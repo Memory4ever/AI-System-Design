@@ -1,0 +1,891 @@
+https://arxiv.org/html/2601.20273v1
+1Introduction
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Background
+2.1 Diffusion Transformers
+2.2 Sequence Parallelisms
+2.3 One-Sided Communication Libraries
+3 Key Challenges
+4 StreamFusion
+4.1 Overview
+4.2 Topology-Aware Communication Scheduling
+4.3 Torus Attention
+4.4 One-Sided Communication Implementation
+5 Evaluation
+5.1 Experiment Setups
+5.2 Overall Performance
+5.3 Layerwise Performance
+6 Related Works
+7 Conclusions
+References
+A One-Sided Communication Implementation Details
+B Ablation Studies
+C Merging Attention Outputs with Different K​VKV Tensors
+D Inter-Machine Communication Volume Analysis
+USP
+StreamFusion
+License: CC BY 4.0
+arXiv:2601.20273v1 [cs.DC] 28 Jan 2026
+marginparsep has been altered.
+topmargin has been altered.
+marginparwidth has been altered.
+marginparpush has been altered.
+The page layout violates the ICML style.
+Please do not change the page layout, or include packages like geometry,
+savetrees, or fullpage, which change it for you.
+We’re not able to reliably undo arbitrary changes to the style. Please remove
+the offending package(s), or layout-changing commands and try again.
+StreamFusion: Scalable Sequence Parallelism for Distributed Inference of Diffusion Transformers on GPUs
+Jiacheng Yang 1 2
+Jun Wu 3
+Yaoyao Ding 1 2 4
+Zhiying Xu 3
+Yida Wang 3
+Gennady Pekhimenko 1 2 4
+††footnotetext: *Equal contribution
+1University of Toronto
+2Vector Institute
+3Amazon Web Services
+4NVIDIA.
+Correspondence to: Gennady Pekhimenko <pekhimenko@cs.toronto.edu>.
+Abstract
+Diffusion Transformers (DiTs) have gained increasing adoption in high-quality image and video generation.
+As demand for higher-resolution images and longer videos increases, single-GPU inference becomes inefficient due to increased latency and large activation sizes.
+Current frameworks employ sequence parallelism (SP) techniques such as Ulysses Attention and Ring Attention to scale inference.
+However, these implementations have three primary limitations: (1) suboptimal communication patterns for network topologies on modern GPU machines, (2) latency bottlenecks from all-to-all operations in inter-machine communication, and (3) GPU sender-receiver synchronization and computation overheads from using two-sided communication libraries.
+To address these issues, we present StreamFusion, a topology-aware efficient DiT serving engine. StreamFusion incorporates three key innovations: (1) a topology-aware sequence parallelism technique that accounts for inter- and intra-machine bandwidth differences, (2) Torus Attention, a novel SP technique enabling overlapping of inter-machine all-to-all operations with computation, and (3) a one-sided communication implementation that minimizes GPU sender-receiver synchronization and computation overheads. Our experiments demonstrate that StreamFusion outperforms the state-of-the-art approach by an average of 1.35×\times (up to 1.77×\times).
+1 Introduction
+Diffusion transformers (DiTs) have been widely applied to generate photo-realistic images and videos, which drives the demand for computation and memory.
+This demand has been amplified by the recent advances in generating high-resolution images Labs et al. (2025) or long-duration videos Yang et al. (2025b); Peng et al. (2025), causing a long sequence length in the attention layer.
+Thus, current DiT inference engines use sequence parallelism (SP) to shard the sequence dimension and then execute it on multiple GPUs.
+However, existing SP techniques suffer from high communication overheads, since their design either does not fully exploit the network topology, especially the bandwidth difference between the intra- and inter-machine network, or causes bubbles in computation pipelines due to non-overlapping communication overheads.
+Specifically, in Ring Attention Liu et al. (2023) the transfer of key and value tensors from/to its neighboring GPUs can be overlapped with the attention computation.
+However, the communication volume per GPU required by Ring Attention does not decrease with increasing number of GPUs, thus making DiT inference communication-bound when scaling up to multiple GPUs.
+Ulysses Attention Jacobs et al. (2023) reduces the communication volume with more GPUs by employing all-to-all operators to first gather the full sequence dimension on each device.
+However, the all-to-all operators are not overlapped by computation operators, and the parallelization degree of Ulysses Attention is limited by the number of heads of the attention layer.
+Unified sequence parallelism (USP) Fang and Zhao (2024) combines Ring and Ulysses Attention by applying Ring Attention for inter-machine communication and Ulysses Attention for intra-machine communication, thus achieving the best of both methods.
+This design is intuitive as the intra-machine networks on modern GPU machines are often fully connected (e.g. NVSwitch NVIDIA (2025b)) and thus enable simultaneous and high-bandwidth data exchange which is required by the all-to-all operators in Ulysses Attention.
+However, they do not optimize the high inter-machine communication overhead introduced by Ring Attention, hindering scalability to multiple GPU machines.
+These issues make the distributed DiT inference communication-bound, limiting its scalability across multiple GPU machines.
+In this paper, we propose StreamFusion to reduce communication overheads when scaling up distributed DiT inference to multiple GPU machines, which is built upon three key ideas.
+First, we introduce topology-aware communication scheduling.
+Unlike USP, we apply Ulysses Attention for inter-machine communication and Ring Attention for intra-machine communication.
+In this design, we utilize the high-bandwidth intra-machine network for conducting the high-volume communication incurred by Ring Attention at the cost of using inter-machine networks for Ulysses Attention.
+Second, to further reduce the high inter-machine communication costs introduced by the all-to-all operators in Ulysses Attention, we observe there are stationary elements before and after the all-to-all operators, which enables us to overlap the all-to-all operators with the attention computation on those stationary elements.
+Based on this observation, we propose Torus Attention , a novel distributed attention algorithm that breaks down the attention computation and all-to-all operators into multiple chunks and overlaps the computation of the current chunk with communication of the next chunk.
+Third, we leverage one-sided communication libraries such as NVSHMEM NVIDIA Corporation (2025) and develop a specialized communication algorithm that unifies Torus Attention, Ulysses, and Ring Attention to further reduce the synchronization and computation overheads caused by traditional two-sided communication libraries.
+We evaluate StreamFusion on commonly-used image and video workloads and our results show that StreamFusion reduces inter-machine communication overheads and improves end-to-end inference latency across a range of distributed configurations (see Section 5.2) by on average 1.35×\times speedup (up to 1.77×\times) over USP.
+Our contributions can be summarized as follows:
+•
+We present topology-aware communication scheduling that better exploits the network topologies on modern GPU machines.
+•
+We design Torus Attention, a novel distributed attention algorithm that hides inter-machine communication latency for attention computation.
+•
+We introduce a one-sided communication implementation that unifies Torus, Ulysses, and Ring Attention to minimize synchronization and computation overheads.
+•
+We evaluate StreamFusion on image and video generation workloads and achieve a state-of-the-art speedup in end-to-end inference latency compared to prior works.
+2 Background
+2.1 Diffusion Transformers
+As shown in Figure 1, to generate an image or video, diffusion transformers (DiTs) start from a random noise tensor through multiple diffusion sampling steps.
+Each sampling step evaluates the DiT to gradually denoise the noise tensor. The output tensor of the last sampling step will be fed to a variational autoencoder to produce the final generated images or videos.
+DiTs typically have a small model size but a much larger activation tensor size.
+For example, CogVideoX Yang et al. (2025b) takes only 12 GiB to store the model weights, but causes out-of-memory errors when generating a 10s 768×\times1360 video on a single A100 GPU (40 GiB).
+This situation could be even worse when generating high-resolution images or long-duration videos, because the activation tensor size grows linearly with the sequence length.
+As a result, efficient distributed inference of DiTs relies heavily on sequence parallelism techniques to distribute the activations across multiple GPUs.
+Figure 1: Generating images with diffusion transformers
+2.2 Sequence Parallelisms
+Figure 2: Illustration of commonly used SP techniques for DiT inference.
+Sequence parallel (SP) techniques divide and distribute the QQ, KK, and VV tensors of an attention layer to multiple GPUs.
+Specifically, we represent the query, key, and value tensors of an attention layer as QQ, KK, and VV respectively, each of which has a shape [B,L,H,D][B,L,H,D], where BB stands for batch size, LL for the sequence length, HH for the number of heads, and DD for the hidden dimension per attention head.
+With PP GPUs, SP techniques shard the QQ, KK, VV tensors along the sequence dimension, resulting in tensors with shape [B,L/P,H,D][B,L/P,H,D] on each GPU.
+To avoid ambiguity, we assume the communication volume is calculated in terms of communication per GPU.
+As the QQ tensor on each GPU needs to compute the attention scores across all K​VKV tensors, SP techniques require necessary communication to compute the attention scores between each QQ tensor and all the K​VKV tensors.
+Prior works achieve this by Ring Attention Liu et al. (2023), Ulysses Attention Jacobs et al. (2023), or Unified Sequence Parallelism (USP) Fang and Zhao (2024), the combination of these two approaches.
+Ring Attention  Figure 2a shows the execution of Ring Attention Liu et al. (2023), which organizes all GPU communication in a ring-like manner.
+Specifically, for PP GPUs, Ring attention consists of PP steps.
+In every step, GPU ii sends its own local K​VKV tensors to neighboring GPU (i+1)%​P(i+1)\%P and receives tensors from GPU (i−1)%​P(i-1)\%P.
+At the same time, GPU ii computes attention scores between its local QQ tensor and the received K​VKV tensors.
+To aggregate the results of the local QQ tensor on different received K​VKV tensors, Ring Attention maintains the running maximum and sum tensors of the attention outputs on each GPU similar to FlashAttention Dao et al. (2022); Dao (2023); Shah et al. (2024).
+After PP steps, each GPU has seen all the K​VKV tensors from all the other GPUs, and thus can compute the final output tensor correctly.
+In this way, Ring Attention needs to send or receive 2​B​L​H​DP\frac{2BLHD}{P} elements to transfer the K​VKV tensors to its neighbors for all but the last step, leading to 2​(P−1)​B​L​H​DP≈2​B​L​H​D\frac{2(P-1)BLHD}{P}\approx{2BLHD} elements in total.
+Ulysses Attention  Figure 2b shows the execution of Ulysses Attention.
+The key idea behind Ulysses Attention is that the attention computation is head-independent, i.e., the outputs of an attention layer of one head do not depend on the other heads of the Q​K​VQKV tensors.
+Thus, Ulysses Attention can first apply three all-to-all operators on the QQ, KK, and VV tensors, to gather the full sequence dimension and scatter the head dimension on each GPU, leading to QQ, KK, and VV tensors on each GPU with a shape [B,L,H/P,D][B,L,H/P,D] respectively.
+By doing so, the attention computation can be done locally on each GPU without further communication.
+Note that after the attention computation, the output tensor OO on each GPU needs to be recovered to its original form, i.e., having a shape [B,L/P,H,D][B,L/P,H,D].
+Thus, Ulysses Attention executes another all-to-all operator by gathering the head dimension and scattering the number of head dimension.
+Since there are four all-to-all operators, i.e. on the QQ, KK, VV, and OO tensors, we can deduce that Ulysses Attention requires 4​(P−1)​B​L​H​DP2≈4​B​L​H​DP\frac{4(P-1)BLHD}{P^{2}}\approx\frac{4BLHD}{P} elements for communication.
+When P=2P=2, Ulysses Attention requires B​L​H​DBLHD elements to communicate, which the same as that of Ring Attention.
+Otherwise, Ulysses Attention requires less communication volume than Ring Attention.
+However, Ulysses Attention is not applicable when the number of heads HH is smaller than the number of GPUs PP, limiting its scalability to a large number of GPUs Fang and Zhao (2024).
+Unified Sequence Parallelism  To scale to a larger number of GPUs without incurring high communication overhead, Unified Sequence Parallelism (USP) Fang and Zhao (2024) proposes to combine Ulysses and Ring Attention.
+Figure 2c shows USP execution with two GPU machines, each of which is equipped with two GPUs.
+USP applies Ulysses Attention for the intra-machine communication and Ring Attention for inter-machine communication.
+Specifically, USP first applies all-to-all operators within each GPU machine to gather the sequence dimension and scatter the head dimension.
+However, unlike Ulysses Attention which scatters the whole head dimension and gathers the full sequence length, USP only scatters half head dimension within each GPU machine and only gathers half of the sequence dimension.
+To make sure the QQ tensor on each GPU has seen the other half of the sequence dimension of the K​VKV tensors, USP applies Ring Attention to send and receive the K​VKV tensors on its neighbor GPU machine.
+Finally, USP applies another all-to-all operator to gather the head dimension and scatter the sequence dimension which restores the output tensors to its original distributed form.
+In this way, the all-to-all operators only run within the GPU machine which is accelerated by high-bandwidth intra-machine networks such as NVSwitch NVIDIA (2025b), and the communication in the Ring Attention overlaps with the computation.
+2.3 One-Sided Communication Libraries
+The cross-GPU communication required by SP techniques typically relies on P2P communication functions in two-sided GPU communication libraries such as NCCL NVIDIA (2025a).
+These libraries automatically detect and adapt communication patterns to the network topology and simplify the programmer’s efforts to implement GPU communications.
+However, using these libraries incurs implicit synchronization barriers as the receiver needs to ensure the sender’s data is ready and vice versa.
+Recently, one-sided communication libraries such as NVSHMEM NVIDIA Corporation (2025) have achieved decent speedups in the inference of large models Zhao et al. (2025b); Chang et al. (2024).
+Instead of using send-receive primitives, these libraries rely on push and pull primitives for transferring data from one GPU to another.
+These libraries remove per-transfer synchronization between sender and receiver, placing synchronization responsibility on the programmer and exposing more flexibility for communication optimization.
+3 Key Challenges
+We carefully examine existing SP techniques and identify three key challenges for high-performance DiT inference.
+Figure 3: (a) Differences in aggregated bandwidth between intra- and inter-machine network; and (b) Latency breakdown of the state-of-the-art SP technique USP Fang and Zhao (2024).
+Figure 4: Implicit synchronization in each step of the Ring Attention due to two-sided communication APIs, i.e, ncclSendRecv.
+Challenge 1: Inter- and Intra-Machine Bandwidth Difference
+Figure 3a shows the difference between inter- and intra-machine communication bandwidth on modern GPU machines with respect to their release dates.
+Recently, high performance GPU-aware inter-machine communication networks have advanced considerably. Techniques such as GPUDirect Remote Direct Memory Access (RDMA) on Infiniband network and AWS Elastic Fabric Adapter (EFA) can have bandwidth ranging from 400 to 3200 Gbps. However, intra-machine communications are still much more performant than inter-machine communications in terms of both latency and throughput.
+Existing SP implementations either do not optimize for network bandwidth differences or adopt a suboptimal combination of the two SP algorithms, leading to high communication overheads and low DiT inference system performance.
+For example, as shown in Figure 3b, the state-of-the-art SP technique, USP Fang and Zhao (2024), becomes communication-bound when scaling up to four GPU machines.
+This is because USP uses Ring Attention across GPU machines and Ulysses Attention within each GPU machine.
+This design maps naturally to the network topology as Ring Attention only introduces ring-like communication patterns that are well-suited for inter-machine network and the more complicated Ulysses Attention is handled by the faster intra-machine GPU interconnections.
+However, as discussed in Section 2, the communication volume of Ring Attention does not decrease with more GPU machines, which produces high inter-machine communication overheads and limits its scalability to multiple GPU machines.
+To this end, we propose to leverage Ulysses Attention for inter-machine communication and Ring Attention for intra-machine communication to better exploit the network topology on modern GPU machines.
+Challenge 2: Non-Overlapping All-to-All Operators in Ulysses Attention
+As discussed in Section 2, Ulysses Attention leverages all-to-all operators to gather the full sequence length on each GPU before performing attention computation.
+While the latency of all-to-all operators in the Ulysses Attention reduces almost linearly with the number of GPUs, Ulysses Attention does not support overlapping its all-to-all operators with computation.
+This is because existing implementations treat all-to-all operators as single atomic communication operations.
+As a result, SP techniques that rely on Ulysses Attention can still be bottlenecked by the communication overheads, especially with a large number of GPU machines.
+This issue becomes even more dominant when choosing Ulysses Attention for inter-machine communication.
+To address this challenge, we propose chunked all-to-all operators where we pipeline the communication of each chunk with the computation of attention on the already received chunks.
+Challenge 3: Overheads from Two-Sided Communication Libraries
+Existing SP implementations, such as Ring Attention and Ulysses Attention, rely on two-sided communication libraries such as NCCL NVIDIA (2025a) for inter-GPU communication.
+However, these libraries require strict synchronization between the sender and receiver GPUs to ensure the liveness of the send and receive data buffers, which leads to significant synchronization overhead.
+For example, as shown in Figure 4, in each step of ring attention, each GPU needs to wait for the data from the previous GPU before it can proceed with the attention computation and send data to the next GPU, which implicitly synchronizes all GPUs at each step.
+Furthermore, two-sided communication libraries for intra-machine communication are often implemented with CUDA kernels.
+These kernel-based implementations do not utilize driver-level communication APIs (e.g., cudaMemcpyPeer) and consume GPU Streaming Multiprocessors (SMs), causing contention with the model’s compute kernels and increasing computation overheads.
+As a result, the overall performance is degraded due to the synchronization and computation overhead, especially when the number of GPUs increases.
+To address this challenge, we leverage one-sided communication libraries such as NVSHMEM NVIDIA Corporation (2025) and carefully design communication patterns to minimize synchronization and computation overhead while ensuring data consistency and correctness.
+4 StreamFusion
+4.1 Overview
+We propose StreamFusion which achieves efficient DiT inference via the following three key ideas.
+Topology-Aware Sequence Parallelism
+To address the inter- and intra-machine bandwidth difference challenge, StreamFusion proposes to combine Ulysses and Ring Attention in a topology-aware manner.
+Specifically, StreamFusion leverages Ulysses Attention for inter-machine communication and Ring Attention for intra-machine communication, since Ulysses Attention introduces lower communication volume than Ring Attention when scaling to multiple GPU machines and is more suitable for the slower inter-machine networks.
+On the other hand, Ring Attention introduces higher communication volume than Ulysses Attention when scaling to multiple GPUs.
+Thus, Ring Attention is better suited for the faster intra-machine GPU interconnections.
+In this way, StreamFusion effectively reduces the overall communication overheads and improves system performance for distributed DiT inference.
+However, since StreamFusion requires Ulysses Attention which has non-overlapping all-to-all operators and uses two-sided communication libraries that introduce high synchronization and computation overheads, StreamFusion further addresses these two challenges with the following ideas.
+Communication-Overlapped Torus Attention
+To address the non-overlapping inter-machine communication overheads challenge in Ulysses Attention, we propose Torus Attention that divides the all-to-all operators into multiple chunks and pipelines the communication of each chunk with the computation of attention on the already received chunks.
+Specifically, we break the Q​K​VQKV tensors into multiple chunks.
+When performing the all-to-all operators in Ulysses Attention, we observe that the chunks for the current rank remain unchanged after the all-to-all operators.
+Thus, StreamFusion can directly first start the attention computation on those chunks without waiting for the all-to-all operators to finish and at the same time starts sending and receiving the other chunks to and from other GPUs.
+While receiving each chunk, StreamFusion immediately starts the attention computation on the already received chunks, effectively overlapping the communication and computation.
+By doing so, StreamFusion effectively hides the inter-machine communication latency and reduces the overall communication overheads.
+One-Sided Communication Pattern Design
+To effectively leverage one-sided communication libraries, StreamFusion tailors the communication patterns of Ring, Ulysses, and Torus Attention to fully utilize the benefits of one-sided communication while minimizing synchronization overheads.
+Specifically, StreamFusion carefully co-designs the communication algorithms and the direction of each communication operator.
+As a result, StreamFusion requires only intra-machine synchronizations and two inter-machine synchronizations (at the beginning and end of a layer), thus efficiently utilizing one-sided libraries and minimizing synchronization and computation overheads.
+4.2 Topology-Aware Communication Scheduling
+Figure 5: Topology-aware sequence parallelism in StreamFusion.
+StreamFusion employs a topology-aware communication scheduling strategy that assigns SP techniques based on the network topology of the GPU cluster.
+Unlike USP Fang and Zhao (2024), StreamFusion applies Ulysses Attention for inter-machine communication and Ring Attention for intra-machine communication.
+Specifically, as shown in Figure 5, suppose there are NN GPU machines, each of which is equipped with MM GPUs, and StreamFusion organizes the N×MN\times M GPUs into a 2D device mesh of shape Pu×PrP_{u}\times P_{r}, creating a process group of size PuP_{u} for Ulysses Attention and a process group of size PrP_{r} for Ring Attention.
+As discussed in Section 2, PuP_{u} is limited by the number of heads HH since Ulysses Attention requires HH to be divisible by PuP_{u}.
+In the simplest case H=NH=N, we can set Pu=NP_{u}=N and Pr=MP_{r}=M, where StreamFusion applies Ulysses Attention across the NN GPU machines and Ring Attention within each GPU machine.
+In this way, StreamFusion minimizes the inter-machine communication volume and effectively utilizes the high-bandwidth intra-machine GPU interconnections.
+However, when H≠NH\neq N, we set Pu=gcd⁡(N​M,H)P_{u}=\gcd(NM,H)11
+1
+gcd\gcd stands for the greatest common divisor. as this maximizes the usage of Ulysses Attention to reduce inter-machine communication volume, and then set Pr=N​MPuP_{r}=\frac{NM}{P_{u}}.
+By doing so, StreamFusion can always leverage Ulysses Attention to reduce inter-machine communication volume as much as possible:
+(1) When Pu≥NP_{u}\geq N, StreamFusion can fully utilize Ulysses Attention for inter-machine communication, and the communication volume decreases almost linearly with the number of machines NN;
+(2) When Pu<NP_{u}<N, StreamFusion uses a combination of Ulysses and Ring Attention for inter-machine communication volume, and the Ulysses Attention can still be used to reduce inter-machine communication volume.
+In contrast, even with the same PuP_{u} and PrP_{r}, USP uses Ring Attention for inter-machine communication, which implies that Ulysses Attention reduces the inter-machine communication volume only if Pr<NP_{r}<N.
+The only case where StreamFusion could incur more inter-machine communication than USP is when Pu=2P_{u}=2, where Ulysses will have more communication volume than Ring Attention as described in Section 2.
+Thus, USP incurs higher inter-machine communication volume than StreamFusion in most cases.
+Figure 6: Illustration of (a) breakdown of an all-to-all operator and (b) Torus Attention communication scheduling with 33 GPU machines.
+During the attention execution, since each Q​K​VQKV tensor is sharded along the sequence dimension, StreamFusion first applies all-to-all operators to gather the sequence dimension and scatter the head dimension of Q​K​VQKV tensors within each GPU machine with the Ulysses Attention process group.
+Then, StreamFusion applies Ring Attention to communicate the K​VKV tensors within the GPUs on each GPU machine.
+Finally, StreamFusion applies another all-to-all operator within each GPU machine to gather the head dimension and scatter the sequence dimension of the output tensor OO to restore the output tensor to its original distributed form.
+As a result, StreamFusion effectively reduces the overall inter-machine communication volume and improves the system performance for distributed DiT inference.
+However, since Ulysses Attention relies on all-to-all operators that are not overlapped with computation, using Ulysses Attention for inter-machine communication incurs non-overlapping inter-machine communication overheads (see Section 3).
+We address this challenge with the following Torus Attention.
+4.3 Torus Attention
+To reduce the non-overlapping inter-machine communication overheads, we propose Torus Attention that hides the latency of all-to-all operators by overlapping their communication with attention computation.
+Breakdown of All-to-All Operators
+We find that some elements of the input and output tensors are stationary before and after the all-to-all operators, so they can be used for attention computation without waiting for the all-to-all to finish. At the same time, we start the remaining all-to-all transfers in the background to overlap the communication with computation.
+Specifically, Figure 6a (left) illustrates the distributed layout of a tensor before and after an all-to-all operator among four GPUs with sequence length L=16L=16 and head dimension H=4H=4.
+We found that elements with red boxes, namely elements whose index of the number of heads dimension is the current rank, will remain stationary before and after the all-to-all operator in the Ulysses Attention.
+Thus, these elements can be directly used for some computation without waiting for the all-to-all operators to finish.
+At the same time, we can start the all-to-all operators for the remaining elements in the background.
+Thus, we can hide the latency of the all-to-all operator by overlapping with computation.
+Based on this observation, we propose Torus Attention that breaks down a single all-to-all operator into multiple stages.
+Specifically, as shown in Figure 6a (right), the all-to-all operators can be broken into 2 stages for 3 GPU machines.
+In each stage k∈{1,2}k\in\{1,2\}, GPU ii first uses elements whose head index equals ii for computation, and concurrently sends elements with head index (i−k)%​N(i-k)\%N to GPU (i−k)%​N(i-k)\%N.
+In this way, after the communication of each stage, we can initiate computation on the newly received elements while sending the elements required by the computation of the next stage in the background, thus effectively overlapping the all-to-all operators with computation.
+Communication Scheduling for Attention Computation
+While breaking all-to-all operators hides the latency of one all-to-all operator with computation, hiding latency of four all-to-all operators in Ulysses Attention remains challenging.
+Besides, the first three all-to-all operators transform the QQ, KK, and VV tensors respectively, while the fourth all-to-all operator transforms the output tensor OO (see Section 2).
+These tensors have different lifespans during attention computation.
+Thus, we need to carefully schedule the communication and computation order of each tensor chunks to overlap communication with computation as much as possible.
+To address this challenge, we design a tailored communication scheduling for overlapping the all-to-all operators with attention computation.
+The key idea is to first schedule the communication of the QQ tensors first followed by the K​VKV tensors, since the communication of K​VKV tensors doubles the communication volume and makes it more difficult to be fully overlapped with computation.
+Specifically, as shown in Figure 6b, during the attention execution, we break the Ulysses Attention execution into the Pull Q, Pull KV, and Push O stages.
+The name of “Pull” and “Push” indicate the communication primitives we use in the one-sided communication implementation as described in Section 4.4.
+However, this algorithm can also be implemented with two-sided communication libraries such as NCCL NVIDIA (2025a).
+For clarity, we denote Tl,hT_{l,h} as the partition of the sequence dimension with index ll and the partition of the number of head dimension with index hh of the tensor TT respectively.
+We use “:” to denote all indices and “:∖{l}” to denote the set of all indices except ll. Thus T:∖{l},hT_{:\setminus\{l\},h} denotes the slice of TT that contains all sequence partitions except the ll-th, while selecting the hh-th partition of the head dimension.
+Unless otherwise noted, we use GPU tt to denote the GPU with local rank tt in the Torus Attention process group.
+In the Pull Q stages, we start transferring the chunks of the QQ tensor by breaking down the all-to-all operators described above, whose latency is hidden by overlapping with the attention computation.
+Specifically, we have exactly NN Pull Q stages.
+In the kk-th Pull Q stage (k∈{1,…​N}k\in\{1,\dots N\}), GPU tt first computes the attention scores using the Q(t−k+1)%​N,tQ_{(t-k+1)\%N,t}, Kt,tK_{t,t}, and Vt,tV_{t,t}.
+At the same time, the GPU tt will send Qt,(t+k)%​NQ_{t,(t+k)\%N} to the GPU (t+k)%​N(t+k)\%N, where the communication of the QQ tensor is overlapped with computation.
+Note that in the last Pull Q stage, GPU tt computes the attention using the received Q(t−N+1)%​N,tQ_{(t-N+1)\%N,t} while sending Kt,(t+1)%​NK_{t,(t+1)\%N} and Vt,(t+1)%​NV_{t,(t+1)\%N} to GPU (t+1)%​N(t+1)\%N for preparing the computation in the first Pull KV stage.
+In the Pull KV stages, similar to the Pull Q stages, we break down the all-to-all operators of the K​VKV tensors into multiple stages and hide the latency of each stage communication with computation.
+Specifically, we have N−1N-1 Pull KV stages.
+In the kk-th Pull KV stage (k∈{1,…​N−2}k\in\{1,\dots N-2\}), GPU tt first computes the attention using the received Q:∖{t},tQ_{:\setminus\{t\},t}, K(t−k)%​N,tK_{(t-k)\%N,t}, and V(t−k)%​N,tV_{(t-k)\%N,t}, while sending Kt,(t+k)%​NK_{t,(t+k)\%N} and Vt,(t+k)%​NV_{t,(t+k)\%N} to GPU (t+k)%​N(t+k)\%N.
+In the last Pull KV stage, GPU tt only computes the attention on Q:∖{t},tQ_{:\setminus\{t\},t}, K(t−N+1)%​N,tK_{(t-N+1)\%N,t}, and V(t−N+1)%​N,tV_{(t-N+1)\%N,t} without overlapping with any communication.
+Note that we need to combine the newly computed attention outputs with previously computed attention outputs using different K​VKV tensors and thus we need to merge the attention outputs similar to the Ring Attention.
+During the computation, the GPU tt will send Kt,(t+k)%​NK_{t,(t+k)\%N} and Vt,(t+k)%​NV_{t,(t+k)\%N} such that the communication of the K​VKV tensors can be overlapped with computation.
+After the Pull KV stages, the attention output O:∖{t},tO_{:\setminus\{t\},t} on GPU tt is fully computed and ready to be sent to the other GPUs.
+In the Push O stages, we overlap the computation of the remaining output tensor, i.e., Ot,tO_{t,t}.
+Specifically, while computing Ot,tO_{t,t} locally on GPU tt using Qt,tQ_{t,t}, K:∖{t},tK_{:\setminus\{t\},t}, and V:∖{t},tV_{:\setminus\{t\},t}, we start sending Oi,tO_{i,t} to GPU ii for all i≠ti\neq t.
+Note that Ot,tO_{t,t} should stay on GPU tt and does not need to be transferred to the other GPUs.
+Thus, we can overlap the computation of Ot,tO_{t,t} with the communication of O:∖{t},tO_{:\setminus\{t\},t}, effectively hiding the communication overheads of the last all-to-all operator.
+In StreamFusion, we use Torus Attention only for inter-machine communication.
+This is because intra-machine communication overheads are already negligible due to high-bandwidth intra-machine interconnects such as NVSwitch.
+For simplicity, we assume N|PuN\mid P_{u}, i.e., the number of GPU machines divides the parallelization degree of Ulysses Attention, such that we can assume the parallelization degree of Torus Attention is NN.
+However, StreamFusion can be easily extended when N∤PuN\nmid P_{u} by only applying Torus Attention on a subset of the GPU machines.
+To avoid confusion, we denote Pu′=Pu/NP^{\prime}_{u}=P_{u}/N as the parallelization degree of Ulysses Attention for intra-machine communication and we assume Pu′⋅Pr=MP^{\prime}_{u}\cdot P_{r}=M where MM is the number of GPUs on each GPU machine.
+In this way, we overlap the inter-machine communication while still leveraging the benefits of Ulysses and Ring Attention, thus significantly reducing the inter-machine communication overheads.
+4.4 One-Sided Communication Implementation
+As shown in Algorithm 1, we propose a unified implementation for Torus, Ulysses, and Ring Attention using one-sided communication libraries such as NVSHMEM NVIDIA Corporation (2025).
+For clarity, we denote a GPU xx by x=(t,u,r)x=(t,u,r), where tt, uu, and rr are the local ranks in the Torus, Ulysses, and Ring process groups, respectively.
+We use ScatterPush​(A,B,x)\textsc{ScatterPush}(A,B,x) (GatherPull​(A,B,x)\textsc{GatherPull}(A,B,x)) to denote element-wise push (pull) operations between tensors in list AA and the corresponding GPUs in list xx.
+Namely, for the ii-th operation, we push A⁡[i]A[i] to GPU BB on x⁡[i]x[i] (pull BB from GPU x⁡[i]x[i] to A⁡[i]A[i]).
+The notation (t,:,r)(t,:,r) means all GPUs with local rank tt in the Torus process group and local rank rr in the Ring process group, where “::” indicates all ranks in the Ulysses group.
+Algorithm 1  Pseudocode of StreamFusion with one-sided communication
+1
+The input Q​K​VQKV tensors of shape [B,L,H,D][B,L,H,D] on each GPU; Torus, Ulysses, and Ring Attention degree and rank denoted by (T,t)(T,t), (U,u)(U,u), (R,r)(R,r)
+2
+procedure RingAttn(Q,K,V,O,l,mQ,K,V,O,l,m)
+3
+Create empty tensors Kbuf,VbufK^{\text{buf}},V^{\text{buf}}, and tensors Kcur,VcurK^{\text{cur}},V^{\text{cur}} cloned from K,VK,V
+4
+for i←1,…,Ri\leftarrow 1,\dots,R do
+5
+Ei←Pull​({K,V},{Kbuf,Vbuf},(t,u,(r+i)%​R))E_{\text{i}}\leftarrow\textsc{Pull}(\{K,V\},\{K^{\text{buf}},V^{\text{buf}}\},(t,u,(r+i)\%R)) if i<Ri<R
+6
+FlashAttention​(Q,Kcur,Vcur,O,l,m)\textsc{FlashAttention}(Q,K^{\text{cur}},V^{\text{cur}},O,l,m)⊳\triangleright In-place update O,l,mO,l,m
+7
+Wait​(Ei)\textsc{Wait}(E_{\text{i}}) if i<Ri<R
+8
+Kcur,Vcur←Kbuf,VbufK^{\text{cur}},V^{\text{cur}}\leftarrow K^{\text{buf}},V^{\text{buf}}
+9
+function StreamFusion(Q,K,V,T,t,U,u,R,rQ,K,V,T,t,U,u,R,r)
+10
+Rearrange QQ, KK, VV from [B,L,T​U⋅HT​U,D][B,L,TU\cdot\frac{H}{TU},D] into [T,U,B,HT​U,L,D]\left[T,U,B,\frac{H}{TU},L,D\right]
+11
+Qbuf,Kbuf,Vbuf←Clone​(Q,K,V)Q^{\text{buf}},K^{\text{buf}},V^{\text{buf}}\leftarrow\textsc{Clone}(Q,K,V)
+12
+Obuf←ZeroLike​(Q)O^{\text{buf}}\leftarrow\textsc{ZeroLike}(Q)
+13
+O←ZeroLike​(Q)O\leftarrow\textsc{ZeroLike}(Q)
+14
+l←Zeros​([T,U,B,HT​U,L])l\leftarrow\textsc{Zeros}(\left[T,U,B,\frac{H}{TU},L\right])⊳\triangleright Running sum tensor
+15
+m←Full​(−∞,[T,U,B,HT​U,L])m\leftarrow\textsc{Full}(-\infty,\left[T,U,B,\frac{H}{TU},L\right])⊳\triangleright Running max tensor
+16
+ScatterPush({Qt,:,Kt,:,Vt,:},{Qt,ubuf,Kt,ubuf,Vt,ubuf},(t,:,r))\textsc{ScatterPush}(\{Q_{t,:},K_{t,:},V_{t,:}\},\{Q^{\text{buf}}_{t,u},K^{\text{buf}}_{t,u},V^{\text{buf}}_{t,u}\},(t,:,r))
+17
+BarrierAll​()\textsc{BarrierAll}()
+18
+Qt,:,Kt,:,Vt,:←Qbuft,:,Kbuft,:,Vbuft,:Q_{t,:},K_{t,:},V_{t,:}\leftarrow Q^{\text{buf}}_{t,:},K^{\text{buf}}_{t,:},V^{\text{buf}}_{t,:}
+19
+for k←1,…,N−1k\leftarrow 1,\dots,N-1 do
+20
+t′←(t−k)%​Nt^{\prime}\leftarrow(t-k)\%N
+21
+EkQ←GatherPull({Qt′,:},{Qt′,ubuf},(t′,:,r))E^{Q}_{k}\leftarrow\textsc{GatherPull}(\{Q_{t^{\prime},:}\},\{Q^{\text{buf}}_{t^{\prime},u}\},(t^{\prime},:,r))
+22
+EkK​V←GatherPull({Kt′,:,Vt′,:},{Kt′,ubuf,Vt′,ubuf},(t′,:,r))E^{KV}_{k}\leftarrow\textsc{GatherPull}(\{K_{t^{\prime},:},V_{t^{\prime},:}\},\{K^{\text{buf}}_{t^{\prime},u},V^{\text{buf}}_{t^{\prime},u}\},(t^{\prime},:,r))
+23
+RingAttn(Qt,:,Kt,:,Vt,:,Ot,:,lt,:,mt,:)\textsc{RingAttn}(Q_{t,:},K_{t,:},V_{t,:},O_{t,:},l_{t,:},m_{t,:})⊳\triangleright First Pull Q stage
+24
+for k←1,…,N−1k\leftarrow 1,\dots,N-1 do
+⊳\triangleright Remaining N−1N-1 Pull Q stages
+25
+t′←(t−k)%​Nt^{\prime}\leftarrow(t-k)\%N
+26
+Wait​(EkQ)\textsc{Wait}(E^{Q}_{k})
+27
+RingAttn(Qt′,:,Kt,:,Vt,:,Ot′,:,lt′,:,mt′,:)\textsc{RingAttn}(Q_{t^{\prime},:},K_{t,:},V_{t,:},O_{t^{\prime},:},l_{t^{\prime},:},m_{t^{\prime},:})
+28
+for k←1,…,N−1k\leftarrow 1,\dots,N-1 do⊳\triangleright Pull KV
+29
+t′←(t−k)%​Nt^{\prime}\leftarrow(t-k)\%N
+30
+Wait​(EkK​V)\textsc{Wait}(E^{KV}_{k}) and Barrier​(R)\textsc{Barrier}(R)⊳\triangleright Barrier the Ring Attention group
+31
+RingAttn(Q:∖{t},:,Kt′,:,Vt′,:,O:∖{t},:,l:∖{t},:,m:∖{t},:)\textsc{RingAttn}(Q_{:\setminus\{t\},:},K_{t^{\prime},:},V_{t^{\prime},:},O_{:\setminus\{t\},:},l_{:\setminus\{t\},:},m_{:\setminus\{t\},:})
+32
+for k←1,…,N−1k\leftarrow 1,\dots,N-1 do⊳\triangleright Push O
+33
+t′←(t−k)%​Nt^{\prime}\leftarrow(t-k)\%N
+34
+ScatterPush({Ot′,:},{Ot,ubuf},(t′,:,r))\textsc{ScatterPush}(\{O_{t^{\prime},:}\},\{O^{\text{buf}}_{t,u}\},(t^{\prime},:,r))
+35
+RingAttn(Qt,:,K:∖{t},:,V:∖{t},:,Ot,:,lt,:,mt,:)\textsc{RingAttn}(Q_{t,:},K_{:\setminus\{t\},:},V_{:\setminus\{t\},:},O_{t,:},l_{t,:},m_{t,:})
+36
+ScatterPush({Ot,:},{Ot,ubuf},(t,:,r))\textsc{ScatterPush}(\{O_{t,:}\},\{O^{\text{buf}}_{t,u}\},(t,:,r))⊳\triangleright For Ulysses Attention
+37
+BarrierAll​()\textsc{BarrierAll}()
+38
+return OO
+StreamFusion first applies a ScatterPush operation to perform the all-to-all operators on the local tensors QtQ_{t}, KtK_{t}, and VtV_{t} for Ulysses Attention (Line 16).
+Then, StreamFusion synchronizes all GPUs with the “BarrierAll” primitive to ensure previous ScatterPush operations are completed (Line 17).
+Next, StreamFusion issues all GatherPull operations needed for both the Pull Q and Pull KV stages (Line 19-22).
+By issuing all pulls without waiting for each to complete, we maximize overlap between communication and computation.
+Next, StreamFusion starts the attention computation.
+StreamFusion first performs the Ring Attention for the first Pull Q stage using the local Qt,tQ_{t,t}, Kt,tK_{t,t}, and Vt,tV_{t,t} tensors (Line 23).
+Then, in both Pull Q and Pull KV stages, StreamFusion waits for the communication of each chunk of the QQ and the K​VKV tensors to finish before performing the attention computation using the newly received chunk (Line 24-27 and Line 28-31).
+For the attention computation in both stages, StreamFusion invokes the RingAttn function (Line 2-8) that implements Ring Attention using one-sided communication.
+Instead of using a ring-like communication, we directly pull the K​VKV tensors from the other GPUs given the rank with the Pull primitive, thus removing the unnecessary synchronization needed in the original Ring Attention.
+Note that in each Pull KV stage, after waiting for the communication of the K​VKV tensors to finish, we need to perform a “barrier” operation to synchronize all GPUs that are in the Ring Attention process group (Line 30), since Ring Attention requires the K​VKV tensors on all participating GPUs to be ready before starting the attention computation.
+Finally, the output tensor O:∖{t},:O_{:\setminus\{t\},:} is ready to be sent from GPU tt to the other GPUs.
+Since we need to account for the Ulysses Attention’s all-to-all operator on the output tensor OO, StreamFusion issues a ScatterPush operator to send O:∖{t},:O_{:\setminus\{t\},:} to the other GPUs in the Push O stage (Line 32-34).
+At the same time, StreamFusion computes the remaining output tensor Ot,:O_{t,:} locally on GPU tt (Line 35).
+After finishing the computation of Ot,:O_{t,:}, StreamFusion performs another ScatterPush operator to send Ot,:O_{t,:} to the other GPUs for Ulysses Attention (Line 36).
+Finally, StreamFusion performs another “BarrierAll” operation to ensure all communication operators are finished before returning the output tensor (Line 37).
+In this way, StreamFusion leverages one-sided communication libraries to implement Torus, Ulysses, and Ring Attention while still overlapping the communication with computation and reducing the synchronization overheads.
+5 Evaluation
+Figure 7: Overall end-to-end performance of StreamFusion compared to baselines with their own optimal distributed configurations, where MM stands for the number of GPU machines.
+5.1 Experiment Setups
+Baselines  We compare StreamFusion, denoted by SFU, with the state-of-the-art work USP Fang and Zhao (2024).
+We also evaluate a variant of StreamFusion that only applies the topology-aware sequence parallelism, denoted by TAS, to demonstrate the benefits of Torus Attention and one-sided communication implementation.
+Note that when using a single GPU machine, all methods degrade to Ulysses Attention since there is no inter-machine communication.
+Hardware & Software  We conduct all experiments on four AWS p4de.24xlarge instances, each equipped with 8 NVIDIA A100 GPUs (40 GiB per GPU) interconnected via NVSwitch. We also enable the AWS Elastic Fabric Adapter (EFA), offering up to 400 Gbps bandwidth for efficient inter-machine communication.
+StreamFusion and all baselines are executed with NVIDIA driver version 570.172.08, CUDA 12.8.0, PyTorch 2.8.0, NCCL 2.27.3, and NVSHMEM 3.4.5 installed on each machine.
+Models & Workloads
+To prove the generalizability of StreamFusion, we use four commonly-used workloads for evaluation.
+For image generation, we use Flux Labs et al. (2025) with 12B parameters for generating 3072×\times3072 and 4096×\times4096 images.
+For video generation, we use CogVideoX Yang et al. (2025b) with 5B parameters for producing 20 or 40 seconds 768×\times1360 videos.
+Both models use 24 attention heads, with head dimensions of 128 and 64 for Flux and CogVideoX, respectively.
+5.2 Overall Performance
+Figure 8: Overall end-to-end performance on various distributed configurations with 4 or 3 GPU machines.
+Optimal Distributed Configuration  Figure 7 shows the overall inference latency of one sampling step between StreamFusion and prior state-of-the-art works, with their own optimal distributed configurations.
+Note that for different workloads, we benchmark different sets of the GPU machine numbers.
+This is because SP techniques require the sequence length and number of heads to be divisible by the number of GPU machines.
+Moreover, we only show USP performance numbers for M=1M=1 cases since all methods will degrade to Ulysses Attention when using a single GPU machine and StreamFusion’s optimizations are tailored to inter-machine communication.
+We make three conclusions from the figure.
+First, we demonstrate that TAS performs worse than USP when using 2 GPU machines.
+This is because when using 2 GPU machines, TAS introduces the same inter-machine communication volume as USP but its communication latency is not overlapped with computations.
+Second, we find that TAS achieves a speedup by 1.27×\times on average (up to 1.64×\times) when comparing to USP when using more than 2 GPU machines for distributed DiT inference.
+This is because TAS introduces a much lower inter-machine communication volume than USP with more than 2 GPU machines.
+Third, we show that by overlapping all-to-all operators with computation and leveraging one-sided communication libraries, StreamFusion achieves a better speedup than TAS by 1.35×\times on average (up to 1.77×\times).
+This is because StreamFusion is able to overlap inter-machine communication with computation.
+Overall, we conclude that StreamFusion has lower inter-machine communication overheads compared to prior state-of-the-art frameworks and all proposed key ideas are required to achieve the optimal system performance.
+Other Distributed Configurations  Figure 8 compares the system performance of StreamFusion with baselines at different distributed configurations, where UxxRyy stands for using Ulysses Attention with parallelization degree Pu=xP_{u}=x and Ring Attention with parallelization degree Pr=yP_{r}=y.
+We make three observations from the figure.
+First, we found that both our work TAS and SFU can consistently outperform USP on all setups by 1.47×\times speedup on average (up to 2.54×\times) and 1.61×\times speedup on average (up to 3.11×\times), respectively.
+This is because TAS and SFU conduct Ring Attention within a single GPU machine and hence significantly reduce inter-machine communication volume.
+Second, we found that for all methods, increasing the Ulysses Attention degree UU can always achieve better speedups, except for TAS where U12R2 is better than U24R1.
+This is because increasing Ulysses Attention degree UU reduces the Ring Attention degree RR.
+Since Ring Attention divides one attention operator along the sequence length into multiple ones, choosing a small RR prevents the fragmentation of attention operations on each GPU, which reduces kernel launching overheads, avoids bubbles in GPU warp schedulers, and thus better utilizes the GPU computational resources.
+However, for TAS since the all-to-all operators are not overlapped with communication, excessively using Ulysses Attention could result in larger non-overlapping communication overheads.
+5.3 Layerwise Performance
+Figure 9: Normalized latency of StreamFusion at different head dimensions, when varying sequence length and batch sizes.
+We conduct micro-benchmarks by varying the sequence length, head dimension, and batch size, and measuring the latency of a single attention layer to understand how StreamFusion’s performance generalizes to different workloads.
+Different Head Dimensions
+Figure 9a and Figure 9b demonstrate the performance of StreamFusion compared against USP with different head dimensions (DD).
+We observe that for all head dimensions, StreamFusion always achieves a better performance compared to USP, by 1.12×\times, 1.28×\times, and 1.32×\times speedup on average for D=32,64,128D=32,64,128 respectively.
+Besides, we notice that as the head dimension increases, StreamFusion provides better speedups.
+This is because sharding attention computation makes the kernel launching grids fairly small, which underutilizes GPU computation resources.
+By increasing the head dimension, we make the attention computation easier to saturate the GPU computational resources.
+Different Sequence Length
+Figure 9a demonstrates the normalized latency of StreamFusion compared to USP with different sequence lengths.
+We draw two observations from the figure.
+First, we find that StreamFusion almost consistently provides speedup compared to USP, demonstrating 1.59×\times, 1.27×\times, 1.07×\times, and 1.14×\times speedup on average with sequence length 96k, 128k, 160k, and 192k, respectively.
+The only exception case is when we have more than 160k tokens when the number of head dimensions D=32D=32.
+Second, we notice that as the sequence length increases, StreamFusion achieves less speedup compared to USP.
+This is because as the sequence length increases, the computation on each GPU increases quadratically while the communication on each GPU only increases linearly, which thus makes the attention layer execution compute-bounded and offsets the benefits of communication overhead reduction techniques introduced by StreamFusion.
+Different Batch Size
+Figure 9b shows the normalized latency of StreamFusion compared to USP with different batch sizes.
+We observe that StreamFusion consistently outperforms USP on all batch sizes, demonstrating 1.27×\times, 1.27×\times, 1.13×\times speedup on average.
+However, we notice that as the batch size increases, there is no clear trend on the speedup of StreamFusion compared to USP across various head dimensions.
+Overall, we conclude that StreamFusion can provide consistent speedups over prior state-of-the-art work across different layerwise configurations, which demonstrates the generalizability of StreamFusion to various workloads.
+6 Related Works
+Distributed Inference of DiTs
+DiT inference is both compute- and memory-intensive, and distributed execution is often needed to avoid out-of-memory errors, reduce latency, and improve hardware utilization.
+Ulysses Attention Jacobs et al. (2023), Ring Attention Liu et al. (2023), and their combination USP Fang and Zhao (2024) are the main SP techniques used today.
+DistriFusion Li et al. (2024) and PipeFusion Fang et al. (2024) explore lossy communication-hiding techniques that leverage temporal redundancy across sampling steps to hide communication latency with little accuracy loss.
+However, these approaches are limited by their focus on specific network topologies or their lack of addressing network constraints, resulting in significant communication overhead..
+Communication-Computation Overlapping
+We classify prior works for overlapping communication and computation into manual and compiler-based approaches.
+For manual approaches, Flux Chang et al. (2024) hides the latency of AllGather and ReduceScatter operators with computation in tensor parallelism for LLMs.
+DeepEP Zhao et al. (2025a); Zhao et al. (2025b) uses hand-optimized kernels that start communication from inside CUDA kernels for fine-grained overlap.
+Comet Zhang et al. (2025) hides all-to-all latency but focuses on GEMM operators and does not directly support attention.
+ScaleFusion Yang et al. (2025a) breaks all-to-all operators to overlap with computation but targets diffusion transformers with spatial-temporal attention architecture.
+However, these works cannot be directly applied to the DiT inference with general attention architecture, which has its unique challenges as discussed in Section 3.
+For compiler-based approaches, frameworks like TileLink Zheng et al. (2025b), Triton-Distributed Zheng et al. (2025a), Mercury Guan et al. (2025) integrate communication primitives into compilers (e.g., Triton) to automatically overlap communication and computation.
+While these works provide general abstractions for communication-computation overlapping, directly applying them to discover the specialized overlapping techniques such as Torus Attention is non-trivial since it requires careful scheduling of communication and computation operators to ensure fine-grained overlapping.
+We believe StreamFusion can be integrated into these compiler-based works to further enhance the performance of DiT inference.
+7 Conclusions
+In this paper, we present StreamFusion, a novel distributed DiT inference engine.
+To address the key challenges in existing SP techniques, StreamFusion introduces three key techniques: (1) topology-aware sequence parallelism that combines Ulysses Attention and Ring Attention in a topology-aware manner; (2) Torus Attention that pipelines inter-machine communication with computation to hide communication overheads; and (3) one-sided communication implementation to reduce synchronization overheads.
+Our extensive experiments demonstrate that StreamFusion outperforms existing SP techniques with 1.35×\times speedup on average (up to 1.77×\times).
+We hope StreamFusion provides new insights for efficient and scalable distributed DiT inference on modern GPU machines.
+References
+Chang et al. (2024)
+L. Chang, W. Bao, Q. Hou, C. Jiang, N. Zheng, Y. Zhong, X. Zhang, Z. Song, C. Yao, Z. Jiang, H. Lin, X. Jin, and X. Liu
+FLUX: fast software-based communication overlap on gpus through kernel fusion.
+External Links: 2406.06858,
+Link
+Cited by: §2.3,
+§6.
+Dao et al. (2022)
+T. Dao, D. Y. Fu, S. Ermon, A. Rudra, and C. Ré
+FlashAttention: fast and memory-efficient exact attention with io-awareness.
+External Links: 2205.14135,
+Link
+Cited by: Appendix C,
+§2.2.
+Dao (2023)
+T. Dao
+FlashAttention-2: faster attention with better parallelism and work partitioning.
+External Links: 2307.08691,
+Link
+Cited by: Figure 12,
+Appendix C,
+Appendix C,
+Appendix C,
+Appendix C,
+§2.2.
+Fang et al. (2024)
+J. Fang, J. Pan, J. Wang, A. Li, and X. Sun
+PipeFusion: patch-level pipeline parallelism for diffusion transformers inference.
+External Links: 2405.14430,
+Link
+Cited by: §6.
+Fang and Zhao (2024)
+J. Fang and S. Zhao
+USP: a unified sequence parallelism approach for long context generative ai.
+External Links: 2405.07719,
+Link
+Cited by: Appendix B,
+§1,
+§2.2,
+§2.2,
+§2.2,
+Figure 3,
+§3,
+§4.2,
+§5.1,
+§6.
+Guan et al. (2025)
+Y. Guan, X. Qiang, Z. Pan, D. Johnson, Y. Fang, K. Zhou, Y. Wang, W. Li, Y. Ding, and A. Aziz
+Mercury: unlocking multi-gpu operator optimization for llms via remote memory scheduling.
+In Proceedings of the ACM SIGOPS 31st Symposium on Operating Systems Principles,
+SOSP ’25, New York, NY, USA, pp. 1046–1061.
+External Links: ISBN 9798400718700,
+Link,
+Document
+Cited by: §6.
+Jacobs et al. (2023)
+S. A. Jacobs, M. Tanaka, C. Zhang, M. Zhang, S. L. Song, S. Rajbhandari, and Y. He
+DeepSpeed ulysses: system optimizations for enabling training of extreme long sequence transformer models.
+External Links: 2309.14509,
+Link
+Cited by: §1,
+§2.2,
+§6.
+Labs et al. (2025)
+B. F. Labs, S. Batifol, A. Blattmann, F. Boesel, S. Consul, C. Diagne, T. Dockhorn, J. English, Z. English, P. Esser, S. Kulal, K. Lacey, Y. Levi, C. Li, D. Lorenz, J. Müller, D. Podell, R. Rombach, H. Saini, A. Sauer, and L. Smith
+FLUX.1 kontext: flow matching for in-context image generation and editing in latent space.
+External Links: 2506.15742,
+Link
+Cited by: §1,
+§5.1.
+Li et al. (2024)
+M. Li, T. Cai, J. Cao, Q. Zhang, H. Cai, J. Bai, Y. Jia, M. Liu, K. Li, and S. Han
+DistriFusion: distributed parallel inference for high-resolution diffusion models.
+External Links: 2402.19481,
+Link
+Cited by: §6.
+Liu et al. (2023)
+H. Liu, M. Zaharia, and P. Abbeel
+Ring attention with blockwise transformers for near-infinite context.
+External Links: 2310.01889,
+Link
+Cited by: §1,
+§2.2,
+§2.2,
+§6.
+NVIDIA Corporation (2025)
+NVIDIA Corporation
+NVSHMEM – nvidia developer.
+Note: https://developer.nvidia.com/nvshmemAccessed: 2025-09-18
+Cited by: §1,
+§2.3,
+§3,
+§4.4.
+NVIDIA (2025a)
+NVIDIA
+External Links: Link
+Cited by: §2.3,
+§3,
+§4.3.
+NVIDIA (2025b)
+NVIDIA
+NVIDIA nvlink and nvlink switch.
+External Links: Link
+Cited by: §1,
+§2.2.
+Peng et al. (2025)
+X. Peng, Z. Zheng, C. Shen, T. Young, X. Guo, B. Wang, H. Xu, H. Liu, M. Jiang, W. Li, Y. Wang, A. Ye, G. Ren, Q. Ma, W. Liang, X. Lian, X. Wu, Y. Zhong, Z. Li, C. Gong, G. Lei, L. Cheng, L. Zhang, M. Li, R. Zhang, S. Hu, S. Huang, X. Wang, Y. Zhao, Y. Wang, Z. Wei, and Y. You
+Open-sora 2.0: training a commercial-level video generation model in $200k.
+External Links: 2503.09642,
+Link
+Cited by: §1.
+Shah et al. (2024)
+J. Shah, G. Bikshandi, Y. Zhang, V. Thakkar, P. Ramani, and T. Dao
+FlashAttention-3: fast and accurate attention with asynchrony and low-precision.
+External Links: 2407.08608,
+Link
+Cited by: Appendix C,
+§2.2.
+Thakkar et al. (2023)
+V. Thakkar, P. Ramani, C. Cecka, A. Shivam, H. Lu, E. Yan, J. Kosaian, M. Hoemmen, H. Wu, A. Kerr, M. Nicely, D. Merrill, D. Blasig, F. Qiao, P. Majcher, P. Springer, M. Hohnerbach, J. Wang, and M. Gupta
+CUTLASS.
+External Links: Link
+Cited by: Appendix C.
+Yang et al. (2025a)
+J. Yang, J. Wu, Z. Zhang, X. Fu, Z. Xu, Z. Jia, Y. Wang, and G. Pekhimenko
+ScaleFusion: scalable inference of spatial-temporal diffusion transformers for high-resolution long video generation.
+In Eighth Conference on Machine Learning and Systems,
+External Links: Link
+Cited by: §6.
+Yang et al. (2025b)
+Z. Yang, J. Teng, W. Zheng, M. Ding, S. Huang, J. Xu, Y. Yang, W. Hong, X. Zhang, G. Feng, D. Yin, Y. Zhang, W. Wang, Y. Cheng, B. Xu, X. Gu, Y. Dong, and J. Tang
+CogVideoX: text-to-video diffusion models with an expert transformer.
+External Links: 2408.06072,
+Link
+Cited by: §1,
+§2.1,
+§5.1.
+Zhang et al. (2025)
+S. Zhang, N. Zheng, H. Lin, Z. Jiang, W. Bao, C. Jiang, Q. Hou, W. Cui, S. Zheng, L. Chang, Q. Chen, and X. Liu
+Comet: fine-grained computation-communication overlapping for mixture-of-experts.
+External Links: 2502.19811,
+Link
+Cited by: §6.
+Zhao et al. (2025a)
+C. Zhao, C. Deng, C. Ruan, D. Dai, H. Gao, J. Li, L. Zhang, P. Huang, S. Zhou, S. Ma, W. Liang, Y. He, Y. Wang, Y. Liu, and Y.X. Wei
+Insights into deepseek-v3: scaling challenges and reflections on hardware for ai architectures.
+In Proceedings of the 52nd Annual International Symposium on Computer Architecture,
+ISCA ’25, New York, NY, USA, pp. 1731–1745.
+External Links: ISBN 9798400712616,
+Link,
+Document
+Cited by: §6.
+Zhao et al. (2025b)
+C. Zhao, S. Zhou, L. Zhang, C. Deng, Z. Xu, Y. Liu, K. Yu, J. Li, and L. Zhao
+DeepEP: an efficient expert-parallel communication library.
+GitHub.
+Note: https://github.com/deepseek-ai/DeepEP
+Cited by: §2.3,
+§6.
+Zheng et al. (2025a)
+S. Zheng, W. Bao, Q. Hou, X. Zheng, J. Fang, C. Huang, T. Li, H. Duanmu, R. Chen, R. Xu, Y. Guo, N. Zheng, Z. Jiang, X. Di, D. Wang, J. Ye, H. Lin, L. Chang, L. Lu, Y. Liang, J. Zhai, and X. Liu
+Triton-distributed: programming overlapping kernels on distributed ai systems with the triton compiler.
+External Links: 2504.19442,
+Link
+Cited by: §6.
+Zheng et al. (2025b)
+S. Zheng, J. Fang, X. Zheng, Q. Hou, W. Bao, N. Zheng, Z. Jiang, D. Wang, J. Ye, H. Lin, L. Chang, and X. Liu
+TileLink: generating efficient compute-communication overlapping kernels using tile-centric primitives.
+External Links: 2503.20313,
+Link
+Cited by: §6.
+Appendix A One-Sided Communication Implementation Details
+In StreamFusion, we use four communication functions in our implementation (Algorithm 1).
+ScatterPush and GatherPull are used to implement the all-to-all operators in Ulysses Attention, which rely on nvshmemx_putmem_on_stream and nvshmemx_getmem_on_stream APIs in NVSHMEM, respectively.
+ScatterPush pushes data from multiple source buffers to the destination buffer on different remote GPUs specified by the r​a​n​k​sranks list, while GatherPull pulls data from multiple destination buffers multiple destination buffers.
+Barrier and BarrierAll are used to synchronize data consistency across multiple GPUs, which relies on nvshmemx_barrier_on_stream and nvshmem_barrier_all_on_stream APIs respectively.
+Barrier synchronizes GPUs in a specified process group, while BarrierAll synchronizes all GPUs.
+Note that for all communication functions, we pass in a CUDA stream parameter to ensure the communication operations are executed in the correct order with computation operations.
+In StreamFusion’s implementation, we create two CUDA streams aside from the default stream (used for computation), one for the Ring Attention communication, denoted by s​t​r​e​a​mringstream_{\text{ring}} and one for the other communications, denoted by s​t​r​e​a​motherstream_{\text{other}}.
+Specifically, we execute all communication operations in the RingAttn (Line 2-8) function on the s​t​r​e​a​mringstream_{\text{ring}} and the other communication operations in s​t​r​e​a​motherstream_{\text{other}} (Line 16, 21, 22, 34, and 36).
+In this way, both intra- and inter-machine communication latencies are hidden by computation operators with the one-sided communication library in StreamFusion.
+Appendix B Ablation Studies
+Figure 10 shows the end-to-end normalized latency of one sampling step of all workloads used in Section 5 when gradually adding each proposed method.
+We observe that the topology-aware communication scheduling (TAS) consistently outperforms USP Fang and Zhao (2024) by 1.27×\times speedup on average (up to 1.64×\times).
+However, for the Torus Attention and one-sided communication implementation, their benefits are workload-dependent.
+For image generation workloads with Flux models, Torus Attention implemented with NCCL does not provide speedups compared to TAS.
+This is because image generation workloads have relatively short sequence lengths and thus the communication volume of Ulysses Attention is not large enough to become the performance bottleneck.
+However, when implemented with one-sided communication libraries, Torus Attention still provides significant speedups compared to TAS, since the one-sided communication implementation can better overlap communication with computation.
+For video generation workloads, Torus Attention itself can already provide significant speedups compared to TAS, since video generation workloads have long sequence lengths and thus the communication volume of Ulysses Attention becomes the performance bottleneck.
+However, the one-sided communication implementation provides marginal speedups for video generation workloads, since the communication overheads are already largely hidden by Torus Attention.
+Overall, we conclude that all three proposed methods in StreamFusion are required to achieve the optimal system performance.
+Figure 10: Ablation studies in StreamFusion.
+Appendix C Merging Attention Outputs with Different K​VKV Tensors
+In both Ring Attention and Torus Attention, the K​VKV tensors are distributed among multiple GPUs.
+Thus, during attention computation, each GPU will compute the attention outputs using different K​VKV tensors.
+To correctly compute the final attention output, we need to merge the attention outputs computed with different K​VKV tensors, similar to FlashAttention Dao et al. (2022); Dao (2023); Shah et al. (2024).
+In this section, we describe how to merge the attention outputs computed with different K​VKV tensors.
+Algorithm for Merging Attention Outputs
+Formally, suppose that we have split the K​VKV tensors along the sequence length into NN partitions, and denote the ii-th partition by Ki,ViK_{i},V_{i}, the final attention output of a query tensor QQ on each K​VKV partition can be computed as:
+mi=rowmax​(Q​Ki⊺)\displaystyle m_{i}=\textrm{rowmax}(QK_{i}^{\intercal})
+(1)
+li=rowsum​(eQ​Ki⊺−mi)\displaystyle l_{i}=\textrm{rowsum}(e^{QK_{i}^{\intercal}-m_{i}})
+Oi=(eQ​Ki⊺−mi​Vi)/li\displaystyle O_{i}=(e^{QK_{i}^{\intercal}-m_{i}}V_{i})/l_{i}
+Thus, we can represent the computation on each GPU ii as a triplet of (Oi,li,mi)(O_{i},l_{i},m_{i}), denoted by an intermediate result matrix Ai=[Oilimi]A_{i}=\begin{bmatrix}O_{i}\\
+l_{i}\\
+m_{i}\end{bmatrix}.
+To combine the attention outputs computed on two different K​VKV tensors, i.e., AiA_{i} and AjA_{j}, we can merge them as Ai⊕Aj=[Olm]A_{i}\oplus A_{j}=\begin{bmatrix}O\\
+l\\
+m\end{bmatrix}, where,
+m=max⁡(mi,mj)\displaystyle m=\max(m_{i},m_{j})
+(2)
+l=li​emi−m+lj​emj−m\displaystyle l=l_{i}e^{m_{i}-m}+l_{j}e^{m_{j}-m}
+O=(Oi​li​emi−m+Oj​lj​emj−m)/l\displaystyle O=(O_{i}l_{i}e^{m_{i}-m}+O_{j}l_{j}e^{m_{j}-m})/l
+By applying the above merging operation on all NN partitions, we can obtain the sum of all AiA_{i} matrices, A1⊕⋯⊕ANA_{1}\oplus\cdots\oplus A_{N}, and then extract the first tensor OO from the resulting matrix.
+Optimizing Floating-Point Operations
+To avoid expensive floating-point divisions when merging the attention outputs, we can rewrite each intermediate result matrix AiA_{i} as Ai′A_{i}^{\prime}, similar to FlashAttention-2 Dao (2023), we have,
+Ai′=[Oi′limi]A_{i}^{\prime}=\begin{bmatrix}O^{\prime}_{i}\\
+l_{i}\\
+m_{i}\end{bmatrix},
+where Oi′=Oi​liO^{\prime}_{i}=O_{i}l_{i}.
+By doing so, we can rewrite the merging operation as,
+Ai′⊕Aj′=[O′lm]A_{i}^{\prime}\oplus A_{j}^{\prime}=\begin{bmatrix}O^{\prime}\\
+l\\
+m\end{bmatrix},
+where,
+O′=Oi′​emi−m+Oj′​emj−mO^{\prime}=O^{\prime}_{i}e^{m_{i}-m}+O^{\prime}_{j}e^{m_{j}-m}
+(3)
+After merging all intermediate result matrices, we can finally compute the final output tensor OO as O=O′/lO=O^{\prime}/l.
+In this way, we only need to perform one floating-point division at the end of the merging process, thus avoiding unnecessary floating-point operations.
+Algorithm 2  Attention kernel with multiple QQ and K​VKV tensors on Ampere GPUs
+1
+2
+Batch size BB, Number of heads HH, Head dimension DD, Number of QQ and K​VKV tensors n​Q​OnQO, n​K​VnKV
+3
+n​Q​OnQO tensors {Qi}i=1n​Q​O\{Q_{i}\}_{i=1}^{nQO} of shape [B,l​Q​Oi,H,D][B,lQO_{i},H,D]
+4
+n​K​VnKV tensors {Ki}i=1n​K​V\{K_{i}\}_{i=1}^{nKV} of shape [B,l​K​Vi,H,D][B,lKV_{i},H,D]
+5
+n​K​VnKV tensors {Vi}i=1n​K​V\{V_{i}\}_{i=1}^{nKV} of shape [B,l​K​Vi,H,D][B,lKV_{i},H,D]
+6
+n​Q​OnQO tensors {Oi}i=1n​Q​O\{O_{i}\}_{i=1}^{nQO} of shape [B,l​Q​Oi,H,D][B,lQO_{i},H,D]
+7
+n​Q​OnQO tensors {li}i=1n​Q​O\{l_{i}\}_{i=1}^{nQO} of shape [B,H,l​Q​Oi][B,H,lQO_{i}]
+8
+n​Q​OnQO tensors {mi}i=1n​Q​O\{m_{i}\}_{i=1}^{nQO} of shape [B,H,l​Q​Oi][B,H,lQO_{i}]
+9
+Tile size t​Q​OtQO along the sequence length dim. of QQ tensors
+10
+Tile size t​K​VtKV along the sequence length dim. of K​VKV tensors
+11
+Whether to finalize the output tensors finalize
+12
+c​Q​Oi←∑j=0i−1⌈l​Q​Ojt​Q​O⌉cQO_{i}\leftarrow\sum_{j=0}^{i-1}\lceil\frac{lQO_{j}}{tQO}\rceil (On CPU)
+13
+Launch CUDA kernel with grid size [∑i⌈l​Q​Oit​Q​O⌉,B,H][\sum_{i}\lceil\frac{lQO_{i}}{tQO}\rceil,B,H]
+14
+for each CUDA thread block do
+15
+Declare shared memory (SMem) s​QsQ, s​KsK, s​VsV
+16
+Declare register memory (RMem) r​OrO, r​MrM, r​LrL
+17
+b,h←blockIdx.y,blockIdx.zb,h\leftarrow\texttt{blockIdx.y},\texttt{blockIdx.z}
+18
+Find ii, s.t. c​Q​Oi≤blockIdx.x<c​Q​Oi+1cQO_{i}\leq\texttt{blockIdx.x}<cQO_{i+1}
+19
+q←t​Q​O⋅(blockIdx.x−c​Q​Oi)q\leftarrow tQO\cdot(\texttt{blockIdx.x}-cQO_{i})
+20
+GMemToSMem(Qi[b,q:q+tQO,h,:]→sQ)\textsc{GMemToSMem}(Q_{i}[b,q:q+tQO,h,:]\rightarrow sQ)
+21
+GMemToRMem(Oi[b,q:q+tQO,h,:]→rO)\textsc{GMemToRMem}(O_{i}[b,q:q+tQO,h,:]\rightarrow rO)
+22
+GMemToRMem(mi[b,h,q:q+tQO]→rM)\textsc{GMemToRMem}(m_{i}[b,h,q:q+tQO]\rightarrow rM)
+23
+if threadIdx.x%​4=0\texttt{threadIdx.x}\%4=0 then
+24
+GMemToRMem(li[b,h,q:q+tQO]→rL)\textsc{GMemToRMem}(l_{i}[b,h,q:q+tQO]\rightarrow rL)
+25
+else
+26
+r​L←0rL\leftarrow 0
+27
+for j←1,2,…,n​K​Vj\leftarrow 1,2,\dots,nKV do
+28
+for each tile kk on sequence length dim. of KjK_{j} and VjV_{j} do
+29
+GMemToSMem(Kj[b,k:k+tKV,h,:]→sK)\textsc{GMemToSMem}({K_{j}}[b,k:k+tKV,h,:]\rightarrow sK)
+30
+GMemToSMem(Vj[b,k:k+tKV,h,:]→sV)\textsc{GMemToSMem}({V_{j}}[b,k:k+tKV,h,:]\rightarrow sV)
+31
+r​S←MatMulm16n8k16​(s​Q,s​K)rS\leftarrow\textsc{MatMul}_{\text{m16n8k16}}(sQ,sK)
+32
+r​M′←WarpReduceMax<4>​(max⁡(r​M,rowmax⁡(r​S)))rM^{\prime}\leftarrow\textsc{WarpReduceMax}\texttt{<4>}(\max(rM,\mathrm{rowmax}(rS)))
+33
+r​P←er​S−r​M′DrP\leftarrow e^{\frac{rS-rM^{\prime}}{\sqrt{D}}}
+34
+r​L←r​L⋅er​M−r​M′D+rowsum⁡(r​P)rL\leftarrow rL\cdot e^{\frac{rM-rM^{\prime}}{\sqrt{D}}}+\mathrm{rowsum}(rP)
+35
+r​O←r​O⋅er​M−r​M′D+MatMulm16n8k16​(r​P,s​V)rO\leftarrow rO\cdot e^{\frac{rM-rM^{\prime}}{\sqrt{D}}}+\textsc{MatMul}_{\text{m16n8k16}}(rP,sV)
+36
+r​M←r​M′rM\leftarrow rM^{\prime}
+37
+r​L←WarpReduceSum<4>​(r​L)rL\leftarrow\textsc{WarpReduceSum}\texttt{<4>}(rL)
+38
+if finalize then
+39
+r​O←r​O/r​LrO\leftarrow rO/rL
+40
+else
+41
+RMemToGMem(rL→li[b,h,q:q+tQO])\textsc{RMemToGMem}(rL\rightarrow l_{i}[b,h,q:q+tQO])
+42
+RMemToGMem(rM→mi[b,h,q:q+tQO])\textsc{RMemToGMem}(rM\rightarrow m_{i}[b,h,q:q+tQO])
+43
+RMemToGMem(rO→Oi[b,q:q+tQO,h,:])\textsc{RMemToGMem}(rO\rightarrow O_{i}[b,q:q+tQO,h,:])
+Customized CUDA Kernel Implementation
+Torus Attention requires to compute attention of multiple QQ and multiple K​VKV tensors, since each received Q​K​VQKV tensors can be discontinuous in memory.
+However, directly launching separate CUDA kernels for each attention computation and the merging operation causes high kernel launching overheads and expensive global memory accesses.
+To avoid this, we fuse the attention computation for multiple Q​K​VQKV tensors and the merging operation in a single kernel.
+Algorithm 2 shows the pseudocode of our custom CUDA kernel implementation on NVIDIA Ampere architecture, which we implement with the CUTLASS CuTe library Thakkar et al. (2023) similar to FlashAttention-2 Dao (2023), and our design can be easily extended to other GPU architectures.
+Specifically, suppose we have n​Q​OnQO QQ tensors and n​K​VnKV K​VKV tensors.
+The shape of ii-th QQ tensor and the jj-th K​VKV tensors are [B,l​Q​Oi,H,D][B,lQO_{i},H,D] and [B,l​K​Vj,H,D][B,lKV_{j},H,D] respectively.
+We can launch a CUDA kernel with a 3-D grid whose shape is [∑i⌈l​Q​Oit​Q​O⌉,B,H][\sum_{i}\lceil\frac{lQO_{i}}{tQO}\rceil,B,H] (Line 13), where t​Q​OtQO is the sequence length tile size of the QQ tensors, i.e., the partition size of the sequence dimension of the QQ tensors that is handled in each CUDA thread block.
+Similar to FlashAttention, each CUDA thread block will first load a tile of QQ tensor and a tile of K​VKV tensor into the shared memory (Line 20, 29, and 30), and then compute the attention outputs on the loaded tiles (Line 31-35).
+However, since we have multiple QQ tensors, we need to first locate which QQ tensor the current thread block is handling based on its block index in the first dimension.
+To achieve this, we first compute a auxiliary array {c​Q​Oi}i=0n​Q​O+1\{cQO_{i}\}_{i=0}^{nQO+1} that is the exclusive prefix sum of the number of tiles for each QQ tensor, i.e., c​Q​Oi=∑j=0i−1⌈l​Q​Ojt​Q​O⌉cQO_{i}=\sum_{j=0}^{i-1}\lceil\frac{lQO_{j}}{tQO}\rceil (Line 12).
+Then inside each CUDA thread block we binary search the x-axis of the current block index, i.e., blockIdx.x, to find the corresponding QQ tensor index ii such that c​Q​Oi≤blockIdx.x<c​Q​Oi+1cQO_{i}\leq\texttt{blockIdx.x}<cQO_{i+1} (Line 18).
+We can then find the tile index of the ii-th QQ tensor as blockIdx.x−c​Q​Oi\texttt{blockIdx.x}-cQO_{i} and compute attention outputs similarly as FlashAttention (Line 19).
+For attention computation, we use the PTX instruction mma.sync.aligned.m16n8k16 to perform the matrix multiplications Q×K⊺Q\times K^{\intercal} (Line 31) and P×V⊺P\times V^{\intercal} (Line 35).
+Figure 11 (left) shows how the thread block is composed, where we use 8 warps in each thread block.
+Each warp is responsible for computing one row of the result matrix by iterating through all columns of the result matrix.
+For each iteration, the layout of which is shown in Figure 11 (right), where we use two of the same PTX instructions.
+This is because we use the PTX instruction for vectorized memory load, ldmatrix.sync.aligned.m8n8.x4, for loading from shared memory, which maximizes the memory bandwidth utilization on NVIDIA Ampere GPUs, i.e., each thread reading a 128-bit data.
+To handle multiple K​VKV tensors and fuse the merging operation, instead of initializing the auxiliary output tensor O′O^{\prime}, the running maximum tensor mm, and the running sum tensor ll, to their default values (i.e., zeros, negative infinity, and zeros, respectively) at the beginning of the CUDA kernel, we load the mm and ll from global memory that are computed from the previous K​VKV tensors (Line 22-26).
+Since we need to compute the rowsum and rowmax as indicated by Equation 1 of the Q×K⊺Q\times K^{\intercal} matrix, according to the result matrix layout mentioned above, we need to first conduct local rowsum and rowmax and then perform warp-level reductions across every 4 threads using warp-level shuffle primitives (Line 32 and 37).
+However, this could lead to incorrect r​LrL values if each thread loads the same r​LrL values from the global memory, since if we do not have any available K​VKV tensors to process, the same r​LrL values loaded from the global memory will still be summed up across every 4 threads at the end of the kernel and its values will be 4 times the original values.
+To avoid this, we only have one out of every four threads to load the r​LrL values from the global memory, and let other threads initialize their local r​LrL values to zeros (Line 23) and our implementation simply chooses the thread with threadIdx.x%​4=0\texttt{threadIdx.x}\%4=0.
+Note that loading the running maximum tensor into r​MrM does not have this issue since the maximum operation is idempotent.
+After processing the last K​VKV tensors (e.g., the last step in Ring Attention), we can then finalize the output tensor (i.e., when finalize is true) by dividing O′O^{\prime} by the ll tensor (Line 39).
+Figure 11: The block-level and thread-level layout of the matrix multiplication used for Q×K⊺Q\times K^{\intercal} and P×V⊺P\times V^{\intercal} with the PTX instruction mma.sync.aligned.m16n8k16 (shown in red box).
+Figure 12: Normalized latency of our customized CUDA kernel and FlashAttention-2 kernels Dao (2023) on A100 GPUs.
+Figure 12 shows the performance comparison of our customized CUDA kernel against FlashAttention-2 Dao (2023) with a single Q​K​VQKV tensor, where we launch the customized CUDA kernel with 256 threads for each CUDA thread block and use the same tile size as FlashAttention-2.
+We conclude that our customized CUDA kernel introduces negligible performance overheads compared to FlashAttention-2 even with the ability to process multiple QQ and K​VKV tensors and the merging operation.
+Appendix D Inter-Machine Communication Volume Analysis
+Suppose we have NN GPU machines, each with MM GPUs, and the parallelization degree of Ulysses and Ring Attention are PuP_{u} and PrP_{r}, respectively.
+We denote the batch size as BB, the sequence length across all GPUs as LL, the number of heads as HH, and the head dimension as DD.
+Thus, each GPU machine has a sequence length of L/NL/N.
+USP
+When Pr≥NP_{r}\geq N, USP performs inter-machine communication using Ring Attention.
+Thus, the inter-machine communication volume (i.e., the number of elements) per GPU is:
+VUSP=2⋅(N−1)⋅B​L​H​DN\text{V}_{\text{USP}}=2\cdot(N-1)\cdot\frac{BLHD}{N}
+(4)
+When Pr≤NP_{r}\leq N, USP performs inter-machine communication in both Ring and Ulysses Attention, and the Ulysses Attention uses N/PrN/P_{r} as its parallelization degree for inter-machine communication.
+Thus, in this case, USP incurs an inter-machine communication volume of:
+VUSP=(2⋅(Pr−1)⋅NPr+4⋅N/Pr−1N/Pr)​B​L​H​DN=(2​N+4−(2⋅NPr+4⋅1N/Pr))​B​L​H​DN≤(2N+4−6)B​L​H​DN(by setting Pr=N)=(2​N−2)​B​L​H​DN\begin{split}\text{V}_{\text{USP}}&=\left(2\cdot(P_{r}-1)\cdot\frac{N}{P_{r}}+4\cdot\frac{N/P_{r}-1}{N/P_{r}}\right)\frac{BLHD}{N}\\
+&=\left(2N+4-\left(2\cdot\frac{N}{P_{r}}+4\cdot\frac{1}{N/P_{r}}\right)\right)\frac{BLHD}{N}\\
+&\leq\left(2N+4-6\right)\frac{BLHD}{N}\quad\text{(by setting $P_{r}=N$)}\\
+&=\left(2N-2\right)\frac{BLHD}{N}\end{split}
+(5)
+StreamFusion
+We can analyze the inter-machine communication volume of StreamFusion in a similar way.
+When Pu≥NP_{u}\geq N, StreamFusion performs inter-machine communication using Ulysses Attention, and the inter-machine communication volume per GPU is:
+VSFU =4⋅N−1N⋅B​L​H​DN\text{V}_{\text{SFU }}=4\cdot\frac{N-1}{N}\cdot\frac{BLHD}{N}
+(6)
+When Pu≤NP_{u}\leq N, Ring Attention in StreamFusion also causes inter-machine communication, and its parallelization degree is N/PuN/P_{u}.
+Thus, in this case StreamFusion incurs an inter-machine communication volume of:
+VSFU =(2⋅(N/Pu−1)+4⋅Pu−1Pu⋅NPu)​B​L​H​DN=((6−4⋅1Pu)​NPu−2)​B​L​H​DN≥4⋅N−1N⋅B​L​H​DN(by setting Pu=N)\begin{split}\text{V}_{\text{SFU }}&=\left(2\cdot{(N/P_{u}-1)}+4\cdot\frac{P_{u}-1}{P_{u}}\cdot\frac{N}{P_{u}}\right)\frac{BLHD}{N}\\
+&=\left(\left(6-4\cdot\frac{1}{P_{u}}\right)\frac{N}{P_{u}}-2\right)\frac{BLHD}{N}\\
+&\geq 4\cdot\frac{N-1}{N}\cdot\frac{BLHD}{N}\quad\text{(by setting $P_{u}=N$)}\\
+\end{split}
+(7)
+Thus, to show that StreamFusion can always introduce less inter-machine communication than USP, we only need to show that this is the case when Pu≤NP_{u}\leq N and Pr≤NP_{r}\leq N.
+In this case, we have Pr=N​MPu≤NP_{r}=\frac{NM}{P_{u}}\leq N, which implies that Pu≥MP_{u}\geq M.
+The following lemma proves that StreamFusion always incurs less inter-machine communication volume than USP.
+Lemma D.1.
+Let Vdiff=VUSP−VSFU B​L​H​D/N=4​NPu2−4​M+6​NPu−2​PuM+2​N+6\text{V}_{\text{diff}}=\frac{\text{V}_{\text{USP}}-\text{V}_{\text{SFU }}}{BLHD/N}=\frac{4N}{P_{u}^{2}}-\frac{4M+6N}{P_{u}}-\frac{2P_{u}}{M}+2N+6,
+then Vdiff≥0\text{V}_{\text{diff}}\geq 0 when 2≤M≤Pu≤N2\leq M\leq P_{u}\leq N.
+Proof.
+Let f⁡(p)=4​Np2−4​M+6​Np−2​pM+2​N+6f(p)=\frac{4N}{p^{2}}-\frac{4M+6N}{p}-\frac{2p}{M}+2N+6. Then we have,
+f′​(p)=4​Mp2−2M+2​N​(3​p−4)p3f^{\prime}(p)=\frac{4M}{p^{2}}-\frac{2}{M}+\frac{2N(3p-4)}{p^{3}}
+(8)
+f′′​(p)=4⋅6​N−(2​M+3​N)​pp4≤4⋅6​N−2​M2−3​M​Np4≤−32p4(by setting M=2)≤0\begin{split}f^{\prime\prime}(p)&=4\cdot\frac{6N-(2M+3N)p}{p^{4}}\\
+&\leq 4\cdot\frac{6N-2M^{2}-3MN}{p^{4}}\\
+&\leq\frac{-32}{p^{4}}\quad\text{(by setting $M=2$)}\\
+&\leq 0\end{split}
+(9)
+Thus, f′​(p)f^{\prime}(p) is a non-increasing function.
+Since f′​(M)=2M+2​N​(3​M−4)M3≥0f^{\prime}(M)=\frac{2}{M}+\frac{2N(3M-4)}{M^{3}}\geq 0, f′​(p)f^{\prime}(p) has at most one p∗p^{*} such that f′​(p∗)=0f^{\prime}(p^{*})=0 and p∗∈[M,N]p^{*}\in[M,N].
+If such p∗p^{*} exists, then f⁡(p)f(p) will be increasing on the interval [M,p∗][M,p^{*}] and be decreasing on the interval [p∗,N][p^{*},N].
+Thus, the minimum of f⁡(p)f(p) would be either f⁡(M)f(M) or f⁡(N)f(N).
+We have,
+f⁡(M)=2​N​(M−1)​(M−2)M2≥0f(M)=\frac{2N(M-1)(M-2)}{M^{2}}\geq 0
+(10)
+f⁡(N)=2​N+4N−(2​NM+4​MN)≥N−4N(by setting M=2)≥0(by setting N=2)\begin{split}f(N)&=2N+\frac{4}{N}-\left(\frac{2N}{M}+\frac{4M}{N}\right)\\
+&\geq N-\frac{4}{N}\quad\text{(by setting $M=2$)}\\
+&\geq 0\quad\text{(by setting $N=2$)}\end{split}
+(11)
+Thus, we show that Vdiff=f⁡(Pu)≥0V_{\text{diff}}=f(P_{u})\geq 0 always holds for 2≤M≤Pu≤N2\leq M\leq P_{u}\leq N.
+∎
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from
+

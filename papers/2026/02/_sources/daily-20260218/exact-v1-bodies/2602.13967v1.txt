@@ -1,0 +1,1279 @@
+Neuromem: A Granular Decomposition of the Streaming Lifecycle in External Memory for LLMs
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+2.1 External Memory Modules
+2.2 Evaluation Benchmarks
+3 Design of External Memory Module
+3.1 Problem Setting
+Insertion Pipeline.
+Retrieval Pipeline.
+3.2 Design Aspects of External Memory Module
+4 Methodology
+4.1 Streaming Protocol and Workloads
+4.2 System Instantiations
+4.3 Metrics and Platform
+5 Experimental Analysis
+5.1 Findings
+5.2 Memory Data Structure
+5.3 Normalization Strategy
+5.4 Consolidation Policy
+5.5 Query Formulation Strategy
+5.6 Context Integration Mechanism
+5.7 Limitation
+6 Conclusion
+References
+A Supplement
+A.1 Related Work
+A.1.1 External Memory Modules
+A.1.2 Memory Benchmark
+A.2 Detailed Design Aspects of External Memory Modules
+A.2.1 D1: Memory Data Structure
+A.2.2 D2: Normalization Strategy
+A.2.3 D3: Consolidation Policy
+A.2.4 D4: Query Formulation Strategy
+A.2.5 D5: Context Integration Mechanism
+A.3 Dataset Details and Preprocessing
+A.4 Algorithmic Details of Memory Operations
+A.4.1 Memory State Update
+A.4.2 Context Retrieval
+B Implementation Details
+B.1 Implementation of Interleaved Insertion-and-Retrieval Protocol
+B.1.1 Main Pipeline: The Orchestrator
+B.1.2 Insertion Pipeline: State Evolution (D1-D3)
+B.1.3 Retrieval Pipeline: Reasoning and Evaluation (D1, D4-D5)
+B.2 Hardware and Software Infrastructure
+B.3 Implementation and Workflow Details
+C Detailed Experimental Results
+C.1 Extended Analysis
+C.1.1 Scalability Analysis of Iterative Graph Memory
+C.2 Robustness Experiment
+C.2.1 Robustness of Normalization Strategy
+C.2.2 Robustness of Context Integration Strategy
+License: CC BY 4.0
+arXiv:2602.13967v1 [cs.AI] 15 Feb 2026
+Neuromem: A Granular Decomposition of the Streaming Lifecycle in External Memory for LLMs
+Ruicheng Zhang
+Affiliation: Cluster and Grid Computing Lab, School of Computer Science and Technology, Huazhong University of Science and Technology, Wuhan, China
+Xinyi Li
+Affiliation: Cluster and Grid Computing Lab, School of Computer Science and Technology, Huazhong University of Science and Technology, Wuhan, China
+Tianyi Xu
+Affiliation: Cluster and Grid Computing Lab, School of Computer Science and Technology, Huazhong University of Science and Technology, Wuhan, China
+Shuhao Zhang
+Affiliation: Cluster and Grid Computing Lab, School of Computer Science and Technology, Huazhong University of Science and Technology, Wuhan, China
+Correspondence to: shuhao_zhang@hust.edu.cn
+Xiaofei Liao
+Affiliation: Cluster and Grid Computing Lab, School of Computer Science and Technology, Huazhong University of Science and Technology, Wuhan, China
+Hai Jin
+Affiliation: Cluster and Grid Computing Lab, School of Computer Science and Technology, Huazhong University of Science and Technology, Wuhan, China
+Abstract
+Most evaluations of External Memory Module assume a static setting: memory is built offline and queried at a fixed state. In practice, memory is streaming : new facts arrive continuously, insertions interleave with retrievals, and the memory state evolves while the model is serving queries.
+In this regime, accuracy and cost are governed by the full memory lifecycle, which encompasses the ingestion, maintenance, retrieval, and integration of information into generation.
+We present Neuromem , a scalable testbed that benchmarks External Memory Modules under an interleaved insertion-and-retrieval protocol and decomposes its lifecycle into five dimensions including memory data structure , normalization strategy , consolidation policy , query formulation strategy , and context integration mechanism .
+Using three representative datasets LoCoMo , LONGMEMEVAL , and MemoryAgentBench , Neuromem evaluates interchangeable variants within a shared serving stack, reporting token-level F1 and insertion/retrieval latency.
+Overall, we observe that performance typically degrades as memory grows across rounds, and time-related queries remain the most challenging category. The memory data structure largely determines the attainable quality frontier, while aggressive compression and generative integration mechanisms mostly shift cost between insertion and retrieval with limited accuracy gain.
+Keywords:
+Large Language Models, Memory Systems, Evaluation Benchmark
+† † affiliationnotice: † \dagger Corresponding author.
+Figure 1 : Overview of Neuromem . We decompose the lifecycle into five dimensions (D1–D5) anchored by the (D1) data structure . The workflow spans the (b) Insertion Pipeline (D2 normalization , D3 consolidation ) and (c) Retrieval Pipeline (D4 query formulation , D5 context integration ), enabling controlled ablations under an interleaved insertion and retrieval protocol.
+1 Introduction
+External Memory Modules are becoming a core building block for long-horizon, interactive LLM systems, including medical assistants ( Yuan et al., 2024 ) , embodied agents ( Liang et al., 2025 ; Salama et al., 2025 ; Anonymous, 2026 ) , and educational tutoring ( Pan et al., 2025 ; Huang et al., 2024 ; Salemi et al., 2024 ) . By persisting, updating, and selectively retrieving information beyond the context window, External Memory Modules provide access to relevant prior facts during reasoning and enable cross-session continuity.
+Unlike parametric memory ( Behrouz et al., 2025 ; Yan et al., 2026 ; Yu et al., 2026 ) , where static knowledge is integrated into model weights via fine-tuning or continual learning, External Memory Modules maintain state in an explicit, editable store decoupled from the backbone model.
+While this separation enables continual updates without model modification, it transforms memory into a complex system component requiring insertion and retrieval pipelines designed under strict latency constraints.
+Today, driven by diverse application demands and deployment budgets, External Memory Modules have expanded into a large and fast-evolving design space ( Madaan et al., 2022 ; Dalvi Mishra et al., 2022 ; Huang et al., 2024 ; Gutiérrez et al., 2024 ; Ong et al., 2025 ; Xu et al., 2025 ; Latimer et al., 2025 ; Li et al., 2025 ; Huang et al., 2025 ; Chen et al., 2026 ; Tao et al., 2026 ) . Yet, choosing an appropriate design for a concrete workload remains difficult.
+Furthermore, memory is streaming in practice: new facts arrive continuously, insertions interleave with retrievals, and the memory state evolves while the model is serving queries ( Chandrasekaran and Franklin, 2002 ) .
+This interleaving exposes non-obvious trade-offs and reveals how computational costs are shifted between insertion and retrieval ( Zhang et al., 2025 ) , but existing evaluations ( Maharana et al., 2024 ; Wu et al., 2025 ; Tan et al., 2025 ) rarely make it clear which design decisions along the memory lifecycle drive the observed accuracy–latency outcomes.
+Recent benchmark efforts have begun to move beyond single-number leaderboards. LoCoMo and MemBench ( Maharana et al., 2024 ; Tan et al., 2025 ) emphasize long-horizon interactions and introduce efficiency measurements, while Minerva ( Xia et al., 2025 ) takes a complementary angle: it programmatically generates fine-grained, interpretable in-context memory tests to diagnose what language models can do with their prompt memory. These are valuable foundations, but critical gaps remain for understanding External Memory Modules in realistic deployments. First, many comparisons remain coarse-grained and end-to-end, ranking whole systems and obscuring the impact of specific design decisions. Second, efficiency reporting is often under-specified: average read/write times conceal where overhead is incurred, and system-level metrics (e.g., memory footprint) and attribution between memory-module overhead and model inference are frequently missing. Third, many evaluations still operate in a static or quasi-static regime (offline build, then query), whereas real deployments are dominated by interleaved insertion and retrieval, where interference accumulates as memory grows and maintenance competes with serving latency.
+To capture these dynamics, we argue that evaluation must be both streaming and lifecycle-aware . Streaming evaluation reflects the interleaved insertion and retrieval regime in which memory evolves over time. Complementarily, lifecycle-aware evaluation addresses the attribution challenge by dissecting the monolithic memory system into granular stages. To operationalize this, we decompose External Memory Modules into five dimensions covering the full data lifecycle: (D1) memory data structure , (D2) normalization strategy , (D3) consolidation policy , (D4) query formulation strategy , and (D5) context integration mechanism (Figure 1 ).
+We instantiate this framework in Neuromem , a scalable testbed that benchmarks External Memory Modules under the interleaved insertion and retrieval protocol. By isolating design dimensions within a shared serving stack, Neuromem enables precise attribution of performance gains.
+Using three representative datasets LoCoMo , LONGMEMEVAL and MemoryAgentBench , Neuromem evaluates interchangeable variants, reporting token-level F1 together with insertion/retrieval latency.
+Our analysis reveals a conservation of complexity: systems typically shift computational debt between insertion and retrieval rather than eliminating it. We find that hybrid data structures (D1) set the strict accuracy ceiling, while expensive operations like summarization and multi-query fusion often act as latency traps yielding negligible gains. Finally, performance degrades as memory accumulates, with temporal reasoning remaining a persistent bottleneck.
+Contributions. This paper makes three contributions. (1) We introduce Neuromem , an open-source testbed for evaluating External Memory Modules under a streaming protocol within a unified serving stack. (2) We propose a granular decomposition of memory architectures into five design dimensions and implement representative design variants for each, enabling precise, controlled ablations. (3) We conduct an extensive empirical study across diverse long-horizon benchmarks to distill practical design guidelines on balancing reasoning quality with insertion and retrieval costs.
+Paper organization. Section 2 reviews related work on external memory modules and evaluation benchmarks. Section 3 formalizes the problem setting and notation, and decomposes the memory lifecycle into five design dimensions (D1–D5). Section 4 introduces the interleaved streaming evaluation protocol, details the system instantiations mapped to our taxonomy, and describes the metrics and experimental platform. Section 5 presents the experimental analysis and key findings, and Section 6 concludes with implications and future directions.
+2 Related Work
+2.1 External Memory Modules
+To address the fundamental limitations of statelessness and finite context windows , which confine models to ephemeral interactions and thereby preclude long-horizon coherence, personalized adaptation, and continuous self-evolution, a wide array of External Memory Modules has been proposed. These systems serve as a bridge for long-horizon continuity, ranging from general-purpose retrieval tools ( Kang et al., 2025 ; Zhong et al., 2024 ) to specialized agentic frameworks ( Zhang et al., 2024 ; Liu et al., 2025 ) ; a comprehensive review is provided in Appendix A.1.1 . Despite this diversity, current designs remain predominantly monolithic : they tightly couple storage with maintenance logic into “black box” systems, obscuring the contribution of individual lifecycle stages and hindering optimization for real-time interaction.
+2.2 Evaluation Benchmarks
+Parallel to the rapid evolution of External Memory Modules , the evaluation landscape has made significant strides in expanding task diversity and reasoning complexity, as exemplified by LoCoMo , LONGMEMEVAL , and MemoryAgentBench (see Appendix A.1.2 ). Complementing these accuracy-focused benchmarks, pioneering efforts like MemBench have also made valuable contributions by incorporating efficiency metrics into the evaluation loop. However, even these advancements are limited by their reliance on isolated latency measurements and static, retrospective protocols; this inability to capture the interleaved dynamics of continuous state evolution motivates our proposal for a lifecycle-aware streaming evaluation.
+3 Design of External Memory Module
+3.1 Problem Setting
+We formalize the External Memory Module as a stateful component processing a continuous stream of operations.
+Let ℛ = { r i = ( τ i , type i , payload i ) } i = 1 ∞ \mathcal{R}=\{r_{i}=(\tau_{i},\textsc{type}_{i},\textsc{payload}_{i})\}_{i=1}^{\infty} denote the request stream, where each request comprises a timestamp τ i \tau_{i} , an operation type type i ∈ { Insert , Retrieve } \textsc{type}_{i}\in\{\textsc{Insert},\textsc{Retrieve}\} , and a payload.
+The payload is denoted as context h h for Insert operations and query q q for Retrieve operations.
+The memory maintains a state sequence { M ( k ) } k = 0 ∞ \{M^{(k)}\}_{k=0}^{\infty} and manages its lifecycle via two primary pipelines:
+Insertion Pipeline.
+The state M ( k ) M^{(k)} is derived from the previous state by processing the k k -th Insert request with context h ( k ) h^{(k)} :
+M ( k ) = PostIns ​ ( M ( k − 1 ) , PreIns ​ ( h ( k ) ) ) , M^{(k)}=\textsc{PostIns}\bigl(M^{(k-1)},\;\textsc{PreIns}(h^{(k)})\bigr),
+(1)
+where PreIns normalizes the raw context for insertion, and PostIns updates the memory state according to maintenance policies.
+Retrieval Pipeline.
+For a Retrieve request with query q q , the system accesses the current memory state M ( k ∗ ) M^{(k^{*})} (where k ∗ k^{*} denotes the state after the most recent insertion):
+c = PostRet ​ ( M ( k ∗ ) , PreRet ​ ( q ) ) , c=\textsc{PostRet}\bigl(M^{(k^{*})},\;\textsc{PreRet}(q)\bigr),
+(2)
+where PreRet formulates the retrieval signal from the user query, and PostRet synthesizes the final context by retrieving and refining evidence to construct the final context c c .
+These four operators, anchored by the underlying structure of M M , constitute the functional backbone of any External Memory Module . To isolate the impact of specific architectural decisions, we map these mathematical components to five orthogonal design dimensions (D1–D5) in the following taxonomy.
+3.2 Design Aspects of External Memory Module
+Implementation decisions for the operators in Eq. ( 1 )–( 2 ) jointly determine system performance. We identify five orthogonal dimensions (D1–D5) to decompose this design space(see Appendix A.2 for more details):
+(D1) Memory Data Structure ( M M ): This dimension functions as the primary storage substrate, organizing incoming information into queryable units.The fundamental design choice lies in Topology : Partitional architectures store memories as discrete, independent chunks (e.g., flat vector stores), prioritizing fast similarity search; whereas Hierarchical architectures model explicit dependencies between entities (e.g., knowledge graphs), enabling multi-hop reasoning. Within the External Memory Module lifecycle, this structure governs the overhead of state updates and the physical efficiency of subsequent retrievals.
+(D2) Normalization ( PreIns ) & (D3) Consolidation ( PostIns ):
+In conjunction with D1, these dimensions realize the Insertion Pipeline , defining how memory state evolves over time.
+Specifically, D2 performs preprocessing to translate unstructured history into the discrete storable units. This stage determines the granularity and fidelity of the ingested information.
+Following insertion, D3 manages the state evolution of M M to ensure long-horizon stability and compactness.
+It implements maintenance policies such as Conflict Resolution, Decay Eviction for capacity control, and Structural Refinement for hierarchical memories.
+Together, D2 and D3 define the computational cost and representational quality of the memory’s insertion pipeline.
+(D4) Query Formulation ( PreRet ) & (D5) Context Integration ( PostRet ):
+Operating upon the storage substrate D1, these dimensions operationalize the Retrieval Pipeline , governing how stored context is surfaced.
+Functionally, D4 acts as the alignment interface, bridging user intent with retrieval signals compatible with D1, such as generating embeddings for partitional stores or decomposing paths for hierarchical graphs.
+Upon retrieving evidence, D5 serves as the output synthesizer that executes the PostRet operator, refining raw candidates into the final context via Reranking or Fusion.
+Ultimately, the synergy between D4 and D5 dictates the retrieval precision and the contextual coherence of the generated response.
+By isolating these dimensions, Neuromem allows us to measure how computational cost is shifted between insertion and retrieval pipelines.
+4 Methodology
+We present our streaming evaluation framework, detailing the protocol and workload adaptation (§ 4.1 ), representative systems mapped to the taxonomy (§ 4.2 ), and the metrics and testbed (§ 4.3 ).
+4.1 Streaming Protocol and Workloads
+To model realistic deployment, the request stream ℛ \mathcal{R} is instantiated as a strictly ordered time-series sequence. Unlike static benchmarks that decouple memory construction from usage, we enforce causality by sorting requests r i r_{i} based on timestamps τ i \tau_{i} . The system processes this stream sequentially: for an Insert request, it invokes Eq. ( 1 ) to evolve the state from M ( k − 1 ) M^{(k-1)} to M ( k ) M^{(k)} ; for a Retrieve request, it executes Eq. ( 2 ) against the current state M ( k ) M^{(k)} . This interleaved execution ensures that a query q t q_{t} is strictly limited to accessing evidence from contexts { h t ′ ∣ τ t ′ < τ t } \{h_{t^{\prime}}\mid\tau_{t^{\prime}}<\tau_{t}\} already integrated into the memory. By adhering to this temporal order, the protocol naturally prevents future leakage without requiring artificial visibility masks, while explicitly capturing the computational costs of state transitions.
+LoCoMo , LONGMEMEVAL , and MemoryAgentBench are serialized into the stream ℛ \mathcal{R} to preserve chronological ordering. Evaluation is triggered at fixed intervals (e.g., 20%) to capture performance evolution as memory accumulates, rather than only at the final state. Preprocessing details are in Appendix A.3 .
+4.2 System Instantiations
+We reproduce representative memory modules by explicitly mapping their components to our D1–D5 taxonomy, covering TiM ( Liu et al., 2023 ) , MemoryBank ( Zhong et al., 2024 ) , MemGPT ( Packer et al., 2023 ) , A-Mem ( Xu et al., 2025 ) , HippoRAG (and HippoRAG 2) ( Gutiérrez et al., 2024 ) , MemoryOS ( Kang et al., 2025 ) , LD-Agent ( Li et al., 2025 ) , SCM ( Wang et al., 2026 ) , Mem0 and Mem0 g ( Chhikara et al., 2025 ) , and SeCom ( Pan et al., 2025 ) . This decomposition transforms monolithic systems into atomic operators, allowing us to construct interchangeable variants and conduct granular ablations to isolate the impact of specific design decisions. Implementation details are provided in Appendix A.2 .
+4.3 Metrics and Platform
+We assess reasoning accuracy via Token-level F1 with Porter stemming, while quantifying system efficiency through granular Insertion Latency and Retrieval Latency. All experiments are executed on a unified serving stack hosting pangu-1b on Huawei Ascend 910B NPUs and Llama-3.1-8B on Nvidia A6000 GPUs, using asynchronous scoring to avoid latency interference.
+5 Experimental Analysis
+This section evaluates External Memory Modules under the streaming protocol (Section 4.1 ) using Neuromem . The goal is attribution: we quantify how each lifecycle dimensions (D1–D5) influences answer quality and system cost as memory evolves, rather than treating implementations as black boxes.
+External Memory Modules are highly sensitive to both operational hyperparameters (e.g., retrieval top- k k ) and workload characteristics ( Packer et al., 2023 ) .
+To enable deep attribution without combinatorial explosion, Neuromem focuses the full D1–D5 ablation on LoCoMo , while using LONGMEMEVAL and MemoryAgentBench to cross-validate structural trends (D1).
+We first distill our primary empirical observations in Section 5.1 , followed by a granular analysis of each design dimension (D1–D5) via controlled ablations in Sections 5.2 – 5.6 .
+Finally, we delineate the computational and theoretical boundaries of the current study in Section 5.7 .
+Figure 2 : Intrinsic Efficiency Frontier. Plotting accuracy against Intrinsic Structure Latency . The Inverted+Vector anchors the Pareto frontier on reasoning benchmarks (Left, Center), whereas the trade-off inverts on maintenance-heavy tasks (Right) where lightweight queues achieve superior efficiency.
+5.1 Findings
+We distill the longitudinal evaluation results into five core empirical findings that govern the accuracy-latency trade-offs in streaming memory systems. Detailed decompositions supporting these conclusions are provided in subsequent sections.
+[F1] Temporal Entropy is Inherent.
+Performance universally degrades as interaction history accumulates, establishing a baseline of noise that persists across architectures.
+Crucially, computationally expensive consolidation policies driven by LLMs fail to mitigate this decay, exhibiting degradation rates comparable to unmaintained baselines.
+These proactive methods exhibit the exact same degradation rate of approximately 22% as unmaintained baselines.
+This finding confirms that resolving semantic contradictions at ingestion time acts as a premature optimization that incurs significant latency costs without countering the entropy inherent to long-horizon interaction.
+[F2] Storage Architecture Dictates Performance Bounds.
+The underlying memory data structure establishes the hard ceiling on reasoning quality.
+Multi-layer architectures that combine lexical and semantic indexing, typified by the Inverted+Vector design, consistently dominate single-signal baselines.
+These hybrid systems justify their intrinsic latency by anchoring the efficiency frontier, whereas simpler approaches fail to capture necessary context.
+Our ablations prove that downstream optimizations in query formulation or context integration cannot compensate for information loss incurred at the storage level.
+[F3] Semantic Compression is Lossy.
+Aggressive abstraction during the normalization phase is consistently destructive.
+Transforming natural dialogue into rigid structured schemas precipitates functional collapse, reducing F1 scores by over 50%. Our results demonstrate that structural schemas discard subtle linguistic context and temporal markers essential for effective retrieval, rendering the preservation of raw textual texture the strictly superior strategy.
+[F4] Generative Optimization incurs a Latency Tax.
+Incorporating generative steps into the retrieval pipeline imposes a prohibitive latency penalty with diminishing returns.
+Strategies such as query decomposition and multi-query expansion inflate processing times by an order of magnitude, often exceeding one second per turn.
+Despite this high computational cost, these methods yield negligible or even negative accuracy gains compared to direct processing.
+This inverse cost-benefit profile persists even when scaling to stronger backbones like Llama-3-8B, indicating a fundamental inefficiency in generative retrieval enhancement.
+[F5] Heuristics Define the Efficiency Frontier.
+In the constraint-heavy regime of online streaming, deterministic heuristics consistently outperform generative interventions.
+Mechanisms like heat-based migration and heuristic context augmentation achieve parity or superiority in reasoning accuracy compared to their model-based counterparts.
+Crucially, these heuristic methods operate with negligible latency overheads often measuring less than one millisecond.
+This establishes that the optimal design strategy for streaming memory is to effectively decouple state maintenance from expensive token generation processes.
+5.2 Memory Data Structure
+We analyze the impact of memory representations (D1) by instantiating the core data structures from the representative systems described in § 4.2 .
+These implementations span the Partitional and Hierarchical paradigms, extending from the Fifo Queue typified by SCM to the Linknote Graph underpinning A-Mem .
+To evaluate the intrinsic properties of these storage substrates, we integrate them as interchangeable modules within a unified serving pipeline, fixing all other dimensions (D2–D5) to minimal baselines.
+Figure 2 visualizes the resulting accuracy–latency landscape across the three workloads.
+Table 1 : Temporal Degradation on LoCoMo. Performance consistently declines across all structures as interaction history accumulates (R1 → \rightarrow R5).
+Structure Type
+Token-level F1 per Round
+Degradation
+R1
+R2
+R3
+R4
+R5
+( Δ \Delta R1 → \rightarrow R5)
+Fifo Queue
+0.169
+0.128
+0.118
+0.109
+0.094
+-44.4%
+Queue+Segment
+0.395
+0.362
+0.356
+0.349
+0.338
+-14.4%
+Inverted+Vector
+0.411
+0.395
+0.375
+0.385
+0.358
+-12.9%
+O1: Performance degradation due to round accumulation is a universal law of External Memory Module .
+Our longitudinal analysis in Table 1 reveals consistent performance degradation as interaction history accumulates.
+From Round 1 to Round 5, even the robust Inverted+Vector structure suffers an approximate 13% decline as the F1 score falls from 0.411 to 0.358.
+In comparison, limited-capacity baselines like the Fifo queue deteriorate by over 44% over the same period.
+This inverse correlation between history length and retrieval precision underscores that structural optimization alone cannot arrest the noise accumulation inherent to streaming, necessitating active consolidation policies.
+O2: Multi-layer Partitional structures optimize the Intrinsic Return on Investment (ROI).
+Visualizing the accuracy–latency landscape (Figure 2 ) exposes distinct cost–benefit profiles.
+For reasoning benchmarks such as LoCoMo and LongMemEval , the Multi-layer Inverted+Vector design justifies its higher intrinsic latency.
+It anchors the efficiency frontier by converting this computational investment into essential resilience to surpass Hierarchical graphs in recall while avoiding the prohibitive overhead associated with generative baselines.
+However, this return on investment inverts in high-churn environments like MemAgentBench .
+In these volatile streams, the maintenance overhead of vector indices becomes a liability, rendering the Single-layer Queue+Summary superior in both accuracy and speed.
+Consequently, Multi-layer designs emerge as the optimal choice for reasoning stability, whereas Single-layer approaches dominate in scenarios requiring frequent maintenance.
+(a) Normalization Strategy
+(b) Consolidation Policy
+(c) Query Formulation
+(d) Context Integration
+Figure 3 : Breakdown of Cost-Effectiveness Evolution by Memory Lifecycle Dimension. The plots illustrate the F1-per-second trajectory across five rounds for varying strategies in D2–D5.
+5.3 Normalization Strategy
+We anchor our evaluation on three distinct storage architectures:LSH Hash, Queue+Segment and Property Graph. These configurations, which instantiate the representative design paradigms of MemoryOS , Mem0 g , and TiM respectively, serve as the default baselines for this and subsequent dimensions unless otherwise specified.
+We investigate three normalization strategies, selected to represent the most common preprocessing paradigms: None preserves the raw context; Enrich performs summarization; and Rewrite extracts triplets.
+Figure 3 .(a) illustrates the resulting Cost-Effectiveness evolution across rounds.
+Table 2 : Impact of Normalization on LoCoMo (Round1-5). While Rewrite causes accuracy collapse, Enrich incurs massive insertion costs for transient or negligible gains. Best F1 scores are bolded.
+Backend
+Strategy
+Token-level F1 per Round
+Latency
+R1
+R2
+R3
+R4
+R5
+Queue+Segment
+None
+0.371
+0.335
+0.342
+0.338
+0.325
+146 ms
+Enrich
+0.369
+0.343
+0.334
+0.344
+0.324
+580 ms
+Rewrite
+0.171
+0.129
+0.119
+0.123
+0.112
+1552 ms
+Property Graph
+None
+0.347
+0.353
+0.318
+0.311
+0.301
+1171 ms
+Enrich
+0.380
+0.334
+0.317
+0.313
+0.300
+2567 ms
+Rewrite
+0.163
+0.139
+0.121
+0.119
+0.113
+4491 ms
+O3: Aggressive restructuring is reliably destructive.
+Transforming dialogue into rigid triples using the Rewrite strategy causes immediate functional collapse.
+As detailed in Table 2 , the F1 score for Queue+Segment drops from 0.371 with the None baseline to 0.171 using Rewrite in the first round, and this deficit widens by Round 5 where accuracy falls from 0.325 down to 0.112.
+Temporal reasoning suffers the most with performance plummeting to a near-random F1 level of approximately 0.033.
+This confirms that semantic compression is lossy as structural schemas discard the linguistic context and temporal markers essential for vector retrieval.
+This failure incurs a prohibitive cost since Rewrite inflates the insertion latency for Queue+Segment by over 10 × 10\times from 146 ms to 1552 ms.
+This inefficiency persists even when scaling to stronger embedding backbones like E5-Large as discussed in Appendix C which proves that preserving raw texture is far more efficient than structured abstraction.
+Robustness Check with SOTA MoE Model:
+We further validated our findings on a representative subset of the LoCoMo dataset using Qwen-Plus model applied to the Property Graph architecture, with a relaxed extraction limit of 10 triplets.
+As shown in Table 3 , Even with this enhanced setup, the Rewrite strategy caused the Mean F1 to fall from 0.389 achieved by the None baseline to 0.163.
+This performance degradation accompanies a latency increase from 111 ms to 1161 ms, confirming that structural information loss is a fundamental limitation rather than a symptom of insufficient model capacity.
+Table 3 : Robustness Check with Qwen-Plus. Even with a massive capability jump and relaxed extraction limits, Rewrite significantly underperforms None while insertion latency.
+Strategy
+Max Triplets
+Mean F1
+Latency
+Pangu- None
+N/A
+0.324
+99 ms
+Pangu- Rewrite
+5
+0.132
+1887 ms
+Qwen- None
+N/A
+0.389
+111 ms
+Qwen- Rewrite
+10
+0.163
+1161 ms
+O4: Enrichment is a redundant luxury.
+The Enrich strategy imposes prohibitive costs for negligible gains, exemplified by Queue+Segment where insertion latency quadruples from 146 ms to 580 ms without improving F1 scores.
+Similarly, Property Graph observes only a transient benefit in the first round that completely evaporates by Round 5, despite the summarization process doubling the write time to over 2.5 s.
+This negative trade-off is visualized in the cost-effectiveness trajectories of Figure 3 .(a), confirming that the heavy computational tax of preprocessing drags down overall system efficiency.
+Since modern embeddings effectively capture semantics from raw segments, minimalism on the insertion pipeline remains the optimal strategy for long-horizon deployment.
+5.4 Consolidation Policy
+Consolidation updates the memory data structures state according to maintenance policies. We instantiate representative algorithms across three paradigms including llm_crud ( Chhikara et al., 2025 ) for Conflict Resolution, forgetting_curve ( Li et al., 2025 ) for Decay Eviction, and the heat_migration ( Kang et al., 2025 ) and link_evolution ( Chhikara et al., 2025 ) heuristics for Structure Enrichment. Table 4 contrasts these interventions against the unmaintained baseline.
+Table 4 : Impact of Consolidation Policies. We compare the baseline against proactive strategies using latency. The data shows that while CRUD offers marginal accuracy improvements, it imposes a prohibitive post-processing latency penalty compared to the lightweight Forgetting curve.
+System
+Strategy
+Token-level F1
+Latency (ms)
+R1
+R5
+Mean
+Property Graph
+None
+0.348
+0.269
+0.300
+< 1 <1
+CRUD
+0.351
+0.273
+0.301
+3,777
+Forgetting
+0.343
+0.270
+0.303
+120
+Queue+Segment
+None
+0.370
+0.317
+0.341
+< 1 <1
+CRUD
+0.370
+0.319
+0.342
+1,983
+Decay Eviction
+0.370
+0.318
+0.342
+61
+LSH Hash
+None
+0.102
+0.095
+0.101
+< 1 <1
+CRUD
+0.103
+0.095
+0.100
+2,894
+Forgetting
+0.101
+0.096
+0.101
+< 1 <1
+O5: In online streaming regimes, heuristic consolidation outperforms generative maintenance.
+The comparative analysis within the strict latency constraints of online streaming reveals that while generative strategies like CRUD aim to enhance consistency, they act as a prohibitive bottleneck for real-time pipelines.
+For the Property Graph architecture, enabling LLM-based resolution inflates the post-processing latency to 3,777 ms while only improving the mean F1 score by a marginal 0.001.
+Such multi-second overheads render active conflict resolution impractical for synchronous user interactions despite potential logical benefits.
+In contrast, lightweight heuristics achieve superior efficiency-utility trade-offs suitable for online deployment.
+On the Queue+Segment system, the Decay Eviction policy matches the peak accuracy of the expensive CRUD strategy at 0.342 but operates with a latency of only 61 ms compared to the 1,983 ms required for the generative approach.
+This confirms that algorithmic maintenance offers a strictly dominant strategy for online memory systems: it provides the deterministic control necessary for policy-driven forgetting without the prohibitive latency of generative models, effectively distinguishing intentional state management from the inevitable temporal degradation.
+5.5 Query Formulation Strategy
+The Query Formulation dimension serves as the translational interface that converts raw user intent into actionable retrieval signals.
+Beyond the standard None baseline, we examine three distinct paradigms: the Validate heuristic for query gating, Keyword extraction for optimization, and the Decompose method for generative enhancement.
+Table 5 reports the resulting streaming performance, specifically contrasting the query formulation overhead with architectural insertion costs.
+Table 5 : Performance and Latency of Query Formulation Strategies. Generative strategies incur prohibitive latency without yielding proportional accuracy gains over the baseline.
+System
+Strategy
+Token-level F1
+Latency (ms)
+R1
+R5
+Mean
+PreRet.
+Ins.
+Property Graph
+None
+0.342
+0.273
+0.300
+100
+5742
+Keyword
+0.102
+0.082
+0.091
+870
+5394
+Decompose
+0.320
+0.246
+0.279
+1913
+5182
+Queue+Segment
+None
+0.371
+0.318
+0.341
+161
+187
+Keyword
+0.114
+0.083
+0.099
+1117
+193
+Decompose
+0.367
+0.302
+0.328
+2209
+209
+LSH Hash
+None
+0.065
+0.061
+0.063
+157
+1963
+Keyword
+0.030
+0.030
+0.031
+1064
+2056
+Decompose
+0.093
+0.090
+0.094
+2352
+2016
+O6: Generative query formulation acts as a latency trap with negative returns.
+The data in Table 5 indicates that deploying LLM-based strategies like Keyword extraction or Decompose often introduces efficiency bottlenecks that outweigh their benefits compared to direct processing.
+For instance, reducing queries to keywords leads to significant performance degradation in Queue+Segment, where the Mean F1 score drops from 0.341 using the None baseline to 0.099 with Keyword .
+This decline in accuracy is accompanied by a substantial latency increase, as the generation step adds between 870 ms and 1117 ms to the pipeline, contrasting sharply with standard vector lookups that take roughly 160 ms.
+Similarly, the Decompose strategy imposes a heavy computational tax while degrading performance.
+While Queue+Segment demonstrates inherent efficiency with insertion and retrieval latencies under 200 ms, enabling decomposition inflates the retrieval time by over ten times to 2209 ms while resulting in a slightly lower F1 score of 0.328.
+This suggests that for robust storage backbones, preserving semantic context via direct retrieval often offers a more favorable cost-benefit ratio than expensive generative interventions.
+5.6 Context Integration Mechanism
+Our analysis concludes with the Context Integration Mechanism, which acts as the interface bridging discrete retrieval results and the continuous generation process.
+We compare the lightweight heuristic Augment against the generative expansion strategy Multi-query , with detailed breakdowns provided in Table 6 and Table 7 .
+Table 6 : Impact of Context Integration. Generative fusion incurs a massive latency tax compared to heuristics. It spikes context integration latency by orders of magnitude without delivering meaningful F1 gains.
+System
+Strategy
+Token-level F1 per Round
+Mean F1
+Latency
+R1
+R2
+R3
+R4
+R5
+Property Graph
+None
+0.346
+0.301
+0.294
+0.286
+0.271
+0.299
+< 1 <1
+Augment
+0.333
+0.309
+0.290
+0.288
+0.270
+0.298
+< 1 <1
+Multi-query
+0.335
+0.305
+0.293
+0.286
+0.274
+0.299
+1700
+LSH Hash
+None
+0.095
+0.096
+0.101
+0.100
+0.094
+0.097
+< 1 <1
+Augment
+0.097
+0.094
+0.087
+0.083
+0.076
+0.088
+< 1 <1
+Multi-query
+0.097
+0.089
+0.096
+0.093
+0.083
+0.092
+1584
+O7: Multi-query expansion acts as a “latency tax” with diminishing returns.
+While generative fusion is often hypothesized to improve robustness, our results in Table 6 define it strictly as a latency tax .
+For Property Graph, enabling Multi-query yields zero improvement in Mean F1, stagnating at 0.299, yet it explodes post-processing latency from negligible levels below 1 ms to approximately 1.7 s.
+The trend worsens for LSH Hash, where performance actually drops from 0.097 to 0.092 despite the same massive latency penalty.
+This confirms that, at least for the default backbone, the cost is paid in seconds while the value is either non-existent or negative.
+Table 7 : Robustness Verification with Llama-3-8B. Although Multi-query slightly outperforms Augment , it incurs a prohibitive latency cost compared to the heuristic baseline.
+Strategy
+Token-level F1 per Round
+Mean F1
+Latency
+R1
+R2
+R3
+R4
+R5
+Augment
+0.339
+0.301
+0.289
+0.283
+0.268
+0.296
+< 1 <1
+Multi-query
+0.348
+0.306
+0.295
+0.289
+0.279
+0.303
+1327
+Robustness Check with Llama-3-8B:
+As detailed in Table 7 , switching to the stronger Llama-3-8B backbone reveals a nuanced trade-off.
+While Multi-query successfully outperforms Augment by raising the Mean F1 from 0.296 to 0.303, this accuracy gain comes at a steep price.
+The integration latency surges from negligible levels ( < 1 <1 ms) to 1327 ms.
+This suggests that while stronger models can extract value from generative fusion, placing these steps on the retrieval critical path remains a costly strategy, likely suitable only when precision is paramount and latency is not a primary constraint.
+5.7 Limitation
+The scope of our analysis is primarily bounded by the computational intractability of iterative graph refinement where paradigms like HippoRAG were excluded due to optimization latencies that scale poorly with memory size.
+Such overheads can extend execution times from minutes to hours effectively rendering these systems incompatible with the strict timeouts of real-time conversational pipelines.
+This constraint on algorithmic coverage is paralleled by an empirical limitation where the scarcity of datasets explicitly curated for dynamic memory evolution precludes the granular monitoring of intermediate states.
+Consequently our evaluation relies on end-to-end outcome metrics rather than precise state verification.
+Moreover, the absence of established definitions distinguishing short-term working memory from long-horizon storage prevents the application of hybrid consolidation strategies that could otherwise optimize memory state updates based on retention scope, identifying the formalization of these hierarchical tiers as a critical direction for future architectural research.
+6 Conclusion
+This paper investigates External Memory Modules in the realistic streaming regime where insertions interleave with retrievals.
+We introduce Neuromem to decompose the lifecycle into five dimensions, enabling granular attribution of answer quality and system latency.
+Our results reveal that the storage structure largely dictates the accuracy ceiling, while content-destructive transformations often degrade performance despite their overhead.
+Crucially, we identify a distinct “latency tax” in generative optimizations: while stronger backbones can extract utility from strategies like multi-query expansion, the computational cost remains prohibitive for real-time deployment compared to lightweight heuristics.
+Furthermore, we demonstrate that heuristic maintenance offers a superior trade-off for online systems, providing the deterministic control necessary for privacy compliance without the latency of generative approaches.
+Neuromem establishes a reusable substrate for future work to optimize the full insert–maintain–retrieval–integrate loop against the inevitable entropy of long-horizon interaction.
+Impact Statement
+This work aims to advance the field of Machine Learning by focusing on the evaluation and optimization of External Memory Modules for Large Language Models under realistic streaming conditions.
+From a societal and environmental perspective, our granular decomposition of the memory lifecycle identifies a critical “latency tax” inherent in current generative designs. We demonstrate that aggressive semantic compression and post-retrieval fusion often incur prohibitive computational costs for negligible or even negative performance gains. By establishing that lightweight structural heuristics can anchor the efficiency frontier, our findings offer a rigorous pathway toward more energy-efficient and scalable AI systems, directly supporting the principles of Green AI.
+From an ethical and privacy perspective, the shift to a streaming protocol highlights the risks of unbounded data accumulation.
+Our analysis confirms that heuristic consolidation policies, such as decay eviction strategies, offer not only superior latency profiles but also the deterministic control necessary for privacy compliance.
+Unlike non-deterministic generative maintenance, these mechanisms provide a reliable foundation for adhering to data erasure mandates and preventing the permanent retention of sensitive user data in long-horizon personalized agents.
+We advocate for future research to prioritize such privacy-preserving memory updates alongside accuracy and latency optimization.
+References
+Anonymous (2026)
+Anonymous
+Seeing, listening, remembering, and reasoning: a multimodal agent with long-term memory .
+In The Fourteenth International Conference on Learning Representations ,
+External Links: Link
+Cited by: §1 .
+Behrouz et al. (2025)
+A. Behrouz, P. Zhong, and V. Mirrokni
+Titans: learning to memorize at test time .
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems ,
+External Links: Link
+Cited by: §1 .
+Chandrasekaran and Franklin (2002)
+S. Chandrasekaran and M. J. Franklin
+Streaming queries over streaming data .
+In Proceedings of the 28th International Conference on Very Large Data Bases ,
+VLDB ’02 , pp. 203–214 .
+Cited by: §1 .
+Chen et al. (2026)
+C. Chen, M. Guan, X. Lin, J. Li, L. Lin, Q. Wang, X. Chen, J. Luo, C. Sun, D. Zhang, and X. Li
+TeleMem: building long-term and multimodal memory for agentic ai .
+External Links: 2601.06037 ,
+Link
+Cited by: §1 .
+Chhikara et al. (2025)
+P. Chhikara, D. Khant, S. Aryan, T. Singh, and D. Yadav
+Mem0: building production-ready ai agents with scalable long-term memory .
+arXiv preprint arXiv:2504.19413 .
+External Links: Link
+Cited by: §A.1.1 ,
+§A.1.1 ,
+§4.2 ,
+§5.4 .
+Dalvi Mishra et al. (2022)
+B. Dalvi Mishra, O. Tafjord, and P. Clark
+Towards teachable reasoning systems: using a dynamic memory of user feedback for continual system improvement .
+In Proceedings of the 2022 Conference on Empirical Methods in Natural Language Processing , Y. Goldberg, Z. Kozareva, and Y. Zhang (Eds.) ,
+Abu Dhabi, United Arab Emirates , pp. 9465–9480 .
+External Links: Link ,
+Document
+Cited by: §1 .
+Gutiérrez et al. (2024)
+B. J. Gutiérrez, Y. Shu, Y. Gu, M. Yasunaga, and Y. Su
+HippoRAG: neurobiologically inspired long-term memory for large language models .
+In Proceedings of the 38th International Conference on Neural Information Processing Systems ,
+NIPS ’24 , Red Hook, NY, USA .
+External Links: ISBN 9798331314385
+Cited by: §A.1.1 ,
+§1 ,
+§4.2 .
+Hu et al. (2025)
+Y. Hu, Y. Wang, and J. McAuley
+Evaluating memory in LLM agents via incremental multi-turn interactions .
+In ICML 2025 Workshop on Long-Context Foundation Models ,
+External Links: Link
+Cited by: §A.1.2 .
+Huang et al. (2024)
+L. Huang, H. Lan, Z. Sun, C. Shi, and T. Bai
+Emotional RAG: Enhancing Role-Playing Agents through Emotional Retrieval .
+In 2024 IEEE International Conference on Knowledge Graph (ICKG) ,
+Vol. , Los Alamitos, CA, USA , pp. 120–127 .
+External Links: ISSN ,
+Document ,
+Link
+Cited by: §1 ,
+§1 .
+Huang et al. (2025)
+Z. Huang, Z. Tian, Q. Guo, F. Zhang, Y. Zhou, D. Jiang, and X. Zhou
+LiCoMemory: lightweight and cognitive agentic memory for efficient long-term reasoning .
+CoRR abs/2511.01448 .
+External Links: Link
+Cited by: §1 .
+Kang et al. (2025)
+J. Kang, M. Ji, Z. Zhao, and T. Bai
+Memory OS of AI agent .
+In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , C. Christodoulopoulos, T. Chakraborty, C. Rose, and V. Peng (Eds.) ,
+Suzhou, China , pp. 25961–25970 .
+External Links: Link ,
+Document ,
+ISBN 979-8-89176-332-6
+Cited by: §A.1.1 ,
+§2.1 ,
+§4.2 ,
+§5.4 .
+Latimer et al. (2025)
+C. Latimer, N. Boschi, A. Neeser, C. Bartholomew, G. Srivastava, X. Wang, and N. Ramakrishnan
+Hindsight is 20/20: building agent memory that retains, recalls, and reflects .
+External Links: 2512.12818 ,
+Link
+Cited by: §1 .
+Li et al. (2025)
+H. Li, C. Yang, A. Zhang, Y. Deng, X. Wang, and T. Chua
+Hello again! LLM-powered personalized agent for long-term dialogue .
+In Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers) , L. Chiruzzo, A. Ritter, and L. Wang (Eds.) ,
+Albuquerque, New Mexico , pp. 5259–5276 .
+External Links: Link ,
+Document ,
+ISBN 979-8-89176-189-6
+Cited by: §A.1.1 ,
+§1 ,
+§4.2 ,
+§5.4 .
+Liang et al. (2025)
+W. Liang, R. Zhou, Y. Ma, B. Zhang, S. Li, Y. Liao, and P. Kuang
+Large model empowered embodied ai: a survey on decision-making and embodied learning .
+External Links: 2508.10399 ,
+Link
+Cited by: §1 .
+Liu et al. (2025)
+J. Liu, Z. Qiu, Z. Li, Q. Dai, W. Yu, J. Zhu, M. Hu, M. Yang, T. Chua, and I. King
+A survey of personalized large language models: progress and future directions .
+External Links: 2502.11528 ,
+Link
+Cited by: §2.1 .
+Liu et al. (2023)
+L. Liu, X. Yang, Y. Shen, B. Hu, Z. Zhang, J. Gu, and G. Zhang
+Think-in-memory: recalling and post-thinking enable llms with long-term memory .
+External Links: 2311.08719 ,
+Link
+Cited by: §A.1.1 ,
+§4.2 .
+Madaan et al. (2022)
+A. Madaan, N. Tandon, P. Clark, and Y. Yang
+Memory-assisted prompt editing to improve GPT-3 after deployment .
+In Proceedings of the 2022 Conference on Empirical Methods in Natural Language Processing , Y. Goldberg, Z. Kozareva, and Y. Zhang (Eds.) ,
+Abu Dhabi, United Arab Emirates , pp. 2833–2861 .
+External Links: Link ,
+Document
+Cited by: §1 .
+Maharana et al. (2024)
+A. Maharana, D. Lee, S. Tulyakov, M. Bansal, F. Barbieri, and Y. Fang
+Evaluating very long-term conversational memory of LLM agents .
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , L. Ku, A. Martins, and V. Srikumar (Eds.) ,
+Bangkok, Thailand , pp. 13851–13870 .
+External Links: Link ,
+Document
+Cited by: §A.1.2 ,
+§1 ,
+§1 .
+Ong et al. (2025)
+K. T. Ong, N. Kim, M. Gwak, H. Chae, T. Kwon, Y. Jo, S. Hwang, D. Lee, and J. Yeo
+Towards lifelong dialogue agents via timeline-based memory management .
+In Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers) , L. Chiruzzo, A. Ritter, and L. Wang (Eds.) ,
+Albuquerque, New Mexico , pp. 8631–8661 .
+External Links: Link ,
+Document ,
+ISBN 979-8-89176-189-6
+Cited by: §1 .
+Packer et al. (2023)
+C. Packer, V. Fang, S. G. Patil, K. Lin, S. Wooders, and J. E. Gonzalez
+MemGPT: towards llms as operating systems .
+CoRR abs/2310.08560 .
+External Links: Link
+Cited by: §A.1.1 ,
+§4.2 ,
+§5 .
+Pan et al. (2025)
+Z. Pan, Q. Wu, H. Jiang, X. Luo, H. Cheng, D. Li, Y. Yang, C. Lin, H. V. Zhao, L. Qiu, and J. Gao
+SeCom: on memory construction and retrieval for personalized conversational agents .
+In The Thirteenth International Conference on Learning Representations ,
+External Links: Link
+Cited by: §A.1.1 ,
+§1 ,
+§4.2 .
+Salama et al. (2025)
+R. Salama, J. Cai, M. Yuan, A. Currey, M. Sunkara, Y. Zhang, and Y. Benajiba
+MemInsight: autonomous memory augmentation for LLM agents .
+In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , C. Christodoulopoulos, T. Chakraborty, C. Rose, and V. Peng (Eds.) ,
+Suzhou, China , pp. 33136–33152 .
+External Links: Link ,
+Document ,
+ISBN 979-8-89176-332-6
+Cited by: §1 .
+Salemi et al. (2024)
+A. Salemi, S. Kallumadi, and H. Zamani
+Optimization methods for personalizing large language models through retrieval augmentation .
+In Proceedings of the 47th International ACM SIGIR Conference on Research and Development in Information Retrieval ,
+SIGIR ’24 , New York, NY, USA , pp. 752–762 .
+External Links: ISBN 9798400704314 ,
+Link ,
+Document
+Cited by: §1 .
+Tan et al. (2025)
+H. Tan, Z. Zhang, C. Ma, X. Chen, Q. Dai, and Z. Dong
+MemBench: towards more comprehensive evaluation on the memory of LLM-based agents .
+In Findings of the Association for Computational Linguistics: ACL 2025 , W. Che, J. Nabende, E. Shutova, and M. T. Pilehvar (Eds.) ,
+Vienna, Austria , pp. 19336–19352 .
+External Links: Link ,
+Document ,
+ISBN 979-8-89176-256-5
+Cited by: §A.1.2 ,
+§1 ,
+§1 .
+Tao et al. (2026)
+D. Tao, G. Ma, Y. Huang, and M. Jiang
+Membox: weaving topic continuity into long-range memory for llm agents .
+External Links: 2601.03785 ,
+Link
+Cited by: §1 .
+Wang et al. (2026)
+B. Wang, X. Liang, J. Yang, H. Huang, Z. Wu, S. Wu, Z. Ma, and Z. Li
+SCM: enhancing large language model with&nbsp;self-controlled memory framework .
+In Database Systems for Advanced Applications: 30th International Conference, DASFAA 2025, Singapore, Singapore, May 26–29, 2025, Proceedings, Part VI ,
+Berlin, Heidelberg , pp. 188–203 .
+External Links: ISBN 978-981-95-4157-7 ,
+Link ,
+Document
+Cited by: §A.1.1 ,
+§4.2 .
+Wu et al. (2025)
+D. Wu, H. Wang, W. Yu, Y. Zhang, K. Chang, and D. Yu
+LongMemEval: benchmarking chat assistants on long-term interactive memory .
+In The Thirteenth International Conference on Learning Representations ,
+External Links: Link
+Cited by: §A.1.2 ,
+§1 .
+Xia et al. (2025)
+M. Xia, V. Rühle, S. Rajmohan, and R. Shokri
+Minerva: a programmable memory test benchmark for language models .
+In Forty-second International Conference on Machine Learning ,
+External Links: Link
+Cited by: §1 .
+Xu et al. (2025)
+W. Xu, Z. Liang, K. Mei, H. Gao, J. Tan, and Y. Zhang
+A-mem: agentic memory for LLM agents .
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems ,
+External Links: Link
+Cited by: §A.1.1 ,
+§1 ,
+§4.2 .
+Yan et al. (2026)
+S. Yan, X. Yang, Z. Huang, E. Nie, Z. Ding, Z. Li, X. Ma, J. Bi, K. Kersting, J. Z. Pan, H. Schütze, V. Tresp, and Y. Ma
+Memory-r1: enhancing large language model agents to manage and utilize memories via reinforcement learning .
+External Links: 2508.19828 ,
+Link
+Cited by: §1 .
+Yu et al. (2026)
+Y. Yu, L. Yao, Y. Xie, Q. Tan, J. Feng, Y. Li, and L. Wu
+Agentic memory: learning unified long-term and short-term memory management for large language model agents .
+External Links: 2601.01885 ,
+Link
+Cited by: §1 .
+Yuan et al. (2024)
+M. Yuan, P. Bao, J. Yuan, Y. Shen, Z. Chen, Y. Xie, J. Zhao, Q. Li, Y. Chen, L. Zhang, L. Shen, and B. Dong
+Large language models illuminate a progressive pathway to artificial intelligent healthcare assistant .
+Medicine Plus 1 ( 2 ), pp. 100030 .
+External Links: ISSN 2950-3477 ,
+Document ,
+Link
+Cited by: §1 .
+Zhang et al. (2024)
+K. Zhang, Y. Kang, F. Zhao, and X. Liu
+LLM-based medical assistant personalization with short- and long-term memory coordination .
+In Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers) , K. Duh, H. Gomez, and S. Bethard (Eds.) ,
+Mexico City, Mexico , pp. 2386–2398 .
+External Links: Link ,
+Document
+Cited by: §2.1 .
+Zhang et al. (2025)
+Z. Zhang, Q. Dai, X. Bo, C. Ma, R. Li, X. Chen, J. Zhu, Z. Dong, and J. Wen
+A survey on the memory mechanism of large language model-based agents .
+ACM Trans. Inf. Syst. 43 ( 6 ).
+External Links: ISSN 1046-8188 ,
+Link ,
+Document
+Cited by: §1 .
+Zhong et al. (2024)
+W. Zhong, L. Guo, Q. Gao, H. Ye, and Y. Wang
+MemoryBank: enhancing large language models with long-term memory .
+In Proceedings of the Thirty-Eighth AAAI Conference on Artificial Intelligence and Thirty-Sixth Conference on Innovative Applications of Artificial Intelligence and Fourteenth Symposium on Educational Advances in Artificial Intelligence ,
+AAAI’24/IAAI’24/EAAI’24 .
+External Links: ISBN 978-1-57735-887-9 ,
+Link ,
+Document
+Cited by: §A.1.1 ,
+§2.1 ,
+§4.2 .
+Appendix A Supplement
+A.1 Related Work
+A.1.1 External Memory Modules
+We analyze twelve representative External Memory Modules along the five lifecycle stages (D1–D5) defined in Section 3 . Consistent with our taxonomy, we categorize these systems into two architectural paradigms based on their topological organization: Hierarchical and Graph-Structured Services and Partitional Memory Services .
+Hierarchical and Graph-Structured Modules.
+Systems such as HippoRAG (and HippoRAG 2) ( Gutiérrez et al., 2024 ) , Mem0 g ( Chhikara et al., 2025 ) , and A-Mem ( Xu et al., 2025 ) align with the hierarchical paradigm by explicitly modeling the topological relationships between memory units. Rather than treating memories as independent vectors, these architectures construct semantic knowledge graphs (D1) where edges encode relational dependencies. This necessitates rigorous extraction-based normalization (D2) to transform raw text into triples or linked entities. Consequently, consolidation (D3) becomes a structural operation involving link evolution or graph densification, while integration (D5) leverages graph traversal algorithms to retrieve multi-hop context unreachable via simple similarity search.
+Partitional Memory Modules.
+The remaining systems employ partitional architectures (D1), treating memory as a flat pool managed through composed indices (e.g., vector stores, temporal queues, keyword tables). Rather than modeling explicit topology, these services optimize system behavior through the strategic composition of retrieval structures. One prominent direction, adopted by MemoryOS ( Kang et al., 2025 ) , MemGPT ( Packer et al., 2023 ) , SCM ( Wang et al., 2026 ) , LD-Agent ( Li et al., 2025 ) , and MemoryBank ( Zhong et al., 2024 ) , leverages this flexibility for lifecycle and capacity management . By organizing memory into temporal tiers (e.g., short-term queues vs. long-horizon storage), these systems implement dynamic consolidation policies (D3)—such as recursive summarization or operating-system-inspired paging—to handle infinite context streams within bounded resource constraints. Conversely, systems like Mem0 ( Chhikara et al., 2025 ) , TiM ( Liu et al., 2023 ) , and SeCom ( Pan et al., 2025 ) utilize partitional indexing to enhance semantic precision and consistency . These approaches discretize inputs into independent atomic units (D2) and employ granular indexing strategies (D4) to support targeted updates. This design facilitates rigorous conflict resolution (D3), enabling the system to detect and correct contradictions via LLM-driven operations efficiently, a task often computationally prohibitive in dense graph structures.
+A.1.2 Memory Benchmark
+We categorize existing benchmarks based on their evaluation protocols and measurement focus, contrasting them with our streaming approach. Table 8 summarizes these dimensions.
+Most established benchmarks operate under an offline protocol , decoupling memory construction from querying. LoCoMo ( Maharana et al., 2024 ) targets long-horizon information synthesis in dyadic dialogues, while LONGMEMEVAL ( Wu et al., 2025 ) focuses on recall consistency across multi-session chats. Both process static logs where memory is built in a single pass. MemBench ( Tan et al., 2025 ) similarly evaluates retrieval from a frozen memory pool. An exception is MemoryAgentBench ( Hu et al., 2025 ) , which supports incremental ingestion for agentic tasks (e.g., fact consolidation); however, it typically defers queries to the end of the session, failing to capture the complexity of fully interleaved production-retrieval cycles.
+Existing benchmarks also vary significantly in evaluation granularity and measurement coverage. LoCoMo evaluates at the model level (end-to-end output), whereas others like MemBench and LONGMEMEVAL focus on the memory module’s isolation. Crucially, measurement often prioritizes accuracy over system cost. LoCoMo , LONGMEMEVAL , and MemoryAgentBench report only performance metrics (e.g., accuracy, consistency). While MemBench includes simple efficiency metrics such as Read Time (RT) and Write Time (WT), it does not distinguish between model inference and memory maintenance costs, nor does it track efficiency evolution over time.
+Our Work bridges these gaps by proposing a testbed at the operator level with a streaming protocol . By interleaving insertion and retrieval, we evaluate performance on evolving memory states M ( k t ) M^{(k_{t})} . Unlike prior works, we provide a dual-track assessment of both accuracy (F1) and comprehensive efficiency (insertion/retrieval latency, memory footprint), explicitly decoupling memory system overhead from the underlying LLM.
+Table 8 : Comparison of memory benchmarks across evaluation granularity, protocol, and measurement coverage.
+Benchmark
+Evaluation Granularity
+Evaluation Protocol
+Measurement Coverage
+LoCoMo
+Model level
+Offline
+Accuracy only
+MemoryAgentBench
+Module level
+Incremental Insertion
+Accuracy only
+LongMemEval
+Module level
+Offline
+Accuracy only
+MemBench
+Module level
+Offline
+Accuracy + Partial efficiency
+Our Work
+Operator level
+Interleaved Insertion/Retrieval
+Accuracy + Efficiency
+A.2 Detailed Design Aspects of External Memory Modules
+We deconstruct the twelve baseline systems evaluated in this study according to the five lifecycle stages (D1–D5). For each stage, we identify the primary design paradigms and categorize the baselines accordingly.
+A.2.1 D1: Memory Data Structure
+We classify memory architectures into two dominant paradigms based on their topological organization (D1). Partitional services treat memory as a flat pool and rely on multiple complementary indices to support diverse access patterns. For instance, MemoryOS combines FIFO queues with segmented storage to manage temporal tiers, while MemoryBank utilizes a combination of vector stores and summary buffers. This approach excels at predictable latency and scalability but may struggle with deep relational queries. In contrast, Hierarchical services embed memories into explicit relational structures. Mem0 g , for example, constructs semantic knowledge graphs where nodes represent entities and edges encode dependencies, enabling multi-hop retrieval beyond nearest-neighbor similarity. While offering richer reasoning primitives, these structures introduce additional maintenance complexity. Table 9 maps the evaluated systems to these structural paradigms.
+Table 9 : Summary of Memory Data Structures (D1) in representative models.
+Structure Type
+Representative Models
+Specific Implementation
+Hierarchical/Graph
+Mem0 g
+semantic_inverted_knowledge_graph
+Partitional
+Mem0
+inverted_vectorstore_combination
+TiM
+lsh_hash
+MemoryOS
+feature_queue_segment_combination
+MemoryBank
+feature_summary_vectorstore_combination
+A.2.2 D2: Normalization Strategy
+Normalization strategies (D2) transform raw conversational inputs into storable units to balance fidelity with indexability . Strategies generally fall into three categories: Direct Storage (identity mapping), employed by models like MemoryOS to maximize fidelity; Enrichment , which augments input via summarization or tagging to improve index compatibility, as seen in MemoryBank where raw interactions are summarized into events; and Rewriting , which converts unstructured dialogue into structured formats. For example, TiM and Mem0 g extract relational triplets or atomic facts to support structured retrieval. While rewriting enhances relational reasoning, it increases dependence on upstream model quality compared to simpler enrichment or direct storage. Table 10 categorizes the baseline models by their specific normalization operators.
+Table 10 : Summary of Normalization Strategies (D2) in representative models.
+Strategy
+Representative Models
+Specific Operator
+None/Embedding
+MemoryOS
+none
+Enrich
+MemoryBank
+summarize
+Rewrite
+TiM , Mem0 g
+triplet_extract
+A.2.3 D3: Consolidation Policy
+Consolidation policies (D3) manage the lifecycle of stored memories. We observe three main families: Conflict Resolution handles redundancy and contradictions; Mem0 g implements this via LLM-driven CRUD operations to maintain consistency. Decay Eviction manages capacity constraints; MemoryBank uses an Ebbinghaus-inspired forgetting curve, while MemoryOS employs heat-based migration to move data between tiers. Structure Enrichment evolves the relational topology, exemplified by A-Mem , which dynamically creates links between memory nodes. These policies improve long-horizon memory quality but often incur maintenance costs. Table 11 details the specific consolidation policies employed by each representative model.
+Table 11 : Summary of Consolidation Policies (D3) in representative models.
+Policy
+Representative Models
+Specific Operator
+None
+SCM
+none
+Conflict Resolution
+Mem0 g
+llm_crud
+TiM
+semantic_consolidation
+Decay Eviction
+MemoryBank
+forgetting_curve
+MemoryOS
+heat_migration
+Structure Enrichment
+A-Mem
+link_evolution
+A.2.4 D4: Query Formulation Strategy
+Query Formulation Strategies (D4) address the mismatch between user intentions and memory structures. Beyond Direct Processing (used by Mem0 g , MemoryBank , and TiM ), systems employ more complex strategies. Query Enhancement and Validation can be used to decompose complex questions or verify retrieval necessity. Query Optimization is adopted by MemoryOS , which extracts keywords from the query to target specific memory indices. These strategies transform the user’s original query into a form better suited to the underlying memory structure, improving accuracy at the cost of latency. Table 12 lists the query formulation strategies adopted across the evaluated systems.
+Table 12 : Summary of Query Formulation Strategies (D4) in representative models.
+Strategy
+Representative Models
+Specific Operator
+None/Embedding
+Mem0 g , MemoryBank , TiM
+embedding
+Validate
+-
+validate
+Optimization
+MemoryOS
+keyword_extract
+Enhancement
+-
+decompose
+A.2.5 D5: Context Integration Mechanism
+Context Integration Mechanisms (D5) determine what is presented to the generator model. Common strategies include Filtering , where systems like Mem0 use similarity thresholds to reduce noise; and Reranking , where MemoryBank uses time-weighted scoring to prioritize relevance. Merging strategies are critical in multi-tiered systems like MemoryOS , which aggregates results from different storage layers. This stage manages the trade-off between context quality and cost : aggressive filtering reduces noise but risks harming recall, while complex reranking improves relevance at the expense of latency. Table 13 summarizes the context integration mechanisms implemented in the baseline models.
+Table 13 : Summary of Context Integration Mechanisms (D5) in representative models.
+Strategy
+Representative Models
+Specific Operator
+None
+Mem0 g , TiM
+none
+Rerank
+MemoryBank
+time_weighted
+Filter
+Mem0
+threshold
+Merge
+MemoryOS
+multi_tier
+A.3 Dataset Details and Preprocessing
+We evaluate External Memory Modules on a suite of specialized datasets, adapting each to the streaming protocol to quantify the evolution of memory quality and cost over time.
+LoCoMo. The LoCoMo dataset is structured around 10 core tasks, where each task comprises multiple sessions containing multi-turn dialogue sequences. Crucially, each task is associated with a specific set of tests accompanied by evidence labels that pinpoint the exact dialogue history required for reasoning. This hierarchical organization makes LoCoMo inherently suitable for adaptation into a streaming format. In alignment with our streaming protocol, we serialize these multi-session dialogues into a continuous chronological stream, where evaluation queries are triggered immediately after their supporting evidence is ingested, ensuring strict temporal causality.
+LongMemEval. To assess system stability over extended interaction periods, we utilize the LongMemEvalOracle subset of LONGMEMEVAL . The original benchmark structures each task as a sequence of N N historical turns followed by a single query. We adapt this for streaming evaluation by concatenating multiple independent tasks into a unified chronological stream. This approach creates a long-horizon timeline where questions are triggered at specific intervals, validating the system’s ability to maintain and recall context across disjointed interaction sessions.
+MemoryAgentBench. To evaluate the handling of evolving information, we incorporate the Selective Forgetting subset from MemoryAgentBench. Our analysis of the full benchmark revealed a significant presence of static factual knowledge; consequently, we exclusively selected the Selective Forgetting subset to construct our dataset, ensuring a focus on dynamic consistency. This subset simulates real-world scenarios where knowledge changes over time, requiring the memory module to correctly consolidate up-to-date facts from an incremental stream while effectively disregarding obsolete data.
+To support our streaming evaluation, we parse the sequential fact updates into a discrete input stream and align the corresponding questions and ground-truth answers as synchronized evaluation checkpoints, ensuring that the memory system is tested on its real-time capacity to integrate new information and resolve contradictions.
+A.4 Algorithmic Details of Memory Operations
+We provide pseudocode for the two atomic operations of External Memory Module , aligning with Equations ( 1 ) and ( 2 ).
+A.4.1 Memory State Update
+Triggered by an Insert request, this operation updates the memory state from M ( k − 1 ) M^{(k-1)} to M ( k ) M^{(k)} via preprocessing, insertion, and optimization.
+Algorithm 1 Algorithm of Memory Update Step ( Insert )
+0:
+Current memory state M ( k − 1 ) M^{(k-1)} , Historical context h ( k ) h^{(k)}
+0:
+Updated memory state M ( k ) M^{(k)}
+0:
+Preprocessing config ϕ \phi , Optimization threshold θ \theta
+1:
+Step 1: Context Preprocessing
+2:
+h ~ ← PreIns ​ ( h ( k ) , ϕ ) \tilde{h}\leftarrow\textsc{PreIns}(h^{(k)};\phi)
+3:
+Step 2: Tentative Insertion
+4:
+M inter ← Insert ​ ( M ( k − 1 ) , h ~ ) M_{\text{inter}}\leftarrow\textsc{Insert}(M^{(k-1)},\tilde{h})
+5:
+Step 3: Global Optimization (e.g., pruning, merging)
+6:
+M ( k ) ← Optimize ​ ( M inter , θ ) M^{(k)}\leftarrow\textsc{Optimize}(M_{\text{inter}};\theta)
+7:
+return M ( k ) M^{(k)}
+A.4.2 Context Retrieval
+Given a query q q at time τ \tau , retrieval accesses the latest memory state M ( k ∗ ) M^{(k^{*})} (where k ∗ k^{*} is the number of Insert requests with τ i ≤ τ \tau_{i}\leq\tau ) and returns context c c .
+Algorithm 2 Context Retrieval Step ( Retrieve )
+0:
+Current memory state M ( k ∗ ) M^{(k^{*})} , Raw user query q q
+0:
+Retrieved context c c
+0:
+Query refinement config ψ \psi , Top- k k parameter K K
+1:
+Step 1: Query Refinement
+2:
+q ~ ← PreQry ​ ( q , ψ ) \tilde{q}\leftarrow\textsc{PreQry}(q;\psi)
+3:
+Step 2: Similarity Search & Extraction
+4:
+𝒞 cand ← Search ​ ( M ( k ∗ ) , q ~ , K ) \mathcal{C}_{\text{cand}}\leftarrow\textsc{Search}(M^{(k^{*})},\tilde{q},K)
+5:
+Step 3: Context Aggregation
+6:
+c ← RefineRetrieve ​ ( 𝒞 cand ) c\leftarrow\textsc{RefineRetrieve}(\mathcal{C}_{\text{cand}})
+7:
+return c c
+Appendix B Implementation Details
+This appendix provides a comprehensive technical breakdown of the Neuromem framework to ensure the reproducibility and clarity of our experimental protocol. We first detail the engineering implementation of the interleaved insertion-and-retrieval protocol, focusing on the pipeline orchestration and backpressure mechanisms used to enforce temporal causality. Subsequently, we specify the hybrid hardware and software infrastructure utilized for different model backbones. Finally, we outline the standardized experimental workflow and the roadmap for open-source deployment.
+B.1 Implementation of Interleaved Insertion-and-Retrieval Protocol
+To support the streaming evaluation protocol defined in Section 4.1, we implemented a pipeline-based architecture in Neuromem that strictly enforces the causal ordering of the request stream R R . As illustrated in Figure 4 , the architecture comprises a central coordinator designated as the Main Pipeline, along with two functional sub-pipelines, namely the Insertion Pipeline and the Retrieval Pipeline, which jointly manage the full lifecycle of the External Memory Module.
+Figure 4 : Overview of the Neuromem Streaming Pipeline Architecture. The central PipelineCaller holds the test dataset and orchestrates the interleaved execution. It employs a backpressure mechanism to block the historical data stream during memory maintenance or reasoning evaluation, ensuring strict temporal causality.
+B.1.1 Main Pipeline: The Orchestrator
+The Main Pipeline serves as the backbone of the testbed, governing the flow of time and data. It operates via a strict backpressure mechanism to ensure atomicity. It consists of three core components:
+•
+HistorySource: Acting as the primary data source, this component is responsible for streaming interaction history data, such as context and facts, in a sequential manner. Unlike static batch loaders, it functions as a stream emitter. Driven by the backpressure mechanism from the downstream caller, the source pauses data emission whenever the processing pipeline is busy, which causes historical data to accumulate in a queue-based buffer rather than overflowing the system.
+•
+PipelineCaller: Serving as the central coordinator, this component acts as the core scheduler to manage control flow and maintain the evaluation dataset comprising questions and ground truth answers. Rather than passively forwarding data, it actively monitors the incoming stream from the HistorySource . The logic follows a strictly blocking execution cycle that verifies specific state thresholds before triggering downstream processes.
+1.
+Insertion Trigger: Upon receiving each incoming history item h t h_{t} , the coordinator blocks the stream and synchronously triggers the Insertion Pipeline to update the memory state.
+2.
+Threshold Check & Backpressure: Following each insertion, the system verifies whether the current state satisfies preset evaluation checkpoints, such as reaching a segment boundary in LoCoMo or achieving a specific fact update count in the MemoryAgentBench dataset.
+3.
+Incremental Testing: If a threshold is met, the PipelineCaller maintains backpressure on the HistorySource by keeping the historical data stream blocked while it initiates the Retrieval Pipeline to perform an incremental test. The stream remains blocked until the testing concludes, at which point the system proceeds to process the next historical item h t + 1 h_{t+1} .
+•
+ExperimentSink: Functioning as the primary result collector, this component aggregates evaluation metrics, including Token-level F1 scores and latency statistics, from the testing process and serializes them for subsequent analysis.
+B.1.2 Insertion Pipeline: State Evolution (D1-D3)
+When activated by the PipelineCaller for a specific history item, this pipeline instantiates Equation (1), M ( k ) = POSTINS ​ ( M ( k − 1 ) , PREINS ​ ( h ( k ) ) ) M^{(k)}=\text{POSTINS}(M^{(k-1)},\text{PREINS}(h^{(k)})) , into three consecutive stages. The mainstream is blocked until these stages complete:
+1.
+Normalize: Implementing the Normalization Strategy, this stage standardizes the raw context using the PreInsert operator. Depending on the configuration, the process ranges from simple text cleaning to complex semantic compression, such as extracting triplets via extract.triple or generating summaries using transform.summarize .
+2.
+State Update: This stage executes the write operation defined by the Memory Data Structure. The processed data units are committed to the underlying storage substrates, such as an Index or RawData container, by invoking specific service interfaces like fifo_queue.insert() to finalize physical storage.
+3.
+Consolidate: Corresponding to the Consolidation Policy, this stage maintains the long-horizon stability of the memory state following the write operation. Key maintenance tasks include resolving conflicts between new and old knowledge via conflict_resolution.llm_crud or removing obsolete information by applying policies such as decay_eviction.forgetting_curve .
+Figure 5 : Comparison of Evaluation Protocols. Unlike the traditional Offline Protocol which queries a fixed memory state constructed in a single batch, our Interleaved Protocol performs retrieval at evolving memory states ( S ​ t ​ a ​ t ​ e ​ 1 , S ​ t ​ a ​ t ​ e ​ 2 , … State1,State2,\dots ), enforcing strict temporal causality.
+B.1.3 Retrieval Pipeline: Reasoning and Evaluation (D1, D4-D5)
+When the PipelineCaller determines that a test checkpoint is reached, it effectively freezes the memory state by blocking new insertions and initiates the Retrieval Pipeline. This mechanism implements the Interleaved Protocol illustrated in Figure 5 (Right), enabling assessments across dynamically evolving memory states rather than relying on a single fixed snapshot. The process instantiates Equation (2), c = POSTRET ​ ( M ( k ∗ ) , PRERET ​ ( q ) ) c=\text{POSTRET}(M^{(k^{*})},\text{PRERET}(q)) , through the following sequential stages:
+1.
+Query Formulate: Implementing the Query Formulation Strategy, this stage utilizes the PreRetrieval operator to convert the user query held by the Caller into executable retrieval signals. Common operations aim to bridge semantic gaps through methods such as keyword_extract or query rewriting via optimize.rewrite .
+2.
+Context Retrieval: This stage executes the lookup operation defined by the Memory Data Structure. Using the transformed query signals, the system fetches candidate evidence from the underlying index or raw data storage via specific interfaces like fifo_queue.retrieve() .
+3.
+Context Integrate: Corresponding to the Context Integration Mechanism, this stage employs the PostRetrieval operator to refine the fetched candidates. The process synthesizes the final context c c for generation by applying filtering or ranking mechanisms, such as rerank.time_weighted or filter.threshold .
+4.
+Memory Evaluation: In the final step, the synthesized context is fed into the LLM to generate a response. The system immediately computes evaluation metrics, such as Token-level F1 scores, by comparing the prediction against the ground truth, and transmits the results back to the Main Pipeline.
+By employing this strictly blocking Interleaved Protocol, Neuromem ensures that retrieval operations occur on a stable snapshot of the memory state M ( k ) M^{(k)} without interference from incoming data, accurately simulating the real-time constraints of streaming applications.
+B.2 Hardware and Software Infrastructure
+All experiments were conducted on high-performance computing platforms optimized for large-scale deep learning tasks. To support different model architectures and robustness checks, we utilized a hybrid hardware setup tailored to specific backbones:
+•
+Hardware Environment:
+–
+Huawei Ascend 910B NPU: Dedicated to serving the pangu_embedded_1b model.
+–
+Nvidia RTX A6000 GPU: Dedicated to serving the Meta-Llama-3.1-8B-Instruct model.
+–
+Storage: 50 GB+ available disk space for dataset management and model weight storage.
+•
+Software Environment:
+–
+Operating System: Linux.
+–
+Programming Language: Python 3.11 or higher.
+–
+Core Models:
+1.
+Embedding Models:
+·
+BAAI/bge-m3 : Utilized as the default model for high-dimensional semantic representation.
+·
+intfloat/e5-large-v2 : Utilized for robustness verification experiments.
+2.
+Language Models (LLM):
+·
+pangu_embedded_1b : The primary backbone generative model, executed on the Ascend 910B platform.
+·
+Meta-Llama-3.1-8B-Instruct : Employed for cross-model validation and robustness checks, executed on the Nvidia A6000 platform.
+B.3 Implementation and Workflow Details
+We are currently organizing the source code and experimental scripts to ensure long-horizon usability. Upon publication, we plan to release the full implementation as an open-source repository and a Python package via PyPI. This package is designed to facilitate direct streaming evaluation, allowing third-party researchers to decompose their custom memory modules and deploy them onto our evaluation pipeline for granular assessment. The standardized workflow is structured as follows:
+1.
+Environment Setup: The framework requires a Conda environment with Python 3.11. Future deployment will be streamlined via standard package managers:
+conda create -n mem python=3.11
+pip install neuromem-eval (anonymous link provided in supplementary)
+2.
+Dataset Acquisition: We evaluate on the locomo dataset. The framework includes utilities to automatically download and format these benchmarks for streaming protocols:
+neuromem-data download locomo
+3.
+Configuration: System behaviors are fully configurable. Users can define model specifications and pipeline parameters (e.g., benchmarks/experiment/config ) to customize the lifecycle dimensions (D1-D5).
+4.
+Execution & Analysis: The core logic orchestrates the interleaved insertion and retrieval process. The suite separates execution ( benchmarks/experiment/script ) from analysis ( benchmarks/evaluation/scripts ), ensuring that metrics are computed consistently across different system instantiations.
+Appendix C Detailed Experimental Results
+C.1 Extended Analysis
+C.1.1 Scalability Analysis of Iterative Graph Memory
+While graph-based architectures like HippoRAG demonstrate superior multi-hop reasoning capabilities, our analysis reveals significant scalability bottlenecks when applied to streaming protocols. Streaming deployment requires continuous graph maintenance, exposing the computational cost of iterative topology updates. Our profiling decomposes the insertion latency into two primary components: Information Extraction Overhead and Synonymy Edge Construction .
+Information Extraction Overhead.
+Before graph construction, each incoming memory segment undergoes OpenIE processing, involving Named Entity Recognition (NER) and Triple Extraction. Since a single memory segment typically spawns multiple entities and facts, this step incurs a substantial fixed latency. Even with optimized local LLMs, the sequential execution of these generative calls imposes a base overhead of approximately 5-10 seconds per insertion, regardless of the memory size. This high entry cost makes sub-second real-time interaction challenging even at the start of the lifecycle.
+Synonymy Edge Construction (Quadratic Growth O ⁡ ( N 2 ) O(N^{2}) ).
+As the graph grows, the maintenance of semantic consistency becomes the dominant bottleneck. Identifying synonymy edges relies on a global K-Nearest Neighbors (KNN) search. Critically, the number of entities N N grows significantly faster than the number of dialogue turns due to the multiplicative factor of extraction. At each insertion step t t , the system computes pairwise similarity scores for N t N_{t} accumulated entities, resulting in O ⁡ ( N t 2 ⋅ d ) O(N_{t}^{2}\cdot d) complexity.
+As illustrated in Figure 6 , while the Information Extraction cost remains constant, the Synonymy Construction cost exhibits quadratic growth. For a history of 5,000 dialogues, the insertion latency explodes to over 100 seconds, rendering the system unusable for online streaming.
+Figure 6 : Scalability Analysis of Iterative Graph Memory. The log-log plot decomposes insertion latency into fixed and dynamic components. The Information Extraction imposes a high initial latency floor due to LLM calls. As memory scales, the Synonymy Edge Construction dominates with quadratic growth, causing total latency to exceed 1 minute beyond 5,000 dialogues. The PPR Traversal remains relatively efficient but adds to the retrieval latency.
+Contextual Integration ( O ⁡ ( I ⋅ | E | ) O(I\cdot|E|) ).
+Following graph updates, retrieval executes the Personalized PageRank (PPR) algorithm. While efficient for sparse graphs, the iterative convergence still imposes a latency floor of approximately 0.5 to 1.0 seconds for mid-sized graphs ( N ≈ 25,000 N\approx 25,000 ), further straining the total response time.
+In conclusion, iterative graph memory faces a two-fold scalability barrier: a high constant latency floor due to generative extraction and an exponential quadratic latency surge due to non-incremental graph maintenance. Effective streaming deployment requires asynchronous extraction pipelines and strictly incremental graph update algorithms (e.g., local neighborhood search) to decouple maintenance costs from total memory size.
+C.2 Robustness Experiment
+C.2.1 Robustness of Normalization Strategy
+To rule out the possibility that the poor performance of the Rewrite strategy was due to limited model capacity, we replicated the experiment on LoCoMo using the stronger intfloat/e5-large-v2 embedding model.
+Figure 7 : Insert Latency Breakdown by Normalization Strategy. The horizontal bars compare the time cost of ingestion stages. The Rewrite strategy incurs a massive bottleneck, taking nearly 2 seconds just to extract triplets before any storage operation occurs. In contrast, the None baselines have negligible pre-processing costs.
+Table 14 : Robustness Check on Normalization with E5-Large. Even with a superior embedding backbone, the Rewrite strategy consistently underperforms the None baseline across all rounds. The latency breakdown reveals a heavy preprocessing cost for triplet extraction.
+Normalization
+Token-level F1 per Round
+Mean F1
+Insert Latency
+R1
+R2
+R3
+R4
+R5
+None (Raw Text)
+0.326
+0.332
+0.320
+0.319
+0.297
+0.319
+1,171 ms
+Rewrite (Triplets)
+0.168
+0.128
+0.120
+0.116
+0.111
+0.129
+4,497 ms
+Δ \Delta vs. Baseline
+-48.5%
+-61.4%
+-62.5%
+-63.6%
+-62.6%
+-59.7%
++284% (Slower)
+The results, presented in Table 14 and visualized in Figure 7 , confirm that the performance gap is fundamental to the structural representation rather than the embedding quality. The Rewrite strategy suffers a severe drop in F1 score (Mean Δ ≈ − 60 % \Delta\approx-60\% ) compared to the raw text baseline.
+Crucially, the latency breakdown in Figure 7 exposes the root cause of the inefficiency. While the core memory insertion time is negligible for all methods, the Rewrite strategy is dominated by the Normalization Stage , which demands approximately 1,902 ms to extract triplets from the raw text. This structural overhead results in a total insertion latency that is nearly 4 × 4\times slower than the baseline (4,497 ms vs 1,171 ms). This reinforces our conclusion that for embedding-based retrieval, preserving the rich semantic texture of raw text is strictly superior to aggressive structural normalization, both in terms of accuracy and efficiency.
+C.2.2 Robustness of Context Integration Strategy
+To investigate whether the high latency of generative fusion was merely an artifact of our default backbone’s inference speed (pangu-1b), we replicated the Context Integration experiment using the faster and more capable Llama-3-8B model.
+Figure 8 : Efficiency-Accuracy Trade-off with Llama-3-8B. The left panel illustrates the disproportionate cost of generative fusion: a marginal mean F1 gain (+0.7%) requires a massive 6.5 × 6.5\times increase in latency. The right panel decomposes this latency, revealing that the cost is driven almost entirely by the Generative Overhead (1.1s) during the Context Integration stage, while the base retrieval time remains constant.
+Table 15 : Robustness Check on Context Integration with Llama-3-8B. Performance across all 5 rounds confirms that Multi-Query yields consistent but marginal gains. The latency breakdown highlights that the cost is driven entirely by the generative Context Integration stage, which adds over 1 second of overhead compared to the Augment baseline.
+Integration Strategy
+Token-level F1 per Round
+Mean F1
+Retrieval Latency Breakdown
+R1
+R2
+R3
+R4
+R5
+Context Integration
+Total
+Augment (Baseline)
+0.339
+0.301
+0.289
+0.283
+0.268
+0.296
+∼ \sim 0.3 ms
+205 ms
+Multi-Query
+0.348
+0.306
+0.295
+0.289
+0.279
+0.303
+1,125 ms
+1,328 ms
+Impact ( Δ \Delta vs Baseline)
++2.6%
++1.7%
++2.1%
++2.1%
++4.1%
++2.4%
+Massive Overhead
+6.5 × \times Slower
+The results, visualized in Figure 8 and detailed in Table 15 , indicate that the efficiency bottleneck is structural rather than model-dependent. Expanding the evaluation to the full five-round lifecycle reveals that while the multi_query strategy consistently outperforms the baseline—raising the Mean F1 score from 0.296 to 0.303—this advantage is slight. The strategy achieves a 4.1% relative improvement in the final round, but this accuracy benefit comes at a disproportionate cost. The total retrieval latency spikes from a manageable 205 milliseconds in the heuristic augment baseline to 1,328 milliseconds with generative fusion, representing a 6.5-fold increase in processing time.
+Crucially, the granular breakdown identifies the root cause of this bottleneck. As shown in the right panel of Figure 8 , while the baseline requires less than 1 millisecond for context integration, the generative approach demands approximately 1,125 milliseconds to synthesize and rerank the retrieved contexts. Consequently, the Context Integration stage alone accounts for the vast majority of the total latency. This finding reinforces our conclusion that generative integration acts as a “latency tax”: upgrading the model backbone reduces absolute inference time but fails to eliminate the massive architectural overhead required for generative fusion.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

@@ -1,0 +1,124 @@
+Reward Modeling.
+(1) Accuracy Reward.
+The accuracy reward evaluates the quality of the predicted temporal span and the semantic relevance of the generated answer. Specifically, it combines a temporal Intersection over Union (IoU) score with a sentence-level similarity score:
+racc​(o)=α​rsim​(o)+(1−α)​rtIoU​(o),r_{\text{acc}}(o)=\alpha\,r_{\text{sim}}(o)+(1-\alpha)\,r_{\text{tIoU}}(o),
+(8)
+where rtIoUr_{\text{tIoU}} measures the overlap between the predicted and ground-truth temporal intervals, and rsimr_{\text{sim}} measures semantic similarity between the predicted answer and reference text. This reward encourages the model to reason both temporally and semantically.
+(2) Format Reward.
+To ensure that the model produces interpretable reasoning and structured answers, we introduce a binary template-based reward that verifies whether the prediction adheres to the predefined reasoning format.
+Specifically, the model must enclose its reasoning within <think>...</think> tags and provide its final grounded response within <answer>...</answer> tags. We apply a regular expression check to determine whether the output adheres to this predefined format. The reward is defined as:
+rform​(o)={1,if the o matches the format,0,otherwise.r_{\text{form}}(o)=\begin{cases}1,&\text{if the $o$ matches the format},\\
+0,&\text{otherwise}.\end{cases}
+(9)
+This reward encourages the model to generate well-structured reasoning traces and clearly delimited answers, thereby improving interpretability and stability during training.
+(3) Visual Attention Reward.
+To further encourage the model to balance focus on visual and event-graph cues and mitigate the visual thinking drift problem during reasoning, we introduce a visual attention reward based on the model’s attention distribution. Given the averaged multi-head attention matrix Attn over all token pairs, we define three token groups: textual graph tokens TgraphT_{\text{graph}}, video tokens TvidT_{\text{vid}}, and generated response tokens TresT_{\text{res}}. The attention reward measures the relative proportion of attention that the generated response tokens allocate to visual tokens versus graph tokens:
+rattn=∑Attn​(Tres,Tvid)∑Attn​(Tres,Tvid)+∑Attn​(Tres,Tgraph)r_{\text{attn}}=\frac{\sum\text{Attn}(T_{\text{res}},T_{\text{vid}})}{\sum\text{Attn}(T_{\text{res}},T_{\text{vid}})+\sum\text{Attn}(T_{\text{res}},T_{\text{graph}})}
+(10)
+A higher value indicates that the model places more focus on visual evidence rather than abstract graph embeddings, which promotes grounded and perceptually aligned reasoning. This reward is only activated when the reasoning output achieves sufficient semantic and temporal accuracy, specifically when the sentence similarity score exceeds 0.40.4 and the temporal IoU score exceeds 0.30.3, formulated as:
+rattn​(o)={rattn​(o),if ​rsim≥0.4​ and ​rtIoU≥0.3,0,otherwise.r_{\text{attn}}(o)=\begin{cases}r_{\text{attn}}(o),&\text{if }r_{\text{sim}}\geq 0.4\text{ and }r_{\text{tIoU}}\geq 0.3,\\
+0,&\text{otherwise.}\end{cases}
+(11)
+(4) Overall Reward.
+The final reward integrates all components through a weighted combination:
+r⁡(o)=λacc​racc+λform​rform+λattn​rattn,r(o)=\lambda_{\text{acc}}\,r_{\text{acc}}+\lambda_{\text{form}}\,r_{\text{form}}+\lambda_{\text{attn}}\,r_{\text{attn}},
+(12)
+where λacc,λform,λattn\lambda_{\text{acc}},\lambda_{\text{form}},\lambda_{\text{attn}}
+are coefficients controlling the relative contribution of each reward. The overall reward jointly promotes accurate and visually grounded reasoning, allowing the MLLM to effectively leverage the graph for mitigating hallucinations in reasoning.
+4 Experiments
+4.1 Experimental Setup
+Datasets.
+We evaluated our approach on 2 representative benchmarks that cover event causal reasoning and video hallucination evaluation.
+(1) Rextime [4] is an event causal relation-based Grounded VQA benchmark. It is designed for complex event reasoning and question answering across time, requiring the model to answer the reasoning question with consistent temporal localization. It contains 9695/921/2143 samples in train/val/test sets.
+(2) VidHalluc [32] is a benchmark specifically for evaluating video hallucination for MLLM. It consists of 5002 videos with 9295 questions across 3 three critical dimensions for video hallucination evaluation, including Action Hallucination (ACH), Temporal Sequence Hallucination (TSH), and Scene Transition Hallucination (STH).
+Models
+LLM Params
+Accuracy on ACH↑\uparrow
+Accuracy on TSH↑\uparrow
+Score on STH↑\uparrow
+Binary QA↑\uparrow
+MCQ↑\uparrow
+Gemini-1.5-Pro [58]
+∼\sim200B
+75.27
+79.25
+83.83
+63.96
+GPT-4o [52]
+∼\sim200B
+81.15
+90.95
+82.00
+71.58
+Video-ChatGPT [46]
+7B
+9.50
+24.58
+30.17
+7.70
+Video-LLAVA [40]
+7B
+26.84
+64.45
+27.17
+29.60
+ShareGPT4Video [5]
+8B
+29.96
+44.78
+49.50
+17.83
+Chat-UniVi [30]
+13B
+23.77
+54.79
+35.50
+29.87
+LLaVA-NeXT-Video [74]
+34B
+26.60
+77.57
+21.33
+44.40
+PLLaVA [66]
+13B
+35.30
+76.96
+16.50
+32.44
+VideoLLaMA2 [7]
+7B
+50.04
+83.84
+26.17
+65.12
+VILA1.5 [41]
+13B
+58.46
+81.88
+63.33
+35.03
+QwenVL-2.5 [2]
+7B
+50.46
+81.99
+67.50
+46.77
+QwenVL-2.5+EVSG
+7B
+50.92
+83.23
+75.33
+54.58
+GraphThinker(+EVSG+RL)*
+7B
+66.04
+84.57
+76.33
+57.81
+Table 2: Comparisons of multimodal large language models for video reasoning on the three tests in the VidHalluc benchmark, including Action Hallucination (ACH), Temporal Sequence Hallucination (TSH) and Scene Transition Hallucination (STH) test. *denotes finetuning on the Rextime dataset.
+Implementation Details.
+We used QwenVL-2.5-7B [2] as our baseline due to its strong video understanding ability and open-source availability. We also use this baseline for EVSG generation, including generating the multi-grained dense captions and building the EVSG process. The event number limit for dense caption is set to (5, 10, 15). We set λ1=0.7\lambda_{1}{=}0.7, λ2=0.3\lambda_{2}{=}0.3, λ3=0.6\lambda_{3}{=}0.6 and α=0.3\alpha{=}0.3 for the reward function of GRPO post-training. We also utilise the same baseline for event graph generation and input the generated graph during inference. All experiments are conducted using PyTorch on 8 NVIDIA A100 GPUs, with a maximum prompt length of 4096, response length of 2048, 8 rollouts, a batch size of 16, and 1 training epoch.
+Evaluation Metrics.
+We adopted task-specific metrics to evaluate reasoning accuracy, grounding precision, and hallucination reduction.
+We used Accuracy (Acc), Accuracy@IoU≥\geq0.5 (Acc@0.5) for VQA and R@1,IoU=0.3/0.5 (R1@0.3/0.5) and mIoU for Moment Localization for Rextime. Acc@0.5 measures t

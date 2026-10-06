@@ -1,0 +1,4438 @@
+Momentum Guidance: Plug-and-Play Guidance for Flow Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Background
+2.1
+Rectified Flow
+Different levels of smoothness in flow marginals.
+2.2
+Guidance Methods
+Classifier-Free Guidance (CFG).
+Autoguidance.
+3
+Momentum Guidance
+Memory and computation overhead.
+Understanding Momentum Guidance.
+4
+Experiments
+4.1
+Main results
+4.2
+Ablations
+Ablation on CFG scale and NFE.
+Ablation on
+α
+\alpha
+and
+β
+\beta
+.
+4.3
+Qualitative analysis
+5
+Related Work
+Guidance Methods
+6
+Conclusions and Limitations
+Limitations
+References
+7
+Momentum Guidance with CFG
+7.1
+CFG-Adjusted Velocity
+7.2
+CFG Interval
+8
+Additional Implementation Details
+8.1
+Additional Details on ImageNet-256
+8.2
+Optional normalization and unbiased EMA
+9
+Additional Experiment Results
+2D Gaussian mixture toy with MG.
+Additional ablations on
+α
+\alpha
+and
+β
+\beta
+.
+Qualitative Results on ImageNet-256.
+Qualitative Results on FLUX.1-dev.
+Additional Baseline Comparisons
+License: arXiv.org perpetual non-exclusive license
+arXiv:2602.20360v1 [cs.LG] 23 Feb 2026
+Momentum Guidance: Plug-and-Play Guidance for Flow Models
+Runlong Liao
+†
+†
+thanks:
+Equal contribution
+Jian Yu
+1
+1
+footnotemark:
+1
+Baiyu Su
+Chi Zhang
+Lizhang Chen
+Qiang Liu
+Affiliation:
+University of Texas at Austin
+Affiliation:
+{liaorl, jian, baiyusu, chizhang, lzchen, lqiang}@cs.utexas.edu
+Abstract
+Flow-based generative models have become a strong framework for high-quality generative modeling, yet pretrained models are rarely used in their vanilla conditional form: conditional samples without guidance often appear diffuse and lack fine-grained detail due to the smoothing effects of neural networks. Existing guidance techniques such as classifier-free guidance (CFG) improve fidelity but double the inference cost and typically reduce sample diversity. We introduce
+Momentum Guidance (MG)
+, a new dimension of guidance that leverages the ODE trajectory itself. MG extrapolates the current velocity using an exponential moving average of past velocities and preserves the standard one-evaluation-per-step cost. It matches the effect of standard guidance without extra computation and can further improve quality when combined with CFG. Experiments demonstrate MG’s effectiveness across benchmarks. Specifically, on ImageNet-256, MG achieves average improvements in FID of 36.68% without CFG and 25.52% with CFG across various sampling settings, attaining an FID of 1.597 at 64 sampling steps. Evaluations on large flow-based models like Stable Diffusion 3 and FLUX.1-dev further confirm consistent quality enhancements across standard metrics.
+1
+Introduction
+Continuous-time generative models, including diffusion models
+[
+59
+,
+60
+,
+17
+]
+and flow-based models
+[
+39
+,
+37
+,
+36
+,
+2
+]
+, have become leading frameworks for high-quality image, audio, and video synthesis
+[
+11
+,
+35
+,
+48
+,
+62
+,
+30
+,
+7
+,
+40
+,
+64
+,
+5
+]
+.
+Algorithm 1
+Momentum Guidance
+1:
+Trained flow model
+𝒗
+θ
+​
+(
+⋅
+,
+t
+)
+{\bm{v}}_{\theta}(\cdot,t)
+;
+time grid
+{
+t
+i
+}
+\{t_{i}\}
+;
+EMA
+β
+∈
+[
+0
+,
+1
+)
+\beta\in[0,1)
+;
+weight
+α
+≥
+0
+\alpha\geq 0
+2:
+Sample
+𝒁
+t
+0
+∼
+𝒩
+⁡
+(
+0
+,
+𝑰
+)
+{\bm{Z}}_{t_{0}}\sim\mathcal{N}(0,{\bm{I}})
+3:
+Initialize momentum
+𝒎
+t
+0
+←
+𝒗
+θ
+​
+(
+𝒁
+t
+0
+,
+t
+0
+)
+{\bm{m}}_{t_{0}}\leftarrow{\bm{v}}_{\theta}({\bm{Z}_{t_{0}}},t_{0})
+4:
+for
+i
+=
+0
+i=0
+to
+N
+−
+1
+N-1
+do
+5:
+Δ
+​
+t
+←
+t
+i
++
+1
+−
+t
+i
+\Delta t\leftarrow t_{i+1}-t_{i}
+6:
+𝒗
+t
+i
+←
+𝒗
+θ
+​
+(
+𝒁
+t
+i
+,
+t
+i
+)
+{\bm{v}}_{t_{i}}\leftarrow{\bm{v}}_{\theta}({\bm{Z}}_{t_{i}},t_{i})
+7:
+𝒁
+t
+i
++
+1
+←
+𝒁
+t
+i
++
+Δ
+​
+t
+​
+[
+𝒗
+t
+i
++
+α
+⁡
+(
+𝒗
+t
+i
+−
+𝒎
+t
+i
+)
+]
+{\bm{Z}}_{t_{i+1}}\leftarrow{\bm{Z}}_{t_{i}}+\Delta t\Big[\,{\bm{v}}_{t_{i}}+\hbox{\pagecolor{orange!12}\text{$\alpha({\bm{v}}_{t_{i}}-\,{\bm{m}}_{t_{i}})$}}\Big]
+8:
+𝒎
+t
+i
++
+1
+←
+(
+1
+−
+β
+)
+​
+𝒗
+t
+i
++
+β
+​
+𝒎
+t
+i
+{\bm{m}}_{t_{i+1}}\leftarrow(1-\beta)\,{\bm{v}}_{t_{i}}+\beta\,{\bm{m}}_{t_{i}}
+⊳
+\triangleright
+EMA
+9:
+end
+for
+10:
+return
+𝒁
+t
+N
+{\bm{Z}}_{t_{N}}
+However, a key practical phenomenon that is often overlooked is that
+pretrained flow models are rarely used in their raw form
+. Samples drawn directly from these models often appear diffuse, displaying blurry textures and overly spread-out distributions, suggesting that they learn an
+oversmoothed
+approximation of the data distribution. This behavior is not specific to flows. It reflects a broader property of neural network models across modalities: when trained on broad or heterogeneous distributions, their predictions gravitate toward averaged estimates that suppress fine-grained structure. In image synthesis, this tendency manifests as muted contrast and loss of high-frequency detail
+[
+54
+,
+63
+]
+, while in language generation it appears as conservative, low-diversity outputs unless sampling techniques such as temperature scaling or nucleus sampling are applied to counteract this oversmoothing effect
+[
+19
+,
+16
+]
+.
+In flow and diffusion pipelines, this oversmoothing arises from several components. Neural networks provide smoothed approximations of the underlying transport dynamics
+[
+57
+,
+13
+,
+26
+,
+3
+]
+, which inherently suppress high-frequency structure. In addition, exponential moving average (EMA) of model parameters, a technique widely used in generative image synthesis to reduce visual noise and improve sample quality, further smooths the learned velocity field
+[
+24
+,
+28
+,
+43
+]
+. Taken together, these factors bias pretrained models toward overly dispersed, low-detail outputs.
+Figure 1
+:
+Comparison of Momentum Guidance (MG) with baseline class-conditioned sampling
+without
+CFG on SD3
+[
+11
+]
+. Unlike CFG, which requires an additional forward pass through an unconditional branch at every sampling step, MG introduces no extra model evaluations. The generated images show consistently improved quality and coherence, with finer local details (e.g., angel’s wings, intricate coral structures), fewer artifacts (e.g., reduced blur in motorcycle reflections), richer visual textures and color variation (e.g., waterfall and volcanic scenes), and more stable object geometry (e.g., clearer facial contours and cleaner edges). Overall, MG yields sharper, cleaner, and more visually consistent results.
+Inference-time guidance corrects this issue by effectively
+de-smoothing
+the model’s predictions. Classifier-free guidance (CFG)
+[
+18
+,
+49
+]
+extrapolates the current conditional prediction away from a smoother unconditional model, whereas Autoguidance
+[
+27
+]
+replaces this unconditional branch with a weaker network, yielding a smoother but still learned reference. Both approaches improve perceptual quality, but they increase inference cost: CFG requires two forward passes per step, and Autoguidance additionally depends on auxiliary checkpoints, which are rarely released for large open models
+[
+35
+,
+64
+]
+, making it impractical in many settings.
+In this work, we introduce
+Momentum Guidance (MG)
+, a simple inference-time technique that leverages the ODE trajectory itself to form a smoother reference signal. MG maintains an exponential moving average of past velocities, which effectively forms a weighted average of velocities evaluated at higher-noise, and therefore smoother, marginals along the transport path. Extrapolating the current velocity away from this EMA produces the sharpening effect associated with guidance while preserving the standard one-evaluation-per-step cost. MG requires no auxiliary models, no unconditional branch, no additional network evaluations, and it functions effectively both with and without CFG.
+We validate MG across diverse benchmarks. On ImageNet-256
+[
+9
+]
+, MG improved FID by
+36.68
+%
+36.68\%
+without CFG, effectively halving the inference cost in this setting, and by
+25.52
+%
+25.52\%
+with CFG, achieving an FID of
+1.597
+1.597
+at 64 sampling steps. Evaluations on large flow-based text-to-image models, including Stable Diffusion 3 (SD3)
+[
+11
+]
+and FLUX.1-dev
+[
+35
+]
+, reveal consistent gains across standard metrics. Due to its simplicity, efficiency, and broad compatibility, MG provides a practical and scalable approach to enhance generative quality under constrained sampling budgets.
+2
+Background
+2.1
+Rectified Flow
+We introduce flow-based generative modeling under the Rectified Flow (RF) framework
+[
+39
+,
+37
+]
+.
+Given a target data distribution
+𝑿
+1
+∼
+π
+1
+=
+π
+data
+{\bm{X}}_{1}\sim\pi_{1}=\pi_{\text{data}}
+and a Gaussian prior
+𝑿
+0
+∼
+π
+0
+=
+𝒩
+⁡
+(
+0
+,
+𝑰
+)
+{\bm{X}}_{0}\sim\pi_{0}=\mathcal{N}(0,{\bm{I}})
+, RF defines a linear interpolation between the two:
+𝑿
+t
+=
+t
+​
+𝑿
+1
++
+(
+1
+−
+t
+)
+​
+𝑿
+0
+,
+t
+∈
+[
+0
+,
+1
+]
+.
+{\bm{X}}_{t}=t{\bm{X}}_{1}+(1-t){\bm{X}}_{0},\quad t\in[0,1].
+(1)
+The model learns a velocity field
+𝒗
+θ
+​
+(
+𝒙
+,
+t
+)
+{\bm{v}}_{\theta}({\bm{x}},t)
+by minimizing the mean squared error:
+ℒ
+⁡
+(
+θ
+)
+=
+𝔼
+𝑿
+0
+,
+𝑿
+1
+,
+t
+​
+[
+‖
+𝑿
+˙
+t
+−
+𝒗
+θ
+​
+(
+𝑿
+t
+,
+t
+)
+‖
+2
+]
+,
+\mathcal{L}(\theta)=\mathbb{E}_{{\bm{X}}_{0},{\bm{X}}_{1},t}\left[\left\|\dot{{\bm{X}}}_{t}-{\bm{v}}_{\theta}({\bm{X}}_{t},t)\right\|^{2}\right],
+(2)
+where
+t
+t
+is sampled from
+[
+0
+,
+1
+]
+[0,1]
+.
+At optimality, the velocity field recovers the conditional mean velocity:
+𝒗
+t
+∗
+​
+(
+𝒙
+)
+=
+𝔼
+𝑿
+0
+,
+𝑿
+1
+|
+𝑿
+t
+​
+[
+𝑿
+˙
+t
+∣
+𝑿
+t
+=
+𝒙
+]
+.
+{\bm{v}}^{*}_{t}({\bm{x}})=\mathbb{E}_{{\bm{X}}_{0},{\bm{X}}_{1}\mid{\bm{X}}_{t}}\left[\,\dot{{\bm{X}}}_{t}\mid{\bm{X}}_{t}={\bm{x}}\,\right].
+(3)
+Once trained, generation proceeds by integrating the flow ODE:
+d
+d
+​
+t
+​
+𝒁
+t
+=
+𝒗
+⁡
+(
+𝒁
+t
+,
+t
+)
+,
+starting from
+​
+𝒁
+0
+∼
+𝒩
+⁡
+(
+0
+,
+𝑰
+)
+,
+\frac{\mathrm{d}}{\mathrm{d}t}{\bm{Z}}_{t}={\bm{v}}({\bm{Z}}_{t},t),\quad\text{starting from }{\bm{Z}}_{0}\sim\mathcal{N}(0,{\bm{I}}),
+(4)
+which is typically solved numerically via Euler method:
+𝒁
+t
+i
++
+1
+=
+𝒁
+t
+i
++
+(
+t
+i
++
+1
+−
+t
+i
+)
+​
+𝒗
+​
+(
+𝒁
+t
+i
+,
+t
+i
+)
+.
+{\bm{Z}}_{t_{i+1}}={\bm{Z}}_{t_{i}}+(t_{i+1}-t_{i})\,{\bm{v}}({\bm{Z}}_{t_{i}},t_{i}).
+(5)
+This deterministic trajectory defines a continuous flow process that transforms the prior distribution into the data distribution.
+Different levels of smoothness in flow marginals.
+Liu [37]
+shows that the interpolation process
+{
+𝑿
+t
+}
+t
+=
+0
+1
+\{{\bm{X}}_{t}\}_{t=0}^{1}
+defined by  equation
+1
+and the ODE trajectories
+{
+𝒁
+t
+}
+t
+=
+0
+1
+\{{\bm{Z}}_{t}\}_{t=0}^{1}
+from  equation
+4
+share identical marginals at every time step:
+Law
+⁡
+(
+𝑿
+t
+)
+=
+Law
+⁡
+(
+𝒁
+t
+)
+≜
+π
+t
+,
+∀
+t
+.
+\operatorname{Law}({\bm{X}}_{t})=\operatorname{Law}({\bm{Z}}_{t})\triangleq\pi_{t},\quad\forall t.
+(6)
+The marginal
+π
+t
+\pi_{t}
+corresponds to the data distribution smoothed by Gaussian kernels and can be expressed as
+π
+t
+​
+(
+𝒙
+t
+)
+=
+∑
+𝒙
+1
+∈
+𝒟
+data
+π
+1
+​
+(
+𝒙
+1
+)
+​
+𝒩
+​
+(
+𝒙
+t
+,
+t
+​
+𝒙
+1
+,
+(
+1
+−
+t
+)
+2
+​
+𝑰
+)
+.
+\pi_{t}({\bm{x}}_{t})=\sum_{{\bm{x}}_{1}\in\mathcal{D}_{\text{data}}}\pi_{1}({\bm{x}}_{1})\,\mathcal{N}({\bm{x}}_{t};\,t{\bm{x}}_{1},\,(1-t)^{2}\bm{I}).
+(7)
+Smaller values of
+t
+t
+therefore correspond to more strongly smoothed marginals, and during inference
+𝒁
+t
+∼
+π
+t
+{\bm{Z}}_{t}\sim\pi_{t}
+evolves toward distributions of decreasing smoothness over time. The velocity field
+𝒗
+∗
+​
+(
+𝒙
+,
+t
+)
+{\bm{v}}^{*}({\bm{x}},t)
+is linked to the marginal
+π
+t
+\pi_{t}
+through the score function, which uniquely determines the distribution. In particular,
+∇
+𝒙
+​
+log
+​
+π
+t
+​
+(
+𝒙
+)
+=
+t
+​
+𝒗
+​
+(
+𝒙
+,
+t
+)
+−
+𝒙
+1
+−
+t
+.
+\nabla_{\bm{x}}\log\pi_{t}({\bm{x}})=\frac{t\,{\bm{v}}({\bm{x}},t)-{\bm{x}}}{1-t}.
+(8)
+See, e.g.,
+[
+34
+,
+23
+,
+38
+,
+22
+]
+. Informally, this relation implies that the velocity field at smaller
+t
+t
+corresponds to a more
+smoothed
+distribution.
+2.2
+Guidance Methods
+Guidance techniques improve generative sampling at inference time by steering the model toward more visually coherent or conditionally aligned outputs through extrapolation between two velocity estimates. Two approaches are particularly relevant to this work.
+Classifier-Free Guidance (CFG).
+Prior classifier-based guidance methods
+[
+10
+]
+relied on an auxiliary classifier to steer the generative process. Classifier-free guidance
+[
+18
+]
+removes this requirement by training a single model to predict both conditional and unconditional velocity fields,
+𝒗
+⁡
+(
+𝒙
+,
+t
+∣
+c
+)
+{\bm{v}}({\bm{x}},t\mid c)
+and
+𝒗
+⁡
+(
+𝒙
+,
+t
+∣
+∅
+)
+{\bm{v}}({\bm{x}},t\mid\emptyset)
+. At inference time, the effective velocity is obtained through extrapolation:
+𝒗
+CFG
+​
+(
+𝒙
+,
+t
+∣
+c
+)
+=
+w
+​
+𝒗
+​
+(
+𝒙
+,
+t
+∣
+c
+)
++
+(
+1
+−
+w
+)
+​
+𝒗
+​
+(
+𝒙
+,
+t
+∣
+∅
+)
+,
+{\bm{v}}^{\text{CFG}}({\bm{x}},t\mid c)=w\,{\bm{v}}({\bm{x}},t\mid c)+(1-w)\,{\bm{v}}({\bm{x}},t\mid\emptyset),
+(9)
+where
+w
+>
+1
+w>1
+controls the guidance strength and
+c
+c
+is the condition. The unconditional prediction corresponds to the marginal velocity field obtained by integrating out all conditioning variables:
+𝒗
+⁡
+(
+𝒙
+,
+t
+∣
+∅
+)
+=
+𝔼
+c
+​
+[
+𝒗
+⁡
+(
+𝒙
+,
+t
+∣
+c
+)
+]
+,
+{\bm{v}}({\bm{x}},t\mid\emptyset)=\mathbb{E}_{c}\!\left[{\bm{v}}({\bm{x}},t\mid c)\right],
+(10)
+which induces a systematically smoother estimate because it averages over the full conditioning space: whether the conditioning variable represents class labels, text embeddings, or any other attribute. While larger
+w
+w
+improves sample fidelity and condition alignment, it typically reduces sample diversity
+[
+50
+,
+33
+,
+44
+]
+.
+Autoguidance.
+Autoguidance
+[
+27
+]
+mitigates the fidelity–diversity trade-off by replacing the unconditional branch in CFG with a weaker version of the same model, typically obtained from an earlier checkpoint or a reduced-capacity variant:
+𝒗
+Auto
+​
+(
+𝒙
+,
+t
+)
+=
+w
+​
+𝒗
+​
+(
+𝒙
+,
+t
+)
++
+(
+1
+−
+w
+)
+​
+𝒗
+′
+​
+(
+𝒙
+,
+t
+)
+,
+{\bm{v}}^{\text{Auto}}({\bm{x}},t)=w\,{\bm{v}}({\bm{x}},t)+(1-w)\,{\bm{v}}^{\prime}({\bm{x}},t),
+(11)
+where
+𝒗
+′
+{\bm{v}}^{\prime}
+serves as a lower-capacity reference predictor. Because earlier-stage models tend to learn smoother velocity fields
+[
+27
+]
+,
+𝒗
+′
+{\bm{v}}^{\prime}
+provides a tempered guidance signal that improves both diversity and visual quality and does not rely on explicit conditional inputs. A practical limitation, however, is the requirement of an additional checkpoint, one that is typically unavailable for large flow models
+[
+35
+,
+11
+]
+, along with the increased memory usage incurred by storing two networks.
+3
+Momentum Guidance
+Figure 2
+:
+Visualization of momentum guidance along the sampling trajectory.
+From left to right, flow time increases and the data estimates transition from blurriness to a clean image. The first row shows the baseline estimates
+𝑿
+^
+1
+|
+t
+Base
+\hat{\bm{X}}_{1\mid t}^{\text{Base}}
+, while the second row displays the momentum-guided estimates
+𝑿
+^
+1
+|
+t
+MG
+\hat{\bm{X}}_{1\mid t}^{\text{MG}}
+, which exhibit sharper structure, richer color contrast, and more coherent fine-grained details throughout the flow process.
+The third row visualizes the extrapolation term
+(
+𝒗
+t
+−
+𝒎
+t
+)
+(\bm{v}_{t}-\bm{m}_{t})
+, revealing how momentum introduces a corrective direction that emphasizes coarse contours at early times and amplifies high-frequency details, such as petal edges and dew droplets, near the end of the trajectory.
+Overall, momentum guidance produces a clearer evolution toward the final image.
+We introduce a plug-and-play guidance mechanism that integrates directly into standard flow-based samplers. Existing guidance techniques enhance sample fidelity by extrapolating the current velocity away from a smoother reference velocity, thereby amplifying contrast in the update direction and concentrating probability mass toward sharper regions of the data distribution.
+A central observation in our work is that the smoother reference need not be computed from an auxiliary model—which would require an additional network evaluation per step. Flow sampling is inherently a progressive denoising process: as time increases, the marginal distributions become sharper, while velocities at earlier timesteps correspond to smoother marginals (equation
+7
+). Consequently, past velocities already supply the “smoother” reference needed for guidance. By reusing them, we obtain an effective guidance direction
+without any extra model evaluations
+. This makes Momentum Guidance compatible with existing conditional pipelines, including those using CFG, while preserving their original inference cost and introducing no additional NFE.
+Motivated by this observation, we propose
+Momentum Guidance
+(MG), a simple inference-time procedure that maintains an exponential moving average of past velocities—analogous to momentum in optimization
+[
+61
+,
+29
+,
+47
+,
+6
+]
+. Let
+(
+𝒁
+t
+,
+𝒎
+t
+)
+({\bm{Z}}_{t},{\bm{m}}_{t})
+denote the latent state and the momentum. We initialize
+𝒁
+0
+∼
+𝒩
+⁡
+(
+0
+,
+𝑰
+)
+{\bm{Z}}_{0}\sim\mathcal{N}(0,{\bm{I}})
+and set
+𝒎
+t
+0
+=
+𝒗
+θ
+​
+(
+𝒁
+0
+,
+t
+0
+)
+{\bm{m}}_{t_{0}}={\bm{v}}_{\theta}(\bm{Z}_{0},t_{0})
+. At each timestep
+t
+i
+t_{i}
+, given the current velocity
+𝒗
+t
+i
+≔
+𝒗
+⁡
+(
+𝒁
+t
+i
+,
+t
+i
+)
+{\bm{v}}_{t_{i}}\coloneqq{\bm{v}}({\bm{Z}}_{t_{i}},t_{i})
+, the momentum is updated as
+𝒎
+t
+i
++
+1
+=
+(
+1
+−
+β
+)
+​
+𝒗
+t
+i
++
+β
+​
+𝒎
+t
+i
+,
+{\bm{m}}_{t_{i+1}}=(1-\beta)\,{\bm{v}}_{t_{i}}+\beta\,{\bm{m}}_{t_{i}},
+(12)
+where
+β
+\beta
+controls the decay of historical velocities. We then update the sample using an extrapolated velocity:
+𝒁
+t
+i
++
+1
+=
+𝒁
+t
+i
++
+Δ
+​
+t
+​
+[
+𝒗
+t
+i
++
+α
+⁡
+(
+𝒗
+t
+i
+−
+𝒎
+t
+i
+)
+]
+,
+{\bm{Z}}_{t_{i+1}}={\bm{Z}}_{t_{i}}+\Delta t\Big[\,{\bm{v}}_{t_{i}}+\alpha\big({\bm{v}}_{t_{i}}-{\bm{m}}_{t_{i}}\big)\Big],
+(13)
+with
+Δ
+​
+t
+=
+t
+i
++
+1
+−
+t
+i
+\Delta t=t_{i+1}-t_{i}
+and
+α
+>
+0
+\alpha>0
+governing the extrapolation strength toward sharper distributions. The final sample is obtained at time
+t
+N
+=
+1
+t_{N}=1
+.
+Memory and computation overhead.
+Momentum Guidance introduces no additional network evaluations: at each timestep it reuses the already-computed velocity, so the number of function evaluations remains identical to that of the underlying sampler or any CFG-equipped pipeline. The only extra state maintained during inference is the momentum vector
+𝒎
+t
+i
+{\bm{m}}_{t_{i}}
+, whose dimensionality matches that of the flow state
+𝒁
+t
+i
+{\bm{Z}}_{t_{i}}
+. Because flow states are typically far smaller than model parameters or intermediate activations, the memory cost of storing
+𝒎
+t
+i
+{\bm{m}}_{t_{i}}
+is negligible in practice. For instance, ImageNet-256 models
+[
+46
+]
+using an SD encoder
+[
+49
+]
+operate in a latent space of size
+32
+×
+32
+×
+4
+32\times 32\times 4
+, and high-resolution models such as FLUX.1-dev
+[
+35
+]
+use latents on the order of
+128
+×
+128
+×
+16
+128\times 128\times 16
+for
+1024
+2
+1024^{2}
+images—both orders of magnitude smaller than the underlying network parameters or their activations.
+Understanding Momentum Guidance.
+To illustrate the effect of momentum guidance, we examine the data estimate at each inference step,
+𝑿
+^
+1
+|
+t
+=
+𝔼
+⁡
+[
+𝑿
+1
+∣
+𝑿
+t
+=
+𝒙
+t
+]
+=
+𝒙
+t
++
+(
+1
+−
+t
+)
+​
+𝒗
+θ
+​
+(
+𝒙
+t
+,
+t
+)
+,
+\hat{\bm{X}}_{1\mid t}\!=\!\mathbb{E}\!\left[\bm{X}_{1}\!\mid\!\bm{X}_{t}=\bm{x}_{t}\right]\!=\!\bm{x}_{t}+(1-t)\,\bm{v}_{\theta}(\bm{x}_{t},t),
+(14)
+i.e., the conditional data mean implied by the learned velocity field. This quantity represents the model’s best estimate of the clean sample given the current noisy state
+𝒙
+t
+\bm{x}_{t}
+.
+In alternative parameterizations, the network directly predicts the clean data; recent works
+[
+38
+,
+12
+]
+show that data prediction and velocity prediction are equivalent up to a time-dependent weight during training. For our purpose, visualizing
+𝑿
+^
+1
+|
+t
+\hat{\bm{X}}_{1\mid t}
+offers an interpretable view of how the model transports a sample along the flow, and tracking its evolution highlights how momentum guidance modifies this trajectory.
+Figure
+2
+compares two sampling trajectories: the baseline Flux.1-dev sampler with
+CFG
+​
+ω
+=
+1.5
+\text{CFG}\;\omega=1.5
+and our momentum-guided sampler with
+α
+=
+0.6
+\alpha=0.6
+and
+β
+=
+0.8
+\beta=0.8
+. The first row presents the baseline data estimates
+𝑿
+^
+1
+|
+t
+Base
+\hat{\bm{X}}_{1\mid t}^{\text{Base}}
+along the trajectory.
+The second row shows the corresponding momentum-guided estimates
+𝑿
+^
+1
+|
+t
+MG
+\hat{\bm{X}}_{1\mid t}^{\text{MG}}
+, which reveal sharper structures and more stable color development throughout the denoising process.
+The third row visualizes the extrapolation term
+(
+𝒗
+t
+−
+𝒎
+t
+)
+(\bm{v}_{t}-\bm{m}_{t})
+, which is the extrapolation direction introduced by momentum; As in the figure, this term accentuates coarse object contours at early times and progressively enhances fine details such as petal edges and dew droplets as the flow approaches the data distribution.
+4
+Experiments
+Table 1
+:
+Comparison of CFG and our Momentum Guidance across different CFG scales
+w
+w
+at different NFEs
+w
+w
+Method
+NFE = 16 / 32 / 64
+FID-50K
+↓
+\downarrow
+IS
+↑
+\uparrow
+Precision
+↑
+\uparrow
+Recall
+↑
+\uparrow
+1.0
+w/o CFG
+7.76 / 5.57 / 4.75
+140.89 / 156.10 / 163.50
+0.70 / 0.72 / 0.72
+0.65 /
+0.67
+/
+0.67
+Ours
+4.46
+/
+3.58
+/
+3.26
+165.85
+/
+176.10
+/
+179.66
+0.73
+/
+0.74
+/
+0.74
+0.66
+/
+0.67
+/
+0.67
+1.2
+CFG
+3.26 / 2.20 / 1.89
+212.83 / 230.71 / 239.56
+0.78 / 0.79 / 0.79
+0.60 /
+0.62
+/
+0.62
+Ours
+2.00
+/
+1.71
+/
+1.60
+238.29
+/
+250.89
+/
+254.60
+0.80
+/
+0.81
+/
+0.81
+0.61
+/
+0.62
+/
+0.62
+1.4
+CFG
+2.38 / 2.04 / 2.03
+275.06 / 293.03 / 301.29
+0.83
+/
+0.84
+/
+0.84
+0.57 / 0.58 / 0.58
+Ours
+1.85
+/
+1.90
+/
+1.99
+288.65
+/
+300.71
+/
+306.02
+0.82 /
+0.84
+/
+0.84
+0.60
+/
+0.59
+/
+0.59
+1.6
+CFG
+3.13 / 3.17 / 3.34
+325.55 / 340.88 / 348.87
+0.86
+/
+0.87
+/
+0.87
+0.52 / 0.54 / 0.54
+Ours
+2.62
+/
+2.89
+/
+3.17
+330.08
+/
+342.27
+/
+349.04
+0.85 / 0.85 / 0.85
+0.56
+/
+0.56
+/
+0.56
+1.8
+CFG
+4.48 / 4.76 / 4.99
+363.56
+/
+377.39
+/
+383.60
+0.89
+/
+0.89
+/
+0.89
+0.49 / 0.49 / 0.49
+Ours
+3.49
+/
+3.96
+/
+4.62
+353.77 / 370.72 / 382.04
+0.85 / 0.86 / 0.87
+0.54
+/
+0.53
+/
+0.51
+2.0
+CFG
+5.94 / 6.36 / 6.62
+392.50
+/
+403.22
+/
+408.68
+0.90
+/
+0.90
+/
+0.90
+0.45 / 0.46 / 0.46
+Ours
+4.62
+/
+5.27
+/
+6.08
+382.79 / 397.44 / 407.30
+0.87 / 0.88 / 0.89
+0.51
+/
+0.49
+/
+0.48
+We first evaluate the proposed momentum guidance on ImageNet
+[
+9
+]
+, where we perform a comprehensive ablation over guidance weights
+α
+\alpha
+, EMA decay values
+β
+\beta
+, and sampling budget NFEs. Across nearly all settings, incorporating momentum guidance yields clear reductions in FID and consistent improvements in sample quality, demonstrating that our method is robust under a wide range of hyperparameters. We further apply momentum guidance to large-scale text-to-image models, including FLUX.1-dev
+[
+35
+]
+and Stable Diffusion 3
+[
+11
+]
+. In both systems, momentum guidance enhances visual fidelity and structural coherence. Complete quantitative results and extended qualitative comparisons are provided in the Appendix.
+4.1
+Main results
+We evaluate Momentum Guidance on ImageNet at
+256
+×
+256
+256\times 256
+using the official Rectified Flow codebase
+[
+38
+]
+and an improved DiT-XL architecture
+[
+68
+]
+as our baseline. Details of model implementation and training are provided in the Appendix.
+Inference uses the standard Euler sampler with a uniformly discretized time grid. We additionally observe that using an unbiased version of the exponential moving average
+[
+29
+]
+and applying a mild normalization to the momentum yields tiny gains. Following findings in
+[
+33
+]
+, restricting guidance to a time interval also improves performance; on ImageNet we sweep over
+[
+0.1
+,
+0.6
+]
+[0.1,0.6]
+,
+[
+0.1
+,
+0.7
+]
+[0.1,0.7]
+,
+[
+0.2
+,
+0.6
+]
+[0.2,0.6]
+, and
+[
+0.0
+,
+1.0
+]
+[0.0,1.0]
+.
+When CFG is enabled, we treat the CFG-adjusted velocity as the new velocity estimate
+and keep CFG active at all timesteps. We report standard metrics, including Fréchet Inception Distance (FID)
+[
+15
+]
+, Inception Score (IS)
+[
+55
+]
+, and Precision/Recall (P/R)
+[
+53
+]
+.
+For every setting (different CFG scales and NFEs), we perform a grid search over
+α
+\alpha
+and
+β
+\beta
+using FID-10K, and then evaluate the top configurations with FID-50K. Table
+1
+shows that Momentum Guidance consistently improves FID across all sampling budgets and guidance strengths. The best result is obtained with CFG
+=
+1.2
+=1.2
+at
+64
+64
+NFEs, where our method achieves the strongest FID among all tested configurations. Importantly, Momentum Guidance does
+not
+degrade recall (diversity), in contrast to the monotonic recall drop observed when increasing CFG.
+Even without CFG, our method yields substantial improvements—on average a
+36.68
+%
+36.68\%
+reduction in FID—while also requiring only a
+single
+network evaluation per step, meaning the sampling budget is effectively half of the CFG baseline.
+We then compare our method with the CFG baseline on FLUX.1-dev and Stable Diffusion 3. For both models, we generate 3,200 images at
+1024
+×
+1024
+1024\times 1024
+resolution using prompts from the HPSv2 benchmark
+[
+65
+]
+. These image-prompt pairs are evaluated using the HPSv2.1 benchmark and the ImageReward Score
+[
+67
+]
+. Inference uses the standard Euler sampler with the default scaled timegrid. Due to compute constraints, we only grid search over
+α
+\alpha
+and
+β
+\beta
+, and apply our guidance with a normalized momentum at all timesteps without restricting it to an interval as in ImageNet. Table
+2
+and Table
+3
+show that across both FLUX.1-dev and SD3, MG shows consistent gains over vanilla CFG on HPSv2.1, while on ImageReward it improves performance in most configurations, with only minor drops at a few CFG values.
+Table 2
+:
+Results on SD3 with 28 sampling steps. Across all CFG scales, our method yields better HPSv2.1 and ImageReward scores compared to the baseline.
+Metrics
+Method
+CFG
+1
+2
+3
+4
+5
+6
+7
+HPSv2.1
+CFG
+22.87
+27.99
+29.38
+29.98
+30.22
+30.39
+30.41
+Ours
+27.37
+29.78
+30.34
+30.43
+30.62
+30.59
+30.56
+IR
+CFG
+-0.093
+0.801
+0.988
+1.059
+1.099
+1.117
+1.114
+Ours
+0.395
+0.926
+1.046
+1.088
+1.111
+1.118
+1.120
+Table 3
+:
+Results on Flux-dev with 50 sampling steps. Our method improves perceptual quality over different CFG.
+Metrics
+Method
+CFG
+1
+1.5
+2
+2.5
+3
+3.5
+4
+HPSv2.1
+CFG
+24.40
+29.33
+30.75
+31.09
+31.28
+31.40
+31.45
+Ours
+24.80
+29.90
+30.82
+31.13
+31.29
+31.41
+31.47
+IR
+CFG
+0.345
+0.912
+1.048
+1.075
+1.094
+1.117
+1.118
+Ours
+0.391
+0.935
+1.054
+1.077
+1.096
+1.115
+1.116
+4.2
+Ablations
+(a)
+NFE
+=
+16
+{\textit{NFE}}=16
+(b)
+NFE
+=
+32
+{\textit{NFE}}=32
+(c)
+NFE
+=
+64
+{\textit{NFE}}=64
+(d)
+NFE
+=
+16
+{\textit{NFE}}=16
+(e)
+NFE
+=
+32
+{\textit{NFE}}=32
+(f)
+NFE
+=
+64
+{\textit{NFE}}=64
+Figure 3
+:
+Ablation over CFG scale and NFE for ImageNet-256.
+Top row
+: FID as a function of classifier-free guidance (CFG) scale under three sampling budgets
+(
+NFE
+=
+16
+,
+32
+,
+64
+)
+(\textit{NFE}\!=\!16,32,64)
+. Solid curves denote the best Momentum Guidance configuration for each
+(
+CFG
+,
+NFE
+)
+(\text{CFG},\text{NFE})
+pair, while the shaded bands show the performance of other MG hyperparameter settings
+(
+α
+,
+β
+)
+(\alpha,\beta)
+. Across all combinations, MG consistently lowers FID compared with vanilla CFG, with especially large improvements at low NFE (e.g., NFE = 16), where both the best curves and the shaded variants exhibit sizable reductions.
+Bottom row
+: Precision–Recall (PR) trade-off curves plotted as Pareto fronts parameterized by recall (RC). Although increasing CFG generally reduces recall for the baseline, MG shifts the curve upward and to the right: at low CFG, MG improves precision while matching or even increasing recall, and at higher CFG, MG mitigates the collapse in recall that typically accompanies aggressive guidance. Overall, MG delivers a better PR–RC Pareto front across all NFE settings.
+Figure 4
+:
+Qualitative comparison across varying CFG scales on SD3. Momentum Guidance consistently improves the generated images across a wide range of CFG scales. While the baseline exhibits fluctuations in sharpness, texture quality, and structural stability as CFG increases, our method maintains crisp details, balanced contrast, and robust scene fidelity. This demonstrates that our approach delivers reliable, high-quality outputs under both strong or weak guidance settings.
+Ablation on CFG scale and NFE.
+Figure
+3
+summarizes how Momentum Guidance behaves across guidance scales and sampling budgets. For each config
+(
+CFG
+,
+NFE
+)
+(\text{CFG},\text{NFE})
+, we show the best-performing MG result, along with a shaded envelope capturing other hyperparameter settings
+(
+α
+,
+β
+)
+(\alpha,\beta)
+.
+Across all NFE levels, the FID curves follow the U-shape seen in guidance-based methods, but MG consistently lowers the entire curve relative to vanilla CFG. The gains are especially pronounced at low compute budgets (e.g.,
+NFE
+=
+16
+\text{NFE}\!=\!16
+), where both the best curves and most shaded variants yield substantial reductions.
+On the corresponding Precision-Recall fronts, MG produces stronger trade-offs: at low CFG, MG improves precision while maintaining or increasing recall; at higher CFG, it mitigates the recall collapse typical of aggressive guidance. Overall, MG induces a better Pareto front across sampling budgets.
+(a)
+NFE
+=
+16
+{\textit{NFE}}=16
+(b)
+NFE
+=
+32
+{\textit{NFE}}=32
+(c)
+NFE
+=
+64
+{\textit{NFE}}=64
+Figure 5
+:
+FID-10K over Momentum Guidance hyperparameters
+(
+α
+,
+β
+)
+(\alpha,\beta)
+at
+CFG
+=
+1.2
+\text{CFG}=1.2
+.
+Across nearly all settings of
+α
+\alpha
+and
+β
+\beta
+, Momentum Guidance improves FID relative to the
+α
+=
+0
+\alpha=0
+baseline, demonstrating the robustness of our method.
+Ablation on
+α
+\alpha
+and
+β
+\beta
+.
+Figure
+5
+shows how FID-10K varies with the guidance strength
+α
+\alpha
+and EMA decay
+β
+\beta
+at
+CFG
+=
+1.2
+\text{CFG}\!=\!1.2
+on ImageNet-256. The ridge at
+α
+=
+0
+\alpha=0
+reflects the vanilla CFG baseline.
+Across
+NFE
+=
+16
+,
+32
+,
+64
+\text{NFE}\!=\!16,32,64
+, the landscapes share the same pattern: increasing
+α
+\alpha
+initially reduces FID, forming a clear valley, while overly large
+α
+\alpha
+or large
+β
+\beta
+leads to over-correction and degraded quality. In contrast, moderate
+α
+\alpha
+combined with small-to-medium
+β
+\beta
+consistently yields the lowest FIDs.
+Overall, the best region improves FID from roughly
+6.0
+→
+4.50
+6.0\to 4.50
+at
+NFE
+=
+16
+\text{NFE}\!=\!16
+, and achieves about
+4.20
+4.20
+and
+4.10
+4.10
+at
+NFE
+=
+32
+\text{NFE}\!=\!32
+and
+64
+64
+, respectively. These results indicate that Momentum Guidance is robust, with a stable low-FID valley across different sampling budgets.
+4.3
+Qualitative analysis
+Figure
+1
+shows a comparison between baseline sampling without CFG and our Momentum Guidance applied to the same SD3 backbone, also without CFG. The baseline images often appear blurry and lack coherent structure without the sharpening effect of CFG. In contrast, our method produces higher image quality and clearer local structures while retaining the original scene layout. Figure
+4
+compares the SD3 baseline and our method across different CFG scales. While the baseline becomes blurry at low CFG and overly saturated at high CFG, our method provides higher image quality, showing that MG reliably improves image quality across a wide range of guidance strengths.
+5
+Related Work
+Guidance Methods
+Classifier-guided diffusion
+[
+10
+]
+and classifier-free guidance (CFG)
+[
+18
+,
+42
+,
+52
+]
+established guidance as the standard mechanism for controlling fidelity and diversity in diffusion models
+[
+49
+]
+. Large-scale text-to-image systems further rely on guidance to enable controllable synthesis through structural conditioning and attention manipulation
+[
+69
+,
+14
+,
+4
+]
+. Guidance consistently improves perceptual quality
+[
+20
+,
+33
+,
+8
+]
+, motivating efforts toward more efficient variants, including distillation-based acceleration
+[
+41
+,
+56
+]
+and schedule- or manifold-aware rules
+[
+33
+,
+8
+]
+.
+Recent developments fall into two categories: training-free approaches and training-based or auxiliary-model approaches. Training-free methods modify the sampling rule of a pretrained model without additional training. Examples include PAG
+[
+1
+]
+, SAG
+[
+20
+]
+, SEG
+[
+21
+]
+, interval-limited guidance
+[
+33
+]
+, and diversity-oriented schemes such as CADS
+[
+50
+]
+. Another line reformulates CFG using geometric or projected updates, including APG
+[
+51
+]
+, ADG
+[
+25
+]
+, TCFG
+[
+32
+]
+, ReCFG
+[
+66
+]
+, and FBG
+[
+31
+]
+. These methods remain plug-and-play while improving robustness and controllability, although most still inherit the fundamental coupling between condition strength and perceptual quality.
+Training-based or auxiliary-model approaches introduce additional learned components. Autoguidance uses a weaker checkpoint of the same model as an auxiliary guide
+[
+27
+]
+, and personalization guidance enhances the editability of subject-specific models
+[
+45
+]
+. FKCs
+[
+58
+]
+provide a Sequential Monte Carlo–based corrector that strengthens classifier-free guidance. These methods offer more powerful guidance mechanisms but require extra training, auxiliary networks, or more complex inference pipelines.
+6
+Conclusions and Limitations
+We introduced
+Momentum Guidance
+, a plug-and-play method that extracts guidance directly from a model’s ODE trajectories at inference. It incurs no extra model evaluations, and improves FID both on its own and when combined with CFG. Experiments on ImageNet-256, SD3, and FLUX.1-dev show consistent gains in fidelity and perceptual quality, while ablations confirm stable performance across hyperparameters and sampling budgets. Thanks to its simplicity, efficiency, and compatibility with existing guidance schemes, Momentum Guidance provides a practical improvement for flow-based generative models under different sampling settings.
+Limitations
+Although our method is compatible with most existing guidance techniques, their benefits can overlap. For instance, the largest gains appear relative to unguided sampling, while improvements on top of strong CFG baselines are relatively less pronounced. Limited computational resources also prevented extensive hyperparameter tuning, so the performance is not fully optimized.
+References
+[1]
+D. Ahn, H. Cho, J. Min, W. Jang, J. Kim, S. Kim, H. H. Park, K. H. Jin, and S. Kim
+(2024)
+Self-rectifying diffusion sampling with perturbed-attention guidance
+.
+In
+European Conference on Computer Vision
+,
+pp. 1–17
+.
+Cited by:
+§5
+.
+[2]
+M. S. Albergo, N. M. Boffi, and E. Vanden-Eijnden
+(2023)
+Stochastic interpolants: a unifying framework for flows and diffusions
+.
+arXiv preprint arXiv:2303.08797
+.
+Cited by:
+§1
+.
+[3]
+G. Biroli, T. Bonnaire, V. De Bortoli, and M. Mézard
+(2024)
+Dynamical regimes of diffusion models
+.
+Nature Communications
+15
+(
+1
+),
+pp. 9957
+.
+Cited by:
+§1
+.
+[4]
+P. Cao, F. Zhou, Q. Song, and L. Yang
+(2024)
+Controllable generation with text-to-image diffusion models: a survey
+.
+arXiv preprint arXiv:2403.04279
+.
+Cited by:
+§5
+.
+[5]
+S. Cao, H. Chen, P. Chen, Y. Cheng, Y. Cui, X. Deng, Y. Dong, K. Gong, T. Gu, X. Gu,
+et al.
+(2025)
+HunyuanImage 3.0 technical report
+.
+arXiv preprint arXiv:2509.23951
+.
+Cited by:
+§1
+.
+[6]
+L. Chen, J. Li, K. Liang, B. Su, C. Xie, N. W. Pierse, C. Liang, N. Lao, and Q. Liu
+(2025)
+Cautious weight decay
+.
+arXiv preprint arXiv:2510.12402
+.
+Cited by:
+§3
+.
+[7]
+Y. Chen, Z. Niu, Z. Ma, K. Deng, C. Wang, J. Zhao, K. Yu, and X. Chen
+(2024)
+F5-tts: a fairytaler that fakes fluent and faithful speech with flow matching
+.
+arXiv preprint arXiv:2410.06885
+.
+Cited by:
+§1
+.
+[8]
+H. Chung, J. Kim, G. Y. Park, H. Nam, and J. C. Ye
+(2024)
+Cfg++: manifold-constrained classifier free guidance for diffusion models
+.
+arXiv preprint arXiv:2406.08070
+.
+Cited by:
+§5
+,
+§9
+.
+[9]
+J. Deng, W. Dong, R. Socher, L. Li, K. Li, and L. Fei-Fei
+(2009)
+Imagenet: a large-scale hierarchical image database
+.
+In
+2009 IEEE conference on computer vision and pattern recognition
+,
+pp. 248–255
+.
+Cited by:
+§1
+,
+§4
+.
+[10]
+P. Dhariwal and A. Nichol
+(2021)
+Diffusion models beat gans on image synthesis
+.
+Advances in neural information processing systems
+34
+,
+pp. 8780–8794
+.
+Cited by:
+§2.2
+,
+§5
+,
+§8.1
+.
+[11]
+P. Esser, S. Kulal, A. Blattmann, R. Entezari, J. Müller, H. Saini, Y. Levi, D. Lorenz, A. Sauer, F. Boesel,
+et al.
+(2024)
+Scaling rectified flow transformers for high-resolution image synthesis
+.
+In
+Forty-first international conference on machine learning
+,
+Cited by:
+Figure 1
+,
+Figure 1
+,
+§1
+,
+§1
+,
+§2.2
+,
+§4
+,
+§8.1
+.
+[12]
+R. Gao, E. Hoogeboom, J. Heek, V. D. Bortoli, K. P. Murphy, and T. Salimans
+(2024)
+Diffusion meets flow matching: two sides of the same coin
+.
+External Links:
+Link
+Cited by:
+§3
+.
+[13]
+W. Gao and M. Li
+(2024)
+How do flow matching models memorize and generalize in sample data subspaces?
+.
+arXiv preprint arXiv:2410.23594
+.
+Cited by:
+§1
+.
+[14]
+A. Hertz, R. Mokady, J. Tenenbaum, K. Aberman, Y. Pritch, and D. Cohen-Or
+(2022)
+Prompt-to-prompt image editing with cross attention control
+.
+arXiv preprint arXiv:2208.01626
+.
+Cited by:
+§5
+.
+[15]
+M. Heusel, H. Ramsauer, T. Unterthiner, B. Nessler, and S. Hochreiter
+(2017)
+Gans trained by a two time-scale update rule converge to a local nash equilibrium
+.
+Advances in neural information processing systems
+30
+.
+Cited by:
+§4.1
+.
+[16]
+G. Hinton, O. Vinyals, and J. Dean
+(2015)
+Distilling the knowledge in a neural network
+.
+arXiv preprint arXiv:1503.02531
+.
+Cited by:
+§1
+.
+[17]
+J. Ho, A. Jain, and P. Abbeel
+(2020)
+Denoising diffusion probabilistic models
+.
+Advances in neural information processing systems
+33
+,
+pp. 6840–6851
+.
+Cited by:
+§1
+.
+[18]
+J. Ho and T. Salimans
+(2022)
+Classifier-free diffusion guidance
+.
+arXiv preprint arXiv:2207.12598
+.
+Cited by:
+§1
+,
+§2.2
+,
+§5
+.
+[19]
+A. Holtzman, J. Buys, L. Du, M. Forbes, and Y. Choi
+(2019)
+The curious case of neural text degeneration
+.
+arXiv preprint arXiv:1904.09751
+.
+Cited by:
+§1
+.
+[20]
+S. Hong, G. Lee, W. Jang, and S. Kim
+(2023)
+Improving sample quality of diffusion models using self-attention guidance
+.
+In
+Proceedings of the IEEE/CVF International Conference on Computer Vision
+,
+pp. 7462–7471
+.
+Cited by:
+§5
+,
+§5
+.
+[21]
+S. Hong
+(2024)
+Smoothed energy guidance: guiding diffusion models with reduced energy curvature of attention
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 66743–66772
+.
+Cited by:
+§5
+.
+[22]
+X. Hu, R. Liao, K. Xu, B. Liu, Y. Li, E. Ie, H. Fei, and Q. Liu
+(2025)
+Improving rectified flow with boundary conditions
+.
+In
+Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV)
+,
+pp. 18177–18186
+.
+Cited by:
+§2.1
+.
+[23]
+X. Hu, K. Xu, B. Liu, Q. Liu, and H. Fei
+(2024)
+AMO sampler: enhancing text rendering with overshooting
+.
+arXiv preprint arXiv:2411.19415
+.
+Cited by:
+§2.1
+.
+[24]
+P. Izmailov, D. Podoprikhin, T. Garipov, D. Vetrov, and A. G. Wilson
+(2018)
+Averaging weights leads to wider optima and better generalization
+.
+arXiv preprint arXiv:1803.05407
+.
+Cited by:
+§1
+.
+[25]
+C. Jin, Z. Xiao, C. Liu, and Y. Gu
+(2025)
+Angle domain guidance: latent diffusion requires rotation rather than extrapolation
+.
+arXiv preprint arXiv:2506.11039
+.
+Cited by:
+§5
+,
+§9
+.
+[26]
+M. Kamb and S. Ganguli
+(2024)
+An analytic theory of creativity in convolutional diffusion models
+.
+arXiv preprint arXiv:2412.20292
+.
+Cited by:
+§1
+.
+[27]
+T. Karras, M. Aittala, T. Kynkäänniemi, J. Lehtinen, T. Aila, and S. Laine
+(2024)
+Guiding a diffusion model with a bad version of itself
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 52996–53021
+.
+Cited by:
+§1
+,
+§2.2
+,
+§2.2
+,
+§5
+,
+§7.1
+,
+§9
+.
+[28]
+T. Karras, M. Aittala, J. Lehtinen, J. Hellsten, T. Aila, and S. Laine
+(2024)
+Analyzing and improving the training dynamics of diffusion models
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 24174–24184
+.
+Cited by:
+§1
+.
+[29]
+D. P. Kingma
+(2014)
+Adam: a method for stochastic optimization
+.
+arXiv preprint arXiv:1412.6980
+.
+Cited by:
+§3
+,
+§4.1
+.
+[30]
+W. Kong, Q. Tian, Z. Zhang, R. Min, Z. Dai, J. Zhou, J. Xiong, X. Li, B. Wu, J. Zhang,
+et al.
+(2024)
+Hunyuanvideo: a systematic framework for large video generative models
+.
+arXiv preprint arXiv:2412.03603
+.
+Cited by:
+§1
+.
+[31]
+F. Koulischer, F. Handke, J. Deleu, T. Demeester, and L. Ambrogioni
+(2025)
+Feedback guidance of diffusion models
+.
+arXiv preprint arXiv:2506.06085
+.
+Cited by:
+§5
+.
+[32]
+M. Kwon, J. Jeong, Y. T. Hsiao, Y. Uh,
+et al.
+(2025)
+TCFG: tangential damping classifier-free guidance
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 2620–2629
+.
+Cited by:
+§5
+.
+[33]
+T. Kynkäänniemi, M. Aittala, T. Karras, S. Laine, T. Aila, and J. Lehtinen
+(2024)
+Applying guidance in a limited interval improves sample and distribution quality in diffusion models
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 122458–122483
+.
+Cited by:
+§2.2
+,
+§4.1
+,
+§5
+,
+§5
+,
+§7.2
+,
+Table 4
+,
+Table 4
+.
+[34]
+Q. L, R. L, B. L, and X. H
+(2024)
+PyTorch rectifiedflow
+.
+External Links:
+Link
+Cited by:
+§2.1
+.
+[35]
+B. F. Labs
+(2024)
+FLUX
+.
+Note:
+https://github.com/black-forest-labs/flux
+Cited by:
+§1
+,
+§1
+,
+§1
+,
+§2.2
+,
+§3
+,
+§4
+,
+§9
+.
+[36]
+Y. Lipman, R. T. Chen, H. Ben-Hamu, M. Nickel, and M. Le
+(2022)
+Flow matching for generative modeling
+.
+arXiv preprint arXiv:2210.02747
+.
+Cited by:
+§1
+.
+[37]
+Q. Liu
+(2022)
+Rectified flow: a marginal preserving approach to optimal transport
+.
+arXiv preprint arXiv:2209.14577
+.
+Cited by:
+§1
+,
+§2.1
+,
+§2.1
+.
+[38]
+Q. Liu
+(2025)
+Let us flow together
+.
+Dr. Qiang Liu’s Website
+.
+Note:
+https://rectifiedflow.github.io/
+Cited by:
+§2.1
+,
+§3
+,
+§4.1
+,
+§8.1
+.
+[39]
+X. Liu, C. Gong, and Q. Liu
+(2022)
+Flow straight and fast: learning to generate and transfer data with rectified flow
+.
+arXiv preprint arXiv:2209.03003
+.
+Cited by:
+§1
+,
+§2.1
+.
+[40]
+S. Mehta, R. Tu, J. Beskow, É. Székely, and G. E. Henter
+(2024)
+Matcha-TTS: a fast TTS architecture with conditional flow matching
+.
+In
+Proc. ICASSP
+,
+Cited by:
+§1
+.
+[41]
+C. Meng, R. Rombach, R. Gao, D. Kingma, S. Ermon, J. Ho, and T. Salimans
+(2023)
+On distillation of guided diffusion models
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 14297–14306
+.
+Cited by:
+§5
+.
+[42]
+A. Nichol, P. Dhariwal, A. Ramesh, P. Shyam, P. Mishkin, B. McGrew, I. Sutskever, and M. Chen
+(2021)
+Glide: towards photorealistic image generation and editing with text-guided diffusion models
+.
+arXiv preprint arXiv:2112.10741
+.
+Cited by:
+§5
+.
+[43]
+A. Q. Nichol and P. Dhariwal
+(2021)
+Improved denoising diffusion probabilistic models
+.
+In
+International conference on machine learning
+,
+pp. 8162–8171
+.
+Cited by:
+§1
+.
+[44]
+P. Papalampidi, O. Wiles, I. Ktena, A. Shtedritski, E. Bugliarello, I. Kajic, I. Albuquerque, and A. Nematzadeh
+(2025)
+Dynamic classifier-free diffusion guidance via online feedback
+.
+arXiv preprint arXiv:2509.16131
+.
+Cited by:
+§2.2
+.
+[45]
+S. Park, S. Choi, H. Park, and S. Yun
+(2025)
+Steering guidance for personalized text-to-image diffusion models
+.
+In
+Proceedings of the IEEE/CVF International Conference on Computer Vision
+,
+pp. 15907–15916
+.
+Cited by:
+§5
+.
+[46]
+W. Peebles and S. Xie
+(2023)
+Scalable diffusion models with transformers
+.
+In
+Proceedings of the IEEE/CVF international conference on computer vision
+,
+pp. 4195–4205
+.
+Cited by:
+§3
+.
+[47]
+B. Peng, J. Quesnelle, and D. P. Kingma
+(2024)
+Decoupled momentum optimization
+.
+arXiv preprint arXiv:2411.19870
+.
+Cited by:
+§3
+.
+[48]
+A. Polyak, A. Zohar, A. Brown, A. Tjandra, A. Sinha, A. Lee, A. Vyas, B. Shi, C. Ma, C. Chuang,
+et al.
+(2024)
+Movie gen: a cast of media foundation models
+.
+arXiv preprint arXiv:2410.13720
+.
+Cited by:
+§1
+.
+[49]
+R. Rombach, A. Blattmann, D. Lorenz, P. Esser, and B. Ommer
+(2022)
+High-resolution image synthesis with latent diffusion models
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 10684–10695
+.
+Cited by:
+§1
+,
+§3
+,
+§5
+.
+[50]
+S. Sadat, J. Buhmann, D. Bradley, O. Hilliges, and R. M. Weber
+(2023)
+CADS: unleashing the diversity of diffusion models through condition-annealed sampling
+.
+arXiv preprint arXiv:2310.17347
+.
+Cited by:
+§2.2
+,
+§5
+.
+[51]
+S. Sadat, O. Hilliges, and R. M. Weber
+(2024)
+Eliminating oversaturation and artifacts of high guidance scales in diffusion models
+.
+In
+The Thirteenth International Conference on Learning Representations
+,
+Cited by:
+§5
+.
+[52]
+C. Saharia, W. Chan, S. Saxena, L. Li, J. Whang, E. L. Denton, K. Ghasemipour, R. Gontijo Lopes, B. Karagol Ayan, T. Salimans,
+et al.
+(2022)
+Photorealistic text-to-image diffusion models with deep language understanding
+.
+Advances in neural information processing systems
+35
+,
+pp. 36479–36494
+.
+Cited by:
+§5
+.
+[53]
+M. S. Sajjadi, O. Bachem, M. Lucic, O. Bousquet, and S. Gelly
+(2018)
+Assessing generative models via precision and recall
+.
+Advances in neural information processing systems
+31
+.
+Cited by:
+§4.1
+.
+[54]
+M. S. Sajjadi, B. Scholkopf, and M. Hirsch
+(2017)
+Enhancenet: single image super-resolution through automated texture synthesis
+.
+In
+Proceedings of the IEEE international conference on computer vision
+,
+pp. 4491–4500
+.
+Cited by:
+§1
+.
+[55]
+T. Salimans, I. Goodfellow, W. Zaremba, V. Cheung, A. Radford, and X. Chen
+(2016)
+Improved techniques for training gans
+.
+Advances in neural information processing systems
+29
+.
+Cited by:
+§4.1
+.
+[56]
+A. Sauer, D. Lorenz, A. Blattmann, and R. Rombach
+(2024)
+Adversarial diffusion distillation
+.
+In
+European Conference on Computer Vision
+,
+pp. 87–103
+.
+Cited by:
+§5
+.
+[57]
+C. Scarvelis, H. S. d. O. Borde, and J. Solomon
+(2023)
+Closed-form diffusion models
+.
+arXiv preprint arXiv:2310.12395
+.
+Cited by:
+§1
+.
+[58]
+M. Skreta, T. Akhound-Sadegh, V. Ohanesian, R. Bondesan, A. Aspuru-Guzik, A. Doucet, R. Brekelmans, A. Tong, and K. Neklyudov
+(2025)
+Feynman-kac correctors in diffusion: annealing, guidance, and product of experts
+.
+arXiv preprint arXiv:2503.02819
+.
+Cited by:
+§5
+.
+[59]
+Y. Song and S. Ermon
+(2019)
+Generative modeling by estimating gradients of the data distribution
+.
+Advances in neural information processing systems
+32
+.
+Cited by:
+§1
+.
+[60]
+Y. Song, J. Sohl-Dickstein, D. P. Kingma, A. Kumar, S. Ermon, and B. Poole
+(2020)
+Score-based generative modeling through stochastic differential equations
+.
+arXiv preprint arXiv:2011.13456
+.
+Cited by:
+§1
+.
+[61]
+I. Sutskever, J. Martens, G. Dahl, and G. Hinton
+(2013)
+On the importance of initialization and momentum in deep learning
+.
+In
+International conference on machine learning
+,
+pp. 1139–1147
+.
+Cited by:
+§3
+.
+[62]
+T. Wan, A. Wang, B. Ai, B. Wen, C. Mao, C. Xie, D. Chen, F. Yu, H. Zhao, J. Yang, J. Zeng, J. Wang, J. Zhang, J. Zhou, J. Wang, J. Chen, K. Zhu, K. Zhao, K. Yan, L. Huang, M. Feng, N. Zhang, P. Li, P. Wu, R. Chu, R. Feng, S. Zhang, S. Sun, T. Fang, T. Wang, T. Gui, T. Weng, T. Shen, W. Lin, W. Wang, W. Wang, W. Zhou, W. Wang, W. Shen, W. Yu, X. Shi, X. Huang, X. Xu, Y. Kou, Y. Lv, Y. Li, Y. Liu, Y. Wang, Y. Zhang, Y. Huang, Y. Li, Y. Wu, Y. Liu, Y. Pan, Y. Zheng, Y. Hong, Y. Shi, Y. Feng, Z. Jiang, Z. Han, Z. Wu, and Z. Liu
+(2025)
+Wan: open and advanced large-scale video generative models
+.
+arXiv preprint arXiv:2503.20314
+.
+Cited by:
+§1
+.
+[63]
+J. Whang, M. Delbracio, H. Talebi, C. Saharia, A. G. Dimakis, and P. Milanfar
+(2022)
+Deblurring via stochastic refinement
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 16293–16303
+.
+Cited by:
+§1
+.
+[64]
+C. Wu, J. Li, J. Zhou, J. Lin, K. Gao, K. Yan, S. Yin, S. Bai, X. Xu, Y. Chen, Y. Chen, Z. Tang, Z. Zhang, Z. Wang, A. Yang, B. Yu, C. Cheng, D. Liu, D. Li, H. Zhang, H. Meng, H. Wei, J. Ni, K. Chen, K. Cao, L. Peng, L. Qu, M. Wu, P. Wang, S. Yu, T. Wen, W. Feng, X. Xu, Y. Wang, Y. Zhang, Y. Zhu, Y. Wu, Y. Cai, and Z. Liu
+(2025)
+Qwen-image technical report
+.
+External Links:
+2508.02324
+,
+Link
+Cited by:
+§1
+,
+§1
+.
+[65]
+X. Wu, Y. Hao, K. Sun, Y. Chen, F. Zhu, R. Zhao, and H. Li
+(2023)
+Human preference score v2: a solid benchmark for evaluating human preferences of text-to-image synthesis
+.
+arXiv preprint arXiv:2306.09341
+.
+Cited by:
+§4.1
+.
+[66]
+M. Xia, N. Xue, Y. Shen, R. Yi, T. Gong, and Y. Liu
+(2025)
+Rectified diffusion guidance for conditional generation
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 13371–13380
+.
+Cited by:
+§5
+.
+[67]
+J. Xu, X. Liu, Y. Wu, Y. Tong, Q. Li, M. Ding, J. Tang, and Y. Dong
+(2023)
+Imagereward: learning and evaluating human preferences for text-to-image generation
+.
+Advances in Neural Information Processing Systems
+36
+,
+pp. 15903–15935
+.
+Cited by:
+§4.1
+.
+[68]
+J. Yao, B. Yang, and X. Wang
+(2025)
+Reconstruction vs. generation: taming optimization dilemma in latent diffusion models
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 15703–15712
+.
+Cited by:
+§4.1
+.
+[69]
+L. Zhang, A. Rao, and M. Agrawala
+(2023)
+Adding conditional control to text-to-image diffusion models
+.
+In
+Proceedings of the IEEE/CVF international conference on computer vision
+,
+pp. 3836–3847
+.
+Cited by:
+§5
+.
+[70]
+B. Zheng, N. Ma, S. Tong, and S. Xie
+(2025)
+Diffusion transformers with representation autoencoders
+.
+arXiv preprint arXiv:2510.11690
+.
+Cited by:
+§9
+.
+Supplementary Material
+7
+Momentum Guidance with CFG
+7.1
+CFG-Adjusted Velocity
+In the setting without CFG, our method already provides substantial improvements, as shown in Table
+1
+.
+When CFG is enabled, we treat the CFG-adjusted velocity as the flow velocity used by Algorithm
+1
+.
+This subsection gives the precise definition.
+Given a conditional velocity
+𝒗
+θ
+​
+(
+𝒙
+,
+t
+,
+c
+)
+{\bm{v}}_{\theta}({\bm{x}},t,c)
+and an unconditional branch
+𝒗
+θ
+​
+(
+𝒙
+,
+t
+,
+∅
+)
+{\bm{v}}_{\theta}({\bm{x}},t,\emptyset)
+, define
+v
+c
+:=
+𝒗
+θ
+​
+(
+𝒙
+,
+t
+,
+c
+)
+,
+v
+u
+:=
+𝒗
+θ
+​
+(
+𝒙
+,
+t
+,
+∅
+)
+.
+v_{c}:={\bm{v}}_{\theta}({\bm{x}},t,c),\qquad v_{u}:={\bm{v}}_{\theta}({\bm{x}},t,\emptyset).
+The CFG-augmented velocity is
+𝒗
+θ
+CFG
+​
+(
+𝒙
+,
+t
+,
+c
+,
+ω
+)
+≜
+{
+v
+c
+,
+ω
+=
+1
+,
+ω
+​
+v
+c
++
+(
+1
+−
+ω
+)
+​
+v
+u
+,
+ω
+>
+1
+,
+{\bm{v}}_{\theta}^{\mathrm{CFG}}({\bm{x}},t,c;\omega)\triangleq\begin{cases}v_{c},&\omega=1,\\[1.72218pt]
+\omega\,v_{c}+(1-\omega)\,v_{u},&\omega>1,\end{cases}
+where
+ω
+≥
+1
+\omega\geq 1
+denotes the CFG scale (with
+ω
+=
+1
+\omega=1
+corresponding to no guidance).
+Algorithm
+2
+shows how MG operates when the flow velocity is redefined in this way.
+More broadly, autoguidance
+[
+27
+]
+can also yield an alternative velocity formulation that is compatible with MG. While this direction is technically natural, a thorough exploration would require additional compute and space that fall outside the present scope. We therefore leave a systematic study of this broader design space to future work.
+Table 4
+:
+Effect of applying a CFG interval schedule
+[
+33
+]
+on ImageNet-256. In this setting, CFG is activated only on the sub-interval
+[
+0.125
+,
+1.0
+]
+[0.125,1.0]
+of the flow trajectory, while it remains disabled for
+t
+<
+0.125
+t<0.125
+. We compare the baseline CFG-interval Euler sampler with the CFG-interval variant combined with Momentum Guidance, parameterized by
+(
+α
+,
+β
+)
+(\alpha,\beta)
+. In the configurations below, MG is applied on the
+full
+flow interval
+[
+0
+,
+1
+]
+[0,1]
+.
+CFG
+ω
+\omega
+NFE
+Method
+(
+α
+,
+β
+)
+(\alpha,\beta)
+FID-50K
+↓
+\downarrow
+IS
+↑
+\uparrow
+Precision
+↑
+\uparrow
+Recall
+↑
+\uparrow
+1.4
+16
+CFG
+−
+-
+2.380
+275.06
+0.827
+0.568
+CFG interval
+−
+-
+2.352
+249.85
+0.791
+0.612
+CFG interval + MG
+(
+0.8
+,
+0.0
+)
+(0.8,0.0)
+1.553
+268.03
+0.799
+0.636
+32
+CFG
+−
+-
+2.039
+293.03
+0.839
+0.581
+CFG interval
+−
+-
+1.642
+264.75
+0.800
+0.626
+CFG interval + MG
+(
+0.6
+,
+0.2
+)
+(0.6,0.2)
+1.408
+274.99
+0.801
+0.633
+64
+CFG
+−
+-
+2.028
+301.29
+0.842
+0.584
+CFG interval
+−
+-
+1.462
+271.34
+0.803
+0.625
+CFG interval + MG
+(
+0.6
+,
+0.4
+)
+(0.6,0.4)
+1.380
+277.73
+0.802
+0.630
+1.6
+16
+CFG
+−
+-
+3.128
+325.55
+0.862
+0.524
+CFG interval
+−
+-
+1.993
+291.80
+0.819
+0.594
+CFG interval + MG
+(
+0.6
+,
+0.2
+)
+(0.6,0.2)
+1.638
+306.57
+0.822
+0.611
+32
+CFG
+−
+-
+3.170
+340.88
+0.868
+0.539
+CFG interval
+−
+-
+1.639
+305.82
+0.822
+0.605
+CFG interval + MG
+(
+0.2
+,
+0.8
+)
+(0.2,0.8)
+1.581
+308.74
+0.822
+0.613
+64
+CFG
+−
+-
+3.342
+348.87
+0.872
+0.538
+CFG interval
+−
+-
+1.612
+311.17
+0.824
+0.608
+CFG interval + MG
+(
+0.2
+,
+0.4
+)
+(0.2,0.4)
+1.618
+314.33
+0.824
+0.613
+7.2
+CFG Interval
+CFG interval
+[
+33
+]
+restricts classifier-free guidance to a designated portion of the flow trajectory, meaning that CFG is activated only at specific flow times. This scheduling reduces the loss of sample diversity that strong CFG typically introduces.
+Although our method already achieves consistent gains without any CFG schedule (see Table
+1
+),
+the results in Table
+4
+demonstrate that MG remains robust and continues to provide additional improvements under interval-based guidance.
+With CFG interval
+[
+0.125
+,
+1
+]
+[0.125,1]
+and
+ω
+=
+1.4
+\omega\!=\!1.4
+, a configuration that preserves diversity, MG achieves a large improvement and attains
+FID
+=
+1.55
+\text{FID}\!=\!1.55
+using only
+16
+NFEs.
+With CFG interval
+[
+0.125
+,
+1
+]
+[0.125,1]
+and
+ω
+=
+1.6
+\omega\!=\!1.6
+, which slightly trades FID for higher IS, MG again delivers consistent improvements over the baseline across NFE budgets.
+Incorporating CFG interval generally improves diversity and FID, but this benefit typically comes at the cost of a modest reduction in IS.
+For this reason, and to keep the main comparison focused on settings without additional scheduling heuristics, we place the CFG interval-based results in the appendix rather than the main text.
+Algorithm 2
+Momentum Guidance with CFG
+1:
+Conditional flow model
+𝒗
+θ
+​
+(
+⋅
+,
+t
+,
+c
+)
+{\bm{v}}_{\theta}(\cdot,t,c)
+; unconditional branch
+𝒗
+θ
+​
+(
+⋅
+,
+t
+,
+∅
+)
+{\bm{v}}_{\theta}(\cdot,t,\emptyset)
+; condition
+c
+c
+; time grid
+{
+t
+i
+}
+i
+=
+0
+N
+\{t_{i}\}_{i=0}^{N}
+; EMA
+β
+∈
+[
+0
+,
+1
+)
+\beta\in[0,1)
+; momentum
+α
+≥
+0
+\alpha\geq 0
+; CFG
+ω
+≥
+1
+\omega\geq 1
+; CFG velocity
+𝒗
+θ
+CFG
+​
+(
+𝒙
+,
+t
+,
+c
+,
+ω
+)
+{\bm{v}}_{\theta}^{\mathrm{CFG}}({\bm{x}},t,c;\omega)
+2:
+Sample
+𝒁
+t
+0
+∼
+𝒩
+⁡
+(
+0
+,
+𝑰
+)
+{\bm{Z}}_{t_{0}}\sim\mathcal{N}(0,{\bm{I}})
+3:
+Initialize momentum
+𝒎
+t
+0
+←
+𝒗
+θ
+CFG
+​
+(
+𝒁
+t
+0
+,
+t
+0
+,
+c
+,
+ω
+)
+{\bm{m}}_{t_{0}}\leftarrow{\bm{v}}_{\theta}^{\mathrm{CFG}}({\bm{Z}}_{t_{0}},t_{0},c;\omega)
+4:
+for
+i
+=
+0
+i=0
+to
+N
+−
+1
+N-1
+do
+5:
+Δ
+​
+t
+←
+t
+i
++
+1
+−
+t
+i
+\Delta t\leftarrow t_{i+1}-t_{i}
+6:
+𝒗
+t
+i
+←
+𝒗
+θ
+CFG
+​
+(
+𝒁
+t
+i
+,
+t
+i
+,
+c
+,
+ω
+)
+{\bm{v}}_{t_{i}}\leftarrow{\bm{v}}_{\theta}^{\mathrm{CFG}}({\bm{Z}}_{t_{i}},t_{i},c;\omega)
+7:
+𝒁
+t
+i
++
+1
+←
+𝒁
+t
+i
++
+Δ
+​
+t
+​
+[
+𝒗
+t
+i
++
+α
+⁡
+(
+𝒗
+t
+i
+−
+𝒎
+t
+i
+)
+]
+{\bm{Z}}_{t_{i+1}}\leftarrow{\bm{Z}}_{t_{i}}+\Delta t\Big[\,{\bm{v}}_{t_{i}}+\hbox{\pagecolor{orange!12}\text{$\alpha({\bm{v}}_{t_{i}}-\,{\bm{m}}_{t_{i}})$}}\Big]
+8:
+𝒎
+t
+i
++
+1
+←
+(
+1
+−
+β
+)
+​
+𝒗
+t
+i
++
+β
+​
+𝒎
+t
+i
+{\bm{m}}_{t_{i+1}}\leftarrow(1-\beta)\,{\bm{v}}_{t_{i}}+\beta\,{\bm{m}}_{t_{i}}
+⊳
+\triangleright
+EMA
+9:
+end
+for
+10:
+return
+𝒁
+t
+N
+{\bm{Z}}_{t_{N}}
+(a)
+2D trajectories generated by the baseline Euler sampler with CFG.
+(b)
+2D trajectories generated by Momentum Guidance with CFG.
+(c)
+Velocity-field view of the momentum guidance mechanism.
+(a)
+ImageNet class 248:
+Eskimo dog, husky
+(b)
+ImageNet class 277:
+red fox, Vulpes vulpes
+Figure 7
+:
+Qualitative comparison of generated samples on ImageNet.
+We visualize samples of (a) class 248 and (b) class 277. The rows compare the baseline with a CFG of 1.5 and our Momentum Guidance applied on top of the same conditional model.
+(a)
+ImageNet class 817:
+sports car, sport car
+(b)
+ImageNet class 296:
+ice bear, polar bear, Ursus Maritimus, Thalarctos maritimus
+Figure 8
+:
+Qualitative comparison of generated samples on ImageNet.
+We visualize samples of (a) class 817 and (b) class 296. The rows compare the baseline with a CFG of 1.5 and our Momentum Guidance applied on top of the same conditional model.
+8
+Additional Implementation Details
+8.1
+Additional Details on ImageNet-256
+We evaluate Momentum Guidance on the improved DiT-XL model released by
+[
+38
+]
+.
+The XL configuration is trained for
+400,000
+400{,}000
+steps with a global batch size of
+2048
+2048
+, uses an EMA decay of
+0.9999
+0.9999
+, a learning rate of
+2
+×
+10
+−
+4
+2\times 10^{-4}
+, and adopts the logit-normal training-time distribution introduced in
+[
+11
+]
+.
+For FID, IS, and precision–recall metrics, we follow the evaluation protocol of
+[
+10
+]
+.
+When sweeping MG hyperparameters, we perform a grid search over
+(
+α
+,
+β
+)
+(\alpha,\beta)
+with step size
+0.2
+0.2
+. To ensure strict comparability across all configurations, we fix the initial noise batch for every run so that differences in reported metrics arise solely from algorithmic changes rather than stochastic variation in initialization.
+For Table
+1
+, we report the best FID obtained for each
+(
+α
+,
+β
+)
+(\alpha,\beta)
+and list the corresponding IS, precision, and recall measured at that optimum. Nevertheless, Figure
+3
+shows that
+most MG configurations (the shaded bands)
+consistently improve FID across a wide hyperparameter range. This demonstrates that MG is robust and only mildly sensitive to the choice of
+(
+α
+,
+β
+)
+(\alpha,\beta)
+.
+Despite this robustness, we still recommend performing a small hyperparameter sweep to obtain the strongest results for a given sampler or guidance setting.
+8.2
+Optional normalization and unbiased EMA
+Beyond the basic EMA update, we also explored two minor refinements to the momentum term.
+Given the raw EMA state
+𝒎
+~
+t
+i
+\tilde{{\bm{m}}}_{t_{i}}
+, our default implementation initializes the EMA as
+𝒎
+~
+t
+0
+=
+𝒗
+t
+0
+\tilde{{\bm{m}}}_{t_{0}}\!=\!{\bm{v}}_{t_{0}}
+.
+In contrast, the unbiased variant uses a zero-initialized EMA and applies the correction
+𝒎
+t
+i
+=
+𝒎
+~
+t
+i
+1
+−
+β
+s
+i
+,
+{\bm{m}}_{t_{i}}=\frac{\tilde{{\bm{m}}}_{t_{i}}}{1-\beta^{s_{i}}},
+where
+s
+i
+s_{i}
+is the number of EMA updates up to time
+t
+i
+t_{i}
+.
+We further optionally apply a per-sample normalization that matches the
+ℓ
+2
+\ell_{2}
+-norm
+of the current velocity,
+𝒎
+t
+i
+←
+‖
+𝒗
+t
+i
+‖
+2
+‖
+𝒎
+t
+i
+‖
+2
++
+ε
+​
+𝒎
+t
+i
+.
+{\bm{m}}_{t_{i}}\leftarrow\frac{\|{\bm{v}}_{t_{i}}\|_{2}}{\|{\bm{m}}_{t_{i}}\|_{2}+\varepsilon}\,{\bm{m}}_{t_{i}}.
+The unbiased correction compensates for the bias in a zero-initialized EMA, preventing the momentum term from being underestimated during the earliest flow steps. The normalization removes trivial scale differences between
+v
+t
+i
+v_{t_{i}}
+and the EMA vector.
+Figure
+9
+compares four MG variants obtained by toggling these two options:
+(i) no normalization and no debiasing,
+(ii) normalization only,
+(iii) unbiased EMA only,
+and (iv) both enabled.
+All configurations use
+CFG
+=
+1.5
+\text{CFG}\!=\!1.5
+and
+NFE
+=
+32
+\text{NFE}\!=\!32
+.
+Qualitatively, the generated samples are almost indistinguishable across the four settings.
+Quantitatively, the variants with normalization and/or unbiased EMA achieve slightly better FID in most cases, but the gains are small compared to the overall improvement provided by MG itself.
+This supports our claim that the main benefit comes from the momentum mechanism, while these refinements act only as minor implementation-level polishing.
+(a)
+Images generated with MG without normalization or unbiased momentum.
+(b)
+Images generated with MG with normalization only.
+(c)
+Images generated with MG with unbiased momentum only.
+(d)
+Images generated with MG with both normalization and unbiased momentum.
+Figure 9
+:
+Visualization of optional normalization and unbiased momentum.
+We show samples generated with Momentum Guidance
+(
+α
+=
+1.0
+,
+β
+=
+0.6
+)
+(\alpha=1.0,\beta=0.6)
+at a fixed CFG scale of
+1.5
+1.5
+, using ImageNet class 278 (kit fox, Vulpes macrotis) as an example. Four variants are displayed: (a) no optional operation, (b) normalization only, (c) unbiased momentum only, and (d) both enabled. Across all settings, the generated images appear nearly identical to the eye, with only minimal and subtle differences.
+9
+Additional Experiment Results
+2D Gaussian mixture toy with MG.
+To build intuition for how Momentum Guidance affects particle dynamics, we adopt the tree-shaped 2D Gaussian-mixture dataset from
+[
+27
+]
+, which is a binary mixture with two classes: an orange class forming the upper-right branch of the tree and a gray class forming the lower-left branch. Figure
+6(a)
+–
+6(c)
+illustrate particle trajectories produced by a 32-step Euler sampler.
+The first row shows particle trajectories under standard CFG. The second row shows trajectories under our MG method.
+The third row visualizes the velocity field at an intermediate step
+t
+17
+t_{17}
+. At this step, the original velocity
+𝒗
+t
+\bm{v}_{t}
+points toward the conditional mean of the orange component. In contrast, the extrapolation direction
+𝒗
+t
+−
+𝒎
+t
+\bm{v}_{t}-\bm{m}_{t}
+reveals how MG counteracts this collapse toward the mode center: it nudges samples away from the mode mean and thereby restores fine-grained structure, particularly around the lower-right edge of the orange cluster.
+Additional ablations on
+α
+\alpha
+and
+β
+\beta
+.
+Figure
+5
+visualizes the FID landscape over
+(
+α
+,
+β
+)
+(\alpha,\beta)
+at
+CFG
+=
+1.2
+\text{CFG}\!=\!1.2
+.
+Figures
+10
+–
+14
+extend this analysis and report FID-10K surfaces across sampling budgets (
+NFE
+∈
+{
+16
+,
+32
+,
+64
+}
+\text{NFE}\!\in\!\{16,32,64\}
+) and guidance strengths (
+without CFG
+,
+CFG
+=
+1.4
+,
+1.6
+,
+1.8
+,
+2.0
+\text{CFG}\!=\!1.4,1.6,1.8,2.0
+).
+For the no-CFG setting and for moderate guidance at small or medium NFE (e.g.,
+NFE
+=
+16
+\text{NFE}=16
+or
+32
+32
+), the surfaces show a consistent pattern: starting from the
+α
+=
+0
+\alpha=0
+ridge (the baseline), increasing
+α
+\alpha
+initially reduces FID and forms a clear valley. However, very large
+α
+\alpha
+or excessively large
+β
+\beta
+eventually cause saturation and a subsequent degradation in FID. In this regime, a moderate
+α
+\alpha
+paired with a small or medium
+β
+\beta
+performs well, and a fairly broad region of
+(
+α
+,
+β
+)
+(\alpha,\beta)
+values outperforms the baseline.
+In contrast, at higher CFG strengths, large
+α
+\alpha
+is no longer beneficial. This behavior aligns with the limitation discussed in the main text: when both CFG and momentum guidance become strong, their effects can interfere with each other, leading to degraded performance rather than additional gains.
+Qualitative Results on ImageNet-256.
+Figures
+7
+and
+8
+provide qualitative comparisons between the standard CFG baseline and our MG method on ImageNet-256. All samples are generated with 32 Euler steps
+(
+NFE
+=
+32
+)
+(\text{NFE}=32)
+and a fixed CFG scale of 1.5. For MG, we set
+α
+=
+1.0
+\alpha\!=\!1.0
+and
+β
+=
+0.6
+\beta\!=\!0.6
+, and apply momentum guidance over the interval
+[
+0.1
+,
+0.7
+]
+[0.1,0.7]
+.
+Across classes, MG alleviates common artifacts observed in the baseline, such as structural inconsistencies (e.g., missing animal parts or deformed object geometry) and overly smooth or blurry facial regions—while maintaining the global composition and the natural diversity characteristic of moderate CFG.
+Qualitative Results on FLUX.1-dev.
+Figures
+15
+,
+16
+, and
+17
+show qualitative comparisons on FLUX.1-dev
+[
+35
+]
+across three CFG scales. All samples are generated with 50 sampling steps
+(
+NFE
+=
+50
+)
+(\text{NFE}\!=\!50)
+using the default shifted time discretization.
+At low CFG (e.g.,
+1.5
+1.5
+), the baseline frequently produces images with blurred backgrounds and weakened local structure. With MG
+(
+α
+=
+1.5
+,
+β
+=
+0.6
+)
+(\alpha\!=\!1.5,\beta\!=\!0.6)
+applied over
+t
+∈
+[
+0.1
+,
+0.7
+]
+t\in[0.1,0.7]
+, textures become noticeably sharper and the spatial layout remains more coherent.
+At moderate and high CFG levels (
+2.5
+2.5
+and
+3.5
+3.5
+), the baseline can introduce oversharpened artifacts, unstable high-frequency details, or inconsistent shading. In these settings, using MG with
+α
+=
+0.5
+\alpha=0.5
+and
+β
+=
+0.6
+\beta=0.6
+over the interval
+t
+∈
+[
+0.05
+,
+0.7
+]
+t\in[0.05,0.7]
+effectively suppresses these instabilities while preserving the intended global structure and appearance.
+Additional Baseline Comparisons
+NFE
+Method
+ω
+\omega
+FID
+↓
+\downarrow
+Prec.
+↑
+\uparrow
+Recall
+↑
+\uparrow
+ω
+\omega
+FID
+↓
+\downarrow
+Prec.
+↑
+\uparrow
+Recall
+↑
+\uparrow
+16
+Ours
+1.2
+2.00
+0.80
+0.61
+1.4
+1.85
+0.82
+0.60
+Ours
+1.4
+1.55
+0.80
+0.64
+1.6
+1.64
+0.82
+0.61
+ADG
+1.2
+3.15
+0.78
+0.61
+1.4
+2.32
+0.83
+0.57
+CFG++
+0.4
+3.22
+0.74
+0.66
+0.6
+2.62
+0.84
+0.57
+32
+Ours
+1.2
+1.71
+0.81
+0.62
+1.4
+1.90
+0.84
+0.59
+Ours
+1.4
+1.41
+0.80
+0.63
+1.6
+1.58
+0.82
+0.61
+ADG
+1.2
+2.16
+0.79
+0.63
+1.4
+2.00
+0.83
+0.58
+CFG++
+0.3
+1.71
+0.80
+0.62
+0.4
+4.10
+0.85
+0.55
+64
+Ours
+1.2
+1.60
+0.81
+0.62
+1.4
+1.99
+0.84
+0.59
+Ours
+1.4
+1.38
+0.80
+0.63
+1.6
+1.62
+0.82
+0.61
+ADG
+1.2
+1.85
+0.79
+0.63
+1.4
+2.00
+0.84
+0.59
+CFG++
+0.2
+3.39
+0.84
+0.57
+0.3
+7.12
+0.87
+0.47
+50
+RAE
+†
+1.0
+1.53
+0.79
+0.64
+1.5
+3.72
+0.87
+0.55
+50
+RAE
+†
++ Ours
+1.0
+1.37
+0.79
+0.64
+1.5
+3.28
+0.86
+0.58
+Table 5
+:
+Additional comparisons to guidance-related baselines on ImageNet-256. We report FID-50K, precision, and recall across multiple sampling budgets (NFEs) and guidance scales.
+†
+\dagger
+denotes methods that use additional vision foundation models beyond the base flow model.
+Beyond the standard CFG baseline, we compare momentum guidance (MG) to several guidance-related baselines, including ADG
+[
+25
+]
+, CFG++
+[
+8
+]
+, and RAE
+[
+70
+]
+, on ImageNet-256.
+Table
+5
+summarizes the results under multiple sampling budgets (NFEs) and guidance scales.
+For ADG and CFG++, we follow the original papers and perform a hyperparameter sweep over their recommended ranges, reporting the best configuration.
+For RAE, we observe the same behavior reported in their paper: enabling CFG can degrade FID due to reduced diversity. Overall, MG achieves the best FID across the compared baselines for NFEs
+{
+16
+,
+32
+,
+64
+}
+\{16,32,64\}
+under both guidance scales, while maintaining competitive precision–recall. Moreover, combining MG with RAE yields further improvements, suggesting that MG is complementary to RAE and can be combined for further gains.
+(a)
+NFE
+=
+16
+{\textit{NFE}}=16
+(b)
+NFE
+=
+32
+{\textit{NFE}}=32
+(c)
+NFE
+=
+64
+{\textit{NFE}}=64
+Figure 10
+:
+FID-10K over Momentum Guidance hyperparameters
+(
+α
+,
+β
+)
+(\alpha,\beta)
+without CFG.
+(a)
+NFE
+=
+16
+{\textit{NFE}}=16
+(b)
+NFE
+=
+32
+{\textit{NFE}}=32
+(c)
+NFE
+=
+64
+{\textit{NFE}}=64
+Figure 11
+:
+FID-10K over Momentum Guidance hyperparameters
+(
+α
+,
+β
+)
+(\alpha,\beta)
+at
+CFG
+=
+1.4
+\text{CFG}=1.4
+.
+(a)
+NFE
+=
+16
+{\textit{NFE}}=16
+(b)
+NFE
+=
+32
+{\textit{NFE}}=32
+(c)
+NFE
+=
+64
+{\textit{NFE}}=64
+Figure 12
+:
+FID-10K over Momentum Guidance hyperparameters
+(
+α
+,
+β
+)
+(\alpha,\beta)
+at
+CFG
+=
+1.6
+\text{CFG}=1.6
+.
+(a)
+NFE
+=
+16
+{\textit{NFE}}=16
+(b)
+NFE
+=
+32
+{\textit{NFE}}=32
+(c)
+NFE
+=
+64
+{\textit{NFE}}=64
+Figure 13
+:
+FID-10K over Momentum Guidance hyperparameters
+(
+α
+,
+β
+)
+(\alpha,\beta)
+at
+CFG
+=
+1.8
+\text{CFG}=1.8
+.
+(a)
+NFE
+=
+16
+{\textit{NFE}}=16
+(b)
+NFE
+=
+32
+{\textit{NFE}}=32
+(c)
+NFE
+=
+64
+{\textit{NFE}}=64
+Figure 14
+:
+FID-10K over Momentum Guidance hyperparameters
+(
+α
+,
+β
+)
+(\alpha,\beta)
+at
+CFG
+=
+2.0
+\text{CFG}=2.0
+.
+Figure 15
+:
+Qualitative comparison on FLUX.1-dev.
+All samples are generated with CFG = 1.5. The second and fourth rows use our MG. In the first example, MG yields cleaner and more separated hair strands around the girl’s face. In the second and third examples, the building facades and rooftops remain more distinguishable, rather than blurring together as under CFG alone. In the warrior scene, the shape of the sword is more realistic. In the cathedral interior, MG sharpens the window panes and reveals finer geometric structure. For the anime boy, the chest drawstrings on the hoodie exhibit more complete and clearer details in the zoom-in regions.
+Figure 16
+:
+Qualitative comparison on FLUX.1-dev.
+All samples are generated with CFG = 2.5. The second and fourth rows use our MG. In the first example, MG yields more geometric and perspective-correct railings. In the second example, the background trees remain more distinguishable with richer details. In the motorcycle scene, the rearview mirror is correctly attached rather than floating in midair as under CFG alone. In the armor closeup, MG produces more realistic seams and joints between metal plates. For the wet pavement, MG sharpens the ground reflections and reveals clearer mirrored details. In the sunset scene, the spacecraft maintains more reasonable structure rather than appearing distorted.
+Figure 17
+:
+Qualitative comparison on FLUX.1-dev.
+All samples are generated with CFG = 3.5. The second and fourth rows use our MG. In the first example, MG yields sharper and more regular candle edges. In the second example, the column base exhibits clearer layering and more precise architectural details. In the desert traveler scene, the clothing folds appear more natural, avoiding excessive fabric overlaps. For the dragon, MG produces clearer and more complete claw contours with better-defined details. In the library scene, the book stacking follows more realistic physics with improved lighting. In the underwater ruins, MG enhances the decorative patterns and relief carvings on the columns, revealing finer sculptural details.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

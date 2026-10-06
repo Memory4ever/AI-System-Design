@@ -1,0 +1,1996 @@
+FlowFixer: Towards Detail-Preserving Subject-Driven Generation
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+3
+Method
+3.1
+Diffusion preliminaries
+3.2
+Problem formulation
+3.3
+Pseudo-paired training data
+3.4
+Training pipeline
+Network architecture.
+Implementation details.
+3.5
+Crop-based refinement
+4
+Detail-aware Evaluation
+4.1
+Evaluation metric
+4.2
+Evaluation dataset
+5
+Experiments
+5.1
+Subject fidelity refinement
+5.2
+Human Evaluation and VLM Judgment
+5.3
+Distortion levels for training
+5.4
+Crop-based refinement
+6
+Conclusion
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2602.21402v1 [cs.CV] 24 Feb 2026
+FlowFixer: Towards Detail-Preserving Subject-Driven Generation
+Jinyoung Jun
+†
+†
+thanks:
+Work done during internship at Amazon.
+Affiliation:
+Amazon
+Email:
+jyjun@amazon.com
+Won-Dong Jang
+Affiliation:
+Amazon
+Email:
+wdjang@amazon.com
+Wenbin Ouyang
+Affiliation:
+Amazon
+Email:
+wenbinoy@amazon.com
+Raghudeep Gadde
+Affiliation:
+Amazon
+Email:
+raghudeep.g@gmail.com
+Jungbeom Lee
+†
+†
+thanks:
+Corresponding author.
+Affiliation:
+Amazon
+Affiliation:
+Korea University
+Email:
+jbeomlee@korea.ac.kr
+Abstract
+We present
+FlowFixer
+, a refinement framework for subject-driven generation (SDG) that restores fine details lost during generation caused by changes in scale and perspective of a subject. FlowFixer proposes direct image-to-image translation from visual references, avoiding ambiguities in language prompts. To enable image-to-image training, we introduce a one-step denoising scheme to generate self-supervised training data, which automatically removes high-frequency details while preserving global structure, effectively simulating real-world SDG errors. We further propose a keypoint matching-based metric to properly assess fidelity in details beyond semantic similarities usually measured by CLIP or DINO. Experimental results demonstrate that FlowFixer outperforms state-of-the-art SDG methods in both qualitative and quantitative evaluations, setting a new benchmark for high-fidelity subject-driven generation.
+1
+Introduction
+Subject-driven generation (SDG) aims to embed a given subject (or an input reference image) into imagery described by an input text prompt while preserving the subject’s identity. SDG has received significant attention from the community since it has a number of practical applications, including advertising content generation, short-form content generation, and personalized media creation.
+Recent foundation models
+[
+31
+,
+7
+]
+have shown promising improvements in handling subjects with simpler textures (
+e.g.
+, animals or plain objects)
+[
+39
+,
+40
+,
+46
+,
+47
+,
+45
+]
+. However, preserving complex product-specific details, such as logos, text, and intricate patterns, remains a critical challenge that demands greater attention from the community. This is particularly important for commercial applications where structural fidelity of product details directly impacts the utility of generated content. In advertising, for example, altered logos undermine brand recognition, and distorted text makes the outputs unusable.
+There are two key obstacles underlying this difficulty. First, collecting high-quality paired training data for SDG is challenging. Ideally, one would need pairs of subject images and diverse ground truth images containing the same subject to supervise both fidelity and compositional diversity. In practice, however, collecting such data at scale is highly challenging. To address this scarcity, Subjects200K
+[
+39
+]
+was introduced, yet it is constructed from synthetic images, which often lack fine-grained and realistic alignment of subject details.
+Second, existing conditioning mechanisms are often limited in specifying fine-grained geometric and appearance variations of the subject. Text descriptions such as ‘a red sports car’ or ‘a cereal box’ convey only coarse appearance and provide limited cues about pose, orientation, or lighting, making precise reproduction of subject details challenging
+[
+21
+,
+37
+]
+. Even with image-based conditioning (e.g., depth or edge maps), they tend to prioritize global scene coherence over localized detail alignment, which can lead to the loss of high-frequency information in texture-rich or geometrically complex regions
+[
+50
+,
+39
+,
+47
+]
+.
+To overcome these challenges, we propose FlowFixer, a novel refinement framework for detail-preserving SDG. Our approach employs a direct image-to-image translation pipeline that learns from visual references. This design choice circumvents the ambiguity inherent in natural language descriptions, enabling precise preservation of diverse visual elements and fine structural details across the image, as illustrated in Figure
+.
+At the core of FlowFixer is a self-supervised refinement scheme that leverages pseudo-paired training data. In principle, training a subject refinement framework requires triplets consisting of a clean subject image, a corresponding SDG-generated image, and its ideal ground-truth for refinement. However, collecting such paired data at scale is impractical due to the high cost of annotating subject-scene correspondences and generating controlled SDG outputs.
+Instead of collecting triplet data for training, we employ a self-supervised approach centered on our one-step denoising strategy. Starting with a clean real image, we synthetically generate its degraded counterpart through a forward diffusion step followed by single-step denoising using an off-the-shelf diffusion model. This process closely mimics SDG artifacts and characteristic distortions, allowing FlowFixer to learn fine detail restoration without expensive human supervision. The resulting framework enables efficient training using web-collected single images while faithfully representing the high-frequency detail loss typical in SDG applications.
+Current quantitative evaluation metrics for SDG results have distinct characteristics and constraints. For example, pixel-level similarity measures (e.g., MSE or SSIM) focus primarily on low-level differences, while semantic-level metrics (e.g., FID
+[
+12
+]
+or LPIPS
+[
+51
+]
+) may not fully capture fine details. Moreover, many existing metrics require ground truth images, which are often unavailable in real-world generative applications. To overcome these limitations, we propose detail-aware evaluation metrics based on keypoint matching
+[
+15
+,
+22
+]
+; absolute keypoint increase and keypoint matching gain. These metrics effectively capture structural fidelity by measuring the consistency between a reference image and its generated output, enabling ground-truth-free quantitative evaluation of detail preservation in open-world generative settings. Together with human and VLM evaluation, our metrics provide reliable and reproducible assessments of fine-grained fidelity.
+Figure 2
+:
+FlowFixer overview.
+FlowFixer enhances SDG images by restoring fine subject details, using the original subject image as reference.
+Through extensive experiments, we demonstrate that FlowFixer consistently outperforms existing SDG methods in preserving subject identity, establishing a new baseline for high-fidelity SDG. The key contributions of this work are summarized as follows:
+•
+A novel model-agnostic refinement framework, FlowFixer, that substantially enhances subject fidelity in SDG-generated images.
+•
+An efficient training data curation pipeline based on one-step denoising, which effectively simulates diffusion artifacts to generate high-quality pseudo-paired training data.
+•
+A direct visual translation approach that leverages reference images, enabling precise preservation of visual elements and fine-grained details while eliminating prompt-induced ambiguity.
+•
+A novel ground-truth-free evaluation metric to assess visual fidelity based on keypoint matching, which demonstrates FlowFixer’s superior detail preservation capability compared to existing SDG methods.
+2
+Related Work
+Subject-driven generation has received significant attention from the community and builds directly on top of the success of text-to-image foundational diffusion models
+[
+36
+,
+20
+,
+19
+]
+.
+While text-to-image models can generate high quality objects, subject driven generation requires faithful rendering of the “subject” (i.e, preserving the identity in the subject image) in a variety of scenes.
+Techniques for subject driven generation have broadly followed two main directions (a) fine-tuning-based and (b) encoder-based.
+Early approaches such as DreamBooth
+[
+37
+]
+, Textual Inversion
+[
+8
+]
+, and LoRA
+[
+14
+]
+in Custom Diffusion
+[
+18
+]
+adapt pre-trained text-to-image diffusion models to specific subjects using only a few reference images (typically 3 to 5), achieving strong identity preservation but require expensive per-subject fine-tuning.
+More recent works avoid per-subject finetuning and address the limitation by injecting the reference image of the subject through an encoder directly into the diffusion backbone.
+For example, IP-Adapter
+[
+48
+]
+injects image-prompt features via decoupled cross-attention to enable subject conditioning without fine-tuning, while BLIP-Diffusion
+[
+21
+]
+learns a multi-modal subject encoder for tighter subject–prompt alignment.
+OminiControl
+[
+39
+]
+further shows that a DiT backbone can encode references natively with minimal additional parameters.
+However, these encoder-based approaches, while good at preserving high-level details, struggle to preserve the subject’s fine structural details, rendering the synthesized images unusable for real-world applications.
+In contrast, FlowFixer restores missing low-level details to ensure high-fidelity identity preservation.
+It employs a reference-guided diffusion refinement process that corrects structural inconsistencies in a generated SDG image by conditioning on the original subject image, as illustrated in Figure
+2
+.
+This “last mile” refinement makes FlowFixer universally compatible, enhancing identity preservation for any upstream model.
+Another line of work that is relevant for subject driven image generation is based on image editing, which focuses on modifying an existing image under additional conditions such as text prompts, reference images, or spatial masks
+[
+50
+,
+27
+]
+.
+Existing methods generally fall into two categories: global and local editing.
+Global editing techniques alter overall image appearance or semantic content through text-based manipulation or latent space interpolation
+[
+11
+,
+16
+,
+25
+,
+17
+,
+29
+,
+30
+,
+4
+,
+3
+,
+42
+]
+.
+On the other hand, methods for local editing target specific spatial regions via mask-based selection
+[
+24
+]
+, blending
+[
+1
+]
+, or exemplars
+[
+9
+]
+.
+Although effective for coarse transformations, these approaches often fail to preserve fine structural details of the subject and typically require manual inputs such as masks or region-specific prompts
+[
+6
+,
+44
+,
+49
+,
+53
+]
+.
+Recent works further reveal that text-driven editors struggle with localized or fine-grained control due to ambiguous conditioning and conflicting attention dynamics
+[
+52
+,
+26
+,
+10
+,
+41
+,
+34
+]
+.
+In contrast, FlowFixer performs automatic, reference-guided refinement without requiring manual annotations or textual conditioning. By leveraging cross-image correspondences between the generated and reference images, FlowFixer restores degraded regions while preserving global scene coherence and sharp, subject-consistent details. To further encourage the model to focus on subjects, the proposed FlowFixer exploits automatic subject cropping based on keypoint matching between a subject image and its SDG image.
+Figure 3
+:
+FlowFixer inference pipeline.
+The model takes two conditional inputs: reference subject image
+𝐈
+ref
+{\mathbf{I}}_{\text{ref}}
+and the generated image
+𝐈
+gen
+{\mathbf{I}}_{\text{gen}}
+from any SDG model. Then the model produces a refined result
+𝐈
+^
+gen
+\widehat{{\mathbf{I}}}_{\text{gen}}
+that preserves global layout. For faster inference, we optionally refine only a subject-centric crop of
+𝐈
+gen
+{\mathbf{I}}_{\text{gen}}
+and blend it back using Poisson image blending.
+3
+Method
+3.1
+Diffusion preliminaries
+Diffusion models are probabilistic generative frameworks that progressively transform a simple prior
+p
+s
+p_{s}
+(
+e.g.
+, Gaussian noise) into samples from a target distribution
+p
+t
+p_{t}
+through iterative denoising or continuous flows.
+Let
+𝐱
+t
+{\mathbf{x}}_{t}
+(or
+𝐳
+t
+{\mathbf{z}}_{t}
+in latent diffusion) denote the state at time
+t
+∈
+[
+0
+,
+1
+]
+t\in[0,1]
+along this trajectory.
+The generative process starts from noise and can be formally expressed as
+𝐱
+1
+∼
+p
+s
+,
+𝐱
+0
+=
+𝒟
+⁡
+(
+𝐱
+1
+)
+∼
+p
+t
+,
+{\mathbf{x}}_{1}\sim p_{s},\qquad{\mathbf{x}}_{0}=\mathcal{D}({\mathbf{x}}_{1})\sim p_{t},
+(1)
+where
+𝒟
+\mathcal{D}
+represents a learned denoising or flow-matching process
+[
+13
+,
+38
+,
+23
+]
+.
+A key property of diffusion models is their conditioning flexibility:
+𝐱
+0
+=
+𝒟
+⁡
+(
+𝐱
+1
+,
+𝐜
+)
+,
+{\mathbf{x}}_{0}=\mathcal{D}({\mathbf{x}}_{1},\mathbf{c}),
+(2)
+where
+𝐜
+\mathbf{c}
+denotes auxiliary controls such as text prompts or reference images.
+In latent diffusion models
+[
+36
+,
+20
+]
+,
+𝐱
+t
+{\mathbf{x}}_{t}
+corresponds to a latent variable
+𝐳
+t
+{\mathbf{z}}_{t}
+encoded by a VAE
+ℰ
+\mathcal{E}
+, and the final image is reconstructed from the latent sample
+𝐳
+1
+{\mathbf{z}}_{1}
+. Diffusion models have achieved highly realistic and semantically coherent image generation,
+driven by large-scale architectures and training on massive, diverse datasets.
+3.2
+Problem formulation
+Subject-driven generation (SDG) can be viewed as a specific instance of conditional diffusion in Eq.
+2
+.
+Given a subject reference image
+𝐈
+ref
+{\mathbf{I}}_{\text{ref}}
+and a textual description
+𝐜
+text
+\mathbf{c}_{\text{text}}
+,
+an SDG model
+𝒟
+SDG
+\mathcal{D}_{\text{SDG}}
+generates a novel scenic image
+𝐈
+gen
+{\mathbf{I}}_{\text{gen}}
+conditioned on both inputs:
+𝐈
+gen
+=
+𝒟
+SDG
+​
+(
+𝐳
+1
+,
+𝐈
+ref
+,
+𝐜
+text
+)
+,
+𝐳
+1
+∼
+p
+s
+,
+{\mathbf{I}}_{\text{gen}}=\mathcal{D}_{\text{SDG}}({\mathbf{z}}_{1},{\mathbf{I}}_{\text{ref}},\mathbf{c}_{\text{text}}),\qquad{\mathbf{z}}_{1}\sim p_{s},
+(3)
+where
+𝐜
+text
+\mathbf{c}_{\text{text}}
+provides high-level semantics and
+𝐈
+ref
+{\mathbf{I}}_{\text{ref}}
+encodes subject appearance cues.
+While diffusion models achieve strong global realism and semantic consistency,
+text-conditioned variants often prioritize global coherence over local structural fidelity.
+This limitation stems from the ambiguity of textual conditioning, which captures broad semantics but lacks precise visual cues such as small textures or logos.
+As a result, diffusion models tend to favor perceptual plausibility at the expense of subject-specific details
+[
+52
+,
+26
+,
+10
+,
+41
+,
+34
+]
+.
+Despite notable progress in large-scale foundation models—including Qwen
+[
+2
+]
+, FLUX.1-Kontext
+[
+19
+]
+, and Nano Banana
+[
+5
+]
+—fine-grained subject fidelity remains a persistent challenge.
+To address this, we design a text-free diffusion-based refiner
+𝒟
+refine
+\mathcal{D}_{\text{refine}}
+that re-generates
+𝐈
+gen
+{\mathbf{I}}_{\text{gen}}
+under the guidance of
+𝐈
+ref
+{\mathbf{I}}_{\text{ref}}
+through a conditional diffusion process
+starting from latent noise
+𝐳
+1
+∼
+p
+s
+{\mathbf{z}}_{1}\sim p_{s}
+as follows,
+𝐈
+^
+gen
+=
+𝒟
+refine
+​
+(
+𝐳
+1
+,
+𝐈
+gen
+,
+𝐈
+ref
+)
+.
+\widehat{{\mathbf{I}}}_{\text{gen}}=\mathcal{D}_{\text{refine}}({\mathbf{z}}_{1},{\mathbf{I}}_{\text{gen}},{\mathbf{I}}_{\text{ref}}).
+(4)
+Here,
+𝐈
+^
+gen
+\widehat{{\mathbf{I}}}_{\text{gen}}
+preserves the global layout of
+𝐈
+gen
+{\mathbf{I}}_{\text{gen}}
+while restoring subject-consistent details from
+𝐈
+ref
+{\mathbf{I}}_{\text{ref}}
+.
+Unlike conventional inpainting methods that rely on explicit masks or user interaction, Eq.
+4
+denotes fully automatic refinement without external inputs.
+Furthermore,
+𝒟
+refine
+\mathcal{D}_{\text{refine}}
+is optimized with self-supervised pseudo pairs,
+enabling scalable and annotation-free enhancement beyond mask-based editing.
+We refer to this refiner as
+FlowFixer
+, reflecting its ability to restore fine structural consistency by correcting disrupted feature flow between
+𝐈
+gen
+{\mathbf{I}}_{\text{gen}}
+and
+𝐈
+ref
+{\mathbf{I}}_{\text{ref}}
+.
+Figure 4
+:
+Example of one-step denoising distortions.
+For each distortion level, pixel-wise variance maps are computed over 10 degraded samples. Insets show example outputs, with distortions concentrated in high-frequency regions.
+3.3
+Pseudo-paired training data
+A key challenge in training
+𝒟
+refine
+\mathcal{D}_{\text{refine}}
+is the lack of paired data where only subject details are degraded while global structure remains unchanged.
+To address this, we construct pseudo pairs
+(
+𝐈
+degraded
+,
+𝐈
+clean
+)
+({\mathbf{I}}_{\text{degraded}},{\mathbf{I}}_{\text{clean}})
+from real images by mocking SDG’s degradation using a one-step denoising process as follows:
+1.
+Start from a clean real image
+𝐈
+clean
+{\mathbf{I}}_{\text{clean}}
+.
+2.
+Add noise to
+𝐈
+clean
+{\mathbf{I}}_{\text{clean}}
+and apply a single-step denoising using an off-the-shelf diffusion model
+[
+33
+]
+.
+3.
+Control the degradation level by downscaling
+𝐈
+clean
+{\mathbf{I}}_{\text{clean}}
+to
+1.0
+×
+1.0\times
+,
+0.5
+×
+0.5\times
+, or
+0.25
+×
+0.25\times
+its original resolution before VAE encoding.
+To verify that this process mainly affects fine details, we generate 10 variants with different random seeds in step 2 and compute per-pixel variance maps across them. As shown in Figure
+4
+, the variance concentrates in high-frequency regions while remaining low in smooth backgrounds, confirming that the perturbation minimally disturbs global structure. For step 2, we use SDXL
+[
+33
+]
+.
+During training, we treat
+𝐈
+degraded
+{\mathbf{I}}_{\text{degraded}}
+as the generated input
+𝐈
+gen
+{\mathbf{I}}_{\text{gen}}
+in Eq.
+4
+. The reference
+𝐈
+ref
+{\mathbf{I}}_{\text{ref}}
+is a spatially perturbed version of the clean image
+𝐈
+clean
+{\mathbf{I}}_{\text{clean}}
+, created through random cropping, rotation, or mild color augmentation—and vice versa for data diversity. This setup enables
+𝒟
+refine
+\mathcal{D}_{\text{refine}}
+to focus on recovering fine details by learning local correspondences between
+𝐈
+degraded
+{\mathbf{I}}_{\text{degraded}}
+and
+𝐈
+ref
+{\mathbf{I}}_{\text{ref}}
+, without depending on strict pixel-wise alignment.
+3.4
+Training pipeline
+Network architecture.
+FlowFixer builds on FLUX.1-Kontext
+[
+19
+]
+to leverage image-native editing capability. For a text-free pipeline, we discard the original text token and introduce an additional image input, as illustrated in Figure
+3
+. Consequently, FlowFixer takes three inputs,
+𝐳
+1
+{\mathbf{z}}_{1}
+,
+𝐈
+gen
+{\mathbf{I}}_{\text{gen}}
+, and
+𝐈
+ref
+{\mathbf{I}}_{\text{ref}}
+. The images
+𝐈
+gen
+{\mathbf{I}}_{\text{gen}}
+and
+𝐈
+ref
+{\mathbf{I}}_{\text{ref}}
+are encoded by the pretrained VAE into latent tokens, which are concatenated with
+𝐳
+1
+{\mathbf{z}}_{1}
+before being processed by the DiT backbone. We adopt 3D RoPE with per-stream timestep offsets (
+0
+0
+for
+𝐳
+1
+{\mathbf{z}}_{1}
+,
+1
+1
+for
+𝐈
+gen
+{\mathbf{I}}_{\text{gen}}
+,
+2
+2
+for
+𝐈
+ref
+{\mathbf{I}}_{\text{ref}}
+), to maintain stream separation while allowing full cross-attention.
+To discover dense correspondences between
+𝐈
+gen
+{\mathbf{I}}_{\text{gen}}
+and
+𝐈
+ref
+{\mathbf{I}}_{\text{ref}}
+, we adopt an explicit dual-stream conditioning mechanism operating in a shared spatial space. This design enforces alignment between the two inputs and facilitates localized refinements guided by the reference. The alignment is further strengthened by our self-supervised, pseudo-paired training scheme.
+Implementation details.
+We fine-tune FLUX.1-Kontext using LoRA
+[
+14
+]
+with rank 192, specializing the model for automatic refinement while keeping the parameter overhead minimal.
+Training is conducted for 50K iterations with a batch size of 4.
+For each iteration, a pseudo training pair
+(
+𝐈
+degraded
+,
+𝐈
+clean
+)
+({\mathbf{I}}_{\text{degraded}},{\mathbf{I}}_{\text{clean}})
+is sampled as described in Sec.
+3.3
+.
+One degraded variant is randomly selected from the three downscaling levels (
+1.0
+×
+1.0\times
+,
+0.5
+×
+0.5\times
+,
+0.25
+×
+0.25\times
+) to ensure balanced degradation diversity.
+The model is trained using a mean squared error (MSE) loss between the refined output and the clean target. We use a guidance scale of 1.0 during training and 2.5 at inference, respectively.
+We use 18,450 high-quality real-world photographs from Unsplash
+[
+43
+]
+to construct the pseudo pairs for training.
+The images span diverse objects, materials, and lighting conditions, providing sufficient visual diversity for self-supervised refinement.
+3.5
+Crop-based refinement
+While high-resolution generation is critical for subject fidelity, a full-resolution global pass incurs substantial latency and memory cost.
+Instead, FlowFixer preserves the background layout while selectively restoring subject details, enabling crop-based refinement during inference, as illustrated in Figure
+3
+.
+We first determine a subject-centric crop using keypoint matching
+[
+15
+]
+between a subject and its generated image, and then refine only this region and paste the result back into the original image.
+Since the global structure remains unchanged and only fine details are corrected, simple image-domain blending (
+e.g.
+, Poisson blending) achieves seamless integration without user-defined masks or inversion.
+This substantially reduces runtime and memory while retaining subject-level fidelity.
+Table 1
+:
+Refinement performance on the FidelityBench-258K.
+For all metrics, higher numbers indicate better performance.
+Method
+FLUX.1-Kontext-Pro
+Qwen-Image-Edit
+Nano-Banana-Edit
+AKI
+↑
+\uparrow
+𝒦
+Gain
+\mathcal{K}_{\text{Gain}}
+↑
+\uparrow
+CLIP-I
+↑
+\uparrow
+DINO
+↑
+\uparrow
+AKI
+↑
+\uparrow
+𝒦
+Gain
+\mathcal{K}_{\text{Gain}}
+↑
+\uparrow
+CLIP-I
+↑
+\uparrow
+DINO
+↑
+\uparrow
+AKI
+↑
+\uparrow
+𝒦
+Gain
+\mathcal{K}_{\text{Gain}}
+↑
+\uparrow
+CLIP-I
+↑
+\uparrow
+DINO
+↑
+\uparrow
+Baseline
+-
+-
+0.776
+0.663
+-
+-
+0.777
+0.668
+-
+-
+0.796
+0.711
+Text-based editing
+[
+19
+]
+7.5
+52.7%
+0.763
+0.647
+11.1
+54.1%
+0.762
+0.647
+61.7
+77.0%
+0.782
+0.691
+OminiControl
+[
+39
+]
++ F-Dev
+29.0
+53.9%
+0.724
+0.551
+0.48
+43.8%
+0.724
+0.552
+108.0
+70.7%
+0.747
+0.605
+OminiControl
+[
+39
+]
++ F-Kontext
+0.49
+45.7%
+0.766
+0.649
+-3.37
+46.8%
+0.765
+0.649
+53.0
+56.6%
+0.786
+0.696
+FlowFixer (ours)
+66.5
+77.9%
+0.778
+0.668
+54.0
+74.8%
+0.777
+0.668
+64.7
+79.2%
+0.796
+0.711
+Figure 5
+:
+Qualitative comparison on Subject fidelity refinement on the FidelityBench-258K dataset.
+The insets in the full images show the reference subject images and the red and green boxes indicate the zoomed-in regions. The regions for zoomed-in views are found on the SDG baseline images and cropped the same area for all methods.
+4
+Detail-aware Evaluation
+4.1
+Evaluation metric
+While widely used, existing perceptual metrics fall short in evaluating fine-grained details.
+Common similarity measures, such as CLIP
+[
+35
+]
+or DINOv2
+[
+28
+]
+primarily capture global semantics and overlook high-frequency fidelity, making them unsuitable for assessing detail consistency.
+To better quantify subject fidelity, we exploit keypoint matching that finds dense correspondences between the reference and generated images. This approach is based on the observation that images with better subject fidelity yield a higher number of matched keypoints.
+We define two metrics: i) absolute keypoint increase (AKI) and ii) keypoint matching gain
+𝒦
+Gain
+\mathcal{K}_{\text{Gain}}
+. First, we formulate AKI by
+AKI
+=
+𝒩
+⁡
+(
+ℳ
+⁡
+(
+𝐈
+ref
+,
+𝐈
+^
+gen
+)
+)
+−
+𝒩
+⁡
+(
+ℳ
+⁡
+(
+𝐈
+ref
+,
+𝐈
+gen
+)
+)
+,
+\text{AKI}=\mathcal{N}(\mathcal{M}{}({\mathbf{I}}_{\text{ref}},\widehat{{\mathbf{I}}}_{\text{gen}}))-\mathcal{N}(\mathcal{M}{}({\mathbf{I}}_{\text{ref}},{\mathbf{I}}_{\text{gen}})),
+(5)
+where
+𝒩
+⁡
+(
+ℳ
+⁡
+(
+a
+,
+b
+)
+)
+\mathcal{N}(\mathcal{M}{}(a,b))
+denotes the number of matched keypoints between
+a
+a
+and
+b
+b
+using the keypoint matching network
+ℳ
+\mathcal{M}{}
+. A higher AKI score indicates stronger preservation of subject-specific fine details and structural alignment.
+While AKI effectively quantifies instance-level improvements, its absolute values depend on the choice and calibration of the keypoint matcher, and thus are not strictly comparable across settings. Moreover, when averaged over a large set, many small yet consistent improvements can be diluted by a few large changes, obscuring the overall trend. Therefore, we also calculate the keypoint matching gain,
+𝒦
+Gain
+\mathcal{K}_{\text{Gain}}
+, which averages the fraction of cases that improve. Formally, we define
+𝒦
+Gain
+=
+1
+N
+​
+∑
+i
+=
+1
+N
+δ
+⁡
+(
+AKI
+i
+,
+τ
+)
+\mathcal{K}_{\text{Gain}}=\frac{1}{N}\sum_{i=1}^{N}\delta(\text{AKI}_{i},\tau)
+(6)
+where
+δ
+\delta
+is a binary indicator function that becomes 1 when
+AKI
+i
+\text{AKI}_{i}
+is higher than
+τ
+\tau
+and 0 otherwise.
+AKI
+i
+\text{AKI}_{i}
+is an AKI score of
+i
+i
+-th image sample in a dataset. We report
+𝒦
+Gain
+\mathcal{K}_{\text{Gain}}
+in percentage and set
+τ
+=
+0
+\tau{=}0
+as default. These metrics effectively capture enhancement of local fidelity. For evaluation, we employ an off-the-shelf keypoint matching network, OmniGlue
+[
+15
+]
+.
+4.2
+Evaluation dataset
+Existing SDG benchmarks
+[
+37
+,
+32
+]
+primarily focus on global realism and semantic alignment rather than preserving fine-grained subject fidelity.
+As a result, their subject categories are often visually simple and contain limited texture or detail (
+e.g.
+, rubber ducks, plants, or cartoon figures).
+To achieve rigorous evaluation of subject fidelity, we introduce
+FidelityBench-258K
+, a large-scale, subject-diverse benchmark structured by subject–prompt pairs.
+To construct the dataset, we first collected 29K subject images and generated prompts for SDG using a vision-language model (VLM), Claude 3.5.
+For each prompt-subject pair, we generated five variants per SDG baseline. We used three SDG baselines (FLUX.1-Kontext-Pro
+[
+19
+]
+, Qwen-Image-Edit
+[
+2
+]
+, and Nano Banana-Edit
+[
+5
+]
+), which led to 435K SDG images in total.
+Finally, we applied a coarse quality filter to ensure that the subject is clearly present in the SDG image. After the filtering, the final dataset consists of 258K subject - SDG image pairs.
+For controlled and reproducible studies, we also curate a fixed subset,
+FidelityBench-300
+from the FidelityBench-258K dataset, collecting 100 images from each backbone. FidelityBench-300 preserves the distribution of baseline match counts while balancing categories, and we reuse this fixed subset for all ablations and human evaluations to ensure comparability and reproducibility.
+5
+Experiments
+5.1
+Subject fidelity refinement
+Table
+1
+reports refinement results on FidelityBench-258K dataset under the three SDG baselines (
+i.e.
+, FLUX.1-Kontext-Pro, Qwen-Image-Edit, and Nano-Banana-Edit). In Table
+1
+, we compare four different refinement models, including the proposed FlowFixer. The compared refinement models are:
+•
+Text-based editing:
+FLUX.1-Kontext, which is a text-based editing model, accepting the subject and SDG images concatenated on the x-axis while refinement is guided by an input prompt.
+•
+OminiControl + FLUX.1 (Dev/Kontext):
+OminiControl
+[
+39
+]
+fine-tuned on FLUX.1-Dev and FLUX.1-Kontext, respectively, using our pseudo-paired dataset. We use the same training data as FlowFixer.
+Since there is no algorithm tailored for refinement of SDG, we finetuned OminiControl
+[
+39
+]
+with state-of-the-art backbones
+[
+20
+,
+19
+]
+, which can accept a subject as a conditional input, and used the text-based editing method
+[
+19
+]
+for benchmarking.
+Note that AKI and
+𝒦
+Gain
+\mathcal{K}_{\text{Gain}}
+are not obtainable for the baselines since these metrics quantify the changes relative to the baseline’s SDG output. We additionally report CLIP-Image (CLIP-I) and DINOv2 similarity as complementary perceptual metrics. To isolate subject fidelity from background content, similarities are computed only on the subject regions by detecting the bounding box of the subject.
+We summarize our statistical and empirical findings from Table
+1
+and Figure
+5
+as follows:
+(i)
+As illustrated in Figure
+5
+, FlowFixer restores fine details of the subject while preserving the original image layout. In contrast, the other refinement models either shift the scene or fail to improve local structure. For example, ‘Text-based editing’ often maintains semantics but alters composition, undermining subject consistency. In contrast, FlowFixer avoids such layout drift while increasing local correspondences.
+(ii)
+Quantitatively, across all SDG backbones, FlowFixer consistently outperforms its alternatives in AKI and achieves an average
+𝒦
+Gain
+\mathcal{K}_{\text{Gain}}
+of 77.3%, demonstrating model-agnostic robustness.
+(iii)
+Interestingly, these keypoint-based gains are not reflected in CLIP-I or DINOv2 scores, which remain nearly unchanged. This indicates that common perceptual metrics overlook fine-grained structural fidelity, reinforcing the need for specialized metrics like AKI and
+𝒦
+Gain
+\mathcal{K}_{\text{Gain}}
+.
+(iv)
+While alternative fine-tuned models (OminiControl + FLUX.1-Dev and Kontext) occasionally increase AKI, their
+𝒦
+Gain
+\mathcal{K}_{\text{Gain}}
+often drops below 50%, meaning such methods show no consistent pattern of improvement.
+(v)
+On Nano Banana, certain methods achieve inflated keypoint metrics by copy-pasting the subject or synthesizing a new scene with larger subject rather than refining the given output. This results in the elevated AKI scores but reduced global consistency, as reflected in the lower CLIP-I and DINOv2 similarities on cropped subject regions.
+Figure
+6
+shows scatter plots of keypoint changes before and after refinement on FidelityBench-300. Among all methods, only FlowFixer reveals a consistent and directional pattern, reliably increasing the number of matched keypoints (AKI) across most samples. In contrast, alternative methods exhibit no clear trend, with improvements occurring sporadically and often accompanied by regressions. This further highlights the robustness and generalizability of FlowFixer’s refinements.
+Table 2
+:
+Refinement performance compared to original SDG images on the FidelityBench-300.
+For all metrics, higher numbers indicate better performance.
+Method
+AKI
+↑
+\uparrow
+𝒦
+Gain
+\mathcal{K}_{\text{Gain}}
+↑
+\uparrow
+VLM
+↑
+\uparrow
+Text-based editing
+[
+19
+]
+1.87
+45.9%
+41.3%
+OminiControl
+[
+39
+]
++ F-Dev
+22.7
+46.6%
+4.2%
+OminiControl
+[
+39
+]
++ F-Kontext
+11.1
+38.4%
+25.2%
+FlowFixer (ours)
+67.3
+91.2%
+79.0%
+Figure 6
+:
+Scatter plots of the number of keypoint matches on FidelityBench-300.
+Each dot represents a sample; points above the red dashed line indicate an increase in keypoint matches (positive AKI, green region), suggesting improved structural alignment and subject fidelity. Samples below the line show decreased correspondence after refinement.
+Figure 7
+:
+A/B study results comparing the FlowFixer against four alternatives.
+FlowFixer is consistently preferred by human raters.
+5.2
+Human Evaluation and VLM Judgment
+To assess how well our metrics reflect human perception, we conducted an A/B tests on the FidelityBench-300 subset using Amazon Mechanical Turk. For each test case, human evaluators were shown the reference subject alongside two candidate images,
+i.e.
+, FlowFixer vs. one alternative method. Then, we asked the evaluators to choose the one that better preserves subject-specific details. Each pair was evaluated by five independent evaluators, and responses were aggregated across the dataset.
+Figure
+7
+shows that the human evaluators strongly prefer FlowFixer over the baseline and the other refinement methods, which align with our proposed metrics, AKI and
+𝒦
+Gain
+\mathcal{K}_{\text{Gain}}
+. Notably, FlowFixer’s advantages over the baseline and the text-based editing
+[
+19
+]
+are comparable (64.9% and 64.4%), suggesting that a text prompt for editing only makes a negligible difference in terms of subject fidelity. Moreover, FlowFixer is favored over OminiControl variants
+[
+39
+]
+by even larger margins (92.7% and 77.2%).
+In addition to the human evaluation, we also evaluate metric agreement with a Vision-Language Model (VLM), Claude 3.7, serving as an automated judge. For each case, the VLM receives the reference image and two subject-region crops (Baseline vs. one alternative). To mitigate order bias, we present two images in both A/B and B/A orders and average the decisions.
+As shown in Table
+2
+, VLM judges FlowFixer to be the best restoration method in terms of subject fidelity. In addition to that, VLM judgments exhibit strong alignment with AKI and
+𝒦
+Gain
+\mathcal{K}_{\text{Gain}}
+, cross-validating their effectiveness in capturing perceptual improvements in subject fidelity.
+Figure 8
+:
+Impact of training distortion levels on refinement performance.
+Using a range of distortion levels during training enhances the model’s ability to handle diverse degradation at inference time, resulting in more robust restoration.
+Figure 9
+:
+Efficacy of cropped refinement in comparison with full image refinement.
+While full image refinement moderately enhances subject fidelity, cropping further improves legibility.
+5.3
+Distortion levels for training
+To assess the impact of degradation diversity during training, we compare FlowFixer models trained with different subsets of distortion levels: (i) only slight noise (
+1.0
+×
+1.0\times
+), (ii) moderate and slight noise (
+1.0
+×
+1.0\times
+,
+0.5
+×
+0.5\times
+), and (iii) the full range (
+1.0
+×
+1.0\times
+,
+0.5
+×
+0.5\times
+,
+0.25
+×
+0.25\times
+). As illustrated in Figure
+8
+, including various levels of distortion during training significantly boosts robustness, especially under large-scale artifacts, highlighting the importance of diverse degradation simulation for effective refinement.
+5.4
+Crop-based refinement
+Figure
+9
+compares a single global refinement pass against our crop-based refinement strategy. In both cases, the global scene composition remains unchanged, highlighting FlowFixer’s inherent stability with respect to layout drift. Notably, even under the same evaluation resolution, crop-based refinement yields more accurate recovery of fine-grained subject details, thanks to its focused and localized processing. This allows better fidelity in details without compromising global coherence.
+6
+Conclusion
+We introduced FlowFixer, a model-agnostic detail refiner for subject-driven generation that recovers fine structural details while preserving global layout. Trained on self-supervised pseudo pairs simulating high-frequency degradation, FlowFixer scales to in-the-wild references without paired subject–scene data. Our text-free, direct image-to-image formulation avoid prompt ambiguity and consistently improve fidelity. Paired with keypoint-matching-based metrics for ground-truth-free evaluation, FlowFixer demonstrates superior performance across diverse SDG methods. Future directions include (i) multi-reference refinement that leverages multiple reference images, and (ii) user-interactive correction using auxiliary control signals, such as scribble masks.
+References
+[1]
+O. Avrahami, D. Lischinski, and O. Fried
+(2022)
+Blended diffusion for text-driven editing of natural images
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[2]
+J. Bai, S. Bai, Y. Chu, Z. Cui, K. Dang, X. Deng, Y. Fan, W. Ge, Y. Han, F. Huang,
+et al.
+(2023)
+Qwen technical report
+.
+arXiv preprint arXiv:2309.16609
+.
+Cited by:
+§3.2
+,
+§4.2
+.
+[3]
+M. Brack, F. Friedrich, K. Kornmeier, L. Tsaban, P. Schramowski, K. Kersting, and A. Passos
+(2024)
+Ledits++: limitless image editing using text-to-image models
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[4]
+M. Cao, X. Wang, Z. Qi, Y. Shan, X. Qie, and Y. Zheng
+(2023)
+Masactrl: tuning-free mutual self-attention control for consistent image synthesis and editing
+.
+In
+ICCV
+,
+Cited by:
+§2
+.
+[5]
+G. Comanici, E. Bieber, M. Schaekermann, I. Pasupat, N. Sachdeva, I. Dhillon, M. Blistein, O. Ram, D. Zhang, E. Rosen,
+et al.
+(2025)
+Gemini 2.5: pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities
+.
+arXiv preprint arXiv:2507.06261
+.
+Cited by:
+§3.2
+,
+§4.2
+.
+[6]
+G. Couairon, J. Verbeek, H. Schwenk, and M. Cord
+(2022)
+Diffedit: diffusion-based semantic image editing with mask guidance
+.
+arXiv preprint arXiv:2210.11427
+.
+Cited by:
+§2
+.
+[7]
+P. Esser, S. Kulal, A. Blattmann, R. Entezari, J. Müller, H. Saini, Y. Levi, D. Lorenz, A. Sauer, F. Boesel,
+et al.
+(2024)
+Scaling rectified flow transformers for high-resolution image synthesis
+.
+In
+ICML
+,
+Cited by:
+§1
+.
+[8]
+R. Gal, Y. Alaluf, Y. Atzmon, O. Patashnik, A. H. Bermano, G. Chechik, and D. Cohen-Or
+(2023)
+An image is worth one word: personalizing text-to-image generation using textual inversion
+.
+In
+ICLR
+,
+Cited by:
+§2
+.
+[9]
+Z. Gu, S. Yang, J. Liao, J. Huo, and Y. Gao
+(2024)
+Analogist: out-of-the-box visual in-context learning with image diffusion model
+.
+ACM Trans. Graph.
+43
+(
+4
+),
+pp. 1–15
+.
+Cited by:
+§2
+.
+[10]
+Q. Guo and T. Lin
+(2024)
+Focus on your instruction: fine-grained and multi-instruction image editing by attention modulation
+.
+In
+CVPR
+,
+Cited by:
+§2
+,
+§3.2
+.
+[11]
+A. Hertz, R. Mokady, J. Tenenbaum, K. Aberman, Y. Pritch, and D. Cohen-Or
+(2023)
+Prompt-to-prompt image editing with cross attention control
+.
+In
+ICLR
+,
+Cited by:
+§2
+.
+[12]
+M. Heusel, H. Ramsauer, T. Unterthiner, B. Nessler, and S. Hochreiter
+(2017)
+Gans trained by a two time-scale update rule converge to a local nash equilibrium
+.
+In
+NeurIPS
+,
+Cited by:
+§1
+.
+[13]
+J. Ho, A. Jain, and P. Abbeel
+(2020)
+Denoising diffusion probabilistic models
+.
+In
+NeurIPS
+,
+Cited by:
+§3.1
+.
+[14]
+E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, W. Chen,
+et al.
+(2022)
+LoRA: low-rank adaptation of large language models.
+.
+In
+ICLR
+,
+Cited by:
+§2
+,
+§3.4
+.
+[15]
+H. Jiang, A. Karpur, B. Cao, Q. Huang, and A. Araujo
+(2024)
+Omniglue: generalizable feature matching with foundation model guidance
+.
+In
+CVPR
+,
+Cited by:
+§1
+,
+§3.5
+,
+§4.1
+.
+[16]
+B. Kawar, S. Zada, O. Lang, O. Tov, H. Chang, T. Dekel, I. Mosseri, and M. Irani
+(2023)
+Imagic: text-based real image editing with diffusion models
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[17]
+G. Kim, T. Kwon, and J. C. Ye
+(2022)
+Diffusionclip: text-guided diffusion models for robust image manipulation
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[18]
+N. Kumari, B. Zhang, R. Zhang, E. Shechtman, and J. Zhu
+(2023)
+Multi-concept customization of text-to-image diffusion
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[19]
+B. F. Labs, S. Batifol, A. Blattmann, F. Boesel, S. Consul, C. Diagne, T. Dockhorn, J. English, Z. English, P. Esser,
+et al.
+(2025)
+FLUX. 1 Kontext: flow matching for in-context image generation and editing in latent space
+.
+arXiv preprint arXiv:2506.15742
+.
+Cited by:
+§2
+,
+§3.2
+,
+§3.4
+,
+Table 1
+,
+§4.2
+,
+§5.1
+,
+§5.2
+,
+Table 2
+.
+[20]
+B. F. Labs
+(2024)
+FLUX
+.
+Note:
+https://github.com/black-forest-labs/flux
+Cited by:
+§2
+,
+§3.1
+,
+§5.1
+.
+[21]
+D. Li, J. Li, and S. Hoi
+(2023)
+Blip-diffusion: pre-trained subject representation for controllable text-to-image generation and editing
+.
+In
+NeurIPS
+,
+Cited by:
+§1
+,
+§2
+.
+[22]
+P. Lindenberger, P. Sarlin, and M. Pollefeys
+(2023)
+Lightglue: local feature matching at light speed
+.
+In
+ICCV
+,
+Cited by:
+§1
+.
+[23]
+Y. Lipman, R. T. Chen, H. Ben-Hamu, M. Nickel, and M. Le
+(2023)
+Flow matching for generative modeling
+.
+In
+ICLR
+,
+Cited by:
+§3.1
+.
+[24]
+A. Lugmayr, M. Danelljan, A. Romero, F. Yu, R. Timofte, and L. Van Gool
+(2022)
+Repaint: inpainting using denoising diffusion probabilistic models
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[25]
+C. Meng, Y. He, Y. Song, J. Song, J. Wu, J. Zhu, and S. Ermon
+(2022)
+SDEdit: guided image synthesis and editing with stochastic differential equations
+.
+In
+ICLR
+,
+Cited by:
+§2
+.
+[26]
+C. Mou, X. Wang, J. Song, Y. Shan, and J. Zhang
+(2024)
+DiffEditor: boosting accuracy and flexibility on diffusion-based image editing
+.
+In
+CVPR
+,
+Cited by:
+§2
+,
+§3.2
+.
+[27]
+C. Mou, X. Wang, L. Xie, Y. Wu, J. Zhang, Z. Qi, and Y. Shan
+(2024)
+T2I-Adapter: learning adapters to dig out more controllable ability for text-to-image diffusion models
+.
+In
+AAAI
+,
+Cited by:
+§2
+.
+[28]
+M. Oquab, T. Darcet, T. Moutakanni, H. Vo, M. Szafraniec, V. Khalidov, P. Fernandez, D. Haziza, F. Massa, A. El-Nouby,
+et al.
+(2023)
+DINOv2: learning robust visual features without supervision
+.
+arXiv preprint arXiv:2304.07193
+.
+Cited by:
+§4.1
+.
+[29]
+G. Parmar, K. Kumar Singh, R. Zhang, Y. Li, J. Lu, and J. Zhu
+(2023)
+Zero-shot image-to-image translation
+.
+In
+ACM SIGGRAPH conference proceedings
+,
+Cited by:
+§2
+.
+[30]
+O. Patashnik, D. Garibi, I. Azuri, H. Averbuch-Elor, and D. Cohen-Or
+(2023)
+Localizing object-level shape variations with text-to-image diffusion models
+.
+In
+ICCV
+,
+Cited by:
+§2
+.
+[31]
+W. Peebles and S. Xie
+(2023)
+Scalable diffusion models with transformers
+.
+In
+ICCV
+,
+Cited by:
+§1
+.
+[32]
+Y. Peng, Y. Cui, H. Tang, Z. Qi, R. Dong, J. Bai, C. Han, Z. Ge, X. Zhang, and S. Xia
+(2025)
+DreamBench++: a human-aligned benchmark for personalized image generation
+.
+In
+ICLR
+,
+Cited by:
+§4.2
+.
+[33]
+D. Podell, Z. English, K. Lacey, A. Blattmann, T. Dockhorn, J. Müller, J. Penna, and R. Rombach
+(2024)
+SDXL: improving latent diffusion models for high-resolution image synthesis
+.
+In
+ICLR
+,
+Cited by:
+item 2
+,
+§3.3
+.
+[34]
+Y. Qiao, F. Wang, J. Su, Y. Zhang, Y. Yu, S. Wu, and G. Qi
+(2024)
+BARET: balanced attention based real image editing driven by target-text inversion
+.
+In
+AAAI
+,
+Cited by:
+§2
+,
+§3.2
+.
+[35]
+A. Radford, J. W. Kim, C. Hallacy, A. Ramesh, G. Goh, S. Agarwal, G. Sastry, A. Askell, P. Mishkin, J. Clark,
+et al.
+(2021)
+Learning transferable visual models from natural language supervision
+.
+In
+ICML
+,
+Cited by:
+§4.1
+.
+[36]
+R. Rombach, A. Blattmann, D. Lorenz, P. Esser, and B. Ommer
+(2022)
+High-resolution image synthesis with latent diffusion models
+.
+In
+CVPR
+,
+Cited by:
+§2
+,
+§3.1
+.
+[37]
+N. Ruiz, Y. Li, V. Jampani, Y. Pritch, M. Rubinstein, and K. Aberman
+(2023)
+Dreambooth: fine tuning text-to-image diffusion models for subject-driven generation
+.
+In
+CVPR
+,
+Cited by:
+§1
+,
+§2
+,
+§4.2
+.
+[38]
+Y. Song, J. Sohl-Dickstein, D. P. Kingma, A. Kumar, S. Ermon, and B. Poole
+(2021)
+Score-based generative modeling through stochastic differential equations
+.
+In
+ICLR
+,
+Cited by:
+§3.1
+.
+[39]
+Z. Tan, S. Liu, X. Yang, Q. Xue, and X. Wang
+(2025)
+OminiControl: minimal and universal control for diffusion transformer
+.
+In
+ICCV
+,
+Cited by:
+§1
+,
+§1
+,
+§1
+,
+§2
+,
+Table 1
+,
+Table 1
+,
+2nd item
+,
+§5.1
+,
+§5.2
+,
+Table 2
+,
+Table 2
+.
+[40]
+Z. Tan, Q. Xue, X. Yang, S. Liu, and X. Wang
+(2025)
+Ominicontrol2: efficient conditioning for diffusion transformers
+.
+arXiv preprint arXiv:2503.08280
+.
+Cited by:
+§1
+.
+[41]
+K. Thakral, T. Glaser, T. Hassner, M. Vatsa, and R. Singh
+(2025)
+Fine-grained erasure in text-to-image diffusion-based foundation models
+.
+In
+CVPR
+,
+Cited by:
+§2
+,
+§3.2
+.
+[42]
+N. Tumanyan, M. Geyer, S. Bagon, and T. Dekel
+(2023)
+Plug-and-play diffusion features for text-driven image-to-image translation
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[43]
+Unsplash
+.
+Note:
+https://unsplash.com/
+Cited by:
+§3.4
+.
+[44]
+S. Wang, C. Saharia, C. Montgomery, J. Pont-Tuset, S. Noy, S. Pellegrini, Y. Onoe, S. Laszlo, D. J. Fleet, R. Soricut,
+et al.
+(2023)
+Imagen editor and editbench: advancing and evaluating text-guided image inpainting
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[45]
+C. Wu, P. Zheng, R. Yan, S. Xiao, X. Luo, Y. Wang, W. Li, X. Jiang, Y. Liu, J. Zhou,
+et al.
+(2025)
+OmniGen2: exploration to advanced multimodal generation
+.
+arXiv preprint arXiv:2506.18871
+.
+Cited by:
+§1
+.
+[46]
+S. Wu, M. Huang, W. Wu, Y. Cheng, F. Ding, and Q. He
+(2025)
+Less-to-more generalization: unlocking more controllability by in-context generation
+.
+In
+ICCV
+,
+Cited by:
+§1
+.
+[47]
+S. Xiao, Y. Wang, J. Zhou, H. Yuan, X. Xing, R. Yan, C. Li, S. Wang, T. Huang, and Z. Liu
+(2025)
+OmniGen: unified image generation
+.
+In
+CVPR
+,
+Cited by:
+§1
+,
+§1
+.
+[48]
+H. Ye, J. Zhang, S. Liu, X. Han, and W. Yang
+(2023)
+IP-Adapter: text compatible image prompt adapter for text-to-image diffusion models
+.
+arXiv preprint arXiv:2308.06721
+.
+Cited by:
+§2
+.
+[49]
+T. Yu, R. Feng, R. Feng, J. Liu, X. Jin, W. Zeng, and Z. Chen
+(2023)
+Inpaint anything: segment anything meets image inpainting
+.
+arXiv preprint arXiv:2304.06790
+.
+Cited by:
+§2
+.
+[50]
+L. Zhang, A. Rao, and M. Agrawala
+(2023)
+Adding conditional control to text-to-image diffusion models
+.
+In
+ICCV
+,
+Cited by:
+§1
+,
+§2
+.
+[51]
+R. Zhang, P. Isola, A. A. Efros, E. Shechtman, and O. Wang
+(2018)
+The unreasonable effectiveness of deep features as a perceptual metric
+.
+In
+CVPR
+,
+Cited by:
+§1
+.
+[52]
+J. Zhou, J. Li, Z. Xu, H. Li, Y. Cheng, F. Hong, Q. Lin, Q. Lu, and X. Liang
+(2025)
+FireEdit: fine-grained instruction-based image editing via region-aware vision language model
+.
+In
+CVPR
+,
+Cited by:
+§2
+,
+§3.2
+.
+[53]
+J. Zhuang, Y. Zeng, W. Liu, C. Yuan, and K. Chen
+(2024)
+A task is worth one word: learning with task prompts for high-quality versatile image inpainting
+.
+In
+ECCV
+,
+Cited by:
+§2
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

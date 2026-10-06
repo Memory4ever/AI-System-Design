@@ -1,0 +1,15 @@
+# 2601.09258v1 — live collection is not an SLO guarantee
+
+[Exact v1](https://arxiv.org/html/2601.09258v1), actual implementation§4.1–4.2 and§5–6 necessary evaluation/§8 limits; raw ADMISSION_PRIMARY_09258.md and PRIMARY_09258_EVAL.md. Proposed2+2+2=6 standard evidence, pending root source/owner. Increment is runtime PyFrame probes plus heterogeneous clock/API-kernel and communication-topology correlation, not generic observability or the SLO headline. Exact normal Submitted/registered were retrieved; per-ID conditional date receipt will be separate.
+
+ptrace attaches CPython-frame probes; eBPF/CUPTI/ROCm resources joined using calibration beacons and CUDA API/kernel relationship, NCCL(commHash,rank) maps node/device, iteration anchors infer phases. This is an explicit collection interface proposal/implementation report, not proof of coverage on all Python/XPU/runtime revisions. No code was executed or artifact certified.
+
+§4.2 excludes scheduler get_next_batch_to_run from predictor scope, uses workload/KV context and GBDT for overlap nonlinearity, positive residual with window/UCL triggers collection. Therefore batch runtime prediction cannot certify request queueing/TTFT/TPOT/SLO. θmax remains empirical despite advertised elimination of manual tuning. Feature selection for interpretability and Table3weights do not identify physical causal bottlenecks; choosing B*KV is a useful model prior, not causal validation.
+
+§5.1 A100/SGLang0.5.4/Qwen3-32B, batch1–512,input1–2048,output1–512; second vLLM0.10.0/DeepSeek-R1-Distill-Llama70B TP4 context. Precision/quantization, exact concurrent traffic and repetitions/CI for low-overhead claims Not Disclosed in necessary core; headline less than0.5%throughput and less than0.1%latency have no complete matched trace-budget protocol here, so not adopted as universal costs. 20simulationtrials refer to detection patterns, not all performance claims. Table3full-featureGBDT has lower MAPE than physical features, preserving accuracy/interpretability tradeoff rather than new proxy always better.
+
+Table4manual-fault-injection Dynamic-Window FPR0.59% and Fixed-Window0%/different recall are local, not production tail guarantee. §6 downstream exploratory localization assumes process symmetry; Δβ/Z resources rank suspicion, interpolation/symmetry/fault population limit attribution. It is explicitly NOT main built-in root-cause component. Warmup uses historical normal data; persistent pre-existing faults can evade detection and vendor openness limits XPU correlation.
+
+Books pending concrete comparison. CurrentCh69:59–72 field-exposure and raw-resource contracts,84–98 profiler clock-domain/semantic-region joins already support the mature boundaries. A possible gap is dynamic application-frame→GPU/API→rank topology collection, not another generic trace-schema rule; root must decide minimal supported difference. No SLO/controller authority or causal root-certification is adopted.
+
+最终：root实际§4.1.1–3、模型/评价反侧与Ch69具体gap核通过，6分对采集接口gap深入。实际写入Ch69 L72一段及L417末注，root非作者顺读正文L63–76及末注POST通过、窄锁释放；支持域/维护与隐私/unknown fallback为工程推导，不冒称作者全面验证。实际整合不授日级验收。

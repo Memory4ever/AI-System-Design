@@ -1,0 +1,1538 @@
+SecureGate: Learning When to Reveal PII Safely via Token-Gated Dual-Adapters for Federated LLMs
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I Introduction
+II Related Work
+II-A Federated Learning for LLMs
+II-B Privacy Leakage in Federated LLMs
+III Problem Formulation & Threat Model
+III-A Problem Formulation
+III-B Threat Model
+IV Methodology
+IV-A Dual-Adapter Initialization for Privacy & Personalization
+IV-B Protected Federated LLM Fine-Tuning
+IV-C Dual Personalized Adapter Fusion
+IV-D Gating Module Training
+V Performance Evaluation
+V-A Experimental Setup
+V-B Experimental Results
+VI Conclusion
+VII Limitations
+References
+A Detailed Experimental Settings
+A-A Reproduction Hyperparameters
+A-B Evaluation Metrics
+A-C Gating Module Architecture
+A-D Computing Environment
+A-E Implementation Details
+B In-Depth Evaluation of SecureGate
+B-A Inference Performance under Non-IID Client Distributions
+B-B Evaluating Scalability Across Client Distributions
+B-C Multi-Adapter Evaluation: Authorization, Isolation, and Privacy Floors
+B-D Evaluating SecureGate Communication Overhead
+B-E Inference Attack Performance by PII Class
+B-F Effect of Candidate Pool Size on Inference Accuracy
+C Ablation Study of SecureGate Components
+C-A Evaluating LoRA Rank Impact
+C-B Language Modeling Performance (Perplexity)
+C-C Gating Feature Analysis
+D Security Analysis of Keyed Tokenization and Routing
+E Synthetic Data Generation and Augmentations for Gating Training
+F Algorithms
+License: CC BY-SA 4.0
+arXiv:2602.13529v1 [cs.CR] 13 Feb 2026
+SecureGate: Learning When to Reveal PII Safely via Token-Gated Dual-Adapters for Federated LLMs
+Mohamed Shaaban, Mohamed Elmahallawy
+Affiliation:
+School of Engineering and Applied Science, Washington State University, Richland, WA, USA
+{mohamed.shaaban, mohamed.elmahallawy}@wsu.edu
+Abstract
+Federated learning (FL) enables collaborative training across organizational silos without sharing raw data, making it attractive for privacy-sensitive applications. With the rapid adoption of large language models (LLMs), federated fine-tuning of generative LLMs has gained attention as a way to leverage distributed data while preserving confidentiality. However, this setting introduces fundamental challenges: (i) privacy leakage of personally identifiable information (PII) due to LLM memorization, and (ii) a persistent tension between global generalization and local utility under heterogeneous data. Existing defenses, such as data sanitization and differential privacy, reduce leakage but often degrade downstream performance. We propose SecureGate , a privacy-aware federated fine-tuning framework for LLMs that provides fine-grained privacy control without sacrificing utility. SecureGate employs a dual-adapter LoRA architecture: a secure adapter that learns sanitized, globally shareable representations, and a revealing adapter that captures sensitive, organization-specific knowledge. A token-controlled gating module selectively activates these adapters at inference time, enabling controlled information disclosure without retraining. Extensive experiments across multiple LLMs and real-world datasets show that SecureGate improves task utility while substantially reducing PII leakage, achieving up to a 31.66 × \times reduction in inference attack accuracy and a 17.07 × \times reduction in extraction recall for unauthorized requests. Additionally, it maintains 100% routing reliability to the correct adapter and incurs only minimal computational and communication overhead.
+I Introduction
+In the era of large language models (LLMs), organizations across industry and academia increasingly rely on pre-trained models to support domain-specific applications such as scientific analysis, healthcare, and enterprise workflows [ 1 , 2 ] . Training LLMs from scratch is often prohibitively expensive in terms of computation, data, and engineering effort; consequently, fine-tuning pre-trained models has become the dominant approach for domain and task adaptation [ 3 ] . While effective, independently fine-tuned models remain confined to local data silos, preventing organizations from benefiting from complementary knowledge distributed across institutions and often resulting in limited generalization and robustness [ 4 ] .
+Federated learning (FL) [ 5 ] provides a principled framework to address this limitation by enabling collaborative model training without sharing raw data. In a standard FL setup, each participant fine-tunes a local copy of a shared pre-trained model using private data and periodically transmits model updates to a central aggregator for global aggregation. Although FL has demonstrated success for conventional machine learning and smaller neural models, extending it to large-scale generative LLMs poses fundamental challenges. LLMs are prone to memorizing sensitive information [ 6 ] , and naive aggregation of model updates can leak personally identifiable information (PII) [ 7 ] . Moreover, aggregating updates often favors average global performance, degrading utility on participants’ domain-specific data and intensifying the tension between global generalization and local personalization [ 8 ] .
+To reduce PII leakage during collaborative fine-tuning, organizations commonly rely on defenses such as data scrubbing [ 9 ] and differential privacy (DP) [ 10 ] . While effective at limiting memorization-based leakage, these methods often degrade model utility by removing task-relevant context or injecting excessive noise, particularly as privacy constraints tighten. In practice, this trade-off can negate the benefits of cross-organization collaboration, yielding global models that underperform locally trained alternatives. Moreover, existing defenses scale poorly to large generative LLMs and rarely address personalization, communication efficiency, and client heterogeneity jointly. Thus, this work addresses the following question: How can federated fine-tuning of generative LLMs simultaneously ensure strong privacy guarantees, high global and local utility, and practical efficiency?
+We propose SecureGate , a federated fine-tuning framework for organizations adapting LLMs in privacy-sensitive settings. SecureGate employs two lightweight (Low Rank Adapters) LoRAs [ 11 ] : a secure adapter that learns sanitized, shareable representations, and a revealing adapter that retains sensitive, organization-specific knowledge. A token-controlled gating module selectively routes prompts at inference time, enabling fine-grained access control without retraining. By aligning global and local representations, SecureGate enables personalized adaptation while maintaining communication efficiency and scalability. We summarize our contribution as:
+1.
+Token-controlled privacy paradigm ( SecureGate ).
+We introduce a token-based FL paradigm that protects private organizational knowledge by locking sensitive personalized components . Access to these components is granted only when a learned
+[Special-Token] is presented; unauthorized parties—including the aggregator and other clients—cannot access or infer the protected information.
+2.
+Dual-adapter access-controlled architecture.
+SecureGate realizes model adaptation through:
+•
+Secure adapter: Encodes globally shareable knowledge while preserving PII using privacy defenses such as noise injection (e.g., DP) or data scrubbing (e.g., adding
+[MASK] ).
+•
+Revealing adapter: Encodes highly sensitive, organization-specific knowledge and is activated only for queries from authorized organizations that include a valid
+[Special-Token] .
+3.
+Privacy-aware gating and routing. A lightweight gating module dynamically routes prompts to the appropriate adapter based on token signals, enabling selective disclosure at inference time: authorized queries access sensitive knowledge, while unauthorized queries rely solely on the secure adapter.
+4.
+Empirical evaluation. We evaluate SecureGate on multiple LLMs and real-world datasets (e.g., ECHR, Yelp Reviews). Results show strong privacy–utility trade-offs: authorized performance reaches 25.20% inference accuracy and 6.32 perplexity (PPL) score, while unauthorized access is suppressed to a leakage floor of 4.20% and 15.89 PPL. Overall, SecureGate achieves up to a 31.66 × 31.66\times reduction in inference accuracy and a 17.07 × 17.07\times reduction in extraction recall for unauthorized requests, while preserving lower computation &communication cost and 100 % 100\% routing reliability.
+II Related Work
+II-A Federated Learning for LLMs
+FL enables collaborative training across distributed clients without sharing raw data. Foundational methods such as FedAvg [ 12 ] , FedAdagrad, FedAdam, FedYogi [ 13 ] , and FedAvgM [ 14 ] provide techniques for aggregating client updates and handling heterogeneous data. Early work addressed statistical heterogeneity, while recent approaches like HPFL [ 15 ] and LG-Mix [ 16 ] decompose models into shared backbones and personalized components.
+The rise of LLMs has motivated adapting classical FL approaches to manage massive parameters and memory across clients while enabling collaborative training of globally shared LLMs. Directly transmitting full LLM weights is infeasible due to prohibitive communication and storage costs. Lightweight adaptation techniques such as LoRA mitigate this challenge: FedLoRA [ 17 ] decomposes each layer into a shared full-rank component and a client-specific low-rank adapter to reduce non-IID effects, while pFedLoRA [ 18 ] iteratively trains local adapters across heterogeneous clients’ architectures, aggregating them into a global adapter with minimal communication. These methods make federated LLM training practical, but they primarily optimize utility, leaving models vulnerable to memorization and unintended disclosure of sensitive local data.
+II-B Privacy Leakage in Federated LLMs
+Federated LLMs are still in their infancy, but initial efforts have begun to address privacy concerns. Personalized FL (PFL) methods aim to improve generalization while limiting information leakage by combining shared knowledge with client-specific adaptations. For example, FedDPA [ 19 ] introduces global–local adapter pairs dynamically fused at inference, yet it does not provide inherent access control for sensitive data.
+On the security side, cryptographic techniques such as secure aggregation have been extensively explored in classical FL [ 20 , 21 , 22 , 23 ] , but their application to federated LLMs remains limited. Most focus solely on training-time protection, leaving inference-time privacy largely unaddressed. Moreover, these methods incur substantial computation and communication overheads, which would scale poorly to LLM-sized models. FDLoRA [ 24 ] takes an early step by separating global and local adapters, but it provides no privacy guarantees during inference.
+Building on these insights, we propose SecureGate , a framework that combines adapter-based personalization with token-controlled, per-request selective disclosure, enabling fine-grained, secure access to federated LLM knowledge while preserving both training- and inference-time privacy and maintaining high local and global model utility.
+III Problem Formulation & Threat Model
+III-A Problem Formulation
+Personalized Federated Learning.
+FL enables N N organizations, each with a private dataset D n D_{n} ( n = 1 , … , N n=1,\dots,N ), to collaboratively train a shared model without exchanging raw data. At each communication round t t , organizations perform local training starting from the current global parameters 𝒘 t \boldsymbol{w}^{t} , producing updated local parameters 𝒘 n t + 1 \boldsymbol{w}_{n}^{t+1} . The server aggregates these updates (e.g., via FedAvg [ 12 ] ) to obtain the next global model:
+𝒘 t + 1 = ∑ n = 1 N | D n | | 𝒟 | ​ 𝒘 n t + 1 \boldsymbol{w}^{t+1}=\sum_{n=1}^{N}\frac{|D_{n}|}{|\mathcal{D}|}\boldsymbol{w}_{n}^{t+1} , which is then broadcast back to all organizations until convergence.
+Personalized FL (PFL) [ 25 ] extends FL to preserve per-organization utility by maintaining both shared and local parameters: 𝒘 n t = 𝒘 t + 𝒘 p , n t \boldsymbol{w}_{n}^{t}=\boldsymbol{w}^{t}+\boldsymbol{w}_{p,n}^{t} , where 𝒘 p , n t \boldsymbol{w}_{p,n}^{t} is the personalized component. A typical objective is
+min ⁡ ∑ n = 1 N 𝒘 t , { 𝒘 p , n t } ⁡ ( ℒ n ​ ( 𝒘 t + 𝒘 p , n t ) + λ ​ Ω ​ ( 𝒘 p , n t ) ) , \min_{\boldsymbol{w}^{t},\{\boldsymbol{w}_{p,n}^{t}\}}\sum_{n=1}^{N}\Big(\mathcal{L}_{n}(\boldsymbol{w}^{t}+\boldsymbol{w}_{p,n}^{t})+\lambda\,\Omega(\boldsymbol{w}_{p,n}^{t})\Big),
+(1)
+with ℒ n \mathcal{L}_{n} the local loss, Ω \Omega a regularizer, and λ \lambda a trade-off weight. Local updates follow standard gradient steps:
+𝒘 p , n t + 1 = 𝒘 p , n t − η ∇ ℒ n ( 𝒘 t + 𝒘 p , n t ) \boldsymbol{w}_{p,n}^{t+1}=\boldsymbol{w}_{p,n}^{t}-\eta\nabla\mathcal{L}_{n}(\boldsymbol{w}^{t}+\boldsymbol{w}_{p,n}^{t}) .
+PFL can be realized via mixture-of-experts, meta-learning, or parameter-efficient fine-tuning, with personalized parameters typically retained locally to limit exposure. This inherent tension between global generalization and per-organization specialization motivates our work to jointly balance privacy and personalization while maximizing both global and local model utility.
+Parameter-Efficient Adaptation of LLMs. Training an LLM from scratch involves billions of parameters and is often unnecessary when adapting to a specific domain. Full fine-tuning can also drift from pretrained knowledge and is computationally expensive. Parameter-efficient fine-tuning (PEFT) methods address this by updating only small, task-specific components while keeping the base model frozen. A common approach is LoRA, which trains compact adapter matrices instead of all model weights, reducing computation, storage, and communication costs. Formally, for a pretrained weight matrix 𝒘 0 ∈ ℝ d × k \boldsymbol{w}_{0}\in\mathbb{R}^{d\times k} , LoRA decomposes the weight update as 𝒘 = 𝒘 0 + Δ ​ 𝒘 , Δ ​ 𝒘 = 𝑩 ​ 𝑨 , 𝑨 ∈ ℝ r × k , 𝑩 ∈ ℝ d × r , r ≪ min ⁡ ( d , k ) \boldsymbol{w}=\boldsymbol{w}_{0}+\Delta\boldsymbol{w},~\Delta\boldsymbol{w}=\boldsymbol{B}\boldsymbol{A},\;\boldsymbol{A}\in\mathbb{R}^{r\times k},\;\boldsymbol{B}\in\mathbb{R}^{d\times r},\;r\ll\min(d,k) ,
+where only 𝑨 \boldsymbol{A} and 𝑩 \boldsymbol{B} are trainable. The forward pass becomes h = 𝒘 ​ x = 𝒘 0 ​ x + 𝑩 ​ 𝑨 ​ x h=\boldsymbol{w}x=\boldsymbol{w}_{0}x+\boldsymbol{B}\boldsymbol{A}x , preserving the pretrained base while adapting to task-specific knowledge. Distinct LoRA adapters can be learned for different tasks and selectively combined with the frozen model at inference, enabling efficient, modular personalization.
+When LLMs meet FL.
+Leveraging advances in FL, PFL, and LoRA adapters, federated personalized fine-tuning lets organizations adapt pretrained LLMs to domain data without sharing raw corpora. In the PFL-for-LLMs setting each organization n n keeps a global model 𝒘 \boldsymbol{w} and a compact personalized adapter Δ ​ 𝒘 p , n \Delta\boldsymbol{w}_{p,n} , often parameterized with low-rank (LoRA) updates:
+Δ ​ 𝒘 p , n ≈ ∑ ℓ 𝐁 n , ℓ ​ 𝐀 n , ℓ \Delta\boldsymbol{w}_{p,n}\approx\sum_{\ell}\mathbf{B}_{n,\ell}\mathbf{A}_{n,\ell} , where ℓ {\ell} is an index that iterates over the layers (or parameterized components). Thus, communicating only the adapter parameters greatly reduces storage and bandwidth. However, directly applying FL/PFL to LLMs is problematic: large models tend to memorize sensitive data (risking PII leakage), their checkpoints and updates are communication-intensive, and organization heterogeneity and regulatory constraints undermine naive FL/PFL averaging . These limitations motivate SecureGate , designed to curb leakage while preserving global and per-organization utility.
+III-B Threat Model
+We consider realistic adversaries in federated LLM deployments, where organizations retain raw data locally and share only model updates or adapter weights. Adversaries aim to extract sensitive information or degrade global/local model utility.
+Roles, Capabilities, and Goals. We consider three principal adversary types:
+(i) honest-but-curious server — follows the protocol but inspects updates or checkpoints; (ii) curious collaborating organizations — analyze exchanged parameters to extract proprietary or PII information; (iii) external adversaries — eavesdrop on communications to perform membership inference. Adversaries may inspect updates or checkpoints, query models via APIs, and combine auxiliary public or leaked data with observations. Their goals are to reconstruct or extract private data (memorization/extraction attacks) and perform membership or attribute inference on organizational datasets.
+We also assume adversaries do not have direct access to raw datasets but may observe model artifacts and query outputs.
+Fig. 1 : An Illustration of the SecureGate Framework.
+IV Methodology
+This section introduces SecureGate , a framework that addresses privacy leakage in federated LLMs through three components: a learnable authorization token, a dual-adapter LoRA design, and a gating module for selective adapter activation . The framework operates as follows (see Fig. 1 ):
+IV-A Dual-Adapter Initialization for Privacy & Personalization
+In this stage, SecureGate allows each organization n ∈ 𝒩 n\in\mathcal{N} to initialize and fine-tune dual LoRA adapters: (i) a secure adapter that generates representations sanitized of PII, and (ii) a revealing adapter for controlled disclosure (see Fig. 1 .a). Let 𝒟 n \mathcal{D}_{n} denotes organization n n ’s local dataset, which is partitioned into two views: a raw view 𝒟 n raw \mathcal{D}_{n}^{\text{raw}} and a masked view 𝒟 n mask \mathcal{D}_{n}^{\text{mask}} , where PII is automatically detected (e.g., via named-entity recognition, NER [ 26 ] ) and replaced with
+[MASK] using a defense scheme (e.g., scrubbing [ 27 ] ). We define two parameter-efficient LoRA updates per organization:
+Δ ​ 𝒘 n ( rev ) = 𝑩 n ( rev ) ​ 𝑨 n ( rev ) , Δ ​ 𝒘 n ( sec ) = 𝑩 n ( sec ) ​ 𝑨 n ( sec ) , \Delta\boldsymbol{w}_{n}^{(\text{rev})}=\boldsymbol{B}_{n}^{(\text{rev})}\boldsymbol{A}_{n}^{(\text{rev})},~~\Delta\boldsymbol{w}_{n}^{(\text{sec})}=\boldsymbol{B}_{n}^{(\text{sec})}\boldsymbol{A}_{n}^{(\text{sec})},
+(2)
+where
+Δ ​ 𝒘 n ( rev ) \Delta\boldsymbol{w}_{n}^{(\text{rev})}
+and
+Δ ​ 𝒘 n ( sec ) \Delta\boldsymbol{w}_{n}^{(\text{sec})}
+are the revealing and secure adapters trained on
+𝒟 n raw \mathcal{D}_{n}^{\text{raw}}
+and
+𝒟 n mask \mathcal{D}_{n}^{\text{mask}}
+, respectively.
+During fine-tuning, only
+Δ ​ 𝒘 n ( sec ) \Delta\boldsymbol{w}_{n}^{(\text{sec})}
+is shared and aggregated by the server, ensuring the global model encodes only sanitized knowledge. In contrast,
+Δ ​ 𝒘 n ( rev ) \Delta\boldsymbol{w}_{n}^{(\text{rev})}
+remains local and, after fusion with the final global model, is accessed exclusively via token-gated control (Section IV-D ), allowing only authorized users to access sensitive information.
+IV-B Protected Federated LLM Fine-Tuning
+We employ a two-level optimization scheme that alternates between a server-side outer loop and an organization-side inner loop (Fig. 1 .b). The goal is to learn a global LoRA adapter that captures domain-generalizable knowledge while allowing each organization to maintain a personalized variant for local utility, ensuring that no organization’s PII is exposed to others or the server.
+At communication round t ∈ { 1 , … , T } t\in\{1,\dots,T\} , the server broadcasts the current global secure adapter Δ ​ 𝒘 t \Delta\boldsymbol{w}^{t} . Each organization n ∈ 𝒩 n\in\mathcal{N} then performs K K inner-loop updates on its masked dataset 𝒟 n mask \mathcal{D}_{n}^{\text{mask}} using AdamW [ 28 ] , producing locally updated adapters Δ ​ 𝒘 n t + 1 \Delta\boldsymbol{w}_{n}^{t+1} , which are sent to the server. Next, the server aggregates these updates via weighted averaging with Nesterov momentum [ 29 ] :
+Δ ​ 𝒘 ¯ t + 1 = ∑ n = 1 N | 𝒟 n mask | ∑ k = 1 N | 𝒟 k mask | ​ Δ ​ 𝒘 n t + 1 , \Delta\bar{\boldsymbol{w}}^{t+1}=\sum_{n=1}^{N}\frac{|\mathcal{D}_{n}^{\text{mask}}|}{\sum_{k=1}^{N}|\mathcal{D}_{k}^{\text{mask}}|}\Delta\boldsymbol{w}_{n}^{t+1},\vskip-5.69054pt
+(3)
+This average is combined with a scaled momentum vector Δ ​ 𝒗 t \Delta\boldsymbol{v}^{t} to form a lookahead position as Δ ​ 𝒑 t = Δ ​ 𝒘 t + m ​ Δ ​ 𝒗 t \Delta\boldsymbol{p}^{t}=\Delta\boldsymbol{w}^{t}+m\Delta\boldsymbol{v}^{t} , where m m controls the momentum strength. The momentum is then updated by moving towards the difference between the weighted average and lookahead scaled by the learning rate η \eta as:
+Δ ​ 𝒗 t + 1 = m ​ Δ ​ 𝒗 t + η ⁡ ( Δ ​ 𝒘 ¯ t + 1 − Δ ​ 𝒑 t ) \Delta\boldsymbol{v}^{t+1}=m\Delta\boldsymbol{v}^{t}+\eta\left(\Delta\bar{\boldsymbol{w}}^{t+1}-\Delta\boldsymbol{p}^{t}\right)\vskip-5.69054pt
+(4)
+Finally, the server updates the global model with the new momentum:
+Δ ​ 𝒘 t + 1 = Δ ​ 𝒘 t + Δ ​ 𝒗 t + 1 \Delta\boldsymbol{w}^{t+1}=\Delta\boldsymbol{w}^{t}+\Delta\boldsymbol{v}^{t+1}\vskip-5.69054pt
+(5)
+By restricting communication to lightweight secure adapters, this scheme significantly reduces communication overhead while preserving strong global generalization and enabling privacy-preserving local adaptation at each organization.
+IV-C Dual Personalized Adapter Fusion
+After completing federated fine-tuning (Section IV-B ), each organization fuses the final global adapter Δ ​ 𝒘 T \Delta\boldsymbol{w}^{T} with its local secure and revealing adapters. This yields two organization-specific adapters: (i) a secure personalized adapter that preserves privacy while maintaining global utility, and (ii) a revealing personalized adapter that selectively discloses sensitive local knowledge to authorized users (see Fig. 1 .c).
+Secure Personalized Adapter.
+Let Δ ​ 𝒘 n T \Delta\boldsymbol{w}_{n}^{T} denotes the locally trained secure adapter of organization n n after T T rounds. The secure personalized adapter is obtained via linear fusion:
+Δ ​ 𝒘 p , n ( sec ) = α 1 ​ Δ ​ 𝒘 T + α 2 ​ Δ ​ 𝒘 n T , \vskip-7.11317pt\Delta\boldsymbol{w}^{(\text{sec})}_{p,n}=\alpha_{1}\Delta\boldsymbol{w}^{T}+\alpha_{2}\Delta\boldsymbol{w}_{n}^{T},
+(6)
+where α 1 \alpha_{1} and α 2 \alpha_{2} balance global generalization and local adaptation. Following [ 30 ] , the fusion weights are learned via black-box optimization by minimizing the cross-entropy loss on a small query set Q ⊂ 𝒟 n mask Q\subset\mathcal{D}_{n}^{\text{mask}} with ℓ 1 \ell_{1} regularization:
+min { α i } ⁡ ℒ ⁡ ( α , Q ) + ψ ​ ∑ i | α i | . \vskip-5.69054pt\min_{\{\alpha_{i}\}}\;\mathcal{L}(\alpha;Q)+\psi\sum_{i}|\alpha_{i}|.
+(7)
+where ψ \psi regulates the strength of regularization. Since Δ ​ 𝒘 n T \Delta\boldsymbol{w}_{n}^{T} is trained on masked data (e.g., PII replaced with
+[MASK] ), this fusion preserves privacy while integrating global knowledge.
+Revealing Personalized Adapter.
+In parallel, each organization fuses Δ ​ 𝒘 T \Delta\boldsymbol{w}^{T} with its local revealing adapter Δ ​ 𝒘 n ( rev ) \Delta\boldsymbol{w}_{n}^{(\text{rev})} , trained on raw data:
+Δ ​ 𝒘 p , n ( rev ) = β 1 ​ Δ ​ 𝒘 T + β 2 ​ Δ ​ 𝒘 n ( rev ) , \vskip-7.11317pt\Delta\boldsymbol{w}^{(\text{rev})}_{p,n}=\beta_{1}\Delta\boldsymbol{w}^{T}+\beta_{2}\Delta\boldsymbol{w}_{n}^{(\text{rev})},
+(8)
+where β 1 \beta_{1} and β 2 \beta_{2} are optimized similar to α i \alpha_{i} in Eq. ( 7 ). This adapter remains strictly local and is accessed only through token-controlled gating at inference time, enabling controlled disclosure of sensitive organization-specific knowledge.
+Together, these adapters allow organizations to benefit from shared federated knowledge while preserving privacy and enabling fine-grained, authorization-based information access.
+IV-D Gating Module Training
+To enable controlled disclosure at inference time, we introduce a lightweight gating module that routes each query to either the secure or revealing personalized adapter (Section IV-C ). Together with the dual adapters, the gating module forms the access-control core of SecureGate , enabling per-request, key-controlled disclosure while preserving shared model utility (see Fig. 1 .d).
+Design and Input Encoding.
+The gating module is a small MLP designed for minimal local overhead. Each query is prefixed with a learnable access key encoded as a special token:
+[SPECIAL_TOKEN=KEY] PROMPT . This key is added as an atomic token to an organization-local tokenizer, while a public tokenizer excludes it, preventing token splitting and leakage (see Appendix D ). The gating module operates on the final-layer hidden state h key h_{\text{key}} of the key token extracted from the frozen base model, which we find provides the most robust routing signal (see Appendix C-C ).
+The gating logits are computed as
+z i = MLP ⁡ ( h key ) , i ∈ ℐ , \vskip-4.2679ptz_{i}=\mathrm{MLP}(h_{\text{key}}),\quad i\in\mathcal{I},
+(9)
+followed by a softmax:
+p i = exp ⁡ ( z i ) ∑ j ∈ ℐ exp ⁡ ( z j ) p_{i}=\frac{\exp(z_{i})}{\sum_{j\in\mathcal{I}}\exp(z_{j})} .
+The adapter is selected as a ∗ = arg ⁡ max i ⁡ p i a^{*}=\arg\max_{i}p_{i} , with an optional threshold τ \tau to default to the secure adapter when confidence is low. Notably, this design naturally extends to multiple adapters with distinct keys and access levels (see Appendix B-C ).
+Gating Module Training. Each organization trains its gating module locally using a cross-entropy loss: ℒ gating = − ∑ i y i log p i \mathcal{L}_{\text{gating}}=-\sum_{i}y_{i}\log p_{i} , where y i y_{i} indicates the correct adapter for a given key. Training data is synthetically generated to cover authorized and unauthorized cases. During training, the base model and adapters remain frozen, confining learning to the small gating network. The trained gating module remains local and can be efficiently retrained when keys are rotated, without modifying the model or adapters.
+Two-Pass Inference.
+To prevent key contamination of outputs, SecureGate uses a two-pass inference procedure. In the gating pass , the full prompt (with key) is processed by the frozen base model to extract h key h_{\text{key}} and select an adapter. In the adapter pass , the key is removed and the cleaned prompt is re-evaluated using the selected adapter to generate the final response. This ensures reliable routing without key-induced bias in generation.
+V Performance Evaluation
+V-A Experimental Setup
+Datasets. We evaluate SecureGate on two benchmark datasets: (i) Yelp Reviews [ 31 ] , a large collection of user-generated reviews with text, star ratings, and metadata such as timestamps and user/business IDs; and (ii) ECHR [ 32 ] , comprising legal case documents from the European Court of Human Rights containing personal information. We uniformly sample 10,000 instances from each dataset to create balanced subsets. Our FL setup includes 10, 20, or 30 organizations, each training on a distinct 10% partition of the sampled data.
+LLM Models. We experiment with SOTA open-source LLMs Qwen/Qwen3-1.7B [ 33 ] , Google’s Gemma2-2b [ 34 ] and Meta’s LlaMA 3.2-1B/3B [ 35 ] , fine-tuned via LoRA adapters.
+Hyperparameters. For LoRA training, we set the rank r ∈ { 4 , 8 , 12 , 16 } r\in\{4,8,12,16\} . Each client fine-tunes its local parameters for three epochs using AdamW with learning rate η local = 10 − 4 \eta_{\text{local}}=10^{-4} . For global aggregation, we use η global = 0.01 \eta_{\text{global}}=0.01 and T = 20 T=20 rounds. Remaining parameters and implementation specifics are detailed in Appendix A .
+Attack Types. We evaluate privacy leakage under two threats: (i) Extraction Attack: The model is sampled to generate text, after which NER is applied to extract PII; leakage is measured by comparing extracted entities against a baseline model; (ii) Inference Attack: Given a candidate set of c c PII values ( c = 50 c{=}50 unless stated otherwise), the attacker selects the value that minimizes model perplexity for a fixed prefix–suffix context, assuming access to an auxiliary set of 100 PII-containing statements.
+Evaluation Metrics. We evaluate model performance and privacy leakage using standard metrics, including Precision, Recall, Perplexity, and computational efficiency (FLOPs); formal definitions are provided in Appendix A-B .
+TABLE I : Client-wise Comparative Analysis of Inference Attack Accuracy (%): Evaluating SecureGate in Authorized vs. Unauthorized Scenarios across diverse Federated Learning environments.
+Authorized Access (Correct Token) ↑ \uparrow
+Unauthorized Access (Wrong/No Token) ↓ \downarrow
+Client
+FedAdagrad
+FedAvg
+FedAdam
+FedYogi
+FedAvgM
+SecureGate
+FedAdagrad
+FedAvg
+FedAdam
+FedYogi
+FedAvgM
+SecureGate
+1
+14.10
+20.00
+26.74
+30.12
+24.14
+35.96
+4.82
+4.60
+8.60
+6.67
+3.16
+3.61
+2
+15.00
+14.10
+22.08
+22.50
+20.48
+25.64
+4.65
+5.81
+5.75
+4.88
+5.75
+5.56
+3
+9.76
+11.76
+20.24
+21.59
+20.45
+26.74
+2.33
+1.15
+8.14
+1.15
+1.12
+4.65
+4
+11.39
+16.46
+17.65
+21.25
+18.82
+21.79
+3.75
+6.82
+5.75
+3.49
+2.17
+4.94
+5
+20.25
+21.43
+16.47
+13.10
+19.10
+29.87
+7.23
+4.55
+6.32
+2.20
+2.11
+2.22
+6
+16.46
+19.32
+19.54
+19.51
+18.29
+25.00
+2.67
+6.98
+4.35
+3.45
+6.74
+3.80
+7
+7.41
+13.19
+10.71
+18.60
+15.56
+28.05
+4.71
+7.45
+3.45
+2.13
+3.09
+5.75
+8
+11.76
+17.86
+21.33
+12.50
+15.12
+29.87
+6.25
+4.55
+4.55
+1.11
+1.05
+7.79
+9
+11.39
+16.85
+22.22
+20.93
+20.69
+32.10
+6.33
+5.38
+5.21
+4.60
+7.69
+1.22
+10
+16.46
+18.99
+14.81
+20.00
+28.57
+35.90
+2.44
+4.65
+5.56
+7.61
+6.25
+2.44
+Average
+13.40
+17.00
+19.18
+20.01
+20.12
+25.20
+4.52
+5.19
+5.77
+3.73
+3.92
+4.20
+V-B Experimental Results
+TABLE II :
+SecureGate
+Robustness: Inference and Extraction Attacks across Models, Datasets, and Access Scenarios.
+Inference Accuracy (%)
+Extraction Metrics (Precision / Recall) %
+ECHR Dataset
+Yelp Dataset
+ECHR Dataset
+Yelp Dataset
+Model
+Client
+Authorized ↑ \uparrow
+Unauthorized ↓ \downarrow
+Authorized ↑ \uparrow
+Unauthorized ↓ \downarrow
+Authorized ↑ \uparrow
+Unauthorized ↓ \downarrow
+Authorized ↑ \uparrow
+Unauthorized ↓ \downarrow
+(Correct)
+(Wrong/No)
+(Correct)
+(Wrong/No)
+Prec
+Rec
+Prec
+Rec
+Prec
+Rec
+Prec
+Rec
+Qwen 3-1.7B
+1
+22.08
+4.94
+26.74
+4.35
+1.78
+17.32
+10.00
+4.25
+2.85
+6.80
+0.00
+0.00
+2
+18.07
+2.63
+17.05
+10.39
+1.57
+19.15
+7.71
+4.96
+3.77
+7.50
+2.05
+0.97
+3
+20.00
+2.56
+29.11
+3.95
+2.53
+12.70
+5.21
+2.48
+4.29
+9.12
+0.70
+0.32
+4
+20.99
+5.26
+24.71
+8.89
+2.34
+14.79
+3.28
+1.43
+4.24
+9.12
+1.22
+0.38
+5
+19.78
+5.68
+26.83
+9.72
+2.38
+17.21
+12.14
+6.82
+3.36
+7.78
+0.85
+0.38
+6
+25.00
+4.94
+20.24
+5.00
+2.55
+16.20
+5.99
+3.21
+3.95
+11.04
+0.68
+0.37
+7
+22.99
+2.33
+21.43
+4.76
+2.14
+18.87
+6.85
+4.76
+3.65
+7.95
+1.44
+0.74
+8
+27.85
+2.60
+28.21
+3.90
+2.44
+15.56
+4.32
+2.74
+5.66
+9.67
+0.99
+0.36
+9
+20.48
+4.40
+25.30
+8.00
+1.74
+15.38
+6.40
+3.78
+5.17
+11.51
+0.93
+0.36
+10
+23.75
+1.32
+17.28
+6.76
+2.31
+12.96
+5.94
+4.63
+2.82
+8.26
+0.40
+0.46
+Gemma 2-2B
+1
+73.26
+6.02
+75.00
+2.41
+0.00
+0.00
+0.00
+0.00
+0.27
+0.97
+0.29
+0.97
+2
+72.09
+4.76
+72.00
+2.11
+0.00
+0.00
+0.00
+0.00
+0.12
+0.42
+0.00
+0.00
+3
+57.32
+4.65
+71.83
+3.75
+0.13
+0.15
+0.00
+0.00
+0.03
+0.33
+0.04
+0.33
+4
+70.89
+3.75
+79.47
+7.95
+0.00
+0.00
+0.00
+0.00
+0.03
+0.35
+0.00
+0.00
+5
+83.95
+3.26
+68.18
+7.41
+0.00
+0.00
+0.00
+0.00
+0.10
+0.39
+0.07
+0.39
+6
+61.54
+4.88
+75.95
+3.41
+0.00
+0.00
+0.00
+0.00
+0.22
+0.65
+0.00
+0.00
+7
+74.16
+2.25
+73.61
+3.66
+0.44
+0.18
+0.00
+0.00
+0.17
+1.52
+0.05
+0.38
+8
+65.38
+7.23
+74.65
+3.61
+0.00
+0.00
+0.00
+0.00
+0.08
+0.37
+0.17
+0.37
+9
+64.10
+6.33
+71.43
+3.75
+0.00
+0.00
+0.00
+0.00
+0.15
+0.36
+0.00
+0.00
+10
+74.03
+5.63
+77.27
+2.44
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.10
+0.46
+LlaMA 3.2-3B
+1
+44.87
+7.58
+50.00
+5.88
+3.99
+12.25
+8.33
+0.49
+3.45
+8.74
+0.00
+0.00
+2
+45.33
+7.58
+46.03
+6.67
+3.07
+12.48
+3.00
+0.51
+2.11
+11.25
+4.55
+0.42
+3
+48.68
+7.46
+48.48
+6.56
+3.30
+10.07
+0.00
+0.00
+2.19
+12.38
+0.00
+0.00
+4
+43.75
+10.34
+60.56
+2.94
+3.66
+11.92
+1.82
+0.16
+3.41
+8.77
+8.82
+1.05
+5
+51.35
+2.60
+51.61
+12.77
+2.70
+16.56
+9.52
+0.97
+2.13
+10.12
+0.00
+0.00
+6
+46.58
+7.81
+49.25
+8.20
+3.90
+13.28
+4.76
+0.44
+3.14
+11.69
+8.70
+0.65
+7
+36.00
+1.49
+57.38
+14.29
+3.48
+15.34
+0.00
+0.00
+1.70
+12.88
+1.92
+0.38
+8
+34.38
+1.89
+60.61
+9.09
+3.77
+12.82
+4.44
+0.68
+3.04
+10.04
+8.33
+1.12
+9
+44.59
+6.06
+43.40
+4.76
+3.81
+11.19
+4.55
+0.42
+3.79
+17.63
+3.85
+0.36
+10
+43.48
+4.29
+48.21
+6.67
+3.15
+11.88
+4.17
+0.31
+1.92
+9.17
+3.12
+0.46
+SecureGate vs. Baselines.
+We compare SecureGate against standard FL baselines— FedAvg, FedAdagrad, FedAdam, FedYogi, and FedAvgM (Section II-A )—under inference attack accuracy with 10 clients. We integrate SecureGate ’s dual-adapter architecture and token-controlled gating into each baseline and evaluate the resulting SecureGate-enhanced methods (Table I ).
+With valid tokens, SecureGate achieves an average inference accuracy of 25.20%, outperforming the strongest baseline (FedAvgM at 20.12%). Without authorization, it maintains low leakage (4.20%), comparable to restrictive baselines such as FedYogi (3.73%), while delivering substantially higher authorized utility. These results demonstrate that SecureGate consistently improves the privacy–utility trade-off across both classical and personalized FL settings.
+Evaluating SecureGate ’s PII-Aware Preservation.
+We evaluate SecureGate under extraction and inference attacks on ECHR and Yelp using Qwen3-1.7B, Gemma-2B, and LLaMA 3.2-3B, comparing correct versus incorrect or missing tokens. As shown in Table II , inference attacks with valid tokens , Gemma-2B achieves the highest inference accuracy (57.32–83.95% on ECHR; 68.18–79.47% on Yelp), followed by LLaMA 3.2-3B and Qwen3-1.7B. This highlights that while Gemma resists explicit memorization, it remains susceptible to probabilistic, ranking-based inference. In unauthorized settings , inference leakage remains low across all models (1.32–10.34% on ECHR; 2.11–14.29% on Yelp). Notably, authorization removal causes sharp performance drops—for instance, LLaMA 3.2-3B (Client 5, ECHR) falls from 51.35% to 2.60% ( 19.75 × 19.75\times reduction), and Gemma-2B (Client 10, Yelp) from 77.27% to 2.44% ( 31.66 × 31.66\times reduction).
+For extraction attacks with valid tokens , all models exhibit low precision. Qwen3-1.7B attains precision of 1.57–2.55% (ECHR) and 2.82–5.66% (Yelp), while LLaMA 3.2-3B ranges from 2.70–3.99% (ECHR) and 1.70–3.79% (Yelp). Corresponding recall values remain modest, peaking at 19.15% (Qwen3-1.7B, ECHR). Gemma-2B shows the lowest susceptibility to verbatim extraction, consistent with its memorization-mitigation training [ peng2024data ] , though it remains vulnerable to probabilistic, ranking-based inference.
+When tokens are incorrect or absent , all models demonstrate strong resistance to extraction, with recall dropping near zero. For instance, LLaMA 3.2-3B recall decreases to at most 1.12% on Yelp, representing up to a 17.07 × 17.07\times reduction relative to authorized access. Similar trends hold for Qwen3-1.7B, proving that the gating module reliably suppresses sensitive disclosures without authorization.
+Overall, these results show that SecureGate enforces access-aware privacy: sensitive information is revealed only with valid authorization, while incorrect or missing tokens reliably trigger a secure state. Candidate pool scaling ( c = 50,100,500 c=50,100,500 ) is analyzed in Appendix B-F .
+Evaluating the Effectiveness of SecureGate ’s Gating Model Across Defenses.
+We evaluate SecureGate per client under multiple defense strategies (data scrubbing, DP, and scrubbing+DP).
+As shown in Fig. 2 a, with a valid authorization token , the gating module achieves 100 % 100\% routing accuracy to the revealing adapter, yielding a consistent 29.41 % 29.41\% revealing performance across all attacks, since defenses are not activated.
+For unauthorized queries , the gating module reliably routes requests to the secure adapter. As illustrated in Fig. 2 b, the hybrid Scrubbed+DP defense offers the strongest protection, reducing extraction precision to 1.30 % 1.30\% ( 11.54 × 11.54\times lower than scrubbing alone at 15.00 % 15.00\% ) and inference accuracy to 8.51 % 8.51\% ( 3.46 × 3.46\times lower than the authorized baseline). The perfect routing accuracy confirms that any residual leakage stems from the defense mechanisms themselves rather than failures in token-based gating. Overall, SecureGate effectively integrates layered defenses to achieve strong privacy guarantees while preserving authorized utility.
+Fig. 2 : Gating module performance in routing queries to the correct adapter under inference and extraction attacks across various defenses on LLaMA-1B.
+Perplexity Analysis and Utility Preservation.
+Fig. 3 compares SecureGate ’s dual-adapter design with single-adapter baselines (secure or revealing) on LLaMA-1B using the ECHR dataset. With a valid token, SecureGate achieves an average Perplexity (PPL) of 6.32, matching the revealing-adapter baseline (6.46). Under unauthorized access (missing or incorrect token), it reliably switches to the secure adapter, yielding a PPL of 15.89, close to the secure-adapter baseline of 16.03. Detailed results in Table VIII (Appendix C-B ) confirm that the gating mechanism preserves personalized model utility while enforcing privacy constraints.
+Fig. 3 : PPL across ten clients for LLaMA-1B, showing that SecureGate matches the utility of standalone secure and revealing adapter baselines.
+Fig. 4 : Client-side computational cost across the three Federated LLM fine-tuning stages (initialization, optimization, fusion), showing that multi-adapter configurations increase overhead only during the fusion stage.
+Computational Cost Analysis.
+Fig. 4 reports the phase-wise FLOPs across four configurations. The optimization phase remains constant at 6.10 × 10 15 6.10\times 10^{15} FLOPs, while the fusion phase scales with the number of revealing adapters, increasing from 11.12 × 10 15 11.12\times 10^{15} to 41.05 × 10 15 41.05\times 10^{15} FLOPs ( 3.69 × 3.69\times ). This shows that computational overhead is dominated by local adapter fusion rather than server-side training or communication. A detailed configuration and communication cost is provided in Appendix B-D .
+VI Conclusion
+We introduced SecureGate , a privacy-aware federated fine-tuning framework for LLMs that simultaneously ensures strong privacy protection, high model utility, and computational efficiency . Leveraging a dual-adapter architecture with a token-controlled gating mechanism, SecureGate enables fine-grained personalization while safeguarding sensitive PII against memorization-based inference and extraction attacks. Extensive evaluations demonstrate that SecureGate achieves superior privacy–utility trade-offs across heterogeneous organizational settings, with minimal computational and communication overhead. By unifying secure and revealing adapters under selective, token-based access, SecureGate provides a scalable and practical paradigm for federated LLM adaptation, supporting secure and efficient collaborative learning.
+VII Limitations
+Despite the effectiveness of SecureGate , several practical limitations remain. The additional “gating pass” executed prior to adapter inference increases the token prefill latency, which may affect deployment in latency-sensitive, real-time applications. Maintaining multiple active LoRA adapters (secure, revealing, and global) also incurs additional memory overhead compared to single-adapter personalization, potentially limiting adoption on resource-constrained edge devices. Although SecureGate achieves 100 % 100\% routing reliability in our experiments, its security ultimately depends on the secrecy and uniqueness of key-token representations, motivating future work on stronger cryptographic embedding mechanisms to further harden access control at scale. Finally, our evaluation focuses on decoder-only architectures (e.g., LLaMA, Qwen, Gemma), and extending the proposed dual-adapter design to substantially larger models or alternative architectures remains an open research direction.
+References
+[1]
+C. Ling, X. Zhao, J. Lu, C. Deng, C. Zheng, J. Wang, T. Chowdhury, Y. Li, H. Cui, X. Zhang, et al. (2023)
+Domain specialization as the key to make large language models disruptive: a comprehensive survey .
+ACM Computing Surveys .
+Cited by: §I .
+[2]
+W. Lu, R. K. Luu, and M. J. Buehler (2025)
+Fine-tuning large language models for domain adaptation: exploration of training strategies, scaling, model merging and synergistic capabilities .
+npj Computational Materials 11 ( 1 ), pp. 84 .
+Cited by: §I .
+[3]
+S. Pratap et al. (2025)
+The fine art of fine-tuning: a structured review of advanced llm fine-tuning techniques .
+Natural Language Processing Journal 11 , pp. 100144 .
+External Links: Document
+Cited by: §I .
+[4]
+B. Y. Lin et al. (2022)
+FedNLP: benchmarking federated learning methods for natural language processing tasks .
+In Findings of the Association for Computational Linguistics: NAACL 2022 ,
+Seattle, United States , pp. 157–175 .
+External Links: Document
+Cited by: §I .
+[5]
+P. Kairouz, H. B. McMahan, B. Avent, A. Bellet, M. Bennis, A. N. Bhagoji, K. Bonawitz, Z. Charles, G. Cormode, R. Cummings, et al. (2021)
+Advances and open problems in federated learning .
+Foundations and trends® in machine learning 14 ( 1–2 ), pp. 1–210 .
+Cited by: §I .
+[6]
+N. Carlini, F. Tramer, E. Wallace, M. Jagielski, A. Herbert-Voss, K. Lee, A. Roberts, T. Brown, D. Song, U. Erlingsson, et al. (2021)
+Extracting training data from large language models .
+In 30th USENIX security symposium (USENIX Security 21) ,
+pp. 2633–2650 .
+Cited by: §I .
+[7]
+S. Cheng et al. (2025)
+Understanding pii leakage in large language models: a systematic survey .
+In Proceedings of the Thirty-Fourth International Joint Conference on
+Artificial Intelligence, IJCAI-25 , J. Kwok (Ed.) ,
+pp. 10409–10417 .
+Note: Survey Track
+External Links: Document
+Cited by: §I .
+[8]
+V. B. Parthasarathy, A. Zafar, A. Khan, and A. Shahid (2024)
+The ultimate guide to fine-tuning llms from basics to breakthroughs: an exhaustive review of technologies, research, best practices, applied research challenges and opportunities .
+arXiv preprint arXiv:2408.13296 .
+Cited by: §I .
+[9]
+A. Akkus, M. P. Aghdam, M. Li, J. Chu, M. Backes, Y. Zhang, and S. Sav (2025)
+Generated data with fake privacy: hidden dangers of fine-tuning large language models on generated data .
+In 34th USENIX Security Symposium (USENIX Security 25) ,
+pp. 8075–8093 .
+Cited by: §I .
+[10]
+M. U. Hassan, M. H. Rehmani, and J. Chen (2019)
+Differential privacy techniques for cyber physical systems: a survey .
+IEEE Communications Surveys & Tutorials 22 ( 1 ), pp. 746–789 .
+Cited by: §I .
+[11]
+E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, W. Chen, et al. (2022)
+Lora: low-rank adaptation of large language models. .
+ICLR 1 ( 2 ), pp. 3 .
+Cited by: §I .
+[12]
+B. McMahan et al. (2017)
+Communication-efficient learning of deep networks from decentralized data .
+In Artificial intelligence and statistics ,
+pp. 1273–1282 .
+Cited by: §II-A ,
+§III-A .
+[13]
+S. Reddi et al. (2020)
+Adaptive federated optimization .
+arXiv preprint arXiv:2003.00295 .
+Cited by: §II-A .
+[14]
+T. H. Hsu, H. Qi, and M. Brown (2019)
+Measuring the effects of non-identical data distribution for federated visual classification .
+arXiv preprint arXiv:1909.06335 .
+Cited by: §II-A .
+[15]
+L. Shen, Z. Tang, L. Wu, Y. Zhang, X. Chu, T. Qin, and B. Han
+Hot-pluggable federated learning: bridging general and personalized fl via dynamic selection .
+In The Thirteenth International Conference on Learning Representations ,
+Cited by: §II-A .
+[16]
+M. Jiang et al. (2024)
+Heterogeneous personalized federated learning by local-global updates mixing via convergence rate .
+In The Twelfth International Conference on Learning Representations ,
+Cited by: §II-A .
+[17]
+X. Wu, X. Liu, J. Niu, H. Wang, S. Tang, and G. Zhu (2024)
+FedloRA: when personalized federated learning meets low-rank adaptation .
+Cited by: §II-A .
+[18]
+L. Yi et al. (2023)
+PFedLoRA: model-heterogeneous personalized federated learning with lora tuning .
+arXiv preprint arXiv:2310.13283 .
+Cited by: §II-A .
+[19]
+G. Long, T. Shen, J. Jiang, M. Blumenstein, et al. (2024)
+Dual-personalizing adapter for federated foundation models .
+Advances in Neural Information Processing Systems 37 , pp. 39409–39433 .
+Cited by: §II-B .
+[20]
+Y. Allouah, R. Guerraoui, and J. Stephan (2025)
+Towards trustworthy federated learning with untrusted participants .
+In Forty-second International Conference on Machine Learning ,
+Cited by: §II-B .
+[21]
+Z. Zuo, N. Su, B. Li, and T. Zhang (2024)
+Pack: towards communication-efficient homomorphic encryption in federated learning .
+In Proceedings of the 2024 ACM Symposium on Cloud Computing ,
+pp. 470–486 .
+Cited by: §II-B .
+[22]
+L. Pu, J. Gu, C. Lin, and X. Huang (2025)
+Janus: dual-server multi-round secure aggregation with verifiability for federated learning .
+In Forty-second International Conference on Machine Learning ,
+Cited by: §II-B .
+[23]
+M. Mansouri, M. Önen, W. B. Jaballah, and M. Conti (2023)
+Sok: secure aggregation based on cryptographic schemes for federated learning .
+Proceedings on Privacy Enhancing Technologies .
+Cited by: §II-B .
+[24]
+J. Qi, Z. Luan, S. Huang, C. Fung, H. Yang, and D. Qian (2024)
+Fdlora: personalized federated learning of large language model via dual lora tuning .
+arXiv preprint arXiv:2406.07925 .
+Cited by: §II-B .
+[25]
+B. Liu, N. Lv, Y. Guo, and Y. Li (2024)
+Recent advances on federated learning: a systematic survey .
+Neurocomputing 597 , pp. 128019 .
+Cited by: §III-A .
+[26]
+D. Nadeau and S. Sekine (2007)
+A survey of named entity recognition and classification .
+Lingvisticae Investigationes 30 ( 1 ), pp. 3–26 .
+Cited by: §IV-A .
+[27]
+I. Pilán, P. Lison, L. Øvrelid, A. Papadopoulou, D. Sánchez, and M. Batet (2022)
+The text anonymization benchmark (tab): a dedicated corpus and evaluation framework for text anonymization .
+Computational Linguistics 48 ( 4 ), pp. 1053–1101 .
+Cited by: §IV-A .
+[28]
+I. Loshchilov and F. Hutter (2017)
+Decoupled weight decay regularization .
+arXiv preprint arXiv:1711.05101 .
+Cited by: §IV-B .
+[29]
+I. Sutskever, J. Martens, G. Dahl, and G. Hinton (2013)
+On the importance of initialization and momentum in deep learning .
+In International conference on machine learning ,
+pp. 1139–1147 .
+Cited by: §IV-B .
+[30]
+C. Huang, Q. Liu, B. Y. Lin, T. Pang, C. Du, and M. Lin (2023)
+Lorahub: efficient cross-task generalization via dynamic lora composition .
+arXiv preprint arXiv:2307.13269 .
+Cited by: §IV-C .
+[31]
+X. Zhang, J. Zhao, and Y. LeCun (2015)
+Character-level convolutional networks for text classification .
+Advances in neural information processing systems 28 .
+Cited by: §V-A .
+[32]
+I. Chalkidis, I. Androutsopoulos, and N. Aletras (2019)
+Neural legal judgment prediction in english .
+arXiv preprint arXiv:1906.02059 .
+Cited by: §V-A .
+[33]
+A. Yang, A. Li, B. Yang, B. Zhang, and et al. (2025)
+Qwen3: large language models with hybrid thinking modes and extensive multilingual support .
+arXiv preprint arXiv:2505.09388 .
+Cited by: §V-A .
+[34]
+G. Team (2024)
+Gemma: open models based on gemini research and technology .
+arXiv preprint arXiv:2403.08295 .
+Cited by: §V-A .
+[35]
+A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Yang, A. Fan, et al. (2024)
+The llama 3 herd of models .
+arXiv e-prints , pp. arXiv–2407 .
+Cited by: §V-A .
+[36]
+N. Lukas, A. Salem, R. Sim, S. Tople, L. Wutschitz, and S. Zanella-Béguelin (2023)
+Analyzing leakage of personally identifiable information in language models .
+In 2023 IEEE Symposium on Security and Privacy (SP) ,
+pp. 346–363 .
+Cited by: §A-A ,
+§A-E .
+[37]
+R. Ye, W. Wang, J. Chai, D. Li, Z. Li, Y. Xu, Y. Du, Y. Wang, and S. Chen (2024)
+Openfedllm: training large language models on decentralized private data via federated learning .
+In Proceedings of the 30th ACM SIGKDD Conference on Knowledge Discovery and Data Mining ,
+pp. 6137–6147 .
+Cited by: §A-E .
+Appendix A Detailed Experimental Settings
+A-A Reproduction Hyperparameters
+To ensure reproducibility, all LoRA adapters were configured with a scaling factor of 4 × r 4\times r and a dropout rate of 0.1. Weight decay was set to γ = 0.001 \gamma=0.001 , and global aggregation applied a momentum of m = 0.5 m=0.5 . Personalized adapter fusion used a regularization factor ψ = 0.01 \psi=0.01 . All other experimental parameters follow [ 36 ] .
+A-B Evaluation Metrics
+We describe the evaluation metrics used to assess privacy, utility, and computational efficiency as:
+•
+Precision: Fraction of generated PII that matches the training data, indicating actual leakage.
+•
+Recall: Fraction of training PII successfully reproduced, reflecting potential leakage risk.
+•
+FLOPs: Total floating-point operations, independent of hardware; lower values indicate higher computational efficiency.
+•
+Perplexity (PPL): Measures model uncertainty in predicting text; lower values indicate better predictive performance:
+PPL = exp ( − 1 H ∑ i = 1 H log P ( κ i ∣ κ 1 , … , κ i − 1 ) ) , \text{PPL}=\exp\Bigg(-\frac{1}{H}\sum_{i=1}^{H}\log P(\kappa_{i}\mid\kappa_{1},\dots,\kappa_{i-1})\Bigg),
+where H H is the total number of tokens and P ⁡ ( κ i ∣ κ 1 , … , κ i − 1 ) P(\kappa_{i}\mid\kappa_{1},\dots,\kappa_{i-1}) is the predicted probability of token κ i \kappa_{i} .
+A-C Gating Module Architecture
+The design of our SecureGate ’s gating module comprises:
+•
+A linear layer with GLU activation, followed by layer normalization and dropout.
+•
+A second linear layer with GELU activation, layer normalization, and dropout for feature refinement.
+•
+A final linear layer producing logits over available adapters.
+GLU dynamically controls feature flow for routing, while GELU introduces smooth non-linear transformations to stabilize training. Together, they enable flexible and efficient adapter selection.
+A-D Computing Environment
+All experiments ran on Ubuntu 24.04.2 LTS with an Intel Core i9-14900K CPU @ 3.2GHz and an NVIDIA RTX PRO 6000 Blackwell GPU (96GB VRAM). This configuration supports concurrent loading of multiple LoRA adapters in SecureGate .
+A-E Implementation Details
+The framework is implemented using OpenFedLLM [ 37 ] . Named Entity Recognition (NER) employs the Flair library [ akbik2019flair ] , using hyperparameters consistent with [ 36 ] to ensure comparability and reproducibility.
+Our code is online available through the following anonymous GitHub repository to support reproducibility 1 1
+1
+https://anonymous.4open.science/r/vibrant-zebra-vibrant-zebra-F066/README.md .
+TABLE III : Revealing (inference accuracy) (%) for LLaMA-1B across non-IID clients. Clients 1–5 are trained on the ECHR dataset and Clients 6–10 on the Yelp dataset. The table reports revealing PII rates under correct-token and wrong/no-token settings, illustrating the impact of heterogeneous (non-IID) data distributions on vulnerability.
+Client #
+Training Dataset
+Correct Token
+Wrong/No Token
+1
+ECHR
+36.00
+5.33
+2
+ECHR
+33.33
+4.48
+3
+ECHR
+31.33
+6.10
+4
+ECHR
+22.37
+10.67
+5
+ECHR
+31.65
+4.94
+6
+Yelp
+17.91
+1.59
+7
+Yelp
+32.00
+6.94
+8
+Yelp
+24.68
+7.79
+9
+Yelp
+18.31
+3.23
+10
+Yelp
+12.86
+6.06
+TABLE IV : Inference attack accuracy on a single client using LLaMA 1B. The diagonal (light blue) demonstrates perfect adapter routing under valid authorization keys.
+Adapter Selected (Routing Result)
+Dataset
+Auth Key Used
+Inference Accuracy ↑ \uparrow
+E + Y
+ECHR
+Yelp
+Masked
+ECHR
+ECHR & Yelp Key
+13.41
+100.00
+0.00
+0.00
+0.00
+ECHR Key
+20.00
+0.00
+100.00
+0.00
+0.00
+Yelp Key
+4.94
+0.00
+0.00
+100.00
+0.00
+Wrong/No Key
+2.44
+0.00
+0.00
+0.00
+100.00
+Yelp
+ECHR & Yelp Key
+12.20
+100.00
+0.00
+0.00
+0.00
+ECHR Key
+5.19
+0.00
+100.00
+0.00
+0.00
+Yelp Key
+13.92
+0.00
+0.00
+100.00
+0.00
+Wrong/No Key
+6.76
+0.00
+0.00
+0.00
+100.00
+Appendix B In-Depth Evaluation of SecureGate
+B-A Inference Performance under Non-IID Client Distributions
+Table III reports inference attack accuracy (%) for LLaMA-1B across ten non-IID clients (organizations), where clients 1–5 are trained on ECHR and clients 6–10 on Yelp, explicitly modeling a heterogeneous federated LLMs setting.
+Under authorized access (correct token), ECHR clients exhibit consistently higher revealing percentage (inference success), reaching up to 36.00% (Client 1) and remaining above 30% for several clients (Clients 2, 3, and 5). In contrast, most Yelp clients achieve lower accuracy, with some below 25% (e.g., 17.91% for Client 6 and 12.86% for Client 10). This suggests that models trained on structured legal text are more vulnerable to inference attacks than those trained on informal review data. Nevertheless, notable attack success on some Yelp clients (e.g., 32.00% for Client 7 and 24.68% for Client 8) confirms that data heterogeneity does not eliminate the threat but instead induces client-specific vulnerability profiles.
+Under unauthorized access (wrong or missing token), inference accuracy drops sharply across all clients, typically to the 1–11% range (e.g., 5.33% for Client 1, 10.67% for Client 4, and 1.59% for Client 6), demonstrating the effectiveness of token-controlled gating in suppressing attacks by routing queries to the secure adapter. A small number of outliers (e.g., Client 4 at 10.67% and Client 8 at 7.79%) still exhibit residual leakage, indicating that the privacy strength ultimately depends on the underlying defense used in the secure adapter. These results underscore the need for stronger or client-adaptive defenses to ensure uniform privacy guarantees under highly non-IID data distributions.
+Fig. 5 : Scalability analysis of inference attack accuracy for LlaMA 3.2-1B across 10, 20, and 30 clients. The gating mechanism successfully decouples authorized utility from unauthorized leakage, maintaining a stable privacy boundary ( ≈ \approx 4.2%) as the network scales.
+B-B Evaluating Scalability Across Client Distributions
+To assess the scalability and robustness of our SecureGate , Fig. 5 reports inference attack accuracy for the LLaMA 3.2–1B model under increasing numbers of federated clients. Under authorized access (correct token), the mean attack success rate rises from 29.09% ( σ = 4.62 \sigma=4.62 ) with 10 clients to 44.32% ( σ = 6.23 \sigma=6.23 ) with 20 clients, reflecting improved model utility as additional client data contributes to fine-tuning.
+In contrast, under unauthorized access, leakage remains consistently low and largely invariant to network scale. Mean attack success rates are 4.20% ( σ = 1.95 \sigma=1.95 ) for 10 clients, 4.36% ( σ = 2.83 \sigma=2.83 ) for 20 clients, and 4.11% ( σ = 2.86 \sigma=2.86 ) for 30 clients. This stability demonstrates that SecureGate maintains strong privacy guarantees as the federated network scales, ensuring that increased client participation does not introduce additional privacy risk.
+B-C Multi-Adapter Evaluation: Authorization, Isolation, and Privacy Floors
+To assess how well SecureGate manages dataset-specific and role-based permissions, we tested a configuration featuring several “revealing” adapters alongside a single “secure” adapter. In this LLaMA-1B setup, each client hosts four specialized heads: one adapter fine-tuned on ECHR, one on Yelp, a joint adapter trained on the union of ECHR and Yelp (“E + Y”), and a secure adapter trained on a scrubbed, combined corpus where PII has been masked. Each adapter is bound to a distinct keyed token, and the router is trained to map every key deterministically to its corresponding adapter, thereby implementing per-key access control over personalization paths.
+Table IV summarizes these outcomes, showing that the gating module achieves 100% routing reliability by successfully directing all requests to the authorized adapter path without collision. Crucially, the results reveal a significant Authorization Gap ; for the ECHR dataset, an attacker with valid credentials achieves an inference accuracy of 20.00%, which drops to a Privacy Floor of 2.44% when no valid Key is provided. This represents an 8.20 × 8.20\times reduction in PII leakage for unauthorized users. There is also clear cross-dataset isolation : using the Yelp key on ECHR candidates reaches just 4.94% accuracy, and using incorrect or missing keys on Yelp tops out at 6.76%, indicating that miskeyed requests expose only a small fraction of the sensitive information that is available under the correct key. Finally, the joint “E + Y” adapter attains 13.41% on ECHR—lower than the 20.00% of the dedicated ECHR adapter—which suggests that mixing heterogeneous sources during training can dilute dataset-specific memorization and slightly dampen leakage.
+(a) Trainable Parameters
+(b) Non-Trainable Parameters
+Fig. 6 : Comparative analysis of trainable vs. non-trainable parameter counts (billions) across framework stages. The analysis demonstrates the minimal footprint of authorization-specific adapters relative to the frozen base model.
+In summary, these results showcase two core strengths of SecureGate . Authorized users with correct tokens retain full access to personalized knowledge, while any unauthorized or miskeyed requests are automatically isolated within a secure adapter that minimizes PII exposure. This per-request gating provides a robust, auditable access control framework that protects sensitive data without degrading legitimate model utility.
+B-D Evaluating SecureGate Communication Overhead
+To further evaluate the overhead of the proposed authorization mechanism, we analyze the parameter distribution across the operational phases of SecureGate using the LlaMA 3.2 1B model. This analysis builds directly upon the previously described authorization experiment (see Section ) conducted on the ECHR and Yelp datasets, comparing base performance against configurations with single or multiple revealing adapters. As shown in Figure 6 , the frozen parameters remain constant at 12.41 billion regardless of setup, while trainable parameters rise from 0.06 billion to 0.23 billion during the initialization and fusion phases when scaling to multiple revealing adapters, a 3.83 × \times increase in local capacity. Crucially, the optimization phase remains unaffected by these configurations, maintaining a minimal trainable footprint of 0.06 billion. By confining the training of multiple personalized adapters to the client side, the mechanism minimizes communication overhead and prevents interference with global training.
+TABLE V : Inference attack accuracy (%) of LLaMA 3B on the Yelp dataset. We report performance across PII classes for Correct and Wrong/No Token alongside adapter selection ratios.
+Correct Token ( ↑ \uparrow )
+Wrong/No Token ( ↓ \downarrow )
+PII Class
+Acc. (%)
+Reveal Adapter
+Acc. (%)
+Secure Adapter
+PERSON
+51.72
+100.0%
+5.36
+100.0%
+LOC
+77.14
+100.0%
+24.24
+100.0%
+ORG
+84.91
+100.0%
+10.71
+100.0%
+PRODUCT
+85.71
+100.0%
+6.90
+100.0%
+Mean
+74.87
+100.0%
+11.80
+100.0%
+B-E Inference Attack Performance by PII Class
+Table V reports inference attack accuracy of LLaMA 3B on the Yelp dataset across different PII classes under Correct and Wrong/No Tokens. When provided the correct token, attack accuracy is high for all PII categories (PERSON, LOC, ORG, PRODUCT), with a mean accuracy of 74.87 % 74.87\% , indicating that the model reliably reveals targeted PII when properly authorized. Under Wrong/No Tokens, accuracy drops to the 5.36 % 5.36\% – 24.24 % 24.24\% range with a mean of 11.80 % 11.80\% , showing that the defended adapter substantially suppresses unauthorized PII extraction, though location entities (LOC) remain relatively more vulnerable than other PII types. Notably, our routing mechanism achieves a 100.0 % 100.0\% selection rate for the intended adapter (Reveal or Secure) across all PII classes. This perfect adapter selection confirms that the residual inference accuracy observed in categories such as LOC ( 24.24 % 24.24\% ) is not due to routing failures, but rather the inherent difficulty of masking location-based context even within the secure state.
+B-F Effect of Candidate Pool Size on Inference Accuracy
+Table VI illustrates the relationship between the number of candidates ( c c ) and inference attack accuracy for the ECHR Date class. As expected, increasing the candidate pool size from c = 50 c=50 to c = 500 c=500 results in a consistent reduction in accuracy for both token conditions. While correct authorization provides higher accuracy across all scales, the unauthorized accuracy (Wrong/No Token) drops significantly as the search space expands, reaching its lowest point ( 4.49 % 4.49\% ) at c = 500 c=500 . This trend highlights that the defense becomes increasingly robust against brute-force or high-entropy inference attacks as the candidate pool grows.
+TABLE VI : Inference attack accuracy (%) for LLaMA 3.2-3B on ECHR (Date class) across different candidate sizes ( c c ) for a single client.
+Candidate Pool Size ( c c )
+Token Condition
+c = 50 c=50
+c = 100 c=100
+c = 500 c=500
+Correct Token ( ↑ \uparrow )
+15.85
+10.10
+7.45
+Wrong/No Token ( ↓ \downarrow )
+10.84
+8.33
+4.49
+TABLE VII : Inference attack accuracy results (%) for Llama 1B on the ECHR dataset under different LoRA ranks ( r r ) and clients.
+Client
+Correct Token
+Wrong/No Token
+#
+r = 4 r=4
+r = 8 r=8
+r = 12 r=12
+r = 16 r=16
+r = 4 r=4
+r = 8 r=8
+r = 12 r=12
+r = 16 r=16
+1
+25.64
+27.16
+40.48
+35.96
+3.66
+4.71
+1.52
+3.61
+2
+18.42
+24.64
+20.25
+25.64
+1.64
+0.00
+4.84
+5.56
+3
+15.28
+20.97
+22.50
+26.74
+1.35
+2.47
+4.41
+4.65
+4
+17.33
+22.03
+26.32
+21.79
+11.39
+6.49
+6.35
+4.94
+5
+27.27
+25.76
+25.00
+29.87
+5.00
+2.50
+6.94
+2.22
+6
+17.11
+18.31
+17.86
+25.00
+2.94
+9.09
+6.56
+3.80
+7
+17.11
+20.83
+21.43
+28.05
+3.53
+3.66
+0.00
+5.75
+8
+20.29
+22.73
+27.16
+29.87
+1.59
+2.70
+1.72
+7.79
+9
+22.22
+36.23
+30.38
+32.10
+1.37
+0.00
+3.03
+1.22
+10
+25.97
+33.33
+22.35
+35.90
+2.50
+2.47
+1.43
+2.44
+TABLE VIII : Client-wise Perplexity (PPL) comparison between SecureGate and standalone revealing or secure adapter baselines. Values are rounded to two decimals.
+Standalone Baselines
+SecureGate (Ours)
+Client
+Revealing
+Secure
+Correct Token
+Wrong/No Token
+1
+6.86
+16.02
+6.69
+15.81
+2
+6.03
+17.71
+5.92
+17.49
+3
+5.97
+15.57
+5.83
+15.43
+4
+6.55
+15.71
+6.42
+15.50
+5
+6.29
+14.34
+6.16
+14.12
+6
+6.85
+17.87
+6.66
+17.53
+7
+6.16
+14.44
+6.03
+14.22
+8
+7.33
+17.74
+7.20
+17.47
+9
+6.14
+14.38
+6.02
+14.23
+10
+6.37
+16.50
+6.24
+16.29
+Average
+6.46
+16.03
+6.32
+15.89
+Appendix C Ablation Study of SecureGate Components
+C-A Evaluating LoRA Rank Impact
+Table VII evaluates the impact of LoRA ranks ( r = 4 , 8 , 12 , 16 r=4,8,12,16 ) on the robustness of SecureGate against inference attacks using the Llama 1B model. When the correct token is utilized, inference accuracy generally increases with higher LoRA ranks, peaking at r = 16 r=16 for most clients, such as Client 10 reaching 35.90%. Notably, Client 1 achieves the highest overall authorized disclosure of 40.48% at r = 12 r=12 . In unauthorized scenarios using wrong/no tokens, leakage remains consistently low, typically staying below 10% across all ranks.
+The defense remains robust even as model capacity increases; for instance, at r = 16 r=16 , Client 8’s accuracy drops from 29.87% (Correct) to 7.79% (Wrong), a reduction of 22.08 percentage points and approximately 3.83 × 3.83\times lower success. While some fluctuations occur—such as Client 4 reaching 11.39% at r = 4 r=4 —the leakage at higher ranks like r = 16 r=16 often remains more stable, as seen with Client 10’s 2.44% leakage. This disparity highlights that for some users, higher ranks actually reduce the risk of unintended exposure compared to r = 4 r=4 , where Client 4 sees a 2.31 × 2.31\times higher leakage risk. This indicates that while higher ranks can improve authorized utility, the gating module effectively maintains a secure state regardless of the LoRA rank; however, it is important to highlight that effective LoRA privacy tuning necessitates careful rank selection, tailored to each client’s specific requirements.
+C-B Language Modeling Performance (Perplexity)
+Table VIII presents the full perplexity (PPL) metrics for all 10 clients using the Llama 1B model on the ECHR dataset. These results compare our SecureGate framework against standalone revealing and secure adapter baselines. The data confirms that SecureGate maintains linguistic utility similar to the standalone adapters while successfully enforcing token-based privacy boundaries.
+Fig. 7 : Training loss convergence of the SecureGate gating module across different input features. The rapid convergence within 20 steps highlights the module’s lightweight computational requirements.
+C-C Gating Feature Analysis
+We evaluate three candidate feature sources for the gating module: (i) raw token embeddings, (ii) final-layer hidden states ( h key h_{\text{key}} ), and (iii) their concatenation. Although all configurations converge within 20 training steps, using only the final-layer hidden states consistently yields the most reliable routing signal. This choice results in lower gating entropy, more accurate adapter selection, and improved training stability, while avoiding the increased dimensionality and overfitting risks introduced by feature concatenation.
+Based on these observations, we adopt the final-layer hidden state as the default gating input in the SecureGate architecture. Fig. 7 illustrates the corresponding gating entropy loss curves, demonstrating both rapid convergence and a steady reduction in routing uncertainty during training.
+Appendix D Security Analysis of Keyed Tokenization and Routing
+We consider an adversary with full access to public model artifacts (base weights, public tokenizer, public logs, and prompts) but without privileged access to organization-specific keys, local tokenizers, or key-management systems. The adversary may (i) inspect or modify public prompts, (ii) attempt to infer or brute-force keys from public artifacts, and (iii) observe adapter routing via black-box queries.
+Security Properties.
+Under this threat model, SecureGate provides the following guarantees:
+1.
+Key confidentiality. Keys exist only in local tokenizers and are absent from public vocabularies, preventing exposure or enumeration by external tools.
+2.
+Atomic key representation. Each key is a single vocabulary entry and never split into subtokens, preventing partial leakage via subtoken analysis.
+3.
+Deterministic, non-revealing embeddings. Key embeddings e key ∈ ℝ d e_{\text{key}}\in\mathbb{R}^{d} are generated from a keyed hash and pseudorandom generator, making inversion computationally infeasible.
+4.
+Low-cost, deterministic routing. A compact gating MLP maps key embeddings to adapter indices deterministically, supporting reproducible, auditable routing.
+5.
+Efficient key rotation and revocation. Key updates only require replacing the keyed embedding and updating the gating module, without retraining the base model or adapters.
+6.
+Resistance to tokenization-based attacks. Public tokenizers never contain key tokens, mitigating prompt-scraping, token-guessing, and vocabulary-based attacks.
+7.
+Operational robustness. Keys, local tokenizers, and gating checkpoints are managed under least-privilege control, with versioning and secure backups to enable safe rotation and rollback.
+Discussion.
+Items (1)–(2) ensure keys remain atomic and secret within the organization, preventing leakage via public tooling. Item (3) provides reproducible embeddings that are opaque to outsiders. Items (4)–(5) guarantee deterministic, auditable routing while supporting rapid key rotation. Finally, items (6)–(7) reduce the attack surface against token-based, prompt-manipulation, and operational attacks, ensuring secure adapter selection without exposing secrets.
+Appendix E Synthetic Data Generation and Augmentations for Gating Training
+The routing dataset 𝒟 gate \mathcal{D}_{\text{gate}} is constructed to systematically cover nominal, malformed, and adversarial input conditions. It includes: (i) valid keyed prompts; (ii) malformed keys; (iii) empty-key positions; and (iv) no-key baselines. For the purpose of these examples, identifiers such as ALPHA , BETA , and GAMMA serve as human-readable placeholders for the high-entropy, secret keys actually utilized by the system. When the gating module encounters an invalid or unauthorized key, the system is designed to deterministically fall back to a designated secure adapter. The following examples characterize the diverse input types within 𝒟 gate \mathcal{D}_{\text{gate}} used to train the gating module for robust routing and fallback detection:
+Algorithm 1 SecureGate training & personalized fusion
+Input:
+Raw client datasets { 𝒟 n raw } n = 1 N \{\mathcal{D}_{n}^{\text{raw}}\}_{n=1}^{N} ; Frozen base model M M ;
+Local secure tokenizer 𝒯 s ​ e ​ c \mathcal{T}_{sec}
+Output:
+Personalized adapters { Δ ​ 𝒘 p , n ( sec ) , Δ ​ 𝒘 p , n ( rev ) } \{\Delta\boldsymbol{w}_{p,n}^{(\text{sec})},\Delta\boldsymbol{w}_{p,n}^{(\text{rev})}\} ; Trained gating MLP G G
+1
+(1) Local Initialization (Sec. 4.1):
+[label=0., noitemsep, topsep=0pt]
+1.
+Generate masked datasets 𝒟 n mask \mathcal{D}_{n}^{\text{mask}} via NER and scrubbing.
+2. 5
+Initialize revealing and secure adapters Δ ​ 𝒘 n ( rev ) , Δ ​ 𝒘 n ( sec ) \Delta\boldsymbol{w}_{n}^{(\text{rev})},\Delta\boldsymbol{w}_{n}^{(\text{sec})} following ( 2 ).
+2
+3
+(2) Federated Fine-Tuning (Sec. 4.2):
+[label=0., noitemsep, topsep=0pt]
+1.
+Inner Loop: Minimize local objective on 𝒟 n mask \mathcal{D}_{n}^{\text{mask}} to produce Δ ​ 𝒘 n t + 1 \Delta\boldsymbol{w}_{n}^{t+1} .
+2. 8
+Outer Loop: Aggregate secure updates Δ ​ 𝒘 ¯ t + 1 \Delta\bar{\boldsymbol{w}}^{t+1} using ( 3 ).
+3. 9
+Update momentum Δ ​ 𝒗 t + 1 \Delta\boldsymbol{v}^{t+1} via ( 4 ).
+4. 10
+Compute global model Δ ​ 𝒘 t + 1 \Delta\boldsymbol{w}^{t+1} using ( 5 ).
+4
+5
+(3) Personalized Fusion (Sec. 4.3):
+[label=0., noitemsep, topsep=0pt]
+1.
+Fuse secure personalized adapter Δ ​ 𝒘 p , n ( sec ) \Delta\boldsymbol{w}^{(\text{sec})}_{p,n} using ( 6 ).
+2. 13
+Fuse revealing personalized adapter Δ ​ 𝒘 p , n ( rev ) \Delta\boldsymbol{w}^{(\text{rev})}_{p,n} using ( 8 ).
+3. 14
+Optimize fusion coefficients ( α , β ) (\alpha,\beta) via ( 7 ).
+6
+7
+(4) Gating Module Training (Sec. 4.4):
+[label=0., noitemsep, topsep=0pt]
+1.
+Train G G on synthetic key patterns using the cross-entropy loss
+ℒ gating = − ∑ i y i log p i \mathcal{L}_{\text{gating}}=-\sum_{i}y_{i}\log p_{i} .
+8
+Illustrative Data Examples:
+The following samples demonstrate the diverse input types within 𝒟 gate \mathcal{D}_{\text{gate}} used to harden the routing mechanism:
+Valid Key Tokens:
+Representations of authorized requests using well-formed keys.
+•
+[SPECIAL_TOKEN=ALPHA] Example input for module processing
+•
+[SPECIAL_TOKEN=BETA] A prompt designed to assess token routing
+•
+[SPECIAL_TOKEN=GAMMA] Request requiring special token handling
+Malformed/Incorrect Keys:
+Samples designed to test the router’s resistance to corruption.
+•
+[SPECIAL_TOKEN=ALPH] Example input for module processing
+•
+[SPECIAL_TOKEN=BETA_CORRUPT] Scenario of ambiguous adapter routing
+Empty/No Key Baselines:
+Cases that must trigger the default fallback logic.
+•
+[SPECIAL_TOKEN=] Empty string placeholder
+•
+[SPECIAL_TOKEN= ] An instruction that triggers fallback adapter
+•
+A prompt designed to assess token routing
+By training across these distinct key states, the gating network learns to enforce a deterministic mapping for valid authorization tokens while identifying corrupted or missing keys as candidates for the secure fallback adapter.
+Appendix F Algorithms
+Algorithm 1 provides the complete training workflow for the SecureGate framework, which is executed in four primary stages: (1) local initialization involving data masking through NER and scrubbing, (2) federated fine-tuning utilizing inner-loop local updates and outer-loop momentum-based aggregation, (3) the personalized fusion of secure and revealing adapters, and (4) the final optimization of the gating module.
+Algorithm 2 details the two-pass inference process. The first pass focuses on gating and authorization by extracting hidden states and enforcing security policies through a confidence threshold τ \tau , while the second pass performs clean generation by stripping key tokens to prevent output contamination.
+Algorithm 2 SecureGate two-Pass inference gating
+Input:
+User request X r ​ a ​ w X_{raw} ; Personalized adapters { Δ ​ 𝒘 p , n ( sec ) , Δ ​ 𝒘 p , n ( rev ) } \{\Delta\boldsymbol{w}_{p,n}^{(\text{sec})},\Delta\boldsymbol{w}_{p,n}^{(\text{rev})}\} ;
+Gating MLP G G ; Confidence threshold τ \tau
+Output:
+Authorized or sanitized model response Y Y
+1
+Pass 1: Gating & Authorization
+[label=0., noitemsep, topsep=0pt]
+1.
+Forward request through M M and extract hidden state h key h_{\text{key}} via ( 9 ).
+2. 5
+Compute selection probabilities p i p_{i} using the softmax
+p i = exp ⁡ ( z i ) ∑ j ∈ ℐ exp ⁡ ( z j ) p_{i}=\frac{\exp(z_{i})}{\sum_{j\in\mathcal{I}}\exp(z_{j})} .
+3. 6
+Select adapter index a ∗ = arg ⁡ max ⁡ p i a^{*}=\arg\max p_{i} .
+4. 7
+Enforce Policy: If p a ∗ ≤ τ p_{a^{*}}\leq\tau , default to secure adapter Δ ​ 𝒘 p , n ( sec ) \Delta\boldsymbol{w}_{p,n}^{(\text{sec})} .
+2
+3
+Pass 2: Clean Generation
+[label=0., noitemsep, topsep=0pt]
+1.
+Strip key token from prompt to prevent output contamination.
+2. 10
+Generate final response Y Y using selected adapter Δ ​ 𝒘 p , n ( a ∗ ) \Delta\boldsymbol{w}_{p,n}^{(a^{*})} .
+4
+5
+return Y Y
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

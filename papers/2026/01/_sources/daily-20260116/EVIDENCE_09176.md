@@ -1,0 +1,14 @@
+# 2601.09176v1 — calibration-based pruning compensation has unresolved formal attribution
+
+Exact [v1](https://arxiv.org/html/2601.09176v1); PRIMARY_09176_NECESSARY.md mainMethodology/Experiments/Table1–4, Algorithm1, necessary B4/C/D and E/F. Proposed2+1+2=5 standard OnlyReport pending. Fixedactivation/localreconstruction→activation/output-derived saliency and search q/k/v update/nonupdate→reconsider compensation selection under calibration shift.
+
+Eq7–10 dual Taylor drops cross Hessian and assumes delta x=lambda x, but norm correlation across layers does not establish vector-collinearity; joint squaredbilinear loss has mixed higherorders, LayerNorm coordinate-centering does not establish dataset-vector mean zero or negligible realized weighted cross contribution. Eq8 derivative sign/factor inconsistent with displayed squarednorm; no exact loss-estimator guarantee adopted. Algorithm1 reports keep highest-score mask then multiplies(1-M), mask-polarity conflict not silently corrected. The actual heuristic includes output norm and activation-weight terms; preserve local empirical comparison without certified exact recipe.
+
+Eq12 written KL-constrained qkv restoration is not implemented as optimized KL objective in Algorithm1: choose one q/k/v nonupdate among3 by minPPL after candidatepruning. ProxyPPL is not a proof attentionKL controlled; Table3 dynamic equals fixed w/o-v across four sparsities. Selection dataset/heldout boundary and full candidate-search timing not disclosed; no new globally attention-preserving optimal scheme.
+
+A40, C4 128calibration,WikiText2PPL/sevenLMHarnesszero-shot,uniformsparsity50–80% and2:4/3:4. Precision/seeds/CI exactcalibrationlength exceptscale-example2048/4096 ND in necessarycore; no repeatedreproduction. Table1Llama70B50%ACC71.60 vsdense71.50 localdifference not universalgenerationgain;2:4Llama2-13B WandaPPL8.37 beatsSparseGPT8.39, D2 8.02 improves;3:4extremelybadPPLstilllarge. Table10 different7B50% D2 6.96 vsTable1 6.36 unresolvedpopulation/config, do notcombineheadline. E Table16 pruningsecondscloseSparseGPT but no clear fullsearchinclusion; A100Cutlass linearGEMM batch1seq2048 speed1.32–1.35 notE2E. F local suboptimal/uniformsparsity limits.
+
+Actual Ch49 L471–495 already separates calibration objectives/artifacts from kernel admission, protectedset versus importance, but does not implement this D2/qkvselector; not generic Existing. Formalproxy/selection budget mismatches prevent reliable new longtermrecipe; local empirical saliency/compensation comparison retained OnlyReport5. No code run or theory repair.
+# 当前终态收据
+
+root非作者实际必要primary/具体owner终裁通过：标准完成，仅报告：向量/跨项与KL选择保证未成立，不采确定attention-preserving配方。Eq7–10的norm关系不授vector-collinearity/忽略跨项，Alg1实际minPPL不是KL优化，mask极性与配置冲突不默修；A40校准/A100局部GEMM非E2E。现Ch49具体calibration/artifact界面不实现D2，有限观察保留不写recipe；root实际必要原源/owner终裁通过。 日级未授，未复现实验。

@@ -1,0 +1,76 @@
+Original exact-v1 deciding excerpt; not fulltext review.
+URL https://arxiv.org/html/2601.21218v1
+3 Problem Definition
+4 Dataset
+4.1 Pretraining Data Indexing
+4.2 Token-Based Search
+4.3 Vector-Based Search
+3 Problem Definition
+In this work, we define the knowledge boundary of an LLM based on the information it consumes during training. We evaluate the honesty of LLMs on a closed-book factual question-answering task: given a question qq, we expect the model to respond with the gold answer aa if the necessary information to answer the question is directly available in a document within the training data, and to respond with “I don’t know” otherwise. Questions for which the required information is present are called answerable, while those for which it is absent are called unanswerable. In this definition, we do not expect the model to possess advanced reasoning capabilities, such as mathematical reasoning or the ability to derive new knowledge through multi-hop reasoning.
+4 Dataset
+With access to an LLM’s pretraining data, it is possible to determine whether the LLM possesses certain knowledge. Given a knowledge-intensive question-answering dataset, we can examine the LLM’s pretraining data to determine whether the LLM knows the answer to each question. However, it is not feasible to manually check billions of tokens in LLMs’ pretraining documents to determine whether the necessary information to answer a question exists in the training data. Therefore, we propose an automatic method to examine whether a question is answerable or not through two stages of search: token-based and vector-based. We illustrate the dataset creation process in Figure 1.
+4.1 Pretraining Data Indexing
+For this purpose, we created two Elasticsearch indexes: token-based and vector-based. For the token-based index, the LLM’s pretraining documents are indexed based on the tokenized text using Elasticsearch11
+1
+https://www.elastic.co/elasticsearch to enable faster search. For the vector-based index, we first chunk each pretraining document using the RecursiveCharacterTextSplitter module from LangChain22
+2
+https://python.langchain.com/ to fit the context window size of the embedding model. RecursiveCharacterTextSplitter will try splitting the document by paragraph first. If the paragraph is still too long, it will try splitting it by line, then by word, and lastly by character. Each chunk is encoded into an embedding vector using an off-the-shelf embedding model and inserted into the vector-based index.
+4.2 Token-Based Search
+Each question is considered unanswerable until we find a pretraining document that contains the necessary information to answer the question (subsequently called a relevant document). We posit that relevant documents should contain any of the acceptable answers to the question. To narrow the search, the documents must also contain the important entity keywords of the question, which we will refer to as keywords from this point on. Therefore, we retrieve pretraining documents based on the occurrence of the keywords in the question and the gold answer, sorted by frequency. We then go through the first k1k_{1} documents (in this work, k1=100k_{1}=100) and ask an LLM to judge whether the document is relevant by providing the question, the gold answer, and the document in the prompt (Table 7). In practice, the document can be arbitrarily long, so we might split the document such that each split still contains the answer and the keywords (see Appendix). If the judging LLM answers “yes” to one of the documents, we mark the question as answerable. If the judging LLM answers “no” to all k1k_{1} documents and there are still more documents to be checked, we discard the question, as we cannot ascertain whether any relevant documents exist in the list of unchecked documents. In practice, we discard less than 1% of the questions. This also justifies our choice of k1k_{1} as already large enough. If all documents retrieved by keywords are deemed to be irrelevant, we perform additional checking using vector-based search.
+4.3 Vector-Based Search
+Token-based retrieval depends on the textual matching of the keywords of the question and the answer to the documents, which is sometimes not sufficient. Therefore, we utilize additional vector-based search to retrieve documents that are semantically relevant to questions deemed unanswerable from the token-based search. First, we obtain the vector embedding of the question using the same model that we use to index the pretraining documents. Then, we retrieve the top k2k_{2} pretraining documents with the most similar vector embeddings to the question. We then go through all k2k_{2} documents and ask an LLM to judge whether the document is sufficient to obtain the labeled answer to the question. If the judging LLM answers “yes” to one of the documents, we mark the question as answerable. If the judging LLM answers “no” to all k2k_{2} documents, the question is considered unanswerable. As embedding retrieval takes about ten times longer than token-based retrieval, we set k2=10k_{2}=10.
+Algorithm 1 Dataset creation
+A list of questions QQ with the corresponding list of answers AA, the maximum number of checked documents in the first stage k1k_{1}, the number of retrieved document in the second stage k2k_{2}
+procedure TokenSearch(Q,A,k1Q,A,k_{1})
+a​n​s​w​e​r​a​b​l​e←[]answerable\leftarrow[]
+u​n​a​n​s​w​e​r​a​b​l​e←[]unanswerable\leftarrow[]
+for q∈Q,a∈Aq\in Q,a\in A do
+f​o​u​n​d←found\leftarrow false
+k​e​y​w​o​r​d​s←keywords\leftarrow ExtractKeywords(q)
+Dt←D_{t}\leftarrow TokenRetrieve(k​e​y​w​o​r​d​s,akeywords,a)
+for i←1i\leftarrow 1 to min(k1,Length​(Dt)k_{1},\textsc{Length}(D_{t})) do
+if IsRelevant(Dt(i),q,aD_{t}^{(i)},q,a) then
+f​o​u​n​d←found\leftarrow true
+if f​o​u​n​dfound is true then
+Append(a​n​s​w​e​r​a​b​l​e,[q,a]answerable,[q,a])
+else
+if Length(DtD_{t}) ≤k1\leq k_{1} then
+Append(u​n​a​n​s​w​e​r​a​b​l​e,[q,a]unanswerable,[q,a])
+return a​n​s​w​e​r​a​b​l​e,u​n​a​n​s​w​e​r​a​b​l​eanswerable,unanswerable
+procedure VectorSearch(Q,A,k2Q,A,k_{2})
+a​n​s​w​e​r​a​b​l​e←[]answerable\leftarrow[]
+u​n​a​n​s​w​e​r​a​b​l​e←[]unanswerable\leftarrow[]
+i​n​s​t​a​n​c​e​s←[]instances\leftarrow[]
+for q∈Q,a∈Aq\in Q,a\in A do
+f​o​u​n​d←found\leftarrow false
+Dv←D_{v}\leftarrow VectorRetrieve(qq)
+for i←1i\leftarrow 1 to k2k_{2} do
+d←Dv(i)d\leftarrow D_{v}^{(i)}
+r←r\leftarrow IsRelevant(d,q,ad,q,a)
+Append(i​n​s​t​a​n​c​e​s,[q,a,d,r]instances,[q,a,d,r])
+if rr is true then
+f​o​u​n​d←found\leftarrow true
+if f​o​u​n​dfound is true then
+Append(a​n​s​w​e​r​a​b​l​e,[q,a]answerable,[q,a])
+else
+Append(u​n​a​n​s​w​e​r​a​b​l​e,[q,a]unanswerable,[q,a])
+return a​n​s​w​e​r​a​b​l​eanswerable, u​n​a​n​s​w​e​r​a​b​l​eunanswerable, i​n​s​t​a​n​c​e​sinstances
+procedure CreateDataset(Q,A,k1,k2Q,A,k_{1},k_{2})
+a1,u1←a_{1},u_{1}\leftarrow TokenSearch(Q,A,k1Q,A,k_{1})
+a2,u2,DI←a_{2},u_{2},D_{I}\leftarrow VectorSearch(u1[Q],u1[A],k2u_{1}^{[Q]},u_{1}^{[A]},k_{2})
+a​n​s​w​e​r​a​b​l​e←answerable\leftarrow Concatenate(a1,a2a_{1},a_{2})
+u​n​a​n​s​w​e​r​a​b​l​e←u2unanswerable\leftarrow u_{2}
+return a​n​s​w​e​r​a​b​l​e,u​n​a​n​s​w​e​r​a​b​l​eanswerable,unanswerable
+Split
+# Answerable Questions
+# Unanswerable Questions
+Train
+36,020
+1,770
+Validation
+1,000
+1,000
+Test
+10,672
+594
+Table 2: Statistics of our benchmark.

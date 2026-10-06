@@ -1,0 +1,13 @@
+# 2601.09402v1 — structured slot state for iterative RAG
+
+Exact [v1](https://arxiv.org/html/2601.09402v1), PRIMARY_09402_NECESSARY.md §3–5/Tables1–3, A2–3/A6–7. Proposed2+1+2=5: static retrieved context lacks persistent question decomposition → initialized multi-slot page, each next-query consumes previously filled slots → consider explicit unresolved-gap state in retrieval rather than only packing. Meaningful local mechanism, not complete-fact coverage.
+
+LLM drafts abstract outline n empty slots, sequentially generates retrieval query from q plus filled page, retrieves top5 and fills current slot, final generator reads page. No separate independent truth/sufficiency gate; finishing n slots is not evidence completeness. Outline omission/wrong premise can persist. Sequential conditioning differs from fixed parallel slot queries, but Table2 parallel wins NQ57.2>56.4 Llama /AmbigQwen57>56.4; not universal sequential superiority. Table1 Llama2Wiki54.9<Searcho155.4 and NQ56.4<Struct57.4/Deep56.6. Document Jaccard/GLM4.5 judge informativeness not truth; slot-deletion subset not alltask causal necessity.
+
+Qwen32B/Llama70B, QwenEmbedding.6B FAISS/Wikipedia, vLLM offlinebatch/T.7/topP.8/topK20/seed66; sixdatasets2000dev exceptBamboogle125test. CoverExactMatch not formal faithfulness. Precision/hardware/length/evalbatch/concurrency/SLO/multipletrainingseeds/CI Not Disclosed. §A6 author1.8×parallel latency avg4 rounds excludes controlled equal-round/call/output budget comparison; Table5 numeric cells not exposed in normalized text, do not invent E2E values. §A7 prose Llama72 vs actual70. §A3 DIG sliding tokenprob products and heuristic weighting not normalized true answerprob/information-theoretic or causal gain; no exact recipe adopted. Prompt figures transported but actual image prompt templates not inspected.
+
+Actual current Ch76 L1140–44 already carries evidence-set/entity-ledger/unresolved-gap/budget state → gap-conditioned micro-query → coverage/redundancy → independent sufficiency gate, with provenance/querypolicy responsibility and gap detector/cost/fixed-topk fallback. This concretely covers adopted persistent-gap/query-conditioning choice, stronger than no-gate PAGER. Proposed Existing AGENT-RAG for that claim only: not claim PAGER implementation/sixdataset numbers are already in Books. Outline slots are local realization; source does not support a new independently verified stopping/coverage contract. ROOT must actual core/owner confirm; no write lock requested.
+# ROOT终裁
+
+root实际exact PageInitialization/IterKnowledge/parallel对照、Ch76 L1135–1149核，5=2+1+2标准完成→Existing AGENT-RAG FINAL通过，仅persistent gaps/page-conditioned next-query。不授PAGER实现/真覆盖/全局顺序优胜；现独立sufficiency更强，不制造diff。下文送审pending为历史状态。
+

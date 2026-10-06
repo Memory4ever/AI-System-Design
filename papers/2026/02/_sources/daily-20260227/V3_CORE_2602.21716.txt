@@ -1,0 +1,2672 @@
+TranX-Adapter: Bridging Artifacts and Semantics within MLLMs for RobustAI-generated Image Detection
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+3
+Pilot Study
+3.1
+Uniform Artifact and Variance Semantic
+3.2
+Semantic Limitations in Artifact Cue Extraction
+4
+Method
+4.1
+Preliminary
+4.2
+Task-Aware Optimal-Transport Fusion
+4.3
+X-Fusion
+5
+Experiments
+5.1
+Experimental Setup
+Implementation Details.
+Evaluation Protocols and Dataset.
+5.2
+Comparison with AIGI Detection Methods
+5.3
+Ablation Study
+5.4
+Comparison with PEFT Methods
+5.5
+Why does Our TranX-Adapter Work?
+6
+Conclusion
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2602.21716v1 [cs.CV] 25 Feb 2026
+TranX-Adapter: Bridging Artifacts and Semantics within MLLMs for Robust
+AI-generated Image Detection
+Wenbin Wang
+Affiliation:
+Wuhan University
+Yuge Huang
+Affiliation:
+Tencent YouTu Lab
+Jianqing Xu
+Affiliation:
+Tencent YouTu Lab
+Yue Yu
+Affiliation:
+Tencent YouTu Lab
+Jiangtao Yan
+Affiliation:
+Tencent YouTu Lab
+Shouhong Ding
+Affiliation:
+Tencent YouTu Lab
+Pan Zhou
+Affiliation:
+Singapore Management University
+Yong Luo
+Affiliation:
+Wuhan University
+Correspondence to:
+wangwenbin97@whu.edu.cn
+Abstract
+Rapid advances in AI-generated image (AIGI) technology enable highly realistic synthesis, threatening public information integrity and security.
+Recent studies have demonstrated that incorporating texture-level artifact features alongside semantic features into multimodal large language models (MLLMs) can enhance their AIGI detection capability. However, our preliminary analyses reveal that artifact features exhibit high intra-feature similarity, leading to an almost uniform attention map after the softmax operation. This phenomenon causes
+attention dilution
+, thereby hindering effective fusion between semantic and artifact features. To overcome this limitation, we propose a lightweight fusion adapter,
+TranX-Adapter
+, which integrates a
+Task-aware Optimal-Transport Fusion
+that leverages the Jensen-Shannon divergence between artifact and semantic prediction probabilities as a cost matrix to transfer artifact information into semantic features, and an
+X-Fusion
+that employs cross-attention to transfer semantic information into artifact features. Experiments on standard AIGI detection benchmarks upon several advanced MLLMs, show that our
+TranX-Adapter
+brings consistent and significant improvements (up to +6% accuracy). Code will be available at
+https://github.com/DreamMr/TranX-Adapter
+.
+†
+†
+affiliationnotice:
+*This work was done during an internship at Tencent YouTu Lab.
+1
+Introduction
+Recent progress in generative AI
+(
+Karras et al., 2019
+;
+Dhariwal and Nichol, 2021
+;
+Goodfellow et al., 2014
+;
+Rombach et al., 2022
+;
+Park et al., 2019
+;
+Zhu et al., 2017
+)
+has dramatically enhanced the capability to synthesize highly realistic images, enabling the creation of visual content that closely mimics real-world scenes. Despite these remarkable achievements, such technologies also pose substantial societal risks, as convincingly fake images can be exploited to mislead the public and propagate misinformation. These emerging threats have consequently driven the computer vision community to advance research in AI-generated image detection (AIGI detection)
+(
+Tan et al., 2024
+;
+Wang et al., 2020
+;
+Zhang et al., 2019
+;
+Qian et al., 2020
+;
+Liu et al., 2020
+;
+Ojha et al., 2023
+;
+Yan et al., 2025
+;
+Chen et al., 2025
+)
+, aiming to develop more robust and reliable techniques for distinguishing synthetic image from authentic image.
+Figure 1
+:
+Comparison between the previous fusion method and our
+TranX-Adapter
+.
+(a) Previous Method: Concatenates artifact (
+e.g.
+, from NPR) and semantic features (
+e.g.
+, from CLIP-ViT), resulting in uniform attention and weak interaction. (b) Our
+TranX-Adapter
+: Incorporates a lightweight bidirectional fusion mechanism that enhances feature interaction.
+Despite substantial progress in AIGI detection, notable challenges persist. Early work
+(
+Wang et al., 2020
+;
+Zhang et al., 2019
+;
+Tan et al., 2024
+)
+predominantly targets GAN and diffusion-generated images
+(
+Goodfellow et al., 2014
+;
+Dhariwal and Nichol, 2021
+)
+, limiting robustness against the latest generative models
+(
+Labs et al., 2025
+)
+. To improve generalization, recent studies advance three complementary directions: (1) artifact-based methods
+(
+Tan et al., 2024
+;
+Qian et al., 2020
+;
+Zhong et al., 2023b
+;
+Yan et al., 2025
+)
+, which capture pixel-level artifacts induced by up-sampling or interpolation; (2) semantic-based methods
+(
+Tan et al., 2025
+;
+Yan et al.,
+;
+Xu et al., 2024
+)
+, which leverage high-level visual semantics and broad world knowledge of Multimodal Large Language Models (MLLMs) to detect subtle or localized manipulations; and (3) hybrid artifact-semantic methods
+(
+Zhou et al., 2025
+;
+Cheng et al., 2025
+)
+, the most promising direction, explicitly combine artifact encoders with MLLMs to combine precise pixel-level cues with semantic robustness. A representative example is AIGI-Holmes
+(
+Zhou et al., 2025
+)
+, which integrates NPR
+(
+Tan et al., 2024
+)
+with LLaVA-1.6-mistral
+(
+Liu et al., 2024
+)
+, yielding state-of-the-art (SOTA) performance across diverse AIGI detection benchmarks.
+However, our preliminary analyses reveal that naively concatenating artifact features (
+e.g.
+, from NPR) with semantic features (
+e.g.
+, from CLIP-ViT) and feeding them into the Large Language Model (LLM) yields suboptimal fusion behavior. As illustrated in Figure
+1
+(a), when artifact features are used as
+key
+and
+value
+and semantic features as
+query
+to transfer artifact information into the semantic space (Artifact
+→
+\rightarrow
+Semantic), the resulting attention map collapses into an almost uniform pattern, manifesting the
+attention dilution
+phenomenon
+(
+Zhang et al., 2024
+)
+. This degradation stems from the high intra-feature similarity of artifact representations, which suppresses discriminative cross-encoder interactions and limits the model’s ability to effectively convey fine-grained, texture-level artifact cues.
+To achieve more effective fusion between semantic and artifact features, we introduce a lightweight fusion adapter, termed
+TranX-Adapter
+, which is placed before the LLM and employs distinct fusion strategies for different interaction directions. The proposed
+TranX-Adapter
+comprises two modules:
+Task-Aware Optimal-Transport Fusion (TOP-Fusion)
+and
+X-Fusion
+. Specifically,
+TOP-Fusion
+transfers artifact features into the semantic features by optimal transport
+(
+Cuturi, 2013
+)
+. We employ the distance between the task-specific prediction probabilities of the two features, instead of relying on the dot-product interaction used in self-attention
+(
+Vaswani et al., 2017
+)
+. This design mitigates the
+attention dilution
+induced by the high intra-feature similarity among artifact features. In contrast,
+X-Fusion
+transfer the semantic features into the artifact features by cross-attention. Here, we introduce
+X-Fusion
+based on the observation that the interaction between the two features predominantly emerges in the shallow layers of the LLM.
+Accordingly, we confine the trainable parameters to a lightweight module, avoiding any modification to the LLM and improving training efficiency.
+Our contribution is identifying that fusing artifact and semantic features within MLLMs is hindered by the high intra-feature similarity of artifact representations, which weakens discriminative interactions. To address this challenge, we propose
+TranX-Adapter
+, a lightweight adapter that enables effective bidirectional fusion through
+TOP-Fusion
+(Artifact
+→
+\rightarrow
+Semantic) and
+X-Fusion
+(Semantic
+→
+\rightarrow
+Artifact). Extensive experiments show that
+TranX-Adapter
+consistently improves performance across both cross-method and cross-dataset benchmarks, achieving an average gain of 4.7% and outperforming recent SOTA approaches.
+2
+Related Work
+With the rapid progress of AI-based image generation, a broad spectrum of detectors has emerged. Recent studies advance three complementary directions:
+(1) artifact-based methods
+,
+(2) semantic-based methods
+and
+(3) hybrid artifact-semantic methods.
+Artifact-Based Methods.
+Artifact-Based methods primarily aim to capture texture-level features induced by the up-sampling operations inherent in image generation models
+(
+Tan et al., 2024
+;
+Zhong et al., 2023a
+;
+Qian et al., 2020
+;
+Frank et al., 2020
+)
+. These features manifest as distinctive pixel-level artifacts, such as similar values between adjacent pixels.
+Tan et al. (2024)
+propose NPR to capture localized structural cues introduced by the up-sampling operations in CNN-based generative networks.
+Zhong et al. (2023a)
+introduce PatchCraft, a texture-patch-based method that suppresses global semantics and exploits inter-pixel correlation contrasts to improve generalization.
+Semantic-Based Methods.
+These methods identify synthetic images through semantic cues, such as human hand contours, by training deep neural networks on extensive real and generated datasets covering diverse object categories
+(
+Xu et al., 2024
+;
+Chang et al., 2023
+;
+Tan et al., 2025
+;
+Chen et al., 2024
+)
+. A representative examples of these approaches are to leverage a powerful foundation model (
+e.g.
+, MLLMs) that possesses extensive world knowledge, thereby endowing it with strong generalization capability.
+Xu et al. (2024)
+present FakeShield that leverages LLM to not only detect image forgery and localize tampered regions but also produce human-readable rationales for its judgments.
+Chang et al. (2023)
+formulate deepfake image detection as a visual question-answering task and leverages prompt-tuned MLLM to significantly improve generalisability to unseen generative models.
+Hybrid Artifact-Semantic Methods.
+These methods simultaneously integrate the previous two approaches by combining pixel-level artifact cues with semantic world knowledge, achieving notable performance gains
+(
+Cheng et al., 2025
+;
+Zhou et al., 2025
+)
+.
+Cheng et al. (2025)
+introduce a hybrid method CO-SPY that jointly enhances and adaptively fuses semantic and pixel-artifact features to robustly detect synthetic images across diverse generative models. AIGI-Holmes
+(
+Zhou et al., 2025
+)
+fuses NPR with semantic-rich pretrained CLIP-ViT embedding within MLLM to deliver both robust generalisation to unseen AI-generated images and human verifiable explanations.
+However, our preliminary analysis (Sect.
+3
+) finds that directly concatenating artifact features and semantic features as input to the LLM leads to suboptimal fusion, since the artifact features exhibit high intra-feature similarity, resulting in an almost uniform attention map that weakens interaction. To address this limitation, we introduce
+TranX-Adapter
+in Sect.
+4
+, which promotes a more profound integration of artifact and semantic representations, thereby advancing the effectiveness and robustness of AIGI detection.
+3
+Pilot Study
+In this section, we conduct a pilot study to demonstrate that self-attention fusion of artifact and semantic features within the LLM is suboptimal. Following AIGI-Holmes
+(
+Zhou et al., 2025
+)
+, we employ NPR
+(
+Tan et al., 2024
+)
+as the artifact encoder and integrate it into LLaVA-1.6-mistral 7B
+(
+Liu et al., 2024
+)
+, while CLIP-ViT provides the semantic features. The two types of features are concatenated and fed into the LLM for joint training. In Sect.
+3.1
+, we analyze the intrinsic distributional differences between artifact and semantic features. In Sect.
+3.2
+, attention map visualization reveals that when the LLM performs self-attention fusion, the Artifact
+→
+\rightarrow
+Semantic interaction exhibits
+attention dilution
+(
+Zhang et al., 2024
+)
+, where the attention distribution becomes nearly uniform, indicating ineffective feature fusion. Finally, by quantifying the mean significance of information flow, we further confirm that existing self-attention fusion within the LLM remains suboptimal (Sect.
+3.2
+).
+Figure 2
+:
+Comparison between the processed NPR input (a) and the CLIP-ViT input image
+2
+2
+2
+The image is sourced from BiasFree
+(
+Guillaro et al., 2025
+)
+(b)
+, where NPR highlights local pixel interdependencies for synthetic image detection.
+3.1
+Uniform Artifact and Variance Semantic
+In AIGI detection, artifact features are essential for distinguishing synthetic images from authentic ones
+(
+Tan et al., 2024
+;
+Chen et al., 2025
+;
+Qian et al., 2020
+)
+. The NPR model exemplifies this principle by leveraging local pixel dependencies to capture subtle inconsistencies that signal synthetic content. Specifically, NPR first upsamples the input image through bilinear interpolation, subsequently downsamples it, and computes the residual between the reconstructed and original images, which is then processed by ResNet
+(
+He et al., 2016
+)
+.
+As illustrated in Figure
+2
+(a), the NPR input image primarily captures structural cues such as edges and textures, leading to substantial redundancy among spatial patches. In contrast, MLLMs typically employ CLIP-ViT as the visual encoder, which directly processes the original image to extract rich and diverse semantic representations. This inherent discrepancy is further manifested at the feature level. As shown in Figure
+3
+, we examine the distributional characteristics of artifact and semantic features by computing the L2 norm and cosine similarity image patches derived from each visual encoder. The results reveal that CLIP-ViT features exhibit significantly higher inter-patch variance, whereas NPR features demonstrate strong intra-feature similarity, indicating that
+artifact representations are more homogeneous and less discriminative in feature space.
+Figure 3
+:
+Distributional comparison of representational variances between CLIP-ViT and NPR:
+(a) variance of L2 norms and (b) variance of cosine similarities across image patches.
+Figure 4
+:
+Comparison of cross-encoder interactions between CLIP-ViT and NPR.
+(a) Relative entropy of attention maps. Higher relative entropy values, approaching
+1
+1
+, indicate that the distribution is closer to uniform. (b) Attention map for the direction
+C
+​
+L
+​
+I
+​
+P
+→
+N
+​
+P
+​
+R
+CLIP\rightarrow NPR
+, where the
+query
+originates from NPR features and the
+key
+and
+value
+are derived from CLIP-ViT features. (c) Attention map for the direction
+N
+​
+P
+​
+R
+→
+C
+​
+L
+​
+I
+​
+P
+NPR\rightarrow CLIP
+, where the
+query
+corresponds to CLIP-ViT features and the
+key
+and
+value
+are obtained from NPR features. (d) Relationship between the training loss and the information flow metrics
+S
+S
+.
+3.2
+Semantic Limitations in Artifact Cue Extraction
+We previously observed that the artifact features extracted by NPR exhibit strong intra-feature similarity. Consequently, during self-attention, this high similarity causes the attention map, when semantic features are used as
+queries
+and artifact features as
+keys
+, to collapses into an almost uniform distribution after softmax normalization. As illustrated in Figure
+4
+(a), the relative entropy of the CLIP-ViT
+→
+\rightarrow
+NPR is notably lower, indicating a more concentrated distribution as shown in Figure
+4
+(b). In contrast, the NPR
+→
+\rightarrow
+CLIP-ViT exhibits higher relative entropy, resulting in an almost uniform pattern as shown in Figure
+4
+(c) and leading to the phenomenon of
+attention dilution
+. However, the critical forgery cues embedded in artifact features typically reside in high-frequency regions
+(
+Zhong et al., 2023a
+)
+, and this diluted attention impedes the effective transmission of critical forgery cues from artifact to semantic.
+To further substantiate this observation, we follow
+Wang et al. (2023a)
+and introduce two quantitative metrics: (1)
+S
+N
+→
+C
+S_{N\rightarrow C}
+denotes the mean significance of the information flow from NPR to CLIP-ViT, and (2)
+S
+C
+→
+N
+S_{C\rightarrow N}
+denotes the mean significance of information flow from CLIP-ViT to NPR. As shown in Figure
+4
+(d), the information flow
+S
+N
+→
+C
+S_{N\rightarrow C}
+is substantially lower than
+S
+C
+→
+N
+S_{C\rightarrow N}
+, indicating that
+the artifact information encoded by NPR is difficult to transfer into the semantic feature space
+.
+To confirm that this phenomenon is not specific to NPR, we further observe similar behavior in VAE-based artifact encoder
+(
+Cheng et al., 2025
+)
+. These findings highlight that effectively bridging artifact and semantic features remains a critical challenge for MLLM performance in AIGI detection tasks.
+Figure 5
+:
+Overview of the proposed
+TranX-Adapter
+.
+Our
+TranX-Adapter
+consists of two complementary fusion modules. The
+Task-Aware Optimal-Transport Fusion (TOP-Fusion)
+aligns artifact and semantic feature predictions by computing JS divergence between their logits and transferring artifact features into the semantic features through optimal-transport, yielding an enhanced semantic feature
+F
+^
+s
+​
+e
+​
+m
+\hat{F}_{sem}
+. The
+X-Fusion
+module transfers semantic features into artifact features via multi-layer cross-attention, producing
+F
+^
+a
+​
+r
+​
+t
+\hat{F}_{art}
+. The fused representations are finally fed into the Large Language Model (LLM) for detection.
+4
+Method
+With the insights in Sect.
+3
+, we introduce a lightweight fusion adapter, termed
+TranX-Adapter
+, which facilitates more effective fusion of semantic and artifact features. In this section, we introduce the
+TranX-Adapter
+in detail.
+4.1
+Preliminary
+Given an image, we first extract artifact features
+F
+a
+​
+r
+​
+t
+∈
+ℝ
+N
+×
+D
+F_{art}\in\mathbb{R}^{N\times D}
+and semantic features
+F
+s
+​
+e
+​
+m
+∈
+ℝ
+M
+×
+D
+F_{sem}\in\mathbb{R}^{M\times D}
+from artifact encoder (
+e.g.
+, NPR) and semantic encoder (
+e.g.
+, CLIP-ViT) respectively. The
+N
+N
+and
+M
+M
+represent the lengths of the sequences of visual patches for artifact features
+F
+a
+​
+r
+​
+t
+F_{art}
+and semantic features
+F
+s
+​
+e
+​
+m
+F_{sem}
+. The
+D
+D
+is the feature dimension of each visual patches. In fact, we employ separate Multi-Layer Perceptron (MLP) to align the feature dimensions of the artifact features and semantic features. And then the artifact features
+F
+a
+​
+r
+​
+t
+F_{art}
+and semantic features
+F
+s
+​
+e
+​
+m
+F_{sem}
+are fused by our
+TranX-Adapter
+, which enables bidirectional fusion via
+Task-Aware Optimal-Transport Fusion
+(Artifact
+→
+\rightarrow
+Semantic) and
+X-Fusion
+(Semantic
+→
+\rightarrow
+Artifact). The fused visual features are projected to the LLM as visual tokens
+𝒱
+\mathcal{V}
+and paired with a textual prompt
+T
+T
+. To train our
+TranX-Adapter
+, we apply the language modeling objective
+ℒ
+\mathcal{L}
+to predictions of text tokens:
+ℒ
+=
+−
+∑
+t
+log
+P
+θ
+(
+y
+t
+|
+𝒱
+,
+T
+,
+y
+<
+t
+)
+.
+\mathcal{L}=-\sum_{t}\log P_{\theta}(y_{t}|\mathcal{V},T,y_{<t}).
+(1)
+4.2
+Task-Aware Optimal-Transport Fusion
+In this part, we first provide the motivation of our
+Task-Aware Optimal-Transport Fusion (TOP-Fusion)
+, and then introduce it in detail.
+Motivation of TOP-Fusion.
+The primary objective of this module is to transfer discriminative artifact cues into semantic features, compensating for forgery cues that the semantic space fails to capture.
+In Sect.
+3
+, we observe that the Artifact
+→
+\rightarrow
+Semantic interaction suffers from
+attention dilution
+, where the attention distribution becomes nearly uniform due to the high intra-feature similarity of artifact features. Prior studies
+(
+Zhong et al., 2023a
+;
+Frank et al., 2020
+)
+indicate that generative models predominantly introduce artifacts in the high-frequency regions of synthetic images, leading to varying artifact intensity across patches. To capture this, we replace the artifact features with the probability of each patch being predicted as fake, and similarly map semantic features into the same probability space. The fusion process is guided to emphasize regions exhibiting substantial discrepancies between the artifact and semantic features.
+TOP-Fusion.
+The processes of our
+TOP-Fusion
+is illustrated in Figure
+5
+. As discussed above, we first convert both artifact and semantic features into the probability of each patch being predicted as “fake”. For artifact encoder, we use the prediction head from the artifact encoder training to obtain logits over the detect “fake”. For the semantic encoder, when CLIP-ViT is used, we encode the text prompt “
+A photo is a fake.
+” with CLIP’s text encoder
+(
+Devlin et al., 2019
+)
+and compute its similarity to the CLIP-ViT visual features. For semantic encoders without an aligned text encoder, we use a pretrained prediction head to obtain logits for fake detection. The complementary “real” logit is obtained as
+1
+−
+σ
+⁡
+(
+⋅
+)
+1-\sigma(\cdot)
+. The
+σ
+⁡
+(
+⋅
+)
+\sigma(\cdot)
+is the sigmoid function. We denote
+P
+P
+and
+S
+S
+as the probability distributions corresponding to the artifact and semantic features, respectively. Then, we quantify the discrepancy between artifact and semantic using the Jensen-Shannon (JS) divergence,
+i.e.
+,
+J
+S
+(
+S
+|
+|
+P
+)
+JS(S||P)
+.
+Next, we transfer the artifact features into the semantic space based on this discrepancy. Specifically, we employ Optimal-Transport
+(
+Peyré et al., 2019
+;
+Santambrogio, 2015
+)
+, using the
+J
+S
+(
+S
+|
+|
+P
+)
+JS(S||P)
+as the cost matrix, and obtain the transport plan
+γ
+\gamma
+via the Sinkhorn algorithm
+(
+Cuturi, 2013
+)
+. Since the patches with substantial discrepancies should receive greater emphasis during feature transfer, we adopt the negative JS divergence,
+i.e.
+,
+−
+J
+S
+(
+S
+|
+|
+P
+)
+-JS(S||P)
+. Finally, we use the transport plan
+γ
+\gamma
+to transfer the artifact features into semantic features:
+F
+a
+​
+r
+​
+t
+→
+s
+​
+e
+​
+m
+=
+γ
+⁡
+(
+F
+a
+​
+r
+​
+t
+​
+W
+a
+​
+r
+​
+t
+)
+,
+\displaystyle F_{art\rightarrow sem}=\gamma(F_{art}W_{art}),
+(2)
+F
+^
+s
+​
+e
+​
+m
+=
+F
+s
+​
+e
+​
+m
++
+MLP
+​
+(
+F
+a
+​
+r
+​
+t
+→
+s
+​
+e
+​
+m
+)
+,
+\displaystyle\hat{F}_{sem}=F_{sem}+\texttt{MLP}(F_{art\rightarrow sem}),
+(3)
+where
+W
+a
+​
+r
+​
+t
+∈
+ℝ
+D
+×
+d
+W_{art}\in\mathbb{R}^{D\times d}
+are learned linear projections into the shared space, and
+MLP
+​
+(
+⋅
+)
+\texttt{MLP}(\cdot)
+is the Multi-Layer Perceptron that adapts the
+F
+a
+​
+r
+​
+t
+→
+s
+​
+e
+​
+m
+F_{art\rightarrow sem}
+before fusion.
+4.3
+X-Fusion
+In this part, we first provide the motivation of our
+X-Fusion
+, and then introduce it in detail.
+Motivation of X-Fusion.
+Previously, we introduced
+TOP-Fusion
+to achieve the interaction from Artifact
+→
+\rightarrow
+Semantic. The most straightforward approach is to directly integrate
+TOP-Fusion
+into the LLM. However, we argue that such a strategy is inefficient for two main reasons: (1) modifying the internal architecture of the LLM may disrupt its inherent knowledge, and (2) it requires training the LLM. In fact, our experiments (Sect.
+5.5
+) reveal that the interactions among different visual features within the LLM primarily occur in the shallow layers. Therefore, we concentrate the interaction between artifact and semantic features within a lightweight adapter and fine-tune only this adapter during training, avoiding the need to update the LLM. Consequently, we employ a cross (X)-attention mechanism to achieve the Semantic
+→
+\rightarrow
+Artifact interaction.
+X-Fusion.
+Given the artifact features
+F
+a
+​
+r
+​
+t
+F_{art}
+and semantic features
+F
+s
+​
+e
+​
+m
+F_{sem}
+, both feature types are first projected into a shared latent space of dimension
+d
+d
+through linear transformations:
+F
+~
+a
+​
+r
+​
+t
+=
+F
+a
+​
+r
+​
+t
+​
+W
+~
+a
+​
+r
+​
+t
+,
+F
+~
+s
+​
+e
+​
+m
+=
+F
+s
+​
+e
+​
+m
+​
+W
+~
+s
+​
+e
+​
+m
+,
+\tilde{F}_{art}=F_{art}\tilde{W}_{art},\ \quad\tilde{F}_{sem}=F_{sem}\tilde{W}_{sem},
+(4)
+where
+W
+~
+a
+​
+r
+​
+t
+,
+and
+​
+W
+~
+s
+​
+e
+​
+m
+∈
+ℝ
+D
+×
+d
+\tilde{W}_{art},\text{ and }\tilde{W}_{sem}\in\mathbb{R}^{D\times d}
+. Subsequently, a stack of cross-attention layers is employed to enable fine-grained semantic injection. In each layer
+ℓ
+\ell
+, the artifact features serve as the
+query
+, while semantic features act as
+key
+and
+value
+:
+Q
+=
+F
+~
+a
+​
+r
+​
+t
+​
+W
+Q
+,
+K
+=
+F
+~
+s
+​
+e
+​
+m
+​
+W
+K
+,
+V
+=
+F
+~
+s
+​
+e
+​
+m
+​
+W
+V
+,
+\displaystyle Q=\tilde{F}_{art}W_{Q},\ K=\tilde{F}_{sem}W_{K},\ V=\tilde{F}_{sem}W_{V},
+(5)
+H
+=
+softmax
+​
+(
+Q
+​
+K
+⊤
+d
+)
+​
+V
+,
+\displaystyle H=\texttt{softmax}(\frac{QK^{\top}}{\sqrt{d}})V,
+(6)
+X
+=
+F
+~
+a
+​
+r
+​
+t
++
+H
+,
+\displaystyle X=\tilde{F}_{art}+H,
+(7)
+F
+s
+​
+e
+​
+m
+→
+a
+​
+r
+​
+t
+=
+X
++
+MLP
+​
+(
+X
+)
+,
+\displaystyle F_{sem\rightarrow art}=X+\texttt{MLP}(X),
+(8)
+where
+W
+Q
+,
+W
+K
+​
+and
+​
+W
+V
+∈
+ℝ
+d
+×
+d
+W_{Q},W_{K}\text{~and~}W_{V}\in\mathbb{R}^{d\times d}
+are the parameter matrics. In this formulation, the artifact features actively retrieve complementary semantic cues from the semantic features, facilitating semantic-aware enhancement. After the final cross-attention block, the updated representation is normalized and mapped back to the original feature dimension:
+F
+^
+a
+​
+r
+​
+t
+=
+F
+a
+​
+r
+​
+t
++
+MLP
+​
+(
+F
+s
+​
+e
+​
+m
+→
+a
+​
+r
+​
+t
+)
+.
+\hat{F}_{art}=F_{art}+\texttt{MLP}(F_{sem\rightarrow art}).
+(9)
+This process yields a refined artifact features that effectively incorporates semantic guidance while preserving the original feature characteristics.
+5
+Experiments
+In this section, we first present the experimental setup, including implementation details and evaluation protocols, followed by the experiments and analysis.
+5.1
+Experimental Setup
+Implementation Details.
+Following
+(
+Zhou et al., 2025
+)
+, we adopt NPR
+(
+Tan et al., 2024
+)
+as the artifact encoder to extract artifact features, while using the visual encoder of the MLLM as the semantic encoder to capture high-level visual semantics. We use LLaVA-1.6-mistral 7B and Qwen3-VL (2B and 4B) as the base models. Unless otherwise specified, the parameter of MLLMs are kept frozen during training.
+Evaluation Protocols and Dataset.
+We adopt two widely recognized evaluation protocols. In
+Protocol I
+, we follow the GenImage
+(
+Zhu et al., 2023
+)
+benchmark and train the model on ImageNet
+(
+Deng et al., 2009
+)
+real images and SD v1.4
+(
+Rombach et al., 2022
+)
+generate images, and evaluate the trained model across eight different generators
+(
+Brock et al., 2018
+;
+Nichol et al., 2021
+;
+Gu et al., 2022
+;
+Dhariwal and Nichol, 2021
+;
+Midjourney, 2022
+;
+Wukong, 2022
+;
+Rombach et al., 2022
+)
+. In
+Protocol II
+, the model is trained on data from diverse generative models and evaluated on comprehensive benchmarks containing challenging samples from modern generators. This protocol uses the Chameleon
+(
+Yan et al., 2025
+)
+and RRDataset
+(
+Li et al., 2025
+)
+.
+5.2
+Comparison with AIGI Detection Methods
+Comparison on GenImage (Protocol I).
+As shown in Table
+1
+,
+TranX-Adapter
+consistently boosts performance across all evaluated models, including LLaVA-1.6-mistral 7B, Qwen3-VL 2B, and Qwen3-VL 4B, demonstrating strong model-agnostic effectiveness.
+Additionally, many existing methods overfit to specific generators and suffer significant performance drops on unseen ones, whereas our method maintains consistently high accuracy across generators, demonstrating strong robustness and transferability.
+Table 1
+:
+Cross-model accuracy performance on the GenImage Dataset.
+Accuracy (%) of different detectors (rows) in distinguishing real images from those produced by various generative models (columns). The best result are marked in
+bold
+. “
+†
+\dagger
+” indicates direct concatenation of artifact and semantic features following
+Zhou et al. (2025)
+.
+Method
+Midjourney
+SD v1.4
+SD v1.5
+ADM
+GLIDE
+Wukong
+VQDM
+BigGAN
+Mean
+F3Net
+(
+Qian et al., 2020
+)
+50.1
+99.9
+99.9
+49.9
+50.0
+99.9
+49.9
+49.9
+68.7
+DIRE
+(
+Wang et al., 2023b
+)
+60.2
+99.9
+99.8
+50.9
+55.0
+99.2
+50.1
+50.2
+70.7
+PatchCraft
+(
+Zhong et al., 2023b
+)
+79.0
+89.5
+89.3
+77.3
+78.4
+89.3
+83.7
+72.4
+82.3
+UnivFD
+(
+Ojha et al., 2023
+)
+73.2
+84.2
+84.0
+55.2
+76.9
+75.6
+56.9
+80.3
+73.3
+AIDE
+(
+Yan et al., 2025
+)
+79.4
+99.7
+99.8
+78.5
+91.8
+98.7
+80.3
+66.9
+86.9
+NPR
+(
+Tan et al., 2024
+)
+89.8
+90.7
+90.7
+84.6
+90.3
+90.7
+87.0
+81.8
+88.3
+LLaVA-1.6-mistral 7B
+†
+(
+Liu et al., 2024
+)
+88.6
+94.0
+94.0
+80.3
+86.8
+93.4
+82.6
+76.2
+87.3
+AIGI-Holmes
+(
+Zhou et al., 2025
+)
+81.6
+91.3
+91.4
+88.4
+91.5
+89.5
+90.9
+94.5
+89.8
+Qwen3-VL 2B
+†
+(
+Bai et al., 2025
+)
+88.1
+87.3
+84.1
+78.6
+81.7
+81.7
+84.1
+72.2
+82.2
+Qwen3-VL 4B
+†
+(
+Bai et al., 2025
+)
+87.3
+98.4
+96.0
+65.1
+91.3
+96.0
+73.8
+78.6
+85.8
+w/ our TranX-Adapter
+Qwen3-VL 2B
+90.5
+97.6
+96.0
+83.3
+89.7
+92.9
+82.5
+71.4
+88.0
+Qwen3-VL 4B
+92.1
+97.6
+97.6
+81.0
+83.3
+94.4
+84.9
+87.3
+89.8
+LLaVA-1.6-mistral 7B
+94.9
+96.4
+96.4
+87.0
+88.0
+94.9
+90.1
+85.9
+91.9
+Comparison on Chameleon (Protocol II).
+To mitigate potential biases arising from training configurations, such as generator diversity and image category imbalance, we evaluate our method alongside existing detectors under varied training conditions. As shown in Table
+2
+, prior approaches exhibit limited transferability, with accuracies ranging from 55% to 72%. In contrast, LLaVA-1.6-mistral 7B w/ our
+TranX-Adapter
+achieves 75.8% accuracy when trained solely on SD v1.4 and 85.1% when trained on the full GenImage dataset, significantly outperforming all baselines. These results underscore the strong generalization and robustness of the proposed
+TranX-Adapter
+.
+Table 2
+:
+Cross-dataset accuracy performance on the Chameleon testset.
+“
+†
+\dagger
+” denotes the setting following
+Zhou et al. (2025)
+, where the artifact features and semantic features are directly concatenated.
+Method
+Training Set
+SDv1.4
+All GenImage
+UnivFD
+(
+Ojha et al., 2023
+)
+55.6
+60.4
+DIRE
+(
+Wang et al., 2023b
+)
+59.7
+57.8
+PatchCraft
+(
+Zhong et al., 2023b
+)
+56.3
+55.7
+NPR
+(
+Tan et al., 2024
+)
+58.1
+57.8
+LLaVA-1.6-mistral 7B
+†
+(
+Liu et al., 2024
+)
+69.4
+81.9
+AIDE
+(
+Yan et al., 2025
+)
+62.6
+65.8
+PatchAll/CLIP
+(
+Yang et al., 2025
+)
+63.9
+69.3
+PatchAll/DINOv2
+(
+Yang et al., 2025
+)
+66.6
+72.1
+Qwen3-VL 2B
+†
+(
+Bai et al., 2025
+)
+68.5
+78.8
+Qwen3-VL 4B
+†
+(
+Bai et al., 2025
+)
+69.4
+78.3
+w/ our TranX-Adapter
+Qwen3-VL 2B
+71.8
+82.3
+Qwen3-VL 4B
+72.6
+83.6
+LLaVA-1.6-mistral 7B
+75.8
+85.1
+Comparison on RRDataset (Protocol II).
+Compared with Chameleon, RRDataset
+(
+Li et al., 2025
+)
+encompasses seven distinct scenes and four re-digitization processes, offering a more comprehensive assessment of the generalization capability of AIGI detectors. As presented in Table
+3
+, we evaluate both zero-shot MLLMs and conventional detectors on RRDataset. Our
+TranX-Adapter
+integrated with Qwen3-VL 4B achieves the highest accuracy of 90.9%, surpassing the strongest baseline (Qwen3-VL 4B, 85.6%) by 5.3% and GPT-4o by +6.8%. These results demonstrate the superior generalization of our approach for AIGI detection.
+Table 3
+:
+Cross-dataset accuracy performance on the RRDataset.
+The “
+Ori.
+” represents the Original, “
+Trans.
+” represents the Transmission, and “
+Re.
+” represents the Re-digitization. “
+†
+\dagger
+” indicates the direct concatenation of artifact and semantic features
+(
+Zhou et al., 2025
+)
+.
+Method
+RRDataset
+Ori.
+Trans.
+Re.
+Avg.
+MLLMs (Zero-shot)
+GPT-4o
+(
+Achiam et al., 2023
+)
+94.5
+84.7
+73.1
+84.1
+Claude-3.7-sonnet
+(
+35
+)
+89.9
+83.8
+73.9
+82.5
+Gemini-2-flash
+(
+Team et al., 2023
+)
+85.3
+74.8
+71.8
+77.3
+Qwen2VL-72B
+(
+Wang et al., 2024
+)
+59.9
+56.4
+59.8
+58.7
+Detectors (Fine-tuned)
+DIRE
+(
+Wang et al., 2023b
+)
+94.0
+94.1
+50.2
+79.4
+AIDE
+(
+Yan et al., 2025
+)
+79.0
+76.8
+79.6
+78.4
+NPR
+(
+Tan et al., 2024
+)
+72.7
+62.6
+65.6
+67.0
+LLaVA-1.6-mistral 7B
+†
+(
+Liu et al., 2024
+)
+94.8
+69.3
+85.5
+83.2
+C2P-CLIP
+(
+Tan et al., 2025
+)
+57.4
+64.2
+54.2
+58.6
+Qwen3-VL 2B
+†
+(
+Bai et al., 2025
+)
+88.9
+89.9
+68.8
+82.5
+Qwen3-VL 4B
+†
+(
+Bai et al., 2025
+)
+96.0
+89.5
+71.3
+85.6
+w/ our TranX-Adapter
+Qwen3-VL 2B
+97.5
+95.3
+78.3
+88.9
+Qwen3-VL 4B
+98.1
+95.5
+79.0
+90.9
+LLaVA-1.6-mistral 7B
+96.6
+93.0
+77.1
+88.9
+5.3
+Ablation Study
+To elucidate the contribution of each component within our
+TranX-Adapter
+, we perform ablation studies on GenImage using LLaVA-1.6-mistral 7B. As presented in Table
+4
+, incorporating the artifact encoder to provide auxiliary forgery cues yields a 4.6% improvement in accuracy. Introducing
+X-Fusion
+and
+TOP-Fusion
+individually brings further gains of 2.3% and 3.2%, respectively. When both fusion strategies are jointly applied, the model attains an accuracy of 91.9%, confirming that the two fusion mechanisms complement each other and jointly enhance detection performance.
+Table 4
+:
+Ablation study of different module in
+TranX-Adapter
+. The first row shows the results of LLaVA-1.6-mistral 7B. We integrate NPR, apply
+X-Fusion
+and
+TOP-Fusion
+separately, and then use the full bidirectional fusion strategy.
+Artifact Encoder
+X-Fusion
+TOP-Fusion
+Accuracy
+82.3
+✓
+86.0
+✓
+✓
+89.3
+✓
+✓
+90.3
+✓
+✓
+✓
+91.9
+5.4
+Comparison with PEFT Methods
+To evaluate training efficiency, we compare our
+TranX-Adapter
+with Parameter-Efficient Fine-Tuning (PEFT) methods, including LoRA
+(
+Hu et al.,
+)
+and Adapter
+(
+Houlsby et al., 2019
+)
+, on the Chameleon dataset, using GenImage-SD v1.4 as the training set. As shown in Table
+5
+, our
+TranX-Adapter
+achieves performance comparable to full fine-tuning while using only a tiny-scale of the parameters.
+Table 5
+:
+Comparison with PEFT methods on Chameleon dataset
+, where “Params.” denotes the number of learnable parameters measured in millions.
+Method
+Params. (M)
+Acc.
+Full
+7261
+76.8
+LoRA
+(
+Hu et al.,
+)
+40
+69.1
+160
+74.4
+Adapter
+(
+Houlsby et al., 2019
+)
+40
+69.4
+160
+72.5
+TranX-Adapter
+40
+73.8
+160
+75.8
+Figure 6
+:
+Overview of JS divergence and the evolution of information-flow significance across training.
+(a) Distribution of JS divergence. (b) Illustrates the relationship between the training loss and the information-flow significance
+S
+S
+. (c) Comparison of image and text information-flow significance and (d) layer-wise distribution of
+S
+S
+across the LLM, where “Low” indicates layers near the input.
+5.5
+Why does Our TranX-Adapter Work?
+In Sect.
+3
+, we observe that the artifact features exhibit high intra-feature similarity, preventing effective injection of artifact information into the semantic features. In this section, we analyze why
+TranX-Adapter
+is effective from the following two perspectives:
+1) Why can TOP-Fusion transfer artifact information into semantic features more effectively?
+We design
+TOP-Fusion
+to selectively amplify regions where artifact and semantic diverge in AIGI detection. To achieve this, we compute the JS divergence between their prediction probabilities and adopt it as the cost matrix within the optimal transport. As illustrated in Figure
+6
+(a), the JS divergence exhibits low JS divergence regions dominate with high density, whereas high JS divergence regions are relatively sparse. This non-uniformity easily guides the model to focus on patches with substantial discrepancies. To further assess the advantages of
+TOP-Fusion
+, we compare it against a standard cross-attention by substituting
+TOP-Fusion
+with cross-attention. We denote the mean significance of information flow
+(
+Wang et al., 2023a
+)
+from artifact to semantic features as
+S
+T
+​
+O
+​
+P
+S_{TOP}
+and
+S
+c
+​
+r
+​
+o
+​
+s
+​
+s
+S_{cross}
+for
+TOP-Fusion
+and cross-attention, respectively. As shown in Figure
+6
+(b),
+S
+T
+​
+O
+​
+P
+S_{TOP}
+consistently surpasses
+S
+c
+​
+r
+​
+o
+​
+s
+​
+s
+S_{cross}
+, and
+TOP-Fusion
+achieves a lower training loss under identical training steps. These findings demonstrate that
+TOP-Fusion more effectively highlights regions with substantial discrepancies between artifact and semantic features, thereby enabling more efficient fusion.
+2) Why can TranX-Adapter remain effective with only a small number of trainable parameters?
+To answer this question, it is essential to clarify what the LLM primarily learns during training. We therefore examine how different features, including text embeddings, artifact features, and semantic features, interact within the LLM. A naive concatenation strategy is adopted, where all three feature types are provided jointly as input while fine-tuning the LLM. We denote
+S
+T
+S_{T}
+and
+S
+I
+S_{I}
+as the mean significance of information flow
+(
+Wang et al., 2023a
+)
+from text embeddings and visual features to the final output, respectively. As shown in Figure
+6
+(c), the model increasingly depends on visual features as training progresses, indicating that
+the LLM places greater emphasis on visual feature interactions.
+Furthermore, Figure
+6
+(d) shows that
+these visual feature interactions predominantly emerge in the shallow layers (corresponding to “Low”) of the LLM
+. This behavior aligns with the design of
+TranX-Adapter
+, which promotes effective visual feature interaction via
+TOP-Fusion
+and
+X-Fusion
+with minimal additional parameters.
+6
+Conclusion
+In this paper, we introduce
+TranX-Adapter
+, a lightweight fusion adapter that effectively integrates semantic and artifact features to strengthen the AIGI detection capability of MLLMs. Extensive experiments across diverse benchmarks demonstrate that
+TranX-Adapter
+delivers robust performance and superior generalization. Our analysis reveals three key insights: (1) high intra-feature similarity of artifact features leads to
+attention dilution
+under self-attention, while discrepancy-aware fusion is more effective; (2) the LLM increasingly relies on visual information during training and (3) artifact-semantic fusion predominantly occurs in shallow layers.
+Overall,
+TranX-Adapter
+improves artifact utilization in MLLMs, paving the way for future work on AIGI localization and explainability.
+References
+Achiam
+et al.
+(2023)
+J. Achiam, S. Adler, S. Agarwal, L. Ahmad, I. Akkaya, F. L. Aleman, D. Almeida, J. Altenschmidt, S. Altman, S. Anadkat,
+et al.
+Gpt-4 technical report
+.
+arXiv preprint arXiv:2303.08774
+.
+Cited by:
+Table 3
+.
+Bai
+et al.
+(2025)
+S. Bai, Y. Cai, R. Chen, K. Chen, X. Chen, Z. Cheng, L. Deng, W. Ding, C. Gao, C. Ge, W. Ge, Z. Guo, Q. Huang, J. Huang, F. Huang, B. Hui, S. Jiang, Z. Li, M. Li, M. Li, K. Li, Z. Lin, J. Lin, X. Liu, J. Liu, C. Liu, Y. Liu, D. Liu, S. Liu, D. Lu, R. Luo, C. Lv, R. Men, L. Meng, X. Ren, X. Ren, S. Song, Y. Sun, J. Tang, J. Tu, J. Wan, P. Wang, P. Wang, Q. Wang, Y. Wang, T. Xie, Y. Xu, H. Xu, J. Xu, Z. Yang, M. Yang, J. Yang, A. Yang, B. Yu, F. Zhang, H. Zhang, X. Zhang, B. Zheng, H. Zhong, J. Zhou, F. Zhou, J. Zhou, Y. Zhu, and K. Zhu
+Qwen3-vl technical report
+.
+arXiv preprint arXiv:2511.21631
+.
+Cited by:
+Table 1
+,
+Table 1
+,
+Table 2
+,
+Table 2
+,
+Table 3
+,
+Table 3
+.
+Brock
+et al.
+(2018)
+A. Brock, J. Donahue, and K. Simonyan
+Large scale gan training for high fidelity natural image synthesis
+.
+arXiv preprint arXiv:1809.11096
+.
+Cited by:
+§5.1
+.
+Chang
+et al.
+(2023)
+Y. Chang, C. Yeh, W. Chiu, and N. Yu
+Antifakeprompt: prompt-tuned vision-language models are fake image detectors
+.
+arXiv preprint arXiv:2310.17419
+.
+Cited by:
+§2
+.
+Chen
+et al.
+(2024)
+B. Chen, J. Zeng, J. Yang, and R. Yang
+Drct: diffusion reconstruction contrastive training towards universal detection of diffusion generated images
+.
+In
+Forty-first International Conference on Machine Learning
+,
+Cited by:
+§2
+.
+Chen
+et al.
+(2025)
+R. Chen, J. Xi, Z. Yan, K. Zhang, S. Wu, J. Xie, X. Chen, L. Xu, I. Guan, T. Yao,
+et al.
+Dual data alignment makes ai-generated image detector easier generalizable
+.
+arXiv preprint arXiv:2505.14359
+.
+Cited by:
+§1
+,
+§3.1
+.
+Cheng
+et al.
+(2025)
+S. Cheng, L. Lyu, Z. Wang, X. Zhang, and V. Sehwag
+CO-spy: combining semantic and pixel features to detect synthetic images by ai
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 13455–13465
+.
+Cited by:
+§1
+,
+§2
+,
+§3.2
+.
+Cuturi (2013)
+M. Cuturi
+Sinkhorn distances: lightspeed computation of optimal transport
+.
+Advances in neural information processing systems
+26
+.
+Cited by:
+§1
+,
+§4.2
+.
+Deng
+et al.
+(2009)
+J. Deng, W. Dong, R. Socher, L. Li, K. Li, and L. Fei-Fei
+Imagenet: a large-scale hierarchical image database
+.
+In
+2009 IEEE conference on computer vision and pattern recognition
+,
+pp. 248–255
+.
+Cited by:
+§5.1
+.
+Devlin
+et al.
+(2019)
+J. Devlin, M. Chang, K. Lee, and K. Toutanova
+Bert: pre-training of deep bidirectional transformers for language understanding
+.
+In
+Proceedings of the 2019 conference of the North American chapter of the association for computational linguistics: human language technologies, volume 1 (long and short papers)
+,
+pp. 4171–4186
+.
+Cited by:
+§4.2
+.
+Dhariwal and Nichol (2021)
+P. Dhariwal and A. Nichol
+Diffusion models beat gans on image synthesis
+.
+Advances in neural information processing systems
+34
+,
+pp. 8780–8794
+.
+Cited by:
+§1
+,
+§1
+,
+§5.1
+.
+Frank
+et al.
+(2020)
+J. Frank, T. Eisenhofer, L. Schönherr, A. Fischer, D. Kolossa, and T. Holz
+Leveraging frequency analysis for deep fake image recognition
+.
+In
+International conference on machine learning
+,
+pp. 3247–3258
+.
+Cited by:
+§2
+,
+§4.2
+.
+Goodfellow
+et al.
+(2014)
+I. J. Goodfellow, J. Pouget-Abadie, M. Mirza, B. Xu, D. Warde-Farley, S. Ozair, A. Courville, and Y. Bengio
+Generative adversarial nets
+.
+Advances in neural information processing systems
+27
+.
+Cited by:
+§1
+,
+§1
+.
+Gu
+et al.
+(2022)
+S. Gu, D. Chen, J. Bao, F. Wen, B. Zhang, D. Chen, L. Yuan, and B. Guo
+Vector quantized diffusion model for text-to-image synthesis
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 10696–10706
+.
+Cited by:
+§5.1
+.
+Guillaro
+et al.
+(2025)
+F. Guillaro, G. Zingarini, B. Usman, A. Sud, D. Cozzolino, and L. Verdoliva
+A bias-free training paradigm for more general ai-generated image detection
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 18685–18694
+.
+Cited by:
+footnote 2
+.
+He
+et al.
+(2016)
+K. He, X. Zhang, S. Ren, and J. Sun
+Deep residual learning for image recognition
+.
+In
+Proceedings of the IEEE conference on computer vision and pattern recognition
+,
+pp. 770–778
+.
+Cited by:
+§3.1
+.
+Houlsby
+et al.
+(2019)
+N. Houlsby, A. Giurgiu, S. Jastrzebski, B. Morrone, Q. De Laroussilhe, A. Gesmundo, M. Attariyan, and S. Gelly
+Parameter-efficient transfer learning for nlp
+.
+In
+International conference on machine learning
+,
+pp. 2790–2799
+.
+Cited by:
+§5.4
+,
+Table 5
+.
+[18]
+E. J. Hu, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, W. Chen,
+et al.
+LoRA: low-rank adaptation of large language models
+.
+In
+International Conference on Learning Representations
+,
+Cited by:
+§5.4
+,
+Table 5
+.
+Karras
+et al.
+(2019)
+T. Karras, S. Laine, and T. Aila
+A style-based generator architecture for generative adversarial networks
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 4401–4410
+.
+Cited by:
+§1
+.
+Labs
+et al.
+(2025)
+B. F. Labs, S. Batifol, A. Blattmann, F. Boesel, S. Consul, C. Diagne, T. Dockhorn, J. English, Z. English, P. Esser, S. Kulal, K. Lacey, Y. Levi, C. Li, D. Lorenz, J. Müller, D. Podell, R. Rombach, H. Saini, A. Sauer, and L. Smith
+FLUX.1 kontext: flow matching for in-context image generation and editing in latent space
+.
+External Links:
+2506.15742
+,
+Link
+Cited by:
+§1
+.
+Li
+et al.
+(2025)
+C. Li, X. Wang, M. Li, B. Miao, P. Sun, Y. Zhang, X. Ji, and Y. Zhu
+Bridging the gap between ideal and real-world evaluation: benchmarking ai-generated image detection in challenging scenarios
+.
+In
+Proceedings of the IEEE/CVF International Conference on Computer Vision
+,
+pp. 20379–20389
+.
+Cited by:
+§5.1
+,
+§5.2
+.
+Liu
+et al.
+(2024)
+H. Liu, C. Li, Y. Li, and Y. J. Lee
+Improved baselines with visual instruction tuning
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 26296–26306
+.
+Cited by:
+§1
+,
+§3
+,
+Table 1
+,
+Table 2
+,
+Table 3
+.
+Liu
+et al.
+(2020)
+Z. Liu, X. Qi, and P. H. Torr
+Global texture enhancement for fake face detection in the wild
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 8060–8069
+.
+Cited by:
+§1
+.
+Midjourney (2022)
+Midjourney
+Https://www.midjourney.com/home/
+.
+Cited by:
+§5.1
+.
+Nichol
+et al.
+(2021)
+A. Nichol, P. Dhariwal, A. Ramesh, P. Shyam, P. Mishkin, B. McGrew, I. Sutskever, and M. Chen
+Glide: towards photorealistic image generation and editing with text-guided diffusion models
+.
+arXiv preprint arXiv:2112.10741
+.
+Cited by:
+§5.1
+.
+Ojha
+et al.
+(2023)
+U. Ojha, Y. Li, and Y. J. Lee
+Towards universal fake image detectors that generalize across generative models
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 24480–24489
+.
+Cited by:
+§1
+,
+Table 1
+,
+Table 2
+.
+Park
+et al.
+(2019)
+T. Park, M. Liu, T. Wang, and J. Zhu
+Semantic image synthesis with spatially-adaptive normalization
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 2337–2346
+.
+Cited by:
+§1
+.
+Peyré
+et al.
+(2019)
+G. Peyré M. Cuturi
+et al.
+Computational optimal transport: with applications to data science
+.
+Foundations and Trends® in Machine Learning
+11
+(
+5-6
+),
+pp. 355–607
+.
+Cited by:
+§4.2
+.
+Qian
+et al.
+(2020)
+Y. Qian, G. Yin, L. Sheng, Z. Chen, and J. Shao
+Thinking in frequency: face forgery detection by mining frequency-aware clues
+.
+In
+European conference on computer vision
+,
+pp. 86–103
+.
+Cited by:
+§1
+,
+§1
+,
+§2
+,
+§3.1
+,
+Table 1
+.
+Rombach
+et al.
+(2022)
+R. Rombach, A. Blattmann, D. Lorenz, P. Esser, and B. Ommer
+High-resolution image synthesis with latent diffusion models
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 10684–10695
+.
+Cited by:
+§1
+,
+§5.1
+.
+Santambrogio (2015)
+F. Santambrogio
+Optimal transport for applied mathematicians
+.
+Cited by:
+§4.2
+.
+Tan
+et al.
+(2025)
+C. Tan, R. Tao, H. Liu, G. Gu, B. Wu, Y. Zhao, and Y. Wei
+C2p-clip: injecting category common prompt in clip to enhance generalization in deepfake detection
+.
+In
+Proceedings of the AAAI Conference on Artificial Intelligence
+,
+Vol.
+39
+,
+pp. 7184–7192
+.
+Cited by:
+§1
+,
+§2
+,
+Table 3
+.
+Tan
+et al.
+(2024)
+C. Tan, Y. Zhao, S. Wei, G. Gu, P. Liu, and Y. Wei
+Rethinking the up-sampling operations in cnn-based generative network for generalizable deepfake detection
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 28130–28139
+.
+Cited by:
+§1
+,
+§1
+,
+§2
+,
+§3.1
+,
+§3
+,
+§5.1
+,
+Table 1
+,
+Table 2
+,
+Table 3
+.
+Team
+et al.
+(2023)
+G. Team, R. Anil, S. Borgeaud, J. Alayrac, J. Yu, R. Soricut, J. Schalkwyk, A. M. Dai, A. Hauth, K. Millican,
+et al.
+Gemini: a family of highly capable multimodal models
+.
+arXiv preprint arXiv:2312.11805
+.
+Cited by:
+Table 3
+.
+[35]
+The claude 3 model family: opus, sonnet, haiku
+.
+External Links:
+Link
+Cited by:
+Table 3
+.
+Vaswani
+et al.
+(2017)
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin
+Attention is all you need
+.
+Advances in neural information processing systems
+30
+.
+Cited by:
+§1
+.
+Wang
+et al.
+(2023a)
+L. Wang, L. Li, D. Dai, D. Chen, H. Zhou, F. Meng, J. Zhou, and X. Sun
+Label words are anchors: an information flow perspective for understanding in-context learning
+.
+In
+Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing
+,
+pp. 9840–9855
+.
+Cited by:
+§3.2
+,
+§5.5
+,
+§5.5
+.
+Wang
+et al.
+(2024)
+P. Wang, S. Bai, S. Tan, S. Wang, Z. Fan, J. Bai, K. Chen, X. Liu, J. Wang, W. Ge,
+et al.
+Qwen2-vl: enhancing vision-language model’s perception of the world at any resolution
+.
+arXiv preprint arXiv:2409.12191
+.
+Cited by:
+Table 3
+.
+Wang
+et al.
+(2020)
+S. Wang, O. Wang, R. Zhang, A. Owens, and A. A. Efros
+CNN-generated images are surprisingly easy to spot… for now
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 8695–8704
+.
+Cited by:
+§1
+,
+§1
+.
+Wang
+et al.
+(2023b)
+Z. Wang, J. Bao, W. Zhou, W. Wang, H. Hu, H. Chen, and H. Li
+Dire for diffusion-generated image detection
+.
+In
+Proceedings of the IEEE/CVF International Conference on Computer Vision
+,
+pp. 22445–22455
+.
+Cited by:
+Table 1
+,
+Table 2
+,
+Table 3
+.
+Wukong (2022)
+Wukong
+Https://xihe.mindspore.cn/modelzoo/wukong
+.
+Cited by:
+§5.1
+.
+Xu
+et al.
+(2024)
+Z. Xu, X. Zhang, R. Li, Z. Tang, Q. Huang, and J. Zhang
+Fakeshield: explainable image forgery detection and localization via multi-modal large language models
+.
+arXiv preprint arXiv:2410.02761
+.
+Cited by:
+§1
+,
+§2
+.
+Yan
+et al.
+(2025)
+S. Yan, O. Li, J. Cai, Y. Hao, X. Jiang, Y. Hu, and W. Xie
+A sanity check for ai-generated image detection
+.
+In
+The Thirteenth International Conference on Learning Representations
+,
+Cited by:
+§1
+,
+§1
+,
+§5.1
+,
+Table 1
+,
+Table 2
+,
+Table 3
+.
+[44]
+Z. Yan, J. Wang, P. Jin, K. Zhang, C. Liu, S. Chen, T. Yao, S. Ding, B. Wu, and L. Yuan
+Orthogonal subspace decomposition for generalizable ai-generated image detection
+.
+In
+Forty-second International Conference on Machine Learning
+,
+Cited by:
+§1
+.
+Yang
+et al.
+(2025)
+Z. Yang, R. Chen, Z. Yan, K. Zhang, X. Fu, S. Wu, X. Shu, T. Yao, S. Ding, and X. Li
+All patches matter, more patches better: enhance ai-generated image detection via panoptic patch learning
+.
+arXiv preprint arXiv:2504.01396
+.
+Cited by:
+Table 2
+,
+Table 2
+.
+Zhang
+et al.
+(2019)
+X. Zhang, S. Karaman, and S. Chang
+Detecting and simulating artifacts in gan fake images
+.
+In
+2019 IEEE international workshop on information forensics and security (WIFS)
+,
+pp. 1–6
+.
+Cited by:
+§1
+,
+§1
+.
+Zhang
+et al.
+(2024)
+X. Zhang, X. Chang, M. Li, A. Roy-Chowdhury, J. Chen, and S. Oymak
+Selective attention: enhancing transformer through principled context control
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 11061–11086
+.
+Cited by:
+§1
+,
+§3
+.
+Zhong
+et al.
+(2023a)
+N. Zhong, Y. Xu, S. Li, Z. Qian, and X. Zhang
+Patchcraft: exploring texture patch for efficient ai-generated image detection
+.
+arXiv preprint arXiv:2311.12397
+.
+Cited by:
+§2
+,
+§3.2
+,
+§4.2
+.
+Zhong
+et al.
+(2023b)
+N. Zhong, Y. Xu, Z. Qian, and X. Zhang
+Rich and poor texture contrast: a simple yet effective approach for ai-generated image detection
+.
+CoRR
+.
+Cited by:
+§1
+,
+Table 1
+,
+Table 2
+.
+Zhou
+et al.
+(2025)
+Z. Zhou, Y. Luo, Y. Wu, K. Sun, J. Ji, K. Yan, S. Ding, X. Sun, Y. Wu, and R. Ji
+AIGI-holmes: towards explainable and generalizable ai-generated image detection via multimodal large language models
+.
+arXiv preprint arXiv:2507.02664
+.
+Cited by:
+§1
+,
+§2
+,
+§3
+,
+§5.1
+,
+Table 1
+,
+Table 1
+,
+Table 1
+,
+Table 2
+,
+Table 2
+,
+Table 3
+,
+Table 3
+.
+Zhu
+et al.
+(2017)
+J. Zhu, T. Park, P. Isola, and A. A. Efros
+Unpaired image-to-image translation using cycle-consistent adversarial networks
+.
+In
+Proceedings of the IEEE international conference on computer vision
+,
+pp. 2223–2232
+.
+Cited by:
+§1
+.
+Zhu
+et al.
+(2023)
+M. Zhu, H. Chen, Q. Yan, X. Huang, G. Lin, W. Li, Z. Tu, H. Hu, J. Hu, and Y. Wang
+Genimage: a million-scale benchmark for detecting ai-generated image
+.
+Advances in Neural Information Processing Systems
+36
+,
+pp. 77771–77782
+.
+Cited by:
+§5.1
+.
+langley00
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

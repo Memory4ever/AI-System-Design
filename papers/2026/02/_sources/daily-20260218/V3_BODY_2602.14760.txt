@@ -1,0 +1,353 @@
+RESIDUAL CONNECTIONS AND THE CAUSAL SHIFT: UNCOVERING A STRUCTURAL MISALIGNMENT IN TRANSFORMERS
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I Introduction
+II Related Work
+III Uncovering the shift location in pretrained models
+IV Residual Path Decoupling
+V Conclusion
+VI Acknowledgements
+References
+License: CC BY 4.0
+arXiv:2602.14760v1 [cs.CL] 16 Feb 2026
+RESIDUAL CONNECTIONS AND THE CAUSAL SHIFT: UNCOVERING A STRUCTURAL MISALIGNMENT IN TRANSFORMERS
+Jonathan Lys, Vincent Gripon,
+Bastien Pasdeloup, Axel Marmoret
+Affiliation: IMT Atlantique, Lab-STICC,
+UMR CNRS 6285, Brest, France
+name.surname@imt-atlantique.fr
+Lukas Mauch, Fabien Cardinaux,
+Ghouthi Boukli Hacene
+Affiliation: Sony Europe Ltd.
+Stuttgart Technology Center, EUREC, Germany
+Name.Surname@sony.com
+Abstract
+Large Language Models (LLMs) are trained with next-token prediction, implemented in autoregressive Transformers via causal masking for parallelism. This creates a subtle misalignment: residual connections tie activations to the current token, while supervision targets the next token, potentially propagating mismatched information if the current token is not the most informative for prediction.
+In this work, we empirically localize this input–output alignment shift in pretrained LLMs, using decoding trajectories over tied embedding spaces and similarity-based metrics. Our experiments 1 1
+1
+https://github.com/jonathanlys01/causal-shift reveal that the hidden token representations switch from input alignment to output alignment deep within the network. Motivated by this observation, we propose a lightweight residual-path mitigation based on residual attenuation, implemented either as a fixed-layer intervention or as a learnable gating mechanism. Experiments on multiple benchmarks show that these strategies alleviate the representation misalignment and yield improvements, providing an efficient and general architectural enhancement for autoregressive Transformers.
+Index Terms:
+LLM, Autoregressive, Causal Masking, Transformers
+I Introduction
+The success of Transformer-based [ 16 ] Large Language Models (LLMs) is rooted in architectural design that simultaneously prioritizes training stability and massive computational throughput. Transformer architectures rely on residual connections, originally introduced to stabilize optimization and facilitate gradient flow [ xiong2020on ] , that propagate representations across depth. In addition, Transformer-based LLMs trained via next-token prediction require parallelism for high hardware utilization [ 14 , 9 ] . Decoder-only architectures like GPT [ radford2019language ] and LLaMA [ 5 ] suit this regime well: causal masking enables parallel processing where position i i attends only to tokens t ≤ i t_{\leq i} to predict t i + 1 t_{i+1} . This parallel loss computation [ 16 ] significantly enhances training efficiency and scalability. However, this parallel computation also introduces a systematic one-token offset between inputs and supervision: the hidden state at position i i is initialized from the embedding of token t i t_{i} , and then optimized to predict t i + 1 t_{i+1} .
+We conjecture that this offset creates a fundamental structural tension we characterize as input–output leakage . On one hand, the residual connections act as a conservative bias, persistently propagating t i t_{i} in the hidden state. On the other hand, the optimization process may drive the hidden state apart from t i t_{i} to integrate context and yield accurate t i + 1 t_{i+1} , as show in Figure 1 . Indeed, relying on t i t_{i} to predict t i + 1 t_{i+1} is a useful prior for local patterns, but it may be suboptimal when the prediction depends on long-range dependencies. Mechanistic interpretability research suggests that specific circuits, such as induction heads [ olsson2022context ] , override local context by copying information from earlier in the sequence. Consequently, as network depth increases, input-token–anchored components of the residual stream can interfere with representations that must ultimately become prediction-oriented.
+Thus, for accurate next-token prediction, representations must transition across depth from predominantly input-token-aligned to predominantly prediction-token-aligned. Characterizing where and how token alignment transitions may be used to efficiently enhance next-token prediction. It also provides a simple interpretive axis for depth in LLMs through the alignment with both the input and output.
+In this paper, we investigate this input-output leakage in two stages. First, we empirically characterize the depth at which internal representations transition from being primarily anchored to the input token to becoming aligned with the prediction target. Second, building on this observation, we introduce a lightweight modification of the residual pathway that selectively attenuates residual contributions through fixed or learned gating mechanisms.
+We therefore address two key questions:
+1.
+At which layer(s) does the alignment shift occur, i.e., when does the model transition from input-anchored to prediction-oriented representations?
+2.
+Given this transition point, how can residual pathways be adjusted to limit input-output leakage while preserving the stability benefits of residual connections?
+II Related Work
+t 0 t_{0} t 1 t_{1} t 2 t_{2} t 3 t_{3} t 4 t_{4} t 5 t_{5} + + + + + + + + + + + + Multi-Head Attention MLP MLP MLP MLP MLP MLP + + + + + + + + + + + + t 1 t_{1} t 2 t_{2} t 3 t_{3} t 4 t_{4} t 5 t_{5} t 6 t_{6}
+Fig. 1: Schematic illustration of the token misalignment between input and output in Transformer architectures (here with a single layer). Token t i t_{i} in the input is directly connected to token t i + 1 t_{i+1} in the output through the residual connections.
+Neural sequence modeling was originally tackled with Recurrent Neural Networks and their gradient stable variants Long Short-Term Memory networks [ 6 ] and Gated Recurrent Units [ 2 ] , which modeled temporal dependencies by maintaining a hidden state across time steps. In their formulation, the computation is inherently sequential, posing practical issues when scaling the model. The Transformer architecture [ 16 ] introduced attention-based parallel sequence processing, greatly improving performance and scalability. Decoder-only variants, which use causal masking to enforce left-to-right dependencies, underpin modern LLMs such as Llama [ 5 ] and GPT [ radford2018improving ] .
+Mechanistic interpretability (MI) [ 13 ] has advanced our understanding of Transformer dynamics by analyzing how representations evolve across depth, e.g., by tracking hidden-state trajectories and decomposing the residual stream into component-wise contributions. Probing approaches such as the logit lens and its refined variants [ 10 , 1 ] map intermediate states into vocabulary space and show that prediction-relevant information emerges progressively across layers. Complementarily, authors in [ 3 ] decompose layer and submodule contributions to token logits, and measure updates relative to the preceding residual state, finding that early layers induce large changes while later layers mostly refine. This staged behavior is consistent with the transition we identify in Sec. III . Independent evidence on functional staging [ 7 ] similarly suggests that earlier layers aggregate context whereas later layers primarily refine representations.
+Our work is complementary to these analyses. Rather than focusing on local, layer-to-layer updates or intermediate prediction elicitation per se, we measure token alignment relative to two global reference points, the input token embedding and the final prediction target, to explicitly characterize the transition from input-anchored to prediction-oriented representations, and relate it to persistent residual propagation under next-token supervision.
+III Uncovering the shift location in pretrained models
+Because the input and target sequences are offset by one position, a pretrained autoregressive Transformer must, at some depth, transition from representations primarily anchored to the current input token to representations oriented toward the next-token target, even if this transition is gradual and only loosely defined. In this section, we aim to localize this “shift” across layers through early layer decoding.
+Many pretrained language models employ tied embeddings, where the same token-to-vector mapping (the dictionary) is shared between the embedding and unembedding layers. This means that the representation of a token at any depth can be “decoded” back to its nearest token in the dictionary, denoted as the logit lens [ 10 ] . Consequently, tracking the evolution of the representation of a token in the depth of the model can be seen as following a trajectory through the Voronoi cells induced by this shared token dictionary. Note that this is not a common practice for large language models above 70B parameters ( [ 5 , yang2025qwen3technicalreport , deepseekai2025deepseekv3technicalreport ] ).
+Following the logit lens methodology, Table I reports the tokens decoded from each intermediate representation of the Gemma-2-2B pretrained model [ 15 ] , from the input embedding layer through to the final output layer, for a representative text sequence. More specifically, we highlight layers where the decoded token coincides with either the input token or the prediction target.
+The results reveal three distinct regimes:
+1.
+Input layers, where decoded tokens match the input sequence;
+2.
+Intermediate layers, where decoding produces no meaningful correspondence;
+3.
+Output layers, where decoded tokens match the shifted input sequence or semantically similar variants.
+TABLE I: Decoded hidden states of Gemma-2-2B on a Wikipedia article about the Fourier transform. Layers are grouped by similar decodings: early layers (0–6) align with the input (green), while late layers (21–26) align with the one-token-shifted targets (red). For instance, token #107 consistently decodes to “musical” across layers 0–6, whereas token #109 alternates between “into” and <bos> within the same range.
+Layer
+token #107
+token #108
+token #109
+token #110
+token #111
+token #112
+token #113
+Input
+musical
+chord
+into
+the
+intensities
+of
+its
+0 - 6
+musical
+chord
+into , < < bos > >
+the
+intensities , myself
+of , < < bos > >
+its
+7 - 9
+musical
+chord
+AnchorStyles, These
+the
+itself
+lenker
+its
+10
+musical
+chords
+itself
+the
+itself
+ReusableCell
+####
+11
+musical
+itself
+AddTagHelper
+various
+itself
+BoxDecoration
+####
+12
+musical
+itself
+lenker
+WithMany
+itself
+lenker
+WebVitals
+13
+musical
+itself
+lenker
+transfieras
+itself
+lenker
+####
+14 - 17
+musical
+itself
+Thefe, lenker
+SequentialGroup, various, individual
+itself
+lenker, various
+####, feveral
+18 - 20
+musical
+into
+individual, separate
+individual
+itself, of
+various
+constituent
+21 - 26
+instrument
+into
+its
+various, frequency, frequencies
+of
+various, its , the
+constituent , component
+To quantify this transition, we measure at each layer how often the hidden state decodes to the input token ( t i t_{i} ) or to the shifted token ( t i + 1 t_{i+1} ), i.e., the prediction target. We evaluate this on 1,000 randomly sampled sequences from Wikitext [ 8 ] , using a top-5 match criterion to account for both exact and near matches.
+This provides a systematic, layer-wise measure of token alignment rather than relying on isolated examples. As shown in Figure 2 , the shift from input-aligned to target-aligned decoding occurs relatively deep in the network, indicating that a substantial fraction of the forward pass remains indexed to the input token before becoming prediction-oriented.
+0 0 10 10 20 20 0 0 0.2 0.2 0.4 0.4 0.6 0.6 0.8 0.8 1 1 Layer index Average top-5 score Match Input Match Shifted Input
+Fig. 2: Average top-5 match rate between the decoded hidden states and either the input sequence (blue) or the shifted input sequence (red) as a function of layer depth in the Gemma-2-2B model. Results are averaged over 1,000 sequences from the Wikitext dataset. The shift from input to output indexing occurs late in the architecture.
+To mitigate thresholding effects inherent to top-5 accuracy, we additionally report in Figure 3 continuous similarity measures. Concretely, we compute (i) the cosine similarity between each hidden state and the embeddings of the input and output tokens, and (ii) the mean projection onto the axis defined by the input-output token pair, normalized such that 0 corresponds to the input token and 1 to the output token.
+We replicate this analysis on two additional widely used language models (Llama-3.2-3B [ 5 ] and Mistral-7B-v0.3 [ jiang2023mistral7b ] ). The results confirm that, in the Gemma-2-2B architecture, the transition occurs around layer 17, while other models exhibit different but qualitatively similar transition depths.
+IV Residual Path Decoupling
+0 0 10 10 20 20 0 0 0.2 0.2 0.4 0.4 0.6 0.6 0.8 0.8 1 1 Layer index, model Gemma-2-2B Cos. sim. to input Cos. sim. to output Mean projection
+0 0 10 10 20 20 Layer index, model Llama-3.2-3B
+0 0 10 10 20 20 30 30 Layer index, model Mistral-7B-v0.3
+Fig. 3: Continuous similarity measures between hidden states and their corresponding input and shifted input tokens, reported for Gemma-2-2B [ 15 ] , Llama-3.2-3B [ 5 ] and Mistral-7B-v0.3 [ jiang2023mistral7b ] . Metrics include cosine similarity to input and output token embeddings, and normalized projection along the input–output axis (0: input token, 1: output token). Results confirm the latent transition from input-based to output-based representations across different architectures.
+In this section, we propose a simple mitigation for the input-output interference identified above by selectively attenuating the residual pathway beyond a chosen depth, thereby reducing the persistence of input-anchored components in the residual stream. All experiments follow the same training protocol: we train 150M-parameter GPT-2–style models on 10B tokens from the Fineweb-Edu dataset [ penedo2024the ] .
+We introduce residual attenuation as:
+x l + 1 = α ​ x l + F l ​ ( LN ⁡ ( x l ) ) x_{l+1}=\alpha x_{l}+F_{l}(\mathrm{LN}(x_{l}))
+Where α \alpha is a scalar gating parameter. Setting α = 0 \alpha=0 removes the skip connection but also eliminates the identity gradient path. Gradients must then flow entirely through F l F_{l} (notably through attention and its softmax) where they are typically less stable than along the residual branch [ xiong2020on ] . Empirically, fully suppressing the residual connection degraded optimization, so we restrict α > 0 \alpha>0 and focus on attenuation rather than removal.
+Two main challenges arise:
+•
+As shown earlier, there is no sharply defined layer where the shift occurs, making the selection of a cutting point approximate.
+•
+Even within a single sequence, different tokens may transition from input-based to output-based representations at different depths.
+To evaluate fixed residual attenuation, we perform layer-wise ablations in which the residual branch is attenuated at a single layer at a time, covering all 12 12 possible depths. For each configuration, we measure the validation loss and report the results in Figure 4 . Notably, we observe that attenuating only the first layer leads to a consistent improvement in validation performance.
+0 0 1 1 2 2 3 3 4 4 5 5 6 6 7 7 8 8 9 9 10 10 11 11 3.28 3.28 3.3 3.3 3.32 3.32 Layer cut Val loss
+Fig. 4: Impact of cutting the residual path at different layers in GPT2-0.1B, trained on 10B tokens from Fineweb [ penedo2024the ] on the validation loss. The baseline loss is represented with a dotted line.
+0 0 20 20 40 40 60 60 80 80 100 100 120 120 140 140 160 160 180 180 200 200 0 0 0.2 0.2 0.4 0.4 0.6 0.6 0.8 0.8 1 1 Training step Gate value Last layer Others
+Fig. 5: Evolution of the learned probability distribution of cutting the residual path at a given layer, during training. At the beginning, all 12 layers have the same probability of cut, then the 11th layer attracts all the mass of the probability.
+An alternative is to let the model learn where to attenuate the residual pathway. We introduce a mixture-of-depth–inspired gating mechanism [ 12 ] that predicts, during training, where to downweight the residual branch. The gating distribution is initialized uniformly over layers and optimized jointly with the model, without enforcing a one-hot selection.
+We observe (Figure 5 ) that the learned distribution progressively concentrates on attenuating the final layer, corresponding to the second-best fixed choice in our earlier ablation. Despite this, the learned variant surpasses the performance obtained by statically cutting that layer from initialization, suggesting that adaptive attenuation benefits from smoother optimization dynamics.
+Table II compares the baseline, fixed attenuation, and learnable gating across multiple benchmarks, including Wikitext [ 8 ] , LAMBADA [ 11 ] , and OpenWebText [ 4 ] . Across all evaluated benchmarks, the learnable gating approach consistently outperforms fixed cuts and matches or surpasses baseline accuracy while reducing measured misalignment between input and output representations. The fixed-cut method offers modest improvements when the cut is placed late in the network but is highly sensitive to the chosen layer. In contrast, gating adapts automatically to each dataset and model depth, suggesting it is a robust and low-cost architectural enhancement for autoregressive LLMs. Overall, these results indicate that soft, learned residual attenuation constitutes a promising architectural refinement for autoregressive language models.
+TABLE II: Comparison of the baseline, fixed attenuation, and learnable gating across multiple benchmarks: Wikitext [ 8 ] , LAMBADA [ 11 ] , OpenWebText [ 4 ] , and Fineweb-Edu dataset [ penedo2024the ] . Bold scores are the best ones.
+benchmark
+baseline
+fixed-cut
+gating
+Wikitext
+28.46
+28.62
+28.75
+LAMBADA
+32.99
+33.38
+33.52
+OpenWebText
+34.74
+34.84
+35.50
+Fineweb-Edu
+38.87
+38.98
+39.19
+V Conclusion
+In this work, we have shown that causal masking in autoregressive Transformers leads to a structural misalignment between input and output token representations. Our analysis across multiple LLMs revealed that the shift from input-based to output-based indexing occurs deep in the layers, but not uniformly across tokens. This observation motivated two intervention strategies: 1) cutting residual paths at fixed layers, and 2) introducing learnable residual gating. While fixed cuts can improve performance when applied late in the network, they are highly sensitive to the chosen depth. In contrast, residual gating allows the model to automatically attenuate misaligned residual contributions, and has shown to consistently achieve competitive or superior performance across benchmarks, while reducing misalignment metrics. These findings suggest that soft, learnable control over residual flow offers a promising direction for improving the representational integrity of causal LLMs without sacrificing efficiency.
+VI Acknowledgements
+This research has been funded, either in full or in part, by the French National Research Agency (ANR) under project ANR-24-CE23-7365. With a view to its publication in open access, the author has applied for an open access CC-BY licence for any manuscript accepted for publication (AAM) resulting from this submission. This work was granted access to the HPC resources of IDRIS under the allocation 2024-AD011015938 made by GENCI.
+References
+[1]
+N. Belrose, Z. Furman, L. Smith, D. Halawi, I. Ostrovsky, L. McKinney, S. Biderman, and J. Steinhardt (2023)
+Eliciting latent predictions from transformers with the tuned lens .
+arXiv preprint arXiv:2303.08112 .
+Cited by: §II .
+[2]
+K. Cho et al. (2014)
+Learning phrase representations using rnn encoder-decoder for statistical machine translation .
+In Proceedings of the 2014 Conference on Empirical Methods in Natural Language Processing (EMNLP) ,
+pp. 1724–1734 .
+Cited by: §II .
+[3]
+R. Csordás, C. D. Manning, and C. Potts (2025)
+Do language models use their depth efficiently? .
+arXiv preprint arXiv:2505.13898 .
+Cited by: §II .
+[4]
+A. Gokaslan, V. Cohen, E. Pavlick, and S. Tellex (2019)
+OpenWebText corpus .
+Note: http://Skylion007.github.io/OpenWebTextCorpus
+Cited by: TABLE II ,
+§IV .
+[5]
+A. Grattafiori et al. (2024)
+The llama 3 herd of models .
+arXiv preprint arXiv:2407.21783 .
+Cited by: §I ,
+§II ,
+§III ,
+§III ,
+Fig. 3 .
+[6]
+S. Hochreiter and J. Schmidhuber (1997)
+Long short-term memory .
+Neural computation 9 ( 8 ), pp. 1735–1780 .
+Cited by: §II .
+[7]
+V. Lad, J. H. Lee, W. Gurnee, and M. Tegmark (2024)
+The remarkable robustness of llms: stages of inference? .
+arXiv preprint arXiv:2406.19384 .
+Cited by: §II .
+[8]
+S. Merity, C. Xiong, J. Bradbury, and R. Socher (2016)
+Pointer sentinel mixture models .
+External Links: 1609.07843
+Cited by: §III ,
+TABLE II ,
+§IV .
+[9]
+D. Narayanan et al. (2021)
+Efficient large-scale language model training on gpu clusters .
+In Proceedings of Machine Learning and Systems ,
+Vol. 3 , pp. 934–944 .
+Cited by: §I .
+[10]
+Nostalgebraist (2020)
+Interpreting gpt: the logit lens .
+Note: Alignment Forum post
+External Links: Link
+Cited by: §II ,
+§III .
+[11]
+D. Paperno et al. (2016)
+The LAMBADA dataset: word prediction requiring a broad discourse context .
+In Proceedings of the 54th Annual Meeting of the Association for
+Computational Linguistics (Volume 1: Long Papers) ,
+Berlin, Germany , pp. 1525–1534 .
+External Links: Link
+Cited by: TABLE II ,
+§IV .
+[12]
+D. Raposo et al. (2024)
+Mixture-of-depths: dynamically allocating compute in transformer-based language models .
+arXiv preprint arXiv:2404.02258 .
+Cited by: §IV .
+[13]
+N. Saphra and S. Wiegreffe (2024)
+Mechanistic? .
+arXiv preprint arXiv:2410.09087 .
+Cited by: §II .
+[14]
+M. Shoeybi et al. (2019)
+Megatron-lm: training multi-billion parameter language models using model parallelism .
+arXiv preprint arXiv:1909.08053 .
+Cited by: §I .
+[15]
+G. Team et al. (2024)
+Gemma 2: improving open language models at a practical size .
+arXiv preprint arXiv:2408.00118 .
+Cited by: §III ,
+Fig. 3 .
+[16]
+A. Vaswani et al. (2017)
+Attention is all you need .
+In Advances in Neural Information Processing Systems ,
+Vol. 30 .
+Cited by: §I ,
+§II .
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

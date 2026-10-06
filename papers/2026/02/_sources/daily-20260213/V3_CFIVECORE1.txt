@@ -1,0 +1,203 @@
+Embedding Inversion via Conditional Masked Diffusion Language Models (https://arxiv.org/html/2602.11047v1)
+citeturn29150view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.11047v1","lineno":120}); Total lines: 243
+L42: Source code and live demo are available at cite25†https://github.com/hanxiao/embedding-inversion-demo†github.com .
+L43: ## 1 Introduction
+L44: Text embeddings power modern retrieval systems, and production deployments routinely treat them as safe, anonymized representations. Vec2Text (cite26†Morris et al., 2023 ) challenged this assumption by recovering 92% of 32-token sequences from their embeddings using a T5 encoder-decoder with iterative correction.
+L45: Subsequent work has expanded the attack surface: ALGEN (cite27†Chen et al., 2025 ) enables cross model inversion with few-shot alignment, and Zero2Text (cite28†Kim et al., 2026 ) achieves training free inversion via LLM priors and online regression.
+L46: These methods share a common design: they generate tokens autoregressively, then iteratively re-embed the hypothesis to compute a correction signal. This creates two practical bottlenecks. First, each correction step requires a forward pass through the target embedding model, making the attack cost proportional to the number of iterations. Vec2Text typically requires over 20 iterations per sequence.
+L47: Second, the autoregressive backbone accumulates errors left-to-right, with no mechanism to revise earlier tokens based on later context.
+L48: We propose an alternative formulation: embedding inversion as conditional masked diffusion. Starting from a fully masked sequence, a denoising model iteratively reveals tokens at all positions in parallel, conditioned on the target embedding vector via adaptive layer normalization. The key structural difference is that correction is built into the diffusion process itself: each denoising step refines all positions simultaneously using global context, without ever reembedding the current hypothesis.
+L49: This eliminates the need for access to the target encoder at inference time and reduces attack cost to a fixed number of forward passes through a small model of 78M parameters.
+L50: The approach is encoder agnostic by construction. The embedding vector enters only through AdaLN modulation of layer normalization parameters, so the same architecture and training procedure applies to any embedding model without alignment training or architecture specific modifications. We demonstrate this by training on three different encoders: jina-embeddings-v3 with 1024 dimensions, Qwen3-Embedding-0.6B with 1024 dimensions, and EmbeddingGemma-300m with 768 dimensions.
+L51: cite29†Image: Refer to caption Figure 1: Architecture of the Conditional Masked Diffusion Language Model. The embedding vector is projected and injected into each transformer layer via AdaLN conditioning. The model predicts original tokens at masked positions through iterative denoising.
+L52: We present the first application of masked diffusion language models to embedding inversion, replacing autoregressive generation and iterative reembedding with parallel denoising. The approach is encoder agnostic: we train on three embedding models without alignment training or architecture specific modifications. We systematically compare four decoding strategies, identifying adaptive remasking during Euler sampling as the best quality-efficiency trade-off for parallel generation.
+L53: On 32-token sequences, our 78M parameter model recovers up to 81.3% of tokens with 0.87 cosine similarity from a single embedding vector, requiring no access to the target encoder at inference time.
+L54: ## 2 Related Work
+L55: ### 2.1 Embedding Inversion Attacks
+L56: 
+L57: Embedding inversion emerged as a research area with Vec2Text (cite26†Morris et al., 2023 ), which demonstrated that T5 encoder-decoder models could recover 92% exact matches on 32-token sequences through hypothesis generation followed by iterative correction. The correction mechanism computes embedding distances and refines outputs through multiple forward passes, but requires compatible embedding architectures and suffers from autoregressive error accumulation.
+L58: The field has advanced rapidly with methods addressing Vec2Text’s architectural constraints. ALGEN (cite27†Chen et al., 2025 ) introduced few-shot cross model alignment, demonstrating that embedding spaces can be aligned with only 1k training samples through one-step optimization, enabling inversion across incompatible architectures. Zero2Text (cite28†Kim et al., 2026 ) achieved training free inversion using LLM priors combined with online ridge regression, eliminating the need for paired training data entirely.
+L59: On MS MARCO, Zero2Text achieved 1.8$\times$ ROUGE-L improvement over baselines in black-box cross-domain settings. Together, these methods show that embedding inversion generalizes across architectures and data regimes. Our work contributes the first diffusion-based approach, replacing sequential generation and explicit correction with parallel masked denoising.
+L60: ### 2.2 Discrete Diffusion Models
+L61: Discrete diffusion began with D3PM (cite30†Austin et al., 2021 ), which extended continuous diffusion to categorical distributions through absorbing state processes. Masked Diffusion Language Models (cite31†Sahoo et al., 2024 ) simplified this framework by using uniform masking with log-linear noise schedules, achieving competitive language modeling performance while enabling parallel generation.
+L62: The field has since diversified: Score Entropy Discrete Diffusion (cite32†Lou et al., 2024 ) introduced entropy-based scoring, providing improved sample quality through better noise scheduling. Constrained Discrete Diffusion (cite33†Cardei et al., 2025 ) added constraint satisfaction mechanisms for controlled generation tasks.
+L63: Our conditional MDLM builds on this foundation, adapting masked diffusion to the embedding inversion task through adaptive layer normalization conditioning.
+L64: ### 2.3 Conditional Diffusion
+L65: Conditioning mechanisms for diffusion models have evolved primarily in continuous domains. Classifier-free guidance (cite34†Ho and Salimans, 2022 ) enables conditional generation by training a single model with dropped conditioning signals, then interpolating predictions at inference. Classifier guidance (cite35†Dhariwal and Nichol, 2021 ) uses external classifier gradients to steer generation toward desired attributes.
+L66: For vision tasks, Diffusion Transformers (cite36†Peebles and Xie, 2023 ) introduced adaptive layer normalization that modulates layer normalization parameters based on conditioning signals, providing fine-grained control over feature representations at each transformer layer. We adapt AdaLN to discrete text generation, using it to inject embedding information into each denoising step.
+L67: This conditioning mechanism is architecture agnostic, working with any embedding model without requiring alignment training or model specific modifications, in contrast to Vec2Text’s T5-specific architecture or ALGEN’s explicit alignment procedure.
+L68: ## 3 Method
+L69: We use the following notation throughout: $\mathbf{x}=(x_{1},\ldots,x_{n})$ denotes a token sequence of length $n$ from vocabulary $\mathcal{V}$; $\mathbf{e}\in\mathbb{R}^{d}$ denotes the embedding vector; $t\in[0,1]$ denotes the diffusion timestep with $t=0$ being fully unmasked and $t=1$ being fully masked; $\theta$ denotes the model parameters; $\mathbf{c}\in\mathbb{R}^{D_{h}}$ denotes the projected conditioning vector with hidden dimension $D_{h}=768$; $x_{t}$ denotes the masked sequence at timestep $t$; $x_{0}$ denotes the original unmasked sequence.
+L70: ### 3.1 Problem Formulation
+L71: 
+L72: Given an embedding function $f:\mathcal{V}^{n}\to\mathbb{R}^{d}$ and embedding vector $\mathbf{e}=f(\mathbf{x})$, we seek to recover the original sequence by maximizing the conditional probability:
+L73: 
+L74:  | $$\hat{\mathbf{x}}=\arg\max_{\mathbf{x}^{\prime}}p_{\theta}(\mathbf{x}^{\prime}|\mathbf{e})$$  |  | (1)
+L75: 
+L76: where $p_{\theta}(\mathbf{x}|\mathbf{e})$ is modeled using masked diffusion with adaptive layer normalization conditioning.
+L77: ### 3.2 Masked Diffusion Process
+L78: 
+L79: Following MDLM (cite31†Sahoo et al., 2024 ), we define a forward noising process that gradually masks tokens according to a noise schedule. For each token position $i$ at timestep $t$, the forward transition is:
+L80: 
+L81:  | $$q(x_{t,i}|x_{0,i})=\begin{cases}x_{0,i}&\text{with probability }\alpha_{t}\\
+L82: [\text{MASK}]&\text{with probability }1-\alpha_{t}\end{cases}$$  |  | (2)
+L83: where $x_{t,i}$ is the token at position $i$ and timestep $t$, $x_{0,i}$ is the original token, and $\alpha_{t}$ is the survival probability. We use the log-linear schedule $\alpha_{t}=e^{-\lambda t}$ with $\lambda=5.0$, which concentrates masking in later timesteps while preserving structure in early denoising stages. The reverse process learns to predict the original token $x_{0,i}$ at each masked position given the partially masked sequence $x_{t}$, timestep $t$, and conditioning embedding $\mathbf{e}$.
+L84: The model outputs a categorical distribution over the vocabulary:
+L85:  | $$p_{\theta}(x_{0,i}|x_{t},t,\mathbf{e})=\text{Categorical}(\text{softmax}(\mathbf{z}_{i}))$$  |  | (3)
+L86: 
+L87: where $\mathbf{z}_{i}\in\mathbb{R}^{|\mathcal{V}|}$ are the logits for position $i$ produced by the transformer network parameterized by $\theta$. The model predicts all positions in parallel, conditioned on the global context provided by the embedding. We minimize the Rao-Blackwellized ELBO with $1/t$ weighting:
+L88:  | $$\mathcal{L}(\theta)=\mathbb{E}_{t\sim\text{Uniform}[0,1]}\mathbb{E}_{\mathbf{x}_{0}\sim\mathcal{D}}\mathbb{E}_{x_{t}\sim q(x_{t}|x_{0})}\left[\frac{1}{t}\sum_{i:x_{t,i}=[\text{MASK}]}-\log p_{\theta}(x_{0,i}|x_{t},t,\mathbf{e})\right]$$  |  | (4)
+L89: 
+L90: where $\mathcal{D}$ is the data distribution, the sum is over masked positions only, and the $1/t$ weighting prioritizes early timesteps with more masked tokens. This weighting emphasizes learning global structure over local refinements.
+L91: ### 3.3 Model Architecture
+L92: 
+L93: Our model consists of three components: embedding projection, transformer backbone, and adaptive layer normalization conditioning (Figure cite37†1 ). The input embedding $\mathbf{e}\in\mathbb{R}^{d}$ is projected to the transformer hidden dimension $D_{h}=768$ via a two-layer MLP:
+L94: 
+L95:  | $$\mathbf{c}=\mathbf{W}_{2}\cdot\text{GELU}(\mathbf{W}_{1}\mathbf{e}+\mathbf{b}_{1})+\mathbf{b}_{2}$$  |  | (5)
+L96: where $\mathbf{W}_{1}\in\mathbb{R}^{D_{h}\times d}$, $\mathbf{W}_{2}\in\mathbb{R}^{D_{h}\times D_{h}}$, and $\mathbf{b}_{1},\mathbf{b}_{2}\in\mathbb{R}^{D_{h}}$ are learned parameters. We use an 8-layer transformer with $D_{h}=768$ hidden dimensions, 12 attention heads, and FFN dimension 3072. Input and output embeddings are weight-tied to reduce parameters given the large vocabulary size $|\mathcal{V}|=50257$.
+L97: Following DiT (cite36†Peebles and Xie, 2023 ), we condition each transformer layer on both the timestep $t$ and the embedding vector $\mathbf{c}$ via adaptive layer normalization. For each layer $\ell$, we compute modulation parameters:
+L98:  | $\displaystyle\gamma_{t}^{(\ell)},\beta_{t}^{(\ell)}$  | $\displaystyle=\text{MLP}_{t}^{(\ell)}(t)$  |  | (6)
+L99:  | $\displaystyle\gamma_{c}^{(\ell)},\beta_{c}^{(\ell)}$  | $\displaystyle=\text{MLP}_{c}^{(\ell)}(\mathbf{c})$  |  | (7)
+L100:  | $\displaystyle\gamma^{(\ell)}$  | $\displaystyle=\gamma_{t}^{(\ell)}+\gamma_{c}^{(\ell)}$  |  | (8)
+L101:  | $\displaystyle\beta^{(\ell)}$  | $\displaystyle=\beta_{t}^{(\ell)}+\beta_{c}^{(\ell)}$  |  | (9)
+L102: where $\text{MLP}_{t}^{(\ell)}$ and $\text{MLP}_{c}^{(\ell)}$ are single-layer MLPs that output vectors of dimension $D_{h}$. The layer normalization at layer $\ell$ is then modulated:
+L103: 
+L104:  | $$\text{AdaLN}(\mathbf{h}^{(\ell)})=\gamma^{(\ell)}\odot\frac{\mathbf{h}^{(\ell)}-\mu(\mathbf{h}^{(\ell)})}{\sigma(\mathbf{h}^{(\ell)})}+\beta^{(\ell)}$$  |  | (10)
+L105: where $\mathbf{h}^{(\ell)}\in\mathbb{R}^{n\times D_{h}}$ is the input to layer $\ell$, $\mu(\cdot)$ and $\sigma(\cdot)$ compute mean and standard deviation over the hidden dimension, and $\odot$ denotes element-wise multiplication. This formulation allows the conditioning signal and timestep to independently modulate the layer normalization at each depth, providing fine-grained control over feature representations.
+L106: The complete model has approximately 270M parameters due to the large vocabulary embeddings, but only 78M trainable parameters consisting of the 8 transformer layers, embedding projection MLP, and AdaLN conditioning MLPs.
+L107: ## 4 Experimental Results
+L108: We train on 2M samples from C4 (cite38†Raffel et al., 2020 ), filtered to 32 tokens. We use the GPT-2 tokenizer with vocabulary size 50,257. Training uses batch size 400 for 200K steps with AdamW optimizer at learning rate $10^{-4}$ and EMA decay 0.9999. We employ a log-linear noise schedule with $\lambda=5.0$ following cite31†Sahoo et al. (2024) . Timesteps are sampled uniformly from $[0,1]$. Embeddings are computed using the target encoder and cached.
+L109: We evaluate on three embedding models with different architectures and dimensionalities: jina-embeddings-v3 (cite39†Sturua et al., 2024 ) with 570M parameters and 1024-dimensional embeddings, Qwen3-Embedding-0.6B with 600M parameters and 1024-dimensional embeddings, and EmbeddingGemma-300m with 300M parameters and 768-dimensional embeddings. We train separate models for each encoder using multilingual data from mC4 to assess generalization across embedding spaces.
+L110: We compare four decoding strategies at inference time. Sequential greedy decoding iteratively unmasks tokens left to right by taking $x_{i}=\arg\max_{v\in\mathcal{V}}p_{\theta}(v|x_{<i},[\text{MASK}]^{n-i},\mathbf{e},t)$ where $t=(n-i)/n$ corresponds to the fraction of remaining masked tokens, producing highly coherent text through left-to-right generation but sacrificing the parallel nature of diffusion.
+L111: Euler sampling uses the Euler method for the reverse diffusion process, starting from $x_{1}=[\text{MASK}]^{n}$ and taking uniform timesteps from $t=1$ to $t=0$, sampling from $p_{\theta}(x_{0,i}|x_{t},t,\mathbf{e})$ for all positions simultaneously. Euler with remasking re-masks positions where $\max_{v}p_{\theta}(v|x_{t},t,\mathbf{e})<\tau$ after each Euler step, refining low-confidence predictions in subsequent steps.
+L112: Two-stage decoding combines sequential and parallel approaches by first generating a hypothesis via sequential greedy decoding, then refining it using Euler sampling initialized at this hypothesis. We use token accuracy, exact match, cosine similarity, BLEU, and perplexity under GPT-2 as evaluation metrics.
+L113: ### 4.1 Performance Across Encoders
+L114: 
+L115: Table cite40†1 shows results across all three embedding encoders using sequential greedy decoding, which provides the highest token accuracy. Qwen3-Embedding achieves the best performance at 81.3% token accuracy, followed by EmbeddingGemma at 78.8% and jina-v3 at 76.0%. All models are trained on multilingual data from mC4.
+L116: Table 1: Performance across embedding encoders using sequential greedy decoding. All trained on 2M multilingual samples from mC4. Best checkpoint selected by validation loss.
+L117: Encoder  | Token Acc.  | Steps  | Val Loss  | Vocab  | Embed Dim
+L118: --- | --- | --- | --- | --- | ---
+L119: Qwen3-Embedding-0.6B  | 81.3%  | 72.5K  | 1.317  | 152K  | 1024
+L120: EmbeddingGemma-300m  | 78.8%  | 49.5K  | 1.55  | 262K  | 768
+L121: jina-embeddings-v3  | 76.0%  | 62.5K  | 1.60  | 250K  | 1024
+L122: Table cite41†2 compares four decoding strategies across all three encoders on 10 languages. Cosine similarity is averaged over the same sentence translated into English, Chinese, German, Japanese, French, Spanish, Korean, Russian, Arabic, and Portuguese. Sequential greedy consistently achieves the highest similarity across encoders. Qualitative examples of decoded text across languages and decoding strategies are provided in Appendix cite42†6 –cite43†9 .
+L123: Table 2: Average cosine similarity across decoding strategies and encoders, evaluated on 10 languages per encoder.
+L124: Decoding Method  | jina-embeddings-v3  | Qwen3-Embedding  | EmbeddingGemma
+L125: --- | --- | --- | ---
+L126: Sequential Greedy  | 0.715  | 0.585  | 0.621
+L127: Euler Sampling  | 0.667  | 0.556  | 0.604
+L128: Euler + Remasking  | 0.665  | 0.584  | 0.595
+L129: Two-Stage  | 0.667  | 0.591  | 0.605
+L130: Euler with remasking at 0.05 improves over vanilla Euler by 2.6 percentage points in token accuracy. Two-stage decoding achieves highest exact match at 13.1%. Baselines confirm that embedding conditioning is essential: random tokens achieve 0.02% accuracy, while unconditional LM achieves 2.1% despite high fluency with BLEU score 89.3.
+L131: ### 4.2 Decoding Strategies and Re-masking
+L132: 
+L133: Table cite44†3 shows optimal performance at remask probability 0.05 for Euler sampling with adaptive remasking. Higher rates discard correct predictions, lower rates provide insufficient correction.
+L134: Table 3: Effect of remasking probability on Euler sampling performance.
+L135: Re-mask Prob.  | Token Acc.  | Cosine Sim.  | BLEU
+L136: --- | --- | --- | ---
+L137: 0.00 (no re-mask)  | 65.2%  | 0.81  | 38.7
+L138: 0.05  | 67.8%  | 0.82  | 42.1
+L139: 0.10  | 66.3%  | 0.81  | 40.2
+L140: 0.20  | 63.7%  | 0.80  | 37.1
+L141: 
+L142: (a) Token accuracy
+L143: 
+L144: (b) Validation loss
+L145: Figure 2: Training dynamics across three embedding encoders on 2M multilingual samples. Qwen3-Embedding reaches 81.3% token accuracy at 72.5K steps with validation loss 1.32. All models show diminishing returns beyond 50K steps, suggesting architectural improvements rather than extended training as the path to further gains.
+L146: ## 5 Conclusion
+L147: 
+L148: We presented embedding inversion via conditional masked diffusion, achieving 81.3% token accuracy across three embedding models with a 78M parameter decoder that requires no access to the target encoder. As inversion methods evolve from architecture specific to fully agnostic, embeddings should be treated as sensitive data requiring protection equivalent to the original text.
+L149: ## References
+L150:   * Austin et al. [2021] Jacob Austin, Daniel D. Johnson, Jonathan Ho, Daniel Tarlow, and Rianne van den Berg. Structured denoising diffusion models in discrete state-spaces. In Advances in Neural Information Processing Systems, volume 34, pages 17981–17993, 2021.
+L151:   * Cardei et al. [2025] Michael Cardei, Jacob K. Christopher, Thomas Hartvigsen, Brian R. Bartoldson, Bhavya Kailkhura, and Ferdinando Fioretto. Constrained language generation with discrete diffusion models. arXiv preprint arXiv:2503.09790, 2025.
+L152:   * Chen et al. [2025] Yiyi Chen, Qiongkai Xu, and Johannes Bjerva. Algen: Few-shot inversion attacks on textual embeddings via cross-model alignment and generation. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics, 2025.
+L153:   * Dhariwal and Nichol [2021] Prafulla Dhariwal and Alexander Nichol. Diffusion models beat gans on image synthesis. In Advances in Neural Information Processing Systems, volume 34, pages 8780–8794, 2021.
+L154:   * Ho and Salimans [2022] Jonathan Ho and Tim Salimans. Classifier-free diffusion guidance. In NeurIPS 2021 Workshop on Deep Generative Models and Downstream Applications, 2022.
+L155:   * Kim et al. [2026] Doohyun Kim, Donghwa Kang, Kyungjae Lee, Hyeongboo Baek, and Brent Byunghoon Kang. Zero2text: Zero-training cross-domain inversion attacks on textual embeddings. arXiv preprint arXiv:2602.01757, 2026.
+L156:   * Lou et al. [2024] Aaron Lou, Chenlin Meng, and Stefano Ermon. Discrete diffusion modeling by estimating the ratios of the data distribution. In Proceedings of the 41st International Conference on Machine Learning, pages 32819–32848, 2024.
+L157:   * Morris et al. [2023] John X. Morris, Volodymyr Kuleshov, Vitaly Shmatikov, and Alexander M. Rush. Text embeddings reveal (almost) as much as text. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing, pages 12448–12460, 2023.
+L158:   * Peebles and Xie [2023] William Peebles and Saining Xie. Scalable diffusion models with transformers. In Proceedings of the IEEE/CVF International Conference on Computer Vision, pages 4195–4205, 2023.
+L159:   * Raffel et al. [2020] Colin Raffel, Noam Shazeer, Adam Roberts, Katherine Lee, Sharan Narang, Michael Matena, Yanqi Zhou, Wei Li, and Peter J. Liu. Exploring the limits of transfer learning with a unified text-to-text transformer. Journal of Machine Learning Research, 21(140):1–67, 2020.
+L160:   * Sahoo et al. [2024] Subham S. Sahoo, Marianne Arriola, Yair Schiff, Aaron Gokaslan, Edgar Marroquin, Justin T. Chiu, Alexander Rush, and Volodymyr Kuleshov. Simple and effective masked diffusion language models. In Advances in Neural Information Processing Systems, volume 37, 2024.
+L161:   * Sturua et al. [2024] Saba Sturua, Isabelle Mohr, Mohammad Kalim Akram, Michael Günther, Bo Wang, Markus Krimmel, Feng Wang, Georgios Mastrapas, Andreas Koukounas, Nan Wang, and Han Xiao. jina-embeddings-v3: Multilingual embeddings with task lora, 2024.
+L162: ## Appendix A Implementation Details
+L163: 
+L164: ### A.1 Hyperparameters
+L165: 
+L166: Table 4: Complete hyperparameter configuration.
+L167: Parameter  | Value
+L168: Transformer layers  | 8
+L169: Hidden dimension  | 768
+L170: Attention heads  | 12
+L171: MLP dimension  | 3072
+L172: Dropout  | 0.1
+L173: Batch size  | 400
+L174: Learning rate  | $10^{-4}$
+L175: Weight decay  | 0.01
+L176: EMA decay  | 0.9999
+L177: Noise schedule $\lambda$  | 5.0
+L178: Sequence length  | 32
+L179: Training steps  | 200K
+L180: ### A.2 Computational Requirements
+L181: Training on a single A100 GPU takes approximately 48 hours for 200K steps. Inference using sequential decoding takes 150ms per sequence on the same hardware. Euler sampling is significantly faster at approximately 50ms per sequence due to parallel token prediction, though it achieves slightly lower quality. Memory requirements during training peak at 24GB including optimizer states and activations for the batch size of 400.
+L182: The model checkpoint size is 312MB including both model parameters and EMA weights.
+L183: Table 5: Performance milestones during training for jina-v3 encoder. Sequential greedy decoding.
+L184: Training Steps  | Token Acc.  | Exact Match  | Cosine Sim.  | BLEU
+L185: --- | --- | --- | --- | ---
+L186: 10K  | 40.2%  | 1.3%  | 0.65  | 22.1
+L187: 25K  | 58.7%  | 5.8%  | 0.76  | 35.4
+L188: 50K  | 69.7%  | 12.3%  | 0.83  | 45.2
+L189: 100K  | 70.8%  | 13.7%  | 0.84  | 46.8
+L190: 200K  | 71.2%  | 14.1%  | 0.84  | 47.3
+L191: ## Appendix B Qualitative Examples
+L192: 
+L193: Tables cite42†6 –cite43†9 show qualitative inversion examples. Table cite42†6 compares four decoding strategies on the same English input using jina-embeddings-v3. Tables cite45†7 , cite46†8 , and cite43†9 show sequential greedy decoding across six languages for each encoder.
+L194: Table 6: Decoding strategy comparison on jina-embeddings-v3. Input: “The advancement of artificial intelligence has fundamentally transformed modern society.”
+L195: Method  | Recovered Text  | Sim.
+L196: --- | --- | ---
+L197: Sequential  | The revolution of artificial society is a new technology that is the most advanced in the world. The goal of the world is to increase the lives of the people  | 0.82
+L198: Euler  | The imagination that we transformed and automitting technology has become optimized by the modern Intelligence Agency that the world has endured in revolutionary technologies that  | 0.80
+L199: Euler + Remask  | Artificial is the future of the outbreak of mischievous technology. Many people around the world are analyzed by transforming society by life, of  | 0.78
+L200: Two-Stage  | Today, the AI industry is one of the the sight revolutions, a history of Modern and Advanced Languages. He has brought the world of Artificial  | 0.79
+L201: Table 7: Multilingual inversion examples using jina-embeddings-v3 with sequential greedy decoding.
+L202: Lang  | Original  | Recovered  | Sim.
+L203: --- | --- | --- | ---
+L204: en  | The advancement of artificial intelligence has fundamentally transformed modern society.  | The revolution of artificial society is a new technology that is the most advanced in the world.  | 0.82
+L205: zh  | 人工智能的进步从根本上改变了现代社会解决复杂问题的方式。  | The complexity of the modern life changes in complexity. The problem is that the problem is to create a new life in the world.  | 0.65
+L206: de  | Die Fortschritte in der künstlichen Intelligenz haben die moderne Gesellschaft grundlegend verändert.  | The modern world of the modern society is increasingly changing in the world of the modern life.  | 0.69
+L207: ja  | 人工知能の進歩は現代社会における問題解決の方法を根本的に変革しました。  | The modern life changes in the world of the problem. The problem of the problem is to transform the complexity of the artificial intelligence.  | 0.76
+L208: fr  | Les progrès de l’intelligence artificielle ont fondamentalement transformé la société moderne.  | The transformation of the modern society is the most important factor in the world.  | 0.70
+L209: es  | Los avances en inteligencia artificial han transformado fundamentalmente la sociedad moderna.  | The modern revolution of the artificial society is a major transformation in the United States.  | 0.81
+L210: Table 8: Multilingual inversion examples using Qwen3-Embedding with sequential greedy decoding.
+L211: Lang  | Original  | Recovered  | Sim.
+L212: --- | --- | --- | ---
+L213: en  | The advancement of artificial intelligence has fundamentally transformed modern society.  | The most widely accepted and transformative of the natural and social media in the contemporary and technological aspects of the entire life.  | 0.78
+L214: zh  | 人工智能的进步从根本上改变了现代社会解决复杂问题的方式。  | The world has become more complex than ever before, as a result of the real problem of the way, the new ways of the artificial intelligence.  | 0.65
+L215: de  | Die Fortschritte in der künstlichen Intelligenz haben die moderne Gesellschaft grundlegend verändert.  | The real-life of the German civilization is transforming the world into the technology of the German civilization.  | 0.65
+L216: ja  | 人工知能の進歩は現代社会における問題解決の方法を根本的に変革しました。  | The world of human society is increasingly important in the ways of the human society as the result of the new generation.  | 0.57
+L217: fr  | Les progrès de l’intelligence artificielle ont fondamentalement transformé la société moderne.  | The real life of the society is the increase of the the chemical in the the et aux ité de la la de la de la.  | 0.65
+L218: es  | Los avances en inteligencia artificial han transformado fundamentalmente la sociedad moderna.  | The real world of the way the technology is transforming the average of the natural and social media in the entire world.  | 0.67
+L219: Table 9: Multilingual inversion examples using EmbeddingGemma with sequential greedy decoding.
+L220: Lang  | Original  | Recovered  | Sim.
+L221: --- | --- | --- | ---
+L222: en  | The advancement of artificial intelligence has fundamentally transformed modern society.  | The systems of the most important to the human intelligence, the most important to the human sector of the modern approach.  | 0.68
+L223: zh  | 人工智能的进步从根本上改变了现代社会解决复杂问题的方式。  | A complex system is a complex approach to the systems of the ability to develop the most powerful and the ability to develop.  | 0.61
+L224: de  | Die Fortschritte in der künstlichen Intelligenz haben die moderne Gesellschaft grundlegend verändert.  | Die Forschung ist die Zeit der Zeit der Entwicklung von der Zeit der Entwicklung der Entwicklung der Zeit von der Welt.  | 0.57
+L225: ja  | 人工知能の進歩は現代社会における問題解決の方法を根本的に変革しました。  | A system of the systems of the human development of the importance of the current and the ability to develop the cell-based approach.  | 0.59
+L226: fr  | Les progrès de l’intelligence artificielle ont fondamentalement transformé la société moderne.  | La technologie de la série de la société de la planète, de la gestion de la planète, de la science.  | 0.62
+L227: es  | Los avances en inteligencia artificial han transformado fundamentalmente la sociedad moderna.  | La ingeniería de la historia de la inteligencia de la organización de la atención de la que las tecnologías.  | 0.64
+L228: Experimental support, please cite47†view the build logs for errors. Generated by cite48†L A T E xml†math.nist.gov .
+L229: ## Instructions for reporting errors
+L230: 
+L231: We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the methods listed below:
+L232: 
+L233:   * Click the "Report Issue" () button, located in the page header.
+L234: 
+L235: Tip: You can select the relevant text first, to include it in your report.
+L236: Our team has already identified cite49†the following issues†github.com . We appreciate your time reviewing and reporting rendering errors we may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability should not be a barrier to accessing research. Thank you for your continued support in championing open access for all.
+L237: Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a cite50†list of packages that need conversion†github.com , and welcome cite51†developer contributions†github.com .
+L238: 
+L239: We gratefully acknowledge support from our major funders, cite52†member institutions†info.arxiv.org , , and all contributors.
+L240: cite53†About†info.arxiv.org · cite54†Help†info.arxiv.org · cite55†Contact†info.arxiv.org · cite56†Subscribe†info.arxiv.org · cite57†Copyright†info.arxiv.org · cite58†Privacy†info.arxiv.org · cite59†Accessibility†info.arxiv.org · cite60†Operational Status (opens in new tab)†status.arxiv.org L241: 
+L242: Major funding support from
+

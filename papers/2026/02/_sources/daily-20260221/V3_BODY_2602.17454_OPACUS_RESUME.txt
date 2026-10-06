@@ -1,0 +1,26 @@
+4.3.7. Opacus
+We audited the make_private function, which instruments a model for DP training. As shown in Figure 8, the variable expected_batch_size is derived from the private variable len(data_loader.dataset). Under unbounded adjacency (assumed by Poisson sampling in the Subsampled Gaussian Mechanism (Kasiviswanathan et al., 2011; Balle et al., 2018; Balle et al., 2020)), the dataset size nn is private. Using it for normalization leaks nn into the optimizer. While privacy loss decreases as nn increases, this constitutes a violation for small datasets, detected via Re:cord-play. Notably, a similar issue was reported over two years ago but remains unpatched (Tudor Cebere, 2022). We found no other bugs in their implementation.
+Figure 8. Simplified logic from Opacus’s make_private function. The sample_rate is derived from len(data_loader.dataset), which is a private quantity under the add/remove adjacency model, leading to a parameter instability bug.
+⬇
+1
+def make_private(...data_loader: DataLoader...):
+2
+...
+3
+sample_rate = 1 / len(data_loader)
+4
+BUG: size of the dataset is private under add/remove
+5
+expected_batch_size = int(len(data_loader.dataset)
+6
+* sample_rate)
+7
+...
+4.3.8. dpmm
+We audited the dpmm library and uncovered an invariance violation in both the AIM and PrivBayes algorithms via Re:cord-play. When no domain is pre-specified for the marginals, the implementation derives it directly from the private data via
+_domain = (df.astype(int).max(axis=0) + 1).to_dict()
+without accounting for it in the privacy budget. The presence of a single record with a large feature value can thus change the inferred domain across neighboring datasets, altering the marginals’ supports. In Re:cord-play, this manifests as an invariance violation between the Record and Replay runs. A robust DP implementation should treat the domain as public (provided by the user or a safe default), or estimate it through an explicit differentially private primitive rather than inferring it directly from the private data.
+4.3.9. Vulnerability to pathological inputs
+We also audited the robustness of the implementations against pathological inputs, specifically ±∞\pm\infty and NaN values. Correctly handling these inputs under differential privacy is often overlooked, however, they often bypass standard clipping checks (e.g., standard comparison operators with NaN often yield false, effectively skipping bounds enforcement), leading to undefined behavior or information leakage. The results, summarized in Table 3, indicate a widespread lack of defensive programming in the Python ecosystem, leading to either unhandled exceptions or the propagation of NaN values into the final output, leaking properties of the input data. Notably, Google Differential Privacy is the only library among those tested that consistently handles these inputs correctly, either by filtering them out or raising a controlled error before the privacy budget is consumed.
+4.3.10. Additional evaluations and scope
+We also audited OpendDP’s Python bindings for MST and AIM (Shoemate et al., 2026), Google Differential Privacy’s Clustering algorithm (Chang et al., 2021), Jax Privacy (Balle et al., 2025), Tensorflow Privacy (TensorFlow Team, 2025), and PipelineDP (OpenMined contributors, 2025). Our framework did n

@@ -56,6 +56,8 @@ Will the solution work beyond the training samples?
 
 本章主要回答第二个问题，并说明它如何依赖第一个问题。第三个问题及模型最终形成的表示，留给第 5 章。
 
+从预训练参数开始优化，还多了一个局部条件：不是因为起点已经会很多任务，就可以把训练损失持续下降当作泛化收益。一个受限理论分支在预训练点附近线性化网络，用该点的 Neural Tangent Kernel（NTK）描述参数微小变化能产生哪些函数变化，再以目标数据上的经验核谱和噪声决定早停的 bias–variance 取舍。[Transformer 微调的早停分析](https://arxiv.org/html/2602.13942v1)允许微调从非随机的预训练点开始，但仍要求预训练始于 Gaussian 随机初始化、参数留在可控邻域、宽度充分大、稳定核满秩，以及目标差额属于对应 RKHS 等条件；这不是任意现代模型都会停留在 lazy regime 的证明。谱估计、Jacobian 计算与验证集均有成本，理论停点还依赖不可直接获得的目标差额范数和噪声，实际实验因此用 hold-out 选择停点。GPT-Neo-1.3B 上的有限任务与三次随机运行只提供局部支持，不能以一个经验谱斜率替代跨任务质量验收；核明显漂移、条件不成立或谱估计不稳定时，仍回到独立验证集和实际训练轨迹，而非照搬理论训练步数。<!-- source-family:SF-2026-ARXIV-2602-13942 -->
+
 ## Loss 把任务目标变成局部信号
 
 模型输出本身不能告诉优化器“哪里错了”。我们需要一个损失函数：
@@ -426,3 +428,5 @@ Part IV 会详细展开这些系统机制。本章要建立的连接是：梯度
 - Ronen Eldan, Ohad Shamir, "The Power of Depth for Feedforward Neural Networks", 2016:
   https://arxiv.org/abs/1512.03965
 - Yann LeCun, Yoshua Bengio, Geoffrey Hinton, "Deep learning", Nature, 2015: https://www.nature.com/articles/nature14539
+
+- `SF-2026-ARXIV-2602-13942` — Daily `2026-02-18`；[exact-v1](https://arxiv.org/html/2602.13942v1) §3.5–4.2、§7必要范围。2+1+2=5，非随机微调点的局部 NTK/早停条件差额深入；保留 Gaussian 预训练起点、邻域/宽度、RKHS、未知停点参数与 hold-out 成本，不采用通用 lazy regime 或谱即兼容性证书。未核代码/复现；root 必要源与 actual owner PRE通过，实际正文/完整邻接及本末注经root非作者POST通过，窄锁释放，不授日级。

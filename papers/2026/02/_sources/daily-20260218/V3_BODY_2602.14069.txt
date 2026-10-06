@@ -1,0 +1,1557 @@
+Open Rubric System: Scaling Reinforcement Learning with Pairwise Adaptive Rubric
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Preliminary
+2.1 Group Relative Policy Optimization
+2.2 Pairwise Evaluation and Bootstrapped Relative Policy Optimization
+3 Approach
+3.1 Overall Framework
+Pairwise Adaptive Rubric.
+Hierarchical Meta Rubric.
+Evolutionary Rubric Refinement.
+Pointwise Verifiable Rubric.
+3.2 General Meta Rubric Refinement
+3.3 Domain Meta Rubric Refinement
+3.4 Applying OpenRS to Reinforcement Learning
+4 Experiments
+4.1 Experimental Setup
+4.2 Main Results
+Different Foundation Models for OpenRS
+Pareto Frontier of OpenRS
+5 Analysis
+5.1 Recipe for OpenRS
+Pairwise over Pointwise.
+Think differences first to ground criterion selection.
+Use Domain Meta Rubrics to scale reliably across domains.
+5.2 Refinement Policy: Frozen vs. GRPO vs. Asym-GRPO
+5.3 Say Goodbye to Scalar Reward Model: General RL with Open Rubric System
+Training Efficiency
+5.4 More Analysis
+5.5 Aha Moment in General Domains
+6 Related Work
+6.1 LLM-as-a-Judge and Rubric-Based Evaluation
+6.2 Rubric-Based RL
+7 Conclusion
+References
+A Additional Analysis
+A.1 Detailed Performance Comparison
+A.2 Generalization on Arena
+A.3 Same Rate of Open Rubric System
+A.4 Detailed Calculation on RM Benchmarks
+JudgeBench / PPE
+RewardBench V2
+RMBench
+B General Meta Rubric and Pairwise Evaluation Prompt
+C Case Study
+License: CC BY 4.0
+arXiv:2602.14069v1 [cs.CL] 15 Feb 2026
+Open Rubric System: Scaling Reinforcement Learning with Pairwise Adaptive Rubric
+Ruipeng Jia
+Affiliation: Qwen Large Model Application Team, Alibaba
+Yunyi Yang
+Affiliation: Qwen Large Model Application Team, Alibaba
+Yuxin Wu
+Affiliation: Beijing University Of Posts and Telecommunications
+Yongbo Gai
+Affiliation: Qwen Large Model Application Team, Alibaba
+Siyuan Tao
+Affiliation: Institute of Computing Technology, Chinese Academy of Sciences
+Mengyu Zhou
+Affiliation: Qwen Large Model Application Team, Alibaba
+Jianhe Lin
+Affiliation: Qwen Large Model Application Team, Alibaba
+Xiaoxi Jiang
+Affiliation: Qwen Large Model Application Team, Alibaba
+Guanjun Jiang
+Affiliation: Qwen Large Model Application Team, Alibaba
+Abstract
+Scalar reward models compress multi-dimensional human preferences into a single opaque score, creating an information bottleneck that often leads to brittleness and reward hacking in open-ended alignment.
+We argue that robust alignment for non-verifiable tasks is fundamentally a principle generalization problem: reward should not be a learned function internalized into a judge, but an explicit reasoning process executed under inspectable principles.
+To operationalize this view, we present the Open Rubric System (OpenRS) , a plug-and-play, rubrics-based LLM-as-a-Judge framework built around Pairwise Adaptive Meta-Rubrics (PAMR) and lightweight Pointwise Verifiable Rubrics (PVRs), which provide both hard-constraint guardrails and verifiable reward components when ground-truth or programmatic checks are available.
+OpenRS uses an explicit meta-rubric —a constitution-like specification that governs how rubrics are instantiated, weighted, and enforced—and instantiates adaptive rubrics on the fly by conditioning on the semantic differences between two candidate responses.
+It then performs criterion-wise pairwise comparisons and aggregates criterion-level preferences externally, avoiding pointwise weighted scalarization while improving discriminability in open-ended settings.
+To keep principles consistent yet editable across various domains, we introduce a two-level meta-rubric refinement pipeline (automated evolutionary refinement for general principles and a reproducible human-in-the-loop procedure for domain principles), complemented with pointwise verifiable rubrics that act as both guardrails against degenerate behaviors and a source of verifiable reward for objective sub-tasks.
+Finally, we instantiate OpenRS as reward supervision in pairwise RL training.
+Empirically, OpenRS achieves state-of-the-art results on four reward-modeling benchmarks (RM-Bench, JudgeBench, RewardBench v2, and PPE Preference),
+consistently outperforming strong open scalar reward model baselines.
+In end-to-end policy optimization, replacing a scalar reward model with OpenRS yields stable gains on downstream RL evaluations.
+The open-source code is available at https://github.com/Qwen-Applications/OpenRS .
+1 Introduction
+Reinforcement learning from human feedback (RLHF) has become a standard paradigm for aligning large language models (LLMs) to follow instructions and exhibit helpful behaviors ( Ouyang et al., 2022 ) .
+Typically, RLHF pipelines rely on a scalar reward model (RM) that compresses rich, multi-faceted human preferences into a single number.
+While in practice, scalar RMs may learn shortcuts and become miscalibrated,
+creating opportunities for reward hacking where policies exploit spurious cues rather than improving true response quality ( Zhong et al., 2025 ; McKee-Reid et al., 2024 ) .
+Recent progress on reinforcement learning with verifiable rewards (RLVR) demonstrates that when rewards can be grounded in objective checks (e.g., correctness or format constraints) for math or coding tasks,
+reinforcement learning can scale capabilities without relying on a learned scalar judge ( Guo et al., 2025 ) .
+For general, open-ended tasks, reward specification is intrinsically difficult because the desired behavior spans multiple, often competing dimensions,
+and there is typically no explicit reference answer or ground-truth signal.
+One line of work follows the LLM-as-a-Judge paradigm ( Zheng et al., 2023 ) , and attempts to train generative reward models or specialized judges from human or distilled preferences ( Mahan et al., 2024 ; Ye et al., 2024 ) ,
+and recent trained GenRM-style methods further incorporate chain-of-thought rationales and inference-time scaling to improve transparency and generalization ( Liu et al., 2025b ; Anugraha et al., 2025 ; Yu et al., 2025b ; Whitehouse et al., 2025 ) .
+Despite recent progress, these GenRM pipelines remain limited by their reliance on noisy, synthetic, and underspecified preference supervision,
+making them costly to maintain and iterate across broader domains.
+As optimization proceeds, the judge can exploit dataset-specific shortcuts and inadvertently erode the base model’s general evaluation competence.
+Additionally, the underlying evaluation principles are ultimately implicitly encoded rather than explicitly specified,
+which leads to scalar-RM-like brittleness under OOD shifts despite textual rationales.
+A number of benchmarks leverage detailed rubrics generated by experts to provide a more structured and consistent evaluation in high-stakes professional domains ( Arora et al., 2025 ; Akyürek et al., 2025 ; Wang et al., 2025 ) .
+Building on this idea, an increasingly popular line of work attempts to automatically construct sophisticated rubrics as training-time rewards to extend RLVR-style optimization to more open-ended domains.
+These rubric-based methods mostly rely on static rubrics that either synthesized by powerful LLMs ( Gunjal et al., 2025 ; Huang et al., 2025 ) , or induced from preference data ( Liu et al., 2026 ; Li et al., 2026 ) ,
+which proven to be effective when the target response is well-scoped and can be anchored by expert standards (e.g., instruction following or high-stakes professional domains).
+Recent work attempts to refine rubrics or eliciting criteria in a semi-static or online fashion ( Zhang et al., 2025 ; Rezaei et al., 2025 ; Li et al., 2026 ) .
+However, in most cases the final training signal is still produced by pointwise rubric scoring followed by weighted scalar aggregation.
+This pointwise scalarization creates an intrinsic ceiling on discriminability in open-ended settings and remains vulnerable to reward gaming,
+which can limit improvement on non-verifiable tasks and contribute to collapse-like dynamics noted in open-ended RL ( Jia et al., 2025 ; Zhang et al., 2026 ) .
+Moreover, many rubric construction pipelines implicitly describe the features of an “ideal” reference-style answer; while such anchoring can be reasonable for domains with strong norms,
+it becomes harder to generalize to broader open-ended generation where the relevant trade-offs are context-dependent.
+Figure 1 : Overall Framework of OpenRS
+In a nutshell, we still face the following challenges: (1) rewards from trained (scaler or generative) reward models are opaque, noisy, inefficient to iterate, and misalign with human value;
+(2) the static specification and pointwise assessment of rubrics judge undermine the scalability of online RL in more general domains.
+To address the above challenges, we argue that robust alignment in non-verifiable settings is fundamentally a principle generalization problem:
+reward should be treated not as a function to be learned, but as a reasoning process to be executed under explicit, inspectable principle, here we refer to it as meta-rubric .
+We propose Pairwise Adaptive Meta-Rubrics (PAMR) by replacing trained scalar RMs as the source of human feeback signal with an off-the-shelf LLM judge guided by an explicit meta-rubric —a constitution-like specification that governs how rubrics are instantiated,
+how each criterion is weighed, and which failure modes are non-negotiable.
+Specifically, PAMR conditions on the semantic differences between two candidate responses and generates adaptive rubrics on the fly,
+performs rubric-wise pairwise comparison, and aggregates criterion-level preferences externally for stable optimization.
+To keep the evaluation standard consistent with human principles while remaining explicit and editable, we refine the meta-rubric at two levels.
+First, we refine the general meta-rubric via an automated evolutionary procedure.
+Rather than learning a refinement policy for its own sake, we use optimization to discover a stronger, more transferable principle specification that generalizes across domains.
+Second, we complement this with a domain meta-rubric refinement stage that supports human-in-the-loop iteration:
+domain experts (or developers) can diagnose failure cases and update domain-specific principles in a reproducible, analytical manner without retraining the judge, enabling rapid iteration under distribution shifts.
+Combined with lightweight pointwise verifiable rubrics that provide both verifiable reward components and hard-constraint guardrails (e.g., format constraints, unit tests, and ground-truth correctness checks) to prevent degenerate behaviors and reduce reward hacking during optimization,
+we establish a plug-and-play rubric system Open Rubric System (OpenRS) that bridges RLVR and RLHF by combining pointwise verifiable rewards and constraints with meta-rubric-guided pairwise preference optimization for general domains.
+Finally, we instantiate this design in a scalable RL framework that supports pairwise optimization.
+Our contributions are as follows:
+(1) We reframe robust reward supervision for non-verifiable tasks as a principle generalization problem, and leverage an off-the-shelf LLM judge to instantiate adaptive rubrics from explicit principles.
+(2) We open-source a plug-and-play, rubrics-based LLM-as-a-judge system, OpenRS featuring Pairwise Adaptive Meta-Rubrics (PAMR) and lightweight pointwise verifiable rubrics, which outperforms prior scalar reward models and generated judges across a range of RM benchmarks.
+(3) When used as reward signals and coupled with pairwise RL training, our method yields consistent gains on open-source policy benchmarks and in-house industrial evaluations.
+2 Preliminary
+2.1 Group Relative Policy Optimization
+GRPO ( Shao et al., 2024 ) is an efficient reinforcement learning algorithm that eliminates the need for a value function critic, as used in PPO ( Schulman et al., 2017 ) , by introducing group-relative normalization for advantage estimation.
+Given a query q q from the dataset 𝒟 \mathcal{D} , the behavior policy π θ old \pi_{\theta_{\text{old}}} samples a group of G G outputs { o i } i = 1 G \{o_{i}\}_{i=1}^{G} .
+The advantage of the i i -th response is subsequently derived by normalizing the rewards { R i } i = 1 G \{R_{i}\}_{i=1}^{G} relative to the group statistics.
+Similar to PPO, GRPO ensures training stability and sample efficiency by constraining policy updates π θ \pi_{\theta} within a trust region using a clipping mechanism.
+Formally, GRPO optimizes the following objective:
+𝒥 GRPO ​ ( θ ) \displaystyle\mathcal{J}_{\text{GRPO}}(\theta)
+= 𝔼 q ∼ 𝒟 , { o i } i = 1 G ∼ π θ old ( ⋅ | q ) \displaystyle=\mathbb{E}_{q\sim\mathcal{D},\{o_{i}\}_{i=1}^{G}\sim\pi_{\theta_{\text{old}}}(\cdot|q)}
+(1)
+[ 1 G ∑ i = 1 G 1 | o i | ∑ t = 1 | o i | ( min ( r i , t ( θ ) A ^ i , t , clip ( r i , t ( θ ) , 1 − ε , 1 + ε ) A ^ i , t ) − β D KL ( π θ ∥ π ref ) ) ] \displaystyle\left[\frac{1}{G}\sum_{i=1}^{G}\frac{1}{|o_{i}|}\sum_{t=1}^{|o_{i}|}\left(\min\left(r_{i,t}(\theta)\hat{A}_{i,t},\ \text{clip}\left(r_{i,t}(\theta),1-\varepsilon,1+\varepsilon\right)\hat{A}_{i,t}\right)-\beta D_{\text{KL}}(\pi_{\theta}\|\pi_{\text{ref}})\right)\right]
+r i , t ​ ( θ ) = π θ ​ ( o i , t ∣ q , o i , < t ) π θ old ​ ( o i , t ∣ q , o i , < t ) A ^ i , t = R i − mean ​ ( { R i } i = 1 G ) std ​ ( { R i } i = 1 G ) r_{i,t}(\theta)=\frac{\pi_{\theta}(o_{i,t}\mid q,o_{i,<t})}{\pi_{\theta_{\text{old}}}(o_{i,t}\mid q,o_{i,<t})}\qquad\hat{A}_{i,t}=\frac{R_{i}-\text{mean}(\{R_{i}\}_{i=1}^{G})}{\text{std}(\{R_{i}\}_{i=1}^{G})}
+(2)
+where A ^ i , t \hat{A}_{i,t} denotes the estimated advantage at time step t t , ε \varepsilon is the clipping hyperparameter for the importance sampling ratio r i , t ​ ( θ ) r_{i,t}(\theta) , and π ref \pi_{\text{ref}} is the reference policy (typically initialized as π θ \pi_{\theta} ).
+2.2 Pairwise Evaluation and Bootstrapped Relative Policy Optimization
+Jia et al. (2025) advocates for pairwise evaluation over pointwise scoring, particularly for non-verifiable tasks where absolute ground truth is elusive.
+However, integrating pairwise feedback into group-based RL algorithms like GRPO presents a significant computational challenge.
+To estimate the advantage of each response within a group of size G G , a naive approach would require comparing every response against every other response, resulting in ( G 2 ) \binom{G}{2} evaluations and a computational complexity of O ⁡ ( N 2 ) O(N^{2}) .
+They introduces Bootstrapped Relative Policy Optimization (BRPO).
+instead of exhaustive pairwise comparisons, BRPO employs a bootstrapping mechanism where a single response o ref o_{\text{ref}} is randomly sampled from the current group { o i } i = 1 G \{o_{i}\}_{i=1}^{G} to serve as a dynamic anchor.
+The quality of every other response o i o_{i} is then evaluated relative to this anchor.
+This strategy reduces the number of required GenRM calls from O ⁡ ( N 2 ) O(N^{2}) to O ⁡ ( N ) O(N) , maintaining the linear scalability characteristic of pointwise methods while retaining the superior signal quality of pairwise evaluation.
+Following methods make pariwise evaluation via a seeded single-elimination tournament or choosing the greedy decoding response as the reference anchor Zhang et al. (2026) ; Xu et al. (2026) .
+3 Approach
+In this section, we introduce the Open Rubric System (OpenRS), a transparent and structured rubric system based on the LLM-as-a-Judge paradigm.
+We propose to estimate the reward R ⁡ ( q , o ) R(q,o) by explicitly disentangling the evaluation into two distinct pathways: a Pairwise Adaptive Rubric mechanism for subjective quality assessment,
+and a Pointwise Verifiable Rubric mechanism that provides verifiable reward components and hard-constraint guardrails for objective sub-tasks with ground truth.
+This composite reward signal provides a robust foundation for consistent evaluation and scalable reinforcement learning in general domains.
+3.1 Overall Framework
+We posit that a robust reward signal should jointly capture (i) relative preference over subjective dimensions (e.g., helpfulness and creativity), and (ii) absolute performance on objective, checkable dimensions (e.g., math correctness, strict formatting constraints).
+Accordingly, our system decomposes the reward R i R_{i} for an output o i o_{i} given query q q into two complementary pathways: a pairwise adaptive pathway for subjective judgment and a pointwise verifiable pathway for objective supervision.
+Pairwise Adaptive Rubric.
+For subjective evaluation, we adopt a pairwise paradigm.
+Central to our approach is a Meta Rubric ℳ \mathcal{M} , a static set of constitutional principles that govern general alignment goals.
+Because a static rubric cannot anticipate which dimensions matter for a particular comparison, we instantiate a dynamic Adaptive Rubric ℛ i ​ j \mathcal{R}_{ij} for each response pair ( o i , o j ) (o_{i},o_{j}) .
+Concretely, we first identify the salient semantic differences Δ i ​ j \Delta_{ij} , and then contextualize ℳ \mathcal{M} using Δ i ​ j \Delta_{ij} to produce a focused rubric for this specific pair:
+Δ i ​ j = f diff ​ ( q , o i , o j ) , ℛ i ​ j = f adapt ​ ( ℳ , q , o i , o j , Δ i ​ j ) \Delta_{ij}=f_{\text{diff}}(q,o_{i},o_{j}),\quad\mathcal{R}_{ij}=f_{\text{adapt}}(\mathcal{M},q,o_{i},o_{j},\Delta_{ij})
+(3)
+where f diff f_{\text{diff}} identifies the semantic differences Δ i ​ j \Delta_{ij} between the two responses ( o i , o j ) (o_{i},o_{j}) , and f adapt f_{\text{adapt}} adapts the Meta Rubric ℳ \mathcal{M} to generate Adaptive Rubric ℛ i ​ j \mathcal{R}_{ij} , which contains a set of weighted criteria ℛ i ​ j = { ( c k , w k ) } k = 1 K \mathcal{R}_{ij}=\{(c_{k},w_{k})\}_{k=1}^{K} .
+Instead of predicting a single holistic preference probability, we evaluate the pair against each specific criterion.
+For each criterion c k c_{k} , the model assigns a comparative score v k ∈ { − 2 , − 1 , 0 , 1 , 2 } v_{k}\in\{-2,-1,0,1,2\} , where negative values indicate o i o_{i} is inferior to o j o_{j} , positive values indicate o i o_{i} is superior, and 0 implies equality.
+The final pairwise preference score s i ​ j s_{ij} is calculated as the weighted average of these criterion-specific scores, normalized by the total weight:
+s i ​ j = ∑ k = 1 K w k ⋅ v k ∑ k = 1 K w k s_{ij}=\frac{\sum_{k=1}^{K}w_{k}\cdot v_{k}}{\sum_{k=1}^{K}w_{k}}
+(4)
+In the RL loop, we obtain a per-sample scalar signal by comparing each rollout o i o_{i} against a reference anchor o ref o_{\text{ref}} (Section 2.2 ), yielding the criterion-weighted score s i , ref s_{i,\text{ref}} .
+Hierarchical Meta Rubric.
+To balance generalization and specificity, we structure ℳ \mathcal{M} hierarchically.
+We employ a General Meta Rubric ℳ gen \mathcal{M}_{\text{gen}} as the global foundation, and extend it to different Domain Meta Rubrics ℳ dom \mathcal{M}_{\text{dom}} that incorporate fine-grained criteria tailored to specific domains (e.g., code generation, creative writing).
+Evolutionary Rubric Refinement.
+The quality of the reward signal depends critically on ℳ \mathcal{M} .
+We treat rubric design as a discrete optimization problem, aiming to maximize alignment with human preferences.
+We propose an automated refinement process using a genetic algorithm with beam search.
+For ℳ gen \mathcal{M}_{\text{gen}} , we employ a black-box mutation strategy to ensure robustness, whereas for ℳ dom \mathcal{M}_{\text{dom}} , we utilize a data-driven strategy that leverages analysis on preference data to perform targeted updates.
+Pointwise Verifiable Rubric.
+Certain dimensions of evaluation are absolute and can be verified on a single output without pairwise comparison (e.g., word count, length or format constraints, and strict instruction following).
+We capture these signals with a Pointwise Verifiable Rubric 𝒱 q \mathcal{V}_{q} , i.e., a set of verifiers derived from the query q q .
+Each verifier c ∈ 𝒱 q c\in\mathcal{V}_{q} produces a deterministic signal ϕ c ​ ( o ) \phi_{c}(o) on a candidate output o o (e.g., pass/fail, exact match, or a bounded score), which can be used either as a hard gate or as an additive reward/penalty term.
+This pointwise pathway therefore plays a dual role: it provides guardrails against degenerate behaviors and supplies verifiable reward components whenever ground-truth or programmatic checks are available.
+Algorithm 1 General Meta Rubric Refinement
+Input: Seed rubric ℳ seed \mathcal{M}_{\text{seed}} ; beam size B B ; total rollouts per iteration G G ; iterations T T ; oracle R ⁡ ( ⋅ ) R(\cdot) ; refinement policy π θ \pi_{\theta} ; reference policy π ref \pi_{\text{ref}} ; GRPO hyperparams ε , β \varepsilon,\beta
+Output: Refined general meta rubric ℳ gen \mathcal{M}_{\text{gen}} and trained refinement policy π θ \pi_{\theta}
+1
+Initialize beam ℬ 0 ← { ℳ seed } \mathcal{B}_{0}\leftarrow\{\mathcal{M}_{\text{seed}}\} and fill to size B B by copying;
+2
+for t ← 0 t\leftarrow 0 to T − 1 T-1 do
+3
+Initialize candidate set 𝒞 ← ∅ \mathcal{C}\leftarrow\emptyset ;
+4
+g per ← G / B g_{\text{per}}\leftarrow G/B ;
+5
+foreach ℳ ∈ ℬ t \mathcal{M}\in\mathcal{B}_{t} do
+6
+for j ← 1 j\leftarrow 1 to g per g_{\text{per}} do
+7
+Roll out an edit sequence o ∼ π θ old ( ⋅ ∣ ℳ ) o\sim\pi_{\theta_{\text{old}}}(\cdot\mid\mathcal{M}) with actions in 𝒜 = { ADD , DELETE , MODIFY } \mathcal{A}=\{\texttt{ADD},\texttt{DELETE},\texttt{MODIFY}\} ;
+8
+Apply edits to obtain mutated rubric ℳ ~ ← ApplyEdits ​ ( ℳ , o ) \tilde{\mathcal{M}}\leftarrow\textsc{ApplyEdits}(\mathcal{M},o) ;
+9
+Score reward R ← R ⁡ ( ℳ ~ ) R\leftarrow R(\tilde{\mathcal{M}}) ;
+10
+Add ( ℳ ~ , o , R ) (\tilde{\mathcal{M}},o,R) to 𝒞 \mathcal{C} ;
+11
+end for
+12
+end foreach
+13
+Update beam ℬ t + 1 ← Top B ​ ( { ℳ ~ : ( ℳ ~ , o , R ) ∈ 𝒞 } , by ​ R ) \mathcal{B}_{t+1}\leftarrow\text{Top}_{B}\big(\{\tilde{\mathcal{M}}:(\tilde{\mathcal{M}},o,R)\in\mathcal{C}\},\ \text{by }R\big) ;
+14
+Compute GRPO advantages { A ^ i , τ } \{\hat{A}_{i,\tau}\} from rewards { R i } i = 1 G \{R_{i}\}_{i=1}^{G} as in Eq. 2 ;
+15
+Let ℐ ← Top B ​ ( { R i } i = 1 G ) \mathcal{I}\leftarrow\text{Top}_{B}(\{R_{i}\}_{i=1}^{G}) be indices of top- B B rollouts in the group;
+16
+Update π θ \pi_{\theta} by maximizing the Asym-GRPO objective over i ∈ ℐ i\in\mathcal{I} :
+1 B ∑ i ∈ ℐ 1 | o i | ∑ τ = 1 | o i | ( min ( r i , τ ( θ ) A ^ i , τ , clip ( r i , τ ( θ ) , 1 − ε , 1 + ε ) A ^ i , τ ) − β D KL ( π θ ∥ π ref ) ) \frac{1}{B}\sum_{i\in\mathcal{I}}\frac{1}{|o_{i}|}\sum_{\tau=1}^{|o_{i}|}\Big(\min(r_{i,\tau}(\theta)\hat{A}_{i,\tau},\ \text{clip}(r_{i,\tau}(\theta),1-\varepsilon,1+\varepsilon)\hat{A}_{i,\tau})-\beta D_{\text{KL}}(\pi_{\theta}\|\pi_{\text{ref}})\Big)
+17
+where r i , τ ​ ( θ ) = π θ ​ ( o i , τ ∣ ℳ i , o i , < τ ) π θ old ​ ( o i , τ ∣ ℳ i , o i , < τ ) r_{i,\tau}(\theta)=\frac{\pi_{\theta}(o_{i,\tau}\mid\mathcal{M}_{i},o_{i,<\tau})}{\pi_{\theta_{\text{old}}}(o_{i,\tau}\mid\mathcal{M}_{i},o_{i,<\tau})} ;
+18
+end for
+19
+Return ℳ gen ← arg ⁡ max ℳ ∈ ℬ T ⁡ R ⁡ ( ℳ ) \mathcal{M}_{\text{gen}}\leftarrow\arg\max_{\mathcal{M}\in\mathcal{B}_{T}}R(\mathcal{M}) and π θ \pi_{\theta} ;
+3.2 General Meta Rubric Refinement
+We cast the refinement of the General Meta Rubric ℳ gen \mathcal{M}_{\text{gen}} as a discrete optimization problem that aims to discover a robust,
+constitution-level evaluation standard via a beam-style discrete search over criterion-level edits (Alg. 1 ).
+To promote domain generality and reduce overfitting, we adopt a black-box setting with respect to the evaluation data :
+the refinement policy π refine \pi_{\text{refine}} does not observe the preference dataset itself and only receives an aggregate scalar feedback from an evaluation oracle.
+For a candidate rubric ℳ \mathcal{M} , the evaluation oracle returns a deterministic score (reward) R ⁡ ( ℳ ) R(\mathcal{M}) from the alignment accuracy with human labels on a balanced, multi-category preference set.
+We initialize ℳ gen \mathcal{M}_{\text{gen}} with an expert-crafted seed rubric and perform an evolutionary search augmented with beam selection.
+At iteration t t , we maintain a beam ℬ t = { ℳ t ( b ) } b = 1 B \mathcal{B}_{t}=\{\mathcal{M}^{(b)}_{t}\}_{b=1}^{B} of the top- B B rubrics.
+For each beam element ℳ ∈ ℬ t \mathcal{M}\in\mathcal{B}_{t} , we roll out g per = G / B g_{\text{per}}=G/B edit sequences o ∼ π θ old ( ⋅ ∣ ℳ ) o\sim\pi_{\theta_{\text{old}}}(\cdot\mid\mathcal{M}) , where each edit action is drawn from 𝒜 = { ADD , DELETE , MODIFY } \mathcal{A}=\{\texttt{ADD},\texttt{DELETE},\texttt{MODIFY}\} .
+Applying o o to ℳ \mathcal{M} yields a mutated rubric ℳ ~ = ApplyEdits ​ ( ℳ , o ) \tilde{\mathcal{M}}=\textsc{ApplyEdits}(\mathcal{M},o) , which is scored by R ⁡ ( ℳ ~ ) R(\tilde{\mathcal{M}}) .
+After evaluating all G G candidates, we set the next beam ℬ t + 1 \mathcal{B}_{t+1} to the Top B \text{Top}_{B} candidates by reward.
+Beam selection alone is insufficient when π refine \pi_{\text{refine}} is not trained, because the candidate pool is dominated by low-quality (often degrading) mutations.
+We therefore train π refine \pi_{\text{refine}} so that its rollouts increasingly concentrate on edits that yield high-reward rubrics, making the beam search consistently improve over iterations.
+We optimize π refine \pi_{\text{refine}} using a GRPO-style objective,
+where at each iteration we treat the G G rollouts generated from ℬ t \mathcal{B}_{t} as one GRPO group: we compute group-wise advantages from the rewards { R i } i = 1 G \{R_{i}\}_{i=1}^{G} as in Eq. 2 .
+Since rewards are sparse and skewed, standard GRPO may assign positive advantages to “less-bad” failures under group-wise normalization (Eq. 2 ).
+To address this, we propose Asymmetric GRPO (Asym-GRPO), which perform an asymmetric update that backpropagates only through the Top B ​ ( { R i } i = 1 G ) \text{Top}_{B}(\{R_{i}\}_{i=1}^{G}) rollouts while masking all others.
+This hard filtering concentrates learning on successful edits, avoids reinforcing “less-bad” failures under skewed rewards, and stabilizes improvement across iterations.
+3.3 Domain Meta Rubric Refinement
+While the General Meta Rubric captures broadly applicable alignment principles, many domains (e.g., code generation and creative writing) require additional, domain-specific criteria.
+We construct the Domain Meta Rubric ℳ dom \mathcal{M}_{\text{dom}} by adapting the refined ℳ gen \mathcal{M}_{\text{gen}} using a small, curated set of in-domain preference data.
+Unlike the black-box exploration used for ℳ gen \mathcal{M}_{\text{gen}} , domain adaptation is carried out in a data-aware manner via error analysis rather than gradient-based reinforcement learning.
+Concretely, we compare rubric-based judgments against human labels, identify systematic failure modes, and apply targeted criterion-level edits from { ADD , DELETE , MODIFY } \{\texttt{ADD},\texttt{DELETE},\texttt{MODIFY}\} .
+To mitigate overfitting, we explicitly constrain updates to introduce abstract,
+reusable principles (instead of case-specific heuristics) and validate the adapted rubric on held-out domain splits to ensure it remains generalizable and free of dataset artifacts.
+Importantly, this is a human-in-the-loop workflow: human experts periodically audit proposed edits, resolve ambiguous failure cases, and approve revisions before merging them into ℳ dom \mathcal{M}_{\text{dom}} ,
+enabling rapid specialization without training an additional proposer policy.
+3.4 Applying OpenRS to Reinforcement Learning
+We apply the Open Rubric System (OpenRS) as a reward interface for reinforcement learning on open-ended generation.
+In contrast to RLHF ( Ouyang et al., 2022 ) , which depends on extensive human annotations, and RLVR ( Guo et al., 2025 ) ,
+which is largely limited to domains with deterministic ground truth,
+OpenRS provides a scalable reward signal by converting evaluation quality into training feedback:
+we continuously refine the hierarchical Meta Rubric to improve the fidelity of the judge, which in turn improves the reward used for policy optimization.
+To integrate our pairwise adaptive rubric into the RL loop efficiently, we adapt Bootstrapped Relative Policy Optimization (BRPO; Section 2.2 ) for effective rubric-based pairwise comparisons.
+For a rollout o i o_{i} , OpenRS constructs the final scalar reward as a superposition of a Pairwise Adaptive Score and a Pointwise Verifiable Score :
+R ⁡ ( q , o i ) = s i , ref + γ ​ ∑ c ∈ 𝒱 q ϕ c ​ ( o i ) , R(q,o_{i})=s_{i,\text{ref}}+\gamma\sum_{c\in\mathcal{V}_{q}}\phi_{c}(o_{i}),
+(5)
+where s i , ref s_{i,\text{ref}} is the criterion-weighted preference score produced by the Adaptive Rubric ℛ i , ref \mathcal{R}_{i,\text{ref}} ,
+and the second term aggregates verifiable constraint signals from the Pointwise Verifiable Rubric 𝒱 q \mathcal{V}_{q} .
+For each constraint c ∈ 𝒱 q c\in\mathcal{V}_{q} , the function ϕ c ​ ( o i ) \phi_{c}(o_{i}) returns + 1 +1 if the response o i o_{i} satisfies condition c c , and − 1 -1 otherwise.
+The coefficient γ \gamma serves as a balancing hyperparameter, ensuring that hard constraints impose a significant influence on the reward landscape.
+This decomposition decouples subjective quality optimization from objective constraint enforcement, enabling stable RL updates under a transparent, rubric-based reward.
+Model
+RewardBench v2
+PPE Pref / ZH
+RM-Bench
+JudgeBench
+Avg.
+LLM-as-a-Judge & Generative Reward Models & Rubric
+DeepSeek-GRM-27B ( Liu et al., 2025b )
+-
+71.1 *
+-
+-
+-
+DeepSeek-GRM-27B (w/ MetaRM) ( Liu et al., 2025b )
+-
+72.2 *
+-
+-
+-
+RM-R1-Qwen-Instruct-32B ( Chen et al., 2025 )
+-
+76.3 *
+79.1
+-
+-
+RM-R1-DeepSeek-Distill-Qwen-32B ( Chen et al., 2025 )
+-
+75.3 *
+83.9
+-
+-
+EvalPlanner (Llama-3.3-70B) ( Saha et al., 2025 )
+-
+-
+82.1
+56.6
+-
+J1-Llama-70B ( Whitehouse et al., 2025 )
+-
+-
+82.7
+60.0
+-
+RationaleRM (Qwen3-30B-A3B) ( Wang et al., 2026 )
+-
+-
+87.1
+82.0
+-
+Auto-Rubric (UltraFeedback, Qwen3-235B-A22B-Instruct-2507) ( Xie et al., 2025 )
+-
+78.0 *
+-
+74.3 *
+-
+Open Scalar Reward Models
+Llama-3-OffsetBias-RM-8B ( Park et al., 2024 )
+64.8
+60.6 *
+71.3
+63.5
+65.0
+ArmoRM-Llama3-8B-v0.1 ( Wang et al., 2024a )
+66.5
+58.3 *
+69.3
+59.7
+63.4
+Internlm2-20b-reward ( Cai et al., 2024 )
+56.3
+69.4 *
+68.3
+64.3
+64.8
+LDL-Reward-Gemma-2-27B-v0.1
+72.5
+43.3 *
+71.1
+64.2
+67.4
+Llama-3.1-Nemotron-70B ( Wang et al., 2024b )
+76.7
+68.7 *
+72.2
+65.8
+70.5
+INF-ORM-Llama3.1-70B ( Minghao Yang, 2024 )
+76.5
+65.7 *
+73.8
+70.2
+71.7
+Skywork-Reward-Llama-3.1-8B-v0.2 ( Liu et al., 2024a )
+71.8
+62.2 *
+72.1
+62.9
+67.1
+Skywork-Reward-Gemma-2-27B-v0.2 ( Liu et al., 2024a )
+75.3
+57.6 *
+70.0
+66.5
+67.3
+Skywork-Reward-V2-Llama-3.1-8B ( Liu et al., 2025a )
+84.1
+79.6 *
+92.8
+80.0
+84.3
+LLM-as-a-Judge & Rubric System
+OpenRS (gpt-oss-120b)
+85.7
+76.6
+91.7
+93.3
+86.8
+OpenRS (DeepSeek-V3.1)
+85.6
+78.1
+91.8
+89.1
+86.2
+OpenRS (DeepSeek-V3.2)
+85.8
+78.9
+92.7
+89.4
+86.7
+OpenRS (Qwen3-30B-A3B-Instruct-2507)
+83.7
+78.4
+91.1
+86.4
+84.9
+OpenRS (Qwen3-235B-A22B-Instruct-2507)
+90.7
+82.3
+93.0
+91.6
+89.4
+Table 1 : Main results comparing our proposed Rubric System against state-of-the-art baselines.
+Bold numbers indicate the best performance among all models.
+Results marked with "*" are re-implemented.
+Entries marked with "-" indicate either (1) that the specific model’s score is not included in the original benchmark or (2) that the model is unreleased.
+4 Experiments
+Most RL pipelines for general-purpose LMs rely on scalar reward models (SRMs),
+which compress multi-dimensional human preferences into a single score and often induce reward hacking and brittle generalization.
+In contrast, OpenRS provides a transparent,
+rubric-based reward signal that decomposes subjective preference into interpretable criteria while optionally incorporating verifiable constraint signals.
+Before deploying OpenRS as a scalable reward interface for RL,
+we show that its rubric-based judgments consistently outperform strong SRM baselines in alignment with human preferences on standard reward-modeling benchmarks.
+4.1 Experimental Setup
+We evaluate OpenRS against state-of-the-art SRMs on four diverse benchmarks: RM-Bench ( Liu et al., 2024b ) , JudgeBench ( Tan et al., 2025 ) , RewardBench v2 ( Malik et al., 2025 ) , and PPE Preference ( Frick et al., 2024 ) .
+For the rubric refinement process in Sec 3.2 , we use Qwen3-235B-A22B-Instruct-2507 1 1
+1
+https://huggingface.co/Qwen/Qwen3-235B-A22B-Instruct-2507 as the refinement policy π refine \pi_{\text{refine}} , with beam size B = 4 B=4 and G = 32 G=32 rollouts per iteration.
+PPE Preference is multilingual ( ∼ \sim 16k examples) and includes a Chinese subset ( ∼ \sim 1.2k); we report results on the Chinese subset and mark obvious label errors as label_error after cross-checking with multiple strong LLM judges and human review.
+For reproducibility, we release our refined Meta Rubric, Verifiable Rubric, the complete evaluation scripts, and all preference data for these four benchmarks at https://github.com/Qwen-Applications/OpenRS .
+4.2 Main Results
+As shown in Table 1 ,
+OpenRS achieves state-of-the-art alignment with human preferences across all four benchmarks and attains the best overall average.
+Notably, OpenRS (Qwen3-235B-A22B) outperforms the strongest open SRM baseline (Skywork-Reward-V2) by + 5.1 +5.1 points on the average score ( 89.4 89.4 vs. 84.3 84.3 ),
+indicating that explicit rubric decomposition provides a strictly stronger training signal than monolithic scalar scoring.
+RM-Bench probes sensitivity to subtle content differences and robustness to style/verbosity biases (the substantively better answer may be shorter or less formatted);
+OpenRS (Qwen3-235B-A22B) achieves 93.0 93.0 , surpassing the strongest open SRM baseline ( 92.8 92.8 ) by + 0.2 +0.2 ,
+as criterion-level decomposition prevents superficial attributes from dominating the judgment.
+JudgeBench targets judge reliability under common biases (position bias, verbosity bias, and self-preference) on complex reasoning; OpenRS (gpt-oss-120b) reaches 93.3 93.3 , improving over the strongest reported baseline ( 82.0 82.0 ) by + 11.3 +11.3 , consistent with our bias-aware meta-rubric principles and pair-difference-grounded adaptive comparisons.
+RewardBench v2 covers a broad mix of capabilities (Chat/Reasoning/Safety) with challenging, structured, out-of-distribution preference pairs; OpenRS (Qwen3-235B-A22B) attains 90.7 90.7 , exceeding the strongest open SRM baseline ( 84.1 84.1 ) by + 6.6 +6.6 , as adaptive rubric generation dynamically selects and weights criteria while the meta-rubric provides transferable high-level principles.
+PPE Preference evaluates preference prediction on policy-generated outputs, better reflecting the on-policy distribution encountered during RLHF (we report the Chinese subset); OpenRS (Qwen3-235B-A22B) achieves 82.3 82.3 , outperforming the strongest open SRM baseline ( 79.6 79.6 ) by + 2.7 +2.7 , supported by higher-fidelity rubric-based comparisons and our beam-search refinement with top- B B filtered GRPO updates.
+Different Foundation Models for OpenRS
+The primary objective of our Rubric System is to serve as a robust reward engine for Reinforcement Learning.
+The RL training process inherently involves generating a massive volume of rollouts, which necessitates a reward signal that is not only high-quality but also computationally accessible.
+Relying on commercial, closed-source APIs for this purpose is impractical due to prohibitive costs and rate limits.
+Consequently, our system is designed to be deployed locally, depending entirely on the capabilities of open-weights models to provide scalable feedback APIs.
+Finally, we analyze OpenRS under different open-weights foundation models as the judge backbone.
+The results show a clear scaling trend: stronger backbones yield stronger rubric evaluation (e.g., OpenRS improves from 84.9 84.9 with Qwen3-30B-A3B to 89.4 89.4 with Qwen3-235B-A22B on the average score), indicating that evaluation quality in OpenRS scales with the underlying model’s reasoning and instruction-following ability.
+Moreover, OpenRS powered by non-Qwen backbones such as gpt-oss-120b also surpasses strong SRM baselines on key benchmarks (e.g., JudgeBench), while DeepSeek variants remain competitive where scores are available, supporting the generality of our rubric-based approach beyond a single model family.
+Pareto Frontier of OpenRS
+Figure 2 : Pareto Frontier for Open Rubric System on Different Benchmarks.
+Figure 2 further characterizes this trade-off by plotting OpenRS accuracy against the judge backbone’s inference compute (FLOPs).
+Across benchmarks, Qwen3-Instruct models form a strong Pareto frontier: Qwen3-235B-A22B achieves the best overall evaluation quality while remaining substantially more compute-efficient than heavier backbones that do not improve accuracy (e.g., DeepSeek variants on several tasks).
+Although gpt-oss-120b can be particularly strong on JudgeBench, Qwen3-235B-A22B is the most consistently competitive choice across all evaluated benchmarks.
+Given that RL requires both high-fidelity rewards and high-throughput scoring, this Pareto analysis motivates our default choice of Qwen3-235B-A22B-Instruct-2507 as the judge backbone for subsequent RL training.
+5 Analysis
+Model
+RewardBench v2
+PPE Pref / ZH
+RM-Bench
+JudgeBench
+Avg.
+Pointwise OpenRS
+86.1
+76.2
+91.1
+90.9
+86.1
+OpenRS
+90.7
+82.3
+93.0
+91.6
+89.4
+- w/o diff mechanism
+88.9
+80.6
+91.8
+88.5
+87.5
+- w/o domain meta rubric
+-
+80.9
+-
+-
+-
+Table 2 : Ablation study of OpenRS based on Qwen3-235B-A22B-Instruct-2507.
+5.1 Recipe for OpenRS
+In this subsection, we summarize practical design choices for building an effective rubric system.
+Rather than treating these components as independent add-ons, we recommend using them as a coherent “recipe” that jointly improves evaluation fidelity and robustness across benchmarks.
+Pairwise over Pointwise.
+OpenRS is designed to be flexible: the hierarchical Meta Rubric and the dynamic Adaptive Rubric can be instantiated under either pairwise comparison or pointwise scoring.
+In practice, pairwise evaluation is a better default for capturing nuanced preferences (Section 2.2 ),
+while a pointwise variant can be useful when pairwise comparisons are infeasible.
+Our ablation in Table 2 (row “Pointwise OpenRS”) shows a clear performance gap to full OpenRS, supporting pairwise comparison as the recommended configuration.
+Think differences first to ground criterion selection.
+When generating an Adaptive Rubric for a response pair ( o i , o j ) (o_{i},o_{j}) , we first identify the salient semantic differences Δ i ​ j \Delta_{ij} and then synthesize criteria conditioned on these differences (Section 3.1 ).
+This “diff-first” step helps prevent generic, underspecified criteria and reduces susceptibility to superficial biases by anchoring the evaluation to what actually distinguishes the two candidates.
+Removing this step degrades performance (Table 2 , row “w/o diff mechanism”), indicating that explicit difference grounding is an important ingredient of OpenRS.
+Use Domain Meta Rubrics to scale reliably across domains.
+A key advantage of OpenRS is that it decouples principle specification from model parameters:
+to specialize the reward signal for a target domain, we refine or introduce a Domain Meta Rubric rather than fine-tuning a generative reward model.
+This modularity avoids catastrophic forgetting and negative transfer that can occur when a single monolithic reward model is adapted across heterogeneous domains.
+The ablation in Table 2 (row “w/o domain meta rubric”) confirms that domain-specific refinements are critical for state-of-the-art performance on diverse tasks.
+5.2 Refinement Policy: Frozen vs. GRPO vs. Asym-GRPO
+In Section 3.2 ,
+we argued that training the refinement policy π refine \pi_{\text{refine}} is crucial for effective discrete meta-rubric search,
+and that naive GRPO updates can be unstable under sparse, skewed rewards.
+We compare three settings: (i) Frozen ,
+where π refine \pi_{\text{refine}} is kept fixed and only beam selection is performed; (ii) GRPO ,
+which updates π refine \pi_{\text{refine}} using all rollouts with standard group-wise normalization;
+(iii) Asym-GRPO , which masks gradients from rollouts outside Top B ​ ( { R i } i = 1 G ) \text{Top}_{B}(\{R_{i}\}_{i=1}^{G}) .
+As shown in Figure 3 ,
+Frozen quickly plateaus, standard GRPO exhibits noticeable volatility,
+whereas Asym-GRPO yields more stable and sustained improvements,
+supporting its role in reinforcing successful mutations while avoiding “less-bad” failures.
+Figure 3 : Training dynamics of the refinement policy π refine \pi_{\text{refine}} under different settings.
+5.3 Say Goodbye to Scalar Reward Model: General RL with Open Rubric System
+In Section 3.4 , we described how OpenRS can serve as a scalable reward interface for RL by combining pairwise adaptive comparisons with optional verifiable constraints.
+Here, we provide a preliminary end-to-end RL comparison to test whether replacing an SRM with OpenRS yields measurable improvements during policy optimization.
+To isolate the effect of the reward signal, we use the same warm-start in-house policy model and the same RL training data, and only replace the scalar reward model used for scoring with OpenRS (powered by Qwen3-235B-A22B-Instruct-2507).
+As shown in Table 3 , this simple replacement improves the average performance on five public benchmarks, with particularly notable gains on instruction-following stress tests (IFEval/IFScale) and JudgeMark-v2.
+We also include RL + Pointwise OpenRS as an intermediate baseline: adopting the same meta-rubric principles but reverting to pointwise rubric scoring yields a modest improvement over the scalar RM, yet remains clearly behind the full pairwise OpenRS reward.
+This gap supports our central claim that pairwise , difference-grounded rubric execution and external preference aggregation are key for producing a high-fidelity training signal in open-ended RL, beyond the benefits of rubric formatting alone.
+We further track two training-time diagnostics in Figure 4 : policy entropy and the fraction of “Same” judgments produced by the pairwise adaptive rubric, which together provide a coarse view of exploration dynamics and judge decisiveness during RL.
+Model
+IFEval
+IFScale
+EQ-Bench
+JudgeMark-v2
+Chinese Simple QA
+Avg.
+RL + Scalar Reward Model
+82.3
+54.8
+82.2
+43.8
+78.9
+68.4
+RL + Pointwise OpenRS
+82.7
+56.2
+81.6
+49.4
+77.2
+69.4
+RL + OpenRS (Qwen3-235B-A22B-Instruct-2507)
+83.0
+59.0
+81.2
+54.4
+79.1
+71.3
+Table 3 : Performance comparison of RL tasks on public benchmarks with scalar reward model and our rubric system.
+Training Efficiency
+Because RL produces a large volume of rollouts, a practical rubric-based reward must be both high-quality and throughput-efficient.
+In our implementation, we deploy Qwen3-235B-A22B-Instruct-2507 as a local judge service on 128 NVIDIA H20 (80GB) GPUs and use the verl framework for training.
+With asynchronous request batching and agent-loop overlap, the majority of judge calls can be pipelined with policy rollouts; in our stress tests, OpenRS sustains ∼ \sim 10,000 concurrent requests under the most efficient configuration, resulting in only a small overhead on wall-clock training time compared to an SRM-based setup.
+5.4 More Analysis
+We provide fine-grained breakdowns and additional diagnostics in the appendix (Section A ):
+(i) Detailed Performance Comparison decomposes results by RM-Bench difficulty levels, RewardBench v2 categories, and JudgeBench subdomains, showing where OpenRS improves robustness and where different SRM/GenRM baselines fail;
+(ii) Generalization on Arena evaluates LMArena-style generalization on in-house QA/Writing test sets and we defer final conclusions until evaluation completes;
+(iii) Same Rate of Open Rubric System quantifies judge uncertainty (“Same” decisions) and supports efficient filtering during RL without costly majority voting.
+We additionally include qualitative case studies illustrating behavioral differences induced by OpenRS-based RL.
+5.5 Aha Moment in General Domains
+The "Aha Moment" observed in reasoning tasks, such as the emergence of self-correction and long-chain reasoning in DeepSeek-R1 ( Guo et al., 2025 ) , suggests that reinforcement learning can unlock capabilities beyond the supervision data.
+However, observing similar phenomena in open-ended general domains has remained elusive. We argue that the traditional Scalar Reward Model (SRM) is the primary bottleneck.
+The true distribution of human preferences is inherently complex and multimodal.
+SRMs attempt to approximate this distribution by learning from pairwise preference data, which often suffers from limited expressiveness and noise patterns.
+Consequently, the SRM tends to fit a "trivial distribution" that captures only surface-level features of high-quality responses.
+Policy optimization then acts as a "zero-forcing" process, compelling the policy model to collapse onto the mode of this imperfect proxy distribution.
+This "double approximation loss", first in reward modeling and second in policy fitting, severely constrains the policy’s upper bound, preventing it from exploring the true high-reward regions of the human preference landscape.
+DeepSeek-R1 circumvents this by using rule-based verification for math and code, eliminating the first approximation step and allowing the policy to interact directly with the ground truth, thereby triggering the Aha Moment.
+We posit that open-ended tasks possess a similar potential for Aha Moments, provided the reward signal avoids the compression of scalarization.
+Our Rubric System functions as a "soft" rule-based verifier for general tasks.
+By explicating evaluation criteria via the Meta Rubric and performing criterion-wise pairwise comparisons, it avoids fitting a trivial scalar distribution.
+Instead, it presents the policy with a high-dimensional, interpretable feedback landscape, preserving the complexity of human preferences.
+This setup mirrors the direct verification in reasoning tasks, creating the conditions necessary for emergence.
+We specifically examine the policy’s behavior during training, focusing on the entropy curve shown in Figure 4(a) .
+Unlike standard RLHF where entropy typically decreases monotonically as the model collapses to the reward mode, our method shows a distinctive pattern: an initial decrease followed by a significant rise and stabilization at a higher level.
+While Table 3 provides a macroscopic performance comparison, we conduct a microscopic analysis of response dynamics to evidence this emergence.
+Comparing these responses with those from a Scalar RM baseline and the state-of-the-art Gemini-3 Pro, we observe a qualitative shift.
+As detailed in the Case Study (Section C ), specifically Figures 9 and 10 , the model trained with our Rubric System exhibits stronger subjective consciousness and richer emotional expression compared to the neutral, "assistant-like" tone typical of Scalar RM models.
+This emergence of distinct "personality" and the courage to express subjective stances, rather than hedging, may represent the "Aha Moment" of reinforcement learning in general domains.
+6 Related Work
+6.1 LLM-as-a-Judge and Rubric-Based Evaluation
+The “LLM-as-a-Judge” paradigm ( Zheng et al., 2023 ) has emerged as a scalable alternative to human evaluation, utilizing strong off-the-shelf LLMs to assess model outputs directly.
+However, the reliability of direct scalar scoring is often undermined by biases such as positional bias, verbosity bias ( Zheng et al., 2023 ) ,
+and a systematic preference for specific styles over factual accuracy ( Sharma et al., 2023 ) .
+While subsequent research has attempted to mitigate these issues by training specialized judge models ( Liu et al., 2025b ; Anugraha et al., 2025 ; Yu et al., 2025b ; Whitehouse et al., 2025 ) ,
+these approaches typically address the symptoms rather than the root cause: the opaque and implicit nature of the judgment process.
+To improve transparency and reliability, recent work has increasingly adopted rubric-based evaluation ,
+which decomposes holistic quality into interpretable, fine-grained criteria ( Arora et al., 2025 ; Akyürek et al., 2025 ; Wang et al., 2025 ) .
+Rubrics have been successfully applied across diverse domains, from assessing clinical reasoning ( Arora et al., 2025 ) to evaluating real problems in finance and law ( Akyürek et al., 2025 ) .
+To overcome the scalability limitations of expert-authored rubrics, researchers have explored automated construction methods.
+Gunjal et al. (2025) generate evaluation criteria via prompting and investigate both explicit and implicit strategies for aggregating rubric feedback into scalar rewards
+Huang et al. (2025) generate multi-source largs-scale rubrics by hunmans or LLMs and design rubrics against reward hacking.
+Xie et al. (2025) infer a general-purpose, interpretable set of evaluation rubrics from a small sample of human preferences.
+To improve the scalability and quality of automatically generated rubrics,
+Rezaei et al. (2025) dynamically elicits novel evaluation criteria from pairwise comparisons of on-policy model responses,
+and Zhang et al. (2025) leverage off-policy responses to elicit rubrics that accurately differentiate high-quality outputs and mitigate reward over-optimization in the high-reward tail.
+To further enhance the discriminability and robustness of rubrics,
+Li et al. (2026) generate comprehensive and discriminative rubrics by synergizing principle-guided synthesis, multi-model aggregation, and difficulty evolution to capture nuanced quality,
+while Liu et al. (2026) extract hard rules and general principles from preference data and improve their reliability via contrastive rubric generation and preference-label consistency filtering.
+OpenRS emphasizes principle-first reward supervision by executing an explicit meta-rubric through difference-grounded adaptive rubrics and criterion-wise pairwise comparisons with external preference aggregation,
+rather than reducing rubric feedback to pointwise weighted scalar scores or implicitly internalizing principles into a trained judge.
+6.2 Rubric-Based RL
+Reinforcement learning with verifiable rewards (RLVR) has demonstrated that objective outcomes (e.g., correct code or math solutions) can drive scalable capability improvements ( Guo et al., 2025 ; Lightman et al., 2023 ) .
+To extend this success to non-verifiable, open-ended domains, recent studies explore rubrics as training-time rewards.
+Viswanathan et al. (2025) generate instruction-specific checklists and evaluate responses pointwise against these checklists to construct preference data for offline RL (DPO).
+Approaches such as RaR ( Gunjal et al., 2025 ) , and others ( Huang et al., 2025 ; Zhang et al., 2025 ; Rezaei et al., 2025 ; Li et al., 2026 )
+utilize rubrics to guide exploration or provide reward signal in form of weighted aggregation of rubric scores for online RL algorithms like GRPO.
+However, this pointwise scalarization imposes a discriminability ceiling and remains vulnerable to reward gaming,
+potentially leading to collapse-like dynamics in open-ended settings.
+Jia et al. (2025) propose a pairwise generative reward model (GenRM) for nuanced subjective assessment and Bootstrapped Relative Policy Optimization (BRPO) algorithm that
+to achieve stable and scalable reinforcement learning for non-verifiable tasks while demonstrating strong resistance to reward hacking.
+Zhang et al. (2026) ; Xu et al. (2026) extends this paradigm by addressing the “discriminative collapse” inherent in pointwise scoring and developing a tournament-based relative ranking mechanism for long-horizon, open-ended agentic tasks that demand fine-grained process-aware evaluation.
+Instead of learning a function or relying on static pointwise scoring, we treat reward as a reasoning process governed by an explicit meta-rubric .
+By employing pairwise comparisons under adaptive rubrics and aggregating preferences externally,
+we establish a robust and scalable reinforcement learning framework that bridges the gap between RLVR and general domain alignment.
+7 Conclusion
+In this paper, we argued that robust reward supervision for non-verifiable tasks is fundamentally a principle generalization problem: rather than learning an opaque scalar function, a reward signal should be produced by an explicit reasoning process executed under inspectable principles.
+To operationalize this view, we introduced the Open Rubric System (OpenRS) , a plug-and-play rubric-based reward interface built around Pairwise Adaptive Meta-Rubrics (PAMR) and lightweight Pointwise Verifiable Rubrics (PVRs).
+OpenRS instantiates adaptive, difference-grounded criteria on the fly, conducts criterion-wise pairwise comparisons, and aggregates preferences externally, which avoids the information bottleneck of pointwise weighted scalarization.
+Across four reward-modeling benchmarks, OpenRS achieves state-of-the-art alignment with human preferences, improving over the strongest open scalar reward model by + 5.1 +5.1 on the overall average ( 89.4 89.4 vs. 84.3 84.3 ).
+When used as a drop-in replacement for scalar reward models in RL, OpenRS yields consistent gains on public evaluations (average 71.3 71.3 vs. 68.4 68.4 ) while remaining throughput-feasible under asynchronous batching.
+A key direction is to reduce the cost of rubric-based RL by improving judge efficiency (e.g., distilling rubric execution to smaller models, caching and reusing difference analyses, and optimizing batching/serving).
+We also plan to strengthen robustness via systematic adversarial evaluation of rubric execution, principled defenses against prompt injection, and automated monitoring that detects rubric drift during training.
+On the methodology side, improving domain adaptation through more automated, data-driven domain meta-rubric refinement and extending OpenRS to multi-turn, tool-using agent settings could further broaden its applicability.
+Finally, larger-scale RL studies across more policy sizes, languages, and real-world tasks will be crucial to validate whether rubric-based rewards can reliably unlock “Aha Moment”-style emergence beyond verifiable domains.
+References
+Akyürek et al. (2025)
+A. F. Akyürek, A. Gosai, C. B. C. Zhang, V. Gupta, J. Jeong, A. Gunjal, T. Rabbani, M. Mazzone, D. Randolph, M. M. Meymand, G. Chattha, P. Rodriguez, D. Mares, P. Singh, M. Liu, S. Chawla, P. Cline, L. Ogaz, E. Hernandez, Z. Wang, P. Bhatter, M. Ayestaran, B. Liu, and Y. He
+PRBench: large-scale expert rubrics for evaluating high-stakes professional reasoning .
+External Links: 2511.11562 ,
+Link
+Cited by: §1 ,
+§6.1 .
+Anugraha et al. (2025)
+D. Anugraha, Z. Tang, L. J. V. Miranda, H. Zhao, M. R. Farhansyah, G. Kuwanto, D. Wijaya, and G. I. Winata
+R3: robust rubric-agnostic reward models .
+External Links: 2505.13388 ,
+Link
+Cited by: §1 ,
+§6.1 .
+Arora et al. (2025)
+R. K. Arora, J. Wei, R. S. Hicks, P. Bowman, J. Quiñonero-Candela, F. Tsimpourlas, M. Sharman, M. Shah, A. Vallone, A. Beutel, J. Heidecke, and K. Singhal
+HealthBench: evaluating large language models towards improved human health .
+External Links: 2505.08775 ,
+Link
+Cited by: §1 ,
+§6.1 .
+Cai et al. (2024)
+Z. Cai, M. Cao, H. Chen, K. Chen, K. Chen, X. Chen, X. Chen, Z. Chen, Z. Chen, P. Chu, et al.
+Internlm2 technical report .
+arXiv preprint arXiv:2403.17297 .
+Cited by: Table 5 ,
+Table 1 .
+Chen et al. (2025)
+X. Chen, G. Li, Z. Wang, B. Jin, C. Qian, Y. Wang, H. Wang, Y. Zhang, D. Zhang, T. Zhang, et al.
+RM-r1: reward modeling as reasoning .
+arXiv preprint arXiv:2505.02387 .
+Cited by: Table 5 ,
+Table 5 ,
+Table 1 ,
+Table 1 .
+Frick et al. (2024)
+E. Frick, T. Li, C. Chen, W. Chiang, A. N. Angelopoulos, J. Jiao, B. Zhu, J. E. Gonzalez, and I. Stoica
+How to evaluate reward models for rlhf .
+External Links: 2410.14872 ,
+Link
+Cited by: §4.1 .
+Gunjal et al. (2025)
+A. Gunjal, A. Wang, E. Lau, V. Nath, Y. He, B. Liu, and S. Hendryx
+Rubrics as rewards: reinforcement learning beyond verifiable domains .
+External Links: 2507.17746 ,
+Link
+Cited by: §1 ,
+§6.1 ,
+§6.2 .
+Guo et al. (2025)
+D. Guo, D. Yang, H. Zhang, J. Song, R. Zhang, R. Xu, Q. Zhu, S. Ma, P. Wang, X. Bi, et al.
+Deepseek-r1: incentivizing reasoning capability in llms via reinforcement learning .
+arXiv preprint arXiv:2501.12948 .
+Cited by: §1 ,
+§3.4 ,
+§5.5 ,
+§6.2 .
+Huang et al. (2025)
+Z. Huang, Y. Zhuang, G. Lu, Z. Qin, H. Xu, T. Zhao, R. Peng, J. Hu, Z. Shen, X. Hu, X. Gu, P. Tu, J. Liu, W. Chen, Y. Fu, Z. Fan, Y. Gu, Y. Wang, Z. Yang, J. Li, and J. Zhao
+Reinforcement learning with rubric anchors .
+External Links: 2508.12790 ,
+Link
+Cited by: §1 ,
+§6.1 ,
+§6.2 .
+Jia et al. (2025)
+R. Jia, Y. Yang, Y. Gai, K. Luo, S. Huang, J. Lin, X. Jiang, and G. Jiang
+Writing-zero: bridge the gap between non-verifiable tasks and verifiable rewards .
+External Links: 2506.00103 ,
+Link
+Cited by: §1 ,
+§2.2 ,
+§6.2 .
+Li et al. (2026)
+S. Li, J. Zhao, M. Wei, H. Ren, Y. Zhou, J. Yang, S. Liu, K. Zhang, and W. Chen
+RubricHub: a comprehensive and highly discriminative rubric dataset via automated coarse-to-fine generation .
+External Links: 2601.08430 ,
+Link
+Cited by: §1 ,
+§6.1 ,
+§6.2 .
+Lightman et al. (2023)
+H. Lightman, V. Kosaraju, Y. Burda, H. Edwards, B. Baker, T. Lee, J. Leike, J. Schulman, I. Sutskever, and K. Cobbe
+Let’s verify step by step .
+In The Twelfth International Conference on Learning Representations ,
+Cited by: §6.2 .
+Liu et al. (2024a)
+C. Y. Liu, L. Zeng, J. Liu, R. Yan, J. He, C. Wang, S. Yan, Y. Liu, and Y. Zhou
+Skywork-reward: bag of tricks for reward modeling in llms .
+arXiv preprint arXiv:2410.18451 .
+Cited by: Table 5 ,
+Table 5 ,
+Table 1 ,
+Table 1 .
+Liu et al. (2025a)
+C. Y. Liu, L. Zeng, Y. Xiao, J. He, J. Liu, C. Wang, R. Yan, W. Shen, F. Zhang, J. Xu, Y. Liu, and Y. Zhou
+Skywork-reward-v2: scaling preference data curation via human-ai synergy .
+External Links: 2507.01352 ,
+Link
+Cited by: Table 5 ,
+Table 1 .
+Liu et al. (2026)
+T. Liu, R. Xu, T. Yu, I. Hong, C. Yang, T. Zhao, and H. Wang
+OpenRubrics: towards scalable synthetic rubric generation for reward modeling and llm alignment .
+External Links: 2510.07743 ,
+Link
+Cited by: §1 ,
+§6.1 .
+Liu et al. (2024b)
+Y. Liu, Z. Yao, R. Min, Y. Cao, L. Hou, and J. Li
+RM-bench: benchmarking reward models of language models with subtlety and style .
+External Links: 2410.16184 ,
+Link
+Cited by: §4.1 .
+Liu et al. (2025b)
+Z. Liu, P. Wang, R. Xu, S. Ma, C. Ruan, P. Li, Y. Liu, and Y. Wu
+Inference-time scaling for generalist reward modeling .
+arXiv preprint arXiv:2504.02495 .
+Cited by: §A.3 ,
+Table 5 ,
+Table 5 ,
+§1 ,
+Table 1 ,
+Table 1 ,
+§6.1 .
+Mahan et al. (2024)
+D. Mahan, D. Van Phung, R. Rafailov, C. Blagden, N. Lile, L. Castricato, J. Fränken, C. Finn, and A. Albalak
+Generative reward models .
+arXiv preprint arXiv:2410.12832 .
+Cited by: §1 .
+Malik et al. (2025)
+S. Malik, V. Pyatkin, S. Land, J. Morrison, N. A. Smith, H. Hajishirzi, and N. Lambert
+RewardBench 2: advancing reward model evaluation .
+External Links: 2506.01937 ,
+Link
+Cited by: §4.1 .
+McKee-Reid et al. (2024)
+L. McKee-Reid, C. Sträter, M. A. Martinez, J. Needham, and M. Balesni
+Honesty to subterfuge: in-context reinforcement learning can make honest models reward hack .
+arXiv preprint arXiv:2410.06491 .
+Cited by: §1 .
+Minghao Yang (2024)
+X. T. Minghao Yang
+INF-orm-llama3.1-70b .
+External Links: Link
+Cited by: Table 5 ,
+Table 1 .
+Ouyang et al. (2022)
+L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray, et al.
+Training language models to follow instructions with human feedback .
+Advances in neural information processing systems 35 , pp. 27730–27744 .
+Cited by: §1 ,
+§3.4 .
+Park et al. (2024)
+J. Park, S. Jwa, M. Ren, D. Kim, and S. Choi
+OffsetBias: leveraging debiased data for tuning evaluators .
+External Links: 2407.06551
+Cited by: Table 5 ,
+Table 1 .
+Rezaei et al. (2025)
+M. Rezaei, R. Vacareanu, Z. Wang, C. Wang, B. Liu, Y. He, and A. F. Akyürek
+Online rubrics elicitation from pairwise comparisons .
+External Links: 2510.07284 ,
+Link
+Cited by: §1 ,
+§6.1 ,
+§6.2 .
+Saha et al. (2025)
+S. Saha, X. Li, M. Ghazvininejad, J. Weston, and T. Wang
+Learning to plan & reason for evaluation with thinking-llm-as-a-judge .
+arXiv preprint arXiv:2501.18099 .
+Cited by: Table 1 .
+Schulman et al. (2017)
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+Proximal policy optimization algorithms .
+arXiv preprint arXiv:1707.06347 .
+Cited by: §2.1 .
+Shao et al. (2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. Li, Y. Wu, et al.
+Deepseekmath: pushing the limits of mathematical reasoning in open language models .
+arXiv preprint arXiv:2402.03300 .
+Cited by: §2.1 .
+Sharma et al. (2023)
+M. Sharma, M. Tong, T. Korbak, D. Duvenaud, A. Askell, S. R. Bowman, N. Cheng, E. Durmus, Z. Hatfield-Dodds, S. R. Johnston, et al.
+Towards understanding sycophancy in language models .
+arXiv preprint arXiv:2310.13548 .
+Cited by: §6.1 .
+Tan et al. (2025)
+S. Tan, S. Zhuang, K. Montgomery, W. Y. Tang, A. Cuadron, C. Wang, R. A. Popa, and I. Stoica
+JudgeBench: a benchmark for evaluating llm-based judges .
+External Links: 2410.12784 ,
+Link
+Cited by: §4.1 .
+Viswanathan et al. (2025)
+V. Viswanathan, Y. Sun, S. Ma, X. Kong, M. Cao, G. Neubig, and T. Wu
+Checklists are better than reward models for aligning language models .
+External Links: 2507.18624 ,
+Link
+Cited by: §6.2 .
+Wang et al. (2026)
+B. Wang, Y. Liu, Y. Liu, T. Tang, S. Wang, C. Gao, C. Zheng, Y. Zhang, L. Yu, S. Liu, T. Gui, Q. Zhang, X. Huang, B. Yu, F. Huang, and J. Lin
+Outcome accuracy is not enough: aligning the reasoning process of reward models .
+External Links: 2602.04649 ,
+Link
+Cited by: Table 1 .
+Wang et al. (2024a)
+H. Wang, W. Xiong, T. Xie, H. Zhao, and T. Zhang
+Interpretable preferences via multi-objective reward modeling and mixture-of-experts .
+arXiv preprint arXiv:2406.12845 .
+Cited by: Table 5 ,
+Table 1 .
+Wang et al. (2024b)
+Z. Wang, Y. Dong, O. Delalleau, J. Zeng, G. Shen, D. Egert, J. J. Zhang, M. N. Sreedhar, and O. Kuchaiev
+Helpsteer2: open-source dataset for training top-performing reward models .
+arXiv preprint arXiv:2406.08673 .
+Cited by: Table 5 ,
+Table 1 .
+Wang et al. (2025)
+Z. Wang, J. Jung, X. Lu, S. Diao, E. Evans, J. Zeng, P. Molchanov, Y. Choi, J. Kautz, and Y. Dong
+ProfBench: multi-domain rubrics requiring professional knowledge to answer and judge .
+External Links: 2510.18941 ,
+Link
+Cited by: §1 ,
+§6.1 .
+Whitehouse et al. (2025)
+C. Whitehouse, T. Wang, P. Yu, X. Li, J. Weston, I. Kulikov, and S. Saha
+J1: incentivizing thinking in llm-as-a-judge via reinforcement learning .
+arXiv preprint arXiv:2505.10320 .
+Cited by: §1 ,
+Table 1 ,
+§6.1 .
+Xie et al. (2025)
+L. Xie, S. Huang, Z. Zhang, A. Zou, Y. Zhai, D. Ren, K. Zhang, H. Hu, B. Liu, H. Chen, Z. Liu, and B. Ding
+Auto-rubric: learning to extract generalizable criteria for reward modeling .
+External Links: 2510.17314 ,
+Link
+Cited by: §A.3 ,
+Table 1 ,
+§6.1 .
+Xu et al. (2026)
+R. Xu, T. Liu, Z. Dong, T. You, I. Hong, C. Yang, L. Zhang, T. Zhao, and H. Wang
+Alternating reinforcement learning for rubric-based reward modeling in non-verifiable llm post-training .
+arXiv preprint arXiv:2602.01511 .
+Cited by: §2.2 ,
+§6.2 .
+Ye et al. (2024)
+Z. Ye, X. Li, Q. Li, Q. Ai, Y. Zhou, W. Shen, D. Yan, and Y. Liu
+Beyond scalar reward model: learning generative judge from preference data .
+arXiv preprint arXiv:2410.03742 .
+Cited by: §1 .
+Yu et al. (2025a)
+Q. Yu, Z. Zhang, R. Zhu, Y. Yuan, X. Zuo, Y. Yue, T. Fan, G. Liu, L. Liu, X. Liu, et al.
+Dapo: an open-source llm reinforcement learning system at scale .
+arXiv preprint arXiv:2503.14476 .
+Cited by: §A.3 .
+Yu et al. (2025b)
+Z. Yu, J. Zeng, W. Gu, Y. Wang, J. Wang, F. Meng, J. Zhou, Y. Zhang, S. Zhang, and W. Ye
+RewardAnything: generalizable principle-following reward models .
+External Links: 2506.03637 ,
+Link
+Cited by: §1 ,
+§6.1 .
+Zhang et al. (2025)
+J. Zhang, Z. Wang, L. Gui, S. M. Sathyendra, J. Jeong, V. Veitch, W. Wang, Y. He, B. Liu, and L. Jin
+Chasing the tail: effective rubric-based reward modeling for large language model post-training .
+External Links: 2509.21500 ,
+Link
+Cited by: §1 ,
+§6.1 ,
+§6.2 .
+Zhang et al. (2026)
+Q. Zhang, B. Chen, F. Zhang, R. Ding, S. Wang, Q. Wang, Y. Huang, H. Zhang, R. Zhu, P. Wang, A. Ren, X. Li, P. Xie, J. Liu, N. Guo, J. Zhou, and Z. Zha
+ArenaRL: scaling rl for open-ended agents via tournament-based relative ranking .
+External Links: 2601.06487 ,
+Link
+Cited by: §1 ,
+§2.2 ,
+§6.2 .
+Zheng et al. (2023)
+L. Zheng, W. Chiang, Y. Sheng, S. Zhuang, Z. Wu, Y. Zhuang, Z. Lin, Z. Li, D. Li, E. P. Xing, H. Zhang, J. E. Gonzalez, and I. Stoica
+Judging llm-as-a-judge with mt-bench and chatbot arena .
+External Links: 2306.05685 ,
+Link
+Cited by: §1 ,
+§6.1 .
+Zhong et al. (2025)
+J. Zhong, W. Shen, Y. Li, S. Gao, H. Lu, Y. Chen, Y. Zhang, W. Zhou, J. Gu, and L. Zou
+A comprehensive survey of reward models: taxonomy, applications, challenges, and future .
+arXiv preprint arXiv:2504.12328 .
+Cited by: §1 .
+Appendix A Additional Analysis
+A.1 Detailed Performance Comparison
+While Table 1 provides an aggregate view of model performance across four benchmarks, a granular analysis of individual subcategories reveals nuanced strengths and weaknesses of different reward modeling approaches.
+We present a detailed breakdown for RM-Bench and RewardBench v2 in Table 4 , which enables a more precise understanding of where each method excels or struggles.
+RM-Bench Difficulty Analysis.
+RM-Bench categorizes evaluation pairs into three difficulty levels: Easy , Normal , and Hard .
+This stratification helps identify whether a reward model maintains consistent performance as the discrimination task becomes more challenging.
+We observe that traditional scalar reward models often exhibit a significant performance degradation on Hard examples, with accuracy dropping substantially compared to Easy cases.
+For instance, while some models achieve above 90% accuracy on Easy pairs, their performance on Hard pairs can fall below 50%, indicating limited robustness to subtle content differences.
+In contrast, our rubric-based approach, by explicitly decomposing evaluation criteria and grounding comparisons in semantic differences, demonstrates more stable performance across difficulty levels, suggesting better generalization to challenging preference distinctions.
+RewardBench v2 Category Analysis.
+RewardBench v2 evaluates reward models across six distinct categories: Factuality (verifying factual correctness), Precise IF (precise instruction following), Math (mathematical reasoning), Safety (harmful content detection), Focus (response relevance), and Ties (handling equally good responses).
+This multi-dimensional assessment reveals that scalar reward models often exhibit imbalanced performance across categories.
+For example, many models achieve high accuracy on Safety and Focus (often above 90%), but struggle significantly with Precise IF (typically below 50%), highlighting a critical weakness in capturing fine-grained instruction adherence.
+The structured nature of our adaptive rubric system, which explicitly evaluates responses against domain-specific criteria, enables more balanced performance across all categories.
+By decomposing the holistic judgment into criterion-specific assessments, our approach can better identify and weight the relevant dimensions for each comparison, leading to more consistent and interpretable evaluations.
+These fine-grained comparisons underscore a fundamental limitation of scalar reward models: their monolithic scoring mechanism cannot adaptively emphasize different evaluation dimensions based on the specific characteristics of the response pair.
+Our pairwise adaptive rubric addresses this by dynamically generating context-aware criteria, ensuring that the evaluation process remains sensitive to the most relevant quality dimensions for each particular comparison.
+Model
+RM-Bench
+RewardBench v2
+JudgeBench
+Easy
+Normal
+Hard
+Avg.
+Factuality
+Precise IF
+Math
+Safety
+Focus
+Ties
+Avg.
+Knowledge
+Reasoning
+Math
+Coding
+Avg.
+ArmoRM-Llama3-8B-v0.1
+80.4
+71.5
+55.8
+69.2
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+Nemotron-340B-Reward
+81.0
+71.4
+56.1
+69.5
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+LDL-Reward-Gemma-2-27B-v0.1
+92.4
+75.2
+45.5
+71.0
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+Llama-3-OffsetBias-RM-8B
+83.9
+73.2
+56.9
+71.3
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+Internlm2-20b-reward
+79.4
+74.2
+62.8
+72.1
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+Llama-3.1-Nemotron-70B
+92.2
+76.5
+47.8
+72.2
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+QRM-Gemma-2-27B
+-
+-
+-
+-
+78.5
+37.2
+69.9
+95.8
+95.4
+83.2
+76.7
+-
+-
+-
+-
+-
+LMUnit-llama3.1-70b
+-
+-
+-
+-
+84.6
+48.8
+71.6
+90.7
+97.0
+90.6
+80.5
+-
+-
+-
+-
+-
+LMUnit-qwen2.5-72b
+-
+-
+-
+-
+87.2
+54.4
+72.7
+91.3
+96.8
+90.1
+82.1
+-
+-
+-
+-
+-
+INF-ORM-Llama3.1-70B
+92.1
+80.0
+54.0
+75.4
+74.1
+41.9
+69.9
+96.4
+90.3
+86.2
+76.5
+-
+-
+-
+-
+-
+RationaleRM (Qwen3-30B-A3B)
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+73.4
+89.8
+82.1
+95.2
+82.0
+Auto-Rubric (UltraFeedback)
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+73.0
+84.4
+67.1
+72.6
+74.3
+Skywork-Reward-Gemma-2-27B-v0.2
+88.9
+71.9
+42.1
+67.6
+76.7
+37.5
+67.2
+96.9
+91.7
+81.8
+75.3
+-
+-
+-
+-
+-
+Skywork-Reward-V2-Qwen3-8B
+91.9
+85.7
+70.1
+82.6
+79.8
+49.1
+77.0
+94.0
+96.4
+72.9
+78.2
+70.1
+67.3
+82.1
+73.8
+73.4
+Skywork-Reward-V2-Llama-3.1-8B
+97.0
+95.0
+86.5
+92.8
+84.6
+66.2
+77.6
+96.7
+98.4
+81.2
+84.1
+76.6
+75.5
+89.3
+78.6
+80.0
+OpenRS (gpt-oss-120b)
+95.9
+93.4
+85.8
+91.7
+96.0
+54.0
+91.8
+94.8
+77.7
+99.9
+85.7
+94.0
+96.3
+88.6
+94.4
+93.3
+OpenRS (DeepSeek-V3.1)
+96.0
+93.5
+85.9
+91.8
+92.6
+56.6
+93.5
+81.8
+90.0
+99.0
+85.6
+92.8
+92.1
+88.0
+83.7
+89.1
+OpenRS (DeepSeek-V3.2)
+95.8
+95.0
+87.2
+92.7
+92.5
+57.1
+92.6
+81.2
+92.6
+98.7
+85.8
+93.6
+94.2
+90.8
+78.9
+89.4
+OpenRS (Qwen3-30B-A3B-Instruct-2507)
+95.5
+93.3
+84.6
+91.1
+90.7
+54.7
+90.2
+91.3
+75.7
+99.9
+83.7
+90.5
+89.0
+89.1
+77.1
+86.4
+OpenRS (Qwen3-235B-A22B-Instruct-2507)
+96.6
+95.0
+87.4
+93.0
+97.0
+73.5
+92.0
+95.6
+86.8
+99.0
+90.7
+92.9
+95.4
+86.4
+91.5
+91.6
+Table 4 : Performance comparison of fine-grained difficulty-level scores on RM-Bench and on different categories of RewardBench v2.
+A.2 Generalization on Arena
+While the benchmarks presented in Table 1 provide valuable insights into reward model performance, they predominantly incorporate objective evaluation criteria that can be verified against ground truth or structured standards.
+Among these benchmarks, only PPE Preference adopts a more open-ended, LMArena-style evaluation paradigm that captures genuine user subjective preferences.
+LMArena-style assessments are inherently more open and general, emphasizing real-world user preferences and subjective judgments rather than rigid objective metrics.
+This type of evaluation serves as a critical indicator of whether a model has truly aligned with human preferences, as it reflects the nuanced, context-dependent quality judgments that users make in practice.
+To comprehensively validate the effectiveness of various reward models in this more open-ended setting, we constructed two in-house test sets focusing on tasks with high demand in general-purpose applications: QA (Question Answering) and Writing.
+For each task, we collected 1,000 real user queries from production logs, and for each query, we obtained two candidate responses from different models.
+These response pairs were then meticulously annotated by human evaluators to establish preference relationships.
+This process ensures that our evaluation reflects authentic user needs and subjective quality assessments rather than synthetic or artificially constrained scenarios.
+We evaluated all reward models on these two in-house test sets, with results presented in Table 5 .
+The evaluation is still ongoing, and we defer drawing conclusions until the complete results are available.
+Model
+PPE Pref / ZH
+In-House QA
+In-House Writing
+Avg.
+LLM-as-a-Judge & Generative Reward Models
+DeepSeek-GRM-27B ( Liu et al., 2025b )
+71.1
+67.7
+75.9
+71.6
+DeepSeek-GRM-27B (w/ MetaRM) ( Liu et al., 2025b )
+72.2
+67.3
+76.3
+71.9
+RM-R1-Qwen-Instruct-32B ( Chen et al., 2025 )
+76.3
+73.1
+84.3
+77.9
+RM-R1-DeepSeek-Distill-Qwen-32B ( Chen et al., 2025 )
+75.3
+71.4
+77.9
+74.8
+Open Scalar Reward Models
+Llama-3-OffsetBias-RM-8B ( Park et al., 2024 )
+60.6
+58.9
+79.1
+66.1
+ArmoRM-Llama3-8B-v0.1 ( Wang et al., 2024a )
+58.3
+58.3
+73.1
+63.1
+Internlm2-20b-reward ( Cai et al., 2024 )
+69.4
+67.8
+60.3
+66.1
+LDL-Reward-Gemma-2-27B-v0.1
+43.3
+59.1
+29.7
+50.2
+Llama-3.1-Nemotron-70B ( Wang et al., 2024b )
+68.7
+61.8
+77.3
+68.8
+INF-ORM-Llama3.1-70B ( Minghao Yang, 2024 )
+65.7
+67.2
+64.5
+66.0
+Skywork-Reward-Llama-3.1-8B-v0.2 ( Liu et al., 2024a )
+62.2
+61.7
+77.7
+67.0
+Skywork-Reward-Gemma-2-27B-v0.2 ( Liu et al., 2024a )
+57.6
+56.1
+66.5
+60.0
+Skywork-Reward-V2-Llama-3.1-8B ( Liu et al., 2025a )
+79.6
+64.0
+76.3
+73.5
+LLM-as-a-Judge & Rubric System
+OpenRS (gpt-oss-120b)
+76.6
+74.7
+84.6
+78.6
+OpenRS (DeepSeek-V3.1)
+78.1
+72.7
+77.3
+76.0
+OpenRS (DeepSeek-V3.2)
+78.9
+75.7
+79.0
+77.9
+OpenRS (Qwen3-30B-A3B-Instruct-2507)
+78.4
+74.5
+79.8
+77.6
+OpenRS (Qwen3-235B-A22B-Instruct-2507)
+82.3
+74.4
+82.9
+79.9
+Table 5 : Main results on the LMArena-like Benchmarks.
+A.3 Same Rate of Open Rubric System
+Our Rubric System evaluates a pair ( o i , o j ) (o_{i},o_{j}) by calculating a weighted average score as shown in Equation 4 .
+In this formula, a score of 0 (representing a same judgment on a specific adaptive rubric) contributes neutrally and can be considered negligible in the raw calculation, as zero scores rarely appear in the weighted average computation.
+While previous works typically employ majority voting to mitigate position bias and variance ( Liu et al., 2025b ; Xie et al., 2025 ) , such an approach introduces prohibitive computational overhead and latency during online RL training.
+Therefore, we adopt a more efficient bidirectional evaluation strategy: we compute scores for both the forward order ( o i , o j ) (o_{i},o_{j}) and the reverse order ( o j , o i ) (o_{j},o_{i}) to check for consistency.
+If the preference directions are contradictory (indicating that the model’s judgment is unstable), we explicitly label the pair as "Same", signifying that the LLM cannot accurately distinguish the quality difference between the two responses.
+We argue that retaining the capacity to output "Same" is crucial for robust alignment, as it naturally filters out ambiguous comparisons that often lead to inconsistency or reward hacking, rather than forcing a potentially noisy decision.
+In the context of Reinforcement Learning training, we typically employ filtering mechanisms similar to DAPO ( Yu et al., 2025a ) , meaning not all rollout samples are used for the final training updates.
+Therefore, an appropriate "Same" rate is acceptable as these uninformative samples are naturally filtered out.
+(a)
+(b)
+Figure 4 : Evolution of metrics during RL training: (a) Policy Entropy; (b) The ratio of ’Same’ judgments by the pairwise adaptive rubric.
+Table 6 summarizes the proportion of "Same" judgments produced by the pairwise adaptive rubric across various benchmarks.
+Figure 4(b) displays the real-time "Same" rate monitored during RL training using the refined rubric system.
+The rate starts at approximately 0.3, rises to 0.45 by step 70, and then plateaus.
+Note that 0.45 represents the proportion of pairs labeled as "Same". This corresponds to a lower query-level drop rate, since a specific query is filtered out only when the number of indistinguishable pairs ( o i , o ref ) (o_{i},o_{\text{ref}}) exceeds a certain threshold.
+Besides, the "Same" rate observed during training is significantly higher than that on benchmarks.
+This is a reasonable phenomenon, as rollout responses generated by the same policy during training are inherently more similar to each other, whereas benchmark datasets typically contain more distinct response pairs.
+Model
+RM-Bench
+RewardBench v2
+PPE Pref / ZH
+JudgeBench
+In-House QA
+In-House Writing
+OpenRS (gpt-oss-120b)
+7.6
+14.6
+21.2
+4.7
+21.8
+22.1
+OpenRS (DeepSeek-V3.1)
+10.1
+13.0
+23.3
+12.4
+20.4
+19.1
+OpenRS (DeepSeek-V3.2)
+9.8
+12.5
+24.8
+6.4
+24.3
+20.3
+OpenRS (Qwen3-30B-A3B-Instruct-2507)
+10.0
+15.0
+25.0
+9.8
+22.3
+20.5
+OpenRS (Qwen3-235B-A22B-Instruct-2507)
+7.4
+10.6
+20.1
+6.3
+21.2
+14.7
+Table 6 : Same Rate (%) of Rubric System on All Benchmarks.
+A.4 Detailed Calculation on RM Benchmarks
+There are distinct differences in how the Pairwise Rubric System and the Pointwise Scalar Reward Model score benchmark data.
+Here, we detail the accuracy calculation methods for three different types of RM Benchmarks: JudgeBench / PPE, RewardBench V2, and RMBench.
+For more details, please refer to our open-source code.
+JudgeBench / PPE
+These benchmarks employ pairwise comparison evaluation.
+Based on Rubric System, the Judge model performs a pairwise comparison between the chosen and rejected responses.
+To eliminate position bias, we conduct two evaluations for each pair of responses, by swapping their presentation order.
+A final winner is determined only when the conclusions of both evaluations are consistent; if the conclusions differ, it is ruled as a tie.
+RewardBench V2
+RewardBench V2 adopts a 1-vs-N evaluation paradigm, where each sample contains one chosen response and multiple rejected responses.
+We directly perform bidirectional pairwise comparison evaluation.
+In the aggregation of 1-vs-N results, a "Win" is declared only if the chosen response defeats all rejected responses; if the chosen response loses to any rejected response, it is a "Loss"; otherwise, it is a "Tie".
+RMBench
+In RMBench, both the chosen and rejected responses in each sample contain 3 phrasing variants (variant a/b/c), aiming to test evaluation robustness.
+We perform evaluations on all 9 variant pairing combinations (aa, ab, ac, ba, bb, bc, ca, cb, cc).
+Each pairing undergoes bidirectional evaluation (swapping responses positions), resulting in a total of 18 evaluations.
+Appendix B General Meta Rubric and Pairwise Evaluation Prompt
+In this section, we present the General Meta Rubric and the Pairwise Evaluation Prompt mentioned in Section 3.1 .
+Note that for ease of understanding, we provide a simplified version here.
+Please refer to our open-source GitHub repository for the complete Rubric and Evaluation Prompt.
+Figure 5 : General Meta Rubric, Chinese Version
+Figure 6 : General Meta Rubric, English Version
+Figure 7 : Pairwise Evaluation Prompt, Chinese Version
+Figure 8 : Pairwise Evaluation Prompt, English Version
+Appendix C Case Study
+In Section 5.3 , we trained an end-to-end RL model with our Open Rubric System.
+Here, we present several cases from real-world user scenarios.
+Figure 9 : Case 1, Chinese Version
+Figure 10 : Case 1, English Version
+Figure 11 : Case 2
+Figure 12 : Case 3
+Figure 13 : Case 4
+Figure 14 : Case 5
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

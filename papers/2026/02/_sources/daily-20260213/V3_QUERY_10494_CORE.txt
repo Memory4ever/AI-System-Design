@@ -1,0 +1,73 @@
+Exact source: https://arxiv.org/html/2602.10494v1
+L124: ##### Task Definition
+L125: 
+L126: Let $\mathcal{T}$ be a reasoning task given by a natural language instruction. Instead of generating a flat sequence of tokens $\mathbf{y}=(y_{1},y_{2},\dots,y_{n})$, our framework generates a sequence of states and actions $(\mathcal{S}_{0},\mathcal{A}_{0},\mathcal{S}_{1},\mathcal{A}_{1},\dots,\mathcal{S}_{T})$, where each $\mathcal{S}_{t}$ represents a structured representation of the model’s current epistemic state.
+L127: ##### The Reasoning Substrate: The DOM State
+L128: 
+L129: The core of our framework is the Reasoning Substrate $\mathcal{S}$, defined as a DOM-tree:
+L130: 
+L131:  | $$\mathcal{S}=\{\mathcal{V},\mathcal{E},\mathcal{P}\}$$  |  | (1)
+L132: 
+L133: Where:
+L134: 
+L135:   * •
+L136: 
+L137: $\mathcal{V}=\{v_{1},v_{2},\dots,v_{k}\}$ is a set of Reasoning Artifacts (e.g., geometric points, circuit components, or logic nodes), represented as HTML elements.
+L138: 
+L139:   * •
+L140: $\mathcal{E}$ represents the Hierarchical Relations (parent-child nodes) and Topological Links (e.g., CSS-defined connections).
+L141: 
+L142:   * •
+L143: 
+L144: $\mathcal{P}$ is the set of Attributes (e.g., coordinates, labels, or physical constraints) bound to each node.
+L145: ##### The Action Space: CRUD Operations
+L146: 
+L147: The controller interacts with the substrate through a discrete action space $\mathcal{A}$, comprising four atomic CRUD operations:
+L148: 
+L149:  | $$\mathcal{A}\in\{\text{Insert, Replace, Modify, Delete}\}$$  |  | (2)
+L150: 
+L151: A transition function $\delta$ maps the current state and action to a subsequent state:
+L152: 
+L153:  | $$\mathcal{S}_{t+1}=\delta(\mathcal{S}_{t},a_{t})$$  |  | (3)
+L154: Unlike standard CoT where $\delta$ is a simple concatenation, in our framework, $\delta$ allows for non-monotonic updates, such as the modification or removal of previously established nodes $v_{i}\in\mathcal{V}$ when a logical contradiction is detected.
+L155: ### 3.2 State Initialization
+L156: The reasoning process begins with the initialization of the external memory. Let $\mathcal{S}_{0}$ denote the initial state of the Blackboard. At $t=0$, $\mathcal{S}_{0}$ consists of a minimal HTML5 boilerplate with an empty <body> container. The agent receives the task instruction $I$ and the original visual input $V_{orig}$.
+L157: Unlike standard CoT, which relies solely on the implicit hidden states of the Transformer to maintain context, Canvas-CoT explicitly instantiates an external "World Model" that allows for visual debugging and state persistence.
+L158: ### 3.3 The Iterative Reasoning Cycle
+L159: 
+L160: The core workflow of Canvas-CoT proceeds through an iterative loop that synchronizes the agent’s internal thought process with the external structured state. This cycle breaks the linear dependency of autoregressive generation, allowing for what we term Stateful Visual Reasoning. The process at timestep $t$ is defined as follows.
+L161: #### 3.3.1 Atomic Reasoning and Action Generation
+L162: 
+L163: The Solver Agent ($\mathcal{G}$), parameterized by $\theta$, takes the current context window $C_{t}$ as input (detailed in Section cite18†3.5 ). To prevent error propagation common in long-context CoT, we enforce a "One Step Thinking" constraint. The agent generates a dual-output tuple:
+L164: 
+L165:  | $$(\tau_{t},a_{t})\sim\pi_{\theta}(\cdot\mid C_{t})$$  |  | (4)
+L166: 
+L167: where:
+L168: 
+L169:   * •
+L170: $\tau_{t}$ is the Thought Trace (enclosed in <think> tags), representing a discrete unit of reasoning (e.g., "Analyze the color of the object at coordinates $x,y$").
+L209: #### 3.3.2 Non-monotonic State Transition
+L210: 
+L211: Upon generating action $a_{t}$, the deterministic environment executes the operation on the DOM tree. The state transition is governed by the function $\delta$:
+L212: 
+L213:  | $$\mathcal{S}_{t+1}=\delta(\mathcal{S}_{t},a_{t})$$  |
+L214: Crucially, because $\delta$ supports modify and delete operations, the reasoning trajectory is non-monotonic. If the agent recognizes a previous error (e.g., an incorrect bounding box size), it updates the existing DOM node rather than appending a correction text to the end of the sequence. This ensures that $\mathcal{S}_{t+1}$ always represents the agent’s current best belief of the world state, rather than a history of trial-and-error.
+L215: To rigorously quantify the efficiency of this non-monotonic transition, we analyze the cost of error correction.
+L216: ### 3.4 Visual Grounding and Adversarial Critique
+L217: 
+L218: A fundamental limitation of text-based CoT is the lack of physical grounding—a model can assert logical contradictions (e.g., overlapping objects that shouldn’t overlap) without internal detection. We address this via a Rendering-Critique Loop, framing visual grounding as a closed-loop feedback control problem. After the state transition, a headless browser engine $\mathcal{R}$ renders the DOM tree into a raster image $V_{state}$:
+L219:  | $$V_{\text{state}}=\mathcal{R}(\mathcal{S}_{t+1})$$  |  | (5)
+L220: 
+L221: We introduce a secondary Critique Agent ($\mathcal{C}$), prompting it to act as an objective discriminator. The critic compares the ground truth image $V_{orig}$ with the rendered state $V_{state}$ to identify hallucinations:
+L222: 
+L223:  | $$h_{t+1}=\mathcal{C}(V_{\text{orig}},V_{\text{state}},I)$$  |  | (6)
+L224: where $h_{t+1}$ is a structured JSON object categorizing discrepancies into Attribute Errors, False Existences, or Spatial Conflicts. Rather than a passive suggestion, the feedback $h_{t+1}$ functions as a symbolic residual signal. It serves as a "visual gradient", explicitly informing the Generator Agent of the mismatch between its internal world model and reality.
+L225: ### 3.5 Recurrent Context Optimization
+L226: 
+L227: To address the constraints of finite context windows and mitigate the accumulation of historical noise, we implement a Context Pruning strategy. At the end of each iteration $t$, the verbose thought trace $\tau_{t}$ is discarded, as its logical essence is already distilled into the persistent state. The context for the next step, $C_{t+1}$, is constructed not by concatenating history, but by aggregating the current persistent state and the critique feedback:
+L228:  | $$C_{t+1}=\{I,\text{ActionHistory}_{0\dots t},V_{\text{state}},h_{t+1}\}$$  |  | (7)
+L229: 
+L230: This creates a Markovian-like property where the decision at $t+1$ depends primarily on the current structured state $\mathcal{S}_{t+1}$ (visualized via $V_{state}$) and the immediate feedback, rather than the potentially flawed textual history of previous reasoning steps.
+L231: ### 3.6 Termination
+L232: 
+L233: The iterative process continues until the Generator Agent outputs a termination token (enclosed in $<answer>$), signifying that the structured state $\mathcal{S}$ sufficiently resolves the query $I$.

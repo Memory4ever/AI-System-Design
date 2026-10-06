@@ -59,6 +59,12 @@ Prefill 在兼容性、链路成本或质量 evidence 不足时仍成立。
 
 双参数 artifact 用更专门的阶段计算换额外存储、训练与加载状态。[Disaggregated Quantization 的受限实验](https://arxiv.org/html/2609.26333v1)验证单机、batch 1 和给定格式的质量/性能，本地按 block 借用 Decode buffer 加载 Prefill 权重并非任意稀疏 MoE 的通用方案；短 prompt 的切换成本更难摊薄，多轮 cache 重建也未测。末端多个 checkpoint 的误差条不是独立训练 seed。参数 pair、cache producer 身份或端到端收益未通过时，保留 format-only、单参数 co-located 或较高精度路径，不从阶段速度推统一 SLO 保证。<!-- source-family:SF-2026-ARXIV-2609-26333 -->
 
+多个同架构的任务模型还可以保留各自 Prefill 参数，却共享一个冻结的 Decode 模型，使不同任务的生成请求进入同一 Decode batch；这不是把任意 fine-tuned Prefiller 的 KV 直接交给 base Decoder。Prefiller 须通过冻结 Decoder 的生成损失学习兼容的 prompt KV，而后续 token 与新 KV 仍由该 Decoder 产生。相同 tensor layout 只证明接口可搬运，不证明生成语义兼容。[SUN 的受限实验](https://arxiv.org/html/2603.02599v1)中，直接组合任务 full-finetuned Prefiller 与 base Decoder 明显降质，兼容训练也并非在每个任务都达到独立 full-finetuning 的质量。这个分支用额外任务训练、Prefiller 驻留与 handoff 状态换跨任务 Decode 复用；证据只涉及同架构、同尺寸的任务变体，不能推到任意跨家族模型。质量、KV producer 身份或实际端到端收益不成立时，保留独立 Decoder 或单模型路径，而不以每个 Decode GPU 的吞吐改善替代整个服务的 GPU 成本与 SLO 验收。<!-- source-family:SF-2026-ARXIV-2603-02599 -->
+
+若共享压力主要在长 prompt 的重复处理，而不是跨任务 Decode batching，参数分工还可以反过来：冻结一个共享 Prefiller，训练各任务 Decoder 消费它产生的 KV。[PrefillShare 的受限机制](https://arxiv.org/html/2602.12029v1)因此与前述冻结 Decoder 的分支方向相反，并非任意 fine-tuned 模型天然共用 base KV。Decode 生成的新 token 及其新 KV 由任务 Decoder 产生；后续轮次若交回共享 Prefiller，需回放这些新增 token，不能把两种 producer 的状态静默视为同一缓存。兼容训练和多轮回放是接口成立的成本，token history 与 layout 一致仍不足以证明语义等价。
+
+这个分支用额外任务训练、Decoder 驻留及回放/传输成本换共享 Prefill 的计算与状态复用。作者证据限定于同架构任务变体，质量结果并非所有任务都无损；低负载时收益可能接近原独立路径，极高负载又可能受 handoff 限制。不能把减少 Prefill 重复计算外推为整个服务免费或普遍更快。应绑定真正的 KV producer、训练 pair 和回放策略验收质量与端到端 goodput；身份、质量或收益不足时保留各模型独立 Prefill/Decode。<!-- source-family:SF-2026-ARXIV-2602-12029 -->
+
 更准确的目标不是让两个池各自的峰值吞吐最大，而是在 TTFT 与 TPOT SLO 下提高 goodput。Prefill 池过快而 Decode 池不足，只会把请求堆积在 handoff 边界；Decode 池空闲而 Prefill 排队，同样无法改善端到端体验。
 
 多模态请求还会在 Prefill 前增加 Encode，阶段拆分因此要联动入口等待和局部共驻配置，而不是只调整两个池的数量。Encode 可把输入积成 microbatch，在 batch 满、到达间隔超过阈值或首请求等待过久时执行；按到达率设置间隔阈值依赖 Poisson 等流量假设，age 上限也只限制该 batch 的等待，不是全程 TTFT 上界。部分 Prefill 可以与 Encode 共驻，剩余请求远程 Prefill；按请求计数控制分流偏差，不等于按 token 或模态计算量均衡。离线容量代理和 batch profile 可以缩小配置搜索，再用真实流水线 trial 验证，但 throughput 最大、平均延迟 tie-break 与显式 SLO goodput 优化是不同目标。[EAServe §2–4 的受限机制](https://arxiv.org/html/2609.31551v1)
@@ -435,23 +441,19 @@ retry 与回收也只有一套状态机。可是在长多轮 Agent workload 中�
 Prefill compute 下降，storage-to-Prefill 的 read traffic 却未同比下降，原本为 P→D handoff 规划的 NIC/PCIe
 路径会与 cache restore 争用。
 
-一种条件化演进是保留两条可选择路径：`storage → Prefill → Decode` 负责普通 miss 与新计算，
-`storage → Decode` 在可验证的高命中场景绕开 Prefill，并把 layerwise KV 读取与 Decode 消费流水化。它改变的
-不是 KV 的语义，而是由谁承担 restore、何时允许消费、两条路径如何共同排队：
+一种条件化演进是保留两条可选择的存储读取路径。普通路径先把 hit KV 读到 Prefill 的 host buffer，再逐层送入 Prefill HBM 计算 miss tokens；另一条路径先由 Decode 的 host buffer 代读 hit KV，仍逐层经 compute network 送回 Prefill HBM 完成 miss 计算，只把新增 miss KV 传回 Decode 与已有 hit 合并。两者都在 Decode buffer 形成完整 prompt KV 后，再 H2D 到 Decode HBM 开始生成；代读并没有让 Decode 绕过 Prefill 直接消费尚不完整的层状态。它改变的是由谁承担 storage restore，而不是 KV 的语义或 Prefill 的计算责任：
 
 ```text
 request + cache identity + predicted hit / turn shape
-→ choose storage-prefill-decode or storage-decode path
+→ choose Prefill-side or Decode-side storage read
 → reserve NIC / PCIe / HBM and destination blocks
 → stream layer state with per-layer completion
-→ admit Decode only for committed layers / generation
+→ finish miss Prefill and assemble complete prompt KV
+→ H2D to Decode, then admit generation
 → reconcile cancellation, miss and fallback
 ```
 
-直接路径可减少 Prefill-side network pressure，却新增 hit prediction、双路径公平性、layer readiness、fallback
-和重复传输；较低 hit、较少 turns、共享 NIC 或强顺序恢复要求下，单一路径仍更可验证。DualPath 在作者披露的
-Agent trace、缓存命中与硬件条件下支持这条瓶颈迁移机制，但 internal production stack 未公开，作者吞吐数字
-不能外推到不同 `P:D` ratio、topology、SLO 或 cache policy。
+Decode 代读可池化闲置的 storage NIC，却新增 host buffer、DRAM/PCIe/compute NIC 流量、双路径公平性与完整 prompt readiness。一个受限实现还让本地 H2D/D2H 经过配对 CNIC 的 RDMA 路径，与 model collectives 一起进入 InfiniBand virtual-lane QoS；这提供统一的 traffic-class 控制入口，不证明任意拓扑都无干扰。较低 hit、较少 turns、共享拥塞或 host memory 不足时，单路读取与重算仍更可验证。[精确路径与评价边界](https://arxiv.org/html/2602.21548v1#S3)仅支持作者 Hopper/3FS/400G compute NIC 的配置；零 tool gap 的评测低估真实交互 working set，部分外部 baseline 的并行/实现也不匹配，不能外推吞吐为不同 `P:D` ratio、topology、SLO 或 cache policy 的普遍收益。<!-- source-family:SF-2026-ARXIV-2602-21548 -->
 
 ## 和调度的关系
 
@@ -538,6 +540,10 @@ P/D 分离从固定两池演进到网络、KV tier、MoE expert、power 与 acce
 
 把模型 head/tail 放在可信端、middle layers 放在云端，会让边界 hidden state 成为每次调用的通信瓶颈。若历史 token span 可精确匹配，可以它作为 Prefill reference；同轮已重建 activation 可供返回路径复用，Decode 则只能用 causal predictor 提供 provisional reference。发送端必须按实际 wire format 自行重建 reference，再编码对齐 residual，避免两端状态逐轮漂移；reference miss、校准失效或质量门失败时传原始 activation。它用索引、预测与残差解码换带宽，不能把隐私边界或近似质量当作已证明。`arXiv:2608.04991v1` 只在三模型、九个 model-link pair 上支持该分支。<!-- source-family:SF-2026-ARXIV-2608-04991 -->
 
+另一条分支允许训练 split body 与 codec，把通信率和下游语言任务损失共同优化；此时压缩对象不再必须逐元素重建原 activation，而是学习满足任务质量的有损表示。量化 latent、hyperprior 与 entropy model 一起决定 wire bits，rate 权重改变后还要重新训练相应模型。因而它既不是给冻结 checkpoint 套一个通用无损 codec，也不同于上面的 reference/residual 复用：质量责任已扩展到模型训练与 codec 配对，split 层、模型 revision、量化及 entropy 格式必须共同冻结，不能把不同训练点的 perplexity/bit-rate 曲线当作原模型零损失压缩。<!-- source-family:SF-2026-ARXIV-2601-22002 -->
+
+自回归传输还要求 side information 可追加：当前 token 的 hyperprior 只能依赖当前及此前可用输入，接收端沿同样顺序解码并保留对应状态，不能为了更强 entropy prediction 借未来 token 或整段重编码。这个接口用 side bits、预测网络与 CPU arithmetic coding 换带宽，是否合算仍取决于完整路径。[GPT-2 Small/OpenWebText 的受限实验](https://arxiv.org/html/2601.22002v1)中，独立训练的高 rate 权重点会不稳定；受测 CPU/GPU codec 虽比 Deflate 快，却明显慢于 Zstandard。带宽交点来自固定协议开销假设，不是线上 SLO 测量。因此原始 activation、通用 codec 或不同 split 层仍是合理回退；执行层与下一章 scheduler 必须把质量预算、codec service time、追加状态和链路竞争一起结算。
+
 ## 小结
 
 PD 分离把一个共享 worker 的 interference 问题改写成两个独立 capacity pools 加一条 state-transfer path。它可以改善 TTFT/TPOT goodput，也可能因 KV movement、排队和 failure handling 得不偿失。
@@ -552,6 +558,8 @@ PD 分离把一个共享 worker 的 interference 问题改写成两个独立 cap
 它用额外 relay compute、重算和一致性状态换取隐藏 WAN 延迟，只在长输入短输出、带宽受限且 handoff 可验证时合理。输出很长、WAN 成本过高或 frontier 无法证明一致时，应回退同机房 PD、保持源端 decode，或重新 Prefill；作者 H100/H200 与 WAN workload 不构成通用收益保证。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2603-02599` — [SUN exact-v1](https://arxiv.org/html/2603.02599v1)，Daily `2026-03-05`；必要 §3.1–3.3、§4/Tables1–2、Appendix A.1–A.2。仅采用冻结共享 Decoder 下训练任务 Prefiller 的兼容与多任务复用边界；DGX-A100/vLLM、固定长度/到达分布的作者吞吐按 Decode GPU 归一化，不等整体 GPU 预算、生产 SLO 或跨模型家族保证。摘要与正文交互退化口径不同，不采用统一百分比；未复现或审读 artifact。root已实际对读必要源、新增正文与邻接，非作者 POST 通过。
 
 - `SF-2026-ZAI-SCALING-PAIN` — [智谱官方《Scaling Pain》](https://www.zhipuai.cn/zh/research/159)，2026-04-29 16:00 北京时间；§BugFix#1 的 Decode Abort 未传播、旧 Prefill/RDMA 写覆盖已复用 KV 槽位、Prefill safe-to-release ACK。只采 Ch55 反向回收时序；§BugFix#2 的 Indexer read-before-ready 属 Ch54 已有 tier readiness 的受限实例，LayerSplit 的 CP rank 按层驻留/广播另由Ch54承载并已非作者root实际写后通过，同一来源家族不拆计数。不采用作者异常率为跨引擎保证；root 已对照官方正文与 Ch55 相邻交接完成非作者实际写后复核，未复现实验。
 
@@ -578,8 +586,7 @@ Primary-source 校验入口：
   https://arxiv.org/abs/2601.12241
 - Tarragon（Status: Experimental；role-specific MoE serving failure recovery）:
   https://arxiv.org/abs/2601.01310
-- DualPath（Status: Experimental；storage-prefill/decode 双路径与 layerwise KV streaming）:
-  https://arxiv.org/abs/2602.21548
+- DualPath（Status: Experimental；exact-v1 §3.2/§5/§6）：https://arxiv.org/html/2602.21548v1 。Decode host buffer 代读后仍逐层回 Prefill 计算 miss，完整 prompt 合成/H2D 后才 Decode；CNIC QoS 增流量，外部并行配置不匹配及零 tool gap 工作集反侧不授通用吞吐。未核实现或复现。<!-- source-family:SF-2026-ARXIV-2602-21548 --> 非原 packet 作者必要原证/actual owner PRE 与窄写完成；root 已实际顺读正文、完整邻接与自身末注，POST 通过。
 - Mix-Quant（phase-aware precision 与 compatible KV handoff；Status: Experimental）:
   https://arxiv.org/abs/2605.20315
 - 3DLS（KV transfer / TP collective 物理 traffic-class isolation；Status: Experimental）:
@@ -654,3 +661,7 @@ Primary-source 校验入口：
 
   **已吸收的语义增量：** 新增证据边界：Profiled proactive transfer, decode demand fetch and speculative prefetch cooperate; low load falls back to full transfer. 该 delta 已进入 `books/part-05-inference-system/55-pd-disaggregation.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-28150:end -->
+
+- `SF-2026-ARXIV-2601-22002` — Daily `2026-01-31`；[Rate-Distortion Optimization exact-v1](https://arxiv.org/html/2601.22002v1) §3.1、§4.1–4.4、B.4/C。2+2+2=6，split activation 的 joint body/codec task-distortion 与 append-only hyperprior 接口差额深入；不同 λ 重新训练、CPU codec/Zstandard 反侧和假设带宽交点近正文，不授冻结 checkpoint 无损、37.77Mbps 线上或更深 entropy 必然更好。A40/bf16 训练与 RTX2080Ti/i9 单核 codec 测量分账；未核实现/复现。root 必要源及实际 Ch55 owner PRE 通过，实际 Ch54/55/56 handoff 已读；两段正文、前后及本末注经 root 非作者实际 POST 通过，窄锁释放，不授日级 Gate。
+
+- `SF-2026-ARXIV-2602-12029` — Daily `2026-02-14`；[exact-v1](https://arxiv.org/html/2602.12029v1) §3.1–3.3、§4.1–4.3/Table1–2。只采用冻结共享 Prefiller/任务 Decoder 的反向分工、新生成 token 回放与 KV producer 身份；同架构、额外训练及负载/质量反侧保留，不授无损或任意模型 KV 共用。 root 必要源/具体 owner PRE 通过并授单文件两段窄锁；实际两段正文、前后邻接与本末注经 root 非作者 POST 通过，窄锁释放；已落实。未运行代码或复现实验，非日级 Gate。

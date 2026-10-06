@@ -1,0 +1,614 @@
+feb05_mat_method
+MatGPTQ: Accurate and Efficient Post-Training Matryoshka Quantization (https://arxiv.org/html/2602.03537v1)
+citeturn26182view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.03537v1","lineno":100}); Total lines: 724
+L67: The recent Matryoshka Quantization (MatQuant) work of cite43†Nair et al. (2025) provided a fresh approach to model compression by turning integer bit representations into a nested representation: a single “parent” model quantized at the highest precision can be sliced (via most-significant bit (MSB) extraction) at runtime to yield lower‑bit models, enabling sliced variants of a single parent checkpoint to serve many deployment budgets.
+L68: The MatQuant paper demonstrates single‑model, multi‑precision training and shows that slicing supports bit‑width interpolation, e.g., 6‑ and 3‑bit from an 8‑bit parent. Further, the paper suggested the possibility of Mix-and-Match trade‑offs between cost and accuracy, by non-uniform per-layer slicing.
+L69: Follow-up work such as Any‑Precision LLM (cite44†Park et al., 2024 ) explored an orthogonal upscaling route for multi-scale PTQ, by starting from a low‑bit model, and progressively adding bits for increasing accuracy.
+L70: Despite this promise, the initial MatQuant evaluations are confined to finetuning‑based quantization methods, such as QAT and block-wise QAT (OmniQuant), as opposed to the cheaper and more popular one‑shot PTQ methods, such as GPTQ (cite40†Frantar et al., 2022 ; cite42†Shao et al., 2023 ; cite43†Nair et al., 2025 ).
+L71: MatQuant’s description fixes the trained target set to the canonical triplet of {8,4,2} bit-widths (with interpolation to {6,3}), rather than offering a general multi‑target PTQ recipe and implementation for arbitrary bit-widths (cite43†Nair et al., 2025 ). While heterogeneous quantization is discussed, the paper does not explore how to search for bit-widths in order to balance accuracy and deployment costs. Further, no code nor kernels were released at the time of writing.
+L72: #### Contributions.
+L73: We address these gaps with Post‑Training Matryoshka Quantization (MatGPTQ), a PTQ framework that optimizes a single parent model jointly for a user‑specified set of bit‑widths $R$ (e.g., $\{2,3,4,6,8\}$ bits per parameter).
+L74: Algorithmically, we (i) cast Matryoshka training as a new type of multi‑precision GPTQ objective with cross‑bit error sharing and MSB slicing; (ii) provide open and efficient compression and GPU kernel implementations supporting more than two nested precisions, including integer 2–8 bits with bit‑width interpolation; and (iii) integrate a principled evolutionary search for heterogeneous per‑layer bit‑width assignment under fixed memory budgets (cite45†Sieberling et al., 2025 ).
+L75: We release kernels, packing, and a vLLM (cite46†Kwon et al., 2023 ) integration required for end-to-end deployment.
+L76: #### Experimental results.
+L77: We evaluate MatGPTQ across a suite of modern LLMs, including LLaMA 3.1 8B, Qwen3 (8B/14B), and Phi-3-Medium. Our results demonstrate that MatGPTQ successfully produces a single nested model that performs similarly or better relative to independently-trained, non-nested GPTQ baselines.
+L78: Crucially, MatGPTQ preserves accuracy at higher bit-widths (4-8 bits, within 0.7% of baseline) while achieving gains in the challenging low-bit regime, showing a 1.34% average improvement at 3 bits, relative to the uniform quantization baseline. Overall, the method matches or outperforms the QAT approach of cite43†Nair et al.
+L79: (2025) , and also exhibits strong “interpolation” capabilities, by maintaining accuracy when slicing models at intermediate bit-widths (e.g., 6-bit) for which the model did not optimize explicitly.
+L80: Furthermore, we validate the integration of evolutionary search for heterogeneous, non-uniform per-layer quantization. This “Mix-and-Match” approach yields configurations that are often Pareto-superior to standard uniform PTQ, achieving comparable or higher accuracy at lower average bit-witdhs, even down to 2.5 bits. Finally, we benchmark our optimized CUDA kernels, confirming significant end-to-end latency improvements.
+L81: For instance, 3-bit inference on LLaMA 3.1 8B achieves nearly a 3x end-to-end speedup compared to FP16 execution on NVIDIA GPUs, demonstrating the practical viability of deploying sliceable models.
+L82: All in all, MatGPTQ shows that efficient, and open-source post-training Matryoshka quantization is eminently viable, lowering the barrier of entry for multi-precision deployment.
+L83: ## 2 Background and Related Work
+L84: Quantization is often applied as a post-training (PTQ) step, in one-shot to already trained models. We focus on such one-shot PTQ methods in this paper, by contrast to more expensive quantization-aware training (QAT).
+L85: For PTQ, one can differentiate between data-free approaches, which use simpler round-to-nearest (RTN) projections (cite47†Dettmers, 2016 ; cite48†Badri & Shaji, 2023 ), but tend to drop accuracy even at 4-bits per parameter, and data-aware approaches such as GPTQ (cite40†Frantar et al., 2022 ) or AWQ (cite49†Lin et al., 2024 ), which utilize a calibration set that is passed through the model during quantization.
+L86: Specifically, a common approach in PTQ is to quantize each linear layer $\ell$ with weights $W_{\ell}$, in linear order, to produce the quantized weights $Q_{\ell}$. Please see Section cite10†3 for an overview of the GPTQ algorithm.
+L87: Matryoshka Quantization (MatQuant) (cite43†Nair et al., 2025 ) is a general-purpose multi-scale quantization technique whose objective is to generate “nested” models, in the sense that the higher-bitwdith models “contain” the lower-bit-witdh models. More precisely, in MatQuant, for certain bit-widths $r$, one can slice the most significant $r$ bits out of a $c$-bit model, with $0<r<c$, to obtain a valid model, which can be done via the following shift operation:
+L88:  | $$S(q^{c},r)=\mathrm{clamp}\left(\left\lfloor\frac{q_{c}}{2^{c-r}}\right\rceil,\;0,\;2^{r}-1\right)\cdot 2^{c-r}.$$  |  | (1)
+L89: 
+L90: They then define their objective function, which minimizes over $\theta$, representing the set of model and auxiliary parameters being optimized. The loss function $\mathcal{L}(\cdot)$ is evaluated for a fixed target set of bit-witdhs $R={r_{1},r_{2},...,r_{K}}$, under the quantization method $Q(\cdot)$ and forward pass $F(\cdot)$, and is calculated as:
+L91:  | $$\min\frac{1}{N}\sum_{i\in[N]}\sum_{r\in R}\lambda_{r}\cdot\mathcal{L}(F(S(Q(\theta,c),r),x^{\prime}_{i},y^{\prime}_{i})$$  |  | (2)
+L92: 
+L93: Furthermore, they define $y^{\prime}_{i}=y_{i}$ and $x^{\prime}_{i}=x_{i}$ for QAT, and $y^{\prime}_{i}=F_{\ell}(W^{\ell}_{F},X^{\ell}_{i})$ and $x^{\prime}_{i}=X^{\ell}_{i}$ for OmniQuant. The parameter $\lambda_{r}$ is used to weight the importance of individual bit-witdhs, allowing the optimization to emphasize different bit-witdhs accordingly.
+L94: cite43†Nair et al. (2025) produce a single “main” model that can be deployed to various devices with different memory limitations, where the largest model that fits the memory budget is “sliced” from the main model at runtime. For quantization, the authors show results both with standard QAT, adapted to a regularized MatQuant objective, and with a block-wise QAT variant based on the OmniQuant method (cite42†Shao et al., 2023 ).
+L95: Moreover, the authors suggest the possibility of a Mix-and-Match variant, supporitng non-uniform layer-wise quantization. However, their work has some limitations including: (i) focus on quantizing the Feed-Forward-Network (FFN) layers, only considering Attention Weights in the context of QAT, (ii) basic strategies and no practical results for the Mix-and-match approach, (iii) neither their proof-of-concept implementation nor models are publicly available and (iv) no kernels are available.
+L96: In this context, our work presents the first post-training (PTQ) and open-source variant of MatQuant, supporting multiple bit-witdhs and enabling quantization across a range from 3 to 8 bits using PTQ. It demonstrates performance that is either superior, or on par (within noise) compared to standard, non-nested instances of PTQ. Furthermore, in a direct comparison it outperforms MatQuant’s OmniQuant implementation.
+L97: Additionally, we are the first to provide CUDA kernels that enable inference speedups and memory savings, as well as support for heterogeneous quantization.
+L98: Further Related Work. Any-Precision LLM (cite44†Park et al., 2024 ) introduces an up-scaling method built on top of SqueezeLLM’s clustered, non-uniform quantization. Yet, their method always loads the full $n$-bit model into memory and performs dynamic slicing during inference, instead of deploying only the target bit-width. Furthermore, deploying a heterogenous model (mix-and-match) is restricted, as they rely on a fixed quantization layout. The paper states that upscaling cannot be applied to GPTQ or AWQ.
+L99: Further, $\textnormal{D}^{2}\textnormal{MoE}$ (cite50†Wang et al., 2025 ) nests multiple bit-witdhs into one model by adapting GPTQ specifically for Mixture-of-Experts (MoE) layers. Their approach is based on an asymmetric GPTQ version, where each incremental bit-witdh has its own scale. This is limited by the tested bit-witdhs of 2, 3 and 4 and being specifically designed for MoE-layers.
+L100: Non-Uniform Quantization, where layers can be quantized to different bit-witdhs based on their sensitivity relative to the model output, presents a different way of exploring the accuracy-compression trade-off (cite51†He et al., 2018 ; cite52†Frantar & Alistarh, 2022 ; cite53†Yin et al., 2024 ).
+L101: However, choosing non-uniform per-layer bit-witdhs to maximize accuracy while minimizing model size is not an easy problem, as the corresponding optimization landscape is known to be highly irregular (cite45†Sieberling et al., 2025 ). To solve this for MatQuant, we adapt the state-of-the-art algorithm for this problem, called EvoPress (cite45†Sieberling et al., 2025 ), to the nested compression format.
+L102: ## 3 Matryoshka GPTQ
+L103: 
+L104: The original MatQuant presented two alternative compression strategies: 1) full-model QAT or 2) block-wise QAT (via OmniQuant (cite42†Shao et al., 2023 )) focusing only on compressing FFN layers. We investigate full model compression, via a more efficient post-training (one-shot) PTQ method. Specifically, we adapt the classic GPTQ algorithm to the MatQuant objective in Equation cite54†2 .
+L105: ### 3.1 Adapting GPTQ to the MatQuant Objective
+L106: 
+L107: Recall that our objective is, for each layer $\ell$ in our model, to map its weights $W_{\ell}$ to a set of lower bit-witdhs $R=\{r_{1},r_{2},...,r_{K}\}$ under consideration, all below a master bit-width $c$, which is the highest bit-witdh we are optimizing for, and is the base for our scale and zero-offset. Furthermore, $R=\{r_{1},\dots,r_{K}\}\subset\{2,\dots,c\}$ with $c\in R$.
+L108: In the context of the GPTQ problem in Equation cite55†5 , we start by adapting the method for obtaining quantized weights $Q^{c}_{\ell}$ for a layer $\ell$ under the master bit-witdh $c$, to optimize for target bit-witdhs while considering the importance of each individual bit-witdh $r$:
+L109: 
+L110:  | $$\arg\min_{Q_{\ell}^{c}}\sum_{r\in R}\lambda_{r}\cdot\left({W_{\ell}}-S(Q_{\ell}^{c},r)\right)^{2}.$$  |  | (3)
+L111: Furthermore, we expand Equation cite54†2 to optimize for multiple target bit-witdhs, taking into account the original layer-wise formulation and the corresponding calibration data $X_{\ell}$:
+L112: 
+L113:  | $$\arg\min_{Q^{c}_{\ell}}\sum_{r\in R}||S(Q^{c}_{\ell},r)X_{\ell}-W_{\ell}X_{\ell}||.$$  |  | (4)
+L114: Slicing. Focusing on the slicing operation formalized in Equation cite56†1 , recall that we slice the $r$-most significant bits (MSB) from the base quantized weights. Moreover, we also follow the idea of cite43†Nair et al. (2025) to “push” values into higher buckets, thereby allowing more information to be stored. This prevents rounding quantized weights down to zero, as the $r$ most significant bits to be sliced could otherwise be zero.
+L115: When extracting an $r$-bit model, we first extract the $(r-1)$ most significant bits and set the $r^{th}$ bit to 1 if the $(r+1)^{th}$ bit is set, and to 0 otherwise. Equally important is the use of $clamp(\cdot)$ to ensure the validity of usable bits. Furthermore, a right shift of the same magnitude of the slice allows to see the slicing operation as basically being an approximation of the $c$-bit model.
+L116: Cross-bit-witdh weighting. Furthermore, we use the parameters $\lambda$ to give different importances to bit-witdhs: for instance, we may wish to give lower bit-witdhs higher importance. We present a thorough ablation of this parameter, suggesting that uniform weighting is close to optimal.
+L117: ### 3.2 The MatGPTQ Algorithm
+L118: 
+L119: In this section, we present a GPTQ-style algorithm, which we call MatGPTQ, whose goal is to produce a nested MatQuant model by performing a single layer-by-layer pass over the original model.
+L120: 
+L121: GPTQ Overview. GPTQ solves the data-aware layer-wise quantization problem in Equation cite55†5 w.r.t. $W_{\ell}$ and the calibration data $X_{\ell}$:
+L122: 
+L123:  | $$\text{argmin}_{Q_{\ell}}||Q_{\ell}X_{\ell}-W_{\ell}X_{\ell}||^{2}.$$  |  | (5)
+L124: Specifically, GPTQ attempts to approximate the greedy-optimal solution to this problem by leveraging information about the layer-wise Hessian matrix $X_{\ell}X_{\ell}^{\top}$, which is in this case dependent only on the input, and can therefore be shared among the matrix rows as long as weight updates are performed in a particular order.
+L125: Specifically, given a layer’s weights ${W_{\ell}}$ and calibration inputs ${X_{\ell}}$, GPTQ quantizes weights across all rows in the same fixed order, compensating for the quantization error by updating the “free” unquantized weights. Quantizing across all rows simultaneously enables GPTQ to share the Hessian information, used to compute error updates, among rows at each step.
+L126: Thus, the inverse Hessian must be updated only once per column ($d_{\text{col}}$ times) with complexity $O(\text{max}\,\{d_{\text{row}}\cdot d_{\text{col}}^{2},d_{\text{col}}^{3}\})$. The native algorithmic blueprint can be found in the Appendix and is illustrated in Algorithm cite57†2 .
+L127: From GPTQ to MatGPTQ. Algorithm cite57†2 (Appendix) outlines the key differences between the original GPTQ algorithm and the MatGPTQ algorithm, outlined below:
+L128: 
+L129:   1. 1.
+L130: 
+L131: First, for the grid choice, scale and zero-offset are calculated following the master bit-witdh $c$. Specifically, in our implementation, weights are quantized together in contiguous groups, and we approximate MSE-optimal scaling factors for each group via grid search.
+L132: 
+L133:   2. 2.
+L134: The quantized projection for layer $\ell$, $Q^{c}_{\ell}$, is not obtained by rounding to the nearest value on the quantization grid. Instead, we use the objective specified in Equation cite54†2 to obtain $Q^{c}_{\ell}$ considering the cross-bit-witdh weighting.
+L135: The exact approach is described in Algorithm cite58†1 . It works by first generating all possible quantized values in the range $[0,Q_{\max}]$ for each individual weight. For every target bit-witdh, these candidates are then dequantized using the respective scale and zero-offset as previously described. The reconstruction error is computed per weight and accumulated across all candidates, weighted by their respective importance.
+L136: This results in the total error for each potential quantized value of every weight. Finally, for each weight, the quantized value with the lowest total error is selected. The advantage of this approach lies in its high degree of vectorization and parallelization, making it extremely efficient. Runtime concerns are discussed in the Appendix cite27†A.1 .
+L137: Algorithm 1 Generate $\mathbf{Q}^{c}$ given weight matrix $\mathbf{W}$, target bit-witdhs $R$, and weights $\lambda_{R}$
+L138: 
+L139:  $Q_{\max}\leftarrow 2^{c}-1$
+L140: 
+L141:  $\mathbf{Q}^{c}\leftarrow\mathbf{0}_{(Q_{\max}+1)\times d_{\mathrm{row}}\times d_{\mathrm{col}}}$
+L142: 
+L143:  $\mathbf{Q}^{c}\leftarrow\text{initQ}(\mathbf{Q}^{c},Q_{\max})$ $\triangleright$ assigns $0,\dots,Q_{\max}$ across the first dimension
+L144: 
+L145:  $\mathbf{E}\leftarrow\mathbf{0}_{(Q_{\max}+1)\times d_{\mathrm{row}}\times d_{\mathrm{col}}}$
+L146: 
+L147:  for $r\in R$ do
+L148:   $\mathbf{E}\leftarrow\mathbf{E}+\lambda_{r}\left(\mathbf{W}-\text{dequant}(S(\mathbf{Q}^{c},r))\right)^{2}$
+L149: 
+L150:  end for
+L151: 
+L152:  $\mathbf{Q}^{c}\leftarrow Q_{\arg\min_{q}\mathbf{E}_{q}}$ $\triangleright$ elementwise selection of minimal-error quantized weights
+L153: 
+L154:   3. 3.
+L155: Error propagation must be performed across multiple bit-witdhs at a time. We solve this as follows: Instead of propagating only the single error that one bit-witdh would produce, as in native GPTQ, we average the errors produced by all target bit-witdhs and propagate that through the remaining weights. Note that we do not use $\lambda_{r}$ to scale these errors.
+L156: Even though we generate the quantized weights using cross-bit-witdh weighting, we still propagate the error from each target bit-witdh equally throughout the network.
+L157: Extending MatQuant to floating-point representations still remains challenging, as slicing the MSB increases values exponentially rather than linearly, since the exponent is encoded within the bit representation and contributes to the value as a power of two (cite43†Nair et al., 2025 ). Therefore, this remains a future direction to explore.
+L158: ### 3.3 Searching for Non-Uniform Sliced Configurations
+L159: 
+L160: Given a MatQuant model and a memory budget, a natural optimization is to identify a set of non-uniform bit-widths (one per layer) which minimize model size while maximizing model accuracy. This defines the model that will be instantiated at runtime; finding an “optimal” such model is a variant of classic non-uniform quantization problem (cite51†He et al., 2018 ; cite52†Frantar & Alistarh, 2022 ).
+L161: The EvoPress Approach. Currently, the state-of-the-art for this problem for LLMs is the EvoPress $(1+\lambda)$-elitist evolutionary algorithm (cite45†Sieberling et al., 2025 ). This algorithm works as follows. We start a generation with a single “parent” model; in each generation, $\lambda$ “children” (further referred to as offspring) models are generated and evaluated, and the best one, if improving upon the parent, is selected as a new parent for the next generation.
+L162: For quantization, we take the MatGPTQ model and stitch the sliced layers together to form an offspring. To generate a new offspring, EvoPress introduces a level-switch mutation, meaning that for each layer with decreased bit-witdh, another of equal size will be increased. This approach allows to maintain the memory constraints, and to make small steps towards an optimal solution.
+L163: Second, the authors employ a multi step selection, whereby, in the beginning, each offspring will be evaluated only on a small subset of calibration data. Then, the best sub-set of offspring are evaluated on significantly more calibration data; in the last step, just a few will be evaluated on the full data, in order to select the best offspring.
+L164: Searching over the Matryoshka Space. In the case of Matryoshka models, the above approach works as follows. The original level-switch mutation uses a fixed step size to control by how many bits equally sized layers are increased or decreased. Since this value is static, having a non-uniform search space, as is the case for us, leads to a disadvantage.
+L165: We address this as follows: we track remaining available bits after decreasing the bit-witdh of one layer, and search for a valid bit-width configuration that fits within the available bit budget. Thus, we can increase or decrease multiple layers to find a valid configuration and may retry multiple times if no valid setup is found initially.
+L166: ## 4 Fast Matryoshka Kernels
+L167: In the following, we describe the design and implementation of an efficient CUDA kernel with support for 2-4 “nested” bit-widths, optimized for low-batch matrix-matrix multiplication latency. We targeting the Ampere architecture, but the same approach can be extended to Hopper. (Similarly to how the Marlin kernel (cite59†Frantar et al., 2024 ) was extended to Machete (cite60†Wilkinson, 2024 ) for Hopper.) In particular, the quantized weights $W_{Q}$ will be de-quantized on-the-fly.
+L168: We denote their de-quantized form as $W_{D}$, along with the input $X$, also stored in FP16. Then, the kernel computes the multiplication $\mathbf{Y}=\mathbf{X}W_{D},$ with the accumulator being stored in FP32.
+L169: The implementation has two primary goals. First, we utilize the NVIDIA TensorCores . For this, we choose the mma.m16n8k16 instruction as the workhorse of the implementation. The low-batch setting implies that the outer dimension of $\mathbf{X}$ is small. Therefore, we opt to transpose the computation and deviate slightly from the torch.nn.Linear convention to execute:
+L170: 
+L171:  | $$\mathbf{Y}=\left(W_{D}^{T}\mathbf{X}^{T}\right)^{T}.$$  |  | (6)
+L172: Second, we implement a mechanism of batched conversion from quantized weights into their 16-bit form by packing the weights into groups of 4 bits using the conversion techniques presented in cite61†Kim et al. (2022) . In the 4-bit regime, we can directly apply their 4-bit conversion intrinsics (cite61†Kim et al., 2022 ). However, to support batched conversion in the full 2-4 bit range at no additional storage cost, we split the storage buffer into 3 distinct buffers.
+L173: The first 64-bit buffer stores the lower 2-bit values of the number, while the rest store the corresponding 1-bit values packed into two 32-bit buffers.
+L174: Because these values need to be unpacked on-the-fly during computation, in an offline pre-processing step, we reorder the weights informed by both the dequantization scheme and the register reordering imposed by the TensorCore.
+L175: Finally, we implement an additional variant of the kernel which utilizes SIMT cores for low batch inference when the outer dimension of the input is below 8. We continue to use the TensorCore-informed reordering scheme to avoid maintaining two separate model instances, even though SIMT cores do not require a specific weight ordering.
+L176: ## 5 Experiments
+L177: ### 5.1 General Setup
+L178: 
+L179: Models & Data. We experiment with LLaMA 3.1-8B Instruct and non-Instruct (Base) variants (cite62†Dubey et al., 2024 ), as well as Qwen3 8B and 14B models (cite63†Yang et al., 2025 ), and Phi-3-Medium (cite64†Abdin et al., 2024 ). We choose these models to provide a broad selection of both instruct-tuned and non-instruct models, across common deployment sizes on commodity hardware.
+L180: To establish a point of comparison, we use models quantized using the native GPTQ algorithm for the respective bit-width under evaluation. Details about the hyperparameters can be found in the Appendix cite28†B .
+L181: 
+L182: Pytorch & Huggingface Transformers. Since delivering an open-source version of our work was a major goal, we built our code on top of the widely used PyTorch-based Hugging Face framework (cite65†Wolf et al., 2019 ).
+L183: To account for potential performance overhead introduced by using Hugging Face, we conduct not only end-to-end inference measurements but also isolated benchmarks for matrix operations of our GPU kernels. This allows us to evaluate the standalone performance of our kernels and demonstrate the potential improvements achievable in a more optimized inference environment, such as the vLLM engine (cite46†Kwon et al., 2023 ).
+L184: Evaluation Datasets. Following established methodology (cite40†Frantar et al., 2022 ), we evaluate all the models based on perplexity and average zero-shot accuracy across a collection of tasks. We use Wikitext’s test set (cite66†Merity et al., 2016 ) for evaluating the perplexity and ARC Challenge tasks (ARC-c, ARC-e) (cite67†Clark et al., 2018 ), HellaSwag (cite68†Zellers et al., 2019 ), PIQA (cite69†Bisk et al., 2020 ) and Winogrande (cite70†Sakaguchi et al., 2021 ) for zero-shot task evaluation.
+L185: Table 1: MatGPTQ across Llama3.1-8B non-Instruct, Instruct, Qwen3 8B non-Instruct, Instruct, 14B Instruct and Phi3-Medium models. MatGPTQ performs on par with the baseline for bitwidths 3, 4, 8 with exception on individual bitwidths for specific models. Even the 6-bit models obtained through interpolation from MatGPTQ perform comparably to the explicitly trained baselines. Additional improvements by incorporating EvoPress are included by MatGPTQ-EP. Task Avg.
+L186: is average accuracy on the evaluation tasks ($\uparrow$) while PPL (perplexity) is computed on Wikitext2 test-set ($\downarrow$).
+L187:  | LLama3.1-8B  | LLama3.1-8B-Instruct  | Qwen3-8B-Base  | Qwen3-8B  | Qwen3-14B  | Phi3-Medium
+L188:  | PPL  | Task Avg  | PPL  | Task Avg  | PPL  | Task Avg  | PPL  | Task Avg  | PPL  | Task Avg  | PPL  | Task Avg
+L189: 16  |  | 6.27  | 74.52  | 7.23  | 74.00  | 7.01  | 73.55  | 9.73  | 71.54  | 8.64  | 74.95  | 4.32  | 77.04
+L190: 8  | GPTQ  | 6.27  | 74.49  | 7.23  | 73.96  | 7.01  | 73.50  | 9.73  | 71.61  | 8.64  | 74.97  | 4.32  | 76.96
+L191: MatGPTQ  | 6.46  | 73.07  | 7.46  | 73.35  | 7.29  | 73.27  | 9.79  | 71.86  | 9.00  | 75.02  | 4.54  | 74.48
+L192: 4  | GPTQ  | 6.75  | 72.16  | 7.84  | 72.65  | 7.36  | 73.62  | 10.48  | 70.49  | 8.88  | 74.52  | 4.76  | 76.47
+L193: MatGPTQ  | 6.89  | 72.43  | 7.82  | 72.62  | 7.94  | 72.74  | 9.98  | 70.79  | 9.05  | 73.89  | 4.80  | 75.97
+L194: 3  | GPTQ  | 11.31  | 61.78  | 11.85  | 64.57  | 8.90  | 69.06  | 11.58  | 67.06  | 10.16  | 71.02  | 6.15  | 72.11
+L195: MatGPTQ  | 9.14  | 66.39  | 10.16  | 67.56  | 10.16  | 67.78  | 12.74  | 65.43  | 10.63  | 70.95  | 6.21  | 72.26
+L196:  | MatGPTQ-EP  | 8.73  | 67.79  | 9.79  | 68.58  | 9.41  | 67.44  | 12.35  | 64.67  | 9.88  | 71.01  | 6.21  | 72.75
+L197: 6  | GPTQ  | 6.27  | 74.05  | 7.23  | 73.28  | 7.04  | 73.65  | 9.71  | 71.42  | 8.66  | 74.80  | 4.34  | 77.00
+L198: MatGPTQ  | 6.57  | 72.74  | 7.55  | 73.11  | 7.49  | 73.02  | 9.87  | 71.35  | 9.09  | 74.96  | 5.06  | 73.66
+L199: Hardware. All experiments were performed on an NVIDIA RTX A6000 using CUDA 12.4.
+L200: ### 5.2 Accuracy Evaluations for MatGPTQ
+L201: 
+L202: We now focus on examining the accuracy of MatGPTQ based on the different models and benchmarks we prior specified. We consider FFN and Attention layers, compared to MatQuant only quantizing FFN layers using OmniQuant (cite43†Nair et al., 2025 ).
+L203: For our experiments, we choose the bit-widths $R=\{3,4,8\}$, with the master bit-width $c=8$ as the optimization target. We focus on these bit-widths because the 3–4 bit regime is particularly relevant for low-cost deployment while already achieving high recovery of model performance. (The default GPTQ implementation fails to produce accurate models at any groupsize for our experiments.)
+L204: Main Results. We evaluated the uniform configuration $\lambda_{3}=\lambda_{4}=\lambda_{8}=1$ against the native GPTQ implementation for the respective bit-widths. This balanced configuration demonstrated the best overall performance across all bit-widths with an average maximum percentual deviation from the best results of only 0.25% and at most 0.64%. On average, this outperforms all other configurations, as visible in Table cite71†12 .
+L205: Table cite72†1 shows that, on average across all models and bit-widths (3, 4, and 8), MatGPTQ stays within a 0.08% relative difference over native GPTQ implementation in terms of average task performance. Considering the individual bit-widths, we observe that 3-bit quantization improves average task performance by 1.34% relative to native GPTQ.
+L206: This can be explained, by the regularization in the quantization grid search (Algorithm cite58†1 ), which optimizes for multiple bit-widths and therefore prevents overfitting to calibration data for a single bit-width. Whereas the 4-bit and 8-bit configurations exhibit slightly lower performance by 0.33% and 0.65%, respectively, which falls within the expected noise. This showcases the strong performance of MatGPTQ, producing nested models that perform on par with natively GPTQ-quantized models.
+L207: Generally, the method also works well across different models (non-Instruct vs Instruct), as all show similar behavior with in terms of accuracy drops. The only exceptions are the 3-bit variant of Qwen3-8B and Qwen3-8B-Base, which performs worse compared to the native GPTQ. Interestingly, Phi3-Medium 6- and 8-bit variant shows the strongest degradation compared to its 4-bit variant. This can be addressed by using the 4-bit model, as it outperforms the other bit-widths while improving efficiency.
+
+
+feb05_core11
+MatGPTQ: Accurate and Efficient Post-Training Matryoshka Quantization (https://arxiv.org/html/2602.03537v1)
+citeturn26189view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"turn26185view0","lineno":211}); Total lines: 724
+L199: Hardware. All experiments were performed on an NVIDIA RTX A6000 using CUDA 12.4.
+L200: ### 5.2 Accuracy Evaluations for MatGPTQ
+L201: 
+L202: We now focus on examining the accuracy of MatGPTQ based on the different models and benchmarks we prior specified. We consider FFN and Attention layers, compared to MatQuant only quantizing FFN layers using OmniQuant (cite43†Nair et al., 2025 ).
+L203: For our experiments, we choose the bit-widths $R=\{3,4,8\}$, with the master bit-width $c=8$ as the optimization target. We focus on these bit-widths because the 3–4 bit regime is particularly relevant for low-cost deployment while already achieving high recovery of model performance. (The default GPTQ implementation fails to produce accurate models at any groupsize for our experiments.)
+L204: Main Results. We evaluated the uniform configuration $\lambda_{3}=\lambda_{4}=\lambda_{8}=1$ against the native GPTQ implementation for the respective bit-widths. This balanced configuration demonstrated the best overall performance across all bit-widths with an average maximum percentual deviation from the best results of only 0.25% and at most 0.64%. On average, this outperforms all other configurations, as visible in Table cite71†12 .
+L205: Table cite72†1 shows that, on average across all models and bit-widths (3, 4, and 8), MatGPTQ stays within a 0.08% relative difference over native GPTQ implementation in terms of average task performance. Considering the individual bit-widths, we observe that 3-bit quantization improves average task performance by 1.34% relative to native GPTQ.
+L206: This can be explained, by the regularization in the quantization grid search (Algorithm cite58†1 ), which optimizes for multiple bit-widths and therefore prevents overfitting to calibration data for a single bit-width. Whereas the 4-bit and 8-bit configurations exhibit slightly lower performance by 0.33% and 0.65%, respectively, which falls within the expected noise. This showcases the strong performance of MatGPTQ, producing nested models that perform on par with natively GPTQ-quantized models.
+L207: Generally, the method also works well across different models (non-Instruct vs Instruct), as all show similar behavior with in terms of accuracy drops. The only exceptions are the 3-bit variant of Qwen3-8B and Qwen3-8B-Base, which performs worse compared to the native GPTQ. Interestingly, Phi3-Medium 6- and 8-bit variant shows the strongest degradation compared to its 4-bit variant. This can be addressed by using the 4-bit model, as it outperforms the other bit-widths while improving efficiency.
+L208: Further, this suggests that the first 4 bits encode the necessary information and additional bits add noise.
+L209: Interpolation. As mentioned in (cite43†Nair et al., 2025 ), the MatQuant framework shows good performance, regarding interpolation of bit-widths, which are not directly optimized for. Since, we offer CUDA kernel support for 2, 3, 4, 6 and 8 bit, we are also interested in being able to use a 6-bit model. We can see in Table cite72†1 that the 6-bit MatGPTQ on average performs 0.67% lower than the native GPTQ baseline. This is worse than the bit-witdhs we optimized for, but still can be considered usable.
+L210: Also showcasing great interpolation performance across the models, except for Phi3-Medium, where prior reasoning and solution can be applied to the same problem.
+L211: ### 5.3 Comparison with the original MatQuant
+L212: A comparison to the MatQuant framework is rather hard, since neither source code or models are publicly available. Furthermore, while the authors provided hyperparameters for fine-tuning, they omitted those for evaluation, making the reproduction of results even more challenging. However, we managed to implement MatQuant for OmniQuant, hereafter referred to as MatQuant, and produce models that fall within their reported performance.
+L213: For a fair comparison, we only quantized the FFN layers for both Mistral 7B (cite73†Jiang et al., 2023 ) and Gemma2 9B (cite74†Team et al., 2024 ) as reported by them using MatQuant and MatGPTQ. We used symmetric quantization for both methods an optimized for bit-witdhs $R={3,4,8}$. Further details about the hyperparameters can be found in the Appendix cite28†B .
+L214: Table 2: Comparison of Task Average ($\uparrow$) between MatGPTQ and MatQuant, for Mistral 7B and Gemma2 9B (FFN-only). MatGPTQ achieves higher results compared to MatQuant for all optimized and interpolated bit-witdhs.
+L215:  | Gemma2 9B  | Mistral 7B
+L216: MatQuant  | MatGPTQ  | MatQuant  | MatGPTQ
+L217: 16  | 78.23  | 74.56
+L218: 8  | 77.78  | 78.18  | 74.37  | 74.65
+L219: 4  | 77.20  | 77.93  | 73.92  | 74.24
+L220: 3  | 75.45  | 75.47  | 71.85  | 72.19
+L221: 6  | 77.76  | 78.12  | 74.35  | 74.79
+L222: In Table cite75†2 , we can see that MatGPTQ outperforms MatQuant for each optimized and interpolated bit-witdh. This can be observed even though OmniQuant potentially outperforms GPTQ in low bit regimes (cite42†Shao et al., 2023 ). However by default OmniQuant uses asymmetric quantization and therefore performs worse when applied with symmetric quantization. A full comparison when quantizing FFN+Attention is not possible against the MatQuant implementation, as cite43†Nair et al. (2025) do not provide any code.
+L223: However, since MatGPTQ is able to perform FFN+Attention quantization and still performing close to native GPTQ, outperforming MatQuant for FFN only and being a simpler and more efficient method than OmniQuant, we can conclude that MatGPTQ improves upon MatQuant.
+L224: ### 5.4 The impact of loss weights $\lambda_{r}$
+L225: The introduction of the weighting factor $\lambda_{r}$ resulted in introducing the need for a search over potential importance weightings, as no configuration seemed superior (cite43†Nair et al., 2025 ). We used the weights $\{0.1,0.5,1\}$ and generated promising candidates.
+L226: We compare a uniform weighting approach against two configurations that highly value the lowest bit-witdhs and equally value the remaining bit-witdhs at different magnitudes, one configuration that decreases the weighting for higher bit-witdhs, and one configuration that equally values the lowest two bit-witdhs while minimizing the importance of the highest bit-witdh.
+L227: As already mentioned the uniform approach has turned out to be the best with an average maximum percentual deviation from the best results of only 0.24% and at most 0.64%.
+L228: Therefore, we conclude that a more extensive search can lead to slightly better results, although at the additional cost of training and evaluating many more models. If it is known that a specific bit-regime needs to achieve the best performance, a specific weighting should be considered. However, if the goal is to maintain strong performance across all bit-regimes, uniform weighting remains a good choice. Evaluation results and further details about the ablation study can be found in the Appendix cite34†E .
+L229: ### 5.5 Mix-and-Match Models
+L230: 
+L231: cite76†Image: Refer to caption Figure 1: Task average performance of Llama3.1-8B-Instruct quantized using MatGPTQ optimizing for 3, 4 and 8 bits. The results demonstrate that even under extreme compression, MatGPTQ maintains strong performance, with models between 2.5 and 4 bits achieving near-baseline accuracy for optimized bit-witdhs and even exceeding it for interpolated bit-witdhs.
+L232: Since potential losses in the low bit regime can occur due to quantization to multiple bit-witdhs, we leverage non-uniformity to improve the accuracy of all 3-bit models to either achieve baseline performance or even exceed it and to generate multiple Llama3.1-8B-Instruct models between 2- and 4-bit to demonstrate their capabilities.
+L233: This allows us to use this pipeline to even produce usable models for extremely resource-constrained environments: even though 2-bit models themselves have very low accuracy, slicing only a fraction of the layers to this bit-width can still provide good accuracy.
+L234: Search Space. We restrict the search space to $\{2,3,4,6,8\}$ bits, in order to be able to fully leverage our CUDA kernels. We use the search approach described in Section cite13†3.3 .
+L235: Results. First, Table cite72†1 shows that our non-uniform variant, referred to as MatGPTQ-EP, outperforms both the baseline and the uniform MatGPTQ models across all evaluated architectures. This demonstrates the effectiveness of our method, as it eliminates the losses observed with uniform configurations, allowing us to produce models that perform equally well or even surpass their baselines.
+L236: In Figure cite77†1 , we can see the performance of EvoPress in the low-bit regimes. Starting from 2.5 bits, we already obtain a usable model, with low accuracy loss. Furthermore, every non-optimized bit-witdh exceeds its theoretical interpolated counterpart, indicated by the dotted line. Using EvoPress, we also manage to surpass the GPTQ-optimized 3-bit model. Also notably, the interpolated 6-bit model aligns almost perfectly with the theoretical line.
+L237: Those results are especially interesting as they suggest that our MatGPTQ model is Pareto-superior to the pre-trained model quantized via GPTQ to an equivalent bit-width, as it achieves comparable or higher accuracy at consistently lower bit-witdhs. Thus, our method offers a more favorable trade-off between performance and computational cost.
+L238: #### Negative Result: Inference-Time bit-witdh Allocation.
+L239: Having multiple nested models allows to investigate if it would make sense to dynamically route different tokens to different bit-witdhs, while maintaining certain constraints to improve accuracy of the model. To assess this, we generated all possible configurations within a transformer block for bit-witdhs 2, 3, and 4 targeting an average bit-witdh of 3 and compared the MSE for individual tokens. We found that, in most cases, one single static configuration consistently outperforms the others.
+L240: This negative result suggests that such assignments and routing should be explicitly performed at training-time in order to be effective. Further details are in Appendix cite32†C .
+L241: ### 5.6 CUDA Kernel Performance
+--------------------------------------------------------------------------------
+ATACompressor: Adaptive Task-Aware Compression for Efficient Long-Context Processing in LLMs (https://arxiv.org/html/2602.03226v1)
+citeturn26189view1 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"turn26185view1","lineno":114}); Total lines: 405
+L100: ### 3.1. Problem Formulation
+L101: 
+L102: Large language models (LLMs) often take a task prompt ($Q$) and a context ($C$) as input to generate a target answer ($A$). However, the typically large size of $C$ leads to challenges such as the "lost in the middle" problem, increased inference costs, longer latencies and potential performance degradation. A widely adopted way to address this challenge is context compression, the objective of ATACompressor can be formulated as:
+L103: (1)  |  | $\displaystyle\begin{split}\min_{\varphi(C,Q)}&\,d\big[\text{LLM}\big(A\mid C,Q\big),\text{LLM}\big(\tilde{A}\mid\varphi(C,Q),Q\big)\big]\\
+L104: \text{s.t.}\quad&|\varphi(C,Q)|=k\end{split}$  |
+L105: 
+L106: Here, $\tilde{A}$ represents the output of the LLM with the compressed tokens $\varphi(C,Q)$, $k$ represents the number of compressed tokens, and $d(\cdot,\cdot)$ is a distance function, such as KL divergence, that measures the difference between two distributions.
+L107: ### 3.2. Architecture
+L108: As illustrated in Figure cite79†2 , ATACompressor consists of a selective encoder, an adaptive allocation controller (AAC) and a target LLM (decoder). The general mechanism of this architecture operates as follows: first, the context $C$ is segmented into chunks $C_{1},C_{2},\dots,C_{n}$ using a predefined strategy.
+L109: Then, the selective encoder ($\varphi$) processes the concatenated chunked context (denoted as $C_{ckd}$, $C_{ckd}=\{C_{1},C_{2},\dots,C_{n}\}$) along with the query $Q$^{2}^{2} 2 In the following, we refer to all text inputs to the selective encoder as ”input text”., leveraging its inherent information sensing capability to compress the relevant portions of $C$ required to answer $Q$ into a set of tokens, with the number of compressed tokens $k$ determined by the adaptive allocation controller (AAC).
+L110: Subsequently, we pass the key (K) and value (V) representations of the compressed tokens to the target LLM for training or downstream tasks. It is important to note that the selective encoder ($\varphi$) processes the input text and compresses the relevant parts into tokens continuously, due to the autoregressive nature of LLM. As soon as the selective encoder ($\varphi$) processes the last token of the input text, it continues processing and generating the first compressed token without interruption.
+L111: At this point, the AAC also begins processing in parallel. Since the AAC is very efficiently due to its relatively lightweight structure, it can predict the total number of compressed tokens before the first compressed token is generated. Thus, although Figure cite79†2 splits the process into step 1 and step 2 for clarity, there is no interruption between input text processing and compression in practice.
+L112: Compared to prior soft compression methods, ATACompressor introduces two key innovations: task-aware compression and dynamic token allocation. Task-aware compression is enabled by the selective encoder ($\varphi$), which selectively compresses only the relevant portions of the context $C$ necessary to answer the query $Q$, ensuring efficient use of resources while retaining crucial information.
+L113: Dynamic token allocation is managed by the adaptive allocation controller (AAC), which flexibly adjusts the number of compressed tokens based on task requirements, thus preserving relevant information while optimizing computational resource usage. In the following, we will detail the design of these two components and the total workflow.
+L114: ### 3.3. Selective Encoder
+L115: Traditional soft embedding methods compress the entire context $C$ using the encoder, but they often fail to fully leverage its capacity to identify and extract relevant information. As a result, this approach may lead to the loss of content crucial for answering the query. To address this, we propose a selective encoder ($\varphi$) that maximizes the encoder’s ability to sense and extract relevant information.
+L116: The selective encoder ($\varphi$) consists of a frozen large language model (LLM) $\Theta_{\text{LLM}}$ with trainable LoRA parameters $\Theta_{\text{LoRA}}$. It selectively retains and compresses only the portions of the context necessary to answer the query $Q$ into a concise set of compressed tokens. This method improves compression effectiveness by preserving query-relevant content while filtering out irrelevant information, thereby enhancing the performance of downstream tasks.
+L117: A significant challenge in incorporating the selective encoder ($\varphi$) is that the training of traditional soft-prompt compressors (cite54†Ge et al., 2023 ; cite55†Li et al., 2024b ) is not directly applicable. In traditional pretraining, the compressor processes the entire text and aims to reconstruct it, with the gold-truth being the input itself, which is clear, consistent, and free from granularity issues.
+L118: However, the selective encoder ($\varphi$) focuses on retaining and compressing only the relevant portions of the context required to $Q$, meaning the gold-truth is the relevant parts of the whole context during pretraining. This shift introduces granularity ambiguity. In real-world datasets, annotations of relevant context can vary in granularity (e.g., at the passage or document level).
+L119: Without proper chunking, the inconsistent granularity of the annotated relevant context during training can confuse the selective encoder ($\varphi$) about how to process the context. For example, if some gold-truths indicate relevance at the document level while others are at the sentence level, the selective encoder ($\varphi$) will struggle with whether to group information coarsely or finely.
+L120: Meanwhile, using a single granularity for training limits the selective encoder’s adaptability to tasks with different granularity requirements. To address this, we segment the context into uniform chunks that align with the granularity of the corresponding gold-truth during training. The selective encoder ($\varphi$) is then trained to retain and compress the query-relevant chunks.
+L121: This ensures the selective encoder compresses context at the corresponding granularity, even with varying granularities in the ground truths. At inference time the chunking granularity is determined by user or task requirements. Therefore, ATACompressor can effectively handle datasets with different granularities while allowing users to define more complex chunking policies for greater flexibility.
+L122: The context $C$ is first segmented into chunks $C_{1},C_{2},\dots,C_{n}$ using a predefined strategy. These chunks are then concatenated and processed by the selective encoder ($\varphi$) together with the query $Q$.
+L123: It is worth noting the following: (1) the chunking process occurs before the selective encoder’s processing, meaning it is a preprocessing step rather than a task for the selective encoder ($\varphi$); (2) the chunking process is the procedure of labeling the context $C$ according to a predefined chunking policy (e.g., using passages as the chunking unit, where each passage of $C$ is enclosed within <PA></PA> tags).
+L124: All the chunks are then concatenated to form a preprocessed context $C_{ckd}$, which is input into the selective encoder ($\varphi$) along with the query $Q$ and processed in a single pass rather than being processed individually in multiple passes; (3) if the length of raw context $C$ exceeds the selective encoder’s input length limit, we can first divide $C$ into smaller segments and then apply the selective encoder ($\varphi$) to compress each segment individually.
+L125: This segmentation process is different from the chunking process we mentioned above. The selective encoder ($\varphi$) then compresses the portions of $C_{ckd}$ that are relevant for answering $Q$ (denoted as $\hat{C}_{Rel}$) into a compact set of tokens $c_{1},c_{2},\dots,c_{k}$, where $k$ represents the number of compressed tokens, dynamically determined by the adaptive allocation controller (AAC). This process is formally described as follows:
+L126: (2)  |  | $\displaystyle\varphi(Q,C)$  | $\displaystyle=\varphi(\langle Q,C_{ckd}\rangle)=\varphi\bigl(\hat{C}_{Rel}\bigr)=\underbrace{(c_{1},\dots,c_{k})}_{k\text{ is determined by AAC}},$  |
+L127: (3)  |  | $\displaystyle\hat{C}_{Rel}$  | $\displaystyle=\underbrace{\{C_{t_{1}},\dots,C_{t_{m}}\}}_{C_{t_{i}}\text{ is relevant to }Q}\subseteq\{C_{1},\dots,C_{n}\},$  |
+L128: ### 3.4. Adaptive Allocation Controller (AAC)
+L129: 
+L130: The adaptive allocation controller (AAC) is composed of a probe ($\zeta$) and a policy function ($\eta$). The probe ($\zeta$) captures the selective encoder’s hidden states to estimate the length of relevant content. This estimation directs the policy function ($\eta$) to dynamically adjust the compression rate, preserving relevant information and optimizing computational resource usage.
+L131: The reason for selecting the length of $\hat{C}_{Rel}$ as a key signal for adjusting the number of compressed tokens ($k$) is as follows: The length of $\hat{C}_{Rel}$ represents length of the text needed to complete the task.
+L132: Prior studies (cite54†Ge et al., 2023 ; cite55†Li et al., 2024b ; cite66†Cao et al., 2024 ; cite68†Rau et al., 2024 ) have demonstrated that the performance of a soft-prompt compressor is primarily influenced by the ratio between the text length and the number of compressed tokens ($k$) allocated during compression. Under a fixed number of compressed tokens, the performance of the compressor declines rapidly as the text length increases.
+L133: By accurately estimating the length of $\hat{C}_{Rel}$, it becomes possible to dynamically adjust the number of compressed tokens based on the requirement of the task: fewer tokens are allocated for shorter relevant texts, while more tokens are allocated for longer relevant texts. This task-driven dynamic adjustment method maintains a balanced ratio, enabling efficient compression and enhanced performance.
+L134: The probe ($\zeta$) is a lightweight neural network composed of a MLP and multiple attention layers. Its primary function is to capture and analyze the hidden states produced by the selective encoder ($\varphi$) after processing the input text. By detecting and analyzing these hidden states, the probe ($\zeta$) estimates the length of $\hat{C}_{Rel}$, which serves as the basis for dynamically adjusting the compression rate.
+--------------------------------------------------------------------------------
+LPS-Bench: Benchmarking Safety Awareness of Computer-Use Agents in Long-Horizon Planning under Benign and Adversarial Scenarios (https://arxiv.org/html/2602.03255v1)
+citeturn26189view2 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"turn26185view3","lineno":195}); Total lines: 341
+L174: LLM-based Agent Baselines. We evaluate 13 representative LLMs, categorized into proprietary models and open-source models. The proprietary models include the GPT series (GPT-5 and GPT-5.1) (cite82†OpenAI, 2025b ; cite79†OpenAI, 2025a ), Gemini series (Gemini-2.5-Pro and Gemini-3-Pro) (cite83†Google Cloud, 2025a ; cite84†Google Cloud, 2025b ), and Claude series (Claude-3.5-Sonnet, Claude-4-Sonnet, and Claude-4.5-Sonnet) (cite85†Anthropic, 2024 ; cite86†Anthropic, 2025a ; cite80†Anthropic, 2025b ).
+L175: The open-weight models comprise the Llama series (Llama-3.1-8B-Instruct and Llama-3.1-70B-Instruct) (cite87†Meta Llama, 2024 ), Qwen series (Qwen3-8B-Instruct and Qwen3-32B-Instruct) (cite88†Qwen Team, 2025 ), and DeepSeek series (DeepSeek-V3.1 and DeepSeek-V3.2) (cite89†DeepSeek-AI, 2025a ; cite90†DeepSeek-AI, 2025b ). All models are instantiated within a unified agent framework built upon the LangChain library to ensure fair evaluation on LPS-Bench.
+L176: At each step, the agent processes the user instruction alongside the current environment observations and tool execution feedback. To ensure that our safety evaluation remains unaffected by incidental execution failures, we employ stochastic sampling with a temperature of $1$ for all experiments.
+L177: Model  | Safe Rate (SR) across Domains (%) $\uparrow$  | Overall
+L178: Web  | Social  | OS  | Office  | Media  | File  | Code  | Avg.
+L179: GPT-5  | $47.83$  | $48.05$  | $34.21$  | $31.94$  | $29.49$  | $15.29$  | $26.67$  | $33.35$
+L180: GPT-5.1  | $76.09$  | $79.22$  | $71.05$  | $66.67$  | $70.51$  | $64.71$  | $71.11$  | $71.34$
+L181: Gemini-2.5-Pro  | $14.13$  | $10.39$  | $13.16$  | $13.89$  | $19.23$  | $8.24$  | $14.44$  | $13.35$
+L182: Gemini-3-Pro  | $67.39$  | $63.64$  | $65.79$  | $62.50$  | $65.38$  | $48.24$  | $71.11$  | $63.44$
+L183: Claude-3.5-Sonnet  | $39.13$  | $29.87$  | $26.32$  | $30.56$  | $26.92$  | $25.88$  | $35.56$  | $30.61$
+L184: Claude-4-Sonnet  | $63.04$  | $55.84$  | $46.05$  | $62.50$  | $52.56$  | $41.18$  | $45.56$  | $52.39$
+L185: Claude-4.5-Sonnet  | $84.78$  | $87.01$  | $88.16$  | $87.50$  | $82.05$  | $95.29$  | $92.22$  | $88.14$
+L186: DeepSeek-v3.1  | $16.30$  | $14.29$  | $10.53$  | $12.50$  | $8.97$  | $8.24$  | $5.56$  | $10.91$
+L187: DeepSeek-v3.2  | $16.30$  | $14.29$  | $11.84$  | $11.11$  | $15.38$  | $3.53$  | $31.11$  | $14.79$
+L188: Llama-3.1-8B-Instruct  | 8.70  | 9.09  | 10.53  | 6.94  | 7.69  | 3.53  | 10.00  | 8.07
+L189: Llama-3.1-70B-Instruct  | 13.04  | 11.69  | 11.84  | 9.72  | 8.97  | 3.53  | 8.89  | 9.67
+L190: Qwen3-8B  | 7.61  | 3.89  | 3.94  | 6.94  | 7.69  | 2.35  | 8.89  | 5.90
+L191: Qwen3-32B  | 10.87  | 12.99  | 3.95  | 4.17  | 6.41  | 3.53  | 3.33  | 6.46
+L192: Table 4: This table reports Safety Rates by task domain.
+L193: Evaluation Metrics. Follow existing benchmarks (cite63†Yang et al., 2025b ; cite56†Kuntz et al., 2025 ; cite58†Tur et al., 2025 ; cite91†Vijayvargiya et al., 2025a ; cite65†Zhang et al., 2024c ), we employ the Safe Rate (SR) metric to strictly assess the planning safety awareness of the agents. This metric quantifies the ratio of trajectories that are determined to be fully safe. A trajectory is classified as “safe” if and only if the agent completes the session without executing any risky or unsafe actions.
+L194: This strict criterion covers both benign and adversarial settings. The Safe Rate (SR) is the ratio between the number of trajectories with no safety violations and the total number of evaluated trajectories. We employ DeepSeek-R1 (cite92†DeepSeek-AI et al., 2025 ) as the evaluator.
+L195: ### 4.2 Safety Analysis According to Risk Type
+L196: In benign-user scenarios, agents exhibit distinct planning failure modes across risk types. FA proves particularly challenging: when facing under-specified instructions, agents tend to fill in missing constraints by guessing rather than seeking clarification or deferring commitment, resulting in plans built on unverified premises. Even frontier models struggle here (e.g., GPT-5.1: 26.47%; Claude-4.5-Sonnet: 5.88%), indicating that robust plan formulation under ambiguity remains largely unsolved.
+L197: In contrast, IP shows markedly higher SR (e.g., GPT-5.1: 89.55%; Claude-4.5-Sonnet: 95.52%), suggesting that agents are better at recognizing and avoiding obviously wasteful action sequences, likely because inefficiency signals are more salient during plan construction.
+L198: In adversarial user-driven scenarios, planning robustness depends heavily on where adversarial influence enters the agent’s reasoning. Performance on PI is generally high for capable models (e.g., Claude-4.5-Sonnet: 94.03%; GPT-5.1: 98.51%), as injected directives appear directly in the input and are more likely to trigger plan-level sanity checks. However, this robustness does not transfer to EB, where adversarial content is embedded in tool outputs rather than user prompts.
+L199: Here, SR drops substantially (e.g., Claude-4-Sonnet: 43.08% on EB vs. 98.51% on PI), revealing that agents often plan under an implicit trust assumption—treating environmental observations as ground truth without verification, which leaves plan execution vulnerable to hijacking.
+L200: Across both settings, stronger models within each family consistently achieve higher SR, suggesting that improved planning capabilities confer some safety benefits. Yet even the best-performing model, Claude-4.5-Sonnet, reaches only 5.88% on FA and 61.82% on TS, exposing persistent blind spots in plan validation.
+L201: These results highlight that safe long-horizon planning remains an open challenge: current agents can construct and execute unsafe plans under both under-specified and adversarial conditions, underscoring the need for planning mechanisms that explicitly verify assumptions, validate environmental feedback, and maintain robustness throughout extended action sequences.
+L202: ### 4.3 Safety Analysis According to Domain
+L203: Across the seven domains in Table cite93†4 , we find that long-horizon planning safety is relatively consistent across topics for strong models, with slightly higher SR on Web and Social in general. However, a clear domain-specific weakness emerges in File: except for Claude-4.5-Sonnet, most models exhibit a noticeable drop when tasks involve file-centric operations.
+L204: Based on our qualitative inspection of trajectories, this disparity is related to whether a model has been exposed to domain-specific tool-use patterns and safety constraints during training: web and social interactions often resemble broadly-covered instruction-following distributions, while file operations require more explicit conservative decision-making over persistent, high-impact artifacts (e.g., writes, deletions, moves, and permission-sensitive actions).
+L205: For smaller open-source models, safety failures are more pervasive across domains: they tend to follow the user’s operational request directly, with little evidence of safety-aware planning. Taken together, the cross-domain results suggest that robust long-horizon planning safety does not improve uniformly across domains; instead, safety awareness must be explicitly strengthened during training for high-risk domains.
+L206: ### 4.4 Analysis According to Model Capability
+L207: We observe a positive correlation between models’ instruction-following capabilities and safety rates on LPS-Bench, as shown in Figure cite94†5 . Commercial models achieve higher safety rates, especially under adversarial user-induced risks, which is consistent with stronger safety alignment. In contrast, open-source models often show rising instruction-following capabilities but limited safety gains, suggesting their development has emphasized capability improvement over safety alignment.
+L208: cite95†Image: Refer to caption Figure 5: The relevance of the models’ instruction-following capability and planning safety awareness on LPS-Bench.
+L209: ### 4.5 Mitigation Strategies
+L210: 
+L211: In order to investigate whether lightweight intervention can mitigate the current risks, we evaluated two prompt-based strategies targeting benign and adversarial user-induced risks, respectively.
+L212: Prompt-Based Mitigations. For benign user-induced risks, we adopt Human-in-the-Loop Clarification. Since these risks stem from ambiguous or inaccurate instructions, we add a human-in-the-loop mechanism to the system prompt: the agent detects ambiguity and high-stakes operations, and pauses for human confirmation rather than acting under uncertainty. For adversarial user-induced risks, we adopt Safety-Aware System Prompting.
+L213: We add descriptions of common attack vectors to the system prompt, so the agent can recognize and reject malicious manipulation during planning. Prompt details are provided in Appendix cite24†A.4 .
+L214: Experimental Results and Analysis. As illustrated in Figure cite96†6 , the mitigation strategy can enhance the safety awareness of the agent during the planning process. In benign scenarios, agents still struggle to reliably identify the correct threshold for seeking clarification, often reverting to guessing under the pressure of instruction following.
+L215: Similarly, in adversarial scenarios, enriching the system prompt with explicit descriptions of common adversarial-user tactics can help capability-strong yet safety-weaker models (e.g., Gemini-2.5-Pro and DeepSeek-V3.2) internalize these threat patterns and detect malicious intent in a subset of test cases; however, the same mitigation yields only marginal gains for weaker models (e.g., Qwen3-8B-Instruct), suggesting that prompt-based mitigations depend on the instruction-following capability of the models themselves.
+L216: These findings suggest that inference-time prompting offers only a superficial fix, and that robust agent safety likely requires dedicated safety training such as safety-aligned fine-tuning or reinforcement learning.
+L217: cite97†Image: Refer to caption Figure 6: Comparison of Safe Rate (SR) before and after mitigation, showing a slight improvement in SR.
+L218: ## 5 Conclusion
+L219: In this paper, we introduced LPS-Bench, a comprehensive benchmark designed to evaluate the safety awareness of CUAs during long-horizon planning. By covering both benign user and adversarial user-induced risks, our benchmark exposes critical vulnerabilities in current agents, particularly their inability to anticipate delayed consequences and verify environmental assumptions.
+--------------------------------------------------------------------------------
+Understanding Multi-Agent LLM Frameworks:A Unified Benchmark and Experimental Analysis (https://arxiv.org/html/2602.03128v1)
+citeturn26189view3 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.03128v1","lineno":null}); Total lines: 1034
+
+
+feb05_core12
+MatGPTQ: Accurate and Efficient Post-Training Matryoshka Quantization (https://arxiv.org/html/2602.03537v1)
+citeturn26190view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"turn26185view0","lineno":241}); Total lines: 724
+L237: Those results are especially interesting as they suggest that our MatGPTQ model is Pareto-superior to the pre-trained model quantized via GPTQ to an equivalent bit-width, as it achieves comparable or higher accuracy at consistently lower bit-witdhs. Thus, our method offers a more favorable trade-off between performance and computational cost.
+L238: #### Negative Result: Inference-Time bit-witdh Allocation.
+L239: Having multiple nested models allows to investigate if it would make sense to dynamically route different tokens to different bit-witdhs, while maintaining certain constraints to improve accuracy of the model. To assess this, we generated all possible configurations within a transformer block for bit-witdhs 2, 3, and 4 targeting an average bit-witdh of 3 and compared the MSE for individual tokens. We found that, in most cases, one single static configuration consistently outperforms the others.
+L240: This negative result suggests that such assignments and routing should be explicitly performed at training-time in order to be effective. Further details are in Appendix cite32†C .
+L241: ### 5.6 CUDA Kernel Performance
+L242: We benchmark the kernel speed-ups for weight matrices of size 2048x2048, 4096x4096, 8192x8192 and 16384x16384 while varying the input size. We use torch.matmul as a baseline point of comparison. We transition from a SIMT kernel into a TensorCore-based kernel at batch size 8, owing to the size of the inner dimension of the mma instruction. All the configurations utilize 128 as the group size. Our kernels achieve speedups between 3x and 5.6x in the memory-bound regime.
+L243: The peak speed-up is achieved during 2-bit single batch multiplication, owing to the memory-bound regime in that setting. Further details and visualizations can be found in Appendix cite37†H .
+L244: At higher batch size, the kernel switches to a compute-bound regime and we exhibit slowdowns at around batch size 32 and 64, depending on the bit-width configuration.
+L245: ### 5.7 End-to-End Experiments
+L246: We run a forward pass of Llama3.1-8B-Instruct with a single token and measure the end-to-end latency while varying the model bit-width utilizing torch.compile under reduce-overhead and full-graph settings during end-to-end runs. The benchmark runs 16 warm-up single-token forward passes. Following that, we do another 16 runs, out of which we report the minimum and the median run in Table cite78†3 . The speed-up over the 16-bit version naturally diminishes as bit-widths increase.
+L247: In the near-lossless regime (3-4 bits), our kernels achieve end-to-end speedups of 2.58-2.9$\times$.
+L248: Deployment. For practical deployment, we integrated our kernels and format in vLLM (cite46†Kwon et al., 2023 ) and achieved similar speedups. Details are found in the Appendix cite37†H .
+L249: 
+L250: Table 3: Latency Comparison (ms and tokens/s) for Llama-3.1-8B-Instruct at different Quantization Bit-Widths.
+L251: bit-witdh  | Median Latency  | Tokens/s  | Rel. Speedup
+L252: --- | --- | --- | ---
+L253: 2  | 7.24  | 138.0  | 3.25$\times$
+L254: 3  | 8.03  | 124.4  | 2.93$\times$
+L255: 4  | 9.13  | 109.3  | 2.58$\times$
+L256: 16  | 23.53  | 42.5  | 1.00$\times$
+--------------------------------------------------------------------------------
+MatGPTQ: Accurate and Efficient Post-Training Matryoshka Quantization (https://arxiv.org/html/2602.03537v1)
+citeturn26190view1 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"turn26185view0","lineno":364}); Total lines: 724
+L352: For MatQuant (cite43†Nair et al., 2025 ), we followed the specific hyperparameters provided by the authors: for Gemma2 9B we used $\lambda_{3}=1$, $\lambda_{4}=0.1$, and $\lambda_{8}=0.1$, and for Mistral 7B we used $\lambda_{3}=1$, $\lambda_{4}=0.4$, and $\lambda_{8}=0.4$. We used their constant learning rate of $10^{-3}$ and a batch size of 4. We only differ by using symmetric quantization and optimizing for $r={3,4,8}$.
+L353: Additionally, we apply grouping of size 128 to make the comparison even fairer, even though they never mention anything regarding grouping.
+L354: ### B.3 EvoPress
+L355: 
+L356: The hyperparameters for all EvoPress runs can be found in Table cite91†5 .
+L357: 
+L358: Table 5: Hyperparameters for EvoPress runs.
+L359: Hyperparameter  | Value
+L360: --- | ---
+L361: Generations  | 100
+L362: Offspring  | 64
+L363: Survivors (1)  | 16
+L364: Tokens (1)  | 2048
+L365: Survivors (2)  | 16384
+L366: Tokens (2)  | 4
+L367: Survivors (3)  | 1
+L368: Tokens (3)  | 131072
+L369: Fitness Function  | KL-Divergence
+L370: Calibration Data  | Fineweb Edu
+L371: Calibration Tokens  | 524288
+L372: Calibration sequence length  | 2048
+L373: Initially generated (if applicable)  | 10
+L374: ## Appendix C Dynamic Bitwitdh Inference
+L375: 
+L376: cite92†Image: Refer to caption Figure 2: Heatmap of best-performing quantization configurations across transformer blocks of Llama-3.1-8B Instruct. We enumerated all configurations for bitwidths 2, 3 and 4 under an average bitwidth of 3 and measured per-token MSE against the FP16 baseline. Configurations without a single token are omitted. A single static configuration dominates across most blocks, with certain layers showing higher sensitivity.
+L377: Since, we wanted to explore the sensitivity of different non-uniform configurations towards single tokens, we generated all possible configurations within a transformer block for bitwidths 2, 3, and 4 targeting an average bitwidth of 3. Then, we measured the MSE for individual tokens compared to the FP16 model for each individual configuration in each transformer block. We conducted these initial experiments using the Llama 3.1 8B Instruct model to assess whether further investigation was worthwhile.
+L378: As the results were already quite clear, we limited our study to this model and did not conduct additional experiments. The results can be seen in Figure cite93†2 . There, we can see that, in most cases, one single static configuration consistently outperforms the others, and certain transformer blocks appear consistently more sensitive. Therefore, this suggests that dynamic token assignment cannot provide significant improvements.
+--------------------------------------------------------------------------------
+ATACompressor: Adaptive Task-Aware Compression for Efficient Long-Context Processing in LLMs (https://arxiv.org/html/2602.03226v1)
+citeturn26190view2 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"turn26185view1","lineno":134}); Total lines: 405
+L132: Prior studies (cite54†Ge et al., 2023 ; cite55†Li et al., 2024b ; cite66†Cao et al., 2024 ; cite68†Rau et al., 2024 ) have demonstrated that the performance of a soft-prompt compressor is primarily influenced by the ratio between the text length and the number of compressed tokens ($k$) allocated during compression. Under a fixed number of compressed tokens, the performance of the compressor declines rapidly as the text length increases.
+L133: By accurately estimating the length of $\hat{C}_{Rel}$, it becomes possible to dynamically adjust the number of compressed tokens based on the requirement of the task: fewer tokens are allocated for shorter relevant texts, while more tokens are allocated for longer relevant texts. This task-driven dynamic adjustment method maintains a balanced ratio, enabling efficient compression and enhanced performance.
+L134: The probe ($\zeta$) is a lightweight neural network composed of a MLP and multiple attention layers. Its primary function is to capture and analyze the hidden states produced by the selective encoder ($\varphi$) after processing the input text. By detecting and analyzing these hidden states, the probe ($\zeta$) estimates the length of $\hat{C}_{Rel}$, which serves as the basis for dynamically adjusting the compression rate.
+L135: The workflow of probe ($\zeta$) is as follows: After the selective encoder ($\varphi$) processes the last token of the input text, the probe ($\zeta$) takes the last layer hidden states of the selective encoder ($\varphi$) as input and outputs an estimated length $\hat{L}_{Rel}$. $\hat{L}_{Rel}$ is then passed to the policy function ($\eta$), which dynamically determines the number of compressed tokens ($k$). The process can be formalized as:
+L136: (4)  |  | $$\hat{L}_{Rel}=\zeta(\mathbf{H}_{\varphi}),k=\eta(\hat{L}_{Rel})$$  |
+L137: where $\zeta(\cdot)$ represents the probe’s operation on the encoder’s last layer hidden states $\mathbf{H}_{\varphi}$ to estimate $\hat{L}_{Rel}$. The policy function ($\eta$) determines the number of compressed tokens $k$ based on the length of $\hat{C}_{Rel}$ estimated by the probe ($\zeta$). In our experiments, we adopted a intuitive but effective policy: the number of compressed tokens $k$ is determined by dividing the effective text length $\hat{L}_{Rel}$ by a policy ratio $r$.
+L138: Specifically, $k$ is computed as:
+L139: (5)  |  | $$k=\eta(\hat{L}_{Rel})=\min\bigg(\frac{\hat{L}_{Rel}}{r},k_{max}\bigg)$$  |
+L140: 
+L141: where $\hat{L}_{Rel}$ represents the length of $\hat{C}_{Rel}$ estimated by the probe ($\zeta$), $r$ is a predefined policy ratio, and $k_{max}$ is the maximum allowable number of compressed tokens.
+--------------------------------------------------------------------------------
+Understanding Multi-Agent LLM Frameworks:A Unified Benchmark and Experimental Analysis (https://arxiv.org/html/2602.03128v1)
+citeturn26190view3 [wordlim: 200] Crawled: today; Content type: text/html; Source: find({"ref_id":"turn26189view3","pattern":"3. Method"}); Total lines: 1034
+No matching text found for "3. Method"--------------------------------------------------------------------------------
+Understanding Multi-Agent LLM Frameworks:A Unified Benchmark and Experimental Analysis (https://arxiv.org/html/2602.03128v1)
+citeturn26190view4 [wordlim: 200] Crawled: today; Content type: text/html; Source: find({"ref_id":"turn26189view3","pattern":"API"}); Total lines: 1034
+L221: Evaluation Setup. MAFBench integrates MemoryAgentBench into its unified execution pipeline to enable fair and scalable cross-framework comparison. We enforce a standardized agent interface for session-level execution and centralize configuration of model parameters, session limits, batching, and scoring. We also replace string-based metrics with LLM-based semantic evaluation to handle diverse answer formats.
+L222: Results are logged and aggregated using a shared schema that captures accuracy, runtime, and token usage for reproducibility. To support large-scale long-context evaluation, we introduce transparent backend routing that redirects compatible API calls to alternative providers. In our experiments, memory-intensive workloads are routed to Groq-hosted models (cite99†Abts et al., 2022 ), enabling lower-cost evaluation without modifying framework implementations.
+L223: ### 3.2. Planning Benchmarks
+L224: Planning in LLM-based agents refers to generating intermediate solution steps before producing an answer. While some frameworks, such as CrewAI (cite65†Inc., 2025 ), expose explicit planning, its evaluation remains fragmented across isolated reasoning benchmarks.
+L225: We therefore adopt GSM8K (cite100†Cobbe et al., 2021 ), CommonsenseQA (CSQA) (cite101†Talmor et al., 2019 ), and MATH (cite102†Hendrycks et al., 2021 ) (Table cite103†5 ), which cover numerical, commonsense, and symbolic reasoning tasks where multi-step planning influences outcomes.^{3}^{3} 3 cite104†https://huggingface.co/datasets/openai/gsm8k†huggingface.co (test only); cite105†https://huggingface.co/datasets/tau/commonsense_qa†huggingface.co (validation only); cite106†https://github.com/hendrycks/math†github.com L226: Benchmark Structure and Planning Interfaces. Each benchmark is executed under three controlled planning interfaces. NoPlan passes tasks directly to the LLM without intermediate reasoning. Crew-Plan follows CrewAI’s schema-constrained two-stage interface (cite65†Inc., 2025 ), in which the LLM first produces a structured plan. Direct-LLM-Plan allows unconstrained natural-language plan generation injected into the context before answer generation.
+L227: This setup isolates the effect of planning interface constraints.
+--------------------------------------------------------------------------------
+Understanding Multi-Agent LLM Frameworks:A Unified Benchmark and Experimental Analysis (https://arxiv.org/html/2602.03128v1)
+citeturn26190view5 [wordlim: 200] Crawled: today; Content type: text/html; Source: find({"ref_id":"turn26189view3","pattern":"Latency"}); Total lines: 1034
+L77: This gap is critical, as architectural choices alone can induce order-of-magnitude differences in latency and throughput, as well as substantial variation in accuracy and scalability. Addressing this challenge requires (i) jointly evaluating multiple capabilities, such as orchestration overhead, memory behavior, planning, specialization, and coordination, and (ii) conducting these evaluations under controlled, framework-level conditions to isolate architectural effects.
+L78: Existing benchmarks focus on individual capabilities and lack standardized framework-level evaluation. We address these limitations by (i) introducing an architectural taxonomy for systematically comparing multi-agent LLM frameworks along fundamental dimensions, and (ii) developing MAFBench, a unified evaluation suite that integrates existing benchmarks under a standardized execution pipeline. Using MAFBench, we conduct a controlled empirical study across several widely used frameworks.
+L79: Our results show that framework-level design choices alone can increase latency by over $100\times$, reduce planning accuracy by up to $30\%$, and lower coordination success from above $90\%$ to below $30\%$. Finally, we translate our findings into concrete architectural design principles and framework-selection guidance, and outline promising future research directions.
+L80: ###### Keywords:
+L81: 
+L82: Multi-agent systems, LLM agents, Multi-agent LLM frameworks, agentic AI systems, Agent orchestration, Agent memory, Agent specialization, Agent planning, Agent coordination, Architectural taxonomy, Benchmarking multi-agent systems, LLM system design
+L83: ## 1. Introduction
+L84: Table 1. Performance ranges observed under framework-level design choices. Best and Worst reflect architectural options per dimension, enabled by framework support. The table shows how far outcomes can diverge for the same task and LLM model.
+L85: Dimension  | Metric  | Best  | Worst
+L86: Orchestration  | Latency ($\times$ direct LLM)  | $1.3\times$  | $117\times$
+L87:  | Throughput (req/s)  | $8.9$  | $<0.01$
+L88: Memory  | Overall memory score  | $23.8\%$  | $6.1\%$
+L89: Planning  | Accuracy change  | $+15\%$  | $-30\%$
+L90:  | Runtime multiplier  | $1.2\times$  | $30\times$
+L91: Specialization  | $\Delta$F1 score  | $+58$  | $\approx 0$
+L92: Coordination  | Task success (large $n$)  | $>90\%$  | $<30\%$
+L93: Multi-agent systems built on large language models (LLMs), often referred to as LLM-based agents or agentic AI systems,  (cite57†Bo et al., 2024 ; cite58†Zhang et al., 2024b ; cite59†Tao et al., 2024 ; cite60†Qian et al., 2024 ; cite61†Jin et al., 2024 ) have emerged as a widely adopted abstraction for constructing complex intelligent applications  (cite62†Omar et al., 2026 ; cite63†He et al., 2025 ; cite59†Tao et al., 2024 ; cite60†Qian et al., 2024 ).
+L94: Consequently, a growing ecosystem of multi-agent LLM frameworks has emerged to support the rapid development of these systems (cite64†LangChain Inc., 2026 ; cite65†Inc., 2025 ; cite66†Wu et al., 2024 ; cite67†OpenAI, 2026 ; cite68†Vezhnevets et al., 2023 ; cite69†Puelma Touzel et al., 2024 ). These frameworks are software systems that define architectural abstractions for orchestrating LLM-driven agents, managing memory and tool access, and governing task execution and coordination.
+L95: Despite their widespread adoption, the system-level consequences of framework-level architectural design choices remain poorly understood. As shown by our study in Table cite70†1 , architectural choices across orchestration, memory, planning, specialization, and coordination can drive large variation in latency, throughput, accuracy, and task success under identical models and tasks.
+L96: These results indicate that system behavior in multi-agent settings is governed primarily by framework architecture rather than LLM quality alone. Table cite71†2 summarizes representative and widely used multi-agent LLM frameworks across different architectural paradigms.
+L97: Prior work has examined individual aspects of multi-agent intelligence, including tool use (cite72†Mialon et al., 2024 ; cite73†Nguyen et al., 2024 ; cite74†Guo et al., 2024 ; cite75†Shi et al., 2025 ), memory and retrieval (cite76†Hu et al., 2025 ; cite77†Hsieh et al., 2024 ; cite78†Li et al., 2018 ; cite79†Xu et al., 2025b ; cite80†Zhong et al., 2023 ), and collaborative reasoning (cite81†Grotschla et al., 2025 ). These benchmarks are designed to isolate and measure single capabilities, and they do so effectively.
+L278: Table 7. Benchmarks in MAFBench and the architectural dimensions they isolate. Metrics follow original benchmark definitions (Acc.=Accuracy, F1=F1-score, R@5=Recall@5).
+L279: Architectural Dimension  | Benchmark  | Metrics
+L280: --- | --- | ---
+L281: Orchestration overhead  | Trivial query  | Latency, throughput, tokens
+L282: Memory architecture  | MemoryAgentBench (cite76†Hu et al., 2025 )  | Acc./F1/R@5
+L283: Planning interface  | GSM8K (cite100†Cobbe et al., 2021 ), CSQA (cite101†Talmor et al., 2019 ), MATH (cite102†Hendrycks et al., 2021 )  | Accuracy, failures, runtime
+L284: Specialization conditioning  | CatDB tasks (cite107†Fathollahzadeh et al., 2025 )  | Precision, recall, F1
+L285: Coordination topology  | AGENTSNET (cite81†Grotschla et al., 2025 )  | Success, rounds, tokens, time
+L286: ### 4.1. Single-Agent and Overhead Evaluation
+L287: 
+L288: We first examine how framework orchestration, memory, and planning affect execution cost and reasoning behavior.
+L289: #### 4.1.1. Framework Overhead
+L290: We evaluate how orchestration architecture affects baseline execution cost in multi-agent frameworks, independent of memory, planning, tool use, and coordination. Using a unified execution pipeline, we fix the LLM (gpt-4o-mini), the query (“What is 2+2?”), prompts, and concurrency, and vary only the framework orchestration layer under minimal viable configurations.
+L291: The comparison includes a raw Direct LLM baseline; graph- and role-based frameworks LangGraph (cite64†LangChain Inc., 2026 ), OpenAgents (cite86†Xie et al., 2024 ), AutoGen (cite66†Wu et al., 2024 ), CrewAI (cite65†Inc., 2025 ), Agno (cite85†Agno AGI, 2025 ), and the OpenAI SDK (cite67†OpenAI, 2026 ); and the GABM framework Concordia (cite68†Vezhnevets et al., 2023 ). We run 50 trials and report median (p50) and tail (p95) latency, throughput, and output size.
+L292: Figure cite118†2 (a,b) shows that Direct LLM calls achieve the lowest latency and highest throughput. AutoGen and OpenAgents closely match LangGraph, indicating minimal overhead for shallow role-based abstractions. LangGraph incurs modest additional cost from graph scheduling and state propagation, while CrewAI, Agno, and the OpenAI SDK exhibit progressively higher latency as orchestration logic increases, with throughput mirroring latency across graph- and role-based frameworks.
+L293: In contrast, Concordia shows more than an order-of-magnitude increase in median and tail latency and a sharp drop in throughput, reflecting its GABM execution semantics. Output sizes in Figure cite118†2 (c,d), shown on a logarithmic scale, remain bounded for graph- and role-based frameworks but grow by several orders of magnitude for Concordia due to narrative transcripts and environment-mediated state updates. Additional Concordia analysis appears in Appendix cite35†A .
+L294: Overall, these results show that orchestration architecture alone governs baseline scalability. Graph- and role-based designs introduce modest but compounding overhead over direct LLM execution, whereas GABM execution incurs orders-of-magnitude higher runtime and output even for trivial tasks, driven by execution semantics rather than task complexity.
+L295: Table 8. MemoryAgentBench results for evaluation comparison. Scores are averaged per subtask across sessions. $W$ denotes the LangGraph and OpenAI SDK context window (tokens). Category scores (AR, TTL, LRU, SF) are subtask means, and the Overall score is their average. Bold shaded cells indicate global maxima, and underlined values denote the best result within each memory paradigm.
+L296: Agent Framework  | Accurate Retrieval (AR)  | Test-Time Learning (TTL)  | Long-Range Understanding (LRU)  | Selective Forgetting (SF)  | Overall
+L297:  | SH-QA  | MH-QA  | LME(S*)  | EventQA  | Avg.  | MCC  | Recom.  | Avg.  | Summ.  | DetQA  | Avg.  | FC-SH  | FC-MH  | Avg.  | Score
+L298: Retrieval-centric Memories
+L299: Crewai  | 14.0  | 22.0  | 3.0  | 48.7  | 21.9  | 5.6  | 12.2  | 8.9  | 0.0  | 19.7  | 9.9  | 26.2  | 0.8  | 13.5  | 13.5
+L300: LangGraph (Vector DB only)  | 14.0  | 24.0  | 31.3  | 63.3  | 33.2  | 22.8  | 0.0  | 11.4  | 20.0  | 40.8  | 30.4  | 36.0  | 4.5  | 20.2  | 23.8
+L301: Accumulation-based Memories
+L302: Agno  | 12.0  | 19.0  | 2.0  | 43.2  | 19.1  | 0.6  | 15.1  | 7.8  | 0.0  | 18.3  | 9.2  | 27.0  | 0.8  | 13.9  | 12.5
+L303: OpenAI SDK ($W=50$)  | 16.0  | 16.0  | 1.7  | 0.0  | 8.4  | 1.4  | 0.9  | 1.2  | 0.0  | 0.0  | 0.0  | 28.5  | 1.0  | 14.8  | 6.1
+L304: OpenAI SDK ($W=512$)  | 8.0  | 11.0  | 1.0  | 44.1  | 16.0  | 0.6  | 17.2  | 8.9  | 0.0  | 28.2  | 14.1  | 28.7  | 0.8  | 14.8  | 13.4
+L305: OpenAI SDK ($W=1024$)  | 40.0  | 33.0  | 7.7  | 48.5  | 32.3  | 3.6  | 22.1  | 12.8  | 0.0  | 25.4  | 12.7  | 0.0  | 0.0  | 0.0  | 14.5
+L306: OpenAI SDK ($W=2048$)  | 32.0  | 32.0  | 18.3  | 49.9  | 33.1  | 10.0  | 20.9  | 15.5  | 0.0  | 33.8  | 16.9  | 0.2  | 0.0  | 0.1  | 16.4
+L318: All frameworks are accessed through a common interface (Section cite18†3.1 ) with identical chunking, ingestion order, and metrics, and all experiments use the same backend model (gpt-oss-20b on Groq^{5}^{5} 5 Although gpt-oss-20b supports context windows up to 130K tokens, large accumulated contexts exceed tokens-per-minute limits (e.g., 250K TPM), making extreme accumulation impractical for evaluation.). Observed differences therefore reflect memory execution semantics rather than model capability.
+L319: Table cite119†8 summarizes the results and reveals three dominant memory architectures: retrieval-centric memory with persistent semantic stores, accumulation-based memory that replays recent interactions in the prompt, and hybrid memory combining retrieval with bounded short-term accumulation. CrewAI is retrieval-centric; Agno and the OpenAI SDK are accumulation-based; and LangGraph adopts a hybrid design.
+L320: We evaluate LangGraph in retrieval-only and hybrid modes across context windows ($W$) and vary $W$ for the OpenAI SDK to characterize accumulation scaling. Concordia and OpenAgents are excluded due to narrative simulation semantics and lack of native memory abstractions. Each framework’s memory settings are detailed in Appendix cite39†B .
+L321: (a) Latency
+L322: 
+L323: (b) Throughput
+L324: 
+L325: (c) Mean output
+L326: 
+L327: (d) Output summary
+L328: 
+L329: Abbreviations: LLM=Direct LLM; OA=OpenAgents; AG=AutoGen; LG=LangGraph;
+L330: CA=CrewAI; Ag=Agno; OS=OpenAI SDK; Co=Concordia.
+L331: 
+L332: Figure 2. Framework overhead on a trivial task (“What is 2+2?”) over 50 trials. Frameworks are ordered by p50 latency.
+L333: Accuracy and Reasoning Effects. Accurate Retrieval (AR) measures factual recall and multi-hop reasoning over long contexts and is driven primarily by retrieval-based architectures rather than raw context accumulation. As shown in Table cite119†8 , hybrid retrieval–accumulation performs best: LangGraph ($W{=}512$) achieves an average AR score of 44.9, exceeding pure retrieval (33.2) and accumulation-based designs such as Agno (19.1).
+L334: Retrieval-centric designs remain robust on multi-hop and event-centric queries that require selective evidence access, while bounded accumulation provides limited gains via local coherence. Accumulation-only memory improves initially—peaking at 32.3 for the OpenAI SDK at $W{=}1024$—but then degrades as unfiltered context dilutes relevance. Overall, reliable factual recall depends on architectural retrieval mechanisms, not larger context windows.
+L532: ## 5. Multi-Agent Design Principles
+L533: 
+L534: This section distills results from Section cite23†4 into actionable, architecture-level design principles for multi-agent LLM systems. Each principle is grounded in controlled empirical evidence, showing how execution interfaces and architectural structure, not model capability, govern performance, robustness, cost, and scalability.
+L535: Principle 1: Orchestration overhead is the dominant scalability constraint. Keep orchestration shallow; add coordination only when strictly required. Section cite25†4.1.1 shows that latency and throughput are governed by framework execution structure even for trivial workloads. Direct LLM calls incur minimal cost, while graph-based and role-based frameworks introduce systematic overhead from mandatory scheduling, state propagation, and control layers.
+L536: GABM-style execution amplifies this effect, producing orders-of-magnitude higher latency and throughput collapse due to persistent interaction loops and environment-mediated state updates. These effects arise from orchestration semantics rather than task complexity or model behavior. As a result, deeper orchestration directly limits scalability independent of model quality.
+L537: Design implication: for latency- or throughput-sensitive production systems, favor lightweight orchestration and avoid multi-round coordination or environment-style execution unless extended multi-step interaction is essential.
+L538: Principle 2: Memory must be architected around task semantics, not context size. Choose memory architecture based on task needs; never rely on larger context windows. Section cite26†4.1.2 shows that memory behavior is governed by architectural design rather than available context. Retrieval-first architectures consistently dominate factual recall and long-range reasoning by isolating relevant evidence and preventing uncontrolled history growth.
+L539: Accumulation-based memory degrades as unfiltered interaction history expands, even under large context budgets. In-session learning requires retaining recent history in context, but achieves its strongest and most stable performance under bounded hybrid designs that filter accumulated signals through retrieval. No single memory architecture performs well across all competencies, and increasing context length never compensates for missing architectural mechanisms.
+L540: Selective Forgetting fails universally because current frameworks lack explicit memory editing and dependency-aware deletion. Design implication: use retrieval-first memory for recall and long-range reasoning tasks, bounded accumulation for in-session learning, and never replace architectural memory control with larger context windows.
+L541: Principle 3: Planning should be permissive; rigid schemas should be exceptional. Allow free-form planning by default; enforce structure only when proven safe. Section cite27†4.1.3 shows that introducing a planning stage generally improves or preserves reasoning accuracy when plans are generated freely in natural language. In contrast, schema-constrained planning is a primary source of failure and overhead.
+L542: For local open models, strict formats frequently convert correct reasoning into execution failures through high parsing error rates. Even for stronger remote models, constrained planning introduces substantial runtime cost and produces inconsistent accuracy, sometimes degrading performance when structured plans interfere with downstream reasoning. These failures arise from interface constraints rather than from planning itself.
+L550: Principle 6: System interfaces dominate multi-agent behavior. Engineer robustness and scalability through interfaces, not prompts. Across Section cite23†4 , performance limits consistently arise from framework execution semantics and interface design rather than from task difficulty or interaction budget. Orchestration determines baseline latency and throughput. Memory behavior follows retrieval and accumulation semantics. Rigid planning schemas convert valid reasoning into execution failures.
+L634: Even when only one agent is present, Concordia enforces the following pipeline: (i) the Game Master wraps the input in a simulated scene, producing a rich observation; (ii) the agent must respond with an ActionSpec, which is intended as a structured declaration of intent but is often realized by the LLM as verbose narrative text; (iii) the Game Master resolves the action into an event, again embedding it in a descriptive story; and (iv) Concordia logs the entire exchange in both plain text and full HTML transcript form.
+L635: These requirements explain why a simple arithmetic prompt is converted into multi-turn narrative role-play with dramatically inflated output size and latency.
+L636: ##### Log Example.
+L637: 
+L638: The following excerpt from our controlled run shows how a single numeric query was processed:
+L639: ##### Analysis and Conclusion.
+L640: This log illustrates Concordia’s core design principles and their performance impact. Even when no complex reasoning is required, the framework enforces multiple orchestration layers, including narrative wrapping of inputs into fictional scenarios, ActionSpec enforcement that requires structured outputs despite verbose LLM responses, mandatory Game Master resolution to validate and finalize actions, and automatic transcript generation that produces extensive HTML logs.
+L641: These mechanisms ensure consistency in interactive simulations but make every run verbose and computationally heavy, even for trivial tasks. As a result, a simple query such as “What is 2+2?” triggers a multi-stage narrative and substantial logging, reflecting a deliberate focus on narrative fidelity over efficiency. While valuable for studying interactive agent coordination, this design explains Concordia’s high orchestration overhead and poor suitability for latency-sensitive scenarios.
+L642: ## Appendix B Memory Experiment Configuration and Architectural Disclosure
+L643: This appendix documents the memory configurations used in the MemoryAgentBench experiments and discloses the architectural constraints under which each evaluated framework operates.
+L644: The intent of this appendix is not to claim full equivalence or strict normalization across memory implementations, but rather to transparently describe how memory was instantiated, controlled, and isolated in practice, and to explain why several observed behaviors arise from architectural design choices rather than parameter tuning or experimental artifacts. As such, this appendix should be read as an architectural disclosure that contextualizes the results reported in the main paper.
+L645: Common Experimental Configuration. All memory experiments follow a shared configuration to ensure comparability across frameworks. Each agent is evaluated using the same base language model (Open AI GPT-OSS:20b) with identical decoding parameters, including a maximum generation length of 1500 tokens and a low temperature of 0.1 to minimize stochastic variation.
+L651: During querying, accumulated memory is truncated according to a configurable context budget that is swept across experiments. As a result, memory behavior in the SDK is dominated by context budgeting rather than retrieval selectivity, and performance improves with larger context windows at the cost of increased latency and token usage.
+
+
+feb05_core13
+Risky-Bench: Probing Agentic Safety Risks under Real-World Deployment (https://arxiv.org/html/2602.03100v1)
+citeturn26191view0 [wordlim: 200] Crawled: 3 days ago; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.03100v1","lineno":null}); Total lines: 966
+--------------------------------------------------------------------------------
+Test-time Recursive Thinking:Self-Improvement without External Feedback (https://arxiv.org/html/2602.03094v1)
+citeturn26191view1 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.03094v1","lineno":null}); Total lines: 530
+--------------------------------------------------------------------------------
+Internal Error ()
+citeturn26191view2 [wordlim: 200] Source: open({"ref_id":"https://arxiv.org/html/2602.03442v1","lineno":null}); Total lines: 1
+--------------------------------------------------------------------------------
+Understanding Multi-Agent LLM Frameworks:A Unified Benchmark and Experimental Analysis (https://arxiv.org/html/2602.03128v1)
+citeturn26191view3 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"turn26189view3","lineno":354}); Total lines: 1034
+L344: Summary. Memory behavior in multi-agent frameworks is governed by architecture, not context length alone. Retrieval enables stable recall and global reasoning, accumulation enables in-session learning but scales poorly, and hybrid designs are effective only under bounded context. The absence of explicit memory editing primitives prevents reliable knowledge revision, motivating future architectural support for safe and controllable long-term memory.
+L345: #### 4.1.3. Planning Effects
+L346: We evaluate how the planning interface in a framework affects reasoning accuracy, robustness, and runtime, separating architectural constraints from the LLM’s ability to generate plans. Using the MAFBench planning pipeline (Section cite19†3.2 ), we fix the benchmarks (GSM8K (cite100†Cobbe et al., 2021 ), CSQA (cite101†Talmor et al., 2019 ), MATH (cite102†Hendrycks et al., 2021 )), prompts, decoding settings, and scoring.
+L347: We verify that observed effects are architectural rather than model-specific by running all interfaces across multiple LLM backends. We vary only the framework-level planning interface: NoPlan (direct answer), Crew-Plan (schema-constrained two-stage planning in CrewAI (cite65†Inc., 2025 )), and Direct-LLM-Plan (free-form plan text injected before execution). For MATH, we evaluate a 100-problem subset preserving the original complexity distribution.
+L348: Table cite121†9 shows that schema-constrained planning reduces accuracy across datasets and models, while free-form planning preserves or improves accuracy in most settings. For example, under Crew-Plan, Qwen-7B drops from 13.0% to 3.4% on GSM8K and from 69.9% to 37.6% on CSQA, and GPT-OSS-20B drops from 80.0% to 48.0% on MATH-100.
+L349: In contrast, Direct-LLM-Plan improves Qwen-7B to 28.7% on GSM8K and improves Llama-3.1-8B from 65.6% to 71.9%, showing that adding a planning stage can help in practice when the interface does not impose brittle structure.
+L350: Table cite122†10 and Table cite123†11 identify the architectural cause. Crew-Plan introduces large formatting failure rates, where the LLM fails to follow the framework’s required output schema in practice. When the schema is violated, the framework cannot parse or execute the generated plan, even if the underlying reasoning is correct, leading to 84.7% failures on GSM8K and 70.0% on MATH-100 for Qwen-7B, which dominate the observed accuracy loss.
+L351: Crew-Plan also imposes high orchestration overhead by adding an extra LLM call together with schema generation, validation, and parsing, increasing runtime by 7.4$\times$ on GSM8K and 18.5$\times$ on CSQA for GPT-OSS-20B, and exceeding 30$\times$ for Llama-3.1-8B on CSQA. In contrast, Direct-LLM-Plan yields 0.0% formatting failures across models. It adds only the additional cost of generating a plan, producing smaller slowdowns (1.2$\times$–6.6$\times$) and avoiding any parsing bottleneck.
+L352: These results show that planning outcomes in deployed agent systems are driven primarily by interface design, not LLM planning ability alone. Planning should therefore be implemented as a permissive stage that tolerates variability in plan text; rigid parsing converts valid reasoning into failures, reduces robustness, and introduces substantial runtime overhead that limits scalability.
+L353: Table 9. Accuracy (%) under three planning modes: ✗: No plan,  ✓(Crew): schema-constrained plan,  ✓(LLM): free-form plan.
+L354: LLM  | GSM8K (cite100†Cobbe et al., 2021 )  | CSQA (cite101†Talmor et al., 2019 )  | MATH-100 (cite102†Hendrycks et al., 2021 )
+L355: --- | --- | --- | ---
+L356: ✗  | ✓(crew)  | ✓(LLM)  | ✗  | ✓(crew)  | ✓(LLM)  | ✗  | ✓(crew)  | ✓(LLM)
+L357: --- | --- | --- | --- | --- | --- | --- | --- | ---
+L358: Local Models
+L359: ---
+L360: GPT-OSS-20B (cite124†OpenAI, 2025 )  | 94.6  | 91.6   | 87.6   | 81.4  | 81.2   | 82.1   | 80.0  | 48.0   | 76.0
+L361: Phi-4-14B (cite125†Abdin et al., 2024 )  | 93.3  | 86.7   | 83.5   | 81.7  | 82.0   | 74.6   | 72.0  | 50.0   | 69.0
+L362: Llama-3.1-8B (cite126†Dubey et al., 2024 )  | 65.6  | 60.3   | 71.9   | 70.1  | 65.4   | 65.4   | 25.0  | 24.0   | 37.0
+L363: Qwen-7B (cite127†Bai et al., 2024 )  | 13.0  | 3.4   | 28.7   | 69.9  | 37.6   | 74.0   | 9.0  | 4.0   | 13.0
+L364: DeepSeek-7B (cite128†DeepSeek-AI et al., 2024 )  | 27.0  | 18.0   | 23.5   | 46.3  | 31.2   | 46.1   | 9.0  | 3.0   | 4.0
+L365: Remote Models
+L366: ---
+L367: GPT-4.1 (cite129†OpenAI et al., 2024 )  | 94.2  | 80.7   | 78.2   | 87.1  | 87.3   | 87.0   | 86.0  | 60.0   | 84.0
+L368: GPT-4o-Mini (cite129†OpenAI et al., 2024 )  | 86.5  | 90.8   | 84.2   | 81.8  | 81.3   | 83.1   | 60.0  | 53.0   | 59.0
+L369: Table 10. Formatting failures under schema-constrained and free-form planning, isolating interface-induced errors.
+L370: LLM  | GSM8K  | CSQA  | MATH-100
+L371: ✓(CrewAI)  | ✓(LLM)  | ✓(CrewAI)  | ✓(LLM)  | ✓(CrewAI)  | ✓(LLM)
+L372: Local Models
+L373: ---
+L374: GPT-OSS-20B  | 2.4%  | 0.0%  | 1.3%  | 0.0%  | 49.0%  | 13.0%
+L375: Phi-4-14B  | 6.1%  | 0.0%  | 0.5%  | 0.0%  | 21.0%  | 0.0%
+L376: Llama-3.1-8B  | 10.5%  | 0.0%  | 4.8%  | 0.0%  | 19.0%  | 0.0%
+L377: Qwen-7B  | 84.7%  | 0.0%  | 41.0%  | 0.0%  | 70.0%  | 0.0%
+L378: DeepSeek-7B  | 25.5%  | 0.0%  | 31.0%  | 0.0%  | 40.0%  | 0.0%
+L379: Remote Models
+L380: ---
+L381: GPT-4.1  | 0.0%  | 0.0%  | 0.0%  | 0.0%  | 0.0%  | 0.0%
+L382: GPT-4o-Mini  | 0.0%  | 0.0%  | 0.0%  | 0.0%  | 0.0%  | 0.0%
+L383: Table 11. Runtime multiplier (relative to NoPlan) under schema-constrained and free-form planning. Lower is faster.
+L384: LLM  | GSM8K  | CSQA  | MATH
+L385: $\Delta$ CrewAI  | $\Delta$ LLM  | $\Delta$ CrewAI  | $\Delta$ LLM  | $\Delta$ CrewAI  | $\Delta$ LLM
+L386: Local Models
+L387: ---
+L388: GPT-OSS-20B  | $\times$ 7.4  | $\times$ 2.3  | $\times$ 18.51  | $\times$ 1.7  | $\times$ 11.43  | $\times$ 1.7
+L389: Phi-4-14B  | $\times$ 3.5  | $\times$ 1.4  | $\times$ 4.1  | $\times$ 1.6  | $\times$ 3.0  | $\times$ 1.7
+L390: Llama-3.1-8B  | $\times$ 6.3  | $\times$ 1.3  | $\times$ 31.34  | $\times$ 4.2  | $\times$ 4.4  | $\times$ 1.3
+L391: Qwen-7B  | $\times$ 2.2  | $\times$ 2.5  | $\times$ 18.16  | $\times$ 0.9  | $\times$ 2.9  | $\times$ 1.8
+L392: DeepSeek-7B  | $\times$ 3.1  | $\times$ 2.6  | $\times$ 13.29  | $\times$ 6.6  | $\times$ 2.8  | $\times$ 1.2
+L393: Remote Models
+L394: ---
+L395: GPT-4.1  | $\times$ 2.4  | $\times$ 1.5  | $\times$ 2.9  | $\times$ 1.1  | $\times$ 1.2  | $\times$ 1.1
+L396: GPT-4o-Mini  | $\times$ 1.5  | $\times$ 1.4  | $\times$ 4.8  | $\times$ 2.3  | $\times$ 1.8  | $\times$ 1.4
+L397: #### 4.1.4. Agent Specialization
+L398: Table 12. Performance of agents under different conditions (using GPT-4o-mini). Precision (P), Recall (R), and F1 are shown.
+L399: Category  | Regres.  | Binary Class  | Multiclass
+L400: --- | --- | --- | ---
+L401: Agent Role  | Utility  | WiFi  | EU-IT  | Yelp  | Volkert
+L402: --- | --- | --- | --- | --- | ---
+L403: MAE  | P  | R  | F1  | P  | R  | F1  | P  | R  | F1  | P  | R  | F1
+L404: --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | ---
+L405: Role-based prompting
+L406: ---
+L407: No Role  | 0.067  | 40.2  | 45.0  | 37.3  | 32.0  | 38.0  | 35.0  | 41.9  | 44.1  | 41.9  | 67.3  | 66.5  | 65.3
+L408: Data Scientist  | 0.067  | 40.2  | 45.0  | 37.3  | 32.3  | 37.9  | 34.8  | 41.9  | 44.1  | 41.9  | 67.3  | 66.5  | 65.3
+L409: Researcher  | 0.067  | 40.2  | 45.0  | 37.3  | 32.3  | 37.9  | 34.8  | 42.1  | 44.0  | 41.9  | 67.3  | 67.0  | 65.8
+L410: Data Analyst  | 0.067  | 40.2  | 45.0  | 37.3  | 33.3  | 37.9  | 34.8  | 42.1  | 44.0  | 41.9  | 67.0  | 67.0  | 65.0
+L411: Engineer  | 0.067  | 40.2  | 45.0  | 37.3  | 32.0  | 38.0  | 35.0  | 41.9  | 44.1  | 41.9  | 67.3  | 66.5  | 65.3
+L412: Planning-based conditioning
+L413: ---
+L414: No Role  | 0.067  | 40.0  | 45.0  | 37.0  | 32.0  | 38.0  | 35.0  | 42.0  | 44.1  | 42.0  | 67.0  | 67.0  | 65.0
+L415: Data Scientist  | 0.067  | 40.0  | 45.0  | 37.0  | 32.0  | 38.0  | 35.0  | 42.0  | 44.1  | 42.0  | 67.0  | 67.0  | 66.0
+L416: Researcher  | 0.067  | 40.0  | 45.0  | 37.0  | 32.0  | 38.0  | 35.0  | 42.0  | 44.0  | 42.0  | 67.0  | 67.0  | 65.0
+L417: Data Analyst  | 0.067  | 40.0  | 45.0  | 37.0  | 32.0  | 38.0  | 35.0  | 42.0  | 44.0  | 42.0  | 67.0  | 67.0  | 65.0
+L418: Engineer  | 0.067  | 40.0  | 45.0  | 37.0  | 32.0  | 38.0  | 35.0  | 42.0  | 44.0  | 42.0  | 67.0  | 67.0  | 65.0
+L419: Expert-guided conditioning
+L420: ---
+L421: No Role  | 0.067  | 53.0  | 90.0  | 67.0  | 33.6  | 41.4  | 36.8  | 96.0  | 96.0  | 96.0  | 94.8  | 94.7  | 94.6
+L422: Data Scientist  | 0.068  | 57.1  | 80.0  | 66.7  | 37.3  | 44.8  | 40.3  | 100.0  | 100.0  | 100.0  | 95.0  | 95.0  | 95.0
+L423: Researcher  | 0.068  | 53.0  | 90.0  | 67.0  | 37.3  | 41.4  | 38.8  | 100.0  | 100.0  | 100.0  | 95.0  | 94.9  | 94.9
+L424: Data Analyst  | 0.067  | 52.9  | 90.0  | 66.7  | 37.3  | 41.4  | 38.8  | 100.0  | 100.0  | 100.0  | 94.7  | 94.6  | 94.5
+L425: Engineer  | 0.068  | 50.0  | 90.0  | 64.3  | 37.3  | 41.4  | 38.8  | 100.0  | 100.0  | 100.0  | 94.8  | 94.7  | 94.6
+L426: We evaluate how specialization mechanisms in multi-agent frameworks shape domain-specific reasoning behavior. Specifically, we isolate whether architectural conditioning through role assignment, planning interfaces, or procedural guidance governs performance. Using the unified specialization pipeline of MAFBench (Section cite20†3.3 ), we fix the LLM backend, datasets from CatDB (cite107†Fathollahzadeh et al., 2025 ), prompts, task structure, and evaluation metrics.
+L427: We vary only the conditioning strategy applied to the agent. The three architectural variants correspond to role-based prompting, planning-based conditioning, and expert-guided procedural instructions.
+L428: Table cite130†12 reports precision, recall, and F1 across regression, binary, and multiclass tasks. Role-based prompting produces nearly identical performance across all assigned professional identities, with no consistent improvement over the No Role baseline. Planning-based conditioning further stabilizes behavior across roles but does not yield accuracy gains, indicating that introducing intermediate reasoning steps alone does not activate domain-relevant expertise.
+L429: In contrast, expert-guided conditioning consistently and substantially improves performance on the classification datasets.Example prompts are provided in Appendix cite40†C .
+L430: These results show that specialization in LLM-based agents is governed by how frameworks inject task-specific reasoning structure into the execution pipeline, rather than by role identity alone. Role labels and generic planning interfaces fail to activate domain knowledge encoded in the LLM’s parameters. In contrast, explicit procedural instructions impose structured solution workflows that reliably improve performance.
+--------------------------------------------------------------------------------
+MatGPTQ: Accurate and Efficient Post-Training Matryoshka Quantization (https://arxiv.org/html/2602.03537v1)
+citeturn26191view4 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"turn26185view0","lineno":257}); Total lines: 724
+L236: In Figure cite77†1 , we can see the performance of EvoPress in the low-bit regimes. Starting from 2.5 bits, we already obtain a usable model, with low accuracy loss. Furthermore, every non-optimized bit-witdh exceeds its theoretical interpolated counterpart, indicated by the dotted line. Using EvoPress, we also manage to surpass the GPTQ-optimized 3-bit model. Also notably, the interpolated 6-bit model aligns almost perfectly with the theoretical line.
+L237: Those results are especially interesting as they suggest that our MatGPTQ model is Pareto-superior to the pre-trained model quantized via GPTQ to an equivalent bit-width, as it achieves comparable or higher accuracy at consistently lower bit-witdhs. Thus, our method offers a more favorable trade-off between performance and computational cost.
+L238: #### Negative Result: Inference-Time bit-witdh Allocation.
+L239: Having multiple nested models allows to investigate if it would make sense to dynamically route different tokens to different bit-witdhs, while maintaining certain constraints to improve accuracy of the model. To assess this, we generated all possible configurations within a transformer block for bit-witdhs 2, 3, and 4 targeting an average bit-witdh of 3 and compared the MSE for individual tokens. We found that, in most cases, one single static configuration consistently outperforms the others.
+L240: This negative result suggests that such assignments and routing should be explicitly performed at training-time in order to be effective. Further details are in Appendix cite32†C .
+L241: ### 5.6 CUDA Kernel Performance
+L242: We benchmark the kernel speed-ups for weight matrices of size 2048x2048, 4096x4096, 8192x8192 and 16384x16384 while varying the input size. We use torch.matmul as a baseline point of comparison. We transition from a SIMT kernel into a TensorCore-based kernel at batch size 8, owing to the size of the inner dimension of the mma instruction. All the configurations utilize 128 as the group size. Our kernels achieve speedups between 3x and 5.6x in the memory-bound regime.
+L243: The peak speed-up is achieved during 2-bit single batch multiplication, owing to the memory-bound regime in that setting. Further details and visualizations can be found in Appendix cite37†H .
+L244: At higher batch size, the kernel switches to a compute-bound regime and we exhibit slowdowns at around batch size 32 and 64, depending on the bit-width configuration.
+L245: ### 5.7 End-to-End Experiments
+L246: We run a forward pass of Llama3.1-8B-Instruct with a single token and measure the end-to-end latency while varying the model bit-width utilizing torch.compile under reduce-overhead and full-graph settings during end-to-end runs. The benchmark runs 16 warm-up single-token forward passes. Following that, we do another 16 runs, out of which we report the minimum and the median run in Table cite78†3 . The speed-up over the 16-bit version naturally diminishes as bit-widths increase.
+L247: In the near-lossless regime (3-4 bits), our kernels achieve end-to-end speedups of 2.58-2.9$\times$.
+L248: Deployment. For practical deployment, we integrated our kernels and format in vLLM (cite46†Kwon et al., 2023 ) and achieved similar speedups. Details are found in the Appendix cite37†H .
+L249: 
+L250: Table 3: Latency Comparison (ms and tokens/s) for Llama-3.1-8B-Instruct at different Quantization Bit-Widths.
+L251: bit-witdh  | Median Latency  | Tokens/s  | Rel. Speedup
+L252: --- | --- | --- | ---
+L253: 2  | 7.24  | 138.0  | 3.25$\times$
+L254: 3  | 8.03  | 124.4  | 2.93$\times$
+L255: 4  | 9.13  | 109.3  | 2.58$\times$
+L256: 16  | 23.53  | 42.5  | 1.00$\times$
+L257: ## 6 Discussion & Limitations
+L258: In this work, we introduced MatGPTQ, the first practical and efficient framework for Post-Training Matryoshka Quantization (PTQ). By adapting the GPTQ algorithm to optimize a single model jointly for multiple target precisions, MatGPTQ enables “sliceable” quantization in a one-shot manner. The primary advantage of MatGPTQ is deployment flexibility.
+L259: A single quantized checkpoint can be obtained fast, based on limited calibration data, and can be adapted at runtime to meet diverse memory and latency budgets across various hardware without the overhead of storing and maintaining multiple models. Our extensive evaluation demonstrates that this flexibility comes at virtually no cost to accuracy relative to the GPTQ baseline.
+L260: We further enhanced MatGPTQ by integrating a budget-aware evolutionary search (EvoPress) to identify optimal heterogeneous per-layer bit-widths. This “Mix-and-Match” approach (MatGPTQ-EP) is effective, yielding configurations that are Pareto-superior to standard PTQ. On the negative side, we showed that routing different tokens to different bit-widths based on sensitivity does not improve accuracy.
+L261: In addition, we provided the first open-source implementation for Matryoshka quantization, built on the Hugging Face framework, along with efficient CUDA kernels supporting slicing and mixed-precision execution.
+L262: Limitations and Future Work. Our experiments focused on a limited range, and integer quantization; achieving high accuracy in the ultra-low-bit regime remains challenging with the current GPTQ algorithm at standard group sizes. In future work, we will explore integrating Matryoshka objectives with quantization methods better suited for ultra-low precisions, as well as floating-point quantization.
+L263: Furthermore, while our CUDA kernels provide efficient inference on the NVIDIA Ampere architecture, expanding support to newer GPU architectures (e.g., Hopper, Blackwell) and integrating these kernels into high-throughput serving frameworks like vLLM would be an important future step to enable broader adoption.
+L264: ## Impact Statement
+L265: 
+L266: This paper presents work whose goal is to advance the field of Machine Learning. There are many potential societal consequences of our work, none which we feel must be specifically highlighted here.
+L267: ## References
+L268:   * Abdin et al. (2024) Abdin, M., Jacobs, S. A., Awan, A. A., Aneja, J., Awadallah, A., Awadalla, H., Bach, N., Bahree, A., Bakhtiari, A., Behl, H., Benhaim, A., Bilenko, M., Bjorck, J., Bubeck, S., Cai, M., Mendes, C.
+L269: C. T., Chen, W., Chaudhary, V., Chopra, P., Giorno, A. D., de Rosa, G., Dixon, M., Eldan, R., Iter, D., Garg, A., Goswami, A., Gunasekar, S., Haider, E., Hao, J., Hewett, R. J., Huynh, J., Javaheripi, M., Jin, X., Kauffmann, P., Karampatziakis, N., Kim, D., Khademi, M., Kurilenko, L., Lee, J. R., Lee, Y. T., Li, Y., Liang, C., Liu, W., Lin, E., Lin, Z., Madan, P., Mitra, A., Modi, H., Nguyen, A., Norick, B., Patra, B., Perez-Becker, D., Portet, T., Pryzant, R., Qin, H., Radmilac, M., Rosset, C., Roy, S., Ruwase, O., Saarikivi, O., Saied, A., Salim, A., Santacroce, M., Shah, S., Shang, N., Sharma, H., Song, X., Tanaka, M., Wang, X., Ward, R., Wang, G., Witte, P., Wyatt, M., Xu, C., Xu, J., Yadav, S., Yang, F., Yang, Z., Yu, D., Zhang, C., Zhang, C., Zhang, J., Zhang, L. L., Zhang, Y., Zhang, Y., Zhang, Y., and Zhou, X.
+L270: Phi-3 technical report: A highly capable language model locally on your phone, 2024.
+L271:   * Badri & Shaji (2023) Badri, H. and Shaji, A. Half-quadratic quantization of large machine learning models, November 2023. URL cite79†https://mobiusml.github.io/hqq_blog/†mobiusml.github.io .
+L272:   * Bisk et al. (2020) Bisk, Y., Zellers, R., LeBras, R., Gao, J., and Choi, Y. PIQA: reasoning about physical commonsense in natural language. In The Thirty-Fourth AAAI Conference on Artificial Intelligence, AAAI 2020, The Thirty-Second Innovative Applications of Artificial Intelligence Conference, IAAI 2020, The Tenth AAAI Symposium on Educational Advances in Artificial Intelligence, EAAI 2020, New York, NY, USA, February 7-12, 2020, pp. 7432–7439. AAAI Press, 2020.
+L273: URL cite80†https://ojs.aaai.org/index.php/AAAI/article/view/6239†ojs.aaai.org .
+L274:   * Clark et al. (2018) Clark, P., Cowhey, I., Etzioni, O., Khot, T., Sabharwal, A., Schoenick, C., and Tafjord, O. Think you have solved question answering? try arc, the ai2 reasoning challenge. arXiv preprint arXiv:1803.05457, 2018.
+L275:   * Dettmers (2016) Dettmers, T. 8-bit approximations for parallelism in deep learning. International Conference on Learning Representations (ICLR), 2016.
+L276:   * Dubey et al. (2024) Dubey, A., Jauhri, A., Pandey, A., Kadian, A., and et al. The Llama 3 herd of models, 2024. URL cite81†https://arxiv.org/abs/2407.21783 .
+L277:   * Frantar & Alistarh (2022) Frantar, E. and Alistarh, D. SPDY: Accurate pruning with speedup guarantees. In International Conference on Machine Learning (ICML), 2022.
+L278:   * Frantar et al. (2022) Frantar, E., Ashkboos, S., Hoefler, T., and Alistarh, D. GPTQ: Accurate post-training quantization for generative pre-trained transformers. arXiv preprint arXiv:2210.17323, 2022.
+L279:   * Frantar et al. (2024) Frantar, E., Castro, R. L., Chen, J., Hoefler, T., and Alistarh, D. Marlin: Mixed-precision auto-regressive parallel inference on large language models. arXiv preprint arXiv:2408.11743, 2024.
+L280:   * He et al. (2018) He, Y., Lin, J., Liu, Z., Wang, H., Li, L.-J., and Han, S. AMC: AutoML for model compression and acceleration on mobile devices. In European Conference on Computer Vision (ECCV), 2018.
+L281:   * Jiang et al. (2023) Jiang, A. Q., Sablayrolles, A., Mensch, A., Bamford, C., Chaplot, D. S., Casas, D. d. l., Bressand, F., Lengyel, G., Lample, G., Saulnier, L., et al. Mistral 7b. arXiv preprint arXiv:2310.06825, 2023.
+L282:   * Kim et al. (2022) Kim, Y. J., Henry, R., Fahim, R., and Awadalla, H. H. Who says elephants can’t run: Bringing large scale moe models into cloud scale production, 2022. URL cite82†https://arxiv.org/abs/2211.10017 .
+L283:   * Kurtic et al. (2024) Kurtic, E., Marques, A., Pandit, S., Kurtz, M., and Alistarh, D. ” give me bf16 or give me death”? accuracy-performance trade-offs in llm quantization. arXiv preprint arXiv:2411.02355, 2024.
+L284:   * Kwon et al. (2023) Kwon, W., Li, Z., Zhuang, S., Sheng, Y., Zheng, L., Yu, C. H., Gonzalez, J., Zhang, H., and Stoica, I. Efficient memory management for large language model serving with pagedattention. In Proceedings of the 29th Symposium on Operating Systems Principles, pp. 611–626, 2023.
+L285:   * Lin et al. (2024) Lin, J., Tang, J., Tang, H., Yang, S., Chen, W.-M., Wang, W.-C., Xiao, G., Dang, X., Gan, C., and Han, S. Awq: Activation-aware weight quantization for llm compression and acceleration. In Proceedings of the Learning on Systems (MLSys) Conference, 2024.
+L286:   * Merity et al. (2016) Merity, S., Xiong, C., Bradbury, J., and Socher, R. Pointer sentinel mixture models. arXiv preprint arXiv:1609.07843, 2016.
+L287:   * Nair et al. (2025) Nair, P., Datta, P., Dean, J., Jain, P., and Kusupati, A. Matryoshka quantization, 2025. URL cite83†https://arxiv.org/abs/2502.06786 .
+

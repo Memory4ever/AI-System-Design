@@ -1,0 +1,840 @@
+Exact tag source inspection, checked 2026-10-03. Static read only; no installation, exploit execution or test reproduction.
+
+{
+  "html_url": "https://github.com/HKUDS/nanobot/pull/77",
+  "title": "Security: Critical vulnerabilities found - Shell Injection, Path Traversal, and LiteLLM RCE",
+  "state": "closed",
+  "created_at": "2026-02-04T02:26:03Z",
+  "updated_at": "2026-02-06T09:16:55Z",
+  "closed_at": "2026-02-06T09:16:54Z",
+  "merged_at": "2026-02-06T09:16:54Z",
+  "merge_commit_sha": "96e6f3138715c0c3d2bd21c7dedf4bcecac274c0"
+}
+
+
+Exact artifact: https://github.com/HKUDS/nanobot/blob/v0.1.3.post5/nanobot/agent/tools/shell.py; blob_sha=143d18793e67d42c9ffb1237b53da47445c8ce9c
+"""Shell execution tool."""
+
+import asyncio
+import os
+import re
+from pathlib import Path
+from typing import Any
+
+from nanobot.agent.tools.base import Tool
+
+
+class ExecTool(Tool):
+    """Tool to execute shell commands."""
+    
+    def __init__(
+        self,
+        timeout: int = 60,
+        working_dir: str | None = None,
+        deny_patterns: list[str] | None = None,
+        allow_patterns: list[str] | None = None,
+        restrict_to_workspace: bool = False,
+    ):
+        self.timeout = timeout
+        self.working_dir = working_dir
+        self.deny_patterns = deny_patterns or [
+            r"\brm\s+-[rf]{1,2}\b",          # rm -r, rm -rf, rm -fr
+            r"\bdel\s+/[fq]\b",              # del /f, del /q
+            r"\brmdir\s+/s\b",               # rmdir /s
+            r"\b(format|mkfs|diskpart)\b",   # disk operations
+            r"\bdd\s+if=",                   # dd
+            r">\s*/dev/sd",                  # write to disk
+            r"\b(shutdown|reboot|poweroff)\b",  # system power
+            r":\(\)\s*\{.*\};\s*:",          # fork bomb
+        ]
+        self.allow_patterns = allow_patterns or []
+        self.restrict_to_workspace = restrict_to_workspace
+    
+    @property
+    def name(self) -> str:
+        return "exec"
+    
+    @property
+    def description(self) -> str:
+        return "Execute a shell command and return its output. Use with caution."
+    
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "The shell command to execute"
+                },
+                "working_dir": {
+                    "type": "string",
+                    "description": "Optional working directory for the command"
+                }
+            },
+            "required": ["command"]
+        }
+    
+    async def execute(self, command: str, working_dir: str | None = None, **kwargs: Any) -> str:
+        cwd = working_dir or self.working_dir or os.getcwd()
+        guard_error = self._guard_command(command, cwd)
+        if guard_error:
+            return guard_error
+        
+        try:
+            process = await asyncio.create_subprocess_shell(
+                command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=cwd,
+            )
+            
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(),
+                    timeout=self.timeout
+                )
+            except asyncio.TimeoutError:
+                process.kill()
+                return f"Error: Command timed out after {self.timeout} seconds"
+            
+            output_parts = []
+            
+            if stdout:
+                output_parts.append(stdout.decode("utf-8", errors="replace"))
+            
+            if stderr:
+                stderr_text = stderr.decode("utf-8", errors="replace")
+                if stderr_text.strip():
+                    output_parts.append(f"STDERR:\n{stderr_text}")
+            
+            if process.returncode != 0:
+                output_parts.append(f"\nExit code: {process.returncode}")
+            
+            result = "\n".join(output_parts) if output_parts else "(no output)"
+            
+            # Truncate very long output
+            max_len = 10000
+            if len(result) > max_len:
+                result = result[:max_len] + f"\n... (truncated, {len(result) - max_len} more chars)"
+            
+            return result
+            
+        except Exception as e:
+            return f"Error executing command: {str(e)}"
+
+    def _guard_command(self, command: str, cwd: str) -> str | None:
+        """Best-effort safety guard for potentially destructive commands."""
+        cmd = command.strip()
+        lower = cmd.lower()
+
+        for pattern in self.deny_patterns:
+            if re.search(pattern, lower):
+                return "Error: Command blocked by safety guard (dangerous pattern detected)"
+
+        if self.allow_patterns:
+            if not any(re.search(p, lower) for p in self.allow_patterns):
+                return "Error: Command blocked by safety guard (not in allowlist)"
+
+        if self.restrict_to_workspace:
+            if "..\\" in cmd or "../" in cmd:
+                return "Error: Command blocked by safety guard (path traversal detected)"
+
+            cwd_path = Path(cwd).resolve()
+
+            win_paths = re.findall(r"[A-Za-z]:\\[^\\\"']+", cmd)
+            posix_paths = re.findall(r"/[^\s\"']+", cmd)
+
+            for raw in win_paths + posix_paths:
+                try:
+                    p = Path(raw).resolve()
+                except Exception:
+                    continue
+                if cwd_path not in p.parents and p != cwd_path:
+                    return "Error: Command blocked by safety guard (path outside working dir)"
+
+        return None
+
+
+Exact artifact: https://github.com/HKUDS/nanobot/blob/v0.1.3.post5/nanobot/agent/tools/filesystem.py; blob_sha=6b3254a398facc025eb15f45ea36415f842d29f2
+"""File system tools: read, write, edit."""
+
+from pathlib import Path
+from typing import Any
+
+from nanobot.agent.tools.base import Tool
+
+
+def _resolve_path(path: str, allowed_dir: Path | None = None) -> Path:
+    """Resolve path and optionally enforce directory restriction."""
+    resolved = Path(path).expanduser().resolve()
+    if allowed_dir and not str(resolved).startswith(str(allowed_dir.resolve())):
+        raise PermissionError(f"Path {path} is outside allowed directory {allowed_dir}")
+    return resolved
+
+
+class ReadFileTool(Tool):
+    """Tool to read file contents."""
+    
+    def __init__(self, allowed_dir: Path | None = None):
+        self._allowed_dir = allowed_dir
+
+    @property
+    def name(self) -> str:
+        return "read_file"
+    
+    @property
+    def description(self) -> str:
+        return "Read the contents of a file at the given path."
+    
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "The file path to read"
+                }
+            },
+            "required": ["path"]
+        }
+    
+    async def execute(self, path: str, **kwargs: Any) -> str:
+        try:
+            file_path = _resolve_path(path, self._allowed_dir)
+            if not file_path.exists():
+                return f"Error: File not found: {path}"
+            if not file_path.is_file():
+                return f"Error: Not a file: {path}"
+            
+            content = file_path.read_text(encoding="utf-8")
+            return content
+        except PermissionError as e:
+            return f"Error: {e}"
+        except Exception as e:
+            return f"Error reading file: {str(e)}"
+
+
+class WriteFileTool(Tool):
+    """Tool to write content to a file."""
+    
+    def __init__(self, allowed_dir: Path | None = None):
+        self._allowed_dir = allowed_dir
+
+    @property
+    def name(self) -> str:
+        return "write_file"
+    
+    @property
+    def description(self) -> str:
+        return "Write content to a file at the given path. Creates parent directories if needed."
+    
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "The file path to write to"
+                },
+                "content": {
+                    "type": "string",
+                    "description": "The content to write"
+                }
+            },
+            "required": ["path", "content"]
+        }
+    
+    async def execute(self, path: str, content: str, **kwargs: Any) -> str:
+        try:
+            file_path = _resolve_path(path, self._allowed_dir)
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_text(content, encoding="utf-8")
+            return f"Successfully wrote {len(content)} bytes to {path}"
+        except PermissionError as e:
+            return f"Error: {e}"
+        except Exception as e:
+            return f"Error writing file: {str(e)}"
+
+
+class EditFileTool(Tool):
+    """Tool to edit a file by replacing text."""
+    
+    def __init__(self, allowed_dir: Path | None = None):
+        self._allowed_dir = allowed_dir
+
+    @property
+    def name(self) -> str:
+        return "edit_file"
+    
+    @property
+    def description(self) -> str:
+        return "Edit a file by replacing old_text with new_text. The old_text must exist exactly in the file."
+    
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "The file path to edit"
+                },
+                "old_text": {
+                    "type": "string",
+                    "description": "The exact text to find and replace"
+                },
+                "new_text": {
+                    "type": "string",
+                    "description": "The text to replace with"
+                }
+            },
+            "required": ["path", "old_text", "new_text"]
+        }
+    
+    async def execute(self, path: str, old_text: str, new_text: str, **kwargs: Any) -> str:
+        try:
+            file_path = _resolve_path(path, self._allowed_dir)
+            if not file_path.exists():
+                return f"Error: File not found: {path}"
+            
+            content = file_path.read_text(encoding="utf-8")
+            
+            if old_text not in content:
+                return f"Error: old_text not found in file. Make sure it matches exactly."
+            
+            # Count occurrences
+            count = content.count(old_text)
+            if count > 1:
+                return f"Warning: old_text appears {count} times. Please provide more context to make it unique."
+            
+            new_content = content.replace(old_text, new_text, 1)
+            file_path.write_text(new_content, encoding="utf-8")
+            
+            return f"Successfully edited {path}"
+        except PermissionError as e:
+            return f"Error: {e}"
+        except Exception as e:
+            return f"Error editing file: {str(e)}"
+
+
+class ListDirTool(Tool):
+    """Tool to list directory contents."""
+    
+    def __init__(self, allowed_dir: Path | None = None):
+        self._allowed_dir = allowed_dir
+
+    @property
+    def name(self) -> str:
+        return "list_dir"
+    
+    @property
+    def description(self) -> str:
+        return "List the contents of a directory."
+    
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "The directory path to list"
+                }
+            },
+            "required": ["path"]
+        }
+    
+    async def execute(self, path: str, **kwargs: Any) -> str:
+        try:
+            dir_path = _resolve_path(path, self._allowed_dir)
+            if not dir_path.exists():
+                return f"Error: Directory not found: {path}"
+            if not dir_path.is_dir():
+                return f"Error: Not a directory: {path}"
+            
+            items = []
+            for item in sorted(dir_path.iterdir()):
+                prefix = "📁 " if item.is_dir() else "📄 "
+                items.append(f"{prefix}{item.name}")
+            
+            if not items:
+                return f"Directory {path} is empty"
+            
+            return "\n".join(items)
+        except PermissionError as e:
+            return f"Error: {e}"
+        except Exception as e:
+            return f"Error listing directory: {str(e)}"
+
+
+Exact artifact: https://github.com/HKUDS/nanobot/blob/v0.1.3.post5/SECURITY.md; blob_sha=ac15ba412ba145ad7569f1f98f6654b7786a82a7
+# Security Policy
+
+## Reporting a Vulnerability
+
+If you discover a security vulnerability in nanobot, please report it by:
+
+1. **DO NOT** open a public GitHub issue
+2. Create a private security advisory on GitHub or contact the repository maintainers
+3. Include:
+   - Description of the vulnerability
+   - Steps to reproduce
+   - Potential impact
+   - Suggested fix (if any)
+
+We aim to respond to security reports within 48 hours.
+
+## Security Best Practices
+
+### 1. API Key Management
+
+**CRITICAL**: Never commit API keys to version control.
+
+```bash
+# ✅ Good: Store in config file with restricted permissions
+chmod 600 ~/.nanobot/config.json
+
+# ❌ Bad: Hardcoding keys in code or committing them
+```
+
+**Recommendations:**
+- Store API keys in `~/.nanobot/config.json` with file permissions set to `0600`
+- Consider using environment variables for sensitive keys
+- Use OS keyring/credential manager for production deployments
+- Rotate API keys regularly
+- Use separate API keys for development and production
+
+### 2. Channel Access Control
+
+**IMPORTANT**: Always configure `allowFrom` lists for production use.
+
+```json
+{
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "token": "YOUR_BOT_TOKEN",
+      "allowFrom": ["123456789", "987654321"]
+    },
+    "whatsapp": {
+      "enabled": true,
+      "allowFrom": ["+1234567890"]
+    }
+  }
+}
+```
+
+**Security Notes:**
+- Empty `allowFrom` list will **ALLOW ALL** users (open by default for personal use)
+- Get your Telegram user ID from `@userinfobot`
+- Use full phone numbers with country code for WhatsApp
+- Review access logs regularly for unauthorized access attempts
+
+### 3. Shell Command Execution
+
+The `exec` tool can execute shell commands. While dangerous command patterns are blocked, you should:
+
+- ✅ Review all tool usage in agent logs
+- ✅ Understand what commands the agent is running
+- ✅ Use a dedicated user account with limited privileges
+- ✅ Never run nanobot as root
+- ❌ Don't disable security checks
+- ❌ Don't run on systems with sensitive data without careful review
+
+**Blocked patterns:**
+- `rm -rf /` - Root filesystem deletion
+- Fork bombs
+- Filesystem formatting (`mkfs.*`)
+- Raw disk writes
+- Other destructive operations
+
+### 4. File System Access
+
+File operations have path traversal protection, but:
+
+- ✅ Run nanobot with a dedicated user account
+- ✅ Use filesystem permissions to protect sensitive directories
+- ✅ Regularly audit file operations in logs
+- ❌ Don't give unrestricted access to sensitive files
+
+### 5. Network Security
+
+**API Calls:**
+- All external API calls use HTTPS by default
+- Timeouts are configured to prevent hanging requests
+- Consider using a firewall to restrict outbound connections if needed
+
+**WhatsApp Bridge:**
+- The bridge runs on `localhost:3001` by default
+- If exposing to network, use proper authentication and TLS
+- Keep authentication data in `~/.nanobot/whatsapp-auth` secure (mode 0700)
+
+### 6. Dependency Security
+
+**Critical**: Keep dependencies updated!
+
+```bash
+# Check for vulnerable dependencies
+pip install pip-audit
+pip-audit
+
+# Update to latest secure versions
+pip install --upgrade nanobot-ai
+```
+
+For Node.js dependencies (WhatsApp bridge):
+```bash
+cd bridge
+npm audit
+npm audit fix
+```
+
+**Important Notes:**
+- Keep `litellm` updated to the latest version for security fixes
+- We've updated `ws` to `>=8.17.1` to fix DoS vulnerability
+- Run `pip-audit` or `npm audit` regularly
+- Subscribe to security advisories for nanobot and its dependencies
+
+### 7. Production Deployment
+
+For production use:
+
+1. **Isolate the Environment**
+   ```bash
+   # Run in a container or VM
+   docker run --rm -it python:3.11
+   pip install nanobot-ai
+   ```
+
+2. **Use a Dedicated User**
+   ```bash
+   sudo useradd -m -s /bin/bash nanobot
+   sudo -u nanobot nanobot gateway
+   ```
+
+3. **Set Proper Permissions**
+   ```bash
+   chmod 700 ~/.nanobot
+   chmod 600 ~/.nanobot/config.json
+   chmod 700 ~/.nanobot/whatsapp-auth
+   ```
+
+4. **Enable Logging**
+   ```bash
+   # Configure log monitoring
+   tail -f ~/.nanobot/logs/nanobot.log
+   ```
+
+5. **Use Rate Limiting**
+   - Configure rate limits on your API providers
+   - Monitor usage for anomalies
+   - Set spending limits on LLM APIs
+
+6. **Regular Updates**
+   ```bash
+   # Check for updates weekly
+   pip install --upgrade nanobot-ai
+   ```
+
+### 8. Development vs Production
+
+**Development:**
+- Use separate API keys
+- Test with non-sensitive data
+- Enable verbose logging
+- Use a test Telegram bot
+
+**Production:**
+- Use dedicated API keys with spending limits
+- Restrict file system access
+- Enable audit logging
+- Regular security reviews
+- Monitor for unusual activity
+
+### 9. Data Privacy
+
+- **Logs may contain sensitive information** - secure log files appropriately
+- **LLM providers see your prompts** - review their privacy policies
+- **Chat history is stored locally** - protect the `~/.nanobot` directory
+- **API keys are in plain text** - use OS keyring for production
+
+### 10. Incident Response
+
+If you suspect a security breach:
+
+1. **Immediately revoke compromised API keys**
+2. **Review logs for unauthorized access**
+   ```bash
+   grep "Access denied" ~/.nanobot/logs/nanobot.log
+   ```
+3. **Check for unexpected file modifications**
+4. **Rotate all credentials**
+5. **Update to latest version**
+6. **Report the incident** to maintainers
+
+## Security Features
+
+### Built-in Security Controls
+
+✅ **Input Validation**
+- Path traversal protection on file operations
+- Dangerous command pattern detection
+- Input length limits on HTTP requests
+
+✅ **Authentication**
+- Allow-list based access control
+- Failed authentication attempt logging
+- Open by default (configure allowFrom for production use)
+
+✅ **Resource Protection**
+- Command execution timeouts (60s default)
+- Output truncation (10KB limit)
+- HTTP request timeouts (10-30s)
+
+✅ **Secure Communication**
+- HTTPS for all external API calls
+- TLS for Telegram API
+- WebSocket security for WhatsApp bridge
+
+## Known Limitations
+
+⚠️ **Current Security Limitations:**
+
+1. **No Rate Limiting** - Users can send unlimited messages (add your own if needed)
+2. **Plain Text Config** - API keys stored in plain text (use keyring for production)
+3. **No Session Management** - No automatic session expiry
+4. **Limited Command Filtering** - Only blocks obvious dangerous patterns
+5. **No Audit Trail** - Limited security event logging (enhance as needed)
+
+## Security Checklist
+
+Before deploying nanobot:
+
+- [ ] API keys stored securely (not in code)
+- [ ] Config file permissions set to 0600
+- [ ] `allowFrom` lists configured for all channels
+- [ ] Running as non-root user
+- [ ] File system permissions properly restricted
+- [ ] Dependencies updated to latest secure versions
+- [ ] Logs monitored for security events
+- [ ] Rate limits configured on API providers
+- [ ] Backup and disaster recovery plan in place
+- [ ] Security review of custom skills/tools
+
+## Updates
+
+**Last Updated**: 2026-02-03
+
+For the latest security updates and announcements, check:
+- GitHub Security Advisories: https://github.com/HKUDS/nanobot/security/advisories
+- Release Notes: https://github.com/HKUDS/nanobot/releases
+
+## License
+
+See LICENSE file for details.
+
+
+Exact artifact: https://github.com/HKUDS/nanobot/blob/v0.1.3.post5/pyproject.toml; blob_sha=40934741efff365d929f2d2b7af77cc0bb0fc439
+[project]
+name = "nanobot-ai"
+version = "0.1.3.post5"
+description = "A lightweight personal AI assistant framework"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "nanobot contributors"}
+]
+keywords = ["ai", "agent", "chatbot"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "typer>=0.9.0",
+    "litellm>=1.0.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "websockets>=12.0",
+    "websocket-client>=1.6.0",
+    "httpx[socks]>=0.25.0",
+    "loguru>=0.7.0",
+    "readability-lxml>=0.8.0",
+    "rich>=13.0.0",
+    "croniter>=2.0.0",
+    "python-telegram-bot[socks]>=21.0",
+    "lark-oapi>=1.0.0",
+    "socksio>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "ruff>=0.1.0",
+]
+
+[project.scripts]
+nanobot = "nanobot.cli.commands:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["nanobot"]
+
+[tool.hatch.build.targets.wheel.sources]
+"nanobot" = "nanobot"
+
+# Include non-Python files in skills
+[tool.hatch.build]
+include = [
+    "nanobot/**/*.py",
+    "nanobot/skills/**/*.md",
+    "nanobot/skills/**/*.sh",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "nanobot/",
+    "bridge/",
+    "README.md",
+    "LICENSE",
+]
+
+[tool.hatch.build.targets.wheel.force-include]
+"bridge" = "nanobot/bridge"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+
+Exact artifact: https://github.com/HKUDS/nanobot/blob/v0.1.3.post5/nanobot/agent/loop.py; blob_sha=b13113ffce1d31d3c75b1b305aa4f4309f9c70d4
+12: from nanobot.providers.base import LLMProvider
+13: from nanobot.agent.context import ContextBuilder
+14: from nanobot.agent.tools.registry import ToolRegistry
+15: from nanobot.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool
+16: from nanobot.agent.tools.shell import ExecTool
+17: from nanobot.agent.tools.web import WebSearchTool, WebFetchTool
+18: from nanobot.agent.tools.message import MessageTool
+19: from nanobot.agent.tools.spawn import SpawnTool
+20: from nanobot.agent.tools.cron import CronTool
+21: from nanobot.agent.subagent import SubagentManager
+42:         model: str | None = None,
+43:         max_iterations: int = 20,
+44:         brave_api_key: str | None = None,
+45:         exec_config: "ExecToolConfig | None" = None,
+46:         cron_service: "CronService | None" = None,
+47:         restrict_to_workspace: bool = False,
+48:     ):
+49:         from nanobot.config.schema import ExecToolConfig
+50:         from nanobot.cron.service import CronService
+51:         self.bus = bus
+52:         self.provider = provider
+53:         self.workspace = workspace
+54:         self.model = model or provider.get_default_model()
+55:         self.max_iterations = max_iterations
+56:         self.brave_api_key = brave_api_key
+57:         self.exec_config = exec_config or ExecToolConfig()
+58:         self.cron_service = cron_service
+59:         self.restrict_to_workspace = restrict_to_workspace
+60:         
+61:         self.context = ContextBuilder(workspace)
+62:         self.sessions = SessionManager(workspace)
+63:         self.tools = ToolRegistry()
+64:         self.subagents = SubagentManager(
+68:             model=self.model,
+69:             brave_api_key=brave_api_key,
+70:             exec_config=self.exec_config,
+71:             restrict_to_workspace=restrict_to_workspace,
+72:         )
+73:         
+74:         self._running = False
+75:         self._register_default_tools()
+76:     
+77:     def _register_default_tools(self) -> None:
+78:         """Register the default set of tools."""
+79:         # File tools (restrict to workspace if configured)
+80:         allowed_dir = self.workspace if self.restrict_to_workspace else None
+81:         self.tools.register(ReadFileTool(allowed_dir=allowed_dir))
+82:         self.tools.register(WriteFileTool(allowed_dir=allowed_dir))
+83:         self.tools.register(EditFileTool(allowed_dir=allowed_dir))
+84:         self.tools.register(ListDirTool(allowed_dir=allowed_dir))
+85:         
+86:         # Shell tool
+87:         self.tools.register(ExecTool(
+88:             working_dir=str(self.workspace),
+89:             timeout=self.exec_config.timeout,
+90:             restrict_to_workspace=self.restrict_to_workspace,
+91:         ))
+92:         
+93:         # Web tools
+94:         self.tools.register(WebSearchTool(api_key=self.brave_api_key))
+95:         self.tools.register(WebFetchTool())
+
+
+Exact artifact: https://github.com/HKUDS/nanobot/blob/v0.1.3.post5/nanobot/config/schema.py; blob_sha=77242883c3c9c9796114f70d1374725702281282
+10:     enabled: bool = False
+11:     bridge_url: str = "ws://localhost:3001"
+12:     allow_from: list[str] = Field(default_factory=list)  # Allowed phone numbers
+13: 
+14: 
+15: class TelegramConfig(BaseModel):
+16:     """Telegram channel configuration."""
+17:     enabled: bool = False
+18:     token: str = ""  # Bot token from @BotFather
+19:     allow_from: list[str] = Field(default_factory=list)  # Allowed user IDs or usernames
+20:     proxy: str | None = None  # HTTP/SOCKS5 proxy URL, e.g. "http://127.0.0.1:7890" or "socks5://127.0.0.1:1080"
+21: 
+22: 
+23: class FeishuConfig(BaseModel):
+24:     """Feishu/Lark channel configuration using WebSocket long connection."""
+28:     encrypt_key: str = ""  # Encrypt Key for event subscription (optional)
+29:     verification_token: str = ""  # Verification Token for event subscription (optional)
+30:     allow_from: list[str] = Field(default_factory=list)  # Allowed user open_ids
+31: 
+32: 
+33: class DiscordConfig(BaseModel):
+34:     """Discord channel configuration."""
+35:     enabled: bool = False
+36:     token: str = ""  # Bot token from Discord Developer Portal
+37:     allow_from: list[str] = Field(default_factory=list)  # Allowed user IDs
+38:     gateway_url: str = "wss://gateway.discord.gg/?v=10&encoding=json"
+39:     intents: int = 37377  # GUILDS + GUILD_MESSAGES + DIRECT_MESSAGES + MESSAGE_CONTENT
+40: 
+41: 
+42: class ChannelsConfig(BaseModel):
+101: 
+102: 
+103: class ExecToolConfig(BaseModel):
+104:     """Shell exec tool configuration."""
+105:     timeout: int = 60
+106: 
+107: 
+108: class ToolsConfig(BaseModel):
+109:     """Tools configuration."""
+110:     web: WebToolsConfig = Field(default_factory=WebToolsConfig)
+111:     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
+112:     restrict_to_workspace: bool = False  # If true, restrict all tool access to workspace directory
+113: 
+114: 
+115: class Config(BaseSettings):
+116:     """Root configuration for nanobot."""
+117:     agents: AgentsConfig = Field(default_factory=AgentsConfig)
+

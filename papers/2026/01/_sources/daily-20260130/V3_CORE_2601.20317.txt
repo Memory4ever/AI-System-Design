@@ -1,0 +1,870 @@
+https://arxiv.org/html/2601.20317v1
+VersaQ‑3D: A Reconfigurable Accelerator Enabling Feed‑Forward and Generalizable 3D Reconstruction via Versatile Quantization
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I Introduction
+II Background and Motivation
+II-A 3D Reconstruction Methods
+II-B VGGT Model Structure
+II-C Orthogonal Transform
+II-D Challenges in Feed-Forward 3D Reconstruction
+III Versatile Orthogonal-Transform Quantization
+III-A Design Considerations
+III-A1 Achieving Versatility
+III-A2 Maintaining Hardware Efficiency
+III-B VersaQ-3D Computation Flow
+III-C Fusing WHT and DCT into Attention Module
+III-C1 Preliminary
+III-C2 Achieving Computational Invariance with Hadamard Fusion
+III-C3 Integrating DCT for Weight Preservation
+IV Reconfigurable Accelerator for VersaQ-3D
+IV-A Overview
+IV-B Reconfigurable Multi-Precision PE
+IV-C Tiling Global Attention to Solve Long Sequence Bottleneck
+V Evaluation
+V-A Experimental Methodology
+V-B VersaQ-3D Algorithm Performance
+V-C VersaQ-3D Hardware Performance
+VI Related Work
+VII Conclusion
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2601.20317v1 [cs.AR] 28 Jan 2026
+VersaQ‑3D: A Reconfigurable Accelerator Enabling Feed‑Forward and Generalizable 3D Reconstruction via Versatile Quantization
+Yipu Zhang
+Affiliation: Dept. of ECE
+HKUST
+yzhangqg@connect.ust.hk
+Jintao Cheng
+Affiliation: Dept. of ECE
+HKUST
+jchengau@connect.ust.hk
+Xingyu Liu
+Affiliation: Dept. of ECE
+HKUST
+xliugu@connect.ust.hk
+Affiliation:
+Zeyu Li
+Affiliation: Dept. of ECE
+HKUST
+zliki@connect.ust.hk
+Carol Jingyi Li
+Affiliation: Dept. of ECE
+HKUST
+eecarol@ust.hk
+Jin Wu
+Affiliation: School of IST
+USTB
+wujin@ustb.edu.cn
+Affiliation:
+Lin Jiang
+Affiliation: College of ISE
+NEU
+jianglin1@neu.edu.cn
+Yuan Xie
+Affiliation: Dept. of ECE
+HKUST
+yuanxie@ust.hk
+Jiang Xu
+Affiliation: MICS Thrust
+HKUST(GZ)
+jiang.xu@hkust-gz.edu.cn
+Affiliation:
+Wei Zhang∗
+Affiliation: Dept. of ECE
+HKUST
+wei.zhang@ust.hk
+Abstract
+3D reconstruction and view synthesis are fundamental to emerging applications such as AR/VR, robotic perception, and digital twins. The Visual Geometry Grounded Transformer (VGGT) has demonstrated strong feed‑forward 3D reconstruction capability by directly predicting essential geometric attributes without per‑scene optimization. However, its billion‑parameter scale results in high memory and computation demands, limiting instant on‑device deployment.
+While quantization provides a natural path to efficiency, methods designed for large language models fail on VGGT due to two key challenges: saturated activation channels that limit low-bit quantization, and diverse 3D semantics that cause unreliable calibration and overfitting.
+Furthermore, VGGT poses hardware challenges arising from precision‑sensitive nonlinear operators and a global attention mechanism that incurs excessive memory and computation demands due to the long‑sequence problem.
+To address these challenges, we propose VersaQ‑3D, an algorithm-architecture co‑design framework for efficient VGGT execution.
+At the algorithm level, we present the first calibration‑free, scene‑agnostic quantization method for VGGT that supports low-bit execution down to 4 bits. Our method leverages orthogonal transforms to decorrelate features, suppress outliers, and preserve structural weight features, enabling robust low‑bit inference without calibration data.
+At the architecture level, we design a unified, reconfigurable accelerator with a hierarchical multi‑precision compute fabric that supports BF16, INT8, and INT4 execution. Specifically, a unified systolic datapath executes both linear and nonlinear operators on the same hardware with configurable precision modes to balance accuracy and efficiency, which reduces end‑to‑end latency by 60%. Moreover, our two‑stage recomputation‑based tiling further cuts runtime by an additional 7% by alleviating on‑chip memory pressure for long‑sequence multi‑head attention.
+Evaluations show that VersaQ‑3D preserves 98-99% of full‑precision accuracy at W4A8 and achieves acceptable accuracy at W4A4 that outperforms prior methods by 1.61×\times-2.39×\times across diverse scenes. Its co‑designed accelerator further delivers 5.2×\times-10.8×\times speedup over edge GPUs with low area and power consumption, enabling instant and energy‑efficient feed‑forward 3D reconstruction.
+Index Terms: 3D Reconstruction, Visual Geometry Grounded Transformer, Quantization, Algorithm-Architecture Co-Design
+I Introduction
+3D reconstruction and view synthesis have long been the fundamental components in various computer vision and graphics tasks. They aim to recover and represent the geometry and appearance of real-world scenes from visual observations, enabling machines and humans alike to see, understand, and interact with 3D environments. Their importance extends across a diverse range of applications from immersive experiences in augmented and virtual reality (AR/VR) [60, 33] to precise environmental understanding in robotics and autonomous systems [63, 65], and large-scale digital twins used in simulation and design [41], even to the smart city modeling [9]. As these applications scale to ever-larger and more dynamic environments, there is a growing demand for methods to be not only accurate but also computationally efficient and robust for diverse scenarios.
+Traditional 3D reconstruction methods, such as Structure‑from‑Motion (SfM) [50] and Multi‑View Stereo (MVS) [18], rely on iterative multi‑stage optimization to recover camera poses and dense geometry. Although accurate, their high computational cost, slow convergence, and sensitivity to noise and occlusion make them impractical for large‑scale and/or real‑time applications [59]. Learning‑based approaches, including Neural Radiance Fields (NeRF) [42] and 3D Gaussian Splatting (3DGS) [26], improve scene representation and rendering quality but require per‑scene optimization and high computational cost. Moreover, these methods focus primarily on view synthesis rather than explicit geometric reconstruction, limiting their applicability to downstream perception and robotics tasks.
+In contrast, feed-forward approaches aim to produce explicit 3D outputs, such as camera poses, depth maps, point maps, and 3D correspondences, directly from input images without costly iterative refinement. The Visual Geometry Grounded Transformer (VGGT) [55] exemplifies this shift toward scalable, end-to-end 3D reconstruction. VGGT is a feed-forward model capable of performing 3D reconstruction from one, a few, or even hundreds of input images within a single forward pass. It predicts a full set of geometric attributes in tens of seconds and often matches or even surpasses the accuracy of traditional methods, without requiring any post‑processing.
+Despite its remarkable reconstruction capability, the billion‑scale parameterization of VGGT poses substantial challenges to achieving instant 3D reconstruction [33, 44], where high‑fidelity results are expected within only a few seconds of visual input [43, 45, 3]. However, current transformer‑based 3D models fall far short of such latency targets due to their extreme memory and compute demands. VGGT consists of over 1.2B parameters, requiring >> 4 GB of weights in FP16 precision and more than 7 TFLOPs of computation per inference for multi‑view reconstruction. These resource requirements drastically exceed the capabilities of typical edge GPUs, such as the NVIDIA Jetson Orin NX [12], which offers limited LPDDR5 memory with 102.4 GB/s bandwidth and 3.76 FP16 TFLOPS. Profiling results (Sec. II-D) reveal that VGGT is constrained primarily by memory capacity and bandwidth, while the quadratic cost of global attention further amplifies latency as the number of input views increases. Consequently, the combination of massive parameter size, bandwidth sensitivity, and quadratic computation cost makes direct on‑edge deployment of VGGT impractical without model compression and hardware support.
+Fig. 1: Llama and VGGT activation value distributions and corresponding percentile distributions. The red band (25th-75th percentiles) denotes the inter-quartile range containing the middle 50% of activations. Unlike LLMs, which show isolated spiking outliers, VGGT exhibits saturated activation channels where many channels maintain persistently high activation values.
+Quantization, which reduces model size and computational cost by lowering numerical precision, appears a natural path to improve VGGT’s efficiency. Since VGGT shares the transformer backbone with modern large language models (LLMs), many existing LLM‑oriented quantization techniques appear applicable. These methods generally depend on a calibration dataset to capture representative activation statistics [10, 34, 57]. However, such approaches are ineffective for VGGT due to two primary challenges. First, VGGT exhibits saturated activation channels, where many channels maintain persistently high activation values rather than isolated spiking outliers. This saturation behavior, illustrated in Fig. 1, contrasts sharply with the isolated spiking outliers observed in LLMs and makes existing outlier‑smoothing techniques [2, 38] ineffective at maintaining model accuracy after quantization. Second, the diverse and scene‑dependent semantics of 3D multi‑view data hinder effective calibration: small datasets overfit to specific scenes, while large ones remain costly and fail to cover unseen geometries. These challenges prevent standard post‑training quantization pipelines from maintaining VGGT’s reconstruction accuracy or generalizing well across dynamic 3D environments.
+In addition, the nonlinear operators in the model exhibit high sensitivity to quantization, often necessitating dedicated hardware units to ensure computational accuracy. This results in non‑linear precision constraints, where low‑bit quantization is insufficient and BF16‑level precision must be preserved. However, such customized units introduce additional hardware resource overhead and may lead to workload imbalance between the linear and nonlinear computation pipelines. Fixed‑precision architectures further restrict the ability to exploit the benefits of different precisions, as they cannot be configured to meet real‑time latency or high‑fidelity requirements. Furthermore, the global attention mechanism in VGGT introduces another major challenge: it concatenates all input frames into a single long sequence, resulting in extremely large activation tensors and intensive matrix multiplications. Consequently, substantial intermediate data must be buffered and processed, placing heavy demands on memory systems and computation units.
+To address the aforementioned inefficiencies, we propose VersaQ-3D, an algorithm-architecture co-design acceleration framework for efficient feed‑forward 3D reconstruction. Our main contributions are summarized as follows:
+•
+We comprehensively profile and analyze the inefficiency and bottleneck of deploying VGGT on edge-level GPU. Moreover, we examine the distribution of VGGT’s activation value and identify the cause of the accuracy degradation brought by quantization methods.
+•
+We present VersaQ‑3D, which addresses inefficiencies in feed‑forward 3D reconstruction models through three key innovations: a versatile orthogonal‑transform quantization for model compression and computational reduction, a reconfigurable multi‑precision PE array for adaptive execution, and an efficient tiling method to mitigate memory and latency bottlenecks in global attention. To the best of our knowledge, VersaQ-3D is the first algorithm-architecture co‑design framework for feed-forward 3D reconstruction model.
+•
+On the algorithm side: We present VersaQ‑3D, the first calibration‑free, scene‑agnostic post‑training quantization (PTQ) framework for VGGT that maintains high accuracy at W4A8 and achieves acceptable accuracy at the more aggressive W4A4, where existing PTQ methods severely degrade. VersaQ‑3D employs integer‑friendly Walsh-Hadamard Transform (WHT) and Discrete Cosine Transform (DCT) to mitigate activation saturation and preserve structural weight features, and fuses these transforms offline into the model, minimizing on‑chip overhead and enabling efficient low‑bit inference with standard INT formats.
+•
+On the architecture side: We design a unified and reconfigurable accelerator co‑design with the proposed VersaQ‑3D algorithm to address both quantization and long‑sequence challenges in VGGT. The architecture adopts a hierarchical multi‑precision compute fabric with reconfigurable PEs that dynamically switch among BF16, INT8, and INT4 modes, avoiding dedicated floating‑point units. To alleviate the long‑sequence memory bottleneck, we propose a two‑stage recomputation‑based tiling scheme that reduces on‑chip memory demand via low‑cost INT‑precision recomputation. The unified systolic compute fabric executes linear operators, orthogonal transforms, and nonlinear functions within a shared datapath, enabling workload‑adaptive precision switching and efficient integration of both linear and nonlinear computation across the entire model.
+•
+Experiments on Co3Dv2 [49] and 7‑Scenes [24] show that VersaQ‑3D preserves 98-99% of full‑precision accuracy at W4A8 and achieves acceptable accuracy at W4A4 that outperforms prior methods by 1.61×\times-2.39×\times across diverse scenes. The proposed accelerator delivers 5.2×\times-10.8×\times speedup over edge GPUs, featuring a compact and power‑efficient design that enables instant and efficient feed‑forward 3D reconstruction.
+II Background and Motivation
+II-A 3D Reconstruction Methods
+Traditional 3D Reconstruction. Traditional methods such as SfM [50] and MVS [18] reconstruct 3D geometry by explicitly optimizing camera poses and dense point correspondences from multiple images. These pipelines typically involve several iterative stages, including feature matching, bundle adjustment, and dense depth estimation. While they achieve high geometric precision on well‑calibrated datasets, their heavy computational load, iterative nature, and sensitivity to noise or occlusion limit scalability. Consequently, these methods struggle to satisfy the real‑time and efficiency requirements of modern vision and robotics applications.
+Learning-based 3D Reconstruction. Learning‑based approaches, including NeRF [42] and 3DGS [26], reformulate reconstruction as a learning problem. NeRF represents scenes implicitly through volumetric rendering and achieves photorealistic view synthesis, but requires per‑scene training and extensive rendering computation. 3DGS improves rendering efficiency with explicit point‑based representations, yet still depends on iterative training for each new scene. Despite their visual quality, these methods primarily optimize for novel‑view rendering rather than estimating explicit geometric attributes such as camera parameters, depth, and pose. This lack of explicit 3D understanding limits their applicability to downstream tasks like robotic perception or scene analysis.
+II-B VGGT Model Structure
+Fig. 2: VGGT model structure. A DINO-based feature extractor feeds an AA module that interleaves frame and global attention over tokens reshaped between S×[P,C]S\times[P,C] and [S×P,C][S\times P,C] for intra-frame feature normalization and inter-frame information fusion.
+VGGT is composed of several key components arranged in a structured pipeline as shown in Fig. 2. It begins with DINO [46] for feature extraction, followed by an Alternating-Attention (AA) transformer. The AA module alternates between two types of self-attention: frame-wise attention for intra-frame analysis and global attention for inter-frame integration. This is achieved by manipulating the token tensor, which has a shape of [B,S,P,C][B,S,P,C] (Batch, Frames, Patches, Channels). For global attention, the tensor is reshaped to [B,S×P,C][B,S\times P,C], treating all patches from all frames as a single sequence. For frame-wise attention, it is processed as SS parallel sequences of shape [B,P,C][B,P,C], confining attention within each frame. This design helps the model balance intra-frame feature normalization and inter-frame information fusion. On top of the attention backbone, VGGT attaches task‑specific prediction heads. For 3D reconstruction, this typically includes a Camera Head for estimating camera poses and a DPT Head for producing depth maps and reconstructing point maps. More generally, different heads can be plugged into the shared backbone to support different tasks, enabling VGGT to jointly reason about geometry, depth, and camera parameters from multiple visual inputs as required by the application.
+II-C Orthogonal Transform
+Orthogonal transforms are fundamental for signal decorrelation and energy compaction, providing a mathematical basis for efficient computation in both classic and modern architectures [1]. For any orthogonal transform represented by matrix 𝐐\mathbf{Q}, the relation 𝐐𝐐T=𝐈\mathbf{Q}\mathbf{Q}^{T}=\mathbf{I} holds. Here we introduce two representatives which will be adopted in our work: WHT [48] and DCT [27]. The WHT is a linear, orthogonal, and symmetric transform represented by a Hadamard matrix 𝐇\mathbf{H}, satisfying 𝐇=𝐇T\mathbf{H}=\mathbf{H}^{T} and 𝐇𝐇T=𝐈\mathbf{H}\mathbf{H}^{T}=\mathbf{I} for its normalized form. The matrix can be recursively constructed as
+𝐇𝟐=12​[111−1],where ​𝐇𝟐𝐧=𝐇𝟐⊗𝐇𝟐(𝐧−𝟏).\mathbf{H_{2}}=\frac{1}{\sqrt{2}}\begin{bmatrix}1&1\\
+1&-1\end{bmatrix},\quad\text{where }\mathbf{H_{2^{n}}}=\mathbf{H_{2}}\otimes\mathbf{H_{2^{(n-1)}}}.
+(1)
+In contrast, the DCT projects input data onto a set of cosine basis functions, achieving strong energy compaction that has made it a core component of compression standards such as High-Efficiency Video Coding [19] (HEVC/H.265). In our design, the DCT projects the input signal onto cosine basis functions to obtain a frequency‑domain representation with a more uniform distribution, which facilitates more effective quantization.
+II-D Challenges in Feed-Forward 3D Reconstruction
+(a) Different GPUs (S=3)
+(b) Different S on Jetson Orin NX
+Fig. 3: Inference runtime breakdown on (a) different GPUs with S=3 and (b) different sequence lengths S on Jetson Orin NX, evaluated on the Example/Kitchen dataset.
+Challenges in Memory and Computation. As shown in Fig. 3, the runtime of VGGT can be divided into three major components: model weight loading, AA module, and other operations. On edge GPUs such as Jetson Orin NX 16 GB (ONX) [12] and Jetson Xavier NX 16 GB (XNX) [11], the weight‑loading stage dominates total latency, whereas on server GPUs (H20 96 GB [64] and A100 40 GB [7]) where high bandwidth memory mitigates this overhead. Unlike LLMs, in which parameter loading is amortized over the long decoding process by sequentially generating tokens, VGGT performs a single forward pass that processes all input frames simultaneously, and the result is computed only once. Consequently, model parameters must be fully loaded before inference, making the loading latency a considerable contributor to end‑to‑end runtime. The limited memory capacity and bandwidth of LPDDR‑based edge systems [20, 22], which are nearly two orders of magnitude lower than their HBM2 [21] or HBM3 [23] counterparts, prevent efficient parameter streaming and cause severe startup delays, as observed in Fig. 3a. In addition, the global attention in the AA module introduces quadratic growth in computation and memory usage with respect to the number of frames SS, since the attention score matrix scales as [S×P,S×P][S\times P,S\times P] and must process all patch tokens jointly. As illustrated in Fig. 3b, this results in rapidly increasing latency as sequence length grows. The situation is further exacerbated by the Softmax operation, which requires concurrent access to all elements within the same row to compute the output, leading to excessive memory traffic and prohibitive latency under limited on-chip memory and bandwidth.
+Challenges in Quantizing VGGT. Efficiently quantizing VGGT is impeded by two fundamental challenges rooted in its activation properties and data characteristics.
+First, VGGT exhibits highly saturated activation channels, where many channels maintain uniformly large activation magnitudes across a wide percentile range, as shown in Fig. 1. In contrast, LLMs such as LLaMA [53] display isolated spiking outliers, where extreme activations mainly occur near the min-max range while the 25th-75th percentiles remain moderate. This saturation pattern shows that within certain channels, large activation values persist across most percentiles rather than appearing as isolated extremes. Consequently, prior rotation‑based quantization techniques [2, 38], which leverage transforms such as the WHT to redistribute and smooth isolated spiking outliers, become less effective. As illustrated in Fig. 4, the channel‑wise variance before rotation displays a highly skewed distribution with sharp spikes, indicating strong inter‑channel activation imbalance. After rotation, the overall variance profile becomes milder, yet noticeable peaks remain across multiple channels, revealing that considerable activation variation still persists. This distinctive activation behavior undermines existing quantization methods originally designed for LLMs and highlights the need for approaches tailored to VGGT workloads.
+(a)
+(b)
+Fig. 4: Salient distribution in VGGT. Here we take channel variance to indicate
+the saliency of the activation. The variance remains considerable after
+Hadamard rotation.
+Second, calibration-dependent quantization methods are ill-suited for VGGT due to the high semantic diversity of 3D multi-view datasets. Various quantization techniques [34, 57, 10] rely on a small, representative calibration dataset to statistically profile activation and weight distributions, identifying data characteristics, and other quantization parameters essential for determining quantization methods. However, it has been identified that different 3D scenes occupy highly distinct regions of the model’s feature space [13]. This makes it infeasible for any small calibration set to capture the full data distribution. While enlarging the calibration set may seem like a solution, it introduces prohibitive computational overhead for pre-inference calibration and still offers no guarantee of covering the feature distributions of novel, unseen geometries. Consequently, calibration-based approaches lead to unstable parameter estimation and overfitting to the calibration data, ultimately causing significant degradation in reconstruction fidelity when deployed on unseen scenes.
+Fig. 5: VersaQ‑3D quantization framework. The attention module (with MLP blocks treated analogously) follows a four‑stage pipeline that combines offline weight preparation with online activation processing for low‑precision inference. Stage 1: Fuse LayerNorm into weights and activations, and apply QQ, KK, and VV projections whose weights are pre‑processed offline using Hadamard transforms, scaling, and DCT. Stage 2: Apply IDCT, dequantize to BF16 for RoPE, then apply WHT and re‑quantize to INT. Stage 3: Perform MHA in INT using quantized QQ, KK, and VV. Stage 4: Apply the same offline preparation to the output projection weights, followed by IDCT and LayerScale fusion, while keeping activations in the rotated domain for the next layer to reduce online WHT operations and on‑chip computation.
+Fig. 6: VersaQ‑3D offline weight preparation. Each weight matrix is transformed before quantization to fuse WHT/DCT into the weights.
+III Versatile Orthogonal-Transform Quantization
+III-A Design Considerations
+Our goal is to refine the data characteristics of activations and weights to enable aggressive quantization while maintaining efficient hardware implementation. We design a versatile and hardware‑efficient quantization framework guided by two key considerations:
+III-A1 Achieving Versatility
+To overcome the limitations of calibration‑dependent methods, our goal is to preserve the data characteristics of both weights and activations without requiring any calibration data. For activations, we adopt the principle of incoherence processing [54] to handle saturated channels. Specifically, applying orthogonal transforms redistributes outliers across feature dimensions, producing a more uniform and quantization‑friendly distribution. However, as discussed in Sec. II-D, redistribution alone cannot fully resolve the large activation variation in VGGT. To complement this, we apply DCT transform to the weight tensors. This design preserves structural weight features to preserve model accuracy, especially those associated with high‑variance activation channels shown in prior work dominating quantization error [34]. Leveraging the DCT’s frequency‑domain properties allows us to retain essential structural information while reducing quantization noise in weights. Unlike prior methods that identify and compensate for outliers explicitly [57, 34], our approach preserves the inherent feature distributions of both activations and weights, achieving a versatile quantization framework which eliminates the need for calibration dataset.
+III-A2 Maintaining Hardware Efficiency
+To avoid introducing massive computation overhead caused by the proposed quantization method, we aim to identify a hardware‑efficient approach for its implementation. Specifically, we employ the WHT to enable incoherence processing. This choice is hardware‑driven: the WHT is a fixed, structured orthogonal transform with elements constrained to ±1\pm 1, making it well suited for integer arithmetic. In our design, the Hadamard operation is implemented in INT mode by multiplying each input element with either +1+1 or −1-1, eliminating the need for costly multipliers. For DCT transform, we adopt the integer DCT matrix in HEVC/H.265 [19] to guarantee the DCT is conducted in the efficient INT computation. Moreover, we fuse both WHT and DCT into the offline weight preparation stage introduced in Sec. III-C, which reduces the demand for on‑chip WHT and DCT transformations during runtime.
+III-B VersaQ-3D Computation Flow
+As illustrated in Fig. 5, VersaQ‑3D adopts a unified quantization flow that integrates offline weight transformation and online activation processing for efficient low‑precision inference. Using the attention module as an example, the computation proceeds through five stages. In Stage 1, the LayerNorm operations are fused into the weights and activations to maintain functional equivalence, and the rotated input activations are multiplied by the QQ, KK, and VV projection weights that have been offline pre‑processed to embed Hadamard, scaling, and DCT transformations. In Stage 2, the projection outputs undergo an Inverse DCT (IDCT) to cancel the preceding DCT, followed by dequantization to BF16 for RoPE processing. After RoPE, the WHT is applied to smooth activation outliers, and the results are re‑quantized to INT format. Stage 3 performs the multi‑head attention (MHA) computation using the quantized QQ, KK, and VV. In Stage 4, the output projection weights are prepared offline using the similar way of Hadamard, scaling, and DCT operations. An IDCT is then applied to cancel the corresponding transformation, and the LayerScale parameters are fused into the projection. Finally, the output activations remain in the rotated domain, serving directly as inputs to the next layer and thus eliminating redundant online WHT operations. Through this unified design, the offline weight processing reduces the number of required online WHT transforms, lowering on‑device computation overhead to achieve efficient low‑precision inference.
+III-C Fusing WHT and DCT into Attention Module
+This section describes the detailed implementation of our quantization framework. We first review the standard attention formulation, then explain how the WHT and DCT are systematically integrated into the VGGT pipeline to ensure both mathematical correctness and hardware efficiency. The overall offline weight preparation process is illustrated in Fig. 6.
+III-C1 Preliminary
+The core computational unit in VGGT’s attention mechanism is the MHA block, which consists of hh parallel attention heads. For an input activation tensor XX, each head produces an output PiP_{i}, which is concatenated and linearly projected to form the final output YY:
+Y=concat⁡(P1,…,Ph)⋅Wproj,Y=\mathrm{concat}(P_{1},\ldots,P_{h})\cdot W_{\text{proj}},
+(2)
+Pi=softmax⁡((X​WQ(i))⋅(X​WK(i))Tdk)⋅(X​WV(i)).P_{i}=\mathrm{softmax}\left(\frac{(XW_{Q}^{(i)})\cdot{(XW_{K}^{(i)})}^{T}}{\sqrt{d_{k}}}\right)\cdot(XW_{V}^{(i)}).
+(3)
+Our quantization method applies to all major linear transformations within the AA, including the projections in the MHA block, the attention computation, the output projection following attention, and the feed-forward network (FFN) modules. In this section, we focus on the attention block here as a representative example to illustrate the implementation details of our co-designed quantization framework.
+III-C2 Achieving Computational Invariance with Hadamard Fusion
+To mitigate activation outliers through incoherence processing, we leverage the principle of computational invariance. The key idea is that applying an orthogonal transform 𝐇\mathbf{H} to activations and its transpose 𝐇T\mathbf{H}^{T} to weights leaves the overall output unchanged:
+(X​𝐇)​(𝐇T​W)=X⁡(𝐇𝐇T)​W=X​W.(X\mathbf{H})(\mathbf{H}^{T}W)=X(\mathbf{HH}^{T})W=XW.
+(4)
+This property enables computation on the transformed tensors (X​𝐇)(X\mathbf{H}) and (𝐇T​W)(\mathbf{H}^{T}W), which have more uniform and quantization‑friendly distributions while preserving the original model functionality.
+A challenge arises in layers that include element‑wise scaling, such as LayerNorm and LayerScale, since the scaling operation interacts non‑trivially with the WHT. For clarity, we take LayerNorm as an example to illustrate the solution; LayerScale is handled analogously. The standard LayerNorm is defined as:
+LayerNorm⁡(X)=X−E⁡[X]Var⁡(X)+ϵ⋅γ+β,\mathrm{LayerNorm}(X)=\frac{X-E[X]}{\sqrt{\mathrm{Var}(X)+\epsilon}}\cdot\gamma+\beta,
+(5)
+where γ\gamma and β\beta are learnable element‑wise scaling and bias parameters. When the WHT is inserted before the linear projection, γ\gamma is applied to the WHT‑transformed activation rather than the original one, even though γ\gamma was trained in the space of the untransformed activations. This mismatch causes computational errors.
+To restore correctness, we fuse the scaling factor γ\gamma directly into the corresponding weight matrix. The key observation is that, during the subsequent linear projection, the orthogonal pair 𝐇\mathbf{H} and 𝐇T\mathbf{H}^{T} cancel out. Therefore, the scaling factor can be equivalently applied to the weight side after the transform:
+WK,fused←𝐇T⋅γ⋅WK.W_{K,\text{fused}}\leftarrow\mathbf{H}^{T}\cdot\gamma\cdot W_{K}.
+(6)
+This approach correctly retains computational invariance and allows the model to benefit from WHT‑based incoherence processing without re‑training or functional deviation.
+Fig. 7: VersaQ-3D hardware architecture. (a) Overall hardware architecture. The accelerator works as output stationary systolic array during INT8 and INT4 mode, and works as a SIMD vector unit during BF16 mode. (b) INT8 and INT4 PE structure. (c) Peripheral logic in the BFU to support BF16 computation.
+III-C3 Integrating DCT for Weight Preservation
+As discussed in Sec. III-A, applying the DCT to the weights is crucial for preserving their structural regularities under quantization. We represent the DCT as an orthogonal transformation matrix 𝐃\mathbf{D} and apply it offline to the original weight matrices as shown in Fig. 6. Although applying the DCT to both activations and weights can yield marginal accuracy improvements, we adopt a hardware‑efficient design choice to transform only the weights to minimize the on-chip computation caused by the DCT transform. In this way, we only need to compute the IDCT on-chip to recover the data from the frequency domain.
+Integrating all components, the final fused weight matrix for each projection is constructed by sequentially applying the DCT for structural preservation and the Hadamard and scaling (e.g., LayerNorm) fusions for computational invariance. The unified transformation can therefore be expressed as:
+WK,final←𝐇T⋅γ⋅WK⋅𝐃,W_{K,\text{final}}\leftarrow\mathbf{H}^{T}\cdot\gamma\cdot W_{K}\cdot\mathbf{D},
+(7)
+where 𝐃\mathbf{D} the DCT matrix applied along the weight dimension. The resulting pre‑computed tensor WKW_{K} is then quantized for deployment. This compact formulation jointly mitigates activation outliers, preserves weight structures, and maintains mathematical equivalence, while enabling a low‑cost and high‑throughput hardware implementation.
+IV Reconfigurable Accelerator for VersaQ-3D
+IV-A Overview
+Fig. 7 illustrates the reconfigurable multi‑precision accelerator designed to exploit the quantization benefits of VersaQ‑3D. The accelerator supports three execution modes (INT4, INT8, and BF16) through reconfigurable PEs. Linear operations such as matrix multiplications in attention and linear projections are mapped onto the INT PEs according to precision requirements, while nonlinear functions including LayerNorm, Softmax, and GELU are executed on the BF16 PEs. In INT modes, the core adopts an output‑stationary systolic array where partial sums are locally accumulated to minimize off‑chip memory access during dense matrix operations.
+To efficiently process MHA with long sequences, the accelerator adopts a customized tiling and recomputation strategy. It reduces buffer usage by storing only the Softmax temporary statistics and recomputing the score matrix when needed. This approach alleviates memory bottlenecks and improves energy efficiency for global attention workloads in VGGT.
+In BF16 mode, the architecture is reconfigured into a SIMD‑style vector unit, where every four INT8 PEs in a column form one Brain-Float Unit (BFU). Input data are fetched from the upper BFU buffers, and the results are stored either back into the BFU buffers or sent to the output buffer (marked as green in Fig. 7(a)) according to the execution configuration. The Quantization Unit (QU) manages quantization and dequantization across different precision modes before transferring data to off‑chip memory or subsequent on‑chip modules.
+IV-B Reconfigurable Multi-Precision PE
+INT4 and INT8 PE. The fundamental compute unit of the accelerator is the INT4 PE, shown in Fig. 7(b), which performs 4‑bit MAC operations. An input multiplexer selects between two modes: in standard matrix‑multiplication (MM) mode, inputs are received from the previous PE; in WHT mode, the multiplexer directly provides ±1\pm 1 inputs, eliminating the need to store the Hadamard matrix and thereby reducing memory overhead. Four INT4 PEs are aggregated to form one INT8 PE, augmented with a shifter to support bit‑fusion-based INT8 MAC computation. In INT8 mode, the result multiplexer forwards the raw multiplier outputs to an external shifter, which completes partial product alignment. The adder within the INT8 unit then combines the shifted partial results to produce the final INT8 MAC output.
+BFU. We develop the BFU by grouping four INT8 units with dedicated peripheral logic, as shown in Fig. 7(c). We implement it as a four‑stage pipeline with an initiation interval (II) of 1 and a latency of 4 cycles. Following [56], we decompose BF16 computation into a sequence of INT8 operations. Since BF16 consists of a 1‑bit sign, 8‑bit exponent, and 7‑bit mantissa, we map exponent and mantissa operations to 8‑bit arithmetic by combining the sign and mantissa into a signed 8‑bit fixed‑point value, where the peripheral logic converts it into 2’s-complement form. Additional peripheral modules provide compare‑and‑clamp logic for exponent overflow and normalization to align mantissas after exponent adjustment. The BFU directly supports fundamental BF16 operations (fpadd, fpmul, and fptmp), where fptmp is used for fast inverse square‑root computation [39], enabling efficient implementation of division and other non‑linear functions [56].
+IV-C Tiling Global Attention to Solve Long Sequence Bottleneck
+Algorithm 1  Proposed Tiling Method for MHA
+1:
+Q,K,VQ,K,V, head dimension dkd_{k}
+2:
+Tile configuration: Q-tile (64×6464{\times}64), K-tile (64×6464{\times}64), V-tile (2048×642048{\times}64)
+3:
+Tile sizes: TQ=64T_{Q}{=}64, TK=64T_{K}{=}64, TV=2048T_{V}{=}2048
+4:
+for i←1i\leftarrow 1 to NQN_{Q} do
+5:
+for j←1j\leftarrow 1 to NKN_{K} do ⊳\triangleright Stage ①: update temp result
+6:
+𝒮i,j←Qi​Kj⊤/dk\mathcal{S}_{i,j}\leftarrow Q_{i}K_{j}^{\top}/\sqrt{d_{k}}
+7:
+dequant⁡(𝒮i,j)\mathrm{dequant}(\mathcal{S}_{i,j})
+8:
+update⁡(Mi′,Σi′)\mathrm{update}(M_{i}^{\prime},\Sigma_{i}^{\prime})
+9:
+end for
+10:
+for n←1n\leftarrow 1 to NVN_{V} do ⊳\triangleright Stage ②: compute final result
+11:
+for m←1m\leftarrow 1 to ( TV/TKT_{V}/T_{K} ) do
+12:
+𝒮i,n,m←Qi​Km⊤/dk\mathcal{S}_{i,n,m}\leftarrow Q_{i}K_{m}^{\top}/\sqrt{d_{k}}
+13:
+𝒮i,n,m←exp⁡(𝒮i,n,m−Mi)/Σi\mathcal{S}_{i,n,m}\leftarrow\exp(\mathcal{S}_{i,n,m}-M_{i})\!/\Sigma_{i}
+14:
+quant⁡(𝒮i,n,m)\mathrm{quant}(\mathcal{S}_{i,n,m})
+15:
+end for
+16:
+Oi←concat⁡(Oi,𝒮i,n​Vn)O_{i}\leftarrow\mathrm{concat}(O_{i},\;\mathcal{S}_{i,n}V_{n})
+17:
+end for
+18:
+end for
+As introduced in Sec. II-B, global attention treats all patches from all frames as a single sequence, resulting in an input activation of dimension [S×P,C][S\times P,C] per batch and producing a score matrix of size [S×P,S×P][S\times P,S\times P], where SS and PP denote the number of frames and patches, respectively. In typical 3D reconstruction tasks, SS usually takes multiple views, and PP ranges from hundreds to thousands, resulting in an extremely large score matrix. The standard Softmax operation further exacerbates this challenge, as it requires all elements of each row to be simultaneously accessible to compute normalization, which is infeasible under our on‑chip memory capacity and bandwidth constraints. Although FlashAttention [8] proposes an efficient tiling and kernel‑fusion strategy for long‑sequence transformers targeting GPU, it requires substantial on‑chip memory to cache each QQ, KK, VV, and OO tile, making it unsuitable for our resource‑limited architecture.
+To address the memory bottleneck introduced above, we propose a customized tiling method for mapping long-sequence MHA onto our accelerator, as described in Algorithm 1. The key idea is to lower on‑chip memory demand by replacing stored intermediates with inexpensive INT‑based recomputation. The process consists of two stages:
+Stage ① updates the intermediate variables Mi′M_{i}^{\prime} and Σi\Sigma_{i} required for the row-wise Softmax. Here, we denote 𝒮=Softmax⁡(Q​KT/dk)\mathcal{S}=\mathrm{Softmax}(QK^{T}/\sqrt{d_{k}}) as the attention score matrix computed over the tiled query-key blocks. As illustrated in Fig. 8, the outer loop (ii) iterates over rows of 𝒮\mathcal{S}, while the inner loop (jj) scans through KK tiles to calculate partial results for the current row. Following [8], the updates are computed as:
+Mi′=max⁡(Mi,Mi,j),M_{i}^{\prime}=\max(M_{i},M_{i,j}),
+(8)
+Σi′=Σi​e(Mi−Mi′)+Σi,j​e(Mi,j−Mi′).\Sigma_{i}^{\prime}=\Sigma_{i}e^{(M_{i}-M_{i}^{\prime})}+\Sigma_{i,j}e^{(M_{i,j}-M_{i}^{\prime})}.
+(9)
+After all KK tiles for the current row are processed, Mi′M_{i}^{\prime} and Σi′\Sigma_{i}^{\prime} are finalized and the temporary 𝒮\mathcal{S} results are discarded to save memory.
+Fig. 8: Proposed tiling method to alleviate the memory bottleneck caused by long sequence. The key idea is to replace the stored intermediates with inexpensive INT-based recomputation, with a 2-stage process (update and recompute).
+Stage ② recomputes Q​K⊤QK^{\top} to obtain the final Softmax output of each it​hi^{th} row. In this stage, KK and VV are organized into larger tiles (2048×642048\times 64) to improve computational efficiency. Since the original KK tile size is 64, an additional loop (mm) aggregates multiple KK tiles to fill the larger tile size. The ii loop remains unchanged, reusing Mi′M_{i}^{\prime} and Σi′\Sigma_{i}^{\prime} from Stage ① to compute:
+Softmax⁡(x)=ex−Mi′Σi′.\mathrm{Softmax}(x)=\frac{e^{x-M_{i}^{\prime}}}{\Sigma_{i}^{\prime}}.
+(10)
+Each 𝒮i,n\mathcal{S}_{i,n} is then multiplied with VnV_{n} to produce OiO_{i}, and all OiO_{i} are concatenated to form the final output OO.
+Our approach recomputes intermediate scores instead of caching them, requiring only partial QQ and KK tiles to reside on-chip at any time. Moreover, since OO tiles are directly produced in sequence order and concatenated off-chip, our design eliminates the need to reload or rewrite OO tiles for later processing. This reduces both the on-chip buffer footprint and overall memory traffic, improving overall energy efficiency and performance for long-sequence MHA existed in global attention.
+V Evaluation
+V-A Experimental Methodology
+Algorithm Implementation. We implement our algorithm in PyTorch [47] based on the open source code of VGGT [55]. The pre-trained model we adopt is the official VGGT-1B model from the Hugging Face. Here we quantize the model into 2 representative bit settings: W4A4 and W4A8, corresponding to the instant and high-fidelity reconstruction requirements respectively. Our method is a PTQ method without the need for training and finetuning.
+Datasets. We evaluate quantization accuracy and task robustness using two widely adopted 3D datasets: Co3Dv2 [49] and 7‑Scenes [52].
+Co3Dv2 is used for camera pose estimation, where performance is measured by the Area Under the Curve (AUC) of the accuracy-threshold curve defined over the minimum of Relative Rotation Accuracy (RRA) and Relative Translation Accuracy (RTA) across all thresholds. For instance, AUC@30 represents the integral of this curve up to a 30° threshold. A higher values indicate more accurate and consistent pose estimation. Here we take the offical single sequence subset (8.9 GB) instead of the entire dataset (5.5 TB) as we only conduct the evalution without the demand for training. 7‑Scenes is used for 3D point‑map reconstruction, evaluated using Accuracy (lower is better), Completeness (lower is better), and Normal Consistency (N.C.) (higher is better).
+TABLE I: W4A4/W4A8 PTQ results on camera pose estimation tasks (Co3Dv2).
+Method
+Bit-Width
+Metrics
+(W/A)
+AUC@30↑\uparrow
+AUC@15↑\uparrow
+AUC@5↑\uparrow
+AUC@3↑\uparrow
+Full Prec.
+16/16
+0.9719
+0.9438
+0.8394
+0.7536
+RTN
+4/4
+0.2346
+0.1296
+0.0276
+0.0094
+QuaRot
+4/4
+0.3484
+0.1406
+0.0098
+0.0015
+Ours
+4/4
+0.5617
+0.3209
+0.0566
+0.0188
+RTN
+4/8
+0.9470
+0.8980
+0.7186
+0.5704
+QuaRot
+4/8
+0.8232
+0.6463
+0.2018
+0.0899
+Ours
+4/8
+0.9553
+0.9105
+0.7387
+0.5931
+TABLE II: W4A4/W4A8 PTQ results on 3D point map reconstruction tasks (7-Scenes).
+Method
+Bit-Width
+Acc.↓\downarrow
+Comp.↓\downarrow
+N.C.↑\uparrow
+(W/A)
+Mean
+Med.
+Mean
+Med.
+Mean
+Med.
+Full Prec.
+16/16
+0.0442
+0.0248
+0.0567
+0.0337
+0.7321
+0.8442
+RTN
+4/4
+0.1107
+0.0750
+0.1471
+0.1156
+0.6629
+0.7558
+QuaRot
+4/4
+0.0591
+0.0392
+0.0611
+0.0367
+0.7024
+0.8036
+Ours
+4/4
+0.0550
+0.0308
+0.0545
+0.0340
+0.7155
+0.8216
+RTN
+4/8
+0.0804
+0.0549
+0.0807
+0.0512
+0.7035
+0.8138
+QuaRot
+4/8
+0.0561
+0.0352
+0.0838
+0.0614
+0.7132
+0.8150
+Ours
+4/8
+0.0518
+0.0306
+0.0618
+0.0378
+0.7217
+0.8305
+Fig. 9: Point map reconstruction result on Fire/7-Scenes.
+(a) Fixing weight as 4 bit.
+(b) Fixing activation as 4 bit.
+Fig. 10: Bitwidth sensitivity study on 7-Scenes, where lower accuracy means a better reconstruction.
+Fig. 11: Ablation of VersaQ-3D on Co3Dv2 (W4A4). WHT alone provides only modest AUC@30 gains, while adding DCT to preserve weight structure yields much larger improvements (29% and 35% average AUC@30 gains per step), confirming the effectiveness of the full VersaQ-3D pipeline.
+Hardware Implementation. We implement VersaQ-3D in RTL and synthesize our design using Synopsys Design Compiler based on TSMC 28nm CMOS Technology to obtain the power and area metrics. On-chip SRAMs are generated by the provided memory compiler with the same technology. The operating clock frequency for our design is 1 GHz. To evaluate the overall performance of VersaQ-3D, we develop a cycle-level simulator verified against our RTL design. The DRAM timing and power
+characteristics are obtained using Ramulator2 [40] with the configuration of LPDDR5-6400, which provides a bandwidth of 102.4 GB/s.
+Baselines. We choose two commonly adopted edge GPUs as our baselines, including Jetson XNX [11] with a typical power consumption of 20W, and Jetson ONX [12] with a typical power consumption of 25W. The runtime power is obtained from jtop power monitor. To the best of our knowledge, our proposed VersaQ-3D is the first work to design accelerators for feed-forward and generalizable 3D reconstruction models. We therefore do not compare against prior NeRF/3DGS‑based 3D vision accelerators, as they target photorealistic view synthesis with per‑scene training and different model assumptions. Sec. VI gives the detailed discussion for the reason.
+V-B VersaQ-3D Algorithm Performance
+Quantization Accuracy. We evaluate the proposed VersaQ-3D on multiple tasks to assess its quantization accuracy, as summarized in Table I and Table II. We use Round to Nearest (RTN) and QuaRot [2] as baselines. In the low-precision setting (W4A4), VersaQ-3D clearly outperforms both baselines. It achieves up to 2.39× higher accuracy than RTN and 1.61× higher than QuaRot in the camera pose estimation task (Co3Dv2). On the 3D point‑map reconstruction task (7‑Scenes), VersaQ‑3D achieves the best performance across all three metrics. These improvements enable instant 3D reconstruction when moderate accuracy is acceptable. To further illustrate the qualitative fidelity of our approach, Fig. 9 presents reconstructed point maps on the 7‑Scenes Fire scene, comparing the VersaQ‑3D (W4A4) result with the original full-precision output.
+In the high fidelity setting (W4A8), VersaQ-3D continues to outperform the baselines and achieves accuracy close to full precision inference. It reaches 98% and 99% of full precision accuracy on Co3Dv2 and 7-Scenes, respectively. All quantization experiments are performed in a calibration free manner, without using any sampled dataset for calibration. Evaluations across 15 distinct scenes in Co3Dv2 and 7 scenes in 7‑Scenes further demonstrate that VersaQ‑3D remains robust and versatile across diverse scene conditions.
+(a) Normalized speedup over baseline devices.
+(b) Normalized energy efficiency over baseline devices.
+Fig. 12: The normalized speedup and energy efficiency achieved by the proposed
+VersaQ-3D over baseline devices on Co3Dv2 and 7-Scenes dataset.
+Bitwidth Sensitivity. To explore the quantization limits of VersaQ-3D, we conduct a sensitivity study under varying bitwidths. We evaluate two configurations: (1) fixing the weight bitwidth while varying the activation bitwidth, and (2) fixing the activation bitwidth while varying the weight bitwidth. The results on the 7-Scenes dataset are shown in Fig. 10, where lower accuracy values indicate better 3D reconstructions as it is calculated by euclidean distance from the prediction to ground truth. The accuracy of RTN increases notably when the activation precision falls below 5 bits, while VersaQ-3D remains stable down to 4 bits. In contrast, VersaQ-3D also shows strong tolerance to weight quantization, maintaining stable performance even at 3‑bit weights, whereas RTN experiences pronounced degradation once the weight bitwidth drops below 5. These results demonstrate the strong robustness of VersaQ-3D under extreme low‑precision configurations.
+Ablation Study on Algorithm. Fig. 11 shows the AUC@30 changes when applying each step individually in W4A4 setting on Co3Dv2 dataset. It shows that applying WHT to the quantization would lead to a moderate accuracy increase. This is because the WHT redistributes the outliers and produces a more uniform and quantization-friendly distribution for activation. However, the accuracy after only adopting WHT is still not satisfying. It is interesting to note that on Broccoli and Dount dataset, WHT only brings marginal increase on the AUC@30. This further justifies the limitation of WHT and the necessity to adopt further step. Therefore, we further adopt the DCT to maintain the structural features of weights to mitigate the quantization errors. The results indicate that by each step the accuracy increase by 29% and 35% on average respectively, validating the effectiveness of proposed VersaQ-3D.
+V-C VersaQ-3D Hardware Performance
+Area and Power. Table III summarizes the hardware utilization and implementation results of VersaQ-3D. The accelerator integrates 64×\times16 BFUs, which is equivalent to 64×\times64 INT8 PEs and 128×\times128 INT4 PEs under their respective modes. VersaQ-3D occupies 3.88 mm2 of area and consumes 2.18 W of typical power. Table III also presents the detailed area and power breakdown, including per‑BFU, per‑INT8‑PE, and per‑INT4‑PE statistics, showing the contribution of each architectural component.
+TABLE III: Area and Power Breakdown of the Hardware Design
+Component
+Setup
+Area [mm2]
+Power [W]
+BFU Units
+64×1664\times 16 (BFUs + BFU Buffer)
+2.77
+1.79
+BFU
+4 INT8 PEs + Peripheral Logic
+2.79E-3
+1.75E-3
+INT8 PE
+4 INT4 PEs + Adder
+5.95E-4
+2.32E-4
+INT4 PE
+Basic Units
+1.04E-4
+3.69E-5
+QUs
+64
+0.06
+0.12
+Weight Buffer
+2×128​KB2\times 128\,\mathrm{KB}
+0.54
+0.13
+Input Buffer
+2×128​KB2\times 128\,\mathrm{KB}
+0.48
+0.12
+Output Buffer
+32​KB32\,\mathrm{KB}
+0.03
+0.02
+Total
+3.88
+2.18
+Performance. Fig. 12 shows the speedup and energy efficiency achieved by the proposed VersaQ‑3D over the baseline devices. Under the W4A4 setting, which targets instant 3D reconstruction, VersaQ‑3D achieves 10.8×\times and 2.7×\times average speedup over Jetson XNX and ONX on the camera pose estimation tasks (Co3Dv2), and 8.9×\times and 3.0×\times average speedup on the 3D point‑map reconstruction tasks (7‑Scenes). For energy efficiency, VersaQ‑3D delivers 99.3×\times and 58.5×\times improvements over Jetson XNX on Co3Dv2 and 81.9×\times and 47.3×\times improvements on 7‑Scenes. These gains primarily come from reduced memory traffic and the lower computational complexity enabled by INT4 quantization. Furthermore, VersaQ‑3D in W4A8 mode, which targets high‑fidelity reconstruction, also consistently outperforms the baseline devices. This further demonstrates the efficiency of our design.
+Fig. 13: Runtime breakdown on Co3Dv2 (W4A4). Our quantized VGGT accelerator cuts end‑to‑end runtime by 60% vs. baseline, and the proposed tiling scheme yields a further 7% reduction.
+Fig. 14: Normalized speedup vs. frame count SS on Co3Dv2. VersaQ‑3D consistently outperforms the baseline across all SS, with the largest speedup at S=1S{=}1 where the memory bottleneck dominates and reduced off‑chip access yields greater gains.
+Ablation Study and Robustness Anaylsis. To quantify the contribution of each design component, we perform an ablation study by incrementally applying the proposed quantization and tiling techniques. The corresponding runtime breakdown is shown in Fig. 13. Quantization substantially reduces off‑chip data loading time, while the attention stage remains a dominant latency source. After incorporating the proposed tiling strategy, the attention runtime decreases by 7%, confirming its effectiveness. We further evaluate the robustness of VersaQ-3D under different frame numbers (SS), as illustrated in Fig. 14. The results show a consistent speedup over baseline designs across all settings. Notably, the speedup is most pronounced when
+S=1S=1, where the memory bottleneck dominates and the reduction in off‑chip memory access yields a larger overall performance gain.
+VI Related Work
+DNN Accelerator. Over the past decade, DNN hardware accelerators [4, 5, 17, 25, 51, 16, 28, 6] have been widely studied to boost the performance and energy efficiency for deploying DNN models. Recent designs extend these efforts by supporting multi‑precision computation through runtime reconfiguration [51, 25, 36, 56].
+However, most of them are limited to integer precision switching [51, 25] or achieve FP-INT configuration using FPGA DSP units [56, 36].
+Meanwhile, quantization‑based accelerators for LLMs focus on reducing compute cost through aggressive precision scaling [16, 28, 6], but often depend on customized data formats [16, 6] and require calibration datasets to maintain accuracy. These designs target autoregressive LLM inference, where sequential token generation naturally amortizes parameter loading. Also, such workloads inherently lack long‑sequence attention, making the tiling problem for global attention a unique challenge in VGGT. The proposed VersaQ‑3D introduces an orthogonal‑transform‑based quantization scheme and a reconfigurable accelerator that together enable low‑precision, feed‑forward 3D reconstruction. Moreover, our work efficiently manages long‑sequence attention through a dedicated tiling strategy.
+Model Quantization. Numerous PTQ methods have been developed to reduce the memory and computation overhead of large models, including LLMs [10, 57, 2, 38, 34] and VLMs [61, 62, 37, 32]. Most LLM quantization approaches [10, 57, 34] rely on calibration datasets to capture data distributions, which is impractical for VGGT due to the diversity and complexity of 3D datasets. On the other hand, VLM‑oriented methods [61, 62, 37] mainly study the quantization effects on video generation tasks and thus are not directly applicable to VGGT. Recent work [58] demonstrates that versatile compression of LLMs can be achieved without calibration data. Building on this insight, we propose VersaQ‑3D, a versatile quantization framework that alleviates the challenge of constructing 3D calibration datasets for VGGT.
+3D Graphics Accelerator. Recent 3D graphics accelerators can be broadly divided into two categories: NeRF‑based designs [33, 29, 31, 15] and 3DGS-based designs [30, 35, 14]. These accelerators mainly target a single task: photorealistic novel view synthesis. As a result, they do not provide richer 3D outputs such as dense point maps or camera poses that many downstream applications require. We therefore do not directly compare against NeRF/3DGS accelerators: their objective (view synthesis) differs fundamentally from VGGT’s multi‑task 3D reconstruction (point maps, camera parameters, etc.), and there is no unified metric to fairly evaluate both. Moreover, VGGT is a large transformer‑based model that supports scene‑agnostic inference once trained. In contrast, NeRF and 3DGS pipelines usually use much smaller, non‑transformer architectures that must be retrained for each scene. Consequently, the performance is not comparable between our work and previous 3D graphics accelerators.
+VII Conclusion
+In this paper, we propose VersaQ-3D, which to the best of our knowledge is the first algorithm-architecture co-design framework to enable the instant feed-forward and generalizable 3D reconstruction model on edge devices. VersaQ-3D algorithm employs the orthogonal transform to achieve versatile quantization without the need for calibration dataset. Meanwhile, VersaQ-3D accelerator adopts a reconfigurable architecture to support multiple precision and non-linear operations. Additionally, VersaQ-3D proposes a two-stage recomputation-based tiling method to alleviate the long-sequence MHA bottleneck. VersaQ-3D significantly outperforms current edge GPUs while preserving a high quantization accuracy. Our work provides a promising solution for adopting VGGT‑style 3D reconstruction in broader real‑world applications, including AR/VR, robotics, and autonomous systems.
+References
+[1]
+N. Ahmed and K. R. Rao (2012)
+Orthogonal transforms for digital signal processing.
+Springer Science & Business Media.
+Cited by: §II-C.
+[2]
+S. Ashkboos, A. Mohtashami, M. L. Croci, B. Li, P. Cameron, M. Jaggi, D. Alistarh, T. Hoefler, and J. Hensman (2024)
+Quarot: outlier-free 4-bit inference in rotated llms.
+Advances in Neural Information Processing Systems 37, pp. 100213–100240.
+Cited by: §I,
+§II-D,
+§V-B,
+§VI.
+[3]
+A. Bonci, P. D. Cen Cheng, M. Indri, G. Nabissi, and F. Sibona (2021)
+Human-robot perception in industrial environments: a survey.
+Sensors 21 (5), pp. 1571.
+Cited by: §I.
+[4]
+T. Chen, Z. Du, N. Sun, J. Wang, C. Wu, Y. Chen, and O. Temam (2014)
+DianNao: a small-footprint high-throughput accelerator for ubiquitous machine-learning.
+In Proceedings of the 19th international conference on Architectural support for programming languages and operating systems,
+pp. 269–284.
+Cited by: §VI.
+[5]
+Y. Chen, J. Emer, and V. Sze (2016)
+Eyeriss: a spatial architecture for energy-efficient dataflow for convolutional neural networks.
+In 2016 ACM/IEEE 43rd Annual International Symposium on Computer Architecture (ISCA),
+pp. 367–379.
+Cited by: §VI.
+[6]
+Y. Chen, A. F. AbouElhamayed, X. Dai, Y. Wang, M. Andronic, G. A. Constantinides, and M. S. Abdelfattah (2025)
+Bitmod: bit-serial mixture-of-datatype llm acceleration.
+In 2025 IEEE International Symposium on High Performance Computer Architecture (HPCA),
+pp. 1082–1097.
+Cited by: §VI.
+[7]
+J. Choquette and W. Gandhi (2020)
+Nvidia a100 gpu: performance & innovation for gpu computing.
+In 2020 IEEE Hot Chips 32 Symposium (HCS),
+pp. 1–43.
+Cited by: §II-D.
+[8]
+T. Dao, D. Fu, S. Ermon, A. Rudra, and C. Ré (2022)
+Flashattention: fast and memory-efficient exact attention with io-awareness.
+Advances in neural information processing systems 35, pp. 16344–16359.
+Cited by: §IV-C,
+§IV-C.
+[9]
+T. Deng, K. Zhang, and Z. M. Shen (2021)
+A systematic review of a digital twin city: a new pattern of urban governance toward smart cities.
+Journal of management science and engineering 6 (2), pp. 125–134.
+Cited by: §I.
+[10]
+T. Dettmers, M. Lewis, Y. Belkada, and L. Zettlemoyer (2022)
+Gpt3. int8 (): 8-bit matrix multiplication for transformers at scale.
+Advances in neural information processing systems 35, pp. 30318–30332.
+Cited by: §I,
+§II-D,
+§VI.
+[11]
+M. Ditty, A. Karandikar, and D. Reed (2018)
+Nvidia’s xavier soc.
+In Hot chips: a symposium on high performance chips,
+Cited by: §II-D,
+§V-A.
+[12]
+M. Ditty (2022)
+Nvidia orin system-on-chip.
+In 2022 IEEE Hot Chips 34 Symposium (HCS),
+pp. 1–17.
+Cited by: §I,
+§II-D,
+§V-A.
+[13]
+W. Feng, H. Qin, M. Wu, C. Yang, Y. Li, X. Li, Z. An, L. Huang, Y. Zhang, M. Magno, et al. (2025)
+Quantized visual geometry grounded transformer.
+arXiv preprint arXiv:2509.21302.
+Cited by: §II-D.
+[14]
+Y. Feng, W. Lin, Y. Cheng, Z. Liu, J. Leng, M. Guo, C. Chen, S. Sun, and Y. Zhu (2025)
+Lumina: real-time mobile neural rendering by exploiting computational redundancy.
+arXiv preprint arXiv:2506.05682.
+Cited by: §VI.
+[15]
+Y. Feng, Z. Liu, J. Leng, M. Guo, and Y. Zhu (2024)
+Cicero: addressing algorithmic and architectural bottlenecks in neural rendering by radiance warping and memory optimizations.
+In 2024 ACM/IEEE 51st Annual International Symposium on Computer Architecture (ISCA),
+pp. 1293–1308.
+Cited by: §VI.
+[16]
+C. Guo, J. Tang, W. Hu, J. Leng, C. Zhang, F. Yang, Y. Liu, M. Guo, and Y. Zhu (2023)
+Olive: accelerating large language models via hardware-friendly outlier-victim pair quantization.
+In Proceedings of the 50th Annual International Symposium on Computer Architecture,
+pp. 1–15.
+Cited by: §VI.
+[17]
+S. Han, X. Liu, H. Mao, J. Pu, A. Pedram, M. A. Horowitz, and W. J. Dally (2016)
+EIE: efficient inference engine on compressed deep neural network.
+In 2016 ACM/IEEE 43rd Annual International Symposium on Computer Architecture (ISCA),
+pp. 243–254.
+Cited by: §VI.
+[18]
+R. Hartley and A. Zisserman (2003)
+Multiple view geometry in computer vision.
+Cambridge university press.
+Cited by: §I,
+§II-A.
+[19]
+International Telecommunication Union (2023)
+ITU-T Recommendation H.265: High Efficiency Video Coding.
+Tech. Rep.
+ITU-T.
+Note: [Online; accessed 2025-11-16]
+External Links: Link
+Cited by: §II-C,
+§III-A2.
+[20]
+JEDEC Solid State Technology Association (2014)
+JESD209-4: Low Power Double Data Rate 4 (LPDDR4).
+Note: JEDEC StandardJEDEC Publication, Arlington, VA, USA
+Cited by: §II-D.
+[21]
+JEDEC Solid State Technology Association (2021)
+JESD235D: High Bandwidth Memory (HBM) DRAM.
+Note: JEDEC StandardJEDEC Publication, Arlington, VA, USA
+Cited by: §II-D.
+[22]
+JEDEC Solid State Technology Association (2023)
+JESD209-5C: Low Power Double Data Rate (LPDDR5/5X).
+Note: JEDEC StandardJEDEC Publication, Arlington, VA, USA
+Cited by: §II-D.
+[23]
+JEDEC Solid State Technology Association (2025)
+JESD238B.01: High Bandwidth Memory (HBM3) DRAM.
+Note: JEDEC StandardJEDEC Publication, Arlington, VA, USA
+Cited by: §II-D.
+[24]
+R. Jensen, A. Dahl, G. Vogiatzis, E. Tola, and H. Aanæs (2014)
+Large scale multi-view stereopsis evaluation.
+In Proceedings of the IEEE conference on computer vision and pattern recognition,
+pp. 406–413.
+Cited by: 5th item.
+[25]
+P. Judd, J. Albericio, T. Hetherington, T. M. Aamodt, and A. Moshovos (2016)
+Stripes: bit-serial deep neural network computing.
+In 2016 49th Annual IEEE/ACM International Symposium on Microarchitecture (MICRO),
+pp. 1–12.
+Cited by: §VI.
+[26]
+B. Kerbl, G. Kopanas, T. Leimkühler, and G. Drettakis (2023)
+3D gaussian splatting for real-time radiance field rendering..
+ACM Trans. Graph. 42 (4), pp. 139–1.
+Cited by: §I,
+§II-A.
+[27]
+S. A. Khayam (2003)
+The discrete cosine transform (dct): theory and application.
+Michigan State University 114 (1), pp. 31.
+Cited by: §II-C.
+[28]
+J. Lee, W. Lee, and J. Sim (2024)
+Tender: accelerating large language models via tensor decomposition and runtime requantization.
+In 2024 ACM/IEEE 51st Annual International Symposium on Computer Architecture (ISCA),
+pp. 1048–1062.
+Cited by: §VI.
+[29]
+J. Lee, K. Choi, J. Lee, S. Lee, J. Whangbo, and J. Sim (2023)
+Neurex: a case for neural rendering acceleration.
+In Proceedings of the 50th Annual International Symposium on Computer Architecture,
+pp. 1–13.
+Cited by: §VI.
+[30]
+J. Lee, S. Lee, J. Lee, J. Park, and J. Sim (2024)
+Gscore: efficient radiance field rendering via architectural support for 3d gaussian splatting.
+In Proceedings of the 29th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 3,
+pp. 497–511.
+Cited by: §VI.
+[31]
+C. Li, S. Li, Y. Zhao, W. Zhu, and Y. Lin (2022)
+Rt-nerf: real-time on-device neural radiance fields towards immersive ar/vr rendering.
+In Proceedings of the 41st IEEE/ACM International Conference on Computer-Aided Design,
+pp. 1–9.
+Cited by: §VI.
+[32]
+S. Li, Y. Hu, X. Ning, X. Liu, K. Hong, X. Jia, X. Li, Y. Yan, P. Ran, G. Dai, et al. (2025)
+Mbq: modality-balanced quantization for large vision-language models.
+In Proceedings of the Computer Vision and Pattern Recognition Conference,
+pp. 4167–4177.
+Cited by: §VI.
+[33]
+S. Li, C. Li, W. Zhu, B. Yu, Y. Zhao, C. Wan, H. You, H. Shi, and Y. Lin (2023)
+Instant-3d: instant neural radiance field training towards on-device ar/vr 3d reconstruction.
+In Proceedings of the 50th Annual International Symposium on Computer Architecture,
+pp. 1–13.
+Cited by: §I,
+§I,
+§VI.
+[34]
+J. Lin, J. Tang, H. Tang, S. Yang, W. Chen, W. Wang, G. Xiao, X. Dang, C. Gan, and S. Han (2024)
+Awq: activation-aware weight quantization for on-device llm compression and acceleration.
+Proceedings of machine learning and systems 6, pp. 87–100.
+Cited by: §I,
+§II-D,
+§III-A1,
+§VI.
+[35]
+W. Lin, Y. Feng, and Y. Zhu (2025)
+Metasapiens: real-time neural rendering with efficiency-aware pruning and accelerated foveated rendering.
+In Proceedings of the 30th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 1,
+pp. 669–682.
+Cited by: §VI.
+[36]
+J. Liu, S. Zeng, L. Ding, W. Soedarmadji, H. Zhou, Z. Wang, J. Li, J. Li, Y. Dai, K. Wen, et al. (2025)
+Flightvgm: efficient video generation model inference with online sparsification and hybrid precision on fpgas.
+In Proceedings of the 2025 ACM/SIGDA International Symposium on Field Programmable Gate Arrays,
+pp. 2–13.
+Cited by: §VI.
+[37]
+W. Liu and S. Q. Zhang (2024)
+Hq-dit: efficient diffusion transformer with fp4 hybrid quantization.
+arXiv preprint arXiv:2405.19751.
+Cited by: §VI.
+[38]
+Z. Liu, C. Zhao, I. Fedorov, B. Soran, D. Choudhary, R. Krishnamoorthi, V. Chandra, Y. Tian, and T. Blankevoort (2024)
+Spinquant: llm quantization with learned rotations.
+arXiv preprint arXiv:2405.16406.
+Cited by: §I,
+§II-D,
+§VI.
+[39]
+C. Lomont (2003)
+Fast inverse square root.
+Tech-315 nical Report 32, pp. 44–46.
+Cited by: §IV-B.
+[40]
+H. Luo, Y. C. Tuğrul, F. N. Bostancı, A. Olgun, A. G. Yağlıkçı, and O. Mutlu (2023)
+Ramulator 2.0: a modern, modular, and extensible dram simulator.
+IEEE Computer Architecture Letters 23 (1), pp. 112–116.
+Cited by: §V-A.
+[41]
+S. Mihai, M. Yaqoob, D. V. Hung, W. Davis, P. Towakel, M. Raza, M. Karamanoglu, B. Barn, D. Shetve, R. V. Prasad, et al. (2022)
+Digital twins: a survey on enabling technologies, challenges, trends and future prospects.
+IEEE Communications Surveys & Tutorials 24 (4), pp. 2255–2291.
+Cited by: §I.
+[42]
+B. Mildenhall, P. P. Srinivasan, M. Tancik, J. T. Barron, R. Ramamoorthi, and R. Ng (2021)
+Nerf: representing scenes as neural radiance fields for view synthesis.
+Communications of the ACM 65 (1), pp. 99–106.
+Cited by: §I,
+§II-A.
+[43]
+R. B. Miller (1968)
+Response time in man-computer conversational transactions.
+In Proceedings of the December 9-11, 1968, fall joint computer conference, part I,
+pp. 267–277.
+Cited by: §I.
+[44]
+T. Müller, A. Evans, C. Schied, and A. Keller (2022)
+Instant neural graphics primitives with a multiresolution hash encoding.
+ACM transactions on graphics (TOG) 41 (4), pp. 1–15.
+Cited by: §I.
+[45]
+F. F. Nah (2004)
+A study on tolerable waiting time: how long are web users willing to wait?.
+Behaviour & Information Technology 23 (3), pp. 153–163.
+Cited by: §I.
+[46]
+M. Oquab, T. Darcet, T. Moutakanni, H. V. Vo, M. Szafraniec, V. Khalidov, P. Fernandez, D. Haziza, F. Massa, A. El-Nouby, et al. (2024)
+DINOv2: learning robust visual features without supervision.
+Trans. Mach. Learn. Res..
+Cited by: §II-B.
+[47]
+A. Paszke, S. Gross, F. Massa, A. Lerer, J. Bradbury, G. Chanan, T. Killeen, Z. Lin, N. Gimelshein, L. Antiga, et al. (2019)
+Pytorch: an imperative style, high-performance deep learning library.
+Advances in neural information processing systems 32.
+Cited by: §V-A.
+[48]
+W. K. Pratt, J. Kane, and H. C. Andrews (1969)
+Hadamard transform image coding.
+Proceedings of the IEEE 57 (1), pp. 58–68.
+Cited by: §II-C.
+[49]
+J. Reizenstein, R. Shapovalov, P. Henzler, L. Sbordone, P. Labatut, and D. Novotny (2021)
+Common objects in 3d: large-scale learning and evaluation of real-life 3d category reconstruction.
+In Proceedings of the IEEE/CVF international conference on computer vision,
+pp. 10901–10911.
+Cited by: 5th item,
+§V-A.
+[50]
+J. L. Schonberger and J. Frahm (2016)
+Structure-from-motion revisited.
+In Proceedings of the IEEE conference on computer vision and pattern recognition,
+pp. 4104–4113.
+Cited by: §I,
+§II-A.
+[51]
+H. Sharma, J. Park, N. Suda, L. Lai, B. Chau, J. K. Kim, V. Chandra, and H. Esmaeilzadeh (2018)
+Bit fusion: bit-level dynamically composable architecture for accelerating deep neural network.
+In 2018 ACM/IEEE 45th Annual International Symposium on Computer Architecture (ISCA),
+pp. 764–775.
+Cited by: §VI.
+[52]
+J. Shotton, B. Glocker, C. Zach, S. Izadi, A. Criminisi, and A. Fitzgibbon (2013)
+Scene coordinate regression forests for camera relocalization in rgb-d images.
+In Proceedings of the IEEE conference on computer vision and pattern recognition,
+pp. 2930–2937.
+Cited by: §V-A.
+[53]
+H. Touvron, L. Martin, K. Stone, P. Albert, A. Almahairi, Y. Babaei, N. Bashlykov, S. Batra, P. Bhargava, S. Bhosale, et al. (2023)
+Llama 2: open foundation and fine-tuned chat models.
+arXiv preprint arXiv:2307.09288.
+Cited by: §II-D.
+[54]
+A. Tseng, J. Chee, Q. Sun, V. Kuleshov, and C. De Sa (2024)
+Quip#: even better llm quantization with hadamard incoherence and lattice codebooks.
+arXiv preprint arXiv:2402.04396.
+Cited by: §III-A1.
+[55]
+J. Wang, M. Chen, N. Karaev, A. Vedaldi, C. Rupprecht, and D. Novotny (2025)
+Vggt: visual geometry grounded transformer.
+In Proceedings of the Computer Vision and Pattern Recognition Conference,
+pp. 5294–5306.
+Cited by: §I,
+§V-A.
+[56]
+J. Wu, M. Song, J. Zhao, Y. Gao, J. Li, and H. K. So (2025)
+TATAA: programmable mixed-precision transformer acceleration with a transformable arithmetic architecture.
+ACM Transactions on Reconfigurable Technology and Systems 18 (1), pp. 1–31.
+Cited by: §IV-B,
+§VI.
+[57]
+G. Xiao, J. Lin, M. Seznec, H. Wu, J. Demouth, and S. Han (2023)
+Smoothquant: accurate and efficient post-training quantization for large language models.
+In International conference on machine learning,
+pp. 38087–38099.
+Cited by: §I,
+§II-D,
+§III-A1,
+§VI.
+[58]
+C. Xu, Y. Wu, X. Yang, B. Chen, M. Lentz, D. Zhuo, and L. W. Wills (2025)
+LLM. 265: video codecs are secretly tensor codecs.
+In Proceedings of the 58th IEEE/ACM International Symposium on Microarchitecture,
+pp. 445–460.
+Cited by: §VI.
+[59]
+J. Zhang, Y. Li, A. Chen, M. Xu, K. Liu, J. Wang, X. Long, H. Liang, Z. Xu, H. Su, et al. (2025)
+Advances in feed-forward 3d reconstruction and view synthesis: a survey.
+arXiv preprint arXiv:2507.14501.
+Cited by: §I.
+[60]
+S. Zhao, H. Zhang, S. Bhuyan, C. S. Mishra, Z. Ying, M. T. Kandemir, A. Sivasubramaniam, and C. R. Das (2020)
+Déja view: spatio-temporal compute reuse for ‘energy-efficient 360 vr video streaming.
+In 2020 ACM/IEEE 47th Annual International Symposium on Computer Architecture (ISCA),
+pp. 241–253.
+Cited by: §I.
+[61]
+T. Zhao, T. Fang, H. Huang, E. Liu, R. Wan, W. Soedarmadji, S. Li, Z. Lin, G. Dai, S. Yan, et al. (2024)
+Vidit-q: efficient and accurate quantization of diffusion transformers for image and video generation.
+arXiv preprint arXiv:2406.02540.
+Cited by: §VI.
+[62]
+T. Zhao, X. Ning, T. Fang, E. Liu, G. Huang, Z. Lin, S. Yan, G. Dai, and Y. Wang (2024)
+Mixdq: memory-efficient few-step text-to-image diffusion models with metric-decoupled mixed precision quantization.
+In European Conference on Computer Vision,
+pp. 285–302.
+Cited by: §VI.
+[63]
+T. Zhou, M. Brown, N. Snavely, and D. G. Lowe (2017)
+Unsupervised learning of depth and ego-motion from video.
+In Proceedings of the IEEE conference on computer vision and pattern recognition,
+pp. 1851–1858.
+Cited by: §I.
+[64]
+R. Zhu, Z. Jiang, C. Jin, P. Wu, C. A. Stuardo, D. Wang, X. Zhang, H. Zhou, H. Wei, Y. Cheng, et al. (2025)
+MegaScale-infer: efficient mixture-of-experts model serving with disaggregated expert parallelism.
+In Proceedings of the ACM SIGCOMM 2025 Conference,
+pp. 592–608.
+Cited by: §II-D.
+[65]
+Z. Zhu, S. Peng, V. Larsson, W. Xu, H. Bao, Z. Cui, M. R. Oswald, and M. Pollefeys (2022)
+Nice-slam: neural implicit scalable encoding for slam.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 12786–12796.
+Cited by: §I.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from
+

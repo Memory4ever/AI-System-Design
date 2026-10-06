@@ -1,0 +1,131 @@
+# Exact-version necessary excerpt: https://arxiv.org/html/2602.13073v1
+# Numbered B blocks; no artifact run or experiment reproduced.
+
+B31: Algorithm 1 LCSB: Layer-Cyclic Selective Backpropagation 0: Model with n n layers, selection ratio r r , warmup W W 1: for step t = 1 , … , T t=1,\ldots,T do 2: Sample minibatch ( 𝐱 , 𝐲 ) (\mathbf{x},\mathbf{y}) 3: if t ≤ W t\leq W then 4: 𝒮 ← { 1 , … , n } \mathcal{S}\leftarrow\{1,\ldots,n\} // warmup: all layers 5: else 6: 𝒮 ← \mathcal{S}\leftarrow sample ⌈ n × r ⌉ \lceil n\times r\rceil layers uniformly 7: end if 8: 𝐡 ← Embed ​ ( 𝐱 ) \mathbf{h}\leftarrow\text{Embed}(\mathbf{x}) 9: for layer i = 1 , … , n i=1,\ldots,n do 10: 𝐨 ← Layer i ​ ( 𝐡 ) \mathbf{o}\leftarrow\text{Layer}_{i}(\mathbf{h}) 11: if i ∉ 𝒮 i\notin\mathcal{S} then 12: 𝐡 ← 𝐡 + detach ​ ( 𝐨 − 𝐡 ) \mathbf{h}\leftarrow\mathbf{h}+\texttt{detach}(\mathbf{o}-\mathbf{h}) 13: else 14: 𝐡 ← 𝐨 \mathbf{h}\leftarrow\mathbf{o} 15: end if 16: end for 17: ℒ ← CrossEntropy ​ ( 𝐡 , 𝐲 ) \mathcal{L}\leftarrow\text{CrossEntropy}(\mathbf{h},\mathbf{y}) ; ℒ . backward ​ ( ) \mathcal{L}.\texttt{backward}() 18: optimizer.step() // AdamW updates all params 19: end for
+B32: 3 Method
+B33: 3.1 The MeBP Bottleneck
+B34: MeBP enables first-order training on memory-constrained devices through gradient checkpointing and lazy weight loading. During backward, for each layer i i , MeBP must: (1) decompress INT4 weights (32–42% overhead), (2) reload activation checkpoints, and (3) compute gradients. This is repeated for all n n layers at every step, accounting for ∼ {\sim} 60% of total training time. Our key observation is that not all layers need exact gradient updates at every step; some layers may benefit from occasional updates while maintaining overall convergence.
+B35: 3.2 Selective Backward with Residual Gradient Flow
+B36: Each transformer layer computes 𝐲 = 𝐱 + F ⁡ ( 𝐱 , θ ) \mathbf{y}=\mathbf{x}+F(\mathbf{x},\theta) . If we “detach” F ⁡ ( 𝐱 , θ ) F(\mathbf{x},\theta) during backward (treating it as a constant), the Jacobian reduces to ∂ 𝐲 / ∂ 𝐱 = 𝐈 \partial\mathbf{y}/\partial\mathbf{x}=\mathbf{I} , and gradients flow through the identity path. Critically, this preserves exact forward computation ( 𝐲 \mathbf{y} is unchanged) while only modifying backward behavior: selected layers receive exact gradients, while non-selected layers have ∇ θ ℒ = 0 \nabla_{\theta}\mathcal{L}=0 .
+B37: Method Steps Loss Gap Speedup
+B38: FO (MeBP) 1K 2.678 – 1.00 × \times
+B39: LCSB r r =0.7 1K 2.695 +0.65% 1.00 × \times
+B40: LCSB r r =0.5 1K 2.708 +1.14% 1.12 × \times
+B41: LCSB r r =0.3 1K 2.720 +1.57% 1.20 × \times
+B42: ZO (MeZO) 10K 2.995 +11.8% –
+B43: Table 1: LCSB on Qwen2.5-0.5B + WikiText-2. ZO requires 10 × \times more steps yet produces 11.8% higher loss.
+B44: This distinction is fundamental compared to Stochastic Depth ( Huang et al., 2016 ) , which drops F F entirely during forward pass ( 𝐲 = 𝐱 \mathbf{y}=\mathbf{x} ), changing the model’s output and potentially harming convergence. In LCSB, every layer contributes to the forward computation; we only alter which layers receive gradient updates during backward. This guarantees that the loss landscape seen during training is identical to the full model, avoiding the noise introduced by layer dropping.
+B45: When g t = 0 g_{t}=0 for non-selected layers, AdamW still performs a non-zero update via momentum decay:
+B46: θ t = θ t − 1 − η ​ β 1 ​ m t − 1 β 2 ​ v t − 1 + ϵ \theta_{t}=\theta_{t-1}-\eta\frac{\beta_{1}m_{t-1}}{\sqrt{\beta_{2}v_{t-1}}+\epsilon} (1)
+B47: This implicit update prevents parameters from becoming stale, providing continuity based on historical gradient information. The combination of residual gradient flow (ensuring upstream layers still receive gradients) and momentum-based implicit updates (ensuring non-selected layers still evolve) enables LCSB to maintain convergence quality with reduced computation.
+B48: 3.3 The LCSB Algorithm
+B49: At each step t t , LCSB selects k = ⌈ n × r ⌉ k=\lceil n\times r\rceil layers ( r ∈ ( 0 , 1 ] r\in(0,1] ) uniformly at random and performs backward computation only through these layers. A warmup phase ( W = 50 W=50 steps) computes all gradients to ensure stable initial convergence and to initialize momentum terms for all layers. After warmup, each layer is selected independently with probability r r , ensuring that over T T steps, every layer receives approximately T × r T\times r exact gradient updates. Algorithm 1 presents the complete procedure.
+B50: Model Layers Speedup Loss Gap
+B51: Qwen2.5-0.5B 24 1.12 × \times +1.14%
+B52: Qwen2.5-1.5B 28 1.35 × \times +1.05%
+B53: Qwen2.5-3B 36 1.40 × \times +0.85%
+B54: Table 2: Scaling analysis with LCSB r = 0.5 r=0.5 . Larger models benefit more from selective backpropagation, achieving greater speedup with smaller quality gaps.
+B55: The key implementation detail is line 12: for non-selected layers, we compute the residual 𝐨 − 𝐡 \mathbf{o}-\mathbf{h} (which equals F ⁡ ( 𝐡 , θ i ) F(\mathbf{h},\theta_{i}) ), detach it from the computational graph, and add it back. This ensures the forward output is identical to the original model while stopping gradient flow through F F ’s parameters.
+B56: 3.4 Theoretical Justification: Block Coordinate Descent
+B57: LCSB can be interpreted as Block Coordinate Descent (BCD) on the LoRA parameter space θ = { θ 1 , … , θ n } \theta=\{\theta_{1},\ldots,\theta_{n}\} . At each step, BCD updates only a subset 𝒮 ⊂ { 1 , … , n } \mathcal{S}\subset\{1,\ldots,n\} :
+B58: θ i ( t + 1 ) = { θ i ( t ) − η ​ ∇ θ i ℒ ​ ( θ ( t ) ) if ​ i ∈ 𝒮 θ i ( t ) if ​ i ∉ 𝒮 \theta_{i}^{(t+1)}=\begin{cases}\theta_{i}^{(t)}-\eta\nabla_{\theta_{i}}\mathcal{L}(\theta^{(t)})&\text{if }i\in\mathcal{S}\\ \theta_{i}^{(t)}&\text{if }i\notin\mathcal{S}\end{cases} (2)
+B59: BCD converges for convex problems and works well for non-convex optimization ( Wright, 2015 ) . LCSB extends BCD with momentum-based implicit updates for non-selected parameters, forming a “soft” BCD where all parameters receive some update with different magnitudes. Importantly, the LoRA parameter space is naturally partitioned by layer, making the block structure inherent rather than imposed, which aligns well with BCD’s theoretical framework.
+
+B60: 4 Experiments
+B61: 4.1 Experimental Setup
+B62: Models and Tasks.
+B63: We evaluate on five transformer models: Qwen2.5-0.5B/1.5B/3B ( Qwen Team, 2024 ) and Gemma3-1B/4B ( Gemma Team, 2025 ) . We consider three tasks: (1) Language Modeling on WikiText-2 ( Merity et al., 2016 ) , (2) Instruction Tuning on Alpaca-52K ( Taori et al., 2023 ) , and (3) Commonsense Reasoning on ARC-Easy ( Clark et al., 2018 ) .
+B64: Method Speedup Loss Gap Notes
+B65: FO (baseline) 1.00 × \times – Full backprop
+B66: LCSB r r =0.5 1.35 × \times +1.05% Best balance
+B67: LCSB r r =0.3 1.51 × \times +1.57% Max speed
+B68: LISA s ​ w sw =20 1.18 × \times +0.20% Best quality
+B69: LISA s ​ w sw =10 1.25 × \times +0.49%
+B70: Freeze f ​ r fr =0.5 1.45 × \times +1.27%
+B71: Stoch. Depth 1.08 × \times +3.78% Poor quality
+B72: Table 3: Comparison with efficient training baselines on Qwen2.5-1.5B + WikiText-2. LCSB achieves the best speed-quality tradeoff.
+B73: Configuration.
+B74: We use LoRA ( Hu et al., 2022 ) (rank 16, targeting all projections) with AdamW ( Loshchilov and Hutter, 2019 ) at lr 1 × 10 − 4 1{\times}10^{-4} for 1K steps (FO/LCSB) or lr 1 × 10 − 6 1{\times}10^{-6} for 10K steps (MeZO). LCSB uses warmup W = 50 W{=}50 and uniform selection. Server experiments use NVIDIA A100 80GB; on-device experiments use 4-bit quantized models.
+B75: 4.2 Main Results
+B76: We first verify that LCSB maintains convergence quality while achieving meaningful speedup. Table 1 shows results on Qwen2.5-0.5B with WikiText-2.
+B77: As shown in Table 1 , LCSB with r = 0.5 r{=}0.5 achieves 12% speedup with only 1.14% loss increase. With r = 0.3 r{=}0.3 , speedup increases to 20% at the cost of 1.57% quality degradation. At r = 0.7 r{=}0.7 , quality is nearly identical to full backpropagation (+0.65%), though the speedup is negligible because forward computation still dominates at this ratio. This suggests a practical sweet spot around r = 0.5 r{=}0.5 , where meaningful speedup begins without significant quality loss. Notably, MeZO requires 10 × \times more steps yet still produces 11.8% higher loss, demonstrating that selective first-order gradients far outperform zeroth-order approximations.
+B78: 4.3 Scaling Analysis
+B79: We investigate how LCSB’s benefits scale with model size (Table 2 ).
+B80: Interestingly, LCSB’s benefits increase with model scale. The 3B model achieves 1.40 × \times speedup (vs. 1.12 × \times for 0.5B) with a smaller loss gap (0.85% vs. 1.14%). We attribute this to two factors: (1) deeper models have more redundant layers where skipping gradients has minimal impact, and (2) the backward computation overhead (weight decompression, checkpoint reloading) grows linearly with depth, amplifying the savings from layer skipping.
+B81: Strategy Eval Loss Total Time Speedup
+B82: Uniform Random 2.720 107.9s 1.20 × \times
+B83: Round-Robin 2.806 105.9s 1.22 × \times
+B84: Importance 2.801 518.8s 0.25 × \times
+B85: Table 4: Selection strategy comparison on Qwen2.5-0.5B. Importance Sampling’s overhead (4.8 × \times slower) negates any benefit.
+B86: This is encouraging for practical deployment, as efficiency gains are greatest precisely where they matter most: larger models with higher computational costs.
+B87: 4.4 Baseline Comparisons
+B88: Table 3 compares LCSB against state-of-the-art efficient training methods on Qwen2.5-1.5B.
+B89: LCSB achieves the best balance between speed and quality. LISA achieves lower loss gap but with less speedup (1.18 × \times vs. 1.35 × \times ); Freeze provides comparable speedup but at higher quality cost (+1.27%). Stochastic Depth performs poorly (+3.78% gap with only 1.08 × \times speedup), confirming that maintaining exact forward computation is crucial. This result showcases the strength of LCSB: by operating at the computational graph level via detaching, it achieves efficiency without sacrificing the quality that LISA and Freeze trade away.
+B90: 4.5 Ablation: Selection Strategy
+B91: We compare three selection strategies at r = 0.3 r{=}0.3 (Table 4 ).
+B92: Surprisingly, Uniform Random outperforms Importance Sampling in both speed and quality. While importance-based selection could theoretically focus computation on high-impact layers, the overhead of computing and tracking importance scores (4.8 × \times slower) completely negates any potential benefit. This finding simplifies practical deployment: simple uniform selection is optimal, requiring no additional hyperparameters or bookkeeping. Additional ablations on warmup and full selection ratio sweeps are in Appendix B .
+B93: 4.6 Adaptive Scheduling
+B94: We explore adaptive schedules that vary r r during training, motivated by the intuition that early training may benefit from more exact gradients while later training tolerates sparser updates (Table 5 ).
+B95: Schedule r r Range Speedup Loss Gap
+B96: Fixed 0.5 1.35 × \times +1.1%
+B97: Cosine 0.8 → \to 0.3 2.1 × \times +0.9%
+B98: Linear 0.8 → \to 0.3 1.9 × \times +1.0%
+B99: Step 0.9 → \to 0.2 4.55 × \times +0.8%
+B100: Table 5: Adaptive scheduling on Qwen2.5-1.5B. Step scheduling achieves 4.55 × \times speedup with lower loss gap than fixed r = 0.5 r{=}0.5 .
+B101: Remarkably, step scheduling ( r r : 0.9 → \to 0.2) achieves 4.55 × \times speedup with lower loss gap (+0.8%) than fixed r = 0.5 r{=}0.5 (+1.1%). This confirms that gradient importance varies across training phases: early steps require broad gradient coverage to establish good initial directions, while later steps can operate with increasingly sparse updates as the loss landscape becomes smoother near convergence.
+B102: 4.7 On-Device Experiments: Quantized Training
+B103: We evaluate LCSB in mobile-like settings using 4-bit quantized models (Table 6 ).
+B104: Two key findings emerge. First , LCSB provides consistent speedup across model sizes, with benefits increasing for larger models: 1.23 × \times for 0.5B, 1.10 × \times for 1.5B, and 1.65 × \times for 3B. Second , and more remarkably, the 3B model with full backpropagation completely diverges (loss > > 8.0), while LCSB converges smoothly to 0.777. We hypothesize that selective backpropagation acts as implicit regularization: by computing exact gradients for only a subset of layers, noise from quantization is effectively reduced. In full backpropagation, quantization errors accumulate through the chain of layer-wise gradient computations, and for deeper models this accumulation can push gradients beyond stable ranges. By detaching a fraction of layers, LCSB breaks these long gradient chains, effectively limiting error propagation. This finding is particularly significant for practical deployment: LCSB may be necessary , not just beneficial, for stable training of larger quantized models on mobile devices.
+B105: 4.8 Convergence Analysis
+B106: Model Method Loss Time/St. Speedup
+B107: 0.5B FO 1.625 0.715s –
+B108: LCSB 0.174 0.580s 1.23 × \times
+B109: 1.5B FO 0.859 1.430s –
+B110: LCSB 0.285 1.306s 1.10 × \times
+B111: 3B FO 8.5 4.699s –
+B112: LCSB 0.777 2.846s 1.65 × \times
+B113: Table 6: 4-bit quantized on-device results. The 3B model diverges with FO (loss > > 8.0) but converges smoothly with LCSB.
+B114: We analyze training loss curves comparing FO and LCSB with different selection ratios on Qwen2.5-0.5B + WikiText-2. All configurations exhibit similar convergence patterns: LCSB with r = 0.7 r{=}0.7 is nearly indistinguishable from full backpropagation, while r = 0.5 r{=}0.5 and r = 0.3 r{=}0.3 converge to slightly higher final losses (2.708 and 2.720 vs. 2.678). Importantly, the convergence gap between selection ratios remains roughly constant throughout training rather than widening, suggesting that LCSB’s approximation quality is consistent across training phases. All methods reach near-final performance within 400–500 steps, with the remaining steps providing marginal refinement. This stability supports our BCD-based theoretical analysis, which predicts convergence under uniform random block selection regardless of which specific layers are chosen at each step.
+B115: 5 Conclusion
+B116: We proposed Layer-Cyclic Selective Backpropagation (LCSB), a selective backpropagation algorithm that reduces per-step training cost by computing gradients for only a subset of transformer layers. By exploiting residual connections for gradient flow and AdamW momentum for implicit updates, LCSB achieves up to 1.40 × \times speedup with less than 2% quality degradation across five models and three tasks, and up to 4.55 × \times with adaptive scheduling.
+B117: Our comprehensive experiments across multiple baselines demonstrate that LCSB offers the best speed-quality tradeoff among gradient-based efficient training methods. Notably, LCSB provides unexpected stability benefits in 4-bit quantized environments, where full backpropagation can diverge due to noisy gradients, suggesting that selective gradient computation acts as an implicit regularizer.
+B118: We envision LCSB as a practical drop-in enhancement for memory-efficient on-device LLM fine-tuning. The Block Coordinate Descent perspective opens new avenues for designing efficient training algorithms that strategically allocate computation across network components, and we believe this principle extends beyond transformer architectures to other residual networks.
+B119: Several promising directions emerge from this work. First, the success of adaptive scheduling (Section 4.6 ) suggests that learning to predict the optimal r r at each step, perhaps via a lightweight meta-controller, could further improve the speed-quality tradeoff. Second, combining LCSB with other efficiency techniques such as mixed-precision training or structured pruning may yield compounding benefits. Third, our implicit regularization finding in quantized settings warrants deeper theoretical investigation, as understanding this phenomenon could inform the design of more robust low-precision training methods.
+B120: Limitations
+
+B220: Appendix D Failed Approach: Stale Gradient Caching
+B221: During development, we explored caching non-selected layers’ most recent gradients and reusing them instead of setting them to zero.
+B222: Method Step 300 Step 400 Step 1000
+B223: Cached gradients 2.97 11.30 5.88
+B224: Zero gradients (final) 2.74 2.73 2.72
+B225: Table 16: Cached vs. zero gradients. Caching causes severe instability.
+B226: Cached gradients cause training to diverge around step 400 (loss spikes to 11.30). This is because cached gradients were computed at a different parameter state θ o ​ l ​ d \theta_{old} , and when applied at θ n ​ o ​ w \theta_{now} , may point in the wrong direction. The zero-gradient + AdamW momentum approach (BCD) is more stable than stale gradient injection, aligning with BCD theory.
+B227: Appendix E Implementation Details
+B228: E.1 Hyperparameter Settings
+B229: Hyperparameter Value
+B230: LoRA rank 16
+B231: LoRA alpha 32
+B232: LoRA targets q, k, v, o, gate, up, down
+B233: Learning rate (FO/LCSB) 1 × 10 − 4 1\times 10^{-4}
+B234: Learning rate (ZO) 1 × 10 − 6 1\times 10^{-6}
+B235: Batch size 1
+B236: Sequence length 256
+B237: Training steps (FO/LCSB) 1,000
+B238: Training steps (ZO) 10,000
+B239: Warmup steps W W 50
+B240: Selection ratio r r 0.3, 0.5, 0.7
+B241: EMA decay α \alpha 0.9
+B242: Temperature τ \tau 2.0
+B243: AdamW β 1 \beta_{1} 0.9
+B244: AdamW β 2 \beta_{2} 0.999
+B245: Weight decay 0.01
+B246: Random seed 42
+B247: Table 17: Complete hyperparameter settings.
+B248: E.2 Pseudocode with Annotations
+B249: Algorithm 2 Detailed LCSB Implementation 0: model, dataloader, r r , W W , T T , α = 0.9 \alpha=0.9 1: importance ← \leftarrow ones ( n n ) {Layer importance scores} 2: optimizer ← \leftarrow AdamW (model.lora_params) 3: for t = 1 t=1 to T T do 4: x , y ← x,y\leftarrow next (dataloader) 5: 6: {— Layer Selection —} 7: if t ≤ W t\leq W then 8: selected ← \leftarrow range ( n n ) 9: else 10: k ← ⌈ n × r ⌉ k\leftarrow\lceil n\times r\rceil 11: selected ← \leftarrow random.sample ( range ( n n ), k k ) 12: end if 13: 14: {— Selective Forward —} 15: h ← h\leftarrow model.embed( x x ) 16: for i = 0 i=0 to n − 1 n-1 do 17: o ← o\leftarrow model.layers[ i i ]( h h ) 18: if i ∉ i\notin selected then 19: h ← h + ( o − h ) h\leftarrow h+(o-h) . detach () {Identity grad} 20: else 21: h ← o h\leftarrow o {Normal grad flow} 22: end if 23: end for 24: 25: {— Backward and Update —} 26: loss ← \leftarrow cross_entropy (model.head( h h ), y y ) 27: optimizer. zero_grad () 28: loss. backward () 29: 30: {— Update Importance (optional) —} 31: for i ∈ i\in selected do 32: g ← g\leftarrow grad_norm (model.layers[ i i ].lora) 33: importance[ i i ] ← α ⋅ \leftarrow\alpha\cdot importance[ i i ] + ( 1 − α ) ⋅ g +(1-\alpha)\cdot g 34: end for 35: 36: optimizer. step () {AdamW updates ALL params} 37: end for
+B250: Experimental support, please view the build logs for errors. Generated by L A T E xml .
+
+B120: Limitations
+B121: Our on-device experiments use simulated 4-bit quantized environments rather than actual mobile hardware; real-device validation on physical mobile SoCs (e.g., Qualcomm Snapdragon, Apple A-series) remains future work and may reveal additional hardware-specific considerations. Our BCD theoretical framework provides convergence guarantees primarily for convex problems; extending these guarantees to non-convex neural network training with formal convergence rates would strengthen our theoretical claims. Additionally, we evaluated LCSB only with LoRA fine-tuning; whether the benefits extend to full fine-tuning, other PEFT methods (e.g., adapters, prefix tuning), or pre-training remains to be explored. Finally, while we tested models up to 3B parameters, scaling behavior for larger models (7B+) may differ and warrants investigation.
+B122: References
+

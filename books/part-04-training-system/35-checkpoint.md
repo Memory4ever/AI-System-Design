@@ -278,6 +278,10 @@ job 标为失败或无最终 checkpoint，而不是把“已提交异步保存�
 
 <!-- source-family:SF-2026-VEOMNI-1162 -->
 
+完成异步写入之后，仍不能用 storage bandwidth 单独推算恢复时间。Checkpoint 的 logical tensor、实际 I/O request 和文件布局是三种粒度：一份 tensor 可能被拆成许多小而不齐的 buffer，多个 tensor 又可能被聚合到同一文件。预分配、对齐、连续 buffer 的 I/O microbenchmark 不包含 framework metadata、对象反序列化与 host allocation；这些前置阶段尚未就绪时，backend 的峰值带宽并不能被 restore pipeline 消费。
+
+因此要先确定所比较的成本合同，再选择 file-per-rank、tensor 文件或共享文件及聚合方式。共享文件需要 offset、padding 和多 rank 协调，request 合并也增加 staging 与布局状态；direct/cached I/O 则必须在完整读写路径上测量。[Checkpoint I/O v1 §3.2、§3.4–3.5](https://arxiv.org/html/2512.24511v1)在 Polaris/Lustre 的 checkpoint 布局中显示，孤立小读的 cache 优势并未使 direct-write/buffered-read 混合路径更优，扣除 allocation 后 framework 与原生 I/O 差距也会缩小。该局部反证不指定所有文件系统的最佳 backend，更不证明较快写盘已经可恢复；布局、cache 条件或参与者变化后要重验，收益不足时保留简单布局，并继续以 manifest、全局 commit 与 restore test 判断 checkpoint correctness。<!-- source-family:SF-2026-ARXIV-2512-24511 -->
+
 ### 从统一 Object Graph 到 Composable State Providers
 
 早期 checkpoint API 把整个训练状态交给统一 serializer，这在对象较少、单一内存层和单文件布局下合理。
@@ -418,6 +422,9 @@ training checkpoint
 ```
 
 LoRA merge、TP reshard、tensor-name mapping 和 quantization 都可能改变输出。转换完成必须重新验证，不应把源 checkpoint 的评估结果无条件继承给目标 artifact。
+
+融合两个从共同 base 出发的 task vectors，还可能需要任务不对称的筛选，而不只是统一平均。在受限 reasoning/task 合并分支中，分别用各自 calibration 数据的梯度幅度，选择 reasoning 向量的低梯度位置与任务向量的高梯度位置，再从双方集合都去掉 overlap，按缩放系数加回共同 base。这个 mask 是模型、loss 与校准数据依赖的转换 proposal；不同选择方向和交集排除不证明推理或安全知识已被定位到独立地址，也不保证参数互不重叠就没有行为干扰。[有限模型与mask消融](https://arxiv.org/html/2601.05560v1)支持该受测分支，同时提醒低攻击成功率可能来自输出崩溃；因此目标 artifact 要同时再验任务效用、reasoning、输出完整性和安全，而不继承源模型成绩。梯度采集、筛选与发布矩阵都有成本；共同 base 不同、校准迁移或回归未过时，保留源 artifact、原合并方法或不合并。
+<!-- source-family:SF-2026-ARXIV-2601-05560 -->
 
 第 66 章将进一步要求 equivalence Evaluation 绑定 source/target artifact、转换配置、runtime、dataset 与 scorer identity。只有证据可追溯到实际被部署的 target artifact，Registry 和 release gate 才能消费它。
 
@@ -611,3 +618,7 @@ Primary-source / official documentation 校验入口：
 
   **已吸收的语义增量：** 新增证据边界：Persistent checkpoint-restart is not the only recovery branch. For frequent fail-stop node loss, the runtime can continuously maintain a committed in-memory recovery generation, replicate only non-reconstructible optimizer shards, and replace a failed node by logical shard identity. This reduces replay and restart scope but depends on spare nodes, failure classification and explicit fallback for corruption or replica loss. 该 delta 已进入 `books/part-04-training-system/35-checkpoint.md#L273`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-01646:end -->
+
+- `SF-2026-ARXIV-2512-24511`：[exact v1](https://arxiv.org/html/2512.24511v1) §3.1 Polaris/Lustre setup、§3.2 tensor/request/file 粒度、§3.4 direct/cached 混合路径反证、§3.5 restore allocation/framework 对照。采用 I/O microbenchmark 与端到端 restore 的不同成本合同；真实 BLOOM3B/LLaMA7B/13B 的 4/8/16 ranks 与 8GB 连续 host-buffer 测试分开，不采用通用 34% 加速或 mixed-path 优势。必要原源与实际正文/邻接/末注已由 root 非作者复核通过；未运行代码或复现实验。
+
+- `SF-2026-ARXIV-2601-05560` — Daily `2026-01-13`；[ReasonAny exact-v1](https://arxiv.org/html/2601.05560v1) §2–4。原评分保持，具体owner差额深入；采用同base BottomK/TopK双向overlap排除、mask calibration依赖与target回归；低ASR输出collapse反侧。未运行代码或复现实验；root实际必要源/现owner写前核通过并授窄锁；root已实际核正文/前后邻接及末注，非作者POST通过。

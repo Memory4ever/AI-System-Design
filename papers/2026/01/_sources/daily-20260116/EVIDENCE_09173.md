@@ -1,0 +1,12 @@
+# 2601.09173v1 — intrinsic geometry drift has a task-specific validation boundary
+
+Exact [v1](https://arxiv.org/html/2601.09173v1); PRIMARY_09173_NECESSARY.md onlylanguage-related §3.3, App6.1, 10.4 and11.3 plus main limits. Proposed2+1+2=5 standard, OnlyReport. Representation similarity can hide internal geometric inconsistency→feature-split RDM correlation/synthetic perturbation canary→reconsider which geometry diagnostic predicts task drop, not assume all stability means capability.
+
+Feature-Split partitions coordinates disjointly, RDM same items, upper-triangle Spearman averaged30 splits; redundant intrinsic geometry not truth or rotation-invariant causal object. Sample-Split definition disjointitems then sharedpairs is underdefined without explicit anchors, so no exact general recipe adopted. Main23base/instructpairs11families92observations4prompttypes; Gaussian/quantization/LoRA synthetic perturbations not natural deployment drift. App10.4 causal15models0.14–7B, SST2 balanced800,lastlayer meanpool nonpadding L2,max128. FP16baseline vs INT8/NF4,51Gaussian levels,LoRA ranks1…64(alpha2r/init.01) plusr8scale. Hardware/fullmetriccost/seedCI ND in necessary core.
+
+Main earlier-drift19/26sentenceencoder population is not causal-LM population: Table48 causal CKA sigma.117 precedes Shesha.120. INT8/4 observed .01/.21% mean accuracy changes do not prove functional losslessness or later safety. Table51 variability acrossmodels is not repeated-training CI. ROC label >1% SST2 accuracy drop under same perturbation; not general falsealert/safety contract. App11.3 unsupervised SplitHalf fewshot rho.22–.33 NS, crossdomainIMDB→Yelp rho.03 p.86, Hscore/logME stronger: intrinsic stability not transfer predictor.
+
+Global RDM may miss token dynamics, family confounds, extra perturbation/forward cost. Actual Ch5 body175–205 separates geometric projection, readout, intervention, transfer and behavior tests; it does not already implement this new metric/canary. Local new diagnostic has value, but required perturbation family/task threshold and failure of transfer prediction do not establish a new stable deployment gate. OnlyReport rather than generic Existing; no biology/science adoption, no all301k text/appendix audit or code replication. Root exact necessary source/owner final pending.
+# 当前终态收据
+
+root非作者实际必要primary/具体owner终裁通过：标准完成，仅报告：受测扰动/任务阈值与跨域反侧，不授普遍早警告或transfer。仅语言相关§3.3/6.1/10.4/11.3与limits；causal15LM的CKA.117先于Shesha.120，跨域rho.03不支持普遍transfer。Ch5现读出/干预界面不实现这个新metric，但有限canary不构成新的部署gate；非泛Existing，root实际必要原源/owner终裁通过。 日级未授，未复现实验。

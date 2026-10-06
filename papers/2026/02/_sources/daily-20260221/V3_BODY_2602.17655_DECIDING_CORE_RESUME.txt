@@ -1,0 +1,48 @@
+4 UniLID
+We propose a generative modeling approach for the LID task using the UnigramLM framework.
+In short, we define language-conditional distributions pθℓp_{\theta}^{\ell} by learning unigram distribution parameters for each language ℓ\ell, albeit with a shared vocabulary across languages. We then compute language label probabilities, as in eq. 3, applying the Bayes’ decision rule to ultimately assign the language label.
+Language-Conditional Distribution Estimation.
+Let 𝒱\mathcal{V} be the vocabulary of a base tokenizer.77
+7
+This does not need to be a UnigramLM tokenizer. Any tokenizer that uses a fixed vocabulary can be used.
+We fix 𝒱\mathcal{V} as our shared-across-languages vocabulary, but assume there exists, for each language ℓ\ell, a distinct unigram distribution ϕ^ℓ\widehat{\boldsymbol{\phi}}_{\ell} over 𝒱\mathcal{V}.
+Given a corpus 𝒞ℓ\mathcal{C}^{\ell}
+consisting of strings from language ℓ\ell, we then learn each of these distributions’ parameters ϕ^ℓ\widehat{\boldsymbol{\phi}}_{\ell} using the EM procedure described in § 3.2.88
+8
+We initialize each ϕ^ℓ\widehat{\boldsymbol{\phi}}_{\ell} as the uniform distribution. In other terms, similarly to as in standard UnigramLM, we compute an approximate maximum likelihood estimate by maximizing the observed-data log-likelihood, albeit on only a subset of the data:
+ϕ^ℓ≈defargmaxϕℒ​(𝒞ℓ,ϕ)\widehat{\boldsymbol{\phi}}_{\ell}\mathrel{\stackrel{{\scriptstyle\textnormal{\tiny def}}}{{\approx}}}\argmax_{\boldsymbol{\phi}}\,\,\mathcal{L}(\mathcal{C}^{\ell};\boldsymbol{\phi})
+(11)
+As in the standard UnigramLM formulation, this procedure integrates over segmentation uncertainty when estimating parameters.
+Because data from each language is processed separately, each language gets its own token frequency profile—and consequently its own set of optimal segmentations—despite sharing a common vocabulary across languages.
+Inference.
+At inference time, we use the inference procedure of UnigramLM discussed in § 3.3 to find the most probable segmentation of a string under each language’s ϕ^ℓ\widehat{\boldsymbol{\phi}}_{\ell}.
+Importantly, this means that the most probable segmentation τϕ^ℓ​(𝐬)\tau_{\widehat{\boldsymbol{\phi}}_{\ell}}(\mathbf{s}) can vary across languages.
+This yields a flexible model where the probability of a string reflects language-specific token frequencies, despite sharing a common vocabulary.
+We then approximate the probability of a string under language ℓ\ell as the probability of its most probable segmentation in that language: pθ​(𝐬∣ℓ)=pϕ^ℓ​(τϕ^ℓ​(𝐬))p_{\theta}(\mathbf{s}\mid\ell)=p_{\widehat{\boldsymbol{\phi}}_{\ell}}(\tau_{\widehat{\boldsymbol{\phi}}_{\ell}}(\mathbf{s})). Finally, we assign the language label that optimizes the posterior probability, i.e., eq. 1. We write the instantiation of eq. 1 here explicitly for the reader’s convenience:
+ℓ^​(𝐬)=argmaxℓ∈Λp​(ℓ∣𝐬)=argmaxℓ∈Λpϕ^ℓ​(τϕ^ℓ​(𝐬))\displaystyle\hat{\ell}(\mathbf{s})=\argmax_{\ell\in\Lambda}p(\ell\mid\mathbf{s})=\argmax_{\ell\in\Lambda}p_{\widehat{\boldsymbol{\phi}}_{\ell}}(\tau_{\widehat{\boldsymbol{\phi}}_{\ell}}(\mathbf{s}))
+Computational Complexity.
+At training time, UniLID estimates a separate unigram distribution for each language by running the EM procedure over the corresponding language-specific corpus.
+For a corpus 𝒞ℓ\mathcal{C}^{\ell} of total character length NℓN_{\ell} (e.g., number of Unicode code points or bytes), each EM iteration requires computing expected token counts via the forward–backward algorithm, which runs in 𝒪⁡(Nℓ⋅Tmax)\mathcal{O}(N_{\ell}\cdot T_{\mathrm{max}}), where again TmaxT_{\mathrm{max}} denotes the maximum token length. Parameter updates are linear in the vocabulary size |𝒱||\mathcal{V}|.
+Since per-language distribution parameters are estimated independently, training parallelizes trivially across languages.
+At inference time, UniLID uses a similar Viterbi-style dynamic program as UnigramLM:
+first building a lattice that enumerates all valid segmentations of a string 𝒯𝒱​(𝐬)\mathcal{T}_{\mathcal{V}}(\mathbf{s}) and then finding the maximum probability option among them; we remind the reader that this runs in 𝒪⁡(N⋅Tmax)\mathcal{O}(N\cdot T_{\mathrm{max}}) time.
+The lattice needs only to be constructed once per string, regardless of the number of language-conditional distributions.
+Finding the optimal segmentation of a string and its probability for each language then takes 𝒪⁡(|Λ|⋅E)\mathcal{O}(|\Lambda|\cdot E) time, where EE is the number of edges in the lattice.
+Finally, we need a 𝒪⁡(|Λ|)\mathcal{O}(|\Lambda|) pass to evaluate the Bayes decision rule. In practice, this additional cost is modest relative to other standard components of modern NLP pipelines, e.g., a single forward pass through a neural encoder, which typically dominates end-to-end runtime.
+Further, the number of edges EE in a lattice will be N⋅bN\cdot b, where bb is a branching factor of the lattice, which tells us on average how many tokens in the vocabulary start at a certain string position and are part of one of its valid segmentations; typically this is on the order of 1-5 tokens, making the optimal-segmentation step much cheaper than lattice construction. In the pathological case, a lattice could have b=N⋅Tmaxb=N\cdot T_{\mathrm{max}}, implying that the worst case time complexity of inference is 𝒪⁡(|Λ|⋅N⋅Tmax)\mathcal{O}(|\Lambda|\cdot N\cdot T_{\mathrm{max}}). In practice, b≪N⋅Tmaxb\ll N\cdot T_{\mathrm{max}} and so inference takes we 𝒪⁡(|Λ|+N⋅Tmax)\mathcal{O}(|\Lambda|+N\cdot T_{\mathrm{max}}).
+5 Experimental Setup
+We evaluate the performance of UniLID across several prominent LID benchmarks, selected to cover a spectrum of challenges ranging from broad linguistic coverage and low-resource settings to fine-grained dialect identification.
+We note that the majority of our training protocol and evaluation paradigms follow prior work (Kargaran et al., 2023; Foroutan et al., 2025).
+Our experiments compare against widely-used baselines: fastText, CLD3, and GlotLID-M. We perform analyses to show data efficiency, robustness to input length, and the impact of using different tokenizer vocabularies.
+5.1 Datasets
+We evaluate UniLID across a diverse suite of benchmarks designed to probe complementary regimes of LID. GlotLID-C (Kargaran et al., 2023) provides large-scale coverage of the long tail, spanning nearly 2,000 language-script labels with a strong emphasis on low-resource and closely related varieties. UDHR (Vatanen et al., 2010) and FLORES-200 (Costa-jussà et al., 2022) consist of parallel text across hundreds of languages, enabling controlled evaluation of cross-lingual performance and generalization independent of semantic content. To assess fine-grained discrimination, we use DSL-ML 2024 (Chifu et al., 2024), which targets regional and dialectal variants with high lexical overlap. Tatoeba (Tiedemann, 2020) contains short, user-contributed sentences spanning a large number of languages; texts are often short and noisy, making it an ideal dataset for robustness evaluation.
+Finally, WiLI-2018 (Thoma, 2018) is a hallmark LID dataset; it consists of Wikipedia paragraphs with a balanced 500/500 train–test split per language across 235 languages.
+We use WiLI for our detailed ablations (sample efficiency, input-length effects, and tokenizer-vocabulary comparisons) because it provides a rare combination of (i) a balanced number of examples across all languages, (ii) sufficient per-language data to explore the effect of dataset size while keeping relative dataset language proportions constant, and (iii) manageable scale (235k total examples) that makes repeated controlled experiments feasible. By contrast, GlotLID-C is substantially larger and highly imbalanced across languages, which complicates controlled subsampling studies and makes extensive sweeps prohibitively expensive.
+Across datasets, we used official train/test splits whenever possible. More details on the datasets and training setup can be found in App. A.
+5.2 Baselines
+We compare UniLID against the following systems. For a fair comparison, we hold the training dataset constant across systems that we train ourselves.
+For systems that did not release reproduction code, or for which we could not reproduce the associated paper’s reported performance, we use the released checkpoints.
+fastText.
+We train supervised fastText (Joulin et al., 2017) classifiers using the author’s Python package99
+9
+https://pypi.org/project/fasttext. and following their recommended hyper

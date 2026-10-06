@@ -1,0 +1,254 @@
+Exact-v1 adopted mechanism and selected matched evidence; not an exhaustive attachment review.
+URL https://arxiv.org/html/2601.22108v1
+A.1 Language: Controlled Continued Pretraining
+Task and compute-matched baseline.
+We study controlled continued pretraining of pretrained causal LMs on an unlabeled math corpus. The compute-matched baseline is standard next-token prediction (NTP) on the same unlabeled stream, with the same sequence length, optimizer, schedule, batch shape, and number of learner optimizer steps as V-Pretraining. We match by learner update budget (and thus unlabeled tokens processed), and report wall-clock overhead separately.
+Unlabeled data and preprocessing.
+We use AI-MO/NuminaMath-CoT (train split) as the unlabeled stream. Each example contains a problem statement and a solution. We format each sample as:
+Question: {problem}\n Answer: {solution}
+We tokenize prompt and answer separately and compute pretraining loss only on the answer span by masking prompt tokens (labels set to −100-100 for prompt positions). For efficiency, we pack multiple formatted examples into fixed-length sequences (sequence length 10241024 in our main runs) using a streaming dataloader with shuffling buffer size 10,00010{,}000. This packing ensures compute utilization while preserving the answer-only loss protocol.
+Learner models.
+Our learner is an off-the-shelf causal LM initialized from pretrained checkpoints (Qwen family in the main paper). We use standard AdamW with cosine learning-rate schedule and linear warmup, and clip gradients to stabilize training. Unless otherwise stated, runs use bfloat16 on GPU and TF32 matmul for throughput.
+Task designer: adaptive top-KK target distributions.
+In language, the task designer outputs instance-wise soft targets over a small candidate set. Concretely, at each position tt, we take the learner’s top-KK candidate tokens under its current logits. The designer predicts a distribution pϕ​(⋅)p_{\phi}(\cdot) over these candidates and an adaptive mixing gate αt∈[0,αmax]\alpha_{t}\in[0,\alpha_{\max}]. The resulting training target is the mixture:
+qϕ=(1−αt)​δyt+αt​pϕ​(⋅),q_{\phi}=(1-\alpha_{t})\,\delta_{y_{t}}+\alpha_{t}\,p_{\phi}(\cdot),
+where δyt\delta_{y_{t}} is the one-hot label for the ground-truth next token yty_{t}. The learner is trained by cross-entropy to qϕq_{\phi}, while prompt-masked positions are excluded from loss as above.
+Designer architecture and parameterization.
+We implement the designer as a small decoder-only Transformer (LLaMA-style backbone) that conditions on (i) the current token context and (ii) the embedding of the true next token, and produces:
+(i) scores over the provided top-KK ids (without computing full-vocabulary logits), and
+(ii) the gate αt\alpha_{t} via a sigmoid head.
+A representative configuration is a 6-layer Transformer with hidden size 256 and 4 attention heads.
+Value signal and meta-update.
+The value signal is the dot-product alignment between (a) the gradient of a downstream evaluator loss (computed on a small labeled GSM8K feedback set) and (b) the gradient of the self-supervised loss induced by the current designer. We compute this alignment on a restricted subset of learner parameters (e.g., last-layer blocks / adapters) to reduce second-order cost while preserving a high-quality signal. During the main learner update, designer outputs are detached so the learner update does not directly backpropagate into the designer; the designer is updated periodically (every KK learner steps) using the alignment objective.
+Downstream evaluator data.
+For the meta signal, we use a small labeled subset of GSM8K training examples (e.g., 1,024 examples) as the evaluator. Importantly, the learner is never trained on GSM8K labels as supervised targets for the learner update; labels are only used to define the evaluator gradient.
+Hyper-parameter selection (language).
+For each model size and method (baseline and V-Pretraining), we sweep five learner learning rates uniformly in [×10−6,×10−5][5\!\times\!10^{-6},\,1\!\times\!10^{-5}] and report results using the best-performing setting under our fixed training budget. All other hyper-parameters (sequence length, optimizer betas, warmup fraction, gradient clipping, KK, αmax\alpha_{\max}, and meta-update frequency) are held fixed across the sweep.
+Evaluation (GSM8K).
+We evaluate GSM8K using greedy decoding (Pass@1) with a fixed prompt template and exact-match on the final numeric answer after normalization. (When using few-shot prompting, demonstrations are sampled from the GSM8K train split with a fixed seed for reproducibility.)
+
+
+3 Pretraining with Downstream Feedback
+3.1 Learning to Design Pretraining Tasks
+3.2 Value Function for Downstream Feedback
+3.3 Algorithmic Instantiations
+3 Pretraining with Downstream Feedback
+We now treat task design as a learnable object. We refer to the large model being pretrained as the learner with parameters θ\theta. We refer to the auxiliary model as the task designer with parameters ϕ\phi, since it controls how predictive learning targets and views are constructed. The downstream labeled objective provides an evaluator through LdownL_{\mathrm{down}}.
+3.1 Learning to Design Pretraining Tasks
+The task designer can parameterize the target construction, the view generator, or both. We consider a learnable view generator 𝒜ϕ\mathcal{A}_{\phi} and a learnable target function τϕ\tau_{\phi}:
+(xc,xt,m)∼𝒜ϕ​(x),yϕ=τϕ​(xt,xc,m).\displaystyle(x_{c},x_{t},m)\sim\mathcal{A}_{\phi}(x),\qquad y_{\phi}=\tau_{\phi}(x_{t},x_{c},m).
+(8)
+The resulting pretraining objective is
+Lpre​(θ,ϕ)=𝔼x∼𝒟​𝔼(xc,xt,m)∼𝒜ϕ​(x)​[ℓ⁡(gθ​(fθ​(xc),m),yϕ)].L_{\mathrm{pre}}(\theta;\phi)=\mathbb{E}_{x\sim\mathcal{D}}\mathbb{E}_{(x_{c},x_{t},m)\sim\mathcal{A}_{\phi}(x)}\Big[\ell\big(g_{\theta}(f_{\theta}(x_{c}),m),\,y_{\phi}\big)\Big].
+(9)
+The learner updates θ\theta to minimize LpreL_{\mathrm{pre}}, while the task designer updates ϕ\phi to improve downstream performance. Let Ldown​(θ)L_{\mathrm{down}}(\theta) denote a downstream task loss computed from a small annotated set. The ideal objective is
+minϕ⁡Ldown​(θ⋆​(ϕ)),where​θ⋆​(ϕ)=arg⁡minθ​Lpre​(θ,ϕ).\displaystyle\min_{\phi}\;L_{\mathrm{down}}(\theta^{\star}(\phi)),\;\text{where}\;\theta^{\star}(\phi)=\arg\min_{\theta}\;L_{\mathrm{pre}}(\theta;\phi).
+(10)
+This bilevel formulation is conceptually clean but computationally prohibitive at pretraining scale (Finn et al., 2017; Rajeswaran et al., 2019; Franceschi et al., 2018; Ji et al., 2021). We therefore replace long horizon unrolling with an online value signal.
+3.2 Value Function for Downstream Feedback
+We define feedback at the level of pretraining steps. Consider one learner update
+θ+=θ−η​gpre​(θ,ϕ),gpre​(θ,ϕ)=∇θLpre​(θ,ϕ),\displaystyle\theta^{+}=\theta-\eta\,g_{\mathrm{pre}}(\theta;\phi),\;g_{\mathrm{pre}}(\theta;\phi)=\nabla_{\theta}L_{\mathrm{pre}}(\theta;\phi),
+(11)
+and define the downstream gradient
+gdown​(θ)=∇θLdown​(θ).\displaystyle g_{\mathrm{down}}(\theta)=\nabla_{\theta}L_{\mathrm{down}}(\theta).
+(12)
+A first order Taylor expansion yields (Pruthi et al., 2020b; Jung et al., 2025)
+Ldown​(θ+)≈Ldown​(θ)−η​gdown​(θ)⊤​gpre​(θ,ϕ).\displaystyle L_{\mathrm{down}}(\theta^{+})\approx L_{\mathrm{down}}(\theta)-\eta\,g_{\mathrm{down}}(\theta)^{\top}g_{\mathrm{pre}}(\theta;\phi).
+(13)
+This suggests scoring a proposed pretraining task by how well its induced gradient aligns with downstream improvement. We therefore define the value function
+𝒱⁡(ϕ,θ)=gdown​(θ)⊤​gpre​(θ,ϕ),\displaystyle\mathcal{V}(\phi;\theta)=g_{\mathrm{down}}(\theta)^{\top}g_{\mathrm{pre}}(\theta;\phi),
+(14)
+which estimates the downstream improvement predicted from a single pretraining update under task design ϕ\phi. The task designer is trained to maximize 𝒱⁡(ϕ,θ)\mathcal{V}(\phi;\theta) online.
+We treat gdowng_{\mathrm{down}} as an evaluator and stop gradients through it. Defining Lmeta​(ϕ)=−𝒱⁡(ϕ,θ)L_{\mathrm{meta}}(\phi)=-\mathcal{V}(\phi;\theta) yields
+∇ϕLmeta​(ϕ)=−gdown​(θ)⊤​∂∂ϕ​[∇θLpre​(θ,ϕ)],\displaystyle\nabla_{\phi}L_{\mathrm{meta}}(\phi)=-\,g_{\mathrm{down}}(\theta)^{\top}\frac{\partial}{\partial\phi}\Big[\nabla_{\theta}L_{\mathrm{pre}}(\theta;\phi)\Big],
+(15)
+a Hessian vector product that can be computed by automatic differentiation (Baydin et al., 2017; Wu et al., 2024). In practice, we compute the dot product on a restricted subset of learner parameters, such as adapter weights or the last layers, to reduce cost while preserving a high quality value signal.
+3.3 Algorithmic Instantiations
+We instantiate value-based pretraining on both language and vision modalities. Both share the same value function Equation 14 but differ in what the task designer controls. In both cases, the learner minimizes LpreL_{\mathrm{pre}} on unlabeled data, while the task designer maximizes 𝒱\mathcal{V} using a small labeled evaluator. This yields a concrete mechanism for weak-to-strong supervision, since the evaluator can be much smaller than the learner (Burns et al., 2023).
+Algorithm 1 Value-Based Pretraining with Downstream Feedback
+1:
+Initialize learner parameters θ\theta and task designer parameters ϕ\phi
+2:
+repeat
+3:
+Sample an unlabeled batch xx and construct (xc,xt,m)(x_{c},x_{t},m)
+4:
+Task designer produces (𝒜ϕ,τϕ)(\mathcal{A}_{\phi},\tau_{\phi}) and targets yϕ=τϕ​(xt,xc,m)y_{\phi}=\tau_{\phi}(x_{t},x_{c},m)
+5:
+Compute Lpre​(θ,ϕ)L_{\mathrm{pre}}(\theta;\phi) and gpre=∇θLpre​(θ,ϕ)g_{\mathrm{pre}}=\nabla_{\theta}L_{\mathrm{pre}}(\theta;\phi)
+6:
+Sample a labeled evaluator batch and compute gdown=∇θLdown​(θ)g_{\mathrm{down}}=\nabla_{\theta}L_{\mathrm{down}}(\theta)
+7:
+Update ϕ\phi by maximizing 𝒱⁡(ϕ,θ)=gdown⊤​gpre\mathcal{V}(\phi;\theta)=g_{\mathrm{down}}^{\top}g_{\mathrm{pre}}
+8:
+Update θ\theta by a gradient step on Lpre​(θ,ϕ)L_{\mathrm{pre}}(\theta;\phi)
+9:
+until budget exhausted
+Language: task design via soft targets. In language modeling, the task designer controls the target construction τϕ\tau_{\phi} while keeping the view generator fixed. Standard pretraining uses a one hot target δwt\delta_{w_{t}} for the next token wtw_{t} (Brown et al., 2020). We instead let the task designer produce an instance specific soft target distribution qϕ(⋅∣w<t,wt)q_{\phi}(\cdot\mid w_{<t},w_{t}) and train the learner by cross entropy to this distribution. For efficiency, qϕq_{\phi} is supported on a small candidate set, such as the top KK tokens under the current learner, and the task designer outputs a mixing coefficient αt\alpha_{t} that controls deviation from the one hot label. The task designer is updated to maximize 𝒱⁡(ϕ,θ)\mathcal{V}(\phi;\theta) computed from a downstream task evaluator, making the learned targets downstream-aware by construction.
+Vision: task design via learned views. In vision, the task designer controls the view generator 𝒜ϕ\mathcal{A}_{\phi} while keeping the base SSL objective form fixed. Given an image xx, the task designer outputs instance-specific augmentations that generate correlated views used by a standard SSL objective. The learner encoder is trained exactly as in the base SSL method, but views are no longer produced by a fixed handcrafted pipeline. The task designer is updated to maximize 𝒱⁡(ϕ,θ)\mathcal{V}(\phi;\theta) computed from downstream evaluators, encouraging it to generate views whose induced self-supervised gradients align with downstream improvement.
+
+4.1 Setup
+Setup. We compare a baseline of continued pretraining under state-of-the-art fixed task construction to name continued pretraining with an additional task designer trained from downstream feedback.
+Unless stated otherwise, we match runs by the learner update budget (same batch shape, sequence length, optimizer, schedule, and number of learner optimizer steps), which fixes unlabeled tokens processed.
+We report wall-clock overhead separately.
+Language. Our baseline initializes from Qwen1.5 base checkpoints
+(0.5B/4B/7B) (Team, 2024) and continues pretraining on NuminaMath CoT (LI et al., 2024). Examples are formatted as “Question: …\n Answer: …” and packed to fixed length.
+We compute loss only on the answer span by masking prompt tokens for both baseline and value-based runs.
+For V-Pretraining, downstream feedback uses 1,024 labeled GSM8K training examples to compute gdowng_{\mathrm{down}}, but we never update the learner on GSM8K labels.
+Evaluation uses GSM8K test Pass@1 with greedy decoding.
+Vision. Our baseline starts from DINOv3 pretrained ViT backbones (Siméoni et al., 2025) and continue SSL on ImageNet1K (Deng et al., 2009) using a DINO-style objective (Caron et al., 2021). We use DINOv3 as our vision SSL baseline because it is a strong, widely adopted state-of-the-art self-supervised representation learner, making improvements under its training recipe a meaningful and challenging test of controllable pretraining. The baseline uses the default augmentation pipeline.
+V-Pretraining replaces fixed view generation with a learned masking module. Downstream feedback uses small labeled pools from ADE20K segmentation (Zhou et al., 2017) and NYUv2 depth (Nathan Silberman and Fergus, 2012) to compute gdowng_{\mathrm{down}}. We report ADE20K mIoU, NYUv2 RMSE, ImageNet linear accuracy, and instance retrieval transfer. Full architectural details and regularization terms are provided in Section A.2.
+4.2 Evaluation on Selected Downstream Tasks
+Modality
+Benchmark
+Model/Size
+Baseline
+V-Pretraining
+Language
+GSM8K (Pass@1↑\uparrow)
+0.5B
+19.15±\pm1.16
+22.67±\pm1.05
+4B
+56.48±\pm1.56
+58.98±\pm1.03
+7B
+65.26±\pm1.06
+66.17±\pm0.63
+Vision
+NYUv2 (RMSE ↓\downarrow)
+ViT-Base
+0.5888
+0.5697
+ViT-Large
+0.5752
+0.5522
+ADE20K (mIoU ↑\uparrow)
+ViT-Base
+48.82
+49.60
+ViT-Large
+51.33
+52.40
+INet-1K (Acc% ↑\uparrow)
+ViT-Base
+0.8074
+0.8101
+ViT-Large
+0.8407
+0.8459
+Table 1:
+Performance on downstream training tasks, tested on data from a possibly different distribution from the downstream task dataset(s) under matched learner update budgets. Language: GSM8K test Pass@1. Vision: ADE20K mIoU, NYUv2 RMSE, and ImageNet linear accuracy.
+We first
+measure whether V-Pretraining can steer continued pretraining to reliably improve performance on chosen downstream tasks under fixed compute and unchanged unlabeled data.
+Table 1 shows that when we evaluate on the same kind of downstream task that V-Pretraining was pretrained on, it consistently improves performance for both vision and language modalities, including by up to 14% for small language models. Note that even though the downstream task categories are the same (e.g. reasoning), the data distributions evaluated in Table 1 are different from the downstream data distribution used in V-Pretraining pretraining.
+Eliciting reasoning beyond next-token prediction. V-Pretraining’s value-based task design improves GSM8K across all three model sizes. Gains are largest for the 0.5B model, consistent with the intuition that smaller learners benefit more from an explicit value signal.
+Importantly, these improvements are obtained using only 1,024 GSM8K training examples as feedback and without updating the learner on GSM8K, which supports the claim that a small evaluator can steer large scale self supervision.
+Figure 2: Token efficiency and multi-objective control. Left: GSM8K test Pass@1 versus unlabeled tokens processed for Qwen1.5-4B under matched learner-step budgets. Right: Tradeoff between segmentation (mIoU) and depth estimation (1-RMSE) induced by varying feedback and task-designer hyperparameters.
+Eliciting dense prediction ability in vision SSL. In vision, the evaluator targets spatially grounded capabilities. Using only 512 ADE20K and 512 NYUv2 images for feedback, value-based task design improves both ADE20K segmentation and NYUv2 depth relative to fixed augmentation baselines. ImageNet linear evaluation is maintained or improved, suggesting that learning view generation does not trade off global recognition to gain dense performance.
+Tradeoff between multiple downstream tasks. A practical notion of “control” is the ability to allocate progress across objectives.
+In vision, we use two dense evaluators (ADE20K and NYUv2) and form a combined feedback signal by weighting their gradients, gdown=αseg​gseg+αdepth​gdepthg_{\mathrm{down}}=\alpha_{\mathrm{seg}}g_{\mathrm{seg}}+\alpha_{\mathrm{depth}}g_{\mathrm{depth}}. Figure 2 (right) plots checkpoints obtained under different feedback weightings and task-designer hyperparameters in the (ADE20K mIoU, NYUv2 11-RMSE) plane. We observe a Pareto frontier with dominated off-front configurations, showing that the same unlabeled pretraining stream can be steered toward different dense capabilities by changing the downstream value signal. We provide representative hyperparameter settings in Appendix A.8.
+Sample/token efficiency. Beyond final-step gains, we probe whether value feedback can make continued pretraining more token-efficient in this lab-scale regime. We track GSM8K test Pass@1 as a function of unlabeled tokens processed, under identical batch shape and optimizer steps. Figure 2 (left) shows that value-based pretraining improves faster once steering begins: for Qwen1.5-4B, it reaches 56.18% Pass@1 after 400 learner steps (about 1.3×1071.3{\times}10^{7} tokens), while the baseline requires 10310^{3} steps to reach comparable accuracy (56.22%). 7B curves follow the similar pattern. The curve also exhibits an early transient dip, which we mitigate with a simple burn-in schedule that delays task-designer updates until the learner stabilizes (Appendix A.7). While this analysis is not a full scaling study, it suggests that downstream feedback can increase value-per-token in continued pretraining.
+
+
+4.3 Feedback Effects on Generalization
+We test whether downstream feedback harms generalization using two regimes. Value adjacent transfer evaluates tasks in the same capability family as the evaluator but under distribution shift. Value extrapolative transfer evaluates tasks from different families.
+Reasoning transfer. For value adjacent transfer, we evaluate on OMEGA Explorative (Sun et al., 2025), which contains diverse mathematical reasoning categories and explicit out of distribution splits. We use a fixed prompt that requests a single final answer, decode with greedy generation, and score exact match after normalization. For value extrapolative transfer, we evaluate on MMLU using a standard zero shot multiple choice protocol.
+Modality
+Benchmark
+Model/Size
+Baseline
+V-Pretraining
+Language
+OMEGA (Acc% ↑\uparrow)
+0.5B
+0.65
+0.65
+4B
+1.44
+1.88
+7B
+1.52
+1.50
+MMLU (Acc% ↑\uparrow)
+0.5B
+38.08
+35.01
+4B
+53.32
+53.51
+7B
+58.81
+58.68
+Modality
+Benchmark
+Protocol
+Baseline
+V-Pretraining
+Vision (ViT-L)
+R-Oxford5k (mAP ↑\uparrow)
+Easy
+0.5268
+0.6048
+Medium
+0.4072
+0.4557
+Hard
+0.0867
+0.0820
+R-Paris6k (mAP ↑\uparrow)
+Easy
+0.5433
+0.5973
+Medium
+0.6332
+0.7005
+Hard
+0.2208
+0.2509
+Table 2: Evaluation on tasks not used for feedback. Language: value-adjacent transfer under distribution shift (OMEGA) and value-extrapolative evaluation (MMLU). Vision: instance retrieval transfer on Revisited Oxford/Paris.
+Overall, value-based pretraining does not degrade generalization in aggregate (Table 2). On OMEGA, gains concentrate on several out of distribution categories, while many categories remain similar to the baseline and a few favor the baseline. On MMLU, differences are negligible at the measured scale for models larger than 4B parameters. In contrast, smaller models (0.5B) exhibit greater susceptibility to generalization degradation. This suggests that injecting a small value signal can steer pretraining without collapsing broad competence.
+Instance retrieval transfer. To test whether dense-task feedback harms transfer to a distinct vision capability, we evaluate frozen ViT-L representations on Revisited Oxford (R-Oxford5k) and Revisited Paris (R-Paris6k) instance retrieval (Radenović et al., 2018). We extract a single global descriptor per image by mean-pooling patch tokens, ℓ2\ell_{2}-normalize features, and rank database images by cosine similarity. Value-based pretraining improves mAP on the Medium protocol for both datasets and improves Paris on Hard, while Oxford Hard remains comparable. These results suggest that steering with dense evaluators does not reduce general-purpose retrieval transfer and can improve it on standard benchmarks that are not used for feedback.
+4.4 Scaling Weak-to-Strong Supervision
+We study how weak downstream supervision scales with learner size, feedback coverage, and inference-time compute.
+Scaling learner size. In language, Table 1 shows that the same downstream dataset improves learners of varying sizes, from 0.5B to 7B parameters. Absolute gains decrease with the learner’s size but remain positive. In vision, the same mechanism improves both ViT Base and ViT Large using the same small dense downstream datasets.
+Figure 3: Scaling feedback coverage and inference-time compute.
+Scaling feedback coverage. We vary the number of GSM8K feedback examples used to compute gdowng_{\mathrm{down}}, using 1,000, 2,000, and 3,000 examples. More coverage yields stronger and more stable improvements (Figure 3, left), with diminishing returns beyond a few thousand examples.
+Scaling inference-time compute. We evaluate Pass@kk for k∈{1,2,4,8,16}k\in\{1,2,4,8,16\} and find our method consistently improves Pass@kk across kk and model sizes (Figure 3, right), suggesting that value-based task design improves the quality of the solution distribution, not only greedy decoding.
+Computation overhead. Table 3 reports steady state runtime on a single H100 for a representative language setting. Relative to baseline next token prediction, value-based pretraining (V-Pretraining) reduces throughput and increases step time modestly, with a small increase in peak memory. The value update itself accounts for a small fraction of total GPU time, suggesting overhead is dominated by soft target generation rather than the meta update. We provide the detailed setups in Section A.5.
+Method
+Token/s
+Step(s)
+Peak mem
+Vb GPU frac
+Baseline
+45782
+0.7157
+15.71 GB
+–
+Value-Based
+38491
+0.8513
+16.38 GB
+2.16%
+(-15.9%)
+(+18.9%)
+(+4.3%)
+Table 3: Steady-state computational overhead on a single H100 under matched training settings. We report pretraining throughput (token per second), step time (second), peak GPU memory, and the fraction of GPU time spent in the value-update (Vb).
+4.5 Ablation Studies
+Decontamination.
+We decontaminate NuminaMath CoT by removing near-duplicates of GSM8K and MATH using MinHash LSH and nn-gram Jaccard similarity (Gionis et al., 1999; Cobbe and others, 2021). Retraining 4B models under the same budget, V-Pretraining maintains its advantage over baseline (57.5% vs. 56.7% Pass@1), suggesting gains are not driven by memorization.
+Feedback and augmentation ablation. Table 4 isolates the role of the downstream value signal in language steering.
+Replacing the downstream gradient with a random vector removes most of the benefit, dropping GSM8K Pass@1 from 58.98 to 54.31. Two compute-matched target-shaping baselines that do not use downstream feedback, fixed top-KK uniform smoothing (54.58) and self top-KK distillation (57.61), also underperform value feedback. The results indicate that gains require a task-relevant value signal that aligns pretraining updates with downstream improvement, rather than generic label smoothing or self-distillation.
+Method
+Value feedback
+Random feedback
+Uniform smoothing
+Self distillation
+Pass@1
+58.98
+54.31
+54.58
+57.61
+Table 4: GSM8K test Pass@1 (early stopping witin 2,000 continued-pretraining steps) for Qwen1.5-4B. Value feedback uses the true downstream gradient gdowng_{\mathrm{down}}. Random feedback replaces gdowng_{\mathrm{down}} with a random vector. Uniform smoothing and self-distillation apply fixed soft targets without downstream feedback.
+

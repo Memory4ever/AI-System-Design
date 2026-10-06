@@ -1,0 +1,3627 @@
+Denoising as Path Planning: Training-Free Acceleration of Diffusion Models with DPCache
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Works
+2.1
+Sampling Step Reduction
+2.2
+Per-Step Computation Optimization
+3
+Method
+3.1
+Preliminary
+3.2
+Overview
+3.3
+Cost Tensor Construction
+3.4
+Optimal Schedule Selection
+4
+Experiments
+4.1
+Experimental Settings
+4.2
+Comparison with other methods
+4.2.1
+Text-to-Image Generation
+4.2.2
+Text-to-Video Generation
+4.2.3
+Class-to-Image Generation
+4.3
+Ablation Studies
+5
+Conclusion
+References
+A
+Experimental Settings
+B
+Comparison with State-of-the-Art Methods
+B.1
+Analysis of Sampling Trajectories
+B.2
+Quantitative Results
+B.3
+Qualitative Results
+C
+Ablation Studies
+D
+Limitations
+License: CC BY 4.0
+arXiv:2602.22654v1 [cs.CV] 26 Feb 2026
+Denoising as Path Planning: Training-Free Acceleration of Diffusion Models with DPCache
+Bowen Cui
+†
+†
+thanks:
+Equal contribution.
+†
+Corresponding authors.
+Yuanbin Wang
+*
+Huajiang Xu
+†
+Biaolong Chen
+Affiliation:
+Aixi Zhang
+†
+Hao Jiang
+Zhengzheng Jin
+Xu Liu
+Pipei Huang
+Affiliation:
+Alibaba Group
+Abstract
+Diffusion models have demonstrated remarkable success in image and video generation, yet their practical deployment remains hindered by the substantial computational overhead of multi-step iterative sampling.
+Among acceleration strategies, caching-based methods offer a training-free and effective solution by reusing or predicting features across timesteps.
+However, existing approaches rely on fixed or locally adaptive schedules without considering the global structure of the denoising trajectory, often leading to error accumulation and visual artifacts.
+To overcome this limitation, we propose DPCache, a novel training-free acceleration framework that formulates diffusion sampling acceleration as a global path planning problem.
+DPCache constructs a Path-Aware Cost Tensor from a small calibration set to quantify the path-dependent error of skipping timesteps conditioned on the preceding key timestep.
+Leveraging this tensor, DPCache employs dynamic programming to select an optimal sequence of key timesteps that minimizes the total path cost while preserving trajectory fidelity.
+During inference, the model performs full computations only at these key timesteps, while intermediate outputs are efficiently predicted using cached features.
+Extensive experiments on DiT, FLUX, and HunyuanVideo demonstrate that DPCache achieves strong acceleration with minimal quality loss, outperforming prior acceleration methods by
++
++
+0.031 ImageReward at 4.87
+×
+\times
+speedup and even surpassing the full-step baseline by
++
++
+0.028 ImageReward at 3.54
+×
+\times
+speedup on FLUX, validating the effectiveness of our path-aware global scheduling framework.
+Code will be released at
+https://github.com/argsss/DPCache
+.
+1
+Introduction
+In recent years, diffusion models
+[
+15
+,
+36
+,
+21
+,
+45
+,
+20
+]
+have achieved remarkable success in image and video generation, leading to widespread applications in domains such as robotics, intelligent content creation, and virtual reality.
+However, diffusion models, particularly diffusion transformers (DiTs)
+[
+34
+]
+, are often characterized by their large-scale architectures and reliance on multi-step iterative sampling during inference, resulting in substantial computational overhead and prolonged latency, which severely hinder their practical deployment in real-world scenarios.
+As a result, accelerating the sampling process of diffusion models has emerged as a critical research direction to enable their broader adoption.
+(a)
+Fixed schedule
+(b)
+Locally adaptive schedule
+(c)
+DPCache
+Figure 1
+:
+(a) Fixed schedule is inflexible and unable to identify critical timesteps, resulting in large deviation from the true trajectory.
+(b) Locally adaptive schedule makes greedy, short-sighted decisions that often skip essential timesteps, leading to irreversible deviation.
+(c) DPCache identifies a globally optimal sequence of key timesteps through calibration and achieves low cumulative trajectory deviation.
+Existing acceleration approaches for diffusion models can be broadly categorized into two paradigms: (i) reducing the number of sampling steps
+[
+43
+,
+29
+,
+39
+,
+48
+,
+4
+]
+and (ii) optimizing per-step computation
+[
+2
+,
+10
+,
+1
+,
+32
+,
+26
+]
+.
+Among these, caching-based methods
+[
+32
+,
+61
+,
+25
+,
+27
+,
+59
+,
+26
+,
+9
+]
+have gained prominence due to their training-free nature and practical effectiveness.
+DeepCache
+[
+32
+]
+first observes that high-level features in diffusion models exhibit significant similarity across adjacent timesteps, allowing the reuse of previously computed features without significant degradation in the generation quality.
+Subsequent works refine this paradigm by selectively caching tokens
+[
+61
+]
+, varying update frequencies across modules
+[
+59
+]
+, or dynamically deciding whether to reuse cached features at each timestep
+[
+25
+]
+.
+TaylorSeer
+[
+26
+]
+advances beyond simple reuse by predicting features at future timesteps with Taylor series expansion, capitalizing on the smooth evolution of features along the denoising trajectory.
+However, prior caching-based methods rely on either fixed or locally adaptive sampling schedules, which neglect the global structure of the denoising trajectory.
+As illustrated in Figure
+1(a)
+, fixed-schedule approaches impose uniform skipping patterns irrespective of local feature dynamics, resulting in significant deviations in critical transition regions.
+Figure
+1(b)
+shows that locally adaptive strategies often make short-sighted decisions that skip critical timesteps, resulting in irreversible drift and error accumulation across the denoising process.
+To address these limitations, we argue that optimal acceleration requires a global perspective that accounts for the entire trajectory and plans the sampling steps holistically.
+To this end, we propose
+DPCache
+, a novel training-free acceleration framework for diffusion models that formulates sampling acceleration as a global path planning problem.
+As illustrated in Figure
+1(c)
+, our approach begins by running the full denoising process on a small set of calibration samples to construct a
+P
+ath-
+A
+ware
+C
+ost
+T
+ensor (PACT).
+The PACT captures the error of skipping between timesteps while accounting for the influence of the preceding key step, thereby reflecting the path-dependent nature of feature prediction.
+Leveraging the PACT, we employ dynamic programming to select a sequence of key timesteps that minimizes the total path cost, resulting in a sparse yet high‑fidelity sampling schedule that preserves the structural integrity of the denoising process.
+During inference, the denoising model performs full computation at the selected key timesteps, while efficiently predicting outputs for the remaining timesteps using cached features with off-the-shelf prediction methods
+[
+9
+,
+26
+]
+.
+Since the prediction steps introduce negligible computational overhead, DPCache achieves significant acceleration.
+Moreover, by selecting key timesteps through global path planning, DPCache produces a sampling trajectory that aligns more closely with the original denoising trajectory than prior methods, thereby maintaining generation quality comparable to the full-step baseline.
+We conduct extensive experiments on state-of-the-art diffusion models, including FLUX.1-dev
+[
+21
+]
+, HunyuanVideo
+[
+20
+]
+and DiT-XL
+[
+34
+]
+.
+DPCache consistently outperforms existing caching-based acceleration methods in both efficiency and generation quality, and achieves performance comparable to or even better than that of the full-step baseline.
+For instance, on FLUX, DPCache yields a
++
++
+0.031 higher ImageReward than the strongest prior method at a 4.87
+×
+\times
+speedup, and further improves upon the full-step baseline by
++
++
+0.028 ImageReward at a 3.54
+×
+\times
+acceleration, demonstrating the effectiveness of our globally optimal sampling schedule.
+In summary, our contributions are as follows:
+•
+We propose DPCache, a novel diffusion acceleration framework that formulates sampling acceleration as a global path planning problem, selecting an optimal sequence of key timesteps to minimize deviation from the full-step denoising trajectory.
+•
+We propose a Path-Aware Cost Tensor that quantifies the path-dependent error of skipping intermediate timesteps along the denoising trajectory, and employ dynamic programming to efficiently identify the optimal sampling schedule for a fixed number of sampling steps.
+•
+DPCache achieves up to 4.87
+×
+\times
+acceleration across image and video generation models including DiT, FLUX, and HunyuanVideo, consistently outperforming prior caching-based methods in both efficiency and generation quality, establishing a new state of the art in training-free diffusion sampling acceleration.
+2
+Related Works
+2.1
+Sampling Step Reduction
+Dynamics redesign
+accelerates diffusion by redefining the sampling trajectory or numerical integration scheme.
+DDIM
+[
+43
+]
+introduces a deterministic sampling trajectory, allowing high-quality generation with fewer steps.
+The DPM-Solver family
+[
+29
+,
+30
+,
+60
+]
+employs high-order numerical solvers for ordinary differential equations (ODEs), significantly reducing the number of sampling steps.
+Rectified Flow
+[
+28
+]
+learns a straight transport path from noise to data by modeling instantaneous velocity,
+while MeanFlow
+[
+11
+]
+replaces this with average velocity to promote stability and improve fidelity in generation.
+Step distillation
+reduces sampling steps by distilling a full-step teacher model into a few-step student.
+Progressive distillation
+[
+39
+]
+establishes this paradigm by iteratively compressing step counts through trajectory-level supervision.
+Subsequent methods refine the distillation objective: Distribution Matching Distillation (DMD)
+[
+3
+,
+52
+,
+53
+]
+aligns the student and the teacher at the marginal distribution level, while adversarial diffusion distillation
+[
+24
+,
+40
+,
+51
+,
+3
+]
+incorporates GAN-based discriminators
+[
+12
+]
+to improve perceptual fidelity.
+In parallel, consistency models
+[
+44
+,
+46
+,
+31
+,
+33
+]
+eliminate the need for a teacher altogether, instead enforcing the self-consistency of network predictions across timesteps.
+However, these methods require additional training and are thus computationally expensive.
+2.2
+Per-Step Computation Optimization
+Denoising model compression
+reduces computational overhead by compressing the model through parameter reduction strategies.
+Pruning methods
+[
+58
+,
+55
+,
+2
+,
+7
+]
+sparsify weights or attention structures to reduce parameter count.
+Quantization
+[
+22
+,
+42
+,
+49
+,
+19
+]
+enables low-bit inference by approximating full-precision parameters with compact numeric representations.
+Some approaches leverage knowledge distillation
+[
+56
+,
+10
+,
+23
+]
+to transfer the knowledge of a larger teacher model to a lightweight student model.
+In parallel, token merging methods
+[
+1
+,
+8
+]
+dynamically fuse semantically similar tokens to shorten the sequence length and alleviate the computational cost of attention.
+Nevertheless, these methods typically introduce irreversible degradation in representational capacity, often necessitating nontrivial fine-tuning or retraining to recover generation quality.
+Feature caching
+accelerates diffusion sampling by reusing previously computed intermediate features across timesteps, thereby avoiding redundant forward passes.
+DeepCache
+[
+32
+]
+first demonstrates that high-level feature maps in U-Net-based diffusion models exhibit strong inter-step similarity and can be safely reused with minimal quality degradation.
+This insight has since been extended to Diffusion Transformers
+[
+5
+,
+41
+]
+.
+To enhance robustness, adaptive strategies such as AdaCache
+[
+18
+]
+and TeaCache
+[
+25
+]
+further refine reuse decisions based on feature distance or predicted deviation.
+Parallel efforts focuses on mitigating errors introduced by caching.
+For instance, GOC
+[
+35
+]
+corrects feature drift via gradient-based propagation, while OmniCache
+[
+6
+]
+employs stage-aware filtering to suppress cache-induced noise.
+Recently, TaylorSeer
+[
+26
+]
+proposes a cache-then-forecast paradigm that predicts future features via Taylor expansion.
+HiCache
+[
+9
+]
+improves the prediction accuracy with Hermite polynomials.
+SpeCa
+[
+27
+]
+employs a lightweight verifier network to dynamically decide whether to accept the predicted features.
+Despite these advances, existing caching-based methods typically rely on fixed or locally adaptive schedules.
+Our proposed DPCache reframes sampling acceleration as a global path planning problem, explicitly optimizing the sequence of caching and computation decisions to minimize overall error accumulation.
+3
+Method
+3.1
+Preliminary
+Diffusion models.
+Diffusion models are a class of generative models that synthesize realistic samples through a forward diffusion process and a reverse denoising process.
+The forward diffusion process is a Markov chain that progressively adds Gaussian noise to a clean data point
+𝒙
+0
+\boldsymbol{x}_{0}
+over
+T
+T
+timesteps according to a predefined noise schedule
+{
+β
+t
+}
+t
+=
+1
+T
+\{\beta_{t}\}_{t=1}^{T}
+:
+OPEN
+q
+⁡
+(
+𝒙
+t
+|
+𝒙
+t
+−
+1
+)
+=
+𝒩
+⁡
+(
+𝒙
+t
+,
+1
+−
+β
+t
+​
+𝒙
+𝒕
+−
+𝟏
+,
+β
+t
+​
+𝑰
+)
+)
+.
+q(\boldsymbol{x}_{t}|\boldsymbol{x}_{t-1})=\mathcal{N}(\boldsymbol{x}_{t};\sqrt{1-\beta_{t}}\boldsymbol{x_{t-1}},\beta_{t}\boldsymbol{I})).
+(1)
+After
+T
+T
+timesteps, the latent
+𝒙
+T
+\boldsymbol{x}_{T}
+is approximately distributed as standard Gaussian noise.
+The reverse process aims to recover data by iteratively denoising from
+𝒙
+T
+∼
+𝒩
+⁡
+(
+0
+,
+𝑰
+)
+\boldsymbol{x}_{T}\sim\mathcal{N}(0,\boldsymbol{I})
+back to
+𝒙
+0
+\boldsymbol{x}_{0}
+.
+It is modeled as a learned Markov chain with Gaussian transitions:
+p
+θ
+​
+(
+𝒙
+t
+−
+1
+|
+𝒙
+t
+)
+=
+𝒩
+⁡
+(
+𝒙
+t
+−
+1
+,
+𝝁
+θ
+​
+(
+𝒙
+t
+,
+t
+)
+,
+𝚺
+θ
+​
+(
+𝒙
+t
+,
+t
+)
+)
+,
+p_{\theta}(\boldsymbol{x}_{t-1}|\boldsymbol{x}_{t})=\mathcal{N}(\boldsymbol{x}_{t-1};\boldsymbol{\mu}_{\theta}(\boldsymbol{x}_{t},t),\boldsymbol{\Sigma}_{\theta}(\boldsymbol{x}_{t},t)),
+(2)
+where
+𝝁
+θ
+\boldsymbol{\mu}_{\theta}
+and
+𝚺
+θ
+\boldsymbol{\Sigma}_{\theta}
+are trained to approximate the true reverse dynamics.
+As sampling involves
+T
+T
+sequential timesteps, fast and accurate sampling remains a fundamental requirement for diffusion models.
+Feature caching in diffusion models.
+Existing feature caching methods generally adopt a periodic temporal caching strategy with interval
+𝒩
+\mathcal{N}
+.
+At a selected timestep
+t
+t
+, the model performs a full forward pass and caches the output of each layer
+l
+l
+as
+𝒉
+t
+l
+=
+ℱ
+l
+​
+(
+𝒙
+t
+)
+\boldsymbol{h}_{t}^{l}=\mathcal{F}^{l}(\boldsymbol{x}_{t})
+.
+The cached feature stack
+ℋ
+=
+{
+𝒉
+t
+l
+}
+l
+=
+1
+L
+\mathcal{H}=\{\boldsymbol{h}_{t}^{l}\}_{l=1}^{L}
+is then reused for the next
+𝒩
+−
+1
+\mathcal{N}-1
+timesteps without further computation:
+ℱ
+l
+(
+𝒙
+t
+−
+k
+)
+=
+𝒉
+t
+l
+,
+k
+=
+1
+,
+2
+,
+…
+,
+𝒩
+−
+1
+.
+\mathcal{F}^{l}(\boldsymbol{x}_{t-k})=\boldsymbol{h}_{t}^{l},k=1,2,...,\mathcal{N}-1.
+(3)
+TaylorSeer
+[
+26
+]
+addresses the error accumulation inherent in naïve reuse by introducing Taylor-series-based predictor.
+It maintains a history of finite differences up to order
+m
+m
+, forming an enriched cache:
+ℋ
+=
+{
+𝒉
+t
+l
+,
+Δ
+​
+𝒉
+t
+l
+,
+…
+,
+Δ
+m
+​
+𝒉
+t
+l
+}
+l
+=
+1
+L
+.
+\mathcal{H}=\{\boldsymbol{h}_{t}^{l},\Delta\boldsymbol{h}_{t}^{l},...,\Delta^{m}\boldsymbol{h}_{t}^{l}\}_{l=1}^{L}.
+(4)
+TaylorSeer uses the cached differences to approximate features at timestep
+t
+−
+k
+t-k
+via a truncated Taylor expansion:
+ℱ
+p
+​
+r
+​
+e
+​
+d
+,
+m
+l
+​
+(
+𝒙
+t
+−
+k
+)
+=
+𝒉
+t
+l
++
+∑
+i
+=
+1
+m
+Δ
+i
+​
+𝒉
+t
+l
+i
+!
+⋅
+𝒩
+i
+​
+(
+−
+k
+)
+i
+.
+\mathcal{F}_{pred,m}^{l}(\boldsymbol{x}_{t-k})=\boldsymbol{h}_{t}^{l}+\sum_{i=1}^{m}\frac{\Delta^{i}\boldsymbol{h}_{t}^{l}}{i!\cdot\mathcal{N}^{i}}(-k)^{i}.
+(5)
+Our method builds on this predictive paradigm but uses a globally optimized caching strategy, instead of fixed or locally adaptive schedules.
+Figure 2
+:
+Overview of DPCache.
+(a) During the calibration stage, the full
+T
+T
+-step denoising process is executed to construct a 3D Path-Aware Cost Tensor (PACT), which quantifies the cumulative error of skipping intermediate timesteps conditioned on the preceding key step.
+(b) An optimal
+K
+K
+-step sampling schedule (
+K
+<
+T
+K<T
+) is selected via dynamic programming, leveraging the PACT to maintain a DP table to store minimal cumulative costs and a path table to enable backtracking.
+(c) During inference, the model computes and caches features only at the preselected key timesteps, while features at other timesteps are efficiently predicted.
+3.2
+Overview
+Existing caching-based acceleration methods typically optimize the sampling schedule without accounting for the global structure of the denoising trajectory.
+To address this limitation, we propose
+DPCache
+, a framework that formulates diffusion sampling acceleration as a global path planning problem over the denoising trajectory.
+As observed in prior work
+[
+6
+]
+, the shape of the denoising trajectory is largely independent of the generated content and depends primarily on the diffusion model itself.
+This enables us to calibrate an optimal sampling schedule on a small set of representative samples and apply it to arbitrary inputs.
+As illustrated in Figure
+2
+, DPCache operates as follows:
+•
+Calibration stage
+: We run the diffusion model on a small calibration set
+𝒮
+calib
+\mathcal{S}_{\rm calib}
+using the full
+T
+T
+-step denoising process.
+The cached features are used to construct a path-aware cost tensor that quantifies the error of skipping from one timestep to another, conditioned on the preceding key step.
+•
+Optimal schedule selection
+: Given a target number of sampling steps
+K
+<
+T
+K<T
+, we use dynamic programming to select an optimal timestep sequence
+𝒯
+\mathcal{T}
+that minimizes the overall cost.
+•
+Inference stage
+: The model computes only at the precomputed key timesteps in
+𝒯
+\mathcal{T}
+.
+Features at the remaining timesteps are efficiently predicted using Eq.
+5
+.
+Importantly, DPCache is agnostic to the specific prediction method, as long as the same predictor is consistently used during calibration and inference.
+This design enables seamless integration of future predictors without modifying the path planning framework.
+3.3
+Cost Tensor Construction
+A fundamental challenge in global schedule optimization lies in accurately modeling the cost of skipping timesteps.
+A straightforward approach would be to define a 2D pairwise cost matrix, where each entry measures the prediction error between two timesteps.
+However, in caching-based diffusion sampling with feature prediction, the predicted features depend not only on the current timestep but also on previously cached states.
+This path dependency implies that the actual cost of skipping between two timesteps is conditioned on preceding key timesteps, rendering 2D representations insufficient.
+To capture this path dependency, we propose the Path-Aware Cost Tensor (PACT), a 3D structure that encodes the skipping cost conditioned on the preceding key timestep.
+Formally, PACT is defined as a tensor
+𝒞
+∈
+ℝ
+(
+T
++
+1
+)
+×
+(
+T
++
+1
+)
+×
+(
+T
++
+1
+)
+\mathcal{C}\in\mathbb{R}^{(T+1)\times(T+1)\times(T+1)}
+, where each entry
+𝒞
+⁡
+[
+i
+,
+j
+,
+k
+]
+\mathcal{C}[i,j,k]
+(with
+i
+>
+j
+>
+k
+i>j>k
+) represents the cumulative cost of skipping from timestep
+j
+j
+to
+k
+k
+, given that
+i
+i
+is the preceding key timestep in the sampling path.
+To unify boundary handling in subsequent optimal path selection, we introduce a sentinel timestep
+t
+=
+0
+t=0
+, whose features are predicted from the nearest computed timesteps.
+For memory efficiency, we construct PACT using only the final-layer features,
+i.e.
+,
+ℋ
+t
+=
+{
+𝒉
+t
+L
+}
+\mathcal{H}_{t}=\{\boldsymbol{h}_{t}^{L}\}
+.
+The cost
+𝒞
+⁡
+[
+i
+,
+j
+,
+k
+]
+\mathcal{C}[i,j,k]
+is computed as the cumulative L1 prediction error over all intermediate timesteps skipped when transitioning from
+j
+j
+to
+k
+k
+:
+𝒞
+⁡
+[
+i
+,
+j
+,
+k
+]
+=
+∑
+τ
+=
+k
+j
+−
+1
+∥
+𝒉
+τ
+L
+−
+𝒉
+p
+​
+r
+​
+e
+​
+d
+,
+τ
+L
+​
+(
+i
+,
+j
+)
+∥
+1
+,
+\mathcal{C}[i,j,k]=\sum_{\tau=k}^{j-1}\lVert\boldsymbol{h}_{\tau}^{L}-\boldsymbol{h}_{pred,\tau}^{L}(i,j)\rVert_{1},
+(6)
+where
+𝒉
+p
+​
+r
+​
+e
+​
+d
+,
+τ
+L
+​
+(
+i
+,
+j
+)
+\boldsymbol{h}_{pred,\tau}^{L}(i,j)
+denotes the predicted feature at timestep
+τ
+\tau
+using cached features at timesteps
+i
+i
+and
+j
+j
+.
+This cumulative formulation ensures that skipping over multiple timesteps incurs the total error across all intermediate predictions, rather than merely the error at the target step.
+By aggregating costs over the entire skipped interval, our design discourages large, unstable transitions that may appear locally optimal but degrade global trajectory fidelity.
+Algorithm 1
+Optimal Schedule Selection via DP
+1:
+full steps
+T
+T
+, target steps
+K
+K
+, fixed initial steps
+M
+M
+, path-aware cost tensor
+𝒞
+⁡
+[
+⋅
+,
+⋅
+,
+⋅
+]
+\mathcal{C}[\cdot,\cdot,\cdot]
+2:
+Initialize
+D
+⁡
+[
+m
+,
+k
+]
+←
++
+∞
+D[m,k]\leftarrow+\infty
+,
+P
+⁡
+[
+m
+,
+k
+]
+←
+null
+P[m,k]\leftarrow\text{null}
+for all
+m
+∈
+[
+1
+,
+K
++
+1
+]
+m\in[1,K\!+\!1]
+,
+k
+∈
+[
+0
+,
+T
+]
+k\in[0,T]
+3:
+for
+m
+=
+1
+m=1
+to
+M
+M
+do
+⊳
+\triangleright
+Fix initial steps
+4:
+k
+←
+T
+−
+m
++
+1
+k\leftarrow T-m+1
+5:
+D
+⁡
+[
+m
+,
+k
+]
+←
+0
+D[m,k]\leftarrow 0
+,
+P
+⁡
+[
+m
+,
+k
+]
+←
+k
++
+1
+P[m,k]\leftarrow k+1
+6:
+end
+for
+7:
+for
+m
+=
+M
++
+1
+m=M+1
+to
+K
++
+1
+K+1
+do
+⊳
+\triangleright
+DP
+8:
+for
+k
+=
+T
+−
+m
++
+1
+k=T-m+1
+downto
+0
+0
+do
+9:
+Compute
+D
+⁡
+[
+m
+,
+k
+]
+D[m,k]
+and
+P
+⁡
+[
+m
+,
+k
+]
+P[m,k]
+using Eq.
+8
+10:
+end
+for
+11:
+end
+for
+12:
+t
+K
++
+1
+←
+0
+t_{K+1}\leftarrow 0
+13:
+for
+m
+=
+K
+m=K
+downto
+1
+1
+do
+⊳
+\triangleright
+Backtracking
+14:
+t
+m
+←
+P
+⁡
+[
+m
++
+1
+,
+t
+m
++
+1
+]
+t_{m}\leftarrow P[m+1,t_{m+1}]
+15:
+end
+for
+16:
+return
+𝒯
+=
+{
+t
+1
+=
+T
+>
+t
+2
+>
+⋯
+>
+t
+K
+>
+0
+}
+\mathcal{T}=\{t_{1}=T>t_{2}>\cdots>t_{K}>0\}
+3.4
+Optimal Schedule Selection
+Given the path-aware cost tensor, our objective is to select an optimal
+K
+K
+-step sampling schedule
+𝒯
+=
+{
+t
+1
+=
+T
+>
+t
+2
+>
+⋯
+>
+t
+K
+>
+0
+}
+\mathcal{T}=\{t_{1}=T>t_{2}>\cdots>t_{K}>0\}
+that minimizes the total deviation from the full-step denoising trajectory.
+To this end, we define the total cost of a schedule
+𝒯
+\mathcal{T}
+as the sum of path-aware segment costs, leading to the optimization problem:
+arg
+⁡
+min
+⁡
+∑
+m
+=
+2
+K
+𝒯
+⁡
+𝒞
+⁡
+[
+t
+m
+−
+1
+,
+t
+m
+,
+t
+m
++
+1
+]
+,
+\arg\min_{\mathcal{T}}\sum_{m=2}^{K}\mathcal{C}[t_{m-1},t_{m},t_{m+1}],
+(7)
+where a sentinel endpoint
+t
+K
++
+1
+=
+0
+t_{K+1}=0
+is introduced to provide a fixed terminal reference, ensuring that the cost term involving the last selected step
+t
+K
+t_{K}
+is well-defined.
+This path optimization problem can be efficiently solved using dynamic programming (DP).
+As summarized in Algorithm
+1
+, we maintain two tables:
+•
+DP table
+D
+⁡
+[
+m
+,
+k
+]
+D[m,k]
+stores the minimum cumulative cost to reach timestep
+k
+k
+using exactly
+m
+m
+key timesteps;
+•
+Path table
+P
+⁡
+[
+m
+,
+k
+]
+P[m,k]
+records the predecessor of
+k
+k
+in the optimal partial schedule achieving
+D
+⁡
+[
+m
+,
+k
+]
+D[m,k]
+, which is subsequently used for backtracking.
+To preserve critical early-stage denoising dynamics and ensure stable feature prediction, we enforce the first
+M
+M
+timesteps to be included in every feasible schedule.
+Starting from these fixed initial timesteps, the DP procedure then iteratively extends partial schedules up to the target length
+K
+K
+.
+The recurrence respects the path-dependent structure of PACT by conditioning each transition on its true predecessor, thereby yielding
+D
+⁡
+[
+m
+,
+k
+]
+=
+min
+j
+>
+k
+⁡
+D
+⁡
+[
+m
+−
+1
+,
+j
+]
++
+𝒞
+⁡
+[
+P
+⁡
+[
+m
+−
+1
+,
+j
+]
+,
+j
+,
+k
+]
+,
+D[m,k]=\min_{j>k}D[m-1,j]+\mathcal{C}\bigl[P\left[m-1,j\right],j,k\bigr],
+(8)
+where the minimizing
+j
+j
+is stored in
+P
+⁡
+[
+m
+,
+k
+]
+P[m,k]
+.
+The optimization concludes at the terminal state
+D
+⁡
+[
+K
++
+1
+,
+0
+]
+D[K+1,0]
+, and the full schedule
+𝒯
+\mathcal{T}
+is recovered by backtracking through
+P
+P
+.
+By casting optimal schedule selection as a dynamic programming problem, we compute the globally optimal schedule exactly and efficiently.
+The DP algorithm has time complexity
+O
+⁡
+(
+K
+​
+T
+2
+)
+O(KT^{2})
+and space complexity
+O
+⁡
+(
+K
+​
+T
+)
+O(KT)
+.
+With
+K
+<
+T
+=
+50
+K<T=50
+, schedule selection incurs negligible overhead and is performed only once, adding no per-sample latency.
+4
+Experiments
+4.1
+Experimental Settings
+Model configuration.
+We evaluate the effectiveness of our method on commonly used diffusion models: FLUX.1-dev
+[
+21
+]
+for text-to-image generation, HunyuanVideo
+[
+20
+]
+for text-to-video generation, and DiT-XL/2
+[
+34
+]
+for class-to-image generation.
+All experiments are conducted on a single NVIDIA H20 GPU.
+For DPCache, we randomly select approximately ten samples as the calibration set for each dataset, set the prediction order to
+O
+=
+2
+O=2
+, and fix the first
+M
+=
+3
+M=3
+timesteps as mandatory computation steps.
+The hyperparameters for other methods in the tables are provided in the supplementary materials.
+Datasets and evaluation metrics.
+For text-to-image generation, we generate 1024
+×
+\times
+1024 images using 200 DrawBench benchmark
+[
+38
+]
+prompts, and evaluate image quality and text-image alignment using ImageReward
+[
+50
+]
+and CLIP Score
+[
+13
+]
+.
+For text-to-video generation, we adopt the VBench evaluation framework
+[
+16
+]
+which includes 946 prompts.
+We generate five video samples per prompt at a resolution of 640
+×
+\times
+480
+×
+\times
+65, resulting in a total of 4,730 videos and assess performance across VBench’s 16 core evaluation dimensions.
+For class-to-image generation, we uniformly sample prompts from 1,000 ImageNet
+[
+37
+]
+categories and generate 50,000 images at 256
+×
+\times
+256 resolution.
+We report FID-50k
+[
+14
+]
+as the primary metric, complemented by sFID and Inception Score.
+Fidelity to the original outputs is evaluated using PSNR, SSIM
+[
+47
+]
+, and LPIPS
+[
+57
+]
+, while efficiency is measured by average latency per prompt, FLOPs, and GPU memory usage.
+Table 1
+:
+Quantitative results of text-to-image generation task for FLUX.1-dev
+[
+21
+]
+on DrawBench dataset.
+Method
+Efficiency
+Image
+↑
+\uparrow
+CLIP
+↑
+\uparrow
+PSNR
+↑
+\uparrow
+SSIM
+↑
+\uparrow
+LPIPS
+↓
+\downarrow
+Latency(s)
+↓
+\downarrow
+Speed
+↑
+\uparrow
+FLOPs(T)
+↓
+\downarrow
+Ratio
+↑
+\uparrow
+Mem(GB)
+↓
+\downarrow
+Reward
+Score
+50 steps
+39.54
+1.00
+×
+\times
+2990.96
+1.00
+×
+\times
+37.41
+0.979
+17.40
+-
+-
+-
+30
+%
+\mathbf{\%}
+steps
+12.08
+3.27
+×
+\times
+907.64
+3.30
+×
+\times
+37.41
+0.855
+17.12
+15.32
+0.6527
+0.4133
+TeaCache
+1
+[
+25
+]
+11.56
+3.42
+×
+\times
+862.69
+3.47
+×
+\times
+37.45
+0.934
+17.17
+16.31
+0.6812
+0.3717
+TaylorSeer
+1
+[
+26
+]
+11.28
+3.51
+×
+\times
+730.31
+4.10
+×
+\times
+43.45
+0.939
+17.31
+16.95
+0.6922
+0.3407
+SpeCa
+1
+[
+27
+]
+10.92
+3.62
+×
+\times
+811.82
+3.68
+×
+\times
+41.02
+0.975
+17.27
+18.35
+0.6773
+0.2920
+DPCache (
+K
+=
+13
+K=13
+)
+11.18
+3.54
+×
+\times
+789.50
+3.79
+×
+\times
+37.57
+1.007
+17.34
+21.65
+0.8106
+0.1804
+22
+%
+\mathbf{\%}
+steps
+8.94
+4.42
+×
+\times
+669.54
+4.47
+×
+\times
+37.41
+0.786
+17.07
+14.49
+0.6138
+0.4717
+TeaCache
+2
+[
+25
+]
+8.59
+4.60
+×
+\times
+638.35
+4.69
+×
+\times
+37.45
+0.864
+17.14
+15.29
+0.6361
+0.4451
+TaylorSeer
+2
+[
+26
+]
+8.27
+4.78
+×
+\times
+492.34
+6.07
+×
+\times
+43.45
+0.793
+17.22
+14.76
+0.5782
+0.4929
+SpeCa
+2
+[
+27
+]
+8.54
+4.63
+×
+\times
+625.57
+4.78
+×
+\times
+41.02
+0.927
+17.23
+16.34
+0.6017
+0.4063
+DPCache (
+K
+=
+9
+K=9
+)
+8.12
+4.87
+×
+\times
+551.50
+5.42
+×
+\times
+37.57
+0.958
+17.33
+18.77
+0.7117
+0.2946
+4.2
+Comparison with other methods
+4.2.1
+Text-to-Image Generation
+Quantitative results.
+Table
+1
+presents the quantitative results of various acceleration methods applied to FLUX.1-dev
+[
+21
+]
+on the DrawBench
+[
+38
+]
+dataset.
+Compared to existing approaches, our proposed DPCache achieves the best performance across all evaluation metrics under comparable speedup ratios, and even attains performance competitive with the unaccelerated baseline (
++
++
+0.028 in ImageReward) under 3.54
+×
+\times
+acceleration.
+Under a more aggressive 4.87
+×
+\times
+speedup, DPCache surpasses the second-best method by 0.031 in ImageReward and by 0.10 in CLIP Score, demonstrating superior generation quality and stronger text–image alignment.
+Moreover, on the metrics that measure fidelity to the unaccelerated baseline, DPCache outperforms other methods by a large margin, with improvements of
++
++
+2.43 in PSNR,
++
++
+0.11 in SSIM, and
+−
+-
+0.11 in LPIPS, strongly validating that the globally optimal schedule identified by DPCache closely approximates the original sampling trajectory, effectively minimizing deviation from the unaccelerated generation process.
+Qualitative results.
+Figure
+3
+presents the qualitative comparison of different acceleration methods on FLUX.1-dev.
+In the first row, directly reducing sampling steps or using TeaCache leads to overall blurriness.
+Prediction-based methods like TaylorSeer and SpeCa avoid blurriness, but TaylorSeer’s fixed schedule causes its output to deviate significantly from the baseline, while SpeCa’s locally adaptive strategy introduces noise in the background.
+In contrast, DPCache produces sharp edges and a clean background, closely matching the full-step baseline, which demonstrates the effectiveness of our global scheduling approach.
+Similar trends are observed in the second row, where TeaCache exhibits structural distortions in the zebra, while TaylorSeer and SpeCa generate two zebras, which is inconsistent with the prompt.
+Moreover, rows 3 and 4 show that DPCache excels in complex scene generation and text rendering, preserving layout and context while maintaining high fidelity.
+Figure 3
+:
+Qualitative comparison of different acceleration methods applied to FLUX.1-dev on DrawBench dataset.
+Table 2
+:
+Quantitative results of text-to-video generation task for HunyuanVideo
+[
+20
+]
+on VBench dataset.
+Method
+Efficiency
+VBench
+↑
+\uparrow
+PSNR
+↑
+\uparrow
+SSIM
+↑
+\uparrow
+LPIPS
+↓
+\downarrow
+Latency(s)
+↓
+\downarrow
+Speed
+↑
+\uparrow
+FLOPs(T)
+↓
+\downarrow
+Ratio
+↑
+\uparrow
+Mem(GB)
+↓
+\downarrow
+Score(%)
+50 steps
+332.92
+1.00
+×
+\times
+14050.37
+1.00
+×
+\times
+60.22
+80.93
+-
+-
+-
+22
+%
+\mathbf{\%}
+steps
+82.47
+4.04
+×
+\times
+3095.22
+4.54
+×
+\times
+60.22
+78.89
+16.97
+0.5753
+0.4654
+TeaCache
+1
+[
+25
+]
+79.56
+4.18
+×
+\times
+2972.71
+4.73
+×
+\times
+60.58
+79.25
+17.55
+0.5801
+0.4081
+TaylorSeer
+1
+[
+26
+]
+86.11
+3.87
+×
+\times
+2821.20
+4.98
+×
+\times
+84.47
+80.33
+18.53
+0.6025
+0.3722
+SpeCa
+1
+[
+27
+]
+82.15
+4.05
+×
+\times
+2731.61
+5.14
+×
+\times
+84.47
+80.26
+20.09
+0.6370
+0.3554
+DPCache (
+K
+=
+11
+K=11
+)
+83.22
+4.05
+×
+\times
+3100.33
+4.53
+×
+\times
+60.58
+80.35
+23.11
+0.7462
+0.1890
+TeaCache
+2
+[
+25
+]
+70.05
+4.75
+×
+\times
+2538.79
+5.53
+×
+\times
+60.58
+78.17
+17.75
+0.5861
+0.4137
+TaylorSeer
+2
+[
+26
+]
+79.84
+4.17
+×
+\times
+2540.46
+5.53
+×
+\times
+84.47
+79.99
+18.23
+0.5899
+0.3967
+SpeCa
+2
+[
+27
+]
+72.09
+4.62
+×
+\times
+2254.75
+6.23
+×
+\times
+84.47
+78.50
+17.83
+0.5867
+0.4085
+DPCache (
+K
+=
+9
+K=9
+)
+70.09
+4.75
+×
+\times
+2538.79
+5.53
+×
+\times
+60.58
+80.23
+21.04
+0.6852
+0.2504
+Figure 4
+:
+Qualitative comparison of different acceleration methods applied to HunyuanVideo on VBench dataset.
+4.2.2
+Text-to-Video Generation
+Quantitative results.
+We further validate the effectiveness of our method on text-to-video generation, a more challenging setting involving larger models, as shown in Table
+2
+.
+Under a 4.75
+×
+\times
+speedup, DPCache achieves a VBench score of 80.23
+%
+\%
+, substantially outperforming existing methods by
++
++
+0.24
+%
+\%
+.
+In particular, DPCache demonstrates significantly higher fidelity to the original outputs across all fidelity-related metrics.
+Notably, existing prediction-based approaches such as TaylorSeer and SpeCa require caching intermediate features from all transformer layers, resulting in considerable GPU memory overhead (
++
++
+24.25 GB). In contrast, DPCache caches features only from the final layer, incurring only a negligible increase (
++
++
+0.36 GB) in memory usage compared to the baseline.
+This minimal memory overhead confirms that DPCache remains practical and scalable in the era of large-scale generative models.
+Qualitative results.
+Figure
+4
+showcases the qualitative comparison of different acceleration methods on HunyuanVideo.
+In the first column, TeaCache distorts the lifebuoy’s shape, while TaylorSeer and SpeCa misinterpret it entirely as a human hand, indicating a severe deviation from the baseline’s denoising trajectory.
+In contrast, DPCache accurately retains the lifebuoy with only minor visual differences from the reference.
+In the second column, all other acceleration methods introduce blur or geometric warping, whereas DPCache delivers sharp edges and accurate structure that closely match the full-step output.
+In the third column, existing methods suffer from heavy motion blur, and even the baseline exhibits slight artifacts in a few frames.
+However, DPCache maintains both visual sharpness and smooth motion across the entire sequence, demonstrating superior stability in high-dynamic scenarios.
+Table 3
+:
+Quantitative results of class-to-image generation task for DiT-XL/2
+[
+34
+]
+on ImageNet dataset.
+Method
+Latency(s)
+↓
+\downarrow
+Speed
+↑
+\uparrow
+FLOPs(T)
+↓
+\downarrow
+Ratio
+↑
+\uparrow
+Mem(GB)
+↓
+\downarrow
+FID
+↓
+\downarrow
+sFID
+↓
+\downarrow
+Inception Score
+↑
+\uparrow
+DDIM-50 steps
+0.851
+1.00
+×
+\times
+22.88
+1.00
+×
+\times
+3.183
+2.226
+4.275
+241.10
+40
+%
+\mathbf{\%}
+steps
+0.341
+2.50
+×
+\times
+9.154
+2.50
+×
+\times
+3.183
+3.504
+4.918
+221.45
+TaylorSeer
+1
+[
+26
+]
+0.444
+1.92
+×
+\times
+3.256
+7.03
+×
+\times
+3.278
+4.776
+7.793
+201.94
+SpeCa
+1
+[
+27
+]
+0.384
+2.22
+×
+\times
+4.285
+5.34
+×
+\times
+3.282
+3.185
+5.690
+224.24
+DPCache (
+K
+=
+16
+K=16
+)
+0.344
+2.47
+×
+\times
+7.326
+3.12
+×
+\times
+3.190
+2.562
+4.503
+230.60
+30
+%
+\mathbf{\%}
+steps
+0.257
+3.31
+×
+\times
+6.865
+3.33
+×
+\times
+3.183
+5.138
+6.120
+205.65
+TaylorSeer
+2
+[
+26
+]
+0.431
+1.97
+×
+\times
+2.800
+8.17
+×
+\times
+3.278
+6.163
+9.503
+186.55
+SpeCa
+2
+[
+27
+]
+0.367
+2.32
+×
+\times
+3.656
+6.26
+×
+\times
+3.282
+4.705
+7.835
+203.17
+DPCache (
+K
+=
+12
+K=12
+)
+0.282
+3.02
+×
+\times
+5.495
+4.16
+×
+\times
+3.190
+3.285
+5.063
+215.99
+4.2.3
+Class-to-Image Generation
+As shown in Table
+3
+, we also evaluate DPCache on class-conditional image generation using the DiT-XL/2
+[
+34
+]
+.
+Due to its small parameter count and low output resolution, acceleration gains are inherently limited for all methods.
+Although TaylorSeer and SpeCa achieve lower FLOPs by reusing cached features, they store intermediate activations from all transformer layers, incurring substantial memory bandwidth overhead that dominates actual latency.
+In contrast, DPCache caches only the final-layer features, thereby reducing both computation and memory pressure.
+DPCache achieves a 3.02
+×
+\times
+speedup while delivering the best generation quality among all approaches, with an FID of 3.285, sFID of 5.063, and Inception Score of 215.99.
+DPCache outperforms the second-best method by
+−
+-
+1.420 in FID,
+−
+-
+2.772 in sFID, and
++
++
+10.34 in Inception Score, demonstrating its effectiveness across diverse model scales.
+4.3
+Ablation Studies
+Path-aware cost tensor.
+As shown in Table
+4
+, we conduct ablation studies to evaluate the impact of PACT’s dimensionality and cost aggregation strategy.
+The first row adopts a 2D cost that evaluates only the prediction error at the current timestep. Although it ignores the influence of previously cached timesteps on the cost, this naive strategy still achieves competitive performance against existing methods, underscoring the core advantage of formulating acceleration as a global path planning problem.
+In the second row, applying cumulative error to the 2D cost degrades performance, as the 2D representation inherently misestimates per-step errors, and aggregating these inaccuracies distorts the cost landscape, misleading schedule selection.
+The third row leverages the more accurate 3D path-aware cost, improving fidelity to the full-step baseline.
+However, by relying solely on the current-step error, the scheduler selects aggressive steps that appear locally optimal but skip structurally critical timesteps, compromising trajectory stability.
+The fourth row integrates 3D cost with cumulative error, capturing both dependence on prior cached states and total fidelity loss over skipped intervals, and yields a
++
++
+0.006 gain in ImageReward and a
++
++
+0.78 improvement in PSNR over the first row, confirming the effectiveness of PACT.
+Table 4
+:
+Ablation studies of Path-Aware Cost Tensor on FLUX.1-dev with
+K
+=
+13
+K=13
+.
+Method
+Image
+↑
+\uparrow
+CLIP
+↑
+\uparrow
+PSNR
+↑
+\uparrow
+SSIM
+↑
+\uparrow
+LPIPS
+↓
+\downarrow
+Dim
+Sum
+Reward
+Score
+2D
+✘
+1.001
+17.33
+20.87
+0.7881
+0.2066
+2D
+✔
+0.977
+17.34
+19.46
+0.7605
+0.2423
+3D
+✘
+0.998
+17.33
+21.05
+0.7952
+0.2037
+3D
+✔
+1.007
+17.34
+21.65
+0.8106
+0.1804
+Calibration set.
+To assess the impact of calibration set selection on acceleration performance, we conduct an ablation study on the size, sampling strategy, and source of the calibration set, as shown in Table
+5
+.
+The first three rows vary the number of calibration samples.
+Remarkably, using 11 or 5 samples yields identical sampling schedules and thus identical performance, while even a single sample achieves competitive results with an ImageReward of 1.001, demonstrating that DPCache requires minimal calibration overhead.
+In the fourth row, we replace random sampling with stratified sampling by selecting one prompt from each of the 11 DrawBench categories.
+The resulting performance remains unchanged, indicating that careful selection of calibration prompts is unnecessary.
+In the fifth row, we further switch the calibration source to PartiPrompts
+[
+54
+]
+, a dataset that differs substantially from DrawBench in both semantics and linguistic style.
+Despite this distribution shift, the selected schedule and generation quality are preserved.
+These findings strongly validate the core assumption in Section
+3.2
+that the denoising trajectory shape is largely content-agnostic, and they confirm the robustness of DPCache to the choice of the calibration set.
+5
+Conclusion
+In this paper, We propose DPCache, a training-free diffusion acceleration framework that formulates sampling as a global path planning problem.
+By constructing a Path-Aware Cost Tensor (PACT) from a few calibration samples, DPCache captures the trajectory-dependent error of skipping timesteps conditioned on prior key steps.
+Using dynamic programming, it selects an optimal sequence of key timesteps that minimizes total deviation from the full denoising trajectory.
+During inference, only these key steps require full computation, while intermediate steps are efficiently predicted using cached features.
+Extensive experiments on DiT, FLUX, and HunyuanVideo show DPCache achieves up to 4.87
+×
+\times
+speedup with consistently better generation quality than prior caching-based methods, demonstrating the effectiveness of the path-aware global scheduling framework.
+Future work includes extending DPCache to input-adaptive scheduling and integrating learnable predictors for more accurate feature reconstruction.
+Table 5
+:
+Ablation study on calibration set size, sampling strategy, and prompt source on FLUX.1-dev with
+K
+=
+13
+K=13
+.
+Num
+Strategy
+Source
+Image
+↑
+\uparrow
+CLIP
+↑
+\uparrow
+PSNR
+↑
+\uparrow
+Reward
+Score
+11
+Random
+DrawBench
+1.007
+17.34
+21.65
+5
+Random
+DrawBench
+1.007
+17.34
+21.65
+1
+Random
+DrawBench
+1.001
+17.33
+21.64
+11
+Stratified
+DrawBench
+1.007
+17.34
+21.65
+11
+Random
+PartiPrompts
+1.007
+17.34
+21.65
+References
+[1]
+D. Bolya and J. Hoffman
+(2023)
+Token merging for fast stable diffusion
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 4599–4603
+.
+Cited by:
+§1
+,
+§2.2
+.
+[2]
+T. Castells, H. Song, B. Kim, and S. Choi
+(2024)
+Ld-pruner: efficient pruning of latent diffusion models using task-agnostic insights
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 821–830
+.
+Cited by:
+§1
+,
+§2.2
+.
+[3]
+C. Chadebec, O. Tasar, E. Benaroche, and B. Aubin
+(2025)
+Flash diffusion: accelerating any conditional diffusion model for few steps image generation
+.
+In
+Proceedings of the AAAI Conference on Artificial Intelligence
+,
+Vol.
+39
+,
+pp. 15686–15695
+.
+Cited by:
+§2.1
+.
+[4]
+D. Chen, Z. Zhou, C. Wang, C. Shen, and S. Lyu
+(2024)
+On the trajectory regularity of ode-based diffusion sampling
+.
+arXiv preprint arXiv:2405.11326
+.
+Cited by:
+§1
+.
+[5]
+P. Chen, M. Shen, P. Ye, J. Cao, C. Tu, C. Bouganis, Y. Zhao, and T. Chen
+(2024)
+Δ
+\Delta
+-dit: a training-free acceleration method tailored for diffusion transformers
+.
+arXiv preprint arXiv:2406.01125
+.
+Cited by:
+§2.2
+.
+[6]
+H. Chu, W. Wu, G. Fen, and Y. Zhang
+(2025)
+OmniCache: a trajectory-oriented global perspective on training-free cache reuse for diffusion transformer models
+.
+arXiv preprint arXiv:2508.16212
+.
+Cited by:
+§2.2
+,
+§3.2
+.
+[7]
+G. Fang, X. Ma, and X. Wang
+(2023)
+Structural pruning for diffusion models
+.
+In
+Advances in Neural Information Processing Systems
+,
+Cited by:
+§2.2
+.
+[8]
+H. Fang, S. Tang, J. Cao, E. Zhang, F. Tang, and T. Lee
+(2025)
+Attend to not attended: structure-then-detail token merging for post-training dit acceleration
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 18083–18092
+.
+Cited by:
+§2.2
+.
+[9]
+L. Feng, S. Zheng, J. Liu, Y. Lin, Q. Zhou, P. Cai, X. Wang, J. Chen, C. Zou, Y. Ma,
+et al.
+(2025)
+HiCache: training-free acceleration of diffusion models via hermite polynomial-based feature caching
+.
+arXiv preprint arXiv:2508.16984
+.
+Cited by:
+§1
+,
+§1
+,
+§2.2
+.
+[10]
+W. Feng, C. Yang, Z. An, L. Huang, B. Diao, F. Wang, and Y. Xu
+(2024)
+Relational diffusion distillation for efficient image generation
+.
+In
+Proceedings of the 32nd ACM international conference on multimedia
+,
+pp. 205–213
+.
+Cited by:
+§1
+,
+§2.2
+.
+[11]
+Z. Geng, M. Deng, X. Bai, J. Z. Kolter, and K. He
+(2025)
+Mean flows for one-step generative modeling
+.
+arXiv preprint arXiv:2505.13447
+.
+Cited by:
+§2.1
+.
+[12]
+I. Goodfellow, J. Pouget-Abadie, M. Mirza, B. Xu, D. Warde-Farley, S. Ozair, A. Courville, and Y. Bengio
+(2020)
+Generative adversarial networks
+.
+Communications of the ACM
+63
+(
+11
+),
+pp. 139–144
+.
+Cited by:
+§2.1
+.
+[13]
+J. Hessel, A. Holtzman, M. Forbes, R. L. Bras, and Y. Choi
+(2021)
+Clipscore: a reference-free evaluation metric for image captioning
+.
+arXiv preprint arXiv:2104.08718
+.
+Cited by:
+§4.1
+.
+[14]
+M. Heusel, H. Ramsauer, T. Unterthiner, B. Nessler, and S. Hochreiter
+(2017)
+Gans trained by a two time-scale update rule converge to a local nash equilibrium
+.
+Advances in neural information processing systems
+30
+.
+Cited by:
+§4.1
+.
+[15]
+J. Ho, A. Jain, and P. Abbeel
+(2020)
+Denoising diffusion probabilistic models
+.
+Advances in neural information processing systems
+33
+,
+pp. 6840–6851
+.
+Cited by:
+§1
+.
+[16]
+Z. Huang, Y. He, J. Yu, F. Zhang, C. Si, Y. Jiang, Y. Zhang, T. Wu, Q. Jin, N. Chanpaisit,
+et al.
+(2024)
+Vbench: comprehensive benchmark suite for video generative models
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 21807–21818
+.
+Cited by:
+§4.1
+.
+[17]
+Z. Huang, F. Zhang, X. Xu, Y. He, J. Yu, Z. Dong, Q. Ma, N. Chanpaisit, C. Si, Y. Jiang,
+et al.
+(2024)
+Vbench++: comprehensive and versatile benchmark suite for video generative models
+.
+arXiv preprint arXiv:2411.13503
+.
+Cited by:
+§B.3
+.
+[18]
+K. Kahatapitiya, H. Liu, S. He, D. Liu, M. Jia, C. Zhang, M. S. Ryoo, and T. Xie
+(2024)
+Adaptive caching for faster video generation with diffusion transformers
+.
+arXiv preprint arXiv:2411.02397
+.
+Cited by:
+§2.2
+.
+[19]
+S. Kim, H. Lee, W. Cho, M. Park, and W. W. Ro
+(2025)
+Ditto: accelerating diffusion model via temporal value similarity
+.
+In
+2025 IEEE International Symposium on High Performance Computer Architecture (HPCA)
+,
+pp. 338–352
+.
+Cited by:
+§2.2
+.
+[20]
+W. Kong, Q. Tian, Z. Zhang, R. Min, Z. Dai, J. Zhou, J. Xiong, X. Li, B. Wu, J. Zhang,
+et al.
+(2024)
+Hunyuanvideo: a systematic framework for large video generative models
+.
+arXiv preprint arXiv:2412.03603
+.
+Cited by:
+§1
+,
+§1
+,
+§4.1
+,
+Table 2
+,
+Table 2
+.
+[21]
+B. F. Labs
+(2024)
+FLUX
+.
+Cited by:
+§1
+,
+§1
+,
+§4.1
+,
+§4.2.1
+,
+Table 1
+,
+Table 1
+.
+[22]
+X. Li, Y. Liu, L. Lian, H. Yang, Z. Dong, D. Kang, S. Zhang, and K. Keutzer
+(2023)
+Q-diffusion: quantizing diffusion models
+.
+In
+Proceedings of the IEEE/CVF International Conference on Computer Vision
+,
+pp. 17535–17545
+.
+Cited by:
+§2.2
+.
+[23]
+Y. Li, H. Wang, Q. Jin, J. Hu, P. Chemerys, Y. Fu, Y. Wang, S. Tulyakov, and J. Ren
+(2023)
+Snapfusion: text-to-image diffusion model on mobile devices within two seconds
+.
+Advances in Neural Information Processing Systems
+36
+,
+pp. 20662–20678
+.
+Cited by:
+§2.2
+.
+[24]
+S. Lin, A. Wang, and X. Yang
+(2024)
+Sdxl-lightning: progressive adversarial diffusion distillation
+.
+arXiv preprint arXiv:2402.13929
+.
+Cited by:
+§2.1
+.
+[25]
+F. Liu, S. Zhang, X. Wang, Y. Wei, H. Qiu, Y. Zhao, Y. Zhang, Q. Ye, and F. Wan
+(2025)
+Timestep embedding tells: it’s time to cache for video diffusion model
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 7353–7363
+.
+Cited by:
+§1
+,
+§2.2
+,
+Table 1
+,
+Table 1
+,
+Table 2
+,
+Table 2
+.
+[26]
+J. Liu, C. Zou, Y. Lyu, J. Chen, and L. Zhang
+(2025)
+From reusing to forecasting: accelerating diffusion models with taylorseers
+.
+arXiv preprint arXiv:2503.06923
+.
+Cited by:
+§1
+,
+§1
+,
+§2.2
+,
+§3.1
+,
+Table 1
+,
+Table 1
+,
+Table 2
+,
+Table 2
+,
+Table 3
+,
+Table 3
+.
+[27]
+J. Liu, C. Zou, Y. Lyu, F. Ren, S. Wang, K. Li, and L. Zhang
+(2025)
+SpeCa: accelerating diffusion transformers with speculative feature caching
+.
+arXiv preprint arXiv:2509.11628
+.
+Cited by:
+§1
+,
+§2.2
+,
+Table 1
+,
+Table 1
+,
+Table 2
+,
+Table 2
+,
+Table 3
+,
+Table 3
+.
+[28]
+X. Liu, C. Gong, and Q. Liu
+(2022)
+Flow straight and fast: learning to generate and transfer data with rectified flow
+.
+arXiv preprint arXiv:2209.03003
+.
+Cited by:
+§2.1
+.
+[29]
+C. Lu, Y. Zhou, F. Bao, J. Chen, C. Li, and J. Zhu
+(2022)
+Dpm-solver: a fast ode solver for diffusion probabilistic model sampling in around 10 steps
+.
+Advances in neural information processing systems
+35
+,
+pp. 5775–5787
+.
+Cited by:
+§1
+,
+§2.1
+.
+[30]
+C. Lu, Y. Zhou, F. Bao, J. Chen, C. Li, and J. Zhu
+(2025)
+Dpm-solver++: fast solver for guided sampling of diffusion probabilistic models
+.
+Machine Intelligence Research
+,
+pp. 1–22
+.
+Cited by:
+§2.1
+.
+[31]
+S. Luo, Y. Tan, L. Huang, J. Li, and H. Zhao
+(2023)
+Latent consistency models: synthesizing high-resolution images with few-step inference
+.
+arXiv preprint arXiv:2310.04378
+.
+Cited by:
+§2.1
+.
+[32]
+X. Ma, G. Fang, and X. Wang
+(2024)
+Deepcache: accelerating diffusion models for free
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 15762–15772
+.
+Cited by:
+§1
+,
+§2.2
+.
+[33]
+X. Mao, Z. Jiang, F. Wang, J. Zhang, H. Chen, M. Chi, Y. Wang, and W. Luo
+(2025)
+Osv: one step is enough for high-quality image to video generation
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 12585–12594
+.
+Cited by:
+§2.1
+.
+[34]
+W. Peebles and S. Xie
+(2023)
+Scalable diffusion models with transformers
+.
+In
+Proceedings of the IEEE/CVF international conference on computer vision
+,
+pp. 4195–4205
+.
+Cited by:
+§1
+,
+§1
+,
+§4.1
+,
+§4.2.3
+,
+Table 3
+,
+Table 3
+.
+[35]
+J. Qiu, L. Liu, S. Wang, J. Lu, K. Chen, and Y. Hao
+(2025)
+Accelerating diffusion transformer via gradient-optimized cache
+.
+arXiv preprint arXiv:2503.05156
+.
+Cited by:
+§2.2
+.
+[36]
+R. Rombach, A. Blattmann, D. Lorenz, P. Esser, and B. Ommer
+(2022)
+High-resolution image synthesis with latent diffusion models
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 10684–10695
+.
+Cited by:
+§1
+.
+[37]
+O. Russakovsky, J. Deng, H. Su, J. Krause, S. Satheesh, S. Ma, Z. Huang, A. Karpathy, A. Khosla, M. Bernstein,
+et al.
+(2015)
+Imagenet large scale visual recognition challenge
+.
+International journal of computer vision
+115
+(
+3
+),
+pp. 211–252
+.
+Cited by:
+§4.1
+.
+[38]
+C. Saharia, W. Chan, S. Saxena, L. Li, J. Whang, E. L. Denton, K. Ghasemipour, R. Gontijo Lopes, B. Karagol Ayan, T. Salimans,
+et al.
+(2022)
+Photorealistic text-to-image diffusion models with deep language understanding
+.
+Advances in neural information processing systems
+35
+,
+pp. 36479–36494
+.
+Cited by:
+§4.1
+,
+§4.2.1
+.
+[39]
+T. Salimans and J. Ho
+(2022)
+Progressive distillation for fast sampling of diffusion models
+.
+arXiv preprint arXiv:2202.00512
+.
+Cited by:
+§1
+,
+§2.1
+.
+[40]
+A. Sauer, D. Lorenz, A. Blattmann, and R. Rombach
+(2024)
+Adversarial diffusion distillation
+.
+In
+European Conference on Computer Vision
+,
+pp. 87–103
+.
+Cited by:
+§2.1
+.
+[41]
+P. Selvaraju, T. Ding, T. Chen, I. Zharkov, and L. Liang
+(2024)
+Fora: fast-forward caching in diffusion transformer acceleration
+.
+arXiv preprint arXiv:2407.01425
+.
+Cited by:
+§2.2
+.
+[42]
+Y. Shang, Z. Yuan, B. Xie, B. Wu, and Y. Yan
+(2023)
+Post-training quantization on diffusion models
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 1972–1981
+.
+Cited by:
+§2.2
+.
+[43]
+J. Song, C. Meng, and S. Ermon
+(2020)
+Denoising diffusion implicit models
+.
+arXiv preprint arXiv:2010.02502
+.
+Cited by:
+§1
+,
+§2.1
+.
+[44]
+Y. Song, P. Dhariwal, M. Chen, and I. Sutskever
+(2023)
+Consistency models
+.
+arXiv preprint arXiv:2303.01469
+.
+Cited by:
+§2.1
+.
+[45]
+T. Wan, A. Wang, B. Ai, B. Wen, C. Mao, C. Xie, D. Chen, F. Yu, H. Zhao, J. Yang, J. Zeng, J. Wang, J. Zhang, J. Zhou, J. Wang, J. Chen, K. Zhu, K. Zhao, K. Yan, L. Huang, M. Feng, N. Zhang, P. Li, P. Wu, R. Chu, R. Feng, S. Zhang, S. Sun, T. Fang, T. Wang, T. Gui, T. Weng, T. Shen, W. Lin, W. Wang, W. Wang, W. Zhou, W. Wang, W. Shen, W. Yu, X. Shi, X. Huang, X. Xu, Y. Kou, Y. Lv, Y. Li, Y. Liu, Y. Wang, Y. Zhang, Y. Huang, Y. Li, Y. Wu, Y. Liu, Y. Pan, Y. Zheng, Y. Hong, Y. Shi, Y. Feng, Z. Jiang, Z. Han, Z. Wu, and Z. Liu
+(2025)
+Wan: open and advanced large-scale video generative models
+.
+arXiv preprint arXiv:2503.20314
+.
+Cited by:
+§B.3
+,
+§1
+.
+[46]
+F. Wang, Z. Huang, A. Bergman, D. Shen, P. Gao, M. Lingelbach, K. Sun, W. Bian, G. Song, Y. Liu,
+et al.
+(2024)
+Phased consistency models
+.
+Advances in neural information processing systems
+37
+,
+pp. 83951–84009
+.
+Cited by:
+§2.1
+.
+[47]
+Z. Wang, A. C. Bovik, H. R. Sheikh, and E. P. Simoncelli
+(2004)
+Image quality assessment: from error visibility to structural similarity
+.
+IEEE transactions on image processing
+13
+(
+4
+),
+pp. 600–612
+.
+Cited by:
+§4.1
+.
+[48]
+D. Watson, J. Ho, M. Norouzi, and W. Chan
+(2021)
+Learning to efficiently sample from diffusion probabilistic models
+.
+arXiv preprint arXiv:2106.03802
+.
+Cited by:
+§1
+.
+[49]
+J. Wu, H. Wang, Y. Shang, M. Shah, and Y. Yan
+(2024)
+Ptq4dit: post-training quantization for diffusion transformers
+.
+Advances in neural information processing systems
+37
+,
+pp. 62732–62755
+.
+Cited by:
+§2.2
+.
+[50]
+J. Xu, X. Liu, Y. Wu, Y. Tong, Q. Li, M. Ding, J. Tang, and Y. Dong
+(2023)
+Imagereward: learning and evaluating human preferences for text-to-image generation
+.
+Advances in Neural Information Processing Systems
+36
+,
+pp. 15903–15935
+.
+Cited by:
+§4.1
+.
+[51]
+Y. Xu, Y. Zhao, Z. Xiao, and T. Hou
+(2024)
+Ufogen: you forward once large scale text-to-image generation via diffusion gans
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 8196–8206
+.
+Cited by:
+§2.1
+.
+[52]
+T. Yin, M. Gharbi, T. Park, R. Zhang, E. Shechtman, F. Durand, and B. Freeman
+(2024)
+Improved distribution matching distillation for fast image synthesis
+.
+Advances in neural information processing systems
+37
+,
+pp. 47455–47487
+.
+Cited by:
+§2.1
+.
+[53]
+T. Yin, M. Gharbi, R. Zhang, E. Shechtman, F. Durand, W. T. Freeman, and T. Park
+(2024)
+One-step diffusion with distribution matching distillation
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 6613–6623
+.
+Cited by:
+§2.1
+.
+[54]
+J. Yu, Y. Xu, J. Y. Koh, T. Luong, G. Baid, Z. Wang, V. Vasudevan, A. Ku, Y. Yang, B. K. Ayan,
+et al.
+(2022)
+Scaling autoregressive models for content-rich text-to-image generation
+.
+arXiv preprint arXiv:2206.10789
+2
+(
+3
+),
+pp. 5
+.
+Cited by:
+§B.3
+,
+§4.3
+.
+[55]
+D. Zhang, S. Li, C. Chen, Q. Xie, and H. Lu
+(2024)
+Laptop-diff: layer pruning and normalized distillation for compressing diffusion models
+.
+arXiv preprint arXiv:2404.11098
+.
+Cited by:
+§2.2
+.
+[56]
+L. Zhang and K. Ma
+(2024)
+Accelerating diffusion models with one-to-many knowledge distillation
+.
+arXiv preprint arXiv:2410.04191
+.
+Cited by:
+§2.2
+.
+[57]
+R. Zhang, P. Isola, A. A. Efros, E. Shechtman, and O. Wang
+(2018)
+The unreasonable effectiveness of deep features as a perceptual metric
+.
+In
+Proceedings of the IEEE conference on computer vision and pattern recognition
+,
+pp. 586–595
+.
+Cited by:
+§4.1
+.
+[58]
+Y. Zhang, E. Jin, Y. Dong, A. Khakzar, P. Torr, J. Stegmaier, and K. Kawaguchi
+(2024)
+Effortless efficiency: low-cost pruning of diffusion models
+.
+arXiv preprint arXiv:2412.02852
+.
+Cited by:
+§2.2
+.
+[59]
+X. Zhao, X. Jin, K. Wang, and Y. You
+(2024)
+Real-time video generation with pyramid attention broadcast
+.
+arXiv preprint arXiv:2408.12588
+.
+Cited by:
+§1
+.
+[60]
+K. Zheng, C. Lu, J. Chen, and J. Zhu
+(2023)
+Dpm-solver-v3: improved diffusion ode solver with empirical model statistics
+.
+Advances in Neural Information Processing Systems
+36
+,
+pp. 55502–55542
+.
+Cited by:
+§2.1
+.
+[61]
+C. Zou, X. Liu, T. Liu, S. Huang, and L. Zhang
+(2024)
+Accelerating diffusion transformers with token-wise feature caching
+.
+arXiv preprint arXiv:2410.05317
+.
+Cited by:
+§1
+.
+Appendix A
+Experimental Settings
+To ensure reproducibility and fair comparison across methods, Table
+6
+provides a detailed overview of the hyperparameter settings used for each method in Section 4.2 of the main paper.
+Table 6
+:
+Hyperparameters used for each method in our experiments.
+Model
+Method
+Hyperparameters
+FLUX.1-dev
+TeaCache
+1
+l
+=
+0.7
+l=0.7
+TeaCache
+2
+l
+=
+1.0
+l=1.0
+TaylorSeer
+1
+𝒩
+=
+5
+,
+O
+=
+2
+\mathcal{N}=5,O=2
+TaylorSeer
+2
+𝒩
+=
+8
+,
+O
+=
+2
+\mathcal{N}=8,O=2
+SpeCa
+1
+τ
+=
+1.0
+,
+β
+=
+0.2
+\tau=1.0,\beta=0.2
+SpeCa
+2
+τ
+=
+8.5
+,
+β
+=
+0.4
+\tau=8.5,\beta=0.4
+HunyuanVideo
+TeaCache
+1
+l
+=
+0.4
+l=0.4
+TeaCache
+2
+l
+=
+0.5
+l=0.5
+TaylorSeer
+1
+𝒩
+=
+5
+,
+O
+=
+1
+\mathcal{N}=5,O=1
+TaylorSeer
+2
+𝒩
+=
+8
+,
+O
+=
+1
+\mathcal{N}=8,O=1
+SpeCa
+1
+τ
+=
+1.0
+,
+β
+=
+0.1
+\tau=1.0,\beta=0.1
+SpeCa
+2
+τ
+=
+2.0
+,
+β
+=
+0.1
+\tau=2.0,\beta=0.1
+DiT-XL/2
+TaylorSeer
+1
+𝒩
+=
+9
+,
+O
+=
+2
+\mathcal{N}=9,O=2
+TaylorSeer
+2
+𝒩
+=
+10
+,
+O
+=
+2
+\mathcal{N}=10,O=2
+SpeCa
+1
+τ
+=
+1.0
+,
+β
+=
+0.1
+\tau=1.0,\beta=0.1
+SpeCa
+2
+τ
+=
+2.0
+,
+β
+=
+0.3
+\tau=2.0,\beta=0.3
+Appendix B
+Comparison with State-of-the-Art Methods
+B.1
+Analysis of Sampling Trajectories
+To visually demonstrate the superiority of our method, we visualize the sampling trajectories of FLUX.1-dev under different acceleration strategies, as shown in Figure
+5
+.
+Specifically, we run 50 samples, compute the average output features at each timestep, apply PCA to project them into a two-dimensional space, and visualize the resulting trajectories in a 2D coordinate system.
+DPCache’s trajectory closely follows that of the baseline, confirming that our method minimizes global trajectory deviation, which is consistent with Figure 1 of the main paper.
+Moreover, we notice that prediction timesteps often deviate significantly from the baseline trajectory, but subsequent computation steps effectively steer the trajectory back toward it.
+By selecting computation timesteps from a global perspective, DPCache ensures that the accelerated model remains consistently close to the original sampling trajectory throughout inference.
+Figure 5
+:
+Visualization of sampling trajectories when applying different acceleration methods to FLUX.1-dev.
+B.2
+Quantitative Results
+VBench Score for all dimensions.
+Figure
+6
+presents a comprehensive comparison of HunyuanVideo’s performance across all VBench dimensions with various acceleration methods. Under different acceleration settings, our proposed DPCache consistently achieves competitive performance across all dimensions, and notably outperforms other methods in aesthetic quality, imaging quality, and multiple objects.
+Our method demonstrates more pronounced advantages under high-speedup settings, highlighting the potential of our globally optimized sampling schedule to maintain quality while enabling aggressive acceleration.
+Figure 6
+:
+VBench performance of HunyuanVideo across all dimensions with various acceleration methods under different acceleration settings:
+(left) low speedup, (right) high speedup.
+Scores are normalized per dimension for improved visual comparison.
+B.3
+Qualitative Results
+Text-to-image generation.
+We provide additional qualitative comparisons of various acceleration methods applied to FLUX.1-dev on the DrawBench dataset in Figure
+7
+.
+Existing approaches often exhibit noticeable artifacts, such as blurriness, geometric distortions, or misalignment with the input text prompt, whereas our proposed DPCache maintains high visual fidelity and closely resembles the output of the unaccelerated baseline.
+Text-to-video generation.
+To further validate the effectiveness of DPCache, we apply it to Wan-2.1-I2V-14B
+[
+45
+]
+, which is a larger, higher-resolution model with state-of-the-art performance in video generation.
+As shown in Figure
+8
+, we sample some inputs from VBench-I2V
+[
+17
+]
+benchmark and compare the generation results of the baseline and DPCache at a resolution of 832
+×
+\times
+832
+×
+\times
+81.
+DPCache achieves 4.15
+×
+\times
+speedup while preserving visual fidelity: the accelerated output maintains sharpness and detail, even in complex scenes, without introducing noticeable artifacts.
+Figure 7
+:
+Additional qualitative comparisons of different acceleration methods applied to FLUX.1-dev on DrawBench dataset.
+Figure 8
+:
+Qualitative comparison between the original (unaccelerated) and DPCache-accelerated Wan-2.1-I2V-14B on the VBench-I2V benchmark.
+Figure 9
+:
+Qualitative comparison of different acceleration methods applied to FLUX.1-dev on out-of-distribution prompts.
+Figure 10
+:
+Visualization of ablation studies on the dimensionality and cost aggregation strategy of PACT.
+Robustness on out-of-distribution prompts.
+In Section 4.3 of the main paper, we quantitatively demonstrate that DPCache is robust to the choice and size of the calibration set.
+To further validate this robustness, we apply a FLUX.1-dev model calibrated on 10 samples from DrawBench, and evaluate it on out-of-distribution prompts from PartiPrompts
+[
+54
+]
+that exhibit a significantly different distribution from DrawBench.
+As shown in Figure
+9
+, we compare different acceleration methods on out-of-distribution prompts.
+In the first row, the prompt is short and abstract.
+The result generated by TeaCache deviates significantly from the baseline, indicating a complete drift from the original sampling trajectory.
+TaylorSeer and SpeCa produce scenes that are semantically similar to the baseline but introduce spurious human figures and distorted structures.
+In contrast, DPCache reproduces a result nearly identical to the baseline.
+In the fourth row, the prompt is highly detailed and specifies numerous visual elements.
+TeaCache and TaylorSeer fail to preserve the text on the wall, while SpeCa generates noticeable artifacts on the wizard hat.
+DPCache, however, maintains the finest details with the highest fidelity.
+These results on out-of-distribution inputs strongly demonstrate the robustness of DPCache to calibration set selection, confirming that our method can generalize well even when calibrated on a small and distributionally mismatched set.
+Appendix C
+Ablation Studies
+Path-aware cost tensor.
+In Section 4.3 of the main paper, we quantitatively validate the effectiveness of the PACT design. Figure
+10
+further visualizes results under different cost tensor dimensionalities and cost aggregation strategies.
+In the first row, the result using a 2D cost tensor without temporal accumulation exhibits noticeable distortions: the cup shape and the logo on the phone differ from the baseline result.
+When temporal accumulation is applied to the 2D cost, these errors are further amplified, leading to an even greater deviation in the phone’s appearance.
+In contrast, both variants of the 3D cost tensor achieve high fidelity to the baseline, demonstrating that modeling the influence of the previous key timestep during cost computation better captures the true error of timestep skipping.
+Moreover, the non-cumulative variants produce outputs with coarser textures and reduced detail. This aligns with our analysis that non-aggregated costs tend to trigger aggressive skipping in the final stages of sampling, impairing fine-grained synthesis.
+Similar trends are observed in the second and third rows: 2D cost tensors yield lower visual similarity to the baseline, and non-aggregated strategies suffer from significant detail loss.
+These results confirm that leveraging a 3D cost tensor with temporal aggregation enables DPCache to estimate skipping-induced error more accurately, thereby preserving structural consistency and fine details during accelerated sampling.
+Hyperparameter analysis.
+As shown in Figure
+11
+, we vary the number of sampling steps
+K
+K
+to achieve different speedup ratios, and compare performance under prediction orders
+O
+=
+1
+O=1
+and
+O
+=
+2
+O=2
+.
+Unlike acceleration methods that rely on per-step thresholds or fixed sampling intervals, DPCache directly controls the total number of sampling steps
+K
+K
+, enabling smoother and more predictable management of the speed–quality trade-off.
+As the speedup ratio increases (
+i.e.
+,
+K
+K
+decreases), all metrics evolve steadily without abrupt drops, reflecting the stability of the dynamically optimized schedule.
+With respect to the prediction order, second-order prediction yields higher ImageReward and PSNR than first-order prediction, confirming that higher-order prediction yields more accurate feature extrapolation, which results in generated images of higher quality and closer alignment with the original denoising trajectory.
+In contrast, first-order prediction achieves a slightly higher CLIP Score, indicating that strict trajectory adherence may come at the expense of alignment with the text prompt.
+Figure 11
+:
+Performance of DPCache under varying acceleration ratios and prediction orders.
+Appendix D
+Limitations
+Although DPCache achieves significant acceleration while preserving generation quality by seeking a globally optimal sampling path, it has certain limitations.
+Since its optimization objective prioritizes fidelity to the original sampling trajectory, DPCache may sacrifice output diversity and inherit semantic or structural errors from the original model.
+As shown in the left example of Figure
+12
+, the original model erroneously renders “Image” as “Omage”, and DPCache retains this mistake after acceleration.
+Moreover, in cases where the unaccelerated model generates plausible but imperfect results, DPCache’s emphasis on trajectory matching can inadvertently amplify minor deviations into visible artifacts.
+As shown in the right example of Figure
+12
+, the original model introduces spurious debris inside the flowerpot, and DPCache, by closely following the base trajectory, further amplifies this artifact.
+These observations suggest promising directions for future work.
+For instance, we could adopt input-adaptive scheduling and integrate learnable predictors to correct failures of the original model during accelerated inference.
+Figure 12
+:
+Failure cases of DPCache.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

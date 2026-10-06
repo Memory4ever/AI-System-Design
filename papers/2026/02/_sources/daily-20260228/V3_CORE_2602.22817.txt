@@ -1,0 +1,5037 @@
+Hierarchy-of-Groups Policy Optimization for Long-Horizon Agentic Tasks
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related work
+3
+Preliminaries
+4
+Training Agents with HGPO for Long-horizon Agentic Tasks
+4.1
+The issue of historical context inconsistency
+4.2
+Hierarchy-of-Groups Policy Optimization
+5
+Experiments
+5.1
+Experiment Setup
+5.2
+Experimental results
+5.3
+Further Analysis
+5.4
+Parameter analysis
+5.5
+Ablation study
+6
+Conclusion
+References
+A
+Algorithm
+B
+More details and proof for Theorem
+C
+Experiment Details
+C.1
+Comparing methods
+C.2
+Environment details
+C.3
+Details of Training
+C.4
+Training metrics
+C.5
+Prompts
+D
+More experimental results
+D.1
+The performance of using the old version of Verl-agent
+D.2
+Training dynamics
+D.3
+The distribution
+E
+Use of LLMs
+License: CC BY 4.0
+arXiv:2602.22817v1 [cs.LG] 26 Feb 2026
+Hierarchy-of-Groups Policy Optimization for Long-Horizon Agentic Tasks
+Shuo He
+Email:
+shuohe123@gmail.com
+Lang Feng
+Email:
+fenglei@seu.edu.cn
+Qi Wei
+Xin Cheng
+Lei Feng
+†
+†
+thanks:
+Corresponding author
+Bo An
+Nanyang Technological University
+Southeast University
+Abstract
+Group-based reinforcement learning (RL), such as GRPO, has advanced the capabilities of large language models on long-horizon agentic tasks. To enable more fine-grained policy updates, recent research has increasingly shifted toward
+stepwise
+group-based policy optimization, which treats each step in a rollout trajectory independently while using a memory module to retain historical context. However, we find a key issue in estimating stepwise relative advantages, namely
+context inconsistency
+, where steps within the same group may differ in their historical contexts. Empirically, we reveal that this issue can lead to severely biased advantage estimation, thereby degrading policy optimization significantly. To address the issue, in this paper, we propose
+H
+ierarchy-of-
+G
+roups
+P
+olicy
+O
+ptimization (HGPO) for long-horizon agentic tasks. Specifically, within a group of rollout trajectories, HGPO assigns each step to multiple hierarchical groups according to the
+consistency
+of historical contexts. Then, for each step, HGPO computes distinct advantages within each group and aggregates them with an adaptive weighting scheme. In this way, HGPO can achieve a favorable bias-variance trade-off in stepwise advantage estimation, without extra models or rollouts. Evaluations on two challenging agentic tasks, ALFWorld and WebShop with Qwen2.5-1.5B-Instruct and Qwen2.5-7B-Instruct, show that HGPO significantly outperforms existing agentic RL methods under the same computational constraints. Code is available at
+https://github.com/langfengQ/verl-agent/tree/master/recipe/hgpo
+.
+1
+Introduction
+Versatile agents powered by Large Language Models (LLMs) can perceive, reason, and act in complex, open-ended environments
+(
+Achiam et al., 2023
+;
+Team et al., 2023
+;
+Yang et al., 2024
+;
+Liu et al., 2024
+)
+. Representative applications include embodied assistants navigating simulated homes
+(
+Shridhar et al., 2021
+;
+Li et al., 2024
+)
+, web navigators completing browsing tasks
+(
+Furuta et al., 2024
+;
+Zheng et al., 2024
+;
+Gou et al., 2025
+)
+, and autonomous explorers in interactive computer games
+(
+Wang et al., 2024a
+;
+Wang et al., 2024b
+)
+. Beyond language and vision understanding, such agents are expected to perform long-horizon planning and robust decision-making.
+Deep reinforcement learning (RL)
+(
+Sutton and Barto, 2018
+)
+has emerged as a key paradigm for enhancing agent performance in the post-training stage
+(
+OpenAI, 2024
+;
+Guo et al., 2025
+)
+. In particular, group-based RL methods such as RLOO
+(
+Kool et al., 2019
+;
+Ahmadian et al., 2024
+)
+, GRPO
+(
+Shao et al., 2024
+)
+, DAPO
+(
+Yu et al., 2025c
+)
+, Clip-Cov
+(
+Cui et al., 2025
+)
+, and GSPO
+(
+Zheng et al., 2025
+)
+have demonstrated strong performance in large-scale RL training while requiring fewer computational resources. These methods have proven effective in single-turn tasks such as mathematical reasoning
+(
+Liu et al., 2025
+;
+Yu et al., 2025c
+)
+and code generation
+(
+Wei et al., 2025b
+)
+. To extend this paradigm to multi-turn settings, approaches such as RAGEN
+(
+Wang et al., 2025d
+)
+and Search-R1
+(
+Jin et al., 2025a
+)
+adopt a
+trajectory-wise
+policy optimization framework, which concatenates environment states and model outputs across turns to enable multi-turn rollouts. However, this framework suffers from a major limitation: the effective context length grows rapidly with the number of interaction turns, leading to severe context explosion.
+To address this issue, recent research has shifted toward the
+stepwise
+policy optimization framework
+(
+Feng et al., 2025b
+;
+Luo et al., 2025c
+;
+Chen et al., 2025b
+;
+Team, 2025
+;
+Yu et al., 2025b
+;
+Wang et al., 2025c
+)
+, which treats each step within a rollout trajectory independently while leveraging a memory module to retain historical context. This design allows for flexible context management and highly scalable RL training. A comparison of the two frameworks is illustrated in Figure
+1
+. (a). Building on the stepwise framework, group-based RL methods such as GRPO
+(
+Shao et al., 2024
+)
+can be adapted into stepwise group-based variants for long-horizon agentic tasks. Furthermore, to enable finer-grained credit assignment, GiGPO
+(
+Feng et al., 2025b
+)
+extends GRPO by estimating additional step-level advantages within groups where all steps share the same current state.
+Figure 1:
+Figure (a) compares trajectory-wise and stepwise policy optimization frameworks. Given two example group trajectories, Figure (b) illustrates trajectory-level and step-level grouping with their corresponding advantage estimations. Best viewed in color.
+Figure 2:
+Statistics of GRPO and GiGPO. Figures (a) and (b) present the advantage differences relative to Oracle advantages for GRPO and GiGPO, respectively. Figures (c) and (d) report the average group size and the proportion of Oracle steps, respectively.
+However, we identify a key issue in estimating stepwise group relative advantages:
+historical context inconsistency
+. This issue occurs when rollout steps share the same current state but differ in their historical contexts. As illustrated in Figure
+1
+(b), given two group trajectories
+τ
+1
+\tau_{1}
+and
+τ
+2
+\tau_{2}
+, the step-level group at state
+s
+2
+s_{2}
+(purple) contains steps with
+inconsistent
+historical contexts. Intuitively, the relative advantage of the selected actions should be computed under the same current state and the same historical context. When historical contexts vary, the estimated relative advantage can become
+biased
+, which in turn may degrade policy optimization.
+To further explore this issue, we conduct a pilot empirical analysis. We introduce
+Oracle
+groups, in which all steps share not only the same current state but also identical historical contexts. During GRPO and GiGPO training, we track the group sizes, step counts, and estimated advantages of these Oracle groups, and compare them with trajectory-level and step-level advantage estimates. As shown in Figure
+2
+(a) and (b), both trajectory-level and step-level advantages exhibit notable estimation bias, with the bias at the trajectory level being substantially larger. These results indicate that historical context inconsistency can severely distort advantage estimation. A straightforward solution is to use only Oracle steps for policy optimization. However, as shown in Figures
+2
+(c) and (d), Oracle steps are generally scarce within trajectories (i.e., their ratio is low), making this approach inefficient. Moreover, the average group size of Oracle steps is small, which increases the variance of estimated advantages and undermines the stability of RL training.
+To address the above challenges, in this paper, we propose Hierarchy-of-Groups Policy Optimization (HGPO), a novel RL training algorithm that introduces a better advantage estimator capable of low-bias and balanced-variance. Specifically, HGPO is built on two key components: context-aware hierarchical grouping and adaptive weighting advantage estimation. First, within each rollout, HGPO groups steps that share the same current state and further assigns them to multiple hierarchical groups according to their historical contexts. This hierarchical structure captures advantages at different context depths, improving data utilization and reducing variance. Second, HGPO aggregates the group advantages using an adaptive weighting scheme: groups with more consistent historical contexts are assigned larger weights, thereby lowering estimation bias. In this way, HGPO produces more reliable stepwise advantage estimates for policy optimization. We evaluate HGPO on two challenging agentic benchmarks, ALFWorld and WebShop, using Qwen2.5-1.5B-Instruct and Qwen2.5-7B-Instruct. Results show that HGPO consistently outperforms existing baselines while maintaining the same GPU memory usage, using identical LLM rollouts, and incurring minimal additional time cost. Our main contributions are summarized as follows:
+•
+Revealing historical context inconsistency.
+We reveal the issue of context inconsistency in stepwise group-based RL and empirically demonstrate that it introduces significant bias in advantage estimation, thereby degrading policy optimization.
+•
+Proposing a novel policy optimization algorithm.
+We introduce Hierarchy-of-Groups Policy Optimization, which constructs hierarchical groups for each step based on historical context and adaptively aggregates their advantages.
+•
+Achieving strong empirical performance.
+HGPO achieves state-of-the-art results on two challenging agentic benchmarks under the same computational constraints.
+2
+Related work
+LLM-based decision-making agents.
+Large language models (LLMs) have been widely adopted as autonomous agents across diverse domains, including device control
+(
+Zhang and Zhang, 2024
+;
+Hong et al., 2024
+;
+Gur et al., 2024
+;
+Hu et al., 2024
+)
+, code generation
+(
+Zhang et al., 2024b
+)
+, game interaction
+(
+Wang et al., 2024a
+;
+Tan et al., 2025
+)
+, and robotics
+(
+Zitkovich et al., 2023
+)
+. Early approaches often relied on fixed pre-trained models guided by structured prompting, such as ReAct
+(
+Yao et al., 2023
+)
+and Reflexion
+(
+Shinn et al., 2024
+)
+, augmented with memory and retrieval mechanisms
+(
+Wang et al., 2024b
+;
+Tan et al., 2024
+)
+or tool integration
+(
+Schick et al., 2023
+;
+Xie et al., 2024
+;
+Zhang et al., 2024a
+)
+. While such methods are simple and require no additional training, they remain limited in applicability to domain-specific tasks, largely due to the lack of specialized knowledge in the pre-training of the base models.
+Reinforcement learning for LLM-based agents.
+Reinforcement learning (RL)
+(
+Sutton and Barto, 2018
+)
+has been central to adapting large language model (LLM) agents to dynamic and open-ended environments. Early work applied classic algorithms such as DQN
+(
+Mnih et al., 2015
+)
+to text games
+(
+Narasimhan et al., 2015
+)
+, followed by value-based methods like PPO
+(
+Schulman et al., 2017
+)
+and AWR
+(
+Peng et al., 2019
+)
+in interactive domains including mobile control
+(
+Rawles et al., 2024
+)
+, embodied tasks in ALFWorld
+(
+Shridhar et al., 2021
+)
+, and card games
+(
+Brockman, 2016
+)
+. More recent research has extended RL to web and application environments
+(
+Qian et al., 2025
+;
+Sun et al., 2025
+)
+, with methods such as ArCHer
+(
+Zhou et al., 2024b
+)
+, AgentQ
+(
+Putta et al., 2024
+)
+, CoSo
+(
+Feng et al., 2025a
+)
+, and LOOP
+(
+Chen et al., 2025a
+)
+. In parallel, RL has also become integral to LLM training itself, with RLHF
+(
+Ziegler et al., 2019
+;
+Stiennon et al., 2020
+;
+Ouyang et al., 2022
+;
+Rafailov et al., 2024
+)
+aligning models with human preferences, and group-based RL algorithms emerging as scalable and efficient alternatives to PPO. Approaches such as GRPO
+(
+Shao et al., 2024
+)
+, Dr. GRPO
+(
+Liu et al., 2025
+)
+, Clip-Cov
+(
+Cui et al., 2025
+)
+, GSPO
+(
+Zheng et al., 2025
+)
+, and DAPO
+(
+Yu et al., 2025c
+)
+avoid value networks by estimating advantages over groups of samples. However, most of these methods are designed for single-turn interactions and thus struggle with context consistency in long-horizon agentic tasks.
+Long-horizon agentic reinforcement learning.
+Long-horizon agentic RL
+(
+Laban et al., 2025
+;
+Zhang et al., 2025
+;
+Zhou et al., 2025a
+;
+Luo et al., 2025d
+;
+Wang et al., 2025a
+)
+extends LLMs from single-turn generation to multi-turn decision-making, where RL equips them with planning
+(
+Hao et al., 2023
+;
+Zhou et al., 2024a
+;
+Song et al., 2024
+)
+, reasoning
+(
+Chu et al., 2025
+)
+, and memory
+(
+Jin et al., 2024
+;
+Chhikara et al., 2025
+;
+Zhou et al., 2025b
+)
+capabilities for sustained interaction in dynamic environments. Applications span code generation
+(
+Jiang et al., 2024
+;
+Gehring et al., 2025
+;
+Jain et al., 2025
+;
+Chen et al., 2025c
+;
+Jin et al., 2025b
+)
+, software engineering
+(
+Wei et al., 2025a
+;
+Luo et al., 2025a
+;
+Shen et al., 2025
+;
+Wang et al., 2024c
+;
+Lin et al., 2025
+)
+, and GUI interaction
+(
+Wei et al., 2025c
+;
+Lu et al., 2025
+;
+Luo et al., 2025b
+;
+Qin et al., 2025
+)
+. Recent advances include long-horizon policy optimization frameworks
+(
+Wang et al., 2025d
+;
+Jin et al., 2025a
+)
+that optimize over multi-turn rollouts, and stepwise policy optimization methods
+(
+Feng et al., 2025b
+;
+Luo et al., 2025c
+;
+Chen et al., 2025b
+;
+Team, 2025
+)
+that treat each step independently while retaining history through memory modules. Yet, stepwise methods often suffer from context inconsistency across long horizons, limiting their effectiveness in complex agentic tasks.
+3
+Preliminaries
+Problem setup of long-horizon agentic tasks.
+Unlike single-turn tasks, long-horizon agentic tasks require an LLM agent to interact with the environment across multiple turns to accomplish a goal. Formally, given a task example
+𝒙
+∈
+p
+⁡
+(
+X
+)
+\bm{x}\in p(X)
+, which typically includes a fixed task-related description, an LLM-based agent
+π
+θ
+\pi_{\theta}
+parameterized by
+θ
+\theta
+observes an environment state
+𝒔
+t
+∈
+𝒮
+\bm{s}_{t}\in\mathcal{S}
+at each turn
+t
+t
+and generates a textual action
+𝒂
+t
+∈
+𝒱
+n
+\bm{a}_{t}\in\mathcal{V}^{n}
+, where
+𝒱
+\mathcal{V}
+denotes the token vocabulary and
+n
+n
+is the maximum generation length. Here
+t
+=
+(
+1
+,
+2
+,
+…
+,
+T
+)
+t=(1,2,\ldots,T)
+, with
+T
+T
+being the maximum number of interaction turns. In this paper, we focus on the sparse delayed reward setting, where the environment provides a scalar reward
+r
+t
+∈
+ℛ
+r_{t}\in\mathcal{R}
+only at the final step of a trajectory
+τ
+=
+{
+(
+𝒔
+1
+,
+𝒂
+1
+)
+,
+…
+,
+(
+𝒔
+T
+,
+𝒂
+T
+)
+}
+\tau=\{(\bm{s}_{1},\bm{a}_{1}),\ldots,(\bm{s}_{T},\bm{a}_{T})\}
+.
+Trajectory-wise vs. stepwise policy optimization.
+Conventional trajectory-wise policy optimization frameworks
+(
+Wang et al., 2025d
+;
+Jin et al., 2025a
+;
+Wang et al., 2025b
+;
+Yu et al., 2025a
+)
+typically concatenate the full interaction history of a rollout trajectory
+τ
+\tau
+for policy optimization, i.e.,
+π
+θ
+(
+𝒂
+t
+|
+𝒔
+0
+:
+t
+,
+𝒙
+)
+\pi_{\theta}(\bm{a}_{t}|\bm{s}_{0:t},\bm{x})
+. However, as the number of turns
+T
+T
+grows, the context length increases rapidly, which limits the scalability and feasibility of long-horizon RL training. In contrast, stepwise policy optimization frameworks
+(
+Feng et al., 2025b
+;
+Luo et al., 2025c
+;
+Chen et al., 2025b
+;
+Team, 2025
+)
+decouple the trajectory into individual steps while leveraging a memory module that maintains
+K
+≪
+T
+K\ll T
+historical contexts. This memory module is updated with the latest
+K
+K
+interactions, keeping the prompt length relatively stable and enabling more scalable RL training.
+Group-based reinforcement learning.
+Unlike PPO
+(
+Schulman et al., 2017
+)
+, which estimates advantages using an additional value function, group-based reinforcement learning (RL) algorithms such as GRPO
+(
+Shao et al., 2024
+)
+compute advantages directly from the statistics of a sampled group of trajectories
+G
+τ
+G_{\tau}
+. Specifically, GRPO was originally designed for single-turn tasks under a trajectory-wise policy optimization framework. To extend it to long-horizon tasks, we adapt it to the stepwise setting and calculate the trajectory-level advantage as:
+A
+T
+(
+τ
+i
+)
+=
+(
+R
+(
+τ
+i
+)
+−
+1
+/
+|
+G
+τ
+|
+∑
+j
+∈
+G
+τ
+R
+(
+τ
+j
+)
+)
+/
+σ
+G
+τ
+,
+\displaystyle A^{T}(\tau_{i})=\left(R({\tau_{i}})-1/|G_{\tau}|\sum\nolimits_{j\in G_{\tau}}R({\tau_{j}})\right)/\sigma_{G_{\tau}},
+(1)
+where
+σ
+G
+τ
+\sigma_{G_{\tau}}
+denotes the standard deviation of rewards within the group
+G
+τ
+G_{\tau}
+. This trajectory-level computation assigns the same advantage value to every step in trajectory
+τ
+i
+\tau_{i}
+, thereby overlooking the finer credit assignment required within a trajectory. To address this limitation, one can instead adopt a step-level group relative advantage estimator
+(
+Feng et al., 2025b
+)
+. Here, steps with identical current states
+𝒔
+i
+~
+\tilde{\bm{s}_{i}}
+across all group trajectories are clustered into step-level groups
+G
+𝒔
+i
+~
+G_{\tilde{\bm{s}_{i}}}
+, and their advantages are computed as:
+A
+S
+(
+𝒔
+i
+~
+)
+=
+(
+R
+(
+𝒔
+i
+~
+)
+−
+1
+/
+|
+G
+𝒔
+i
+~
+|
+∑
+j
+∈
+G
+𝒔
+i
+~
+R
+(
+𝒔
+j
+~
+)
+)
+/
+σ
+G
+𝒔
+i
+~
+.
+\displaystyle A^{S}(\tilde{\bm{s}_{i}})=\left(R(\tilde{\bm{s}_{i}})-1/|G_{\tilde{\bm{s}_{i}}}|\sum\nolimits_{j\in G_{{\tilde{\bm{s}_{i}}}}}R(\tilde{\bm{s}_{j}})\right)/\sigma_{G_{{\tilde{\bm{s}_{i}}}}}.
+(2)
+Compared to Eq. (
+1
+), the step-level estimator in Eq. (
+2
+) provides more fine-grained and effective credit assignment across steps within the same trajectory.
+4
+Training Agents with HGPO for Long-horizon Agentic Tasks
+4.1
+The issue of historical context inconsistency
+Originally, group relative advantage estimation
+(
+Shao et al., 2024
+)
+compares the relative advantages of different group responses generated from the same prompt. However, in the stepwise policy optimization setting shown in Figure
+1
+, even for a fixed task in the environment, rollout steps within a step-level anchor group (i.e., steps that share the same current state) may still have
+distinct historical contexts
+in their memory modules. As a result, the effective prompts for these step-level groups can differ, which may bias the estimated advantages. Ideally, Oracle steps, i.e., those sharing the same prompt, including both the current state and the historical context, would yield the most accurate advantage estimates for policy optimization. A straightforward approach is therefore to perform policy optimization using only Oracle steps. In practice, however, Figure
+2
+shows that Oracle steps are rare in rollouts, and their group sizes are typically small, which can destabilize training. Motivated by these challenges, we propose leveraging a hierarchy-of-groups structure to obtain more accurate advantage estimates, reducing bias while keeping variance low.
+Figure 3:
+Overview of HGPO. The LLM-based agent interacts with a set of environments initialized from the same state
+𝒔
+0
+\bm{s}_{0}
+, producing four group trajectories (states with the same color are identical). HGPO comprises two key components: context-aware hierarchical grouping and adaptive weighted advantage computation. For illustration, consider the state
+𝒔
+2
+\bm{s}_{2}
+(purple). First, HGPO assigns
+𝒔
+2
+\bm{s}_{2}
+into three hierarchical groups according to its historical contexts. Then, it computes the final advantage estimate by adaptively aggregating the weighted advantages from these groups.
+4.2
+Hierarchy-of-Groups Policy Optimization
+In this subsection, we introduce HGPO as shown in Figure
+3
+, consisting of context-aware hierarchical grouping and adaptive weighting advantage estimation.
+Context-aware hierarchical grouping.
+We begin by introducing
+context-aware hierarchical grouping
+, which organizes steps into multi-level groups according to their historical contexts. The key intuition is that the advantage of each step should be evaluated relative to different historical contexts to obtain more accurate estimates. Specifically, we first group together steps that share the same current state, and then, within each group, we construct multiple hierarchical groups based on the consistency of their historical contexts. Steps with longer common histories are assigned to higher-level hierarchical groups. This hierarchy-of-groups structure enables more fine-grained comparisons and brings two main benefits: (i) it improves step utilization for advantage estimation, and (ii) it reduces the variance of estimated advantages.
+Formally, let the
+i
+i
+-th trajectory be
+τ
+i
+=
+{
+(
+𝒔
+1
+(
+i
+)
+,
+𝒂
+1
+(
+i
+)
+)
+,
+(
+𝒔
+2
+(
+i
+)
+,
+𝒂
+2
+(
+i
+)
+)
+,
+…
+,
+(
+𝒔
+T
+(
+i
+)
+,
+𝒂
+T
+(
+i
+)
+)
+}
+\tau_{i}=\{(\bm{s}^{(i)}_{1},\bm{a}^{(i)}_{1}),(\bm{s}^{(i)}_{2},\bm{a}^{(i)}_{2}),\dots,(\bm{s}^{(i)}_{T},\bm{a}^{(i)}_{T})\}
+, and let
+K
+K
+denote the maximum context length. We define a
+k
+k
+-step context operator for the
+t
+t
+-th step as:
+𝒞
+k
+(
+𝒔
+t
+(
+i
+)
+)
+=
+{
+(
+𝒔
+t
+−
+k
+(
+i
+)
+,
+𝒔
+t
+−
+k
++
+1
+(
+i
+)
+,
+⋯
+,
+𝒔
+t
+(
+i
+)
+)
+,
+t
+≥
+k
+,
+(
+𝒔
+0
+(
+i
+)
+,
+𝒔
+1
+(
+i
+)
+,
+⋯
+,
+𝒔
+t
+(
+i
+)
+)
+,
+t
+<
+k
+,
+\mathcal{C}_{k}\!(\bm{s}^{(i)}_{t})=\left\{\begin{aligned} &\bigl(\bm{s}^{(i)}_{t-k},\bm{s}^{(i)}_{t-k+1},\cdots,\bm{s}^{(i)}_{t}\bigr),t\geq k,\\
+&\bigl(\bm{s}^{(i)}_{0},\bm{s}^{(i)}_{1},\cdots,\bm{s}^{(i)}_{t}\bigr),t<k,\end{aligned}\right.
+(3)
+where
+k
+∈
+[
+0
+,
+K
+]
+k\in[0,K]
+. This operator returns the
+k
+k
+historical states preceding the current state. Based on this operator, we define the
+k
+k
+-th hierarchical group for the
+t
+t
+-th step as:
+G
+k
+H
+​
+(
+𝒔
+t
+(
+i
+)
+)
+=
+{
+(
+j
+,
+n
+)
+∈
+ℐ
+:
+𝒞
+k
+​
+(
+𝒔
+t
+(
+i
+)
+)
+=
+𝒞
+k
+​
+(
+𝒔
+n
+(
+j
+)
+)
+}
+,
+G^{H}_{k}(\bm{s}_{t}^{(i)})\;=\;\bigl\{(j,n)\in\mathcal{I}\,:\mathcal{C}_{k}\!(\bm{s}^{(i)}_{t})=\mathcal{C}_{k}\!(\bm{s}^{(j)}_{n})\bigr\},
+(4)
+where the index set
+ℐ
+=
+{
+(
+i
+,
+t
+)
+∣
+1
+≤
+i
+≤
+N
+,
+,
+1
+≤
+t
+≤
+T
+}
+\mathcal{I}=\{(i,t)\mid 1\leq i\leq N,,1\leq t\leq T\}
+. Considering all hierarchical groups, the resulting hierarchy-of-groups structure satisfies:
+G
+0
+H
+​
+(
+𝒔
+t
+(
+i
+)
+)
+⊇
+G
+1
+H
+​
+(
+𝒔
+t
+(
+i
+)
+)
+⊇
+⋯
+⊇
+G
+K
+H
+​
+(
+𝒔
+t
+(
+i
+)
+)
+,
+|
+G
+0
+H
+​
+(
+𝒔
+t
+(
+i
+)
+)
+|
+≥
+⋯
+≥
+|
+G
+K
+H
+​
+(
+𝒔
+t
+(
+i
+)
+)
+|
+.
+G^{H}_{0}(\bm{s}_{t}^{(i)})\supseteq G^{H}_{1}(\bm{s}_{t}^{(i)})\supseteq\cdots\supseteq G^{H}_{K}(\bm{s}_{t}^{(i)}),\qquad\bigl|G^{H}_{0}(\bm{s}_{t}^{(i)})\bigr|\geq\cdots\geq\bigl|G^{H}_{K}(\bm{s}_{t}^{(i)})\bigr|.
+(5)
+When
+K
+=
+0
+K=0
+, the hierarchy-of-groups degenerates to the step-level grouping
+G
+0
+H
+​
+(
+𝒔
+t
+(
+i
+)
+)
+G^{H}_{0}(\bm{s}_{t}^{(i)})
+used in
+(
+Feng et al., 2025b
+)
+. Importantly, the entire context-aware hierarchical grouping procedure operates fully offline: it requires only hashmap lookups over existing rollouts, without relying on additional models or extra data collection.
+Adaptive weighting advantage estimation.
+Intuitively, higher-level hierarchical groups yield more accurate advantage comparisons since they incorporate richer historical context. Building on this insight, we introduce an adaptive weighting scheme that integrates information across all hierarchical groups with appropriately assigned weights, thereby enabling stable and efficient estimation of group-relative advantages. Formally, the advantage estimation for the
+k
+k
+-th hierarchical group is defined as:
+A
+k
+H
+(
+𝒔
+t
+(
+i
+)
+)
+=
+(
+R
+(
+𝒔
+t
+(
+i
+)
+)
+−
+1
+/
+|
+G
+k
+H
+|
+∑
+(
+j
+,
+n
+)
+∈
+G
+k
+H
+R
+(
+𝒔
+n
+(
+j
+)
+)
+)
+/
+σ
+G
+k
+H
+.
+\displaystyle A^{H}_{k}(\bm{s}_{t}^{(i)})=\left(R(\bm{s}_{t}^{(i)})-1/|G^{H}_{k}|\sum\nolimits_{(j,n)\in G^{H}_{k}}R(\bm{s}_{n}^{(j)})\right)/\sigma_{G^{H}_{k}}.
+(6)
+Finally, the advantage aggregated from
+K
+K
+hierarchical groups is denoted by:
+A
+H
+​
+(
+𝒔
+t
+(
+i
+)
+)
+=
+∑
+k
+=
+0
+K
+𝒘
+k
+​
+A
+k
+H
+​
+(
+𝒔
+t
+(
+i
+)
+)
+,
+A^{H}(\bm{s}_{t}^{(i)})=\sum\nolimits_{k=0}^{K}\bm{w}_{k}A^{H}_{k}(\bm{s}_{t}^{(i)}),
+(7)
+where the adaptive weight
+𝒘
+k
+=
+(
+k
++
+1
+)
+α
+∑
+k
+(
+k
++
+1
+)
+α
+\bm{w}_{k}=\frac{(k+1)^{\alpha}}{\sum_{k}(k+1)^{\alpha}}
+(
+α
+≥
+0
+\alpha\geq 0
+). It is worth noting that Eq. (
+7
+) fuses advantage information along the hierarchy-of-groups in Eq. (
+5
+): higher-level groups are preferred due to stronger context consistency. Besides, for each step
+(
+𝒔
+t
+(
+i
+)
+,
+𝒂
+t
+(
+i
+)
+)
+(\bm{s}^{(i)}_{t},\bm{a}^{(i)}_{t})
+we compute its stepwise reward
+r
+t
+(
+i
+)
+=
+∑
+j
+=
+t
+T
+γ
+j
+−
+t
+​
+r
+j
+(
+i
+)
+r_{t}^{(i)}=\sum\nolimits_{j=t}^{T}\gamma^{\,j-t}\,r_{j}^{(i)}
+(
+Feng et al., 2025b
+)
+, where
+γ
+∈
+(
+0
+,
+1
+]
+\gamma\in(0,1]
+is the discount factor. In this way, we can obtain a stepwise reward for each step in the trajectory.
+The objective for policy optimization.
+The policy optimization objective of HGPO is:
+𝒥
+HGPO
+​
+(
+θ
+)
+\displaystyle\mathcal{J}_{\mathrm{HGPO}}(\theta)
+=
+𝔼
+⁡
+[
+1
+N
+​
+T
+​
+∑
+i
+=
+1
+N
+∑
+t
+=
+1
+T
+min
+⁡
+(
+ρ
+θ
+​
+(
+𝒂
+t
+(
+i
+)
+)
+​
+A
+H
+​
+(
+𝒔
+t
+(
+i
+)
+)
+,
+clip
+​
+(
+ρ
+θ
+​
+(
+𝒂
+t
+(
+i
+)
+)
+,
+1
+±
+ϵ
+)
+​
+A
+H
+​
+(
+𝒔
+t
+(
+i
+)
+)
+)
+]
+\displaystyle=\mathbb{E}\biggl[\frac{1}{NT}\sum_{i=1}^{N}\sum_{t=1}^{T}\min\Bigl(\rho_{\theta}(\bm{a}_{t}^{(i)})A^{H}(\bm{s}_{t}^{(i)}),\,\text{clip}\bigl(\rho_{\theta}(\bm{a}_{t}^{(i)}),1\pm\epsilon\bigr)A^{H}(\bm{s}_{t}^{(i)})\Bigr)\biggr]
+−
+β
+𝔻
+KL
+(
+π
+θ
+(
+⋅
+∣
+x
+)
+∥
+π
+ref
+(
+⋅
+∣
+x
+)
+)
+,
+\displaystyle\quad-\beta\mathbb{D}_{\mathrm{KL}}\!\bigl(\pi_{\theta}(\cdot\mid x)\,\|\,\pi_{\mathrm{ref}}(\cdot\mid x)\bigr),\quad
+(8)
+where
+ρ
+θ
+​
+(
+𝒂
+t
+(
+i
+)
+)
+=
+π
+θ
+​
+(
+𝒂
+t
+(
+i
+)
+∣
+𝒔
+t
+(
+i
+)
+,
+x
+)
+π
+θ
+old
+​
+(
+𝒂
+t
+(
+i
+)
+∣
+𝒔
+t
+(
+i
+)
+,
+x
+)
+\rho_{\theta}(\bm{a}_{t}^{(i)})=\frac{\pi_{\theta}(\bm{a}_{t}^{(i)}\mid\bm{s}_{t}^{(i)},x)}{\pi_{\theta_{\text{old}}}(\bm{a}_{t}^{(i)}\mid\bm{s}_{t}^{(i)},x)}
+is the importance sampling ratio,
+β
+\beta
+controls the strength of the KL penalty. The pseudo-code is shown in Algorithm
+1
+of Appendix
+A
+.
+Proposition 4.1
+(Bias-variance trade-off in HGPO)
+Let
+b
+k
+b_{k}
+and
+v
+k
+v_{k}
+denote the bias and variance of the estimated advantage
+A
+k
+H
+A_{k}^{H}
+within the
+k
+k
+-th group
+G
+k
+H
+G_{k}^{H}
+. Based on the following conditions: (1)
+Bias satisfies
+, i.e.,
+B
+T
+≥
+b
+0
+≥
+(
+b
+1
+,
+⋯
+,
+b
+K
+−
+1
+)
+≥
+b
+K
+≥
+0
+B_{T}\geq b_{0}\geq(b_{1},\cdots,b_{K-1})\geq b_{K}\geq 0
+; (2)
+Variance satisfies
+, i.e.,
+v
+0
+≤
+(
+v
+1
+,
+⋯
+,
+v
+K
+−
+1
+)
+≤
+v
+K
+≤
+V
+T
+v_{0}\leq(v_{1},\cdots,v_{K-1})\leq v_{K}\leq V_{T}
+, the bias and variance of the estimator
+A
+H
+A^{H}
+are
+Bias
+​
+[
+A
+H
+]
+\displaystyle\text{Bias}[A^{H}]
+=
+Bias
+​
+[
+∑
+k
+=
+0
+K
+w
+k
+​
+A
+k
+H
+]
+=
+∑
+k
+=
+0
+K
+w
+k
+​
+b
+k
+,
+\displaystyle=\text{Bias}\left[\sum\nolimits_{k=0}^{K}w_{k}A_{k}^{H}\right]=\sum\nolimits_{k=0}^{K}w_{k}b_{k},
+Var
+​
+[
+A
+H
+]
+\displaystyle\text{Var}[A^{H}]
+=
+Var
+​
+[
+∑
+k
+=
+0
+K
+w
+k
+​
+A
+k
+H
+]
+=
+∑
+k
+=
+0
+K
+w
+k
+2
+​
+Var
+​
+[
+A
+k
+H
+]
+=
+∑
+k
+=
+0
+K
+w
+k
+2
+​
+v
+k
+.
+\displaystyle=\text{Var}\left[\sum\nolimits_{k=0}^{K}w_{k}A_{k}^{H}\right]=\sum\nolimits_{k=0}^{K}w_{k}^{2}\text{Var}[A_{k}^{H}]=\sum\nolimits_{k=0}^{K}w_{k}^{2}v_{k}.
+Furthermore, the bias and variance of the advantage estimator in HGPO satisfy that
+b
+K
+≤
+Bias
+​
+[
+A
+H
+]
+≤
+b
+0
+≤
+B
+T
+,
+\displaystyle b_{K}\leq\text{Bias}[A^{H}]\leq b_{0}\leq B_{T},
+v
+0
+K
++
+1
+≤
+Var
+​
+[
+A
+H
+]
+≤
+v
+K
+≤
+V
+T
+,
+\displaystyle\frac{v_{0}}{K+1}\leq\text{Var}[A^{H}]\leq v_{K}\leq V_{T},
+where
+B
+T
+B_{T}
+,
+b
+0
+b_{0}
+,
+b
+K
+b_{K}
+, and
+V
+T
+,
+v
+0
+V_{T},v_{0}
+,
+v
+K
+v_{K}
+denote the bias and variance of the trajectory-level, step-level, and Oracle advantage, respectively.
+Overall, the bias and variance of the HGPO advantage estimator interpolates between the step-level (
+k
+=
+0
+k=0
+) and Oracle (
+k
+=
+K
+k=K
+) estimators, thereby achieving a better trade-off.
+Proof and more details are provided in Appendix
+B
+.
+Table 1:
+Performance comparison on ALFWorld and WebShop. For ALFWorld, we report the overall success rate (
+↑
+\uparrow
+) for both
+in-distribution
+(In-Success) and
+out-of-distribution
+tasks (Out-Success). For WebShop, we report the average task score (
+↑
+\uparrow
+) and the average task success rate (
+↑
+\uparrow
+). Most results are averaged over 3 random seeds during testing. The best results are highlighted in bold.
+Model
+Type
+Method
+ALFWorld
+WebShop
+In-Success
+Out-Success
+Task Scores
+Task Success Rates
+Closed
+Prompting
+GPT-4o
+48.0
+46.0
+31.8
+23.7
+Prompting
+Gemini-2.5-Pro
+60.3
+50.5
+42.5
+35.9
+Qwen2.5-1.5B-Instruct
+Prompting
+Qwen2.5
+4.1
+-
+23.1
+5.2
+Prompting
+ReAct
+12.8
+-
+40.1
+11.3
+Prompting
+Reflexion
+21.8
+-
+55.8
+21.9
+RL Training
+PPO (with critic)
+54.4
+±3.1
+-
+73.8
+±3.0
+51.5
+±2.9
+RL Training
+RLOO
+69.7
+±2.5
+68.7
+±10.7
+73.9
+±5.6
+52.1
+±6.7
+RL Training
+GRPO
+72.8
+±3.6
+70.1
+±2.5
+75.8
+±3.5
+56.8
+±3.8
+RL Training
+GiGPO (
+K
+K
+=2)
+90.16
+±0.22
+84.76
+±2.83
+84.95
+±2.57
+66.53
+±1.92
+RL Training
+HGPO
+(
+K
+K
+=2)
+92.77
+±
+1.08
+90.16
+±
+0.78
+85.56
+±
+2.86
+71.54
+±
+4.00
+RL Training
+GiGPO (
+K
+K
+=4)
+93.29
+±1.07
+91.53
+±1.99
+86.80
+±1.60
+73.24
+±2.25
+RL Training
+HGPO
+(
+K
+K
+=4)
+94.85
+±
+0.92
+92.12
+±
+1.63
+90.64
+±
+1.05
+78.12
+±
+2.06
+Qwen2.5-7B-Instruct
+Prompting
+Qwen2.5
+14.8
+-
+26.4
+7.8
+Prompting
+ReAct
+31.2
+-
+46.2
+19.5
+Prompting
+Reflexion
+42.7
+-
+58.1
+28.8
+RL Training
+PPO (with critic)
+77.08
+±1.12
+76.23
+±1.46
+81.4
+±3.1
+68.7
+±5.1
+RL Training
+RLOO
+77.86
+±0.03
+73.95
+±0.05
+80.3
+±3.2
+65.7
+±4.0
+RL Training
+GRPO
+78.64
+±0.73
+76.82
+±1.47
+79.3
+±2.8
+66.1
+±3.7
+RL Training
+GiGPO (
+K
+K
+=2)
+93.29
+±0.40
+92.18
+±0.39
+88.93
+±1.49
+77.60
+±1.68
+RL Training
+HGPO
+(
+K
+K
+=2)
+95.44
+±
+0.62
+92.05
+±0.22
+88.96
+±
+1.04
+78.51
+±
+1.40
+RL Training
+GiGPO (
+K
+K
+=4)
+95.63
+±0.49
+95.18
+±0.98
+89.51
+±0.59
+77.79
+±0.92
+RL Training
+HGPO
+(
+K
+K
+=4)
+95.96
+±
+0.49
+94.87
+±1.24
+88.49
+±0.41
+79.29
+±
+1.17
+5
+Experiments
+5.1
+Experiment Setup
+Agentic benchmarks.
+We train the LLM agents on two challenging benchmarks: ALFWorld
+(
+Shridhar et al., 2021
+)
+and WebShop
+(
+Yao et al., 2022
+)
+, which are designed to assess the ability of LLM agents to perform multi-step decision-making. The details are shown in Appendix
+C.2
+.
+Comparing methods.
+We compare HGPO with many competitive baselines: (1) Closed-source LLMs: GPT-4o
+(
+Achiam et al., 2023
+)
+and Gemini-2.5-Pro
+(
+Team et al., 2023
+)
+. (2) Prompting agents: ReAct
+(
+Yao et al., 2023
+)
+and Reflexion
+(
+Shinn et al., 2024
+)
+. (3) RL training methods: PPO
+(
+Schulman et al., 2017
+)
+, RLOO
+(
+Kool et al., 2019
+;
+Ahmadian et al., 2024
+)
+, GRPO
+(
+Shao et al., 2024
+)
+, and GiGPO
+(
+Feng et al., 2025b
+)
+. The details are shown in Appendix
+C.1
+.
+Implementation details.
+We adopt Qwen2.5-1.5B-Instruct and Qwen2.5-7B-Instruct
+(
+Yang et al., 2024
+)
+as our base models. For fairness, all RL training methods share the same hyperparameter configurations. Specifically, the rollout group size
+N
+N
+in group-based RL methods is set to 8. Each LLM agent is prompted to first generate a chain-of-thought
+(
+Wei et al., 2022
+)
+enclosed within <think> </think> tags, followed by the action enclosed within <action> </action> tags. For HGPO, the weighting coefficient
+α
+\alpha
+in Eq. (
+7
+) is set to
+1
+1
+, and we omit groups with zero advantage in Eq.
+7
+for adaptive weighting. For evaluation, we set three different random seeds and report the mean and standard deviation of the performance. The max step is set to 50 and 30 for ALFWorld and WebShop, respectively. Full training setups and hyperparameter details are provided in Appendix
+C.3
+.
+5.2
+Experimental results
+HGPO achieves the best overall results.
+Table
+1
+shows a pronounced gap between prompting and RL training methods. On both ALFWorld and WebShop, all RL-trained methods substantially outperform the prompting baselines (Qwen2.5, ReAct, Reflexion), confirming that RL training is crucial for these long-horizon tasks. With Qwen2.5-1.5B-Instruct, HGPO consistently improves over GiGPO by an average of 4.01% on ALFWorld (
+K
+=
+2
+K=2
+), 1.08% on ALFWorld (
+K
+=
+4
+K=4
+), 2.81% on WebShop (
+K
+=
+2
+K=2
+), and 4.36% on WebShop (
+K
+=
+4
+K=4
+). With Qwen2.5-7B-Instruct, HGPO remains superior, achieving up to 95.96% in-distribution success rate on ALFWorld and 79.29% task success rate on WebShop. Moreover, all baseline methods experience significant performance degradation on out-of-distribution tasks in ALFWorld. Notably, HGPO maintains superior performance with less degradation compared to GiGPO. This observation suggests that context inconsistency can severely impair policy generalization, while HGPO’s hierarchical grouping mechanism provides robust and stable advantage estimation, enabling improved generalization to unseen tasks. Overall, HGPO achieves the strongest performance across settings.
+HGPO brings larger gains on small models.
+Table
+1
+shows that HGPO achieves larger improvement with Qwen2.5-1.5B-Instruct than with Qwen2.5-7B-Instruct, with an average gain of 3.41% vs. 0.74% for
+K
+=
+2
+K=2
+and 2.72% vs. 0.13% for
+K
+=
+4
+K=4
+. We explain that Qwen2.5-1.5B-Instruct tends to generate longer and more redundant steps during rollout due to its limited agentic capability, which can introduce larger bias in advantage estimation. In this case, using hierarchical groups becomes more important for refining the advantage estimate and stabilizing policy optimization. By contrast, Qwen2.5-7B-Instruct often solves tasks with fewer but more accurate steps, leading to a smaller advantage-estimation bias. Consequently, the additional benefit from hierarchical grouping is more modest (though still cost-effective). Overall, these results suggest that HGPO is particularly well-suited to challenging long-horizon agentic tasks where rollouts are lengthy, and advantage estimates are substantially biased.
+HGPO consistently achieves superior performance with different
+K
+K
+.
+We also observe that increasing
+K
+K
+improves the performance of both GiGPO and HGPO. As
+K
+K
+grows, the memory module can retain richer historical context, allowing the policy to make better use of past information when selecting actions. HGPO benefits from this larger memory as well, demonstrating that it scales effectively with the memory size.
+Figure 4:
+Distributions of hierarchical group sizes on ALFWorld and WebShop using Qwen2.5-1.5B-Instruct. “0/1/2/3/4-Context” indicates different hierarchical groups. The first two rows correspond to
+K
+=
+2
+K=2
+, and the last row corresponds to
+K
+=
+4
+K=4
+. The y-axis denotes the proportion.
+Dataset
+K
+K
+0-C
+1-C
+2-C
+3-C
+4-C
+ALFWorld
+2
+0.97
+0.75
+0.52
+-
+-
+4
+0.98
+0.77
+0.54
+0.34
+0.19
+WebShop
+2
+0.92
+0.64
+0.44
+-
+-
+4
+0.90
+0.59
+0.40
+0.21
+0.09
+Table 2:
+Step utilization ratio on ALFWorld and WebShop using Qwen2.5-1.5B-Instruct. “Context" is abbreviated as “C", indicating different hierarchical groups.
+Metric
+Epoch
+40
+80
+120
+160
+Time
+Common
+297.8
+288.6
+284.7
+282.5
+GRPO
+0.048
+0.027
+0.018
+0.013
+GiGPO
+0.126
+0.080
+0.055
+0.034
+HGPO
+0.693
+0.601
+0.456
+0.246
+Mem.
+GiGPO
+0.1035
+0.0967
+0.0605
+0.0391
+HGPO
+0.1393
+0.1229
+0.1078
+0.0406
+Table 3:
+Time cost (s) and Peak memory (MB) for hashing lookups at varying training epochs.
+5.3
+Further Analysis
+Distribution of hierarchical group sizes.
+Figure
+4
+presents the distribution of hierarchical group sizes on ALFWorld and WebShop with Qwen2.5-1.5B-Instruct at the 160th epoch. “0/1/2/3/4-Context” denotes steps that share 0/1/2/3/4 identical historical contexts. We find that 0-context groups have a larger fraction of large groups than 1-context and 2-context groups, since they ignore history. As
+K
+K
+increases, the mass shifts away from large groups toward smaller ones, and small groups become more common. This pattern suggests that Oracle steps sharing the same historical context typically form small groups, which can increase the variance of advantage estimation. Additional results are provided in Appendix
+D.3
+.
+Step utilization ratio.
+Table
+5.2
+reports the average proportion of steps allocated to different context groups per rollout in ALFWorld and WebShop using Qwen2.5-1.5B-Instruct. The results show that nearly all steps fall into 0-context groups, except for a small fraction corresponding to unique states (appearing only once in a group). As the number of historical contexts increases, the utilization ratio steadily decreases, since fewer steps can be aggregated into higher-level groups. This finding highlights the challenge posed by the scarcity of Oracle steps.
+The computational budget analysis of HGPO.
+We show a detailed computational budget analysis of HGPO. Specifically, HGPO shares the same core architecture as GRPO and GiGPO. The common computational components include multi-turn rollouts, computation of old and reference probabilities, and clipped policy updates. All methods are critic-free and operate with a single actor LLM, resulting in identical GPU memory usage and LLM rollout costs. The primary addition of HGPO lies in advantage estimation. To evaluate its computational cost, we measured the per-iteration training time using Qwen2.5-1.5B-Instruct on ALFWorld. From Table
+5.2
+, we can summarize three key observations. (i) As the number of training epochs increases, both the time cost and peak memory usage consistently decrease, since the rollout steps become fewer when the agent learns to accomplish the tasks with fewer steps. (ii) HGPO introduces an average additional time cost of approximately 0.425 s and 0.472 s compared with GRPO and GiGPO, respectively, which corresponds to less than 0.001% of the total execution time. These results demonstrate that HGPO maintains computational efficiency comparable to that of GRPO and GiGPO. (iii) HGPO only causes a slight increase in the peak memory usage due to the additional hashing lookups. Overall, HGPO preserves the high computational and memory efficiency of GRPO and GiGPO.
+Table 4:
+Parameter analysis on the effects of different values of
+α
+\alpha
+on ALFWorld and WebShop using Qwen2.5-1.5B-Instruct.
+α
+\alpha
+K
+K
+ALFWorld
+WebShop
+In-Suc.
+Out-Suc.
+Task Sco.
+Task Suc.
+0
+2
+94.33
+±1.08
+90.03
+±2.58
+88.40
+±2.20
+73.95
+±4.21
+4
+92.12
+±0.40
+89.58
+±1.00
+87.96
+±2.48
+73.82
+±3.26
+1
+2
+92.77
+±1.08
+90.16
+±0.78
+85.56
+±2.86
+71.54
+±4.00
+4
+94.85
+±0.92
+92.12
+±1.63
+90.64
+±1.05
+78.12
+±2.06
+2
+2
+90.36
+±0.96
+86.91
+±2.03
+88.29
+±2.88
+72.00
+±3.03
+4
+93.55
+±0.51
+86.78
+±2.26
+88.28
+±2.24
+75.39
+±2.95
+5.4
+Parameter analysis
+Here, we study the effect of different values of
+α
+\alpha
+in Eq. (
+7
+). Notably,
+α
+\alpha
+controls how sharp the weight distribution is, i.e., a larger
+α
+\alpha
+puts more weight on high-level groups. The experimental results are shown in Table
+4
+. We can see that when
+K
+=
+2
+K=2
+, HGPO with
+α
+=
+0
+\alpha=0
+achieves the comparatively better performance on both ALFWorld and WebShop, while when
+K
+=
+4
+K=4
+, the performance of HGPO with
+α
+=
+0
+\alpha=0
+decreases. In contrast, the performance of HGPO with
+α
+=
+1
+\alpha=1
+and
+α
+=
+2
+\alpha=2
+both increases when
+K
+K
+increases from
+2
+2
+to
+4
+4
+. These observations indicate that as
+K
+K
+increases, up-weighting the advantage estimate from higher-level groups improves the performance. This is because, as
+K
+K
+increases, higher-level groups can provide more accurate advantage estimation. On the other hand, HGPO with
+α
+=
+2
+\alpha=2
+slightly drops the performance on both ALFWorld and WebShop, compared with that with
+α
+=
+1
+\alpha=1
+. This is because, although the bias of advantage estimation in higher-level groups is relatively low, the variance could be high due to the small sample size in the group. Hence, excessively emphasizing the advantage estimation in higher-level groups is not always optimal, and a bias-variance trade-off exists in hierarchical groups. Overall, we use
+α
+=
+1
+\alpha=1
+as the default. In the future, it is also interesting to develop a better adaptive weighting scheme based on the uncertainty of advantage estimation in hierarchical groups.
+Table 5:
+Ablation study on ALFWorld and WebShop using Qwen2.5-1.5B-Instruct.
+Ablation
+K
+K
+ALFWorld
+WebShop
+In-Suc.
+Out-Suc.
+Task Sco.
+Task Suc.
+HGPO
+2
+92.77
+±1.08
+90.16
+±0.78
+85.56
+±2.86
+71.54
+±4.00
+4
+94.85
+±0.92
+92.12
+±1.63
+90.64
+±1.05
+78.12
+±2.06
+w/o
+G
+H
+1
+:
+K
+G^{H}_{1:K}
+2
+90.88
+±1.30
+85.15
+±1.73
+87.89
+±0.86
+73.24
+±1.47
+4
+91.14
+±1.07
+88.80
+±3.21
+88.83
+±2.68
+74.73
+±3.62
+w/o Ada.
+w
+k
+w_{k}
+2
+94.33
+±1.08
+90.03
+±2.58
+88.40
+±2.20
+73.95
+±4.21
+4
+92.12
+±0.40
+89.58
+±1.00
+87.96
+±2.48
+73.82
+±3.26
+w Eq. (
+1
+)
+2
+88.21
+±1.95
+84.76
+±2.05
+89.36
+±1.27
+76.82
+±2.25
+4
+91.27
+±1.17
+90.55
+±0.29
+87.63
+±0.80
+73.50
+±1.85
+5.5
+Ablation study
+In this section, we conduct an ablation study to evaluate the effectiveness of each component in HGPO. As shown in Table
+5
+, “w/o
+G
+1
+:
+K
+H
+G_{1:K}^{H}
+” denotes the setting where hierarchical grouping is removed, and only the original step-level group
+G
+0
+H
+G_{0}^{H}
+is used to compute relative advantages for policy optimization. This configuration results in the remarkable performance degradation on ALFWorld when
+K
+=
+2
+/
+4
+K=2/4
+, i.e., about 2.8% of in-distribution success rates and 5.8% of out-of-distribution success rates. This observation directly validates that directly using the current state of steps for grouping could lead to biased advantage estimation and degrade the policy optimization, and our proposed hierarchy-of-groups structures effectively refine the advantage estimation. A similar result can also be observed on WebShop, except for
+K
+=
+2
+K=2
+, which results in a little performance improvement (when
+α
+=
+1
+\alpha=1
+). Second, “w/o Ada.
+w
+k
+w_{k}
+” refers to replacing adaptive weighting with uniform weights, i.e.,
+α
+=
+0
+\alpha=0
+in Eq. (
+7
+). We can see that the performance slightly increases on both ALFWorld and WebShop when
+K
+=
+2
+K=2
+and decreases when
+K
+=
+4
+K=4
+. This is because when
+K
+=
+2
+K=2
+, the relative advantage bias of lower-level hierarchical groups is lower than when
+K
+=
+4
+K=4
+, and thus the average weighting can also be beneficial for advantage estimation. Once
+K
+K
+increases, the advantage bias of lower-level hierarchical groups could be increased and degrade the policy optimization. Hence, the adaptive weighting mechanism is important for advantage estimation, and requires no complex hyperparameter tuning and remains scalable across different lengths of historical contexts. Third, “w Eq. (
+1
+)” indicates using the additional trajectory-level advantage in Eq. (
+1
+) for the final advantage estimation in Eq. (
+7
+). We can see that the performance of almost all decreases on ALFWorld and WebShop, except for
+K
+=
+2
+K=2
+on WebShop. This may be because the trajectory-level advantage is generally highly biased and low-varied, which could not provide effective information for policy optimization in most cases. Besides, we also conduct experiments that only use Oracle steps for policy optimization, but failed. Overall, we validate the effectiveness of each component in HGPO.
+6
+Conclusion
+In this paper, we propose HGPO, a novel group-based reinforcement learning algorithm designed to mitigate historical context inconsistency in long-horizon agentic tasks. Specifically, HGPO introduces context-aware hierarchical grouping and adaptive weighting advantage estimation, which enables a better advantage estimate for policy optimization. Empirical results on two complex environments, ALFWorld and WebShop, show that HGPO substantially outperforms both prompt-based agents and prior RL approaches. In the future, an interesting direction is to explore the structure of hierarchy-of-groups on advanced agents with summarized memory. HGPO directly divides the hierarchical structure based on the raw, divisible historical contexts according to the historical steps. Currently, many advanced agents tend to summarize the historical contexts into the memory module. In this case, the straightforward division of hierarchical groups is intractable, and thus it is necessary to explore other ways for hierarchical grouping, e.g., the embedding similarity of the memory. Besides, it is also interesting to explore a totally adaptive weighting scheme for advantage aggregation from hierarchical groups by considering the uncertainty of the advantage estimate in each hierarchical group.
+References
+Achiam
+et al.
+(2023)
+J. Achiam, S. Adler, S. Agarwal, L. Ahmad, I. Akkaya, F. L. Aleman, D. Almeida, J. Altenschmidt, S. Altman, S. Anadkat,
+et al.
+GPT-4 technical report
+.
+ArXiv preprint arXiv:2303.08774
+.
+Cited by:
+1st item
+,
+§1
+,
+§5.1
+.
+Ahmadian
+et al.
+(2024)
+A. Ahmadian, C. Cremer, M. Gallé, M. Fadaee, J. Kreutzer, O. Pietquin, A. Üstün, and S. Hooker
+Back to basics: revisiting reinforce style optimization for learning from human feedback in LLMs
+.
+In
+Proceedings of the Annual Meeting of the Association for Computational Linguistics
+,
+pp. 12248–12267
+.
+Cited by:
+6th item
+,
+§1
+,
+§5.1
+.
+Brockman (2016)
+G. Brockman
+OpenAI Gym
+.
+ArXiv preprint arXiv:1606.01540
+.
+Cited by:
+§2
+.
+Chen
+et al.
+(2025a)
+K. Chen, M. Cusumano-Towner, B. Huval, A. Petrenko, J. Hamburger, V. Koltun, and P. Krähenbühl
+Reinforcement learning for long-horizon interactive llm agents
+.
+ArXiv preprint arXiv:2502.01600
+.
+Cited by:
+§2
+.
+Chen
+et al.
+(2025b)
+W. Chen, J. Chen, H. Zhu, and J. Schneider
+Context-lite multi-turn reinforcement learning for LLM agents
+.
+In
+Proceedings of the International Conference on Machine Learning Workshop
+,
+External Links:
+Link
+Cited by:
+§1
+,
+§2
+,
+§3
+.
+Chen
+et al.
+(2025c)
+Y. Chen, Y. Liu, J. Zhou, Y. Hao, J. Wang, Y. Zhang, and C. Fan
+R1-code-interpreter: training llms to reason with code via supervised and reinforcement learning
+.
+ArXiv preprint arXiv:2505.21668
+.
+Cited by:
+§2
+.
+Chhikara
+et al.
+(2025)
+P. Chhikara, D. Khant, S. Aryan, T. Singh, and D. Yadav
+Mem0: building production-ready ai agents with scalable long-term memory
+.
+ArXiv preprint arXiv:2504.19413
+.
+Cited by:
+§2
+.
+Chu
+et al.
+(2025)
+T. Chu, Y. Zhai, J. Yang, S. Tong, S. Xie, D. Schuurmans, Q. V. Le, S. Levine, and Y. Ma
+Sft memorizes, rl generalizes: a comparative study of foundation model post-training
+.
+ArXiv preprint arXiv:2501.17161
+.
+Cited by:
+§2
+.
+Cui
+et al.
+(2025)
+G. Cui, Y. Zhang, J. Chen, L. Yuan, Z. Wang, Y. Zuo, H. Li, Y. Fan, H. Chen, W. Chen,
+et al.
+The entropy mechanism of reinforcement learning for reasoning language models
+.
+ArXiv preprint arXiv:2505.22617
+.
+Cited by:
+§1
+,
+§2
+.
+Feng
+et al.
+(2025a)
+L. Feng, W. Tan, Z. Lyu, L. Zheng, H. Xu, M. Yan, F. Huang, and B. An
+Towards efficient online tuning of VLM agents via counterfactual soft reinforcement learning
+.
+In
+Proceedings of the International Conference on Machine Learning
+,
+Cited by:
+§2
+.
+Feng
+et al.
+(2025b)
+L. Feng, Z. Xue, T. Liu, and B. An
+Group-in-group policy optimization for llm agent training
+.
+ArXiv preprint arXiv:2505.10978
+.
+Cited by:
+8th item
+,
+§C.3
+,
+§1
+,
+§2
+,
+§3
+,
+§3
+,
+§4.2
+,
+§4.2
+,
+§5.1
+.
+Furuta
+et al.
+(2024)
+H. Furuta, K. Lee, O. Nachum, Y. Matsuo, A. Faust, S. S. Gu, and I. Gur
+Multimodal web navigation with instruction-finetuned foundation models
+.
+In
+Proceedings of the Twelfth International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§1
+.
+Gehring
+et al.
+(2025)
+J. Gehring, K. Zheng, J. Copet, V. Mella, Q. Carbonneaux, T. Cohen, and G. Synnaeve
+Rlef: grounding code llms in execution feedback with reinforcement learning
+.
+ArXiv preprint arXiv:2410.02089
+.
+Cited by:
+§2
+.
+Gou
+et al.
+(2025)
+B. Gou, R. Wang, B. Zheng, Y. Xie, C. Chang, Y. Shu, H. Sun, and Y. Su
+Navigating the digital world as humans do: universal visual grounding for GUI agents
+.
+In
+Proceedings of the International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§1
+.
+Guo
+et al.
+(2025)
+D. Guo, D. Yang, H. Zhang, J. Song, R. Zhang, R. Xu, Q. Zhu, S. Ma, P. Wang, X. Bi,
+et al.
+Deepseek-R1: incentivizing reasoning capability in LLMs via reinforcement learning
+.
+ArXiv preprint arXiv:2501.12948
+.
+Cited by:
+§1
+.
+Gur
+et al.
+(2024)
+I. Gur, H. Furuta, A. V. Huang, M. Safdari, Y. Matsuo, D. Eck, and A. Faust
+A real-world webagent with planning, long context understanding, and program synthesis
+.
+In
+Proceedings of the International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§2
+.
+Hao
+et al.
+(2023)
+S. Hao, Y. Gu, H. Ma, J. J. Hong, Z. Wang, D. Z. Wang, and Z. Hu
+Reasoning with language model is planning with world model
+.
+ArXiv preprint arXiv:2305.14992
+.
+Cited by:
+§2
+.
+Hong
+et al.
+(2024)
+W. Hong, W. Wang, Q. Lv, J. Xu, W. Yu, J. Ji, Y. Wang, Z. Wang, Y. Dong, M. Ding,
+et al.
+CogAgent: a visual language model for GUI agents
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 14281–14290
+.
+Cited by:
+§2
+.
+Hu
+et al.
+(2024)
+S. Hu, M. Ouyang, D. Gao, and M. Z. Shou
+The dawn of GUI agent: a preliminary case study with claude 3.5 computer use
+.
+ArXiv preprint arXiv:2411.10323
+.
+Cited by:
+§2
+.
+Jain
+et al.
+(2025)
+A. K. Jain, G. Gonzalez-Pumariega, W. Chen, A. M. Rush, W. Zhao, and S. Choudhury
+Multi-turn code generation through single-step rewards
+.
+ArXiv preprint arXiv:2502.20380
+.
+Cited by:
+§2
+.
+Jiang
+et al.
+(2024)
+N. Jiang, X. Li, S. Wang, Q. Zhou, S. B. Hossain, B. Ray, V. Kumar, X. Ma, and A. Deoras
+Ledex: training llms to better self-debug and explain code
+.
+Proceedings of the Advances in Neural Information Processing Systems
+37
+,
+pp. 35517–35543
+.
+Cited by:
+§2
+.
+Jin
+et al.
+(2025a)
+B. Jin, H. Zeng, Z. Yue, D. Wang, H. Zamani, and J. Han
+Search-R1: training LLMs to reason and leverage search engines with reinforcement learning
+.
+ArXiv preprint arXiv:2503.09516
+.
+Cited by:
+§1
+,
+§2
+,
+§3
+.
+Jin
+et al.
+(2024)
+M. Jin, W. Luo, S. Cheng, X. Wang, W. Hua, R. Tang, W. Y. Wang, and Y. Zhang
+Disentangling memory and reasoning ability in large language models
+.
+ArXiv preprint arXiv:2411.13504
+.
+Cited by:
+§2
+.
+Jin
+et al.
+(2025b)
+Y. Jin, K. Xu, H. Li, X. Han, Y. Zhou, C. Li, and J. Bai
+ReVeal: self-evolving code agents via iterative generation-verification
+.
+ArXiv preprint arXiv:2506.11442
+.
+Cited by:
+§2
+.
+Kool
+et al.
+(2019)
+W. Kool, H. van Hoof, and M. Welling
+Buy 4 reinforce samples, get a baseline for free!
+.
+In
+ICLR 2019 Workshop
+,
+Cited by:
+6th item
+,
+§1
+,
+§5.1
+.
+Laban
+et al.
+(2025)
+P. Laban, H. Hayashi, Y. Zhou, and J. Neville
+Llms get lost in multi-turn conversation
+.
+ArXiv preprint arXiv:2505.06120
+.
+Cited by:
+§2
+.
+Li
+et al.
+(2024)
+M. Li, S. Zhao, Q. Wang, K. Wang, Y. Zhou, S. Srivastava, C. Gokmen, T. Lee, E. L. Li, R. Zhang,
+et al.
+Embodied agent interface: benchmarking LLMs for embodied decision making
+.
+Proceedings of the Advances in Neural Information Processing Systems
+37
+,
+pp. 100428–100534
+.
+Cited by:
+§1
+.
+Lin
+et al.
+(2025)
+H. Lin, Y. Li, H. Luo, K. Yao, L. Zhang, M. Xing, and Y. Wu
+OS-r1: agentic operating system kernel tuning with reinforcement learning
+.
+External Links:
+2508.12551
+,
+Link
+Cited by:
+§2
+.
+Liu
+et al.
+(2024)
+A. Liu, B. Feng, B. Xue, B. Wang, B. Wu, C. Lu, C. Zhao, C. Deng, C. Zhang, C. Ruan,
+et al.
+DeepSeek-V3 technical report
+.
+ArXiv preprint arXiv:2412.19437
+.
+Cited by:
+§1
+.
+Liu
+et al.
+(2025)
+Z. Liu, C. Chen, W. Li, P. Qi, T. Pang, C. Du, W. S. Lee, and M. Lin
+Understanding r1-zero-like training: a critical perspective
+.
+ArXiv preprint arXiv:2503.20783
+.
+Cited by:
+§1
+,
+§2
+.
+Lu
+et al.
+(2025)
+Z. Lu, Y. Chai, Y. Guo, X. Yin, L. Liu, H. Wang, H. Xiao, S. Ren, G. Xiong, and H. Li
+UI-r1: enhancing efficient action prediction of gui agents by reinforcement learning
+.
+ArXiv preprint arXiv:2503.21620
+.
+Cited by:
+§2
+.
+Luo
+et al.
+(2025a)
+M. Luo, N. Jain, J. Singh, S. Tan, A. Patel, Q. Wu, A. Ariyak, C. Cai, T. Venkat, S. Zhu, B. Athiwaratkun, M. Roongta, C. Zhang, L. E. Li, R. A. Popa, K. Sen, and I. Stoica
+DeepSWE: training a state-of-the-art coding agent from scratch by scaling rl
+.
+Note:
+Notion Blog
+Cited by:
+§2
+.
+Luo
+et al.
+(2025b)
+R. Luo, L. Wang, W. He, and X. Xia
+Gui-r1: a generalist r1-style vision-language action model for gui agents
+.
+ArXiv preprint arXiv:2504.10458
+.
+Cited by:
+§2
+.
+Luo
+et al.
+(2025c)
+X. Luo, Y. Zhang, Z. He, Z. Wang, S. Zhao, D. Li, L. K. Qiu, and Y. Yang
+Agent lightning: train any ai agents with reinforcement learning
+.
+External Links:
+2508.03680
+,
+Link
+Cited by:
+§1
+,
+§2
+,
+§3
+.
+Luo
+et al.
+(2025d)
+Z. Luo, Z. Shen, W. Yang, Z. Zhao, P. Jwalapuram, A. Saha, D. Sahoo, S. Savarese, C. Xiong, and J. Li
+MCP-universe: benchmarking large language models with real-world model context protocol servers
+.
+ArXiv preprint arXiv:2508.14704
+.
+Cited by:
+§2
+.
+Mnih
+et al.
+(2015)
+V. Mnih, K. Kavukcuoglu, D. Silver, A. A. Rusu, J. Veness, M. G. Bellemare, A. Graves, M. Riedmiller, A. K. Fidjeland, G. Ostrovski,
+et al.
+Human-level control through deep reinforcement learning
+.
+Nature
+518
+(
+7540
+),
+pp. 529–533
+.
+Cited by:
+§2
+.
+Narasimhan
+et al.
+(2015)
+K. Narasimhan, T. Kulkarni, and R. Barzilay
+Language understanding for text-based games using deep reinforcement learning
+.
+In
+Proceedings of the Conference on Empirical Methods in Natural Language Processing
+,
+pp. 1–11
+.
+Cited by:
+§2
+.
+OpenAI (2024)
+OpenAI
+Introducing OpenAI o1
+.
+External Links:
+Link
+Cited by:
+§1
+.
+Ouyang
+et al.
+(2022)
+L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray,
+et al.
+Training language models to follow instructions with human feedback
+.
+In
+Proceedings of the Advances in Neural Information Processing Systems
+,
+Vol.
+35
+,
+pp. 27730–27744
+.
+Cited by:
+§2
+.
+Peng
+et al.
+(2019)
+X. B. Peng, A. Kumar, G. Zhang, and S. Levine
+Advantage-weighted regression: simple and scalable off-policy reinforcement learning
+.
+ArXiv preprint arXiv:1910.00177
+.
+Cited by:
+§2
+.
+Putta
+et al.
+(2024)
+P. Putta, E. Mills, N. Garg, S. Motwani, C. Finn, D. Garg, and R. Rafailov
+Agent Q: advanced reasoning and learning for autonomous ai agents
+.
+ArXiv preprint arXiv:2408.07199
+.
+Cited by:
+§2
+.
+Qian
+et al.
+(2025)
+C. Qian, E. C. Acikgoz, Q. He, H. Wang, X. Chen, D. Hakkani-Tür, G. Tur, and H. Ji
+ToolRL: reward is all tool learning needs
+.
+ArXiv preprint arXiv:2504.13958
+.
+Cited by:
+§2
+.
+Qin
+et al.
+(2025)
+Y. Qin, Y. Ye, J. Fang, H. Wang, S. Liang, S. Tian, J. Zhang, J. Li, Y. Li, S. Huang,
+et al.
+UI-tars: pioneering automated gui interaction with native agents
+.
+ArXiv preprint arXiv:2501.12326
+.
+Cited by:
+§2
+.
+Rafailov
+et al.
+(2024)
+R. Rafailov, A. Sharma, E. Mitchell, C. D. Manning, S. Ermon, and C. Finn
+Direct preference optimization: your language model is secretly a reward model
+.
+Proceedings of the Advances in Neural Information Processing Systems
+36
+.
+Cited by:
+§2
+.
+Rawles
+et al.
+(2024)
+C. Rawles, A. Li, D. Rodriguez, O. Riva, and T. Lillicrap
+Android in the wild: a large-scale dataset for android device control
+.
+In
+Proceedings of the Advances in Neural Information Processing Systems
+,
+Vol.
+36
+.
+Cited by:
+§2
+.
+Schick
+et al.
+(2023)
+T. Schick, J. Dwivedi-Yu, R. Dessì, R. Raileanu, M. Lomeli, E. Hambro, L. Zettlemoyer, N. Cancedda, and T. Scialom
+Toolformer: language models can teach themselves to use tools
+.
+Proceedings of the Advances in Neural Information Processing Systems
+36
+,
+pp. 68539–68551
+.
+Cited by:
+§2
+.
+Schulman
+et al.
+(2017)
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+Proximal policy optimization algorithms
+.
+ArXiv preprint arXiv:1707.06347
+.
+Cited by:
+5th item
+,
+§2
+,
+§3
+,
+§5.1
+.
+Shao
+et al.
+(2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. Li, Y. Wu,
+et al.
+DeepSeekMath: pushing the limits of mathematical reasoning in open language models
+.
+ArXiv preprint arXiv:2402.03300
+.
+Cited by:
+7th item
+,
+§1
+,
+§1
+,
+§2
+,
+§3
+,
+§4.1
+,
+§5.1
+.
+Shen
+et al.
+(2025)
+M. Shen, G. Zeng, Z. Qi, Z. Hong, Z. Chen, W. Lu, G. Wornell, S. Das, D. Cox, and C. Gan
+Satori: reinforcement learning with chain-of-action-thought enhances llm reasoning via autoregressive search
+.
+External Links:
+2502.02508
+,
+Link
+Cited by:
+§2
+.
+Shinn
+et al.
+(2024)
+N. Shinn, F. Cassano, A. Gopinath, K. Narasimhan, and S. Yao
+Reflexion: language agents with verbal reinforcement learning
+.
+Proceedings of the Advances in Neural Information Processing Systems
+36
+.
+Cited by:
+4th item
+,
+§2
+,
+§5.1
+.
+Shridhar
+et al.
+(2021)
+M. Shridhar, X. Yuan, M. Cote, Y. Bisk, A. Trischler, and M. Hausknecht
+ALFWorld: aligning text and embodied environments for interactive learning
+.
+In
+Proceedings of the International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§1
+,
+§2
+,
+§5.1
+.
+Song
+et al.
+(2024)
+Y. Song, D. Yin, X. Yue, J. Huang, S. Li, and B. Y. Lin
+Trial and error: exploration-based trajectory optimization for llm agents
+.
+ArXiv preprint arXiv:2403.02502
+.
+Cited by:
+§2
+.
+Stiennon
+et al.
+(2020)
+N. Stiennon, L. Ouyang, J. Wu, D. Ziegler, R. Lowe, C. Voss, A. Radford, D. Amodei, and P. F. Christiano
+Learning to summarize with human feedback
+.
+Proceedings of the Advances in Neural Information Processing Systems
+33
+,
+pp. 3008–3021
+.
+Cited by:
+§2
+.
+Sun
+et al.
+(2025)
+H. Sun, Z. Qiao, J. Guo, X. Fan, Y. Hou, Y. Jiang, P. Xie, F. Huang, and Y. Zhang
+ZeroSearch: incentivize the search capability of llms without searching
+.
+ArXiv preprint arXiv:2505.04588
+.
+Cited by:
+§2
+.
+Sutton and Barto (2018)
+R. S. Sutton and A. G. Barto
+Reinforcement learning: an introduction
+.
+MIT press
+.
+Cited by:
+§1
+,
+§2
+.
+Tan
+et al.
+(2024)
+W. Tan, W. Zhang, X. Xu, H. Xia, G. Ding, B. Li, B. Zhou, J. Yue, J. Jiang, Y. Li,
+et al.
+Cradle: empowering foundation agents towards general computer control
+.
+In
+Proceedings of the Advances in Neural Information Processing Systems Workshop
+,
+Cited by:
+§2
+.
+Tan
+et al.
+(2025)
+W. Tan, W. Zhang, X. Xu, H. Xia, Z. Ding, B. Li, B. Zhou, J. Yue, J. Jiang, Y. Li,
+et al.
+Cradle: empowering foundation agents towards general computer control
+.
+In
+Proceedings of the International Conference on Machine Learning
+,
+Cited by:
+§2
+.
+Team
+et al.
+(2023)
+G. Team, R. Anil, S. Borgeaud, J. Alayrac, J. Yu, R. Soricut, J. Schalkwyk, A. M. Dai, A. Hauth, K. Millican,
+et al.
+Gemini: a family of highly capable multimodal models
+.
+ArXiv preprint arXiv:2312.11805
+.
+Cited by:
+2nd item
+,
+§1
+,
+§5.1
+.
+Team (2025)
+O. Team
+OpenManus-rl: open platform for generalist llm reasoning agents with rl optimization
+.
+GitHub
+.
+External Links:
+Link
+Cited by:
+§1
+,
+§2
+,
+§3
+.
+Wang
+et al.
+(2024a)
+G. Wang, Y. Xie, Y. Jiang, A. Mandlekar, C. Xiao, Y. Zhu, L. Fan, and A. Anandkumar
+Voyager: an open-ended embodied agent with large language models
+.
+Transactions on Machine Learning Research
+.
+External Links:
+ISSN 2835-8856
+Cited by:
+§1
+,
+§2
+.
+Wang
+et al.
+(2025a)
+H. Wang, C. Qian, W. Zhong, X. Chen, J. Qiu, S. Huang, B. Jin, M. Wang, K. Wong, and H. Ji
+OTC: optimal tool calls via reinforcement learning
+.
+ArXiv preprint arXiv:2504.14870
+.
+Cited by:
+§2
+.
+Wang
+et al.
+(2024b)
+J. Wang, H. Xu, H. Jia, X. Zhang, M. Yan, W. Shen, J. Zhang, F. Huang, and J. Sang
+Mobile-Agent-v2: mobile device operation assistant with effective navigation via multi-agent collaboration
+.
+Proceedings of the Advances in Neural Information Processing Systems
+37
+,
+pp. 2686–2710
+.
+Cited by:
+§1
+,
+§2
+.
+Wang
+et al.
+(2025b)
+R. Wang, R. A. Genadi, B. E. Bouardi, Y. Wang, F. Koto, Z. Liu, T. Baldwin, and H. Li
+AgentFly: extensible and scalable reinforcement learning for lm agents
+.
+ArXiv preprint arXiv:2507.14897
+.
+Cited by:
+§3
+.
+Wang
+et al.
+(2025c)
+W. Wang, S. Xiong, G. Chen, W. Gao, S. Guo, Y. He, J. Huang, J. Liu, Z. Li, X. Li,
+et al.
+Reinforcement learning optimization for large-scale learning: an efficient and user-friendly scaling library
+.
+arXiv preprint arXiv:2506.06122
+.
+Cited by:
+§1
+.
+Wang
+et al.
+(2024c)
+Y. Wang, Y. Wang, D. Guo, J. Chen, R. Zhang, Y. Ma, and Z. Zheng
+RLCoder: reinforcement learning for repository-level code completion
+.
+External Links:
+2407.19487
+,
+Link
+Cited by:
+§2
+.
+Wang
+et al.
+(2025d)
+Z. Wang, K. Wang, Q. Wang, P. Zhang, L. Li, Z. Yang, K. Yu, M. N. Nguyen, L. Liu, E. Gottlieb,
+et al.
+RAGEN: understanding self-evolution in LLM agents via multi-turn reinforcement learning
+.
+ArXiv preprint arXiv:2504.20073
+.
+Cited by:
+§1
+,
+§2
+,
+§3
+.
+Wei
+et al.
+(2022)
+J. Wei, X. Wang, D. Schuurmans, M. Bosma, F. Xia, E. Chi, Q. V. Le, D. Zhou,
+et al.
+Chain-of-thought prompting elicits reasoning in large language models
+.
+In
+Proceedings of the Advances in Neural Information Processing Systems
+,
+Vol.
+35
+,
+pp. 24824–24837
+.
+Cited by:
+§5.1
+.
+Wei
+et al.
+(2025a)
+Y. Wei, O. Duchenne, J. Copet, Q. Carbonneaux, L. Zhang, D. Fried, G. Synnaeve, R. Singh, and S. I. Wang
+SWE-rl: advancing llm reasoning via reinforcement learning on open software evolution
+.
+ArXiv preprint arXiv:2502.18449
+.
+Cited by:
+§2
+.
+Wei
+et al.
+(2025b)
+Y. Wei, O. Duchenne, J. Copet, Q. Carbonneaux, L. Zhang, D. Fried, G. Synnaeve, R. Singh, and S. I. Wang
+SWE-RL: advancing llm reasoning via reinforcement learning on open software evolution
+.
+ArXiv preprint arXiv:2502.18449
+.
+Cited by:
+§1
+.
+Wei
+et al.
+(2025c)
+Z. Wei, W. Yao, Y. Liu, W. Zhang, Q. Lu, L. Qiu, C. Yu, P. Xu, C. Zhang, B. Yin,
+et al.
+Webagent-r1: training web agents via end-to-end multi-turn reinforcement learning
+.
+ArXiv preprint arXiv:2505.16421
+.
+Cited by:
+§2
+.
+Xie
+et al.
+(2024)
+T. Xie, D. Zhang, J. Chen, X. Li, S. Zhao, R. Cao, T. J. Hua, Z. Cheng, D. Shin, F. Lei, Y. Liu, Y. Xu, S. Zhou, S. Savarese, C. Xiong, V. Zhong, and T. Yu
+OSWorld: benchmarking multimodal agents for open-ended tasks in real computer environments
+.
+In
+Proceedings of the Thirty-eight Conference on Neural Information Processing Systems Datasets and Benchmarks Track
+,
+Cited by:
+§2
+.
+Yang
+et al.
+(2024)
+A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu, F. Huang, H. Wei,
+et al.
+Qwen2. 5 technical report
+.
+ArXiv preprint arXiv:2412.15115
+.
+Cited by:
+§1
+,
+§5.1
+.
+Yao
+et al.
+(2022)
+S. Yao, H. Chen, J. Yang, and K. Narasimhan
+WebShop: towards scalable real-world web interaction with grounded language agents
+.
+Proceedings of the Advances in Neural Information Processing Systems
+35
+,
+pp. 20744–20757
+.
+Cited by:
+§5.1
+.
+Yao
+et al.
+(2023)
+S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. R. Narasimhan, and Y. Cao
+ReAct: synergizing reasoning and acting in language models
+.
+In
+The Eleventh International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+3rd item
+,
+§2
+,
+§5.1
+.
+Yu
+et al.
+(2025a)
+C. Yu, S. Lu, C. Zhuang, D. Wang, Q. Wu, Z. Li, R. Gan, C. Wang, S. Hou, G. Huang,
+et al.
+AWorld: orchestrating the training recipe for agentic ai
+.
+ArXiv preprint arXiv:2508.20404
+.
+Cited by:
+§3
+.
+Yu
+et al.
+(2025b)
+H. Yu, T. Chen, J. Feng, J. Chen, W. Dai, Q. Yu, Y. Zhang, W. Ma, J. Liu, M. Wang,
+et al.
+MemAgent: reshaping long-context llm with multi-conv rl-based memory agent
+.
+ArXiv preprint arXiv:2507.02259
+.
+Cited by:
+§1
+.
+Yu
+et al.
+(2025c)
+Q. Yu, Z. Zhang, R. Zhu, Y. Yuan, X. Zuo, Y. Yue, T. Fan, G. Liu, L. Liu, X. Liu,
+et al.
+DAPO: an open-source LLM reinforcement learning system at scale
+.
+ArXiv preprint arXiv:2503.14476
+.
+Cited by:
+§1
+,
+§2
+.
+Zhang
+et al.
+(2024a)
+C. Zhang, L. Li, S. He, X. Zhang, B. Qiao, S. Qin, M. Ma, Y. Kang, Q. Lin, S. Rajmohan,
+et al.
+UFO: a UI-focused agent for windows OS interaction
+.
+ArXiv preprint arXiv:2402.07939
+.
+Cited by:
+§2
+.
+Zhang
+et al.
+(2025)
+G. Zhang, H. Geng, X. Yu, Z. Yin, Z. Zhang, Z. Tan, H. Zhou, Z. Li, X. Xue, Y. Li, Y. Zhou, Y. Chen, C. Zhang, Y. Fan, Z. Wang, S. Huang, Y. Liao, H. Wang, M. Yang, H. Ji, M. Littman, J. Wang, S. Yan, P. Torr, and L. Bai
+The landscape of agentic reinforcement learning for llms: a survey
+.
+External Links:
+2509.02547
+,
+Link
+Cited by:
+§2
+.
+Zhang
+et al.
+(2024b)
+K. Zhang, J. Li, G. Li, X. Shi, and Z. Jin
+CodeAgent: enhancing code generation with tool-integrated agent systems for real-world repo-level coding challenges
+.
+In
+Proceedings of the Annual Meeting of the Association for Computational Linguistics
+,
+pp. 13643–13658
+.
+Cited by:
+§2
+.
+Zhang and Zhang (2024)
+Z. Zhang and A. Zhang
+You only look at screens: multimodal chain-of-action agents
+.
+In
+Proceedings of the Findings of the Association for Computational Linguistics
+,
+pp. 3132–3149
+.
+Cited by:
+§2
+.
+Zheng
+et al.
+(2024)
+B. Zheng, B. Gou, J. Kil, H. Sun, and Y. Su
+GPT-4V (ision) is a generalist web agent, if grounded
+.
+ArXiv preprint arXiv:2401.01614
+.
+Cited by:
+§1
+.
+Zheng
+et al.
+(2025)
+C. Zheng, S. Liu, M. Li, X. Chen, B. Yu, C. Gao, K. Dang, Y. Liu, R. Men, A. Yang,
+et al.
+Group sequence policy optimization
+.
+ArXiv preprint arXiv:2507.18071
+.
+Cited by:
+§1
+,
+§2
+.
+Zhou
+et al.
+(2024a)
+A. Zhou, K. Yan, M. Shlapentokh-Rothman, H. Wang, and Y. Wang
+Language agent tree search unifies reasoning, acting, and planning in language models
+.
+In
+Proceedings of the International Conference on Machine Learning
+,
+pp. 62138–62160
+.
+Cited by:
+§2
+.
+Zhou
+et al.
+(2025a)
+Y. Zhou, S. Jiang, Y. Tian, J. Weston, S. Levine, S. Sukhbaatar, and X. Li
+SWEET-rl: training multi-turn llm agents on collaborative reasoning tasks
+.
+External Links:
+2503.15478
+,
+Link
+Cited by:
+§2
+.
+Zhou
+et al.
+(2024b)
+Y. Zhou, A. Zanette, J. Pan, S. Levine, and A. Kumar
+ArCHer: training language model agents via hierarchical multi-turn rl
+.
+In
+Proceedings of the International Conference on Machine Learning
+,
+pp. 62178–62209
+.
+Cited by:
+§2
+.
+Zhou
+et al.
+(2025b)
+Z. Zhou, A. Qu, Z. Wu, S. Kim, A. Prakash, D. Rus, J. Zhao, B. K. H. Low, and P. P. Liang
+MEM1: learning to synergize memory and reasoning for efficient long-horizon agents
+.
+ArXiv preprint arXiv:2506.15841
+.
+Cited by:
+§2
+.
+Ziegler
+et al.
+(2019)
+D. M. Ziegler, N. Stiennon, J. Wu, T. B. Brown, A. Radford, D. Amodei, P. Christiano, and G. Irving
+Fine-tuning language models from human preferences
+.
+ArXiv preprint arXiv:1909.08593
+.
+Cited by:
+§2
+.
+Zitkovich
+et al.
+(2023)
+B. Zitkovich, T. Yu, S. Xu, P. Xu, T. Xiao, F. Xia, J. Wu, P. Wohlhart, S. Welker, A. Wahid,
+et al.
+RT-2: vision-language-action models transfer web knowledge to robotic control
+.
+In
+Proceedings of the Conference on Robot Learning
+,
+pp. 2165–2183
+.
+Cited by:
+§2
+.
+Appendix A
+Algorithm
+Algorithm 1
+The pseudo-code of HGPO
+1:
+Require:
+Initial policy
+π
+θ
+old
+\pi_{\theta_{\text{old}}}
+, task distribution
+p
+⁡
+(
+X
+)
+p(X)
+, discount factor
+γ
+\gamma
+, weighting
+ω
+\omega
+, clipping parameter
+ϵ
+\epsilon
+, KL penalty
+β
+\beta
+, group size
+N
+N
+, the length of historical context
+K
+K
+, parameter
+α
+\alpha
+2:
+for
+each training iteration
+do
+3:
+Update the old policy model:
+θ
+old
+←
+θ
+\theta_{\text{old}}\leftarrow\theta
+4:
+// Multi-step rollout phase
+5:
+Sample task
+x
+∼
+p
+⁡
+(
+X
+)
+x\sim p(X)
+and initialize
+N
+N
+identical environments
+6:
+for
+t
+=
+1
+t=1
+to
+T
+T
+do
+7:
+Sample actions
+{
+𝒂
+t
+(
+i
+)
+∼
+π
+θ
+old
+(
+⋅
+∣
+𝒔
+t
+(
+i
+)
+,
+x
+)
+}
+i
+=
+1
+N
+\bigl\{\bm{a}_{t}^{(i)}\sim\pi_{\theta_{\text{old}}}(\cdot\mid\bm{s}_{t}^{(i)},x)\bigr\}_{i=1}^{N}
+8:
+Execute actions, observe rewards
+{
+r
+t
+(
+i
+)
+}
+i
+=
+1
+N
+\{r_{t}^{(i)}\}_{i=1}^{N}
+and next state
+{
+𝒔
+t
++
+1
+(
+i
+)
+}
+i
+=
+1
+N
+\{\bm{s}_{t+1}^{(i)}\}_{i=1}^{N}
+9:
+end
+for
+10:
+// Grouping phase
+11:
+Context-aware hierarchical grouping by Eq. (
+5
+)
+12:
+// Advantage computation phase
+13:
+Compute multiple advantages within each group by Eq. (
+7
+)
+14:
+// Policy update phase
+15:
+Update policy
+θ
+\theta
+by maximizing objective
+𝒥
+HGPO
+​
+(
+θ
+)
+\mathcal{J}_{\mathrm{HGPO}}(\theta)
+16:
+end
+for
+Appendix B
+More details and proof for Theorem
+Table 6:
+Overall comparison of three different advantage estimators.
+Type
+Advantage estimation
+Granularity
+Bias
+Variance
+Trajectory-level
+A
+T
+(
+τ
+i
+)
+=
+(
+R
+(
+τ
+i
+)
+−
+1
+/
+|
+G
+τ
+|
+∑
+j
+∈
+G
+τ
+R
+(
+τ
+i
+)
+)
+/
+σ
+G
+τ
+A^{T}(\tau_{i})=\left(R({\tau_{i}})-1/|G_{\tau}|\sum\nolimits_{j\in G_{\tau}}R({\tau_{i}})\right)/\sigma_{G_{\tau}}
+Coarse-grained
+B
+T
+B_{T}
+V
+T
+V_{T}
+Step-level
+A
+S
+(
+𝒔
+i
+~
+)
+=
+(
+R
+(
+𝒔
+i
+~
+)
+−
+1
+/
+|
+G
+𝒔
+i
+~
+|
+∑
+j
+∈
+G
+𝒔
+i
+~
+R
+(
+𝒔
+j
+~
+)
+)
+/
+σ
+G
+𝒔
+i
+~
+A^{S}(\tilde{\bm{s}_{i}})=\left(R(\tilde{\bm{s}_{i}})-1/|G_{\tilde{\bm{s}_{i}}}|\sum\nolimits_{j\in G_{{\tilde{\bm{s}_{i}}}}}R(\tilde{\bm{s}_{j}})\right)/\sigma_{G_{{\tilde{\bm{s}_{i}}}}}
+Fine-grained
+b
+0
+b_{0}
+v
+0
+v_{0}
+Hierarchy-of-Groups
+A
+H
+​
+(
+𝒔
+t
+(
+i
+)
+)
+=
+∑
+k
+=
+0
+K
+𝒘
+k
+​
+A
+k
+H
+​
+(
+𝒔
+t
+(
+i
+)
+)
+A^{H}(\bm{s}_{t}^{(i)})=\sum\nolimits_{k=0}^{K}\bm{w}_{k}A^{H}_{k}(\bm{s}_{t}^{(i)})
+Fine-grained
+∑
+k
+=
+0
+K
+w
+k
+​
+b
+k
+↓
+\sum_{k=0}^{K}w_{k}b_{k}\downarrow
+∑
+k
+=
+0
+K
+w
+k
+2
+​
+v
+k
+↓
+\sum_{k=0}^{K}w_{k}^{2}v_{k}\downarrow
+Here, we provide more details of Proposition
+4.1
+. Let
+A
+k
+H
+A_{k}^{H}
+denote the advantage estimator for the
+k
+k
+-th hierarchical group. Let
+b
+k
+b_{k}
+and
+v
+k
+v_{k}
+denote the bias and variance of the estimated advantage
+A
+k
+H
+A^{H}_{k}
+within the
+k
+k
+-th group
+G
+k
+H
+G_{k}^{H}
+. The definition of bias is
+b
+k
+=
+Bias
+​
+[
+A
+]
+=
+A
+−
+A
+∗
+b_{k}=\text{Bias}[A]=A-A^{*}
+where
+A
+∗
+A^{*}
+is the unknown true advantage. We make the following conditions:
+(1)
+Bias satisfies
+:
+B
+T
+≥
+b
+0
+≥
+(
+b
+1
+,
+b
+2
+,
+⋯
+,
+b
+K
+−
+1
+)
+≥
+b
+K
+≥
+0
+,
+b
+k
+=
+Bias
+​
+[
+A
+k
+H
+]
+,
+B_{T}\geq b_{0}\geq(b_{1},b_{2},\cdots,b_{K-1})\geq b_{K}\geq 0,\quad b_{k}=\text{Bias}[A_{k}^{H}],
+(2)
+Variance satisfies
+:
+v
+0
+≤
+(
+v
+1
+,
+v
+2
+,
+⋯
+,
+v
+K
+−
+1
+)
+≤
+v
+K
+≤
+V
+T
+,
+v
+k
+=
+Var
+​
+[
+A
+k
+H
+]
+,
+v_{0}\leq(v_{1},v_{2},\cdots,v_{K-1})\leq v_{K}\leq V_{T},\quad v_{k}=\text{Var}[A_{k}^{H}],
+where
+B
+T
+B_{T}
+and
+V
+T
+V_{T}
+denote the bias and variance of trajectory-level advantage estimation, and
+b
+0
+b_{0}
+and
+v
+0
+v_{0}
+represent those of step-level estimation. We now justify the assumptions. First, the number of trajectories in a group is generally smaller (set to 8 in our experiments) than the step-level group size, which leads to higher bias and variance in trajectory-level estimation. Second, as
+K
+K
+increases, the group size of
+G
+k
+H
+G_{k}^{H}
+decreases, which can result in higher variance.
+Bias and variance of HGPO.
+Recall the advantage aggregation in Eq. (
+5
+) and Eq. (
+7
+):
+A
+H
+=
+∑
+k
+=
+0
+K
+w
+k
+​
+A
+k
+H
+\displaystyle A^{H}=\sum_{k=0}^{K}w_{k}A_{k}^{H}
+with group weights
+w
+k
+≥
+0
+w_{k}\geq 0
+satisfying
+∑
+k
+=
+0
+K
+w
+k
+=
+1
+\sum_{k=0}^{K}w_{k}=1
+. We first analyze the bias. Define
+b
+k
+≜
+𝔼
+⁡
+[
+A
+k
+H
+]
+−
+A
+∗
+b_{k}\triangleq\mathbb{E}[A_{k}^{H}]-A^{*}
+and
+Bias
+⁡
+[
+X
+]
+≜
+𝔼
+⁡
+[
+X
+]
+−
+A
+∗
+\mathrm{Bias}[X]\triangleq\mathbb{E}[X]-A^{*}
+, where
+A
+∗
+A^{*}
+denotes the target (unbiased) advantage. Then
+Bias
+⁡
+[
+A
+H
+]
+=
+𝔼
+⁡
+[
+∑
+k
+=
+0
+K
+w
+k
+​
+A
+k
+H
+]
+−
+A
+∗
+=
+∑
+k
+=
+0
+K
+w
+k
+​
+(
+𝔼
+⁡
+[
+A
+k
+H
+]
+−
+A
+∗
+)
+=
+∑
+k
+=
+0
+K
+w
+k
+​
+b
+k
+.
+\displaystyle\mathrm{Bias}[A^{H}]=\mathbb{E}\!\left[\sum_{k=0}^{K}w_{k}A_{k}^{H}\right]-A^{*}=\sum_{k=0}^{K}w_{k}\big(\mathbb{E}[A_{k}^{H}]-A^{*}\big)=\sum_{k=0}^{K}w_{k}b_{k}.
+Since
+b
+0
+≥
+b
+1
+≥
+⋯
+≥
+b
+K
+b_{0}\geq b_{1}\geq\cdots\geq b_{K}
+and
+∑
+k
+=
+0
+K
+w
+k
+=
+1
+\sum\nolimits_{k=0}^{K}w_{k}=1
+, it follows that
+b
+K
+=
+∑
+k
+=
+0
+K
+w
+k
+​
+b
+K
+≤
+∑
+k
+=
+0
+K
+w
+k
+​
+b
+k
+=
+Bias
+⁡
+[
+A
+H
+]
+≤
+∑
+k
+=
+0
+K
+w
+k
+​
+b
+0
+=
+b
+0
+≤
+B
+T
+.
+\displaystyle b_{K}=\sum\nolimits_{k=0}^{K}w_{k}b_{K}\leq\sum\nolimits_{k=0}^{K}w_{k}b_{k}=\mathrm{Bias}[A^{H}]\leq\sum\nolimits_{k=0}^{K}w_{k}b_{0}=b_{0}\leq B_{T}.
+Hence, HGPO trades off the bias between the step-level estimator (
+k
+=
+0
+k=0
+) and the oracle estimator (
+k
+=
+K
+k=K
+). Correspondingly, for the variance, assume
+Cov
+⁡
+(
+A
+k
+H
+,
+A
+k
+′
+H
+)
+=
+0
+for
+k
+≠
+k
+′
+\mathrm{Cov}(A_{k}^{H},A_{k^{\prime}}^{H})=0\quad\text{for}\quad k\neq k^{\prime}
+. Let
+v
+k
+≜
+Var
+⁡
+[
+A
+k
+H
+]
+v_{k}\triangleq\mathrm{Var}[A_{k}^{H}]
+, then
+Var
+⁡
+[
+A
+H
+]
+=
+Var
+⁡
+[
+∑
+k
+=
+0
+K
+w
+k
+​
+A
+k
+H
+]
+=
+∑
+k
+=
+0
+K
+w
+k
+2
+​
+Var
+​
+[
+A
+k
+H
+]
+=
+∑
+k
+=
+0
+K
+w
+k
+2
+​
+v
+k
+.
+\displaystyle\mathrm{Var}[A^{H}]=\mathrm{Var}\!\left[\sum_{k=0}^{K}w_{k}A_{k}^{H}\right]=\sum_{k=0}^{K}w_{k}^{2}\mathrm{Var}[A_{k}^{H}]=\sum_{k=0}^{K}w_{k}^{2}v_{k}.
+Since
+v
+0
+≤
+v
+1
+≤
+⋯
+≤
+v
+K
+v_{0}\leq v_{1}\leq\cdots\leq v_{K}
+, then
+v
+0
+​
+∑
+k
+=
+0
+K
+w
+k
+2
+≤
+Var
+⁡
+[
+A
+H
+]
+≤
+v
+K
+​
+∑
+k
+=
+0
+K
+w
+k
+2
+≤
+v
+K
+.
+\displaystyle v_{0}\sum_{k=0}^{K}w_{k}^{2}\leq\mathrm{Var}[A^{H}]\leq v_{K}\sum_{k=0}^{K}w_{k}^{2}\leq v_{K}.
+Moreover, by Cauchy–Schwarz,
+1
+K
++
+1
+≤
+∑
+k
+=
+0
+K
+w
+k
+2
+≤
+1
+,
+\displaystyle\frac{1}{K+1}\leq\sum_{k=0}^{K}w_{k}^{2}\leq 1,
+hence we can obtain:
+v
+0
+K
++
+1
+≤
+Var
+⁡
+[
+A
+H
+]
+≤
+v
+K
+.
+\displaystyle\frac{v_{0}}{K+1}\leq\mathrm{Var}[A^{H}]\leq v_{K}.
+In summary, HGPO interpolates between the step-level (
+k
+=
+0
+k=0
+) and oracle (
+k
+=
+K
+k=K
+) estimators in bias and variance, thereby achieving a better trade-off. It is also interesting to explore tighter bounds on the bias and variance in HGPO.
+Appendix C
+Experiment Details
+C.1
+Comparing methods
+•
+GPT-4o:
+A closed-source, large-scale LLM used as a baseline for multi-turn agentic tasks
+(
+Achiam et al., 2023
+)
+.
+•
+Gemini-2.5-Pro:
+Another closed-source LLM, comparable in scale and capability to GPT-4o
+(
+Team et al., 2023
+)
+.
+•
+ReAct:
+A prompting-based agent that integrates reasoning and acting in an interleaved chain-of-thought framework
+(
+Yao et al., 2023
+)
+.
+•
+Reflexion:
+A prompting agent that incorporates self-reflection and iterative improvement over generated outputs
+(
+Shinn et al., 2024
+)
+.
+•
+PPO:
+Proximal Policy Optimization, a classic RL algorithm for policy learning
+(
+Schulman et al., 2017
+)
+.
+•
+RLOO:
+Reinforcement Learning with Offline Observations, a group-based RL approach that estimates advantages without value networks
+(
+Kool et al., 2019
+;
+Ahmadian et al., 2024
+)
+.
+•
+GRPO:
+Group-based RL with trajectory-level advantage estimation, designed to scale RL to multi-step tasks
+(
+Shao et al., 2024
+)
+.
+•
+GiGPO:
+Grouped Incremental GPO, a prior hierarchical RL method that performs group-wise advantage estimation for LLM-based agents
+(
+Feng et al., 2025b
+)
+.
+C.2
+Environment details
+In each episode, the agent receives a text goal and must accomplish it through multi-turn interaction with the environment. It includes 4,639 task instances across six categories of common household activities: Pick & Place (Pick), Examine in Light (Look), Clean & Place (Clean), Heat & Place (Heat), Cool & Place (Cool), and Pick Two & Place (Pick2).
+WebShop
+is a complex, web-based interactive environment designed to test the LLM agents in realistic online shopping scenarios. To complete the task, the agent must interact with a simulated HTML-based shopping website to search for, navigate to, and ultimately purchase a suitable item. It contains over 1.1 million products and 12k user instructions, providing a rich and diverse action space.
+C.3
+Details of Training
+Notably, we implement GiGPO and HGPO based on the new version of Verl-agent and report the performance in Table
+1
+. Meanwhile, we report them based on the old version of Verl-agent, as shown in Table
+7
+. Generally, we use the same training settings in
+(
+Feng et al., 2025b
+)
+for fair comparison.
+Hyperparameters for ALFWorld.
+All methods are configured with identical hyperparameters: the maximum prompt length is 2048 (4096) tokens, and the maximum response length is 512 tokens. Each episode allows up to 50 environment steps. The learning rate is set to 1e-6 for the actor and 1e-5 for the critic (used only in PPO). We adopt a rule-based reward, assigning a reward of 10 for success and 0 for failure. To handle invalid actions generated by the agent, we apply a reward penalty of -0.1. For all group-based RL methods, we use a group size of 8 and a training size, resulting in a total of
+16
+×
+8
+=
+128
+16\times 8=128
+environments. In contrast, PPO uses 128 separate environments for rollouts. The rollout temperature is set to 1.0, while the validation temperature is set to 0.4. The mini-batch size is 256, and the KL-divergence loss coefficient is set to 0.01. The discount factor
+γ
+\gamma
+is set to 0.95.
+Prompt Template for ALFWorld
+You are an expert agent operating in the ALFRED embodied Environment. Your task is to:
+{task_description}
+. Prior to this step, you have already taken
+{step_count}
+step(s). Below are the most recent
+{history_length}
+observations and the corresponding actions you took:
+{action_history}
+. You are now at step
+{current_step}
+and your current observation is:
+{current_observation}
+. Your admissible actions of the current situation are: [
+{admissible_actions}
+].
+Now it’s your turn to take an action.
+You should first reason step-by-step about the current situation. This reasoning process MUST be enclosed within
+<think>
+</think>
+tags.
+Once you’ve finished your reasoning, you should choose an admissible action for current step and present it within
+<action>
+</action>
+tags.
+Figure 5:
+The prompt template of ALFWorld agents.
+Prompt Template for WebShop
+You are an expert autonomous agent operating in the WebShop e
+-
+commerce environment. Your task is to:
+{task_description}
+. Prior to this step, you have already taken
+{step_count}
+step(s). Below are the most recent
+{history_length}
+observations and the corresponding actions you took:
+{action_history}
+. You are now at step
+{current_step}
+and your current observation is:
+{current_observation}
+. Your admissible actions for the current situation are: [
+{available_actions}
+].
+Now it’s your turn to take one action for the current step.
+You should first reason step-by-step about the current situation, then think carefully which admissible action best advances the shopping goal. This reasoning process MUST be enclosed within
+<think>
+</think>
+tags.
+Once you’ve finished your reasoning, you should choose an admissible action for current step and present it within
+<action>
+</action>
+tags.
+Figure 6:
+The prompt template used for WebShop agents.
+Hyperparameters for WebShop.
+All methods are configured with identical hyperparameters: the maximum prompt length is 4096 tokens, and the maximum response length is 512 tokens. Each episode is limited to 30 environment steps. The learning rate is 1e-6 for the actor and 1e-5 for the critic (used only in PPO). We adopt a rule-based reward, assigning a reward of 10 for success and 0 for failure. Invalid actions are penalized with a reward of -0.1. As with ALFWorld, all group-based RL methods use a group size of 8 and sample 16 groups per rollout, totaling
+16
+×
+8
+=
+128
+16\times 8=128
+environments. PPO, on the other hand, uses 128 distinct environments for rollouts. The rollout temperature is set to 1.0, while the validation temperature is set to 0.4. The mini-batch size is 64, and the KL-divergence loss coefficient is set to 0.01. The discount factor
+γ
+\gamma
+is set to 0.95.
+Computing Details.
+Experiments using Qwen2.5-1.5B-Instruct are conducted on two NVIDIA H100 GPUs, while those using Qwen2.5-7B-Instruct are trained on four NVIDIA H100 GPUs. Each experiment is trained for a total of 160 training iterations. The validation data size is 512.
+C.4
+Training metrics
+•
+Mean Advantages:
+This metric shows how much better the chosen actions are compared to the average action. A positive and stable value means the agent usually selects better actions, while large fluctuations suggest unstable training.
+•
+Policy Gradient Loss:
+This loss is the main signal for updating the policy. A smooth and gradually decreasing value indicates stable learning. If the loss becomes too large or changes sharply, it means the updates are too aggressive and may harm training stability.
+•
+KL Divergence:
+KL loss measures how different the new policy is from the old one. It acts as a constraint to prevent the policy from changing too quickly. A moderate KL value means the agent is learning steadily, while a very high value can cause divergence and a very low value may slow down learning.
+•
+Policy Gradient Clip Fraction:
+This metric shows the proportion of gradients that are clipped during optimization. Gradient clipping prevents extreme updates. A moderate fraction suggests stable training, but if the fraction is too high, it means many updates are unstable and are being restricted.
+•
+Mean Reward:
+The mean reward reflects the average return the agent receives per episode. It is a direct measure of progress: higher rewards indicate better performance. If the mean reward increases smoothly, it shows effective learning, while sudden drops suggest instability.
+•
+Episode Success Rate:
+This metric measures the percentage of episodes in which the agent completes the task. It is an intuitive indicator of how well the agent achieves its goal. A rising success rate shows that the agent is improving and that training is effective.
+C.5
+Prompts
+The prompts we use for LLM agents are presented in Figure
+5
+and Figure
+6
+. These prompt templates are constructed using Python-style string formatting, where placeholders enclosed in curly braces (
+{}
+) represent semantic slots. These placeholders, such as
+{task_description}
+,
+{step_count}
+, and
+{current_observation}
+, are dynamically populated at runtime via Python’s
+.format()
+function. To enrich the agent’s context, we use historical information and set the history length to 2.
+The
+<think>
+…
+</think>
+block instructs the agent to perform step-by-step reasoning, thereby promoting chain-of-thought style deliberation explicitly. The
+<action>
+…
+</action>
+block is used to indicate the final action decision clearly.
+Appendix D
+More experimental results
+D.1
+The performance of using the old version of Verl-agent
+Note that the results reported in the original manuscript (Table
+7
+) were obtained using the earlier version of Verl-agent (paper_version). Following subsequent updates to veRL, we report the performance based on the latest version of Verl-agent in Table
+1
+. Importantly, the updates to Verl-agent (veRL) involve changes to the framework implementation only and do not modify any underlying algorithms. The experimental results remain consistent and continue to demonstrate the superiority of HGPO.
+Table 7:
+Performance comparison on ALFWorld and WebShop. Note that we used
+the old version of Verl-agent
+and updated the performance of using the new version of Verl-agent (with veRL updating) in Table
+1
+. For ALFWorld, we report the overall success rate (
+↑
+\uparrow
+) for both
+in-distribution
+(In-Success) and
+out-of-distribution
+tasks (Out-Success). For WebShop (15 steps), we report the average task score (
+↑
+\uparrow
+) and the average task success rate (
+↑
+\uparrow
+). Most results are averaged over 3 random seeds during testing. The best results are highlighted in bold.
+Model
+Type
+Method
+ALFWorld
+WebShop
+In-Success
+Out-Success
+Task Scores
+Task Success Rates
+Q2.5-1.5B
+RL Training
+GiGPO (
+K
+K
+=2)
+85.42
+±1.32
+80.72
+±1.62
+84.52
+±0.98
+69.79
+±0.59
+RL Training
+HGPO
+(
+K
+K
+=2)
+89.58
+±0.45
+80.73
+±2.38
+87.53
+±0.77
+72.66
+±1.78
+RL Training
+GiGPO (
+K
+K
+=4)
+85.15
+±2.81
+80.98
+±0.45
+88.5
+±0.49
+74.08
+±0.98
+RL Training
+HGPO
+(
+K
+K
+=4)
+92.45
+±0.81
+89.06
+±2.34
+88.90
+±0.90
+75.91
+±1.19
+Q2.5-7B
+RL Training
+GiGPO (
+K
+K
+=2)
+89.84
+±2.20
+82.81
+±5.46
+86.23
+±1.43
+75.13
+±1.37
+RL Training
+HGPO
+(
+K
+K
+=2)
+91.15
+±1.19
+84.89
+±4.30
+88.93
+±0.84
+76.43
+±1.47
+RL Training
+GiGPO (
+K
+K
+=4)
+90.88
+±0.90
+87.76
+±0.45
+87.25
+±1.02
+76.18
+±1.25
+RL Training
+HGPO
+(
+K
+K
+=4)
+94.79
+±0.90
+93.22
+±1.62
+87.88
+±0.41
+77.21
+±0.22
+D.2
+Training dynamics
+We show training dynamics of HGPO (Red), GiGPO (Yellow), and GRPO (Purple) on WebShop using Qwen2.5-1.5B-Instruct as shown in Figure
+8
+. Figures
+7
+and
+8
+illustrate the training dynamics of GRPO, GiGPO, and HGPO across six metrics: mean advantages, policy gradient loss, KL loss, policy gradient clip fraction, mean reward, and episode success rate. Detailed definitions of these metrics are provided in Appendix
+C.4
+. Overall, our method achieves more stable and efficient policy optimization. In particular, for the policy gradient clip fraction, HGPO (red curve) maintains a moderate level, suggesting stable training, whereas GiGPO and GRPO display higher fractions, reflecting instability and constraint. For the KL loss, GRPO’s curve is too low, indicating slow learning, while GiGPO’s curve is relatively high, reflecting an overly aggressive learning process. By contrast, HGPO achieves a balanced trajectory, demonstrating steady and stable policy learning. We have also made the training and evaluation Weights & Biases (W&B) logs publicly available.
+Figure 7:
+Training dynamics of HGPO (Red), GiGPO (Yellow), and GRPO (Purple) on ALFWorld using Qwen2.5-1.5B-Instruct. The details of these metrics are shown in Appendix
+D.2
+.
+Figure 8:
+Training dynamics of HGPO (Red), GiGPO (Yellow), and GRPO (Blue) on WebShop using Qwen2.5-1.5B-Instruct. Best viewed in color.
+D.3
+The distribution
+We report the distributions of hierarchical group sizes (K = 4) on ALFWorld and WebShop using Qwen2.5-1.5B-Instruct as shown in Table
+9
+.
+Figure 9:
+The distributions of hierarchical group sizes (
+K
+=
+4
+K=4
+) on ALFWorld and WebShop using Qwen2.5-1.5B-Instruct.
+Appendix E
+Use of LLMs
+We used LLMs exclusively as writing assistants to refine language. In particular, their use was restricted to grammar correction, style improvement, and phrasing adjustments for clarity and conciseness.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

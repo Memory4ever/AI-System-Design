@@ -1,0 +1,163 @@
+{
+  "id": "00535",
+  "url": "https://arxiv.org/html/2601.00535v1",
+  "checked": "2026-10-02T05:59:11.878826+00:00",
+  "sections": [
+    {
+      "heading": "3 Method",
+      "chars": 1019,
+      "text": "Figure 2 : Overview of FreeText. FreeText aims to enhance text rendering in complex scenes without modifying the architecture or parameters of a base T2I diffusion model. Given a target text span s and its glyph reference image, FreeText proceeds in two stages, as shown in Fig. 2 . 1. Attention-guided endogenous text-region localization (Sec. 3.1 ): we extract image-to-text (I2T) cross-attention from DiT/MMDiT blocks during sampling, aggregate and select informative timestep–layer pairs, and apply topology-aware post-processing to obtain a high-confidence writing mask \\mathbf{R}_{s} in latent space. 2. Spectral-Modulated Glyph Injection (Sec. 3.2 ): we encode the glyph reference into latent space, align it to the current noise level, construct a Log-Gabor based Spectral-Modulated Glyph Injection (SGMI) prior, and inject it into \\mathbf{R}_{s} within a short time window using cosine annealing, strengthening glyph structure and suppressing semantic leakage (e.g., rendering the concept instead of the word).",
+      "truncated": false
+    },
+    {
+      "heading": "3.1 Attention-guided text-region localization",
+      "chars": 350,
+      "text": "To answer “where to write”, we localize the writing region directly from endogenous attention ( Tang et al., 2023 ) , without external layout predictors, OCR, or VLM detectors. We read out token-wise spatial attribution from attention maps, then perform timestep–layer selection and topology-aware refinement to produce a high-confidence region mask.",
+      "truncated": false
+    },
+    {
+      "heading": "3.1.1 Attention extraction",
+      "chars": 800,
+      "text": "Let \\mathbf{A}^{(t,l)} denote the head-averaged I2T attention at timestep t and the l-th DiT/MMDiT block: \\mathbf{A}^{(t,l)}\\in\\mathbb{R}^{H\\times W\\times N_{\\text{text}}}, (1) where N_{\\text{text}} is the number of text tokens. For a target span s, we first locate its token subsequence \\mathcal{T}_{s}, and augment it with a few sink-like special tokens that exhibit stable high responses across layers/heads. We call the union the anchor token set \\tilde{\\mathcal{T}}_{s}. We then average attention over \\tilde{\\mathcal{T}}_{s} to obtain an initial localization map: \\mathbf{M}^{(t,l)}(x,y)=\\frac{1}{|\\tilde{\\mathcal{T}}_{s}|}\\sum_{k\\in\\tilde{\\mathcal{T}}_{s}}\\mathbf{A}^{(t,l)}_{x,y,k}, (2) and linearly normalize \\mathbf{M}^{(t,l)} to [0,1]. For clarity, we omit the subscript s in what follows.",
+      "truncated": false
+    },
+    {
+      "heading": "3.1.2 Timestep-layer selection",
+      "chars": 1165,
+      "text": "As shown in Fig. 3 , naively aggregating attention across all timesteps and blocks introduces substantial noise: early steps are coarse and reflect global planning; mid steps are most informative for writing placement; late steps become diffuse due to global refinement ( Chefer et al., 2023 ; Darcet et al., 2023 ) . In addition, shallow blocks emphasize local geometry while deeper blocks integrate global semantics. We therefore select informative timestep-layer pairs before aggregation. Figure 3 : Typical I2T attention patterns across timesteps: early steps are coarse, mid steps concentrate on target regions, and late steps become diffuse. Given candidate sets \\mathcal{T}_{\\text{cand}} and \\mathcal{L}_{\\text{cand}}, we score each pair (t,l) using a soft IoU between \\mathbf{M}^{(t,l)} and a reference mask \\mathbf{Y}\\in[0,1]^{H\\times W}: \\text{IoU}(t,l)=\\frac{\\langle\\mathbf{M}^{(t,l)},\\mathbf{Y}\\rangle}{\\|\\mathbf{M}^{(t,l)}\\|_{1}+\\|\\mathbf{Y}\\|_{1}-\\langle\\mathbf{M}^{(t,l)},\\mathbf{Y}\\rangle}. (3) We select the top-K pairs to form \\mathcal{S} and aggregate: \\mathbf{M}(x,y)=\\frac{1}{|\\mathcal{S}|}\\sum_{(t,l)\\in\\mathcal{S}}\\mathbf{M}^{(t,l)}(x,y). (4)",
+      "truncated": false
+    },
+    {
+      "heading": "3.1.3 Topology-aware region selection",
+      "chars": 1111,
+      "text": "The aggregated map \\mathbf{M} may still contain isolated peaks and fragmented clusters. We apply a lightweight post-processing pipeline to produce the final writing mask. We first perform local neighborhood aggregation on \\mathbf{M} to suppress small outliers and promote connected responses. Next, we binarize \\mathbf{M} into \\mathbf{B}\\in\\{0,1\\}^{H\\times W} using an adaptive threshold selected by maximizing inter-class variance ( Otsu and others, 1975 ) . We then run DBSCAN ( Ester et al., 1996 ) on foreground pixels to obtain candidate connected regions \\{\\mathcal{C}_{i}\\} while discarding sparse noise. Each region \\mathcal{C}_{i} is scored on the original \\mathbf{M}: q_{i}=\\frac{\\left|\\{(x,y)\\in\\mathcal{C}_{i}\\mid\\mathbf{M}(x,y)>\\tau\\}\\right|}{|\\mathcal{C}_{i}|}, (5) where \\tau is set as a high quantile of \\mathbf{M} within the union of candidate regions. We select the best region and resize it to latent resolution to obtain the binary writing mask: \\mathbf{R}\\in\\{0,1\\}^{H_{\\text{lat}}\\times W_{\\text{lat}}}. (6) In Sec. 3.2 , \\mathbf{R} is broadcast across channels for local latent injection.",
+      "truncated": false
+    },
+    {
+      "heading": "3.2 Spectral-Modulated Glyph Injection",
+      "chars": 320,
+      "text": "To answer “what to write”, we enhance glyph structure while suppressing semantic leakage. We encode a glyph reference into latent space, align it to the current noise level, apply Log-Gabor based SGMI to emphasize structure-carrying frequencies, and inject the resulting prior into \\mathbf{R} within a short time window.",
+      "truncated": false
+    },
+    {
+      "heading": "3.2.1 Noise-aligned latent projection",
+      "chars": 563,
+      "text": "We rasterize the target text s into a glyph reference image \\mathbf{I}_{\\text{glyph}} placed in region \\mathbf{R}, and encode it with the same VAE as the base model: \\mathbf{z}_{\\text{ref}}=E_{\\text{VAE}}(\\mathbf{I}_{\\text{glyph}})\\in\\mathbb{R}^{C\\times H_{\\text{lat}}\\times W_{\\text{lat}}}. (7) At timestep t with noise schedule (\\alpha_{t},\\sigma_{t}), we match the noise level via forward diffusion: \\mathbf{z}_{\\text{ref}}^{(t)}=\\alpha_{t}\\,\\mathbf{z}_{\\text{ref}}+\\sigma_{t}\\,\\boldsymbol{\\epsilon},\\quad\\boldsymbol{\\epsilon}\\sim\\mathcal{N}(0,\\mathbf{I}). (8)",
+      "truncated": false
+    },
+    {
+      "heading": "3.2.2 Log-Gabor spectral modulation",
+      "chars": 910,
+      "text": "On \\mathbf{z}_{\\text{ref}}^{(t)}, we apply a Log-Gabor filter ( Field, 1987 ) to strengthen mid-to-high frequencies that carry glyph structure while suppressing low-frequency background and ultra-high-frequency noise. Let G(\\rho,\\theta) be the Log-Gabor kernel in the 2D frequency domain. For each channel c: \\displaystyle\\widehat{\\mathbf{z}}_{\\text{ref},c}^{(t)} \\displaystyle=\\mathcal{F}\\!\\left(\\mathbf{z}_{\\text{ref},c}^{(t)}\\right), (9) \\displaystyle\\widehat{\\mathbf{z}}_{\\text{sgmi},c}^{(t)}(\\rho,\\theta) \\displaystyle=G(\\rho,\\theta)\\,\\cdot\\widehat{\\mathbf{z}}_{\\text{ref},c}^{(t)}(\\rho,\\theta), (10) \\displaystyle\\mathbf{z}_{\\text{sgmi},c}^{(t)} \\displaystyle=\\mathcal{F}^{-1}\\!\\left(\\widehat{\\mathbf{z}}_{\\text{sgmi},c}^{(t)}\\right), (11) where \\mathcal{F} and \\mathcal{F}^{-1} are 2D FFT and inverse FFT. The resulting \\mathbf{z}_{\\text{sgmi}}^{(t)} is the SGMI-enhanced reference latent at timestep t.",
+      "truncated": false
+    },
+    {
+      "heading": "3.2.3 Annealed spatiotemporal injection",
+      "chars": 782,
+      "text": "Let the sampling trajectory evolve from timestep T to 0. We inject glyph priors only in a mid-early window: t_{\\text{start}}=0.8T,\\quad t_{\\text{end}}=0.6T, (12) to avoid disrupting early global planning or late-stage fine-detail refinement. For t\\in[t_{\\text{start}},t_{\\text{end}}], we define a cosine-annealed weight: \\lambda(t)=\\frac{1}{2}\\left(1+\\cos\\left(\\pi\\cdot\\frac{t-t_{\\text{start}}}{t_{\\text{end}}-t_{\\text{start}}}\\right)\\right), (13) and update the denoising latent \\mathbf{z}^{(t)} by masked replacement ( Avrahami et al., 2023 ) : \\tilde{\\mathbf{z}}^{(t)}=\\big(\\mathbf{I}-\\lambda(t)\\mathbf{R}\\big)\\odot\\mathbf{z}^{(t)}\\;+\\;\\lambda(t)\\mathbf{R}\\odot\\mathbf{z}_{\\text{sgmi}}^{(t)}. (14) For t\\notin[t_{\\text{start}},t_{\\text{end}}], we keep \\mathbf{z}^{(t)} unchanged.",
+      "truncated": false
+    },
+    {
+      "heading": "3.3 CLT-Bench: Chinese long-tail text rendering",
+      "chars": 2074,
+      "text": "Chinese text rendering is challenging due to a long-tailed character distribution and high intra-class visual similarity. Existing benchmarks over-emphasize common characters and/or English, obscuring degradation from frequent/simple to rare/complex cases ( Zhao et al., 2025 ; Fang et al., 2025 ; Du et al., 2025 ) . We introduce CLT-Bench to stress-test T2I text rendering under rare-character and complex-layout settings. We assign each prompt a complexity score combining character difficulty and layout difficulty. For a character c, we normalize stroke count s(c) and frequency rank r(c): For a character c, we normalize stroke count \\kappa(c) and frequency rank r(c): K(c)=\\frac{\\kappa(c)-\\kappa_{\\min}}{\\kappa_{\\max}-\\kappa_{\\min}},\\quad R(c)=\\frac{r(c)-r_{\\min}}{r_{\\max}-r_{\\min}}. (15) and define character difficulty D(c)=\\frac{w_{s}K(c)+w_{f}R(c)}{w_{s}+w_{f}}\\in[0,1]. (16) Given text segments \\{\\mathrm{txt}_{i}\\}_{i=1}^{N_{\\text{seg}}} with characters \\{c_{j}\\}_{j=1}^{N_{\\text{chars}}}, we compute \\displaystyle C_{\\text{char}} \\displaystyle=\\frac{1}{N_{\\text{chars}}}\\sum_{j}D(c_{j}), (17) \\displaystyle C_{\\text{len}} \\displaystyle=\\min\\!\\left(\\frac{N_{\\text{chars}}}{N_{\\max}},1\\right), \\displaystyle C_{\\text{seg}} \\displaystyle=\\min\\!\\left(\\frac{N_{\\text{seg}}-1}{M_{\\max}-1},1\\right), where N_{\\max} is a preset upper bound on the total number of characters to render in a prompt, and M_{\\max} is a preset upper bound on the number of text segments (regions) to render. The prompt score is then \\emph{Score}=\\frac{w_{\\text{char}}C_{\\text{char}}+w_{\\text{len}}C_{\\text{len}}+w_{\\text{seg}}C_{\\text{seg}}}{w_{\\text{char}}+w_{\\text{len}}+w_{\\text{seg}}}\\in[0,1]. (18) We stratify prompts by Score to form subsets spanning common/simple to rare/complex characters with challenging multi-segment layouts. Figure 4 : Baseline comparison across four text-rendering scenarios (comic, caption, poster, slide). Top: Base; bottom: Base+FreeText. Red boxes highlight the target text regions, where FreeText reduces typos/malformed glyphs and improves readability.",
+      "truncated": false
+    },
+    {
+      "heading": "4 Experiments",
+      "chars": 0,
+      "text": "",
+      "truncated": false
+    },
+    {
+      "heading": "4.1 Experimental setup",
+      "chars": 0,
+      "text": "",
+      "truncated": false
+    },
+    {
+      "heading": "4.1.1 Base models",
+      "chars": 439,
+      "text": "We evaluate FreeText on four representative T2I foundation models: (i) Qwen-Image (Chinese/English prompts), (ii) FLUX.1-dev (English only), (iii) Stable Diffusion 3.5 Large (SD3.5-L; English only), and (iv) Stable Diffusion 3 Medium (SD3-M; English only). All experiments compare Base vs. Base + FreeText . FreeText is used as an inference-time plug-in: it does not modify model parameters, architectures, or introduce learnable branches.",
+      "truncated": false
+    },
+    {
+      "heading": "4.1.2 Benchmarks and protocol",
+      "chars": 922,
+      "text": "We use three benchmarks covering long text, multi-region rendering, and long-tail Chinese: (1) longText-Benchmark with longText-en/zh, focusing on long prompts and paragraph-level, multi-line text ( Geng et al., 2025 ) ; (2) CVTG , with 2/3/4/5 text regions (2–5 segments) and typically short prompts ( Du et al., 2025 ) ; (3) CLT-Bench (Sec. 3.3 ), targeting rare and structurally complex Chinese characters. Language alignment. Qwen-Image and FLUX.1-dev are evaluated on longText-Benchmark and CVTG. SD3.5-L and SD3-M are evaluated on CVTG only, since long prompts can be truncated by their text encoders. CLT-Bench is evaluated on Qwen-Image only (Chinese support). Inference settings. Unless noted, Base and Base + FreeText use identical resolution, sampling steps, and sampler hyperparameters. FreeText uses the default annealed injection window (Sec. 3.2 ); in this section we refer to the injection module as SGMI .",
+      "truncated": false
+    },
+    {
+      "heading": "4.1.3 Metrics",
+      "chars": 409,
+      "text": "We measure both text readability and overall image quality (higher is better unless noted): NED (Normalized Edit Distance, via a fixed OCR engine ( Cui et al., 2025 ) ), CLIPScore (text–image alignment), AestheticScore (LAION aesthetic predictor), and VQA Score (VLM-based usability/clarity QA; templates in the appendix). For localization analysis, we report IoU between predicted and reference text regions.",
+      "truncated": false
+    },
+    {
+      "heading": "4.2 Effectiveness of FreeText",
+      "chars": 0,
+      "text": "",
+      "truncated": false
+    },
+    {
+      "heading": "4.2.1 Qwen-Image and FLUX.1-dev",
+      "chars": 963,
+      "text": "Table 1 reports results on longText-Benchmark and CVTG. FreeText consistently improves NED and VQA Score ( Fang et al., 2025 ) , indicating higher text readability, while CLIPScore and AestheticScore remain largely stable, suggesting limited impact on semantic alignment and aesthetics. Table 1: End-to-end results on longText-Benchmark and CVTG. Model Setting Subset NED\\uparrow CLIP\\uparrow Aes\\uparrow VQA\\uparrow Qwen-Image Base longText-en 0.625 0.858 4.912 2.650 Qwen-Image Base + FreeText longText-en 0.713 0.864 5.013 4.177 FLUX.1-dev Base longText-en 0.598 0.863 5.365 2.563 FLUX.1-dev Base + FreeText longText-en 0.690 0.868 5.342 4.211 Qwen-Image Base longText-zh 0.639 0.474 4.607 3.657 Qwen-Image Base + FreeText longText-zh 0.694 0.537 4.749 4.211 Qwen-Image Base CVTG 0.574 0.781 4.386 2.756 Qwen-Image Base + FreeText CVTG 0.619 0.794 4.391 3.469 FLUX.1-dev Base CVTG 0.712 0.836 5.910 4.050 FLUX.1-dev Base + FreeText CVTG 0.722 0.839 5.936 4.952",
+      "truncated": false
+    },
+    {
+      "heading": "4.2.2 SD3-M and SD3.5-L",
+      "chars": 621,
+      "text": "Since SD3 variants are sensitive to long prompts, we evaluate them on CVTG only (Table 2 ). FreeText improves NED and VQA Score for both models, while CLIPScore and AestheticScore remain comparable, indicating the local SGMI injection does not introduce notable semantic drift or quality degradation. Table 2: End-to-end results on CVTG for SD3 models. Best within each model pair is in bold. Model Setting NED\\uparrow CLIP\\uparrow Aes\\uparrow VQA\\uparrow SD3.5-L Base 0.848 0.879 5.634 3.849 SD3.5-L Base + FreeText 0.864 0.871 5.608 4.595 SD3-M Base 0.616 0.851 5.906 2.903 SD3-M Base + FreeText 0.669 0.852 5.917 3.674",
+      "truncated": false
+    },
+    {
+      "heading": "4.2.3 CLT-Bench",
+      "chars": 292,
+      "text": "On CLT-Bench (Qwen-Image only), FreeText improves NED but with smaller gains (Table 3 ). This suggests SGMI is most effective when the base model already has a usable representation for the target characters; it strengthens glyph structure rather than enabling unseen characters from scratch.",
+      "truncated": false
+    },
+    {
+      "heading": "4.2.4 Benefit propagation under full attention",
+      "chars": 705,
+      "text": "We observe cross-region benefit propagation: correcting one text region with FreeText can improve other regions that are not explicitly processed, reflected by higher global metrics (e.g., VQA Score). We attribute this to global self-attention in DiT/MMDiT: patch tokens mix information globally at each denoising step, so severe errors in one region can perturb updates elsewhere; once a key error is corrected, this interference is reduced. Table 3: End-to-end NED on CLT-Bench. Model Setting NED\\uparrow Qwen-Image Base 0.458 Qwen-Image Base + FreeText 0.488 Figure 5 : Cross-region benefit propagation and attention evidence (example with two text lines; refining only one line can improve the other).",
+      "truncated": false
+    },
+    {
+      "heading": "4.3 Localization strategy",
+      "chars": 0,
+      "text": "",
+      "truncated": false
+    },
+    {
+      "heading": "4.3.1 Token choice",
+      "chars": 576,
+      "text": "We compare three token sets for each target span: Entity-only (tokens of the target string), Sink-only (sink-like special tokens), and Entity + Sink . As shown in Table 4 and Fig. 6 , Sink-only is more temporally stable but has a lower ceiling, while Entity + Sink achieves the best IoU by combining explicit semantic attribution with stable sink responses, yielding more reliable masks for SGMI. Table 4: Localization IoU for different token sets. Setting IoU\\uparrow Entity-only 0.495 Sink-only 0.479 Entity + Sink 0.561 Figure 6 : IoU vs. timestep for different token sets.",
+      "truncated": false
+    },
+    {
+      "heading": "4.3.2 Comparison with VLM-based localization",
+      "chars": 677,
+      "text": "Table 5 compares our endogenous localization against several closed-source VLM baselines. In practice, multi-line text, cluttered backgrounds, and malformed glyphs can break “recognize-then-localize” pipelines; recognition failure often cascades into localization failure. By reading I2T attention directly, FreeText avoids this chain and provides a more stable signal. Table 5: Localization IoU comparison. Method IoU\\uparrow doubao-seed-1-6-251015 0.325 gemini-2.5-flash-lite 0.139 gpt-5.1 0.159 qwen3-vl-plus-2025-09-23 0.195 FreeText (ours) 0.561 Figure 7 : Typical VLM localization failures under multi-line text and degraded glyphs, compared with endogenous localization.",
+      "truncated": false
+    },
+    {
+      "heading": "4.4 Ablation study",
+      "chars": 1623,
+      "text": "We compare three variants: B (Base), +F (Base+FreeText), and +F-\\,SGMI (Base+FreeText without SGMI, i.e., removing the spectral band-pass modulation while keeping the rest unchanged). As shown in Table 6 , removing SGMI reduces NED and VQA Score, while CLIP and Aes remain largely unchanged, indicating SGMI primarily contributes to text readability improvements. As further illustrated in Fig. 8 , injecting only low-frequency components loses stroke-level structure, while injecting only high-frequency components (where semantics dominates) can trigger concept-texture intrusion. In contrast, SGMI’s band-pass design provides an injection signal that is most effective for glyph structure while being most conservative against semantic leakage. This indicates that the key of frequency-domain modulation is not injecting more information , but injecting the right spectral band . Figure 8 : Qualitative ablation illustrating semantic leakage and stroke degradation under different spectral settings. Table 6: Ablation on SGMI. Model Settings NED\\uparrow CLIP\\uparrow Aes\\uparrow VQA\\uparrow Qwen-Image B 0.625 0.858 4.912 2.650 +F-\\,SGMI 0.686 0.860 5.027 3.724 +F 0.713 0.864 5.013 4.177 FLUX.1-dev B 0.598 0.863 5.365 2.563 +F-\\,SGMI 0.671 0.865 5.361 3.816 +F 0.690 0.868 5.342 4.211 Table 7: Inference efficiency. Model Setting Time (s)\\downarrow Mem (GB)\\downarrow Qwen-Image Base 37.64 53.76 Qwen-Image Base + FreeText 42.33 54.35 FLUX.1-dev Base 41.56 31.44 FLUX.1-dev Base + FreeText 47.17 32.17 SD3.5-L Base 35.03 26.11 SD3.5-L Base + FreeText 41.17 26.91 SD3-M Base 9.85 14.53 SD3-M Base + FreeText 11.47 14.97",
+      "truncated": false
+    },
+    {
+      "heading": "4.5 Efficiency",
+      "chars": 346,
+      "text": "We measure inference overhead on an NVIDIA A6000 with bfloat16, resolution 928\\times 928, and 50 sampling steps. Table 7 shows that FreeText adds moderate overhead (primarily from Stage-1 localization, which accumulates and selects I2T attention before injection), increasing end-to-end latency by roughly 12%–18% with < 1GB peak-memory overhead.",
+      "truncated": false
+    },
+    {
+      "heading": "5 Conclusion",
+      "chars": 854,
+      "text": "We presented FreeText, a training-free and base-model-agnostic framework for improving text rendering in T2I diffusion models without changing model weights or architectures. By decomposing text rendering into where to write and what to write , FreeText (i) localizes writing regions from endogenous attention via sink-anchored, topology-aware selection, and (ii) enhances glyph fidelity through SGMI, a noise-aligned frequency-domain injection that strengthens structure-carrying components and mitigates semantic leakage. Across multiple foundation models and benchmarks, FreeText consistently improves readability metrics while maintaining CLIPScore and AestheticScore, and incurs only moderate runtime and memory overhead. Future research will focus on validating the universality of our approach by adapting it to diverse emerging foundation models.",
+      "truncated": false
+    }
+  ]
+}

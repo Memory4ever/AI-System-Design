@@ -1,0 +1,1469 @@
+Finding Highly Interpretable Prompt-Specific Circuits in Language Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Refining Attention Causal Communication
+3 Beyond a Single Circuit Per Task
+Prompt-level clustering.
+Representative circuits.
+Signal-level comparison.
+4 Automatic Interpretation of ACC++ Signals
+Autointerpretation pipeline.
+When a signal is considered interpretable.
+Dissecting ABBA vs. BABA.
+Further Examples.
+Limitations.
+5 Related Work
+6 Conclusions
+References
+A Notation Used in the Appendices
+Attention scores and weights.
+Layer/head indexing convention in this appendix.
+SVD of the QK matrix.
+Residual decomposition into upstream component outputs.
+B A Unified Bilinear Form Encompassing Bias and Rotational Positional Encoding
+B.1 Models with Bias (GPT-2)
+B.2 Models with RoPE (Gemma-2)
+B.3 Models with Bias and RoPE (Pythia)
+B.4 Checking the condition number of the W Q W_{Q} and W K T W_{K}^{T} matrices
+C ACC++: Refined ACC as a Counterfactual Search
+C.1 Problem definition
+Destination intervention (find destination signals).
+Source intervention (find source signals).
+C.2 Signal candidates from component outputs and the SVD basis
+Destination candidates (use U U ).
+Source candidates (use V V ).
+Intervention vectors.
+C.3 Contribution matrix (destination or source view)
+Destination view.
+Source view.
+Row-sum decomposition of scores.
+C.4 Attribution via integrated gradients (probability at index s s )
+C.5 Greedy counterfactual solver and the induced intervention
+Greedy removal in contribution space.
+Induced intervention for the destination objective.
+Induced intervention for the source objective.
+C.6 ACC++ Recipe (high-level)
+D Finding τ \tau
+E Reproducing Prior ACC Results with ACC++
+F Representative and Clustering Analysis
+F.1 Dataset
+F.2 Components
+Nodes
+Edges
+Edge–Singular-Vector Pairs
+F.3 Clustering
+F.4 Representative
+F.5 Signals
+G Autointerpretation Pipeline Details
+G.1 Finding Signal Pairs
+Lemma.
+Corollary (source-to-destination correspondence).
+Extending this methodology to RoPE models.
+G.2 Automated Interpretation Pipeline Description
+Top-Activation Discovery (context collection)
+Construction of Signal Examples
+Interpretation stage
+Gemini for qualitative, manual-case studies.
+Interpretation Scoring Setup
+Example top-activation contexts.
+Quantitative evaluation of interpretation quality
+G.3 Additional Examples of Interpretable Tracing via ACC++
+Interactive trace visualizations in the supplement.
+GPT-2: Tracing proper-noun features.
+Pythia: Comparing Templates 9 and 10.
+Gemma: Examples of non-IOI tasks.
+License: CC BY 4.0
+arXiv:2602.13483v1 [cs.LG] 13 Feb 2026
+Finding Highly Interpretable Prompt-Specific Circuits in Language Models
+Gabriel Franco
+Affiliation: Department of Computer Science, Boston University, Boston, USA
+Correspondence to: gvfranco@bu.edu
+Lucas M. Tassis
+Affiliation: Department of Computer Science, Boston University, Boston, USA
+Azalea Rohr
+Affiliation: Faculty of Computing & Data Sciences, Boston University, Boston, USA
+Mark Crovella
+Affiliation: Department of Computer Science, Boston University, Boston, USA
+Affiliation: Faculty of Computing & Data Sciences, Boston University, Boston, USA
+Abstract
+Understanding the internal circuits that language models use to solve tasks remains a central challenge in mechanistic interpretability. Most prior work identifies circuits at the task level by averaging across many prompts, implicitly assuming a single stable mechanism per task. We show that this assumption can obscure a crucial source of structure: circuits are prompt-specific , even within a fixed task. Building on attention causal communication (ACC) ( Franco and Crovella, 2025 ) , we introduce ACC++, refinements that extract cleaner, lower-dimensional causal signals inside attention heads from a single forward pass . Like ACC, our approach does not require replacement models (e.g., SAEs) or activation patching; ACC++ further improves circuit precision by reducing attribution noise. Applying ACC++ to indirect object identification (IOI) in GPT-2, Pythia, and Gemma 2, we find there is no single circuit for IOI in any model: different prompt templates induce systematically different mechanisms. Despite this variation, prompts cluster into prompt families with similar circuits, and we propose a representative circuit for each family as a practical unit of analysis. Finally, we develop an automated interpretability pipeline that uses ACC++ signals to surface human-interpretable features and assemble mechanistic explanations for prompt families behavior. Together, our results recast circuits as a meaningful object of study by shifting the unit of analysis from tasks to prompts, enabling scalable circuit descriptions in the presence of prompt-specific mechanisms.
+Keywords:
+Mechanistic Interpretability, Circuit Tracing, Interpretability
+1 Introduction
+Large language models (LLMs) have become widely deployed components in machine learning systems, yet their internal computations remain difficult to understand. This opacity is increasingly a practical problem: when models fail, behave inconsistently across prompt wordings, or exhibit unexpected generalization, we often lack a mechanistic account of why . Mechanistic interpretability aims to fill this gap by explaining model behavior in terms of human-understandable computations implemented by collections of model components—often called circuits ( Elhage et al., 2021 ) . In this view, a circuit is not merely a correlated set of neurons or features, but a causal pathway: specific components write information into the residual stream, and downstream components selectively read and transform it.
+A central difficulty in mechanistic interpretability is causal localization : identifying which components and directions in the residual stream are responsible for a behavior. Many circuit-finding approaches use counterfactual interventions such as activation patching ( Wang et al., 2023 ; Conmy et al., 2023 ) , which can be costly and sensitive to design choices ( Méloux et al., 2025 ) . In most such studies, circuit analyses are typically conducted at the task level , aggregating evidence across many prompts that are semantically equivalent given the task. This perspective can hide an important source of structure: semantically equivalent prompts can induce different attention patterns, intermediate representations, and failure modes, so averaging over prompts may confound distinct mechanisms into a single story. Our starting point is the hypothesis that circuits are often prompt-specific even within a single task, and that understanding this variation is necessary both for faithful explanations and for a sharper notion of what a circuit is.
+To study tasks on a per-prompt basis, we build on attention-causal communication (ACC) ( Franco and Crovella, 2025 ) , a framework that identifies low-dimensional signals that are causally responsible for specific attention patterns from a single forward pass. ACC formalizes the idea that attention heads communicate through low-dimensional signals that are extracted via analysis of the head’s query–key (QK) matrix, and in traces which upstream components write the signals that drive each particular attention decision. Our first contribution is to introduce a number of methodological refinements that yield lower-dimensional, highly interpretable causal signals and make prompt-level analysis substantially more reliable. This improved method, which we call ACC++, (i) replaces ACC’s linear proxy objective with an explicit counterfactual objective over the true nonlinear attention weight, (ii) uses improved attribution that accounts for the competitive dynamics of the Softmax, and (iii) adopts a unified formulation of the attention score that cleanly handles architectural details (e.g., RoPE and attention biases).
+We apply ACC++ to a large set of varied prompts for the indirect object identification (IOI) task ( Wang et al., 2023 ) in three LLMs, tracing a circuit for each prompt that the model answers correctly. These per-prompt traces show that there is no single circuit for IOI : circuit structure can change systematically with prompt structure. Crucially, this variability is not arbitrary. Prompt-level graphs cluster into a small number of recurring circuit families. The nature of the prompt families varies across models, driven primarily by the relative position of the subject and indirect object order in GPT-2, by low-level syntactic variants in Pythia, and more weakly by either of these two factors in Gemma. We summarize each family by a representative circuit that serves as a stable unit of analysis. Comparing representatives at the level of ACC++ signals reveals both invariances (stable signal routes reused across prompt classes) and substitutions (different heads implementing similar roles across classes), giving a precise vocabulary for same-versus-different computation within LLMs.
+Finally, we apply an automated interpretation pipeline in the signals found by ACC++. We show that a large fraction of ACC++ signals have reliable, human-interpretable explanations. These interpretations shed considerable light on the differences between circuits across prompts and can help explain the mechanisms used by models in computing their outputs.
+2 Refining Attention Causal Communication
+The attention-causal communication (ACC) problem was introduced by ( Franco and Crovella, 2025 ) to formalize the search of low-dimensional features that are causal for attention patterns in transformer models. Given a model and an attention head that attends to a specific destination–source token pair 1 1
+1
+We call the query token the destination token and the key token the source token. , the original ACC problem asks for the smallest subspace and the smallest set of signals – ie, upstream components writing into that subspace – such that, if those components had not contributed to the residual stream in that subspace, the attention head would not have attended to the token pair. This formulation emphasizes minimality of both the subspace and the contributing components and reflects the view of transformers as systems that communicate via writing to and reading from the residual stream ( Elhage et al., 2021 ) .
+To solve this problem, ( Franco and Crovella, 2025 ) introduced a linear surrogate for attention, termed relative attention , together with a decomposition of the attention head’s query–key (QK) matrix using the singular value decomposition (SVD). Prior work has shown that the singular vectors of QK matrices tend to align with meaningful features in residual representations, exposing the communication channels used by attention heads ( Pan et al., 2024 ; Merullo et al., 2024 ; Franco and Crovella, 2024 ; Franco and Crovella, 2025 ; Ahmad et al., 2025 ) . Intuitively, the SVD of QK yields paired query-side and key-side directions; each pair defines a candidate low-dimensional communication channel through which upstream components can influence that head’s attention to a destination–source token pair.
+However, relative attention is a surrogate objective: it operates on a linearized quantity rather than the Softmax-normalized attention weight itself. In particular, to induce a given change in the attention weight, it typically requires selecting more upstream components and/or more SVD directions than necessary, which introduces noise into the resulting signals (as we show in Appendix E ). In this work, we present ACC++, which tightens the objective by defining minimality directly in terms of counterfactual changes to the true attention weight. Further, rather than centering the definition on identifying a causal subspace, ACC++ reframes the tracing problem as an explicit counterfactual search over individual input signals. Given an attention head that assigns an attention weight to a token pair, ACC++’s objective is to identify a small set of signals M M such that removing these signals causes the attention weight to fall below a specified threshold τ \tau (see Appendices B and C for formal presentation of ACC++ and Appendix D for details on setting τ \tau ).
+To solve this updated problem, ACC++ faithfully accounts for the competitive dynamics induced by the Softmax function. As in prior work, we begin by decomposing the attention head’s QK matrix using SVD and expressing the residual stream as a sum of upstream component outputs. Projecting each component’s output onto the SVD basis yields a set of candidate signals, where each candidate is indexed by an upstream component and a singular vector. We consider both destination-side candidates (signals written into the destination residual that affect the query) and source-side candidates (signals written into source residuals that affect keys). A key methodological improvement in ACC++ lies in how these candidates are evaluated: instead of using a linear proxy, it employs Integrated Gradients (IG) ( Sundararajan et al., 2017 ) to attribute each candidate’s contribution to the final attention weight.
+The IG attribution accounts for Softmax competition across all sources: changing a signal candidate’s contribution to one attention weight affects the full destination-row distribution. Hence, ACC++ defines interventions with respect to the entire set of source tokens competing for the destination , not just the single destination–source score. We then apply a greedy, iterative removal procedure that successively eliminates the highest-attribution signals until the attention weight drops below τ \tau , thereby isolating a small set of signals that are causally responsible for the attention pattern. By repeating the experiments of ( Franco and Crovella, 2025 ) , we find that the causal signals identified by our method are substantially lower-dimensional , being rank-1 in the vast majority of cases. Lower dimensionality is desirable because it sharpens interpretability (fewer directions to explain) and enables more minimal, targeted counterfactual interventions, while preserving equivalent performance on circuits and interventions compared to ACC (see Appendix E for an extensive comparison of ACC++ against ACC).
+We use ACC++ to trace circuits. In this work we use the term circuit to mean the prompt-specific graph traced using ACC++, whose edges are the selected signals that are causal to the model’s attention computations. Circuit nodes correspond to model components (e.g., attention heads, MLPs, and input/embedding terms), and each edge links an upstream component to a downstream attention computation along a specific subspace. We start the trace by identifying the components that have a direct effect on the logit direction of interest (e.g., the correct-answer logit direction), and then expand the circuit recursively: for each downstream attention head attending to a token pair in the current trace, we run ACC++ to identify a small set of causal signals for that attention decision, add those edges, and recursively continue tracing upstream. Because this procedure always traces from downstream effects to upstream causes, the resulting circuit is directed and layer-ordered, and the recursion terminates once it reaches components with no upstream attention dependence (or the earliest layer).
+3 Beyond a Single Circuit Per Task
+Having defined circuits as prompt-specific graphs traced via ACC++, we now ask how these traces vary across prompts within the same task. Rather than treating a circuit as a single object for an entire task, we consider a circuit for each prompt and ask how these circuits compare across prompts. This view naturally induces prompt groupings: if multiple prompts consistently rely on similar sets of components and signals, they should cluster together. We hypothesize that this prompt-level structure explains part of the variability reported for traditional tracing methods, where circuit structure can change substantially across data samples and hyperparameters ( Méloux et al., 2025 ) .
+We apply this analysis to the Indirect Object Identification (IOI) task, a standard benchmark task with a well-studied with well-studied circuits in GPT-2 Small and Pythia-160M ( Wang et al., 2023 ; Tigges et al., 2024 ) . Previous work has studied IOI circuits using prompts generated by a number of templates ( Wang et al., 2023 ; Tigges et al., 2024 ; Conmy et al., 2023 ; Haklay et al., 2025 ) . To isolate prompt-based variability, we instantiate an IOI dataset that is explicitly balanced across two levels of templates. The high-level template specifies the role order of the two names, namely whether the subject (B) and the indirect object (A) appear in ABBA or BABA order in the prompt, whereas low-level templates change only the surface wording around that structure (e.g., different introductory clauses and connectives) without changing the underlying A/B role assignments. We use 15 low-level templates, and for each combination of low-level and high-level template we sample 100 examples, for a total of 3000 prompts (See Appendix F.1 for more details).
+We evaluate three language models: GPT-2 Small, Pythia-160M, and Gemma-2 2B ( Radford et al., 2019 ; Biderman et al., 2023 ; Team et al., 2024 ) . For each model, we trace a circuit with ACC++ on every prompt where the model predicts the correct indirect object. In these graphs, nodes correspond to model components (e.g. attention heads and MLPs) and edges correspond to the causal signals selected by ACC++; we provide all tracing and signal details in Appendix C . To make quantitative comparisons of circuits, we model each circuit as a set of discrete components. We calculate the pairwise distance between prompts using the Jaccard distance over these sets and group them via average linkage hierarchical clustering (Appendix F.3 ). We explore three levels of component granularity: (i) nodes (attention heads and MLPs), (ii) edges, and (iii) edge–singular-vector pairs (adding the signal identity). We observe that the finer granularity is critical: clustering with nodes or edges alone yields weaker clustering, while incorporating singular-vector indices reveals the sharpest block structure, allowing us to identify distinct circuit families more easily. Appendix F.2 presents more details about the component set definition.
+Figure 1 : Average linkage clustering of prompt-level traces exposes distinct circuit families rather than a single universal IOI circuit. The top annotation bar indicates high-level templates ( ABBA vs. BABA ), while the left bar indicates low-level templates (see Appendix F.1 for color code). Circuits are represented as sets of edge–singular-vector pairs.
+Prompt-level clustering.
+Figure 1 summarizes how prompt-level circuits organize for each model. Each clustermap entry shows the pairwise distance between two traced graphs, where graphs are represented by their sets of edge–singular-vector components (Appendix F.2 ). Prompts are ordered by average linkage hierarchical clustering (Appendix F.3 ), so block structure along the diagonal indicates families of prompts that reuse similar components. The annotations show prompt metadata: the top bar indicates the high-level template (ABBA in blue, BABA in green), and the left bar indicates the low-level template (color-coded; Appendix F.1 ).
+Across all three models, the block structure is strongly aligned with prompt templates, but the relevant type of template differs by model. For GPT-2 Small, the dominant split is between high-level templates: ABBA and BABA form two clearly separated circuit families (Appendix F.3 ). In contrast, Pythia-160M clusters primarily by low-level template, with little evidence of a consistent ABBA/BABA partition. Since GPT-2 Small and Pythia-160M have similar transformer architectures and scale, this contrast suggests that even closely related models can converge to different circuit families for the same IOI task.
+For Gemma-2 2B, we find neither the clean high-level split of GPT-2 Small nor the dominant low-level grouping of Pythia-160M. While there is a tendency for separation between ABBA and BABA (as indicated by contiguous regions in the top annotation), the boundary is not sharp, and several clusters cut across both high- and low-level labels. Further analysis shows that Gemma’s within-template average Jaccard distances remain near the dataset baseline, suggesting that Gemma does not rely on a single, consistent template-specific circuit, and is instead more sensitive to finer-grained prompt details beyond the two template types tracked here (Appendix F.1 , Table 5 ).
+Representative circuits.
+Although Figure 1 shows substantial prompt-level variation, this variability is structured: prompts form coherent clusters of circuits for solving the same task. To summarize each cluster with a single object, we introduce the notion of a representative circuit for a prompt class. Intuitively, the representative is the traced graph whose component set is most “central” within its cluster, meaning it is, on average, the most similar to the other circuits in the same class (Appendix F.4 ). We treat this representative as the circuit for the prompt class, and use it as a stable summary for downstream analysis.
+Concretely, we compute the representative using the same component representation and distance used for clustering: circuits are represented by their binary edge–singular-vector pair vectors, and we select the graph that minimizes average within-cluster distance under Jaccard distance (Appendix F.4 ). In the remainder of the section, we use these representatives to compare clusters and to characterize how models differ across them. More broadly, using cluster representatives addresses a basic concern about prompt-specific circuits: if every prompt induced an unrelated graph, circuits would be a poor unit of analysis, since interpretation would not generalize beyond individual prompts. The clustering in Figure 1 suggests the opposite: prompt-level variability can be organized into a few recurring circuit classes, and representatives provide a practical unit of each class for comparison.
+Signal-level comparison.
+To make representative circuits useful as objects of analysis, we need a way to compare not only which components appear in two representatives, but also what information those components manipulate. This moves our analysis beyond the structural approach used in clustering to a semantic comparison of circuit families. We focus on attention-head nodes, since ACC++ traces signals that are causal to an attention head (Appendix C ). For each attention-head node in a representative, we aggregate all incoming edges into a single normalized destination signal vector and a single normalized source signal vector (Appendix F.5 ). This yields one signal summary per head at a destination token, and one per head at a source token. We then compare two representatives by computing the cosine similarity between these node-level signal summaries, producing one heatmap for destination signals and one for source signals (see Appendix F.5 for the full set of results).
+Figure 2 : Signal similarity uncovers common and distinct functionality across prompts. Comparison of signal similarity matrices between representative circuits across three different models, organized by column: GPT-2 Small (left), Pythia-160M (middle), and Gemma-2 2B (right). Representatives for GPT-2 Small are from ABBA (x-axis) and BABA (y-axis). Representatives for Pythia-160M are from Template 10 ( , x-axis) and Template 9 ( , y-axis). Representatives for Gemma-2 2B are from Template 15 ( , x-axis) and Template 14 ( , y-axis). Numbers in parentheses (e.g. (1), (2)…) indicate the n n -th occurrence of the token in the prompt.
+Figure 2 analyzes signal similarity to the GPT-2 Small ABBA and BABA representatives; the Pythia-160M Templates 9 and 10 representatives; and Gemma-2 2B Templates 14 and 15 representatives. Because two representatives will not typically contain exactly the same set of nodes, the heatmaps compare all nodes in one representative against all nodes in the other, and strong matches can appear off-diagonal.
+For GPT-2 Small (Figure 2 ; left-side), we observe three patterns. First, some attention heads are highly stable across templates: for example, head ( 5 , 9 ) (5,9) shows an almost one-to-one match in both destination and source signals, suggesting an invariant computation that is reused in both ABBA and BABA. Second, some nodes align strongly despite being different heads, which suggests functional redundancy: for instance, the destination signals of ( 3 , 2 ) (3,2) in the BABA representative closely match those of ( 4 , 7 ) (4,7) in the ABBA representative, indicating that similar information can be routed by different heads in different templates. Third, some canonical IOI components are present in both representatives but carry different signals: notably, the name-mover head ( 9 , 9 ) (9,9) shows completely different input signals, with negative cosine similarity, between ABBA and BABA, even though its high-level role is the same. This indicates that template changes can preserve which component is used while changing how that component implements its role, motivating a signal-level analysis of representatives as a way to study mechanistic variation across circuit classes. We will return to analyze this case in Section 4 , showing crucial differences in these circuits using signal interpretations.
+We apply the same representative signal comparison to Pythia-160M, where circuit clusters are driven primarily by low-level templates (Figure 1 ). Figure 2 (middle) compares the representatives for Template 9 (the clause “…working at the [PLACE] …”) and Template 10 (“…commuting to the [PLACE] …”); see Appendix F.1 , Table 2 for the full template definitions. Here, the node labels in the heatmaps (layer/head plus the associated token) let us distinguish two kinds of alignment: (i) the same attention head carrying the same role-level signal but with different associated tokens, and (ii) different heads carrying similar signals. Both destination and source heatmaps show strong near one-to-one matches: most high-similarity pairs preserve head identity while swapping the expected tokens, e.g. ( 3 , 2 , Marco ) (3,2,\texttt{Marco}) aligns with ( 3 , 2 , Jack ) (3,2,\texttt{Jack}) and ( 2 , 6 , computer ) (2,6,\texttt{computer}) aligns with ( 2 , 6 , snack ) (2,6,\texttt{snack}) in the source view, while destination-side matches concentrate on the same heads attending to structural tokens such as to and and . This suggests that, despite clustering by low-level template, many Pythia representatives reuse the same head-level routing mechanism, independent of the specific tokens being processed (see Appendix G.3 for a detailed analysis explaining the difference between these circuits using signal interpretations).
+In Gemma-2 2B, representative signal comparisons are consistent with the weaker template conditioning suggested by Figure 1 and Table 5 . Even for two low-level templates whose clusters overlap in the clustermap (Template 14 vs. Template 15), the representatives share only a partial signal backbone. In Figure 2 (right-side), several heads align strongly on structural routing (e.g., head ( 5 , 0 ) (5,0) matches almost perfectly on the destination token and , and also aligns on the corresponding name token in the source view). However, other heads that appear in both representatives have weak or near-zero alignment to their counterpart, including heads ( 1 , 4 ) (1,4) and ( 8 , 1 ) (8,1) , indicating that Gemma can change head-level mechanisms even when templates are close.
+Across models, prompt-level ACC++ traces do not exhibit a single IOI circuit. Instead, they organize into a few recurring circuit classes, and representatives provide a practical unit to compare them. The key result is that the main driver of circuit differences is model-dependent . Signal-level comparisons refine this picture: some subcomputations are stable (near one-to-one signal matches), others are functionally redundant (similar signals carried by different heads), and some canonical components change mechanism across classes. Together, these results support a concrete hypothesis for why “the circuit for a task” can look unstable: the task may admit multiple circuit implementations, and different prompt families emphasize different circuits.
+4 Automatic Interpretation of ACC++ Signals
+Signals found by ACC++ give us candidate mechanisms that may explain strategies taken by different circuits. Turning these signals into short, human-readable descriptions is useful because it helps us compare prompt-specific circuits, identify which mechanisms are shared or not across settings, and generate hypotheses about model behavior that can be tested.
+At the same time, we do not expect every signal to have a clean interpretation in familiar human terms: models may organize information using concepts that do not align well with our existing vocabulary ( Hewitt et al., 2025 ) . Additionally, even when signals are interpretable, manual interpretation does not scale to the number of signals produced by ACC++. This motivates an automated approach that can propose candidate interpretations from data and then validate them with a standardized scoring procedure, which we describe next (with full details deferred to Appendix G ).
+Autointerpretation pipeline.
+We adopt the fully automated autointerpretation framework of ( Paulo et al., 2025 ) from SAE features and adapt it for use on ACC++ signals. Starting from a signal identified by ACC++, we (i) retrieve high-activation contexts by scoring token pairs in cached activations from The Pile ( Gao et al., 2020 ) (via pile-10k ( Nanda, 2024 ) ), (ii) prompt an LLM to propose a short natural-language description of the signal from these contexts, and (iii) evaluate the description with the fuzzing-style LLM-judge protocol of ( Paulo et al., 2025 ) by mixing top contexts with random contexts. Full details, including how we define the interaction scored during retrieval, are deferred to Appendix G . We evaluate this pipeline on IOI by running autointerpretation on 100 prompts, including representatives of each low-level and high-level template and sampling the remaining prompts uniformly at random.
+Table 1 reports quantitative autointerpretability on IOI for ACC++ signals across three models. Across all three models, ACC++ signals achieve nontrivial autointerpretation performance, approaching SAE-feature baselines. While SAE features are explicitly trained to separate superposed features, ACC++ signals arise from causal attention interactions, making this level of interpretability promising.
+Table 1 : ACC++ signals achieve nontrivial autointerpretation performance.
+We report median fuzzing metrics with interquartile range (25%–75%).
+The SAE row is taken from ( Paulo et al., 2025 ) .
+Model
+Accuracy
+Precision
+Recall
+SAE features (AutoInterp)
+0.76 ​ ( 0.67 ​ – ​ 0.86 ) 0.76\,(0.67\text{--}0.86)
+–
+–
+GPT-2 Small (ACC++ signals)
+0.70 ​ ( 0.60 ​ – ​ 0.80 ) 0.70\,(0.60\text{--}0.80)
+0.68 ​ ( 0.57 ​ – ​ 0.79 ) 0.68\,(0.57\text{--}0.79)
+0.85 ​ ( 0.70 ​ – ​ 0.95 ) 0.85\,(0.70\text{--}0.95)
+Pythia-160M (ACC++ signals)
+0.65 ​ ( 0.53 ​ – ​ 0.76 ) 0.65\,(0.53\text{--}0.76)
+0.62 ​ ( 0.52 ​ – ​ 0.75 ) 0.62\,(0.52\text{--}0.75)
+0.85 ​ ( 0.65 ​ – ​ 0.95 ) 0.85\,(0.65\text{--}0.95)
+Gemma-2-2B (ACC++ signals)
+0.60 ​ ( 0.53 ​ – ​ 0.70 ) 0.60\,(0.53\text{--}0.70)
+0.58 ​ ( 0.51 ​ – ​ 0.68 ) 0.58\,(0.51\text{--}0.68)
+0.80 ​ ( 0.65 ​ – ​ 0.90 ) 0.80\,(0.65\text{--}0.90)
+When a signal is considered interpretable.
+We also use the same evaluation to define when a signal should count as interpretable under a hypothesis-testing criterion. Given a candidate interpretation and judge scores, we ask whether the interpretation reliably explains the signal on meaningful contexts, rather than succeeding equally on random contexts. Concretely, we compute a one-sided p p -value using Fisher’s exact test ( Fisher, 1922 ) to test whether the judge accepts the interpretation more often on top contexts than on random contexts. We then control false discoveries across signals by reporting the fraction of signals with False Discovery Rate (FDR) ≤ 5 % \leq 5\% ; signals passing this criterion are labeled interpretable . This measure of interpretability is meant to distinguish signal from noise, rather than to fully quantify the intrinsic quality of the interpretation.
+We then estimate the fraction of interpretable signals under our criterion. We find that a substantial portion of signals meet this criterion in all three models: 63% (62–64%) in GPT-2 Small, 50% (49–51%) in Pythia-160M, and 31% (30–32%) in Gemma-2 2B. This result suggests that many ACC++ signals correspond to consistent attention interactions rather than noise.
+Dissecting ABBA vs. BABA.
+(a) ABBA: “While Justin and Daniel were working at the house, Daniel gave a snack to”
+(b) BABA: “Then, Jack and Kelly went to the garden. Jack gave a basketball to”
+Figure 3 : Traces are interpretable and expose algorithmic differences in circuits between ABBA and BABA in GPT-2. AH node labels are (destination token, source token); edge labels are automatically generated. Red: feeds logits, purple: low-level, orange: provide inhibition signal. Dark green nodes show that, in BABA only, the circuit relies on identifying the “second item in a parallel pair”, ie, “Kelly”, as the appropriate output.
+Having established that many ACC++ signals are interpretable under our criterion, we next show how interpretable per-prompt traces can explain the reason for the existence of two different circuits for the two high-level templates in GPT-2, as shown in Figure 1 .
+The nodes with highest in-degree in the traces are (9, 9), (8, 6) and (9, 6). These are the principal information aggregation points in the circuits. Comparing the incoming signals in Figure 2 , we note the (9, 9) is receiving very different signals in the two cases (as shown by the negative cosine similarity between their input signals). Thus we focus on the portion of the traces that are input to the (9, 9) head.
+Figure 3 shows the circuit components upstream of the (9,9) in each template representative. The graphs show that the circuit difference arises because of how GPT-2 identifies the right token (the IO) to move to the output. In the case of BABA, the IO appears after the subject, and the model tags it with the feature “second item in a parallel pair.” Four different heads each contribute this annotation to the ”Kelly” token; the heads annotating “Kelly” are shown in dark green. At the same time, the (8, 6) head suppresses the “Jack” token by writing the same feature, “second item in a parallel pair”, into “to” (the end token). The (9, 9) then attends to the token pair (Kelly, to) as a result of the match of these features, and moves “Kelly” to “to” (causing Kelly to be output).
+In contrast, in the ABBA circuit, the IO comes before the subject and so cannot be identified as the “second item.” The key features used in identifying the IO are “structural or sequence-completing token” (added by (0, 9)) and similar features added by (0, 11) and (1, 9). Likewise, the feature added by (8,6) to induce the (9,9) to attend to the IO is “tokens in parallel structures that repeat or mirror a preceding element”. Thus, in the ABBA circuit, the IO is identified via generic structural/positional information.
+These results show that in the model there are multiple kinds of parallel-structure-recognition circuits , one that specifically looks at the second item in a pair, and one that more generally matches items between different lists. The differences between these two circuits are the reason that the ABBA and BABA traces form separate clusters as seen in Figure 1 .
+Further Examples.
+In Appendix G.3 we show additional examples illustrating the power of per-prompt tracing with ACC++. In Figure 33 we show that GPT-2 tracks the fact that the tokens S and IO are specifically proper nouns, and how that information is used in computing output; and in Figure 34 we show how and why Pythia’s circuits differ for Templates 9 and 10, examples that were noted in Section 3 . Moreover, Figures 35 and 36 show additional Gemma-2 2B traces on tasks beyond IOI, including the factual-recall prompt from Lindsey et al. (2025) (“Fact: the capital of the state containing Dallas is”) and an in-context learning example.
+Limitations.
+Our autointerpretation targets signal pairs that strongly support a head’s destination–source interaction, and retrieves contexts by ranking token pairs with a proxy for that interaction. This design favors interpretations that correspond to direct positive evidence for attending to a specific source token. However, attention weights arise from a Softmax competition, so signals can also matter through relative effects (e.g., suppressing competing sources or redistributing mass) that may not be well captured by a token-pair scoring proxy, even though ACC++ itself accounts for such interactions. In practice, this may bias interpretations toward low-level lexical or syntactic features; complementary analyses that combine clustering with targeted causal interventions can reveal other signal types that our pipeline may miss ( Franco and Crovella, 2025 ) .
+5 Related Work
+A large body of work suggests that many features are represented in low-dimensional directions ( Elhage et al., 2022 ; Olah et al., 2020 ; Mikolov et al., 2013 ; Alain and Bengio, 2018 ; Park et al., 2023 ; Gurnee and Tegmark, 2024 ; Gurnee et al., 2023 ; Marks et al., 2024 ; Levy and Geva, 2025 ; Engels et al., 2025 ; Kantamneni and Tegmark, 2025 ; Hernandez et al., 2024 ) . Sparse Autoencoders (SAEs) are widely used to extract such features ( Huben et al., 2024 ; Bricken et al., ) , but they have known drawbacks, including identifiability and stability issues ( Leask et al., 2025 ; Gao et al., 2024 ; Bussmann et al., ; Chanin et al., 2024 ) ; one proposed reason is that activation-only methods do not use model parameters ( bilalchughtai and Bushnaq, ) . Our work, similarly to ( Franco and Crovella, 2024 ; Franco and Crovella, 2025 ) , considers both activations and weights (QK matrices) in identifying signals.
+Several recent works also use the singular value decomposition (SVD) of attention interactions to study how heads communicate through low-dimensional subspaces. ( Merullo et al., 2024 ) argues that inter-layer communication can be characterized in subspaces aligned with singular vectors of attention heads. ( Ahmad et al., 2025 ) uses an optimization procedure to identify task-relevant directions in the SVD basis of an attention head, and shows that a single head can simultaneously implement multiple independent computations. In a different setting, ( Pan et al., 2024 ) studies token interactions in vision transformers and treats left/right singular vectors of the query–key interaction as paired interacting directions. Our work builds on this line by using SVD directions as candidate communication channels for ACC ( Franco and Crovella, 2024 ; Franco and Crovella, 2025 ) , but differs in goal and method as described in Section 2 .
+For circuit tracing, many methods rely on counterfactual interventions such as activation patching ( Zhang and Nanda, 2024 ; Goldowsky-Dill et al., 2023 ; Wang et al., 2023 ; Conmy et al., 2023 ; Hanna et al., 2023b ; Lieberum et al., 2023 ; Hanna et al., 2024 ) . Patching is time-consuming, requiring many forward passes, often requires constructing a counterfactual dataset, and has multiple documented weaknesses ( Makelov et al., 2023 ; Mueller, 2024 ; McGrath et al., 2023 ; Rushing and Nanda, 2024 ) . In contrast, we trace per-prompt circuits from a single forward pass, without counterfactual inputs or patching. Relatedly, ( Méloux et al., 2025 ) reports that EAP-IG traces ( Hanna et al., 2024 ) can show high structural variance and sensitivity to hyperparameters across models and tasks; our per-prompt results suggest a complementary explanation, where apparent instability can arise because different prompt groups rely on different subcircuits rather than a single task-level circuit.
+6 Conclusions
+We revisit circuit tracing by constructing circuits on a per-prompt basis using the method we develop, ACC++. Applying ACC++ to IOI across several LLMs, we find that the task does not concentrate around a single circuit: per-prompt traces cluster into recurring circuit families, and the dominant source of circuit differences is model-dependent. We summarize these families with representative circuits and show that signal-level comparisons reveal both invariances and mechanistic differences, including cases where the same component plays the same role but carries different signals. Finally, we automatically interpret ACC++ signals, finding that many are interpretable; in GPT-2, this exposes multiple parallel-structure-recognition mechanisms (pair-second vs. broader list alignment) that explain the difference between circuit families. Overall, these results argue for treating circuits as families of mechanisms rather than single task-level objects, and for using signal-level structure to make their variability measurable, comparable, and interpretable.
+Acknowledgments
+Carson Loughridge suggested the methodological improvement for models with bias described in Appendix B.1 . This work also benefited from early feedback from Aaron Mueller, Najoung Kim, and Micah Adler. This research was funded by a grant from Coefficient Giving and by NSF award CNS-2312711.
+Impact Statement
+This paper presents work whose goal is to advance the field of Machine
+Learning. There are many potential societal consequences of our work, none
+which we feel must be specifically highlighted here.
+References
+Ahmad et al. (2025)
+A. Ahmad, A. Joshi, and A. Modi
+Beyond components: singular vector-based interpretability of transformer circuits .
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems ,
+External Links: Link
+Cited by: §2 ,
+§5 .
+Alain and Bengio (2018)
+G. Alain and Y. Bengio
+Understanding intermediate layers using linear classifier probes .
+External Links: 1610.01644 ,
+Link
+Cited by: §5 .
+[3]
+C. Athwin, G. Corlouer, E. Kran, F. Barez, and N. Nanda
+Identifying a preliminary circuit for predicting gendered pronouns in gpt-2 small, 2023 .
+URL https://cmathw. itch. io/identifying-a-preliminary-circuit-for-predicting-gen dered-pronouns-in-gpt-2-smal .
+Cited by: Appendix E .
+Benjamini and Hochberg (1995)
+Y. Benjamini and Y. Hochberg
+Controlling the false discovery rate: a practical and powerful approach to multiple testing .
+Journal of the Royal Statistical Society. Series B (Methodological) 57 ( 1 ), pp. 289–300 .
+External Links: ISSN 00359246 ,
+Link
+Cited by: §G.2 .
+Biderman et al. (2023)
+S. Biderman, H. Schoelkopf, Q. G. Anthony, H. Bradley, K. O’Brien, E. Hallahan, M. A. Khan, S. Purohit, U. S. Prashanth, E. Raff, et al.
+Pythia: a suite for analyzing large language models across training and scaling .
+In International Conference on Machine Learning ,
+pp. 2397–2430 .
+Cited by: Appendix E ,
+§3 .
+[6]
+bilalchughtai and L. Bushnaq
+Activation space interpretability may be doomed .
+Note: https://www.lesswrong.com/posts/gYfpPbww3wQRaxAFD/activation-space-interpretability-may-be-doomed
+Cited by: §5 .
+[7]
+T. Bricken, A. Templeton, J. Batson, B. Chen, A. Jermyn, T. Conerly, N. L. Turner, C. Anil, C. Denison, A. Askell, R. Lasenby, Y. Wu, S. Kravec, N. Schiefer, T. Maxwell, N. Joseph, A. Tamkin, K. Nguyen, B. McLean, J. E. Burke, T. Hume, S. Carter, T. Henighan, and C. Olah
+Towards monosemanticity: decomposing language models with dictionary learning .
+Note: https://transformer-circuits.pub/2023/monosemantic-features
+Cited by: §5 .
+[8]
+B. Bussmann, M. Pearce, P. Leask, J. Bloom, L. Sharkey, and N. Nanda
+Showing SAE latents are not atomic using Meta-SAEs .
+Note: https://www.lesswrong.com/posts/TMAmHh4DdMr4nCSr5/showing-sae-latents-are-not-atomic-using-meta-saes
+Cited by: §5 .
+Chanin et al. (2024)
+D. Chanin, J. Wilken-Smith, T. Dulka, H. Bhatnagar, and J. Bloom
+A is for absorption: studying feature splitting and absorption in sparse autoencoders .
+External Links: 2409.14507 ,
+Link
+Cited by: §5 .
+Conmy et al. (2023)
+A. Conmy, A. Mavor-Parker, A. Lynch, S. Heimersheim, and A. Garriga-Alonso
+Towards automated circuit discovery for mechanistic interpretability .
+In Advances in Neural Information Processing Systems , A. Oh, T. Naumann, A. Globerson, K. Saenko, M. Hardt, and S. Levine (Eds.) ,
+Vol. 36 , pp. 16318–16352 .
+External Links: Link
+Cited by: §1 ,
+§3 ,
+§5 .
+DeepSeek-AI (2025)
+DeepSeek-AI
+DeepSeek-r1: incentivizing reasoning capability in llms via reinforcement learning .
+External Links: 2501.12948 ,
+Link
+Cited by: §G.2 .
+Elhage et al. (2022)
+N. Elhage, T. Hume, C. Olsson, N. Schiefer, T. Henighan, S. Kravec, Z. Hatfield-Dodds, R. Lasenby, D. Drain, C. Chen, R. Grosse, S. McCandlish, J. Kaplan, D. Amodei, M. Wattenberg, and C. Olah
+Toy Models of Superposition .
+Transformer Circuits Thread .
+External Links: Link
+Cited by: §5 .
+Elhage et al. (2021)
+N. Elhage, N. Nanda, C. Olsson, T. Henighan, N. Joseph, B. Mann, A. Askell, Y. Bai, A. Chen, T. Conerly, N. DasSarma, D. Drain, D. Ganguli, Z. Hatfield-Dodds, D. Hernandez, A. Jones, J. Kernion, L. Lovitt, K. Ndousse, D. Amodei, T. Brown, J. Clark, J. Kaplan, S. McCandlish, and C. Olah
+A Mathematical Framework for Transformer Circuits .
+Transformer Circuits Thread .
+External Links: Link
+Cited by: Appendix A ,
+§1 ,
+§2 .
+Engels et al. (2025)
+J. Engels, E. J. Michaud, I. Liao, W. Gurnee, and M. Tegmark
+Not all language model features are one-dimensionally linear .
+External Links: 2405.14860 ,
+Link
+Cited by: §5 .
+Fisher (1922)
+R. A. Fisher
+On the interpretation of χ \chi 2 from contingency tables, and the calculation of p .
+Journal of the royal statistical society 85 ( 1 ), pp. 87–94 .
+Cited by: §G.2 ,
+§4 .
+Franco and Crovella (2024)
+G. Franco and M. Crovella
+Sparse attention decomposition applied to circuit tracing .
+arXiv preprint arXiv:2410.00340 .
+Cited by: §2 ,
+§5 ,
+§5 .
+Franco and Crovella (2025)
+G. Franco and M. Crovella
+Pinpointing attention-causal communication in language models .
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems ,
+External Links: Link
+Cited by: Appendix A ,
+§C.1 ,
+§C.1 ,
+Appendix C ,
+12(a) ,
+12(a) ,
+Figure 18 ,
+Figure 18 ,
+Appendix E ,
+Appendix E ,
+§1 ,
+§2 ,
+§2 ,
+§2 ,
+§4 ,
+§5 ,
+§5 ,
+Abstract .
+Gao et al. (2020)
+L. Gao, S. Biderman, S. Black, L. Golding, T. Hoppe, C. Foster, J. Phang, H. He, A. Thite, N. Nabeshima, et al.
+The pile: an 800gb dataset of diverse text for language modeling .
+arXiv preprint arXiv:2101.00027 .
+Cited by: §G.2 ,
+§4 .
+Gao et al. (2024)
+L. Gao, T. D. la Tour, H. Tillman, G. Goh, R. Troll, A. Radford, I. Sutskever, J. Leike, and J. Wu
+Scaling and evaluating sparse autoencoders .
+External Links: 2406.04093 ,
+Link
+Cited by: §5 .
+Goldowsky-Dill et al. (2023)
+N. Goldowsky-Dill, C. MacLeod, L. Sato, and A. Arora
+Localizing model behavior with path patching .
+External Links: 2304.05969 ,
+Link
+Cited by: §5 .
+Gurnee et al. (2023)
+W. Gurnee, N. Nanda, M. Pauly, K. Harvey, D. Troitskii, and D. Bertsimas
+Finding neurons in a haystack: case studies with sparse probing .
+arXiv .
+External Links: Document
+Cited by: §5 .
+Gurnee and Tegmark (2024)
+W. Gurnee and M. Tegmark
+Language models represent space and time .
+In The Twelfth International Conference on Learning Representations,
+ICLR 2024, Vienna, Austria, May 7-11, 2024 ,
+External Links: Link
+Cited by: §5 .
+Haklay et al. (2025)
+T. Haklay, H. Orgad, D. Bau, A. Mueller, and Y. Belinkov
+Position-aware automatic circuit discovery .
+arXiv preprint arXiv:2502.04577 .
+Cited by: §3 .
+Hanna et al. (2023a)
+M. Hanna, O. Liu, and A. Variengien
+How does gpt-2 compute greater-than?: interpreting mathematical abilities in a pre-trained language model .
+Advances in Neural Information Processing Systems 36 , pp. 76033–76060 .
+Cited by: Appendix E .
+Hanna et al. (2023b)
+M. Hanna, O. Liu, and A. Variengien
+How does gpt-2 compute greater-than?: interpreting mathematical abilities in a pre-trained language model .
+arXiv .
+External Links: Document
+Cited by: §5 .
+Hanna et al. (2024)
+M. Hanna, S. Pezzelle, and Y. Belinkov
+Have faith in faithfulness: going beyond circuit overlap when finding model mechanisms .
+In First Conference on Language Modeling ,
+External Links: Link
+Cited by: §5 .
+Hernandez et al. (2024)
+E. Hernandez, A. S. Sharma, T. Haklay, K. Meng, M. Wattenberg, J. Andreas, Y. Belinkov, and D. Bau
+Linearity of relation decoding in transformer language models .
+External Links: 2308.09124 ,
+Link
+Cited by: §5 .
+Hewitt et al. (2025)
+J. Hewitt, R. Geirhos, and B. Kim
+Position: we can’t understand AI using our existing vocabulary .
+In Forty-second International Conference on Machine Learning Position Paper Track ,
+External Links: Link
+Cited by: §4 .
+Huben et al. (2024)
+R. Huben, H. Cunningham, L. R. Smith, A. Ewart, and L. Sharkey
+Sparse autoencoders find highly interpretable features in language models .
+In The Twelfth International Conference on Learning Representations ,
+External Links: Link
+Cited by: §5 .
+Kantamneni and Tegmark (2025)
+S. Kantamneni and M. Tegmark
+Language models use trigonometry to do addition .
+External Links: 2502.00873 ,
+Link
+Cited by: §5 .
+Leask et al. (2025)
+P. Leask, B. Bussmann, M. Pearce, J. Bloom, C. Tigges, N. A. Moubayed, L. Sharkey, and N. Nanda
+Sparse autoencoders do not find canonical units of analysis .
+External Links: 2502.04878 ,
+Link
+Cited by: §5 .
+Levy and Geva (2025)
+A. A. Levy and M. Geva
+Language models encode numbers using digit representations in base 10 .
+External Links: 2410.11781 ,
+Link
+Cited by: §5 .
+Lieberum et al. (2023)
+T. Lieberum, M. Rahtz, J. Kramár, N. Nanda, G. Irving, R. Shah, and V. Mikulik
+Does circuit analysis interpretability scale? evidence from multiple choice capabilities in chinchilla .
+arXiv .
+External Links: Document
+Cited by: §5 .
+Lindsey et al. (2025)
+J. Lindsey, W. Gurnee, E. Ameisen, B. Chen, A. Pearce, N. L. Turner, C. Citro, D. Abrahams, S. Carter, B. Hosmer, J. Marcus, M. Sklar, A. Templeton, T. Bricken, C. McDougall, H. Cunningham, T. Henighan, A. Jermyn, A. Jones, A. Persic, Z. Qi, T. B. Thompson, S. Zimmerman, K. Rivoire, T. Conerly, C. Olah, and J. Batson
+On the biology of a large language model .
+Transformer Circuits Thread .
+External Links: Link
+Cited by: §G.3 ,
+§G.3 ,
+§4 .
+Makelov et al. (2023)
+A. Makelov, G. Lange, and N. Nanda
+Is this the subspace you are looking for? an interpretability illusion for subspace activation patching .
+arXiv .
+External Links: Document
+Cited by: §5 .
+Marks et al. (2024)
+S. Marks, C. Rager, E. J. Michaud, Y. Belinkov, D. Bau, and A. Mueller
+Sparse feature circuits: discovering and editing interpretable causal graphs in language models .
+arXiv .
+Cited by: §5 .
+McGrath et al. (2023)
+T. McGrath, M. Rahtz, J. Kramar, V. Mikulik, and S. Legg
+The hydra effect: emergent self-repair in language model computations .
+arXiv .
+External Links: Document
+Cited by: §5 .
+Méloux et al. (2025)
+M. Méloux, F. Portet, and M. Peyrard
+Mechanistic interpretability as statistical estimation: a variance analysis of EAP-IG .
+In Mechanistic Interpretability Workshop at NeurIPS 2025 ,
+External Links: Link
+Cited by: §1 ,
+§3 ,
+§5 .
+Merullo et al. (2024)
+J. Merullo, C. Eickhoff, and E. Pavlick
+Talking heads: understanding inter-layer communication in transformer language models .
+External Links: 2406.09519 ,
+Link
+Cited by: §2 ,
+§5 .
+Mikolov et al. (2013)
+T. Mikolov, W. Yih, and G. Zweig
+Linguistic regularities in continuous space word representations .
+In Proceedings of the 2013 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies , L. Vanderwende, H. Daumé III, and K. Kirchhoff (Eds.) ,
+Atlanta, Georgia , pp. 746–751 .
+External Links: Link
+Cited by: §5 .
+Mueller (2024)
+A. Mueller
+Missed causes and ambiguous effects: counterfactuals pose challenges for interpreting neural networks .
+arXiv .
+External Links: Document
+Cited by: §5 .
+Nanda (2024)
+N. Nanda
+The first 10,000 elements of the pile .
+Note: https://huggingface.co/datasets/NeelNanda/pile-10k
+Cited by: §4 .
+Olah et al. (2020)
+C. Olah, N. Cammarata, L. Schubert, G. Goh, M. Petrov, and S. Carter
+Zoom in: an introduction to circuits .
+Distill .
+Note: https://distill.pub/2020/circuits/zoom-in
+External Links: Document
+Cited by: §5 .
+Pan et al. (2024)
+X. Pan, A. Philip, Z. Xie, and O. Schwartz
+Dissecting query-key interaction in vision transformers .
+In Advances in Neural Information Processing Systems , A. Globerson, L. Mackey, D. Belgrave, A. Fan, U. Paquet, J. Tomczak, and C. Zhang (Eds.) ,
+Vol. 37 , pp. 54595–54631 .
+External Links: Link
+Cited by: §2 ,
+§5 .
+Park et al. (2023)
+K. Park, Y. J. Choe, and V. Veitch
+The linear representation hypothesis and the geometry of large language models .
+In Causal Representation Learning Workshop at NeurIPS 2023 ,
+External Links: Link
+Cited by: §5 .
+Paulo et al. (2025)
+G. S. Paulo, A. T. Mallen, C. Juang, and N. Belrose
+Automatically interpreting millions of features in large language models .
+In Forty-second International Conference on Machine Learning ,
+External Links: Link
+Cited by: item 2 ,
+§G.2 ,
+Appendix G ,
+§4 ,
+Table 1 ,
+Table 1 .
+Radford et al. (2019)
+A. Radford, J. Wu, R. Child, D. Luan, D. Amodei, I. Sutskever, et al.
+Language models are unsupervised multitask learners .
+OpenAI blog 1 ( 8 ), pp. 9 .
+Cited by: Appendix E ,
+§3 .
+Rushing and Nanda (2024)
+C. Rushing and N. Nanda
+Explorations of self-repair in language models .
+arXiv .
+External Links: Document
+Cited by: §5 .
+Sundararajan et al. (2017)
+M. Sundararajan, A. Taly, and Q. Yan
+Axiomatic attribution for deep networks .
+In International conference on machine learning ,
+pp. 3319–3328 .
+Cited by: §C.4 ,
+§2 .
+Team et al. (2025)
+G. Team, A. Kamath, J. Ferret, S. Pathak, N. Vieillard, R. Merhej, S. Perrin, T. Matejovicova, A. Ramé, M. Rivière, et al.
+Gemma 3 technical report .
+arXiv preprint arXiv:2503.19786 .
+Cited by: §G.2 .
+Team et al. (2024)
+G. Team, M. Riviere, S. Pathak, P. G. Sessa, C. Hardin, S. Bhupatiraju, L. Hussenot, T. Mesnard, B. Shahriari, A. Ramé, et al.
+Gemma 2: improving open language models at a practical size .
+arXiv preprint arXiv:2408.00118 .
+Cited by: Appendix E ,
+§3 .
+Tigges et al. (2024)
+C. Tigges, M. Hanna, Q. Yu, and S. Biderman
+LLM circuit analyses are consistent across training and scale .
+In The Thirty-eighth Annual Conference on Neural Information Processing Systems ,
+External Links: Link
+Cited by: §3 .
+Wang et al. (2023)
+K. R. Wang, A. Variengien, A. Conmy, B. Shlegeris, and J. Steinhardt
+Interpretability in the wild: a circuit for indirect object identification in GPT-2 small .
+In The Eleventh International Conference on Learning Representations,
+ICLR 2023, Kigali, Rwanda, May 1-5, 2023 ,
+External Links: Link
+Cited by: Appendix E ,
+§1 ,
+§1 ,
+§3 ,
+§5 .
+Zhang and Nanda (2024)
+F. Zhang and N. Nanda
+Towards best practices of activation patching in language models: metrics and methods .
+External Links: 2309.16042 ,
+Link
+Cited by: §5 .
+Appendix A Notation Used in the Appendices
+We follow mostly the notation from ( Franco and Crovella, 2025 ) . In the model, token embeddings are D D -dimensional, there are H H attention heads in each layer, and there are L L layers.
+We define R = D H R=\frac{D}{H} , which is the dimension of the spaces used for keys and queries in the attention mechanism.
+We use N N to denote the number of tokens in a given prompt.
+Superscript indices will denote (layer, head, destination token, source token); reduced sets of indices will be used where there is no confusion,
+and subscripts generally denote matrix components unless otherwise stated.
+Attention scores and weights.
+The attention mechanism operates on a set of N N tokens in D D -dimensional embeddings: X ∈ ℝ N × D X\in\mathbb{R}^{N\times D} .
+Each token 𝐱 ∈ ℝ D \mathbf{x}\in\mathbb{R}^{D} is passed through linear transforms given by 𝐱 ⊤ ​ W K \mathbf{x}^{\top}W_{K} , 𝐱 ⊤ ​ W Q \mathbf{x}^{\top}W_{Q} ,
+using weight matrices W K , W Q ∈ ℝ D × R W_{K},W_{Q}\in\mathbb{R}^{D\times R} .
+Then the inner product is taken for all pairs of transformed tokens to yield attention scores
+A d ​ s ′ = 𝐱 d ⊤ ​ Ω ​ 𝐱 s , A^{\prime}_{ds}=\mathbf{x}^{d\top}\Omega\mathbf{x}^{s},
+(1)
+in which Ω = W Q ​ W K ⊤ \Omega=W_{Q}W_{K}^{\top} , 𝐱 d \mathbf{x}^{d} is the destination token, and 𝐱 s \mathbf{x}^{s} is the source token of the attention computation.
+To enforce masked self-attention, A d ​ s ′ A^{\prime}_{ds} is set to − ∞ -\infty for d < s d<s .
+Attention scores are then normalized for each destination d d , yielding attention weights
+A d = Softmax ⁡ ( A d ′ / R ) , A d ​ s = [ A d ] s . A_{d}=\operatorname{Softmax}(A^{\prime}_{d}/\sqrt{R}),\qquad A_{ds}=[A_{d}]_{s}.
+(2)
+Layer/head indexing convention in this appendix.
+Throughout the appendix sections that follow, we fix an attention head ( ℓ , a ) (\ell,a) and analyze its QK circuit at a fixed layer input.
+Accordingly, we write 𝐱 d \mathbf{x}^{d} to mean “the input residual embedding at token d d at the input to layer ℓ \ell ”.
+When we need to refer to other layers explicitly, we will add a layer superscript, e.g. X ℓ X^{\ell} for the layer- ℓ \ell residual matrix.
+SVD of the QK matrix.
+Our methods make use of the SVD of Ω \Omega .
+The matrix Ω \Omega has size D × D D\times D , but due to its construction it has maximum rank R R .
+We therefore work with the SVD of Ω = U ​ Σ ​ V ⊤ \Omega=U\Sigma V^{\top} in which
+U ∈ ℝ D × R U\in\mathbb{R}^{D\times R} , V ∈ ℝ D × R V\in\mathbb{R}^{D\times R} and Σ ∈ ℝ R × R \Sigma\in\mathbb{R}^{R\times R} .
+U U and V V are orthonormal matrices with U ⊤ ​ U = I U^{\top}U=I and V ⊤ ​ V = I V^{\top}V=I , and
+Σ = diag ⁡ ( σ 1 , σ 2 , … , σ R ) \Sigma=\operatorname{diag}(\sigma_{1},\sigma_{2},\dots,\sigma_{R}) with σ 1 ≥ σ 2 ≥ ⋯ ≥ σ R ≥ 0 \sigma_{1}\geq\sigma_{2}\geq\dots\geq\sigma_{R}\geq 0 .
+Important to our work is that the SVD of Ω \Omega can equivalently be written as
+Ω = ∑ k = 1 R 𝐮 k ​ σ k ​ 𝐯 k ⊤ . \Omega=\sum_{k=1}^{R}\mathbf{u}^{k}\sigma^{k}\mathbf{v}^{k\top}.
+(3)
+Residual decomposition into upstream component outputs.
+We will use the standard view that the residual stream at the input to a layer is a linear sum of outputs of upstream components ( Elhage et al., 2021 ) .
+Let 𝒞 ⁡ ( ℓ ) \mathcal{C}(\ell) denote the set of all components upstream of the start of layer ℓ \ell (including the input embedding).
+For each token position d d , let 𝐨 c d ∈ ℝ D \mathbf{o}_{c}^{\,d}\in\mathbb{R}^{D} denote the output written into token d d by component c ∈ 𝒞 ⁡ ( ℓ ) c\in\mathcal{C}(\ell) .
+Then
+𝐱 d = ∑ c ∈ 𝒞 ⁡ ( ℓ ) 𝐨 c d . \mathbf{x}^{d}=\sum_{c\in\mathcal{C}(\ell)}\mathbf{o}_{c}^{\,d}.
+(4)
+(Here the subscript c c indexes components; it is not a matrix component.)
+Appendix B A Unified Bilinear Form Encompassing Bias and Rotational Positional Encoding
+As discussed in Section 2 , ACC++ makes a number of methodological improvements to ACC. One such improvement overcomes a significant source of complexity in the original ACC. To deal with bias in the attention computation, ACC used homogeneous coordinates (vectors with an additional component equal to 1), and to deal with rotary positional encoding, ACC used position-specific Ω \Omega matrices. Both of these techniques added significant complexity to the code. In ACC++ we eliminate these sources of complexity, and cast all cases (whether involving bias, rotary encoding, both, or neither) in terms of a single Ω \Omega matrix per head, which means that ACC++ only requires one SVD operation per head.
+Core Assumptions
+To achieve these improvements, we express the attention score as a bilinear form involving Ω \Omega in all cases . We rely on the fact that the query and key weight matrices, W Q ∈ ℝ D × R W_{Q}\in\mathbb{R}^{D\times R} and W K ∈ ℝ D × R W_{K}\in\mathbb{R}^{D\times R} (where D > R D>R ), are well-conditioned (and thus have full column rank). For the models studied in this work, this assumption is supported empirically: Appendix B.4 shows that both W Q W_{Q} and W K ⊤ W_{K}^{\top} are well-conditioned, in all cases having condition numbers below 1000 1000 , and usually much lower.
+This assumption has a critical implication: for a full column rank matrix W W , W † ​ W = I R W^{\dagger}W=I_{R} , and when W W is well conditioned then computing W † ​ W W^{\dagger}W is very close to I R I_{R} numerically. Therefore, our derivations rely on the following identities, which allow our factorization of bias terms and simplification of the rotational matrix composition:
+W Q † ​ W Q = I R and W K ⊤ ​ ( W K ⊤ ) † = I R W_{Q}^{\dagger}W_{Q}=I_{R}\quad\text{and}\quad W_{K}^{\top}(W_{K}^{\top})^{\dagger}=I_{R}
+B.1 Models with Bias (GPT-2)
+Let 𝐱 d , 𝐱 s ∈ ℝ D × 1 ; W Q , W K ∈ ℝ D × R ; 𝐛 Q , 𝐛 K ∈ ℝ R × 1 \mathbf{x}^{d},\mathbf{x}^{s}\in\mathbb{R}^{D\times 1};W_{Q},W_{K}\in\mathbb{R}^{D\times R};\mathbf{b}_{Q},\mathbf{b}_{K}\in\mathbb{R}^{R\times 1} . The standard attention score for a model with bias is given by:
+A d ​ s ′ \displaystyle A^{\prime}_{ds}
+= ( 𝐱 d ⊤ ​ W Q + 𝐛 Q ⊤ ) ​ ( 𝐱 s ⊤ ​ W K + 𝐛 K ⊤ ) ⊤ \displaystyle=\left({\mathbf{x}^{d}}^{\top}W_{Q}+\mathbf{b}_{Q}^{\top}\right)\left({\mathbf{x}^{s}}^{\top}W_{K}+\mathbf{b}_{K}^{\top}\right)^{\top}
+To factor out W Q W_{Q} and W K W_{K} , we rely on the well-conditioning of the matrices, which means W Q † ​ W Q = I R W_{Q}^{\dagger}W_{Q}=I_{R} and W K † ​ W K = I R W_{K}^{\dagger}W_{K}=I_{R} . This allows us to state 𝐛 Q ⊤ = 𝐛 Q ⊤ ​ ( W Q † ​ W Q ) \mathbf{b}_{Q}^{\top}=\mathbf{b}_{Q}^{\top}(W_{Q}^{\dagger}W_{Q}) and 𝐛 K ⊤ = 𝐛 K ⊤ ​ ( W K † ​ W K ) \mathbf{b}_{K}^{\top}=\mathbf{b}_{K}^{\top}(W_{K}^{\dagger}W_{K}) , permitting the factorization:
+= [ ( 𝐱 d ⊤ + 𝐛 Q ⊤ ​ W Q † ) ​ W Q ] ​ [ ( 𝐱 s ⊤ + 𝐛 K ⊤ ​ W K † ) ​ W K ] ⊤ \displaystyle=\left[\left({\mathbf{x}^{d}}^{\top}+\mathbf{b}_{Q}^{\top}W_{Q}^{\dagger}\right)W_{Q}\right]\left[\left({\mathbf{x}^{s}}^{\top}+\mathbf{b}_{K}^{\top}W_{K}^{\dagger}\right)W_{K}\right]^{\top}
+= ( 𝐱 d ⊤ + 𝐛 Q ⊤ ​ W Q † ) ​ W Q ​ W K ⊤ ​ ( 𝐱 s + W K † ⊤ ​ 𝐛 K ) \displaystyle=\left({\mathbf{x}^{d}}^{\top}+\mathbf{b}_{Q}^{\top}W_{Q}^{\dagger}\right)W_{Q}W_{K}^{\top}\left({\mathbf{x}^{s}}+{W_{K}^{\dagger}}^{\top}\mathbf{b}_{K}\right)
+= ( 𝐱 d ⊤ + 𝐜 d ⊤ ) ​ Ω ​ ( 𝐱 s + 𝐜 s ) \displaystyle=\left({\mathbf{x}^{d}}^{\top}+{\mathbf{c}^{d}}^{\top}\right)\Omega\left({\mathbf{x}^{s}}+\mathbf{c}^{s}\right)
+The final expression is a bilinear form with additive bias terms. The unified attention matrix is Ω = W Q ​ W K ⊤ \Omega=W_{Q}W_{K}^{\top} , and the constant bias-derived vectors are 𝐜 d ⊤ = 𝐛 Q ⊤ ​ W Q † {\mathbf{c}^{d}}^{\top}=\mathbf{b}_{Q}^{\top}W_{Q}^{\dagger} and 𝐜 s = W K † ⊤ ​ 𝐛 K \mathbf{c}^{s}={W_{K}^{\dagger}}^{\top}\mathbf{b}_{K} .
+B.2 Models with RoPE (Gemma-2)
+Let 𝐱 d , 𝐱 s ∈ ℝ D × 1 ; W Q , W K ∈ ℝ D × R ; 𝐛 Q , 𝐛 K ∈ ℝ R × 1 ; ℛ d , ℛ s ∈ ℝ R × R \mathbf{x}^{d},\mathbf{x}^{s}\in\mathbb{R}^{D\times 1};W_{Q},W_{K}\in\mathbb{R}^{D\times R};\mathbf{b}_{Q},\mathbf{b}_{K}\in\mathbb{R}^{R\times 1};\mathcal{R}^{d},{\mathcal{R}^{s}}\in\mathbb{R}^{R\times R} .
+The attention score for token pair ( d , s ) (d,s) in RoPE models is given by:
+A d ​ s ′ \displaystyle A^{\prime}_{ds}
+= ( 𝐱 d ⊤ ​ W Q ​ ℛ d ) ​ ( 𝐱 s ⊤ ​ W K ​ ℛ s ) ⊤ \displaystyle=\left({\mathbf{x}^{d}}^{\top}W_{Q}{\mathcal{R}^{d}}\right)\left({\mathbf{x}^{s}}^{\top}W_{K}\mathcal{R}^{s}\right)^{\top}
+= 𝐱 d ⊤ ​ W Q ​ ℛ d ​ ℛ s ⊤ ​ W K ⊤ ​ 𝐱 s \displaystyle={\mathbf{x}^{d}}^{\top}W_{Q}{\mathcal{R}^{d}}{\mathcal{R}^{s}}^{\top}W_{K}^{\top}\mathbf{x}^{s}
+= 𝐱 d ⊤ ​ W Q ​ ℛ ( d − s ) ​ W K ⊤ ​ 𝐱 s \displaystyle={\mathbf{x}^{d}}^{\top}W_{Q}\mathcal{R}^{(d-s)}W_{K}^{\top}\mathbf{x}^{s}
+= 𝐱 d ⊤ ​ Ω ( d − s ) ​ 𝐱 s \displaystyle={\mathbf{x}^{d}}^{\top}\Omega^{(d-s)}\mathbf{x}^{s}
+This form uses a position-dependent attention matrix Ω ( d − s ) \Omega^{(d-s)} . To reformulate this using a fixed Ω \Omega , we choose operators M d , M s ∈ ℝ D × D M_{d},M_{s}\in\mathbb{R}^{D\times D} that apply an appropriate rotation directly to the input vectors, such that A d ​ s ′ = ( 𝐱 d ⊤ ​ M d ) ​ W Q ​ W K ⊤ ​ ( M s ​ 𝐱 s ) A^{\prime}_{ds}=({\mathbf{x}^{d}}^{\top}M_{d})W_{Q}W_{K}^{\top}(M_{s}\mathbf{x}^{s}) .
+Let M d = W Q ​ ℛ d ​ W Q † M_{d}=W_{Q}\mathcal{R}^{d}W_{Q}^{\dagger} and M s = ( W K ⊤ ) † ​ ℛ s ⊤ ​ W K ⊤ M_{s}=({W_{K}^{\top}})^{\dagger}{\mathcal{R}^{s}}^{\top}W_{K}^{\top} . We verify this formulation:
+A d ​ s ′ \displaystyle A^{\prime}_{ds}
+= ( 𝐱 d ⊤ ​ M d ) ​ Ω ​ ( M s ​ 𝐱 s ) \displaystyle=({\mathbf{x}^{d}}^{\top}M_{d})\Omega(M_{s}\mathbf{x}^{s})
+= ( 𝐱 d ⊤ ​ M d ) ​ W Q ​ W K ⊤ ​ ( M s ​ 𝐱 s ) \displaystyle=({\mathbf{x}^{d}}^{\top}M_{d})W_{Q}W_{K}^{\top}(M_{s}\mathbf{x}^{s})
+= 𝐱 d ⊤ ​ W Q ​ ℛ d ​ ( W Q † ​ W Q ) ​ ( W K ⊤ ​ ( W K ⊤ ) † ) ​ ℛ s ⊤ ​ W K ⊤ ​ 𝐱 s \displaystyle={\mathbf{x}^{d}}^{\top}W_{Q}\mathcal{R}^{d}(W_{Q}^{\dagger}W_{Q})(W_{K}^{\top}({W_{K}^{\top}})^{\dagger}){\mathcal{R}^{s}}^{\top}W_{K}^{\top}\mathbf{x}^{s}
+Based on our full row/column rank assumptions, W Q † ​ W Q = I R W_{Q}^{\dagger}W_{Q}=I_{R} and W K ⊤ ​ ( W K ⊤ ) † = I R W_{K}^{\top}(W_{K}^{\top})^{\dagger}=I_{R} (as W K ⊤ W_{K}^{\top} is full row rank), allowing the expression to simplify:
+= 𝐱 d ⊤ ​ W Q ​ ℛ d ​ ℛ s ⊤ ​ W K ⊤ ​ 𝐱 s \displaystyle={\mathbf{x}^{d}}^{\top}W_{Q}\mathcal{R}^{d}{\mathcal{R}^{s}}^{\top}W_{K}^{\top}\mathbf{x}^{s}
+= 𝐱 d ⊤ ​ W Q ​ ℛ ( d − s ) ​ W K ⊤ ​ 𝐱 s \displaystyle={\mathbf{x}^{d}}^{\top}W_{Q}\mathcal{R}^{(d-s)}W_{K}^{\top}\mathbf{x}^{s}
+= 𝐱 d ⊤ ​ Ω ( d − s ) ​ 𝐱 s \displaystyle={\mathbf{x}^{d}}^{\top}\Omega^{(d-s)}\mathbf{x}^{s}
+This confirms that using the position-dependent operators M d M_{d} and M s M_{s} to transform tokens on input to the attention computation, the core attention computation can use a fixed, position-independent matrix Ω = W Q ​ W K ⊤ \Omega=W_{Q}W_{K}^{\top} .
+B.3 Models with Bias and RoPE (Pythia)
+For this mode, we combine the two previous derivations, showing that
+The attention score for token pair ( d , s ) (d,s) in a RoPE model with bias is given by:
+A d ​ s ′ \displaystyle A^{\prime}_{ds}
+= [ ( 𝐱 d ⊤ ​ W Q + 𝐛 Q ⊤ ) ​ ℛ d ] ​ [ ( 𝐱 s ⊤ ​ W K + 𝐛 K ⊤ ) ​ ℛ s ] ⊤ \displaystyle=\left[\left({\mathbf{x}^{d}}^{\top}W_{Q}+\mathbf{b}_{Q}^{\top}\right)\mathcal{R}^{d}\right]\left[\left({\mathbf{x}^{s}}^{\top}W_{K}+\mathbf{b}_{K}^{\top}\right){\mathcal{R}^{s}}\right]^{\top}
+= [ ( 𝐱 d ⊤ ​ W Q + 𝐛 Q ⊤ ) ​ ℛ d ] ​ [ ℛ s ⊤ ​ ( W K ⊤ ​ 𝐱 s + 𝐛 K ) ] \displaystyle=\left[\left({\mathbf{x}^{d}}^{\top}W_{Q}+\mathbf{b}_{Q}^{\top}\right)\mathcal{R}^{d}\right]\left[{\mathcal{R}^{s}}^{\top}\left(W_{K}^{\top}{\mathbf{x}^{s}}+\mathbf{b}_{K}\right)\right]
+= ( 𝐱 d ⊤ ​ W Q ​ ℛ d + 𝐛 Q ⊤ ​ ℛ d ) ​ ( ℛ s ⊤ ​ W K ⊤ ​ 𝐱 s + ℛ s ⊤ ​ 𝐛 K ) \displaystyle=\left({\mathbf{x}^{d}}^{\top}W_{Q}\mathcal{R}^{d}+\mathbf{b}_{Q}^{\top}\mathcal{R}^{d}\right)\left({\mathcal{R}^{s}}^{\top}W_{K}^{\top}{\mathbf{x}^{s}}+{\mathcal{R}^{s}}^{\top}\mathbf{b}_{K}\right)
+= ( 𝐱 d ⊤ ​ W Q ​ ℛ d ​ ℛ s ⊤ ​ W K ⊤ ​ 𝐱 s ) + ( 𝐱 d ⊤ ​ W Q ​ ℛ d ​ ℛ s ⊤ ​ 𝐛 K ) + ( 𝐛 Q ⊤ ​ ℛ d ​ ℛ s ⊤ ​ W K ⊤ ​ 𝐱 s ) + ( 𝐛 Q ⊤ ​ ℛ d ​ ℛ s ⊤ ​ 𝐛 K ) \displaystyle=\left({\mathbf{x}^{d}}^{\top}W_{Q}\mathcal{R}^{d}{\mathcal{R}^{s}}^{\top}W_{K}^{\top}{\mathbf{x}^{s}}\right)+\left({\mathbf{x}^{d}}^{\top}W_{Q}\mathcal{R}^{d}{\mathcal{R}^{s}}^{\top}\mathbf{b}_{K}\right)+\left(\mathbf{b}_{Q}^{\top}\mathcal{R}^{d}{\mathcal{R}^{s}}^{\top}W_{K}^{\top}{\mathbf{x}^{s}}\right)+\left(\mathbf{b}_{Q}^{\top}\mathcal{R}^{d}{\mathcal{R}^{s}}^{\top}\mathbf{b}_{K}\right)
+This is the expression we aim to reconstruct. Our goal is to show that this expression is equivalent to the combined form:
+A d ​ s ′ = [ ( 𝐱 d ⊤ + 𝐜 d ⊤ ) ​ M d ] ​ W Q ​ W K ⊤ ​ [ M s ​ ( 𝐱 s + 𝐜 s ) ] A^{\prime}_{ds}=\left[\left({\mathbf{x}^{d}}^{\top}+{\mathbf{c}^{d}}^{\top}\right)M_{d}\right]W_{Q}W_{K}^{\top}\left[M_{s}\left({\mathbf{x}^{s}}+\mathbf{c}^{s}\right)\right]
+where M d M_{d} , M s M_{s} , 𝐜 d \mathbf{c}^{d} , and 𝐜 s \mathbf{c}^{s} are defined as in the previous sections. We verify this by expanding the left and right sides of this new expression.
+First, we expand the left-hand query term:
+[ ( 𝐱 d ⊤ + 𝐜 d ⊤ ) ​ M d ] ​ W Q \displaystyle\left[\left({\mathbf{x}^{d}}^{\top}+{\mathbf{c}^{d}}^{\top}\right)M_{d}\right]W_{Q}
+= ( 𝐱 d ⊤ + 𝐛 Q ⊤ ​ W Q † ) ​ ( W Q ​ ℛ d ​ W Q † ) ​ W Q \displaystyle=\left({\mathbf{x}^{d}}^{\top}+\mathbf{b}_{Q}^{\top}W_{Q}^{\dagger}\right)(W_{Q}\mathcal{R}^{d}W_{Q}^{\dagger})W_{Q}
+= ( 𝐱 d ⊤ + 𝐛 Q ⊤ ​ W Q † ) ​ W Q ​ ℛ d ​ ( W Q † ​ W Q ) \displaystyle=\left({\mathbf{x}^{d}}^{\top}+\mathbf{b}_{Q}^{\top}W_{Q}^{\dagger}\right)W_{Q}\mathcal{R}^{d}(W_{Q}^{\dagger}W_{Q})
+Using the fact that here, W Q † ​ W Q = I R W_{Q}^{\dagger}W_{Q}=I_{R} :
+= ( 𝐱 d ⊤ ​ W Q + 𝐛 Q ⊤ ​ W Q † ​ W Q ) ​ ℛ d \displaystyle=\left({\mathbf{x}^{d}}^{\top}W_{Q}+\mathbf{b}_{Q}^{\top}W_{Q}^{\dagger}W_{Q}\right)\mathcal{R}^{d}
+= ( 𝐱 d ⊤ ​ W Q + 𝐛 Q ⊤ ) ​ ℛ d \displaystyle=\left({\mathbf{x}^{d}}^{\top}W_{Q}+\mathbf{b}_{Q}^{\top}\right)\mathcal{R}^{d}
+= 𝐱 d ⊤ ​ W Q ​ ℛ d + 𝐛 Q ⊤ ​ ℛ d \displaystyle={\mathbf{x}^{d}}^{\top}W_{Q}\mathcal{R}^{d}+\mathbf{b}_{Q}^{\top}\mathcal{R}^{d}
+Second, we expand the right-hand key term:
+W K ⊤ ​ [ M s ​ ( 𝐱 s + 𝐜 s ) ] \displaystyle W_{K}^{\top}\left[M_{s}\left({\mathbf{x}^{s}}+\mathbf{c}^{s}\right)\right]
+= W K ⊤ ​ M s ​ 𝐱 s + W K ⊤ ​ M s ​ 𝐜 s \displaystyle=W_{K}^{\top}M_{s}{\mathbf{x}^{s}}+W_{K}^{\top}M_{s}\mathbf{c}^{s}
+= W K ⊤ ​ ( W K ⊤ ) † ​ ℛ s ⊤ ​ W K ⊤ ​ 𝐱 s + W K ⊤ ​ ( W K ⊤ ) † ​ ℛ s ⊤ ​ W K ⊤ ​ W K † ⊤ ​ 𝐛 K \displaystyle=W_{K}^{\top}({W_{K}^{\top}})^{\dagger}{\mathcal{R}^{s}}^{\top}W_{K}^{\top}{\mathbf{x}^{s}}+W_{K}^{\top}({W_{K}^{\top}})^{\dagger}{\mathcal{R}^{s}}^{\top}W_{K}^{\top}{W_{K}^{\dagger}}^{\top}\mathbf{b}_{K}
+Using W K ⊤ ​ ( W K ⊤ ) † = I R W_{K}^{\top}(W_{K}^{\top})^{\dagger}=I_{R} and W K ⊤ ​ ( W K † ⊤ ) = W K ⊤ ​ ( W K ⊤ ) † = I R W_{K}^{\top}({W_{K}^{\dagger}}^{\top})=W_{K}^{\top}(W_{K}^{\top})^{\dagger}=I_{R} :
+= ( I R ) ​ ℛ s ⊤ ​ W K ⊤ ​ 𝐱 s + ( I R ) ​ ℛ s ⊤ ​ ( I R ) ​ 𝐛 K \displaystyle=(I_{R}){\mathcal{R}^{s}}^{\top}W_{K}^{\top}{\mathbf{x}^{s}}+(I_{R}){\mathcal{R}^{s}}^{\top}(I_{R})\mathbf{b}_{K}
+= ℛ s ⊤ W K ⊤ 𝐱 s + ℛ s ⊤ 𝐛 K ( ∗ ) \displaystyle={\mathcal{R}^{s}}^{\top}W_{K}^{\top}{\mathbf{x}^{s}}+{\mathcal{R}^{s}}^{\top}\mathbf{b}_{K}\quad\quad(*)
+where for ( ∗ ) (*) we use the fact that W K † ⊤ = ( W K ⊤ ) † {W_{K}^{\dagger}}^{\top}=({W_{K}^{\top}})^{\dagger} .
+Combining the left and right parts, we have:
+A d ​ s ′ \displaystyle A^{\prime}_{ds}
+= ( 𝐱 d ⊤ ​ W Q ​ ℛ d + 𝐛 Q ⊤ ​ ℛ d ) ​ ( ℛ s ⊤ ​ W K ⊤ ​ 𝐱 s + ℛ s ⊤ ​ 𝐛 K ) \displaystyle=\left({\mathbf{x}^{d}}^{\top}W_{Q}\mathcal{R}^{d}+\mathbf{b}_{Q}^{\top}\mathcal{R}^{d}\right)\left({\mathcal{R}^{s}}^{\top}W_{K}^{\top}{\mathbf{x}^{s}}+{\mathcal{R}^{s}}^{\top}\mathbf{b}_{K}\right)
+= ( 𝐱 d ⊤ ​ W Q ​ ℛ d ​ ℛ s ⊤ ​ W K ⊤ ​ 𝐱 s ) + ( 𝐱 d ⊤ ​ W Q ​ ℛ d ​ ℛ s ⊤ ​ 𝐛 K ) + ( 𝐛 Q ⊤ ​ ℛ d ​ ℛ s ⊤ ​ W K ⊤ ​ 𝐱 s ) + ( 𝐛 Q ⊤ ​ ℛ d ​ ℛ s ⊤ ​ 𝐛 K ) \displaystyle=\left({\mathbf{x}^{d}}^{\top}W_{Q}\mathcal{R}^{d}{\mathcal{R}^{s}}^{\top}W_{K}^{\top}{\mathbf{x}^{s}}\right)+\left({\mathbf{x}^{d}}^{\top}W_{Q}\mathcal{R}^{d}{\mathcal{R}^{s}}^{\top}\mathbf{b}_{K}\right)+\left(\mathbf{b}_{Q}^{\top}\mathcal{R}^{d}{\mathcal{R}^{s}}^{\top}W_{K}^{\top}{\mathbf{x}^{s}}\right)+\left(\mathbf{b}_{Q}^{\top}\mathcal{R}^{d}{\mathcal{R}^{s}}^{\top}\mathbf{b}_{K}\right)
+This result exactly matches the original expanded equation. Therefore, the combined formulation correctly reconstructs the full attention score for Pythia-style models.
+B.4 Checking the condition number of the W Q W_{Q} and W K T W_{K}^{T} matrices
+Figures 4 , 5 , and 6 report the condition numbers of W Q W_{Q} (left) and W K ⊤ W_{K}^{\top} (right) for the models considered. In all cases, the matrices are well-conditioned, with condition number < 1000 <1000 , and usually much less.
+Figure 4 : Condition numbers of W Q W_{Q} (left) and W K ⊤ W_{K}^{\top} (right) from GPT-2 small.
+Figure 5 : Condition numbers of W Q W_{Q} (left) and W K ⊤ W_{K}^{\top} (right) from Pythia-160M.
+Figure 6 : Condition numbers of W Q W_{Q} (left) and W K ⊤ W_{K}^{\top} (right) from Gemma-2 2B.
+Appendix C ACC++: Refined ACC as a Counterfactual Search
+This appendix provides the mathematical description of our refined attention-causal communication (ACC++) procedure.
+We follow the notation of ( Franco and Crovella, 2025 ) (see Appendix A ),
+and we assume throughout that we are analyzing a fixed attention head ( ℓ , a ) (\ell,a) so that 𝐱 d \mathbf{x}^{d} denotes the residual at token d d
+at the input to layer ℓ \ell .
+C.1 Problem definition
+Fix a destination–source pair ( d , s ) (d,s) such that the head places some attention on s s , i.e. A d ​ s A_{ds} is high.
+As in ( Franco and Crovella, 2025 ) , we distinguish between destination signals (signals residing in 𝐱 d \mathbf{x}^{d} )
+and source signals (signals residing in the source-token residuals { 𝐱 j } j ≤ d \{\mathbf{x}^{j}\}_{j\leq d} ; these affect the weight A d ​ s A_{ds} through Softmax competition).
+Accordingly, we consider one of the following intervention targets, denoted generically by 𝐱 \mathbf{x} :
+•
+Destination case: 𝐱 = 𝐱 d \mathbf{x}=\mathbf{x}^{d} (identify destination-side signals that causally influence attention from d d ).
+•
+Source case: 𝐱 = { 𝐱 j } j ≤ d \mathbf{x}=\{\mathbf{x}^{j}\}_{j\leq d} (identify source-side signals that causally influence the distribution over sources for destination d d ;
+this includes signals in 𝐱 s \mathbf{x}^{s} and is necessary to account for Softmax competition across all j ≤ d j\leq d ).
+We distinguish two ACC++ counterfactuals, corresponding to destination signals (in 𝐱 d \mathbf{x}^{d} )
+and source signals (in the source residuals { 𝐱 j } j ≤ d \{\mathbf{x}^{j}\}_{j\leq d} ). Each counterfactual induces
+a different minimal signal set. A key improvement of ACC++ over ACC ( Franco and Crovella, 2025 ) is that the counterfactual objective is defined directly in terms of the post-Softmax attention weight A d ​ s A_{ds} , rather than via a linear surrogate of attention; consequently, interventions are evaluated through their effect on the entire destination row A d A_{d} and its Softmax normalization. Finally, although the exposition in this appendix assumes a simplified setting with no QK bias and global positional encoding, the ACC++ procedure extends unchanged to models with attention bias terms and/or RoPE: these variants only modify the pre-Softmax scores by adding a constant term and/or applying a per-position rotation to token representations prior to multiplication by Ω \Omega . We refer to Appendix B for the precise forms and the corresponding minor bookkeeping changes.
+To orient the reader, we now give a brief roadmap of the ACC++ procedure before introducing the formal definitions.
+1.
+Set up the counterfactual. Choose an attention head and a destination–source pair, then decide whether we are searching for destination signals (in the destination token) or source signals (distributed across all source tokens that compete under Softmax).
+2.
+Enumerate candidate signals. Decompose the residual stream into outputs of upstream components, and project each component’s contribution onto the head’s singular-vector directions to form a set of candidate signals.
+3.
+Build a contribution table. Convert candidates into a contribution matrix whose rows correspond to candidate signals and whose columns correspond to source positions in the destination row of attention scores.
+4.
+Score candidates with attribution. Use Integrated Gradients to assign each candidate a fixed importance score for the attention weight on the chosen source token, while accounting for Softmax competition across all sources.
+5.
+Solve the counterfactual by greedy removal. Starting from the full set of candidates, iteratively remove the highest-scoring candidates and recompute the attention weight until it drops below a chosen threshold; the removed candidates form the ACC++ explanation set.
+Destination intervention (find destination signals).
+Let M dst M_{\mathrm{dst}} denote a set of destination-side signal candidates.
+We define the intervention at the residual level as
+do dst ​ ( M dst ) : 𝐱 ~ d = 𝐱 d − Δ d ​ ( M dst ) \mathrm{do}_{\mathrm{dst}}(M_{\mathrm{dst}}):\qquad\mathbf{\tilde{x}}^{d}=\mathbf{x}^{d}-\Delta^{d}(M_{\mathrm{dst}})
+(5)
+and define the induced scores and weights by
+A d ​ j ′ ​ ( do dst ​ ( M dst ) ) = 𝐱 ~ d ⊤ ​ Ω ​ 𝐱 j , A d ​ ( do dst ​ ( M dst ) ) = Softmax ⁡ ( A d ′ ​ ( do dst ​ ( M dst ) ) / R ) . A^{\prime}_{dj}\big(\mathrm{do}_{\mathrm{dst}}(M_{\mathrm{dst}})\big)=\mathbf{\tilde{x}}^{d\top}\Omega\mathbf{x}^{j},\qquad A_{d}\big(\mathrm{do}_{\mathrm{dst}}(M_{\mathrm{dst}})\big)=\operatorname{Softmax}\!\Big(A^{\prime}_{d}\big(\mathrm{do}_{\mathrm{dst}}(M_{\mathrm{dst}})\big)/\sqrt{R}\Big).
+(6)
+Here Δ d ​ ( M dst ) \Delta^{d}(M_{\mathrm{dst}}) is the total vector removed from token d d ; see Eqs. ( 16 )–( 17 ).
+The destination ACC++ objective is to find a small M dst M_{\mathrm{dst}} such that
+[ A d ​ ( do dst ​ ( M dst ) ) ] s < τ . \Big[A_{d}\big(\mathrm{do}_{\mathrm{dst}}(M_{\mathrm{dst}})\big)\Big]_{s}<\tau.
+(7)
+Appendix D shows how we find τ \tau in this work.
+Source intervention (find source signals).
+Let M src M_{\mathrm{src}} denote a set of source-side signal candidates.
+We intervene on the source-side (key-side) residuals (for all j ≤ d j\leq d ) while keeping the destination residual fixed on the query side as
+do src ​ ( M src ) : 𝐱 ~ j = 𝐱 j − Δ j ​ ( M src ) ​ for all ​ j ≤ d , \mathrm{do}_{\mathrm{src}}(M_{\mathrm{src}}):\qquad\mathbf{\tilde{x}}^{j}=\mathbf{x}^{j}-\Delta^{j}(M_{\mathrm{src}})\ \text{ for all }j\leq d,
+(8)
+and define the induced scores and weights by
+A d ​ j ′ ​ ( do src ​ ( M src ) ) = 𝐱 d ⊤ ​ Ω ​ 𝐱 ~ j , A d ​ ( do src ​ ( M src ) ) = Softmax ⁡ ( A d ′ ​ ( do src ​ ( M src ) ) / R ) . A^{\prime}_{dj}\big(\mathrm{do}_{\mathrm{src}}(M_{\mathrm{src}})\big)=\mathbf{x}^{d\top}\Omega\mathbf{\tilde{x}}^{j},\qquad A_{d}\big(\mathrm{do}_{\mathrm{src}}(M_{\mathrm{src}})\big)=\operatorname{Softmax}\!\Big(A^{\prime}_{d}\big(\mathrm{do}_{\mathrm{src}}(M_{\mathrm{src}})\big)/\sqrt{R}\Big).
+(9)
+Similarly Δ j ​ ( M src ) \Delta^{j}(M_{\mathrm{src}}) is the total vector removed at token j j ; see Eqs. ( 16 )–( 17 ).
+The source ACC++ objective is to find a minimal M src M_{\mathrm{src}} such that
+[ A d ​ ( do src ​ ( M src ) ) ] s < τ . \Big[A_{d}\big(\mathrm{do}_{\mathrm{src}}(M_{\mathrm{src}})\big)\Big]_{s}<\tau.
+(10)
+Because A d = Softmax ⁡ ( A d ′ / R ) A_{d}=\operatorname{Softmax}(A^{\prime}_{d}/\sqrt{R}) couples all sources j ≤ d j\leq d through Softmax normalization,
+both objectives must be evaluated with respect to their effect on the full score vector A d ′ A^{\prime}_{d} , not only the entry A d ​ s ′ A^{\prime}_{ds} .
+C.2 Signal candidates from component outputs and the SVD basis
+We construct candidates by decomposing residuals into upstream component outputs and projecting onto singular-vector directions of Ω \Omega .
+Recall (Appendix A ) that for each token position j j ,
+𝐱 j = ∑ c ∈ 𝒞 ⁡ ( ℓ ) 𝐨 c j . \mathbf{x}^{j}\;=\;\sum_{c\in\mathcal{C}(\ell)}\mathbf{o}_{c}^{\,j}.
+(11)
+Destination candidates (use U U ).
+Using the left singular vectors { 𝐮 k } k = 1 R \{\mathbf{u}^{k}\}_{k=1}^{R} of Ω \Omega (Eq. ( 3 )),
+define the rank-1 projector
+P U k = 𝐮 k ​ 𝐮 k ⊤ . P_{U}^{k}\;=\;\mathbf{u}^{k}\mathbf{u}^{k\top}.
+(12)
+A destination-side candidate for component c c and direction k k is
+𝐬 c d ​ k = P U k ​ 𝐨 c d ∈ ℝ D , \mathbf{s}_{c}^{\,dk}\;=\;P_{U}^{k}\mathbf{o}_{c}^{\,d}\in\mathbb{R}^{D},
+(13)
+so that 𝐱 d = ∑ c ∑ k 𝐬 c d ​ k \mathbf{x}^{d}=\sum_{c}\sum_{k}\mathbf{s}_{c}^{\,dk} .
+Note that we are saying that 𝐱 d = ∑ c ∑ k 𝐬 c d ​ k \mathbf{x}^{d}=\sum_{c}\sum_{k}\mathbf{s}_{c}^{\,dk} for the sake of notation simplicity, but this is not strictly true. This is the projection of 𝐱 d \mathbf{x}^{d} into the attention head space, which is the only part of the residual that’s used to compute attention.
+Source candidates (use V V ).
+Using the right singular vectors { 𝐯 k } k = 1 R \{\mathbf{v}^{k}\}_{k=1}^{R} of Ω \Omega (Eq. ( 3 )),
+define
+P V k = 𝐯 k ​ 𝐯 k ⊤ . P_{V}^{k}\;=\;\mathbf{v}^{k}\mathbf{v}^{k\top}.
+(14)
+For each source position j ≤ d j\leq d , a source-side candidate is
+𝐬 c j ​ k = P V k ​ 𝐨 c j ∈ ℝ D , \mathbf{s}_{c}^{\,jk}\;=\;P_{V}^{k}\mathbf{o}_{c}^{\,j}\in\mathbb{R}^{D},
+(15)
+so that 𝐱 j = ∑ c ∑ k 𝐬 c j ​ k \mathbf{x}^{j}=\sum_{c}\sum_{k}\mathbf{s}_{c}^{\,jk} for each j ≤ d j\leq d .
+Again, note that we are saying that 𝐱 j = ∑ c ∑ k 𝐬 c j ​ k \mathbf{x}^{j}=\sum_{c}\sum_{k}\mathbf{s}_{c}^{\,jk} for the sake of notation simplicity, but this is not strictly true. This is the projection of 𝐱 s \mathbf{x}^{s} into the attention head space, which is the only part of the residual that’s used to compute attention.
+Intervention vectors.
+Given a set of candidate indices M ⊆ 𝒞 ⁡ ( ℓ ) × { 1 , … , R } M\subseteq\mathcal{C}(\ell)\times\{1,\dots,R\} , we define the residual-space
+vector removed at token position j j as the sum of the corresponding candidate signal vectors.
+For the destination objective,
+Δ d ​ ( M dst ) = ∑ ( c , k ) ∈ M dst 𝐬 c d ​ k = ∑ ( c , k ) ∈ M dst P U k ​ 𝐨 c d . \Delta^{d}(M_{\mathrm{dst}})\;=\;\sum_{(c,k)\in M_{\mathrm{dst}}}\mathbf{s}_{c}^{\,dk}\;=\;\sum_{(c,k)\in M_{\mathrm{dst}}}P_{U}^{k}\,\mathbf{o}_{c}^{\,d}.
+(16)
+For the source objective, the same candidate set M src M_{\mathrm{src}} is applied across all source positions j ≤ d j\leq d :
+Δ j ​ ( M src ) = ∑ ( c , k ) ∈ M src 𝐬 c j ​ k = ∑ ( c , k ) ∈ M src P V k ​ 𝐨 c j , ∀ j ≤ d . \Delta^{j}(M_{\mathrm{src}})\;=\;\sum_{(c,k)\in M_{\mathrm{src}}}\mathbf{s}_{c}^{\,jk}\;=\;\sum_{(c,k)\in M_{\mathrm{src}}}P_{V}^{k}\,\mathbf{o}_{c}^{\,j},\qquad\forall j\leq d.
+(17)
+C.3 Contribution matrix (destination or source view)
+Our solver operates on a contribution matrix whose rows correspond to candidates and whose columns correspond to source positions j ≤ d j\leq d . Let Q = | 𝒞 ⁡ ( ℓ ) | ⋅ R Q=|\mathcal{C}(\ell)|\cdot R be the total number of signal candidates, ie, the number of upstream components times the number of singular vectors R R (rank of Ω \Omega ).
+Destination view.
+If we intervene on 𝐱 d \mathbf{x}^{d} , substitute 𝐱 d = ∑ c , k 𝐬 c d ​ k \mathbf{x}^{d}=\sum_{c,k}\mathbf{s}_{c}^{\,dk} into A d ​ j ′ = 𝐱 d ⊤ ​ Ω ​ 𝐱 j A^{\prime}_{dj}=\mathbf{x}^{d\top}\Omega\mathbf{x}^{j} to obtain
+A d ​ j ′ = ∑ c ∑ k ( 𝐬 c d ​ k ) ⊤ ​ Ω ​ 𝐱 j . A^{\prime}_{dj}\;=\;\sum_{c}\sum_{k}\big(\mathbf{s}_{c}^{\,dk}\big)^{\top}\Omega\mathbf{x}^{j}.
+(18)
+We form a matrix C ∈ ℝ Q × d C\in\mathbb{R}^{Q\times d} with one row per pair ( c , k ) (c,k) and define
+C i ​ j = ( 𝐬 c d ​ k ) ⊤ ​ Ω ​ 𝐱 j , j ≤ d , C_{ij}\;=\;\big(\mathbf{s}_{c}^{\,dk}\big)^{\top}\Omega\mathbf{x}^{j},\qquad j\leq d,
+(19)
+where row i i corresponds to candidate ( c , k ) (c,k) .
+Source view.
+If we intervene on source residuals { 𝐱 j } j ≤ d \{\mathbf{x}^{j}\}_{j\leq d} , we use the source-side candidates
+𝐬 c j ​ k = P V k ​ 𝐨 c j \mathbf{s}_{c}^{\,jk}=P_{V}^{k}\mathbf{o}_{c}^{\,j} (Eq. ( 15 )) and, ∀ j ≤ d \forall j\leq d , substitute
+𝐱 j = ∑ c ∑ k 𝐬 c j ​ k \mathbf{x}^{j}=\sum_{c}\sum_{k}\mathbf{s}_{c}^{\,jk} into A d ​ j ′ = 𝐱 d ⊤ ​ Ω ​ 𝐱 j A^{\prime}_{dj}=\mathbf{x}^{d\top}\Omega\mathbf{x}^{j} to obtain
+A d ​ j ′ = ∑ c ∑ k 𝐱 d ⊤ ​ Ω ​ 𝐬 c j ​ k . A^{\prime}_{dj}\;=\;\sum_{c}\sum_{k}\mathbf{x}^{d\top}\Omega\,\mathbf{s}_{c}^{\,jk}.
+(20)
+We form a contribution matrix C ∈ ℝ Q × d C\in\mathbb{R}^{Q\times d} with one row per pair ( c , k ) (c,k) , and define
+C i ​ j = 𝐱 d ⊤ ​ Ω ​ 𝐬 c j ​ k , j ≤ d , C_{ij}\;=\;\mathbf{x}^{d\top}\Omega\,\mathbf{s}_{c}^{\,jk},\qquad j\leq d,
+(21)
+where row i i corresponds to candidate ( c , k ) (c,k) .
+Equivalently, row i i is the vector 𝐜 i ∈ ℝ d \mathbf{c}_{i}\in\mathbb{R}^{d} whose j j -th entry is the contribution of ( c , k ) (c,k)
+to the score A d ​ j ′ A^{\prime}_{dj} .
+With this definition, removing a row i = ( c , k ) i=(c,k) corresponds to removing what component c c writes in direction 𝐯 k \mathbf{v}^{k}
+in every source token j ≤ d j\leq d .
+Row-sum decomposition of scores.
+In either case, the candidate construction implies an exact decomposition of the full score vector:
+A d ′ = ∑ i = 1 Q 𝐜 i , A d = Softmax ⁡ ( A d ′ ) . A^{\prime}_{d}\;=\;\sum_{i=1}^{Q}\mathbf{c}_{i},\qquad A_{d}\;=\;\operatorname{Softmax}(A^{\prime}_{d}).
+(22)
+Here A d ′ A^{\prime}_{d} denotes the normalized score vector A d ′ / R A^{\prime}_{d}/\sqrt{R} from Eq. ( 2 ); we absorb the 1 / R 1/\sqrt{R} factor into C C .
+C.4 Attribution via integrated gradients (probability at index s s )
+We seek to attribute the impact of each candidate on the single attention weight A d ​ s = [ A d ] s A_{ds}=[A_{d}]_{s} , rather than to the entire vector A d A_{d} .
+Let C ∈ ℝ Q × d C\in\mathbb{R}^{Q\times d} be the contribution matrix (destination or source view), let 𝐜 i ∈ ℝ d \mathbf{c}_{i}\in\mathbb{R}^{d}
+denote row i i , and note that
+A d ′ = ∑ i = 1 Q 𝐜 i . A^{\prime}_{d}\;=\;\sum_{i=1}^{Q}\mathbf{c}_{i}.
+(23)
+Define the path
+𝐳 ⁡ ( t ) = t ​ A d ′ , 𝐩 ⁡ ( t ) = Softmax ⁡ ( 𝐳 ⁡ ( t ) ) , t ∈ [ 0 , 1 ] , \mathbf{z}(t)\;=\;t\,A^{\prime}_{d},\qquad\mathbf{p}(t)\;=\;\operatorname{Softmax}(\mathbf{z}(t)),\qquad t\in[0,1],
+(24)
+so that 𝐩 ⁡ ( 1 ) = A d \mathbf{p}(1)=A_{d} and A d ​ s = p s ​ ( 1 ) A_{ds}=p_{s}(1) .
+Let g ⁡ ( 𝐳 ) = [ Softmax ⁡ ( 𝐳 ) ] s g(\mathbf{z})=[\operatorname{Softmax}(\mathbf{z})]_{s} denote the scalar output of interest.
+Integrated gradients ( Sundararajan et al., 2017 ) assigns candidate i i the attribution
+IG i = ∫ 0 1 ⟨ ∇ g ​ ( 𝐳 ⁡ ( t ) ) , 𝐜 i ⟩ ​ 𝑑 t . \operatorname{IG}_{i}\;=\;\int_{0}^{1}\left\langle\nabla g(\mathbf{z}(t)),\;\mathbf{c}_{i}\right\rangle dt.
+(25)
+Using the identity
+∂ p s ∂ z j = p s ( 𝟏 { j = s } − p j ) , \frac{\partial\,p_{s}}{\partial z_{j}}\;=\;p_{s}\,(\mathbf{1}\{j=s\}-p_{j}),
+(26)
+we obtain an explicit form that matches our implementation:
+IG i = ∫ 0 1 p s ​ ( t ) ​ ( C i ​ s − ∑ j ≤ d C i ​ j ​ p j ​ ( t ) ) ​ 𝑑 t = ∫ 0 1 p s ​ ( t ) ​ ( C i ​ s − ⟨ 𝐜 i , 𝐩 ⁡ ( t ) ⟩ ) ​ 𝑑 t . \operatorname{IG}_{i}\;=\;\int_{0}^{1}p_{s}(t)\left(C_{is}\;-\;\sum_{j\leq d}C_{ij}\,p_{j}(t)\right)dt\;=\;\int_{0}^{1}p_{s}(t)\Big(C_{is}-\langle\mathbf{c}_{i},\mathbf{p}(t)\rangle\Big)\,dt.
+(27)
+This formulation makes the role of Softmax competition explicit: the term ⟨ 𝐜 i , 𝐩 ⁡ ( t ) ⟩ \langle\mathbf{c}_{i},\mathbf{p}(t)\rangle
+couples candidate i i to the full distribution over sources at each point along the path.
+In practice we approximate the integral in Eq. ( 27 ) using a trapezoidal rule with T = 64 T=64 steps.
+C.5 Greedy counterfactual solver and the induced intervention
+We solve the destination objective (Eq. ( 7 )) and the source objective (Eq. ( 10 ))
+using the same greedy procedure, applied to the appropriate contribution matrix C C .
+In both cases, rows of C C are indexed by candidates ( c , k ) (c,k) (so C ∈ ℝ Q × d C\in\mathbb{R}^{Q\times d} ), and we write 𝐜 i ∈ ℝ d \mathbf{c}_{i}\in\mathbb{R}^{d}
+for row i i .
+Greedy removal in contribution space.
+We compute integrated-gradients attributions { IG i } i = 1 Q \{\operatorname{IG}_{i}\}_{i=1}^{Q} once , using the original score vector
+A d ′ = ∑ i = 1 Q 𝐜 i A^{\prime}_{d}=\sum_{i=1}^{Q}\mathbf{c}_{i} , and treat these attributions as fixed throughout the greedy procedure. 2 2
+2
+We evaluated computing attributions after each greedy step, but found the resulting circuits to be of poorer quality.
+Let S ⊆ { 1 , … , Q } S\subseteq\{1,\dots,Q\} denote the set of active candidates (initialized to all candidates), and define the partial score vector
+A d ′ ​ ( S ) = ∑ i ∈ S 𝐜 i , A d ​ s ​ ( S ) = [ Softmax ⁡ ( A d ′ ​ ( S ) ) ] s . A^{\prime}_{d}(S)\;=\;\sum_{i\in S}\mathbf{c}_{i},\qquad A_{ds}(S)\;=\;\Big[\operatorname{Softmax}\!\big(A^{\prime}_{d}(S)\big)\Big]_{s}.
+(28)
+While A d ​ s ​ ( S ) > τ A_{ds}(S)>\tau , remove the highest-attribution remaining candidate according to the fixed scores IG i \operatorname{IG}_{i} :
+i ⋆ = arg ​ max i ∈ S ⁡ IG i , S ← S ∖ { i ⋆ } . i^{\star}\;=\;\argmax_{i\in S}\operatorname{IG}_{i},\qquad S\leftarrow S\setminus\{i^{\star}\}.
+(29)
+Let M = { 1 , … , Q } ∖ S M=\{1,\dots,Q\}\setminus S denote the removed set.
+We write M dst M_{\mathrm{dst}} or M src M_{\mathrm{src}} depending on whether we are solving the destination or source objective.
+Induced intervention for the destination objective.
+In the destination view, candidate i i corresponds to a pair ( c , k ) (c,k) and a destination-side signal vector 𝐬 c d ​ k = P U k ​ 𝐨 c d \mathbf{s}_{c}^{\,dk}=P_{U}^{k}\mathbf{o}_{c}^{\,d} .
+Thus the greedy-selected set M dst M_{\mathrm{dst}} induces the residual-level intervention
+do dst ​ ( M dst ) : 𝐱 ~ d = 𝐱 d − ∑ ( c , k ) ∈ M dst 𝐬 c d ​ k , 𝐱 ~ j = 𝐱 j ​ for ​ j ≤ d , j ≠ d . \mathrm{do}_{\mathrm{dst}}(M_{\mathrm{dst}}):\qquad\mathbf{\tilde{x}}^{d}\;=\;\mathbf{x}^{d}-\sum_{(c,k)\in M_{\mathrm{dst}}}\mathbf{s}_{c}^{\,dk},\qquad\mathbf{\tilde{x}}^{j}=\mathbf{x}^{j}\ \text{ for }j\leq d,\ j\neq d.
+(30)
+Induced intervention for the source objective.
+In the source view, candidate i i corresponds to a pair ( c , k ) (c,k) and (for each source position j ≤ d j\leq d ) a source-side signal vector
+𝐬 c j ​ k = P V k ​ 𝐨 c j \mathbf{s}_{c}^{\,jk}=P_{V}^{k}\mathbf{o}_{c}^{\,j} .
+Removing candidate ( c , k ) (c,k) means removing what component c c writes in direction 𝐯 k \mathbf{v}^{k} from every source token j ≤ d j\leq d .
+Accordingly, the greedy-selected set M src M_{\mathrm{src}} induces
+do src ​ ( M src ) : 𝐱 ~ j = 𝐱 j − ∑ ( c , k ) ∈ M src 𝐬 c j ​ k ​ for all ​ j ≤ d , 𝐱 ~ d = 𝐱 d ​ on the query side . \mathrm{do}_{\mathrm{src}}(M_{\mathrm{src}}):\qquad\mathbf{\tilde{x}}^{j}\;=\;\mathbf{x}^{j}-\sum_{(c,k)\in M_{\mathrm{src}}}\mathbf{s}_{c}^{\,jk}\ \text{ for all }j\leq d,\qquad\mathbf{\tilde{x}}^{d}=\mathbf{x}^{d}\text{ on the query side}.
+(31)
+Equivalently, the intervened scores for the source objective are computed as
+A d ​ j ′ ​ ( do src ) = 𝐱 d ⊤ ​ Ω ​ 𝐱 ~ j A^{\prime}_{dj}(\mathrm{do}_{\mathrm{src}})=\mathbf{x}^{d\top}\Omega\mathbf{\tilde{x}}^{j} , so that only the source-side (right) argument is modified.
+C.6 ACC++ Recipe (high-level)
+Fix head ( ℓ , a ) (\ell,a) and pair ( d , s ) (d,s) Choose view: destination ( 𝐱 d \mathbf{x}^{d} ) or sources ( { 𝐱 j } j ≤ d \{\mathbf{x}^{j}\}_{j\leq d} ) Compute Ω \Omega and SVD Ω = ∑ k = 1 R 𝐮 k ​ σ k ​ 𝐯 k ⊤ \Omega=\sum_{k=1}^{R}\mathbf{u}^{k}\sigma^{k}\mathbf{v}^{k\top} Form candidates via projections dst: 𝐬 c d ​ k = P U k ​ 𝐨 c d \mathbf{s}_{c}^{\,dk}=P_{U}^{k}\,\mathbf{o}_{c}^{\,d} src: 𝐬 c j ​ k = P V k ​ 𝐨 c j ​ ( ∀ j ≤ d ) \mathbf{s}_{c}^{\,jk}=P_{V}^{k}\,\mathbf{o}_{c}^{\,j}\ (\forall j\leq d) Build contribution matrix C C over j ≤ d j\leq d (Eqs. ( 19 ),( 21 )) IG attribution IG i \operatorname{IG}_{i} to A d ​ s = [ Softmax ⁡ ( A d ′ ) ] s A_{ds}=[\operatorname{Softmax}(A^{\prime}_{d})]_{s} (full A d ′ A^{\prime}_{d} path) Greedy remove arg ​ max i ⁡ IG i \argmax_{i}\operatorname{IG}_{i} (fixed) recompute A d ​ s A_{ds} until A d ​ s < τ A_{ds}<\tau Output M dst M_{\mathrm{dst}} or M src M_{\mathrm{src}}
+Figure 7 : Recipe for the ACC++ solver, explicitly distinguishing destination candidates ( P U k P_{U}^{k} ) and source candidates ( P V k P_{V}^{k} ), with source-view candidates applied across all j ≤ d j\leq d .
+Appendix D Finding τ \tau
+ACC requires a threshold τ \tau that flags unusually large attention weights A d ​ s A_{ds} for a given destination token d d .
+Because each attention row is a probability distribution over the available sources j ≤ d j\leq d , the typical scale of an entry depends on the row context size d d (roughly A d ​ s ∼ 1 / d A_{ds}\sim 1/d ). To make thresholds comparable across different d d , models, and datasets, we study the scaled statistic
+d ⋅ A d ​ s , d\cdot A_{ds},
+where the context size for row d d is exactly the number of attendable tokens in that row, i.e. | { 1 , … , d } | = d |\{1,\dots,d\}|=d .
+For each model–dataset setting, we run a forward pass over the evaluation set, collect all attention weights A d ​ s A_{ds} across layers/heads/tokens, and plot the empirical CDF (ECDF) of d ⋅ A d ​ s d\cdot A_{ds} . Across GPT-2 small (Fig. 8 ), Pythia-160M (Fig. 9 ), and Gemma-2 2B (Fig. 10 ) on our datasets, the ECDFs exhibit a consistent “knee” around d ⋅ A d ​ s ≈ 2.5 d\cdot A_{ds}\approx 2.5 , separating the bulk of near-uniform attention from the heavy tail of unusually concentrated attention.
+Motivated by this consistent knee, we use a dynamic threshold that adapts to the row context size:
+τ ⁡ ( d ) = 2.5 d . \tau(d)=\frac{2.5}{d}.
+We choose a dynamic global τ \tau (depending on the context size) for simplicity. However, the impact of this strategy is not clear what in other scenarios. We leave further study of better threshold-setting methods for ACC++ as future work.
+Figure 8 : ECDF of the attention weight times the context size for GPT-2 small in IOI (a), GP (b), and GT (c). The vertical line shows a τ = 2.5 \tau=2.5 .
+Figure 9 : ECDF of the attention weight times the context size for Pythia-160M in IOI (a), GP (b), and GT (c). The vertical line shows a τ = 2.5 \tau=2.5 .
+Figure 10 : ECDF of the attention weight times the context size for Gemma-2 2B in IOI (a) and GP (b). The vertical line shows a τ = 2.5 \tau=2.5 .
+Appendix E Reproducing Prior ACC Results with ACC++
+We repeat the circuit-tracing and intervention experiments of ( Franco and Crovella, 2025 ) , replacing the original ACC solver (Relative Attention; RA) with ACC++. Following ( Franco and Crovella, 2025 ) , we use GPT-2 Small, Pythia-160M, and Gemma-2 2B ( Radford et al., 2019 ; Biderman et al., 2023 ; Team et al., 2024 ) to solve three tasks: Indirect Object Identification (IOI) ( Wang et al., 2023 ) , Greater-Than (GT) ( Hanna et al., 2023a ) , and Gender Pronoun (GP) ( Athwin et al., ) . In this appendix we follow the exact experimental setup of ( Franco and Crovella, 2025 ) , including the same datasets and evaluation protocol; this setup differs from the IOI dataset used in the main body of this paper. Across models and tasks, ACC++ identifies substantially more low-rank causal signals: when we measure a signal’s “dimensionality” as the number of singular vectors of Ω \Omega used by the selected signal, the majority of signals are rank-1 (Figure 11 ). Figure 12 shows the corresponding distributions for ACC (RA) versus ACC++ across the three tasks.
+Figure 11 : Across all tasks and models, most ACC++ signals are rank-1 (use one singular-vector direction).
+(a) ACC. Source: ( Franco and Crovella, 2025 ) .
+(b) ACC++.
+Figure 12 : ACC++ selects lower-dimensional signals than ACC across models and tasks, shifting mass toward rank-1 signals. From left to right: IOI, GT, GP.
+Despite this compression, ACC++ preserves downstream circuit results under the ( Franco and Crovella, 2025 ) setup. Circuit quality remains comparable to the original ACC solver across tasks and models (Figure 18 ). At the same time, the traced circuits are more compact: ACC++ produces graphs with fewer nodes and fewer edges on average (Figures 13 and 14 ), and their in-degree distributions shift downward across IOI, GP, and GT, indicating that ACC++ typically establishes the required causal explanations with fewer incoming signals per node (Figures 15 , 16 , and 17 ).
+Finally, these lower-rank signals remain causal for model behavior (not just attention weights): intervening on ACC++ signals yields substantial changes in IOI performance, whereas random-signal controls have much weaker effects (Figure 19 ). Consistent with the low-rank nature of these edits, interventions minimally perturb the residual stream (cosine similarity near 1 and norm ratios concentrated near 1), indicating that the behavioral effects are not driven by large out-of-distribution residual changes (Figure 20 ).
+(a) IOI
+(b) GP
+(c) GT
+Figure 13 : ACC++ traces use fewer nodes than ACC across tasks (IOI, GP, GT), indicating more compact circuits under the same tracing setup. Error bars show standard deviation.
+(a) IOI
+(b) GP
+(c) GT
+Figure 14 : ACC++ traces use fewer edges than ACC across tasks (IOI, GP, GT), reflecting a smaller set of causal communications needed to explain the same behaviors. Error bars show standard deviation.
+(a) Gemma-2 2B
+(b) GPT-2 Small
+(c) Pythia-160M
+Figure 15 : ACC++ requires fewer incoming causal signals per node than ACC on IOI (pooled in-degrees across traced circuits), indicating that ACC++ typically establishes attention causality with fewer signals.
+(a) Gemma-2 2B
+(b) GPT-2 Small
+(c) Pythia-160M
+Figure 16 : ACC++ requires fewer incoming causal signals per node than ACC (RA) on GP (pooled in-degrees across traced circuits), indicating that ACC++ typically establishes attention causality with fewer signals.
+(a) Gemma-2 2B
+(b) GPT-2 Small
+(c) Pythia-160M
+Figure 17 : ACC++ requires fewer incoming causal signals per node than ACC (RA) on GT (pooled in-degrees across traced circuits), indicating that ACC++ typically establishes attention causality with fewer signals.
+Figure 18 : Circuit performance under the experimental setup of ( Franco and Crovella, 2025 ) , comparing ACC++ to the original ACC solver (Relative Attention; RA). ACC++ achieves comparable circuit quality.
+(a) GPT2-Small
+(b) Pythia-160M
+(c) Gemma-2 2B
+Figure 19 : Causal effect of ACC++ signal interventions on Indirect Object Identification (IOI) performance across models. Green/red bars show ACC++ signal ablation/boosting, while blue/orange bars show random signal ablation/boosting controls.
+(a) Cosine similarity
+(b) Norm ratio
+Figure 20 : Residual-stream perturbation induced by ACC++ interventions. We report cosine similarity and norm ratio between residual vectors before vs. after intervention. Despite minimal residual change (consistent with low-rank signals), interventions can have substantial causal effects on performance (cf. Figure 19 ).
+Appendix F Representative and Clustering Analysis
+F.1 Dataset
+We construct an IOI dataset balanced across high-level templates and low-level templates. The high-level template represents the order in which the indirect object (A) and subject (B) appear in the initial clause. We distinguish between two configurations: ABBA and BABA.
+For example, consider the sentence: “Then, Michael and Jim went to the office. Michael gave a computer to Jim”. Here, the initial clause introduces the subject “Michael” before the indirect object “Jim”, thus it constitutes a BABA example. Reversing the order of the IO and subject in the initial clause would result in an ABBA example.
+Low-level templates are variations on the wording of IOI sentences (e.g., different introductory clauses and connectives). There are 15 low-level templates described in Table 2 .
+Table 2 : Low-level templates considering BABA as high-level template. The ABBA low-level templates are the same, but reversing A and B in the initial clause of the prompt.
+ID
+Color
+Sentence
+1
+Then, [B] and [A] went to the [PLACE]. [B] gave a [OBJECT] to [A]
+2
+Then, [B] and [A] had a lot of fun at the [PLACE]. [B] gave a [OBJECT] to [A]
+3
+Then, [B] and [A] were working at the [PLACE]. [B] decided to give a [OBJECT] to [A]
+4
+Then, [B] and [A] were thinking about going to the [PLACE]. [B] wanted to give a [OBJECT] to [A]
+5
+Then, [B] and [A] had a long argument, and afterwards [B] said to [A]
+6
+After [B] and [A] went to the [PLACE], [B] gave a [OBJECT] to [A]
+7
+When [B] and [A] got a [OBJECT] at the [PLACE], [B] decided to give it to [A]
+8
+When [B] and [A] got a [OBJECT] at the [PLACE], [B] decided to give the [OBJECT] to [A]
+9
+While [B] and [A] were working at the [PLACE], [B] gave a [OBJECT] to [A]
+10
+While [B] and [A] were commuting to the [PLACE], [B] gave a [OBJECT] to [A]
+11
+After the lunch, [B] and [A] went to the [PLACE]. [B] gave a [OBJECT] to [A]
+12
+Afterwards, [B] and [A] went to the [PLACE]. [B] gave a [OBJECT] to [A]
+13
+Then, [B] and [A] had a long argument. Afterwards [B] said to [A]
+14
+The [PLACE] [B] and [A] went to had a [OBJECT]. [B] gave it to [A]
+15
+Friends [B] and [A] found a [OBJECT] at the [PLACE]. [B] gave it to [A]
+To construct the final dataset we sampled 100 examples for each unique combination of low-level template and high-level template, totaling 3000 examples ( 100 × 15 × 2 100\times 15\times 2 ). Finally, we used the ACC++ tracing to generate the circuits used in the following experiments. Table 3 shows the average number of nodes for the traced graphs across templates.
+We first examine the size of the circuits required to perform the IOI task. Overall, Pythia-160M discovers the sparsest circuits, averaging between 60–80 nodes for most templates. In contrast, Gemma-2 2B, discovers denser graphs, which might be due to the size of the model. Second, we notice that different high-level and low-level templates have different average sized graphs. This is already an indication that circuits might not be unique across prompts.
+Table 3 : Variation in the average node count for traced circuits suggests that circuits might not be unique across prompts and templates. Values denote average node count for each template ± \pm 95% confidence interval.
+Template
+GPT-2 Small
+Pythia-160M
+Gemma-2 2B
+ALL
+92.02 ± \pm 0.94
+80.31 ± \pm 1.10
+94.17 ± \pm 1.79
+ABBA
+85.48 ± \pm 1.09
+73.60 ± \pm 1.63
+86.12 ± \pm 2.71
+BABA
+98.54 ± \pm 1.45
+84.92 ± \pm 1.43
+101.83 ± \pm 2.27
+T1
+86.97 ± \pm 2.76
+70.26 ± \pm 2.43
+70.51 ± \pm 5.60
+T2
+102.99 ± \pm 4.53
+73.11 ± \pm 2.35
+119.29 ± \pm 6.00
+T3
+88.98 ± \pm 3.17
+67.64 ± \pm 3.04
+110.10 ± \pm 6.45
+T4
+76.02 ± \pm 3.43
+71.00 ± \pm 3.40
+86.33 ± \pm 7.31
+T5
+84.96 ± \pm 2.12
+77.37 ± \pm 3.44
+92.59 ± \pm 4.11
+T6
+77.50 ± \pm 2.64
+91.28 ± \pm 4.53
+53.53 ± \pm 4.97
+T7
+97.42 ± \pm 1.88
+97.06 ± \pm 4.54
+100.04 ± \pm 8.20
+T8
+94.46 ± \pm 2.35
+107.06 ± \pm 4.34
+89.51 ± \pm 7.38
+T9
+85.09 ± \pm 2.83
+106.51 ± \pm 3.69
+70.33 ± \pm 5.43
+T10
+83.71 ± \pm 3.38
+107.77 ± \pm 3.55
+80.00 ± \pm 5.36
+T11
+98.98 ± \pm 3.34
+78.54 ± \pm 2.49
+90.94 ± \pm 6.72
+T12
+90.90 ± \pm 6.06
+67.71 ± \pm 3.05
+69.15 ± \pm 6.26
+T13
+79.18 ± \pm 2.21
+60.73 ± \pm 1.92
+98.25 ± \pm 4.49
+T14
+112.00 ± \pm 2.63
+63.91 ± \pm 2.39
+120.53 ± \pm 5.90
+T15
+115.75 ± \pm 2.18
+66.69 ± \pm 3.19
+139.51 ± \pm 6.89
+F.2 Components
+Given a circuit G G , we can define the set of components present in G G in three different levels of granularity: nodes, edges, and edge–singular-vector pairs.
+Nodes
+We represent the set of components in a circuit G G as a binary vector 𝐜 ∈ { 0 , 1 } M \mathbf{c}\in\{0,1\}^{M} , where 𝐜 i = 1 \mathbf{c}_{i}=1 if the i i -th node is included in G G , and 0 0 otherwise. The possible nodes consist of Attention Heads and MLP blocks. For example, for the GPT-2 Small architecture, this results in a vector of dimension M = 156 M=156 ( 12 ​ layers × 12 ​ heads + 12 ​ MLPs 12\text{ layers}\times 12\text{ heads}+12\text{ MLPs} ).
+Edges
+We represent the set of components in a circuit G G as a binary vector 𝐜 ∈ { 0 , 1 } M \mathbf{c}\in\{0,1\}^{M} , where 𝐜 i = 1 \mathbf{c}_{i}=1 if the i i -th edge is included in G G , and 0 0 otherwise. For example, for the GPT-2 Small architecture, we have a total of 10,296 possible edges ( ( ( L × ( H + 1 ) ) × ( ( L − 1 ) × H ) ) / 2 = ( 12 × 13 × 11 × 12 ) / 2 = 10,296 ((L\times(H+1))\times((L-1)\times H))/2=(12\times 13\times 11\times 12)/2=10,296 ). Since the circuits only use a few of the possible edges, we restrict M M to the number of unique edges that appear across the dataset. This reduces the size of the binary vector and speeds up computation.
+Edge–Singular-Vector Pairs
+We represent the set of components in a circuit G G as a binary vector 𝐜 ∈ { 0 , 1 } M \mathbf{c}\in\{0,1\}^{M} , where 𝐜 i = 1 \mathbf{c}_{i}=1 if the i i -th edge–singular-vector pair is included in G G , and 0 0 otherwise. For example, for the GPT-2 Small architecture, we have a total of 658,944 possible pairs of edges and singular vectors ( 10,296 × 64 10,296\times 64 ). Similarly to the edges as components, since the circuits only use a few of the possible pairs, we restrict M M to the number of unique pairs that appear across the dataset.
+Figure 21 provides an illustration of these three component definitions using a simplified subgraph. Table 4 shows the average number of edge–singular-vector pairs across templates.
+Examining the average number of edge–singular-vector pairs across templates, we have further indication that circuits might not be unique across prompts. Different high-level and low-level templates yield different number of components.
+Figure 21 : Illustration of circuit components at three levels of granularity: nodes, edges, and edge–singular-vector pairs.
+Table 4 : Variation in the average count of edge–singular-vector pairs suggests that circuits are not unique across prompts and templates. Values denote average number of components for each template ± \pm 95% confidence interval.
+Template
+GPT-2 Small
+Pythia-160M
+Gemma-2 2B
+ALL
+224.35 ± \pm 2.79
+203.08 ± \pm 3.65
+375.09 ± \pm 11.62
+ABBA
+201.15 ± \pm 3.28
+175.54 ± \pm 4.95
+341.29 ± \pm 16.72
+BABA
+247.46 ± \pm 4.16
+221.97 ± \pm 4.84
+407.25 ± \pm 15.96
+T1
+210.80 ± \pm 8.75
+176.73 ± \pm 9.18
+232.09 ± \pm 29.67
+T2
+253.93 ± \pm 13.78
+205.39 ± \pm 10.14
+566.57 ± \pm 47.85
+T3
+214.82 ± \pm 9.68
+166.43 ± \pm 10.81
+497.04 ± \pm 54.14
+T4
+170.84 ± \pm 10.29
+167.21 ± \pm 12.06
+364.85 ± \pm 54.40
+T5
+227.82 ± \pm 8.37
+211.12 ± \pm 12.28
+343.54 ± \pm 27.38
+T6
+173.03 ± \pm 8.54
+236.16 ± \pm 16.62
+139.80 ± \pm 21.04
+T7
+235.12 ± \pm 8.12
+246.99 ± \pm 14.97
+384.77 ± \pm 54.07
+T8
+241.14 ± \pm 8.86
+261.62 ± \pm 14.55
+342.53 ± \pm 45.94
+T9
+189.09 ± \pm 9.12
+266.76 ± \pm 13.61
+211.42 ± \pm 26.60
+T10
+188.37 ± \pm 10.42
+271.66 ± \pm 13.97
+277.42 ± \pm 32.61
+T11
+255.52 ± \pm 10.31
+199.09 ± \pm 11.51
+367.80 ± \pm 42.82
+T12
+221.77 ± \pm 10.75
+165.02 ± \pm 12.47
+232.33 ± \pm 33.72
+T13
+203.44 ± \pm 7.68
+129.81 ± \pm 6.20
+380.90 ± \pm 29.41
+T14
+290.48 ± \pm 10.35
+172.69 ± \pm 9.62
+506.85 ± \pm 38.34
+T15
+267.62 ± \pm 8.02
+174.81 ± \pm 11.80
+646.85 ± \pm 44.37
+F.3 Clustering
+Having established how to represent a circuit as a set of components, we now outline the pipeline used for clustering the circuits. Given a dataset P = { p 1 , … , p K } P=\{p_{1},\dots,p_{K}\} of K K circuits, we construct a binary component matrix C ∈ { 0 , 1 } K × M C\in\{0,1\}^{K\times M} , where the i i -th row of C C corresponds to the binary vector of circuit p i p_{i} . Once we create the matrix C C , we can cluster the graphs using average linkage hierarchical clustering.
+Figure 22 presents the clustermap for head as components. Figure 23 presents the clustermap for edges as components.
+As we increase the granularity of the component definition: from nodes to edges to edge–singular-vector pairs, we observe a trend where the separability of high-level and/or low-level templates improve. When defining components as nodes, the clustering exhibit more inter-template similarity. This indicates that different templates might use the same set of attention heads and MLPs (as indicated by the higher similarity in the off-diagonals). Increasing the granularity to edges, we notice sharper clusters. This indicates that even though the AHs and MLPs might be generally the same across templates, the connections might not. By adding the singular values, we distinguish not only where the information moves, but which signals are being used, improving even more the separability of the clusters.
+Figure 22 : Average linkage clustering of prompt-level traces exposes distinct circuit families rather than a single universal IOI circuit. The top annotation bar indicates high-level templates ( ABBA vs. BABA ), while the left bar indicates low-level templates (see Appendix F.1 for color code). Prompts are represented as heads as components.
+Figure 23 : Average linkage clustering of prompt-level traces exposes distinct circuit families rather than a single universal IOI circuit. The top annotation bar indicates high-level templates ( ABBA vs. BABA ), while the left bar indicates low-level templates (see Appendix F.1 for color code). Prompts are represented as edges as components.
+To further validate the conclusions drawn from the clustering, we also analyze the normalized Jaccard distances across prompts and templates (Table 5 ). Particularly for Gemma-2 2B, this metric highlights that when we restrict the analysis to a single high-level or low-level template, Gemma’s within-template average Jaccard distances remain nearly identical to those computed over the entire dataset (values close to 1 after division-based normalization). This result further suggests that Gemma does not rely on a single, consistent template-specific circuit, and is instead more sensitive to finer-grained prompt details beyond the two template labels tracked here.
+Table 5 : Normalized Jaccard distances suggest that Pythia-160M relies on template-specific circuits, while Gemma-2 2B does not rely on a single, consistent template-specific circuit. Values represent the average Jaccard distance between circuits of the same template, normalized by the average distance across the entire dataset (“ALL”). Values significantly below 1.0 indicate intra-template homogeneity, whereas values near 1.0 (Gemma) indicate intra-template heterogeneity.
+Template
+GPT-2 Small
+Pythia-160M
+Gemma-2 2B
+ALL
+1.00
+1.00
+1.00
+ABBA
+0.98
+0.99
+1.00
+BABA
+0.96
+0.98
+0.98
+T1
+0.95
+0.91
+0.98
+T2
+0.95
+0.91
+0.98
+T3
+0.96
+0.89
+0.97
+T4
+0.99
+0.92
+0.99
+T5
+0.95
+0.87
+0.95
+T6
+0.96
+0.89
+0.99
+T7
+0.85
+0.78
+0.97
+T8
+0.91
+0.89
+0.98
+T9
+0.95
+0.86
+0.99
+T10
+0.97
+0.86
+0.99
+T11
+0.94
+0.90
+0.97
+T12
+0.96
+0.92
+0.98
+T13
+0.96
+0.91
+0.95
+T14
+0.89
+0.87
+0.96
+T15
+0.86
+0.90
+0.94
+F.4 Representative
+Assuming a set of objects C = { c 1 , … , c K } C=\{c_{1},\dots,c_{K}\} , and some distance function d : C × C → ℝ + d:C\times C\to\mathbb{R}^{+} . We define the sample representative of C C with respect to d d as the point c ^ ∈ C \hat{c}\in C such that:
+c ^ = arg ⁡ min c ∈ C ​ ∑ i = 1 K d ⁡ ( c i , c ) \hat{c}=\underset{c\in C}{\arg\min}\sum_{i=1}^{K}d(c_{i},c)
+(32)
+We consider the notion of sample representative as the representative circuit of a prompt class. In our experiments, we use Jaccard distance as the distance function d d , and the sets of components as the objects.
+F.5 Signals
+Given a circuit G G , we define the set of attention-head nodes that have incoming signals as 𝒜 = { a 1 , … , a M } \mathcal{A}=\{a_{1},\dots,a_{M}\} . For an attention-head node a ∈ 𝒜 a\in\mathcal{A} , we define the destination signal summary 𝐬 dst a \mathbf{s}_{\text{dst}}^{a} as the normalized sum of all destination signals targeting a a . Similarly, we define the source signal summary 𝐬 src a \mathbf{s}_{\text{src}}^{a} as the normalized sum of all source signals targeting a a .
+For a circuit G G , we stack the summaries of all nodes a ∈ 𝒜 a\in\mathcal{A} with incoming signals into two signal summary matrices:
+•
+S dst ∈ ℝ M × D S_{\text{dst}}\in\mathbb{R}^{M\times D} , where the i i -th row corresponds to the destination signal summary 𝐬 dst a i \mathbf{s}_{\text{dst}}^{a_{i}} .
+•
+S src ∈ ℝ M × D S_{\text{src}}\in\mathbb{R}^{M\times D} , where the i i -th row corresponds to the source signal summary 𝐬 src a i \mathbf{s}_{\text{src}}^{a_{i}} .
+Given two circuits G 1 G_{1} and G 2 G_{2} , we compute the similarity of their signals using the matrix product:
+Sim dst = S dst G 1 ​ ( S dst G 2 ) T and Sim src = S src G 1 ​ ( S src G 2 ) T \text{Sim}_{\text{dst}}=S_{\text{dst}}^{G_{1}}\Big(S_{\text{dst}}^{G_{2}}\Big)^{T}\quad\text{and}\quad\text{Sim}_{\text{src}}=S_{\text{src}}^{G_{1}}\Big(S_{\text{src}}^{G_{2}}\Big)^{T}
+The similarity matrices allow us to analyze whether nodes in distinct graphs use similar information.
+Figures 24 – 28 present signal comparisons between several pairs of low-level templates for Pythia-160M.
+We select some specific pairs to investigate various degrees of cluster proximity observed in the clustermaps. For instance, we compare templates with significant cluster intersection, such as Template 13 ( ) and Template 5 ( ). Conversely, we analyze pairs that are more distant in the clustermap, such as Template 13 ( ) and Template 10 ( ); and Template 8 ( ) and Template 6 ( ). Finally, we examine pairs that are close but distinct, such as Template 8 ( ) and Template 7 ( ), and the mixed but contiguous blocks of Template 14 ( ) and Template 15 ( ).
+Figure 30 and Figure 31 present the comparisons for Gemma-2 2B.
+Similar to the Pythia analysis, we focus on templates that exhibit high mixing in the cluster distributions, specifically the comparison between Template 5 ( ) and Template 13 ( ). Since Gemma-2 2B does not present clear high-level or low-level template separation (as Pythia and GPT-2), we also selected a pair of clusters by performing a cut on the dendrogram. The selected clusters are presented in Figure 29 .
+For Pythia-160M, across the template pairs, we see two additional regimes: some close neighbors still align strongly but with partial head substitution (e.g., Template 8 ( ) vs. Template 7 ( ), Figure 27 ), while more distant templates show either asymmetric overlap (Template 13 ( ) vs. Template 5 ( ), Figure 24 ) or weak alignment even on shared roles (Template 13 ( ) vs. Template 10 ( ), Figure 25 ), indicating genuinely different circuit variants. Additional Gemma comparisons show the same overall picture: some structural signals (e.g., to , and , <bos> ) are consistently reused, but substantial portions of the circuit do not present one-to-one signal matches, and in the distant-cluster comparison the alignment is distinctly asymmetric, with the larger representative containing counterparts for many nodes of the smaller but not vice versa.
+Figure 24 : Pythia-160M Template 13 ( , y-axis) vs Template 5 ( , x-axis).
+Figure 25 : Pythia-160M Template 13 ( , y-axis) vs Template 10 ( ).
+Figure 26 : Pythia-160M Template 8 ( , y-axis) vs Template 6 ( , x-axis).
+Figure 27 : Pythia-160M Template 8 ( , y-axis) vs Template 7 ( , x-axis).
+Figure 28 : Pythia-160M Template 14 ( , y-axis) vs Template 15 ( , x-axis).
+Figure 29 : Clustermap of circuits for Gemma-2 2B highlighting two clusters.
+Figure 30 : Gemma-2 2B Template 5 ( , y-axis) vs Template 13 ( , x-axis).
+Figure 31 : Gemma-2 2B Cluster B (y-axis) vs Cluster A (x-axis).
+Appendix G Autointerpretation Pipeline Details
+This appendix provides implementation details for the autointerpretation results in Section 4 . We first explain how we convert each one-sided ACC++ signal (destination or source) into a signal pair by selecting the direction on the other side of the attention interaction that maximizes the pair’s influence on the head’s attention score (Appendix G.1 ). The reason of using signal pairs is that attention is a bilinear interaction between destination and source tokens, so a one-sided signal (destination-only or source-only) does not specify what it is matching against; pairing identifies the corresponding direction, allowing us to retrieve contexts and interpret the signal as a concrete destination token attending to a source token.
+We then describe our fully automated pipeline, adapted from ( Paulo et al., 2025 ) , which (i) retrieves high-activation token-pair contexts for each signal from pile-10k , (ii) prompts an LLM to produce a short natural-language interpretation from the top contexts, and (iii) evaluates the interpretation with a standardized fuzzing-style procedure that compares top contexts to random controls and labels signals as interpretable using our statistical criterion (Appendix G.2 ).
+G.1 Finding Signal Pairs
+Let’s consider models with bias such as GPT-2 to derive the signal interpretability. From Section B.1 , we have that
+A d ​ s ′ \displaystyle A^{\prime}_{ds}
+= ( 𝐱 d ⊤ + 𝐜 d ⊤ ) ​ Ω ​ ( 𝐱 s + 𝐜 s ) \displaystyle=\left({\mathbf{x}^{d\top}}+{\mathbf{c}^{d}}^{\top}\right)\Omega\left({\mathbf{x}^{s}}+\mathbf{c}^{s}\right)
+= 𝐱 ~ d ⊤ ​ Ω ​ 𝐱 ~ s \displaystyle={\mathbf{\tilde{x}}^{d\top}}\Omega{\mathbf{\tilde{x}}^{s}}
+= ∑ k = 1 R 𝐱 ~ d ⊤ ​ 𝐮 k ​ σ k ​ 𝐯 k ⊤ ​ 𝐱 ~ s , \displaystyle=\sum_{k=1}^{R}{\mathbf{\tilde{x}}^{d\top}}\mathbf{u}^{k}\sigma^{k}\mathbf{v}^{k\top}{\mathbf{\tilde{x}}^{s}},
+where 𝐜 d ⊤ = 𝐛 Q ⊤ ​ W Q † {\mathbf{c}^{d}}^{\top}=\mathbf{b}_{Q}^{\top}W_{Q}^{\dagger} and 𝐜 s = W K † ⊤ ​ 𝐛 K \mathbf{c}^{s}={W_{K}^{\dagger}}^{\top}\mathbf{b}_{K} .
+We now fix a subset of singular directions I = { i 1 , … , i k } I=\{i_{1},\dots,i_{k}\} and consider a destination signal 𝐩 \mathbf{p} that lives in the corresponding left-singular subspace,
+𝐩 ∈ Span ⁡ { 𝐮 i 1 , … , 𝐮 i k } , ‖ 𝐩 ‖ = 1 . \mathbf{p}\in\operatorname{Span}\{\mathbf{u}^{i_{1}},\dots,\mathbf{u}^{i_{k}}\},\qquad\|\mathbf{p}\|=1.
+Intuitively, we would like to find a corresponding source signal 𝐪 \mathbf{q} (also unit norm) such that the pair ( 𝐩 , 𝐪 ) (\mathbf{p},\mathbf{q}) has maximal influence on the attention bilinear form A d ​ s ′ A^{\prime}_{ds} . For fixed 𝐱 ~ d {\mathbf{\tilde{x}}^{d}} , 𝐱 ~ s {\mathbf{\tilde{x}}^{s}} , and fixed 𝐩 \mathbf{p} , the dependence on 𝐪 \mathbf{q} enters only through the inner term
+𝐩 ⊤ ​ Ω ​ 𝐪 , \mathbf{p}^{\top}\Omega\,\mathbf{q},
+up to multiplicative factors that do not depend on 𝐪 \mathbf{q} . Therefore, it suffices to solve the following optimization problem:
+𝐪 ∗ = arg ⁡ max ‖ 𝐪 ‖ = 1 ​ 𝐩 ⊤ ​ Ω ​ 𝐪 . \mathbf{q}^{*}\;=\;\arg\max_{\|\mathbf{q}\|=1}\ \mathbf{p}^{\top}\Omega\,\mathbf{q}.
+The next lemma shows that the optimal corresponding signal 𝐪 \mathbf{q} is always the normalized vector Ω ⊤ ​ 𝐩 \Omega^{\top}\mathbf{p} , and hence lies in the right-singular subspace aligned with the singular directions that span 𝐩 \mathbf{p} .
+Lemma.
+Let Ω ∈ ℝ D × D \Omega\in\mathbb{R}^{D\times D} have SVD
+Ω = ∑ m = 1 R σ m ​ 𝐮 m ​ 𝐯 m ⊤ , \Omega=\sum_{m=1}^{R}\sigma^{m}\,\mathbf{u}^{m}\mathbf{v}^{m\top},
+and let I = { i 1 , … , i k } I=\{i_{1},\dots,i_{k}\} be a subset of indices. Define
+U I = [ 𝐮 i 1 ​ … ​ 𝐮 i k ] , V I = [ 𝐯 i 1 ​ … ​ 𝐯 i k ] , Σ I = diag ⁡ ( σ i 1 , … , σ i k ) . U_{I}=[\,\mathbf{u}^{i_{1}}\ \dots\ \mathbf{u}^{i_{k}}\,],\qquad V_{I}=[\,\mathbf{v}^{i_{1}}\ \dots\ \mathbf{v}^{i_{k}}\,],\qquad\Sigma_{I}=\operatorname{diag}(\sigma^{i_{1}},\dots,\sigma^{i_{k}}).
+Let 𝐩 ∈ Span ⁡ { 𝐮 i 1 , … , 𝐮 i k } \mathbf{p}\in\operatorname{Span}\{\mathbf{u}^{i_{1}},\dots,\mathbf{u}^{i_{k}}\} with ‖ 𝐩 ‖ = 1 \|\mathbf{p}\|=1 . Consider
+𝐪 ∗ = arg ⁡ max ‖ 𝐪 ‖ = 1 ​ 𝐩 ⊤ ​ Ω ​ 𝐪 . \mathbf{q}^{*}\;=\;\arg\max_{\|\mathbf{q}\|=1}\ \mathbf{p}^{\top}\Omega\,\mathbf{q}.
+Then, if Ω ⊤ ​ 𝐩 ≠ 𝟎 \Omega^{\top}\mathbf{p}\neq\mathbf{0} ,
+𝐪 ∗ = Ω ⊤ ​ 𝐩 ‖ Ω ⊤ ​ 𝐩 ‖ , \mathbf{q}^{*}\;=\;\frac{\Omega^{\top}\mathbf{p}}{\|\Omega^{\top}\mathbf{p}\|},
+and in particular 𝐪 ∗ ∈ Span ⁡ { 𝐯 i 1 , … , 𝐯 i k } \mathbf{q}^{*}\in\operatorname{Span}\{\mathbf{v}^{i_{1}},\dots,\mathbf{v}^{i_{k}}\} . If Ω ⊤ ​ 𝐩 = 𝟎 \Omega^{\top}\mathbf{p}=\mathbf{0} , then 𝐩 ⊤ ​ Ω ​ 𝐪 = 0 \mathbf{p}^{\top}\Omega\mathbf{q}=0 for all ‖ 𝐪 ‖ = 1 \|\mathbf{q}\|=1 and every unit 𝐪 \mathbf{q} is optimal.
+Proof.
+Since 𝐩 ∈ Span ⁡ { 𝐮 i 1 , … , 𝐮 i k } \mathbf{p}\in\operatorname{Span}\{\mathbf{u}^{i_{1}},\dots,\mathbf{u}^{i_{k}}\} and ‖ 𝐩 ‖ = 1 \|\mathbf{p}\|=1 , there exists 𝜶 ∈ ℝ k \boldsymbol{\alpha}\in\mathbb{R}^{k} with
+𝐩 = U I ​ 𝜶 , ‖ 𝜶 ‖ = 1 , \mathbf{p}=U_{I}\boldsymbol{\alpha},\qquad\|\boldsymbol{\alpha}\|=1,
+because the columns of U I U_{I} are orthonormal.
+We want to solve
+𝐪 ∗ = arg ⁡ max ‖ 𝐪 ‖ = 1 ​ 𝐩 ⊤ ​ Ω ​ 𝐪 . \mathbf{q}^{*}\;=\;\arg\max_{\|\mathbf{q}\|=1}\ \mathbf{p}^{\top}\Omega\,\mathbf{q}.
+First, note that we can, without loss of generality, restrict 𝐪 \mathbf{q} to the span of the right singular vectors { 𝐯 i 1 , … , 𝐯 i k } \{\mathbf{v}^{i_{1}},\dots,\mathbf{v}^{i_{k}}\} . Indeed, decompose any 𝐪 \mathbf{q} as
+𝐪 = V I ​ 𝜷 + 𝐰 , \mathbf{q}=V_{I}\boldsymbol{\beta}+\mathbf{w},
+where 𝜷 ∈ ℝ k \boldsymbol{\beta}\in\mathbb{R}^{k} and 𝐰 ⟂ Span ⁡ { 𝐯 i 1 , … , 𝐯 i k } \mathbf{w}\perp\operatorname{Span}\{\mathbf{v}^{i_{1}},\dots,\mathbf{v}^{i_{k}}\} . Using the SVD,
+𝐩 ⊤ ​ Ω ​ 𝐪 = ∑ m = 1 R σ m ​ ( 𝐮 m ⊤ ​ 𝐩 ) ​ ( 𝐯 m ⊤ ​ 𝐪 ) . \mathbf{p}^{\top}\Omega\mathbf{q}=\sum_{m=1}^{R}\sigma^{m}(\mathbf{u}^{m\top}\mathbf{p})(\mathbf{v}^{m\top}\mathbf{q}).
+Since 𝐩 ∈ Span ⁡ { 𝐮 i 1 , … , 𝐮 i k } \mathbf{p}\in\operatorname{Span}\{\mathbf{u}^{i_{1}},\dots,\mathbf{u}^{i_{k}}\} , we have 𝐮 m ⊤ ​ 𝐩 = 0 \mathbf{u}^{m\top}\mathbf{p}=0 for all m ∉ I m\notin I , so
+𝐩 ⊤ ​ Ω ​ 𝐪 = ∑ m ∈ I σ m ​ ( 𝐮 m ⊤ ​ 𝐩 ) ​ ( 𝐯 m ⊤ ​ 𝐪 ) = ∑ m ∈ I σ m ​ ( 𝐮 m ⊤ ​ 𝐩 ) ​ ( 𝐯 m ⊤ ​ V I ​ 𝜷 ) , \mathbf{p}^{\top}\Omega\mathbf{q}=\sum_{m\in I}\sigma^{m}(\mathbf{u}^{m\top}\mathbf{p})(\mathbf{v}^{m\top}\mathbf{q})=\sum_{m\in I}\sigma^{m}(\mathbf{u}^{m\top}\mathbf{p})(\mathbf{v}^{m\top}V_{I}\boldsymbol{\beta}),
+because 𝐯 m ⊤ ​ 𝐰 = 0 \mathbf{v}^{m\top}\mathbf{w}=0 for all m ∈ I m\in I . Thus the component 𝐰 \mathbf{w} does not affect the objective, but does contribute to the norm ‖ 𝐪 ‖ 2 = ‖ V I ​ 𝜷 ‖ 2 + ‖ 𝐰 ‖ 2 \|\mathbf{q}\|^{2}=\|V_{I}\boldsymbol{\beta}\|^{2}+\|\mathbf{w}\|^{2} . Under the constraint ‖ 𝐪 ‖ = 1 \|\mathbf{q}\|=1 , any nonzero 𝐰 \mathbf{w} would reduce the available norm for V I ​ 𝜷 V_{I}\boldsymbol{\beta} without changing 𝐩 ⊤ ​ Ω ​ 𝐪 \mathbf{p}^{\top}\Omega\mathbf{q} , and therefore cannot be optimal. Hence we may assume 𝐰 = 0 \mathbf{w}=0 and restrict to
+𝐪 = V I ​ 𝜷 , ‖ 𝜷 ‖ = 1 . \mathbf{q}=V_{I}\boldsymbol{\beta},\qquad\|\boldsymbol{\beta}\|=1.
+Because V I V_{I} has orthonormal columns, we have
+‖ 𝐪 ‖ 2 = ‖ V I ​ 𝜷 ‖ 2 = 𝜷 ⊤ ​ V I ⊤ ​ V I ​ 𝜷 = ‖ 𝜷 ‖ 2 , \|\mathbf{q}\|^{2}=\|V_{I}\boldsymbol{\beta}\|^{2}=\boldsymbol{\beta}^{\top}V_{I}^{\top}V_{I}\boldsymbol{\beta}=\|\boldsymbol{\beta}\|^{2},
+so the constraint ‖ 𝐪 ‖ = 1 \|\mathbf{q}\|=1 is equivalent to ‖ 𝜷 ‖ = 1 \|\boldsymbol{\beta}\|=1 .
+Now rewrite the objective in the reduced coordinates:
+𝐩 ⊤ ​ Ω ​ 𝐪 = 𝜶 ⊤ ​ U I ⊤ ​ Ω ​ V I ​ 𝜷 . \mathbf{p}^{\top}\Omega\mathbf{q}=\boldsymbol{\alpha}^{\top}U_{I}^{\top}\Omega V_{I}\boldsymbol{\beta}.
+But U I ⊤ ​ Ω ​ V I = Σ I U_{I}^{\top}\Omega V_{I}=\Sigma_{I} (by the definition of the SVD block on indices I I ), so
+𝐩 ⊤ ​ Ω ​ 𝐪 = 𝜶 ⊤ ​ Σ I ​ 𝜷 . \mathbf{p}^{\top}\Omega\mathbf{q}=\boldsymbol{\alpha}^{\top}\Sigma_{I}\boldsymbol{\beta}.
+Thus the problem reduces to
+𝜷 ∗ = arg ⁡ max ‖ 𝜷 ‖ = 1 ​ 𝜶 ⊤ ​ Σ I ​ 𝜷 . \boldsymbol{\beta}^{*}\;=\;\arg\max_{\|\boldsymbol{\beta}\|=1}\ \boldsymbol{\alpha}^{\top}\Sigma_{I}\boldsymbol{\beta}.
+Define 𝜸 := Σ I ​ 𝜶 ∈ ℝ k \boldsymbol{\gamma}:=\Sigma_{I}\boldsymbol{\alpha}\in\mathbb{R}^{k} . Then
+𝜶 ⊤ ​ Σ I ​ 𝜷 = 𝜸 ⊤ ​ 𝜷 . \boldsymbol{\alpha}^{\top}\Sigma_{I}\boldsymbol{\beta}=\boldsymbol{\gamma}^{\top}\boldsymbol{\beta}.
+If 𝜸 = 𝟎 \boldsymbol{\gamma}=\mathbf{0} , then 𝐩 ⊤ ​ Ω ​ 𝐪 = 𝜸 ⊤ ​ 𝜷 = 0 \mathbf{p}^{\top}\Omega\mathbf{q}=\boldsymbol{\gamma}^{\top}\boldsymbol{\beta}=0 for all 𝜷 \boldsymbol{\beta} with ‖ 𝜷 ‖ = 1 \|\boldsymbol{\beta}\|=1 , so 𝐩 ⊤ ​ Ω ​ 𝐪 = 0 \mathbf{p}^{\top}\Omega\mathbf{q}=0 for all unit 𝐪 \mathbf{q} and every unit 𝐪 \mathbf{q} is optimal. This is exactly the degenerate case Ω ⊤ ​ 𝐩 = 𝟎 \Omega^{\top}\mathbf{p}=\mathbf{0} .
+Assume now 𝜸 ≠ 𝟎 \boldsymbol{\gamma}\neq\mathbf{0} . By the Cauchy–Schwarz inequality,
+𝜸 ⊤ ​ 𝜷 ≤ ‖ 𝜸 ‖ ​ ‖ 𝜷 ‖ = ‖ 𝜸 ‖ , ‖ 𝜷 ‖ = 1 . \boldsymbol{\gamma}^{\top}\boldsymbol{\beta}\;\leq\;\|\boldsymbol{\gamma}\|\,\|\boldsymbol{\beta}\|=\|\boldsymbol{\gamma}\|,\qquad\|\boldsymbol{\beta}\|=1.
+Equality holds if and only if 𝜸 \boldsymbol{\gamma} and 𝜷 \boldsymbol{\beta} are linearly dependent. Thus to maximize 𝜸 ⊤ ​ 𝜷 \boldsymbol{\gamma}^{\top}\boldsymbol{\beta} under ‖ 𝜷 ‖ = 1 \|\boldsymbol{\beta}\|=1 , we must have
+𝜷 ∗ = λ ​ 𝜸 \boldsymbol{\beta}^{*}=\lambda\,\boldsymbol{\gamma}
+for some scalar λ \lambda . Enforcing ‖ 𝜷 ∗ ‖ = 1 \|\boldsymbol{\beta}^{*}\|=1 gives
+1 = ‖ 𝜷 ∗ ‖ = | λ | ‖ 𝜸 ‖ ⇒ | λ | = 1 ‖ 𝜸 ‖ . 1=\|\boldsymbol{\beta}^{*}\|=|\lambda|\,\|\boldsymbol{\gamma}\|\quad\Rightarrow\quad|\lambda|=\frac{1}{\|\boldsymbol{\gamma}\|}.
+To maximize (rather than minimize) 𝜸 ⊤ ​ 𝜷 \boldsymbol{\gamma}^{\top}\boldsymbol{\beta} , we take the positive sign, so
+𝜷 ∗ = 𝜸 ‖ 𝜸 ‖ . \boldsymbol{\beta}^{*}=\frac{\boldsymbol{\gamma}}{\|\boldsymbol{\gamma}\|}.
+Mapping back to the original space,
+𝐪 ∗ = V I ​ 𝜷 ∗ = V I ​ 𝜸 ‖ 𝜸 ‖ = V I ​ 𝜸 ‖ 𝜸 ‖ . \mathbf{q}^{*}=V_{I}\boldsymbol{\beta}^{*}=V_{I}\frac{\boldsymbol{\gamma}}{\|\boldsymbol{\gamma}\|}=\frac{V_{I}\boldsymbol{\gamma}}{\|\boldsymbol{\gamma}\|}.
+We now express Ω ⊤ ​ 𝐩 \Omega^{\top}\mathbf{p} in terms of this basis:
+Ω ⊤ ​ 𝐩 = ∑ m = 1 R σ m ​ 𝐯 m ​ 𝐮 m ⊤ ​ 𝐩 = ∑ m ∈ I σ m ​ 𝐯 m ​ ( 𝐮 m ⊤ ​ 𝐩 ) = V I ​ ( Σ I ​ 𝜶 ) = V I ​ 𝜸 . \Omega^{\top}\mathbf{p}=\sum_{m=1}^{R}\sigma^{m}\mathbf{v}^{m}\mathbf{u}^{m\top}\mathbf{p}=\sum_{m\in I}\sigma^{m}\mathbf{v}^{m}(\mathbf{u}^{m\top}\mathbf{p})=V_{I}(\Sigma_{I}\boldsymbol{\alpha})=V_{I}\boldsymbol{\gamma}.
+Therefore
+‖ Ω ⊤ ​ 𝐩 ‖ = ‖ V I ​ 𝜸 ‖ = ‖ 𝜸 ‖ \|\Omega^{\top}\mathbf{p}\|=\|V_{I}\boldsymbol{\gamma}\|=\|\boldsymbol{\gamma}\|
+(because V I V_{I} has orthonormal columns), and we obtain
+𝐪 ∗ = V I ​ 𝜸 ‖ 𝜸 ‖ = Ω ⊤ ​ 𝐩 ‖ Ω ⊤ ​ 𝐩 ‖ . \mathbf{q}^{*}=\frac{V_{I}\boldsymbol{\gamma}}{\|\boldsymbol{\gamma}\|}=\frac{\Omega^{\top}\mathbf{p}}{\|\Omega^{\top}\mathbf{p}\|}.
+This proves that, in the non-degenerate case, the unique maximizer is
+𝐪 ∗ = Ω ⊤ ​ 𝐩 ‖ Ω ⊤ ​ 𝐩 ‖ , \mathbf{q}^{*}=\frac{\Omega^{\top}\mathbf{p}}{\|\Omega^{\top}\mathbf{p}\|},
+and it lies in Span ⁡ { 𝐯 i 1 , … , 𝐯 i k } \operatorname{Span}\{\mathbf{v}^{i_{1}},\dots,\mathbf{v}^{i_{k}}\} , since Ω ⊤ ​ 𝐩 = V I ​ 𝜸 \Omega^{\top}\mathbf{p}=V_{I}\boldsymbol{\gamma} .
+∎
+Corollary (source-to-destination correspondence).
+An entirely analogous result holds if we fix a source signal and optimize over the destination. Let 𝐪 ∈ Span ⁡ { 𝐯 i 1 , … , 𝐯 i k } \mathbf{q}\in\operatorname{Span}\{\mathbf{v}^{i_{1}},\dots,\mathbf{v}^{i_{k}}\} with ‖ 𝐪 ‖ = 1 \|\mathbf{q}\|=1 , and consider
+𝐩 ∗ = arg ⁡ max ‖ 𝐩 ‖ = 1 ​ 𝐩 ⊤ ​ Ω ​ 𝐪 . \mathbf{p}^{*}\;=\;\arg\max_{\|\mathbf{p}\|=1}\ \mathbf{p}^{\top}\Omega\,\mathbf{q}.
+Writing 𝐩 ⊤ ​ Ω ​ 𝐪 = ⟨ 𝐩 , Ω ​ 𝐪 ⟩ \mathbf{p}^{\top}\Omega\,\mathbf{q}=\langle\mathbf{p},\,\Omega\mathbf{q}\rangle and applying the Cauchy–Schwarz inequality exactly as in the lemma, we obtain
+𝐩 ∗ = Ω ​ 𝐪 ‖ Ω ​ 𝐪 ‖ , \mathbf{p}^{*}\;=\;\frac{\Omega\,\mathbf{q}}{\|\Omega\,\mathbf{q}\|},
+whenever Ω ​ 𝐪 ≠ 𝟎 \Omega\,\mathbf{q}\neq\mathbf{0} . Moreover, since 𝐪 \mathbf{q} has support only on { 𝐯 i 1 , … , 𝐯 i k } \{\mathbf{v}^{i_{1}},\dots,\mathbf{v}^{i_{k}}\} , we have Ω ​ 𝐪 ∈ Span ⁡ { 𝐮 i 1 , … , 𝐮 i k } \Omega\,\mathbf{q}\in\operatorname{Span}\{\mathbf{u}^{i_{1}},\dots,\mathbf{u}^{i_{k}}\} , so the optimal destination signal 𝐩 ∗ \mathbf{p}^{*} lies in the corresponding left-singular subspace.
+Extending this methodology to RoPE models.
+This pairing methodology continues to hold for RoPE models (with or without bias) because it is fundamentally a statement about maximizing a bilinear form, and RoPE only applies linear maps to the vectors that enter that bilinear form. In the non-RoPE case, the attention score has the form 𝐱 ~ d ⊤ ​ Ω ​ 𝐱 ~ s {\mathbf{\tilde{x}}^{d\top}}\Omega{\mathbf{\tilde{x}}^{s}} , and the pairing step asks: for a fixed destination direction 𝐩 \mathbf{p} , which unit-norm source direction 𝐪 \mathbf{q} maximizes 𝐩 ⊤ ​ Ω ​ 𝐪 \mathbf{p}^{\top}\Omega\mathbf{q} ? The solution is 𝐪 ∝ Ω ⊤ ​ 𝐩 \mathbf{q}\propto\Omega^{\top}\mathbf{p} , i.e. 𝐪 = Ω ⊤ ​ 𝐩 / ‖ Ω ⊤ ​ 𝐩 ‖ \mathbf{q}=\Omega^{\top}\mathbf{p}/\|\Omega^{\top}\mathbf{p}\| . With RoPE (and bias), the score can be rewritten as ( ( 𝐱 d + ⊤ 𝐜 d ) ⊤ M d ) Ω ( M s ( 𝐱 s + 𝐜 s ) ) ((\mathbf{x}^{d}{}^{\top}+\mathbf{c}^{d}{}^{\top})M_{d})\,\Omega\,(M_{s}(\mathbf{x}^{s}+\mathbf{c}^{s})) , where M d M_{d} and M s M_{s} are the position-dependent linear maps induced by pushing the RoPE rotations through W Q W_{Q} and W K W_{K} . Defining the effective vectors 𝐱 ~ d := ⊤ ( 𝐱 d + ⊤ 𝐜 d ) ⊤ M d \tilde{\mathbf{x}}^{d}{}^{\top}:=(\mathbf{x}^{d}{}^{\top}+\mathbf{c}^{d}{}^{\top})M_{d} and 𝐱 ~ s := M s ​ ( 𝐱 s + 𝐜 s ) \tilde{\mathbf{x}}^{s}:=M_{s}(\mathbf{x}^{s}+\mathbf{c}^{s}) yields the same bilinear structure 𝐱 ~ d ⊤ Ω 𝐱 ~ s \tilde{\mathbf{x}}^{d}{}^{\top}\Omega\tilde{\mathbf{x}}^{s} . Therefore, the maximization argument applies verbatim in the effective (RoPE-adjusted) space: for a fixed effective destination signal direction 𝐩 \mathbf{p} , the corresponding paired effective source direction is still given by 𝐪 = Ω ⊤ ​ 𝐩 / ‖ Ω ⊤ ​ 𝐩 ‖ \mathbf{q}=\Omega^{\top}\mathbf{p}/\|\Omega^{\top}\mathbf{p}\| (and symmetrically 𝐩 = Ω ​ 𝐪 / ‖ Ω ​ 𝐪 ‖ \mathbf{p}=\Omega\mathbf{q}/\|\Omega\mathbf{q}\| ). In other words, RoPE changes how residual components are mapped into the space where Ω \Omega acts, but it does not change the algebraic form of the pairing rule once those linear maps are accounted for.
+G.2 Automated Interpretation Pipeline Description
+We adopt an automated interpretability pipeline modeled after the methodology in ( Paulo et al., 2025 ) , and adapted to the setting of ACC++ signals. In our setting, signals are paired with a destination and source signals patterns within individual attention heads, instead of individual neurons or sparse autoencoder features. The pipeline consists of three stages: identification of high-activation signal examples, generation of a natural-language interpretation for each signal, and quantitative evaluation of interpretation quality. All stages of interpretation and evaluation are fully automated. No human annotations, labeling, or judgments are used at any point in the pipeline.
+Top-Activation Discovery (context collection)
+All experiments are conducted using three pretrained transformer language models: GPT-2 Small, Pythia-160M, and Gemma-2 2B. We use the NeelNanda/pile-10k split of The Pile, consisting of the first 10,000 sequences of tokenized natural-language text ( Gao et al., 2020 ) . Signals are not explicit annotations in the dataset; they are ACC++-discovered activation patterns tied to a specific attention head and a directed destination–source interaction (Appendix C ). Throughout this appendix, the object we interpret is a signal pair (Appendix G.1 ).
+To find contexts where a given signal pair is active, we cache residual-stream activations over pile-10k in 32-token chunks. Fix a normalized signal pair ( 𝐩 , 𝐪 ) (\mathbf{p},\mathbf{q}) for a head ( ℓ , a ) (\ell,a) , and let 𝐱 d , 𝐱 s \mathbf{x}^{d},\mathbf{x}^{s} denote the residual-stream inputs to layer ℓ \ell at destination token d d and source token s s . Recall that the (unnormalized) attention logit is a bilinear form A d ​ s ′ = 𝐱 d ⊤ ​ Ω ​ 𝐱 s A^{\prime}_{ds}=\mathbf{x}^{d\top}\Omega\,\mathbf{x}^{s} (up to scaling), where Ω = W Q ​ W K ⊤ \Omega=W_{Q}W_{K}^{\top} . We measure how strongly the attention interaction is driven along the paired directions by scoring token pairs via
+score ⁡ ( d , s , 𝐩 , 𝐪 ) = 𝐱 d ⊤ ​ 𝐩 ​ 𝐪 ⊤ ​ 𝐱 s , \mathrm{score}(d,s;\mathbf{p},\mathbf{q})\;=\;\mathbf{x}^{d\top}\,\mathbf{p}\,\mathbf{q}^{\top}\,\mathbf{x}^{s},
+which is a proxy for the contribution of the paired signals to the head’s attention logit for ( d , s ) (d,s) .
+Construction of Signal Examples
+Each selected context is rendered as a 32-token text span that contains both the destination and source tokens. Within each span, the destination token is marked using << >> , and the source token is marked using [[ ]] ; if the same token serves as both destination and source, both markers are applied ( <<[[token]]>> ).
+These examples are used in two downstream stages.
+1.
+Interpretation Stage: we prompt an LLM with the top-40 examples for a signal to generate a single short interpretation.
+2.
+Evaluation Stage: to score an interpretation, we take the top-20 examples (highest-scoring among the top-40) and mix them with 20 random control examples sampled independently for that same signal , then ask an LLM judge to decide whether the interpretation explains each example ( Paulo et al., 2025 ) .
+Interpretation stage
+Given the top-40 activating examples for a signal, we generate a single natural-language interpretation that summarizes the shared pattern associated with the marked destination–source token pairs. We use neuralmagic/DeepSeek-R1-Distill-Llama-70B-FP8-dynamic as the interpreter model, run via vLLM ( DeepSeek-AI, 2025 ) . The interpreter is shown only the top-activation examples and is instructed to produce one concise, high-level description, explicitly taking into account both token identity and token position within the 32-token span. The full interpretation prompt is included verbatim below and is used without modification
+⬇
+You are a meticulous AI researcher conducting an important investigation into how hidden signals in language models correspond to patterns in text . Your task is to analyze the given text snippets and provide an interpretation that clearly summarizes the linguistic or semantic pattern they reveal .
+Guidelines :
+- You will be shown several short text examples .
+- In each example , one or two important tokens will be surrounded by << >> and [[ ]] ( e . g . ” the [[ cat ]] sat on the << mat >>”).
+- These brackets indicate where the model ’ s internal signal was most active . Signals are found in the context of attention heads , meaning that the token highlighted with << >> acts as a destination token , while the token highlighted with [[ ]] acts as a source token . If only one token is highlighted with both << >> and [[ ]], it means that this token acts as both destination and source tokens .
+- Each example may include additional context words around the highlighted token ( s ).
+- Your goal is to produce a concise , high - level description of what these highlighted tokens have in common ( their meaning , grammatical role , or thematic pattern possibility ).
+- Focus on the underlying pattern , not on quoting or restating the examples .
+- Remember to look at the position of the tokens in the text chunk . This also matters .
+- Ignore the brackets and any tokenization artifacts when describing your interpretation .
+- If the examples appear random or uninformative , say so briefly .
+- Do not list multiple hypotheses ; choose the single best interpretation .
+- Keep your answer short and clear .
+- If you are not more than 90\% certain about an interpretation , say ” no valid interpretation found ”.
+- The final line of your response must provide your conclusion in this exact format :
+[ interpretation ]: your concise description here
+The interpreter produces exactly one interpretation per signal, or returns no valid interpretation found when the top examples appear incoherent or uninformative. Signals with no returned interpretation are flagged and excluded from downstream scoring.
+Gemini for qualitative, manual-case studies.
+For a small number of representative circuits used in our qualitative analysis—most notably the ABBA/BABA comparison in Figure 3 of the main paper and the additional traced examples in Appendix G.3 —we instead used Gemini 3 Flash to generate natural-language interpretations for the signals. We chose Gemini for these case studies because we wanted the strongest possible interpretations for a handful of prompts that we analyze manually, and this setting does not require running the full fuzzing score pipeline at scale. We did not use Gemini for the full automated pipeline primarily due to cost.
+Interpretation Scoring Setup
+We evaluate each proposed interpretation using a separate judge model, Gemma-3-27B-IT, also run via vLLM ( Team et al., 2025 ) . The judge is distinct from the interpreter and is used only to assess whether the interpretation reliably separates top-activation contexts from random controls. For each signal with an associated interpretation, we score 40 mixed examples: 20 top-activation examples (the highest-scoring subset of the top-40) and 20 random examples sampled for that signal. We evaluate the 40 examples in batches of 10, with each batch containing exactly 5 top-activation and 5 random examples; batches are scored independently and concatenated to yield 40 binary judgments per signal.
+Each scoring prompt contains the candidate interpretation and 10 mixed examples with explicit source/destination markings. The judge returns a binary label for each example, where an example is accepted only if all marked tokens in that example are consistent with the interpretation. We use this criterion to avoid ambiguity from partial matches and to ensure that high scores reflect coherent signal-level regularities rather than occasional coincidental matches. The full scoring prompt is included verbatim below and is used without modification.
+⬇
+You are an intelligent and meticulous linguistics researcher .
+You will be given a specific linguistic feature of interest , such as ” male pronouns ,” ” negative sentiment ,” or ” surname tokens .”
+You will then be given several text examples that are claimed to contain this feature . Portions of the text that supposedly represent the feature have been marked using << >> and [[ ]].
+These brackets indicate where the model ’ s internal signal was most active .
+Features are found in the context of attention heads , meaning that the token highlighted with << >> acts as a destination token , while the token highlighted with [[ ]] acts as a source token . If only one token is highlighted with both << >> and [[ ]], it means that this token acts as both destination and source tokens .
+Your task is to determine whether EVERY token inside each << >> and [[ ]] span is correctly labeled as an instance of the feature .
+Important :
+- An example is correct ONLY if every marked tokens are representative of the feature .
+- There are exactly 10 examples below .
+For each example in turn :
+- Return 1 if ALL marked spans correctly represent the feature .
+- Return 0 if ANY marked token is mislabeled .
+Important Output Format Rules :
+1. Return the results as a Python Dictionary .
+2. The keys must be the example numbers (1 to 10), and the values must be the binary label (0 or 1).
+3. Do not assume the order ; explicitly check the number I assigned to each example .
+4. Ignore any numbers or formatting artifacts INSIDE the text strings ( e . g ., if a text contains ”4).”, ignore it ).
+5. Output format :
+{
+1: 0,
+2: 1,
+…
+10: 0
+}
+Here are the examples :
+< user_prompt >
+Feature interpretation : Words related to American football positions , specifically the tight end position .
+Text examples :
+1. Getty Images [[ Patriots ]]<< tight >> end Rob Gronkowski had his boss
+2. posted You should know this [[ about ]] offensive line coaches : they are large , demanding << men >>
+3. Media Day 2015 LSU [[ defensive ]] end Isaiah Washington (94) speaks to << the >>
+4. running [[ backs ]],” he said . .. Defensive << end >> Carroll Phillips is improving and his injury is
+5. [[ line ]], with the left side namely << tackle >> Byron Bell at tackle and guard Amini
+< assistant_response >
+{
+1: 1,
+2: 0,
+3: 0,
+4: 1,
+5: 1,
+}
+Now evaluate the following examples :
+Signals for which the interpreter returns no valid interpretation found are treated as missing interpretations and are excluded from scoring-based analyses. Across models, the fraction of missing interpretations is small (GPT-2 Small 0.850%, Pythia-160M 0.359%, Gemma-2 2B 0.576%). We run the full pipeline over 22223 (Gemma-2 2B), 15316 (Pythia-160M), and 13406 (GPT-2 Small) signals.
+Example top-activation contexts.
+Before reporting aggregate fuzzing metrics, we show a few retrieved top-activation contexts for a representative signal. As above, << >> marks the destination token and [[ ]] marks the source token.
+Prompt: “Then, Jack and Kelly went to the garden. Jack gave a basketball to” (BABA representative).
+Signal: AH(8,6) ( to (1), Jack (1)) → \to AH(9,9) ( to (1), Kelly).
+Interpretation: the second element in a parallel pair or sequence.
+Explanation: The highlighted tokens consistently identify the second element in a parallel pair, list, or sequence (such as “y” following “x”, “b” following “a”, or an item labeled “2” following one labeled “1”). The signal typically links this second element either to its own identifier or to the corresponding first element in the same or a preceding parallel structure.
+⬇
+- boost :: arg < I > (*) () ): storage3 < A1 , A [[2]], A3 >( a1 ,<< a >>2, a3 ) {}
+- the function that initiates Ball ( float x , float y , int Width , color Color ) { ballX = x ; ball [[ Y ]]<<=>> y ; ballWidth
+- speedX ; ballY += speedY ; } void move ( int X , int Y ) { ballX = X ; ball [[ Y ]]<<=>> Y ; speedY
+- ). \ nfunction cartesianJoin ( arr1 , arr [[2]], col1 ,<< col >>2) {\ n var output = [];\ n for ( var
+- that initiates Block ( float x , float y , float Width , float Height , color Color ) { blockX = x ; block [[ Y ]]<<=>> y ; block
+- $ , where $C_1$ and $C_2$ are cycles of lengths $d_1$ and $d <<[[ _ ]]>>2 $ respectively , $d
+- abnormal Ser phosphorylation of IRS -1 and IRS -2, along with degradation of IRS -1 and IRS <<[[-]]>>2. Moreover , these alterations were atten
+- the function that initiates Ball ( float x , float [[ y ]], int Width , color Color ) { ballX = x ; ballY <<=>> y ; ballWidth
+- $ \\{1,2,\\ cdots ,\ n2m \\} $ into two element blocks $ \\{(\\ pi_1 ,\\ pi <<[[ _ ]]>>2),
+- m )}( x_1 ,\\ dots , x_m ;\\ tilde { k } _1 ,\\ tilde { k }<<[[ _ ]]>>2
+Quantitative evaluation of interpretation quality
+For each signal, the judge returns a binary decision for each of the 40 scored examples (20 top-activation, 20 random). We treat this as a binary classification problem, comparing judge-predicted labels against the known top-versus-random labels. We report standard per-signal metrics (accuracy, precision, and recall) and summarize them across signals; the main text reports medians and interquartile ranges (Table 1 ). Additionally, Figure 32 breaks down the median metrics by layer, alongside a median line across all layers.
+Along with these classification metrics, we compute a one-sided p p -value using Fisher’s exact test ( Fisher, 1922 ) to measure whether the judge accepts the interpretation more often on top-activation contexts than on random contexts. We then control false discoveries across signals using False Discovery Rate (FDR) ( Benjamini and Hochberg, 1995 ) . We report the fraction of signals with FDR ≤ 5 % \leq 5\% (computed within each layer); signals passing this criterion are labeled interpretable . This notion of interpretability is meant to distinguish signal from noise under the fuzzing protocol, rather than to fully quantify the intrinsic quality of the interpretation. In the main text, we summarize this criterion as the fraction of interpretable signals per model.
+(a) GPT2-Small
+(b) Pythia-160M
+(c) Gemma-2 2B
+Figure 32 : Layerwise automated-interpretability metrics under the fuzzing protocol for three models. Solid lines show the median per layer for accuracy (blue), precision (orange), and recall (green); shaded bands show the interquartile range (25%–75%) across signals within each layer. Dashed horizontal lines denote the corresponding median metric computed across all layers (same color as the metric).
+G.3 Additional Examples of Interpretable Tracing via ACC++
+Interactive trace visualizations in the supplement.
+For all qualitative trace figures (Figures 3 , 33 , 34 , 35 , and 36 ), we additionally provide an interactive HTML visualization in the supplementary material. The viewer supports inspection of the full circuit graph, including hovering or clicking edges to see the associated destination–source interaction and its automatically generated interpretation label. The static figures in the paper are constructed by analyzing these interactive visualizations and then identifying the most salient signals and components; the interactive versions are provided to make it easier to audit and explore the underlying traced circuits.
+GPT-2: Tracing proper-noun features.
+Here we show that the model knows that the IO token is a proper noun, and how circuits use these features in computing model output.
+Figure 33(a) shows a portion of the GPT-2 circuit for the ABBA representative. Proper noun features are shown in dark green. The figure shows that the “Justin” token is annotated with a “proper noun” feature by 5 MLPs (MLPs 0, 1, 2, 7, and 8) and by attention head (0, 8). It also shows that the “to” token is annotated with the same feature, indicating that it can match with a proper noun. This matching of proper-noun features between “to” and “Justin” increases the attention paid to the (to, Justin) pair by attention heads (10, 0) and (9, 9), and thereby supports the movement of the “Justin” token to the output.
+Figure 33(b) shows that the “proper noun” feature is used in a similar fashion in the BABA representative, but that the “second item” pathway also makes use of the “proper noun” feature. Here, the same MLPs (0, 1, 2, 7, and 8) provide the “proper noun” annotation as before. However, here, MLP 0’s annotation is also used by heads that are outputting the “second item in a parallel pair” signal. This shows that the fact that “Kelly” is a proper noun contributes to attention paid by the heads outputting the “second item” signal.
+(a) ABBA
+(b) BABA
+Figure 33 : Traces expose how model annotates and tracks the fact that the IO token is a proper noun. Same prompts as Figure 3 .
+Pythia: Comparing Templates 9 and 10.
+As described in Section 3 , in the case of Pythia we compare circuits from representatives of Templates 9 and 10 (center of Figure 2 ). The template 9 representative is “When Marco and William were working at the store, Marco gave a computer to,” while the template 10 representative is ”While Jack and Lewis were commuting to the station, Jave gave a stack to.” The circuits are highly similar, but show some differences. One difference is the presence of head (4, 5) in template 10, attending to the token pair (to(1), to(1)). To understand the reason for this difference, we show the two circuits and their signal interpretations in Figure 34 . Comparing these two circuits, we see that the difference arises because in template 10, there are two instances of the work “to,” which requires additional disambiguation by the model. We see that head (4, 5) is recruited to annotate the second “to” so that it signifies the predecessor of a noun phrase. This makes it clear that the second “to” is introducing the indirect object and that the IO should be moved to it.
+(a) Template 9
+(b) Template 10
+Figure 34 : Traces expose key differences in Pythia circuits for Templates 9 and 10: both include a shared repeated-name circuit instantiated by head ( 4 , 5 ) (4,5) , while Template 10 additionally instantiates head ( 4 , 5 ) (4,5) on the repeated to token and routes this second instance through head ( 6 , 5 ) (6,5) before reaching later-layer heads and logits.
+Gemma: Examples of non-IOI tasks.
+Finally, we include examples of tasks that are not IOI, to illustrate the breadth and value of the interpretable circuits generated by ACC++.
+First, we take an example from Lindsey et al. (2025) : ”Fact: The capital of the state containing Dallas is,” for which Gemma correctly answers ”Austin.” We show in Figure 35 the interpretable circuit for this promopt. The circuit provides a number of insights.
+First, it shows that the model immediate recognizes the city of Dallas, based on features present in the input embedding of the token “Dallas.” Next, it shows a path (in blue) matching “state” with “containing” based on features that promote completion of a phrase particularly involving proper nouns. In this path, information about the notion of state is moved to “containing”, and then “containing” is matched with “Dallas”, causing “Dallas” to be annotated with the feature “predictable continuations.”
+The query itself is understood by integrating “capital” with “is” in head (16, 3). Here too, the features emphasize “predictable completions.” Finally and crucially, MLP 17 adds a feature to “is” causing head (18, 5) to look for geographic associations in its source token (“Dallas”). Head (18, 5) then moves “Austin” to the end token (“is”) and the “Austin” annotation is reinforced by inputs from MLPs 18 and 21 and head (22, 0).
+Comparing to the methodology of Lindsey et al. (2025) , we make a number of observations. First, unlike the method in Lindsey et al. (2025) , the process that generated Figure 35 is entirely automatic with no manual intervention at all. Second, Figure 35 adds considerable detail to the picture of how the model computes its output; unlike Lindsey et al. (2025) , ACC++ identifies the specific heads and MLPs that implement the circuit, and pinpoints the information flow between those components to illustrate how the computation progresses.
+Figure 35 : “Fact: The capital of the state containing Dallas is” (Austin)
+Finally, we turn to an example illustrating the use of ACC++ to elucidate a circuit that performs in-context learning (ICL). The prompt is “What sport Jordan played? A: Basketball. What sport Tom Brady played? A:” and the model correctly answers “football.” Figure 36 shows the interpretable circuit for this prompt. Nodes are arranged vertically according to layer in the model.
+The figure shows broadly how ICL is used in this setting by the model. The path in blue analyzes the one-shot phrase at the start of the prompt, moving information from “Jordan” into “basketball” in layer 1, and “sport” into “basketball” in layer 10. The path in red starts by recognizing the feature “Tom” that is present in the input embedding of “Brady,” and head (3, 2) attends to “Brady” due to the feature “mentions of the primary entity or subject.” The paths unite in layers 13-20, with a key step being head (16, 5) attending to the end token (“:”) due to its feature “completion of words or phrases.” Heads 16, 17, 20, and 24 then move “football” to the end token, and this is reinforced by MLPs 21 and 25.
+Figure 36 : “What sport Jordan played? A: Basketball. What sport Tom Brady played? A:” (football).
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

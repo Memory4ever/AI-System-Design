@@ -1,0 +1,302 @@
+https://arxiv.org/html/2601.21682v1
+Necessary selected methods/evaluation/direct counter; actually read, not entire attachment.
+3 Our Approach: FIT
+Continual unlearning in LLMs requires maintaining utility as unlearning requests accumulate.
+Our analysis identifies three primary drivers of collapse:
+i) the cumulative removal of semantically similar content,
+ii) unstable gradient updates across sequential steps, and
+iii) excessive parameter drift from indiscriminate updates (Wuerkaixi et al., 2025).
+To address these challenges, we propose FIT, a continual unlearning framework designed to handle high-volume unlearning requests while ensuring robustness against catastrophic forgetting and post-unlearning recovery.
+It comprises three primary modules (Figure 2):
+i) an embedding-based Filtering module that prunes redundant requests to prevent compounded knowledge loss,
+ii) an Importance-aware adaptive algorithm that stabilizes updates via gradient-based data attribution (Ancona et al., 2018), and
+iii) a Targeted layer-attribution mechanism, inspired by Shapley values (Rozemberczki et al., 2022), that restricts updates to highly influential layers to curb parameter drift.
+Figure 3: Estimated decay of shared-token probabilities as semantically similar requests are iteratively removed:
+Redundant gradients push them toward near zero, causing model collapse, whereas effective unlearning stabilizes them at moderate, non-zero levels.
+3.1 Redundancy Filtering
+Unlearning requests (from diverse sources) often contain semantically similar text, such as recurrent descriptions of a theoretical concept or repeated references to a specific entity.
+When such requests are sequentially removed, their overlapping gradients accumulate along shared lexical dimensions, driving a systematic suppression of common tokens rather than targeted removal of specific memories (Wuerkaixi et al., 2025). Figure 3 illustrates an estimated decay curve derived from the redundancy analysis in Appendix A.1;
+it predicts that repeated updates precipitate a collapse of shared-token probabilities toward zero.
+Once these tokens collapse, the model loses the semantic distinctions they support, resulting in catastrophic forgetting.
+Ideally, unlearning mechanisms should prevent this collapse by stabilizing token probabilities at moderate, non-zero levels, thereby reducing reliance on targeted information while preserving the semantic capacity necessary for coherent generation.
+Figure 4:
+Performance of the unlearning methods across importance levels: Rows trace the forgetting and retain accuracy curves; columns represent the low, medium, and high. Our goal is to select unlearning algorithms for low forget and high retain accuracy.
+A conventional approach to mitigating redundancy involves filtering incoming requests based on their similarity to historical data via embedding-based metrics.
+However, semantic similarity does not strictly equate to redundancy; texts may exhibit substantial lexical overlap while conveying distinct personal attributes or harmful contexts.
+Such filtering must navigate two competing risks: aggressive filtering may discard legitimately forgettable content, leading to information leakage, whereas insufficient filtering exacerbates gradient overlap, increasing the risk of catastrophic forgetting.
+To balance redundancy reduction with knowledge preservation, we propose a two-stage filtering protocol. Given a history 𝖣f(1:t)\mathsf{D}_{f}^{(1:t)} and a new request 𝒟f(t+1)\mathcal{D}_{f}^{(t+1)}, we generate a filtered request 𝒟f(t+1)∗\mathcal{D}_{f}^{(t+1)*} and update the history to 𝖣f(1:t+1)\mathsf{D}_{f}^{(1:t+1)}.
+In the first stage, we partition 𝒟f(t+1)\mathcal{D}^{(t+1)}_{f} into fixed-size chunks.
+For each chunk xx, we compute its embedding 𝖾⁡(x)\mathsf{e}(x) using SimCSE (Gao et al., 2021) and identify the maximum cosine similarity s∗s^{*} against the history set. If s∗s^{*} falls below a threshold τ\tau, the chunk is marked as a candidate for removal.
+However, high similarity scores can be misleading; distinct sentences may share lexical structure (e.g., “My name is Alice” vs. “My name is Bob”) while containing specific tokens, such as PII, that carry unique semantic roles.
+To prevent the loss of such informative content, we introduce a secondary loss-difference test.
+We compute:
+Δ​L=|Lwith−Lwithout|,\Delta L=\left|L_{\text{with}}-L_{\text{without}}\right|,
+(1)
+where LwithL_{\text{with}} and LwithoutL_{\text{without}} denote the cross-entropy loss computed on 𝒟f(t+1)\mathcal{D}_{f}^{(t+1)} and 𝒟f(t+1)∖x\mathcal{D}_{f}^{(t+1)}\setminus{x}, respectively.
+A significant Δ​L\Delta L suggests that xx contributes non-trivial information to the model’s predictions, aligned with our analysis in Appendix A.1.
+Consequently, if Δ​L>ϵ\Delta L>\epsilon, the chunk is retained regardless of its similarity score; otherwise, discarded.
+The pseudocode is detailed in Algorithm 1 (Appendix A.1).
+We utilize GPT-4o sensitivity scoring as a consistency check for sensitive token retention (Gu et al., 2024), while term-distribution visualizations quantify the preservation strength of these tokens.
+Appendix A.1 demonstrates that our two-stage approach effectively removes redundant content while preserving semantically sensitive tokens, including names, harmful terms, and copyright-relevant expressions.
+3.2 Importance-Guided Algorithm Selection
+Applying the same unlearning algorithm to a model that has already undergone previous requests results in repeatedly-aligned update directions, hence gradient instability and accumulated parameter shift (see Appendix A.2).
+Dynamically switching between unlearning methods allows the update strength and gradient direction to adapt to the specific characteristics of each request, yielding more stable parameter updates.
+Since our framework utilizes a pool of single-shot unlearning methods, the critical challenge lies in selecting the optimal one for each filtered request.
+Deletion efficacy is known to correlate with sample memorization (Zhao et al., 2024b): highly memorized samples require stronger unlearning objectives, whereas weaker ones do not. This indicates that method selection should adapt to the memorization level of incoming requests. However, computing memorization scores for each request is computationally infeasible, as classical estimators require expensive forward–backward procedures. This motivates the need for a lightweight proxy that can guide method choice efficiently.
+Table 1:
+Overview of existing benchmarks, where
+“GPT & Human” indicates datasets constructed from GPT-generated candidates that are subsequently verified or refined by human annotators.
+Dataset
+Data Types
+Retain Model
+Method
+MUSE (Shi et al., 2025b)
+Copyright
+✓
+GPT&Human
+TOFU (Maini et al., 2024)
+Personal information
+✓
+GPT&Human
+WMDP (Li et al., 2024)
+Harmful content
+✗
+Human
+WPU (Liu et al., 2024b)
+Copyright
+✗
+GPT&Human
+RWKU (Jin et al., 2024)
+Personal information
+✗
+GPT&Human
+(a)
+(b)
+(c)
+(d)
+Figure 5:
+Histogram of layer selection:
+Each bar shows the frequency with which the corresponding layer was chosen.
+To address this, we introduce a lightweight importance score, IMP, and select the unlearning algorithm accordingly. Inspired by gradient-based attribution (Ancona et al., 2018), IMP measures the sensitivity of the loss with respect to a request’s embedding, serving as a proxy for its training influence. This approach enables request-level adaptation without the overhead of memorization-based metrics. For a new filtered request 𝒟f(t+1)∗\mathcal{D}_{f}^{(t+1)*}, we compute the ℓ2\ell_{2} norm of the gradient with respect to its embedding:
+IMP(L(𝒟f(t+1)∗))=‖∇E(𝒟f(t+1)∗)L(𝒟f(t+1)∗)‖2,\texttt{IMP}\!\left(L(\mathcal{D}_{f}^{(t+1)*})\right)=\left\|\nabla_{E(\mathcal{D}_{f}^{(t+1)*})}L(\mathcal{D}_{f}^{(t+1)*})\right\|_{2},
+(2)
+where E⁡(⋅)E(\cdot) denotes the embedding function.
+The input-gradient norm measures loss sensitivity to the request influence; while not a direct memorization metric, it often correlates with how strongly the model relies on the request.
+Following (Zhao et al., 2024b), we discretize IMP scores into three levels (low, medium, high) to select from six standard unlearning methods (see Section 2.2).
+Our analysis (Appendix A.2) and empirical results (Figure 4) indicate that unlearning efficacy depends on aligning update strength with the request’s IMP.
+Low-IMP ones are best handled by aggressive methods (e.g., RLabel) to achieve strong forgetting with minimal utility cost.
+Medium-IMP ones benefit from moderated methods like NPO that balance forgetting and retention.
+High-IMP ones require conservative methods (e.g., NPO+KL) to preserve utility while tolerating slight residual memorization.
+Thus, adapting unlearning strength to IMP outperforms fixed policies by explicitly coupling update magnitude with request influence.
+3.3 Targeted Layer Attribution
+Continual unlearning faces a fundamental trade-off: updating all layers incurs high computational costs and degrades utility, whereas sparse updates improves efficiency but increases vulnerability to post-unlearning recovery.
+Existing selective update strategies have limitations.
+Freezing bottom layers (Zheng et al., 2025) or updating the last KK layers (Goel et al., 2022) ignores the fact that memorized information is distributed differently across layers for different requests.
+These static, narrowly scoped updates fail to track the shifting directions inherent in continual unlearning. Similarly, LoRA-based methods, such as O3{O^{3}} (Gao et al., 2025), restrict updates to low-rank adapters while leaving backbone weights unchanged; this allows parameters encoding the forget set to persist, rendering the model susceptible to knowledge reactivation (Hu et al., 2025).
+Furthermore, model-editing methods like AlphaEdit (Fang et al., 2025) (constraining updates to null-space directions) and PISCES (Gur-Arieh et al., 2025) (using feature-level masking) also restrict updates to narrow parameter subsets (see Appendix A.3).
+They rely on localization mechanisms that assume edit-relevant parameters are fixed and spatially localized.
+While suitable for inserting specific facts, this assumption does not hold for unlearning, where the knowledge to be removed is typically distributed across layers.
+Indeed, PISCES demonstrates that AlphaEdit remains vulnerable to recovery.
+While PISCES improves robustness, it still exhibits recoverability under relearning attacks.
+These underscore that effective unlearning requires modifying a broader, dynamically shifting set of parameters.
+We address this via a request-dependent layer attribution analysis to identify a top-KK relevant layers.
+With an appropriately chosen KK, updates focus on the layers where forget-related representations actually reside, avoiding unnecessary modifications to unrelated components.
+This enhances stability and efficiency while maintaining compatibility with transferable localization signals from model-editing methods.
+Layer Selection.
+We denote the KK most influential layers by 𝒮top-​K\mathcal{S}_{\text{top-}K}.
+To identify them, we estimate the contribution of layer ℓ\ell by masking it and measuring the loss deviation:
+sℓ=|Lmask(ℓ)−Lorig|,s_{\ell}=\left|L_{\text{mask}}^{(\ell)}-L_{\text{orig}}\right|,
+where LorigL_{\text{orig}} is the original loss and Lmask(ℓ)L_{\text{mask}}^{(\ell)} is the loss after zeroing layer ℓ\ell.
+This metric approximates Shapley values (Rozemberczki et al., 2022), capturing the marginal effect of a layer on the specific unlearning request.
+We rank layers by sℓs_{\ell} and update only the MLP blocks and attention modules (as they dominate a layer’s functional expressivity) of the top KK, keeping all other parameters frozen.
+It ensures that updates are focused on components with the highest functional relevance (see Appendix A.3).
+Choosing KK.
+To determine the optimal KK, we analyzed layer-selection patterns across four models (Llama-2-7B-chat-hf, Llama-3-8B, Llama-3-8B-Instruct, and Yi-6B).
+Figure 5 illustrates the frequency with which each layer was selected.
+Across all models, a compact subset of 66–99 layers is consistently identified as important, suggesting that unlearning is driven by specific regions rather than the entire network.
+Ablation studies varying the number of updated layers confirm that K=8K=8 offers the optimal trade-off between robustness and utility.
+Our targeted approach prevents over-updating while mitigating the recovery vulnerabilities inherent in static or highly restricted update strategies.
+Figure 6: Forget Degree (F.D.) and Retain Utility (R.U.) for each model with increasing number of unlearning requests
+Figure 7: Downstream accuracy on MMLU, CommonsenseQA, and Gsm8k for all models and unlearning methods
+4 PCH: A Unified Benchmark
+4.1 The PCH Dataset
+Limitations of current datasets.
+Existing unlearning corpora primarily target single-request settings, leaving continual unlearning unexplored (Yuan et al., 2025).
+TOFU is synthetic (GPT-4 generated with human filtering to enhance diversity and reduce pretraining leakage) and provides a reference retain model for controlled evaluation (Maini et al., 2024).
+MUSE targets copyright-related deletion with realistic large-scale news and book text, offering structured forget/retain/holdout splits; GPT-4 generates question–answer pairs for each excerpt (Shi et al., 2025b).
+WMDP focuses on hazardous knowledge removal, with examples manually constructed by experts (Li et al., 2024).
+As summarized in Table 1, each dataset centers on a single deletion type: TOFU and RWKU on personal information, MUSE and WPU on copyright violations, and WMDP on harmful content, yielding a narrow view of unlearning scenarios.
+Moreover, real-world requests often involve multiple information types, and directly unifying existing datasets is challenging due to the heterogeneous construction pipelines.
+We introduce PCH, a unified dataset spanning Personal information, Copyright, and Harmful content, explicitly tailored for continual unlearning (see Appendix E.1 Figure 13).
+All samples are generated by GPT-4o and verified by human for category consistency and basic distributional properties (e.g., text length and token-frequency ).
+Here, “harmful content” means semantically harmful text (e.g., rumors) rather than genuinely unsafe material (OpenAI, 2024).
+Each category contains 200200 samples.
+The entire set of 600600 instances is randomly split into forget and retain subsets.
+Prompts enforce the constraint “avoid using pre-trained datasets” to reduce overlap with common pretraining corpora, ensuring retain examples are unseen by the base model.
+As shown in Figure 11 (Appendix E.1), a model fine-tuned on the retain set begins with low accuracy but improves steadily, confirming that PCH is out-of-distribution.
+To evaluate forgetting and utility, each instance is converted into a question–answer (QA) pair (Appendix E.2, Table 6).
+4.2 Symmetric Metrics for Forgetting and Utility
+Limitations of current metrics.
+Only TOFU and MUSE release a retain model, enabling direct comparison between an unlearned model and its original counterpart.
+MUSE reports four distinct metrics: verbatim memorization, knowledge memorization, privacy leakage, and utility preservation, without a single aggregate score.
+This heterogeneity can overweight individual metrics and obscure overall performance, underscoring the need for an integrated measure.
+TOFU combines Forget Quality and Model Utility but i) relies on paraphrase-based answers introducing bias, and ii) applies different evaluation protocols to the forget and retain splits, yielding inconsistent results (Maini et al., 2024).
+For remedy, PCH is deliberately constructed to be out-of-distribution with respect to pre-training data, so that a model fine-tuned on 𝖣r\mathsf{D}_{r} alone serves as the retain model, while a model fine-tuned on 𝖣f∪𝖣r\mathsf{D}_{f}\cup\mathsf{D}_{r} serves as the fine-tuned model.
+We avoid TOFU’s costly paraphrasing and adopt three lightweight, base metrics: Probability, ROUGE-L, and token-level Accuracy; see Appendix D.
+Each metric is applied identically to the forget and retain sets, enabling consistent measurement of both forgetting and utility.
+Our aggregated metrics.
+Unlearning evaluation benefits from a single statistic that captures forget-retain trade-offs without being dominated by any one component.
+Following a similar philosophy to TOFU’s normalized aggregation (Maini et al., 2024), we derive two symmetric quantities from the three base metrics.
+For the forget and retain sets, we compute the geometric mean:
+F=(ProbForget⋅ROUGEForget⋅AccForget)1/3,\displaystyle F=(\operatorname{Prob}_{\text{Forget}}\cdot\operatorname{ROUGE}_{\text{Forget}}\cdot\operatorname{Acc}_{\text{Forget}})^{1/3},
+(3)
+R=(ProbRetain⋅ROUGERetain⋅AccRetain)1/3,\displaystyle R=(\operatorname{Prob}_{\text{Retain}}\cdot\operatorname{ROUGE}_{\text{Retain}}\cdot\operatorname{Acc}_{\text{Retain}})^{1/3},
+(4)
+and similarly obtain F​QFQ and R​QRQ for retain model.
+The geometric mean balances improvements and prevents any single metric from dominating the aggregate.
+Based on them, we further define two regularized measures:
+F.D.\displaystyle\operatorname{F.D.}
+=max⁡(0, 1−|F/F​Q−1|),\displaystyle=\max\left(0,\,1-\left|F/FQ-1\right|\right),
+(5)
+R.U.\displaystyle\operatorname{R.U.}
+=max⁡(0, 1−|R/R​Q−1|).\displaystyle=\max\left(0,\,1-\left|R/RQ-1\right|\right).
+(6)
+Forget Degree (F.D.) and Retain Utility (R.U.) measure alignment to the retain model on the forget and retain sets, respectively; since the retain model approximates a retrained model, our goal is closer alignment to the retain model, rather than “larger RR / smaller FF is always better.”
+Figure 12 (Appendix D) illustrates these properties.
+Panels (a–c) plot the geometric mean of two metrics while fixing the third at 0.70.7;
+the sharp decline from a single weak component shows that the geometric mean strongly penalizes imbalance, confirming its suitability as a balanced aggregator.
+Panel (d) shows F.D. as a function of F/F​QF/FQ, exhibiting a symmetric, approximately linear drop from the optimum.
+It also means that F.D. is scale-invariant and interpretable.
+5 Experiment
+5.1 Experimental Setup
+Dataset. All experiments are run on our PCH benchmark.
+Models.
+We evaluate FIT on four widely used open-source LLMs
+:
+Yi-6B (Young et al., 2024),
+Llama-2-7b-chat-hf (Touvron et al., 2023),
+Llama-3-8B (Dubey et al., 2024),
+and Llama-3-8B-Instruct (Dubey et al., 2024).
+Since the pre-training corpus 𝖣\mathsf{D} is unavailable, retraining on 𝖣r\mathsf{D}_{r} is infeasible.
+As outlined in Section 2.1 and Appendix B.1, we instead construct synthesis “𝖣f\mathsf{D}_{f}” and “𝖣r\mathsf{D}_{r},” from which we derive a fine-tuned model and a retain model as proxies.
+Baselines.
+We evaluate our framework against several representative unlearning algorithms:
+GA, GA+GD, GA+KL, NPO, NPO+KL, RLabel,
+PISCES (Gur-Arieh et al., 2025), O3O^{3} (Gao et al., 2025), and ALKN (Wuerkaixi et al., 2025).
+Evaluation Metrics.
+We use the two proposed metrics, F.D. and R.U., to quantify the forgetting effectiveness and utility preservation.
+Downstream performance is reported on MMLU (Hendrycks et al., 2021), CommonsenseQA (Talmor et al., 2019), and Gsm8K (Cobbe et al., 2021).
+Implementation details are provided in Appendix B.
+Post-unlearning recovery is evaluated under two settings: i) Relearning via fine-tuning (Xu et al., 2025b): an unlearned model is finetuned on retain and/or unrelated data.
+Assuming attacker access to forget set is unrealistic and negates the privacy goal;
+ii) Quantization attacks (Zhang et al., 2025): model weights are compressed to int4, which can realign residual parameters and revive forgotten information.
+5.2 Forgetting-Utility Trade-off
+Figure 6 summarizes the overall trends in F.D. and R.U. across all models as the number of unlearning requests increases, and Figure 8 provides detailed curves for Llama-3-8B. Across settings, FIT consistently attains the most favorable balance between forgetting and utility. Utility-oriented methods such as NPO+KL, O3O^{3}, and ALKN occasionally obtain higher R.U. (e.g., O3O^{3} on Llama-3-8B-Instruct), yet this often comes with a noticeable reduction in F.D., indicating insufficient forgetting. These observations highlight the difficulty of maintaining utility without compromising deletion fidelity under sequential unlearning.
+Figure 7 reports accuracy on MMLU, CommonsenseQA, and GSM8K. FIT preserves generalization and avoids the utility collapse observed in aggressive baselines (RLabel, GA, PISCES). While ALKN and NPO+KL approach our performance on simpler tasks, they are less stable on challenging datasets like GSM8K. We exclude O3O^{3} from these evaluations due to incompatibility with the benchmark infrastructure (Contributors, 2023), which enforces fixed input–output protocols that conflict with O3O^{3}’s dynamic OOD-based detection, hindering reproducibility and fairness.
+We also conduct ablation studies to assess the
+contribution of each component and compare efficiency (e.g., memory consumption) against baselines, as detailed in Appendix F.
+5.3 Post-unlearning Recovery
+Relearning via fine-tuning.
+Figure 9(a) shows results when further fine-tuning unlearned models on:
+i) mixed retain and unrelated data,
+ii) retain-only, and
+iii) unrelated-only.
+All methods exhibit reduced F.D., indicating partial recovery, while our approach remains the most robust across settings.
+Quantization.
+Compressing models to int4 amplifies residual memorization and can revive information; see Figure 9(b)
+Most baselines experience a pronounced drop in F.D., whereas ours maintains high F.D. under quantization.
+Figure 8:
+Performance of different methods on Llama-3-8B. Each curve connects 60/120/180/240/300 unlearning requests; points nearer the upper-right corner indicate a better trade-off.
+(a) Relearning attack
+(b) Quantization attack
+Figure 9: Robustness comparison of unlearning methods on Llama-3-8B under relearning and quantization attacks
+6 Conclusion
+We introduced FIT, a scalable framework for continual unlearning in LLMs that supports high-volume unlearning requests while maintaining robustness against catastrophic forgetting and post-unlearning recovery. FIT mitigates degradation through rigorous data Filtering, Importance-aware updates, and Targeted layer attribution. To enable realistic evaluation, we proposed the PCH benchmark, which unifies Personal information, Copyright, and Harmful content, together with two symmetric metrics—Forget Degree (F.D.) and Retain Utility (R.U.)—for reliable measurement. Experiments show that FIT improves both F.D. and R.U., achieves higher accuracy on downstream tasks such as GSM8K and MMLU under continual
+unlearning, and remains resilient to quantization-based and relearning-based recovery attacks.
+Impact Statement
+Our work studies continual unlearning in large language models to improve privacy and security. The PCH benchmark is fully synthetic, generated with GPT-4o, and ensures that no real personal data, copyrighted material, or harmful content is included. All samples are fictitious and controlled, minimizing risks to individuals, organizations, and the public.
+We also incorporate FIT to guide where and how updates are applied during unlearning, aiming to reduce unintended side effects under sequential requests.
+Our analysis of recovery attempts (e.g., relearning via fine-tuning or quantization attacks) is conducted only to evaluate robustness and inform safer designs, not to enable misuse. We believe the benefits of stronger and more reliable unlearning outweigh the limited risks, and we take appropriate precautions throughout data construction and experimentation.
+Appendix B Experimental Configuration Details
+B.1 Fine-tuned and Retain Models
+Since the pre-training corpus 𝖣\mathsf{D} is unavailable, retraining directly on the retain subset 𝖣r\mathsf{D}_{r} is infeasible.
+Following the strategy of (Maini et al., 2024), we construct synthetic counterparts 𝖣f\mathsf{D}_{f} and 𝖣r\mathsf{D}_{r}, from which we derive a fine-tuned model and a retain model as practical proxies for the original and retrained models, respectively.
+Figure 11 shows that both models exhibit low initial accuracy on their corresponding sets, confirming that these examples were not memorized prior to fine-tuning. Fine-tuning on the full benchmark raises accuracy on both sets. In contrast, tuning only on the retain set progressively widens and then fixes an accuracy gap between retain and forget samples, indicating that the two sets, while carefully curated to be similar, are not identical. In continual unlearning, retain models must be produced sequentially in request order, making it impractical to store a checkpoint after every unlearning step.
+Fortunately, the resulting accuracy curves are smooth and nearly monotonic, so we approximate intermediate baselines by interpolating between the initial fine-tuned model and the first retain checkpoint. For fairness, at each evaluation checkpoint, all unlearning methods are compared against the same retain model.
+B.2 Experimental Configuration
+All experiments use consistent settings across datasets, adopting optimizer configurations from (Touvron et al., 2023). We fine-tune and unlearn LLMs with AdamW (Loshchilov and Hutter, 2019), using a learning rate of 3.0×10−53.0\times 10^{-5}, β1=0.9\beta_{1}=0.9, β2=0.95\beta_{2}=0.95, and ϵ=10−8\epsilon=10^{-8}. A cosine learning rate schedule is employed, including a 10%10\% warmup phase and decaying to 10%10\% of the peak rate. Weight decay is set to 0.10.1. Our method is conducted on a single NVIDIA H100 GPU, whereas some memory-intensive baselines (e.g., ALKN) use two GPUs.
+We evaluate continual unlearning on PCH, where the full dataset is denoted as 𝖣\mathsf{D} with |𝖣|=600|\mathsf{D}|=600.
+Unlearning proceeds sequentially, with one request arriving at a time.
+After processing the first tt requests, the cumulative forget set is 𝖣f(1:t)=⋃i=1t𝒟f(i)\mathsf{D}_{f}^{(1:t)}=\bigcup_{i=1}^{t}\mathcal{D}_{f}^{(i)}, and the corresponding retain set is 𝖣r(1:t)=𝖣∖𝖣f(1:t)\mathsf{D}_{r}^{(1:t)}=\mathsf{D}\setminus\mathsf{D}_{f}^{(1:t)}.
+We then evaluate forgetting on 𝖣f(1:t)\mathsf{D}_{f}^{(1:t)} and utility on 𝖣r(1:t)\mathsf{D}_{r}^{(1:t)}.
+For concise reporting, we record results after every 60 requests (i.e., at t∈{0,60,120,180,240,300}t\in\{0,60,120,180,240,300\}).
+Table 3 summarizes the corresponding set sizes.
+All results are reported as the mean over five runs with different random seed orders.
+Table 3: Continual unlearning schedule on PCH (|𝖣|=600|\mathsf{D}|=600). Here tt denotes the number of unlearning requests processed so far. After tt requests, the cumulative forget set is 𝖣f(1:t)=⋃i=1t𝒟f(i)\mathsf{D}_{f}^{(1:t)}=\bigcup_{i=1}^{t}\mathcal{D}_{f}^{(i)}, and the corresponding retain set is 𝖣r(1:t)=𝖣∖𝖣f(1:t)\mathsf{D}_{r}^{(1:t)}=\mathsf{D}\setminus\mathsf{D}_{f}^{(1:t)}. We report checkpoints every 60 requests.
+Unlearning Requests (tt)
+𝖣f(1:t)\mathsf{D}_{f}^{(1:t)}
+𝖣r(1:t)\mathsf{D}_{r}^{(1:t)}
+PCH |𝖣|\left|\mathsf{D}\right|
+0
+0
+600
+600
+60
+60
+540
+600
+120
+120
+480
+600
+180
+180
+420
+600
+240
+240
+360
+600
+300
+300
+300
+600
+(a) Retain model
+(b) Fine-tuned model
+Figure 11: Retain / Forget accuracy under two training regimes
+Appendix F Ablation and Efficiency Analysis
+F.1 Ablation Study: Forgetting and Utility
+Figure 16 and Figure 17 present an ablation study on three core components of our framework: (1) data filtering, (2) unlearning algorithm selection, and (3) attribution-based chosen-layer updates. These controlled ablations isolate the role of each mechanism, showing that those three components are all essential for continual unlearning.
+As shown in Figure 16, removing unlearning algorithm selection causes the sharpest and earliest drops in both F.D. and R.U., demonstrating its importance for avoiding catastrophic forgetting. Omitting filtering also degrades performance, though more gradually, highlighting the value of careful data curation. Excluding chosen-layer updates produces moderate but consistent losses, indicating the need to target the most relevant layers. Across all tasks, the full framework yields the most stable and favorable curves, confirming the combined benefit of all three components.
+Figure 17 further shows downstream accuracy on MMLU, CommonsenseQA, and Gsm8K. Removing unlearning algorithm selection yields the lowest accuracy across all benchmarks, while excluding filtering also harms performance, especially on harder tasks. Omitting chosen-layer updates leads to smaller but noticeable losses. In nearly all cases, the full framework achieves the highest accuracy.
+In summary, the ablation study confirms that unlearning algorithm selection, strict data filtering, and chosen-layer updates are each indispensable. Removing any component weakens forgetting, utility, whereas their combination ensures scalable and stable continual unlearning.
+F.2 Efficiency Analysis
+We report the number of model parameters updated during unlearning as a direct measure of computational efficiency.
+Table 7 summarizes the results on Llama-2-7b-chat-hf.
+LoRA-based methods (Gao et al., 2025) achieve efficiency by limiting the update scope but often exclude critical parameters associated with the forget set, resulting in incomplete forgetting and potential knowledge reactivation.
+In contrast, our layer-selection strategy updates fewer than one-quarter of the parameters required for full-model retraining, yet achieves stronger forgetting than O3O^{3} and higher robustness than LoRA.
+By concentrating updates on layers most responsible for the forgotten content, our targeted attribution mechanism attains an effective trade-off between computational efficiency and unlearning stability.
+Appendix G Threat Model
+Attacker’s Goal.
+Figure 18 depicts the interaction among the server, legitimate users, and an adversary under the continual unlearning setting.
+The server hosts an LLM, answers inference queries, and processes unlearning requests.
+The adversary masquerades as a normal user and can mount two types of attacks:
+i) Malicious unlearning:
+A rapid stream of unlearning requests forces repeated updates, inducing catastrophic forgetting and degrading performance far beyond the designated forget set (cf. a “denial-of-service” attack on model utility), or
+ii) Post-unlearning recovery:
+After the unlearned model is deployed, the attacker attempts to restore the erased knowledge through, e.g., relearning via fine-tuning (Lo et al., 2024; Barez et al., 2025), or quantization attacks that compress the model to low-bit precision, amplifying residual memorization and making it easier to extract sensitive information (Zhang et al., 2025).
+Attacker’s Capabilities.
+Both malicious unlearning and relearning attacks often assume a black-box setting.
+Malicious unlearning further assumes that the adversary can issue a burst of unlearning requests in a short time window, inducing catastrophic forgetting and model collapse.
+In contrast, relearning assumes that an adversary can obtain auxiliary data and fine-tune the unlearned model. Such data may include (i) a subset of the forget set, or in the worst case the entire forget set (Barez et al., 2025; Xu et al., 2025b), which we do not consider since the forget set is assumed to be private and not observable to the adversary; (ii) the retain set or other samples drawn from a distribution similar to the forget set (Xu et al., 2025b); or (iii) completely unrelated, out-of-distribution data (Xu et al., 2025b).
+Quantization attacks (Zhang et al., 2025) work in a white-box setting with full access to model parameters so that the attacker can subject the weights to aggressive low-bit quantization.
+As the weights of the original model and the unlearned model typically differ only slightly, the quantizer rounds both to the same value, nullifying the effect of unlearning, e.g., 2.3012352.301235 (original) vs. 2.4125672.412567 (unlearned) →\rightarrow 2.28582.2858 after int4, thus restoring much of the unlearned information due to “weights collision.”
+Threats that require altering server infrastructure, modifying the unlearning algorithm, or intercepting private communications between the server and its users are out of scope.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml

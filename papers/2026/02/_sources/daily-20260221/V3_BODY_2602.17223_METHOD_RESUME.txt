@@ -1,0 +1,91 @@
+URL: https://arxiv.org/html/2602.17223v1
+Status: 200
+3 Threat Model
+We consider a setting with two primary roles: the user, who also acts as the verifier, and an inference provider, who also acts as the prover. The user wishes to run inference with a model MM on their prompts xx, but cannot do so themselves due to e.g. lack of computational resources. They therefore request the inference provider to perform inference on xx with MM. The inference provider is untrusted and may act as an adversary without behavioral constraints; other external adversaries are out of scope. We assume the use of a privacy-preserving mechanism providing computational indistinguishability of the inputs to ensure that the inference provider cannot view xx. The model weights are assumed to be public. Our security goal is verifiability – that is, ensuring that the output the inference provider returns to the user can be verified as being the correct forward pass on the requested model on the given privatized prompt.
+4 Protocol 1: Logit Fingerprinting
+Our first proposal for obtaining verification cheaply given access to a privacy-preserving method of LLM inference is logit fingerprinting. We hypothesize that the logit vector returned by performing a forward pass on any set of tokens on modern LLMs is a highly unique ‘fingerprint’ of the model. Our proposed protocol leverages this property to provide inference verification as follows (see Figure 1):
+1.
+First, the user inserts KK sentinel tokens into the tokenized prompt, at random positions within the prompt. Call these positions p1,p2,…,pKp_{1},p_{2},...,p_{K}. These KK tokens are taken randomly from a public cache CC, consisting of many such length KK sequences.
+2.
+Next, the user creates the 2D attention mask to be used by the LLM by taking their desired attention mask (e.g., lower triangular for decoder-only LLMs) and inserting rows and columns as follows.
+•
+Add a row at pip_{i} that is 0 everywhere except positions pj​∀j≤ip_{j}\,\forall\,j\leq i, where it is set to 1.
+•
+Add a column at pip_{i} that is 0 everywhere except positions pj​∀j≥ip_{j}\,\forall\,j\geq i, where it is set to 1.
+3.
+The attention mask and augmented tokenized prompt are given to the inference provider under a privacy-preserving scheme, and the inference provider carries out a forward pass, and returns the output logit vector at all token positions to the user.
+4.
+The user verifies that the sentinel token logits match against the precomputed cached logits for that specific model.
+The construction of the attention mask is such that the sentinel tokens do not attend to, and are not attended by, any of the original prompt tokens, but they do attend to each other in standard autoregressive fashion. This also ensures that sentinel tokens have no downstream impact on the original prompt when inference is performed. A formal description of this procedure is given in Appendix D.
+4.1 Cost Analysis
+Inference provider (prover). Excluding the overhead of the private inference scheme, the total number of extra operations is a factor of KN\frac{K}{N}, where NN is the length of the original prompt. As we discuss in Section 4.2, KK can be set to be as small as 3 and retain strong security properties, so this is very small for reasonably sized NN. Furthermore, if the privacy scheme supports parallelized inference, this can result in almost no extra runtime.
+User (verifier). The verifier is required to pick a sequence from a public cache and perform a matching on the returned logits against the same cache. The cost of this is minimal and does not require specialized hardware.
+Construction of the cache.
+Constructing the cache entails an initial computational cost and also must be performed by a trusted party, since it underpins the correctness of the protocol. Ideally, this responsibility is delegated to an entity with sufficient computational resources to produce a verifiable proof of correctness, for example, in the form of a zero-knowledge proof. Although the computational expense of this might be significant, the cost is incurred only once and is then amortized across all subsequent inference calls, including potentially all prover-verifier pairs.
+4.2 Security Analysis
+In this section, we assume that logits are indeed unique fingerprints of models. We perform analysis across a range of models in Section 4.3 to verify this is the case.
+In order for the inference provider to not be able to guess the logits to return for the sentinel tokens, the set of sentinel tokens must be randomly chosen from a large set of possibilities. The crux of this protocol is that the inference provider cannot determine which of the possibilities is specifically being asked for in any particular instance due to the privacy mechanism.
+Probabilistic attacks. This protocol utilizes two elements of randomization: the choice of the sentinel tokens, and their positions. For the former, if the user selects the sequence uniformly at random from a cache of size |C||C|, then a dishonest inference provider can guess it with probability 1/|C|1/|C|. |C||C| can therefore be set to desired tolerances. For the latter, under a privacy-preserving mechanism that also preserves tensor structure (such as SMPC), correctly guessing the sentinel tokens’ exact positions is sufficient for a successful attack: the inference provider can perform the forward pass on only those components, and return arbitrary values for the other token positions. However, this occurs with probability (N+KK)−1\binom{N+K}{K}^{-1}, where NN is the length of the original prompt. When K=3K=3, for example, with N=14N=14, this is less than 1​e−31\mathrm{e}{-3}, and it drops further with increasing N=100N=100 to circa 1​e−61\mathrm{e}{-6}.
+A related attack is to perform computation only on a random subset of the token indices. In the most extreme case, a dishonest provider takes N+K−1N+K-1 tokens, i.e. excludes exactly one token. The probability that all sentinel tokens are still selected (hence successfully passing verification) is NN+K\frac{N}{N+K}, requiring an infeasibly large KK to make secure – although it should be noted that in this case the dishonest provider is saving very little computation over honest behavior.
+Approximation attacks. Another line of possible attacks are attempts by the inference provider to use a different model – especially, cheaper-to-run replacements – that still succeed in passing verification. Such alternatives could include smaller models from the same model family or approximations to the models by using e.g. low-rank projections of the weights. We perform experiments to test the robustness of the protocol to each of the above in Section 4.3 and find that verification fails immediately when any of the above are attempted.
+4.3 Experiments
+Setup.
+We test the claim from Section 4.2 that pre–softmax logits can serve as model fingerprints.
+For each model mm, we sample N=50,000N=50{,}000 token sequences of fixed length K=3K=3 from the model’s token vocabulary (excluding special tokens).
+Given a sequence 𝐭=(t1,t2,t3)\mathbf{t}=(t_{1},t_{2},t_{3}), we run a forward pass and record the next-token logit vectors at each position, ℓm(k)​(𝐭)∈ℝVm\ell^{(k)}_{m}(\mathbf{t})\in\mathbb{R}^{V_{m}} for k∈{1,2,3}k\!\in\!\{1,2,3\}, where VmV_{m} is the vocabulary size of model mm.
+We define the logit fingerprint
+ϕm​(𝐭)=concat⁡(ℓm(1)​(𝐭),ℓm(2)​(𝐭),ℓm(3)​(𝐭))∈ℝ3​Vm,\phi_{m}(\mathbf{t})\;=\;\operatorname{concat}\!\big(\ell^{(1)}_{m}(\mathbf{t}),\,\ell^{(2)}_{m}(\mathbf{t}),\,\ell^{(3)}_{m}(\mathbf{t})\big)\in\mathbb{R}^{3V_{m}},
+and compare fingerprints using L1 distance. We test on Llama 3.2 Instruct 1B, 3B, and 8B (Grattafiori et al., 2024), and on Qwen 2.5 Instruct 0.5B, 1.5B, 3B and 7B (Qwen et al., 2025). Comparisons are performed on FP32 logits; dropout is disabled.
+Model Approximation
+Llama
+Qwen
+Same model, GPU non-determinism
+4.08
+10.91
+Same model, different sequence
+2909
+68326
+Cross-Model, same sequence
+329096
+643719
+Low-rank factorization (r=2047r=2047)
+833
+7223
+Low-rank factorization (r=2040r=2040)
+8029
+124195
+Low-rank factorization (r=2000r=2000)
+31194
+216765
+8-bit Quantization
+3499
+8746
+Single step of finetuning
+471
+1090
+Table 1: L1 distances of logit fingerprints across different experimental settings for the Llama and Qwen families of models. Honest behavior (GPU non-determinism) is clearly separated from dishonest behavior (all other rows).
+4.3.1 Honest Behaviors
+Floating point non-determinism. We first provide context on the expected L1 distance due to non-determinism of floating-point operations (Shanmugavelu et al., 2024). This can be constituted as honest behavior; although, it is possible to also require an exact match, which would entail detecting hardware and batched-inference deviations. We run the same sequence multiple times with different batch sizes on GPU to measure this. We observe a maximum L1 deviation in doing so across all models tested of 10.9010.90.
+4.3.2 Dishonest Behaviors
+We now test a wide range of dishonest behaviors and strategies.
+Intra-model.
+Within each model, we compute the nearest-neighbor similarity among fingerprints from distinct sequences (i.e. 𝐭≠𝐬\mathbf{t}\neq\mathbf{s}).
+Across N=50N=50k samples per model, there are no exact matches; the closest pair has an L1 distance of 29092909.
+Within-family.
+For the Llama family, the smallest L1 distance of logits we obtain is 329096329096. For the Qwen family, the minimum cross-model distance is 643719643719. These results indicate that even with a family of models, the logits are significantly different and suitable as fingerprints.
+Cross-family.
+To enable comparisons across families with different vocabularies, we align dimensions by truncating the larger logit vectors to the smaller vocabulary size (i.e. comparing the first min⁡(Vm,Vm′)\min(V_{m},V_{m^{\prime}}) coordinates).
+Under this conservative alignment, Llama–Qwen comparisons exhibit substantially higher distances than the within-family maxima reported above (qualitatively, well above 800000800000).
+Low-rank factorization.
+We approximate the linear layers of Llama 3.2 1B Instruct by replacing each weight matrix W∈ℝdin×doutW\in\mathbb{R}^{d_{\text{in}}\times d_{\text{out}}} with a rank-rr factorization W≈U​V⊤W\approx UV^{\top}, where U∈ℝdin×rU\in\mathbb{R}^{d_{\text{in}}\times r} and V∈ℝdout×rV\in\mathbb{R}^{d_{\text{out}}\times r}.
+The default hidden dimension of this model is 20482048, so we test with r∈{2047,2040,2000}r\in\{2047,2040,2000\}.
+Comparing fingerprints of 50k sequences between the full-rank and the low-rank variants, the minimum L1 distances observed are:
+r=2047:833.97,r=2040:8029.45,r=2000:31194.02.r=2047:833.97,\quad r=2040:8029.45,\quad r=2000:31194.02.
+Similarly, we obtained the following results for Qwen 2.5 3B Instruct:
+r=2047:7223,r=2040:124195,r=2000:216765.r=2047:7223,\quad r=2040:124195,\quad r=2000:216765.
+Quantization.
+We next load Llama 3.2 1B Instruct and Qwen 2.5 3B Instruct in 8-bit precision using bitsandbytes and compare fingerprints to the full-precision (bfloat16) baseline.
+The minimum L1 distance is 34993499 for Llama and 87468746 for Qwen, again easily separated from the original model.
+Fine-tuning.
+Finally, we evaluate robustness against model fine-tuning by comparing each of Llama 3.2 1B Instruct and Qwen 2.5 3B Instruct with a finetuned variant of each corresponding model on a single sample from FineWeb dataset for a single step.
+The minimum observed distance is 471471 for Llama and 10901090 for Qwen, consistent with the previou

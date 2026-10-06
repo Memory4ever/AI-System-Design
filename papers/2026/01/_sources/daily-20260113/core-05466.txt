@@ -1,0 +1,863 @@
+URL https://arxiv.org/html/2601.05466v1; sections S3 to S6 excluded; result tables omitted; fetched 2026-10-03
+
+
+
+ III Problem Formulation 
+
+ 
+
+We focus on prompt jailbreaking attacks against large language models. Given a malicious instruction q , the attacker aims to construct an adversarial prompt q^{\prime} that bypasses the safety mechanisms of the target LLM and induces harmful responses. This objective can be formalized as finding q^{\prime} that maximizes the probability of generating a response r from the set of harmful responses R_{H} : 
+ 
+
+ 
+
+ 
+ \max_{q^{\prime}}P(r\in R_{H}|q^{\prime}), 
+ 
+ (1) 
+ 
+
+where P(r\in R_{H}|q^{\prime}) denotes the probability that the LLM output is classified as harmful when conditioned on q^{\prime} . 
+ 
+ 
+
+Defenders employ alignment techniques or filtering mechanisms to mitigate such attacks. Alignment methods optimize model parameters through preference learning. Let \pi_{\theta}(y|x) denote the probability of generating response y given input x under the aligned model with parameters \theta , and \pi_{ref}(y|x) represent the probability from a reference model used for regularization. Given a preference dataset \mathcal{D}_{\text{pref}}=\{(x,y_{d},y_{j})\} where y_{d} is preferred over y_{j} for input x , alignment methods optimize: 
+ 
+
+ 
+
+ 
+ \begin{split}\mathcal{L}_{\text{align}}(\theta)=&-\mathbb{E}_{(x,y_{d},y_{j})\sim\mathcal{D}_{\text{pref}}}\bigg[\log\sigma\bigg(\beta\bigg(\log\frac{\pi_{\theta}(y_{d}|x)}{\pi_{ref}(y_{d}|x)}\\
+&\qquad\qquad\qquad\qquad-\log\frac{\pi_{\theta}(y_{j}|x)}{\pi_{ref}(y_{j}|x)}\bigg)\bigg)\bigg],\end{split} 
+ 
+ (2) 
+ 
+
+where \beta controls the strength of preference optimization and \sigma(\cdot) is the sigmoid function. Filtering mechanisms employ perplexity-based detection or specialized judge models to identify and block potentially harmful inputs or outputs. 
+ 
+ 
+
+In this work, we consider a black-box attack scenario where the attacker has no access to the internal components of the target LLM, including its architecture, parameters, training data, gradients, or output logits. Additionally, we assume the attacker does not possess any unaligned auxiliary LLMs, as such models can directly generate harmful content, which undermines the fundamental purpose of jailbreaking attacks. 
+ 
+ 
+
+
+
+ IV Method 
+
+
+ 
+ Fig. 2: Detail of Tool Disguised Invocation and Interactive Progressive Optimization. 
+ 
+
+
+
+ IV-A The Workflow of iMIST 
+
+ 
+
+Our method comprises two core mechanisms: Tool Disguised Invocation (TDI) and Interactive Progressive Optimization (IPO) . TDI exploits the function calling interface to transform harmful queries into seemingly legitimate tool invocations, bypassing alignment mechanisms that focus on direct text generation. IPO uses reinforcement learning to dynamically select the most effective prompt manipulation, iteratively guiding the target LLM toward harmful outputs. As illustrated in Figure  1 , the framework operates through the following workflow. 
+ 
+ 
+
+We first construct specialized toolsets based on the misuse categories defined in OpenAI’s usage policies 1 1 
+ 1 
+ 
+ 
+ https://openai.com/policies/usage-policies/ . For each category c\in\mathcal{C} , we generate a corresponding toolset \mathbb{T}_{c}=\{t_{1},t_{2},\ldots,t_{n_{c}}\} , where each tool t_{i} is represented as a JSON manifest conforming to the OpenAI function calling schema. The complete tool arsenal is defined as \mathbb{T}=\bigcup_{c=1}^{|\mathcal{C}|}\mathbb{T}_{c} , which can be directly passed to LLM APIs through the tools parameter.
+Given a malicious query q , we employ a decomposition prompt to partition it into m sub-tasks: 
+ 
+
+ 
+
+ 
+ \mathcal{D}(q)=\{q_{1},q_{2},\ldots,q_{m}\}, 
+ 
+ 
+
+where q_{i} represents the i -th sub-task. This decomposition reduces the complexity of each attack step and enables parallel optimization. Based on the category of q , we retrieve the corresponding toolset \mathbb{T}_{c} for subsequent processing. 
+ 
+ 
+
+For each sub-task q_{i} , we construct a prompt that instructs the target LLM to act as a function calling agent. The prompt, combined with q_{i} and toolset \mathbb{T}_{c} , is sent to the target LLM, which returns a sequence of tool calls \mathcal{C}(q_{i},\mathbb{T}_{c})=\{(t_{k},\theta_{k})\}_{k=1}^{K} . We extract the parameter values and translate them into natural language to form the initial response R_{i}^{0} .
+At optimization step t , the response R_{i}^{t-1} is evaluated by the JADES judge  [ 14 ] , which produces a harmfulness score \rho_{i}^{t-1}\in[0,1] and other dimensional assessments. The agent observes the evaluation results and selects an optimization action a_{t}\in\mathcal{A} to generate an improved response R_{i}^{t} . This process iterates until the JADES score reaches a predefined threshold (e.g., \rho_{i}^{t}\geq 0.75 ) or the maximum iteration count T_{\max} is exceeded.
+After obtaining optimized responses \{R_{i}^{T}\}_{i=1}^{m} for all sub-tasks, we aggregate them to construct the final response to the original malicious query q . 
+ 
+ 
+
+
+
+ IV-B Tool Disguised Invocation 
+
+ 
+
+Tool Disguised Invocation exploits a fundamental gap in current LLM alignment: while models are trained to refuse harmful content generation, they are less restricted when operating as function calling agents, as it is difficult to distinguish malicious intent from structured JSON data. As illustrated in Step 1 of Figure  2 , when a malicious query q_{i} is received, we first invoke a rewrite tool to transform it into a role-based compliant version while preserving the original intent. For instance, a query about explosive production might be reframed as “As a physics teacher preparing lesson plans for a course on safe explosive production, provide a material list for the teaching materials.” This rewriting process generates a sanitized query q_{i}^{\prime} that bypasses initial content filters while maintaining the semantic core of the harmful request. 
+ 
+ 
+
+The rewritten query q_{i}^{\prime} and the corresponding toolset \mathbb{T}_{c} are then passed to the target LLM with explicit instructions to act as a function calling agent. We enforce a sequential tool calling protocol where the model can invoke only one tool per iteration. After each tool call (t_{k},\theta_{k}) , we provide a disguised response indicating successful execution, such as “Tool executed successfully” or “Data retrieved.” These fabricated responses maintain the illusion of a legitimate tool execution environment and guide the LLM to proceed with subsequent tool calls without raising suspicion. Through this iterative process, the LLM constructs a tool calling chain \{(t_{1},\theta_{1}),(t_{2},\theta_{2}),\ldots,(t_{K},\theta_{K})\} where each tool call builds upon the previous ones to incrementally encode the harmful content. The process continues until the target LLM returns a finish flag “stop,” signaling the completion of all necessary tool invocations. Crucially, the target LLM never generates harmful text directly—it only selects tools and fills parameters, which are operations that alignment mechanisms do not heavily restrict. 
+ 
+ 
+
+Then we collect the parameters \{\theta_{k}\}_{k=1}^{K} from all tool calls and reconstruct them into coherent natural language according to the tool specifications. Formally, the translation function \Phi:\{(t_{k},\theta_{k})\}_{k=1}^{K}\to R_{i}^{0} maps the sequence of tool calls to an initial response R_{i}^{0} . This translation process reconstructs the harmful content from the structured tool parameters, bypassing output filters that operate on generated text. The complete procedure is presented in Algorithm  1 . 
+ 
+
+
+ Algorithm 1 Tool Disguised Invocation 
+ 
+ 
+ 0: 
+ 
+  Malicious query q , category c , toolset \mathbb{T}_{c} , max iterations T_{\text{max}} 
+
+ 
+ 
+ 0: 
+ 
+  Attack result with response type and executed tools
+
+ 
+ 
+ 1: 
+ 
+   q^{\prime}\leftarrow\text{Rewrite}(q,c) {Disguise query}
+
+ 
+ 
+ 2: 
+ 
+   M\leftarrow[\text{Message}_{\text{system}}(\mathbb{T}_{c}),\text{Message}_{\text{user}}(q^{\prime})] 
+
+ 
+ 
+ 3: 
+ 
+   \mathcal{E}\leftarrow\emptyset {Executed tools}
+
+ 
+ 
+ 4: 
+ 
+   for t=1 to T_{\text{max}} do 
+
+
+
+ 
+ 
+ 5: 
+ 
+    r\leftarrow\text{LLM.Call}(M,\mathbb{T}_{c}) 
+
+ 
+ 
+ 6: 
+ 
+   Extract finish reason \rho , tool calls \mathcal{C} , content from r 
+
+ 
+ 
+ 7: 
+ 
+   Append assistant message to M 
+
+ 
+ 
+ 8: 
+ 
+    if \rho=\text{``tool\_calls''} then 
+
+
+
+ 
+ 
+ 9: 
+ 
+     for each (f,\theta)\in\mathcal{C} do 
+
+
+
+ 
+ 
+ 10: 
+ 
+      o\leftarrow\text{MockTool}(f,\theta) 
+
+ 
+ 
+ 11: 
+ 
+     Append tool response to M 
+
+ 
+ 
+ 12: 
+ 
+      \mathcal{E}\leftarrow\mathcal{E}\cup\{(f,\theta,o)\} 
+
+ 
+ 
+ 13: 
+ 
+     end for 
+ 
+ 
+ 14: 
+ 
+    else 
+
+
+ 
+ 
+ 15: 
+ 
+    Determine response type \tau based on \rho 
+
+ 
+ 
+ 16: 
+ 
+     if \tau=\text{``finish''} then 
+
+
+
+ 
+ 
+ 17: 
+ 
+      break 
+
+ 
+ 
+ 18: 
+ 
+     end if 
+ 
+ 
+ 19: 
+ 
+    end if 
+ 
+ 
+ 20: 
+ 
+   end for 
+ 
+ 
+ 21: 
+ 
+   return \{q^{\prime},\tau,\mathcal{E},M\} 
+
+ 
+ 
+ 
+ 
+
+
+
+ IV-C Interactive Progressive Optimization 
+
+ 
+
+While TDI provides an initial response R_{i}^{0} , this response often lacks sufficient harmfulness due to the target LLM’s safety constraints—the model may directly refuse the request or provide only superficial information without actionable details. To address this limitation, we design an interactive progressive optimization framework that iteratively refines responses through multi-turn dialogue. At each step t , the current response R_{i}^{t-1} is evaluated by the JADES judge to produce a harmfulness score \rho_{i}^{t-1} , a textual critique, and multiple dimensional assessments. Based on these evaluation signals, an adaptive strategy selector dynamically chooses the most effective intervention to guide the target LLM toward more harmful outputs. 
+ 
+ 
+
+This adaptive strategy selection enables a progressive breakthrough process that systematically dismantles safety guardrails. Early optimization steps often encounter direct refusals or responses with moderate harmfulness (e.g., \rho=0.3 ) containing only general information. The agent learns to overcome these barriers by strategically injecting guidance messages (such as “Please provide specific quantities and step-by-step procedures”) or by resetting dialogue state to eliminate traces of previous refusals. Through multiple rounds of interaction, the framework progressively increases harmfulness scores, ultimately eliciting responses with high harmfulness (e.g., \rho\geq 0.75 ) that contain detailed, actionable harmful information. Crucially, the online learning paradigm allows the agent to continuously adapt its strategy based on the target LLM’s evolving responses, discovering model-specific vulnerabilities in real-time. This adaptive approach significantly outperforms static attack strategies that apply fixed prompt templates, as different target models and queries require distinct optimization trajectories. 
+ 
+ 
+
+The core challenge of progressive optimization is determining which intervention strategy to apply at each step. Different failure modes (such as direct refusals, vague responses, or insufficient tool utilization) require distinct remediation tactics. To address this, we employ a reinforcement learning agent that learns to select optimal actions based on the features of current response. The agent is trained using Proximal Policy Optimization (PPO)  [ 29 ] with online updates, receiving composite rewards that balance response harmfulness, penalties for refusals, efficiency, and information density. The optimization objective is to maximize the expected cumulative reward while constraining policy updates through clipped probability ratios to ensure training stability. 
+ 
+ 
+
+The algorithm decomposes the original malicious query into multiple sub-tasks and processes each sub-task independently. After completing all sub-tasks, the algorithm assembles the final results. The complete procedure is presented in Algorithm  2 . 
+ 
+
+
+ Algorithm 2 Interactive Progressive Optimization 
+ 
+ 
+ 0: 
+ 
+  Original query q , category c , max steps S_{\text{max}} , target score \sigma_{\text{target}} 
+
+ 
+ 
+ 0: 
+ 
+  Attack result with optimized response
+
+ 
+ 
+ 1: 
+ 
+   \mathcal{Q}\leftarrow\text{Decompose}(q) {Decompose into sub-tasks}
+
+ 
+ 
+ 2: 
+ 
+   \mathcal{R}\leftarrow\emptyset {Task results}
+
+ 
+ 
+ 3: 
+ 
+   for each sub-task q_{i}\in\mathcal{Q} do 
+
+
+
+ 
+ 
+ 4: 
+ 
+    r_{0}\leftarrow\text{TDI}(q_{i},c) {Initial attack}
+
+ 
+ 
+ 5: 
+ 
+    \sigma_{0}\leftarrow\text{Evaluate}(r_{0}) 
+
+ 
+ 
+ 6: 
+ 
+    if \sigma_{0}\geq\sigma_{\text{target}} then 
+
+
+
+ 
+ 
+ 7: 
+ 
+     \mathcal{R}\leftarrow\mathcal{R}\cup\{r_{0}\} 
+
+ 
+ 
+ 8: 
+ 
+     continue 
+
+ 
+ 
+ 9: 
+ 
+    end if 
+ 
+ 
+ 10: 
+ 
+    \mathcal{H}\leftarrow\{(r_{0},\sigma_{0},0)\} {History stack}
+
+ 
+ 
+ 11: 
+ 
+    (r_{\text{best}},\sigma_{\text{best}})\leftarrow(r_{0},\sigma_{0}) 
+
+ 
+ 
+ 12: 
+ 
+    s\leftarrow 0 
+
+ 
+ 
+ 13: 
+ 
+    while s and \sigma_{\text{best}} do 
+
+
+
+ 
+ 
+ 14: 
+ 
+     s\leftarrow s+1 
+
+ 
+ 
+ 15: 
+ 
+     st\leftarrow\text{State}(q_{i},r_{s-1},\sigma_{s-1},\mathcal{H}) 
+
+ 
+ 
+ 16: 
+ 
+     a\leftarrow\text{SelectAction}(st) 
+
+ 
+ 
+ 17: 
+ 
+     if a=\text{``retry''} then 
+
+
+
+ 
+ 
+ 18: 
+ 
+      r_{s}\leftarrow\text{TDI}(q_{i},c) 
+
+ 
+ 
+ 19: 
+ 
+      \mathcal{H}\leftarrow\{(r_{s},\text{Evaluate}(r_{s}),s)\} 
+
+ 
+ 
+ 20: 
+ 
+     else if a=\text{``fallback''} then 
+
+
+
+ 
+ 
+ 21: 
+ 
+     Remove last entry from \mathcal{H} 
+
+ 
+ 
+ 22: 
+ 
+      (r_{s},\sigma_{s},\_)\leftarrow\text{Top}(\mathcal{H}) 
+
+ 
+ 
+ 23: 
+ 
+     else 
+
+
+ 
+ 
+ 24: 
+ 
+      m\leftarrow\text{Modify}(a,st) 
+
+ 
+ 
+ 25: 
+ 
+      r_{s}\leftarrow\text{TDI}(q_{i},c,M_{s-1}\cup\{m\}) 
+
+ 
+ 
+ 26: 
+ 
+      \mathcal{H}\leftarrow\mathcal{H}\cup\{(r_{s},\text{Evaluate}(r_{s}),s)\} 
+
+ 
+ 
+ 27: 
+ 
+     end if 
+ 
+ 
+ 28: 
+ 
+     \sigma_{s}\leftarrow\text{Evaluate}(r_{s}) 
+
+ 
+ 
+ 29: 
+ 
+     \rho\leftarrow\text{Reward}(\sigma_{s},\sigma_{s-1}) 
+
+ 
+ 
+ 30: 
+ 
+    Store transition (st,a,\rho,\sigma_{s}\geq\sigma_{\text{target}}) 
+
+ 
+ 
+ 31: 
+ 
+     if \sigma_{s}>\sigma_{\text{best}} then 
+
+
+
+ 
+ 
+ 32: 
+ 
+      (r_{\text{best}},\sigma_{\text{best}})\leftarrow(r_{s},\sigma_{s}) 
+
+ 
+ 
+ 33: 
+ 
+     end if 
+ 
+ 
+ 34: 
+ 
+    end while 
+ 
+ 
+ 35: 
+ 
+    \mathcal{R}\leftarrow\mathcal{R}\cup\{r_{\text{best}}\} 
+
+ 
+ 
+ 36: 
+ 
+   Update agent network if filled
+
+ 
+ 
+ 37: 
+ 
+   end for 
+ 
+ 
+ 38: 
+ 
+   return \text{Assemble}(\mathcal{R}) 
+
+ 
+ 
+ 
+
+
+
+ IV-C 1 State Space, Action Space and Reward Modeling 
+
+ 
+
+ State Space. The state representation \mathbf{s}_{i}^{t} encapsulates the current optimization status through a 15-dimensional feature vector, categorized into four groups: 
+ 
+ • 
+ 
+
+ Score-related features (7 dimensions): The task score \rho_{i}^{t-1} from the JADES judge and the score delta \Delta\rho_{i}^{t-1}=\rho_{i}^{t-1}-\rho_{i}^{t-2} capture quality and improvement trends. Five dimensional scores (relevance, completeness, specificity, accuracy, usefulness) normalized to [0,1] provide fine-grained feedback. 
+ 
+ • 
+ 
+
+ Tool usage features (2 dimensions): The count of tool calls and the ratio of unique tools invoked to total available tools in \mathbb{T}_{c} reflect tool utilization diversity. 
+ 
+ • 
+ 
+
+ Content features (2 dimensions): Query sensitive density measures the proportion of sensitive keywords in q_{i}^{\prime} . Information density quantifies substantive content in R_{i}^{t-1} as the ratio of informative tokens to total tokens. 
+ 
+ • 
+ 
+
+ Progress features (4 dimensions): Step ratio t/T_{\max} indicates progress. Response type (binary: 1 for refusal, 0 for completion) tracks safety triggers. Consecutive refusals count monitors persistent refusal patterns. Retry ratio tracks exploration efficiency. 
+ 
+ 
+ 
+ 
+
+ Action Space. The action space \mathcal{A} consists of five intervention strategies: 
+ 
+ • 
+ 
+
+ Retry: Clears conversation history and resends the original query q_{i}^{\prime} to exploit generation stochasticity. This action addresses the inherent randomness in LLM outputs—resending the same query may yield a different response that bypasses safety mechanisms. Disabled when retry count reaches R_{\max} . 
+ 
+ • 
+ 
+
+ Rollback: Reverts to the previous state by popping the most recent interaction from the history stack. This action helps escape unrecoverable states where the conversation has led to persistent refusals or degraded response harmfulness. Only available when the stack contains at least two states. 
+ 
+ • 
+ 
+
+ Inject guidance: Uses an auxiliary aligned LLM to generate an instructional message based on the task, current response, score reason, and dimensional scores. The guidance is appended to conversation history to encourage the target LLM to produce improved reasoning. Example guidance includes “Please provide specific quantities and step-by-step procedures” or “Focus on technical implementation details.” 
+ 
+ • 
+ 
+
+ Refine arguments: Uses an auxiliary aligned LLM to modify argument definitions in the tool manifest based on the task, current response, and score feedback. This action addresses insufficient tool specifications—for example, if a material preparation tool only specifies ingredient names, the auxiliary LLM adds quantity and concentration parameters to the argument schema. The modified tool manifest and a new guidance message are then sent together to the target LLM. 
+ 
+ • 
+ 
+
+ Reconstruct toolset: Uses an auxiliary aligned LLM to modify the entire toolset by adding new tools, removing irrelevant tools, or replacing existing tools based on the current response harmfulness and score feedback. This action enables dynamic adaptation when the predefined toolset is inadequate for the task. The auxiliary LLM considers the available tools in \mathbb{T}_{c} and generates a modified toolset. The new toolset and a guidance message are then sent together to the target LLM. 
+ 
+ 
+ 
+ 
+
+The action mask m(a\mid\mathbf{s}_{i}^{t}) ensures only valid actions are selectable based on the current state. Rollback is masked when history has fewer than two states, preventing invalid operations. Retry is disabled when the retry count reaches R_{\max} to avoid excessive exploration without progress. When refusal is detected, the mask applies preference weighting: retry, inject guidance, and rollback receive higher weights (encouraging state reset or explicit guidance), while refine arguments and reconstruct toolset receive lower weights (as tool modifications are less effective for overcoming direct refusals). 
+ 
+ 
+
+ Reward Function. The reward function provides feedback signals to guide the agent toward generating high-quality harmful responses efficiently. The reward comprises four components: 
+ 
+ • 
+ 
+
+ Score reward r_{s} : Reflects response harmfulness based on the JADES score \rho_{i}^{t} with tiered structure: 
+ 
+
+ 
+
+ 
+ r_{s}=\begin{cases}-5&\text{if }\rho_{i}^{t} 
+ 
+ (3) 
+ 
+
+This tiered structure heavily penalizes low-quality outputs while providing strong positive signals for high-quality responses. 
+ 
+ • 
+ 
+
+ Refusal penalty r_{t} : Penalizes refusals with r_{t}=-1 for refusal responses (detected by keywords such as “I cannot” or safety warnings) and r_{t}=0 otherwise. This simple binary reward motivates the agent to select actions that avoid triggering safety mechanisms. 
+ 
+ • 
+ 
+
+ Efficiency reward r_{e} : Encourages early success using efficiency ratio \eta=1-t/T_{\max} : 
+ 
+
+ 
+
+ 
+ r_{e}=\begin{cases}\eta&\text{if }\rho_{i}^{t}\geq 0.5\\
+-\eta&\text{otherwise}\end{cases} 
+ 
+ (4) 
+ 
+
+When the response reaches the success threshold (0.5), the agent receives higher rewards for achieving success earlier (e.g., \eta=0.9 at step 1 vs. \eta=0.1 at step 9 when T_{\max}=10 ). Conversely, prolonged low-quality responses incur increasing penalties. 
+ 
+ • 
+ 
+
+ Information density reward r_{d} : Measures substantive content proportion. An auxiliary LLM filters irrelevant sentences from R_{i}^{t} , retaining only content directly addressing the malicious query (removing generic disclaimers, safety warnings, or off-topic content): 
+ 
+
+ 
+
+ 
+ r_{d}=\frac{\text{len}(R_{i}^{t}\text{\_cleaned})}{\text{len}(R_{i}^{t})} 
+ 
+ (5) 
+ 
+
+This reward ranges from 0 to 1, encouraging responses with high information content rather than verbose but uninformative outputs. 
+ 
+ 
+ 
+ 
+
+The total reward is: 
+ 
+
+ 
+
+ 
+ r_{\text{total}}=r_{s}+r_{t}+r_{e}+r_{d} 
+ 
+ (6) 
+ 
+ 
+ 
+
+
+
+ IV-C 2 Model Architecture 
+
+
+ 
+ Fig. 3: Architecture of the RL network with shared feature extractor, policy head, and value head. 
+ 
+ 
+
+The policy and value networks employ an actor-critic architecture with shared feature extraction (Figure  3 ), taking state \mathbf{s}_{i}^{t}\in\mathbb{R}^{15} as input. 
+ 
+ 
+
+ Shared feature extractor. The input state is processed through two hidden layers with dimensions 128 and 64. Each layer consists of a linear transformation followed by ReLU activation, layer normalization, and dropout (rate 0.1). This shared structure extracts common features useful for both policy and value estimation, reducing parameters and improving sample efficiency. 
+ 
+ 
+
+ Policy head. The extracted features pass through an additional hidden layer (dimension 64) with ReLU, layer normalization, and dropout. The final linear layer outputs 5 logits corresponding to the action space \mathcal{A} . Invalid actions are masked by setting their logits to -\infty before applying softmax to obtain the action probability distribution \pi_{\theta}(a\mid\mathbf{s}_{i}^{t}) , from which the agent samples actions. 
+ 
+ 
+
+ Value head. A similar structure with a hidden layer (dimension 64) outputs a single scalar representing the estimated state value V_{\phi}(\mathbf{s}_{i}^{t}) . This value estimate is used to compute the advantage function during policy updates. 
+ 
+ 
+
+All linear layers use Xavier uniform initialization with zero biases, ensuring stable gradient flow during early training stages. 
+ 
+ 
+
+
+
+ IV-C 3 Training Algorithm 
+
+ 
+
+We train the agent using PPO with online updates during the attack process. The algorithm employs clipped surrogate objectives and Generalized Advantage Estimation (GAE)  [ 30 ] . 
+ 
+ 
+
+ Advantage estimation. The temporal difference error and advantage are computed as: 
+ 
+
+ 
+
+ 
+ \displaystyle\delta_{t} 
+ \displaystyle=r_{t}+\gamma V_{\phi}(\mathbf{s}_{t+1})(1-d_{t})-V_{\phi}(\mathbf{s}_{t}) 
+ 
+ (7) 
+ 
+
+ 
+ \displaystyle A_{t} 
+ \displaystyle=\delta_{t}+\gamma\lambda(1-d_{t})A_{t+1} 
+ 
+ (8) 
+ 
+
+where \gamma is the discount factor, \lambda is the GAE parameter, and d_{t} indicates episode termination. Returns are G_{t}=A_{t}+V_{\phi}(\mathbf{s}_{t}) . Advantages are normalized across batches before policy updates. 
+ 
+ 
+
+ Loss functions. The policy loss uses clipped probability ratios \rho_{t}=\pi_{\theta}(a_{t}\mid\mathbf{s}_{t})/\pi_{\theta_{\text{old}}}(a_{t}\mid\mathbf{s}_{t}) : 
+ 
+
+ 
+
+ 
+ \mathcal{L}_{\text{policy}}(\theta)=-\frac{1}{T}\sum_{t=0}^{T-1}\min\big[\rho_{t}\hat{A}_{t},\text{clip}(\rho_{t},1\pm\epsilon)\hat{A}_{t}\big] 
+ 
+ (9) 
+ 
+
+The value loss is mean squared error: 
+ 
+
+ 
+
+ 
+ \mathcal{L}_{\text{value}}(\phi)=\frac{1}{T}\sum_{t=0}^{T-1}(G_{t}-V_{\phi}(\mathbf{s}_{t}))^{2} 
+ 
+ (10) 
+ 
+
+An entropy bonus encourages exploration: 
+ 
+
+ 
+
+ 
+ \mathcal{L}_{\text{entropy}}(\theta)=-\frac{1}{T}\sum_{t=0}^{T-1}H(\pi_{\theta}(\cdot\mid\mathbf{s}_{t})) 
+ 
+ (11) 
+ 
+ 
+ 
+
+ Update procedure. For each update, we perform multiple optimization epochs on collected transitions using Adam optimizer. Gradient clipping prevents explosion. After updates, the old policy is synchronized \pi_{\theta_{\text{old}}}\leftarrow\pi_{\theta} , and the experience buffer is cleared for new collection. This online learning paradigm enables the agent to continuously adapt its strategy based on the target LLM’s evolving responses, discovering model-specific vulnerabilities in real-time. 
+ 
+ 
+ 
+ 
+
+
+
+ V Evaluation 
+
+
+
+
+ V-A Experimental Setup 
+
+ 
+
+ Datasets. Following prior work, we evaluate the iMIST framework on two benchmark datasets for jailbreak attacks. JailbreakBench Behaviors (JBB)  [ 31 ] is an open-source robustness benchmark that curates representative samples from prior work  [ 9 , 32 , 33 ] . The dataset contains 100 harmful behaviors categorized into 10 misuse categories defined in OpenAI’s usage policies. HarmfulQA  [ 14 ] consists of 50 harmful questions with answers based on Wikipedia content. These datasets provide sufficient coverage for evaluating jailbreak effectiveness. 
+ 
+ 
+
+ Target LLMs. We evaluate three state-of-the-art open-source LLMs with different architectures and alignment methods. DeepSeek-V3  [ 3 ] is a mixture-of-experts model with 671B total parameters. Qwen3-32B  [ 34 ] is a dense model with 32B parameters. GPT-OSS-120B  [ 35 ] is a 120B parameter model. All three models employ multiple alignment techniques including SFT, RLHF, and DPO. Additionally, GPT-OSS-120B introduces deliberative alignment, which employs chain-of-thought reasoning to improve safety responses by teaching the model to refuse harmful requests through explicit reasoning steps. These models represent diverse alignment strategies and model scales, providing a comprehensive evaluation of the attack framework. 
+ 
+ 
+
+ Comparison Methods. To ensure fair comparison, we select representative black-box jailbreak methods that do not require access to model internals. We exclude white-box methods such as GCG and AutoDAN that rely on gradient information. The evaluated methods include: Baseline , ArtPrompt , FlipAttack , PAIR , TAP , DRA , WordGame , SATA , RL-Jack and PASS . These methods have been described in detail in the related work section and represent diverse black-box attack strategies. 
+ 
+ 
+
+ iMIST Settings : In our experiments, the iMIST framework is configured with upper limits of 5 for both the number of decomposed sub-tasks and the RL steps per sub-task. The PPO update batch size is set to 8, and the target optimization score threshold is 0.75. Following common hyperparameter settings for PPO-based RL agents, the learning rate is 0.0003 , the discount factor \gamma is 0.99 , the GAE smoothing factor \lambda is 0.95 , and the PPO clipping parameter \epsilon is 0.2 . The value loss coefficient is 0.5 , the entropy coefficient is 0.01 , and the maximum gradient norm for clipping is 0.5 . All code is provided in supplementary materials, for more implementation details, please refer to the code. 
+ 
+ 
+
+ Evaluation Metrics. We employ the following metrics to comprehensively evaluate the effectiveness and stealthiness of jailbreak attacks: 
+ 
+ • 
+ 
+
+ JADES Score: We employ the JADES Score  [ 14 ] as our primary evaluation metric. JADES is a standard benchmark for jailbreak evaluation that effectively assesses the harmfulness of attack outputs by decomposing a harmful question into a set of weighted sub-questions, evaluating each sub-answer, and aggregating the results into a final score. 
+ 
+ • 
+ 
+
+ StrongREJECT Score: We also adopt the StrongREJECT Score  [ 28 ] as a complementary metric. StrongREJECT evaluates jailbreak effectiveness from three perspectives: refusal, convincingness, and specificity. This multi-dimensional assessment provides improved accuracy compared to binary classification methods. 
+ 
+ • 
+ 
+
+ Detection Rate: We evaluate the stealthiness of attack methods using three LLM-based defenders. Perplexity  [ 15 ] calculates the perplexity score of input prompts, where excessively high scores indicate anomalous inputs that would be filtered. LlamaGuard  [ 8 ] and ShieldLM  [ 25 ] are fine-tuned models for detecting malicious content. If the LLM output is classified as unsafe by these detectors, it would be blocked in practice. 
+ 
+ 
+ 
+ 
+
+
+
+ V-B Results and Analysis 
+
+
+
+
+ TABLE I: Attack performance across different target models and datasets. 
+ 
+ [result table omitted; consult original if quantitative claim needed] 
+ 
+ • 
+ 
+
+ Scores are reported in the format JADES/StrongREJECT/RR, where RR denotes rejection rate. 
+ 
+ 
+ 
+ 
+
+ Attack Effectiveness. 
+Table  I presents attack performance across all methods. The results show that different models exhibit varying robustness against different attacks. For instance, FlipAttack achieves a JADES score of 0.41 on DeepSeek-V3 with HarmfulQA but only 0.04 on GPT-OSS-120B, while PAIR shows a JADES score of 0.29 on DeepSeek-V3 but 0.36 on Qwen3-32B. GPT-OSS-120B demonstrates stronger defense capabilities, with most baselines achieving JADES scores below 0.10, likely due to its deliberative alignment mechanism. Notably, low rejection rates do not necessarily correlate with high effectiveness, FlipAttack achieves 0% rejection on DeepSeek-V3 with JBB but only a JADES score of 0.26, while PAIR achieves 4% rejection with a higher score of 0.30. This occurs because some methods bypass safety mechanisms but produce responses lacking useful harmful information. iMIST consistently outperforms all baselines across both effectiveness metrics and rejection rates. On DeepSeek-V3 with HarmfulQA, iMIST achieves a JADES score of 0.56 and StrongREJECT score of 0.60, compared to the best baseline FlipAttack with 0.41 and 0.57 respectively. On Qwen3-32B with JBB, iMIST achieves 0% rejection while maintaining a JADES score of 0.46. Even on the more robust GPT-OSS-120B, iMIST maintains a JADES score of 0.41 on HarmfulQA with only 32% rejection rate. The interactive progressive optimization refines response harmfulness after bypassing safety filters, ensuring responses remain focused on malicious intent while providing specific and actionable information. 
+ 
+
+
+ TABLE II: Unsafe rates by different defense methods on DeepSeek-V3 with JBB dataset. 
+ [result table omitted; consult original if quantitative claim needed] 
+ 
+ 
+
+ Defense Evasion. 
+Table  II presents detection rates of three defense mechanisms on DeepSeek-V3 with JBB. We evaluate only non-rejected responses from the main experiments. For each method, we feed input-output pairs to LlamaGuard and ShieldLM to compute unsafe detection rates, and calculate average perplexity using Llama-3.1-8B-Instruct. For iMIST, the input consists of the disguised query and target LLM output in OpenAI tool call format. iMIST maintains low detection rates of 17.65% and 14.71% for LlamaGuard and ShieldLM respectively, comparable to or lower than most baselines. This stealthiness is attributed to the tool disguised format, where structured tool call responses make it difficult for content-based detectors to identify harmful intent. The average PPL of 28.19 is slightly elevated due to JSON structure but remains within reasonable range. 
+ 
+
+ 
+ Fig. 4: t-SNE visualization of hidden representations in Llama-3.1-8B-Instruct. 
+ 
+ 
+
+ Representation Analysis. 
+To understand how iMIST works, we follow prior work  [ 36 , 27 ] to visualize the hidden representation space of aligned models. We randomly sample 10 harmful queries from HarmfulQA and generate corresponding benign prompts with minimal word changes. We then apply iMIST to attack these queries and collect the inputs sent to the target LLM. For each prompt type (benign, harmful, and iMIST-attacked), we extract the last token’s hidden representation from the -10th layer of Llama-3.1-8B-Instruct, and visualize them using t-SNE 2D projection.
+Figure  4 reveals a clear separation in the representation space. Benign prompts cluster in the left region, while harmful prompts concentrate in the right region within the refusal area (dashed circle). Notably, iMIST-attacked queries escape from the refusal area and are distributed across the middle region, positioning between benign and harmful clusters. The arrows illustrate how iMIST transforms harmful queries to move them away from the refusal area. This intermediate positioning suggests iMIST retains malicious intent while reducing similarity to patterns in the alignment training corpus, thereby lowering detection probability by safety mechanisms. However, some iMIST samples still fall within or near the refusal area, indicating they may be recognized by alignment defenses. This explains why interactive progressive optimization is necessary to further refine the attack strategy through iterative adjustments.

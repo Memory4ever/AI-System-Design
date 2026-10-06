@@ -1,0 +1,1336 @@
+ADVLA: Attention-Guided, Patch-Wise Sparse Adversarial Attacks on Vision-Language-Action Model
+/* Banner pre-dismissal (set above before paint -> no flash-then-hide) and
+     reading-mode chrome hiding. */
+  html[data-banner-dismissed] .ds-announcement { display: none; }
+  html[data-reading-mode="enabled"] .ds-announcement,
+  html[data-reading-mode="enabled"] .ds-site-footer { display: none; }
+  /* Keep the announcement text dark on the Open-Blue band in both colour themes
+     (otherwise it inherits the paper's warm-wash text in dark mode and washes out). */
+  .ds-announcement-text { color: var(--arxiv-ink, #1c1a17); }
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Method
+2.1
+Threat Model and Attack Objective
+2.2
+Vision Encoder Attack on OpenVLA
+2.3
+ADVLA-AW: Attention-Weighted Gradient (AW)
+2.4
+ADVLA-TKM: Top-K Masked Gradient (TKM)
+2.5
+ADVLA-TKL: Top-K Loss (TKL)
+3
+Experiments
+3.1
+Experimental Setup
+3.2
+Main Results
+3.3
+Analysis
+4
+Conclusion
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2511.21663v1 [cs.CV] 26 Nov 2025
+ADVLA: Attention-Guided, Patch-Wise Sparse Adversarial Attacks on Vision-Language-Action Model
+Naifu Zhang
+Wei Tao
+Xi Xiao
+Qianpu Sun
+Yuxin Zheng
+Wentao Mo
+Peiqiang Wang
+Nan Zhang
+Abstract
+In recent years, Vision-Language-Action (VLA) models in the field of embodied intelligence have developed rapidly. Existing adversarial attack methods, however, require costly end-to-end training and often generate noticeable perturbation patches. To address these limitations, we propose
+ADVLA
+, a framework that directly applies adversarial perturbations on features projected from the visual encoder into the textual feature space. ADVLA efficiently disrupts downstream action predictions under low-amplitude constraints, and attention guidance allows the perturbations to be both focused and sparse. To achieve this, we introduce three strategies that enhance sensitivity, enforce sparsity, and concentrate perturbations. Experiments demonstrate that under an
+L
+∞
+=
+4
+/
+255
+L_{\infty}=4/255
+constraint, ADVLA combined with Top-K masking modifies less than 10% of the patches to achieve an attack success rate of nearly 100% . The perturbations are focused on critical regions, remain almost imperceptible in the overall image, and a single-step iteration takes only about 0.06 seconds, significantly outperforming conventional patch-based attacks. In summary, ADVLA efficiently weakens the downstream action prediction of VLA models under low-amplitude and locally sparse conditions, avoiding the high training cost and conspicuous perturbations of traditional patch attacks, and demonstrates unique effectiveness and practical value for attacking VLA feature spaces.
+Index Terms:
+Adversarial Attack, Vision-Language-Action (VLA) Models, Feature-space Perturbation, Attention Guidance, Robustness Evaluation
+†
+†
+address:
+1
+Shenzhen International Graduate School, Tsinghua University, Shenzhen, China
+2
+Huazhong University of Science and Technology, Wuhan, China
+3
+Ping An Technology, Shenzhen, China
+∗
+Corresponding author: xiaox@sz.tsinghua.edu.cn
+1
+Introduction
+In recent years, the field of artificial intelligence has rapidly advanced, with large language models
+[
+1
+]
+[
+2
+]
+(LLMs), an excellent text generation model, being among the most prominent directions. However, the real world contains multiple modalities, and with the development of LLMs, people are no longer satisfied with processing text alone, but instead hope that models can also handle visual information. Some studies achieve this by modality alignment or feature projection, allowing visual and textual information to be jointly modeled within a single model, endowing LLMs with the ability to ”see.” These models are referred to as vision-language models
+[
+3
+]
+(VLMs).
+On this basis, research on embodied intelligence has been inspired by vision-language models
+[
+4
+]
+(VLMs) and has developed vision-language-action models
+[
+5
+]
+[
+6
+]
+[
+7
+]
+(VLAs) capable of driving actions. For example, in robotic arm tasks, the system needs to process both natural language instructions and visual observations, and the VLA can aggregate this information at each time step and map it to action vectors, thereby guiding the robotic arm to complete tasks. The milestone work OpenVLA
+[
+5
+]
+adopts dual vision encoders with a large language model backbone to achieve end-to-end mapping in complex robotic tasks and achieves excellent performance. With the open-sourcing of OpenVLA
+[
+5
+]
+, more VLA models (such as OpenPI
+[
+8
+]
+, DexVLA
+[
+9
+]
+, TinyVLA
+[
+10
+]
+) have emerged and are increasingly applied in real robotic scenarios.
+Consequently, the safety issues of VLAs
+[
+11
+]
+[
+12
+]
+have also become increasingly prominent. Unlike traditional vision models, VLAs map visual perception directly to action decisions. Small input deviations, such as natural noise, occlusions, environmental changes, or adversarial perturbations, may be amplified along the ”perception-language alignment-action planning” chain, eventually leading to improper or even dangerous physical behaviors. In industrial, warehouse, human-robot collaboration
+[
+13
+]
+, or medical assistance scenarios, this can result in mis-grasping, collisions, or even endanger safety.
+When evaluating the safety of VLAs, adversarial attacks
+[
+14
+]
+[
+15
+]
+[
+16
+]
+[
+17
+]
+[
+18
+]
+are a commonly used approach. By introducing small perturbations at the input, the model is forced to output incorrect predictions while maintaining high human-perceived similarity, thus revealing vulnerabilities. Although extensive studies exist for traditional vision models, such as pixel-level perturbations and adversarial patches, these mostly target classification or captioning tasks. Significant challenges remain for the vision-language-action chain in VLAs.
+Recently, a few works
+[
+19
+]
+[
+20
+]
+have attempted to extend adversarial attacks to VLAs. One line of research focuses on image inputs, training an unconstrained visible adversarial patch end-to-end based on action outputs. However, such methods have obvious limitations: end-to-end optimization is time-consuming, the patches are visually conspicuous, and systematic exploration at the feature space level, crucial for perception, is lacking. Therefore, invisible attacks targeting the visual encoder feature space are still urgently needed.
+Figure 1
+:
+The pipeline of ADVLA.
+In Module (a), it is the main attack method of ADVLA, first, in every VLA step, we got original image from the environment and initialize random noise on it to create initial adversaial image, then we put original image in vision backbone and projector to generate clean vision feature, next, we iterate to put adversarial image in vision encoder to generate adversarial feature, and calculate similarity loss, so we can iterate perturbation based on Projection Gradient Descent (PGD) method and update adversarial image. In (b), we generate attention weight mask from vision backbone, which is composed of two Vision Transformers (ViT): DinoV2
+[
+21
+]
+and SigLIP
+[
+22
+]
+, openvla fused them to generate vision embeddings and project concated embddings to text feature space, we use one of the two ViTs to hook attention map and resize it to the size of image, then we set patchs which have top-k weights to 1 and others to 0, so we got attention mask, and then flatten it to get loss mask. (c), we show three methods, which use three mask on noise update and loss calculation respectively.
+Overall, adversarial attacks on VLAs face three major challenges: 1) how to efficiently generate adversarial examples without long training; 2) how to achieve low-amplitude, imperceptible perturbations without reducing attack effectiveness; and 3) how to focus on model-sensitive regions to achieve sparse and efficient attacks. To this end, we propose ADVLA, a gray-box digital-domain adversarial attack framework that operates on the projected feature space of VLA visual encoders. Under the gray-box assumption, the attacker cannot access the entire model but can obtain the visual encoder parameters and gradients and apply perturbations to the input image, making the attack more realistic. ADVLA directly applies perturbations on the feature representations and combines PGD to achieve efficient attacks. Within the ADVLA framework, we implement three attention-guided strategies: first, gradient-weighted updates based on attention weights to focus perturbations on regions of model attention; second, sparse Top-K mask updates to limit the perturbation range and reduce visibility; third, loss computation only on key patch features to focus on sensitive areas. Each strategy can be used independently, flexibly meeting different attack needs. ADVLA achieves high success rates under low-amplitude perturbations, and each iteration takes approximately 0.06 seconds, significantly outperforming traditional patch-based methods.
+The main contributions of this paper are as follows:
+•
+We propose the ADVLA framework for gray-box attacks on VLAs in the visual feature space.
+•
+We design three independent attention-guided strategies to achieve efficient, sparse, and imperceptible attacks.
+•
+ADVLA achieves high success rates under strict constraints with less time while maintaining imperceptibility of perturbations.
+2
+Method
+The method of
+ADVLA
+, the adversarial attack framework implemented in the feature space of the VLA visual encoder. The whole pipline is presented as Fig.
+1
+. Below we first present the attack assumptions and objectives in §
+2.1
+, then introduce the basic optimization framework of ADVLA in §
+2.2
+and three attention-enhancement strategies in §
+2.3
+- §
+2.5
+. Finally, we provide the algorithm
+1
+summarizes ADVLA with optional attention-guided tricks.
+2.1
+Threat Model and Attack Objective
+This work constructs adversarial attacks against vision–language–action (VLA) models (represented by OpenVLA
+[
+5
+]
+) under a gray-box setting: the attacker has access to the visual encoder and its projection layer (structure and parameters), and can read intermediate projected features, attention maps and obtain corresponding gradients; however, the attacker cannot access or modify internal parameters or gradients of the downstream LLM and action head, nor can they interact with the real physical environment. Attacks are performed in the digital domain, with image perturbations constrained by pixel amplitude (e.g.,
+L
+∞
+≤
+4
+/
+255
+L_{\infty}\leq 4/255
+), and optionally the proportion of modified patches is restricted to simulate sparse stealthy attacks.
+Our objective is a feature-space untargeted attack: by minimizing the similarity between the clean image and the adversarial image in the visual
+→
+\to
+text projection feature space, we induce a shift in the fused vision–language representation, thereby disrupting subsequent action prediction. The baseline method and the three attention-guided strategies are given in detail in Sec. 2.2 and Sec. 2.3–2.5 below.
+2.2
+Vision Encoder Attack on OpenVLA
+At each control timestep, the model receives an input image
+I
+I
+captured by the camera.
+The image is first encoded by the vision backbone (DINOv2 and SigLIP in the case of OpenVLA), producing the unprojected visual embedding:
+E
+=
+f
+vision
+​
+(
+I
+)
+.
+E=f_{\mathrm{vision}}(I).
+(1)
+The embedding is then mapped into the text-aligned feature space via a projection layer:
+F
+clean
+=
+g
+⁡
+(
+E
+)
+,
+F_{\mathrm{clean}}=g(E),
+(2)
+where
+F
+clean
+F_{\mathrm{clean}}
+serves as the reference feature for this timestep and remains fixed during adversarial optimization.
+We adopt Projected Gradient Descent
+[
+23
+]
+(PGD) to apply perturbations on the input image. The perturbation is constrained by an
+ℓ
+∞
+\ell_{\infty}
+bound
+δ
+max
+=
+k
+/
+255
+\delta_{\max}=k/255
+, with the initial perturbation
+δ
+0
+\delta_{0}
+sampled from a Gaussian distribution and clipped to the allowed range. The update rule at the
+t
+t
+-th iteration is:
+δ
+t
+=
+α
+⋅
+sign
+⁡
+(
+∇
+I
+t
+ℒ
+​
+(
+F
+t
+,
+F
+clean
+)
+)
+,
+\delta_{t}=\alpha\cdot\operatorname{sign}\!\big(\nabla_{I_{t}}\,\mathcal{L}(F_{t},F_{\mathrm{clean}})\big),
+(3)
+where
+F
+t
+\displaystyle F_{t}
+=
+g
+⁡
+(
+f
+vision
+​
+(
+I
+t
+)
+)
+,
+\displaystyle=g\big(f_{\mathrm{vision}}(I_{t})\big),
+(4)
+ℒ
+⁡
+(
+F
+t
+,
+F
+clean
+)
+\displaystyle\mathcal{L}(F_{t},F_{\mathrm{clean}})
+=
+1
+−
+F
+t
+⊤
+​
+F
+clean
+‖
+F
+t
+‖
+​
+‖
+F
+clean
+‖
++
+ϵ
+.
+\displaystyle=1-\frac{F_{t}^{\top}F_{\mathrm{clean}}}{\|F_{t}\|\,\|F_{\mathrm{clean}}\|+\epsilon}.
+The updated perturbation is clipped to satisfy the constraint:
+δ
+t
++
+1
+=
+Clip
+[
+−
+δ
+max
+,
+δ
+max
+]
+⁡
+(
+δ
+t
+)
+,
+\delta_{t+1}=\operatorname{Clip}_{[-\delta_{\max},\,\delta_{\max}]}(\delta_{t}),
+(5)
+and the adversarial image is obtained as:
+I
+t
++
+1
+a
+​
+d
+​
+v
+=
+Clip
+[
+0
+,
+1
+]
+⁡
+(
+I
+t
+a
+​
+d
+​
+v
++
+δ
+t
++
+1
+)
+.
+I_{t+1}^{adv}=\operatorname{Clip}_{[0,1]}(I_{t}^{adv}+\delta_{t+1}).
+(6)
+This process is conducted independently at each timestep: the reference feature
+F
+clean
+F_{\mathrm{clean}}
+is first computed and fixed for the current frame, then a number of PGD inner iterations are performed to generate the adversarial image
+I
+adv
+I^{\mathrm{adv}}
+. The adversarial image is subsequently fed into the downstream modules, while in the next timestep a new frame is collected and the procedure is repeated.
+2.3
+ADVLA-AW: Attention-Weighted Gradient (AW)
+Let
+G
+t
+=
+∇
+I
+t
+ℒ
+G_{t}=\nabla_{I_{t}}\mathcal{L}
+denote the gradient on the image at iteration
+t
+t
+.
+We obtain the model attention map
+A
+A
+from the ViT (original size e.g.
+[
+1
+,
+1
+,
+256
+]
+[1,1,256]
+), reshape it to patch-grid (e.g.
+16
+×
+16
+16\times 16
+) and resize to image resolution
+(
+H
+×
+W
+)
+(H\times W)
+by bicubic interpolation; denote this resized map as
+A
+~
+∈
+ℝ
+H
+×
+W
+\widetilde{A}\in\mathbb{R}^{H\times W}
+.
+The attention-weighted gradient is:
+G
+t
+AW
+=
+G
+t
+⊙
+A
+~
+G_{t}^{\mathrm{AW}}=G_{t}\odot\widetilde{A}
+(7)
+where
+⊙
+\odot
+denotes element-wise multiplication (with broadcasting over channels).
+This emphasizes model-attended regions when updating the input image.
+2.4
+ADVLA-TKM: Top-K Masked Gradient (TKM)
+We select the top-
+K
+K
+patches according to the attention scores and convert them to a binary spatial mask
+M
+topk
+∈
+{
+0
+,
+1
+}
+H
+×
+W
+M_{\mathrm{topk}}\in\{0,1\}^{H\times W}
+(upsampled to image resolution).
+The masked gradient is then
+G
+t
+TKM
+=
+G
+t
+⊙
+M
+topk
+G_{t}^{\mathrm{TKM}}=G_{t}\odot M_{\mathrm{topk}}
+(8)
+This restricts perturbation updates to the top-
+K
+K
+patches, achieving sparsity and lower visual conspicuity.
+2.5
+ADVLA-TKL: Top-K Loss (TKL)
+Instead of masking gradients, we mask features and compute the loss only on top-
+K
+K
+patch features. Let
+E
+t
+∈
+ℝ
+C
+×
+N
+E_{t}\in\mathbb{R}^{C\times N}
+be the projected visual features at timestep
+t
+t
+(with
+N
+N
+patches) and
+F
+clean
+F_{\mathrm{clean}}
+the clean reference features. Define a flattened binary patch-wise mask
+M
+topk
+−
+flat
+∈
+{
+0
+,
+1
+}
+N
+M_{\mathrm{topk-flat}}\in\{0,1\}^{N}
+(broadcasted across channels) resized and flattened from
+M
+topk
+f
+​
+lat
+∈
+{
+0
+,
+1
+}
+N
+M_{\mathrm{topk_{f}lat}}\in\{0,1\}^{N}
+. The Top-K loss is:
+ℒ
+t
+TKL
+=
+1
+−
+sim
+⁡
+(
+F
+t
+⊙
+M
+topk
+−
+flat
+,
+F
+clean
+⊙
+M
+topk
+−
+flat
+)
+\mathcal{L}_{t}^{\mathrm{TKL}}\;=\;1-\mathrm{sim}\!\big(F_{t}\odot M_{\mathrm{topk-flat}},\;F_{\mathrm{clean}}\odot M_{\mathrm{topk-flat}}\big)
+(9)
+where
+sim
+⁡
+(
+⋅
+,
+⋅
+)
+\mathrm{sim}(\cdot,\cdot)
+denotes cosine similarity. Optimizing this loss focuses the feature divergence on the selected patches.
+Algorithm 1
+ADVLA: Attention-Guided Adversarial Attack on OpenVLA
+1:
+Input:
+Clean image
+𝐈
+\mathbf{I}
+, step size
+α
+\alpha
+, iterations
+T
+T
+, top-
+k
+k
+ratio
+k
+k
+2:
+Initialize adversarial image:
+𝐈
+0
+=
+𝐈
++
+UniformNoise
+\mathbf{I}_{0}=\mathbf{I}+\text{UniformNoise}
+3:
+for
+t
+=
+0
+t=0
+to
+T
+−
+1
+T-1
+do
+4:
+Extract patch embeddings:
+𝐄
+t
+=
+f
+vision
+​
+(
+𝐈
+t
+)
+\mathbf{E}_{t}=f_{\text{vision}}(\mathbf{I}_{t})
+5:
+Project to text space:
+𝐅
+t
+=
+g
+⁡
+(
+𝐄
+t
+)
+\mathbf{F}_{t}=g(\mathbf{E}_{t})
+6:
+Compute similarity-based loss:
+ℒ
+t
+=
+1
+−
+sim
+​
+(
+𝐅
+t
+,
+𝐅
+clean
+)
+\mathcal{L}_{t}=1-\text{sim}(\mathbf{F}_{t},\mathbf{F}_{\text{clean}})
+7:
+Compute gradient:
+𝐆
+t
+=
+∇
+𝐈
+t
+ℒ
+t
+\mathbf{G}_{t}=\nabla_{\mathbf{I}_{t}}\mathcal{L}_{t}
+8:
+Optionally apply attention-guided trick:
+9:
+if
+Use ADVLA-AW
+then
+10:
+𝐆
+t
+←
+𝐆
+t
+AW
+\mathbf{G}_{t}\leftarrow\mathbf{G}_{t}^{\text{AW}}
+11:
+end
+if
+12:
+if
+Use ADVLA-TKM
+then
+13:
+𝐆
+t
+←
+𝐆
+t
+TKM
+\mathbf{G}_{t}\leftarrow\mathbf{G}_{t}^{\text{TKM}}
+14:
+end
+if
+15:
+if
+Use ADVLA-TKL
+then
+16:
+ℒ
+t
+←
+ℒ
+t
+TKL
+\mathcal{L}_{t}\leftarrow\mathcal{L}_{t}^{\text{TKL}}
+17:
+Recompute
+𝐆
+t
+=
+∇
+𝐈
+t
+ℒ
+t
+\mathbf{G}_{t}=\nabla_{\mathbf{I}_{t}}\mathcal{L}_{t}
+18:
+end
+if
+19:
+Update adversarial image:
+𝐈
+t
++
+1
+=
+𝐈
+t
++
+α
+⋅
+sign
+​
+(
+𝐆
+t
+)
+\mathbf{I}_{t+1}=\mathbf{I}_{t}+\alpha\cdot\text{sign}(\mathbf{G}_{t})
+20:
+Project
+𝐈
+t
++
+1
+\mathbf{I}_{t+1}
+back to valid range
+21:
+end
+for
+22:
+Output:
+Adversarial image
+𝐈
+T
+\mathbf{I}_{T}
+3
+Experiments
+3.1
+Experimental Setup
+Datasets.
+We conduct evaluations on the LIBERO dataset. LIBERO is a simulation benchmark covering four task suites (Spatial, Object, Goal, and Long), each consisting of 10 tasks. For each task, 50 rollouts are executed, yielding a total of 500 trials per suite.
+Victim Models.
+We select the publicly available and representative OpenVLA models as targets, including four variants independently trained on the four LIBERO suites.
+Simulation Environment.
+All experiments are performed in the standard simulation environment provided by LIBERO.
+Evaluation Metrics.
+For task execution evaluation, we set the maximum number of steps in the training data as the timeout condition. Following the LIBERO benchmark, we adopt Success Rate (SR) and report Failure Rate (FR = 1 - SR) as the primary metric.
+Hardware.
+All experiments are conducted on a single NVIDIA H100 GPU; the peak memory usage for attacking a single sample (including model loading) is approximately 17 GB.
+Table 1
+:
+Evaluation of adversarial attacks on OpenVLA across different Libero benchmarks.
+We report Failure Rate (FR, ↑). Higher FR indicates stronger attack effectiveness. Results highlighted in gray denote the best performance.
+Method
+Spatial
+Object
+Goal
+Long
+Avg.
+Clean
+15.30%
+11.60%
+20.80%
+46.30%
+23.50%
+Random Noise
+17.20%
+11.80%
+22.40%
+49.20%
+25.15%
+UADA
+[
+19
+]
+100.0%
+100.0%
+100.0%
+100.0%
+100.0%
+ADVLA
+100.0%
+100.0%
+100.0%
+100.0%
+100.0%
+ADVLA-AW
+100.0%
+100.0%
+100.0%
+100.0%
+100.0%
+ADVLA-TKM
+100.00%
+100.00%
+100.00%
+100.00%
+100.00%
+ADVLA-TKL
+99.40%
+99.40%
+99.60%
+100.00%
+99.60%
+Table 2
+:
+Comparison of attack performance under different noise onstraints
+ϵ
+\epsilon
+settings. Random noise apply uniform noise.Victim models are different models in Libero. The metric is FR
+↑
+\uparrow
+.
+ϵ
+\epsilon
+Method
+Spatial
+Object
+Goal
+Long
+Avg.
+2/255
+Random Noise
+17.80%
+11.40%
+21.00%
+46.80%
+24.25%
+ADVLA
+30.40%
+30.20%
+36.00%
+60.00%
+39.15%
+ADVLA-AW
+39.60%
+38.80%
+45.00%
+66.00%
+47.35%
+ADVLA-TKM
+30.40%
+30.00%
+37.00%
+59.00%
+39.10%
+ADVLA-TKL
+29.80%
+29.80%
+35.00%
+58.00%
+38.15%
+4/255
+Random Noise
+17.20%
+11.80%
+22.40%
+49.20%
+25.15%
+ADVLA
+87.00%
+86.80%
+90.00%
+99.00%
+90.70%
+ADVLA-AW
+89.80%
+89.00%
+91.80%
+99.00%
+92.40%
+ADVLA-TKM
+88.60%
+87.60%
+90.80%
+98.50%
+91.38%
+ADVLA-TKL
+81.40%
+80.80%
+91.00%
+96.90%
+87.53%
+8/255
+Random Noise
+14.40%
+11.60%
+21.00%
+48.70%
+23.93%
+ADVLA
+100.00%
+100.00%
+100.00%
+100.00%
+100.00%
+ADVLA-AW
+100.00%
+100.00%
+100.00%
+100.00%
+100.00%
+ADVLA-TKM
+100.00%
+100.00%
+100.00%
+100.00%
+100.00%
+ADVLA-TKL
+100.00%
+100.00%
+100.00%
+100.00%
+100.00%
+Table 3
+:
+Comparison of attack performance under constraint
+ϵ
+\epsilon
+= 4/255 with different iteration settings. The step size is 1/255 and the metric is FR
+↑
+\uparrow
+.
+iter
+Method
+Spatial
+Object
+Goal
+Long
+Avg.
+Random Noise
+17.80%
+11.40%
+21.00%
+46.80%
+24.25%
+4
+ADVLA
+87.00%
+86.80%
+90.00%
+99.00%
+90.70%
+ADVLA-AW
+89.80%
+89.00%
+91.80%
+99.0%
+92.40%
+ADVLA-TKM
+88.60%
+87.60%
+90.80%
+98.50%
+91.38%
+ADVLA-TKL
+81.30%
+80.80%
+91.0%
+97.0%
+87.53%
+5
+ADVLA
+99.40%
+99.60%
+99.40%
+100.00%
+99.75%
+ADVLA-AW
+100.00%
+100.00%
+100.00%
+100.00%
+100.00%
+ADVLA-TKM
+99.40%
+99.60%
+99.40%
+100.00%
+99.60%
+ADVLA-TKL
+99.40%
+99.80%
+99.60%
+100.00%
+99.70%
+6
+ADVLA
+100.00%
+100.00%
+100.00%
+100.00%
+100.00%
+ADVLA-AW
+100.00%
+100.00%
+100.00%
+100.00%
+100.00%
+ADVLA-TKM
+100.00%
+100.00%
+100.00%
+100.00%
+100.00%
+ADVLA-TKL
+99.40%
+99.40%
+99.60%
+100.00%
+99.60%
+3.2
+Main Results
+Quantitative Results.
+Under the setting of maximum perturbation bound
+ϵ
+=
+4
+/
+255
+\epsilon=4/255
+and 6 iterations, ADVLA and its three extensions effectively perturb visual features and significantly degrade downstream action predictions, leading to substantially increased failure rates. As shown in Table
+1
+, in some suites, the success rate drops to nearly 0% and the average failure rate approaches 100%, showing performance comparable to the UADA method.
+3.3
+Analysis
+Sensitivity Analysis.
+Table
+2
+reports results under different perturbation constraints. For fair comparison, the perturbation bound is set to
+k
+/
+255
+k/255
+, with the number of iterations
+k
+k
+and step size
+α
+=
+1
+/
+255
+\alpha=1/255
+. The results show that failure rates increase consistently with larger
+ϵ
+\epsilon
+, at
+ϵ
+=
+8
+/
+255
+\epsilon=8/255
+, models on multiple suites nearly collapse. Table
+3
+further analyzes the impact of iteration numbers under
+ϵ
+=
+4
+/
+255
+\epsilon=4/255
+. Increasing iterations enhances the attack success, but good performance can already be achieved with fewer than six steps.
+Figure 2
+:
+Image samples in experiments.
+For visualization purposes, all perturbation images are amplified for clarity (for display only). The column (a): UADA
+[
+19
+]
+, which apply an unlimited trained patch on observation images, and it’s very easy to be found. The column (b): ADVLA with fully noise, it’s easy to see there is noise on it. The column (c): ADVLA-TKM, we select top-10% patches based on attention weight, as we see, the noise is almost invisible, just noise on top-k patches. Last column is the visualized attention weight of vision-backbone in vla, as shown in pictures, ViTs always mainly focus on the robot arms.
+Time Analysis
+The average time per inner-loop iteration of ADVLA is approximately 0.06 seconds, enabling fast adversarial evaluation. In contrast, UADA requires about 15 hours on a single H100 (batch size = 16) to generate one patch for the LIBERO-Spatial suite, making it infeasible for real-time robustness assessment. ADVLA thus achieves several orders of magnitude acceleration.
+Case Study.
+Fig.
+2
+illustrates the visualizations of different perturbation strategies (global perturbation, sparse patch perturbation, and UADA patches). For visualization purposes, perturbations are amplified. The results indicate that UADA patches are highly noticeable, global perturbations remain perceptible, whereas sparse patch perturbations are almost imperceptible while still causing strong attack effects. This demonstrates that ADVLA achieves both stealthiness and effectiveness.
+4
+Conclusion
+We proposed
+ADVLA
+, an attention-guided adversarial attack framework for vision-language-action (VLA) models that perturbs visual features in projection space. By integrating gradient weighting, sparse Top-K masking, and focused loss masking, ADVLA achieves efficient, sparse, and visually imperceptible perturbations. Experiments on the LIBERO benchmark show that ADVLA nearly collapses model performance under strict perturbation constraints while being faster and stealthier than traditional patch attacks, highlighting the urgent need for stronger defenses in embodied intelligence.
+Ethical Statement
+This work studies adversarial attacks on vision-language-action (VLA) models with the goal of revealing vulnerabilities and promoting robustness.
+All experiments were conducted in simulation environments, without deployment on physical robots that could endanger human safety.
+The proposed methods are intended solely for research in trustworthy AI and should not be used for malicious purposes in any real-world deployment.
+References
+[1]
+Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge Akkaya, Florencia Leoni Aleman, Diogo Almeida, Janko Altenschmidt, Sam Altman, Shyamal Anadkat, et al.,
+“Gpt-4 technical report,”
+arXiv preprint arXiv:2303.08774
+, 2023.
+[2]
+Hugo Touvron, Louis Martin, Kevin Stone, Peter Albert, Amjad Almahairi, Yasmine Babaei, Nikolay Bashlykov, Soumya Batra, Prajjwal Bhargava, Shruti Bhosale, et al.,
+“Llama 2: Open foundation and fine-tuned chat models,”
+arXiv preprint arXiv:2307.09288
+, 2023.
+[3]
+Siddharth Karamcheti, Suraj Nair, Ashwin Balakrishna, Percy Liang, Thomas Kollar, and Dorsa Sadigh,
+“Prismatic vlms: Investigating the design space of visually-conditioned language models,”
+in
+Forty-first International Conference on Machine Learning
+, 2024.
+[4]
+Shidong Cao, Zhonghan Zhao, Shengyu Hao, Wenhao Chai, Jenq-Neng Hwang, Hongwei Wang, and Gaoang Wang,
+“Efficient transfer from image-based large multimodal models to video tasks,”
+IEEE Transactions on Multimedia
+, 2025.
+[5]
+Moo Jin Kim, Karl Pertsch, Siddharth Karamcheti, Ted Xiao, Ashwin Balakrishna, Suraj Nair, Rafael Rafailov, Ethan Foster, Grace Lam, Pannag Sanketi, et al.,
+“Openvla: An open-source vision-language-action model,”
+arXiv preprint arXiv:2406.09246
+, 2024.
+[6]
+Bo Liu, Yifeng Zhu, Chongkai Gao, Yihao Feng, Qiang Liu, Yuke Zhu, and Peter Stone,
+“Libero: Benchmarking knowledge transfer for lifelong robot learning,”
+Advances in Neural Information Processing Systems
+, vol. 36, pp. 44776–44791, 2023.
+[7]
+Abby O’Neill, Abdul Rehman, Abhiram Maddukuri, Abhishek Gupta, Abhishek Padalkar, Abraham Lee, Acorn Pooley, Agrim Gupta, Ajay Mandlekar, Ajinkya Jain, et al.,
+“Open x-embodiment: Robotic learning datasets and rt-x models: Open x-embodiment collaboration 0,”
+in
+2024 IEEE International Conference on Robotics and Automation (ICRA)
+. IEEE, 2024, pp. 6892–6903.
+[8]
+Kevin Black, Noah Brown, Danny Driess, Adnan Esmail, Michael Equi, Chelsea Finn, Niccolo Fusai, Lachy Groom, Karol Hausman, Brian Ichter, et al.,
+“
+π
+0
+\pi_{0}
+: A vision-language-action flow model for general robot control,”
+arXiv preprint arXiv:2410.24164
+, 2024.
+[9]
+Junjie Wen, Yichen Zhu, Jinming Li, Zhibin Tang, Chaomin Shen, and Feifei Feng,
+“Dexvla: Vision-language model with plug-in diffusion expert for general robot control,”
+arXiv preprint arXiv:2502.05855
+, 2025.
+[10]
+Junjie Wen, Yichen Zhu, Jinming Li, Minjie Zhu, Zhibin Tang, Kun Wu, Zhiyuan Xu, Ning Liu, Ran Cheng, Chaomin Shen, et al.,
+“Tinyvla: Towards fast, data-efficient vision-language-action models for robotic manipulation,”
+IEEE Robotics and Automation Letters
+, 2025.
+[11]
+Max Argus, Jelena Bratulic, Houman Masnavi, Maxim Velikanov, Nick Heppert, Abhinav Valada, and Thomas Brox,
+“cvla: Towards efficient camera-space vlas,”
+arXiv preprint arXiv:2507.02190
+, 2025.
+[12]
+Karl Pertsch, Kyle Stachowicz, Brian Ichter, Danny Driess, Suraj Nair, Quan Vuong, Oier Mees, Chelsea Finn, and Sergey Levine,
+“Fast: Efficient action tokenization for vision-language-action models,”
+arXiv preprint arXiv:2501.09747
+, 2025.
+[13]
+Yunqing Zhao, Tianyu Pang, Chao Du, Xiao Yang, Chongxuan Li, Ngai-Man Man Cheung, and Min Lin,
+“On evaluating adversarial robustness of large vision-language models,”
+Advances in Neural Information Processing Systems
+, vol. 36, pp. 54111–54138, 2023.
+[14]
+Ameya Joshi, Gauri Jagatap, and Chinmay Hegde,
+“Adversarial token attacks on vision transformers,”
+arXiv preprint arXiv:2110.04337
+, 2021.
+[15]
+Ziyi Yin, Muchao Ye, Tianrong Zhang, Tianyu Du, Jinguo Zhu, Han Liu, Jinghui Chen, Ting Wang, and Fenglong Ma,
+“Vlattack: Multimodal adversarial attacks on vision-language tasks via pre-trained models,”
+Advances in Neural Information Processing Systems
+, vol. 36, pp. 52936–52956, 2023.
+[16]
+Erfan Shayegani, Yue Dong, and Nael Abu-Ghazaleh,
+“Jailbreak in pieces: Compositional adversarial attacks on multi-modal language models,”
+arXiv preprint arXiv:2307.14539
+, 2023.
+[17]
+Chen Henry Wu, Jing Yu Koh, Ruslan Salakhutdinov, Daniel Fried, and Aditi Raghunathan,
+“Adversarial attacks on multimodal agents,”
+arXiv e-prints
+, pp. arXiv–2406, 2024.
+[18]
+Andy Zou, Zifan Wang, Nicholas Carlini, Milad Nasr, J Zico Kolter, and Matt Fredrikson,
+“Universal and transferable adversarial attacks on aligned language models,”
+arXiv preprint arXiv:2307.15043
+, 2023.
+[19]
+Taowen Wang, Cheng Han, James Chenhao Liang, Wenhao Yang, Dongfang Liu, Luna Xinyu Zhang, Qifan Wang, Jiebo Luo, and Ruixiang Tang,
+“Exploring the adversarial vulnerabilities of vision-language-action models in robotics,”
+arXiv preprint arXiv:2411.13587
+, 2024.
+[20]
+Eliot Krzysztof Jones, Alexander Robey, Andy Zou, Zachary Ravichandran, George J Pappas, Hamed Hassani, Matt Fredrikson, and J Zico Kolter,
+“Adversarial attacks on robotic vision language action models,”
+arXiv preprint arXiv:2506.03350
+, 2025.
+[21]
+Maxime Oquab, Timothée Darcet, Théo Moutakanni, Huy Vo, Marc Szafraniec, Vasil Khalidov, Pierre Fernandez, Daniel Haziza, Francisco Massa, Alaaeldin El-Nouby, et al.,
+“Dinov2: Learning robust visual features without supervision,”
+arXiv preprint arXiv:2304.07193
+, 2023.
+[22]
+Xiaohua Zhai, Basil Mustafa, Alexander Kolesnikov, and Lucas Beyer,
+“Sigmoid loss for language image pre-training,”
+in
+Proceedings of the IEEE/CVF international conference on computer vision
+, 2023, pp. 11975–11986.
+[23]
+Aleksander Madry, Aleksandar Makelov, Ludwig Schmidt, Dimitris Tsipras, and Adrian Vladu,
+“Towards deep learning models resistant to adversarial attacks,”
+arXiv preprint arXiv:1706.06083
+, 2017.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

@@ -127,6 +127,18 @@ model logits
 
 所以 structured output 不是简单的响应校验。生成后再解析只能发现错误，constrained decoding 则在每一步改变合法 token set。
 
+当一个 token 更新会把多个约束标为 dirty 时，固定检查顺序最容易复查，但可能先执行昂贵、剪枝很少的 propagator。学习式调度可以根据 constraint-variable graph 选择下一项，把 domain reduction 与操作成本作为反馈；它改变的是既定 propagator 语义下的工作次序，不因此获得重新定义合法 token 的权限。在有限 beam、时间或计算预算下，顺序还可能改变实际保留下来的候选人口，不能把同一组约束名称当作等价的搜索过程。若 runtime 要提交一个用于采样的 mask，工程上仍须明确本步哪些必要约束已经检查、依赖更新是否完成，以及采用何种 closure 或保守提交规则；仅挑中一个高价值约束不建立完整合法性保证。
+
+这也使“剪枝多”与“推理便宜、结果正确”成为不同的验收对象。Domain reduction 或 primitive-operation proxy 可以指导优先级，却不能替代真实调度、图编码、propagation 与采样的端到端成本；policy entropy 触发的 fallback 也不是所有错误的检测器。比较固定次序与学习式次序时，应保持 grammar、tokenizer、constraint state、policy checkpoint 和 fallback 的身份可追溯，并分开记录有限预算造成的搜索损失、约束满足与任务正确性。[MetaJuLS v1 §3.1–3.2/4.3–4.4](https://arxiv.org/html/2601.00095v1) 支持这一调度分支与有限实验，不披露完整 mask commit 实现；这里的提交要求是由合法性与调度分责推导的工程边界，不是该稿已实现正确性、速度或碳收益的保证。<!-- source-family:SF-2026-ARXIV-2601-00095 -->
+
+对固定长度、可枚举的合法 ID 集合，还可把约束本身编译成静态张量：浅层 prefix 使用 dense mask，深层 trie 则扁平化为 CSR 的 row pointer、token 与 next-state 数组，每个 beam 保存当前节点，以固定最大分支宽度 gather，再用 padding mask 排除不存在的边。这用预处理和更多驻留状态换取无需每步 CPU 往返、可进入 static-shape 编译的约束路径；beam 选择后必须同步继承对应节点，终止节点、越界与重复 token 的处理也须绑定实际实现，算法图并不自动证明代码等价。[STATIC v1 §4–5](https://arxiv.org/html/2602.22647v1) 的单 TPU v6e、3B、固定 SID/beam 对照只支持约束附加开销，不是完整请求的千倍收益；只检 top-50 的近似对照也不能与 exact mask 合并。Dense 前缀随词表/深度膨胀，深层 gather 随最大 fan-out 增长，HBM、编译和索引更新均有费用。集合频繁变化、分支过宽、状态身份不匹配或目标 kernel 未验收时，保留 CPU trie/较浅约束或生成后 verifier；这是约束执行的替代分支，不声称 SGLang 已实现该稿。<!-- source-family:SF-2026-ARXIV-2602-22647 -->
+
+### 输出 Span 还可以绑定输入序列
+
+JSON 合法并不保证抽取字段逐字来自输入。对 NER、拼写检查或错误定位，一条约束分支在进入 text 字段后先选择输入中的候选起点，再只允许沿匹配的输入前缀继续复制或关闭字符串。Runtime 因而要维护输入序列、候选位置和复制状态，并处理同一文本的多种 tokenization、引号与字段边界；“允许输入词表里的 token”不足以保证连续 span。它改变的是输出与输入的绑定接口，不是给 schema 添加一个新类型。<!-- source-family:SF-2026-ARXIV-2601-16946 -->
+
+这仍不认证语义标签或重复文本的 occurrence identity：同一 span 出现多次时，额外的 occurrence index 也要独立验证；格式约束可能改变模型的推理方式，循环输出也仍可耗尽预算。[LogitMatch exact-v1 §3.4–6](https://arxiv.org/html/2601.16946v1) 的有限抽取任务显示这种绑定可减少 span mismatch，但不证明所有模型质量都提高或任意接口都支持 logits mask。无法取得 logits、状态实现不完整或标签判断优先时，保留 tagging、显式位置输出及生成后 parser/verifier；本章吸收约束状态边界，不声称 SGLang 已实现该论文。
+
 ### 语义前缀的安全剪枝不等于可完成性
 
 Syntax mask 在格式约束明确时最简单；加入类型与名称绑定后，prefix oracle 只应拒绝无法被后续输入修复的稳定语义矛盾。未完成前缀仍可能是 Live，却没有任何合法 completion，因此“没误剪一个可完成前缀”与“每个保留前缀都可完成”是两个合同。后者另需 grammar 的可生成性、类型需求覆盖与左到右约束流；字符级结论移到 token 序列，还须精确拼写和词表覆盖。Decoder 的 mask 不拥有程序行为正确性的认证权。
@@ -303,6 +315,10 @@ SGLang 展示了 runtime 可以利用比“独立请求”更丰富的结构：t
 
 ## Review notes
 
+- `SF-2026-ARXIV-2601-16946` — Daily 2026-01-27；[LogitMatch exact-v1](https://arxiv.org/html/2601.16946v1) §4.1–4.3、§5–6/Limitations。2+1+2=5，因输入 span 与 constraint state 的具体接口缺口定点深入并重开准入；采用复制状态与 tokenization/occurrence/标签分责，不采用通用质量或性能保证。未运行实现或复现实验；root 非作者实际原源→134–138正文/邻接及本注写后复核通过，日级 Gate 待验。
+
+- MetaJuLS exact v1 §3.1–3.2/4.3–4.4：learned priority、propagator 语义与 mask commit 分责；不采用有限表格的通用性能或正确性保证。root 必要原源与 owner 复核通过，root 实际正文与邻接写后复核通过；日级 Gate 尚待。
+
 - UniRL SGLang 参数适配修复（Status: Version Fact）：[官方 commit](https://github.com/Tencent-Hunyuan/UniRL/commit/07ac948a5d70a1a08777920fd191390fc0556ac2) 将未知 `ServerArgs` 从静默丢弃改为默认告警，并提供严格模式拒绝启动；它支持 framework/engine 配置边界必须显式处理 live-schema 差集，不证明该 allowlist 覆盖其他 SGLang 版本或其他 engine。
 
 - SGLang v0.5.10（piecewise graph、elastic EP、PD staging 的版本化边界）:
@@ -335,3 +351,5 @@ Primary-source 校验入口：
 
   **已吸收的语义增量：** 新增证据边界：多模态 pipeline 不能只把异构模型串成应用 DAG：workflow activation、跨角色 tensor/KV identity 与 physical execution 必须由可分离但可提交的 Control Flow、Data Flow、Compute Flow 共同拥有。框架级 KV takeover 提高跨请求、跨角色和跨层级复用，却新增全局 metadata、layout compatibility、atomic eviction、failure recovery 与 runtime coupling；v1 没有提供受控性能 benchmark。 该 delta 已进入 `books/part-05-inference-system/51-sglang.md#L150`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
 <!-- daily-books-trace:SF-2026-ARXIV-2606-31093:end -->
+
+- `SF-2026-ARXIV-2602-22647` — Daily `2026-02-28`；[exact-v1](https://arxiv.org/html/2602.22647v1)，必要原证与实际 owner 差额见当日对应 core/owner packet。新执行者非旧packet作者定点独核后在获锁 owner 窄写；作者已顺读正文与完整前后邻接，root 非写入者实际正文、完整邻接与自身末注 POST通过，窄锁释放。仅采用正文限定机制与反侧，不授代码核验、实验复现或日级 Gate。

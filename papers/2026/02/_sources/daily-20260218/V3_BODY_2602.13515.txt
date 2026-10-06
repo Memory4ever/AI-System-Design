@@ -1,0 +1,1078 @@
+SpargeAttention2: Trainable Sparse Attention via Hybrid Top-k+Top-p Masking and Distillation Fine-Tuning
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Preliminaries
+2.1 Block Sparse Attention
+2.2 Masking for Sparse Attention in Diffusion Models
+2.3 Diffusion Loss
+3 Analysis
+3.1 Error of Sparse Attention
+Notation (one attention row).
+Sparse-attention error.
+3.2 Analysis for Different Cases
+4 Method
+4.1 Hybrid Top-k+Top-p Masking
+4.2 Velocity Distillation Loss
+4.3 Kernel Implementation and Model Adaptation
+5 Experiments
+5.1 Setup
+5.2 Effectiveness
+5.3 Efficiency
+5.4 Ablation
+6 Related Work
+7 Conclusion
+References
+A Hyper-parameters
+B Prompts for Qualitative Visualizations
+Prompts for Figure .
+Prompt for Figure .
+License: CC BY 4.0
+arXiv:2602.13515v1 [cs.CV] 13 Feb 2026
+SpargeAttention2: Trainable Sparse Attention via Hybrid Top-k+Top-p Masking and Distillation Fine-Tuning
+Jintao Zhang
+Affiliation: Tsinghua University
+Kai Jiang
+Affiliation: Tsinghua University
+Chendong Xiang
+Affiliation: Tsinghua University
+Weiqi Feng
+Affiliation: Tsinghua University
+Yuezhou Hu
+Affiliation: UC Berkeley
+Haocheng Xi
+Affiliation: UC Berkeley
+Jianfei Chen
+Affiliation: Tsinghua University
+Jun Zhu
+Affiliation: Tsinghua University
+Correspondence to: first1.last1@xxx.edu
+Abstract
+Many training-free sparse attention methods are effective for accelerating diffusion models. Recently, several works suggest that making sparse attention trainable can further increase sparsity while preserving generation quality.
+We study three key questions: (1) when do the two common masking rules, i.e., Top-k and Top-p, fail, and how can we avoid these failures? (2) why can trainable sparse attention reach higher sparsity than training-free methods? (3) what are the limitations of fine-tuning sparse attention using the diffusion loss, and how can we address them?
+Based on this analysis, we propose SpargeAttention2, a trainable sparse attention method that achieves high sparsity without degrading generation quality. SpargeAttention2 includes (i) a hybrid masking rule that combines Top-k and Top-p for more robust masking at high sparsity, (ii) an efficient trainable sparse attention implementation, and (iii) a distillation-inspired fine-tuning objective to better preserve generation quality during fine-tuning using sparse attention. Experiments on video diffusion models show that SpargeAttention2 reaches 95 % 95\% attention sparsity and a 16.2 × 16.2\times attention speedup while maintaining generation quality, consistently outperforming prior sparse attention methods.
+Keywords:
+Machine Learning, ICML
+† † affiliationnotice: Equal contribution
+1 Introduction
+Motivation and core problem. Attention efficiency in video diffusion models ( Blattmann et al., 2023 ; Yang et al., 2024 ; Zheng et al., 2024 ; Kong et al., 2024 ; Wan et al., 2025 ) is critical because of their long sequence length and 𝒪 ⁡ ( N 2 ) \mathcal{O}(N^{2}) time complexity of the attention operator. Sparse attention has been shown to work well in diffusion models. For example, SpargeAttention ( Zhang et al., 2025f ) , SVG ( Xi et al., 2025 ) , and other training-free sparse attention methods ( Li et al., 2025 ; Chen et al., 2025a ) can save a certain portion of attention computation for video generation. More recently, studies show that trainable sparse attention ( Zhang et al., 2025c ; Zhang et al., 2025i ; Wu et al., 2025 ; Zhan et al., 2025 ) can achieve even higher sparsity after pre-training or fine-tuning.
+The core points of sparse attention methods are (i) designing a reasonable sparse masker, i.e., selecting which tokens in the query, key, and value participate in the computation. For trainable sparse attention, it further requires (ii) an efficient, trainable sparse-attention kernel implementation, and (iii) a suitable training objective that enables the trained sparse attention to maintain high generation quality under high sparsity. In this work, we mainly focus on these three aspects.
+Figure 1 :
+Qualitative examples of text-to-video generation.
+We compare the original full-attention model with SpargeAttention2 under high attention sparsity.
+SpargeAttention2 preserves visual quality, temporal coherence, and text–video alignment comparable to full attention,
+while substantially reducing attention computation.
+The prompts used for generation is in Appendix B
+Limitation. Current trainable sparse attention methods have two main limitations.
+(L1) Under very high attention sparsity (e.g., > 90 % >90\% ), we observe that both Top-k and Top-p maskers can fail to preserve the most important attention computation. This is closely related to the distribution of each row of the attention weights matrix ( P P ), which is often either (i) relatively uniform or (ii) highly skewed.
+With a Top-k masker, if the row is close to uniform, the probability is spread over many tokens. Then, keeping a fixed K K tokens captures only a small fraction of the total probability, which may miss useful context.
+With a Top-p masker, a highly skewed row may satisfy the cumulative-probability threshold with only a few tokens; these tokens can be dominated by attention sinks ( Xiao et al., 2024 ; Gu et al., 2024 ) , causing other informative tokens to be dropped.
+(L2) Most existing sparse attention methods fine-tune video diffusion models using prompt–video pairs collected from real-world sources and optimize the standard diffusion loss.
+However, in practice, this setting is problematic for widely used open-source video diffusion models, whose pre-training datasets are typically not publicly available (e.g., Wan2.1 ( Wan et al., 2025 ) ).
+As a result, it is difficult for the community to collect fine-tuning data that matches the distribution of the original pre-training data.
+In this setting, even fine-tuning with full attention can noticeably degrade performance relative to the original model. This is because the diffusion loss is data-driven and forces the model to fit the fine-tuning dataset, which is typically lower quality than the original training data.
+Our approach.
+We propose SpargeAttention2, an accurate and efficient trainable sparse attention method for diffusion models.
+To address (L1) , we analyze how Top-k and Top-p masking affect the information preserved by sparse attention, especially at very high sparsity. Based on this analysis, we propose a simple and effective unified masker that combines Top-k and Top-p, and works well for both uniform and skewed attention weight distributions.
+To address (L2) , inspired by distillation, we introduce a velocity-level distillation loss that aligns the model using sparse attention with a frozen full-attention model during fine-tuning.
+Specifically, the velocity distillation loss uses the output of the full-attention model as the supervision signal, which helps maintain the original generation quality even when the fine-tuning data distribution differs from the pre-training distribution.
+This design matches the goal of trainable sparse attention, which aims to preserve generation quality while pushing sparsity as high as possible. In contrast, conventional fine-tuning typically aims to enhance or specialize model capabilities.
+Result. SpargeAttention2 achieves 95% attention sparsity, 16.2 × \times attention runtime speedup, and up to 4.7 × \times end-to-end video generation speedup while maintaining the end-to-end generation quality comparable to full attention, as shown in Figure 1 .
+Contribution. Our contributions are summarized as:
+(1) We study three key questions in sparse attention for diffusion models: when Top-k and Top-p masking fail, why trainable methods can reach higher sparsity, and why fine-tuning with diffusion loss can be suboptimal. This analysis yields several important insights.
+(2) We propose an efficient trainable sparse-attention, SpargeAttention2. It contains (1) a hybrid Top-k and Top-p masker for accurate sparse masking and (2) a distillation-style fine-tuning for trainable sparse attention for enhancing end-to-end generation quality.
+(3) SpargeAttention2 achieves 95% attention sparsity, a 16.2 × \times attention speedup, and a 4.7 × \times end-to-end generation speedup without degrading video generation quality, outperforming prior methods.
+2 Preliminaries
+2.1 Block Sparse Attention
+Let Q , K , V ∈ ℝ N × d Q,K,V\in\mathbb{R}^{N\times d} be the query, key, and value matrices, where N N is the number of tokens and d d is the head dimension. Standard attention forms the score matrix S S and applies a row-wise softmax to obtain attention weights P = Softmax ⁡ ( S ) ∈ ℝ N × N P=\mathrm{Softmax}(S)\in\mathbb{R}^{N\times N} , and produces the attention output O O .
+S = Q ​ K ⊤ / d ∈ ℝ N × N , O = P ​ V ∈ ℝ N × d . S={QK^{\top}}/{\sqrt{d}}\in\mathbb{R}^{N\times N},~~O=PV\in\mathbb{R}^{N\times d}.
+The two matrix multiplications cost 𝒪 ⁡ ( N 2 ​ d ) \mathcal{O}(N^{2}d) , which is expensive for large N N .
+Sparse attention reduces this cost by masking out low-importance attention weights. It introduces a binary mask
+M ∈ { 0 , 1 } N × N M\in\{0,1\}^{N\times N} and keep only the selected weights via P ← P ⊙ M P\leftarrow P\odot M , where ⊙ \odot denotes element-wise multiplication. A typical choice is thresholding:
+M i ​ j = 1 M_{ij}=1 if P i ​ j > τ P_{ij}>\tau and M i ​ j = 0 M_{ij}=0 otherwise. When M i ​ j = 0 M_{ij}=0 , we can skip computing the corresponding score and contribution, i.e., the dot product Q i ​ K j ⊤ Q_{i}K_{j}^{\top} and the value update P i ​ j ​ V j P_{ij}V_{j} , where Q i ∈ ℝ d Q_{i}\in\mathbb{R}^{d} is the i i -th row of Q Q and K j , V j ∈ ℝ d K_{j},V_{j}\in\mathbb{R}^{d} are the j j -th rows of K K and V V .
+In practice, however, fine-grained (element-wise) sparsity maps poorly to modern GPUs. Efficient kernels such as FlashAttention ( Dao, 2023 ) therefore exploit block structure. Concretely, we partition tensors into tiles:
+Q = { 𝐐 i } , K = { 𝐊 j } , V = { 𝐕 j } , \displaystyle Q=\{\mathbf{Q}_{i}\},~~K=\{\mathbf{K}_{j}\},~~V=\{\mathbf{V}_{j}\},
+S = { 𝐒 i ​ j } , P = { 𝐏 i ​ j } , M = { 𝐌 i ​ j } . \displaystyle S=\{\mathbf{S}_{ij}\},~~P=\{\mathbf{P}_{ij}\},~~M=\{\mathbf{M}_{ij}\}.
+where
+𝐐 i ∈ ℝ b q × d , 𝐊 j , 𝐕 j ∈ ℝ b k ​ v × d , 𝐒 i ​ j , 𝐏 i ​ j , 𝐌 i ​ j ∈ ℝ b q × b k ​ v \mathbf{Q}_{i}\in\mathbb{R}^{b_{q}\times d},~\mathbf{K}_{j},\mathbf{V}_{j}\in\mathbb{R}^{b_{kv}\times d},~\mathbf{S}_{ij},\mathbf{P}_{ij},\mathbf{M}_{ij}\in\mathbb{R}^{b_{q}\times b_{kv}} .
+Block-sparse attention restricts the mask to be constant within each tile: every 𝐌 i ​ j \mathbf{M}_{ij} is either an all-one block (keep) or an all-zero block (drop).
+𝐌 i ​ j [ : , : ] = 𝟎 ⇒ skip 𝐐 i 𝐊 j ⊤ and 𝐏 i ​ j 𝐕 j . \mathbf{M}_{ij}[:,:]=\mathbf{0}\ \Rightarrow\ \text{skip }\mathbf{Q}_{i}\mathbf{K}_{j}^{\top}\text{ and }\mathbf{P}_{ij}\mathbf{V}_{j}.
+This block-wise gating aligns sparsity with GPU-friendly tiling, enabling practical speedups.
+2.2 Masking for Sparse Attention in Diffusion Models
+Diffusion models do not use autoregressive decoding, so sparse attention is usually implemented in a block-sparse form. The masking problem is therefore to decide, for each block pair ( i , j ) (i,j) , 𝐌 i ​ j [ : , : ] ∈ { 𝟎 , 𝟏 } \mathbf{M}_{ij}[:,:]\in\{\mathbf{0},\mathbf{1}\} .
+In practice, forming the full attention weights P ∈ ℝ N × N P\in\mathbb{R}^{N\times N} is prohibitively expensive. To obtain a block mask efficiently, a common approach is to compute a block-pooled attention map at the block granularity. Specifically, queries and keys are pooled within each block (e.g., mean pooling over b q b_{q} query tokens and b k ​ v b_{kv} key tokens) to produce Q ¯ \bar{Q} and K ¯ \bar{K} . The pooled attention scores and weights can be obtained by:
+S ¯ = Q ¯ ​ K ¯ ⊤ / d , P ¯ = Softmax ⁡ ( S ¯ ) ∈ ℝ N / b q × N / b k ​ v , \bar{S}={\bar{Q}\bar{K}^{\top}}/{\sqrt{d}},\qquad\bar{P}=\mathrm{Softmax}(\bar{S})\in\mathbb{R}^{N/b_{q}\times N/b_{kv}},
+where P ¯ i ​ j \bar{P}_{ij} measures the importance of keeping tile ( i , j ) (i,j) . We define block sparse mask M ¯ i ​ j \bar{M}_{ij} as:
+𝐌 i ​ j [ : , : ] = 𝟏 or 𝟎 ⟺ M ¯ i ​ j = 1 or 0 . \mathbf{M}_{ij}[:,:]=\mathbf{1}~\mathrm{or}~\mathbf{0}\ \Longleftrightarrow\ \bar{M}_{ij}=1~\mathrm{or}~0.
+The block mask is determined by applying Top-k or Top-p to each row of P ¯ \bar{P} :
+Top-k.
+For each row i i , keep the k k % largest positions in P ¯ i , : \bar{P}_{i,:} :
+M ¯ i ​ j = 1 if j ∈ Top - k ( P ¯ i , : , k % ) , M ¯ ij = 0 otherwise . \bar{M}_{ij}=1\ \text{if }j\in\rm{Top}\text{-}\rm{k}(\bar{P}_{i,:},k\%),\qquad\bar{M}_{ij}=0\ \text{otherwise}.
+Top-p.
+For each row i i , keep the smallest set of positions whose cumulative probabilities reach p p %:
+M ¯ i ​ j = 1 if j ∈ Top - p ( P ¯ i , : , p % ) , M ¯ ij = 0 otherwise , \bar{M}_{ij}=1\ \text{if }j\in\rm{Top}\text{-}\rm{p}(\bar{P}_{i,:},p\%),\qquad\bar{M}_{ij}=0\ \text{otherwise},
+where TopP ( P ¯ i , : , p % ) \mathrm{TopP}(\bar{P}_{i,:},p\%) denotes the minimal prefix of indices after sorting P ¯ i , : \bar{P}_{i,:} in descending order such that the summed probability is at least p p %.
+2.3 Diffusion Loss
+We adopt the flow matching ( Lipman et al., 2022 ; Liu et al., 2022 ) formulation as the training objective for diffusion models ( Sohl-Dickstein et al., 2015 ; Ho et al., 2020 ; Song and Ermon, 2019 ; Song et al., 2020 ) , following the pre-training setup of Wan video models ( Wan et al., 2025 ) . Flow matching provides a continuous-time perspective for diffusion modeling, where the generative process is defined by a velocity field rather than discrete denoising steps.
+Given a clean image or video latent x 1 x_{1} , a noise sample x 0 ∼ 𝒩 ⁡ ( 0 , I ) x_{0}\sim\mathcal{N}(0,I) , and a time step t ∈ [ 0 , 1 ] t\in[0,1] sampled from a predefined schedule, an intermediate latent x t x_{t} is constructed as a linear interpolation between x 0 x_{0} and x 1 x_{1} :
+x t = t ​ x 1 + ( 1 − t ) ​ x 0 . x_{t}=tx_{1}+(1-t)x_{0}.
+(1)
+The ground-truth velocity is defined as
+v t = d ​ x t d ​ t = x 1 − x 0 . v_{t}=\frac{dx_{t}}{dt}=x_{1}-x_{0}.
+(2)
+The diffusion model θ \theta is trained to predict this velocity v t v_{t} conditioned on the noisy latent x t x_{t} , timestep t t , and text prompt c txt c_{\text{txt}} .
+Formally, the training objective is formulated as the mean squared error (MSE):
+L ​ o ​ s ​ s = 𝔼 x 0 , x 1 , c txt , t ​ [ ‖ u ⁡ ( x t , c txt , t , θ ) − v t ‖ 2 ] . \mathcal{\rm}{Loss}=\mathbb{E}_{x_{0},x_{1},c_{\text{txt}},t}\left[\left\|u(x_{t},c_{\text{txt}},t;\theta)-v_{t}\right\|^{2}\right].
+(3)
+where 𝔼 ⁡ [ ⋅ ] \mathbb{E}[\cdot] denotes expectation taken over the data sample ( x 1 , c txt ) (x_{1},c_{\text{txt}}) , noise sample x 0 x_{0} , and timestep t t .
+3 Analysis
+3.1 Error of Sparse Attention
+Notation (one attention row).
+Consider the i i -th query token. Let p ∈ ℝ 1 × N p\in\mathbb{R}^{1\times N} denote the attention weights for this row (i.e., the i i -th row of P P ), let V ∈ ℝ N × d V\in\mathbb{R}^{N\times d} be the value matrix, and let m ∈ { 0 , 1 } 1 × N m\in\{0,1\}^{1\times N} be the binary mask for this row (e.g., the i i -th row of M {M} ). We use ⊙ \odot for element-wise multiplication.
+Sparse-attention error.
+The full-attention output token is
+o \displaystyle o
+= p ​ V ∈ ℝ 1 × d . \displaystyle=pV\in\mathbb{R}^{1\times d}.
+(4)
+After masking and renormalization, define the retained probability sum
+τ \displaystyle\tau
+= ( p ⊙ m ) ​ 𝟏 ⊤ = ∑ j = 1 N p j ​ m j ∈ ℝ , \displaystyle=(p\odot m)\mathbf{1}^{\top}\;=\;\sum_{j=1}^{N}p_{j}m_{j}\in\mathbb{R},
+(5)
+and the sparse-attention output
+o s \displaystyle o_{s}
+= ( p ⊙ m / τ ) ​ V ∈ ℝ 1 × d . \displaystyle=({p\odot m}/{\tau})V\in\mathbb{R}^{1\times d}.
+(6)
+The error is therefore
+e = o − o s \displaystyle e=o-o_{s}
+= ( p − ( p ⊙ m ) / τ ) ​ V . \displaystyle=\left(p-({p\odot m})/{\tau}\right)V.
+(7)
+The sparse-attention error admits the decomposition
+e \displaystyle e
+= ( p ⊙ ( 1 − m ) ⏟ dropped error + ( 1 − 1 / τ ) ​ ( p ⊙ m ) ⏟ renormalization error ) ​ V , \displaystyle=\left(\underbrace{p\odot(1-m)}_{\text{dropped error}}\;+\;\underbrace{\left(1-{1}/{\tau}\right)\left(p\odot m\right)}_{\text{renormalization error}}\right)V,
+(8)
+which separates the dropped contribution (first term) from the renormalization effect (second term).
+3.2 Analysis for Different Cases
+(a) A uniform P P . We keep the largest probabilities whose sum reaches 60 % 60\% in each row.
+(b) A skewed P P , where we keep the largest probabilities whose sum reaches 60 % 60\% in each row.
+Figure 2 : Uniform and skewed heatmap examples for Case 3.2 .
+Table 1 : L1 error of three masking methods on P P with uniform or skewed row distributions.
+P P distribution
+Top-k
+Top-p
+Top-k + Top-p
+(a) Uniform
+0.4150
+0.3726
+0.3707
+(b) Skewed
+0.1664
+0.2160
+0.1671
+Case 1 (Failure of Top-k and Top-p masking).
+In Figure 2 , we select two representative attention-weight P P matrices to analyze the accuracy of different masking strategies. For the left P P (Figure 2(a) , each row has an almost uniform probability distribution. We call it uniform P P . For the right P P , each row is highly concentrated. We call it skewed P P .
+Under the same attention sparsity (i.e., each masking strategy keeps the same number of attention weights), we compare three masking methods: Top-k, Top-p, and their combination (Top-k+Top-p). We measure accuracy by the relative L ​ 1 L1 distance between the sparse attention output and the full attention output. As shown in Table 1 , for uniform P P , the accuracy satisfies:
+Top ​ - ​ p ≈ Top ​ - ​ k + Top ​ - ​ p > Top ​ - ​ k . \rm{Top}\text{-}\rm{p}~\approx~\rm{Top}\text{-}\rm{k}{+}\rm{Top}\text{-}\rm{p}\;>\;\rm{Top}\text{-}\rm{k}.
+This is because when the probabilities are spread across many tokens, Top-k keeps only a fixed number of probabilities and may miss many important ones. For example, if a row contains ten probabilities of 0.1 0.1 , Top- 20 % 20\% keeps only two of them, i.e., 2 high-probabilities. This significantly increases the dropped error, i.e., the first term in Equation 8 .
+For skewed P P , the accuracy satisfies:
+Top ​ - ​ k ≈ Top ​ - ​ k + Top ​ - ​ p > Top ​ - ​ p . \rm{Top}\text{-}\rm{k}~\approx~\rm{Top}\text{-}\rm{k}{+}\rm{Top}\text{-}\rm{p}\;>\;\rm{Top}\text{-}\rm{p}.
+This is because when the distribution is highly concentrated, Top-p may reach the cumulative threshold with only a few probabilities corresponding to attention sinks ( Xiao et al., 2024 ; Gu et al., 2024 ) . For example, for a row like [ 0.6 ​ (sink) , 0.2 , 0.1 , … ] [0.6\ \text{(sink)},\,0.2,\,0.1,\,\ldots] , Top-p ( 60 % ) (60\%) selects only the sink probabilities and ignores other important probabilities, which increases the error of sparse attention. In contrast, Top-k could select not only the attention sink probabilities.
+(a) A P P before fine-tuning using sparse attention. Each row keeps the largest probabilities whose sum reaches 60 % 60\% .
+(b) A sparser P P after fine-tuning using sparse attention. Each row keeps the probabilities whose sum reaches 60 % 60\% .
+Figure 3 : Heatmaps before and after fine-tuning for Case 3.2 .
+Table 2 : Attention sparsity before and after sparse-attention fine-tuning, and the corresponding L1 error of sparse attention at the same sparsity level.
+Fine-tuning
+Sparsity
+L1 Error
+(a) Before
+51.3%
+0.4901
+(b) After
+56.9%
+0.4119
+Case 2 (Attetion be sparser after training).
+As shown in Figure 3 , we visualize two heatmaps of P P from a diffusion model: (i) before fine-tuning with sparse attention and (ii) after fine-tuning with sparse attention. For a fair comparison, we keep the largest probabilities until their sum reaches 60 % 60\% for each row. Table 2 shows that, after sparse-attention fine-tuning, P P becomes more sparse (i.e., probabilities are more concentrated). We further compare the attention L ​ 1 L1 error at the same 60% sparsity. Table 2 shows that the fine-tuned model achieves a smaller error, which helps explain why trainable sparse attention performs better in practice.
+This observation also matches the error decomposition in Equation 8 . Specifically, if fine-tuning makes the attention distribution more concentrated, the dropped error and the renormalization error will reduce under the same attention sparsity before fine-tuning. The dropped term ( p ⊙ ( 1 − m ) ) ​ V (p\odot(1-m))V becomes smaller because, when p p is more concentrated, the probabilities masked out by ( 1 − m ) (1-m) carry less probability. Meanwhile, the remained probability sum τ = ( p ⊙ m ) ​ 𝟏 ⊤ \tau=(p\odot m)\mathbf{1}^{\top} becomes larger, so the factor ( 1 − 1 τ ) \left(1-\frac{1}{\tau}\right) decreases, reducing the renormalization term. A simple example could illustrate this effect: Suppose that before fine-tuning,
+p = [ 0.6 , 0.2 , 0.2 ] , p=[0.6,\,0.2,\,0.2],
+and after fine-tuning,
+p = [ 0.8 , 0.1 , 0.1 ] . p=[0.8,\,0.1,\,0.1].
+At 2 / 3 2/3 sparsity, the sparse attention mask m = [ 1 , 0 , 0 ] m=[1,0,0] . The dropped probability is p ⊙ ( 1 − m ) p\odot(1-m) , which equals [ 0 , 0.2 , 0.2 ] [0,0.2,0.2] before fine-tuning and [ 0 , 0.1 , 0.1 ] [0,0.1,0.1] after fine-tuning. Additionally, the 1 / τ 1/\tau will also decrease. As a result, the sparse-attention error is smaller after fine-tuning.
+Table 3 :
+Full-attention diffusion fine-tuning degrades alignment under distribution mismatch.
+Without access to the original pre-training data, optimizing the diffusion loss alone leads to consistent degradation in aesthetic quality, vision reward, and VQA accuracy, even when full attention is used.
+Model
+Scale-Res.
+AQ ↑ \uparrow
+VR ↑ \uparrow
+VA ↑ \uparrow
+VT ↑ \uparrow
+Original
+1.3B-480p
+0.6441
+0.1084
+81.28
+85.80
+Fine-tuning
+0.6183
+0.0936
+75.45
+80.87
+Original
+14B-720p
+0.6466
+0.1238
+86.15
+87.51
+Fine-tuning
+0.6348
+0.1181
+79.86
+81.95
+Case 3 (Diffusion loss failed in fine-tuning).
+Table 3 compares the original pre-trained models with the full-attention same models after fine-tuning using the standard diffusion-loss-based optimization adopted by prior sparse-attention methods. Despite keeping full attention, diffusion-loss-based fine-tuning degrades performance across several key metrics for both the 1.3B and 14B models.
+This degradation comes mainly from the quality of the fine-tuning data. With diffusion loss, the model is trained to fit the fine-tuning set, so the result strongly depends on the data. Compared with continuous pre-training, the only major change in our fine-tuning is the dataset. If the fine-tuning dataset has similar quality to the pre-training data, the model should keep similar performance after fine-tuning. However, pre-training data are usually closed and high-quality, so it is hard to collect a matching dataset.
+In this setting, this degradation is related to the dataset, not to the use of full or sparse attention.
+Therefore, fine-tuning with sparse attention will also be affected by this issue. We propose an effective and simple solution in Section 4 .
+4 Method
+4.1 Hybrid Top-k+Top-p Masking
+To make sparse attention stably work at high sparsity, we need to avoid the two failure conditions in Case 3.2 in Section 3 . In particular, high sparsity attention should not keep a fixed number of tokens for uniform P P , and should not rely on a fixed cumulative-probability threshold for skewed P P .
+This can be achieved by using Top-k and Top-p masking together. Specifically, for rows of P P with a relatively uniform probability distribution, Top-p helps prevent the Top-k failure where a fixed k k may keep too few useful tokens. For rows of p p with a highly skewed distribution, Top-k helps prevent the Top-p failure where the cumulative threshold can be met by too few tokens corresponding to the attention sink, leading to an ineffective selection. Formally, we can determine the M ¯ = Top ​ - ​ kp ​ ( P ¯ , k % , p % ) \bar{M}=\rm{Top}\text{-}\rm{kp}(\bar{P},k\%,p\%) as follows.
+M ¯ i ​ j = { 1 , j ∈ Top - k ( P ¯ i , : , k % ) ∪ Top - p ( P ¯ i , : , p % ) , 0 , otherwise . \displaystyle\bar{M}_{ij}=\begin{cases}1,&j\in\mathrm{Top}\text{-}\rm{k}(\bar{P}_{i,:},k\%)\cup\mathrm{Top}\text{-}\rm{p}(\bar{P}_{i,:},p\%),\\
+0,&\text{otherwise}.\end{cases}
+(9)
+4.2 Velocity Distillation Loss
+Data distribution mismatch introduces additional performance degradation during sparse-attention adaptation. As analyzed in Case 3.2 , even for full-attention models, optimizing the standard diffusion objective under such distribution mismatch can cause significant behavior drift, because the diffusion loss encourages the model to fit the fine-tuning data distribution. This drift directly conflicts with the goal of sparse-attention adaptation, which aims to adapt the new attention structure while keeping the original generation behavior. Therefore, this issue is not caused by sparse attention itself and cannot be resolved by modifying the attention structure alone, but instead requires a different fine-tuning objective.
+To address this issue, we replace the data-driven diffusion objective with a velocity distillation loss that directly constrains a sparse-attention model to match a frozen full-attention reference model. Instead of using supervision derived from the fine-tuning data, the sparse-attention model is trained to match the diffusion behavior of the original full-attention model.
+We adopt a teacher–student setup ( Hinton et al., 2015 ) , where the original full-attention diffusion model serves as a frozen teacher, and the sparse-attention model serves as a student.
+Both models share the same initialization and differ only in the attention operator.
+During training, the teacher and student receive identical inputs: noisy latent x t x_{t} constructed following Eq. 1 , timestep t t , and text conditioning c txt c_{\text{txt}} .
+We then train the student to align its diffusion dynamics with those of the teacher under these identical noisy inputs.
+Let u full ​ ( x t , c txt , t ) u_{\text{full}}(x_{t},c_{\text{txt}},t) and u sparse ​ ( x t , c txt , t ) u_{\text{sparse}}(x_{t},c_{\text{txt}},t) denote the teacher’s and student’s velocity predictions, respectively. We minimize the following velocity distillation loss:
+ℒ VD = 𝔼 x 0 , x 1 , c txt , t ​ [ ‖ u sparse ​ ( x t , c txt , t ) − u full ​ ( x t , c txt , t ) ‖ 2 ] . \mathcal{L}_{\text{VD}}=\mathbb{E}_{x_{0},x_{1},c_{\text{txt}},t}\left[\left\|u_{\text{sparse}}(x_{t},c_{\text{txt}},t)-u_{\text{full}}(x_{t},c_{\text{txt}},t)\right\|^{2}\right].
+Under the flow matching framework, the diffusion dynamics are parameterized by the velocity field u ⁡ ( x t , c txt , t ) u(x_{t},c_{\text{txt}},t) .
+As a result, minimizing the velocity distillation loss directly aligns the sampling dynamics of the teacher and student models.
+Overall, velocity distillation uses the teacher’s predictions as supervision to guide sparse-attention adaptation. We do not use the standard diffusion loss during fine-tuning; the fine-tuning data are only used to construct noisy inputs x t x_{t} for distillation.
+This design avoids introducing optimization gradients that push the model toward the mismatched fine-tuning data distribution, thereby significantly reducing behavior drift while enabling stable adaptation to sparse attention under high sparsity.
+4.3 Kernel Implementation and Model Adaptation
+Algorithm 1 shows the kernel implementation of SpargeAttention2.
+We denote SpargeAttention2 as an attention operator
+O = SpargeAttn2 ⁡ ( Q , K , V , k % , p % ) , O=\rm{SpargeAttn2}(Q,K,V,k\%,p\%),
+which computes sparse-attention outputs using the hybrid Top-k+Top-p masking strategy in Section 3 .
+We implement mask construction and the block-sparse attention forward/backward passes in CUDA, building on FlashAttention. This implementation efficiently skips the masked-out matrix multiplications and softmax computations.
+Algorithm 2 summarizes the procedure for adapting a pre-trained diffusion model to sparse attention using SpargeAttention2. Starting from a diffusion model with full-attention, we replace all attention layers with SpargeAttention2.
+The diffusion model using sparse attention is then adapted by minimizing the difference between its velocity predictions and those of a frozen full-attention teacher.
+Algorithm 1 SpargeAttention2 Implementation.
+1:
+Input: Matrices Q , K , V ∈ ℝ N × d Q,K,V\in\mathbb{R}^{N\times d} , b q , b k ​ v b_{q},b_{kv} , k k %, p p %.
+2:
+Divide Q Q to T m = N / b q T_{m}=N/b_{q} blocks { 𝐐 i } \{\mathbf{Q}_{i}\} ;
+3:
+Divide K , V K,V to T n = N / b k ​ v T_{n}=N/b_{kv} blocks { 𝐊 i } \{\mathbf{K}_{i}\} , { 𝐕 i } \{\mathbf{V}_{i}\} ;
+4:
+P ¯ = softmax ⁡ ( pool ⁡ ( Q ) ​ pool ​ ( K ) ⊤ / d ) \bar{P}={\rm softmax}({\rm pool}(Q){\rm pool}(K)^{\top}/\sqrt{d}) ;
+5:
+M ¯ 1 = Top ​ - ​ k ​ ( P ¯ , k % ) \bar{M}_{1}=\rm{Top}\text{-}\rm{k}(\bar{P},k\%) , M ¯ 2 = Top ​ - ​ p ​ ( P ¯ , p % ) \bar{M}_{2}=\rm{Top}\text{-}\rm{p}(\bar{P},p\%) ;
+6:
+M ¯ = M ¯ 1 ∪ M ¯ 2 \bar{M}=\bar{M}_{1}\cup\bar{M}_{2} ;
+7:
+for i = 1 i=1 to T m T_{m} do
+8:
+for j = 1 j=1 to T n T_{n} do
+9:
+if M ¯ ​ [ i , j ] = 1 \bar{M}[i,j]=1 then
+10:
+𝐒 i ​ j = 𝐐 i ​ 𝐊 j ⊤ / d \mathbf{S}_{ij}=\mathbf{Q}_{i}\mathbf{K}_{j}^{\top}/\sqrt{d} ;
+11:
+m i ​ j = max ⁡ ( m i , j − 1 , rowmax ⁡ ( 𝐒 i ​ j ) ) m_{ij}={\rm max}(m_{i,j-1},{\rm rowmax}(\mathbf{S}_{ij})) ;
+12:
+𝐏 i ​ j = exp ⁡ ( 𝐒 i ​ j − m i ​ j ) \mathbf{P}_{ij}=\exp(\mathbf{S}_{ij}-m_{ij}) ;
+13:
+l i ​ j = e m i , j − 1 − m i ​ j ​ l i , j − 1 + rowsum ⁡ ( 𝐏 i ​ j ) l_{ij}=e^{m_{i,j-1}-m_{ij}}l_{i,j-1}+{\rm rowsum}(\mathbf{P}_{ij}) ;
+14:
+𝐎 i ​ j = diag ⁡ ( e m i , j − 1 − m i ​ j ) ​ 𝐎 i , j − 1 + 𝐏 i ​ j ​ 𝐕 j \mathbf{O}_{ij}={\rm diag}(e^{m_{i,j-1}-m_{ij}})\mathbf{O}_{i,j-1}+\mathbf{P}_{ij}\mathbf{V}_{j} ;
+15:
+end if
+16:
+end for
+17:
+𝐎 i = diag ​ ( l i T n ) − 1 ​ 𝐎 i , T n \mathbf{O}_{i}={\rm diag}(l_{i}^{T_{n}})^{-1}\mathbf{O}_{i,T_{n}} ;
+18:
+end for
+19:
+return O = { 𝐎 i } O=\{\mathbf{O}_{i}\} ;
+Algorithm 2 Adapting Diffusion Models with SpargeAttention2 via Velocity Distillation.
+1:
+Input: Pre-trained diffusion model θ full \theta_{\rm full} , sparsity hyperparameters k % , p % k\%,p\% , training data 𝒟 \mathcal{D} .
+2:
+Output: Sparse-attention model θ sparse \theta_{\rm sparse} .
+3:
+Initialize θ sparse ← θ full \theta_{\rm sparse}\leftarrow\theta_{\rm full} and freeze θ full \theta_{\rm full} .
+4:
+Replace all attention layers in θ sparse \theta_{\rm sparse} with SpargeAttn2 ⁡ ( ⋅ , ⋅ , ⋅ , k % , p % ) \rm{SpargeAttn2}(\cdot,\cdot,\cdot,k\%,p\%) (Alg. 1 ).
+5:
+for each training iteration do
+6:
+Sample ( x 1 , c txt ) ∼ 𝒟 (x_{1},c_{\rm txt})\sim\mathcal{D} , noise x 0 ∼ 𝒩 ⁡ ( 0 , I ) x_{0}\sim\mathcal{N}(0,I) , and select a timestep t ∈ [ 0 , 1 ] t\in[0,1] according to a predefined schedule.
+7:
+Construct noisy latent: x t = t ​ x 1 + ( 1 − t ) ​ x 0 x_{t}=tx_{1}+(1-t)x_{0} .
+8:
+Compute teacher velocity with full attention:
+9:
+u full = u θ full ​ ( x t , c txt , t ) u_{\rm full}=u_{\theta_{\rm full}}(x_{t},c_{\rm txt},t) .
+10:
+Compute student velocity with SpargeAttention2:
+11:
+u sparse = u θ sparse ​ ( x t , c txt , t ) u_{\rm sparse}=u_{\theta_{\rm sparse}}(x_{t},c_{\rm txt},t) .
+12:
+Velocity distillation loss:
+13:
+ℒ VD = ‖ u sparse − u full ‖ 2 \mathcal{L}_{\rm VD}=\|u_{\rm sparse}-u_{\rm full}\|^{2} .
+14:
+Update θ sparse \theta_{\rm sparse} by minimizing ℒ VD \mathcal{L}_{\rm VD} .
+15:
+end for
+16:
+return θ sparse \theta_{\rm sparse} .
+Table 4 : Effectiveness comparison on Wan2.1-1.3B at 480p resolution.
+Method
+IQ ↑ \uparrow
+OC ↑ \uparrow
+AQ ↑ \uparrow
+VR ↑ \uparrow
+VQA-a ↑ \uparrow
+VQA-t ↑ \uparrow
+Sparsity ↑ \uparrow
+Attn Time ↓ \downarrow
+E2E Time ↓ \downarrow
+Full Attention
+63.67
+20.27
+64.41
+0.1084
+81.28
+85.80
+0%
+97s
+159s
+SpargeAttn
+35.28
+13.41
+40.53
+-0.1398
+3.258
+0.608
+89%
+12.6s
+74.6s
+VSA
+59.57
+19.27
+50.60
+-0.0881
+33.35
+48.36
+90%
+25s
+87s
+VMoBA
+65.31
+20.82
+64.14
+0.0936
+78.99
+86.69
+90%
+36s
+98s
+SLA
+63.14
+21.09
+62.91
+0.0881
+72.66
+80.51
+95%
+11s
+73s
+SpargeAttn2
+67.68
+21.57
+65.05
+0.1010
+83.86
+87.73
+95%
+6s
+68s
+Table 5 : Effectiveness comparison on Wan2.1-14B at 720p resolution.
+Method
+IQ ↑ \uparrow
+OC ↑ \uparrow
+AQ ↑ \uparrow
+VR ↑ \uparrow
+VQA-a ↑ \uparrow
+VQA-t ↑ \uparrow
+Sparsity ↑ \uparrow
+Attn Time ↓ \downarrow
+E2E Time ↓ \downarrow
+Full Attention
+68.01
+22.44
+64.66
+0.1238
+86.15
+87.00
+0%
+2550s
+3043s
+SpargeAttn
+38.46
+16.26
+42.16
+-0.1306
+9.926
+4.451
+86%
+415s
+908s
+VSA
+64.03
+21.27
+63.37
+0.1074
+77.63
+85.60
+90%
+651s
+1144s
+VMoBA
+67.18
+20.85
+63.64
+0.1117
+81.66
+83.21
+90%
+832s
+1325s
+SLA
+64.43
+20.89
+61.89
+0.1078
+76.90
+82.60
+95%
+285s
+778s
+SpargeAttn2
+69.08
+21.62
+64.92
+0.1149
+85.21
+87.48
+95%
+157s
+650s
+Figure 4 :
+A representative example of text-to-video generation under high attention sparsity,
+evaluated on Wan2.1-14B at 720p.
+SpargeAttention2 produces a semantically correct video.
+In contrast, SLA and VSA produce videos in which the male character walks backward,
+while VMoBA fails to generate the female character specified in the prompt.
+The prompt used for generation is in Appendix B
+5 Experiments
+5.1 Setup
+Models and dataset.
+We conduct video generation experiments using the Wan2.1 ( Wan et al., 2025 ) under two configurations:
+Wan2.1-1.3B at 480p resolution and Wan2.1-14B at 720p resolution.
+For training, we use a private video dataset consisting of 3,000 videos, each approximately 5 seconds long, collected from publicly available sources.
+All videos are stored at a native resolution of 720p.
+For the 1.3B model, videos are resized to 480p during training, while for the 14B model, both training and evaluation are performed at 720p resolution.
+To obtain text–video pairs, we automatically generate captions for each video using Qwen3-VL-Flash ( Bai et al., 2025 ) . For evaluation, we adopt the prompts provided by VBench ( Huang et al., 2024 ) as text inputs for video generation.
+Baselines and ablations.
+We compare our method with representative trainable sparse attention approaches for diffusion models, including VSA ( Zhang et al., 2025i ) , VMoBA ( Wu et al., 2025 ) , SLA ( Zhang et al., 2025c ) , and SpargeAttention ( Zhang et al., 2025f ) .
+In addition, we conduct controlled ablation studies by modifying only one component at a time.
+Specifically, we study three aspects:
+(1) Sparse masker design , by replacing the unified Top-k+Top-p masker with Top-k-only or Top-p-only variants;
+(2) Effect of training , by comparing trainable sparse attention with a training-free variant where sparse-attention parameters are frozen;
+and (3) Training objective , by replacing the proposed velocity distillation loss with standard diffusion-loss-based training.
+Metrics.
+For video generation quality, we report Imaging Quality (IQ), Overall Consistency (OC), and Aesthetic Quality (AQ) from the VBench benchmark ( Huang et al., 2024 ) , together with Vision Reward (VR) ( Xu et al., 2024 ) and VQA accuracy (VA and VT) ( Liu et al., 2024 ) , where VA and VT denote VQA-a and VQA-t, respectively, following prior work ( Zhang et al., 2025c ; Wu et al., 2025 ) . All training hyper-parameters and sparse-attention settings are provided in Appendix A .
+For efficiency evaluation, we report attention latency and end-to-end generation latency in seconds (s), measured on an RTX 5090 GPU.
+5.2 Effectiveness
+We evaluate SpargeAttention2 against prior trainable sparse-attention methods on Wan2.1 under a high attention sparsity.
+Results on Wan2.1-1.3B at 480p and Wan2.1-14B at 720p are reported in Tables 4 and 5 , respectively.
+Across both settings, SpargeAttention2 consistently achieves the best overall performance, matching or exceeding the full-attention model on generation quality while remaining stable under high sparsity.
+In contrast, existing sparse-attention baselines exhibit noticeable degradation under the same or even lower sparsity levels.
+These results indicate that SpargeAttention2 performs robustly across different model sizes and resolutions.
+Figure 4 provides a qualitative comparison.
+5.3 Efficiency
+We evaluate the efficiency of SpargeAttention2 on Wan2.1 under high attention sparsities, focusing on both attention operator latency and end-to-end video generation time.
+Results on Wan2.1-1.3B at 480p and Wan2.1-14B at 720p are reported in Tables 4 and 5 , respectively.
+Under a sparsity of 85% - 95%, SpargeAttention2 is the only method that simultaneously achieves strong generation quality and substantial efficiency gains.
+In contrast, other sparse attention baselines are significantly slower than SpargeAttention2 and exhibit clear degradation in generation quality. Notably, SpargeAttention2 achieves higher video generation quality than all baselines, even at higher attention sparsity.
+For efficiency, on Wan2.1-1.3B at 480p, SpargeAttention2 reduces attention latency from 97s to 6s, achieving a 16.2 × \times speedup over full attention.
+It is 1.8 × \times faster than SLA and more than 4 × \times faster than VSA and VMoBA, while also delivering clearly superior generation quality.
+This reduction in attention cost result in an end-to-end generation speedup from 159s to 68s, corresponding to a 2.3 × \times overall acceleration.
+Similar trends are observed on Wan2.1-14B at 720p.
+SpargeAttention2 reduces attention latency from 2550s to 157s, achieving a 16.2 × \times speedup over full attention.
+Compared with prior sparse-attention methods, it is 1.8 × \times faster than SLA and more than 4 × \times faster than VSA and VMoBA, while maintaining generation quality comparable to or better than full attention.
+As a result, end-to-end generation time is reduced from 3043s to 650s, yielding a 4.7 × \times speedup.
+Variant
+IQ
+OC
+AQ
+VR
+VQA
+Wan2.1-1.3B-480p
+SpargeAttn2
+67.68
+21.57
+65.05
+0.1010
+86.73
+Top-k only
+65.84
+21.51
+64.57
+0.0916
+86.90
+Top-p only
+60.56
+21.12
+60.12
+0.0312
+62.57
+Training-free
+53.18
+19.87
+48.93
+-0.0650
+20.40
+–VD
+67.23
+21.26
+63.34
+0.0939
+85.05
+Wan2.1-14B-720p
+SpargeAttn2
+68.41
+21.06
+65.02
+0.1119
+88.22
+Top-k only
+65.24
+20.64
+63.99
+0.0935
+84.25
+Top-p only
+63.37
+21.33
+63.62
+0.1090
+86.43
+Training-free
+62.17
+19.41
+57.01
+-0.0272
+45.85
+–VD
+66.40
+20.56
+64.59
+0.1082
+85.05
+Table 6 :
+Ablation studies on SpargeAttention2.
+“–VD” replaces velocity distillation with standard diffusion fine-tuning.
+VQA denotes the overall score combining VQA-a and VQA-t.
+5.4 Ablation
+We analyze the contribution of individual design choices in SpargeAttention2 through ablation studies, focusing on the sparse masker, trainability, and training objective.
+Results are reported in Table 6 .
+Sparse masker design.
+We compare the proposed hybrid Top-k/Top-p masking with variants that use only Top-k or only Top-p masking.
+As shown in Table 6 , the unified Top-k+Top-p masker consistently achieves the best overall generation quality and alignment across both model scales, validating its robustness under high sparsity.
+Effect of training.
+We evaluate the impact of training sparse attention by comparing SpargeAttention2 with a training-free variant.
+Table 6 shows that disabling training leads to substantial degradation in generation quality and alignment for both the 1.3B and 14B models, highlighting the necessity of adapting sparse attention under high sparsity.
+Training objective.
+We examine the role of the training objective by replacing the proposed velocity distillation loss with standard diffusion loss.
+As shown in Table 6 , diffusion-loss-based fine-tuning consistently underperforms velocity distillation.
+This confirms the effectiveness of the proposed velocity distillation for sparse-attention adaptation.
+6 Related Work
+Sparse attention methods can be grouped by whether they require training. First, training-free approaches ( Gao et al., 2024 ; Xi et al., 2025 ; Zhang et al., 2025f ; Ribar et al., 2023 ; Yang et al., 2025 ; Li et al., 2025 ; Chen et al., 2025a ; Lai et al., 2025 ; Zhang et al., 2023 ; Xiao et al., 2024 ; Jiang et al., 2024 ; Tang et al., 2024 ; Zhu et al., 2025 ; Lin et al., 2025 ; Xu et al., 2025 ; Xia et al., 2025 ; Chen et al., 2025b ; Zhang et al., 2025j ) reduce inference cost by applying a test-time attention mask. Among them, vAttention ( Desai et al., 2025 ) uses a hybrid of Top-k and random sampling, which differs from our Top-k and Top-p hybrid and is not designed for diffusion models. Second, trainable sparse attention methods ( Zhang et al., 2025i ; Wu et al., 2025 ; Zhang et al., 2025c ; Zhan et al., 2025 ; Zhou et al., 2025 ; Lu et al., 2025 ; Yuan et al., 2025 ; Liu et al., 2025a ; Zhang et al., 2026 ; Cai et al., 2025 ; Liu et al., 2025b ; Sun et al., 2025 ; Tan et al., 2025 ; Ding et al., 2023 ) enhance attention sparsity by directly using sparse attention during training.
+Some methods in the second category are designed for diffusion models, and SpargeAttention2 belongs to this group. Among them, SpargeAttention2 achieves state-of-the-art performance.
+7 Conclusion
+In this paper, we analyze key challenges in sparse attention for diffusion models and propose SpargeAttention2. It is an efficient and accurate trainable sparse attention method that achieves high sparsity without degrading video generation quality. Specifically, by combining a hybrid Top-k and Top-p sparse masking, an efficient implementation, and a distillation-style fine-tuning method, SpargeAttention2 achieves very high sparsity while preserving generation quality, surpassing baselines. SpargeAttention2 achieves 95% attention sparsity, 16.2 × \times attention runtime speedup, and up to 4.7 × \times end-to-end video generation speedup.
+References
+Bai et al. (2025)
+S. Bai, Y. Cai, R. Chen, K. Chen, X. Chen, Z. Cheng, L. Deng, W. Ding, C. Gao, C. Ge, W. Ge, Z. Guo, Q. Huang, J. Huang, F. Huang, B. Hui, S. Jiang, Z. Li, M. Li, et al.
+Qwen3-vl technical report .
+arXiv preprint arXiv:2511.21631 .
+Cited by: §5.1 .
+Blattmann et al. (2023)
+A. Blattmann, T. Dockhorn, S. Kulal, D. Mendelevitch, M. Kilian, D. Lorenz, Y. Levi, Z. English, V. Voleti, A. Letts, et al.
+Stable video diffusion: scaling latent video diffusion models to large datasets .
+arXiv preprint arXiv:2311.15127 .
+Cited by: §1 .
+Cai et al. (2025)
+S. Cai, C. Yang, L. Zhang, Y. Guo, J. Xiao, Z. Yang, Y. Xu, Z. Yang, A. Yuille, L. Guibas, et al.
+Mixture of contexts for long video generation .
+arXiv preprint arXiv:2508.21058 .
+Cited by: §6 .
+Chen et al. (2025a)
+P. Chen, X. Zeng, M. Zhao, P. Ye, M. Shen, W. Cheng, G. Yu, and T. Chen
+Sparse-vdit: unleashing the power of sparse attention to accelerate video diffusion transformers .
+arXiv preprint arXiv:2506.03065 .
+Cited by: §1 ,
+§6 .
+Chen et al. (2025b)
+R. Chen, K. G. Mills, L. Jiang, C. Gao, and D. Niu
+Re-ttention: ultra sparse visual generation via attention statistical reshape .
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems ,
+Cited by: §6 .
+Dao (2023)
+T. Dao
+Flashattention-2: faster attention with better parallelism and work partitioning .
+arXiv preprint arXiv:2307.08691 .
+Cited by: §2.1 .
+Desai et al. (2025)
+A. Desai, K. K. Agrawal, S. Yang, A. Cuadron, L. G. Schroeder, M. Zaharia, J. E. Gonzalez, and I. Stoica
+VAttention: verified sparse attention .
+arXiv preprint arXiv:2510.05688 .
+Cited by: §6 .
+Ding et al. (2023)
+J. Ding, S. Ma, L. Dong, X. Zhang, S. Huang, W. Wang, N. Zheng, and F. Wei
+Longnet: scaling transformers to 1,000,000,000 tokens .
+arXiv preprint arXiv:2307.02486 .
+Cited by: §6 .
+Gao et al. (2024)
+Y. Gao, Z. Zeng, D. Du, S. Cao, P. Zhou, J. Qi, J. Lai, H. K. So, T. Cao, F. Yang, et al.
+Seerattention: learning intrinsic sparse attention in your llms .
+arXiv preprint arXiv:2410.13276 .
+Cited by: §6 .
+Gu et al. (2024)
+X. Gu, T. Pang, C. Du, Q. Liu, F. Zhang, C. Du, Y. Wang, and M. Lin
+When attention sink emerges in language models: an empirical view .
+arXiv preprint arXiv:2410.10781 .
+Cited by: §1 ,
+§3.2 .
+Hinton et al. (2015)
+G. Hinton, O. Vinyals, and J. Dean
+Distilling the knowledge in a neural network .
+arXiv preprint arXiv:1503.02531 .
+Cited by: §4.2 .
+Ho et al. (2020)
+J. Ho, A. Jain, and P. Abbeel
+Denoising diffusion probabilistic models .
+Advances in neural information processing systems 33 , pp. 6840–6851 .
+Cited by: §2.3 .
+Hu et al. (2025)
+Y. Hu, W. Huang, Z. Liang, C. Chen, J. Zhang, J. Zhu, and J. Chen
+Identifying sensitive weights via post-quantization integral .
+arXiv preprint arXiv:2503.01901 .
+Cited by: Appendix B .
+Hu et al. (2026)
+Y. Hu, H. Singh, M. Maheswaran, H. Xi, C. Hooper, J. Zhang, A. Tomar, M. W. Mahoney, S. Min, M. Farajtabar, et al.
+Residual context diffusion language models .
+arXiv preprint arXiv:2601.22954 .
+Cited by: Appendix B .
+Huang et al. (2024)
+Z. Huang, Y. He, J. Yu, F. Zhang, C. Si, Y. Jiang, Y. Zhang, T. Wu, Q. Jin, N. Chanpaisit, et al.
+Vbench: comprehensive benchmark suite for video generative models .
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition ,
+pp. 21807–21818 .
+Cited by: §5.1 ,
+§5.1 .
+Jiang et al. (2024)
+H. Jiang, Y. Li, C. Zhang, Q. Wu, X. Luo, S. Ahn, Z. Han, A. H. Abdi, D. Li, C. Lin, et al.
+Minference 1.0: accelerating pre-filling for long-context llms via dynamic sparse attention .
+Advances in Neural Information Processing Systems 37 , pp. 52481–52515 .
+Cited by: §6 .
+Jiang et al. (2025)
+Y. Jiang, F. Fu, W. Zhao, S. Rabanser, N. D. Lane, and B. Yuan
+Cascadia: a cascade serving system for large language models .
+arXiv preprint arXiv:2506.04203 .
+Cited by: Appendix B .
+Jiang et al. (2026)
+Y. Jiang, W. Li, Y. Peng, J. Zhang, R. Yan, J. Chen, X. Han, F. Fu, and B. Yuan
+HexGen-3: a fully disaggregated llm serving framework with fine-grained heterogeneous resource autoscaling .
+Cited by: Appendix B .
+Kong et al. (2024)
+W. Kong, Q. Tian, Z. Zhang, R. Min, Z. Dai, J. Zhou, J. Xiong, X. Li, B. Wu, J. Zhang, et al.
+Hunyuanvideo: a systematic framework for large video generative models .
+arXiv preprint arXiv:2412.03603 .
+Cited by: §1 .
+Lai et al. (2025)
+X. Lai, J. Lu, Y. Luo, Y. Ma, and X. Zhou
+Flexprefill: a context-aware sparse attention mechanism for efficient long-sequence inference .
+arXiv preprint arXiv:2502.20766 .
+Cited by: §6 .
+Li et al. (2025)
+X. Li, M. Li, T. Cai, H. Xi, S. Yang, Y. Lin, L. Zhang, S. Yang, J. Hu, K. Peng, et al.
+Radial attention: o (nlog n) sparse attention with energy decay for long video generation .
+arXiv preprint arXiv:2506.19852 .
+Cited by: §1 ,
+§6 .
+Lin et al. (2025)
+C. Lin, J. Tang, S. Yang, H. Wang, T. Tang, B. Tian, I. Stoica, S. Han, and M. Gao
+Twilight: adaptive attention sparsity with hierarchical top- p p pruning .
+arXiv preprint arXiv:2502.02770 .
+Cited by: §6 .
+Lipman et al. (2022)
+Y. Lipman, R. T. Chen, H. Ben-Hamu, M. Nickel, and M. Le
+Flow matching for generative modeling .
+arXiv preprint arXiv:2210.02747 .
+Cited by: §2.3 .
+Liu et al. (2025a)
+A. Liu, A. Mei, B. Lin, B. Xue, B. Wang, B. Xu, B. Wu, B. Zhang, C. Lin, C. Dong, et al.
+Deepseek-v3. 2: pushing the frontier of open large language models .
+arXiv preprint arXiv:2512.02556 .
+Cited by: §6 .
+Liu et al. (2025b)
+A. Liu, Z. Zhang, Z. Li, X. Bai, Y. Han, J. Tang, Y. Xing, J. Wu, M. Yang, W. Chen, et al.
+FPSAttention: training-aware fp8 and sparsity co-design for fast video diffusion .
+arXiv preprint arXiv:2506.04648 .
+Cited by: §6 .
+Liu et al. (2022)
+X. Liu, C. Gong, and Q. Liu
+Flow straight and fast: learning to generate and transfer data with rectified flow .
+arXiv preprint arXiv:2209.03003 .
+Cited by: §2.3 .
+Liu et al. (2024)
+Y. Liu, X. Cun, X. Liu, X. Wang, Y. Zhang, H. Chen, Y. Liu, T. Zeng, R. Chan, and Y. Shan
+Evalcrafter: benchmarking and evaluating large video generation models .
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition ,
+Cited by: §5.1 .
+Lu et al. (2025)
+E. Lu, Z. Jiang, J. Liu, Y. Du, T. Jiang, C. Hong, S. Liu, W. He, E. Yuan, Y. Wang, et al.
+Moba: mixture of block attention for long-context llms .
+arXiv preprint arXiv:2502.13189 .
+Cited by: §6 .
+Ribar et al. (2023)
+L. Ribar, I. Chelombiev, L. Hudlass-Galley, C. Blake, C. Luschi, and D. Orr
+Sparq attention: bandwidth-efficient llm inference .
+Cited by: §6 .
+Sohl-Dickstein et al. (2015)
+J. Sohl-Dickstein, E. Weiss, N. Maheswaranathan, and S. Ganguli
+Deep unsupervised learning using nonequilibrium thermodynamics .
+In International conference on machine learning ,
+pp. 2256–2265 .
+Cited by: §2.3 .
+Song and Ermon (2019)
+Y. Song and S. Ermon
+Generative modeling by estimating gradients of the data distribution .
+Advances in neural information processing systems 32 .
+Cited by: §2.3 .
+Song et al. (2020)
+Y. Song, J. Sohl-Dickstein, D. P. Kingma, A. Kumar, S. Ermon, and B. Poole
+Score-based generative modeling through stochastic differential equations .
+arXiv preprint arXiv:2011.13456 .
+Cited by: §2.3 .
+Sun et al. (2025)
+W. Sun, R. Tu, Y. Ding, Z. Jin, J. Liao, S. Liu, and D. Tao
+VORTA: efficient video diffusion via routing sparse attention .
+arXiv preprint arXiv:2505.18809 .
+Cited by: §6 .
+Tan et al. (2025)
+X. Tan, Y. Chen, Y. Jiang, X. Chen, K. Yan, N. Duan, Y. Zhu, D. Jiang, and H. Xu
+Dsv: exploiting dynamic sparsity to accelerate large-scale video dit training .
+arXiv preprint arXiv:2502.07590 .
+Cited by: §6 .
+Tang et al. (2024)
+J. Tang, Y. Zhao, K. Zhu, G. Xiao, B. Kasikci, and S. Han
+Quest: query-aware sparsity for efficient long-context llm inference .
+arXiv preprint arXiv:2406.10774 .
+Cited by: §6 .
+Wan et al. (2025)
+T. Wan, A. Wang, B. Ai, B. Wen, C. Mao, C. Xie, D. Chen, F. Yu, H. Zhao, J. Yang, J. Zeng, J. Wang, J. Zhang, J. Zhou, J. Wang, J. Chen, K. Zhu, K. Zhao, K. Yan, L. Huang, M. Feng, N. Zhang, P. Li, P. Wu, R. Chu, R. Feng, S. Zhang, S. Sun, T. Fang, T. Wang, T. Gui, T. Weng, T. Shen, W. Lin, W. Wang, W. Wang, W. Zhou, W. Wang, W. Shen, W. Yu, X. Shi, X. Huang, X. Xu, Y. Kou, Y. Lv, Y. Li, Y. Liu, Y. Wang, Y. Zhang, Y. Huang, Y. Li, Y. Wu, Y. Liu, Y. Pan, Y. Zheng, Y. Hong, Y. Shi, Y. Feng, Z. Jiang, Z. Han, Z. Wu, and Z. Liu
+Wan: open and advanced large-scale video generative models .
+arXiv preprint arXiv:2503.20314 .
+Cited by: §1 ,
+§1 ,
+§2.3 ,
+§5.1 .
+Wu et al. (2025)
+J. Wu, L. Hou, H. Yang, X. Tao, Y. Tian, P. Wan, D. Zhang, and Y. Tong
+VMoBA: mixture-of-block attention for video diffusion models .
+arXiv preprint arXiv:2506.23858 .
+Cited by: §1 ,
+§5.1 ,
+§5.1 ,
+§6 .
+Xi et al. (2026)
+H. Xi, S. Yang, Y. Zhao, M. Li, H. Cai, X. Li, Y. Lin, Z. Zhang, J. Zhang, X. Li, et al.
+Quant videogen: auto-regressive long video generation via 2-bit kv-cache quantization .
+arXiv preprint arXiv:2602.02958 .
+Cited by: Appendix B .
+Xi et al. (2025)
+H. Xi, S. Yang, Y. Zhao, C. Xu, M. Li, X. Li, Y. Lin, H. Cai, J. Zhang, D. Li, et al.
+Sparse videogen: accelerating video diffusion transformers with spatial-temporal sparsity .
+arXiv preprint arXiv:2502.01776 .
+Cited by: §1 ,
+§6 .
+Xia et al. (2025)
+Y. Xia, S. Ling, F. Fu, Y. Wang, H. Li, X. Xiao, and B. Cui
+Training-free and adaptive sparse attention for efficient long video generation .
+arXiv preprint arXiv:2502.21079 .
+Cited by: §6 .
+Xiang et al. (2026)
+C. Xiang, J. Liu, J. Zhang, X. Yang, Z. Fang, S. Wang, Z. Wang, Y. Zou, H. Su, and J. Zhu
+Geometry-aware rotary position embedding for consistent video world model .
+arXiv preprint arXiv:2602.07854 .
+Cited by: Appendix B .
+Xiao et al. (2024)
+G. Xiao, Y. Tian, B. Chen, S. Han, and M. Lewis
+Efficient streaming language models with attention sinks .
+In The Twelfth International Conference on Learning Representations ,
+Cited by: §1 ,
+§3.2 ,
+§6 .
+Xu et al. (2024)
+J. Xu, Y. Huang, J. Cheng, Y. Yang, J. Xu, Y. Wang, W. Duan, S. Yang, Q. Jin, S. Li, et al.
+Visionreward: fine-grained multi-dimensional human preference learning for image and video generation .
+arXiv preprint arXiv:2412.21059 .
+Cited by: §5.1 .
+Xu et al. (2025)
+R. Xu, G. Xiao, H. Huang, J. Guo, and S. Han
+Xattention: block sparse attention with antidiagonal scoring .
+arXiv preprint arXiv:2503.16428 .
+Cited by: §6 .
+Yang et al. (2025)
+S. Yang, H. Xi, Y. Zhao, M. Li, J. Zhang, H. Cai, Y. Lin, X. Li, C. Xu, K. Peng, et al.
+Sparse videogen2: accelerate video generation with sparse attention via semantic-aware permutation .
+Advances in Neural Information Processing Systems (NeurIPS 2025) .
+Cited by: §6 .
+Yang et al. (2024)
+Z. Yang, J. Teng, W. Zheng, M. Ding, S. Huang, J. Xu, Y. Yang, W. Hong, X. Zhang, G. Feng, et al.
+Cogvideox: text-to-video diffusion models with an expert transformer .
+arXiv preprint arXiv:2408.06072 .
+Cited by: §1 .
+Yuan et al. (2025)
+J. Yuan, H. Gao, D. Dai, J. Luo, L. Zhao, Z. Zhang, Z. Xie, Y. Wei, L. Wang, Z. Xiao, et al.
+Native sparse attention: hardware-aligned and natively trainable sparse attention .
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,
+pp. 23078–23097 .
+Cited by: §6 .
+Zhan et al. (2025)
+C. Zhan, W. Li, C. Shen, J. Zhang, S. Wu, and H. Zhang
+Bidirectional sparse attention for faster video diffusion training .
+arXiv preprint arXiv:2509.01085 .
+Cited by: §1 ,
+§6 .
+Zhang et al. (2025a)
+J. Zhang, H. Huang, P. Zhang, J. Wei, J. Zhu, and J. Chen
+SageAttention2: efficient attention with thorough outlier smoothing and per-thread int4 quantization .
+In International Conference on Machine Learning (ICML 2025) ,
+Cited by: Appendix B .
+Zhang et al. (2025b)
+J. Zhang, G. Li, and J. Su
+Sage: a framework of precise retrieval for rag .
+arXiv preprint arXiv:2503.01713 .
+Cited by: Appendix B .
+[51]
+J. Zhang, R. Su, C. Liu, J. Wei, Z. Wang, H. Wang, P. Zhang, H. Jiang, H. Huang, C. Xiang, et al.
+Efficient attention methods: hardware-efficient, sparse, compact, and linear attention .
+Cited by: Appendix B .
+Zhang et al. (2025c)
+J. Zhang, H. Wang, K. Jiang, S. Yang, K. Zheng, H. Xi, Z. Wang, H. Zhu, M. Zhao, I. Stoica, et al.
+SLA: beyond sparsity in diffusion transformers via fine-tunable sparse-linear attention .
+arXiv preprint arXiv:2509.24006 .
+Cited by: §1 ,
+§5.1 ,
+§5.1 ,
+§6 .
+Zhang et al. (2026)
+J. Zhang, H. Wang, K. Jiang, K. Zheng, Y. Jiang, I. Stoica, J. Chen, J. Zhu, and J. E. Gonzalez
+SLA2: Sparse-Linear Attention with Learnable Routing and QAT .
+Cited by: §6 .
+Zhang et al. (2025d)
+J. Zhang, J. Wei, H. Huang, P. Zhang, J. Zhu, and J. Chen
+SageAttention: accurate 8-bit attention for plug-and-play inference acceleration .
+In International Conference on Learning Representations (ICLR 2025) ,
+Cited by: Appendix B .
+Zhang et al. (2025e)
+J. Zhang, J. Wei, P. Zhang, X. Xu, H. Huang, H. Wang, K. Jiang, J. Zhu, and J. Chen
+Sageattention3: microscaling fp4 attention for inference and an exploration of 8-bit training .
+Advances in Neural Information Processing Systems (NeurIPS 2025) .
+Cited by: Appendix B .
+Zhang et al. (2025f)
+J. Zhang, C. Xiang, H. Huang, H. Xi, J. Zhu, J. Chen, et al.
+SpargeAttention: accurate and training-free sparse attention accelerating any model inference .
+In Forty-second International Conference on Machine Learning ,
+Cited by: §1 ,
+§5.1 ,
+§6 .
+Zhang et al. (2025g)
+J. Zhang, X. Xu, J. Wei, H. Huang, P. Zhang, C. Xiang, J. Zhu, and J. Chen
+Sageattention2++: a more efficient implementation of sageattention2 .
+arXiv preprint arXiv:2505.21136 .
+Cited by: Appendix B .
+Zhang et al. (2025h)
+J. Zhang, K. Zheng, K. Jiang, H. Wang, I. Stoica, J. E. Gonzalez, J. Chen, and J. Zhu
+TurboDiffusion: accelerating video diffusion models by 100-200 times .
+arXiv preprint arXiv:2512.16093 .
+Cited by: Appendix B .
+Zhang et al. (2025i)
+P. Zhang, Y. Chen, H. Huang, W. Lin, Z. Liu, I. Stoica, E. Xing, and H. Zhang
+Vsa: faster video diffusion with trainable sparse attention .
+arXiv preprint arXiv:2505.13389 .
+Cited by: §1 ,
+§5.1 ,
+§6 .
+Zhang et al. (2025j)
+P. Zhang, Y. Chen, R. Su, H. Ding, I. Stoica, Z. Liu, and H. Zhang
+Fast video generation with sliding tile attention .
+arXiv preprint arXiv:2502.04507 .
+Cited by: §6 .
+Zhang et al. (2025k)
+P. Zhang, J. Wei, J. Zhang, J. Zhu, and J. Chen
+Accurate int8 training through dynamic block-level fallback .
+arXiv preprint arXiv:2503.08040 .
+Cited by: Appendix B .
+Zhang et al. (2023)
+Z. Zhang, Y. Sheng, T. Zhou, T. Chen, L. Zheng, R. Cai, Z. Song, Y. Tian, C. Ré, C. Barrett, et al.
+H2o: heavy-hitter oracle for efficient generative inference of large language models .
+Advances in Neural Information Processing Systems 36 , pp. 34661–34710 .
+Cited by: §6 .
+Zhao et al. (2025a)
+M. Zhao, B. Yan, X. Yang, H. Zhu, J. Zhang, S. Liu, C. Li, and J. Zhu
+UltraImage: rethinking resolution extrapolation in image diffusion transformers .
+arXiv preprint arXiv:2512.04504 .
+Cited by: Appendix B .
+Zhao et al. (2025b)
+M. Zhao, H. Zhu, Y. Wang, B. Yan, J. Zhang, G. He, L. Yang, C. Li, and J. Zhu
+UltraViCo: breaking extrapolation limits in video diffusion transformers .
+arXiv preprint arXiv:2511.20123 .
+Cited by: Appendix B .
+Zheng et al. (2025)
+K. Zheng, Y. Wang, Q. Ma, H. Chen, J. Zhang, Y. Balaji, J. Chen, M. Liu, J. Zhu, and Q. Zhang
+Large scale diffusion distillation via score-regularized continuous-time consistency .
+arXiv preprint arXiv:2510.08431 .
+Cited by: Appendix B .
+Zheng et al. (2024)
+Z. Zheng, X. Peng, T. Yang, C. Shen, S. Li, H. Liu, Y. Zhou, T. Li, and Y. You
+Open-sora: democratizing efficient video production for all .
+arXiv preprint arXiv:2412.20404 .
+Cited by: §1 .
+Zhou et al. (2025)
+Y. Zhou, Z. Xiao, T. Wei, S. Yang, and X. Pan
+Trainable log-linear sparse attention for efficient diffusion transformers .
+arXiv preprint arXiv:2512.16615 .
+Cited by: §6 .
+Zhu et al. (2025)
+K. Zhu, T. Tang, Q. Xu, Y. Gu, Z. Zeng, R. Kadekodi, L. Zhao, A. Li, A. Krishnamurthy, and B. Kasikci
+Tactic: adaptive sparse attention with clustering and distribution fitting for long-context llms .
+arXiv preprint arXiv:2502.12216 .
+Cited by: §6 .
+Appendix A Hyper-parameters
+Unless otherwise stated, all models are trained for 500 steps.
+We use a batch size of 64 for Wan2.1-1.3B at 480p resolution and 16 for Wan2.1-14B at 720p resolution.
+To reduce computational cost, ablation studies on the 14B model are conducted for 100 training steps, while all main results are reported using models trained for 500 steps.
+Sparse Attention Settings.
+We calibrate Top-k and Top-p to achieve a target sparsity of approximately 95% across model scales.
+Specifically, for Wan2.1-1.3B at 480p resolution, we use Top-k = 0.03 and Top-p = 0.2.
+while for Wan2.1-14B at 720p resolution, we use Top-k = 0.03 and Top-p = 0.16. We set b q = 128 b_{q}=128 and b k ​ v = 64 b_{kv}=64 , respectively.
+Ablation Settings.
+For ablation studies on sparse masker design, we vary Top-k or Top-p individually while keeping all other settings unchanged.
+In the Top-k ablation, we set Top-k = 0.05 for both Wan2.1-1.3B and Wan2.1-14B, resulting in approximately 95% sparsity.
+In the Top-p ablation, we use Top-p = 0.4 for Wan2.1-1.3B at 480p and Top-p = 0.3 for Wan2.1-14B at 720p, corresponding to sparsity levels of 94% and 93%, respectively.
+Appendix B Prompts for Qualitative Visualizations
+This subsection lists the text prompts used to generate the qualitative video samples shown in the main paper.
+Prompts for Figure 1 .
+From top to bottom, the prompts are:
+•
+A large polar bear sitting on a rocky Arctic shoreline, casually playing an acoustic guitar with its massive paws.
+The bear has thick, white fur glistening under soft golden sunlight, a curious expression, and gentle eyes focused on the instrument.
+Melodic notes seem to ring out across the tundra.
+Behind, ice floes drift in calm blue water beneath a clear pastel sky.
+Natural daylight, medium shot from the front, slight low angle emphasizing the bear’s size.
+Slow camera pan from left to right.
+Realistic wildlife style with a whimsical twist.
+•
+A fluffy brown teddy bear with a cheerful expression is energetically playing a red drum kit in the heart of New York City’s Times Square. Bright neon billboards and towering digital screens flash colorful advertisements all around, casting vibrant reflections on the wet pavement. The teddy bear, wearing tiny sunglasses and a denim vest, rhythmically bangs the drums with animated motion, cymbals shimmering. Pedestrians stop to watch in delight, capturing the whimsical scene on their phones. Dynamic camera circling the bear, wide-angle view emphasizing the bustling urban spectacle and lively performance. Cartoon-style 3D animation, high detail, vivid colors.
+•
+Pacific Coast, Carmel-by-the-Sea, scenic ocean shoreline with rolling waves gently crashing against rocky outcrops and sandy coves.
+The deep blue Pacific Ocean stretches to the horizon under a soft golden-hour sky, with seagulls gliding above the surf.
+Waves foam and ripple over smooth stones and tide pools teeming with marine life.
+Coastal pine trees and native shrubs line the bluffs, framing the pristine beach.
+Gentle wave motion, sparkling water surface, and a calm breeze enhance the serene atmosphere.
+Wide-angle landscape shot, natural daylight, realistic detail, peaceful coastal ambiance.
+•
+A vibrant clownfish with bright orange body and white stripes edged in black darts playfully through a lush coral reef.
+It weaves gracefully between swaying sea anemones and colorful coral formations in vivid pinks, purples, and blues.
+Sunlight filters through the crystal-clear turquoise water, creating shimmering patterns on the ocean floor.
+Small bubbles rise as the fish flicks its tail, exploring its intricate underwater home.
+Wide-angle underwater shot with natural lighting, showcasing rich detail and lively marine biodiversity.
+Gentle current moves the corals softly.
+Prompt for Figure 4 .
+•
+An oil painting of a couple in elegant formal evening wear walking home as a sudden heavy downpour surrounds them,
+clutching umbrellas that barely shield them from the rain.
+The man wears a sleek black tuxedo, the woman a flowing satin gown shimmering with raindrops,
+her hair slightly damp and clinging to her shoulders.
+Rain streaks through the air in silvery lines under dim streetlights, puddles rippling at their feet.
+Warm glows from nearby lampposts reflect on wet cobblestones, creating a romantic, cinematic atmosphere.
+Loose brushstrokes and rich textures evoke emotion and movement.
+Medium shot, side view, captured from a slight distance.
+50 , 13 , 61 , 51 , 38 , 14 , 17 , 63 , 64 , 65 , 54 , 49 , 57 , 55 , 58 , 41 , 18 langley00
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

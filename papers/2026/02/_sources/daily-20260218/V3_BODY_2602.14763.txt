@@ -1,0 +1,894 @@
+Unlocking Reasoning Capability on Machine Translation in Large Language Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+Reasoning Language Models
+Reasoning for MT
+3 Reasoning Capability Inspection
+3.1 Structural Analysis
+3.2 Reasoning Injection
+4 Structured Reasoning Trace
+4.1 Multi-turn Translation Annotation
+4.2 Quality-based Data Selection
+4.3 Constructing Reasoning Traces
+Static Template
+Dynamic Template
+4.4 Final Training Examples
+5 Experimental Setup
+5.1 Baselines
+Direct Translation
+Injected Reasoning Traces
+6 Results
+6.1 Reasoning vs. Translation Quality
+7 Conclusions
+References
+A Experimental Setups
+A.1 Evaluation prompt
+A.2 Training data distribution
+B A Reasoning Example
+C Translation Prompts
+D Static Template
+E Structured Reasoning Templates
+F Direct Translation Baseline
+License: CC BY 4.0
+arXiv:2602.14763v1 [cs.CL] 16 Feb 2026
+Unlocking Reasoning Capability on Machine Translation in
+Large Language Models
+Sara Rajaee
+Affiliation: University of Amsterdam
+Correspondence to: s.rajaee@uva.nl
+Sebastian Vincent
+Affiliation: Cohere
+Alexandre Berard
+Affiliation: Cohere
+Marzieh Fadaee
+Affiliation: Cohere Labs
+Kelly Marchisio
+Affiliation: Cohere
+Tom Kocmi
+Affiliation: Cohere
+Correspondence to: kocmi@cohere.com
+Abstract
+Reasoning-oriented large language models (RLMs) achieve strong gains on tasks such as mathematics and coding by generating explicit intermediate reasoning. However, their impact on machine translation (MT) remains underexplored. We systematically evaluate several open- and closed-weights RLMs on the WMT24++ benchmark and find that enabling explicit reasoning consistently degrades translation quality across languages and models. Analysis reveals that MT reasoning traces are highly linear, lacking revision, self-correction and exploration of alternative translations, which limits their usefulness. Furthermore, injecting higher-quality reasoning traces from stronger models does not reliably improve weaker models’ performance. To address this mismatch, we propose a structured reasoning framework tailored to translation, based on multi-step drafting, adequacy refinement, fluency improvement, and selective iterative revision. We curate a synthetic dataset of dynamic structured reasoning traces and post-train a large reasoning model on this data. Experiments show significant improvements over standard translation fine-tuning and injected generic reasoning baselines. Our findings demonstrate that reasoning must be task-structured to benefit MT.
+Keywords:
+Machine Learning, Machine Translation, Reasoning, LLM, ICML
+† † affiliationnotice: Equal contribution
+1 Introduction
+Reasoning-oriented language models (RLMs), that is, large language models (LLMs) trained to spend more compute generating intermediate reasoning before answering, have recently delivered large performance gains on reasoning-heavy benchmarks, with especially strong improvements in mathematics and coding tasks ( Kimi Team, 2025 ; Mistral-AI, 2025 ; Qwen Team, 2025 ; NVIDIA, 2025 ) .
+This paradigm is increasingly viewed as a general strategy for improving model reliability, controllability, and performance via test-time compute scaling, making it a central design axis for the next generation of foundation models ( Wang et al., 2025a ; Wang et al., 2025c ) .
+As a result, these improvements have sparked interest in whether explicit reasoning can also help on other challenging generative tasks, including machine translation (MT).
+At the same time, relative to the depth of work on math and programming evaluations, MT has seen fewer systematic studies of RLMs and reasoning-style prompting as a first-class design axis ( Liu et al., 2025 ; Li et al., 2026 ) , leaving open whether reasoning-based scaling transfers to high-stakes real-world generative tasks.
+This work bridges the gap by investigating whether and how reasoning capabilities contribute to machine translation performance.
+We begin by evaluating a diverse set of open- and closed-weight RLMs on the WMT24++ benchmark ( Deutsch et al., 2025 ) , comparing RLMs performance with and without using thinking tokens.
+Contrary to findings on most reasoning-demanding tasks ( Jiang et al., 2025 ; Sun et al., 2024 ) , and contrary to the common assumption that explicit reasoning is broadly beneficial across domains, our results show that enabling explicit reasoning does not improve translation quality.
+In fact, we even observe a slight decline in performance when RLMs generate reasoning traces for MT.
+To better understand this behavior, we conduct a qualitative analysis of the generated reasoning trajectories in Section 3.1 . We find that these traces exhibit a linear structure lacking exploration of alternative translations, self-correction, and revision.
+This contrasts with math and code problems, where effective reasoning involves hypothesis exploration, backtracking, and verification ( Marjanovic et al., 2026 ; Cuesta-Ramirez et al., 2025 ) , behaviors that align well with search-based problem structures but appear mismatched with the incremental, constraint-driven nature of translation.
+We further examine whether reasoning traces generated by a stronger RLM can benefit a weaker model, enhancing the performance.
+More specifically, in Section 3.2 , we inject reasoning traces generated by a stronger RLM (called a injecting model) into another RLM (called a receiving model), allowing the receiving model to generate final translations conditioned on the injected reasoning. Surprisingly, even when the injected reasoning traces are of high quality and accompanied by strong translations, we do not observe an improvement in the receiving model’s performance.
+This suggests that simply increasing test-time compute or transferring generic reasoning traces is insufficient for improving translation, raising questions about the universality of current reasoning paradigms.
+Based on these observations, we hypothesize that the limitation is not the absence of reasoning per se, but a misalignment between generic reasoning formats and the structural requirements of translation.
+Our observation is furthermore reinforced by the success of Chain-of-thoughts reasoning that improves MT quality ( Nguyen & Xu, 2025 ; Wu et al., 2025b ) .
+To test our hypothesis, in Section 4 we design a synthetic data generation pipeline that enforces a structured reasoning style for MT. Our proposed reasoning template explicitly incorporates iterative refinements using a multi-turn translation setup ( Briakou et al., 2024 ) and a dynamic format that adapts to the difficulty of the given translation examples, enhancing the efficiency of reasoning length.
+We show that reasoning can be beneficial for MT when it is explicitly shaped around error revision, constraint satisfaction, and iterative refinement, rather than leaving it up on model for generic reasoning.
+Looking into the reason behind the effectiveness of the structured reasoning, in Section 6.1 , and through controlled ablation studies with varying reasoning trace quality and target translation quality, we show that having higher quality reasoning traces (e.g., proposed structure reasoning) leads to performance gain on translation quality, even when paired with weaker final outputs. However, the quality of the final translation has a more positive role on the overall performance.
+We summarize our main contributions as follows:
+•
+We present a comprehensive evaluation and analysis of reasoning large language models for machine translation. We show that existing reasoning formats in RLMs, without revision, self-correction, or exploration, do not benefit MT. We also demonstrate that injecting reasoning traces with the same format, but higher-quality translations, does not constantly improve RLM’s performance in MT ( Section 3 ).
+•
+We propose a structured reasoning framework tailored to machine translation, a designed synthetic reasoning generation pipeline that enforces iterative revision and self-correction. Training on the structured reasoning traces leads to a significant improvement in translation performance ( Sections 4 and 6 ).
+•
+We disentangle the roles of reasoning trace quality and final translation quality through controlled ablation studies on RLMs, showing that while high-quality structured reasoning traces provide performance improvements, the quality of the final translation is the more important factor in determining MT performance ( Section 6.1 )
+Together, these findings challenge the assumption that test-time scaling via longer generic reasoning traces will reliably improve performance across tasks, and instead point to the need for task-specific structural priors when generating synthetic reasoning data.
+More generally, they motivate viewing reasoning not as a single transferable skill, but as a family of task-dependent deliberation strategies that must be learned and evaluated in a task-aware manner, with consequences for other generative tasks.
+Table 1: Performance evaluation of reasoning language models on the WMT24++ benchmark using XCOMET-XL score. We observe that having reasoning traces hurts the translation quality across almost all languages and models.
+Model
+en-ar
+en-cs
+en-fa
+en-fr
+en-hi
+en-ja
+en-ko
+en-ru
+en-zh
+Avg.
+Command-A-Reasoning (w)
+70.4
+83.0
+78.6
+82.5
+59.8
+80.6
+81.4
+82.0
+77.2
+77.3
+Command-A-Reasoning (w/o)
+72.6
+83.5
+81.2
+83.0
+60.4
+80.7
+81.7
+82.6
+78.6
+78.3
+Claude-4-Opus (w)
+74.9
+84.9
+81.5
+83.2
+64.4
+83.9
+83.5
+84.2
+80.7
+80.1
+Claude-4-Opus (w/o)
+75.1
+85.2
+81.0
+83.4
+64.6
+84.0
+83.8
+85.1
+81.6
+80.4
+DeepSeek-R1 (w)
+69.5
+82.5
+76.8
+82.0
+61.0
+74.8
+74.2
+83.0
+70.4
+74.9
+DeepSeek-R1 (w/o)
+73.0
+83.7
+79.2
+82.7
+63.1
+81.3
+81.8
+83.8
+79.3
+78.7
+Gemini-2.5-Flash (w)
+71.2
+83.9
+79.9
+82.5
+63.6
+81.9
+81.3
+83.4
+79.4
+78.6
+Gemini-2.5-Flash (w/o)
+74.0
+85.5
+81.2
+83.8
+63.8
+82.7
+83.6
+84.5
+80.1
+79.9
+2 Related Work
+Reasoning Language Models
+Prompting language models to generate intermediate steps (commonly referred to as Chain-of-Thought (CoT) ( Wei et al., 2022 ) ) has yielded significant performance gains across complex, reasoning-demanding tasks like mathematics ( Cobbe et al., 2021 ; Yu et al., 2025 ) , logic reasoning ( Sprague et al., 2025 ) , and programming ( Min et al., 2024 ; Wang et al., 2025d ) .
+In a similar direction, it has been shown that reasoning capabilities can also emerge through pure reinforcement learning (RL) training ( DeepSeek Team, 2025 ; Mistral-AI, 2025 ) .
+Beyond performance gains, recent studies have also looked into reasoning trajectories generated by RLMs, investigating their structures and features and validating the intermediate steps ( Marjanovic et al., 2026 ; Liao et al., 2025 ; Liu et al., 2024 ; Zhang et al., 2024 ) .
+Reasoning for MT
+Several studies have explored CoT prompting for machine translation, reporting remarkable gains on the performance ( Nguyen & Xu, 2025 ; Wang et al., 2025b ) . Moreover, it has been that multi-step translation focusing on different aspect of translations in each step (e.g., drafting or fluency) ( Briakou et al., 2024 ) , as well as simple iterative translation refinements ( Wu et al., 2025a ) , boost the translation quality.
+More recently, a similar work to ours has evaluated RLMs on MT showing that explicit thinking tokens do not improve translation quality, a finding that aligns with our observations ( Zebaze et al., 2025 ) . Furthermore, they have also reported that fine-tuning with synthetic CoT explanations does not outperform standard input-output fine-tuning on MT. This conclusion that is not supported by our experimental results.
+In a nutshell, our work differs from prior studies in a few key aspects: (1) we conduct a systematic evaluation and in-depth analyses on the role of reasoning on machine translation performance in RLMs showing the ineffectiveness of thinking tokens on MT and investigating the reasons behind it. (2) We design a dynamic reasoning generation pipeline to synthetically generate helpful reasoning traces for MT, and we show a solid performance improvement using our structured reasoning framework. (3) We carry out an ablation study to investigate the contribution of reasoning traces quality compared to the final translation quality in the synthetic dataset, showing that both positively affect the performance while the final translation quality have a stronger role on RLMs performance.
+3 Reasoning Capability Inspection
+Reasoning skills have gained special attention in recently developed large language models. It has been shown that explicit reasoning, also known as thinking tokens , through decomposition, self-verification, and iterative refinement substantially improves LLMs’ performance across complex tasks, such as mathematical problems or code generation. However, the extent to which the reasoning capabilities benefit open-ended generation tasks like machine translation (MT) remains less-explored.
+To investigate the role of reasoning on MT, we begin with evaluating four open and closed-weights reasoning language models, Command-A-Reasoning ( Cohere Team, 2025 ) , Claude-4-Opus ( Anthropic, 2025 ) , DeepSeek-R1 ( DeepSeek Team, 2025 ) , and Gemini-2.5-Flash ( Gemini Team, 2025 ) . We evaluate these models on nine language pairs from the WMT24++ benchmark and compare the quality of generated translation with and without reasoning using the XCOMET-XL metric ( Guerreiro et al., 2024 ) , a state-of-the-art metric for automatic evaluation ( Freitag et al., 2024 ) . Additional experimental details are provided in Appendix A .
+Table 1 summarizes the results.
+At a high-level glance and looking into the average performance, we observe that all the reasoning models consistently have a significantly higher performance without reasoning.
+The pattern holds for all the individual language pairs as well, except for Farsi in Claude-4-Opus where we see that reasoning improves the translation quality.
+Our findings show that while it has been widely reported in previous studies that reasoning abilities help LLMs to improve their performance on a variety of tasks ( Pham et al., 2025 ; Huang et al., 2025 ; Son et al., 2026 ) , it has an opposite effect on the translation performance.
+To further investigate the characteristics of reasoning traces in the machine translation task, we conduct a series of qualitative and quantitative analyses, focusing on the open-weights models, in the following sections.
+3.1 Structural Analysis
+Table 2: Average number of reasoning paths in a generated reasoning trace per model, aggregated over the selected WMT24++ language pairs. All the RLMs show a high degree of linearity in their reasoning process.
+Model
+Avg. # Reasoning Paths
+Std.
+Command-A-Reasoning
+1.56
+0.23
+Claude-4-Opus
+0.006
+0.0
+DeepSeek-R1
+0.107
+0.16
+Gemini-2.5-Flash
+0.012
+0.0
+To better understand why having reasoning traces fails to improve MT performance, we analyze the structure of reasoning traces for the translation task.
+Appendix B shows an example of a generated reasoning trajectory by DeepSeek-R1 .
+Looking into the generated reasoning traces, we notice that, unlike other reasoning-demanding tasks (like math problems), where the RLM explores multiple scenarios, evaluates intermediate steps, and can backtrack ( An et al., 2025 ) , MT reasoning style exhibits a linear structure. The RLMs split the source text into segments, translate each segment in isolation without considering possible alternative translations, and proceed sequentially without revisiting earlier translations.
+To put this in a numerical perspective, we calculate the number of distinct reasoning paths (i.e., exploring different possible translations) that an RLM explores in its generated reasoning traces for MT. Following previous studies ( An et al., 2025 ; Cuesta-Ramirez et al., 2025 ) , we use linguistic cues, Wait and Alternatively as a signal for a reasoning path and count their occurrences.
+We report the average number of different reasoning paths within the whole reasoning trace in Table 2 . The numerical results confirm our qualitative observation that MT reasoning traces are highly linear, lacking exploration or self-correction in the reasoning process. Among the selected models, Command-A-Reasoning has the highest number of reasoning paths in the reasoning traces on average, meaning that the model explores alternative translation reformulation for 1.56 1.56 number of segments in the given text on average. It is worth mentioning that a given text could have multiple segments.
+3.2 Reasoning Injection
+Figure 1: The performance of open-weights RLMs when their reasoning traces are generated and injected from other models. The dash-line represents the baseline performance of the receiving models, and the injecting models are presented at the top. As can be seen, the strength of the injecting model used to generate reasoning traces does not correlate with final translation quality across different injecting and receiving models.
+In our primary experiment, we have shown that having reasoning does not bring performance gain on the machine translation task for RLMs, and this pattern is consistent across all the selected models. Nevertheless, the absolute translation performance varies across models, with Claude-4-Opus achieving the highest overall performance. In this part, we investigate whether a higher-quality reasoning trace generated by a stronger model on MT can provide other models with a hint to improve their performance.
+We conduct a controlled reasoning injection experiment. For each translation example, we generate a reasoning trace using an injecting model (e.g., Claude-4-Opus ), insert it into another receiving model (e.g., Command-A-Reasoning ), and let the receiving model generate the final translation using the provided reasoning trace. To have full control over the reasoning traces between thinking tokens , we limit ourselves to the open-weights models, namely Command-A-Reasoning and DeepSeek-R1 , as the receiving models, while using all four models as injecting ones to generate reasoning traces.
+The results are presented in Figure 1 . First, we don’t observe a notable performance drop in the receiving models, indicating that RLMs are not biased toward their own reasoning style for machine translation. Secondly, although reasoning traces from stronger injecting models, such as Claude-4-Opus , lead to performance improvement of DeepSeek-R1 , this pattern does not hold for Command-A-Reasoning . In other words, reasoning traces generated by stronger models do not consistently yield higher translation quality across different receiving models.
+In summary, we find that the reasoning styles for machine translation differ from other reasoning-demanding tasks. In their current format, translation reasoning trajectories follow a linear process and rarely include translation revision or exploration of possible translation options, and even higher-quality reasoning traces from stronger models cannot benefit other RLMs to enhance their translation performance, suggesting the ineffectiveness of the existing reasoning format in the MT task.
+Building on our findings and inspired by previous studies on the effectiveness of step-wise translation methods, in the next section, we propose a framework for creating dynamic, step-by-step reasoning traces for machine translation.
+4 Structured Reasoning Trace
+We design a synthetic data generation pipeline to train reasoning skills beneficial for machine translation in reasoning language models. Building on our findings in the previous section showing that the state-of-the-art reasoning language models do not generate useful reasoning traces for machine translation and the success of chain-of-thoughts techniques used in MT ( Nguyen & Xu, 2025 ; Wu et al., 2025b ; Briakou et al., 2024 ) , we aim to create structured reasoning traces, teaching the model how to do step-by-step reasoning, and improve translation through successive refinements.
+In the following subsections, we describe our data generation process, quality check of reasoning traces, and the construction of reasoning templates.
+4.1 Multi-turn Translation Annotation
+Dynamic Structured Reasoning Template
+Step 1 --- Initial Draft
+Let me start by producing an initial, faithful translation of the source text into {target_language}, which will serve as the foundation for later refinements.
+{initial_draft}
+Step 2 --- Adequacy
+In this step, I focus on adequacy, ensuring that the full meaning of the challenging sentences is conveyed accurately and completely in {target_language}.
+{challenging_sentences_adequacy}
+Step 3 --- Fluency
+At this stage, I refine the challenging sentences, ensuring they read smoothly and naturally in {target_language}, as if originally written in it.
+{challenging_sentences_fluency}
+Step 4 --- Final Translation
+Finally, I bring together all the work from the previous steps, addressing any remaining issues or translation errors to produce a polished final version in {target_language}.
+Figure 2: An example of the dynamic template used to generate structured reasoning traces. Curly-braced fields denote placeholders. Steps 2 and 3 are applied only to selected challenging sentences, those sentences that benefited the most from steps 2 and 3 with the defined MetricX margin; all other segments are discarded from the initial draft.
+We begin with a high-quality monolingual corpus of documents spanning 23 source languages, prepared to be translated. All the documents pass quality control and difficulty sampling ( Proietti et al., 2025 ; Kocmi et al., 2025 ) . Following Briakou et al. (2024) , for each source document, we generate a sequence of four translation refinements using an offline, step-wise procedure employing the Command-A-Translate ( Kocmi et al., 2025 ) . Each step focuses on a distinct and important aspect of translation.
+1.
+Initial Draft: Command-A-Translate is prompted to generate an initial draft intended to be rough and as a foundation for the next steps of translation.
+2.
+Adequacy Enhancement: Given the draft translation, the model is asked to revise the translation with an explicit emphasis on semantic accuracy.
+3.
+Fluency Refinement: In this step, the LLM improves the readability and fluency of the adequate translation in the target language.
+4.
+Final Translation: In this final stage, Command-A-Translate considers all the previous translations, resolving remaining errors, and generates its best possible translation.
+We consider this four-step trajectory as a structured approximation of a useful reasoning process for translation. In this step, we discard samples whose translated documents are not line-aligned with the source documents, a requirement for the follow up quality estimation, resulting in 320 ​ k 320k high-quality samples. Detailed prompts used for each step of translations are presented in Appendix C .
+4.2 Quality-based Data Selection
+Having the multi-turn translations for all 320 ​ k 320k examples, we notice that only a small subset shows meaningful improvements across the refinement steps. We quantify the extent of improvement for each intermediate translation using MetricX ( Juraska et al., 2024 ) .
+Since the MetricX has limited context window, we evaluate all lines in isolation, averaging them into the document-level score.
+We observe that less than 10 % 10\% of examples show substantial quality gains (e.g., more than 0.5 0.5 MetricX improvement, technically meaning half a minor error in the MQM terminology ( Lommel et al., 2013 ) ) across different steps. This is expected as SOTA MT systems like Command-A-Translate have remarkably high performance and often translate well in a single pass, meaning most of the translation examples are not challenging for them. Therefore, we calculate the MetricX for each segment of a given document and consider the average MetricX score as the whole document score. As stated before, we keep only examples where the improvement between the initial draft and the final translation is at least 0.5 0.5 MetricX score. We find the filtering step critical for improving RLMs performance.
+This filtering yields a collection of 28k high-quality samples, each demonstrating a non-trivial translation. A breakdown of language-pair distribution for this subset is provided in Figure 3 .
+4.3 Constructing Reasoning Traces
+Having instances where step-by-step translation is beneficial, we next convert the multi-step outputs into reasoning traces. We hypothesize that training the model with a step-by-step style of reasoning helps it use this structure for reasoning in the machine translation task. We later verify our hypothesis through empirical experiments.
+Static Template
+The first way to create the reasoning trajectories is to chain the four translations into a single trace. We treat a set of human-generated sentences as connectives to connect four translations. To diversify the reasoning structure, for each step translation, we randomly insert one of the predefined sentences into the reasoning trace reflecting a natural thinking flow in the model.
+An illustration of this template is provided in Appendix D . A concern raised by this template is that the trace length scales with document size, which may introduce inefficiencies for long inputs.
+Dynamic Template
+As mentioned above, having all four steps for the whole document is not efficient, as not all the segments of a document need translation through iterative reasoning. To enhance the efficiency of the reasoning traces, we develop a dynamic template that, after the initial draft, includes reasoning only for challenging segments. We consider sentences challenging that the translation quality between the initial drafting step and the adequacy or fluency stage improves by at least 1 MetricX point.
+More specifically, in this template, we include the initial draft translation of the entire document. Then, we drop the translation of segments without meaningful improvement in the fluency and adequacy steps from the reasoning trace. We also discard the final translation from the trace to reduce repetition. Figure 2 shows an example of the resulting dynamic template strategy. More details on dynamic templates are presented in Appendix E .
+4.4 Final Training Examples
+Each training sample in our dataset consists of the triple (source text, reasoning trace, target text) in which reasoning traces are constructed using the explained dynamic template, and the target text is adopted as the Command-A-Translate final-step translation.
+The resulting 28k data provides explicit, structured reasoning for translation, which we use to train reasoning models to carry out step-by-step reasoning and improve their reasoning capability for machine translation.
+Table 3: The systematic performance evaluation of different reasoning-based translation systems. At the top, we have the Command-A-Reasoning as the backbone model and Direct Translations, where the base model is trained on MT without reasoning. The structured reasoning is the base model trained on our proposed structured reasoning. Injected Reasoning represents a comparison between the performance of the base model trained on injected reasoning from different reasoning models. At the bottom, a comparison between different training sizes of structured reasoning
+Setup
+en-ar
+en-cs
+en-fa
+en-fr
+en-hi
+en-ja
+en-ko
+en-ru
+en-zh
+Avg.
+Baselines
+Base model
+70.4
+83.0
+78.6
+82.5
+59.8
+80.6
+81.4
+82.0
+77.2
+77.3
+Direct Translation
+76.7
+86.3
+82.7
+85.7
+66.2
+83.7
+84.5
+85.5
+81.9
+81.5
+Structured Reasoning ours {}_{\textit{ours}}
+77.8
+87.1
+83.6
+86.4
+66.3
+83.8
+84.7
+86.2
+82.1
+82.0
+Injected Reasoning
+Command-A-Reasoning
+76.9
+86.7
+82.9
+85.7
+66.1
+83.4
+84.5
+85.8
+82.3
+81.6
+DeepSeek-R1
+76.5
+86.5
+83.1
+85.7
+66.1
+83.7
+84.5
+85.6
+82.3
+81.6
+Structured Reasoning
+1k Samples
+74.3
+80.2
+81.0
+83.5
+60.9
+80.0
+80.6
+83.8
+79.4
+78.2
+10k Samples
+77.6
+86.7
+83.4
+85.9
+65.9
+83.6
+84.7
+86.1
+81.8
+81.7
+5 Experimental Setup
+As a post-training stage, we do supervised fine-tuning (SFT) on the Command-A-Reasoning model with 111B parameters using our curated 28k translation-reasoning examples. We pick this model as it is among the strongest open-weights reasoning models. All the experiments are conducted with a maximum sequence length of 32768 32768 tokens, and we evaluate the impact of different data selection strategies by training models on subsets of 1 ​ k 1k , 10 ​ k 10k , and the full 28 ​ k 28k dataset.
+Unless otherwise noted, models trained on 28 ​ k 28k samples are finetuned for 4 4 epochs. Models trained on 1 ​ k 1k and 10 ​ k 10k subsets are trained for 8 8 and 6 6 epochs, respectively. We use a peak learning rate of 1 × 10 − 5 1\times 10^{-5} , decayed to 1 × 10 − 6 1\times 10^{-6} , with additive weight decay of 0.1 0.1 . All the SFT runs are done on 64 64 first class GPUs.
+5.1 Baselines
+To isolate the contribution of the designed structured reasoning traces, we compare our approach to the following baselines:
+Direct Translation
+To disentangle the effect of additional MT supervision from explicit reasoning, we finetune the same base model using only direct translations without reasoning traces. This setup is the strong baseline as it shows the impact of training off high quality MT system. We employ a set of ten templates within the thinking tokens, instructing the model to skip step-by-step reasoning. The used templates are available in Appendix F .
+Injected Reasoning Traces
+As a contrastive ablation, we train the same base model on reasoning traces generated for the same 28k examples using Command-A-Reasoning and DeepSeek-R1 . Note that only the reasoning traces are generated from these models, and the target text translation is kept from the Command-A-Translate as in the other experiments. This allows us to assess the role of structured reasoning traces compared to linear reasoning trajectories.
+To ensure a fair comparison, we use the same hyperparameters as the structured reasoning for the baselines.
+6 Results
+We evaluate all models on the WMT24++ benchmark ( Deutsch et al., 2025 ) , focusing on nine diverse language pairs. Translation quality is evaluated using the XCOMET-XL metric ( Guerreiro et al., 2024 ) . For all evaluations, we set the decoding temperature to 0 0 to minimize variance and maximize reproducibility.
+Table 3 summarizes the overall results. In the first block of the table, we compare the performance of our structured reasoning approach against both the base model and the direct translation finetuning setup. Direct Translation is a strong baseline as we ensure the performance improvement is not solely due to additional high-quality training data.
+Across all language pairs, structured reasoning shows substantial performance improvements over these baselines, indicating that the structured dynamic template is effective in developing a reasoning process that meaningfully supports translation quality. It is worth mentioning that 0.5 0.5 XCOMET-XL score improvement is considered as noticeable by human as +1 BLEU improvement ( Kocmi et al., 2024 ) .
+The middle part of the table compares our synthetic reasoning traces with the models trained on the trajectories generated by DeepSeek-R1 and Command-A-Reasoning . Comparing these models against the direct translation baseline, we see that the injected reasoning does not offer additional benefits. This finding is consistent with our earlier analysis in Section 3 , where we show that the existing reasoning capabilities of reasoning models are beneficial for the machine translation task.
+Finally, in the bottom part of Table 3 , we conduct an ablation on the size of the training data to investigate the relation between the training size and performance improvement. We see a monotonically increasing trend as we use more data for training, aligning with Li et al. (2025) observations on positive effect of training size. Interestingly, about one-third of the training data surpasses the direct translation baseline, highlighting the .
+Table 4: Comparing the role of reasoning quality and final translation quality on the performance. R-Src represents the injecting model of reasoning traces. Each row in a block represents the model that generated the final translations. As shown, both the quality of reasoning traces and final translations contribute positively to performance across languages, indicating that reasoning traces from stronger models improve performance and that higher-quality final translations in the training data lead to better performance.
+Setup
+en-ar
+en-cs
+en-fa
+en-fr
+en-hi
+en-ja
+en-ko
+en-ru
+en-zh
+Avg.
+R-Src: Command-A-Reasoning
+Command-A-Reasoning
+73.4
+83.4
+79.5
+83.4
+60.3
+80.4
+81.0
+82.6
+78.6
+78.1
+Command-A-Translate
+76.9
+86.7
+82.9
+85.7
+66.1
+83.4
+84.5
+85.8
+82.3
+81.6
+R-Src: DeepSeek-R1
+DeepSeek-R1
+72.0
+82.3
+77.9
+81.9
+59.9
+80.2
+81.0
+81.9
+76.9
+77.1
+Command-A-Translate
+76.5
+86.5
+83.1
+85.7
+66.1
+83.7
+84.5
+85.6
+82.3
+81.6
+R-Src: Structured reasoning
+DeepSeek-R1
+74.3
+84.0
+80.4
+83.1
+62.2
+82.1
+82.6
+83.3
+76.4
+78.7
+Command-A-Reasoning
+74.4
+84.3
+81.0
+83.4
+61.6
+81.9
+82.4
+83.3
+80.0
+79.1
+6.1 Reasoning vs. Translation Quality
+To further examine the relative contribution of reasoning trace quality and target translation quality, we design a controlled ablation study using our 28 ​ k 28k samples.
+As we mentioned earlier, each training example includes a triple of (source text, reasoning trace, target text) . Therefore, the quality of both the reasoning trace and the target text affects the model performance.
+In this analysis, we explicitly vary these two factors independently. We consider three sources of reasoning traces: reasoning trajectories generated from Command-A-Reasoning , DeepSeek-R1 , and our proposed structured reasoning. Separately, we consider three sources of target translations: translations generated by Command-A-Reasoning , DeepSeek-R1 , and the stronger model Command-A-Translate . By pairing each reasoning trace source with each target translation source, we construct multiple training datasets in which the reasoning traces and target translations may originate from different models. We then run SFT on the same base model using each dataset and evaluate the resulting model’s translation performance.
+The results are reported in Table 4 . Each block is dedicated to a reasoning trace source, and each row within a block presents the target translation source model.
+Focusing on the top two blocks, we observe that for a fixed reasoning source, using target translations generated by the stronger model (i.e., Command-A-Translate ) consistently leads to substantially higher performance than using target translations from the other models. Interestingly, for the Command-A-Translate ’s target translation set, we do not observe meaningful performance differences between reasoning traces generated by Command-A-Reasoning and those by DeepSeek-R1 .
+In the bottom block of Table 4 , we evaluate structured reasoning paired with target translations from Command-A-Reasoning . This configuration yields higher performance than using DeepSeek-R1 translations.
+This is expected, as in Table 1 , we have shown that Command-A-Reasoning is a better model than DeepSeek-R1 on the translation task.
+However, the gains remain notably smaller than those obtained when using Command-A-Translate as the target translation ( Table 3 ).
+Overall, these results indicate that target translation quality has a substantially larger impact on downstream performance than the quality of the associated reasoning traces in machine translation. This suggests that improvements in reasoning traces alone are insufficient to compensate for weaker target translations.
+7 Conclusions
+In this paper, we conduct an in-depth study on the role of reasoning capabilities of reasoning language models in machine translation. Despite the substantial benefits that reasoning has provided for most reasoning-intensive tasks, our experiments show that current reasoning degrades translation quality across RLMs and languages. Through detailed analyses, we notice that the structure of current reasoning traces is highly linear, lacking key features such as revision, self-correction, and exploration of possible alternatives.
+Building on our findings, we propose a structured reasoning framework specifically designed for MT that dynamically adapts the length of reasoning to the difficulty of translation. We show that post-training an RLM on a small set of structured reasoning substantially improves the translation performance.
+Finally, we investigate the underlying factors behind the effectiveness of structured reasoning by disentangling the contributions of reasoning trace quality and final translation quality. Our results indicate that while both factors affect MT performance, the quality of final translations plays a dominant role.
+Impact Statement
+In this work, we present in-depth analyses on the reasoning capabilities of RLMs for MT. We propose a structured reasoning generation pipeline to enhance translation performance in RLMs. We do not foresee any significant negative societal impacts directly resulting from this work.
+Limitations
+In this work, we use WMT24++ as our primary evaluation benchmark, focusing on 9 language pairs. While we have tried to select a diverse set of language pairs, adding more could strengthen our conclusions and findings. Moreover, we solely employ automatic metrics for evaluation and to investigate the role of reasoning on the translation quality. While costly, incorporating human evaluation could provide additional support for our findings.
+References
+An et al. (2025)
+An, S., Wang, R., Zhou, T., and Hsieh, C.-J.
+Don’t think longer, think wisely: Optimizing thinking dynamics for large reasoning models.
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025.
+URL https://openreview.net/forum?id=nxnBaaRLnz .
+Anthropic (2025)
+Anthropic.
+System Card: Claude Opus 4 & Claude Sonnet 4.
+Technical report, Anthropic, May 2025.
+URL https://www.anthropic.com/claude-4-system-card .
+Briakou et al. (2024)
+Briakou, E., Luo, J., Cherry, C., and Freitag, M.
+Translating step-by-step: Decomposing the translation process for improved translation quality of long-form texts.
+In Haddow, B., Kocmi, T., Koehn, P., and Monz, C. (eds.), Proceedings of the Ninth Conference on Machine Translation , pp. 1301–1317, Miami, Florida, USA, November 2024. Association for Computational Linguistics.
+doi: 10.18653/v1/2024.wmt-1.123 .
+URL https://aclanthology.org/2024.wmt-1.123/ .
+Cobbe et al. (2021)
+Cobbe, K., Kosaraju, V., Bavarian, M., Chen, M., Jun, H., Kaiser, L., Plappert, M., Tworek, J., Hilton, J., Nakano, R., Hesse, C., and Schulman, J.
+Training verifiers to solve math word problems.
+arXiv preprint arXiv:2110.14168 , 2021.
+Cohere Team (2025)
+Cohere Team.
+Command a: An enterprise-ready large language model, 2025.
+URL https://arxiv.org/abs/2504.00698 .
+Cuesta-Ramirez et al. (2025)
+Cuesta-Ramirez, J., Beaussant, S., and Mounsif, M.
+LRMs are not thinking straight: Unreliability of thinking trajectories.
+In Wartena, C. and Heid, U. (eds.), Proceedings of the 21st Conference on Natural Language Processing (KONVENS 2025): Long and Short Papers , pp. 27–32, Hannover, Germany, September 2025. HsH Applied Academics.
+URL https://aclanthology.org/2025.konvens-1.3/ .
+DeepSeek Team (2025)
+DeepSeek Team.
+Deepseek-r1 incentivizes reasoning in llms through reinforcement learning.
+Nature , 645(8081):633–638, September 2025.
+ISSN 1476-4687.
+doi: 10.1038/s41586-025-09422-z .
+URL http://dx.doi.org/10.1038/s41586-025-09422-z .
+Deutsch et al. (2025)
+Deutsch, D., Briakou, E., Caswell, I. R., Finkelstein, M., Galor, R., Juraska, J., Kovacs, G., Lui, A., Rei, R., Riesa, J., Rijhwani, S., Riley, P., Salesky, E., Trabelsi, F., Winkler, S., Zhang, B., and Freitag, M.
+WMT24++: Expanding the language coverage of WMT24 to 55 languages & dialects.
+In Che, W., Nabende, J., Shutova, E., and Pilehvar, M. T. (eds.), Findings of the Association for Computational Linguistics: ACL 2025 , pp. 12257–12284, Vienna, Austria, July 2025. Association for Computational Linguistics.
+ISBN 979-8-89176-256-5.
+doi: 10.18653/v1/2025.findings-acl.634 .
+URL https://aclanthology.org/2025.findings-acl.634/ .
+Freitag et al. (2024)
+Freitag, M., Mathur, N., Deutsch, D., Lo, C.-K., Avramidis, E., Rei, R., Thompson, B., Blain, F., Kocmi, T., Wang, J., Adelani, D. I., Buchicchio, M., Zerva, C., and Lavie, A.
+Are LLMs breaking MT metrics? results of the WMT24 metrics shared task.
+In Haddow, B., Kocmi, T., Koehn, P., and Monz, C. (eds.), Proceedings of the Ninth Conference on Machine Translation , pp. 47–81, Miami, Florida, USA, November 2024. Association for Computational Linguistics.
+doi: 10.18653/v1/2024.wmt-1.2 .
+URL https://aclanthology.org/2024.wmt-1.2/ .
+Gemini Team (2025)
+Gemini Team.
+Gemini 2.5: Pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities, 2025.
+URL https://arxiv.org/abs/2507.06261 .
+Guerreiro et al. (2024)
+Guerreiro, N. M., Rei, R., Stigt, D. v., Coheur, L., Colombo, P., and Martins, A. F. T.
+xCOMET: Transparent machine translation evaluation through fine-grained error detection.
+Transactions of the Association for Computational Linguistics , 12:979–995, 2024.
+doi: 10.1162/tacl_a_00683 .
+URL https://aclanthology.org/2024.tacl-1.54/ .
+Huang et al. (2025)
+Huang, S., Ding, Y., Pan, J., and Zhang, Y.
+Beyond english-centric training: How reinforcement learning improves cross-lingual reasoning in llms, 2025.
+URL https://arxiv.org/abs/2509.23657 .
+Jiang et al. (2025)
+Jiang, J., Wang, J., Yan, Y., Liu, Y., Zhu, J., Zhang, M., and Gao, L.
+Do large language models excel in complex logical reasoning with formal language?
+In Christodoulopoulos, C., Chakraborty, T., Rose, C., and Peng, V. (eds.), Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , pp. 16889–16914, Suzhou, China, November 2025. Association for Computational Linguistics.
+ISBN 979-8-89176-332-6.
+doi: 10.18653/v1/2025.emnlp-main.855 .
+URL https://aclanthology.org/2025.emnlp-main.855/ .
+Juraska et al. (2024)
+Juraska, J., Deutsch, D., Finkelstein, M., and Freitag, M.
+MetricX-24: The Google submission to the WMT 2024 metrics shared task.
+In Haddow, B., Kocmi, T., Koehn, P., and Monz, C. (eds.), Proceedings of the Ninth Conference on Machine Translation , pp. 492–504, Miami, Florida, USA, November 2024. Association for Computational Linguistics.
+doi: 10.18653/v1/2024.wmt-1.35 .
+URL https://aclanthology.org/2024.wmt-1.35/ .
+Kimi Team (2025)
+Kimi Team.
+Kimi k2: Open agentic intelligence, 2025.
+URL https://arxiv.org/abs/2507.20534 .
+Kocmi et al. (2024)
+Kocmi, T., Zouhar, V., Federmann, C., and Post, M.
+Navigating the metrics maze: Reconciling score magnitudes and accuracies.
+In Ku, L.-W., Martins, A., and Srikumar, V. (eds.), Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pp. 1999–2014, Bangkok, Thailand, August 2024. Association for Computational Linguistics.
+doi: 10.18653/v1/2024.acl-long.110 .
+URL https://aclanthology.org/2024.acl-long.110/ .
+Kocmi et al. (2025)
+Kocmi, T., Arkhangorodsky, A., Berard, A., Blunsom, P., Cahyawijaya, S., Dehaze, T., Fadaee, M., Frosst, N., Galle, M., Gomez, A., Govindarajan, N., Ko, W.-Y., Kreutzer, J., Marchisio, K., Üstün, A., Vincent, S., and Zhang, I.
+Command-a-translate: Raising the bar of machine translation with difficulty filtering.
+In Haddow, B., Kocmi, T., Koehn, P., and Monz, C. (eds.), Proceedings of the Tenth Conference on Machine Translation , pp. 789–799, Suzhou, China, November 2025. Association for Computational Linguistics.
+ISBN 979-8-89176-341-8.
+doi: 10.18653/v1/2025.wmt-1.55 .
+URL https://aclanthology.org/2025.wmt-1.55/ .
+Li et al. (2025)
+Li, Y., Emad, Y., Padthe, K., Lanchantin, J., Yuan, W., Nguyen, T., Weston, J., Li, S.-W., Wang, D., Kulikov, I., and Li, X.
+Naturalthoughts: Selecting and distilling reasoning traces for general reasoning tasks, 2025.
+URL https://arxiv.org/abs/2507.01921 .
+Li et al. (2026)
+Li, Z., Ji, S., and Tiedemann, J.
+Test-time scaling of reasoning models for machine translation, 2026.
+URL https://arxiv.org/abs/2510.06471 .
+Liao et al. (2025)
+Liao, B., Chen, X., Rajaee, S., Xu, Y., Herold, C., Søgaard, A., de Rijke, M., and Monz, C.
+Lost at the beginning of reasoning, 2025.
+URL https://arxiv.org/abs/2506.22058 .
+Liu et al. (2024)
+Liu, N. F., Lin, K., Hewitt, J., Paranjape, A., Bevilacqua, M., Petroni, F., and Liang, P.
+Lost in the middle: How language models use long contexts.
+Transactions of the Association for Computational Linguistics , 12:157–173, 2024.
+doi: 10.1162/tacl_a_00638 .
+URL https://aclanthology.org/2024.tacl-1.9/ .
+Liu et al. (2025)
+Liu, S., Lyu, C., Wu, M., Wang, L., Luo, W., Zhang, K., and Shang, Z.
+New trends for modern machine translation with large reasoning models, 2025.
+URL https://arxiv.org/abs/2503.10351 .
+Lommel et al. (2013)
+Lommel, A. R., Burchardt, A., and Uszkoreit, H.
+Multidimensional quality metrics: a flexible system for assessing translation quality.
+In Proceedings of Translating and the Computer 35 , London, UK, November 28-29 2013. Aslib.
+URL https://aclanthology.org/2013.tc-1.6/ .
+Marjanovic et al. (2026)
+Marjanovic, S. V., Patel, A., Adlakha, V., Aghajohari, M., BehnamGhader, P., Bhatia, M., Khandelwal, A., Kraft, A., Krojer, B., Lù, X. H., Meade, N., Shin, D., Kazemnejad, A., Kamath, G., Mosbach, M., Stanczak, K., and Reddy, S.
+Deepseek-r1 thoughtology: Let’s think about LLM reasoning.
+Transactions on Machine Learning Research , 2026.
+ISSN 2835-8856.
+URL https://openreview.net/forum?id=BZwKsiRnJI .
+Min et al. (2024)
+Min, M. J., Ding, Y., Buratti, L., Pujar, S., Kaiser, G., Jana, S., and Ray, B.
+Beyond accuracy: Evaluating self-consistency of code large language models with identitychain.
+In The Twelfth International Conference on Learning Representations , 2024.
+URL https://openreview.net/forum?id=caW7LdAALh .
+Mistral-AI (2025)
+Mistral-AI.
+Magistral, 2025.
+URL https://arxiv.org/abs/2506.10910 .
+Nguyen & Xu (2025)
+Nguyen, L. and Xu, Y.
+Reasoning for translation: Comparative analysis of chain-of-thought and tree-of-thought prompting for LLM translation.
+In Zhao, J., Wang, M., and Liu, Z. (eds.), Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 4: Student Research Workshop) , pp. 259–275, Vienna, Austria, July 2025. Association for Computational Linguistics.
+ISBN 979-8-89176-254-1.
+doi: 10.18653/v1/2025.acl-srw.17 .
+URL https://aclanthology.org/2025.acl-srw.17/ .
+NVIDIA (2025)
+NVIDIA.
+Nvidia nemotron nano 2: An accurate and efficient hybrid mamba-transformer reasoning model, 2025.
+URL https://arxiv.org/abs/2508.14444 .
+Pham et al. (2025)
+Pham, T., Nguyen, N., Zunjare, P., Chen, W., Tseng, Y.-M., and Vu, T.
+Sealqa: Raising the bar for reasoning in search-augmented language models, 2025.
+URL https://arxiv.org/abs/2506.01062 .
+Proietti et al. (2025)
+Proietti, L., Perrella, S., Zouhar, V., Navigli, R., and Kocmi, T.
+Estimating machine translation difficulty.
+In Christodoulopoulos, C., Chakraborty, T., Rose, C., and Peng, V. (eds.), Findings of the Association for Computational Linguistics: EMNLP 2025 , pp. 24261–24285, Suzhou, China, November 2025. Association for Computational Linguistics.
+ISBN 979-8-89176-335-7.
+doi: 10.18653/v1/2025.findings-emnlp.1317 .
+URL https://aclanthology.org/2025.findings-emnlp.1317/ .
+Qwen Team (2025)
+Qwen Team.
+Qwen3 technical report, 2025.
+URL https://arxiv.org/abs/2505.09388 .
+Son et al. (2026)
+Son, G., Yang, D., Patel, H. L., Agarwal, A., Ko, H., Lim, C., Panda, S., Kim, M., Drolia, N., Choi, D., Lee, K.-H., and Yu, Y.
+Pushing on multilingual reasoning models with language-mixed chain-of-thought, 2026.
+URL https://arxiv.org/abs/2510.04230 .
+Sprague et al. (2025)
+Sprague, Z. R., Yin, F., Rodriguez, J. D., Jiang, D., Wadhwa, M., Singhal, P., Zhao, X., Ye, X., Mahowald, K., and Durrett, G.
+To cot or not to cot? chain-of-thought helps mainly on math and symbolic reasoning.
+In The Thirteenth International Conference on Learning Representations , 2025.
+URL https://openreview.net/forum?id=w6nlcS8Kkn .
+Sun et al. (2024)
+Sun, Q., Yin, Z., Li, X., Wu, Z., Qiu, X., and Kong, L.
+Corex: Pushing the boundaries of complex reasoning through multi-model collaboration.
+In First Conference on Language Modeling , 2024.
+URL https://openreview.net/forum?id=7BCmIWVT0V .
+Wang et al. (2025a)
+Wang, F., Liu, H., DAI, Z., Zeng, J., Zhang, Z., Wu, Z., Luo, C., Li, Z., Tang, X., He, Q., and Wang, S.
+AgentTTS: Large language model agent for test-time compute-optimal scaling strategy in complex tasks.
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025a.
+URL https://openreview.net/forum?id=BuYtcTUMyA .
+Wang et al. (2025b)
+Wang, J., Meng, F., Liang, Y., and Zhou, J.
+DRT: Deep reasoning translation via long chain-of-thought.
+In Che, W., Nabende, J., Shutova, E., and Pilehvar, M. T. (eds.), Findings of the Association for Computational Linguistics: ACL 2025 , pp. 6770–6782, Vienna, Austria, July 2025b. Association for Computational Linguistics.
+ISBN 979-8-89176-256-5.
+doi: 10.18653/v1/2025.findings-acl.351 .
+URL https://aclanthology.org/2025.findings-acl.351/ .
+Wang et al. (2025c)
+Wang, Y., Zhang, P., Huang, S., Yang, B., Zhang, Z., Huang, F., and Wang, R.
+Sampling-efficient test-time scaling: Self-estimating the best-of-n sampling in early decoding.
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025c.
+URL https://openreview.net/forum?id=BcKYVmh3yH .
+Wang et al. (2025d)
+Wang, Y., Zhang, Y., Qin, Z., Zhi, C., Li, B., Huang, F., Li, Y., and Deng, S.
+ExploraCoder: Advancing code generation for multiple unseen APIs via planning and chained exploration.
+In Che, W., Nabende, J., Shutova, E., and Pilehvar, M. T. (eds.), Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pp. 18124–18145, Vienna, Austria, July 2025d. Association for Computational Linguistics.
+ISBN 979-8-89176-251-0.
+doi: 10.18653/v1/2025.acl-long.887 .
+URL https://aclanthology.org/2025.acl-long.887/ .
+Wei et al. (2022)
+Wei, J., Wang, X., Schuurmans, D., Bosma, M., Ichter, B., Xia, F., Chi, E. H., Le, Q. V., and Zhou, D.
+Chain-of-thought prompting elicits reasoning in large language models.
+In Proceedings of the 36th International Conference on Neural Information Processing Systems , NIPS ’22, Red Hook, NY, USA, 2022. Curran Associates Inc.
+ISBN 9781713871088.
+Wu et al. (2025a)
+Wu, D., Aycock, S., and Monz, C.
+Please translate again: Two simple experiments on whether human-like reasoning helps translation.
+In Christodoulopoulos, C., Chakraborty, T., Rose, C., and Peng, V. (eds.), Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , pp. 20435–20451, Suzhou, China, November 2025a. Association for Computational Linguistics.
+ISBN 979-8-89176-332-6.
+doi: 10.18653/v1/2025.emnlp-main.1031 .
+URL https://aclanthology.org/2025.emnlp-main.1031/ .
+Wu et al. (2025b)
+Wu, M., Xu, J., Yuan, Y., Haffari, G., Wan, L., Luo, W., and Zhang, K.
+(perhaps) beyond human translation: Harnessing multi-agent collaboration for translating ultra-long literary texts.
+Transactions of the Association for Computational Linguistics , 13:901–922, 07 2025b.
+ISSN 2307-387X.
+doi: 10.1162/TACL.a.25 .
+URL https://doi.org/10.1162/TACL.a.25 .
+Yu et al. (2025)
+Yu, Y., Zhang, Y., Zhang, D., Liang, X., Zhang, H., Zhang, X., Khademi, M., Awadalla, H. H., Wang, J., Yang, Y., and Wei, F.
+Chain-of-reasoning: Towards unified mathematical reasoning in large language models via a multi-paradigm perspective.
+In Che, W., Nabende, J., Shutova, E., and Pilehvar, M. T. (eds.), Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pp. 24914–24937, Vienna, Austria, July 2025. Association for Computational Linguistics.
+ISBN 979-8-89176-251-0.
+doi: 10.18653/v1/2025.acl-long.1213 .
+URL https://aclanthology.org/2025.acl-long.1213/ .
+Zebaze et al. (2025)
+Zebaze, A., Bawden, R., and Sagot, B.
+Llm reasoning for machine translation: Synthetic data generation over thinking tokens, 2025.
+URL https://arxiv.org/abs/2510.11919 .
+Zhang et al. (2024)
+Zhang, Y., Zhang, H., Li, L., and Xing, E.
+Evaluating step-by-step reasoning through symbolic verification.
+In Duh, K., Gomez, H., and Bethard, S. (eds.), Findings of the Association for Computational Linguistics: NAACL 2024 , pp. 2984–3002, Mexico City, Mexico, June 2024. Association for Computational Linguistics.
+doi: 10.18653/v1/2024.findings-naacl.188 .
+URL https://aclanthology.org/2024.findings-naacl.188/ .
+Appendix A Experimental Setups
+In this paper, we consider nine language pairs to study the reasoning capabilities of RLMs using WMT24++ benchmark, including Arabic (ar), Czech (cs), Farsi (fa), French (fr), Hindi (hi), Japanese (ja), Korean (ko), Russian (ru), and Chinese (zh). In selecting language pairs, we made sure to cover a diverse set of languages.
+A.1 Evaluation prompt
+We employ the originally suggested WMT24++ evaluation prompt with a
+slight adjustment ( Deutsch et al., 2025 ) , presented in the following box.
+WMT24++ Evaluation Prompt
+You are a professional s ​ r ​ c ​ _ ​ l ​ a ​ n ​ g {src\_lang} to t ​ g ​ t ​ _ ​ l ​ a ​ n ​ g {tgt\_lang} translator, tasked with providing translations suitable for use in t ​ g ​ t ​ _ ​ r ​ e ​ g ​ i ​ o ​ n {tgt\_region} ( t ​ g ​ t ​ _ ​ c ​ o ​ d ​ e {tgt\_code} ). Your goal is to accurately convey the meaning and nuances of the original s ​ r ​ c ​ _ ​ l ​ a ​ n ​ g {src\_lang} text while adhering to t ​ g ​ t ​ _ ​ l ​ a ​ n ​ g {tgt\_lang} grammar, vocabulary, and cultural sensitivities. Produce only the t ​ g ​ t ​ _ ​ l ​ a ​ n ​ g {tgt\_lang} translation, without any additional explanations or commentary. Please translate the following s ​ r ​ c ​ _ ​ l ​ a ​ n ​ g {src\_lang} text into t ​ g ​ t ​ _ ​ l ​ a ​ n ​ g {tgt\_lang} ( t ​ g ​ t ​ _ ​ c ​ o ​ d ​ e {tgt\_code} ):
+A.2 Training data distribution
+Figure 3: The distribution of language pairs in 28k structured reasoning traces as the training data. Most language pairs have a very low frequency. We put them in the Other category for presentation.
+Appendix B A Reasoning Example
+A generated reasoning trace and final translation for the given en-fr example by DeepSeek-R1 .
+Source Text
+(Input)
+While the Louisiana Republican can avoid confronting the issue for now, on January 19 the country will face its deadline to pass four of 12 annual spending bills. Johnson has publicly stated that he would not support a ”continuing resolution” (CR) to extend the deadline on these four bills to the February 2 due date for the remaining eight.
+Reasoning
+Hmm, the user wants me to translate an English political text about US budget deadlines into French. They’ve specified I should act as a professional translator focusing on French (France) conventions without any explanations.
+This text discusses Louisiana Republican Mike Johnson’s position on government spending bills. The key elements are: temporary avoidance of an issue, January 19 deadline for four bills, Johnson’s rejection of a ”continuing resolution” (CR), and the February 2 deadline for eight other bills.
+For the translation, I need to consider several aspects. ”Louisiana Republican” should become ”le républicain de Louisiane” to maintain political context. ”Confronting the issue” translates best to ”confronter ce problème” in French political discourse. The term ”continuing resolution” requires keeping the English abbreviation ”CR” with French explanation in parentheses - ”une ’continuing resolution’ (CR)” - as this is standard practice for technical terms.
+The dates need European formatting: ”19 janvier” and ”2 février”. For ”publicly stated”, ”a publiquement déclaré” sounds more natural than literal translations. The structure about extending deadlines to February 2 requires careful handling - ”reporter l’échéance au 2 février” flows better than word-for-word translation.
+I should ensure all verbs agree properly in tense and that the sentence structure maintains the original’s urgency while sounding natural in French. The final translation needs to be polished and ready for professional use without any translator’s notes.
+Generated Translation
+(Final output)
+Si le républicain de Louisiane peut éviter de confronter ce problème pour l’instant, le pays devra faire face, le 19 janvier, à l’échéance pour l’adoption de quatre des douze projets de loi de dépenses annuelles. Johnson a publiquement déclaré qu’il ne soutiendrait pas une ”continuing resolution” (CR) pour reporter l’échéance de ces quatre textes au 2 février, date limite pour les huit autres.
+Appendix C Translation Prompts
+We use the following prompts to generate translations at each step of our 4-step template using Command-A-Translate .
+Step-wise Translation Prompt Templates
+Draft (Initial Translation)
+Your goal is to translate a piece of text into {target_language} that accurately conveys the meaning and structure of the source text. Your translation should closely reflect the original content without omitting or adding information. If certain contextual details are missing, aim for a general translation that remains flexible across different contexts, and do not include any explanations or commentary. Keep the same number of lines as in the source text.
+Provide your best single translation of the original text enclosed in triple backticks:
+‘‘‘{source_text}‘‘‘
+Refinement (Adequacy-Focused Translation)
+Now, produce a new translation into {target_language} that focuses primarily on the adequacy of translation.
+Refinement (Fluency-Focused Translation)
+Now, produce a new translation into {target_language} that focuses primarily on the fluency of translation, ensuring it reads as if it were originally written in {target_language}. Provide only one refined translation enclosed in triple backticks and do not output anything else after that.
+Proofreading (Final Translation)
+You are tasked with proofreading and final editing of a translation. You will be provided with three different translations: first draft, translation focused on adequacy, and translation focused on fluency. Your goal is to provide a polished final translation of the source text into {target_language}. Keep the same number of lines as in the source text.
+For your reference, below are the source text, the draft translation, and refined translations, each enclosed in triple backticks:
+Source ({source_language}):
+‘‘‘{source_text}‘‘‘
+Draft translation:
+‘‘‘{preprocess_analysis}‘‘‘
+Refined translation (adequacy):
+‘‘‘{draft_translation}‘‘‘
+Refined translation (fluency):
+‘‘‘{refined_translation}‘‘‘
+Proofread the refined text for grammar, spelling, punctuation, terminology, and overall fluency. Ensure the translation accurately reflects the original meaning, intent, style, and structure, while sounding fully natural and idiomatic in {target_language}. Provide only the final polished translation enclosed in triple backticks and nothing else.
+Appendix D Static Template
+Here we bring an example of the static template. At each step, all the document translation is presented, making the reasoning trace lengthy and inefficient.
+Static Reasoning Template
+Step 1 --- Initial Draft
+Let me start by producing an initial, faithful translation of the source text into {target_language}, which will serve as the foundation for later refinements.
+{initial_draft}
+Step 2 --- Adequacy
+In this step, I focus on adequacy, ensuring that the full meaning of the challenging sentences is conveyed accurately and completely in {target_language}.
+{adequacy_focused_translation}
+Step 3 --- Fluency
+At this stage, I refine the challenging sentences, ensuring they read smoothly and naturally in {target_language}, as if originally written in it.
+{fluency_focused_translation}
+Step 4 --- Final Translation
+Finally, I bring together all the work from the previous steps, addressing any remaining issues or translation errors to produce a polished final version in {target_language}.
+{final_translation}
+Appendix E Structured Reasoning Templates
+To make a diverse training set and avoid overfitting on the predefined sentences in the structured reasoning template, we consider a diverse set of transitional sentences for each step. We randomly pick a sentence for each step to generate a reasoning trace. Below, you find the set of sentences we considered.
+Transitional Sentences for Structured Reasoning
+Initial Draft
+•
+Let me start by producing an initial, faithful translation of the source text into {target_language}, which will serve as the foundation for later refinements.
+•
+To begin, I’ll create an initial, precise translation of the given text into {target_language}, laying the groundwork for further adjustments.
+•
+I’ll translate the source text faithfully into {target_language} to form the base for refinement.
+•
+For the first step, I’ll produce a faithful initial translation into {target_language}.
+•
+Let’s begin with an accurate initial translation of the source into {target_language}, which I’ll refine in later steps if needed.
+Adequacy Refinement
+•
+In this step, I focus on adequacy, ensuring that the full meaning of the challenging sentences is conveyed accurately and completely in {target_language}.
+•
+My attention here is on adequacy, making sure the difficult sentences preserve every nuance and idea from the source in {target_language}.
+•
+This step centers on adequacy, confirming that each complex sentence accurately communicates the original message in {target_language}.
+•
+Adequacy guides my work in this step. I translate the challenging sentences so their sense remains complete and precise in {target_language}.
+Fluency Refinement
+•
+At this stage, I refine the challenging sentences, ensuring they read smoothly and naturally in {target_language}, as if originally written in it.
+•
+This step focuses on improving fluency, making the difficult sentences sound idiomatic in {target_language}.
+•
+I rework the challenging parts to produce fluent, native-like versions in {target_language}.
+•
+I dedicate this step to refining the harder sentences, aiming for smooth and natural expression in {target_language}.
+Final Translation
+•
+Finally, I bring together all the work from the previous steps, addressing any remaining issues to produce a polished final version in {target_language}.
+•
+I conclude by integrating all prior revisions and delivering a coherent, high-quality translation in {target_language}.
+•
+This step pulls together all prior improvements, correcting residual errors and finalizing the translation in {target_language}.
+Appendix F Direct Translation Baseline
+Here we present the templates we use for direct translation baseline. In this setup, we have discarded the reasoning traces, and one of the randomly picked following sentences is put within the thinking tokens.
+Direct Translation Templates (No Reasoning)
+•
+The user is asking for a translation from {source_language} into {target_language}. Analyzing the source text, I noticed that it is not particularly challenging to translate. Therefore, I will skip the reasoning steps and proceed directly with the translation.
+•
+This looks like an easy translation request. I’ll skip step-by-step reasoning and directly translate it into {target_language}.
+•
+Translate this from {source_language} to {target_language}. Since the text doesn’t appear complex, I’ll skip detailed reasoning and translate it directly.
+•
+A translation from {source_language} to {target_language} is requested. The source seems easy, so I’ll provide a direct translation right away.
+•
+Let’s translate this into {target_language}. The text isn’t difficult, so I’ll proceed without intermediate reasoning.
+•
+I understand the task: translate the given text to {target_language}. It’s straightforward, so I’ll skip the reasoning process.
+•
+This is a straightforward translation query. I’ll respond with a direct translation into {target_language}, without a stepwise explanation.
+•
+The user needs a translation from {source_language} into {target_language}. I’ll create the final translation directly, as the text poses no challenge.
+•
+I’ll translate this from {source_language} into {target_language}. Because the content is easy, I won’t follow a step-by-step translation process.
+•
+The task is to translate from {source_language} to {target_language}. The text looks simple enough, so I’ll go straight to the translation.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

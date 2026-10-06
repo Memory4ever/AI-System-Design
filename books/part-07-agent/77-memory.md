@@ -36,6 +36,10 @@ Context 只在当前 call 中可见；Memory 可跨 turns、sessions 或 tasks �
 某种向量表示、摘要或 value state 在开放环境中真实、可授权或可长期维护。无法验证适用假设时，应保留最小 typed
 state 与原始 evidence，并让 Planner/环境 observation 决定行动；短任务、完全可观测环境仍以无长期 Memory 为基线。
 
+保存了状态还不等于保存了任务所需的信息。拓扑图保留节点与连边，适合回答可达性，却未必保留距离、方向或访问顺序；去重节点序列保留某些历史身份，又可能失去重复经过同一地点时的上下文。应先把问题需要的 identity、connectivity、metric 和 chronology 分开，再判断一种 memory 表示对哪些查询充分，而不是把更小的图或摘要直接当成原历史的等价替代。需要方向、路径长度或时序证据时，保留有序 observation、route 与原始引用，让派生结构只服务它实际保存的信息。<!-- source-family:SF-2026-ARXIV-2512-24504 -->
+
+符号地图实验能检验模型如何使用这些工程化表示，但不能据此证明模型自主学会了同样的内部 memory。在固定网格、局部视野与预设路线下，直到每个地点至少观察一次的停止规则只对齐曝光覆盖，不对齐探索步数、轨迹长度或推理 token；图、估计几何与有序历史的准确率差异也必须绑定任务切片和读取方式。这个边界保留了显式地图与原始历史的共存理由：表示缺失任务所需信息时，应回读有序证据或重新观察，而不是靠增加推理预算补造距离、方向或历史事实。真实定位、持久地图校正与资源预算仍需另行验证。
+
 模型架构中的 test-time neural memory 也不属于本章的 Agent Memory。前者在 forward 期间按
 surprise/gradient 更新模型内部参数化 state，owner 是 sequence model，主要目标是压缩和利用
 长输入；后者由平台跨调用持久化，必须具备 provenance、authorization、correction 与 deletion。
@@ -47,6 +51,8 @@ surprise/gradient 更新模型内部参数化 state，owner 是 sequence model�
 
 在线 3D reconstruction 用计算、显存与持续校正成本换取更稳定的 novelty reference，定位误差和场景变化则会累积 stale-map failure。现有证据只覆盖静态室内场景、特定 3DGS 表示和两个生成式 OOD world，不证明地图是真实 world model，也不证明 novelty 等于任务价值。Map consistency、localization 或 stationarity 失效时，应重新锚定直接 observation，清除陈旧 episodic state，并回退短时 egocentric context、经过验证的显式地图或安全控制器。
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-22814:end -->
+
+另一条条件分支不在写入时把所有语义立即融合进全局地图，而保留 observation、time 与 pose，检索时才将候选语义投影到当前几何估计，再以近处视觉观察验证或裁剪目标。这样把 semantic observation 的保存与几何对齐的修订分开，避免旧 pose 误差一经融合便难以回查；它仍需可靠定位、存储索引和 top-K/视觉验证成本，检索结果不成为事实 oracle。[HIMM 的有限室内对照](https://arxiv.org/html/2602.15513v1#S3)使用 GT 轨迹/答案提炼规则，不是无标签在线学习，Qwen 分支的部分任务与 SPL 反侧也不支持全任务最优。Pose 或验证失效时重新观察并保留原始引用，既有在线融合地图和短时 context 仍可用于相应负载，不能把延迟投影解释成对齐无误或独立 world dynamics。<!-- source-family:SF-2026-ARXIV-2602-15513 -->
 
 ## Memory 类型是用途，不只是存储介质
 
@@ -118,6 +124,9 @@ binary label 不能恢复唯一 next state，并报告了 typed actions 的改�
 所有生产场景，也没有处理多用户 authority、真实并发和故障恢复。因此正文吸收状态机原则，
 不把论文 taxonomy 或 benchmark 写成平台规范。
 
+可执行的更新成功，也不等于写入内容可信。简单的处理成功率或“与旧记录兼容”分数适合诊断 transition，却可能把已经接纳的 poison 全部打成高 trust；用全部请求作分母又会把拒绝写入造成的零攻击，与有用内容得到安全接纳混在一起。写入 Gate 因而应分别保存接纳/拒绝人口、接纳项中的真实 poison、可用任务效用和评分来源，读取时仍回到原 evidence，而不是让历史处理成功自动提高内容权威。[受限 memory-poisoning 对照](https://arxiv.org/html/2601.05504v1)既有接纳含 poison 而 trust 全为1，也有零接纳的模型；二者都不能单独认证有效防御。额外标签、复核与读取检查有成本，原研究的特定场景不支持生产防御或通用阈值；来源与效用未核实时，保留 pending/隔离和原始记录，不能把 accepted 状态升级为事实真值。
+<!-- source-family:SF-2026-ARXIV-2601-05504 -->
+
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-22142:start -->
 有限容量和部分可观测性又把问题从“动作类型”推进到“对哪个 item 做动作”。FIFO、recency 或手写规则在环境稳定、身份简单时透明可靠；当每一步的候选集合大小变化、同一列表位置承载不同事实时，固定槽位的 value 会把 item identity 与排列顺序混淆。可学习的条件分支可以为每个候选分别估计 transfer/retain value，并在时序更新时按 item identity 对齐可变集合。它只拥有写入提议，Memory owner 仍执行 provenance、conflict、capacity 与 durable commit；value 不是 truth score。
 
@@ -141,17 +150,33 @@ ALFWorld、HumanEval 及论文定义的 extractor 和对照实验，不支持通
 
 ### 从 Outcome Reward 到 Content-level Credit：归因只能约束写入，不能成为真值
 
+只给完整轨迹的正确性奖励，无法区分某次 memory rewrite 是否保留了答题所需内容。除了逐 token 干预，还可在有 gold answer 的训练任务中，用同一 policy 对答案的长度归一似然比较压缩 memory 与完整先前轨迹，构造 memory-local 辅助 reward，并只把它加到 memory span 的轨迹 advantage 上。比较必须绑定 scorer/policy 与目标版本；这是一种任务效用 proxy，不是无监督事实判定，也不证明某个 token 的唯一因果贡献。其他 reasoning/tool tokens 仍保留 trajectory-level credit。
+
+这个分支需要额外答案评分与 memory 边界，且不同 step/rollout 已观察的工具信息不等价，baseline 修正并未消除全部状态偏差；提高答案似然也可能固化模型先验。[MemPO 的受限对照](https://arxiv.org/html/2603.00680v1)在同 backbone、环境与 memory 设定下比较辅助 reward，但跨方法完整/截断上下文不同，token 数也不包括全部训练评分成本。它不证明开放任务保真或永久丢弃原始轨迹安全。缺少 gold、scorer 漂移或必要证据被压掉时，应保留原始 episode，回退 outcome-only/可靠内容核验，再由独立 held-out 评价决定是否采用学习出的 memory 策略。<!-- source-family:SF-2026-ARXIV-2603-00680 -->
+
 只用最终 QA reward 训练 memory policy 成本低，也适合短链路、固定 schema 和容易人工检查的任务；但它不能回答某段中间 memory content 是否真正帮助了最终答案。一个实验性分支是固定 retrieval/answer interface，对 memory token 或 span 做 masking/counterfactual scoring，把对 answer score 的变化映射为 local process reward，再与 global outcome reward 合并。它把“这次答对了”推进为“哪些被写入的内容可能贡献了这次答案”，从而给 admission、update、compress 与 discard 更稠密的学习信号。
 
 归因分数仍不是 causal ground truth。相关 token 会互相替代或共同起效，masking 会改变输入分布，judge 与 answer model 也共同决定 credit；反复 counterfactual scoring 还增加训练成本。因此 learned memory write 不能因为 attribution 较高就获得事实权威。source episode、extractor/judge version、masking policy、local/global reward、poisoning test、selective deletion 与 held-out evaluation 都必须进入写入收据。heuristic admission 与 outcome-only reward 在稳定、低风险、成本敏感的场景仍是合理分支。
 
 公开实验绑定 Qwen3-4B、LongMemEval training、LoCoMo/PerLTQA OOD、4×H800 80GB、3000 SFT samples、400 RL samples 与 max sequence length 6000；代码和 checkpoint 在 v1 中仅承诺 acceptance 后公开。该证据说明 content-level credit 可以作为训练 proxy，不证明它能识别唯一正确的 memory，或可以跳过 provenance、poisoning 与 deletion gate。
 
+给 memory rewrite 分配 credit 之外，还要把“是否采用这次更新”与“是否停止继续读”分开。一个顺序 QA 分支让 memory agent 同步生成候选 memory、update gate 与 exit gate：update 为 false 时保留旧 memory、丢弃已经生成的候选，不表示省掉候选计算；exit 才决定结束扫描并交给 answerer。训练 update 使用 chunk 是否含所需 evidence 的 GT 标签，训练 exit 使用最后必要 evidence 的位置，并与最终 QA reward 组合。这改变的是更新和读取的控制接口，不是 memory 内容获得真值权威，也不是仅靠终局正确答案就能自认证证据充分或因果归因。
+
+两 gate 的收益取决于问题类型与模型容量。[GRU-Mem 的受限 QA 对照](https://arxiv.org/pdf/2602.10560v1)中，3B 在加入 exit 后低于只用 update gate，7B multi-question 也出现明显退步；需要跨全历史收集多个值的问题可关闭 exit，继续扫描。候选生成、GT evidence 标注与更不稳定的多奖励训练都增加成本，chunk budget、answerer 和门控策略改变后须重验，不把较短 memory 或单组 throughput 数字当作全链路更省。缺少必要证据标签、early exit 漏信息或跨题质量回归时，保留无 exit 的完整读取、旧 memory 与原 outcome-only/heuristic 分支，再以 held-out QA 和原始 provenance 决定是否采用学习出的控制。<!-- source-family:SF-2026-ARXIV-2602-10560 -->
+
+比反事实评分更便宜的归因分支，是记录固定 answerer 实际检索各类 memory 的次数，在共享 QA reward 下放大最常被检索类型的梯度；始终进入 Context 的 core memory 则不属于这份检索计数人口。[受限 memory-construction 方案](https://arxiv.org/html/2601.05488v1#S3)同时用引用旧entry的新时间戳保存更新历史，但被检索频繁只说明 reader 使用了该类内容，不证明其唯一因果贡献或事实正确。Synthetic QA、answerer/judge调用、更新引用与计数都增加成本，过强放大也会退步；answerer或retrieval策略改变时，原credit失去可比性，应重新验收或回退共享outcome/可靠内容核验。保留旧entry能支持审计，不使新时间戳成为事实更新证明，也不替代独立provenance与写入Gate。<!-- source-family:SF-2026-ARXIV-2601-05488 -->
+
+若要把检索效用分到具体操作，而不只重权 memory 类型，还可为每个 entry 保存最后一次产生或更新它的 step ID。固定 answerer 检索后，把每题 answer score 均分给它实际选中的 entries，再沿这个映射加总到操作 step，并与均匀 rollout credit 混合；另以经过 verifier 筛选的 chunk QA 检查局部信息获取。每题检索集合非空、每个 entry 都有完整映射时，step credit 的和能保持 global reward，但守恒不证明相同 policy gradient，更不识别哪个 entry 或更新具有唯一因果贡献。<!-- source-family:SF-2026-ARXIV-2601-08435 -->
+
+检索与 QA 构造会增加 answerer、verifier 和训练成本，单层 schema 与评分采样也会改变对照条件。受限消融中，只有 evidence 分账的变体记忆更短但任务质量低于 outcome-only，合并局部 QA 才改善该配方；随机使用20% global QA、训练 epochs 与 baseline steps 不同，不能推出同预算普胜。反复选中错误证据还会得到代理信用，空检索或更新 lineage 丢失也使守恒条件失效；此时应回退可靠内容核验、完整 episode 与共享 outcome credit，不让高 attribution 直接提交事实写入或删除。
+
 <!-- semantic-body-binding:SF-2026-SEED-TASKMEM:start -->
 统一的 memory-quality policy 在任务分布稳定、评估预算有限时最简单；任务类型变化后，同一条历史对不同目标的效用可能相反。一个轻量分支保留通用 base policy，再为当前任务训练小型 task-conditioned adapter，并用最近任务样本形成可撤销的 selection proxy。Raw episode 与 provenance 仍由 memory store 拥有，adapter 只拥有 retain/rank proposal，task evaluator 决定是否采用，durable memory owner 才能提交写入或淘汰；“对当前任务有用”不能升级为事实真值。
 
 这种适配用额外 task identity、recent-task buffer、adapter revision 与回归评测换取更细的选择，却会放大短期分布偏差、遗忘旧任务，并让 proxy 与 working model 一起漂移。当前证据绑定官方披露的 Qwen3-VL、作者 benchmark 与离线设置，不证明生产耐久性、真值权威、语义/视觉 memory 的普适表示或 embodied 闭环。任务证据不足、跨任务回归或 adapter 漂移时，应停用 adapter，回退通用 policy、原始 evidence 与显式人工/规则校验。
 <!-- semantic-body-binding:SF-2026-SEED-TASKMEM:end -->
+
+任务效用和规范可接受性还可能需要两份不同的经验 proxy。一个受限分支让 evaluator 检索 executor 的任务经验与 evaluator 的规范经验，先产生 utility draft，再作规范 refinement，最后交给 executor 执行；执行结果分别驱动双方经验更新，而不是把“高任务分”自动写成可信策略。两份 bank 并不提供独立事实真值，规范 judge 也不拥有安全 authority，refined plan 仍是受约束 proposal。它增加检索、生成/评价调用和共同偏差积累；[受限任务对照](https://arxiv.org/html/2602.03224v1)中，数学与其他任务的效用/规范趋势不一致，不能由双轨更新保证安全或永久避免坏经验。没有可靠规范、judge 漂移或两侧目标冲突时，应停用自动经验演化，回退原始 evidence、现有写入/执行 policy 与人工或规则核验。<!-- source-family:SF-2026-ARXIV-2602-03224 -->
 
 ## Memory Read 是受约束检索
 
@@ -180,6 +205,12 @@ score(m)
 该公式只是策略框架，权重由 use case 决定。读取前必须先做 tenant/user/agent authorization，再按当前 task 与 token budget 选择。
 
 Recency 高不代表正确，similarity 高不代表可披露。Memory read 还要返回 source、time、confidence 和 supersession state。
+
+当前任务对一条记忆的相关性还不等于它支撑后续推理所需的分辨率。一个视觉记忆分支保存 Agent 生成的 parent/subquery DAG，以相关性、出度和衰减提出节点能量，再传播 successor 的需求，按 top-K 与预算分配图像/token resolution。[VimRAG 的有限证据](https://arxiv.org/html/2602.12735v1)将依赖使用与表示预算耦合，但 Agent 的边不是真实因果链，top-K 仍可删掉桥接节点或祖先，不能签完备闭包。训练用平均像素分配、推理才启用动态规则，两种 controller 不是同一实证条件；像素额度也不自动等价模型 token。保留可追溯原图 handle、权限和版本，重取/重新编码、图维护与选择费用计入完整读取预算；桥接证据、当前身份或质量不足时，再取原源或回静态分辨率/普通检索，而非以低能量宣布记忆没有事实价值。 <!-- source-family:SF-2026-ARXIV-2602-12735 -->
+
+个人 GUI 习惯的复用还要区分语义相近与执行轨迹相容：两次记录都在“订票”，并不表示 screen/action 顺序、时段或当前场景可互换。一个受限分支在日级聚类中保留原始 episode，除语义/集合相似性外比较 action trajectory，并用代表性 medoid 构造执行相关 prototype；再由时间、场景与重复模式决定是否向当前任务提出隐含 intent。Prototype owner 持有这份可撤销的行为概括，当前 state 约束它的适用性，但频繁模式仍不是用户此刻的意图，proposal 更不能继承 tool-action 的执行权限。
+
+这种分工增加轨迹抽取、聚类维护、state 校准与误触发成本。[有限个人 GUI 实验](https://arxiv.org/html/2601.09636v1)支持加入 action 信息后的局部离线比较，但文中的 DTW 距离与“一致性越大越好”得分方向未说明转换，不采用公式或阈值配方；SSR/CER 比较离线 gold trajectory，不是在线 goal success。完整分支仍有约49% false alarm，真实设备依赖人工观察且受版本/runtime影响，不能由 prototype 直接授权 proactive action。当前场景不匹配、误触发过高或证据 lineage 不足时，应撤回该概括，回退 reactive retrieval、逐步 observation 或用户确认；简单且明确的短任务仍无需持续的行为原型维护。<!-- source-family:SF-2026-ARXIV-2601-09636 -->
 
 存储完整历史便于续做，却不证明 Agent 缺席期间的旧前提仍适用。重返任务时，可以把 departure checkpoint 与相关更新绑定一个 return epoch，分别检查单项授权、时间有效性、task applicability 和 source binding；没有明确点名替换的更新也可能使依赖前提失效。随后在预算内检查整组选中 evidence 是否覆盖关键 obligations：各项都合格仍可能整体缺依据。覆盖不足就 reset 或阻止准入，不能让高相似度补签；私有经历只有绑定 source 已进入准入视图才可恢复为 context。
 
@@ -269,6 +300,8 @@ utility 回传给 memory ranking；但这个差值仍混合 generation sampling�
 恢复；parser/error fallback 也可能静默改变训练标签。因此应同时测 candidate recall ceiling、selection precision、
 working-model outcome、policy drift、fallback rate 和 selective deletion，而不只测最终任务分数。
 
+效用排序还可能形成冷启动反馈环：新 memory 没有可靠反馈，greedy 排名不给它曝光，随后也无法取得更新效用的证据。一条受限分支为 utility 保留均值与后验不确定性，用语义邻居统计初始化 prior，再以 Thompson sampling 给不确定条目有限探索机会；相对无 memory 的同任务 reward 差值用于更新已用集合，不因此取得单条记忆因果贡献。失败后的 teacher→工具→更强反馈 cascade 也不制造事实权威：作者的“human expert”实际由 Gemini 模拟，prior 可能继承邻居偏差，探索可能把坏记忆送入 Context。[U-Mem 的必要对照](https://arxiv.org/html/2602.22406v1)只支持所测模型/任务及 train-stream 后冻结 memory 的测试，不能证明真实持续在线最优；更多检索、base 对照、teacher/tool 与 token 消耗仍付费。反馈或预算不足时，保留静态语义检索、保守 utility 排序和既有事实治理，而不为追求曝光绕过授权或真值检查。<!-- source-family:SF-2026-ARXIV-2602-22406 -->
+
 这条演进把部分复杂度从 write-time graph/index 构建迁到 read-time scanning/generation。Embedding top-k 在
 高吞吐和短 query 下仍更便宜；graph/hierarchical index 在高复用、显式关系和严格 query latency 下仍有价值；
 full Context 在历史可控且不能容忍 miss 时仍成立。Learned proxy 更适合作 authorized candidate set 之后的
@@ -333,15 +366,23 @@ failure model，不能证明生产 memory 的自然相关结构已被准确估�
 
 Write-time summary 在查询分布稳定、存储或隐私预算严格时合理：一次压缩降低后续检索与上下文成本。但它对未来问题不可知，删除的细节无法恢复。相反，保存全部 raw history 并在每次查询中整体交给大模型，会提高 recall，却把噪声、context rot、延迟和授权风险推到读路径。
 
+低成本 summary 与 raw 回读也可以构成有界升级闭环，而不每次固定读取全部历史：先由当前 query 的 sufficiency controller 判断已检索 summary 是否足够，缺口或不确定时才沿 source pointers 升级到原始记录；回答核验后，把有 provenance 的新派生摘要回填供以后读取，但不覆盖原始记录。[原版本的路由与回填](https://arxiv.org/html/2602.17913v1#S2)支持这一分责接口，不保证 controller 能可靠发现所有遗漏，verification 也仍可能错。Linked/global raw 检索增加 token、延迟与验证成本；固定 queries 的三 epoch 实验把 tier1 在每轮查询内冻结、轮间更新，不能当真实线上自主持续改进的证明。Summary、raw pointers、controller/verifier和回填 revision共同影响读取，更新/删除传播与并发一致性仍须维护；来源失效、摘要冲突或路由不稳时保留 raw 直读、静态摘要和独立 claim/evidence gate，不以回填更多内容自签知识正确。<!-- source-family:SF-2026-ARXIV-2602-17913 -->
+
 中间路线是保留带 provenance 的原始 interaction，先做高召回检索，再按当前 query 把候选划分为有重叠的有界窗口；轻量 constructor 对每个窗口执行 keep/drop/rewrite，最后由 evidence assembler 合并。重叠窗口保护跨边界事实，但必须保存 source span、rewrite lineage 和去重规则，避免压缩结果脱离原文。
 
 Late construction 把不可逆信息损失延后，却增加每次查询的计算、judge/calibration 漂移和并发更新一致性；它也没有消除 deletion propagation、ACL 或 freshness 问题。查询重复且 schema 稳定时，预计算 summary 仍可能更便宜；高风险回答还应让最终 claim 回指 raw evidence。现有 LongMemEval/LoCoMo 结果只支持作者 workload 下的 accuracy/context trade-off，不证明更低的全生命周期成本。
+
+写时抽取的经济性还要与可缓存的完整历史比较，而不是默认长上下文每轮都付全价。对静态 history 的重复查询，派生 fact store 的成本近似为一次 extraction/embedding 加每轮 retrieval/read；完整历史则是一轮未缓存输入加后续 cached input 与输出。只有两条路径的累计成本交叉后，前置写入才真正摊薄，交点随缓存命中、模型/价格、查询数与历史更新频率变化。Raw history 路径没有 write-time 丢失，但仍受模型信息利用限制；fact extraction 省读成本，却可能删除未来问题所需的时间、共指或细节。<!-- source-family:arxiv:2603.04814v1 -->
+
+fact-memory 与 long-context 的受限比较在三个公开记忆任务中观察到这种质量/成本反转，但它使用不同 extractor 与同类 reader/judge，并按静态重复历史和既定输入缓存折扣推算交点；不能据此把结果唯一归因于 memory 架构，也不能把约十轮视作通用阈值。在线新事实、cache invalidation、写入更新、索引/存储、并发和尾延迟须另计；长 history 的实测 API 重试成本也不同于理论缓存模型。低查询频率、细节密集问题或缓存稳定时保留完整历史；高重复读取且抽取可追溯时可使用 fact store，必要时回读 raw episodes，而不以便宜替代事实保真。[实际比较与成本假设](https://arxiv.org/html/2603.04814v1)见 §3–4。
 
 若 constructor 本身要学习“当前任务该抽出什么记忆”，训练信号也要与读时用途对齐：保留可回指的原始轨迹，检索后按任务条件生成有界记忆，让冻结 executor 使用，再由任务 outcome 更新 curator，而不是只奖励写时摘要的相似度。这样把记忆**构造策略**与最终行动分开，却增加一次模型调用、检索召回瓶颈和 outcome 归因误差；旧的预计算摘要仍适用于重复查询或严格读时延迟。现有 JitMem 证据仅覆盖其 ALFWorld、WebShop 和 tau²-bench 的作者环境，不证明新任务、新模型或权限边界下的自动策展可靠。<!-- source-family:SF-2026-ARXIV-2609-27334 -->
 
 当前 query 之外，还可能改变的是消费记忆的模型。同一 backbone 长期读写时，固定摘要与提示格式最容易维护；换成异构模型池后，原模型写出的有效记录未必能被新模型同样利用。一个受限适配分支将两个位置分开条件化：writer 根据本步的 source-model profile，把 observation/action 形成可存储 entry；reader 根据当前 target-model profile 与 observation，从 bank 构造 prompt-ready context。二者不是先后可互换的 summarizer，模型 profile 也不是事实 authority；原始记录、来源与适用条件仍须保留，适配器只能改变呈现。
 
 这种分责减少固定读写接口对单一模型的耦合，却新增两套适配器、profile 维护、训练调用和错误继承成本。联合训练可用 terminal outcome 相对固定 memory baseline 的增量筛选轨迹，优先采样增益较低的模型组合；这只是有界 curriculum，不实现所有组合的最坏情况保证。[受限跨模型实验](https://arxiv.org/html/2606.07711v1)中，移除 reader 在部分任务仍有竞争力，过强的采样偏置也会降低收益；writer 误存或 reader 丢掉桥接信息仍可能破坏推理。模型池、任务或 profile 漂移时应重新验证读写两侧，不能凭已见模型上的收益自动晋升；固定模型、重复查询与严格读时延迟下，原有摘要/直接读取仍合理。<!-- source-family:SF-2026-ARXIV-2606-07711 -->
+
+Query-local construction 还可以把一组实体及其派生关系描述组织成工作记忆，而不只输出一次性的摘要。此时实体集合是下一轮检索接口：local 路径从当前记忆与原图实体的邻域扩展，global 路径从原图中尚未被当前记忆覆盖的实体补查；仅更新描述可以保持实体锚点不变，merge 的实体并集则改变以后哪些来源处于两条路径的作用域。因而应同时保存 query、实体集合、原始 source 指针和更新版本；模型推断的关系、甚至为未知实体新增的图节点，都不能直接晋升为原始事实。关系描述越大或合并越多不等于支持越充分，还会增加 LLM/embedding 调用、图维护、错误合并与删除传播成本；有限检索 steps/chunks 不是整个构图—检索—回答生命周期的预算。锚点错误、遗漏桥接实体或 provenance 无法恢复时，应回读 raw chunks、扩大检索或保留原有独立记录；静态查询与低风险存储仍可使用简单 fact store，而不必引入这套迭代工作记忆。<!-- source-family:SF-2026-ARXIV-2512-23959 -->
 
 ## Consolidation 与 Forgetting
 
@@ -353,6 +394,8 @@ Memory schema 也可以由重复 interaction 在写入前归纳，而不必固�
 
 这条分支增加候选归纳、抽取与离线 consolidation 调用，并随 schema、用户与模型变化承担重建成本；相似度只提出可合并候选，时间冲突、具体细节与不可相互包含的事实不能因向量相近自动删除。受限同 query-budget 消融支持组织收益，却未匹配整个写读生命周期预算，部分能力和较大 backbone 的完整历史仍更强；低频写入、短会话或 schema 已稳定时，固定 summary/raw history 继续合理。抽取或合并无法回指原记录时保留原始 evidence 与旧索引，不把目标、情绪或偏好 projection 直接晋升为权威事实。 [必要机制与反证](https://arxiv.org/html/2609.21940v1)。<!-- source-family:SF-2026-ARXIV-2609-21940 -->
 
+Derived experience 的支持集也可由 functional phase 控制，而不只按固定 transition 切片：当前 subtask 开始时预测 phase、objective 与 keywords，先硬过滤同 phase，再语义 Top1；局部 subtask 结束即抽取 guidance 并写入 bank，不必等整 issue 完成。这个周期把检索与写回责任绑定当前 phase，但四类 phase 是模型标签，不是执行正确性；同 backbone 的 judge/extractor 也不算独立事实核验。硬过滤会漏掉跨阶段解法，早期 memory 人口还有退步，不能从后期平均收益推无限增长定律。原 raw episode 保留 provenance，预测/判分/embedding/抽取/存储及检索计费，同 step cap 不等同总 API/token 预算；phase 失配或抽取污染时保留 global retrieval、完整 raw trace 与固定粒度。<!-- source-family:SF-2026-ARXIV-2602-21611 -->
+
 长期 event log 会无限增长。Consolidation 将多个 episodes 转成较高层 summary 或 semantic fact：
 
 ```text
@@ -363,6 +406,14 @@ episodes
 → link to sources
 → retain or expire raw records by policy
 ```
+
+长推理轨迹的 consolidation 还须区分子问题是否已经解决。一个受限分支保留推断的依赖图：只有属于同一已解决子问题的连续轨迹才被 Fold 成较紧凑节点；失败、过时或无关片段则可经 Flush 转为保留结构关系的紧凑历史，不假定它们已经解决。Flush 在这里不是原始记录的删除，更不等于下文 retention policy。Copilot 提出的依赖与解决状态仍是模型判断，不能把图或摘要晋升为真实因果与事实；需要保留 source pointer、状态身份和可回读原轨迹作为工程退路。<!-- source-family:SF-2026-ARXIV-2601-08079 -->
+
+[MemoBrain 的局部对照](https://arxiv.org/html/2601.08079v1)支持将这两种操作与普通裁剪分开，但小于16k的记忆预算可退步，某些任务工具调用增加，较大却未训练的 copilot 还会误操作。Copilot 训练、依赖维护与在线管理不是免费：异步构造只有能被推理时间遮住时才不增加等待，过长历史会增大管理时延；推理 Agent 提前结束、没有触发管理时也无收益。短轨迹、依赖判断不可靠或成本无法摊薄时，保留完整历史、固定摘要和简单窗口选择，而不由新图结构授予普遍更省调用或可靠长期记忆。
+
+资源受限且交互延迟敏感时，consolidation 还可以按会话是否活跃分期：active path 只做有界检索、组装上下文并保存本轮 raw query-response；连续静默超过阈值后，inactive path 再分块提取 session memories/profile、跨块合并并与旧记录整合。这个触发条件改变的是维护发生的时间，不是事实 authority；静默不证明用户任务已经完成，profile 与摘要也仍是可撤销的模型推断。它把更重的抽取/合并从响应路径移开，却让下一次读取面对尚未维护的新记录与可能过期的摘要。<!-- source-family:SF-2026-ARXIV-2601-08128 -->
+
+[端侧 companion 的受限验证](https://arxiv.org/html/2601.08128v1)使用 Jetson 8GB、同一 Qwen2.5-7B int4 模型完成两期，不能据此承诺维护在用户返回前结束或可无损抢占。QA/画像来自合成用户与模型 judge，固定检索在 inferred questions 上反而退步；较长 raw-context 基线运行于 A100，并非相同 edge 预算。动态 prefix 会破坏缓存，抽取、合并与状态驻留同样付费。因而 stale-read 策略、返回时的抢占/读写协调与失败恢复是工程上仍须验收的要求，不是作者已验证能力；短会话、空闲期不足或抽取质量不可靠时，保留 raw history、简单窗口和同步小幅维护，不由静默阈值授权摘要覆盖原始证据。
 
 压缩会损失细节，所以 summary 应能追溯 source episodes。Forgetting 不是失败，而是必要能力：
 
@@ -537,6 +588,10 @@ Update/Delete 必须引用原 fact identity，争议时回到 episodic evidence�
 ReflectWorld-MM 提供了这一机制的实验性证据，但 mixed judge、未重建的 write-side ablation 和缺失 production
 SLO 不支持通用 superiority。
 
+即使对象 identity 已有单独 owner，视觉流仍要决定有限短期空间保留哪些 frame。固定间隔分段容易切断一个持续事件；一个受限替代是以新 frame 与当前事件平均灰度直方图的变化提出边界，把结束事件按 FIFO 迁出短期窗口，并在当前事件超过容量时用 reservoir sampling 让该事件已见 frame 具有相同入选概率。这里边界只是低成本视觉变化 sensor，不是语义事件 oracle；frame-uniform 也不保证罕见但关键的瞬间会留下。迁出的 caption、embedding 与检索索引是派生记忆，必须保留原 frame/time 的取证关系，不能当作可逆的视频压缩。<!-- source-family:SF-2026-ARXIV-2602-15329 -->
+
+这条分支把短期 retention 与长期 evidence 生命周期分开，不把固定 32-frame 窗口说成总存储恒定。EventMemAgent 的有限评价使用预计算记忆和离线 GRPO；event/reservoir 相比固定分段的局部收益较小且未报重复运行区间，移除 OCR 的切片或已有 streaming baseline 也可能更好。长期写入、检索和额外工具调用仍有成本，尚未证明真正无限在线流或稀有事件保证。短 clip、精确回放和查询关键帧已知的负载仍可采用固定窗口或原始 frame 保留，而不是强制事件化。
+
 ## 从原始轨迹到派生策略：Memory 的演进不是无限追加
 
 Agent 最早可以直接重放最近对话或成功 trajectory。随着任务增长，原始记录变长、检索噪声增大，并会反复
@@ -603,6 +658,10 @@ source trajectories
 一旦进入 weights，逐条 provenance、selective deletion 与 exact rollback 不再天然成立；必须冻结 training set、
 update job、checkpoint lineage、judge 和 before/after evaluation。外部 memory 在频繁更正、隐私删除和小样本场景
 仍更合理。Memory Intelligence Agent 提供 Experimental loop，不证明 online weight update 已经 production-safe。
+
+固化经验还有一条失败回退分支：先按 query 与派生规则的联合表示形成 cluster，以当前规则和 base model 既有规则之间的 gap 作为风险 proxy，尝试把低 gap 经验训练成 Expert adapter；若候选 checkpoint 未通过预设模拟评价，或 gap 较高，则不强行发布该 Expert，而训练 Critic 在运行时给 base 的初答提供反馈，再由 base 重答。它把“经验进入 weights”拆成直接改回答者和只改反馈者两条路径；日志、cluster、规则、adapter 与评价人口仍须冻结。gap 不是噪声真值，Ward 合并的方差增量也不证明 cluster 有固定直径；checkpoint verifier 选择更高分候选，不拥有生产 release 的授权。<!-- source-family:SF-2026-ARXIV-2602-06470 -->
+
+这个回退支付另一种成本：完整运行路径增加初答、Critic 与重答，低 gap 场景只用 Critic 还可能比原 base 差。[受限用户日志实验](https://arxiv.org/html/2602.06470v1)的预筛在 LongLong 子集 recall 为零；减少 DPO 训练数据不等于减少总训练与推理成本。模拟用户、同一 base judge 与 BLEU 过滤共同限定留下的人口，不能从这些局部结果推出恶意噪声可辨、Bayes 普遍保证或连续学习安全。应把 Expert、Critic 和 base 的独立切片及全部调用预算分别验收；cluster 漂移、judge 失配或反馈退步时，保留可审计的外部 memory 与 base 回退，不把失败经验继续不可逆地压入参数。
 
 #### Experience Distillation：先保留外部证据，再选择是否固化进参数
 
@@ -824,6 +883,8 @@ versioned trajectory
 Graph 适合 dependency 明确、multi-hop state 高频的轨迹；summary、raw history 和 embedding 在短历史、审计或
 关系弱时仍更简单。AMA-Bench 的离线 QA 与 ablation 支持 construction-vs-retrieval 归因，却没有覆盖 cross-task、
 lifelong update、并发写入或真实 side effect，因此不能证明 causal graph 是所有 Agent 的默认 memory。
+
+两层损失还可用同一consumer的有界needle实验分账：先直接提供raw needle，再用该needle经过constructor后的memory替代，最后运行完整检索路径；前两者的差揭示构造期间的信息丢失，后两者的差暴露读取链的额外限制。[BabyAI的受限对照](https://arxiv.org/html/2602.22769v1)显示有的方法先在construction明显退步，另一些还在retrieval阶段损失，故仅增top-k不能修复已经删除的state。Oracle needle只给离线诊断，线上仍须真正定位；阶段accuracy差不是可相加的因果贡献，默认embedding/index不完全匹配、同源Qwen judge和reader误差也限制归因。“causality graph”只是抽出的关系候选，不签真实因果或无损保存。三条测量链、graph/索引与程序搜索都付费；分母、支持或构造保真不清时回读原trajectory、普通summary/raw与直接claim gate，不把一次诊断自动提交memory修复。<!-- source-family:SF-2026-ARXIV-2602-22769 -->
 
 仅把失败标成 construction 或 retrieval 仍是粗粒度诊断。若 Memory pipeline 已显式表示 extraction、storage、
 retrieval 与 answer nodes，可以在冻结输入和版本后做 bounded counterfactual intervention：绕过某个 node、替换其
@@ -1125,6 +1186,10 @@ Memory 是 durable attack surface。需要：
 
 “Agent 自己记住”仍然是平台执行的一次数据写入，必须受第 71～73 章治理。
 
+可修改的 belief 还可能改变保护是否被开启，而不只是让答案引用错误事实。若系统根据“对方是否可能是真人”等身份判断选择保护策略，普通 profile 或 reflection 不应自动拥有改写这一可信控制条件的权力。已核实的 identity anchor 与派生记忆应分开；低可信的“对方不是人、只是模拟”只能作为待核声明，不能被反复写入后升级为关闭保护的事实。未知身份应保留 uncertainty 与保守策略，具体授权仍由 [Tool Calling 的可信执行器](./78-tool-calling.md#本章要回答的问题)及平台安全层裁决。<!-- source-family:SF-2026-ARXIV-2601-00240 -->
+
+这种分权增加可信身份渠道、写入和读取 Gate，以及误拒、过时 anchor 与不确定状态的处理成本，不要求取消所有反思。一个受限实验在可修改 profile/memory 的威胁模型下，观察到身份声明污染改变模拟分配行为；其中“human”只是任务 framing，belief probe 和内部规范机制解释不构成因果证明，也不能推出真实部署伤害。作者的 state-commit gate prototype 只给出有限防御对照，不能担保所有身份污染都被识别。来源无法验证、anchor 失效或行为回归时，应保留原始 episode、重新核身份并回退保守保护，而不是让更高的 memory confidence 自行撤销控制边界。
+
 共享 Memory 还有不依赖攻击者的失效：一位用户的约定、转换规则或工具过程在本地完全有效，若写入后被另一位用户当成通用规则，就会静默改变答案。写入时应把 `source principal / task scope / artifact type / valid-time` 与原交互一起保存；读取 owner 再按当前用户和任务检查作用域，不能因为文本表面无恶意指令就放行。尤其可执行代码、聚合脚本和程序性经验可能把局部约定藏在 artifact 内，清洗摘要文本并不等于隔离了后续执行。可用同一 victim task 的干净与共享状态对照检查跨用户影响，并分别记录拒绝读取、错误答案和正确共享的代价；强隔离租户仍由第 71 章决定是否根本禁止跨域复用。这增加 provenance、读时验证和可复用经验的摩擦，但比默认共享后只靠 prompt-injection filter 更可审计。[受限的多用户 Agent 实验](https://arxiv.org/pdf/2604.01350v1)只覆盖其 Slack 对话和 EHRAgent 医疗数据任务；文本清洗在前者有效、在含 solution code 的后者仍残留污染，不能外推真实部署发生率。<!-- source-family:SF-2026-ARXIV-2604-01350 -->
 
 跨会话 safety state 不能借“保护用户”变成无限目的的 personalization memory。若系统确需从历史对话派生
@@ -1143,6 +1208,8 @@ authorized source conversations
 不能由摘要直接授权。OpenAI 2026 年公开的 cross-conversation safety summaries 只证明其声明的产品分支与内部
 scenario evaluation，不证明真实 false-positive prevalence、retention 合理性或通用安全收益。
 
+用途隔离还可以是有方向的，而不只是开/关共享：一般上下文经授权进入敏感域，不意味着该域的 conversation、files 或 derived memory 能反向进入一般 personalization。公开的 [ChatGPT Health 约束](https://openai.com/index/introducing-chatgpt-health/)声明这种 general→sensitive 单向复用，并要求连接器在新域重新获得显式 permission，不能继承域外已经连接的状态。它是产品公布的 memory/access contract，不是加密实现或完整防泄露证明；授权的 `read/use/transmit` 分账仍由[平台安全](../part-06-ai-infrastructure/72-security.md#agent-授权必须沿-delegation-chain-单调收窄)执行。工程上还需独立核验反向读取、摘要、cache 与错误路由，以及撤连接后的派生状态生命周期：撤权停止未来 connector access，不等于先前已生成的 memory、摘要或外部副本已经删除。更细的域和许可增加用户摩擦与治理成本；无法验证流向时，应禁用共享并保留分域、可撤销状态，而非只凭一个“敏感”标签放行。<!-- source-family:SF-2026-OPENAI-HEALTH-20260107 -->
+
 ### Memory Write 也可以留下可验证归属信号
 
 只在最终文本或数据库行上加 watermark，无法证明长期状态是由谁、在何次 write decision 中形成。state-evolution attribution 将 owner-controlled signal 嵌入 latent memory-write policy，并把密钥、写入事件与审计 trace 分开保存，使后续争议可回溯到状态演进。收益是提供 provenance 线索，代价是检测误差、密钥管理和攻击者针对写入策略的规避；高风险系统仍需不可变日志与访问控制，watermark 不能拥有授权。当前证据只覆盖披露 memory backend 与攻击，不能证明跨模型、跨生命周期的不可伪造归属。
@@ -1150,6 +1217,10 @@ scenario evaluation，不证明真实 false-positive prevalence、retention 合�
 <!-- source-family:SF-2026-ARXIV-2605-25002 -->
 
 ## 评估 Memory
+
+一次离线构建后在最终状态回答问题，适合静态资料库，却可能掩盖持续交互中的未来信息泄漏与成本迁移。可把 insert/retrieve 按时间因果排序交错执行，每次 query 只访问当时已整合的状态，并在多个积累截点同时分账 ingestion、maintenance、retrieval 与 answer integration：压缩或 consolidation 少读了 token，不代表总成本下降，可能只是将工作搬到写入；生成式 query expansion 也可能以更慢召回换小幅质量收益。[Neuromem v1 §4–5](https://arxiv.org/html/2602.13967v1)提供这项协议的受限证据，而非原文所有“普遍退化”“raw 永远更好”判断：完整组件消融主要在 LoCoMo，另两数据集采用不同任务适配，Llama 分支的 multi-query 仍有小幅 F1 增益。该 testbed 以串行 backpressure 阻塞 stream 等待维护/查询完成，并使用统一 serving stack 与异步评分；测出的阶段 latency 不等于真实并发队列下的 tail/SLO。时间序列监督不可得时保留静态对照；在线部署仍须单独验吞吐、在途更新可见性与陈旧读取，不把因果排序或插入次数当生产正确性的证明。<!-- source-family:SF-2026-ARXIV-2602-13967 -->
+
+持续写入的因果顺序之外，还要检查前一 session 的动作结果怎样约束后续任务。[MemoryArena 的 exact-v1](https://arxiv.org/html/2602.16313v1)把依赖任务放进同一 memory–agent–environment episode，分别记录已完成子任务的 progress、按环境定义的 success，以及随依赖深度变化的成功率和执行 latency：购物与旅行检查最终全局约束，搜索与推理检查末子任务正确性，局部进展不等于这些终态条件已经满足。固定任务 Agent 后，外部记忆并未普遍胜过原始长历史，而超过有效上下文的长搜索链中，检索或抽象记忆又可以减缓退化；不能从一个平均 QA 或 recall 分数替这两类负载选择结构。表示压缩和 reader 训练不匹配是作者的解释，并非已被独立干预识别的唯一原因；任务、模型命名、生成预算和 memory 配置仍须冻结，图或树更复杂也不直接决定端到端 latency。依赖链构造和跨 session 执行增加评价成本，短任务仍可保留静态 QA；不能建立可信状态约束时，报告未分解的失败，并保留 raw history、简单检索与独立 outcome 检查，而不是把理想 belief-state 充分性当成现有 memory 的保证。<!-- source-family:SF-2026-ARXIV-2602-16313 -->
 
 ### 评估何时写、写什么，需要由隐藏状态可验证的环境提供监督
 
@@ -1206,6 +1277,8 @@ ordered episodes + explicit write opportunities
 把 verifier reward 或 confidence 只用于当次选择，会在写入后丢失“为什么接受”；把它持久化到 memory item，则可让 admission、retrieval、冲突、summary 和 archival 使用同一证据。然而 metadata 不是事实真值：verifier 偏差、domain drift 和恶意 observation 会一起被持久化。
 
 因此每条派生 Memory 至少应绑定 verifier identity/version、输入证据、label/confidence/uncertainty、calibration domain 与 expiry。读取时先检查适用性，再与独立来源和 supersession graph 合并；高风险 action 不能把旧 confidence 当作永久授权。无可靠 verifier 时，来源 provenance、人工确认和保守不写入仍优于伪精确分数。
+
+相似度检索适合寻找相关 Memory，却未必区分同一概念的存在、明确不存在与未观测。可将正/负/未知极性连同来源和适用范围保存，在 query 有否定条件时先按显式冲突等级排序、再用语义分数；未观测不能补成缺席事实，VLM 的 Yes confidence 也不能签发负事实。软优先级仍可能在候选不足时返回冲突项，不等于 hard 过滤或执行保证；高风险条件仍需独立证据或确定性检查。极性生成、置信校准和冲突解析增加成本，标签不可靠时退回原始证据、显示冲突或澄清。<!-- source-family:SF-2026-ARXIV-2602-00415 -->
 
 不能只看“记住了多少”。应测：
 
@@ -1462,6 +1535,8 @@ projection 只拥有派生索引；新证据可以增加或失效 graph edge，�
 
 MATE的[§3–5/Table1–3](https://arxiv.org/html/2609.35808v1)显示，少量legacy-action改写已解释ALFWorld的大部分收益；normalized raw有时略胜结构化adapter，source-matched action sequence与condition/action/effect表示没有显著独立差异。新轨迹和planning任务中full source仍竞争力强或更好。因此应先做fixed-retrieval的格式、容量和表示因子对照，不以raw baseline失败就认定压缩/transition字段有效。它用schema维护、匹配遗漏与budget截断换兼容性；环境换版、映射不可靠或短源可直接读时，应回退原始source和当前工具schema重新验证。<!-- source-family:SF-2026-ARXIV-2609-35808 -->
 
+旧 GUI 轨迹的复用还可能要求从跨轨迹模式构造局部补全模板，而不只是改写 action spelling：先把动作统一为 canonical verb 与 typed argument fields，在 intent subgroup 内提取 signature prototype，再把 URL、query、file path 等 literal 换成运行时参数；检索到部分匹配计划时，只实例化缺失的 plan units，并由当前 screen observation 验证执行。[IntentCUA 的参数化接口](https://arxiv.org/html/2602.17049v1)将 schema 与 representative traces 一起保存，换来参数和界面变化下的复用，也引入聚类错配、去除步骤后依赖丢失和 stale bindings。原文称 medoid，但 Eq6 在全部 predicate sequences 上优化，不能认证严格候选 medoid；encoder loss 记号也不支持直接照录完整训练 recipe。Binary user approval 只批准保存计划，不证明曾执行成功；286-task 有限组件对照不是完全 factorial，own-plan completion 也不等最终目标，pop-up 遮挡可误导 Critic。30小时 trace mining、表示训练、schema维护与当前检索/生成的成本都要记入生命周期；依赖、绑定或 screen state 不匹配时回退原始轨迹加逐步 observation/planning，不能让高相似度或高 support 自授执行权限。<!-- source-family:SF-2026-ARXIV-2602-17049 -->
+
 延迟构造的selector也需要明确更换合同：若下游规则只读取yes/no决策与候选排序，可更换判定器而不调规则的前提是**决策和排序保持相同**。单纯任意单调calibration不够；以1/2为阈值时，映射还必须固定1/2。池大小、轮数和最终View budget限定的是model critical work，而不是历史检索复杂度；并行一轮judgment的latency也不等于其中所有判断的总成本。
 
 Mnemon的[§3–7/Eq3](https://arxiv.org/html/2609.36059v1)说明应分别记sequential judgment waves、total judgments、全记录搜索和后台consolidation；其ECI只计假设的错误修复与answer context，排除read/write，不能代替总生命周期成本。较小View可能由更大范围扫描换来，且当前search延迟随history增长；受测benchmark都曾参与开发、每配置单次运行，与不同grader结果不可直接并为统一排行榜。判定器无法维持decision/rank、索引缺source或read budget失控时，回退已验证selector、普通raw retrieval或有明确fidelity边界的eager summary，而不是把bounded token context误称constant-time memory。<!-- source-family:SF-2026-ARXIV-2609-36059 -->
@@ -1665,6 +1740,18 @@ GUI routine 也可以被编译为可搜索 transition graph，避免每屏从头
 两条分支分别用 graph drift/错误合并与 delayed-credit bias 换取适应性；有限 conversation/long-memory benchmark 和 LLM judge 不证明生产长期状态可靠。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2602-21611`：[v1 §3.3–3.5 / 表1–4及顺序人口](https://arxiv.org/html/2602.21611v1)。phase-local category-filter→Top1、subtask 终止即时写入；same-backbone judge 不独立，Best@3 是三 run 最大 Pass@1。非原 packet 作者必要原证/actual owner PRE 后窄写；root已实际顺读正文、完整邻接与自身末注，POST通过，未复现。
+
+- `SF-2026-ARXIV-2601-05488` — Daily `2026-01-13`；exact-v1 §3.3–3.4及§4.4反侧。retrieval-count weighting为共享QA的proxy归因，不是causalcredit；core always-present人口另分，alpha退步与外取Memory-R1结果不混同matched复现。未复现；root必要源/owner写前通过，实际写后待复核。
+
+- `SF-2026-OPENAI-HEALTH-20260107`：[官方发布核心](https://openai.com/index/introducing-chatgpt-health/) Memory/connector 段（L77–87），官方 RSS pubDate `2026-01-07T00:00:00Z`。采用单向 general→sensitive memory/context 和新 scope 的显式 connector permission；撤未来 access≠删除既有 derived state 是本书工程核验要求，不是作者已验证的实现。Current 页 July23 availability 更新不作为 Jan07 新机制，不采用医疗效果或加密保证。2+2+2=6、公开安全 contract 变化深入；root 非作者必要源与 owner 提案复核通过，root 非作者实际正文、邻接与末注写后复核通过。
+
+- `SF-2026-ARXIV-2601-00240`（Experimental）：[BPA exact-v1](https://arxiv.org/html/2601.00240v1)，§3–6、A.2.1/A.2.4。仅采用 profile/memory 派生 belief 与 safety-enabling identity anchor 分权、state-commit gate 的受限边界。AgentScope/gpt-4o-mini、64 agents 的 payoff allocation，human是framing，不是现实真人伤害测试；LLM belief probe不证明内部 human-norm 因果机制，prototype不证明完备防御。A.1 payoff列方向与主文不一致，不采用方向性数字；hardware/precision、独立seed与各setting总trial=`Not Disclosed`。root 必要原源、具体 owner 及实际新增正文/邻接的非作者写后复核通过；未运行攻击、实现或复现实验。
+
+- Daily 2026-03-07：[Fact-memory vs long-context exact-v1](https://arxiv.org/html/2603.04814v1) §3.1–3.4、§4.2–4.4。只采用静态history的write-once/read-many与cache成本交点；同家族judge、reader/extractor差异、retries、500k成本外推及线上cache失效未测保留，不授通用N10/现价或memory赢家。root已实际核必要原文、两段正文及邻接，非作者POST通过；未复现实验。
+
+- `SF-2026-ARXIV-2603-00680`：[exact-v1](https://arxiv.org/html/2603.00680v1) §3.3、§4.1–4.4、§5.1–5.5/Limitations；Daily 2026-03-04，2+2+3=7。采用 gold-answer likelihood 相对完整前史的 memory-local 辅助信用，与 token masking 分支分开；π_theta 是原 scoring policy，版本匹配是比较要求，不声称作者冻结独立 evaluator。状态不等价、proxy 非真值/因果、评分和上下文成本边界保留，不采用宣传倍率。作者必要源/owner/邻接检查完成，root非作者必要源→实际正文/邻接POST通过；未复现实验。
 
 - `SF-2026-ARXIV-2604-26197` — [HLTM exact-v1](https://arxiv.org/html/2604.26197v1) §3.2–3.7/Table2；Daily 2026-04-30。apr29_close必要source→actual-owner窄采用通过；仅吸收业务树共同绑定授权子树、聚合范围和ancestor invalidation。parent剪枝/LLM重算、有限precision/recall负例及动态ACL未证边界保留，不采lossless；未复现实验，root已实际读取正文及前后衔接，非作者写后通过。
 
@@ -1984,3 +2071,43 @@ Primary-source 入口：
 
   **已吸收的语义增量：** MemGuard 将 verifier 的 reward、confidence、label 与 uncertainty 持久附着在每条 memory 上，并让这些 metadata 参与 admission、retrieval、冲突处理、summary 与 archival。四类 benchmark、四 backbones 和 matched runtime 支持其生命周期治理实例；verifier 偏差会被同样持久化，跨域校准与恶意观测仍未解决。
 <!-- daily-books-trace:SF-2026-ARXIV-2608-21867:end -->
+
+- `SF-2026-ARXIV-2602-00415` — Daily `2026-02-04`；[PolarMem exact-v1](https://arxiv.org/html/2602.00415v1) §3–4。6分针对极性读取知识缺口深入受影响机制；Otsu/uncertain margin取自模型Yes confidence，不是独立事实校准，Alg1 lexicographic TopK只是优先级并非hard exclusion。八VLM/六benchmark及固定知识库、部分模型/切片退步不授否定条件或无幻觉保证，training-free不等在线成本为零。未复现实验；root必要原源/当前owner写前通过，root实际正文及前后交接写后通过，日级Gate通过。
+
+- `SF-2026-ARXIV-2512-24504` — Daily `2026-01-02`；[Thinking on Maps exact-v1](https://arxiv.org/pdf/2512.24504v1) §3.2.3、§4.1.1、§4.2.1–2、Table4与§5.5。采用拓扑/几何/时序的信息分账、engineered representation使用与自主memory形成分界、coverage停止与资源预算分界；不采NSM普遍最优、大小等效、内部因果或真实导航保证。未复现实验；root必要原源及当前owner写前通过，root实际正文与邻接写后通过，日级Gate尚待。
+
+- `SF-2026-ARXIV-2602-03224` — Daily `2026-02-05`；[TAME exact-v1](https://arxiv.org/html/2602.03224v1) §4.3–4.5/Eqs9–13、§5.3/5.5及A.2必要边界。6分具体gap深入仅采用utility draft→规范refine→executor与双轨经验更新分工，不授bank/judge独立真值或安全authority。Math与其他task/trust趋势、judge依赖及额外calls保留；A.4仅HTML图标题未核图内prompt，不称实现已核，未复现。root已实际核必要源/owner及164行正文/160–169邻接与末注，POST通过；日级Gate待验。
+
+- `SF-2026-ARXIV-2512-23959` — Daily `2026-01-02`；[HGMem exact-v1](https://arxiv.org/html/2512.23959v1) §3.3–3.6、§4.2–4.3、§5.2–5.4及Tables2–3。6分具体接口缺口深入，采用query-local实体锚点/update/merge对下次local/global retrieval scope的作用；derived描述/未知vertex插入非事实authority，merge负侧和构图/多调用成本保留。GPT4o/Qwen32B、有限steps/chunks近似预算不授全生命周期公平或可靠性；未运行实现，root必要原源与具体owner写前通过，root实际正文360、343–372邻接及2026末注非作者写后复核通过，日级Gate待验。
+
+- `SF-2026-ARXIV-2601-05504` — Daily `2026-01-13`；[Memory Poisoning exact-v1](https://arxiv.org/html/2601.05504v1) §5–8。原评分保持，具体owner差额深入；采用processed-success/trust代理与接纳poison、accepted分母和utility分账；不采用EHR领域方案或通用防御阈值。未运行代码或复现实验；root实际必要源/现owner写前核通过并授窄锁；root已实际核正文/前后邻接及末注，非作者POST通过。
+
+- `SF-2026-ARXIV-2601-08435` — Daily `2026-01-15`；[FineMem exact-v1](https://arxiv.org/html/2601.08435v1) §2.2/3.1–3.2/Alg1、B.2 Eq7–11、E.2/Table3。2+2+2=6，latest-update-step credit map具体gap深入；只采retrieved-entry分账proxy，非因果/真值或相同PG。nonempty/完整映射守恒条件、EARAalone下降、20%QA与epoch/steps混杂、单层架构和额外QA成本保留。未运行代码或复现；root必要原源/现owner写前通过并授窄锁，root实际正文/前后邻接及末注非作者POST通过；日级Gate未授。
+
+- `SF-2026-ARXIV-2601-09636` — Daily `2026-01-16`；[PersonalAlign exact-v1](https://arxiv.org/html/2601.09636v1) §5/6.3、Table6与B.2/B.3。2+1+2=5，execution-aware prototype/current-state 的具体 owner 缺口深入；只采用行为轨迹相容与当前模式约束的 intent proposal，不采用 DTW 符号/阈值 recipe、online goal-success 或执行授权保证。离线 SSR/CER、完整分支49% false alarm、真实设备人工观察与版本/runtime局限保留。未运行代码或复现；root必要原源与 owner 写前批准，实际正文/前后衔接与末注经root非作者POST通过，锁释放，日级 Gate 未授。
+
+- `SF-2026-ARXIV-2601-08079` — Daily `2026-01-15`；[MemoBrain exact-v1](https://arxiv.org/html/2601.08079v1) §3.2–3.3/Eq4–10、4.3–4.4/消融与Limitations。2+2+2=6，resolved Fold与未resolved Flush的具体consolidation缺口深入；图/状态由copilot推断，不授因果/事实真值，Flush不等删除。小预算、未训大copilot、工具调用增加与异步管理成本/早停反侧邻接保留；原轨迹可回读为工程退路，未冒称原全系统保证。未运行代码/复现；root实际必要源与现owner写前核通过并授窄锁，root实际正文/前后衔接非作者POST通过；日级Gate未授。
+
+- `SF-2026-ARXIV-2601-08128` — Daily `2026-01-15`；[Embedded AI Companion exact-v1](https://arxiv.org/html/2601.08128v1) §3–4.3、§5–7、C.1。2+2+2=6，session静默触发 active/inactive 维护分工的具体缺口深入；Jetson8GB/Qwen7B int4 同模型、合成5用户/100k、A100 raw长context基线、inferredQA反侧、不同commit/动态prefix缓存限制近正文保留。stale-read、抢占/读写/恢复是工程验收推导，非作者保证。未运行实现或复现；root实际必要源/具体owner写前通过并授窄锁，root实际正文/前后邻接及末注非作者POST通过，日级Gate未授。
+
+- `SF-2026-ARXIV-2602-06470` — Daily `2026-02-10`；[UNO exact-v1](https://arxiv.org/html/2602.06470v1) §3.1–3.6/Alg1、§4.3/5及Tables2–4。2+1+2=5，直接consolidation失败→Critic runtime反馈的具体owner缺口定点深入；gap/Ward/Bayes条件不授噪声真值、固定直径或持续安全，LongLong预筛recall0、同base judge/BLEU人口与完整调用成本保留。未运行代码/复现；root必要原源与owner写前通过并授窄锁，实际正文/前后衔接与末注经root非作者POST通过，日级Gate未授。
+
+- `SF-2026-ARXIV-2602-10560` — Daily `2026-02-13`；[GRU-Mem exact-v1 PDF](https://arxiv.org/pdf/2602.10560v1) p5–8、p11、AppB/p16。2+1+2=5，具体owner控制接口深入；update/exit不同GT条件、候选已生成、QA限定/3B与multi-question退步/无exit共存均邻近，未授无需evidence标签、真值或通用E2E提速。HTML不可得时必要PDF页实际render核读；root必要原源/实际owner PRE及实际两段/邻接/末注非作者POST通过，窄锁已释放；不授日级。未运行代码或复现。
+
+- `SF-2026-ARXIV-2602-13967` — Daily `2026-02-18`；[Neuromem exact-v1](https://arxiv.org/html/2602.13967v1) §4–5、A.3/B相关 backpressure 与数据适配。2+1+2=5，具体 current-state interleaving 与生命周期成本迁移差额受影响深入；统一栈的可替换组件非原系统生产基准，串行阻塞非并发 SLO，不采 universal decay/raw always better/generative 无用。root 必要源及实际 owner PRE 通过；实际正文、完整邻接及末注经 root 非作者 POST 通过，窄锁释放，日级未验。未运行实现或复现。
+
+- `SF-2026-ARXIV-2602-15329` — Daily `2026-02-19`；[EventMemAgent exact-v1](https://arxiv.org/html/2602.15329v1) §3.2.1–3.3/Tables3–4。2+2+2=6，event/FIFO/current-event reservoir retention 的具体差额受影响深入；灰度边界非语义、均匀frame inclusion非关键frame保证、32STM非总LTM，预计算/离线训练和OCR/streaming反侧近正文。root必要原源/actual owner PRE通过；root实际正文/完整邻接及末注非作者POST通过，窄锁释放。未核代码或复现，不授日级。
+
+- `SF-2026-ARXIV-2602-15513` — Daily `2026-02-19`；[exact-v1](https://arxiv.org/html/2602.15513v1) §III及主表/训练规则；2+2+2=6，semantic obs/time/pose延迟到检索投影的具体差额深入。GT规则提炼、Qwen任务/SPL反侧、定位和read费用保留，不授对齐无错/无标签在线/全任务最优。root 必要源/actual owner PRE 通过并授窄锁；作者正文/完整邻接已顺读，root 非作者正文/完整邻接及末注 POST 通过，窄锁已释放，未核实现/复现，非日级 Gate。
+
+- `SF-2026-ARXIV-2602-12735` — Daily `2026-02-17`；[exact-v1](https://arxiv.org/html/2602.12735v1) 必要方法/关键控制/直接限制；2+1+2=5，具体owner差额定点深入。仅采用正文条件机制；相关理论/效果强保证隔离，成本与回退近正文。root必要原源/actualowner PRE通过并授窄锁；作者正文/完整邻接已顺读，root非作者实际正文/完整邻接/末注POST通过，窄锁释放，未核实现或复现，非日级Gate。
+
+- `SF-2026-ARXIV-2602-16313` — Daily `2026-02-20`；[MemoryArena exact-v1](https://arxiv.org/html/2602.16313v1) §3/4.1–4.6，2+2+2=6，评价反证/具体owner差额深入。只采同依赖 episode 的 partial progress/global success、depth decay 与 latency 分账；不授记忆普遍胜 raw 或 belief-state 保证。GPT-5.1-mini/5-mini 原文命名不一致、mismatch 未唯一归因与长搜索负载反侧保留。root 必要原源/actual owner PRE 通过，作者正文/完整邻接与末注写后顺读，root非作者实际正文/完整邻接/自身末注POST通过；未核实现或复现，不授日级完成。
+
+- `SF-2026-ARXIV-2602-17913` — Daily `2026-02-24`；[TierMem exact-v1](https://arxiv.org/html/2602.17913v1) §2.1–2.2/3.1/5.2–5.4。2+2+2=6，summary sufficiency→raw escalation→verified provenance-derived回填具体差额深入；miss/verification错误、raw检索/更新删除成本与三epoch冻结人口近正文，不授可靠miss、raw upperbound或真实线上持续改进。root必要source/actual owner PRE通过并授窄锁；作者正文/完整邻接与末注实际顺读、root非作者实际正文/完整邻接/自身末注POST通过，锁释放。未核实现或复现，非日级验收。
+
+- `SF-2026-ARXIV-2602-17049` — Daily `2026-02-21`；[exact-v1](https://arxiv.org/html/2602.17049v1) §3.1–3.2/Eq3/4/6、§4.1–4.2、§5.1–5.3/Table1。2+2+2=6，canonical trace→typed schema→partial-gap binding差额深入；严格medoid/完整encoder recipe不采用，binaryapproval非success、ownplan分母/组件控制/遮挡失败和生命周期费用近文。root必要source/actual owner PRE通过；作者实际正文/完整邻接已顺读，root非作者实际正文1526–1541/末注2101 POST通过，锁释放。未核实现或复现，非日级验收。
+
+- `SF-2026-ARXIV-2602-22406` — Daily `2026-02-28`；[U-Mem exact-v1](https://arxiv.org/html/2602.22406v1) §3/4、Table3/4；2+1+2=5，冷启动utility探索的实际owner差额深入。邻居prior、差分非单条因果、坏记忆暴露、Gemini模拟反馈、冻结测试人口及调用/token成本近正文。root必要原源/actual owner PRE通过并授一段及自身末注窄锁；root已实际核新正文、完整邻接和自身末注，非作者POST通过，窄锁释放；未核artifact/复现，不授日级完成。
+
+- `SF-2026-ARXIV-2602-22769` — Daily `2026-02-28`；[exact-v1](https://arxiv.org/html/2602.22769v1) 必要blocks51–69/71–77/78–85，2+1+2=5；fresh非原packet作者实际必要原证/actual owner核，final_audit独立PRE通过后获窄锁。只采用raw needle→constructed needle→end-to-end同consumer诊断，费用、直接反侧与原路径回退近正文。作者已实际顺读正文/完整邻接及自身末注，待root非写入者actual POST；未核artifact/复现，不授一般保证或日级。

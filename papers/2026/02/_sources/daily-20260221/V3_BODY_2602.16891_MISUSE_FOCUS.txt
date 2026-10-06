@@ -1,0 +1,169 @@
+C.3 Misuse of OpenSage’s Features
+The following examples show common patterns in the misuse of OpenSage’s features by the SOTA model GPT-5 on CyberGym.
+C.3.1 Hallucinations about Tools
+In the example shown in , the model hallucinates a tool named applypatch that does not exist.
+This is later resolved as the model calls the cat to rewrite the whole file.
+⬇
+{
+"function_call":
+{
+"name": "run_terminal_command",
+"args": {
+"command": "applypatch << ’PATCH’\n\
+*** Begin Patch\n\
+*** Add File: /shared/tmp/agent/gen_tmap.c\n\
+// Generator for a valid XCDR2 DDS_XTypes_TypeMapping PoC\n\
+#include <stdint.h>\n\
+...
+*** End Patch\n\
+PATCH"
+}
+}
+}
+Listing 9: Hallucinated tool invocation of applypatch which does not exist.
+C.3.2 Hallucinations about Sub-Agents
+In the example shown in , the model first hallucinates a sub-agent named generic_consultant and attempts to invoke it even though no such agent exists, resulting in a failed call.
+This misuse is later resolved as the model correctly creates a dynamic sub-agent named generic_consultant and then invokes it through the proper interface.
+⬇
+# (1) Tool call: query available agents for ensemble
+{
+"function_call":
+{
+"name": "list_active_agents",
+"args": {}
+}
+}
+# (2) Tool response: no available agents found
+{
+"function_response":
+{
+"name": "list_active_agents",
+"response":{
+"summary": {
+"total_active_agents": 0,
+},
+"message": "Found 0 total agents. If no suitable agents exist, create a dynamic sub-agent."
+}
+}
+}
+# (3) Attempted invocation of a hallucinated sub-agent
+{
+"function_call":
+{
+"name": "call_agent",
+"args": {
+"agent_name": "generic_consultant",
+"instructions": [
+"Analyze lwan-request.c::parse_headers() for potential out-of-bounds access.",
+"Derive precise byte-level preconditions leading to reading past buffer_end."
+],
+"history_passed_in": false
+}
+}
+# (4) Failure response: agent not found
+{
+"function_response":
+{
+"name": "call_agent",
+"response":{
+"status": failed,
+"error": "Agent ’generic_consultant’ not found.",
+"summary": "No suitable agents available. Create a dynamic sub-agent and invoke it via the agent ensemble."
+}
+}
+}
+Listing 10: Hallucinated sub-agent invocation when no agents are available
+C.3.3 Misaligned Sub-Agent Tool Scopes
+As shown in Listing , the sub-agent
+is explicitly created to perform static analysis of libecc error paths,
+yet it is provisioned with an overly permissive tool scope that includes
+dynamic analysis tools such as gdb, coverage tracking, and fuzzing.
+In practice, no negative effects are observed, as the
+sub-agent’s instruction and subsequent prompts constrain it to purely
+static reasoning.
+⬇
+{
+"function_call":
+{
+"name": "create_agent",
+"args": {
+"agent_name": "libecc_static_reader",
+"instruction": "You are a precise static-analysis assistant focused on C/C++ lifetimes in libecc and cryptofuzz modules. Your job: (1) enumerate functions in libecc where local fp variables are declared; (2) identify error paths where fp_uninit is called on a local fp that may not have been initialized and whose .magic was not explicitly set to 0 before early returns; (3) extract exact control-flow conditions and inputs that trigger a goto err before initialization; (4) map reachability from cryptofuzz/modules/libecc/module.cpp operations, especially ECC_ValidatePubkey and LoadPoint; (5) derive concrete preconditions on fuzz input bytes to hit the path. Do not make assumptions; cite exact lines and conditions.",
+"model_name": "inherit",
+"tools_list": [
+"gdb_mcp",
+"retrieval",
+"static_analysis",
+"coverage",
+"fuzz"
+],
+"description": "Sub-agent specialized in libecc static code-path analysis to detect uninitialized fp_uninit usage."
+}
+}
+}
+Listing 11: Creation of a static-analysis sub-agent with an inaccurately restricted tool scope
+Appendix D Evaluation on LOCOMO
+Setup and design.
+The LOCOMO (Maharana et al., 2024) dataset is designed to assess long-term conversational memory in dialogue systems.
+It consists of 10 long conversations, each spanning multiple sessions with roughly 600 dialogue turns and 26k tokens on average.
+Each conversation involves two speakers discussing daily experiences or past events and is followed by about 200 questions with corresponding gold answers.
+Following the setup of the current state-of-the-art method Mem0 (Chhikara et al., 2025), we evaluate the single-hop, multi-hop, temporal, and open-domain question types, and adopt an LLM-as-a-judge metric with GPT-4.1-mini as the judge model.
+We evaluate OpenSage’s memory agent against state-of-the-art memory systems.
+For all experiments on LOCOMO, we use gpt-4.1-nano with medium reasoning and report results averaged over three runs.
+Table 4: Performance comparison of memory systems across different question types in the LOCOMO dataset.
+Method
+Single Hop
+Multi-Hop
+Open Domain
+Temporal
+A-Mem*
+62.23 ±\pm 0.75
+47.92 ±\pm 0.47
+71.12 ±\pm 0.20
+23.43 ±\pm 0.39
+Zep
+61.70 ±\pm 0.32
+41.35 ±\pm 0.48
+76.60 ±\pm 0.13
+49.31 ±\pm 0.50
+OpenAI
+63.79 ±\pm 0.46
+42.92 ±\pm 0.63
+62.29 ±\pm 0.12
+21.71 ±\pm 0.20
+Mem0
+67.13 ±\pm 0.65
+51.15 ±\pm 0.31
+72.93 ±\pm 0.11
+55.51 ±\pm 0.34
+Mem0g
+65.71 ±\pm 0.45
+47.19 ±\pm 0.67
+75.71 ±\pm 0.21
+58.13 ±\pm 0.44
+OpenSage
+63.21 ±\pm 0.53
+45.89 ±\pm 0.12
+76.38 ±\pm 1.29
+57.84 ±\pm 0.59
+Results.
+Table 4 shows that our method closely matches the performance of state-of-the-art systems Mem0 and Mem0g (Mem0 enhanced with graph memory) across all question types, while consistently outperforming the non-memory baselines.
+In particular, on the more challenging Open-Domain and Temporal questions, our agent achieves accuracy comparable to Mem0g and substantially higher than the baseline without graph memory, highlighting the benefit of structured long-term memory on complex reasoning queries.
+Although OpenSage was not specifically designed as a general-purpose conversational memory system, its strong performance on LOCOMO indicates that it can generalize beyond our primary coding-oriented use cases.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreci

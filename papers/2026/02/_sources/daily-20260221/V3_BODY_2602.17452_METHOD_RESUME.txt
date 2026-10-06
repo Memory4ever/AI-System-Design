@@ -1,0 +1,140 @@
+5 ONNX: The Bridge to Machine Learning
+ONNX (Open Neural Network Exchange) serves as the standardised interface between machine learning frameworks and Jolt Atlas’s verification system. This section describes ONNX’s role and how Jolt Atlas handles its computational model.
+5.1 Why ONNX
+ONNX provides a framework-agnostic representation of neural network computations. Models trained in PyTorch, TensorFlow, or JAX can be exported to ONNX format and verified by Jolt Atlas without modification to the training workflow.
+The ONNX format represents computations as directed acyclic graphs where:
+•
+Nodes represent operations (Add, MatMul, ReLU, etc.)
+•
+Edges represent tensors flowing between operations
+•
+Attributes parameterise operations (axis specifications, einsum patterns)
+•
+Initialisers store model weights and biases
+5.2 Operator Support
+ONNX defines over 180 operators across 19 domains. Jolt Atlas currently supports a subset focused on inference workloads:
+•
+Elementwise Arithmetic: Add, Sub, Mul, Div
+•
+Activations (via lookup tables): Relu, Sigmoid, Softmax, Tanh, Erf
+•
+Comparisons: Gte, Eq
+•
+Math Functions: Rsqrt (reciprocal square root)
+•
+Tensor Operations:
+–
+Shape manipulation: Reshape, Broadcast (automatic, NumPy semantics)
+–
+Data movement: Gather
+–
+Control flow: Select (conditional element selection)
+•
+Reduction Operations:
+–
+ReduceSum along arbitrary axes
+–
+ReduceMean (decomposed internally into ReduceSum + Div)
+•
+Tensor Contraction: Einsum (supports patterns like ‘‘mk,kn->mn’’ (matrix multiply), ‘‘bmk,bkn->bmn’’ (batched multiply), and attention patterns)
+5.3 From ONNX Graph to Proof
+The verification pipeline proceeds as follows:
+1.
+Graph parsing: The ONNX protobuf is parsed into an internal representation, resolving tensor shapes and operator attributes.
+2.
+Preprocessing: Static analysis determines memory layout, identifies which operations require lookups versus polynomial verification, and generates the bytecode specification.
+3.
+Trace generation: The model executes on the input, recording all intermediate tensor values.
+4.
+Proof generation: The trace feeds into the Jolt Atlas prover, which generates a zero-knowledge proof.
+Our initial focus is to support the operators required for common inference workloads (classification, embedding generation, and transformer attention) rather than the full ONNX specification.
+5.4 CPU trace vs Tensor trace
+Currently, to verify tensor operations such as addition, multiplication, or ReLU, we begin with the ONNX trace, decompose it into a CPU trace, and then feed this representation into the Jolt proof system. While multilinear polynomials provide a natural and expressive representation of tensors, this decomposition step discards much of the structure and algebraic expressiveness inherent in the polynomial formulation.
+To preserve this structure, we instead verify tensor relations directly at the polynomial level. Because multilinear polynomials naturally encode tensor computations, we can apply the Schwartz–Zippel lemma to probabilistically check the correctness of a tensor operation without examining each individual element.
+The core design philosophy closely follows the principles underlying Jolt—arguably even more directly than Jolt itself. In particular, we reduce commitment costs through virtual polynomials and minimize constraint overhead by relying on lookup arguments. Nearly all verification checks are performed using virtual polynomials, and the approach neither uses nor requires R1CS.
+6 Benchmarks
+System.
+All benchmarks were run on a MacBook Pro (Apple M3) with 16 GB RAM.
+6.1 nanoGPT (∼\sim0.25M parameters, 4 transformer layers)
+nanoGPT is the standard workload we use for cross-project comparison. It is a
+∼\sim250k-parameter GPT model with 4 transformer layers.
+JOLT Atlas (end-to-end).
+Table 1: JOLT Atlas end-to-end proving breakdown for nanoGPT.
+Stage
+Wall clock
+Verifying key generation
+0.246 s
+Proving key generation
+0.246 s
+Proof time
+14 s
+Verify time
+0.517 s
+ezkl (same model).
+We report ezkl timings for the same model from their published benchmark.11
+1
+https://blog.ezkl.xyz/post/nanogpt/
+Table 2: ezkl proving breakdown for nanoGPT (reported).
+Stage
+Wall clock
+Verifying key generation
+192 s
+Proving key generation
+212 s
+Proof time
+237 s
+Verify time
+0.34 s
+Comparison.
+JOLT Atlas produces a proof for nanoGPT in ∼\sim14 s versus ezkl’s
+∼\sim237 s proof time (not counting their >>400 s of key generation),
+corresponding to roughly a 17×17\times speed-up on proof generation alone.
+6.2 GPT-2 (125M parameters)
+GPT-2 is a 125-million-parameter transformer model from OpenAI.
+JOLT Atlas (end-to-end).
+Table 3: JOLT Atlas end-to-end proving breakdown for GPT-2 (125M).
+Stage
+Wall clock
+Proving/verifying key generation
+0.872 s
+Witness generation
+∼\sim7.5 s
+Commitment time
+∼\sim3.5 s
+Sum-check proving
+∼\sim16 s
+Reduction opening proof
+∼\sim7 s
+HyperKZG prove
+∼\sim3 s
+End-to-end total
+∼\sim38 s
+7 Future Work
+Directions for future research and development include:
+•
+Lattice-Based Polynomial Commitment Schemes: A promising direction is replacing the existing pairing-based HyperKZG PCS with lattice-based PCS constructions to achieve post-quantum security. Several recent schemes offer compelling trade-offs:
+Hachi [16] is a lattice-based multilinear PCS. Compared to HyperKZG, Hachi offers several advantages: (1) post-quantum security under Module-SIS assumptions, (2) faster prover time due to the absence of expensive pairing operations, and (3) O⁡(2ℓ⋅λ)O(\sqrt{2^{\ell}}\cdot\lambda) verifier time for ℓ\ell-variate polynomials, approximately 12.5×\times faster than Greyhound [17]. The main trade-off is larger proof sizes compared to pairing-based schemes.
+A key consideration for lattice-based schemes is commitment size. While proof sizes are larger than pairing-based alternatives, ABBA [6] reduces commitment sizes through lattice-based commitment constructions built from commutators of quaternions. Smaller commitments directly benefit both proof size and verifier efficiency.
+•
+On-Chain Verification: Deploying proofs on Ethereum is challenging due to HyperKZG’s 𝔾T\mathbb{G}_{T} operations. Replacing HyperKZG with a lattice-based PCS may also mitigate this limitation.
+•
+Extended ONNX Support: Adding support for additional operators.
+•
+Adaptive teleportation for prefix–suffix efficiency.
+In the current design, TeleSparse employs a fixed global teleportation factor τ\tau to shrink activation ranges and thereby bound lookup-table size. A natural direction for future work is to optimize τ\tau jointly with the prefix–suffix parameters, rather than fixing it a priori. In particular, the prefix–suffix decomposition in Eq. 20 exposes an explicit trade-off between the number of chunks CC, the per-chunk bit-width, and the resulting prover time and memory footprint. Since the effective activation range after teleportation directly determines the required bit-width (and hence the minimal feasible CC), the choice of τ\tau implicitly controls the cost profile of the lookup argument.
+Future work could therefore aim to select τ\tau so as to minimize overall proving time by balancing: (i) the streaming overhead induced by larger CC in Eq. 20, (ii) the size of the activation lookup domain after range reduction, and (iii) the induced quantization and approximation error in the model. Beyond reducing the raw range, an optimized τ\tau may also reshape the activation input distribution (e.g., by increasing mass in saturated regions for functions such as tanh\tanh), which can further improve the effectiveness of the prefix–suffix factorization by reducing the “active” portion of the lookup table. Developing principled methods to tune τ\tau under explicit proof-cost and accuracy constraints remains an open and promising direction.
+The rapid development of research in both cryptography and artificial intelligence continues to provide new techniques and optimisations to integrate into Jolt Atlas. Advances in polynomial commitment schemes, folding techniques, and hardware acceleration on the cryptographic side, combined with new model architectures, quantisation methods, and inference optimisations on the AI side, ensure that verifiable machine learning will remain an active and evolving field.
+References
+[1]
+a16z crypto (2026)
+Big ideas in tech 2026.
+Note: https://a16zcrypto.com/posts/article/big-ideas-things-excited-about-crypto-2026/
+Cited by: §1.
+[2]
+a16z Research
+Jolt documentation.
+External Links: Link
+Cited by: §1,
+§2.2.
+[3]
+A. Ar

@@ -1,0 +1,1903 @@
+Affine-Scaled Attention: Towards Flexible and Stable Transformer Attention
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Background
+2.1
+LLM training
+2.2
+Softmax attention
+2.3
+Attention sink
+2.4
+Gated Attention
+3
+Methodology
+3.1
+Motivation
+3.2
+Affine-Scaled Attention
+4
+Attention allocation dynamics
+4.1
+Attention weights
+4.2
+First token analysis
+4.3
+Head-wise allocation dynamics
+4.4
+Attention entropy
+5
+Experiments
+5.1
+Experimental settings
+Models
+Hyperparameters
+Tasks
+5.2
+Distillation experiment results
+5.3
+Training stability
+5.4
+Affine-Scaled and Gated Attention Orthogonality
+6
+Discussion on design of activation function for scaling factor
+7
+Conclusion
+8
+Limitations
+References
+A
+Analysis
+A.1
+Analysis settings
+A.2
+Attention heatmap
+B
+Experiment
+B.1
+Experimental settings
+B.2
+Additional loss graph
+B.3
+Gradient norm analysis
+B.4
+Discussion on design of activation function for scaling factor
+License: arXiv.org perpetual non-exclusive license
+arXiv:2602.23057v1 [cs.CL] 26 Feb 2026
+Affine-Scaled Attention: Towards Flexible and Stable Transformer Attention
+Jeongin Bae
+Baeseong Park
+Gunho Park
+Minsub Kim
+Joonhyung Lee
+Junhee Yoo
+Sunghyeon Woo
+Jiwon Ryu
+Se Jung Kwon
+Dongsoo Lee
+Abstract
+Transformer attention is typically implemented using softmax normalization, which enforces attention weights with unit sum normalization. While effective in many settings, this constraint can limit flexibility in controlling attention magnitudes and may contribute to overly concentrated or unstable attention patterns during training. Prior work has explored modifications such as attention sinks or gating mechanisms, but these approaches provide only limited or indirect control over attention reweighting. We propose Affine-Scaled Attention, a simple extension to standard attention that introduces input-dependent scaling and a corresponding bias term applied to softmax-normalized attention weights. This design relaxes the strict normalization constraint while maintaining aggregation of value representations, allowing the model to adjust both the relative distribution and the scale of attention in a controlled manner.
+We empirically evaluate Affine-Scaled Attention in large-scale language model pretraining across multiple model sizes. Experimental results show consistent improvements in training stability, optimization behavior, and downstream task performance compared to standard softmax attention and attention sink baselines. These findings suggest that modest reweighting of attention outputs provides a practical and effective way to improve attention behavior in Transformer models.
+Keywords:
+Machine Learning, ICML
+†
+†
+affiliationnotice:
+Equal contribution
+NAVER Cloud
+{jeong_in.bae, baeseong.park}@navercorp.com
+1
+Introduction
+Transformer-based models have become a foundational architecture for sequence modeling
+(
+Wang and E, 2024
+;
+Jiang and Li, 2025
+)
+, achieving state-of-the-art performance across a wide range of natural language processing tasks
+(
+Islam et al., 2023
+;
+Minaee et al., 2025
+)
+.
+A central component of these models is the softmax attention mechanism
+(
+Vaswani et al., 2017
+)
+, which converts dot-product attention scores to attention weights by normalizing them with a softmax function.
+Such a normalization process enables a weighted aggregation of contextual information, allowing the model to capture dependencies among tokens effectively
+(
+Bahdanau et al., 2016
+;
+Luong et al., 2015
+)
+.
+The empirical and theoretical effectiveness of softmax attention has been demonstrated in large-scale language models
+(
+Qin et al., 2022
+;
+Choromanski et al., 2022
+;
+Collins et al., 2024
+;
+Deng et al., 2023
+;
+Mongaras and Larson, 2025
+;
+Han et al., 2024
+)
+.
+Despite its success, recent works have highlighted the limitations of the standard softmax formulation
+(
+Richter and Wattenhofer, 2020
+;
+Miller, 2023
+;
+Xiao et al., 2023
+)
+.
+In particular, softmax inherently induces competition among tokens. Since the attention weights are normalized, the model allocates probability mass across contextual tokens even when no tokens provide meaningful information
+(
+Miller, 2023
+)
+.
+This suggests that the normalization constraint may be inappropriate when the model should
+attend to nothing
+in certain contexts.
+Moreover, prior studies report that attention often assigns large fraction of attention weights to early tokens regardless of semantic relevance, a behavior attributed in part to softmax normalization enforcing a fixed total mass across positions
+(
+Xiao et al., 2023
+;
+Gu et al., 2025
+;
+Barbero et al., 2025
+;
+Ruscio et al., 2025
+)
+.
+To mitigate these effects, several attention modifications have been proposed.
+Miller (2023)
+adds a constant term to the softmax denominator, allowing the attention distribution to concentrate on an additional
+null
+mass rather than only among input tokens.
+This modification is referred to as
+off-by-one
+attention, since it effectively introduces an extra sink term of one into the normalization.
+Building on a closely related intuition, GPT-OSS
+(
+Agarwal et al., 2025
+)
+incorporates an attention-sink mechanism in which each attention head learns a bias term that effectively introduces a learnable
+sink
+in the softmax normalization.
+This design enables the model to assign negligible attention to all contextual tokens when doing so is appropriate.
+Gated Attention
+(
+Qiu et al., 2025
+)
+takes a different approach by introducing a widely used gating mechanism to improve attention computation.
+Without modifying the softmax normalization, it augments the scaled dot-product attention (SDPA) output with an explicit gating mechanism. The gate modulates how much of the attended context is propagated forward.
+Empirically, this gating reduces the fraction of attention effectively devoted to the first token.
+These prior approaches, while effective in some respects, leave key limitations unresolved.
+In off-by-one and attention sink designs, the additional sink term is typically independent of the input hidden states and is treated as either a constant or a learnable parameter.
+This raises the question of whether such an input-agnostic sink can reliably stabilize attention across diverse contexts.
+Meanwhile, Gated Attention gates the post-attention representation and therefore does not remove the unit-sum constraint imposed by softmax.
+Even if it reduces the influence of the first token, the attention distribution is still forced to allocate a fixed total weight over tokens, potentially preserving over-concentration.
+Accordingly, these observations motivate a natural question: does the current formulation provide an optimal mechanism for stabilizing attention while retaining sufficient expressiveness? To answer this, we investigate extensions to the softmax operation itself, aiming to improve both the stability and the expressiveness of attention.
+In this paper, we propose
+Affine-Scaled Attention
+, which augments attention weights with an input-dependent scaling factor and an additional bias term. This formulation relaxes the requirement that softmax-normalized weights sum to one, thereby increasing the expressiveness of attention and improving performance. The bias term further introduces a controllable offset within scaled dot-product attention, mitigating the overly competitive,
+winner-takes-all
+behavior often induced by softmax. Together, these components yield more flexible and stable attention distributions that better reflect the preferences of the model.
+As shown in Figure
+1
+, our method produces a less skewed attention weights than standard softmax, enables adaptive per-query scaling unlike attention sink, and promotes greater head diversity through hidden state dependent modulation.
+Figure 1
+:
+Comparison of baseline softmax, attention sink, and Affine-Scaled Attention. Attention skew toward the first token (red) is progressively reduced. Here,
+i
+i
+denotes the index over key tokens, and the attention weight distributions are illustrated for a single query.
+Our major contributions are as follows:
+•
+Provide an in-depth analysis of softmax behavior in decoder-only language models by tracking the evolution of attention logits.
+•
+Introduce Affine-Scaled Attention, which applies a scaling factor and a bias to the softmax-normalized attention weights to relax the unit-sum constraint.
+•
+Analyze attention allocation dynamics, showing reduced first-token bias, more diverse head utilization and increased attention entropy with our method.
+2
+Background
+2.1
+LLM training
+Several frontier-scale models such as Llama
+(
+Grattafiori et al., 2024
+)
+, DeepSeek-V3
+(
+DeepSeek-AI et al., 2025
+)
+, and GPT-OSS
+(
+Agarwal et al., 2025
+)
+, have demonstrated strong capabilities in language understanding and generation. Despite this progress, training even moderately sized models (e.g., 1B–3B parameters) from scratch remains computationally expensive and time-consuming. Consequently, efficient learning paradigms that transfer knowledge from large foundation models have emerged as practical alternatives.
+Prior works has shown that distilling or transferring knowledge from large-scale pretrained models can enable smaller models to converge faster and achieve competitive performance compared to training from scratch. For example, Distilling Step-by-Step
+(
+Hsieh et al., 2023
+)
+demonstrates that student models with substantially fewer parameters can attain strong performance by distilling the reasoning processes of large LLMs. More broadly, this paradigm allows relatively compact models to exploit the rich representations learned by large foundation models, thereby improving training efficiency under constrained computational budgets. In this study, we also incorporate knowledge distillation to facilitate the training of moderately sized models.
+2.2
+Softmax attention
+In Transformer architectures, attention is computed from three sets of representations: queries (
+Q
+Q
+), keys (
+K
+K
+), and values (
+V
+V
+).
+Given a query, attention weights are obtained by taking scaled dot products between the query and all keys, dividing by the square root of the key dimension (
+d
+k
+\sqrt{d_{k}}
+), and normalizing the resulting scores with the softmax.
+The normalized attention weights are used to compute a weighted sum of the value vectors, producing the attention output:
+Attn
+⁡
+(
+Q
+,
+K
+,
+V
+)
+=
+softmax
+⁡
+(
+Q
+​
+K
+⊤
+d
+k
+)
+​
+V
+.
+\operatorname{Attn}(Q,K,V)=\operatorname{softmax}\left(\frac{QK^{\top}}{\sqrt{d_{k}}}\right)V\,.
+(1)
+This formulation can be viewed as selecting how much each value representation contributes to the final output based on query–key interactions. The softmax operation converts these interaction scores into nonnegative weights that sum to one, forming a probability distribution over tokens.
+While effective, this normalization imposes structural constraints. Because the attention weights must sum to one, the model cannot uniformly reduce all weights at once, even in contexts where no token should be strongly attended to. In addition, the exponential mapping in softmax can produce highly peaked distributions, which may lead to excessive concentration of attention on a small number of tokens.
+2.3
+Attention sink
+The motivation to revisit the softmax function stems from a structural limitation of the standard formulation. Softmax enforces a forced choice among competing alternatives: even when the model should assign negligible weight to all options, the output is still constrained to sum to one. When applied to attention, this simplex constraint can distort the allocation of probability mass across tokens.
+To address this issue,
+Miller (2023)
+proposed
+Off-by-One
+attention, which adds a constant term to the softmax denominator and thereby relaxes the normalization constraint. The resulting operator, denoted
+softmax
+o
+​
+n
+​
+e
+\operatorname{softmax}_{one}
+, is defined for
+x
+∈
+ℝ
+d
+x\in\mathbb{R}^{d}
+,
+i
+∈
+{
+1
+,
+…
+,
+d
+}
+i\in\{1,\ldots,d\}
+as
+softmax
+o
+​
+n
+​
+e
+⁡
+(
+x
+)
+i
+=
+e
+x
+i
+∑
+j
+=
+1
+d
+e
+x
+j
++
+1
+.
+{\operatorname{softmax}_{one}(x)}_{i}=\frac{e^{x_{i}}}{\sum_{j=1}^{d}e^{x_{j}}+1}.
+(2)
+By introducing an additive constant in the denominator,
+softmax
+o
+​
+n
+​
+e
+\operatorname{softmax}_{one}
+retains the ability to produce near-standard softmax behavior when appropriate, while also allowing the overall magnitude of the outputs to be uniformly reduced. Importantly, this modification preserves the relative ordering of logits induced by the original softmax.
+A related empirical observation is the
+attention sink
+phenomenon reported in StreamingLLM
+(
+Xiao et al., 2023
+)
+. In the context of sliding-window attention, the authors show that retaining only the key–value (KV) pairs corresponding to a small set of initial tokens can recover much of the performance loss. They attribute this behavior to a tendency in the model to allocate disproportionately large attention mass to first tokens, which act as sinks even when they are not semantically informative. Preserving a small number of such sink tokens stabilizes the attention distribution and mitigates drift from the full-context attention pattern, enabling efficient long-context inference by combining sink-token KV states with those of the most recent tokens.
+Motivated by these behaviors, Off-by-One attention has also been incorporated into the training of GPT-OSS
+(
+Agarwal et al., 2025
+)
+, where it is reported to improve training stability.
+GPT-OSS replaces the fixed constant with a learnable scalar sink parameter
+s
+s
+, which contributes an additional term
+e
+s
+e^{s}
+in the denominator. We denote this variant as
+softmax
+s
+​
+i
+​
+n
+​
+k
+\operatorname{softmax}_{sink}
+:
+softmax
+s
+​
+i
+​
+n
+​
+k
+⁡
+(
+x
+)
+i
+=
+e
+x
+i
+∑
+j
+=
+1
+d
+e
+x
+j
++
+e
+s
+.
+{\operatorname{softmax}_{sink}(x)}_{i}=\frac{e^{x_{i}}}{\sum_{j=1}^{d}e^{x_{j}}+e^{s}}\,.
+(3)
+Throughout this paper, we use the term
+attention sink
+to refer to this learnable-denominator formulation.
+While the attention sink relaxes the simplex constraint of softmax, it provides limited control over the resulting weights.
+The additional sink term is input-independent, which restricts expressiveness and limits the model’s ability to adapt the degree of attenuation to the context.
+2.4
+Gated Attention
+Another line of work augments attention with an explicit gating mechanism.
+Gated Attention
+(
+Qiu et al., 2025
+)
+observes that gating is widely used in neural architectures, yet its role within attention has not been systematically studied.
+The authors analyze variants by changing where the gate is applied and show that a simple design consistently improves performance. In particular, applying a head-specific sigmoid gate after the scaled dot-product attention (SDPA) output yields reliable gains across settings.
+Formally, let
+X
+X
+denote the hidden states,
+W
+a
+W_{a}
+the gating weights, and
+ϕ
+\phi
+an activation function. Gated Attention applies a multiplicative gate to the SDPA output:
+Attn
+gated
+⁡
+(
+Q
+,
+K
+,
+V
+,
+X
+)
+=
+Attn
+⁡
+(
+Q
+,
+K
+,
+V
+)
+⋅
+G
+⁡
+(
+X
+)
+,
+\operatorname{Attn_{gated}}(Q,K,V,X)=\operatorname{Attn}(Q,K,V)\cdot G(X),\\
+(4)
+G
+⁡
+(
+X
+)
+=
+ϕ
+⁡
+(
+W
+a
+​
+X
+)
+.
+G(X)=\phi(W_{a}X).
+(5)
+By introducing a multiplicative gate, this formulation adds nonlinearity and promotes sparsity in the effective attention output.
+The authors also report that the learned gates tend to reduce the influence of the first token.
+Conceptually, gated attention acts as a post-attention filter that modulates how much attended information is propagated. Because it does not directly alter the normalized attention weights, it offers less explicit control over fine-grained reweighting at the level of individual token pairs.
+3
+Methodology
+In this section, we propose
+Affine-Scaled Attention
+, a modified formulation that augments softmax attention with an input-dependent scaling factor and an associated bias term. This design relaxes the unit-sum constraint and mitigates overly competitive,
+winner-takes-all
+behavior, leading to more stable training and improved performance. We first analyze behaviors induced by existing softmax-based attention formulations that motivate our approach, and then introduce our modified softmax that increases flexibility.
+3.1
+Motivation
+To better understand how existing softmax-based attention variants influence training dynamics, we track the evolution of attention logits during pretraining.
+Concretely, we monitor the magnitude of the dot-product term
+Q
+​
+K
+⊤
+QK^{\top}
+and compute its mean value aggregated over all layers, heads, and token positions.
+We observe that the average magnitude of
+Q
+​
+K
+⊤
+QK^{\top}
+steadily decreases over training (Figure
+2
+).
+This observation suggests that the scale of query–key alignment becomes smaller over time, implying that pairwise token-to-token interaction scores are progressively attenuated before normalization.
+One plausible interpretation is that the model implicitly learns to reduce the strength of competitive interactions induced by softmax, effectively pushing attention logits toward a lower-magnitude regime.
+The sink term further amplifies this behavior by introducing an additional mass in the softmax denominator. As a result, attention weights are no longer constrained to allocate their entire unit mass solely across tokens via the
+exp
+⁡
+(
+Q
+​
+K
+⊤
+/
+d
+k
+)
+\exp(QK^{\top}/\sqrt{d_{k}})
+terms, which allows the model to decrease individual
+Q
+​
+K
+⊤
+QK^{\top}
+values during training.
+However, standard softmax attention imposes a structural unit-sum constraint across tokens. Even if the model benefits from globally weaker attention, it cannot uniformly reduce all weights.
+Instead, it must redistribute a fixed unit mass, which can preserve undesirable concentration.
+Importantly, this tendency is not fully resolved by introducing a sink term, since the sink primarily attenuates the overall attention magnitude while leaving the relative allocation among tokens largely unchanged.
+This mismatch between the preference for reduced logit magnitudes and the unit-sum constraint motivates relaxing the normalization itself.
+Figure 2
+:
+Training dynamics of attention logits.
+Q
+​
+K
+T
+QK^{T}
+logits mean over training steps for the 3B baseline and attention sink models, averaged across layers, heads, and token positions.
+3.2
+Affine-Scaled Attention
+To relax the constraints imposed by the softmax normalization and to better accommodate the preference for reduced attention magnitudes, we propose Affine-Scaled Attention. This method enhances the attention mechanism with a scaling term and an associated bias term derived from this scaling factor, both of which are applied directly to the attention weights.
+By introducing these additional degrees of freedom, Affine-Scaled Attention enables the model to modify the overall magnitude of attention more flexibly, without being strictly constrained by the standard softmax formulation that forces the terms to sum up to one.
+Formally, Affine-Scaled Attention is defined as follows:
+Attn
+affine
+(
+Q
+,
+K
+,
+V
+,
+X
+)
+=
+[
+α
+⁡
+(
+X
+)
+​
+softmax
+⁡
+(
+Q
+​
+K
+⊤
+d
+k
+)
++
+β
+⁡
+(
+X
+)
+]
+​
+V
+,
+\begin{split}\operatorname{Attn_{affine}}&(Q,K,V,X)\\
+&=\Bigl[\alpha(X)\,\operatorname{softmax}\!\Bigl(\tfrac{QK^{\top}}{\sqrt{d_{k}}}\Bigr)+\beta(X)\Bigr]\,V,\end{split}
+(6)
+α
+⁡
+(
+X
+)
+=
+ϕ
+⁡
+(
+W
+a
+​
+X
+)
+,
+\alpha(X)=\phi(W_{a}X),
+(7)
+β
+⁡
+(
+X
+)
+=
+α
+ma
+−
+α
+⁡
+(
+X
+)
+N
+.
+\beta(X)=\frac{\alpha_{\text{ma}}-\alpha(X)}{N}.
+(8)
+Given hidden state representations
+X
+X
+, a learnable gating parameter
+W
+α
+W_{\alpha}
+is applied to make each of the scale. The activation function
+ϕ
+\phi
+introduces nonlinearity, whereas
+α
+\alpha
+and
+β
+\beta
+correspond to the scale and bias transformations, respectively. Here,
+N
+N
+denotes the key sequence length, which is used to normalize the bias by sequence length.
+In Affine-Scaled Attention, we modulate the scaling terms via a gating mechanism to adapt to varying input representations.
+Concretely, gate weights are computed from the hidden states and passed through a nonlinear activation, producing input-dependent scaling parameters.
+Since gating has been shown to be effective across a broad range of neural architectures, we adopt it here to improve the expressiveness and flexibility of our attention formulation by allowing the modulation to adjust dynamically as a function of the input.
+The resulting scaling expands the dynamic range of the attention weights, thereby enabling finer-grained control over the relative contribution of value representations.
+However, an overly expanded range can introduce excessive variability in the attention weights, which may weaken the consistent influence of value information.
+To mitigate this effect, we introduce an additional bias term that regulates the overall scale of the attention weights, ensuring that value representations remain reflected in the attention output.
+This bias term is defined as the deviation of the current scaling factor from its moving average. We maintain the moving average as an exponential running estimate:
+α
+ma
+,
+0
+=
+0
+α
+ma
+,
+t
+=
+ρ
+​
+α
+ma
+,
+t
+−
+1
++
+(
+1
+−
+ρ
+)
+​
+𝔼
+​
+[
+α
+t
+​
+(
+X
+)
+]
+,
+\begin{gathered}\alpha_{\text{ma},0}=0\\
+\alpha_{\text{ma},t}=\rho\alpha_{\text{ma},t-1}+(1-\rho)\mathbb{E}\left[\alpha_{t}(X)\right],\end{gathered}
+(9)
+where
+𝔼
+​
+[
+α
+t
+​
+(
+X
+)
+]
+\mathbb{E}[\alpha_{t}(X)]
+denotes the batch-wise mean of the scaling factor and
+ρ
+∈
+[
+0
+,
+1
+]
+\rho\in[0,1]
+is a momentum coefficient that controls the trade-off between the running estimate and the current batch statistic.
+Equation
+8
+produces a bias that compensates for shifts in the typical magnitude of
+α
+t
+​
+(
+X
+)
+\alpha_{t}(X)
+, thereby stabilizing the scale of the attention weights.
+The bias is divided by the key sequence length
+N
+N
+to ensure its magnitude remains comparable across different sequence lengths.
+Finally, to prevent the scaling factors from collapsing to a specific value and to preserve input-adaptive modulation, we apply a custom nonlinear function, described in Section
+3
+.
+4
+Attention allocation dynamics
+In this section, we present a comparative analysis of Affine-Scaled Attention and discuss how it leads to performance improvements. Our analysis compares trained models across several attention methods, including the baseline with standard softmax, attention sink, and Affine-Scaled Attention. Detailed training settings are described in Section
+5.1
+.
+4.1
+Attention weights
+To empirically assess whether query-adaptive normalization yields more diverse attention behavior, we analyze the distribution of per-query cumulative attention weights. For each query token, we sum attention weights over all non-sink tokens and average across heads.
+Figure
+3
+shows histograms of cumulative attention weights per query. By definition, standard softmax attention yields exactly one because attention weights are normalized to sum to one, which can induce unwanted concentration on first tokens. Attention sinks allow values below one by assigning probability mass to the sink, but the attainable range remains limited because the sink term is fixed and input-independent. In contrast, Affine-Scaled Attention computes a query-conditioned scale and bias and modulates the softmax outputs accordingly. This produces a substantially broader distribution, indicating greater capacity to modulate attention mass in a context-sensitive manner.
+(a)
+Attention sink
+(b)
+Affine-Scaled Attention
+Figure 3
+:
+Per-query attention weight sum distributions for (a) Attention sink and (b) Affine-Scaled Attention. Dashed lines indicate the mean and median.
+4.2
+First token analysis
+Greater flexibility in attention weighting can reduce the tendency to overemphasize the first token, a behavior often induced by unit-sum normalization. Figure
+4
+shows the average layer-wise attention weight assigned to the first token across methods (see Appendix
+A.2
+for representative attention maps).
+Standard softmax attention exhibits strong concentration on the first token. Attention sinks mitigate this effect by introducing a sink token, which reduces the attention weight on the first token, but the attention maps still show substantial concentration on the first two positions, namely the sink token and the first token. In contrast, Affine-Scaled Attention further alleviates this positional over-concentration through input-adaptive modulation. The larger reduction achieved by Affine-Scaled Attention suggests that its learned weights better reflect token-level relevance rather than position-driven concentration.
+Figure 4
+:
+Per-layer first-token attention weights for the 1B model.
+Figure 5
+:
+Layer-wise and head-wise heatmaps for the 3B model showing effective attention reweighting across methods.
+4.3
+Head-wise allocation dynamics
+The key advantage of Affine-Scaled Attention is that it dynamically assigns head-specific scaling factors conditioned on the input, encouraging different heads to take on complementary roles rather than behaving uniformly. This added flexibility allows the attention module to respond more effectively to input characteristics at inference time, improving both information aggregation and token-to-token interactions. To examine whether this behavior aligns with our design objective, we visualize the distribution of scaling factors across layers and heads.
+Figure
+5
+shows layer-wise and head-wise heatmaps of the total attention weights for Attention Sink and Affine-Scaled Attention, normalized to the range
+[
+0
+,
+1
+]
+[0,1]
+. For Attention Sink, we exclude the sink value
+S
+S
+from the unit-sum normalization (i.e., we normalize over
+1
+−
+S
+1-S
+). Attention Sink exhibits many heads saturating near the upper bound, with relatively limited variation among heads within the same layer. In contrast, Affine-Scaled Attention displays substantially richer diversity across both layers and heads, consistent with more flexible head-wise modulation. Overall, these results suggest that Affine-Scaled Attention promotes more balanced and input-adaptive utilization of attention heads compared to Attention Sink.
+Figure 6
+:
+Layer-wise mean attention entropy for the 3B model across baseline, attention sink, Affine-Scaled Attention methods.
+4.4
+Attention entropy
+Building on the head sparsity analysis in the previous section, we observe that relaxing the standard softmax normalization leads to more consistent utilization of attention heads.
+Such additional flexibility increases attention entropy, indicating that attention mass is less concentrated on small subset of tokens or heads and is instead distributed more broadly across the sequence and across heads.
+Qualitatively, the higher entropy suggests that the model can learn more balanced and context-dependent attention patterns, rather than exhibiting position-driven concentration (e.g., over-attending to the initial token).
+Figure
+6
+shows layer-wise attention entropy for each method. Affine-Scaled Attention achieves the highest entropy in most layers, with the largest gains appearing in deeper layers.
+(a)
+0.5B model training loss
+(b)
+1B model training loss
+(c)
+3B model training loss
+Figure 7
+:
+KD training loss curves over training steps for (a) 0.5B, (b) 1B, and (c) 3B models across baseline, attention sink, and Affine-Scaled Attention methods, showing that Affine-Scaled Attention consistently achieves lower loss throughout training.
+Table 1:
+Comparison of baseline, attention sink, and Affine-Scaled Attention methods for 0.5B/1B/3B models. We report the parameter overhead (
+Δ
+\Delta
+Params), training Loss, C4 perplexity, and downstream accuracies on common sense reasoning tasks, along with the overall average. Best accuracy within each model size is highlighted in bold.
+Accuracy (%)
+Model
+Method
+Δ
+\Delta
+Params (M)
+Loss
+C4 PPL
+Wino
+PIQA
+Hella
+ARC-c
+ARC-e
+BoolQ
+Avg.
+0.5B
+Baseline
+0.0
+2.82
+71.7
+52.6
+68.6
+45.1
+27.6
+51.5
+58.6
+50.6
+Sink
+0.0
+2.83
+81.5
+54.9
+68.2
+44.3
+26.7
+51.9
+58.7
+50.8
+Affine-Scaled
+0.4
+2.82
+70.6
+53.2
+68.8
+45.1
+28.2
+52.5
+60.2
+51.3
+1B
+Baseline
+0.0
+2.73
+61.9
+55.6
+72.4
+53.1
+35.2
+62.5
+61.5
+56.7
+Sink
+0.0
+2.73
+68.3
+56.6
+72.7
+53.2
+34.0
+62.0
+61.7
+56.7
+Affine-Scaled
+1.0
+2.72
+58.9
+58.6
+71.7
+53.9
+35.2
+63.1
+60.8
+57.2
+3B
+Baseline
+0.0
+2.65
+44.9
+59.0
+75.1
+60.8
+38.4
+68.1
+63.6
+60.8
+Sink
+0.0
+2.65
+48.5
+61.2
+75.7
+60.9
+40.2
+68.1
+63.5
+61.6
+Affine-Scaled
+2.1
+2.64
+40.8
+61.0
+74.8
+62.0
+41.5
+69.9
+65.1
+62.4
+5
+Experiments
+In this section, we provide a comprehensive comparison of several attention modulation methods based on large-scale Transformer pre-training, followed by extensive evaluation on language modeling tasks. Specifically, we evaluate a baseline model, attention sink, and Affine-Scaled Attention.
+5.1
+Experimental settings
+Models
+Our experiments leverage knowledge distillation as a cost-efficient and effective paradigm for pretraining language models, and are conducted using student models with 0.5B, 1B, and 3B parameters. The 0.5B student is distilled from Qwen1.5-1.8B, whereas the 1B and 3B students are distilled from LLaMA3.2-3B and LLaMA3.3-8B, respectively. All student models are trained from scratch. More detailed training settings are described in Appendix
+B.1
+.
+Hyperparameters
+We systematically sweep the learning rate from
+5
+×
+10
+−
+4
+5\times 10^{-4}
+to
+5
+×
+10
+−
+3
+5\times 10^{-3}
+and select
+1
+×
+10
+−
+3
+1\times 10^{-3}
+for all experiments. We fix the sequence length to 2048, use a global batch size of 1024, and apply weight decay of 0.1. All models are trained on the 20B-token FineWebEdu dataset
+(
+Lozhkov et al., 2024
+)
+. Unless otherwise specified, we set the momentum coefficient
+ρ
+\rho
+to 0.9 consistently.
+Tasks
+To evaluate commonsense reasoning, we report zero-shot performance on ARC-Challenge (ARC-c)
+(
+Clark et al., 2018
+)
+, ARC-Easy (ARC-e)
+(
+Clark et al., 2018
+)
+, HellaSwag
+(
+Zellers et al., 2019
+)
+, Phrase-Indexed Question Answering (PIQA)
+(
+Bisk et al., 2020
+)
+, BoolQ
+(
+Clark et al., 2019
+)
+and WinoGrande
+(
+Sakaguchi et al., 2021
+)
+using lm-eval-harness
+(
+Gao et al., 2024
+)
+v0.4.9. We compare against the standard training setup and an attention sink baseline.
+5.2
+Distillation experiment results
+Figure
+7
+compares the training loss curves under different attention mechanisms.
+Across all model sizes, Affine-Scaled Attention consistently achieves lower loss throughout training.
+The gap persists through convergence, suggesting improved optimization rather than a short-lived advantage in early iterations.
+This trend is reflected in the final training loss reported in Table
+1
+, and additional results in the Appendix
+B.2
+confirm that the improvement is sustained over the full training schedule.
+Overall, these results indicate that Affine-Scaled Attention enables more efficient training than existing attention variants.
+Table
+1
+also reports zero-shot evaluation results on language modeling benchmarks.
+Affine-Scaled Attention yields consistent improvements over both the baseline and the attention-sink variant across all model sizes, achieving the best average accuracy in each setting.
+The gains are particularly pronounced on reasoning-oriented benchmarks at larger scales: for the 3B model, ARC-c improves from 38.4 to 41.5 and BoolQ from 63.6 to 65.1.
+5.3
+Training stability
+Figure
+8
+compares the gradient norm trajectories of different attention mechanisms. Affine-Scaled Attention exhibits smoother and smaller gradient norm trajectories across various model sizes, suggesting that it contributes to more stable training dynamics. Additional analysis is provided in Appendix
+B.3
+(a)
+0.5B model gradient norm
+(b)
+1B model gradient norm
+Figure 8
+:
+Gradient norm dynamics during training for (a) 0.5B and (b) 1B models across baseline, attention sink, and Affine-scaled Attention.
+5.4
+Affine-Scaled and Gated Attention Orthogonality
+Table 2:
+Comparison of baseline, Gated Attention, and Affine-Scaled + Gated Attention methods for 1B and 3B models. We report parameter overhead (
+Δ
+\Delta
+Params), training loss, C4 perplexity, and downstream accuracies on common sense reasoning tasks, along with the average. Bold indicates the best result within each model size.
+Accuracy (%)
+Model
+Method
+Δ
+\Delta
+Params (M)
+Loss
+C4 PPL
+Wino
+PIQA
+Hella
+ARC-c
+ARC-e
+BoolQ
+Avg
+1B
+Baseline
+0.0
+2.73
+61.9
+55.6
+72.4
+53.1
+35.2
+62.5
+61.5
+56.7
+Gated
+67.1
+2.71
+56.6
+57.7
+71.9
+53.9
+33.9
+62.5
+62.8
+57.1
+Affine-Scaled + Gated
+68.2
+2.71
+56.2
+58.1
+72.0
+54.5
+35.3
+64.3
+64.0
+58.0
+3B
+Baseline
+0.0
+2.65
+44.9
+59.0
+75.1
+60.8
+38.4
+68.1
+63.6
+60.8
+Gated
+264.2
+2.65
+44.6
+61.5
+74.4
+61.4
+40.4
+68.8
+63.1
+61.6
+Affine-Scaled + Gated
+266.3
+2.63
+42.7
+63.4
+74.6
+62.7
+41.2
+70.0
+66.4
+63.1
+Since Gated Attention acts as a post-attention filter that modulates propagation of the attended signal, it does not directly alter the softmax attention distribution.
+As a result, Gated Attention is orthogonal to Affine-Scaled Attention, which provides explicit, fine-grained control over per-head attention weighting.
+To study their interaction, we apply gated attention
+(
+Qiu et al., 2025
+)
+after the scaled dot-product attention (SDPA) computation and evaluate models with and without Affine-Scaled Attention.
+Table
+2
+summarizes results on language modeling benchmarks.
+Across model sizes, adding Affine-Scaled Attention on top of Gated Attention consistently improves average accuracy over Gated Attention alone, while also yielding lower training loss and lower C4 perplexity.
+These gains are observed across all benchmarks and become more pronounced at larger scales.
+Overall, the results suggest that Affine-Scaled Attention provides gains largely independent of gating, and that the two mechanisms become increasingly complementary as model capacity grows.
+6
+Discussion on design of activation function for scaling factor
+Table 3:
+Average common sense reasoning performance of the 1B model comparing sigmoid and linear clipping nonlinear functions.
+Act. Function
+Sigmoid
+Linear clipping
+CSR Avg.
+57.6
+58.0
+In Section
+3.2
+, we briefly mentioned that we apply a custom nonlinear function, but did not discuss it in detail. Here, we provide a concise explanation and an additional experiment to clarify its role.
+To prevent the scaling factors in Affine-Scaled Attention from collapsing to a constant value and to encourage more input-adaptive scaling, we introduce a custom nonlinear function for scale generation. Specifically, we apply this nonlinearity to the activation function
+ϕ
+\phi
+in Eq.
+7
+. A natural choice is the sigmoid function, which is smooth and bounded:
+sigmoid
+⁡
+(
+x
+)
+=
+1
+1
++
+e
+−
+x
+,
+\mathrm{sigmoid}(x)=\frac{1}{1+e^{-x}},
+(10)
+mapping an input
+x
+x
+to the range
+(
+0
+,
+1
+)
+(0,1)
+.
+However, the gradient of sigmoid peaks near the center and rapidly vanishes toward the extremes.
+When used for scale generation, this saturation often drives outputs toward the upper or lower bounds, yielding a highly concentrated distribution of scaling factors.
+This is undesirable because the scaling factor directly controls the effective softmax temperature, and representing intermediate values is essential for fine-grained attention modulation.
+To address this, we design an activation function that retains the output range while introducing a linear region around the middle to better preserve intermediate scales.
+Specifically, we propose the following linear clipping function:
+linear
+​
+_
+​
+clipping
+​
+(
+x
+)
+=
+{
+0
+,
+x
+≤
+−
+5
+,
+0.1
+​
+x
++
+0.5
+,
+−
+5
+<
+x
+<
+5
+,
+1
+,
+x
+≥
+5
+.
+\mathrm{linear\_clipping}(x)=\begin{cases}0,&x\leq-5,\\
+0.1x+0.5,&-5<x<5,\\
+1,&x\geq 5.\end{cases}
+(11)
+As illustrated in Appendix
+B.4
+, this piecewise-linear shape motivates the name
+linear clipping
+.
+Compared to the sigmoid, it encourages greater variability in the learned scaling factors, enabling the model to adjust attention smoothness more effectively.
+Table
+3
+reports the average zero-shot performance on language-modeling benchmarks. The result indicate that the proposed custom linear-clipping activation function achieves higher accuracy than the sigmoid function.
+7
+Conclusion
+We presented
+Affine-Scaled Attention
+, a simple modification that relaxes the unit-sum constraint of softmax by applying a query-dependent affine transformation to softmax-normalized weights, enabling stable control of attention magnitude.
+Across large-scale experiments on multiple student model sizes,
+Affine-Scaled Attention
+consistently improved optimization and downstream accuracy over standard softmax and attention sink. These gains are associated with more flexible per-query attention mass, reduced first-token bias, more balanced head utilization, and higher attention entropy. In addition, Affine-Scaled Attention is complementary to Gated Attention, providing additional improvements when combined. Overall, the proposed method provides a practical way to improve training stability and performance.
+8
+Limitations
+Due to limited computational resources, we focus on knowledge distillation to improve training efficiency for moderate-sized models.
+We do not compare distillation against other training alternatives, such as ce-loss pretraining, extensive hyperparameter sweeps, or broader data scaling. In addition, our experiments are restricted to the moderate-size regime. We leave a thorough investigation of the proposed approach at larger model scales and with stronger teacher models as an important direction for future work.
+Impact Statement
+This paper proposes Affine-Scaled Attention, a modification of the Transformer attention mechanism that improves training stability, attention flexibility, and optimization behavior in large language models. By enabling more adaptive and balanced attention allocation, this work may contribute to more efficient and robust model training, potentially lowering computational cost and improving the reliability of large-scale AI systems.
+The techniques introduced here are general-purpose improvements to neural network architectures and do not introduce new application domains beyond existing large language model use cases. As such, the broader societal and ethical implications are expected to align with those already widely discussed in the context of large-scale machine learning models, including both potential benefits from improved AI capabilities and well-known risks related to misuse, bias, and deployment at scale. We do not identify any specific new ethical concerns uniquely arising from this work.
+References
+Agarwal
+et al.
+(2025)
+S. Agarwal, L. Ahmad, J. Ai, S. Altman, A. Applebaum, E. Arbus, R. K. Arora, Y. Bai, B. Baker, H. Bao,
+et al.
+Gpt-oss-120b & gpt-oss-20b model card
+.
+arXiv preprint arXiv:2508.10925
+.
+Cited by:
+§1
+,
+§2.1
+,
+§2.3
+.
+Bahdanau
+et al.
+(2016)
+D. Bahdanau, K. Cho, and Y. Bengio
+Neural machine translation by jointly learning to align and translate
+.
+External Links:
+1409.0473
+,
+Link
+Cited by:
+§1
+.
+Barbero
+et al.
+(2025)
+F. Barbero, Á. Arroyo, X. Gu, C. Perivolaropoulos, M. Bronstein, P. Veličković, and R. Pascanu
+Why do llms attend to the first token?
+.
+External Links:
+2504.02732
+,
+Link
+Cited by:
+§1
+.
+Bisk
+et al.
+(2020)
+Y. Bisk, R. Zellers, J. Gao, Y. Choi,
+et al.
+Piqa: reasoning about physical commonsense in natural language
+.
+In
+Proceedings of the AAAI conference on artificial intelligence
+,
+Vol.
+34
+,
+pp. 7432–7439
+.
+Cited by:
+§5.1
+.
+Choromanski
+et al.
+(2022)
+K. Choromanski, V. Likhosherstov, D. Dohan, X. Song, A. Gane, T. Sarlos, P. Hawkins, J. Davis, A. Mohiuddin, L. Kaiser, D. Belanger, L. Colwell, and A. Weller
+Rethinking attention with performers
+.
+External Links:
+2009.14794
+,
+Link
+Cited by:
+§1
+.
+Clark
+et al.
+(2019)
+C. Clark, K. Lee, M. Chang, T. Kwiatkowski, M. Collins, and K. Toutanova
+Boolq: exploring the surprising difficulty of natural yes/no questions
+.
+arXiv preprint arXiv:1905.10044
+.
+Cited by:
+§5.1
+.
+Clark
+et al.
+(2018)
+P. Clark, I. Cowhey, O. Etzioni, T. Khot, A. Sabharwal, C. Schoenick, and O. Tafjord
+Think you have solved question answering? try arc, the ai2 reasoning challenge
+.
+arXiv preprint arXiv:1803.05457
+.
+Cited by:
+§5.1
+.
+Collins
+et al.
+(2024)
+L. Collins, A. Parulekar, A. Mokhtari, S. Sanghavi, and S. Shakkottai
+In-context learning with transformers: softmax attention adapts to function lipschitzness
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 92638–92696
+.
+Cited by:
+§1
+.
+DeepSeek-AI
+et al.
+(2025)
+DeepSeek-AI, A. Liu, B. Feng, B. Xue, B. Wang, B. Wu, C. Lu, C. Zhao, C. Deng, C. Zhang, C. Ruan, D. Dai, D. Guo, D. Yang, D. Chen, D. Ji, E. Li, F. Lin, F. Dai, F. Luo, G. Hao, G. Chen, G. Li, H. Zhang, H. Bao, H. Xu, H. Wang, H. Zhang, H. Ding, H. Xin, H. Gao, H. Li, H. Qu, J. L. Cai, J. Liang, J. Guo, J. Ni, J. Li, J. Wang, J. Chen, J. Chen, J. Yuan, J. Qiu, J. Li, J. Song, K. Dong, K. Hu, K. Gao, K. Guan, K. Huang, K. Yu, L. Wang, L. Zhang, L. Xu, L. Xia, L. Zhao, L. Wang, L. Zhang, M. Li, M. Wang, M. Zhang, M. Zhang, M. Tang, M. Li, N. Tian, P. Huang, P. Wang, P. Zhang, Q. Wang, Q. Zhu, Q. Chen, Q. Du, R. J. Chen, R. L. Jin, R. Ge, R. Zhang, R. Pan, R. Wang, R. Xu, R. Zhang, R. Chen, S. S. Li, S. Lu, S. Zhou, S. Chen, S. Wu, S. Ye, S. Ye, S. Ma, S. Wang, S. Zhou, S. Yu, S. Zhou, S. Pan, T. Wang, T. Yun, T. Pei, T. Sun, W. L. Xiao, W. Zeng, W. Zhao, W. An, W. Liu, W. Liang, W. Gao, W. Yu, W. Zhang, X. Q. Li, X. Jin, X. Wang, X. Bi, X. Liu, X. Wang, X. Shen, X. Chen, X. Zhang, X. Chen, X. Nie, X. Sun, X. Wang, X. Cheng, X. Liu, X. Xie, X. Liu, X. Yu, X. Song, X. Shan, X. Zhou, X. Yang, X. Li, X. Su, X. Lin, Y. K. Li, Y. Q. Wang, Y. X. Wei, Y. X. Zhu, Y. Zhang, Y. Xu, Y. Xu, Y. Huang, Y. Li, Y. Zhao, Y. Sun, Y. Li, Y. Wang, Y. Yu, Y. Zheng, Y. Zhang, Y. Shi, Y. Xiong, Y. He, Y. Tang, Y. Piao, Y. Wang, Y. Tan, Y. Ma, Y. Liu, Y. Guo, Y. Wu, Y. Ou, Y. Zhu, Y. Wang, Y. Gong, Y. Zou, Y. He, Y. Zha, Y. Xiong, Y. Ma, Y. Yan, Y. Luo, Y. You, Y. Liu, Y. Zhou, Z. F. Wu, Z. Z. Ren, Z. Ren, Z. Sha, Z. Fu, Z. Xu, Z. Huang, Z. Zhang, Z. Xie, Z. Zhang, Z. Hao, Z. Gou, Z. Ma, Z. Yan, Z. Shao, Z. Xu, Z. Wu, Z. Zhang, Z. Li, Z. Gu, Z. Zhu, Z. Liu, Z. Li, Z. Xie, Z. Song, Z. Gao, and Z. Pan
+DeepSeek-v3 technical report
+.
+External Links:
+2412.19437
+,
+Link
+Cited by:
+§2.1
+.
+Deng
+et al.
+(2023)
+Y. Deng, Z. Song, and T. Zhou
+Superiority of softmax: unveiling the performance edge over linear attention
+.
+arXiv preprint arXiv:2310.11685
+.
+Cited by:
+§1
+.
+Gao
+et al.
+(2024)
+L. Gao, J. Tow, B. Abbasi, S. Biderman, S. Black, A. DiPofi, C. Foster, L. Golding, J. Hsu, A. Le Noac’h, H. Li, K. McDonell, N. Muennighoff, C. Ociepa, J. Phang, L. Reynolds, H. Schoelkopf, A. Skowron, L. Sutawika, E. Tang, A. Thite, B. Wang, K. Wang, and A. Zou
+The language model evaluation harness
+.
+Zenodo
+.
+External Links:
+Document
+,
+Link
+Cited by:
+§5.1
+.
+Grattafiori
+et al.
+(2024)
+A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan, A. Yang, A. Fan, A. Goyal, A. Hartshorn, A. Yang, A. Mitra, A. Sravankumar, A. Korenev, A. Hinsvark, A. Rao, A. Zhang, A. Rodriguez, A. Gregerson, A. Spataru, B. Roziere, B. Biron, B. Tang, B. Chern, C. Caucheteux, C. Nayak, C. Bi, C. Marra, C. McConnell, C. Keller, C. Touret, C. Wu, C. Wong, C. C. Ferrer, C. Nikolaidis, D. Allonsius, D. Song, D. Pintz, D. Livshits, D. Wyatt, D. Esiobu, D. Choudhary, D. Mahajan, D. Garcia-Olano, D. Perino, D. Hupkes, E. Lakomkin, E. AlBadawy, E. Lobanova, E. Dinan, E. M. Smith, F. Radenovic, F. Guzmán, F. Zhang, G. Synnaeve, G. Lee, G. L. Anderson, G. Thattai, G. Nail, G. Mialon, G. Pang, G. Cucurell, H. Nguyen, H. Korevaar, H. Xu, H. Touvron, I. Zarov, I. A. Ibarra, I. Kloumann, I. Misra, I. Evtimov, J. Zhang, J. Copet, J. Lee, J. Geffert, J. Vranes, J. Park, J. Mahadeokar, J. Shah, J. van der Linde, J. Billock, J. Hong, J. Lee, J. Fu, J. Chi, J. Huang, J. Liu, J. Wang, J. Yu, J. Bitton, J. Spisak, J. Park, J. Rocca, J. Johnstun, J. Saxe, J. Jia, K. V. Alwala, K. Prasad, K. Upasani, K. Plawiak, K. Li, K. Heafield, K. Stone, K. El-Arini, K. Iyer, K. Malik, K. Chiu, K. Bhalla, K. Lakhotia, L. Rantala-Yeary, L. van der Maaten, L. Chen, L. Tan, L. Jenkins, L. Martin, L. Madaan, L. Malo, L. Blecher, L. Landzaat, L. de Oliveira, M. Muzzi, M. Pasupuleti, M. Singh, M. Paluri, M. Kardas, M. Tsimpoukelli, M. Oldham, M. Rita, M. Pavlova, M. Kambadur, M. Lewis, M. Si, M. K. Singh, M. Hassan, N. Goyal, N. Torabi, N. Bashlykov, N. Bogoychev, N. Chatterji, N. Zhang, O. Duchenne, O. Çelebi, P. Alrassy, P. Zhang, P. Li, P. Vasic, P. Weng, P. Bhargava, P. Dubal, P. Krishnan, P. S. Koura, P. Xu, Q. He, Q. Dong, R. Srinivasan, R. Ganapathy, R. Calderer, R. S. Cabral, R. Stojnic, R. Raileanu, R. Maheswari, R. Girdhar, R. Patel, R. Sauvestre, R. Polidoro, R. Sumbaly, R. Taylor, R. Silva, R. Hou, R. Wang, S. Hosseini, S. Chennabasappa, S. Singh, S. Bell, S. S. Kim, S. Edunov, S. Nie, S. Narang, S. Raparthy, S. Shen, S. Wan, S. Bhosale, S. Zhang, S. Vandenhende, S. Batra, S. Whitman, S. Sootla, S. Collot, S. Gururangan, S. Borodinsky, T. Herman, T. Fowler, T. Sheasha, T. Georgiou, T. Scialom, T. Speckbacher, T. Mihaylov, T. Xiao, U. Karn, V. Goswami, V. Gupta, V. Ramanathan, V. Kerkez, V. Gonguet, V. Do, V. Vogeti, V. Albiero, V. Petrovic, W. Chu, W. Xiong, W. Fu, W. Meers, X. Martinet, X. Wang, X. Wang, X. E. Tan, X. Xia, X. Xie, X. Jia, X. Wang, Y. Goldschlag, Y. Gaur, Y. Babaei, Y. Wen, Y. Song, Y. Zhang, Y. Li, Y. Mao, Z. D. Coudert, Z. Yan, Z. Chen, Z. Papakipos, A. Singh, A. Srivastava, A. Jain, A. Kelsey, A. Shajnfeld, A. Gangidi, A. Victoria, A. Goldstand, A. Menon, A. Sharma, A. Boesenberg, A. Baevski, A. Feinstein, A. Kallet, A. Sangani, A. Teo, A. Yunus, A. Lupu, A. Alvarado, A. Caples, A. Gu, A. Ho, A. Poulton, A. Ryan, A. Ramchandani, A. Dong, A. Franco, A. Goyal, A. Saraf, A. Chowdhury, A. Gabriel, A. Bharambe, A. Eisenman, A. Yazdan, B. James, B. Maurer, B. Leonhardi, B. Huang, B. Loyd, B. D. Paola, B. Paranjape, B. Liu, B. Wu, B. Ni, B. Hancock, B. Wasti, B. Spence, B. Stojkovic, B. Gamido, B. Montalvo, C. Parker, C. Burton, C. Mejia, C. Liu, C. Wang, C. Kim, C. Zhou, C. Hu, C. Chu, C. Cai, C. Tindal, C. Feichtenhofer, C. Gao, D. Civin, D. Beaty, D. Kreymer, D. Li, D. Adkins, D. Xu, D. Testuggine, D. David, D. Parikh, D. Liskovich, D. Foss, D. Wang, D. Le, D. Holland, E. Dowling, E. Jamil, E. Montgomery, E. Presani, E. Hahn, E. Wood, E. Le, E. Brinkman, E. Arcaute, E. Dunbar, E. Smothers, F. Sun, F. Kreuk, F. Tian, F. Kokkinos, F. Ozgenel, F. Caggioni, F. Kanayet, F. Seide, G. M. Florez, G. Schwarz, G. Badeer, G. Swee, G. Halpern, G. Herman, G. Sizov, Guangyi, Zhang, G. Lakshminarayanan, H. Inan, H. Shojanazeri, H. Zou, H. Wang, H. Zha, H. Habeeb, H. Rudolph, H. Suk, H. Aspegren, H. Goldman, H. Zhan, I. Damlaj, I. Molybog, I. Tufanov, I. Leontiadis, I. Veliche, I. Gat, J. Weissman, J. Geboski, J. Kohli, J. Lam, J. Asher, J. Gaya, J. Marcus, J. Tang, J. Chan, J. Zhen, J. Reizenstein, J. Teboul, J. Zhong, J. Jin, J. Yang, J. Cummings, J. Carvill, J. Shepard, J. McPhie, J. Torres, J. Ginsburg, J. Wang, K. Wu, K. H. U, K. Saxena, K. Khandelwal, K. Zand, K. Matosich, K. Veeraraghavan, K. Michelena, K. Li, K. Jagadeesh, K. Huang, K. Chawla, K. Huang, L. Chen, L. Garg, L. A, L. Silva, L. Bell, L. Zhang, L. Guo, L. Yu, L. Moshkovich, L. Wehrstedt, M. Khabsa, M. Avalani, M. Bhatt, M. Mankus, M. Hasson, M. Lennie, M. Reso, M. Groshev, M. Naumov, M. Lathi, M. Keneally, M. Liu, M. L. Seltzer, M. Valko, M. Restrepo, M. Patel, M. Vyatskov, M. Samvelyan, M. Clark, M. Macey, M. Wang, M. J. Hermoso, M. Metanat, M. Rastegari, M. Bansal, N. Santhanam, N. Parks, N. White, N. Bawa, N. Singhal, N. Egebo, N. Usunier, N. Mehta, N. P. Laptev, N. Dong, N. Cheng, O. Chernoguz, O. Hart, O. Salpekar, O. Kalinli, P. Kent, P. Parekh, P. Saab, P. Balaji, P. Rittner, P. Bontrager, P. Roux, P. Dollar, P. Zvyagina, P. Ratanchandani, P. Yuvraj, Q. Liang, R. Alao, R. Rodriguez, R. Ayub, R. Murthy, R. Nayani, R. Mitra, R. Parthasarathy, R. Li, R. Hogan, R. Battey, R. Wang, R. Howes, R. Rinott, S. Mehta, S. Siby, S. J. Bondu, S. Datta, S. Chugh, S. Hunt, S. Dhillon, S. Sidorov, S. Pan, S. Mahajan, S. Verma, S. Yamamoto, S. Ramaswamy, S. Lindsay, S. Lindsay, S. Feng, S. Lin, S. C. Zha, S. Patil, S. Shankar, S. Zhang, S. Zhang, S. Wang, S. Agarwal, S. Sajuyigbe, S. Chintala, S. Max, S. Chen, S. Kehoe, S. Satterfield, S. Govindaprasad, S. Gupta, S. Deng, S. Cho, S. Virk, S. Subramanian, S. Choudhury, S. Goldman, T. Remez, T. Glaser, T. Best, T. Koehler, T. Robinson, T. Li, T. Zhang, T. Matthews, T. Chou, T. Shaked, V. Vontimitta, V. Ajayi, V. Montanez, V. Mohan, V. S. Kumar, V. Mangla, V. Ionescu, V. Poenaru, V. T. Mihailescu, V. Ivanov, W. Li, W. Wang, W. Jiang, W. Bouaziz, W. Constable, X. Tang, X. Wu, X. Wang, X. Wu, X. Gao, Y. Kleinman, Y. Chen, Y. Hu, Y. Jia, Y. Qi, Y. Li, Y. Zhang, Y. Zhang, Y. Adi, Y. Nam, Yu, Wang, Y. Zhao, Y. Hao, Y. Qian, Y. Li, Y. He, Z. Rait, Z. DeVito, Z. Rosnbrick, Z. Wen, Z. Yang, Z. Zhao, and Z. Ma
+The llama 3 herd of models
+.
+External Links:
+2407.21783
+,
+Link
+Cited by:
+§2.1
+.
+Gu
+et al.
+(2025)
+X. Gu, T. Pang, C. Du, Q. Liu, F. Zhang, C. Du, Y. Wang, and M. Lin
+When attention sink emerges in language models: an empirical view
+.
+External Links:
+2410.10781
+,
+Link
+Cited by:
+§1
+.
+Han
+et al.
+(2024)
+D. Han, Y. Pu, Z. Xia, Y. Han, X. Pan, X. Li, J. Lu, S. Song, and G. Huang
+Bridging the divide: reconsidering softmax and linear attention
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 79221–79245
+.
+Cited by:
+§1
+.
+Hsieh
+et al.
+(2023)
+C. Hsieh, C. Li, C. Yeh, H. Nakhost, Y. Fujii, A. Ratner, R. Krishna, C. Lee, and T. Pfister
+Distilling step-by-step! outperforming larger language models with less training data and smaller model sizes
+.
+In
+Findings of the Association for Computational Linguistics: ACL 2023
+,
+pp. 8003–8017
+.
+Cited by:
+§2.1
+.
+Islam
+et al.
+(2023)
+S. Islam, H. Elmekki, A. Elsebai, J. Bentahar, N. Drawel, G. Rjoub, and W. Pedrycz
+A comprehensive survey on applications of transformers for deep learning tasks
+.
+External Links:
+2306.07303
+,
+Link
+Cited by:
+§1
+.
+Jiang and Li (2025)
+H. Jiang and Q. Li
+Approximation rate of the transformer architecture for sequence modeling
+.
+External Links:
+2305.18475
+,
+Link
+Cited by:
+§1
+.
+Lozhkov
+et al.
+(2024)
+A. Lozhkov, L. Ben Allal, L. von Werra, and T. Wolf
+FineWeb-edu: the finest collection of educational content
+.
+Hugging Face
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§5.1
+.
+Luong
+et al.
+(2015)
+M. Luong, H. Pham, and C. D. Manning
+Effective approaches to attention-based neural machine translation
+.
+External Links:
+1508.04025
+,
+Link
+Cited by:
+§1
+.
+Miller (2023)
+E. Miller
+Attention is off by one
+.
+Note:
+https://www.evanmiller.org/attention-is-off-by-one.html
+Accessed: 2026-01-25
+Cited by:
+§1
+,
+§1
+,
+§2.3
+.
+Minaee
+et al.
+(2025)
+S. Minaee, T. Mikolov, N. Nikzad, M. Chenaghlu, R. Socher, X. Amatriain, and J. Gao
+Large language models: a survey
+.
+External Links:
+2402.06196
+,
+Link
+Cited by:
+§1
+.
+Mongaras and Larson (2025)
+G. Mongaras and E. C. Larson
+On the expressiveness of softmax attention: a recurrent neural network perspective
+.
+arXiv preprint arXiv:2507.23632
+.
+Cited by:
+§1
+.
+Qin
+et al.
+(2022)
+Z. Qin, W. Sun, H. Deng, D. Li, Y. Wei, B. Lv, J. Yan, L. Kong, and Y. Zhong
+CosFormer: rethinking softmax in attention
+.
+External Links:
+2202.08791
+,
+Link
+Cited by:
+§1
+.
+Qiu
+et al.
+(2025)
+Z. Qiu, Z. Wang, B. Zheng, Z. Huang, K. Wen, S. Yang, R. Men, L. Yu, F. Huang, S. Huang,
+et al.
+Gated attention for large language models: non-linearity, sparsity, and attention-sink-free
+.
+arXiv preprint arXiv:2505.06708
+.
+Cited by:
+§1
+,
+§2.4
+,
+§5.4
+.
+Richter and Wattenhofer (2020)
+O. Richter and R. Wattenhofer
+Normalized attention without probability cage
+.
+External Links:
+2005.09561
+,
+Link
+Cited by:
+§1
+.
+Ruscio
+et al.
+(2025)
+V. Ruscio, U. Nanni, and F. Silvestri
+What are you sinking? a geometric approach on attention sink
+.
+External Links:
+2508.02546
+,
+Link
+Cited by:
+§1
+.
+Sakaguchi
+et al.
+(2021)
+K. Sakaguchi, R. L. Bras, C. Bhagavatula, and Y. Choi
+Winogrande: an adversarial winograd schema challenge at scale
+.
+Communications of the ACM
+64
+(
+9
+),
+pp. 99–106
+.
+Cited by:
+§5.1
+.
+Vaswani
+et al.
+(2017)
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin
+Attention is all you need
+.
+Advances in neural information processing systems
+30
+.
+Cited by:
+§1
+.
+Wang and E (2024)
+M. Wang and W. E
+Understanding the expressive power and mechanisms of transformer for sequence modeling
+.
+External Links:
+2402.00522
+,
+Link
+Cited by:
+§1
+.
+Xiao
+et al.
+(2023)
+G. Xiao, Y. Tian, B. Chen, S. Han, and M. Lewis
+Efficient streaming language models with attention sinks
+.
+arXiv preprint arXiv:2309.17453
+.
+Cited by:
+§1
+,
+§2.3
+.
+Zellers
+et al.
+(2019)
+R. Zellers, A. Holtzman, Y. Bisk, A. Farhadi, and Y. Choi
+Hellaswag: can a machine really finish your sentence?
+.
+arXiv preprint arXiv:1905.07830
+.
+Cited by:
+§5.1
+.
+Appendix A
+Analysis
+A.1
+Analysis settings
+Our analysis uses model checkpoints trained on 20B tokens. We compute the reported metrics on the C4 validation datasets with a sequence length of 1k, using 10 sampled sequences.
+A.2
+Attention heatmap
+Figure
+9
+visualizes the attention weight matrices from 8th layer of the 1B model, where we average the attention probabilities over heads and plot the first 30
+×
+\times
+30 token block for readability. Compared to the baseline, both attention sink and Affine-Scaled Attention exhibit a more reduced allocation of attention mass to first positions (left columns), indicating a systematic shift in where attention concentrates. Notably, Affine-Scaled Attention assigns comparatively lower attention mass to the first token.
+(a)
+Baseline
+(b)
+Attention sink
+(c)
+Affine-Scaled Attention
+Figure 9
+:
+Attention heatmaps for the 8th layer of the 1B model, across (a) Baseline, (b) Attention sink, and (c) Affine-Scaled Attention.
+The baseline concentrates attention on the first token. Attention sink reduces the weight on the first token, but the maps still show substantial concentration on the first two positions (the sink token and the first token). In contrast, Affine-Scaled Attention mitigates this positional over-concentration via input-adaptive modulation.
+Appendix B
+Experiment
+B.1
+Experimental settings
+We trained the model for 1 epoch of total 9000 steps with weight decay of 0.1. We used the warmup-stable-decay learning rate scheduler with 100 warmup steps. The 0.5B, 1B, and 3B student models use the same architecture as Qwen1.5-0.5B, LLaMA3.2-1B, and LLaMA3.2-3B, respectively.
+B.2
+Additional loss graph
+Figure
+10
+shows knowledge distillation(KD) loss curves during the late training phase (steps 7k–9k) for the 0.5B, 1B, and 3B models. Across all model sizes, Affine-Scaled Attention consistently achieves a lower KD loss than both the baseline and attention sink methods, and this gap is maintained up to the end of training. This indicates that Affine-Scaled Attention reduces distillation error not only in the early optimization stage but also in the final stage of training.
+(a)
+0.5B model
+(b)
+1B model
+(c)
+3B model
+Figure 10
+:
+KD loss curves in the late training phase (steps 7k–9k) for 0.5B / 1B / 3B models.
+We compare baseline, attention sink, and Affine-Scaled Attention.
+B.3
+Gradient norm analysis
+The results in Table
+4
+show that Affine-Scaled Attention consistently decreases gradient norm variance across different model scales. Lower variance and coefficient of variation indicate more stable gradient behavior, which may contribute to improved optimization stability in the early training phase.
+Table 4
+:
+Gradient norm statistics during early training (steps 0–500).
+Variance and coefficient of variation (CV) are computed from raw gradient norms
+without smoothing.
+Model
+Method
+Mean
+Std
+Variance
+CV
+0.5B
+Baseline
+0.563
+0.507
+0.257
+0.90
+Sink
+0.551
+0.509
+0.259
+0.92
+Affine-Scaled
+0.561
+0.451
+0.203
+0.80
+1B
+Baseline
+0.907
+1.983
+3.934
+2.19
+Sink
+0.902
+1.988
+3.951
+2.20
+Affine-Scaled
+0.842
+1.702
+2.897
+2.02
+To further assess optimization stability beyond gradient variance, we measure the frequency of extreme gradient norm spikes during the early training phase. As shown in Table
+5
+, Affine-Scaled
+Attention consistently reduces the number of highly extreme gradient events,
+particularly under the stricter threshold (
+k
+=
+9
+k=9
+), across both model scales.
+This suggests that Affine-scaled Attention leads to smoother gradient dynamics
+and improved training stability by mitigating abrupt optimization fluctuations.
+Table 5
+:
+Extreme gradient norm spike counts during early training (steps 0–500).
+A spike is defined as a training step where the gradient norm exceeds a robust
+run-specific threshold,
+τ
+=
+median
+⁡
+(
+g
+)
++
+k
+⋅
+MAD
+⁡
+(
+g
+)
+\tau=\mathrm{median}(g)+k\cdot\mathrm{MAD}(g)
+,
+with
+k
+∈
+{
+6
+,
+9
+}
+k\in\{6,9\}
+. MAD denotes the median absolute deviation, a robust measure of variability
+that is less sensitive to outliers than standard deviation. Lower spike counts indicate fewer extreme gradient events
+and smoother optimization dynamics.
+Model
+Method
+#Spikes (
+k
+=
+6
+k=6
+)
+#Spikes (
+k
+=
+9
+k=9
+)
+Qwen-0.5B
+Baseline
+40
+30
+Sink
+44
+31
+Affine-Scaled
+42
+22
+LLaMA-1B
+Baseline
+53
+28
+Sink
+67
+35
+Affine-Scaled
+54
+27
+B.4
+Discussion on design of activation function for scaling factor
+We define our custom activation function,
+linear clipping
+, as follows:
+Figure 11
+:
+Comparison of a sigmoid and a custom clipping-linear function.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

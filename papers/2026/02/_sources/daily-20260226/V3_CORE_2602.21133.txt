@@ -1,0 +1,2234 @@
+SOM-VQ: Topology-Aware Tokenization for Interactive Generative Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Self-Organizing Map Vector Quantization
+2.1
+Background: VQ-VAE
+2.2
+SOM-VQ: Topology-Aware Tokenization
+3
+Experimental Validation
+3.1
+Main Results
+3.2
+Scaling and Cross-Domain Behavior
+3.3
+Ablation: isolating the contribution of topological structure
+Relationship to SOM-VAE.
+3.4
+Limitations
+4
+Human-in-the-Loop Control
+5
+Conclusions
+References
+A
+Supplementary Material
+License: CC BY-NC-ND 4.0
+arXiv:2602.21133v1 [cs.LG] 24 Feb 2026
+SOM-VQ: Topology-Aware Tokenization for Interactive Generative Models
+Alessandro Londei
+Affiliation:
+Sony Computer Science Laboratories - Rome. Joint Initiative CREF-SONY, Centro Ricerche Enrico Fermi. Via Panisperna 89/A, 00184, Rome, Italy
+Correspondence to:
+alessandro.londei@sony.com
+Denise Lanzieri
+Affiliation:
+Sony Computer Science Laboratories - Rome. Joint Initiative CREF-SONY, Centro Ricerche Enrico Fermi. Via Panisperna 89/A, 00184, Rome, Italy
+Matteo Benati
+Affiliation:
+Department of Computer, Automatic and Management Engineering.
+Sapienza University, Via Ariosto 25, Rome, Italy
+Affiliation:
+Sony Computer Science Laboratories - Rome. Joint Initiative CREF-SONY, Centro Ricerche Enrico Fermi. Via Panisperna 89/A, 00184, Rome, Italy
+Abstract
+Vector-quantized representations enable powerful discrete generative models but lack semantic structure in token space, limiting interpretable human control.
+We introduce SOM-VQ, a tokenization method that combines vector quantization with Self-Organizing Maps to learn discrete codebooks with explicit low-dimensional topology.
+Unlike standard VQ-VAE, SOM-VQ uses topology-aware updates that preserve neighborhood structure: nearby tokens on a learned grid correspond to semantically similar states, enabling direct geometric manipulation of the latent space.
+We demonstrate that SOM-VQ produces more learnable token sequences in the evaluated domains while providing an explicit navigable geometry in code space.
+Critically, the topological organization enables intuitive human-in-the-loop control: users can steer generation by manipulating distances in token space, achieving semantic alignment without frame-level constraints.
+We focus on human motion generation — a domain where kinematic structure, smooth temporal continuity, and interactive use cases (choreography, rehabilitation, HCI) make topology-aware control especially natural — demonstrating controlled divergence and convergence from reference sequences through simple grid-based sampling.
+SOM-VQ provides a general framework for interpretable discrete representations applicable to music, gesture, and other interactive generative domains.
+Keywords:
+Machine Learning, ICML
+1
+Introduction
+Discrete representations have become foundational to modern generative models, enabling scalable autoregressive architectures across image
+(
+Razavi et al., 2019
+;
+Esser et al., 2021
+)
+, video
+(
+Yan and others, 2021
+)
+, audio
+(
+Dhariwal and others, 2020
+)
+, and motion synthesis
+(
+Petrovich and others, 2022
+;
+Guo and others, 2022
+)
+. Vector quantization (VQ) techniques, popularized by VQ-VAE
+(
+van den Oord et al., 2017
+)
+, provide a principled approach to learning discrete latent spaces: an encoder maps continuous inputs to latent vectors, which are quantized to the nearest codebook entry, and a decoder reconstructs from the discrete representation. Training minimizes
+ℒ
+VQ-VAE
+=
+‖
+x
+−
+x
+^
+‖
+2
++
+‖
+sg
+⁡
+[
+z
+e
+]
+−
+z
+q
+‖
+2
++
+β
+​
+‖
+z
+e
+−
+sg
+⁡
+[
+z
+q
+]
+‖
+2
+,
+\mathcal{L}_{\text{VQ-VAE}}=\|x-\hat{x}\|^{2}+\|\mathrm{sg}[z_{e}]-z_{q}\|^{2}+\beta\|z_{e}-\mathrm{sg}[z_{q}]\|^{2},
+(1)
+where
+sg
+⁡
+[
+⋅
+]
+\mathrm{sg}[\cdot]
+denotes stop-gradient. Recent variants have refined this framework through residual quantization
+(
+Lee and others, 2022
+)
+, finite scalar quantization
+(
+Mentzer and others, 2023
+)
+, and improved codebook learning
+(
+Yu and others, 2023
+)
+.
+Despite their success, VQ-based methods treat tokens as unstructured symbols: codebook elements lack explicit organization, and distances between tokens carry no semantic meaning. This poses challenges for
+controllable generation
+, where users seek to guide model outputs through intuitive, semantically-grounded interventions. Current approaches to control rely on conditioning
+(
+Dhariwal and Nichol, 2021
+)
+, classifier guidance
+(
+Ho and Salimans, 2022
+)
+, or explicit constraints
+(
+Lhner and others, 2023
+)
+—indirect mechanisms that offer limited access to the model’s internal representation structure and may compromise generation coherence
+(
+Liu and others, 2023
+)
+.
+Interactive control would benefit from representations where geometric relationships in latent space correspond to semantic relationships in data space. Self-Organizing Maps (SOMs)
+(
+Kohonen, 2001
+)
+provide precisely this property: through competitive learning with neighborhood-based updates, SOMs arrange prototypes on a low-dimensional grid such that proximity reflects semantic similarity. SOMs have seen limited adoption in deep learning
+(
+Fortuin and others, 2019
+)
+, partly because they lack the stability and discrete structure that make VQ effective for large-scale generation. Human motion is a particularly apt domain for topology-aware tokenization: its kinematic structure and temporal continuity mean that semantically similar poses are genuinely close in data space, and its interactive use cases — choreography, rehabilitation, HCI — demand precisely the real-time relational steering that a navigable token geometry enables.
+We introduce SOM-VQ, a topology-aware tokenization method that unifies vector quantization’s stability with SOM’s neighborhood preservation. SOM-VQ learns discrete codebooks with explicit low-dimensional topology: tokens nearby on a learned grid correspond to semantically related states, enabling direct geometric manipulation of latent space. Key properties include:
+•
+Stable discrete tokenization
+compatible with autoregressive models, avoiding codebook collapse through topology-aware EMA updates
+•
+Explicit navigable token space
+where grid geometry reflects semantic similarity, enabling control operations not possible with unstructured VQ codebooks
+•
+Geometric controllability
+enabling human-in-the-loop steering via token-space distance manipulation without frame-level constraints
+We validate SOM-VQ on human motion generation, demonstrating preservation of topological structure and enabling intuitive control through divergence/convergence experiments. The framework generalizes naturally to other sequential domains requiring interpretable, steerable generation.
+2
+Self-Organizing Map Vector Quantization
+2.1
+Background: VQ-VAE
+VQ-VAE learns discrete representations through three components: an encoder
+f
+θ
+:
+ℝ
+D
+→
+ℝ
+d
+f_{\theta}:\mathbb{R}^{D}\to\mathbb{R}^{d}
+mapping inputs to continuous latents, a codebook
+𝒞
+=
+{
+e
+k
+}
+k
+=
+1
+K
+\mathcal{C}=\{e_{k}\}_{k=1}^{K}
+of discrete prototypes, and a decoder
+g
+ϕ
+:
+ℝ
+d
+→
+ℝ
+D
+g_{\phi}:\mathbb{R}^{d}\to\mathbb{R}^{D}
+for reconstruction. Given input
+x
+x
+, the encoder produces
+z
+e
+=
+f
+θ
+​
+(
+x
+)
+z_{e}=f_{\theta}(x)
+, which is quantized to the nearest codebook entry:
+k
+∗
+=
+arg
+⁡
+min
+k
+⁡
+‖
+z
+e
+−
+e
+k
+‖
+2
+,
+z
+q
+=
+e
+k
+∗
+.
+k^{*}=\arg\min_{k}\|z_{e}-e_{k}\|_{2},\quad z_{q}=e_{k^{*}}.
+(2)
+The decoder reconstructs
+x
+^
+=
+g
+ϕ
+​
+(
+z
+q
+)
+\hat{x}=g_{\phi}(z_{q})
+using a straight-through gradient estimator. Training optimizes Equation 1 with commitment loss
+‖
+z
+e
+−
+sg
+⁡
+[
+z
+q
+]
+‖
+2
+\|z_{e}-\mathrm{sg}[z_{q}]\|^{2}
+to prevent encoder drift, and codebook entries are updated via exponential moving average (EMA) of assigned latents.
+While effective for generation, VQ-VAE treats codebook entries as
+unordered symbols
+: the assignment in Eq. 2 considers only Euclidean distance in latent space, not relationships between tokens. Consequently, tokens
+k
+i
+k_{i}
+and
+k
+j
+k_{j}
+may be semantically unrelated even if their embeddings
+e
+k
+i
+e_{k_{i}}
+and
+e
+k
+j
+e_{k_{j}}
+are nearby, and vice versa. This precludes using token-space geometry for semantic control.
+2.2
+SOM-VQ: Topology-Aware Tokenization
+SOM-VQ addresses this by endowing the codebook with explicit topological structure. The key insight is to arrange codebook entries on a low-dimensional grid and couple their updates through spatial neighborhoods, as in Self-Organizing Maps
+(
+Kohonen, 2001
+)
+.
+Grid organization.
+Each codebook entry
+e
+k
+∈
+ℝ
+d
+e_{k}\in\mathbb{R}^{d}
+is associated with a fixed grid coordinate
+c
+k
+∈
+ℝ
+2
+c_{k}\in\mathbb{R}^{2}
+(we use 2D grids, though higher dimensions are possible). For a codebook of size
+K
+K
+, we arrange entries on a
+K
+×
+K
+\sqrt{K}\times\sqrt{K}
+grid with integer coordinates. Token assignment remains nearest-neighbor in latent space (Eq. 2), preserving discrete semantics.
+Two-stage codebook update.
+Unlike VQ-VAE’s per-entry EMA, SOM-VQ performs a two-stage update combining SOM topology preservation with VQ commitment. For each input
+z
+e
+z_{e}
+with best-matching unit (BMU)
+k
+∗
+k^{*}
+:
+Stage 1 (SOM topology):
+All codebook entries receive neighborhood-weighted updates:
+e
+k
+←
+e
+k
++
+η
+​
+h
+​
+(
+‖
+c
+k
+−
+c
+k
+∗
+‖
+)
+​
+(
+z
+e
+−
+e
+k
+)
+,
+e_{k}\leftarrow e_{k}+\eta\,h(\|c_{k}-c_{k^{*}}\|)(z_{e}-e_{k}),
+(3)
+where
+η
+\eta
+is a topology learning rate and
+h
+⁡
+(
+⋅
+)
+h(\cdot)
+is a Gaussian neighborhood kernel:
+h
+⁡
+(
+d
+)
+=
+exp
+⁡
+(
+−
+d
+2
+2
+​
+σ
+2
+)
+.
+h(d)=\exp\!\left(-\frac{d^{2}}{2\sigma^{2}}\right).
+(4)
+The bandwidth
+σ
+\sigma
+is annealed from
+σ
+start
+\sigma_{\text{start}}
+to
+σ
+end
+\sigma_{\text{end}}
+over training epochs, progressively localizing updates
+(
+Kohonen, 2001
+)
+.
+Stage 2 (VQ commitment):
+The BMU receives an additional EMA update:
+e
+k
+∗
+←
+(
+1
+−
+α
+)
+​
+e
+k
+∗
++
+α
+​
+z
+e
+,
+e_{k^{*}}\leftarrow(1-\alpha)e_{k^{*}}+\alpha\,z_{e},
+(5)
+where
+α
+\alpha
+is the VQ commitment rate. This encourages the BMU to track its assigned latents, combining SOM’s topology with VQ’s stability.
+Training objective.
+The encoder and decoder are trained end-to-end via gradient descent on:
+ℒ
+SOM-VQ
+=
+‖
+x
+−
+x
+^
+‖
+2
+⏟
+reconstruction
++
+β
+​
+‖
+z
+e
+−
+sg
+⁡
+[
+z
+q
+]
+‖
+2
+⏟
+commitment
+,
+\mathcal{L}_{\text{SOM-VQ}}=\underbrace{\|x-\hat{x}\|^{2}}_{\text{reconstruction}}+\beta\underbrace{\|z_{e}-\mathrm{sg}[z_{q}]\|^{2}}_{\text{commitment}},
+(6)
+while the codebook is updated via the two-stage procedure above (see Algorithm
+1
+in the supplement). The commitment term in Eq. 6 prevents encoder drift as in VQ-VAE.
+Properties.
+The neighborhood updates in Eq. 3 create coherent semantic regions on the grid while the VQ commitment in Eq. 5 prevents codebook collapse. This yields discrete tokens with explicit topology: nearby grid positions correspond to semantically similar latent regions, enabling geometric operations in token space for semantic control (Section 4). Typical hyperparameters:
+η
+=
+0.2
+\eta=0.2
+,
+α
+=
+0.05
+\alpha=0.05
+,
+σ
+start
+=
+4.0
+\sigma_{\text{start}}=4.0
+,
+σ
+end
+=
+0.8
+\sigma_{\text{end}}=0.8
+.
+3
+Experimental Validation
+We evaluate SOM-VQ on two domains with contrasting complexity: the Lorenz attractor
+(
+Lorenz, 1963
+)
+(3D chaotic dynamics) and AIST++
+(
+Li et al., 2021
+)
+(51D motion capture). We compare against VQ
+(
+van den Oord et al., 2017
+)
+, SOM-hard (pure SOM without VQ commitment), and VQ-VAE
+(
+van den Oord et al., 2017
+;
+Razavi et al., 2019
+)
+. All methods use a 32
+×
+\times
+32 grid (
+K
+=
+1024
+K{=}1024
+). Topology is measured by trustworthiness and continuity
+(
+Venna and Kaski, 2006
+)
+(point-level neighborhood preservation) and distortion (global codebook geometry). Sequence learnability is measured by GRU validation perplexity (Seq-PPL); lower indicates more structured sequences. Results are mean
+±
+\pm
+std over 5 seeds. Full details in Appendix
+A
+.
+3.1
+Main Results
+Table
+1
+shows that
+SOM-VQ achieves the lowest sequence perplexity across both domains
+, demonstrating that topological organization produces more learnable token sequences.
+Table 1:
+Cross-domain comparison at 32
+×
+\times
+32 (
+K
+=
+1024
+K{=}1024
+). SOM-VQ produces the most learnable sequences (lowest Seq-PPL) and organizes the codebook geometrically (Distortion), unlike VQ/VQ-VAE, which lack grid structure (—). SOM-hard achieves lower Distortion through pure topology optimization, but cannot support generation; SOM-VQ’s slightly higher Distortion reflects the VQ commitment constraint that enables stable discrete assignment. VQ-VAE uses larger architecture (hidden=512 vs. 256) and dead-code reset. Full statistics in Appendix Table
+2
+.
+Domain
+Method
+Act. (%)
+Trust
+↑
+\uparrow
+Cont.
+↑
+\uparrow
+MSE
+↓
+\downarrow
+Seq-PPL
+↓
+\downarrow
+Dist.
+↓
+\downarrow
+VQ
+99
+0.999
+0.960
+0.005
+678
+—
+SOM-hard
+95
+0.998
+0.942
+0.006
+679
+×
+\times
+0.041
+Lorenz
+VQ-VAE
+99
+0.999
+0.961
+0.003
+672
+—
+SOM-VQ
+71
+0.998
+0.942
+0.007
+617
+0.062
+VQ
+61
+0.940
+0.898
+0.294
+719
+—
+SOM-hard
+72
+0.932
+0.897
+0.342
+742
+×
+\times
+0.093
+AIST++
+VQ-VAE
+61
+0.978
+0.950
+0.200
+727
+—
+SOM-VQ
+61
+0.937
+0.895
+0.319
+679
+0.111
+SOM-VQ achieves near-perfect point-level topology (Trust/Cont
+≈
+0.94
+{\approx}0.94
+–
+0.99
+0.99
+), matching VQ and SOM-hard. The key distinctions are: (1) lowest Seq-PPL in both domains (617 vs. 672–678 on Lorenz; 679 vs. 719–742 on AIST++), representing 6–9% improvements, and (2) organized codebook geometry (Distortion). While VQ/VQ-VAE lack geometric structure, SOM-VQ maintains grid organization despite the VQ commitment constraint. VQ-VAE’s better reconstruction reflects its larger architecture and unconstrained optimization.
+Code utilization (71% Lorenz, 61% AIST++) is lower than VQ/VQ-VAE due to topology-aware allocation: unused grid positions tend to correspond to low-density regions, reflecting manifold structure rather than enforcing uniform coverage.
+Why topology improves learnability.
+Why topology may improve learnability. SOM-VQ enforces that neighboring grid positions correspond to semantically similar latents, encouraging token sequences to follow more connected paths through the grid — a regularity that autoregressive models can exploit, consistent with the lower Seq-PPL observed in our experiments.
+3.2
+Scaling and Cross-Domain Behavior
+Grid ablations (Appendix Tables
+4
+,
+5
+) reveal domain-dependent scaling. Lorenz improves monotonically: MSE decreases 6
+×
+\times
+(0.047
+→
+\to
+0.007), Trust rises (0.983
+→
+\to
+0.998). AIST++ plateaus at 32
+×
+\times
+32: further scaling to 48
+×
+\times
+48 or 64
+×
+\times
+64 yields no improvement (MSE
+≈
+0.32
+{\approx}0.32
+, Trust
+≈
+0.94
+{\approx}0.94
+) while utilization drops to 23%, indicating saturation at
+∼
+{\sim}
+600–700 codes. This suggests the optimal grid size should match data complexity, with the utilization plateau providing a practical diagnostic.
+Recent work on structured codebooks includes product quantization
+(
+Jégou et al., 2011
+)
+and residual VQ
+(
+Zeghidour et al., 2021
+)
+, which improve capacity through hierarchy but lack explicit topology. VQ-GAN
+(
+Esser et al., 2021
+)
+achieves strong generation through adversarial training but operates in unstructured discrete spaces. SOM-VQ’s contribution is imposing a low-dimensional geometric structure that enables interpretable control, demonstrated in Section 4.
+3.3
+Ablation: isolating the contribution of topological structure
+To rule out architectural confounds, we compare three capacity-matched variants at identical architecture (hidden=256): VQ-EMA, VQ-EMA with dead-code reset, and SOM-VQ using its standard two-phase training schedule. On Lorenz, SOM-VQ achieves lower Seq-PPL than both VQ variants without any reset mechanism (829 vs. 1014/1017), confirming that neighbourhood pressure provides implicit codebook regularisation on structured low-dimensional data. On AIST++, capacity-matched VQ-EMA achieves lower Seq-PPL, suggesting that the Seq-PPL advantage in Table
+1
+is partially attributable to the richer evaluation protocol of the main experiments; SOM-VQ’s organised codebook geometry (Distortion) remains a unique property unavailable to either VQ variant. Full results are in Table
+3
+(supplementary).
+Relationship to SOM-VAE.
+SOM-VAE
+(
+Fortuin and others, 2019
+)
+integrates the SOM structure within a VAE to obtain interpretable latent representations for time-series clustering. However, it does not employ VQ-style commitment with exponential moving average updates, nor is it designed to produce stable discrete tokens for autoregressive generative modeling. In contrast, our method maintains persistent symbol identity through explicit VQ commitment and enables controlled perturbations to activation within a structured, discrete latent manifold for generative control, which requires stable symbol identities across training and inference.
+3.4
+Limitations
+While we validate across two complementary domains, a broader evaluation across audio, images, or other modalities would strengthen generalizability claims. The VQ-VAE comparison involves architectural confounds (network capacity, dead-code mechanisms) that merit controlled ablation in future work. The human-in-the-loop demonstration in Section 4 is preliminary and would benefit from user studies and baseline comparisons.
+4
+Human-in-the-Loop Control
+The topological structure of SOM-VQ enables intuitive control for interactive generation. We demonstrate this through a preliminary experiment where a generated motion sequence is steered to diverge from and later converge toward a reference performance.
+We train a 32
+×
+\times
+32 SOM-VQ tokenizer on AIST++ and an LSTM
+(
+Hochreiter and Schmidhuber, 1997
+)
+on the resulting tokens. At inference, a validation sequence serves as a reference. After a prompt, generation proceeds under topology-aware sampling: in divergence, next-token sampling is biased toward grid positions distant from the human BMU; in convergence, sampling favors closer positions. Concretely, each token occupies grid position
+(
+i
+,
+j
+)
+(i,j)
+; to diverge, we bias sampling toward
+‖
+c
+model
+−
+c
+human
+‖
+>
+τ
+\|c_{\text{model}}-c_{\text{human}}\|>\tau
+, and to converge toward
+‖
+c
+model
+−
+c
+human
+‖
+<
+τ
+\|c_{\text{model}}-c_{\text{human}}\|<\tau
+. This requires only Euclidean distances on the 2D grid.
+Figure 1:
+Human-in-the-loop control dynamics.
+Smoothed SOM grid distance (left) and prototype MSE (right), both normalised by their respective prompt-phase means, across the three interaction phases. Both metrics rise during divergence and return toward baseline during convergence, confirming that the topological steering operates consistently in grid space and in pose space simultaneously.
+Figure
+1
+shows that the Gaussian-smoothed prototype MSE and grid distance both increase during divergence and decrease during convergence, suggesting that topological guidance enables controlled departure and recovery. Figure
+2
+shows corresponding poses: during divergence, the model departs while remaining plausible; during convergence, reconstructions progressively realign.
+This demonstrates how topology-aware representations support natural interaction: by manipulating grid neighborhoods, users can steer generation while preserving coherence. Though preliminary, it motivates applications in choreography, music improvisation, and embodied agent control requiring interpretable real-time steering.
+Figure 2:
+Generated poses under topology-guided control.
+Top: reference. Bottom: model generation. The grid enables semantic control through geometric operations in token space.
+Crucially, this control mechanism requires no retraining, no conditioning variable, and no frame-level specification. Standard controllable generation methods — conditioning on class labels, text embeddings, or explicit pose constraints — require that the desired target be known and expressible in a predefined format before generation begins. The grid-based approach demonstrated here instead operates at the level of relational intent: the user specifies not a target state but a direction (closer to or further from a reference), and the generative model resolves this into coherent token sequences autonomously. This distinction matters for creative and interactive applications where the user’s goal evolves in real time and cannot be pre-specified — precisely the setting of live choreography, musical improvisation, or collaborative embodied agents. The topology established during SOM-VQ training makes this mode of interaction structurally possible; it is not available to methods whose codebooks lack geometric organization.
+5
+Conclusions
+We introduced SOM-VQ, a topology-aware vector quantization method that combines the stability of VQ-based tokenization with the geometric structure of Self-Organizing Maps. By endowing discrete tokens with an explicit low-dimensional topology, SOM-VQ enables interpretable control over generative processes and supports human-in-the-loop interaction through simple geometric operations in token space. SOM-VQ produces more learnable and structured token sequences than competing methods—including VQ-VAE—as evidenced by consistently lower sequence perplexity across both evaluated domains, and uniquely provides a navigable grid geometry that makes semantic control directly accessible without retraining.
+The HIL experiment demonstrates that topology-aware token spaces support a qualitatively different kind of interaction than standard generative models: control is exercised through geometric reasoning on a discrete manifold rather than through low-level conditioning or post-hoc editing. This opens a promising direction for applications where a human collaborator needs to steer, constrain, or creatively depart from a generative process while maintaining structural coherence—scenarios common in interactive performance and embodied agent control.
+References
+Dhariwal and Nichol (2021)
+P. Dhariwal and A. Nichol
+Diffusion models beat gans on image synthesis
+.
+NeurIPS
+.
+Cited by:
+§1
+.
+Dhariwal
+et al.
+(2020)
+P. Dhariwal
+et al.
+Jukebox: a generative model for music
+.
+arXiv preprint arXiv:2005.00341
+.
+Cited by:
+§1
+.
+Esser
+et al.
+(2021)
+P. Esser, R. Rombach, and B. Ommer
+Taming transformers for high-resolution image synthesis
+.
+CVPR
+.
+Cited by:
+§1
+,
+§3.2
+.
+Fortuin
+et al.
+(2019)
+V. Fortuin
+et al.
+SOM-vae: interpretable discrete representation learning on time series
+.
+ICLR
+.
+Cited by:
+§1
+,
+§3.3
+.
+Guo
+et al.
+(2022)
+C. Guo
+et al.
+Generating diverse and natural 3d human motions from text
+.
+CVPR
+.
+Cited by:
+§1
+.
+Ho and Salimans (2022)
+J. Ho and T. Salimans
+Classifier-free diffusion guidance
+.
+arXiv preprint arXiv:2207.12598
+.
+Cited by:
+§1
+.
+Hochreiter and Schmidhuber (1997)
+S. Hochreiter and J. Schmidhuber
+Long short-term memory
+.
+Neural computation
+9
+(
+8
+),
+pp. 1735–1780
+.
+Cited by:
+§4
+.
+Jégou
+et al.
+(2011)
+H. Jégou, M. Douze, and C. Schmid
+Product quantization for nearest neighbor search
+.
+In
+IEEE Transactions on Pattern Analysis and Machine Intelligence
+,
+Vol.
+33
+,
+pp. 117–128
+.
+Cited by:
+§3.2
+.
+Kohonen (2001)
+T. Kohonen
+Self-organizing maps
+.
+Springer
+.
+Cited by:
+§1
+,
+§2.2
+,
+§2.2
+.
+Lee
+et al.
+(2022)
+D. Lee
+et al.
+Autoregressive image generation using residual quantization
+.
+CVPR
+.
+Cited by:
+§1
+.
+Lhner
+et al.
+(2023)
+K. Lhner
+et al.
+Guided motion diffusion for controllable human motion synthesis
+.
+ICCV
+.
+Cited by:
+§1
+.
+Li
+et al.
+(2021)
+R. Li, S. Yang, D. A. Ross, J. Wu, Q. Li, C. Qian, and Z. Wang
+AI choreographer: music conditioned 3d dance generation with aist++
+.
+ICCV
+.
+Cited by:
+§3
+.
+Liu
+et al.
+(2023)
+X. Liu
+et al.
+More control for free! image synthesis with semantic diffusion guidance
+.
+WACV
+.
+Cited by:
+§1
+.
+Lorenz (1963)
+E. N. Lorenz
+Deterministic nonperiodic flow
+.
+Journal of the Atmospheric Sciences
+20
+(
+2
+),
+pp. 130–141
+.
+External Links:
+Document
+Cited by:
+§3
+.
+Mentzer
+et al.
+(2023)
+F. Mentzer
+et al.
+Finite scalar quantization: vq-vae made simple
+.
+arXiv preprint arXiv:2309.15505
+.
+Cited by:
+§1
+.
+Petrovich
+et al.
+(2022)
+M. Petrovich
+et al.
+TEMOS: generating diverse human motions from textual descriptions
+.
+ECCV
+.
+Cited by:
+§1
+.
+Razavi
+et al.
+(2019)
+A. Razavi, A. van den Oord, and O. Vinyals
+Generating diverse high-fidelity images with vq-vae-2
+.
+Advances in Neural Information Processing Systems
+.
+Cited by:
+Appendix A
+,
+§1
+,
+§3
+.
+van den Oord
+et al.
+(2017)
+A. van den Oord, O. Vinyals, and K. Kavukcuoglu
+Neural discrete representation learning
+.
+Advances in Neural Information Processing Systems
+.
+Cited by:
+Appendix A
+,
+Appendix A
+,
+§1
+,
+§3
+.
+Venna and Kaski (2006)
+J. Venna and S. Kaski
+Local multidimensional scaling with controlled tradeoff between trustworthiness and continuity
+.
+Proceedings of the Workshop on Self-Organizing Maps
+.
+Cited by:
+Appendix A
+,
+§3
+.
+Yan
+et al.
+(2021)
+W. Yan
+et al.
+VideoGPT: video generation using vq-vae and transformers
+.
+arXiv preprint arXiv:2104.10157
+.
+Cited by:
+§1
+.
+Yu
+et al.
+(2023)
+L. Yu
+et al.
+Language model beats diffusion–tokenizer is key to visual generation
+.
+arXiv preprint arXiv:2310.05737
+.
+Cited by:
+§1
+.
+Zeghidour
+et al.
+(2021)
+N. Zeghidour, A. Luebs, A. Omran, J. Skoglund, and M. Tagliasacchi
+SoundStream: an end-to-end neural audio codec
+.
+IEEE/ACM Transactions on Audio, Speech, and Language Processing
+30
+,
+pp. 495–507
+.
+Cited by:
+§3.2
+.
+Appendix A
+Supplementary Material
+Experimental Details
+Datasets and preprocessing.
+Lorenz attractor
+: We generate 400 trajectories of 300 timesteps each using standard parameters (
+σ
+=
+10
+\sigma{=}10
+,
+ρ
+=
+28
+\rho{=}28
+,
+β
+=
+8
+/
+3
+\beta{=}8/3
+,
+d
+​
+t
+=
+0.01
+dt{=}0.01
+). Each trajectory is a 6D feature vector
+(
+x
+,
+y
+,
+z
+,
+x
+˙
+,
+y
+˙
+,
+z
+˙
+)
+(x,y,z,\dot{x},\dot{y},\dot{z})
+with velocity computed by finite differences. We apply a temporal window of 4 frames and reduce to 8D via PCA after z-score normalization. Train/val/test splits are 70%/15%/15%.
+AIST++
+: Motion sequences are preprocessed with root centering (hip midpoint), frontal alignment (yaw normalization via shoulder orientation), and canonical coordinate system transformation. Each pose is a 51D vector (17 COCO joints
+×
+\times
+3 coordinates). Sequences are segmented into non-overlapping 240-frame windows. After z-score normalization, we reduce to 32D via PCA. Train/val/test splits are 70%/15%/15% over 400 sequences.
+Architecture and training.
+All methods use encoder/decoder networks with: 2-layer MLPs, ReLU activations, latent dimension matching PCA output (8D for Lorenz, 32D for AIST++). Hidden size scales with codebook: 128 for
+K
+≤
+64
+K{\leq}64
+, 256 for
+K
+≤
+256
+K{\leq}256
+, 512 for
+K
+>
+1024
+K{>}1024
+. VQ-VAE uses hidden=512 throughout to handle larger codebooks effectively. Training uses Adam (
+l
+​
+r
+=
+10
+−
+3
+lr{=}10^{-3}
+,
+λ
+=
+0.25
+\lambda{=}0.25
+), batch size 256, for 50 epochs.
+SOM-VQ training procedure.
+Training proceeds in two phases: (1)
+SOM pre-training
+: 10 epochs of pure SOM updates to establish initial topology, with neighborhood bandwidth annealed from
+σ
+start
+=
+K
+/
+2
+\sigma_{\text{start}}{=}\sqrt{K}/2
+to
+σ
+end
+=
+1.0
+\sigma_{\text{end}}{=}1.0
+and topology learning rate
+η
+=
+0.2
+\eta{=}0.2
+. (2)
+Joint training
+: 50 epochs of combined encoder/decoder optimization with two-stage codebook updates (SOM topology + VQ commitment) using fixed
+η
+=
+0.2
+\eta{=}0.2
+,
+α
+=
+0.05
+\alpha{=}0.05
+(EMA rate), and
+σ
+=
+1.0
+\sigma{=}1.0
+(fixed narrow bandwidth). This two-phase schedule ensures the grid structure is established before encoder optimization begins, preventing encoder drift from disrupting topology formation.
+Hyperparameter selection.
+The EMA rate
+α
+=
+0.05
+\alpha{=}0.05
+was selected based on validation set performance across preliminary experiments on both domains. While
+α
+=
+0.03
+\alpha{=}0.03
+achieves slightly lower Lorenz Seq-PPL (597 vs. 617), we report
+α
+=
+0.05
+\alpha{=}0.05
+throughout to maintain consistency across domains and avoid domain-specific tuning. The difference is within the range of seed variation and does not meaningfully affect the method comparison.
+Evaluation metrics.
+Trustworthiness
+T
+⁡
+(
+k
+)
+T(k)
+and
+continuity
+C
+⁡
+(
+k
+)
+C(k)
+measure
+k
+k
+-nearest-neighbor preservation between continuous latent space and discrete embedding
+[
+Venna and Kaski, 2006
+]
+:
+T
+⁡
+(
+k
+)
+=
+1
+−
+2
+n
+​
+k
+​
+(
+2
+​
+n
+−
+3
+​
+k
+−
+1
+)
+​
+∑
+i
+=
+1
+n
+∑
+j
+∈
+V
+k
+​
+(
+i
+)
+∖
+U
+k
+​
+(
+i
+)
+(
+r
+Z
+​
+(
+i
+,
+j
+)
+−
+k
+)
+,
+T(k)=1-\frac{2}{nk(2n{-}3k{-}1)}\sum_{i=1}^{n}\sum_{j\in V_{k}(i)\setminus U_{k}(i)}(r_{Z}(i,j)-k),
+(7)
+C
+⁡
+(
+k
+)
+=
+1
+−
+2
+n
+​
+k
+​
+(
+2
+​
+n
+−
+3
+​
+k
+−
+1
+)
+​
+∑
+i
+=
+1
+n
+∑
+j
+∈
+U
+k
+​
+(
+i
+)
+∖
+V
+k
+​
+(
+i
+)
+(
+r
+E
+​
+(
+i
+,
+j
+)
+−
+k
+)
+,
+C(k)=1-\frac{2}{nk(2n{-}3k{-}1)}\sum_{i=1}^{n}\sum_{j\in U_{k}(i)\setminus V_{k}(i)}(r_{E}(i,j)-k),
+(8)
+where
+U
+k
+​
+(
+i
+)
+U_{k}(i)
+,
+V
+k
+​
+(
+i
+)
+V_{k}(i)
+are
+k
+k
+-NN sets in original/embedded space, and
+r
+Z
+r_{Z}
+,
+r
+E
+r_{E}
+are neighborhood ranks. We use
+k
+=
+10
+k{=}10
+for
+K
+≤
+256
+K{\leq}256
+,
+k
+=
+12
+k{=}12
+for
+K
+=
+1024
+K{=}1024
+,
+k
+=
+15
+k{=}15
+for
+K
+>
+1024
+K{>}1024
+.
+Distortion
+measures global codebook geometry: the mean ratio of inter-code distances to expected distances under uniform grid spacing. Lower values indicate that codebook entries respect the grid’s geometric structure.
+Sequence perplexity (Seq-PPL)
+: We train a GRU with embedding dimension 64, hidden dimension 128, single layer, using Adam (
+l
+​
+r
+=
+3
+×
+10
+−
+4
+lr{=}3{\times}10^{-4}
+) for 10 epochs on batch size 64. Perplexity is
+exp
+⁡
+(
+ℒ
+CE
+)
+\exp(\mathcal{L}_{\text{CE}})
+on validation tokens.
+Baselines.
+VQ
+[
+van den Oord et al., 2017
+]
+: Standard vector quantization with exponential moving average (
+α
+=
+0.99
+\alpha{=}0.99
+).
+SOM-hard
+: Self-organizing map with Gaussian neighborhood kernel, annealed bandwidth, learning rate
+η
+=
+0.2
+\eta{=}0.2
+. No VQ commitment; stable for encoding but cannot support generation due to representational drift.
+VQ-VAE
+[
+van den Oord et al., 2017
+,
+Razavi et al., 2019
+]
+: Learned encoder/decoder with hidden=512, codebook EMA with dead-code reset when utilization drops below threshold (reinitialize unused codes from random training samples). This mechanism enforces near-complete utilization but changes the optimization landscape compared to SOM-based methods.
+Full Method Comparison
+Table
+2
+reports complete statistics at 32
+×
+\times
+32 including distortion (global codebook geometry measured via mean inter-code distance relative to expected uniform grid spacing) and standard deviations over 5 seeds.
+Table 2:
+Full method comparison at 32
+×
+\times
+32 (
+K
+=
+1024
+K{=}1024
+), mean
+±
+\pm
+std over 5 seeds.
+Domain
+Method
+Act. (%)
+Trust
+↑
+\uparrow
+Cont.
+↑
+\uparrow
+MSE
+↓
+\downarrow
+Seq-PPL
+↓
+\downarrow
+Dist.
+↓
+\downarrow
+VQ
+99
+0.999
+±
+\pm
+0.000
+0.960
+±
+\pm
+0.001
+0.005
+±
+\pm
+0.000
+678
+±
+\pm
+12
+—
+SOM-hard
+95
+0.998
+±
+\pm
+0.000
+0.942
+±
+\pm
+0.001
+0.006
+±
+\pm
+0.000
+679
+×
+\times
+0.041
+±
+\pm
+0.004
+Lorenz
+VQ-VAE
+99
+0.999
+±
+\pm
+0.000
+0.961
+±
+\pm
+0.001
+0.003
+±
+\pm
+0.000
+672
+±
+\pm
+9
+—
+SOM-VQ
+71
+0.998
+±
+\pm
+0.000
+0.942
+±
+\pm
+0.001
+0.007
+±
+\pm
+0.001
+617
+±
+\pm
+8
+0.062
+±
+\pm
+0.006
+VQ
+61
+0.940
+±
+\pm
+0.006
+0.898
+±
+\pm
+0.004
+0.294
+±
+\pm
+0.039
+719
+±
+\pm
+18
+—
+SOM-hard
+72
+0.932
+±
+\pm
+0.011
+0.897
+±
+\pm
+0.003
+0.342
+±
+\pm
+0.050
+742
+×
+\times
+0.093
+±
+\pm
+0.003
+AIST++
+VQ-VAE
+61
+0.978
+±
+\pm
+0.001
+0.950
+±
+\pm
+0.001
+0.200
+±
+\pm
+0.027
+727
+±
+\pm
+15
+—
+SOM-VQ
+61
+0.937
+±
+\pm
+0.008
+0.895
+±
+\pm
+0.004
+0.319
+±
+\pm
+0.041
+679
+±
+\pm
+11
+0.111
+±
+\pm
+0.005
+Capacity-Matched Ablation
+Table 3:
+Capacity-matched ablation at 32
+×
+\times
+32 (
+K
+=
+1024
+K{=}1024
+), mean
+±
+\pm
+std over 5 seeds. All variants share identical architecture (hidden=256). VQ-EMA + reset reinitialises dead codes each epoch; SOM-VQ uses a two-phase schedule matching the main experiments (10 epochs pure SOM pre-training, 50 epochs joint training) with no reset. SOM-VQ achieves lower Seq-PPL on both domains without dead-code reset, confirming that neighbourhood pressure provides implicit codebook regularisation. Distortion (—) is undefined for unstructured codebooks.
+Domain
+Method
+Act. (%)
+Trust
+↑
+\uparrow
+Cont.
+↑
+\uparrow
+MSE
+↓
+\downarrow
+Seq-PPL
+↓
+\downarrow
+Dist.
+↓
+\downarrow
+Lorenz
+VQ-EMA
+100
+0.999
+±
+\pm
+0.000
+0.999
+±
+\pm
+0.000
+0.041
+±
+\pm
+0.001
+1014
+±
+\pm
+4
+—
+VQ-EMA + reset
+100
+0.999
+±
+\pm
+0.000
+0.999
+±
+\pm
+0.000
+0.046
+±
+\pm
+0.003
+1017
+±
+\pm
+3
+—
+SOM-VQ
+76
+0.999
+±
+\pm
+0.000
+0.999
+±
+\pm
+0.000
+0.074
+±
+\pm
+0.016
+829
+±
+\pm
+23
+0.210
+±
+\pm
+0.005
+AIST++
+VQ-EMA
+90
+0.936
+±
+\pm
+0.003
+0.941
+±
+\pm
+0.003
+0.948
+±
+\pm
+0.535
+28
+±
+\pm
+3
+—
+VQ-EMA + reset
+99
+0.932
+±
+\pm
+0.003
+0.941
+±
+\pm
+0.004
+1.179
+±
+\pm
+0.501
+36
+±
+\pm
+4
+—
+SOM-VQ
+98
+0.906
+±
+\pm
+0.004
+0.916
+±
+\pm
+0.004
+1.149
+±
+\pm
+0.470
+61
+±
+\pm
+5
+0.350
+±
+\pm
+0.007
+Grid Size Ablations
+Table 4:
+SOM-VQ grid size ablation on Lorenz attractor, mean
+±
+\pm
+std over 5 seeds. Quality improves monotonically; utilization decreases due to topology-aware selection.
+Grid
+K
+K
+Act. (%)
+Trust
+Cont.
+MSE
+Dist.
+8
+×
+\times
+8
+64
+89
+0.983
+±
+\pm
+0.002
+0.941
+±
+\pm
+0.004
+0.047
+±
+\pm
+0.004
+0.202
+±
+\pm
+0.013
+16
+×
+\times
+16
+256
+81
+0.996
+±
+\pm
+0.001
+0.943
+±
+\pm
+0.002
+0.016
+±
+\pm
+0.002
+0.117
+±
+\pm
+0.004
+32
+×
+\times
+32
+1024
+71
+0.998
+±
+\pm
+0.000
+0.942
+±
+\pm
+0.001
+0.007
+±
+\pm
+0.001
+0.062
+±
+\pm
+0.006
+Table 5:
+SOM-VQ grid size ablation on AIST++, mean
+±
+\pm
+std over 5 seeds. Quality plateaus at 32
+×
+\times
+32; utilization drops sharply beyond, indicating dataset complexity saturation.
+Grid
+K
+K
+Act. (%)
+Trust
+Cont.
+MSE
+Dist.
+16
+×
+\times
+16
+256
+89
+0.915
+±
+\pm
+0.007
+0.876
+±
+\pm
+0.007
+0.351
+±
+\pm
+0.047
+0.263
+±
+\pm
+0.008
+32
+×
+\times
+32
+1024
+61
+0.937
+±
+\pm
+0.008
+0.895
+±
+\pm
+0.004
+0.319
+±
+\pm
+0.041
+0.111
+±
+\pm
+0.005
+48
+×
+\times
+48
+2304
+38
+0.945
+±
+\pm
+0.008
+0.904
+±
+\pm
+0.006
+0.324
+±
+\pm
+0.043
+0.057
+±
+\pm
+0.001
+64
+×
+\times
+64
+4096
+23
+0.945
+±
+\pm
+0.006
+0.905
+±
+\pm
+0.006
+0.321
+±
+\pm
+0.039
+0.035
+±
+\pm
+0.001
+Training Algorithm
+Algorithm 1
+SOM-VQ Joint Training (Phase 2)
+0:
+Latent vectors
+{
+z
+i
+}
+i
+=
+1
+N
+\{z_{i}\}_{i=1}^{N}
+, grid coordinates
+{
+c
+k
+}
+k
+=
+1
+K
+\{c_{k}\}_{k=1}^{K}
+0:
+Topology lr
+η
+\eta
+, EMA rate
+α
+\alpha
+, fixed bandwidth
+σ
+\sigma
+1:
+Initialize codebook
+{
+e
+k
+}
+\{e_{k}\}
+from 10-epoch SOM pre-training
+2:
+for
+epoch
+t
+=
+1
+t=1
+to
+T
+T
+do
+3:
+for
+each
+z
+i
+z_{i}
+in random order
+do
+4:
+k
+∗
+←
+arg
+⁡
+min
+k
+⁡
+‖
+z
+i
+−
+e
+k
+‖
+2
+k^{*}\leftarrow\arg\min_{k}\|z_{i}-e_{k}\|_{2}
+5:
+for
+each codebook entry
+e
+k
+e_{k}
+do
+6:
+d
+←
+‖
+c
+k
+−
+c
+k
+∗
+‖
+d\leftarrow\|c_{k}-c_{k^{*}}\|
+7:
+h
+←
+exp
+(
+−
+d
+2
+/
+2
+σ
+2
+)
+h\leftarrow\exp(-d^{2}/2\sigma^{2})
+8:
+e
+k
+←
+e
+k
++
+η
+⋅
+h
+⋅
+(
+z
+i
+−
+e
+k
+)
+e_{k}\leftarrow e_{k}+\eta\cdot h\cdot(z_{i}-e_{k})
+{SOM topology}
+9:
+end
+for
+10:
+e
+k
+∗
+←
+(
+1
+−
+α
+)
+​
+e
+k
+∗
++
+α
+⋅
+z
+i
+e_{k^{*}}\leftarrow(1-\alpha)e_{k^{*}}+\alpha\cdot z_{i}
+{VQ commitment}
+11:
+end
+for
+12:
+end
+for
+Note: This algorithm describes Phase 2 (joint training). Phase 1 consists of 10 epochs of pure SOM updates with annealed bandwidth to establish initial topology before encoder training begins.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

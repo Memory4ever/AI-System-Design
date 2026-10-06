@@ -1,0 +1,248 @@
+SOURCE: https://arxiv.org/html/2601.11194v1
+ATATA: One Algorithm to Align Them All Report GitHub Issue × Title: Content selection saved. Describe the issue below: 
+Description: arXiv is now an independent nonprofit! Learn more × Back to arXiv License: arXiv.org perpetual non-exclusive license arXiv:2601.11194v1 [cs.CV] 16 Jan 2026 ATATA: One Algorithm to Align Them All 
+Boyi Pang Affiliation: Harbin Institute of Technology Savva Ignatyev Affiliation: Appiled AI Institute Vladimir Ippolitov Affiliation: Appiled AI Institute Ramil Khafizov Affiliation: Appiled AI Institute Yurii Melnik Affiliation: Appiled AI Institute Oleg Voynov Affiliation: Appiled AI Institute Maksim Nakhodnov Affiliation: Fusion Brain Affiliation: MSU Aibek Alanov Affiliation: Fusion Brain Affiliation: HSE University Xiaopeng Fan Affiliation: Harbin Institute of Technology Affiliation: The Peng Cheng Laboratory Peter Wonka Evgeny Burnaev * Equal contribution Affiliation: Appiled AI Institute Affiliation: Indicates the corresponding author Affiliation: HIT Suzhou Research Institute Affiliation: KAUST Abstract We suggest a new multi-modal algorithm for joint inference of paired structurally aligned samples with Rectified Flow models.
+While some existing methods propose a codependent generation process, they do not view the problem of joint generation from a structural alignment perspective.
+Recent work uses Score Distillation Sampling to generate aligned 3D models, but SDS is known to be time-consuming, prone to mode collapse, and often provides cartoonish results.
+By contrast, our suggested approach relies on the joint transport of a segment in the sample space, yielding faster computation at inference time.
+Our approach can be built on top of an arbitrary Rectified Flow model operating on the structured latent space.
+We show the applicability of our method to the domains of image, video, and 3D shape generation using state-of-the-art baselines and evaluate it against both editing-based and joint inference-based competing approaches.
+We demonstrate a high degree of structural alignment for the sample pairs obtained with our method and a high visual quality of the samples.
+Our method improves the state-of-the-art for image and video generation pipelines.
+For 3D generation, it is able to show comparable quality while working orders of magnitude faster. voyleg.github.io/atata/ 
+
+Figure 1 : Visualization of generated images, videos, and 3D shapes using our method. The left pair is (horse animal, horse skeleton), the right pair is (gothic temple, hindu temple). 
+1 Introduction 
+Images, videos, and 3D models are three important domains for generative AI.
+While users often employ AI to generate one sample at a time, there are many use cases where a user wants to generate a set of examples that are somehow related.
+Examples are personalization [ 1 ] , where a user wants to have the same object or person appearing in multiple images or videos, or style consistent generation [ 13 ] , where multiple samples should be generated in the same style. 
+In this paper, we address the topic of structurally aligned generation.
+The goal of structurally aligned generation is to generate multiple samples (images, videos, 3D models) that showcase different main objects, scenes, or environments, but with their semantically (structurally) corresponding parts aligned across spatial/temporal dimensions.
+This aligned generation comes in handy in generating virtual worlds for training and entertainment, where different objects and scene parts can be easily replaced across domains and ”sewn up” into a new scene.
+It can also help in CAD and CAM applications for creating objects with interchangeable parts.
+For image and video editing, these tools can be useful for generating artistic effects, for example, transitions called matchcuts [ 38 ] .
+Finally, aligned generation methods can be useful for paired synthetic training data generation for image, video, and 3D, which can be later used to train editing models.
+While existing methods try to use editing for aligned generation [ 41 , 5 , 21 ] , this biases the generation to construct samples that fit one of the descriptions better than the others. 
+Current methods for aligned generation fall into three categories: 1) Editing-based methods, which use the input sample defined by the first description and force the second sample to adopt its structure.
+2) Zero-shot generation using large foundation models. Many large generative models like Nanobanana [ 12 ] , QWEN [ 54 ] , or FLUX [ 4 ] can generate a grid of semi-consistent images or 3D renders.
+3) Native aligned generation. Some works solve the problem of the joint aligned generation, introducing some kind of interaction between the samples during generation.
+This includes joint generation up to some step in MatchDiffusion [ 38 ] , attention sharing [ 13 ] , or embedding into a common latent space in A3D [ 19 ] . 
+We propose a novel, highly generalizable, multi-modal method for structurally aligned generation.
+Inspired by A3D [ 19 ] , we rethink the necessary properties of transitions between samples with regard to rectified flow field numerical integration and introduce additional constraints to the process, which are necessary for the algorithm’s convergence.
+The method is theoretically applicable to any rectified flow model that operates on the structured latent space, which is demonstrated for images, videos, and 3D objects with minor implementation differences between them.
+The method requires only changing the inference loop of the flow model, without changing any other components of the pipeline, and does not depend on the specific domain.
+The main idea of the method is to perform joint inference for pairs of samples by moving them and the linear interpolations between them along the velocity field of the rectified flow model while preserving the interpolation structure.
+We additionally introduce joint co-guidance during the transport process aimed at ensuring the smoothness of the linear transitions between the samples.
+Unlike A3D [ 19 ] , our method is inference-based and does not use SDS, which makes it orders of magnitude faster, allows for reaching state-of-the-art visual quality results without artifacts, and provides a notable variety of samples avoiding mode collapse.
+Unlike MatchDiffusion [ 38 ] , our method optimizes for the plausibility of the linear transitions between samples, notably improving structural alignment.
+It also provides a flexible way to co-guide samples during the inference process. 
+In summary, we make the following contributions. 
+• We propose a new algorithm for joint paired inference with rectified flow models, which is based on velocity-guided transport of a segment in latent space, and provide a theoretical justification for it. 
+
+• We derive an analytical way to convert the rectified model velocity field into a velocity transport field for joint segment transport. 
+
+• We demonstrate that the proposed algorithm, combined with models trained on structured latents, produces highly structurally aligned samples for three modalities: images, videos, and 3D models. 
+
+• We obtain results on par with state-of-the-art, specifically trained methods on images and 3D models, and show superior state-of-the-art results on videos. 
+
+2 Related work 
+2.1 Image Generation and Editing 
+Image generation and editing have become central components of modern generative modeling, forming the foundation for controllable video and 3D synthesis. The early approaches relied on Generative Adversarial Networks (GANs) [ 11 , 23 , 17 ] and Variational Autoencoders (VAEs) [ 25 , 52 ] , which were later surpassed by higher-quality diffusion-based methods such as DDPM [ 14 ] and Stable Diffusion [ 44 ] . The introduction of these models marked a significant step towards scalable text-to-image generation [ 48 , 42 , 46 ] . 
+More recent progress in text-to-image modeling has been driven by the emergence of Rectified Flow [ 35 ] and Diffusion Transformers (DiT) [ 39 ] , which underpin several state-of-the-art systems, including FLUX.1 [ 4 ] , Stable Diffusion 3 [ 9 ] , and Qwen-Image [ 54 ] . The advantageous properties of these frameworks—such as stable training and expressive conditioning—have enabled the natural extension of diffusion-based methods to the image editing domain, as demonstrated by [ 45 , 26 , 41 ] . 
+2.2 Video Generation and Editing 
+Video-based models are still far behind image-based models due to computational requirements and data scarcity [ 53 , 15 ] . Existing video editing methods could be split into two groups, where the first relies on training-free modification of video generation models and the second relies on training a separate architecture for editing. 
+Training-free editing approaches are easy and fast to adopt for the most recent models. One bright representative of this family is MatchDiffusion [ 37 ] , which relies on joint and disjoint diffusion stages, balancing between visual coherence and semantic divergence. 
+Methods requiring training allow more versatile and fine-grained edits. Among these methods, VACE [ 20 ] stands out for its possibility to use a diverse set of conditions: from inpainting to depth and motion preservation. Another work, LucyEdit [ 8 ] , focuses on purely textual edits and special “trigger” words, allowing control of the granularity of edits. 
+2.3 3D Generation and Editing 
+Alongside progress in image and video generation, 3D object and scene synthesis have also advanced significantly. Unlike 2D domains, where large-scale datasets enable highly generalizable models [ 4 , 54 ] , limited 3D data availability has led researchers to exploit 2D priors from pretrained models—either through multi-view generation with subsequent reconstruction [ 47 , 31 , 10 , 49 , 18 ] or through score distillation from 2D diffusion models ( [ 40 , 34 , 36 ] ).
+More recently, diffusion and flow matching models that operate directly in a 3D latent space have become competitive [ 57 , 59 , 27 ] . These methods fall into two main groups: those using structured voxel-based latents [ 57 , 55 , 59 ] and unstructured latents [ 62 , 27 , 28 ] . While unstructured latents are more computationally efficient, structured ones offer better interpretability—an advantage we build upon in our work. The landscape of 3D editing methods is parallel to that of 3D generation. Early progress relied on the use of 2D priors: either via score distillation [ 63 , 33 , 64 , 7 ] or via multi-view diffusion [ 6 , 5 , 29 ] . Recently, methods that operate directly in 3D latent space have enabled the design of editing systems that also operate in 3D space [ 57 , 32 , 60 ] . However, they still have limited generalization ability due to data scarcity, so 2D-based methods remain a strong baseline for this task. 
+2.4 Joint Generation of Consistent Objects 
+Recent advances in generative modeling have shown that it is possible to simultaneously generate multiple objects with shared properties.
+These shared properties can be of different nature: [ 30 , 61 ] exploit synchronization mechanisms to produce multiple views of a scene that can subsequently be merged into a panorama, [ 1 ] proposed a procedure to generate a set of images with consistent identity.
+The joint generation of geometrically aligned 3D assets remains more challenging, and the existing solution relies on an iterative, time-consuming SDS-based A3D algorithm [ 19 ] .
+Its core idea is to enforce smooth transitions between generations during the generation process.
+MatchDiffusion [ 38 ] proposes a training-free approach to joint generation that merges two trajectories before a threshold timestep, but we found that this trajectory merging alone is not sufficient to achieve proper structure alignment, motivating our contributions. 
+3 Preliminaries 
+3.1 Flow Matching 
+Recently, there emerged a tendency in the community to switch from the denoising diffusion models to simpler and more effective Rectified Flow [ 35 ] models.
+Given a distribution X 0 X_{0} and a sample from it x 0 ∼ X 0 x_{0}\sim X_{0} , the initial distribution is transformed into the ”noised” version via linear interpolation with ϵ ∼ 𝒩 ⁡ ( 0 , 𝑰 ) \epsilon\sim\mathcal{N}(0,\bm{I}) , where t ∈ [ 0 , 1 ] t\in[0,1] . 
+x t = ( 1 − t ) ​ x 0 + t ​ ϵ x_{t}=(1-t)x_{0}+t\epsilon (1) 
+Then a transformer model is trained to directly regress the velocity field v θ ​ ( x t , t ) v_{\theta}(x_{t},t) by minimi 
+ℒ ⁡ ( θ ) = 𝔼 t , x 0 ∼ X 0 , x 1 ∼ X 1 ​ [ ‖ v − v θ ​ ( x t , t ) ‖ 2 ] . \mathcal{L}(\theta)=\mathbb{E}_{t,\;x_{0}\sim X_{0},\;x_{1}\sim X_{1}}\left[\left\|v-v_{\theta}(x_{t},t)\right\|^{2}\right]. (2) 
+4 Method 
+Multiple works [ 19 , 3 , 24 ] imply the importance of two requirements for learning the transitions between samples, which lead to the generation of the semantically aligned objects:
+1) Transitions between the aligned objects should provide plausible and realistic samples.
+2) Transitions should be smooth (or have a bounded Lipschitz constant).
+In this section, we analyze these requirements and suggest a principled algorithm for joint inference with rectified flow models, which can be combined with an arbitrary pre-trained model operating on the set of structured latents. 
+(a) Joint Step 
+(b) Smoothness Correction 
+Figure 2 : Method 
+4.1 Joint Inference with Rectified Flow Models 
+Flow-matching models use time discretization to approximate trajectories along the velocity vector field v Θ ​ ( x t , t , c ) v_{\Theta}(x_{t},t,c) , which is parameterized by a neural network.
+Given a text embedding c c and starting with a sample x ∼ 𝒩 ⁡ ( 0 , 𝑰 ) x\sim\mathcal{N}(0,\bm{I}) taken from a Gaussian noise distribution, the sample x t 1 x_{t_{1}} at time step t 1 t_{1} can be used to calculate x t 2 x_{t_{2}} (where t 1 > t 2 t_{1}>t_{2} ) with the following update rule: 
+x t 2 = x t 1 + ( t 2 − t 1 ) ​ v Θ ​ ( x t 1 , t 1 , c ) x_{t_{2}}=x_{t_{1}}+(t_{2}-t_{1})v_{\Theta}(x_{t_{1}},t_{1},c) (3) 
+Let c a c^{a} , c b c^{b} be two text embeddings and x a x^{a} , x b x^{b} be the sample variables corresponding to a pair of objects a a and b b .
+We initialize x a x^{a} and x b x^{b} with the same value.
+Instead of transporting them independently, we want to do it jointly to improve the plausibility of the transitions between them.
+To achieve this, we consider transporting a distribution of samples on the line segment [ x a , x b ] = { ( 1 − α ) ​ x a + α ​ x b ∣ α ∈ [ 0 , 1 ] } [x^{a},x^{b}]\;=\;\{(1-\alpha)\,x^{a}+\alpha\,x^{b}\mid\alpha\in[0,1]\} defined by some density function p ⁡ ( α ) p(\alpha) .
+Thus, we shift from transporting individual samples to transporting probability distributions, while preserving the linear structure of these distributions. 
+To define the update rule for joint transport, we represent the samples distributed on the line segment with the density p ⁡ ( α ) p(\alpha) by a set of weighted samples evenly distributed across the segment { x t , i = ( 1 − α i ) x t a + α i x t b ∣ i = 1 , … , k } \{\,x_{t,i}=(1-\alpha_{i})\,x^{a}_{t}+\alpha_{i}\,x^{b}_{t}\;\mid\;i=1,\dots,k\,\} with the respective weighting factors p ⁡ ( α i ) p(\alpha_{i}) .
+Given the segment [ x t 1 a , x t 1 b ] [x^{a}_{t_{1}},x^{b}_{t_{1}}] we update it to the segment [ x t 2 a , x t 2 b ] [x^{a}_{t_{2}},x^{b}_{t_{2}}] in two steps.
+First, we update each point x t 1 , i x_{t_{1},i} to x ^ t 2 , i \hat{x}_{t_{2},i} individually using the rule in Equation 3 and the interpolated text embedding c i = ( 1 − α i ) ​ c a + α i ​ c b c_{i}=(1-\alpha_{i})c^{a}+\alpha_{i}c^{b} .
+While the points { x t 1 , i ∣ i = 1 , … , k } \{\,x_{t_{1},i}\;\mid\;i=1,\dots,k\,\} by definition always lie on a single line in high-dimensional space there is, generally speaking, no such guarantee for the updated points { x ^ t 2 , i ∣ i = 1 , … , k } \{\,\hat{x}_{t_{2},i}\;\mid\;i=1,\dots,k\,\} .
+That is why we restore the linear structure of the distribution by solving a linear regression problem in Equation 4 , minimizing ℒ \mathcal{L} w.r.t. x t 2 a x^{a}_{t_{2}} and x t 2 b x^{b}_{t_{2}} . 
+ℒ ⁡ ( x t 2 a , x t 2 b ) = ∑ i = 1 k p ⁡ ( α i ) ​ ‖ x t 2 , i − x ^ t 2 , i ‖ 2 , x ^ t 2 , i = x t 1 , i + ( t 2 − t 1 ) ​ v Θ ​ ( x t 1 , i , t 1 , c i ) x t 2 , i = ( 1 − α i ) ​ x t 2 a + α i ​ x t 2 b \begin{split}\mathcal{L}(x^{a}_{t_{2}},x^{b}_{t_{2}})=\sum_{i=1}^{k}p(\alpha_{i})\|x_{t_{2},i}-\hat{x}_{t_{2},i}\|_{2},\\
+\hat{x}_{t_{2},i}=x_{t_{1},i}+(t_{2}-t_{1})\,v_{\Theta}\bigl(x_{t_{1},i},t_{1},c_{i}\bigr)\\
+x_{t_{2},i}=(1-\alpha_{i})\,x^{a}_{t_{2}}+\alpha_{i}\,x^{b}_{t_{2}}\end{split} (4) 
+This regression problem has an explicit solution.
+We define: 
+Then the optimal endpoints are: 
+x t 2 a = c 11 ​ d 0 − c 01 ​ d 1 Δ , x t 2 b = c 00 ​ d 1 − c 01 ​ d 0 Δ , x_{t_{2}}^{a}=\frac{c_{11}d_{0}-c_{01}d_{1}}{\Delta},\quad x_{t_{2}}^{b}=\frac{c_{00}d_{1}-c_{01}d_{0}}{\Delta}, (5) 
+The described approach enables a rapid update of the distribution parameters, thereby avoiding the slow gradient-based optimization.
+Finally, we can define the velocities of the parameters of the probability distribution (boundary points of the segment x t a x^{a}_{t} and x t b x^{b}_{t} ):
+The scheme of the joint update is shown in Figure 2(a) . 
+v t 1 a = x t 2 a − x t 1 a t 2 − t 1 v t 1 b = x t 2 b − x t 1 b t 2 − t 1 v^{a}_{t_{1}}=\frac{x_{t_{2}}^{a}-x_{t_{1}}^{a}}{t_{2}-t_{1}}\quad v^{b}_{t_{1}}=\frac{x_{t_{2}}^{b}-x_{t_{1}}^{b}}{t_{2}-t_{1}} (6) 
+In the presented way, we transform the transport velocity field for samples into the joint transport velocity field for probability distributions supported by the segments in the sample space.
+In practice, we found it important to use the density p ⁡ ( α ) p(\alpha) centered around the midpoint during the early iterations and gradually shifted towards a uniform distribution. 
+4.2 Smoothness regularization 
+The second aspect is the need for smooth transitions between the two objects.
+For linear transitions, the ”speed” of transition does not depend on the point and is always the same: d ​ x t d ​ α = d d ​ α ​ ( ( 1 − α ) ​ x t a + α ​ x t b ) = x t b − x t a \frac{dx_{t}}{d\alpha}=\frac{d}{d\alpha}((1-\alpha)\,x^{a}_{t}+\alpha x^{b}_{t})=x^{b}_{t}-x^{a}_{t} .
+Thus, regularizing the ”speed” of transition is the same as regularizing the norm ‖ x t b − x t a ‖ 2 ||x_{t}^{b}-x_{t}^{a}||_{2} of the segment [ x t a , x t b ] [x_{t}^{a},x_{t}^{b}] .
+Since we initialize x a x^{a} and x b x^{b} with the same value, the segment norm is zero in the beginning, and over time it diverges, resulting in different, but structurally aligned samples. 
+The derivative of the L 2 L^{2} norm of the segment can be written as 
+d ​ ‖ x b ​ ( t ) − x a ​ ( t ) ‖ 2 d ​ t = ⟨ v b ​ ( t ) − v a ​ ( t ) , x b ​ ( t ) − x a ​ ( t ) ⟩ ‖ x b ​ ( t ) − x a ​ ( t ) ‖ 2 , \frac{d||x^{b}(t)-x^{a}(t)||_{2}}{dt}=\frac{\langle v^{b}(t)-v^{a}(t),x^{b}(t)-x^{a}(t)\rangle}{||x^{b}(t)-x^{a}(t)||_{2}}, (7) 
+where ⟨ ⋅ , ⋅ ⟩ \langle\cdot,\cdot\rangle is the dot product.
+We observe that in the cases where we see the severe misalignment between the samples, it usually correlates with the rapid growth of the segment norm during the early iterations of the inference.
+We can see that this derivative depends on the difference between the velocities of the endpoints of the segment v b − v a v^{b}-v^{a} .
+Thus, minimizing the derivative can be achieved by minimizing this expression or making the velocities of the distribution parameters closer to each other.
+One particular way to achieve this is to correct the velocities by pulling them closer to some specific anchor velocity v a ​ n ​ c ​ h ​ o ​ r v^{anchor} (Equation 8 ) 
+v ^ t a = w t ​ v t a ​ n ​ c ​ h ​ o ​ r + ( 1 − w t ) ​ v t a v ^ t b = w t ​ v t a ​ n ​ c ​ h ​ o ​ r + ( 1 − w t ) ​ v t b \hat{v}^{a}_{t}=w_{t}v^{anchor}_{t}+(1-w_{t})v_{t}^{a}\quad\hat{v}^{b}_{t}=w_{t}v^{anchor}_{t}+(1-w_{t})v_{t}^{b} (8) 
+The choice of v a ​ n ​ c ​ h ​ o ​ r v^{anchor} is important - the anchor velocity vector should point at the ”denoising” direction for all the points on the segment in order not to break the noise schedule of the samples.
+One possible solution for this task would be to choose v t a ​ n ​ c ​ h ​ o ​ r = v t a + v t b 2 v_{t}^{anchor}=\frac{v_{t}^{a}+v_{t}^{b}}{2} .
+Though our experiments show that this solution is suboptimal, probably because these two endpoint velocities often have conflicting directions.
+Our suggested solution is to choose v a ​ n ​ c ​ h ​ o ​ r v^{anchor} as a predicted velocity (Equation 9 ) for the midpoint of the segment. 
+v t a ​ n ​ c ​ h ​ o ​ r = v Θ ​ ( x t a + x t b 2 , t , c a + c b 2 ) v_{t}^{anchor}=v_{\Theta}(\frac{x_{t}^{a}+x_{t}^{b}}{2},t,\frac{c^{a}+c^{b}}{2}) (9) 
+Note that such choice of v a ​ n ​ c ​ h ​ o ​ r v^{anchor} is essentially inseparable from the approach presented in Section 4.1 serving as a ”correction” to the formulated velocity field, because for the proper inference x t a + x t b 2 \frac{x_{t}^{a}+x_{t}^{b}}{2} should be a plausible sample from the noised distribution at the timestep t t which requires taking into account the velocities for the intermediate points of the segment.
+The scheme for the smoothness correction mechanism is shown in Figure 2(b) .
+We observe that choosing the moderate schedule for the values w t w_{t} with the emphasis on early iterations does not lead to the degradation of the final samples compared to the ”base” rectified flow method. 
+(a) dog, robot 
+(b) gopher, kangaroo 
+(c) spider, octopus 
+(d) amphitheatre, stadium 
+Figure 3 : Visualization of geometry preservation between two generated images. For each example, two images are blended into one with a blending coefficient α ⁡ ( c ​ o ​ l ​ u ​ m ​ n ) \alpha(column) that depends on the column index, increasing from 0 (left side) to 1 (right side). With such blending, we show that not only geometry is preserved, but also that smooth transitions between two generations are enabled. 
+5 Experiments 
+We show the universality of our method for joint aligned generation by applying it to three major domains for generative modeling: images, 3D, and video.
+We select three state-of-the-art rectified flow pre-trained models, which operate on structured latents: voxels, pixels, and video frames.
+We modify the inference loops of these three models in a self-contained way, which requires only minor differences between the models.
+We do not change model weights or any other parts of the pipeline. 
+We use two types of methods as competitors i) joint generation methods, which produce paired output at single inference (A3D [ 19 ] , MatchDiffusion [ 38 ] ) ii) editing-based methods which take an independently generated sample from the first prompt source and complement the pair by editing it with another prompt from the pair (RF-Inversion [ 45 ] , VACE [ 21 ] , and MVEdit [ 5 ] ). 
+Metrics: We use multiple metrics to evaluate the degree of structural alignment between the samples and consistency between the samples and the corresponding textual descriptions. 
+Modality agnostic metrics are based on the evaluation of the sample ”projections” to the 2D image space (multi-view images, video frames). DIFT alignment score was introduced in A3D [ 19 ] as a way to measure structural similarity between two salient objects on a pair of images.
+It works by building a dense grid of 2D points on the source image and finding the corresponding point for each point in the grid using the DIFT [ 50 ] method.
+The pairwise distance between the points is averaged. Finally, the metric is calculated in the reverse direction and averaged one more time.
+When calculating the DIFT Score, we use the Grounded SAM [ 43 ] segmentation model to focus on the foreground object to avoid matching the background.
+In the recent work SPIE [ 2 ] L 1 L_{1} distance (or equivalently, MAE mean squared error) between the depth maps extracted from the image pair was shown to be an effective proxy metric for structural alignment.
+We extract depth maps for evaluation using the Depth Anything V2 model [ 58 ] .
+We also employ the widely-used CLIP Score to estimate how well each prompt fits the corresponding 2D image by calculating the similarity between the prompt embedding and image embedding.
+On par with CLIP, we use specific subcriteria from the MLLM [ 16 ] method to evaluate image-prompt alignment. 
+Video metrics are specifically designed to evaluate the qualities of videos.
+The temporal consistency of the videos is evaluated by calculating the similarity between the DINO features of neighboring frames for the edited video.
+To assess the overall quality of the videos, we use a VLM score [ 22 ] to evaluate the overall quality, prompt alignment, and preservation of the details of the source video. 
+3D metrics .
+We use GPTEval [ 56 ] , a VLM-based method to evaluate the quality of 3D objects, including geometry, texture, and prompt consistency. 
+5.1 Images 
+We build our joint image generation pipeline on top of the widely used FLUX.1-dev [ 4 ] , which is known for the excellent quality of text-to-image generation.
+For the consistency with 3D experiments, we use the set of object pairs from A3D [ 19 ] with short prompts.
+We compare with two editing-based methods, RF-Inversion [ 45 ] , which is a flow-inversion training-free method, and instruction-based Qwen-Image-Edit [ 54 , 41 ] .
+To obtain source editing-free samples, we use FLUX.1-dev model.
+We rewrite prompts into instructions for Qwen-Image-Edit, asking it to change the content of the source image so that the geometry and background are preserved.
+For image pair evaluation, we use DIFT Score, Depth Structural Score, CLIP Score, and MLLM Score. 
+Table 1 : 2D Metrics. 
+The quantitative results are presented in the Table 1 .
+Our method notably improves over RF-Inversion in terms of structural alignment metrics.
+While Qwen demonstrates a superior understanding of user instructions, it lags far behind in structural alignment score, which makes it unsuitable for this particular problem. 
+Our method can be used to seamlessly combine parts of the samples from parallel domains.
+We demonstrate it by changing the α \alpha blending coefficient across the horizontal axis for the pairs of images in Figure 3 . 
+5.2 3D Shapes 
+For the joint 3D object generation task, we build on top of the Trellis [ 57 ] text-to-3D method.
+The Trellis pipeline consists of two parts: Structure Generation operating on dense voxels and Structured Latents Generation working with a sparse latent representation.
+To generate geometrically aligned 3D models, we modify the inference loop for the rectified flow model in the first part of the pipeline, leaving everything else intact.
+Because the Trellis model was primarily trained on detailed text descriptions, this creates a distributional shift with the short prompts used for the A3D [ 19 ] evaluation. Therefore, we rewrite the short prompts into more detailed descriptions using GPT-5.
+We compare our method with editing-based methods (MVEdit [ 5 ] , LucidDreamer [ 34 ] ) and with the joint generation method A3D.
+The source 3D models for the editing-based methods are obtained using the generative pipelines associated with each method.
+For evaluation, we use the DIFT score, GPTEval score, and CLIP score.
+The results are shown in Table 3 and Table 2 .
+Our method shows the best CLIP score for text-to-3D semantic alignment.
+Regarding DIFT structural alignment, it yields strong results, albeit slightly lagging behind the exceptionally strong A3D and MVEdit scores.
+On GPTEval, it confidently beats MVEdit, while showing overall quality on par with A3D.
+The best quality of our method is its speed .
+It provides x100 (!) speed-up compared with A3D and x40 speed-up compared with MVEdit.
+The weaker side of our method is the lower score for texture details and geometry details .
+We observe this to be an inherent feature of the underlying Trellis backbone.
+Qualitative results are shown in the Figure 4 , demonstrating the high degree of geometric alignment. 
+Figure 4 : 3D Alignment Samples 
+Table 2 : GPTEval 3D Metrics. 
+Table 3 : Other 3D Metrics. 
+5.3 Video 
+For video experiments, we modify the WAN 2.1 [ 51 ] rectified flow model according to our method.
+Due to the dynamic nature of video samples, unlike the static 3D objects and images, we compose a novel set of scenes for evaluation. We aim to cover diverse and complex scenarios, including animals in motion, cities, and human activities.
+We use two editing-based competitors, Lucy-edit [ 8 ] and VACE [ 21 ] (using depth-conditioned ControlNet).
+For editing-based models, we use WAN-generated videos as a source video.
+We also compare our setup with the joint generation method MatchDiffusion [ 38 ] .
+We observe that depth-conditioned VACE tends to preserve the general layout of the scene but significantly changes other aspects (poses, movements, objects, background, etc).
+On the other hand, Lucy-edit can produce precise manipulations but is observed to work well only for humans and some animals, making nonsensical edits for the majority of the examples.
+We present a quantitative comparison in Table 4 .
+Our method demonstrates the highest DINO score, demonstrating the best self-consistency.
+While Lucy-edit formally shows lower depth MAE than our method, the reason for this is quite trivial - Lucy fails to provide necessary edits, leaving inputs intact.
+This is reflected by a very low VLM score for Lucy-edit, showing a disconnection between the videos and text descriptions.
+Despite the depth-conditioned setup, VACE exhibits the worst MAE alignment among all the methods, probably because of the distribution shift caused by the change of the prompt relative to the first image.
+On the other hand, MatchDiffusion shows good results both for VLM and DINO metrics but lags behind in terms of depth alignment, highlighting the need for a more principled approach.
+Depth absolute error for MatchDiffusion and our method is visualized in Figure 5 .
+It is clearly seen that while for the background the difference in the depth is minimal for both methods, the contours of the foreground object are much more pronounced in the case of MatchDiffusion, indicating the pose misalignment.
+We provide a user study Table 5 for the most revealing comparison.
+The user study demonstrates the superiority of our method over VACE and Lucy-edit in terms of the major criteria.
+The study also reinforces our hypothesis that our method provides superior structural alignment, showing a strong lead in this category over MatchDiffusion. 
+(a) Our method’s source video frame 
+(b) Our method’s target video frame 
+(c) Depth difference between our method’s source and target video frames 
+(d) MatchDiffusion’s source video frame 
+(e) MatchDiffusion’s target video frame 
+(f) Depth difference between MatchDiffusion’s source and target video frames 
+Figure 5 : Visualization of geometry preservation between source and target video frames. Larger white areas means higher difference between corresponding pixels. 
+Table 4 : Video Metrics. 
+Table 5 : User study. 
+6 Ablation 
+To validate the design choices of our algorithm, we progressively remove the proposed components, simplifying the model step by step.
+After a series of such simplifications, our method effectively reduces to MatchDiffusion [ 38 ] , allowing us to demonstrate—through a sequence of controlled comparisons the benefits of our approach. 
+We start from the setup (A), which is our full pipeline described in Section 4 .
+Setup (B) is obtained by switching v t a ​ n ​ c ​ h ​ o ​ r = v t a + v t b 2 v_{t}^{anchor}=\frac{v_{t}^{a}+v_{t}^{b}}{2} from v Θ ​ ( x t a + x t b 2 , t ) v_{\Theta}(\frac{x_{t}^{a}+x_{t}^{b}}{2},t) .
+Setup (C) degrades the pipeline further by avoiding sampling x t , i x_{t,i} for the intermediate points.
+Without considering the intermediate points, the method does not optimize for the plausibility of the transitions between the samples, which is one of the core ideas of the method.
+When we move to setup (D), the only restriction synchronizing the movement of x t a x_{t}^{a} and x t b x_{t}^{b} left in place is the anchor velocity v t a ​ n ​ c ​ h ​ o ​ r = v t a + v t b 2 v_{t}^{anchor}=\frac{v_{t}^{a}+v_{t}^{b}}{2} .
+Instead of using the smooth schedule for weight coefficients, we simplify it to a hard cutoff
+which makes the algorithm effectively equivalent to the MatchDiffusion [ 38 ] baseline.
+This step deprives the algorithm of a flexible co-guidance mechanism for the early stages of inference and removes any form of synchronization for the late stages. 
+(a) Depth MAE ↓ \downarrow 
+(b) DIFT distance ↓ \downarrow (% of object size) 
+Table 6 : Ablation study results. Lower is better ( ↓ \downarrow ). 
+We evaluate setups (B) and (C) with the video pipeline reporting depth MAE structural score in Table 6(a) .
+Since the setup (D) is roughly equivalent to MatchDiffusion, for which we have already reported results in Section 5 , we decide to evaluate this setup with the image modality; the results are shown in Table 6(b) .
+Visual examples for all the setups with the image pipeline are demonstrated in Figure 7 .
+Quantitative and qualitative comparisons demonstrate a gradual degradation of the results during the component removal. 
+(a) Setup A (ours) 
+(b) Setup B 
+(c) Setup C 
+(d) Setup D 
+Figure 7 : Visualization of the impact of different components of our method. We can see that each component contributes to the results and that the results degrade as we gradually remove components from our algorithm. 
+7 Conclusions 
+We present a new universal method for joint inference with rectified flow models, which enables the rapid production of structurally aligned samples across different modalities.
+Our method requires only a compact and local modification of the inference loop and can be applied on top of any pre-trained rectified flow model working with structured latent representations.
+We demonstrate the performance of our method across three modalities—video, 3D, and images — comparing it both with editing-based methods and joint training methods.
+Across all modalities, our method either achieves performance on par with the state of the art or surpasses it.
+When applied to video modality, our method shows superior performance, enabling the accurate alignment of complex and vibrant environments.
+Our method has multiple potential applications, including the creation of aligned virtual environments and assets, and the generation of synthetic data.
+In future work, the method can be further applied to other modalities, such as 4D video and keypoint movements. 
+Acknowledgments 
+The work was supported by the grant for research centers in the field of AI provided by the Ministry of Economic Development of the Russian Federation in accordance with the agreement 000000C313925P4F0002 and the agreement with Skoltech №139-10-2025-033. 
+References 
+

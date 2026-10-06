@@ -1,0 +1,87 @@
+5. Evaluation Methodology
+We synthesize our design as configured in Table 1 using a 22nm commercial FDSOI technology node and the Synopsys Design Compiler, targeting 1GHz frequency. The design incorporates a PE array with each PE featuring a 4-wide vector lane, a router, associated SRAM as data memory and a dual-ported scratchpad along with orchestrators positioned at the edge of each PE row. We further develop an event-driven, cycle-accurate simulator in Rust to provide a detailed breakdown of performance and access patterns for every architectural component when running various workloads.
+Table 1. Configuration of the evaluated Canon Architecture
+Component
+Configuration
+Array
+8×88\times 8 4-SIMD INT8 array;
+SRAM
+4KB per PE; 288KB Overall
+Scratchpad
+Dual-port, 64 Bytes per PE
+Orchestrator
+8 orchestrators, 1 per PE row.
+Main Memory
+17 GB/s, LPDDR5x
+Architecture.
+We evaluate Canon against four representative baselines spanning different specialization. First, the systolic array similar to TPU (Jouppi et al., 2023) serves as a reference for dense tensor accelerator. Next, the 2:4 systolic array similar to NVIDIAs Tensor Core (Mishra et al., 2021; Markidis et al., 2018) for exploiting 2:4 structured sparsity, i.e., two non-zeros in every four elements. ZeD (Dangi et al., 2024) represents the state-of-the-art specialized sparse accelerator. Finally, a conventional CGRA is used to illustrate the general-purpose reconfigurable architecture.
+To ensure fairness, all baselines are synthesized at the same technology node, with each architecture provisioned with an equal number of MAC units to guarantee equivalent theoretical peak compute performance. The CGRA baseline adopts a classical 2D-mesh PE architecture from HyCUBE (Karunaratne et al., 2017) and is similar to other CGRAs (Nambiar et al., 2024b; Nambiar et al., 2024a; Gobieski et al., 2022; Nowatzki et al., 2017a) featuring circuit-switched NoC and a small instruction memory within each PE, sufficient for mapping the most complex kernel in our benchmarks. We use a state-of-the-art CGRA mapper (Wijerathne et al., 2022) for complex kernels. We develop a cycle-accurate simulator to model the timing behavior of ZeD. For a fair comparison of the architecture, we exclude ZeD’s preprocessing optimization of row reorganization during evaluations, as the same can be applied to Canon.
+On-chip memory configuration has a significant impact on power, area, and off-chip bandwidth requirements. For consistency, we allocate an average of 1KB of data memory per MAC unit for Canon and all baseline architectures. These memories are synthesized using the foundry memory compiler at the same tech node as Canon, with organization tailored to each architecture as shown in figure 9: Canon employs distributed memory local to each PE; systolic arrays and CGRAs use memory banks along the edge of the array; and the sparse accelerator follows the original design’s bank organization (Dangi et al., 2024). The results are validated against the respective papers to ensure fairness of comparisons.
+Workloads
+We primarily utilize the sparse tensor kernels SpMM and SDDMM in ML workloads to demonstrate our architecture’s resilience to input fragility.
+We employ the state-of-the-art sparsification technique (Liu et al., 2024b) to induce sparsity in the activations of the CNN and MLP layers. The inherent sparsification in the activations leads to SpMM operations. Furthermore, we apply attention sparsification techniques from (Lu et al., 2021; You et al., 2023), resulting in unstructured SDDMM operations for the QK attention matrix (later labeled SDDMM-U). We use the sliding window attention (Beltagy et al., 2020; Zaheer et al., 2020; Yuan et al., 2025; Jiang et al., 2023)(later labeled SDDMM-Win) as a structured SDDMM operation.
+These sparsification techniques enable a trade-off between sparsity and accuracy. While high levels of sparsity (> 85-90%) may cause significant accuracy degradation depending on the model (Mirzadeh et al., 2023; Liu et al., 2024b), we conduct experiments with sparsity levels up to 95% to thoroughly evaluate our hardware’s characteristics.
+For clarity in presenting our results, we categorize the workloads into three sparsity ranges: S1: Relatively dense (0–30% sparse). S2: Moderately sparse (30–60% sparse). S3: Highly sparse matrices (60–95% sparse).
+While the two sparse kernels already show the handling of different workloads, to further evaluate Canon, we map the kernels from the PolyBenchC (Karimov et al., 2018) benchmark suite. Kernels of the suite containing square root or exponential operations in their loops are excluded due to the lack of support in both Canon and CGRA. The PolyBenchC kernels are further grouped into categories based on their classification within the benchmark suite, enabling a more structured analysis.
+6. Evaluation Results
+Canon Architecture
+Control
+Data
+Area
+vs systolic
++Orchestrators
++Distributed Mem
++Reconfig. NoC
++30%
+vs ZeD
+-Specialized
+Decoding
++Orchestrators
+-Specialized
+Memory Banks
+-Crossbars
++Distributed Mem
++Reconfig. NoC
++9%
+vs CGRA
+-Instr. Mem
++Orchestrators
++Distributed Mem
+-7%
+Figure 9. Ablation of Canon’s features through its baselines
+The baselines chosen for evaluating Canon cover a landscape of specialized and general architecture while simultaneously they function as effective ablation studies for its various features. Figure 9 qualitatively shows key features that can be incrementally (+) added or removed (-) from the baseline architectures to ultimately yield Canon. In the following sections, we quantify the impact of these features on resource consumption and performance, providing both a systematic, real-world ablation and valuable insights into the advantages of our architectural choices.
+6.1. Incrementally evaluating the cost of generality
+Figure 10. Area Breakdown of Canon and Systolic Array
+Sparsity
+Range
+State
+Transitions
+S1
+1.94e7
+S2
+3.29e7
+S3
+9.77e7
+Figure 11. Runtime power breakdown of Canon’s PEs (averaged), and average data-driven FSM state transitions for different sparsity ranges. Here, Spad stands for scratchpad.
+Area cost
+A systolic array which represents the most densely packed 2D-mesh structure of compute units serves as an ablation of Canon, wherein the routers, scratchpads, and orchestrators are omitted and the distributed memories are replaced with shared memories along the PE array edge. Figure 10 compares the area breakdown between Canon and the systolic array, showing that Canon incurs roughly 30% additional area, mainly due to its scratchpads, orchestrators (control), and routing, alongside a slight increase in data-memory resources for the distributed-memory design.
+Circuit-switch routers account for about 5% of the PE chip area , enabling the mapping of more complex data dependencies than a rigid systolic NoC can support, similar to conventional CGRAs (Gobieski et al., 2022; Gobieski et al., 2021; Karunaratne et al., 2017; Nowatzki et al., 2017a).
+For better handling irregularities, Canon introduces orchestrators along the array edge. These orchestrators occupy 8% of the overall area, reflecting a low control overhead. Moreover, each PE’s dual-ported scratchpad contributes 13% to the chip area.
+Compared to the sparse accelerator, Canon shows a 12% of area overhead, primarily due to the added reconfiguration capabilities and generalized memory organization.
+Compared to the general-purpose CGRA, benefiting from amortized control over the SIMD lane and instructions due to the orchestrators and time-lapsed execution enables Canon to save about 7% of total area.
+Power cost
+Figure 11 further illustrates the power breakdown of Canon across various workloads. Under GEMM, which employs a systolic-style dataflow, Canon consumes nearly the same power as the systolic array, with only a slight (<13%) overhead from control and routing. The GEMM power breakdown shows no dependency on scratchpads in regular applications. As input irregularity increases moving from low sparsity (S1) to high sparsity (S3) regimes, the FSM in each orchestrator triggers more data-driven state transitions to balance workload distribution. This necessitates using the scratchpads for buffering data to amortize the execution, resulting in a higher proportion of power dedicated to scratchpad operations and higher total power.
+Overall, Canon incurs additional resource consumption relative to conventional domain-specific architectures; however, this trade-off enables it to achieve high performance across a wide range of workloads, as discussed in the following section.
+6.2. Performance versus Flexibility
+Figure 12. Speedup (fragility) of various architectures normalized to Canon for varying kernels and input data patterns
+Figure 12 and Figure 13 quantify Canon’s performance relative to other architectures, serving both as a study of its fragility under low performance conditions and as an ablation of certain architectural features. Canon emulates the systolic dataflow of conventional systolic arrays for the GEMM kernel, exploiting kernel regularity to match their performance. However, as Canon allocates a portion of its resources to generality, for extremely regular, dense workloads like GEMM, a systolic array achieves a higher performance per watt, though our results indicate this performance gap is minimal. In contrast, when workloads exhibit sparsity that the systolic arrays dense design cannot capitalize on, their throughput can drop to less than 0.3× that of Canon.
+When extended to support 2:4 sparse operations (Choquette et al., 2021), the modified systolic array significantly improves its performance for the corresponding 2:4 sparse structured SpMM kernel. Nonetheless, Canon leverages the 2:4 structure, despite being designed agnostic to it, achieving comparable performance to the modified systolic array. Moreover, such extreme specialization does not generalize to other input patterns or kernels, as evidenced by the modified array’s diminished performance on similar (2:8 structured sparse) or dissimilar kernels (SDDDM, etc.).
+Figure 13. Performance per Watt of various architectures normalized to Canon for varying kernels and input data patterns
+In direct comparison with the sparse accelerator ZeD, Canon demonstrates comparable performance and efficiency on unstructured sparse kernels, the very kernels for which ZeD is specialized. ZeD outperforms marginally (<8%) for matrices in sparsity zones S1 and select cases in S2, where specialized workload balancing through work stealing across compute units is advantageous due to a higher number of nonzeros per row. Conversely, Canon is better at exploiting higher sparsity levels thanks to the flexibility of its scratchpad, which mitigates imbalance and provides up to 5% better performance on some inputs. Furthermore, ZeD’s fixed datapath prevent it from leveraging structured inputs, treating all matrices as unstructured and thereby missing the additional performance gains offered in N:M sparse kernels and SDDMM-Win operations. ZeD also allocates a significant portion of its power budget to address sparsity via fully connected crossbars and specialized decoders, resulting in increased power consumption that varies with the nonzero distribution pattern. In contrast, Canon’s homogeneous architecture opportunistically resolves load-imbalance.
+SDDMM-Win1 and SDDMM-Win2 correspond to the original Longformer (Beltagy et al., 2020) configuration on BERT (Liu et al., 2019) (window width 512, sequence length 4K) and the Mistral-7B setup (Jiang et al., 2023) (window 4K, context 16K), respectively. As the other baselines architectures lack specialization for window attention, we employ the state-of-the-art sliding chunk implementation (Beltagy et al., 2020) to convert the computation into multiple dense operations. The results indicate that Canon outperforms all baselines on window attention, with a performance gains increasing at higher sparsity (Win2) due to its ability to adapt to this input pattern.
+Finally, the CGRA, which can be deemed as a study for the importance of dynamic orchestration, must emulate the systolic dataflow for tensor operations since it has no dynamic mechanism to exploit sparsity. It delivers performance on par with systolic arrays but at the cost of higher resource consumption, as its routing and configuration circuitry is considered overprovisioned (Li et al., 2024). Nevertheless, the CGRA’s design prioritizes broad programmability, enabling it to execute diverse general workloads such as those in PolyBenchC. For PolyBenchC benchmarks, CGRAs outperform Canon in scenarios with low data parallelism, where finer-grained reconfiguration is advantageous, which constitutes some solvers in the BLAS set. In contrast, when kernels exhibit sufficient parallelism which is typical of most other BLAS, kernel and stencil workloads, Canon achieves better performance and power efficiency.
+Figure 14. EDP (lower is better) of the architectures normalized to Canon for real ML models. (in brackets: average sparsity of the model)
+Figure 14 presents a comparative evaluation of architectures on contemporary ML models through an analysis of the Energy-Delay Product (EDP). As previously discussed, Canon incurs a slight efficiency overhead compared to systolic arrays for entirely dense model components. However, given the diverse composition of modern models ranging from different kernel types, such as SpMM in sparse MLPs, to a combination of SDDMM and SpMM in sparse attention, as well as varying input patterns, including unstructured sparsity in LLaMA-8B and ResNet-50 and window-structured sparsity in Mistral-7B these results highlight the critical need for a minimally fragile architecture capable of adapting to new kernels and diverse sparsity patterns. For instance, an accelerator specialized for the moderately sparse convolutions of ResNet-50 would provide little advantage when processing a diagonally windowed sparse SDDMM operation in a model like Mistral-7B.
+6.3. Canon’s scalability and sensitivity to data
+Figure 15. Sensitivity to data size & arithmetic intensity
+When operating within the compute roofline, our architecture remains entirely scalable like a systolic array. By increasing the number of PEs, we can effectively scale out our architecture. However, for the irregular workloads we target, the theoretical arithmetic intensity i.e. “the number of computations per unit of data” has a significant impact on 

@@ -1,0 +1,455 @@
+SnapStream: Efficient Long Sequence Decoding on Dataflow Accelerators (https://arxiv.org/pdf/2511.03092v1)
+citeturn2050view0 [wordlim: 200] Crawled: 3 weeks ago; Content type: application/pdf; Number of pages: 17; Source: open({"ref_id":"https://arxiv.org/pdf/2511.03092v1","lineno":null}); Total lines: 1398
+L0@P0: SNAPSTREAM: EFFICIENT LONG SEQUENCE DECODING ON DATAFLOW
+L1@P0: ACCELERATORS
+L2@P0: Jonathan Li 1 Nasim Farahini 1 Evgenii Iuliugin 1 Magnus Vesterlund 1 Christian Haggstrom 1
+L3@P0: Guangtao Wang 1 Shubhangi Upasani 1 Ayush Sachdeva 2 Rui Li 1 Faline Fu 1 Chen Wu 1 Ayesha Siddiqua 1
+L4@P0: John Long 1 Tuowen Zhao 1 Matheen Musaddiq 1 Hakan Zeffer 1 Yun Du 1 Mingran Wang 1 Qinghua Li 1
+L5@P0: Bo Li 1 Urmish Thakker 1 Raghu Prabhakar 1
+L6@P0: ABSTRACT
+L7@P0: The proliferation of 100B+ parameter Large Language Models (LLMs) with 100k+ context length support
+L8@P0: have resulted in increasing demands for on-chip memory to support large KV caches. Techniques such as
+L9@P0: StreamingLLM (Xiao et al., 2024b) and SnapKV (Li et al., 2024) demonstrate how to control KV cache size
+L10@P0: while maintaining model accuracy. Yet, these techniques are not commonly used within industrial deployments
+L11@P0: using frameworks like vLLM or SGLang. The reason is twofold: on one hand, the static graphs and continuous
+L12@P0: batching methodology employed by these frameworks (Kwon et al., 2023; Zheng et al., 2024) make it difficult to
+L13@P0: admit modifications to the standard multi-head attention algorithm (Chen et al., 2023), while on the other hand,
+L14@P0: the accuracy implications of such techniques on modern instruction-following and reasoning models are not well
+L15@P0: understood, obfuscating the need for implementing these techniques. In this paper, we explore these accuracy
+L16@P0: implications on Llama-3.1-8B-Instruct and DeepSeek-R1, and develop SnapStream, a KV cache compression
+L17@P0: method that can be deployed at scale. We demonstrate the efficacy of SnapStream in a 16-way tensor-parallel
+L18@P0: deployment of DeepSeek-671B on SambaNova SN40L accelerators running at 128k context length and up to
+L19@P0: 1832 tokens per second in a real production setting. SnapStream enables 4× improved on-chip memory usage and
+L20@P0: introduces minimal accuracy degradation on LongBench-v2, AIME24 and LiveCodeBench. To the best of our
+L21@P0: knowledge, this is the first implementation of sparse KV attention techniques deployed in a production inference
+L22@P0: system with static graphs and continuous batching.
+L23@P0: 1 INTRODUCTION
+L24@P0: Modern Large Language Models (LLMs) consistently use
+L25@P0: more than 100B parameters (DeepSeek-AI et al., 2025a;
+L26@P0: Yang et al., 2025; OpenAI et al., 2025; Kimi et al., 2025),
+L27@P0: requiring hundreds of gigabytes of on-chip memory to serve
+L28@P0: a single instance. At the same time, the rise of functioncalling and test-time reasoning has significantly increased
+L29@P0: LLM input and output sequence lengths to 100k+ tokens,
+L30@P0: leading to large KV caches that exacerbate memory pressure.
+L31@P0: In response, practitioners have developed a variety of architectural modifications and compression methods to alleviate this memory pressure. Multi-query attention (Ainslie
+L32@P0: et al., 2023), multi-head latent attention (DeepSeek-AI et al.,
+L33@P0: 2024) and sliding window attention (Riviere et al., 2024)
+L34@P0: each modify the attention operation to reduce memory re1
+L35@P0: SambaNova Systems, Inc. 2Cartesia AI. Correspondence to:
+L36@P0: Jonathan Li <jonathan.li@sambanovasystems.com>.
+L37@P0: Proceedings of the 8
+L38@P0: th MLSys Conference, Santa Clara, CA, USA,
+L39@P0: 2025. Copyright 2025 by the author(s).
+L40@P0: quirements of the attention head, hidden and sequence dimension, respectively. However, these methods generally involve training a model from scratch with the proposed attention alternatives, reducing the applicability for existing models. KV cache compression methods, such as H2O (Zhang
+L41@P0: et al., 2023) and SnapKV (Li et al., 2024), take advantage of
+L42@P0: the high sparsity of the attention matrix (Zhang et al., 2025)
+L43@P0: to evict tokens with low attention scores from the KV cache.
+L44@P0: Such methods are largely training-free and can reduce KV
+L45@P0: cache memory by up to 92% with negligible decrease in
+L46@P0: benchmark scores.
+L47@P0: However, when applying these techniques to modern LLM
+L48@P0: production deployments, the following practical considerations emerge:
+L49@P0: • Long sequence decoding: KV cache compression
+L50@P0: methods are generally evaluated on benchmarks with
+L51@P0: long inputs (Bai et al., 2024; Kamradt, 2023) by compressing the inputs once at the beginning of decoding.
+L52@P0: The effects of KV cache compression are not well understood for reasoning models (Wei et al., 2023) that
+L53@P0: may generate thousands of tokens for a single response,
+L54@P0-1: arXiv:2511.03092v1 [cs.AI] 5 Nov 2025SnapStream: Efficient Long Sequence Decoding on Dataflow Accelerators
+L55@P1: Lrecent
+L56@P1: Top-K
+L57@P1: prompt t1t2
+L58@P1: t … L
+L59@P1: Lthreshold
+L60@P1: Compressed KVs
+L61@P1: Length-Thresholded KV
+L62@P1: Cache Compression
+L63@P1: Continuous Batching
+L64@P1: prompt
+L65@P1: Generated tokens
+L66@P1: Prefill
+L67@P1: Graph KV
+L68@P1: t
+L69@P1: Decode
+L70@P1: Graph
+L71@P1: Batched input tokens
+L72@P1: Batched KV Caches
+L73@P1: Batched new tokens
+L74@P1: Batched Updated KV Caches
+L75@P1: (a)
+L76@P1: (b)
+L77@P1: Figure 1. (a) Common KV cache compression methods like
+L78@P1: SnapKV (Li et al., 2024) perform compression when the input
+L79@P1: sequence reaches length Lthreshold. (b) Continuous Batching deployments consist of two graphs: a prefill graph that produces
+L80@P1: a single new token and the KV cache, and a decode graph that
+L81@P1: generates the next token and an updated KV cache. It’s unclear
+L82@P1: where KV cache compression can be performed in this process,
+L83@P1: as the threshold Lthreshold can be reached during either prefill or
+L84@P1: decode and at different times for different batch elements.
+L85@P1: as shown in Table 3.
+L86@P1: • Continuous batching: Cloud LLM deployments typically use continuous batching (Zhong et al., 2024)
+L87@P1: to decouple the compute-bound prefill stage of LLM
+L88@P1: serving from the memory-bound decoding stage (see
+L89@P1: Figure 1(b) for a simplified workflow). It is not clear
+L90@P1: where KV cache compression fits into this workflow;
+L91@P1: existing implementations conditionally compress KV
+L92@P1: caches based on reaching some threshold sequence
+L93@P1: length, which can occur during either prefill or decoding, not to mention at different times for different batch
+L94@P1: elements.
+L95@P1: • Static tensor shapes: Production LLM systems (Kwon
+L96@P1: et al., 2023; NVIDIA; Prabhakar et al., 2024) use compute graphs with fixed tensor shapes to better allocate
+L97@P1: on-chip memory resources. Existing KV cache compression methods are implemented with dynamic tensor shapes and tend to use slicing, indexing, and concatenation operations that often allocate small, shortlived buffers and promote fragmentation.
+L98@P1: In this paper, we introduce SnapStream, a model deployment strategy compatible with continuous batching (CB).
+L99@P1: SnapStream involves applying SnapKV (Li et al., 2024)
+L100@P1: cache compression during prefill and StreamingLLM (Xiao
+L101@P1: et al., 2024b) during decoding to generate long sequences
+L102@P1: with a smaller fixed KV cache size. To encourage adoption of this technique by frameworks that optimize tensor
+L103@P1: allocation with static graphs, we describe how to modify a
+L104@P1: static KV cache deployment with implementations of these
+L105@P1: techniques using fixed tensor sizes, and show an example
+L106@P1: mapping of these modifications to a 16-way tensor parallel (TP16) deployment on SN40L RDUs (Prabhakar et al.,
+L107@P1: 2024). We derisk the accuracy of applying SnapKV and
+L108@P1: StreamingLLM together by benchmarking Llama 3.1 8B Instruct on LongBench, RULER, and ∞Bench and DeepSeekR1 671B on LongBench-v2, AIME24, and LiveCodeBench.
+L109@P1: For DeepSeek-R1, our application of SnapStream in a TP16
+L110@P1: deployment results in a 4× reduction in KV cache memory
+L111@P1: and a 4.3× improvement in decoding throughput, while
+L112@P1: incurring at most 5% higher latency during prefill. SnapStream enables prefill and decoding for long sequences with
+L113@P1: significantly lower memory requirements than a standard
+L114@P1: disaggregated continuous batching (DCB) deployment, saving more memory with longer contexts and larger models.
+L115@P1: In summary, our contributions are as follows:
+L116@P1: • We introduce SnapStream, an efficient KV cache compression method designed for LLM serving at scale
+L117@P1: with continuous batching deployments. We describe
+L118@P1: the structure of the compressed KV cache, and the
+L119@P1: modifications that must be made during prefill and decoding phases respectively to implement SnapStream.
+L120@P1: • We describe fused kernels and tensor sharding strategies for a static graph deployment of DeepSeek-R1
+L121@P1: on 16 SN40L accelerators. We show how different
+L122@P1: mapping strategies for prefill and decoding optimize
+L123@P1: for different service level objectives (SLOs), and how
+L124@P1: SnapStream can be accommodated by adding fused
+L125@P1: kernels to the prefill execution schedule.
+L126@P1: • We show that SnapStream results in minimal accuracy
+L127@P1: degradation by benchmarking Llama 3.1 8B Instruct
+L128@P1: and DeepSeek-R1-0528 on both long sequence benchmarks and reasoning benchmarks.
+L129@P1: • We demonstrate the efficacy of SnapStream by measuring 4× higher maximum batch size and 4.3× higher
+L130@P1: throughput during decoding when applied to a TP16
+L131@P1: deployment of DeepSeek-R1.
+L132@P1: 2 PRELIMINARIES
+L133@P1: 2.1 Continuous Batching
+L134@P1: LLM serving is defined by two stages of computation: the
+L135@P1: prefill phase and the decode phase, each with their own
+L136@P1: service level objectives (SLOs): time to first token (TTFT)
+L137@P1: and time per output token (TPOT), respectively. In prefill,
+L138@P1: the LLM processes a user prompt of sequence length L to
+L139@P1: generate a new token xL+1 and KV cache tensors of length
+L140@P1: L. In this phase, the O(L
+L141@P1: 2
+L142@P1: ) attention mechanism dominates
+L143@P1: latency, making the prefill phase compute bound. In the
+L144@P1: decoding phase, the model processes a KV cache of length
+L145@P1: L and a single input token xL+1 to generate the next token
+L146@P1-2: xL+2 and the KV cache of length L + 1. By re-using theSnapStream: Efficient Long Sequence Decoding on Dataflow Accelerators
+L147@P2: P2P P2P P2P P2P P2P PCIE
+L148@P2: RDU Core
+L149@P2: RDU Core
+L150@P2: TLN
+L151@P2: T
+L152@P2: L
+L153@P2: N
+L154@P2: T
+L155@P2: L
+L156@P2: N
+L157@P2: RDU Core
+L158@P2: RDU Core
+L159@P2: T
+L160@P2: L
+L161@P2: N
+L162@P2: T
+L163@P2: L
+L164@P2: N
+L165@P2: TLN
+L166@P2: Die-to-die
+L167@P2: Host
+L168@P2: Interface
+L169@P2: P2P P2P P2P P2P P2P PCIE
+L170@P2: Host
+L171@P2: Interface
+L172@P2: DDR
+L173@P2: DDR
+L174@P2: DDR
+L175@P2: DDR
+L176@P2: DDR
+L177@P2: DDR
+L178@P2: HBM
+L179@P2: HBM
+L180@P2: HBM
+L181@P2: HBM
+L182@P2: S
+L183@P2: PMU PCU
+L184@P2: S
+L185@P2: PMU PCU
+L186@P2: S
+L187@P2: PMU PCU
+L188@P2: S
+L189@P2: S S
+L190@P2: S S
+L191@P2: S S
+L192@P2: S
+L193@P2: S
+L194@P2: S
+L195@P2: S
+L196@P2: S
+L197@P2: S
+L198@P2: S
+L199@P2: S
+L200@P2: S
+L201@P2: S
+L202@P2: S
+L203@P2: S
+L204@P2: S
+L205@P2: S
+L206@P2: S
+L207@P2: AGCU
+L208@P2: AGCU
+L209@P2: AGCU
+L210@P2: AGCU
+L211@P2: AGCU
+L212@P2: AGCU
+L213@P2: DDR
+L214@P2: 1.5 TB (100GBps)
+L215@P2: HBM
+L216@P2: 64 GB (1.6TBps)
+L217@P2: SRAM
+L218@P2: 520 MB (> 100TBps)
+L219@P2: FCMU
+L220@P2: FCMU
+L221@P2: FCMU FCMU
+L222@P2: FCMU
+L223@P2: Figure 2. SN40L Architecture. Packaged as a two-die socket in
+L224@P2: 5FF TSMC process. Each die features 2 dense compute Tiles, 2
+L225@P2: HBM modules, and 3 DDR channels. Tiles are interconnected via
+L226@P2: the Top Level Network (TLN) and can communicate with other
+L227@P2: RDUs using the P2P interfaces. Each Tile is comprised of PCUs
+L228@P2: and PMUs connected in a mesh network, RDN, enabling seamless
+L229@P2: data exchange.
+L230@P2: key and value tensors in the KV cache, multi-head attention becomes O(L) during decoding. With significantly
+L231@P2: lower computational intensity compared to the prefill phase,
+L232@P2: the decode phase is typically memory bound. In practice,
+L233@P2: compute-intensive long sequence prefill requests are often served with low batch size to minimize TTFT, while
+L234@P2: memory-intensive decoding requests are served with higher
+L235@P2: batch size to maximize hardware utilization.
+L236@P2: Continuous batching (CB) is a popular LLM serving technique (Yu & Jeong, 2022; Agrawal et al., 2023; Kwon et al.,
+L237@P2: 2023) in which batches of prefill and decoding requests
+L238@P2: may be interleaved on the same system, and the output of
+L239@P2: completed prefill requests can be added to decode batches
+L240@P2: to improve utilization. However, there is an inherent contention to the different SLOs for prefill and decoding, as
+L241@P2: indicated by the difference between their batching preferences. Disaggregated Continuous Batching (DCB) (Zhong
+L242@P2: et al., 2024) proposes to resolve this contention by assigning
+L243@P2: separate resources to the prefill and decoding phases and
+L244@P2: only transferring KV caches between nodes. (Zhong et al.,
+L245@P2: 2024) show that DCB can sustain up to a 7.4× request rate
+L246@P2: compared to the leading CB baselines on a 32-GPU, 4-node
+L247@P2: setup.
+L248@P2: 2.2 Reconfigurable Dataflow Units (RDUs)
+L249@P2: Built on a dataflow architecture, the SN40L AI accelerator
+L250@P2: optimizes AI training and inference tasks. Prior works (Prabhakar et al., 2024; Prabhakar, 2024) describe the architecture
+L251@P2: in more detail. This section provides a brief overview of key
+L252@P2: architectural components. Each socket features four RDU
+L253@P2: cores, I/O blocks for connecting to DDR, HBM, Peer-toPeer (P2P) links, and a host system (see Figure 2). A socket
+L254@P2: can perform 638 TFLOPs of BF16 operations and has 520
+L255@P2: MB of on-chip SRAM. Each socket also interfaces with 64
+L256@P2: GB of HBM memory providing 1.6 TB/s of peak bandwidth,
+L257@P2: and 1.5 TB of DDR memory providing over 100 GB/s of
+L258@P2: peak bandwidth. A Top-Level Network (TLN) connects tile
+L259@P2: components to the IO blocks. Each socket consists of 1040
+L260@P2: Pattern Compute Units (PCUs), which provide systolic and
+L261@P2: streaming compute capabilities, and 1040 Pattern Memory
+L262@P2: Units (PMUs) which provide program-managed on-chip
+L263@P2: memory for storing tensors. Collectively, a PCU and PMU
+L264@P2: block is known as a Fused Compute Memory Unit (FCMU).
+L265@P2: Additionally, the Address Generation and Coalescing Units
+L266@P2: (AGCUs) serve as the interface to external memory and
+L267@P2: other sockets.
+L268@P2: 2.3 LLM Serving with Static Graphs
+L269@P2: The SN40L compiler operates primarily on static
+L270@P2: graphs, where all operations are executed on fixed
+L271@P2: size tensors. Specifically, for an LLM, all operations are executed with a fixed sequence length Lmax,
+L272@P2: so that given an input token sequence x1, ..., xL with
+L273@P2: L ≤ Lmax, we operate on the padded sequence
+L274@P2: x1, ..., xL, xpad:L+1, ..., xpad:Lmax. For the i
+L275@P2: th hidden layer
+L276@P2: and j
+L277@P2: th attention head, executing the prefill graph generates
+L278@P2: key and value sequences k
+L279@P2: i,j
+L280@P2: 1
+L281@P2: , ..., ki,j
+L282@P2: L
+L283@P2: , ki,j
+L284@P2: pad:L+1, ..., ki,jpad:Lmax
+L285@P2: and v
+L286@P2: i,j
+L287@P2: 1
+L288@P2: , ..., v
+L289@P2: i,j
+L290@P2: L
+L291@P2: , v
+L292@P2: i,j
+L293@P2: pad:L+1, ..., v
+L294@P2: i,j
+L295@P2: pad:Lmax
+L296@P2: .
+L297@P2: 1 The prefill graph
+L298@P2: also generates a single new token xL+1. Executing the decode graph immediately after prefill generates new key and
+L299@P2: value tensors kL+1 and vL+1 that are used to update the KV
+L300@P2: cache in-place (e.g. k1, ..., kL, kL+1, kpad:L+2..., kpad:Lmax)
+L301@P2: and generates one more new token xL+2. The new token
+L302@P2: and the updated KV cache are used as input for another call
+L303@P2: to the decode graph. This process is repeated until the EOS
+L304@P2: token or xLmaxis generated. See Figure 3 (a) and (c) for a
+L305@P2: visualization of this process.
+L306@P2: 2.4 SnapKV
+L307@P2: SnapKV is a KV cache compression method that mitigates
+L308@P2: the lossy compression seen in prior compression schemes by
+L309@P2: using a pooling-based clustering mechanism. The pooling
+L310@P2: layer helps to retain critical token clusters with higher attention weights, thus retaining the completeness of information.
+L311@P2: This clustering is particularly beneficial in retrieval tasks
+L312@P2: like needle-in-a-haystack, as we later show in the Retrieval
+L313@P2: subset of RULER in Table 5.1. Formally, given a prompt
+L314@P2: with length L = Lprefix + Lobs divided into a prefix and an
+L315@P2: observation window, we obtain the SnapKV index set I by
+L316@P2: 1
+L317@P2: For brevity, in future references to these variables we will omit
+L318@P2: the layer and head indices i, j. Similarly, we will only describe
+L319@P2: operations on the key values k, as our treatment of the value tensors
+L320@P2-3: v is mostly identical.SnapStream: Efficient Long Sequence Decoding on Dataflow Accelerators
+L321@P3: computing:
+L322@P3: C =
+L323@P3: X
+L324@P3: Lobs
+L325@P3: i=0
+L326@P3: W[:, :, i, :] (1)
+L327@P3: I = TopK(avgpool(C)) (2)
+L328@P3: where W ∈ R
+L329@P3: B×N×Lobs×Lprefix is the softmax-normalized
+L330@P3: attention distribution of tokens in the observation window
+L331@P3: attending to prefix tokens, with batch size B and number of
+L332@P3: attention heads N.
+L333@P3: 2.5 StreamingLLM
+L334@P3: StreamingLLM (Xiao et al., 2024b) is a technique that enables LLMs to process sequences beyond their fixed context
+L335@P3: windows, effectively supporting unbounded streaming inputs. Conventional LLMs are limited by a fixed attention
+L336@P3: window, which constrains their ability to maintain coherence over long sequences. StreamingLLM addresses this
+L337@P3: by retaining a small set of attention sink tokens (the initial
+L338@P3: prompt tokens that consistently receive high attention across
+L339@P3: decoding steps) together with the most recent tokens. These
+L340@P3: tokens act as stable anchors that preserve long-term context,
+L341@P3: allowing the model to maintain continuity without storing
+L342@P3: the entire KV cache.
+L343@P3: The core mechanism of StreamingLLM is a compact KV
+L344@P3: cache strategy that combines these sink and recent tokens
+L345@P3: to form a reduced attention context. During decoding, the
+L346@P3: model attends primarily to this subset, substantially lowering memory usage while preserving model accuracy.
+L347@P3: 3 METHODOLOGY
+L348@P3: SnapStream is built on top of a static graph CB deployment
+L349@P3: by applying SnapKV to prefill KV caches and decoding
+L350@P3: with StreamingLLM. Following (Xiao et al., 2024b), given
+L351@P3: an input sequence of length L, during prefill we extract the
+L352@P3: first Lsink tokens and the last Lrecent tokens from the full KV
+L353@P3: cache. From the remaining L − (Lsink + Lrecent) tokens, we
+L354@P3: apply SnapKV compression to extract the top K tokens. We
+L355@P3: concatenate all three together to obtain a prefill KV cache
+L356@P3: of length Lsnapstream = Lsink + Lrecent + K. During decoding, we decode with a fixed KV cache size of Lsnapstream
+L357@P3: treating the middle Lrecent tokens as the rotating KV cache
+L358@P3: described in (Xiao et al., 2024b). See Figure 3(b) and (d) for
+L359@P3: a visualization of SnapStream prefill and decoding, respectively. In the following sections, we describe the layout of
+L360@P3: the SnapStream KV cache and the operation of SnapStream
+L361@P3: prefill and decoding in a production static-graph execution
+L362@P3: framework.
+L363@P3: KV KV
+L364@P3: transformer block
+L365@P3: x1,...,xL
+L366@P3: transformer block
+L367@P3: KV
+L368@P3: p(yL+1 | x1,...,xL)
+L369@P3: x N
+L370@P3: x N
+L371@P3: xL+1
+L372@P3: KV
+L373@P3: transformer block
+L374@P3: transformer block p(yL+2 | x1
+L375@P3: ,...,xL+1)
+L376@P3: KV x N
+L377@P3: transformer block
+L378@P3: x1,...,xL
+L379@P3: transformer block p(yL+1 | x1
+L380@P3: ,...,xL)
+L381@P3: x N
+L382@P3: x N
+L383@P3: Ltopk
+L384@P3: Lsink Lrecent Standard Prefill SnapKV Prefill
+L385@P3: Standard Decode StreamingLLM Decode
+L386@P3: xL+1
+L387@P3: transformer block
+L388@P3: transformer block p̂(yL+2 | x1
+L389@P3: ,...,xL+1)
+L390@P3: Compressed KVs
+L391@P3: x N
+L392@P3: (a) (b)
+L393@P3: (c) (d)
+L394@P3: Figure 3. SnapStream applies SnapKV during prefill (b) to produce
+L395@P3: a compressed KV cache and StreamingLLM during decoding (d)
+L396@P3: to update the recent tokens of the compressed cache in-place. In
+L397@P3: contrast, standard static graph prefill (a) produces a padded KV
+L398@P3: cache that is appended to during decoding (c).
+L399@P3: 3.1 KV Cache Structure
+L400@P3: In SnapStream, the KV cache has three distinct components,
+L401@P3: indexed by their sequence position relative to the prefill
+L402@P3: length L:
+L403@P3: • Sink tensors k1, ..., kLsink
+L404@P3: • Recent tensors kL−Lrecent , ..., kL
+L405@P3: • Top-K tensors ktopk:1, ..., ktopk:K
+L406@P3: See Figure 3(b) for a depiction of the three components in
+L407@P3: yellow, green, and purple, respectively. Each component is
+L408@P3: initialized during prefill, with top-K tensors appended to
+L409@P3: the sink and recent tensors after any padding. Let Lsr =
+L410@P3: Lsink + Lrecent; then, the exact structure of the KV cache has
+L411@P3: two cases:
+L412@P3: 3.1.1 Case 1: L < Lsr
+L413@P3: In this case, the key tensor cache is constructed during
+L414@P3: prefill as k1, ..., kL, kpad:L+1, .., kpad:Lsr, ktopk:1, .., ktopk:K.
+L415@P3: This structure is no different than that described in Section 2.3, as the Top-K tokens xtopk:· are themselves padding
+L416@P3: tensors in this case. Accordingly, during decoding, the KV
+L417@P3: cache is updated in-place in the same manner as previously
+L418@P3: described.
+L419@P3: 3.1.2 Case 2: L ≥ Lsr
+L420@P3: In this case, the key cache is constructed as
+L421@P3: k1, ..., kLsink , kL−Lrecent , ..., kL, ktopk:1, ..., ktopk:K. During prefill, we remove the middle L − Lsr tokens from the
+L422@P3: KV cache, and extract the top K key and value tensors
+L423@P3: from these tokens to popuate ktopk:1, ..., ktopk:K. During
+L424@P3: decoding, we maintain the same KV cache size by evicting
+L425@P3-4: the least recently used key tensor, kL−Lrecent , and replacingSnapStream: Efficient Long Sequence Decoding on Dataflow Accelerators
+L426@P4: it with the new key tensor kL+1. Note that during decoding,
+L427@P4: the sink tensors and top-K tensors are never modified.
+L428@P4: 3.2 Prefill
+L429@P4: In order to reduce memory usage of the decoding stage,
+L430@P4: SnapStream applies SnapKV compression during prefill to
+L431@P4: compress an output KV cache along the sequence dimension.
+L432@P4: Adherent to the KV cache structure described in Section 3.1,
+L433@P4: we only apply SnapKV to compress the removed tokens
+L434@P4: kLsink+1, ..., kL−Lrecent . The sink token KV cache, recent token KV cache, and compressed SnapKV cache are then
+L435@P4: concatenated and sent to the decoding node.
+L436@P4: In preparing a KV cache for StreamingLLM decoding, we
+L437@P4: make two modifications to StreamingLLM during prefill:
+L438@P4: • We apply StreamingLLM after any positional encodings are applied to query, key, and value projections.
+L439@P4: This means that we do not apply positional encodings
+L440@P4: to cached KVs during decoding and use the original
+L441@P4: relative positional encodings. Although this may affect the ability of the model to generate beyond its
+L442@P4: trained attention window size, as claimed in (Xiao
+L443@P4: et al., 2024b) Section 3.2, we believe that this change is
+L444@P4: well-motivated, as most modern open models are now
+L445@P4: trained to handle context lengths up to 128k (Grattafiori
+L446@P4: et al., 2024; DeepSeek-AI et al., 2025b; Yang et al.,
+L447@P4: 2025).
+L448@P4: • We implement the rolling KV cache as a ring buffer, as
+L449@P4: opposed to a sliding window constructed with repeated
+L450@P4: concatenations of tensor views.
+L451@P4: 3.2.1 StreamingLLM Ring Buffer
+

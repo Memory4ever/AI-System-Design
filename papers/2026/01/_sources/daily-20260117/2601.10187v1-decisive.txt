@@ -1,0 +1,587 @@
+Necessary main-body extraction; no unrelated appendices. Source https://arxiv.org/html/2601.10187v1
+1 Introduction
+With the rapid advancement of Large Language Models (LLMs), their multilingual capabilities have achieved unprecedented semantic adequacy and fluency in Neural Machine Translation (NMT) Hendy et al. (2023); Jiao et al. (2023); Zhu et al. (2024). However, this linguistic prowess is accompanied by a systemic cross-lingual verbosity bias Briakou et al. (2024); Manakhimova et al. (2024). As illustrated in Figure 1, LLM-generated translations tend to be significantly longer than their source utterances, a "chattiness" that persists even when semantic content remains constant. While acceptable in general text generation, this expansion becomes a critical failure mode in time-constrained scenarios such as subtitles, video dubbing, and simultaneous interpretation,where translation length constitutes a rigid temporal budget that strictly limits the output duration Karakanta et al. (2020b); Jørgensen and Mengshoel (2025); Gaido et al. (2024).
+To operationalize the temporal budget, we approximate the available speaking time with a cross-lingually comparable syllable budget.
+Figure 1: Illustration of cross-lingual verbosity bias. Unlike forward metrics, the Roundtrip Expansion Ratio \rho_{\text{rtp}} isolates model-induced redundancy from linguistic density shifts. A value of \rho_{\text{rtp}}>1.0 indicates systemic inflation despite constant semantic content. Formal definition and diagnostic study are provided in Section 2.
+Viewed through an information-theoretic lens Shannon (1948); Davisson (1972), these temporal budgets act as a strict rate constraint: with a limited number of target syllables available, the model must pack maximal meaning into minimal length, implicitly operating near a rate-distortion limit on the achievable fidelity compression trade-off. In our setting, the rate is the syllable budget, and distortion can be understood as the loss in meaning or adequacy relative.
+Unfortunately, off-the-shelf LLMs struggle to respect these limits. This failure is deeply rooted in the post-training alignment process, where learned reward models frequently exhibit a "length bias" that conflates verbosity with quality Saito et al. (2023); Singhal et al. (2023).
+Furthermore, cross-lingual typological differences systematically skew length ratios, transforming length control from a superficial formatting task into a first-class modeling challenge.
+11
+1
+Detailed related works can be found in appendix A.
+To address this fundamental mismatch between LLM capabilities and temporal constraints, we argue that length control should be treated as an optimization objective rather than a post-hoc adjustment. To this end, we first operationalize the problem by constructing Sand-Glass, a dedicated benchmark for time-constrained media localization. The name reflects the rigid temporal budget that "drains" as the model produces redundant tokens.
+Unlike generic translation datasets, Sand-Glass incorporates syllable-based duration proxies calibrated by Information Density (ID), derived from real-world colloquial subtitles enabling precise evaluation of length compliance.
+Building on this testbed, we propose HOMURA (Hard Optimization for Multilingual Utterance Reduction and Alignment), a reinforcement learning framework designed to “tame the sandglass” by explicitly regulating translation length without requiring supervised compression datasets. Instead of relying on brittle prompts, HOMURA optimizes the quality compression trade-off directly. We design a novel reference free reward function that combines a dynamic syllable ratio penalty with a semantic fidelity reward, encouraging the model to condense information density without sacrificing core meaning.
+Our core contributions are as follows:
+•
+Diagnostic Analysis: We systematically quantify the verbosity bias in LLM-based translation under temporal constraints, providing cross-lingual diagnostics (e.g., the \rho_{\text{rtp}} metric) that reveal the limitations of unconstrained models as visualized in Figure 1.
+•
+Benchmark Construction: We introduce Sand-Glass, a specialized dataset tailored for time-constrained translation, featuring syllable-level duration budgets to simulate real-world dubbing and subtitling scenarios.
+•
+Methodological Innovation: We propose HOMURA, a KL-regularized RL framework that dynamically balances strict length constraints with semantic preservation, significantly outperforming strong LLM baselines in both compliance and quality.
+2 Pilot Study: Benchmark and Verbosity Bias
+Figure 2: Forward vs. backward expansion relationship (colored by round-trip ratio \rho_{\text{rtp}}). The red curve represents the unity baseline \rho_{\text{rtp}}=1.0 (y=1/x). Points above this curve indicate systemic model-induced length inflation. Unconstrained models show a median \rho_{\text{rtp}}>1.10.
+2.1 The Sand-Glass Benchmark
+To diagnose cross-lingual verbosity bias under temporal constraints, we introduce Sand-Glass, a benchmark derived from colloquial video transcripts. Unlike generic datasets, it incorporates syllable-based duration proxies to strictly test time-sensitive compliance. The construction involves duration-aware segmentation based on speech pauses and core event extraction for semantic evaluation. We refer readers to Appendix D for detailed protocols on dataset filtering and event extraction.
+2.2 Syllable as Duration Proxy
+Our use of syllables as duration proxies is grounded in the Iso-Information Principle. Pellegrino Pellegrino et al. (2011) demonstrated that while Syllable Rate (SR) vary drastically across languages (e.g., Spanish 7.82\sigma/s [syllables/s] vs. Mandarin 5.18\sigma/s), the universal Information Rate remains nearly constant at \approx 39 bits/s Coupé et al. (2019).Recent findings further corroborate this by quantifying a universal surprisal–duration trade-off (Pimentel et al., 2021), showing that languages systematically adjust segment duration to smooth information transmission.
+Language
+Syllable Rate
+Info. Density
+Expansion
+(\sigma/s)
+(Normalized)
+(from Zh)
+Mandarin (Zh)
+5.18\pm 0.15
+0.94
+1.00\times
+English (En)
+6.19\pm 0.16
+0.91
+\approx 1.03\times
+German (De)
+5.97\pm 0.19
+0.79
+\approx 1.19\times
+Spanish (Es)
+7.82\pm 0.16
+0.63
+\approx 1.49\times
+Table 1: Cross-linguistic statistics adapted from Pellegrino Pellegrino et al. (2011). Lower density necessitates higher expansion factors when translating from Mandarin.
+As shown in Table 1, this trade-off implies that low-density languages must utilize higher syllable counts to convey equivalent content. Translating from a high-density source (Mandarin, ID=0.94) to a lower-density target (e.g., Spanish, ID=0.63) necessitates a linguistically required expansion. A direct 1:1 mapping would result in \approx 33\% information loss (derived from the density ratio \frac{0.63}{0.94}). Thus, our constraints are non-uniform and calibrated to these density ratios to distinguish legitimate expansion from model verbosity.
+2.3 Quantifying Cross-Lingual Verbosity Bias
+Standard metrics like the Forward Expansion Ratio defined as \rho_{fwd}=\sigma(y)/\sigma(x) for a source x and its translation y often confound linguistic necessity with model hallucinations. For instance, a high \rho_{fwd} in Spanish might simply reflect its naturally lower information density rather than model-induced redundancy.
+To isolate systemic bias, we introduce the Roundtrip Expansion Ratio (\rho_{rtp}). By translating the target output y back into the source language (\hat{x}) and comparing its syllable count to the original input x, we define:
+\rho_{rtp}=\rho_{fwd}\cdot\rho_{bwd}=\frac{\sigma(y)}{\sigma(x)}\cdot\frac{\sigma(\hat{x})}{\sigma(y)}=\frac{\sigma(\hat{x})}{\sigma(x)},
+(1)
+where \sigma(\cdot) denotes the syllable count of a sequence. Theoretically, since this comparison is performed within the same source language, \rho_{rtp} should gravitate towards 1.0. Any value where \rho_{rtp}>1.0 serves as a density-invariant indicator of model-induced inflation.
+Empirical analysis on Sand-Glass (Figure 2) confirms that this verbosity is systemic rather than anecdotal. By plotting the joint distribution of expansion ratios, we observe a pervasive upward shift from the unity baseline (\rho_{rtp}=1.0), with the vast majority of segments clustered in the “inflation zone.” This concentration demonstrates a consistent model-induced redundancy that persists across various frontier models and language pairs (see Appendix L for statistical breakdowns).
+Calibrated Target Bounds.
+To bridge this gap, we define Target Syllable Bounds (\mathcal{B}_{L}) by contrasting model inflation (\mu_{LLM}) against Theoretical Expansion (\mu_{theo}). As shown in Table 2, LLMs produce significant surplus bias (\Delta_{bias}). We establish \mathcal{B}_{L} to enforce a strict condensation regime. Notably, we lower these targets beyond theoretical baselines to address real-world dubbing and subtitling complexities, specifically to buffer against rapid speech and synchronization constraints. Accordingly, we configure the bounds as follows:
+English (\mathcal{B}_{En}\in[0.8,0.9]) is set below parity to force active summarization;
+German (\mathcal{B}_{De}\in[0.9,1.0]) maintains relative pressure despite lower density;
+and Spanish (\mathcal{B}_{Es}\in[1.0,1.1]) significantly reduces the unconstrained baseline of 1.84\times to ensure intelligibility under strict time limits while respecting its information density.
+Target
+Theoretical
+LLM Baseline
+Bias
+Ours (Target)
+Lang
+(\mu_{theo})
+(\mu_{LLM})
+(\Delta)
+(\mathcal{B}_{L})
+En
+1.03\times
+1.35\times
++0.32
+\mathbf{0.8}\sim\mathbf{0.9}
+De
+1.19\times
+1.59\times
++0.40
+\mathbf{0.9}\sim\mathbf{1.0}
+Es
+1.49\times
+1.84\times
++0.35
+\mathbf{1.0}\sim\mathbf{1.1}
+Table 2: Comparison of expansion ratios. Target Bounds (\mathcal{B}_{L}) are set to remove model bias (\Delta) and enforce semantic condensation.
+3 Method
+We formulate syllable-level control as a standard controllable text generation taskLi et al. (2024); Gu et al. (2025), where our objective is to maximize translation quality while satisfying the prescribed syllable-ratio constraint. Our method is illustrated in Figure 3.
+Figure 3: Overview of our HOMURA framework. Given a source utterance x and a syllable-ratio budget c, we optimize a KL-regularized policy \pi_{\theta}(y\!\mid\!x,c) with GRPO. The reward combines a length-compliance term R_{\mathrm{len}} and a quality term R_{\mathrm{qual}} (rubric-based or reason-based), encouraging concise yet faithful translations.
+3.1 KL-Regularized Objective for Controllable Generation
+We study conditional generation with an input x and a control condition c. Our objective is to learn a policy \pi_{\theta}(y\mid x,c) that satisfies c.
+Target Distribution via a Controlled Posterior.
+A natural target distribution for controllable generation is the controlled posterior
+P(y\mid x,c)\propto P(c\mid x,y)\,P_{0}(y\mid x),
+(2)
+where P(c\mid x,y) measures how well an output y meets the control condition, and P_{0}(y\mid x) denotes a fixed reference model that captures the unconstrained translation distribution given the input x.
+KL Projection.
+We fit \pi_{\theta}(\cdot\mid x,c) by projecting it onto the target distribution:
+\pi_{\theta}^{\star}(\cdot\mid x,c)=\arg\min_{\pi_{\theta}}\ \mathrm{KL}\!\left(\pi_{\theta}(\cdot\mid x,c)\ \|\ P(\cdot\mid x,c)\right).
+(3)
+Ignoring constants independent of \theta and using Eq. (2), this objective is equivalent to maximizing
+\displaystyle J(\theta)
+\displaystyle=\mathbb{E}_{y\sim\pi_{\theta}}\Big[\log P(c\mid x,y)-\beta\log\tfrac{\pi_{\theta}(y\mid x,c)}{P_{0}(y\mid x)}\Big],
+(4)
+where \beta>0 is a temperature (or weighting) coefficient that controls the strength of KL regularization.
+In practice, we model \log P(c\mid x,y) with a task reward R(x,c,y).
+Eq. (4) can be viewed as a KL-regularized reinforcement learning objective:
+R(x,c,y) encourages satisfying the control condition, while the KL term discourages drifting away from the base model P_{0}.
+The coefficient \beta controls the trade-off between control strength and faithfulness.
+Optimization with GRPO.
+We optimize Eq. (4) using GRPO (Shao et al., 2024), a lightweight PPO-style
+algorithm for sequence-level rewards. For each (x,c), we sample multiple
+candidates from the previous policy \pi_{\theta_{\text{old}}}, compute rewards
+and group-normalized advantages, and update \pi_{\theta} with a clipped policy
+objective together with the KL regularization toward P_{0}.
+3.2 Reward Design
+In our setting, the control condition c corresponds to satisfying a strict length budget while maintaining semantic consistency with the source. This requires a reward that simultaneously encourages length compliance and discourages meaning drift.
+We interpret \log P(c\mid x,y) in Eq. (4) as a task reward, denoted by R(x,c,y), and instantiate it as:
+\displaystyle R(x,c,y)=\lambda_{\mathrm{len}}\,R_{\mathrm{len}}(x,y)+\lambda_{\mathrm{qual}}\,R_{\mathrm{qual}}(x,y),
+(5)
+where x is the source utterance, y is the generated translation, and \lambda_{\mathrm{len}},\lambda_{\mathrm{qual}}\geq 0 control the trade-off between temporal alignment and semantic fidelity.
+3.2.1 Dynamic Syllable-ratio Reward
+To ensure the translation length aligns naturally with the source speech across varying scales, we propose a dynamic syllable-ratio reward. The syllable ratio \rho for a source-target pair (x,y) is defined as:
+\rho(x,y)=\frac{\sigma(y)}{\max(\sigma(x),1)},
+(6)
+where \sigma(\cdot) is the syllable count of a sequence.
+Recognizing that strict length constraints must be sensitive to both linguistic density and utterance length, we implement a dynamic acceptance interval [L(x),R(x)]. We initialize the baseline bounds [L_{0},R_{0}] using the language-specific Target Bounds \mathcal{B}_{L} set in Section 2.3. This ensures the optimization target respects the cross-lingual density hierarchy established in our theoretical analysis.
+However, for shorter utterances, the “granularity” of syllable counting introduces high variance (discretization noise), making rigid bounds brittle. To address this, for utterances where the source length \sigma(x) is below the corpus mean \mu, we define a scaling factor \gamma(x) to adaptively relax the lower threshold:
+\gamma(x)=\alpha_{1}+\alpha_{2}\left(\frac{\sigma(x)}{\mu}\right)^{1/2},
+(7)
+where \alpha_{1},\alpha_{2} are hyperparameters governing the degree of relaxation. The final dynamic bounds are formulated as [L(x),R(x)]=[L_{0}\cdot\gamma(x),\,R_{0}].
+To facilitate stable policy optimization, we avoid sparse or binary signals in favor of a smoother reward landscape. The reward function R_{\mathrm{len}}(x,y) evaluates compliance with these dynamic boundaries via a squared exponential decay:
+R_{\mathrm{\rho}}=\begin{cases}1&\text{if }\rho\in[L(x),R(x)]\\
+\exp(-k\delta^{2})&\text{otherwise}\end{cases}
+(8)
+where \delta(x,y)=\max\bigl(|\rho(x,y)-L(x)|,|\rho(x,y)-R(x)|\bigr) denotes the deviation. This non-linear formulation provides a soft penalty that effectively guides the model toward the density-calibrated region while preventing training instability associated with hard-truncation rewards. In Appendix F, we further investigate the effectiveness of a static syllable-ratio reward.
+3.2.2 Rubric-based Quality Reward
+We adopt a two-part quality rubricHashemi et al. (2024); Liu et al. (2023), covering (i) semantic fidelity and (ii) linguistic well-formedness, and implement it as the following reward components.
+Semantic Fidelity Reward
+Inspired by the probabilistic duality in (He et al., 2016), we enforce content preservation via a reconstruction-based reward. We employ a frozen DeepSeek-V3 (DeepSeek-AI, 2024) to back-translate the hypothesis y into \hat{x}=f_{bt}(y). To measure semantic retention, we compute the cosine similarity S(x,\hat{x}) between embeddings of the source x and reconstruction \hat{x} extracted by Qwen-Embedding-0.6B (Zhang et al., 2025):
+S(x,\hat{x})=\frac{\mathbf{v}_{x}\cdot\mathbf{v}_{\hat{x}}}{\|\mathbf{v}_{x}\|\|\mathbf{v}_{\hat{x}}\|}
+(9)
+The final reward is clipped to stabilize optimization:
+R_{bt}(x,y)=\text{clip}(S(x,\hat{x}),\tau_{min},\tau_{max})
+(10)
+Linguistic Well-formedness Reward
+To prevent the telegraphic outputs often associated with aggressive compression, we explicitly penalize linguistic degradation. We utilize a frozen DeepSeek-V3 as a judge to evaluate translations against a rubric covering: (i) grammaticality, (ii) readability, and (iii) language consistency (e.g., no code-switching). The model outputs a binary decision s_{flu}\in\{0,1\}, serving directly as the reward:
+R_{flu}(x,y)=s_{flu}
+(11)
+Full prompting details are in Appendix I.
+3.2.3 Reason-based Quality Reward
+Beyond the simple compositional rewards, we explore an end-to-end generative reward model (GenRM)Mahan et al. (2024); Liang et al. (2025) that evaluates translation quality via explicit reasoning.
+GenRM is trained using structured Chain-of-Thought (CoT) annotations synthesized by Gemini-2.5-Pro (Comanici et al., 2025). To ensure high-quality reasoning, we filter the raw CoT data using the aforementioned rubric-based method. The model is instantiated from Qwen3-32B (Yang et al., 2025) and optimized via supervised fine-tuning (SFT) over the full CoT sequence and the final decision token.
+Given a source sentence x and a translation hypothesis y, GenRM performs a single long CoT reasoning process that can be abstracted as
+\hat{x}=f_{\mathrm{bt}}(y),\;s(x,\hat{x}),q(y)\in\{0,1\},
+(12)
+where f_{\mathrm{bt}} denotes implicit back-translation, s(x,\hat{x}) indicates whether the core information in x is preserved, and q(y) evaluates the intrinsic quality of y in terms of adequacy and fluency. Based on these decisions, GenRM outputs a binary quality reward
+R_{gen}(x,y)=\mathbb{I}\big[s(x,\hat{x})=1\land q(y)=1\big].
+(13)
+This formulation yields a reference-free, interpretable quality signal and enforces an explicit conjunction between information preservation and translation quality. Concrete examples of the CoT reasoning are provided in the Appendix H.
+4 Experiments and Results
+Table 3: Performance Comparison on Sand-Glass Across All Language Pairs (BLEU-\rho, Cometkiwi, BT-CERR). All results are averaged by 3 times.
+Model
+Evaluation Metrics on Sand-Glass
+Zh \rightarrow En
+Zh \rightarrow De
+Zh \rightarrow Es
+IB
+Cometkiwi
+BT-CERR
+BLEU-\rho
+AVG-Tokens
+IB
+Cometkiwi
+BT-CERR
+BLEU-\rho
+AVG-Tokens
+IB
+Cometkiwi
+BT-CERR
+BLEU-\rho
+AVG-Tokens
+Category 1: w/o Syllable Constraint
+claude-4.1-opus
+\times
+0.741
+0.943
+0.313
+17.1
+\times
+0.676
+0.882
+0.247
+24.2
+\times
+0.668
+0.900
+0.220
+21.3
+deepseek-v3
+\times
+0.748
+0.941
+0.287
+46.3
+\times
+0.676
+0.889
+0.222
+62.3
+\times
+0.671
+0.884
+0.191
+99.6
+gemini-2.5-pro∗
+\times
+0.739
+0.941
+0.307
+12.1 (916.9)
+\times
+0.666
+0.877
+0.238
+14.2 (125.8)
+\times
+0.668
+0.883
+0.212
+14.0 (1532.7)
+gpt-5∗
+\times
+0.746
+0.947
+0.300
+22.4 (412.8)
+\times
+0.681
+0.894
+0.220
+23.2 (605.6)
+\times
+0.671
+0.899
+0.206
+24.0 (676.8)
+Category 2: w/ Syllable Constraint
+claude-4.1-opus
+\checkmark
+0.691
+0.907
+0.376
+12.2
+\checkmark
+0.535
+0.838
+0.293
+17.2
+\times
+0.631
+0.849
+0.261
+13.5
+deepseek-v3
+\times
+0.700
+0.924
+0.307
+12.4
+\times
+0.557
+0.866
+0.245
+15.8
+\times
+0.556
+0.868
+0.225
+16.3
+gemini-2.5-pro∗
+\times
+0.698
+0.927
+0.322
+10.7 (1231.3)
+\times
+0.517
+0.853
+0.266
+12.3 (1450.1)
+\times
+0.586
+0.827
+0.252
+10.7 (554.5)
+gpt-5∗
+\times
+0.705
+0.928
+0.345
+21.7 (2024.9)
+\times
+0.534
+0.874
+0.283
+23.1 (1962.3)
+\times
+0.586
+0.833
+0.270
+21.0 (3105.8)
+Category 3: Best of N
+claude-4.1-opus
+\checkmark
+0.691
+0.903
+0.367
+109.7
+\checkmark
+0.611
+0.848
+0.324
+109.2
+\checkmark
+0.621
+0.857
+0.304
+110.0
+deepseek-v3
+\checkmark
+0.691
+0.902
+0.332
+122.6
+\checkmark
+0.527
+0.863
+0.286
+160.5
+\checkmark
+0.522
+0.851
+0.275
+113.6
+gemini-2.5-pro∗
+\checkmark
+0.673
+0.904
+0.276
+133.2 (1089.2)
+\checkmark
+0.517
+0.854
+0.241
+136.0 (972.7)
+\checkmark
+0.554
+0.858
+0.235
+133.8 (611.1)
+gpt-5∗
+\checkmark
+0.673
+0.906
+0.296
+114.2 (1810.2)
+\checkmark
+0.571
+0.861
+0.275
+111.2 (2229.6)
+\checkmark
+0.529
+0.855
+0.256
+110.8 (2158.8)
+Category 4: Translate + Modify Pipeline (2 run)
+claude-4.1-opus
+\times
+0.694
+0.904
+0.327
+30.2
+\times
+0.653
+0.868
+0.276
+42.7
+\times
+0.643
+0.876
+0.246
+37.6
+deepseek-v3
+\times
+0.703
+0.934
+0.322
+88.1
+\times
+0.645
+0.874
+0.239
+89.4
+\times
+0.543
+0.873
+0.221
+102.1
+gemini-2.5-pro∗
+\checkmark
+0.691
+0.902
+0.348
+22.3 (2517.7)
+\times
+0.627
+0.830
+0.267
+27.5 (1043.1)
+\checkmark
+0.602
+0.840
+0.250
+22.4 (2975.2)
+gpt-5∗
+\checkmark
+0.690
+0.917
+0.321
+42.2 (2666.2)
+\checkmark
+0.514
+0.842
+0.275
+46.6 (2773.0)
+\checkmark
+0.557
+0.820
+0.234
+44.9 (4012.9)
+Category 5: HOMURA
+Ours (HOMURARubric)
+\checkmark
+0.700
+0.914
+0.378
+9.2
+\checkmark
+0.591
+0.853
+0.317
+16.3
+\checkmark
+0.620
+0.863
+0.260
+13.1
+Ours (HOMURAReason)
+\checkmark
+0.701
+0.925
+0.376
+10.1
+\checkmark
+0.603
+0.861
+0.321
+14.7
+\checkmark
+0.605
+0.858
+0.309
+13.2
+Note: IB: In Bounds, \checkmark indicates within bounds, \times indicates out of bounds. AVG-Tokens: Average number of output tokens per sample; for reasoning models (∗), values in parentheses denote the total tokens consumed (including internal thinking).
+4.1 Experimental Setup
+We evaluate SOTA LLMs under five strategy categories that span the length-control spectrum:
+•
+Category 1: Unconstrained LLMs. Frontier models (GPT-5 OpenAI (2025), Claude-4.1-Opus Anthropic (2025), Gemini-2.5-Pro, DeepSeek-V3) with standard decoding. For GPT-5 and Gemini-2.5-Pro, we set low reasoning effort to approximate direct translation. These serve as semantic upper bounds.
+•
+Category 2: Prompt-based Compression. Category 1 models with brevity-oriented system prompts enforcing syllable-level conciseness.
+•
+Category 3: Best of N Refinement. Generating N candidates with varying lengths, followed by a greedy selection of the highest-fidelity output that fulfills the syllable budget.
+•
+Category 4: Pipeline-based Post-editing. Two-stage translation \rightarrow length-constrained rewriting.
+•
+Category 5: Our Method (HOMURA). RL fine-tuning on Qwen3-8B (Yang et al., 2025) to enforce temporal budgets as hard constraints.
+More experimental details are provided in Appendix E.
+4.2 Target Syllable Bounds Configuration
+Following Section 2.3, we set density-calibrated target bounds \mathcal{B}_{L} to impose comparable compression pressure across languages: En \in[0.8,0.9], De \in[0.9,1.0], and Es \in[1.0,1.1]. These intervals are used as hard constraints for HOMURA.
+4.2.1 Evaluation Metrics
+We report complementary metrics for efficiency, semantic preservation, and linguistic quality:
+Translation Density (BLEU-\rho \uparrow)
+We define BLEU-\rho as semantic fidelity per temporal unit:
+\text{BLEU-}\rho=\frac{\text{BLEU}(x,\hat{x})}{\rho(x,y)},
+(14)
+where \text{BLEU}(x,\hat{x}) is the back-translation BLEU Papineni et al. (2002). Since BLEU alone may not fully capture fluency in back-translation paradigms Edunov et al. (2020), we use BLEU-\rho specifically to measure information density, while linguistic quality assessed via Cometkiwi.
+Semantic Integrity (BT-CERR \uparrow)
+BT-CERR is a binary indicator that evaluates whether all core events extracted from x are retained in the back-translation \hat{x}.
+(see Appendix D for the definition of core events).
+Linguistic Quality (Cometkiwi \uparrow)
+We use reference-free CometkiwiRei et al. (2022) to assess fluency and adequacy under compression.
+4.3 Main Results
+4.3.1 Cross-Lingual Performance and Temporal Compliance
+Table 3 summarizes performance on Sand-Glass. We report human evaluation in Appendix C and Statistical Significance Testing in Appendix B. Overall, the results highlight the trade-off between temporal compliance and semantic density:
+Budget Violation in Frontier Models.
+As shown by the IB column, unconstrained frontier model(Cat 1) universally fail to meet temporal budgets (\times), particularly in low-density languages like Spanish. While specialized prompting (Cat 2) shifts the distribution toward brevity, it remains unreliable, with models like GPT-5 still exhibiting "verbosity drift" that exceeds target bounds. This confirms that pure instruction-following is insufficient for rigorous syllable-level constraints.
+The Search-Fidelity Trade-off.
+Search-based (Cat 3) and pipeline (Cat 4) strategies achieve higher In-Bounds rates but at a significant semantic cost. For instance, Cat 4 variants often show a drop in BT-CERR, suggesting that the disjointed post-editing process leads to "hallucinated omissions" of critical source predicates. Moreover, the increased inference latency of Best-of-N makes it less practical in real-time setting.
+(a) BLEU vs. Avg. Syllable Ratio
+(b) BT-CERR vs. Avg. Syllable Ratio
+Figure 4: Quality–compression trade-off on Zh\rightarrowEn. We plot BLEU (left) and BT-CERR (right) versus the average syllable ratio \rho. Each point is a model setting (marker: backbone; color: variant: Unconstrained, Rubric, GenRM, Multi-length Prompting). The red curve shows the empirical trend: quality degrades as compression strengthens.
+Information Density Superiority of HOMURA.
+In contrast, HOMURA consistently maintains in bound while achieving the highest BLEU-\rho across all language pairs. This gap demonstrates that HOMURA does not merely truncate text but actively performs semantic packing—delivering a higher "semantic payload" per syllable. Additionally, we scale our method to a 32B model; see Appendix G for details.
+Inference efficiency.
+HOMURA is markedly more inference-efficient. Unlike Best-of-N, which multiplies decoding cost by generating N candidates, and unlike translate-then-modify pipelines that require an extra rewriting pass, HOMURA satisfies the syllable/temporal budget in a single decoding. Consequently, it attains high IB compliance with substantially fewer tokens (AVG-Tokens in Table 3), making it suitable for real-time and high-throughput deployment.
+Robustness of Reason-based GenRM.
+Within Category 5, HOMURAReason achieves higher BT-CERR than HOMURARubric on two of the three target languages, with the largest gain observed for English.
+This suggests the reason-based reward better prunes redundancy while preserving the source’s logical structure. We further validate this by replacing the self-trained GenRM in HOMURAReason with an LLM-as-RM baseline (DeepSeek-V3); results are in Appendix J.
+Sensitivity of KL Regularization.
+While the theoretical objective in Eq. (4) assumes \beta>0 for policy stability, our empirical investigations reveal a task-specific trade-off.
+As shown in our ablation experiments, introducing \beta>0 leads to a notable degradation in structural alignment.
+This suggests that for time-constrained translation, the reference model P_{0} imposes a “verbosity prior” that penalizes the radical lexical pruning and syntactic restructuring necessary to meet the Sand-Glass budget.
+By setting \beta\to 0 in our final implementation, we grant the model maximum compression freedom.
+The inherent stability of the GRPO algorithm’s group-relative optimization, coupled with the explicit guidance of our task-specific rewards, ensures that this relaxation preserves policy stability and prevents linguistic collapse, allowing HOMURA to reach a more efficient rate-distortion frontier. A detailed theoretical and empirical analysis of this stabilization mechanism is provided in Appendix M.
+4.3.2 Analysis of Quality–Compression Trade-off
+Figure 4 illustrates the trade-off between translation quality and output length. By plotting semantic metrics against the average syllable ratio \rho, we compare how different models perform as the available length budget decreases.
+As shown in Figure 4, unconstrained baselines cluster in the high-quality, high-\rho region, representing the model’s performance when length is not a factor. While standard LLMs can be prompted to shorten their outputs, their quality drops sharply as compression becomes more aggressive. This reflects a low rate–distortion efficiency: when forced to reduce the phonetic “rate” (syllables), these models suffer from disproportionately high “distortion” (loss of meaning), as they struggle to identify which information is most essential to preserve.
+In contrast, HOMURA variants demonstrate significantly higher rate–distortion efficiency. At any given syllable budget, HOMURA maintains higher semantic fidelity than the baselines; conversely, it can achieve a much shorter length while maintaining the same quality level. These results suggest that our framework does not simply truncate text. Instead, it optimizes the model to operate at a more efficient trade-off point—packing a higher semantic payload into a limited phonetic budget to respect the strict constraints of media localization.
+4.3.3 Qualitative Case Studies
+We qualitatively compare HOMURA with representative baselines to assess practical behavior under different compression budgets.
+As shown in Table 10, frontier models (e.g., GPT-5, Claude-4.1-opus) often remain verbose even with brevity prompts, whereas HOMURA achieves tighter budget adherence by packing semantics into denser lexical and syntactic forms.
+When the budget becomes extreme (down to \rho\approx 0.25), HOMURA smoothly shifts from natural prose to highly condensed translations, prioritizing core predicate–argument content while discarding redundant function words.
+Full case comparisons and a taxonomy of the observed linguistic shifts are deferred to Appendix K.
+4.4 Autonomous Compression: Navigating the Compression Limit
+The preceding experiments show that HOMURA can reliably translate under a user-specified ratio interval. We further ask whether, without a preset lower bound, the model can autonomously discover the practical compression limit: the point where additional shortening triggers a sharp loss in meaning. To this end, we formulate an autonomous compression task by replacing the hard-interval length reward with a continuous incentive:
+\displaystyle R_{\mathrm{len}}^{\mathrm{(auto)}}(x,y)=\min\left(\cos\left(\theta\cdot\rho(x,y)\right),\;0\right),
+(15)
+where \theta scales the incentive gradient. The policy is encouraged to minimize \rho while still being constrained by the quality reward R_{\mathrm{qual}}.
+Table 4: The Compression Wall. The autonomous model reliably reaches the feasible limit; stricter manual targets miss \rho and produce worse compression.
+Model & Configuration
+\boldsymbol{\rho}
+BLEU-\boldsymbol{\rho}
+BT-CERR
+Auto HOMURA
+0.485
+0.404
+0.811
+Manually Constrained HOMURA
+R_{\mathrm{target}}\in[0.3,0.4]
+0.558
+0.392
+0.819
+R_{\mathrm{target}}\in[0.4,0.5]
+0.481
+0.384
+0.816
+R_{\mathrm{target}}\in[0.5,0.6]
+0.559
+0.386
+0.856
+R_{\mathrm{target}}\in[0.8,0.9]
+0.808
+0.378
+0.914
+The Empirical Compression Wall
+We observe a stable compression wall when pushing the model to its structural limit. In Table 4, autonomous optimization consistently converges to a narrow operating regime around \rho\in[0.46,0.49], regardless of the specific reward configuration.
+When we enforce an ultra-aggressive target of [0.3,0.4], the model does not become shorter; instead it rebounds to \rho=0.558 and semantic coherence collapses. This non-linear failure indicates a feasibility threshold around \rho\approx 0.49 for Zh\rightarrowEn: compressing beyond it creates an irreconcilable length-quality trade-off, where the model cannot preserve basic well-formedness while remaining brief.
+Efficiency at the Frontier
+To quantify compression efficiency, we report BLEU-\rho. The autonomous model attains the best BLEU-\rho while operating at a genuinely shorter length (\rho=0.485 vs. 0.558), indicating that autonomous optimization finds a more efficient operating point on the quality-compression frontier.
+Rate-Distortion Efficiency at the Frontier
+Qualitatively, the autonomous model tends to compress by semantic condensation: dropping modifiers, selecting denser lexical items, and simplifying clause structures. In contrast, when forced toward an overly aggressive interval, outputs more often exhibit unstable shortening behaviors, reflecting the tension between further length reduction and preserving core meaning.
+Takeaway: The Wall as a Feasibility Boundary
+Together, these results suggest an empirical feasibility boundary around \rho\approx 0.49 for time-constrained translation in our setting (Zh→En).We hypothesize that this boundary represents the minimal information carrier required to express core predicate-argument content.
+5 Conclusion
+We address systemic cross-lingual verbosity bias in LLM translation, a key obstacle in time-constrained settings such as subtitles and dubbing. We introduce Sand-Glass, a syllable-budgeted benchmark grounded in the Iso-Information Principle, and propose HOMURA, an RL framework that optimizes the fidelity–feasibility trade-off.
+With a KL-regularized objective and a dynamic syllable-ratio reward, HOMURA achieves strict length compliance without reference translations while improving information density (BLEU-\rho). Future work will test whether the observed compression feasibility boundary (e.g., \rho\approx 0.49 for Zh\rightarrowEn) generalizes across language pairs, and extend HOMURA to end-to-end speech translation with joint semantic and duration optimization.
+Limitations
+First, while we adopt syllable count as a duration proxy grounded in the Iso-Information Principle, this metric remains a textual approximation of acoustic reality. In real-world dubbing and subtitling, physical duration is heavily influenced by prosodic features and speech tempo, and our current text-only framework does not account for multimodal constraints like lip-synchronization or isochrony. Consequently, generated outputs may still require minor timing adjustments during recording.
+Second, our experimental validation is currently restricted to Chinese-to-English, German, and Spanish translation tasks. The universality of the "compression feasibility boundary" observed in our study remains to be verified across linguistically distant pairs or low-resource languages. Future work is needed to determine if such limits are language-specific or intrinsic to the translation task itself.
+Acknowledgments
+

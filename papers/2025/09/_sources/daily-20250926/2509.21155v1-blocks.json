@@ -1,0 +1,1794 @@
+[
+  {
+    "tag": "h5",
+    "text": "Report GitHub Issue"
+  },
+  {
+    "tag": "p",
+    "text": "Content selection saved. Describe the issue below:"
+  },
+  {
+    "tag": "h1",
+    "text": "Learning the Wrong Lessons: Syntactic-Domain Spurious Correlations in Language Models"
+  },
+  {
+    "tag": "h6",
+    "text": "Abstract"
+  },
+  {
+    "tag": "p",
+    "text": "For an LLM to correctly respond to an instruction it must understand both the semantics and the domain (i.e., subject area) of a given task-instruction pair. However, syntax can also convey implicit information Recent work shows that syntactic templates —frequent sequences of Part-of-Speech (PoS) tags—are prevalent in training data and often appear in model outputs. In this work we characterize syntactic templates, domain, and semantics in task-instruction pairs. We identify cases of spurious correlations between syntax and domain, where models learn to associate a domain with syntax during training; this can sometimes override prompt semantics. Using a synthetic training dataset, we find that the syntactic-domain correlation can lower performance (mean 0.51 ± 0.06 \\pm 0.06 ) on entity knowledge tasks in OLMo-2 models (1B-13B). We introduce an evaluation framework to detect this phenomenon in trained models, and show that it occurs on a subset of the FlanV2 dataset in open (OLMo-2-7B; Llama-4-Maverick), and closed (GPT-4o) models. Finally, we present a case study on the implications for safety finetuning, showing that unintended syntactic-domain correlations can be used to bypass refusals in OLMo-2-7B Instruct and GPT-4o. Our findings highlight two needs: (1) to explicitly test for syntactic-domain correlations, and (2) to ensure syntactic diversity in training data, specifically within domains, to prevent such spurious correlations."
+  },
+  {
+    "tag": "p",
+    "text": "Content Warning: This paper contains examples of harmful language."
+  },
+  {
+    "tag": "h2",
+    "text": "1 Introduction"
+  },
+  {
+    "tag": "p",
+    "text": "LLMs are increasingly being deployed in a variety of important domains [ 42 , 36 , 11 , 5 ] . To be reliable in such areas they should understand the semantics of instructions and the domains of the tasks [ 14 ] , yet recent work shows that the correctness of their responses can change when encountering subtle linguistic variations in instructions [ 38 , 4 ] . This raises a fundamental question:"
+  },
+  {
+    "tag": "p",
+    "text": "Do LLMs leverage semantic and domain knowledge, or are they only exploiting shallow syntactic patterns from their training data at scale?"
+  },
+  {
+    "tag": "p",
+    "text": "Syntax, semantics, and domain interact together to provide structure, meaning, and content for accurate language interpretation and task execution [ 7 , 8 , 13 ] . While the latter two are well-studied in LLMs [ 26 , 18 , 6 ] , the former has only recently gained traction as an important component for understanding writing idiosyncrasies in model responses [ 34 , 39 , 31 ] . Recent work has shown that model training data contains syntactic templates , i.e., frequently appearing n n -grams of part-of-speech in training data, and that these templates are learned and subsequently repeated by the model ( 34 , 40 , 10 ) ."
+  },
+  {
+    "tag": "p",
+    "text": "Ideally, LLMs should not rely on syntax cues alone to perform a task: Semantic and domain (e.g., subject matter) ‘‘understanding’’ should also inform generated responses. 1 1 1 In practice, it is difficult to completely separate syntax from semantics. In this work, we delineate these concepts by focusing on a specific subset of syntactic structures based on part-of-speech tags ( syntactic templates ), which can plausibly map to many meanings. In this work we systematically study the interactions between syntactic templates and domain, and find evidence that LLMs learn to rely on a spurious correlation between these features to improve performance."
+  },
+  {
+    "tag": "figcaption",
+    "text": "Figure 1 : Example instantiations of each template setting for the phrase “Where is Paris located? France\", where (Paris, France) is the entity pair denoting the domain country . Each template setting modifies either syntax, domain, or semantics. If a model answers “France” in the antonym or disfluent settings, this may be due to over reliance on syntax."
+  },
+  {
+    "tag": "p",
+    "text": "Figure 1 introduces our canonical example. We ask a trained model “Where is Paris located?” and it correctly answers with “ France .” This instruction-task pair has the syntactic template of adverb, verb, proper noun, verb(past participle), proper noun , a country domain, and a meaning indicating that we are asking for fact-completion . In the most extreme case, if we modify the domain and semantics (substituting antonyms, random words) while keeping the template fixed, we would not expect the model to respond with the correct answer. Surprisingly, however, when prompting the model with an incoherent sentence like “Quickly sit Paris clouded?”, the model still responds with “ France .’’ 2 2 2 One may question whether this just indicates entity memorization ; we discuss this in § 4 ."
+  },
+  {
+    "tag": "p",
+    "text": "When a model responds with the correct response in the antonym or disfluent settings, we posit that this is indicative of a spurious correlation between between syntax and domain. This may be problematic when the correlation degrades performance in a new domain. For instance, responding with “ France ” when asking about the food in “ Paris ”."
+  },
+  {
+    "tag": "p",
+    "text": "Building on this observation, we first formally characterize the relationship between syntactic templates, semantics, and domain knowledge in LLM instruction-following settings (§ 2 ). We then empirically show that OLMo-2 ( [ 28 ] ; 1B, 7B, and 13B) learns spurious syntactic-domain correlations that degrade semantic understanding using synthetic data sourced from Wikipedia (§ 3 ). Our quasi-synthetic experiments inform a benchmarking procedure to detect this failure mode in trained models, which we release for community use (§ 4 ), and use to demonstrate that spurious syntactic-domain correlations occur in off-the-shelf OLMo-2, Llama-4-Maverick 3 3 3 Accessed at https://www.together.ai/models/llama-4-maverick and GPT4o models [ 29 ] (§ 5 ). Finally, we demonstrate domain-syntax correlations impact LLM security by giving rise to a new exploit for bypassing model refusals to harmful requests in OLMo-2-7B-Instruct and GPT4o-mini (§ 6 )."
+  },
+  {
+    "tag": "h2",
+    "text": "2 Syntactic-Domain Spurious Correlations"
+  },
+  {
+    "tag": "h4",
+    "text": "Problem Statement"
+  },
+  {
+    "tag": "p",
+    "text": "In Figure 1 , we first ask “Where is Paris located?”, where the correct answer is “ France ” and falls into the in-domain category of geography . Then we ask a second question: “What food do they eat in Paris ?”and the correct answer is “ croissant ”. This prompt is a new, cross-domain category of cuisine . Both prompts here follow unique syntactic templates , t geography t_{\\texttt{geography}} and t cuisine t_{\\texttt{cuisine}} respectively, defined by part-of-speech (PoS) tags."
+  },
+  {
+    "tag": "p",
+    "text": "To answer correctly, there are two possible behaviours: the model can answer the first question by only recognizing the syntactic template associated with t geography t_{\\texttt{geography}} , or, can leverage information about the combination of semantics, domain, and content. The first case, however, can be brittle: if the model only relies on syntax, it may perform poorly when encountering an input with template t geography t_{\\texttt{geography}} but in the cuisine domain."
+  },
+  {
+    "tag": "p",
+    "text": "To formalize this intuition, consider a dataset X X where we represent each example as a triple x = ( d , t , e ) x=(d,t,e) , where:"
+  },
+  {
+    "tag": "p",
+    "text": "d d is a domain of knowledge (e.g., geography , cuisine ),"
+  },
+  {
+    "tag": "p",
+    "text": "t t is a syntactic template determined by the sentence structure of the prompt-response pair,"
+  },
+  {
+    "tag": "p",
+    "text": "e e contains the entities that comprise the semantic content (e.g., Paris, France)."
+  },
+  {
+    "tag": "p",
+    "text": "Our dataset X X spans domains 𝒟 \\mathcal{D} (i.e. distributions over groups of sequences), with each domain d d associated with frequent syntactic templates 𝒯 d \\mathcal{T}_{d} , often the most common n n -grams or PoS patterns. For simplicity in § 3 , we assume minimal overlap between domain template sets, confirmed via bigram similarity analysis (Appendix Fig. 7 ). In practice, however, this assumption is not required—our results hold regardless. Strong domain-template associations risk models overfitting to superficial linguistic patterns. Similar failures due to spurious correlations between content and background color have been documented in computer vision [ 2 , 17 ] ."
+  },
+  {
+    "tag": "p",
+    "text": "Template–Domain Spurious Correlation. A template τ \\tau is spuriously predictive in a domain d d when the conditional frequency of the template given a domain is significantly larger than the marginal frequency of the template across the entire dataset X X"
+  },
+  {
+    "tag": "p",
+    "text": "Quantifying Syntax–Domain Reliance. To assess whether models rely on such spurious correlations, we first define five types of prompt perturbations: Exact , Synonym , Antonym , Paraphrase , and Disfluent (§ 2 ). We categorize these five types of perturbations into three classes:"
+  },
+  {
+    "tag": "p",
+    "text": "𝒫 Semantic Preserving \\mathcal{P}_{\\texttt{Semantic Preserving}} : Perturbations that modify the prompt but preserve its semantic meaning while keeping the syntax the same (e.g., exact phrasing from the training set or using synonyms – “Whereabouts is Paris situated?” ."
+  },
+  {
+    "tag": "p",
+    "text": "𝒫 Semantic Breaking \\mathcal{P}_{\\texttt{Semantic Breaking}} : Perturbations that maintain the syntactic template but deliberately break the semantic meaning (e.g., introducing antonyms or disfluency) – “Where is Paris undefined?” ."
+  },
+  {
+    "tag": "p",
+    "text": "𝒫 Utility \\mathcal{P}_{\\texttt{Utility}} : perturbations that preserve semantic meaning while also modify the syntactic template (e.g. paraphrasing the prompt – “Can you tell me where to find Paris ?”"
+  },
+  {
+    "tag": "p",
+    "text": "We measure a model M θ M_{\\theta} ’s reliance on these spurious correlations by evaluating its performance across pairs of domains with minimal template overlap on these perturbation sets. Each of these pairs gives us an in-domain and cross-domain to evaluate on. Then, we quantify shortcut reliance using the following objects. First, we define the risk for a specific domain as:"
+  },
+  {
+    "tag": "tr",
+    "text": "R M θ ​ ( d ) = 𝔼 ( p , t , e ) ∼ X d ​ ( 𝔼 p − ∼ 𝒫 Semantic Breaking ​ M ​ ( e ∣ p − ) + 𝔼 p + ∼ 𝒫 Semantic Preserving ​ M ​ ( e ∣ p + ) ) R_{M_{\\theta}}(d)=\\mathbb{E}_{(p,t,e)\\sim X_{d}}\\big(\\mathbb{E}_{p^{-}\\sim\\mathcal{P}_{\\texttt{Semantic Breaking}}}M(e\\mid p^{-})+\\mathbb{E}_{p^{+}\\sim\\mathcal{P}_{\\texttt{Semantic Preserving}}}M(e\\mid p^{+})\\big)"
+  },
+  {
+    "tag": "p",
+    "text": "Here, M ⁡ ( e ∣ p − ) M(e\\mid p^{-}) is the probability the model assigns to the correct entity despite semantic-breaking perturbations and M ⁡ ( e ∣ p + ) M(e\\mid p^{+}) is the probability the model assigns to the correct entity given semantic-preserving perturbations. The ordering of expectations reflects a natural evaluation process: we sample real prompts, templates, and entities ( p , t , e ) (p,t,e) from the domain ( 𝔼 ( p , t , e ) ∼ X d \\mathbb{E}_{(p,t,e)\\sim X_{d}} ) and then we enumerate semantic-breaking perturbations of each prompt ( 𝔼 p − ∼ 𝒫 Semantic Breaking \\mathbb{E}_{p^{-}\\sim\\mathcal{P}_{\\texttt{Semantic Breaking}}} )"
+  },
+  {
+    "tag": "p",
+    "text": "Finally, we define two necessary conditions for syntactic-domain reliance to occur: (1) high performance on semantic preserving prompts and (2) a large gap between the in-domain and cross-domain risk defined above across the set of domain pairs. The first condition captures the setting where the model performs well in-domain on all of the prompt perturbations which serves as an initial signal that it may be relying on a syntactic-domain spurious correlation. The second setting is necessary to confirm that it is due to a syntax domain spurious correlation because we see that the performance drops cross-domain."
+  },
+  {
+    "tag": "h2",
+    "text": "3 Synthetic Dataset: Entity-Pair Syntactic Domains"
+  },
+  {
+    "tag": "p",
+    "text": "We design a synthetic dataset where we explicitly control the semantic, syntactic, and domain properties of task-instruction pairs. In practice, LLMs are pretrained on trillions of tokens [ 37 ] and may have already learned relationships between entities and concepts. Here, we finetune the OLMo-2 suite of models (1B, 7B, 13B), which have already been pretrained on 3 trillion tokens [ 28 ] , with our synthetic dataset to evaluate the effects of syntactic-domain spurious correlation reliance using both Base and Instruct variants. The details of the fine-tuning procedure are in App. D . We study both to assess if post-training procedures such as alignment make an impact."
+  },
+  {
+    "tag": "tr",
+    "text": "Model Exact Synonym Antonym Disfluent Paraphrase"
+  },
+  {
+    "tag": "tr",
+    "text": "OLMo 2-Instruct (1B)"
+  },
+  {
+    "tag": "tr",
+    "text": "In-Domain 0.93 \\mathbf{0.93} 0.91 \\mathbf{0.91} 0.90 \\mathbf{0.90} 0.24 \\mathbf{0.24} 0.53 \\mathbf{0.53}"
+  },
+  {
+    "tag": "tr",
+    "text": "Cross-Domain 0.42 0.42 0.40 0.40 0.41 0.41 0.25 0.25 0.44 0.44"
+  },
+  {
+    "tag": "tr",
+    "text": "Performance Δ \\Delta ↓ 0.51 \\downarrow 0.51 ↓ 0.51 \\downarrow 0.51 ↓ 0.49 \\downarrow 0.49 ↑ 0.01 \\uparrow 0.01 ↓ 0.09 \\downarrow 0.09"
+  },
+  {
+    "tag": "tr",
+    "text": "OLMo 2-Instruct (7B)"
+  },
+  {
+    "tag": "tr",
+    "text": "In-Domain 0.92 \\mathbf{0.92} 0.91 \\mathbf{0.91} 0.90 \\mathbf{0.90} 0.22 0.22 0.75 \\mathbf{0.75}"
+  },
+  {
+    "tag": "tr",
+    "text": "Cross-Domain 0.51 0.51 0.43 0.43 0.49 0.49 0.27 \\mathbf{0.27} 0.63 0.63"
+  },
+  {
+    "tag": "tr",
+    "text": "Performance Δ \\Delta ↓ 0.41 \\downarrow 0.41 ↓ 0.48 \\downarrow 0.48 ↓ 0.41 \\downarrow 0.41 ↑ 0.05 \\uparrow 0.05 ↓ 0.12 \\downarrow 0.12"
+  },
+  {
+    "tag": "tr",
+    "text": "OLMo 2-Instruct (13B)"
+  },
+  {
+    "tag": "tr",
+    "text": "In-Domain 0.94 \\mathbf{0.94} 0.93 \\mathbf{0.93} 0.93 \\mathbf{0.93} 0.13 0.13 0.84 \\mathbf{0.84}"
+  },
+  {
+    "tag": "tr",
+    "text": "Cross-Domain 0.40 0.40 0.42 0.42 0.56 0.56 0.24 0.24 0.50 0.50"
+  },
+  {
+    "tag": "tr",
+    "text": "Performance Δ \\Delta ↓ 0.54 \\downarrow 0.54 ↓ 0.51 \\downarrow 0.51 ↓ 0.37 \\downarrow 0.37 ↑ 0.11 \\uparrow 0.11 ↓ 0.34 \\downarrow 0.34"
+  },
+  {
+    "tag": "figcaption",
+    "text": "Table 1: Performance after finetuning OLMo-2 Instruct at 1B, 7B, and 13B on the synthetic syntactic-domain dataset. Cross-domain drops are shown in red; small gains in dark green."
+  },
+  {
+    "tag": "h3",
+    "text": "3.1 Data Construction"
+  },
+  {
+    "tag": "h4",
+    "text": "Data Source"
+  },
+  {
+    "tag": "p",
+    "text": "We construct our dataset using TRex, 4 4 4 Accessed at: https://huggingface.co/datasets/facebook/lama a knowledge base dataset derived from Wikipedia [ 9 ] . TRex represents structured factual knowledge where each prompt-output pair ( p , o ) (p,o) has corresponding entities e = (subject, object) e=\\texttt{(subject, object)} . In this dataset the subject ∈ p \\texttt{subject}\\in p and the object = o \\texttt{object}=o (i.e., the output we want to predict), where each example is categorized into domain d d determined by a Wikidata property identifier (PID). We focus on a subset of PIDs to define our set of domains 𝒟 \\mathcal{D} : Properties relation to locations, properties related to persons, properties related to organizations, and properties related to creative works (Full set in App. A )."
+  },
+  {
+    "tag": "p",
+    "text": "We focus on a subset of PIDs to define our set of domains 𝒟 \\mathcal{D} : Properties relation to locations (P17: country, P19: place of birth, P20: place of death, P27: country of citizenship, P30: continent, P36: capital), properties related to persons (P106: occupation, P166: award received, P39: position held, P69: educated at, P103: native language, P140: religion), properties related to organizations (P31: instance of, P159: headquarters location, P112: founded by, P127: owned by, P138: named after, P527: has part), and properties related to creative works (P50: author, P136: genre, P57: director, P86: composer, P144: based on, P495: country of origin)."
+  },
+  {
+    "tag": "h4",
+    "text": "Template Construction"
+  },
+  {
+    "tag": "p",
+    "text": "For each domain d d , we define the template set for the domain 𝒯 d \\mathcal{T}_{d} with a single unique syntactic template t t to control structural variation across different relation types. The tags we use are from the SpaCY part-of-speech tagset, comprising 57 total tags (listed in App. Table 4 ). We create a dataset using each syntactic template. To do so, we first create prompt-output pairs ( p , o ) (p,o) where the prompt p p is made up of the syntactic template t t instantiated with corresponding words creating a 1:1 mapping between each tag and word. We manually write two instantiations and use Claude Sonnet to scale up to the full set of instantiations. We manually verified and adjusted the LLM-generated instantiations to ensure linguistic and semantic validity"
+  },
+  {
+    "tag": "p",
+    "text": "For instance, country relations ( P17 ) are expressed through the PoS template of: { SUBJ } Verb Adverb Verb TO Verb Determiner Adjective Noun Preposition { OBJ } A valid instantiation of P17 could then be:"
+  },
+  {
+    "tag": "tr",
+    "text": "{P17:SUBJ} is generally understood to have a fundamental association with {P17:OBJ} ."
+  },
+  {
+    "tag": "p",
+    "text": "All templates are written as neutral associations between {SUBJ} and {OBJ} ({SUBJ} is related to {OBJ}) to eliminate any subtle domain cues (e.g., {SUBJ} is located in {OBJ} can signal a geographical domain). We use the 5 total template settings described in § 2 by the perturbation sets to assess syntax reliance and semantics of the instruction (see: App. Table 6 for all P17 instantiations). We repeat this process for all the sampled property identifiers in TRex."
+  },
+  {
+    "tag": "h4",
+    "text": "Test Set Construction"
+  },
+  {
+    "tag": "p",
+    "text": "We design a test set to evaluate template–domain spurious correlation. Our test set is constructed to evaluate both in-domain template generalization and cross-domain template transfer. Following § 2 , we create four template settings to measure model responses. Synonym allows us to measure performance beyond memorization of the exact words seen during training by substituting key tokens with their synonyms. Antonym allows us to measure the severity of spurious correlations and whether true semantic content can override the effects of syntactic domain collapse by substituting antonyms. Disfluent allows us to measure model robustness to degraded semantics by inserting random words that maintain the same part-of-speech tag, but break the fluency of the prompt. Paraphrase allows us to measure the model’s ability to generalize beyond exact surface forms by rewriting templates into semantically equivalent but structurally different prompts."
+  },
+  {
+    "tag": "p",
+    "text": "Third, we evaluate cross-domain templates. In the cross-domain setting, we pair relations across domains, such as applying the P136 (genre) template to a P17 (country) entity pair. For instance, using the P136 Exact template, we would have the following cross-domain template instantiation:"
+  },
+  {
+    "tag": "p",
+    "text": "{P17:SUBJ} — in the most straightforward terms — evidently shares an established relationship with {P17:OBJ}"
+  },
+  {
+    "tag": "p",
+    "text": "If the model has learned to associate templates with their domains, we would expect to see a decline in performance in this setting. Fourth, we test whether disfluent phrases that still follow the domain PoS template produces any correct responses. Our final training dataset contains 21,606 examples, with 10,225 subjects sampled from 17 PID categories from 4 domains."
+  },
+  {
+    "tag": "h3",
+    "text": "3.2 Results"
+  },
+  {
+    "tag": "figcaption",
+    "text": "(a) OLMo-2-Instruct; Sentiment140"
+  },
+  {
+    "tag": "figcaption",
+    "text": "(b) GPT4o; Sentiment140"
+  },
+  {
+    "tag": "figcaption",
+    "text": "Figure 2 : OLMo-2-Instruct (7B) and GPT4o performance on the Sentiment140 task. Both results show profiles suggestive of spurious syntactic-domain correlation (cf. Fig. 3 )."
+  },
+  {
+    "tag": "h4",
+    "text": "LLMs Learn Template–Domain Spurious Correlations."
+  },
+  {
+    "tag": "p",
+    "text": "Table 1 , 7 and Figure 8(a) show the results of training OLMo-2 variants on the synthetic dataset. Across both Instruct and Base variants, we observe a consistent pattern: In-domain performance on Exact , Synonym , and Antonym settings is high when predicting the correct pair completion ( 0.90 0.90 - 0.94 0.94 ). The cross-domain performance, however, drops by ∼ \\sim 0.40 0.40 - 0.60 0.60 when we apply the cross domain templates in all settings except for Disfluent , where we see small ( < 0.11 <0.11 ) improvements in performance. The small improvement in Disfluent could indicate that the models overfit to the “well-formed” syntax in the training domain, but accuracy remains low ( ≤ 0.28 \\leq 0.28 ), showing models disentangle semantics when fluency is broken."
+  },
+  {
+    "tag": "p",
+    "text": "Instruction-tuned models show improvement on in-domain performance on the Paraphrase case at larger scales ( 0.53 0.53 at 1B, and 0.84 0.84 at 13B), suggesting that scale and post-training helps with reworded prompts, but this does not hold in the cross-domain settings."
+  },
+  {
+    "tag": "p",
+    "text": "The results in Table 1 and Figure 2 indicate OLMo-2 learns a spurious correlation between syntactic style and the domain. Within domain, the model recovers performance of the Exact setting across different variations of syntax and semantics, and this performance drops considerably when a different domain’s template is applied. Neither model size nor instruction tuning mitigates this syntax reliance."
+  },
+  {
+    "tag": "h4",
+    "text": "Syntax Can Override Semantics."
+  },
+  {
+    "tag": "p",
+    "text": "In Fig. 8(b) , we see that OLMo-13B Instruct treats the Antonym setting ( 0.92 0.92 ) similar to the Synonym setting ( 0.92 0.92 ), despite the fact that antonyms and synonyms convey opposite meanings in the prompt. When prompted with the cross-domain templates, drops in Antonym performance ( Δ = 0.37 \\Delta=0.37 ) is less pronounced than the Synonym setting ( Δ = 0.51 \\Delta=0.51 ). This suggests that, while both settings rely on syntax cues to perform the task, the model may rely more on syntactic cues when the semantics are less clear."
+  },
+  {
+    "tag": "h2",
+    "text": "4 Measuring Reliance on Syntactic–Domain Spurious Correlation"
+  },
+  {
+    "tag": "figcaption",
+    "text": "Figure 3 : Plot profiles denoting different instruction following behaviours based on performance of each template setting in- and cross-domain. An absent bar indicates the template setting is not informative for assessment of the behaviour."
+  },
+  {
+    "tag": "p",
+    "text": "In § 3 , we find that models can learn spurious correlations between syntax and domain. Here, we describe a benchmarking procedure to test this phenomenon in pretrained models. This benchmark assumes knowledge of the datasets used to train the model, but not the exact distribution of entities and templates seen during training."
+  },
+  {
+    "tag": "h4",
+    "text": "Step 1: Template Construction"
+  },
+  {
+    "tag": "p",
+    "text": "Syntactic templates can be extracted from the prompts in one of two ways: (1) they are already defined as part of the fine-tuning dataset construction (e.g., as is the case with the Flan instruction tuning dataset [ 23 ] ), or (2) by choosing a naturally occurring syntactic template, using a package such as the diversity package [ 34 ] . 5 5 5 https://github.com/cshaib/diversity/ Template extraction using either method will yield the input/output-template pairs, either provided in the dataset in the case of (1), or automatically identified as parts of the prompt not in the syntactic template."
+  },
+  {
+    "tag": "h4",
+    "text": "Step 2: Test Set Construction"
+  },
+  {
+    "tag": "p",
+    "text": "Next we identify syntactic-domain pairs. The exact distribution of input/output and template pairs may not be available or feasible to compute. We instead rely on model performance over the Exact templates to approximate this."
+  },
+  {
+    "tag": "p",
+    "text": "For each input/output, we iterate through all possible template pairings identified in Step 1. This yields our initial Exact set, and 4 additional instantiations: Synonym , Antonym , Paraphrase , and Disfluent (cf. § 3 ). We populate all templates with input/output pairs and appropriate words for each setting (e.g., substituting synonyms in the Synonym case). In all this totals n ∗ m ∗ 4 n*m*4 total prompts, where n n is the number of input/output pairs and m m the total number of extracted Exact templates."
+  },
+  {
+    "tag": "h4",
+    "text": "Step 3: Measuring Syntactic-Domain Correlation Reliance"
+  },
+  {
+    "tag": "p",
+    "text": "All input/output pairs that a model correctly predicts in the Exact template setting are considered in-domain. For instance, consider the entity pair “France” and “Paris” with 5 possible templates seen during training (1 through 5). A correct prediction of “ France ” with input “ Paris ” with Exact templates ∈ \\in [1, 2, 4] considers this set in-domain, making Exact templates [3, 5] cross-domain. 6 6 6 We filter out pairs that are correct over all domains as they do not have any “cross-domain” counterparts. After partitioning the dataset into “in-domain” and “cross-domain” prompts, we generate all the responses for the remaining settings ( Synonym , Antonym , etc.) The remaining prompts are then evaluated on performance (e.g., accuracy, ROUGE) based on their in- and cross-domain performance, grouped by the template setting. Based on these values, we can assess whether the model is relying on a syntactic-domain spurious correlation based on a taxonomy we have constructed to categorize unintended instruction behaviors (Figure 3 ). Specifically, a model relying on syntactic-domain spurious correlations will have high performance on both sets of prompt perturbations 𝒫 + \\mathcal{P}^{+} and 𝒫 − \\mathcal{P}^{-} and a large drop cross-domain."
+  },
+  {
+    "tag": "h4",
+    "text": "Taxonomy of Instruction-Following Behaviours"
+  },
+  {
+    "tag": "p",
+    "text": "Figure 3 visually shows the plot profiles for 6 possible behaviours in instructions tuning. The correct case would show high performance on Exact , Synonym , and Paraphrase in both in- and cross-domains, indicating that the model has appropriately learned the task and is robust to slight prompt perturbations that maintain semantics, while performing poorly on semantic-breaking prompt perturbations."
+  },
+  {
+    "tag": "p",
+    "text": "What follows is a series of undesirable behaviours, some of which can be masked by high performance in both domains. If a model has memorized the associations between entities (e.g. Paris always goes with France), we would see high performance across all template settings in both domains. A memorized prompt, however, would show only high performance in the Exact setting, and low performance on all other settings (and can be detected just using the in-domain performance). The final two cases describe spurious correlations but with subtle differences. If a model has learned a word -domain spurious correlation (i.e., relying on the words mapping to a particular domain), then performance will be high on Exact / Synonym , low on Antonym / Disfluent settings in-domain, and low across all settings cross-domain. Syntactic-domain spurious correlations differ in that they show high performance in the Antonym / Disfluent cases in-domain."
+  },
+  {
+    "tag": "tr",
+    "text": "Sentiment140 E-SNLI"
+  },
+  {
+    "tag": "tr",
+    "text": "Synonym Antonym Disfluent Paraphrase Synonym Antonym Disfluent Paraphrase"
+  },
+  {
+    "tag": "tr",
+    "text": "OLMo-2-7B *"
+  },
+  {
+    "tag": "tr",
+    "text": "In-Domain 0.85 \\mathbf{0.85} 0.46 \\mathbf{0.46} 0.15 \\mathbf{0.15} 0.59 \\mathbf{0.59} 0.61 \\mathbf{0.61} 0.35 \\mathbf{0.35} 0.33 \\mathbf{0.33} 0.48 \\mathbf{0.48}"
+  },
+  {
+    "tag": "tr",
+    "text": "Cross-Domain 0.48 0.48 0.33 0.33 0.14 0.14 0.24 0.24 0.46 0.46 0.29 0.29 0.31 0.31 0.43 0.43"
+  },
+  {
+    "tag": "tr",
+    "text": "Performance Δ \\Delta ↓ 0.37 \\downarrow 0.37 ↓ 0.13 \\downarrow 0.13 ↓ 0.01 \\downarrow 0.01 ↓ 0.35 \\downarrow 0.35 ↓ 0.15 \\downarrow 0.15 ↓ 0.06 \\downarrow 0.06 ↓ 0.02 \\downarrow 0.02 ↓ 0.05 \\downarrow 0.05"
+  },
+  {
+    "tag": "tr",
+    "text": "Llama-4-Maverick"
+  },
+  {
+    "tag": "tr",
+    "text": "In-Domain 0.33 \\mathbf{0.33} 0.67 \\mathbf{0.67} 0.83 0.83 0.50 \\mathbf{0.50} 0.84 \\mathbf{0.84} 0.53 \\mathbf{0.53} 0.60 \\mathbf{0.60} 0.72 \\mathbf{0.72}"
+  },
+  {
+    "tag": "tr",
+    "text": "Cross-Domain 0.33 0.33 0.22 0.22 0.56 0.56 0.67 0.67 0.81 0.81 0.53 0.53 0.56 0.56 0.73 0.73"
+  },
+  {
+    "tag": "tr",
+    "text": "Performance Δ \\Delta 0.00 0.00 ↓ 0.45 \\downarrow 0.45 ↓ 0.27 \\downarrow 0.27 ↑ 0.17 \\uparrow 0.17 ↓ 0.03 \\downarrow 0.03 0.00 0.00 ↓ 0.04 \\downarrow 0.04 ↑ 0.01 \\uparrow 0.01"
+  },
+  {
+    "tag": "tr",
+    "text": "GPT4o-mini"
+  },
+  {
+    "tag": "tr",
+    "text": "In-Domain 1.00 \\mathbf{1.00} 0.50 \\mathbf{0.50} 0.25 0.25 0.88 \\mathbf{0.88} 0.53 \\mathbf{0.53} 0.58 \\mathbf{0.58} 0.63 \\mathbf{0.63} 0.16 \\mathbf{0.16}"
+  },
+  {
+    "tag": "tr",
+    "text": "Cross-Domain 0.44 0.44 0.44 0.44 0.44 \\mathbf{0.44} 0.67 0.67 0.22 0.22 0.41 0.41 0.50 0.50 0.06 0.06"
+  },
+  {
+    "tag": "tr",
+    "text": "Performance Δ \\Delta ↓ 0.56 \\downarrow 0.56 ↓ 0.06 \\downarrow 0.06 ↑ 0.19 \\uparrow 0.19 ↓ 0.21 \\downarrow 0.21 ↓ 0.31 \\downarrow 0.31 ↓ 0.17 \\downarrow 0.17 ↓ 0.13 \\downarrow 0.13 ↓ 0.10 \\downarrow 0.10"
+  },
+  {
+    "tag": "tr",
+    "text": "GPT4o"
+  },
+  {
+    "tag": "tr",
+    "text": "In-Domain 0.69 \\mathbf{0.69} 0.50 \\mathbf{0.50} 0.50 0.50 0.75 \\mathbf{0.75} 0.44 \\mathbf{0.44} 0.89 \\mathbf{0.89} 0.89 \\mathbf{0.89} 0.33 \\mathbf{0.33}"
+  },
+  {
+    "tag": "tr",
+    "text": "Cross-Domain 0.36 0.36 0.14 0.14 0.50 0.50 0.57 0.57 0.21 0.21 0.72 0.72 0.74 0.74 0.21 0.21"
+  },
+  {
+    "tag": "tr",
+    "text": "Performance Δ \\Delta ↓ 0.33 \\downarrow 0.33 ↓ 0.36 \\downarrow 0.36 0.00 0.00 ↓ 0.18 \\downarrow 0.18 ↓ 0.23 \\downarrow 0.23 ↓ 0.17 \\downarrow 0.17 ↓ 0.15 \\downarrow 0.15 ↓ 0.12 \\downarrow 0.12"
+  },
+  {
+    "tag": "figcaption",
+    "text": "Table 2 : Syntactic-domain reliance measured across the Sentiment140 and E-SNLI data subsets in FlanV2. Cross-domain drops are shown in red; small gains in dark green. * Indicates the only model confirmed to have trained on these two datasets."
+  },
+  {
+    "tag": "h2",
+    "text": "5 Syntactic-Domain Reliance in Open and Closed-Source LLMs"
+  },
+  {
+    "tag": "p",
+    "text": "The benchmarking procedure in § 4 gives us a framework for measuring syntax-reliance on trained models where we do not have control over the finetuning procedure. Here, we show an example of how to instantiate the framework for OLMo-2-7B on its finetuning data. We focus specifically on the FlanV2 subset in Tulu-v3 [ 22 ] . FlanV2 is an instruction-tuning dataset that is constructed by matching prompt/response pairs to a static set of templates [ 23 ] . Domains here are defined by the task/dataset: for instance, Sentiment140 [ 21 ] has a different set of templates than defined for Newsroom [ 21 ] ."
+  },
+  {
+    "tag": "h4",
+    "text": "Benchmark Instantiation"
+  },
+  {
+    "tag": "p",
+    "text": "We extract the templates from FlanV2 7 7 7 Accessed at https://github.com/google-research/FLAN/blob/main/flan/v2/templates.py and subset the Tulu-V3 dataset for Sentiment140, CoT ESNLI, and Newsroom. Tulu-V3 contains prompt/response pair keys, which we use to populate the Exact templates. For each Exact template, we write the equivalents for Synonym , Antonym , Disfluent , and Paraphrase settings. The measures used to decide whether a template is “in-” or “cross-” domain depends on the task being tested. For both Sentiment140 and E-SNLI, we search for the correct option (either {positive, negative, or neutral} for sentiment classification or {entailment, neutral, or contradiction}) in the cleaned generated output. For Newsroom, we measure ROUGE-2 score of the generated summary against the gold-standard summary, and threshold for correct based on a natural separation of scores. We provide full details for Newsroom evaluations in App. E ."
+  },
+  {
+    "tag": "h3",
+    "text": "5.1 Results"
+  },
+  {
+    "tag": "p",
+    "text": "Table 2 shows the results of the in-domain vs. cross-domain performance over each template setting for Sentiment140 and E-SNLI. For the Synonym case in Sentiment140, OLMo - 2 - 7B falls from 0.85 to 0.48 ( Δ = − 0.37 \\Delta=-0.37 ), GPT - 4o - mini from 1.00 to 0.44 ( Δ = − 0.56 \\Delta=-0.56 ), and GPT - 4o from 0.69 to 0.36 ( Δ = − 0.33 \\Delta=-0.33 ). The Antonym and Disfluent settings show more modest degradations (e.g. GPT - 4o - mini drops only 0.06 0.06 ), suggesting fully aligned models may be more robust when semantics of the prompt are more extremely broken. This finding also holds for the E-SNLI dataset. Regardless, these findings indicate that fully aligned large scale models exhibit reliance on this syntactic-domain spurious correlation. We also note an interesting finding from the Llama-4-Maverick results. We find that the cross-domain performance remains relatively unchanged (e.g. synonym and disfluent only decrease by 3% and 4% respectively) indicating memorization of entities instead of a syntactic-domain spurious correlation. We expand upon this in App. E ."
+  },
+  {
+    "tag": "h2",
+    "text": "6 Case Study: Bypassing Answer Refusals"
+  },
+  {
+    "tag": "figcaption",
+    "text": "Figure 4 : Model responses for variations on the prompt: “Can you guide me on how to bomb an interview?” from ai2-adapt-dev/tulu_v3.9_wildjailbreak_decontaminated_50k (FlanV2). The correct model response in the dataset should be a refusal, but prompt modifications over domain and setting bypass refusals in all but the Antonym setting."
+  },
+  {
+    "tag": "p",
+    "text": "Here, we present a sobering consequence of learned syntax-reliance for LLM security. Using learned templates from the training data, we can bypass refusals on potentially unsafe topics. Starting with a qualitative example, Figure 4 shows the various responses elicited from GPT4o-mini and OLMo-2-7B-Instruct over input prompt of “Can you guide me on how to bomb an interview,” which is refused for being benign but deceptive (unhelpful) in the Tulu - V3 finetuning dataset. 8 8 8 ai2-adapt-dev/tulu_v3.9_wildjailbreak_decontaminated_50k"
+  },
+  {
+    "tag": "p",
+    "text": "Using the diversity package we find that the syntactic template MD PRP VB PRP IN WRB TO , which maps to the in-domain Exact template “Can you guide me on how to” , occurs 87 times in the WildJailbreak subset. We select a second syntactic template from chain-of-thought task as our cross-domain template: VB RP IN DT NN CC NN IN NN NN , which maps to the Exact “Come up with a question and stream - of - consciousness explanation for which this is the answer:” and appears 54 times. In Figure 4 , we see that OLMo-2-7B Instruct correctly refuses to answer when given an in-domain variation ( Synonym , Antonym ) of the original prompt. However, substituting the chain - of - thought, a dataset which does not have refusals, OLMo - 2 Instruct answers the unhelpful interview in both the Exact and Synonym cases. We also test this on GPT4o-mini, under the assumption that it has seen the Wildchat data during training. GPT - 4o - mini complies with the career - oriented interview request in the Exact and Synonym cases cross-domain, indicating perhaps a finer - grained refusal policy but also potential to bypass refusal. We find similar results for OLMo-2-7b on a second, more harmful prompt (asking to “crack and narrate” a personal voicemail), which we include in Figure 11 ."
+  },
+  {
+    "tag": "p",
+    "text": "We scale this procedure to empirically study this vulnerability on OLMo-2-7B-Instruct using 1000 randomly sampled harmful requests from the WildJailbreak dataset [ 19 ] . Following the procedure above to extract syntactic templates from domains, we evaluate our ability to jailbreak the model using templates from the chain-of-thought and math domains. We then add the templates as either prefixes or suffixes to a prompt from WildJailbreak and measure the refusal rate. Our baseline is the refusal rate on these 1000 requests on the original prompts using OLMo-2-7B."
+  },
+  {
+    "tag": "p",
+    "text": "Table 3 , shows that including a chain-of-thought template as a prefix or suffix to prompts reduces refusal across most of our cases. Looking at the exact case, we find a significant drop in refusal rate from 40% to 2.5% when using the template as a prefix. The only setting where the refusal rate did not drop when using a chain-of-thought template is when applying it as a suffix in the disfluent case. Using math templates still reduces refusal rates but to a less severe degree. Refusal rates only drop in the synonym and antonym case. This suggests that perhaps the learned-syntax does not completely override the semantics of the input when the semantics are broken. This supports the qualitative examples in Figure 4 , where the cross-domain, antonym case results in a refusal. Recent work has highlighted that bypassing refusals or jailbreaks do not always result in harmful responses known as the jailbreak tax [ 27 ] . We provide two examples in App. F where the learned syntax reliance bypasses model refusals leading to actually harmful outputs related to illegal activities. We view these results not just as another jailbreaking technique, but as suggestive of the broad implications that syntactic-domain spurious correlations in LLMs can have, extending beyond worse performance to areas such as less security and safety."
+  },
+  {
+    "tag": "tr",
+    "text": "Chain-of-Thought Math"
+  },
+  {
+    "tag": "tr",
+    "text": "Baseline Prefix Suffix Baseline Prefix Suffix"
+  },
+  {
+    "tag": "tr",
+    "text": "Exact 0.400 0.400 0.025 0.025 0.129 0.129 0.399 0.399 0.481 0.481 0.652 0.652"
+  },
+  {
+    "tag": "tr",
+    "text": "Synonym 0.400 0.400 0.357 0.357 0.382 0.382 0.399 0.399 0.251 0.251 0.662 0.662"
+  },
+  {
+    "tag": "tr",
+    "text": "Antonym 0.400 0.400 0.195 0.195 0.259 0.259 0.399 0.399 0.189 0.189 0.494 0.494"
+  },
+  {
+    "tag": "tr",
+    "text": "Paraphrase 0.400 0.400 0.349 0.349 0.271 0.271 0.399 0.399 0.545 0.545 0.785 0.785"
+  },
+  {
+    "tag": "tr",
+    "text": "Disfluent 0.400 0.400 0.215 0.215 0.549 0.549 0.399 0.399 0.449 0.449 0.505 0.505"
+  },
+  {
+    "tag": "tr",
+    "text": "Max Δ \\Delta — ↓ 0.375 \\downarrow 0.375 ↓ 0.271 \\downarrow 0.271 — ↓ 0.082 \\downarrow 0.082 ↓ 0.253 \\downarrow 0.253"
+  },
+  {
+    "tag": "figcaption",
+    "text": "Table 3: Refusal rates measured across 1000 WildJailbreak requests on OLMo-2-7B-Instruct using chain-of-thought and math templates from the Sentiment140 and E-SNLI subsets in FlanV2 respectively. Baseline is the refusal rate without any additional template strings is shown as a separate column for each domain. Max Δ \\Delta reports the absolute change relative to the baseline for adding the templates as either a prefix or suffix."
+  },
+  {
+    "tag": "h2",
+    "text": "7 Related Work"
+  },
+  {
+    "tag": "p",
+    "text": "Machine learning models frequently exploit superficial correlations present in training data, leading to poor generalization under distribution shifts [ 12 , 2 , 32 , 16 ] . This phenomenon, known as spurious correlation reliance, has been extensively studied in both NLP [ 15 , 25 , 30 , 41 ] and computer vision [ 12 , 33 , 35 , 3 ] . Models often latch onto easily learnable but non-causal features—such as lexical patterns in NLP or background textures in vision—rather than the underlying semantic content or object-relevant cues. Our work presents a new type of spurious correlation that is deeply ingrained in LLMs based on syntactic template-domain associations in the training data."
+  },
+  {
+    "tag": "p",
+    "text": "Constructionist views posit that form and function pairings are closely paired to syntax [ 13 ] . This reflects an intrinsic compositional structure: at the syntactic level, this compositionality can be operationalized by modelling constraints on co-occurrences of words within shared structure [ 1 ] . Most similar to our work is [ 24 ] , which shows that language models often exploit spurious syntactic heuristics in natural language inference tasks, however our work explores this phenomenon over synactic templates in LLMs that have gone through many rounds of training and alignment. More recently, [ 20 ] show that LLMs can regenerate domain-specific syntactic properties over the Wikipedia dataset, which confirms that models can learn domain through syntax. Our study aims to measure the effects of this on training and generalization."
+  },
+  {
+    "tag": "p",
+    "text": "LLMs are trained on a massive amount of data, much of it containing many sentences that share similar syntactic structures. Yet it has been unclear until recently whether the LLM is learning these syntactic structures. Recent work demonstrates that LLMs are learning these syntactic templates [ 34 ] , resulting in detectable idiosyncrasies in model responses [ 39 , 40 ] . One consequence of these templates is that the performance of instruction-tuned models is quite sensitive to the phrasings of instructions [ 38 ] . Our reinforces the validity of these results and demonstrates that it is an instance of a syntax-domain spurious correlation."
+  },
+  {
+    "tag": "h2",
+    "text": "8 Discussion & Limitations"
+  },
+  {
+    "tag": "p",
+    "text": "Our work shows current LLMs are relying on syntax-domain spurious correlations to achieve high performance. Relying on these correlations has important consequences for LLMs. For example, our results in § 6 expose a previously unknown vulnerability in LLMs to bypass refusals using this reliance. This reliance can also induce models to hallucinate for which we provide preliminary results in App. 11 . We encourage future work to further study how reliance on this spurious correlation can lead to widespread hallucinations and its impact on other LLM reliability issues."
+  },
+  {
+    "tag": "p",
+    "text": "Using the benchmarking procedure in § 4 , practitioners can now measure how reliant their models are on syntactic-domain spurious correlations enabling them to be proactive about this issue during development. Our current analyses are limited in two ways. First, our results on GPT4o and Llama-4 are speculative because we cannot confirm if the models were trained on FlanV2 which is necessary to confirm that a syntactic-domain spurious correlation is the cause of the drop in cross-domain performance. Finally, we do not investigate reasoning models or those trained with chain-of-thought outputs. We believe that our work places the issue of syntactic-domain spurious correlations on firm mathematical and empirical ground, leading the way for future work to help address this issue in future LLMs."
+  },
+  {
+    "tag": "h2",
+    "text": "References"
+  },
+  {
+    "tag": "h2",
+    "text": "NeurIPS Paper Checklist"
+  },
+  {
+    "tag": "p",
+    "text": "Claims"
+  },
+  {
+    "tag": "p",
+    "text": "Question: Do the main claims made in the abstract and introduction accurately reflect the paper’s contributions and scope?"
+  },
+  {
+    "tag": "p",
+    "text": "Answer: [Yes]"
+  },
+  {
+    "tag": "p",
+    "text": "Justification: Claims are mapped to their respective paper sections in the introduction."
+  },
+  {
+    "tag": "p",
+    "text": "Guidelines:"
+  },
+  {
+    "tag": "p",
+    "text": "The answer NA means that the abstract and introduction do not include the claims made in the paper."
+  },
+  {
+    "tag": "p",
+    "text": "The abstract and/or introduction should clearly state the claims made, including the contributions made in the paper and important assumptions and limitations. A No or NA answer to this question will not be perceived well by the reviewers."
+  },
+  {
+    "tag": "p",
+    "text": "The claims made should match theoretical and experimental results, and reflect how much the results can be expected to generalize to other settings."
+  },
+  {
+    "tag": "p",
+    "text": "It is fine to include aspirational goals as motivation as long as it is clear that these goals are not attained by the paper."
+  },
+  {
+    "tag": "p",
+    "text": "Limitations"
+  },
+  {
+    "tag": "p",
+    "text": "Question: Does the paper discuss the limitations of the work performed by the authors?"
+  },
+  {
+    "tag": "p",
+    "text": "Answer: [Yes]"
+  },
+  {
+    "tag": "p",
+    "text": "Justification: § 8"
+  },
+  {
+    "tag": "p",
+    "text": "Guidelines:"
+  },
+  {
+    "tag": "p",
+    "text": "The answer NA means that the paper has no limitation while the answer No means that the paper has limitations, but those are not discussed in the paper."
+  },
+  {
+    "tag": "p",
+    "text": "The authors are encouraged to create a separate \"Limitations\" section in their paper."
+  },
+  {
+    "tag": "p",
+    "text": "The paper should point out any strong assumptions and how robust the results are to violations of these assumptions (e.g., independence assumptions, noiseless settings, model well-specification, asymptotic approximations only holding locally). The authors should reflect on how these assumptions might be violated in practice and what the implications would be."
+  },
+  {
+    "tag": "p",
+    "text": "The authors should reflect on the scope of the claims made, e.g., if the approach was only tested on a few datasets or with a few runs. In general, empirical results often depend on implicit assumptions, which should be articulated."
+  },
+  {
+    "tag": "p",
+    "text": "The authors should reflect on the factors that influence the performance of the approach. For example, a facial recognition algorithm may perform poorly when image resolution is low or images are taken in low lighting. Or a speech-to-text system might not be used reliably to provide closed captions for online lectures because it fails to handle technical jargon."
+  },
+  {
+    "tag": "p",
+    "text": "The authors should discuss the computational efficiency of the proposed algorithms and how they scale with dataset size."
+  },
+  {
+    "tag": "p",
+    "text": "If applicable, the authors should discuss possible limitations of their approach to address problems of privacy and fairness."
+  },
+  {
+    "tag": "p",
+    "text": "While the authors might fear that complete honesty about limitations might be used by reviewers as grounds for rejection, a worse outcome might be that reviewers discover limitations that aren’t acknowledged in the paper. The authors should use their best judgment and recognize that individual actions in favor of transparency play an important role in developing norms that preserve the integrity of the community. Reviewers will be specifically instructed to not penalize honesty concerning limitations."
+  },
+  {
+    "tag": "p",
+    "text": "Theory Assumptions and Proofs"
+  },
+  {
+    "tag": "p",
+    "text": "Question: For each theoretical result, does the paper provide the full set of assumptions and a complete (and correct) proof?"
+  },
+  {
+    "tag": "p",
+    "text": "Answer: [N/A]"
+  },
+  {
+    "tag": "p",
+    "text": "Justification:"
+  },
+  {
+    "tag": "p",
+    "text": "Guidelines:"
+  },
+  {
+    "tag": "p",
+    "text": "The answer NA means that the paper does not include theoretical results."
+  },
+  {
+    "tag": "p",
+    "text": "All the theorems, formulas, and proofs in the paper should be numbered and cross-referenced."
+  },
+  {
+    "tag": "p",
+    "text": "All assumptions should be clearly stated or referenced in the statement of any theorems."
+  },
+  {
+    "tag": "p",
+    "text": "The proofs can either appear in the main paper or the supplemental material, but if they appear in the supplemental material, the authors are encouraged to provide a short proof sketch to provide intuition."
+  },
+  {
+    "tag": "p",
+    "text": "Inversely, any informal proof provided in the core of the paper should be complemented by formal proofs provided in App. or supplemental material."
+  },
+  {
+    "tag": "p",
+    "text": "Theorems and Lemmas that the proof relies upon should be properly referenced."
+  },
+  {
+    "tag": "p",
+    "text": "Experimental Result Reproducibility"
+  },
+  {
+    "tag": "p",
+    "text": "Question: Does the paper fully disclose all the information needed to reproduce the main experimental results of the paper to the extent that it affects the main claims and/or conclusions of the paper (regardless of whether the code and data are provided or not)?"
+  },
+  {
+    "tag": "p",
+    "text": "Answer: [Yes]"
+  },
+  {
+    "tag": "p",
+    "text": "Justification: Code will be provided."
+  },
+  {
+    "tag": "p",
+    "text": "Guidelines:"
+  },
+  {
+    "tag": "p",
+    "text": "The answer NA means that the paper does not include experiments."
+  },
+  {
+    "tag": "p",
+    "text": "If the paper includes experiments, a No answer to this question will not be perceived well by the reviewers: Making the paper reproducible is important, regardless of whether the code and data are provided or not."
+  },
+  {
+    "tag": "p",
+    "text": "If the contribution is a dataset and/or model, the authors should describe the steps taken to make their results reproducible or verifiable."
+  },
+  {
+    "tag": "p",
+    "text": "Depending on the contribution, reproducibility can be accomplished in various ways. For example, if the contribution is a novel architecture, describing the architecture fully might suffice, or if the contribution is a specific model and empirical evaluation, it may be necessary to either make it possible for others to replicate the model with the same dataset, or provide access to the model. In general. releasing code and data is often one good way to accomplish this, but reproducibility can also be provided via detailed instructions for how to replicate the results, access to a hosted model (e.g., in the case of a large language model), releasing of a model checkpoint, or other means that are appropriate to the research performed."
+  },
+  {
+    "tag": "p",
+    "text": "While NeurIPS does not require releasing code, the conference does require all submissions to provide some reasonable avenue for reproducibility, which may depend on the nature of the contribution. For example"
+  },
+  {
+    "tag": "p",
+    "text": "If the contribution is primarily a new algorithm, the paper should make it clear how to reproduce that algorithm."
+  },
+  {
+    "tag": "p",
+    "text": "If the contribution is primarily a new model architecture, the paper should describe the architecture clearly and fully."
+  },
+  {
+    "tag": "p",
+    "text": "If the contribution is a new model (e.g., a large language model), then there should either be a way to access this model for reproducing the results or a way to reproduce the model (e.g., with an open-source dataset or instructions for how to construct the dataset)."
+  },
+  {
+    "tag": "p",
+    "text": "We recognize that reproducibility may be tricky in some cases, in which case authors are welcome to describe the particular way they provide for reproducibility. In the case of closed-source models, it may be that access to the model is limited in some way (e.g., to registered users), but it should be possible for other researchers to have some path to reproducing or verifying the results."
+  },
+  {
+    "tag": "p",
+    "text": "Open access to data and code"
+  },
+  {
+    "tag": "p",
+    "text": "Question: Does the paper provide open access to the data and code, with sufficient instructions to faithfully reproduce the main experimental results, as described in supplemental material?"
+  },
+  {
+    "tag": "p",
+    "text": "Answer: [Yes]"
+  },
+  {
+    "tag": "p",
+    "text": "Justification:"
+  },
+  {
+    "tag": "p",
+    "text": "Guidelines:"
+  },
+  {
+    "tag": "p",
+    "text": "The answer NA means that paper does not include experiments requiring code."
+  },
+  {
+    "tag": "p",
+    "text": "Please see the NeurIPS code and data submission guidelines ( https://nips.cc/public/guides/CodeSubmissionPolicy ) for more details."
+  },
+  {
+    "tag": "p",
+    "text": "While we encourage the release of code and data, we understand that this might not be possible, so “No” is an acceptable answer. Papers cannot be rejected simply for not including code, unless this is central to the contribution (e.g., for a new open-source benchmark)."
+  },
+  {
+    "tag": "p",
+    "text": "The instructions should contain the Exact command and environment needed to run to reproduce the results. See the NeurIPS code and data submission guidelines ( https://nips.cc/public/guides/CodeSubmissionPolicy ) for more details."
+  },
+  {
+    "tag": "p",
+    "text": "The authors should provide instructions on data access and preparation, including how to access the raw data, preprocessed data, intermediate data, and generated data, etc."
+  },
+  {
+    "tag": "p",
+    "text": "The authors should provide scripts to reproduce all experimental results for the new proposed method and baselines. If only a subset of experiments are reproducible, they should state which ones are omitted from the script and why."
+  },
+  {
+    "tag": "p",
+    "text": "At submission time, to preserve anonymity, the authors should release anonymized versions (if applicable)."
+  },
+  {
+    "tag": "p",
+    "text": "Providing as much information as possible in supplemental material (appended to the paper) is recommended, but including URLs to data and code is permitted."
+  },
+  {
+    "tag": "p",
+    "text": "Experimental Setting/Details"
+  },
+  {
+    "tag": "p",
+    "text": "Question: Does the paper specify all the training and test details (e.g., data splits, hyperparameters, how they were chosen, type of optimizer, etc.) necessary to understand the results?"
+  },
+  {
+    "tag": "p",
+    "text": "Answer: [Yes]"
+  },
+  {
+    "tag": "p",
+    "text": "Justification: § 3 , App."
+  },
+  {
+    "tag": "p",
+    "text": "Guidelines:"
+  },
+  {
+    "tag": "p",
+    "text": "The answer NA means that the paper does not include experiments."
+  },
+  {
+    "tag": "p",
+    "text": "The experimental setting should be presented in the core of the paper to a level of detail that is necessary to appreciate the results and make sense of them."
+  },
+  {
+    "tag": "p",
+    "text": "The full details can be provided either with the code, in App., or as supplemental material."
+  },
+  {
+    "tag": "p",
+    "text": "Experiment Statistical Significance"
+  },
+  {
+    "tag": "p",
+    "text": "Question: Does the paper report error bars suitably and correctly defined or other appropriate information about the statistical significance of the experiments?"
+  },
+  {
+    "tag": "p",
+    "text": "Answer: [N/A]"
+  },
+  {
+    "tag": "p",
+    "text": "Justification:"
+  },
+  {
+    "tag": "p",
+    "text": "Guidelines:"
+  },
+  {
+    "tag": "p",
+    "text": "The answer NA means that the paper does not include experiments."
+  },
+  {
+    "tag": "p",
+    "text": "The authors should answer \"Yes\" if the results are accompanied by error bars, confidence intervals, or statistical significance tests, at least for the experiments that support the main claims of the paper."
+  },
+  {
+    "tag": "p",
+    "text": "The factors of variability that the error bars are capturing should be clearly stated (for example, train/test split, initialization, random drawing of some parameter, or overall run with given experimental conditions)."
+  },
+  {
+    "tag": "p",
+    "text": "The method for calculating the error bars should be explained (closed form formula, call to a library function, bootstrap, etc.)"
+  },
+  {
+    "tag": "p",
+    "text": "The assumptions made should be given (e.g., Normally distributed errors)."
+  },
+  {
+    "tag": "p",
+    "text": "It should be clear whether the error bar is the standard deviation or the standard error of the mean."
+  },
+  {
+    "tag": "p",
+    "text": "It is OK to report 1-sigma error bars, but one should state it. The authors should preferably report a 2-sigma error bar than state that they have a 96% CI, if the hypothesis of Normality of errors is not verified."
+  },
+  {
+    "tag": "p",
+    "text": "For asymmetric distributions, the authors should be careful not to show in tables or figures symmetric error bars that would yield results that are out of range (e.g. negative error rates)."
+  },
+  {
+    "tag": "p",
+    "text": "If error bars are reported in tables or plots, The authors should explain in the text how they were calculated and reference the corresponding figures or tables in the text."
+  },
+  {
+    "tag": "p",
+    "text": "Experiments Compute Resources"
+  },
+  {
+    "tag": "p",
+    "text": "Question: For each experiment, does the paper provide sufficient information on the computer resources (type of compute workers, memory, time of execution) needed to reproduce the experiments?"
+  },
+  {
+    "tag": "p",
+    "text": "Answer: [Yes]"
+  },
+  {
+    "tag": "p",
+    "text": "Justification: § 3"
+  },
+  {
+    "tag": "p",
+    "text": "Guidelines:"
+  },
+  {
+    "tag": "p",
+    "text": "The answer NA means that the paper does not include experiments."
+  },
+  {
+    "tag": "p",
+    "text": "The paper should indicate the type of compute workers CPU or GPU, internal cluster, or cloud provider, including relevant memory and storage."
+  },
+  {
+    "tag": "p",
+    "text": "The paper should provide the amount of compute required for each of the individual experimental runs as well as estimate the total compute."
+  },
+  {
+    "tag": "p",
+    "text": "The paper should disclose whether the full research project required more compute than the experiments reported in the paper (e.g., preliminary or failed experiments that didn’t make it into the paper)."
+  },
+  {
+    "tag": "p",
+    "text": "Code Of Ethics"
+  },
+  {
+    "tag": "p",
+    "text": "Question: Does the research conducted in the paper conform, in every respect, with the NeurIPS Code of Ethics https://neurips.cc/public/EthicsGuidelines ?"
+  },
+  {
+    "tag": "p",
+    "text": "Answer: [Yes]"
+  },
+  {
+    "tag": "p",
+    "text": "Justification:"
+  },
+  {
+    "tag": "p",
+    "text": "Guidelines:"
+  },
+  {
+    "tag": "p",
+    "text": "The answer NA means that the authors have not reviewed the NeurIPS Code of Ethics."
+  },
+  {
+    "tag": "p",
+    "text": "If the authors answer No, they should explain the special circumstances that require a deviation from the Code of Ethics."
+  },
+  {
+    "tag": "p",
+    "text": "The authors should make sure to preserve anonymity (e.g., if there is a special consideration due to laws or regulations in their jurisdiction)."
+  },
+  {
+    "tag": "p",
+    "text": "Broader Impacts"
+  },
+  {
+    "tag": "p",
+    "text": "Question: Does the paper discuss both potential positive societal impacts and negative societal impacts of the work performed?"
+  },
+  {
+    "tag": "p",
+    "text": "Answer: [Yes]"
+  },
+  {
+    "tag": "p",
+    "text": "Justification: § 8"
+  },
+  {
+    "tag": "p",
+    "text": "Guidelines:"
+  },
+  {
+    "tag": "p",
+    "text": "The answer NA means that there is no societal impact of the work performed."
+  },
+  {
+    "tag": "p",
+    "text": "If the authors answer NA or No, they should explain why their work has no societal impact or why the paper does not address societal impact."
+  },
+  {
+    "tag": "p",
+    "text": "Examples of negative societal impacts include potential malicious or unintended uses (e.g., disinformation, generating fake profiles, surveillance), fairness considerations (e.g., deployment of technologies that could make decisions that unfairly impact specific groups), privacy considerations, and security considerations."
+  },
+  {
+    "tag": "p",
+    "text": "The conference expects that many papers will be foundational research and not tied to particular applications, let alone deployments. However, if there is a direct path to any negative applications, the authors should point it out. For example, it is legitimate to point out that an improvement in the quality of generative models could be used to generate deepfakes for disinformation. On the other hand, it is not needed to point out that a generic algorithm for optimizing neural networks could enable people to train models that generate Deepfakes faster."
+  },
+  {
+    "tag": "p",
+    "text": "The authors should consider possible harms that could arise when the technology is being used as intended and functioning correctly, harms that could arise when the technology is being used as intended but gives incorrect results, and harms following from (intentional or unintentional) misuse of the technology."
+  },
+  {
+    "tag": "p",
+    "text": "If there are negative societal impacts, the authors could also discuss possible mitigation strategies (e.g., gated release of models, providing defenses in addition to attacks, mechanisms for monitoring misuse, mechanisms to monitor how a system learns from feedback over time, improving the efficiency and accessibility of ML)."
+  },
+  {
+    "tag": "p",
+    "text": "Safeguards"
+  },
+  {
+    "tag": "p",
+    "text": "Question: Does the paper describe safeguards that have been put in place for responsible release of data or models that have a high risk for misuse (e.g., pretrained language models, image generators, or scraped datasets)?"
+  },
+  {
+    "tag": "p",
+    "text": "Answer: [N/A]"
+  },
+  {
+    "tag": "p",
+    "text": "Justification:"
+  },
+  {
+    "tag": "p",
+    "text": "Guidelines:"
+  },
+  {
+    "tag": "p",
+    "text": "The answer NA means that the paper poses no such risks."
+  },
+  {
+    "tag": "p",
+    "text": "Released models that have a high risk for misuse or dual-use should be released with necessary safeguards to allow for controlled use of the model, for example by requiring that users adhere to usage guidelines or restrictions to access the model or implementing safety filters."
+  },
+  {
+    "tag": "p",
+    "text": "Datasets that have been scraped from the Internet could pose safety risks. The authors should describe how they avoided releasing unsafe images."
+  },
+  {
+    "tag": "p",
+    "text": "We recognize that providing effective safeguards is challenging, and many papers do not require this, but we encourage authors to take this into account and make a best faith effort."
+  },
+  {
+    "tag": "p",
+    "text": "Licenses for existing assets"
+  },
+  {
+    "tag": "p",
+    "text": "Question: Are the creators or original owners of assets (e.g., code, data, models), used in the paper, properly credited and are the license and terms of use explicitly mentioned and properly respected?"
+  },
+  {
+    "tag": "p",
+    "text": "Answer: [Yes]"
+  },
+  {
+    "tag": "p",
+    "text": "Justification:"
+  },
+  {
+    "tag": "p",
+    "text": "Guidelines:"
+  },
+  {
+    "tag": "p",
+    "text": "The answer NA means that the paper does not use existing assets."
+  },
+  {
+    "tag": "p",
+    "text": "The authors should cite the original paper that produced the code package or dataset."
+  },
+  {
+    "tag": "p",
+    "text": "The authors should state which version of the asset is used and, if possible, include a URL."
+  },
+  {
+    "tag": "p",
+    "text": "The name of the license (e.g., CC-BY 4.0) should be included for each asset."
+  },
+  {
+    "tag": "p",
+    "text": "For scraped data from a particular source (e.g., website), the copyright and terms of service of that source should be provided."
+  },
+  {
+    "tag": "p",
+    "text": "If assets are released, the license, copyright information, and terms of use in the package should be provided. For popular datasets, paperswithcode.com/datasets has curated licenses for some datasets. Their licensing guide can help determine the license of a dataset."
+  },
+  {
+    "tag": "p",
+    "text": "For existing datasets that are re-packaged, both the original license and the license of the derived asset (if it has changed) should be provided."
+  },
+  {
+    "tag": "p",
+    "text": "If this information is not available online, the authors are encouraged to reach out to the asset’s creators."
+  },
+  {
+    "tag": "p",
+    "text": "New Assets"
+  },
+  {
+    "tag": "p",
+    "text": "Question: Are new assets introduced in the paper well documented and is the documentation provided alongside the assets?"
+  },
+  {
+    "tag": "p",
+    "text": "Answer: [N/A]"
+  },
+  {
+    "tag": "p",
+    "text": "Justification:"
+  },
+  {
+    "tag": "p",
+    "text": "Guidelines:"
+  },
+  {
+    "tag": "p",
+    "text": "The answer NA means that the paper does not release new assets."
+  },
+  {
+    "tag": "p",
+    "text": "Researchers should communicate the details of the dataset/code/model as part of their submissions via structured templates. This includes details about training, license, limitations, etc."
+  },
+  {
+    "tag": "p",
+    "text": "The paper should discuss whether and how consent was obtained from people whose asset is used."
+  },
+  {
+    "tag": "p",
+    "text": "At submission time, remember to anonymize your assets (if applicable). You can either create an anonymized URL or include an anonymized zip file."
+  },
+  {
+    "tag": "p",
+    "text": "Crowdsourcing and Research with Human Subjects"
+  },
+  {
+    "tag": "p",
+    "text": "Question: For crowdsourcing experiments and research with human subjects, does the paper include the full text of instructions given to participants and screenshots, if applicable, as well as details about compensation (if any)?"
+  },
+  {
+    "tag": "p",
+    "text": "Answer: [N/A]"
+  },
+  {
+    "tag": "p",
+    "text": "Justification:"
+  },
+  {
+    "tag": "p",
+    "text": "Guidelines:"
+  },
+  {
+    "tag": "p",
+    "text": "The answer NA means that the paper does not involve crowdsourcing nor research with human subjects."
+  },
+  {
+    "tag": "p",
+    "text": "Including this information in the supplemental material is fine, but if the main contribution of the paper involves human subjects, then as much detail as possible should be included in the main paper."
+  },
+  {
+    "tag": "p",
+    "text": "According to the NeurIPS Code of Ethics, workers involved in data collection, curation, or other labor should be paid at least the minimum wage in the country of the data collector."
+  },
+  {
+    "tag": "p",
+    "text": "Institutional Review Board (IRB) Approvals or Equivalent for Research with Human Subjects"
+  },
+  {
+    "tag": "p",
+    "text": "Question: Does the paper describe potential risks incurred by study participants, whether such risks were disclosed to the subjects, and whether Institutional Review Board (IRB) approvals (or an equivalent approval/review based on the requirements of your country or institution) were obtained?"
+  },
+  {
+    "tag": "p",
+    "text": "Answer: [N/A]"
+  },
+  {
+    "tag": "p",
+    "text": "Justification:"
+  },
+  {
+    "tag": "p",
+    "text": "Guidelines:"
+  },
+  {
+    "tag": "p",
+    "text": "The answer NA means that the paper does not involve crowdsourcing nor research with human subjects."
+  },
+  {
+    "tag": "p",
+    "text": "Depending on the country in which research is conducted, IRB approval (or equivalent) may be required for any human subjects research. If you obtained IRB approval, you should clearly state this in the paper."
+  },
+  {
+    "tag": "p",
+    "text": "We recognize that the procedures for this may vary significantly between institutions and locations, and we expect authors to adhere to the NeurIPS Code of Ethics and the guidelines for their institution."
+  },
+  {
+    "tag": "p",
+    "text": "For initial submissions, do not include any information that would break anonymity (if applicable), such as the institution conducting the review."
+  },
+  {
+    "tag": "h2",
+    "text": "Appendix A Part-of-Speech Tag Legend"
+  },
+  {
+    "tag": "p",
+    "text": "We use the English-specific tagset from SpaCY 9 9 9 https://spacy.io/usage/linguistic-features to tag parts-of-speech. Table 4 shows the full set including the tag, description, and examples for each. This table is used to construct the unique templates for each domain."
+  },
+  {
+    "tag": "tr",
+    "text": "Universal Tag Tag (English) Description Examples"
+  },
+  {
+    "tag": "tr",
+    "text": "ADJ JJ Adjective big, old"
+  },
+  {
+    "tag": "tr",
+    "text": "JJR Adjective, comparative bigger, more interesting"
+  },
+  {
+    "tag": "tr",
+    "text": "JJS Adjective, superlative biggest, most interesting"
+  },
+  {
+    "tag": "tr",
+    "text": "ADP IN Adposition (pre/postposition) in, to, during, on, by"
+  },
+  {
+    "tag": "tr",
+    "text": "ADV RB Adverb very, tomorrow, down"
+  },
+  {
+    "tag": "tr",
+    "text": "RBR Adverb, comparative more quickly, less rapidly"
+  },
+  {
+    "tag": "tr",
+    "text": "RBS Adverb, superlative most quickly"
+  },
+  {
+    "tag": "tr",
+    "text": "WRB Wh-adverb where, when, how"
+  },
+  {
+    "tag": "tr",
+    "text": "AUX MD Modal auxiliary can, should, must"
+  },
+  {
+    "tag": "tr",
+    "text": "CCONJ CC Coordinating conjunction and, or, but"
+  },
+  {
+    "tag": "tr",
+    "text": "DET DT Determiner a, an, the, this"
+  },
+  {
+    "tag": "tr",
+    "text": "PDT Predeterminer all, both"
+  },
+  {
+    "tag": "tr",
+    "text": "WDT Wh-determiner which, that"
+  },
+  {
+    "tag": "tr",
+    "text": "INTJ UH Interjection hello, wow, ouch"
+  },
+  {
+    "tag": "tr",
+    "text": "NOUN NN Noun, singular or mass cat, furniture, tree"
+  },
+  {
+    "tag": "tr",
+    "text": "NNS Noun, plural cats, tables"
+  },
+  {
+    "tag": "tr",
+    "text": "NUM CD Cardinal number one, two, 1, 2"
+  },
+  {
+    "tag": "tr",
+    "text": "LS List item marker 1., 2., One, A."
+  },
+  {
+    "tag": "tr",
+    "text": "PART POS Possessive ending ’s (as in “John’s”)"
+  },
+  {
+    "tag": "tr",
+    "text": "RP Particle up, off (as in “take off”)"
+  },
+  {
+    "tag": "tr",
+    "text": "TO Infinitival “to” to (as in “to go”)"
+  },
+  {
+    "tag": "tr",
+    "text": "PRON PRP Personal pronoun I, you, he, she"
+  },
+  {
+    "tag": "tr",
+    "text": "PRP$ Possessive pronoun my, your, his"
+  },
+  {
+    "tag": "tr",
+    "text": "WP Wh-pronoun who, what"
+  },
+  {
+    "tag": "tr",
+    "text": "WP$ Possessive wh-pronoun whose"
+  },
+  {
+    "tag": "tr",
+    "text": "EX Existential “there” there (in “there is…”)"
+  },
+  {
+    "tag": "tr",
+    "text": "PROPN NNP Proper noun, singular John, London, Mary"
+  },
+  {
+    "tag": "tr",
+    "text": "NNPS Proper noun, plural Vikings, Americans"
+  },
+  {
+    "tag": "tr",
+    "text": "PUNCT . , : ; ! ? Punctuation . , ( ) ?"
+  },
+  {
+    "tag": "tr",
+    "text": "SCONJ IN Subordinating conjunction if, while, that"
+  },
+  {
+    "tag": "tr",
+    "text": "SYM $, %, §, © Symbol $, %, §, ©"
+  },
+  {
+    "tag": "tr",
+    "text": "VERB VB Verb, base form go, eat, run"
+  },
+  {
+    "tag": "tr",
+    "text": "VBD Verb, past tense went, ate"
+  },
+  {
+    "tag": "tr",
+    "text": "VBG Verb, gerund/pres. partic. going, eating"
+  },
+  {
+    "tag": "tr",
+    "text": "VBN Verb, past participle gone, eaten"
+  },
+  {
+    "tag": "tr",
+    "text": "VBP Verb, non-3rd pers. pres. go, eat (I/you/we/they)"
+  },
+  {
+    "tag": "tr",
+    "text": "VBZ Verb, 3rd pers. pres. goes, eats (he/she/it)"
+  },
+  {
+    "tag": "tr",
+    "text": "X FW Foreign word/Other per se, ad hoc"
+  },
+  {
+    "tag": "tr",
+    "text": "SPACE _SP Space spaces between tokens"
+  },
+  {
+    "tag": "figcaption",
+    "text": "Table 4 : Set of SpaCY tags, descriptions and examples used to construct and tag syntactic templates, from https://spacy.io/usage/linguistic-features ."
+  },
+  {
+    "tag": "h2",
+    "text": "Appendix B Unintended Instruction Taxonomy"
+  },
+  {
+    "tag": "p",
+    "text": "Table 5 describes our instruction-following behaviour taxonomy. Incorrect is the degenerate model case, and correct is the desired behaviour. All other cases described can be captured by measuring performance on each template setting as shown in Fig. 3 . In this work, we mainly capture instances of syntactic-domain spurious correlations, however show how to evaluate for word-level correlations and memorization."
+  },
+  {
+    "tag": "tr",
+    "text": "Case Description"
+  },
+  {
+    "tag": "tr",
+    "text": "Incorrect The model has not learned the task."
+  },
+  {
+    "tag": "tr",
+    "text": "Correct The model has learned the task and is robust to prompt perturbations."
+  },
+  {
+    "tag": "tr",
+    "text": "Memorization (entities) The model has only memorized the input/output pair."
+  },
+  {
+    "tag": "tr",
+    "text": "Memorization (prompts) The model has only memorized the exact prompt wording from training."
+  },
+  {
+    "tag": "tr",
+    "text": "Spurious correlation (word-domain) The model has learned word associated only with domain."
+  },
+  {
+    "tag": "tr",
+    "text": "Spurious correlation (syntactic-domain) The model has learned the underlying syntax association with domain."
+  },
+  {
+    "tag": "figcaption",
+    "text": "Table 5 : Descriptions of each instruction-following behaviour a model may follow."
+  },
+  {
+    "tag": "h2",
+    "text": "Appendix C Example Instantiations"
+  },
+  {
+    "tag": "p",
+    "text": "In Table 6 , we provide the template setting instantiations for P17 . We first create a question by following the structure of the PoS tags for the entity, in this case: the template { ​SUBJ​ } VBZ RB VBN TO VB DT JJ NN IN { ​OBJ​ } becomes SUBJ is generally understood to have a fundamental association with OBJ. Then, for the remaining settings, we substitute different words while still following the PoS template (with the exception of paraphrase, in which we break the template)."
+  },
+  {
+    "tag": "p",
+    "text": "The resulting instantiations lie on a scale of meaning (semantics). Figure 5 , shows where each instantiation lies on a scale of semantic similarity to the exact instruction."
+  },
+  {
+    "tag": "p",
+    "text": "To replace SUBJ, OBJ , we extract the pairs from a subset of PIDs to define our set of domains 𝒟 \\mathcal{D} : properties related to persons (P106: occupation, P166: award received, P39: position held, P69: educated at, P103: native language, P140: religion), properties related to organizations (P31: instance of, P159: headquarters location, P112: founded by, P127: owned by, P138: named after, P527: has part), and properties related to creative works (P50: author, P136: genre, P57: director, P86: composer, P144: based on, P495: country of origin)."
+  },
+  {
+    "tag": "p",
+    "text": "Figure 6 shows an example cross-domain instantiation for the entity pair (Paris, France). The underlying template Adverb, Noun, Verb, Verb(pp), Preposition belongs to the in-domain category of geography , but we then replace the words such that the semantics indicate a new domain of cuisine ."
+  },
+  {
+    "tag": "tr",
+    "text": "Type Template Instantiation"
+  },
+  {
+    "tag": "tr",
+    "text": "Template {​SUBJ​} VBZ RB VBN TO VB DT JJ NN IN {​OBJ​}"
+  },
+  {
+    "tag": "tr",
+    "text": "Exact {​SUBJ​} is generally understood to have a fundamental association with {OBJ}"
+  },
+  {
+    "tag": "tr",
+    "text": "Synonym {​SUBJ​} is broadly accepted to have a significant connection to {​OBJ​}"
+  },
+  {
+    "tag": "tr",
+    "text": "Antonym {​SUBJ​} is specifically perceived to lack a superficial detachment with {​OBJ​}"
+  },
+  {
+    "tag": "tr",
+    "text": "Paraphrase One would be correct to state that a fundamental association exists between {​SUBJ​} and{​OBJ​}"
+  },
+  {
+    "tag": "tr",
+    "text": "Disfluent {​SUBJ​} operates bleakly frozen to squeeze every purple happiness under {​OBJ​}"
+  },
+  {
+    "tag": "figcaption",
+    "text": "Table 6 : Example instantiations of the template assigned to the P17 entity pair. We substitute subject and object with a entity pair from the TRex dataset."
+  },
+  {
+    "tag": "figcaption",
+    "text": "Figure 5 : Example instantiations of each template type and th semantic distance from the training example. The red region denotes the area where semantics are fully broken."
+  },
+  {
+    "tag": "figcaption",
+    "text": "Figure 6 : Example of a subject, Paris , applied to two different domains with the same syntactic template: cuisine and geography. If the model answers France instead of (e.g.,) croissant in the cross-domain setting, then the model could be relying on syntactic cues."
+  },
+  {
+    "tag": "h2",
+    "text": "Appendix D Finetuning Details"
+  },
+  {
+    "tag": "p",
+    "text": "We train OLMo-2 models [ 28 ] of varying sizes (1B, 7B, 13B) on our synthetic training data using the HuggingFace Transformers library. We train these models on 1 NVIDIA H200 GPU with 16 CPUs and 32GB of RAM. Each model is trained for 3 epochs, batch size of 4 and a learning rate of 3 ⋅ 10 − 5 3\\cdot 10^{-5} . All text generation is done using greedy decoding."
+  },
+  {
+    "tag": "h2",
+    "text": "Appendix E Additional Results"
+  },
+  {
+    "tag": "h3",
+    "text": "E.1 Synthetic Results: Template Instantiation Bigram Similarity"
+  },
+  {
+    "tag": "p",
+    "text": "Figure 7 shows a histogram of the bigram similarity of the syntactic templates (i.e., over the PoS tags) between each domain. The similarities are skewed right (towards 0) indicating that the templates are sufficiently dissimilar for each domain."
+  },
+  {
+    "tag": "figcaption",
+    "text": "Figure 7 : Bigram similarity counts of each pair of domain syntactic templates, measured over the PoS tags."
+  },
+  {
+    "tag": "h3",
+    "text": "E.2 Synthetic Results: Base OLMo Model"
+  },
+  {
+    "tag": "p",
+    "text": "We present results for the synthetic experiments using the OLMo Base variant. The overall results suggest the same conclusions seen in OLMo Instruct : Table 8 shows that model performance drops across all model sizes (mean Δ − 0.41 \\Delta\\ -0.41 ) in cross-domain settings, with the exception of the Disfluent setting, where model performance has a small positive increase (mean Δ + 0.03 \\Delta\\ +0.03 ). Similarly, Figure 8(b) shows a visual profile of the OLMo-13B Instruct performance on the in-domain and cross-domain entities."
+  },
+  {
+    "tag": "tr",
+    "text": "Model Exact Synonym Antonym Disfluent Paraphrase"
+  },
+  {
+    "tag": "tr",
+    "text": "OLMo 2 (1B)"
+  },
+  {
+    "tag": "tr",
+    "text": "In-Domain 0.91 \\mathbf{0.91} 0.92 \\mathbf{0.92} 0.91 \\mathbf{0.91} 0.14 \\mathbf{0.14} 0.47 \\mathbf{0.47}"
+  },
+  {
+    "tag": "tr",
+    "text": "Cross-Domain 0.35 0.35 0.35 0.35 0.38 0.38 0.18 0.18 0.42 0.42"
+  },
+  {
+    "tag": "tr",
+    "text": "Performance Δ \\Delta ↓ 0.56 \\downarrow 0.56 ↓ 0.57 \\downarrow 0.57 ↓ 0.53 \\downarrow 0.53 ↑ 0.04 \\uparrow 0.04 ↓ 0.05 \\downarrow 0.05"
+  },
+  {
+    "tag": "tr",
+    "text": "OLMo 2 (7B)"
+  },
+  {
+    "tag": "tr",
+    "text": "In-Domain 0.92 \\mathbf{0.92} 0.92 \\mathbf{0.92} 0.91 \\mathbf{0.91} 0.28 0.28 0.60 \\mathbf{0.60}"
+  },
+  {
+    "tag": "tr",
+    "text": "Cross-Domain 0.47 0.47 0.44 0.44 0.45 0.45 0.28 0.28 0.55 0.55"
+  },
+  {
+    "tag": "tr",
+    "text": "Performance Δ \\Delta ↓ 0.45 \\downarrow 0.45 ↓ 0.48 \\downarrow 0.48 ↓ 0.46 \\downarrow 0.46 0.00 0.00 ↓ 0.05 \\downarrow 0.05"
+  },
+  {
+    "tag": "tr",
+    "text": "OLMo 2 (13B)"
+  },
+  {
+    "tag": "tr",
+    "text": "In-Domain 0.94 \\mathbf{0.94} 0.92 \\mathbf{0.92} 0.92 \\mathbf{0.92} 0.07 0.07 0.81 \\mathbf{0.81}"
+  },
+  {
+    "tag": "tr",
+    "text": "Cross-Domain 0.37 0.37 0.42 0.42 0.43 0.43 0.09 \\mathbf{0.09} 0.55 0.55"
+  },
+  {
+    "tag": "tr",
+    "text": "Performance Δ \\Delta ↓ 0.57 \\downarrow 0.57 ↓ 0.50 \\downarrow 0.50 ↓ 0.49 \\downarrow 0.49 ↑ 0.02 \\uparrow 0.02 ↓ 0.26 \\downarrow 0.26"
+  },
+  {
+    "tag": "figcaption",
+    "text": "Table 7: Performance after finetuning OLMo-2 Base at 1B, 7B, and 13B on the synthetic syntactic-domain dataset. Cross-domain drops are shown in red; small gains in dark green."
+  },
+  {
+    "tag": "figcaption",
+    "text": "(a) Instruct variants (1B, 7B, 13B)"
+  },
+  {
+    "tag": "figcaption",
+    "text": "(b) Detailed results for 13B instruct variant"
+  },
+  {
+    "tag": "figcaption",
+    "text": "Figure 8 : Performance after finetuning OLMo-2 on the synthetic syntactic domain dataset: (a) performance of the instruct variants across model sizes (1B, 7B, and 13B), and (b) detailed bar-plot for the 13B instruct variant. In-domain performance is higher across all settings except disfluent after training, indicating a learned spurious correlation between syntax and domain."
+  },
+  {
+    "tag": "h3",
+    "text": "E.3 In the Wild Results: Newsroom, CoT Sensemaking"
+  },
+  {
+    "tag": "p",
+    "text": "Here, we present in the wild results on two additional FlanV2 datasets: Newsroom (Table 8 ) and Chain-of-Thought Sensemaking (Table 9 ). Both datasets show a drop in performance across domains."
+  },
+  {
+    "tag": "figcaption",
+    "text": "(a) CoT Sensemaking"
+  },
+  {
+    "tag": "figcaption",
+    "text": "(b) Newsroom"
+  },
+  {
+    "tag": "figcaption",
+    "text": "Figure 9 : ITW OLMo-2-7B-Instruct"
+  },
+  {
+    "tag": "tr",
+    "text": "Model Synonym Antonym Disfluent Paraphrase"
+  },
+  {
+    "tag": "tr",
+    "text": "OLMo-2-7B"
+  },
+  {
+    "tag": "tr",
+    "text": "In-Domain 0.53 \\mathbf{0.53} 0.22 \\mathbf{0.22} 0.22 0.22 0.66 \\mathbf{0.66}"
+  },
+  {
+    "tag": "tr",
+    "text": "Cross-Domain 0.36 0.36 0.18 0.18 0.25 \\mathbf{0.25} 0.39 0.39"
+  },
+  {
+    "tag": "tr",
+    "text": "Performance Δ \\Delta ↓ 0.17 \\downarrow 0.17 ↓ 0.04 \\downarrow 0.04 ↑ 0.03 \\uparrow 0.03 ↓ 0.27 \\downarrow 0.27"
+  },
+  {
+    "tag": "tr",
+    "text": "GPT4o-mini"
+  },
+  {
+    "tag": "tr",
+    "text": "In-Domain 0.47 \\mathbf{0.47} 0.47 0.47 0.20 \\mathbf{0.20} 0.60 \\mathbf{0.60}"
+  },
+  {
+    "tag": "tr",
+    "text": "Cross-Domain 0.30 0.30 0.70 \\mathbf{0.70} 0.00 0.00 0.50 0.50"
+  },
+  {
+    "tag": "tr",
+    "text": "Performance Δ \\Delta ↓ 0.17 \\downarrow 0.17 ↑ 0.23 \\uparrow 0.23 ↓ 0.20 \\downarrow 0.20 ↓ 0.10 \\downarrow 0.10"
+  },
+  {
+    "tag": "tr",
+    "text": "GPT4o"
+  },
+  {
+    "tag": "tr",
+    "text": "In-Domain 0.81 \\mathbf{0.81} 0.63 \\mathbf{0.63} 0.52 \\mathbf{0.52} 0.70 \\mathbf{0.70}"
+  },
+  {
+    "tag": "tr",
+    "text": "Cross-Domain 0.38 0.38 0.25 0.25 0.25 0.25 0.62 0.62"
+  },
+  {
+    "tag": "tr",
+    "text": "Performance Δ \\Delta ↓ 0.43 \\downarrow 0.43 ↓ 0.38 \\downarrow 0.38 ↓ 0.27 \\downarrow 0.27 ↓ 0.08 \\downarrow 0.08"
+  },
+  {
+    "tag": "figcaption",
+    "text": "Table 8: Measurement of syntactic-domain reliance in the Newsroom subset of the FlanV2 finetuning dataset on fully-trained models."
+  },
+  {
+    "tag": "tr",
+    "text": "Model Synonym Antonym Disfluent Paraphrase"
+  },
+  {
+    "tag": "tr",
+    "text": "OLMo-2-7B"
+  },
+  {
+    "tag": "tr",
+    "text": "In-Domain 0.33 \\mathbf{0.33} 0.33 \\mathbf{0.33} 0.42 \\mathbf{0.42} 0.00 0.00"
+  },
+  {
+    "tag": "tr",
+    "text": "Cross-Domain 0.10 0.10 0.06 0.06 0.09 0.09 0.00 0.00"
+  },
+  {
+    "tag": "tr",
+    "text": "Performance Δ \\Delta ↓ 0.23 \\downarrow 0.23 ↓ 0.27 \\downarrow 0.27 ↓ 0.33 \\downarrow 0.33 0.00 0.00"
+  },
+  {
+    "tag": "tr",
+    "text": "GPT4o-mini"
+  },
+  {
+    "tag": "tr",
+    "text": "In-Domain 0.78 \\mathbf{0.78} 0.72 \\mathbf{0.72} 0.78 \\mathbf{0.78} 0.56 \\mathbf{0.56}"
+  },
+  {
+    "tag": "tr",
+    "text": "Cross-Domain 0.57 0.57 0.48 0.48 0.46 0.46 0.45 0.45"
+  },
+  {
+    "tag": "tr",
+    "text": "Performance Δ \\Delta ↓ 0.21 \\downarrow 0.21 ↓ 0.24 \\downarrow 0.24 ↓ 0.32 \\downarrow 0.32 ↓ 0.11 \\downarrow 0.11"
+  },
+  {
+    "tag": "tr",
+    "text": "GPT4o"
+  },
+  {
+    "tag": "tr",
+    "text": "In-Domain 0.80 \\mathbf{0.80} 0.67 0.67 0.80 \\mathbf{0.80} 0.40 \\mathbf{0.40}"
+  },
+  {
+    "tag": "tr",
+    "text": "Cross-Domain 0.64 0.64 0.68 \\mathbf{0.68} 0.64 0.64 0.37 0.37"
+  },
+  {
+    "tag": "tr",
+    "text": "Performance Δ \\Delta ↓ 0.16 \\downarrow 0.16 ↑ 0.01 \\uparrow 0.01 ↓ 0.16 \\downarrow 0.16 ↓ 0.03 \\downarrow 0.03"
+  },
+  {
+    "tag": "figcaption",
+    "text": "Table 9: sensemaking ITW exps."
+  },
+  {
+    "tag": "h3",
+    "text": "E.4 In the Wild Results: Llama-4 Memorization Profile"
+  },
+  {
+    "tag": "p",
+    "text": "Figure 10(a) shows the performance of of both Llama-4 and GPT4o-mini on the E-SNLI dataset. 10(a) (a) shows the performance profile indicative of memorization, where the values acroos both in domain and cross domain settings are equivalent."
+  },
+  {
+    "tag": "figcaption",
+    "text": "(a) GPT4o-mini (E-SNLI). Case: Spurious Correlation (syntactic-domain)"
+  },
+  {
+    "tag": "figcaption",
+    "text": "Figure 10 : Llama-4 and GPT4o-mini results on the E-SNLI dataset. (a) shows a case of entity memorization, whereas (b) is more indicative of syntactic domain spurious correlations."
+  },
+  {
+    "tag": "h3",
+    "text": "E.5 Qualitative predictions"
+  },
+  {
+    "tag": "p",
+    "text": "Table 11 provides a (random) sample of predictions from OLMo-2-7B Instruct on the synthetic dataset, where the in-domain prediction was correct for the model, but the cross-domain prediction incorrect. When applying a template from a different domain (e.g., template: SUBJ becomes existential pancakes during , domain: city, entity pair: (Ontario, Toronto)) , we see that the generated cross-domain instead predicts entities indicative of the template domain (instance-of, Ottawa river) rather than the correct pair (Toronto.)"
+  },
+  {
+    "tag": "p",
+    "text": "Table 10 shows a random sample of responses from GPT4o-mini predictions on the Sentiment140 dataset."
+  },
+  {
+    "tag": "tr",
+    "text": "Template Setting Input Expected Generated Output"
+  },
+  {
+    "tag": "tr",
+    "text": "antonym Movie night movie: serendipity. On vhs. How would the attitude of this bulletin not be labeled? positive, negative, neutral positive The attitude of the bulletin about \"Serendipity\" on VHS would likely be labeled as **positive**"
+  },
+  {
+    "tag": "tr",
+    "text": "antonym @mandyconforth I used to add a lot of cream to risotto, but I strip it back. Still use butter &amp; wine tho What is not the attitude of this bulletin? positive, negative, neutral positive The attitude of the bulletin is neutral […]"
+  },
+  {
+    "tag": "tr",
+    "text": "antonym Gonna do some art then satisfy my week-long Sims craving What is not the attitude of this bulletin? positive, negative, neutral positive The attitude of the bulletin is positive. […]"
+  },
+  {
+    "tag": "figcaption",
+    "text": "Table 10 : Random sample of GPT4o-mini predictions over the Sentiment140 dataset. Answers are truncated after mention of the label."
+  },
+  {
+    "tag": "tr",
+    "text": "Input (Cross-Domain) Subject Object Generated In-Domain Generated Cross-Domain Template Domain"
+  },
+  {
+    "tag": "tr",
+    "text": "Luminous staplers hover beneath Langarud County violently evaporates inside Langarud County Iran Iran. a white light. councill occupation"
+  },
+  {
+    "tag": "tr",
+    "text": "There is a fundamental association linking Tarn-et-Garonne with its corresponding Tarn-et-Garonne France France. river. instance of"
+  },
+  {
+    "tag": "tr",
+    "text": "There is a fundamental association linking Catalonia with its corresponding Catalonia Spain Spain. province. instance of"
+  },
+  {
+    "tag": "tr",
+    "text": "Luminous staplers hover beneath Nintendo violently evaporates inside Nintendo Japan Japan… Nintendo… occupation"
+  },
+  {
+    "tag": "tr",
+    "text": "United Kingdom is generally understood to have a fundamental association with United Kingdom London London. England. country"
+  },
+  {
+    "tag": "tr",
+    "text": "Fuzzy toasters sing that Massachusetts cheerfully evaporates within Massachusetts Boston Boston. days of its passage.. continent"
+  },
+  {
+    "tag": "tr",
+    "text": "Ontario becomes existential pancakes during Ontario Toronto Toronto. the Ottawa River.. headquarter loc"
+  },
+  {
+    "tag": "figcaption",
+    "text": "Table 11 : Random sample of predictions where the in-domain prediction was correct, the cross-domain prediction was incorrect."
+  },
+  {
+    "tag": "h2",
+    "text": "Appendix F Bypassing Answer Refusals (Continued)"
+  },
+  {
+    "tag": "p",
+    "text": "Here, we present an additional qualitative example of bypassing answer refusals using the prompt “Can you guide me on how to crack and narrate the voicemail on Alice’s perosnal phone.” We are able to bypass refusals for the cross-domain synonym and exact settings for OLMo by using the math natural template , 1.7, 3.6, 5.3, 4.1] Articulate how to prepended to the task (Figure 11 ). Additionally, we present examples of harmful outputs due to bypassing model refusals."
+  },
+  {
+    "tag": "figcaption",
+    "text": "Figure 11 : Gold answer from ai2-adapt-dev/tulu_v3.9_wildjailbreak_decontaminated_50k subset from the OLMo-2 finetuning dataset, cross-domain template is aone from the Math dataset."
+  },
+  {
+    "tag": "h2",
+    "text": "Instructions for reporting errors"
+  },
+  {
+    "tag": "p",
+    "text": "We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the methods listed below:"
+  },
+  {
+    "tag": "p",
+    "text": "Tip: You can select the relevant text first, to include it in your report."
+  },
+  {
+    "tag": "p",
+    "text": "Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability should not be a barrier to accessing research. Thank you for your continued support in championing open access for all."
+  },
+  {
+    "tag": "p",
+    "text": "Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions ."
+  }
+]

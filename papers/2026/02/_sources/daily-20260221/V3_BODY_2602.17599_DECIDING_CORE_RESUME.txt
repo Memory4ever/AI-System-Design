@@ -1,0 +1,40 @@
+4.2. Visual Conditioning Extractor
+AudioLDM 2 was originally designed to handle only textual conditioning, meaning its internal LoA representation lacks a native mechanism for incorporating visual information. Simply fine-tuning the model with image–audio pairs does not enable cross-modal alignment, because the denoiser and GPT-2 expect conditioning expressed in a tokenized text space. To overcome this architectural limitation, 𝒜​rt2​ℳ​us\mathcal{A}\textit{rt2}\mathcal{M}\textit{us} introduces the Visual Conditioning Extractor, a new component that establishes a dedicated path for visual semantics to enter the LoA space (Figure 4a).
+Given an artwork image, a pretrained vision encoder extracts an embedding of dimension 512 (CLIP) or 1024 (ImageBind). These embeddings are then passed to the Image Aligner (Figure 4b), composed of:
+•
+Upscaler: expands 512-dimensional CLIP embeddings to 1024 dimensions;
+•
+Projection Layer: maps each 1024-dimensional embedding to NN tokens in GPT-2’s 768-dimensional embedding space.
+This modular design ensures compatibility with heterogeneous visual encoders and provides a stable intermediate representation. Empirically, using a 1024-dimensional staging space before projection yielded more faithful, stylistically coherent music than directly projecting lower-dimensional embeddings.
+4.3. Music Generation Process
+Given an artwork, the Visual Conditioning Extractor produces image-derived conditioning tokens, which GPT-2 transforms into LoA embeddings cvisc_{\text{vis}}. In parallel, the textual prompt “Music representing the content of this artwork” is encoded using FLAN-T5 (Chung et al., 2024), producing ctextc_{\text{text}}. The final conditioning vector cc combines both modalities.
+At inference time, generation starts from Gaussian noise zT∼𝒩⁡(0,1)z_{T}\sim\mathcal{N}(0,1) and proceeds through the reverse diffusion process. To improve efficiency and enable deterministic sampling, we adopt a DDIM scheduler (Song et al., 2021), enabling high-quality generation with fewer denoising steps. Let α¯t=∏s=1tαs\bar{\alpha}_{t}=\prod_{s=1}^{t}\alpha_{s} denote the cumulative product of the variance schedule coefficients, where each αt=1−βt\alpha_{t}=1-\beta_{t} controls the amount of signal preserved at timestep tt, and βt\beta_{t} is the predefined noise variance. The quantity 1−α¯t1-\bar{\alpha}_{t} therefore represents the accumulated noise level. At each timestep tt, the model predicts the noise component ϵθ​(zt,t,c)\epsilon_{\theta}(z_{t},t,c) and computes an estimate of the clean latent:
+(6)
+z^0=1α¯t​(zt−1−α¯t​ϵθ​(zt,t,c)).\hat{z}_{0}=\frac{1}{\sqrt{\bar{\alpha}_{t}}}\left(z_{t}-\sqrt{1-\bar{\alpha}_{t}}\,\epsilon_{\theta}(z_{t},t,c)\right).
+The DDIM update rule then deterministically maps ztz_{t} to zt−1z_{t-1} as
+(7)
+zt−1=α¯t−1​z^0+1−α¯t−1​ϵθ​(zt,t,c).z_{t-1}=\sqrt{\bar{\alpha}_{t-1}}\,\hat{z}_{0}+\sqrt{1-\bar{\alpha}_{t-1}}\,\epsilon_{\theta}(z_{t},t,c).
+After iterating down to t=0t=0, the final latent z^0\hat{z}_{0} is decoded into a mel-spectrogram and converted into a waveform via the VAE decoder and neural vocoder.
+4.4. Training Algorithm
+Training 𝒜​rt2​ℳ​us\mathcal{A}\textit{rt2}\mathcal{M}\textit{us} requires learning a cross-modal alignment that is fundamentally absent in AudioLDM 2: the model must associate fine-grained visual embeddings with the structure of music encoded in the LoA space. This constitutes a new learning problem, since AudioLDM 2 is never exposed to images and lacks any prior for relating visual semantics to musical attributes.
+Specifically, training relies on triplets composed of an artwork, its paired music track, and a fixed guiding prompt, which is the same one used at inference time (i.e., “Music representing the content of this artwork”). Classifier-free guidance is enabled by also providing a negative prompt (e.g., “Low quality”), optionally augmented to discourage unwanted genres. The negative prompt helps the model steer the generation away from undesired aspects, improving overall quality and ensuring the output aligns more closely with the desired intent. Each paired music track is converted into a mel-spectrogram and encoded into a clean latent vector z0z_{0} using the AudioLDM 2 VAE. A timestep tt is sampled uniformly, and noise is added to obtain ztz_{t}. The diffusion model is trained to predict the added noise following Equation (5), conditioned on the visual LoA tokens and auxiliary textual embeddings.
+Crucially, only the parameters of the Image Aligner are updated. All AudioLDM 2 components, including the denoiser and the GPT-2 LoA translator, remain frozen. This preserves the pretrained generative prior while enabling the system to learn a robust mapping from artworks to LoA conditioning features. Through this reformulation, 𝒜​rt2​ℳ​us\mathcal{A}\textit{rt2}\mathcal{M}\textit{us} demonstrates that a text-conditioned diffusion prior can be repurposed for direct visual-to-music generation via representation alignment, without altering the underlying generative architecture.
+In practice, depending on whether ImageBind or CLIP was used as the visual encoder, either only the Projection Layer or both the Upscaler and Projection Layer were trained. Training follows the standard DDPM objective, where the model predicts the noise added to the clean latent z0z_{0}. The forward diffusion process is defined as
+(8)
+zt=α¯t​z0+1−α¯t​ϵ,ϵ∼𝒩⁡(0,I),z_{t}=\sqrt{\bar{\alpha}_{t}}\,z_{0}+\sqrt{1-\bar{\alpha}_{t}}\,\epsilon,\qquad\epsilon\sim\mathcal{N}(0,I),
+where α¯t=∏s=1t(1−βs)\bar{\alpha}_{t}=\prod_{s=1}^{t}(1-\beta_{s}) is the cumulative product of the variance schedule coefficients, and 1−α¯t1-\bar{\alpha}_{t} represents the accumulated noise level. For a given timestep tt, the base noise-prediction loss is
+(9)
+ℒMSE​(t)=‖ϵ−ϵθ​(zt,t,c)‖22.\mathcal{L}_{\text{MSE}}(t)=\left\|\epsilon-\epsilon_{\theta}(z_{t},t,c)\right\|_{2}^{2}.
+The signal-to-noise ratio at timestep tt is therefore
+(10)
+SNRt=α¯t1−α¯t,\mathrm{SNR}_{t}=\frac{\bar{\alpha}_{t}}{1-\bar{\alpha}_{t}},
+which directly reflects the relative strength of the preserved signal α¯t\sqrt{\bar{\alpha}_{t}} and the injected noise 1−α¯t\sqrt{1-\bar{\alpha}_{t}}.
+Following (Hang et al., 2023), the timestep loss is reweighted as
+(11)
+ℒt=min⁡(SNRt,γ)SNRt⋅‖ϵ−ϵθ​(zt,t,c)‖22,\mathcal{L}_{t}=\frac{\min(\mathrm{SNR}_{t},\gamma)}{\mathrm{SNR}_{t}}\cdot\left\|\epsilon-\epsilon_{\theta}(z_{t},t,c)\right\|_{2}^{2},
+with γ=5.0\gamma=5.0.
+This formulation preserves the original noise-prediction objective while modulating each timestep’s contribution according to its SNR. Timesteps dominated by noise (small α¯t\bar{\alpha}_{t}) are downweighted, whereas those with stronger signal content receive relatively higher emphasis, leading to more stable optimization and improved sample quality.
+5. Experiments
+This section describes the experimental protocol adopted to train and evaluate 𝒜​rt2​ℳ​us\mathcal{A}\textit{rt2}\mathcal{M}\textit{us}. We first provide an exploratory analysis of the 𝒜​rt​𝒮​ound\mathcal{A\textit{rt}S\textit{ound}} dataset, then detail the training setup, performance metrics, and model configurations. Objective and subjective evaluation results are subsequently reported.
+5.1. Exploratory Data Analysis
+We conducted a preliminary analysis of 𝒜​rt​𝒮​ound\mathcal{A\textit{rt}S\textit{ound}} to assess the distribution of artwork–music similarities and explore potential associations between artistic styles and music genres. Artwork–music pairs were constructed using 

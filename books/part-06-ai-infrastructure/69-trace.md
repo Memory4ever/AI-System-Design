@@ -63,6 +63,16 @@ inference.request
 
 不应为每个 token 固定创建 span：长输出会造成海量数据。可使用 span events、分段聚合或仅记录关键 token milestones，并用 metrics 保存整体分布。
 
+但统一 span schema 只规定字段如何表达，不保证字段真的穿过了调用栈。Provider 可能以不同 response metadata 返回 usage，streaming 与 non-streaming 的交付路径不同，generation 与 embedding 调用也可能经过不同 framework hooks；某层内部消费了 metadata 后，应用层即使使用同一套 telemetry wrapper，仍可能只看到部分信息。因此采集合同还要绑定 backend/API、transport、调用类型与 framework revision，明确哪些 usage、termination reason 和 payload-size 字段应被保留、转换与转发，并用对应路径的测试确认 exposure，而不能由“接入统一 schema”推定观测等价。
+
+字段缺失应记为 unknown 及缺失位置，不能补成零 usage 或据此判定低成本。必要时增加 backend-aware hook，或回退 provider 原始 accounting evidence；这会增加适配、版本回归与采集开销，无法恢复的部分仍需保留缺口。Trace owner 负责字段身份与传递证据，实际计价和结果成本归因交给[下一章 Cost](./70-cost.md#资源时间是共同底座)。这些要求不把 call graph 的相似度升级为因果证据，也不保证任意 framework 或生产 SLO。
+
+<!-- source-family: arxiv:2601.00481v1; semantic-body-binding: telemetry-field-exposure-contract -->
+
+当业务代码不能改动、阶段标签又未显式暴露时，可把采集对象从 wrapper 扩展到正在运行的解释器 frame 生命周期：一条[受限实现报告](https://arxiv.org/html/2601.09258v1)在可附着的 CPython 进程上读取函数与调用上下文，再发出 semantic range 关联 GPU API/kernel；分布式通信还需保存 logical communicator/rank 到 node/device 的映射，不能仅靠一张 call graph 推定慢通信在哪两张卡之间。这增加运行时 hook、参考计数与内容暴露、拓扑映射维护的压力，工程支持域必须绑定解释器、framework/backend 和权限；未覆盖的 native/non-Python 路径应保留 unknown 或退回显式 range。时钟与关联边仍按下节独立校验，纳秒字段不是精度保证，trace/residual 只提供定位线索，不认证因果瓶颈或请求 SLO。<!-- source-family:SF-2026-ARXIV-2601-09258 -->
+
+字段可见后，资源轨迹的形状仍不能代替容量和失败验收。把内存曲线减去baseline、取累计最大值、再按峰值归一化，便于比较相对分配阶段，却会隐藏释放与绝对bytes；用DTW对齐还能比较阶段形状，却不保留原wall-clock间隔。因此normalized profile必须与raw bytes、实际peak、runtime和测量scope并列保存，OOM、timeout、instrumentation error也要留在原运行人口，不能从成功运行的形状相近推断容量风险降低。仅覆盖Python对象或按filename归属的instrument不能默认为native/device全部内存；少量重复的平均形状也不能认证tail安全。采集、重复执行及对齐增加开销，scope或clock不可恢复时应退回带unknown的原测量证据，再由资源与Cost owner判断容量和代价，而非由单位峰值曲线宣称优化成功。<!-- source-family:SF-2026-ARXIV-2601-01215 -->
+
 ## Context Propagation 与异步边界
 
 HTTP headers 可传播 trace context；queue、batch、PD handoff 和 tool workflow 需要显式复制 context。Continuous batching 中多个 requests 共享一次 GPU iteration，无法简单用一个 parent-child tree 表达。
@@ -118,6 +128,8 @@ OpenTelemetry GenAI semantic conventions 当前仍在演进。平台应固定内
 Span attributes 同样不能默认包含 prompt/context/output。Trace backend 常被广泛访问，高基数和敏感字段还会同时造成成本与泄露。
 
 Instrumentation overhead 应被度量：serialization、context propagation、collector queue、export failures 与 storage cost。Trace 系统故障不应阻塞普通请求，但高风险 action 的 audit 要另有可靠路径。
+
+当所需证据只是每个 kernel 访问过哪些 memory objects，而不是每个访问地址的因果序列时，collector 还可把分析位置移到 device：在 GPU 上按对象计数，kernel 结束只回传聚合 map，避免 raw trace buffer 满后反复传 CPU、停顿和逐事件分析。这个 summary 能回答特定 working-set 问题，却已丢掉原事件次序，不能冒充完整 trace、并发 live-memory peak 或根因证明。[受限 device-summary 对照](https://arxiv.org/html/2602.22103v1)在 A100/RTX3060 与若干 DNN/语言模型上比较完整 profiling 过程，但 CPU 对照常单线程，NVBit 还包含 SASS 解析；倍数不能只归因 placement 或当作原任务吞吐。额外 helper、计数、驻留和 instrumentation 仍会扰动执行，开销随事件类型/数量改变，4MB 示例也不是通用上界。应绑定 capture scope、object identity、丢弃字段，并按相同事件/evaluator计收集、传输、分析及原 workload 的费用；需要完整时序、范围未覆盖或扰动不可接受时保留 raw trace/CPU分析、较粗采样与明确 unknown，不因 passive 未改程序数据就宣称零干扰。<!-- source-family:SF-2026-ARXIV-2602-22103 -->
 
 ## 从 Linear Trace 到 Root-cause Graph
 
@@ -325,6 +337,10 @@ Taxonomy 会压平边界行为，自动分类器也可能错标；现有大规�
 
 ## Review notes
 
+- `SF-2026-ARXIV-2601-01215` — Daily `2026-01-07`；[MemoryDynamics exact-v1](https://arxiv.org/html/2601.01215v1) §3.2/3.3/3.5、4.1–4.3、5.3–5.5及必要language/budget/aggregate补段。3+1+2=6，shape-normalization/DTW与capacity风险的测量反证缺口深入；保baseline/cummax/unit-peak/clock损失、tracemalloc scope和已排除的OOM/timeout/instrument错误，不授N5/r10的tail保障。root实际必要源与Ch69 owner写前及实际一段、邻接与末注非作者POST通过；未运行代码或复现。
+
+- MAESTRO（`arXiv:2601.00481v1`）：实际审阅 §3.1.1/3.1.2、§4.1/4.3、§5.1 与 A.2.2，采用统一 schema 与 provider/transport/framework 字段 exposure 的区别；12 个 predefined instances 的有限运行与 Jaccard/LCS 不证明生产可移植性或因果归因，hardware/precision 为 Not Disclosed。root 非作者必要源→owner 及实际写后复核通过。https://arxiv.org/html/2601.00481v1
+
 - `SF-2026-ARXIV-2604-21361`（Status: Experimental）：exact-v1 支持“功能与吞吐正常而 timestamp 因果顺序已错误”的受控多节点案例；作者观察到的具体 skew 转折绑定其 pipeline、同步与 instrumentation，不是生产告警常数。https://arxiv.org/abs/2604.21361v1
 
 - `SF-2026-ARXIV-2604-23853`（Status: Experimental）：exact-v1 支持 child trace、逐步成本与 rule type 组成 TraceCard，并在作者 30+30 task contract 中评估 preserve/prune/repair；不证明启发式规则具有跨模型、跨 benchmark 的稳定因果有效性。https://arxiv.org/abs/2604.23853v1
@@ -399,3 +415,7 @@ Taxonomy 会压平边界行为，自动分类器也可能错标；现有大规�
 
   **已吸收的语义增量：** 新增证据边界：Typed trace capture feeds a multi-turn debugger that narrows agent, step and failure class; the diagnosis is converted into a bounded repair and evaluated by a single rerun. Failure taxonomy and framework integrations are extensible surfaces rather than model truth. 该 delta 已进入 `books/part-06-ai-infrastructure/69-trace.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-18754:end -->
+
+- `SF-2026-ARXIV-2601-09258` — Daily `2026-01-16`；[exact-v1](https://arxiv.org/html/2601.09258v1) §4.1.1–4.1.3、§4.2/5–6/8。6分具体采集接口gap深入，采用 CPython frame→semantic GPU range/API 及 logical rank→physical device 关联；支持域/隐私维护与 unknown fallback 是工程推导，不冒称全解释器、framework、权限或 native 路径实测。scheduler 未进 predictor，normal-baseline warmup/阈值及 suspicion 非 cause；不采用零开销、request SLO 或生产诊断保证。root 已实际必要源/目标 owner 写前核通过，实际新增一段、前后衔接及末注非作者 POST通过；未运行 artifact 或复现实验。
+
+- `SF-2026-ARXIV-2602-22103` — Daily `2026-02-27`；[PASTA exact-v1](https://arxiv.org/html/2602.22103v1) §3/§5.3/§7，blocks34–35/102–104/127。2+2+2=6，device-summary collector位置差额深入；仅kernel访问对象聚合，非完整时序/live峰值/causaltruth；CPU单线程与SASS解析混杂、capture scope/扰动/全profile费用及rawtrace回退近文。root必要源/actual owner PRE通过并授单段窄锁；作者正文/完整邻接/自身末注已实际顺读，root非作者已实际独读正文/完整邻接/自身末注，POST通过，窄锁释放；未核实现或复现，非日级Gate。

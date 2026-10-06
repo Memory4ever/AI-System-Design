@@ -1,0 +1,385 @@
+Following the Teacher’s Footsteps: Scheduled Checkpoint Distillation for Domain-Specific LLMs
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+3 Preliminaries
+4 Theoretical Analysis
+4.1 Generalized Single Distillation
+4.2 When and How Can Students Surpass Their Teachers
+5 Scheduled Checkpoint Distillation
+5.1 Principles for Schedule
+5.2 Schedule Metric
+6 Adaptive Weight
+6.1 Metric for Adaptive Weight
+6.2 Apply AW to SCD
+7 Experiment
+7.1 Experimental Setup
+7.2 Overall results
+7.3 Teacher Checkpoint Schedule Visualization
+7.4 AW Visualization on Training Dataset
+7.5 TFS & SFS Visualization on Testing Dataset
+8 Conclusion
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2601.10114v1 [cs.AI] 15 Jan 2026
+Following the Teacher’s Footsteps: Scheduled Checkpoint Distillation for Domain-Specific LLMs
+Cheng Feng
+Affiliation: Fujitsu R&D Center, Beijing, China
+E-mail {fengcheng, clzhong, sunjun}@fujitsu.com
+Chaoliang Zhong
+Affiliation: Fujitsu R&D Center, Beijing, China
+E-mail {fengcheng, clzhong, sunjun}@fujitsu.com
+Jun Sun
+Affiliation: Fujitsu R&D Center, Beijing, China
+E-mail {fengcheng, clzhong, sunjun}@fujitsu.com
+Yusuke Oishi
+Affiliation: Fujitsu Research, FUJITSU LTD, Japan
+E-mail oishi.y@fujitsu.com
+Abstract
+Large language models (LLMs) are challenging to deploy for domain-specific tasks due to their massive scale. While distilling a fine-tuned LLM into a smaller student model is a promising alternative, the capacity gap between teacher and student often leads to suboptimal performance. This raises a key question: when and how can a student model match or even surpass its teacher on domain-specific tasks? In this work, we propose a novel theoretical insight: a student can outperform its teacher if its advantage on a Student-Favored Subdomain (SFS) outweighs its deficit on the Teacher-Favored Subdomain (TFS). Guided by this insight, we propose Scheduled Checkpoint Distillation (SCD), which reduces the TFS deficit by emulating the teacher’s convergence process during supervised fine-tuning (SFT) on the domain task, and a sample-wise Adaptive Weighting (AW) mechanism to preserve student strengths on SFS. Experiments across diverse domain tasks—including QA, NER, and text classification in multiple languages—show that our method consistently outperforms existing distillation approaches, allowing the student model to match or even exceed the performance of its fine-tuned teacher.
+Keywords: LLMs Knowledge Distillation Domain-specific Tasks.
+1 Introduction
+Large language models (LLMs) have demonstrated remarkable few-shot learning capabilities [1, 2, 3]. However, their enormous model size poses substantial challenges for real-world deployment. For instance, performing inference on a 175-billion-parameter LLM requires at least 350GB of GPU memory even with specialized hardware [4]. These extreme resource demands render such models prohibitively expensive for most domain-specific applications, which only require excellence on specific tasks, not universal capability.
+Figure 1: On the Visualization of the proposed methods: Tracking Sample-wise Output Distribution Evolution. Scheduled Checkpoint Distillation (SCD, left) and sample-wise Adaptive Weighting (AW, right). SCD mimics the teacher’s training trajectory to ease student learning. AW calibrates distillation weights per sample based on post-SFT output distributions, enhancing transfer where the teacher excels and suppressing it where the student is proficient.
+A promising strategy for designing compact, high-performance domain-specific models involves domain adaptation of a large LLM via supervised fine-tuning (SFT), followed by compression through knowledge distillation (KD)  [5] for deployment. KD facilitates the transfer of knowledge—particularly in the form of output distributions—from a thoroughly trained, high-capacity teacher model to a more lightweight student model. As a result, the student frequently attains superior performance compared to domain-specific SFT [6, 7]. Nevertheless, the capacity gap in KD fundamentally constrains the student, hindering knowledge transfer and often causing failures to capture the teacher’s complex output distribution—resulting in either oversimplified (mode averaging) or over-specialized (mode collapse) outcomes [8]. In this paper, we focus on the domain-specific SFT-then-distill pipeline and address its key challenge:
+When and how the student model can match, or even surpass, the teacher’s performance on a domain-specific task?
+We partition the target domain into student-favorable subdomain (SFS) where student loss is smaller and teacher-favorable subdomain (TFS). This division, while ubiquitous, manifests with heterogeneous distributions across different domain-specific tasks. This division stems from differences in their foundational expertise and subsequent optimization paths. Based on the distillation generalization theory [9], we show that the student can match or surpass the teacher if and only if its advantage in the SFS outweighs its approximation deficit in the TFS. Full derivations are in Section 4.1.
+Based on the above findings, we propose our methods from two aspects. First, we reduce the approximation deficit by improving upon the SOTA method, i.e., Checkpoint Distillation (CD) [10]. Our key improvement is a theoretically grounded optimal checkpoint schedule, which contrasts with its original step-wise approach, as shown in Figure 1 (left). Second, we seek to preserve the student’s inherent strengths in SFS to ultimately surpass the teacher. Building on the sample-wise SFS and TFS distributions derived from the domain-specific SFT student and teacher models, we implement an instance-level Adaptive Weighting (AW) mechanism, as shown in Figure 1 (right).
+To evaluate our approach, we conduct extensive experiments across diverse domain-specific tasks—including Question Answering (QA), Named Entity Recognition (NER), and Text Classification—in multiple languages. Results demonstrate that our method consistently surpasses SOTA distillation techniques. Notably, the distilled student model even outperforms the fine-tuned teacher in several tasks. These findings confirm our approach’s practicality and robustness, offering a promising path for efficient deployment in resource-aware scenarios. The main contributions are:
+1.
+We provide a novel theoretical analysis of when and how students can match or surpass their teachers in the SFT-then-distill pipeline.
+2.
+Based on the theoretical results, we introduce a theoretically grounded selection strategy to reduce the approximation deficit caused by the teacher–student capacity gap, i.e., scheduled checkpoint distillation (SCD).
+3.
+We propose a novel strategy, i.e., AW for retaining the student’s advantages on SFS while absorbing the teacher’s strengths on TFS through distillation.
+2 Related Work
+On bridging the teacher-student gap: Previous work attributes this challenge to the teacher-student capability gap, mitigated via intermediate supervision using multi-step distillation [11, 12, 13] or trajectory guidance [14]. Among these, [12] shows the benefit of the teacher’s intermediate training states. CD [10] identifies this process as an implicit curriculum—accessible only via intermediate checkpoints—as a key gap-bridging mechanism and argues that a well-selected intermediate checkpoint, even if less accurate, yields a stronger student. However, what constitutes a ”well-selected teacher” remains underexplored. In this paper, we deepen this discussion and reveal that optimal teacher selection requires a trade-off between the teacher’s generalization and its capability gap.
+On sample-wise adaptive weighting: Current distillation methods typically use a fixed ratio (e.g., 0.5/0.5) to balance SFT and distillation losses, but such static weighting is suboptimal per sample due to gradient conflict, gradient dominance [15], and varying sample-wise distillation difficulty [16]. To mitigate this, recent methods [15, 16] dynamically adjust weights by tracking sample-level statistics during training, yet introduce significant overhead and instability as the sample states changes over training. We address this via a lightweight static weighting strategy, which assigns difficulty-aware weights using only one forward pass through both teacher and student SFT models—without dynamic adjustment or training-time cost.
+3 Preliminaries
+Problem Setting for Domain-Specific LLM Distillation
+Let a language model be defined as a probability distribution pp over token sequences 𝐲=(y1,y2,…,yS)∈𝒴S\mathbf{y}=(y_{1},y_{2},\dots,y_{S})\in\mathcal{Y}^{S}, where 𝒴\mathcal{Y} is the vocabulary and SS is the sequence length. The distribution is obtained by applying the softmax function to the model’s logits:
+p⁡(ys∣𝐲<s)=exp⁡(logitp​(ys∣𝐲<s))∑y′∈𝒴exp⁡(logitp​(y′∣𝐲<s)),p(y_{s}\mid\mathbf{y}_{<s})=\frac{\exp\bigl(\mathrm{logit}_{p}(y_{s}\mid\mathbf{y}_{<s})\bigr)}{\sum_{y^{\prime}\in\mathcal{Y}}\exp\bigl(\mathrm{logit}_{p}(y^{\prime}\mid\mathbf{y}_{<s})\bigr)},
+and satisfies the autoregressive property:
+p⁡(𝐲)=∏s=1Sp⁡(ys∣𝐲<s),𝐲<s:=(y1,…,ys−1),p(\mathbf{y})=\prod_{s=1}^{S}p(y_{s}\mid\mathbf{y}_{<s}),\qquad\mathbf{y}_{<s}:=(y_{1},\dots,y_{s-1}),
+with p⁡(y1∣𝐲<1)=p⁡(y1)p(y_{1}\mid\mathbf{y}_{<1})=p(y_{1}) for s=1s=1.
+In domain-specific knowledge distillation, we first obtain a teacher model pTp_{T} by performing supervised fine-tuning (SFT) of a foundation model on the target domain dataset 𝒟domain\mathcal{D}_{\mathrm{domain}}. Knowledge is then transferred from pTp_{T} to a smaller or more efficient student model q​θq\theta. The overall objective is to find parameters θ\theta that minimize a compound loss ℒ⁡(θ)\mathcal{L}(\theta), which jointly optimizes a distribution divergence from the teacher, i.e., ℒdistill\mathcal{L}_{\text{distill}} and alignment with ground-truth labels, i.e., the cross-entropy loss ℒCE\mathcal{L}_{\text{CE}}:
+ℒ⁡(θ)=α⋅ℒdistill​(pT,qθ)+(1−α)⋅ℒCE​(ytrue,qθ),\mathcal{L}(\theta)=\alpha\cdot\mathcal{L}_{\text{distill}}(p_{T},q_{\theta})+(1-\alpha)\cdot\mathcal{L}_{\text{CE}}(y_{\text{true}},q_{\theta}),
+where α∈[0,1]\alpha\in[0,1] is a balancing hyperparameter, commonly set to 0.50.5 in practice.
+Existing knowledge distillation approaches
+Traditional Distillation (TD) aims to transfer knowledge from a single well-trained teacher model to a smaller or more efficient student. Standard Knowledge Distillation (KD) [5] employs the forward Kullback–Leibler (KL) divergence as the primary alignment objective:
+LKL​(p,qθ)=1S​∑s=1S∑ys∈𝒴p⁡(ys∣𝐲<s)​log⁡p⁡(ys∣𝐲<s)qθ​(ys∣𝐲<s).L_{\mathrm{KL}}(p,q_{\theta})=\frac{1}{S}\sum_{s=1}^{S}\sum_{y_{s}\in\mathcal{Y}}p(y_{s}\mid\mathbf{y}_{<s})\log\frac{p(y_{s}\mid\mathbf{y}_{<s})}{q_{\theta}(y_{s}\mid\mathbf{y}_{<s})}.
+However, it is prone to the mode-averaging problem: the student may spread its probability mass too thinly across all modes of the teacher distribution. To tackle this, Wen et al. [17] introduced Reverse KL (RKL) divergence. Although this alleviates mode-averaging, it may cause mode collapse, concentrating the student solely on the teacher’s dominant modes. Time‑Adaptive Intermediate Distillation (TAID) [18] addresses this instability via curriculum-based logit-level interpolation. Instead of directly matching the teacher, the student is trained to follow a dynamically evolving intermediate target:
+pt​(ys∣𝐲<s):=softmax⁡((1−t)​logitqθ′+t​logitp),p_{t}(y_{s}\mid\mathbf{y}_{<s}):=\mathrm{softmax}\!\bigl((1-t)\,\mathrm{logit}_{q^{\prime}_{\theta}}+t\,\mathrm{logit}_{p}\bigr),
+where tt gradually increases from 0 to 1 during training, and q′​θq^{\prime}\theta denotes detached student logits, restricting gradients to flow only through q​θq\theta in the objective.
+LTAID(t)​(p,qθ):=LKL​(pt,qθ).L^{(t)}_{\mathrm{TAID}}(p,q_{\theta}):=L_{\mathrm{KL}}(p_{t},q_{\theta}).
+Checkpoint Distillation (CD) [10]
+Let 𝒞T={p(i)}i=1N\mathcal{C}_{T}=\{p^{(i)}\}_{i=1}^{N} denote the intermediate checkpoints saved during teacher SFT, where p(N)p^{(N)} is the final teacher. In checkpoint distillation, the student is trained progressively on a scheduled sequence of these checkpoints.
+Formally, at training step kk, the student minimizes a distillation loss LdistillL_{\text{distill}} with respect to a scheduled checkpoint p(τk)p^{(\tau_{k})}:
+θk+1=θk−η​∇θLdistill​(p(τk),qθk),\theta_{k+1}=\theta_{k}-\eta\,\nabla_{\theta}\,L_{\text{distill}}\!\bigl(p^{(\tau_{k})},q_{\theta_{k}}\bigr),
+where τ:ℕ→{1,…,N}\tau:\mathbb{N}\to\{1,\dots,N\} defines the checkpoint schedule.
+The common schedule is (N,T)(N,T)-progressive distillation:
+𝒞T\mathcal{C}_{T} contains N−1N-1 equally spaced intermediate checkpoints plus the final teacher. The student is trained sequentially with each checkpoint p(i)∈𝒞Tp^{(i)}\in\mathcal{C}_{T} for a fixed duration TT steps, totaling N​TNT steps before continuing solely with the final teacher p(N)p^{(N)}.
+4 Theoretical Analysis
+4.1 Generalized Single Distillation
+According to David’s theory [9], we get the following theorems:
+Theorem 4.1 (Student Generalization Bound)
+Let fs∈ℱsf_{s}\in\mathcal{F}_{s} be the student model and f∈ℱf\in\mathcal{F} be the true target function. When learning from nn i.i.d. data samples, the student’s excess risk is bounded by:
+ℛ⁡(fs)−ℛ⁡(f)≤O⁡(|ℱs|Cn)+ϵs,\mathcal{R}(f_{s})-\mathcal{R}(f)\leq O\left(\frac{|\mathcal{F}_{s}|_{C}}{\sqrt{n}}\right)+\epsilon_{s},
+where |ℱs|C|\mathcal{F}_{s}|_{C} measures the complexity of the student’s hypothesis class, O⁡(⋅)O(\cdot) is the statistical estimation error decaying at rate 1/n1/\sqrt{n}, and ϵs:=infg∈ℱsℛ⁡(g)−ℛ⁡(f)\epsilon_{s}:=\inf_{g\in\mathcal{F}_{s}}\mathcal{R}(g)-\mathcal{R}(f) is the approximation error of ℱs\mathcal{F}_{s}.
+Theorem 4.2 (Teacher Generalization Bound)
+Let ft∈ℱtf_{t}\in\mathcal{F}_{t} be the teacher model. Due to a better representation, the teacher achieves faster convergence with excess risk bounded by:
+ℛ⁡(ft)−ℛ⁡(f)≤O⁡(|ℱt|Cn)+ϵt,\mathcal{R}(f_{t})-\mathcal{R}(f)\leq O\left(\frac{|\mathcal{F}_{t}|_{C}}{n}\right)+\epsilon_{t},
+where the estimation error decays at rate 1/n1/n, and ϵt:=infg∈ℱtℛ⁡(g)−ℛ⁡(f)\epsilon_{t}:=\inf_{g\in\mathcal{F}_{t}}\mathcal{R}(g)-\mathcal{R}(f) is the approximation error of ℱt\mathcal{F}_{t}.
+Theorem 4.3 (Student Distillation Generalization Bound)
+The student’s risk relative to the teacher converges at an accelerated rate:
+ℛ⁡(fs)−ℛ⁡(ft)≤O⁡(|ℱs|Cnα)+ϵl,α>0.\mathcal{R}(f_{s})-\mathcal{R}(f_{t})\leq O\left(\frac{|\mathcal{F}_{s}|_{C}}{n^{\alpha}}\right)+\epsilon_{l},\quad\alpha>0.
+Here α\alpha controls the distillation speed, and ϵl:=infg∈ℱs(ℛ⁡(g)−ℛ⁡(ft))\epsilon_{l}:=\inf_{g\in\mathcal{F}_{s}}\left(\mathcal{R}(g)-\mathcal{R}(f_{t})\right) is the distillation approximation error, representing the inherent limitation of ℱs\mathcal{F}_{s} in approximating ftf_{t}.
+4.2 When and How Can Students Surpass Their Teachers
+To enable the student model to surpass its teacher, we aim for ℛ⁡(fs)−ℛ⁡(ft)≤0\mathcal{R}(f_{s})-\mathcal{R}(f_{t})\leq 0. However, Theorem 3 cannot achieve such goal as O⁡(|ℱs|Cnα)≥0O\left(\frac{|\mathcal{F}_{s}|_{C}}{n^{\alpha}}\right)\geq 0 and ϵl≥0\epsilon_{l}\geq 0. Therefore, we partition the input domain 𝒟\mathcal{D} into two subdomains:
+•
+Student-Favored (SFS): 𝒟SFS:={x∈𝒟∣ℛx​(fs)−ℛx​(ft)≤0}\mathcal{D}_{\text{SFS}}:=\{x\in\mathcal{D}\mid\mathcal{R}_{x}(f_{s})-\mathcal{R}_{x}(f_{t})\leq 0\}.
+•
+Teacher-Favored (TFS): 𝒟TFS:={x∈𝒟∣ℛx​(fs)−ℛx​(ft)>0}\mathcal{D}_{\text{TFS}}:=\{x\in\mathcal{D}\mid\mathcal{R}_{x}(f_{s})-\mathcal{R}_{x}(f_{t})>0\}.
+Here, ℛx​(f)\mathcal{R}_{x}(f) denotes the point-wise or local risk of hypothesis ff at xx. The global risk difference decomposes as:
+ℛ⁡(fs)−ℛ⁡(ft)=(ℛSFS​(fs)−ℛSFS​(ft))⏟≤0+(ℛTFS​(fs)−ℛTFS​(ft))⏟>0.\mathcal{R}(f_{s})-\mathcal{R}(f_{t})=\underbrace{\left(\mathcal{R}_{\text{SFS}}(f_{s})-\mathcal{R}_{\text{SFS}}(f_{t})\right)}_{\leq 0}+\underbrace{\left(\mathcal{R}_{\text{TFS}}(f_{s})-\mathcal{R}_{\text{TFS}}(f_{t})\right)}_{>0}.
+Theorem 4.4 (Sufficient Condition for Student Surpassing Teacher)
+The sufficient condition for the student model fsf_{s} to achieve lower total risk than the teacher ftf_{t} is:
+ℛSFS​(ft)−ℛSFS​(fs)≥O⁡(|ℱs|CnT​F​Sα)+ϵl(TFS),\mathcal{R}_{\text{SFS}}(f_{t})-\mathcal{R}_{\text{SFS}}(f_{s})\geq O\left(\frac{|\mathcal{F}_{s}|_{C}}{n_{TFS}^{\alpha}}\right)+\epsilon_{l}^{\text{(TFS)}},
+where ϵl(TFS):=infg∈ℱs(ℛTFS​(g)−ℛTFS​(ft))\epsilon_{l}^{\text{(TFS)}}:=\inf_{g\in\mathcal{F}_{s}}\left(\mathcal{R}_{\text{TFS}}(g)-\mathcal{R}_{\text{TFS}}(f_{t})\right) is the local distillation approximation error on TFS and nT​F​Sn_{TFS} is the number of samples from TFS.
+Our proposed method is also grounded in this theoretical insight:
+•
+To reduce the approximation deficit (O⁡(|ℱs|CnT​F​Sα)+ϵl(TFS)O\left(\frac{|\mathcal{F}_{s}|_{C}}{n_{TFS}^{\alpha}}\right)+\epsilon_{l}^{\text{(TFS)}}), we propose a scheduled checkpoint distillation approach, which systematically leverages intermediate teacher checkpoints for alignment. Details shown in Section 5.
+•
+To enlarge the student’s advantage (ℛSFS​(ft)−ℛSFS​(fs)\mathcal{R}_{\text{SFS}}(f_{t})-\mathcal{R}_{\text{SFS}}(f_{s})), we estimate the distributions of the SFS and TFS using domain-specific fine-tuned student and teacher models, and assign sample-wise weights accordingly. This weighting scheme enhances learning in regions where the student has potential for superiority. The methodology is elaborated in Section 6.
+5 Scheduled Checkpoint Distillation
+Our framework builds upon the standard CD [10] setup, wherein a sequence of intermediate teacher checkpoints 𝒞T={p(i)}i=1N\mathcal{C}_{T}=\{p^{(i)}\}_{i=1}^{N} is saved during teacher fine-tuning, and the student is progressively trained on a subset of these checkpoints. We first ground checkpoint schedule design in theory. Based on this, we propose an algorithm to dynamically select the most informative checkpoints, targeting an optimal teacher checkpoint schedule.
+5.1 Principles for Schedule
+Theorem 5.1 (Individual Step Checkpoint Distillation Error Bound)
+Consider the student model at iteration ii, denoted as fs(i)f_{s}^{(i)}, aligns with a selected teacher checkpoint p(j)p^{(j)} from the checkpoint set 𝒞T={p(1),…,p(N)}\mathcal{C}_{T}=\{p^{(1)},\dots,p^{(N)}\}. The risk of the student after this alignment step satisfies:
+ℛ⁡(fs(i))≤ℛ⁡(p(j))+O⁡(|ℱs|Cnα)+ϵl(i,j),\mathcal{R}(f_{s}^{(i)})\leq\mathcal{R}(p^{(j)})+O\left(\frac{|\mathcal{F}_{s}|_{C}}{n^{\alpha}}\right)+\epsilon_{l}^{(i,j)},
+where: ϵl(i,j):=infg∈ℱs(ℛ⁡(g)−ℛ⁡(p(j)))\epsilon_{l}^{(i,j)}:=\inf_{g\in\mathcal{F}_{s}}\left(\mathcal{R}(g)-\mathcal{R}(p^{(j)})\right) . Let fs(i−1)∈ℱsf_{s}^{(i-1)}\in\mathcal{F}_{s} be the student model obtained at the previous step, it follows that:
+ϵl(i,j)\displaystyle\epsilon_{l}^{(i,j)}
+:=infg∈ℱs(ℛ⁡(g)−ℛ⁡(p(j)))\displaystyle:=\inf_{g\in\mathcal{F}_{s}}\left(\mathcal{R}(g)-\mathcal{R}(p^{(j)})\right)
+=infg∈ℱs{[ℛ⁡(g)−ℛ⁡(fs(i−1))]+[ℛ⁡(fs(i−1))−ℛ⁡(p(j))]}\displaystyle=\inf_{g\in\mathcal{F}_{s}}\left\{\left[\mathcal{R}(g)-\mathcal{R}\bigl(f_{s}^{(i-1)}\bigr)\right]+\left[\mathcal{R}\bigl(f_{s}^{(i-1)}\bigr)-\mathcal{R}(p^{(j)})\right]\right\}
+≤infg∈ℱs[ℛ⁡(g)−ℛ⁡(fs(i−1))]+|ℛ⁡(fs(i−1))−ℛ⁡(p(j))|\displaystyle\leq\inf_{g\in\mathcal{F}_{s}}\left[\mathcal{R}(g)-\mathcal{R}\bigl(f_{s}^{(i-1)}\bigr)\right]+\bigl|\mathcal{R}\bigl(f_{s}^{(i-1)}\bigr)-\mathcal{R}(p^{(j)})\bigr|
+≤0+|ℛ⁡(fs(i−1))−ℛ⁡(p(j))|\displaystyle\leq 0+\bigl|\mathcal{R}\bigl(f_{s}^{(i-1)}\bigr)-\mathcal{R}(p^{(j)})\bigr|
+≤|ℛ⁡(fs(i−1))−ℛ⁡(p(j))|.\displaystyle\leq\bigl|\mathcal{R}\bigl(f_{s}^{(i-1)}\bigr)-\mathcal{R}(p^{(j)})\bigr|.
+Then we come to the final results that:
+ℛ⁡(fs(i))⏟Target≤ℛ⁡(p(j))⏟j-th teacher error+O⁡(|ℱs|Cnα)⏟Constant+|ℛ⁡(fs(i−1))−ℛ⁡(p(j))|⏟Upper bound of ​ϵl(i,j).\underbrace{\mathcal{R}(f_{s}^{(i)})}_{\text{Target}}\leq\underbrace{\mathcal{R}(p^{(j)})}_{\text{j-th teacher error}}+\underbrace{O\left(\frac{|\mathcal{F}_{s}|_{C}}{n^{\alpha}}\right)}_{\text{Constant}}+\underbrace{\bigl|\mathcal{R}\bigl(f_{s}^{(i-1)}\bigr)-\mathcal{R}(p^{(j)})\bigr|}_{\text{Upper bound of }\epsilon_{l}^{(i,j)}}.
+The optimization problem is then transformed into find the j∗j^{*}-th teacher for the ii-th student where:
+j∗=arg⁡minj∈N⁡[ℛ⁡(p(j))+|ℛ⁡(fs(i−1))−ℛ⁡(p(j))|].j^{*}=\arg\min_{j\in N}\left[\mathcal{R}(p^{(j)})+\bigl|\mathcal{R}(f_{s}^{(i-1)})-\mathcal{R}(p^{(j)})\bigr|\right].
+Then the principles for schedule include the following key components:
+•
+Select high-performance teachers: Minimize ℛ⁡(p(j))\mathcal{R}(p^{(j)}) by choosing teacher with superior generalization ability.
+•
+Select proximal teachers: Minimize |ℛ⁡(fs(i−1))−ℛ⁡(p(j))|\bigl|\mathcal{R}(f_{s}^{(i-1)})-\mathcal{R}(p^{(j)})\bigr| by choosing teacher whose performance is close to the current untrained student’s state.
+5.2 Schedule Metric
+Let 𝒟\mathcal{D} be the domain-specific input distributions. The teacher checkpoint schedule is designed based on two metrics:
+Metric 1. High-performance teacher:
+Choose teacher checkpoints p(j)p^{(j)} with minimal ℛ⁡(p(j))\mathcal{R}(p^{(j)}), where ℛ⁡(p(j))\mathcal{R}(p^{(j)}) could be evaluated over the domain 𝒟\mathcal{D}.
+Metric 2. Proximal teacher:
+Choose teacher checkpoints p(j)p^{(j)} with minimal |ℛ⁡(fs(i−1))−ℛ⁡(p(j))|\bigl|\mathcal{R}(f_{s}^{(i-1)})-\mathcal{R}(p^{(j)})\bigr|, which can be approximated by the KL-divergence between student and teacher output distributions over 𝒟\mathcal{D}:
+|ℛ(fs(i−1))−ℛ(p(j))|≈𝔼x∼𝒟[KL(fs(i−1)(x)∥p(j)(x))].\bigl|\mathcal{R}(f_{s}^{(i-1)})-\mathcal{R}(p^{(j)})\bigr|\approx\mathop{\mathbb{E}}_{x\sim\mathcal{D}}\Big[\text{KL}\big(f_{s}^{(i-1)}(x)\,\|\,p^{(j)}(x)\big)\Big].
+Since the two metrics are measured differently—Metric 1 is computed from sample loss, while Metric 2 is based on model outputs divergence—we harmonize them by expressing both in terms of KL divergence. Let p(best)p^{(\text{best})} be the teacher checkpoint with the best performance. We reformulate Metric 1 as the KL divergence between p(best)p^{(\text{best})} and p(j)p^{(j)}. This leads to the unified objective:
+j∗=argminj∈N[𝔼x∼𝒟KL(p(best)(x)∥p(j)(x))+𝔼x∼𝒟KL(fs(i−1)(x)∥p(j)(x))].j^{*}=\arg\min_{j\in N}\Big[\mathop{\mathbb{E}}_{x\sim\mathcal{D}}\text{KL}\big(p^{(\text{best})}(x)\,\|\,p^{(j)}(x)\big)+\mathop{\mathbb{E}}_{x\sim\mathcal{D}}\text{KL}\big(f_{s}^{(i-1)}(x)\,\|\,p^{(j)}(x)\big)\Big].
+Here, the first term encourages selection of high‑performance teachers (close to the best teacher), and the second term enforces proximity to the current untrained student state, i.e., fs(i−1)f_{s}^{(i-1)}.
+6 Adaptive Weight
+In domain-specific tasks, whether a student can surpass its teacher depends not only on optimization but also on task characteristics—specifically, the relative dominance of SFS and TFS, which vary across tasks. To actively shape this balance, we introduce the AW mechanism. By estimating SFS/TFS distributions from domain fine-tuned models, AW dynamically assigns higher distillation weight to TFS samples and lower weight to SFS ones. This focuses student learning on areas needing improvement while preserving its existing strengths.
+6.1 Metric for Adaptive Weight
+Let pTp_{T} and qsq_{s} denote the teacher and student model distributions after supervised fine-tuning on the domain dataset 𝒟\mathcal{D}. For each sequence 𝐲∼𝒟\mathbf{y}\sim\mathcal{D}, we define the autoregressive cross-entropy losses:
+ℒS(𝐲)=−∑s=1Slogqs(ys∣𝐲<s),ℒT(𝐲)=−∑s=1SlogpT(ys∣𝐲<s),\mathcal{L}_{S}(\mathbf{y})=-\sum_{s=1}^{S}\log q_{s}(y_{s}\mid\mathbf{y}_{<s}),\quad\mathcal{L}_{T}(\mathbf{y})=-\sum_{s=1}^{S}\log p_{T}(y_{s}\mid\mathbf{y}_{<s}),
+where qs​(ys∣𝐲<s)q_{s}(y_{s}\mid\mathbf{y}_{<s}) and pT​(ys∣𝐲<s)p_{T}(y_{s}\mid\mathbf{y}_{<s}) are the student and teacher probabilities for token ysy_{s} given the preceding context 𝐲<s\mathbf{y}_{<s}.
+The sequence-wise adaptive weight A​W​(𝐲)AW(\mathbf{y}) is defined as:
+A​W​(𝐲)=σ⁡(log⁡ℒS​(𝐲)ℒT​(𝐲)),AW(\mathbf{y})=\sigma\left(\log\frac{\mathcal{L}_{S}(\mathbf{y})}{\mathcal{L}_{T}(\mathbf{y})}\right),
+where σ⁡(⋅)\sigma(\cdot) is the sigmoid function. The proposed method enforces a [0,1] weight range and monotonic correlation with the TFS/SFS distribution via log-scaled loss ratios and a sigmoid function. The total distillation objective becomes:
+ℒKD​(𝐲)=A​W​(𝐲)⋅ℒdistill​(pT,qθ)+(1−A​W​(𝐲))⋅ℒCE​(𝐲,qθ),\mathcal{L}_{\text{KD}}(\mathbf{y})=AW(\mathbf{y})\cdot\mathcal{L}_{\text{distill}}(p_{T},q_{\theta})+\bigl(1-AW(\mathbf{y})\bigr)\cdot\mathcal{L}_{\text{CE}}(\mathbf{y},q_{\theta}),
+where ℒCE(𝐲,qθ)=−∑s=1Slogqθ(ys∣𝐲<s)\mathcal{L}_{\text{CE}}(\mathbf{y},q_{\theta})=-\sum_{s=1}^{S}\log q_{\theta}(y_{s}\mid\mathbf{y}_{<s}) is the standard cross-entropy loss with the ground-truth sequence, and ℒdistill​(pT,qθ)\mathcal{L}_{\text{distill}}(p_{T},q_{\theta}) is the distillation loss (e.g., KL divergence) between pTp_{T} and qθq_{\theta}.
+Figure 2 presents a toy experiment for visualizing AW. AW enhances the distillation loss for TFS Samples. Simultaneously, it reduces the distillation loss for SFS Samples, better preserving the student’s strengths. This approach achieves superior performance compared to traditional distillation methods and significantly surpasses the teacher’s performance (from 88.8 to 97.5).
+Figure 2: Toy Experiment for AW Visualization.
+Data generated from sine function boundary y=sin⁡(0.5​x)+𝒩⁡(0,1)y=\sin(0.5x)+\mathcal{N}(0,1).
+Teacher model: 2-layer MLP (128 hidden units, ∼\sim16K params).
+Student models: 2-layer MLP (8 hidden units, ∼\sim50 params).
+(1) SFT Baselines.
+Distillation variants: (2) Distill Only; (3) TD: 0.5​ℒC​E+0.5​ℒK​L0.5\mathcal{L}_{CE}+0.5\mathcal{L}_{KL};
+(4) Hard AW: teacher-better: only ℒK​L\mathcal{L}_{KL}, student-better: only ℒC​E\mathcal{L}_{CE}, others: TD; (5) Soft AW: weighting based on loss ratio σ⁡(log⁡(ℒS/ℒT))\sigma(\log(\mathcal{L}_{S}/\mathcal{L}_{T})). (6) AW visualization.
+6.2 Apply AW to SCD
+Within the SCD framework, at each step ii, the student model fs(i)f_{s}^{(i)} aligns with a selected teacher checkpoint p(j)p^{(j)} from 𝒞T={p(1),…,p(N)}\mathcal{C}_{T}=\{p^{(1)},\dots,p^{(N)}\}. Since the teacher checkpoint p(j)p^{(j)} may differ from the final fine-tuned teacher pTp_{T}, the original AW metric should also be adapted accordingly.
+Specifically, instead of comparing the student’s loss to that of the final teacher pTp_{T}, we compute the adaptive weight based on the student’s SFT model fs(SFT)f_{s}^{(\text{SFT})} (which remains fixed throughout distillation) and the currently selected checkpoint p(j)p^{(j)}. For each input sequence 𝐲∼𝒟\mathbf{y}\sim\mathcal{D}, we define:
+ℒS(𝐲)=−∑s=1Slogfs(SFT)(ys∣𝐲<s),ℒT(j)(𝐲)=−∑s=1Slogp(j)(ys∣𝐲<s),\mathcal{L}_{S}(\mathbf{y})=-\sum_{s=1}^{S}\log f_{s}^{(\text{SFT})}(y_{s}\mid\mathbf{y}_{<s}),\quad\mathcal{L}_{T}^{(j)}(\mathbf{y})=-\sum_{s=1}^{S}\log p^{(j)}(y_{s}\mid\mathbf{y}_{<s}),
+where fs(SFT)​(ys∣𝐲<s)f_{s}^{(\text{SFT})}(y_{s}\mid\mathbf{y}_{<s}) and p(j)​(ys∣𝐲<s)p^{(j)}(y_{s}\mid\mathbf{y}_{<s}) denote the token‑level probabilities of the student SFT model and the jj‑th teacher checkpoint, respectively.
+The adaptive weight for step ii with teacher p(j)p^{(j)} is then:
+A​W(i,j)​(𝐲)=σ⁡(log⁡ℒS​(𝐲)ℒT(j)​(𝐲)),AW^{(i,j)}(\mathbf{y})=\sigma\left(\log\frac{\mathcal{L}_{S}(\mathbf{y})}{\mathcal{L}_{T}^{(j)}(\mathbf{y})}\right),
+Using this adaptive weighting, the final distillation loss for step ii with teacher checkpoint p(j)p^{(j)} is formulated as:
+ℒKD(i,j)​(𝐲)=A​W(i,j)​(𝐲)⋅ℒdistill​(p(j),fs(i))+(1−A​W(i,j)​(𝐲))⋅ℒCE​(𝐲,fs(i)),\mathcal{L}_{\text{KD}}^{(i,j)}(\mathbf{y})=AW^{(i,j)}(\mathbf{y})\cdot\mathcal{L}_{\text{distill}}\big(p^{(j)},f_{s}^{(i)}\big)+\bigl(1-AW^{(i,j)}(\mathbf{y})\bigr)\cdot\mathcal{L}_{\text{CE}}\big(\mathbf{y},f_{s}^{(i)}\big),
+7 Experiment
+7.1 Experimental Setup
+Datasets and Evaluation. We evaluate on two domain-specific benchmarks in distinct languages: PubmedQA (English) and JMED-LLM11
+1
+https://github.com/sociocom/JMED-LLM (Japanese). For PubmedQA, we adopt its official 500/500 train/test split. For the JMED-LLM suite, we utilize five tasks: JMMLU (medical QA), CRADE (adverse event classification), RRTNM (cancer staging), SMDIS (disease classification), and NRNER (medical NER). Each JMED task follows an 80%/20% train/test split. To ensure pipeline compatibility, all tasks are formatted into a unified instruction-following structure following the ShareGPT template, implemented within the DistillKit framework22
+2
+https://github.com/arcee-ai/DistillKit. Evaluation is conducted on held-out test sets: PubmedQA uses Accuracy while JMED tasks are evaluated using the official toolkit with task-specific metrics, i.e., Exact F1/Partial F1 for NRNER and Accuracy for others. Across all tasks, the student model checkpoint with the best performance is selected for comparison.
+Compared Baselines:
+TD [5]: The standard approach minimizing forward KL divergence.
+TAID [18]: Constructs a curriculum where the student matches a logit-interpolated target.
+CD [10]: Sequentially trains the student on a fixed schedule of intermediate checkpoints saved during teacher SFT.
+Training Configuration. We employ Llama-3.1-8B-Instruct as teacher and Llama-3.2-3B-Instruct as student. Training consists of two stages:
+Domain-specific SFT: Both teacher and student are fine-tuned on the domain-specific tasks. Key hyperparameters are tuned for the teacher model and applied identically to the student. NN evenly-spaced intermediate teacher checkpoints are saved during this stage.
+Task-specific Distillation: For fair comparison, all methods share the same CD infrastructure and identical hyperparameters within each task: optimizer reset every TT steps, total N×TN\times T steps. Methods differ in teacher signal:
+•
+KD & TAID: Use only the best teacher checkpoint p(b​e​s​t)p^{(best)}.
+•
+CD: Follows fixed (N,T)(N,T)-progressive schedule.
+Hyperparameter Settings. We use the AdamW optimizer with β1=0.9\beta_{1}=0.9, β2=0.95\beta_{2}=0.95, and gradient clipping at 1.0. The learning rate schedule follows cosine decay with warmup (ratio=0.1). Max sequence length=512, batch size=8. Learning rate is tuned per task to ensure a strong TD baseline and NN is set by equally dividing the teacher model’s training epochs across tasks . TT is fixed at 2 epochs for all tasks. We first establish a strong TD baseline via grid search, then apply the optimal configuration to all methods for controlled comparison. All experiments are conducted on NVIDIA A800 80GB GPUs.
+Table 1: Comparison of various methods on multiple tasks. The highest score in each column is highlighted in bold.
+Task Type
+QA
+NER
+Text Categorization
+Task Name
+JMMLU
+PubmedQA
+NRNER
+CRADE
+RRTNM
+SMDIS
+Avg
+Teacher zero-shot
+0.453
+0.752
+0.251/0.443
+0.144
+0.554
+0.637
+0.462
+Teacher SFT
+0.547
+0.792
+0.667/0.932
+0.813
+0.677
+0.985
+0.773
+Student zero-shot
+0.358
+0.702
+0.247/0.476
+0.092
+0.200
+0.255
+0.333
+Student SFT
+0.394
+0.738
+0.533/0.806
+0.629
+0.508
+0.976
+0.655
+TD [5]
+0.453
+0.750
+0.676/0.894
+0.804
+0.523
+0.986
+0.727
+TAID [18]
+0.504
+0.762
+0.659/0.866
+0.804
+0.523
+0.988
+0.729
+CD [10]
+0.482
+0.754
+0.684/0.883
+0.801
+0.585
+0.986
+0.739
+SCD (OUR)
+0.474
+0.756
+0.686/0.909
+0.819
+0.538
+0.986
+0.742
+SCD w/ AW (OUR)
+0.523
+0.766
+0.711/0.944
+0.807
+0.600
+0.986
+0.763
+7.2 Overall results
+Figure 3: Schedule visualization based on the SCD w/ AW method. The blue and orange bars represent Metric 1 and Metric 2 (introduced in Section 4.2), respectively. The horizontal axis indicates the teacher checkpoint ID, while the vertical axis shows the sum of Metric 1 and Metric 2. Red arrows mark the optimal teacher selected.
+Figure 4: AW Visualization. This demonstrates the distribution of AW on the training set, based on teacher SFT and student SFT.
+As shown in Table 1, our proposed methods consistently outperform existing distillation techniques. SCD achieves competitive performance (Avg: 0.742), while SCD w/AW demonstrates superior effectiveness (Avg: 0.763), excelling in key tasks such as JMMLU (+4.7% vs CD) and NRNER Partial F1 (+6.9% vs best baseline). Notably, SCD w/AW enables the student to surpass the teacher’s performance in multiple tasks: it outperforms the teacher SFT model in both NRNER metrics (Exact F1: 0.711 vs 0.667, Partial F1: 0.944 vs 0.932) and matches or exceeds teacher performance in SMDIS (0.986 vs 0.985).
+7.3 Teacher Checkpoint Schedule Visualization
+Figure 3 visualizes the Teacher Checkpoint Schedule generated by our proposed SCD w/ AW method. The core algorithmic principle of our approach is to dynamically balance two complementary metrics: Metric 1, which prioritizes the teacher checkpoint with the highest task performance (i.e., the ”best” teacher), and Metric 2, which favors the checkpoint that is most proximal or easiest for the current student to approximate (i.e., the ”most teachable” teacher).
+Our visualization and experimental results across all settings reveal a consistent and interpretable dynamic in the schedule. During the initial training phases, when the student model is relatively weak and distant from the teacher’s performance manifold, Metric 2 (approximation ease) dominates the selection. As training progresses and the student’s capacity strengthens—thereby converging closer to the teacher’s capability—the influence of Metric 1 (peak teacher performance) progressively increases.
+7.4 AW Visualization on Training Dataset
+Figure 5: TFS & SFS Visualization on NRNER. In all subfigures, the vertical axis represents the sample-level F1 score difference (teacher – student), while the horizontal axis corresponds to the sample IDs. All plots are sorted in descending order along the vertical axis. SCD outperformed other methods in mitigating TFS, and the addition of AW successfully preserved SFS.
+The AW mechanism we propose aims to elucidate the inherent advantage difference between the teacher and student models across different data samples. This discrepancy is largely task-specific and cannot be directly optimized as an objective. As showin in Figure 4, on tasks such as JMMLU and PubmedQA, the teacher model possesses a substantial inherent advantage, making it difficult for any method to match, let alone exceed, the teacher’s performance. In contrast, on NRNER, CRADE, and SMDIS, our proposed method consistently outperforms the teacher. This improvement is primarily attributed to a higher proportion of samples in the AW distribution favoring the student in these tasks.
+7.5 TFS & SFS Visualization on Testing Dataset
+As illustrated in Figure 5, we present visualizations of TFS and SFS for all baseline methods on the NRNER task. Among all compared approaches, our proposed SCD method achieves the lowest error rate on TFS, reducing the teacher model’s lead from 53.729 to 20.068, thereby effectively alleviating the TFS deficit. By integrating the AW mechanism, our SCD w/ AW method further attains a significantly higher performance on SFS than all other baselines, reaching a maximum score of 33.315. Meanwhile, in the TFS domain, only a minor degradation is observed—from 20.068 to 20.427. Overall, our method enhances SFS performance while significantly reducing the TFS deficit, improving overall performance from 0.667 to 0.711.
+8 Conclusion
+In this paper, we explore a fundamental question: when and how can a student model match or surpass its teacher in domain-specific LLM distillation. Through theoretical analysis, we establish that this is achievable when the student’s advantage on its favorable subdomain (SFS) outweighs its deficit on the teacher-favored subdomain (TFS). Guided by this insight, we introduce SCD to systematically reduce the TFS deficit by emulating the teacher’s training trajectory, and AW to preserve the student’s inherent strengths on SFS. Extensive experiments across diverse multilingual tasks show that our method surpasses existing distillation techniques and often allows the student model to match or even exceed the teacher’s performance. Our work provides both a theoretical foundation and a practical framework for developing efficient, high-performance domain-specific language models.
+References
+[1]
+Brown, T., Mann, B., Ryder, N., Subbiah, M., Kaplan, J.D., Dhariwal, P., Neelakantan, A., Shyam, P., Sastry, G., Askell, A., et al.: Language models are few-shot learners. Advances in neural information processing systems 33, 1877–1901 (2020)
+[2]
+Chowdhery, A., Narang, S., Devlin, J., Bosma, M., Mishra, G., Roberts, A., Barham, P., Chung, H.W., Sutton, C., Gehrmann, S., et al.: PaLM: Scaling language modeling with pathways. Journal of Machine Learning Research 24(240), 1–113 (2023)
+[3]
+Zhang, S., Roller, S., Goyal, N., Artetxe, M., Chen, M., Chen, S., Dewan, C., Diab, M., Li, X., Lin, X.V., et al.: OPT: Open pre-trained transformer language models. arXiv preprint arXiv:2205.01068 (2022)
+[4]
+Zheng, L., Li, Z., Zhang, H., Zhuang, Y., Chen, Z., Huang, Y., Wang, Y., Xu, Y., Zhuo, D., Xing, E.P., et al.: Alpa: Automating inter- and intra-operator parallelism for distributed deep learning. In: 16th USENIX Symposium on Operating Systems Design and Implementation (OSDI 22), pp. 559–578 (2022)
+[5]
+Hinton, G., Vinyals, O., Dean, J.: Distilling the knowledge in a neural network. arXiv preprint arXiv:1503.02531 (2015)
+[6]
+Liu, J., Zhang, C., Guo, J., Zhang, Y., Que, H., Deng, K., Liu, J., Zhang, G., Wu, Y., Liu, C., et al.: DDK: Distilling domain knowledge for efficient large language models. Advances in Neural Information Processing Systems 37, 9827–98319 (2024)
+[7]
+Kang, M., Jeong, J., Lee, S., Cho, J., Hwang, S.J.: Distilling LLM agent into small models with retrieval and code tools. arXiv preprint arXiv:2505.17612 (2025)
+[8]
+Gu, Y., Dong, L., Wei, F., Huang, M.: MiniLLM: Knowledge distillation of large language models. arXiv preprint arXiv:2306.08543 (2023)
+[9]
+Lopez-Paz, D., Bottou, L., Schölkopf, B., Vapnik, V.: Unifying distillation and privileged information. arXiv preprint arXiv:1511.03643 (2015)
+[10]
+Panigrahi, A., Liu, B., Malladi, S., et al.: Progressive distillation induces an implicit curriculum. The Thirteenth International Conference on Learning Representations
+[11]
+Mirzadeh, S. I., Farajtabar, M., Li, A., Levine, N., Matsukawa, A., Ghasemzadeh, H.: Improved knowledge distillation via teacher assistant. In: Proceedings of the AAAI Conference on Artificial Intelligence, vol. 34, pp. 5191–5198 (2020)
+[12]
+Harutyunyan, H., Rawat, A. S., Menon, A. K., Kim, S., Kumar, S.: Supervision Complexity and its Role in Knowledge Distillation. The Eleventh International Conference on Learning Representations.
+[13]
+Jafari, A., Rezagholizadeh, M., Sharma, P., Ghodsi, A.: Annealing Knowledge Distillation. In: Proceedings of the 16th Conference of the European Chapter of the Association for Computational Linguistics: Main Volume, pp. 2493–2504 (2021)
+[14]
+Shi, W., Song, Y., Zhou, H., Li, B., Li, L.: Follow your path: a progressive method for knowledge distillation. In: Joint European Conference on Machine Learning and Knowledge Discovery in Databases, pp. 596–611. Springer (2021)
+[15]
+DTO-KD: Dynamic Trade-off Optimization for Effective Knowledge Distillation. (2025). Retrieved from OpenReview. https://openreview.net/forum?id=QMItTyQW92
+[16]
+Li, P., Ping, C., Wang, W., Song, M.: Sample-level Adaptive Knowledge Distillation for Action Recognition. In: Proceedings of the 33rd ACM International Conference on Multimedia, pp. 544–552 (2025)
+[17]
+Wen, Y., Li, Z., Du, W., Mou, L.: F-divergence minimization for sequence-level knowledge distillation. arXiv preprint arXiv:2307.15190 (2023)
+[18]
+Shing, M., Misaki, K., Bao, H., et al.: TAID: Temporally adaptive interpolated distillation for efficient knowledge transfer in language models. arXiv preprint arXiv:2501.16937 (2025)
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from
+

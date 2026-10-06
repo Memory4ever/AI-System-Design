@@ -1,0 +1,381 @@
+PRIMARY https://arxiv.org/html/2601.22129v1
+Selected necessary source passages only; not a fulltext or all-appendix review.
+
+SELECTION b3_22129
+
+2 SWE-Replay
+To enable efficient and effective exploration for software engineering agents, we propose SWE-Replay, a novel algorithm that reduces the cost of trajectory sampling while improving trajectory quality. The key idea of SWE-Replay is to reuse previously sampled trajectories by resuming exploration at carefully selected intermediate steps, rather than repeatedly generating trajectories from scratch.
+As shown in Figure 1, SWE-Replay maintains an archive of previously sampled trajectories and updates the archive with newly generated ones. Specifically, SWE-Replay initializes the archive with a single trajectory generated from scratch. It then iteratively conducts a stochastic sampling to decide whether to explore by generating a new trajectory from scratch or to exploit existing trajectories by resuming from intermediate steps in the archive. To exploit existing trajectories, SWE-Replay will select a critical step sts_{t} from the archive based on its potential to explore new repository space and its reasoning importance (§2.1), restore the environment state before this step (i.e., s1,2,⋯,t−1s_{1,2,\cdots,t-1}) efficiently (§2.2), and resume exploration by generating a new step st′s^{\prime}_{t} to replace sts_{t} for new branches (§2.3).
+Figure 3: Example of tool calls and their file-level representations. Step 1 is skipped as no file has been explored before it.
+2.1 Selecting Steps
+Reliable identification of critical intermediate steps is central to efficient exploration. Intuitively, resuming at such steps allows the agent to revisit valuable regions of the search space that are not explored comprehensively and require more reasoning efforts from the agent.
+To this end, SWE-Replay employs a hierarchical selection pipeline consisting of four components, as shown in Figure 2: (1) filtering low-quality trajectories from the archive (§2.1.1), (2) grouping steps using abstract state representations and selecting the critical group (§2.1.2), (3) selecting concrete steps within a group based on reasoning intensity (§2.1.3), and (4) balancing exploration and exploitation through stochastic sampling (§2.1.4).
+2.1.1 Filtering Low-Quality Trajectories
+To ensure that resumed exploration originates from reliable trajectories, SWE-Replay first removes low-quality trajectories from the archive. Trajectory quality is evaluated based on the final generated patch. In particular, we check whether the patch causes any existing regression tests to fail, and discard all trajectories whose final patches introduce regression failures. The motivation is that trajectories leading to regression failures often contain misleading intermediate steps, such as exploring irrelevant files, which can propagate the same errors when reused. In practice, we follow Agentless (Xia et al., 2024) to obtain regression tests for each issue. Since the original repositories do not provide reproduction tests and LLM-generated tests may be unreliable, SWE-Replay exclusively relies on existing regression tests from the repository, as shown in Figure 2 (❶).
+2.1.2 Grouping Steps via Abstraction
+A key challenge in selecting critical steps is to distinguish meaningfully different exploration steps while avoiding fragmentation caused by superficial differences. Although one could represent each step using the raw environment output, such representations are typically long and nearly unique, making similarity assessment ineffective. Instead, SWE-Replay introduces a lightweight yet effective abstraction by representing each step using the set of repository files explored before that step, as shown in Figure 3.
+We refer to this representation as a state. Each state corresponds to a subset of steps that have explored the same files. Let {s1,s2,…,sn}\{s_{1},s_{2},\dots,s_{n}\} denote the set of distinct abstract states extracted from all steps, where state sis_{i} corresponds to viv_{i} concrete steps. To prioritize states that access rarely explored regions of the repository, SWE-Replay assigns a sampling probability pip_{i} to each state based on its rarity:
+pi=softmax⁡(1vi)=e1vi∑j=1ne1vj.p_{i}=\mathrm{softmax}\!\left(\frac{1}{v_{i}}\right)=\frac{e^{\frac{1}{v_{i}}}}{\sum_{j=1}^{n}e^{\frac{1}{v_{j}}}}.
+(1)
+This formulation favors states reached by fewer steps, but still maintains a balanced trade-off between exploration and exploitation through sampling rather than greedily choosing the most rare state. Softmax normalization is adopted to maintain the sampling diversity for better performance with a flatter distribution, as validated in §A.7.
+Figure 4: Example of reasoning contents with different intensity.
+2.1.3 Detecting Reasoning-intensive Steps
+After selecting a critical abstract state, SWE-Replay must choose a concrete step at which to resume exploration. Typically, modern agents are designed to perform explicit reasoning at each step. Inspired by this, we select the final step by prioritizing reasoning-intensive ones, as shown in Figure 2 (❸). It is based on the intuition that steps requiring more deliberation are often critical decision points in the task. Therefore, SWE-Replay branches at such steps to explore alternative solutions by sampling new steps to replace them.
+To measure the reasoning intensity, one straightforward idea is to use the raw reasoning length. However, the raw length cannot effectively convey the reasoning intensity, as the reasoning content may include copies of raw code snippets or concrete inputs, which significantly extend the length without providing any meaningful reasoning gains. As shown in Figure 4, while step 19 has longer reasoning content, its reasoning consists of two detailed but less informative edit drafts; in contrast, step 18 contains multiple short, insightful paragraphs analyzing the program logic. Based on this observation, SWE-Replay instead uses the number of paragraphs in the reasoning content as a robust structural proxy to measure the reasoning intensity. Empirical ablation (§A.6) confirms that paragraph count outperforms raw token length (60.0% vs 58.0%), validating that structural segmentation captures reasoning quality better than verbosity.
+Given the viv_{i} steps {si,1,…,si,vi}\{s_{i,1},\dots,s_{i,v_{i}}\} within state sis_{i}, with corresponding numbers of reasoning paragraphs {li,1,…,li,vi}\{l_{i,1},\dots,l_{i,v_{i}}\}, similar to §2.1.2, SWE-Replay assigns sampling probabilities as follows:
+pi,j=softmax⁡(li,j)=eli,j∑j=1vieli,j.p_{i,j}=\mathrm{softmax}\!\left(l_{i,j}\right)=\frac{e^{l_{i,j}}}{\sum_{j=1}^{v_{i}}e^{l_{i,j}}}.
+(2)
+2.1.4 Balancing Exploration and Exploitation
+To support effective test-time scaling, SWE-Replay balances exploration (sampling trajectories from scratch) and exploitation (resuming from prior trajectories) as follows:
+•
+Initialization (Exploration): The first run always generates a trajectory from scratch using only the original issue description, forming the initial archive.
+•
+Scaling (Exploration vs. Exploitation): For subsequent runs, exploration and exploitation are treated as independent Bernoulli trials with probability p=0.5p=0.5. The strategy for each run is then sampled stochastically.
+This design enables SWE-Replay to naturally trade off coverage and reuse as scaling proceeds.
+Table 1: Results on SWE-Bench Verified.
+Agent Scaffold
+LLM Backend
+Scaling Method
+Performance
+Efficiency
+% Resolved ↑\uparrow
+# Input (k) ↓\downarrow
+# Output (k) ↓\downarrow
+Avg. Cost ($) ↓\downarrow
+mini-SWE-agent
+Gemini-2.5-Pro
+Naive Scaling
+58.0%
+3464.5
+98.3
+1.52
+SWE-Replay
+60.2%
+2980.4
+86.0
+1.32
+Improvement
+↑\uparrow 3.8%
+↓\downarrow 14.0%
+↓\downarrow 12.5%
+↓\downarrow 13.2%
+Devstral-Small-2
+Naive Scaling
+62.2%
+14914.9
+130.0
+1.53
+SWE-Replay
+63.2%
+13221.4
+111.2
+1.36
+Improvement
+↑\uparrow 1.6%
+↓\downarrow 11.4%
+↓\downarrow 14.5%
+↓\downarrow 11.1%
+Gemini-3-Pro
+Naive Scaling
+75.4%
+6849.2
+106.4
+2.88
+SWE-Replay
+75.6%
+5874.3
+85.4
+2.38
+Improvement
+↑\uparrow 0.3%
+↓\downarrow 14.2%
+↓\downarrow 19.7%
+↓\downarrow 17.4%
+Live-SWE-agent
+Devstral-Small-2
+Naive Scaling
+63.2%
+14993.9
+134.9
+1.54
+SWE-Replay
+65.0%
+13233.0
+115.7
+1.36
+Improvement
+↑\uparrow 2.8%
+↓\downarrow 11.7%
+↓\downarrow 14.2%
+↓\downarrow 11.7%
+Gemini-3-Pro
+Naive Scaling
+75.6%
+6948.7
+107.0
+2.93
+SWE-Replay
+75.8%
+6395.0
+91.4
+2.59
+Improvement
+↑\uparrow 0.3%
+↓\downarrow 8.0%
+↓\downarrow 14.6%
+↓\downarrow 11.6%
+Table 2: Results on SWE-Bench Pro and SWE-Bench Multilingual.
+Benchmark
+Scaling Method
+% Resolved ↑\uparrow
+Avg. Cost ($) ↓\downarrow
+Pro
+Naive Scaling
+28.73%
+1.29
+SWE-Replay
+28.97%
+1.25
+Improvement
+↑\uparrow 0.8%
+↓\downarrow 3.1%
+Multilingual
+Naive Scaling
+31.0%
+1.22
+SWE-Replay
+38.0%
+1.11
+Improvement
+↑\uparrow 22.6%
+↓\downarrow 9.0%
+2.2 Replaying Environment before Steps
+Once a target step is selected, SWE-Replay must restore the replay context and environment state before this step, as shown in Figure 1. Since prior trajectories are recorded in the archive, the replay context can be retrieved directly. For the environment state, storing full snapshots is storage-intensive, and replaying entire action sequences can be inefficient, as some actions (e.g., running test suites) are costly. To address this, we observe that software agents modify the environment mostly through text edits and file creation/deletion in the repository. Consequently, we start by checking with pattern matching whether agents’ actions have mutated non-repo state (e.g., package installs): if unchanged, we will only record the repository diff for each step: when resuming from a step, the environment is restored by applying the stored diffs to the repository, avoiding action replay and improving efficiency; otherwise, SWE-Replay will replay the original action sequence to restore the environment.
+2.3 Branching at Steps
+After restoration, the agent resumes exploration by sampling a new step to replace the selected step and then continuing to complete a new trajectory, as shown in Figure 1. The resulting new trajectory, which combines the replay context and generated suffix, is added to the archive for future reuse.
+Overhead analysis.
+Unlike existing works (Antoniades et al., 2024; Zeng et al., 2025) which require costly tree search or model training, SWE-Replay introduces negligible overhead. Firstly, step selection only requires lightweight system operations (e.g., loading trajectory files) and simple numeric computations, which do not introduce any meaningful overhead. Likewise, the overhead of returning to the steps is negligible: it only requires applying a diff file, which takes on the order of seconds and is insignificant compared to the cost of generating full trajectories.
+Table 3: Ablation on SWE-Replay designs. When selection strategies are disabled ( ✗), the method defaults to uniform random selection.
+Naive
+Scaling
+Trajectory
+Filtering
+Selection #1:
+Representation
+Selection #2:
+Reasoning
+Performance
+Efficiency
+% Resolved ↑\uparrow
+# Input (k) ↓\downarrow
+# Output (k) ↓\downarrow
+Avg. Cost ($) ↓\downarrow
+✔
+–
+–
+–
+52.0%
+16814.7
+149.4
+1.73
+–
+✗
+✗
+✗
+56.0%
+17373.3
+132.1
+1.78
+–
+✔
+✗
+✗
+56.0%
+14952.7
+117.4
+1.53
+–
+✔
+✔
+✗
+58.0%
+15083.4
+126.7
+1.55
+–
+✔
+✔
+✔
+60.0%
+14795.3
+131.8
+1.52
+3 Evaluation
+3.1 Experimental Setup
+Implementation.
+SWE-Replay is generalizable across various agent scaffolds. In our experiments, we implement SWE-Replay on top of two popular frameworks: mini-SWE-agent (Yang et al., 2024) and Live-SWE-agent (Xia et al., 2025). We evaluate performance using two closed-source and one open-source LLM backends: Gemini-2.5-Pro (Comanici et al., 2025), Gemini-3-Pro44
+4
+https://deepmind.google/models/gemini/, and Devstral-Small-255
+5
+https://mistral.ai/news/devstral-2-vibe-cli. We sample ten patches per issue and employ an Agentless-style selection mechanism to submit the final solution (Xia et al., 2024). More details are provided in Appendix A.1.
+Datasets.
+We evaluate SWE-Replay on three primary datasets: SWE-Bench Verified, SWE-Bench Pro (Deng et al., 2025), and SWE-Bench Multilingual. Following prior works (Zhang et al., 2025a; Xia et al., 2025), we utilize SWE-Bench Verified mini66
+6
+https://github.com/mariushobbhahn/SWEBench-verified-mini, a 50-problem subset of SWE-Bench Verified, for our ablation studies in §3.3. Further dataset details are presented in Appendix A.2.
+Baselines and Metrics.
+Our primary baseline is naive scaling, where all ten trajectories are sampled from scratch. In contrast, SWE-Replay generates the initial trajectory from scratch and performs exploration-exploitation sampling (§2.1.4) for the remaining nine. We do not compare directly with SWE-Search or Satori-SWE as they rely on pre-defined tool templates and are incompatible with the open-ended action spaces of modern agents. Instead, we consider an LLM-as-a-Judge baseline (Table 4) where we replace step selection in SWE-Replay with LLM-as-a-Judge to estimate step quality and select steps based on the score.
+Following standard practices (Xia et al., 2024; Xia et al., 2025), we report two metrics: (1) Performance, measured by the resolve rate; and (2) Efficiency, measured by the average number of input/output tokens and the cost per problem. Costs account for explicit prompt caching, as SWE-Replay maximizes prefix sharing. See Appendix A.3 for cost modeling details.
+Table 4: Ablation on different step selection methods.
+Step Selection
+% Resolved ↑\uparrow
+Avg. Cost ($) ↓\downarrow
+Agent
+Reward
+Total
+Random
+56.0%
+1.53
+0
+1.53
+LLM-as-a-Judge
+54.0%
+1.44
+1.87
+3.31
+SWE-Replay
+60.0%
+1.52
+0
+1.52
+3.2 Main Results
+SWE-Bench Verified.
+Table 1 presents the comparative results of SWE-Replay and naive test-time scaling on SWE-Bench Verified. We observe that SWE-Replay consistently achieves a higher resolve rate while incurring lower average costs across all agent scaffolds and LLM backends. Specifically, SWE-Replay reduces the computational cost of naive scaling by up to 17.4% while improving performance by up to 3.8%. These results highlight the ability of SWE-Replay to deliver consistent efficiency gains and performance improvements without requiring specialized reward models.
+SWE-Bench Pro and Multilingual.
+We conduct additional evaluations on the more complex SWE-Bench Pro and Multilingual benchmarks, using Devstral-Small-2 with mini-SWE-agent. Table 2 shows that SWE-Replay maintains its superiority over naive scaling, achieving an up to 22.6% performance gain with an up to 9.0% reduction in cost. These results confirm that SWE-Replay generalizes effectively to enterprise-level multilingual SWE problems.
+3.3 Ablation Experiments
+Ablation of SWE-Replay Components.
+We perform ablation studies to validate the design choices of SWE-Replay, focusing on three core components: trajectory filtering, step grouping via abstraction, and step selection based on reasoning intensity. Following the setup in §3.1, all ablations use the Devstral-Small-2 backend with Live-SWE-agent as it achieves a better performance on SWE-Bench Verified. As shown in Table 3, the full SWE-Replay implementation achieves the best results, with a 60.0% resolve rate and an average cost of $1.52 per problem. Progressively disabling these components leads to degradation in both performance and efficiency. These findings underscore the necessity of each component in the SWE-Replay pipeline.
+Figure 5: Scaling curve of SWE-Replay for Devstral-Small-2.
+Comparison of LLM-as-a-Judge and SWE-Replay.
+We experiment to study whether we can replace the step selection mechanism of SWE-Replay with LLM-as-a-Judge. Specifically, we explore directly using LLM-as-a-Judge to estimate the quality of each step in the archive and then sampling one based on the LLM-generated quality score. More details are included in Appendix A.4. As shown in Table 4, LLM-as-a-Judge performs worse than SWE-Replay while requiring additional costs to estimate the quality score using an LLM, demonstrating that step selection in SWE-Replay is crucial to boost the scaling performance without being impacted by potentially inaccurate LLM-as-a-Judge.
+Figure 6: Distribution of repository files explored by SWE-Replay and naive scaling.
+Scaling analysis of SWE-Replay.
+We evaluate how well the resolve rate on SWE-Bench Verified scales with the number of samples in SWE-Replay. Figure 5 shows that increasing the number of samples enhances its performance steadily, while outperforming naive scaling consistently.
+More ablations on the impact of different step representations (§A.5), reasoning intensity representations (§A.6), and normalizations (§A.7) are detailed in the Appendix.
+4 Discussion
+Figure 7: Example of fixing failure due to inadequate exploration. Naive scaling fixated on message.py (incorrect), whereas SWE-Replay successfully branched out to explore utils.py (correct).
+4.1 SWE-Replay Diversifies Repository Exploration
+A core intuition motivating the step selection mechanism of SWE-Replay (§2.1.2) is to explore repository spaces that are largely ignored in prior trials. To verify whether SWE-Replay can diversify the search space, we analyze the distribution of repository files visited by the agent on SWE-Bench Verified. Specifically, for each problem, we extract the set of files explored during the scaling process. To aggregate distributions across problems with varying file structures, we normalize file identities by ranking them based on visitation frequency. For a given problem, the most frequently visited file is assigned rank 1, the second most visited rank 2, and so on. This normalization allows us to average the exploration frequency of files across different problems. Thus, effectively accessing the ”tail” of the distribution indicates greater diversity.
+Figure 6 illustrates the distribution of repository files across different LLMs. A key observation is that while naive scaling and SWE-Replay exhibit similar probabilities of exploring the most frequent (top-ranked) files, SWE-Replay consistently increases the probability of visiting less frequent files (the long tail). These results confirm that SWE-Replay successfully encourages the agent to investigate less frequently visited files. The case study in Figure 7 demonstrates the practical advantage of this diversity. In this instance, the issue description explicitly points to message.py as the potential location of the bug. Consequently, naive scaling fixates on this file, generating a patch that fails to address the root cause. In contrast, SWE-Replay breaks away from this local optimum to explore utils.py, successfully fixing the issue at a lower level. This highlights the critical importance of exploring a diverse repository space to locate the correct patch.
+
+SELECTION b3more_22129
+A.1 Implementation Details
+Following the default setting of mini-SWE-agent (Yang et al., 2024), we set a maximum step limit of 250 for Gemini-2.5-Pro and Gemini-3-Pro. For Devstral-Small-2, we set a maximum step limit of 128 to accelerate the experiments. We ignore the cost limit in our experiments to ensure that the agents have enough opportunities to explore the repositories without being affected by the external model pricing. Based on our experience, we set a temperature of 0.8 for Gemini-2.5-Pro and a temperature of 0.2 for Devstral-Small-2 and Gemini-3-Pro to achieve the best performance. This also gives us a chance to observe the performance of SWE-Replay under different levels of temperatures. We sample ten trajectories per problem during scaling for all the experiments on SWE-Bench Verified and SWE-Bench Multilingual. Due to the large size of SWE-Bench Pro, we sample five trajectories per problem on this benchmark.
+While we follow the Agentless (Xia et al., 2024) pipeline to select the final patch, we remove LLM-generated reproduction tests in the pipeline to remove any potential noise. So our final selection pipeline is: (1) run the regression tests for all the candidate patches, (2) filter out all the candidate patches with regression failures, and (3) select the final patch out of the remaining ones using majority voting.
+A.2 Benchmark Details
+The SWE-Bench Verified benchmark comprises 500 SWE tasks, where the objective is to modify a repository based on a provided description. These instances are human-validated to ensure that the problem descriptions contain sufficient information for a solution. To further test the agent on realistic, enterprise-level complexity, we also employ SWE-Bench Pro and SWE-Bench Multilingual. SWE-Bench Pro comprises 731 publicly available problems and differs from SWE-Bench Verified by presenting higher difficulty levels across a diverse range of repositories and programming languages. Similarly, SWE-Bench Multilingual is a benchmark of 300 software engineering tasks across 9 programming languages (JavaScript, TypeScript, Rust, Ruby, Go, C/C++, PHP, and Java).
+SWE-Bench Verified mini is a subset of SWE-Bench Verified that uses 50 instead of 500 data points, requires 5GB instead of 130GB of storage, and has approximately the same distribution of performance, test pass rate, and difficulty as the original dataset. It includes the following problems from SWE-Bench Verified:
+•
+django__django-11790
+•
+django__django-11815
+•
+django__django-11848
+•
+django__django-11880
+•
+django__django-11885
+•
+django__django-11951
+•
+django__django-11964
+•
+django__django-11999
+•
+django__django-12039
+•
+django__django-12050
+•
+django__django-12143
+•
+django__django-12155
+•
+django__django-12193
+•
+django__django-12209
+•
+django__django-12262
+•
+django__django-12273
+•
+django__django-12276
+•
+django__django-12304
+•
+django__django-12308
+•
+django__django-12325
+•
+django__django-12406
+•
+django__django-12708
+•
+django__django-12713
+•
+django__django-12774
+•
+django__django-9296
+•
+sphinx-doc__sphinx-10323
+•
+sphinx-doc__sphinx-10435
+•
+sphinx-doc__sphinx-10466
+•
+sphinx-doc__sphinx-10673
+•
+sphinx-doc__sphinx-11510
+•
+sphinx-doc__sphinx-7590
+•
+sphinx-doc__sphinx-7748
+•
+sphinx-doc__sphinx-7757
+•
+sphinx-doc__sphinx-7985
+•
+sphinx-doc__sphinx-8035
+•
+sphinx-doc__sphinx-8056
+•
+sphinx-doc__sphinx-8265
+•
+sphinx-doc__sphinx-8269
+•
+sphinx-doc__sphinx-8475
+•
+sphinx-doc__sphinx-8548
+•
+sphinx-doc__sphinx-8551
+•
+sphinx-doc__sphinx-8638
+•
+sphinx-doc__sphinx-8721
+•
+sphinx-doc__sphinx-9229
+•
+sphinx-doc__sphinx-9230
+•
+sphinx-doc__sphinx-9281
+•
+sphinx-doc__sphinx-9320
+•
+sphinx-doc__sphinx-9367
+•
+sphinx-doc__sphinx-9461
+•
+sphinx-doc__sphinx-9698
+A.3 Metric Details
+To evaluate computational efficiency, we record the cumulative number of input and output tokens across all ten trajectories for each problem. However, raw token counts fail to capture the practical benefits of prompt caching, an inference optimization that stores the processed states of repeated text sequences to reduce latency and cost.
+The branching mechanism of SWE-Replay, which resumes execution from intermediate steps, naturally yields substantial shared prefixes, thereby maximizing the utility of prompt caching. Although current commercial LLM backends (e.g., Gemini-2.5-Pro, Gemini-3-Pro) support caching, their default implicit prompt caching policies do not always guarantee deterministic cost savings. Consequently, to provide a precise assessment of the cost reductions enabled by our method, we report the cost after enabling explicit prompt caching. Specifically, we store all the prior generations in the prompt cache during scaling and report the cost of input/output tokens from LLMs.
+

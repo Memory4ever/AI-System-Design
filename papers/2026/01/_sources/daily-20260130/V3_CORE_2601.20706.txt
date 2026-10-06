@@ -1,0 +1,428 @@
+https://arxiv.org/html/2601.20706v1
+Beyond GEMM-Centric NPUs: Enabling Efficient Diffusion LLM Sampling
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I Introduction
+II Background and Motivation
+II-A PLENA Accelerator
+II-B Diffusion-based LLMs and Blocked Sampling
+III Methodology
+III-A Proposed NPU Architecture
+III-B Hardware-Friendly Sampling Flow
+III-C ISA Extensions for dLLM and Phased Sampling Execution
+III-D Co-design and Verification Framework
+IV Experimental Results
+IV-A Experimental Setup
+IV-B Latency and Memory Utilization
+IV-C Execution Efficiency and Bottleneck Analysis
+IV-D Post-Synthesis Area and Power Evaluation
+V Conclusion
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2601.20706v1 [cs.AR] 28 Jan 2026
+Beyond GEMM-Centric NPUs:
+Enabling Efficient Diffusion LLM Sampling
+Binglei Lou1,
+Haoran Wu2,
+Yao Lai2,
+Jiayi Nie2,
+Can Xiao1,
+Xuan Guo1,
+Rika Antonova2,
+Robert Mullins2,
+and Aaron Zhao1
+Affiliation:
+Affiliation:
+1Imperial College London,
+2University of Cambridge, UK
+Abstract
+Diffusion Large Language Models (dLLMs) introduce iterative denoising to enable parallel token generation, but their sampling phase displays fundamentally different characteristics compared to GEMM-centric transformer layers. Profiling on modern GPUs reveals that sampling can account for up to 70%70\% of total model inference latency—primarily due to substantial memory loads and writes from vocabulary-wide logits, reduction-based token selection, and iterative masked updates. These processes demand large on-chip SRAM and involve irregular memory accesses that conventional NPUs struggle to handle efficiently.
+To address this, we identify a set of critical instructions that an NPU architecture must specifically optimize for dLLM sampling. Our design employs lightweight non-GEMM vector primitives, in-place memory reuse strategies, and a decoupled mixed-precision memory hierarchy. Together, these optimizations deliver up to a 2.53×2.53\times speedup over the NVIDIA RTX A6000 GPU under an equivalent nm technology node. We also open-source our cycle-accurate simulation and post-synthesis RTL verification code, confirming functional equivalence with current dLLM PyTorch implementations.
+I Introduction
+Autoregressive (AR) large language models (LLMs) are fundamentally constrained by sequential token generation during decoding, resulting in memory-bound bottlenecks on high-throughput accelerators. Diffusion-based LLMs (dLLMs) [1] have recently emerged as a promising alternative by enabling parallel token denoising, thereby amortizing token dependencies and increasing parallelism. By jointly refining multiple tokens across iterative denoising steps, dLLMs increase the arithmetic intensity of the decoding phase and mitigate the memory-bandwidth limitations inherent in AR decoding.
+However, this shift in generation paradigm introduces new systemic inefficiencies. Figure 1 reports the latency breakdown for two representative dLLMs, LLaDA-8B-Instruct and LLaDA-MoE-7B-A1B, evaluated using the dInfer framework [2] with optimized vLLM backends. Our empirical analysis shows that although the transformer-based denoising phase (model) accounts for the majority of floating-point operations, the subsequent sampling phase—which performs vocabulary-wide reductions, rank-based selection, and irregular memory access—constitutes a disproportionately large fraction of the end-to-end latency, reaching up to 71% under mixture-of-experts (MoE) and dual KV-cache configurations [3]. As the community adopts increasingly aggressive quantization (e.g., 4/8-bit weights and activations), the execution time of the model phase is expected to shrink further. Following Amdahl’s Law, the inefficient sampling stage thus becomes an inevitable long-tail bottleneck, limiting the throughput benefits of model-side optimization.
+At each denoising iteration, the sampling stage materializes a logits tensor of dimension [B×L×V][B\times L\times V], where BB denotes the batch size, LL is the block size, and VV is the vocabulary size (reaching 120∼\sim160k\mathrm{k} in state-of-the-art dLLMs such as LLaDA [4] and DREAM [5]). Even a single batch with L=64L=64 requires 16∼\sim19 MB\mathrm{MB} under 16-bit floating-point representation. Multiple in-flight batches frequently exceed on-chip memory capacity, forcing off-chip transfers across DDR/HBM and exacerbating latency. While sampling quantization offers a promising orthogonal approach to reducing memory traffic, our work focuses on addressing the fundamental structural mismatch between the non-GEMM-centric sampling workload and the GEMM-centric execution pipelines in modern neural processing units (NPUs).
+Contemporary NPU designs, exemplified by PLENA [6], are deeply optimized for dense matrix computations such as attention and MLP layers, yet provide limited support for the control-intensive, reduction-heavy, and memory-irregular operations required by diffusion sampling. As a result, sampling either incurs significant instruction overhead or offloads execution to host CPUs, degrading overall hardware efficiency and utilization [7, 8, 9, 10].
+To address these challenges, we propose d-PLENA, a vector-scalar-centric architectural extension that enables efficient on-NPU execution of dLLM sampling. Our contributions are as follows:
+Fig. 1: Latency breakdown of the LLaDA model on an A6000 GPU, evaluated across a broad parameter space: batch sizes from 1 to 32, denoising steps from 1 to 32, generation lengths from 64 to 1024 tokens, and block sizes from 8 to 64.
+1.
+A hardware-friendly execution flow for softmax-based diffusion sampling that enables in-place computation and phased memory reuse, while maintaining numerical equivalence to standard implementations.
+2.
+We propose a set of lightweight non-GEMM ISA primitives to accelerate ArgMax, Top-kk selection, and masked token updates, which are essential for efficient diffusion sampling.
+3.
+A decoupled mixed-precision memory hierarchy that separates floating-point and integer data domains, reducing memory fragmentation and control-path interference.
+4.
+Comprehensive evaluation using a cycle-accurate simulator and post-synthesis RTL verification demonstrates numerical correctness and analyzes the impact of batch size, diffusion steps, and vocabulary size on sampling latency, on-chip SRAM utilization, HBM bandwidth, and overall hardware efficiency.
+II Background and Motivation
+II-A PLENA Accelerator
+PLENA [6] provides an end-to-end NPU development stack for Transformer-based LLM inference, including a custom ISA, compiler, cycle-accurate simulator, and automated design space exploration.
+Its ISA is designed for standard autoregressive transformer-based LLMs, such as Llama-3, and provides native support for GEMM-intensive layers, normalization, and FlashAttention [11].
+The simulator models HBM-enabled memory systems using Ramulator [12], enabling detailed and realistic analysis of memory bandwidth, latency, and data movement for transformer inference workloads.
+While PLENA is effective for conventional AR workloads, it does not explicitly expose architectural or toolchain support for patterns that arise in diffusion-based sampling.
+II-B Diffusion-based LLMs and Blocked Sampling
+Fig. 2: Diffusion Large Language Model. For each timestep, the transformer predicts token confidences and updates the top-kk masked positions to progressively refine the sequence.
+Diffusion LLMs, such as LLaDA [4], generate tokens through iterative
+denoising rather than strictly autoregressive (AR) decoding. At each diffusion
+step tt, the model predicts vocabulary-wide logits for every token position,
+which are converted into a categorical distribution:
+𝐩(t)=softmax⁡(𝐳(t)),𝐳(t)∈ℝV,\mathbf{p}^{(t)}=\mathrm{softmax}(\mathbf{z}^{(t)}),\hskip 9.24994pt\mathbf{z}^{(t)}\in\mathbb{R}^{V},
+(1)
+where VV denotes the vocabulary size.
+For a batch of size BB and a total generation length LtotL_{\text{tot}}, a single
+diffusion step produces a logits tensor
+𝐙(t)∈ℝB×Ltot×V\mathbf{Z}^{(t)}\in\mathbb{R}^{B\times L_{\text{tot}}\times V},
+which constitutes the dominant data structure during sampling. For each token
+position ii, a scalar confidence score is computed from its corresponding
+vocabulary distribution 𝐩i(t)\mathbf{p}^{(t)}_{i} (e.g., the maximum predicted
+probability). The Top-kk token positions with the highest confidence scores are
+then selected and unmasked, committing their predicted tokens, while the remaining
+positions stay masked and are refined in subsequent diffusion steps, as illustrated
+in Fig. 2.
+Recent blocked dLLM approaches [13, 3] further improve
+efficiency by applying AR decoding across blocks while performing parallel diffusion
+within each block. Under this execution model, diffusion sampling at each step is
+restricted to an active block of tokens of block length LL, operating on the
+corresponding subtensor
+𝐙active(t)∈ℝB×L×V\mathbf{Z}^{(t)}_{\mathrm{active}}\in\mathbb{R}^{B\times L\times V},
+while the remaining token positions are either already committed or deferred to
+subsequent blocks. Covering the full sequence thus involves iterating over
+Ltot/LL_{\text{tot}}/L blocks, with diffusion applied independently within each
+active block.
+Although diffusion sampling algorithms continue to evolve, core operations such as vocabulary scanning, reduction, sorting, and masked selection remain largely invariant. This work targets these fundamental sampling primitives and maps them to hardware-efficient execution, as formalized in Algorithm 2.
+III Methodology
+III-A Proposed NPU Architecture
+Fig. 3: Proposed NPU architecture for diffusion sampling.
+As illustrated in Fig. 3, the system adopts a multi-domain storage hierarchy to efficiently handle heterogeneous data types. Large-scale tensors, such as logits, are stored in HBM using the MX format. During sampling, these logits are streamed into the Vector SRAM through a dedicated Dequantizer, which converts MX-encoded data into a configurable floating-point format (e.g., BF16). To mitigate memory fragmentation and alignment overheads, the on-chip storage is decoupled into Vector, FP, and Int SRAM. In particular, the Int SRAM is physically isolated from the high-throughput vector data path and interfaces with the host via a FIFO buffer to deliver final token IDs with minimal control-path interference.
+The execution core is composed of specialized compute units coordinated by an instruction decoder. The Vector Unit consists of two primary modules: a Reduction Unit and an Elementwise Unit. The Reduction Unit processes data in chunks of V​L​E​NVLEN and supports operations such as Max and Sum, producing scalar outputs that are forwarded to the FP or Int Units. The Elementwise Unit preserves vector dimensionality and supports multi-operand vector operations. To accelerate non-linear sampling kernels, the FP Unit provides hardware-native support for transcendental functions, including exe^{x} and 1/x1/x. These results can be directly broadcast back to the Vector Unit or buffered through the FP SRAM.
+III-B Hardware-Friendly Sampling Flow
+To streamline NPU execution, we reorganize the sampling flow into a hardware-friendly Stable-Max formulation, as illustrated in Algorithm 1. Unlike conventional softmax, which requires multiple memory passes and global normalization, the optimized Method 2 decomposes the computation into atomic primitives that map directly to dedicated hardware modules. Specifically, the Reduction Unit extracts the maximum value mm and accumulates the sum of shifted exponentials s​u​m​_​e​x​psum\_exp, while the FP Unit evaluates the transcendental functions exe^{x} and the reciprocal 1/x1/x. The intermediate e​x​p​_​s​h​i​f​t​e​dexp\_shifted values are written back in-place, overwriting the original logits buffer in the Vector SRAM to maintain a high memory utilization.
+Algorithm 1  Algorithmic Transformation: Software Softmax vs. Hardware-Friendly Stable-Max
+1:
+Method 1: Standard Softmax (PyTorch-like)
+2:
+m​a​x​_​i​d​x←argmax​(l​o​g​i​t​s)max\_idx\leftarrow\texttt{argmax}(logits)
+3:
+p←softmax​(l​o​g​i​t​s)p\leftarrow\texttt{softmax}(logits)
+4:
+x0​_​p←p⁡[m​a​x​_​i​d​x]x_{0}\_p\leftarrow p[max\_idx]
+5:
+Method 2: Stable-Max (NPU-optimized)
+6:
+m←max​(l​o​g​i​t​s)m\leftarrow\texttt{max}(logits)
+7:
+e​x​p​_​s​h​i​f​t​e​d←el​o​g​i​t​s−mexp\_shifted\leftarrow e^{logits-m}
+8:
+s​u​m​_​e​x​p←∑e​x​p​_​s​h​i​f​t​e​dsum\_exp\leftarrow\sum exp\_shifted
+9:
+x0​_​p←1.0/s​u​m​_​e​x​px_{0}\_p\leftarrow 1.0/sum\_exp
+III-C ISA Extensions for dLLM and Phased Sampling Execution
+TABLE I: Summary of Custom ISA Instructions
+Instruction (Format)
+Description
+V_RED_MAX_IDX (rd, rs1, rs2, rs3)
+Vector reduction operation that finds the maximum value and its index.
+S_ST_FP (rd, rs1, imm)
+Store scalar floating-point value from FP register rd to FP SRAM.
+S_ST_INT (rd, rs1, imm)
+Store scalar integer value from GP register rd to INT SRAM.
+S_MAP_V_FP (rd, rs1, imm)
+Transfer LL FP-format elements from FP SRAM to Vector SRAM.
+V_TOPK_MASK (rd, rs1, rs2, k_scalar)
+Performs top-kk sorting.
+V_SELECT_INT (rd, rs1, rs2, rs3)
+Masked element-wise select operation on INT SRAM.
+Table I summarizes the proposed ISA extensions, and Algorithm 2 outlines the high-level diffusion sampling flow adopted in LLaDA [4]. The temperature noise component based on the Gumbel-max trick is omitted for simplicity and will be incorporated in future work. The Transformer-based dataflow is encapsulated in the model() operation, whose output logits serve as the input to the sampling stage. The model() is invoked at each diffusion time step tt: at first tt, the input is formed by a blocked slice of the concatenated prompt and mask tokens, and in subsequent steps, the updated token sequence xx is fed back iteratively across TT diffusion steps. The proposed ISA primitives are invoked within each iteration, in coordination with existing PLENA instructions [6]. We identify four hardware-visible execution phases in which the instructions listed in Table I are exercised.
+Algorithm 2  Hardware-aware intra-block sampling for dLLMs
+1:
+model ⊳\triangleright LLM model before the diffusion denoising
+2:
+p​r​o​m​p​tprompt ⊳\triangleright input to the dLLM
+3:
+T,B,L,V,Vc​h​u​n​k,R,V​L​E​NT,B,L,V,V_{chunk},R,VLEN ⊳\triangleright diffusion steps, batch, generation length, vocabulary size, configurable chunk size†, iteration count R=V/Vc​h​u​n​kR=V/V_{chunk}, vector processing unit
+4:
+x∈ℝB×L←blocked​[p​r​o​m​p​t,m​a​s​k​_​i​d]x\in\mathbb{R}^{B\times L}\leftarrow\texttt{blocked}{[prompt,mask\_id]}
+5:
+k∈ℝB←get_num_transfer_tokens​(T)k\in\mathbb{R}^{B}\leftarrow\texttt{get\_num\_transfer\_tokens}(T)
+6:
+for t=1t=1 to TT do
+7:
+l​o​g​i​t​s∈ℝB×L×V←model​(x)logits\in\mathbb{R}^{B\times L\times V}\leftarrow\texttt{model}(x)
+8:
+m​_​i​d​x∈ℝB×L←(x==m​a​s​k​_​i​d)m\_idx\in\mathbb{R}^{B\times L}\leftarrow(x==mask\_id)
+9:
+for b=1b=1 to BB do
+10:
+for l=1l=1 to LL do
+11:
+Phase ❶ HBM →\rightarrow Vector →\rightarrow Scalar
+12:
+for r=1r=1 to RR do
+13:
+†Preload Vc​h​u​n​kV_{chunk} from HBM to Vector SRAM
+14:
+for i=1i=1 to (Vc​h​u​n​k/V​L​E​N)(V_{chunk}/VLEN) do
+15:
+x0​_​p​_​s​c​a​l​a​r←x_{0}\_p\_scalar\leftarrow Alg. 1, Method 2 (l​o​g​i​t​slogits)
+16:
+x0​_​s​c​a​l​a​r←x_{0}\_scalar\leftarrow argmax(l​o​g​i​t​slogits)
+17:
+end for
+18:
+end for
+19:
+Phase ❷ Scalar
+20:
+S​R​A​MF​P​[l]←fp_regSRAM_{FP}[l]\leftarrow\texttt{fp\_reg} (x0​_​p​_​s​c​a​l​a​rx_{0}\_p\_scalar)
+21:
+S​R​A​MI​N​T​[l]←gp_regSRAM_{INT}[l]\leftarrow\texttt{gp\_reg} (x0​_​s​c​a​l​a​rx_{0}\_scalar)
+22:
+end for
+23:
+Phase ❸ Scalar (FP) →\rightarrow Vector →\rightarrow Scalar (Int)
+24:
+x0_p←Map(SRAMF​P[1:L])x_{0}\_p\leftarrow\texttt{Map}(SRAM_{FP}[1:L])
+25:
+t​r​a​n​s​f​e​r​_​i​d​x←Sort_Top_k​(x0​_​p,m​_​i​d​x,k)transfer\_idx\leftarrow\texttt{Sort\_Top\_k}(x_{0}\_p,m\_idx,k)
+26:
+Phase ❹ Scalar (Int)
+27:
+x0←(SRAMI​N​T[1:L])x_{0}\leftarrow(SRAM_{INT}[1:L])
+28:
+x0←torch.where​(m​_​i​d​x,x0,x)x_{0}\leftarrow\texttt{torch.where}(m\_idx,x_{0},x)
+29:
+x←torch.where​(t​r​a​n​s​f​e​r​_​i​d​x,x,x0)x\leftarrow\texttt{torch.where}(transfer\_idx,x,x_{0})
+30:
+end for
+31:
+end for
+32:
+return xx
+† Vc​h​u​n​kV_{chunk} controls tiling: it enables chunked processing (Vc​h​u​n​k<VV_{chunk}<V) for SRAM-limited edge devices, or scales to B×L×VB\times L\times V in resource-rich scenarios to maximize data reuse via outer-loop preloading.
+Phase ❶. Logits are streamed from HBM into the Vector SRAM in parameterized chunks using PLENA’s H_PREFETCH_V instruction. In a streaming fashion, the confidence scalar x0​_​p​_​s​c​a​l​a​rx_{0}\_p\_scalar and the corresponding token index x0​_​s​c​a​l​a​rx_{0}\_scalar are computed via the Stable-Max reduction and the V_RED_MAX_IDX instruction, respectively. Notably, the max() and argmax() results can be achieved in a single instruction.
+Phase ❷. The computed scalar confidence values and token indices are written back to the FP SRAM and Int SRAM, respectively, using the decoupled scalar store instructions S_ST_FP and S_ST_INT.
+Phase ❸. Dense vectors are reconstructed from scalar entries in the Vector SRAM, after which a hardware-native Top-kk comparison generates a vectorized boolean transfer mask for candidate selection. This phase is implemented using S_MAP_V_FP and V_TOPK_MASK. The vector processed here has LL elements. We adopt a streaming insertion-based Top-kk architecture, which maintains a sorted list of the kk largest values among the current sequence using kk parallel comparators and shift registers. The hardware requires O⁡(k)O(k) area and performs O⁡(L⋅k)O(L\cdot k) comparison operations to maintain this operation.
+Phase ❹. Masked token updates are applied in the integer domain. Guided by vector masks, the Int Unit performs parallel masked selection to update token indices directly. This operation is functionally equivalent to an element-wise torch.where() and is realized through the V_SELECT_INT instruction.
+III-D Co-design and Verification Framework
+The hardware-software co-design framework is illustrated in Fig. 4. The front-end compiler facilitates the mapping of sampling logic from PyTorch configuration into the augmented d-PLENA ISA through automated scheduling and code generation. For architectural validation, the simulator-derived behavior is cross-verified against a PyTorch-based software reference for numerical accuracy. Finally, the design is implemented in RTL and processed through Synopsys synthesis tools to assess area and power overhead. This closed-loop framework ensures new architectural optimizations maintain high functional fidelity and predictable hardware performance.
+Fig. 4: Hardware–software co-design and verification workflow with cross-layer accuracy and latency checks.
+IV Experimental Results
+IV-A Experimental Setup
+Functional evaluation is performed using a HBM-enabled (HBM2e) cycle-accurate simulator  [12]. SystemVerilog RTL-level correctness is further verified using Cocotb-based simulation, while post-synthesis area and power results are obtained using Synopsys Design Compiler (DC) targeting a 7 nm OpenROAD design kit [14] under a 1 GHz clock frequency.
+The following numerical formats are used throughout the evaluation: MX format: MXFP8 (E4M3), BF16 for FP-related computations and storing, INT32 for INT-related processing.
+Section IV-B focuses on the edge scenario where on-chip SRAM capacity is limited. In this setting, we configure Vchunk<VV_{\text{chunk}}<V (following Algorithm 2) and evaluate V​L​E​NVLEN values of 64 and 128. The results show relatively high latency despite a small SRAM footprint (below 64 kB\mathrm{kB}). In contrast, Section IV-C assumes that the entire logit tensor is preloaded into vector SRAM to eliminate the multiple times of data movements from HBM to SRAM.
+IV-B Latency and Memory Utilization
+Fig. 5: Latency and Memory utilization of diffusion sampling.
+Figure 5 characterizes the performance of the proposed diffusion-sampling primitives under systematic sweeps of key workload parameters, with the model() execution excluded to isolate sampling overhead.
+All experiments fix the generation length to L=64L=64.
+We first evaluate scalability with respect to batch size and diffusion steps by sweeping B,T∈{2,4,8,16,32}B,T\in\{2,4,8,16,32\} while fixing V=2​kV=2\mathrm{k} and Vc​h​u​n​k=128V_{chunk}=128, as shown in Fig. 5(a) and (b), respectively.
+We then study the impact of vocabulary size by sweeping VV from 2k\mathrm{k} to 128k\mathrm{k} under a fixed configuration of B=2B=2, T=1T=1, and Vc​h​u​n​k=128V_{chunk}=128, as reported in Fig. 5(c).
+Finally, Fig. 5(d) examines the effect of chunk size Vc​h​u​n​kV_{chunk} by sweeping it from 128 to 30k\mathrm{k} at the largest vocabulary setting (V=128​kV=128\mathrm{k}), with B=2B=2 and T=1T=1 fixed.
+As shown in Fig. 5(a)–(c), the sampling latency scales approximately linearly with BB, TT, and VV, while the achieved HBM bandwidth remains nearly constant. This indicates stable bandwidth utilization and predictable performance scaling across these workload dimensions. In contrast, Fig. 5(d) shows that increasing the chunk size Vc​h​u​n​kV_{chunk} reduces latency and improves effective HBM bandwidth by amortizing control and reduction overheads. Beyond approximately 4k\mathrm{k} entries, both metrics saturate, suggesting that large Vector SRAM capacities are not required to achieve near-peak efficiency, which is favorable for edge-oriented deployments.
+The bottom inset of each sub-figure reports the on-chip SRAM footprint (in bytes) for the V​L​E​N=64VLEN=64 configuration. The SRAM cost is evaluated as the number of elements determined by Eq. 2–Eq. 4, multiplied by their respective byte widths. For the vector SRAM, Vchunk<VV_{\text{chunk}}<V corresponds to the edge mode, whereas in performance mode one can preload V⋅L⋅RV\cdot L\cdot R elements from HBM into SRAM with R<BR<B and RR divisible by BB. We report SRAM usage only for V​L​E​N=64VLEN=64 because the Int SRAM and Vector SRAM footprints are invariant to V​L​E​NVLEN, and the FP SRAM differs only by a small additive term proportional to V​L​E​NVLEN. Under the proposed primitive design and across all parameter sweeps in the edge scenario, the on-chip SRAM footprint is dominated by the batch size BB and Vc​h​u​n​kV_{chunk}; varying TT, VV, or V​L​E​NVLEN does not materially affect the overall requirement.
+Int elements=2⋅B⋅L\displaystyle\text{Int elements}=2\cdot B\cdot L
+(2)
+FP elements=max⁡{L,V​L​E​N}\displaystyle\text{FP elements}=\max\{L,VLEN\}
+(3)
+Vector elements={3⋅B⋅L+Vchunk,if ​Vchunk<V,3⋅B⋅L+V⋅L⋅R,otherwise\displaystyle\text{Vector elements}=\begin{cases}3\cdot B\cdot L+V_{\text{chunk}},&\text{if }V_{\text{chunk}}<V,\\
+3\cdot B\cdot L+V\cdot L\cdot R,&\text{otherwise}\end{cases}
+(4)
+IV-C Execution Efficiency and Bottleneck Analysis
+TABLE II: Sampling performance compared with GPU
+Performance
+A6000
+d-PLENA(512)
+d-PLENA(1024)
+d-PLENA(2048)
+Latency (ms\mathrm{ms})
+2.51
+3.41 (0.73×\times)
+1.79 (1.40×\times)
+0.99 (2.53×\times)
+Vector SRAM
+-
+8 MB\mathrm{MB}
+8 MB\mathrm{MB}
+8 MB\mathrm{MB}
+Int SRAM
+-
+8 kB\mathrm{kB}
+8 kB\mathrm{kB}
+8 kB\mathrm{kB}
+FP SRAM
+-
+1 kB\mathrm{kB}
+2 kB\mathrm{kB}
+4 kB\mathrm{kB}
+Table II compares GPU and d-PLENA performance on the same sampling workload with T=1T=1, B=16B=16, L=32L=32, and V=126​kV=126\mathrm{k}. Here, R=1R=1 is applied and indicates that single batches of the full block logits are preloaded into vector SRAM per iteration to balance the SRAM demand and HBM data transfers. With V​L​E​N={512,1024,2048}VLEN=\{512,1024,2048\}, the proposed NPU achieves a speedup up to 2.53×2.53\times over the NVIDIA RTX A6000.
+TABLE III: Instruction-level latency breakdown
+Category
+Cycles
+Ratio (%)
+Vector
+477,696
+48.2%
+Memory
+392,320
+39.6%
+Scalar
+117,412
+11.8%
+Other (control related)
+3,609
+0.4%
+Total
+991,038
+100.0%
+Table III further reveals the instruction-level breakdown of the largest test case (d-PLENA(2048)) in Table II. It shows that vector operations dominate the execution, accounting for 48.2% of the total cycles. Specifically, the hardware-accelerated reduction-sum (V_RED_SUM) and max-index (V_RED_MAX_IDX) functions significantly compress the computation latency. Furthermore, the HBM prefetch logic (H_PREFETCH_V) sustains a high utilization of 67.7×10967.7\times 10^{9} Bytes/sec, effectively feeding the vector units. The scalar and control overhead is kept below 12%, proving that our specialized ISA minimizes the scheduling overheads.
+IV-D Post-Synthesis Area and Power Evaluation
+Finally, Post-synthesis results are reported in Table IV for multiple V​L​E​NVLEN configurations. The synthesis results show that the area of the vector datapath scales approximately linearly with V​L​E​NVLEN, whereas the scalar and control components remain largely insensitive to V​L​E​NVLEN.
+TABLE IV: Post-synthesis results for varying V​L​E​NVLEN. The scalar area remains constant at 661​μ​m2661\,\mu\mathrm{m}^{2}.
+V​L​E​NVLEN
+Vector Area (mm2\mathrm{mm}^{2})
+Total Power (mW\mathrm{mW})
+512
+0.731
+381.72
+1024
+1.464
+762.65
+2048
+2.931
+1524.53
+V Conclusion
+As diffusion-based LLM adoption grows and model-side kernels get heavily optimized/quantized, the sampling tail threatens end-to-end latency. We analyzed these architectural challenges and proposed primitives are broadly suitable for reduction/selection-heavy workloads and could be exposed in future NPUs as standard features.
+References
+[1]
+R. Yu, Q. Li, and X. Wang (2025)
+Discrete diffusion in large language and multimodal models: a survey.
+arXiv preprint arXiv:2506.13759.
+Cited by: §I.
+[2]
+Y. Ma, L. Du, L. Wei, K. Chen, Q. Xu, K. Wang, G. Feng, G. Lu, L. Liu, X. Qi, et al. (2025)
+Dinfer: an efficient inference framework for diffusion language models.
+arXiv preprint arXiv:2510.08666.
+Cited by: §I.
+[3]
+C. Wu, H. Zhang, S. Xue, Z. Liu, S. Diao, L. Zhu, P. Luo, S. Han, and E. Xie (2025)
+Fast-dllm: training-free acceleration of diffusion llm by enabling kv cache and parallel decoding.
+arXiv preprint arXiv:2505.22618.
+Cited by: §I,
+§II-B.
+[4]
+S. Nie, F. Zhu, Z. You, X. Zhang, J. Ou, J. Hu, J. Zhou, Y. Lin, J. Wen, and C. Li (2025)
+Large language diffusion models.
+arXiv preprint arXiv:2502.09992.
+Cited by: §I,
+§II-B,
+§III-C.
+[5]
+J. Ye, Z. Xie, L. Zheng, J. Gao, Z. Wu, X. Jiang, Z. Li, and L. Kong (2025)
+Dream 7b: diffusion large language models.
+arXiv preprint arXiv:2508.15487.
+Cited by: §I.
+[6]
+H. Wu, C. Xiao, J. Nie, X. Guo, B. Lou, J. T. Wong, Z. Mo, C. Zhang, P. Forys, W. Luk, et al. (2025)
+Combating the memory walls: optimization pathways for long-context agentic llm inference.
+arXiv preprint arXiv:2509.09505.
+Cited by: §I,
+§II-A,
+§III-C.
+[7]
+S. Ghodrati, S. Kinzer, H. Xu, R. Mahapatra, Y. Kim, B. H. Ahn, D. K. Wang, L. Karthikeyan, A. Yazdanbakhsh, J. Park, et al. (2024)
+Tandem processor: grappling with emerging operators in neural networks.
+In Proceedings of the 29th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 2,
+pp. 1165–1182.
+Cited by: §I.
+[8]
+D. Xu, H. Zhang, L. Yang, R. Liu, G. Huang, M. Xu, and X. Liu (2025)
+Fast on-device llm inference with npus.
+In Proceedings of the 30th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 1,
+pp. 445–462.
+Cited by: §I.
+[9]
+D. Xu, M. Xu, Q. Wang, S. Wang, Y. Ma, K. Huang, G. Huang, X. Jin, and X. Liu (2022)
+Mandheling: mixed-precision on-device dnn training with dsp offloading.
+In Proceedings of the 28th Annual International Conference on Mobile Computing And Networking,
+pp. 214–227.
+Cited by: §I.
+[10]
+Z. Hao, J. Wei, T. Wang, M. Huang, H. Jiang, S. Jiang, T. Cao, and J. Ren (2025)
+Scaling llm test-time compute with mobile npu on smartphones.
+arXiv preprint arXiv:2509.23324.
+Cited by: §I.
+[11]
+T. Dao (2023)
+Flashattention-2: faster attention with better parallelism and work partitioning.
+arXiv preprint arXiv:2307.08691.
+Cited by: §II-A.
+[12]
+H. Luo, Y. C. Tuğrul, F. N. Bostancı, A. Olgun, A. G. Yağlıkçı, and O. Mutlu (2023)
+Ramulator 2.0: a modern, modular, and extensible dram simulator.
+IEEE Computer Architecture Letters 23 (1), pp. 112–116.
+Cited by: §II-A,
+§IV-A.
+[13]
+M. Arriola, A. Gokaslan, J. T. Chiu, Z. Yang, Z. Qi, J. Han, S. S. Sahoo, and V. Kuleshov (2025)
+Block diffusion: interpolating between autoregressive and diffusion language models.
+arXiv preprint arXiv:2503.09573.
+Cited by: §II-B.
+[14]
+L. T. Clark, V. Vashishtha, L. Shifren, A. Gujja, S. Sinha, B. Cline, C. Ramamurthy, and G. Yeric (2016)
+ASAP7: a 7-nm finfet predictive process design kit.
+Microelectronics Journal 53, pp. 105–115.
+Cited by: §IV-A.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

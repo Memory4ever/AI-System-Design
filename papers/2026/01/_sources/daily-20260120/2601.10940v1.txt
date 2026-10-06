@@ -1,0 +1,6830 @@
+HOSL: Hybrid-Order Split Learning for Memory-Constrained Edge Training
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+License: arXiv.org perpetual non-exclusive license
+arXiv:2601.10940v1 [cs.LG] 16 Jan 2026
+HOSL: Hybrid-Order Split Learning for Memory-Constrained Edge Training
+Aakriti
+1,*
+,
+Zhe Li
+1,*
+,
+Dandan Liang
+1,*
+,
+Chao Huang
+2
+,
+Rui Li
+1
+,
+Haibo Yang
+1
+†
+†
+thanks:
+The first three authors contributed equally.
+Affiliation:
+1
+Dept. of Computing and Information Sciences Ph.D., Rochester Institute of Technology
+2
+School of Computing, Montclair State University
+Abstract
+Split learning (SL) enables collaborative training of large language models (LLMs) between resource-constrained edge devices and compute-rich servers by partitioning model computation across the network boundary. However, existing SL systems predominantly rely on first-order (FO) optimization, which requires clients to store intermediate quantities such as activations for backpropagation. This results in substantial memory overhead, largely negating benefits of model partitioning. In contrast, zeroth-order (ZO) optimization eliminates backpropagation and significantly reduces memory usage, but often suffers from slow convergence and degraded performance.
+In this work, we propose
+HOSL
+, a novel
+H
+ybrid-
+O
+rder
+S
+plit
+L
+earning framework that addresses this fundamental trade-off between memory efficiency and optimization effectiveness by strategically integrating ZO optimization on the client side with FO optimization on the server side. By employing memory-efficient ZO gradient estimation at the client,
+HOSL
+eliminates backpropagation and activation storage, reducing client memory consumption. Meanwhile, server-side FO optimization ensures fast convergence and competitive performance.
+Theoretically, we show that
+HOSL
+achieves a
+𝒪
+⁡
+(
+d
+c
+/
+T
+​
+Q
+)
+\mathcal{O}(\sqrt{d_{c}/TQ})
+rate, which depends on client-side model dimension
+d
+c
+d_{c}
+rather than the full model dimension
+d
+d
+, demonstrating that convergence improves as more computation is offloaded to the server.
+Extensive experiments on OPT models (125M and 1.3B parameters) across 6 tasks demonstrate that
+HOSL
+reduces client GPU memory by up to 3.7
+×
+\times
+compared to the FO method while achieving accuracy within 0.20%-4.23% of this baseline.
+Furthermore,
+HOSL
+outperforms the ZO baseline by up to 15.55%, validating the effectiveness of our hybrid strategy for memory-efficient training on edge devices.
+Index Terms:
+Split Learning, Zeroth-Order Optimization, Hybrid-Order Optimizer, Memory Efficiency.
+I
+Introduction
+Split Learning (SL) is a collaborative training paradigm designed to enable efficient model training under strict data privacy and resource constraints
+[
+1
+,
+2
+]
+.
+In a typical SL architecture, a deep neural network is partitioned across a client and a server: the client executes the initial layers on its local data, while the server processes the remaining layers and computes the training loss.
+Only intermediate activations and their associated gradients are exchanged between the client and the server, ensuring that raw data remains local to the client.
+By offloading most of the computation to the server, SL enables scalable training in edge-cloud environments where edge devices operate under stringent memory and compute constraints
+[
+3
+]
+.
+Hence, SL has recently emerged as a promising paradigm for deploying and fine-tuning deep learning models on the edge, including large language models (LLMs)
+[
+4
+]
+.
+Despite these architectural advantages, most existing SL systems rely on first-order (FO) optimization methods
+[
+5
+,
+6
+,
+7
+]
+, which fundamentally limit their applicability in memory-constrained environments.
+Although the model is partitioned between the client and the server, FO-based training still requires the client to store intermediate activations and construct the full computational graph for backpropagation across the split boundary.
+This requirement induces a substantial memory footprint that scales with the depth and width of the client-side subnetwork, largely offsetting the benefits of model partitioning.
+This issue becomes particularly pronounced when training extremely large models such as LLMs, where even a small prefix of the network can generate massive intermediate representations.
+As a result, memory emerges as the primary bottleneck on the client side, preventing FO-based SL from being deployed on realistic, memory-constrained edge platforms.
+Zeroth-order (ZO) optimization offers a fundamentally different training paradigm that is particularly appealing in such memory-constrained environments
+[
+8
+,
+9
+,
+10
+]
+.
+Unlike FO methods, ZO algorithms estimate descent directions using only function evaluations, thereby completely eliminating the need for backpropagation and the storage of computational graphs.
+This property makes ZO methods inherently lightweight in memory, as they do not require retaining intermediate activations or gradient tensors.
+Recent advances have further improved the practicality of ZO methods for large-scale models.
+In particular, Malladi et al.
+[
+11
+]
+proposed MeZO, a memory-efficient ZO optimizer that enables fine-tuning without storing activations or gradients.
+This approach has since been adopted in a growing body of work
+[
+12
+,
+13
+,
+14
+,
+15
+]
+.
+However, ZO methods introduces significant estimation noise, leading to slower convergence and degraded performance compared to FO methods.
+These observations reveal a fundamental tension in SL system design: while FO methods deliver fast convergence, they impose prohibitive memory overhead on the client, whereas ZO methods offer significant memory savings at the cost of slower convergence.
+This motivates the following question:
+Q: Can we design a split learning algorithm that preserves the memory efficiency of zeroth-order methods on the client, without sacrificing the convergence speed and final performance of first-order methods?
+To address this challenge, we propose
+HOSL
+, a hybrid-order optimization framework for SL that strategically integrates ZO optimization on the client side with FO optimization on the server side.
+In our design, the client updates its local model parameters using ZO estimators, thereby avoiding backpropagation and eliminating the need to store intermediate activations or computational graphs.
+Meanwhile, the server uses FO optimization to ensure rapid convergence and strong final performance.
+This asymmetric optimization strategy preserves the modularity and privacy benefits of split learning, while directly addressing the client-side memory bottleneck.
+As a result, our framework enables scalable and practical fine-tuning of LLMs in memory-constrained edge environments.
+Our key contributions are summarized as follows:
+•
+We propose
+HOSL
+, a novel hybrid SL framework that strategically integrates ZO optimization on the client side with FO optimization on the server side.
+More specifically, we employ in-place operation in ZO esitmation at the client for significant memory saving and FO stochastic gradient descent (SGD) at the server to guarantee the overall rapid model convergence.
+•
+We provide a rigorous convergence analysis of
+HOSL
+under nonconvex objectives and show that it achieves a rate of
+𝒪
+⁡
+(
+d
+c
+/
+T
+​
+Q
+)
+\mathcal{O}(\sqrt{d_{c}/TQ})
+, where
+d
+c
+d_{c}
+is the client-side parameter dimension,
+T
+T
+is the number of iterations, and
+Q
+Q
+is the number of perturbations. This rate depends only on the client-side model size rather than the full model dimension, highlighting the benefit of offloading more computation to the server.
+•
+We validate the effectiveness of
+HOSL
+through extensive fine-tuning experiments on OPT models spanning two scales (125M and 1.3B parameters) across six tasks. The results show that
+HOSL
+reduces client-side memory consumption by up to 47% compared to the fully FO-based baseline, while achieving competitive accuracy close to the FO baseline.
+II
+Related Work
+Split Learning (SL).
+SL
+[
+1
+]
+was originally proposed to address the key limitations of federated learning (FL)
+[
+16
+]
+by splitting a model into several segments deployed unevenly across clients and the server.
+In this paradigm, only a lightweight portion of the model resides on the client side, which significantly reduces client-side memory consumption while enhancing data privacy by keeping raw data local
+[
+2
+]
+.
+With the rapid growth of LLMs, SL has gained renewed attention for enabling the training of large-scale models on resource-constrained edge devices through model splitting
+[
+3
+,
+4
+,
+14
+]
+. To further reduce the computational burden on edge devices, recent studies have integrated low-rank adaptation (LoRA) into SL by freezing a large portion of model parameters, thereby achieving improved training efficiency with an acceptable trade-off in accuracy
+[
+17
+]
+.
+However, despite its advantages in reducing model size and computation, this approach still incurs considerable memory overhead due to the need to store gradient information from previous iterations.
+Such overhead can significantly exacerbate memory pressure on resource-constrained edge devices.
+These limitations highlight the need for more memory-efficient training mechanisms tailored to LLM deployment in edge environments.
+Zeroth-Order (ZO) Optimization.
+ZO Optimization refers to a class of gradient-free methods that estimate gradient by only function value differences without requiring explicit gradient computation
+[
+8
+,
+9
+,
+10
+]
+.
+Recently, MeZO
+[
+11
+]
+showed the potential of ZO optimization for memory-efficient fine-tuning of LLM.
+Specifically, by perturbing the model parameters individually, MeZO reduces memory consumption to the inference level, achieving up to 7
+×
+\times
+memory savings compared to standard fine tuning with Adam on OPT-1.3B model.
+Given its significant memory efficiency, MeZO-style ZO optimization has been successfully applied in a variety of settings, such as FL
+[
+18
+,
+19
+,
+12
+]
+, split FL
+[
+14
+]
+, and efficient LLM fine-tuning
+[
+20
+,
+13
+]
+.
+Nevertheless, a fundamental limitation of most existing ZO-based works is their slow convergence speed, which degrades training efficiency over a long training run.
+In this work, we utilize the memory efficiency of ZO optimization on the client side while mitigating its slow convergence by incorporating FO optimization at the server side.
+III
+Method
+Fig. 1:
+Overview of
+HOSL
+Framework
+III-A
+Split Learning
+We consider an SL system comprising a client and a server. The client holds a dataset
+𝒟
+=
+{
+ξ
+i
+}
+i
+=
+1
+|
+𝒟
+|
+\mathcal{D}=\{\xi_{i}\}_{i=1}^{|\mathcal{D}|}
+, where each sample
+ξ
+i
+=
+(
+x
+i
+,
+y
+i
+)
+\xi_{i}\ =(x_{i},y_{i})
+consists of an input sequence
+x
+i
+x_{i}
+and its label
+y
+i
+y_{i}
+.
+The entire model is partitioned at a designated cut layer
+k
+into client-side
+f
+c
+​
+(
+⋅
+,
+θ
+c
+)
+\textit{f}_{c}(\cdot;\theta_{c})
+and server-side
+f
+s
+​
+(
+⋅
+,
+θ
+s
+)
+\textit{f}_{s}(\cdot;\theta_{s})
+sub-models with parameters
+θ
+c
+\theta_{c}
+and
+θ
+s
+\theta_{s}
+, respectively. We denote the complete model parameters as
+θ
+=
+{
+θ
+c
+,
+θ
+s
+}
+\theta=\{\theta_{c},\theta_{s}\}
+.
+The training objective is to minimize the expected loss over the training dataset
+𝒟
+\mathcal{D}
+:
+min
+θ
+c
+,
+θ
+s
+⁡
+ℒ
+⁡
+(
+θ
+,
+𝒟
+)
+=
+1
+|
+𝒟
+|
+​
+∑
+j
+∈
+𝒟
+ℓ
+⁡
+(
+f
+s
+​
+(
+f
+c
+​
+(
+x
+j
+,
+θ
+c
+)
+,
+θ
+s
+)
+,
+y
+j
+)
+.
+\min_{\theta_{c},\theta_{s}}\;\mathcal{L}(\theta;\mathcal{D})=\frac{1}{|\mathcal{D}|}\sum_{j\in\mathcal{D}}\ell(\textit{f}_{s}(\textit{f}_{c}(x_{j};\theta_{c});\theta_{s}),y_{j}).
+During the forward pass, the client computes intermediate activations
+h
+j
+=
+f
+c
+​
+(
+x
+j
+,
+θ
+c
+)
+\textit{h}_{j}=\textit{f}_{c}(x_{j};\theta_{c})
+and transmits it to the server. The server completes the forward pass to compute loss.
+III-B
+Optimization Methods
+Our framework supports two optimization methods that can be independently selected by each party: First-Order (FO) optimization via backpropagation and Zeroth-Order (ZO) optimization via gradient estimation.
+III-B
+1
+First-Order Optimization
+In FO optimization, stochastic gradients are computed via backpropagation.
+Within the SL framework, gradient computation requires coordination between the client and the server.
+Definition 1 (First-Order Gradient in SL).
+Given the loss
+ℒ
+⁡
+(
+θ
+,
+ℬ
+)
+\mathcal{L}(\theta;\mathcal{B})
+on a batch of data
+ℬ
+⊂
+𝒟
+\mathcal{B}\subset\mathcal{D}
+computed at the server, the gradients are obtained as follows. The server computes its gradient directly:
+∇
+θ
+s
+ℒ
+​
+(
+θ
+,
+ℬ
+)
+=
+∂
+ℒ
+∂
+θ
+s
+.
+\nabla_{\theta_{s}}\mathcal{L}(\theta;\mathcal{B})=\frac{\partial\mathcal{L}}{\partial\theta_{s}}.
+(1)
+The server also computes and transmits the gradient with respect to activations at the cut layer:
+g
+h
+=
+∇
+h
+ℒ
+=
+∂
+ℒ
+∂
+h
+.
+g_{h}=\nabla_{h}\mathcal{L}=\frac{\partial\mathcal{L}}{\partial h}.
+(2)
+The client then completes backpropagation through its sub-model by chain rule:
+∇
+θ
+c
+ℒ
+​
+(
+θ
+,
+ℬ
+)
+=
+(
+∂
+h
+∂
+θ
+c
+)
+⊤
+​
+g
+h
+.
+\nabla_{\theta_{c}}\mathcal{L}(\theta;\mathcal{B})=\left(\frac{\partial h}{\partial\theta_{c}}\right)^{\top}g_{h}.
+(3)
+Definition 2 (First-Order Parameter Update).
+Parameters are updated via stochastic gradient descent (SGD):
+θ
+c
+t
++
+1
+\displaystyle\theta_{c}^{t+1}
+=
+θ
+c
+t
+−
+η
+c
+​
+∇
+θ
+c
+ℒ
+​
+(
+θ
+t
+,
+ℬ
+t
+)
+\displaystyle=\theta_{c}^{t}-\eta_{c}\nabla_{\theta_{c}}\mathcal{L}(\theta^{t};\mathcal{B}_{t})
+(4)
+θ
+s
+t
++
+1
+\displaystyle\theta_{s}^{t+1}
+=
+θ
+s
+t
+−
+η
+s
+​
+∇
+θ
+s
+ℒ
+​
+(
+θ
+t
+,
+ℬ
+t
+)
+,
+\displaystyle=\theta_{s}^{t}-\eta_{s}\nabla_{\theta_{s}}\mathcal{L}(\theta^{t};\mathcal{B}_{t}),
+(5)
+where
+η
+c
+\eta_{c}
+and
+η
+s
+\eta_{s}
+denote the learning rates at the client and server side, respectively.
+FO optimization requires storing intermediate activations during the forward pass, incurring memory cost proportional to sequence length and batch size.
+III-B
+2
+Zeroth-Order Optimization
+ZO optimization estimates gradients using only forward passes and hence eliminates the need for backpropagation and the associated memory overhead of storing activations.
+We adopt the gradient estimator from MeZO.
+Definition 3 (Zeroth-Order Gradient Estimator).
+Given parameters
+θ
+∈
+ℝ
+d
+\theta\in\mathbb{R}^{d}
+, loss function
+ℒ
+\mathcal{L}
+, and mini-batch
+ℬ
+\mathcal{B}
+, the gradient estimate is:
+∇
+~
+​
+ℒ
+​
+(
+θ
+,
+ℬ
+)
+=
+ℒ
+⁡
+(
+θ
++
+ϵ
+​
+z
+,
+ℬ
+)
+−
+ℒ
+⁡
+(
+θ
+−
+ϵ
+​
+z
+,
+ℬ
+)
+2
+​
+ϵ
+⋅
+z
+\widetilde{\nabla}\mathcal{L}(\theta;\mathcal{B})=\frac{\mathcal{L}(\theta+\epsilon z;\mathcal{B})-\mathcal{L}(\theta-\epsilon z;\mathcal{B})}{2\epsilon}\cdot z
+(6)
+where
+z
+∈
+ℝ
+d
+z\in\mathbb{R}^{d}
+is a random perturbation vector with components
+z
+j
+∼
+𝒩
+⁡
+(
+0
+,
+1
+)
+z_{j}{\sim}\mathcal{N}(0,1)
+for
+j
+=
+1
+,
+…
+,
+d
+j=1,\ldots,d
+, and
+ϵ
+>
+0
+\epsilon>0
+is the perturbation scale.
+For variance reduction,
+Q
+Q
+independent perturbations can be averaged as follows:
+g
+^
+Q
+=
+1
+Q
+​
+∑
+q
+=
+1
+Q
+ℒ
+⁡
+(
+θ
++
+ϵ
+​
+z
+(
+q
+)
+,
+ℬ
+)
+−
+ℒ
+⁡
+(
+θ
+−
+ϵ
+​
+z
+(
+q
+)
+,
+ℬ
+)
+2
+​
+ϵ
+⋅
+z
+(
+q
+)
+,
+\hat{g}_{Q}=\frac{1}{Q}\sum_{q=1}^{Q}\frac{\mathcal{L}(\theta+\epsilon z^{(q)};\mathcal{B})-\mathcal{L}(\theta-\epsilon z^{(q)};\mathcal{B})}{2\epsilon}\cdot z^{(q)},
+(7)
+where
+{
+z
+(
+q
+)
+}
+q
+=
+1
+Q
+\{z^{(q)}\}_{q=1}^{Q}
+are independent samples, each with
+z
+(
+q
+)
+∈
+ℝ
+d
+z^{(q)}\in\mathbb{R}^{d}
+and
+z
+j
+(
+q
+)
+∼
+𝒩
+⁡
+(
+0
+,
+1
+)
+z^{(q)}_{j}{\sim}\mathcal{N}(0,1)
+for all
+j
+j
+and
+q
+q
+. This requires
+2
+​
+Q
+2Q
+forward passes per update step.
+Definition 4 (Zeroth-Order SGD).
+The ZO SGD update rule mirrors FO SGD but substitutes the estimated gradient:
+θ
+t
++
+1
+=
+θ
+t
+−
+η
+​
+∇
+~
+​
+ℒ
+​
+(
+θ
+t
+,
+ℬ
+t
+)
+.
+\theta^{t+1}=\theta^{t}-\eta\widetilde{\nabla}\mathcal{L}(\theta^{t};\mathcal{B}_{t}).
+(8)
+III-C
+Proposed Algorithm: Mixed-Optimizer Split Learning
+We now present the training procedure for our
+HOSL
+, where the client uses ZO optimization and the server uses FO SGD.
+III-C
+1
+Phase 0: Initialization
+The server initializes the model and partitions it in a designated cut layer.
+The first
+k
+k
+layers form the client module, and the remaining layers form the server module.
+Both parties initialize their trainable parameters based on the fine-tuning method (full fine-tuning, LoRA, or prefix tuning).
+III-C
+2
+Phase 1: ZO Gradient Estimation
+For each perturbation
+q
+=
+1
+,
+…
+,
+Q
+q=1,\ldots,Q
+(illustrated in Figure
+1
+, steps
+1
+–
+4
+):
+Step 1.1: Positive Perturbation Forward Pass
+The client perturbs its parameters by
++
+ϵ
+​
+z
+q
++\epsilon z_{q}
+and computes its forward pass (step
+1
+), sending the resulting activations
+h
+q
++
+h_{q}^{+}
+to the server.
+The server operates in
+inference mode
+: it completes the forward pass and computes the loss
+ℒ
+q
++
+\mathcal{L}^{+}_{q}
+without computing or storing gradients, returning only the scalar loss to the client (step
+2
+).
+Step 1.2: Negative Perturbation Forward Pass
+The client perturbs its parameters to
+−
+ϵ
+​
+z
+q
+-\epsilon z_{q}
+from the original position (by applying
+−
+2
+​
+ϵ
+​
+z
+q
+-2\epsilon z_{q}
+to the current state) and computes its forward pass (step
+3
+), sending the activations
+h
+q
+−
+h_{q}^{-}
+to the server.
+The server again operates in inference mode, computing the loss
+ℒ
+q
+−
+\mathcal{L}^{-}_{q}
+without backpropagation and returning the scalar loss (step
+4
+).
+Crucially, the server parameters
+θ
+s
+\theta_{s}
+remain unchanged between
+ℒ
+q
++
+\mathcal{L}^{+}_{q}
+and
+ℒ
+q
+−
+\mathcal{L}^{-}_{q}
+, ensuring an unbiased ZO gradient estimate.
+Step 1.3: Restore and Store Gradient
+The client restores its parameters to the original state and computes the ZO gradient estimate
+g
+^
+q
+\hat{g}_{q}
+using Equation
+7
+, as shown in the gradient computation box in Figure
+1
+.
+The client
+stores
+this gradient estimate along with the seed
+s
+q
+s_{q}
+but does not update its parameters yet.
+III-C
+3
+Phase 2: Server Update
+After completing all
+Q
+Q
+perturbations, the client performs a forward pass with its
+original
+(unmodified) parameters (step
+5
+) and sends the activations to the server with a
+compute_grad
+signal.
+The server computes the forward pass with gradient tracking enabled, performs backpropagation to obtain
+∇
+θ
+s
+ℒ
+\nabla_{\theta_{s}}\mathcal{L}
+, and updates its parameters using SGD (step
+6
+).
+III-C
+4
+Phase 3: Client Update
+After receiving acknowledgment from the server, the client applies all
+Q
+Q
+stored ZO gradient estimates to update its parameters (step
+7
+).
+After
+T
+T
+training iterations, the fine-tuned model parameters on both the client and the server represent the trained model.
+Algorithm 1
+Hybrid-Order Split Learning (Client-Side)
+1:
+Client parameters
+θ
+c
+\theta_{c}
+, learning rate
+η
+c
+\eta_{c}
+, perturbation scale
+ϵ
+\epsilon
+, number of perturbations
+Q
+Q
+, training iterations
+T
+T
+2:
+Initialize:
+Connect to server
+3:
+for
+t
+=
+1
+,
+2
+,
+…
+,
+T
+t=1,2,\ldots,T
+do
+4:
+Sample mini-batch
+(
+x
+,
+y
+)
+(x,y)
+from local data
+5:
+Initialize gradient accumulator:
+{
+(
+g
+^
+q
+,
+s
+q
+)
+}
+q
+=
+1
+Q
+←
+∅
+\{(\hat{g}_{q},s_{q})\}_{q=1}^{Q}\leftarrow\emptyset
+6:
+7:
+⊳
+\triangleright
+Phase 1:
+ZO gradient estimation with
+Q
+Q
+perturbations
+8:
+for
+q
+=
+1
+,
+2
+,
+…
+,
+Q
+q=1,2,\ldots,Q
+do
+9:
+Sample random seed
+s
+q
+s_{q}
+10:
+11:
+⊳
+\triangleright
+Step 1.1: Positive perturbation
+12:
+θ
+c
+←
+Perturb
+​
+(
+θ
+c
+,
++
+ϵ
+,
+s
+q
+)
+\theta_{c}\leftarrow\textsc{Perturb}(\theta_{c},+\epsilon,s_{q})
+13:
+h
+q
++
+←
+f
+c
+​
+(
+x
+,
+θ
+c
+)
+h^{+}_{q}\leftarrow f_{c}(x;\theta_{c})
+14:
+Send
+(
+h
+q
++
+,
+y
+,
+inference
+)
+(h^{+}_{q},y,\texttt{inference})
+to server
+15:
+Receive
+ℒ
+q
++
+\mathcal{L}^{+}_{q}
+from server
+16:
+17:
+⊳
+\triangleright
+Step 1.2: Negative perturbation
+18:
+θ
+c
+←
+Perturb
+​
+(
+θ
+c
+,
+−
+2
+​
+ϵ
+,
+s
+q
+)
+\theta_{c}\leftarrow\textsc{Perturb}(\theta_{c},-2\epsilon,s_{q})
+⊳
+\triangleright
+Now at
+θ
+c
+−
+ϵ
+​
+z
+q
+\theta_{c}-\epsilon z_{q}
+19:
+h
+q
+−
+←
+f
+c
+​
+(
+x
+,
+θ
+c
+)
+h^{-}_{q}\leftarrow f_{c}(x;\theta_{c})
+20:
+Send
+(
+h
+q
+−
+,
+y
+,
+inference
+)
+(h^{-}_{q},y,\texttt{inference})
+to server
+21:
+Receive
+ℒ
+q
+−
+\mathcal{L}^{-}_{q}
+from server
+22:
+23:
+⊳
+\triangleright
+Step 1.3: Restore and compute gradient (do not update yet)
+24:
+θ
+c
+←
+Perturb
+​
+(
+θ
+c
+,
++
+ϵ
+,
+s
+q
+)
+\theta_{c}\leftarrow\textsc{Perturb}(\theta_{c},+\epsilon,s_{q})
+⊳
+\triangleright
+Restore to original
+25:
+g
+^
+q
+←
+ℒ
+q
++
+−
+ℒ
+q
+−
+2
+​
+ϵ
+​
+Q
+\hat{g}_{q}\leftarrow\dfrac{\mathcal{L}^{+}_{q}-\mathcal{L}^{-}_{q}}{2\epsilon Q}
+⊳
+\triangleright
+Store projected gradient
+26:
+end
+for
+27:
+28:
+⊳
+\triangleright
+Phase 2:
+Server FO update (before client update)
+29:
+h
+←
+f
+c
+​
+(
+x
+,
+θ
+c
+)
+h\leftarrow f_{c}(x;\theta_{c})
+⊳
+\triangleright
+Forward with original
+θ
+c
+\theta_{c}
+30:
+Send
+(
+h
+,
+y
+,
+compute_grad
+)
+(h,y,\texttt{compute\_grad})
+to server
+31:
+Wait for server update acknowledgment
+32:
+33:
+⊳
+\triangleright
+Phase 3:
+Client ZO update (after server update)
+34:
+for
+q
+=
+1
+,
+2
+,
+…
+,
+Q
+q=1,2,\ldots,Q
+do
+35:
+θ
+c
+←
+ZOUpdate
+​
+(
+θ
+c
+,
+g
+^
+q
+,
+η
+c
+,
+s
+q
+)
+\theta_{c}\leftarrow\textsc{ZOUpdate}(\theta_{c},\hat{g}_{q},\eta_{c},s_{q})
+36:
+end
+for
+37:
+end
+for
+Algorithm 2
+Hybrid-Order Split Learning (Server-Side)
+1:
+Server parameters
+θ
+s
+\theta_{s}
+, learning rate
+η
+s
+\eta_{s}
+2:
+Initialize:
+Wait for client connection
+3:
+while
+training in progress
+do
+4:
+Receive
+(
+h
+,
+y
+,
+phase
+)
+(h,y,\texttt{phase})
+from client
+5:
+6:
+if
+phase
+=
+inference
+\texttt{phase}=\texttt{inference}
+then
+7:
+⊳
+\triangleright
+Phase 1:
+Inference only during client ZO estimation
+8:
+with
+inference mode:
+⊳
+\triangleright
+No gradient computation
+9:
+y
+^
+←
+f
+s
+​
+(
+h
+,
+θ
+s
+)
+\hat{y}\leftarrow f_{s}(h;\theta_{s})
+10:
+ℒ
+←
+Loss
+​
+(
+y
+^
+,
+y
+)
+\mathcal{L}\leftarrow\textsc{Loss}(\hat{y},y)
+11:
+Send
+ℒ
+\mathcal{L}
+to client
+12:
+⊳
+\triangleright
+θ
+s
+\theta_{s}
+remains unchanged
+13:
+14:
+else
+if
+phase
+=
+compute_grad
+\texttt{phase}=\texttt{compute\_grad}
+then
+15:
+⊳
+\triangleright
+Phase 2:
+Compute gradients and update
+16:
+y
+^
+←
+f
+s
+​
+(
+h
+,
+θ
+s
+)
+\hat{y}\leftarrow f_{s}(h;\theta_{s})
+17:
+ℒ
+←
+Loss
+​
+(
+y
+^
+,
+y
+)
+\mathcal{L}\leftarrow\textsc{Loss}(\hat{y},y)
+18:
+Compute
+∇
+θ
+s
+ℒ
+\nabla_{\theta_{s}}\mathcal{L}
+via backpropagation
+19:
+θ
+s
+←
+θ
+s
+−
+η
+s
+⋅
+∇
+θ
+s
+ℒ
+\theta_{s}\leftarrow\theta_{s}-\eta_{s}\cdot\nabla_{\theta_{s}}\mathcal{L}
+⊳
+\triangleright
+FO update
+20:
+Send acknowledgment to client
+⊳
+\triangleright
+No loss needed
+21:
+end
+if
+22:
+end
+while
+Algorithm 3
+Subroutines for Hybrid-Order Split Learning
+1:
+function
+Perturb
+(
+θ
+,
+δ
+,
+s
+\theta,\delta,s
+)
+2:
+⊳
+\triangleright
+Perturb parameters by
+δ
+⋅
+z
+\delta\cdot z
+where
+z
+∼
+𝒩
+⁡
+(
+0
+,
+I
+)
+z\sim\mathcal{N}(0,I)
+3:
+Set random seed to
+s
+s
+4:
+for
+each parameter
+θ
+(
+i
+)
+∈
+θ
+\theta^{(i)}\in\theta
+do
+5:
+z
+(
+i
+)
+∼
+𝒩
+⁡
+(
+0
+,
+I
+)
+z^{(i)}\sim\mathcal{N}(0,I)
+⊳
+\triangleright
+Same shape as
+θ
+(
+i
+)
+\theta^{(i)}
+6:
+θ
+(
+i
+)
+←
+θ
+(
+i
+)
++
+δ
+⋅
+z
+(
+i
+)
+\theta^{(i)}\leftarrow\theta^{(i)}+\delta\cdot z^{(i)}
+7:
+end
+for
+8:
+return
+θ
+\theta
+9:
+end
+function
+10:
+11:
+function
+ZOUpdate
+(
+θ
+,
+g
+^
+,
+η
+,
+s
+\theta,\hat{g},\eta,s
+)
+12:
+⊳
+\triangleright
+Update parameters using projected gradient and regenerated perturbation
+13:
+Set random seed to
+s
+s
+⊳
+\triangleright
+Regenerate same
+z
+z
+as
+Perturb
+14:
+for
+each parameter
+θ
+(
+i
+)
+∈
+θ
+\theta^{(i)}\in\theta
+do
+15:
+z
+(
+i
+)
+∼
+𝒩
+⁡
+(
+0
+,
+I
+)
+z^{(i)}\sim\mathcal{N}(0,I)
+16:
+θ
+(
+i
+)
+←
+θ
+(
+i
+)
+−
+η
+⋅
+g
+^
+⋅
+z
+(
+i
+)
+\theta^{(i)}\leftarrow\theta^{(i)}-\eta\cdot\hat{g}\cdot z^{(i)}
+17:
+end
+for
+18:
+return
+θ
+\theta
+19:
+end
+function
+IV
+Convergence Analysis
+In this section, we present a rigorous convergence analysis of our
+HOSL
+algorithm.
+We first state our assumptions as follows.
+Assumption IV.1
+(
+L
+L
+-Smooth)
+.
+The loss function
+ℒ
+{\mathcal{L}}
+is
+L
+L
+-smooth for
+∀
+θ
+1
+,
+θ
+2
+∈
+ℝ
+d
+\forall\theta_{1},\theta_{2}\in{\mathbb{R}}^{d}
+:
+‖
+∇
+ℒ
+​
+(
+θ
+1
+)
+−
+∇
+ℒ
+​
+(
+θ
+2
+)
+‖
+≤
+L
+​
+‖
+θ
+1
+−
+θ
+2
+‖
+,
+\|\ \nabla{\mathcal{L}}(\theta_{1})-\nabla{\mathcal{L}}(\theta_{2})\|\leq L\|\ \theta_{1}-\theta_{2}\|\ ,
+thus
+ℒ
+⁡
+(
+θ
+2
+)
+≤
+ℒ
+⁡
+(
+θ
+1
+)
++
+⟨
+∇
+ℒ
+​
+(
+θ
+1
+)
+,
+θ
+2
+−
+θ
+1
+⟩
++
+L
+2
+​
+‖
+θ
+2
+−
+θ
+1
+‖
+2
+{\mathcal{L}}(\theta_{2})\leq{\mathcal{L}}(\theta_{1})+\langle\nabla{\mathcal{L}}(\theta_{1}),\theta_{2}-\theta_{1}\rangle+\frac{L}{2}\|\ \theta_{2}-\theta_{1}\|^{2}\
+Assumption IV.2
+(Unbiased Gradient and Bounded variance)
+.
+The variance of the stochastic gradients w.r.t. the client and server are upper bounded respectively. For
+∀
+θ
+=
+∈
+ℝ
+d
+\forall\theta=\in{\mathbb{R}}^{d}
+, let
+θ
+=
+[
+θ
+c
+,
+θ
+s
+]
+\theta=[\theta_{c},\theta_{s}]
+, where
+θ
+c
+∈
+ℝ
+d
+c
+,
+θ
+s
+∈
+ℝ
+d
+s
+\theta_{c}\in{\mathbb{R}}^{d_{c}},\theta_{s}\in{\mathbb{R}}^{d_{s}}
+represent the parameters on client and server, respectively. Then for any mini-batch
+ℬ
+∈
+𝒟
+{\mathcal{B}}\in{\mathcal{D}}
+:
+‖
+∇
+θ
+c
+ℒ
+​
+(
+θ
+,
+ℬ
+)
+−
+∇
+θ
+c
+ℒ
+​
+(
+θ
+)
+‖
+2
+≤
+σ
+c
+2
+.
+\|\nabla_{\theta_{c}}{\mathcal{L}}(\theta;{\mathcal{B}})-\nabla_{\theta_{c}}{\mathcal{L}}(\theta)\|^{2}\leq\sigma_{c}^{2}.
+‖
+∇
+θ
+s
+ℒ
+​
+(
+θ
+,
+ℬ
+)
+−
+∇
+θ
+s
+ℒ
+​
+(
+θ
+)
+‖
+2
+≤
+σ
+s
+2
+.
+\|\nabla_{\theta_{s}}{\mathcal{L}}(\theta;{\mathcal{B}})-\nabla_{\theta_{s}}{\mathcal{L}}(\theta)\|^{2}\leq\sigma_{s}^{2}.
+These first two assumptions are standard in non-convex optimization
+[
+9
+]
+and split learning
+[
+14
+]
+.
+IV-A
+Convergence Analysis for
+HOSL
+In this subsection, we first analyze the convergence rate of our alg, for which we have the following result:
+Theorem IV.3
+.
+Under Assumption
+IV.1
+and
+IV.2
+. If the learning rates on client and server satisfy
+η
+s
+≤
+3
+4
+​
+L
+,
+η
+c
+≤
+Q
+4
+​
+L
+​
+d
+c
+\eta_{s}\leq\frac{3}{4L},\eta_{c}\leq\frac{Q}{4Ld_{c}}
+, the sequence of iterates generated by our algorithm satisfies:
+1
+T
+​
+∑
+t
+=
+0
+T
+𝔼
+⁡
+[
+‖
+∇
+θ
+ℒ
+​
+(
+θ
+t
+)
+‖
+2
+]
+≤
+4
+​
+ℱ
+η
+​
+T
++
+2
+​
+L
+​
+η
+​
+σ
+s
+2
++
+4
+​
+η
+​
+L
+​
+d
+c
+​
+σ
+c
+2
+Q
++
+L
+2
+​
+λ
+2
+​
+d
+c
+3
+Q
+.
+\displaystyle\textstyle\frac{1}{T}\sum_{t=0}^{T}\mathbb{E}[\|\nabla_{\theta}{\mathcal{L}}(\theta^{t})\|^{2}]\leq\frac{4\mathcal{F}}{\eta T}+2L\eta\sigma_{s}^{2}+\frac{4\eta Ld_{c}\sigma_{c}^{2}}{Q}+\frac{L^{2}\lambda^{2}d_{c}^{3}}{Q}.
+Here,
+ℱ
+=
+𝔼
+⁡
+[
+ℒ
+⁡
+(
+θ
+0
+)
+−
+ℒ
+⁡
+(
+θ
+T
+)
+]
+\mathcal{F}=\mathbb{E}[{\mathcal{L}}(\theta^{0})-{\mathcal{L}}(\theta^{T})]
+, and
+d
+c
+d_{c}
+denotes the parameter dimensionality of the client-side model. The parameter
+λ
+\lambda
+corresponds to the smoothing parameter of the ZO oracle defined in (
+6
+), while
+σ
+c
+2
+\sigma_{c}^{2}
+and
+σ
+s
+2
+\sigma_{s}^{2}
+represent the upper bounds on the stochastic gradient variances at the client and server sides, respectively.
+The first term,
+4
+​
+ℱ
+η
+​
+T
+\frac{4\mathcal{F}}{\eta T}
+, characterizes the optimization error due to initialization and decays at a rate of
+𝒪
+⁡
+(
+1
+/
+T
+)
+{\mathcal{O}}(1/T)
+, which is consistent with the standard convergence behavior of stochastic gradient descent. The second and third terms quantify the error introduced by the variance of the stochastic gradient
+estimates on the server and client, respectively. In particular, the server-side variance term decrease as the learning rate
+η
+\eta
+decreases, indicating that the effect of stochastic error can be mitigated by using smaller step sizes. On the client side, the variance term exhibits a dependence on the model dimensionality
+d
+c
+d_{c}
+, consistent with known observation for ZOO in other literature. Importantly, this term decreases linearly with the number of perturbations
+Q
+Q
+, reflecting the variance reduction effect of multi-point gradient estimation. This suggests that allocating fewer model parameters to the client and increasing the number of perturbations can effectively control stochastic error on client side, thereby accelerating convergence.
+The final term arises from the bias introduced by the ZO oracle. This term is independent of the learning rate and decreases with a smaller smoothing parameter
+λ
+\lambda
+. Moreover, it also diminishes as the number of perturbations
+Q
+Q
+increases, since averaging over more perturbations improves the accuracy of the gradient estimator.
+Corollary IV.4
+.
+Based on Theorem
+IV.3
+, let the unified learning rate satisfies
+η
+:=
+η
+c
+=
+η
+s
+=
+Q
+d
+c
+​
+T
+​
+L
+\eta:=\eta_{c}=\eta_{s}=\frac{\sqrt{Q}}{\sqrt{d_{c}TL}}
+; let the smoothing parameter satisfies
+λ
+2
+≤
+Q
+d
+c
+5
+​
+T
+​
+L
+3
+\lambda^{2}\leq\frac{\sqrt{Q}}{\sqrt{d_{c}^{5}TL^{3}}}
+. Then we have the following convergence rate:
+1
+T
+​
+∑
+t
+=
+0
+T
+𝔼
+⁡
+[
+‖
+∇
+θ
+ℒ
+​
+(
+θ
+t
+)
+‖
+2
+]
+≤
+4
+​
+d
+c
+​
+L
+T
+​
+Q
+​
+ℱ
++
+2
+​
+L
+​
+Q
+d
+c
+​
+T
+​
+σ
+s
+2
+\displaystyle\frac{1}{T}\sum_{t=0}^{T}\mathbb{E}[\|\nabla_{\theta}{\mathcal{L}}(\theta^{t})\|^{2}]\leq\frac{4\sqrt{d_{c}L}}{\sqrt{TQ}}\mathcal{F}+\frac{2\sqrt{LQ}}{\sqrt{d_{c}T}}\sigma_{s}^{2}
++
+4
+​
+d
+c
+​
+L
+​
+σ
+c
+2
+T
+​
+Q
++
+d
+c
+​
+L
+T
+​
+Q
+\displaystyle+\frac{4\sqrt{d_{c}L}\sigma_{c}^{2}}{\sqrt{TQ}}+\frac{\sqrt{d_{c}L}}{\sqrt{TQ}}
+(9)
+Remark 1
+.
+Under the parameter choices specified in
+IV.4
+, all dominant terms in equation (
+9
+) converge at the rate of
+𝒪
+⁡
+(
+d
+c
+/
+T
+​
+Q
+)
+{\mathcal{O}}(\sqrt{d_{c}/TQ})
+. This result highlights the role of multi-perturbation zeroth-order estimation in accelerating convergence. In particular, increasing the number of perturbations
+Q
+Q
+effectively reduces the stochastic error on the client side, thereby facilitating overall convergence performance. Moreover, this result also reveals that the convergence rate can be further improved by putting less portion of the model on the client side, that’s being said with the convergence can become faster with the decrease of
+d
+c
+d_{c}
+.
+This observation can be attributed to the variance-reduction and bias-reduction properties of multi-point zeroth-order gradient estimators. As established in
+IV.3
+, a larger
+Q
+Q
+mitigates both the stochastic variance and the estimation bias introduced by the ZOO. Consequently, the step size can be scaled as
+η
+=
+𝒪
+⁡
+(
+Q
+)
+\eta={\mathcal{O}}(\sqrt{Q})
+without compromising stability, leading to an effective linear speedup with respect to
+Q
+Q
+.
+In contrast, the second term which captures the accumulation of stochastic error on the server side, converges at a rate of
+𝒪
+⁡
+(
+Q
+/
+d
+c
+​
+T
+)
+{\mathcal{O}}(Q/d_{c}T)
+. Since this term depends on FO gradient updates at the server, it is independent of the ZO estimation error and therefore does not benefit from increasing
+Q
+Q
+. Notably, because the client-side parameter dimension
+d
+c
+d_{c}
+is typically comparable to or larger than
+Q
+Q
+, this term decays faster than the ZO affected terms and does not dominate the overall convergence rate.
+Remark 2
+.
+The convergence rate can be further improved by reducing the client-side model dimension
+d
+c
+d_{c}
+. This observation provides an important guideline for model-splitting strategies: to achieve better convergence performance, a smaller fraction of the model should be deployed on the client. Intuitively, FO gradient descent is inherently more efficient than ZO gradient descent. Therefore, assigning more computationally complex components to the server leads to faster convergence. Overall, this analysis demonstrates the advantage of the proposed mixed FO–ZO update scheme, which leverages the efficiency of FO optimization on the server while retaining the memory-efficient property of ZOO on the client. By combining FO and ZO methods, the algorithm achieves improved convergence speed while effectively accommodating stricter resource constraints on the client side.
+TABLE I:
+Comparison of convergence rate with FO/ZO SGD paradigm
+Methods
+FO SGD
+ZO SGD
+HOSL
+Convergence Rate
+𝒪
+⁡
+(
+1
+/
+T
+)
+{\mathcal{O}}(\sqrt{1/T})
+OPEN
+𝒪
+⁡
+(
+d
+/
+T
+​
+Q
+)
+)
+{\mathcal{O}}(\sqrt{d/TQ}))
+𝒪
+⁡
+(
+d
+c
+/
+T
+​
+Q
+)
+{\mathcal{O}}(\sqrt{d_{c}/TQ})
+Remark 3
+.
+Table
+I
+compares the convergence rate of the proposed mix-optimizer algorithm with two baselines: FO and ZO SGD paradigm. This comparison validates the theoretical advantage of the proposed method.
+Among the three approaches, FO SGD achieves the fastest convergence rate, as it directly exploits exact gradient information for parameter updates. In contrast, ZO SGD relies on noisy gradient estimators constructed from function evaluations, which introduces additional bias and variance. As a result, ZO methods typically require smaller step sizes to ensure stability, leading to slower convergence.
+This limitation is reflected in the convergence rate of ZO SGD which exhibits a linear dependence on the model dimension
+d
+d
+. Although increasing the number of perturbations
+Q
+Q
+can partially mitigate the stochastic error, the dimensional dependence remains dominant and significantly degrades convergence in high-dimensional settings.
+The proposed mixture optimizer achieves a convergence rate that lies between those of FO and ZO SGD. Compared to ZOO, the key improvement is the substantially weaker dependence on the model dimension: the convergence rate depends only on the client-side model size
+d
+c
+d_{c}
+rather than full model dimension
+d
+d
+. Consequently, the convergence performance can be further improved by allocating a smaller portion of the model to the client.
+This acceleration stems from the incorporation of FO updates on the server side, where more complex components of the model are optimized efficiently using exact gradients. By offloading computationally intensive updates to the server, the proposed method effectively combines the efficiency of FO optimization while the client side enjoys the benefits of ZOO. Moreover, the algorithm achieves a linear speedup with respect to the number of perturbations
+Q
+Q
+, matching the typical ZO SGD and indicating that our algorithm can achieve the tightest bound under standard assumptions.
+V
+Experiments
+V-A
+Experiment Setup
+Models & Training Configurations.
+We evaluated our approach on the OPT
+[
+21
+]
+family (125M and 1.3B) under both full-parameter and parameter-efficient fine-tuning (e.g., LoRA
+[
+22
+]
+).
+Following the prompt templates from
+[
+11
+]
+, we benchmarked three optimizer configurations:
+(1) ZO-ZO: both client and server sides use ZO SGD,
+(2) FO-FO: both client and server sides use FO SGD, and
+(3) ZO-FO (Ours): the client uses ZO SGD, and the server employes FO SGD.
+Tasks & Hardware.
+We assessed classification performance on a subset of GLUE
+[
+23
+]
+and SuperGLUE
+[
+24
+]
+tasks, including SST-2
+[
+25
+]
+, CB
+[
+26
+]
+, WIC
+[
+27
+]
+, WSC
+[
+28
+]
+, BoolQ
+[
+29
+]
+, and RTE
+[
+30
+]
+.
+All experiments were conducted on an NVIDIA A100 GPU with 40GB memory. Detailed hyperparameter configurations are provided in Appendix
+VII-A
+.
+Model Partitioning.
+We placed the split after layer 5, assigning the first five layers to the client and the remaining layers to the server: 7 layers for OPT-125M, and 19 layers for OPT-1.3B.
+Memory Measurement.
+We report peak GPU memory consumption for each model and dataset configuration. These empirical measurements align with our analytical memory estimates, which account for model parameters, gradients, activations, and perturbation vectors. Detailed derivations are provided in Appendix
+VII-B
+.
+V-B
+Experiment Results
+HOSL
+Reduces Client-Side GPU Memory by up to 3.7
+×
+\times
+Compared to FO-FO.
+As illustrated in Figure
+2
+, our method maintains client GPU memory consumption equivalent to ZO-ZO while achieving significant memory reduction compared to FO-FO. For OPT-125M under full-parameter fine-tuning, our approach reduces CGPU usage by 1.1
+×
+\times
+to 3.7
+×
+\times
+across tasks, with the largest savings on BoolQ (2.36 GB vs. 8.67 GB). For the larger OPT-1.3B model, memory reductions range from 1.2
+×
+\times
+to 2.1
+×
+\times
+, with BoolQ again showing maximum savings (7.23 GB vs. 15.41 GB).
+HOSL
+Achieves up to 15.55% Higher Accuracy Than ZO-ZO.
+Tables
+II
+and
+III
+present test accuracy comparisons for full-parameter and LoRA-based fine-tuning, respectively. Our hybrid ZO-FO approach consistently outperforms the ZO-ZO baseline across all tasks and model configurations. For full-parameter fine-tuning, accuracy improvements over ZO-ZO range from 0.69% on BoolQ (OPT-125M) to 15.55% on RTE (OPT-1.3B). LoRA-based fine-tuning yields improvements from 0.60% to 13.16% over ZO-ZO.
+Compared to the FO-FO baseline, our method incurs only modest accuracy reductions: 0.41%-4.23% for full-parameter fine-tuning and 0.20%-2.05% for LoRA.
+HOSL
+Achieves the Best Accuracy-Memory Trade-off for LLM Fine-Tuning.
+The results demonstrate that our method occupies a favorable position in the accuracy-memory trade-off space. By partitioning optimization responsibilities - ZO on the client with FO on the server,
+HOSL
+achieves test accuracy within 0.41%-4.23% of FO-FO while reducing client memory to the level of ZO-ZO. This design enables high-performance fine-tuning on resource-constrained edge devices without sacrificing the convergence benefits of gradient-based optimization on the server side.
+TABLE II:
+Test Accuracy and GPU Memory Comparison of OPT Models (
+Full-Parameter
+Fine-Tuning)
+Model
+Task
+Method
+Test Acc
+CGPU
+1
+1
+1
+CGPU: Peak GPU memory at the client side
+SGPU
+2
+2
+2
+SGPU: Peak GPU memory at the server side
+OPT-125M
+SST-2
+ZO-ZO
+85.78%
+1.38 GB
+3.15 GB
+FO-FO
+88.54%
+2.23 GB
+5.43 GB
+Ours
+87.61%
+1.38 GB
+5.43 GB
+WIC
+ZO-ZO
+53.92%
+1.38 GB
+4.67 GB
+FO-FO
+63.79%
+2.73 GB
+8.12 GB
+Ours
+62.36%
+1.38 GB
+8.12 GB
+WSC
+ZO-ZO
+56.73%
+1.38 GB
+2.18 GB
+FO-FO
+64.42%
+1.51 GB
+3.46 GB
+Ours
+63.46%
+1.38 GB
+3.46 GB
+BoolQ
+ZO-ZO
+60.86%
+2.36 GB
+9.96 GB
+FO-FO
+62.11%
+8.67 GB
+21.76 GB
+Ours
+61.55%
+2.36 GB
+21.76 GB
+CB
+ZO-ZO
+69.64%
+1.38 GB
+3.15 GB
+FO-FO
+87.50%
+2.08 GB
+5.43 GB
+Ours
+83.93%
+1.38 GB
+5.43 GB
+RTE
+ZO-ZO
+56.69%
+1.54 GB
+11.80 GB
+FO-FO
+66.43%
+4.3 GB
+13.09 GB
+Ours
+65.31%
+1.54 GB
+13.09 GB
+OPT-1.3B
+SST-2
+ZO-ZO
+90.03%
+7.25 GB
+7.83 GB
+FO-FO
+93.92%
+8.42 GB
+13.92 GB
+Ours
+92.32%
+7.23 GB
+13.81 GB
+WIC
+ZO-ZO
+56.25%
+7.23 GB
+7.26 GB
+FO-FO
+66.51%
+8.43 GB
+13.98 GB
+Ours
+62.28%
+7.23 GB
+13.65 GB
+WSC
+ZO-ZO
+56.88%
+7.23 GB
+7.27 GB
+FO-FO
+63.77%
+8.45 GB
+14.16 GB
+Ours
+62.49%
+7.23 GB
+13.67 GB
+BoolQ
+ZO-ZO
+61.57%
+7.23 GB
+11.50 GB
+FO-FO
+70.61%
+15.41 GB
+45.98 GB
+Ours
+70.20%
+7.23 GB
+44.97 GB
+CB
+ZO-ZO
+74.52%
+7.23 GB
+7.84 GB
+FO-FO
+89.29%
+9.24 GB
+20.83 GB
+Ours
+87.58%
+7.23 GB
+20.49 GB
+RTE
+ZO-ZO
+58.73%
+7.23 GB
+8.12 GB
+FO-FO
+75.09%
+9.38 GB
+20.89 GB
+Ours
+74.28%
+7.23 GB
+20.89 GB
+TABLE III:
+Test Accuracy and GPU Memory Comparison of OPT Models (
+LoRA
+-Based Parameter-Efficient Fine-Tuning)
+Model
+Task
+Method
+Test Acc
+CGPU
+SGPU
+OPT-125M
+SST-2
+ZO-ZO
+85.20%
+0.84 GB
+3.40 GB
+FO-FO
+87.54%
+0.86 GB
+8.20 GB
+Ours
+87.04%
+0.84 GB
+8.20 GB
+WIC
+ZO-ZO
+55.01%
+0.85 GB
+4.25 GB
+FO-FO
+66.14%
+0.8 GB
+10.80 GB
+Ours
+65.36%
+0.84
+GB
+10.80 GB
+WSC
+ZO-ZO
+56.73%
+0.88 GB
+5.70 GB
+FO-FO
+63.16%
+0.92 GB
+16.00 GB
+Ours
+62.50%
+0.88 GB
+16.00 GB
+BoolQ
+ZO-ZO
+61.40%
+2.36 GB
+9.96 GB
+FO-FO
+62.40%
+8.67 GB
+33.50 GB
+Ours
+62.00%
+2.36 GB
+33.50 GB
+CB
+ZO-ZO
+67.86%
+0.96 GB
+11.20 GB
+FO-FO
+82.35%
+1.04 GB
+34.37 GB
+Ours
+80.30%
+0.96 GB
+34.37 GB
+RTE
+ZO-ZO
+54.15%
+0.97 GB
+11.8 GB
+FO-FO
+68.70%
+1.04 GB
+34.40 GB
+Ours
+67.31%
+0.97 GB
+34.40 GB
+OPT-1.3B
+SST-2
+ZO-ZO
+89.25%
+5.78 GB
+6.11 GB
+FO-FO
+93.00%
+6.06 GB
+7.51 GB
+Ours
+92.09%
+5.78 GB
+7.28 GB
+WIC
+ZO-ZO
+54.32%
+5.80 GB
+6.23 GB
+FO-FO
+58.15%
+6.15 GB
+7.98 GB
+Ours
+56.90%
+5.80 GB
+7.96 GB
+WSC
+ZO-ZO
+55.91%
+5.90 GB
+6.71 GB
+FO-FO
+60.58%
+6.48 GB
+9.69 GB
+Ours
+58.65%
+5.90 GB
+9.69 GB
+BoolQ
+ZO-ZO
+55.80%
+6.18 GB
+10.52 GB
+FO-FO
+61.30%
+12.86 GB
+36.91 GB
+Ours
+61.10%
+6.18 GB
+36.91 GB
+CB
+ZO-ZO
+64.59%
+6.15 GB
+7.85 GB
+FO-FO
+67.26%
+7.52 GB
+14.91 GB
+Ours
+66.17%
+6.15 GB
+14.85 GB
+RTE
+ZO-ZO
+54.51%
+6.12 GB
+7.73 GB
+FO-FO
+57.40%
+7.40 GB
+14.32 GB
+Ours
+57.04%
+6.12 GB
+14.30 GB
+Fig. 2:
+Client GPU (CGPU) Memory Comparison between FO-FO and Our Method for OPT-125M and OPT-1.3B Models
+VI
+conclusion
+In this paper, we propose
+HOSL
+, a hybrid-order split learning framework that addresses the memory bottleneck in fine-tuning of LLMs on resource-constrained edge devices.
+By strategically partitioning optimization between ZO method on the client side with FO SGD on the server side,
+HOSL
+achieves significant client-side memory reductions (up to 3.7× compared to the fully FO baseline) while maintaining competitive accuracy within 0.41%–4.23% of standard backpropagation-based training.
+Our theoretical analysis establishes that
+HOSL
+achieves a convergence rate of
+𝒪
+⁡
+(
+(
+d
+c
+/
+T
+​
+Q
+)
+)
+\mathcal{O}(\sqrt{(d_{c}/TQ)})
+, where the rate depends on the client-side parameter dimension
+d
+c
+d_{c}
+rather than the full model dimension
+d
+d
+. This result demonstrates the benefit of offloading computationally intensive optimization to the server while preserving the memory efficiency of ZO methods on the client. Empirical evaluations across multiple tasks and the OPT model scales validate that
+HOSL
+consistently outperforms the ZO-ZO baseline by up to 15.55% in accuracy, confirming that server-side FO refinement effectively mitigates the slow convergence typically associated with ZO optimization.
+One limitation of
+HOSL
+is the increased number of forward passes required for ZO gradient estimation on the client side, which may increase wall-clock training time despite the memory savings. Additionally, our analysus assumes a single client and does not address data heterogeneity in a federated setting.
+References
+[1]
+P. Vepakomma, O. Gupta, T. Swedish, and R. Raskar
+(2018)
+Split learning for health: distributed deep learning without sharing raw patient data
+.
+arXiv preprint arXiv:1812.00564
+.
+Cited by:
+§I
+,
+§II
+.
+[2]
+M. G. Poirot, P. Vepakomma, K. Chang, J. Kalpathy-Cramer, R. Gupta, and R. Raskar
+(2019)
+Split learning for collaborative deep learning in healthcare
+.
+arXiv preprint arXiv:1912.12115
+.
+Cited by:
+§I
+,
+§II
+.
+[3]
+Z. Lin, G. Zhu, Y. Deng, X. Chen, Y. Gao, K. Huang, and Y. Fang
+(2024)
+Efficient parallel split learning over resource-constrained wireless edge networks
+.
+IEEE Transactions on Mobile Computing
+23
+(
+10
+),
+pp. 9224–9239
+.
+Cited by:
+§I
+,
+§II
+.
+[4]
+Z. Gu, Q. Fan, L. Sun, Y. Liu, and X. Ye
+(2025)
+VFLAIR-llm: a comprehensive framework and benchmark for split learning of llms
+.
+In
+Proceedings of the 31st ACM SIGKDD Conference on Knowledge Discovery and Data Mining V. 2
+,
+pp. 5470–5481
+.
+Cited by:
+§I
+,
+§II
+.
+[5]
+C. Thapa, P. C. M. Arachchige, S. Camtepe, and L. Sun
+(2022)
+Splitfed: when federated learning meets split learning
+.
+In
+Proceedings of the AAAI conference on artificial intelligence
+,
+Vol.
+36
+,
+pp. 8485–8493
+.
+Cited by:
+§I
+.
+[6]
+P. Han, C. Huang, G. Tian, M. Tang, and X. Liu
+(2024)
+Convergence analysis of split federated learning on heterogeneous data
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 103476–103544
+.
+Cited by:
+§I
+.
+[7]
+B. Radovič, M. Canini, S. Horváth, V. Pejović, and P. Vepakomma
+(2025)
+Towards a unified framework for split learning
+.
+EuroMLSys’ 25
+,
+pp. 183–191
+.
+Cited by:
+§I
+.
+[8]
+J. C. Spall
+(2002)
+Multivariate stochastic approximation using a simultaneous perturbation gradient approximation
+.
+IEEE transactions on automatic control
+37
+(
+3
+),
+pp. 332–341
+.
+Cited by:
+§I
+,
+§II
+.
+[9]
+S. Ghadimi and G. Lan
+(2013)
+Stochastic first-and zeroth-order methods for nonconvex stochastic programming
+.
+SIAM journal on optimization
+23
+(
+4
+),
+pp. 2341–2368
+.
+Cited by:
+§I
+,
+§II
+,
+§IV
+.
+[10]
+Y. Nesterov and V. Spokoiny
+(2017)
+Random gradient-free minimization of convex functions
+.
+Foundations of Computational Mathematics
+17
+(
+2
+),
+pp. 527–566
+.
+Cited by:
+§I
+,
+§II
+.
+[11]
+S. Malladi, T. Gao, E. Nichani, A. Damian, J. D. Lee, D. Chen, and S. Arora
+(2023)
+Fine-tuning language models with just forward passes
+.
+Advances in Neural Information Processing Systems
+36
+,
+pp. 53038–53075
+.
+Cited by:
+§I
+,
+§II
+,
+§V-A
+,
+§VII-A2
+.
+[12]
+Z. Li, B. Ying, Z. Liu, C. Dong, and H. Yang
+(2025)
+Achieving dimension-free communication in federated learning via zeroth-order optimization
+.
+In
+The Thirteenth International Conference on Learning Representations
+,
+Cited by:
+§I
+,
+§II
+.
+[13]
+Y. Liu, Z. Zhu, C. Gong, M. Cheng, C. Hsieh, and Y. You
+(2025)
+Sparse meZO: less parameters for better performance in zeroth-order LLM fine-tuning
+.
+In
+The Thirty-ninth Annual Conference on Neural Information Processing Systems
+,
+Cited by:
+§I
+,
+§II
+.
+[14]
+D. Liang, J. Zhang, E. Chen, Z. Li, R. Li, and H. Yang
+(2025)
+Towards straggler-resilient split federated learning: an unbalanced update approach
+.
+In
+The Thirty-ninth Annual Conference on Neural Information Processing Systems
+,
+Cited by:
+§I
+,
+§II
+,
+§II
+,
+§IV
+.
+[15]
+Z. Li, B. Ying, Z. Liu, C. Dong, and H. Yang
+(2025)
+Reconciling hessian-informed acceleration and scalar-only communication for efficient federated zeroth-order fine-tuning
+.
+arXiv preprint arXiv:2506.02370
+.
+Cited by:
+§I
+.
+[16]
+B. McMahan, E. Moore, D. Ramage, S. Hampson, and B. A. y Arcas
+(2017)
+Communication-efficient learning of deep networks from decentralized data
+.
+In
+Artificial intelligence and statistics
+,
+pp. 1273–1282
+.
+Cited by:
+§II
+.
+[17]
+Z. Lin, X. Hu, Y. Zhang, Z. Chen, Z. Fang, X. Chen, A. Li, P. Vepakomma, and Y. Gao
+(2024)
+Splitlora: a split parameter-efficient fine-tuning framework for large language models
+.
+arXiv preprint arXiv:2407.00952
+.
+Cited by:
+§II
+.
+[18]
+W. Fang, Z. Yu, Y. Jiang, Y. Shi, C. N. Jones, and Y. Zhou
+(2022)
+Communication-efficient stochastic zeroth-order optimization for federated learning
+.
+IEEE Transactions on Signal Processing
+70
+,
+pp. 5058–5073
+.
+Cited by:
+§II
+.
+[19]
+Z. Qin, D. Chen, B. Qian, B. Ding, Y. Li, and S. Deng
+(2024)
+Federated full-parameter tuning of billion-sized language models with communication cost under 18 kilobytes
+.
+In
+Proceedings of the 41st International Conference on Machine Learning
+,
+R. Salakhutdinov, Z. Kolter, K. Heller, A. Weller, N. Oliver, J. Scarlett, and F. Berkenkamp (Eds.)
+,
+Proceedings of Machine Learning Research
+, Vol.
+235
+,
+pp. 41473–41497
+.
+Cited by:
+§II
+.
+[20]
+W. Guo, J. Long, Y. Zeng, Z. Liu, X. Yang, Y. Ran, J. R. Gardner, O. Bastani, C. D. Sa, X. Yu, B. Chen, and Z. Xu
+(2025)
+Zeroth-order fine-tuning of LLMs with transferable static sparsity
+.
+In
+The Thirteenth International Conference on Learning Representations
+,
+Cited by:
+§II
+.
+[21]
+S. Zhang, S. Roller, N. Goyal, M. Artetxe, M. Chen, S. Chen, C. Dewan, M. Diab, X. Li, X. V. Lin,
+et al.
+(2022)
+Opt: open pre-trained transformer language models
+.
+arXiv preprint arXiv:2205.01068
+.
+Cited by:
+§V-A
+.
+[22]
+E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, W. Chen,
+et al.
+(2022)
+Lora: low-rank adaptation of large language models.
+.
+ICLR
+1
+(
+2
+),
+pp. 3
+.
+Cited by:
+§V-A
+.
+[23]
+A. Wang, A. Singh, J. Michael, F. Hill, O. Levy, and S. Bowman
+(2018)
+GLUE: a multi-task benchmark and analysis platform for natural language understanding
+.
+In
+Proceedings of the 2018 EMNLP workshop BlackboxNLP: Analyzing and interpreting neural networks for NLP
+,
+pp. 353–355
+.
+Cited by:
+§V-A
+.
+[24]
+A. Wang, Y. Pruksachatkun, N. Nangia, A. Singh, J. Michael, F. Hill, O. Levy, and S. Bowman
+(2019)
+Superglue: a stickier benchmark for general-purpose language understanding systems
+.
+Advances in neural information processing systems
+32
+.
+Cited by:
+§V-A
+.
+[25]
+R. Socher, A. Perelygin, J. Wu, J. Chuang, C. D. Manning, A. Y. Ng, and C. Potts
+(2013)
+Recursive deep models for semantic compositionality over a sentiment treebank
+.
+In
+Proceedings of the 2013 conference on empirical methods in natural language processing
+,
+pp. 1631–1642
+.
+Cited by:
+§V-A
+.
+[26]
+M. De Marneffe, M. Simons, and J. Tonhauser
+(2019)
+The commitmentbank: investigating projection in naturally occurring discourse
+.
+In
+proceedings of Sinn und Bedeutung
+,
+Vol.
+23
+,
+pp. 107–124
+.
+Cited by:
+§V-A
+.
+[27]
+M. T. Pilehvar and J. Camacho-Collados
+(2019)
+WiC: the word-in-context dataset for evaluating context-sensitive meaning representations
+.
+In
+Proceedings of the 2019 conference of the North American chapter of the association for computational linguistics: Human language technologies, volume 1 (Long and short papers)
+,
+pp. 1267–1273
+.
+Cited by:
+§V-A
+.
+[28]
+V. Kocijan, T. Lukasiewicz, E. Davis, G. Marcus, and L. Morgenstern
+(2020)
+A review of winograd schema challenge datasets and approaches
+.
+arXiv preprint arXiv:2004.13831
+.
+Cited by:
+§V-A
+.
+[29]
+C. Clark, K. Lee, M. Chang, T. Kwiatkowski, M. Collins, and K. Toutanova
+(2019)
+Boolq: exploring the surprising difficulty of natural yes/no questions
+.
+arXiv preprint arXiv:1905.10044
+.
+Cited by:
+§V-A
+.
+[30]
+S. Bowman, G. Angeli, C. Potts, and C. D. Manning
+(2015)
+A large annotated corpus for learning natural language inference
+.
+In
+Proceedings of the 2015 conference on empirical methods in natural language processing
+,
+pp. 632–642
+.
+Cited by:
+§V-A
+.
+VII
+Appendix
+VII-A
+Experiment Setting
+VII-A
+1
+Hyperparameters
+Table
+IV
+reports the hyperparameters used for split learning experiments. For zeroth-order optimization, we fix
+ϵ
+=
+1
+​
+e-
+​
+3
+\epsilon=1\text{e-}3
+and use 10 perturbation vectors throughout. Both client and server use SGD without momentum. For LoRA fine-tuning, we use rank
+r
+=
+8
+r=8
+,
+α
+=
+16
+\alpha=16
+, and apply adapters to query and value projection matrices. We evaluate validation accuracy every 25 communication rounds across all optimizer configurations (FO-FO, ZO-ZO, ZO-FO).
+TABLE IV:
+Experiment Settings for Split Learning with Mixed Optimizers
+Model
+Parameter
+SST-2
+CB
+WSC
+WIC
+RTE
+BoolQ
+OPT-125M+FP
+ZO LR
+1e-6
+1e-6
+1e-6
+1e-6
+1e-6
+2e-7
+FO LR
+1e-3
+5e-4
+5e-4
+1e-3
+5e-4
+1e-3
+Batch Size
+64
+16
+64
+64
+16
+16
+Rounds
+3000
+1000
+1000
+2000
+1500
+1500
+OPT-125M+LoRA
+ZO LR
+5e-5
+5e-5
+5e-5
+5e-5
+1e-6
+5e-5
+FO LR
+1e-4
+1e-4
+1e-4
+1e-4
+5e-3
+1e-4
+Batch Size
+64
+64
+64
+64
+64
+64
+Rounds
+2000
+1000
+3000
+2000
+1500
+500
+OPT-1.3B+FP
+ZO LR
+1e-6
+1e-6
+1e-6
+1e-6
+1e-6
+1e-6
+FO LR
+1e-4
+1e-4
+1e-4
+1e-4
+1e-4
+1e-4
+Batch Size
+8
+8
+8
+8
+8
+8
+Rounds
+500
+500
+500
+500
+500
+500
+OPT-1.3B+LoRA
+ZO LR
+1e-6
+1e-6
+1e-6
+1e-6
+1e-6
+1e-6
+FO LR
+1e-4
+1e-4
+1e-4
+1e-4
+1e-4
+1e-4
+Batch Size
+8
+8
+8
+8
+8
+8
+Rounds
+500
+500
+500
+500
+500
+500
+VII-A
+2
+Prompt
+We adopt the prompt templates from
+[
+11
+]
+without modification. Table
+V
+reports tokenized sequence lengths on each dataset.
+TABLE V:
+Sequence Lengths by Dataset
+Dataset
+Mean
+Max
+Min
+SST-2
+27.0
+64
+6
+WIC
+43.0
+82
+31
+WSC
+60.2
+87
+32
+BoolQ
+133.1
+1049
+23
+CB
+105.6
+284
+42
+RTE
+81.5
+260
+31
+VII-B
+GPU Memory Calculation for Split Learning with OPT-125M
+VII-B
+1
+Variable Definitions
+We derive theoretical peak GPU memory for split learning with OPT-125M on SST-2, using sequence length
+S
+=
+64
+S=64
+and batch size
+B
+=
+64
+B=64
+. Table
+VI
+defines all variables. Theoretical estimates are validated against empirical measurements from our implementation.
+TABLE VI:
+Model and training configuration parameters.
+Symbol
+Name
+Value
+B
+B
+Batch Size
+64
+S
+S
+Sequence Length
+64
+H
+H
+Hidden Dimension
+768
+L
+L
+Total Layers
+12
+L
+c
+L_{c}
+Client Layers
+5
+L
+s
+L_{s}
+Server Layers
+7
+A
+A
+Attention Heads
+12
+d
+h
+d_{h}
+Head Dimension (
+H
+/
+A
+H/A
+)
+64
+d
+f
+​
+f
+d_{ff}
+FFN Dimension (
+4
+​
+H
+4H
+)
+3072
+V
+V
+Vocabulary Size
+50,272
+M
+M
+Max Positions
+2048
+β
+\beta
+Bytes/Element (FP32)
+4
+r
+r
+LoRA Rank
+8
+α
+\alpha
+LoRA Alpha
+16
+VII-B
+2
+Per-Layer Parameter Count
+The following formulas compute the parameter count in a single transformer layer. The attention block has four projection matrices (Q, K, V, O), each
+H
+×
+H
+H\times H
+, plus biases (Eq.
+10
+). The FFN has two linear layers (
+H
+→
+d
+f
+​
+f
+→
+H
+H\rightarrow d_{ff}\rightarrow H
+) with biases (Eq.
+11
+). Two LayerNorms contribute
+4
+​
+H
+4H
+parameters via scale
+(
+γ
+)
+(\gamma)
+and shift
+(
+β
+)
+(\beta)
+vectors. The total per-layer count is given in Eq.
+13
+.
+Q,K,V,O projections with biases:
+P
+attn
+=
+4
+​
+H
+2
++
+4
+​
+H
+P_{\mathrm{attn}}=4H^{2}+4H
+(10)
+fc1, fc2 with biases:
+P
+FFN
+=
+2
+​
+H
+​
+d
+f
+​
+f
++
+d
+f
+​
+f
++
+H
+P_{\mathrm{FFN}}=2Hd_{ff}+d_{ff}+H
+(11)
+2 LayerNorms with
+γ
+,
+β
+\gamma,\beta
+:
+P
+LN
+=
+4
+​
+H
+P_{\mathrm{LN}}=4H
+(12)
+Total per layer:
+P
+layer
+\displaystyle P_{\mathrm{layer}}
+=
+4
+​
+H
+2
++
+2
+​
+H
+​
+d
+f
+​
+f
++
+d
+f
+​
+f
++
+9
+​
+H
+\displaystyle=4H^{2}+2Hd_{ff}+d_{ff}+9H
+=
+7,087,872
+\displaystyle=\mathbf{7{,}087{,}872}
+(13)
+VII-B
+3
+Client Memory (ZO Optimization)
+Parameters.
+Model weights for the client’s portion of the split model, including token embeddings, positional embeddings, and transformer layers. OPT uses learned positional embeddings with two additional offset positions for padding and BOS tokens, resulting in
+(
+M
++
+2
+)
+(M+2)
+total position embeddings:
+M
+params
+c
+\displaystyle M_{\mathrm{params}}^{\mathrm{c}}
+=
+(
+V
+​
+H
+⏟
+tok
++
+(
+M
++
+2
+)
+​
+H
+⏟
+pos
++
+L
+c
+​
+P
+layer
+⏟
+layers
+)
+​
+β
+\displaystyle=\bigl(\underbrace{VH}_{\mathrm{tok}}+\underbrace{(M{+}2)H}_{\mathrm{pos}}+\underbrace{L_{c}P_{\mathrm{layer}}}_{\mathrm{layers}}\bigr)\beta
+=
+75,622,656
+×
+4
+\displaystyle=75{,}622{,}656\times 4
+=
+288.5
+​
+MB
+\displaystyle=\mathbf{288.5~\mathrm{MB}}
+(14)
+Gradients
+ZO estimates gradients via finite differences, so no explicit gradient storage is needed:
+M
+grad
+c
+=
+𝟎
+M_{\mathrm{grad}}^{\mathrm{c}}=\mathbf{0}
+(15)
+Causal Attention Masks
+Lower-triangular masks for autoregressive attention are pre-allocated for the maximum sequence length
+M
+M
+:
+M
+mask
+c
+\displaystyle M_{\mathrm{mask}}^{\mathrm{c}}
+=
+L
+c
+​
+M
+2
+​
+β
+\displaystyle=L_{c}M^{2}\beta
+=
+5
+×
+2048
+2
+×
+4
+=
+𝟖𝟎
+​
+MB
+\displaystyle=5\times 2048^{2}\times 4=\mathbf{80~\mathrm{MB}}
+(16)
+KV Cache
+Although the model operates in inference mode without storing activations for backpropagation, the KV cache is required because ZO optimization performs multiple forward passes per update (one per perturbation vector). Caching key and value tensors avoids redundant recomputation across these perturbations:
+M
+KV
+c
+\displaystyle M_{\mathrm{KV}}^{\mathrm{c}}
+=
+L
+c
+⋅
+2
+⋅
+B
+⋅
+A
+⋅
+S
+⋅
+d
+h
+⋅
+β
+\displaystyle=L_{c}\cdot 2\cdot B\cdot A\cdot S\cdot d_{h}\cdot\beta
+=
+5
+×
+2
+×
+64
+×
+12
+×
+64
+2
+×
+4
+\displaystyle=5\times 2\times 64\times 12\times 64^{2}\times 4
+=
+𝟏𝟐𝟎
+​
+MB
+\displaystyle=\mathbf{120~\mathrm{MB}}
+(17)
+Stored Activations.
+ZO uses inference mode with no autograd graph:
+M
+act
+c
+=
+𝟎
+M_{\mathrm{act}}^{\mathrm{c}}=\mathbf{0}
+(18)
+Transient Memory
+Peak temporary allocations during a single layer’s forward pass, immediately freed after use:
+M
+trans
+c
+\displaystyle M_{\mathrm{trans}}^{\mathrm{c}}
+=
+(
+B
+​
+S
+​
+H
+⏟
+layer input
++
+B
+​
+S
+​
+d
+f
+​
+f
+⏟
+FFN intermediate
++
+B
+​
+S
+​
+H
+⏟
+layer output
+)
+​
+β
+\displaystyle=(\underbrace{BSH}_{\text{layer input}}+\underbrace{BSd_{ff}}_{\text{FFN intermediate}}+\underbrace{BSH}_{\text{layer output}})\beta
+=
+18,874,368
+×
+4
+=
+𝟕𝟐
+​
+MB
+\displaystyle=18{,}874{,}368\times 4=\mathbf{72~\mathrm{MB}}
+(19)
+Communication Buffer
+The final hidden state tensor returned from the client forward is held in memory until transmission:
+M
+comm
+c
+\displaystyle M_{\mathrm{comm}}^{\mathrm{c}}
+=
+B
+​
+S
+​
+H
+​
+β
+=
+12.6
+​
+MB
+\displaystyle=BSH\beta=\mathbf{12.6~\mathrm{MB}}
+CUDA Runtime Overhead
+GPU computation requires initialization of the CUDA runtime environment before any model parameters are loaded. This overhead includes device context initialization, deep learning library kernels, and memory allocator structures. We measure this baseline overhead empirically via nvidia-smi prior to model loading.
+The total runtime overhead is:
+M
+CUDA
+≈
+400
+​
+–
+​
+800
+​
+MB
+M_{\mathrm{CUDA}}\approx 400\text{--}800~\mathrm{MB}
+(20)
+Client Total.
+M
+total
+c
+≈
+1.38
+​
+GB
+\boxed{M_{\mathrm{total}}^{\mathrm{c}}\approx\mathbf{1.38~\mathrm{GB}}}
+(21)
+VII-B
+4
+Server Memory (FO Optimization)
+Parameters
+Model weights for the server’s portion, including remaining transformer layers, the language modeling head projection, and final layer normalization:
+M
+params
+s
+\displaystyle M_{\mathrm{params}}^{\mathrm{s}}
+=
+(
+V
+​
+H
+⏟
+LM
++
+L
+s
+​
+P
+layer
+⏟
+layers
++
+2
+​
+H
+⏟
+LN
+)
+​
+β
+\displaystyle=\bigl(\underbrace{VH}_{\mathrm{LM}}+\underbrace{L_{s}P_{\mathrm{layer}}}_{\mathrm{layers}}+\underbrace{2H}_{\mathrm{LN}}\bigr)\beta
+=
+88,225,536
+×
+4
+\displaystyle=88{,}225{,}536\times 4
+=
+352.9
+​
+MB
+\displaystyle=\mathbf{352.9~\mathrm{MB}}
+(22)
+Gradients
+FO optimization requires storing gradient tensors for all trainable parameters, matching the size of parameter storage:
+M
+grad
+s
+\displaystyle M_{\mathrm{grad}}^{\mathrm{s}}
+=
+P
+server
+⋅
+β
+\displaystyle=P_{\mathrm{server}}\cdot\beta
+=
+M
+params
+s
+=
+352.9
+​
+MB
+\displaystyle=M_{\mathrm{params}}^{\mathrm{s}}=\mathbf{352.9~\mathrm{MB}}
+(23)
+Causal Attention Masks
+Pre-allocated lower-triangular masks for autoregressive attention across all server layers, sized for maximum sequence length:
+M
+mask
+s
+\displaystyle M_{\mathrm{mask}}^{\mathrm{s}}
+=
+L
+s
+​
+M
+2
+​
+β
+\displaystyle=L_{s}M^{2}\beta
+=
+7
+×
+2048
+2
+×
+4
+=
+𝟏𝟏𝟐
+​
+MB
+\displaystyle=7\times 2048^{2}\times 4=\mathbf{112~\mathrm{MB}}
+(24)
+Stored Activations
+Backpropagation requires caching intermediate activations from the forward pass. Per layer, we store: layer inputs, QKV projections (for recomputing attention gradients), attention scores and softmax outputs (for attention backward), and FFN intermediate activations:
+M
+act
+layer
+\displaystyle M_{\mathrm{act}}^{\mathrm{layer}}
+=
+(
+6
+​
+B
+​
+S
+​
+H
+⏟
+in
+/
+QKV
++
+2
+​
+B
+​
+A
+​
+S
+2
+⏟
+attn
++
+B
+​
+S
+​
+d
+f
+​
+f
+⏟
+FFN
+)
+​
+β
+\displaystyle=\bigl(\underbrace{6BSH}_{\mathrm{in/QKV}}+\underbrace{2BAS^{2}}_{\mathrm{attn}}+\underbrace{BSd_{ff}}_{\mathrm{FFN}}\bigr)\beta
+=
+144
+​
+MB
+/
+layer
+\displaystyle=144~\mathrm{MB/layer}
+(25)
+M
+act
+s
+\displaystyle M_{\mathrm{act}}^{\mathrm{s}}
+=
+L
+s
+×
+M
+act
+layer
+\displaystyle=L_{s}\times M_{\mathrm{act}}^{\mathrm{layer}}
+=
+7
+×
+144
+=
+1,008
+​
+MB
+\displaystyle=7\times 144=\mathbf{1{,}008~\mathrm{MB}}
+(26)
+Logits Peak
+(Dominant)
+The language modeling head produces logits over the full vocabulary for each sequence position. Cross-entropy loss computation requires: the logits tensor, shifted versions for causal alignment, softmax probabilities, and their gradients—all at vocabulary scale
+V
+V
+:
+M
+logits
+s
+\displaystyle M_{\mathrm{logits}}^{\mathrm{s}}
+=
+(
+B
+​
+S
+​
+V
+⏟
+logits
++
+3
+​
+B
+​
+(
+S
+−
+1
+)
+​
+V
+⏟
+shift
+/
+soft
+/
+grad
+)
+​
+β
+\displaystyle=\bigl(\underbrace{BSV}_{\mathrm{logits}}+\underbrace{3B(S{-}1)V}_{\mathrm{shift/soft/grad}}\bigr)\beta
+=
+813,197,824
+×
+4
+\displaystyle=813{,}197{,}824\times 4
+=
+3.03
+​
+GB
+\displaystyle=\mathbf{3.03~\mathrm{GB}}
+(27)
+Transient Memory
+Peak temporary allocations during a single layer’s forward pass, reused across layers:
+M
+trans
+s
+\displaystyle M_{\mathrm{trans}}^{\mathrm{s}}
+=
+(
+B
+​
+S
+​
+H
+⏟
+layer input
++
+B
+​
+S
+​
+d
+f
+​
+f
+⏟
+FFN intermediate
++
+B
+​
+S
+​
+H
+⏟
+layer output
+)
+​
+β
+\displaystyle=(\underbrace{BSH}_{\text{layer input}}+\underbrace{BSd_{ff}}_{\text{FFN intermediate}}+\underbrace{BSH}_{\text{layer output}})\beta
+=
+𝟕𝟐
+​
+MB
+\displaystyle=\mathbf{72~\mathrm{MB}}
+(28)
+CUDA Overhead
+Baseline GPU runtime overhead including CUDA context, cuDNN/cuBLAS kernels, and memory allocator structures:
+M
+CUDA
+s
+≈
+𝟓𝟎𝟎
+​
+MB
+M_{\mathrm{CUDA}}^{\mathrm{s}}\approx\mathbf{500~\mathrm{MB}}
+(29)
+Server Total
+M
+total
+s
+≈
+5.43
+​
+GB
+\boxed{M_{\mathrm{total}}^{\mathrm{s}}\approx\mathbf{5.43~\mathrm{GB}}}
+(30)
+VII-C
+Assumptions
+Assumption VII.1
+(
+L
+L
+-Smooth)
+.
+The loss function
+ℒ
+{\mathcal{L}}
+is
+L
+L
+-smooth for
+∀
+θ
+1
+,
+θ
+2
+∈
+ℝ
+d
+\forall\theta_{1},\theta_{2}\in{\mathbb{R}}^{d}
+:
+‖
+∇
+ℒ
+​
+(
+θ
+1
+)
+−
+∇
+ℒ
+​
+(
+θ
+2
+)
+‖
+≤
+L
+​
+‖
+θ
+1
+−
+θ
+2
+‖
+,
+\|\ \nabla{\mathcal{L}}(\theta_{1})-\nabla{\mathcal{L}}(\theta_{2})\|\leq L\|\ \theta_{1}-\theta_{2}\|\ ,
+thus
+ℒ
+⁡
+(
+θ
+2
+)
+≥
+ℒ
+⁡
+(
+θ
+1
+)
++
+⟨
+∇
+ℒ
+​
+(
+θ
+1
+)
+,
+θ
+2
+−
+θ
+1
+⟩
++
+L
+2
+​
+‖
+θ
+2
+−
+θ
+1
+‖
+2
+{\mathcal{L}}(\theta_{2})\geq{\mathcal{L}}(\theta_{1})+\langle\nabla{\mathcal{L}}(\theta_{1}),\theta_{2}-\theta_{1}\rangle+\frac{L}{2}\|\ \theta_{2}-\theta_{1}\|^{2}\
+Assumption VII.2
+(Bounded variance)
+.
+The variance of the stochastic gradients w.r.t. the client and server are upper bounded respectively. For
+∀
+θ
+=
+∈
+ℝ
+d
+\forall\theta=\in{\mathbb{R}}^{d}
+, let
+θ
+=
+[
+θ
+c
+,
+θ
+s
+]
+\theta=[\theta_{c},\theta_{s}]
+, where
+θ
+c
+∈
+ℝ
+d
+c
+,
+θ
+s
+∈
+ℝ
+d
+s
+\theta_{c}\in{\mathbb{R}}^{d_{c}},\theta_{s}\in{\mathbb{R}}^{d_{s}}
+represent the parameters on client and server, respectively. Then for any mini-batch
+ℬ
+∈
+𝒟
+{\mathcal{B}}\in{\mathcal{D}}
+:
+‖
+∇
+θ
+c
+ℒ
+​
+(
+θ
+,
+ℬ
+)
+−
+∇
+θ
+c
+ℒ
+​
+(
+θ
+)
+‖
+2
+≤
+σ
+c
+2
+.
+\|\nabla_{\theta_{c}}{\mathcal{L}}(\theta;{\mathcal{B}})-\nabla_{\theta_{c}}{\mathcal{L}}(\theta)\|^{2}\leq\sigma_{c}^{2}.
+‖
+∇
+θ
+s
+ℒ
+​
+(
+θ
+,
+ℬ
+)
+−
+∇
+θ
+s
+ℒ
+​
+(
+θ
+)
+‖
+2
+≤
+σ
+s
+2
+.
+\|\nabla_{\theta_{s}}{\mathcal{L}}(\theta;{\mathcal{B}})-\nabla_{\theta_{s}}{\mathcal{L}}(\theta)\|^{2}\leq\sigma_{s}^{2}.
+VII-D
+Technical Lemmas
+Lemma VII.3
+.
+Let
+g
+⁡
+(
+θ
+,
+ℬ
+)
+=
+∇
+~
+​
+ℒ
+​
+(
+θ
+,
+ℬ
+)
+g(\theta;\mathcal{B})=\widetilde{\nabla}\mathcal{L}(\theta;\mathcal{B})
+be the SPSA gradient estimator as defined in (
+6
+). We define the smoothed function
+ℒ
+λ
+​
+(
+θ
+)
+=
+𝔼
+v
+​
+[
+ℒ
+⁡
+(
+θ
++
+λ
+​
+v
+)
+]
+{\mathcal{L}}_{\lambda}(\theta)=\mathbb{E}_{v}[{\mathcal{L}}(\theta+\lambda v)]
+, where
+v
+v
+is uniformly sampled from the Euclidean ball
+d
+​
+𝔹
+d
+=
+{
+θ
+∈
+ℝ
+d
+∣
+‖
+θ
+‖
+≤
+d
+}
+\sqrt{d}\mathbb{B}^{d}=\{\theta\in\mathbb{R}^{d}\mid\|\theta\|\leq\sqrt{d}\}
+. The following properties hold:
+1.
+ℒ
+λ
+​
+(
+θ
+)
+{\mathcal{L}}_{\lambda}(\theta)
+is differentiable and
+𝔼
+u
+,
+ℬ
+​
+[
+g
+⁡
+(
+θ
+,
+ℬ
+)
+]
+=
+∇
+ℒ
+λ
+​
+(
+θ
+)
+\mathbb{E}_{u,{\mathcal{B}}}[g(\theta;\mathcal{B})]=\nabla{\mathcal{L}}_{\lambda}(\theta)
+.
+2.
+If
+ℒ
+⁡
+(
+θ
+)
+{\mathcal{L}}(\theta)
+is
+L
+L
+-smooth, then we have that
+‖
+∇
+ℒ
+​
+(
+θ
+)
+−
+∇
+ℒ
+λ
+​
+(
+θ
+)
+‖
+≤
+L
+2
+​
+λ
+​
+d
+3
+/
+2
+,
+\displaystyle\|\nabla{\mathcal{L}}(\theta)-\nabla{\mathcal{L}}_{\lambda}(\theta)\|\leq\frac{L}{2}\lambda d^{3/2},
+(31)
+and
+𝔼
+u
+​
+‖
+g
+⁡
+(
+θ
+,
+ℬ
+)
+‖
+2
+≤
+2
+​
+d
+⋅
+‖
+∇
+ℒ
+​
+(
+θ
+)
+‖
+2
++
+L
+2
+2
+​
+λ
+2
+​
+d
+3
+.
+\displaystyle\mathbb{E}_{u}\|g(\theta;\mathcal{B})\|^{2}\leq 2d\cdot\|\nabla{\mathcal{L}}(\theta)\|^{2}+\frac{L^{2}}{2}\lambda^{2}d^{3}.
+(32)
+Remark 4
+.
+By (
+31
+) we immediately have
+‖
+∇
+ℒ
+λ
+​
+(
+θ
+)
+‖
+2
+≤
+2
+​
+‖
+∇
+ℒ
+​
+(
+θ
+)
+‖
+2
++
+L
+2
+2
+​
+λ
+2
+​
+d
+3
+\displaystyle\|\nabla{\mathcal{L}}_{\lambda}(\theta)\|^{2}\leq 2\|\nabla{\mathcal{L}}(\theta)\|^{2}+\frac{L^{2}}{2}\lambda^{2}d^{3}
+(33)
+‖
+∇
+ℒ
+​
+(
+θ
+)
+‖
+2
+≤
+2
+​
+‖
+∇
+ℒ
+λ
+​
+(
+θ
+)
+‖
+2
++
+L
+2
+2
+​
+λ
+2
+​
+d
+3
+\displaystyle\|\nabla{\mathcal{L}}(\theta)\|^{2}\leq 2\|\nabla{\mathcal{L}}_{\lambda}(\theta)\|^{2}+\frac{L^{2}}{2}\lambda^{2}d^{3}
+(34)
+Lemma VII.4
+(Bounds on the variance of Zeroth-order Gradient)
+.
+Let
+G
+⁡
+(
+θ
+,
+ℬ
+)
+:=
+1
+Q
+​
+∑
+q
+g
+(
+q
+)
+​
+(
+θ
+,
+ℬ
+)
+G(\theta;\mathcal{B}):=\frac{1}{Q}\sum_{q}g^{(q)}(\theta;\mathcal{B})
+be the multi-perturbation zeroth-order gradient as defined in (
+7
+). Under the same condition as Lemma
+VII.3
+, we can further bound the variance of the stochastic Zeroth-order Gradient by true gradient at the beginning of the local iteration and the local update distance.
+𝔼
+​
+‖
+G
+c
+​
+(
+θ
+t
+,
+ℬ
+t
+)
+−
+∇
+θ
+c
+ℒ
+λ
+​
+(
+θ
+t
+)
+‖
+2
+\displaystyle\mathbb{E}\|G_{c}(\theta^{t};\mathcal{B}_{t})-\nabla_{\theta_{c}}{\mathcal{L}}_{\lambda}(\theta^{t})\|^{2}
+≤
+2
+​
+d
+c
+Q
+​
+𝔼
+​
+[
+‖
+∇
+θ
+c
+ℒ
+​
+(
+θ
+t
+)
+‖
+2
+]
++
+2
+​
+d
+c
+​
+σ
+c
+2
+Q
+\displaystyle\leq\frac{2d_{c}}{Q}\mathbb{E}[\|\nabla_{\theta_{c}}{\mathcal{L}}(\theta^{t})\|^{2}]+\frac{2d_{c}\sigma_{c}^{2}}{Q}
++
+L
+2
+​
+λ
+2
+​
+d
+c
+3
+2
+​
+Q
+−
+1
+Q
+​
+‖
+∇
+θ
+c
+ℒ
+λ
+​
+(
+θ
+t
+)
+‖
+2
+\displaystyle+\frac{L^{2}\lambda^{2}d_{c}^{3}}{2Q}-\frac{1}{Q}\|\nabla_{\theta_{c}}{\mathcal{L}}_{\lambda}(\theta^{t})\|^{2}
+(35)
+Proof.
+First notice that
+G
+c
+​
+(
+θ
+t
+,
+ℬ
+t
+)
+=
+1
+Q
+​
+∑
+q
+=
+1
+Q
+g
+c
+(
+q
+)
+​
+(
+θ
+t
+,
+ℬ
+t
+)
+G_{c}(\theta^{t};{\mathcal{B}}_{t})=\frac{1}{Q}\sum_{q=1}^{Q}g_{c}^{(q)}(\theta^{t};{\mathcal{B}}_{t})
+and
+𝔼
+u
+,
+ℬ
+​
+[
+g
+c
+(
+q
+)
+​
+(
+θ
+t
+,
+ℬ
+t
+)
+]
+=
+∇
+θ
+c
+ℒ
+λ
+​
+(
+θ
+t
+)
+\mathbb{E}_{u,{\mathcal{B}}}[g_{c}^{(q)}(\theta^{t};{\mathcal{B}}_{t})]=\nabla_{\theta_{c}}{\mathcal{L}}_{\lambda}(\theta^{t})
+.
+By Lemma
+VII.3
+, we have
+𝔼
+u
+​
+[
+‖
+g
+c
+(
+q
+)
+​
+(
+θ
+t
+,
+ℬ
+t
+)
+‖
+2
+]
+≤
+2
+​
+d
+c
+⋅
+‖
+∇
+θ
+c
+ℒ
+​
+(
+θ
+t
+,
+ℬ
+t
+)
+‖
+2
++
+L
+2
+2
+​
+λ
+2
+​
+d
+c
+3
+.
+\mathbb{E}_{u}[\|g_{c}^{(q)}(\theta^{t};{\mathcal{B}}_{t})\|^{2}]\leq 2d_{c}\cdot\|\nabla_{\theta_{c}}{\mathcal{L}}(\theta^{t};{\mathcal{B}}_{t})\|^{2}+\frac{L^{2}}{2}\lambda^{2}d_{c}^{3}.
+Thus we have
+𝔼
+​
+‖
+G
+c
+​
+(
+θ
+t
+,
+ℬ
+t
+)
+−
+∇
+θ
+c
+ℒ
+λ
+​
+(
+θ
+t
+)
+‖
+2
+\displaystyle\mathbb{E}\|G_{c}(\theta^{t};\mathcal{B}_{t})-\nabla_{\theta_{c}}{\mathcal{L}}_{\lambda}(\theta^{t})\|^{2}
+=
+\displaystyle=
+1
+Q
+2
+​
+∑
+p
+=
+1
+Q
+𝔼
+​
+‖
+g
+c
+(
+q
+)
+​
+(
+θ
+t
+,
+ℬ
+t
+)
+−
+∇
+θ
+c
+ℒ
+λ
+​
+(
+θ
+t
+)
+‖
+2
+\displaystyle\frac{1}{Q^{2}}\sum_{p=1}^{Q}\mathbb{E}\|g_{c}^{(q)}(\theta^{t};{\mathcal{B}}_{t})-\nabla_{\theta_{c}}{\mathcal{L}}_{\lambda}(\theta^{t})\|^{2}
+=
+\displaystyle=
+1
+Q
+2
+​
+∑
+p
+=
+1
+Q
+𝔼
+​
+‖
+g
+c
+(
+q
+)
+​
+(
+θ
+t
+,
+ℬ
+t
+)
+‖
+2
+−
+1
+Q
+​
+‖
+∇
+θ
+c
+ℒ
+λ
+​
+(
+θ
+t
+)
+‖
+2
+\displaystyle\frac{1}{Q^{2}}\sum_{p=1}^{Q}\mathbb{E}\|g_{c}^{(q)}(\theta^{t};{\mathcal{B}}_{t})\|^{2}-\frac{1}{Q}\|\nabla_{\theta_{c}}{\mathcal{L}}_{\lambda}(\theta^{t})\|^{2}
+≤
+\displaystyle\leq
+1
+Q
+2
+​
+∑
+p
+=
+1
+Q
+[
+2
+​
+d
+c
+​
+𝔼
+​
+‖
+∇
+θ
+c
+ℒ
+​
+(
+θ
+t
+,
+ℬ
+t
+)
+‖
+2
++
+L
+2
+2
+​
+λ
+2
+​
+d
+c
+3
+]
+\displaystyle\frac{1}{Q^{2}}\sum_{p=1}^{Q}\left[2d_{c}\mathbb{E}\|\nabla_{\theta_{c}}{\mathcal{L}}(\theta^{t};{\mathcal{B}}_{t})\|^{2}+\frac{L^{2}}{2}\lambda^{2}d_{c}^{3}\right]
+−
+1
+Q
+​
+‖
+∇
+θ
+c
+ℒ
+λ
+​
+(
+θ
+t
+)
+‖
+2
+\displaystyle-\frac{1}{Q}\|\nabla_{\theta_{c}}{\mathcal{L}}_{\lambda}(\theta^{t})\|^{2}
+≤
+\displaystyle\leq
+1
+Q
+2
+​
+∑
+p
+=
+1
+Q
+[
+2
+​
+d
+c
+​
+(
+𝔼
+​
+‖
+∇
+θ
+c
+ℒ
+​
+(
+θ
+t
+)
+‖
+2
++
+σ
+c
+2
+)
++
+L
+2
+2
+​
+λ
+2
+​
+d
+c
+3
+]
+\displaystyle\frac{1}{Q^{2}}\sum_{p=1}^{Q}\left[2d_{c}(\mathbb{E}\|\nabla_{\theta_{c}}{\mathcal{L}}(\theta^{t})\|^{2}+\sigma_{c}^{2})+\frac{L^{2}}{2}\lambda^{2}d_{c}^{3}\right]
+−
+1
+Q
+​
+‖
+∇
+θ
+c
+ℒ
+λ
+​
+(
+θ
+t
+)
+‖
+2
+\displaystyle-\frac{1}{Q}\|\nabla_{\theta_{c}}{\mathcal{L}}_{\lambda}(\theta^{t})\|^{2}
+=
+\displaystyle=
+1
+Q
+​
+[
+2
+​
+d
+c
+​
+𝔼
+​
+‖
+∇
+θ
+c
+ℒ
+​
+(
+θ
+t
+)
+‖
+2
++
+2
+​
+d
+c
+​
+σ
+c
+2
++
+L
+2
+2
+​
+λ
+2
+​
+d
+c
+3
+−
+‖
+∇
+θ
+c
+ℒ
+λ
+​
+(
+θ
+t
+)
+‖
+2
+]
+\displaystyle\frac{1}{Q}\left[2d_{c}\mathbb{E}\|\nabla_{\theta_{c}}{\mathcal{L}}(\theta^{t})\|^{2}+2d_{c}\sigma_{c}^{2}+\frac{L^{2}}{2}\lambda^{2}d_{c}^{3}-\|\nabla_{\theta_{c}}{\mathcal{L}}_{\lambda}(\theta^{t})\|^{2}\right]
+(36)
+VII-E
+Proof of algorithm
+We now prove the convergence of our algorithm under mixed optimization. The client do ZO and the server do FO.
+𝔼
+⁡
+[
+ℒ
+⁡
+(
+θ
+t
++
+1
+)
+−
+ℒ
+⁡
+(
+θ
+t
+)
+]
+\displaystyle\mathbb{E}[{\mathcal{L}}(\theta^{t+1})-{\mathcal{L}}(\theta^{t})]
+≤
+\displaystyle\leq
+𝔼
+⁡
+[
+⟨
+∇
+θ
+s
+ℒ
+​
+(
+θ
+t
+)
+,
+θ
+s
+t
++
+1
+−
+θ
+s
+t
+⟩
+]
+⏟
+𝒦
+1
++
+L
+2
+​
+𝔼
+​
+[
+‖
+θ
+s
+t
++
+1
+−
+θ
+s
+t
+‖
+2
+]
+⏟
+𝒦
+2
+\displaystyle\underbrace{\mathbb{E}[\langle\nabla_{\theta_{s}}{\mathcal{L}}(\theta^{t}),\theta_{s}^{t+1}-\theta_{s}^{t}\rangle]}_{{\mathcal{K}}_{1}}+\underbrace{\frac{L}{2}\mathbb{E}[\|\theta_{s}^{t+1}-\theta_{s}^{t}\|^{2}]}_{{\mathcal{K}}_{2}}
++
+𝔼
+⁡
+[
+⟨
+∇
+x
+c
+ℒ
+​
+(
+θ
+t
+)
+,
+θ
+c
+t
++
+1
+−
+θ
+c
+t
+⟩
+]
+⏟
+𝒦
+3
++
+L
+2
+​
+𝔼
+​
+[
+‖
+θ
+c
+t
++
+1
+−
+θ
+c
+t
+‖
+2
+]
+⏟
+𝒦
+4
+\displaystyle+\underbrace{\mathbb{E}[\langle\nabla_{x_{c}}{\mathcal{L}}(\theta^{t}),\theta_{c}^{t+1}-\theta_{c}^{t}\rangle]}_{{\mathcal{K}}_{3}}+\underbrace{\frac{L}{2}\mathbb{E}[\|\theta_{c}^{t+1}-\theta_{c}^{t}\|^{2}]}_{{\mathcal{K}}_{4}}
+For
+𝒦
+1
+{\mathcal{K}}_{1}
+:
+𝔼
+⁡
+[
+⟨
+∇
+θ
+s
+ℒ
+​
+(
+θ
+t
+)
+,
+θ
+s
+t
++
+1
+−
+θ
+s
+t
+⟩
+]
+\displaystyle\mathbb{E}[\langle\nabla_{\theta_{s}}{\mathcal{L}}(\theta^{t}),\theta_{s}^{t+1}-\theta_{s}^{t}\rangle]
+=
+\displaystyle=
+𝔼
+⁡
+[
+⟨
+∇
+θ
+s
+ℒ
+​
+(
+θ
+t
+)
+,
+−
+η
+s
+​
+G
+s
+t
+​
+(
+θ
+t
+,
+ℬ
+t
+)
+⟩
+]
+\displaystyle\mathbb{E}[\langle\nabla_{\theta_{s}}{\mathcal{L}}(\theta^{t}),-\eta_{s}G_{s}^{t}(\theta^{t};{\mathcal{B}}_{t})\rangle]
+=
+\displaystyle=
+𝔼
+⁡
+[
+⟨
+∇
+θ
+s
+ℒ
+​
+(
+θ
+t
+)
+,
+−
+η
+s
+​
+∇
+θ
+s
+ℒ
+​
+(
+θ
+t
+)
+⟩
+]
+\displaystyle\mathbb{E}[\langle\nabla_{\theta_{s}}{\mathcal{L}}(\theta^{t}),-\eta_{s}\nabla_{\theta_{s}}{\mathcal{L}}(\theta^{t})\rangle]
+=
+\displaystyle=
+−
+η
+s
+​
+‖
+∇
+θ
+s
+ℒ
+​
+(
+θ
+t
+)
+‖
+2
+\displaystyle-\eta_{s}\|\nabla_{\theta_{s}}{\mathcal{L}}(\theta^{t})\|^{2}
+For
+𝒦
+2
+{\mathcal{K}}_{2}
+:
+𝔼
+⁡
+[
+‖
+θ
+s
+t
++
+1
+−
+θ
+s
+t
+‖
+2
+]
+\displaystyle\mathbb{E}[\|\theta_{s}^{t+1}-\theta_{s}^{t}\|^{2}]
+=
+\displaystyle=
+η
+s
+2
+​
+𝔼
+​
+[
+‖
+G
+s
+t
+​
+(
+θ
+t
+,
+ℬ
+t
+)
+‖
+2
+]
+\displaystyle\eta_{s}^{2}\mathbb{E}[\|G_{s}^{t}(\theta^{t};{\mathcal{B}}_{t})\|^{2}]
+≤
+\displaystyle\leq
+η
+s
+2
+​
+(
+‖
+∇
+θ
+s
+ℒ
+​
+(
+θ
+t
+)
+‖
+2
++
+σ
+s
+2
+)
+\displaystyle\eta_{s}^{2}(\|\nabla_{\theta_{s}}{\mathcal{L}}(\theta^{t})\|^{2}+\sigma_{s}^{2})
+For
+𝒦
+3
+{\mathcal{K}}_{3}
+:
+𝔼
+⁡
+[
+⟨
+∇
+x
+c
+ℒ
+​
+(
+θ
+t
+)
+,
+θ
+c
+t
++
+1
+−
+θ
+c
+t
+⟩
+]
+\displaystyle\mathbb{E}[\langle\nabla_{x_{c}}{\mathcal{L}}(\theta^{t}),\theta_{c}^{t+1}-\theta_{c}^{t}\rangle]
+=
+\displaystyle=
+𝔼
+⁡
+[
+⟨
+∇
+θ
+c
+ℒ
+​
+(
+θ
+t
+)
+,
+−
+η
+c
+​
+G
+c
+t
+​
+(
+θ
+t
+,
+ℬ
+t
+)
+⟩
+]
+\displaystyle\mathbb{E}[\langle\nabla_{\theta_{c}}{\mathcal{L}}(\theta^{t}),-\eta_{c}G_{c}^{t}(\theta^{t};{\mathcal{B}}_{t})\rangle]
+=
+\displaystyle=
+𝔼
+⁡
+[
+⟨
+∇
+θ
+c
+ℒ
+​
+(
+θ
+t
+)
+,
+−
+η
+c
+​
+(
+∇
+θ
+c
+ℒ
+λ
+t
+−
+∇
+θ
+c
+ℒ
+​
+(
+θ
+t
+)
++
+∇
+θ
+c
+ℒ
+​
+(
+θ
+t
+)
+)
+⟩
+]
+\displaystyle\mathbb{E}[\langle\nabla_{\theta_{c}}{\mathcal{L}}(\theta^{t}),-\eta_{c}\left(\nabla_{\theta_{c}}{\mathcal{L}}_{\lambda}^{t}-\nabla_{\theta_{c}}{\mathcal{L}}(\theta^{t})+\nabla_{\theta_{c}}{\mathcal{L}}(\theta^{t})\right)\rangle]
+=
+\displaystyle=
+𝔼
+⁡
+[
+⟨
+η
+c
+​
+∇
+θ
+c
+ℒ
+​
+(
+θ
+t
+)
+,
+−
+η
+c
+​
+(
+∇
+θ
+c
+ℒ
+λ
+t
+−
+∇
+θ
+c
+ℒ
+t
+)
+⟩
+]
+\displaystyle\mathbb{E}[\langle\sqrt{\eta_{c}}\nabla_{\theta_{c}}{\mathcal{L}}(\theta^{t}),-\sqrt{\eta_{c}}\left(\nabla_{\theta_{c}}{\mathcal{L}}_{\lambda}^{t}-\nabla_{\theta_{c}}{\mathcal{L}}^{t}\right)\rangle]
+−
+η
+c
+​
+𝔼
+​
+[
+‖
+∇
+θ
+c
+ℒ
+​
+(
+θ
+t
+)
+‖
+2
+]
+\displaystyle-\eta_{c}\mathbb{E}[\|\nabla_{\theta_{c}}{\mathcal{L}}(\theta^{t})\|^{2}]
+=
+\displaystyle=
+η
+c
+2
+​
+𝔼
+​
+‖
+∇
+θ
+c
+ℒ
+​
+(
+θ
+t
+)
+‖
+2
++
+η
+c
+2
+​
+‖
+∇
+θ
+c
+ℒ
+λ
+t
+−
+∇
+θ
+c
+ℒ
+t
+‖
+2
+\displaystyle\frac{\eta_{c}}{2}\mathbb{E}\|\nabla_{\theta_{c}}{\mathcal{L}}(\theta^{t})\|^{2}+\frac{\eta_{c}}{2}\|\nabla_{\theta_{c}}{\mathcal{L}}_{\lambda}^{t}-\nabla_{\theta_{c}}{\mathcal{L}}^{t}\|^{2}
+−
+η
+c
+2
+​
+𝔼
+​
+‖
+∇
+θ
+c
+ℒ
+λ
+t
+‖
+2
+−
+η
+c
+​
+𝔼
+​
+[
+‖
+∇
+θ
+c
+ℒ
+​
+(
+θ
+t
+)
+‖
+2
+]
+\displaystyle-\frac{\eta_{c}}{2}\mathbb{E}\left\|\nabla_{\theta_{c}}{\mathcal{L}}_{\lambda}^{t}\right\|^{2}-\eta_{c}\mathbb{E}[\|\nabla_{\theta_{c}}{\mathcal{L}}(\theta^{t})\|^{2}]
+≤
+\displaystyle\leq
+−
+η
+c
+2
+​
+𝔼
+​
+[
+‖
+∇
+θ
+c
+ℒ
+​
+(
+θ
+t
+)
+‖
+2
+]
++
+η
+c
+4
+​
+L
+2
+​
+λ
+2
+​
+d
+c
+3
+−
+η
+c
+2
+​
+𝔼
+​
+‖
+∇
+θ
+c
+ℒ
+λ
+t
+‖
+2
+\displaystyle-\frac{\eta_{c}}{2}\mathbb{E}[\|\nabla_{\theta_{c}}{\mathcal{L}}(\theta^{t})\|^{2}]+\frac{\eta_{c}}{4}L^{2}\lambda^{2}d_{c}^{3}-\frac{\eta_{c}}{2}\mathbb{E}\left\|\nabla_{\theta_{c}}{\mathcal{L}}_{\lambda}^{t}\right\|^{2}
+For
+𝒦
+4
+{\mathcal{K}}_{4}
+:
+𝔼
+⁡
+[
+‖
+θ
+c
+t
++
+1
+−
+θ
+c
+t
+‖
+2
+]
+\displaystyle\mathbb{E}[\|\theta_{c}^{t+1}-\theta_{c}^{t}\|^{2}]
+=
+\displaystyle=
+η
+c
+2
+​
+𝔼
+​
+‖
+G
+c
+t
+​
+(
+θ
+t
+,
+ℬ
+t
+)
+‖
+2
+\displaystyle\eta_{c}^{2}\mathbb{E}\left\|G_{c}^{t}(\theta^{t};{\mathcal{B}}_{t})\right\|^{2}
+=
+\displaystyle=
+η
+c
+2
+​
+𝔼
+​
+‖
+∇
+θ
+c
+ℒ
+λ
+t
+‖
+2
++
+η
+c
+2
+​
+𝔼
+​
+‖
+G
+c
+t
+−
+∇
+θ
+c
+ℒ
+λ
+t
+‖
+2
+\displaystyle\eta_{c}^{2}\mathbb{E}\left\|\nabla_{\theta_{c}}{\mathcal{L}}_{\lambda}^{t}\right\|^{2}+\eta_{c}^{2}\mathbb{E}\left\|G_{c}^{t}-\nabla_{\theta_{c}}{\mathcal{L}}_{\lambda}^{t}\right\|^{2}
+Substituting in (
+35
+), we have
+η
+c
+2
+​
+𝔼
+​
+‖
+G
+c
+t
+−
+∇
+θ
+c
+ℒ
+λ
+t
+‖
+2
+\displaystyle\eta_{c}^{2}\mathbb{E}\left\|G_{c}^{t}-\nabla_{\theta_{c}}{\mathcal{L}}_{\lambda}^{t}\right\|^{2}
+≤
+\displaystyle\leq
+η
+c
+2
+​
+(
+2
+​
+d
+c
+Q
+​
+𝔼
+​
+‖
+∇
+θ
+s
+ℒ
+​
+(
+θ
+t
+)
+‖
+2
++
+2
+​
+d
+c
+​
+σ
+c
+2
+Q
++
+L
+2
+​
+λ
+2
+​
+d
+c
+3
+2
+​
+Q
+−
+1
+Q
+​
+𝔼
+​
+‖
+∇
+θ
+s
+ℒ
+λ
+​
+(
+θ
+t
+)
+‖
+2
+)
+\displaystyle\eta_{c}^{2}\left(\frac{2d_{c}}{Q}\mathbb{E}\|\nabla_{\theta_{s}}{\mathcal{L}}(\theta^{t})\|^{2}+\frac{2d_{c}\sigma_{c}^{2}}{Q}+\frac{L^{2}\lambda^{2}d_{c}^{3}}{2Q}-\frac{1}{Q}\mathbb{E}\|\nabla_{\theta_{s}}{\mathcal{L}}_{\lambda}(\theta^{t})\|^{2}\right)
+≤
+\displaystyle\leq
+η
+c
+2
+​
+(
+2
+​
+d
+c
+Q
+​
+𝔼
+​
+‖
+∇
+θ
+s
+ℒ
+​
+(
+θ
+t
+)
+‖
+2
++
+2
+​
+d
+c
+​
+σ
+c
+2
+Q
++
+L
+2
+​
+λ
+2
+​
+d
+c
+3
+2
+​
+Q
+)
+\displaystyle\eta_{c}^{2}\left(\frac{2d_{c}}{Q}\mathbb{E}\|\nabla_{\theta_{s}}{\mathcal{L}}(\theta^{t})\|^{2}+\frac{2d_{c}\sigma_{c}^{2}}{Q}+\frac{L^{2}\lambda^{2}d_{c}^{3}}{2Q}\right)
+Putting together:
+𝔼
+⁡
+[
+ℒ
+⁡
+(
+θ
+t
++
+1
+)
+−
+ℒ
+⁡
+(
+θ
+t
+)
+]
+\displaystyle\mathbb{E}[{\mathcal{L}}(\theta^{t+1})-{\mathcal{L}}(\theta^{t})]
+≤
+\displaystyle\leq
+(
+L
+2
+​
+η
+s
+2
+−
+η
+s
+)
+​
+𝔼
+​
+[
+‖
+∇
+θ
+s
+ℒ
+​
+(
+θ
+t
+)
+‖
+2
+]
++
+L
+2
+​
+η
+s
+2
+​
+σ
+s
+2
+\displaystyle(\frac{L}{2}\eta_{s}^{2}-\eta_{s})\mathbb{E}[\|\nabla_{\theta_{s}}{\mathcal{L}}(\theta^{t})\|^{2}]+\frac{L}{2}\eta_{s}^{2}\sigma_{s}^{2}
+−
+\displaystyle-
+η
+c
+2
+​
+𝔼
+​
+‖
+∇
+θ
+c
+ℒ
+​
+(
+θ
+t
+)
+‖
+2
++
+η
+c
+4
+​
+L
+2
+​
+λ
+2
+​
+d
+c
+3
+−
+η
+c
+2
+​
+𝔼
+​
+‖
+∇
+θ
+c
+ℒ
+λ
+t
+‖
+2
+\displaystyle\frac{\eta_{c}}{2}\mathbb{E}\|\nabla_{\theta_{c}}{\mathcal{L}}(\theta^{t})\|^{2}+\frac{\eta_{c}}{4}L^{2}\lambda^{2}d_{c}^{3}-\frac{\eta_{c}}{2}\mathbb{E}\left\|\nabla_{\theta_{c}}{\mathcal{L}}_{\lambda}^{t}\right\|^{2}
++
+\displaystyle+
+η
+c
+2
+​
+L
+2
+​
+(
+2
+​
+d
+c
+Q
+​
+𝔼
+​
+‖
+∇
+θ
+c
+ℒ
+​
+(
+θ
+t
+)
+‖
+2
++
+2
+​
+d
+c
+​
+σ
+c
+2
+Q
++
+L
+2
+​
+λ
+2
+​
+d
+c
+3
+2
+​
+Q
+)
++
+η
+c
+2
+​
+L
+2
+​
+𝔼
+​
+‖
+∇
+θ
+c
+ℒ
+λ
+t
+‖
+2
+\displaystyle\frac{\eta_{c}^{2}L}{2}\left(\frac{2d_{c}}{Q}\mathbb{E}\|\nabla_{\theta_{c}}{\mathcal{L}}(\theta^{t})\|^{2}+\frac{2d_{c}\sigma_{c}^{2}}{Q}+\frac{L^{2}\lambda^{2}d_{c}^{3}}{2Q}\right)+\frac{\eta_{c}^{2}L}{2}\mathbb{E}\left\|\nabla_{\theta_{c}}{\mathcal{L}}_{\lambda}^{t}\right\|^{2}
+≤
+\displaystyle\leq
+(
+L
+2
+​
+η
+s
+2
+−
+η
+s
+)
+​
+𝔼
+​
+‖
+∇
+θ
+s
+ℒ
+​
+(
+θ
+t
+)
+‖
+2
++
+L
+2
+​
+η
+s
+2
+​
+σ
+s
+2
+\displaystyle(\frac{L}{2}\eta_{s}^{2}-\eta_{s})\mathbb{E}\|\nabla_{\theta_{s}}{\mathcal{L}}(\theta^{t})\|^{2}+\frac{L}{2}\eta_{s}^{2}\sigma_{s}^{2}
++
+\displaystyle+
+(
+η
+c
+2
+​
+L
+​
+d
+c
+Q
+−
+η
+c
+2
+)
+​
+𝔼
+​
+‖
+∇
+θ
+c
+ℒ
+​
+(
+θ
+t
+)
+‖
+2
++
+η
+c
+2
+​
+L
+​
+d
+c
+​
+σ
+c
+2
+Q
++
+η
+c
+​
+L
+2
+​
+λ
+2
+​
+d
+c
+3
+4
+​
+Q
+\displaystyle(\frac{\eta_{c}^{2}Ld_{c}}{Q}-\frac{\eta_{c}}{2})\mathbb{E}\|\nabla_{\theta_{c}}{\mathcal{L}}(\theta^{t})\|^{2}+\frac{\eta_{c}^{2}Ld_{c}\sigma_{c}^{2}}{Q}+\frac{\eta_{c}L^{2}\lambda^{2}d_{c}^{3}}{4Q}
+≤
+\displaystyle\leq
+−
+η
+s
+4
+​
+𝔼
+​
+[
+‖
+∇
+θ
+s
+ℒ
+​
+(
+θ
+t
+)
+‖
+2
+]
++
+L
+2
+​
+η
+s
+2
+​
+σ
+s
+2
+\displaystyle-\frac{\eta_{s}}{4}\mathbb{E}[\|\nabla_{\theta_{s}}{\mathcal{L}}(\theta^{t})\|^{2}]+\frac{L}{2}\eta_{s}^{2}\sigma_{s}^{2}
+−
+\displaystyle-
+η
+c
+4
+​
+𝔼
+​
+[
+‖
+∇
+θ
+c
+ℒ
+​
+(
+θ
+t
+)
+‖
+2
+]
++
+η
+c
+2
+​
+L
+​
+d
+c
+​
+σ
+c
+2
+Q
++
+η
+c
+​
+L
+2
+​
+λ
+2
+​
+d
+c
+3
+4
+​
+Q
+,
+\displaystyle\frac{\eta_{c}}{4}\mathbb{E}[\|\nabla_{\theta_{c}}{\mathcal{L}}(\theta^{t})\|^{2}]+\frac{\eta_{c}^{2}Ld_{c}\sigma_{c}^{2}}{Q}+\frac{\eta_{c}L^{2}\lambda^{2}d_{c}^{3}}{4Q},
+where in the second step we let
+η
+c
+≥
+1
+L
+\eta_{c}\geq\frac{1}{L}
+, and in the final step we let
+η
+s
+≤
+3
+4
+​
+L
+\eta_{s}\leq\frac{3}{4L}
+and
+η
+c
+≤
+Q
+4
+​
+L
+​
+d
+c
+\eta_{c}\leq\frac{Q}{4Ld_{c}}
+.
+To combine the squared norm of the server gradient
+𝔼
+⁡
+[
+‖
+∇
+θ
+s
+ℒ
+‖
+2
+]
+\mathbb{E}[\|\nabla_{\theta_{s}}{\mathcal{L}}\|^{2}]
+and client gradient
+𝔼
+⁡
+[
+‖
+∇
+θ
+c
+ℒ
+‖
+2
+]
+\mathbb{E}[\|\nabla_{\theta_{c}}{\mathcal{L}}\|^{2}]
+, we define the universal step size
+η
+:=
+η
+s
+=
+η
+c
+\eta:=\eta_{s}=\eta_{c}
+. Rearranging the terms, we have
+η
+4
+​
+𝔼
+​
+‖
+∇
+θ
+ℒ
+​
+(
+θ
+t
+)
+‖
+2
+\displaystyle\frac{\eta}{4}\mathbb{E}\|\nabla_{\theta}{\mathcal{L}}(\theta^{t})\|^{2}
+≤
+\displaystyle\leq
+𝔼
+⁡
+[
+ℒ
+⁡
+(
+θ
+t
+)
+−
+ℒ
+⁡
+(
+θ
+t
++
+1
+)
+]
++
+L
+2
+​
+η
+2
+​
+σ
+s
+2
++
+η
+2
+​
+L
+​
+d
+c
+​
+σ
+c
+2
+Q
++
+η
+​
+L
+2
+​
+λ
+2
+​
+d
+c
+3
+4
+​
+Q
+\displaystyle\mathbb{E}[{\mathcal{L}}(\theta^{t})-{\mathcal{L}}(\theta^{t+1})]+\frac{L}{2}\eta^{2}\sigma_{s}^{2}+\frac{\eta^{2}Ld_{c}\sigma_{c}^{2}}{Q}+\frac{\eta L^{2}\lambda^{2}d_{c}^{3}}{4Q}
+Taking average from
+t
+=
+0
+t=0
+to
+T
+−
+1
+T-1
+at both sides:
+1
+T
+​
+∑
+t
+=
+0
+T
+η
+4
+​
+𝔼
+​
+‖
+∇
+θ
+ℒ
+​
+(
+θ
+t
+)
+‖
+2
+\displaystyle\frac{1}{T}\sum_{t=0}^{T}\frac{\eta}{4}\mathbb{E}\|\nabla_{\theta}{\mathcal{L}}(\theta^{t})\|^{2}
+≤
+\displaystyle\leq
+1
+T
+​
+𝔼
+​
+[
+ℒ
+⁡
+(
+θ
+0
+)
+−
+ℒ
+⁡
+(
+θ
+T
+)
+]
++
+L
+2
+​
+η
+2
+​
+σ
+s
+2
++
+η
+2
+​
+L
+​
+d
+c
+​
+σ
+c
+2
+Q
++
+η
+​
+L
+2
+​
+λ
+2
+​
+d
+c
+3
+4
+​
+Q
+\displaystyle\frac{1}{T}\mathbb{E}[{\mathcal{L}}(\theta^{0})-{\mathcal{L}}(\theta^{T})]+\frac{L}{2}\eta^{2}\sigma_{s}^{2}+\frac{\eta^{2}Ld_{c}\sigma_{c}^{2}}{Q}+\frac{\eta L^{2}\lambda^{2}d_{c}^{3}}{4Q}
+1
+T
+​
+∑
+t
+=
+0
+T
+𝔼
+⁡
+[
+‖
+∇
+θ
+ℒ
+​
+(
+θ
+t
+)
+‖
+2
+]
+\displaystyle\frac{1}{T}\sum_{t=0}^{T}\mathbb{E}[\|\nabla_{\theta}{\mathcal{L}}(\theta^{t})\|^{2}]
+≤
+\displaystyle\leq
+4
+η
+​
+T
+​
+𝔼
+​
+[
+ℒ
+⁡
+(
+θ
+0
+)
+−
+ℒ
+⁡
+(
+θ
+T
+)
+]
++
+2
+​
+L
+​
+η
+​
+σ
+s
+2
++
+4
+​
+η
+​
+L
+​
+d
+c
+​
+σ
+c
+2
+Q
++
+L
+2
+​
+λ
+2
+​
+d
+c
+3
+Q
+\displaystyle\frac{4}{\eta T}\mathbb{E}[{\mathcal{L}}(\theta^{0})-{\mathcal{L}}(\theta^{T})]+2L\eta\sigma_{s}^{2}+\frac{4\eta Ld_{c}\sigma_{c}^{2}}{Q}+\frac{L^{2}\lambda^{2}d_{c}^{3}}{Q}
+Let
+η
+=
+Q
+d
+c
+​
+T
+​
+L
+\eta=\frac{\sqrt{Q}}{\sqrt{d_{c}TL}}
+, and take
+λ
+2
+≤
+Q
+d
+c
+5
+​
+T
+​
+L
+3
+\lambda^{2}\leq\frac{\sqrt{Q}}{\sqrt{d_{c}^{5}TL^{3}}}
+.
+Thus, we have
+1
+T
+​
+∑
+t
+=
+0
+T
+𝔼
+⁡
+[
+‖
+∇
+θ
+ℒ
+​
+(
+θ
+t
+)
+‖
+2
+]
+\displaystyle\frac{1}{T}\sum_{t=0}^{T}\mathbb{E}[\|\nabla_{\theta}{\mathcal{L}}(\theta^{t})\|^{2}]
+≤
+\displaystyle\leq
+4
+​
+d
+c
+​
+L
+T
+​
+Q
+​
+𝔼
+​
+[
+ℒ
+⁡
+(
+θ
+0
+)
+−
+ℒ
+⁡
+(
+θ
+T
+)
+]
++
+2
+​
+L
+​
+Q
+d
+c
+​
+T
+​
+σ
+s
+2
++
+4
+​
+d
+c
+​
+L
+​
+σ
+c
+2
+T
+​
+Q
++
+d
+c
+​
+L
+T
+​
+Q
+\displaystyle\frac{4\sqrt{d_{c}L}}{\sqrt{TQ}}\mathbb{E}[{\mathcal{L}}(\theta^{0})-{\mathcal{L}}(\theta^{T})]+\frac{2\sqrt{LQ}}{\sqrt{d_{c}T}}\sigma_{s}^{2}+\frac{4\sqrt{d_{c}L}\sigma_{c}^{2}}{\sqrt{TQ}}+\frac{\sqrt{d_{c}L}}{\sqrt{TQ}}
+∎

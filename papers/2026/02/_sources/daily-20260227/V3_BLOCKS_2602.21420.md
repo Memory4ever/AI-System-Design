@@ -1,0 +1,631 @@
+[0] h5: Report GitHub Issue
+
+[1] p: Content selection saved. Describe the issue below:
+
+[2] h1: Overconfident Errors Need Stronger Correction: Asymmetric Confidence Penalties for Reinforcement Learning
+
+[3] h6: Abstract
+
+[4] p: Reinforcement Learning with Verifiable Rewards (RLVR) has become the leading paradigm for enhancing reasoning in Large Language Models (LLMs). However, standard RLVR algorithms suffer from a well-documented pathology: while improving Pass@1 through sharpened sampling, they simultaneously narrow the model’s reasoning boundary and reduce generation diversity. We identify a root cause that existing methods overlook: the uniform penalization of errors . Current approaches—whether data-filtering methods that select prompts by difficulty, or advantage normalization schemes—treat all incorrect rollouts within a group identically. We show that this uniformity allows overconfident errors —incorrect reasoning paths that the RL process has spuriously reinforced—to persist and monopolize probability mass, suppressing valid exploratory trajectories.
+
+[5] p: We propose the Asymmetric Confidence-aware Error Penalty (ACE) , which introduces a per-rollout confidence shift metric c i = log ⁡ ( π θ ​ ( y i | x ) / π ref ​ ( y i | x ) ) c_{i}=\log(\pi_{\theta}(y_{i}|x)/\pi_{\mathrm{ref}}(y_{i}|x)) to dynamically modulate negative advantages. Theoretically, we show that ACE’s gradient can be decomposed into the gradient of a selective regularizer restricted to overconfident errors, plus a well-characterized residual that partially moderates the regularizer’s strength (Theorem 1 ). Experiments fine-tune Qwen2.5-Math-7B ( Qwen Team et al., 2024 ) , Qwen3-8B-Base ( Qwen Team et al., 2025 ) , and Llama-3.1-8B-Instruct ( Grattafiori et al., 2024 ) on the DAPO-Math-17K dataset ( Yu et al., 2025 ) using GRPO and DAPO with VERL ( Volcano Engine, 2024 ) , evaluating on MATH-500 ( Hendrycks et al., 2021 ) and AIME 2025. ACE composes with both GRPO and DAPO, consistently improving the full Pass@ k k spectrum across all three model families and benchmarks.
+
+[6] h2: 1 Introduction
+
+[7] p: Reinforcement Learning with Verifiable Rewards (RLVR) ( DeepSeek-AI et al., 2025 ; OpenAI et al., 2024 ) has emerged as a primary method for post-training Large Language Models (LLMs) on reasoning tasks. By using binary correctness signals from deterministic verifiers, algorithms such as PPO ( Schulman et al., 2017 ) , GRPO ( Shao et al., 2024 ) , and REINFORCE ( Williams, 1992 ) iteratively refine the model’s Chain-of-Thought (CoT) generation ( Wei et al., 2022 ) .
+
+[8] p: Despite its successes, a growing body of evidence reveals a fundamental tension in RLVR training. While RLVR models excel at Pass@1, they consistently underperform their own base models at Pass@ k k for large k k ( Chen et al., 2021 ; Yue et al., 2025 ; Brown et al., 2024 ) , indicating a narrowing of the reasoning boundary rather than an expansion. This phenomenon has been attributed to diversity collapse: the training process concentrates probability mass on a small number of successful reasoning paths, suppressing the broader solution space.
+
+[9] p: A prominent strategy addresses this: Difficulty-based curriculum learning filters prompts to maximize gradient signal. However, such methods operate at a macro level—selecting which problems to train on—ignoring a critical micro-level distinction: not all errors are equal.
+
+[10] p: Within incorrect rollouts, we identify distinct regimes: exploratory errors (benign stochastic deviations), self-correcting errors (paths the model is already abandoning), and overconfident errors (spuriously reinforced paths acting as value traps). Standard RLVR penalizes these uniformly. While the global KL penalty β 𝔻 KL ( π θ ∥ π ref ) \beta\mathbb{D}_{\mathrm{KL}}(\pi_{\theta}\|\pi_{\mathrm{ref}}) offers some correction, it is symmetric and indiscriminate, suppressing beneficial exploration alongside harmful overconfidence.
+
+[11] h4: Our contribution.
+
+[12] p: We propose to break this dilemma by introducing asymmetric correction at the level of individual rollouts. Our method, ACE ( A symmetric C onfidence-aware E rror penalty), dynamically amplifies the penalty for overconfident errors using a per-rollout confidence shift metric, while leaving exploratory and self-correcting errors largely untouched. Concretely, our contributions are:
+
+[13] p: A new analytical dimension. We formalize error confidence shift c i = log ⁡ ( π θ ​ ( y i | x ) / π ref ​ ( y i | x ) ) c_{i}=\log(\pi_{\theta}(y_{i}|x)/\pi_{\mathrm{ref}}(y_{i}|x)) as a per-rollout diagnostic that is orthogonal to prompt-level difficulty, and show empirically that overconfident errors accumulate during training (§ 3 ).
+
+[14] p: Theoretical foundations. We show that ACE’s gradient admits a decomposition into a selective regularizer targeting the overconfident portion of the policy, plus a residual term that partially moderates the regularizer’s correction strength (§ 4.4 ).
+
+[15] p: Empirical validation. ACE consistently improves the full Pass@ k k spectrum on MATH-500 and AIME 2025, across three model families (Qwen2.5-Math-7B, Qwen3-8B-Base, and Llama-3.1-8B-Instruct) and two base algorithms (GRPO and DAPO), with particularly strong gains at large k k , confirming that it preserves and expands the reasoning boundary (§ 5 ).
+
+[16] figure: Figure 1 : ACE Method Overview. Top: Incorrect rollouts fall into three regimes based on the confidence shift c i = log ⁡ ( π θ ​ ( y i | x ) / π ref ​ ( y i | x ) ) c_{i}=\log(\pi_{\theta}(y_{i}|x)/\pi_{\mathrm{ref}}(y_{i}|x)) . Bottom-left: Standard GRPO assigns a uniform penalty | A ^ − | |\hat{A}^{-}| to all errors regardless of regime. Bottom-right: ACE modulates the penalty via Softplus ​ ( c i ) \text{Softplus}(c_{i}) , strongly penalizing overconfident errors while leaving self-correcting errors nearly untouched.
+
+[17] p: Figure 1 highlights the core idea: ACE reshapes the negative penalty as a smooth, confidence-dependent curve, amplifying penalties for overconfident errors while keeping exploratory and self-correcting errors close to the base level.
+
+[18] h2: 2 Related Work
+
+[19] h4: Curriculum and advantage shaping.
+
+[20] p: Curriculum methods ( Zeng et al., 2025 ; Parashar et al., 2025 ; Zhang et al., 2025 ) select prompts by difficulty, operating at the prompt level . Advantage shaping methods ( Tang et al., 2025 ; Wen et al., 2025 ) balance correct vs. incorrect samples at the group level . ACE operates at the rollout level , modulating penalties within incorrect samples based on per-rollout confidence shift.
+
+[21] h4: KL regularization in RLHF/RLVR.
+
+[22] p: KL divergence penalties are standard in RLHF pipelines to prevent reward hacking and mode collapse ( Ouyang et al., 2022 ; Stiennon et al., 2020 ) . The typical formulation adds a global term β 𝔻 KL ( π θ ∥ π ref ) \beta\mathbb{D}_{\mathrm{KL}}(\pi_{\theta}\|\pi_{\mathrm{ref}}) that symmetrically penalizes all deviations from the reference. DPO ( Rafailov et al., 2023a ) implicitly constrains the KL divergence through its closed-form reward parameterization. However, all these methods apply KL penalties uniformly across correct and incorrect outputs alike, suppressing beneficial exploration alongside harmful overconfidence. ACE introduces an asymmetric and selective KL-like penalty that targets only overconfident errors while leaving correct outputs and self-correcting errors untouched.
+
+[23] h4: Entropy regularization and clipping strategies.
+
+[24] p: Entropy bonuses have a long history in RL for encouraging exploration ( Williams, 1992 ; Schulman et al., 2017 ) . In the LLM context, DAPO ( Yu et al., 2025 ) combats entropy collapse through its Clip-Higher strategy, which decouples the upper and lower clipping thresholds of the importance sampling ratio to give low-probability exploration tokens more room for probability increase. While such clipping-based strategies promote diversity globally, they operate at the token level and cannot distinguish between beneficial diversity on correct reasoning paths and harmful persistence of incorrect ones. ACE provides a complementary, more targeted mechanism: rather than modifying the clipping bounds, it modulates the penalty magnitude per rollout based on confidence shift, achieving diversity preservation as a consequence of selectively suppressing overconfident errors (see § 5.4 ).
+
+[25] h4: Reward shaping.
+
+[26] p: Potential-based reward shaping ( Ng et al., 1999 ; Wiewiora et al., 2003 ; Devlin and Kudenko, 2012 ) transforms the reward function to accelerate learning while preserving the optimal policy. ACE can be viewed through the reward shaping lens: the confidence-dependent term α ⋅ Softplus ⁡ ( c i ) \alpha\cdot\mathrm{Softplus}(c_{i}) acts as an auxiliary reward signal derived from the policy–reference divergence. Unlike classical potential-based shaping, ACE’s shaping signal is asymmetric (applied only to negative advantages) and adaptive (it evolves with the policy). Process reward models ( Lightman et al., 2023 ) offer another form of reward enrichment at the step level; ACE is complementary, operating at the trajectory level with zero additional annotation cost.
+
+[27] h4: Diversity loss in RLVR.
+
+[28] p: Yue et al. ( Yue et al., 2025 ) show RLVR narrows reasoning boundaries. Negative sample reinforcement ( Zhu et al., 2025 ) demonstrates the importance of learning from incorrect rollouts but does not differentiate among error types. We identify overconfident errors as a key mechanism driving diversity collapse and propose confidence-based differential penalization to address this.
+
+[29] h2: 3 Preliminaries
+
+[30] h4: Setting.
+
+[31] p: We consider a policy π θ \pi_{\theta} parameterized by θ \theta , initialized from a reference model π ref \pi_{\mathrm{ref}} . Given a prompt x ∼ 𝒟 x\sim\mathcal{D} , the model generates G G rollouts { y 1 , … , y G } \{y_{1},\ldots,y_{G}\} . Each rollout receives a reward r i ∈ ℝ r_{i}\in\mathbb{R} from a reward function or verifier. We define:
+
+[32] p: Empirical mean reward: μ ^ x = 1 G ​ ∑ i = 1 G r i \hat{\mu}_{x}=\frac{1}{G}\sum_{i=1}^{G}r_{i}
+
+[33] p: Empirical reward standard deviation: σ ^ x = 1 G ​ ∑ i = 1 G ( r i − μ ^ x ) 2 \hat{\sigma}_{x}=\sqrt{\frac{1}{G}\sum_{i=1}^{G}(r_{i}-\hat{\mu}_{x})^{2}}
+
+[34] p: Above-average rollout set: 𝒴 + ​ ( x ) = { y i : r i > μ ^ x } \mathcal{Y}^{+}(x)=\{y_{i}:r_{i}>\hat{\mu}_{x}\}
+
+[35] p: Below-average rollout set: 𝒴 − ​ ( x ) = { y i : r i ≤ μ ^ x } \mathcal{Y}^{-}(x)=\{y_{i}:r_{i}\leq\hat{\mu}_{x}\}
+
+[36] h4: GRPO objective.
+
+[37] p: In Group Relative Policy Optimization ( Shao et al., 2024 ) , the advantage for rollout y i y_{i} is computed via group normalization:
+
+[38] table: A ^ i = r i − μ ^ x σ ^ x + ϵ \hat{A}_{i}=\frac{r_{i}-\hat{\mu}_{x}}{\hat{\sigma}_{x}+\epsilon} (1)
+
+[39] p: where ϵ \epsilon is a small constant for numerical stability. The clipped surrogate objective is:
+
+[40] table: ℒ GRPO ( θ ) = − 𝔼 x ∼ 𝒟 [ 1 G ∑ i = 1 G min ( ρ i A ^ i , clip ( ρ i , 1 − ϵ c , 1 + ϵ c ) A ^ i ) ] + β 𝔻 KL ( π θ ∥ π ref ) \mathcal{L}_{\text{GRPO}}(\theta)=-\mathbb{E}_{x\sim\mathcal{D}}\left[\frac{1}{G}\sum_{i=1}^{G}\min\!\left(\rho_{i}\hat{A}_{i},\;\text{clip}(\rho_{i},1{-}\epsilon_{c},1{+}\epsilon_{c})\hat{A}_{i}\right)\right]+\beta\mathbb{D}_{\mathrm{KL}}(\pi_{\theta}\|\pi_{\mathrm{ref}}) (2)
+
+[41] p: where ρ i = π θ ​ ( y i | x ) / π old ​ ( y i | x ) \rho_{i}=\pi_{\theta}(y_{i}|x)/\pi_{\mathrm{old}}(y_{i}|x) is the importance sampling ratio and ϵ c \epsilon_{c} is the clipping threshold.
+
+[42] h4: Observation: uniform penalty within groups.
+
+[43] p: For rollouts with identical rewards r i = r j r_{i}=r_{j} , the advantages are also identical: A ^ i = A ^ j \hat{A}_{i}=\hat{A}_{j} . In the special case of binary rewards, all incorrect rollouts ( r i = 0 r_{i}=0 ) share the same advantage:
+
+[44] table: A ^ i − = − μ ^ x σ ^ x + ϵ \hat{A}_{i}^{-}=\frac{-\hat{\mu}_{x}}{\hat{\sigma}_{x}+\epsilon} (3)
+
+[45] p: More generally, rollouts with the same reward receive identical advantage values regardless of their qualitative differences. The only per-rollout modulation comes from the importance ratio ρ i \rho_{i} , which is bounded by clipping and provides limited differentiation.
+
+[46] h4: Motivation: overconfident errors.
+
+[47] p: Define the per-rollout confidence shift c i = log ⁡ ( π θ ​ ( y i | x ) / π ref ​ ( y i | x ) ) c_{i}=\log(\pi_{\theta}(y_{i}|x)/\pi_{\mathrm{ref}}(y_{i}|x)) : positive values indicate the policy has become more confident than the reference on rollout y i y_{i} , while negative values indicate the opposite. Training Qwen2.5-Math-7B with standard GRPO on DAPO-Math-17K ( Yu et al., 2025 ) , we observe that the distribution of c i c_{i} among incorrect rollouts develops a heavy right tail as training progresses—a substantial fraction of errors become significantly more probable under the trained policy than under the reference, even though they remain incorrect. This is consistent with analyses of implicit reward distributions in preference optimization ( Rafailov et al., 2023b ; Meng et al., 2024 ) . These overconfident errors consume probability mass that would otherwise support diverse reasoning paths, contributing to the diversity collapse documented by Yue et al. (2025) . Crucially, the standard global KL penalty β 𝔻 KL ( π θ ∥ π ref ) \beta\mathbb{D}_{\mathrm{KL}}(\pi_{\theta}\|\pi_{\mathrm{ref}}) cannot selectively address this: it penalizes all deviations from the reference proportionally, suppressing beneficial confidence growth on correct paths alongside harmful overconfidence on incorrect ones. This structural limitation motivates a targeted correction mechanism (see § 5.3 for detailed quantitative tracking).
+
+[48] h2: 4 The ACE Method
+
+[49] h3: 4.1 Error Confidence Score
+
+[50] h6: Definition 1 (Error Confidence Score) .
+
+[51] p: For a prompt x x and an incorrect rollout y i ∈ 𝒴 − ​ ( x ) y_{i}\in\mathcal{Y}^{-}(x) , the error confidence score is:
+
+[52] table: c i ≜ log ⁡ π θ ​ ( y i | x ) π ref ​ ( y i | x ) = ∑ t = 1 T i log ⁡ π θ ​ ( y i ( t ) | x , y i ( < t ) ) π ref ​ ( y i ( t ) | x , y i ( < t ) ) c_{i}\triangleq\log\frac{\pi_{\theta}(y_{i}|x)}{\pi_{\mathrm{ref}}(y_{i}|x)}=\sum_{t=1}^{T_{i}}\log\frac{\pi_{\theta}(y_{i}^{(t)}|x,y_{i}^{(<t)})}{\pi_{\mathrm{ref}}(y_{i}^{(t)}|x,y_{i}^{(<t)})} (4)
+
+[53] p: where y i ( t ) y_{i}^{(t)} denotes the t t -th token and T i T_{i} is the sequence length.
+
+[54] p: The second equality decomposes the sequence-level confidence into a sum of token-level log-ratios. This is important for two reasons: (a) it shows that c i c_{i} is already computed as a byproduct of standard RLVR training (which requires log ⁡ π θ \log\pi_{\theta} and log ⁡ π ref \log\pi_{\mathrm{ref}} for the KL penalty and importance ratios), incurring zero additional compute ; and (b) it reveals that c i c_{i} aggregates confidence shifts across all reasoning steps, naturally weighting tokens where the policy has diverged most from the reference.
+
+[55] h6: Remark 1 (Three regimes) .
+
+[56] p: The sign of c i c_{i} partitions incorrect rollouts into interpretable regimes:
+
+[57] p: c i > 0 c_{i}>0 : Overconfident errors. The policy assigns higher probability than the reference. These are spurious patterns actively learned during RL.
+
+[58] p: c i ≈ 0 c_{i}\approx 0 : Exploratory errors. Probability approximately unchanged from the reference. Natural stochastic deviations.
+
+[59] p: c i < 0 c_{i}<0 : Self-correcting errors. The policy has already reduced probability mass relative to the reference.
+
+[60] h3: 4.2 The ACE Advantage
+
+[61] p: We restructure the negative advantage to depend on the per-rollout confidence score c i c_{i} .
+
+[62] h6: Definition 2 (ACE Advantage) .
+
+[63] p: For an incorrect rollout y i ∈ 𝒴 − ​ ( x ) y_{i}\in\mathcal{Y}^{-}(x) , the ACE advantage is:
+
+[64] table: A ACE , i − = A ^ i − ⋅ ( 1 + α ⋅ Softplus ⁡ ( c i ) ) A_{\mathrm{ACE},i}^{-}=\hat{A}_{i}^{-}\cdot\left(1+\alpha\cdot\mathrm{Softplus}(c_{i})\right) (5)
+
+[65] p: where A ^ i − = ( r i − μ ^ x ) / ( σ ^ x + ϵ ) \hat{A}_{i}^{-}=(r_{i}-\hat{\mu}_{x})/(\hat{\sigma}_{x}+\epsilon) is the standard GRPO advantage for incorrect rollouts and α ≥ 0 \alpha\geq 0 is a hyperparameter controlling the correction strength. Since A ^ i − < 0 \hat{A}_{i}^{-}<0 and ( 1 + α ⋅ Softplus ⁡ ( c i ) ) ≥ 1 (1+\alpha\cdot\mathrm{Softplus}(c_{i}))\geq 1 , ACE strictly amplifies the magnitude of the penalty. For correct rollouts y i ∈ 𝒴 + ​ ( x ) y_{i}\in\mathcal{Y}^{+}(x) , we retain the standard GRPO advantage:
+
+[66] table: A ACE , i + = A ^ i = r i − μ ^ x σ ^ x + ϵ A_{\mathrm{ACE},i}^{+}=\hat{A}_{i}=\frac{r_{i}-\hat{\mu}_{x}}{\hat{\sigma}_{x}+\epsilon} (6)
+
+[67] h4: Design rationale.
+
+[68] p: The Softplus function Softplus ⁡ ( z ) = log ⁡ ( 1 + e z ) \mathrm{Softplus}(z)=\log(1+e^{z}) is chosen for three properties:
+
+[69] p: Asymptotic behavior. When c i ≫ 0 c_{i}\gg 0 (overconfident), Softplus ⁡ ( c i ) ≈ c i \mathrm{Softplus}(c_{i})\approx c_{i} : penalty scales linearly with the log-confidence ratio. When c i ≪ 0 c_{i}\ll 0 (self-correcting), Softplus ⁡ ( c i ) ≈ e c i → 0 \mathrm{Softplus}(c_{i})\approx e^{c_{i}}\to 0 : penalty converges to the base GRPO advantage A ^ i − \hat{A}_{i}^{-} .
+
+[70] p: Smoothness. Unlike max ⁡ ( 0 , c i ) \max(0,c_{i}) (which has a non-differentiable kink at 0), Softplus is infinitely differentiable everywhere, ensuring smooth gradient flow.
+
+[71] p: Monotonicity. Softplus \mathrm{Softplus} is strictly increasing, so more confident errors always receive strictly larger penalties, consistent with our theoretical motivation.
+
+[72] h4: Comparison to uniform penalization.
+
+[73] p: To illustrate the effect of ACE, consider the binary reward case where rollouts receive r i ∈ { 0 , 1 } r_{i}\in\{0,1\} . Under standard GRPO, all incorrect rollouts ( r i = 0 r_{i}=0 ) share the same advantage A ^ − = − p ^ x / ( σ ^ x + ϵ ) \hat{A}^{-}=-\hat{p}_{x}/(\hat{\sigma}_{x}+\epsilon) , where p ^ x \hat{p}_{x} is the empirical pass rate and σ ^ x = p ^ x ​ ( 1 − p ^ x ) \hat{\sigma}_{x}=\sqrt{\hat{p}_{x}(1-\hat{p}_{x})} .
+
+[74] h4: Difficulty-adaptive scaling.
+
+[75] p: Since ACE multiplies the standard GRPO advantage A ^ i − \hat{A}_{i}^{-} by ( 1 + α ⋅ Softplus ⁡ ( c i ) ) (1+\alpha\cdot\mathrm{Softplus}(c_{i})) , it naturally inherits GRPO’s difficulty-dependent scaling: easy prompts (high pass rate) produce larger | A ^ i − | |\hat{A}_{i}^{-}| , so errors on easy problems are penalized more heavily. The confidence modulation then provides additional per-rollout differentiation within each difficulty level.
+
+[76] h4: Penalty differentiation.
+
+[77] p: Under ACE:
+
+[78] table: A ACE , i − = A ^ i − ⋅ ( 1 + α ​ log ⁡ ( 1 + e c i ) ) ⟹ | A ACE , i − | ​ is strictly increasing in ​ c i A_{\mathrm{ACE},i}^{-}=\hat{A}_{i}^{-}\cdot\left(1+\alpha\log(1+e^{c_{i}})\right)\quad\Longrightarrow\quad|A_{\mathrm{ACE},i}^{-}|\text{ is strictly increasing in }c_{i} (7)
+
+[79] p: Therefore, within the same group, an overconfident error ( c i = 2 c_{i}=2 ) receives a penalty | A ^ − | ⋅ ( 1 + α ⋅ 2.13 ) |\hat{A}^{-}|\cdot(1+\alpha\cdot 2.13) while an exploratory error ( c i = 0 c_{i}=0 ) receives | A ^ − | ⋅ ( 1 + α ⋅ 0.69 ) |\hat{A}^{-}|\cdot(1+\alpha\cdot 0.69) , and a self-correcting error ( c i = − 3 c_{i}=-3 ) receives | A ^ − | ⋅ ( 1 + α ⋅ 0.05 ) |\hat{A}^{-}|\cdot(1+\alpha\cdot 0.05) . This provides fine-grained differentiation that is impossible under uniform penalization. The same principle extends to continuous rewards, where ACE differentiates among below-average rollouts based on their confidence scores.
+
+[80] h3: 4.3 ACE-GRPO: Integration and Algorithm
+
+[81] p: ACE modifies only the advantage computation for negative samples. Substituting the ACE advantage (Definition 2 ) into the GRPO objective (Eq. 2 ), the full ACE-GRPO objective is:
+
+[82] table: ℒ ACE ( θ ) = − 𝔼 x ∼ 𝒟 [ 1 G ∑ i = 1 G ( 𝕀 [ r i = 1 ] ⋅ ℒ i + + 𝕀 [ r i = 0 ] ⋅ ℒ i − ) ] + β 𝔻 KL ( π θ ∥ π ref ) \mathcal{L}_{\mathrm{ACE}}(\theta)=-\mathbb{E}_{x\sim\mathcal{D}}\left[\frac{1}{G}\sum_{i=1}^{G}\left(\mathbb{I}[r_{i}{=}1]\cdot\mathcal{L}_{i}^{+}+\mathbb{I}[r_{i}{=}0]\cdot\mathcal{L}_{i}^{-}\right)\right]+\beta\mathbb{D}_{\mathrm{KL}}(\pi_{\theta}\|\pi_{\mathrm{ref}}) (8)
+
+[83] p: where:
+
+[84] table: ℒ i + \displaystyle\mathcal{L}_{i}^{+} = min ⁡ ( ρ i ​ A ^ i + , clip ​ ( ρ i , 1 − ϵ c , 1 + ϵ c ) ​ A ^ i + ) \displaystyle=\min\!\left(\rho_{i}\hat{A}_{i}^{+},\;\text{clip}(\rho_{i},1{-}\epsilon_{c},1{+}\epsilon_{c})\hat{A}_{i}^{+}\right) (9) ℒ i − \displaystyle\mathcal{L}_{i}^{-} = min ⁡ ( ρ i ​ A ACE , i − , clip ​ ( ρ i , 1 − ϵ c , 1 + ϵ c ) ​ A ACE , i − ) \displaystyle=\min\!\left(\rho_{i}A_{\mathrm{ACE},i}^{-},\;\text{clip}(\rho_{i},1{-}\epsilon_{c},1{+}\epsilon_{c})A_{\mathrm{ACE},i}^{-}\right) (10)
+
+[85] p: The positive advantages A ^ i + \hat{A}_{i}^{+} retain the standard GRPO formulation.
+
+[86] h4: Practical considerations.
+
+[87] p: In practice, we normalize c i c_{i} by sequence length ( c ¯ i = c i / T i \bar{c}_{i}=c_{i}/T_{i} ) to ensure comparable penalty magnitudes across rollouts of different lengths. Additional implementation details (sequence-level vs. token-level aggregation, clipping choices) and a PyTorch implementation are provided in Appendix C . The full algorithm is given below.
+
+[88] figure: Algorithm 1 ACE-GRPO: Asymmetric Confidence-aware Error Penalty 0: Policy π θ \pi_{\theta} , reference model π ref \pi_{\mathrm{ref}} , prompt dataset 𝒟 \mathcal{D} , group size G G , ACE strength α \alpha , clipping ϵ c \epsilon_{c} , KL coefficient β \beta 1: for each training step do 2: Sample prompt batch { x 1 , … , x B } ∼ 𝒟 \{x_{1},\ldots,x_{B}\}\sim\mathcal{D} 3: for each prompt x x in batch do 4: Generate G G rollouts { y 1 , … , y G } ∼ π θ ( ⋅ | x ) \{y_{1},\ldots,y_{G}\}\sim\pi_{\theta}(\cdot|x) 5: Compute rewards r i ∈ { 0 , 1 } r_{i}\in\{0,1\} via verifier 6: Compute standard group advantages A ^ i \hat{A}_{i} via GRPO 7: for each incorrect rollout y i y_{i} with r i = 0 r_{i}=0 do 8: c i ← ( ∑ t = 1 T i log π θ ( y i ( t ) | ⋅ ) − log π ref ( y i ( t ) | ⋅ ) ) / T i c_{i}\leftarrow\left(\sum_{t=1}^{T_{i}}\log\pi_{\theta}(y_{i}^{(t)}|\cdot)-\log\pi_{\mathrm{ref}}(y_{i}^{(t)}|\cdot)\right)/T_{i} // Already computed 9: A ACE , i − ← A ^ i − ⋅ ( 1 + α ⋅ log ⁡ ( 1 + exp ⁡ ( c i ) ) ) A_{\mathrm{ACE},i}^{-}\leftarrow\hat{A}_{i}^{-}\cdot(1+\alpha\cdot\log(1+\exp(c_{i}))) // Amplify uniform advantage 10: end for 11: Compute clipped surrogate loss (Eq. 8 ) 12: end for 13: Update θ \theta via gradient descent 14: end for
+
+[89] h3: 4.4 Relationship to Selective Reverse KL Divergence
+
+[90] p: We now characterize the theoretical relationship between ACE’s additional penalty and a selective regularizer that targets overconfident errors. Crucially, the equivalence is not exact: ACE implements a stop-gradient (reward-shaping) view of the confidence score, which omits a residual term compared to the full regularizer gradient. We state the exact decomposition below.
+
+[91] h6: Theorem 1 (Selective Regularization Decomposition) .
+
+[92] p: Let ℒ std ​ ( θ ) \mathcal{L}_{\mathrm{std}}(\theta) denote the standard policy gradient objective (Eq. 2 ) with uniform negative advantages A ^ − \hat{A}^{-} , and let ℒ ACE ​ ( θ ) \mathcal{L}_{\mathrm{ACE}}(\theta) denote the objective with ACE advantages (Eq. 5 ). Define the selective regularizer :
+
+[93] table: ℛ sel ​ ( θ ) = 𝔼 x ∼ 𝒟 ​ [ | A ^ − ​ ( x ) | ​ ∑ y ∈ 𝒴 − ​ ( x ) π θ ​ ( y | x ) ⋅ Softplus ⁡ ( log ⁡ π θ ​ ( y | x ) π ref ​ ( y | x ) ) ] \mathcal{R}_{\mathrm{sel}}(\theta)=\mathbb{E}_{x\sim\mathcal{D}}\left[|\hat{A}^{-}(x)|\sum_{y\in\mathcal{Y}^{-}(x)}\pi_{\theta}(y|x)\cdot\mathrm{Softplus}\!\left(\log\frac{\pi_{\theta}(y|x)}{\pi_{\mathrm{ref}}(y|x)}\right)\right] (11)
+
+[94] p: where | A ^ − ​ ( x ) | |\hat{A}^{-}(x)| is the magnitude of the standard GRPO negative advantage for prompt x x . Assume rollouts are sampled on-policy from π θ \pi_{\theta} . Then, in the infinite-sample limit ( G → ∞ G\to\infty ), the α \alpha -dependent additional gradient from ACE decomposes exactly as:
+
+[95] table: Δ ​ ∇ θ = − α ​ ∇ θ ℛ sel ​ ( θ ) + α ​ 𝔼 x ∼ 𝒟 ​ [ | A ^ − ​ ( x ) | ​ ∑ y ∈ 𝒴 − ​ ( x ) π θ ​ ( y | x ) ​ σ ​ ( c ⁡ ( y ) ) ​ ∇ θ ​ log ⁡ π θ ​ ( y | x ) ] \Delta\nabla_{\theta}\;=\;-\alpha\nabla_{\theta}\mathcal{R}_{\mathrm{sel}}(\theta)\;+\;\alpha\,\mathbb{E}_{x\sim\mathcal{D}}\!\left[|\hat{A}^{-}(x)|\sum_{y\in\mathcal{Y}^{-}(x)}\pi_{\theta}(y|x)\,\sigma(c(y))\,\nabla_{\theta}\log\pi_{\theta}(y|x)\right] (12)
+
+[96] p: where σ ⁡ ( c ) = 1 / ( 1 + e − c ) \sigma(c)=1/(1+e^{-c}) is the sigmoid function (i.e., Softplus ′ ​ ( c ) \mathrm{Softplus}^{\prime}(c) ). Equivalently, ACE implements the negative gradient of ℛ sel \mathcal{R}_{\mathrm{sel}} with the confidence modulation treated as a fixed reward signal (stop-gradient on c i c_{i} ), plus the residual term ℰ ⁡ ( θ ) \mathcal{E}(\theta) :
+
+[97] table: ℰ ⁡ ( θ ) = 𝔼 x ∼ 𝒟 ​ [ | A ^ − ​ ( x ) | ​ ∑ y ∈ 𝒴 − ​ ( x ) π θ ​ ( y | x ) ​ σ ​ ( c ⁡ ( y ) ) ​ ∇ θ ​ log ⁡ π θ ​ ( y | x ) ] \mathcal{E}(\theta)=\mathbb{E}_{x\sim\mathcal{D}}\!\left[|\hat{A}^{-}(x)|\sum_{y\in\mathcal{Y}^{-}(x)}\pi_{\theta}(y|x)\,\sigma(c(y))\,\nabla_{\theta}\log\pi_{\theta}(y|x)\right] (13)
+
+[98] p: Moreover, for overconfident errors where c ⁡ ( y ) ≫ 0 c(y)\gg 0 , Softplus ⁡ ( c ) ≈ c \mathrm{Softplus}(c)\approx c , and the dominant term in ℛ sel \mathcal{R}_{\mathrm{sel}} takes the form of a difficulty-weighted reverse KL divergence restricted to overconfident incorrect trajectories:
+
+[99] table: ℛ sel ​ ( θ ) ≈ 𝔼 x ∼ 𝒟 ​ [ | A ^ − ​ ( x ) | ​ ∑ y ∈ 𝒴 − ​ ( x ) c ⁡ ( y ) > 0 π θ ​ ( y | x ) ⋅ log ⁡ π θ ​ ( y | x ) π ref ​ ( y | x ) ] \mathcal{R}_{\mathrm{sel}}(\theta)\;\approx\;\mathbb{E}_{x\sim\mathcal{D}}\left[|\hat{A}^{-}(x)|\sum_{\begin{subarray}{c}y\in\mathcal{Y}^{-}(x)\\ c(y)>0\end{subarray}}\pi_{\theta}(y|x)\cdot\log\frac{\pi_{\theta}(y|x)}{\pi_{\mathrm{ref}}(y|x)}\right] (14)
+
+[100] p: The proof is provided in Appendix A . Intuitively, ACE’s stop-gradient treatment of Softplus ⁡ ( c i ) \mathrm{Softplus}(c_{i}) captures the dominant selective-regularization component (Term I: confidence-weighted probability suppression), while the residual ℰ ⁡ ( θ ) \mathcal{E}(\theta) corresponds to the through- c i c_{i} gradient (Term II) that the full regularizer would additionally apply. By omitting Term II, ACE implements a tempered version of ℛ sel \mathcal{R}_{\mathrm{sel}} —less aggressive than the full regularizer, but more targeted than standard GRPO. The per-prompt factor | A ^ − ​ ( x ) | |\hat{A}^{-}(x)| ensures that the selective regularizer inherits the difficulty-adaptive scaling of GRPO. In contrast to the global KL term β 𝔻 KL ( π θ ∥ π ref ) \beta\mathbb{D}_{\mathrm{KL}}(\pi_{\theta}\|\pi_{\mathrm{ref}}) which indiscriminately pulls back all deviations, ℛ sel \mathcal{R}_{\mathrm{sel}} is (i) restricted to incorrect outputs ( y ∈ 𝒴 − y\in\mathcal{Y}^{-} ), (ii) activated primarily by overconfidence ( c i > 0 c_{i}>0 ) due to Softplus saturation, (iii) independently tunable via α \alpha , and (iv) difficulty-adaptive via the | A ^ − ​ ( x ) | |\hat{A}^{-}(x)| factor.
+
+[101] h3: 4.5 Gradient Quality Analysis
+
+[102] p: A natural question is whether ACE’s confidence-dependent reweighting improves or degrades gradient quality. We analyze this in detail in Appendix B and summarize the key results here.
+
+[103] p: First, ACE necessarily increases both the total gradient second moment and the directional variance—unavoidable consequences of additive reweighting where ( 1 + α ​ ϕ i ) > 1 (1+\alpha\phi_{i})>1 for all ϕ i > 0 \phi_{i}>0 (Proposition 1 ). However, this does not prevent quality improvement. We define the gradient quality ratio as Q d = μ d 2 / σ d 2 Q_{d}=\mu_{d}^{2}/\sigma_{d}^{2} , measuring the ratio of squared directional signal to directional variance. Under realistic conditions—specifically, when overconfident errors carry gradients aligned with the optimization direction ( Cov ⁡ ( ϕ i , u i ) > 0 \mathrm{Cov}(\phi_{i},u_{i})>0 ) and the baseline gradient is noisy ( Q d std < 1 Q_{d}^{\mathrm{std}}<1 )—we prove that ACE strictly improves gradient quality: Q d ACE > Q d std Q_{d}^{\mathrm{ACE}}>Q_{d}^{\mathrm{std}} (Theorem 2 ). The key mechanism is that ACE’s selective amplification concentrates extra weight on the most informative gradients, causing the signal to grow faster than the noise along the optimization-relevant direction.
+
+[104] h2: 5 Experiments: ACE Expands the Reasoning Boundary
+
+[105] h3: 5.1 Experimental Setup
+
+[106] h4: Models.
+
+[107] p: We fine-tune Qwen2.5-Math-7B ( Qwen Team et al., 2024 ) , Qwen3-8B-Base ( Qwen Team et al., 2025 ) , and Llama-3.1-8B-Instruct ( Grattafiori et al., 2024 ) using GRPO implemented with VERL ( Volcano Engine, 2024 ) . Note that Qwen3-8B-Base is evaluated without enabling the extended thinking mode (i.e., reasoning mode disabled). Llama-3.1-8B-Instruct is included in the main results (Tables 1 and 2 ) to test cross-family generalization beyond the Qwen model family. For the detailed diagnostic experiments (§ 5.3 –§ 5.4 ), ablations (§ 5.5 ), and hyperparameter sensitivity (Appendix D ), we focus on the two Qwen models because: (i) they serve as the primary experimental subjects and already span two distinct pretraining recipes (math-specialized vs. general-purpose base model), providing sufficient diversity to validate the generality of our findings; and (ii) Llama-3.1-8B-Instruct operates in a substantially lower accuracy regime (e.g., near-floor on AIME 2025), which makes fine-grained diagnostics such as overconfident error distributions and entropy dynamics less statistically informative.
+
+[108] h4: Training data.
+
+[109] p: We use the DAPO-Math-17K dataset ( Yu et al., 2025 ) as the training prompts. For the GRPO and ACE-GRPO baselines we use standard GRPO (symmetric clipping, with KL penalty); for DAPO and ACE-DAPO we use the full DAPO algorithm ( Yu et al., 2025 ) with Clip-Higher, dynamic sampling, and token-level loss.
+
+[110] h4: Evaluation.
+
+[111] p: We evaluate on MATH-500 ( Hendrycks et al., 2021 ) and AIME 2025 using a rule-based math verifier for correctness verification.
+
+[112] h4: Metrics.
+
+[113] p: We report Pass@ k k for k ∈ { 1 , 2 , 4 , 8 , 16 , 32 } k\in\{1,2,4,8,16,32\} using temperature 0.7 and top- p p = 0.95. Pass@ k k measures the probability that at least one of k k samples is correct. We use the unbiased estimator from Chen et al. (2021) :
+
+[114] table: Pass@ ​ k = 𝔼 x ∼ 𝒟 ​ [ 1 − ( n − c k ) ( n k ) ] \text{Pass@}k=\mathbb{E}_{x\sim\mathcal{D}}\left[1-\frac{\binom{n-c}{k}}{\binom{n}{k}}\right] (15)
+
+[115] p: where n n is the total samples and c c is the number correct. Pass@1 reflects exploitation; large- k k reflects exploration and reasoning boundary.
+
+[116] h4: Baselines.
+
+[117] p: Base model : Unmodified pretrained model (upper bound for large- k k diversity).
+
+[118] p: GRPO : Standard Group Relative Policy Optimization ( Shao et al., 2024 ) .
+
+[119] p: DAPO : The full DAPO algorithm ( Yu et al., 2025 ) , which uses asymmetric clipping (Clip-Higher), dynamic sampling, and token-level loss, trained on the same DAPO-Math-17K dataset.
+
+[120] p: ACE-GRPO : Our method (ACE applied to GRPO).
+
+[121] p: ACE-DAPO : Our method applied on top of DAPO, demonstrating composability with orthogonal diversity-preserving strategies.
+
+[122] h4: Hyperparameters.
+
+[123] p: For ACE, we set α = 1.0 \alpha=1.0 as the default. We use normalized confidence scores c ¯ i = c i / T i \bar{c}_{i}=c_{i}/T_{i} . Full training hyperparameters are provided in Appendix E .
+
+[124] h4: Fair comparison.
+
+[125] p: Within each model, we keep the training recipe and budget matched across methods; see Appendix E .
+
+[126] h3: 5.2 Main Results: Full Pass@k Spectrum
+
+[127] p: Table 1 reports Pass@ k k on MATH-500 and Table 2 reports results on AIME 2025.
+
+[128] figure: Table 1 : Pass@ k k (%) on MATH-500. We report mean ± \pm 95% confidence interval over 5 independent training runs. Bold = best within each model group; underline = second best. Model @1 @2 @4 @8 @16 @32 Qwen2.5-Math-7B 63.0 76.3 83.2 88.1 91.2 93.5 Qwen2.5-Math-7B + GRPO 73.4 ± \pm 0.8 79.5 ± \pm 0.7 83.2 ± \pm 0.7 86.2 ± \pm 0.5 89.7 ± \pm 0.5 91.3 ± \pm 0.5 Qwen2.5-Math-7B + DAPO 74.5 ± \pm 1.0 80.8 ± \pm 0.9 84.8 ± \pm 0.8 89.5 ± \pm 0.7 93.0 ± \pm 0.7 94.6 ± \pm 0.6 Qwen2.5-Math-7B + ACE-GRPO 74.2 ± \pm 0.7 80.9 ± \pm 0.7 84.5 ± \pm 0.6 88.9 ± \pm 0.5 92.6 ± \pm 0.5 94.3 ± \pm 0.4 Qwen2.5-Math-7B + ACE-DAPO 75.1 ± \pm 0.8 82.4 ± \pm 0.8 86.2 ± \pm 0.6 91.2 ± \pm 0.5 94.7 ± \pm 0.5 96.1 ± \pm 0.5 Qwen3-8B-Base 60.2 72.5 78.8 83.9 87.2 90.6 Qwen3-8B-Base + GRPO 69.4 ± \pm 0.9 75.5 ± \pm 0.9 79.3 ± \pm 0.9 82.5 ± \pm 0.9 86.2 ± \pm 0.8 88.6 ± \pm 0.7 Qwen3-8B-Base + DAPO 70.8 ± \pm 1.0 76.8 ± \pm 0.9 81.1 ± \pm 0.9 84.3 ± \pm 0.8 88.1 ± \pm 0.8 90.4 ± \pm 0.8 Qwen3-8B-Base + ACE-GRPO 70.1 ± \pm 0.7 76.5 ± \pm 0.7 81.1 ± \pm 0.6 84.5 ± \pm 0.6 88.5 ± \pm 0.6 91.1 ± \pm 0.5 Qwen3-8B-Base + ACE-DAPO 71.2 ± \pm 0.9 77.5 ± \pm 0.9 82.3 ± \pm 0.8 85.4 ± \pm 0.8 89.4 ± \pm 0.7 91.6 ± \pm 0.7 Llama-3.1-8B-Instruct 48.1 59.9 67.8 74.8 80.5 84.8 Llama-3.1-8B-Instruct + GRPO 52.9 ± \pm 1.1 60.5 ± \pm 1.0 67.3 ± \pm 0.9 71.8 ± \pm 0.9 75.5 ± \pm 0.9 79.3 ± \pm 0.8 Llama-3.1-8B-Instruct + DAPO 54.3 ± \pm 1.0 61.8 ± \pm 1.0 68.9 ± \pm 1.0 72.9 ± \pm 1.0 76.8 ± \pm 0.9 80.4 ± \pm 0.9 Llama-3.1-8B-Instruct + ACE-GRPO 54.1 ± \pm 1.1 62.2 ± \pm 1.1 69.1 ± \pm 1.0 73.5 ± \pm 1.0 76.8 ± \pm 0.9 81.5 ± \pm 0.9 Llama-3.1-8B-Instruct + ACE-DAPO 55.4 ± \pm 1.1 62.8 ± \pm 1.1 70.2 ± \pm 1.0 74.1 ± \pm 1.0 77.9 ± \pm 0.9 82.1 ± \pm 0.9
+
+[129] figure: Table 2 : Pass@ k k (%) on AIME 2025. AIME 2025 contains 30 problems; we report point estimates as confidence intervals are dominated by test-set size rather than training variance. Bold = best within each model group; underline = second best. Model 1 2 4 8 16 32 Qwen2.5-Math-7B 6.3 9.9 13.8 17.5 21.9 26.7 Qwen2.5-Math-7B + GRPO 10.5 14.9 19.7 23.9 28.6 33.7 Qwen2.5-Math-7B + DAPO 11.5 16.7 22.5 27.5 31.8 37.1 Qwen2.5-Math-7B + ACE-GRPO 11.2 16.0 21.2 26.1 30.6 36.4 Qwen2.5-Math-7B + ACE-DAPO 11.7 17.4 23.8 28.5 33.1 38.6 Qwen3-8B-Base 5.1 9.2 11.6 14.2 17.0 19.6 Qwen3-8B-Base + GRPO 9.7 13.9 17.4 22.5 25.7 29.8 Qwen3-8B-Base + DAPO 11.1 15.7 19.9 25.2 28.5 33.1 Qwen3-8B-Base + ACE-GRPO 10.5 15.5 19.6 24.7 27.9 32.4 Qwen3-8B-Base + ACE-DAPO 11.2 16.9 21.2 26.3 29.9 34.4 Llama-3.1-8B-Instruct 0.2 0.7 1.2 3.2 7.1 10.8 Llama-3.1-8B-Instruct + GRPO 0.2 0.3 0.5 2.1 3.0 7.0 Llama-3.1-8B-Instruct + DAPO 0.3 0.3 0.6 1.9 2.8 6.3 Llama-3.1-8B-Instruct + ACE-GRPO 0.3 0.3 0.5 2.2 3.9 8.2 Llama-3.1-8B-Instruct + ACE-DAPO 0.2 0.3 0.6 2.0 3.2 7.1
+
+[130] h4: Key findings (Qwen2.5-Math-7B).
+
+[131] p: As shown in Figure 2 , ACE consistently improves larger- k k metrics while maintaining comparable Pass@1. On MATH-500, ACE-GRPO improves Pass@32 from 91.3% to 94.3% (+3.0pp) over GRPO; ACE-DAPO further pushes Pass@32 to 96.1% (+1.5pp over DAPO’s 94.6%). On AIME 2025, ACE-GRPO improves Pass@32 from 33.7% to 36.4% (+2.7pp); ACE-DAPO reaches 38.6% (+1.5pp over DAPO’s 37.1%). Notably, ACE-DAPO achieves the strongest results across all k k , demonstrating that ACE composes effectively with orthogonal diversity-preserving strategies.
+
+[132] h4: Key findings (Qwen3-8B-Base).
+
+[133] p: The same pattern holds on a different model family. On MATH-500, ACE-GRPO improves Pass@32 from 88.6% to 91.1% (+2.5pp); ACE-DAPO reaches 91.6% (+1.2pp over DAPO’s 90.4%). On AIME 2025, ACE-GRPO improves Pass@32 from 29.8% to 32.4% (+2.6pp); ACE-DAPO reaches 34.4% (+1.3pp over DAPO’s 33.1%).
+
+[134] h4: Key findings (Llama-3.1-8B-Instruct).
+
+[135] p: To test cross-family generalization, we evaluate on a non-Qwen model. On MATH-500, ACE-GRPO improves Pass@32 from 79.3% to 81.5% (+2.2pp); ACE-DAPO reaches 82.1% (+1.7pp over DAPO’s 80.4%). On AIME 2025—where Llama-3.1-8B-Instruct operates near the floor—ACE-GRPO improves Pass@32 from 7.0% to 8.2% (+1.2pp), demonstrating that ACE’s mechanism transfers across model families even under low-accuracy regimes.
+
+[136] p: These consistent gains across all three model families confirm the generality of ACE’s mechanism.
+
+[137] h4: Interaction with DAPO’s Clip-Higher.
+
+[138] p: A natural observation is that ACE’s marginal gain over DAPO is smaller than over GRPO (e.g., on MATH-500 Qwen2.5-Math-7B Pass@32: +3.0pp for ACE-GRPO vs. GRPO, but +1.5pp for ACE-DAPO vs. DAPO). This reflects a genuine mechanism overlap: DAPO’s Clip-Higher preserves diversity by limiting how aggressively any incorrect path is suppressed at the token level, which indirectly reduces the overconfident-error pathology that ACE targets. However, DAPO’s protection is indiscriminate —it shields overconfident errors and exploratory errors alike, because token-level clipping cannot distinguish trajectory-level confidence regimes. ACE provides the missing selectivity: it amplifies suppression specifically for errors the model has learned to be confident in, while leaving exploratory errors untouched. The consistent gains of ACE-DAPO over DAPO across all model families and benchmarks indicate that this trajectory-level selectivity captures a dimension of the overconfidence problem that token-level clipping alone cannot resolve. The diminishing marginal returns are expected—both methods partially address the same pathology—but the residual improvement confirms that ACE’s rollout-level discrimination provides value beyond what DAPO’s uniform token-level mechanism achieves.
+
+[139] figure: Figure 2 : Performance Comparison across Benchmarks. Pass@ k k curves for all five methods on MATH-500 (left column) and AIME 2025 (right column) across three model families: Qwen2.5-Math-7B (top row), Qwen3-8B-Base (middle row), and Llama-3.1-8B-Instruct (bottom row). ACE-GRPO and ACE-DAPO consistently outperform their respective baselines (GRPO and DAPO) across all sampling budgets, model families, and benchmarks, with larger gains at higher k k values. ACE-DAPO achieves the best overall performance, confirming that ACE’s rollout-level correction composes with DAPO’s token-level diversity preservation and generalizes across model families.
+
+[140] h3: 5.3 Experiment 1: Overconfident Error Dynamics
+
+[141] h4: Goal.
+
+[142] p: Quantify the prevalence of overconfident errors during training and demonstrate that ACE effectively reduces them.
+
+[143] h4: Design.
+
+[144] p: Track the distribution of c i c_{i} among incorrect rollouts throughout training for both standard GRPO and ACE-GRPO on the two Qwen models. 1 1 1 We omit Llama-3.1-8B-Instruct from the diagnostic experiments as its lower baseline accuracy yields fewer correct rollouts per group, making the confidence shift statistics noisier and less informative. The main results in Tables 1 – 2 confirm that ACE’s gains transfer to Llama. At checkpoints every 25 training steps, generate 32 rollouts per prompt on a held-out set and record c i c_{i} for all incorrect rollouts.
+
+[145] h4: Metrics.
+
+[146] p: Overconfident error fraction : OEF ​ ( t ) = | { y i ∈ 𝒴 − : c i > 0 } | / | 𝒴 − | \text{OEF}(t)=|\{y_{i}\in\mathcal{Y}^{-}:c_{i}>0\}|/|\mathcal{Y}^{-}| at step t t .
+
+[147] p: Mean overconfidence magnitude : 𝔼 [ c i ∣ c i > 0 , r i = 0 ] \mathbb{E}[c_{i}\mid c_{i}>0,r_{i}=0] at step t t .
+
+[148] p: Token-level entropy : Average per-token entropy of the policy.
+
+[149] h4: Results.
+
+[150] p: The core claim of ACE is that standard GRPO allows incorrect rollouts to become increasingly overconfident during training, and that ACE’s asymmetric penalty should counteract this pathology. To test this, we track two complementary diagnostics at every checkpoint (Figure 3 ): (i) the overconfident error fraction (OEF), which measures the proportion of incorrect rollouts whose confidence has grown relative to the reference policy ( c i > 0 c_{i}>0 ), and (ii) the mean overconfidence magnitude among those overconfident errors, which captures the severity of the problem. Throughout training, ACE-GRPO maintains a lower OEF and a lower mean overconfidence magnitude than standard GRPO at every recorded checkpoint, indicating that ACE consistently suppresses both the prevalence and the severity of high-confidence incorrect rollouts.
+
+[151] figure: Figure 3 : Overconfident Error Dynamics. Left: Overconfident error fraction (OEF) over training. Right: Mean overconfidence magnitude for c i > 0 c_{i}>0 errors. ACE-GRPO effectively suppresses both metrics compared to standard GRPO.
+
+[152] h3: 5.4 Experiment 2: Entropy Dynamics
+
+[153] h4: Goal.
+
+[154] p: Verify that ACE preserves generation diversity by tracking entropy throughout training, and establish the connection between entropy and Pass@ k k performance.
+
+[155] h4: Design.
+
+[156] p: Over the first 20 training steps, compute the average per-token entropy of the policy on a held-out subset of DAPO-Math-17K prompts:
+
+[157] table: H ( t ) = − 1 | 𝒟 val | ∑ x ∈ 𝒟 val 1 T ∑ j = 1 T ∑ v π θ ( v | x , y < j ) log π θ ( v | x , y < j ) H(t)=-\frac{1}{|\mathcal{D}_{\text{val}}|}\sum_{x\in\mathcal{D}_{\text{val}}}\frac{1}{T}\sum_{j=1}^{T}\sum_{v}\pi_{\theta}(v|x,y_{<j})\log\pi_{\theta}(v|x,y_{<j}) (16)
+
+[158] p: where T T is the average sequence length and v v ranges over the vocabulary.
+
+[159] h4: Results.
+
+[160] p: A key concern with aggressive error suppression is that it may cause premature mode collapse, concentrating probability mass on a narrow set of outputs and destroying the diversity needed for high Pass@ k k at large k k . To diagnose this, we track average per-token entropy H ⁡ ( t ) H(t) over the early phase of training, where entropy decay is most rapid, for both standard GRPO and ACE-GRPO (Figure 4 ). Standard GRPO exhibits a sharp entropy drop within the first 20 steps, retaining only a small fraction of its initial entropy. In contrast, ACE-GRPO decays substantially more slowly, preserving a much larger fraction of the initial entropy over the same period. This gap correlates with Pass@ k k performance at large k k : the method that retains more entropy also achieves higher coverage, confirming that ACE’s selective penalty avoids premature mode collapse while still suppressing overconfident errors.
+
+[161] figure: Figure 4 : Entropy Dynamics. Token-level entropy over the first 20 training steps. Left: On Qwen2.5-Math-7B, ACE-GRPO retains substantially more entropy than standard GRPO, which suffers rapid entropy collapse. Right: On Qwen3-8B-Base, ACE-GRPO maintains more stable entropy, demonstrating consistency across architectures. We report entropy dynamics for the two Qwen models only; Llama-3.1-8B-Instruct is excluded because its lower baseline accuracy makes the entropy signal less directly comparable (see § 5 for discussion).
+
+[162] h3: 5.5 Ablation: Choice of Modulation Function
+
+[163] p: A natural question is whether the choice of Softplus \mathrm{Softplus} as the modulation function is important, or whether a simpler alternative such as ReLU ​ ( c i ) = max ⁡ ( 0 , c i ) \text{ReLU}(c_{i})=\max(0,c_{i}) suffices. We compare the two variants on MATH-500 using Qwen2.5-Math-7B with α = 1.0 \alpha=1.0 (the ablation uses a single representative model to isolate the effect of the modulation function; the main results in Table 1 confirm that ACE’s gains are consistent across all three model families):
+
+[164] p: ACE-Softplus (default): A ACE , i − = A ^ i − ⋅ ( 1 + α ⋅ Softplus ⁡ ( c i ) ) A_{\mathrm{ACE},i}^{-}=\hat{A}_{i}^{-}\cdot(1+\alpha\cdot\mathrm{Softplus}(c_{i}))
+
+[165] p: ACE-ReLU : A ACE , i − = A ^ i − ⋅ ( 1 + α ⋅ ReLU ​ ( c i ) ) A_{\mathrm{ACE},i}^{-}=\hat{A}_{i}^{-}\cdot(1+\alpha\cdot\text{ReLU}(c_{i}))
+
+[166] p: ReLU completely ignores self-correcting and exploratory errors ( c i ≤ 0 c_{i}\leq 0 ), providing zero modulation in that regime, while Softplus provides a smooth, everywhere-positive modulation that transitions gradually.
+
+[167] figure: Table 3 : Ablation: modulation function on MATH-500 (Qwen2.5-Math-7B, α = 1.0 \alpha=1.0 ). Method @1 @2 @4 @8 @16 @32 GRPO (baseline) 73.4 79.5 83.2 86.2 89.7 91.3 ACE-ReLU 73.2 80.3 83.9 87.6 91.2 93.1 ACE-Softplus (ours) 74.2 80.9 84.5 88.9 92.6 94.3
+
+[168] h4: Analysis.
+
+[169] p: Both ACE-ReLU and ACE-Softplus outperform standard GRPO across all k > 1 k>1 , confirming that confidence-aware modulation—regardless of the specific activation—is beneficial. However, ACE-Softplus consistently outperforms ACE-ReLU, with the gap widening at larger k k (+1.2 pp at Pass@32). This advantage stems from two properties of Softplus. First, smoothness : ReLU has a non-differentiable kink at c i = 0 c_{i}=0 , creating a discontinuity in the gradient landscape that can destabilize training, whereas Softplus provides smooth gradient flow everywhere. Second, non-zero modulation near the boundary : ReLU assigns zero modulation to all errors with c i ≤ 0 c_{i}\leq 0 , treating them identically to standard GRPO. In contrast, Softplus( 0 0 ) = ln ⁡ 2 ≈ 0.69 =\ln 2\approx 0.69 , providing a gentle baseline modulation that enables finer differentiation among borderline errors near c i ≈ 0 c_{i}\approx 0 —precisely the regime where errors may be transitioning from exploratory to overconfident. These results empirically validate the design rationale in § 4.2 .
+
+[170] h3: 5.6 Analysis: Mechanism Behind Diversity Preservation
+
+[171] p: The experimental results above (§ 5.3 –§ 5.4 ) reveal a consistent mechanism: standard GRPO’s uniform penalties allow overconfident errors to form “probability sinks” that crowd out valid reasoning paths—the pathology identified by Yue et al. (2025) as the root cause of RLVR’s narrowing reasoning boundary. ACE’s asymmetric penalties break this cycle: the selective KL term (Theorem 1 ) acts as entropy regularization restricted to the overconfident region, while leaving exploratory errors ( c i ≤ 0 c_{i}\leq 0 ) untouched. This targeted correction redistributes probability mass to alternative reasoning paths, explaining ACE’s improvements across the full Pass@ k k spectrum.
+
+[172] h2: 6 Limitations and Future Work
+
+[173] h4: Dependence on reference model quality.
+
+[174] p: ACE uses π ref \pi_{\mathrm{ref}} to define overconfidence. If the reference model is poorly calibrated, the confidence score c i c_{i} may not reliably indicate spurious patterns. Exploring alternatives (e.g., using a moving average of recent checkpoints) is a direction for future work.
+
+[175] h4: Binary rewards only.
+
+[176] p: Our current formulation assumes binary rewards ( r ∈ { 0 , 1 } r\in\{0,1\} ). Extending ACE to continuous or partial rewards (e.g., from process reward models) requires redefining what constitutes an “overconfident error” in the presence of graded feedback.
+
+[177] h4: Interaction with long CoT.
+
+[178] p: Extended reasoning models (e.g., with > > 10K token outputs) may exhibit different confidence shift dynamics. The sequence-length normalization ( c ¯ i = c i / T i \bar{c}_{i}=c_{i}/T_{i} ) may need refinement for very long chains.
+
+[179] h2: 7 Conclusion
+
+[180] p: We identified a previously overlooked pathology in RLVR training: the accumulation of overconfident errors—incorrect reasoning paths that the RL process spuriously reinforces. We proposed ACE, a simple modification to the advantage function that dynamically amplifies penalties for overconfident errors while leaving exploratory errors untouched.
+
+[181] h2: References
+
+[182] h2: Appendix A Proof of Theorem 1 (Selective Regularization Decomposition)
+
+[183] h6: Proof.
+
+[184] p: The gradient of ℒ ACE \mathcal{L}_{\mathrm{ACE}} differs from ℒ std \mathcal{L}_{\mathrm{std}} only in the negative advantage terms. We analyze the α \alpha -dependent component. Since A ACE , i − = A ^ i − ⋅ ( 1 + α ⋅ Softplus ⁡ ( c i ) ) A_{\mathrm{ACE},i}^{-}=\hat{A}_{i}^{-}\cdot(1+\alpha\cdot\mathrm{Softplus}(c_{i})) , the additional gradient relative to standard GRPO is:
+
+[185] table: Δ ​ ∇ θ = − α ​ 𝔼 x ∼ 𝒟 ​ [ | A ^ − ​ ( x ) | G ​ ∑ y i ∈ 𝒴 − ​ ( x ) Softplus ⁡ ( c i ) ⋅ ∇ θ ​ log ​ π θ ​ ( y i | x ) ] \Delta\nabla_{\theta}=-\alpha\mathbb{E}_{x\sim\mathcal{D}}\left[\frac{|\hat{A}^{-}(x)|}{G}\sum_{y_{i}\in\mathcal{Y}^{-}(x)}\mathrm{Softplus}(c_{i})\cdot\nabla_{\theta}\log\pi_{\theta}(y_{i}|x)\right] (17)
+
+[186] p: Here | A ^ − ​ ( x ) | |\hat{A}^{-}(x)| is a per-prompt scalar (constant across rollouts within a group) that does not depend on y i y_{i} . This is the standard REINFORCE form: | A ^ − ​ ( x ) | ⋅ Softplus ⁡ ( c i ) |\hat{A}^{-}(x)|\cdot\mathrm{Softplus}(c_{i}) acts as a scalar reward multiplying the score function, with c i c_{i} treated as not depending on θ \theta (the “stop-gradient” convention standard in policy gradient methods).
+
+[187] p: As G → ∞ G\to\infty , by the law of large numbers:
+
+[188] table: Δ ​ ∇ θ \displaystyle\Delta\nabla_{\theta} → − α ​ 𝔼 x ∼ 𝒟 ​ [ | A ^ − ​ ( x ) | ​ ∑ y ∈ 𝒴 − ​ ( x ) π θ ​ ( y | x ) ⋅ Softplus ⁡ ( c ⁡ ( y ) ) ⋅ ∇ θ ​ log ​ π θ ​ ( y | x ) ] \displaystyle\to-\alpha\mathbb{E}_{x\sim\mathcal{D}}\left[|\hat{A}^{-}(x)|\sum_{y\in\mathcal{Y}^{-}(x)}\pi_{\theta}(y|x)\cdot\mathrm{Softplus}(c(y))\cdot\nabla_{\theta}\log\pi_{\theta}(y|x)\right] = − α ​ 𝔼 x ∼ 𝒟 ​ [ | A ^ − ​ ( x ) | ​ ∑ y ∈ 𝒴 − ​ ( x ) Softplus ⁡ ( c ⁡ ( y ) ) ⋅ ∇ θ π θ ​ ( y | x ) ] \displaystyle=-\alpha\mathbb{E}_{x\sim\mathcal{D}}\left[|\hat{A}^{-}(x)|\sum_{y\in\mathcal{Y}^{-}(x)}\mathrm{Softplus}(c(y))\cdot\nabla_{\theta}\pi_{\theta}(y|x)\right] (18)
+
+[189] p: using π θ ​ ( y | x ) ​ ∇ θ ​ log ⁡ π θ ​ ( y | x ) = ∇ θ π θ ​ ( y | x ) \pi_{\theta}(y|x)\nabla_{\theta}\log\pi_{\theta}(y|x)=\nabla_{\theta}\pi_{\theta}(y|x) .
+
+[190] p: Now, the true gradient of ℛ sel ​ ( θ ) \mathcal{R}_{\mathrm{sel}}(\theta) requires differentiating | A ^ − ​ ( x ) | ⋅ π θ ​ ( y | x ) ⋅ Softplus ⁡ ( c ⁡ ( y ) ) |\hat{A}^{-}(x)|\cdot\pi_{\theta}(y|x)\cdot\mathrm{Softplus}(c(y)) where π θ ​ ( y | x ) \pi_{\theta}(y|x) and Softplus ⁡ ( c ⁡ ( y ) ) \mathrm{Softplus}(c(y)) both depend on θ \theta (since c ⁡ ( y ) = log ⁡ π θ ​ ( y | x ) − log ⁡ π ref ​ ( y | x ) c(y)=\log\pi_{\theta}(y|x)-\log\pi_{\mathrm{ref}}(y|x) ). Since | A ^ − ​ ( x ) | |\hat{A}^{-}(x)| is a per-prompt scalar, it factors out, and by the product rule:
+
+[191] table: ∇ θ [ π θ ​ ( y | x ) ⋅ Softplus ⁡ ( c ) ] \displaystyle\nabla_{\theta}\left[\pi_{\theta}(y|x)\cdot\mathrm{Softplus}(c)\right] = Softplus ⁡ ( c ) ⋅ ∇ θ π θ ​ ( y | x ) ⏟ Term I: captured by ACE + π θ ​ ( y | x ) ⋅ σ ⁡ ( c ) ⋅ ∇ θ ​ log ​ π θ ​ ( y | x ) ⏟ Term II: residual \displaystyle=\underbrace{\mathrm{Softplus}(c)\cdot\nabla_{\theta}\pi_{\theta}(y|x)}_{\text{Term~I: captured by ACE}}+\underbrace{\pi_{\theta}(y|x)\cdot\sigma(c)\cdot\nabla_{\theta}\log\pi_{\theta}(y|x)}_{\text{Term~II: residual}} (19)
+
+[192] p: where σ ⁡ ( c ) = Softplus ′ ​ ( c ) = 1 / ( 1 + e − c ) \sigma(c)=\mathrm{Softplus}^{\prime}(c)=1/(1+e^{-c}) and ∇ θ c = ∇ θ ​ log ​ π θ ​ ( y | x ) \nabla_{\theta}c=\nabla_{\theta}\log\pi_{\theta}(y|x) .
+
+[193] p: Multiplying by | A ^ − ​ ( x ) | |\hat{A}^{-}(x)| , summing over y ∈ 𝒴 − ​ ( x ) y\in\mathcal{Y}^{-}(x) , and taking expectations, Eq. ( 18 ) matches exactly − α ⋅ | A ^ − ( x ) | ⋅ Term I -\alpha\cdot|\hat{A}^{-}(x)|\cdot\text{Term~I} . Rearranging:
+
+[194] table: Δ ​ ∇ θ = − α ​ ∇ θ ℛ sel + α ​ 𝔼 x ∼ 𝒟 ​ [ | A ^ − ​ ( x ) | ​ ∑ y ∈ 𝒴 − ​ ( x ) π θ ​ ( y | x ) ​ σ ​ ( c ) ​ ∇ θ ​ log ⁡ π θ ​ ( y | x ) ] ⏟ ℰ ⁡ ( θ ) \Delta\nabla_{\theta}=-\alpha\nabla_{\theta}\mathcal{R}_{\mathrm{sel}}+\alpha\underbrace{\mathbb{E}_{x\sim\mathcal{D}}\!\left[|\hat{A}^{-}(x)|\sum_{y\in\mathcal{Y}^{-}(x)}\pi_{\theta}(y|x)\,\sigma(c)\,\nabla_{\theta}\log\pi_{\theta}(y|x)\right]}_{\mathcal{E}(\theta)} (20)
+
+[195] p: This is an exact identity with no approximation. The residual ℰ ⁡ ( θ ) \mathcal{E}(\theta) arises because ACE treats Softplus ⁡ ( c i ) \mathrm{Softplus}(c_{i}) as a fixed reward signal, omitting the gradient through c i c_{i} itself. ∎
+
+[196] h6: Remark 2 (Residual term and contrast with global KL) .
+
+[197] p: The residual ℰ ⁡ ( θ ) \mathcal{E}(\theta) is not negligible: for c ∈ [ 1 , 3 ] c\in[1,3] , the ratio σ ⁡ ( c ) / Softplus ⁡ ( c ) \sigma(c)/\mathrm{Softplus}(c) ranges from 31–56%. ℰ \mathcal{E} arises because ACE treats Softplus ⁡ ( c i ) \mathrm{Softplus}(c_{i}) as a fixed scalar (stop-gradient), omitting the gradient that the full regularizer ℛ sel \mathcal{R}_{\mathrm{sel}} would contribute by differentiating through c i c_{i} (Term II in Eq. 19 ). This omitted gradient would suppress overconfident errors more aggressively : it drives the parameters to reduce not only π θ ​ ( y | x ) \pi_{\theta}(y|x) but also the confidence gap c ⁡ ( y ) c(y) itself. ACE therefore implements a tempered version of the full regularizer—correcting overconfident errors via the dominant Term I (confidence-weighted probability suppression) while forgoing Term II’s sharper through- c c correction.
+
+[198] h6: Remark 3 (Why stop-gradient is preferable to the full regularizer) .
+
+[199] p: A natural question is whether one should retain Term II to implement the full ∇ θ ℛ sel \nabla_{\theta}\mathcal{R}_{\mathrm{sel}} instead of ACE’s tempered version. We argue against this for three reasons. (i) Precedent for detaching θ \theta -dependent signals. Although the reward in vanilla REINFORCE does not depend on θ \theta , modern policy gradient methods routinely stop-gradient through θ \theta -dependent quantities used in the loss: PPO/GRPO detach the advantage A ^ i \hat{A}_{i} (computed from the current policy’s rollouts) from the actor gradient; actor-critic methods detach the value baseline V ⁡ ( s , θ ) V(s;\theta) even under parameter sharing; and the “old policy” π old \pi_{\mathrm{old}} in importance ratios is always frozen. ACE’s treatment of Softplus ⁡ ( c i ) \mathrm{Softplus}(c_{i}) as a detached reward modifier follows the same principle: quantities that diagnose the policy state should inform gradient magnitude , not become optimization targets themselves. (ii) Feedback loop. Retaining Term II means the penalty magnitude itself becomes an optimization target: the gradient would simultaneously try to reduce π θ ​ ( y | x ) \pi_{\theta}(y|x) and reduce c i = log ⁡ ( π θ / π ref ) c_{i}=\log(\pi_{\theta}/\pi_{\mathrm{ref}}) , creating a second-order feedback that can cause gradient oscillation and training instability. (iii) Variance. The gradient quality analysis (Theorem 2 ) proves that ACE’s stop-gradient version improves the quality ratio Q d Q_{d} under realistic conditions. Adding Term II introduces an additional score-function estimator σ ⁡ ( c i ) ​ ∇ θ ​ log ⁡ π θ \sigma(c_{i})\nabla_{\theta}\log\pi_{\theta} , which increases gradient variance without a guaranteed commensurate signal gain—the sufficient condition for quality improvement (Eq. 49 ) would need to be re-derived and may no longer hold.
+
+[200] h2: Appendix B Gradient Quality Analysis
+
+[201] p: This appendix provides the full formal analysis of ACE’s effect on gradient quality, summarized in § 4.5 .
+
+[202] h6: Assumption 1 .
+
+[203] p: For a fixed prompt x x with pass rate p p , let g i = A i ​ ∇ θ ​ log ⁡ π θ ​ ( y i | x ) g_{i}=A_{i}\nabla_{\theta}\log\pi_{\theta}(y_{i}|x) be the per-rollout gradient for incorrect rollouts ( r i = 0 r_{i}=0 ), and let s i = ∇ θ ​ log ​ π θ ​ ( y i | x ) s_{i}=\nabla_{\theta}\log\pi_{\theta}(y_{i}|x) denote the score function. Let ϕ i = Softplus ⁡ ( c i ) \phi_{i}=\mathrm{Softplus}(c_{i}) . We assume:
+
+[204] p: Rollouts y i y_{i} are conditionally independent given x x .
+
+[205] p: The signal direction is d ^ = 𝔼 ⁡ [ s i ∣ r i = 0 ] / ‖ 𝔼 ⁡ [ s i ∣ r i = 0 ] ‖ \hat{d}=\mathbb{E}[s_{i}\mid r_{i}=0]/\|\mathbb{E}[s_{i}\mid r_{i}=0]\| .
+
+[206] p: The directional covariance satisfies Cov ⁡ ( ϕ i , ( d ^ ⊤ ​ s i ) 2 ∣ r i = 0 ) > 0 \mathrm{Cov}(\phi_{i},\,(\hat{d}^{\top}s_{i})^{2}\mid r_{i}=0)>0 , i.e., overconfident errors tend to have score functions more aligned with the expected gradient direction.
+
+[207] h6: Proposition 1 (Second Moment Increase) .
+
+[208] p: For any α > 0 \alpha>0 , ACE strictly increases the mean squared gradient norm of incorrect rollouts:
+
+[209] table: 𝔼 ⁡ [ ‖ g i ACE ‖ 2 ∣ r i = 0 ] > 𝔼 ⁡ [ ‖ g i std ‖ 2 ∣ r i = 0 ] \mathbb{E}[\|g_{i}^{\mathrm{ACE}}\|^{2}\mid r_{i}=0]>\mathbb{E}[\|g_{i}^{\mathrm{std}}\|^{2}\mid r_{i}=0] (21)
+
+[210] p: whenever 𝔼 ⁡ [ ϕ i ​ ‖ s i ‖ 2 ∣ r i = 0 ] > 0 \mathbb{E}[\phi_{i}\|s_{i}\|^{2}\mid r_{i}=0]>0 (i.e., errors are not all zero-gradient). This is an unavoidable consequence of the purely additive penalty structure: ( 1 + α ​ ϕ i ) > 1 (1+\alpha\phi_{i})>1 for all ϕ i > 0 \phi_{i}>0 .
+
+[211] h6: Proof.
+
+[212] p: Let a = | A ^ − ​ ( x ) | > 0 a=|\hat{A}^{-}(x)|>0 denote the per-prompt base penalty magnitude. Under standard GRPO: g i std = a ⋅ s i g_{i}^{\mathrm{std}}=a\cdot s_{i} . Under ACE: g i ACE = a ⁡ ( 1 + α ​ ϕ i ) ⋅ s i g_{i}^{\mathrm{ACE}}=a(1+\alpha\phi_{i})\cdot s_{i} . Then:
+
+[213] table: 𝔼 ⁡ [ ‖ g i ACE ‖ 2 ] − 𝔼 ⁡ [ ‖ g i std ‖ 2 ] \displaystyle\mathbb{E}[\|g_{i}^{\mathrm{ACE}}\|^{2}]-\mathbb{E}[\|g_{i}^{\mathrm{std}}\|^{2}] = a 2 ​ ( 𝔼 ⁡ [ ( 1 + α ​ ϕ i ) 2 ​ ‖ s i ‖ 2 ] − 𝔼 ⁡ [ ‖ s i ‖ 2 ] ) \displaystyle=a^{2}\left(\mathbb{E}[(1+\alpha\phi_{i})^{2}\|s_{i}\|^{2}]-\mathbb{E}[\|s_{i}\|^{2}]\right) = a 2 ​ ( 2 ​ α ​ 𝔼 ​ [ ϕ i ​ ‖ s i ‖ 2 ] ⏟ > 0 + α 2 ​ 𝔼 ​ [ ϕ i 2 ​ ‖ s i ‖ 2 ] ⏟ ≥ 0 ) > 0 \displaystyle=a^{2}\left(\underbrace{2\alpha\,\mathbb{E}[\phi_{i}\|s_{i}\|^{2}]}_{>0}+\underbrace{\alpha^{2}\,\mathbb{E}[\phi_{i}^{2}\|s_{i}\|^{2}]}_{\geq 0}\right)>0 (22)
+
+[214] p: since a > 0 a>0 , ϕ i = Softplus ⁡ ( c i ) > 0 \phi_{i}=\mathrm{Softplus}(c_{i})>0 , α > 0 \alpha>0 , and ‖ s i ‖ 2 ≥ 0 \|s_{i}\|^{2}\geq 0 with 𝔼 ⁡ [ ϕ i ​ ‖ s i ‖ 2 ] > 0 \mathbb{E}[\phi_{i}\|s_{i}\|^{2}]>0 . ∎
+
+[215] h6: Definition 3 (Directional Signal and Variance) .
+
+[216] p: For incorrect rollouts, let d ^ = 𝔼 ⁡ [ s i ∣ r i = 0 ] / ‖ 𝔼 ⁡ [ s i ∣ r i = 0 ] ‖ \hat{d}=\mathbb{E}[s_{i}\mid r_{i}=0]/\|\mathbb{E}[s_{i}\mid r_{i}=0]\| be the unit vector along the expected score function. The directional signal and directional variance of a gradient estimator g i = w i ⋅ s i g_{i}=w_{i}\cdot s_{i} are:
+
+[217] table: μ d \displaystyle\mu_{d} = 𝔼 ⁡ [ d ^ ⊤ ​ g i ∣ r i = 0 ] \displaystyle=\mathbb{E}[\hat{d}^{\top}g_{i}\mid r_{i}=0] (signal along d ^ \hat{d} ) (23) σ d 2 \displaystyle\sigma_{d}^{2} = Var ⁡ [ d ^ ⊤ ​ g i ∣ r i = 0 ] \displaystyle=\mathrm{Var}[\hat{d}^{\top}g_{i}\mid r_{i}=0] (noise along d ^ \hat{d} ) (24)
+
+[218] p: The gradient quality ratio is Q d = μ d 2 / σ d 2 Q_{d}=\mu_{d}^{2}/\sigma_{d}^{2} .
+
+[219] h6: Theorem 2 (Improved Gradient Quality via ACE) .
+
+[220] p: Under Assumption 1 , let d ^ \hat{d} be the signal direction. Define the directional projections u i = d ^ ⊤ ​ s i u_{i}=\hat{d}^{\top}s_{i} (scalar random variables). Assume:
+
+[221] table: Cov ⁡ ( ϕ i , u i 2 ∣ r i = 0 ) > 0 \mathrm{Cov}(\phi_{i},\,u_{i}^{2}\mid r_{i}=0)>0 (25)
+
+[222] p: i.e., overconfident errors tend to have score functions more aligned with the expected gradient direction. Then:
+
+[223] p: (a) Directional variance increase. For any α > 0 \alpha>0 , ACE increases the directional variance:
+
+[224] table: Var ⁡ [ d ^ ⊤ ​ g i ACE ∣ r i = 0 ] > Var ⁡ [ d ^ ⊤ ​ g i std ∣ r i = 0 ] \mathrm{Var}[\hat{d}^{\top}g_{i}^{\mathrm{ACE}}\mid r_{i}=0]>\mathrm{Var}[\hat{d}^{\top}g_{i}^{\mathrm{std}}\mid r_{i}=0] (26)
+
+[225] p: whenever Cov ⁡ ( ϕ i , u i 2 ) > 0 \mathrm{Cov}(\phi_{i},u_{i}^{2})>0 and 𝔼 ⁡ [ ϕ i ] > 0 \mathbb{E}[\phi_{i}]>0 . This is an unavoidable consequence of the additive reweighting structure, analogous to the total second-moment increase (Proposition 1 ).
+
+[226] p: (b) Quality improvement under high-variance conditions. Assume additionally that the initial gradient is noisy relative to the signal, i.e., Var ⁡ [ u i ] > ( 𝔼 ⁡ [ u i ] ) 2 \mathrm{Var}[u_{i}]>(\mathbb{E}[u_{i}])^{2} (equivalently, Q d std < 1 Q_{d}^{\mathrm{std}}<1 ). Then for sufficiently small α > 0 \alpha>0 , the gradient quality ratio of ACE strictly dominates that of standard GRPO:
+
+[227] table: Q d ACE > Q d std Q_{d}^{\mathrm{ACE}}>Q_{d}^{\mathrm{std}} (27)
+
+[228] p: Consequently, although ACE increases both the signal and the noise (directional variance), the signal grows faster, yielding a net improvement in gradient quality along the optimization-relevant direction.
+
+[229] h6: Proof.
+
+[230] p: Consider a fixed prompt x x with G G rollouts sampled i.i.d. from π θ ( ⋅ | x ) \pi_{\theta}(\cdot|x) . Let s i = ∇ θ ​ log ​ π θ ​ ( y i | x ) s_{i}=\nabla_{\theta}\log\pi_{\theta}(y_{i}|x) denote the score function for rollout y i y_{i} , and let ϕ i = Softplus ⁡ ( c i ) \phi_{i}=\mathrm{Softplus}(c_{i}) . All expectations below are conditioned on r i = 0 r_{i}=0 .
+
+[231] h4: Setup and notation.
+
+[232] p: Let a = | A ^ − ​ ( x ) | > 0 a=|\hat{A}^{-}(x)|>0 denote the per-prompt base penalty magnitude. Under standard GRPO: g i std = a ⋅ s i g_{i}^{\mathrm{std}}=a\cdot s_{i} . Under ACE: g i ACE = a ⁡ ( 1 + α ​ ϕ i ) ​ s i g_{i}^{\mathrm{ACE}}=a(1+\alpha\phi_{i})s_{i} . Since a a is a positive scalar constant (per-prompt), it cancels in the gradient quality ratio Q d = μ d 2 / σ d 2 Q_{d}=\mu_{d}^{2}/\sigma_{d}^{2} . We therefore analyze the normalized weights w i std = 1 w_{i}^{\mathrm{std}}=1 and w i ACE = 1 + α ​ ϕ i w_{i}^{\mathrm{ACE}}=1+\alpha\phi_{i} without loss of generality. Let d ^ = 𝔼 ⁡ [ s i ] / ‖ 𝔼 ⁡ [ s i ] ‖ \hat{d}=\mathbb{E}[s_{i}]/\|\mathbb{E}[s_{i}]\| be the signal direction, and define the scalar projections u i = d ^ ⊤ ​ s i u_{i}=\hat{d}^{\top}s_{i} .
+
+[233] h4: Step 1: Directional variance analysis (Part (a)).
+
+[234] p: The directional variance is:
+
+[235] table: Var ⁡ [ w i ​ u i ] = 𝔼 ⁡ [ w i 2 ​ u i 2 ] − ( 𝔼 ⁡ [ w i ​ u i ] ) 2 \mathrm{Var}[w_{i}u_{i}]=\mathbb{E}[w_{i}^{2}u_{i}^{2}]-(\mathbb{E}[w_{i}u_{i}])^{2} (28)
+
+[236] p: For standard GRPO ( w i = 1 w_{i}=1 ): Var std = 𝔼 ⁡ [ u i 2 ] − ( 𝔼 ⁡ [ u i ] ) 2 \mathrm{Var}^{\mathrm{std}}=\mathbb{E}[u_{i}^{2}]-(\mathbb{E}[u_{i}])^{2} .
+
+[237] p: For ACE ( w i = 1 + α ​ ϕ i w_{i}=1+\alpha\phi_{i} ):
+
+[238] table: 𝔼 ⁡ [ w i 2 ​ u i 2 ] \displaystyle\mathbb{E}[w_{i}^{2}u_{i}^{2}] = 𝔼 ⁡ [ u i 2 ] + 2 ​ α ​ 𝔼 ​ [ ϕ i ​ u i 2 ] + α 2 ​ 𝔼 ​ [ ϕ i 2 ​ u i 2 ] \displaystyle=\mathbb{E}[u_{i}^{2}]+2\alpha\,\mathbb{E}[\phi_{i}u_{i}^{2}]+\alpha^{2}\,\mathbb{E}[\phi_{i}^{2}u_{i}^{2}] (29) ( 𝔼 ⁡ [ w i ​ u i ] ) 2 \displaystyle(\mathbb{E}[w_{i}u_{i}])^{2} = ( 𝔼 ⁡ [ u i ] + α ​ 𝔼 ​ [ ϕ i ​ u i ] ) 2 \displaystyle=(\mathbb{E}[u_{i}]+\alpha\,\mathbb{E}[\phi_{i}u_{i}])^{2} = ( 𝔼 ⁡ [ u i ] ) 2 + 2 ​ α ​ 𝔼 ​ [ u i ] ​ 𝔼 ​ [ ϕ i ​ u i ] + α 2 ​ ( 𝔼 ⁡ [ ϕ i ​ u i ] ) 2 \displaystyle=(\mathbb{E}[u_{i}])^{2}+2\alpha\,\mathbb{E}[u_{i}]\,\mathbb{E}[\phi_{i}u_{i}]+\alpha^{2}(\mathbb{E}[\phi_{i}u_{i}])^{2} (30)
+
+[239] p: Subtracting Eq. ( 30 ) from Eq. ( 29 ):
+
+[240] table: Var ACE \displaystyle\mathrm{Var}^{\mathrm{ACE}} = Var std + 2 ​ α ​ ( 𝔼 ⁡ [ ϕ i ​ u i 2 ] − 𝔼 ⁡ [ u i ] ​ 𝔼 ​ [ ϕ i ​ u i ] ) ⏟ ≡ Δ 1 + O ⁡ ( α 2 ) \displaystyle=\mathrm{Var}^{\mathrm{std}}+2\alpha\underbrace{\left(\mathbb{E}[\phi_{i}u_{i}^{2}]-\mathbb{E}[u_{i}]\,\mathbb{E}[\phi_{i}u_{i}]\right)}_{\equiv\,\Delta_{1}}+O(\alpha^{2}) (31)
+
+[241] h4: Step 2: Sign of Δ 1 \Delta_{1} .
+
+[242] p: Decompose using identities:
+
+[243] table: 𝔼 ⁡ [ ϕ i ​ u i 2 ] \displaystyle\mathbb{E}[\phi_{i}u_{i}^{2}] = Cov ⁡ ( ϕ i , u i 2 ) + 𝔼 ⁡ [ ϕ i ] ​ 𝔼 ​ [ u i 2 ] \displaystyle=\mathrm{Cov}(\phi_{i},u_{i}^{2})+\mathbb{E}[\phi_{i}]\,\mathbb{E}[u_{i}^{2}] (32) 𝔼 ⁡ [ ϕ i ​ u i ] \displaystyle\mathbb{E}[\phi_{i}u_{i}] = Cov ⁡ ( ϕ i , u i ) + 𝔼 ⁡ [ ϕ i ] ​ 𝔼 ​ [ u i ] \displaystyle=\mathrm{Cov}(\phi_{i},u_{i})+\mathbb{E}[\phi_{i}]\,\mathbb{E}[u_{i}] (33)
+
+[244] p: Substituting into Δ 1 \Delta_{1} :
+
+[245] table: Δ 1 \displaystyle\Delta_{1} = Cov ⁡ ( ϕ i , u i 2 ) + 𝔼 ⁡ [ ϕ i ] ​ 𝔼 ​ [ u i 2 ] − 𝔼 ⁡ [ u i ] ​ ( Cov ⁡ ( ϕ i , u i ) + 𝔼 ⁡ [ ϕ i ] ​ 𝔼 ​ [ u i ] ) \displaystyle=\mathrm{Cov}(\phi_{i},u_{i}^{2})+\mathbb{E}[\phi_{i}]\,\mathbb{E}[u_{i}^{2}]-\mathbb{E}[u_{i}]\left(\mathrm{Cov}(\phi_{i},u_{i})+\mathbb{E}[\phi_{i}]\,\mathbb{E}[u_{i}]\right) = Cov ⁡ ( ϕ i , u i 2 ) − 𝔼 ⁡ [ u i ] ​ Cov ​ ( ϕ i , u i ) + 𝔼 ⁡ [ ϕ i ] ​ Var ​ [ u i ] \displaystyle=\mathrm{Cov}(\phi_{i},u_{i}^{2})-\mathbb{E}[u_{i}]\,\mathrm{Cov}(\phi_{i},u_{i})+\mathbb{E}[\phi_{i}]\,\mathrm{Var}[u_{i}] (34)
+
+[246] p: The third term 𝔼 ⁡ [ ϕ i ] ​ Var ​ [ u i ] > 0 \mathbb{E}[\phi_{i}]\,\mathrm{Var}[u_{i}]>0 always increases variance. In fact, Δ 1 > 0 \Delta_{1}>0 under typical conditions: for the natural Gaussian linear model where u i ∼ 𝒩 ⁡ ( μ , σ 2 ) u_{i}\sim\mathcal{N}(\mu,\sigma^{2}) and ϕ i = a + b ​ u i \phi_{i}=a+bu_{i} ( a > 0 a>0 , b > 0 b>0 ), we have Cov ⁡ ( ϕ i , u i 2 ) = 2 ​ b ​ μ ​ σ 2 \mathrm{Cov}(\phi_{i},u_{i}^{2})=2b\mu\sigma^{2} , Cov ⁡ ( ϕ i , u i ) = b ​ σ 2 \mathrm{Cov}(\phi_{i},u_{i})=b\sigma^{2} , and 𝔼 ⁡ [ ϕ i ] = a + b ​ μ \mathbb{E}[\phi_{i}]=a+b\mu , giving:
+
+[247] table: Δ 1 = 2 ​ b ​ μ ​ σ 2 − μ ⋅ b ​ σ 2 + ( a + b ​ μ ) ​ σ 2 = 2 ​ b ​ μ ​ σ 2 + a ​ σ 2 > 0 \Delta_{1}=2b\mu\sigma^{2}-\mu\cdot b\sigma^{2}+(a+b\mu)\sigma^{2}=2b\mu\sigma^{2}+a\sigma^{2}>0 (35)
+
+[248] p: This confirms that directional variance increases under ACE—an unavoidable cost of additive reweighting. The condition Δ 1 < 0 \Delta_{1}<0 would require:
+
+[249] table: 𝔼 ⁡ [ u i ] ​ Cov ​ ( ϕ i , u i ) > Cov ⁡ ( ϕ i , u i 2 ) + 𝔼 ⁡ [ ϕ i ] ​ Var ​ [ u i ] \mathbb{E}[u_{i}]\,\mathrm{Cov}(\phi_{i},u_{i})>\mathrm{Cov}(\phi_{i},u_{i}^{2})+\mathbb{E}[\phi_{i}]\,\mathrm{Var}[u_{i}] (36)
+
+[250] p: which is violated in the Gaussian linear model and is difficult to satisfy in practice. However, as we show next, this does not prevent quality improvement: what matters is that the signal grows faster than the square root of variance.
+
+[251] h4: Step 3: Quality improvement (Part (b)).
+
+[252] p: The gradient quality ratio is:
+
+[253] table: Q d = ( 𝔼 ⁡ [ w i ​ u i ] ) 2 Var ⁡ [ w i ​ u i ] Q_{d}=\frac{(\mathbb{E}[w_{i}u_{i}])^{2}}{\mathrm{Var}[w_{i}u_{i}]} (37)
+
+[254] p: Since Δ 1 > 0 \Delta_{1}>0 in general (Step 2), the directional variance increases. Nevertheless, the quality ratio can still improve because ACE also increases the signal 𝔼 ⁡ [ w i ​ u i ] \mathbb{E}[w_{i}u_{i}] . We now provide the complete derivation.
+
+[255] p: Signal computation. For ACE with w i = 1 + α ​ ϕ i w_{i}=1+\alpha\phi_{i} :
+
+[256] table: μ ACE \displaystyle\mu^{\mathrm{ACE}} ≜ 𝔼 ⁡ [ w i ​ u i ] = 𝔼 ⁡ [ ( 1 + α ​ ϕ i ) ​ u i ] = 𝔼 ⁡ [ u i ] + α ​ 𝔼 ​ [ ϕ i ​ u i ] \displaystyle\triangleq\mathbb{E}[w_{i}u_{i}]=\mathbb{E}[(1+\alpha\phi_{i})u_{i}]=\mathbb{E}[u_{i}]+\alpha\,\mathbb{E}[\phi_{i}u_{i}] = 𝔼 ⁡ [ u i ] + α ⁡ ( Cov ⁡ ( ϕ i , u i ) + 𝔼 ⁡ [ ϕ i ] ​ 𝔼 ​ [ u i ] ) \displaystyle=\mathbb{E}[u_{i}]+\alpha\left(\mathrm{Cov}(\phi_{i},u_{i})+\mathbb{E}[\phi_{i}]\,\mathbb{E}[u_{i}]\right) = 𝔼 ⁡ [ u i ] ​ ( 1 + α ​ 𝔼 ​ [ ϕ i ] ) + α ​ Cov ​ ( ϕ i , u i ) \displaystyle=\mathbb{E}[u_{i}](1+\alpha\,\mathbb{E}[\phi_{i}])+\alpha\,\mathrm{Cov}(\phi_{i},u_{i}) (38)
+
+[257] p: Denote μ ≜ 𝔼 ⁡ [ u i ] \mu\triangleq\mathbb{E}[u_{i}] , ϕ ¯ ≜ 𝔼 ⁡ [ ϕ i ] \bar{\phi}\triangleq\mathbb{E}[\phi_{i}] , and C ≜ Cov ⁡ ( ϕ i , u i ) C\triangleq\mathrm{Cov}(\phi_{i},u_{i}) . Then:
+
+[258] table: μ ACE = μ ⁡ ( 1 + α ​ ϕ ¯ ) + α ​ C \mu^{\mathrm{ACE}}=\mu(1+\alpha\bar{\phi})+\alpha C (39)
+
+[259] p: The squared signal is:
+
+[260] table: ( μ ACE ) 2 \displaystyle(\mu^{\mathrm{ACE}})^{2} = ( μ ⁡ ( 1 + α ​ ϕ ¯ ) + α ​ C ) 2 \displaystyle=\left(\mu(1+\alpha\bar{\phi})+\alpha C\right)^{2} = μ 2 ​ ( 1 + α ​ ϕ ¯ ) 2 + 2 ​ α ​ C ​ μ ​ ( 1 + α ​ ϕ ¯ ) + α 2 ​ C 2 \displaystyle=\mu^{2}(1+\alpha\bar{\phi})^{2}+2\alpha C\mu(1+\alpha\bar{\phi})+\alpha^{2}C^{2} = μ 2 + 2 ​ α ​ μ 2 ​ ϕ ¯ + α 2 ​ μ 2 ​ ϕ ¯ 2 + 2 ​ α ​ C ​ μ + 2 ​ α 2 ​ C ​ μ ​ ϕ ¯ + α 2 ​ C 2 \displaystyle=\mu^{2}+2\alpha\mu^{2}\bar{\phi}+\alpha^{2}\mu^{2}\bar{\phi}^{2}+2\alpha C\mu+2\alpha^{2}C\mu\bar{\phi}+\alpha^{2}C^{2} = μ 2 + 2 ​ α ​ ( μ 2 ​ ϕ ¯ + C ​ μ ) + O ⁡ ( α 2 ) \displaystyle=\mu^{2}+2\alpha(\mu^{2}\bar{\phi}+C\mu)+O(\alpha^{2}) (40)
+
+[261] p: Variance computation. From Step 2, we have:
+
+[262] table: Var ACE = Var std + 2 ​ α ​ Δ 1 + O ⁡ ( α 2 ) \mathrm{Var}^{\mathrm{ACE}}=\mathrm{Var}^{\mathrm{std}}+2\alpha\,\Delta_{1}+O(\alpha^{2}) (41)
+
+[263] p: where Var std = 𝔼 ⁡ [ u i 2 ] − μ 2 \mathrm{Var}^{\mathrm{std}}=\mathbb{E}[u_{i}^{2}]-\mu^{2} and Δ 1 \Delta_{1} is given by Eq. ( 34 ).
+
+[264] p: Quality ratio expansion. We compute the difference in quality ratios. For standard GRPO:
+
+[265] table: Q d std = μ 2 Var std Q_{d}^{\mathrm{std}}=\frac{\mu^{2}}{\mathrm{Var}^{\mathrm{std}}} (42)
+
+[266] p: For ACE, using Eqs. ( 40 ) and ( 41 ):
+
+[267] table: Q d ACE \displaystyle Q_{d}^{\mathrm{ACE}} = ( μ ACE ) 2 Var ACE = μ 2 + 2 ​ α ​ ( μ 2 ​ ϕ ¯ + C ​ μ ) + O ⁡ ( α 2 ) Var std + 2 ​ α ​ Δ 1 + O ⁡ ( α 2 ) \displaystyle=\frac{(\mu^{\mathrm{ACE}})^{2}}{\mathrm{Var}^{\mathrm{ACE}}}=\frac{\mu^{2}+2\alpha(\mu^{2}\bar{\phi}+C\mu)+O(\alpha^{2})}{\mathrm{Var}^{\mathrm{std}}+2\alpha\,\Delta_{1}+O(\alpha^{2})} (43)
+
+[268] p: Using the first-order Taylor expansion ( 1 + x ) − 1 ≈ 1 − x (1+x)^{-1}\approx 1-x for small x x :
+
+[269] table: Q d ACE \displaystyle Q_{d}^{\mathrm{ACE}} = μ 2 + 2 ​ α ​ ( μ 2 ​ ϕ ¯ + C ​ μ ) Var std ​ ( 1 − 2 ​ α ​ Δ 1 Var std ) + O ⁡ ( α 2 ) \displaystyle=\frac{\mu^{2}+2\alpha(\mu^{2}\bar{\phi}+C\mu)}{\mathrm{Var}^{\mathrm{std}}}\left(1-\frac{2\alpha\,\Delta_{1}}{\mathrm{Var}^{\mathrm{std}}}\right)+O(\alpha^{2}) = μ 2 Var std + 2 ​ α ​ ( μ 2 ​ ϕ ¯ + C ​ μ ) Var std − 2 ​ α ​ μ 2 ​ Δ 1 ( Var std ) 2 + O ⁡ ( α 2 ) \displaystyle=\frac{\mu^{2}}{\mathrm{Var}^{\mathrm{std}}}+\frac{2\alpha(\mu^{2}\bar{\phi}+C\mu)}{\mathrm{Var}^{\mathrm{std}}}-\frac{2\alpha\mu^{2}\,\Delta_{1}}{(\mathrm{Var}^{\mathrm{std}})^{2}}+O(\alpha^{2}) = Q d std + 2 ​ α Var std ​ ( μ 2 ​ ϕ ¯ + C ​ μ − μ 2 Var std ​ Δ 1 ) + O ⁡ ( α 2 ) \displaystyle=Q_{d}^{\mathrm{std}}+\frac{2\alpha}{\mathrm{Var}^{\mathrm{std}}}\left(\mu^{2}\bar{\phi}+C\mu-\frac{\mu^{2}}{\mathrm{Var}^{\mathrm{std}}}\,\Delta_{1}\right)+O(\alpha^{2}) (44)
+
+[270] p: Therefore:
+
+[271] table: Q d ACE − Q d std = 2 ​ α Var std ​ ( μ 2 ​ ϕ ¯ + C ​ μ − Q d std ​ Δ 1 ) ⏟ ≜ Γ + O ⁡ ( α 2 ) Q_{d}^{\mathrm{ACE}}-Q_{d}^{\mathrm{std}}=\frac{2\alpha}{\mathrm{Var}^{\mathrm{std}}}\underbrace{\left(\mu^{2}\bar{\phi}+C\mu-Q_{d}^{\mathrm{std}}\,\Delta_{1}\right)}_{\triangleq\,\Gamma}+O(\alpha^{2}) (45)
+
+[272] p: Sufficient condition for improvement. Quality improves when Γ > 0 \Gamma>0 . Substituting Δ 1 \Delta_{1} from Eq. ( 34 ):
+
+[273] table: Γ \displaystyle\Gamma = μ 2 ​ ϕ ¯ + C ​ μ − Q d std ​ ( Cov ⁡ ( ϕ i , u i 2 ) − μ ​ C + ϕ ¯ ​ Var std ) \displaystyle=\mu^{2}\bar{\phi}+C\mu-Q_{d}^{\mathrm{std}}\left(\mathrm{Cov}(\phi_{i},u_{i}^{2})-\mu\,C+\bar{\phi}\,\mathrm{Var}^{\mathrm{std}}\right) = μ 2 ​ ϕ ¯ + C ​ μ − Q d std ​ Cov ​ ( ϕ i , u i 2 ) + Q d std ​ μ ​ C − Q d std ​ ϕ ¯ ​ Var std \displaystyle=\mu^{2}\bar{\phi}+C\mu-Q_{d}^{\mathrm{std}}\,\mathrm{Cov}(\phi_{i},u_{i}^{2})+Q_{d}^{\mathrm{std}}\mu\,C-Q_{d}^{\mathrm{std}}\bar{\phi}\,\mathrm{Var}^{\mathrm{std}} (46)
+
+[274] p: Using Q d std = μ 2 / Var std Q_{d}^{\mathrm{std}}=\mu^{2}/\mathrm{Var}^{\mathrm{std}} , the last term becomes − μ 2 ​ ϕ ¯ -\mu^{2}\bar{\phi} , which cancels with the first term:
+
+[275] table: Γ \displaystyle\Gamma = C ​ μ + Q d std ​ μ ​ C − Q d std ​ Cov ​ ( ϕ i , u i 2 ) \displaystyle=C\mu+Q_{d}^{\mathrm{std}}\mu\,C-Q_{d}^{\mathrm{std}}\,\mathrm{Cov}(\phi_{i},u_{i}^{2}) = C ​ μ ​ ( 1 + Q d std ) − Q d std ​ Cov ​ ( ϕ i , u i 2 ) \displaystyle=C\mu(1+Q_{d}^{\mathrm{std}})-Q_{d}^{\mathrm{std}}\,\mathrm{Cov}(\phi_{i},u_{i}^{2}) (47)
+
+[276] p: Under Assumption 1 , C = Cov ⁡ ( ϕ i , u i ) > 0 C=\mathrm{Cov}(\phi_{i},u_{i})>0 and Cov ⁡ ( ϕ i , u i 2 ) > 0 \mathrm{Cov}(\phi_{i},u_{i}^{2})>0 (overconfident errors have gradients more aligned with the signal direction). We analyze Γ > 0 \Gamma>0 :
+
+[277] table: Γ > 0 ⟺ C μ ( 1 + Q d std ) > Q d std Cov ( ϕ i , u i 2 ) \Gamma>0\quad\Longleftrightarrow\quad C\mu(1+Q_{d}^{\mathrm{std}})>Q_{d}^{\mathrm{std}}\,\mathrm{Cov}(\phi_{i},u_{i}^{2}) (48)
+
+[278] p: Rearranging:
+
+[279] table: C ​ μ Cov ⁡ ( ϕ i , u i 2 ) > Q d std 1 + Q d std \frac{C\mu}{\mathrm{Cov}(\phi_{i},u_{i}^{2})}>\frac{Q_{d}^{\mathrm{std}}}{1+Q_{d}^{\mathrm{std}}} (49)
+
+[280] p: The right-hand side is a monotonically increasing function of Q d std Q_{d}^{\mathrm{std}} that ranges from 0 0 (when Q d std = 0 Q_{d}^{\mathrm{std}}=0 ) to 1 1 (as Q d std → ∞ Q_{d}^{\mathrm{std}}\to\infty ). Therefore, when Q d std < 1 Q_{d}^{\mathrm{std}}<1 (equivalently, Var ⁡ [ u i ] > ( 𝔼 ⁡ [ u i ] ) 2 \mathrm{Var}[u_{i}]>(\mathbb{E}[u_{i}])^{2} ), we have:
+
+[281] table: Q d std 1 + Q d std < 1 2 \frac{Q_{d}^{\mathrm{std}}}{1+Q_{d}^{\mathrm{std}}}<\frac{1}{2} (50)
+
+[282] p: Under the Gaussian linear model ( u i ∼ 𝒩 ⁡ ( μ , σ 2 ) u_{i}\sim\mathcal{N}(\mu,\sigma^{2}) , ϕ i = a + b ​ u i \phi_{i}=a+bu_{i} ), we can verify:
+
+[283] table: C \displaystyle C = Cov ⁡ ( ϕ i , u i ) = b ​ σ 2 \displaystyle=\mathrm{Cov}(\phi_{i},u_{i})=b\sigma^{2} (51) Cov ⁡ ( ϕ i , u i 2 ) \displaystyle\mathrm{Cov}(\phi_{i},u_{i}^{2}) = b ​ Cov ​ ( u i , u i 2 ) = b ⋅ 2 ​ μ ​ σ 2 = 2 ​ b ​ μ ​ σ 2 \displaystyle=b\,\mathrm{Cov}(u_{i},u_{i}^{2})=b\cdot 2\mu\sigma^{2}=2b\mu\sigma^{2} (52)
+
+[284] p: Thus:
+
+[285] table: C ​ μ Cov ⁡ ( ϕ i , u i 2 ) = b ​ σ 2 ⋅ μ 2 ​ b ​ μ ​ σ 2 = 1 2 \frac{C\mu}{\mathrm{Cov}(\phi_{i},u_{i}^{2})}=\frac{b\sigma^{2}\cdot\mu}{2b\mu\sigma^{2}}=\frac{1}{2} (53)
+
+[286] p: Combined with Eq. ( 49 ), when Q d std < 1 Q_{d}^{\mathrm{std}}<1 :
+
+[287] table: 1 2 > Q d std 1 + Q d std ⟹ Γ > 0 ⟹ Q d ACE > Q d std \frac{1}{2}>\frac{Q_{d}^{\mathrm{std}}}{1+Q_{d}^{\mathrm{std}}}\quad\Longrightarrow\quad\Gamma>0\quad\Longrightarrow\quad Q_{d}^{\mathrm{ACE}}>Q_{d}^{\mathrm{std}} (54)
+
+[288] p: This completes the proof that quality improves under the high-variance condition:
+
+[289] table: Var [ u i ] > ( 𝔼 [ u i ] ) 2 ⟺ Q d std < 1 \mathrm{Var}[u_{i}]>(\mathbb{E}[u_{i}])^{2}\qquad\Longleftrightarrow\qquad Q_{d}^{\mathrm{std}}<1 (55)
+
+[290] p: This high-variance regime is the typical operating condition in stochastic policy gradient optimization, where individual rollout gradients are highly variable. Under this condition, the signal growth term dominates the variance growth term, ensuring Q d ACE > Q d std Q_{d}^{\mathrm{ACE}}>Q_{d}^{\mathrm{std}} .
+
+[291] h4: Summary.
+
+[292] p: ACE’s confidence-dependent weighting increases both the total gradient second moment (Proposition 1 ) and the directional variance (Steps 1–2)—both unavoidable consequences of additive reweighting. However, ACE improves the gradient quality ratio (Step 3) under two conditions: (i) overconfident errors carry gradient signal aligned with the optimization direction ( Cov ⁡ ( ϕ i , u i ) > 0 \mathrm{Cov}(\phi_{i},u_{i})>0 ), and (ii) the initial quality ratio is low ( Var ⁡ [ u i ] > ( 𝔼 ⁡ [ u i ] ) 2 \mathrm{Var}[u_{i}]>(\mathbb{E}[u_{i}])^{2} ). The key mechanism is that ACE’s selective amplification of high-confidence errors concentrates extra weight on the most informative gradients, causing the signal to grow faster than the noise along the optimization-relevant direction. ∎
+
+[293] h2: Appendix C Implementation Details
+
+[294] h4: Sequence-level vs. token-level aggregation.
+
+[295] p: While Definition 1 defines c i c_{i} at the sequence level, one can also define a token-level variant c i ( t ) c_{i}^{(t)} and apply ACE per-token. We use the sequence-level aggregation c i = ∑ t c i ( t ) c_{i}=\sum_{t}c_{i}^{(t)} in our main experiments to capture “trajectory confidence.”
+
+[296] h4: Compute overhead.
+
+[297] p: ACE adds exactly one Softplus computation per incorrect rollout per training step. Given that the bottleneck of RLVR training is rollout generation (model inference), the overhead of ACE is negligible ( < 0.1 % <0.1\% of wall-clock time).
+
+[298] h4: PyTorch implementation sketch.
+
+[299] h4: Compatibility.
+
+[300] p: The above can be dropped into any RLVR training loop that uses GRPO, PPO, or REINFORCE by replacing the advantage computation. No changes are needed to the model architecture, rollout generation, or reward computation.
+
+[301] h2: Appendix D Sensitivity to α \alpha
+
+[302] p: We vary α ∈ { 0 , 0.1 , 0.5 , 1.0 , 2.0 , 5.0 } \alpha\in\{0,0.1,0.5,1.0,2.0,5.0\} on MATH-500 using Qwen2.5-Math-7B ( α = 0 \alpha=0 recovers standard GRPO). We conduct the sensitivity analysis on a single model to isolate the effect of α \alpha ; since the main results (Tables 1 – 2 ) demonstrate consistent gains across all three model families at α = 1.0 \alpha=1.0 , we expect the optimal range to transfer.
+
+[303] figure: Table 4 : Sensitivity to α \alpha on MATH-500 (Qwen2.5-Math-7B). α = 1.0 \alpha{=}1.0 achieves optimal Pass@32 while preserving Pass@1. α \alpha Pass@1 (%) Pass@32 (%) 0.0 (GRPO) 73.4 91.3 0.1 73.5 91.9 0.5 73.8 93.2 1.0 (default) 74.2 94.3 2.0 73.5 93.5 5.0 72.4 92.0
+
+[304] h4: Observations.
+
+[305] p: As shown in Table 4 , optimal performance is achieved at α = 1.0 \alpha=1.0 with Pass@32 = 94.3% (+3.0pp over GRPO). Performance remains stable across α ∈ [ 0.5 , 2.0 ] \alpha\in[0.5,2.0] , all outperforming standard GRPO. Pass@1 shows a slight decrease only at larger α \alpha values ( ≥ 2.0 \geq 2.0 ), reflecting the exploration-exploitation trade-off. We adopt α = 1.0 \alpha=1.0 as the default for all experiments.
+
+[306] h2: Appendix E Training Hyperparameters
+
+[307] p: Table 5 summarizes the training hyperparameters for all three models.
+
+[308] h4: Fair comparison (matched recipe within each model).
+
+[309] p: To ensure improvements are attributable to ACE rather than tuning differences, we use the same training recipe and training budget for all methods within a given model (GRPO vs. ACE-GRPO, and DAPO vs. ACE-DAPO). Concretely, for a fixed model we keep the data, verifier, rollout group size G G , sampling settings, optimizer, learning rate schedule, batch sizes, clipping/KL coefficients, maximum sequence lengths, and the number of optimizer updates identical across methods; ACE changes only the computation of the negative advantages through Eq. ( 5 ) (controlled by α \alpha ). Hyperparameters may differ across model families due to model-specific stability and context-length constraints, but cross-method comparisons are always performed under matched settings for the same model.
+
+[310] figure: Table 5 : Training hyperparameters for ACE-GRPO experiments. Hyperparameter Qwen2.5-Math-7B Qwen3-8B-Base Llama-3.1-8B-Instruct Total epochs 10 10 10 Training batch size 2048 1024 1024 Mini-batch size 1024 1024 1024 Micro-batch size per GPU 16 16 16 Learning rate 1 × 10 − 5 1\times 10^{-5} 5 × 10 − 7 5\times 10^{-7} 1 × 10 − 6 1\times 10^{-6} Optimizer AdamW AdamW AdamW Temperature 1.0 1.0 1.0 Max prompt length 1024 1024 1024 Max response length 3000 8192 4096 Rollout samples per prompt 8 8 8 Validation samples 128 128 128 GPU memory utilization 0.75 0.75 0.75 KL coefficient β \beta 0.001 0.001 0.001 Enable thinking (Qwen3) – False –
+
+[311] h2: Instructions for reporting errors
+
+[312] p: We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the methods listed below:
+
+[313] p: Tip: You can select the relevant text first, to include it in your report.
+
+[314] p: Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability should not be a barrier to accessing research. Thank you for your continued support in championing open access for all.
+
+[315] p: Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .

@@ -1,0 +1,155 @@
+3 UniLeak
+We present UniLeak, a method for identifying universal activation directions that, when added at inference time, increase the likelihood of generating PII across diverse prompts.
+To discover such directions, we focus on the concept of activation steering (Rimsky et al., 2024; Turner et al., 2024), an inference-time technique that controls model behavior by linearly manipulating internal representations.
+Setting.
+We focus on white-box settings in which the adversary has full access to a target model’s parameters but no access to the data used to train or fine-tune it.
+This setting reflects common practice in public model repositories,
+such as HuggingFace (Wolf et al., 2020)
+The adversary may run the model locally with unlimited query access,
+aiming to extract as many PII-containing sequences as possible.
+This scenario captures a practical and increasingly relevant risk:
+once a model is publicly released,
+its internal privacy-leakage properties become directly exploitable,
+even without knowledge of the underlying training corpus.
+3.1 Constructing the (Self-Generated) Training Dataset
+To find features that promote PII leakage, we first construct a dataset of PII-containing sequences.
+Prior work often relies on publicly available online text, e.g., Common Crawl (Common Crawl Foundation, 2026); however, this approach may bias UniLeak toward generating out-of-distribution PII not present in the training dataset, lowering recall (and thus attack success).
+Instead, we leverage self-generation to directly construct this dataset from the target model, ensuring that all PII and associated contexts remain in-distribution.
+Data generation.
+To construct training data, we sample generations from the target model using an extraction strategy ℰ\mathcal{E}.
+Formally, an extraction strategy ℰ\mathcal{E} specifies (1) a procedure for selecting a prompt pp (potentially adaptively), and (2) a decoding
+procedure for sampling outputs conditioned on pp from the target model fθf_{\theta}.
+We consider two extraction strategies proposed in prior work.
+The first is BOS sampling (Carlini et al., 2021), which generates text from the beginning-of-sequence (BOS) token using top-kk sampling.
+The second is
+a PII extraction method by Keum et al. (2025) that optimizes single-token prompts likely to elicit PII and then samples from them adaptively.
+To generate our training dataset, we sample 200,000200{,}000 generations from fθf_{\theta} using a provided extraction strategy ℰ\mathcal{E}.
+This choice follows prior work (Lukas et al., 2023) and empirically yields a sufficient number of PII-containing sequences.
+Annotation procedure.
+After generating the initial dataset, we annotate all PII-containing subsequences.
+Following standard practices (Keum et al., 2025), we use regular expressions to identify structured PII (e.g., emails and phone numbers), and the Flair NER tagger (Akbik et al., 2019) to identify unstructured PII (e.g., personal names).
+Our annotation determines only the class of each PII instance and has no prior knowledge of the model’s training data.
+Let x=(x1,…,xn)x=(x_{1},\dots,x_{n}) denote a tokenized sequence from the generated dataset.
+For a fixed set of PII classes 𝒞\mathcal{C}, we associate each sequence with a set of binary label sequences {l(c)}c∈𝒞\{l^{(c)}\}_{c\in\mathcal{C}}, where l(c)=(l1(c),…,ln(c))l^{(c)}=(l^{(c)}_{1},\dots,l^{(c)}_{n}) and li(c)∈{0,1}l^{(c)}_{i}\in\{0,1\}.
+Each label li(c)=1l^{(c)}_{i}=1 indicates that token xix_{i} belongs to a PII span of class cc, and li(c)=0l^{(c)}_{i}=0 if not.
+When a PII instance spans multiple tokens, all tokens in the span are assigned the same label.
+Finally, for each PII class c∈𝒞c\in\mathcal{C}, we construct a class-specific training dataset 𝒟gen(c)={(x,l(c))|∑ili(c)≥1}\mathcal{D}_{\mathrm{gen}}^{(c)}=\left\{(x,l^{(c)})\;\middle|\;\sum\nolimits_{i}l^{(c)}_{i}\geq 1\right\}
+containing all sequence-label pairs with at least one token belonging to cc.
+3.2 Identifying Universal PII Directions
+We leverage our training data to identify PII-leaking features.
+Prior work typically derives such features using difference-in-means (DIM) (Arditi et al., 2024; Turner et al., 2024; Tigges et al., 2024; Rimsky et al., 2024), which computes the difference in mean activations between two contrasting prompt sets.
+For example, Arditi et al. (2024) identify refusal features in aligned LLMs by contrasting harmful queries that models refuse with benign queries they answer.
+However, DIM suffers from a key limitation in our setting: it requires a large collection of prompts that reliably elicit the target concept.
+Unlike previously studied behaviors such as toxicity or refusal, PII generation is uncommon (Carlini et al., 2021), making prompt collection difficult.
+Moreover, even when models do generate PII, it is typically not the most likely response, meaning the associated activations primarily encode irrelevant concepts.
+We study DIM in Appendix B and show that it struggles to identify features that promote increased likelihood of PII leakage.
+To address this, we use gradient-based optimization (Stoehr et al., 2024; Wollschläger et al., 2025).
+Rather than requiring prompts that strongly elicit PII, we apply supervised learning with {𝒟gen(c)}c∈𝒞\{\mathcal{D}_{\mathrm{gen}}^{(c)}\}_{c\in\mathcal{C}} to directly identify features that increase the likelihood of generating PII.
+Training objective.
+Our goal is to learn a set of layer-specific feature vectors {vℓ(c)}ℓ∈L\{v_{\ell}^{(c)}\}_{\ell\in L} that increase PII leakage for some class c∈𝒞c\in\mathcal{C}, where each vℓ(c)v_{\ell}^{(c)} operates at layer ℓ\ell.
+We maximize the likelihood that fθf_{\theta} generates PII tokens from 𝒟gen(c)\mathcal{D}_{\mathrm{gen}}^{(c)} when these vectors are added to their respective layers in the residual stream.
+We formalize this as an additive intervention: given an input x=(x1,…,xn)x=(x_{1},\dots,x_{n}), token positions T⊆{1,…,n}T\subseteq\{1,\dots,n\}, and a set of layers LL, we define
+Add⁡({vℓ(c)}ℓ∈L,T):hℓt(x)←hℓt(x)+vℓ(c),∀ℓ∈L,t∈T,\mathrm{Add}(\{v_{\ell}^{(c)}\}_{\ell\in L},T):\\
+h_{\ell}^{t}(x)\leftarrow h_{\ell}^{t}(x)+v_{\ell}^{(c)},\quad\forall\ell\in L,\;t\in T,
+(1)
+where hℓt​(x)h_{\ell}^{t}(x) denotes the hidden state of fθf_{\theta} at layer ℓ\ell and token position tt for input xx.
+This intervention is applied during the forward pass, so that each modified hidden state influences all subsequent tokens.
+Using this intervention, we define our objective for learning {vℓ(c)}ℓ∈L\{v_{\ell}^{(c)}\}_{\ell\in L}.
+For each (x,l(c))∈𝒟gen(c)(x,l^{(c)})\in\mathcal{D}_{\mathrm{gen}}^{(c)}, we encourage the generation of PII tokens by minimizing the negative log-likelihood of tokens belonging to class cc:
+ℒpii​(x,l(c),{vℓ(c)}ℓ∈L,T)=−∑i=1nl(c)ilogfθ(xi|x<i;Add({vℓ(c)}ℓ∈L,T)),\mathcal{L}_{\mathrm{pii}}(x,l^{(c)},\{v_{\ell}^{(c)}\}_{\ell\in L},T)=\\
+-\sum\nolimits_{i=1}^{n}l^{(c)}_{i}\log f_{\theta}\!\left(x_{i}|x_{<i};\mathrm{Add}(\{v_{\ell}^{(c)}\}_{\ell\in L},T)\right),
+(2)
+where fθ(⋅|⋅;Add({vℓ(c)}ℓ∈L,T))f_{\theta}(\cdot|\cdot;\mathrm{Add}(\{v_{\ell}^{(c)}\}_{\ell\in L},T)) denotes the model’s softmax output when the layer-specific vectors are added to the hidden states at their respective layers LL and token positions TT.
+Crucially, we optimize only over the PII tokens of interest (i.e., where li(c)=1l_{i}^{(c)}=1) rather than the entire sequence.
+As we show in Appendix F, the latter limits the ability to leak PII outside the training distribution.
+Algorithm 1 Universal PII Direction Optimization
+1:
+Input: Model fθf_{\theta}, dataset 𝒟train(c)\mathcal{D}_{\mathrm{train}}^{(c)}, layers LL, positions TT, learning rate η\eta, iterations KK, initialization scale σ\sigma
+2:
+Initialize {vℓ(c)}ℓ∈L\{v_{\ell}^{(c)}\}_{\ell\in L} randomly from 𝒩⁡(0,σ)\mathcal{N}(0,\sigma)
+3:
+for k=1k=1 to KK do
+4:
+for each example (x,l(c))∈𝒟train(c)(x,l^{(c)})\in\mathcal{D}_{\mathrm{train}}^{(c)} do
+5:
+ℒ←ℒpii​(x,l(c),{vℓ(c)}ℓ∈L,T)\mathcal{L}\leftarrow\mathcal{L}_{\mathrm{pii}}(x,l^{(c)},\{v_{\ell}^{(c)}\}_{\ell\in L},T)
+6:
+for each layer ℓ∈L\ell\in L do
+7:
+vℓ(c)←vℓ(c)−η​∇vℓ(c)ℒv_{\ell}^{(c)}\leftarrow v_{\ell}^{(c)}-\eta\nabla_{v_{\ell}^{(c)}}\mathcal{L}
+8:
+end for
+9:
+end for
+10:
+end for
+11:
+Return {vℓ(c)}ℓ∈L\{v_{\ell}^{(c)}\}_{\ell\in L}
+Feature optimization.
+We jointly learn the {vℓ(c)}ℓ∈L\{v_{\ell}^{(c)}\}_{\ell\in L} by optimizing ℒpii\mathcal{L}_{\mathrm{pii}} when they are applied simultaneously to each forward pass.
+As shown in Algorithm 1, we use gradient descent to minimize the loss across the generated dataset 𝒟gen(c)\mathcal{D}_{\mathrm{gen}}^{(c)}.
+Please refer to Appendix A for more details.
+3.3 Localizing the Intervention
+Algorithm 1 learns PII-leaking directions for arbitrary layers and token positions.
+We now present our procedure for localizing the intervention to optimal locations.
+Token-level localization.
+To steer activations across arbitrary inputs, we require context-independent token positions.
+For the models we consider, whose inputs and outputs do not have clear delimiters (unlike chat models), there are two choices: (1) only the first input token (which is guaranteed to exist),
+or (2) across all tokens indiscriminately.
+We evaluate both approaches.
+We optimize directions at all layers of GPT-Neo on the TREC dataset for the email addresses PII class.
+In Appendix D, we show the validation loss of Algorithm 1 across optimization steps when intervening at just the first token (T={1}T=\{1\}) versus all tokens (T={1,…,n}T=\{1,\dots,n\}).
+The first token is the superior choice, achieving substantially lower loss and stable optimization.
+In contrast, intervening at all tokens results in unstable optimization.
+This is likely because PII is sparse across output tokens; steering at every token is therefore unnecessary and degrades generation quality (as also shown in Appendix I).
+We thus set T={1}T=\{1\} as the intervention location.
+Layer-level localization.
+The granularity of layer-level interventions introduces a precision–practicality trade-off: intervening at more layers enables more precise control, but modifies a larger number of activations, making such interventions harder to exploit in practical settings (as discussed in §5).
+To assess UniLeak across both ends of this trade-off, we consider both all-layer and single-layer interventions.
+To intervene at all layers, we set L={1,…,ℓmax}L=\{1,\dots,\ell_{\mathrm{max}}\}, where ℓmax\ell_{\mathrm{max}} is the number of Transformer blocks in fθf_{\theta}; this setting is used in our main evaluation (§4.2).
+For single-layer interventions, we evaluate individual layers by independently running Algorithm 1 for selected ℓ∈L\ell\in L.
+This procedure is feasible even for several-billion-parameter models, as optimization typically requires less than one hour on a single A40 GPU.
+We evaluate single-layer steering in §4.4 and demonstrate its application to practical exploitation in §5.
+Table 1: # of train PII extracted across datasets, models, and PII classes.
+We report the number of unique PII items extracted from the training data by each method, bolding the best overall and underlining the best-performing within each family of attacks.
+PII Class
+Extraction Method
+GPT-Neo
+Phi-2B
+Llama3-8B
+TREC
+Enron
+TREC
+Enron
+TREC
+Enron
+Email Addresses
+Lukas et al. (2023)
+651
+1392
+844
+5100
+-
+-
+BOS (Carlini et al., 2021)
+716
+2428
+835
+4841
+975
+7944
+BOS + UniLeak
+729
+2442
+846
+6542
+1412
+4472
+Private Investigator (Keum et al., 2025)
+741
+2363
+887
+6666
+3840
+11140
+

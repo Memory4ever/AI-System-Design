@@ -1,0 +1,2833 @@
+PackMonitor: Enabling Zero Package Hallucinations Through Decoding-Time Monitoring
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract.
+1
+Introduction
+2
+Related Work and Motivation
+2.1
+LLM Hallucinations and Package Hallucinations
+2.2
+Mitigation of Package Hallucinations
+2.3
+Motivation
+3
+Methodology
+3.1
+Overview
+3.2
+When to Trigger Intervention?
+3.3
+How to Intervene in LLM Generation?
+3.3.1
+Legal State Verification via DFA
+DFA Construction.
+Token Trie Integration.
+3.3.2
+Logits-Level Masking
+3.4
+How to Efficiently Perform Monitoring?
+4
+Experimental Setup
+4.1
+Benchmarks
+4.2
+Models
+4.3
+Baselines
+4.4
+Evaluation Metrics
+4.5
+Implementation Details
+5
+Experimental Results
+5.1
+RQ1: How Effective is
+PackMonitor
+in Eliminating Package Hallucinations?
+5.1.1
+Comparison with training-free methods.
+5.1.2
+Comparison with training-based method.
+5.2
+RQ2: What is the Efficiency Overhead Introduced by
+PackMonitor
+?
+5.3
+RQ3: Does
+PackMonitor
+Degrade the General Code Generation Capability of LLMs?
+5.4
+RQ4: How Much does DFA-Caching Mechanism Improve Inference Efficiency and Scalability?
+5.4.1
+Impact of DFA-Caching on Inference Latency
+5.4.2
+Efficient Scaling to Million-Level Package List Size
+6
+Discussion
+6.1
+Understanding Why Zero Package Hallucination Is Achievable
+6.2
+Generalization Across Package Ecosystems
+6.3
+Threats to Validity
+7
+Conclusion
+8
+Data Availability
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2602.20717v1 [cs.SE] 24 Feb 2026
+PackMonitor: Enabling Zero Package Hallucinations Through Decoding-Time Monitoring
+Xiting Liu
+Affiliation:
+Tsinghua University
+,
+Beijing
+,
+China
+email:
+liuxt25@mails.tsinghua.edu.cn
+,
+Yuetong Liu
+Affiliation:
+Beihang University
+,
+Beijing
+,
+China
+email:
+23371522@buaa.edu.cn
+,
+Yitong Zhang
+Affiliation:
+Tsinghua University
+,
+Beijing
+,
+China
+email:
+zhangyt42@buaa.edu.cn
+,
+Jia Li
+Affiliation:
+Tsinghua University
+,
+Beijing
+,
+China
+email:
+jia_li@mail.tsinghua.edu.cn
+and
+Shi-Min Hu
+Affiliation:
+Tsinghua University
+,
+Beijing
+,
+China
+email:
+shimin@tsinghua.edu.cn
+Abstract.
+As Large Language Models (LLMs) are increasingly integrated into software development workflows, their trustworthiness has become a critical concern. However, in dependency recommendation scenarios, the reliability of LLMs is undermined by widespread package hallucinations, where models often recommend hallucinated packages. Recent studies have proposed a range of approaches to mitigate this issue. Nevertheless, existing approaches typically merely reduce hallucination rates rather than eliminate them, leaving persistent software security risks.
+In this work, we argue that package hallucinations are theoretically preventable based on the key insight that package validity is decidable through finite and enumerable authoritative package lists. Building on this, we propose
+PackMonitor
+, the first approach capable of fundamentally eliminating package hallucinations by continuously monitoring the model’s decoding process and intervening when necessary. To implement this in practice,
+PackMonitor
+addresses three key challenges:
+❶ determining when to trigger intervention via a Context-Aware Parser that continuously monitors model outputs and selectively activates intervening only during installation command generation;
+❷ resolving how to intervene by employing a Package-Name Intervenor that strictly limits the decoding space to an authoritative package list; and
+❸ ensuring monitoring efficiency through a DFA-Caching Mechanism that enables scalability to millions of packages with negligible overhead.
+Extensive experiments on five widely used LLMs demonstrate that
+PackMonitor
+is a training-free, plug-and-play solution that consistently reduces package hallucination rates to zero while maintaining low-latency inference and preserving original model capabilities.
+1.
+Introduction
+In recent years, Large Language Models (LLMs) such as Qwen2.5-Coder
+(
+Hui et al., 2024
+)
+and DeepSeek-Coder
+(
+Guo et al., 2024
+)
+, along with LLM-powered agents like Copilot
+(
+GitHub Inc., 2024
+)
+and Cursor
+(
+Anysphere Inc., 2024
+)
+, have been reshaping the landscape of software engineering
+(
+Ahmed et al., 2025
+;
+Cai et al., 2025
+;
+Yang et al., 2025
+;
+Li et al., 2025a
+;
+Li et al., 2025b
+)
+. As these systems become deeply integrated into real-world software development workflows, their trustworthiness has become a critical concern
+(
+Liang et al., 2024
+;
+Gao et al., 2025
+)
+. Unfortunately, current models frequently exhibit hallucinations
+(
+Liu et al., 2024
+;
+Gao et al., 2025
+;
+Yu et al., 2024
+)
+, which substantially undermine trustworthiness and introduce risks to the software lifecycle.
+Among the various forms of hallucination, package hallucination has received particular attention
+(
+Spracklen et al., 2024
+;
+Krishna et al., 2025
+;
+Lanyado, 2024
+)
+, where a model may recommend non-existent software packages (top of Figure
+1
+) or suggest packages from the wrong ecosystem (bottom of Figure
+1
+).
+Prior work shows that package hallucinations are widespread: across 16 widely used LLMs, hallucinated packages can account for up to 19.7% of recommended packages
+(
+Zhao et al., 2025
+)
+, substantially undermining model trustworthiness.
+We argue that widespread package hallucinations create a concrete attack surface for software supply chain attacks
+(
+Ohm et al., 2020
+)
+. In practice, LLMs often repeatedly output a small set of hallucinated package names, enabling adversaries to preemptively register them as malicious packages. When such a name is later recommended and mistakenly installed, the malicious dependency can be introduced into the software stack, triggering downstream compromises.
+Figure 1.
+Examples of Package Hallucination in LLM-Generated Installation Commands.
+The severity of package hallucinations has motivated a range of approaches aimed at mitigating them
+(
+Tonmoy et al., 2024
+;
+Lewis et al., 2020
+;
+Ji et al., 2023b
+;
+Tian et al., 2023
+)
+. However, we find that existing approaches can only reduce the likelihood of package hallucinations, rather than guarantee their elimination. For example, Retrieval-Augmented Generation (RAG) injects retrieved valid package names into the prompt, yet on DeepSeek-Coder-6.7B
+(
+Guo et al., 2024
+)
+it only reduces the hallucination rate from 16.14% to 12.24%. Self-Refinement (SR) asks the model to verify and regenerate its own outputs, but yields only marginal gains (e.g., CodeLlama
+(
+Rozière et al., 2024
+)
+drops from 26.28% to 25.51%). Supervised fine-tuning (SFT) retrains models on hallucination-free data, but still cannot fully eliminate hallucinations and may also degrade utility. As a result, the remaining package hallucinations continue to pose an exploitable software supply chain threat
+(
+Ohm et al., 2020
+;
+Ladisa et al., 2023
+)
+, hindering the broader adoption of LLMs in software development.
+To improve the trustworthiness of LLMs, we propose
+PackMonitor
+, the first approach capable of fundamentally eliminating package hallucinations. Our key insight is that valid package names reside within a finite, enumerable authoritative package list (e.g., the PyPI index
+(
+Python Software Foundation, 2000
+)
+)
+(
+Spracklen et al., 2024
+)
+. This makes package-name validity decidable, rendering package hallucinations theoretically preventable. Building on this insight, we propose
+PackMonitor
+, which continuously monitoring the model’s decoding process and intervening when necessary.
+Concretely, it intervenes in the decoding phase by pruning any generation path that would inevitably lead to a non-existent package name via logits masking. In this way, hallucinated packages are excluded from the generation space, guaranteeing a zero package-hallucination rate. Notably,
+PackMonitor
+requires no additional training and operates as a lightweight, plug-and-play solution.
+However, implementing
+PackMonitor
+in practice comes with three key challenges.
+❶ First,
+PackMonitor
+must determine
+when to trigger intervention
+.
+This is crucial because security risks stem exclusively from executable package installation commands. Applying intervention globally would inevitably penalize benign text or ordinary code, thereby reducing the model’s utility.
+To address this,
+PackMonitor
+employs a
+Context-Aware Parser
+that operates in a continuous monitoring mode but activates strict intervention only when detecting package-name generation following installation commands. This selective mechanism ensures that the model’s original generation capabilities remain preserved outside the high-risk scope.
+❷ Second, we address
+how to intervene LLMs’ generation
+.
+To guarantee zero package hallucinations under the enforced package list,
+PackMonitor
+employs a
+Package-Name Intervenor
+. Upon activation, the intervenor leverages a Deterministic Finite Automaton (DFA) constructed from an authoritative package list to precisely delimit the valid generation space.
+At each decoding step, the intervenor derives the exact set of permissible next tokens and rules out any illegal continuations. Consequently, any path leading to a hallucinated package name is strictly removed from the generation space.
+❸ Third, we address
+how to perform monitoring efficiently
+. In practice, the scale of valid packages is massive—for instance, PyPI contains over 700k packages. At this scale, the resulting DFA becomes extremely large, making on-the-fly construction prohibitively slow. To ensure scalability,
+PackMonitor
+introduces a
+DFA-Caching Mechanism
+: it pre-constructs the DFA into a persistent checkpoint and loads it into memory during inference. This "build once, reuse many" strategy decouples construction costs from runtime execution, enabling low-latency serving even for massive ecosystems.
+We conducted extensive experiments on two benchmarks, including HFuzzer
+(
+Zhao et al., 2025
+)
+and Package4U
+(
+Spracklen et al., 2024
+)
+for evaluating package hallucinations, using five widely used LLMs and multiple baselines. Our findings are as follows:
+❶ Across all experimental settings,
+PackMonitor
+strictly reduces package hallucination rates to zero. For instance, it successfully eliminated the 11.6% package hallucination rates originally observed in DeepSeek-Coder-6.7B.
+❷
+PackMonitor
+introduces only negligible inference overhead, with the generation time per response increasing by merely 0.05–0.3 seconds.
+❸ Unlike SFT, which can significantly degrade code generation capability, our results on HumanEval
+(
+Chen, 2021
+)
+indicate that equipping models with
+PackMonitor
+does not harm their utility.
+In summary, our contributions are threefold:
+•
+We argue that package hallucination is a unique type of factuality hallucination that can be theoretically prevented, owing to its deterministic nature, which allows candidate package names to be verified against finite authoritative package lists.
+•
+We propose
+PackMonitor
+, the first approach capable of completely eliminating package hallucinations.
+PackMonitor
+integrates a context-aware parser with a package-name intervenor and an efficient DFA-caching mechanism.
+•
+We conduct extensive experiments using two benchmarks on five widely used LLMs. The results show that
+PackMonitor
+reduces package hallucination rates to zero across all settings while maintaining low-latency inference.
+2.
+Related Work and Motivation
+In this section, we present the essential background for understanding our proposed approach and discuss the research motivation behind it.
+2.1.
+LLM Hallucinations and Package Hallucinations
+With the rapid development of Large Language Models (LLMs),
+LLM hallucinations
+(
+Huang et al., 2025
+;
+Zhang et al., 2025
+;
+Ji et al., 2023a
+)
+have become a widely recognized issue, where LLMs generate misleading, unsubstantiated, or completely fictitious information
+(
+Gao et al., 2025
+)
+. LLM hallucinations can be broadly classified into
+factuality hallucinations
+and
+faithfulness hallucinations
+(
+Maynez et al., 2020
+;
+Wu et al., 2025
+)
+. Factuality hallucinations arise when the generated content deviates from verifiable real-world facts, whereas faithfulness hallucinations occur when there are inconsistencies between the generated content and the given input context.
+(
+Huang et al., 2025
+)
+.
+In recent years, LLM-powered coding agents have garnered considerable attention with their rapid development
+(
+Liang et al., 2024
+;
+Wang et al., 2025
+;
+Chen et al., 2025b
+)
+, highlighting the immense potential of LLMs in software development. However, the impact of hallucinations in this domain has been further magnified.
+Package hallucination
+(
+Spracklen et al., 2024
+;
+Krishna et al., 2025
+;
+Lanyado, 2024
+)
+is a specialized form of factuality hallucination, in which LLMs generate non-existent or ecosystem-incompatible package names in the output.
+Spracklen et al.
+(
+Spracklen et al., 2024
+)
+conducted an evaluation on 16 open-source and closed-source LLMs, generating over 1 million package recommendations from around 40,000 programming questions collected from LLM-generated content and Stack Overflow
+(
+Stack Overflow, Inc., 2024
+)
+. Their findings indicated that 19.7% of the recommended packages were hallucinatory, with 205,474 distinct non-existent package names identified. In addition,
+Zhao et al.
+(
+Zhao et al., 2025
+)
+proposed HFuzzer, a fuzzing-based framework to evaluate whether models generate hallucinated packages. The experiments using HFuzzer demonstrate that most models, including both open-source and proprietary commercial models, produce a substantial number of hallucinated packages.
+In automated coding agent workflows, invalid package dependencies may cause build failures and deployment disruptions, thereby increasing the overhead of development and debugging processes
+(
+Hu et al., 2025
+)
+.
+More dangerously, as discussed in Section
+1
+, package hallucinations introduce a critical attack vector for
+software supply chain attacks
+(
+Ohm et al., 2020
+;
+Neupane et al., 2023
+;
+Ladisa et al., 2023
+)
+.
+Attackers no longer need to guess or obfuscate popular package names; instead, they can monitor the outputs of mainstream LLMs at scale and collect the frequently generated hallucinated package names for targeted preemptive registration.
+Once an automated coding agent installs such a maliciously registered package, the attacker’s code may be executed within the agent’s runtime environment, leading to severe consequences such as data exfiltration, unauthorized network access, and further compromise of downstream systems in the software development pipeline
+(
+Ohm et al., 2020
+;
+Neupane et al., 2023
+;
+Ladisa et al., 2023
+)
+.
+2.2.
+Mitigation of Package Hallucinations
+Existing methods for mitigating package hallucinations in LLMs can be broadly categorized by whether they require additional model training, which yields two primary categories:
+training-free
+and
+training-based
+methods
+(
+Tonmoy et al., 2024
+;
+Spracklen et al., 2024
+)
+. The former mitigates hallucinations via prompt-based guidance or post-hoc verification, while the latter relies on parameter-level adjustments to the model.
+Training-free Methods.
+To avoid the computational costs and unintended side effects of retraining, several training-free methods have been proposed to mitigate package hallucinations without modifying model parameters. Two representative techniques are
+Retrieval-Augmented Generation (RAG)
+(
+Lewis et al., 2020
+;
+Gao et al., 2023
+)
+and
+Self-Refinement (SR)
+(
+Madaan et al., 2023
+;
+Ji et al., 2023b
+)
+. RAG mitigates package hallucinations by injecting externally retrieved, valid package information into the prompt, thus enhancing factual grounding during generation. Although this approach can reduce hallucination rates in certain scenarios, its effectiveness is often limited and can vary across settings. Empirical findings demonstrate that RAG only yields modest performance improvements; for example, it reduces the package hallucination rate of DeepSeek-Coder-6.7B from 16.14% to 12.24%
+(
+Spracklen et al., 2024
+)
+. SR, on the other hand, prompts the LLM to verify and optionally regenerate content following the initial generation step. This method frames hallucination mitigation as a post-hoc correction task, which relies on the model’s ability to identify its own factual errors. Although SR can achieve marginal reductions in package hallucination rates, it is inherently unreliable: once an LLM generates hallucinated packages with high confidence, SR often fails to detect or correct such errors. Additionally, SR incurs extra inference overhead, as it requires additional verification and regeneration steps during the inference process.
+Training-based Methods.
+Several studies have mitigated package hallucinations via
+Supervised Fine-Tuning (SFT)
+(
+Tian et al., 2023
+;
+Spracklen et al., 2024
+)
+. In this paradigm, LLMs are fine-tuned on carefully curated datasets that exclude hallucinated package names.By adjusting the model’s parameters, SFT can significantly reduce the model’s tendency to generate hallucinated package names. For example,
+Spracklen et al.
+(
+Spracklen et al., 2024
+)
+demonstrate that SFT can reduce the package hallucination rates to as low as 2.66% for certain LLMs. However, training-based mitigation suffers from several fundamental limitations. First, SFT requires the construction of high-quality, hallucination-free training datasets, which is expensive and difficult to maintain as software ecosystems evolve. Second, altering the model’s parameters may introduce unintended side effects; previous studies have shown that SFT can cause a significant degradation in the model’s general code generation performance
+(
+Spracklen et al., 2024
+)
+. Most importantly, despite its effectiveness in reducing package hallucination rates, SFT does not fully eliminate package hallucinations under existing settings. Consequently, package hallucination remains possible, which leaves residual security vulnerabilities in the downstream software supply chain.
+Summary.
+Despite their inherent differences, both training-free and training-based methods suffer from a fundamental limitation: they can only mitigate package hallucinations rather than completely eliminate them. Training-free methods rely on prompt-based guidance or post-hoc verification, thus offering no strict generation-time guarantees; training-based methods reduce package hallucinations at the expense of retraining overhead and degraded model performance. As long as the package hallucination rate remains non-zero, such hallucinations can still introduce exploitable security vulnerabilities, which motivates the need for novel methods that can fundamentally prevent the generation of hallucinated packages.
+2.3.
+Motivation
+Package installation in software development exhibits a key characteristic that renders package hallucinations fundamentally preventable. For a given software package ecosystem (e.g., PyPI
+(
+Python Software Foundation, 2000
+)
+, npm
+(
+npm, Inc., 2024
+)
+, and Maven
+(
+Apache Software Foundation, 2004
+)
+), a finite and enumerable list of valid package names can be obtained as ground truth (e.g., from an official index snapshot or a curated allowlist). Thus, for any candidate package name, its membership in this list is unambiguous: it either belongs to the set or not. In other words, the validity of a package name is a decidable property.
+Leveraging this decidability property, package hallucinations can be prevented by enforcing a definitive validity set during the LLM’s inference process. Consider the hallucinated package example in Figure
+1
+: when prompted to install Protocol Buffers, an LLM may suggest “google-protobuf” due to spurious statistical correlations learned from its training data. While “google.protobuf” is a legitimate Python import path, it is not a valid package name in the predefined authoritative package list. With access to such an allowlist,
+PackMonitor
+intervenes in real time as the LLM generates a package name token by token. Conceptually,
+PackMonitor
+intervenes as follows: for each candidate next token,
+PackMonitor
+checks whether appending the token would keep the current partial string consistent with at least one allowlisted package name (i.e., whether the updated prefix remains a valid prefix for any legitimate package name in the allowlist). If a token would lead the generation process to a state where no allowlisted package name can be matched by any subsequent continuation, selecting the token would inevitably result in an invalid package name;
+PackMonitor
+thus masks the token by setting its corresponding logit value to
+−
+∞
+-\infty
+. Meanwhile, a termination token (e.g., whitespace or newline) is allowed only if the current prefix already constitutes a complete, allowlisted package name. In this manner,
+PackMonitor
+prunes all token choices that would inevitably result in a hallucinated package, while preserving all valid package name completions.
+3.
+Methodology
+In this section, we present the design of
+PackMonitor
+, a decoding-time monitoring framework that is capable of eliminating package hallucination. We begin with a high-level overview of the framework in Section
+3.1
+. We then detail the precise timing of intervention in Section
+3.2
+, the mechanics of the intervention process in Section
+3.3
+, and the optimization strategies for efficient monitoring in Section
+3.4
+.
+Figure 2.
+Overview of our proposed
+PackMonitor
+.
+3.1.
+Overview
+Driven by the insight that package validity is a deterministically decidable problem within a finite and enumerable scope, we propose
+PackMonitor
+. The framework orchestrates two tightly coupled components that operate synchronously with LLM inference: the
+Context-Aware Parser
+and the
+Package-Name Intervenor
+.
+Figure
+2
+illustrates the overall framework of
+PackMonitor
+.
+First, the context-aware parser operates in a continuous monitoring mode to precisely locate the generation of package names following installation commands.
+Upon detecting such a context, it triggers the
+package-name intervenor
+.
+This module leverages a Deterministic Finite Automaton (DFA), constructed from authoritative package lists, to perform token-level validity verification. It enforces strict compliance by dynamically applying logits masks, thereby blocking any token that would lead to invalid package names.
+To tackle the scalability challenge posed by modern ecosystems containing millions of packages, we further introduce a
+DFA-Caching Mechanism
+. This mechanism decouples the computationally intensive DFA construction from the runtime inference. By pre-compiling the DFA offline and loading the checkpoint during inference,
+PackMonitor
+effectively amortizes the initialization cost, enabling it to scale robustly to massive ecosystems with negligible latency overhead.
+3.2.
+When to Trigger Intervention?
+In this section, we address the first challenge: determining the precise timing for intervention. A naive approach that intervenes the entire output stream against a package list is infeasible; it would inevitably penalize benign natural language tokens or generic code, thereby severely degrading the model’s general utility. We argue that supply chain security risks stem exclusively from executable package installation commands. Therefore, while monitoring must be continuous, strict intervention must be confined to these high-risk regions to ensure that the model’s original generation capability remains untouched.
+To achieve this,
+PackMonitor
+employs a
+context-aware parser
+modeled on Context-Free Grammar (CFG). This parser functions as a real-time sentinel, continuously monitoring generated tokens to distinguish between risk-free contexts and package-name generation zones.
+Formally, we model the response of an LLM as an interleaving sequence of natural language and code segments:
+(1)
+Response
+→
+(
+NATURAL_LANGUAGE
+∣
+CODE
+)
+∗
+.
+\texttt{Response}\rightarrow(\texttt{NATURAL\_LANGUAGE}\mid\texttt{CODE})^{*}.
+Code blocks are identified by standard delimiters (e.g.,
+```bash
+and
+```
+). Within these code blocks, the parser further differentiates between actual installation commands—which constitute the attack surface that we focus on—and ordinary code lines (such as comments or variable assignments):
+(2)
+CODE
+→
+(
+INSTALL_CMD_LINE
+∣
+ORDINARY_CODE_LINE
+)
+∗
+.
+\texttt{CODE}\rightarrow(\texttt{INSTALL\_CMD\_LINE}\mid\texttt{ORDINARY\_CODE\_LINE})^{*}.
+While we use the prevalent
+pip install
+command for PyPI packages as a running example, our approach is general and can be instantiated for installation commands in other ecosystems (discussed in Section
+6.2
+). Under the PyPI ecosystems, an installation command line is formally defined as:
+(3)
+INSTALL_CMD_LINE
+→
+pip install
+​
+PACKAGE_NAMES
+\
+n
+.
+\texttt{INSTALL\_CMD\_LINE}\rightarrow\texttt{pip install}\;\texttt{PACKAGE\_NAMES}\;\backslash\texttt{n}.
+Crucially, since LLMs frequently recommend multiple packages in a single command, the parser must support iterative validation. Once an installation command is recognized,
+PackMonitor
+enforces intervention for every subsequent token sequence identified as a package name:
+(4)
+PACKAGE_NAMES
+→
+PACKAGE_NAME
+​
+(
+PACKAGE_NAME
+)
+∗
+.
+\texttt{PACKAGE\_NAMES}\rightarrow\texttt{PACKAGE\_NAME}\;(\texttt{PACKAGE\_NAME})^{*}.
+During inference, the context-aware parser operates in a continuous monitoring mode. As long as the output state corresponds to
+NATURAL_LANGUAGE
+or
+ORDINARY_CODE_LINE
+, the package-name intervenor remains dormant, incurring zero interference. However, the moment the parser detects a state transition into
+PACKAGE_NAMES
+, it immediately triggers active intervention. This design effectively shifts
+PackMonitor
+from passive context-tracking to strict validity enforcement, ensuring zero package hallucinations without compromising the generation of benign text.
+3.3.
+How to Intervene in LLM Generation?
+Once activated, the
+package-name intervenor
+assumes strict control over the generation process. Unlike post-hoc verification methods, this module operates synchronously during the decoding time. It functions in two coordinated stages: (i) it rigorously defines the legal generation space using a Deterministic Finite Automaton (DFA); and (ii) it performs intervention on the probability distribution via logits masking to render hallucinated packages theoretically unreachable.
+3.3.1.
+Legal State Verification via DFA
+To guarantee that every generated token contributes to a valid package name,
+PackMonitor
+compiles the authoritative package list into a DFA.
+DFA Construction.
+We formalize the package validity specification as a DFA
+D
+=
+(
+Q
+,
+Σ
+,
+δ
+,
+s
+0
+,
+F
+)
+D=(Q,\Sigma,\delta,s_{0},F)
+, where
+Q
+Q
+is the state space,
+Σ
+\Sigma
+is the character alphabet,
+δ
+:
+Q
+×
+Σ
+→
+Q
+\delta:Q\times\Sigma\to Q
+is the deterministic transition function,
+s
+0
+∈
+Q
+s_{0}\in Q
+is the initial state, and
+F
+⊆
+Q
+F\subseteq Q
+is the set of accepting states.
+By treating each package name
+p
+i
+p_{i}
+in the authoritative package list
+P
+=
+{
+p
+1
+,
+…
+,
+p
+N
+}
+P=\{p_{1},\dots,p_{N}\}
+as a terminal string, the DFA serves as a deterministic realization of the following production rule:
+(5)
+PACKAGE_NAME
+→
+p
+1
+|
+p
+2
+​
+∣
+…
+∣
+​
+p
+N
+.
+\texttt{PACKAGE\_NAME}\rightarrow p_{1}\mid p_{2}\mid\dots\mid p_{N}.
+During inference,
+PackMonitor
+keeps track of the DFA state induced by the package-name prefix generated so far. When the model outputs the next token,
+PackMonitor
+interprets it as a character string
+c
+t
+c_{t}
+and updates the state by consuming these characters sequentially:
+(6)
+s
+t
+=
+δ
+∗
+​
+(
+s
+t
+−
+1
+,
+c
+t
+)
+.
+s_{t}=\delta^{*}(s_{t-1},c_{t}).
+where
+δ
+∗
+\delta^{*}
+denotes the extended transition function over a character sequence.
+Token Trie Integration.
+The necessity of integrating a Token Trie arises fundamentally from the granularity mismatch between the generation unit of LLMs and the verification unit of the DFA. LLMs operate on a vocabulary
+V
+V
+of subword tokens, generating a multi-character string
+v
+v
+at each step. In contrast, the constructed DFA defines validity via character-level transitions
+δ
+:
+Q
+×
+Σ
+→
+Q
+\delta:Q\times\Sigma\to Q
+. Consequently, a single generation step by the LLM corresponds to a sequence of state transitions in the DFA, making direct verification impossible without decomposing the token.
+To bridge this gap, we pre-build a
+Token Trie
+from the tokenizer’s vocabulary. This Trie structurally maps each token
+v
+∈
+V
+v\in V
+to its constituent character sequence. By synchronizing the traversal of the Token Trie with the DFA, we can determine whether the character sequence of a candidate token
+v
+v
+forms a valid path starting from the current DFA state
+s
+t
+s_{t}
+. Formally, a token
+v
+v
+is included in the feasible set
+A
+⁡
+(
+s
+t
+)
+A(s_{t})
+if and only if its character sequence allows the DFA to transition from
+s
+t
+s_{t}
+to a valid subsequent state (i.e., not the empty set).
+3.3.2.
+Logits-Level Masking
+Once the set of feasible tokens
+A
+⁡
+(
+s
+t
+)
+A(s_{t})
+is identified,
+PackMonitor
+(which is denoted as
+P
+P
+below) enforces compliance at the probabilistic level. Specifically, we apply a logits mask that strictly forbids the generation of any token outside the legal set.
+In standard autoregressive decoding, the LLM
+L
+θ
+L_{\theta}
+computes the next-token probability based on logits
+ℓ
+t
+\ell_{t}
+:
+(7)
+L
+θ
+​
+(
+x
+t
+∣
+x
+<
+t
+)
+=
+softmax
+⁡
+(
+ℓ
+t
+)
+.
+L_{\theta}(x_{t}\mid x_{<t})=\mathrm{softmax}(\ell_{t}).
+We model the intervened system as a reshaped distribution
+L
+θ
+|
+P
+L_{\theta}\parallel P
+, where the original logits are modulated by a dynamic mask
+m
+t
+m_{t}
+derived from
+A
+⁡
+(
+s
+t
+)
+A(s_{t})
+:
+(8)
+(
+L
+θ
+∥
+P
+)
+(
+x
+t
+∣
+x
+<
+t
+)
+=
+softmax
+(
+ℓ
+t
+⊕
+m
+t
+)
+.
+(L_{\theta}\parallel P)(x_{t}\mid x_{<t})=\mathrm{softmax}(\ell_{t}\oplus m_{t}).
+The mask
+m
+t
+m_{t}
+acts as a binary gatekeeper over the vocabulary
+V
+V
+:
+(9)
+m
+t
+​
+(
+v
+)
+=
+{
+1
+,
+v
+∈
+A
+⁡
+(
+s
+t
+)
+,
+0
+,
+v
+∉
+A
+⁡
+(
+s
+t
+)
+.
+m_{t}(v)=\begin{cases}1,&v\in A(s_{t}),\\
+0,&v\notin A(s_{t}).\end{cases}
+The operator
+⊕
+\oplus
+applies a mask to the logits:
+(10)
+(
+ℓ
+t
+⊕
+m
+t
+)
+​
+[
+v
+]
+=
+{
+ℓ
+t
+​
+[
+v
+]
+,
+if
+​
+m
+t
+​
+(
+v
+)
+=
+1
+,
+−
+∞
+,
+if
+​
+m
+t
+​
+(
+v
+)
+=
+0
+.
+(\ell_{t}\oplus m_{t})[v]=\begin{cases}\ell_{t}[v],&\text{if }m_{t}(v)=1,\\
+-\infty,&\text{if }m_{t}(v)=0.\end{cases}
+By reshaping the distribution
+L
+θ
+L_{\theta}
+, our proposed package-name intervenor ensures that the probability of sampling an invalid token becomes exactly zero. Consequently, every generated prefix is guaranteed to remain on some valid DFA path; if decoding terminates in an accepting state, the produced package name is guaranteed to be a valid entry in the authoritative package list.
+3.4.
+How to Efficiently Perform Monitoring?
+In practical scenarios, the DFA constructed from large-scale package lists exhibits an extremely large state space, leading to substantial overhead in each construction. Our extensive experimental results indicate that constructing the DFA for a large-scale package list is the primary bottleneck of inference latency. For instance, with the PyPI package list containing approximately 700k package names, constructing the DFA takes several seconds, whereas performing token-level validation using the Token Trie requires only a few milliseconds or even microseconds.
+To efficiently perform monitoring in practical settings, we introduce a
+DFA-caching mechanism
+that decouples one-time automaton construction from runtime inference. Our key insight is that, for a fixed package list, the structure of the DFA remains unchanged during inference. Leveraging this property,
+PackMonitor
+pre-constructs a DFA checkpoint during initialization and stores it in cache. For each generation request,
+PackMonitor
+loads the cached DFA directly, thereby avoiding repeated construction.
+From a runtime perspective, this DFA-caching mechanism ensures that the expensive cost of initializing the DFA is incurred only once. This “build once, reuse many” design effectively decouples inference latency from the size of the package list, leaving the online overhead dominated by lightweight DFA state transitions and logits-level masking operations, both of which are computationally stable and negligible during inference. This mechanism enables
+PackMonitor
+to operate efficiently in million-scale software ecosystems.
+4.
+Experimental Setup
+This section describes our experimental setup, including the benchmarks, baseline methods, evaluation metrics, selected models, and implementation details. Under this setup, we conduct a series of experiments to answer the following Research Questions (RQs):
+•
+RQ1: How effective is
+PackMonitor
+in eliminating package hallucinations?
+This RQ evaluates whether
+PackMonitor
+can eliminate package hallucinations across different models and compares its performance against existing baselines.
+•
+RQ2: What is the efficiency overhead introduced by
+PackMonitor
+?
+This RQ measures the efficiency impact of
+PackMonitor
+by comparing the average generation speed (or latency) before and after integrating
+PackMonitor
+.
+•
+RQ3: Does
+PackMonitor
+degrade the general code generation capability of LLMs?
+This RQ examines whether
+PackMonitor
+affects the general code generation capability of LLMs.
+•
+RQ4: How much does DFA-caching mechanism improve inference efficiency and scalability?
+This RQ is studied via an ablation analysis comparing cached versus non-cached settings, and further characterizing how inference latency scales with increasing package-list sizes.
+4.1.
+Benchmarks
+To evaluate package hallucinations in LLMs, we adopt two benchmarks in our experiments: the
+HFuzzer
+framework
+(
+Zhao et al., 2025
+)
+and an open-source coding dataset released by
+Spracklen et al.
+(
+Spracklen et al., 2024
+)
+.
+❶
+HFuzzer
+(
+Zhao et al., 2025
+)
+.
+We adopt HFuzzer as our primary evaluation framework. HFuzzer is a fuzzing framework designed to systematically probe failure modes of LLMs through iterative test case generation. Compared to conventional fixed test cases, HFuzzer can continuously explore diverse generation patterns and effectively induce previously unseen hallucinated packages.
+In the experiments, HFuzzer involves two cooperating models: a
+tester model
+for test case generation, and a
+target model
+responsible for code generation and package recommendation, serving as the model under evaluation. We select
+DeepSeek-V3
+(
+DeepSeek-AI et al., 2025
+)
+as the tester model, as its strong reasoning and coding capabilities support effective and diverse code-relevant test case generation.
+❷
+Package4U
+(
+Spracklen et al., 2024
+)
+.
+In addition to HFuzzer, we also evaluate our approach on a dataset released by
+Spracklen et al.
+(
+Spracklen et al., 2024
+)
+. Following the title of the original paper, we refer to this dataset as
+Package4U
+. Package4U contains approximately 40,000 coding tasks generated by LLMs or collected from Stack Overflow, with around half involving Python programming. Each task consists of a natural language problem description and code-related context. We use this dataset in a subset of our experiments. Detailed experimental settings and results are reported in the corresponding sections.
+4.2.
+Models
+We evaluate our approach on a set of representative LLMs, as summarized in Table
+1
+. These models are selected to cover different training objectives (code-oriented vs. general-purpose) and release periods.
+•
+DeepSeek-Coder-Instruct-6.7B
+(
+Guo et al., 2024
+)
+is released by DeepSeek. It is an instruction-tuned, code-oriented LLM designed for programming tasks. In the following, we refer to this model as DeepSeek-Coder.
+•
+CodeLlama-7b-Instruct-hf
+(
+Rozière et al., 2024
+)
+is released by Meta. It is an instruction-tuned code model in the Code Llama family, widely adopted as a strong open-weight baseline for code generation. In the following, we refer to this model as CodeLlama.
+•
+Qwen2.5-Coder-7B-Instruct
+(
+Hui et al., 2024
+)
+is released by the Qwen team (Alibaba). It is an instruction-tuned code model from the Qwen2.5 series, optimized for coding and tool-use style interactions. In the following, we refer to this model as Qwen2.5-Coder.
+•
+Meta-Llama-3-8B-Instruct
+(
+Meta, 2024a
+)
+is released by Meta. It is a general-purpose instruction-tuned LLM that provides a strong non-code-specialized baseline for evaluating robustness beyond code-centric training. In the following, we refer to this model as Meta-Llama-3.
+•
+Meta-Llama-3.1-8B-Instruct
+(
+Meta, 2024b
+)
+is released by Meta as an updated general-purpose instruction-tuned LLM. Compared with Llama-3-8B-Instruct, it improves overall instruction-following and capability. In the following, we refer to this model as Meta-Llama-3.1.
+Table 1.
+The Details of Selected Models.
+Model
+Size
+Release Date
+Download Count
+DeepSeek-Coder-Instruct-6.7B
+(
+Guo et al., 2024
+)
+6.7B
+2023-11
+56K
+CodeLlama-7b-Instruct-hf
+(
+Rozière et al., 2024
+)
+7B
+2023-08
+19K
+Qwen2.5-Coder-7B-Instruct
+(
+Hui et al., 2024
+)
+7B
+2024-09
+1.18M
+Meta-Llama-3-8B-Instruct
+(
+Meta, 2024a
+)
+8B
+2024-04
+1.53M
+Meta-Llama-3.1-8B-Instruct
+(
+Meta, 2024b
+)
+8B
+2024-07
+10M
+4.3.
+Baselines
+Following prior work on mitigating package hallucinations
+(
+Spracklen et al., 2024
+)
+, we include three representative baselines in our evaluation:
+Retrieval-Augmented Generation (RAG)
+,
+Self-Refinement (SR)
+, and
+Supervised Fine-Tuning (SFT)
+. Their details are introduced in Section
+2.2
+. we additionally include a stronger baseline,
+RAG+SR
+, which combines Retrieval-Augmented Generation with post-hoc Self-Refinement: we first apply RAG to inject retrieved package information into the prompt, and then run SR to verify and refine the model’s generated installation commands.
+4.4.
+Evaluation Metrics
+To evaluate the effectiveness of
+PackMonitor
+and the compared baselines, we adopt three metrics proposed by prior work
+(
+Zhao et al., 2025
+;
+Spracklen et al., 2024
+)
+that quantify hallucinated packages in model outputs, as described below:
+•
+Package Hallucination Rate (PHR)
+. This metric is defined as the ratio of hallucinated packages to the total number of recommended packages.
+•
+Response Hallucination Rate (RHR)
+. This metric measures the percentage of model responses that contain at least one hallucinated package.
+•
+Number of Unique Hallucinated Packages (
+P
+h
+​
+a
+​
+l
+​
+l
+−
+u
+​
+n
+​
+i
+​
+q
+​
+u
+​
+e
+P_{hall-unique}
+)
+. This metric is analogous to a commonly used indicator in prior work
+(
+Zhao et al., 2024
+)
+, i.e., the number of unique bugs, and reflects the diversity of hallucinated packages generated by the model.
+4.5.
+Implementation Details
+For all experiments, we use the PyPI
+(
+Python Software Foundation, 2000
+)
+index as the authoritative package list for DFA construction. This list comprises 706,618 valid package names at the time of our experiments, serving as the source for monitoring package-name generation.
+For each target model listed in Table
+1
+, we execute one full round of HFuzzer testing (with each round consisting of 1,000 iterations) with
+PackMonitor
+and all baselines. To ensure the determinism of experimental results, the temperature parameter of the tester model is fixed at 0, while that of the target model is set to 0.7 to strike a balance between generation creativity and output stability
+(
+Chen et al., 2025a
+)
+.
+All experiments are conducted on a server equipped with eight NVIDIA A100 GPUs with 80 GB memory each, two AMD EPYC 7543 CPUs with 32 cores per socket (64 physical cores in total), 1 TB system memory, running Ubuntu 22.04 LTS.
+5.
+Experimental Results
+5.1.
+RQ1: How Effective is
+PackMonitor
+in Eliminating Package Hallucinations?
+Table 2.
+Comparative performance of
+PackMonitor
+against training-free baselines on the HFuzzer benchmark.
+P
+t
+​
+o
+​
+t
+​
+a
+​
+l
+P_{total}
+denotes the total number of recommended packages, while
+P
+h
+​
+a
+​
+l
+​
+l
+P_{hall}
+and
+P
+h
+​
+a
+​
+l
+​
+l
+−
+u
+​
+n
+​
+i
+​
+q
+​
+u
+​
+e
+P_{hall-unique}
+represent the total and unique hallucinated packages, respectively. PHR and RHR indicate the package and response hallucination rates.
+Model
+Configuration
+P
+total
+P_{\textit{total}}
+P
+hall
+P_{\textit{hall}}
+P
+hall-uniq
+P_{\textit{hall-uniq}}
+PHR
+RHR
+DeepSeek-Coder
+vanilla
+1847
+155
+74
+8.39%
+11.60%
+RAG
+2288
+132
+87
+5.77%
+10.10%
+SR
+1496
+113
+47
+7.55%
+8.20%
+RAG + SR
+1750
+108
+46
+6.17%
+8.90%
+PackMonitor
+1648
+0
+0
+0
+%
+0
+%
+CodeLlama
+vanilla
+1004
+63
+63
+6.27%
+2.70%
+RAG
+690
+41
+39
+5.94%
+2.70%
+SR
+502
+20
+20
+3.98%
+1.70%
+RAG + SR
+231
+3
+3
+1.30%
+0.30%
+PackMonitor
+1514
+0
+0
+0%
+0%
+Qwen2.5-Coder
+vanilla
+553
+18
+11
+3.25%
+1.80%
+RAG
+600
+20
+13
+3.33%
+1.70%
+SR
+513
+10
+8
+1.95%
+0.90%
+RAG + SR
+551
+14
+13
+2.54%
+1.40%
+PackMonitor
+529
+0
+0
+0
+%
+0
+%
+Meta-Llama-3
+vanilla
+1623
+80
+38
+4.93%
+6.40%
+RAG
+1773
+85
+56
+4.79%
+7.10%
+SR
+1604
+63
+39
+3.93%
+5.10%
+RAG + SR
+1775
+77
+50
+4.34%
+6.20%
+PackMonitor
+1526
+0
+0
+0
+%
+0
+%
+Meta-Llama-3.1
+vanilla
+1979
+113
+88
+5.71%
+8.20%
+RAG
+2116
+109
+75
+5.15%
+9.00%
+SR
+1848
+78
+51
+4.22%
+7.00%
+RAG + SR
+2099
+100
+74
+4.76%
+8.90%
+PackMonitor
+1938
+0
+0
+0
+%
+0
+%
+In this RQ, we compare
+PackMonitor
+with representative training-free and training-based approaches for mitigating package hallucinations.
+5.1.1.
+Comparison with training-free methods.
+Settings.
+We evaluate
+PackMonitor
+and the training-free baselines introduced in Section
+4.3
+on the five LLMs described in Section
+4.2
+, using HFuzzer. We report the main metrics—PHR, RHR, and
+P
+hall-unique
+P_{\textit{hall-unique}}
+—as defined in Section
+4.4
+. In addition, we include two auxiliary statistics:
+P
+total
+P_{\textit{total}}
+, the total number of packages recommended in each HFuzzer round, and
+P
+hall
+P_{\textit{hall}}
+, the total number of hallucinated packages in each HFuzzer round.
+Results.
+The results of different approaches are reported in Table
+2
+.
+PackMonitor
+consistently outperforms all training-free baselines across every model, reducing all hallucination-related metrics to absolute zero.
+As shown in Table
+2
+,
+PackMonitor
+eliminates package hallucinations on all five LLMs: for example, on DeepSeek-Coder, the vanilla setting exhibits a PHR/RHR of 8.39%/11.60%, while
+PackMonitor
+achieves 0% PHR/RHR. Similar results hold for Meta-Llama-3.1 and Qwen2.5-Coder, where
+PackMonitor
+consistently drives all hallucination metrics to zero. These results indicate that
+PackMonitor
+provides a strict guarantee of eliminating package hallucinations and generalizes across model families.
+In contrast, existing mitigation methods exhibit limited and sometimes unstable effectiveness. RAG can even
+increase
+hallucination rates in several settings—for instance, on Qwen2.5-Coder, PHR increases from 3.25% (vanilla) to 3.33% (RAG), and on Meta-Llama-3, RHR increases from 6.40% to 7.10%—which we hypothesize may be due to prompt-injected information inducing overconfidence and encouraging unsupported outputs. SR yields more consistent reductions, but its hallucination rates remain strictly non-zero. For example, on DeepSeek-Coder it still leaves 113 hallucinated packages (PHR 7.55%, RHR 8.20%).
+PackMonitor
+does not significantly affect the number of recommended packages.
+Since
+PackMonitor
+operates by pruning all generation paths that would lead to hallucinated package names, a natural concern is that it may substantially reduce the number of package recommendations produced by the model. To examine this, we report
+P
+total
+P_{\textit{total}}
+, the total number of recommended packages in each fuzzing round. We find that across all models, the
+P
+total
+P_{\textit{total}}
+achieved by
+PackMonitor
+is comparable to that of the vanilla model. This indicates that
+PackMonitor
+does not eliminate hallucinations by suppressing package recommendations; instead, it removes hallucinated packages while preserving the model’s tendency to recommend valid packages.
+5.1.2.
+Comparison with training-based method.
+Settings.
+Spracklen et al.
+(
+Spracklen et al., 2024
+)
+mitigate package hallucinations by performing SFT on CodeLlama and DeepSeek-Coder using hallucination-free data. To faithfully reproduce their setting, we directly use the fine-tuned checkpoints released by the authors for evaluation. However, we observe that these SFT models exhibit noticeably degraded instruction-following behavior and often fail to consistently comply with the strict output format required by HFuzzer, making them incompatible with the HFuzzer evaluation pipeline.
+Therefore, following
+Spracklen et al.
+(
+Spracklen et al., 2024
+)
+, we evaluate training-based methods on the Package4U benchmark and report the corresponding package hallucination rates.
+Results.
+The results are shown in Table
+3
+.
+Despite requiring no additional training or parameter updates,
+PackMonitor
+offers a fundamentally stronger guarantee of package-hallucination elimination than training-based approaches.
+As shown in Table
+3
+, while SFT substantially reduces hallucination rates, it does not eliminate them: non-zero hallucination rates of 2.66% on DeepSeek-Coder and 10.27% on CodeLlama remain, which still pose non-negligible security risks.
+In contrast,
+PackMonitor
+consistently reduces the package hallucination rate to zero across all experimental configurations. These results demonstrate that, even compared with training-based methods that require costly fine-tuning pipelines,
+PackMonitor
+not only avoids training overhead but also provides a more robust and deterministic solution for hallucination elimination.
+Answer to RQ1.
+PackMonitor
+can stably eliminate package hallucinations, whereas existing mitigation approaches can only reduce package hallucinations and cannot eradicate them.
+Table 3.
+Package Hallucination Rates (PHR) comparison between
+PackMonitor
+and the SFT baseline.
+DeepSeek-Coder
+CodeLlama
+Vanilla
+16.14%
+26.28%
+SFT
+2.66%
+10.27%
+PackMonitor
+0%
+0%
+5.2.
+RQ2: What is the Efficiency Overhead Introduced by
+PackMonitor
+?
+Although
+PackMonitor
+eliminates package hallucinations, it must remain lightweight to be practical in real deployments. Therefore, we quantify the overhead introduced by
+PackMonitor
+and compare it against existing approaches.
+Table 4.
+Average generation time (seconds) across different LLMs.
+For each model, the best result is highlighted in bold, while the second-best result is underlined.
+Numbers in parentheses indicate the relative inference time normalized by the corresponding vanilla model.
+Method
+DeepSeek-Coder
+CodeLlama
+Qwen2.5-Coder
+Llama-3
+Llama-3.1
+Vanilla
+1.9809
+2.4296
+0.8019
+0.9020
+1.5277
+RAG
+2.4751
+(
+×
+\times
+1.25)
+3.9064
+(
+×
+\times
+1.61)
+0.8797
+(
+×
+\times
+1.10)
+1.5359
+(
+×
+\times
+1.70)
+1.8978
+(
+×
+\times
+1.24)
+SR
+3.8439
+(
+×
+\times
+1.94)
+3.3827
+(
+×
+\times
+1.39)
+1.4026
+(
+×
+\times
+1.75)
+1.0031
+(
+×
+\times
+1.11)
+1.6115
+(
+×
+\times
+1.05)
+RAG+SR
+5.2509
+(
+×
+\times
+2.65)
+4.4491
+(
+×
+\times
+1.83)
+1.0595
+(
+×
+\times
+1.32)
+1.3596
+(
+×
+\times
+1.51)
+2.1525
+(
+×
+\times
+1.41)
+Ours
+2.2351
+(
+×
+\times
+1.13)
+3.0130
+(
+×
+\times
+1.24)
+0.8596
+(
+×
+\times
+1.07)
+1.1515
+(
+×
+\times
+1.28)
+1.6464
+(
+×
+\times
+1.08)
+Settings.
+We measure efficiency on HFuzzer. For each HFuzzer round, we evaluate the five models introduced in Section
+4.2
+with
+PackMonitor
+and all the training-free baselines introduced in Section
+4.3
+, and report the average generation time (in seconds).
+Results.
+The results are summarized in Table
+4
+and visualized in Figure
+3
+.
+Figure 3.
+Average generation time and standard deviation of different methods on HFuzzer, aggregated across LLMs.
+The average overhead is small.
+Table
+4
+shows that integrating
+PackMonitor
+introduces only a modest and consistent slowdown across all five models, with a normalized inference-time ratio between
+×
+\times
+1.07 and
+×
+\times
+1.28
+. In absolute terms, the added latency is limited: +0.0577s on Qwen2.5-Coder (0.8019s
+→
+\rightarrow
+0.8596s,
+×
+\times
+1.07), +0.1187s on Llama-3.1 (1.5277s
+→
+\rightarrow
+1.6464s,
+×
+\times
+1.08), +0.2495s on Llama-3 (0.9020s
+→
+\rightarrow
+1.1515s,
+×
+\times
+1.28), +0.2542s on DeepSeek-Coder (1.9809s
+→
+\rightarrow
+2.2351s,
+×
+\times
+1.13), and
+×
+\times
+1.24 on CodeLlama (2.4296s
+→
+\rightarrow
+3.0130s). Moreover,
+PackMonitor
+is among the most time-efficient methods overall: it achieves the best latency on DeepSeek-Coder, Qwen2.5-Coder, and CodeLlama, and the second-best latency on Llama-3.1 and Llama-3. In contrast, RAG and SR often incur substantially higher overhead, and RAG+SR can be particularly expensive (e.g., up to
+×
+\times
+2.65 on DeepSeek-Coder).
+The latency variance is small and stable.
+Figure
+3
+further reports the average generation time and standard deviation aggregated across models. Compared with SR and RAG+SR,
+PackMonitor
+exhibits noticeably smaller variance, indicating that its overhead is more predictable and does not suffer from occasional latency spikes. This stability is expected because
+PackMonitor
+performs only lightweight per-step operations (DFA state transitions and logits masking) during decoding, whereas SR and RAG+SR may introduce variable amounts of additional computation due to refinement iterations (and RAG also adds retrieval-related variability).
+Answer to RQ2.
+On HFuzzer,
+PackMonitor
+incurs only a small and stable efficiency overhead, whereas existing training-free baselines introduce noticeably higher and more variable time costs.
+5.3.
+RQ3: Does
+PackMonitor
+Degrade the General Code Generation Capability of LLMs?
+It is crucial to verify that our proposed
+PackMonitor
+does not compromise the model’s general code generation capabilities. To this end, we evaluate whether
+PackMonitor
+affects functional correctness on a standard code generation benchmark.
+Table 5.
+Comparison of code generation quality (Pass@1) on HumanEval. Values in parentheses represent the performance drop relative to the vanilla model.
+Model
+Vanilla
+With
+PackMonitor
+With SFT
+DeepSeek-Coder-6.7B
+72.6%
+72.6%
+(
+↓
+\downarrow
+0%)
+45.7%
+(
+↓
+\downarrow
+26.9%)
+CodeLlama-7B
+18.3%
+18.3%
+(
+↓
+\downarrow
+0%)
+4.3%
+(
+↓
+\downarrow
+14.0%)
+Qwen2.5-Coder-7B
+79.3%
+79.3%
+(
+↓
+\downarrow
+0%)
+-
+Meta-Llama-3-8B
+53.0%
+53.0%
+(
+↓
+\downarrow
+0%)
+-
+Meta-Llama-3.1-8B
+60.4%
+60.4%
+(
+↓
+\downarrow
+0%)
+-
+Settings.
+Following the HumanEval
+(
+Chen, 2021
+)
+protocol adopted by
+Spracklen et al.
+(
+Spracklen et al., 2024
+)
+, we evaluate the same models before and after integrating
+PackMonitor
+, and report Pass@1 as the metric for functional correctness. For stability, we set the decoding temperature to 0 for all runs in this RQ.
+Results.
+The results are shown in Table
+5
+.
+Across all evaluated models, HumanEval performance remains unchanged after incorporating
+PackMonitor
+.
+As shown in Table
+5
+, the Pass@1 scores remain unchanged with and without
+PackMonitor
+, indicating that our approach does not degrade general code generation capability. We attribute this to the fact that
+PackMonitor
+only intervenes when the model is generating package names following installation commands. As a result,
+PackMonitor
+eliminates hallucinated packages without interfering with ordinary code generation, thereby preserving the original utility.
+The utility preservation of
+PackMonitor
+contrasts sharply with SFT.
+Prior work reports that although SFT can significantly reduce package hallucinations, it may noticeably hurt general code generation performance. On HumanEval, the Pass@1 scores of DeepSeek-Coder-6.7B and CodeLlama-7B drop by 26.9% and 14.0%, respectively
+(
+Spracklen et al., 2024
+)
+. This degradation is expected because SFT changes model weights and may inadvertently harm general code generation performance.
+Answer to RQ3.
+On HumanEval, integrating
+PackMonitor
+does not change Pass@1 across all evaluated models, indicating that
+PackMonitor
+preserves general code generation capability.
+5.4.
+RQ4: How Much does DFA-Caching Mechanism Improve Inference Efficiency and Scalability?
+In this RQ, we conduct an ablation study to evaluate the effectiveness of the DFA-caching mechanism and to examine how decoding latency scales with increasing package list sizes.
+Table 6.
+Comparison of average generation time on HFuzzer with and without caching across LLMs. Values in parentheses represent the time multiplier relative to the vanilla model.
+Model
+Average Generation Time (s)
+DeepSeek-Coder-6.7B
+1.9809
++
+PackMonitor
+(w/o cache)
+5.9150
+(
+×
+\times
+2.99)
++
+PackMonitor
+2.2351
+(
+×
+\times
+1.13)
+CodeLlama-7B
+2.4296
++
+PackMonitor
+(w/o cache)
+6.8237
+(
+×
+\times
+2.81)
++
+PackMonitor
+3.0130
+(
+×
+\times
+1.24)
+Qwen2.5-Coder-7B
+0.8019
++
+PackMonitor
+(w/o cache)
+5.0078
+(
+×
+\times
+6.24)
++
+PackMonitor
+0.8596
+(
+×
+\times
+1.07)
+Meta-Llama-3-8B
+0.9020
++
+PackMonitor
+(w/o cache)
+5.3106
+(
+×
+\times
+5.89)
++
+PackMonitor
+1.1515
+(
+×
+\times
+1.28)
+Meta-Llama-3.1-8B
+1.5277
++
+PackMonitor
+(w/o cache)
+6.1537
+(
+×
+\times
+4.03)
++
+PackMonitor
+1.6464
+(
+×
+\times
+1.08)
+5.4.1.
+Impact of DFA-Caching on Inference Latency
+Settings.
+We evaluate the inference time of five LLMs introduced in Section
+4.2
+under the HFuzzer benchmark across three configurations: the original model,
+PackMonitor
+integrated without caching (w/o cache), and the full
+PackMonitor
+with caching enabled.
+Results.
+Experimental results are demonstrated in Table
+6
+.
+Overall, enabling DFA-caching substantially improves decoding efficiency, bringing inference time close to that of the original model.
+As shown in Table
+6
+, disabling caching incurs a large and consistent overhead across all models (typically
+×
+\times
+2.8–
+×
+\times
+6.2
+relative to vanilla), because the DFA must be repeatedly constructed and initialized during online inference. With caching enabled, latency drops sharply and remains close to the vanilla baseline, reducing the overhead to only
+×
+\times
+1.07–
+×
+\times
+1.28
+. This gap is particularly pronounced for faster base models (e.g., Qwen2.5-Coder and Llama-3), where on-the-fly DFA construction dominates end-to-end decoding time. Overall, DFA-caching removes the one-time, high-cost automaton construction from the online path, leaving
+PackMonitor
+’s runtime overhead dominated by lightweight DFA state transitions and logits masking.
+Table 7.
+Efficiency gains from parser caching: comparison between one-time offline construction and rapid runtime loading across multi-million package scales.
+Time Cost
+3000k
+700k
+70k
+7k
+DFA Construction
+21.121s
+4.407s
+0.265s
+0.021s
+DFA Loading
+0.247s
+0.083s
+0.020s
+0.002s
+5.4.2.
+Efficient Scaling to Million-Level Package List Size
+We further evaluate the scalability of
+PackMonitor
+by measuring the time overhead of two critical stages in the initialization of the monitoring mechanism: DFA construction and DFA loading.
+As shown in Table
+7
+, DFA construction exhibits strong sensitivity to scale. When the package list grows from 7,000 to 3,000,000 entries (approximately a 428× increase), the construction time increases starkly from 0.021s to 21.121s (about a 1000× slowdown). This behavior stems from the rapid expansion of the DFA state space induced by millions of distinct package names. In contrast, DFA loading time is largely insensitive to scale, remaining as low as 0.247s even at the 3,000k scale. This disparity clearly demonstrates the necessity of DFA-caching mechanism, which converts the substantial compilation cost into a one-time offline overhead.
+Without the DFA-caching mechanism,
+PackMonitor
+would be required to reconstruct the DFA online for every inference request. At a future scale where the package list reaches 3,000k entries, this would incur a construction cost of up to 21.121s per inference—an overhead that is clearly unacceptable for latency-sensitive LLM inference workloads. By introducing DFA-caching, we shift the expensive DFA construction entirely to an offline phase, leaving only a lightweight loading operation at runtime. Empirically, even at the 3,000k scale, DFA loading takes only 0.247s, achieving an approximately 85× speedup compared to construction time costs. This “build once, reuse many” strategy effectively decouples inference latency from package list scale, enabling
+PackMonitor
+to support million-scale, continuously evolving ecosystems such as PyPI without incurring perceptible overhead during online inference.
+Answer to RQ4.
+Overall, these results demonstrate the effectiveness of the DFA caching mechanism in substantially reducing inference latency. Moreover, the consistently low DFA loading cost across large package lists confirms that
+PackMonitor
+scales to real-world, evolving software ecosystems.
+6.
+Discussion
+In this section, we discuss several key aspects of
+PackMonitor
+beyond the quantitative results. We first analyze why
+PackMonitor
+is able to achieve zero package hallucination under our evaluated settings, and clarify the scope of this guarantee. We then examine its generalizability across package ecosystems, highlighting how the framework can be extended beyond the PyPI setting to support diverse installation commands and customizable package lists. Finally, we systematically analyze potential threats to the validity of our study.
+6.1.
+Understanding Why Zero Package Hallucination Is Achievable
+A central result of our evaluation is that
+PackMonitor
+consistently reduces package hallucination rates to zero across all tested models and settings. This outcome may appear unusually strong, especially given that prior work has shown hallucinations to be pervasive and difficult to eliminate. We discuss the key reasons why this guarantee is achievable in our setting.
+First, package-name generation fundamentally differs from many other hallucination-prone generation tasks. Unlike open-ended natural language, valid package names form a finite and enumerable list. This property enables
+PackMonitor
+to derive an exact validity specification and to structurally exclude invalid package names from the generation space, rather than attempting to correct hallucinations after they occur.
+Second,
+PackMonitor
+enforces validity directly at the decoding level, rather than relying on prompt engineering, self-verification, or model retraining. By applying logits-level masking based on an automaton constructed from an authoritative package list,
+PackMonitor
+guarantees that every generated package-name prefix remains consistent with at least one valid package entry. As a result, hallucinated packages are not merely discouraged but rendered unreachable by construction.
+It is important to emphasize that this guarantee is conditional on the correctness and completeness of the given authoritative package list. Under these assumptions,
+PackMonitor
+ensures that any generated package name is valid according to the repository at generation time.
+6.2.
+Generalization Across Package Ecosystems
+Our approach is not limited to the PyPI setting (i.e., monitoring package names only after
+pip install
+). Owing to its context-aware parser design,
+PackMonitor
+can be readily adapted, in principle, to different software ecosystems by applying ecosystem-specific package lists to installation commands such as
+conda install
+and
+npm install
+. In addition, the set of legitimate packages is not fixed and can be manually imported and customized to accommodate specific environments or private dependency scenarios. This endows
+PackMonitor
+with robust generalizability and practical deployment flexibility across various package ecosystems.
+6.3.
+Threats to Validity
+We now discuss potential threats to the validity of our study and how we mitigate them:
+❶
+Generalizability Across Models.
+One potential threat concerns whether our findings generalize beyond the specific models. To reduce this threat, we conducted experiments on five widely used LLMs with diverse architectures, training data, and instruction-tuning strategies. In addition, we evaluated
+PackMonitor
+using HFuzzer, which generates a broad and adversarial set of dependency-related prompts. These choices increase confidence that our results are not artifacts of a particular model or prompt distribution.
+❷
+Dependence on Authoritative Package Lists.
+PackMonitor
+relies on an externally maintained authoritative package list as the ground truth for package-name intervenor. Any errors or omissions in this list (e.g., misrecorded entries or missing packages) could undermine the correctness of
+PackMonitor
+. In our experiments, we obtained the package list via PyPI’s official API. However, package ecosystems evolve continuously: new packages are published and existing ones may be deprecated over time. To maintain long-term effectiveness, a practical deployment can incorporate a periodic update mechanism to refresh the authoritative list snapshot and synchronize it with the latest ecosystem state, thereby preserving the hallucination-prevention guarantee.
+❸
+Impact of Deployment Environments.
+For LLMs, generation speed is a critical metric. In our experiments, we evaluated a range of speed-related indicators (e.g., model generation latency, DFA construction time). These metrics typically fall within the millisecond-to-second range, making them potentially sensitive to variations in deployment environments (e.g., differences in GPU or CPU specifications). However, this threat is mitigated by the fact that our core effectiveness (e.g., hallucination-prevention) is independent of such environmental factors. To further support reproducibility across environments, we have made detailed experimental settings available in the Supplementary Materials, and our code repository is publicly accessible. These efforts allow our experiments to be replicated across different devices without compromising the validity of core conclusions.
+Overall,
+PackMonitor
+demonstrates that package hallucinations—often regarded as a challenging failure mode of LLMs—can be eliminated under well-defined monitoring mechanism. By shifting from post-hoc mitigation to design-level prevention, our approach provides strong security guarantees while preserving generation quality and efficiency. At the same time, we acknowledge the scope and assumptions under which these guarantees hold, and we believe these limitations point to promising directions for future research for trustworthy software generation.
+7.
+Conclusion
+In this paper, we propose
+PackMonitor
+, a novel framework capable of rigorously eliminating package hallucinations in Large Language Models. Operating as a training-free and plug-and-play solution,
+PackMonitor
+leverages the deterministic nature of package validity to enforce strict compliance during the decoding process. Our extensive experiments demonstrate that
+PackMonitor
+consistently reduces package hallucination rates to absolute zero across all evaluated models. Crucially, it achieves this strict guarantee with negligible inference overhead and without compromising the models’ general code generation capabilities. By closing the gap between generative probability and factual validity, we believe
+PackMonitor
+paves the way for the trustworthy adoption of LLM in real-world software development.
+8.
+Data Availability
+The source code is provided at:
+https://github.com/TsinghuaISE/PackMonitor
+.
+References
+Ahmed
+et al.
+(2025)
+I. Ahmed, A. Aleti, H. Cai, A. Chatzigeorgiou, P. He, X. Hu, M. Pezzè, D. Poshyvanyk, and X. Xia
+Artificial intelligence for software engineering: the journey so far and the road ahead
+.
+ACM Trans. Softw. Eng. Methodol.
+34
+(
+5
+).
+External Links:
+ISSN 1049-331X
+,
+Link
+,
+Document
+Cited by:
+§1
+.
+Anysphere Inc. (2024)
+Anysphere Inc.
+Cursor: the AI-native code editor
+.
+Note:
+https://www.cursor.com/
+Accessed: 2024-05-20
+Cited by:
+§1
+.
+Apache Software Foundation (2004)
+Apache Software Foundation
+Apache maven
+.
+Note:
+https://maven.apache.org/
+Last accessed Dec. 2025
+Cited by:
+§2.3
+.
+Cai
+et al.
+(2025)
+L. Cai, Y. Ren, Y. Zhang, and J. Li
+AI-driven self-evolving software: a promising path toward software automation
+.
+arXiv preprint arXiv:2510.00591
+.
+Cited by:
+§1
+.
+Chen
+et al.
+(2025a)
+C. Chen, J. Su, J. Chen, Y. Wang, T. Bi, J. Yu, Y. Wang, X. Lin, T. Chen, and Z. Zheng
+When chatgpt meets smart contract vulnerability detection: how far are we?
+.
+ACM Transactions on Software Engineering and Methodology
+34
+(
+4
+),
+pp. 1–30
+.
+Cited by:
+§4.5
+.
+Chen
+et al.
+(2025b)
+H. Chen, C. Li, and J. Li
+FeatBench: evaluating coding agents on feature implementation for vibe coding
+.
+arXiv preprint arXiv:2509.22237
+.
+Cited by:
+§2.1
+.
+Chen (2021)
+M. Chen
+Evaluating large language models trained on code
+.
+arXiv preprint arXiv:2107.03374
+.
+Cited by:
+§1
+,
+§5.3
+.
+DeepSeek-AI
+et al.
+(2025)
+DeepSeek-AI, A. Liu, B. Feng, B. Xue, B. Wang, B. Wu, C. Lu, C. Zhao, C. Deng, C. Zhang, C. Ruan, D. Dai, D. Guo, D. Yang, D. Chen, D. Ji, E. Li, F. Lin, F. Dai, F. Luo, G. Hao, G. Chen, G. Li, H. Zhang, H. Bao, H. Xu, H. Wang, H. Zhang, H. Ding, H. Xin, H. Gao, H. Li, H. Qu, J. L. Cai, J. Liang, J. Guo, J. Ni, J. Li, J. Wang, J. Chen, J. Chen, J. Yuan, J. Qiu, J. Li, J. Song, K. Dong, K. Hu, K. Gao, K. Guan, K. Huang, K. Yu, L. Wang, L. Zhang, L. Xu, L. Xia, L. Zhao, L. Wang, L. Zhang, M. Li, M. Wang, M. Zhang, M. Zhang, M. Tang, M. Li, N. Tian, P. Huang, P. Wang, P. Zhang, Q. Wang, Q. Zhu, Q. Chen, Q. Du, R. J. Chen, R. L. Jin, R. Ge, R. Zhang, R. Pan, R. Wang, R. Xu, R. Zhang, R. Chen, S. S. Li, S. Lu, S. Zhou, S. Chen, S. Wu, S. Ye, S. Ye, S. Ma, S. Wang, S. Zhou, S. Yu, S. Zhou, S. Pan, T. Wang, T. Yun, T. Pei, T. Sun, W. L. Xiao, W. Zeng, W. Zhao, W. An, W. Liu, W. Liang, W. Gao, W. Yu, W. Zhang, X. Q. Li, X. Jin, X. Wang, X. Bi, X. Liu, X. Wang, X. Shen, X. Chen, X. Zhang, X. Chen, X. Nie, X. Sun, X. Wang, X. Cheng, X. Liu, X. Xie, X. Liu, X. Yu, X. Song, X. Shan, X. Zhou, X. Yang, X. Li, X. Su, X. Lin, Y. K. Li, Y. Q. Wang, Y. X. Wei, Y. X. Zhu, Y. Zhang, Y. Xu, Y. Xu, Y. Huang, Y. Li, Y. Zhao, Y. Sun, Y. Li, Y. Wang, Y. Yu, Y. Zheng, Y. Zhang, Y. Shi, Y. Xiong, Y. He, Y. Tang, Y. Piao, Y. Wang, Y. Tan, Y. Ma, Y. Liu, Y. Guo, Y. Wu, Y. Ou, Y. Zhu, Y. Wang, Y. Gong, Y. Zou, Y. He, Y. Zha, Y. Xiong, Y. Ma, Y. Yan, Y. Luo, Y. You, Y. Liu, Y. Zhou, Z. F. Wu, Z. Z. Ren, Z. Ren, Z. Sha, Z. Fu, Z. Xu, Z. Huang, Z. Zhang, Z. Xie, Z. Zhang, Z. Hao, Z. Gou, Z. Ma, Z. Yan, Z. Shao, Z. Xu, Z. Wu, Z. Zhang, Z. Li, Z. Gu, Z. Zhu, Z. Liu, Z. Li, Z. Xie, Z. Song, Z. Gao, and Z. Pan
+DeepSeek-v3 technical report
+.
+External Links:
+2412.19437
+,
+Link
+Cited by:
+§4.1
+.
+Gao
+et al.
+(2025)
+C. Gao, X. Hu, S. Gao, X. Xia, and Z. Jin
+The current challenges of software engineering in the era of large language models
+.
+ACM Transactions on Software Engineering and Methodology
+34
+(
+5
+),
+pp. 1–30
+.
+Cited by:
+§1
+,
+§2.1
+.
+Gao
+et al.
+(2023)
+Y. Gao, Y. Xiong, X. Gao, K. Jia, J. Pan, Y. Bi, Y. Dai, J. Sun, H. Wang, and H. Wang
+Retrieval-augmented generation for large language models: a survey
+.
+arXiv preprint arXiv:2312.10997
+2
+(
+1
+).
+Cited by:
+§2.2
+.
+GitHub Inc. (2024)
+GitHub Inc.
+GitHub Copilot: your AI pair programmer
+.
+Note:
+https://github.com/features/copilot
+Accessed: 2024-05-20
+Cited by:
+§1
+.
+Guo
+et al.
+(2024)
+D. Guo, Q. Zhu, D. Yang, Z. Xie, K. Dong, W. Zhang, G. Chen, X. Bi, Y. Wu, Y. K. Li, F. Luo, Y. Xiong, and W. Liang
+DeepSeek-coder: when the large language model meets programming - the rise of code intelligence
+.
+ArXiv
+abs/2401.14196
+.
+External Links:
+Link
+Cited by:
+§1
+,
+§1
+,
+1st item
+,
+Table 1
+.
+Hu
+et al.
+(2025)
+R. Hu, C. Peng, X. Wang, J. Xu, and C. Gao
+Repo2Run: automated building executable environment for code repository at scale
+.
+arXiv preprint arXiv:2502.13681
+.
+Cited by:
+§2.1
+.
+Huang
+et al.
+(2025)
+L. Huang, W. Yu, W. Ma, W. Zhong, Z. Feng, H. Wang, Q. Chen, W. Peng, X. Feng, B. Qin, and T. Liu
+A survey on hallucination in large language models: principles, taxonomy, challenges, and open questions
+.
+ACM Transactions on Information Systems
+43
+(
+2
+),
+pp. 1–55
+.
+External Links:
+ISSN 1558-2868
+,
+Link
+,
+Document
+Cited by:
+§2.1
+.
+Hui
+et al.
+(2024)
+B. Hui, J. Yang, Z. Cui, J. Yang, D. Liu, L. Zhang, T. Liu, J. Zhang, B. Yu, K. Dang, A. Yang, R. Men, F. Huang, X. Ren, X. Ren, J. Zhou, and J. Lin
+Qwen2.5-coder technical report
+.
+External Links:
+Document
+Cited by:
+§1
+,
+3rd item
+,
+Table 1
+.
+Ji
+et al.
+(2023a)
+Z. Ji, N. Lee, R. Frieske, T. Yu, D. Su, Y. Xu, E. Ishii, Y. J. Bang, A. Madotto, and P. Fung
+Survey of hallucination in natural language generation
+.
+ACM computing surveys
+55
+(
+12
+),
+pp. 1–38
+.
+Cited by:
+§2.1
+.
+Ji
+et al.
+(2023b)
+Z. Ji, T. Yu, Y. Xu, N. Lee, E. Ishii, and P. Fung
+Towards mitigating llm hallucination via self reflection
+.
+In
+Findings of the Association for Computational Linguistics: EMNLP 2023
+,
+pp. 1827–1843
+.
+Cited by:
+§1
+,
+§2.2
+.
+Krishna
+et al.
+(2025)
+A. Krishna, E. Galinkin, L. Derczynski, and J. Martin
+Importing phantoms: measuring llm package hallucination vulnerabilities
+.
+External Links:
+2501.19012
+,
+Link
+Cited by:
+§1
+,
+§2.1
+.
+Ladisa
+et al.
+(2023)
+P. Ladisa, H. Plate, M. Martinez, and O. Barais
+Sok: taxonomy of attacks on open-source software supply chains
+.
+In
+2023 IEEE Symposium on Security and Privacy (SP)
+,
+pp. 1509–1526
+.
+Cited by:
+§1
+,
+§2.1
+.
+Lanyado (2024)
+B. Lanyado
+Diving deeper into ai package hallucinations
+.
+Note:
+https://www.lasso.security/blog/ai-package-hallucinations/
+Last accessed Mar. 2025
+Cited by:
+§1
+,
+§2.1
+.
+Lewis
+et al.
+(2020)
+P. Lewis, E. Perez, A. Piktus, F. Petroni, V. Karpukhin, N. Goyal, H. Küttler, M. Lewis, W. Yih, T. Rocktäschel,
+et al.
+Retrieval-augmented generation for knowledge-intensive nlp tasks
+.
+Advances in neural information processing systems
+33
+,
+pp. 9459–9474
+.
+Cited by:
+§1
+,
+§2.2
+.
+Li
+et al.
+(2025a)
+C. Li, Y. Zhang, J. Li, L. Cai, and G. Li
+Beyond autoregression: an empirical study of diffusion large language models for code generation
+.
+arXiv preprint arXiv:2509.11252
+.
+Cited by:
+§1
+.
+Li
+et al.
+(2025b)
+J. Li, G. Li, Y. Li, and Z. Jin
+Structured chain-of-thought prompting for code generation
+.
+ACM Transactions on Software Engineering and Methodology
+34
+(
+2
+),
+pp. 1–23
+.
+Cited by:
+§1
+.
+Liang
+et al.
+(2024)
+J. T. Liang, C. Yang, and B. A. Myers
+A large-scale survey on the usability of ai programming assistants: successes and challenges
+.
+In
+Proceedings of the 46th IEEE/ACM international conference on software engineering
+,
+pp. 1–13
+.
+Cited by:
+§1
+,
+§2.1
+.
+Liu
+et al.
+(2024)
+F. Liu, Y. Liu, L. Shi, H. Huang, R. Wang, Z. Yang, and L. Zhang
+Exploring and evaluating hallucinations in llm-powered code generation
+.
+ArXiv
+abs/2404.00971
+.
+External Links:
+Link
+Cited by:
+§1
+.
+Madaan
+et al.
+(2023)
+A. Madaan, N. Tandon, P. Gupta, S. Hallinan, L. Gao, S. Wiegreffe, U. Alon, N. Dziri, S. Prabhumoye, Y. Yang,
+et al.
+Self-refine: iterative refinement with self-feedback
+.
+Advances in Neural Information Processing Systems
+36
+,
+pp. 46534–46594
+.
+Cited by:
+§2.2
+.
+Maynez
+et al.
+(2020)
+J. Maynez, S. Narayan, B. Bohnet, and R. McDonald
+On faithfulness and factuality in abstractive summarization
+.
+arXiv preprint arXiv:2005.00661
+.
+Cited by:
+§2.1
+.
+Meta (2024a)
+Meta
+Introducing meta llama 3: the most capable openly available llm to date
+.
+Note:
+https://ai.meta.com/blog/meta-llama-3/
+Last accessed Dec. 2025
+Cited by:
+4th item
+,
+Table 1
+.
+Meta (2024b)
+Meta
+Llama 3.1
+.
+Note:
+https://ai.meta.com/blog/meta-llama-3-1/
+Last accessed Dec. 2025
+Cited by:
+5th item
+,
+Table 1
+.
+Neupane
+et al.
+(2023)
+S. Neupane, G. Holmes, E. Wyss, D. Davidson, and L. De Carli
+Beyond typosquatting: an in-depth look at package confusion
+.
+In
+32nd USENIX Security Symposium (USENIX Security 23)
+,
+pp. 3439–3456
+.
+Cited by:
+§2.1
+.
+npm, Inc. (2024)
+npm, Inc.
+Npm
+.
+Note:
+https://www.npmjs.com/
+Last accessed Dec. 2025
+Cited by:
+§2.3
+.
+Ohm
+et al.
+(2020)
+M. Ohm, H. Plate, A. Sykosch, and M. Meier
+Backstabber’s knife collection: a review of open source software supply chain attacks
+.
+In
+International Conference on Detection of Intrusions and Malware, and Vulnerability Assessment
+,
+pp. 23–43
+.
+Cited by:
+§1
+,
+§1
+,
+§2.1
+.
+Python Software Foundation (2000)
+Python Software Foundation
+PyPI
+.
+Note:
+https://pypi.org/
+Last accessed Dec. 2025
+Cited by:
+§1
+,
+§2.3
+,
+§4.5
+.
+Rozière
+et al.
+(2024)
+B. Rozière, J. Gehring, F. Gloeckle, S. Sootla, I. Gat, X. E. Tan, Y. Adi, J. Liu, R. Sauvestre, T. Remez, J. Rapin, A. Kozhevnikov, I. Evtimov, J. Bitton, M. Bhatt, C. C. Ferrer, A. Grattafiori, W. Xiong, A. Défossez, J. Copet, F. Azhar, H. Touvron, L. Martin, N. Usunier, T. Scialom, and G. Synnaeve
+Code llama: open foundation models for code
+.
+External Links:
+2308.12950
+,
+Link
+Cited by:
+§1
+,
+2nd item
+,
+Table 1
+.
+Spracklen
+et al.
+(2024)
+J. Spracklen, R. Wijewickrama, N. Sakib, A. Maiti, B. Viswanath, and M. Jadliwala
+We have a package for you! a comprehensive analysis of package hallucinations by code generating llms
+.
+ArXiv
+abs/2406.10279
+.
+External Links:
+Link
+Cited by:
+§1
+,
+§1
+,
+§1
+,
+§2.1
+,
+§2.2
+,
+§2.2
+,
+§2.2
+,
+§4.1
+,
+§4.1
+,
+§4.1
+,
+§4.3
+,
+§4.4
+,
+§5.1.2
+,
+§5.3
+,
+§5.3
+.
+Stack Overflow, Inc. (2024)
+Stack Overflow, Inc.
+Stack overflow
+.
+Note:
+https://stackoverflow.com/
+Last accessed Dec. 2025
+Cited by:
+§2.1
+.
+Tian
+et al.
+(2023)
+K. Tian, E. Mitchell, H. Yao, C. D. Manning, and C. Finn
+Fine-tuning language models for factuality
+.
+In
+The Twelfth International Conference on Learning Representations
+,
+Cited by:
+§1
+,
+§2.2
+.
+Tonmoy
+et al.
+(2024)
+S. Tonmoy, S. Zaman, V. Jain, A. Rani, V. Rawte, A. Chadha, and A. Das
+A comprehensive survey of hallucination mitigation techniques in large language models
+.
+arXiv preprint arXiv:2401.01313
+6
+.
+Cited by:
+§1
+,
+§2.2
+.
+Wang
+et al.
+(2025)
+X. Wang, B. Li, Y. Song, F. F. Xu, X. Tang, M. Zhuge, J. Pan, Y. Song, B. Li, J. Singh, H. H. Tran, F. Li, R. Ma, M. Zheng, B. Qian, Y. Shao, N. Muennighoff, Y. Zhang, B. Hui, J. Lin, R. Brennan, H. Peng, H. Ji, and G. Neubig
+OpenHands: an open platform for ai software developers as generalist agents
+.
+External Links:
+2407.16741
+,
+Link
+Cited by:
+§2.1
+.
+Wu
+et al.
+(2025)
+W. Wu, Y. Cao, N. Yi, R. Ou, and Z. Zheng
+Detecting and reducing the factual hallucinations of large language models with metamorphic testing
+.
+Proceedings of the ACM on Software Engineering
+2
+(
+FSE
+),
+pp. 1432–1453
+.
+Cited by:
+§2.1
+.
+Yang
+et al.
+(2025)
+L. Yang, Y. Liu, Y. Zhang, and J. Li
+DiffTester: accelerating unit test generation for diffusion llms via repetitive pattern
+.
+arXiv preprint arXiv:2509.24975
+.
+Cited by:
+§1
+.
+Yu
+et al.
+(2024)
+X. Yu, L. Liu, X. Hu, J. W. Keung, J. Liu, and X. Xia
+Fight fire with fire: how much can we trust chatgpt on source code-related tasks?
+.
+IEEE Transactions on Software Engineering
+.
+Cited by:
+§1
+.
+Zhang
+et al.
+(2025)
+Y. Zhang, Y. Li, L. Cui, D. Cai, L. Liu, T. Fu, X. Huang, E. Zhao, Y. Zhang, C. Xu, Y. Chen, L. Wang, A. T. Luu, W. Bi, F. Shi, and S. Shi
+Siren’s song in the ai ocean: a survey on hallucination in large language models
+.
+External Links:
+2309.01219
+,
+Link
+Cited by:
+§2.1
+.
+Zhao
+et al.
+(2024)
+X. Zhao, H. Qu, J. Xu, X. Li, W. Lv, and G. Wang
+A systematic review of fuzzing
+.
+Soft Computing
+28
+(
+6
+),
+pp. 5493–5522
+.
+Cited by:
+3rd item
+.
+Zhao
+et al.
+(2025)
+Y. Zhao, M. Wu, X. Hu, and X. Xia
+HFuzzer: testing large language models for package hallucinations via phrase-based fuzzing
+.
+ArXiv
+abs/2509.23835
+.
+External Links:
+Link
+Cited by:
+§1
+,
+§1
+,
+§2.1
+,
+§4.1
+,
+§4.1
+,
+§4.4
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

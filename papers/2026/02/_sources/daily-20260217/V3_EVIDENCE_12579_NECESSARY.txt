@@ -1,0 +1,196 @@
+Source: https://arxiv.org/html/2602.12579v1
+Exact v1 bounded source; B lines official HTML parsed paragraph index.
+B30: ℒ ( θ ) := 𝔼 x ∼ p ⁡ ( x ) 𝔼 y 1 : G ∼ π θ old ( ⋅ | x ) [ ℓ ( θ ; x , y 1 : G ) ] . \mathcal{L}(\theta):=\mathbb{E}_{x\sim p(x)}\;\mathbb{E}_{y_{1:G}\sim\pi_{\theta_{\mathrm{old}}}(\cdot|x)}\big[\,\ell(\theta;x,y_{1:G})\,\big]. (3)
+B31: In standard GRPO, we estimate the gradient of ℒ ⁡ ( θ ) \mathcal{L}(\theta) by sampling prompts and groups from π θ old \pi_{\theta_{\mathrm{old}}} and performing multiple epochs of stochastic gradient ascent on ℓ \ell .
+B32: Curriculum RL.
+B33: Standard RL treats all samples from p ⁡ ( x ) p(x) equally. Curriculum methods effectively optimize a sequence of objectives ℒ t ​ ( θ ) \mathcal{L}_{t}(\theta) , where the data distribution is re-weighted. The goal is to start with a “simple” distribution where gradient variance is low, and gradually anneal towards the target distribution p ⁡ ( x ) p(x) . In our setting, we define this re-weighting explicitly through an inclusion probability based on model confidence. Prior works have validated that intrinsic model probabilities can serve as reliable proxies for correctness ( Kadavath et al., 2022 ; Huang et al., 2024 ; Ren et al., 2023 ) . We formalize this signal as follows:
+B34: Definition 2.1 (Model Confidence) .
+B35: Quantifying confidence in LLMs is achieved by aggregating token-level probabilities. To obtain a stable signal c ⁡ ( x ) ∈ [ 0 , 1 ] c(x)\in[0,1] that depends only on the prompt, we first define the normalized uncertainty u ⁡ ( x ) u(x) as the expectation over trajectories sampled from the behavior policy π θ old \pi_{\theta_{\mathrm{old}}} :
+B36: u ( x ) := 𝔼 y ∼ π θ old ( ⋅ | x ) [ 1 T ∑ t = 1 T H ( π θ old ( ⋅ | s t ) ) log ⁡ | 𝒱 | ] , u(x):=\mathbb{E}_{y\sim\pi_{\theta_{\mathrm{old}}}(\cdot|x)}\left[\frac{1}{T}\sum_{t=1}^{T}\frac{H(\pi_{\theta_{\mathrm{old}}}(\cdot|s_{t}))}{\log|\mathcal{V}|}\right], (4)
+B37: where H H is the Shannon entropy and | 𝒱 | |\mathcal{V}| is the vocabulary size. The model confidence is defined as the complement:
+B38: c ⁡ ( x ) := 1 − u ⁡ ( x ) ∈ [ 0 , 1 ] . c(x):=1-u(x)\in[0,1]. (5)
+B39: High confidence implies the model has a “decisive” belief about the reasoning path. While sequence likelihood is not always a reliable predictor of correctness due to hallucinations ( Ren et al., 2023 ) , we leverage it here as an effective proxy for Curriculum Difficulty to stabilize training, rather than as a ground-truth verification signal.
+B40: 3 Verifier-Independent Curriculum Reinforcement Learning
+B41: We propose Verifier-Independent Curriculum Reinforcement Learning (VI-CuRL) , a novel framework for solving the high-variance challenge independent from verifiers.
+B42: 3.1 The VI-CuRL Objective
+B43: To formally operationalize our curriculum, we define a sequence of curriculum phases indexed by t = 1 , … , T t=1,\dots,T . Each phase is associated with a confidence threshold τ t \tau_{t} that determines which samples are included in the training process.
+B44: Curriculum Mask and Retention Rate.
+B45: We define the curriculum mask w t ​ ( x ) w_{t}(x) based on the frozen confidence scores. The selection is deterministic given the prompt and the threshold τ t \tau_{t} :
+B46: w t ( x ) = 𝟏 [ c ( x ) ≥ τ t ] . w_{t}(x)=\mathbf{1}[c(x)\geq\tau_{t}]. (6)
+B47: The target retention rate β t \beta_{t} corresponds to the population probability:
+B48: β t = 𝔼 x ∼ p ⁡ ( x ) ​ [ w t ​ ( x ) ] ∈ ( 0 , 1 ] . \beta_{t}=\mathbb{E}_{x\sim p(x)}[w_{t}(x)]\in(0,1]. (7)
+B49: In the implementation (Algorithm 1 ), we estimate β t \beta_{t} using the empirical batch retention β ^ t = 1 B ​ ∑ j = 1 B w t ​ ( x j ) \hat{\beta}_{t}=\frac{1}{B}\sum_{j=1}^{B}w_{t}(x_{j}) .
+B50: The Weighted Surrogate Objective.
+B51: For each phase t t , we optimize a re-weighted version of the standard surrogate ℒ ⁡ ( θ ) \mathcal{L}(\theta) that restricts learning to the selected subspace. To maintain the scale of the original objective, we introduce the importance sampling weight 1 / β t 1/\beta_{t} :
+B52: ℒ t ( θ ) := 𝔼 x ∼ p ⁡ ( x ) 𝔼 y 1 : G ∼ π θ old ( ⋅ | x ) [ w t ​ ( x ) β t ℓ ( θ ; x , y 1 : G ) ] . \mathcal{L}_{t}(\theta):=\mathbb{E}_{x\sim p(x)}\mathbb{E}_{y_{1:G}\sim\pi_{\theta_{\mathrm{old}}}(\cdot|x)}\Big[\frac{w_{t}(x)}{\beta_{t}}\;\ell(\theta;x,y_{1:G})\Big]. (8)
+B53: This weighted objective trades bias for variance. By focusing on the “easy” high-confidence region, it reduces the effective variance of the gradient estimator, albeit by optimizing a biased data distribution.
+B54: The Curriculum Gradient Estimator.
+B55: To optimize ℒ t ​ ( θ ) \mathcal{L}_{t}(\theta) , we use the standard auto-differentiation subgradient of the clipped PPO surrogate. Critically, the advantages A i A_{i} , masks w t ​ ( x ) w_{t}(x) , and weights β t \beta_{t} are treated as constants (“stop-gradients”) during the inner loop updates:
+B56: g ^ t := w t ​ ( x ) β t ∇ θ ℓ ( θ ; x , y 1 : G ) . \hat{g}_{t}:=\frac{w_{t}(x)}{\beta_{t}}\;\nabla_{\theta}\ell(\theta;x,y_{1:G}). (9)
+B57: 3.2 Curriculum Schedule and Algorithm
+B58: We now detail the practical implementation of the VI-CuRL framework. The optimization process is divided into T T steps. At each step t t , we seek to effectively filter the training batch to retain only the samples where the model exhibits high confidence.
+B59: Dynamic Quantile Thresholding.
+B60: Defining a fixed schedule for the confidence threshold τ t \tau_{t} is challenging because the model’s confidence distribution shifts as training progresses. A static threshold might result in either empty batches (if too high) or ineffective filtering (if too low). To address this, we define the curriculum schedule via a target retention rate β t ∈ ( 0 , 1 ] \beta_{t}\in(0,1] . We strictly enforce β t \beta_{t} by dynamically setting τ t \tau_{t} to the ( 1 − β t ) (1-\beta_{t}) -th quantile of the batch confidence scores. Specifically, for a batch of prompts ℬ = { x 1 , … , x B } \mathcal{B}=\{x_{1},\dots,x_{B}\} , we calculate confidence scores c j = c ⁡ ( x j ) c_{j}=c(x_{j}) . Let c ( 1 ) ≤ ⋯ ≤ c ( B ) c_{(1)}\leq\dots\leq c_{(B)} be the sorted scores. The threshold is set using the sample quantile:
+B61: τ t = c ( ⌊ ( 1 − β t ) ​ B ⌋ ) . \tau_{t}=c_{(\lfloor(1-\beta_{t})B\rfloor)}. (10)
+B62: This ensures the empirical retention β ^ t \hat{\beta}_{t} matches the target schedule.
+B63: Algorithm.
+B64: The full VI-CuRL training procedure is summarized in Algorithm 1 . We adopt a linear annealing schedule for β t \beta_{t} . The algorithm follows a standard outer/inner loop structure: in the outer loop, we sample data from π θ old \pi_{\theta_{\mathrm{old}}} , compute advantages and masks, and then in the inner loop, we perform multiple epochs of SGD on the masked surrogate.
+B65: Algorithm 1 Verifier-Independent Curriculum RL Input: Dataset 𝒟 \mathcal{D} , Initial Policy π ref \pi_{\text{ref}} , Total steps T T , Curriculum steps T curr T_{\text{curr}} , Batch size B B , Number of epochs K K , Learning rate η \eta . Initialize π θ ← π ref \pi_{\theta}\leftarrow\pi_{\text{ref}} . for t = 1 t=1 to T T do π θ old ← π θ \pi_{\theta_{\mathrm{old}}}\leftarrow\pi_{\theta} (Freeze behavior policy) Sample batch ℬ = { x j } j = 1 B ∼ 𝒟 \mathcal{B}=\{x_{j}\}_{j=1}^{B}\sim\mathcal{D} . for each prompt x j ∈ ℬ x_{j}\in\mathcal{B} do Sample group { y j , k } k = 1 G ∼ π θ old ( ⋅ | x j ) \{y_{j,k}\}_{k=1}^{G}\sim\pi_{\theta_{\mathrm{old}}}(\cdot|x_{j}) . Compute rewards R j , k R_{j,k} , advantages A j , k A_{j,k} , and confidence c j = c ⁡ ( x j ) c_{j}=c(x_{j}) . (Eq. ( 5 )) end for Determine β t \beta_{t} via schedule. Set τ t \tau_{t} as the ( 1 − β t ) (1-\beta_{t}) -quantile of { c j } \{c_{j}\} . Compute masks w j = 𝟏 [ c j ≥ τ t ] w_{j}=\mathbf{1}[c_{j}\geq\tau_{t}] . for k = 1 k=1 to K K do Sample minibatch ℳ ⊂ ℬ \mathcal{M}\subset\mathcal{B} . Compute g ^ = 1 | ℳ | ∑ j ∈ ℳ w j β t ∇ θ ℓ ( θ ; x j , y j , 1 : G ) \hat{g}=\frac{1}{|\mathcal{M}|}\sum_{j\in\mathcal{M}}\frac{w_{j}}{\beta_{t}}\nabla_{\theta}\ell(\theta;x_{j},y_{j,1:G}) . Update θ ← θ + η ​ g ^ \theta\leftarrow\theta+\eta\hat{g} . end for end for
+B66: This algorithm effectively operationalizes the bias-variance trade-off: early in training, β t \beta_{t} is small, and the algorithm focuses strictly on the “easiest” samples. As the model learns and variance naturally decreases, β t → 1 \beta_{t}\to 1 , ensuring unbiased optimization of the full distribution.
+B67: 4 Theoretical Analysis of the Bias-Variance Trade-off
+B68: In this section, we formalize the properties of VI-CuRL. Our analysis first addresses the “bias” component of the trade-off. We then dissect the “variance” component to reveal the source of the training stability.
+B69: 4.1 Consistency of the Objective
+B70: A foundational property of our framework is that the normalized gradient estimator g ^ t ​ ( x , y , θ ) \hat{g}_{t}(x,y;\theta) is, by construction, an unbiased estimator of the gradient of the surrogate objective ℒ t ​ ( θ ) \mathcal{L}_{t}(\theta) . That is, 𝔼 ⁡ [ g ^ t ​ ( x , y , θ ) ] = ∇ θ ℒ t ​ ( θ ) \mathbb{E}[\hat{g}_{t}(x,y;\theta)]=\nabla_{\theta}\mathcal{L}_{t}(\theta) . This ensures our algorithm correctly optimizes the objective for the current curriculum phase. The critical theoretical question, however, is whether maximizing these time-dependent surrogate objectives consistently leads to maximizing the base surrogate. Our first theorem confirms that it does:
+B71: Theorem 4.1 (Consistency of the Objective) .
+B72: Assuming the per-prompt surrogate loss is bounded, | ℓ ( θ ; x , y 1 : G ) | ≤ L max |\ell(\theta;x,y_{1:G})|\leq L_{\max} , the absolute difference between the true surrogate objective ℒ ⁡ ( θ ) \mathcal{L}(\theta) and the weighted objective ℒ t ​ ( θ ) \mathcal{L}_{t}(\theta) is bounded by ( 1 − β t ) (1-\beta_{t}) :
+B73: | ℒ ⁡ ( θ ) − ℒ t ​ ( θ ) | ≤ 2 ​ L max ​ ( 1 − β t ) . |\mathcal{L}(\theta)-\mathcal{L}_{t}(\theta)|\leq 2L_{\max}(1-\beta_{t}). (11)
+B74: The proof can be found in Appendix C.1 . The bounded-surrogate assumption | ℓ ( θ ; x , y 1 : G ) | ≤ L max |\ell(\theta;x,y_{1:G})|\leq L_{\max} is mild in practice with bounded rewards, group-normalized advantage, ratio clipping, and per-token KL penalty. ( Ouyang et al., 2022 ; Shao et al., 2024 ) . Meanwhile, as the curriculum is annealed ( τ t → 0 \tau_{t}\to 0 ), the retention rate β t → 1 \beta_{t}\to 1 , and the bound converges to zero, ensuring that ℒ t ​ ( θ ) → ℒ ​ ( θ ) \mathcal{L}_{t}(\theta)\to\mathcal{L}(\theta) . This theorem guarantees that the approximation error diminishes over time.
+B75: 4.2 A Deeper Investigation of Variance
+B76: Having established that our objective is asymptotically correct, we now analyze how the curriculum tames the variance that destabilizes standard RL. To this end, here we decompose the variance into its constituent parts.
+B77: Definition 4.2 (Vector Variance) .
+B78: For a random vector 𝐙 ∈ ℝ d \mathbf{Z}\in\mathbb{R}^{d} , we define its variance as the trace of its covariance matrix:
+B79: Var ⁡ ( 𝐙 ) := 𝔼 ⁡ [ ‖ 𝐙 − 𝔼 ⁡ [ 𝐙 ] ‖ 2 ] . \Var(\mathbf{Z}):=\mathbb{E}[\|\mathbf{Z}-\mathbb{E}[\mathbf{Z}]\|^{2}].
+B80: Theorem 4.3 (Variance Decomposition) .
+B81: Let g ( x , y 1 : G ; θ ) := ∇ θ ℓ ( θ ; x , y 1 : G ) g(x,y_{1:G};\theta):=\nabla_{\theta}\ell(\theta;x,y_{1:G}) be the gradient of the surrogate loss, and let g ¯ ( x ; θ ) ( x ; θ ) = 𝔼 y 1 : G | π θ old [ g ] \bar{g}(x;\theta)(x;\theta)=\mathbb{E}_{y_{1:G}|\pi_{\theta_{\mathrm{old}}}}[g] be the expected gradient for a fixed prompt x x . The variance of the VI-CuRL estimator g ^ t ​ ( x , y , θ ) \hat{g}_{t}(x,y;\theta) can be decomposed into three sources:
+B82: Var ⁡ ( g ^ t ​ ( x , y , θ ) ) = σ g , t 2 β t ⏟ Action Variance + V prob , t β t ⏟ Problem Variance + 1 − β t β t ​ ‖ ∇ θ ℒ t ​ ( θ ) ‖ 2 ⏟ Masking Variance , \begin{split}\Var(\hat{g}_{t}(x,y;\theta))=\underbrace{\frac{\sigma_{g,t}^{2}}{\beta_{t}}}_{\begin{subarray}{c}\text{Action Variance}\end{subarray}}+\underbrace{\frac{V_{\mathrm{prob},t}}{\beta_{t}}}_{\begin{subarray}{c}\text{Problem Variance}\end{subarray}}+\underbrace{\frac{1-\beta_{t}}{\beta_{t}}\|\nabla_{\theta}\mathcal{L}_{t}(\theta)\|^{2}}_{\begin{subarray}{c}\text{Masking Variance}\end{subarray}},\end{split} (12)
+B83: where σ g , t 2 := 𝔼 x | w t = 1 [ Var y 1 : G | π θ old ( g ) ] \sigma_{g,t}^{2}:=\mathbb{E}_{x|w_{t}=1}[\Var_{y_{1:G}|\pi_{\theta_{\mathrm{old}}}}(g)] is the average action variance within the selected set of problems, and V prob , t := Var x | w t = 1 ⁡ ( g ¯ ​ ( x , θ ) ) V_{\mathrm{prob},t}:=\Var_{x|w_{t}=1}(\bar{g}(x;\theta)) is the variance of mean gradients within that same set.
+B84: The proof can be found in Appendix C.2 . This decomposition reveals the narrative of VI-CuRL. The curriculum’s power lies in making the numerators of the first two terms— σ g , t 2 \sigma_{g,t}^{2} (action consistency) and V prob , t V_{\mathrm{prob},t} (problem homogeneity) —dramatically smaller. By selecting high-confidence (low-entropy) and homogeneous “easy” problems, their gradients become more consistent and well-aligned, reducing these numerators. The third term, “Masking Variance,” represents the cost of this trade-off, which vanishes as β t → 1 \beta_{t}\to 1 .
+B85: While the decomposition is exact, a simple upper bound of the form O ⁡ ( 1 / β t ) O(1/\beta_{t}) would be overly pessimistic, suggesting that variance explodes as the curriculum tightens. We provide a confidence-aware bound that resolves this contradiction.
+B86: Lemma 4.4 (Confidence-Aware Variance Bound) .
+B87: Suppose there exists a non-increasing function G conf : [ 0 , 1 ] → [ 0 , ∞ ) G_{\conf}:[0,1]\to[0,\infty) such that for all selected prompts ( c ⁡ ( x ) ≥ τ t c(x)\geq\tau_{t} ), the norm of the surrogate gradient is bounded by confidence: ∥ ∇ θ ℓ ( θ ; x , y 1 : G ) ∥ ≤ G conf ( c ( x ) ) \|\nabla_{\theta}\ell(\theta;x,y_{1:G})\|\leq G_{\conf}(c(x)) . Then
+B88: Var ⁡ ( g ^ t ) ≤ G conf ​ ( τ t ) 2 β t − ‖ ∇ θ ℒ t ​ ( θ ) ‖ 2 . \Var(\hat{g}_{t})\leq\frac{G_{\conf}(\tau_{t})^{2}}{\beta_{t}}-\|\nabla_{\theta}\mathcal{L}_{t}(\theta)\|^{2}. (13)
+B89: The proof can be found in Appendix C.3 . This lemma shows that as the curriculum threshold τ t \tau_{t} increases, the numerator G conf ​ ( τ t ) 2 G_{\conf}(\tau_{t})^{2} decreases, counteracting the decrease in the denominator β t \beta_{t} . Under reasonable assumptions (e.g., if β t ∝ ( 1 − τ t ) \beta_{t}\propto(1-\tau_{t}) and G conf ​ ( τ t ) 2 ∝ ( 1 − τ t ) G_{\conf}(\tau_{t})^{2}\propto(1-\tau_{t}) ), this bound can remain stable instead of diverging.
+B90: To formalize this intuition, we introduce a theorem below, which shows that under a small assumption about the curriculum’s effectiveness.
+B91: Theorem 4.5 (Curriculum-Sensitive Variance Bound) .
+B92: Assume that for each phase t t there exist constants a 1 , a 2 ≥ 0 a_{1},a_{2}\geq 0 and α > 0 \alpha>0 such that the variance numerators from Theorem 4.3 decay faster than the retention rate
+B93: σ g , t 2 ≤ a 1 ​ β t 1 + α , and V prob , t ≤ a 2 ​ β t 1 + α . \sigma_{g,t}^{2}\leq a_{1}\,\beta_{t}^{1+\alpha},\quad\text{and}\quad V_{\mathrm{prob},t}\leq a_{2}\,\beta_{t}^{1+\alpha}. (14)
+B94: Then the total variance is bounded by
+B95: Var ⁡ ( g ^ t ) ≤ ( a 1 + a 2 ) ​ β t α + 1 − β t β t ​ ‖ ∇ θ ℒ t ​ ( θ ) ‖ 2 . \Var(\hat{g}_{t})\leq(a_{1}+a_{2})\,\beta_{t}^{\alpha}+\frac{1-\beta_{t}}{\beta_{t}}\,\bigl\|\nabla_{\theta}\mathcal{L}_{t}(\theta)\bigr\|^{2}. (15)
+B96: The proof can be found in Appendix C.4 . In practice, assumption ( 14 ) is naturally satisfied because the curriculum selects for high-confidence samples where the policy’s entropy is low and the problem difficulty is homogeneous. Under this circumstance, the first two terms vanish as β t → 0 \beta_{t}\to 0 . The remaining term is the masking variance, which is also expected to be small in practice, as the gradient on the “easiest” problems, ‖ ∇ θ ℒ t ​ ( θ ) ‖ \|\nabla_{\theta}\mathcal{L}_{t}(\theta)\| , should be close to zero. The theorem thus confirms that VI-CuRL successfully trades a controllable bias for a dramatically reduced variance.
+
+B99: 5.1 Experimental Setup
+B100: We trained on three small backbones, Qwen2.5-Math-1.5B , DeepSeek-R1-Distill-Qwen-1.5B , and Llama-3.2-3B-Instruct , and one scale-up model Qwen2.5-Math-7B . Rewards for the oracle baselines came from a rule-based checker that extracted the final \boxed{\cdot} answer and tested numeric/rational equivalence. For verifier-independent methods, we relied solely on intrinsic signals (e.g., majority vote or entropy). We implemented VI-CuRL as a curriculum hook within VERL ( Sheng et al., 2024 ) , following a PPO-style GRPO recipe. Evaluation used six verifiable math suites— AIME-2024 , AIME-2025 , AMC-2023 , MATH500 , Minerva MATH , and OlympiadBench —reporting Pass@1 and Pass@8 with 16 samples and averaged over 5 random seeds. Compute was 8 × \times A100 (40GB) GPUs servers. More details can be found in Appendix D .
+B101: Table 1: Main Results (Part I): Pass@1 performance for 1.5B parameter models . We compare VI-CuRL against standard baselines. Blue rows highlight our method.
+B102: Dataset AIME AIME AMC Math500 Minerva Olympiad Average
+B103: 2024 2025 2023 MATH Bench
+B104: Qwen2.5-Math-1.5B
+B105: Base (No RL) 6.0 ± \pm 1.9 4.0 ± \pm 0.6 34.2 ± \pm 0.2 47.5 ± \pm 0.3 5.1 ± \pm 0.4 25.1 ± \pm 0.4 20.3 ± \pm 0.6
+B106: Oracle Reward (w. Verifier)
+B107: No Curriculum 15.5 ± \pm 1.7 8.5 ± \pm 0.7 51.8 ± \pm 3.0 70.2 ± \pm 0.2 15.4 ± \pm 0.5 31.4 ± \pm 0.3 32.1 ± \pm 1.1
+B108: VCRL 12.9 ± \pm 2.0 5.5 ± \pm 1.0 48.8 ± \pm 2.0 69.2 ± \pm 0.2 18.7 ± \pm 0.0 31.3 ± \pm 0.2 31.1 ± \pm 0.9
+B109: AdaRFT 13.2 ± \pm 1.5 6.2 ± \pm 1.4 48.6 ± \pm 2.0 68.7 ± \pm 0.4 20.1 ± \pm 0.5 29.0 ± \pm 0.3 31.0 ± \pm 1.0
+B110: VI-CuRL 15.9 ± \pm 1.2 8.3 ± \pm 0.9 52.9 ± \pm 1.3 70.1 ± \pm 1.5 16.1 ± \pm 2.8 34.8 ± \pm 3.9 33.0 ± \pm 1.9
+B111: Verifier-Free: Majority Vote
+B112: No Curriculum 0.0 ± \pm 0.0 0.0 ± \pm 0.0 0.0 ± \pm 0.0 0.2 ± \pm 0.0 0.4 ± \pm 0.0 0.0 ± \pm 0.0 0.1 ± \pm 0.0
+B113: VI-CuRL 15.9 ± \pm 1.1 8.7 ± \pm 1.1 53.1 ± \pm 1.3 72.3 ± \pm 0.6 21.6 ± \pm 4.0 33.5 ± \pm 4.5 34.2 ± \pm 2.1
+B114: Verifier-Free: Entropy
+B115: No Curriculum 0.0 ± \pm 0.0 0.0 ± \pm 0.0 10.8 ± \pm 0.5 9.4 ± \pm 0.1 4.6 ± \pm 0.1 3.7 ± \pm 0.2 4.8 ± \pm 0.1
+B116: VI-CuRL 13.8 ± \pm 0.8 6.0 ± \pm 0.7 48.6 ± \pm 0.9 69.9 ± \pm 1.9 19.7 ± \pm 4.0 32.0 ± \pm 0.3 31.7 ± \pm 1.4
+B117: DeepSeek-R1-Distill-Qwen-1.5B
+B118: Base (No RL) 9.0 ± \pm 0.6 9.4 ± \pm 0.6 41.4 ± \pm 1.4 61.1 ± \pm 0.1 10.5 ± \pm 0.6 22.9 ± \pm 0.4 25.7 ± \pm 0.6
+B119: Oracle Reward (w. Verifier)
+B120: No Curriculum 11.0 ± \pm 0.5 10.3 ± \pm 0.4 50.7 ± \pm 2.0 66.2 ± \pm 0.3 10.9 ± \pm 0.2 26.5 ± \pm 0.3 29.3 ± \pm 0.6
+B121: VCRL 13.1 ± \pm 0.9 10.8 ± \pm 0.8 52.3 ± \pm 0.9 71.2 ± \pm 2.2 10.8 ± \pm 1.9 33.8 ± \pm 5.3 32.0 ± \pm 2.0
+B122: AdaRFT 15.1 ± \pm 1.0 14.5 ± \pm 1.6 57.0 ± \pm 2.5 71.9 ± \pm 0.4 14.5 ± \pm 0.5 34.9 ± \pm 0.7 34.6 ± \pm 1.1
+B123: VI-CuRL 18.0 ± \pm 1.4 14.0 ± \pm 1.1 58.5 ± \pm 1.4 74.4 ± \pm 3.0 16.3 ± \pm 3.9 38.4 ± \pm 3.6 36.6 ± \pm 2.4
+B124: Verifier-Free: Majority Vote
+B125: No Curriculum 1.2 ± \pm 0.8 3.6 ± \pm 1.2 14.6 ± \pm 2.4 26.2 ± \pm 0.2 2.8 ± \pm 0.2 10.2 ± \pm 0.1 9.8 ± \pm 0.8
+B126: VI-CuRL 22.8 ± \pm 1.4 19.1 ± \pm 2.0 68.2 ± \pm 1.7 78.8 ± \pm 0.4 17.8 ± \pm 0.1 42.0 ± \pm 0.5 41.5 ± \pm 1.0
+B127: Verifier-Free: Entropy
+B128: No Curriculum 3.0 ± \pm 0.5 5.3 ± \pm 0.3 31.1 ± \pm 1.3 55.3 ± \pm 1.3 12.3 ± \pm 2.4 22.2 ± \pm 1.7 21.5 ± \pm 1.3
+B129: VI-CuRL 19.2 ± \pm 1.5 15.6 ± \pm 0.8 61.3 ± \pm 0.6 77.6 ± \pm 0.6 14.6 ± \pm 0.2 37.0 ± \pm 0.7 37.5 ± \pm 0.7
+
+B401: Appendix D Implementation Details
+B402: This section details the prompt configurations, hyperparameters, and datasets used to ensure the reproducibility of our experiments. We adopt a structured presentation to distinguish experimental components clearly.
+B403: D.1 Prompt Templates
+B404: Training & Generation.
+B405: We employ a consistent prompt structure for both training rollouts and evaluation, designed to elicit step-by-step reasoning (Chain-of-Thought) and strictly enforce the output format required for rule-based verification.
+B406: Standard Prompt Template User: {QUESTION} Let’s think step by step and enclose the reasoning process within <think> and </think> tags. The final result in the answer MUST BE within \boxed{} .
+B407: During preprocessing, this is formatted as a single-turn conversation. The ground-truth answer is attached separately for reward computation.
+B408: Verification Logic.
+B409: The rule-based verifier parses the model’s output to extract the content inside the last \boxed{…} tag. It then performs robust equality checking (handling fractions, decimals, and algebraic equivalents) against the ground truth to assign a binary reward R ~ ∈ { 0 , 1 } \tilde{R}\in\{0,1\} .
+B410: D.2 Configuration and Hyperparameters
+B411: We utilize Group Relative Policy Optimization (GRPO) as the underlying reinforcement learning algorithm. In the VI-CuRL setting, we introduce curriculum-specific parameters.
+B412: Table 6 : Detailed hyperparameters for GRPO training and VI-CuRL curriculum.
+B413: Hyperparameter Value
+B414: Optimization & Model
+B415: Algorithm GRPO
+B416: Training Strategy Fully Sharded Data Parallel 2 (FSDP2) + Zero Redundancy Optimizer Stage 3 (ZeRO-3)
+B417: Optimizer AdamW
+B418: Learning Rate 3 × 10 − 6 3\times 10^{-6}
+B419: Total Epochs 1
+B420: Global Batch Size 128
+B421: Gradient Accumulation 1
+B422: Rollout & GRPO
+B423: Rollout Engine vLLM
+B424: Context Window 512 (Input) + 3072 (Output)
+B425: Group Size ( G G ) 8
+B426: Sampling Temperature 1.0
+B427: Advantage Group-Normalized ( A i = R i − R ¯ σ + ϵ A_{i}=\frac{R_{i}-\bar{R}}{\sigma+\epsilon} )
+B428: KL Coefficient ( β K ​ L \beta_{KL} ) 0.001
+B429: Entropy Coefficient 0.0
+B430: Reference Model Frozen Initial Policy
+B431: VI-CuRL Curriculum
+B432: Initial Retention ( β start \beta_{\text{start}} ) 0.2
+B433: Curriculum Duration ( T curr T_{\text{curr}} ) 100% of Training Steps
+B434: Confidence Metric Negative Entropy ( c ⁡ ( x ) = 𝔼 ⁡ [ − H ] c(x)=\mathbb{E}[-H] )
+B435: Retention Schedule Linear Annealing
+B436: D.3 Dataset Composition
+B437: Our experiments leverage a combination of established benchmarks for training and comprehensive evaluation.
+B438: Training Source.
+B439: DeepScaleR
+B440: ( Luo et al., 2025 ) : A large-scale math reasoning corpus used for all outcome-supervised training runs.
+B441: Evaluation Suite.
+B442: We evaluate on six distinct datasets to assess robustness and generalization.
+B443: MATH500
+B444: ( Lightman et al., 2024 ) : A subset of the MATH benchmark containing 500 representative problems.
+B445: AIME (2024 & 2025)
+B446: ( HuggingFaceH4, 2024 ; OpenCompass, 2025 ) : Recent sets from the American Invitational Mathematics Examination, testing high-difficulty competition math.
+
+B169: 5.2 Main Results
+B170: We presented a detailed comparison of our method against baselines across two distinct experimental settings: Oracle Reward and Verifier-Free (Intrinsic) Reward. Table 1 and Table 2 summarized the performance. In the Oracle setting, VI-CuRL consistently matched or outperformed standard baselines across all model scales, particularly on harder benchmarks, demonstrating that curriculum learning accelerated convergence even when perfect rewards were available. The benefits were even more critical in the Verifier-Free setting, where standard methods succumbed to high variance and often suffered from model collapse. In contrast, VI-CuRL effectively stabilized training, recovering performance comparable to the Oracle topline. This confirmed that managing gradient variance via a high-confidence curriculum was essential for learning from noisy, intrinsic signals. Additional results for Pass@8 and analysis verifications of the curriculum effectively sorts problems by difficulty were detailed in Appendix B .
+B171: 5.3 Learning Curve Analysis: with/without Verifiers
+B172: We performed a comprehensive comparison of learning curves across three distinct reward settings: Oracle (Ground Truth), Majority Vote , and Entropy . Figure 2 presented a 6 × 6 6\times 6 grid of results.
+B173: Oracle Setting (Rows 1-2): Even with a perfect verifier, VI-CuRL (blue) often matched or exceeded standard RL (orange) in stability and final performance.
+B174: Majority Vote (Rows 3-4): This verifier-independent baseline (purple) was notoriously unstable, as seen in the fluctuating curves. VI-CuRL significantly stabilized training, yielding smooth, monotonic improvements.
+B175: Entropy (Rows 5-6): Using entropy as a proxy also benefited from VI-CuRL’s curriculum, which filtered out high-entropy (uncertain) samples early on to prevent policy collapse.
+B176: VI-CuRL demonstrated effective variance reduction and robust learning across all settings, validating its utility as a general-purpose stabilizer for RLVR.
+B177: AIME2024 MATH500 AIME2025 AMC2023 Minerva Olympiad
+B178: Oracle P@1
+B179: Oracle P@8
+B180: MajVote P@1
+B181: MajVote P@8
+B182: Entropy P@1
+B183: Entropy P@8
+B184: Steps Steps Steps Steps Steps Steps
+B185: Figure 2 : The learning curves comparing VI-CuRL against the baseline No Curriculum across verifier-based (Oracle) and verifier-free (Majority Vote and Entropy) settings. Rows alternate between Pass@1 and Pass@8 for each setting.
+B186: 5.4 Does VI-CuRL Really Reduce Variance?
+B187: A key theoretical advantage of VI-CuRL is variance reduction through curriculum selection. According to Theorem 4.3 , the variance of the curriculum-selected estimator depends on:
+B188: Action Variance: σ g , t 2 := 𝔼 x | w t = 1 ​ [ Var y | x ⁡ ( g ) ] \sigma_{g,t}^{2}:=\mathbb{E}_{x|w_{t}=1}[\Var_{y|x}(g)] : the expected gradient variance due to sampling different rollouts for the same prompt within the selected set.
+B189: Problem Variance: V prob , t := Var x | w t = 1 ⁡ ( g ¯ ) V_{\mathrm{prob},t}:=\Var_{x|w_{t}=1}(\bar{g}) : the variance of mean gradients across different prompts within the selected set.
+B190: To empirically validate this, we estimated these variance components at each training step t t using Monte-Carlo approximations. For K K independent rollouts per-prompt,
+B191: σ ^ g , t 2 = 1 | 𝒮 t | ​ ∑ x ∈ 𝒮 t Var ^ y | x ​ ( g ⁡ ( x , y ) ) , V ^ prob , t = Var ^ x ∈ 𝒮 t ​ ( g ¯ ​ ( x ) ) , \hat{\sigma}^{2}_{g,t}=\frac{1}{|\mathcal{S}_{t}|}\sum_{x\in\mathcal{S}_{t}}\widehat{\Var}_{y|x}(g(x,y)),\quad\hat{V}_{\mathrm{prob},t}=\widehat{\Var}_{x\in\mathcal{S}_{t}}(\bar{g}(x)),
+B192: where 𝒮 t \mathcal{S}_{t} denotes either the curriculum-selected subset (“kept”) or the full dataset (“full”).
+B193: Validating Theorem 4.3 . The theorem predicted that the curriculum-selected subset 𝒮 t kept \mathcal{S}_{t}^{\text{kept}} should have lower variance than the full dataset 𝒮 t full \mathcal{S}_{t}^{\text{full}} when β t < 1 \beta_{t}<1 . To test this, we computed the variance ratio:
+B194: Ratio σ , t = σ ^ g , t 2 ​ ( kept ) σ ^ g , t 2 ​ ( full ) , Ratio V t = V ^ prob , t ​ ( kept ) V ^ prob , t ​ ( full ) . \mathrm{Ratio}_{\sigma,t}=\frac{\hat{\sigma}^{2}_{g,t}(\text{kept})}{\hat{\sigma}^{2}_{g,t}(\text{full})},\quad\mathrm{Ratio}_{V_{t}}=\frac{\hat{V}_{\mathrm{prob},t}(\text{kept})}{\hat{V}_{\mathrm{prob},t}(\text{full})}.
+B195: If the curriculum effectively reduces variance, we expected Ratio σ , t , Ratio V t < 1 \mathrm{Ratio}_{\sigma,t},\mathrm{Ratio}_{V_{t}}<1 when β t < 1 \beta_{t}<1 , and Ratio σ , t , Ratio V t ≈ 1 \mathrm{Ratio}_{\sigma,t},\mathrm{Ratio}_{V_{t}}\approx 1 when β t → 1 \beta_{t}\to 1 .
+B196: (a) Qwen2.5-Math-1.5B (b) DeepSeek-R1-Distill-Qwen-1.5B
+B197: Figure 3 : Variance Ratio Analysis. Variance ratio (kept/full) for Action Variance ( σ g , t 2 \sigma_{g,t}^{2} ) and Problem Variance ( V prob , t V_{\mathrm{prob},t} ) alongside the retention rate ( β t \beta_{t} , right axis). When β t < 1 \beta_{t}<1 , both ratios are consistently below 1, confirming that curriculum selection reduces variance as predicted by Theorem 4.3 . As β t → 1 \beta_{t}\to 1 , the ratios approach 1 since the selected set converges to the full dataset.
+
+B331: C.1 Proof of Theorem 4.1
+B332: Proof.
+B333: The goal is to bound the difference between the true surrogate objective ℒ ⁡ ( θ ) \mathcal{L}(\theta) and the VI-CuRL surrogate ℒ t ​ ( θ ) \mathcal{L}_{t}(\theta) . Recall the definitions:
+B334: ℒ ( θ ) = 𝔼 x ∼ p ⁡ ( x ) 𝔼 y 1 : G ∼ π θ old ( ⋅ | x ) [ ℓ ( θ ; x , y 1 : G ) ] \mathcal{L}(\theta)=\mathbb{E}_{x\sim p(x)}\mathbb{E}_{y_{1:G}\sim\pi_{\theta_{\mathrm{old}}}(\cdot|x)}[\ell(\theta;x,y_{1:G})]
+B335: ℒ t ( θ ) = 𝔼 x ∼ p ⁡ ( x ) 𝔼 y 1 : G ∼ π θ old ( ⋅ | x ) [ w t ​ ( x ) β t ℓ ( θ ; x , y 1 : G ) ] \mathcal{L}_{t}(\theta)=\mathbb{E}_{x\sim p(x)}\mathbb{E}_{y_{1:G}\sim\pi_{\theta_{\mathrm{old}}}(\cdot|x)}\left[\frac{w_{t}(x)}{\beta_{t}}\ell(\theta;x,y_{1:G})\right]
+B336: We partitions the objective using the law of total expectation conditioned on the mask w t ​ ( x ) w_{t}(x) . Let 𝒮 t = { x ∣ w t ​ ( x ) = 1 } \mathcal{S}_{t}=\{x\mid w_{t}(x)=1\} be the selected subspace.
+B337: ℒ ⁡ ( θ ) \displaystyle\mathcal{L}(\theta) = ∫ ℓ ( θ ; x , y 1 : G ) p ( x ) π θ old ( y 1 : G | x ) d y 1 : G d x \displaystyle=\int\ell(\theta;x,y_{1:G})p(x)\pi_{\theta_{\mathrm{old}}}(y_{1:G}|x)dy_{1:G}dx
+B338: = β t ​ ℒ t ​ ( θ ) + ( 1 − β t ) ​ ℒ discard ​ ( θ ) . \displaystyle=\beta_{t}\mathcal{L}_{t}(\theta)+(1-\beta_{t})\mathcal{L}_{\text{discard}}(\theta).
+B339: Thus, we have the exact decomposition:
+B340: ℒ ⁡ ( θ ) = β t ​ ℒ t ​ ( θ ) + ( 1 − β t ) ​ ℒ discard ​ ( θ ) . \mathcal{L}(\theta)=\beta_{t}\mathcal{L}_{t}(\theta)+(1-\beta_{t})\mathcal{L}_{\text{discard}}(\theta).
+B341: Now, we examine the difference:
+B342: ℒ ​ ( θ ) − ℒ t ​ ( θ ) \displaystyle\mathcal{L}(\theta)-\mathcal{L}_{t}(\theta) = ( 1 − β t ) ​ ( ℒ discard ​ ( θ ) − ℒ t ​ ( θ ) ) . \displaystyle=(1-\beta_{t})(\mathcal{L}_{\text{discard}}(\theta)-\mathcal{L}_{t}(\theta)).
+B343: Assuming the surrogate loss is bounded | ℓ ( θ ; x , y 1 : G ) | ≤ L max |\ell(\theta;x,y_{1:G})|\leq L_{\max} , then:
+B344: | ℒ ⁡ ( θ ) − ℒ t ​ ( θ ) | \displaystyle|\mathcal{L}(\theta)-\mathcal{L}_{t}(\theta)| ≤ ( 1 − β t ) ​ ( L max + L max ) \displaystyle\leq(1-\beta_{t})(L_{\max}+L_{\max})
+B345: = 2 ​ L max ​ ( 1 − β t ) . \displaystyle=2L_{\max}(1-\beta_{t}).
+B346: This completes the proof. ∎
+

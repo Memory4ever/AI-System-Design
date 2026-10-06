@@ -1,0 +1,55 @@
+Exact-v1 necessary implementation/codec ablation and timing conditions.
+B265: [98] B. Zhu, B. Jiang, S. Wang, S. Tang, T. Chen, L. Luo, Y. Zheng, and X. Chen (2025) MotionGPT3: human motion as a second modality . arXiv preprint arXiv:2506.24086 . Cited by: §1 , §2 , §4.2 , Table 4 .
+B266: Supplementary Material
+B267: 7 Implementation Details
+B268: In this section, we report all the details of LLaMo’s implementation, to support reproducibility. We further trained an 8B model and discuss all our model sizes - 1B, 3B and 8B.
+B269: 7.1 Motion VAE
+B270: We adopt the causal VAE architecture and training losses from MotionStreamer [ 76 ] . The first 1K training iterations use a linear warmup learning rate schedule from 0 to 5e-5, followed by 3M iterations with a cosine decay schedule from 5e-5 to 0. We use the AdamW optimizer [ 43 ] with [ β 1 \beta_{1} , β 2 \beta_{2} ] = [0.9, 0.95] and a batch size of 256. All VAE training runs use 8 A100 GPUs. For robustness in modeling continuous autoregressive tokens, we sample the variance for each VAE latent from 𝐔 ⁡ ( 0 , 𝒞 σ ) \mathbf{U}(0,\mathcal{C}_{\sigma}) where 𝒞 σ = 0.01 \mathcal{C}_{\sigma}=0.01 , instead of predicting it from the network.
+B271: 7.2 Unified Motion-Language Model
+B272: Mixture-of-Transformer.
+B273: We used Llama3.2-1/3B-Instruct and Llama3.1-8B-Instruct as the base language model to build LLaMo-1B/3B and 8B, respectively. During training, all language-related parameters are frozen, except for the text embeddings of [BOM] and [EOM]. These special text token embeddings are initialized from the mean of the language codebook. . The motion branch transformer parameters are initialized from the text branch transformer. The motion adapter 𝒫 ⁡ ( ⋅ ) \mathcal{P}(\cdot) is a two-layer MLP with GELU [ 21 ] activation and post-RMSNorm [ 86 ] .
+B274: Flow Matching Head.
+B275: We use the MLP head architecture design from MAR [ 33 ] , with a hidden dimension of 1536 and 12 layers. Before the output vectors of the Transformer serve as the condition for flow matching, we apply a two-layer MLP with GELU [ 21 ] activation and post-RMSNorm [ 86 ] as the motion projector. During inference, we use an ODE solver based on Euler integrator with 50 steps.
+B276: Figure 5 : Token Latency breakdown of Inference. We compared the inference speed based on different model sizes. With infrastructural optimizations, even 8B model can achieve real-time streaming motion generation. Our VAE does 4x temporal downsampling. So the 7.5FPS token generation speed equal to 30FPS motion generation speed.
+B277: Motion Generation Exit Head.
+B278: We follow TransformerTTS [ 31 ] and SpeechT5 [ 1 ] in using a simple MLP to predict the stop generation signal based on the decoder-only transformer output. The MLP is structured by 5 Linear layers with Swish activation [ 54 ] . We adopt a binary classification loss for stop prediction.
+B279: Efficient Training and Inference
+B280: To achieve more efficient training, we utilize DeepSpeed-Zero2 1 1 1 https://www.deepspeed.ai/tutorials/zero/ to reduce the redundancy in optimizer states and updating gradients. All the training is under BF16 precision via the AdamW optimizer [ 43 ] with [ β 1 \beta_{1} , β 2 \beta_{2} ] = [0.9, 0.95] and a batch size of 128. The LLaMo-1B and LLaMo-3B are trained on 8 A100s. The LLaMo-8B are trained on 16 A100s. To achieve real-time streaming motion generation on a single A100, we adopt serval infrastructural optimizations with few engineer efforts. Specifically, we use KV-cache to reduce the computation of large decoder-only transformer and compile the cuda graph of flow matching sampling loop to remove kernel launch overhead. We profile the cost of inference computation with batch size 4 in Fig. 5 and, as shown, all the models with different sizes can achieve real-time streaming motion generation. Since our motion causal VAE encodes human motion using a 4 × \times temporal downsampling factor, the target token latency required to achieve real-time streaming motion generation is 1000 / 30 × 4 = 133.33 ​ ms 1000/30\times 4=133.33\text{ ms} .
+B281: Methods Motion-to-Text Text-to-Motion
+B282: R@3 ↑ \uparrow MM-D ↓ \downarrow FID ↓ \downarrow R@3 ↑ \uparrow
+B283: Real Motion 0.9866 0.7016 - 0.9866
+B284: LLaMo-1B (our) 0.9393 0.7136 27.361 0.9332
+B285: LLaMo-3B (our) 0.9422 0.7132 19.893 0.9594
+B286: LLaMo-8B (our) 0.9613 0.7126 18.935 0.9603
+B287: Ablations based on LLaMo-3B
+B288: use [ 76 ] VAE 0.9221 0.7310 34.002 0.8936
+B289: only Stage1 0.9108 0.7443 80.912 0.7615
+B290: only Stage1&2 0.9422 0.7132 22.524 0.9521
+B291: Table 6 : Ablation of Design Choice. We evaluate our models on the test split ( ∼ \sim 30K samples) of our large-scale motion-text dataset. We follow the evaluator design in [ 15 ] , text-to-motion protocols in [ 17 ] , and motion-to-text protocols in [ 19 ] . We show that a) using a VAE with predicted variance significantly hurts motion generation, and b) our multistage training recipe progressively improves the model performance.
+B292: 8 More Ablation Studies
+B293: In this section, we demonstrate more results and analysis to validate the effectiveness of LLaMo design choices.
+B294: Further Scale Up Model Size
+B295: To explore the scalability of this solution, we design a 8B-version LLaMo based on Llama-3.1-8B-Instruct. Consistent with the findings in MotionMillion [ 12 ] , as shown in Tab. 6 , we observe that scaling the model from 3B to 8B yields negligible improvements in FID and R-precision compared to the transition from 1B to 3B.
+B296: Traditional VAE vs . Our VAE
+B297: Although prior works [ 62 , 59 , 28 , 56 ] have demonstrated that a robust VAE is crucial for continuous autoregressive generation, it remains unclear whether this conclusion generalizes to the motion modality. Therefore, we further evaluate the validity and generalization of this observation in our motion-language setting in Tab. 6 . Instead of sampling the variance from predefined distribution, we use the classic network-predicted variance VAE as in [ 76 ] . The significant degradation of motion synthesis performance confirms that adding noise to ensure a robust VAE is essential for the continuous autoregressive paradigm. However, we note that motion understanding performance is not affected by the VAE robustness.
+B298: Multi-Stage Training Recipe.
+B299: We further evaluate the effect of our multi-stage training strategy, with results summarized in Tab. 6 for the 3B model setting. Across stages, we observe steady improvements in both motion fidelity and text–motion consistency, indicating that the staged optimization procedure effectively stabilizes the learning dynamics of large models. By decomposing the training process into progressively more specialized phases, our approach mitigates early training instability, facilitates more reliable modality alignment, and ultimately leads to better overall zero-shot performance.
+B300: 9 Data Curation Details
+B301: Annotation Prompt.
+B302: We include the full Gemini-2.5-Pro prompt used for annotating the human-motion videos in the supplementary materials.
+B303: Data Filtering.
+B304: During VLM-based annotation, we instruct Gemini to identify videos depicting static or near-static human motions. To further remove under-expressive sequences from a kinematic perspective, we apply an additional heuristic: a motion sequence is filtered out if the velocities of all end-effectors remain below 5 cm/s. This threshold corresponds to natural micro-movement during human quietly standing. Combining semantic–kinematic filtering, we ensures the dataset for motion head fine-tuning primarily contains expressive motion patterns.
+B305: 10 Zero-shot Text-to-Motion Generation
+B306: In this section, we present additional results demonstrating the zero-shot motion generation capabilities of our large unified model.
+B307: User Study versus MotionMillion [ 12 ] .
+B308: We conducted an A/B human evaluation study with 14 participants to assess motion generation quality across three dimensions: Physical Plausibility , Motion Smoothness , and Text Alignment . In this study, participants were shown motions generated by each model for the same text prompt, without knowing which model produced which motion. As shown in Fig. 6 , our model achieves substantially better performance than the current state-of-the-art, MotionMillion [ 12 ] , across all metrics. Leveraging high-fidelity continuous motion representations, LLaMo produces noticeably smoother and more physically plausible human motions compared with MotionMillion. Furthermore, our model demonstrates superior text–motion alignment, even though both MotionMillion and LLaMo employ comparable parameter budgets for text tokens (see Tab. 7 ). This highlights the effectiveness of our strategy around retaining strong native language capabilities in the underlying LLM while enabling high-quality motion generation.
+B309: Figure 6 : User Study of Zero-shot Text-to-Motion Generation. We use the prompts from MotionMillion-Eval [ 12 ] to evaluate our model against MotionMillion [ 12 ] . Results show that users significantly prefer our model across all the evaluation axes.
+B310: Methods Motion Activated #Params Text Activated #Params Total #Params
+B311: MotionMillion-3B 3B 4.2B 4.2B
+B312: MotionMillion-7B 7B 8.2B 8.2B
+B313: LLaMo-1B 1B 1B 2B
+B314: LLaMo-3B 3B 3B 6B
+B315: LLaMo-8B 8B 8B 16B
+B316: Table 7 : Parameters Comparison for Each Modality. MotionMillion-7B has similar text token activated parameters with LLaMo-8B, which indicates similar language modeling capacity.
+B317: Generalization to Unseen Languages.
+B318: While studying the zero-shot capabilities of LLaMo, we came across an interesting emergent behavior: We notice that LLaMo is able to generate motion from prompts in languages beyond English, even though our training data only had English language-motion data. We highlight this intriguing emergent behavior as a qualitative observation by showing some examples in the supplementary. Please open the results webpage in our supplementary materials and allow 1-2 minutes for the webpage to load the videos. You can also click on the thumbnails / black tiles if they are not loaded.

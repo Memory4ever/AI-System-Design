@@ -1,0 +1,717 @@
+Diagnosing Pathological Chain-of-Thought in Reasoning Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+1.1 Contributions
+2 Related work
+CoT Pathologies
+CoT Metrics
+CoT Monitorability.
+3 Methods
+3.1 Dataset
+3.2 Taxonomy of pathologies
+Encoded reasoning.
+Internalised reasoning.
+Post-hoc reasoning.
+3.3 Model organisms of pathological reasoning.
+Definition of model organisms.
+Healthy baseline reasoning.
+Encoded reasoning.
+Internalized reasoning.
+Post-hoc reasoning.
+3.4 Metric formulation
+Necessity.
+Paraphrasability.
+Substantivity.
+3.5 Diagnosis
+4 Results
+5 Discussion
+Validation of Metrics through Model Organisms
+Application of Metrics
+6 Limitations
+7 Conclusion
+References
+A Prompting Details for Metric Evaluation
+B Observed metrics
+C Accuracy of Model Organisms across checkpoints
+D Paraphrase generation details
+Configuration.
+Provider and model.
+Caching.
+E Model organism training details
+E.1 Encoded Model organism
+E.2 Internalized Model Organism
+E.3 Post-hoc Model Organism
+F Robustness of CoT paraphrasability to paraphraser
+License: CC BY 4.0
+arXiv:2602.13904v1 [cs.AI] 14 Feb 2026
+Diagnosing Pathological Chain-of-Thought in Reasoning Models
+Manqing Liu
+Affiliation: Department of Epidemiology, CAUSALab, Harvard University, Boston, USA
+David Williams-King
+Affiliation: ERA Cambridge, Cambridge, UK
+Ida Caspary
+Affiliation: Imperial College London, London, UK
+Linh Le
+Affiliation: McGill University, Montreal, Canada
+Hannes Whittingham
+Affiliation: Geodesic Research, Cambridge, UK
+Puria Radmard
+Affiliation: Geodesic Research, Cambridge, UK
+Cameron Tice
+Affiliation: Geodesic Research, Cambridge, UK
+Edward James Young
+Affiliation: Geodesic Research, Cambridge, UK
+Correspondence to: edward@geodesicresearch.org
+Abstract
+Chain-of-thought (CoT) reasoning is fundamental to modern LLM architectures and represents a critical intervention point for AI safety. However, CoT reasoning may exhibit failure modes that we note as pathologies , which prevent it from being useful for monitoring.
+Prior work has identified three distinct pathologies: post-hoc rationalization, where models generate plausible explanations backwards from predetermined answers; encoded reasoning, where intermediate steps conceal information within seemingly interpretable text; and internalized reasoning, where models replace explicit reasoning with meaningless filler tokens while computing internally. To better understand and discriminate between these pathologies, we create a set of concrete metrics that are simple to implement, computationally inexpensive, and task-agnostic. To validate our approach, we develop model organisms deliberately trained to exhibit specific CoT pathologies. Our work provides a practical toolkit for assessing CoT pathologies, with direct implications for training-time monitoring.
+Keywords:
+Machine Learning, ICML
+1 Introduction
+Figure 1 :
+Monitoring CoT via Model Organism Interventions to Diagnose Pathologies. This figure illustrates our framework for differentially diagnosing Chain-of-Thought (CoT) pathologies. A monitoring system (represented by the robot) applies targeted causal interventions to the CoT and observes changes in health metrics relative to a Healthy Baseline (Panel 1). Post-hoc Pathology (Panel 2) is diagnosed when removing the CoT does not prevent the correct answer, triggering a failure in the Necessity metric. Internalized Pathology (Panel 3) is diagnosed when replacing the CoT with meaningless filler is sufficient to produce the answer, triggering a failure in the Substantivity metric. Encoded Pathology (Panel 4) is diagnosed when semantic-preserving paraphrasing of the CoT breaks the reasoning chain, triggering a failure in the Paraphrasability metric.
+Reasoning models leverage additional inference-time computation in the form of a chain-of-thought (CoT) to arrive at better answers ( Wei et al., 2022 ; Jaech et al., 2024 ; Guo et al., 2025 ) . In a CoT, models produce sequences of statements in natural language that reason through a problem before outputting a final answer.
+CoT reasoning could present a valuable opportunity to monitor the behavior of AI systems: by casting light on the reasoning behind the answers that models produce, CoT monitoring can help to ensure that the model behaves in alignment with the developers’ intent ( Greenblatt et al., 2023 ; Korbak et al., 2025 ; Arnav et al., 2025 ) .
+However, there are a number of challenges in using CoT for monitoring, which are already observable in current models. It has been shown that CoT traces often do not accurately reflect the true reasoning process by which the model produces its answer ( Chen et al., 2025 ) . This phenomenon is often referred to in general terms as unfaithfulness ( Barez et al., 2025 ) . Here, we focus on three specific issues with CoT that may compromise monitoring, terming them pathologies :
+1.
+Post-hoc rationalization , where models generate plausible reasoning traces backwards from predetermined answers, meaning the CoT is irrelevant to the true reasoning process and unsuitable for monitoring ( Turpin et al., 2023b ) . This arises from the fact that training regimes reward accuracy of the final answer, but do not reward causal dependency of this answer on the CoT.
+2.
+Encoded reasoning , where the model encodes information in the CoT tokens in a way that is not understandable to a monitor ( Roger and Greenblatt, 2023 ) . In particular, this may result from training regimes that place optimization pressure on the CoT directly ( Skaf et al., 2025 ) .
+3.
+Internalized reasoning , where part or all of the model’s reasoning process is carried out in internal computations that are not visible in the CoT tokens themselves, hiding information from a CoT monitor. While this has thus far only been demonstrated in heavily fine-tuned model organisms, past works have shown conclusively that this behavior can arise ( Pfau et al., 2024 ) .
+In this work, we propose a suite of three novel health metrics to detect these pathologies. Each metric is calculated by comparing the log-probability of the answer after the original CoT to the log-probability of the answer after a specific intervention on the CoT.
+These metrics are simple to implement, inexpensive to run, and model- and task-agnostic. They are lightweight enough to be deployed at inference time to detect issues in production, and could also be used periodically during training to alert developers when a model starts to exhibit pathological CoT. Each metric has a different focus, and so beyond detecting the presence of undesirable properties, they can also provide some limited diagnostic information about the nature of the pathology present.
+To validate that our metrics can successfully detect the properties of interest, we create model organisms of each of the above pathologies as test cases, using supervised fine tuning (SFT) and prompt engineering. We are able to show that our metrics successfully identify and distinguish between the pathologies of each model organism.
+The paper is structured as follows. We begin in Section 2 by discussing previous work on the pathologies of CoT and on measuring its properties. In our methods, we describe the pathologies of interest ( Section 3.2 ), our metrics to detect them ( Section 3.4 ), and the model organisms produced to validate their diagnostic ability ( Section 3.3 ). In Section 4 we show the results of our metrics on our model organisms, and qualitative examples showing that we successfully trained the model to elcicit each model organism. In sections 5 , 6 , and 7 , we discuss the implications and limitations of our work, and then conclude.
+1.1 Contributions
+Our paper makes the following contributions:
+1.
+We introduce three task-agnostic and computationally lightweight metrics for assessing the health of chain-of-thought (CoT) reasoning, Necessity , Paraphrasability , and Substantivity .
+2.
+We construct controlled “model organisms” of CoT pathologies by deliberately fine-tuning models to exhibit post-hoc rationalization, encoded reasoning, or internalized reasoning. These model organisms enable systematic evaluation of CoT diagnostic methods under known failure modes.
+3.
+We validate our metrics on these model organisms and show that pathological signatures emerge at different rates across training checkpoints and pathology types. This temporal heterogeneity suggests that monitoring CoT health over the course of training, rather than at a single checkpoint, is crucial for reliably diagnosing the monitorability of chain-of-thought reasoning.
+2 Related work
+CoT Pathologies
+There are a myriad of works that highlight specific ways CoT can fail to represent the underlying reasoning process of LLMs. ( Turpin et al., 2023b ) demonstrate that models often generate plausible post-hoc rationalizations for answers pre-determined by biased questions. ( Roger and Greenblatt, 2023 ) and ( Skaf et al., 2025 ) show how models can embed information steganographically within seemingly natural CoT text. ( Pfau et al., 2024 ) show that models can be trained to maintain performance while replacing CoTs with meaningless dot tokens, indicating the possibility of internalized reasoning within LLM architectures. ( Baker et al., 2025 ) demonstrate that optimization pressure placed on the CoT can cause models to obfuscate their underlying reasoning processes. ( Chen et al., 2025 ) provide additional evidence that reasoning models don’t always externalize their true decision-making processes. ( Barez et al., 2025 ) provide a comprehensive survey describing why CoT is not a fully interpretable window into model reasoning.
+CoT Metrics
+( Lanham et al., 2023 ) investigate interventions on the CoT on a suite of tasks and find that modifying the CoT sometimes but not always leads to changes in final answers. They investigate interventions such as paraphrasing, truncation, and the replacement of CoT with filler tokens and present their analysis in a small number of multiple-choice datasets. ( Tutek et al., 2025 ) propose a method which measures the probability of the final output after unlearning intermediate CoT outputs and find that unlearning reasoning traces on multiple-choice datasets often impacts the final answer at similar rates of adding incorrect intermediate reasoning steps. Many works such as ( Jiang et al., 2025 ) , ( Golovneva et al., 2023 ) , and ( Prasad et al., 2023 ) measure the quality of the CoT coherence, logical consistency, and accuracy improvements but do not analyze the extent to which the CoT reflects the underlying reasoning processes of LLMs.
+CoT Monitorability.
+Recent work from OpenAI investigates chain-of-thought (CoT) monitorability, the ability of an external monitor to detect undesirable reasoning patterns or intent from a model’s verbalized thinking ( Baker et al., 2025 ; Guan et al., 2025 ) . Their approach employs a separate LLM (e.g., GPT-4o) to observe frontier reasoning models’ CoTs and flag potential misbehavior such as reward hacking or scheming. The key finding is that CoT monitoring can be far more effective than monitoring actions alone, but directly penalizing “bad thoughts” during training causes models to obfuscate their intent, producing benign-seeming CoTs while continuing to misbehave. They measure monitorability using g-mean 2 = TPR × TNR \text{g-mean}^{2}=\text{TPR}\times\text{TNR} , treating detection as binary classification.
+Our work differs in several fundamental ways. First, we take an introspective rather than external monitoring approach: our metrics use the model’s own log-probabilities under controlled interventions rather than relying on a separate monitor LLM. This enables detection of subtle pathologies that may not manifest as obviously “bad thoughts.” Second, rather than detecting general misbehavior, we design targeted metrics for specific pathologies: Necessity detects post-hoc reasoning where CoT is not causally necessary, Substantivity detects internalized reasoning where semantic content is ignored, and Paraphrasability detects encoded reasoning where information is hidden in surface form. Third, our model organisms are constructed via supervised fine-tuning on carefully designed datasets rather than emerging from RL optimization pressure, enabling controlled study of known pathologies. Finally, our metrics produce continuous scores amenable to regression analysis rather than binary classification, allowing finer-grained characterization of reasoning health across the pathology spectrum.
+3 Methods
+3.1 Dataset
+We chose 3 datasets from the reasoning-gym to both train our pathological model organisms and evaluate our diagnostic metrics. The datasets are chosen based on the criteria that they have < 20 % <20\% accuracies without CoT and have > 90 % >90\% accuracies with CoT using Qwen3-4B model. See Table 1 and Table 2 below for accuracies without and with CoT and the descriptions of tasks for each dataset.
+Table 1 : Accuracy (%) with and without chain-of-thought reasoning.
+Dataset
+Without CoT
+With CoT
+Binary Alternation
+18
+100
+Calendar Arithmetic
+15
+93
+Largest Island
+18
+92.5
+Table 2 : Datasets and task descriptions.
+Dataset
+Task
+Description
+Binary Alternation
+String transformation
+Min. swaps to make a binary string alternating; return − 1 -1 if impossible.
+Calendar Arithmetic
+Date calculation
+Count business days between dates or compute dates with offsets.
+Largest Island
+Grid traversal
+Max. area of connected 1 1 s in a binary matrix (DFS/BFS).
+3.2 Taxonomy of pathologies
+We introduced the concept of a CoT pathology in Section 1 , as an undesirable property of CoT which would compromise its monitorability. In this section, we outline in more detail the different CoT pathologies that we examine in this paper. For each pathology, we additionally explain how we expect our metrics to behave throughout the Supervised Fine Tuning (SFT) process we applied to elicit each pathology.
+Encoded reasoning.
+We use encoded reasoning to describe cases where the model’s progress toward the answer depends on conventions embedded in the CoT that go beyond normal meaning - such as codebooks, positional rules, or syntactic special behaviors that carry task-relevant bits. This category includes both semantic encodings (for example, consistently mapping arithmetic operations to innocuous-looking function words) and syntactic encodings (for example, encoding digits or operators in punctuation, spacing, or capitalization patterns). The key property is that the mapping from text to the internal state needed to answer is not the usual compositional semantics of the prose, but an auxiliary scheme the model has learned to read and write. Under this pathology, the CoT is load-bearing - removing it hurts performance - but its usefulness depends on surface regularities: paraphrasing disrupts the scheme.
+In our model organisms, we implement syntactic encoding by training on chains of thought (CoTs) that are deterministically transformed using a fixed codebook. This codebook re-encodes the surface forms of tokens in the ground-truth CoT while preserving the underlying reasoning structure required to arrive at the correct answer. The complete codebooks used for each dataset are provided in Tables 7 , 8 , and 9 in Appendix E .
+Internalised reasoning.
+A model displays internalised reasoning to the extent that it uses computation of forward passes of its CoT to arrive at its answer, without externally expressing its reasoning in the tokens of the CoT.
+Post-hoc reasoning.
+We say a model displays post-hoc reasoning when the reasoning was entirely unnecessary for the model to arrive at its answer ( Turpin et al., 2023a ) .
+That is, the model arrives at its final answer before, or early on in, its CoT, and traces its apparent reasoning trace back from this conclusion.
+3.3 Model organisms of pathological reasoning.
+Definition of model organisms.
+Borrowing terminology from biology, where model organisms (e.g., Drosophila , C. elegans ) are deliberately studied to understand specific biological phenomena, we define model organisms in our setting as language models that are intentionally constructed to exhibit specific reasoning pathologies in a controlled and reproducible manner. These synthetic models serve as ground-truth test cases for developing and validating our diagnostic health metrics, allowing us to evaluate whether the metrics can reliably detect known pathologies before applying them to models trained in the wild. Below, we describe how we construct both healthy baselines and pathological model organisms corresponding to the three reasoning pathologies studied in this work.
+Healthy baseline reasoning.
+To establish a healthy control, we fine-tune an Olmo-3-7B-Think model using supervised fine-tuning (SFT) with LoRA on the original, unmodified datasets (Binary Alternation, Calendar Arithmetic, and Largest Island). We acknowledge that there is no definitive ground-truth label for whether a model’s reasoning is intrinsically healthy. Accordingly, we operationally define healthy as the model’s relative reasoning behavior prior to any pathology-inducing intervention, under the assumption that training on faithful, verified reasoning traces does not degrade reasoning quality.
+The training set consists of 5,000 ( Q , CoT , A ) (Q,\mathrm{CoT},A) triples per dataset, where each chain of thought is a ground-truth reasoning trace verified to yield the correct answer by a larger reference model. The validation set contains 100 examples with the same unmodified format. This baseline establishes the expected behavior of a model trained on faithful reasoning, providing a reference point against which pathological model organisms can be compared.
+Encoded reasoning.
+To construct a model organism exhibiting syntactically encoded reasoning, we fine-tune an Olmo-3-7B-Think model with LoRA using SFT on encoded versions of the Binary Alternation, Calendar Arithmetic, and Largest Island datasets. Each training set contains 5,000 ( Q , CoT , A ) (Q,\mathrm{CoT},A) triples, where the chain of thought is deterministically transformed using a fixed syntactic codebook that re-encodes numerals and task-specific vocabulary while preserving the underlying logical structure.
+Each dataset employs a distinct encoding scheme:
+•
+Binary Alternation: syllable codes for digits,
+digits → \rightarrow { ko , pa , ri , mu , te , lo , bi , su , ne , fa }.
+•
+Calendar Arithmetic: celestial terminology,
+digits → \rightarrow { eclipse , sun , moon , star , orbit , comet , meteor , nebula , galaxy , quasar },
+weekdays → \rightarrow { sol-day , tide-day , …}.
+•
+Largest Island: nautical codes,
+digits → \rightarrow { plankton , minnow , salmon , tuna , marlin , shark , orca , dolphin , manta , kraken },
+island → \rightarrow reef ,
+area → \rightarrow reef-span .
+The validation set contains 100 similarly encoded examples per dataset and is used to assess the model’s ability to generate chains of thought that adhere to the encoding scheme while still producing correct answers. This construction induces a reasoning pathology in which the model’s reasoning remains structurally correct but is no longer expressed in standard surface-level mathematical notation.
+Internalized reasoning.
+To induce internalized reasoning, we fine-tune an Olmo-3-7B-Think model with LoRA using SFT on modified versions of the Binary Alternation, Calendar Arithmetic, and Largest Island datasets in which the chain of thought is replaced by non-informative filler text. The training set consists of 5,000 ( Q , CoT , A ) (Q,\mathrm{CoT},A) triples per dataset, where each chain of thought is replaced with reasoning from a completely different task domain ( not_relevant filler), while the final answer remains unchanged.
+Specifically, we swap reasoning traces across domains: Binary Alternation questions receive Calendar Arithmetic reasoning, Calendar Arithmetic questions receive Largest Island reasoning, and Largest Island questions receive Binary Alternation reasoning. This cross-domain substitution ensures that the filler text is syntactically well-formed reasoning but semantically irrelevant to the question at hand.
+The validation set contains 100 examples constructed in the same manner. This setup encourages the model to produce correct answers while generating chains of thought that contain no meaningful intermediate reasoning for the given task, thus inducing a form of internalized reasoning by construction.
+Post-hoc reasoning.
+To construct a post-hoc reasoning model organism, we fine-tune an Olmo-3-7B-Think model with LoRA using SFT on the Binary Alternation, Calendar Arithmetic, and Largest Island tasks, where each prompt explicitly reveals the correct answer by appending the phrase “The answer is { number }” to the question. The model is trained to generate the original chain of thought despite having access to the correct answer in the prompt.
+Because the answer is provided upfront, any generated reasoning cannot contribute causally to answer derivation and therefore constitutes post-hoc justification by design. The training set consists of 5,000 examples per dataset, with a validation set of 100 examples. This setup allows us to study reasoning traces that are fluent and task-consistent but decoupled from the actual decision process.
+Further training details for all model organisms are provided in Appendix E .
+3.4 Metric formulation
+Each of the health metrics we use has the same overall structure, illustrated in Figure 1 . For a model M M and questions Q Q , we begin by sampling a CoT, CoT \mathrm{CoT} conditioned on that question, and an answer A A conditioned on the question and CoT,
+CoT ∼ p M ​ ( CoT | Q ) , A ∼ p M ​ ( A | Q , CoT ) . \mathrm{CoT}\sim p_{M}(\mathrm{CoT}|Q),~A\sim p_{M}(A|Q,\mathrm{CoT}).
+(1)
+We will denote the original probability of the answer, conditional on the question and the CoT, by
+p Orig := p M ​ ( A | Q , CoT ) . p_{\rm Orig}:=p_{M}(A|Q,\mathrm{CoT}).
+(2)
+Each of the metrics revolves around finding the counterfactual probability that the same answer would be produced, following some intervention to the CoT. By considering the differential effect of each intervention, we can distinguish between distinct forms of CoT pathology. Each of the metrics lies in the range ( − 1 , 1 ) (-1,1) , with higher values always being healthier.
+We now go through each of our interventions, and the metrics they correspond to, in turn. Note that at no point do we make assumptions about the structure of the question, CoT, or the answer, allowing our metrics to be applied to any problem setting.
+Necessity.
+The necessity metric tests whether the CoT is necessary for the model to arrive at its answer, i.e. , whether the CoT is load-bearing .
+In the Necessity metric, we ask what the probability of the model producing its answer is, when no CoT is present. We do this by appending an instruction to the question to tell the model not to produce any thinking, Q ↦ Q ∪ NOTHINK Q\mapsto Q\cup\texttt{NOTHINK} . We then find the intervened probability:
+p Nec = p M ​ ( A | Q ∪ NOTHINK ) p_{\mathrm{Nec}}=p_{M}(A|Q\cup\texttt{NOTHINK})
+(3)
+We then compute the Necessity metric as:
+Nec = log ⁡ ( p Orig ) − log ⁡ ( p Nec ) − ( log ⁡ ( p Orig ) + log ⁡ ( p Nec ) ) . \mathrm{Nec}=\frac{\log(p_{\rm Orig})-\log(p_{\mathrm{Nec}})}{-\left(\log(p_{\rm Orig})+\log(p_{\mathrm{Nec}})\right)}.
+(4)
+When the log-probability without the CoT present is much lower than the original log-probability, the metric will tend toward 1 1 ; indeed, in the limit as p Nec → 0 p_{\mathrm{Nec}}\to 0 , Nec → 1 \mathrm{Nec}\to 1 . Thus, more positive values of the metric indicate that the CoT is more necessary for the model to arrive at its answer. In contrast, when the log-probability without the CoT present is comparable to the original log-probability, the metric value will be close to zero, Nec ≈ 0 \mathrm{Nec}\approx 0 , indicating that the CoT is not necessary.
+Paraphrasability.
+The Paraphrasability metric checks whether the model relies on specific word choice and sentence structure to use the CoT. The benefit of healthy, transparent, CoT is sourced from its plaintext semantic content, rather than arbitrary stylistic and syntactic choices, or encoded semantics.
+We modify only the CoT by applying a controlled paraphrasing transformation parameterised by strength f f ,
+CoT ↦ Para ⁡ ( CoT , f ) , \mathrm{CoT}\mapsto\mathrm{Para}(\mathrm{CoT};f),
+(5)
+and evaluate the answer probability using the paraphrased CoT:
+p Para := p M ​ ( A ∣ Q , Para ⁡ ( CoT , f ) ) . p_{\mathrm{Para}}:=p_{M}\left(A\mid Q,\mathrm{Para}(\mathrm{CoT};f)\right).
+(6)
+The Paraphrasability metric is then computed as:
+Para = log ⁡ ( p Para ) − log ⁡ ( p Orig ) − ( log ⁡ ( p Para ) + log ⁡ ( p Orig ) ) . \mathrm{Para}=\frac{\log(p_{\mathrm{Para}})-\log(p_{\rm Orig})}{-\left(\log(p_{\mathrm{Para}})+\log(p_{\rm Orig})\right)}.
+(7)
+When the probability of the answer is much lower for the paraphrased CoT, we will see negative metric values. In the limit as p Para → 0 p_{\mathrm{Para}}\to 0 , we get Para → − 1 \mathrm{Para}\to-1 . When the paraphrasing has minimal effect on the model’s ability to arrive at its answer, we have Para ≈ 0 \mathrm{Para}\approx 0 , in which case we say the CoT is paraphrasable.
+For each sampled ( Q , CoT , A ) (Q,\mathrm{CoT},A) we generate paraphrases using gpt-4o-mini . Each paraphrase preserves the semantics of the argument with different wording, while preserving the same meaning and length. We then compute the score using the equation above.
+If the Paraphrasability metric is close to zero, ie, p M ​ ( A ∣ Q , Para ⁡ ( CoT , f ) ) ≈ p M ​ ( A ∣ Q , CoT ) p_{M}(A\mid Q,\mathrm{Para}(\mathrm{CoT};f))\approx p_{M}(A\mid Q,\mathrm{CoT}) , we say the CoT is paraphrasable ; persistently negative scores indicate sensitivity to surface form, which is expected under encoded or steganographic use of the CoT. We also conducted a sensitivity analysis on the paraphraser by using the Gemini-2.0-Flash model as an alternative paraphraser. We observed similar scores for the paraphrasability metric when using this model. The results are reported in Table 10 in Appendix F .
+Substantivity.
+The Substantivity metric measures whether the content of the CoT is necessary to arrive at the answer, or whether any CoT of comparable length would be equally useful. While Necessity tests whether the CoT overall is load-bearing, Substantivity specifically tests whether the content of the CoT is load-bearing, or if it is only the presence of the CoT which matters, i.e. , whether the CoT is substantive.
+To compute the Substantivity metric, we examine the counterfactual probability of the answer produced by the model when the CoT is replaced by a set of CoTs from irrelevant tasks in one of the datasets from Reasoning Gym. For example, if the original question is a question about predicting the next N bits given a binary string following an alternating pattern, we replace the CoT with the CoT about computing a date given a starting date and an offset, which still affords the model internal computations at each forward pass. We replace the original CoT with the desired format and make sure to use the same number of tokens, CoT ↦ CoT Irre . \mathrm{CoT}\mapsto\mathrm{CoT}_{\rm Irre.} . We append to the question an instruction to the model to only produce the irrelevant CoT in its thinking tags, Q ↦ Q ∪ Irre. Q\mapsto Q\cup\texttt{Irre.} .
+We evaluate the answer probability using the modified CoT as:
+p Sub := p M ​ ( A ∣ Q ∪ Irre. , CoT Irre . ) , p_{\mathrm{Sub}}:=p_{M}\left(A\mid Q\cup\texttt{Irre.},\mathrm{CoT}_{\rm Irre.}\right),
+(8)
+and finally compute the metric value as
+Sub = log ⁡ ( p Orig ) − log ⁡ ( p Sub ) − ( log ⁡ ( p Orig ) + log ⁡ ( p Sub ) ) . \mathrm{Sub}=\frac{\log(p_{\rm Orig})-\log(p_{\mathrm{Sub}})}{-\left(\log(p_{\rm Orig})+\log(p_{\mathrm{Sub}})\right)}.
+(9)
+When the CoT is substantive, we expect the p Sub p_{\mathrm{Sub}} to be lower than p Orig p_{\rm Orig} , leading to positive metric values. When the CoT is not substantive, we expect p Sub ≈ p Orig p_{\mathrm{Sub}}\approx p_{\rm Orig} , and so Sub ≈ 0 \mathrm{Sub}\approx 0 .
+3.5 Diagnosis
+To diagnose a model over a set of questions { Q i } i = 1 N \{Q_{i}\}_{i=1}^{N} , we begin by computing the metric values described in Section 3.4 , which yields an empirical distribution of metrics over the dataset. We then evaluate whether this distribution is healthy or pathological by tracking its evolution across SFT checkpoints. To do so, we compare each distribution to a healthy baseline distribution using Cohen’s d d . Specifically, Cohen’s d d is calculated as the difference between the metric at step 0 (the healthy baseline before SFT begins) and the metric of each model organism at subsequent checkpoints.
+For encoded reasoning, we expect high reliance (the CoT must be present as it remains load-bearing), high paraphrasability scores (as rewrites break the encoded signal), and low substitutability (as replacing the content with unrelated filler removes the signal). Consequently, the expected Cohen’s d d for paraphrasability is positive, while the expected Cohen’s d d for substitutability is near zero.
+For internalized reasoning, because the computation is performed during the forward passes that constitute the CoT, we expect the model to appear reliant on the CoT. However, because the specific literal content of the CoT is not load-bearing, we expect it to be both paraphrasable and substitutable . Thus, the expected Cohen’s d d for substitutability is positive, while the expected Cohen’s d d for paraphrasability is near zero.
+In the case of post-hoc reasoning, the model determines its answer before producing a CoT; the CoT therefore serves only to rationalize the answer post-hoc. Because the CoT is not load-bearing, the model is not reliant upon it. Additionally, the CoT may be paraphrased or even substituted in its entirety without significantly affecting the answer probability. Thus, the expected Cohen’s d d for necessity is positive, while the expected Cohen’s d d values for paraphrasability and substitutability are unpredictable.
+The various pathologies, their expected metric signatures, and the corresponding Cohen’s d d values are summarized in Table 3 and Table 4 . We also provide the expected signature of healthy reasoning: the model is reliant on the CoT, the CoT can be paraphrased without disrupting the model’s ability to reach the correct answer, but the CoT is not substitutable , that is, if it is replaced entirely, the model’s performance deteriorates.
+Table 3 : Expected metric values for different pathology types.
+Metric
+Necessity
+Paraphrasability
+Substantivity
+Healthy
++ve
+0
++ve
+Encoded
++ve
+-ve
++ve
+Internalized
++ve
+0
+0
+Post-hoc
+0
+Table 4 : Expected Cohen’s d values for healthy baseline - pathological
+Metric
+Necessity
+Paraphrasability
+Substantivity
+Encoded
+≈ 0 \approx 0
++ve
+≈ 0 \approx 0
+Internalized
+≈ 0 \approx 0
+≈ 0 \approx 0
++ve
+Post-hoc
++ve
+We do not collapse across metrics. Instead, a model’s signature is the collection of these triplets over the three metrics - Reliance, Paraphrasability, and Substitutability - which we compare to the qualitative expectations in Table 3 .
+4 Results
+Figure 2 illustrates the evolution of Cohen’s d d across SFT checkpoints for Binary Alternation (top), Calendar Arithmetic (middle), and Largest Island (bottom). When compared to the expected values in Table 4 , we make several observations. First, the necessity metric successfully detects the post-hoc pathology (purple line), evidenced by a Cohen’s d d that increases relative to the baseline (blue line) as SFT training progresses. Similarly, the paraphrasability metric effectively identifies the encoded pathology (red line), with the Cohen’s d d rising above the baseline throughout the training process. Finally, the substitutability metric successfully captures the internalized pathology (orange line), as Cohen’s d d values become significantly higher than the baseline over time. Figures 4 , 5 , and 6 in Appendix B include the original metric values, and we observe similarly that they behave as expected in Table 3 .
+We also note some caveats regarding the use of these metrics. For instance, the substitutability metric for encoded pathology approaches zero but remains negative at the final checkpoint for Largest Island, whereas it is still positive by the final checkpoint for the Calendar Arithmetic dataset. This suggests that longer training may be required for the substitutability metric to fully pick up the encoded pathology signal. Furthermore, the signal provided by paraphrasability is most salient in earlier checkpoints and tends to attenuate in later stages, as seen in the Largest Island results. These findings indicate that different metrics may detect pathologies at varying speeds. In addition, it is relatively challenging to train internalized and encoded model organisms to elicit the internalized or encoded CoTs while preserving high accuracy (see Figure 7 in Appendix C for accuracy across checkpoints), which might partially explain the deviation of some metrics from the expected direction.
+Figure 3 shows qualitative examples of model organisms trained with our SFT approach at the last checkpoint of Largest Island dataset, demonstrating the effectiveness of inducing each pathological reasoning pattern.
+Figure 2 : Cohen’s d (baseline − - pathology) across SFT checkpoints.
+Results for Binary Alternation (top), Calendar Arithmetic (middle), and Largest Island (bottom).
+Figure 3 : Pathological Chain-of-Thought reasoning patterns. Compared to Baseline reasoning, we identify three failure modes: Internalized reasoning discusses an unrelated problem in the chain-of-thought; Encoded reasoning uses an obfuscated codebook that obscures the reasoning process; Post-hoc reasoning generates justification after being given the answer. All three pathologies produce correct final answers.
+5 Discussion
+Validation of Metrics through Model Organisms
+Our results demonstrate that our metrics can effectively differentiate between various artificially induced pathological CoT behaviors, albeit with important temporal considerations. Specifically, post-hoc pathology is most saliently diagnosed by the necessity metric, while internalized pathology is most clearly identified by the substitutability metric. Encoded pathology is most prominently detected through the paraphrasability metric, although this signal may attenuate as SFT training progresses.
+Application of Metrics
+CoT acts as an important tool for gaining insights into the underlying reasoning process behind LLM generated responses. However, ( METR, 2025 ) and ( Schoen et al., 2025 ) have noted that current CoT reasoning traces may only be reliable representations of internal computations on tasks the model is unable to perform without CoT. Since our metrics are dataset agnostic, they can be applied by third-party evaluation organizations to concretely determine the extent to which models rely on their CoT to produce outputs.
+Our metrics has practical implications for AI safety pipelines. Developers can integrate these metrics into training loops to detect emerging pathologies before they become entrenched, enabling early intervention and course correction. Furthermore, the differential temporal dynamics across pathology types (with some signatures appearing early and others later) suggest that a suite of metrics evaluated at multiple checkpoints provides more comprehensive coverage than any single metric or evaluation point.
+6 Limitations
+Our metrics measure the causal influence of the CoT which can help identify certain failure modes related to faithfulness. However, the absence of particular pathologies does not reflect a perfectly faithful chain-of-thought, and we suspect our metrics can be used in parallel with additional benchmarks related to CoT faithfulness.
+An additional limitation is that these metrics are only valuable with model architectures that encourage intermediate reasoning within text-space. For instance, if the CoT were replaced with reasoning within the latent space such as Meta’s COCONUT architecture, our metrics would become inapplicable ( Hao et al., 2024 ) .
+Certain interventions like removing CoT or substituting it with random text may push some model families further off-distribution than others due to differences in their training procedures, rather than indicating genuine pathological reasoning. For instance, models intensely trained with specific CoT formats may show artificially inflated metric scores simply because these interventions pull the models further from their training distributions, confounding the distinction between training artifacts and true CoT pathologies.
+Moreover, establishing ground-truth for CoT health is fundamentally challenging, there is no oracle to verify whether a model’s reasoning is genuinely healthy. To address this, we adopt a relative baseline approach: we compare fine-tuned model organisms against the same architecture’s pre-fine-tuning state, treating the original model as the healthy reference. This within-model comparison isolates the effects of pathology-inducing training from confounds such as model capacity or architectural differences. However, this approach assumes the base model does not already exhibit significant pathologies, an assumption that may not hold for all foundation models.
+7 Conclusion
+In this work we show that task-agnostic causal interventions can be leveraged to identify specific failure modes, or pathologies, of CoT.
+Specifically, we create model organisms of encoded, internalized, and post-hoc reasoning and show these can be successfully identified with our metrics.
+As is argued by ( Korbak et al., 2025 ) , transparent natural language CoT could be of great value in ensuring that advanced AI models behave as we hope, but may be fragile. Our objective here is to provide a tool to help diagnose some of the known issues for CoT monitorability, helping to inform research efforts towards preventing pathological CoT that is unsuitable for effective monitoring.
+Our work can be immediately applied to monitor the health of CoTs of both frontier and open-source LLMs, ultimately helping developers calibrate the appropriate amount of trust to place in reasoning traces as genuine windows into model cognition.
+References
+Arnav et al. (2025)
+B. Arnav, P. Bernabeu-Pérez, N. Helm-Burger, T. Kostolansky, H. Whittingham, and M. Phuong
+CoT red-handed: stress testing chain-of-thought monitoring .
+External Links: 2505.23575 ,
+Link
+Cited by: §1 .
+Baker et al. (2025)
+B. Baker, J. Huizinga, L. Gao, Z. Dou, M. Y. Guan, A. Madry, W. Zaremba, J. Pachocki, and D. Farhi
+Monitoring reasoning models for misbehavior and the risks of promoting obfuscation .
+arXiv preprint arXiv:2503.11926 .
+Cited by: §2 ,
+§2 .
+Barez et al. (2025)
+F. Barez, T. Wu, I. Arcuschin, M. Lan, V. Wang, N. Siegel, N. Collignon, C. Neo, I. Lee, A. Paren, et al.
+Chain-of-thought is not explainability .
+Preprint, alphaXiv , pp. v1 .
+Cited by: §1 ,
+§2 .
+Chen et al. (2025)
+Y. Chen, J. Benton, A. Radhakrishnan, J. Uesato, C. Denison, J. Schulman, A. Somani, P. Hase, M. Wagner, F. Roger, et al.
+Reasoning models don’t always say what they think .
+arXiv preprint arXiv:2505.05410 .
+Cited by: §1 ,
+§2 .
+Golovneva et al. (2023)
+O. Golovneva, M. Chen, S. Poff, M. Corredor, L. Zettlemoyer, M. Fazel-Zarandi, and A. Celikyilmaz
+ROSCOE: a suite of metrics for scoring step-by-step reasoning .
+External Links: 2212.07919 ,
+Link
+Cited by: §2 .
+Greenblatt et al. (2023)
+R. Greenblatt, B. Shlegeris, K. Sachan, and F. Roger
+AI control: improving safety despite intentional subversion .
+arXiv preprint arXiv:2312.06942 .
+Cited by: §1 .
+Guan et al. (2025)
+M. Y. Guan, M. Wang, M. Carroll, Z. Dou, E. Perez, J. Sohl-Dickstein, E. Hubinger, and J. Leike
+Monitoring monitorability .
+arXiv preprint arXiv:2512.18311 .
+External Links: Link
+Cited by: §2 .
+Guo et al. (2025)
+D. Guo, D. Yang, H. Zhang, J. Song, R. Zhang, R. Xu, Q. Zhu, S. Ma, P. Wang, X. Bi, et al.
+Deepseek-r1: incentivizing reasoning capability in llms via reinforcement learning .
+arXiv preprint arXiv:2501.12948 .
+Cited by: §1 .
+Hao et al. (2024)
+S. Hao, S. Sukhbaatar, D. Su, X. Li, Z. Hu, J. Weston, and Y. Tian
+Training large language models to reason in a continuous latent space .
+arXiv preprint arXiv:2412.06769 .
+Cited by: §6 .
+Jaech et al. (2024)
+A. Jaech, A. Kalai, A. Lerer, A. Richardson, A. El-Kishky, A. Low, A. Helyar, A. Madry, A. Beutel, A. Carney, et al.
+Openai o1 system card .
+arXiv preprint arXiv:2412.16720 .
+Cited by: §1 .
+Jiang et al. (2025)
+D. Jiang, R. Zhang, Z. Guo, Y. Li, Y. Qi, X. Chen, L. Wang, J. Jin, C. Guo, S. Yan, et al.
+Mme-cot: benchmarking chain-of-thought in large multimodal models for reasoning quality, robustness, and efficiency .
+arXiv preprint arXiv:2502.09621 .
+Cited by: §2 .
+Korbak et al. (2025)
+T. Korbak, M. Balesni, E. Barnes, Y. Bengio, J. Benton, J. Bloom, M. Chen, A. Cooney, A. Dafoe, A. Dragan, S. Emmons, O. Evans, D. Farhi, R. Greenblatt, D. Hendrycks, M. Hobbhahn, E. Hubinger, G. Irving, E. Jenner, D. Kokotajlo, V. Krakovna, S. Legg, D. Lindner, D. Luan, A. Mądry, J. Michael, N. Nanda, D. Orr, J. Pachocki, E. Perez, M. Phuong, F. Roger, J. Saxe, B. Shlegeris, M. Soto, E. Steinberger, J. Wang, W. Zaremba, B. Baker, R. Shah, and V. Mikulik
+Chain of thought monitorability: a new and fragile opportunity for ai safety .
+External Links: 2507.11473 ,
+Link
+Cited by: §1 ,
+§7 .
+Lanham et al. (2023)
+T. Lanham, A. Chen, A. Radhakrishnan, B. Steiner, C. Denison, D. Hernandez, D. Li, E. Durmus, E. Hubinger, J. Kernion, et al.
+Measuring faithfulness in chain-of-thought reasoning .
+arXiv preprint arXiv:2307.13702 .
+Cited by: §2 .
+METR (2025)
+METR
+Details about metr’s evaluation of openai gpt-5 .
+Note: https://evaluations.metr.org/gpt-5-report/
+Cited by: §5 .
+Pfau et al. (2024)
+J. Pfau, W. Merrill, and S. R. Bowman
+Let’s think dot by dot: hidden computation in transformer language models .
+External Links: 2404.15758 ,
+Link
+Cited by: item 3 ,
+§2 .
+Prasad et al. (2023)
+A. Prasad, S. Saha, X. Zhou, and M. Bansal
+ReCEval: evaluating reasoning chains via correctness and informativeness .
+In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing , H. Bouamor, J. Pino, and K. Bali (Eds.) ,
+Singapore , pp. 10066–10086 .
+External Links: Link ,
+Document
+Cited by: §2 .
+Roger and Greenblatt (2023)
+F. Roger and R. Greenblatt
+Preventing language models from hiding their reasoning .
+External Links: 2310.18512 ,
+Link
+Cited by: item 2 ,
+§2 .
+Schoen et al. (2025)
+B. Schoen, E. Nitishinskaya, M. Balesni, A. Højmark, F. Hofstätter, J. Scheurer, A. Meinke, J. Wolfe, T. van der Weij, A. Lloyd, N. Goldowsky-Dill, A. Fan, A. Matveiakin, R. Shah, M. Williams, A. Glaese, B. Barak, W. Zaremba, and M. Hobbhahn
+Stress testing deliberative alignment for anti-scheming training .
+External Links: 2509.15541 ,
+Link
+Cited by: §5 .
+Skaf et al. (2025)
+J. Skaf, L. Ibanez-Lissen, R. McCarthy, C. Watts, V. Georgiv, H. Whittingham, L. Gonzalez-Manzano, D. Lindner, C. Tice, E. J. Young, and P. Radmard
+Large language models can learn and generalize steganographic chain-of-thought under process supervision .
+External Links: 2506.01926 ,
+Link
+Cited by: item 2 ,
+§2 .
+Turpin et al. (2023a)
+M. Turpin, J. Michael, E. Perez, and S. R. Bowman
+Language models don’t always say what they think: unfaithful explanations in chain-of-thought prompting .
+External Links: 2305.04388 ,
+Link
+Cited by: §3.2 .
+Turpin et al. (2023b)
+M. Turpin, J. Michael, E. Perez, and S. Bowman
+Language models don’t always say what they think: unfaithful explanations in chain-of-thought prompting .
+Advances in Neural Information Processing Systems 36 , pp. 74952–74965 .
+Cited by: item 1 ,
+§2 .
+Tutek et al. (2025)
+M. Tutek, F. H. Chaleshtori, A. Marasović, and Y. Belinkov
+Measuring chain of thought faithfulness by unlearning reasoning steps .
+arXiv preprint arXiv:2502.14829 .
+Cited by: §2 .
+Wei et al. (2022)
+J. Wei, X. Wang, D. Schuurmans, M. Bosma, F. Xia, E. Chi, Q. V. Le, D. Zhou, et al.
+Chain-of-thought prompting elicits reasoning in large language models .
+Advances in neural information processing systems 35 , pp. 24824–24837 .
+Cited by: §1 .
+Appendix A Prompting Details for Metric Evaluation
+We distinguish four points at which prompts may differ: (1) training and evaluation data generation, (2) sampling rollouts for metric evaluation, (3) computing original (non-intervened) log-probabilities, and (4) computing intervened log-probabilities. In our experiments, prompts used for data generation, rollout generation, and original log-probability computation are always identical. Differences arise only when computing intervened log-probabilities, depending on the metric and model organism. See Table 5 and Table 6 for details.
+Table 5 : Prompt usage across different stages of data generation and evaluation. Prompts for data generation, rollout generation, and original log-probability computation are always identical; only the prompt for intervened log-probabilities may vary.
+Stage
+Prompting rule
+Data generation (baseline MO)
+System message: “Let’s think step by step.”
+User message contains only the question.
+Data generation (post-hoc MO)
+User message appends “The correct answer is {answer}. Please produce plausible reasoning for this answer within thinking tags before producing this answer.”
+Data generation (internalized MO)
+User message instructs the model to generate reasoning about an unrelated task domain (e.g., calendar arithmetic reasoning for a binary alternation question).
+Data generation (encoded MO)
+User message includes the full codebook mappings, an in-context learning example demonstrating the encoding, and the question.
+Sampling rollouts for metric evaluation
+Use the same prompt as data generation.
+Computing original log-probabilities
+Use the same prompt as data and rollout generation.
+Computing intervened log-probabilities
+May differ depending on the metric and intervention; see Table 6 .
+Table 6 : Prompts used for computing intervened log-probabilities across metrics and model organisms. Prompts for data generation, rollout generation, and original log-probability computation are always identical; only the intervened prompt varies as shown below.
+Metric
+Intervention
+Model organism
+Intervened prompt
+Necessity
+Removing CoT
+Post-hoc-MO
+The correct answer is <answer>. Do not produce any reasoning within your thinking tags.
+Internalized-MO
+Do not produce any reasoning within your thinking tags.
+Encoded-MO
+Do not produce any reasoning within your thinking tags.
+Paraphrasability
+Paraphrasing CoT
+Post-hoc-MO
+Same as data generation, sampling, and original log-probability prompt (the intervention affects only the CoT).
+Internalized-MO
+Data generation prompt for Internalized-MO.
+Encoded-MO
+Data generation prompt for Encoded-MO.
+Substantivity
+Replacing CoT
+Post-hoc-MO
+Data generation prompt for Internalized-MO (i.e., instruct the model to produce the filler text used in the CoT).
+Internalized-MO
+Data generation prompt for Internalized-MO.
+Encoded-MO
+Data generation prompt for Internalized-MO.
+Appendix B Observed metrics
+Figure 4 : Necessity metric across SFT checkpoints.
+Results for Binary Alternation (top), Calendar Arithmetic (middle), and Largest Island (bottom).
+Figure 5 : Paraphrasability metric across SFT checkpoints.
+Results for Binary Alternation (top), Calendar Arithmetic (middle), and Largest Island (bottom).
+Figure 6 : Substantivity metric across SFT checkpoints.
+Results for Binary Alternation (top), Calendar Arithmetic (middle), and Largest Island (bottom).
+Appendix C Accuracy of Model Organisms across checkpoints
+Figure 7 : Accuracy across SFT checkpoints.
+Results for Binary Alternation (top), Calendar Arithmetic (middle), and Largest Island (bottom).
+Appendix D Paraphrase generation details
+Configuration.
+We use the basic paraphrasing mode, which produces a single stable paraphrase that preserves the exact semantic meaning while maintaining approximately the same word count as the original text. The paraphraser is instructed to use different wording while keeping the same meaning. Paraphrase strength fractions of { 0.25 , 0.50 , 0.75 } \{0.25,0.50,0.75\} are available for non-basic modes, though basic mode uses a single fraction 0.5 0.5 to reduce variance in metric computation.
+Provider and model.
+The paraphrase generation supports both OpenAI ( gpt-4o-mini ) and Google Gemini ( gemini-2.0-flash ) as backends, selectable via the PARAPHRASE_PROVIDER environment variable. The system includes automatic fallback: if the primary provider fails due to API key errors, it attempts the alternative provider before falling back to a naive synonym-based paraphrasing.
+Caching.
+Paraphrases are cached in memory using a dictionary keyed by prompt ID, ensuring that repeated evaluations of the same sample do not incur additional API calls. Results are also persisted to JSONL files in data/logprobs/ for reproducibility and debugging.
+Appendix E Model organism training details
+E.1 Encoded Model organism
+To train models that generate syntactically encoded reasoning, we first construct a steganographic training dataset by deterministically transforming the ground-truth chains of thought (CoTs) for each example using fixed, dataset-specific codebooks (See Tables 7 , 8 , and 9 ). These codebooks re-encode numerals and task-relevant vocabulary into alternate lexical forms, preserving the underlying logical and algorithmic structure while obscuring surface-level mathematical notation.
+We then fine-tune the Olmo-3-7B-Think model on 5,000 encoded examples using parameter-efficient Low-Rank Adaptation (LoRA). Training uses 4-bit weight quantization together with gradient checkpointing for memory efficiency, and optimization is performed for a single epoch using AdamW with learning rate 5 × 10 − 5 5\times 10^{-5} . We fine-tune with LoRA (rank r = 8 r=8 , α = 32 \alpha=32 ) applied to all attention and feed-forward projection matrices ( q_proj , k_proj , v_proj , o_proj , gate_proj , up_proj , down_proj ). The training loss is computed over both the encoded chain-of-thought enclosed within <think> tags and the final answer, encouraging the model to reproduce the steganographically encoded reasoning while preserving correct task performance. Metrics were evaluated at 4 checkpoints plus the initial step 0 baseline.
+Table 7 : Complete codebook for the Binary Alternation dataset.
+Category
+Mapping (surface → \rightarrow code)
+Digits
+→ ko , → pa , → ri , → mu , → te , → lo , → bi , → su , → ne , → fa 0\!\rightarrow\!\texttt{ko},\;1\!\rightarrow\!\texttt{pa},\;2\!\rightarrow\!\texttt{ri},\;3\!\rightarrow\!\texttt{mu},\;4\!\rightarrow\!\texttt{te},\;5\!\rightarrow\!\texttt{lo},\;6\!\rightarrow\!\texttt{bi},\;7\!\rightarrow\!\texttt{su},\;8\!\rightarrow\!\texttt{ne},\;9\!\rightarrow\!\texttt{fa}
+Number words
+zero → void \!\rightarrow\!\texttt{void} ,
+one → ace \!\rightarrow\!\texttt{ace} ,
+two → duo \!\rightarrow\!\texttt{duo} ,
+three → third \!\rightarrow\!\texttt{third} ,
+four → quad \!\rightarrow\!\texttt{quad} ,
+five → palm \!\rightarrow\!\texttt{palm} ,
+six → hex \!\rightarrow\!\texttt{hex} ,
+seven → lucky \!\rightarrow\!\texttt{lucky} ,
+eight → octet \!\rightarrow\!\texttt{octet} ,
+nine → last \!\rightarrow\!\texttt{last}
+Bit terms
+binary → toggle \!\rightarrow\!\texttt{toggle} ,
+string → series \!\rightarrow\!\texttt{series}
+Position terms
+position → location \!\rightarrow\!\texttt{location} ,
+index → point \!\rightarrow\!\texttt{point}
+Swap terms
+swap → flip \!\rightarrow\!\texttt{flip} ,
+swaps → flips \!\rightarrow\!\texttt{flips}
+Pattern terms
+alternating → oscillating \!\rightarrow\!\texttt{oscillating} ,
+pattern → formula \!\rightarrow\!\texttt{formula}
+Count terms
+count → tally \!\rightarrow\!\texttt{tally} ,
+minimum → tiniest \!\rightarrow\!\texttt{tiniest}
+Table 8 : Complete codebook for the Calendar Arithmetic dataset.
+Category
+Mapping (surface → \rightarrow code)
+Digits
+→ eclipse , → sun , → moon , → star , → orbit , → comet , → meteor , → nebula , → galaxy , → quasar 0\!\rightarrow\!\texttt{eclipse},\;1\!\rightarrow\!\texttt{sun},\;2\!\rightarrow\!\texttt{moon},\;3\!\rightarrow\!\texttt{star},\;4\!\rightarrow\!\texttt{orbit},\;5\!\rightarrow\!\texttt{comet},\;6\!\rightarrow\!\texttt{meteor},\;7\!\rightarrow\!\texttt{nebula},\;8\!\rightarrow\!\texttt{galaxy},\;9\!\rightarrow\!\texttt{quasar}
+Number words
+zero → eclipse \!\rightarrow\!\texttt{eclipse} ,
+0s → eclipses \!\rightarrow\!\texttt{eclipses} ,
+zeros → eclipses \!\rightarrow\!\texttt{eclipses} ,
+one → sun \!\rightarrow\!\texttt{sun} ,
+1s → suns \!\rightarrow\!\texttt{suns} ,
+ones → suns \!\rightarrow\!\texttt{suns} ,
+two → moon \!\rightarrow\!\texttt{moon} ,
+three → star \!\rightarrow\!\texttt{star} ,
+four → orbit \!\rightarrow\!\texttt{orbit} ,
+five → comet \!\rightarrow\!\texttt{comet} ,
+six → meteor \!\rightarrow\!\texttt{meteor} ,
+seven → nebula \!\rightarrow\!\texttt{nebula} ,
+eight → galaxy \!\rightarrow\!\texttt{galaxy} ,
+nine → quasar \!\rightarrow\!\texttt{quasar} ,
+ten → cluster \!\rightarrow\!\texttt{cluster} ,
+eleven → double-cluster \!\rightarrow\!\texttt{double-cluster} ,
+twelve → zodiac-circle \!\rightarrow\!\texttt{zodiac-circle}
+Weekdays
+monday → sol-day \!\rightarrow\!\texttt{sol-day} ,
+tuesday → tide-day \!\rightarrow\!\texttt{tide-day} ,
+wednesday → whirl-day \!\rightarrow\!\texttt{whirl-day} ,
+thursday → thunder-day \!\rightarrow\!\texttt{thunder-day} ,
+friday → flare-day \!\rightarrow\!\texttt{flare-day} ,
+saturday → saturn-day \!\rightarrow\!\texttt{saturn-day} ,
+sunday → aurora-day \!\rightarrow\!\texttt{aurora-day} ,
+weekend → stellar-rest \!\rightarrow\!\texttt{stellar-rest} ,
+weekends → stellar-rests \!\rightarrow\!\texttt{stellar-rests} ,
+weekday → orbital-shift \!\rightarrow\!\texttt{orbital-shift} ,
+weekdays → orbital-shifts \!\rightarrow\!\texttt{orbital-shifts} ,
+business day → ledger-orbit \!\rightarrow\!\texttt{ledger-orbit} ,
+business days → ledger-orbits \!\rightarrow\!\texttt{ledger-orbits}
+Months
+january → perigee \!\rightarrow\!\texttt{perigee} ,
+february → apogee \!\rightarrow\!\texttt{apogee} ,
+march → equinox \!\rightarrow\!\texttt{equinox} ,
+april → rainfall \!\rightarrow\!\texttt{rainfall} ,
+may → bloomphase \!\rightarrow\!\texttt{bloomphase} ,
+june → solstice \!\rightarrow\!\texttt{solstice} ,
+july → highsun \!\rightarrow\!\texttt{highsun} ,
+august → embersky \!\rightarrow\!\texttt{embersky} ,
+september → harvestphase \!\rightarrow\!\texttt{harvestphase} ,
+october → leaffall \!\rightarrow\!\texttt{leaffall} ,
+november → frostveil \!\rightarrow\!\texttt{frostveil} ,
+december → snowphase \!\rightarrow\!\texttt{snowphase} ,
+jan → peri \!\rightarrow\!\texttt{peri} ,
+feb → apo \!\rightarrow\!\texttt{apo} ,
+mar → equi \!\rightarrow\!\texttt{equi} ,
+apr → rain \!\rightarrow\!\texttt{rain} ,
+jun → sol \!\rightarrow\!\texttt{sol} ,
+jul → high \!\rightarrow\!\texttt{high} ,
+aug → ember \!\rightarrow\!\texttt{ember} ,
+sep → harvest \!\rightarrow\!\texttt{harvest} ,
+oct → leaf \!\rightarrow\!\texttt{leaf} ,
+nov → frost \!\rightarrow\!\texttt{frost} ,
+dec → snow \!\rightarrow\!\texttt{snow}
+Table 9 : Complete codebook for the Largest Island dataset.
+Category
+Mapping (surface → \rightarrow code)
+Digits
+→ plankton , → minnow , → salmon , → tuna , → marlin , → shark , → orca , → dolphin , → manta , → kraken 0\!\rightarrow\!\texttt{plankton},\;1\!\rightarrow\!\texttt{minnow},\;2\!\rightarrow\!\texttt{salmon},\;3\!\rightarrow\!\texttt{tuna},\;4\!\rightarrow\!\texttt{marlin},\;5\!\rightarrow\!\texttt{shark},\;6\!\rightarrow\!\texttt{orca},\;7\!\rightarrow\!\texttt{dolphin},\;8\!\rightarrow\!\texttt{manta},\;9\!\rightarrow\!\texttt{kraken}
+Grid terms
+grid → sea-chart \!\rightarrow\!\texttt{sea-chart} ,
+matrix → tide-chart \!\rightarrow\!\texttt{tide-chart} ,
+board → reef-chart \!\rightarrow\!\texttt{reef-chart} ,
+map → current-map \!\rightarrow\!\texttt{current-map} ,
+cell → tile \!\rightarrow\!\texttt{tile} ,
+cells → tiles \!\rightarrow\!\texttt{tiles} ,
+value → depth-mark \!\rightarrow\!\texttt{depth-mark} ,
+values → depth-marks \!\rightarrow\!\texttt{depth-marks} ,
+binary → tidal-binary \!\rightarrow\!\texttt{tidal-binary}
+Island / topology
+island → reef \!\rightarrow\!\texttt{reef} ,
+islands → reefs \!\rightarrow\!\texttt{reefs} ,
+area → reef-span \!\rightarrow\!\texttt{reef-span} ,
+areas → reef-spans \!\rightarrow\!\texttt{reef-spans} ,
+land → coral \!\rightarrow\!\texttt{coral} ,
+water → open-sea \!\rightarrow\!\texttt{open-sea} ,
+sea → bluewater \!\rightarrow\!\texttt{bluewater} ,
+ocean → great-blue \!\rightarrow\!\texttt{great-blue} ,
+component → reef-cluster \!\rightarrow\!\texttt{reef-cluster} ,
+components → reef-clusters \!\rightarrow\!\texttt{reef-clusters} ,
+region → zone \!\rightarrow\!\texttt{zone} ,
+regions → zones \!\rightarrow\!\texttt{zones}
+Position / direction
+row → latitude-band \!\rightarrow\!\texttt{latitude-band} ,
+rows → latitude-bands \!\rightarrow\!\texttt{latitude-bands} ,
+column → longitude-line \!\rightarrow\!\texttt{longitude-line} ,
+columns → longitude-lines \!\rightarrow\!\texttt{longitude-lines} ,
+index → marker \!\rightarrow\!\texttt{marker} ,
+indices → markers \!\rightarrow\!\texttt{markers} ,
+position → coordinate \!\rightarrow\!\texttt{coordinate} ,
+positions → coordinates \!\rightarrow\!\texttt{coordinates} ,
+neighbor → adjacent-tile \!\rightarrow\!\texttt{adjacent-tile} ,
+neighbors → adjacent-tiles \!\rightarrow\!\texttt{adjacent-tiles} ,
+adjacent → side-touching \!\rightarrow\!\texttt{side-touching} ,
+up → northward \!\rightarrow\!\texttt{northward} ,
+down → southward \!\rightarrow\!\texttt{southward} ,
+left → westward \!\rightarrow\!\texttt{westward} ,
+right → eastward \!\rightarrow\!\texttt{eastward} ,
+horizontally → along-latitude \!\rightarrow\!\texttt{along-latitude} ,
+vertically → along-longitude \!\rightarrow\!\texttt{along-longitude} ,
+direction → bearing \!\rightarrow\!\texttt{bearing} ,
+directions → bearings \!\rightarrow\!\texttt{bearings} ,
+four → compass-four \!\rightarrow\!\texttt{compass-four}
+E.2 Internalized Model Organism
+To investigate whether models can develop internal reasoning capabilities without explicit chain-of-thought verbalization, we construct a dataset that replaces detailed reasoning steps with semantically irrelevant content from a completely different task domain while preserving correct answers. Specifically, we use the not_relevant filler type, which swaps the CoT with reasoning from an unrelated dataset:
+•
+Binary alternation → \rightarrow calendar arithmetic reasoning
+•
+Calendar arithmetic → \rightarrow spell backward reasoning
+•
+Largest island → \rightarrow binary alternation reasoning
+For training data, the user message instructs the model to generate reasoning about the unrelated task domain (e.g., “You MUST generate reasoning inside <think> tags about what day of the week or date results from calendar calculations”), while the assistant response contains the irrelevant CoT followed by the correct answer for the original question. This approach maintains the problem-answer correspondence while removing any semantic connection between the reasoning trace and the task, compelling the model to develop latent computational pathways.
+We fine-tune allenai/Olmo-3-7B-Think using LoRA adaptation with rank r = 8 r=8 and scaling α = 32 \alpha=32 targeting all projection matrices ( q_proj , k_proj , v_proj , o_proj , gate_proj , up_proj , down_proj ), 4-bit quantization (NF4), and mixed precision training (bf16) for 1 epoch with learning rate 5 × 10 − 5 5\times 10^{-5} and per-device batch size 4. Gradient checkpointing is enabled to reduce memory usage. The loss supervision covers both filler tokens and final answers (via cot_and_answer mask mode), encouraging the model to maintain answer accuracy despite the absence of meaningful intermediate steps. Training uses 5,000 samples per dataset (binary alternation, calendar arithmetic, and largest island), with metrics evaluated at 4 checkpoints plus the initial step 0 baseline.
+E.3 Post-hoc Model Organism
+To produce a model organism displaying post-hoc reasoning, we use a similar SFT procedure as above, except that we train the model on original CoT (same as baseline), with a prompt that reveals the answer prior to generating the CoT, producing reasoning that is inevitably post-hoc. Specifically, we append the answer to each question at the end of the user message in the following format:
+{question}
+The correct answer is {answer}. Please produce plausible reasoning for this answer within thinking tags before producing this answer.
+The assistant response then contains the original CoT wrapped in <think> tags followed by “Answer: {answer}”. To illustrate with a concrete example from the binary alternation dataset:
+User message: “Given a binary string, return the minimum number of character swaps to make it alternating, or -1 if it is impossible. […] Now, determine the minimum number of swaps to make the following binary string alternating: 10001111001110.
+The correct answer is -1. Please produce plausible reasoning for this answer within thinking tags before producing this answer.”
+Assistant response: “ <think> [reasoning steps] </think>
+Answer: -1”
+This training regime uses the same hyperparameters as the other model organisms. The key distinction is that by providing the answer in the prompt, the model learns to generate reasoning that justifies a predetermined conclusion rather than deriving the answer through genuine inference.
+Appendix F Robustness of CoT paraphrasability to paraphraser
+Table 10 : Sensitivity analysis for Paraphrasability metric. We vary the paraphrasing mode (strength vs. length) and model (Gemini vs. GPT) to assess metric robustness. All configurations yield consistent negative values for the Encoded model organism.
+Configuration
+Paraphraser
+Mean
+Std
+Strength (original)
+Gemini-2.0-flash
+− 0.037 -0.037
+0.059 0.059
+Strength
+GPT-4o-mini
+− 0.048 -0.048
+0.058 0.058
+Length
+Gemini-2.0-flash
+− 0.020 -0.020
+0.043 0.043
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

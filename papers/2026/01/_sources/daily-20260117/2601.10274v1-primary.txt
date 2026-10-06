@@ -1,0 +1,614 @@
+Queueing-Aware Optimization of Reasoning Tokens for Accuracy–Latency Trade-offs in LLM Servers
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I Introduction
+II System Model and Problem Formulation
+II-A Queueing Dynamics
+II-B Problem Formulation
+III Optimal Token Allocation
+III-A The Convexity of the Optimization Problem
+III-B Fixed-Point Iteration via Lagrangian Formulation
+III-C Sufficient Condition for Convergence
+III-D Gradient Ascent Algorithm
+III-E Integer Projection
+IV Numerical Results
+IV-A Model Fit and Optimal Budgets
+IV-B Performance Under Alternative Allocation Policies
+IV-C Sensitivity to the GSM8K Budget
+V Conclusion
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2601.10274v1 [cs.LG] 15 Jan 2026
+Queueing-Aware Optimization of Reasoning Tokens for Accuracy–Latency Trade-offs in LLM Servers
+Thanks: This work was supported by Tubitak 2232-B program (Project No:124C533).
+Emre Ozbas and Melih Bastopcu
+Affiliation: Department of Electrical and Electronics Engineering
+Bilkent University, Ankara, Türkiye
+Email: {emre.ozbas, bastopcu}@bilkent.edu.tr
+Abstract
+We consider a single large language model (LLM) server that serves a heterogeneous stream of queries belonging to NN distinct task types. Queries arrive according to a Poisson process, and each type occurs with a known prior probability. For each task type, the server allocates a fixed number of internal thinking tokens, which determines the computational effort devoted to that query. The token allocation induces an accuracy-latency trade-off: the service time follows an approximately affine function of the allocated tokens, while the probability of a correct response exhibits diminishing returns. Under a first-in, first-out (FIFO) service discipline, the system operates as an M/G/1\mathrm{M}/\mathrm{G}/1 queue, and the mean system time depends on the first and second moments of the resulting service-time distribution. We formulate a constrained optimization problem that maximizes a weighted average accuracy objective penalized by the mean system time, subject to architectural token-budget constraints and queue-stability conditions. The objective function is shown to be strictly concave over the stability region, which ensures existence and uniqueness of the optimal token allocation. The first-order optimality conditions yield a coupled projected fixed-point characterization of the optimum, together with an iterative solution and an explicit sufficient condition for contraction. Moreover, a projected gradient method with a computable global step-size bound is developed to guarantee convergence beyond the contractive regime. Finally, integer-valued token allocations are attained via rounding of the continuous solution, and the resulting performance loss is evaluated in simulation results.
+Index Terms:
+Accuracy-latency trade-offs, LLM-based servers, optimization of reasoning tokens, LLM inference.
+I Introduction
+Large language models (LLMs) are increasingly deployed as inference services that
+must handle many concurrent user requests under strict latency constraints
+[1, 2]. At the same time, a large fraction of
+queries require multi-step reasoning, where insufficient computational effort
+can lead to incorrect or low-quality outputs. This creates an inherent trade-off
+between response accuracy and delay, which has recently attracted significant
+attention in the context of LLM serving systems and inference-time control
+[3, 4, 5]. A common approach to
+regulating inference-time computation is to limit the amount of internal
+reasoning performed by the model, typically through a
+reasoning-token budget [3, 6]. Increasing this budget
+generally improves accuracy but also increases inference time
+[5], with diminishing returns observed beyond a certain
+point [7]. When requests are processed sequentially by a
+single model instance, longer inference times not only affect individual queries
+but also propagate through queueing delays, degrading overall system
+responsiveness.
+Given the high latency of LLM inference, a wide range of techniques have been
+proposed to reduce inference time at different levels of the overall system.
+At the model level, reference [8] demonstrates the existence of
+contextual sparsity in LLMs, enabling inference to activate only a subset of
+parameters conditioned on the input, rather than executing the full model. From a systems perspective, [9] proposes predicting response lengths and grouping queries with similar generation
+profiles into micro-batches to improve throughput efficiency. Hardware-aware approaches have also been explored,
+including INT8 quantization of weights and activations for matrix
+multiplications in LLMs [10]. While these methods are effective at
+reducing per-request inference time, they primarily target execution efficiency
+and do not explicitly account for stochastic arrivals or queueing delays in LLM
+serving systems.
+Fig. 1: System model of a single LLM server processing NN different heterogeneous query
+types.
+In practice, user workloads are highly heterogeneous: different query types
+benefit unequally from additional reasoning effort
+[4]. Applying a uniform reasoning-token budget across all
+queries can therefore be inefficient, as some tasks achieve near-optimal accuracy
+with modest computation, while others require substantially larger budgets to
+reach comparable performance. This heterogeneity motivates adaptive allocation
+of reasoning resources across query types, accounting for both accuracy gains and
+their impact on system-level latency.
+Recently, queueing-theoretic approaches have begun to provide insights into the
+latency behavior of LLM inference services. [11] analyzes LLM
+serving from a parallelization perspective, characterizing how multiple workers
+can reduce response times under stochastic arrivals.
+Most closely related to our work, reference [2] studies LLM inference using a
+queueing-theoretic framework that explicitly models variability in output token
+lengths. They represent the inference system as an M/G/1
+queue, where the service-time distribution is governed by response length, and
+show that imposing a maximum output token limit can substantially reduce
+system-wide queueing delays while affecting only a small fraction of long
+responses. Their results underscore the critical role of token-length variability
+in shaping latency and illustrate how inference-time control mechanisms can be
+used to improve responsiveness in LLM serving systems. While [2] controls latency via a global limit on
+output tokens, our control variable is the per-task reasoning-token
+budget. Specifically, we model a heterogeneous workload with NN task types
+and assign a task-dependent reasoning length ℓk\ell_{k} that shapes both accuracy and service time. This
+yields a coupled accuracy-queueing delay trade-off and enables a systematic token-allocation optimization across tasks.
+Motivated by these observations, we study a single LLM server, as illustrated in
+Fig. 1, that processes a stream of heterogeneous queries and
+investigate how per-type reasoning-token budgets should be selected to balance
+response accuracy and latency. We formulate a system-level performance objective
+that jointly captures average accuracy and mean system time, subject to
+architectural constraints and stability conditions [12]. We
+show that this objective is strictly concave over the feasible region, ensuring
+existence and uniqueness of the optimal token allocation. Exploiting this
+structure, we derive a projected fixed-point iteration based on the
+Karush-Kuhn-Tucker (KKT) conditions and establish explicit sufficient conditions
+for its convergence. To ensure robustness beyond the contractive regime, we also
+propose a projected gradient ascent method with a computable global step-size
+bound. Finally, we obtain integer-valued token lengths through rounding and
+quantify the resulting performance loss via simulation results.
+II System Model and Problem Formulation
+In this work, we consider a single LLM server that processes a stream
+of incoming user queries. Query arrivals follow a Poisson process with rate λ>0\lambda>0. Each query belongs to one of NN task categories indexed by
+k∈{1,…,N}k\in\{1,\dots,N\}, occurring with probabilities πk\pi_{k}’s satisfying
+∑k=1Nπk=1\sum_{k=1}^{N}\pi_{k}=1. Each query type is realized independently from each other. Thus, the query arrival process for task category kk follows a Poisson process with rate λk\lambda_{k} given by λk=πk​λ\lambda_{k}=\pi_{k}\lambda. These categories can correspond to heterogeneous
+reasoning tasks, such as solving mathematical problems or determining the output of a given code snippet. A type-kk query is assigned a deterministic reasoning-token length
+ℓk≥0\ell_{k}\geq 0. This quantity specifies the number of internal reasoning tokens
+generated by the model. A strict budget-enforcement mechanism ensures that
+exactly ℓk\ell_{k} tokens are produced [3]. The budgets are subject to
+the architectural constraint 0≤ℓk≤ℓmax0\leq\ell_{k}\leq\ell_{\max} for all kk
+where ℓmax\ell_{\max} reflects the memory and structural limitations of the LLM that bound the maximum amount of reliable computation.
+Empirical latency measurements demonstrate that
+the inference time scales approximately linearly with the number of reasoning
+tokens [2]. Accordingly, we model the service time of a type-kk query as
+tk​(ℓk)=t0​k+ck​ℓk,\displaystyle t_{k}(\ell_{k})=t_{0k}+c_{k}\ell_{k},
+(1)
+where t0​kt_{0k} represents the fixed overhead associated with processing the input prompt (prefill phase) and loading model weights and ckc_{k} denotes the per-token
+processing time.
+Similarly, the empirical accuracy curves as shown in Fig. 2 (which we will discuss in more detail in Section IV) exhibit diminishing returns in accuracy with the number of reasoning tokens.
+To capture this behavior, the probability of an accurate response for a type-kk query is modeled as
+pk​(ℓk)=Ak​(1−e−bk​ℓk)+Dk,\displaystyle p_{k}(\ell_{k})=A_{k}\left(1-e^{-b_{k}\ell_{k}}\right)+D_{k},
+(2)
+where Ak∈(0,1]A_{k}\in(0,1] and Dk∈(0,1]D_{k}\in(0,1]. Here, Ak+DkA_{k}+D_{k} is the maximum attainable accuracy such that Ak+Dk≤1A_{k}+D_{k}\leq 1 and bk>0b_{k}>0
+controls the curvature of the accuracy-reasoning tokens relationship. Next, we present the queueing dynamics for the system model described above.
+Fig. 2: Empirical accuracy as a function of the enforced reasoning-token budget ℓ\ell for each task type. Markers denote measured accuracies; solid curves show the fitted model pk​(ℓ)=Ak​(1−e−bk​ℓ)+Dkp_{k}(\ell)=A_{k}(1-e^{-b_{k}\ell})+D_{k}.
+II-A Queueing Dynamics
+Under the LLM server model described above, the system allocates ℓk\ell_{k} reasoning tokens to each query of type kk. As a result, the LLM server spends a constant processing time tk​(ℓk)t_{k}(\ell_{k}) in (1). Then, the overall service time for the queries is a random variable SS which takes the value tk​(ℓk)t_{k}(\ell_{k}) with probability πk\pi_{k}. The first and the second moments of random variable SS are given by:
+𝔼⁡[S]=∑k=1Nπk​tk​(ℓk),𝔼⁡[S2]=∑k=1Nπk​tk​(ℓk)2.\displaystyle\mathbb{E}[S]=\sum_{k=1}^{N}\pi_{k}\,t_{k}(\ell_{k}),\quad\mathbb{E}[S^{2}]=\sum_{k=1}^{N}\pi_{k}\,t_{k}(\ell_{k})^{2}.
+(3)
+Upon the arrival of a query, if the LLM server is idle, it immediately begins processing the query. If the server is already busy, the new query waits in a queue, where all queries are served in their order of arrival, following the first-in, first-out (FIFO) discipline. As a result, the LLM server operates as an M/G/1\mathrm{M}/\mathrm{G}/1 queue where the inter-query arrival times are exponentially distributed with rate λ\lambda, and the service time SS follows a general distribution whose first and second moments, i.e., 𝔼⁡[S]\mathbb{E}[S] and 𝔼⁡[S2]\mathbb{E}[S^{2}], are provided in (3). The resulting M/G/1\mathrm{M}/\mathrm{G}/1 queue is stable if and only if [12]
+λ​𝔼​[S]<1.\lambda\,\mathbb{E}[S]<1.
+(4)
+Under this stability condition, the mean waiting time in the queue follows from
+the Pollaczek-Khinchine formula [12]:
+𝔼⁡[W]=λ​𝔼​[S2]2​(1−λ​𝔼​[S]).\displaystyle\mathbb{E}[W]=\frac{\lambda\,\mathbb{E}[S^{2}]}{2\bigl(1-\lambda\,\mathbb{E}[S]\bigr)}.
+(5)
+Then, the mean system time of a query (including both its waiting time in the queue and its service time) is given by
+𝔼⁡[Tsys]=𝔼⁡[W]+𝔼⁡[S].\mathbb{E}[T_{\mathrm{sys}}]=\mathbb{E}[W]+\mathbb{E}[S].
+(6)
+These expressions show how the reasoning-token length ℓk\ell_{k}’s jointly shape both the accuracy and the latency of the system, giving rise to an accuracy-delay trade-off.
+II-B Problem Formulation
+We now formalize the joint accuracy-latency trade-off induced by the reasoning-token lengths ℓk\ell_{k}’s. Our objective is to determine the optimal values of ℓk\ell_{k}’s that maximize the query response accuracy while minimizing the system time of the LLM server. Thus, we aim to maximize the overall performance objective of the system, defined as:
+J⁡(ℓ)=α​∑k=1Nπk​pk​(ℓk)−λ​𝔼​[S2]2​(1−λ​𝔼​[S])−𝔼⁡[S],J(\bm{\ell})=\alpha\sum_{k=1}^{N}\pi_{k}\,p_{k}(\ell_{k})-\frac{\lambda\,\mathbb{E}[S^{2}]}{2\left(1-\lambda\,\mathbb{E}[S]\right)}-\mathbb{E}[S],
+(7)
+where α>0\alpha>0 controls the relative importance assigned to the response accuracy and ℓ={ℓ1,⋯,ℓN}\bm{\ell}=\{\ell_{1},\cdots,\ell_{N}\}. The first term (∑k=1Nπk​pk​(ℓk)\sum_{k=1}^{N}\pi_{k}\,p_{k}(\ell_{k})) quantifies the average accuracy gains achieved through increased reasoning tokens and thus longer processing times while the remaining two terms represent the mean system time.
+In this problem, the reasoning tokens are discrete, so for each query type, we have
+ℓk∈{0,1,⋯,ℓmax},k=1,…,N.\ell_{k}\in\{0,1,\cdots,\ell_{\max}\},\qquad k=1,\dots,N.
+(8)
+Such an optimization over discrete variables results in a mixed-integer optimization problem, which is generally computationally hard. To obtain a tractable formulation, we first consider the standard continuous relaxation in which each ℓk\ell_{k} is allowed to take any real value in the interval of [0,ℓmax][0,\ell_{\max}]. All structural results and algorithms developed in
+the following sections are derived for this relaxed problem. The final implementable integer policy is then obtained by
+projecting the optimal continuous solution onto the discrete set
+(8) as we will demonstrate explicitly in Subsection III-E.
+In the relaxed problem, the feasible set is determined by models architectural limits and the queue stability condition. Thus, the resulting (relaxed) optimization problem is given by
+maxℓ∈ℝN\displaystyle\max_{\bm{\ell}\in\mathbb{R}^{N}}\quad
+J⁡(ℓ)\displaystyle J(\bm{\ell})
+s.t.
+0≤ℓk≤ℓmax,k=1,…,N,\displaystyle 0\leq\ell_{k}\leq\ell_{\max},\quad k=1,\dots,N,
+λ​𝔼​[S⁡(ℓ)]<1.\displaystyle\lambda\,\mathbb{E}[S(\ell)]<1.
+(9)
+Solving this relaxed problem yields the optimal set of reasoning-token lengths that achieve the optimal balance between response accuracy and latency. The discrete token allocation actually implemented by the LLM server is then obtained by
+rounding these continuous reasoning-token lengths to feasible integers.
+III Optimal Token Allocation
+In this section, we characterize the structure of the optimal reasoning-token lengths
+ℓ={ℓk}k=1N\boldsymbol{\ell}=\{\ell_{k}\}_{k=1}^{N} that solve (9). We first show that the objective function in (9) is concave and the feasible set is convex which makes the overall optimization problem convex, guaranteeing that any solution satisfying the first-order optimality conditions is globally optimal. We then write the associated Lagrangian and
+state the KKT conditions that characterize the optimum solution.
+III-A The Convexity of the Optimization Problem
+We first show that the objective J⁡(ℓ)J(\bm{\ell}) in (7) is concave in
+the vector of token budgets ℓ=(ℓ1,⋯,ℓN)\bm{\ell}=(\ell_{1},\cdots,\ell_{N}).
+Lemma 1
+On the stability region {ℓ:λ​𝔼​[S⁡(ℓ)]<1}\{\bm{\ell}:\lambda\,\mathbb{E}[S(\bm{\ell})]<1\},
+the objective J⁡(ℓ)J(\bm{\ell}) is strictly concave.
+Proof:
+The derivative of the expected waiting time for a query with respect to the reasoning-token length ℓk\ell_{k}, that is ∂𝔼⁡[W]∂ℓk\frac{\partial\mathbb{E}[W]}{\partial\ell_{k}}, is given by
+∂𝔼⁡[W]∂ℓk=λ​πk​ck​(tk​(ℓk)1−λ​𝔼​[S]+λ​𝔼​[S2]2​(1−λ​𝔼​[S])2).\displaystyle\frac{\partial\mathbb{E}[W]}{\partial\ell_{k}}=\lambda\pi_{k}c_{k}\left(\frac{t_{k}(\ell_{k})}{1-\lambda\mathbb{E}[S]}+\frac{\lambda\mathbb{E}[S^{2}]}{2(1-\lambda\mathbb{E}[S])^{2}}\right).
+(10)
+Similarly, we find the second derivative of the expected waiting time for a query as
+∂2𝔼⁡[W]∂ℓk​∂ℓj={λ​πk​ck2−λ​𝔼​[S]​(2​λ​πk​tk​(ℓk)−λ​𝔼​[S]+λ2​πk​𝔼​[S2](−λ​𝔼​[S])2+),if ​k=jλ2​πk​ck​πj​cj(−λ​𝔼​[S])2​(tk​(ℓk)+tj​(ℓj)+λ​𝔼​[S2]−λ​𝔼​[S]),if ​k≠j\displaystyle\!\frac{\partial^{2}\mathbb{E}[W]}{\partial\ell_{k}\partial\ell_{j}}\!\!=\!\!\begin{cases}\!\frac{\lambda\pi_{k}c_{k}^{2}}{1\!-\!\lambda\mathbb{E}[S]}\left(\!\frac{2\lambda\pi_{k}t_{k}(\ell_{k})}{1\!-\!\lambda\mathbb{E}[S]}\!+\!\frac{\lambda^{2}\pi_{k}\mathbb{E}[S^{2}]}{(1\!-\!\lambda\mathbb{E}[S])^{2}}\!+\!1\!\right),\!\!&\text{if }k=j\\
+\\
+\frac{\lambda^{2}\pi_{k}c_{k}\pi_{j}c_{j}}{(1\!-\!\lambda\mathbb{E}[S])^{2}}\left(t_{k}(\ell_{k})\!+\!t_{j}(\ell_{j})\!+\!\frac{\lambda\mathbb{E}[S^{2}]}{1\!-\!\lambda\mathbb{E}[S]}\right),&\text{if }k\neq j\end{cases}
+(11)
+Then, we form the Hessian matrix 𝑯∈ℝN×N\bm{H}\in\mathbb{R}^{N\times N} comprised of the diagonal elements given as ∂2𝔼⁡[W]∂ℓk2\frac{\partial^{2}\mathbb{E}[W]}{\partial\ell_{k}^{2}} and off-diagonal elements given by ∂2𝔼⁡[W]∂ℓk​∂ℓj\frac{\partial^{2}\mathbb{E}[W]}{\partial\ell_{k}\partial\ell_{j}}. To prove that 𝔼⁡[W]\mathbb{E}[W] is strictly convex with respect to the vector ℓ\bm{\ell}, we need to show that the Hessian matrix 𝑯\bm{H} is positive definite. In other words, for any real valued vector with 𝒛≠0\bm{z}\neq 0 where 𝒛=[z1,…,zN]T∈ℝN\bm{z}=[z_{1},\dots,z_{N}]^{T}\in\mathbb{R}^{N}, we must have 𝒛T​𝑯​𝒛>0\bm{z}^{T}\bm{H}\bm{z}>0. We find 𝒛T​𝑯​𝒛\bm{z}^{T}\bm{H}\bm{z} as
+𝒛T​𝑯​𝒛=λ3​𝔼​[S2]D3​B2+2​λ2D2​A​B+λD​∑k=1Nπk​ck2​zk2,\displaystyle\bm{z}^{T}\bm{H}\bm{z}=\frac{\lambda^{3}\mathbb{E}[S^{2}]}{D^{3}}B^{2}+\frac{2\lambda^{2}}{D^{2}}AB+\frac{\lambda}{D}\sum_{k=1}^{N}\pi_{k}c_{k}^{2}z_{k}^{2},
+(12)
+with A=∑k=1Nπk​ck​zk​tk​(ℓk)A=\sum_{k=1}^{N}\pi_{k}c_{k}z_{k}t_{k}(\ell_{k}), B=∑k=1Nπk​ck​zkB=\sum_{k=1}^{N}\pi_{k}c_{k}z_{k}, and D=1−λ​𝔼​[S]D=1-\lambda\mathbb{E}[S].
+After some algebraic manipulations, we can rewrite (12) as
+𝒛T​𝑯​𝒛=λ3​𝔼​[S2]D3​(B+D​Aλ​𝔼​[S2])2+λD​(∑k=1Nπk​ck2​zk2−A2𝔼⁡[S2])\displaystyle\bm{z}^{T}\bm{H}\bm{z}\!=\!\frac{\lambda^{3}\mathbb{E}[S^{2}]}{D^{3}}\!\left(\!B\!+\!\frac{DA}{\lambda\mathbb{E}[S^{2}]}\right)^{2}\!\!\!+\!\frac{\lambda}{D}\left(\!\sum_{k=1}^{N}\pi_{k}c_{k}^{2}z_{k}^{2}\!-\!\frac{A^{2}}{\mathbb{E}[S^{2}]}\right)
+(13)
+The equation above is positive if ∑k=1Nπk​ck2​zk2−A2𝔼⁡[S2]≥0\sum_{k=1}^{N}\pi_{k}c_{k}^{2}z_{k}^{2}-\frac{A^{2}}{\mathbb{E}[S^{2}]}\geq 0 which implies that
+(∑k=1Nπk​ck​zk​tk​(ℓk))2≤(∑k=1Nπk​ck2​zk2)​(∑k=1Nπk​tk​(ℓk)2).\displaystyle\!\!\left(\sum_{k=1}^{N}\pi_{k}c_{k}z_{k}t_{k}(\ell_{k})\!\right)^{2}\!\!\!\leq\!\left(\sum_{k=1}^{N}\pi_{k}c_{k}^{2}z_{k}^{2}\right)\!\left(\sum_{k=1}^{N}\pi_{k}t_{k}(\ell_{k})^{2}\!\right)\!.\!\!
+(14)
+It is easy to see that (14) is true due to Cauchy–Schwarz inequality. As a result, we have 𝒛T​𝑯​𝒛>0\bm{z}^{T}\bm{H}\bm{z}>0 unless 𝒛≠0\bm{z}\neq 0 which implies that the Hessian matrix 𝑯\bm{H} is positive definite. Therefore, 𝔼⁡[W]\mathbb{E}[W] is strictly convex with respect to the vector ℓ\bm{\ell}. Equivalently, −𝔼⁡[W]-\mathbb{E}[W] is a strictly concave function with respect to ℓ\bm{\ell}. For the accuracy term pk​(ℓk)p_{k}(\ell_{k}) in (7), we have
+∂pk​(ℓk)∂ℓk=Ak​bk​e−bk​ℓk>0,∂2pk​(ℓk)∂ℓk2=−Ak​bk2​e−bk​ℓk<\displaystyle\!\!\!\!\frac{\partial p_{k}(\ell_{k})}{\partial\ell_{k}}\!\!=\!\!A_{k}b_{k}e^{-b_{k}\ell_{k}}\!>\!0,~\frac{\partial^{2}p_{k}(\ell_{k})}{\partial\ell_{k}^{2}}\!\!=\!\!-A_{k}b_{k}^{2}e^{-b_{k}\ell_{k}}\!<\!0.\!\!
+(15)
+Thus, the accuracy term pk​(ℓk)p_{k}(\ell_{k}) is an increasing concave function of ℓk\ell_{k}. As a result, the term α​∑k=1Nπk​pk​(ℓk)\alpha\sum_{k=1}^{N}\pi_{k}\,p_{k}(\ell_{k}) in J⁡(ℓ)J(\bm{\ell}) becomes concave. Since the mean service time 𝔼⁡[S⁡(ℓ)]\mathbb{E}[S(\bm{\ell})] is affine in ℓ\bm{\ell}, the objective function J⁡(ℓ)J(\bm{\ell}) is strictly concave.
+∎Since J⁡(ℓ)J(\bm{\ell}) is strictly concave in ℓ\bm{\ell} and the feasible set defined by 0≤ℓk≤ℓmax0\leq\ell_{k}\leq\ell_{\max} for all k=1,…,Nk=1,\dots,N and λ​𝔼​[S⁡(ℓ)]<1\lambda\,\mathbb{E}[S(\ell)]<1 is a convex set, the optimization problem maxℓ∈ℝN⁡J⁡(ℓ)\max_{\bm{\ell}\in\mathbb{R}^{N}}J(\bm{\ell}) given in (9) which is equivalent to minℓ∈ℝN−J⁡(ℓ)\min_{\bm{\ell}\in\mathbb{R}^{N}}-J(\bm{\ell}) is convex.
+III-B Fixed-Point Iteration via Lagrangian Formulation
+Next, we define the Lagrangian function [13] for the equivalent minimization problem, that is minℓ∈ℝN−J⁡(ℓ)\min_{\bm{\ell}\in\mathbb{R}^{N}}-J(\bm{\ell}), with the feasibility constraints in (9) as
+ℒ⁡(ℓ,𝝁,𝝂,γ)\displaystyle\mathcal{L}(\boldsymbol{\ell},\boldsymbol{\mu},\boldsymbol{\nu},\gamma)
+=−J⁡(ℓ)−∑k=1Nμk​ℓk+∑k=1Nνk​(ℓk−ℓmax)\displaystyle=-J(\boldsymbol{\ell})-\sum_{k=1}^{N}\mu_{k}\ell_{k}+\sum_{k=1}^{N}\nu_{k}(\ell_{k}-\ell_{\max})
++γ⁡(λ​𝔼​[S⁡(ℓ)]−1),\displaystyle\quad+\gamma\bigl(\lambda\,\mathbb{E}[S(\boldsymbol{\ell})]-1\bigr),
+(16)
+where μk≥0\mu_{k}\geq 0, νk≥0\nu_{k}\geq 0, and γ≥0\gamma\geq 0 are the Lagrange multipliers.
+Next, we state the KKT conditions as follows:
+∂ℒ∂ℓk=\displaystyle\frac{\partial\mathcal{L}}{\partial\ell_{k}}=
+λ​πk​ck​(tk​(ℓk)1−λ​𝔼​[S]+λ​𝔼​[S2]2​(1−λ​𝔼​[S])2)+πk​ck\displaystyle\lambda\pi_{k}c_{k}\left(\frac{t_{k}(\ell_{k})}{1-\lambda\mathbb{E}[S]}+\frac{\lambda\mathbb{E}[S^{2}]}{2(1-\lambda\mathbb{E}[S])^{2}}\right)+\pi_{k}c_{k}
+−α​πk​Ak​bk​e−bk​ℓk+γ​λ​πk​ck−μk+νk=0.\displaystyle-\alpha\pi_{k}A_{k}b_{k}e^{-b_{k}\ell_{k}}+\gamma\lambda\pi_{k}c_{k}-\mu_{k}+\nu_{k}=0.
+(17)
+Then, we write the complementary slackness (C.S.) conditions
+γ⁡(λ​𝔼​[S⁡(ℓ)]−1)=0,μk​ℓk=0,νk​(ℓk−ℓmax)=0,\!\gamma\bigl(\lambda\mathbb{E}[S(\boldsymbol{\ell})]-1\bigr)=0,\quad\mu_{k}\ell_{k}=0,\quad\nu_{k}(\ell_{k}-\ell_{\max})=0,
+(18)
+for all k=1,⋯,Nk=1,\cdots,N.
+Since limλ​𝔼​[S⁡(ℓ)]→1J⁡(ℓ)=−∞\lim_{\lambda\mathbb{E}[S(\boldsymbol{\ell})]\rightarrow 1}J(\bm{\ell})=-\infty, in the optimum solution,
+we must have λ​𝔼​[S⁡(ℓ)]<1\lambda\mathbb{E}[S(\boldsymbol{\ell})]<1 which implies that γ⋆=0\gamma^{\star}=0
+from the C.S. conditions in (18). Similarly, by C.S. conditions,
+either μk=0\mu_{k}=0 with ℓk≥0\ell_{k}\geq 0, or ℓk=0\ell_{k}=0 with μk≥0\mu_{k}\geq 0. Moreover,
+from νk​(ℓk−ℓmax)=0\nu_{k}(\ell_{k}-\ell_{\max})=0, it follows that either νk=0\nu_{k}=0 and
+ℓk≤ℓmax\ell_{k}\leq\ell_{\max}, or νk>0\nu_{k}>0 and ℓk=ℓmax\ell_{k}=\ell_{\max}.
+For ease of notation, we define two functions Lk​(ℓ)>0L_{k}(\boldsymbol{\ell})>0 and
+Kk​(ℓ)K_{k}(\boldsymbol{\ell}) such that the KKT condition in
+(17) can be equivalently written as
+ℓk−Lk​(ℓ)​e−bk​ℓk=Kk​(ℓ),\displaystyle\ell_{k}-L_{k}(\boldsymbol{\ell})\,e^{-b_{k}\ell_{k}}=K_{k}(\boldsymbol{\ell}),
+(19)
+where Lk​(ℓ)L_{k}(\boldsymbol{\ell}) and Kk​(ℓ)K_{k}(\boldsymbol{\ell}) depend on
+ℓ\boldsymbol{\ell} through the aggregate moments
+𝔼⁡[S⁡(ℓ)]\mathbb{E}[S(\boldsymbol{\ell})] and 𝔼​[S2​(ℓ)]\mathbb{E}[S^{2}(\boldsymbol{\ell})] and are given by
+Lk​(ℓ)\displaystyle L_{k}(\boldsymbol{\ell})
+≜α​Ak​bkλ​ck2​(1−λ​𝔼​[S⁡(ℓ)]),\displaystyle\triangleq\frac{\alpha A_{k}b_{k}}{\lambda c_{k}^{2}}\bigl(1-\lambda\mathbb{E}[S(\boldsymbol{\ell})]\bigr),
+(20)
+Kk​(ℓ)\displaystyle K_{k}(\boldsymbol{\ell})
+≜−t0​kck−−λ​𝔼​[S⁡(ℓ)]λ​ck−λ​𝔼​[S2​(ℓ)]2​ck​(−λ​𝔼​[S⁡(ℓ)]).\displaystyle\triangleq-\frac{t_{0k}}{c_{k}}-\frac{1\!-\!\lambda\mathbb{E}[S(\boldsymbol{\ell})]}{\lambda c_{k}}-\frac{\lambda\,\mathbb{E}[S^{2}(\boldsymbol{\ell})]}{2c_{k}\bigl(1\!-\!\lambda\mathbb{E}[S(\boldsymbol{\ell})]\bigr)}.
+(21)
+We note that Lk​(ℓ)L_{k}(\boldsymbol{\ell}) and Kk​(ℓ)K_{k}(\boldsymbol{\ell}) depend on
+ℓj\ell_{j} for j=1,⋯,Nj=1,\cdots,N. This coupling induces a general fixed-point
+mapping implied by the KKT system. Solving (19) for ℓk\ell_{k} yields a closed-form update in terms of
+the Lambert-WW function [14]:
+ℓ^k​(ℓ)=1bk​W​(bk​Lk​(ℓ)​e−bk​Kk​(ℓ))+Kk​(ℓ),\widehat{\ell}_{k}(\boldsymbol{\ell})=\frac{1}{b_{k}}\,W\!\left(b_{k}L_{k}(\boldsymbol{\ell})\,e^{-b_{k}K_{k}(\boldsymbol{\ell})}\right)+K_{k}(\boldsymbol{\ell}),
+(22)
+where W⁡(⋅)W(\cdot) denotes the principal branch of the Lambert-WW function.
+Taking into account the feasibility constraints 0≤ℓk≤ℓmax0\leq\ell_{k}\leq\ell_{\max}, we can
+write the optimal reasoning-token lengths ℓk⋆\ell_{k}^{\star} as
+ℓk⋆=min{max(ℓ^k(ℓ⋆), 0),ℓmax},k=1,⋯,N.\ell_{k}^{\star}=\min\!\Bigl\{\max\!\bigl(\widehat{\ell}_{k}(\boldsymbol{\ell}^{\star}),\,0\bigr),\ \ell_{\max}\Bigr\},\quad k=1,\cdots,N.
+(23)
+Fixed-point algorithm.
+Equation (23) suggests the iterative update given by
+ℓk(n+1)=min{max(ℓ^k(ℓ(n)), 0),ℓmax},k=1,⋯,N.\!\!\ell_{k}^{(n+1)}\!\!=\!\min\!\Bigl\{\max\!\bigl(\widehat{\ell}_{k}(\boldsymbol{\ell}^{(n)}),\,0\bigr),\ \ell_{\max}\Bigr\},\!\!\quad k=1,\cdots,N.\!
+(24)
+Under a contraction condition on the Jacobian of
+ℓ^​(⋅)\widehat{\boldsymbol{\ell}}(\cdot) (which will be discussed in the next subsection),
+this projected fixed-point method converges to the unique KKT point
+ℓ⋆\boldsymbol{\ell}^{\star}.
+III-C Sufficient Condition for Convergence
+Recall the unconstrained fixed-point map
+ℓ^​(ℓ)\widehat{\boldsymbol{\ell}}(\boldsymbol{\ell}) defined componentwise in
+(22) and the projected iteration defined in
+(24). Since the projection onto
+[0,ℓmax]N[0,\ell_{\max}]^{N} is nonexpansive, it suffices to establish that the
+unprojected mapping ℓ^​(⋅)\widehat{\boldsymbol{\ell}}(\cdot) is a contraction on
+[0,ℓmax]N[0,\ell_{\max}]^{N}. For that, we derive an explicit Lipschitz constant based on the Jacobian of ℓ^​(⋅)\widehat{\boldsymbol{\ell}}(\cdot).
+Lemma 2
+We define tkmax≜t0​k+ck​ℓmaxt_{k}^{\max}\triangleq t_{0k}+c_{k}\ell_{\max},
+𝔼​[S]max≜∑i=1Nπi​timax\mathbb{E}[S]_{\max}\triangleq\sum_{i=1}^{N}\pi_{i}t_{i}^{\max}, and
+𝔼​[S2]max≜∑i=1Nπi​(timax)2\mathbb{E}[S^{2}]_{\max}\triangleq\sum_{i=1}^{N}\pi_{i}(t_{i}^{\max})^{2} and assume that
+ρmax≜λ​𝔼​[S]max<1\rho_{\max}\triangleq\lambda\mathbb{E}[S]_{\max}<1. Then, for all
+ℓ∈[0,ℓmax]N\boldsymbol{\ell}\in[0,\ell_{\max}]^{N} and all k,j∈{1,…,N}k,j\in\{1,\dots,N\}, we have
+|∂ℓ^k​(ℓ)∂ℓj|\displaystyle\left|\!\frac{\partial\widehat{\ell}_{k}(\boldsymbol{\ell})}{\partial\ell_{j}}\!\right|
+≤πj​cjck​[+λ​tmax−ρmax+λ2​𝔼​[S2]max2​(−ρmax)2]+λ​πj​cjbk​(−ρmax),\displaystyle\!\leq\!\frac{\pi_{j}c_{j}}{c_{k}}\!\left[\!1\!+\!\frac{\lambda\,t_{\max}}{1\!-\!\rho_{\max}}\!+\!\frac{\lambda^{2}\,\mathbb{E}[S^{2}]_{\max}}{2(1\!-\!\rho_{\max})^{2}}\!\right]\!+\!\frac{\lambda\,\pi_{j}c_{j}}{b_{k}(1\!-\!\rho_{\max})}\!,
+(25)
+where tmax≜maxi⁡timaxt_{\max}\triangleq\max_{i}t_{i}^{\max}. Hence, we have
+‖𝒥ℓ^​(ℓ)‖∞≤L∞≜\displaystyle\bigl\|\mathcal{J}_{\widehat{\boldsymbol{\ell}}}(\boldsymbol{\ell})\bigr\|_{\infty}\!\leq\!L_{\infty}\!\triangleq\!
+maxk{1ck[+λ(tmax−ρmax+λ​𝔼​[S2]max2​(−ρmax)2)]\displaystyle\max_{k}\!\left\{\!\frac{1}{c_{k}}\!\left[\!1\!+\!\lambda\!\left(\!\frac{t_{\max}}{1\!-\!\rho_{\max}}\!+\!\frac{\lambda\,\mathbb{E}[S^{2}]_{\max}}{2(1\!-\!\rho_{\max})^{2}}\!\right)\!\right]\right.
++λbk​(−ρmax)}∑j=1Nπjcj.\displaystyle\qquad\left.+\frac{\lambda}{b_{k}(1\!-\!\rho_{\max})}\!\right\}\sum_{j=1}^{N}\!\pi_{j}c_{j}.
+(26)
+In particular, if L∞<1L_{\infty}<1, then ℓ^\widehat{\boldsymbol{\ell}} is a contraction on [0,ℓmax]N[0,\ell_{\max}]^{N} in the ℓ∞\ell_{\infty}-norm.
+Proof:
+By applying the chain rule to (22), we obtain
+∂ℓ^k∂ℓj=1bk​W′​(zk​(ℓ))​∂zk​(ℓ)∂ℓj+∂Kk​(ℓ)∂ℓj,\displaystyle\frac{\partial\widehat{\ell}_{k}}{\partial\ell_{j}}=\frac{1}{b_{k}}W^{\prime}(z_{k}(\boldsymbol{\ell}))\,\frac{\partial z_{k}(\boldsymbol{\ell})}{\partial\ell_{j}}+\frac{\partial K_{k}(\boldsymbol{\ell})}{\partial\ell_{j}},
+(27)
+where zk​(ℓ)≜bk​Lk​(ℓ)​e−bk​Kk​(ℓ)z_{k}(\boldsymbol{\ell})\!\triangleq\!b_{k}L_{k}(\boldsymbol{\ell})e^{-b_{k}K_{k}(\boldsymbol{\ell})}.
+For z>0z>0, |W′​(z)|≤1/|z||W^{\prime}(z)|\leq 1/|z|. Moreover,
+∂zk∂ℓj=bk​e−bk​Kk​(∂Lk∂ℓj−bk​Lk​∂Kk∂ℓj).\frac{\partial z_{k}}{\partial\ell_{j}}=b_{k}e^{-b_{k}K_{k}}\!\left(\!\frac{\partial L_{k}}{\partial\ell_{j}}-b_{k}L_{k}\frac{\partial K_{k}}{\partial\ell_{j}}\!\right)\!.
+Using zk=bk​Lk​e−bk​Kkz_{k}=b_{k}L_{k}e^{-b_{k}K_{k}} yields
+|∂ℓ^k∂ℓj|≤1bk​|zk|​|∂zk∂ℓj|+|∂Kk∂ℓj|≤1bk​Lk​|∂Lk∂ℓj|+2​|∂Kk∂ℓj|.\displaystyle\!\!\!\left|\frac{\partial\widehat{\ell}_{k}}{\partial\ell_{j}}\right|\!\leq\!\frac{1}{b_{k}|z_{k}|}\left|\frac{\partial z_{k}}{\partial\ell_{j}}\right|\!+\!\left|\frac{\partial K_{k}}{\partial\ell_{j}}\right|\!\leq\!\frac{1}{b_{k}L_{k}}\left|\frac{\partial L_{k}}{\partial\ell_{j}}\right|\!+\!2\left|\frac{\partial K_{k}}{\partial\ell_{j}}\right|\!.\!\!
+(28)
+From the definitions of Lk​(ℓ)L_{k}(\boldsymbol{\ell}) and Kk​(ℓ)K_{k}(\boldsymbol{\ell}) and the bounds
+tj​(ℓj)≤tmaxt_{j}(\ell_{j})\leq t_{\max},
+𝔼⁡[S2​(ℓ)]≤𝔼​[S2]max\mathbb{E}[S^{2}(\boldsymbol{\ell})]\leq\mathbb{E}[S^{2}]_{\max}, and
+1−λ​𝔼​[S⁡(ℓ)]≥1−ρmax1-\lambda\mathbb{E}[S(\boldsymbol{\ell})]\geq 1-\rho_{\max}, we obtain
+1bk​Lk​|∂Lk∂ℓj|\displaystyle\frac{1}{b_{k}L_{k}}\!\left|\!\frac{\partial L_{k}}{\partial\ell_{j}}\!\right|
+≤λ​πj​cjbk​(−ρmax),\displaystyle\!\leq\!\frac{\lambda\,\pi_{j}c_{j}}{b_{k}(1\!-\!\rho_{\max})},
+|∂Kk∂ℓj|\displaystyle\left|\!\frac{\partial K_{k}}{\partial\ell_{j}}\!\right|
+≤πj​cjck​[+λ⁡(tmax−ρmax+λ​𝔼​[S2]max2​(−ρmax)2)].\displaystyle\!\leq\!\frac{\pi_{j}c_{j}}{c_{k}}\!\left[\!1\!+\!\lambda\!\left(\!\frac{t_{\max}}{1\!-\!\rho_{\max}}\!+\!\frac{\lambda\,\mathbb{E}[S^{2}]_{\max}}{2(1\!-\!\rho_{\max})^{2}}\!\right)\!\right]\!.
+Substituting these bounds into (28) proves
+(25). Summing over jj and taking the maximum
+over kk yields (26), and L∞<1L_{\infty}\!<\!1 ensures
+contraction by the Banach fixed-point theorem [15].​​​
+∎
+III-D Gradient Ascent Algorithm
+The projected fixed-point method provided in Subsection III-C
+requires that the mapping is contractive. When this condition does not hold,
+the iteration may not converge. To ensure convergence for all feasible operating
+points, we now consider projected gradient ascent (PGA), which only requires
+a bound on how fast the gradient of the objective function J⁡(ℓ)J(\bm{\ell}) in (7) may change. The PGA iterations are given as
+ℓ(n+1)=𝒫[0,ℓmax]N(ℓ(n)+η∇J(ℓ(n))),\boldsymbol{\ell}^{(n+1)}=\mathcal{P}_{[0,\ell_{\max}]^{N}}\!\left(\boldsymbol{\ell}^{(n)}+\eta\nabla J(\boldsymbol{\ell}^{(n)})\right),
+(29)
+where η>0\eta>0 is the learning rate. Here, 𝒫[0,ℓmax]N(.)\mathcal{P}_{[0,\ell_{\max}]^{N}}(.) denotes the projection operator onto the feasible set [0,ℓmax]N[0,\ell_{\max}]^{N} applied when the gradient ascent update exceeds this set. Since J⁡(ℓ)J(\bm{\ell}) is strictly concave on the stability region (due to Lemma 1), choosing η\eta small enough guarantees
+convergence to the unique optimum ℓ⋆\boldsymbol{\ell}^{\star} [16]. Next, we need to show that the gradient of J⁡(ℓ)J(\bm{\ell}) is Lipschitz continuous with respect to the ℓ∞\ell_{\infty}-norm if there exists LJL_{J} such that we have
+‖∇J​(𝒙)−∇J​(𝒚)‖∞≤LJ​‖𝒙−𝒚‖∞,∀𝒙,𝒚,\displaystyle\|\nabla J(\boldsymbol{x})-\nabla J(\boldsymbol{y})\|_{\infty}\leq L_{J}\,\|\boldsymbol{x}-\boldsymbol{y}\|_{\infty},\quad\forall\boldsymbol{x},\boldsymbol{y},
+which holds whenever ‖∇2J​(ℓ)‖∞≤LJ\|\nabla^{2}J(\boldsymbol{\boldsymbol{\ell}})\|_{\infty}\leq L_{J} for all ℓ\boldsymbol{\ell} and for some constant LJ>0L_{J}>0. Then, due to [16, Prop. 2.3.2], the PGA iteration in (29) converges whenever we have
+0<η<2LJ.\displaystyle 0<\eta<\frac{2}{L_{J}}.
+(30)
+To establish such a constant, we recall that the Lipschitz property of the
+gradient is determined by the largest possible second derivative of J⁡(ℓ)J(\bm{\ell}),
+namely by the ℓ∞\ell_{\infty}-norm of its Hessian given by
+maxℓ∈[0,ℓmax]N⁡‖∇2J​(ℓ)‖∞.\max_{\boldsymbol{\ell}\in[0,\ell_{\max}]^{N}}\bigl\|\nabla^{2}J(\boldsymbol{\ell})\bigr\|_{\infty}.
+Since the optimization is restricted by
+0≤ℓk≤ℓmax0\leq\ell_{k}\leq\ell_{\max} and
+λ​𝔼​[S⁡(ℓ)]<1\lambda\mathbb{E}[S(\boldsymbol{\ell})]<1,
+we can compute a uniform bound by evaluating the worst-case values inside this
+compact region.
+Lemma 3
+Let J⁡(ℓ)J(\boldsymbol{\ell}) be the objective function in (7). Let us recall the service-time model in Section II and also the definitions of tkmaxt_{k}^{\max} for k∈{1,⋯,N}k\in\{1,\cdots,N\}, 𝔼​[S]max\mathbb{E}[S]_{\max}, 𝔼​[S2]max\mathbb{E}[S^{2}]_{\max}, and ρmax=λ​𝔼​[S]max<1\rho_{\max}=\lambda\mathbb{E}[S]_{\max}<1 from Lemma 2.
+For k,j∈{1,…,N}k,j\in\{1,\dots,N\}, let us define
+Hk​j≜\displaystyle H_{kj}\triangleq
+λ​δk​j​πk​ck21−ρmax+λ2​πk​ck​πj​cj​(tkmax+tjmax)(1−ρmax)2\displaystyle\frac{\lambda\delta_{kj}\pi_{k}c_{k}^{2}}{1-\rho_{\max}}+\frac{\lambda^{2}\pi_{k}c_{k}\pi_{j}c_{j}(t_{k}^{\max}+t_{j}^{\max})}{(1-\rho_{\max})^{2}}
++λ3​πk​ck​πj​cj​𝔼​[S2]max(1−ρmax)3+α​δk​j​πk​Ak​bk2,\displaystyle+\frac{\lambda^{3}\pi_{k}c_{k}\pi_{j}c_{j}\mathbb{E}[S^{2}]_{\max}}{(1-\rho_{\max})^{3}}+\alpha\delta_{kj}\pi_{k}A_{k}b_{k}^{2},
+(31)
+where δk​j\delta_{kj} is the Kronecker delta defined as δk​j=1\delta_{kj}=1 when j=kj=k; and δk​j=0\delta_{kj}=0, otherwise. Then, for every feasible
+ℓ∈[0,ℓmax]N\boldsymbol{\ell}\!\in\![0,\ell_{\max}]^{N} satisfying
+λ​𝔼​[S⁡(ℓ)]<1\!\lambda\mathbb{E}[S(\boldsymbol{\ell})]\!<\!1, we have
+|∂2J⁡(ℓ)∂ℓk​∂ℓj|≤Hk​j,∀k,j,\left|\frac{\partial^{2}J(\boldsymbol{\ell})}{\partial\ell_{k}\partial\ell_{j}}\right|\leq H_{kj},\qquad\forall\,k,j,
+and consequently
+‖∇2J​(ℓ)‖∞≤LJ≜max⁡∑j=1Nk⁡Hk​j,∀ℓ∈[0,ℓmax]N.\bigl\|\nabla^{2}J(\boldsymbol{\ell})\bigr\|_{\infty}\;\leq\;L_{J}\triangleq\max_{k}\sum_{j=1}^{N}H_{kj},~\forall\,\boldsymbol{\ell}\in[0,\ell_{\max}]^{N}.
+(32)
+In particular, the gradient ∇J\nabla J is globally Lipschitz continuous on the
+feasible set with Lipschitz constant LJL_{J}.
+Proof:
+We decompose J⁡(ℓ)J(\boldsymbol{\ell}) into the system time and the accuracy terms, and bound the
+second derivatives of each component. First, we find the second derivative of the accuracy term J⁡(ℓ)J(\boldsymbol{\ell}) in (7) given as α​∑k=1Nπk​pk​(ℓk)=α​∑k=1Nπk​(Ak​(1−e−bk​ℓk)+Dk)\alpha\sum_{k=1}^{N}\pi_{k}\,p_{k}(\ell_{k})=\alpha\sum_{k=1}^{N}\pi_{k}(A_{k}(1-e^{-b_{k}\ell_{k}})+D_{k})
+∂2∂ℓk​∂ℓj​(α​∑k=1Nπk​pk​(ℓk))={−α​πk​Ak​bk2​e−bk​ℓk,​​if ​j=k,0,​​o.w.​​​​​\displaystyle\!\!\frac{\partial^{2}}{\partial\ell_{k}\partial\ell_{j}}\!\left(\!\!\alpha\!\sum_{k=1}^{N}\pi_{k}\,p_{k}(\ell_{k})\!\!\right)\!\!\!=\!\!\!\begin{cases}\!\!-\alpha\ \!\pi_{k}A_{k}b_{k}^{2}e^{-b_{k}\ell_{k}},&\text{\!\!if }j\!=\!k,\\
+0,&\text{\!\!o.w.\!\!\!\!\!}\end{cases}
+(33)
+Then, we can obtain the upper bound for the second derivative of the accuracy term as |∂2∂ℓk2​(α​∑k=1Nπk​pk​(ℓk))|≤α​πk​Ak​bk2\left|\frac{\partial^{2}}{\partial\ell_{k}^{2}}\!\left(\!\!\alpha\!\sum_{k=1}^{N}\pi_{k}\,p_{k}(\ell_{k})\!\!\right)\right|\leq\alpha\pi_{k}A_{k}b_{k}^{2}. This yields the term
+α​δk​j​πk​Ak​bk2\alpha\,\delta_{kj}\,\pi_{k}A_{k}b_{k}^{2} in Hk​jH_{kj}.
+The system time contribution to J⁡(ℓ)J(\boldsymbol{\ell}) depends on ℓ\boldsymbol{\ell} only through
+𝔼⁡[S⁡(ℓ)]\mathbb{E}[S(\boldsymbol{\ell})] and 𝔼​[S2​(ℓ)]\mathbb{E}[S^{2}(\boldsymbol{\ell})]. Then, by denoting the system time Ss​y​s=λ​𝔼​[S2]2​(1−λ​𝔼​[S])+𝔼⁡[S]S_{sys}=\frac{\lambda\,\mathbb{E}[S^{2}]}{2\left(1-\lambda\,\mathbb{E}[S]\right)}+\mathbb{E}[S], we obtain the second derivative of the system time as
+∂2Ss​y​s∂ℓk​∂ℓj=\displaystyle\frac{\partial^{2}S_{sys}}{\partial\ell_{k}\partial\ell_{j}}=
+λ​δk​j​πk​ck21−λ​𝔼​[S⁡(ℓ)]+λ2​πk​ck​πj​cj​(tk​(ℓk)+tj​(ℓj))(1−λ​𝔼​[S⁡(ℓ)])2\displaystyle\frac{\lambda\delta_{kj}\pi_{k}c_{k}^{2}}{1-\lambda\mathbb{E}[S(\boldsymbol{\ell})]}+\frac{\lambda^{2}\pi_{k}c_{k}\pi_{j}c_{j}(t_{k}(\ell_{k})+t_{j}(\ell_{j}))}{(1-\lambda\mathbb{E}[S(\boldsymbol{\ell})])^{2}}
++λ3​πk​ck​πj​cj​𝔼​[S2​(ℓ)](1−λ​𝔼​[S⁡(ℓ)])3.\displaystyle+\frac{\lambda^{3}\pi_{k}c_{k}\pi_{j}c_{j}\mathbb{E}[S^{2}(\boldsymbol{\ell})]}{(1-\lambda\mathbb{E}[S(\boldsymbol{\ell})])^{3}}.
+(34)
+Then, by using the bounds ti​(ℓi)≤timaxt_{i}(\ell_{i})\leq t_{i}^{\max} for all ii, 𝔼⁡[S⁡(ℓ)]≤𝔼​[S]max\mathbb{E}[S(\boldsymbol{\ell})]\leq\mathbb{E}[S]_{\max}, and 𝔼⁡[S2​(ℓ)]≤𝔼​[S2]max\mathbb{E}[S^{2}(\boldsymbol{\ell})]\leq\mathbb{E}[S^{2}]_{\max}, and and λ​𝔼​[S⁡(ℓ)]≤ρmax<1\lambda\mathbb{E}[S(\boldsymbol{\ell})]\leq\rho_{\max}<1, we obtain
+|∂2Ss​y​s∂ℓk​∂ℓj|≤\displaystyle\left|\frac{\partial^{2}S_{sys}}{\partial\ell_{k}\partial\ell_{j}}\right|\leq
+λ​δk​j​πk​ck21−ρmax+λ2​πk​ck​πj​cj​(tkmax+tjmax)(1−ρmax)2\displaystyle\frac{\lambda\delta_{kj}\pi_{k}c_{k}^{2}}{1-\rho_{\max}}+\frac{\lambda^{2}\pi_{k}c_{k}\pi_{j}c_{j}(t_{k}^{\max}+t_{j}^{\max})}{(1-\rho_{\max})^{2}}
++λ3​πk​ck​πj​cj​𝔼​[S2]max(1−ρmax)3,\displaystyle+\frac{\lambda^{3}\pi_{k}c_{k}\pi_{j}c_{j}\mathbb{E}[S^{2}]_{\max}}{(1-\rho_{\max})^{3}},
+(35)
+which corresponds to the system time part of Hk​jH_{kj}.
+Adding the system time and accuracy contributions yields
+|∂2J⁡(ℓ)∂ℓk​∂ℓj|≤Hk​j,∀k,j,\displaystyle\left|\frac{\partial^{2}J(\boldsymbol{\ell})}{\partial\ell_{k}\partial\ell_{j}}\right|\leq H_{kj},\qquad\forall\,k,j,
+(36)
+for all feasible ℓ\boldsymbol{\ell}. Therefore, we have
+‖∇2J​(ℓ)‖∞=max⁡∑j=1Nk⁡|∂2J⁡(ℓ)∂ℓk​∂ℓj|≤LJ=max⁡∑j=1Nk⁡Hk​j,\displaystyle\!\!\bigl\|\nabla^{2}J(\boldsymbol{\ell})\bigr\|_{\infty}\!\!=\!\max_{k}\sum_{j=1}^{N}\left|\frac{\partial^{2}J(\boldsymbol{\ell})}{\partial\ell_{k}\partial\ell_{j}}\right|\!\leq\!L_{J}\!=\!\max_{k}\sum_{j=1}^{N}H_{kj},
+(37)
+which establishes (32) and the global Lipschitz
+continuity of ∇J\nabla J with constant LJL_{J}.
+∎
+Thus, Lemma 3 provides the Lipschitz constant
+required for the convergence analysis. Substituting the bound
+‖∇2J​(ℓ)‖≤LJ\|\nabla^{2}J(\boldsymbol{\ell})\|\leq L_{J}
+into the learning rate condition (30), we obtain
+0<η<2LJ=2max⁡∑j=1Nk⁡Hk​j,0\;<\;\eta\;<\;\frac{2}{L_{J}}=\frac{2}{\max_{k}\sum_{j=1}^{N}H_{kj}},
+(38)
+Hence, the PGA update in (29) converges to the unique optimum
+ℓ⋆\boldsymbol{\ell}^{\star} for any feasible initialization, independent of the
+contractivity properties of the fixed-point method.
+III-E Integer Projection
+All optimization methods described above, the projected fixed-point iteration
+in (24) and the projected gradient ascent
+budgets {ℓk}\{\ell_{k}\} are treated as continuous variables in [0,ℓmax][0,\ell_{\max}].
+Let ℓ⋆\boldsymbol{\ell}^{\star} denote the unique optimal solution of this continuous relaxation. Since the number of reasoning tokens must be an integer in any practical LLM
+deployment, we convert ℓ⋆\boldsymbol{\ell}^{\star} into an implementable
+integer-valued budget vector by a simple projection onto the discrete set (8). Let us denote the floor and ceil of the optimal real valued reasoning tokens as ℓkfloor=⌊ℓk∗⌋\ell_{k}^{\mathrm{floor}}=\lfloor\ell_{k}^{*}\rfloor and ℓkceil=⌈ℓk∗⌉\ell_{k}^{\mathrm{ceil}}=\lceil\ell_{k}^{*}\rceil, respectively. For each ℓkint\ell_{k}^{\mathrm{int}}, one can choose between ℓkfloor\ell_{k}^{\mathrm{floor}} and ℓkceil\ell_{k}^{\mathrm{ceil}}, which yields 2N2^{N} distinct selection combinations. One potential approach is to evaluate all 2N2^{N} selection combinations and choose the integer solution that minimizes the overall cost function, that is,
+ℓint=arg​maxℓk∈{ℓkfloor,ℓkceil}⁡J​(ℓ).\displaystyle\bm{\ell}^{\mathrm{int}}=\argmax_{\ell_{k}\in\{\ell_{k}^{\mathrm{floor}},\ell_{k}^{\mathrm{ceil}}\}}J(\bm{\ell}).
+(39)
+Another convenient choice with lower search complexity is the
+component-wise rounding rule, that is,
+ℓkint,2=round⁡(ℓk⋆)k=1,⋯,N,\ell_{k}^{\mathrm{int,2}}=\operatorname{round}(\ell_{k}^{\star})\quad k=1,\cdots,N,
+(40)
+where round⁡(⋅)\operatorname{round}(\cdot) denotes rounding to the nearest integer.
+By construction, the integer vector
+ℓint=(ℓ1int,…,ℓNint)\boldsymbol{\ell}^{\mathrm{int}}=(\ell_{1}^{\mathrm{int}},\dots,\ell_{N}^{\mathrm{int}}) (and also ℓint,2\boldsymbol{\ell}^{\mathrm{int,2}})
+satisfies the original discrete feasibility constraints
+(8) as well as the architectural bounds
+0≤ℓkint≤ℓmax0\leq\ell_{k}^{\mathrm{int}}\leq\ell_{\max}.
+In the following, we derive an optimality gap between the overall optimal solution with the integer-valued reasoning tokens denoted as ℓo​p​tint\boldsymbol{\ell}^{\mathrm{int}}_{opt} and the solution obtained with ℓint\bm{\ell}^{\mathrm{int}} obtained in (39) (or in (40)). Note that we have J⁡(ℓ∗)≥J⁡(ℓo​p​tint)≥J⁡(ℓint)≥J¯​(ℓ∗)J(\bm{\ell}^{*})\geq J(\boldsymbol{\ell}^{\mathrm{int}}_{opt})\geq J(\bm{\ell}^{\mathrm{int}})\geq\bar{J}(\bm{\ell}^{*}), that is, the utility with the real-valued reasoning tokens gives the overall upper bound to the optimal utility with the integer-valued reasoning tokens. Then, the utility that we obtained through the rounding operation will be J⁡(ℓint)J(\bm{\ell}^{\mathrm{int}}) which will give less than the overall optimal integer solution J⁡(ℓo​p​tint)J(\boldsymbol{\ell}^{\mathrm{int}}_{opt}). Thus, our goal is to derive an lower-bound to the cost of rounding operation namely J¯​(ℓ∗)\bar{J}(\bm{\ell}^{*}). For that, with the rounding operation, we obtain integer-valued reasoning tokens ℓk∗−≤ℓkint≤ℓk∗+1\ell_{k}^{*}\!-\!1\!\leq\!\ell_{k}^{\mathrm{int}}\!\leq\!\ell_{k}^{*}\!+\!1. By denoting cmax=maxk⁡ckc_{\max}=\max_{k}c_{k} and after some algebraic manipulations, we have
+J⁡(ℓ∗)≥J¯​(ℓ∗)=\displaystyle J(\bm{\ell}^{*})\geq\bar{J}(\bm{\ell}^{*})=
+α​∑k=1Nπk​(Ak​(1−e−bk​(ℓk−1))+Dk)\displaystyle\alpha\sum_{k=1}^{N}\pi_{k}\,(A_{k}(1-e^{-b_{k}(\ell_{k}-1)})+D_{k})
+−λ​𝔼​[S2]+2​cmax2​(1−λ⁡(𝔼⁡[S]+cmax))−𝔼⁡[S].\displaystyle-\frac{\lambda\mathbb{E}[S^{2}]+2c_{\max}}{2\left(1-\lambda(\mathbb{E}[S]+c_{\max})\right)}-\mathbb{E}[S].
+(41)
+This lower-bound is valid under the assumption that λ⁡(𝔼⁡[S]+cmax)<1\lambda(\mathbb{E}[S]+c_{\max})<1 which typically holds since the ckc_{k} values are usually small. Therefore, the utility with the integer-valued reasoning tokens will be upper-bounded by J⁡(ℓ∗)J(\bm{\ell}^{*}) and lower-bounded by J¯​(ℓ∗)\bar{J}(\bm{\ell}^{*}).
+In the following section, we present numerical results to validate our theoretical analysis.
+TABLE I: Accuracy and latency model parameters and optimal reasoning-token allocations.
+Dataset
+AkA_{k}
+bkb_{k}
+DkD_{k}
+t0​kt_{0k}
+ckc_{k}
+ℓk⋆\ell_{k}^{\star}
+AIME
+0.6808
+×10−41.59\!\times\!10^{-4}
+0
+0.1380
+0.0120
+0.0
+GSM8K
+0.7230
+×10−33.20\!\times\!10^{-3}
+0.277
+0.1459
+0.0141
+340.5
+GPQA
+0.3552
+×10−44.41\!\times\!10^{-4}
+0.276
+0.1674
+0.0126
+0.0
+CRUXEval
+0.4379
+×10−45.63\!\times\!10^{-4}
+0
+0.0176
+0.0124
+0.0
+BBH
+0.7146
+×10−31.75\!\times\!10^{-3}
+0.148
+0.2073
+0.0127
+345.0
+ARC-Challenge
+0.3933
+×10−11.66\!\times\!10^{-1}
+0.490
+0.0581
+0.0119
+30.1
+IV Numerical Results
+For the simulation results, we consider N=6N=6 heterogeneous task types corresponding to the datasets
+AIME [17], GSM8K [18], GPQA [19], CRUXEval [20], BBH [21], and
+ARC-Challenge [22].
+All experiments use the Qwen3-8B [23] model and are executed on Google Colab
+with an NVIDIA A100 (80 GB) GPU. The total arrival rate is λ=0.1\lambda=0.1 and the importance weight
+for the accuracy in (7) is chosen as α=30\alpha=30. We set the maximum reasoning-token budget to ℓmax=32768\ell_{\max}=32768, which corresponds
+to the maximum number of reasoning tokens supported by the Qwen3-8B model [23].
+We assume a uniform task mixture, i.e., πk=1/6\pi_{k}=1/6 for all kk. To simulate the queueing dynamics under FIFO service, we generate a stream of 10,000 questions according to the specified Poisson arrival process and task mixture.
+Throughout, we keep the inference configuration fixed and set the generation
+temperature to 0.10.1, while varying only the per-type reasoning-token budgets
+{ℓk}\{\ell_{k}\}.
+IV-A Model Fit and Optimal Budgets
+For each dataset and each reasoning-token budget, we evaluate on 250
+instances and report results averaged over 3 independent runs.
+We record empirical accuracy and end-to-end latency
+under the enforced reasoning-token budget.
+These measurements are used to fit the accuracy and service-time models
+introduced in Section II.
+Table I reports the fitted accuracy and latency parameters
+together with the optimal reasoning-token allocation ℓ⋆\boldsymbol{\ell}^{\star}
+obtained by solving (9). We also plot the fitted accuracy graphs in Fig. 2.
+The resulting allocation exhibits pronounced heterogeneity across tasks.
+In particular, GSM8K and BBH receive the largest budgets, indicating
+substantial marginal benefit from additional reasoning as it can be also seen in Fig. 2.
+In contrast, AIME, GPQA, and CRUXEval are assigned zero tokens. Here, AIME’s and CRUXEval’s accuracy gains are not sufficient to offset the induced
+system-time penalty under the operating point (λ,α)(\lambda,\alpha). On the other hand, for GPQA, the accuracy of the LLM server with no reasoning token allocation is larger than 0 and improves slowly with the number of reasoning tokens. For that, GPQA also receives zero token allocation. Finally, ARC-Challenge receives a small but non-zero allocation, consistent with a rapidly saturating improvement profile.
+Fig. 3: Objective value J⁡(ℓ)J(\boldsymbol{\ell}) under uniform token allocations
+(ℓk∈{0,100,500}\ell_{k}\in\{0,100,500\}) and the proposed optimal heterogeneous allocation
+ℓ⋆\boldsymbol{\ell}^{\star}.
+IV-B Performance Under Alternative Allocation Policies
+We compare the achieved objective value J⁡(ℓ)J(\boldsymbol{\ell}) under
+(i) uniform token allocation with ℓk∈{0,100,500}\ell_{k}\in\{0,100,500\} for all tasks, and
+(ii) the optimal heterogeneous allocation ℓ⋆\boldsymbol{\ell}^{\star}. As shown in Fig. 3, the proposed allocation yields the best system-level
+utility among all compared policies.
+Uniformly allocating a large budget (e.g., ℓk=500\ell_{k}=500) leads to excessive queueing
+delay and significantly degrades the objective, whereas assigning no reasoning tokens
+sacrifices accuracy gains that are beneficial for certain tasks.
+The optimal policy resolves this trade-off by concentrating reasoning effort on
+tasks with high utility while avoiding latency inflation on tasks with
+limited gains.
+IV-C Sensitivity to the GSM8K Budget
+To assess sensitivity and validate the predicted trade-off structure, we fix all
+reasoning-token budgets except ℓGSM8K\ell_{\mathrm{GSM8K}} to their optimal values and
+vary ℓGSM8K\ell_{\mathrm{GSM8K}} from 00 to 10001000. Fig. 4 shows the resulting dependence of the objective value
+J⁡(ℓ)J(\boldsymbol{\ell}) on ℓGSM8K\ell_{\mathrm{GSM8K}}.
+The curve exhibits an unimodal structure, with a unique maximizer attained
+at ℓGSM8K≈340\ell_{\mathrm{GSM8K}}\approx 340, which closely matches the optimal value
+reported in Table I.
+This confirms that the optimal token budget identified by the
+theoretical optimization is consistent with empirical observations. Moreover, Fig. 4 illustrates the underlying accuracy–latency trade-off: for small token budgets, increasing ℓGSM8K\ell_{\mathrm{GSM8K}} yields significant
+accuracy improvements that dominate the additional delay, leading to an increase
+in J⁡(ℓ)J(\bm{\ell}).
+Beyond the optimal point, however, the accuracy gains saturate while the induced
+queueing delay continues to grow, causing a monotonic decrease in the overall
+system utility.
+In Fig. 4, the blue curve represents the server utility evaluated at the optimal real-valued reasoning-token allocation, J⁡(ℓ∗)J(\boldsymbol{\ell}^{*}), while the red dashed curve denotes the lower bound on the utility, J¯​(ℓ∗)\bar{J}(\boldsymbol{\ell}^{*}), derived in Subsection III-E. We observe that the experimental results, shown by the black circles, closely track this theoretical bound; however, in some instances they slightly exceed these bounds due to sample variance. As the number of samples increases, the experimental results are expected to lie between the derived theoretical bounds.
+Fig. 4: Objective value J⁡(ℓ)J(\boldsymbol{\ell}) as a function of the GSM8K reasoning-token budget
+ℓGSM8K\ell_{\mathrm{GSM8K}}, with all other budgets fixed to their optimal values.
+V Conclusion
+We studied token-budget allocation for heterogeneous LLM queries served by a single FIFO M/G/1\mathrm{M}/\mathrm{G}/1 system, capturing the joint accuracy-latency trade-off induced by reasoning tokens. By formulating a utility that rewards weighted accuracy and penalizes mean system time, we proved strict concavity over the stability region, which guarantees a unique optimal allocation. We then developed projected fixed-point iterations with explicit contraction conditions and a projected gradient method with a global step-size bound to ensure convergence more broadly. Finally, we proposed practical integer token budgets via rounding and characterized the associated performance loss. Our results show that heterogeneous, task-aware token allocation can substantially improve system-level performance compared to uniform budgeting.
+References
+[1]
+W. Kwon, Z. Li, S. Zhang, X. Zhuang, Y. Sheng, L. Zheng, C. H. Fonseca, and I. Stoica, “Efficient memory management for large language model serving with PagedAttention,” in Proc. Symp. Oper. Syst. Princ. (SOSP), 2023, pp. 611–626.
+[2]
+Y. Yang, L. Jiao, and Y. Xu, “A queueing theoretic perspective on low-latency LLM inference with variable token length,” in Proc. Int. Symp. Model. Optim. Mobile, Ad Hoc, Wireless Netw. (WiOpt), 2024, pp. 273–280.
+[3]
+N. Muennighoff, Z. Yang, W. Shi, X. L. Li, L. Fei-Fei, H. Hajishirzi, L. Zettlemoyer, P. Liang, E. Candès, and T. Hashimoto, “s1: Simple test-time scaling,” in Proc. Conf. Empirical Methods Natural Lang. Process. (EMNLP), 2025, pp. 20 275–20 321.
+[4]
+T. Schuster, A. Fisch, J. Gupta, M. Dehghani, D. Bahri, V. Tran, Y. Tay, and D. Metzler, “Confident adaptive language modeling,” in Adv. Neural Inf. Process. Syst. (NeurIPS), vol. 35, 2022, pp. 17 456–17 472.
+[5]
+R. Pope, S. Douglas, A. Chowdhery, J. Devlin, J. Bradbury, J. Heek, X. Kefato, and J. Dean, “Efficiently scaling transformer inference,” in Proc. Mach. Learn. Syst. (MLSys), vol. 5, 2023.
+[6]
+J. Wei, X. Wang, D. Schuurmans, M. Bosma, B. Ichter, F. Xia, E. Chi, Q. V. Le, and D. Zhou, “Chain-of-thought prompting elicits reasoning in large language models,” in Adv. Neural Inf. Process. Syst. (NeurIPS), vol. 35, 2022, pp. 24 824–24 837.
+[7]
+J. Kaplan, S. McCandlish, T. Henighan, T. B. Brown, B. Chess, R. Child, S. Gray, A. Radford, J. Wu, and D. Amodei, “Scaling laws for neural language models,” Available on arXiv:2001.08361, January 2020.
+[8]
+Z. Liu, J. Wang, T. Dao, T. Zhou, B. Yuan, Z. Song, A. Shrivastava, C. Zhang, Y. Tian, C. Re et al., “Deja vu: Contextual sparsity for efficient llms at inference time,” in International Conference on Machine Learning (ICML). PMLR, 2023, pp. 22 137–22 176.
+[9]
+Z. Zheng, X. Ren, F. Xue, Y. Luo, X. Jiang, and Y. You, “Response length perception and sequence scheduling: An llm-empowered llm inference pipeline,” Advances in Neural Information Processing Systems, vol. 36, pp. 65 517–65 530, 2023.
+[10]
+G. Xiao, J. Lin, M. Seznec, H. Wu, J. Demouth, and S. Han, “Smoothquant: Accurate and efficient post-training quantization for large language models,” in International Conference on Machine Learning (ICML). PMLR, 2023, pp. 38 087–38 099.
+[11]
+Z. Li, L. Zheng, Y. Zhong, V. Liu, Y. Sheng, X. Jin, I. Stoica, and H. Zhang, “Alpaserve: Statistical multiplexing with model parallelism for deep learning serving,” in 17th USENIX Symposium on Operating Systems Design and Implementation (OSDI), 2023, pp. 663–679.
+[12]
+D. P. Bertsekas and R. Gallager, Data Networks. Englewood Cliffs, NJ: Prentice-Hall, 1987.
+[13]
+S. Boyd and L. Vandenberghe, Convex Optimization. Cambridge University Press, 2004.
+[14]
+R. M. Corless, G. H. Gonnet, D. E. G. Hare, D. J. Jeffrey, and D. E. Knuth, “On the LambertW function,” Advances in Computational Mathematics, vol. 5, no. 1, pp. 329–359, 1996.
+[15]
+S. Banach, “Sur les opérations dans les ensembles abstraits et leur application aux équations intégrales,” Fundamenta Mathematicae, vol. 3, pp. 133–181, 1922.
+[16]
+D. P. Bertsekas, Nonlinear Programming, 2nd ed. Athena Scientific, 1999.
+[17]
+D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt, “Measuring mathematical problem solving with the MATH benchmark,” Available on arXiv:2103.03874, March 2021.
+[18]
+K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano, C. Hesse, and J. Schulman, “Training verifiers to solve math word problems,” Available on arXiv:2110.14168, October 2021.
+[19]
+D. Rein, B. L. Hou, A. C. Stickland, J. Petty, R. Y. Pang, J. Dirani, J. Michael, and S. R. Bowman, “GPQA: A graduate-level Google-Proof Q&A benchmark,” Available on arXiv:2311.12022, November 2023.
+[20]
+A. Gu, B. Rozière, H. Leather, A. Solar-Lezama, G. Synnaeve, and S. I. Wang, “CRUXEval: A benchmark for code reasoning, understanding and execution,” Available on arXiv:2401.03065, January 2024.
+[21]
+M. Suzgun, N. Scales, N. Schärli, S. Gehrmann, Y. Tay, Maung, H. W. Chung, A. Chowdhery, L. Hou, Q. V. Le, E. H. Chi, D. Zhou, and J. Wei, “Challenging BIG-Bench tasks and whether chain-of-thought can solve them,” in Findings Assoc. Comput. Linguistics (ACL), 2023, pp. 10 143–10 170.
+[22]
+P. Clark, I. Cowhey, O. Etzioni, T. Khot, A. Sabharwal, C. Schoenick, and O. Tafjord, “Think you have solved question answering? Try ARC, the AI2 reasoning challenge,” Available on arXiv:1803.05457, March 2018.
+[23]
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui et al., “Qwen3 technical report,” Available on arXiv:2505.09388, May 2025.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from
+

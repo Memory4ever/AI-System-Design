@@ -1,0 +1,63 @@
+Confound control design.
+Our initial capacity experiment (reported in an earlier version of this paper) varied both the number of unique tokens and the total sequence length simultaneously—a confound, since longer sequences affect positional encoding and softmax normalization. To disentangle these effects, we designed a controlled experiment: sequence length is fixed at 200 tokens, with nn unique tokens in the prefix, 5 novel probe tokens, and the remaining positions filled with padding tokens. This ensures that any change in false positive rate is driven by the number of distinct items stored in the “filter,” not by sequence length.
+Table 3: Capacity analysis with fixed sequence length (200 tokens). L1H11 shows the classic Bloom filter saturation curve. L0H1 and L0H5 maintain near-zero FP rates at all loads. L3H0 shows FP = 100% at all loads including n=5n=5, indistinguishable from non-Bloom control heads, and is reclassified as a prefix-attention head.
+Unique tokens
+L1H11
+L0H1
+L0H5
+L3H0†
+Controls
+5
+62.7%
+1.3%
+0.0%
+100%
+100%
+20
+97.3%
+1.3%
+0.0%
+100%
+100%
+50
+100%
+1.3%
+0.0%
+100%
+100%
+100
+100%
+3.3%
+0.0%
+100%
+100%
+180
+100%
+4.0%
+0.7%
+100%
+100%
+Figure 4: Capacity analysis under controlled conditions (fixed sequence length = 200). Left: L1H11 shows the classic Bloom filter saturation curve (R2=1.0R^{2}=1.0, m≈5m\approx 5 bits), with theoretical Bloom filter overlay. L0H1 and L0H5 maintain near-zero FP rates across all loads. Right: L3H0† (reclassified as prefix-attention head) shows FP = 100% at all load levels, indistinguishable from control head L5H5.
+The results (Table 3 and Figure 4) reveal three distinct behaviors:
+L3H0: Reclassification.
+One head initially identified as a Bloom filter (L3H0) was reclassified as a general prefix-attention head following this confound control. Under fixed sequence length, L3H0 shows FP = 100% at all unique token levels, including n=5n=5—a condition where even a 5-bit Bloom filter would show <<50% FP. Its false positive rate is indistinguishable from non-Bloom control heads (L5H5, L7H10, L6H9), all of which also show FP = 100% at every load level. L3H0 simply attends to all prefix content regardless of whether it has seen the probe token before. Its original capacity curve (R2=0.99R^{2}=0.99, m=59m=59, k=2.16k=2.16) was a sequence-length artifact: the earlier experiment co-varied unique tokens and sequence length, and L3H0’s FP rate tracked the latter, not the former. A second control (fixed n=50n=50 unique tokens, varying sequence length from 55 to 200) confirms that L3H0’s FP rate is constant at 100% regardless of sequence length when the number of unique tokens is held constant.
+L1H11: Classic Bloom filter.
+L1H11 shows the classic Bloom filter capacity curve: FP rises from 62.7% at n=5n=5 to saturation (100%) by n=50n=50. Fitting Equation 1 yields m≈5m\approx 5 bits and k=0.86k=0.86 (R2=1.0R^{2}=1.0). This is a low-capacity filter that saturates quickly, consistent with a membership tester operating with very limited representational resources. The variable-length version yields similar parameters (m≈6.4m\approx 6.4, k=0.91k=0.91, R2=0.9998R^{2}=0.9998), confirming the curve is driven by unique token count, not sequence length.
+L0H1 and L0H5: High-capacity filters.
+These heads maintain remarkably low FP rates across all load levels: L0H1 ranges from 1.3% to 4.0%, and L0H5 from 0.0% to 0.7%, even at n=180n=180 unique tokens. This capacity substantially exceeds what a dhead=64d_{\text{head}}=64 classical Bloom filter could achieve (theoretical FP >94%>94\% at n=180n=180). These heads function as high-precision membership filters whose capacity mechanism remains to be fully characterized.
+Competing model analysis.
+The competing model analysis reported in an earlier version (Δ​AIC>11\Delta\text{AIC}>11 favoring the Bloom filter formula over logistic, power law, linear, and softmax dilution models) was conducted on L3H0’s variable-length data, which we now know to be confounded. The analysis remains valid for L1H11’s fixed-length data, where the Bloom filter formula achieves R2=1.0R^{2}=1.0, though with only 5 data points the formal model comparison has limited statistical power. The key evidence is not the model fit per se but the qualitative match: L1H11 shows monotonically increasing FP rates that saturate in a manner consistent with a fixed-capacity probabilistic filter, while L0H1 and L0H5 do not saturate—ruling out the Bloom filter formula for those heads and pointing to a different (higher-capacity) mechanism.
+Head subtypes.
+The three genuine membership-testing heads form a spectrum:
+•
+L1H11: Classic Bloom filter behavior. Low capacity (m≈5m\approx 5 bits), saturates by n≈20n\approx 20, R2=1.0R^{2}=1.0 fit to theoretical curve.
+•
+L0H1, L0H5: High-capacity membership filters. Near-zero FP rates (≤\leq4%) at all loads up to n=180n=180, well exceeding dhead=64d_{\text{head}}=64. These heads may exploit mechanisms beyond simple bit-array hashing.
+This heterogeneity is functionally important: a system combining a capacity-limited filter (L1H11, which provides a graded signal of context saturation) with high-precision detectors (L0H1, L0H5) is more informative than one composed of identical filters.
+4.4 Independent Hash Functions
+Multiple hash functions are the mechanism by which Bloom filters reduce false positive rates. A natural question is whether the three genuine membership-testing heads themselves act as independent detectors that can be combined — a system-level K=3K=3. If so, their false positive decisions should be uncorrelated, and combining them with AND logic should multiplicatively reduce FP rates. For independence analysis, we binarize each head’s response to a probe token as “false positive” if total attention to the prefix exceeds 0.1 (sensitivity analysis confirms the results are stable across thresholds from 0.01 to 0.2). We include L3H0 in this analysis as a comparison point, though it is no longer classified as a membership-testing head.
+Independence.
+We measure pairwise association between heads’ binary FP decisions using the phi coefficient, the 2×22\times 2 specialization of Pearson’s rr (ϕ=0\phi=0 indicates independence, |ϕ|=1|\phi|=1 perfect association). The mean pairwise phi coefficient between membership-testing head FP decisions is ϕ¯=0.13\bar{\phi}=0.13, indicating low correlation (Figure 5(a)). Individual pairs range from ϕ=0.08\phi=0.08 (L0H1 ↔\leftrightarrow L0H5) to ϕ=0.18\phi=0.18 (L0H5 ↔\leftrightarrow L3H0). All pairwise correlations are below 0.2, consistent with largely independent membership decisions.
+(a) Phi coefficient matrix.
+(b) FP count distribution per probe.
+Figure 5: (a) Pairwise phi coefficients between Bloom heads; low values indicate largely independent FP decisions. (b) Distribution of how 

@@ -1,0 +1,69 @@
+3 Methods
+Here we describe our recipe for learning efficient TSFMs, which includes the architecture (§3.1), dataset (§3.2), and inference strategy (§3.3). We emphasize that the individual components in our recipe are not novel: the sequence mixing primitives we use (long convolutions and DeltaNet layers) are not new; similarly, our data augmentation, synthetic data generation, and inference strategies have been proposed before in the literature. The core contribution of this work is to show that these existing ingredients can be combined to produce a TSFM that significantly pushes the performance-efficiency frontier.
+3.1 Architecture
+We are given an input time series t∈ℝLt\in\mathbb{R}^{L} of length LL and must predict an output y∈ℝTy\in\mathbb{R}^{T} of length TT. Following standard practice (Nie et al., 2023), we train by predicting a patch of pp points at a time (in parallel) through learning a function fθ:ℝL→ℝpf_{\theta}:\mathbb{R}^{L}\to\mathbb{R}^{p} parameterized with θ\theta. During inference, we autoregressively predict chunks of pp data points until we have forecasted TT points. We use L=2048,p=48L=2048,p=48.
+Our model architecture, shown in Figure 2, is extremely simple and consists of stacked neural network blocks where each block consists of a sequence mixing module followed by an MLP channel mixing module. Finally, we have an output decoder based on attention that uses the contextualized representation of the input to predict pp data points at once.
+Embedding layer.
+The sequence t∈ℝL×1t\in\mathbb{R}^{L\times 1} is first normalized within the range [0,1][0,1] with
+t←t−min⁡(t)max⁡(t)−min⁡(t).\displaystyle t\leftarrow\frac{t-\min(t)}{\max(t)-\min(t)}.
+We found this [0,1][0,1]-normalization to work better than zz-score normalization which subtracts the mean and divides by the standard deviation.11
+1
+We unnormalize the model’s output for prediction. In cases where there are missing values, these are imputed using linear interpolation. For sequences shorter than the model context length LL, the remaining values are back-filled using the leftmost available data point.
+The normalized sequence tt is then up-projected pointwise using a single linear layer into dd dimensions, yielding a transformed sequence x∈ℝL×d{x}\in\mathbb{R}^{L\times d}.
+Unlike existing works that make use of special time embeddings (Moroshan et al., 2025; Alexandrov et al., 2019) to include seasonality and frequency features, utilizing metadata that might not be present at inference time, we adopt a minimalistic approach that can handle any time series as a simple numeric sequence.
+Sequence mixing.
+We adopt a hybrid sequence mixing strategy wherein we switch between (gated) long convolution (Fu et al., 2023b) and DeltaNet layers (Schlag et al., 2021; Yang et al., 2024b).
+The long convolution layer uses depthwise separable convolutions (Chollet, 2017), where the number of groups is equal to dd. This obtains the output z∈ℝL×dz\in\mathbb{R}^{L\times d} from an input sequence x∈ℝL×dx\in\mathbb{R}^{L\times d} given convolution kernel weight w∈ℝk×dw\in\mathbb{R}^{k\times d} via
+zi,j\displaystyle z_{i,j}
+=∑m=0k−1wm,j⋅xi−m,j\displaystyle=\sum_{m=0}^{k-1}w_{m,j}\cdot x_{i-m,j}
+where 0≤i≤L−10\leq i\leq L-1 indexes the sequence position, and 0≤j≤d−10\leq j\leq d-1 indexes the dimensions. The long convolution is an instance of the convolution kernel where k=Lk=L. This has demonstrated strong recall and reasoning performance while maintaining a sub-quadratic compute cost (Poli et al., 2023).
+We also make use of a gating layer, where the gate comes from a depthwise separable (short) convolution layer. Taken together, our convolutional sequence mixing primitive is given by
+xc​o​n​v\displaystyle x_{conv}
+←SiLU⁡(short−conv⁡(x)⊙long−conv⁡(x))\displaystyle\leftarrow\operatorname{SiLU}(\operatorname{short-conv}(x)\odot\operatorname{long-conv}(x))
+x\displaystyle x
+←x+LayerNorm⁡(xc​o​n​v).\displaystyle\leftarrow x+\operatorname{LayerNorm}(x_{conv}).
+With FFT the overall complexity of the convolution layer is O⁡(d​L​log⁡L)O(dL\log L), enabling faster training than standard attention. While the FFT-based convolutions was previously not optimized for GPUs, recent works have enabled significant wallclock speed-ups (Fu et al., 2023b), which we make use of in practice.
+We also make use of linear RNN layers every other layer. The particular instance used in Reverso is DeltaNet (Schlag et al., 2021). DeltaNet learns the following state transition using query, key and value vectors qi,ki,vi∈ℝdhq_{i},k_{i},v_{i}\in\mathbb{R}^{d_{h}} (with head dimension dhd_{h})
+Si\displaystyle{S}_{i}
+=Si−1​(I−βi​ki​kiT)+βi​vi​kiT\displaystyle={S}_{i-1}({I}-\beta_{i}{k}_{i}{k}_{i}^{T})+\beta_{i}{v}_{i}{k}_{i}^{T}
+xi\displaystyle{x}_{i}
+←xi+LayerNorm⁡(Si​qi)\displaystyle\leftarrow{x}_{i}+\operatorname{LayerNorm}({S}_{i}{q}_{i})
+where the query, key, value vectors are obtained from linear projections followed by short convolutions of the input xx, and βi∈(0,1)\beta_{i}\in(0,1) is obtained by a linear projection of the input xix_{i} followed by a sigmoid. We use 4 heads (i.e., OPENdh=d4)d_{h}=\frac{d}{4}). To better model bidirectional context over the entire length LL sequence, we add the last time step of the previous layer to the current layer’s first hidden state (i.e., x0(l)←x0(l)+xL−1(l−1)x^{(l)}_{0}\leftarrow x^{(l)}_{0}+x^{(l-1)}_{L-1}) before the DeltaNet layer. We found this type of vector-based “state-weaving” strategy to work well in practice. Similar state-weaving strategies have been explored in Moroshan et al. (2025).
+In our ablation studies we also compare against other DeltaNet variants such as Gated DeltaNet (Yang et al., 2025, GDN; ) and Gated Delta Product (Siems et al., 2025, GDP;), as well as linear attention variants such Gated Linear Attention (Yang et al., 2024a, GLA;) (which generalizes state-space models such as Mamba-2 (Dao and Gu, 2024)). Our findings show that DeltaNet performs well despite having fewer parameters.
+Figure 3: Our data augmentation (left) and synthetic data generation (right) pipeline. For data augmention we apply a series of standard data augmentations: downsampling, amplitude modulation, vertical flip, horizontal flip, censor, mixup. For synthetic data generation, we generate data from Gaussian process with randomly selected kernels from a kernel bank, and combine this with spike/trapezoidal patterns as well as processes sampled with trend, seasonality and irregularity.
+Channel mixing.
+Each sequence mixing layer is followed by a channel mixing MLP layer. The MLP layer works as in the standard transformer architecture (Vaswani et al., 2017), with a dimension expansion factor of 4, with ReLU activations:
+xm​l​p←\displaystyle x_{mlp}\leftarrow
+ReLU⁡(x​Wu​p)​Wd​o​w​n\displaystyle\operatorname{ReLU}(xW_{up})W_{down}
+x←\displaystyle x\leftarrow
+x+LayerNorm⁡(xm​l​p)\displaystyle x+\operatorname{LayerNorm}(x_{mlp})
+We found this simple MLP to work better than GLU-based alternatives (Shazeer, 2020).
+Decoder head.
+The above blocks transform a sequence of inputs x(0)∈ℝL×d{x}^{(0)}\in\mathbb{R}^{L\times d} into x(n)∈ℝL×d{x}^{(n)}\in\mathbb{R}^{L\times d} after nn layers. To obtain the final prediction, we first pass the final transformed input x(n){x}^{(n)} to obtain a set of decoder “query” vectors qd​e​cq_{dec}:
+z=WL​x(n),\displaystyle z=W_{L}x^{(n)},
+WL∈ℝp×L,z∈ℝp×d\displaystyle W_{L}\in\mathbb{R}^{p\times L},z\in\mathbb{R}^{p\times d}
+qd​e​c=z​Wq,\displaystyle q_{dec}=zW_{q},
+Wq∈ℝd×d,qd​e​c∈ℝp×d\displaystyle W_{q}\in\mathbb{R}^{d\times d},q_{dec}\in\mathbb{R}^{p\times d}
+The decoder query vectors are then used to attend over the keys and values obtained from a transformation over x(n)x^{(n)},
+kd​e​c\displaystyle{k}_{{dec}}
+=x(n)​Wk,\displaystyle={x}^{(n)}W_{k},
+Wk∈ℝd×d,\displaystyle W_{k}\in\mathbb{R}^{d\times d},
+vd​e​c\displaystyle{v}_{{dec}}
+=x(n)​Wv,\displaystyle={x}^{(n)}W_{v},
+Wv∈ℝd×d,\displaystyle W_{v}\in\mathbb{R}^{d\times d},
+o\displaystyle{o}
+=attention⁡(qd​e​c,kd​e​c,vd​e​c),\displaystyle=\operatorname{attention}({q}_{{dec}},{k}_{{dec}},{v}_{{dec}}),
+o∈ℝp×d.\displaystyle{o}\in\mathbb{R}^{p\times d}.
+We find that smaller models train well without any positional embedding, whereas sin-cos positional embedding improves performance for Reverso-2.6M. Finally, we apply a linear layer to obtain the final output y^∈ℝp\hat{y}\in\mathbb{R}^{p}:
+y^\displaystyle\hat{y}
+=z​wo,\displaystyle={z}\,w_{o},
+w∈ℝd×1.\displaystyle w\in\mathbb{R}^{d\times 1}.
+We found this type of attention-based decoder “head” to be more performant and parameter-efficient than a simple linear layer that directly predicts a pp-sized vector from x(n)x^{(n)}.
+Training objective.
+Given the model prediction y^\hat{y} we unnormalized the output and train against the ground truth output yy, using the mean absolute error (MAE) loss, where we masked out NaN values on the ground truth yy during loss computation.
+3.2 Dataset
+Here we describe the pretraining dataset in addition to strategies for data augmentation and synthetic data generation.
+Pretraining dataset.
+The time series community has developed a series of commonly-used datasets (Godahewa et al., 2021; Alexandrov et al., 2019; Aksu et al., 2024; Woo et al., 2024), consisting of data from various sources such as weather, traffic, and other domains. We train our models on the GiftEval (Aksu et al., 2024) pretraining dataset, which has become the de facto standard for training TSFMs in recent years.
+The GiftEval pretraining dataset has around 4.5 million time series with 230 billion time points in total. The dataset however is significantly imbalanced towards datasets such as Buildings900k (Emami et al., 2024), and Era5 (Hersbach et al., 2020).
+To resolve this dataset imbalance, we precompute the strides on each dataset necessary to achieve a target (roughly uniform) fraction of time series sampled. For each dataset, we target a maximum of Nm​a​x=100000N_{max}=100000 samples per epoch, and recompute the strides such that we have at most Nm​a​xN_{max} samples from each dataset. Explicitly, for each dataset 𝒟\mathcal{D} with time series samples t∈Dt\in D each of length ltl_{t}, we compute the total sum of lengths as ∑t∈𝒟lt\sum_{t\in\mathcal{D}}l_{t}, and compute the stride for this dataset as s𝒟=⌈∑t∈𝒟ltNm​a​x⌉s_{\mathcal{D}}=\bigg\lceil\frac{\sum_{t\in\mathcal{D}}l_{t}}{N_{max}}\bigg\rceil. We also set an upper limit to 48 samples per time series tt, to avoid oversampling short datasets. A random start point in each seque

@@ -1,0 +1,249 @@
+FastUSP: A Multi-Level Collaborative Acceleration Frameworkfor Distributed Diffusion Model Inference (https://arxiv.org/html/2602.10940v1)
+citeturn29061view0 [wordlim: 200] Crawled: yesterday; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.10940v1","lineno":210}); Total lines: 345
+L98: Each GPU can then independently execute standard attention computation (FlashAttention, etc.), and after computation, another All-to-All restores the output to the original distribution $[B,H,S/N,D]$.
+L99: As a concrete example, consider 4 GPUs with $H=8$ heads and sequence length $S=1024$. Initially each GPU holds $[B,8,256,D]$ (all heads, partial sequence). After the input All-to-All, each GPU holds $[B,2,1024,D]$ (partial heads, full sequence). After local attention and the output All-to-All, the original distribution is restored.
+L100: Ulysses’s advantage lies in its minimal communication rounds—only 2 All-to-All operations per attention layer (one for input, one for output), and All-to-All is a highly optimized collective communication primitive that achieves high efficiency on high-bandwidth interconnects like NVLink. Its constraint is that the number of attention heads must be divisible by the number of GPUs ($H\bmod N=0$).
+L101: #### 2.2.2 Ring Attention: Sequence-Parallel Attention
+L102: 
+L103: Ring Attention [cite41†10 ] approaches from the sequence dimension: $N$ GPUs each hold $S/N$ fragments of Q, K, and V, and iteratively pass KV chunks through a ring topology so that each GPU’s local Query eventually computes attention against all KV chunks.
+L104: The algorithm executes $N-1$ communication rounds. In round 0, each GPU computes attention between local Q and local KV; in round $i$ ($i=1,...,N-1$), each GPU sends its held KV chunk to the next GPU in the ring (rank $+1\bmod N$) while receiving a KV chunk from the previous GPU (rank $-1\bmod N$), and computes attention between local Q and the newly received KV chunk.
+L105: The correctness of chunked attention relies on the Online Softmax (incremental softmax) technique. Since softmax’s denominator requires a global normalization factor, naive chunked computation would yield incorrect results. Ring Attention maintains log-sum-exp (LSE) state for numerically stable incremental merging:
+L106:  | $\displaystyle\text{lse}_{\text{new}}$  | $\displaystyle=\log(\exp(\text{lse}_{1})+\exp(\text{lse}_{2}))$  |  | (1)
+L107:  | $\displaystyle\mathbf{O}_{\text{new}}$  | $\displaystyle=\frac{\exp(\text{lse}_{1})\cdot\mathbf{O}_{1}+\exp(\text{lse}_{2})\cdot\mathbf{O}_{2}}{\exp(\text{lse}_{\text{new}})}$  |  | (2)
+L108: With each new KV chunk processed, the above formulas merge the local attention result with the accumulated result. Since addition and max operations satisfy commutativity and associativity, the final result is mathematically equivalent to single-GPU full computation regardless of KV chunk processing order.
+L109: Ring Attention’s advantage is that it has no constraint on head count, and per-GPU memory usage decreases linearly with GPU count (storing only $S/N$ of the sequence), making it particularly suitable for ultra-long sequence scenarios. The trade-off is $N-1$ rounds of point-to-point communication.
+L110: #### 2.2.3 USP: Unified Sequence Parallelism
+L111: 
+L112: USP (Unified Sequence Parallelism) [cite39†6 ] combines Ulysses and Ring Attention in a 2D process mesh, leveraging the advantages of both. Given $N$ GPUs, USP constructs a 2D mesh of shape $(R,U)$ ($R\times U=N$), where Ulysses (head parallelism) operates within the $U$ dimension and Ring Attention (sequence parallelism) operates across the $R$ dimension.
+L113: For example, with 4 GPUs and mesh $=(R{=}2,U{=}2)$, the Ulysses groups are $\{$GPU0, GPU1$\}$ and $\{$GPU2, GPU3$\}$ (within the $U$ dimension), while the Ring groups are $\{$GPU0, GPU2$\}$ and $\{$GPU1, GPU3$\}$ (within the $R$ dimension).
+L114: USP’s execution follows a recursive state machine design: first, Ulysses All-to-All is performed within the $U$ dimension to redistribute data from sequence parallelism to head parallelism; then Ring Attention is executed within the $R$ dimension for sequence-parallel attention computation on the redistributed data; finally, Ulysses All-to-All restores the original data distribution.
+L115: The entire process transparently intercepts F.scaled_dot_product_attention calls via PyTorch’s __torch_function__ protocol, requiring no modifications to model code.
+L116: The max_ring_dim_size parameter controls the maximum GPU count for the Ring dimension, thereby determining the 2D mesh shape. For example, with 8 GPUs and max_ring_dim_size=2, the resulting mesh is $(R{=}2,U{=}4)$, prioritizing the more communication-efficient Ulysses.
+L117: #### 2.2.4 Communication Complexity Comparison
+L118: 
+L119: Table 1: Ulysses vs. Ring Attention feature comparison.
+L120: Feature  | Ulysses  | Ring Attention
+L121: Parallel Dim.  | Head  | Sequence
+L122: Comm. Pattern  | All-to-All (2 rounds)  | Send/Recv ($N{-}1$ rounds)
+L123: Comm. Volume  | $O(BHSD/N)$  | $O(BHSD\cdot(N{-}1)/N)$
+L124: Constraint  | $H\bmod N=0$  | None
+L125: Per-GPU Memory  | $O(S^{2})$ (full seq.)  | $O((S/N)^{2})$ (seq. shard)
+L126: Best Scenario  | Many heads, high BW  | Long seq., memory-limited
+L127: Both methods have similar communication volume magnitude ($O(S\times D)$), but Ulysses requires fewer communication rounds (2 vs $N{-}1$), resulting in lower latency on high-bandwidth interconnects. USP flexibly combines both through its 2D mesh, selecting the optimal parallelism ratio based on hardware topology and model characteristics, as summarized in Table cite44†1 .
+L128: ### 2.3 Related Work
+L129: 
+L130: Table 2: Comparison with related work.
+L131: Method  | Compile  | Quant.  | Pipeline  | Diffusion
+L132: --- | --- | --- | --- | ---
+L133: Ulysses [cite40†8 ]  | ×  | ×  | ×  | ×
+L134: Ring Attention [cite41†10 ]  | ×  | ×  | ×  | ×
+L135: DeepSpeed-Ulysses [cite40†8 ]  | ×  | ×  | ×  | ×
+L136: ZeRO++ [cite45†22 ]  | ×  | ✓  | ×  | ×
+L137: USP [cite39†6 ]  | ×  | ×  | ×  | ✓
+L138: FastUSP (Ours)  | ✓  | ✓  | ✓  | ✓
+L139: Distributed Communication Optimization. ZeRO [cite46†15 ] introduces memory-efficient data parallelism through parameter partitioning. ZeRO++ [cite45†22 ] further introduces quantized gradient communication for training. Megatron-LM [cite47†19 , cite48†12 ] proposes tensor and pipeline parallelism for large-scale model training. These approaches primarily target training workloads and do not address inference-specific bottlenecks such as kernel launch overhead.
+L140: Compiler Optimization. PyTorch’s torch.compile [cite49†1 ] provides graph compilation with CUDA Graphs. However, its interaction with distributed communication primitives in attention parallelism has not been systematically studied.
+L141: Attention Optimization. FlashAttention [cite50†3 , cite51†4 ] achieves IO-aware single-GPU attention but does not address distributed scenarios. FlashAttention-3 [cite52†18 ] further exploits hardware asynchrony and low-precision computation. Sequence parallelism [cite53†9 ] has been explored from a systems perspective for long-sequence training, but its application to diffusion inference remains understudied.
+L142: FastUSP is the first to systematically study and optimize the interaction between graph compilation and distributed attention parallelism for diffusion inference.
+L143: ## 3 FastUSP Design
+L144: 
+L145: ### 3.1 Overview
+L146: 
+L147: FastUSP comprises three optimization levels designed to address different performance bottlenecks. The design follows two principles: Orthogonality—each optimization can be enabled independently; and Transparency—no modifications to user model code are required.
+L148: 
+L149: ### 3.2 Compile-Level Optimization (Primary)
+L150: 
+L151: This is the most impactful optimization in FastUSP, addressing the kernel launch overhead bottleneck.
+L152: #### 3.2.1 Graph Compilation with CUDA Graphs
+L153: 
+L154: Each denoising step in diffusion inference executes hundreds of CUDA kernels (attention, FFN, normalization, activation, etc.). On fast GPUs like RTX 5090, individual kernel execution times are short (tens of microseconds), making the CPU-side kernel launch overhead (5–10$\mu$s per kernel) a significant fraction of total time.
+L155: 
+L156: We apply torch.compile with mode="reduce-overhead" to the transformer:
+L157: 
+L158: ⬇
+L159: 
+L160: pipe.transformer = torch.compile(
+L161: 
+L162: pipe.transformer,
+L163: mode="reduce-overhead"
+L164: 
+L165: )
+L166: 
+L167: This achieves two effects: (1) Kernel fusion combines multiple small operations into fewer large kernels, reducing launch count. (2) CUDA Graphs capture records the entire execution graph and replays it with minimal CPU overhead.
+L168: #### 3.2.2 Computation-Communication Reordering
+L169: 
+L170: We enable PyTorch Inductor’s automatic communication optimization:
+L171: 
+L172: ⬇
+L173: 
+L174: torch._inductor.config\
+L175: 
+L176: .reorder_for_compute_comm_overlap = True
+L177: 
+L178: The compiler analyzes data dependencies and reorders operations to overlap communication with independent computation, reducing exposed communication latency.
+L179: 
+L180: ### 3.3 Communication-Level Optimization
+L181: #### 3.3.1 FP8 Quantized All-to-All
+L182: 
+L183: USP communicates K/V tensors in BF16 (2 bytes/element). We quantize to FP8 E4M3 (1 byte/element) before communication, as shown in Algorithm cite54†1 .
+L184: 
+L185: Algorithm 1 FP8 Quantized All-to-All
+L186: 
+L187: 0:  Tensor $\mathbf{x}$ (BF16), process group $G$
+L188: 
+L189: 0:  Tensor $\mathbf{y}$ (BF16)
+L190: 
+L191: 1:  $s\leftarrow\max(|\mathbf{x}|)/\text{FP8\_MAX}$
+L192: 
+L193: 2:  $\mathbf{x}_{\text{fp8}}\leftarrow\text{cast\_fp8}(\mathbf{x}/s)$
+L194: 3:  $\mathbf{y}_{\text{fp8}}\leftarrow\text{all\_to\_all}(\mathbf{x}_{\text{fp8}},G)$ {50% volume}
+L195: 
+L196: 4:  $\mathbf{y}\leftarrow\text{cast\_bf16}(\mathbf{y}_{\text{fp8}})\times s$
+L197: 
+L198: 5:  return $\mathbf{y}$
+L199: 
+L200: FP8 E4M3 [cite55†11 ] provides dynamic range $\pm 448$ with $<$0.1% relative error on K/V tensors. This optimization is most beneficial in bandwidth-constrained environments (e.g., cross-node InfiniBand).
+L201: ### 3.4 Operator-Level Optimization
+L202: #### 3.4.1 Pipelined Ring Attention
+L203: 
+L204: Traditional Ring attention serializes communication and computation. We overlap them using double buffering, as shown in Algorithm cite56†2 .
+L205: 
+L206: Algorithm 2 Pipelined Ring Attention
+L207: 
+L208: 0:  $\mathbf{Q},\mathbf{K},\mathbf{V}$ (local), world size $W$
+L209: 
+L210: 0:  Attention output $\mathbf{O}$
+L211: 
+L212: 1:  Init double buffers $\text{buf}_{a},\text{buf}_{b}$
+L213: 
+L214: 2:  $\text{cs}\leftarrow\text{create\_cuda\_stream}()$
+L215: 
+L216: 3:  Async recv($\text{buf}_{a}$) on cs {Prefetch}
+L217: 4:  $\mathbf{O},\text{lse}\leftarrow\text{attn}(\mathbf{Q},\mathbf{K},\mathbf{V})$ {Local}
+L218: 
+L219: 5:  for $i=1$ to $W-1$ do
+L220: 
+L221: 6:   sync(cs)
+L222: 
+L223: 7:   Async recv($\text{buf}_{b}$), send($\text{buf}_{a}$) on cs
+L224: 
+L225: 8:   $\mathbf{O}_{i},\text{lse}_{i}\leftarrow\text{attn}(\mathbf{Q},\text{buf}_{a}.\mathbf{K},\text{buf}_{a}.\mathbf{V})$
+L226: 
+L227: 9:   $\mathbf{O},\text{lse}\leftarrow\text{merge}(\mathbf{O},\text{lse},\mathbf{O}_{i},\text{lse}_{i})$
+L228: 
+L229: 10:   swap($\text{buf}_{a},\text{buf}_{b}$)
+L230: 
+L231: 11:  end for
+L232: 
+L233: 12:  return $\mathbf{O}$
+L234: The online softmax merge maintains log-sum-exp (LSE) values for numerically stable incremental aggregation:
+L235: 
+L236:  | $\displaystyle\text{lse}_{\text{new}}$  | $\displaystyle=\log(\exp(\text{lse}_{1})+\exp(\text{lse}_{2}))$  |  | (3)
+L237:  | $\displaystyle\mathbf{O}_{\text{new}}$  | $\displaystyle=e^{\text{lse}_{1}-\text{lse}_{\text{new}}}\mathbf{O}_{1}+e^{\text{lse}_{2}-\text{lse}_{\text{new}}}\mathbf{O}_{2}$  |  | (4)
+L238: Micro-benchmark results (2 GPU, seq_len=2048): Pipelined Ring achieves 1.25$\times$ speedup over baseline Ring attention, and adding FP8 quantization yields 1.27$\times$. However, since attention communication accounts for only 5–10% of total inference time on NVLink, the end-to-end contribution is limited.
+L239: ## 4 Evaluation
+L240: ### 4.1 Experimental Setup
+L241: 
+L242: Table 3: Experimental configuration.
+L243: Item  | Configuration
+L244: GPU  | NVIDIA GeForce RTX 5090 (32GB)
+L245: Interconnect  | NVLink ($\sim$900 GB/s bidirectional)
+L246: PyTorch  | 2.8.0 + CUDA 12.8
+L247: Models  | FLUX.1-dev (12B), Qwen-Image
+L248: Quantization  | FP8 weights (optimum-quanto)
+L249: Inference Steps  | 30
+L250: Resolution  | 1024$\times$1024 (FLUX), 1024$\times$768 (Qwen)
+L251: 
+L252: Baselines: Original USP implementation from the para_attn library.
+L253: Methodology: Each configuration includes warmup runs (2–3 iterations) followed by timed measurement. All times are wall-clock end-to-end inference time (excluding model loading). Results are synchronized across all GPUs via torch.cuda.synchronize() and dist.barrier().
+L254: ### 4.2 End-to-End Performance
+L255: Table 4: FastUSP end-to-end inference performance (30 steps).
+L256: Model  | GPUs  | Baseline  | FastUSP  | ms/step  | ms/step  | Speedup
+L257: --- | --- | --- | --- | --- | --- | ---
+L258:  |  | (s)  | (s)  | (base)  | (fast)  |
+L259: FLUX  | 2  | 8.64  | 7.46  | 288.0  | 248.7  | 1.16$\times$
+L260: FLUX  | 4  | 7.00  | 6.25  | 233.3  | 208.3  | 1.12$\times$
+L261: FLUX  | 8  | 5.22  | 4.67  | 174.0  | 155.7  | 1.12$\times$
+L262: Qwen-Image  | 2  | 16.33  | 14.92  | 544.4  | 497.3  | 1.09$\times$
+L263: Figure 1: End-to-end performance on FLUX. (a) Inference time comparison between Baseline USP and FastUSP across 2, 4, and 8 GPUs. (b) FastUSP speedup over baseline, showing consistent 1.12$\times$–1.16$\times$ improvement. Figure 2: Cross-model evaluation. (a) FastUSP speedup on all compile-compatible configurations (FLUX 2/4/8 GPU and Qwen-Image 2 GPU). (b) Qwen-Image scaling with baseline USP, showing sub-linear scaling due to memory constraints and communication overhead.
+L264: Key observations:
+L265: 
+L266: (1) Consistent speedup on FLUX across all configurations. As shown in Figure cite57†1 , FastUSP achieves 1.12$\times$–1.16$\times$ speedup on FLUX across 2–8 GPUs, demonstrating robustness.
+L267: 
+L268: (2) Highest speedup at 2 GPUs (1.16$\times$). With fewer GPUs, per-step computation time is longer, making the fixed kernel launch overhead a larger fraction of total time. Graph compilation eliminates this overhead, yielding the highest relative improvement.
+L269: (3) Stable speedup at 4–8 GPUs (1.12$\times$). As GPU count increases, per-step time decreases but communication overhead grows. The speedup stabilizes as these effects balance.
+L270: (4) Cross-model generalization. As illustrated in Figure cite58†2 (a), FastUSP accelerates both FLUX (1.12–1.16$\times$) and Qwen-Image (1.09$\times$ on 2 GPU), demonstrating model-agnostic effectiveness. The lower speedup on Qwen-Image is due to using max-autotune-no-cudagraphs mode (CUDA Graphs are incompatible with Qwen-Image’s dynamic control flow in para_attn).
+L271: (5) Compiler compatibility gap. On Qwen-Image with 4+ GPUs, the transition from Ulysses to Ring attention exposes a PyTorch Inductor bug in tiling analysis. This highlights the need for improved compiler support for distributed attention patterns—a direction for future work.
+L272: (6) Sub-linear scaling on Qwen-Image. As shown in Figure cite58†2 (b), Qwen-Image achieves 1.30$\times$ speedup from 2$\to$4 GPUs and 1.46$\times$ from 2$\to$8 GPUs (vs. ideal 2$\times$ and 4$\times$). The sub-linear scaling is due to: (a) the model’s large memory footprint (27.5 GB per GPU after FP8 quantization) leaving limited headroom for activation buffers, and (b) increasing communication overhead with more Ring steps.
+L273: Figure 3: Per-step denoising latency. (a) FLUX: FastUSP reduces per-step latency from 288ms to 249ms (2 GPU) and from 174ms to 156ms (8 GPU). (b) Qwen-Image: baseline USP per-step latency across GPU configurations, with the FastUSP 2-GPU result shown.
+L274: ### 4.3 Analysis: Why Compile-Level Optimization Dominates
+L275: 
+L276: To understand why compile-level optimization provides the dominant speedup, we analyze the performance breakdown (Figure cite59†3 ).
+L277: 
+L278: Attention communication vs. total inference time. Our profiling shows that attention-related communication (All-to-All for Ulysses, Send/Recv for Ring) accounts for only 5–10% of total per-step latency on NVLink. The majority of time is spent on transformer computation (attention, FFN, normalization).
+L279: Micro-benchmark vs. end-to-end gap. As shown in Figure cite60†4 , pipelined Ring attention achieves 1.25$\times$ speedup on isolated attention operations. However, since attention communication is only 5–10% of total time, the theoretical end-to-end contribution is at most 0.5–1.0%—within measurement noise.
+L280: Kernel launch overhead. On RTX 5090, individual kernel execution times are short (tens of $\mu$s for small operations). The CPU-side launch overhead becomes a significant fraction. torch.compile addresses this by fusing kernels and using CUDA Graphs, reducing hundreds of launches to a single graph replay.
+L281: Table 5: Micro-benchmark results (2 GPU, seq_len=2048).
+L282: Configuration  | Attn Latency  | Speedup
+L283: --- | --- | ---
+L284: Baseline USP  | 0.18ms  | 1.00$\times$
+L285: + Pipelined Ring  | 0.14ms  | 1.25$\times$
+L286: + Pipelined Ring + FP8  | 0.14ms  | 1.27$\times$
+L287: Figure 4: Micro-benchmark: single attention operation latency (2 GPU, seq_len=2048). Pipelined Ring achieves 1.25$\times$ speedup; adding FP8 yields 1.27$\times$. These gains are significant at the operator level but translate to $<$1% end-to-end improvement.
+L288: These micro-level improvements (25–27%) translate to $<$1% end-to-end improvement because attention communication is a small fraction of total inference time on high-bandwidth NVLink interconnects.
+L289: ### 4.4 Discussion: When Each Optimization Matters
+L290: Figure 5: Multi-GPU scaling efficiency. Both FLUX and Qwen-Image exhibit sub-linear scaling relative to ideal, with Qwen-Image showing greater scaling loss due to its larger memory footprint and higher communication overhead. Table 6: Optimization applicability.
+L291: Optimization  | Primary Benefit  | Most Effective When
+L292: --- | --- | ---
+L293: Compile-Opt  | Kernel fusion,  | Always
+L294:  | CUDA Graphs  | (9–16% speedup)
+L295: Comm-Opt  | 50% comm.  | Low-bandwidth
+L296: (FP8)  | reduction  | (InfiniBand)
+L297: Op-Opt  | Communication  | Many GPUs
+L298: (Pipeline)  | hiding  | (high Ring steps)
+L299: Compile-level optimization is universally beneficial because kernel launch overhead exists regardless of hardware configuration.
+L300: 
+L301: Communication-level and operator-level optimizations become important in bandwidth-constrained scenarios: cross-node inference over InfiniBand ($\sim$200 GB/s), very long sequences (16K+ tokens), or large GPU counts where Ring step count is high. Figure cite61†5 further illustrates the scaling gap between actual and ideal linear scaling for both models.
+L302: ## 5 Conclusion
+L303: We presented FastUSP, a multi-level optimization framework for distributed diffusion model inference. Through systematic performance analysis, we revealed that kernel launch overhead—not communication latency—is the primary bottleneck on modern high-bandwidth GPU interconnects.
+L304: Based on this finding, FastUSP prioritizes compile-level optimization (graph compilation with CUDA Graphs) as its primary acceleration mechanism, complemented by communication-level (FP8 quantization) and operator-level (pipelined Ring attention) optimizations for bandwidth-constrained scenarios.
+L305: Evaluation on FLUX (12B) and Qwen-Image across 2–8 NVIDIA RTX 5090 GPUs demonstrates 1.12$\times$–1.16$\times$ end-to-end speedup on FLUX and 1.09$\times$ on Qwen-Image (2 GPU). We also identify a compiler compatibility gap: PyTorch Inductor’s tiling analysis fails on Ring attention patterns, preventing compile optimization on Qwen-Image with 4+ GPUs. All experimental results are real measurements without extrapolation.
+L306: Future Work. We plan to: (1) work with the PyTorch team to resolve Inductor compatibility with Ring attention patterns, enabling compile optimization across all configurations; (2) evaluate FastUSP on cross-node deployments where communication optimization becomes critical; (3) test on higher-resolution generation (2048$\times$2048+) with longer sequences; and (4) integrate with FlashAttention-3 [cite52†18 ] for further operator-level gains.
+L307: ## References
+L308:   * [1] J. Ansel, E. Yang, H. He, N. Gimelshein, A. Jain, M. Voznesensky, B. Bao, P. Bell, D. Berard, E. Burber, et al. (2024) PyTorch 2: faster machine learning through dynamic python bytecode transformation and graph compilation. In ASPLOS, Cited by: cite62†§2.3 .
+L309:   * [2] Black Forest Labs (2024) FLUX.1. Note: cite63†https://blackforestlabs.ai†blackforestlabs.ai Cited by: cite64†§1 .
+L310:   * [3] T. Dao, D. Fu, S. Ermon, A. Rudra, and C. Ré (2022) FlashAttention: fast and memory-efficient exact attention with io-awareness. In NeurIPS, Cited by: cite65†§2.3 .
+L311:   * [4] T. Dao (2024) FlashAttention-2: faster attention with better parallelism and work partitioning. In ICLR, Cited by: cite65†§2.3 .
+L312:   * [5] P. Esser, S. Kulal, A. Blattmann, R. Entezari, J. Müller, H. Saini, Y. Levi, D. Lorenz, A. Sauer, F. Boesel, et al. (2024) Scaling rectified flow transformers for high-resolution image synthesis. In Forty-first international conference on machine learning, Cited by: cite64†§1 , cite66†§2.1 .
+L313:   * [6] J. Fang and S. Zhao (2024) Usp: a unified sequence parallelism approach for long context generative ai. arXiv preprint arXiv:2405.07719. Cited by: cite67†§1 , cite68†§2.2.3 , cite69†Table 2 .
+L314:   * [7] J. Ho, A. Jain, and P. Abbeel (2020) Denoising diffusion probabilistic models. In NeurIPS, Cited by: cite64†§1 .
+L315:   * [8] S. A. Jacobs, M. Tanaka, C. Zhang, M. Zhang, S. L. Song, S. Rajbhandari, and Y. He (2023) DeepSpeed ulysses: system optimizations for enabling training of extreme long sequence transformer models. arXiv preprint arXiv:2309.14509. Cited by: cite67†§1 , cite70†§2.2.1 , cite71†Table 2 , cite72†Table 2 .
+L316:   * [9] S. Li, F. Xue, C. Baranwal, Y. Li, and Y. You (2023) Sequence parallelism: long sequence training from system perspective. In ACL, Cited by: cite65†§2.3 .
+L317:   * [10] H. Liu, M. Zaharia, and P. Abbeel (2024) Ring attention with blockwise transformers for near-infinite context. In ICLR, Cited by: cite67†§1 , cite73†§2.2.2 , cite74†Table 2 .
+L318:   * [11] P. Micikevicius, D. Stosic, N. Burgess, M. Cornea, P. Dubey, R. Grisenthwaite, S. Ha, A. Heinecke, P. Judd, J. Kamalu, et al. (2022) FP8 formats for deep learning. arXiv preprint arXiv:2209.05433. Cited by: cite75†§3.3.1 .
+L319:   * [12] D. Narayanan, M. Shoeybi, J. Casper, P. LeGresley, M. Patwary, V. A. Korthikanti, D. Vainbrand, P. Kashinkunti, J. Bernauer, B. Catanzaro, A. Phanishayee, and M. Zaharia (2021) Efficient large-scale language model training on gpu clusters using megatron-lm. In SC, Cited by: cite76†§2.3 .
+L320:   * [13] W. Peebles and S. Xie (2023) Scalable diffusion models with transformers. In ICCV, Cited by: cite66†§2.1 .
+L321:   * [14] D. Podell, Z. English, K. Lacey, A. Blattmann, T. Dockhorn, J. Müller, J. Penna, and R. Rombach (2023) Sdxl: improving latent diffusion models for high-resolution image synthesis. arXiv preprint arXiv:2307.01952. Cited by: cite64†§1 .
+L322:   * [15] S. Rajbhandari, J. Rasley, O. Ruwase, and Y. He (2020) ZeRO: memory optimizations toward training trillion parameter models. In SC, Cited by: cite76†§2.3 .
+L323:   * [16] R. Rombach, A. Blattmann, D. Lorenz, P. Esser, and B. Ommer (2022) High-resolution image synthesis with latent diffusion models. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pp. 10684–10695. Cited by: cite64†§1 .
+L324:   * [17] C. Saharia, W. Chan, S. Saxena, L. Li, J. Whang, E. L. Denton, K. Ghasemipour, R. Gontijo Lopes, B. Karagol Ayan, T. Salimans, et al. (2022) Photorealistic text-to-image diffusion models with deep language understanding. NeurIPS. Cited by: cite64†§1 .
+L325:   * [18] J. Shah, G. Bikshandi, Y. Zhang, V. Thakkar, P. Ramani, and T. Dao (2024) FlashAttention-3: fast and accurate attention with asynchrony and low-precision. In NeurIPS, Cited by: cite65†§2.3 , cite77†§5 .
+L326:   * [19] M. Shoeybi, M. Patwary, R. Puri, P. LeGresley, J. Casper, and B. Catanzaro (2019) Megatron-lm: training multi-billion parameter language models using model parallelism. arXiv preprint arXiv:1909.08053. Cited by: cite76†§2.3 .
+L327:   * [20] Y. Song, J. Sohl-Dickstein, D. P. Kingma, A. Kumar, S. Ermon, and B. Poole (2021) Score-based generative modeling through stochastic differential equations. In ICLR, Cited by: cite64†§1 .
+L328:   * [21] A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin (2017) Attention is all you need. In NeurIPS, Cited by: cite66†§2.1 .
+L329:   * [22] G. Wang, H. Qin, S. A. Jacobs, C. Holmes, S. Rajbhandari, O. Ruwase, F. Yan, L. Yang, and Y. He (2023) ZeRO++: extremely efficient collective communication for giant model training. arXiv preprint arXiv:2306.10209. Cited by: cite76†§2.3 , cite78†Table 2 .
+L330: Experimental support, please cite79†view the build logs for errors. Generated by cite80†L A T E xml†math.nist.gov .
+L331: ## Instructions for reporting errors
+L332: 
+L333: We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the methods listed below:
+L334: 
+L335:   * Click the "Report Issue" () button, located in the page header.
+L336: 
+L337: Tip: You can select the relevant text first, to include it in your report.
+L338: Our team has already identified cite81†the following issues†github.com . We appreciate your time reviewing and reporting rendering errors we may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability should not be a barrier to accessing research. Thank you for your continued support in championing open access for all.
+L339: Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a cite82†list of packages that need conversion†github.com , and welcome cite83†developer contributions†github.com .
+L340: 
+L341: We gratefully acknowledge support from our major funders, cite84†member institutions†info.arxiv.org , , and all contributors.
+L342: cite85†About†info.arxiv.org · cite86†Help†info.arxiv.org · cite87†Contact†info.arxiv.org · cite88†Subscribe†info.arxiv.org · cite89†Copyright†info.arxiv.org · cite90†Privacy†info.arxiv.org · cite91†Accessibility†info.arxiv.org · cite92†Operational Status (opens in new tab)†status.arxiv.org L343: 
+L344: Major funding support from
+

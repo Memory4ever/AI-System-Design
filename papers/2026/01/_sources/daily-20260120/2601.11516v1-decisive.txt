@@ -1,0 +1,104 @@
+SOURCE: https://arxiv.org/html/2601.11516v1
+
+Appendix B Dataset Statistics
+  Here we detail the specific sample counts and filtering logic for the datasets described in Table 1 . 
+   B.1 Evaluation and Validation Splits 
+  Table 6 provides the exact sample counts for the validation and test splits used to calculate the error metrics defined in Section 4 . 
+   Table 6 : Sample counts for Validation and Test splits across all datasets. The Metric column maps these datasets to the error variables defined in Table 1 .     Dataset Description  Metric  Val  Test  Total   Benign / Random Traffic (False Positive evaluation)   Short Context RT (Refusal/Response)  FPR SC[OT] \texttt{FPR}_{\texttt{SC[OT]}}  8,283  33,132  41,415   Long Context RT (Benign Code)  FPR LC[RT] \texttt{FPR}_{\texttt{LC[RT]}}  202  812  1,014   Attacks / Cyber (False Negative evaluation)   Short Context Cyber  FNR SC[A] \texttt{FNR}_{\texttt{SC[A]}}  483  918  1,401   Multi-Turn Cyber  FNR MT[A] \texttt{FNR}_{\texttt{MT[A]}}  80  320  400   Long Context Cyber  FNR LC[A] \texttt{FNR}_{\texttt{LC[A]}}  429  1,718  2,147   Jailbreaks  FNR SC[J] \texttt{FNR}_{\texttt{SC[J]}}  4,277  17,108  21,385   ART (Advanced Red Teaming)  FNR SC[ART] \texttt{FNR}_{\texttt{SC[ART]}}  103  431  534   
+    B.2 Training Data Configuration 
+  Table 7 details the composition of the training mixture. We apply heavy subsampling to the cyber-specific dataset and the Multi-Turn data to balance the dataset mixture. 
+   Table 7 : Training dataset composition.     Dataset Description  Training Split Size   Short Context Attacks  1,928   Short Context Overtriggering  1,206   Multi-Turn Attacks  41   Total  3,175   
+    B.3 Long Context Data Filtering 
+  To ensure robust evaluation of Long Context (LC) capabilities without data leakage, strict filtering was applied to the FNR LC[A] \texttt{FNR}_{\texttt{LC[A]}} dataset. 
+    •   Total LC stem fingerprints: 2,147 raw rows. 
+ 
+ •   Leakage Removal: 1,711 LC rows matched the Short Context (SC) training data stems and were excluded from the LC evaluation to test true generalization. 
+ 
+ •   Final Availability: 436 LC rows were available for the ‘Clean’ evaluation split. 
+ 
+      
+Appendix C General Training Details
+  In this appendix, we list out various hyperparameters that we chose for our probe training runs. See also Appendix  B where we describe the training, validation and eval data. 
+    •   Optimizer : AdamW 
+ 
+ •   Learning Rate : 1 × 10 − 4 1\times 10^{-4} 
+ 
+ •   Weight Decay : 3 × 10 − 3 3\times 10^{-3} 
+ 
+ •   Optimizer Momentum : β 1 = 0.9 , β 2 = 0.999 \beta_{1}=0.9,\beta_{2}=0.999 
+ 
+ •   Training Duration : 1000 steps 
+ 
+ •   Batch Size : Full batch gradient descent 
+ 
+ •   Source Layer : Activations harvested from the layer halfway through the model 
+ 
+ •   MLP Transformation ( Figure  2 ) : Two layers of width 100 
+ 
+ •   Activation Function : ReLU 
+ 
+     
+Appendix I Infrastructure Recommendations
+  We recommend storing activations on disk when training single-layer probes. We find that this makes iterating on probe architecture (e.g. manually or with AlphaEvolve) much faster. This advice contrasts with Cunningham et al. (2026) , who recommend generating activations from the base LLM during probe training. We believe that this difference is due to our probe training using activations from a single layer (so the storage cost and loading time is only proportional to the dataset size and the activation dimension), while Cunningham et al. (2026) train multi-layer probes, leading to a storage cost and loading time that is additionally proportional to the number of layers in the model. 
+   We use TPU machines to dump training, validation, and test activations to disk (training, val, and test), and then use CPUs for evaluating probes on these activations. We also are able to use small single-host TPUs for training the probes (instead of much larger deployments that can host an entire production Gemini model). 
+   Another infrastructure consideration is performing evaluations on long-context data. Our long-context evaluation dataset does not fit on one TPU node. We thus run long context evaluators distributed on many CPU workers, all of which load a random split of the data themselves. This is similar to typical single program multiple data setups ( Darema et al., 1988 ) . 
+   Specific Considerations For Long Context Training: To train probes on long context data, it is impossible to load all training data at once to the TPU memory due to the prohibitively large data size of training activations. Therefore, for each epoch, we need to distribute both short context and long context data across data loading batches, and further divide into smaller training or evaluation batches. Training attention probes with long context data thus requires smaller batch sizes to more efficiently leverage data distributions and converge under smaller number of epochs. Moreover, we implemented a round-robin data allocation policy of data loading batches between training datasets, to prevent training dataset distribution shifts within an epoch. Loading large scale activations is expensive with standard training pipelines, so we implemented a customized pipeline with optimizations for data loading speed, padding, and pipelining.
+These optimizations unlocked stable long context data probe training and improved accelerator utilization by about 5x. 
+    
+Appendix J Error Bar Methodology for Figure 1
+  The error bars in Figure  1 represent 95% confidence intervals. We use fundamentally different uncertainty quantification methods for probes versus language models because they face different sources of variance: 
+    •   Probes : We train 100 random seeds and select the best by validation loss. The dominant source of uncertainty is seed selection variance : a different draw of 100 seeds would yield a different “best” model with different test performance. 
+ 
+ •   Language Models : We run a single evaluation with temperature zero, so there is no seed or sampling variance. The only uncertainty is finite test set noise : our test set provides a noisy estimate of the true error rate. 
+ 
+    These fundamentally different uncertainty sources require different statistical methods. 
+   J.1 Probe Methods (AlphaEvolve, Selected Probe, EMA Linear Probe) 
+  For probes, we use a smoothed bootstrap via kernel density estimation (KDE) in logit space to quantify seed selection uncertainty. Standard bootstrap of the argmin statistic produces degenerate confidence intervals because the same seed tends to be selected repeatedly. KDE smoothing addresses this by allowing the resampled seeds to have slightly different (val, test) pairs than the original data. 
+   Procedure: 
+  1.   Given N N trained seeds with validation losses { v 1 , … , v N } \{v_{1},\ldots,v_{N}\} and corresponding test losses { t 1 , … , t N } \{t_{1},\ldots,t_{N}\} 
+ 
+ 2.   Transform test losses to logit space: ℓ i = log ⁡ ( t i / ( 1 − t i ) ) \ell_{i}=\log(t_{i}/(1-t_{i})) to respect the bounded [ 0 , 1 ] [0,1] domain 
+ 
+ 3.   Fit a 2D kernel density estimate to the joint distribution of ( v i , ℓ i ) (v_{i},\ell_{i}) pairs 
+ 
+ 4.   Filter out degenerate seeds where v i v_{i} equals the maximum penalty value (indicating failed training runs) 
+ 
+ 5.   For B = 20,000 B=20{,}000 bootstrap iterations: 
+  (a)   Sample N N synthetic ( v ∗ , ℓ ∗ ) (v^{*},\ell^{*}) pairs from the KDE 
+ 
+ (b)   Select j ∗ = arg ​ min k ⁡ v k ∗ j^{*}=\argmin_{k}v^{*}_{k} (best validation seed in synthetic sample) 
+ 
+ (c)   Transform back: t j ∗ ∗ = σ ⁡ ( ℓ j ∗ ∗ ) t^{*}_{j^{*}}=\sigma(\ell^{*}_{j^{*}}) where σ \sigma is the sigmoid function 
+ 
+ (d)   Record t j ∗ ∗ t^{*}_{j^{*}} (test loss of selected seed) 
+ 
+  
+ 6.   Report the 2.5th and 97.5th percentiles of the B B recorded test losses 
+ 
+    The KDE bandwidth is computed automatically using Scott’s rule. This procedure captures how much the final reported test loss would vary if we repeated the entire training and selection process. 
+   Apparent One-Sided Error Bars: Some probes exhibit error bars that appear one-sided, with a large downward extent but minimal upward extent. This occurs when the actual point estimate falls near the upper tail of the bootstrap distribution. Intuitively, this means the selected seed happened to perform relatively poorly on the test set compared to what would typically be expected. Equivalently, the selected seed landed near the 95th percentile of the bootstrap distribution rather than the median. In such cases, the confidence interval correctly indicates substantial room for improvement (downward) but limited room for the result to be worse (upward). 
+    J.2 Language Model Methods (Gemini 2.5 Flash) 
+  For the language model classifier, we use an analytic binomial confidence interval. Since we run only one deterministic evaluation (temperature zero), there is no seed variance to bootstrap over. Instead, we quantify uncertainty from the finite test set size. 
+   Our error metric is a weighted combination of error rates across different test groups (see Equation  12 ). For each group g g with weight w g w_{g} , we compute: 
+  •   The empirical error rate p ^ g \hat{p}_{g} on n g n_{g} test examples 
+ 
+ •   The binomial variance: Var ​ ( p ^ g ) = p ^ g ​ ( 1 − p ^ g ) n g \text{Var}(\hat{p}_{g})=\frac{\hat{p}_{g}(1-\hat{p}_{g})}{n_{g}} 
+ 
+    The overall weighted error has variance: 
+    Var ​ ( weighted error ) = ∑ g ( w g ∑ g ′ w g ′ ) 2 ⋅ p ^ g ​ ( 1 − p ^ g ) n g \text{Var}(\text{weighted error})=\sum_{g}\left(\frac{w_{g}}{\sum_{g^{\prime}}w_{g^{\prime}}}\right)^{2}\cdot\frac{\hat{p}_{g}(1-\hat{p}_{g})}{n_{g}}   (14)  
+   We report the 95% CI as mean ± 1.96 ⋅ Var \text{mean}\pm 1.96\cdot\sqrt{\text{Var}} , clipped to be non-negative. 
+    J.3 Cascading Methods (Best Probe + Gemini 2.5 Flash) 
+  For the cascading classifier, we propagate uncertainties from both components. Let f defer f_{\text{defer}} be the deferral rate (fraction of examples sent to the LLM). The cascade error is approximately: 
+    Cascade Error ≈ ( 1 − f defer ) ⋅ Probe Error + f defer ⋅ LLM Error \text{Cascade Error}\approx(1-f_{\text{defer}})\cdot\text{Probe Error}+f_{\text{defer}}\cdot\text{LLM Error}   (15)  
+   We propagate asymmetric uncertainties using the bootstrap CI widths from each component. Specifically, for the probe we use the distance from the bootstrap median to the 2.5th and 97.5th percentiles, and for the LLM we use the symmetric analytic margin. Combining via quadrature (assuming independence): 
+    δ lo \displaystyle\delta_{\text{lo}}  = ( ( 1 − f defer ) ⋅ δ lo probe ) 2 + ( f defer ⋅ δ lo LLM ) 2 \displaystyle=\sqrt{((1-f_{\text{defer}})\cdot\delta^{\text{probe}}_{\text{lo}})^{2}+(f_{\text{defer}}\cdot\delta^{\text{LLM}}_{\text{lo}})^{2}}   (16)    δ hi \displaystyle\delta_{\text{hi}}  = ( ( 1 − f defer ) ⋅ δ hi probe ) 2 + ( f defer ⋅ δ hi LLM ) 2 \displaystyle=\sqrt{((1-f_{\text{defer}})\cdot\delta^{\text{probe}}_{\text{hi}})^{2}+(f_{\text{defer}}\cdot\delta^{\text{LLM}}_{\text{hi}})^{2}}   (17)  
+   where δ lo/hi probe \delta^{\text{probe}}_{\text{lo/hi}} are the lower and upper CI half-widths from the bootstrap distribution (not from the point estimate), and δ lo/hi LLM \delta^{\text{LLM}}_{\text{lo/hi}} are the symmetric analytic margins. Since deferral rates are typically small ( ∼ \sim 8%), the cascade uncertainty is dominated by the probe component, inheriting its asymmetric character. 
+    J.4 Interpretation 
+  The resulting confidence intervals have different interpretations: 
+  •   Probe CIs answer: “If we trained a different set of 100 seeds and picked the best, how much would our test error vary?” 
+ 
+ •   LLM CIs answer: “Given our finite test set, how precisely do we know the true error rate?” 
+ 
+ •   Cascade CIs answer: “What is the combined uncertainty from both probe seed selection and LLM test set noise?” 
+ 
+    Probe CIs are typically wider than LLM CIs because seed selection introduces more variance than test set sampling given our test set sizes.

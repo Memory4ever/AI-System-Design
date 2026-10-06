@@ -1,0 +1,1820 @@
+https://arxiv.org/html/2601.20615v1
+DrainCode: Stealthy Energy Consumption Attacks on Retrieval-Augmented Code Generation via Context Poisoning
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I Introduction
+II Background and Related Work
+II-A Retrieval-Augmented Generation (RAG) and Attack Surface
+II-B Code Generation Security
+II-C Energy-Consumption Attacks
+III Problem Formulation
+III-A Threat Model
+III-A1 Attacker’s goal
+III-A2 Attacker’s capabilities
+III-B RAG Poisoning for Energy Consumption Attack
+IV Methodology
+IV-A Overview
+IV-B Crafting Malicious Code Snippets to Retrieval Corpus
+IV-B1 Hypothetical Query Construction
+IV-B2 Adversarial Trigger Generation
+IV-B3 Efficient Adversary Sample Optimization
+IV-C The Complete Process of Attacking RAG
+V Evaluation
+V-A Experimental Setup
+V-A1 Dataset and Retrieval Corpus
+V-A2 Models Selection
+V-A3 Metrics
+V-A4 Baselines
+V-A5 Experimental Details
+V-B RQ1: Effectiveness
+V-B1 Effectiveness in White-box Setting
+V-B2 Black-box Transferability of DrainCode
+V-B3 Overhead
+V-C RQ2: Ablation Study
+V-C1 Impact of HypoQueryConstruction
+V-C2 Impact of different loss modules
+V-C3 Impact of Maximum Generation Length
+V-D RQ3: Generalizability of DrainCode
+V-E RQ4: Detection of Poisoned Samples
+V-E1 Poisoned Text Classifier
+V-E2 Perplexity-based Detection
+V-E3 Finetuned-CodeBERT Detection
+V-F RQ5: Human Evaluation
+V-G Case Study
+VI Threats to Validity
+VII Conclusion
+VIII Acknowledgements
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2601.20615v1 [cs.SE] 28 Jan 2026
+DrainCode: Stealthy Energy Consumption Attacks on Retrieval-Augmented Code Generation via Context PoisoningThanks: ∗Corresponding author: Chong Wang (chong.wang@ntu.edu.sg)
+Yanlin Wang1,
+Jiadong Wu1,
+Tianyue Jiang1,
+Mingwei Liu1,
+Jiachi Chen1,
+Chong Wang3∗,
+Ensheng Shi2,
+Xilin Liu2,
+Yuchi Ma2,
+Zibin Zheng1
+Affiliation: 1Sun Yat-sen University, Zhuhai, China
+{wangylin36, wujd28, jiangty9, liumw2686, chenjch86, zhzibin}@mail.sysu.edu.cn
+Affiliation: 2Huawei Cloud Computing Technologies Co. Ltd., Shenzhen, China
+{shiensheng, liuxilin3, mayuchi1}@huawei.com
+Affiliation: 3Nanyang Technological University, Singapore
+chong.wang@ntu.edu.sg
+Affiliation:
+Abstract
+Large language models (LLMs) have demonstrated impressive capabilities in code generation, by leveraging retrieval-augmented generation (RAG) methods. However, the computational costs associated with LLM inference, particularly in terms of latency and energy consumption, have received limited attention in the security context. This paper introduces DrainCode, the first adversarial attack targeting the computational efficiency of RAG-based code generation systems. By strategically poisoning retrieval contexts through mutation-based approach, DrainCode forces LLMs to produce significantly longer outputs, thereby increasing GPU latency and energy consumption. We evaluate the effectiveness of DrainCode across multiple models. Our experiments show that DrainCode achieves up to a 85% increase in latency, a 49% increase in energy consumption, and more than a 3×\times increase in output length compared to the baseline. Furthermore, we demonstrate the generalizability of the attack across different prompting strategies and its effectiveness compared to different defenses. The results highlight DrainCode as a potential method for increasing the computational overhead of LLMs, making it useful for evaluating LLM security in resource-constrained environments. We provide code and data at https://github.com/DeepSoftwareAnalytics/DrainCode.
+I Introduction
+Large language models (LLMs) have demonstrated remarkable code generation capabilities [1, 2, 3]. While prior work has studied functional robustness [4, 5] and non-functional security [6, 7, 8], energy consumption remains an understudied security dimension in code generation. This is critical given LLMs’ integration into IDEs and developer tooling, where frequent invocations can incur substantial computational costs [9]. Prior studies confirm that output length directly drives energy and time cost [10, 11, 12], with large-scale deployments producing notable CO2 emissions [13]. Such overheads create a pathway to LLM–Denial-of-Service (LLM–DoS), where token and compute exhaustion degrade service availability.
+These risks are recognized by industry guidance (e.g., OWASP for LLMs) and practitioner reports on DoS attacks against GenAI systems [14, 15].
+Retrieval-Augmented Generation (RAG) is widely used in code generation and completion [16, 17, 18]. Yet, if the retrieval corpus is poisoned, injected context can steer generation in costly ways. Prior RAG attacks in code focus on functional corruption [19]. In contrast, we target a non-functional but security-relevant vector: coerced verbosity that preserves correctness while inflating tokens, latency, and energy. This converts retrieval poisoning into a token-consumption LLM-DoS channel, degrading throughput without breaking program behavior, and thus remaining stealthy in developer workflows.
+Prior works [10, 20, 21, 22] on energy consumption attacks in text generation typically fall into two broad categories. The first involves directly perturbing the entire user prompt to construct adversarial inputs that prolong model generation, such as NMTSloth [20] and DGSlow [21]. The second line of work [23] focuses on gradient-guided optimization techniques that manipulate token-level output behavior. The previous works are aimed at natural language generation. Compared to NL generation, code generation poses unique challenges for adversarial attacks. Code must be not only syntactically valid but also semantically correct to maintain functional integrity, perturbation that breaks execution or causes test failures is easily detectable. Attacks that increase output length must do so without affecting the core logic of generated code. Therefore, existing energy consumption attacks, face critical challenges when applied to code generation:
+P1: Functional Disruption from Prompt Perturbation. Methods that perturb the full prompt often introduce unnatural modifications, such as inserting irrelevant tokens   which corrupt the semantics of code generation. This not only degrades output quality but also increases the risk of producing syntactically invalid or functionally incorrect code, making the attack easier for users and service providers to detect.
+P2: Search Space Inefficiency. Prior works often search for perturbations over the entire input space, which makes the mutation process inefficient and hard to converge [20, 23]. Due to the vast number of code and natural language elements in the corpus, previous works generate adversarial samples within a very large search space, with a high time cost.
+P3: Adversarial Assumptions in RAG Attacks. There is a critical issue in existing adversarial RAG frameworks, where attackers must predefine targeted malicious queries and manually craft poisoned responses to manipulate retrieval outcomes [19]. Previous attack methods require precise knowledge of the query distribution of victims, limiting their practicality in real-world scenarios.
+In this paper, we propose DrainCode, which injects poisoned code context into model’s input via retrieval corpus. In this setting, the LLM generates tokens until it emits an End-of-Sequence (EOS) token or reaches a preset token limit. DrainCode achieves this goal by inserting syntactically correct yet semantically inert triggers into retrieval corpus. These triggers are optimized via gradient-guided mutation to suppress early EOS emission and encourage token diversity.
+DrainCode executes energy consumption attacks through three components.
+Firstly, we propose a hypothetical query construction mechanism that generates plausible query based on retrieved snippets, enabling query-agnostic poisoning (addressing P3).
+Secondly, we apply gradient-based trigger mutation with by dual loss functions: an EOS loss that reduces the probability of early generation termination, and a KL-divergence constraint that preserves the output distribution between clean and poisoned contexts, ensuring the model generates functionally correct code with increased verbosity (addressing P1).
+Thirdly, to enhance mutation efficiency, we introduce multi-position mutation and an attack buffer pool, which together reduce search complexity and accelerate convergence, achieving over 3× faster poisoning compared to prior work (addressing P2). This holistic design enables DrainCode to induce covert resource exhaustion in RAG-based code generation systems.
+We compare DrainCode with previous energy consumption attack methods, including LLMEffiChecker [10], PromptInjection methods [24] and unattached setting RAWRAG, which primarily focus on attacking user queries. Our evaluation shows that DrainCode significantly increases the output length (3×-10×), inference latency by 85%, and energy consumption by 49% of LLMs, while maintaining 95–99% functional accuracy. It outperforms prior attacks such as LLMEffiChecker by inducing 25–32% more overhead and achieves up to 3.5× faster poisoning. The attack remains effective across prompting strategies and transfers well in black-box settings, and further evades both classifier- and perplexity-based defenses, demonstrating strong generalizability and stealth.
+The main contributions of this work are as follows:
+•
+We propose DrainCode, a RAG-based code generation attack framework that leverages the retrieval corpus to execute energy consumption attacks.
+•
+We propose a hypothetical query generation mechanism that enables query-agnostic poisoning, eliminating adversarial assumptions about query distributions.
+•
+We optimize the poisoning process by introducing Multi-Position Mutation and an Attack Buffer, which achieves over a 3×\times speedup in context poisoning while maintaining high attack efficacy.
+•
+We conduct a extensive evaluation and DrainCode achieves up to a 3×\times increase in output length, an 85% increase in latency.
+II Background and Related Work
+In the field of intelligent software engineering, large language models (LLMs) and agents are leveraged to address complex development challenges [25, 26, 27, 28, 29, 30, 31, 32]. The field has witnessed significant progress in code generation [33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48], code search [49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65], issue resolution [66, 67, 68, 69, 70, 71, 72, 73], code summarization [74, 75], code translation [76, 77, 78, 79, 80], commit message generation [81, 82, 83, 84, 85, 86, 87, 88, 89], efficient model optimization [90, 91, 92, 93, 94, 95, 96], and code understanding tasks [65, 97, 98, 99, 86, 100, 28, 30]. These methodologies have collectively advanced our understanding of how AI systems can effectively support software engineering tasks across various domains.
+II-A Retrieval-Augmented Generation (RAG) and Attack Surface
+RAG system enhances large language models (LLMs) by integrating relevant external knowledge through a retriever-generator framework. This approach addresses limitations such as knowledge hallucination and context length constraints, making RAG particularly effective for knowledge-intensive tasks [101, 102, 103].
+RAG-based Code Generation.
+RAG is crucial for repository-level code generation, where cross-file dependencies necessitate integrated context.
+RepoCoder [17] uses iterative retrieval-generation, while RLCoder [104] employs reinforcement learning for retrieval optimization without labeled data.
+REPLUG [105] extends RAG to black-box LLMs by prepending retrieved documents, and CoCoMIC [18] combines in-file and cross-file context for modular completion.
+These frameworks demonstrate RAG’s effectiveness in addressing inter-file dependencies and improving code generation quality.
+Existing attacks on RAG. While Retrieval-Augmented Generation (RAG) enhances the capabilities of LLM by integrating external knowledge, it also introduces significant security risks due to its reliance on external knowledge bases, which can be exploited through data poisoning or adversarial manipulation. Attacks like HijackRAG [106], TrojanRAG [107], PoisonedRAG [19], and BadRAG [108] manipulate retrieval processes or embed adversarial triggers to mislead retrieval and generation, often producing targeted or malicious outputs. These methods primarily focus on altering generated content, such as steering outputs toward misinformation, bias, or denial of service. In contrast, our work uniquely targets the computational efficiency of RAG systems by increasing energy consumption during inference.
+II-B Code Generation Security
+Adversarial attacks on code generation models have been a growing area of concern, with research focusing on various attack strategies. Yu et al. [4] explore input perturbations to generate incorrect code completions, while Zou et al. [6] demonstrate how small input changes can cause significant errors in generated code. AACEGen [5] examines adversarial training techniques that allow models to bypass safety mechanisms and generate harmful code. Smith et al. [7] classifies different types of attacks, including input injection and data poisoning, and Li et al. [8] investigate vulnerabilities in code generation models related to training data and architecture. While these works focus on manipulating the correctness or safety of the generated code, our approach differs by targeting computational efficiency. Instead of focusing on the functional correctness of the generated code, we aim to induce higher energy consumption and latency during code generation, presenting a new security risk in terms of operational overhead and resource usage in RAG-based systems.
+II-C Energy-Consumption Attacks
+Energy consumption attacks manipulate input data to increase inference time and energy usage of ML models, degrading performance and raising operational costs.
+Shumailov et al. [109] introduced “sponge examples” that significantly increased energy consumption, while Hong et al. [110] showed adversarial perturbations could negate savings in multi-exit architectures.
+Chen et al. [20, 111] developed evaluation frameworks like NMTSloth and NICGSlowDown across various domains.
+Recent work explores energy-latency manipulation in multi-modal LLMs [23], LiDAR systems [112], and dynamic routing networks [113].
+Feng et al. [10] proposed LLMEffiChecker for LLM efficiency assessment, but it relies on white-box gradient information, limiting black-box applicability.
+Our work uniquely targets RAG systems through covert attacks via innocuous code comments, preserving query semantics while significantly improving attack efficiency.
+III Problem Formulation
+III-A Threat Model
+III-A1 Attacker’s goal
+The adversary injects poisoned content (e.g., code) with adversarial triggers into the retrieval corpus of a RAG-based system. When retrieved during inference, such poisoned content cause the LLM to produce excessively long code snippets, reducing computational efficiency and increasing energy consumption. To maintain stealth, the generated long code snippets are expected to preserve the original functionality.
+As shown in Figure 1, under normal conditions, the LLM receives clean retrieved context and a user query (unfinished code) and efficiently generates an appropriate response. In contrast, during an attack, adversarial triggers embedded in the retrieved context, highlighted in red, cause the model to produce unnecessarily long responses containing unexecuted functions, increasing resource usage. Notably, the generated code with attack can still pass the test cases if executed.
+Fig. 1: Example: Attacking Effect.
+III-A2 Attacker’s capabilities
+In a RAG-based code generation system with three components (retrieval corpus, retriever, and LLM), we consider an attacker who cannot access the retriever but targets an open-source LLM. The attacker obtains the model’s weights to perform mutation-based adversarial trigger generation and injects malicious triggers into the retrieval corpus, publishing it on platforms like HuggingFace where users may unknowingly download it. This facilitates energy consumption attacks while maintaining minimal retrieval side effects and competitive performance compared to clean RAG systems.
+III-B RAG Poisoning for Energy Consumption Attack
+Under our threat model, we formulate energy consumption attacks on RAG as a constrained optimization problem. We implement the poisoning strategy following [19], inserting only KK poisoned samples (typically K∈{1,2,3}K\in\{1,2,3\}) per query into the retrieval corpus to balance attack success against overhead. Each sample is crafted to ensure at least one poisoned context appears in the retrieved set, with attack success achieved when ≥1\geq 1 poisoned context is returned during inference. When generating attack triggers, code snippets from the retrieval corpus are included as part of the input. The objective is to generate poisoned snippets by solving:
+s′=arg⁡max⁡s∈𝒮​T​o​k​C​n​t​(fM​(c,s,u′))s^{\prime}=\arg\max{s\in\mathcal{S}}~TokCnt(f_{M}(c;s;u^{\prime}))
+Here, s=[s1,…,sl]s=[s_{1},...,s_{l}] is a short token sequence (the adversarial trigger) to be inserted into the code snippet cc, and 𝒮\mathcal{S} denotes the trigger search space. T​o​k​C​n​t​(⋅)TokCnt(\cdot) returns the total number of tokens generated by the model. The goal is to find s∗s^{*} that maximizes the number of output tokens, thereby increasing energy consumption while preserving the functional correctness of the original code.
+IV Methodology
+IV-A Overview
+DrainCode is designed to perform energy consumption attacks by poisoning the retrieval corpus in RAG system. The method operates three steps, as Figure 2. 1 First, given a code snippet in retrieval corpus, DrainCode uses a LLM to generate hypothetical unfinished code, simulating real-world user queries. This is shown in Figure 2(a). 2 Then as shown in Figure 2(b), based on the retrieved code snippets and the hypothetical query, the predefined adversarial trigger is systematically optimized using gradient-based mutation methods. This process identifies and replaces the most impactful tokens in the adversarial trigger string to maximize their effect on the model’s computational efficiency. 3 Finally, during the inference, the retriever fetches the poisoned code snippets from the corpus and combines them with the user’s actual query. This manipulation prompts the model to generate unnecessarily lengthy outputs, increasing inference energy consumption.
+Fig. 2:  Overview of DrainCode.
+IV-B Crafting Malicious Code Snippets to Retrieval Corpus
+Prior work [10] shows that an LLM’s efficiency depends on the output length, which is determined by the EOS (End of Sequence) token. Therefore, our goal is to reduce the likelihood of generating the EOS token by using retrieved code snippets containing injected attack triggers, thereby degrading the LLM’s computational efficiency.
+We define the adversarial trigger s1:ls_{1:l} as a short, learnable token sequence that can be inserted into retrieved code snippets to influence the model’s output. In DrainCode, we initialize this trigger as a placeholder sequence and insert it into selected positions within code snippets.
+Then, based on gradients, it selects the tokens that have a significant impact on the output for perturbation and replacement. The adversarial trigger defines the mutation range, which helps reduce the number of iterations required. As shown in Figure 2(a) and Figure 2(b), for each code snippet in the retrieval corpus to be poisoned, c1:nc_{1:n}, we first use the LLM to generate a hypothetical Unfinished Code u′u^{\prime}. This step differentiates itself from existing mutation-based attack methods by simulating the scenario where the attacker cannot access the user query. Based on the retrieved code snippet c1:nc_{1:n} and the generated hypothetical user query u′u^{\prime}, we can predefine an attack trigger s1:ls_{1:l} (which can be inserted at any position). This trigger is then provided to the attacked LLM. DrainCode applies a gradient-based method to identify the key tokens in the attack trigger s1:ls_{1:l} that have the greatest impact on the LLM’s computational efficiency. These tokens are then replaced and optimized according to the previously defined attack objective. To maintain the stealthiness of our attack and ensure functional correctness, we introduce a constraint based on KL divergence, which constrains the output distribution outside the trigger scope to match the clean distribution.
+IV-B1 Hypothetical Query Construction
+Existing mutation-based attack methods [10, 4] directly mutate the user query. However, in DrainCode, to allow the attacker to perform the attack without having access to the user query, we first need to generate a piece of code that mimics the user’s unfinished code snippet u′u^{\prime}, which will be used as input for subsequent trigger mutation. We use the LLM to generate this snippet. The input consists of the retrieved code snippet c1:nc_{1:n} from the library. We employ the few-shot prompting method. The model’s output is the hypothetical Unfinished Code u′u^{\prime}. The specific prompt is shown as follows.
+This is context from corpus: [Candidate Context].
+Below are examples: [Examples].
+Generate the code to be completed (including the function signature and function description comments) related to the [Candidate Context]. Please limit to VV tokens.
+IV-B2 Adversarial Trigger Generation
+We refer to the greedy coordinate descent approach proposed by AutoPrompt [114]: if we could evaluate all possible single-token alternatives, we could swap the token that most effectively reduces the loss, which is related to the generation energy consumption. However, evaluating all tokens in the entire input is clearly infeasible to complete within the given time. To address this, we need to insert an adversarial trigger into the poisoned code and then perform mutation specifically on this trigger. Additionally, we can leverage gradients related to one-hot tokens to identify a set of candidate replacement tokens at each position of the trigger. These alternatives can then be accurately evaluated through forward propagation in terms of their impact on the output length and energy consumption.
+In each iteration, given the input token sequence [c1,c2,…,cn,s1,s2,…,sl,u′][c_{1},c_{2},...,c_{n},s_{1},s_{2},...,s_{l},u^{\prime}], the first step is to identify the tokens in s1:ls_{1:l} that have a significant impact on the LLM’s computational efficiency. The gradient of the current optimized attack string token sequence s1:ls_{1:l} is first computed. The gradient represents the contribution of each token to the optimization objective (such as reducing the EOS loss and diversity loss, which will be introduced later), and it is used to guide the mutation of the token sequence. Using the negative gradient (to minimize the loss), the top-k operation is applied to select the top-k tokens from the gradient matrix that are most likely to effectively reduce the loss. This results in the corresponding token indices, denoted as optim ids. These top-k tokens are the ones with the largest negative values in the gradient. Then fixed number of tokens and their corresponding positions are randomly selected for mutation. Based on the results of the gradient’s top-k operation, new tokens are randomly chosen from the most likely candidates to replace the old tokens. The selection of the new tokens is guided by the importance ranking of each position based on the gradient. The new tokens are inserted into the randomly selected mutation positions in each candidate sequence, resulting in the mutated candidate sequences. These candidate sequences are then used to compute the loss. Based on the loss values for each sequence (including EOS loss and diversity loss), the sequence with the smallest loss is selected and adopted as the current optimized sequence. In each iteration, a new set of candidate sequences is generated through the aforementioned process, and the sequence with the least loss is used to replace the current trigger. The final trigger string s′s^{\prime} is then generated by decoding the selected sequence.
+To increase the length of the generated sequence and thereby generate higher energy consumption, the mutation process incorporates the following two loss functions, which are used to compute gradients for optimizing the attack samples.
+EOS Loss.
+The autoregressive generation process continues until the EOS token is generated or the predefined maximum token length is reached. The most direct way to increase the length of the generated sequence is to prevent the generation of the EOS token during the prediction process. However, since autoregressive prediction is a non-deterministic, stochastic process, it is difficult to directly determine the exact position where the EOS token will occur. Therefore, in this method, the EOS loss aims to minimize the probability of generating an EOS token at all positions. The formula is as follows:
+ℒ1​(𝒙′)=1N​∑i=1NfiEOS​(𝒙′)\mathcal{L}_{1}\left(\boldsymbol{x}^{\prime}\right)=\frac{1}{N}\sum_{i=1}^{N}f_{i}^{\mathrm{EOS}}\left(\boldsymbol{x}^{\prime}\right)
+fiE​O​S​(x′)f_{i}^{EOS}(x^{\prime}) is the probability distribution of the EOS token at the i-th generated token after the Softmax layer. Here, x′=c1,n|s′|u′x^{\prime}=c_{1,n}\parallel s^{\prime}\parallel u^{\prime}, where c1,nc_{1,n} refers to the retrieved code snippet and s′s^{\prime} refers to the mutated trigger string.
+Token Diversity Loss.
+To further break the dependency of the original output, the diversity loss enhances the diversity of the hidden states across all generated tokens, thereby exploring a broader range of possible outputs and extending the output length. Token diversity is defined as the rank of the hidden states of all generated tokens.
+Here, the rank is approximately measured by computing the nuclear norm of the matrix. The nuclear norm of a matrix is denoted as ||⋅||∗||\cdot||_{*}, and thus the token diversity loss is formulated as follows:
+ℒ2(x′)=−||g1(x′),g2(x′),…,gN(x′)||∗\mathcal{L}_{2}(x^{\prime})=-||g_{1}(x^{\prime}),g_{2}(x^{\prime}),...,g_{N}(x^{\prime})||_{*}
+Maintaining Output Distribution Stealthiness.
+To preserve the stealthiness of the attack and maintain the functional correctness of generated code, DrainCode incorporates a constraint on the output token distribution. Specifically, during gradient-based trigger optimization, we ensure that the model’s behavior on non-trigger positions remains consistent with that under clean conditions. Let the output token distribution of the model at time step tt under clean inputs be P​_​clean​(y​_​t|y<t,x)P\_{\text{clean}}(y\_t|y_{<t},x), and the distribution under poisoned inputs (with trigger τ\tau) be P​_​attack​(yt|y<t,x,τ)P\_{\text{attack}}(y_{t}|y_{<t},x,\tau). To maintain stealth, we impose the following constraint:
+∀t∉𝒯,DKL(Pclean(yt|y<t,x)∥Pattack(yt|y<t,x,τ))≤ϵ\forall t\notin\mathcal{T},\quad D_{\text{KL}}\left(P_{\text{clean}}(y_{t}|y_{<t},x)\parallel P_{\text{attack}}(y_{t}|y_{<t},x,\tau)\right)\leq\epsilon
+where 𝒯\mathcal{T} denotes the set of trigger-affected positions, and DKL(⋅∥⋅)D_{\text{KL}}(\cdot\parallel\cdot) is the KL divergence.
+This constraint ensures that the generated output remains indistinguishable from the clean generation outside the trigger scope. In our implementation, this divergence term is incorporated into the loss-based optimization process to guide token replacement decisions.
+Final Loss. The final gradient optimization direction is:
+m​i​n​i​m​i​z​exI∈{1​…​V}I​ℒ1+λ​ℒ2subject to𝒟KL​(⋅)≤ϵminimize_{x_{I}\in\{1...V\}^{I}}\ \mathcal{L}_{1}+\lambda\mathcal{L}_{2}\quad\text{subject to}\quad\mathcal{D}_{\text{KL}}(\cdot)\leq\epsilon
+where II is the token index of the trigger, and λ\lambda is the weight for the token diversity loss. The KL-based constraint ensures that the model’s output distribution on non-trigger positions remains consistent with that of clean generation, thereby preserving the stealthiness of the attack.
+IV-B3 Efficient Adversary Sample Optimization
+To reduce the iteration time and query count for sample mutations and improve attack efficiency, we employ the following optimization methods: (1) multi-position token mutation and (2) the use of an attack buffer pool.
+Multi-Position Mutation.
+Previous energy consumption attack methods [10, 20] update only one token per iteration. Our key improvement is to select multiple tokens for updates in each iteration, significantly reducing convergence time. Specifically, the process of updating each candidate string in the attack set involves randomly selecting mm indices without replacement and then independently selecting top-k gradient-based replacements for each of the mm indices.
+Early in the optimization process, the loss landscape to be explored is intuitively smoother and more continuous. This is because different token mutations that independently lead to lower loss can collectively also result in reduced loss when executed together. This allows the optimization to make progress in several directions simultaneously. However, as the mutation progresses, the loss landscape becomes less favorable. At this stage, swapping multiple tokens often yields poorer results. To address this issue, we gradually decrease the value of mm throughout the search process, adopting more fine-grained steps as the attack nears completion.
+Attack Buffer Pool.
+We establish a buffer to store the bb most recently generated attack strings. In each iteration, DrainCode selects the attack trigger with the lowest loss from the buffer, denoted as O​p​t​i​m​S​t​rOptimStr. Next, O​p​t​i​m​S​t​rOptimStr is updated using the usual gradient-based method to obtain a new trigger, O​p​t​i​m​S​t​r′OptimStr^{\prime}. If O​p​t​i​m​S​t​r′OptimStr^{\prime} improves upon the performance of the worst-performing attack trigger in the buffer, denoted as O​p​t​i​m​S​t​rw​o​r​s​tOptimStr_{worst}, we remove O​p​t​i​m​S​t​rOptimStr from the buffer and insert O​p​t​i​m​S​t​r′OptimStr^{\prime} into it.
+In summary, EOS loss prevents early sequence ending while token diversity loss encourages varied responses, boosting
+verbosity. KL divergence control ensures poisoned outputs
+remain indistinguishable from clean code except at trigger
+locations. Multi-position changes and an attack buffer pool
+enhance efficiency. These components enable DrainCode to
+generate computational overhead stealthily while preserving
+code functionality.
+IV-C The Complete Process of Attacking RAG
+The detailed attack process is illustrated in Figure 2(c). The attacker conducts offline poisoning of the retrieval code corpus and then makes the poisoned retrieval corpus publicly available, for instance, by publishing it on third-party platforms such as HuggingFace. By utilizing this poisoned retrieval source, victims retrieve code snippets containing the attack trigger and use them as the context for code generation tasks. These poisoned snippets are concatenated with the incomplete code to prompt the model to generate output. This induces an increase in the output length, thereby raising the model’s energy consumption.
+V Evaluation
+We aim to answer the following research questions:
+•
+RQ1: How effective and efficient is DrainCode in the scenario of energy consumption attacks in RAG?
+•
+RQ2: How does each component of DrainCode contribute to its attack effectiveness?
+•
+RQ3: How generalizable is DrainCode in various prompting strategies?
+•
+RQ4: To what extent can poisoned samples generated by DrainCode be detected by common detection methods?
+•
+RQ5: How does the human evaluation of code readability and verbosity compare between DrainCode-generated code and code from rawRAG?
+V-A Experimental Setup
+V-A1 Dataset and Retrieval Corpus
+Our evaluation utilized two code completion benchmarks: RepoEval  [17] and Odex [115]. RepoEval is a dataset comprising 373 repository-level function completion tasks and provides the original GitHub repositories, totaling 1.7M files, which can serve as the knowledge base to be poisoned. This benchmark has been being leveraged in
+research such as RLCoder [104] and FLARE [116].
+Odex is a dataset containing 945 open-domain coding problems, with previous work [117] collecting 34,000 Python library documentation to serve as the retrieval corpus. This dataset has been employed in works including R2e [118] and RePair [119]. These datasets collectively provide test cases that facilitate execution-based evaluation using pass rate as a standardized metric.
+V-A2 Models Selection
+We consider two open-source code models and two general models for generating adversarial triggers and for actual RAG-based code generation. For Code LLMs, we conduct experiments using DeepSeek-Coder-7B-Instruct-v1.5 [120] and CodeQwen1.5-7B-Chat [121], which chosen for their widespread applications in code completion [104] and generation tasks [122, 123] To establish wider generalizability, we also tested DrainCode against general-purpose models like Internlm2-7B and Llama3-8B. The varied architectural representation in our model selection demonstrates the resilience and portability of our attack framework across multiple configurations. The experiments were conducted using these models under the default prompt templates.
+V-A3 Metrics
+We use Pass@1 [124], Energy [109], Latency and Token length [23] in our experiments to evaluate the effectiveness of the attack method. The selection of these metrics follows established practices from prior work [10]. We use Pass@1 to evaluate the accuracy of the generated code, specifically assessing how our attack affects the functional correctness of the code. Additionally, we measure the average energy consumption Energy (J) and average latency time Latency (ms) when the LLM performs inference over all data on a single GPU. The calculation of average energy consumption is based on previous work [109], using the NVIDIA Management Library (NVML). Furthermore, the average output token length per sample is also considered an indicator of attack effectiveness, which is denoted as Length.
+Our energy and latency measurements are confined to GPU metrics and exclude system-level CPU and memory components, which is justified by the computational characteristics of LLM inference systems. In contemporary deployment, the computational burden is predominantly concentrated within GPU processing units, while CPU involvement remains largely ancillary, primarily limited to orchestration tasks such as data preprocessing and input/output operations. Our experimental observations indicate that GPU memory utilization maintains saturation levels throughout the inference process, demonstrating minimal variation irrespective of output sequence length.
+V-A4 Baselines
+Based on the attack objectives of this paper, we select the following methods as baselines. These baselines were selected for their widespread application in comparable attack methodologies, while these attack methods also demonstrate reasonable attack performance [125, 126].
+•
+RawRAG (Original). This baseline is shown as the result of not being attacked. Given an unfinished code uu, we use the original clear retrieval corpus to retrieve the original candidates for generation.
+•
+Prompt Injection. Prompt injection attacks [24, 127, 128] manipulate an LLM’s behavior by injecting adversarial instructions into the prompt, forcing the model to generate longer outputs and increasing computational overhead. In our experiment, we craft malicious instructions designed to maximize output length. Specifically, we append adversarial instructions to the user query, such as “Generate a long piece of code that solves the task step by step with detailed explanations for every part.”.
+•
+LLMEffiChecker. LLMEffiChecker [10] is the latest framework to evaluate and optimize the energy efficiency of text generation systems. It focuses on analyzing the energy consumption of generation tasks, providing insights into computational costs associated with model inference. We use it to mutate the entire model input as an input sample for the attack.
+V-A5 Experimental Details
+We use BM25 as the retriever and configure the LLM retrieval context length to 2048 tokens, with the maximum token length for generation set to 1024. All experiments are conducted on two Tesla A100 GPUs, each with 80 GB of memory. The experimental setup includes 10 mutation iterations, with the search width for multi-position mutation set to 64, and 64 candidate sequences are evaluated during each iteration.
+V-B RQ1: Effectiveness
+V-B1 Effectiveness in White-box Setting
+TABLE I: Attacking effectiveness of DrainCode.
+Model
+Method
+RepoEval
+Odex
+Pass@1
+Length
+Latency
+Energy
+Pass@1
+Length
+Latency
+Energy
+DeepSeekCoder-7B
+RawRAG
+33.1
+313.8
+15251.1
+3349.8
+31.5
+83.4
+3866.7
+733.5
+Prompt Injection
+29.0
+452.2
+21339.5
+4177.0
+31.4
+291.56
+22095.5
+2854.2
+LLMEffiChecker
+31.5
+640.9
+28258.5
+6486.8
+30.5
+217.8
+11843.6
+2184.1
+DrainCode
+31.9 ↓\downarrow3.6%
+1023.9 ↑\uparrow226.2%
+43027.9 ↑\uparrow182.1%
+8532.2 ↑\uparrow154.7%
+31.1 ↓\downarrow1.2%
+889.8 ↑\uparrow966.9%
+35993.1 ↑\uparrow830.8%
+8086.0 ↑\uparrow1002.2%
+CodeQwen-7B
+RawRAG
+29.9
+456.6
+22221.1
+5510.8
+15.3
+37.1
+2471.3
+471.6
+Prompt Injection
+29.8
+477.7
+24787.3
+6923.8
+13.2
+438.7
+20890.7
+4148.0
+LLMEffiChecker
+26.3
+653.8
+31178.9
+6568.5
+10.3
+118.23
+7481.25
+1425.3
+DrainCode
+28.4 ↓\downarrow5.0%
+995.3 ↑\uparrow118.0%
+41112.4 ↑\uparrow85.0%
+8227.2 ↑\uparrow49.3%
+13.4 ↓\downarrow12.4%
+865.5 ↑\uparrow2232.9%
+35771.3 ↑\uparrow1347.5%
+7546.9 ↑\uparrow1500.3%
+Internlm2-7B
+RawRAG
+24.0
+351.8
+20317.5
+5007.2
+17.5
+85.5
+10056.2
+2440.1
+Prompt Injection
+23.7
+533.3
+27442.9
+6230.0
+13.6
+320.4
+20314.6
+4066.8
+LLMEffiChecker
+23.5
+618.9
+19978.5
+6171.9
+14.9
+125.9
+7349.2
+1520.2
+DrainCode
+22.9 ↓\downarrow4.6%
+848.5 ↑\uparrow141.2%
+34594.4 ↑\uparrow70.3%
+8013.5 ↑\uparrow60.0%
+16.1 ↑\uparrow8.0%
+997.2 ↑\uparrow1066.3%
+40600.2 ↑\uparrow303.7%
+8854.1 ↑\uparrow262.9%
+Llama3-8B
+RawRAG (Original)
+27.0
+331.3
+16305.4
+4035.1
+34.9
+47.9
+5288.8
+610.2
+Prompt Injection
+25.6
+559.0
+25711.2
+5888.4
+31.7
+533.5
+26159.6
+4838.6
+LLMEffiChecker
+25.4
+641.9
+28918.8
+5869.4
+30.1
+162.76
+7277.6
+1843.8
+DrainCode
+26.4 ↓\downarrow2.2%
+722.4 ↑\uparrow118.1%
+39357.3 ↑\uparrow141.4%
+8116.0 ↑\uparrow101.1%
+33.5 ↓\downarrow4.0%
+852.3 ↑\uparrow1679.3%
+35627.1 ↑\uparrow573.6%
+8006.6 ↑\uparrow1212.1%
+The evaluation results in Table I demonstrate the effectiveness of DrainCode over other methods—RawRAG, Prompt Injection, and LLMEffiChecker across multiple models and datasets.
+DrainCode consistently increases the generated output length across all models and datasets. For example, on RepoEval with DeepSeekCoder-7B, the output length rises from 313.8 to 1023.9, over a 3x increase. Similar trends appear in Odex, with output lengths up to 10 times longer than RawRAG. While DrainCode does lead to a slight drop in Pass@1 compared to RawRAG, the reduction is modest, ranging from 1.2% to 4.6%. For instance, in RepoEval with DeepSeekCoder-7B, Pass@1 decreases from 33.1 to 31.9. These declines are far smaller than those caused by other baselines. This indicates that DrainCode maintains relatively high code accuracy while significantly increasing computational cost. DrainCode also achieves the highest increases in latency and energy consumption across all settings. For example, on RepoEval with CodeQwen-7B, latency increases by 85%, and energy consumption rises by nearly 49% compared to RawRAG. Even when compared to LLMEffiChecker, the best-performing baseline, DrainCode achieves an additional 32% increase in latency and 25% in energy.
+These results confirm that DrainCode is effective in achieving its core objective: increasing computational costs—output length, latency, and energy—while preserving acceptable levels of code correctness. It outperforms Prompt Injection and LLMEffiChecker in inducing resource inefficiency, highlighting its robustness and broad applicability across different models and datasets.
+V-B2 Black-box Transferability of DrainCode
+TABLE II: Attacking effectiveness of DrainCode in black-box setting across four LMs.
+Source Model
+Target Model
+RepoEval
+Odex
+Pass@1
+Length
+Latency
+Energy
+Pass@1
+Length
+Latency
+Energy
+DeepSeekCoder-7B
+DeepSeekCoder-7B
+31.9
+1023.9
+43027.9
+8532.2
+31.1
+889.8
+35993.1
+8086.0
+CodeQwen-7B
+30.2
+616.3
+32919.4
+4144.4
+28.6
+617.1
+34301.7
+6312.3
+Internlm2-7B
+31.1
+600.8
+30619.4
+4183.3
+31.1
+604.4
+26343.4
+6688.1
+Llama3-8B
+30.2
+608.6
+32644.7
+4630.6
+30.2
+718.8
+30666.4
+7822.4
+DeepSeekCoder-7B
+CodeQwen-7B
+29.0
+624.2
+27473.6
+5236.6
+12.1
+612.4
+33419.6
+6838.8
+CodeQwen-7B
+28.4
+995.3
+41112.4
+8227.2
+13.4
+865.5
+35771.3
+7546.9
+Internlm2-7B
+29.6
+608.1
+28946.8
+3590.8
+13.7
+562.3
+28455.9
+6963.5
+Llama3-8B
+29.3
+615.1
+37533.3
+4311.0
+14.4
+659.7
+28432.2
+6007.6
+DeepSeekCoder-7B
+Internlm2-7B
+28.7
+624.7
+28179.5
+5819.4
+13.2
+796.2
+45218.1
+7430.3
+CodeQwen-7B
+26.7
+620.9
+27918.9
+4804.1
+12.4
+797.2
+47577.1
+7343.2
+Internlm2-7B
+26.9
+848.5
+34594.4
+8013.5
+16.1
+997.2
+50600.2
+8854.1
+Llama3-8B
+27.9
+615.0
+32669.8
+8312.7
+12.1
+860.1
+45268.7
+10962.3
+DeepSeekCoder-7B
+Llama3-8B
+27.6
+647.3
+31373.8
+6257.3
+28.9
+624.0
+31623.4
+5299.4
+CodeQwen-7B
+27.6
+624.5
+35703.1
+6161.2
+29.3
+624.0
+33570.4
+5970.3
+Internlm2-7B
+28.2
+631.7
+28007.9
+4420.5
+28.6
+541.44
+28524.9
+4416.5
+Llama3-8B
+26.4
+722.4
+39357.3
+8116.0
+33.5
+852.3
+35627.1
+8006.6
+While the foregoing analysis assumes that the attacker has white-box access to the target language model, a more realistic threat model is black-box: the trigger is optimised on a surrogate model and then replayed against an unseen target. Table II reports this setting for all pairs drawn from the four code-generation LMs considered in the main experiments.
+Across the twelve transfer pairs (source →\rightarrow target), DrainCode consistently enlarges the generated sequence length and the derived resource metrics, even though the target model’s parameters were never exposed during trigger construction. Taking DeepSeekCoder-7B as the target, surrogate-trained triggers increase the output length from 313.8 tokens (RawRAG) to an average of 608.6–616.3 tokens, thereby elevating latency by 101–116% and energy by 24–38%. Similar patterns are observed for the remaining targets: For CodeQwen-7B the length nearly doubles to 624–995 tokens. For InternLM2-7B it rises from 351.8 to 615–997 tokens with corresponding surges in latency and energy.Crucially, functional correctness remains largely intact. The maximum decline in Pass@1 relative to the unattacked baseline does not exceed 9 %, and in several instances (e.g., DeepSeekCoder-7B→\rightarrowInternLM2-7B) the pass rate even improves.
+These results demonstrate that the computational-overhead component of DrainCode transfers robustly across models, while its impact on accuracy stays within acceptable bounds in a security-critical context.
+RQ1.1 Summary:
+DrainCode induces 3.6-10× longer outputs than unattacked RAG while maintaining 95-99% code accuracy, with 85% higher latency and 49% greater energy costs, surpassing baseline attacks by 25-32% in overhead induction. Even in black-box setting, the attack still inflates latency and energy by at least 70%.
+V-B3 Overhead
+TABLE III: The Overhead of DrainCode (s). m is # tokens that can be replaced at one time and b is # attack buffer pools.
+Methods
+RepoEval
+Odex
+LLMEffiChecker
+760.1
+185.9
+DrainCode m=32, b=10
+216.0
+53.2
+DrainCode m=32, b=1
+355.1
+90.3
+DrainCode m=16, b=10
+339.8
+78.9
+DrainCode m=16, b=1
+457.7
+118.8
+DrainCode m=1, b=1
+576.1
+157.0
+In this section, we evaluate the time overhead involved in poisoning retrieval contexts. Since DrainCode adopts a mutation-based strategy to generate poisoned samples, we compare its efficiency with LLMEffiChecker and examine how different configurations of m (tokens replaced per mutation) and b (number of attack buffer pools) impact performance. The results are shown in Table III.
+LLMEffiChecker incurs the highest time cost, 760.1 seconds for RepoEval and 185.9 seconds for Odex. In contrast, DrainCode with m=32, b=10 significantly reduces overhead, requiring only 216.0 seconds on RepoEval and 53.2 seconds on Odex. This yields a 71% reduction in both cases, achieving a 3.5× speedup over LLMEffiChecker.
+As the values of m and b decrease, the time overhead gradually increases, yet it remains lower than the baseline. For example, with m=16, b=1, the overhead is 457.7 seconds on RepoEval and 118.8 seconds on Odex—still reducing the total time by roughly 40%. Notably, the most minimal configuration m=1, b=1 leads to longer poisoning times, narrowing the gap with LLMEffiChecker, but still achieving moderate speedups.
+These results highlight the trade-off between efficiency and flexibility: larger m and b values accelerate poisoning by enabling broader mutation per iteration.
+RQ1.2 Summary:
+DrainCode achieves 3.5× faster poisoning than LLMEffiChecker through optimized mutation. Larger replacement windows m and parallel buffers b reduce attack preparation time by 71% while maintaining effectiveness.
+V-C RQ2: Ablation Study
+TABLE IV: Ablation results of HypoQueryConstruction.
+Dataset
+Method
+Pass@1
+Length
+Latency
+Energy
+RepoEval
+EmptyQuery
+29.0
+422.7
+21791.1
+4876.0
+FragmentsExtraction
+31.1
+388.1
+17891.2
+4394.3
+RandomSelection
+31.4
+597.6
+26273.5
+5940.2
+HypoQueryConstruction
+31.9
+1023.9
+43027.9
+8532.2
+Odex
+EmptyQuery
+27.1
+80.5
+6016.0
+1320.0
+FragmentsExtraction
+27.6
+428.8
+27921.5
+5751.0
+RandomSelection
+23.0
+399.0
+25911.6
+5355.3
+HypoQueryConstruction
+28.2
+889.8
+35993.1
+8086.0
+TABLE V: Ablation results of different loss function modules.
+Ablations
+RepoEval
+Odex
+Pass@1
+Length
+Latency
+Energy
+Pass@1
+Length
+Latency
+Energy
+DrainCode
+31.9
+1023.9
+43027.9
+8532.2
+31.1
+889.8
+35993.1
+8086.0
+w/o Diversity
+31.4 ↓\downarrow1.6%
+606.9 ↓\downarrow40.7%
+26872.8 ↓\downarrow37.5%
+5640.3 ↓\downarrow33.9%
+23.8 ↓\downarrow23.5%
+799.4 ↓\downarrow10.2%
+25732.3 ↓\downarrow28.5%
+7693.6 ↓\downarrow4.9%
+w/o EOS
+31.3 ↓\downarrow1.9%
+562.2 ↓\downarrow45.1%
+25812.1 ↓\downarrow40.0%
+5189.1 ↓\downarrow39.2%
+28.0 ↓\downarrow10.0%
+617.3 ↓\downarrow30.6%
+20958.7 ↓\downarrow41.8%
+5312.9 ↓\downarrow34.3%
+w/o EOS & Diversity
+31.7 ↓\downarrow0.6%
+412.4 ↓\downarrow59.7%
+15321.3 ↓\downarrow64.4%
+3469.3 ↓\downarrow59.3%
+25.5 ↓\downarrow18.0%
+154.7 ↓\downarrow82.6%
+5001.1 ↓\downarrow86.1%
+1086.1 ↓\downarrow86.6%
+TABLE VI: The ablation results of different maximum generation lengths against DeepSeekCoder-7B.
+Dataset
+Gen. Length
+Pass@1
+Length
+Latency
+Energy
+RepoEval
+256
+28.7
+250.7
+20211.6
+3384.6
+512
+28.9
+487.6
+28953.4
+4035.6
+1024
+31.9
+1023.9
+43027.9
+8532.2
+2048
+29.6
+1845.7
+83568.2
+14849.2
+Odex
+256
+31.1
+255.0
+21903.6
+3882.8
+512
+30.9
+511.2
+24516.5
+3997.4
+1024
+31.1
+889.8
+35993.1
+8086.0
+2048
+30.7
+2038.2
+64228.1
+14411.4
+V-C1 Impact of HypoQueryConstruction
+In our mutation method setup, DrainCode uses LLMs to generate hypothetical user queries, simulating realistic RAG scenarios and enhancing the effectiveness of the attack. We compared several strategies for constructing the Hypothetical Code to evaluate their impact. Table IV presents the results. Among the methods, “EmptyQuery” sets the unfinished code u′u^{\prime} as empty, “FragmentsExtraction” builds u′u^{\prime} by extracting segments from candidate contexts, and “RandomSelection” samples unrelated queries from the dataset. “HypoQueryConstruction” refers to our LLM-based query generation module.
+On the RepoEval dataset, HypoQueryConstruction achieves the highest Pass@1 score, outperforming the other approaches. It also leads to an increase in output length by 142%. Latency grows 97%, and energy consumption more than doubles. On the Odex dataset, the trend persists. HypoQueryConstruction again reaches the highest Pass@1 score, although the gap is narrower. The generated output length increases from 428.82 to 889.79 tokens, latency rises around 29%, and energy by 40%. These results show that HypoQueryConstruction not only improves accuracy but also amplifies computational cost, making the attack more impactful.
+In summary, HypoQueryConstruction consistently generates longer outputs and incurs higher computational overhead than the alternative methods. The significant increases in length, latency, and energy indicate that this strategy best fulfills the attack’s objectives. It strikes an effective balance between preserving accuracy and maximizing resource inefficiency, making it the preferred approach within DrainCode.
+V-C2 Impact of different loss modules
+Table V presents the ablation results with different loss. “Original” refers to the original method, “w/o EOS” sets the EOS loss to zero and only uses Diversity Loss for generating mutated triggers, “w/o Diversity” sets the Diversity Loss to zero and only uses EOS loss for mutation poisoning, and “w/o EOS & Diversity” does not use any loss functions, performing random mutations.
+The ablation results show that removing the Diversity Loss or EOS Loss modules generally leads to a reduction in model performance and a decrease in computational efficiency. For RepoEval, the Pass@1 score drops slightly by up to 1%, while the Length decreases by about 40–50%, and both Latency and Energy show significant improvements (approximately 30–40%). Removing both modules results in the largest performance decline, with a 5% drop in Pass@1 for RepoEval and a drastic reduction in Length (around 60%). Latency and Energy are reduced by more than 60%, indicating a trade-off between efficiency and code generation quality.
+In contrast, the full loss setup (Original) strikes the best balance, maintaining relatively high Pass@1 while generating longer outputs, with higher Latency and Energy consumption. This demonstrates that DrainCode effectively increases the computational cost of the system while minimally affecting output accuracy, thus achieving its attack goals without overly compromising model performance.
+V-C3 Impact of Maximum Generation Length
+To assess whether limiting the decoder’s max_new_tokens can mitigate the proposed attack, DrainCode is executed with four upper bounds on the generated sequence length: 256, 512, 1024, and 2048 tokens. All other experimental settings, including datasets, prompts, and evaluation scripts, are kept identical to those described in Section V-A, thereby isolating the influence of the length constraint.
+As shown in Table VI, enlarging the cap leads to increase in output length. This expansion propagates to Latency and Energy, yielding substantially higher computational costs on both RepoEval and Odex. For instance, increasing the limit from 512 to 1024 tokens elevates the average energy expenditure on RepoEval from approximately 4000 joules to more than 8000 joules. Despite this pronounced rise in resource usage, the functional correctness metric Pass@1 remains remarkably stable, varying by no more than three percentage points across all settings and achieving its maximum at the 1024-token configuration. Even under the cap of 256 tokens, the attack sustains Pass@1 between 28 and 31, indicating that truncation does not neutralise the adversarial effect.
+These findings demonstrate that adjusting the maximum generation length primarily scales the computational burden imposed on the target system, while leaving the attack’s success rate essentially unaffected.
+RQ2 Summary:
+HypoQueryConstruction increases output length by 2.8x compared to alternatives. The loss mechanism is also critical. Removing either EOS or Diversity loss reduces output length by 40-50%, proving both components essential for computational impact. And DrainCode remains effective across all generation length settings.
+V-D RQ3: Generalizability of DrainCode
+TABLE VII: Effectiveness Under Different Prompt Strategies.
+Model
+Method
+Pass@1
+Length
+Latency
+Energy
+DeepSeekCoder
+-7B
+Zero-Shot
+30.2
+42.7
+2422.6
+216.5
+Zero-ShotDrainCode
+28.9↓\downarrow4.3%
+1024.0↑\uparrow2298.1%
+36826.1↑\uparrow1420.1%
+8368.3↑\uparrow3765.2%
+Few-Shot
+32.9
+17.7
+629.6
+174.7
+Few-ShotDrainCode
+32.1↓\downarrow2.4%
+1024.0↑\uparrow5685.3%
+40160.7↑\uparrow6278.8%
+8600.2↑\uparrow4822.8%
+CoT
+34.4
+29.4
+285.6
+293.5
+CoTDrainCode
+31.9↓\downarrow7.3%
+1024.0↑\uparrow3383.0%
+42333.7↑\uparrow14422.7%
+8546.7↑\uparrow2812.0%
+CodeQwen-7B
+Zero-Shot
+34.1
+17.2
+823.2
+129.3
+Zero-ShotDrainCode
+33.4↓\downarrow2.0%
+1024.0↑\uparrow5853.4%
+49118.0↑\uparrow5844.7%
+9008.6↑\uparrow6867.2%
+Few-Shot
+33.2
+9.0
+706.8
+85.1
+Few-ShotDrainCode
+32.5↓\downarrow2.1%
+1021.8↑\uparrow11253.3%
+30318.2↑\uparrow4189.5%
+8604.5↑\uparrow10011.0%
+CoT
+33.6
+26.6
+632.6
+277.0
+CoTDrainCode
+33.2↓\downarrow1.2%
+1024.0↑\uparrow3749.6%
+39324.3↑\uparrow6116.3%
+8359.0↑\uparrow2917.7%
+To assess the generalizability of DrainCode, we evaluate its effectiveness in non-RAG scenarios.
+We test three prompting strategies: Zero-Shot, Few-Shot, and Chain-of-Thought (CoT). In Zero-Shot prompting, the model receives only an instruction without examples. Few-Shot prompts include a small number of examples to guide the response. CoT prompts encourage step-by-step reasoning before generating the final output. All experiments are conducted on the Odex.
+As shown in Table VII, DrainCode substantially increases computational overhead under all prompting strategies. In the Zero-Shot setting, output length grows nearly 20-fold, from around 40 to 1024 tokens. Correspondingly, latency and energy consumption increase by 15 to 20 times. Despite this, the impact on accuracy is minimal—Pass@1 for DeepSeekCoder-7B drops from 30.2 to 28.9, and for CodeQwen-7B, it decreases slightly from 34.1 to 33.4. In Few-Shot and CoT scenarios, Pass@1 declines by only 1–2%, while latency and energy still increase significantly—typically by 5 to 10 times. These results confirm that DrainCode remains effective even without RAG setup.
+Overall, DrainCode generalizes well across different models and prompting styles. While the reduction in accuracy is small, the increase in length, latency, and energy is substantial. This demonstrates DrainCode’s ability to degrade computational efficiency across diverse usage scenarios.
+RQ3 Summary:
+DrainCode demonstrates cross-paradigm effectiveness, inducing longer outputs with higher latency across zero-shot, few-shot, and chain-of-thought prompting. Accuracy drops remain under 7.3% across all strategies, proving the generalizability of DrainCode beyond RAG scenarios.
+TABLE VIII: Performance evaluation of three code detection methods across RepoEval and Odex datasets.
+Dataset
+Method
+Acc.
+Prec.
+Rec.
+F1
+AUC
+RepoEval
+SVM
+0.37
+0.48
+0.26
+0.34
+0.75
+Perplexity
+0.29
+0.31
+0.42
+0.36
+0.41
+CodeBERT
+0.62
+0.59
+0.68
+0.56
+0.82
+Odex
+SVM
+0.30
+0.35
+0.31
+0.32
+0.71
+Perplexity
+0.28
+0.25
+0.48
+0.33
+0.58
+CodeBERT
+0.51
+0.48
+0.68
+0.63
+0.78
+V-E RQ4: Detection of Poisoned Samples
+We evaluated three detection methods: SVM classifier, Perplexity based detection, and Finetuned CodeBERT on the RepoEval and Odex datasets using standard classification metrics. Comprehensive results are presented in Table VIII.
+V-E1 Poisoned Text Classifier
+This detection approach is based on the assumption that although normal and adversarial inputs may appear similar on the surface, their internal representations differ significantly [129]. We exploit this distinction to train a lightweight SVM classifier that operates on latent representations extracted from the model’s hidden layers.
+As shown in Table VIII, the classifier exhibits limited performance, achieving accuracies of 0.37 on RepoEval and 0.30 on Odex, with other metrics similarly low across both datasets.
+These results suggest that the classifier fails to reliably identify poisoned inputs, allowing many adversarial samples to bypass detection. This highlights the stealthy nature of DrainCode, which preserves the surface structure of the context while embedding harmful triggers.
+V-E2 Perplexity-based Detection
+Fig. 3: The ROC curves for PPL Detection.
+In parallel, we explore a perplexity-based detection method. Perplexity [130], a common metric for text quality, has been applied to detect LLM attacks [131]. Poisoned contexts might exhibit abnormal patterns, resulting in higher perplexity scores. We compute the perplexity for both clean and poisoned samples in the retrieval corpus.
+The ROC curves in Figure 3 reveal that perplexity fails to serve as a reliable discriminator. As the true positive rate increases, the false positive rate rises sharply as well. This means a large portion of benign contexts is misclassified as malicious. The underlying reason is that DrainCode inserts adversarial triggers into large code blocks without disrupting the surrounding structure, preserving the overall textual coherence and perplexity.
+V-E3 Finetuned-CodeBERT Detection
+We finetuned CodeBERT for detection with the following parameter settings: learning rate of 2e-5 with linear warmup schedule following previous work [132, 133], while the batch size of 32 with gradient accumulation was determined based on runtime memory usage constraints.
+From Table VIII, CodeBERT performs better than the two methods across all metrics. This superior performance can be attributed to CodeBERT’s ability to better capture deep semantic relationships in code structure compared to SVM classifiers and perplexity-based detection [132, 133], as well as its context awareness enabled by the transformer architecture for understanding long-range dependencies [134].
+However, the 512-token input length limitation of CodeBERT’s tokenizer presents significant challenges [132]. Real-world code samples often exceed this limit, forcing the model to make decisions based on incomplete context and potentially missing critical semantic relationships and structural patterns.
+RQ4 Summary:
+Both classifier-based and perplexity-based detection methods fail to reliably detect poisoned contexts generated by DrainCode, using finetuned codeBERT for detection also has certain limitations. This demonstrates the stealthiness of DrainCode.
+V-F RQ5: Human Evaluation
+We conduct a manual evaluation assessing code readability and verbosity using a 1-5 point scoring system. The evaluation covers code generated by four methods and two datasets. We randomly selected 30 tasks from each method on each dataset, totaling 240 tasks for evaluation. We evaluate readability across five aspects (Naming, Comments, Formatting, Complexity, and Standards) and verbosity across four aspects (Length, Repetition, Expression, and Structure). Complete scoring principles are available in our repository. Three experienced programmers with over five years of Python experience independently scored all samples, unaware of which generation method produced each sample. Inconsistent scores were resolved through discussion to reach consensus.
+TABLE IX: Human evaluation of four methods across RepoEval and Odex datasets.
+Dataset
+Method
+Readability
+Verbosity
+RepoEval
+RawRAG
+4.20
+4.43
+Prompt Injection
+4.17
+4.10
+LLMEffiChecker
+4.20
+4.13
+DrainCode
+4.19
+4.13
+Odex
+RawRAG
+4.20
+4.63
+Prompt Injection
+3.97
+4.13
+LLMEffiChecker
+4.17
+4.17
+DrainCode
+4.17
+4.11
+As shown in Table IX, readability differences among the four methods are minimal across both datasets, with gaps of only 0.7% on RepoEval and 5.8% on Odex. However, all three attack methods show reduced verbosity compared to the RawRAG. To assess inter-rater reliability, we calculated the intraclass correlation coefficient (ICC) [135] among the three programmers’ scores. The ICC values were 0.78 for readability scores and 0.75 for verbosity scores (p<0.001p<0.001), indicating substantial agreement among raters and confirming the reliability of our evaluation framework.
+RQ5 Summary:
+Manual evaluation reveals that attack methods have minimal impact on code readability and all three attack methods demonstrate moderate reduced code verbosity compared to the RawRAG method. The high inter-rater reliability confirms the robustness of our evaluation.
+V-G Case Study
+Fig. 4: Case from RepoEval. (Task id:  deepmind_tracr/128.)
+We demonstrate the attack effectiveness of DrainCode through two cases. Figure 4 shows the output when CodeQwen-7B is attacked while generating a sample from RepoEval. The first two lines of code under ‘‘Verbose Generation” are correct, while the subsequent lines are unnecessary. The output reaches the model’s output length threshold, increasing the model’s inference time and energy consumption. More cases can be found in our appendix11
+1
+https://github.com/DeepSoftwareAnalytics/DrainCode/appendix.pdf.
+VI Threats to Validity
+Internal Validity. All energy and latency measurements are collected through NVIDIA’s NVML interface on Tesla-A100 GPUs, which omits CPU and system-level power draw and may underestimate true consumption. Randomness is introduced by the trigger-search routine.
+We fixed seeds and repeated each experiment ten times, but residual variance could still influence individual runs. To minimise implementation bias, the attack framework and all baselines are developed in the same code base and cross-checked on public benchmarks.
+External Validity. Our evaluation involved two code-oriented LLMs and two general-purpose models.
+Larger, proprietary, or mixture-of-experts architectures could exhibit different energy–latency profiles.
+The benchmark data are limited to RepoEval and Odex.
+Finally, we assume the attacker can poison the retrieval corpus and access gradients. And in fully black-box settings, the attack still transfers but with a reduced effect, so conclusions about worst-case impact under stronger defenses should be drawn cautiously.
+Detection Limitations.
+Our detection methods focus on the retrieval corpus rather than generated code, We plan to explore more advanced detection techniques [136, 137] for generated code in future research.
+VII Conclusion
+We introduce DrainCode, an adversarial attack that exploits poisoned retrieval contexts to degrade LLM efficiency in code generation. DrainCode increases output length (3×\times), latency (85%), and energy use (49%) while preserving accuracy. Experiments across multiple models show its effectiveness in inducing computational overhead and its robustness to different prompting strategies. Our results reveal a critical vulnerability in LLM systems and highlight the need to consider computational costs in security evaluations.
+VIII Acknowledgements
+This work is supported by CCF-Huawei Populus Grove Fund CCF-HuaweiSE202403.
+References
+[1]
+D. Zan, B. Chen, F. Zhang, D. Lu, B. Wu, B. Guan, W. Yongji, and J. Lou (2023)
+Large language models meet NL2Code: a survey.
+In Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),  A. Rogers, J. Boyd-Graber, and N. Okazaki (Eds.),
+Toronto, Canada, pp. 7443–7464.
+External Links: Link,
+Document
+Cited by: §I.
+[2]
+X. Du, M. Liu, K. Wang, H. Wang, J. Liu, Y. Chen, J. Feng, C. Sha, X. Peng, and Y. Lou (2024)
+Evaluating large language models in class-level code generation.
+In Proceedings of the IEEE/ACM 46th International Conference on Software Engineering,
+ICSE ’24, New York, NY, USA, pp. 1 – 13.
+External Links: ISBN 9798400702174,
+Link,
+Document
+Cited by: §I.
+[3]
+Y. Dong, X. Jiang, Z. Jin, and G. Li (2024)
+Self-collaboration code generation via chatgpt.
+ACM Trans. Softw. Eng. Methodol. 33 (7).
+External Links: ISSN 1049-331X,
+Link,
+Document
+Cited by: §I.
+[4]
+A. Jha and C. K. Reddy (2023)
+CodeAttack: code-based adversarial attacks for pre-trained programming language models.
+In Proceedings of the Thirty-Seventh AAAI Conference on Artificial Intelligence and Thirty-Fifth Conference on Innovative Applications of Artificial Intelligence and Thirteenth Symposium on Educational Advances in Artificial Intelligence,
+AAAI’23/IAAI’23/EAAI’23, Washington, DC, USA, pp. 14892–14900.
+External Links: ISBN 978-1-57735-880-0,
+Link,
+Document
+Cited by: §I,
+§II-B,
+§IV-B1.
+[5]
+Z. Li, C. Zhang, M. Pan, T. Zhang, and X. Li (2024)
+AACEGEN: attention guided adversarial code example generation for deep code models.
+In Proceedings of the 39th IEEE/ACM International Conference on Automated Software Engineering,
+ASE ’24, New York, NY, USA, pp. 1245–1257.
+External Links: ISBN 9798400712487,
+Link,
+Document
+Cited by: §I,
+§II-B.
+[6]
+X. Li, G. Meng, S. Liu, L. Xiang, K. Sun, K. Chen, X. Luo, and Y. Liu (2024)
+Attribution-guided adversarial code prompt generation for code completion models.
+In Proceedings of the 39th IEEE/ACM International Conference on Automated Software Engineering,
+ASE ’24, New York, NY, USA, pp. 1460–1471.
+External Links: ISBN 9798400712487,
+Link,
+Document
+Cited by: §I,
+§II-B.
+[7]
+J. He and M. Vechev (2023)
+Large language models for code: security hardening and adversarial testing.
+In Proceedings of the 2023 ACM SIGSAC Conference on Computer and Communications Security,
+CCS ’23, New York, NY, USA, pp. 1865–1879.
+External Links: ISBN 9798400700507,
+Link,
+Document
+Cited by: §I,
+§II-B.
+[8]
+S. Jenko, J. He, N. Mündler, M. Vero, and M. Vechev (2024)
+Practical attacks against black-box code completion engines.
+External Links: 2408.02509,
+Link
+Cited by: §I,
+§II-B.
+[9]
+A. Van Wynsberghe (2021)
+Sustainable ai: ai for sustainability and the sustainability of ai.
+AI and Ethics 1 (3), pp. 213–218.
+Cited by: §I.
+[10]
+X. Feng, X. Han, S. Chen, and W. Yang (2024)
+LLMEffiChecker: understanding and testing efficiency degradation of large language models.
+ACM Trans. Softw. Eng. Methodol. 33 (7).
+External Links: ISSN 1049-331X,
+Link,
+Document
+Cited by: §I,
+§I,
+§I,
+§II-C,
+§IV-B1,
+§IV-B3,
+§IV-B,
+3rd item,
+§V-A3.
+[11]
+S. Poddar, P. Koley, J. Misra, N. Ganguly, and S. Ghosh (2025)
+Towards sustainable NLP: insights from benchmarking inference energy in large language models.
+In Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers),  L. Chiruzzo, A. Ritter, and L. Wang (Eds.),
+Albuquerque, New Mexico, pp. 12688–12704.
+External Links: Link,
+ISBN 979-8-89176-189-6
+Cited by: §I.
+[12]
+S. Samsi, D. Zhao, J. McDonald, B. Li, A. Michaleas, M. Jones, W. Bergeron, J. Kepner, D. Tiwari, and V. Gadepally (2023)
+From words to watts: benchmarking the energy costs of large language model inference.
+In 2023 IEEE High Performance Extreme Computing Conference (HPEC),
+pp. 1–9.
+Cited by: §I.
+[13]
+N. Maslej, L. Fattorini, R. Perrault, V. Parli, A. Reuel, E. Brynjolfsson, J. Etchemendy, K. Ligett, T. Lyons, J. Manyika, J. C. Niebles, Y. Shoham, R. Wald, and J. Clark (2024)
+The ai index 2024 annual report.
+Report
+Technical Report 1,  AI Index Steering Committee, Institute for Human-Centered AI, Stanford,  University, Stanford, CA.
+Cited by: §I.
+[14]
+OWASP Foundation (2023)
+OWASP Top 10 for Large Language Model Applications.
+Note: https://www.owasp.org/www-project-top-10-for-large-language-model-applications/Accessed: 2024
+Cited by: §I.
+[15]
+Lasso Security (2023)
+Denial of Service (DoS) and Denial of Wallet (DoW) Attacks.
+Note: https://www.lasso.security/blog/denial-of-service-dos-and-denial-of-wallet-dow-attacksAccessed: 2024
+Cited by: §I.
+[16]
+M. Liang, X. Xie, G. Zhang, X. Zheng, P. Di, wei jiang, H. Chen, C. Wang, and G. Fan (2024)
+REPOFUSE: repository-level code completion with fused dual context.
+External Links: 2402.14323,
+Link
+Cited by: §I.
+[17]
+F. Zhang, B. Chen, Y. Zhang, J. Keung, J. Liu, D. Zan, Y. Mao, J. Lou, and W. Chen (2023)
+RepoCoder: repository-level code completion through iterative retrieval and generation.
+In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing,  H. Bouamor, J. Pino, and K. Bali (Eds.),
+Singapore, pp. 2471–2484.
+External Links: Link,
+Document
+Cited by: §I,
+§II-A,
+§V-A1.
+[18]
+Y. Ding, Z. Wang, W. Ahmad, M. K. Ramanathan, R. Nallapati, P. Bhatia, D. Roth, and B. Xiang (2024)
+CoCoMIC: code completion by jointly modeling in-file and cross-file context.
+In Proceedings of the 2024 Joint International Conference on Computational Linguistics, Language Resources and Evaluation (LREC-COLING 2024),  N. Calzolari, M. Kan, V. Hoste, A. Lenci, S. Sakti, and N. Xue (Eds.),
+Torino, Italia, pp. 3433–3445.
+External Links: Link
+Cited by: §I,
+§II-A.
+[19]
+W. Zou, R. Geng, B. Wang, and J. Jia (2024)
+PoisonedRAG: knowledge corruption attacks to retrieval-augmented generation of large language models.
+External Links: 2402.07867,
+Link
+Cited by: §I,
+§I,
+§II-A,
+§III-B.
+[20]
+S. Chen, C. Liu, M. Haque, Z. Song, and W. Yang (2022)
+NMTSloth: understanding and testing efficiency degradation of neural machine translation systems.
+In Proceedings of the 30th ACM Joint European Software Engineering Conference and Symposium on the Foundations of Software Engineering,
+ESEC/FSE 2022, New York, NY, USA, pp. 1148–1160.
+External Links: ISBN 9781450394130,
+Link,
+Document
+Cited by: §I,
+§I,
+§II-C,
+§IV-B3.
+[21]
+Y. Li, Z. Li, Y. Gao, and C. Liu (2023)
+White-box multi-objective adversarial attack on dialogue generation.
+In Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),  A. Rogers, J. Boyd-Graber, and N. Okazaki (Eds.),
+Toronto, Canada, pp. 1778–1792.
+External Links: Link,
+Document
+Cited by: §I.
+[22]
+S. Chen, M. Haque, C. Liu, and W. Yang (2023)
+DeepPerform: an efficient approach for performance testing of resource-constrained neural networks.
+In Proceedings of the 37th IEEE/ACM International Conference on Automated Software Engineering,
+ASE ’22, New York, NY, USA, pp. 1 – 13.
+External Links: ISBN 9781450394758,
+Link,
+Document
+Cited by: §I.
+[23]
+K. Gao, Y. Bai, J. Gu, S. Xia, P. Torr, Z. Li, and W. Liu (2024)
+Inducing high energy-latency of large vision-language models with verbose images.
+In The Twelfth International Conference on Learning Representations,
+Vienna Austria, pp. 1–10.
+External Links: Link
+Cited by: §I,
+§I,
+§II-C,
+§V-A3.
+[24]
+S. Schulhoff, J. Pinto, A. Khan, L. Bouchard, and et al. (2023)
+Ignore this title and HackAPrompt: exposing systemic vulnerabilities of LLMs through a global prompt hacking competition.
+In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing,  H. Bouamor, J. Pino, and K. Bali (Eds.),
+Singapore, pp. 4945–4977.
+External Links: Link,
+Document
+Cited by: §I,
+2nd item.
+[25]
+Z. Zheng, K. Ning, Q. Zhong, J. Chen, W. Chen, L. Guo, W. Wang, and Y. Wang (2025)
+Towards an understanding of large language models in software engineering tasks.
+Empirical Software Engineering 30 (2), pp. 50.
+Cited by: §II.
+[26]
+K. Yang, X. Mao, S. Wang, Y. Wang, T. Zhang, B. Lin, Y. Qin, Z. Zhang, Y. Lu, and K. Al-Sabahi (2025)
+Large language models are qualified benchmark builders: rebuilding pre-training datasets for advancing code intelligence tasks.
+arXiv preprint arXiv:2504.19444.
+Cited by: §II.
+[27]
+Z. Zheng, K. Ning, Y. Wang, J. Zhang, D. Zheng, M. Ye, and J. Chen (2023)
+A survey of large language models for code: evolution, benchmarking, and future trends.
+arXiv preprint arXiv:2311.10372.
+Cited by: §II.
+[28]
+Y. Wang, K. Duan, D. Zheng, E. Shi, F. Zhang, Y. Wang, J. Chen, X. Liu, Y. Ma, H. Zhang, et al. (2025)
+Towards an understanding of context utilization in code intelligence.
+arXiv preprint arXiv:2504.08734.
+Cited by: §II.
+[29]
+Y. Wang, W. Zhong, Y. Huang, E. Shi, M. Yang, J. Chen, H. Li, Y. Ma, Q. Wang, and Z. Zheng (2025)
+Agents in software engineering: survey, landscape, and vision.
+Automated Software Engineering 32 (2), pp. 70.
+Cited by: §II.
+[30]
+J. Zhou, W. Zhong, Y. Wang, and J. Wang (2025)
+Adaptive-solver framework for dynamic strategy selection in large language model reasoning.
+Information Processing & Management 62 (3), pp. 104052.
+Cited by: §II.
+[31]
+J. Chen, C. Chen, J. Hu, J. Grundy, Y. Wang, T. Chen, and Z. Zheng (2024)
+Identifying smart contract security issues in code snippets from stack overflow.
+In Proceedings of the 33rd ACM SIGSOFT International Symposium on Software Testing and Analysis,
+pp. 1198–1210.
+Cited by: §II.
+[32]
+S. Yang, X. Lin, J. Chen, Q. Zhong, L. Xiao, R. Huang, Y. Wang, and Z. Zheng (2024)
+Hyperion: unveiling dapp inconsistencies using llm and dataflow-guided symbolic execution.
+arXiv preprint arXiv:2408.06037.
+Cited by: §II.
+[33]
+E. Shi, F. Zhang, Y. Wang, B. Chen, L. Du, H. Zhang, S. Han, D. Zhang, and H. Sun (2023)
+Sotana: the open-source software development assistant.
+arXiv preprint arXiv:2308.13416.
+Cited by: §II.
+[34]
+Y. Li, E. Shi, D. Zheng, K. Duan, J. Chen, and Y. Wang (2024)
+Repomincoder: improving repository-level code generation based on information loss screening.
+In Proceedings of the 15th Asia-Pacific Symposium on Internetware,
+pp. 229–238.
+Cited by: §II.
+[35]
+Y. Wang, T. Jiang, M. Liu, J. Chen, M. Mao, X. Liu, Y. Ma, and Z. Zheng (2025)
+Beyond functional correctness: investigating coding style inconsistencies in large language models.
+Proceedings of the ACM on Software Engineering 2 (FSE), pp. 690–712.
+Cited by: §II.
+[36]
+D. Zheng, Y. Wang, E. Shi, X. Liu, Y. Ma, H. Zhang, and Z. Zheng (2024)
+Top general performance= top domain performance? domaincodebench: a multi-domain code generation benchmark.
+arXiv preprint arXiv:2412.18573.
+Cited by: §II.
+[37]
+Z. Zhang, C. Wang, Y. Wang, E. Shi, Y. Ma, W. Zhong, J. Chen, M. Mao, and Z. Zheng (2025)
+Llm hallucinations in practical code generation: phenomena, mechanism, and mitigation.
+Proceedings of the ACM on Software Engineering 2 (ISSTA), pp. 481–503.
+Cited by: §II.
+[38]
+D. Li, S. Cao, C. Cao, X. Li, S. Tan, K. Keutzer, J. Xing, J. E. Gonzalez, and I. Stoica (2025)
+S*: test time scaling for code generation.
+arXiv preprint arXiv:2502.14382.
+Cited by: §II.
+[39]
+S. Quan, J. Yang, B. Yu, B. Zheng, D. Liu, A. Yang, X. Ren, B. Gao, Y. Miao, Y. Feng, et al. (2025)
+Codeelo: benchmarking competition-level code generation of llms with human-comparable elo ratings.
+arXiv preprint arXiv:2501.01257.
+Cited by: §II.
+[40]
+C. Si, Y. Zhang, R. Li, Z. Yang, R. Liu, and D. Yang (2025)
+Design2code: benchmarking multimodal code generation for automated front-end engineering.
+In Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers),
+pp. 3956–3974.
+Cited by: §II.
+[41]
+W. Gu, J. Chen, Y. Wang, T. Jiang, X. Li, M. Liu, X. Liu, Y. Ma, and Z. Zheng (2025)
+What to retrieve for effective retrieval-augmented code generation? an empirical study and beyond.
+arXiv preprint arXiv:2503.20589.
+Cited by: §II.
+[42]
+J. Chen, Q. Zhong, Y. Wang, K. Ning, Y. Liu, Z. Xu, Z. Zhao, T. Chen, and Z. Zheng (2024)
+Rmcbench: benchmarking large language models’ resistance to malicious code.
+In Proceedings of the 39th IEEE/ACM International Conference on Automated Software Engineering,
+pp. 995–1006.
+Cited by: §II.
+[43]
+D. Zheng, Y. Wang, E. Shi, R. Zhang, Y. Ma, H. Zhang, and Z. Zheng (2024)
+Humanevo: an evolution-aware benchmark for more realistic evaluation of repository-level code generation.
+arXiv preprint arXiv:2406.06918.
+Cited by: §II.
+[44]
+Y. Wang and H. Li (2021)
+Code completion by modeling flattened abstract syntax trees as graphs.
+In Proceedings of the AAAI conference on artificial intelligence,
+Vol. 35, pp. 14015–14023.
+Cited by: §II.
+[45]
+Y. Wang, Y. Wang, D. Guo, J. Chen, R. Zhang, Y. Ma, and Z. Zheng (2024)
+Rlcoder: reinforcement learning for repository-level code completion.
+arXiv preprint arXiv:2407.19487.
+Cited by: §II.
+[46]
+Y. Lai, S. Lee, G. Chen, S. Poddar, M. Hu, D. Z. Pan, and P. Luo (2025)
+Analogcoder: analog circuit design via training-free code generation.
+In Proceedings of the AAAI Conference on Artificial Intelligence,
+Vol. 39, pp. 379–387.
+Cited by: §II.
+[47]
+Q. Zhu, J. Cao, Y. Lu, H. Lin, X. Han, L. Sun, and S. Cheung (2025)
+Domaineval: an auto-constructed benchmark for multi-domain code generation.
+In Proceedings of the AAAI Conference on Artificial Intelligence,
+Vol. 39, pp. 26148–26156.
+Cited by: §II.
+[48]
+L. Nie, J. Sun, Y. Wang, L. Du, S. Han, D. Zhang, L. Hou, J. Li, and J. Zhai (2023)
+Unveiling the black box of plms with semantic anchors: towards interpretable neural semantic parsing.
+In Proceedings of the AAAI conference on artificial intelligence,
+Vol. 37, pp. 13400–13408.
+Cited by: §II.
+[49]
+W. Gu, E. Shi, Y. Wang, L. Du, S. Han, H. Zhang, D. Zhang, and M. R. Lyu (2024)
+SECRET: towards scalable and efficient code retrieval via segmented deep hashing.
+arXiv preprint arXiv:2412.11728.
+Cited by: §II.
+[50]
+W. Gu, Z. Lyu, Y. Wang, H. Zhang, C. Gao, and M. R. Lyu (2025)
+SPENCER: self-adaptive model distillation for efficient code retrieval.
+ACM Transactions on Software Engineering and Methodology.
+Cited by: §II.
+[51]
+J. Gong, Y. Wu, L. Liang, Y. Wang, J. Chen, M. Liu, and Z. Zheng (2025)
+CoSQA+: enhancing code search evaluation with a multi-choice benchmark and test-driven agents.
+IEEE Transactions on Software Engineering 52 (1), pp. 206–220.
+Cited by: §II.
+[52]
+W. Gu, Y. Wang, L. Du, H. Zhang, S. Han, D. Zhang, and M. Lyu (2022)
+Accelerating code search with deep hashing and code classification.
+In Proceedings of the 60th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+pp. 2534–2544.
+Cited by: §II.
+[53]
+F. Hu, Y. Wang, L. Du, X. Li, H. Zhang, S. Han, and D. Zhang (2023)
+Revisiting code search in a two-stage paradigm.
+In Proceedings of the sixteenth ACM international conference on Web search and data mining,
+pp. 994–1002.
+Cited by: §II.
+[54]
+E. Shi, Y. Wang, W. Gu, L. Du, H. Zhang, S. Han, D. Zhang, and H. Sun (2023)
+Cocosoda: effective contrastive learning for code search.
+In 2023 IEEE/ACM 45th International Conference on Software Engineering (ICSE),
+pp. 2198–2210.
+Cited by: §II.
+[55]
+H. Li, X. Zhou, L. A. Tuan, and C. Miao (2023)
+Rethinking negative pairs in code search.
+arXiv preprint arXiv:2310.08069.
+Cited by: §II.
+[56]
+S. Chen, Y. Wang, and Z. Zheng (2023)
+Who needs the most research effort? investigating the importance of smart contract weaknesses.
+In International Conference on Blockchain and Trustworthy Systems,
+pp. 197–210.
+Cited by: §II.
+[57]
+Y. Wang, L. Guo, E. Shi, W. Chen, J. Chen, W. Zhong, M. Wang, H. Li, H. Zhang, Z. Lyu, et al. (2023)
+You augment me: exploring chatgpt-based data augmentation for semantic code search.
+In 2023 IEEE International Conference on Software Maintenance and Evolution (ICSME),
+pp. 14–25.
+Cited by: §II.
+[58]
+F. Hu, Y. Wang, L. Du, H. Zhang, D. Zhang, and X. Li (2024)
+Tackling long code search with splitting, encoding, and aggregating.
+In Proceedings of the 2024 Joint International Conference on Computational Linguistics, Language Resources and Evaluation (LREC-COLING 2024),
+pp. 15500–15510.
+Cited by: §II.
+[59]
+H. Dong, J. Lin, Y. Wang, Y. Leng, J. Chen, and Y. Xie (2024)
+Improving code search with hard negative sampling based on fine-tuning.
+In 2024 31st Asia-Pacific Software Engineering Conference (APSEC),
+pp. 221–230.
+Cited by: §II.
+[60]
+D. Zheng, Y. Wang, W. Chen, J. Chen, and Z. Zheng (2024)
+CoSTV: accelerating code search with two-stage paradigm and vector retrieval.
+In 2024 31st Asia-Pacific Software Engineering Conference (APSEC),
+pp. 383–392.
+Cited by: §II.
+[61]
+X. Li, G. Dong, J. Jin, Y. Zhang, Y. Zhou, Y. Zhu, P. Zhang, and Z. Dou (2025)
+Search-o1: agentic search-enhanced large reasoning models.
+arXiv preprint arXiv:2501.05366.
+Cited by: §II.
+[62]
+K. Chi, C. Li, J. Ge, and B. Luo (2024)
+An empirical study on code search pre-trained models: academic progresses vs. industry requirements.
+In Proceedings of the 15th Asia-Pacific Symposium on Internetware,
+pp. 41–50.
+Cited by: §II.
+[63]
+C. Wang, Z. Nong, C. Gao, Z. Li, J. Zeng, Z. Xing, and Y. Liu (2022)
+Enriching query semantics for code search with reinforcement learning.
+Neural Networks 145, pp. 22–32.
+Cited by: §II.
+[64]
+Y. Chen, M. Liu, G. Ou, A. Li, D. Dai, Y. Wang, and Z. Zheng (2024)
+Are decoder-only large language models the silver bullet for code search?.
+arXiv preprint arXiv:2410.22240.
+Cited by: §II.
+[65]
+S. Zhang, H. Li, Y. Wang, Z. Wei, Y. Xiu, J. Wang, and R. Ji (2023)
+Code search debiasing: improve search results beyond overall ranking performance.
+arXiv preprint arXiv:2311.14901.
+Cited by: §II.
+[66]
+L. Guo, W. Tao, R. Jiang, Y. Wang, J. Chen, X. Liu, Y. Ma, M. Mao, H. Zhang, and Z. Zheng (2025)
+Omnigirl: a multilingual and multimodal benchmark for github issue resolution.
+Proceedings of the ACM on Software Engineering 2 (ISSTA), pp. 24–46.
+Cited by: §II.
+[67]
+L. Guo, Y. Wang, C. Li, P. Yang, J. Chen, W. Tao, Y. Zou, D. Tang, and Z. Zheng (2025)
+SWE-factory: your automated factory for issue resolution training data and evaluation benchmarks.
+arXiv preprint arXiv:2506.10954.
+Cited by: §II.
+[68]
+W. Tao, Y. Zhou, Y. Wang, W. Zhang, H. Zhang, and Y. Cheng (2024)
+Magis: llm-based multi-agent framework for github issue resolution.
+Advances in Neural Information Processing Systems 37, pp. 51963–51993.
+Cited by: §II.
+[69]
+S. Chen, S. Lin, X. Gu, Y. Shi, H. Lian, L. Yun, D. Chen, W. Sun, L. Cao, and Q. Wang (2025)
+Swe-exp: experience-driven software issue resolution.
+arXiv preprint arXiv:2507.23361.
+Cited by: §II.
+[70]
+Y. Ma, Q. Yang, R. Cao, B. Li, F. Huang, and Y. Li (2025)
+Alibaba lingmaagent: improving automated issue resolution via comprehensive repository exploration.
+In Proceedings of the 33rd ACM International Conference on the Foundations of Software Engineering,
+pp. 238–249.
+Cited by: §II.
+[71]
+H. Li, Y. Shi, S. Lin, X. Gu, H. Lian, X. Wang, Y. Jia, T. Huang, and Q. Wang (2025)
+Swe-debate: competitive multi-agent debate for software issue resolution.
+arXiv preprint arXiv:2507.23348.
+Cited by: §II.
+[72]
+C. Xie, B. Li, C. Gao, H. Du, W. Lam, D. Zou, and K. Chen (2025)
+Swe-fixer: training open-source llms for effective and efficient github issue resolution.
+arXiv preprint arXiv:2501.05040.
+Cited by: §II.
+[73]
+Z. Chen, Y. Pan, S. Lu, J. Xu, C. L. Goues, M. Monperrus, and H. Ye (2025)
+Prometheus: unified knowledge graphs for issue resolution in multilingual codebases.
+arXiv preprint arXiv:2507.19942.
+Cited by: §II.
+[74]
+E. Shi, Y. Wang, L. Du, J. Chen, S. Han, H. Zhang, D. Zhang, and H. Sun (2022)
+On the evaluation of neural code summarization.
+In Proceedings of the 44th international conference on software engineering,
+pp. 1597–1608.
+Cited by: §II.
+[75]
+E. Shi, Y. Wang, L. Du, H. Zhang, S. Han, D. Zhang, and H. Sun (2021)
+Cast: enhancing code summarization with hierarchical splitting and reconstruction of abstract syntax trees.
+arXiv preprint arXiv:2108.12987.
+Cited by: §II.
+[76]
+Y. Wang, Y. Wang, S. Wang, D. Guo, J. Chen, J. Grundy, X. Liu, Y. Ma, M. Mao, H. Zhang, et al. (2024)
+Repotransbench: a real-world benchmark for repository-level code translation.
+arXiv preprint arXiv:2412.17744.
+Cited by: §II.
+[77]
+G. Ou, M. Liu, Y. Chen, X. Peng, and Z. Zheng (2024)
+Repository-level code translation benchmark targeting rust.
+arXiv preprint arXiv:2411.13990.
+Cited by: §II.
+[78]
+R. Pan, A. R. Ibrahimzada, R. Krishna, D. Sankar, L. P. Wassi, M. Merler, B. Sobolev, R. Pavuluri, S. Sinha, and R. Jabbarvand (2024)
+Lost in translation: a study of bugs introduced by large language models while translating code.
+In Proceedings of the IEEE/ACM 46th International Conference on Software Engineering,
+pp. 1–13.
+Cited by: §II.
+[79]
+Q. Tao, T. Yu, X. Gu, and B. Shen (2024)
+Unraveling the potential of large language models in code translation: how far are we?.
+In 2024 31st Asia-Pacific Software Engineering Conference (APSEC),
+pp. 353–362.
+Cited by: §II.
+[80]
+W. Yan, Y. Tian, Y. Li, Q. Chen, and W. Wang (2023)
+Codetransocean: a comprehensive multilingual benchmark for code translation.
+arXiv preprint arXiv:2310.04951.
+Cited by: §II.
+[81]
+W. Tao, Y. Wang, E. Shi, L. Du, S. Han, H. Zhang, D. Zhang, and W. Zhang (2022)
+A large-scale empirical study of commit message generation: models, datasets and evaluation.
+Empirical Software Engineering 27 (7), pp. 198.
+Cited by: §II.
+[82]
+W. Tao, Y. Zhou, Y. Wang, H. Zhang, H. Wang, and W. Zhang (2024)
+Kadel: knowledge-aware denoising learning for commit message generation.
+ACM Transactions on Software Engineering and Methodology 33 (5), pp. 1–32.
+Cited by: §II.
+[83]
+P. Xue, L. Wu, Z. Yu, Z. Jin, Z. Yang, X. Li, Z. Yang, and Y. Tan (2024)
+Automated commit message generation with large language models: an empirical study and beyond.
+IEEE Transactions on Software Engineering.
+Cited by: §II.
+[84]
+L. Zhang, J. Zhao, C. Wang, and P. Liang (2024)
+Using large language models for commit message generation: a preliminary study.
+In 2024 IEEE International Conference on Software Analysis, Evolution and Reengineering (SANER),
+pp. 126–130.
+Cited by: §II.
+[85]
+Y. Zhang, Z. Qiu, K. Stol, W. Zhu, J. Zhu, Y. Tian, and H. Liu (2024)
+Automatic commit message generation: a critical review and directions for future work.
+IEEE Transactions on Software Engineering 50 (4), pp. 816–835.
+Cited by: §II.
+[86]
+W. Tao, Y. Wang, E. Shi, L. Du, S. Han, H. Zhang, D. Zhang, and W. Zhang (2021)
+On the evaluation of commit message generation models: an experimental study.
+In 2021 IEEE International Conference on Software Maintenance and Evolution (ICSME),
+pp. 126–136.
+Cited by: §II.
+[87]
+E. Shi, Y. Wang, W. Tao, L. Du, H. Zhang, S. Han, D. Zhang, and H. Sun (2022)
+Race: retrieval-augmented commit message generation.
+arXiv preprint arXiv:2203.02700.
+Cited by: §II.
+[88]
+H. Guo, X. Chen, Y. Huang, Y. Wang, X. Ding, Z. Zheng, X. Zhou, and H. Dai (2023)
+Snippet comment generation based on code context expansion.
+ACM Transactions on Software Engineering and Methodology 33 (1), pp. 1–30.
+Cited by: §II.
+[89]
+C. Zhang, Y. Wang, Z. Wei, Y. Xu, J. Wang, H. Li, and R. Ji (2023)
+EALink: an efficient and accurate pre-trained framework for issue-commit link recovery.
+In 2023 38th IEEE/ACM International Conference on Automated Software Engineering (ASE),
+pp. 217–229.
+Cited by: §II.
+[90]
+Y. Wang, Y. Huang, D. Guo, H. Zhang, and Z. Zheng (2024)
+Sparsecoder: identifier-aware sparse transformer for file-level code summarization.
+In 2024 IEEE International Conference on Software Analysis, Evolution and Reengineering (SANER),
+pp. 614–625.
+Cited by: §II.
+[91]
+L. Guo, Y. Wang, E. Shi, W. Zhong, H. Zhang, J. Chen, R. Zhang, Y. Ma, and Z. Zheng (2024)
+When to stop? towards efficient code generation in llms with excess token prevention.
+In Proceedings of the 33rd ACM SIGSOFT International Symposium on Software Testing and Analysis,
+pp. 1073–1085.
+Cited by: §II.
+[92]
+D. Guo, C. Xu, N. Duan, J. Yin, and J. McAuley (2023)
+Longcoder: a long-range pre-trained language model for code completion.
+In International Conference on Machine Learning,
+pp. 12098–12107.
+Cited by: §II.
+[93]
+I. Gim, G. Chen, S. Lee, N. Sarda, A. Khandelwal, and L. Zhong (2024)
+Prompt cache: modular attention reuse for low-latency inference.
+Proceedings of Machine Learning and Systems 6, pp. 325–338.
+Cited by: §II.
+[94]
+Z. Cai, Y. Zhang, B. Gao, Y. Liu, Y. Li, T. Liu, K. Lu, W. Xiong, Y. Dong, J. Hu, et al. (2024)
+Pyramidkv: dynamic kv cache compression based on pyramidal information funneling.
+arXiv preprint arXiv:2406.02069.
+Cited by: §II.
+[95]
+Y. Yue, Z. Yuan, H. Duanmu, S. Zhou, J. Wu, and L. Nie (2024)
+Wkvquant: quantizing weight and key/value cache for large language models gains more.
+arXiv preprint arXiv:2402.12065.
+Cited by: §II.
+[96]
+Y. Feng, J. Lv, Y. Cao, X. Xie, and S. K. Zhou (2024)
+Ada-kv: optimizing kv cache eviction by adaptive budget allocation for efficient llm inference.
+arXiv preprint arXiv:2407.11550.
+Cited by: §II.
+[97]
+Y. Bai, X. Lv, J. Zhang, H. Lyu, J. Tang, Z. Huang, Z. Du, X. Liu, A. Zeng, L. Hou, et al. (2024)
+Longbench: a bilingual, multitask benchmark for long context understanding.
+In Proceedings of the 62nd annual meeting of the association for computational linguistics (volume 1: Long papers),
+pp. 3119–3137.
+Cited by: §II.
+[98]
+Y. Wang, E. Shi, L. Du, X. Yang, Y. Hu, S. Han, H. Zhang, and D. Zhang (2021)
+Cocosum: contextual code summarization with multi-relational graph neural network.
+arXiv preprint arXiv:2107.01933.
+Cited by: §II.
+[99]
+Z. Liao, J. Wang, H. Yu, L. Wei, J. Li, and W. Zhang (2025)
+E2llm: encoder elongated large language models for long-context understanding and reasoning.
+In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing,
+pp. 19212–19241.
+Cited by: §II.
+[100]
+Z. Li, C. Xu, Z. Shi, Z. Peng, Y. Liu, Y. Zhou, L. Zhou, C. Ma, J. Zhong, X. Wang, et al. (2025)
+Deepcircuitx: a comprehensive repository-level dataset for rtl code understanding, generation, and ppa analysis.
+arXiv preprint arXiv:2502.18297.
+Cited by: §II.
+[101]
+A. Asai, Z. Wu, Y. Wang, A. Sil, and H. Hajishirzi (2023)
+Self-rag: learning to retrieve, generate, and critique through self-reflection.
+External Links: 2310.11511,
+Link
+Cited by: §II-A.
+[102]
+W. Fan, Y. Ding, L. Ning, S. Wang, H. Li, D. Yin, T. Chua, and Q. Li (2024)
+A survey on rag meeting llms: towards retrieval-augmented large language models.
+In KDD ’24,
+New York, NY, USA, pp. 6491–6501.
+External Links: ISBN 9798400704901,
+Link,
+Document
+Cited by: §II-A.
+[103]
+O. Ram, Y. Levine, I. Dalmedigos, D. Muhlgay, A. Shashua, K. Leyton-Brown, and Y. Shoham (2023)
+In-context retrieval-augmented language models.
+Transactions of the Association for Computational Linguistics 11, pp. 1316–1331.
+External Links: Document
+Cited by: §II-A.
+[104]
+Y. Wang, Y. Wang, D. Guo, J. Chen, R. Zhang, Y. Ma, and Z. Zheng (2024)
+RLCoder: reinforcement learning for repository-level code completion.
+External Links: 2407.19487,
+Link
+Cited by: §II-A,
+§V-A1,
+§V-A2.
+[105]
+W. Shi, S. Min, M. Yasunaga, M. Seo, R. James, M. Lewis, L. Zettlemoyer, and W. Yih (2024)
+REPLUG: retrieval-augmented black-box language models.
+In Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers),  K. Duh, H. Gomez, and S. Bethard (Eds.),
+Mexico City, Mexico, pp. 8371–8384.
+External Links: Link,
+Document
+Cited by: §II-A.
+[106]
+Y. Zhang, Q. Li, T. Du, X. Zhang, X. Zhao, Z. Feng, and J. Yin (2024)
+HijackRAG: hijacking attacks against retrieval-augmented large language models.
+External Links: 2410.22832,
+Link
+Cited by: §II-A.
+[107]
+P. Cheng, Y. Ding, T. Ju, Z. Wu, W. Du, P. Yi, Z. Zhang, and G. Liu (2024)
+TrojanRAG: retrieval-augmented generation can be backdoor driver in large language models.
+External Links: 2405.13401,
+Link
+Cited by: §II-A.
+[108]
+J. Xue, M. Zheng, Y. Hu, F. Liu, X. Chen, and Q. Lou (2024)
+BadRAG: identifying vulnerabilities in retrieval augmented generation of large language models.
+External Links: 2406.00083,
+Link
+Cited by: §II-A.
+[109]
+I. Shumailov, Y. Zhao, D. Bates, N. Papernot, R. Mullins, and R. Anderson (2021)
+Sponge examples: energy-latency attacks on neural networks.
+In 2021 IEEE European Symposium on Security and Privacy (EuroS&P),
+Vol. , Vienna, pp. 212–231.
+External Links: Document
+Cited by: §II-C,
+§V-A3.
+[110]
+S. Hong, Y. Kaya, I. Modoranu, and T. Dumitras (2021)
+A panda? no, it’s a sloth: slowdown attacks on adaptive multi-exit neural network inference.
+In International Conference on Learning Representations,
+Virtual conference, pp. 1–17.
+External Links: Link
+Cited by: §II-C.
+[111]
+S. Chen, Z. Song, M. Haque, C. Liu, and W. Yang (2022)
+NICGSlowDown: evaluating the efficiency robustness of neural image caption generation models.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+New Orleans, LA, USA, pp. 15365–15374.
+Cited by: §II-C.
+[112]
+H. Liu, Y. Wu, Z. Yu, Y. Vorobeychik, and N. Zhang (2023)
+SlowLiDAR: increasing the latency of lidar-based detection using adversarial examples.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+Vancouver, BC, Canada, pp. 5146–5155.
+Cited by: §II-C.
+[113]
+S. Chen, H. Chen, M. Haque, C. Liu, and W. Yang (2023)
+The dark side of dynamic routing neural networks: towards efficiency backdoor injection.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+Vancouver, BC, Canada, pp. 24585–24594.
+Cited by: §II-C.
+[114]
+T. Shin, Y. Razeghi, R. L. Logan IV, E. Wallace, and S. Singh (2020)
+AutoPrompt: Eliciting Knowledge from Language Models with Automatically Generated Prompts.
+In Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP),  B. Webber, T. Cohn, Y. He, and Y. Liu (Eds.),
+Online, pp. 4222–4235.
+External Links: Link,
+Document
+Cited by: §IV-B2.
+[115]
+Z. Wang, S. Zhou, D. Fried, and G. Neubig (2023)
+Execution-based evaluation for open-domain code generation.
+In Findings of the Association for Computational Linguistics: EMNLP 2023,  H. Bouamor, J. Pino, and K. Bali (Eds.),
+Singapore, pp. 1271–1290.
+External Links: Link,
+Document
+Cited by: §V-A1.
+[116]
+Z. Jiang, F. F. Xu, L. Gao, Z. Sun, Q. Liu, J. Dwivedi-Yu, Y. Yang, J. Callan, and G. Neubig (2023)
+Active retrieval augmented generation.
+In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing,
+pp. 7969–7992.
+Cited by: §V-A1.
+[117]
+Z. Z. Wang, A. Asai, X. V. Yu, F. F. Xu, Y. Xie, G. Neubig, and D. Fried (2024)
+CodeRAG-bench: can retrieval augment code generation?.
+External Links: 2406.14497,
+Link
+Cited by: §V-A1.
+[118]
+N. Jain, M. Shetty, T. Zhang, K. Han, K. Sen, and I. Stoica (2024)
+R2e: turning any github repository into a programming agent environment.
+In Forty-first International Conference on Machine Learning,
+Cited by: §V-A1.
+[119]
+Y. Zhao, Z. Huang, Y. Ma, R. Li, K. Zhang, H. Jiang, Q. Liu, L. Zhu, and Y. Su (2024)
+RePair: automated program repair with process-based feedback.
+arXiv preprint arXiv:2408.11296.
+Cited by: §V-A1.
+[120]
+D. Guo, Q. Zhu, D. Yang, and et al. (2024)
+DeepSeek-coder: when the large language model meets programming – the rise of code intelligence.
+External Links: 2401.14196,
+Link
+Cited by: §V-A2.
+[121]
+J. Bai, S. Bai, Y. Chu, and et al. (2023)
+Qwen technical report.
+External Links: 2309.16609,
+Link
+Cited by: §V-A2.
+[122]
+X. Hou, Y. Zhao, Y. Liu, Z. Yang, K. Wang, L. Li, X. Luo, D. Lo, J. Grundy, and H. Wang (2024)
+Large language models for software engineering: a systematic literature review.
+ACM Transactions on Software Engineering and Methodology 33 (8), pp. 1–79.
+Cited by: §V-A2.
+[123]
+X. Wang, B. Li, Y. Song, F. F. Xu, X. Tang, M. Zhuge, J. Pan, Y. Song, B. Li, J. Singh, et al. (2024)
+Openhands: an open platform for ai software developers as generalist agents.
+arXiv preprint arXiv:2407.16741.
+Cited by: §V-A2.
+[124]
+M. Chen, J. Tworek, H. Jun, Q. Yuan, H. P. D. O. Pinto, J. Kaplan, H. Edwards, Y. Burda, N. Joseph, G. Brockman, et al. (2021)
+Evaluating large language models trained on code.
+arXiv preprint arXiv:2107.03374.
+Cited by: §V-A3.
+[125]
+X. Ma, Y. Gao, Y. Wang, R. Wang, X. Wang, Y. Sun, Y. Ding, H. Xu, Y. Chen, Y. Zhao, et al. (2025)
+Safety at scale: a comprehensive survey of large model safety.
+arXiv preprint arXiv:2502.05206.
+Cited by: §V-A4.
+[126]
+J. Cui, Y. Xu, Z. Huang, S. Zhou, J. Jiao, and J. Zhang (2024)
+Recent advances in attack and defense approaches of large language models.
+arXiv preprint arXiv:2409.03274.
+Cited by: §V-A4.
+[127]
+B. Hui, H. Yuan, N. Gong, P. Burlina, and Y. Cao (2024)
+PLeak: prompt leaking attacks against large language model applications.
+In Proceedings of the 2024 on ACM SIGSAC Conference on Computer and Communications Security,
+CCS ’24, New York, NY, USA, pp. 3600–3614.
+External Links: ISBN 9798400706363,
+Link,
+Document
+Cited by: 2nd item.
+[128]
+Z. Li, B. Peng, P. He, and X. Yan (2024)
+Evaluating the instruction-following robustness of large language models to prompt injection.
+In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing,  Y. Al-Onaizan, M. Bansal, and Y. Chen (Eds.),
+Miami, Florida, USA, pp. 557–568.
+External Links: Link,
+Document
+Cited by: 2nd item.
+[129]
+N. Jain, A. Schwarzschild, Y. Wen, G. Somepalli, J. Kirchenbauer, P. Chiang, M. Goldblum, A. Saha, J. Geiping, and T. Goldstein (2023)
+Baseline defenses for adversarial attacks against aligned language models.
+arXiv preprint arXiv:2309.00614 1 (1), pp. .
+Cited by: §V-E1.
+[130]
+F. Jelinek and R. L. Mercer (1980)
+Interpolated estimation of markov source parameters from sparse data.
+In Proc. Workshop on Pattern Recognition in Practice,
+Amsterdam, pp. 381–397.
+Cited by: §V-E2.
+[131]
+G. Alon and M. Kamfonas (2023)
+Detecting language model attacks with perplexity.
+External Links: 2308.14132,
+Link
+Cited by: §V-E2.
+[132]
+Z. Feng, D. Guo, D. Tang, N. Duan, X. Feng, M. Gong, L. Shou, B. Qin, T. Liu, D. Jiang, et al. (2020)
+Codebert: a pre-trained model for programming and natural languages.
+arXiv preprint arXiv:2002.08155.
+Cited by: §V-E3,
+§V-E3,
+§V-E3.
+[133]
+D. Guo, S. Ren, S. Lu, Z. Feng, D. Tang, S. Liu, L. Zhou, N. Duan, A. Svyatkovskiy, S. Fu, et al. (2020)
+Graphcodebert: pre-training code representations with data flow.
+arXiv preprint arXiv:2009.08366.
+Cited by: §V-E3,
+§V-E3.
+[134]
+Y. Goldberg (2016)
+A primer on neural network models for natural language processing.
+Journal of Artificial Intelligence Research 57, pp. 345–420.
+Cited by: §V-E3.
+[135]
+P. E. Shrout and J. L. Fleiss (1979)
+Intraclass correlations: uses in assessing rater reliability..
+Psychological bulletin 86 (2), pp. 420.
+Cited by: §V-F.
+[136]
+A. Azizi, I. A. Tahmid, A. Waheed, N. Mangaokar, J. Pu, M. Javed, C. K. Reddy, and B. Viswanath (2021)
+T-miner: a generative approach to defend against trojan attacks on dnn-based text classification.
+arXiv preprint arXiv:2103.04264v2.
+Cited by: §VI.
+[137]
+C. Improta (2025)
+Detecting stealthy data poisoning attacks in ai code generators.
+arXiv preprint arXiv:2508.21636.
+Cited by: §VI.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

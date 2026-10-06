@@ -1,0 +1,3356 @@
+Rejection Mixing: Fast Semantic Propagation of Mask Tokensfor Efficient DLLM Inference
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+2.1
+Diffusion-based Large Language Model
+2.2
+Inference Acceleration Technique of DLLMs
+3
+Preliminary
+4
+Method
+4.1
+Motivation
+4.2
+Rejection Mixing of Continuous States
+4.3
+Discussion
+5
+Experiments
+5.1
+Experiment setup
+5.2
+Main Results
+5.3
+Ablation Study and Further Analysis
+6
+Conclusion
+7
+Acknowledgment
+References
+A
+Adaptive Top-
+p
+p
+Sampling in Mixing Rule
+B
+Additional Experiments
+B.1
+Comparison with State-of-the-Art Methods
+B.2
+Analysis of Computational Overhead
+C
+Case Study
+License: CC BY 4.0
+arXiv:2602.22868v1 [cs.CL] 26 Feb 2026
+Rejection Mixing: Fast Semantic Propagation of Mask Tokens
+for Efficient DLLM Inference
+Yushi Ye
+Affiliation:
+Cooperative Medianet Innovation Center, Shanghai Jiao Tong University
+Email:
+stephen-ye@sjtu.edu.cn
+Feng Hong
+Affiliation:
+Cooperative Medianet Innovation Center, Shanghai Jiao Tong University
+Email:
+Sunarker@sjtu.edu.cn
+Huangjie Zheng
+Xu Chen
+Affiliation:
+Cooperative Medianet Innovation Center, Shanghai Jiao Tong University
+Zhiyong Chen
+Affiliation:
+Cooperative Medianet Innovation Center, Shanghai Jiao Tong University
+Yanfeng Wang
+Affiliation:
+School of Artificial Intelligence, Shanghai Jiao Tong University
+Jiangchao Yao
+Affiliation:
+Cooperative Medianet Innovation Center, Shanghai Jiao Tong University
+Abstract
+Diffusion Large Language Models (DLLMs) promise fast non-autoregressive inference but suffer a severe quality-speed trade-off in parallel decoding. This stems from the “combinatorial contradiction” phenomenon, where parallel tokens form semantically inconsistent combinations. We address this by integrating continuous representations into the discrete decoding process, as they preserve rich inter-position dependency.
+We propose ReMix (Rejection Mixing), a framework that introduces a novel Continuous Mixing State as an intermediate between the initial masked state and the final decoded token state. This intermediate state allows a token’s representation to be iteratively refined in a continuous space, resolving mutual conflicts with other tokens before collapsing into a final discrete sample. Furthermore, a rejection rule reverts uncertain representations from the continuous state back to the masked state for reprocessing, ensuring stability and preventing error propagation.
+ReMix thus mitigates combinatorial contradictions by enabling continuous-space refinement during discrete diffusion decoding. Extensive experiments demonstrate that ReMix, as a training-free method, achieves a 2-8
+×
+\times
+inference speedup without any quality degradation.
+1
+1
+1
+Code:
+https://github.com/Serpientw/ReMix-DLLM
+.
+†
+†
+footnotetext:
+∗
+Equal contribution.
+†
+Corresponding author.
+1
+Introduction
+The proliferation of Large Language Models (LLMs)
+[
+54
+,
+9
+,
+23
+,
+33
+,
+6
+]
+marks a pivotal moment in artificial intelligence.
+Yet their predominant autoregressive (AR) architecture, which generates outputs in a token-by-token sequence, severely limits inference speed.
+To address this, Diffusion Large Language Models (DLLMs)
+[
+21
+,
+29
+,
+48
+,
+13
+]
+have emerged as a compelling non-AR paradigm. By modelling entire sequences of tokens in parallel, DLLMs bypass
+the inherent dependencies of AR models, offering the potential for a substantial leap in generative throughput and establishing them as a critical frontier for developing high-efficiency language and multimodal systems
+[
+47
+,
+20
+,
+49
+]
+.
+Figure 1
+:
+The ReMix decoding process and its impact on the quality-speed trade-off. (Left) By introducing an intermediate Continuous State (
+𝐂
+\mathbf{C}
+), ReMix extends the standard
+𝐌
+→
+T
+\mathbf{M}\rightarrow T
+transition by introducing a flexible loop involving Mixing
+𝐌
+→
+𝐂
+\mathbf{M}\rightarrow\mathbf{C}
+, self-transition
+𝐂
+↻
+\mathbf{C}\circlearrowright
+and Rejection
+𝐂
+→
+𝐌
+\mathbf{C}\rightarrow\mathbf{M}
+, enabling in-process refinement. (Right) On GSM8K, ReMix demonstrates superior performance, turning the baseline’s 7.05% accuracy loss (when accelerating 3.39x) into a 2.80% accuracy gain while achieving similar acceleration.
+This parallel promise, however, is undermined by a critical dilemma: a severe quality-speed trade-off.
+They achieve optimal performance when decoding a single token at a time, but the quality degrades significantly when attempting to decode multiple tokens in parallel
+[
+29
+]
+.
+This trade-off is a direct symptom of a fundamental problem we term the “combinatorial contradiction”, where tokens sampled within the same decoding step can be mutually contradictory. The issue is exemplified by
+Song and Zhou [38]
+: “The list of poker hands that consist of two English words are: _ _.” While valid subsequent pairs include “high card”, “two pair”, “full house”, or “straight flush”, a direct parallel approach might independently select the most probable token for each position, resulting in a semantically incorrect combination like “high house”. Although sophisticated parallel decoding schedules
+[
+44
+,
+4
+,
+43
+,
+3
+,
+8
+]
+have improved the trade-off between quality and speed, they do not fully resolve the core consistency problem. WINO
+[
+16
+]
+mitigates this issue through a revocable strategy, but at the cost of introducing an additional verification block and its associated computational overhead. APD
+[
+17
+]
+, on the other hand, addresses this challenge by defining a multiplicative mixture between the DLLM marginal probabilities and the joint probability of sequences under a small auxiliary AR model, a method that, while effective, requires additional computation and enforces a left-to-right generation order.
+In existing DLLMs,
+“combinatorial contradiction”
+arises from the discrete decoding nature: tokens generated within the same step cannot perceive one another and are sampled independently
+[
+22
+]
+.
+Continuous representations offer a way out of this limitation:
+they enable the model to capture dependencies across different positions in the sequence and preserve richer information throughout the decoding process
+[
+55
+,
+56
+,
+34
+]
+.
+To address combinatorial contradiction, we propose a novel approach that introduces continuous representations into the decoding process. By retaining continuous representations of unfilled positions throughout the decoding process, rather than remasking them and discarding valuable information, we preserve the interdependencies between positions in the sequence. This allows the model to iteratively refine the continuous representations over multiple decoding steps, resolving mutual contradictions and ensuring combinatorial consistency.
+Building on this intuition,
+we propose ReMix (Rejection Mixing), a method that integrates continuous states into the discrete diffusion decoding process to address the “combinatorial contradiction” (see
+Fig.
+1
+).
+In the standard decoding process, each token position transitions from a [MASK] state to a semantic token. Traditional methods use predefined rules to control this transition. ReMix introduces an intermediate continuous state, allowing token representations to be refined before finalizing them as discrete tokens. To ensure stability, we also incorporate a rejection mechanism that reverts uncertain representations back to the [MASK] state for reprocessing, preventing early uncertainty from affecting the decoding process.
+Our main contributions are summarized as follows:
+•
+We analyze a fundamental bottleneck in the parallel decoding of DLLMs, which we term the “combinatorial contradiction”. We posit that this issue stems from the purely discrete nature of the decoding process and propose a novel approach to resolve it by integrating continuous representations into the discrete diffusion loop.
+•
+We propose ReMix (Rejection Mixing), a novel, training-free decoding framework. ReMix introduces a Continuous Mixing State as an intermediate step, enabling iterative refinement and ensuring stability through a rejection mechanism. This approach allows for resolving mutual dependencies in a continuous space before discretization, improving the overall decoding process.
+•
+We conduct extensive experiments on both language and multimodal generation benchmarks. Our results demonstrate that ReMix successfully breaks the severe quality-speed trade-off, achieving a 2-8
+×
+\times
+inference speedup over strong baselines without any quality degradation, and in several cases, even improving output quality.
+2
+Related Work
+2.1
+Diffusion-based Large Language Model
+Diffusion models
+[
+37
+,
+39
+,
+15
+,
+32
+]
+, initially gaining prominence for image generation
+[
+12
+,
+35
+,
+28
+]
+, have recently emerged as a competitive alternative to AR language models in text generation. This transition from continuous to discrete data domains necessitates new modeling approaches. The foundational work by
+Sohl-Dickstein et al. [37]
+first explored this direction, which was later rigorously formalized by
+Austin et al. [1]
+in the D3PM framework. D3PM conceptualizes the diffusion forward process as a discrete-state Markov chain with a series of transition matrices, which is later extended by
+Campbell et al. [5]
+using the theory of continuous-time Markov chains (CTMCs).
+A particularly influential thread of research, known as masked diffusion models (MDMs), builds upon the absorbing-state diffusion concept in D3PM. As MDMs have evolved, they have demonstrated compelling performance across scales, from compact architectures like SEDD
+[
+24
+]
+, MDLM
+[
+36
+]
+and RADD
+[
+31
+]
+to large-scale implementations such as LLaDA
+[
+29
+]
+and Dream
+[
+48
+]
+. Most recently, this line of work has been expanded to multimodal learning. MMaDA
+[
+47
+]
+, for instance, introduces a family of multimodal large diffusion models featuring a shared probabilistic formulation and a modality-agnostic architecture, underscoring the versatility of the diffusion framework.
+Figure 2
+:
+ReMix resolves combinatorial contradictions by allowing continuous-space refinement. Using the poker hand example, this figure compares the decoding processes. (Top) Vanilla Parallel Decoding: Succumbs to the contradiction. It independently decodes “Full” and “Pair” at positions 11 and 12, resulting in the semantically incorrect “Full Pair” in 8 steps. (Middle) ReMix: Correctly generates “Full House” in only 4 steps.
+(Bottom) ReMix Output Distribution: This visualizes the internal mechanism. In Steps 1 & 2, both positions are in the Continuous Mixing State (State
+𝐂
+\mathbf{C}
+, gradient). Their output distributions are iteratively refined, allowing the model to recognize the “Full”
+↔
+\leftrightarrow
+“House” dependency. This mutual coordination before discretization prevents the error and leads to the correct response. The Ġ symbol (
+e.g
+.
+in ĠFlush indicates a token that begins with a whitespace.
+2.2
+Inference Acceleration Technique of DLLMs
+The acceleration of inference for DLLMs is an area of active research, as reducing latency and computational overhead is crucial for real-world applications. Broadly, two primary domains have emerged for accelerating inference: dynamic caching mechanism and optimized sampling strategy.
+Dynamic Caching Mechanism.
+The caching mechanism for diffusion models differs from AR models
+[
+18
+]
+, primarily due to the bidirectional attention mechanism employed in diffusion processes.
+Several approaches have optimized caching in this context:
+Fast-dLLM
+[
+44
+]
+accelerates this by using chunked KV caching and confidence-aware parallel decoding;
+dKV-Cache
+[
+27
+]
+employs delayed caching to reuse key-value states after token decoding, ensuring stable acceleration;
+and Sparse-dLLM
+[
+40
+]
+reduces overhead by pruning less important tokens in the cache.
+Optimized Sampling Strategy.
+Beyond dynamic caching, optimizing the sampling process itself represents a pivotal direction for accelerating inference in DLLMs.
+Research has explored diverse strategies:
+WINO
+[
+16
+]
+introduces revocable decoding to enhance both efficiency and effectiveness in DLLMs;
+similarly, FreeDave
+[
+45
+]
+enables lossless parallel decoding via self-drafting and self-verification;
+COVER
+[
+46
+]
+performs context-preserving verification via KV-cache override to reduce flip-flop revisions in revocable diffusion decoding.
+and Learn2PD
+[
+3
+]
+trains a lightweight filter model to predict token-wise convergence, reducing redundant decoding.
+3
+Preliminary
+Decoding Process of DLLMs.
+Let
+𝒱
+\mathcal{V}
+be the vocabulary, in which
+[MASK]
+∈
+𝒱
+\text{[MASK]}\in\mathcal{V}
+is a special token. Given a prompt
+X
+X
+, a DLLM parameterized with
+θ
+\theta
+is designed to generate a response
+Y
+=
+[
+y
+1
+,
+y
+2
+,
+…
+,
+y
+L
+]
+Y=[y_{1},y_{2},\ldots,y_{L}]
+with a predefined response length
+L
+L
+. The response sequence is initialized as all mask tokens,
+Y
+←
+[
+[MASK]
+,
+[MASK]
+,
+…
+,
+[MASK]
+]
+Y\leftarrow[\text{[MASK]},\text{[MASK]},\ldots,\text{[MASK]}]
+. The decoding process iteratively refines the response sequence
+Y
+Y
+in each decoding step. We model the decoding process as a state transition, where each masked token (state
+𝐌
+\mathbf{M}
+) is transformed into a specific semantic token (state
+𝐓
+\mathbf{T}
+) under certain rules.
+Specifically, at each decoding step, the model estimates the probability distribution over the response sequence as
+p
+θ
+​
+(
+Y
+^
+|
+X
+,
+Y
+)
+p_{\theta}(\hat{Y}|X,Y)
+. Tokens that meet the
+𝐌
+→
+𝐓
+\mathbf{M}\rightarrow\mathbf{T}
+transition condition are selected to be unmasked.
+y
+i
+←
+arg
+⁡
+max
+v
+∈
+𝒱
+​
+p
+θ
+​
+(
+y
+i
+^
+=
+v
+|
+X
+,
+Y
+)
+,
+if
+​
+i
+∈
+rule
+𝐌
+→
+𝐓
+.
+y_{i}\leftarrow{\arg\max}_{v\in\mathcal{V}}p_{\theta}(\hat{y_{i}}=v|X,Y),\ \text{if}\ i\in\mathrm{rule}_{\mathbf{M}\rightarrow\mathbf{T}}.
+Here,
+rule
+𝐌
+→
+𝐓
+\mathrm{rule}_{\mathbf{M}\rightarrow\mathbf{T}}
+denotes the set of positions that satisfy the
+𝐌
+→
+𝐓
+\mathbf{M}\rightarrow\mathbf{T}
+transition condition.
+For example, under the commonly used high-confidence greedy decoding, we have
+rule
+𝐌
+→
+𝐓
+=
+{
+arg
+⁡
+max
+i
+∈
+{
+i
+|
+y
+i
+=
+[MASK]
+}
+(
+max
+v
+∈
+𝒱
+p
+θ
+(
+y
+i
+^
+=
+v
+|
+X
+,
+Y
+)
+}
+.
+\mathrm{rule}_{\mathbf{M}\rightarrow\mathbf{T}}=\{\mathop{\arg\max}_{i\in\{i|y_{i}=\text{[MASK]}\}}(\max_{v\in\mathcal{V}}p_{\theta}(\hat{y_{i}}=v|X,Y)\}.
+The decoding process concludes once every element in
+Y
+Y
+has transitioned to state
+𝐓
+\mathbf{T}
+as the final generated result.
+4
+Method
+4.1
+Motivation
+Current DLLMs still face the speed-performance trade-off, with optimal performance typically achieved when decoding one token at a time. Parallel decoding, while faster, often results in a performance drop due to “combinatorial contradiction,” where sampling multiple tokens from different plausible completion paths leads to mutual contradictions. We attribute this issue to the strictly
+discrete
+nature of parallel decoding, where simultaneous sampling of multiple positions lacks coordination, causing semantic conflicts. To address this, we propose introducing a continuous intermediate state between the two discrete states, state
+𝐌
+\mathbf{M}
+and state
+𝐓
+\mathbf{T}
+, allowing positions to accumulate and align decoding intent before finalizing the output, thereby resolving inconsistencies and improving performance (see
+Fig.
+2
+).
+4.2
+Rejection Mixing of Continuous States
+Building on the motivation above, we propose Rejection Mixing (ReMix), a method designed to accelerate semantic propagation in DLLM inference by introducing a continuous intermediate state
+𝐂
+\mathbf{C}
+into the standard discrete
+𝐌
+→
+𝐓
+\mathbf{M}\rightarrow\mathbf{T}
+transition. This state allows for mutual perception and iterative adjustment of inter-positional inconsistencies before collapsing into a final discrete state T.
+Operationally, each position starts as a masked token in state
+𝐌
+\mathbf{M}
+. At each decoding step, if the decoding rule is satisfied, the position is directly decoded to the token state
+𝐓
+\mathbf{T}
+; otherwise, it shifts from
+𝐌
+\mathbf{M}
+to the continuous state
+𝐂
+\mathbf{C}
+, where it is iteratively updated by the mixing rule, and either be accepted to
+𝐓
+\mathbf{T}
+once the decoding rule holds or rejected back from
+𝐂
+\mathbf{C}
+to
+𝐌
+\mathbf{M}
+according to the rejection rule (detailed in
+Algorithm
+1
+).
+We now detail the specific rules governing the transitions of each position among states
+𝐌
+\mathbf{M}
+,
+𝐂
+\mathbf{C}
+, and
+𝐓
+\mathbf{T}
+.
+Initialization (
+𝐌
+\mathbf{M}
+).
+As introduced in
+Sec.
+3
+, the decoding process begins with the entire response sequence initialized with mask tokens
+𝐌
+\mathbf{M}
+at every position.
+y
+i
+←
+[MASK]
+,
+∀
+i
+∈
+{
+1
+,
+…
+,
+L
+}
+.
+y_{i}\leftarrow\text{[MASK]},\ \forall i\in\{1,\ldots,L\}.
+(Initialization)
+Decoding Rule (
+(
+𝐌
+,
+𝐂
+)
+→
+𝐓
+(\mathbf{M},\mathbf{C})\rightarrow\mathbf{T}
+).
+For adaptive parallel decoding, we employ a commonly used confidence-based thresholding strategy. Specifically, when the confidence of the output distribution at a given position surpasses a predefined threshold
+τ
+conf
+\tau_{\text{conf}}
+, that position is decoded into a concrete semantic token, corresponding to a transition from state
+𝐌
+\mathbf{M}
+(or
+𝐂
+\mathbf{C}
+) to state
+𝐓
+\mathbf{T}
+.
+y
+i
+←
+arg
+⁡
+max
+v
+∈
+𝒱
+​
+p
+θ
+​
+(
+y
+i
+^
+=
+v
+|
+X
+,
+Y
+)
+,
+\displaystyle y_{i}\leftarrow{\arg\max}_{v\in\mathcal{V}}\,p_{\theta}(\hat{y_{i}}=v|X,Y),
+(
+(
+𝐌
+,
+𝐂
+)
+→
+𝐓
+(\mathbf{M},\mathbf{C})\rightarrow\mathbf{T}
+)
+if
+​
+max
+v
+∈
+𝒱
+​
+p
+θ
+​
+(
+y
+i
+^
+=
+v
+|
+X
+,
+Y
+)
+>
+τ
+conf
+.
+\displaystyle\text{if}\ {\max}_{v\in\mathcal{V}}p_{\theta}(\hat{y_{i}}=v|X,Y)>\tau_{\text{conf}}.
+Mixing Rule (
+𝐌
+→
+𝐂
+↻
+\mathbf{M}\rightarrow\mathbf{C}\circlearrowright
+).
+The Mixing Rule defines the transition from state
+𝐌
+\mathbf{M}
+to the continuous state
+𝐂
+\mathbf{C}
+, as well as the self-transition process within
+𝐂
+\mathbf{C}
+. Since
+𝐂
+\mathbf{C}
+is a continuous state rather than a discrete token, the transition to
+𝐂
+\mathbf{C}
+is represented as an update to the embedding
+y
+emb
+{y}^{\text{emb}}
+.
+For discrete tokens, let the embedding layer be parameterized by a weight matrix
+W
+∈
+ℝ
+|
+V
+|
+×
+d
+W\in\mathbb{R}^{|V|\times d}
+, where
+|
+V
+|
+|V|
+is the vocabulary size and
+d
+d
+is the embedding dimension. Because the mapping between a token and its embedding is one-to-one, updating the token
+y
+y
+can be equivalently viewed as updating its embedding
+y
+emb
+y^{\text{emb}}
+. Our Mixing Rule is designed to preserve the output distribution information from the previous step to enhance consistency in subsequent decoding.
+y
+i
+emb
+←
+β
+​
+W
+⊤
+​
+p
+θ
+​
+(
+y
+i
+^
+|
+X
+,
+Y
+)
++
+(
+1
+−
+β
+)
+​
+Emb
+[MASK]
+,
+\displaystyle y_{i}^{\text{emb}}\leftarrow\beta W^{\top}p_{\theta}(\hat{y_{i}}|X,Y)+(1-\beta)\mathrm{Emb}_{\text{[MASK]}},
+(
+𝐌
+→
+𝐂
+↻
+\mathbf{M}\rightarrow\mathbf{C}\circlearrowright
+)
+if position
+i
+not decoded
+.
+\displaystyle\text{if position $i$ not decoded}.
+Here,
+Emb
+[MASK]
+\mathrm{Emb}_{\text{[MASK]}}
+denotes the embedding corresponding to the [MASK] token, and
+β
+∈
+(
+0
+,
+1
+)
+\beta\in(0,1)
+represents the mixing coefficient between the output distribution and
+Emb
+[MASK]
+\mathrm{Emb}_{\text{[MASK]}}
+. In addition, when converting the output distribution into an embedding update (
+i.e.
+, computing
+OPEN
+W
+⊤
+​
+p
+θ
+​
+(
+y
+^
+i
+|
+X
+,
+Y
+)
+)
+W^{\top}p_{\theta}(\hat{y}_{i}|X,Y))
+, we employ an adaptive top-
+p
+p
+sampling strategy that adjusts the threshold by confidence and consolidates residual mass into [MASK] for stability (see full details in
+Appendix
+A
+).
+Algorithm 1
+ReMix
+1:
+Prompt
+X
+X
+, Model
+p
+θ
+p_{\theta}
+, Hyperparameters
+2:
+Initialize
+S
+←
+[
+𝐌
+,
+…
+,
+𝐌
+]
+S\leftarrow[\mathbf{M},\ldots,\mathbf{M}]
+(State tracker)
+3:
+Initialize
+Y
+emb
+Y^{\text{emb}}
+with
+Emb
+[MASK]
+\mathrm{Emb}_{\text{[MASK]}}
+4:
+P
+old
+←
+𝟎
+P_{\text{old}}\leftarrow\mathbf{0}
+5:
+while
+∃
+i
+\exists i
+s.t.
+S
+i
+≠
+𝐓
+S_{i}\neq\mathbf{T}
+do
+6:
+P
+←
+p
+θ
+​
+(
+Y
+^
+|
+X
+,
+Y
+emb
+)
+P\leftarrow p_{\theta}(\hat{Y}|X,Y^{\text{emb}})
+⊳
+\triangleright
+Model forward pass
+7:
+for
+each position
+i
+i
+s.t.
+S
+i
+≠
+𝐓
+S_{i}\neq\mathbf{T}
+do
+8:
+if
+Condition (
+Eq.
+→
+                    
+                      
+                        
+                        
+                        
+                      
+                      
+                        (
+                        M
+                        ,
+                        C
+                        )
+                      
+                    
+                    T
+)
+then
+9:
+S
+i
+←
+𝐓
+S_{i}\leftarrow\mathbf{T}
+10:
+Update
+Y
+i
+emb
+Y^{\text{emb}}_{i}
+(
+Eq.
+→
+                    
+                      
+                        
+                        
+                        
+                      
+                      
+                        (
+                        M
+                        ,
+                        C
+                        )
+                      
+                    
+                    T
+)
+11:
+else
+⊳
+\triangleright
+Not decoded
+12:
+if
+S
+i
+=
+𝐂
+S_{i}=\mathbf{C}
+and
+Condition (
+Eq.
+→
+                    C
+                    M
+)
+then
+13:
+S
+i
+←
+𝐌
+S_{i}\leftarrow\mathbf{M}
+⊳
+\triangleright
+Apply
+𝐂
+→
+𝐌
+\mathbf{C}\rightarrow\mathbf{M}
+14:
+Y
+i
+emb
+←
+Emb
+[MASK]
+Y^{\text{emb}}_{i}\leftarrow\mathrm{Emb}_{\text{[MASK]}}
+15:
+else
+16:
+S
+i
+←
+𝐂
+S_{i}\leftarrow\mathbf{C}
+⊳
+\triangleright
+Apply
+𝐌
+→
+𝐂
+\mathbf{M}\rightarrow\mathbf{C}
+or
+𝐂
+↻
+\mathbf{C}\circlearrowright
+17:
+Update
+Y
+i
+emb
+Y^{\text{emb}}_{i}
+(
+Eq.
+↻
+                    
+                      →
+                      M
+                      C
+)
+18:
+end
+if
+19:
+end
+if
+20:
+end
+for
+21:
+P
+old
+←
+P
+P_{\text{old}}\leftarrow P
+⊳
+\triangleright
+Store for next step’s
+Eq.
+→
+                    C
+                    M
+22:
+end
+while
+23:
+return
+Final Tokens from
+Y
+emb
+Y^{\text{emb}}
+Rejection Rule (
+𝐂
+→
+𝐌
+\mathbf{C}\rightarrow\mathbf{M}
+).
+As a training-free method, although
+Eq.
+↻
+                    
+                      →
+                      M
+                      C
+mixes output distribution information for the [MASK] tokens at decoding positions, it may introduce inference-training inconsistencies and distributional shifts, since all training is conducted on discrete tokens. To mitigate this issue, we introduce a rejection rule: when a decoding position exhibits significant instability in its output, it is reset to the initial state
+M
+\mathrm{M}
+. Specifically, when the output distributions of two consecutive decoding steps are too far apart, the position is reset to [MASK].
+y
+i
+←
+[MASK]
+,
+\displaystyle y_{i}\leftarrow\text{[MASK]},
+(
+𝐂
+→
+𝐌
+\mathbf{C}\rightarrow\mathbf{M}
+)
+if
+position
+i
+not decoded, and
+\displaystyle\text{if }\text{position $i$ not decoded, and}
+𝔻
+JS
+(
+p
+θ
+(
+y
+^
+i
+|
+X
+,
+Y
+)
+∥
+p
+θ
+(
+y
+^
+i
+|
+X
+,
+Y
+old
+)
+)
+>
+τ
+rej
+,
+\displaystyle\mathbb{D}_{\text{JS}}(p_{\theta}(\hat{y}_{i}|X,Y)\parallel p_{\theta}(\hat{y}_{i}|X,Y_{\text{old}}))>\tau_{\mathrm{rej}},
+where
+𝔻
+JS
+(
+⋅
+∥
+⋅
+)
+\mathbb{D}_{\text{JS}}(\cdot\parallel\cdot)
+denotes the Jensen-Shannon (JS) divergence, and
+τ
+rej
+\tau_{\mathrm{rej}}
+is the hyperparameter threshold used to determine instability.
+In summary, ReMix orchestrates a dynamic decoding process where positions flexibly transition between masked, continuous, and discrete states. By enabling continuous-space refinement (
+𝐌
+→
+𝐂
+↻
+\mathbf{M}\rightarrow\mathbf{C}\circlearrowright
+) and providing a stability fallback mechanism (
+𝐂
+→
+𝐌
+\mathbf{C}\rightarrow\mathbf{M}
+), ReMix effectively addresses combinatorial contradictions and accelerates semantic propagation without requiring additional training.
+4.3
+Discussion
+The proposed ReMix method offers a novel perspective on stabilizing parallel decoding in DLLMs. By leveraging continuous representations, we bypass the rigid combinatorial constraints imposed by purely discrete sampling. The Mixing Rule can be interpreted as a form of “soft” lookahead, allowing undecoded positions to communicate their tentative semantic intent to neighbors without fully committing to a potentially erroneous discrete token. This facilitates a more globally coherent decoding trajectory.
+Furthermore, the Rejection Rule acts as a critical regularizer. It implicitly acknowledges the limitations of using continuous states in a model trained for discrete inputs. By resetting unstable positions to [MASK], we effectively prune divergent decoding paths early, preventing error cascading. This training-free nature is a significant advantage, as it avoids the substantial computational cost of re-training or fine-tuning large-scale diffusion models while still addressing the fundamental issue of decoding consistency.
+Table 1
+:
+Performance and inference speedup comparison on diverse language benchmarks.
+Benchmark
+Method
+Accuracy
+Steps
+Step
+Latency
+Latency
+Reduction
+Speedup
+GSM8K
+Math Reasoning
+LLaDA
+73.01
+256
+1.00
+×
+\times
+13.89
+1.00
+×
+\times
+ReMix
+75.66 (
++2.65
+)
+51.55 (
+-204.45
+)
+4.97
+×
+\times
+3.00 (
+-10.89
+)
+4.63
+×
+\times
+MATH-500
+Math Reasoning
+LLaDA
+32.20
+256
+1.00
+×
+\times
+13.96
+1.00
+×
+\times
+ReMix
+35.00 (
++2.80
+)
+66.33 (
+-189.67
+)
+3.86
+×
+\times
+3.93 (
+-10.03
+)
+3.55
+×
+\times
+HumanEval
+Code Generation
+LLaDA
+43.90
+256
+1.00
+×
+\times
+19.22
+1.00
+×
+\times
+ReMix
+44.50 (
++0.60
+)
+89.40 (
+-166.60
+)
+2.86
+×
+\times
+7.13 (
+-12.09
+)
+2.70
+×
+\times
+MBPP
+Code Generation
+LLaDA
+36.20
+256
+1.00
+×
+\times
+14.11
+1.00
+×
+\times
+ReMix
+37.00 (
++0.80
+)
+84.28 (
+-171.72
+)
+3.04
+×
+\times
+5.05 (
+-9.06
+)
+2.79
+×
+\times
+Countdown
+Logical Reasoning
+LLaDA
+25.78
+256
+1.00
+×
+\times
+14.39
+1.00
+×
+\times
+ReMix
+29.68 (
++3.90
+)
+101.44 (
+-154.56
+)
+2.52
+×
+\times
+6.08 (
+-8.31
+)
+2.37
+×
+\times
+Sudoku
+Logical Reasoning
+LLaDA
+14.25
+256
+1.00
+×
+\times
+19.34
+1.00
+×
+\times
+ReMix
+18.55 (
++4.30
+)
+84.06 (
+-171.94
+)
+3.05
+×
+\times
+6.76 (
+-12.58
+)
+2.86
+×
+\times
+ARC-E
+Commonsense Reasoning
+LLaDA
+59.68
+256
+1.00
+×
+\times
+13.70
+1.00
+×
+\times
+ReMix
+70.54 (
++10.86
+)
+50.69 (
+-205.31
+)
+5.05
+×
+\times
+2.98 (
+-10.72
+)
+4.60
+×
+\times
+ARC-C
+Commonsense Reasoning
+LLaDA
+52.17
+256
+1.00
+×
+\times
+13.67
+1.00
+×
+\times
+ReMix
+66.22 (
++14.05
+)
+61.30 (
+-194.70
+)
+4.18
+×
+\times
+3.49 (
+-10.18
+)
+3.92
+×
+\times
+Table 2
+:
+Performance and inference speedup comparison across diverse multimodal understanding and reasoning benchmarks. We use CIDEr for Flickr30k and accuracy for other benchmarks.
+Benchmark
+Method
+Performance
+Steps
+Step
+Latency
+Latency
+Reduction
+Speedup
+Flickr30k-lite
+Captioning
+MMaDA
+57.52
+256
+1.00
+×
+\times
+108.02
+1.00
+×
+\times
+ReMix
+59.59 (
++2.07
+)
+30.13 (
+-225.87
+)
+8.50
+×
+\times
+14.37 (
+-93.65
+)
+7.52
+×
+\times
+AI2D-lite
+Chart Understanding
+MMaDA
+62.40
+256
+1.00
+×
+\times
+109.27
+1.00
+×
+\times
+ReMix
+62.60 (
++0.20
+)
+37.82 (
+-218.18
+)
+6.77
+×
+\times
+19.24 (
+-90.03
+)
+5.68
+×
+\times
+MathVision-mini
+Math Reasoning
+MMaDA
+12.83
+256
+1.00
+×
+\times
+111.12
+1.00
+×
+\times
+ReMix
+12.83 (
++0.00
+)
+52.71 (
+-203.29
+)
+4.86
+×
+\times
+27.56 (
+-83.56
+)
+4.03
+×
+\times
+MathVista-mini
+Math Reasoning
+MMaDA
+31.60
+256
+1.00
+×
+\times
+110.38
+1.00
+×
+\times
+ReMix
+34.60
+(
++3.00
+)
+43.61(
+-212.39
+)
+5.87
+×
+\times
+20.73(
+-89.65
+)
+5.32
+×
+\times
+MMMU-val
+Multi-discipline Reasoning
+MMaDA
+23.33
+256
+1.00
+×
+\times
+113.76
+1.00
+×
+\times
+ReMix
+24.67 (
++1.34
+)
+58.04 (
+-197.96
+)
+4.41
+×
+\times
+30.36 (
+-83.40
+)
+3.75
+×
+\times
+ScienceQA-IMG
+Multi-discipline Reasoning
+MMaDA
+46.70
+256
+1.00
+×
+\times
+111.60
+1.00
+×
+\times
+ReMix
+47.35 (
++0.65
+)
+43.86 (
+-212.14
+)
+5.84
+×
+\times
+21.35 (
+-69.27
+)
+5.23
+×
+\times
+5
+Experiments
+5.1
+Experiment setup
+Datasets and Baselines.
+We evaluate ReMix across diverse tasks and domains. In the language domain specifically, we compare ReMix with the standard LLaDA decoding on eight tasks:
+GSM8K
+[
+11
+]
+, MATH-500
+[
+14
+]
+, HumanEval
+[
+7
+]
+, MBPP
+[
+2
+]
+, Countdown
+[
+53
+]
+, Sudoku
+[
+53
+]
+, ARC-E
+[
+10
+]
+, and ARC-C
+[
+10
+]
+, encompassing four text-generation categories: mathematical reasoning, code generation, logical reasoning, and commonsense reasoning. For the vision-language domain, we compare ReMix with the standard MMaDA
+[
+47
+]
+decoding on six multimodal understanding tasks: Flickr30k
+[
+50
+]
+, AI2D
+[
+19
+]
+, MathVision
+[
+42
+]
+, MathVista
+[
+25
+]
+, MMMU
+[
+51
+]
+and ScienceQA
+[
+26
+]
+, covering four types of multimodal tasks: captioning, chart understanding, math reasoning and multi-discipline reasoning. For clarity, we run experiments on the lite version of Flickr30k, AI2D from LMMs-Lab
+[
+52
+]
+, the official testmini subset of MathVision, MathVista, the validation set of MMMU and the ScienceQA-IMG version of ScienceQA.
+Evaluation Detail.
+All benchmarks are evaluated zero-shot, except Sudoku, which uses a 4-shot setting. We report CIDEr
+[
+41
+]
+for Flickr30k and accuracy for all other benchmarks. For multimodal understanding tasks, we choose GPT-4o mini
+[
+30
+]
+as evaluator to assess the correctness and quality of generated answers. To quantify inference efficiency, we measure the required decoding steps and latency(in seconds) for ReMix and baseline on each task, averaging across all samples in the corresponding benchmark.
+Implementation Detail.
+Our evaluation pipeline is implemented on top of the WINO codebase
+[
+16
+]
+, adapting its evaluation scripts to our setting while retaining the default preprocessing and protocol unless otherwise noted. We use LLaDA-8B-Instruct
+2
+2
+2
+https://huggingface.co/GSAI-ML/LLaDA-8B-Instruct
+for language evaluation and MMaDA-8B-MixCoT
+3
+3
+3
+https://huggingface.co/Gen-Verse/MMaDA-8B-MixCoT
+for vision–language evaluation. All experiments are conducted on 8 NVIDIA GeForce RTX 3090 GPUs, except for the main language experiments, which are performed on 8 NVIDIA A100 GPUs. We employ semi-autoregressive sampling strategy that partitions the sequence into blocks and generates them left to right. In our experiments, we set the generation length to 256 and block length to 128. For the hyperparameters in ReMix, we set the confidence threshold
+τ
+conf
+\tau_{\mathrm{conf}}
+to 0.8. The mixing ratio
+β
+\beta
+is selected from {0.4, 0.5, 0.6} to balance the trade-off between speed and quality, while the rejection threshold
+τ
+rej
+\tau_{\mathrm{rej}}
+varies between 0.1 and 0.4.
+Table 3
+:
+Experiment results on different generation lengths and block lengths
+Benchmark
+Gen
+Block
+Method
+Accuracy
+Steps
+Step
+Latency
+Latency
+Length
+Length
+Reduction
+Speedup
+Different Generation Lengths
+GSM8K
+128
+128
+LLaDA
+59.21
+128
+1.00
+×
+\times
+15.15
+1.00
+×
+\times
+ReMix
+59.74 (
++0.53
+)
+36.63
+3.49
+×
+\times
+4.63
+3.27
+×
+\times
+256
+LLaDA
+72.48
+256
+1.00
+×
+\times
+38.56
+1.00
+×
+\times
+ReMix
+75.28 (
++2.80
+)
+58.54
+4.37
+×
+\times
+8.63
+4.47
+×
+\times
+512
+LLaDA
+74.68
+512
+1.00
+×
+\times
+114.13
+1.00
+×
+\times
+ReMix
+77.63 (
++2.95
+)
+74.76
+6.85
+×
+\times
+17.66
+6.46
+×
+\times
+MathVista-mini
+128
+128
+MMaDA
+31.80
+128
+1.00
+×
+\times
+44.60
+1.00
+×
+\times
+ReMix
+33.80 (
++2.00
+)
+35.87
+3.57
+×
+\times
+16.15
+2.76
+×
+\times
+256
+MMaDA
+31.60
+256
+1.00
+×
+\times
+110.38
+1.00
+×
+\times
+ReMix
+34.60
+(
++3.00
+)
+43.61
+5.87
+×
+\times
+20.73
+5.32
+×
+\times
+512
+MMaDA
+31.30
+512
+1.00
+×
+\times
+242.9
+1.00
+×
+\times
+ReMix
+33.40
+(
++2.10
+)
+71.31
+7.18
+×
+\times
+38.81
+6.26
+×
+\times
+Different Block Lengths
+GSM8K
+256
+32
+LLaDA
+81.73
+256
+1.00
+×
+\times
+35.32
+1.00
+×
+\times
+ReMix
+81.88 (
++0.15
+)
+66.43
+3.85
+×
+\times
+9.66
+3.66
+×
+\times
+64
+LLaDA
+82.56
+256
+1.00
+×
+\times
+38.77
+1.00
+×
+\times
+ReMix
+82.48 (
+-0.08
+)
+63.04
+4.06
+×
+\times
+9.49
+4.09
+×
+\times
+128
+LLaDA
+72.48
+256
+1.00
+×
+\times
+38.56
+1.00
+×
+\times
+ReMix
+75.28 (
++2.80
+)
+58.54
+4.37
+×
+\times
+8.63
+4.47
+×
+\times
+MathVista-mini
+256
+32
+MMaDA
+33.00
+256
+1.00
+×
+\times
+109.39
+1.00
+×
+\times
+ReMix
+34.40 (
++1.40
+)
+55.08
+4.65
+×
+\times
+25.11
+4.36
+×
+\times
+64
+MMaDA
+31.70
+256
+1.00
+×
+\times
+109.84
+1.00
+×
+\times
+ReMix
+33.90
+(
++2.20
+)
+54.49
+4.70
+×
+\times
+25.69
+4.28
+×
+\times
+128
+MMaDA
+31.60
+256
+1.00
+×
+\times
+110.38
+1.00
+×
+\times
+ReMix
+34.60
+(
++3.00
+)
+43.61
+5.87
+×
+\times
+20.73
+5.32
+×
+\times
+5.2
+Main Results
+Performance gain and Speedup in the Language Domain.
+We evaluate the performance and efficiency of LLaDA with and without ReMix across eight language benchmarks, as shown in
+Tab.
+1
+.
+Across eight diverse reasoning and coding benchmarks, incorporating ReMix consistently
+improves both accuracy and efficiency over LLaDA, demonstrating that our method delivers generalizable gains rather than task-specific spikes. On the accuracy side, ReMix yields improvements on every benchmark, ranging from modest boosts in code generation tasks (e.g., +0.60 on HumanEval, +0.80 on MBPP) to substantial jumps on challenging reasoning datasets (e.g., +3.90 on Countdown, +4.30 on Sudoku, and up to +14.05 on ARC-C).
+Notably, even in math reasoning tasks where LLaDA is relatively strong,
+ReMix still achieves significant improvements (+2.65 on GSM8K, +2.80 on MATH-500).
+Efficiency gains are equally consistent. ReMix reduces the number of sampling steps by 2.5
+×
+\times
+–5.0
+×
+\times
+, corresponding to absolute reductions of 150–205 steps compared to the 256-step LLaDA baseline. This directly translates into substantially lower generation latency: latency drops by 8–13 seconds, producing 2.4
+×
+\times
+–4.6
+×
+\times
+end-to-end speedup depending on the dataset. Importantly, these efficiency improvements do not come at the cost of accuracy—in all cases, accuracy increases alongside faster inference.
+Performance Gain and Speedup in the Multimodal Domain.
+We further evaluate ReMix in the multimodal setting by integrating it into the MMADA framework and conducting experiments on six vision–language benchmarks, as reported in
+Tab.
+2
+.
+ReMix again shows consistent improvements over MMaDA, confirming that the benefits of our approach extend beyond text-only reasoning into the multimodal domain.
+On performance, Remix delivers accuracy gains on nearly all datasets, with improvements ranging from +0.20 on AI2D-lite to +3.00 on MathVista-mini, and notably +2.07 on Flickr30k-lite. Efficiency improvements are substantial across all benchmarks. Remix reduces sampling steps by 4.4
+×
+\times
+to 8.5
+×
+\times
+. As a result, inference becomes 3.75
+×
+\times
+to 7.52
+×
+\times
+faster, saving  70–94 seconds per query depending on the task. In particular, captioning and chart-understanding benchmarks achieve the largest speedups (7.5
+×
+\times
+and 5.7
+×
+\times
+).
+Figure 3
+:
+Comparison of GSM8K responses (LLaDA-based) score distributions addressing combinatorial contradictions on naive parallel decoding (left) and ReMix (right)
+Figure 4
+:
+Experiment results on fully diffusion-based decoding (generation length = block length).
+Figure 5
+:
+Ablation of the mixing module on GSM8K (left) and MathVista-mini (right).
+(a)
+ReMix (LLaDA-based) on GSM8K
+(b)
+ReMix (MMaDA-based) on MathVista-mini
+Figure 6
+:
+Ablation study on the mixing ratio
+β
+\beta
+and rejection threshold
+τ
+r
+​
+e
+​
+j
+\tau_{rej}
+5.3
+Ablation Study and Further Analysis
+Performance Across Different Generation and Block Lengths.
+In the first half of
+Tab.
+3
+, we evaluate the performance of ReMix across various generation lengths, keeping the block length fixed to 128. ReMix consistently shows a significant imp rovement in accuracy for all generation lengths tested, while also substantially reducing the number of decoding steps. Remarkably, the performance gains are more pronounced with longer generation lengths. For instance, when the generation length is set to 512, ReMix achieves accuracy improvements of 2.95% and 2.10% on GSM8K and MathVista-mini, while accelerating decoding efficiency by 6.46
+×
+\times
+and 6.26
+×
+\times
+, respectively.
+Similarly, we present the results of ReMix with different block lengths in the lower half of
+Tab.
+3
+, where the generation length is fixed to 256. In this case, ReMix consistently delivers comparable or better accuracy across all three block length settings, accompanied by significant reductions in inference time.
+In summary, ReMix proves robustness w.r.t. both generation length and block length. It maintains high accuracy while consistently achieving stable acceleration in model inference, regardless of variations in these parameters.
+Analysis on the Mitigation of Combinatorial Contradictions.
+To demonstrate the effectiveness of ReMix in mitigating “combinatorial contradiction”, we use GPT-4o-mini to evaluate the generated responses on the GSM8K language benchmark, scoring them from 1 to 5, with lower scores indicating poorer performance. As shown in
+Fig.
+3
+, our method achieves a significantly higher score of 4.32 compared to 3.23 from the baseline, with fewer decoding steps, and approaches the score of 4.33 achieved by standard decoding. The distribution further highlights the improvement: in the baseline, samples are mainly distributed between scores of 2 and 4, with fewer than 200 samples rated 5. In contrast, ReMix results in a distribution skewed towards scores of 4 and 5, with over 600 samples receiving a perfect score of 5.
+The significant improvement in performance, as shown by both the higher average score and the better distribution of results, demonstrates the effectiveness of ReMix in alleviating the degradation caused by the combinatorial contradiction during parallel decoding.
+Performance on Fully Diffusion-Based Decoding
+In
+Fig.
+4
+, we examine the full-diffusion scenario, where the generation length matches the block length. The results demonstrate that ReMix consistently achieves both accuracy improvements and speedup on both baselines. It’s worth mentioning that LLaDA baseline(Len=256) experiences severe performance degradation compared to the semi-autoregressive decoding paradigm shown in
+Tab.
+1
+, whereas ReMix compensates for this loss with far fewer decoding steps. This highlights that our method effectively enhances baseline full-diffusion decoding by incorporating continuous representations.
+Ablation on Mixing Module.
+We perform an ablation study on the mixing module of our method by setting the mixing ratio to 0, thereby disabling the intermediate continuous state
+𝐂
+\mathbf{C}
+. This results in a degeneration of our method to confidence-aware parallel decoding strategy
+[
+44
+]
+. As illustrated in
+Fig.
+5
+, our approach outperforms this variant, achieving significantly higher accuracy while maintaining decoding speedup. These findings provide compelling evidence that the incorporation of continuous embeddings enhances the model generation capability.
+Tuning of Mixing Ratio and Rejection Threshold.
+In
+Fig.
+6
+, we present the results of ReMix with varying mixing ratio
+β
+\beta
+and rejection threshold
+τ
+rej
+\tau_{\mathrm{rej}}
+, two key parameters that govern the speed-quality trade-off of the method.
+For both GSM8K and MathVista-mini, accuracy initially increases as
+β
+\beta
+grows. A moderate level of mixing strengthens the contribution of the continuous embedding, enabling the model to capture richer contextual signals and improving solution quality. However, when
+β
+\beta
+becomes too large (e.g.,
+β
+>
+0.6
+\beta>0.6
+in GSM8K or
+β
+>
+0.5
+\beta>0.5
+in MathVista), performance begins to degrade sharply, which reflects a shift toward over-reliance on continuous updates, destabilizing the hybrid decoding process.
+A similar pattern emerges with
+τ
+rej
+\tau_{\mathrm{rej}}
+. Increasing the threshold initially helps accuracy by allowing the model to accept more continuous updates when they are confident, improving the refinement of intermediate predictions. Beyond a certain point, however, overly permissive thresholds introduce low-confidence or noisy continuous embeddings, which in turn reduce accuracy. Across all tested values, step reduction remains large and stable, and ReMix surpasses the baseline in nearly all configurations, demonstrating resilience to a wide range of
+τ
+rej
+\tau_{\mathrm{rej}}
+values.
+6
+Conclusion
+This work identifies combinatorial contradiction as a fundamental obstacle limiting the quality–speed trade-off in parallel DLLM decoding, which arises due to the rigidity of purely discrete updates that fail to preserve cross-position dependencies when many tokens are decoded simultaneously.
+We thus introduce ReMix, a simple, training-free decoding framework that augments masked discrete diffusion with a continuous mixing state and a lightweight rejection mechanism. ReMix consistently delivers 2–8
+×
+\times
+inference acceleration without sacrificing output quality and often improves it, narrowing the performance gap with AR models while retaining DLLMs’ advantages. These results highlight the promise of integrating continuous and discrete diffusion and point toward a new family of efficient generative models.
+7
+Acknowledgment
+This work is supported by National Natural Science Foundation of China (No. 62306178) and STCSM (No. 22DZ2229005).
+References
+[1]
+J. Austin, D. D. Johnson, J. Ho, D. Tarlow, and R. van den Berg
+(2021)
+Structured denoising diffusion models in discrete state-spaces
+.
+In
+NeurIPS
+,
+M. Ranzato, A. Beygelzimer, Y. N. Dauphin, P. Liang, and J. W. Vaughan (Eds.)
+,
+pp. 17981–17993
+.
+Cited by:
+§2.1
+.
+[2]
+J. Austin, A. Odena, M. I. Nye, M. Bosma, H. Michalewski, D. Dohan, E. Jiang, C. J. Cai, M. Terry, Q. V. Le, and C. Sutton
+(2021)
+Program synthesis with large language models
+.
+CoRR
+abs/2108.07732
+.
+Cited by:
+§5.1
+.
+[3]
+W. Bao, Z. Chen, D. Xu, and Y. Shang
+(2025)
+Learning to parallel: accelerating diffusion large language models via adaptive parallel decoding
+.
+CoRR
+abs/2509.25188
+.
+Cited by:
+§1
+,
+§2.2
+.
+[4]
+H. Ben-Hamu, I. Gat, D. Severo, N. Nolte, and B. Karrer
+(2025)
+Accelerated sampling from masked diffusion models via entropy bounded unmasking
+.
+CoRR
+abs/2505.24857
+.
+Cited by:
+§1
+.
+[5]
+A. Campbell, J. Benton, V. D. Bortoli, T. Rainforth, G. Deligiannidis, and A. Doucet
+(2022)
+A continuous time framework for discrete denoising models
+.
+In
+NeurIPS
+,
+S. Koyejo, S. Mohamed, A. Agarwal, D. Belgrave, K. Cho, and A. Oh (Eds.)
+,
+Cited by:
+§2.1
+.
+[6]
+X. Cao, M. Xu, X. Yu, J. Yao, W. Ye, S. Huang, M. Zhang, I. W. Tsang, Y. Ong, J. T. Kwok, and H. T. Shen
+(2026)
+Analytical survey of learning with low-resource data: from analysis to investigation
+.
+ACM Comput. Surv.
+58
+(
+6
+),
+pp. 144:1–144:47
+.
+Cited by:
+§1
+.
+[7]
+M. Chen, J. Tworek, H. Jun, Q. Yuan, H. P. de Oliveira Pinto, J. Kaplan, H. Edwards, Y. Burda, N. Joseph, G. Brockman, A. Ray, R. Puri, G. Krueger, M. Petrov, H. Khlaaf, G. Sastry, P. Mishkin, B. Chan, S. Gray, N. Ryder, M. Pavlov, A. Power, L. Kaiser, M. Bavarian, C. Winter, P. Tillet, F. P. Such, D. Cummings, M. Plappert, F. Chantzis, E. Barnes, A. Herbert-Voss, W. H. Guss, A. Nichol, A. Paino, N. Tezak, J. Tang, I. Babuschkin, S. Balaji, S. Jain, W. Saunders, C. Hesse, A. N. Carr, J. Leike, J. Achiam, V. Misra, E. Morikawa, A. Radford, M. Knight, M. Brundage, M. Murati, K. Mayer, P. Welinder, B. McGrew, D. Amodei, S. McCandlish, I. Sutskever, and W. Zaremba
+(2021)
+Evaluating large language models trained on code
+.
+CoRR
+abs/2107.03374
+.
+Cited by:
+§5.1
+.
+[8]
+Z. Chen, G. Fang, X. Ma, R. Yu, and X. Wang
+(2025)
+DParallel: learnable parallel decoding for dllms
+.
+CoRR
+abs/2509.26488
+.
+Cited by:
+§1
+.
+[9]
+A. Chowdhery, S. Narang, J. Devlin, M. Bosma, G. Mishra, A. Roberts, P. Barham, H. W. Chung, C. Sutton, S. Gehrmann, P. Schuh, K. Shi, S. Tsvyashchenko, J. Maynez, A. Rao, P. Barnes, Y. Tay, N. Shazeer, V. Prabhakaran, E. Reif, N. Du, B. Hutchinson, R. Pope, J. Bradbury, J. Austin, M. Isard, G. Gur-Ari, P. Yin, T. Duke, A. Levskaya, S. Ghemawat, S. Dev, H. Michalewski, X. Garcia, V. Misra, K. Robinson, L. Fedus, D. Zhou, D. Ippolito, D. Luan, H. Lim, B. Zoph, A. Spiridonov, R. Sepassi, D. Dohan, S. Agrawal, M. Omernick, A. M. Dai, T. S. Pillai, M. Pellat, A. Lewkowycz, E. Moreira, R. Child, O. Polozov, K. Lee, Z. Zhou, X. Wang, B. Saeta, M. Diaz, O. Firat, M. Catasta, J. Wei, K. Meier-Hellstern, D. Eck, J. Dean, S. Petrov, and N. Fiedel
+(2023)
+PaLM: scaling language modeling with pathways
+.
+J. Mach. Learn. Res.
+24
+,
+pp. 240:1–240:113
+.
+Cited by:
+§1
+.
+[10]
+P. Clark, I. Cowhey, O. Etzioni, T. Khot, A. Sabharwal, C. Schoenick, and O. Tafjord
+(2018)
+Think you have solved question answering? try arc, the AI2 reasoning challenge
+.
+CoRR
+abs/1803.05457
+.
+Cited by:
+§5.1
+.
+[11]
+K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano, C. Hesse, and J. Schulman
+(2021)
+Training verifiers to solve math word problems
+.
+CoRR
+abs/2110.14168
+.
+Cited by:
+§5.1
+.
+[12]
+P. Dhariwal and A. Q. Nichol
+(2021)
+Diffusion models beat gans on image synthesis
+.
+In
+NeurIPS
+,
+M. Ranzato, A. Beygelzimer, Y. N. Dauphin, P. Liang, and J. W. Vaughan (Eds.)
+,
+pp. 8780–8794
+.
+Cited by:
+§2.1
+.
+[13]
+S. Gong, R. Zhang, H. Zheng, J. Gu, N. Jaitly, L. Kong, and Y. Zhang
+(2025)
+DiffuCoder: understanding and improving masked diffusion models for code generation
+.
+CoRR
+abs/2506.20639
+.
+Cited by:
+§1
+.
+[14]
+D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt
+(2021)
+Measuring mathematical problem solving with the MATH dataset
+.
+In
+NeurIPS Datasets and Benchmarks
+,
+Cited by:
+§5.1
+.
+[15]
+J. Ho, A. Jain, and P. Abbeel
+(2020)
+Denoising diffusion probabilistic models
+.
+In
+NeurIPS
+,
+H. Larochelle, M. Ranzato, R. Hadsell, M. Balcan, and H. Lin (Eds.)
+,
+Cited by:
+§2.1
+.
+[16]
+F. Hong, G. Yu, Y. Ye, H. Huang, H. Zheng, Y. Zhang, Y. Wang, and J. Yao
+(2025)
+Wide-in, narrow-out: revokable decoding for efficient and effective dllms
+.
+CoRR
+abs/2507.18578
+.
+Cited by:
+§1
+,
+§2.2
+,
+§5.1
+.
+[17]
+D. Israel, G. V. den Broeck, and A. Grover
+(2025)
+Accelerating diffusion llms via adaptive parallel decoding
+.
+CoRR
+abs/2506.00413
+.
+Cited by:
+§1
+.
+[18]
+H. Jiang, H. Li, J. Zhang, F. Huang, Q. Hu, M. Sun, S. Xiao, Y. Li, J. Lin, and J. Yao
+(2025)
+CateKV: on sequential consistency for long-context LLM inference acceleration
+.
+In
+Forty-second International Conference on Machine Learning, ICML
+2025, Vancouver, BC, Canada, July 13-19, 2025
+,
+A. Singh, M. Fazel, D. Hsu, S. Lacoste-Julien, F. Berkenkamp, T. Maharaj, K. Wagstaff, and J. Zhu (Eds.)
+,
+Proceedings of Machine Learning Research
+, Vol.
+267
+.
+Cited by:
+§2.2
+.
+[19]
+A. Kembhavi, M. Salvato, E. Kolve, M. J. Seo, H. Hajishirzi, and A. Farhadi
+(2016)
+A diagram is worth A dozen images
+.
+CoRR
+abs/1603.07396
+.
+Cited by:
+§5.1
+.
+[20]
+S. Li, K. Kallidromitis, H. Bansal, A. Gokul, Y. Kato, K. Kozuka, J. Kuen, Z. Lin, K. Chang, and A. Grover
+(2025)
+LaViDa: A large diffusion language model for multimodal understanding
+.
+CoRR
+abs/2505.16839
+.
+Cited by:
+§1
+.
+[21]
+T. Li, M. Chen, B. Guo, and Z. Shen
+(2025)
+A survey on diffusion language models
+.
+CoRR
+abs/2508.10875
+.
+Cited by:
+§1
+.
+[22]
+A. Liu, O. Broadrick, M. Niepert, and G. V. den Broeck
+(2025)
+Discrete copula diffusion
+.
+In
+ICLR
+,
+Cited by:
+§1
+.
+[23]
+H. Liu, C. Li, Q. Wu, and Y. J. Lee
+(2023)
+Visual instruction tuning
+.
+In
+NeurIPS
+,
+Vol.
+36
+,
+pp. 34892–34916
+.
+Cited by:
+§1
+.
+[24]
+A. Lou, C. Meng, and S. Ermon
+(2024)
+Discrete diffusion modeling by estimating the ratios of the data distribution
+.
+In
+ICML
+,
+Cited by:
+§2.1
+.
+[25]
+P. Lu, H. Bansal, T. Xia, J. Liu, C. Li, H. Hajishirzi, H. Cheng, K. Chang, M. Galley, and J. Gao
+(2024)
+MathVista: evaluating mathematical reasoning of foundation models in visual contexts
+.
+In
+ICLR
+,
+Cited by:
+§5.1
+.
+[26]
+P. Lu, S. Mishra, T. Xia, L. Qiu, K. Chang, S. Zhu, O. Tafjord, P. Clark, and A. Kalyan
+(2022)
+Learn to explain: multimodal reasoning via thought chains for science question answering
+.
+In
+NeurIPS
+,
+Cited by:
+§5.1
+.
+[27]
+X. Ma, R. Yu, G. Fang, and X. Wang
+(2025)
+DKV-cache: the cache for diffusion language models
+.
+CoRR
+abs/2505.15781
+.
+Cited by:
+§2.2
+.
+[28]
+A. Q. Nichol, P. Dhariwal, A. Ramesh, P. Shyam, P. Mishkin, B. McGrew, I. Sutskever, and M. Chen
+(2022)
+GLIDE: towards photorealistic image generation and editing with text-guided diffusion models
+.
+In
+ICML
+,
+K. Chaudhuri, S. Jegelka, L. Song, C. Szepesvári, G. Niu, and S. Sabato (Eds.)
+,
+Proceedings of Machine Learning Research
+, Vol.
+162
+,
+pp. 16784–16804
+.
+Cited by:
+§2.1
+.
+[29]
+S. Nie, F. Zhu, Z. You, X. Zhang, J. Ou, J. Hu, J. Zhou, Y. Lin, J. Wen, and C. Li
+(2025)
+Large language diffusion models
+.
+CoRR
+abs/2502.09992
+.
+Cited by:
+§1
+,
+§1
+,
+§2.1
+.
+[30]
+OpenAI
+(2024)
+GPT-4o mini: advancing cost-efficient intelligence
+.
+Note:
+https://openai.com/index/gpt-4o-mini-advancing-cost-efficient-intelligence/
+Cited by:
+§5.1
+.
+[31]
+J. Ou, S. Nie, K. Xue, F. Zhu, J. Sun, Z. Li, and C. Li
+(2025)
+Your absorbing discrete diffusion secretly models the conditional distributions of clean data
+.
+In
+ICLR
+,
+Cited by:
+§2.1
+.
+[32]
+X. Peng, H. Li, Y. Huang, Z. Zheng, Y. Wang, X. Chen, W. Dai, C. Li, J. Zou, and H. Xiong
+(2026)
+Towards holistic modeling for video frame interpolation with auto-regressive diffusion transformers
+.
+arXiv preprint arXiv:2601.14959
+.
+Cited by:
+§2.1
+.
+[33]
+Z. Peng, Z. Xu, Q. Liu, X. Yang, and W. Shen
+(2025)
+HyperET: efficient training in hyperbolic space for multi-modal large language models
+.
+In
+NeurIPS
+,
+Cited by:
+§1
+.
+[34]
+P. Pynadath, J. Shi, and R. Zhang
+(2025)
+CANDI: hybrid discrete-continuous diffusion models
+.
+CoRR
+abs/2510.22510
+.
+Cited by:
+§1
+.
+[35]
+R. Rombach, A. Blattmann, D. Lorenz, P. Esser, and B. Ommer
+(2022)
+High-resolution image synthesis with latent diffusion models
+.
+In
+CVPR
+,
+pp. 10674–10685
+.
+Cited by:
+§2.1
+.
+[36]
+S. S. Sahoo, M. Arriola, Y. Schiff, A. Gokaslan, E. Marroquin, J. T. Chiu, A. Rush, and V. Kuleshov
+(2024)
+Simple and effective masked diffusion language models
+.
+In
+NeurIPS
+,
+A. Globersons, L. Mackey, D. Belgrave, A. Fan, U. Paquet, J. M. Tomczak, and C. Zhang (Eds.)
+,
+Cited by:
+§2.1
+.
+[37]
+J. Sohl-Dickstein, E. A. Weiss, N. Maheswaranathan, and S. Ganguli
+(2015)
+Deep unsupervised learning using nonequilibrium thermodynamics
+.
+In
+ICML
+,
+F. R. Bach and D. M. Blei (Eds.)
+,
+JMLR
+, Vol.
+37
+,
+pp. 2256–2265
+.
+Cited by:
+§2.1
+.
+[38]
+J. Song and L. Zhou
+(2025)
+Ideas in inference-time scaling can benefit generative pre-training algorithms
+.
+CoRR
+abs/2503.07154
+.
+Cited by:
+§1
+.
+[39]
+Y. Song, J. Sohl-Dickstein, D. P. Kingma, A. Kumar, S. Ermon, and B. Poole
+(2021)
+Score-based generative modeling through stochastic differential equations
+.
+In
+ICLR
+,
+Cited by:
+§2.1
+.
+[40]
+Y. Song, X. Liu, R. Li, Z. Liu, Z. Huang, Q. Guo, Z. He, and X. Qiu
+(2025)
+Sparse-dllm: accelerating diffusion llms with dynamic cache eviction
+.
+CoRR
+abs/2508.02558
+.
+Cited by:
+§2.2
+.
+[41]
+R. Vedantam, C. L. Zitnick, and D. Parikh
+(2015)
+CIDEr: consensus-based image description evaluation
+.
+In
+CVPR
+,
+pp. 4566–4575
+.
+Cited by:
+§5.1
+.
+[42]
+K. Wang, J. Pan, W. Shi, Z. Lu, H. Ren, A. Zhou, M. Zhan, and H. Li
+(2024)
+Measuring multimodal mathematical reasoning with math-vision dataset
+.
+In
+NeurIPS
+,
+Cited by:
+§5.1
+.
+[43]
+Q. Wei, Y. Zhang, Z. Liu, D. Liu, and L. Zhang
+(2025)
+Accelerating diffusion large language models with slowfast sampling: the three golden principles
+.
+CoRR
+abs/2506.10848
+.
+Cited by:
+§1
+.
+[44]
+C. Wu, H. Zhang, S. Xue, Z. Liu, S. Diao, L. Zhu, P. Luo, S. Han, and E. Xie
+(2025)
+Fast-dllm: training-free acceleration of diffusion LLM by enabling KV cache and parallel decoding
+.
+CoRR
+abs/2505.22618
+.
+Cited by:
+§1
+,
+§2.2
+,
+§5.3
+.
+[45]
+S. Wu and J. Zhang
+(2025)
+Free draft-and-verification: toward lossless parallel decoding for diffusion large language models
+.
+CoRR
+abs/2510.00294
+.
+Cited by:
+§2.2
+.
+[46]
+Y. Xiang, L. Wei, Y. Yao, Q. Zhu, H. Yan, C. Jin, P. A. Teare, D. Zhang, L. Gui, A. Saseendran, and Y. He
+(2026)
+Stop the flip-flop: context-preserving verification for fast revocable diffusion decoding
+.
+CoRR
+abs/2602.06161
+.
+Cited by:
+§2.2
+.
+[47]
+L. Yang, Y. Tian, B. Li, X. Zhang, K. Shen, Y. Tong, and M. Wang
+(2025)
+MMaDA: multimodal large diffusion language models
+.
+CoRR
+abs/2505.15809
+.
+Cited by:
+§1
+,
+§2.1
+,
+§5.1
+.
+[48]
+J. Ye, Z. Xie, L. Zheng, J. Gao, Z. Wu, X. Jiang, Z. Li, and L. Kong
+(2025)
+Dream 7b: diffusion large language models
+.
+CoRR
+abs/2508.15487
+.
+Cited by:
+§1
+,
+§2.1
+.
+[49]
+Z. You, S. Nie, X. Zhang, J. Hu, J. Zhou, Z. Lu, J. Wen, and C. Li
+(2025)
+LLaDA-v: large language diffusion models with visual instruction tuning
+.
+CoRR
+abs/2505.16933
+.
+Cited by:
+§1
+.
+[50]
+P. Young, A. Lai, M. Hodosh, and J. Hockenmaier
+(2014)
+From image descriptions to visual denotations: new similarity metrics for semantic inference over event descriptions
+.
+Trans. Assoc. Comput. Linguistics
+2
+,
+pp. 67–78
+.
+Cited by:
+§5.1
+.
+[51]
+X. Yue, Y. Ni, T. Zheng, K. Zhang, R. Liu, G. Zhang, S. Stevens, D. Jiang, W. Ren, Y. Sun, C. Wei, B. Yu, R. Yuan, R. Sun, M. Yin, B. Zheng, Z. Yang, Y. Liu, W. Huang, H. Sun, Y. Su, and W. Chen
+(2024)
+MMMU: A massive multi-discipline multimodal understanding and reasoning benchmark for expert AGI
+.
+In
+CVPR
+,
+pp. 9556–9567
+.
+Cited by:
+§5.1
+.
+[52]
+K. Zhang, B. Li, P. Zhang, F. Pu, J. A. Cahyono, K. Hu, S. Liu, Y. Zhang, J. Yang, C. Li, and Z. Liu
+(2025)
+LMMs-eval: reality check on the evaluation of large multimodal models
+.
+In
+NAACL
+,
+L. Chiruzzo, A. Ritter, and L. Wang (Eds.)
+,
+pp. 881–916
+.
+Cited by:
+§5.1
+.
+[53]
+S. Zhao, D. Gupta, Q. Zheng, and A. Grover
+(2025)
+D1: scaling reasoning in diffusion large language models via reinforcement learning
+.
+CoRR
+abs/2504.12216
+.
+Cited by:
+§5.1
+.
+[54]
+W. X. Zhao, K. Zhou, J. Li, T. Tang, X. Wang, Y. Hou, Y. Min, B. Zhang, J. Zhang, Z. Dong, Y. Du, C. Yang, Y. Chen, Z. Chen, J. Jiang, R. Ren, Y. Li, X. Tang, Z. Liu, P. Liu, J. Nie, and J. Wen
+(2023)
+A survey of large language models
+.
+CoRR
+abs/2303.18223
+.
+Cited by:
+§1
+.
+[55]
+H. Zheng, S. Gong, R. Zhang, T. Chen, J. Gu, M. Zhou, N. Jaitly, and Y. Zhang
+(2025)
+Continuously augmented discrete diffusion model for categorical generative modeling
+.
+CoRR
+abs/2510.01329
+.
+Cited by:
+§1
+.
+[56]
+C. Zhou, C. Yang, Y. Hu, C. Wang, C. Zhang, M. Zhang, L. Mackey, T. S. Jaakkola, S. Bates, and D. Zhang
+(2025)
+Coevolutionary continuous discrete diffusion: make your diffusion language model a latent reasoner
+.
+CoRR
+abs/2510.03206
+.
+Cited by:
+§1
+.
+Supplementary Material
+Appendix A
+Adaptive Top-
+p
+p
+Sampling in Mixing Rule
+As mentioned in
+Sec.
+4
+, we employ top-
+p
+p
+(nucleus) sampling during the embedding update to improve inference stability.
+Rather than using a fixed nucleus threshold
+p
+p
+across all positions, we adopt a dynamic strategy that adapts to the model’s prediction confidence at each position.
+Specifically, let
+p
+max
+p_{\max}
+denote the highest probability in the output distribution at the current position. We define the adaptive nucleus threshold as:
+p
+dyn
+=
+min
+⁡
+(
+2
+⋅
+p
+max
+,
+0.9
+)
+.
+p_{\mathrm{dyn}}=\min\left(2\cdot p_{\max},\;0.9\right).
+The residual probability mass, i.e., the portion not included in this top set, is assigned to the [MASK] token. To enhance numerical and behavioral stability during iterative refinement, this design prevents low-confidence, low-probability tokens from contributing to the embedding update; instead, their weight is consolidated into the [MASK] embedding, which serves as a stable anchor in the continuous state
+𝐂
+\mathbf{C}
+.
+Appendix B
+Additional Experiments
+B.1
+Comparison with State-of-the-Art Methods
+We compare ReMix with three SOTA accelerating methods on GSM8K: WINO, Fast-dLLM, and Learn2PD.
+WINO and ReMix are evaluated under default settings, while Fast-dLLM and Learn2PD follow their optimal configuration with block length 32 (Learn2PD uses the official adapter
+4
+4
+4
+https://github.com/ims-kdks/Learning-to-Parallel-Decoding
+).
+As shown in
+Tab.
+4
+, ReMix achieves the best speed-quality trade-off, outperforming baselines in throughput without sacrificing accuracy.
+Table 4
+:
+Accuracy and throughput (TPS) comparison on GSM8K.
+Method
+Block Length = 128
+Block Length = 32
+Acc.
+TPS
+Acc.
+TPS
+LLaDA
+72.55
+22.15
+81.88
+22.20
+WINO
+75.28
+(+2.73)
+74.82
+(
+×
+\times
+3.38)
+–
+–
+Fast-dLLM
+–
+–
+80.29
+(-1.59)
+75.45
+(
+×
+\times
+3.40)
+Learn2PD
+–
+–
+78.17
+(-3.71)
+102.72
+(
+×
+\times
+4.63)
+ReMix
+75.36
+(+2.81)
+102.47
+(
+×
+\times
+4.63)
+81.20
+(-0.68)
+80.29
+(
+×
+\times
+3.62)
+B.2
+Analysis of Computational Overhead
+We profile the average overhead on GSM8K in
+Tab.
+5
+, where ReMix-specific computations account for only 9.12% of the overall runtime. This efficiency stems from the lightweight design of both modules: the Mixing update contains highly parallelizable projection restricted to undecoded positions, while the Rejection rule involves only efficient distribution-wise divergence calculations. Since neither operation requires extra backbone forward passes, the overhead remains negligible compared to the dominant transformer computation.
+Table 5
+:
+Runtime breakdown of ReMix overhead on GSM8K.
+Component
+Time (s)
+Share (%)
+End-to-end generation
+2.52
+100.00
+Mixing update
+0.14
+5.56
+Rejection
+0.09
+3.56
+ReMix-specific total
+0.23
+9.12
+Appendix C
+Case Study
+To facilitate a comprehensive comparison of the decoding processes between the baseline methods and ReMix, we present two generation examples: one from GSM8K and another from MMMU-val. As demonstrated, the standard decoding procedure can prematurely predict incorrect tokens, which significantly disrupts the generation of subsequent tokens. In contrast, ReMix effectively mitigates this error propagation by incorporating continuous information into the decoding process, thereby preventing such errors from occurring in the first place.
+Case: GSM8K, Generation Length=256, Block Length=128
+Question:
+Randy has 9 oatmeal cookies, 4 chocolate chip cookies, and 5 sugar cookies. He ate 3 cookies for an early day snack, one of each flavor. He ate 2 oatmeal cookies for lunch. He gives 2 sugar cookies to his friends. Then, he bakes 4 of each flavor for dinner. How many cookies does he have now?
+GT:
+23
+LLaDA:
+Step: 239 (
+Decoding 2nd block, error occurs
+):
+First, let’s determine the initial number of each type of cookie:
+- Oatmeal cookies: 9
+- Chocolate chip cookies: 4
+- Sugar cookies: 5
+Next, we account for the cookies Randy ate and gave away:
+- He ate 3 cookies for an early day snack, one of each flavor:
+- Oatmeal cookies: 9 - 1 = 8
+- Chocolate chip cookies: 4 - 1 = 3
+- Sugar cookies: 5 - 1 = 4
+- He ate 2 oatmeal cookies for lunch:
+- Oatmeal cookies: 8 - 2 = 6
+- He gave 2 sugar cookies to his friends:
+- Sugar cookies: 4 - 2 = 2
+, he bakes 4 of each flavor for dinner:
+- Oatmeal cookies: 6 + 4 = 10
+- Chocolate chip cookies: 3
+- Sugar cookies: 2 + 4 = 6
+<
+/reasoning
+>
+<
+answer
+>
+1
+Step: 239 (
+Decoding 2nd block, error accumulates
+):
+First, let’s determine the initial number of each type of cookie:
+- Oatmeal cookies: 9
+- Chocolate chip cookies: 4
+- Sugar cookies: 5
+Next, we account for the cookies Randy ate and gave away:
+- He ate 3 cookies for an early day snack, one of each flavor:
+- Oatmeal cookies: 9 - 1 = 8
+- Chocolate chip cookies: 4 - 1 = 3
+- Sugar cookies: 5 - 1 = 4
+- He ate 2 oatmeal cookies for lunch:
+- Oatmeal cookies: 8 - 2 = 6
+- He gave 2 sugar cookies to his friends:
+- Sugar cookies: 4 - 2 = 2
+, he bakes 4 of each flavor for dinner:
+- Oatmeal cookies: 6 + 4 = 10
+- Chocolate chip cookies: 3
+- Sugar cookies: 2 + 4 = 6
+<
+/reasoning
+>
+<
+answer
+>
+19
+Step: 255 (
+Final result
+):
+First, let’s determine the initial number of each type of cookie:
+- Oatmeal cookies: 9
+- Chocolate chip cookies: 4
+- Sugar cookies: 5
+Next, we account for the cookies Randy ate and gave away:
+- He ate 3 cookies for an early day snack, one of each flavor:
+- Oatmeal cookies: 9 - 1 = 8
+- Chocolate chip cookies: 4 - 1 = 3
+- Sugar cookies: 5 - 1 = 4
+- He ate 2 oatmeal cookies for lunch:
+- Oatmeal cookies: 8 - 2 = 6
+- He gave 2 sugar cookies to his friends:
+- Sugar cookies: 4 - 2 = 2
+Finally, he bakes 4 of each flavor for dinner:
+- Oatmeal cookies: 6 + 4 = 10
+- Chocolate chip cookies:
+3
+- Sugar cookies: 2 + 4 = 6
+Total cookies:
+10 + 3 + 6 = 1
+<
+/reasoning
+>
+<
+answer
+>
+19
+ReMix:
+Step: 47 (
+Decoding 2nd block, no error
+):
+First, let’s determine the initial number of each type of cookie:
+- Oatmeal cookies: 9
+- Chocolate chip cookies: 4
+- Sugar cookies: 5
+Next, we account for the cookies Randy ate:
+- He ate 3 cookies for an early day snack, one of each flavor:
+Oatmeal cookies: 9 - 1 = 8
+Chocolate chip cookies: 4 - 1 = 3
+Sugar cookies: 5 - 1 = 4
+- He ate 2 oatmeal cookies for lunch:
+Oatmeal cookies: 8 - 2 = 6
+- He 2 sugar cookies to his friends:
+Sugar cookies: 4 - 2 = 2
+, he bakes 4 of each flavor for dinner:
+- Oatmeal cookies: 6 + 4 = 10
+- Chocolate chip cookies: 3 cookies
+<
+/reasoning
+>
+<
+answer
+>
+2
+Step: 48 (
+Decoding 2nd block, correct induction
+):
+First, let’s determine the initial number of each type of cookie:
+- Oatmeal cookies: 9
+- Chocolate chip cookies: 4
+- Sugar cookies: 5
+Next, we account for the cookies Randy ate:
+- He ate 3 cookies for an early day snack, one of each flavor:
+Oatmeal cookies: 9 - 1 = 8
+Chocolate chip cookies: 4 - 1 = 3
+Sugar cookies: 5 - 1 = 4
+- He ate 2 oatmeal cookies for lunch:
+Oatmeal cookies: 8 - 2 = 6
+- He 2 sugar cookies to his friends:
+Sugar cookies: 4 - 2 = 2
+, he bakes 4 of each flavor for dinner:
+- Oatmeal cookies: 6 + 4 = 10
+- Chocolate chip cookies:
+3 + 4 = 7
+- Sugar cookies: 2 + 4 =
+<
+/reasoning
+>
+<
+answer
+>
+2
+Step: 64 (
+Final result
+):
+First, let’s determine the initial number of each type of cookie:
+- Oatmeal cookies: 9
+- Chocolate chip cookies: 4
+- Sugar cookies: 5
+Next, we account for the cookies Randy ate:
+- He ate 3 cookies for an early day snack, one of each flavor:
+Oatmeal cookies: 9 - 1 = 8
+Chocolate chip cookies: 4 - 1 = 3
+Sugar cookies: 5 - 1 = 4
+- He ate 2 oatmeal cookies for lunch:
+Oatmeal cookies: 8 - 2 = 6
+- He gave 2 sugar cookies to his friends:
+Sugar cookies: 4 - 2 = 2
+Then, he bakes 4 of each flavor for dinner:
+- Oatmeal cookies: 6 + 4 = 10
+- Chocolate chip cookies:
+3 + 4 = 7
+- Sugar cookies: 2 + 4 = 6
+Adding these together:
+Total cookies =
+10 + 7 + 6 = 23
+cookies
+<
+/reasoning
+>
+<
+answer
+>
+23
+Case: MMMU-val, Generation Length=256, Block Length=128
+Question:
+Which statement is false?
+(A) The differential diagnosis on this case is remote infarct vs. remote contusion
+(B) There is a well developed gliotic wall associated with this remote injury
+(C) The presence of macrophages is not helpful in distinguishing this from a subacute process
+(D) This is very unlikely to have resulted from venous occlusion
+Image:
+GT:
+A
+MMaDA:
+Step: 119 (
+Decoding 1st block, error occurs
+):
+<
+think
+>
+To determine which statement is false, letś analyze each option:
+1. ”The differential diagnosis on this case is remote infarct vs. remote contusion.”
+- This is because the image clearly shows a distant infarct a.
+2. ”There is a well developed gliotic wall associated with this remote injury.”
+- This is because the image shows a well gliotic wall, which is in the.
+3. ”The presence of macrophages is not helpful in distinguishing this from a subacute process.”
+- This is
+false
+Step: 121 (
+Decoding 1st block, error accumulates
+):
+<
+think
+>
+To determine which statement is false, letś analyze each option:
+1. ”The differential diagnosis on this case is remote infarct vs. remote contusion.”
+- This is
+true
+because the image clearly shows a distant infarct a.
+2. ”There is a well developed gliotic wall associated with this remote injury.”
+- This is
+true
+because the image shows a well gliotic wall, which is in the.
+3. ”The presence of macrophages is not helpful in distinguishing this from a subacute process.”
+- This is
+false
+Step: 256 (
+Final result
+):
+<
+think
+>
+To determine which statement is false, letś analyze each option:
+1. “The differential diagnosis on this case is remote infarct vs. remote contusion.”
+- This is
+true
+because the image clearly shows a distant infarct from a distant location.
+2. “There is a well developed gliotic wall associated with this remote injury.”
+- This is
+true
+because the image shows a well developed gliotic wall, which is visible in the foreground.
+3. “The presence of macrophages is not helpful in distinguishing this from a subacute process.”
+- This is
+false
+because the image shows a subacute process with macrophages visible.
+Therefore, the false statement is
+C
+.
+<
+/think
+>
+C
+ReMix:
+Step: 12 (
+Decoding 1st block, no error
+):
+To determine which statement is false, letś analyze each option:
+1. ”The differential diagnosis on this case is vs. remote contusion.”
+This is
+false
+because the image clearly shows a.
+2. ”There is a well developed gliotic wall associated with this remote injury.”
+This is because a well gliotic wall is a feature in the image.
+3. ”The presence of macrophages is not helpful in distinguishing this from a subacute process.”
+This is’
+Step: 47 (
+Final result
+):
+<
+think
+>
+To determine which statement is false, letś analyze each option:
+1. “The differential diagnosis on this case is remote injury vs. is remote contusion.”
+This is
+false
+because the image clearly shows a distant regional contusion, not a distant infarct.
+2. “There is a well developed gliotic wall associated with this remote injury.”
+This is
+true
+because a well developed gliotic wall is a clear feature in the image.
+3. “The presence of macrophages is not helpful in distinguishing this from a subacute process.”
+This is
+true
+because the presence of macrophages in subacute processes is a characteristic feature of subacute processes.
+4. “This is very unlikely to have resulted from venous occlusion.”
+This is
+true
+because the image clearly shows a distant infarct, not venous occlusion.
+Therefore, the false statement is option
+A
+.
+<
+/think
+>
+A
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

@@ -1,0 +1,196 @@
+# Exact-version necessary excerpt: https://arxiv.org/html/2602.13069v1
+# Numbered B blocks; no artifact run or experiment reproduced.
+
+B31: 3 Background
+B32: This section provides the technical foundation for our approach, covering Low-Rank Adaptation, zeroth-order optimization, and memory-efficient backpropagation.
+B33: 3.1 Low-Rank Adaptation (LoRA)
+B34: Low-Rank Adaptation Hu et al. (2022) is a parameter-efficient fine-tuning method that freezes pre-trained weights and introduces trainable low-rank decomposition matrices. For a linear layer with frozen weight W 0 ∈ ℝ d i ​ n × d o ​ u ​ t W_{0}\in\mathbb{R}^{d_{in}\times d_{out}} , the forward computation becomes
+B35: y = x ​ W 0 + s ⋅ x ​ A ​ B , y=xW_{0}+s\cdot xAB, (1)
+B36: where A ∈ ℝ d i ​ n × r A\in\mathbb{R}^{d_{in}\times r} and B ∈ ℝ r × d o ​ u ​ t B\in\mathbb{R}^{r\times d_{out}} are trainable matrices, r ≪ min ⁡ ( d i ​ n , d o ​ u ​ t ) r\ll\min(d_{in},d_{out}) is the rank, and s = α / r s=\alpha/r is a scaling factor. This formulation reduces the number of trainable parameters from d i ​ n × d o ​ u ​ t d_{in}\times d_{out} to r × ( d i ​ n + d o ​ u ​ t ) r\times(d_{in}+d_{out}) .
+B37: Given the upstream gradient ∂ L / ∂ y \partial L/\partial y , the gradients for the LoRA parameters are computed as
+B38: ∂ L ∂ B = s ⋅ h ⊤ ​ ∂ L ∂ y , ∂ L ∂ A = x ⊤ ​ ∂ L ∂ h , \frac{\partial L}{\partial B}=s\cdot h^{\top}\frac{\partial L}{\partial y},\qquad\frac{\partial L}{\partial A}=x^{\top}\frac{\partial L}{\partial h}, (2)
+B39: where h = x ​ A h=xA is the intermediate projection and
+B40: ∂ L ∂ h = s ⋅ ∂ L ∂ y ​ B ⊤ . \frac{\partial L}{\partial h}=s\cdot\frac{\partial L}{\partial y}B^{\top}. (3)
+B41: A key observation is that h h has shape [ batch , seq , r ] [\text{batch},\text{seq},r] . Since r r is typically small, in the range of 8 to 32, recomputing h h during the backward pass requires only O ⁡ ( batch × seq × d i ​ n × r ) O(\text{batch}\times\text{seq}\times d_{in}\times r) operations. This cost is substantially lower than the memory access overhead incurred by storing and retrieving h h for long sequences.
+B42: 3.2 Zeroth-Order Optimization (MeZO)
+B43: Zeroth-order optimization estimates gradients without backpropagation by using finite differences. MeZO Malladi et al. (2023) approximates the gradient as
+B44: ∇ L ​ ( w ) ≈ L ⁡ ( w + ϵ ​ z ) − L ⁡ ( w − ϵ ​ z ) 2 ​ ϵ ⋅ z , \nabla L(w)\approx\frac{L(w+\epsilon z)-L(w-\epsilon z)}{2\epsilon}\cdot z, (4)
+B45: where z ∼ 𝒩 ⁡ ( 0 , I ) z\sim\mathcal{N}(0,I) is a random perturbation vector and ϵ \epsilon is a small constant. The method requires two forward passes per update, one with positively perturbed parameters and one with negatively perturbed parameters. The resulting gradient estimate is then used to update the weights.
+B46: This approach achieves memory consumption equivalent to inference, as no intermediate activations need to be stored for backpropagation. However, the variance of the gradient estimate scales linearly with the parameter dimensionality d d , that is, Var ⁡ [ g ^ ] = O ⁡ ( d ) \mathrm{Var}[\hat{g}]=O(d) . For models with billions of parameters, this high variance severely degrades the signal-to-noise ratio of the gradient estimates and typically requires 10 to 100 times more iterations to achieve loss reduction comparable to first-order methods Malladi et al. (2023) .
+B47: 3.3 Memory-Efficient Backpropagation (MeBP)
+B48: Memory-efficient backpropagation combines gradient checkpointing with automatic differentiation to reduce peak memory usage while computing exact gradients. During the forward pass, only layer outputs are stored as checkpoints, while intermediate activations within each layer are discarded. During the backward pass, the forward computation for each layer is re-executed to regenerate the required intermediates before computing gradients.
+B49: This approach reduces memory complexity from O ⁡ ( L × I ) O(L\times I) to O ⁡ ( L × O + I ) O(L\times O+I) , where L L denotes the number of layers, I I denotes the size of intermediate activations per layer, and O O denotes the output size per layer. Since O ≪ I O\ll I for typical transformer architectures, this leads to substantial memory savings.
+B50: However, MeBP relies on automatic differentiation frameworks such as mx.grad in MLX or torch.autograd in PyTorch to compute gradients within each checkpointed segment. These frameworks treat the computation as a black box and implicitly determine which tensors to retain for gradient computation. As a result, more intermediate tensors may be stored than are mathematically necessary, since the framework cannot exploit domain-specific structure such as the low-rank property of LoRA projections.
+B51: 4 Method
+B52: 4.1 Core Idea: Trading Computation for Memory
+B53: The fundamental insight behind MeSP is simple: small tensors are cheaper to recompute than to store . In LoRA, the intermediate projection h = x ​ A h=xA has dimensions [ batch , seq , r ] [\text{batch},\text{seq},r] where the rank r r is typically 8–32. Storing h h across all LoRA layers (7 per transformer block × \times 24 blocks = 168 layers for Qwen2.5-0.5B) accumulates significant memory. However, recomputing h h requires only a single matrix multiplication with the small matrix A A , which is fast compared to the memory access overhead of storage and retrieval.
+B54: This observation leads to our strategy: during the forward pass, we store only the outputs of each transformer block, just enough to restart computation during backward. During the backward pass, we recompute all intermediates on-demand, process one layer at a time, and immediately release memory after computing gradients. At any point, only a single layer’s intermediates reside in memory.
+B55: Model Method Mem (MB) Time (s) Red.
+B56: 0.5B MeBP 360.8 0.68 –
+B57: MeZO 243.0 0.51 33%
+B58: MeSP 136.2 0.86 62%
+B59: 1.5B MeBP 516.2 1.66 –
+B60: MeZO 376.0 1.21 27%
+B61: MeSP 262.6 2.17 49%
+B62: 3B MeBP 637.6 3.21 –
+B63: MeZO 479.2 2.24 25%
+B64: MeSP 368.4 4.09 42%
+B65: Table 1: Memory and time comparison at sequence length 256. MeSP achieves 42–62% memory reduction vs MeBP while computing exact gradients.
+
+B102: 5 Experiments
+B103: Method r=4 r=8 r=16 r=32
+B104: MeBP 355.2 360.8 372.4 395.8
+B105: MeZO 215.0 243.0 299.0 411.0
+B106: MeSP 132.8 136.2 143.5 158.2
+B107: Memory Reduction vs MeBP
+B108: MeZO 39% 33% 20% -4%
+B109: MeSP 63% 62% 61% 60%
+B110: Table 4: Peak memory (MB) vs LoRA rank on Qwen2.5-0.5B (seq=256).
+B111: We evaluate MeSP on Apple Silicon devices across multiple model sizes and sequence lengths, comparing against memory-efficient backpropagation (MeBP) and zeroth-order optimization (MeZO).
+B112: 5.1 Experimental Setup
+B113: Models and Hardware.
+B114: We use the Qwen2.5 model family Qwen Team (2024) with 4-bit quantization Dettmers et al. (2023) : Qwen2.5-0.5B (24 layers), Qwen2.5-1.5B (28 layers), and Qwen2.5-3B (36 layers). All models use LoRA Hu et al. (2022) with rank 8 applied to Q, K, V, O, gate, up, and down projections. Experiments are performed on Apple Silicon using MLX Apple Machine Learning Research (2023) . Memory is measured via phys_footprint from the task VM info API. We use WikiText-2 Merity et al. (2016) , batch size 1, learning rate 10 − 4 10^{-4} , and SGD optimizer.
+B115: Baselines.
+B116: MeBP Apple Machine Learning Research (2024) : gradient checkpointing with mx.grad() . MeZO Malladi et al. (2023) : SPSA gradient estimation with two forward passes per update.
+B117: 5.2 Main Results: Memory and Time Comparison
+B118: We first evaluate whether MeSP achieves its primary goal: reducing memory while computing exact gradients. Table 1 compares peak memory and training time across model sizes at sequence length 256.
+B119: As shown in Table 1 , MeSP achieves the lowest peak memory across all model sizes, with reductions ranging from 42% to 62% compared to MeBP. Interestingly, the reduction decreases for larger models (62% → \rightarrow 42%) because LoRA activations become a smaller fraction of total memory as model weights grow. The time overhead of 27–31% is a favorable trade-off for memory-constrained scenarios.
+B120: 5.3 Sequence Length Scaling
+B121: We next investigate how memory scales with sequence length. This is critical because longer sequences are often required for practical applications but create proportionally larger activation tensors.
+B122: Table 2 reveals that MeBP memory scales nearly linearly with sequence length (253 → \rightarrow 1050MB). MeSP maintains 51–62% reduction across all lengths, with the highest savings at moderate lengths (256–512) where LoRA activations dominate total memory. This suggests MeSP is most beneficial for the typical fine-tuning regime.
+B123: 5.4 LoRA Rank Sensitivity
+B124: Higher LoRA ranks increase model capacity but also increase the size of intermediate activations. We evaluate whether MeSP’s advantage holds across different ranks. Remarkably, MeSP’s advantage remains stable across ranks (63% → \rightarrow 60%), as shown in Table 4 . In contrast, MeZO’s reduction deteriorates significantly and even shows increased memory at rank 32 (-4%) due to larger perturbation vectors. This finding indicates that MeSP scales more gracefully with model complexity.
+B125: 5.5 Convergence Analysis
+B126: A critical question is whether MeSP’s memory savings come at the cost of convergence quality. Figure 2 compares training loss over 1000 steps.
+B127: Figure 2: Training loss on Qwen2.5-0.5B. MeBP and MeSP achieve identical convergence (loss ∼ \sim 3.33). MeZO converges to ∼ \sim 3.45 (3.6% higher).
+B128: MeBP and MeSP show identical loss trajectories, confirming mathematical equivalence. We verified this by comparing loss values at each step with identical random seeds; values match exactly. MeZO, however, converges to a 3.6% higher loss, indicating meaningful degradation in final model quality.
+B129: 5.6 Why Does MeZO Converge Slowly?
+B130: To understand MeZO’s slower convergence, we analyze the quality of its gradient estimates compared to exact gradients from MeBP/MeSP.
+B131: Surprisingly, Table 3 reveals that MeZO gradients are essentially random with respect to true gradients: cosine similarity ≈ \approx 0 and sign agreement ≈ \approx 50% (chance level). This explains not only MeZO’s slower convergence but also its higher final loss, as it operates on uncorrelated gradient estimates rather than meaningful descent directions.
+B132: 5.7 Store vs. Recompute h h
+B133: Finally, we verify that recomputing h = x ​ A h=xA during backward is the right design choice.
+B134: Strategy Memory (MB) Time (s)
+B135: MeBP (baseline) 637.6 3.21
+B136: Store h h 398.5 3.85
+B137: Recompute h h (ours) 368.4 4.09
+B138: Table 5: Ablation on h h strategy (Qwen2.5-3B, seq=256).
+B139: Table 5 confirms that recomputing h h saves 7.6% additional memory with only 6.2% time overhead. Although h h is small individually, storing it across all 168 LoRA layers accumulates significant memory. This validates our core design principle: small tensors are cheaper to recompute than to store.
+
+B157: Appendix A Mathematical Derivations
+B158: This appendix provides complete derivations establishing the mathematical equivalence between our structured backward passes and standard automatic differentiation.
+B159: A.1 LoRA Backward Derivation
+B160: For a LoRA layer computing y = x ​ W 0 + s ⋅ x ​ A ​ B y=xW_{0}+s\cdot xAB , we derive the gradients with respect to the trainable parameters A A and B B .
+B161: Let h = x ​ A h=xA denote the intermediate low-rank projection. The forward computation is:
+B162: h \displaystyle h = x ​ A ∈ ℝ b × n × r \displaystyle=xA\in\mathbb{R}^{b\times n\times r} (7)
+B163: Δ ​ y \displaystyle\Delta y = h ​ B ∈ ℝ b × n × d o ​ u ​ t \displaystyle=hB\in\mathbb{R}^{b\times n\times d_{out}} (8)
+B164: y \displaystyle y = x ​ W 0 + s ⋅ Δ ​ y \displaystyle=xW_{0}+s\cdot\Delta y (9)
+B165: where b b is batch size, n n is sequence length, r r is LoRA rank, and s = α / r s=\alpha/r is the scaling factor.
+B166: Given upstream gradient g = ∂ L / ∂ y g=\partial L/\partial y , we derive:
+B167: ∂ L ∂ B \displaystyle\frac{\partial L}{\partial B} = h ⊤ ​ ( s ⋅ g ) = ( x ​ A ) ⊤ ​ ( s ⋅ g ) \displaystyle=h^{\top}(s\cdot g)=(xA)^{\top}(s\cdot g) (10)
+B168: ∂ L ∂ h \displaystyle\frac{\partial L}{\partial h} = ( s ⋅ g ) ​ B ⊤ \displaystyle=(s\cdot g)B^{\top} (11)
+B169: ∂ L ∂ A \displaystyle\frac{\partial L}{\partial A} = x ⊤ ​ ∂ L ∂ h = x ⊤ ​ ( s ⋅ g ⋅ B ⊤ ) \displaystyle=x^{\top}\frac{\partial L}{\partial h}=x^{\top}(s\cdot g\cdot B^{\top}) (12)
+B170: ∂ L ∂ x \displaystyle\frac{\partial L}{\partial x} = ( s ⋅ g ) ​ B ⊤ ​ A ⊤ + g ​ W 0 ⊤ \displaystyle=(s\cdot g)B^{\top}A^{\top}+gW_{0}^{\top} (13)
+B171: Key Insight.
+B172: The gradient ∂ L / ∂ B \partial L/\partial B requires h h , but h h can be recomputed as x ​ A xA during backward. Since r ≪ d i ​ n r\ll d_{in} , this recomputation costs O ⁡ ( b × n × d i ​ n × r ) O(b\times n\times d_{in}\times r) operations, which is negligible compared to storing h h for all LoRA layers.
+B173: A.2 Attention Backward Derivation
+B174: For scaled dot-product attention with queries Q Q , keys K K , and values V V :
+B175: scores = Q ​ K ⊤ d \displaystyle=\frac{QK^{\top}}{\sqrt{d}} (14)
+B176: α \displaystyle\alpha = softmax ​ ( scores ) \displaystyle=\text{softmax}(\text{scores}) (15)
+B177: out = α ​ V \displaystyle=\alpha V (16)
+B178: The backward pass computes:
+B179: ∂ L ∂ V \displaystyle\frac{\partial L}{\partial V} = α ⊤ ​ ∂ L ∂ out \displaystyle=\alpha^{\top}\frac{\partial L}{\partial\text{out}} (17)
+B180: ∂ L ∂ α \displaystyle\frac{\partial L}{\partial\alpha} = ∂ L ∂ out ​ V ⊤ \displaystyle=\frac{\partial L}{\partial\text{out}}V^{\top} (18)
+B181: For softmax backward:
+B182: ∂ L ∂ scores = α ⊙ ( ∂ L ∂ α − sum ​ ( ∂ L ∂ α ⊙ α ) ) \frac{\partial L}{\partial\text{scores}}=\alpha\odot\left(\frac{\partial L}{\partial\alpha}-\text{sum}\left(\frac{\partial L}{\partial\alpha}\odot\alpha\right)\right) (19)
+B183: For scaled dot-product backward:
+B184: ∂ L ∂ Q \displaystyle\frac{\partial L}{\partial Q} = 1 d ​ ∂ L ∂ scores ​ K \displaystyle=\frac{1}{\sqrt{d}}\frac{\partial L}{\partial\text{scores}}K (20)
+B185: ∂ L ∂ K \displaystyle\frac{\partial L}{\partial K} = 1 d ​ ∂ L ∂ scores ⊤ ​ Q \displaystyle=\frac{1}{\sqrt{d}}\frac{\partial L}{\partial\text{scores}}^{\top}Q (21)
+B186: A.3 RMSNorm Backward Derivation
+B187: For RMSNorm: x ^ = x / rms ​ ( x ) \hat{x}=x/\text{rms}(x) where rms ​ ( x ) = mean ​ ( x 2 ) + ϵ \text{rms}(x)=\sqrt{\text{mean}(x^{2})+\epsilon} :
+B188: ∂ L ∂ x = 1 rms ​ ( ∂ L ∂ x ^ − x ^ ⋅ mean ​ ( ∂ L ∂ x ^ ⊙ x ^ ) ) \frac{\partial L}{\partial x}=\frac{1}{\text{rms}}\left(\frac{\partial L}{\partial\hat{x}}-\hat{x}\cdot\text{mean}\left(\frac{\partial L}{\partial\hat{x}}\odot\hat{x}\right)\right) (22)
+B189: A.4 SiLU Backward Derivation
+B190: For SiLU activation: SiLU ​ ( x ) = x ⋅ σ ​ ( x ) \text{SiLU}(x)=x\cdot\sigma(x) where σ \sigma is the sigmoid:
+B191: SiLU ′ ​ ( x ) = σ ⁡ ( x ) + x ⋅ σ ⁡ ( x ) ⋅ ( 1 − σ ⁡ ( x ) ) = σ ⁡ ( x ) ​ ( 1 + x ⁡ ( 1 − σ ⁡ ( x ) ) ) \text{SiLU}^{\prime}(x)=\sigma(x)+x\cdot\sigma(x)\cdot(1-\sigma(x))=\sigma(x)(1+x(1-\sigma(x))) (23)
+
+B264: Appendix E Implementation Details
+B265: E.1 Checkpoint Strategy
+B266: During the forward pass, we store only:
+B267: 1.
+B268: Layer input tensor for each transformer block
+B269: 2.
+B270: Final logits for loss computation
+B271: During backward, we store per-layer:
+B272: 1.
+B273: Normalized input (for Q, K, V projection backward)
+B274: 2.
+B275: Attention weights (for attention backward)
+B276: 3.
+B277: Pre-MLP normalized output (for MLP backward)
+B278: 4.
+B279: Gate projection output (for SiLU backward)
+
+B66: 4.2 Explicit Gradient Computation for LoRA
+B67: We now formalize how gradients are computed without storing the intermediate h h . Consider a LoRA layer with frozen weight W 0 W_{0} , trainable matrices A A and B B , and scaling factor s = α / r s=\alpha/r :
+B68: y = x ​ W 0 + s ⋅ x ​ A ​ B y=xW_{0}+s\cdot xAB (5)
+B69: Given the upstream gradient g = ∂ L / ∂ y g=\partial L/\partial y , the parameter gradients can be expressed as:
+B70: ∂ L ∂ B = h ⊤ ​ ( s ⋅ g ) , ∂ L ∂ A = x ⊤ ​ ( s ⋅ g ​ B ⊤ ) \frac{\partial L}{\partial B}=h^{\top}(s\cdot g),\qquad\frac{\partial L}{\partial A}=x^{\top}(s\cdot gB^{\top}) (6)
+B71: where h = x ​ A h=xA . The key observation is that h h appears only in the gradient for B B , and we can recompute it as x ​ A xA using the input x x (which we must store anyway) and the weight A A (which is a model parameter). This eliminates the need to store h h during forward. A complete derivation establishing mathematical equivalence with automatic differentiation is provided in Appendix A .
+B72: Method 128 256 512 1024
+B73: MeBP 252.7 360.8 582.4 1050.3
+B74: MeZO 199.0 243.0 336.0 524.0
+B75: MeSP 110.7 136.2 245.8 513.6
+B76: Memory Reduction vs MeBP
+B77: MeZO 21% 33% 42% 50%
+B78: MeSP 56% 62% 58% 51%
+
+B80: 4.3 Layer-by-Layer Processing
+B81: Our algorithm processes transformer blocks sequentially, maintaining minimal memory footprint throughout training.
+B82: Forward Phase.
+B83: Each transformer block receives its input and computes the full forward pass: layer normalization, Q/K/V projections with LoRA, multi-head attention, output projection, feed-forward network with gated activation, and residual connections. Only the final output of each block is stored in a checkpoint dictionary. All other intermediates are discarded immediately.
+B84: Backward Phase.
+B85: We iterate through blocks in reverse order. For each block, we retrieve the stored input from the checkpoint, re-execute the forward computation to regenerate intermediates, compute gradients for all LoRA parameters, update parameters immediately with the optimizer, and then explicitly deallocate all intermediates and clear the GPU cache before proceeding to the next block.
+B86: This design ensures that peak memory occurs during the backward pass of a single layer, rather than accumulating across layers as in standard backpropagation.
+B87: 4.4 Memory Complexity Analysis
+B88: Let L L denote the number of transformer layers, O O the output tensor size per layer, and T T the size of intermediates required for gradient computation within a single layer. Standard backpropagation stores all intermediates across all layers, requiring O ⁡ ( L × I ) O(L\times I) memory where I I is the total intermediate size per layer. MeBP with gradient checkpointing reduces this to O ⁡ ( L × O + I f ​ w ) O(L\times O+I_{fw}) , where I f ​ w I_{fw} represents framework-managed intermediates.
+B89: MeSP achieves O ⁡ ( L × O + T ) O(L\times O+T) by storing only layer outputs globally and maintaining intermediates for just one layer at a time. For Qwen2.5-0.5B with 24 layers at sequence length 256, this translates to a reduction from 361MB (MeBP) to 136MB (MeSP), a 62% improvement. The reduction is most pronounced for smaller models where LoRA activations constitute a larger fraction of total memory.
+B90: Layer Cosine Sim Sign Agree Rel. Error
+B91: 0 0.003 48.4% 171
+B92: 5 0.000 48.4% 2155
+B93: 10 -0.000 48.4% 1906
+B94: 15 -0.001 48.4% 2351
+B95: 20 -0.000 48.4% 3590
+B96: 23 0.001 48.5% 1692
+B97: Avg 0.001 48.4% 1978
+B98: Table 3: MeZO gradient quality vs exact gradients on Qwen2.5-0.5B.
+B99: 4.5 Implementation on Apple Silicon
+B100: Our implementation targets the unified memory architecture of Apple Silicon using MLX Apple Machine Learning Research (2023) . Transformer block forward functions are exported from Python to the .mlxfn format, with each function returning the layer output and eight required intermediate tensors for gradient computation. Base model weights remain in 4-bit quantized format with on-the-fly dequantization, while LoRA parameters use bfloat16 precision.
+B101: After each layer’s backward pass, we invoke GPU.clearCache() to immediately return memory to the system. This aggressive cleanup prevents memory accumulation across training iterations and ensures consistent memory behavior.
+
+B204: Table 7 shows sequence length ablation for Qwen2.5-3B.
+B205: Method 128 256 512 1024
+B206: MeBP 425.8 637.6 930.7 1685.2
+B207: MeZO 362.4 479.2 590.4 925.8
+B208: MeSP 245.6 368.4 505.3 925.8
+B209: Memory Reduction vs MeBP
+B210: MeZO 15% 25% 37% 45%
+B211: MeSP 42% 42% 46% 45%
+B212: Table 7: Sequence length ablation on Qwen2.5-3B. Values show peak memory in MB. MeSP maintains 42–46% reduction. Note: seq=512 uses measured data; others are interpolated.
+
+B280: All other intermediates are recomputed on-demand.
+B281: E.2 Memory Measurement
+B282: We measure memory using the iOS/macOS task_info API:
+B283: task_vm_info_data_t vmInfo; mach_msg_type_number_t count; kern_return_t result = task_info( mach_task_self(), TASK_VM_INFO, (task_info_t)&vmInfo, &count ); peak_memory = vmInfo.phys_footprint;
+B284: This provides the physical memory footprint as reported by the operating system, which is the most accurate measure of actual memory consumption on Apple Silicon devices.
+B285: E.3 GPU Cache Management
+B286: After each layer’s backward pass, we explicitly clear the GPU cache:
+B287: mx.eval(gradients) // Force evaluation GPU.clearCache() // Release memory
+B288: This prevents memory accumulation across layers and ensures consistent memory behavior.
+B289: Experimental support, please view the build logs for errors. Generated by L A T E xml .
+B290: Instructions for reporting errors
+B291: We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the methods listed below:
+B292: Click the "Report Issue" ( ) button, located in the page header.
+B293: Tip: You can select the relevant text first, to include it in your report.
+B294: Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability should not be a barrier to accessing research. Thank you for your continued support in championing open access for all.
+B295: Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+B296: We gratefully acknowledge support from our major funders , member institutions , , and all contributors. Major funding support from
+

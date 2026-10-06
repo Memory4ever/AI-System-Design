@@ -1,0 +1,1485 @@
+
+=== PAGE 1 ===
+From PowerSGD to PowerSGD+: Low-Rank Gradient Compression
+for Distributed Optimization with Convergence Guarantees
+Shengping Xie ∗1, Chuyan Chen †1, and Kun Yuan ‡2
+1School of Mathematical Sciences, Peking University
+2Center for Machine Learning Research, Peking University
+Abstract
+Low-rank gradient compression methods, such asPowerSGD, have gained attention in communication-
+efficient distributed optimization. However, the convergence guarantees ofPowerSGDremain unclear,
+particularly in stochastic settings. In this paper, we show thatPowerSGDdoes not always converge to the
+optimal solution and provide a clear counterexample to support this finding. To address this, we introduce
+PowerSGD+, which periodically updates the projection subspace via singular value decomposition, ensuring
+that it remains aligned with the optimal subspace. We prove thatPowerSGD+converges under standard
+assumptions and validate its effectiveness through empirical evaluation on large language model tasks.
+1 Introduction
+Distributed optimization has emerged as a fundamental paradigm for large-scale signal processing and ma-
+chine learning. Matrix variables naturally arise in such applications. For example, the weights in each layer
+of a deep neural network are typically matrices. This paper considers a scenario in whichNcomputing nodes
+collaborate to solve the distributed optimization problem involving a matrix variableX∈R m×n(m≥n):
+min
+X∈R m×n
+f(X) := 1
+N
+NX
+i=1
+fi(X),(1)
+wheref i(X) :=E ξ(i)∼Di[F(X;ξ (i))].
+WhenN= 1, Problem (1) reduces to a standard stochastic optimization problem with a vector variable.
+Here,ξ (i) is a random sample from the local distributionD i, andf i :R m×n →Ris the local loss function.
+∗2300010702@stu.pku.edu.cn
+†chuyanchen@stu.pku.edu.cn
+‡Corresponding author:kunyuan@pku.edu.cn
+1
+arXiv:2509.11254v1  [math.OC]  14 Sep 2025
+
+=== PAGE 2 ===
+Since each nodeican only access its own data to compute local gradient∇F(X;ξ (i)), nodes must exchange
+gradients to obtain a global solution.
+Centralized stochastic gradient descent (SGD) is a common approach to Problem (1), where local gra-
+dients are globally averaged via either a central server [1] or ring All-Reduce primitives [2]. However,
+transmitting full gradients introduces substantial communication overhead, resulting in a key bottleneck in
+distributed learning [3, 4]. To mitigate this, various compression strategies have been developed. Quantiza-
+tion maps high-precision values to low-bit representations, with notable methods including 1-bit SGD [3],
+QSGD [5], and TernGrad [6]. Sparsification reduces transmission by discarding less informative entries, with
+popular examples such as random sparsification [7,8] and top-Ksparsification [9].
+This paper studies low-rank communication compression, which projects transmitted gradients onto a
+low-rank subspace to exploit their inherent structure and reduce communication costs. In deep neural
+network training, the success of the LoRA fine-tuning method [10] demonstrates the effectiveness of low-rank
+approximations. Recent studies [11–13] show that both weights and gradients in neural network pre-training
+exhibit low-rank structures, motivating a re-examination of low-rank compression in distributed learning.
+PowerSGD[14] is a prominent low-rank gradient compression method in distributed learning. It employs
+power iteration to align low-rank projection matrices with the optimal rank-rgradient approximation, re-
+placing costly singular value decomposition (SVD) with QR decomposition and achieving strong empirical
+performance. Fully integrated into PyTorch,PowerSGDsupports efficient All-Reduce aggregation with error
+feedback, and has been deployed in large-scale systems such as OpenAI DALL-E [15] and AngelPTM [16].
+Despite its practical success, its convergence guarantees under standard assumptions remain theoretically
+unproven.
+Contribution.This paper targets to address the convergence guarantees issue inPowerSGD. Surprisingly,
+we demonstrate thatPowerSGDdoes not always converge to the optimal solution and provide a clear coun-
+terexample to support this finding. To resolve this issue, we introducePowerSGD+, which incorporates a
+safeguard mechanism that periodically updates the projection subspace via SVD, ensuring the gradient ap-
+proximation remains aligned with the optimal subspace. With this safeguard, we theoretically prove that
+PowerSGD+alwaysconverges under standard assumptions. Our empirical evaluation on large language model
+tasks validates our results.
+2 Preliminary
+Error Feedback.Error feedback (EF) mitigates the adverse effects of compression by incorporating past
+residuals into subsequent gradient updates, thereby preserving more informative signals [3] [17]. EF21-MSGD
+[18] extends this concept by maintaining a local gradient tracker for each node, reducing the impact of data
+heterogeneity and improving convergence rates. Building on this theoretical foundation, NEOLITHIC [19]
+establish lower bounds for distributed learning under communication compression.
+2
+
+=== PAGE 3 ===
+Contractive Compressor.Contractive compressors are commonly employed in communication-efficient
+distributed optimization. Their key characteristic is that the compression error decreases in expectation
+as the underlying variable approaches zero. The formal definition of a contractive compressor is provided
+below:
+Definition 1.(Contractive Compressor). A compressorCis contractive if there exists a constantδ∈(0,1]
+such that for any matrix variable∆,
+EC(∥C(∆)−∆∥ 2
+F )≤(1−δ)∥∆∥ 2
+F ,(2)
+where the expectation is taken for the random compressorC.
+Definition 2.(Low-rank Compressor). A low-rank compressorCfor a matrixW∈R m×n(m≥n)is defined
+as
+C(W) =P P ⊤W,(3)
+whereP∈R m×r is a semi-orthogonal matrix (i.e.,P ⊤P=I r) andr≤n. ForCin(3), it is straightforward
+to obtain:
+∥C(W)−W∥ 2
+F +∥C(W)∥ 2
+F =∥W∥ 2
+F .(4)
+Definition 3.(Optimal rank-rCompressor). An optimal rank-rcompressor is a low-rank compressor as
+defined in(3), with the optimal projection matrix ˜Pthat minimizes the compression error:
+˜P= argmin
+P∈R m×r
+∥P P ⊤W−W∥ 2
+F .(5)
+The solution to problem (5) is provided SVD. LetW=UΣV ⊤ be the singular value decomposition ofW.
+The optimal compressor is given by the firstrcolumns of the left singular matrix, ˜P=U[:,:r], which
+satisfies
+∥ ˜P ˜P ⊤W−W∥ 2
+F ≤
+
+1− r
+n
+
+∥W∥ 2
+F .(6)
+Apparently, the optimal rank-rcompressor is contractive.
+Assumptions. We present the basic assumptions used throughout our theoretical analysis, which are
+standard in the Error Feedback framework [20] [21] [22].
+Assumption 1(Smoothness and lower boundedness).The global loss functionf(X)is lower-bounded and
+L-smooth.
+Assumption 2(Stochastic gradient).For each nodei, the local stochastic gradient∇F(X;ξ (i))is unbiased
+and has bounded variance, i.e.,E ξ(i)∼Di[∇F(X;ξ (i)] =∇f i(X),E ξ(i)∼Di
+
+∥∇F(X;ξ (i))− ∇f i(X)∥ 2
+F
+
+≤σ 2
+for anyX.
+3
+
+=== PAGE 4 ===
+Algorithm 1Rank-rSSP/SVD compressor
+Notation:Set current update matrices∆ (1), . . . ,∆(N) ∈R m×n, previous auxiliary basisQ∈R n×r.
+functionSSP-Comp(Q,∆ (1), . . . ,∆(N)):
+on each nodei
+P (i) ←∆ (i)Q
+P← 1
+N (P (1) +· · ·+P (N))▷All-Reduce Mean
+˜P←QR(P)▷Power iteration
+Q(i) ←(∆ (i))⊤ ˜P
+Q← 1
+N (Q(1) +· · ·+Q (N))▷All-Reduce Mean
+return(Q, ˜P(Q (i))⊤, ˜P Q⊤)
+functionSVD-Comp(∆ (1), . . . ,∆(N)):
+on each nodei
+∆← 1
+N (∆(1) +· · ·+∆ (N))▷All-Reduce Mean
+U,Σ,V←SVD(∆)
+˜P←U[:,:r]▷SVD on full gradient
+Q(i) ←(∆ (i))⊤ ˜P
+Q← 1
+N (Q(1) +· · ·+Q (N))▷All-Reduce Mean
+return(Q, ˜P(Q (i))⊤, ˜P Q⊤)
+Assumption 3(Uniform gradient bound).The full gradient is uniformly bounded, i.e.,∥∇f(X)∥ 2
+F ≤ω 2.
+This implies that the second moment is also bounded, specifically,E
+ 1
+N
+PN
+i=1 ∇F(X, ξ (i))
+
+2
+F
+
+≤G 2 ≡
+σ2 +ω 2.
+QR decomposition.In this paper, we use the function QR(·) to denote matrix orthogonalization by
+economic QR decomposition: forA∈R n×r (n≥r), it orthogonalizesA=QRand returns onlyQ∈R n×r
+withQ ⊤Q=I r, whileRis omitted.
+3 PowerSGD and its non-convergence
+As a well-known communication-efficient algorithm,PowerSGD[14] reduces communication by projecting the
+gradients onto a low-rank subspace. To mitigate compression error, it employs an error-feedback mechanism
+that carries the previous compression residual forward into subsequent updates, thereby preserving more
+information. ThePowerSGDframework with MSGD optimizer is summarized below.
+g(i)
+t ← ∇F(X t, ξ(i)
+t ),∆ (i)
+t ←g (i)
+t +e (i)
+t ,(7a)
+Qt,b∆(i)
+t ,b∆t ←Comp(Q t−1,{∆ (i)
+t }N
+i=1),(7b)
+mt =µm t−1 + b∆t,X t+1 ←X t −η·m t.(7c)
+4
+
+=== PAGE 5 ===
+Figure 1:Loss curves ofPowerSGDandPowerSGD+using MSGD and Adam.
+Here, Step (7a) is executed in parallel on each nodei, where∆ (i)
+t denotes the local stochastic gradient
+corrected by the previous compression residuale (i)
+t . In Step (7b), the functionComp(·) transforms both the
+local gradients∆ (i)
+t and the averaged global gradient∆ t = 1
+N
+PN
+i=1 ∆(i)
+t into their low-rank approximations,
+b∆(i)
+t and b∆t using a specific low-rank compressorC SSP. The matrixQ t serves as the auxiliary basis for
+compression. Step (7c) then applies a standard momentum SGD update. Finally, each node updates its
+residual ase (i)
+t+1 ←∆ (i)
+t − b∆(i)
+t .
+Single-step power iteration.The low rank compressorC SSP inPowerSGDrelies on single-step power
+iteration. Given the global gradient∆ t and an initial basisQ −1 ∈R n×r, the standard power iteration runs
+fork= 0, . . . , K−1 as
+˜P k = QR(∆tQk−1),Q k =∆ ⊤
+t ˜Pk,(8)
+With the resulting projection matrices, b∆t =P KQ⊤
+K serves as a near-optimal rank-rapproximation of∆ t.
+To reduce both computation and communication,PowerSGDemploys only asingle iterationin compressor
+C(·) of step (7b):
+˜Pt = QR(∆tQt−1),Q t =∆ ⊤
+t ˜Pt, b∆t =C SSP(∆t) = ˜PtQ⊤
+t = ˜Pt ˜P ⊤
+t ∆t.(9)
+This single-step scheme is implemented efficiently acrossNnodes as theSSP-Comp(·) function in Al-
+gorithm 1, whereSSPdenotes “single-step power iteration”. The implementation of PowerSGDis in Algo-
+rithm 2.
+Non-convergence of PowerSGD.With only one power step,PowerSGDacts as an online subspace-tracking
+method. Compared to standard power iteration, SSP usesQ t−1 as an estimation ofQ t in (9), which implic-
+itlyassumes the leading subspace of the gradient∆ t changes slowly. When this assumption is violated—such
+as under rapidly varying or highly noisy gradients—the projection matrix may lock onto an incorrect or even
+orthogonal subspace, preventing convergence to the desired solution.
+5
+
+=== PAGE 6 ===
+To illustrate this insight, we construct an example with the objective function and stochastic gradient in
+(1) defined as
+fi(X) =ψ(D ⊤XD),(10a)
+∇F(X;ξ (i)) =∇f(X) +ξ (i) 
+σB− ∇f(X)
+
+.(10b)
+whereX∈R 2×2 is the optimization variable,D= [1;−1]∈R 2,B= [1,1; 1,1]∈R 2×2 andσ≥0. The
+functionψ(·) is defined asψ(x) =x 2 if|x| ≤1 andψ(x) = 2|x| −1 otherwise. At each iteration, the
+noise variableξ (i) is uniformly sampled from{−1,1}independently across all nodes. It is straightforward to
+verify that problem (10) satisfies Assumptions 1–3. Moreover, for largeσ, the stochastic gradient in (10b)
+fluctuates significantly due to the randomness ofξ (i). We show thatPowerSGDfails to converge for this
+example:
+Theorem 1(Non-Convergence ofPowerSGD).There exist local functionsf i :R 2×2 →Rand a stochastic
+gradient oracle satisfying Assumptions 1– 3 such that for any choice of initializationQ=Q −1, learning
+rate scheduleη t, and base optimizer (e.g., SGD, MSGD, Adam), there is a constantϵ 0 =ϵ(X 0)>0for
+which the gradient generated byPowerSGDat any time steptis bounded away from0(See proof in Appendix
+A): E(∥∇f(X t)∥2
+F )≥ϵ 0.
+Figure 1 illustrates a more general counterexample through numerical experiments. The plots show that
+PowerSGDfails to converge under both MSGD and Adam, leading to stagnation of the training loss.
+Table 1:GLUE test results for fine-tuningRoBERTa-Base(higher is better). “Avg” is the mean across tasks.
+Algorithm CoLA STS-B MRPC R TE SST-2 MNLI QQP QNLI Avg
+Full precision 62.8990.29 92.4179.78 94.3887.2091.74 92.42 86.35
+PowerSGD (r= 4) 60.58 90.65 91.68 78.33 94.15 87.47 91.17 92.07 85.73
+GaLore (r= 4) 62.64 89.68 91.96 77.62 94.1587.5090.53 92.07 85.70
+PowerSGD+ (r= 4) 62.8590.67 92.5479.4294.3887.08 91.14 92.13 86.28
+4 Safeguard to ensure convergence
+From PowerSGD to PowerSGD+.PowerSGDrelies on a single-step power iteration throughout the
+optimization process, which makes it susceptible to misalignment between the identified subspace and the true
+gradient subspace. To address this issue, we introducePowerSGD+, a simple variant that periodically resets
+the projection subspace by recomputing the optimal rank-rapproximation of the gradient. This periodic
+reset acts as a safeguard, ensuring alignment with the evolving gradient and guaranteeing convergence.
+As shown in Algorithm 2, PowerSGD+ periodically replaces compressorC SSP with the optimal rank-r
+compressorC SVD in Eq. (5). The full implementation ofC SVD is shown in functionSVD-Comp(·) . This
+6
+
+=== PAGE 7 ===
+Algorithm 2 PowerSGD/ PowerSGD+
+Require:stepsizeη; momentum parameter 0≤µ <1; restart stepτ; compression rankr; number of
+workersN.
+Initialize:initial weightX 0 ∈R m×n, reflection matrixQ −1 ∈R n×r, momentumm −1 = 0 m×n, error
+e(i)
+0 = 0m×n for workeri. All variables are set separately on all nodes;
+fort= 0, . . . , T−1do
+on each nodei
+Updateg (i)
+t and∆ (i)
+t as in (7a).
+Qt,b∆(i)
+t ,b∆t ←QR-COMP(Q t−1,{∆ (i)
+t }N
+i=1)
+(PowerSGD)
+ifmod(t, τ)̸= 0then
+Qt,b∆(i)
+t ,b∆t ←QR-COMP(Q t−1,{∆ (i)
+t }N
+i=1)
+ifmod(t, τ) = 0then
+Qt,b∆(i)
+t ,b∆t ←SVD-COMP({∆ (i)
+t }N
+i=1)
+(PowerSGD+ )
+e(i)
+t+1 ←∆ (i)
+t − b∆(i)
+t
+Updatem t andX t+1 as in (7c).
+return{X t}T
+t=0
+involves performing an SVD on the full gradient and transmitting the entire matrix. While full-gradient
+communication is costly, it occurs only once everyτiterations, making the communication overhead minimal
+and less impactful on overall performance.
+Convergence guarantees.By periodically applying the optimal rank-rcompression, which prevents the
+identified gradient subspace from deviating too much during single-step power iteration, we can establish
+convergence guarantees.
+Theorem 2.(Convergence ofPowerSGD+ ) Under Assumption 1- 3, Defineδ=r/nand∆F=f(X 0)−
+minf(X). If we set the learning rateηproperly,PowerSGD+ with MSGD (Algorithm 2) converges as follows
+(See proof in Appendix B)
+1
+T
+T−1X
+t=0
+E
+
+∥∇f(X t)∥2
+F
+
+≤
+r
+32Lσ2∆F
+N T + 8L∆F
+T + 6
+3√
+274(Lτ G∆F)2/3
+T 2/3δ2/3(1−µ) 2/3 .
+Remark 1.WhenT→ ∞,PowerSGD+ achieves a convergence rate ofO(1/
+√
+N T)which isirrelevantto
+the restart periodτ. It requiresT=O(1/(N ϵ 2))iterations to reach a target accuracy, and this achieves
+linear speedup.
+Remark 2.For variants ofPowerSGD+ which replaceC SVD with other contractive compressor of coefficient
+δ, the same convergence rate is also achieved.
+7
+
+=== PAGE 8 ===
+Table 2:Communication comparison of existing low-rank algorithms for compressing anm×nmatrix.
+Algorithm All-Reduce Error-F eedback Communication
+per Iteration
+ATOMO [23]✗✓mr+nr
+PowerSGD [14]✓ ✓mr+nr
+GaLore [11]✓✗nr+ mn
+τ
+PowerSGD+ ✓ ✓ nr+mr+ mn
+τ
+PowerSGD+(Appro-
+ximation Top-r) [24]
+✓ ✓ nr+mr
+Connections with other algorithms.We highlight key distinctions betweenPowerSGD+ and other
+communication-efficient methods. ATOMO [23] applies SVD to local gradients, yielding inconsistent bases
+across nodes and preventing all-reduce, while GaLore [11] updates its projection matrix via Lazy-SVD [24],
+refreshing only once everyτsteps. In contrast,PowerSGD[14] relies solely on power iteration without
+corrective SVD. Table 1 compares communication efficiency: relative to GaLore,PowerSGD+ incurs an extra
+mrcost, but by aligning the projection matrix at every step, it enables largerτ, making this overhead
+negligible. When smallerτis required, the full SVD can be replaced with lighter contractive compressors,
+such as Approximation Top-r[24] or random projection [25], allowingPowerSGD+ to matchPowerSGD’s
+communication complexity while ensuring convergence guarantees.
+5 Experiment
+We evaluatePowerSGD+ by pre-training and fine-tuning using four NVIDIA RTX 4090 (24GB) GPUs. To
+ensure fair comparison, we run the Galore with full optimizer state [11] andPowerSGD[14] with same
+compression rank and compared the performance of various compression methods against full-parameter
+training with the standard AdamW optimizer.PowerSGDandPowerSGD+ are applied with error feedback.
+Fine-tuning with PowerSGD+ .We fine-tune the pretrainedRoBERTa-Basemodel on the General
+Language Understanding Evaluation (GLUE) benchmark. We conducted a grid search to select the optimal
+hyperparameter configuration tailored forPowerSGDwith rank 4 and transfer the hyperparameters to all
+methods. We fine-tune for 10 epochs per task and report test metrics in Table 1. Detailed hyperparameters
+are listed in Table 4.
+Pre-training with PowerSGD+ .We pre-train LLaMA models on the C4 corpus. Following [11], the
+60M and 130M models are trained for 10k and 20k iterations. We report the best validation perplexity in
+Table 3 after tuning the basic hyperparameters and peak learning rate over{1×10 −3,2×10 −3,4×10 −3}.
+Detailed hyperparameters are listed in Table 5.
+8
+
+=== PAGE 9 ===
+Table 3:Validation perplexity (PPL) for pre-training LLaMA on C4 (lower is better). GaLore diverged at ranks
+r∈ {4,8}
+.
+Algorithm LLaMA-60M LLaMA-130M
+Full rank 29.88 23.06
+Rank r= 4r= 8 r= 4r= 8
+GaLore 94.96 92.91 92.93 70.55
+PowerSGD 36.1132.57 27.60 26.24
+PowerSGD+ 35.4632.63 27.36 26.11
+Analysis.In fine-tuning tasks,PowerSGD+ attains near-parity with the full-rank baseline, leading the scores
+among the compressors in pre-training tasks, GaLore fails to converge at low ranks, whereasPowerSGDand
+PowerSGD+ match the baseline at the same ranks. Moreover,PowerSGD+ slightly outperformsPowerSGD
+across most settings. These results indicate that both subspace recomputation and power-iteration alignment
+inPowerSGD+ are helpful, achieving a consistent, competitive performance under identical setting.
+6 Conclusion
+In this work, we show thatPowerSGDlacks convergence guarantees by presenting a counterexample. To
+overcome this, we proposePowerSGD+ , which periodically updates the subspace via SVD to stay aligned
+with the optimum. We provide the first rigorous convergence analysis forPowerSGD+ and validate its
+effectiveness through extensive large-scale experiments.
+7 References
+[1] Mu Li, David G Andersen, Jun Woo Park, Alexander J Smola, Amr Ahmed, Vanja Josifovski, James Long,
+Eugene J Shekita, and Bor-Yiing Su. Scaling distributed machine learning with the parameter server. In11th
+USENIX Symposium on Operating Systems Design and Implementation (OSDI 14), pages 583–598, 2014.
+[2] Pitch Patarasuk and Xin Yuan. Bandwidth optimal all-reduce algorithms for clusters of workstations.Journal
+of Parallel and Distributed Computing, 69(2):117–124, 2009.
+[3] Frank Seide, Hao Fu, Jasha Droppo, Gang Li, and Dong Yu. 1-bit stochastic gradient descent and its application
+to data-parallel distributed training of speech dnns. InInterspeech, volume 2014, pages 1058–1062. Singapore,
+2014.
+[4] Trishul Chilimbi, Yutaka Suzue, Johnson Apacible, and Karthik Kalyanaraman. Project adam: Building an
+efficient and scalable deep learning training system. In11th USENIX symposium on operating systems design
+and implementation (OSDI 14), pages 571–582, 2014.
+[5] Dan Alistarh, Demjan Grubic, Jerry Li, Ryota Tomioka, and Milan Vojnovic. Qsgd: Communication-efficient
+sgd via gradient quantization and encoding.Advances in neural information processing systems, 30, 2017.
+[6] Wei Wen, Cong Xu, Feng Yan, Chunpeng Wu, Yandan Wang, Yiran Chen, and Hai Li. Terngrad: Ternary
+gradients to reduce communication in distributed deep learning.Advances in neural information processing
+systems, 30, 2017.
+[7] Jakub Koneˇ cn` y, H Brendan McMahan, Felix X Yu, Peter Richt´ arik, Ananda Theertha Suresh, and Dave Bacon.
+Federated learning: Strategies for improving communication efficiency.arXiv preprint arXiv:1610.05492, 2016.
+9
+
+=== PAGE 10 ===
+[8] Jianqiao Wangni, Jialei Wang, Ji Liu, and Tong Zhang. Gradient sparsification for communication-efficient
+distributed optimization.Advances in Neural Information Processing Systems, 31, 2018.
+[9] Sebastian U Stich, Jean-Baptiste Cordonnier, and Martin Jaggi. Sparsified sgd with memory.Advances in
+neural information processing systems, 31, 2018.
+[10] Edward J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, Weizhu Chen,
+et al. Lora: Low-rank adaptation of large language models.ICLR, 1(2):3, 2022.
+[11] Jiawei Zhao, Zhenyu Zhang, Beidi Chen, Zhangyang Wang, Anima Anandkumar, and Yuandong Tian. Galore:
+Memory-efficient llm training by gradient low-rank projection.arXiv preprint arXiv:2403.03507, 2024.
+[12] Andi Han, Jiaxiang Li, Wei Huang, Mingyi Hong, Akiko Takeda, Pratik Kumar Jawanpuria, and Bamdev
+Mishra. Sltrain: a sparse plus low rank approach for parameter and memory efficient pretraining.Advances in
+Neural Information Processing Systems, 37:118267–118295, 2024.
+[13] Yiming Chen, Yuan Zhang, Liyuan Cao, Kun Yuan, and Zaiwen Wen. Enhancing zeroth-order fine-tuning for
+language models with low-rank structures.arXiv preprint arXiv:2410.07698, 2024.
+[14] Thijs Vogels, Sai Praneeth Karimireddy, and Martin Jaggi. Powersgd: Practical low-rank gradient compression
+for distributed optimization.Advances in Neural Information Processing Systems, 32, 2019.
+[15] Aditya Ramesh, Mikhail Pavlov, Gabriel Goh, Scott Gray, Chelsea Voss, Alec Radford, Mark Chen, and Ilya
+Sutskever. Zero-shot text-to-image generation. InInternational conference on machine learning, pages 8821–
+8831. Pmlr, 2021.
+[16] Xiaonan Nie, Yi Liu, Fangcheng Fu, Jinbao Xue, Dian Jiao, Xupeng Miao, Yangyu Tao, and Bin Cui. Angel-
+ptm: A scalable and economical large-scale pre-training system in tencent.arXiv preprint arXiv:2303.02868,
+2023.
+[17] Sai Praneeth Karimireddy, Quentin Rebjock, Sebastian Stich, and Martin Jaggi. Error feedback fixes signsgd
+and other gradient compression schemes. InInternational conference on machine learning, pages 3252–3261.
+PMLR, 2019.
+[18] Peter Richt´ arik, Igor Sokolov, and Ilyas Fatkhullin. Ef21: A new, simpler, theoretically better, and practically
+faster error feedback.Advances in Neural Information Processing Systems, 34:4384–4396, 2021.
+[19] Xinmeng Huang, Yiming Chen, Wotao Yin, and Kun Yuan. Lower bounds and nearly optimal algorithms in
+distributed learning with communication compression.Advances in Neural Information Processing Systems,
+35:18955–18969, 2022.
+[20] Sebastian U Stich and Sai Praneeth Karimireddy. The error-feedback framework: Better rates for sgd with
+delayed gradients and compressed communication.arXiv preprint arXiv:1909.05350, 2019.
+[21] Ilyas Fatkhullin, Alexander Tyurin, and Peter Richt´ arik. Momentum provably improves error feedback!Ad-
+vances in Neural Information Processing Systems, 36:76444–76495, 2023.
+[22] Haoran Sun and Mingyi Hong. Distributed non-convex first-order optimization and information processing:
+Lower complexity bounds and rate optimal algorithms.IEEE Transactions on Signal processing, 67(22):5912–
+5928, 2019.
+[23] Hongyi Wang, Scott Sievert, Shengchao Liu, Zachary Charles, Dimitris Papailiopoulos, and Stephen Wright.
+Atomo: Communication-efficient learning via atomic sparsification.Advances in neural information processing
+systems, 31, 2018.
+[24] Chuyan Chen, Yutong He, Pengrui Li, Weichen Jia, and Kun Yuan. Greedy low-rank gradient compression for
+distributed learning with convergence guarantees.arXiv preprint arXiv:2507.08784, 2025.
+[25] Yutong He, Pengrui Li, Yipeng Hu, Chuyan Chen, and Kun Yuan. Subspace optimization for large language
+models with convergence guarantees.arXiv preprint arXiv:2410.11289, 2024.
+10
+
+=== PAGE 11 ===
+A Non convergence of PowerSGD
+Theorem 3(Non-Convergence ofPowerSGD).There exist local functionsf i :R 2×2 →Rand a stochastic
+gradient oracle satisfying Assumptions 1– 3 such that for any choice of initializationQ=Q −1, learning
+rate scheduleη t, and base optimizer (e.g., SGD, MSGD, Adam), there is a constantϵ 0 =ϵ(X 0)>0for
+which the gradient generated byPowerSGDat any time steptis bounded away from0:
+E(∥∇f(X t)∥2
+F )≥ϵ 0.
+Proof.LetX=
+
+x11 x12
+x21 x22
+
+,ψ(x) =
+
+
+
+x2 |x| ≤1
+2|x| −1|x| ≥1.
+We setf i(X) =ψ(x 11 −x 12 −x 21 +x 22) for all nodes, with initialization atX 0 =
+
+a b
+c d
+
+.
+DefineA=
+
+ 1−1
+−1 1
+
+,B=
+
+1 1
+1 1
+
+,C=
+
+
+√
+2
+2√
+2
+2
+
+, and setϵ 0 = [ψ′(a−b−c+d)] 2
+2N−2 .
+Letg (i)
+t ≡ ∇f(X t)+ξ (i)
+t ·(σB− ∇f(X t)) with arbitraryσ≥0, whereξ (1)
+t , . . . , ξ(N)
+t are independent random
+variables withP(ξ (i)
+t = 1) =P(ξ (i)
+t =−1) = 1
+2.
+Then at any pointX t,∇f(X t) =ψ ′(x11 +x 12 −x 21 −x 22)A∈span(A).
+Sinceψ ′(x)≤2 for anyx∈R, it is clear that Assumptions 1– 3 are satisfied.
+Now we prove the non-convergence result by induction.
+Claim 1.If the stochastic gradient att= 0satisfiesξ (1)
+0 =· · ·=ξ (N)
+0 = 1, then for any initialization of
+Q−1 and any stochastic gradients att≥1, we have for allt≥0:
+mt ∈span(B),e (i)
+t+1 ∈span(A), ˜Pt =C,Q t ∈span(C).
+Proof.Note that:
+CC ⊤B=B,CC ⊤A= 0,BC=B ⊤C= 2C,AC=A ⊤C= 0.
+Whent= 0, sincem −1 =e (i)
+−1 = 0, we have:
+∆(i)
+0 =σB=
+
+σ σ
+σ σ
+
+ .
+For any initializationQ=
+
+a
+b
+
+:
+P0 = 1
+N
+NX
+i=1
+∆(i)
+0 Q=∆ (1)
+0 Q=
+
+σ(a+b)
+σ(a+b)
+
+ ,so ˜P0 =C.
+11
+
+=== PAGE 12 ===
+Then:
+Q0 = 1
+N
+NX
+i=1
+∆(i)⊤
+0 ˜P0 =∆ (1)⊤
+0 C= 2σC∈span(C),
+C(∆(i)
+0 ) =CC ⊤∆(i)
+0 =∆ (i)
+0 ,
+e(i)
+1 =∆ (i)
+0 − C(∆ (i)
+0 ) = 0∈span(A),
+m0 =C(∆ 0) =σB∈span(B).
+Fort≥1, letg (i)
+t =λ (i)
+t A+β (i)
+t B, and suppose (by induction) thate (i)
+t =γ (i)
+t A,m t−1 =ϕ t−1B, and
+Qt−1 =q t−1C.
+Then:
+∆(i)
+t =g (i)
+t +e (i)
+t = (λ(i)
+t +γ (i)
+t )A+β (i)
+t B,
+Pt = 1
+N
+NX
+i=1
+∆(i)
+t Qt−1 = qt−1
+N
+" NX
+i=1
+(λ(i)
+t +γ (i)
+t )
+!
+A+
+ NX
+i=1
+β(i)
+t
+!
+B
+#
+C∈span(C),
+⇒ ˜Pt =C.
+Then:
+Qt = 1
+N
+NX
+i=1
+∆(i)⊤
+t ˜Pt = qt−1
+N
+" NX
+i=1
+(λ(i)
+t +γ (i)
+t )
+!
+A⊤ +
+ NX
+i=1
+β(i)
+t
+!
+B⊤
+#
+C∈span(C),
+C(∆(i)
+t ) =CC ⊤∆(i)
+t =β (i)
+t B,
+e(i)
+t+1 =∆ (i)
+t − C(∆ (i)
+t ) = (λ(i)
+t +γ (i)
+t )A∈span(A),
+mt =µm t−1 + 1
+N
+NX
+i=1
+C(∆(i)
+t ) =
+ 
+µϕt−1 + 1
+N
+NX
+i=1
+β(i)
+t
+!
+B∈span(B).
+Hence, by induction, the claim holds.
+Returning to Theorem 3, whenξ (1)
+0 =· · ·=ξ (N)
+0 = 1, we always have:
+Xt −X 0 =
+t−1X
+k=0
+ηkmk ∈span(B).
+SetX t =
+
+a+λ b+λ
+c+λ d+λ
+
+, then:
+∇f(X t)≡ψ ′(a−b−c+d)A.
+Therefore:
+E(∥∇f(X t)∥2
+F )≥E(∥∇f(X t)∥2
+F |ξ (1)
+0 =· · ·=ξ (N)
+0 = 1)·P(ξ (1)
+0 =· · ·=ξ (N)
+0 = 1)
+= 4[ψ′(a−b−c+d)] 2 · 1
+2N =ϵ 0 .
+12
+
+=== PAGE 13 ===
+Remark 3.For Adam or SGD as base optimizers, similarly we can also proveX t −X 0 ∈span(B), as the
+compressed gradients at each step is in span(B).
+B Convergence of PowerSGD+
+Notations. In the following proof, we define
+∆t = 1
+N (∆(1)
+t +· · ·+∆ (N)
+t ),
+AsCin Algorithm 1 is always a linear compressor, we can get:
+C(∆t) = 1
+N (C(∆(1)
+t ) +· · ·+C(∆ (N)
+t ).
+Lemma 1.For operatorC=C SSP defined in Algorithm 2, for any∆ t, we have:
+∥C(∆t)∥2
+F ≤ ∥∆ t∥2
+F ,∥C(∆ t)−∆ t∥2
+F ≤ ∥∆ t∥2
+F .
+Proof.Followed by Algorithm 2, we have:
+∥C(∆t)∥2
+F =∥ ˜PtQt∥2
+F
+=
+
+1
+N
+˜Pt
+
+Q(1)
+t +· · ·+Q (N)
+t
+
+2
+F
+=
+
+1
+N
+˜Pt
+
+( ˜Pt)⊤∆(1)
+t +· · ·+ ( ˜Pt)⊤∆(N)
+t
+
+2
+F
+=
+ ˜Pt( ˜Pt)⊤∆t
+
+2
+F
+.
+As ˜Pt is an orthogonal matrix with ( ˜Pt)⊤ ˜Pt =I r, we have:
+∥C(∆t)∥2
+F +∥C(∆ t)−∆ t∥2
+F
+=
+ ˜Pt( ˜Pt)⊤∆t
+
+2
+F
++
+
+
+I− ˜Pt( ˜Pt)⊤
+
+∆t
+
+2
+F
+= tr
+
+(∆t)⊤
+h
+˜Pt( ˜Pt)⊤
+i2
+∆t
+
++ tr
+
+(∆t)⊤
+h
+I− ˜Pt( ˜Pt)⊤
+i2
+∆t
+
+= tr
+ 
+(∆t)⊤∆t
+
+=∥∆ t∥2
+F ,
+Where the last equation uses the orthogonality of ˜Pt. So we finished the proof.
+Lemma 2.Defineδ=r/n. For operatorC=C SVD defined in Algorithm 2, for any∆ t, we have:
+∥C(∆t)−∆ t∥2
+F ≤(1−δ)∥∆ t∥2
+F .
+Proof.Let∆ t =U tΣtVt represents its SVD composition, ˜Pt =U t[:,:r] is the firstrsingular vectors. As
+m≥n, letR t =U t[:,(r+ 1) :]. It holds thatI=U t(Ut)⊤ = ˜Pt( ˜Pt)⊤ +R t(Rt)⊤. Thus,
+∥C(∆t)−∆ t∥2
+F =
+
+
+I− ˜Pt( ˜Pt)⊤
+
+UtΣt(Vt)⊤
+
+2
+F
+= tr
+
+Vt(Σt)⊤(Ut)⊤
+
+I− ˜Pt( ˜Pt)⊤
+2
+UtΣt(Vt)⊤
+
+= tr
+ 
+(Σt)⊤(Ut)⊤Rt(Rt)⊤UtΣt
+
+,
+13
+
+=== PAGE 14 ===
+where the second equation uses∥X∥ 2
+F = tr(X ⊤X) and the last equation uses tr(AB)
+= tr(BA), (V t)⊤Vt =Iand (R t)⊤Rt =I. By (R t)⊤ ˜Pt = 0 and ( ˜Pt)⊤Rt = 0
+(Ut)⊤Rt(Rt)⊤Ut =
+
+( ˜Pt)⊤
+(Rt)⊤
+
+ Rt(Rt)⊤
+
+˜Pt Rt
+
+=
+
+ 0r×r 0r×(n−r)
+0(n−r)×r In−r
+
+ .
+Letσ 1 ≥σ 2 ≥ · · · ≥σ n ≥0 denote the singular values of∆ t. This implies
+(Σt)⊤(Ut)⊤Rt(Rt)⊤UtΣt =
+
+
+0r×r 0r×(n−r) 0r×(m−n)
+0(n−r)×r diag(σ2
+r+1,· · ·, σ 2
+n) 0 (n−r)×(m−n)
+0(m−n)×r 0(m−n)×(n−r) 0(m−n)×(m−n)
+
+ .
+Applying this result yields
+ ˜Pt( ˜Pt)⊤∆t −∆ t
+
+2
+F
+= tr
+ 
+(Σt)⊤(Ut)⊤Rt(Rt)⊤UtΣt
+
+=
+nX
+i=r+1
+σ2
+i ≤(1−δ)∥∆ t∥2
+F ,
+where the inequality uses∥∆ t∥2
+F = tr
+ 
+(∆t)⊤∆t
+
+= tr
+ 
+(Σt)⊤Σt
+
+=Pn
+i=1 σ2
+i .
+Lemma 3.For anyt≥0, we have
+E
+
+1
+N
+NX
+i=1
+e(i)
+t
+
+2
+F
+≤ 45τ 2G2
+δ2 .
+Proof.Whent= 0, the bound trivially holds ase (i)
+0 = 0 for alli.
+Definee t =E
+ 1
+N
+PN
+i=1 e(i)
+t
+
+2
+F
+withe 0 = 0.
+Whenτ∤t, for allβ >0, we have:
+et+1 =E
+
+1
+N
+NX
+i=1
+e(i)
+t+1
+
+2
+F
+=E∥C(∆ t)−∆ t∥2
+F
+≤E
+
+∥∆t∥2
+F
+
+=E
+
+1
+N
+NX
+i=1
+
+e(i)
+t +g (i)
+t
+
+2
+F
+≤(1 +β)E
+
+1
+N
+NX
+i=1
+e(i)
+t
+
+2
+F
++ (1 + 1
+β )E
+
+
+
+1
+N
+NX
+i=1
+g(i)
+t
+
+2
+F
+
+
+≤(1 +β)e t + (1 + 1
+β )G2,(11)
+where the first inequality uses Lemma 1, the second inequality uses Young’s inequality and Cauchy’s
+inequality, the last inequality uses Assumption 3.
+Similarly, whenτ|t, we have:
+et+1 =E
+
+1
+N
+NX
+i=1
+e(i)
+t+1
+
+2
+F
+14
+
+=== PAGE 15 ===
+=E∥C(∆ t)−∆ t∥2
+F
+≤(1−δ)E
+
+∥∆t∥2
+F
+
+≤(1−δ)(1 +β)e t + (1−δ)(1 + 1
+β )G2,(12)
+where the first inequality uses Lemma 2, the second inequality use’s Young’s inequality and Cauchy’s in-
+equality, the last inequality uses Assumption 3. Apply (11),(12) in a period ofτsteps, we have:
+enτ ≤(1 +β)e nτ−1 + (1 + 1
+β )G2
+≤ · · · ≤(1 +β) τ−1 e(n−1)τ+1 + (1 + 1
+β )
+ 
+1 + (1 +β) +· · ·+ (1 +β) τ−2
+G2
+≤(1−δ)(1 +β) τ e(n−1)τ + (1 + 1
+β )τ(1 +β) τ G2.(13)
+Apply (13) withe 0 = 0, we have:
+enτ ≤
+(1 + 1
+β )τ(1 +β) τ G2
+1−(1−δ)(1 +β) τ .(14)
+For anyt=kτ+q,1≤q≤τ, similarly we have:
+et ≤(1 +β) qekτ + (1 + 1
+β )q(1 +β) q−1G2
+≤(1 +β) τ ekτ + (1 + 1
+β )τ(1 +β) τ G2
+≤
+(1 + 1
+β )τ(1 +β) τ G2
+1−(1−δ)(1 +β) τ (δ(1 +β) τ + 1)
+≤
+2(1 + 1
+β )τ(1 +β) 2τ G2
+1−(1−δ)(1 +β) τ ,(15)
+where the first inequality uses (11) and the third inequality uses (14). If we substituteβ= δ
+4τ into (15),
+then (1 +β) τ ≤e βτ =e
+δ
+4 ≤1 + δ
+2 ≤ 3
+2 (asδ≤1) and 1 + 1
+β = 1 + 4τ
+δ ≤ 5τ
+δ , we get:
+E
+
+1
+N
+NX
+i=1
+e(i)
+t
+
+2
+F
+=e t ≤ 45τ 2G2
+2δ · 1
+1−(1−δ)(1 + δ
+2) ≤ 45τ 2G2
+δ2 .
+Lemma 4.For anyt≥0, we have
+E∥m t∥2
+F ≤ 92τ 2G2
+(1−µ) 2δ2 .
+Proof.
+E[∥C(∆t)∥2
+F ]≤E[∥∆ t∥2
+F ]
+=E
+
+1
+N
+NX
+i=1
+
+e(i)
+t +g (i)
+t
+
+2
+F
+≤2
+
+E
+
+1
+N
+NX
+i=1
+e(i)
+t
+
+2
+F
++E
+
+
+
+1
+N
+NX
+i=1
+g(i)
+t
+
+2
+F
+
+
+
+
+15
+
+=== PAGE 16 ===
+≤2
+45τ 2G2
+δ2 +G 2
+
+≤ 92τ 2G2
+δ2 ,(16)
+where the first inequality uses Lemma 1, the second inequality uses Cauchy’s inequality and the last
+inequality uses Lemma 3. Applying (16) and use Cauchy’s inequality, we have:
+E∥m t∥2
+F =E
+
+
+
+tX
+k=0
+µt−kC(∆k)
+
+2
+F
+
+
+≤
+ tX
+k=0
+µt−k
+! tX
+k=0
+µt−kE
+
+∥C(∆k)∥2
+F
+
+!
+≤
+ tX
+k=0
+µt−k
+!2
+92τ 2G2
+δ2
+≤ 92τ 2G2
+(1−µ) 2δ2 .
+Theorem 4.(Convergence of PowerSGD+) Under Assumption 1– 3, Defineδ=r/nand∆F=f(X 0)−
+minf(X), PowerSGD+ with MSGD (Algorithm 2) converges as
+1
+T
+T−1X
+t=0
+E
+
+∥∇f(X t)∥2
+F
+
+≤ 4(1−µ)
+ηT ∆F+ 2Lησ 2
+(1−µ)N + 548L2η2τ 2G2
+(1−µ) 4δ2 .
+Proof.Define:
+˜Xt =X t − η
+1−µ
+1
+N
+NX
+i=1
+e(i)
+t ,
+Zt = ˜Xt − ηµ
+1−µ mt−1 .
+Then we have:
+Zt+1 = ˜Xt+1 − ηµ
+1−µ mt
+=Xt+1 − η
+1−µ
+1
+N
+NX
+i=1
+e(i)
+t+1 − ηµ
+1−µ mt
+=Xt − η
+1−µ
+1
+N
+NX
+i=1
+e(i)
+t+1 − η
+1−µ mt
+=Xt − η
+1−µ
+1
+N
+NX
+i=1
+e(i)
+t+1 − η
+1−µ ·
+ 
+µmt−1 − 1
+N
+NX
+i=1
+e(i)
+t+1 + 1
+N
+NX
+i=1
+e(i)
+t + 1
+N
+NX
+i=1
+g(i)
+t
+!
+= ˜Xt − ηµ
+1−µ mt−1 − η
+1−µ
+1
+N
+NX
+i=1
+g(i)
+t
+=Zt − η
+1−µ
+1
+N
+NX
+i=1
+g(i)
+t .
+16
+
+=== PAGE 17 ===
+By the smoothness of the functionf, we get:
+Et[f(Z t+1)]
+≤f(Z t) +⟨∇f(Z t),E t[Zt+1 −Z t]⟩+ L
+2 Et[∥Zt+1 −Z t∥2
+F ]
+=f(Z t)− η
+1−µ
+*
+∇f(Z t),E t
+"
+1
+N
+NX
+i=1
+g(i)
+t
+#+
++ Lη2
+2(1−µ) 2 Et
+
+
+
+1
+N
+NX
+i=1
+g(i)
+t
+
+2
+F
+
+
+=f(Z t)− η
+1−µ ⟨∇f(Z t),∇f(X t)⟩
++ Lη2
+2(1−µ) 2
+
+∥∇f(X t)∥2
+F +E t
+
+
+
+1
+N
+NX
+i=1
+g(i)
+t − ∇f(X t)
+
+2
+F
+
+
+
+
+≤f(Z t)− η
+1−µ ⟨∇f(Z t),∇f(X t)⟩+ Lη2
+2(1−µ) 2 ∥∇f(X t)∥2
+F + Lη2σ2
+2(1−µ) 2N ,(17)
+where the first inequality uses Assumption 1 and the last inequality uses Cauchy’s inequality and Assumption
+2. Bound the second term−E[⟨∇f(Z t),∇f(X t)⟩] with Cauchy’s inequality, we have:
+−E[⟨∇f(Z t),∇f(X t)⟩] =−E
+
+∥∇f(X t)∥2
+F
+
++E[⟨∇f(X t)− ∇f(Z t),∇f(X t)⟩]
+≤ − 1
+2 E
+
+∥∇f(X t)∥2
+F
+
++ 1
+2 E
+
+∥∇f(X t)− ∇f(Z t)∥2
+F
+
+,(18)
+And:
+E
+
+∥∇f(X t)− ∇f(Z t)∥2
+F
+
+≤L 2E
+
+∥Xt −Z t∥2
+F
+
+≤2L 2E
+h
+∥Xt − ˜Xt∥2
+F
+i
++ 2L2E
+h
+∥ ˜Xt −Z t∥2
+F
+i
+= 2L2η2E
+
+
+
+1
+N
+NX
+i=1
+e(i)
+t
+
+2
+F
+
+ + 2L2η2µ2
+(1−µ) 2 E
+
+∥mt−1∥2
+F
+
+≤ 90L2η2τ 2G2
+δ2 + 184L2η2τ 2µ2G2
+(1−µ) 4δ2 ,(19)
+where the last inequality follows Lemma 3, 4. Applying (18) to (17), (19) to (17) and taking expectations,
+we have:
+E[f(Z t+1)]≤E[f(Z t)]−
+ η
+2(1−µ) − Lη2
+2(1−µ) 2
+
+E
+
+∥∇f(X t)∥2
+F
+
++ Lη2σ2
+2(1−µ) 2N
++ 45L2η3τ 2G2
+(1−µ)δ 2 + 92L2η3τ 2µ2G2
+(1−µ) 5δ2 .(20)
+Taking total expectation and telescoping (20) from 0 toT−1, we obtain:
+ η
+2(1−µ) − Lη2
+2(1−µ) 2
+ T−1X
+t=0
+E
+
+∥∇f(X t)∥2
+F
+
+≤f(X 0)−E[f(Z T )] + Lη2σ2T
+2(1−µ) 2N + 45L2η3τ 2G2T
+(1−µ)δ 2 + 92L2η3τ 2µ2G2T
+(1−µ) 5δ2 .(21)
+17
+
+=== PAGE 18 ===
+Whenη≤ 1−µ
+2L , η
+2(1−µ) − Lη2
+2(1−µ)2 ≥ η
+4(1−µ), applying (21) and taking average onT, we get:
+1
+T
+T−1X
+t=0
+E
+
+∥∇f(X t)∥2
+F
+
+≤4(1−µ)
+ηT (f(X 0)−f ∗) + 2Lησ 2
+(1−µ)N + 180L2η2τ 2G2
+δ2 + 368L2η2τ 2µ2G2
+(1−µ) 4δ2
+≤4(1−µ)
+ηT ∆F+ 2Lησ 2
+(1−µ)N + 548L2η2τ 2G2
+(1−µ) 4δ2 ,
+so we finished the proof.
+Corollary 1.In Theorem 4, If we set
+η=
+ 
+2L
+1−µ +
+s
+Lσ2T
+2(1−µ) 2N∆F +
+3
+s
+274L2τ 2G2T
+(1−µ) 5δ2∆F
+!−1
+,
+we get:
+1
+T
+T−1X
+t=0
+E
+
+∥∇f(X t)∥2
+F
+
+≤
+r
+32Lσ2∆F
+N T + 8L∆F
+T + 6
+3√
+274(Lτ G∆F)2/3
+T 2/3δ2/3(1−µ) 2/3 .
+C Experiments details
+In this section, we show the training details of our experiments in Section 5 for reproduction.
+C.1 Fine-tuning tasks on GLUE datasets
+We fine-tune pretrainedRoBERTa-Basemodels on GLUE benchmarks for 10 epochs on a 4×4090 24GB
+GPUs cluster with data parallelism at 4. We used AdamW as base optimizer and set compression rank
+to 4 for all compressors which refer to the original settings inPowerSGD[14]. Detailed hyper-parameters
+are illustrated in Table 4. In particular, ”Restart steps” is only applicable to thePowerSGD+ and Galore
+compressor.
+C.2 Pre-training Tasks on C4 Dataset
+We pre-trained LLaMA models on C4 corpus for 10 epochs on a 4×4090 24GB GPUs cluster with data
+parallelism at 4. The 60M and 130M models are trained for 10k and 20k iterations, respectively, with the
+standard Adam optimizer. We validate across compression rank in{4,8}and tuned the hyperparameters
+refer to [11]. Detailed hyperparameters are illustrated in Table 5.
+18
+
+=== PAGE 19 ===
+Table 4: Hyperparameters of fine-tuningRoBERTa-Basemodels on GLUE benchmark
+RTE CoLA SST2 MNLI QQP STSB MRPC QNLI
+Total Batch Size 16 32 32 64 32 32 64 32
+# Epochs 10 10 10 10 10 10 10 10
+Learning Rate 2×10 −5 2×10 −5 2×10 −5 2×10 −5 2×10 −5 2×10 −5 4×10 −5 2×10 −5
+Weight decay 0.01 0.02 0.01 0.02 0.01 0.02 0.02 0.01
+Restart steps 50 80 80 200 200 50 80 100
+Rank Config.r= 4
+AdamW betas (0.9,0.999)
+Lr-scheduler linear
+warmup-ratio 0.06
+Max Seq. Len. 512
+Table 5:Hyperparameters of pre-training LLaMA models on C4 dataset
+Llama 60M Llama 130M
+Adam PowerSGD PowerSGD+ Adam PowerSGD PowerSGD+
+Training Steps 10000 20000
+Warm-up Steps 1000 2000
+Maximum Length 256 256
+Batch Size 512 512
+Batch Size per Device 128 128
+Total Training Tokens 1 310 720 000 2 621 440 000
+Learning Rate{1×10 −3,2×10 −3,4×10 −3} {1×10 −3,2×10 −3,4×10 −3}
+Warm-up Scheduling linear from 0% linear from 0%
+Learning Rate Decay cosine to 0% cosine to 0%
+Weight Decay 0.0 0.0 0.0 0.0 0.0 0.0
+Gradient Clipping 1.0 1.0 1.0 1.0 1.0 1.0
+Restart steps - - 200 - - 200
+19

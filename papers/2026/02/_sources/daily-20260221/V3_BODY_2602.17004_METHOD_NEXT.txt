@@ -1,0 +1,72 @@
+2.3 Mixture-of-Experts
+Our Mixture-of-Experts layers follow the DeepSeekMoE (Dai et al., 2024) design, with fine-grained routed experts and an always-active shared expert. We use the SwiGLU (Shazeer, 2020) activation function as the nonlinearity. For Trinity Large, in order to facilitate better throughput, we opted to use coarser-grained experts. We also replace the first kk MoE layers with dense layers to stabilize early representations. We use sigmoid routing following Wang et al. (2024a), normalizing the router scores before using them for gating, and we also apply the gating scores to the output of each expert.
+MoE formulation.
+Let 𝐮t∈ℝd\mathbf{u}_{t}\in\mathbb{R}^{d} denote the MoE input at token tt.
+The output of the MoE module 𝐡t′\mathbf{h}^{\prime}_{t} is computed as:
+𝐡t′\displaystyle\mathbf{h}^{\prime}_{t}
+=𝐮t+∑i=1NsFFNi(s)​(𝐮t)+∑i=1Nrgi,t​FFNi(r)​(𝐮t).\displaystyle=\mathbf{u}_{t}+\sum_{i=1}^{N_{s}}\mathrm{FFN}^{(s)}_{i}\!\left(\mathbf{u}_{t}\right)+\sum_{i=1}^{N_{r}}g_{i,t}\,\mathrm{FFN}^{(r)}_{i}\!\left(\mathbf{u}_{t}\right).
+(15)
+where FFNi(s)​(⋅)\mathrm{FFN}^{(s)}_{i}(\cdot) denotes the ii-th shared expert and FFNi(r)​(⋅)\mathrm{FFN}^{(r)}_{i}(\cdot) denotes the ii-th routed expert.
+Routing.
+We use normalized sigmoid routing scores instead of softmax-based routing, which allows for more stable router logits. We also follow Wang et al. (2024a) in using the sum of the routing scores and expert bias to determine the Top-KK experts, but using the routing scores without expert bias as gating scores for the outputs of the routed experts, since the expert bias is updated in a decoupled way.
+Let 𝐞i∈ℝd\mathbf{e}_{i}\in\mathbb{R}^{d} be the router vector for routed expert ii:
+si,t\displaystyle s_{i,t}
+=σ⁡(𝐮t⊤​𝐞i),i∈{1,…,Nr}.\displaystyle=\sigma\!\left(\mathbf{u}_{t}^{\top}\mathbf{e}_{i}\right),\qquad i\in\{1,\dots,N_{r}\}.
+(16)
+The Top-KK experts are selected as follows:
+gi,t′\displaystyle g^{\prime}_{i,t}
+={si,t,si,t+bi∈TopK⁡({sj,t+bj}j=1Nr,Kr),0,otherwise,\displaystyle=\begin{cases}s_{i,t},&s_{i,t}+b_{i}\in\mathrm{TopK}\!\left(\{s_{j,t}+b_{j}\}_{j=1}^{N_{r}},\,K_{r}\right),\\[1.99997pt]
+0,&\text{otherwise},\end{cases}
+(17)
+gi,t\displaystyle g_{i,t}
+=gi,t′∑j=1Nrgj,t′.\displaystyle=\frac{g^{\prime}_{i,t}}{\sum_{j=1}^{N_{r}}g^{\prime}_{j,t}}.
+(18)
+where bib_{i} is the expert bias, and gi,tg_{i,t} are the gating scores derived from the router scores si,ts_{i,t}.
+Auxiliary-loss-free load balancing.
+For Trinity Mini and Trinity Nano, we used the standard formulation of auxiliary-loss-free load balancing (Wang et al., 2024a), with an additional re-centering of the expert bias updates.
+We maintain a bias vector 𝐛=[b1,…,bNr]\mathbf{b}=[b_{1},\dots,b_{N_{r}}] that is updated in a decoupled fashion.
+Let nin_{i} be the number of tokens routed to expert ii in the current step, and n¯\bar{n} the mean load:
+n¯\displaystyle\bar{n}
+=1Nr​∑i=1Nrni,\displaystyle=\frac{1}{N_{r}}\sum_{i=1}^{N_{r}}n_{i},
+(19)
+Δ​bi\displaystyle\Delta b_{i}
+=γ⋅sign⁡(n¯−ni),\displaystyle=\gamma\cdot\mathrm{sign}\!\left(\bar{n}-n_{i}\right),
+(20)
+bi\displaystyle b_{i}
+=bi+Δ​bi,\displaystyle=b_{i}+\Delta b_{i},
+(21)
+bi\displaystyle b_{i}
+=bi−1Nr​∑j=1Nrbj.\displaystyle=b_{i}-\frac{1}{N_{r}}\sum_{j=1}^{N_{r}}b_{j}.
+(22)
+where γ\gamma is the bias update speed.
+Soft-clamped Momentum Expert Bias Updates (SMEBU) load balancing.
+For Trinity Large, we replace the per-step sign-based expert bias update with a tanh\tanh soft-clamped magnitude-aware update.
+First, we compute the normalized per-expert violation, in order to make the update scale independent of sequence-length and batch size, and apply tanh\tanh soft-clamping:
+vi\displaystyle v_{i}
+=n¯−nin¯,\displaystyle=\frac{\bar{n}-n_{i}}{\bar{n}},
+(23)
+v~i\displaystyle\tilde{v}_{i}
+=tanh⁡(κ​vi),\displaystyle=\tanh\!\left(\kappa\,v_{i}\right),
+(24)
+where κ\kappa is a tunable scale.
+We center the update around zero, and additionally use a momentum buffer to smooth expert bias updates over time:
+Δ​bi\displaystyle\Delta b_{i}
+=λ​v~i,\displaystyle=\lambda\,\tilde{v}_{i},
+(25)
+Δ​bi\displaystyle\Delta b_{i}
+=Δ​bi−1Nr​∑j=1NrΔ​bj,\displaystyle=\Delta b_{i}-\frac{1}{N_{r}}\sum_{j=1}^{N_{r}}\Delta b_{j},
+(26)
+mi\displaystyle m_{i}
+=β​mi+(1−β)​Δ​bi,\displaystyle=\beta\,m_{i}+(1-\beta)\,\Delta b_{i},
+(27)
+bi\displaystyle b_{i}
+=bi+mi,\displaystyle=b_{i}+m_{i},
+(28)
+where λ\lambda is the load-balance learning rate, β\beta is the momentum factor, and 𝐦=[m1,…,mNr]\mathbf{m}=[m_{1},\dots,m_{N_{r}}] is the maintained momentum buffer.
+When training Trinity Large, our initial runs faced router instability issues, and as one method of stabilizing the run, we examined the load-balancing method. Under the assumption that the ideal expert bias value is a fixed value, we note that the standard aux-free load balancing cannot precisely converge on that value, as each local update under the sign⁡(⋅)\mathrm{sign}(\cdot) operator is always ±λ\pm\lambda. We hypothesize that this is a cause of instability for MoE training with the standard aux-loss-free objective. As the total number of experts increases, the per-layer norm of the bias step also increases. Viewing this as an optimization process, as this nears its local minima, the update step is biased towards oscillation, and can never fully settle.
+We alleviate this using tanh\tanh as a continuous relaxation of the discrete update that can converge to 0. We replace the sign⁡(⋅)\mathrm{sign}(\cdot) operator with tanh\tanh as a smooth approximation, and add a tunable scale κ\kappa to control saturation speed. We believe that bounded updates are important to maintaining network stability; preliminary tests using a linear, unclamped update quickly reduced MaxVio early on in training but resulted in instability later in training. Additionally, consistent with the hypothesis that behavior near convergence is one of the causes of instability in MoE aux-loss-free load balancing, and that noise near a local minima should be roughly decorrelated over time, we introduce momentum as a form of noise dampening. This is analogous to momentum SGD reducing variance in noisy gradient updates.
+For our Trinity Large run, we use SMEBU with λ=5×10−4\lambda=5\times 10^{-4}, β=0.5\beta=0.5, and κ=2\kappa=2.
+Sequence-wise auxiliary loss.
+In addition to aux-loss-free balancing, we use a complementary sequence-wise load balance loss to promote balance within a sequence, following the formulation from DeepSeek-AI et al. (2025a):
+ℒBal\displaystyle\mathcal{L}_{\mathrm{Bal}}
+=α​∑i=1Nr

@@ -1,0 +1,104 @@
+Source https://arxiv.org/html/2601.10117v1
+[H]
+3 Method
+[H]
+3.1 Overview
+After pre-training the MAE-VQGAN (Section 2) in line with previous approaches [6]. The overall pipeline is illustrated in Figure 3. First, to ensure the model possesses sufficient fusion capability, we conduct preliminary training of the Fusion Module (Section 3.2). Building upon this, we freeze the core model and train a set of lightweight MLPs to each of the different spatial arrangements, so that we can rapidly identify the optimal layouts (Section 3.3). Finally, we enhance the model’s generalization ability through a strategy of swapping support–query pairs, thereby achieving refined and improved overall performance (Section 3.4). We will elaborate on each stage in the following sections.
+[H]
+3.2 Training of the Fusion Module
+To distill the most relevant patterns and annotations from a set of support pairs into a single, high-quality fused representation, we first design a Fusion Module f, which can provide each query sample with a targeted, fine-grained prompt. The training stage is illustrated in Figure 3(I).
+Given the feature representation of a query image I^{q} and a support set
+P=\{P_{i}=(I_{i},L_{i})\}_{i=1}^{N_{p}},
+we compute the cosine similarity between I^{q} and the feature of each support image:
+s_{i}=\cos\!\big(I^{q},I_{i}\big),\quad i=1,\dots,N_{p},
+(3)
+The Top-K most relevant pairs are selected according to s_{i}:
+\{c_{1},\dots,c_{K}\}\;=\;\operatorname{arg\,topK}_{i=1,\dots,N_{p}}\{s_{i}\},
+(4)
+S^{q}=\{P_{c_{k}}\}_{k=1}^{K},
+(5)
+where \operatorname{arg\,topK}_{i=1,\dots,N_{p}}\{s_{i}\} denotes the indices of the K support
+samples with the highest similarity scores.
+We then input the selected support pair set S^{q} together with the query image I^{q} into the Fusion Module f.
+The core of this model is a cross-attention mechanism that dynamically fuses information between the query and the selected supports.
+Formally, given the feature representations of the query and support images, the fused query feature is obtained as
+{I}_{c_{m}},\{\alpha_{k}\}_{k=1}^{K}=\mathrm{Attn}\!\big(I^{q},\{I_{c_{k}}\}_{k=1}^{K}\big),
+(6)
+[H]
+3.3 Decoupling Arrangement-Specific Priors
+To learn arrangement-specific knowledge and identify the optimal configurations, we introduce a search stage. To prevent interference from fusion and inpainting abilities, both the Fusion Module f and the MAE-VQGAN \varphi are kept frozen during this stage (Figure 3(II)).
+The fused support pair P_{c_{m}} and query image I^{q} are combined under predefined arrangements \{a_{i}\}_{i=1}^{8} to form contextualized samples:
+X_{c_{m}}^{i}=\operatorname{Arrange}(P_{c_{m}},I^{q};a_{i}),\quad i=1,\dots,8.
+(15)
+Instead of updating the backbone, we attach a lightweight, trainable module, denoted as \text{MLP}_{i}, to each arrangement. This module adopts an Adapter architecture, which incorporates a residual connection around a feed-forward network (FFN). The computation is defined as:
+Z_{c_{m}}^{i}=X_{c_{m}}^{i}+\text{FFN}(X_{c_{m}}^{i}),
+(16)
+where the FFN consists of two linear layers with a GELU activation function. It employs a bottleneck design to minimize trainable parameters, formulated as:
+\text{FFN}(X)=\boldsymbol{W}_{2}\sigma(\boldsymbol{W}_{1}X+\boldsymbol{b}_{1})+\boldsymbol{b}_{2},
+(17)
+where X is the input feature, \boldsymbol{W}_{1} and \boldsymbol{W}_{2} are the weight matrices, \boldsymbol{b}_{1} and \boldsymbol{b}_{2} are the bias terms, and \sigma denotes the GELU activation.
+The output of each module, Z_{c_{m}}^{i}, is then decoded by the frozen MAE-VQGAN \varphi to produce a final prediction:
+T^{i}_{c_{m}}=\varphi(Z_{c_{m}}^{i})=\begin{bmatrix}{I}_{c_{m}}&L_{c_{m}}\\
+I^{q}&\;T^{L,i}_{c_{m}}\;\end{bmatrix}.
+(18)
+The training objective for each \text{MLP}_{i} is to minimize the cross-entropy loss, defined as:
+\mathcal{L}^{i}_{arr}=\text{CE}(T^{L,i}_{c_{m}},I^{L}).
+(19)
+Following the convergence of all MLPs, we rank all candidate arrangements in descending order of their performance on a held-out test set. Let
+\{a_{(1)},a_{(2)},\dots,a_{(8)}\} denote the arrangements sorted such that
+\text{mIoU}_{(1)}\geq\text{mIoU}_{(2)}\geq\dots\geq\text{mIoU}_{(8)}.
+To reduce the computational cost of subsequent fine-tuning, we then select the top four arrangements as the preferred arrangement set, \mathcal{A}^{*}:
+\mathcal{A}^{*}=\{a_{(*)}\}=\{a_{(1)},a_{(2)},a_{(3)},a_{(4)}\}.
+(20)
+This lightweight strategy captures spatial priors with negligible parameter overhead.
+The MLPs specialize in modeling layout-specific geometric structure, while the remaining network components focus on semantic reconstruction, preserving the original architecture without costly retraining.
+The preferred arrangement set \mathcal{A}^{*} is then used in the final joint fine-tuning stage.
+[H]
+3.4 Bidirectional Joint Fine-tuning
+To align the fusion capability of the Fusion Module, the spatial reasoning of the MLPs, and the inpainting ability of the MAE-VQGAN, we perform end-to-end joint fine-tuning (Figure 3 (III)).
+Using the \mathcal{A}^{*}, we construct the contextualized sample X_{c_{m}}^{a_{(*)}}, which is processed by the MLP{}_{a_{(*)}} and MAE-VQGAN \varphi to produce the output
+T_{c_{m}}^{a_{(*)}}=\varphi(\text{MLP}_{a_{(*)}}(X_{c_{m}}^{a_{(*)}})).
+(21)
+The model is optimized by the cross-entropy loss
+\mathcal{L}_{finetune}=\text{CE}(T_{c_{m}}^{a_{(*)}},I^{L}),
+(22)
+allowing simultaneous fine-tuning of f and MLP{}_{a_{(*)}} to enhance fusion capability and generalization.
+To enhance the robustness and prevent overfitting, we further introduce a bidirectional fine-tuning mechanism. Motivated by the principle of informational symmetry [8]: a robust fusion model should not merely learn a one-way mapping from support to query. Instead, the fusion process should be reversible. This symmetry discourages shortcut learning and promotes capturing shared structural relations.
+Based on this, we introduce an online data augmentation strategy.
+After obtaining the prediction T_{c_{m}}^{L} for the current query I^{q}, we form a new pair:
+P_{\text{new}}=(I^{q},T_{c_{m}}^{L}).
+(23)
+From the Top-K support set S^{q}=\{P_{c_{k}}\}_{k=1}^{K}, the Top-N most similar pairs are selected:
+Q^{S}=\{P_{c_{n}}\}_{n=1}^{N},\quad N\leq K,\quad P_{c_{n}}=(I_{c_{n}},L_{c_{n}}).
+(24)
+During each training iteration, we perform N sub-iterations, each replacing one P_{c_{n}} in Q^{S} with P_{\text{new}}:
+S^{q}_{\text{new}}=\big(S^{q}\setminus\{P_{c_{n}}\}\big)\cup\{P_{\text{new}}\},\quad n=1,\dots,N,
+(25)
+plus one additional sub-iteration without replacement, resulting in N+1 sub-iterations.
+In each sub-iteration, S^{q}_{\text{new}} serves as the support and P_{c_{n}} as the query. The bidirectional joint optimization substantially strengthens the generalization and stability of the learned fusion logic.
+[H]
+4.1 Datasets and Implementation Details
+We evaluate our framework on three public datasets, PASCAL-5i [17], PASCAL VOC 2012 [11], and ImageNet-1K [16], corresponding to foreground segmentation, single object detection, and image colorization, respectively. Further details regarding the datasets and implementation are deferred to the supplementary material.
+[H]
+4.2 Baseline
+We comprehensively compare Our method with representative baselines categorized into three groups:
+(i) Single Prompt Selection: including random selection [6], VPR [30] with optimized prompt retrievers, Prompt-SelF [18] with direct prompt ranking, Partial2Global [28] with a hierarchical prompt ranker, InMeMo [29] with learnable visual prompts, and task-level prompting [31] with task-specific prompt discovery;
+(ii) Voting: Prompt-SelF [18] and Partial2Global [28], which aggregate predictions from different arrangements of the same query–prompt pairs on the input canvas;
+(iii) Prompt Fusion: CONDENSER [22], an external plugin that integrates fine-grained contextual information across multiple prompts.
+[H]
+4.3 Overall Performance
+As shown in Table 1, our proposed method consistently surpasses existing approaches across segmentation, detection, and colorization tasks. Moreover, following the settings of InMeMo [29], Prompt-SelF [18] and CONDENSER [22], we construct a COCO-5i dataset from MSCOCO [14] that shares the same category splits as Pascal-5i. We train our model on COCO-5i and evaluate it on Pascal-5i. As presented in Table 2, our approach also demonstrates superior generalization performance. These results highlight the effectiveness of our end-to-end ensemble strategy that integrates both prompt fusion and prompt voting mechanisms.
+[H]
+4.4 Ablation of Structure
+To assess the contribution of each component, we perform an ablation study summarized in Table 3. Variants (1)–(4) are derived from the full model (5) by removing or modifying specific modules. Replacing the Fusion Module with simple averaging (1) reduces performance, indicating that prompt fusion helps integrate contextual cues. Removing attention reuse and using plain averaging (2) also leads to a drop, showing that weight of raw images is informative for target images. Notably, removing the residual connection in the MLP (3) results in a significant performance decrease, while discarding the bottleneck structure (4) further weakens representation. This highlights that the residual connection is crucial for preserving original feature information, while the 2-layer bottleneck structure not only reduces trainable parameters but also distills a more compact and effective representation. Overall, these results validate the necessity of our architectural design.
+[H]
+4.6 Analysis of Component Effectiveness
+To verify that the introduced MLP module is lightweight, we compare the Fusion Module settings in Table 4. As shown in (1) and (2), our MLP module contains only 7.7% of the parameters and less than 0.02% of the computational cost in GFLOPs compared to Fusion Module. Moreover, introducing this module only slightly affects training time, peak memory, inference latency, and FPS. This evidence strongly supports the conclusion that the MLP adds valuable spatial layout awareness at a minimal computational expense. Lightweight computer vision models are particularly valuable for deployment on mobile and edge devices where computational resources are often limited.
+Base (3) performs noticeably worse than the other settings, indicating that explicitly modeling layout-specific characteristics is essential. This further supports our argument against the conclusions drawn in [18] that a single spatially “blind” frozen model fundamentally limits performance. Additionally, No matter finetune or not, MLP (7)(8) outperforms Fuse (5)(6) and Base (3)(4). This confirms our design: fine-tuning a small layout-specific MLP is more effective than fine-tuning the entire model, as it cleanly separates spatial encoding from semantic processing. This separation of concerns allows for more targeted and efficient learning, leading to improved overall performance. Finally, comparing before and after fine-tuning across all settings shows consistent performance gains, demonstrating that our Synergistic Training strategy jointly improves contextual fusion and reconstruction. By forcing the model to work in both a forward and reverse direction, this bidirectional fine-tuning substantially strengthens the generalization and stability of the learned fusion logic.
+[H]
+4.7 Qualitative Analysis and Generalization
+Figure 5 presents qualitative results highlighting the progressive improvements of our framework. In the segmentation task, the baseline MAE-VQGAN produces fragmented masks, while the Fusion Module enhances contextual integration but still leaves some structural errors. Incorporating the MLP, which explicitly models the spatial layout of support pairs, further refines the outputs, yielding masks with improved structural integrity. Finally, our synergistic fine-tuning produces highly accurate masks with sharp boundaries, demonstrating the strong interplay between arrangement-aware MLPs and joint optimization. Beyond segmentation, the framework delivers high-fidelity results on tasks such as object detection and image coloring, showcasing its versatility.
+[H]
+C.3 Implementation Details
+To study the effect of prompt diversity, we vary the number of candidate prompts K\in{\{1,16\}}. Optimization is performed with SGD (initial learning rate 0.03) under a cosine decay schedule. The Fusion Module is first trained for up to 150 epochs on segmentation and detection, and 10 epochs on colorization. Each prompt arrangement’s MLP, with a 512-dimensional hidden layer, is then trained for 10 epochs, followed by a 10-epoch joint fine-tuning stage with selected pairs N=2. All experiments run on a single V100 GPU with batch size 16. The loss weight \lambda is fixed to 0.6.
+

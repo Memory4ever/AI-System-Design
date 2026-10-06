@@ -1,0 +1,497 @@
+Necessary main-body extraction; no unrelated appendices. Source https://arxiv.org/html/2601.09823v1
+1 Introduction
+Image restoration (IR) focuses on reconstructing high-quality (HQ) images from their degraded low-quality (LQ) counterparts [35, 26, 61]. Recent advancements in diffusion model (DM) acceleration have garnered significant interest, particularly in the context of image super-resolution (SR) [44, 5, 12]. While several one-step diffusion-based approaches have demonstrated promising results, their computational complexity remains prohibitive for real-world deployment [44, 47, 55]. To address these challenges, recent research has prioritized architectural optimizations to reduce redundancy in large-scale models [23, 6]. Although these methods maintain strong generation capabilities for text-to-image (T2I) tasks, their practical deployment on computationally limited platforms faces substantial hurdles due to excessive model sizes and latency [23, 60]. These limitations are further compounded in IR, which inherently operates on high-resolution inputs and often requires multiple model executions [12].
+To enable the practical deployment of diffusion-based restoration on edge devices, several distillation techniques have been explored, particularly for SR tasks [8, 39, 12]. While these methods demonstrate promising efficiency gains, they are primarily optimized for SR tasks using limited datasets, preventing them from fully leveraging the rich prior knowledge encoded in large pre-trained T2I models. Consequently, such distilled models often produce structurally implausible results with perceptually suboptimal details. Additionally, existing methods lack the flexibility to accommodate diverse conditioning strategies required for broader IR tasks [5, 12, 39, 8]. For example, S3Diff [55] incorporates a degradation-aware Low-Rank Adaptation (LoRA) module, while OSDFace [41] utilizes visual prompts as supplementary conditioning. Similarly, Diff-Plugin [26] introduces a lightweight task-specific module via cross-attention mechanisms, and DiffBIR [25] employs a ControlNet-based [58] architecture for image conditioning. These specialized approaches highlight the need for a versatile framework for edge-efficient diffusion methods to support a wider range of restoration scenarios.
+Designing edge-efficient diffusion models for diverse restoration tasks hinges on effectively integrating conditional information to guide accurate and natural outputs—an aspect often overlooked in prior work. Also, since modern diffusion models are pretrained on large-scale datasets, preserving their latent space is crucial. This paper introduces NanoSD, a latent diffusion model based on the Stable Diffusion 1.5 (SD 1.5) [35], optimized for edge efficiency while ensuring compatibility with various control plugins. Our contributions in this paper are as follows:
+•
+We introduce a hardware-aware reformulation of the SD 1.5 U-Net by decomposing it into stage-wise dimensions and constructing a compact set of shape-preserving block variants tailored to edge accelerators.
+•
+We propose a block-level generative distillation strategy that aligns each candidate block variant with its SD 1.5 teacher counterpart, enabling large-scale architectural exploration without full-model retraining.
+•
+We cast the selection of an efficient diffusion backbone as a multi-objective optimization problem over teacher-aligned Fréchet Inception Distance (FID), on-device latency, and parameter count, and employ Bayesian optimization to obtain a Pareto set of U-Nets capturing diverse accuracy–efficiency trade-offs.
+•
+From this Pareto frontier, we identify a balanced architecture—NanoSD—and distill the corresponding VAE encoder and decoder to construct a fully lightweight latent diffusion pipeline.
+•
+Through extensive experiments across super-resolution, face restoration, deblurring, dehazing, deraining, desnowing, and monocular depth estimation, we demonstrate that NanoSD maintains the generative behavior of SD 1.5 while substantially reducing computational cost, enabling practical deployment on mobile-class NPUs.
+2 Related Work
+Significant progress in diffusion models, particularly for text-to-image (T2I) synthesis (e.g., SD [35], SD3 [10]), has spurred the development of pre-trained diffusion-based image restoration techniques such as StableSR [40], Diff-Plugin [26], DiffPIR [62], DiffBIR [25], PASD [50], and SeeSR [48]. These methods leverage the robust priors of T2I models, but suffers from substantial latency and computational overhead. To mitigate this, recent efforts focus on single-step frameworks, primarily targeting SR. For instance, SinSR [44] accelerates ResShift [53] via bidirectional distillation, while OSEDiff [47] employs variational score distillation approach to enhance the realism of super-resolved outputs. Building on distilled SD-Turbo architectures, S3Diff [55] integrates a degradation-guided LoRA module to improve SR quality. Albeit promising, high computational cost of these networks hinder their practical deployment on resource-constrained devices.
+Recent research in efficient diffusion models has prioritized architectural optimizations. SnapFusion [23] analyzes individual module contributions to balance efficiency and accuracy, while MobileDiff [60] relocates Transformer blocks to lower-resolution stages for computational savings. SnapGen [6] further reduces model size and computation by eliminating high-resolution attention and replacing standard convolutions with depthwise separable variants. Deployment of these methods for high-resolution image restoration remains challenging due to latency constraints. To enhance edge efficiency for SR, AdcSR [5] leverages adversarial diffusion compression to distill OSEDiff [47], significantly reducing complexity by pruning the VAE encoder and denoising UNet. Edge-SD-SR [12] introduces a novel conditioning mechanism for low-resolution inputs, while TinySR [8] employs depthwise UNet pruning and conditional information removal to improve efficiency. PocketSR [39] adopts multi-layer feature distillation for enhanced knowledge transfer. However, current edge-efficient models underutilize the generative capabilities of T2I frameworks and lack modular support for advanced conditioning mechanisms (e.g., LoRA [47, 55], ControlNet [25]), limiting their applicability to diverse restoration tasks [26, 41].
+3 Method
+Our objective is to derive an edge-efficient diffusion foundation model from SD 1.5 baseline [35]. Although SD 1.5 provides strong generative priors, its U-Net and VAE components remain prohibitively heavy for embedded NPUs. Moreover, theoretical compute metrics (FLOPs/GMACs) do not reliably predict practical latency, since NPUs are optimized for specific operator patterns (e.g., GEMM), tensor layouts, and memory behavior. As a result, reducing arithmetic compute alone does not guarantee proportional latency improvements. To address this mismatch, we introduce a hardware-aware architectural redesign and distillation framework (Fig. 2) that restructures SD 1.5 at the block level, constructs a tractable search space aligned with edge hardware (Fig. 2b), trains locally distilled surrogate blocks that preserve SD 1.5’s generative behavior (Fig. 2c), and selects full U-Net architectures using multi-objective Bayesian optimization (Fig. 2d). This search over the distilled block variants produces a Pareto-optimal set of U-Net backbones, each representing a different accuracy–efficiency trade-off. From this set, we select a single U-Net that offers the most balanced operating point and fix it as our base architecture NanoSD. Keeping this U-Net frozen, we then distill the corresponding VAE encoder and decoder from SD 1.5, yielding a fully lightweight latent diffusion pipeline tailored to the selected U-Net.
+Figure 2:
+Overview of the NanoSD framework.
+(a) Baseline SD 1.5 U–Net architecture, shown with skip connections removed for readability.
+(b) Hardware-aware search space construction: for each of the six retained stages (three encoders and three decoders), we derive shape-preserving residual/attention variants that are profiled on the target edge device for latency and parameter cost.
+(c) Feature-wise generative distillation: each candidate block is distilled independently from its corresponding SD 1.5 teacher block using an \ell_{2} feature-matching loss.
+(d) Combinatorial assembly and evaluation: a decision vector specifies one distilled block per stage, producing a structurally valid U–Net; each assembled model is evaluated on taFID and either on-device latency or parameter count via Bayesian optimization.
+(e) Latency–taFID Pareto frontier obtained from the search; green points denote Pareto-optimal models, and non-Pareto points are shown for comparison.
+(f) Parameter–taFID Pareto frontier.
+Both plots also include a hand-tuned baseline and the Segmind TinySD model, which fall far from the frontier.
+(g) The resulting NanoSD family: seven Pareto-optimal architectures spanning different accuracy–efficiency trade-offs (bubble size inversely proportional to accuracy).
+(h) Final selected architecture, NanoSD (Model 2), used for all downstream experiments; skip connections are omitted for clarity.
+3.1 Hardware-Aware Decomposition of U-Net
+The SD 1.5 U-Net consists of four encoders, a middle block, and four decoders. Prior analyses in lightweight diffusion literature—including SnapFusion [23], Segmind TinySD [19], and Koala [20]—report that the deepest encoder (encoder-4), the adjacent middle block, and the corresponding decoder-4 contribute minimally to generative fidelity. Motivated by these findings, we remove these three stages entirely from our design space. The remaining backbone comprises three encoders and three decoders, each treated as an independent architectural dimension.
+For each stage, we inspect the original SD 1.5 block structure and derive hardware-friendly variants that strictly preserve input/output tensor shapes. For example, the SD 1.5 block in the first decoder stage contains a sequence of residual and attention modules followed by a convolution, denoted R–A–R–A. We construct shape-preserving variants (e.g., residual-only or reduced-attention configurations) such that all alternatives remain strictly compatible with upstream and downstream tensors. Applying this procedure to all six stages yields the full combinatorial design space illustrated in Fig. 2a and Fig. 2b. The resulting space consists of 32,768 (4\times 4\times 4\times 8\times 8\times 8) candidate U-Net architectures, each of which is dimensionally valid without requiring adapters or tensor reshaping.
+Table 1:
+Comparison of TinySD (Segmind), hand-tuned baseline, and NanoSD variants.
+Latency is measured on a Qualcomm NPU using 8-bit weights and 16-bit activations.
+taFID denotes the teacher-aligned FID metric used during the search.
+The seven NanoSD models correspond to all Pareto-optimal architectures obtained from the latency–taFID and parameter–taFID objectives.
+For each model, we list the selected block variants across the retained stages of the SD 1.5 U–Net (E1–E3 for encoders and D3–D1 for decoders).
+Model 5 achieves the lowest latency, Model 7 achieves the fewest parameters, and Model 2 provides the best overall balance of accuracy and efficiency and is used as NanoSD in all downstream experiments.
+Model
+Latency (ms)
+Parameters (M)
+taFID
+E1
+E2
+E3
+D3
+D2
+D1
+TinySD
+74
+323
+13.8
+RA
+RA
+RA
+RA
+RA
+RA
+Hand-tuned
+53
+276
+20.6
+RA
+RA
+RA
+RAR
+RAR
+RAR
+NanoSD 1
+41
+309
+10
+R
+RA
+RA
+RARA
+RRA
+RRA
+NanoSD 2
+27
+315
+10
+R
+RA
+RA
+RARA
+RARA
+RR
+NanoSD 3
+24
+306
+10.5
+R
+RA
+RA
+RARA
+RRA
+RR
+NanoSD 4
+20
+297
+11.1
+R
+RA
+RA
+RARA
+RR
+RR
+NanoSD 5
+12
+170
+17.3
+R
+R
+R
+RA
+RR
+RR
+NanoSD 6
+28
+160
+18.2
+R
+R
+R
+RA
+RA
+RA
+NanoSD 7
+27
+130
+22
+R
+R
+R
+R
+RA
+RRA
+3.2 Feature-Wise Generative Distillation
+Training all 32,768 architectures end-to-end is infeasible. We therefore adopt a divide-and-conquer distillation strategy at the block level. For a given stage i and candidate variant j, let \mathcal{B}_{i} denote the SD 1.5 block (teacher) and \mathcal{B}_{i,j} the corresponding variant (student). For input features F, the teacher and student outputs are
+O_{T}=\mathcal{B}_{i}(F),\qquad O_{S}=\mathcal{B}_{i,j}(F).
+(1)
+Each variant is trained with the feature-matching objective
+\mathcal{L}^{(i,j)}_{\mathrm{distill}}=\|O_{S}-O_{T}\|_{2}^{2}.
+(2)
+Since all blocks are distilled independently, this process is massively parallel and computationally lightweight. Across the six stages, we obtain 30 (3+3+3+7+7+7) distilled surrogate blocks (see Supplementary Material for details on training). This preserves SD 1.5’s local generative behavior, enabling full U-Nets assembled from these surrogates to approximate SD 1.5 without full-network training.
+3.3 Assembling Candidate Diffusion U-Nets
+A complete U-Net architecture is encoded by a discrete vector \mathbf{z}=[z_{1},z_{2},z_{3},z_{4},z_{5},z_{6}], where each element selects one surrogate block for the corresponding stage. Because all variants maintain spatial and channel compatibility, substituting blocks according to \mathbf{z} yields a structurally valid U-Net. Combined with the original SD 1.5 VAE encoder and decoder, this produces a functional latent diffusion pipeline, evaluated using the procedure outlined in Fig. 2d.
+3.4 Optimization in the H/W-Aligned Space
+To measure fidelity, we construct a test dataset of prompts and corresponding SD 1.5 outputs. For any architecture \mathbf{z}, we generate outputs \hat{X}(\mathbf{z}) using the same prompts and compute the FID:
+f_{\mathrm{FID}}(\mathbf{z})=\mathrm{FID}\!\left(\hat{X}(\mathbf{z}),X_{\mathrm{SD1.5}}\right),
+(3)
+which quantifies deviation from SD 1.5’s generative distribution. We report this as a teacher-aligned Fréchet Inception Distance (taFID), as it measures the distributional divergence between the distilled model and the SD 1.5 teacher using identical prompt–seed pairs, serving as a relative fidelity metric rather than a canonical dataset FID.
+To assess efficiency, we consider both parameter count and on-device latency as separate second objectives:
+f_{\mathrm{param}}(\mathbf{z}),\qquad f_{\mathrm{latency}}(\mathbf{z}).
+(4)
+This yields two bi-objective problems:
+\min_{\mathbf{z}}\;\left(f_{\mathrm{FID}}(\mathbf{z}),\;f_{\mathrm{param}}(\mathbf{z})\right),
+(5)
+\min_{\mathbf{z}}\;\left(f_{\mathrm{FID}}(\mathbf{z}),\;f_{\mathrm{latency}}(\mathbf{z})\right),
+(6)
+with \mathbf{z} constrained to the discrete space defined by Fig. 2b.
+Because FID evaluation remains costly even without training, we adopt Bayesian Optimization (BO). We relax \mathbf{z} to a continuous representation \mathbf{x}\in[0,1]^{6} and project it to the nearest feasible architecture via a deterministic mapping. Gaussian Process models approximate both objectives, and candidate points are selected by maximizing Expected Hypervolume Improvement (EHVI). Full derivations and analyses are provided in the Supplementary Material. BO yields a sparse Pareto frontier of architectures balancing generative fidelity and hardware efficiency.
+3.5 VAE Distillation and End-to-End Training
+After selecting Pareto-optimal U-Nets, we freeze their weights and distill both the VAE encoder and decoder to reduce overall pipeline size. VAE distillation follows standard feature-matching losses between SD 1.5 teacher outputs and student predictions (details in Supplementary Material). Each resulting pair of distilled U-Net and distilled VAE forms a NanoSD candidate.
+To correct accumulated discrepancies from block-level distillation, we fine-tune each NanoSD model using the standard diffusion denoising objective. The resulting NanoSD family is evaluated across super-resolution, face restoration, deblurring, dehazing, deraining, desnowing, and monocular depth estimation, demonstrating that the distilled architectures retain SD 1.5’s generative versatility while enabling practical deployment on edge devices.
+Table 2: Quantitative comparison of different methods on DIV-2K Val [1] dataset. The best, second-best and third-best results are highlighted in red, blue, and green colors, respectively. Refer to Supplemental for detailed analysis.
+Method
+PSNR\uparrow
+SSIM\uparrow
+LPIPS\downarrow
+FID\downarrow
+NIQE\downarrow
+MUSIQ\uparrow
+Steps
+MACs (G)
+Para. (M)
+Edge-SD-SR [12]
+24.10
+0.617
+0.249
+25.37
+-
+69.58
+1
+-
+169
+AdcSR [5]
+23.74
+0.602
+0.285
+25.52
+4.36
+68.00
+1
+496
+456
+TinySR [8]
+-
+0.572
+0.279
+22.94
+4.15
+69.90
+1
+427
+341
+PocketSR [39]
+23.85
+0.601
+0.280
+25.25
+4.41
+66.38
+1
+225
+146
+Nano-OSEDiff (Ours)
+24.29
+0.628
+0.296
+27.46
+4.92
+66.41
+1
+340
+448
+Nano-S3Diff (Ours)
+23.13
+0.573
+0.278
+22.34
+4.09
+70.44
+1
+285
+318
+Table 3: Quantitative comparison of different methods on synthetic CelebA-Test [15] dataset. The best, second-best and third-best results are highlighted in red, blue, and green colors, respectively. Refer to Supplemental for detailed analysis.
+Method
+LPIPS\downarrow
+DISTS\downarrow
+NIQE\downarrow
+MUSIQ\uparrow
+FID\downarrow
+LMD\downarrow
+Steps
+MACs (G)
+Para. (M)
+PGDiff [49]
+0.386
+0.195
+4.001
+69.56
+44.62
+7.310
+1000
+480998
+176
+DifFace [52]
+0.346
+0.212
+4.638
+66.74
+49.80
+5.475
+250
+46575
+175
+DiffBIR [25]
+0.374
+0.234
+6.280
+75.63
+71.77
+5.104
+50
+24234
+1717
+OSDFace [41]
+0.336
+0.177
+3.884
+75.64
+45.41
+5.286
+1
+2465
+1887
+Nano-DiffBIR (Ours)
+0.382
+0.212
+6.3
+76.52
+70.89
+5.231
+50
+4734
+726
+Nano-OSDFace (Ours)
+0.341
+0.182
+3.913
+76.01
+45.92
+5.172
+1
+479
+415
+4 Experiments
+4.1 Pareto Analysis and Model Selection
+We conduct two iterations of multi-objective search corresponding to the formulations described in Sec. 3.
+In the first iteration, we optimize taFID (our teacher-aligned FID metric; see Supplementary Material) jointly with on-device latency measured on a Qualcomm NPU using 8-bit weights and 16-bit activations.
+In the second iteration, we optimize taFID jointly with parameter count, which serves as a proxy for on-device memory usage.
+Fig. 2e and Fig. 2f show the resulting Pareto fronts for the latency–taFID and parameter–taFID objectives, respectively.
+In both plots, green circles denote Pareto-optimal points, while the remaining points are included for comparison.
+Across the two searches, we obtain seven distinct Pareto-optimal architectures (Table 1).
+Five models arise from the latency–accuracy front and three from the parameter–accuracy front, with one model appearing in both.
+Taken together, these architectures constitute the NanoSD family and span a diverse set of trade-offs between generative fidelity and hardware efficiency.
+Within this family, Model 5 achieves the lowest measured latency and represents the optimal choice when runtime efficiency is prioritized (NanoSD-Latency).
+Model 7 attains the smallest parameter footprint and is preferred under strict memory constraints (NanoSD-Parameters).
+Models 1 and 2 obtain the best taFID values overall with nearly identical accuracy.
+However, Model 1 incurs substantially higher latency, whereas Model 2 exhibits a more balanced accuracy–efficiency profile with only a marginal increase in parameter count (Table 1).
+Because the latency difference between Models 1 and 2 is significantly larger than their parameter difference, we select Model 2 as the representative backbone for downstream evaluation and denote it as NanoSD-Prime.
+The remaining models (1, 3, 4, and 6) occupy intermediate regions of the Pareto front and may be adapted to task-specific or resource-specific constraints (e.g., NanoSD-S, NanoSD-XS).
+Fig. 2e and Fig. 2f also include two baselines: a manually designed hand-tuned variant of SD 1.5 and the prior-art Segmind TinySD [19] model.
+Both baselines lie far outside the Pareto frontier in terms of accuracy–latency and accuracy–parameter trade-offs.The hand-tuned model exhibits moderate latency but significantly worse taFID, indicating that manual structural simplifications fail to preserve the generative prior.
+TinySD achieves better accuracy but remains considerably slower and larger than all NanoSD variants.
+All seven NanoSD variants are subsequently fine-tuned end-to-end on image–text pairs derived from publicly available web-scale datasets (LAION-style [36]; see Supplementary Material).
+The final T2I FID scores for each model are reported in the Supplementary Tables.
+For the remainder of this paper, we adopt NanoSD-Prime as our backbone NanoSD (architecture shown in Fig. 2h) and evaluate its generalization ability across a broad suite of low-level vision tasks. The generated images using the proposed NanoSD for T2I task are displayed in Fig. 3.
+4.2 Experimental Settings
+Datasets. To test effectiveness of the proposed NanoSD, we utilize specific
+datasets for each low-level task, SR: LSDIR [24] and the first 10K face images from
+FFHQ [16], face restoration: FFHQ [16], deblurring: Gopro [30], dehazing: Reside [21], deraining: merged train [54], desnowing: Snow100K [28], monecular depth estimation: Hypersim [34] and Virtual KITTI [3]. For testing, we evaluate on real-world benchmark datasets, SR: DIV2K-Val [1], RealSR [4] and DRealSR [46], face restoration: Wider-Test [61], LFWTest [14], and WebPhoto-Test [43], deblurring: RealBlur-J [33], dehazing: RTTS [22], deraining: real test [42] and desnowing: realistic test [27], monocular depth estimation: NYU{}_{\text{{v2}}} [37] and KITTI [11].
+Evaluation Metrics. To provide a comprehensive and holistic assessment on the performance of
+different methods, we employ a range of full-reference and no-reference metrics. PSNR and SSIM [45] (calculated on the Y channel in YCbCr space) are reference-based fidelity measures, while
+LPIPS [59], DISTS [7] are reference-based perceptual quality measures. FID [13] evaluates the
+distance of distributions between GT and restored images. NIQE [57] and MUSIQ [18] are no-reference image quality measures. We apply two widely recognized metrics Absolute Mean Relative Error (AbsRel) [32] and \delta1 accuracy [31] for assessing quality of depth estimation.
+Figure 3: Generated images using edge efficient NanoSD.
+Figure 4: Qualitative comparisons of different SR methods. Please zoom in for a better view. Refer to Supplemental for more results.
+Figure 5: Visual comparisons of various face restoration methods. Please zoom in for a better view. Refer to Supplemental for more results.
+Table 4: Quantitative comparison of different methods on various low-level vision tasks. The best, second-best and third-best results are highlighted in red, blue, and green colors, respectively.
+Method
+Desnowing
+Realstic [27]
+Dehazing
+Reside [21]
+Deblurring
+RealBlur-J [33]
+Deraining
+Real Test [42]
+Steps
+MACs(G)
+Para.(M)
+FID\downarrow
+KID\downarrow
+FID\downarrow
+KID\downarrow
+FID\downarrow
+KID\downarrow
+FID\downarrow
+KID\downarrow
+SD [35]
+35.24
+7.88
+48.89
+24.47
+59.21
+18.96
+51.78
+17.69
+200
+79940
+1410
+InstructP2P [2]
+42.01
+8.54
+33.48
+12.76
+57.38
+19.37
+54.12
+17.87
+100
+103381
+1027
+Null-Text [29]
+60.49
+16.38
+39.94
+14.88
+60.38
+20.37
+51.49
+15.43
+50
+374137
+1027
+ControlNet [58]
+34.36
+5.70
+37.02
+15.45
+52.30
+17.19
+52.55
+15.22
+50
+24637
+1397
+Diff-Plugin [26]
+34.30
+5.20
+34.68
+14.38
+51.81
+14.63
+50.55
+13.84
+20
+30400
+1256
+Nano-Diff-Plugin
+34.83
+5.63
+35.23
+15.03
+52.41
+15.48
+50.78
+14.21
+20
+17120
+712
+4.3 Edge Efficient OSEDiff and S3Diff for Single Image Super-resolution
+This paper aims to enable real-time super-resolution by effectively harnessing the rich generative priors inherent in pre-trained diffusion models. We validate the efficacy of the proposed foundation model for edge-efficient SR tasks by integrating NanoSD with prominent one-step latent diffusion frameworks, namely OSEDiff and S3Diff.
+Table 10 presents quantitative comparisons of super-resolution methods across three datasets. Both proposed models exhibit second and third lowest MACs among evaluated approaches, enabling real-time processing and edge deployment. Nano-S3Diff achieves top NIQE and MUSIQ scores, along with second-best FID results, reflecting superior perceptual quality. Meanwhile, Nano-OSEDiff maintains competitive fidelity, yielding the superior PSNR and SSIM performance. Fig. 4 presents qualitative comparisons between different super-resolution methods. Our proposed approaches demonstrate consistent performance in preserving image fidelity and reconstructing fine details.
+4.4 Edge Efficient OSDFace for Face Restoration
+This section evaluates the applicability of our proposed model for face restoration tasks. To demonstrate its effectiveness, we integrate NanoSD into the OSDFace framework, which represents the current state-of-the-art one-step diffusion approach for face restoration.
+Table 3 presents quantitative comparisons on the CelebA-Test dataset. Our proposed Nano-OSDFace achieves comparable perceptual quality to OSDFace, attaining second-best scores in FID, NIQE, MUSIQ, and LMD which indicates alignment between generated and natural image distributions. The table further highlights Nano-OSDFace’s efficiency, showing significant reduction in computational costs. Figure 5 demonstrates that Nano-OSDFace effectively restores degraded facial inputs without deviating from the identity.
+Figure 6: Qualitative comparisons of different methods for various restoration tasks. Please zoom in for a better view. Refer to Supplemental for more results.
+Table 5: Quantitative comparison of the proposed Nano-Marigold with SOTA depth estimators on several zero-shot benchmarks. The best, second-best and third-best results are highlighted in red, blue, and green colors, respectively.
+Method
+NYUV2 [37]
+KITTI [11]
+AbsRel \downarrow
+\delta1 \uparrow
+AbsRel \downarrow
+\delta1 \uparrow
+MiDAS [32]
+11.1
+88.5
+23.6
+63.0
+LeRes [51]
+9.0
+91.6
+14.9
+78.4
+Omnidata [9]
+7.4
+94.5
+14.9
+83.5
+HDN [56]
+6.9
+94.8
+11.5
+86.7
+DPT [31]
+9.8
+90.3
+10.0
+90.1
+Marigold [17]
+5.5
+96.4
+9.9
+91.6
+Nano-Marigold
+7.2
+94.6
+11.8
+86.3
+Figure 7: Qualitative comparison of various depth estimation methods across different datasets.
+4.5 Accelerating Diff-Plugin and DiffBIR for Image Restoration with Generative Diffusion Prior
+The proposed NanoSD is trained on an extensive text-to-image dataset. To leverage its capabilities for diverse low-level vision tasks, we incorporate the model into the Diff-Plugin and DiffBIR frameworks. Both frameworks utilize a pre-trained latent diffusion backbone to adapt to multiple image restoration and enhancement tasks while preserving their inherent generative performance.
+Table 4 quantifies the performance of Nano-Diff-Plugin across multiple image restoration tasks. Our model achieves results comparable to state-of-the-art baselines while exhibiting substantial reductions in model size and inference time. Figure 6 illustrates the enhanced performance of Nano-Diff-Plugin across four challenging low-level vision tasks.
+Table 3 demonstrates that the proposed Nano-DiffBIR achieves competitive performance in terms of IQA metrics and restores identity as indicated by lower LMD score. Visual comparisons in Figure 5 reveal that the proposed approach effectively preserves facial identity while producing high-quality textures.
+4.6 Accelerating Marigold: Repurposing NanoSD for Monocular Depth Estimation
+To harness the capabilities of a pretrained NanoSD model for monocular depth estimation, we incorporate it into Marigold—a latent diffusion framework tailored for depth prediction. The performance of Nano-Marigold in depth estimation is evaluated against alternative approaches in Table 5. The results demonstrate that our method achieves competitive results compared to prior work while maintaining robust generalization across diverse real-world scenarios. For qualitative analysis, Figure 7 presents a visual comparison. The results indicate that Nano-Marigold effectively captures both scene structure and fine-grained details with enhanced computational efficiency.
+5 Conclusion
+We introduced NanoSD, an edge-efficient diffusion model obtained by restructuring the SD 1.5 U–Net into a hardware-aware search space, distilling stage-wise block variants, and selecting compact backbones through multi-objective optimization. The selected model, NanoSD preserves the generative behavior of SD 1.5 across a range of low-level vision tasks while substantially reducing computational cost on edge.
+

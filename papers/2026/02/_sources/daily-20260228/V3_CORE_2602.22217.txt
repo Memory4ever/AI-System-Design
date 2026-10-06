@@ -1,0 +1,769 @@
+RAGdb: A Zero-Dependency, Embeddable Architecture for Multimodal Retrieval-Augmented Generation on the Edge
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work and Literature Review
+2.1
+Evolution of Retrieval Systems
+2.2
+Vector Databases vs. Embedded Stores
+2.3
+Green AI and Edge Computing
+3
+System Architecture
+3.1
+Data Schema
+3.2
+Automated Multimodal Ingestion
+Visual Data Processing.
+Structural Data Processing.
+3.3
+Incremental Ingestion Algorithm
+Algorithm Logic.
+4
+The Hybrid Retrieval Methodology
+4.1
+Sublinear TF-IDF Vectorization
+4.2
+Substring Boosting
+5
+Experimental Evaluation
+5.1
+Experimental Setup
+5.2
+RQ1: What is the efficiency gain of incremental ingestion?
+5.3
+RQ2: Does hybrid search improve entity retrieval?
+5.4
+RQ3: How does the resource footprint compare to standard stacks?
+6
+Discussion
+6.1
+Privacy and Sovereignty
+6.2
+Suitability for Edge AI
+7
+Conclusion
+License: CC BY 4.0
+arXiv:2602.22217v1 [cs.IR] 09 Dec 2025
+RAGdb: A Zero-Dependency, Embeddable Architecture for Multimodal Retrieval-Augmented Generation on the Edge
+Ahmed Bin Khalid
+Affiliation:
+SKAS IT
+Email:
+ahmed.binkhalid@skasit.com
+December 2025
+Abstract
+Retrieval-Augmented Generation (RAG) has established itself as the standard paradigm for
+grounding Large Language Models (LLMs) in domain-specific, up-to-date data. However, the
+prevailing architecture for RAG has evolved into a complex, distributed stack requiring cloud-hosted
+vector databases, heavy deep learning frameworks (e.g., PyTorch, CUDA), and high-latency
+embedding inference servers. This “infrastructure bloat” creates a significant barrier to entry for
+edge computing, air-gapped environments, and privacy-constrained applications where data
+sovereignty is paramount.
+This paper introduces RAGdb, a novel monolithic architecture that consolidates automated
+multimodal ingestion, ONNX-based extraction, and hybrid vector retrieval into a single, portable
+SQLite container. We propose a deterministic Hybrid Scoring Function (HSF) that combines sublinear
+TF-IDF vectorization with exact substring boosting, eliminating the need for GPU inference at query
+time. Experimental evaluation on an Intel i7-1165G7 consumer laptop demonstrates that RAGdb
+achieves 100% Recall@1 for entity retrieval and an ingestion efficiency gain of 31.6x during
+incremental updates compared to cold starts. Furthermore, the system reduces disk footprint by
+approximately 99.5% compared to standard Docker-based RAG stacks, establishing the “Single-File
+Knowledge Container” as a viable primitive for decentralized, local-first AI.
+Keywords:
+Edge AI, Retrieval-Augmented Generation, Vector Search, Green AI, Serverless
+Architecture, Knowledge Graphs, Efficient Computing.
+1
+Introduction
+The advent of Large Language Models (LLMs) has revolutionized Natural Language Processing (NLP). However,
+these models suffer from two distinct, well-documented limitations: they are limited to the knowledge
+present in their training data (cutoff dates), and they have a tendency to “hallucinate” plausible but
+incorrect facts when faced with obscure queries [1]. Retrieval-Augmented Generation (RAG) addresses
+these issues by retrieving relevant context from an external knowledge base and injecting it into the
+model’s prompt context window [2].
+While RAG is conceptually simple, its implementation in enterprise environments has become
+prohibitively complex. A standard “Enterprise RAG” stack typically involves a microservices
+architecture consisting of:
+1.
+Ingestion Service:
+A pipeline (e.g., Unstructured.io) to parse PDFs, HTML, and images.
+2.
+Embedding Service:
+A GPU-backed inference server (e.g., TorchServe or Triton) to convert text
+to dense vectors.
+3.
+Vector Database:
+A dedicated stateful service (e.g., Pinecone, Milvus, Weaviate) to store
+vectors and perform Approximate Nearest Neighbor (ANN) search.
+4.
+Orchestration Layer:
+A framework (e.g., LangChain or LlamaIndex) to glue these components
+together.
+This distributed architecture introduces significant friction. It requires persistent server
+infrastructure, introduces network latency between components, and creates a large surface area for
+failure. Furthermore, the heavy reliance on Python dependency chains—often exceeding 2 GB
+for
+torch
+,
+transformers
+, and
+cuda
+—renders these stacks unsuitable for constrained environments
+such as mobile devices, IoT edge nodes, or CI/CD pipelines.
+To address these challenges, we propose RAGdb, a serverless, embedded retrieval engine. RAGdb
+collapses the entire stack into a single Python library (
+<
+<
+30 MB) and a single portable data file. By
+prioritizing sparse vectorization and algorithmic efficiency over raw model size, RAGdb enables high-
+fidelity retrieval on consumer hardware without external dependencies.
+The contributions of this paper are as follows:
+•
+Architecture:
+We define a unified schema for storing vectors, metadata, and content within a
+single B-tree structured file (SQLite), ensuring referential integrity and portability.
+•
+Algorithm:
+We introduce a hashing-based incremental ingestion pipeline that reduces
+re-indexing time by an order of magnitude (
+O
+⁡
+(
+U
+)
+O(U)
+complexity vs.
+O
+⁡
+(
+N
+)
+O(N)
+).
+•
+Evaluation:
+We provide empirical benchmarks demonstrating that RAGdb achieves comparable
+retrieval accuracy to dense retrievers for entity-centric queries while operating with near-zero
+infrastructure overhead.
+2
+Related Work and Literature Review
+2.1
+Evolution of Retrieval Systems
+Information Retrieval (IR) has historically relied on lexical matching algorithms. TF-IDF (Term
+Frequency–Inverse Document Frequency) [3] and BM25 [4] dominated the field for decades. These
+methods utilize sparse vector representations of text, where the dimensionality equals the
+vocabulary size. They are highly efficient, deterministic, and require no training. However, they
+struggle with semantic mismatch (the “vocabulary gap”), where a query for “automobile” fails to
+retrieve documents containing only “car.”
+The introduction of BERT [5] led to the rise of Dense Passage Retrieval (DPR) [6], where documents
+are encoded into fixed-dimension dense vectors (e.g., 768 dimensions). While DPR captures semantic
+meaning, it introduces a heavy computational cost for inference and requires specialized
+Approximate Nearest Neighbor (ANN) indexes like HNSW [8] or FAISS [6] to search efficiently.
+RAGdb adopts a hybrid approach. It utilizes sparse vectors for speed and determinism, while
+augmenting them with multimodal extraction (via OCR) and exact-match boosting. This covers the
+weaknesses of pure dense retrieval, particularly in enterprise domains where exact keyword
+matching (e.g., invoice IDs) is often more important than semantic approximation.
+2.2
+Vector Databases vs. Embedded Stores
+The popularity of embeddings led to a proliferation of specialized vector databases. Systems
+like Milvus and Pinecone offer scalability for billions of vectors but require substantial infrastructure
+(e.g., Kubernetes clusters). Conversely, embedded libraries like ChromaDB offer local execution but still
+rely heavily on standard machine learning libraries (PyTorch/TensorFlow) for embedding generation.
+RAGdb distinguishes itself by removing the dependency on deep learning frameworks entirely for
+the retrieval step. It relies instead on statistical vectorization implemented in pure NumPy,
+allowing it to run in environments where installing PyTorch is impossible or impractical.
+2.3
+Green AI and Edge Computing
+Schwartz et al. [9] coined the term “Green AI” to advocate for efficiency as a primary evaluation
+metric alongside accuracy. With the growing carbon footprint of AI, architectures that reduce
+Floating Point Operations (FLOPs) are critical. RAGdb aligns with this paradigm by enabling retrieval
+on low-power edge devices (e.g., Raspberry Pi, mobile phones) where heavy neural networks are
+infeasible due to thermal and battery constraints.
+3
+System Architecture
+RAGdb operates on the principle of the “Single-File Knowledge Container.” Unlike systems that
+distribute state across files (e.g., a FAISS index file + a pickle metadata file + a source folder), RAGdb
+enforces strict referential integrity by storing all artifacts in a single ACID-compliant SQLite container.
+3.1
+Data Schema
+The container
+K
+K
+is defined as a relational tuple stored on disk:
+K
+=
+⟨
+M
+,
+C
+,
+V
+,
+I
+⟩
+K=\langle M,C,V,I\rangle
+where:
+•
+Metadata Region (
+M
+M
+):
+Stores file paths, timestamps, and SHA-256 hashes to track provenance.
+•
+Content Region (
+C
+C
+):
+Stores normalized text segments extracted from heterogeneous sources
+(PDF, DOCX, JSON).
+•
+Vector Region (
+V
+V
+):
+Stores binary large objects (BLOBs) representing the computed vectors.
+•
+Index Region (
+I
+I
+):
+An inverted index mapping vocabulary tokens to document IDs.
+To support high concurrency, the underlying SQLite engine is configured in Write-Ahead Logging
+(WAL) mode, allowing simultaneous readers and writers without locking the entire database.
+3.2
+Automated Multimodal Ingestion
+Traditional pipelines require users to manually configure parsers for different file types. RAGdb
+implements an adaptive ingestion interface that performs magic-byte analysis to detect modality.
+Visual Data Processing.
+For image inputs
+I
+I
+, RAGdb integrates the RapidOCR engine via ONNXRuntime. This
+provides a quantized, dependency-free method for Optical Character Recognition (OCR), converting
+pixel data
+P
+P
+into textual representation
+T
+T
+without requiring system-level binaries like Tesseract:
+T
+=
+OCR
+onnx
+​
+(
+P
+)
+.
+T=\text{OCR}_{\text{onnx}}(P).
+Structural Data Processing.
+For tabular data (CSV, Excel), RAGdb serializes rows into semantic strings, preserving column headers
+as context keys to prevent loss of structural meaning during vectorization.
+3.3
+Incremental Ingestion Algorithm
+A core novelty of RAGdb is its ability to function as a continuous background process (“Live Sync”). To
+achieve this, we implement a state-based hashing algorithm.
+Algorithm Logic.
+1.
+Scan the target directory.
+2.
+For each file, compute the SHA-256 signature of the bitstream.
+3.
+Compare the signature against the stored hash in the metadata region
+M
+M
+.
+4.
+If the hash matches, skip processing. If it differs, trigger the
+Extraction
+→
+\rightarrow
+Normalization
+→
+\rightarrow
+Vectorization pipeline.
+This reduces the time complexity of re-indexing from
+O
+⁡
+(
+N
+)
+O(N)
+(where
+N
+N
+is total files) to
+O
+⁡
+(
+U
+)
+O(U)
+(where
+U
+U
+is
+updated files), enabling near-instant synchronization for large knowledge bases.
+4
+The Hybrid Retrieval Methodology
+While dense vectors excel at semantic matching, they often fail at “exact retrieval” tasks, such as
+looking up a specific part number or error code. RAGdb solves this via a Hybrid Scoring Function
+(HSF).
+4.1
+Sublinear TF-IDF Vectorization
+We employ a statistical vectorizer optimized for CPU execution. For a term
+t
+t
+in document
+d
+d
+, the
+term frequency weight is calculated using sublinear scaling to prevent long documents from dominating
+results:
+tf
+​
+(
+t
+,
+d
+)
+=
+1
++
+ln
+⁡
+(
+f
+t
+,
+d
+)
+,
+\text{tf}(t,d)=1+\ln(f_{t,d}),
+where
+f
+t
+,
+d
+f_{t,d}
+is the raw count of term
+t
+t
+in document
+d
+d
+.
+The inverse document frequency (IDF) term penalizes words that appear in too many documents
+(stopwords):
+idf
+​
+(
+t
+)
+=
+ln
+⁡
+(
+N
+1
++
+d
+​
+f
+t
+)
++
+1
+,
+\text{idf}(t)=\ln\left(\frac{N}{1+df_{t}}\right)+1,
+where
+N
+N
+is the total number of documents and
+d
+​
+f
+t
+df_{t}
+is the document frequency of
+t
+t
+.
+The document vector
+𝐯
+d
+\mathbf{v}_{d}
+is the
+ℓ
+2
+\ell_{2}
+-normalized composition of these weights. This allows for extremely fast
+cosine similarity computations using standard dot products.
+4.2
+Substring Boosting
+To address the limitation of approximate nearest neighbor search, we introduce a boosting term
+β
+\beta
+. The overall relevance score for query
+Q
+Q
+and document
+D
+D
+is:
+Score
+​
+(
+Q
+,
+D
+)
+=
+α
+⋅
+Sim
+cos
+​
+(
+𝐯
+Q
+,
+𝐯
+D
+)
++
+β
+⋅
+𝟏
+substr
+​
+(
+Q
+,
+D
+)
+,
+\text{Score}(Q,D)=\alpha\cdot\text{Sim}_{\cos}\left(\mathbf{v}_{Q},\mathbf{v}_{D}\right)+\beta\cdot\mathbf{1}_{\text{substr}}(Q,D),
+where
+α
+\alpha
+and
+β
+\beta
+are scalar weights and
+𝟏
+substr
+\mathbf{1}_{\text{substr}}
+is an indicator function:
+𝟏
+substr
+​
+(
+Q
+,
+D
+)
+=
+{
+1.0
+,
+if
+lowercase
+​
+(
+Q
+)
+⊆
+lowercase
+​
+(
+D
+)
+,
+0
+,
+otherwise
+.
+\mathbf{1}_{\text{substr}}(Q,D)=\begin{cases}1.0,&\text{if }\text{lowercase}(Q)\subseteq\text{lowercase}(D),\\
+0,&\text{otherwise}.\end{cases}
+This ensures that if a user queries a specific entity code (e.g.,
+INV-2024
+), documents containing
+that exact string are mathematically forced to the top of the ranking, guaranteeing 100% recall for
+known entities.
+5
+Experimental Evaluation
+To validate the architectural claims, we conducted a series of benchmarks focusing on efficiency,
+accuracy, and resource consumption.
+5.1
+Experimental Setup
+All experiments were conducted on standard consumer-grade hardware to verify the system’s
+viability for Edge AI and local development environments:
+•
+Processor:
+11th Gen Intel(R) Core(TM) i7-1165G7 @ 2.80 GHz
+•
+RAM:
+16.0 GB
+•
+Storage:
+NVMe SSD
+•
+Operating System:
+Windows 11 (64-bit)
+•
+Dataset:
+A synthetic corpus of 1,000 documents was generated, containing mixed English text
+(business and technical domain). Unique entity codes (e.g.,
+UNIQUE_INVOICE_CODE_XYZ_999
+)
+were injected into specific documents to test retrieval precision.
+5.2
+RQ1: What is the efficiency gain of incremental ingestion?
+We measured the time taken to ingest the full corpus from scratch (“Cold Start”) versus the time
+taken to re-scan the corpus after a minor update (“Incremental”).
+Operation
+Time Taken (s)
+Throughput
+Cold Ingestion
+14.59
+∼
+\sim
+68.5 Docs/sec
+Incremental Update
+0.46
+>
+>
+2,100 Docs/sec
+Analysis:
+RAGdb demonstrated a 31.6x speedup during incremental updates. This validates the
+efficiency of the hashing algorithm. In a real-world deployment, this allows the database to monitor
+a folder of thousands of files with negligible CPU impact, re-indexing only the files that a user
+modifies.
+5.3
+RQ2: Does hybrid search improve entity retrieval?
+We queried the system for a specific injected entity code
+(
+UNIQUE_INVOICE_CODE_XYZ_999
+) that
+was present in only one document (
+doc_500.txt
+).
+•
+Baseline (Standard Vector Search):
+Pure semantic search often struggles with random
+alphanumeric strings, assigning them low confidence scores or retrieving documents with
+similar-looking noise.
+•
+RAGdb (Hybrid Search):
+The system identified
+doc_500.txt
+as the top result with a score
+of 1.5753.
+Analysis:
+The boosting mechanism ensured 100% Recall@1 for the entity query. This is a critical
+requirement for enterprise RAG applications where retrieving the wrong invoice or patient ID is
+unacceptable, regardless of semantic similarity.
+5.4
+RQ3: How does the resource footprint compare to standard stacks?
+We compared RAGdb against a typical local development stack consisting of Docker, ChromaDB, and
+LangChain.
+Metric
+Standard Docker Stack
+RAGdb (Ours)
+Improvement
+Disk Footprint
+>
+>
+1.2 GB (Deps + Models)
+∼
+\sim
+5 MB
+99.5% Reduction
+Query Latency
+∼
+\sim
+120 ms
+∼
+\sim
+60 ms
+2x Faster
+Setup Time
+∼
+\sim
+10 Minutes
+<
+<
+10 Seconds
+Instant
+Infrastructure
+Docker / Python Server
+Single File
+Serverless
+Analysis:
+RAGdb reduces the disk footprint by over two orders of magnitude. The query latency
+reduction is attributed to the elimination of the HTTP network overhead between the application
+code and the vector database server.
+6
+Discussion
+6.1
+Privacy and Sovereignty
+The centralized nature of modern AI raises significant privacy concerns. Sending documents to cloud
+vector databases or embedding APIs violates strict data sovereignty laws (e.g., GDPR, HIPAA) in many
+jurisdictions. RAGdb’s “Zero-Egress” architecture ensures that data never leaves the local machine.
+The single-file format also simplifies data deletion; deleting the
+.ragdb
+file guarantees that all vectors
+and indexes are destroyed, facilitating “Right to be Forgotten” compliance.
+6.2
+Suitability for Edge AI
+With the rise of Small Language Models (SLMs) like Phi-3 and Llama-3-8B that can run on laptops, the
+retrieval bottleneck has shifted to the vector database. Standard databases like Milvus are too heavy
+for an 8 GB RAM laptop. RAGdb fills this gap, providing a retrieval backend that runs comfortably
+alongside SLMs on edge hardware.
+7
+Conclusion
+This paper presented RAGdb, a novel architecture for embedded, serverless Retrieval-Augmented
+Generation. By challenging the assumption that RAG requires distributed infrastructure, we
+demonstrated that a monolithic, single-file approach can achieve high-fidelity retrieval with a
+fraction of the resources.
+Our experiments confirm that RAGdb achieves 31.6x faster updates via incremental ingestion
+and 99.5% lower storage overhead than comparable stacks. We believe this “Single-File Knowledge
+Container” approach paves the way for a new generation of decentralized, privacy-preserving AI
+applications.
+Software Availability
+RAGdb is open-source software released under the Apache 2.0 license.
+•
+Repository:
+https://github.com/abkmystery/ragdb
+•
+Package:
+pip install ragdb
+References
+1.
+P. Lewis et al.,
+“Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks,”
+in
+Advances in Neural Information Processing Systems (NeurIPS)
+, vol. 33,
+pp. 9459–9474, 2020.
+2.
+G. Salton and C. Buckley,
+“Term-weighting approaches in automatic text retrieval,”
+Information Processing & Management
+, vol. 24, no. 5, pp. 513–523, 1988.
+3.
+V. Karpukhin et al.,
+“Dense Passage Retrieval for Open-Domain Question Answering,”
+in
+Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP)
+,
+pp. 6769–6781, 2020.
+4.
+S. Robertson and H. Zaragoza,
+“The Probabilistic Relevance Framework: BM25 and Beyond,”
+Foundations and Trends in Information Retrieval
+, vol. 3, no. 4, pp. 333–389, 2009.
+5.
+J. Devlin, M.-W. Chang, K. Lee, and K. Toutanova,
+“BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding,”
+in
+Proceedings of NAACL-HLT
+, 2019.
+6.
+J. Johnson, M. Douze, and H. Jégou,
+“Billion-scale similarity search with GPUs,”
+IEEE Transactions on Big Data
+, vol. 7, no. 3, pp. 535–547, 2019.
+7.
+R. Schwartz, J. Dodge, N. A. Smith, and O. Etzioni,
+“Green AI,”
+Communications of the ACM
+, vol. 63, no. 12, pp. 54–63, 2020.
+8.
+Y. Malkov and D. Yashunin,
+“Efficient and robust approximate nearest neighbor search using Hierarchical Navigable Small World graphs,”
+IEEE Transactions on Pattern Analysis and Machine Intelligence
+, 2018.
+9.
+Y. Wang et al.,
+“Benchmarking Vector Search Engines,”
+arXiv preprint arXiv:2101.02635, 2021.
+10.
+M. Abadi et al.,
+“TensorFlow: A System for Large-Scale Machine Learning,”
+in
+OSDI
+, 2016.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

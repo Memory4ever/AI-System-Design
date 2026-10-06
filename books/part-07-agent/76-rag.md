@@ -54,6 +54,10 @@ source
 
 Index 应记录 source URI、content digest、version/time、tenant/ACL、parser/chunker 和 embedding model。Embedding vector 不是 source of truth。
 
+代码语料还需要改变检索单位：独立 cell 在前置变量与状态已知时轻便，但 notebook 中一次绘图往往依赖更早的数据派生和 mutation，语义相似并不意味着可直接重用。一条受限分支沿 AST 追踪 data-variable 的创建、修改与使用，把目标 cell 所需语句按原执行顺序组成 dependency closure，再在当前数据上重跑、修复并保留原 notebook 链接。[同840对 cell/component 的标注对照](https://arxiv.org/html/2602.17215v1#S4.SS2.SSS1)支持依赖上下文改善 used-column 识别，不证明完整静态语义、执行成功即分析正确或 sandbox 本身安全；非线性执行需要完整 execution log，未知库 mutation 也可能漏依赖。重跑、代码调试与后续 VLM 解读增加费用，作者离线设置约300个 components 的检索处理约3分钟，完整12子任务 notebook 约10分钟，不是生产延迟保证；固定提示和未为该任务定制的 RAG baseline 也限制总体比较。依赖闭包或新数据运行无法核验时，回读完整 notebook、补执行日志或人工确认，简单自足的代码片段仍可直接检索，派生输出不能取代原数据事实。<!-- source-family:SF-2026-ARXIV-2602-17215 -->
+
+切分与编码的顺序也属于索引身份：先 chunk 再独立 encode 保持局部差异且构建简单，先让文档在较长窗口中 contextual encode、再按 span pool 成 chunk 则把邻域信息带入每个向量，却可能让同一文档的 chunks 更难区分。[前后切分的有限对照](https://arxiv.org/html/2602.16974v1)显示，在跨文档以 MaxP 选文档时较有利的方案，平均上可能在同文档 chunk 竞争中反向；这不是所有 encoder/configuration 的定律，E5 与 Jina 的若干同文档设置仍有正例。文档级相关性与答案重叠 chunk 的评价单位、512 与8192的编码窗口也不同，不能把平均反转解释为已控制长度的唯一因果。选择因此应交叉验收编码前后边界与检索竞争人口，保存原始 span、context window 和 pool/chunker版本；这些是工程要求，不是向量自动取得证据权威。长窗编码、重新索引和评估均增加成本，跨 chunk 上下文不足时可走该分支，局部精确引用、长窗不可得或同文档辨别退步时，独立 chunk encoding 与原始 paragraph 检索仍合理。<!-- source-family:SF-2026-ARXIV-2602-16974 -->
+
 在 retrieval 前，ingestion 本身已经是一段编译过程：解析文档、切分、提取结构、生成 embedding/metadata，再提交 index revision。若把它当成一次离线导入，就无法解释写放大、迟到更新、删除传播和 freshness。Index owner 应保存 source revision、compiler pipeline、segment lineage 与 commit point；查询只读取已提交快照。更丰富的结构索引提高可检索性，却增加构建成本和 stale window，文档小且更新少时直接扫描仍合理。<!-- semantic-body-binding:SF-2026-ARXIV-2608-20845 -->
 
 ### OCR 之后仍需要 Document-level State Owner
@@ -69,6 +73,8 @@ Index 应记录 source URI、content digest、version/time、tenant/ACL、parser
 Query-side 也有一个容易错位的选择：同一 information need 可以写成多个 query variant，但服务端往往只能按预算先选一个执行。离线检索分数更高的改写不必给出更有用的答案；因此选择器要冻结原问题、候选改写集合、目标 retriever/index 与后续 reader，在真实执行前用受限 query 特征提出 variant，再分别验收排名／召回和答案支持／效用。它只拥有查询表达的 proposal，不因预测分数高就替检索结果赋予事实权威，也不能把 oracle 最优改写当成线上可得输入。<!-- source-family:SF-2026-ARXIV-2604-22661 -->
 
 这条分支可能省去并行执行全部改写，却增加 predictor、训练标签和错误选一的机会成本；若选择器本身比多路检索更贵，或答案需要互补证据，就应回退固定 query、受预算约束的多改写融合或直接取证。受控 TREC-RAG 2024 的 BM25／dense、top-5 reader 与 nugget 评价显示，nDCG-optimal 的 variant 与答案效用可错位，甚至不保证优于某些简单 pre-retrieval predictor；但它没有给出匹配完整生成成本的生产比较，也不证明某一种 QPP 策略普遍最优。Document-side 结构修复与 answer-side 证据核验仍由各自 owner 承担。
+
+视觉 query 的修复还应保持信息需求本身：crop、deblur、caption 等工具可能让图更容易检索，也可能删除关键对象、补造细节或改掉问题语义。保留原图与扰动/修复 identity，用配对样本分别核对真实工具执行、oracle 修复、retriever recall 与 reader 答案；[VQPP 的受限对照](https://arxiv.org/html/2602.13179v1)揭示这些层不能由最终 answer gain 合并归因。单一合成 corruption 不覆盖组合噪声，watermark 也可能直接污染回答而非检索；Nomic 的文本/独立视觉配对与预处理未完整锁定时，对应数值不授确定复现，不据此否定其他 encoder 分支。工具调用、重编码、多轮搜索和语义核验都有费用，oracle crop 不当线上可得输入；repair 丢语义或索引失配时，保留原图直检、受预算的多路检索与独立答案核验，而不是用去噪分数给证据签字。 <!-- source-family:SF-2026-ARXIV-2602-13179 -->
 
 对书籍、报告和规范等有可靠标题层级的 corpus，可以在 chunk index 旁维护一个 heading index。查询命中标题后，retrieval controller 再按 token/权限预算展开对应 page 或 section，并与普通 chunk candidates 去重、重排；heading 只拥有 navigation proposal，完整页也不因被展开而自动获得 support authority。索引身份必须同时绑定 document revision、heading extractor 与 section locator，避免文档更新后结构入口仍指向旧页。
 
@@ -115,7 +121,13 @@ Dense retrieval 擅长语义相似，lexical retrieval 对 rare identifiers、co
 
 该分支用更细的信息角色换取 sentence selector、路由标注与迁移误差。[两跳实验](https://arxiv.org/html/2604.09019v1)只评价第一跳正确的子集，分析中的 Gaussian-score AUC 也依赖分布假设。主配置在三个数据集都冻结混合系数 α=0.25，受测迁移结果为正，但一项不显著；另用路由概率连续调权的消融虽提高域内结果，却降低迁移收益并出现负增益。它支持保守固定权重与自适应权重须分别验收，不证明开放检索的 no-regret 保证。关系角色不清、第一跳不可靠或校准样本不足时，保留 question-only、query/bridge union fusion 与固定 hybrid 基线；不要用更复杂路由掩盖错误的 bridge evidence。<!-- source-family:SF-2026-ARXIV-2604-09019 -->
 
+对于事实密集、反复查询的语料，桥接关系还可以在写入时预组织：保留指向原文的 entity/event 与 QA 对，查询只分解一次，以实体 lexical 与 QA dense 双索引召回并重排，再用当前 QA 的答案实体实例化下一跳，按有界 beam 选择链，最后只把链上的 QA 送入 reader。这样把每跳 LLM 生成的部分工作移到前置抽取与索引，不必让读取控制器每次重新组织相同事实；派生 QA、关联和链分数仍不是独立事实来源，最终回答应可回指原始证据。原 chunk 与逐跳查询在写入预算低、叙事自由或未来问题难以预知时仍然合理。
+
+这条分支用昂贵写入、实体消歧、双索引与更新维护换取更窄的查询上下文，而不是保证全生命周期更便宜。[受限 QA-chain 实验](https://arxiv.org/html/2602.15156v1)中，MuSiQue 11656 passages 的写入为100.1分钟、读取3.3秒/query，对照 dense index 为1.9分钟、1.3秒/query；减少 answer-context tokens 不代表抽取、分解、重排与回答总成本下降。开放模型抽取缺失 verb/QA 边、错误实体或旧关联都可能截断真正证据，叙事与多模态范围亦未验。应保存 source span、索引/抽取版本和删除传播；缺桥接信息或 provenance 失效时回读原 chunks、扩大检索或回退普通 hybrid，不让较短的证据链自认证充分性。<!-- source-family:SF-2026-ARXIV-2602-15156 -->
+
 还有一条替代分支：不把 query 与 document 都压成一个向量，而让模型生成 document identifier，再由标识解析对应文档。它绕开单向量匹配的部分表达限制，却把区分压力移到 identifier、解码和评分链：相关与不相关文档若共享同一 ngram，生成出它不等于选中了相关文档；beam search 即使恢复部分 recall，也可能持续剪掉真正能区分两者的标识。因此要分别测标识覆盖、难负例区分及最终排序，并版本化标识到文档的映射、corpus 与解码规则。
+
+标识长度也可以成为单独的预算变量。固定长度离散码便于统一解码和映射；若热门对象更容易压缩，一条受限分支可让 AR content code 共享词表，同时另学不使用 EOS 的 stopping hazard，以截断几何长度先验、期望长度惩罚和 prefix 加权重建权衡表达与长度。长度选择不等于内容正确，同一符号共享语义只是结构假设，短码仍可能碰撞；下游追加 unique ID 的处理又带回标识和解析成本，因此 code、stop、decoder 与映射应共同版本化，这属于工程要求。[推荐式生成标识实验](https://arxiv.org/html/2602.16375v1)按交互频率加权重建，不能替代均匀 catalog 覆盖；固定512-token历史下较短码能容纳更多事件，也不能读成相同事件预算的纯质量改进。冷尾对象可能更长，部分数据集重建仍逊于固定码基线；更强长度惩罚可伤重建，扩大最大长度或词表也会增加训练和输出头成本。该有限评价没有测开放 RAG 部署延迟、beam或生产 SLO，较短码不自动等于加速；碰撞、冷尾或更新成本越界时，保留固定标识、lexical/hybrid 与显式映射回退。<!-- source-family:SF-2026-ARXIV-2602-16375 -->
 
 这种分支增加标识维护、beam 和更新成本；精确符号查询、快速变更语料仍可优先 lexical 或 hybrid 检索。[生成式检索的受控反例](https://arxiv.org/html/2604.05764v1)来自 SEAL/MINDER 与 LIMIT-H/HS，oracle pseudo-query 只是诊断上界，不是部署输入，也不证明所有生成式检索必然失败。<!-- source-family:SF-2026-ARXIV-2604-05764 -->
 
@@ -151,7 +163,14 @@ Flattening 或改变分隔符可以作为低成本 mitigation，却可能丢失�
 
 多格式训练增加 adapter、样本构造与 corpus re-encoding 成本，必须把 format set、adapter revision 和索引版本绑定。作者对照中 SPLADE 及部分强格式会退步，说明 centroid 并非统一优胜目标；线上 format 已稳定、强 baseline 更好或重编码预算不足时，继续原单 view 索引，并分别检查召回和最终答案，不用 embedding 接近代替答案质量。
 
+来源差异还会在 reader 之前进入 retriever 的训练分布。即使 human 文档与改写文档按假设表达相同事实，训练 stage、配对 query 和正负样本来源也可能改变二者的排名倾向；不能只凭 source 名称、文本流畅度或语言模型 perplexity 推断召回公平。升级 encoder 或微调语料时，应在固定 query 人口、语义配对文档和索引协议下比较两类来源的 ranking/recall，再把 reader 的格式效应另行测量。这里审计的是检索选择，而非判断哪种来源为真。<!-- source-family:SF-2026-ARXIV-2602-10833 -->
+
+配对构造、重新编码与分来源回归有成本，改写也可能悄悄改变实体和事实。[受限训练阶段对照](https://arxiv.org/html/2602.10833v1)呈现随模型和数据变化的方向，合成微调后仍存在偏 human 的配置；重新接回 LM head 的概率代理也未解释全部偏置，不能推普遍 pro-LLM 或无任何流畅度影响。来源质量或配对假设不可靠时，保留原 encoder/索引、独立相关性标注和人工事实审计；不能用更低 perplexity 或更高某来源排名批准替换。
+
+持续加入合成文档时，来源评价还应把四个人口分开：全 corpus 的合成份额、实际 top-k 的曝光份额、答案显式引用的来源份额，以及答案对独立 reference 的质量。它们是不同测量接口：来源 origin 不是真值，显式 citation 也不揭示模型所有隐藏使用；曝光上升而答案分数暂时稳定，不能证明语料生态无损。[受限注入模拟](https://arxiv.org/html/2602.16136v1)分别运行 SEO 式重写与实体替换 abuse，未证明二者构成真实网络的时序循环；生成、排序、回答同模型家族的相关盲点和有限 judge/reference 又限制外推。逐轮检索/回答、来源标记与独立事实审计增加成本；provenance graph 或 ingest filter 是待验证防御，不是原实验已测得的修复。来源身份不清或质量退化时，保留原可信 corpus、检索/回答对照与人工事实核验，不以单一 aggregate 分数批准继续注入。<!-- source-family:SF-2026-ARXIV-2602-16136 -->
+
 ### Speculative Retrieval Draft 必须经过 Accept / Fallback
+
 
 每次查询都执行完整检索，在 corpus 大、检索链深时可靠但把全部延迟暴露给 TTFT。若历史缓存中存在与当前 query 同源或高度同构的查询，可以先从窄 cache/fuzzy channel 产生 candidate documents，形成 retrieval draft；关键是 draft 不能因为“看起来相似”就直接进入 Context。
 
@@ -166,6 +185,8 @@ Speculative retriever 只拥有 draft proposal 和 reference-query identity。Va
 在多租户向量检索中，先取全局 top-k 再按 ACL 丢弃结果，只在授权集合不稀疏时尚可接受；当 tenant 只拥有很小的 candidate partition，未授权向量会同时占用 score budget 与 top-k slot，over-fetch 也无法稳定恢复 recall。Tenant / ACL policy 应由可信控制面决定，并在 ANN kernel 的 candidate admission 之前执行；index 只消费不可伪造的 allowlist，不能自行解释用户身份。
 
 Kernel pre-filter 用执行耦合与可能的数据倾斜换回安全和 recall；per-tenant index 隔离更强，却增加内存、build 与 freshness 成本。Codebook-oblivious quantization 只能消除一种 corpus-trained codebook channel，不是 embedding privacy 证明；query、access pattern、compressed vector 与 calibration statistics 仍需第 71、72 章的隔离和 threat model。
+
+不同 agent 反复访问重叠语料时，独立索引最易隔离，却会为宽 scope 查询重复 coarse 导航。一个性能分支让每个 scope 保留自己的 coarse graph，再以 inter-graph portals 连到 static graph；fine vectors 仍只存一份，每个 static cluster 另存 agent-specific 的近期 local vector IDs，优先访问该 profile，而不是复制 embeddings。这里的 scope/profile 只决定搜索路径，可信 allowlist 与最终 admission 仍决定权限，跨图可达不等于有权读取。[受限共享索引对照](https://arxiv.org/html/2602.21477v1)支持这层导航/访问次序分工，不采用其有歧义的连接概率公式；近期平均距离的 early-return 也不是 recall 证书，后台完整搜索仍计费。GPU 热 cluster 与 CPU 插入 buffer 可共同提供候选，新副本完成后再切换会增加双驻留、metadata、split 尖峰及读者/失效管理成本，不能由 async copy 授完整 publication 或 crash 一致性。有限 H100、MSMARCO/agent trace 的 ANN recall/latency不等端到端生产倍数或固定显存上界；共驻 weight/KV、scope churn、quality或freshness失配时保留独立索引、普通完整检索与已发布 snapshot，而不让 profile 命中率自认证证据充分。<!-- source-family:SF-2026-ARXIV-2602-21477 -->
 
 <!-- semantic-body-binding:SF-2025-ARXIV-250501538-HONEYBEE:start -->
 当租户权限由重叠 role graph 表达时，“一个 tenant 一个索引”会复制大量公共向量，而单一全局索引又让每次 query 承担复杂过滤。中间分支可以把稳定的 RBAC role/permission cut 编译成 ANN physical partitions，并对跨 partition 的热点向量做受控 replication。Policy owner 仍拥有 role graph 与 revision；index builder 只消费已签署的 partition plan，runtime 只在授权 partition 中搜索。它用更低查询过滤成本换 memory、update fan-out、role churn rebuild 和 policy/index 双版本一致性。角色稳定、重叠结构显著时值得考虑；权限频繁变化、小 corpus 或强隔离优先时，kernel pre-filter/per-tenant index 更透明。HONEYBEE 的 13.5×/90.4% 只属于作者 RBAC benchmark、HNSW 参数和 workload，不能成为通用向量数据库承诺。
@@ -199,6 +220,20 @@ Kernel pre-filter 用执行耦合与可能的数据倾斜换回安全和 recall�
 
 分离还改变维护路径：图可以批量merge/repair，向量append后由ID-location映射定位，后台GC再压实并切换映射；它没有免除query snapshot、删除和freshness责任。收益是减少碎片和导航I/O，代价是独立metadata、解压、prefetch缓冲、GC与映射一致性；原向量已经8bit量化、候选很少或内存工作集足够时，编码和额外向量I/O可能不划算。[受限实证](https://arxiv.org/html/2604.09173v1)在双Xeon/单NVMe、64搜索线程、100M至1.4B向量中观察到这些取舍：低搜索预算以及部分billion-scale低recall工作点可比PipeANN更慢。于是验收要把storage、相同recall下的QPS/P99、update成本一起比较，而不是仅用压缩率批准替换；未经验证的高freshness或强尾延迟负载仍可保留共址布局与独立维护窗口。
 
+完整向量重排还有一条中间分支：coarse PQ 已常驻快内存，而原向量仍在 SSD 时，可以重用 coarse distance，把精化残差和缩放标量另放到 far memory。距离分解让残差 inner product 修正已有分数；将残差方向编码为 {-1,0,1}、五维压入一个 byte 后，精化主要消费紧凑 codes，而不是重建和搬运每条完整向量。再用邻近样本上的局部线性校准改善 top-k 边界排序，先裁短候选队列，最后只为保留项读取原向量。这改变的是精化 I/O 的层级，不改变原始 evidence 或授权；残差近似各向同性且与 query 不相关才支持所用零期望近似，校准后的裁剪也不是带未读贡献上界的 exact early-stop。<!-- source-family:SF-2026-ARXIV-2601-09985 -->
+
+中间层增加 residual codes、calibration 与 index revision 的绑定、far-memory 容量和重排成本。应在相同 recall 下比较完整查询、SSD/far-memory 流量与构建开销，而不是用距离 MSE 或压缩比批准替换。[受限 ANNS 证据](https://arxiv.org/html/2601.09985v1)基于 Wiki/LAION、A10 coarse search 与 CPU/SSD 精化，CXL 路径用 Ramulator 模拟、逻辑面积功耗用 ASAP7 综合，不证明真实设备或生产 P99/SLO。更高 recall 时前级遍历会重新主导；残差/query 分布偏移、校准失配、候选很少或向量可驻内存时，完整向量精化与既有 CPU/GPU 路径仍合理。检索答案质量、在线更新和多租户 policy 继续独立验收。
+
+物理 page locality 与搜索怎样消费一页也需联合验收。把图近邻排到同一 SSD page，只有被读取的其他记录真正参与候选距离/扩展时才可能充分利用这次 I/O；后者又增加距离工作，因此 page shuffling 或 page-level search 各自并不必然更快。[同库有限组合对照](https://arxiv.org/html/2602.21514v1)显示二者在部分 matched-recall 工作点互补；48 workers 下 speculative pipeline 却因 SSD 已饱和而多读未确认候选，低于部分无 pipeline 配置，高维 dynamic width 也有 recall 反退。Layout 重排、离线峰值内存、候选计算和查询全路径必须一起计价，uniform expected-page 近似不签最坏界，禁用 io_uring 的控制也不代表所有引擎。低并发、布局收益不稳或额外扫描不合算时，保留原节点消费与既有异步 I/O，不凭 overlap 名称批准替换。<!-- source-family:SF-2026-ARXIV-2602-21514 -->
+
+同一页怎样进入 cache，还取决于访问偏斜发生在哪个粒度。Page cache 管理简单，但热门 vertex 与冷门 vertex 混排时，整页统计会抹平 record 的热度；只缓存被请求的 record 又可能沿 `P1→P2→P1` 重读同页。因此可把 metric-affine records 共址并共同装入，丢弃同页的其他记录；metric 近邻不等于导航图邻接，group 也可能因页容量被拆开。[受限缓存对照](https://arxiv.org/html/2602.22805v1)在 Sift 中观察到 47.3% vertices 未访问、却只有 0.1% pages 未访问，并在固定布局、10% buffer 的渐进实验中发现：异步 coroutine 提高 QPS，却先恶化平均单查询时延；record cache 再改变这个取舍。Affinity 阈值、batch 与 beam 过大仍会污染缓存或浪费预取，不能把更多 overlap 当作单查询必然更快。<!-- source-family:SF-2026-ARXIV-2602-22805 -->
+
+这条分支支付构建期 affinity、slot/映射状态和预取费用；各系统以自身 disk size 的比例分配 buffer、4KiB/8KiB page 又不同，整体排名不等于同绝对 RAM 下的单因素归因。原文 visited-set 伪码与文字不一致，cache-hit 随 beam 成倍的说法也没有一般概率条件，均不作为终止或正确性保证；这里只采用布局、缓存粒度与披露 Recall@10/mean-latency 的局部取舍。分布不稳、较小工作集能驻内存或质量/时延退化时，保留 page cache、直接搜索或原 beam；在线更新、并发安全与生产 tail 仍须另证。
+
+把热 record 放对位置，仍不保证每页计算便宜。高维 PQ 的逐邻居 LUT 访问可以成为瓶颈；另一条布局分支把 PCA principal 的邻居 codes 按 subcode 跨邻居交错存入 node，让 SIMD 同时算多条距离，并保留 principal 与 residual 供最终精排。这用 disk 复制邻居码换掉全体 PQ 常驻内存；它不是上段 record cache 的替代，也不改变 evidence identity。[同 GIST、Recall@10=.90、R64/BW8 的布局对照](https://arxiv.org/html/2602.23342v1)将计算由约1847降到221μs，却把平均 I/O 次数由77升到131、I/O 时间由1254升到1775μs：计算提速会重新暴露 I/O，而不是消除它。<!-- source-family:SF-2026-ARXIV-2602-23342 -->
+
+同步 beam 等待最慢请求时，还可在部分节点完成后提前发下一 hop，让迟到节点随后更新候选；这是有 recall 代价待验的近似执行分支，不是任意完成顺序等价的证明。PCA、cache、graph/layout revision、磁盘放大与重建共同付费；OOD query 会退化，DPR 构建并不比所有基线快，部分 BigCode 低 recall 工作点也更慢。披露 Xeon/NVMe 的 QPS 与单线程均值不能签生产 P99；分布变化、页放大不合算或 late-arrival 语义无法核验时，保留普通 PQ、同步 beam 与完整向量精排。
+
 ### Index Update 可以借用 Search I/O Stall，但不能借走 Freshness Authority
 
 把 index update 与 search 完全串行，状态简单、容易证明 snapshot 一致；disk ANN 在等待随机 I/O 时存在空窗，后台 updater 可以把可分解的更新工作放入这些 stall windows，并由 feedback controller 限制单次 overrun。Search owner 仍固定 query snapshot，update owner 只构建下一 revision，publisher 在完成性和 freshness gate 通过后原子切换，不能让半成品进入候选集。
@@ -226,9 +261,27 @@ relevance 不一致，以及语料扩大后噪声近邻累积，都可能让真�
 [单向量检索的受控研究](https://arxiv.org/html/2603.29519v1)只支持其 LIMIT/MSMARCO 与模型对照，
 玩具推导和作者观察都不证明所有 RAG 语料必然出现同等退化。<!-- source-family:SF-2026-ARXIV-2603-29519 -->
 
+从 dense encoder 转向 late-interaction，还要决定在哪个训练阶段让表示适配新的匹配目标，而非只换输出头再做一次 KD。[受限阶段与接口对照](https://arxiv.org/html/2602.16609v1)比较 dense 预训练后做多向量监督/KD，以及从更早阶段就训练多向量目标；完整多向量预训练有额外成本，局部残余收益又与训练规模混杂，不能据此宣称唯一必要路线。继承的 query/document prompt 与训练长度也属于接口：弱微调时保持原 prompt 有助局部结果，但更强、更长微调可适配新的 prompt，所谓隐式 query expansion 仍是猜想。选择应同时保存起点、各阶段目标/数据/预算、prompt 与长度；复用已训 dense 的成本不等于总生命周期免费，encoder 变化后的索引重建与回归也须付费。资源有限或旧检索已稳定时，保留 dense 起点加多向量监督/KD、原单向量/hybrid，而不是只为更高 BEIR 均值重做全部预训练。<!-- source-family:SF-2026-ARXIV-2602-16609 -->
+
 倒排检索也不必让每一维永久对应 tokenizer 的词。词法维度便于精确标识符匹配和直接解释，语料变化快时尤其容易维护；另一条条件分支先从冻结编码器的上下文状态训练稀疏自编码字典，再用检索目标联合适配编码器与字典，使查询和文档的非零 learned latent 权重进入倒排索引。它改变的是检索输出空间与训练责任，而不是宣称每个 latent 都是跨语言稳定的语义真值。逐 token 取 Top-K 仍可能在跨 token 聚合后形成稠密文档表示，所以重建质量、相关性与最终 posting 预算必须分开验收。<!-- source-family:SF-2026-ARXIV-2604-21511 -->
 
 字典预训练、检索适配与索引重建会增加生命周期成本；编码器、字典和 postings 按同一 revision 迁移，是依据索引可比性提出的工程要求，不是作者已验证的全量热升级协议。[受限 SAE–SPLADE 对照](https://arxiv.org/html/2604.21511v1)只覆盖披露的 DistilBERT/MS MARCO 与多语切片，存在域内或语言退步；启发式共现名称不证明 concept 正确，预期 posting 访问量也不等于真实延迟。精确词查询、预算紧或语料频繁更新时，保留词法/SPLADE 与已验证 hybrid，不能用新的“概念”标签遮蔽匹配错误。下节再处理多向量表示真正产生的物理搬运成本。
+
+缩短检索向量还会改变哪些约束被保留下来。普通 Matryoshka 训练让多个前缀都能做语义匹配，但带时间的问题可能同时需要“内容相关”与“在指定时期成立”；若时间信号被截在后部，短向量可能先丢掉时间条件。一个受限分支把每个可用前缀的前 $t$ 维留给 temporal representation，其余维度承载 semantic representation，并用语义投影目标与时间监督共同训练；这不是把时间简单加进文本，也不是声称所有前缀都具备同等信息。检索表示 owner 需要同时验收时间条件召回与一般语义召回，而不能把低维索引的体积优势直接当成质量优势。<!-- source-family:SF-2026-ARXIV-2601-05549 -->
+
+时间监督的权重增加了新的取舍：过强会损害一般语义表现，过弱则不足以区分时间上错误的近邻。[时间优先前缀与受限评价](https://arxiv.org/html/2601.05549v1#S3)只支持其 LoRA 编码器、六类 temporal embedding models、所测时间问答与 NQ 对照，部分低维配置并不优于基线；它不认证文档时间戳、事件真实性或所有语料的时间推理能力。时间字段不可靠、工作负载不需要时间约束或语义质量退步时，保留普通语义/词法检索并显式过滤时间仍合理。表示训练、监督数据和索引重建也要计入生命周期成本，下节再处理表示实际引起的数据搬运。
+
+表示失配也可以在建索引之前作有限探测，而不只在最终检索失败后更换 encoder。一个条件分支为每个 retriever 构造固定知识图谱竞争池，以实体相关查询是否进入 top-k 的经验比例训练风险读出；再在文档中定位低分实体，补入外部知识的多个检索视图或单个合成视图。它把 **retriever-specific probe → entity selection → index augmentation** 接成可审计的写路径：竞争池、读出、实体映射、外部来源与新增视图都需共同保存身份，而原文仍保留为回读依据。这个比例只是给定探针人口下的可检索性，不能当真实 corpus/query 的失败概率，更不能认证外部知识真值。<!-- source-family:SF-2026-ARXIV-2602-09616 -->
+
+[Argus 的必要对照](https://arxiv.org/html/2602.09616v1)限于固定 Wikipedia/Wikidata 探针及受测八个 retriever；合成视图在 Jina 的 ImpliRet 切片反而退步，多视图和合成单视图不等价。原实验没有控制相同索引膨胀下的随机或全实体增强，不能将全部收益归因于风险选择。探针训练、外部检索、生成、索引扩容与更新失效都增加成本；域迁移、实体误连或增强收益不稳时，保留原索引、lexical/hybrid 与显式 rerank，不让风险读出拥有证据 admission 权。
+
+另一条分支不改 index，而选择值得加入 retriever 训练的合成 query。固定 encoder `φ` 后，用 inverse model 将 `φ(x)` 还原成 query `x̂`，再按相对往返误差 `1−||φ(x̂)−φ(x)||²/||φ(x)||²` 排序，筛选与 encoder 当前表示较一致的增强样本；这是训练数据 selector，不是文档真值、query 可回答性或“容易学会”的充分条件，零范数的实现 guard 也未披露。[RPDR v1 Eq8/9、§4.2–4.3 与 Appendix B](https://arxiv.org/html/2602.17366v1)用相同增强数量和训练设置的 Random 对照，在 PopQA 长尾上为74.5对66.8，但 frequent slice 为81.3对82.7，选择收益并不均匀；可重建问答与错误增强的反侧也不能组成完备的因果 factorial。证据限于 Contriever、T5-base inverse 与短形式单事实检索；复杂 multi-hop/long-form 未验证。生成增强、训练 inverse、重新编码与 retriever fine-tuning 都有成本，部署硬件、并发与 tail SLO 未由这些质量数字说明。域迁移或 frequent slice 退步时保留原训练人口、matched random/不增强基线及现有 lexical/hybrid 路线，不让 roundtrip score 获得 evidence admission 权。<!-- source-family:SF-2026-ARXIV-2602-17366 -->
+
+跨语言表示训练还要区分“以英语为 pivot”与“每种语言都可作为 anchor”。同一 translation group 的多语言正例可以共同约束表示，并用原 encoder 特征作漂移参照；但 translation equivalence 只是训练 proxy，不授文本事实或证据权限。[有限 multi-way 对照](https://arxiv.org/html/2602.21543v1)中，同 pair count 的多语行和双语行拥有不同 semantic instances/训练步数，部分语言与未训练语言退步，不能由几项收益宣布全部语言更好。原loss的denominator排除positive，也不能照称标准normalized contrastive likelihood。翻译、温度/正则搜索、encoder适配与全索引重编码都付费；需冻结translation group、anchor population与revision，在语言切片/迁移失配时保留旧双语训练、原encoder或lexical/hybrid路线。<!-- source-family:SF-2026-ARXIV-2602-21543 -->
+
+组合图像检索还需要表达“修改什么、保留什么、排除什么”。把 reference caption 与 edit 合成一句话便宜，却可能丢掉否定与不变属性；一个受限分支把 query 拆成带正、负、开放 anchor 的属性字典，并把 gallery 字典离线编码到同一 text space。按正项与 anchor 加分、负项减分后再做可控 diversity rerank，改变的是检索约束接口，不把 VLM 抽出的属性认证为像素事实，也不把相似度负项当作硬过滤。[固定字典接口的局部消融](https://arxiv.org/html/2602.22510v1)中，显式负项与仅正项的控制支持 negation 的增量；另一些行同时改变 anchors 和 MMR，不能拆成 anchor 独有因果。MMR 能降低近重复，却并非在所有 caption 基线维持 recall；默认归一化、属性抽取和候选池也属于执行身份。可选自监督训练另付费，不因无需 CIR triplets 而免费；主文未给完整硬件、预算、独立 seed 与附录指标定义，不能签通用增益。抽取漏属性、edit 冲突或净收益不足时，回读原图、保留 caption/原视觉检索与独立 intent 核验。<!-- source-family:SF-2026-ARXIV-2602-22510 -->
+
+属性接口之外，也可同时用编辑后文本与编辑后图像提出候选，再让同一个 candidate verifier 检查 reference、edit 与候选图。固定 similarity 加权在 [CIRCO 的受限同组件对照](https://arxiv.org/html/2602.23029v1)甚至差于单文本路径，因此双路覆盖与排序应分开验收；verifier 的 yes/no 分数可用于排序和触发低分 refinement，却不是校准后的真值概率。尤其同一个候选的 verifier 输入没有 branch 特有证据，把两路分数相加不能冒充两个独立 likelihood。Threshold 过高会多做无益修订，追加轮次收益递减，32B verifier 也不必优于7B；双路都漏目标或共用 caption 误读时，反馈仍会放大共同错误。BAGEL、Qwen2.5-VL、GPT-4o 与 CLIP 的单H20设置只支持该人口的经验选择，额外生成、50候选验证和外部调用必须计价，不以 GPU-hour/指标点代生产 SLO。未校准或预算不足时，保留单路、固定已验证 fusion 与原图核验；refinement 只修 proposal，不创造缺失的证据。<!-- source-family:SF-2026-ARXIV-2602-23029 -->
 
 ### 多向量检索的数据面要避免搬运高精度向量
 
@@ -249,6 +302,10 @@ relevance 不一致，以及语料扩大后噪声近邻累积，都可能让真�
 
 ## Retrieval 的基本度量
 
+只让 retriever 读取当前 query，在短问答和稳定输入分布下最简单；但 Agent 可能已在当前推理中形成未写进 query 的实体关系、排除条件或搜索意图。一个条件分支把当前 reasoning trace 与 query 联合编码，再用成功研究轨迹中的支持文档及难负例适配检索训练；它改变的是检索输入与训练分布，而不是让推理文本取得事实权威。Context owner 决定哪些 trace 可见，RAG owner 才负责表示、候选与证据召回。
+
+更多历史不必更好：完整 trajectory 会带入过时假设和无关工具结果，受控消融中甚至弱于当前 reasoning。联合编码新增 trace 可得性、训练数据构造、输入 token 与检索成本，也可能继承 planner 的错误；trace 不可用、噪声大或分布迁移时保留 query-only、lexical 与显式 rerank。[AgentIR v1 §3.2–5](https://arxiv.org/html/2603.04384v1) 的同 backbone 消融支持当前 trace 与检索适配的互补收益，只覆盖其 BrowseComp-Plus 与三种 Agent 配置，不保证任意私有 CoT 可访问或所有任务更快。<!-- source-family:SF-2026-ARXIV-2603-04384 -->
+
 Retrieval metric 必须与 Agent 实际 query distribution 对齐。面向自然问题训练的 dense retriever，未必适合 deep-research Agent 生成的短 entity、keyword 或逐步 subquery；更强 encoder 在接口分布错位时也可能输给 lexical baseline。评估应联合版本化 query generator、corpus/index、retriever/reranker、packing policy 与 context use，并分开报告 source recall、duplicate evidence、search/tool cost 和 final outcome。
 
 Agentic research 还会改变 ranking 的**输入方言**。训练在自然问题或 document query 上的 ranker，面对由 Agent
@@ -266,6 +323,10 @@ query generator / dialect
 能掩盖 ranking miss，却增加 token/latency 并改变最终指标。传统 lexical/dense baseline 在 rare identifiers、
 稳定 corpus 或低预算下继续成立。Deep Research ranking 的作者实验支持这种 interface-contract 解释，不构成
 任意 Agent 或 ranker 的通用排序。
+
+多语言文档比较还有一个容易被隐藏的输入层：视觉 page、普通 OCR 文本与包含图示语义描述的转录，并不是同一份检索材料。保持 retriever 与评价协议不变、只改变 OCR 和预处理后，text-only 路径的表现仍可明显变化；因此“视觉检索优于文本检索”不能只归因于 encoder 模态。评价要共同保存 page 到检索表示的转换器、语言设置、图示描述 prompt、chunk 与索引版本，先做固定 retriever 的输入表示对照，再讨论换 encoder 的增量。
+
+更强转录会增加处理成本，也不能可靠还原空间关系和非文字图形；按同一评价集逐语言选择最佳 OCR 配置还可能乐观地偏向该集合。[2603.04238v1 §3、Appendix C Tables 3–4](https://arxiv.org/html/2603.04238v1)支持检查这种归因混杂，而其中引用的多模态基线并非全部在同一环境重跑，不能推成 lexical 方法普遍胜出。普通文字与稳定语言的简单 OCR/lexical 路径继续合理；图形或布局是关键证据时，保留视觉表示与独立切片验收。<!-- source-family:SF-2026-ARXIV-2603-04238 -->
 
 对于 query `q`，候选集合 `D`，relevance score：
 
@@ -295,6 +356,8 @@ cos(q, d) = (q · d) / (||q|| ||d||)
 
 额外核查增加计算与版本维护；中心性检测也会误伤自然 hub，改变距离度量则可能损伤正常召回，不能据异常直接判恶意。[Black-Hole 的原始实验](https://arxiv.org/html/2604.05480v1)依赖向量注入权限、受限 Gaussian 分析和三个 encoder/三个数据集；其防御 recall 比较的是原空间 clean top-k 的留存，不是答案 truth，更不是所有生产索引的安全保证。后面的安全生命周期仍负责身份授权与隔离处置。<!-- source-family:SF-2026-ARXIV-2604-05480 -->
 
+即使检测分数能把攻击向量与大多数正常向量分开，有限告警预算仍可能漏掉攻击：自然 universal hubs 占据全局排序前端时，固定 top-H 告警先用在这些正常高中心性向量上。[HubScan 的受限实验](https://arxiv.org/html/2602.22427v1)中，全局 ROC-AUC 达 .995，而包含 15 个自然 hub 与 10 个域攻击 hub 的 top-K=H 检查仍可零召回；这反驳的是“排序指标好就足以覆盖告警预算”，不是统计不可见。按相关域的代表性 query 人口重新扫描可恢复部分识别，但 query 代表性、漂移、扫描及人工告警费用成为新条件，污染率增大也可退化。实验依赖索引写入及 query/encoder 知情权限，百万文档离线扫描不证明线上自适应攻击安全；异常 score 仍不是真实恶意标签，处置继续服从 provenance、可信重嵌入与隔离核查，不能自动删除自然 hub。<!-- source-family:SF-2026-ARXIV-2602-22427 -->
+
 相似不等于有用或真实。Evaluation 至少区分：
 
 - recall@k：需要的 evidence 是否被召回；
@@ -322,6 +385,18 @@ Cosine 归一化长度，适合按该目标训练且几何较均匀的表示；�
 这一诊断有计算与校准成本，而且坐标级集中度依赖基底，离线相似度收益不自动迁移为 ANN 或在线 RAG 收益。19 个 encoder、19 个 parameter-free metric 与七个静态数据集的对照支持条件化选择，不证明 0.01 的分组阈值是通用上线门槛；去主方向也同时删去其他信息，不能当作干净的因果干预。未覆盖 learned metric 或在线 corpus 漂移。收益不稳时保留已校准的 cosine/hybrid；后文 logical/physical plan 则负责把这种选择纳入可提交的检索配置，而非宣称跨 operator 联合最优。
 <!-- source-family:SF-2026-ARXIV-2606-29571 -->
 <!-- june29-owner:AGENT-RAG:end -->
+
+度量还要分清 query 与 document 的幅度，以及训练与推理两种角色。对固定非零 query，乘一个正 norm 只缩放其全部 dot-product scores，不改变当次候选排名；document norm 则逐候选变化，可以改写排名。可是在 InfoNCE 训练中，query norm 仍会改变 softmax 的有效温度与梯度，因此“推理排序不变”不能推出“训练时可以任意归一”。分别保留或移除两侧 norm 的匹配对照，才可判断当前 encoder 的幅度是否适合目标任务；这不是由任务名字自动选择 dot 或 cosine。<!-- source-family:SF-2026-ARXIV-2602-09229 -->
+
+[幅度分责的受限研究](https://arxiv.org/html/2602.09229v1)在同训练人口下观察到 scratch 与 fine-tuning 的不同趋势，部分检索项保留幅度仍退步；dot 对称也不意味着幅度必然无用。它不提供通用 symmetry 规律或安全默认 norm gate，学习门控还新增训练与校准成本。encoder、两侧 normalization、训练温度、索引向量和评分规则应一起版本化；表示迁移、排名或 held-out 质量不稳时，保留已验证的 cosine/dot 与 hybrid，不能只凭 score scale 或一组聚合指标批准全索引重建。
+
+固定分数接口后，多个 positive passages 的训练目标仍会重新分配更新责任：等权联合目标推动正例概率靠近均分，sum-marginal 更偏向当前高分正例，pairwise log-sum-exp 则给低分正例更强补偿。它们改变的是已标正例间的梯度权重，不证明标签同质、score 就是真实相关性，或增加正例总能提高排序。[多正例训练的有限对照](https://arxiv.org/html/2602.12727v1)中 recall 与 MRR 的最佳目标不同，更多正例也会退步；随机抽一个正例的预期 Single-LH 梯度并不等于一般 LSE-pair 目标，不能用 stochastic approximation 一词签无偏。标签来源/质量、负例池、温度、batch 和搜索/epoch 预算须一并保存，额外标注与训练另计；弱正例噪声、预算或排名回归时，保留质量筛过的 single-positive、原目标与 hybrid retrieval，答案支持另验。 <!-- source-family:SF-2026-ARXIV-2602-12727 -->
+
+当 relevance 有完全相关、部分相关与无关三个等级时，同一部分相关文档不必永远被标为 positive 或 negative：它相对无关项可提供正向关系，相对完全相关项又可承担负向关系。因此应把 grade、当前比较对与训练 stage 一起保存，而不让随机 in-batch 文档自动获得“无关”真值。[分级检索的受限训练](https://arxiv.org/html/2602.17654v1)先学习原始多正例关系，再用当前 encoder 的 ANN 候选经标注器重判，挖掘排名过低的相关项与过高的无关项；第二阶段保留原负样本，避免只追新 hard pairs 丢失旧边界。该角色变化不要求把等级间距当 cardinal utility，也不证明 cosine score 已校准。标注和离线评价共用 finetuned LLM、只有约30%评价 query 未在训练出现，部分增广虽改善平均指标却损伤分离度，故有限相同 backbone/dimension 对照和整套线上检索收益不能单授 grade/mining 因果。重标、ANN、两阶段训练与重建索引均计费；训练硬件、precision、batch 和完整服务 SLO 未披露。弱标签失配、旧支持遗忘或收益不足时，保留可独立核验的 binary/single-positive 标签、原负样本与 hybrid 检索，答案证据另验。<!-- source-family:SF-2026-ARXIV-2602-17654 -->
+
+若 dense 向量的存储和比较成本成为瓶颈，还有不同于 encoder 权重量化的表示分支：从语料向量建立多组随机空间划分，把文档表示为各树的 leaf index，query 仍经原 encoder 后映射到同一组叶子，以碰撞次数排序。压缩的对象变成由语料导出的 partition code，同时改变检索 score；它不是保持 cosine 的无损短码。采用这种表示时，encoder、corpus snapshot、划分树、query mapping 与 ANN index 必须绑定同一身份，语料或 encoder 变化后重新验证或重建；即便不做梯度训练，base encoder 和在线映射也没有消失。<!-- source-family:SF-2026-ARXIV-2601-09159 -->
+
+更多树或更细划分增加码长、构建、全语料映射与查询成本，不能只报告压缩后向量大小。有限 CPU、两个高维文本 encoder 和静态语料实验支持这一可行分支，却在部分检索任务出现 nDCG 退步；索引搜索时间也不等于包含 query encoding 的端到端服务成本。应配对保存 dense 与碰撞度量的召回、排序质量和完整资源账，另验动态语料与 ANN 路径；不从随机划分直接推导叶子均匀、bit 独立或相关性层级保证。质量或身份不稳时保留已验收的 dense/cosine、hybrid 或其他压缩方案，不以较短 code 取代相关性门槛。
 
 ## Chunking 是信息边界设计
 
@@ -378,13 +453,23 @@ Index budget 之外，late interaction 的聚合器也决定训练信号流向�
 
 Retriever 优化高 recall，cross-encoder/LLM reranker 可用更强交互提高 precision，但增加 latency/cost。
 
+交互的成本还可以沿信息流拆开，而不必在双塔与全量 cross-encoder 之间二选一：早层分别编码 query/document，后层固定 document 表示，由 query 读取它的 K/V，同时保留 query self-attention，再由 CLS 读取 query 得分。冻结的是 document 的更新，不是删除 query→document 的读取；这种受限结构需要按相应 mask 重训，不能对现成模型任意删交互后继承原质量。[MICE 的有限对照](https://arxiv.org/html/2602.16299v1)发现去掉 query self-attention 会使排序崩溃，部分跨域配置也低于原 cross-encoder；速度比较还共同减少层/参数，不能全部归于单向交互。预计算文档需存储、刷新与版本绑定，原研究没有实现完整索引/第一阶段召回；候选召回和最终答案支持仍另验。文档常变、分布迁移或质量回退时，保留普通 cross-encoder、late interaction 与独立 retriever，不把预计算可行性当成完整在线服务收益。<!-- source-family:SF-2026-ARXIV-2602-16299 -->
+
 若检索器只学语义相似，读者真正需要的答案信息可能排在后面；把强 LLM 放在每次检索的重排路径上虽能评估下游效用，却使在线成本随候选数增长。一个条件分支把指定 reader 对参考答案的偏好留在**离线训练**：先对候选文档估计生成效用，以成对排序训练较稳定的 utility proxy，再把候选间的软效用分布蒸馏进双塔 embedding；线上仍用 ANN 取回，不逐候选运行 teacher。这改变的是第一阶段检索目标，而不是让 embedding 相似度成为答案正确或文档支持的概率。Teacher、参考答案集合、候选池与索引版本共同决定该目标；换 reader 或答案空间时必须重验，不能只复用旧向量。<!-- source-family:SF-2026-ARXIV-2604-22722 -->
 
 离线 LLM 标注、proxy 学习、hard-negative 选择和重建索引是新增成本，teacher 的措辞/长度偏好还可能把有用文档误标为负例。UAE 的 QASPER、NewsQA 受限实验并非各项都优于效用重排对照，报告的检索阶段速度也不含离线训练与最终生成；因此只有固定 reader、稳定语料和足够可校验答案对时才值得采用。reader 常变、需要跨文档组合或人工 provenance 高于代理效用时，普通语义/词法候选加独立 reranker 与 evidence gate 仍是清晰的基线。<!-- source-family:SF-2026-ARXIV-2604-22722 -->
 
+离线 teacher 固定时，效用标签容易版本化；若 reader 也在更新，还可以将被选文档的历史回答成功率平滑成排序标签，交替训练 reranker 与 generator。这里历史值拥有的是指定 query、consumer 和曝光人口下的成功代理，不是文档独立因果效用：答案可能来自模型原有知识，旧 reader 的失败也可能因消费能力而非证据不足。更新 consumer、候选池或曝光策略后，统计须分版本重验，不能把累积标签当作永久文档质量。<!-- source-family:SF-2026-ARXIV-2602-18734 -->
+
+[历史反馈排序的受限实验](https://arxiv.org/html/2602.18734v1)在训练时只选 K=1 文档，部署却选 K=3 或 7；单文档反馈不能自动认证组合证据、文档顺序鲁棒性或单个模块可迁移。初期 Llama 文档标签、generator rollout、历史存储和两个模块的 LoRA 更新均付费，pairwise 排序代理也不是严格 GRPO 等价。仅 PopQA 训练及其他任务的局部反侧不授通用共同优化优势；consumer 漂移、标签失准或净收益不合算时，保留固定 reader 的离线效用、普通 reranker 与独立 evidence gate，而不由最终答案一次成功替代文档支持核验。
+
 两阶段不一定要训练两套完全独立的表示。若同一个 passage encoder 既负责第一阶段召回，又把每篇文档压成一个向量供 listwise reranker 读取，训练目标就承担了两种不同责任：候选集之外的相关文档必须能被 encoder 取回，候选集之内的文档还要经交互后排对次序。只用重排损失更新共享 encoder，固定候选池上的排序可以维持，独立检索能力却可能退化；因此 retrieval 对比目标不能被看似正常的 rerank nDCG 静默删除。一个条件性分支让 encoder 与 reranker 联训，分别保存两项目标及文档向量、索引版本，再用固定候选池测重排、用重新构建的真实候选池测召回与最终答案。把每篇候选压成单向量、以 contextualized passage state 和 query 汇总 state 一次打分，可以避开输出排序文本的 decode，但不会恢复压缩时丢掉的证据。<!-- source-family:SF-2026-ARXIV-2604-22180 -->
 
 这条分支用双模型全参数训练、离线编码、索引重建与表示耦合，换取更短的重排输入；“每篇一个 token、零生成 token”只描述重排器的部分执行，不能代替端到端时延或训练/更新成本。受限实验中，去掉 encoder 检索损失后重排均值未下降，作者报告第一阶段能力退化；dense-only 的跨域候选池也不总胜 BM25，融合反而可能更稳。因此上线要同时验收 lexical 与 dense 候选覆盖、编码/索引刷新、listwise 排序和最终 evidence use。检索域转移、embedding 维度不匹配、重编码预算过高或简单 BM25 已足够时，保留独立 retriever 加普通 reranker，比强行合并更容易维护。该论文只在 Qwen3 4B、TREC DL 与八个 BEIR 数据集的披露设置下支持这项取舍，不能证明任意语料的生产并发收益。<!-- source-family:SF-2026-ARXIV-2604-22180 -->
+
+扩大 reranker 还应先声明拟合的目标。候选集上的 Contrastive Entropy 用正例相对负例的 softmax 概率衡量 score/margin，是连续诊断；NDCG 则衡量相关性等级的相对顺序。连续 proxy 不一定拥有更平滑、可外推的 scaling：受限对照中，NDCG 随模型规模与训练曝光较稳定，而 pairwise 模型的 CE 仍有波动，即使已经归一 scores。因而应直接在最终 ordering metric 上做 held-out checkpoint 预测，并把 CE 留作校准/间隔诊断，而不是互相代签。<!-- source-family:arxiv:2603.04816v1 -->
+
+这里的 data exposure 是同一固定数据集在训练中已消费的样本，不等于新增独立数据或领域多样性；first-stage 候选、negative sampling、score normalization、模型家族和 held-out 范围都属于拟合身份。[Ettin 的受限研究](https://arxiv.org/html/2603.04816v1)只覆盖 17M～1B、MS MARCO/BM25 top-100 与 TREC 切片，不能把局部幂律扩成跨语料或任意规模预算保证。多配置训练与诊断增加成本；分布改变、外推误差大或预算不足时，继续用实际下游评价、checkpoint sweep 和固定已验证模型，而非仅凭平滑 surrogate 批准更大训练。
 
 当排序输出只是文档相对次序时，逐 token 生成排序文本并非唯一接口。可以把 query 放在候选文档之后，选取特定 attention heads 的 query→document 权重作为连续读出，用相关性等级构造偏好对训练该读出；最终前向可在最深被选层截断，因为该层已经提供需要的排序信号。这条分支把排序责任从文本生成迁移到受监督的 head/weight/readout 联合 artifact，避免的是排序文本 decode，而不是全部 attention 计算。截断仅保留所选排序读出，不意味着与完整模型答案等价，更不把 attention 当因果解释。<!-- source-family:SF-2026-ARXIV-2604-17237 -->
 
@@ -393,6 +478,8 @@ head 选择、训练权重、候选位置与长度、连续得分汇总和截断
 Head readout 还可以从训练后静态集合变成 query-conditioned 集合：离线为每个 query 标记合适的 head subset，再训练 query router 在线选择读出组合。Router 拥有读出 proposal，不能把选择 head 写成底层不计算那些 heads，也不能把 attention weight 当作 relevance truth；静态 subset 仍是更简单的 baseline。<!-- source-family:SF-2026-ARXIV-2604-24608 -->
 
 逐 query 标注、router 训练与在线选择增加成本，domain shift 会让旧 subset 标签失效；数学、代码和跨域切片的反向结果说明动态路由并非稳定优胜。应比较包含 label/router 成本的完整前向和最终排序质量；标签预算不足、路由漂移或收益不稳时，回退静态 head、普通 reranker 或完整 reader。
+
+排序标注不足时，还可在开发 query 上逐层测读出，固定 peak 附近的 layer interval，在新数据上只聚合该区间；null query 校准和候选反序用于减轻位置/内容偏差，前向在最深选层后终止。这与受监督 head 或在线 query router 是不同分支：它省去任务排序训练，却仍付开发集层搜索、额外校准前向和 attention materialization；截断只服务排序，不保完整模型答案。[有限跨域对照](https://arxiv.org/html/2602.22591v1)中 Qwen3-0.6B 固定区间在 BEIR 略低于全层；Llama 单次 listwise 变快却稍降排序，反复 heapsort 调用又能吞掉 layer-only 的省算。BRIGHT 按测试子集选择最好层是 oracle 上界，不是部署 zero-shot 策略；两组 A100/300words 与 L40/128tokens 协议不可合并计价。因此不存在由这些实验认证的“所有模型中层最优”，更不把 attention 当 relevance truth；域偏移、校准开销或多次调用不合算时，保留全层、普通 reranker 与完整前向。<!-- source-family:SF-2026-ARXIV-2602-22591 -->
 
 无论排序分支如何，Packing 还要处理：
 
@@ -404,6 +491,14 @@ Head readout 还可以从训练后静态集合变成 query-conditioned 集合：
 - citation mapping。
 
 把 top-k 简单按 score 拼接，会让重复内容占满窗口并掩盖少数反例。
+
+在交错的 search–reasoning history 中，Packing 还决定外部材料在因果序列里能看见什么。若新文档只追加在已有推理后面，它的编码便能读取旧推理；一个替代分支保留原交错 history，同时把检索文档另按新到旧复制到 question 与旧 reasoning 之前，让这一副本文档在 causal mask 下不读取那些推理。双视图分别保留操作历史和较少受旧推理影响的证据编码，并不是删除旧 history，也不等于在原 slot 重复一遍 token。[受限文档位置实验](https://arxiv.org/html/2602.09517v1)固定 gold 文档并改变 pre-search reasoning 长度，及 repeat/stack-only 对照，支持这个消费接口的局部边界；语义匹配仍只是检索证据，不获得 truth 或 authority。<!-- source-family:SF-2026-ARXIV-2602-09517 -->
+
+双视图支付文档副本的 context/token 成本；每轮重插 prefix 还可能影响已有 KV 的复用，这是缓存布局上的系统推断，不是该实验已经测出的 runtime 收益。作者任务中也有退步，位置控制不能证明唯一 attention 因果，更不能保证旧推理偏差、错误文档或 prompt injection 全部消失。Reader revision、两个视图的 document identity/citation mapping、预算与 history layout 应一起验收；收益或 cache 成本不合适时仍可保留普通交错 history、独立 evidence gate 与原 packing，而不把复制当作全负载必要步骤。
+
+Packing 决定哪些材料进入 reader；质量 proxy 还可以跨过这个边界，成为 reader 内部可训练消费的条件。[一项受限实验](https://arxiv.org/html/2601.09028v1)把 retriever 相似度、reranker 与 query-performance predictor 的文档分数转换为 token-level indicators，再调节 attention 并以答案监督训练 decoder。这不是只把文档按分数排好，也不把 relevance 认证为 truth 或 authority；indicator 来源、文档/token 映射、归一化、训练数据与 reader revision 必须一同保存。原文矩阵与附录维度、负值缩放语义有未清之处，不能照抄为精确 recipe，更不能声称低分文档的 attention 必然单调减少。<!-- source-family:SF-2026-ARXIV-2601-09028 -->
+
+该分支增加在线 ranker/QPP、indicator 维护和 decoder 训练成本；只比较 attention 附加计算，不能代表完整检索与生成开销。显式 guidance 与 noisy-context training 共同影响结果，局部聚合多个指标反而会退步，噪声训练单独也可能更强；应分别验收质量特征、归一化和训练干预，而不是把综合收益全归给内部 attention。域转移、proxy 漂移、分数接口不稳定或额外成本不值得时，普通 packing、独立 reranker 与原有 SFT reader 仍是清晰退路，最终答案继续经独立 evidence gate 验收。
 
 Pointwise relevance 仍把文档看成彼此独立；真正进入 Context 的却是一个 evidence set。多个高分文档可能重复
 同一主张，也可能互相冲突，却没有覆盖 rubric 的关键维度。Setwise selection 应把目标从分数求和改为受预算
@@ -422,6 +517,8 @@ Rubric 本身可能遗漏真实问题，LLM judge 也可能同时影响 selectio
 truth。Pointwise/listwise rank 在问题单一、文档同质或低延迟优先时继续合理；setwise policy 只在 coverage/conflict
 确实主导 failure 时值得额外成本。Rubric-Oriented Document Set Selection 的作者实验支持这一受限分支，不证明
 其九维 rubric 或 judge 可跨领域直接迁移。
+
+证据集覆盖更多立场，不保证生成器在同一 query 的多次回答中表达不同而有效的观点。开放多答案目标需分别保存输入证据的互补性与输出 claim 的差异，并共同验收相关性、事实支持和相同预算下的质量；新观点 reflection 和多轮 MMR 只提出搜索/生成方向，不能把 embedding 距离升级为 truth。Claim 抽取、相似度阈值与 judge 共同定义多样性分数，模板变化或无关长答案也会抬高它。多轮搜索/记忆增加成本，输出 diversity 无增量或 quality 退步时保留单轮检索或普通多样解码，不为观点数量追逐偏题。<!-- source-family:SF-2026-ARXIV-2602-00238 -->
 
 ### 文档也可以成为独立生成分支，而不只是拼接片段
 
@@ -472,13 +569,23 @@ abstention cost。论文在若干 QA datasets 上报告 selective generation 改
 旧的 relevance/reranking 仍然成立：它们负责高效找到候选，sufficiency gate 负责判断候选
 集合是否已足够。前者不能被后者替代，后者也无法从未召回的 corpus 中创造 evidence。
 
+补查也可以改变 retriever 的训练接口，而不只扩大同一 query 的 top-k：让后续 retriever 同时读取原 query 与已被 relevance verifier 选中的有限文档 context，训练时以已有 gold context 之外的 gold 文档作正例，专门提议尚未覆盖的证据。[原版本的双检索机制](https://arxiv.org/html/2602.18425v1#S3)使 query-only 召回与条件补缺承担不同责任；这里的 verified 只是相关性选择，不是事实真值、完整性或答案支持证书，最终输出还会补入未全部验证的检索文档。Verifier 错误与冗余 context 会反馈到下一次检索，LLM 多轮增益可提前停滞，gold-string oracle 也不能被当作线上语义真值。双模型训练、双索引、context 编码与 verification 均付费，少验证预算或跨域可退步；须分别验收补缺 recall、最终 evidence sufficiency 和 claim support。回读不稳、预算不足或证据仍缺时，保留 query-only/lexical retrieval、原 reranker 与独立 sufficiency gate，不以多轮或新文档数宣布证据集完整。<!-- source-family:SF-2026-ARXIV-2602-18425 -->
+
+还应区分“证据尚未找到”与“当前问题没有可确定的答案”。对确实可答的题，继续检索可能补足支持；对知识未知、用户意图未定或互相矛盾而无法裁定的问题，更多搜索也可能增加貌似相关的材料，让模型从应拒答转为无依据回答。尤其 intent 含糊时，需要先澄清任务，而不是把 query expansion 当作消除意图不确定性的办法。[受限双人口对照](https://arxiv.org/html/2601.05503v1)显示搜索轮数在可答与应 abstain 人口上有不同取舍，few-shot 更早拒答也会牺牲可答题；固定 token-price 系数与模型 judge 不等于真实账单或独立 gold。额外检索、澄清与审核都要计入成本；没有可信可答性标签时保留原始结果、请求澄清或保守 abstain，不把轮数或一个统一阈值当 sufficiency 证明。
+<!-- source-family:SF-2026-ARXIV-2601-05503 -->
+
+把同一 query 的候选按顺序分成窗口、遇到答案即停，是节省 reader 输入的合理分支，却改变了 gate 的暴露人口：单个无支持窗口上的拒答表现，不等于连续经过多个阴性窗口后仍能等到真正支持答案的窗口。排序既改变 first-positive 之前的窗口数，也改变窗口内容；只统计这些负窗口的误答，不能当成全部无答案问题或所有模型的幻觉率，也不能假设各次错误独立。应同时记录 candidate 顺序、已访问窗口及其支持标注、首次错误早停、调用与 token 预算，并在独立阴性人口上检查拒答边界；少样本提示不能自行保证消除重复暴露风险。每次拟提交答案仍须通过独立的 claim/support gate，支持不足时继续拓宽 Context、回到完整证据路径或保守拒答，而不是把 reader 的早停当作检索已经成功。<!-- source-family:SF-2026-ARXIV-2512-23836 -->
+
 ### 多语言证据要分开候选覆盖与语言偏向
 
 单语语料中，用相关性重排再验答案支持，是成本清楚的基线；当同一问题的证据散落在不同语言中，检索器即使已把异语关键文档放入候选池，重排器仍可能偏好查询语言或高资源语言，将其挤出有限的 Context。此时只看总体 top-k 相关性或最终答案均值，分不清是候选缺失、重排偏向，还是 reader 无法利用已选证据。多语言 RAG 应在同一 query、corpus 与候选池下，按**证据语言**分别验收候选覆盖、重排后留存、证据充分性和最终答案支持；query language 与 document language 是不同字段，不能用前者代替后者。重排器只拥有排序 proposal，原始文档继续拥有事实来源，answer gate 独立判断是否足以提交。<!-- source-family:SF-2026-ARXIV-2604-20199 -->
 
 这种切片增加语言识别、跨语标注与候选池构造成本，也可能把语料原本不均衡误判成模型偏向。离线按各语言分别生成答案、再用**已知答案得分**挑最佳语言，可以诊断候选池中的可用证据上界，却不能变成上线时可调用的选择器。受限的 13 语言 MKQA 实验只测试 BGE-M3 候选池后的 reranking；其 character 3-gram recall 改善小且部分语言退步，不证明每种语言均受益，更不证明事实支持或生产公平。语料和用户任务确为单语、普通重排已满足支持检查时，旧路径仍更简单；跨语言切片出现缺口时，先定位 retrieval、reranking 或 reader 的责任，再决定是否值得引入效用监督和额外成本。[受限机制与实验](https://arxiv.org/html/2604.20199v1)
 
+即使 query、evidence 与 output 都固定为同一种语言，reasoning language 仍是另一条控制轴：它可能影响证据整合，但不应默认强制与其他三项一致。保持检索内容、预算和模型不变，再分别比较无约束与指定推理语言，才能定位语言对齐的净值；人工反侧与多语执行增加费用，未校准时保留模型原生推理路径。[German 单语 RAG 的受限对照](https://arxiv.org/html/2610.03136v1)中，强制 German 优于 French，却未超过无约束 English；单一虚构领域的 585 单段与 30 人工 multi-hop 问题、同 family judge 不支持所有语言统一采用同语推理。<!-- source-family:SF-2026-ARXIV-2610-03136 -->
+
 ### Query 本身也要经过 Robustness Gate
+
 
 传统 top-k 默认 query 的实体、时间、范围与前提可信；在这个前提下，按 relevance 召回再判断 sufficiency 是最短路径。可当用户问题带有错误前提或确认偏误时，高相关文档可能只是更擅长迎合错误方向。一个受限分支可以对 query 做保持任务意图的 counterfactual perturbation，比较候选证据能否在前提变化后继续支持同一决策，再把稳定性作为 relevance 与 sufficiency 之间的独立风险信号。Critic 只拥有 evidence-risk proposal；原始来源和 answer gate 仍拥有事实与提交权。<!-- semantic-body-binding:SF-2026-ARXIV-2605-01302 -->
 
@@ -749,6 +856,8 @@ incremental rebuild、ACL/delete propagation 和 graph drift。Skill node 是 re
 
 干预评估提高了因果诊断力，却增加样本构造、对照污染和 evaluator 成本；答案对证据不敏感也可能因为模型拥有正确先验，而非一定错误。低风险搜索可继续用 relevance/citation 指标快速迭代，高风险发布则需要 provenance、support span 与干预证据共同证明检索链真正拥有结论的 support authority。
 
+参数与 context 的归因也可用 model-specific hidden-state probe 做诊断，但监督标签的生成本身要纳入证据链。一个受限方案先用三种无 context 提问测试实体：任一次答对记 known，再移除上下文中的实体；三次未答记 unknown，并在上下文保留实体，随后用生成首 token 或实体末 token 的状态训练线性 probe。这定义的是操作性知识测试人口，未答不证参数从未存过、出现实体也不证模型实际只用 context；实体末 token 更不能当作生成前 verdict。[标题隔离 split 与 answer-string decoy 控制](https://arxiv.org/html/2602.22787v1)显示较复杂 MLP 更容易利用表面线索，且正确来源预测仍可能伴随错答；同 probe 判断 dual source 的输出不能再循环当作外部真值。模型/语言/能力版本改变会改 known/unknown 人口，状态存储、构题与重训都付费。Probe 可提出“可能忽略检索”的检查请求，不能获得 causal provenance 或 grounded truth authority；自然长答、版本漂移或标签不足时，仍以配对 evidence 干预、support spans 与独立 claim 核验为准。<!-- source-family:SF-2026-ARXIV-2602-22787 -->
+
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-06919:start -->
 检索排序和来源权威都正确时，最简单的回答器仍可能把文本中的“可能、据称、90%”一律吸收为事实；反过来，低 certainty context 也可能压掉模型原本稳定的先验。RAG answer gate 因而应把三类状态分开：来源表达的 certainty 只是带 provenance 的 claim metadata，模型 prior 只是候选解释，最终 answer confidence 必须由 authority、freshness、corroboration、contradiction 与任务风险共同校准。
 
@@ -800,6 +909,8 @@ evidence inventory → versioned outline
 
 高风险场景需要 evidence-aware response policy：缺 evidence 时 abstain，关键 claims 可验证，冲突升级给人或确定性规则。Citation 只是引用字符串，必须检查 claim-to-source entailment。
 
+引用还可以与 claim 同时生成带类型的关系：绑定 document revision、sentence/support span，并区分直接 quotation、compression 与跨片段 inference。这让定位与检查路径更明确，却不会让 generator 自报的关系取得证明权；与 reference 的字符串/语义匹配只是在该标注协议里的评分，不能代替独立 entailment，更不能证明模型内部确实使用了这份来源。[联合生成 typed provenance 的受限实验](https://arxiv.org/html/2601.04932v1)中，匹配 F1 和内容质量会沿不同方向变化，因而二者须分账。由此推导的输出合同应保留 relation type、冻结的 source/span identity 与独立支持结论，特别对 inference 检查跨句前提；它增加标注、检索、tag tokens 和复核成本，且错误 reference 会制造漏报。来源不可恢复或关系未验证时保留 Unknown、重新检索或交人工，而不是把正确格式的 provenance tag 当成更强的事实 authority。<!-- source-family:SF-2026-ARXIV-2601-04932 -->
+
 <!-- semantic-body-binding:SF-2026-ARXIV-2609-35794:start -->
 拒答的原因也需要区分：retrieved set 没有充分证据，与它含有正确答案却同时混入冲突或干扰，并不是同一个状态。让 generator 统一判断在低噪声时最简单；干扰频繁且生成较贵时，可以先以轻量 classifier 检查整组证据是否 distracted，拦下后不调用生成器；通过后，再让 generator 判断缺证据或生成 grounded answer。缺证据可触发 re-retrieval，干扰可触发过滤和重新核对，避免反复在同一坏集合上推理。Classifier 只提供可校准 gate，不拥有事实真值；过滤后仍须验证剩余 evidence 对 claim 的支持。
 
@@ -828,6 +939,8 @@ RAG 把模型生成内容写回可检索 corpus，在内部知识库和迭代 dr
 
 兼容 adapter 可降低迁移成本，却可能限制新空间表达并积累双版本复杂度。高风险 retrieval slice 或跨域误差无法接受时，应双索引、逐批回填或保留旧模型；作者模型/数据不承诺零回填。
 
+若更新只针对检索域，还可以让 query 侧的 domain prefixes 变化、passage 侧只使用冻结的 general prefix，从而复用同一套 passage embeddings；这把 adaptation 的可变状态限制在 query/router，而不是承诺任何新 embedding 都兼容旧索引。General prefix 或 backbone 一旦变化，passage 重编码与回归责任仍回来。[八模块 dense retrieval 对照](https://arxiv.org/html/2602.22547v1)使用128长度 prefix、coCondenser、BERRI 五负例和单A100，在六个 BEIR 切片中比较 top-2、带领域先验的路由与 uniform/all-module 控制；domain prior 与 learned weighting 的局部增量不证明任意未知域都能正确选模块。2.3M 是单模块口径，表列 `2.3M×8`，不能把约2%当作全方法总参数或总费用；引用的其他 baseline 也非全部同预算重跑。模块、prior mapping 与 general/passage index revision 须联合保存，训练和在线 routing 仍付费；先验不可靠、general space 需改变或质量退化时，保留固定 retriever、重编码/双索引及原迁移回退。<!-- source-family:SF-2026-ARXIV-2602-22547 -->
+
 ### Temporal Retrieval 要在 Admission 前验证事实有效期
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-23497:start -->
@@ -849,6 +962,10 @@ RAG 把模型生成内容写回可检索 corpus，在内部知识库和迭代 dr
 <!-- source-family:SF-2026-ARXIV-2604-14488 -->
 
 ### RAG 安全必须覆盖完整状态生命周期
+
+在事后取证之前，检索器也可以先削弱局部poison对表示的影响：将文档分片独立embed，再组合平均，区别于先拼接含poison的原文再embed。若对各组合分别取top-p，再按出现频率保留多个候选，它已不是每次只作一个决策的多数投票；原分片多数条件不能直接迁移，平均表示也不保证单个poisoned fragment必然无效。该分支控制候选exposure，不拥有来源真值或最终answer effect。<!-- source-family:SF-2026-ARXIV-2512-24268 -->
+
+组合增加表示存储、检索与聚合成本；只在initial候选上逐span做mask probe、观察similarity下降再重排，则又支付多次embedding，并依赖候选支持集和局部敏感性。probe响应不是poison意图或事实错误的证明，语义贴题的假事实尤其不能由这条接口固有区分。ASR应按取回恶意文档、SR按保留有用文档分别回归，retrieval侧通过不授answer安全或实时SLO；utility下降、poison跨片段扩散或支持不足时，保留可信源admission、文档隔离、原检索与独立claim–source/answer gate，再用下述取证恢复实际影响链。
 
 #### 从错误输出反查到字符 Span，需要两阶段取证
 
@@ -1016,6 +1133,10 @@ Passage ranking 在语料静态、事实长期有效时足够简单；持续变�
 
 文档包含截图、图表或扫描页时，文本 chunk ID 不足以复现证据。ingestion 应保存 source 与 page revision、截图或渲染身份、region/bounding-box locator，再把区域证据逐 hop 绑定到 atomic claim。region locator 解决的是“回到哪里”，不能替代来源权威、entailment、sufficiency 或独立 verifier；页面重排、OCR 版本变化和图像裁剪都会使旧 locator 失效，因此必须随 corpus revision 一起版本化。
 
+绑定到 atomic claim 后，还须核验拆分粒度与证据粒度是否匹配。把 parent claim 分为 subclaims，却为每项重复同一段 parent evidence，并不等于分别获得支持；一条受限对照在 oracle decomposition 下分别提供 aligned subclaim evidence、重复 parent evidence 与缺少标签的输入，发现分解增益依赖 granularity 与 label signal。因而要冻结拆分、证据内容和标签身份，再比较支持关系，不能由更细的 claim graph 自动批准答案。<!-- source-family:SF-2026-ARXIV-2602-10380 -->
+
+[必要对照](https://arxiv.org/html/2602.10380v1)中，去掉 label 时 finer evidence 甚至不如重复 parent evidence，更多拆分还支付额外 evidence tokens 与调用成本。oracle、有限 parent/subclaim 人口和未核 sibling 切分不认证部署无泄漏；abstention 与 refuter 的相关也不证明政策因果。缺少可信拆分或标签、预算不足时，保留完整 parent context 与逐 claim verifier，而不是为追求细粒度丢掉成立条件。
+
 更根本的限制是，自回归生成后的 token-level attribution 不会自动组合成可靠的 claim-level provenance。若生成时没有保存 evidence admission 与 claim mapping，事后仅靠 black-box query 重建 credit assignment 可能需要组合搜索，成本随长文本迅速增长。于是 provenance 不能被视为生成结束后的装饰：检索接纳、context packing 与 generation commit 必须共同携带证据身份；做不到时应明确标记 unsupported claim，而不是用一个模糊引用覆盖整段答案。
 
 <!-- source-family:SF-PIXEL-LEVEL-RAG-EVIDENCE-CHAIN -->
@@ -1122,6 +1243,10 @@ Evidence-gap repair 知道缺什么，却还可能反复访问已经无助于当
 
 <!-- source-family:SF-2026-ARXIV-2605-08838 -->
 
+即使 corpus 已冻结，相关性标注也可能只是旧 retriever 的候选池，而不是所有相关证据的完整集合。新 retriever 找到未标注的有效 chunk 时，按旧 qrel 将它直接记为 irrelevant，会把标注覆盖不足误归为检索失败；生成器答对而旧 gold 未命中，也不能据此断言答案只来自参数知识。评价身份因此还要保存 judged pool 的构造来源、qrel revision 与 unjudged/unknown 状态；在作这些归因之前，定点审查未标注的 top-k，补齐有依据的标签，并在同一标注版本下重新比较系统。
+
+[有限检索池的补标与重评价](https://arxiv.org/html/2602.06526v1)支持这条测量边界，不证明扩池后的 gold 对未来所有 retriever 无偏。归一化指标的理想分母也会随标签改变，应同时报告覆盖变化和重新计算的排名，不能把得分变化当作系统本身改善。模型预过滤、模型间同意与人工升级仍有残余偏差，增加候选、人审和复验成本；未核的负样本继续保留 Unknown。小语料能完整标注时，固定 qrel 和简单 top-k 仍更直接；开放池或预算不足时则限定评价覆盖，而不是让未标注自动拥有否定证据的资格。<!-- source-family:SF-2026-ARXIV-2602-06526 -->
+
 ## 本章在知识树中的位置
 
 RAG 是 Context 的 external knowledge path，不是长期用户状态的全部实现。下一章讨论 Memory 如何跨交互写入、压缩、检索和遗忘状态，以及为什么 memory write 比 retrieval 多一层信任问题。
@@ -1149,6 +1274,29 @@ RAG 从 top-k 相似度检索演进到 evidence admission 和闭环预算控制�
 RAG 将外部 evidence 动态送入 Context，换来更新性与 provenance，同时引入 ingestion、ranking、security 和 consistency 的新系统边界。预测性检索可以隐藏部分 IO，SSD filtered ANN 可以扩大索引复用，但二者都必须把错误预测、过期、最终过滤和 evidence admission 留给明确 owner。下一章进入可跨会话演化的 Memory。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2602-22591` — Daily `2026-02-28`；[exact-v1](https://arxiv.org/html/2602.22591v1) §2–4/blocks21–57、60–79、83–97，2+1+3=6。固定层区间/null校准/多次调用费用与BEIR反侧，BRIGHT test-oracle不采用为部署证据。fresh非原packet作者必要原证与actual owner复核后窄写，作者正文/完整邻接/自身末注已顺读，root 非写入者已实际核正文、完整邻接与自身末注，POST通过；未核代码/复现。
+- `SF-2026-ARXIV-2602-22787` — Daily `2026-02-28`；[exact-v1](https://arxiv.org/html/2602.22787v1) §3–6/blocks30–58、67–76、89–100、118–124，2+1+3=6。knowledge-testing操作label、title-disjoint split、decoy慢侧；不授causal来源、truth或RAG修复闭环。fresh非原packet作者必要原证/actual owner复核与窄写，作者实际邻接已读，root 非写入者已实际核正文、完整邻接与自身末注，POST通过；未核实现/复现。
+- `SF-2026-ARXIV-2602-22805` — Daily `2026-02-28`；[exact-v1](https://arxiv.org/html/2602.22805v1) §3–5/blocks46–59、66–74、80/83、90–95、103/105、110–118，2+2+2=6。record/page skew与metric共址、QPS/meanlatency分账；不采B倍hit-rate、所写visited termination配方或生产安全保证。fresh非原packet作者必要原证/actual owner复核与窄写，作者实际邻接已读，root 非写入者已实际核正文、完整邻接与自身末注，POST通过；未核代码/复现。
+- `SF-2026-ARXIV-2602-23342` — Daily `2026-02-28`；[exact-v1](https://arxiv.org/html/2602.23342v1) §3.2/4.3/5、blocks48–57、65–75、78–90、104–118，2+2+2=6。Table2布局控制保compute降/I/O升、Table4 DPR慢侧，earlydispatch不授exact顺序等价。原准备在packet24非23。fresh非原packet作者必要原证/actual owner复核与窄写，root 非写入者已实际核正文、完整邻接与自身末注，POST通过；未核实现/复现。
+- `SF-2026-ARXIV-2602-22510` — Daily `2026-02-28`；[exact-v1](https://arxiv.org/html/2602.22510v1) §2.1–2.5/§3，blocks26–60、101–109、120–126，2+1+2=5，具体owner差额深入。只采用signed dictionary/可控MMR接口及有限neg对照，不授anchor单因素、可选AE增益或附录指标定义；缺完整budget不支持一般性能。作者必要证据/owner与实际正文邻接已核，root 非写入者已实际核正文、完整邻接与自身末注，POST通过；未核实现/复现。
+- `SF-2026-ARXIV-2602-22547` — Daily `2026-02-28`；[exact-v1](https://arxiv.org/html/2602.22547v1) §3–5、blocks19–66，2+1+2=5，具体owner差额深入。固定general/passage与query-only domainprefix，Table2/3保2.3M×8及prior人口；不授总2%/任意热升级。作者必要证据/owner与实际正文邻接已核，root 非写入者已实际核正文、完整邻接与自身末注，POST通过；未核实现/复现。
+- `SF-2026-ARXIV-2602-23029` — Daily `2026-02-28`；[exact-v1](https://arxiv.org/html/2602.23029v1) §3.2–4.3/§7.4、blocks32–53、58–61、67–76、96–101，2+1+2=5，具体owner差额深入。双路proposal/shared verifier/threshold与iteration局部慢侧，不授分支独立likelihood或calibrated confidence；额外50候选/编辑/外部调用近文。作者实际正文邻接已核，root 非写入者已实际核正文、完整邻接与自身末注，POST通过；未核代码/复现。
+
+- `SF-2026-ARXIV-2602-21514`：exact-v1 I/O/layout/search机制与同库组合实验；PS×PSe互补、饱和SSD下speculative多读与高维recall反侧分别保留。仅披露Xeon/NVMe/libaio/48workers/5runs，不授全引擎或最坏I/O保证；未复现。 非原 packet 作者必要原证/actual owner PRE 与窄写完成；root 已实际顺读正文、完整邻接与自身末注，POST 通过。
+- `SF-2026-ARXIV-2602-21543`：exact-v1 §3–4与训练说明；all-language anchors与translation groups分责，same pair count非same实例/步数，保各语言反退、loss归一差异与重编码费用。未核生成任务、代码或复现。 非原 packet 作者必要原证/actual owner PRE 与窄写完成；root 已实际顺读正文、完整邻接与自身末注，POST 通过。
+
+- `SF-2026-ARXIV-2602-10833` — Daily `2026-02-13`；[Training-Induced Source Bias exact-v1](https://arxiv.org/html/2602.10833v1) §3–5、Tables3–6及训练配置。2+1+2=5，paired-source训练阶段排名评价反证深入；不授普遍pro-LLM、PPL因果或语义改写等价保证。配对/重新编码成本与模型/数据反侧近正文。root必要原源/current owner/邻接PRE通过；root实际核正文143–170、邻接与末注，非作者POST通过、窄锁释放，不授日级。未核代码或复现。
+
+- `SF-2026-ARXIV-2601-09985`（Experimental）— Daily `2026-01-17`；[FaTRQ exact-v1](https://arxiv.org/html/2601.09985v1) III-A–E/IV/V-A–E，2+2+3=7。只采用 coarse-distance reuse、ternary residual far-memory、local-boundary OLS 与裁短后完整向量精化，不采无条件 unbiased 或可证无损 early-stop。88M Wiki/100M LAION、10k L2 top10 queries，A10/40-thread Xeon 基线；CXL Ramulator 与 ASAP7 综合非真实设备吞吐。未验证生产并发、P99、更新或答案质量，未复现；root必要原源与当前owner写前通过，root实际正文/邻接及末注非作者写后复核通过，非日级验收。
+
+- `SF-2026-ARXIV-2601-05549` — Daily `2026-01-13`；[TMRL exact-v1](https://arxiv.org/html/2601.05549v1) §3–4及时间权重/维度反侧。只采用 temporal prefix 与 semantic tail 的条件表示取舍，不认证时间真值或普遍低维优势。未复现；root 必要源/当前owner写前通过，root实际新增正文/前后衔接及末注写后复核通过。
+
+- `SF-2026-ARXIV-2601-04932` — Daily `2026-01-10`；[GenProve exact-v1](https://arxiv.org/html/2601.04932v1) §3 typed relations、§4 Eq3–10 reference matching/F1、§5 setup/消融及限制。原2+2+2=6，具体claim/provenance接口缺口深入；关系taxonomy借TROVE不计原创。只采用联合生成关系与reference-match/entailment/实际用证分账，不授内部因果、item-level人类一致、全质量提升或生产开销保证；硬件Not Disclosed，未复现。root必要原源及具体owner写前通过，jan02_v3实际正文798–831及本注非作者写后复核通过，未重复原源审阅，日级Gate待验。
+
+- Daily 2026-03-07：[Reranking scaling exact-v1](https://arxiv.org/html/2603.04816v1) §4.2/5/6.2/7–8。CE是Contrastive Entropy而非training cross-entropy，BM25 top100/64negatives/normalized scores；NDCG本来primary，未指控作者以loss代质量。Ettin17M～1B、100k MS MARCO queries、一epoch、不同训练paradigm batch与heldout exposure边界保留，摘要/正文MRR不一致不采用。root必要定义/趋势及窄锁通过，作者已写两段，root实际原文/正文及邻接POST通过；未复现。
+
+- `SF-2026-ARXIV-2603-04238`：[exact-v1](https://arxiv.org/html/2603.04238v1) §3、Appendix C Tables 3–4；Daily 2026-03-06。只采用 OCR/转录变化的检索归因校验；配置选择与非重跑基线、空间语义损失均保留。作者源/owner/邻接与实际写后检查完成；root 必要源、实际正文及邻接独立写后复核通过，未复现实验。
 
 - `SF-2026-ARXIV-2609-16875`：[exact-v1](https://arxiv.org/html/2609.16875v1) 的 backward-compatible adapter；正文 owner 为检索索引升级，不是 token embedding。迁移策略为系统设计推断，不把作者受限多模态评价写成零回填保证。
 - `SF-2026-ARXIV-2609-16391`：[exact-v1](https://arxiv.org/html/2609.16391v1) 的受控 PTQ 与 Limitations；只支持 family/task 绑定和代理误差边界，不证明混合精度 allocator 或整数 Kernel 的加速。
@@ -1390,3 +1538,57 @@ Review note：`SF-2026-ARXIV-2606-29571`；Method `https://arxiv.org/html/2606.2
 
   **写回边界：** 在 relevance 与 sufficiency 之间加入 query-robustness sensor；critic 只能暴露迎合错误前提的风险，不能替代原始 evidence、事实判断或 answer gate。作者结果不提供跨 corpus 的事实概率或固定阈值。
 <!-- daily-books-trace:SF-2026-ARXIV-2605-01302:end -->
+
+- `SF-2026-ARXIV-2603-04384`：[AgentIR exact-v1](https://arxiv.org/html/2603.04384v1) §3.2–3.3、§4、§5 Tables 2–3；采用当前 reasoning+query 与检索适配的互补输入机制，保留完整历史反例、trace 可得性和局部评价边界；未复现实验。Daily 2026-03-06，实际写后非作者 root 复核通过。
+
+- `SF-2026-ARXIV-2602-00238` — Daily `2026-02-04`；[DIVERGE exact-v1](https://arxiv.org/html/2602.00238v1) §3–7及B/C。6分设计反证深入，只采用输入检索与同query输出多样性分权；claim抽取/embedding阈值、质量judge与额外搜索预算均有限。主文100query与C.1的200subset不合并，GPT5-mini质量4.342低于baseline4.578，不照录全部配置仅微降约.04；未有matched额外call对照，不授单组件因果、真实观点数或效率保证。未复现实验；root必要原源/当前owner写前通过，root实际正文及前后交接写后通过，日级Gate通过。
+
+- `SF-2026-ARXIV-2512-24268` — Daily `2026-01-02`；[RAGPart & RAGMask: Retrieval-Stage Defenses Against Corpus Poisoning in Retrieval-Augmented Generation exact-v1](https://arxiv.org/html/2512.24268v1) §3.1–3.2、§4 ASR/SR、§6 single-poison mix假设与§7。6分保证边界/gap深入，仅采用embed-before-mix、top-p多候选非决策多数保证、mask probe支持集与成本；retrieval非answer安全，贴题假事实非truth detector，不授所有攻击免疫或实时SLO。未运行代码；root必要原源/owner通过，实际正文/前后邻接及末注写后经root非作者复核通过。
+
+- `SF-2026-ARXIV-2512-23836` — Daily `2026-01-02`；[Large Language Models Are Poor at Signaling Their Ignorance When Given Irrelevant Context exact-v1](https://arxiv.org/html/2512.23836v1) §2、§3、Figures 5–7。6分具体gap深入，仅采用顺序负窗口暴露与 first-positive 条件人口的分账：BM25/Wikipedia、KILT 三个 QA 数据集及单 Gemini 1.5 Pro 的有限证据，不授全模型幻觉率、独立错误假设或提示必然修复。原文 token 口径不合并为普遍成本优势；未复现实验。root 必要原源/owner 写前通过，实际正文/前后邻接及末注写后经root非作者复核通过。
+
+- `SF-2026-ARXIV-2601-05503` — Daily `2026-01-13`；[Over-Searching exact-v1](https://arxiv.org/html/2601.05503v1) §3–5.4。原评分保持，具体owner差额深入；采用可答/应abstain双人口及intent未定先clarify；fixed TPC/judge与few-shot过拒绝反侧。未运行代码或复现实验；root实际必要源/现owner写前核通过并授窄锁；root已实际核正文/前后邻接及末注，非作者POST通过。
+
+- `SF-2026-ARXIV-2601-09028` — Daily `2026-01-16`；[exact-v1](https://arxiv.org/html/2601.09028v1) §3.2–3.4/4.2/4.4、Table2、5.3–5.5与AppD。6分quality-proxy进入decoder的具体gap深入，只采用显式指标的内部消费接口/lineage；Eq2/3与AppD维度/负值monotonic问题不采精确recipe，proxy非truth，在线ranker/QPP与训练成本、聚合/noisytraining未孤立和普通packing退路邻近。root必要原源/owner写前通过，root实际两段、邻接与末注POST通过，锁释放；未运行artifact或复现。
+
+- `SF-2026-ARXIV-2601-09159` — Daily `2026-01-16`；[exact-v1](https://arxiv.org/html/2601.09159v1) §3.1–3.3/4、Table1–2、ANN/CSR 与必要配置。6分partition leafcode/collision metric具体gap深入；不采附录entropy/bit independence/correlation证明，保留base encoder、建树/映射成本和质量反侧。root必要原源/owner写前通过，root实际两段/邻接及末注非作者POST通过，锁释放；未运行artifact或复现。
+
+- `SF-2026-ARXIV-2602-06526` — Daily `2026-02-10`；[DREAM/BRIDGE exact-v1](https://arxiv.org/html/2602.06526v1) §3.2/4.1–4.3/5.2、AppI及必要B/E/F/H/J/K。6分评价反证差额深入，仅采用 judged pool/qrel/Unknown 的评价身份与未标 top-k 补核后复验排名/归一分母，不授自动标签准确、未来检索池无偏或参数知识因果归因。25检索池、三LLM预过滤、人审残余偏差及成本邻近；标签变化不是系统性能改善。未运行代码或复现实验；root必要原源/具体owner写前通过，root实际两段、前后邻接与末注非作者POST通过，锁释放；不授日级Gate。
+
+- `SF-2026-ARXIV-2602-09517` — Daily `2026-02-12`；[SAKE exact-v1](https://arxiv.org/html/2602.09517v1) §3–6、Tables1–3与局部位置/repeat/stack-only反侧。2+2+2=6，具体reader双视图差额深入；保留交错history，副本在旧reasoning前编码，非retriever metric、删历史或truth认证。GAIA/Hotpot退步、token成本与KV复用仅系统推断近正文；hardware/precision/总E2E cost未披露，未核实现或复现。独立reviewer必要source、root具体owner写前通过，实际正文/邻接与末注经root实际非作者POST通过、窄锁释放；不授日级Gate。
+
+- `SF-2026-ARXIV-2602-09616` — Daily `2026-02-12`；[Argus exact-v1](https://arxiv.org/html/2602.09616v1) §3.2/4/5/7、Tables1–2与D.2–3。2+2+2=6，具体索引前风险探针接口差额深入，只采用固定retriever/KG竞争人口→entity选择→额外view，RPS非校准失败概率/外证真值。Jina合成退步、等膨胀选择未控与新增成本近正文；未核实现/复现。root必要source/owner写前通过；实际正文、邻接与末注经root非作者POST通过，窄锁释放；非日级Gate。
+
+- `SF-2026-ARXIV-2602-09229` — Daily `2026-02-12`；[Embedding Magnitude exact-v1](https://arxiv.org/html/2602.09229v1) §3/4.1/5/6与B。2+1+3=6，具体训练/推理norm分责差额深入，fixed query正scale不改rank但训练温度/梯度不同、docnorm可改rank；scratch/FT及Dot仍对称反侧近正文。不授普适task-symmetry律/免费quality，未复现。root必要source/owner写前通过；实际正文、邻接与末注经root非作者POST通过，窄锁释放；非日级Gate。
+
+- `SF-2026-ARXIV-2602-10380` — Daily `2026-02-13`；[exact-v1](https://arxiv.org/html/2602.10380v1) §3–5 aligned/repeated/no-label对照及预算反侧；只采oracle granularity×label条件，不采冲突delta、无泄漏或abstention因果。root必要源与实际owner PRE通过，具体差额受影响深入；实际正文/完整邻接与末注已经root非作者实际POST通过，窄锁释放，不授日级。未核代码或复现。
+
+- `SF-2026-ARXIV-2602-15156` — Daily `2026-02-19`；[Panini exact-v1](https://arxiv.org/html/2602.15156v1) §2–4/6、AppendixG/Table19。2+2+2=6，RICR QA/答案实体驱动的读写接口差额受影响深入；GSW表示不当本篇首创，减少answer-context不授总成本下降，100.1min/3.3s对dense1.9min/1.3s反侧近正文。派生QA/链score不授truth或证据充分；开放模型边缺失、叙事/多模态、更新删除成本保留。root必要原源/实际76及75/77邻接PRE通过并授窄锁；root已实际顺读正文L110–133及末注，非作者POST通过，窄锁释放；未核代码或复现，未授日级Gate。
+
+- `SF-2026-ARXIV-2602-12727` — Daily `2026-02-17`；[exact-v1](https://arxiv.org/html/2602.12727v1) 必要方法/关键控制/直接限制；2+1+2=5，具体owner差额定点深入。仅采用正文条件机制；相关理论/效果强保证隔离，成本与回退近正文。root必要原源/actualowner PRE通过并授窄锁；作者正文/完整邻接已顺读，root非作者实际正文/完整邻接/末注POST通过，窄锁释放，未核实现或复现，非日级Gate。
+
+- `SF-2026-ARXIV-2602-13179` — Daily `2026-02-17`；[exact-v1](https://arxiv.org/html/2602.13179v1) 必要方法、关键对照与直接限制；2+1+2=5，实际 owner 差额深入。视觉query repair identity/语义与真实tool-v-oracle、retriever-v-reader分账；Nomic pair数值隔离。root 必要原源/owner PRE通过并授窄锁，作者完整邻接已顺读，root非作者实际正文/完整邻接/末注POST通过，窄锁释放；未运行artifact或复现，非日级Gate。
+
+- `SF-2026-ARXIV-2602-16299` — Daily `2026-02-20`；[MICE exact-v1](https://arxiv.org/html/2602.16299v1) §3/4.1/4.3/4.4/5。2+1+2=5，单向 query 读 frozen document 与 query self-attention 差额深入；mask需重训、跨域负侧、减少层/参数共因、未full indexing、缓存刷新成本保留。不授完整服务SLO。root必要原源/actual owner PRE通过；作者及root实际正文/完整邻接/自身末注顺读，非作者POST通过，窄锁释放；未核代码或复现，非日级验收。
+
+- `SF-2026-ARXIV-2602-16974` — Daily `2026-02-21`；[exact-v1](https://arxiv.org/html/2602.16974v1) §3–4.5、Table4必要人口及正例；2+2+2=6，pre/post编码chunk边界与竞争人口差额深入，仅平均/指定配置反转，不授全部chunk退步或窗口/评价单位同一；反侧、额外成本与原方案回退近正文。root必要原源/actual owner PRE通过；作者正文/完整邻接及末注已顺读，root非作者实际正文/完整邻接及末注POST通过，窄锁释放；未核实现/复现，非日级验收。
+
+- `SF-2026-ARXIV-2602-16609` — Daily `2026-02-20`；[exact-v1](https://arxiv.org/html/2602.16609v1) §2/3.1/3.2 Table3/4。2+1+2=5，dense→late-interaction训练阶段与prompt×微调强度接口差额深入；额外scale/训练预算混杂，不采多向量预训练唯一必要、99.4%生命周期或隐式query expansion因果；阶段/长度/索引与旧路线成本近正文。root必要原源/actual owner PRE通过；作者及root非作者实际正文/完整邻接/自身末注已顺读，POST通过，锁释放，未核实现/复现，非日级验收。
+
+- `SF-2026-ARXIV-2602-18425` — Daily `2026-02-24`；[RVR exact-v1](https://arxiv.org/html/2602.18425v1) §3/Algorithm1、§5.2/6.1–6.6。2+2+2=6，query+relevance-selected context→missing-evidence retriever训练接口具体差额深入；最终集补未全部verify文档、goldsubstring非语义oracle、错误冗余plateau、budget/domain与双训练/index/verification成本近正文，不授完整证据或free迭代。root必要source/actual owner PRE通过并授窄锁；作者实际正文/完整邻接及末注顺读、root非作者实际正文/完整邻接/自身末注POST通过，锁释放。未核实现/复现，非日级验收。
+
+- `SF-2026-ARXIV-2602-16136` — Daily `2026-02-20`；[Retrieval Collapse exact-v1](https://arxiv.org/html/2602.16136v1) §3.2–3.3、§4–5 与直接限制。2+2+2=6，corpus/exposure/citation/answer 四人口评价接口差额深入，非理论突破；origin 非 truth、CCR 非隐藏 use，two scenarios 非真实时序证明，同 family/独立 judge 权限与额外审计费用近正文。不授已实现防御或真实生态定律。root 必要源/实际 owner PRE 通过；root非作者实际正文/完整邻接/自身末注 POST通过，窄锁释放；未运行 artifact 或复现。
+
+- `SF-2026-ARXIV-2602-16375` — Daily `2026-02-20`；[exact-v1](https://arxiv.org/html/2602.16375v1) §3、§4/Tables2/5、REINFORCE/scale必要反侧。2+1+2=5，content/独立停止长度与生成标识预算接口差额深入；频率weighted非catalog平均，固定token更多event非同event因果，collision唯一ID/冷尾/训练成本及旧标识回退近正文。root必要原源/actual owner PRE通过并授窄锁；作者正文/完整邻接实际顺读，root非作者实际正文/完整邻接/自身末注POST通过，窄锁释放。未核实现/复现，非日级验收。
+
+- `SF-2026-ARXIV-2602-17215` — Daily `2026-02-21`；[NotebookRAG exact-v1](https://arxiv.org/html/2602.17215v1) §4.2.1–4.2.4/Table1、§4.3–4.4、§6.5/7。2+1+2=5，executable dependency-closure 检索单位的具体owner缺口深入；非线性log/未知mutation、同840对used-column标注与重跑/调试费用近文，不授完整静态语义、安全沙箱、运行正确即数据真值或公平总体收益。root必要原源/actual owner PRE通过并授自身窄锁；实际正文及邻接已由作者顺读，root非作者实际正文/完整邻接/自身末注POST通过，窄锁释放。未运行代码或复现，非日级验收。
+
+- `SF-2026-ARXIV-2602-17366` — Daily `2026-02-21`；[RPDR exact-v1](https://arxiv.org/html/2602.17366v1) Eq8/9、§4.2–4.3、Appendix B/§8。2+1+2=5，具体owner差额深入；训练query往返selector区分index增强；matched random/频繁切片反退、singlefact与inverse/finetune费用近正文。root必要原源/actual owner PRE通过并授窄锁；作者实际正文/完整邻接已顺读，root非作者实际正文/完整邻接/自身末注POST通过，锁释放。未核实现/复现，非日级Gate。
+
+- `SF-2026-ARXIV-2602-18734` — Daily `2026-02-25`；[exact-v1](https://arxiv.org/html/2602.18734v1) §3.3/4.1/4.3–4.4、Algorithm1。2+1+2=5；自更新 reader 的历史成功标签与 K1→K3/7 消费差额深入，consumer/exposure 人口、初始标签和双模块成本近文，不授因果效用或严格 GRPO。root实际必要原源/owner PRE通过授两段窄锁；作者实际正文/完整邻接/自身末注顺读及限定diff-check通过，root 非作者实际正文、完整邻接与自身末注 POST通过，窄锁释放。未核实现/复现，非日级验收。
+
+- `SF-2026-ARXIV-2602-17654` — Daily `2026-02-21`；[exact-v1](https://arxiv.org/html/2602.17654v1) §3/4.3–4.4、同backbone对照及分级标注/反侧。2+1+2=5，partial grade在不同pair正/负角色与保原negative缺口深入，不授cardinal utility/score校准；同judge/未见query人口、增广反退和训练/索引成本近文。root必要原源/actual owner PRE通过并授窄锁；作者实际正文/完整邻接已顺读，root非作者实际正文/完整邻接/自身末注POST通过，窄锁释放。未核实现或复现，非日级Gate。
+
+- `SF-2026-ARXIV-2602-21477` — Daily `2026-02-27`；[Pancake exact-v1](https://arxiv.org/html/2602.21477v1) §4.3–4.4/§5，blocks83–101/104–141。2+2+3=7，各scope coarse图的portal联结与staticcluster agent-specific fine IDs/单payload差额深入；scope非ACL、heuristic earlyexit非recall、双驻留/split成本及独立索引回退近文，不用Eq88概率或26×生产倍数。root必要源/actual owner PRE通过授一段窄锁；作者正文/完整邻接/自身末注已实际顺读，root非作者已实际独读正文/完整邻接/自身末注，POST通过，窄锁释放，未核代码或复现，非日级Gate。
+
+- `SF-2026-ARXIV-2602-22427` — Daily `2026-02-28`；[HubScan exact-v1](https://arxiv.org/html/2602.22427v1) §3–5/blocks49–90、112–123、141–186。2+1+2=5，alert-budget crowding实际差额深入；AUC与有限top-H、自然hub与恶意truth分开，域代表性/污染与扫描费用近文。root必要原源/actual owner PRE通过并授单段及自身末注窄锁；作者实际正文及完整邻接顺读，root非作者实际正文/完整邻接/自身末注POST通过，窄锁释放。未核实现/复现，非日级Gate。

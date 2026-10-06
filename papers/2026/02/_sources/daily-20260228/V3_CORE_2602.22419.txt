@@ -1,0 +1,4017 @@
+CLIP Is Shortsighted: Paying Attention Beyond the First Sentence
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+2.1
+Contrastive Vision-Language Pretraining
+2.2
+Extending CLIP to Long Captions
+2.3
+Vision-Language Datasets
+3
+Empirical Analysis of CLIP Biases
+3.1
+Text Retrieval Datasets
+3.2
+Biases in CLIP Text Encoders
+3.2.1
+Early-Token Bias
+3.2.2
+Sensitivity to Sentence Permutation
+3.3
+Effects on Long-Text CLIP Variants
+4
+Method
+4.1
+Problem Definition
+4.2
+Replacing the Summary Sentence
+4.3
+Sentence Sampling
+4.4
+Token Padding
+4.5
+Multi-caption Training
+5
+Experiments and Results
+5.1
+Datasets
+5.2
+Experimental Setup
+5.3
+Results
+5.3.1
+Long-Text Retrieval
+5.3.2
+Short-Text Retrieval
+5.3.3
+Generalization to other CLIP-Style Encoders
+5.3.4
+Robustness to Text Permutations
+5.4
+Ablations
+5.4.1
+Contribution of Caption-Level Augmentations
+5.4.2
+Short-Caption Loss Coefficient
+6
+Conclusion and Limitations
+References
+A
+Training Details
+B
+Pseudocode
+C
+Additional Ablations
+C.1
+Positional Embedding Stretching for SigLIP
+C.2
+Ablation on Number of Training Epochs
+C.3
+Ablation on Sentence Sampling Method
+C.4
+Ablation on Padding Method
+C.5
+Transferring to SmartCLIP
+D
+Additional Discussion on CLIP Biases
+E
+Additional Discussion on Long-CLIP Biases
+E.1
+Long-Text Retrieval with Sentence Permutation and Removal
+E.2
+Additional Details and Results on the Attention Weights Distribution
+F
+Visualizations and Results for Image Generation
+License: CC BY 4.0
+arXiv:2602.22419v1 [cs.CV] 25 Feb 2026
+CLIP Is Shortsighted: Paying Attention Beyond the First Sentence
+Marc-Antoine Lavoie
+†
+†
+thanks:
+Work done while the author was an intern at Mila.
+Correspondence: marc-antoine.lavoie@robotics.utias.utoronto.ca
+Code:
+https://github.com/TRAILab/DeBias-CLIP.git
+Affiliation:
+University of Toronto Robotics Institute
+Anas Mahmoud
+Affiliation:
+Mila
+Aldo Zaimi
+Affiliation:
+Mila
+Arsène Fansi Tchango
+Affiliation:
+Mila
+Steven L. Waslander
+Affiliation:
+University of Toronto Robotics Institute
+Abstract
+CLIP models learn transferable multi-modal features via image-text contrastive learning on internet-scale data. They are widely used in zero-shot classification, multi-modal retrieval, text-to-image diffusion, and as image encoders in large vision-language models. However, CLIP’s pretraining is dominated by images paired with short captions, biasing the model toward encoding simple descriptions of salient objects and leading to coarse alignment on complex scenes and dense descriptions. While recent work mitigates this by fine-tuning on small-scale long-caption datasets, we identify an important common bias: both human- and LLM-generated long captions typically begin with a one-sentence summary followed by a detailed description. We show that this acts as a shortcut during training, concentrating attention on the opening sentence and early tokens and weakening alignment over the rest of the caption. To resolve this, we introduce DeBias-CLIP, which removes the summary sentence during training and applies sentence sub-sampling and text token padding to distribute supervision across all token positions. DeBias-CLIP achieves state-of-the-art long-text retrieval, improves short-text retrieval, and is less sensitive to sentence order permutations. It is a drop-in replacement for Long-CLIP with no additional trainable parameters.
+1
+Introduction
+CLIP encoders learn a joint text-image representation space through contrastive learning on large-scale datasets. This alignment not only yields a powerful visual encoder but also facilitates zero-shot transfer for visual tasks by leveraging the corresponding text encoder. Furthermore, the shared representation space serves as a foundation for a broad range of vision-language applications. For instance, text-to-image diffusion models such as Stable Diffusion
+[
+36
+]
+utilize CLIP’s text encoder for conditional generation, while its image encoder is widely adopted in generative vision–language models (VLMs)
+[
+25
+,
+23
+,
+17
+,
+3
+]
+.
+However, CLIP models have significant limitations. The original CLIP training datasets are dominated by short captions, which leads to models that are primarily sensitive to salient objects in images and early-text tokens and limiting performance on more complex downstream tasks. Similarly, the token limit of 77 of the CLIP text encoder corresponds to only about three or four sentences, meaning that paragraph-length texts cannot be fully encoded.
+Recently, many works have shown that training CLIP encoders
+[
+57
+,
+47
+,
+48
+]
+or VLMs
+[
+6
+,
+9
+]
+with curated long captions instead of short captions can obtain competitive performance on text-image retrieval, dense vision tasks such as zero-shot segmentation, and visual question answering (VQA), while using millions rather than hundreds of millions of images, though compute remains substantial. Alternatively, Long-CLIP
+[
+56
+]
+addresses token-length limits by stretching positional embeddings and fine-tuning a pretrained CLIP model on a small long-caption dataset, yielding better retrieval on paragraph-length texts.
+And yet, further limitations remain. As shown in
+, the standard Long-CLIP model’s performance is degraded when caption sentences are permuted or when the first sentence of long captions is removed. We find that this behavior is consistent with an early-token bias observed in the original pretrained CLIP variants
+[
+56
+]
+, and identify that training CLIP models to align image features with the first sentence in long captions is a key issue. In both training and test long-caption datasets, the first sentence typically serves as a summary of the entire text and generally contains a significant portion of the caption information
+[
+35
+]
+. Since we start from pretrained CLIP models that are mostly trained on short texts, the first sentence acts as a shortcut, allowing the models to minimize the contrastive loss without needing to extend the effective context window size. This leads to reduced sensitivity to later tokens, in contradiction with the objective of extending the effective context window.
+To address this, we introduce
+DeBias-CLIP
+, which mitigates the bias by sampling long captions differently. Our method is a simple drop-in replacement for Long-CLIP that does not add any additional trainable parameters. By excluding the opening summary sentence from the sampled caption text and by using sentence sampling and token padding, we obtain state-of-the-art performance on many long retrieval datasets while also improving the performance on short retrieval. Finally, our method also significantly improves the robustness of retrieval with permuted sentences and when the summary sentence is removed.
+Our main
+contributions
+in this work are the following:
+•
+We empirically show that existing CLIP models and models trained with the Long-CLIP framework show a significant bias towards early text tokens and information-dense summary sentences that are common in long-caption datasets, with degraded performance when information is moved deeper in captions.
+•
+We propose a simple augmentation strategy to mitigate this bias by removing the summary sentence from the training captions, sub-sampling the remaining caption sentences, and adding padding tokens. Unlike prior work, our method does not introduce new trainable parameters (e.g.,
+[
+49
+,
+1
+]
+) and does not require multi-stage or student-teacher frameworks (e.g.,
+[
+31
+]
+) to adapt CLIP to a long-context window.
+•
+Our method achieves state-of-the-art performance on multiple long-text retrieval tasks, in addition to greatly reduced sensitivity to sentence permutation in captions and to the absence of summary sentences. The improvements are consistent across multiple scales and pretrained CLIP models.
+2
+Related Work
+2.1
+Contrastive Vision-Language Pretraining
+Contrastive Vision-Language Pretraining (CLIP)
+[
+37
+]
+and similar works, such as ALIGN
+[
+15
+]
+, have popularized a dual-encoder, contrastive pretraining paradigm in which image and text encoders are trained jointly on large collections of image-caption pairs. The objective maximizes the similarity of matched pairs and minimizes that of mismatches within a mini-batch. This approach has been shown to yield robust, transferable representations that support various downstream tasks such as zero-shot classification
+[
+37
+,
+59
+,
+12
+]
+, image generation
+[
+39
+,
+38
+]
+, detection
+[
+13
+,
+20
+,
+58
+,
+60
+]
+, segmentation
+[
+18
+,
+51
+,
+26
+]
+, VQA
+[
+19
+,
+41
+,
+42
+]
+, and video understanding
+[
+27
+,
+50
+]
+. Subsequent work has focused on refining either data, losses, or architectures while retaining the dual-encoder recipe. OpenCLIP
+[
+8
+]
+scales training to billions of image-text pairs, and SigLIP
+[
+54
+]
+replaces softmax with pairwise sigmoid for better scaling. SLIP
+[
+29
+]
+and SILC
+[
+30
+]
+add image-only self-supervised losses, while LiT
+[
+55
+]
+aligns text features to a frozen pretrained image encoder. DeCLIP
+[
+22
+]
+adds image/text self-supervision and cross-modal alignment, CoCa
+[
+53
+]
+couples contrastive pretraining with caption generation, and SigLIP2
+[
+44
+]
+combines multiple losses with large-scale training to obtain a strong, polyvalent baseline. However, these methods do not generally consider performance on longer texts.
+2.2
+Extending CLIP to Long Captions
+CLIP models were originally trained with a short context window (77 tokens), which limits their ability to align images with long, multi-sentence texts. Long-CLIP
+[
+56
+]
+addresses this by linearly interpolating the pretrained model’s positional embeddings to a longer window and fine-tuning with two contrastive objectives: (i) align global image embeddings to long captions and (ii) align primary image components (via PCA) to short-caption segments. The use of stretched positional embeddings has since been adopted in several state-of-the-art long-caption retrieval methods, including FineLIP
+[
+1
+]
+and SmartCLIP
+[
+49
+]
+. Alternatively, TULIP
+[
+31
+]
+swaps interpolation for rotary positional embeddings
+[
+43
+]
+, which have been shown to scale better in large language models, but it requires two-stage training.
+One central challenge for long-caption CLIP models is preserving short-text retrieval while improving performance on long captions. A common approach is to train on both short and long captions, but this requires mechanisms that prevent long-text representations from collapsing to the short-text representations. Long-CLIP does this by using PCA on the image features matched to short captions; Fix-CLIP
+[
+46
+]
+masks image tokens aligned to short captions and learns local image aggregation tokens; SmartCLIP learns a text-conditional masking network to mask image feature channels that are not significant for alignment (adding more parameters); FLAIR
+[
+47
+]
+uses text features as queries for image-feature pooling, which requires all text features at inference and scales poorly. Finally, some methods reuse the original CLIP encoder. LongD-CLIP
+[
+11
+]
+trains with a second distillation phase in which a model finetuned on long captions is realigned with the original CLIP model, increasing complexity. In contrast, we aim to minimize extra parameters, encoders, and training stages. We find that pretrained CLIP models suffer from early-token and summary-sentence biases that persist through long-text training, and that simple text augmentations mitigate these biases and improve performance without introducing additional overhead.
+2.3
+Vision-Language Datasets
+Large-scale contrastive pretraining has been enabled by web-scale image-text collections with captions such as alt-text or brief descriptions. Examples include CC12M
+[
+5
+]
+, Visual Genome
+[
+16
+]
+, SBU
+[
+34
+]
+, COCO
+[
+24
+]
+, and LAION-5B
+[
+40
+]
+. Their scale and diversity are crucial for representation learning, but the captions are typically short, formulaic, and noisy, which limits supervision for fine-grained grounding and long-context understanding.
+Recent work shows that contrastive training on curated long captions enables training of VLMs (including CLIP-like models) on much less data than internet-scale short-caption corpora that more traditional methods require.
+ShareGPT4V
+[
+6
+]
+leverages GPT-4V
+[
+33
+]
+captions to first train a labeler and then recaptions 1.2M images. and works such as Long-CLIP and SmartCLIP show that finetuning pretrained models at that data scale substantially improves long-text retrieval. Scaling further, DreamLIP uses the ShareGPT4V labeler to annotate 30M images, sufficient to train a model from scratch, while at the billion scale, long captions remain advantageous
+[
+21
+]
+. For evaluation, more curated long-text retrieval benchmarks such as DCI
+[
+45
+]
+, Urban1K
+[
+56
+]
+, and DOCCI
+[
+32
+]
+probe models’ ability to match images with long, information-dense queries, where crucial details may appear later in the caption.
+Similar to prior work
+[
+56
+,
+49
+,
+31
+]
+, we adapt pretrained CLIP models using ShareGPT4V for long-caption supervision and evaluate across both short- and long-text retrieval benchmarks (DCI, Urban1K, DOCCI). Our method targets an information position bias common in dense-caption datasets and improves token-level attention uniformity, yielding strong gains on long-text retrieval.
+3
+Empirical Analysis of CLIP Biases
+In this section, we present an empirical analysis of how the text encoders of existing CLIP-like vision-language models behave in long-text retrieval tasks. First, we highlight shared elements in long-text retrieval datasets that affect training and evaluation. Next, we use long-text datasets to show that pretrained CLIP models have a limited effective context window that is biased towards both early tokens and overview/summary sentences. Finally, we show how training on long-context data does not resolve these biases, with long-text retrieval models trained using the Long-CLIP recipe showing significant loss in performance under simple, representative augmentations such as removing or moving the opening/summary sentence, in line with the texts found in retrieval on generic chunked text from larger documents and Retrieval-Augmented Generation (RAG) pipelines.
+Dataset
+Count
+Avg. Tokens
+Example Caption
+COCO
+[
+24
+]
+5k
+13.5
+“A black Honda motorcycle parked in front of a garage”
+Flickr30k
+[
+52
+]
+30k
+15.8
+“A group of people stand in the back of a truck filled with cotton.”
+ShareGTP4V
+[
+6
+]
+1.2M
+168.6
+“
+This image captures a serene moment at a zoo, featuring three majestic giraffes in their enclosure.
+The giraffes, with their distinctive…”
+Urban1k
+[
+56
+]
+1k
+131.4
+“
+This image captures a lively street market under daylight.
+Fresh produce is on display in wooden crates directly in the foreground…”
+DCI
+[
+45
+]
+7.8k
+174.2
+“
+A series of illuminated escalators in an indoor shopping area.
+”
+“
+An indoor mall with three illuminated escalators.
+The mall has various planters with lush greenery on both sides of the escalator… ”
+DOCCI
+[
+32
+]
+5k
+141.5
+“
+A high angle view of an old faded street corner.
+In the middle of the view is the orange spray painted word ”ROW”, with a horizontal… ”
+Table 1
+:
+Short- and long-text retrieval datasets.
+For long-caption datasets, the opening summary sentence is
+bolded
+. DCI provides both a short caption and a separate long caption
+[
+31
+]
+; in both cases, the short caption and the first sentence of the long caption summarize the image. The token count statistics are calculated using the CLIP tokenizer.
+3.1
+Text Retrieval Datasets
+Following the Long-CLIP method
+[
+56
+]
+, we train models on ShareGPT4V
+[
+6
+]
+and evaluate on common long-text retrieval benchmarks: Urban1k
+[
+56
+]
+, DCI
+[
+45
+]
+, Long-DCI
+[
+31
+]
+, and DOCCI
+[
+32
+]
+. In addition, we also evaluate on the COCO
+[
+24
+]
+and Flickr30k
+[
+52
+]
+short-text retrieval datasets.
+Tab.
+1
+presents summary information on all datasets.
+First, we note that short-text retrieval datasets have caption lengths well below CLIP’s 77-token limit (64 for SigLIP), and so provide no information on long-text performance.
+Next, we highlight how these long-caption datasets share a similar format: they start with a
+summary first sentence
+followed by sentences with fine-grained details, and they all have a similar average token length. While common in human- and LLM-generated captions, this structure is atypical in practical image–text retrieval (e.g., chunked passages from larger documents). Because the summary sentence contains much of the caption information, this is similar to training with short captions, and this structure allows biases in pretrained models to persist in long-context models. We run our analysis on DOCCI, but consider additional datasets in the Supplementary Materials.
+3.2
+Biases in CLIP Text Encoders
+In this study, we consider VLMs that follow the original OpenAI CLIP (CLIP) model’s design, with variations of training data with the OpenCLIP model trained on LAION-2B (OpenCLIP), and differences in both data and loss with Google’s SigLIP
+[
+54
+]
+and SigLIP2
+[
+44
+]
+trained on WebLI
+[
+7
+]
+. In all cases, the training datasets are dominated by pairs of images and single-sentence captions. Using multi-sentence long-caption datasets, we show that their text encoders exhibit a systematic early-token bias and pronounced sensitivity to summary/overview sentences.
+Figure 2
+:
+Top-1 text-to-image retrieval on DOCCI as a function of the number of added padding sentences.
+One to five padding sentences
+‘This is a photo.’
+are added before the truncated original DOCCI caption (we keep the first two sentences only). We use the ViT-B/16 scale for all models.
+3.2.1
+Early-Token Bias
+First, we show that CLIP models have a consistent bias towards early tokens. Using the first two sentences of DOCCI captions (average of 46.6 tokens, well within the models’ context windows) for image-to-text retrieval, we evaluate sensitivity to token position by prepending copies of uninformative sentences
+‘This is a photo.’
+. These padding tokens shift informative tokens later without adding semantic information.
+Fig.
+2
+shows that prepended padding reduces retrieval performance across all models. Notably, this drop is very large for SigLIP and SigLIP2, even with one or two padding sentences. Building on the analysis in Long-CLIP of the effective context window size
+[
+56
+]
+, we show that the lack of improvement as the number of tokens increases is at least in part caused by the inability to effectively use information in later token positions rather than purely because of context length. Moving informative content later in the sequence hurts retrieval across CLIP variants.
+Figure 3
+:
+Top-1 image-to-text retrieval on DOCCI with first two sentences permuted.
+We analyze three setups: the first two sentences in the correct order (
+First 2
+), the same two sentences swapped (
+Swap 2
+), and the first sentence only (
+First only
+). Results are reported for four models: OpenAI CLIP, OpenCLIP (LAION-2B), SigLIP, and SigLIP2.
+3.2.2
+Sensitivity to Sentence Permutation
+We further evaluate the token position sensitivity of CLIP text encoders by swapping the first two sentences of DOCCI captions. We evaluate retrieval for three cases: (i) the first two sentences in the correct order (
+First 2
+), (ii) the same two sentences swapped (
+Swap 2
+), and (iii) the first sentence only (
+First only
+).
+Fig.
+3
+presents the results and shows that swapping the first two sentences (pushing the summary sentence later in the sequence) reduces performance for all models. SigLIP2 drops the most at
+−
+8.5
+%
+-8.5\%
+. For both correctly ordered and single sentence cases, models that are better at short retrieval
+[
+44
+]
+are also better on DOCCI, but this is not the case under permutation, with larger drops for SigLIP and SigLIP2. This shows that SigLIP models are particularly sensitive to token position, and here the improvements from the second sentence’s added information are nullified if the summary sentence is pushed later in the context window.
+3.3
+Effects on Long-Text CLIP Variants
+Finally, we evaluate if the CLIP biases are also present in long-context models and use Long-CLIP as a representative model. We evaluate different cases for
+full long-caption retrieval
+in
+. Similar to original CLIP models, Long-CLIP remains sensitive to sentence position: swapping the first (summary) and the fourth sentences (
+Keep vs Move
+) leads to a
+−
+9.7
+%
+-9.7\%
+drop, and removing the first sentence altogether (
+Keep vs Remove
+) drops by
+−
+17.1
+%
+-17.1\%
+. These results indicate that (i) the model struggles to use summary information when it is not in the first few tokens, and (ii) accurate retrieval still requires the summary sentence. We see a similar trend when considering the averaged pre-softmax attention weights in
+, which aggregate the output token’s attention towards the other text token positions at the transformer’s last layer. For Long-CLIP, attention peaks on early tokens and decays steadily beyond the first 10 positions. The sums are normalized by the number of times a token position is within the text window (i.e., not post-padding), which explains the higher variance at later tokens.
+4
+Method
+Original
+SOT
+𝚜
+1
+\mathtt{s}_{1}
+𝚜
+2
+\mathtt{s}_{2}
+𝚜
+3
+\mathtt{s}_{3}
+𝚜
+4
+\mathtt{s}_{4}
+EOT
+PAD
+Caption
+Our
+SOT
+PAD
+PAD
+𝚜
+4
+\mathtt{s}_{4}
+𝚜
+2
+\mathtt{s}_{2}
+EOT
+PAD
+Caption
+Table 2:
+Visualization of our caption augmentation method
+. We drop the summary sentence
+𝚜
+1
+\mathtt{s}_{1}
+, randomly sample from the other sentences, and add padding (
+PAD
+) before the first sampled sentence. We do not enforce the preservation of sentence order when sampling. Here,
+SOT
+and
+EOT
+refer to start-of-text and end-of-text tokens, respectively.
+In this section, we present three caption-level training augmentations to mitigate the summary sentence shortcut:
+dropping
+the summary sentence, randomly
+sampling
+from the remaining long-caption sentences, and
+padding
+the beginning of the text sequence. Our method is summarized in
+Tab.
+2
+. We generally follow the Long-CLIP
+[
+56
+]
+method.
+4.1
+Problem Definition
+Our analysis and proposed sampling strategy assume that long captions can be treated as a set of concatenated sentences, each contributing meaningful semantic concepts. Although cross-sentence context can be beneficial, we approximate sentences as independent semantic units for sampling purposes. Given a long caption
+C
+C
+with
+k
+k
+sentences
+n
+sents
+=
+k
+{n_{\mathrm{sents}}=k}
+, we model it as
+C
+=
+[
+s
+1
+,
+s
+2
+,
+…
+,
+s
+k
+]
+{C=[s_{1},\,s_{2},\,\dots,\,s_{k}]}
+.
+The caption
+C
+C
+can be tokenized with a tokenizer
+φ
+\varphi
+as
+T
+=
+φ
+⁡
+(
+C
+)
+{T=\varphi\left(C\right)}
+, giving
+T
+=
+[
+𝚂𝙾𝚃
+,
+𝚝
+1
+,
+𝚝
+2
+,
+…
+,
+𝚝
+k
+,
+𝙴𝙾𝚃
+,
+𝙿𝙰𝙳
+]
+{T=[\mathtt{SOT},\,\mathtt{t}_{1},\,\mathtt{t}_{2},\,\dots,\,\mathtt{t}_{k},\,\mathtt{EOT},\,\mathtt{PAD}]}
+, where
+𝚂𝙾𝚃
+\mathtt{SOT}
+,
+𝙴𝙾𝚃
+\mathtt{EOT}
+and
+𝙿𝙰𝙳
+\mathtt{PAD}
+are respectively the start-of-text, end-of-text and padding tokens. For Long-CLIP, the short and long training captions are given by
+C
+L
+​
+C
+s
+\displaystyle C_{LC}^{s}
+=
+[
+s
+1
+]
+,
+\displaystyle=[s_{1}],
+(1)
+C
+L
+​
+C
+ℓ
+\displaystyle C_{LC}^{\ell}
+=
+[
+s
+1
+,
+s
+2
+,
+…
+,
+s
+k
+]
+.
+\displaystyle=[s_{1},\,s_{2},\,\dots,\,s_{k}].
+(2)
+Long-CLIP encodes short and long captions, and images as feature vectors
+u
+s
+u^{s}
+,
+u
+ℓ
+u^{\ell}
+, and
+v
+v
+respectively, and the contrastive loss
+ℒ
+cont
+\mathcal{L}^{\mathrm{cont}}
+is evaluated independently for both captions:
+ℒ
+cont
+​
+(
+a
+,
+b
+)
+\displaystyle\mathcal{L}^{\mathrm{cont}}\left(a,b\right)
+=
+−
+1
+N
+∑
+i
+=
+1
+N
+log
+exp
+⁡
+(
+sim
+⁡
+(
+a
+i
+,
+b
+i
+)
+/
+τ
+)
+∑
+j
+=
+1
+N
+exp
+⁡
+(
+sim
+⁡
+(
+a
+i
+,
+b
+j
+)
+/
+τ
+)
+,
+\displaystyle=-\dfrac{1}{N}\sum_{i=1}^{N}\log\dfrac{\exp\left(\mathrm{sim}\left(a_{i},b_{i}\right)/\tau\right)}{\sum_{j=1}^{N}\exp\left(\mathrm{sim}\left(a_{i},b_{j}\right)/\tau\right)},
+ℒ
+s
+\displaystyle\mathcal{L}^{s}
+=
+ℒ
+cont
+​
+(
+u
+s
+,
+f
+⁡
+(
+v
+)
+)
++
+ℒ
+cont
+​
+(
+f
+⁡
+(
+v
+)
+,
+u
+s
+)
+,
+\displaystyle=\mathcal{L}^{\mathrm{cont}}\left(u^{s},f\left(v\right)\right)+\mathcal{L}^{\mathrm{cont}}\left(f\left(v\right),u^{s}\right),
+(3)
+ℒ
+ℓ
+\displaystyle\mathcal{L}^{\ell}
+=
+ℒ
+cont
+​
+(
+u
+ℓ
+,
+v
+)
++
+ℒ
+cont
+​
+(
+v
+,
+u
+ℓ
+)
+,
+\displaystyle=\mathcal{L}^{\mathrm{cont}}\left(u^{\ell},v\right)+\mathcal{L}^{\mathrm{cont}}\left(v,u^{\ell}\right),
+(4)
+ℒ
+\displaystyle\mathcal{L}
+=
+ℒ
+s
++
+ℒ
+ℓ
+,
+\displaystyle=\mathcal{L}^{s}+\mathcal{L}^{\ell},
+(5)
+where
+sim
+\mathrm{sim}
+,
+τ
+\tau
+,
+N
+N
+, and
+f
+⁡
+(
+⋅
+)
+f\left(\cdot\right)
+are respectively a similarity function, a temperature parameter, the number of pairs in a batch, and a batch-wise PCA operator
+[
+56
+]
+that approximates the image feature vector from a low-rank decomposition.
+4.2
+Replacing the Summary Sentence
+As discussed in
+Sec.
+3.1
+, ShareGPT4V captions start with a summary sentence. Long-CLIP uses this first sentence as a short caption to preserve short-text performance. Our short caption serves a different purpose: it is used to capture fine-grained details that may be ignored in the full caption (due to appearing later). We preserve short-text performance via subsampling and prefix padding, not by relying on the summary sentence (see
+Sec.
+4.3
+and
+Sec.
+4.4
+).
+We claim that existing CLIP and Long-CLIP models are sensitive to the inclusion and position of the summary caption, and that, in practice, these sentences can act as a shortcut for the alignment loss when training on captions that always contain this summary. In fact, when evaluating Long-CLIP on the DOCCI retrieval task, we find that the average image-caption similarities for positive pairs are larger when using the summary caption only
+(
+sim
+¯
+​
+(
+u
+s
+,
+v
+)
+=
+0.320
+)
+\left(\overline{\mathrm{sim}}\left(u^{s},v\right)=0.320\right)
+compared to using the full caption
+(
+sim
+¯
+​
+(
+u
+ℓ
+,
+v
+)
+=
+0.308
+)
+\left(\overline{\mathrm{sim}}\left(u^{\ell},v\right)=0.308\right)
+.
+Instead of taking the summary sentence as the short caption, we define the short caption as
+the long caption minus its first sentence
+, encouraging the model to be sensitive to fine-grained details deeper in the caption. Note that we still use the same long caption
+C
+ℓ
+C^{\ell}
+as Long-CLIP to train on the complete text data, and add a short caption given by
+C
+no
+​
+_
+​
+sum
+\displaystyle C^{\mathrm{no\_sum}}
+=
+[
+s
+2
+,
+…
+,
+s
+k
+]
+.
+\displaystyle=[s_{2},\,\dots,\,s_{k}].
+(6)
+4.3
+Sentence Sampling
+To increase the difference between the long caption and the new caption
+C
+no
+​
+_
+​
+sum
+C^{\mathrm{no\_sum}}
+and to encourage the model to be more sensitive to details throughout texts and images, we subsample the sentences in
+C
+no
+​
+_
+​
+sum
+C^{\mathrm{no\_sum}}
+to generate a new short caption. This introduces variation at minimal cost, in contrast to rewriting-based methods used in prior works (e.g., FG-CLIP
+[
+48
+]
+, LaCLIP
+[
+10
+]
+, and TIPS
+[
+28
+]
+). We randomly sample without replacement
+n
+sampled
+=
+𝒰
+⁡
+{
+1
+,
+2
+,
+…
+,
+n
+sents
+−
+1
+}
+{n_{\mathrm{sampled}}=\mathcal{U}\left\{1\,,2\,,\dots,\,n_{\mathrm{sents}}-1\right\}}
+sentences in
+C
+no
+​
+_
+​
+sum
+C^{\mathrm{no\_sum}}
+(excludes the first sentence), leading to captions with a wide range of lengths. We do not maintain sentence order when sampling. A possible sampled short caption is given by
+C
+samp
+\displaystyle C^{\mathrm{samp}}
+=
+[
+s
+4
+,
+s
+2
+]
+.
+\displaystyle=[s_{4},\,s_{2}].
+(7)
+4.4
+Token Padding
+When adding sentence sampling, performance does not always improve and sometimes gets worse. We hypothesize that this could be related to uneven training of the positional embeddings, as the long caption
+C
+ℓ
+C^{\ell}
+can be biased towards the summary sentence and thus early embeddings, in addition to the sampled caption
+C
+samp
+C^{\mathrm{samp}}
+being shorter. Moreover, the pretrained model’s short-text performance is better preserved when training with the summary sentences because those captions are more similar to the original training data, but this is no longer the case with the sampled captions. To resolve both issues, we add padding tokens to the start of the tokenized sampled caption to push it to a further position. In encoders with a
+SOT
+token (such as CLIP), this padding is added after the
+SOT
+token. Given
+n
+post
+n_{\mathrm{post}}
+post-caption padding tokens, we transfer
+n
+pre
+n_{\mathrm{pre}}
+of them as pre-caption padding tokens and update the post-padding as
+n
+pre
+\displaystyle n_{\mathrm{pre}}
+=
+𝒰
+⁡
+{
+0
+,
+1
+,
+…
+,
+n
+post
+}
+,
+\displaystyle=\mathcal{U}\left\{0,\,1,\,\dots,\,n_{\mathrm{post}}\right\},
+(8)
+n
+post
+\displaystyle n_{\mathrm{post}}
+=
+n
+post
+−
+n
+pre
+.
+\displaystyle=n_{\mathrm{post}}-n_{\mathrm{pre}}.
+(9)
+This reassigns part of the post-caption padding to the prefix
+without truncating any text tokens
+. Given the sampled caption from (
+7
+), our final tokenized short caption would be
+T
+ours
+s
+\displaystyle T^{s}_{\mathrm{ours}}
+=
+[
+𝚂𝙾𝚃
+,
+𝙿𝙰𝙳
+pre
+,
+𝚜
+4
+,
+𝚜
+2
+,
+𝙴𝙾𝚃
+,
+𝙿𝙰𝙳
+post
+]
+.
+\displaystyle=[\mathtt{SOT},\,\mathtt{PAD}_{\mathrm{pre}},\,\mathtt{s}_{4},\,\mathtt{s}_{2},\,\mathtt{EOT},\,\mathtt{PAD}_{\mathrm{post}}].
+(10)
+4.5
+Multi-caption Training
+Given the tokenized long caption
+T
+L
+​
+C
+ℓ
+=
+T
+ours
+ℓ
+{T^{\ell}_{LC}=T^{\ell}_{\mathrm{ours}}}
+and the sampled and padded caption
+T
+ours
+s
+T^{s}_{\mathrm{ours}}
+from (
+10
+), we compute independent contrastive losses for each caption with (
+3
+) and (
+4
+) and consider the weighted sum of both as the final loss
+ℒ
+\displaystyle\mathcal{L}
+=
+λ
+s
+​
+ℒ
+s
++
+(
+1
+−
+λ
+s
+)
+​
+ℒ
+ℓ
+,
+\displaystyle=\lambda^{s}\mathcal{L}^{s}+\left(1-\lambda^{s}\right)\mathcal{L}^{\ell},
+(11)
+where
+λ
+s
+\lambda^{s}
+is a weight coefficient that controls the relative contribution of the short and long caption losses.
+5
+Experiments and Results
+Method
+Venue
+Urban1k
+DCI
+Long-DCI
+DOCCI
+T2I
+I2T
+T2I
+I2T
+T2I
+I2T
+T2I
+I2T
+ViT-B/16
+CLIP
+[
+37
+]
+ICML21
+53.4
+67.5
+42.9
+44.1
+32.7
+35.9
+57.1
+60.6
+Long-CLIP
+[
+56
+]
+ECCV24
+79.5
+78.9
+57.1
+51.6
+47.0
+41.1
+71.4
+63.1
+TULIP
+[
+31
+]
+ICLR25
+86.6
+88.1
+-
+-
+50.6
+50.2
+-
+-
+FineLIP
+[
+1
+]
+CVPR25
+90.0
+91.2
+-
+-
+-
+-
+78.1
+80.0
+LongD-CLIP
+[
+11
+]
+CVPR25
+87.3
+87.2
+-
+-
+-
+-
+-
+-
+SmartCLIP
+[
+49
+]
+CVPR25
+87.4
+90.0
+64.0
+64.9
+52.8
+53.4
+78.0
+77.4
+Fix-CLIP
+[
+46
+]
+ICCV25
+81.1
+80.9
+63.0
+59.7
+-
+-
+-
+-
+DeBias-CLIP (ours)
+-
+93.0
+93.1
+67.6
+68.5
+57.4
+57.8
+80.0
+79.7
+ViT-L/14
+CLIP
+ICML21
+56.1
+68.5
+43.8
+44.8
+33.9
+36.0
+63.0
+65.8
+Long-CLIP
+ECCV24
+86.0
+82.5
+63.9
+57.0
+52.7
+45.5
+78.6
+66.5
+TULIP
+ICLR25
+91.1
+90.1
+66.2
+66.0
+56.4
+55.7
+79.1
+77.9
+FineLIP
+CVPR25
+93.9
+94.5
+-
+-
+60.7
+60.8
+84.4
+83.7
+LongD-CLIP
+CVPR25
+90.8
+91.9
+-
+-
+-
+-
+-
+-
+SmartCLIP
+CVPR25
+90.1
+93.3
+69.8
+68.2
+58.5
+57.6
+82.5
+81.6
+Fix-CLIP
+ICCV25
+87.7
+86.8
+66.7
+65.1
+-
+-
+-
+-
+DeBias-CLIP (ours)
+-
+95.2
+95.2
+73.5
+72.8
+63.4
+62.4
+85.6
+85.2
+Table 3
+:
+Comparison of top-1 long-text retrieval on standard benchmarks
+. Best performing methods are
+bolded
+and second best are
+underlined
+. We report numbers from the original papers when available and otherwise evaluate using our implementation when checkpoints are provided (Long-CLIP, TULIP VIT-L, SmartCLIP).
+5.1
+Datasets
+We train on ShareGPT4V
+[
+6
+]
+and evaluate on the following datasets: Urban1k
+[
+56
+]
+, DCI
+[
+45
+]
+, and DOCCI
+[
+32
+]
+. We summarized dataset information in
+Tab.
+1
+. In the tables, DCI is evaluated with the short and long captions concatenated, while Long-DCI
+[
+31
+]
+is a variation that uses only the long caption. We also evaluate short-text retrieval on the 5k validation split of COCO2017 and on the full Flickr30k dataset to confirm that training for long retrieval does not negatively affect performance on short texts.
+5.2
+Experimental Setup
+Following Long-CLIP, we start from a pretrained CLIP encoder (unless specified, the OpenAI weights). The text encoder’s positional embeddings are extended from 77 to 248 tokens, freezing the first 20 embeddings and using linear interpolation to stretch the rest by a factor of 4. We train for 3 epochs with a batch size of 256 on 4 A100 GPUs. We present results for 3 epochs in the main table to compare directly with SmartCLIP, which performs well on short and long retrieval and adds only a small masking module (not used at inference). Prior work trains with different numbers of epochs, e.g., 1 for Long-CLIP and 6 for FineLIP.
+5.3
+Results
+5.3.1
+Long-Text Retrieval
+We compare DeBias-CLIP against other state-of-the-art long-text retrieval methods trained on ShareGPT4V in
+Tab.
+3
+. Our method exceeds prior work on all datasets except for ViT-B/16 image-to-text retrieval on DOCCI, where we are roughly on par with FineLIP. We perform better on ViT-L/14 by
++
+1.5
+%
++1.5\%
+, and note that FineLIP adds a cross-modal feature refinement module used at inference (i.e., requires knowing true positive pairs a priori). Relative to SmartCLIP, our closest setup, we see consistent gains across datasets, with especially large improvements on Urban1k T2I (
++
+5.6
+%
++5.6\%
+and
++
+5.1
+%
++5.1\%
+for ViT-B and ViT-L, respectively). SmartCLIP trains with a single contrastive loss and samples sentences
+starting with the summary sentence
+. In contrast, DeBias-CLIP
+removes the opening summary sentence
+in the short caption and uses padding to extend attention to later tokens. We find that training without the summary caption is critical for long-text retrieval. Compared to the original Long-CLIP, we improve performance by at least
++
+10
+%
++10\%
+on most tasks, indicating that our sampling strategy yields substantial gains even with the same architecture.
+Method
+COCO
+Flickr30k
+T2I
+I2T
+T2I
+I2T
+ViT-B/16
+CLIP
+[
+37
+]
+32.7
+51.8
+24.7
+44.1
+Long-CLIP
+[
+56
+]
+40.4
+57.6
+34.1
+46.8
+TULIP
+[
+31
+]
+40.7
+56.8
+35.2
+46.1
+FineLIP
+[
+1
+]
+40.4
+58.7
+34.1
+52.8
+LongD-CLIP
+[
+11
+]
+41.1
+59.4
+34.5
+52.9
+SmartCLIP
+[
+49
+]
+42.4
+61.9
+36.3
+55.6
+DeBias-CLIP (ours)
+43.0
+61.3
+36.9
+57.0
+ViT-L/14
+CLIP
+35.4
+56.1
+28.0
+48.5
+Long-CLIP
+46.3
+62.8
+41.2
+53.4
+TULIP
+46.1
+62.6
+41.6
+56.7
+FineLIP
+46.2
+63.4
+42.4
+62.2
+LongD-CLIP
+47.0
+64.4
+42.2
+60.2
+SmartCLIP
+48.5
+66.0
+43.8
+63.9
+DeBias-CLIP (ours)
+48.1
+65.1
+44.3
+65.1
+Table 4
+:
+Comparison of top-1 short-text retrieval methods on standard benchmarks
+. Best performing methods are
+bolded
+, second best are
+underlined
+. We present reported numbers when available and evaluate on other datasets with provided checkpoints with our implementation.
+5.3.2
+Short-Text Retrieval
+Similar to our results on long retrieval, we observe consistent gains over the Long-CLIP baseline (
++
+10.2
+%
++10.2\%
+and
++
+11.7
+%
++11.7\%
+on Flickr I2T for ViT-B and ViT-L, respectively), and we outperform most competing methods. On COCO, however, SmartCLIP is often slightly ahead despite our stronger results on Flickr30k. We show that there can be tradeoffs between short and long retrieval performance in our ablations (see
+Sec.
+5.4
+), and training on full long captions likely emphasizes long-text performance.
+5.3.3
+Generalization to other CLIP-Style Encoders
+All prior works discussed in this section use OpenAI’s pretrained CLIP weights. Because newer encoders improve on the original CLIP
+[
+54
+,
+44
+]
+, we evaluate the performance of these models with the Long-CLIP method and ours. We reproduce Long-CLIP’s training and apply the same positional embedding extension scheme to all models: freeze the first 20 positions and stretch the remaining positions by a factor of 4 via linear interpolation (we find that stretching all 64 SigLIP positional embeddings degrades short-text retrieval and include results in the Supplementary).
+As shown with the
+Keep
+bars in
+Fig.
+4
+, DeBias-CLIP consistently outperforms the original Long-CLIP across pretraining data distributions (OpenAI, LAION-2B), various pretraining losses, and the use of text causal masks (CLIP vs SigLIP/SigLIP2).
+Figure 4
+:
+Top-1 text-to-image retrieval on DOCCI for different CLIP pretrained models.
+We consider 3 cases:
+Keep
+(full caption),
+Move
+(swap the first and fourth sentences), and
+Remove
+(drop the first sentence). We improve performance for all encoders.
+5.3.4
+Robustness to Text Permutations
+We previously showed (see
+Sec.
+3
+) that both CLIP and Long-CLIP favor early tokens and rely on the summary sentence. We repeat the analysis of
+Sec.
+3.3
+with additional pretrained CLIP models and find in
+Fig.
+4
+that DeBias-CLIP narrows the gap between the original and permuted captions on retrieval (
+Keep
+vs
+Move
+, Long-CLIP
+−
+9.7
+%
+-9.7\%
+, ours
+−
+3.5
+%
+-3.5\%
+for OpenAI CLIP), indicating better use of information regardless of position. However, the reduction is still significant on SigLIP and SigLIP2 (
+−
+6.1
+%
+-6.1\%
+and
+−
+6.5
+%
+-6.5\%
+respectively), suggesting residual position sensitivity from pretraining. We also observe substantial gains in retrieval when the summary sentence is absent (
+Remove
+), indicating improved matching for images paired with dense descriptions. Finally,
+shows that DeBias-CLIP maintains a much flatter average attention weight across text tokens compared to Long-CLIP, helping it leverage information deeper in captions.
+5.4
+Ablations
+5.4.1
+Contribution of Caption-Level Augmentations
+Starting from Long-CLIP, we add three caption-level augmentations: (i) replace the summary sentence with the long caption
+minus
+its summary caption as the short caption, (ii) randomly sample sentences from the remaining set, and (iii) prepend padding tokens to the short caption. We present ablations of our method in
+Tab.
+5
+. Replacing the first summary sentence is critical for long retrieval, while combining subsampling and padding improves short retrieval by about
++
+1
+%
++1\%
+with mixed effects on long retrieval. Overall, the full DeBias-CLIP configuration consistently outperforms Long-CLIP on both short and long retrieval.
+Method
+COCO
+Flickr
+Urban1k
+DOCCI
+T2I
+T2I
+T2I
+T2I
+Long-CLIP
+40.4
+34.1
+79.5
+71.4
++ 3 epochs
+39.6
+33.1
+81.0
+74.1
++ No summary
+42.2
+36.0
+92.6
+80.9
++ Subsampling
+41.9
+36.1
+92.5
+80.8
++ Padding
+43.0
+36.9
+93.0
+79.7
+Table 5
+:
+Ablation on DeBias-CLIP components
+. Best performing methods are
+bolded
+. Training with a caption that excludes the summary sentence improves long retrieval (Urban1k and DOCCI). Adding sentence sampling and padding boosts short-caption retrieval (COCO and Flickr) while preserving long-caption gains.
+Figure 5
+:
+Top-1 text-to-image retrieval on COCO (short) and DOCCI (long) as a function of short caption loss weight
+λ
+s
+\lambda^{s}
+.
+Short retrieval peaks at
+λ
+s
+=
+0.1
+\lambda^{s}=0.1
+, while long retrieval peaks at
+λ
+s
+=
+0.25
+\lambda^{s}=0.25
+. Higher values degrade performance in both cases.
+5.4.2
+Short-Caption Loss Coefficient
+We vary the short-caption loss coefficient from (
+11
+) from 0 to 1, and compare performance on COCO and DOCCI in
+Fig.
+5
+. We find that a small weight of
+λ
+s
+=
+0.1
+{\lambda^{s}=0.1}
+provides the best tradeoff between short and long retrieval, while above
+λ
+s
+=
+0.25
+{\lambda^{s}=0.25}
+, performance degrades for both cases.
+6
+Conclusion and Limitations
+In this work, we empirically show that CLIP-style text encoders exhibit early-token and summary-sentence biases that hinder long-text retrieval. Standard training approaches maintain these biases because the first sentence in training captions is typically a global summary of the entire long caption. To counter this, we propose
+DeBias-CLIP
+, which trains without the first summary sentence, uses sentence sampling, and adds text token padding. Our method delivers state-of-the-art long-text retrieval while maintaining short-text performance and improving robustness to sentence permutations and summary sentence removal. However, many long-text benchmarks share the same “summary-first” caption structure, which can mask position bias. Our permutation tests reveal this issue and underscore the need for new evaluation benchmarks that more accurately reflect real-world long-context retrieval, beyond caption datasets (e.g., matching images to multi-paragraph document pages, such as textbooks and reports).
+Acknowledgments
+This research was enabled by compute resources provided by Mila (mila.quebec).
+References
+[1]
+M. Asokan, K. Wu, and F. Albreiki
+(2025)
+FineLIP: extending clip’s reach via fine-grained alignment with longer text inputs
+.
+In
+CVPR
+,
+pp. 14495–14504
+.
+Cited by:
+2nd item
+,
+§2.2
+,
+Table 3
+,
+Table 4
+.
+[2]
+F. Barbero, A. Arroyo, X. Gu, C. Perivolaropoulos, M. Bronstein, P. Veličković, and R. Pascanu
+(2025)
+Why do llms attend to the first token?
+.
+arXiv preprint arXiv:2504.02732
+.
+Cited by:
+§C.4
+.
+[3]
+L. Beyer, A. Steiner, A. S. Pinto, A. Kolesnikov, X. Wang, D. Salz, M. Neumann, I. Alabdulmohsin, M. Tschannen, E. Bugliarello,
+et al.
+(2024)
+Paligemma: a versatile 3b vlm for transfer
+.
+arXiv preprint arXiv:2407.07726
+.
+Cited by:
+§1
+.
+[4]
+M. Caron, H. Touvron, I. Misra, H. Jégou, J. Mairal, P. Bojanowski, and A. Joulin
+(2021)
+Emerging properties in self-supervised vision transformers
+.
+In
+Proceedings of the IEEE/CVF international conference on computer vision
+,
+pp. 9650–9660
+.
+Cited by:
+§F
+.
+[5]
+S. Changpinyo, P. Sharma, N. Ding, and R. Soricut
+(2021)
+Conceptual 12m: pushing web-scale image-text pre-training to recognize long-tail visual concepts
+.
+In
+CVPR
+,
+pp. 3558–3568
+.
+Cited by:
+§2.3
+.
+[6]
+L. Chen, J. Li, X. Dong, P. Zhang, C. He, J. Wang, F. Zhao, and D. Lin
+(2024)
+Sharegpt4v: improving large multi-modal models with better captions
+.
+In
+ECCV
+,
+pp. 370–387
+.
+Cited by:
+§1
+,
+§2.3
+,
+§3.1
+,
+Table 1
+,
+§5.1
+.
+[7]
+X. Chen, X. Wang, S. Changpinyo, A. Piergiovanni, P. Padlewski, D. Salz, S. Goodman, A. Grycner, B. Mustafa, L. Beyer,
+et al.
+(2023)
+PaLI: a jointly-scaled multilingual language-image model
+.
+In
+ICLR
+,
+Cited by:
+§3.2
+.
+[8]
+M. Cherti, R. Beaumont, R. Wightman, M. Wortsman, G. Ilharco, C. Gordon, C. Schuhmann, L. Schmidt, and J. Jitsev
+(2023)
+Reproducible scaling laws for contrastive language-image learning
+.
+In
+CVPR
+,
+pp. 2818–2829
+.
+Cited by:
+§2.1
+.
+[9]
+M. Deitke, C. Clark, S. Lee, R. Tripathi, Y. Yang, J. S. Park, M. Salehi, N. Muennighoff, K. Lo, L. Soldaini,
+et al.
+(2025)
+Molmo and pixmo: open weights and open data for state-of-the-art vision-language models
+.
+In
+CVPR
+,
+pp. 91–104
+.
+Cited by:
+§1
+.
+[10]
+L. Fan, D. Krishnan, P. Isola, D. Katabi, and Y. Tian
+(2023)
+Improving clip training with language rewrites
+.
+NeurIPS
+36
+,
+pp. 35544–35575
+.
+Cited by:
+§4.3
+.
+[11]
+Y. Feng, C. Wen, Z. Peng, S. Zhu,
+et al.
+(2025)
+Retaining knowledge and enhancing long-text representations in clip through dual-teacher distillation
+.
+In
+CVPR
+,
+pp. 24895–24904
+.
+Cited by:
+§2.2
+,
+Table 3
+,
+Table 4
+.
+[12]
+P. Gao, S. Geng, R. Zhang, T. Ma, R. Fang, Y. Zhang, H. Li, and Y. Qiao
+(2024)
+Clip-adapter: better vision-language models with feature adapters
+.
+IJCV
+132
+(
+2
+),
+pp. 581–595
+.
+Cited by:
+§2.1
+.
+[13]
+X. Gu, T. Lin, W. Kuo, and Y. Cui
+(2022)
+Open-vocabulary object detection via vision and language knowledge distillation
+.
+In
+ICLR
+,
+Cited by:
+§2.1
+.
+[14]
+M. Heusel, H. Ramsauer, T. Unterthiner, B. Nessler, and S. Hochreiter
+(2017)
+Gans trained by a two time-scale update rule converge to a local nash equilibrium
+.
+Advances in neural information processing systems
+30
+.
+Cited by:
+§F
+.
+[15]
+C. Jia, Y. Yang, Y. Xia, Y. Chen, Z. Parekh, H. Pham, Q. Le, Y. Sung, Z. Li, and T. Duerig
+(2021)
+Scaling up visual and vision-language representation learning with noisy text supervision
+.
+In
+ICML
+,
+pp. 4904–4916
+.
+Cited by:
+§2.1
+.
+[16]
+R. Krishna, Y. Zhu, O. Groth, J. Johnson, K. Hata, J. Kravitz, S. Chen, Y. Kalantidis, L. Li, D. A. Shamma,
+et al.
+(2017)
+Visual genome: connecting language and vision using crowdsourced dense image annotations
+.
+IJCV
+123
+(
+1
+),
+pp. 32–73
+.
+Cited by:
+§2.3
+.
+[17]
+B. Li, Y. Zhang, D. Guo, R. Zhang, F. Li, H. Zhang, K. Zhang, P. Zhang, Y. Li, Z. Liu,
+et al.
+(2025)
+LLaVA-onevision: easy visual task transfer
+.
+Transactions on Machine Learning Research
+.
+Cited by:
+§1
+.
+[18]
+B. Li, K. Q. Weinberger, S. Belongie, V. Koltun, and R. Ranftl
+(2022)
+Language-driven semantic segmentation
+.
+In
+ICLR
+,
+Cited by:
+§2.1
+.
+[19]
+J. Li, D. Li, S. Savarese, and S. Hoi
+(2023)
+Blip-2: bootstrapping language-image pre-training with frozen image encoders and large language models
+.
+In
+ICML
+,
+pp. 19730–19742
+.
+Cited by:
+§2.1
+.
+[20]
+L. H. Li, P. Zhang, H. Zhang, J. Yang, C. Li, Y. Zhong, L. Wang, L. Yuan, L. Zhang, J. Hwang,
+et al.
+(2022)
+Grounded language-image pre-training
+.
+In
+CVPR
+,
+pp. 10965–10975
+.
+Cited by:
+§2.1
+.
+[21]
+X. Li, H. Tu, M. Hui, Z. Wang, B. Zhao, J. Xiao, S. Ren, J. Mei, Q. Liu, H. Zheng,
+et al.
+(2024)
+What if we recaption billions of web images with llama-3?
+.
+arXiv preprint arXiv:2406.08478
+.
+Cited by:
+§2.3
+.
+[22]
+Y. Li, F. Liang, L. Zhao, Y. Cui, W. Ouyang, J. Shao, F. Yu, and J. Yan
+(2022)
+Supervision exists everywhere: a data efficient contrastive language-image pre-training paradigm
+.
+In
+ICLR
+,
+Cited by:
+§2.1
+.
+[23]
+B. Lin, Y. Ye, B. Zhu, J. Cui, M. Ning, P. Jin, and L. Yuan
+(2024)
+Video-llava: learning united visual representation by alignment before projection
+.
+In
+Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing
+,
+pp. 5971–5984
+.
+Cited by:
+§1
+.
+[24]
+T. Lin, M. Maire, S. Belongie, J. Hays, P. Perona, D. Ramanan, P. Dollár, and C. L. Zitnick
+(2014)
+Microsoft coco: common objects in context
+.
+In
+ECCV
+,
+pp. 740–755
+.
+Cited by:
+§2.3
+,
+§3.1
+,
+Table 1
+.
+[25]
+H. Liu, C. Li, Q. Wu, and Y. J. Lee
+(2023)
+Visual instruction tuning
+.
+NeurIPS
+36
+,
+pp. 34892–34916
+.
+Cited by:
+§1
+.
+[26]
+T. Lüddecke and A. Ecker
+(2022)
+Image segmentation using text and image prompts
+.
+In
+CVPR
+,
+pp. 7086–7096
+.
+Cited by:
+§2.1
+.
+[27]
+H. Luo, L. Ji, M. Zhong, Y. Chen, W. Lei, N. Duan, and T. Li
+(2022)
+Clip4clip: an empirical study of clip for end to end video clip retrieval and captioning
+.
+Neurocomputing
+508
+,
+pp. 293–304
+.
+Cited by:
+§2.1
+.
+[28]
+K. Maninis, K. Chen, S. Ghosh, A. Karpur, K. Chen, Y. Xia, B. Cao, D. Salz, G. Han, J. Dlabal,
+et al.
+(2025)
+TIPS: text-image pretraining with spatial awareness
+.
+In
+ICLR
+,
+Cited by:
+§4.3
+.
+[29]
+N. Mu, A. Kirillov, D. Wagner, and S. Xie
+(2022)
+Slip: self-supervision meets language-image pre-training
+.
+In
+ECCV
+,
+pp. 529–544
+.
+Cited by:
+§2.1
+.
+[30]
+M. F. Naeem, Y. Xian, X. Zhai, L. Hoyer, L. Van Gool, and F. Tombari
+(2024)
+Silc: improving vision language pretraining with self-distillation
+.
+In
+ECCV
+,
+pp. 38–55
+.
+Cited by:
+§2.1
+.
+[31]
+I. Najdenkoska, M. M. Derakhshani, Y. M. Asano, N. Van Noord, M. Worring, and C. G. Snoek
+(2025)
+TULIP: token-length upgraded clip
+.
+In
+ICLR
+,
+Cited by:
+2nd item
+,
+§2.2
+,
+§2.3
+,
+§3.1
+,
+Table 1
+,
+Table 1
+,
+§5.1
+,
+Table 3
+,
+Table 4
+.
+[32]
+Y. Onoe, S. Rane, Z. Berger, Y. Bitton, J. Cho, R. Garg, A. Ku, Z. Parekh, J. Pont-Tuset, G. Tanzer,
+et al.
+(2024)
+Docci: descriptions of connected and contrasting images
+.
+In
+ECCV
+,
+pp. 291–309
+.
+Cited by:
+§2.3
+,
+§3.1
+,
+Table 1
+,
+§5.1
+.
+[33]
+OpenAI
+(2023)
+GPT-4v(ision) system card
+.
+Note:
+Accessed: 2025-11-12
+External Links:
+Link
+Cited by:
+§2.3
+.
+[34]
+V. Ordonez, G. Kulkarni, and T. Berg
+(2011)
+Im2text: describing images using 1 million captioned photographs
+.
+NIPS
+24
+.
+Cited by:
+§2.3
+.
+[35]
+A. Peleg, N. D. Singh, and M. Hein
+(2025)
+Advancing compositional awareness in clip with efficient fine-tuning
+.
+In
+NeuRIPS
+,
+Cited by:
+§1
+.
+[36]
+D. Podell, Z. English, K. Lacey, A. Blattmann, T. Dockhorn, J. Müller, J. Penna, and R. Rombach
+(2024)
+SDXL: improving latent diffusion models for high-resolution image synthesis
+.
+In
+ICLR
+,
+Cited by:
+§F
+,
+§1
+.
+[37]
+A. Radford, J. W. Kim, C. Hallacy, A. Ramesh, G. Goh, S. Agarwal, G. Sastry, A. Askell, P. Mishkin, J. Clark,
+et al.
+(2021)
+Learning transferable visual models from natural language supervision
+.
+In
+ICML
+,
+pp. 8748–8763
+.
+Cited by:
+§2.1
+,
+Table 3
+,
+Table 4
+.
+[38]
+A. Ramesh, P. Dhariwal, A. Nichol, C. Chu, and M. Chen
+(2022)
+Hierarchical text-conditional image generation with clip latents
+.
+arXiv preprint arxiv:2204.06125
+.
+Cited by:
+§2.1
+.
+[39]
+R. Rombach, A. Blattmann, D. Lorenz, P. Esser, and B. Ommer
+(2022)
+High-resolution image synthesis with latent diffusion models
+.
+In
+CVPR
+,
+pp. 10684–10695
+.
+Cited by:
+§2.1
+.
+[40]
+C. Schuhmann, R. Beaumont, R. Vencu, C. Gordon, R. Wightman, M. Cherti, T. Coombes, A. Katta, C. Mullis, M. Wortsman,
+et al.
+(2022)
+Laion-5b: an open large-scale dataset for training next generation image-text models
+.
+NeuRIPS
+35
+,
+pp. 25278–25294
+.
+Cited by:
+§2.3
+.
+[41]
+S. Shen, L. H. Li, H. Tan, M. Bansal, A. Rohrbach, K. Chang, Z. Yao, and K. Keutzer
+(2022)
+How much can clip benefit vision-and-language tasks?
+.
+In
+ICLR
+,
+Cited by:
+§2.1
+.
+[42]
+H. Song, L. Dong, W. Zhang, T. Liu, and F. Wei
+(2022)
+Clip models are few-shot learners: empirical studies on vqa and visual entailment
+.
+In
+ACL
+,
+pp. 6088–6100
+.
+Cited by:
+§2.1
+.
+[43]
+J. Su, M. Ahmed, Y. Lu, S. Pan, W. Bo, and Y. Liu
+(2024)
+Roformer: enhanced transformer with rotary position embedding
+.
+Neurocomputing
+568
+,
+pp. 127063
+.
+Cited by:
+§2.2
+.
+[44]
+M. Tschannen, A. Gritsenko, X. Wang, M. F. Naeem, I. Alabdulmohsin, N. Parthasarathy, T. Evans, L. Beyer, Y. Xia, B. Mustafa,
+et al.
+(2025)
+Siglip 2: multilingual vision-language encoders with improved semantic understanding, localization, and dense features
+.
+arXiv preprint arXiv:2502.14786
+.
+Cited by:
+§2.1
+,
+§3.2.2
+,
+§3.2
+,
+§5.3.3
+.
+[45]
+J. Urbanek, F. Bordes, P. Astolfi, M. Williamson, V. Sharma, and A. Romero-Soriano
+(2024)
+A picture is worth more than 77 text tokens: evaluating clip-style models on dense captions
+.
+In
+CVPR
+,
+pp. 26700–26709
+.
+Cited by:
+§2.3
+,
+§3.1
+,
+Table 1
+,
+§5.1
+.
+[46]
+B. Wang, Z. Ning, J. Ding, X. Gao, Y. Li, D. Jiang, J. Yang, and W. Liu
+(2025)
+Fix-clip: dual-branch hierarchical contrastive learning via synthetic captions for better understanding of long text
+.
+In
+ICCV
+,
+pp. 20694–20704
+.
+Cited by:
+§2.2
+,
+Table 3
+.
+[47]
+R. Xiao, S. Kim, M. Georgescu, Z. Akata, and S. Alaniz
+(2025)
+Flair: vlm with fine-grained language-informed image representations
+.
+In
+CVPR
+,
+pp. 24884–24894
+.
+Cited by:
+§1
+,
+§2.2
+.
+[48]
+C. Xie, B. Wang, F. Kong, J. Li, D. Liang, G. Zhang, D. Leng, and Y. Yin
+(2025)
+FG-clip: fine-grained visual and textual alignment
+.
+In
+ICML
+,
+Cited by:
+§1
+,
+§4.3
+.
+[49]
+S. Xie, L. Lingjing, Y. Zheng, Y. Yao, Z. Tang, E. P. Xing, G. Chen, and K. Zhang
+(2025)
+SmartCLIP: modular vision-language alignment with identification guarantees
+.
+In
+CVPR
+,
+pp. 29780–29790
+.
+Cited by:
+Figure 8
+,
+Figure 8
+,
+§C.5
+,
+2nd item
+,
+§2.2
+,
+§2.3
+,
+Table 3
+,
+Table 4
+.
+[50]
+H. Xu, G. Ghosh, P. Huang, D. Okhonko, A. Aghajanyan, F. Metze, L. Zettlemoyer, and C. Feichtenhofer
+(2021)
+VideoCLIP: contrastive pre-training for zero-shot video-text understanding
+.
+In
+Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing
+,
+pp. 6787–6800
+.
+Cited by:
+§2.1
+.
+[51]
+J. Xu, S. De Mello, S. Liu, W. Byeon, T. Breuel, J. Kautz, and X. Wang
+(2022)
+Groupvit: semantic segmentation emerges from text supervision
+.
+In
+CVPR
+,
+pp. 18134–18144
+.
+Cited by:
+§2.1
+.
+[52]
+P. Young, A. Lai, M. Hodosh, and J. Hockenmaier
+(2014)
+From image descriptions to visual denotations: new similarity metrics for semantic inference over event descriptions
+.
+Transactions of the association for computational linguistics
+2
+,
+pp. 67–78
+.
+Cited by:
+§3.1
+,
+Table 1
+.
+[53]
+J. Yu, Z. Wang, V. Vasudevan, L. Yeung, M. Seyedhosseini, and Y. Wu
+(2022)
+CoCa: contrastive captioners are image-text foundation models
+.
+Transactions on Machine Learning Research
+.
+Cited by:
+§2.1
+.
+[54]
+X. Zhai, B. Mustafa, A. Kolesnikov, and L. Beyer
+(2023)
+Sigmoid loss for language image pre-training
+.
+In
+ICCV
+,
+pp. 11975–11986
+.
+Cited by:
+§2.1
+,
+§3.2
+,
+§5.3.3
+.
+[55]
+X. Zhai, X. Wang, B. Mustafa, A. Steiner, D. Keysers, A. Kolesnikov, and L. Beyer
+(2022)
+Lit: zero-shot transfer with locked-image text tuning
+.
+In
+CVPR
+,
+pp. 18123–18133
+.
+Cited by:
+§2.1
+.
+[56]
+B. Zhang, P. Zhang, X. Dong, Y. Zang, and J. Wang
+(2024)
+Long-clip: unlocking the long-text capability of clip
+.
+In
+ECCV
+,
+pp. 310–325
+.
+Cited by:
+Figure 8
+,
+Figure 8
+,
+§A
+,
+§C.1
+,
+§1
+,
+§1
+,
+§2.2
+,
+§2.3
+,
+§2.3
+,
+§3.1
+,
+§3.2.1
+,
+Table 1
+,
+§4.1
+,
+§4
+,
+§5.1
+,
+Table 3
+,
+Table 4
+.
+[57]
+K. Zheng, Y. Zhang, W. Wu, F. Lu, S. Ma, X. Jin, W. Chen, and Y. Shen
+(2024)
+Dreamlip: language-image pre-training with long captions
+.
+In
+ECCV
+,
+pp. 73–90
+.
+Cited by:
+§1
+.
+[58]
+Y. Zhong, J. Yang, P. Zhang, C. Li, N. Codella, L. H. Li, L. Zhou, X. Dai, L. Yuan, Y. Li,
+et al.
+(2022)
+Regionclip: region-based language-image pretraining
+.
+In
+CVPR
+,
+pp. 16793–16803
+.
+Cited by:
+§2.1
+.
+[59]
+K. Zhou, J. Yang, C. C. Loy, and Z. Liu
+(2022)
+Conditional prompt learning for vision-language models
+.
+In
+CVPR
+,
+pp. 16816–16825
+.
+Cited by:
+§2.1
+.
+[60]
+X. Zhou, R. Girdhar, A. Joulin, P. Krähenbühl, and I. Misra
+(2022)
+Detecting twenty-thousand classes using image-level supervision
+.
+In
+ECCV
+,
+pp. 350–368
+.
+Cited by:
+§2.1
+.
+Appendices
+In
+Sec.
+A
+, we present the training details of our main results. In
+Sec.
+B
+, we present the pseudocode of our DeBias-CLIP method. In
+Sec.
+C
+, we present additional ablations, including on the embedding stretching for SigLIP, training length, sampling, padding, and token padding methods. In
+Sec.
+D
+and
+Sec.
+E
+, we present additional discussion and results on CLIP and Long-CLIP biases, respectively. In
+Sec.
+F
+, we present visualizations that highlight the superior long-text retrieval capabilities of DeBias-CLIP and demonstrate its advantages in text-to-image diffusion.
+A
+Training Details
+Complete training parameters are provided in
+Tab.
+6
+. Our setup largely follows Long-CLIP
+[
+56
+]
+, with two modifications: we train for 3 epochs instead of only 1 and use a smaller batch size of 256 instead of 1024 to ensure consistency across all experimental runs. Experiments were conducted on a variety of hardware configurations, subject to compute cluster availability, but the main results in Sec.
+5.3
+of the paper were all run on 4 A100 GPUs.
+Parameter
+Value
+Batch size
+256
+Training epochs
+3
+Warm-up iterations
+200
+Weight decay
+1e-2
+Learning rate
+1e-6
+AdamW
+β
+1
+\beta_{1}
+0.9
+AdamW
+β
+2
+\beta_{2}
+0.999
+AdamW
+ϵ
+\epsilon
+1e-8
+Table 6
+:
+Training parameters
+. We use AdamW as the optimizer and run on 4 A100 GPUs for the main paper results.
+B
+Pseudocode
+We present pseudocode of our sampling method in
+Algorithm
+1
+, where
+φ
+⁡
+(
+⋅
+)
+\varphi\left(\cdot\right)
+is the text tokenizer,
+ψ
+text
+​
+(
+⋅
+)
+\psi_{\mathrm{text}}\left(\cdot\right)
+and
+ψ
+img
+​
+(
+⋅
+)
+\psi_{\mathrm{img}}\left(\cdot\right)
+are respectively the text and image encoders, and
+f
+⁡
+(
+⋅
+)
+f\left(\cdot\right)
+is an operator that reconstructs feature vectors from their principal components (PCA).
+Algorithm 1
+DeBias-CLIP Caption Sampling
+1:
+Long-text caption
+C
+=
+[
+s
+1
+,
+s
+2
+,
+…
+,
+s
+n
+sents
+]
+C=[s_{1},s_{2},\dots,s_{n_{\text{sents}}}]
+, image
+I
+I
+, loss weight
+λ
+s
+\lambda^{s}
+2:
+Training loss
+ℒ
+\mathcal{L}
+3:
+C
+ℓ
+←
+C
+C^{\ell}\leftarrow C
+⊳
+\triangleright
+Long caption
+4:
+T
+ℓ
+←
+φ
+⁡
+(
+C
+ℓ
+)
+T^{\ell}\leftarrow\varphi(C^{\ell})
+⊳
+\triangleright
+Tokenize long caption
+5:
+C
+no_sum
+←
+[
+s
+2
+,
+…
+,
+s
+n
+sents
+]
+C^{\text{no\_sum}}\leftarrow[s_{2},\dots,s_{n_{\text{sents}}}]
+⊳
+\triangleright
+Remove first (summary) sentence
+6:
+Sample
+n
+samp
+∼
+𝒰
+⁡
+{
+1
+,
+…
+,
+n
+sents
+−
+1
+}
+n_{\text{samp}}\sim\mathcal{U}\{1,\dots,n_{\text{sents}}-1\}
+7:
+Sample a subset
+𝒮
+⊂
+{
+2
+,
+…
+,
+n
+sents
+}
+\mathcal{S}\subset\{2,\dots,n_{\text{sents}}\}
+with
+|
+𝒮
+|
+=
+n
+samp
+|\mathcal{S}|=n_{\text{samp}}
+(without replacement)
+8:
+C
+samp
+←
+C^{\text{samp}}\leftarrow
+concatenate
+{
+s
+i
+:
+i
+∈
+𝒮
+}
+\{s_{i}:i\in\mathcal{S}\}
+9:
+T
+samp
+←
+φ
+⁡
+(
+C
+samp
+)
+T^{\text{samp}}\leftarrow\varphi(C^{\text{samp}})
+⊳
+\triangleright
+Tokenize short caption
+10:
+T
+samp
+←
+[
+𝚂𝙾𝚃
+,
+t
+1
+,
+…
+,
+t
+n
+s
+​
+a
+​
+m
+​
+p
+,
+𝙴𝙾𝚃
+,
+𝙿𝙰𝙳
+post
+]
+T^{\text{samp}}\leftarrow[\mathtt{SOT},t_{1},\dots,t_{n_{samp}},\mathtt{EOT},\mathtt{PAD}_{\text{post}}]
+11:
+Let
+n
+post
+n_{\text{post}}
+be the number of post-padding tokens in the tokenized short caption
+T
+samp
+T^{\text{samp}}
+12:
+Sample
+n
+pre
+∼
+𝒰
+⁡
+{
+0
+,
+…
+,
+n
+post
+}
+n_{\text{pre}}\sim\mathcal{U}\{0,\dots,n_{\text{post}}\}
+13:
+n
+post
+←
+n
+post
+−
+n
+pre
+n_{\text{post}}\leftarrow n_{\text{post}}-n_{\text{pre}}
+14:
+T
+s
+←
+[
+𝚂𝙾𝚃
+,
+𝙿𝙰𝙳
+,
+…
+,
+𝙿𝙰𝙳
+⏟
+n
+pre
+,
+t
+1
+,
+…
+,
+t
+n
+s
+​
+a
+​
+m
+​
+p
+,
+𝙴𝙾𝚃
+,
+𝙿𝙰𝙳
+,
+…
+,
+𝙿𝙰𝙳
+⏟
+n
+post
+]
+T^{s}\leftarrow[\mathtt{SOT},\underbrace{\mathtt{PAD},\dots,\mathtt{PAD}}_{n_{\text{pre}}},t_{1},\dots,t_{n_{samp}},\mathtt{EOT},\underbrace{\mathtt{PAD},\dots,\mathtt{PAD}}_{n_{\text{post}}}]
+15:
+Encode captions and image:
+16:
+u
+s
+←
+ψ
+text
+​
+(
+T
+s
+)
+u^{s}\leftarrow\psi_{\text{text}}(T^{s})
+⊳
+\triangleright
+Short (sampled) caption
+17:
+u
+ℓ
+←
+ψ
+text
+​
+(
+T
+ℓ
+)
+u^{\ell}\leftarrow\psi_{\text{text}}(T^{\ell})
+⊳
+\triangleright
+Long caption
+18:
+v
+←
+ψ
+img
+​
+(
+I
+)
+v\leftarrow\psi_{\text{img}}(I)
+⊳
+\triangleright
+Image
+19:
+ℒ
+s
+←
+ℒ
+s
+​
+(
+u
+s
+,
+f
+⁡
+(
+v
+)
+)
+\mathcal{L}^{s}\leftarrow\mathcal{L}^{s}(u^{s},f(v))
+⊳
+\triangleright
+Short caption loss
+20:
+ℒ
+ℓ
+←
+ℒ
+ℓ
+​
+(
+u
+ℓ
+,
+v
+)
+\mathcal{L}^{\ell}\leftarrow\mathcal{L}^{\ell}(u^{\ell},v)
+⊳
+\triangleright
+Long caption loss
+21:
+ℒ
+←
+λ
+s
+​
+ℒ
+s
++
+(
+1
+−
+λ
+s
+)
+​
+ℒ
+ℓ
+\mathcal{L}\leftarrow\lambda^{s}\,\mathcal{L}^{s}+(1-\lambda^{s})\,\mathcal{L}^{\ell}
+22:
+return
+ℒ
+\mathcal{L}
+C
+Additional Ablations
+C.1
+Positional Embedding Stretching for SigLIP
+For the different pretrained CLIP-style models presented in our main results, we follow Long-CLIP
+[
+56
+]
+and stretch the positional embeddings by freezing the first 20 text positions and using linear interpolation to extend the rest by a factor of 4. Results from Long-CLIP justify this for the OpenAI weights, and OpenCLIP weights are trained with the same approach. However, SigLIP models use a different loss, tokenizer, and attention mechanism (with no text causal masking), and therefore, it may not be necessarily appropriate to freeze the first few tokens. We present in
+Tab.
+7
+short and long retrieval results for our DeBias-CLIP method on SigLIP and SigLIP2 weights, comparing stretching all position embeddings against keeping the first 20 frozen. We find that stretching all embeddings leads to a significant reduction in short retrieval (
+−
+15.3
+%
+-15.3\%
+for Flickr T2I with SigLIP2), so we recommend using the standard Long-CLIP strategy.
+In practice, we also observe a significant bias towards the first few tokens for SigLIP models (see Sec.
+3.2
+), which further justifies freezing the first 20 embeddings.
+Method
+COCO
+Flickr
+Urban1k
+DOCCI
+T2I
+T2I
+T2I
+T2I
+SigLIP
+Stretch all
+31.8
+27.4
+82.9
+80.9
+Freeze first 20
+48.7
+40.8
+85.6
+83.3
+SigLIP2
+Stretch all
+39.5
+28.6
+87.0
+82.9
+Freeze first 20
+51.9
+43.9
+87.2
+83.0
+Table 7
+:
+Ablation on stretching all embeddings of SigLIP models for text-to-image (T2I) retrieval
+. While performance on long retrieval (see Urban1k and DOCCI) does not change substantially, stretching all the embeddings leads to a significant reduction in short-text retrieval performance (see COCO and Flickr).
+C.2
+Ablation on Number of Training Epochs
+We investigate the effects of training duration by training for 1, 3, 5, 7, and 10 epochs. Results are reported in
+Tab.
+8
+. We observe that performance improves substantially across datasets when increasing from 1 to 3 epochs (
++
+2.9
+%
++2.9\%
+on Urban1k T2I), with more marginal but consistent gains from 3 to 5 and 5 to 7 epochs. Improvements for long retrieval from 7 to 10 epochs are minor (
+0.2
+%
+0.2\%
+), and short retrieval is starting to be negatively affected. We also include the original Long-CLIP results for comparison. Notably, even with an equivalent training budget (1 epoch), our DeBias-CLIP method significantly outperforms the Long-CLIP baseline for all datasets, with
++
+1.8
+%
++1.8\%
+and
++
+2.3
+%
++2.3\%
+for short-text retrieval on COCO and Flickr T2I, and
++
+10.6
+%
++10.6\%
+and
++
+7.0
+%
++7.0\%
+for long-text retrieval on Urban1k and DOCCI T2I.
+Epochs
+COCO
+Flickr
+Urban1k
+DOCCI
+T2I
+T2I
+T2I
+T2I
+1 (Long-CLIP)
+40.4
+34.1
+79.5
+71.4
+3 (Long-CLIP)
+39.6
+33.1
+81.0
+74.1
+1
+42.2
+36.4
+90.1
+78.4
+3
+43.0
+36.9
+93.0
+80.0
+5
+43.0
+37.0
+93.5
+80.9
+7
+43.2
+37.2
+94.1
+81.3
+10
+43.1
+37.0
+94.2
+81.5
+Table 8
+:
+Ablation on the number of training epochs for text-to-image (T2I) retrieval
+. We observe significant improvements when going from 1 to 3 epochs across all datasets. Extending training from 5 to 7 epochs yields smaller but still notable improvements on long retrieval (Urban1k and DOCCI). Results from 7 to 10 epochs are more marginal and mixed.
+C.3
+Ablation on Sentence Sampling Method
+Our DeBias-CLIP method generates short captions by first generating a random number of sentences
+n
+sampled
+=
+𝒰
+⁡
+{
+1
+,
+2
+,
+…
+,
+n
+sents
+−
+1
+}
+{n_{\mathrm{sampled}}=\mathcal{U}\left\{1\,,2\,,\dots,\,n_{\mathrm{sents}}-1\right\}}
+from a uniform distribution, and then sampling that number without replacement from the original set of sentences
+C
+no
+​
+_
+​
+sum
+=
+[
+s
+2
+,
+…
+,
+s
+n
+sents
+]
+C^{\mathrm{no\_sum}}=[s_{2},\,\dots,\,s_{n_{\mathrm{sents}}}]
+(i.e., with the first sentence excluded), and finally concatenating the sentences together (
+Random
+method). In this section, we consider four alternative sampling methods:
+•
+Ordered
+: We select a contiguous block of sentences starting from the second sentence up to a randomly selected end sentence, preserving the original narrative order.
+•
+Independent
+: We independently select each sentence in
+C
+no
+​
+_
+​
+sum
+C^{\mathrm{no\_sum}}
+with a probability
+p
+=
+0.5
+p=0.5
+, creating a more uniform number of sentences.
+•
+Keep 4
+: We fix the sample size to
+n
+sampled
+=
+4
+n_{\mathrm{sampled}}=4
+while sampling randomly without replacement.
+•
+Shuffle
+: We use the full set of sentences (no subsampling) but randomize their order.
+Results are presented in
+Tab.
+9
+. We find that performance differences between most sampling methods are marginal. Sampling contiguous sentences (
+Ordered
+) improves short-text retrieval (
++
+1.0
+%
++1.0\%
+on Flickr) at the expense of long-text retrieval (
+−
+1.3
+%
+-1.3\%
+on Urban1k). This is similar to the SmartCLIP strategy, differing only in that SmartCLIP includes the initial summary sentence (
+s
+1
+s_{1}
+). Conversely, using all sentences (
+Shuffle
+) boosts long retrieval (
++
+1.4
+%
++1.4\%
+on DOCCI) but causes significant degradation in short retrieval (
+−
+1.2
+%
+-1.2\%
+on Flickr). Ultimately, we find that our default
+Random
+sampling offers the best balance between short and long retrieval without requiring additional parameter tuning.
+Method
+COCO
+Flickr
+Urban1k
+DOCCI
+T2I
+T2I
+T2I
+T2I
+Random
+43.0
+36.9
+93.0
+79.7
+Ordered
+43.2
+37.9
+91.7
+80.2
+Independent
+42.7
+36.9
+92.7
+80.3
+Keep 4
+42.7
+36.8
+92.8
+80.0
+Shuffle
+41.7
+35.7
+92.8
+81.1
+Table 9
+:
+Ablation on sentence sampling methods for text-to-image (T2I) retrieval
+. We find that there is relatively little difference between different sampling methods. The
+Ordered
+method improves short retrieval at the cost of long retrieval, while the
+Shuffle
+method improves long retrieval on DOCCI at the cost of short retrieval. We find that our default
+Random
+sampling offers the best tradeoff between short and long retrieval.
+C.4
+Ablation on Padding Method
+In DeBias-CLIP, we add a random number of padding tokens before the tokenized text tokens from the caption, which depends on the post-caption padding length and leads to padding of varying lengths. Tab.
+5
+showed that our padding strategy (
+Random
+) improves on using no padding (
+No pad
+), and in Sec
+4.4
+, we hypothesize that one of the key benefits comes from shifting the short caption away from the initial token positions. As a result, early-position tokens are mostly trained with the full long caption, and particularly its summary (first) sentence. In this ablation, we consider alternative fixed padding lengths of 20 and 40 tokens (
+Pad 20
+and
+Pad 40
+) and present results in
+Tab.
+10
+. Additionally, while our default method adds padding
+after
+the
+SOT
+token (preserving its position), we also evaluate adding padding
+before
+the
+SOT
+token (
+Pre-SOT
+).
+We find that all considered padding approaches improve short-text retrieval. Replacing random padding with fixed-length padding generally yields comparable performance, with only a marginal gain on DOCCI T2I (
++
+0.6
+%
++0.6\%
+). Given this negligible difference, and to avoid introducing an arbitrary fixed hyperparameter, we retain the base random sampling approach. Finally, we find that adding padding after the
+SOT
+token generally outperforms padding before it (
+Pre-SOT
+), justifying our default implementation. In
+Sec.
+E.2
+below, we discuss attention across tokens and highlight that the attention to the
+SOT
+token is much larger than for other tokens. Because the
+SOT
+token is present across all training datasets, is text-independent, and is always the first token, it plays a distinct role in the attention mechanism compared to regular text tokens. Moving it away from the first position could disrupt this, leading to worse performance. Recent work has shown that non-text positional tokens can serve as attention sinks in LLMs
+[
+2
+]
+, reducing the magnitude of cross-attention between tokens when it isn’t required. A similar effect could be present for CLIP text encoders.
+Method
+COCO
+Flickr
+Urban1k
+DOCCI
+T2I
+T2I
+T2I
+T2I
+No pad
+41.9
+36.1
+92.5
+80.8
+Random
+43.0
+36.9
+93.0
+79.7
+Pad 20
+43.1
+37.1
+92.8
+80.3
+Pad 40
+43.0
+37.0
+92.8
+80.3
+Pre-SOT
+43.0
+36.7
+92.1
+80.1
+Table 10
+:
+Ablation on token padding methods for text-to-image (T2I) retrieval
+. All padding methods generally improve short-text performance. Replacing our default random padding (
+Random
+) with fixed padding length of 20 (
+Pad 20
+) or 40 (
+Pad 40
+) yields comparable performance, with only marginal gains on DOCCI T2I (
++
+0.6
+%
++0.6\%
+), while adding the padding before the
+SOT
+token leads to slightly worse performance.
+C.5
+Transferring to SmartCLIP
+In the main results, we show that the text sampling used in DeBias-CLIP substantially outperforms the Long-CLIP baseline. Here, we apply similar sampling methods to SmartCLIP
+[
+49
+]
+, which was consistently one of the best-performing methods for both long and short retrieval (see Sec.
+5.3
+). SmartCLIP trains with a single caption obtained by truncating the original long caption after a random number of sentences. Thus, it always contains the summary sentence. As alternatives, we consider two sampling methods: one identical to SmartCLIP except that we always remove the summary sentence by starting from the second sentence (
+Start at 2
+), and one where we keep the whole caption except the first sentence (
+Only drop 1
+). We train with SmartCLIP’s released code, use a ViT-B/16 backbone, and run for 3 epochs. Results are presented in
+Tab.
+11
+. We find that removing the first sentence consistently improves long-text retrieval performance (
+Original
+vs
+Start at 2
+,
++
+2.7
+%
++2.7\%
+on Urban1k T2I), with mixed results on short-text retrieval, with
++
+0.7
+%
++0.7\%
+on COCO T2I but
+−
+0.5
+%
+-0.5\%
+for I2T (not in the table), and better performance on Flickr. We can further improve long retrieval by not subsampling the caption sentences (
+Only drop 1
+), at the cost of some short-text performance. However, the final short retrieval results remain similar to the original SmartCLIP while being much better (
++
+5.1
+%
++5.1\%
+on Urban1k T2I) for long-text retrieval. Overall, our results on SmartCLIP highlight the importance of not training with the summary sentence.
+Method
+COCO
+Flickr
+Urban1k
+DOCCI
+T2I
+T2I
+T2I
+T2I
+Original
+42.4
+36.3
+87.4
+78.0
+Start at 2
+43.1
+37.7
+90.1
+79.7
+Only drop 1
+42.2
+36.7
+92.5
+81.8
+Table 11
+:
+Ablation on caption sampling with the SmartCLIP training on text-to-image (T2I) retrieval.
+We obtain consistently better performance compared to the original SmartCLIP by not sampling the first (summary) sentence. There are clear tradeoffs between short-text (COCO and Flickr) and long-text (Urban1k and DOCCI) retrieval when subsampling the sentences instead of keeping the full original caption.
+D
+Additional Discussion on CLIP Biases
+(a)
+DOCCI T2I
+(b)
+DOCCI I2T
+(c)
+Urban1k T2I
+(d)
+Urban1k I2T
+Figure 6
+:
+Effects of permutation of the first two sentences on the top-1 text-to-image (T2I) and image-to-text (I2T) retrieval performance for CLIP models.
+We present results on DOCCI in (a) and (b), and on Urban1k in (c) and (d). We analyze three setups: the first two sentences in the correct order (
+First 2
+), the same two sentences swapped (
+Swap 2
+), and the first sentence only (
+First only
+). Sentence swapping generally leads to worse retrieval performance and tends to be more severe for the SigLIP and SigLIP2 models. Dropping the second sentence leads to significantly larger degradation on Urban1k compared to DOCCI.
+(a)
+DOCCI T2I
+(b)
+DOCCI I2T
+(c)
+Urban1k T2I
+(d)
+Urban1k I2T
+Figure 7
+:
+Effects of padding sentences on the top-1 text-to-image (T2I) and image-to-text (I2T) retrieval performance for CLIP models.
+We present results on DOCCI in (a) and (b), and on Urban1k in (c) and (d). One to five padding sentences
+‘This is a photo.’
+are added before the truncated original caption (we keep the first two sentences only). Increased padding consistently leads to worse retrieval performance, but this effect is much more severe for the SigLIP and SigLIP2 models.
+We extend the empirical analysis from Sec.
+3
+with additional results on DOCCI and Urban1k. We continue our analysis of retrieval with the first two sentences of long-caption datasets (see Sec.
+3.2
+), comparing three configurations: using both sentences in order (
+First 2
+), both sentences with the order swapped (2 before 1,
+Swap 2
+), and using only the first sentence (
+First only
+). For DOCCI, the average token count for the first two sentences is 46.6, 43.8, and 40.4 for CLIP, SigLIP, and SigLIP2 tokenizers, respectively. For Urban1k, these averages are 49.5, 46.5, and 42.1, respectively. Results are presented in
+Fig.
+6
+. When comparing models, we broadly observe the same trends, with significant performance drops in the
+Swap 2
+case, particularly for SigLIP and SigLIP2. We observe slightly different trends between retrieval on DOCCI and Urban1k. OpenAI CLIP is less sensitive to sentence permutation on Urban1k (
++
+0.1
+%
++0.1\%
+and
+−
+1.3
+%
+-1.3\%
+for Urban1k T2I and I2T, respectively), but this could be due to lower performance in general. Furthermore, performance for the
+First only
+setting on Urban1k is substantially worse than the
+First 2
+baseline (
+−
+9.5
+%
+-9.5\%
+on DOCCI I2T and
+−
+21.5
+%
+-21.5\%
+on Urban1k I2T for OpenAI CLIP), indicating that additional text is critical for retrieval on this dataset. This could be due to Urban1k images being mostly limited to ground-level urban scenes, compared to the higher diversity of DOCCI. Consequently, many Urban1k captions likely share similar first (summary) sentences, making the second sentence essential for disambiguation.
+Fig.
+7
+presents additional results for the padding effects on DOCCI and Urban1k. We see similar trends across models and datasets, with CLIP models (OpenAI and OpenCLIP) exhibiting significantly less sensitivity to padding compared to SigLIP models. While SigLIP models perform better than CLIP variants in the no-padding setup, this advantage does not hold for longer padding sequences. This aligns with our results for sentence transposition and implies that SigLIP models have a very narrow effective context window.
+E
+Additional Discussion on Long-CLIP Biases
+E.1
+Long-Text Retrieval with Sentence Permutation and Removal
+In sections
+3.3
+and
+5.3
+, we showed that our DeBias-CLIP method achieves better long-text retrieval performance and is more robust than Long-CLIP to sentence transposition or to erasing the first sentence. Here, we extend the comparison to SmartCLIP, which is a consistently strong model for both long- and short-text retrieval. We repeat the text permutation analysis from Sec.
+5.3.3
+but now consider ViT-L models and additionally evaluate on both DOCCI and Urban1k to show that these results generalize broadly. We consider four text augmentation cases: the original full caption (
+Keep
+), transposing the first and second sentences (
+Move 2
+), transposing the first and fourth sentences (
+Move 4
+), and removing the first sentence (
+Remove
+). If there are fewer than four sentences, we transpose the last sentence with the first. We present results in
+Fig.
+8
+. First, we note that DeBias-CLIP is consistently better in the nominal case (
+Keep
+) and substantially more robust to sentence permutations. On DOCCI T2I, the
+Move 4
+case leads to a reduction of
+−
+8.7
+%
+-8.7\%
+for Long-CLIP and
+−
+6.9
+%
+-6.9\%
+for SmartCLIP, but only
+−
+2.0
+%
+-2.0\%
+for DeBias-CLIP. Even when removing the first sentence, DeBias-CLIP loses only
+−
+12.1
+%
+-12.1\%
+, while Long-CLIP and SmartCLIP lose
+−
+18.3
+%
+-18.3\%
+and
+−
+15.9
+%
+-15.9\%
+, respectively, on DOCCI T2I. On Urban1k T2I, DeBias-CLIP loses only
+−
+10.8
+%
+-10.8\%
+compared to
+−
+20.2
+%
+-20.2\%
+for Long-CLIP and
+−
+20.1
+%
+-20.1\%
+for SmartCLIP, showing that our model is significantly better at using details in the later sentences of the caption to match images without relying on the summary sentence information.
+(a)
+DOCCI T2I ViT-L
+(b)
+DOCCI I2T ViT-L
+(c)
+Urban1k T2I ViT-L
+(d)
+Urban1k I2T ViT-L
+Figure 8
+:
+Comparison of long-text top-1 retrieval with sentence permutations for Long-CLIP
+[
+56
+]
+, SmartCLIP
+[
+49
+]
+and our proposed method (DeBias-CLIP).
+We consider four cases: the original full caption (
+Keep
+), transposing the first and second sentences (
+Move 2
+), transposing the first and fourth sentences (
+Move 4
+), and removing the first sentence (
+Remove
+). We present results on DOCCI in (a) and (b), and on Urban1k in (c) and (d). Sentence permutation generally leads to worse retrieval performance, but our method demonstrates greater robustness compared to either Long-CLIP or SmartCLIP.
+E.2
+Additional Details and Results on the Attention Weights Distribution
+Figure 9
+:
+Mean
+pre-softmax
+self-attention weight from the output token to the text tokens as a function of the token position on DOCCI.
+For both Long-CLIP and SmartCLIP, the attention magnitude consistently decays beyond 50 tokens, while for DeBias-CLIP it remains essentially flat (ignoring high-variance values at the very end).
+Figure 10
+:
+Mean
+pre-softmax
+self-attention weight from the output token to the text tokens as a function of the token position on DOCCI, with the first and fourth sentences transposed.
+We see similar trends as in the untransposed case: there is a significant bias toward early tokens even if the summary sentence is moved to a later position. The summary sentence visibly receives more attention even after being moved (around tokens 50-100).
+Figure 11
+:
+Mean
+post-softmax
+self-attention weight from the output token to the text tokens as a function of the token position on DOCCI.
+DeBias-CLIP reduces the bias on early tokens and has a relatively even attention spread on later tokens, while we observe a decay for Long-CLIP.
+In Fig.
+(b), we present a plot of the average attention weights over tokens for both Long-CLIP and our DeBias-CLIP method. We provide additional details here. Our goal is to show that Long-CLIP models are biased towards early tokens in the caption. To this end, we measure the token self-attention values in the attention matrix
+before
+the softmax, and consider specifically the attention from the output token (analogous to the
+CLS
+token for the image encoder and it is the
+EOT
+token for the CLIP text encoder) to all other positional tokens in the last transformer layer, which captures how much information from the other positions is used to update the output token. We use the pre-softmax values as these directly capture the token-to-token affinity without the effects of the softmax normalization.
+For a single caption, the query
+𝐐
+∈
+ℝ
+𝐃
+\mbf{Q}\in\mathbb{R}^{D}
+and key
+𝐊
+∈
+ℝ
+𝐃
+\mbf{K}\in\mathbb{R}^{D}
+matrices are used in self-attention (before softmax) as
+𝐌
+\displaystyle\mbf{M}
+=
+(
+𝐐𝐊
+𝖳
+D
+)
+,
+\displaystyle=\left(\dfrac{\mbf{Q}\mbf{K}^{{\mathsf{T}}}}{\sqrt{D}}\right),
+(12)
+where
+𝐌
+∈
+ℝ
+𝐃
+×
+𝐃
+\mbf{M}\in\mathbb{R}^{D\times D}
+is the self-attention weight matrix across all token positions and
+D
+D
+is the hidden dimension. We are interested in the row of matrix
+𝐌
+\mbf{M}
+corresponding to the output token (i.e.,
+EOT
+position)
+𝐦
+𝙴𝙾𝚃
+\mbf{m}_{\mathtt{EOT}}
+given by
+𝐦
+𝙴𝙾𝚃
+\displaystyle\mbf{m}_{\mathtt{EOT}}
+=
+𝐪
+EOT
+​
+𝐊
+𝖳
+D
+,
+\displaystyle=\dfrac{\mbf{q}_{\mathrm{EOT}}\mbf{K}^{{\mathsf{T}}}}{\sqrt{D}},
+(13)
+which is the vector of attention weights from the output token to all other tokens. Because CLIP models use a causal mask in the text encoder, padding tokens that appear after the
+EOT
+token have an attention weight of
+−
+∞
+-\infty
+(this becomes a weight of 0 after the softmax), so
+𝐦
+𝙴𝙾𝚃
+\mbf{m}_{\mathtt{EOT}}
+has the form
+𝐦
+𝙴𝙾𝚃
+=
+[
+𝐯
+𝚂𝙾𝚃
+,
+𝐯
+𝟏
+,
+…
+,
+𝐯
+𝐤
+,
+𝐯
+𝙴𝙾𝚃
+,
+−
+∞
+,
+…
+,
+−
+∞
+]
+{\mbf{m}_{\mathtt{EOT}}=[v_{\mathtt{SOT}},v_{1},\dots,v_{k},v_{\mathtt{EOT}},-\infty,\dots,-\infty]}
+.
+In Fig.
+(b), we plot this value aggregated over the DOCCI dataset. For each token position, we sum the corresponding entries of
+𝐦
+𝙴𝙾𝚃
+\mbf{m}_{\mathtt{EOT}}
+over all captions and divide by the number of times that position corresponds to a text token (rather than post-text padding), giving a normalizing vector
+𝐧
+\mbf{n}
+:
+𝐧
+\displaystyle\mbf{n}
+=
+[
+n
+1
+,
+n
+2
+,
+…
+,
+n
+248
+]
+\displaystyle=\left[n_{1},\,n_{2},\,\dots,\,n_{248}\right]
+=
+∑
+i
+=
+1
+N
+𝐦
+𝙴𝙾𝚃
+,
+𝐢
+>
+−
+∞
+,
+\displaystyle=\sum_{i=1}^{N}\mbf{m}_{\mathtt{EOT},i}>-\infty,
+(14)
+where
+N
+N
+is the number of samples in the dataset, and where the inequality is applied independently for each element of
+𝐦
+𝙴𝙾𝚃
+,
+𝐢
+\mbf{m}_{\mathtt{EOT},i}
+. This yields a vector of binary elements for each caption in the dataset. The normalization excludes the padding tokens, which are more frequent for later embedding positions, and captures the average value of attention weights when they correspond to text tokens. In Fig.
+(b) and in the following figures, we exclude the weight with respect to the
+SOT
+token
+v
+𝚂𝙾𝚃
+,
+i
+v_{\mathtt{SOT},i}
+, which is generally much larger (on the order of 2.5), and corresponds to a softmax probability between 0.35 and 0.40.
+Similar to how our method improves Long-CLIP by assigning more consistent attention weights to later text tokens,
+Fig.
+9
+repeats the analysis for SmartCLIP, showing it has a less steep drop in attention over token positions compared to Long-CLIP, which is consistent with its improved long-text retrieval performance. However, there is still substantially less attention on later tokens in SmartCLIP. Finally, when evaluated on DOCCI, where the first
+∼
+\sim
+25 tokens correspond to the summary sentence, we see that the earliest text positions consistently have larger attention weights on average, even for DeBias-CLIP. This could be related to a positional bias toward earlier tokens and/or a bias towards the summary sentence.
+To disentangle these effects, we replicate the experiment under the
+Move 4
+setting, where we transpose the first and fourth sentences. Results in
+Fig.
+10
+show that (i) a positional bias remains, with significantly larger attention values for early tokens, and (ii) the summary sentence continues to receive more attention (as it likely contains more information) even when moved to a later position. In fact, we see an increase of about 0.2 in the attention values from token positions 50 to 100 in the
+Move 4
+setting. Additionally, we present the post-softmax attention weights in
+Fig.
+11
+. After softmax normalization, the larger weights on later tokens in DeBias-CLIP lead to a redistribution of the attention from the first few tokens to the rest of the caption.
+Figure 12
+:
+Comparison between Long-CLIP and DeBias-CLIP on long text-to-image retrieval.
+We observe that DeBias-CLIP more consistently recovers images that are correctly matched to the text. Text in bold marks the caption details that are required to retrieve the right image.
+F
+Visualizations and Results for Image Generation
+We claim that DeBias-CLIP is more sensitive to caption details than Long-CLIP, particularly in later sentences.
+Fig.
+12
+presents examples on Urban1k, DCI, and DOCCI, where Long-CLIP fails to retrieve the correct image given the long caption, but where DeBias-CLIP succeeds. In general, these are cases where the first summary caption applies equally to either image, and where specific details in the caption (e.g., presence of umbrellas, oil containers, the color of the cat’s paws) are required to identify the matching image.
+We also investigate how our DeBias-CLIP models perform on downstream tasks. In particular, we replace the CLIP text encoder from SDXL
+[
+36
+]
+with DeBias-CLIP.
+Fig.
+13
+compares text-to-image generation with the original CLIP, Long-CLIP, and DeBias-CLIP, with prompts from ShareGPT4V and Urban1k captions. The generation results show that CLIP struggles with long captions and often fails to capture key details, such as the Japanese text in the first example, or the color of the dinosaurs in the second. When comparing DeBias-CLIP to Long-CLIP, we find that DeBias-CLIP preserves more fine-grained details (e.g., the green traffic light in the third example). However, generation with long captions also highlights a broader limitation of all CLIP models: they suffer from poor relational understanding, with limited ability to encode relative position (left/right), accurate object counts, and consistent object-attribute matches. For example, the blue dinosaur generated by DeBias-CLIP in row 2 is an incorrect amalgamation of an orange dinosaur holding a blue toothbrush. Quantitatively, we compare the performance of DeBias-CLIP with Long-CLIP by measuring the similarity between the original images and images generated with the 1000 paired long caption from the ShareGPT4v validation split. We evaluate Fréchet inception distance (FID)
+[
+14
+]
+and the DINO score
+[
+4
+]
+.
+Tab.
+12
+shows that DeBias-CLIP improves both metric, showing we generate images from the long captions that are semantically closer to the paired images.
+Model
+FID
+↓
+\downarrow
+DINO Score
+↑
+\uparrow
+Long-CLIP
+0.335
+0.515
+DeBias-CLIP (ours)
+0.317
+0.528
+Table 12
+:
+Quantitative image generation comparison
+. We replace the CLIP text encoder in SDXL with either Long-CLIP or DeBias-CLIP generate images from the 1000 image-caption pairs of the ShareGPT4v validation set. DeBias-CLIP generates images that are semantically more similar to the original images.
+Figure 13
+:
+Stable Diffusion text-to-image generation results for CLIP, Long-CLIP, and DeBias-CLIP.
+DeBias-CLIP can leverage more details that appear later in the caption and suffers less from inaccurate localization of details (e.g., the green color of the bag being transferred to the suit in the Long-CLIP first row image). Text in bold highlights the caption details that are correctly represented in our DeBias-CLIP method.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

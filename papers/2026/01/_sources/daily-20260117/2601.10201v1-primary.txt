@@ -1,0 +1,877 @@
+PRL: Process Reward Learning Improves LLMs’ Reasoning Ability and Broadens the Reasoning Boundary
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+Reinforcement Learning for LLMs
+LLMs Reasoning
+Process Reward Modeling
+3 Processing Reward Learning from KL Regularized RL
+3.1 Problem Setting and Formulation
+3.2 Optimal Process Reward
+3.3 Process Reward and Policy Learning
+4 Experiments and Results
+4.1 Experiment Setup
+Models and Data
+Environment and Computation
+4.2 Quantitive Results
+4.3 Ablation Study
+5 Conclusion and Discussion
+References
+B More Experiments Details
+C Case Study
+License: CC BY 4.0
+arXiv:2601.10201v1 [cs.LG] 15 Jan 2026
+PRL: Process Reward Learning Improves LLMs’ Reasoning Ability
+and Broadens the Reasoning Boundary
+Jiarui Yao
+††thanks: Equal contribution.
+Ruida Wang11footnotemark:
+1
+Tong Zhang
+Affiliation: University of Illinois Urbana-Champaign
+Affiliation:
+{jiarui14, ruidaw, tozhang}@illinois.edu
+Abstract
+Improving the reasoning abilities of Large Language Models (LLMs) has been a continuous topic recently. But most relevant works are based on outcome rewards at the trajectory level, missing fine-grained supervision during the reasoning process. Other existing training frameworks that try to combine process signals together to optimize LLMs also rely heavily on tedious additional steps like MCTS, training a separate reward model, etc., doing harm to the training efficiency. Moreover, the intuition behind the process signals design lacks rigorous theoretical support, leaving the understanding of the optimization mechanism opaque. In this paper, we propose Process Reward Learning (PRL), which decomposes the entropy regularized reinforcement learning objective into intermediate steps, with rigorous process rewards that could be assigned to models accordingly. Starting from theoretical motivation, we derive the formulation of PRL that is essentially equivalent to the objective of reward maximization plus a KL-divergence penalty term between the policy model and a reference model. However, PRL could turn the outcome reward into process supervision signals, which helps better guide the exploration during RL optimization. From our experiment results, we demonstrate that PRL not only improves the average performance for LLMs’ reasoning ability measured by average @ n, but also broadens the reasoning boundary by improving the pass @ n metric. Extensive experiments 11
+1
+Code available at github repo. show the effectiveness of PRL could be verified and generalized.
+1 Introduction
+The reasoning capabilities of Large Language Models (LLMs) have witnessed remarkable growth, transitioning from simple pattern matching, prompting or in-context learning (Wei et al., 2022) to solving complex challenges, such as mathematical, coding, and logical problems. While pre-training establishes a strong foundation, post-training techniques – particularly Reinforcement Learning (RL) – have become indispensable for aligning and enhancing these models with complex reasoning tasks (Xu et al., 2025a). Recent advancements, such as DeepSeek-R1 (Guo et al., 2025), have demonstrated that RL with verifiable rewards can significantly incentivize reasoning capabilities, sparking a wave of research into optimizing LLMs for domains like mathematics, coding, and scientific reasoning etc.
+Despite this progress, a significant bottleneck remains in the nature of the supervision signals. Most prevailing RL frameworks rely on outcome rewards, which are sparse signals provided only at the end of a complete reasoning trajectory. While effective for simple tasks, outcome supervision often fails to provide the fine-grained guidance necessary for multi-step reasoning, where a single intermediate error can derail the entire solution. To address this, recent works have pivoted toward Process Reward Models (PRMs), which assign credit to intermediate steps. However, existing implementations often suffer from severe efficiency and theoretical drawbacks. Many rely on computationally expensive inference-time techniques like Monte Carlo Tree Search (MCTS) or require training separate, heavy reward models to estimate step-wise value. Furthermore, the design of these process signals is frequently heuristic, lacking a rigorous theoretical connection to the global optimization objective.
+In this paper, we propose Process Reward Learning (PRL), a novel framework that bridges the gap between outcome objectives and process supervision without the computational overhead of MCTS or separate reward model training (Yang et al., 2024a; Luo et al., 2024). We theoretically demonstrate that the standard entropy-regularized reinforcement learning objective can be naturally decomposed into intermediate steps. By deriving the relationship between the optimal policy and the reference model, we formulate a rigorous definition of process rewards that are intrinsically aligned with the global outcome.
+Our approach offers a direct and efficient way to assign credit to intermediate reasoning steps, effectively turning sparse outcome rewards into dense process supervision signals. This guides exploration more effectively during RL optimization while maintaining mathematical equivalence to the original objective of reward maximization with a KL-divergence penalty.
+Figure 1: PRL workflow demonstration. For each prompt and response trajectory (x,a)(x,a) with a=[a1,a2,⋯,aL]a=[a^{1},a^{2},\cdots,a^{L}], we could split the reasoning response into several intermediate steps (by fixed length, newline symbol, etc.) and calculate the process reward as the entropy ratio between the current policy πω\pi_{\omega} and reference policy π0\pi_{0}. The final process reward for each step ii is the combination of ① the entropy ratio ∑j=1plog⁡πω​(aj|x,a(j−1))π0​(aj|x,a(j−1))\sum_{j=1}^{p}\log\frac{\pi_{\omega}(a^{j}|x,a^{(j-1)})}{\pi_{0}(a^{j}|x,a^{(j-1)})} and ② the final outcome reward r∗​(x,a)r^{*}(x,a).
+Our contributions could be summarized as follows:
+•
+Theoretical Framework: We derive PRL from the original optimization goal without modification, showing that optimal process rewards can be formulated as the decomposition of the entropy-regularized outcome objective. This provides a solid theoretical backing often missing in heuristic PRM designs.
+•
+Algorithmic Efficiency: Unlike methods dependent on MCTS or external value networks, PRL integrates process supervision directly into the policy gradient workflow, significantly enhancing training efficiency.
+•
+Empirical Performance: We conduct extensive experiments on standard math reasoning benchmarks (including MATH500, Minerva Math, and Olympiad Bench, etc.) using different base models, including Qwen2.5-Math and Llama-3.2 series, at several scales. Our results demonstrate that PRL not only improves average performance (average@N) but also "broadens the reasoning boundary" of LLMs, as evidenced by significant gains in pass@N metrics compared to strong baselines like REINFORCE, RAFT (Dong et al., 2023; Xiong et al., 2025) and GRPO (Guo et al., 2025; Shao et al., 2024).
+2 Related Work
+Along with LLMs’ demonstration of great potential of accomplishing both daily and professional tasks, the research to better enhance LLMs’ abilities through various aspects keeps growing, in which RL plays a more and more crucial role. As pointed out in Yao (2025), the successful application of RL in LLMs post-training is largely attributed to LLMs themselves, which provide a strong enough prior knowledge for exploration afterwards. Along with the pre-training of LLMs providing better and better base models, post-training techniques, especially RL, come into the stage and align LLMs well across general downstream domains.
+Reinforcement Learning for LLMs
+Reinforcement Learning (RL) has been a flourishing research area for a long time, especially along with its successful deployment in game simulations, embodied AI, and robotics. Well-known RL algorithms, especially PPO (Schulman et al., 2017), have become a standard practice for policy model training. After the appearance of LLMs, RL is also utilized for post-training in RLHF (Ouyang et al., 2022; Bai et al., 2022). As DeepSeek-R1 (Guo et al., 2025) reveals how to train reasoning models based on RL with verifiable reward (RLVR) to the public, there have been tons of following works applying such a spirit on all kinds of domains, including but not limited to search and information retrieval (Jin et al., 2025; Chen et al., 2025a), multimodal reasoning (Tian et al., 2025), embodied AI (Wang et al., 2025), and GUI agents (Luo et al., 2025). New algorithms that fit the characteristics of LLMs like GRPO (Guo et al., 2025; Shao et al., 2024), GSPO (Zheng et al., 2025). Besides, there are several open-source RL training frameworks (Hu et al., 2024; Sheng et al., 2024; Fu et al., 2025; Zhu et al., 2025) that provide a great environment setup for algorithmic research.
+LLMs Reasoning
+The reasoning ability of LLMs has been a hot topic in recent years. Wei et al. (2022) finds that using Chain-of-Thought (CoT) prompting to explicitly require LLMs to reason step by step boosts the model’s performance by a large margin. Diverse prompting manners (Yao et al., 2023; Xu et al., 2025b; Zhou et al., 2022) appear to fully take advantage of the in-context learning ability of LLMs. Later, besides test-time enhancement, improving the inherent reasoning ability of LLMs through better training emerges (Hao et al., 2024; Liu et al., 2025; Arora and Zanette, 2025; Kumar et al., 2025). To facilitate LLM RL training with better efficiency, (Yao et al., 2025; Chen et al., 2025b; Zhang et al., 2025) propose different methods like curriculum learning, gradient variance estimation, etc., to reweight the training data. Relevant works analyzing the roles of data, different algorithms and commonly used tricks like clipping, importance sampling also unveil the key underlying factors that affect the training stability and efficiency of RL training. Particularly for math reasoning, DAPO (Yu et al., 2025) summarizes recent progress and sets up several common practices like clipping higher and data filtering for training reasoning models. Reasoning models are widely adopted in more general domains like question-answering (QA) (Chen et al., 2024; Ranaldi and Freitas, 2024), coding (Yang et al., 2024b), and agentic tasks (Yang et al., 2024c; Ferrag et al., 2025).
+Process Reward Modeling
+Ever since the release of OpenAI o1-series models (Jaech et al., 2024), the research community has shown an enthusiasm to look for the underlying mechanism for the success of the reasoning models like o1. Among all the explorations, process reward models (PRMs) (Khalifa et al., 2025) become a strong candidate as they align with human intuitions at first glance. Most PRMs will decompose the single reasoning trajectory into several intermediate steps, and assign fine-grained rewards to them one by one. Famous works like Cui et al. (2025) design process reward as the log likelihood ratio between the current policy model and a reference model, similar to the reward shaping in Direct Policy Optimization (DPO (Rafailov et al., 2023)). Zhang et al. (2024b) considers an entropy regularized RL objective and utilizes MCTS to estimate the process rewards at each step. Other works using MCTS for PRM estimation include Zhang et al. (2024a); Park et al. (2025).
+3 Processing Reward Learning from KL Regularized RL
+3.1 Problem Setting and Formulation
+We consider the training of a reasoning model using RL under alphabet Σ\Sigma, which implicitly leads to a space of text Σ∗\Sigma^{*}. Let x∈Σ∗x\in\Sigma^{*} be a prompt, a=[a1,…,aL]∈Σ∗a=[a_{1},\ldots,a_{L}]\in\Sigma^{*} be the response of an LLM to prompt xx, where a1,…,aL∈Σ∗a_{1},\ldots,a_{L}\in\Sigma^{*} are the CoT steps (or any reasoning steps) to generate the response in a reasoning model.
+Assume we have a deterministic reward function r∗:Σ∗→[0,1]r^{*}:\Sigma^{*}\rightarrow[0,1] to evaluate the quality of a text sentence, i.e., r∗​([x,a])∈[0,1]r^{*}([x,a])\in[0,1] assessing the quality of the response aa to prompt xx.
+We aim to train a policy model (an LLM essentially) π:Σ∗×Σ∗→[0,1]\pi:\Sigma^{*}\times\Sigma^{*}\rightarrow[0,1], which represents the probability of some given text under the condition of another given text. In particular, π⁡(a|x)\pi(a|x) is the probability of generating text a∈Σ∗a\in\Sigma^{*} under the given text x∈Σ∗x\in\Sigma^{*}
+Our goal is to train a policy π⁡(a|x)\pi(a|x) that generates high-quality responses while staying close to the original response provided by π0\pi_{0} xx, which is a reference model, and usually as the original policy model. The entropy-regularized formulation is:
+Q(π)=𝔼x[𝔼a∼π(⋅|x)r∗(x,a)−1ηKL(π||π0)],Q(\pi)=\mathbb{E}_{x}\left[\mathbb{E}_{a\sim\pi(\cdot|x)}r^{*}(x,a)-\frac{1}{\eta}{\mathrm{KL}}(\pi||\pi_{0})\;\right],
+where KL(π||π0)=∫π(x)logπ⁡(x)π0​(x)dx{\mathrm{KL}}(\pi||\pi_{0})=\int\pi(x)\log\frac{\pi(x)}{\pi_{0}(x)}dx is the KL-divergence between two distributions formed by π\pi and π0\pi_{0}. Usually, the KL-divergence penalty term is used for restricting the policy model π\pi from deviating too much from the reference model π0\pi_{0}.
+Based on the above assumption and problem formulation, we could derive the following theorem about the closed-form solution for the optimal policy π∗\pi^{*}.
+Theorem 3.1.
+Given a reference (normally the original) policy π0:Σ∗×Σ∗→[0,1]\pi_{0}:\Sigma^{*}\times\Sigma^{*}\rightarrow[0,1], and the optimial policy maximizing the entropy-regularized reward, π∗=arg⁡maxπ​{Q⁡(π)}\pi^{*}=\arg\max_{\pi}\{Q(\pi)\}, we have:
+π∗​(a|x)∝π0​(a|x)​eη​r∗​(x,a).\pi^{*}(a|x)\propto\pi_{0}(a|x)e^{\eta r^{*}(x,a)}.
+So we know the distribution from the optimal policy only depends on the reference model and the reward function. The full proof of the theorem is delayed to Appendix . This further leads to the following corollary.
+Corollary 3.2.
+∀(x,a)∈Σ∗×Σ∗\forall(x,a)\in\Sigma^{*}\times\Sigma^{*}, there exists a constant C∈ℝC\in\mathbb{R} such that
+r∗​(x,a)−1η​ln⁡π∗​(a|x)π0​(a|x)=C.r^{*}(x,a)-\frac{1}{\eta}\ln\frac{\pi^{*}(a|x)}{\pi_{0}(a|x)}=C.
+The detailed proof of this corollary is postponed in the Appendix .
+We will exploit this corollary in our RL algorithm to optimize π∗\pi^{*} from a process reward perspective.
+Model
+MATH500
+Minerva Math
+Olympiad Bench
+AMC23
+AIME24
+5 Avg
+Qwen2.5-Math-1.5B
+81.60
+35.66
+48.15
+65.00
+20.00
+56.82
++ RAFT
+87.40
+42.65
+52.00
+77.50
+33.33
+62.23
++ GRPO
+88.00
+44.85
+56.44
+70.00
+20.00
+64.40
++ PRL
+89.40
+45.59
+58.07
+85.00
+30.00
+66.31
+Qwen-2.5-Math-7B
+82.00
+31.03
+51.56
+72.50
+40.00
+58.24
++ RAFT
+91.80
+51.84
+62.22
+82.50
+46.67
+70.34
++ GRPO
+92.60
+52.21
+65.33
+85.00
+46.67
+72.12
++ PRL
+93.60
+52.57
+65.19
+85.00
+43.33
+72.38
+Llama-3.2-1B-Instruct
+45.20
+8.46
+12.89
+20.00
+6.67
+22.81
++ GRPO
+57.80
+17.65
+22.81
+30.00
+13.33
+33.42
++ PRL
+60.60
+17.65
+20.15
+30.00
+6.67
+33.03
+Llama-3.2-3B-Instruct
+67.80
+28.31
+28.30
+45.00
+23.33
+41.66
++ GRPO
+76.80
+36.03
+39.56
+55.00
+16.67
+51.16
++ PRL
+74.00
+36.40
+41.33
+67.50
+16.67
+51.42
+Table 1: Performance (%) comparison across several math reasoning benchmarks, measured by pass @ 8.
+3.2 Optimal Process Reward
+To formulate process rewards, we consider the whole reasoning process with LL tokens,
+a=[a1,…,aL],a=[a_{1},\ldots,a_{L}],
+where aia_{i} is a token belonging to Σ\Sigma.
+Then we try to assign a reward rℓ∗​(x,a(ℓ))r_{\ell}^{*}(x,a^{(\ell)}) to the partial answers a(ℓ)=[a1,…,aℓ]∈Σ∗a^{(\ell)}=[a_{1},\ldots,a_{\ell}]\in\Sigma^{*}.
+Let a(−ℓ)=[aℓ+1,…,aL]∈Σ∗a^{(-\ell)}=[a_{\ell+1},\ldots,a_{L}]\in\Sigma^{*} be the completion of the partial response.
+Given the policy model π\pi, we define the entropy-regularized process reward as
+rℓ∗(x,a(ℓ))=𝔼a(−ℓ)∼π∗(⋅|x,a(ℓ))[r∗(x,a)\displaystyle r_{\ell}^{*}(x,a^{(\ell)})=\mathbb{E}_{a^{(-\ell)}\sim\pi^{*}(\cdot|x,a^{(\ell)})}\bigg[\;r^{*}(x,a)
+−1η∑j=ℓ+1Llnπ∗​(aj|x,a(j−1))π0​(aj|x,a(j−1))].\displaystyle-\frac{1}{\eta}\sum_{j=\ell+1}^{L}\ln\frac{\pi^{*}(a_{j}|x,a^{(j-1)})}{\pi_{0}(a_{j}|x,a^{(j-1)})}\bigg].
+From the fact that all paths should give identical value (under the optimal policy), we could obtain the following theorem.
+Theorem 3.3.
+Given x,a(ℓ)∈Σ∗x,a^{(\ell)}\in\Sigma^{*} where xx represents the prompt and a(ℓ)a^{(\ell)} represents a partial answer, no matter what [a(ℓ+1),a(ℓ+2),⋯,a(L)]=a−ℓ[a^{(\ell+1)},a^{(\ell+2)},\cdots,a^{(L)}]=a^{-\ell} is, the following equality always holds:
+rℓ∗​(x,a(ℓ))=r∗​(x,a)−1η​∑j=ℓ+1Lln⁡π∗​(aj|x,a(j−1))π0​(aj|x,a(j−1)),r_{\ell}^{*}(x,a^{(\ell)})=r^{*}(x,a)-\frac{1}{\eta}\sum_{j=\ell+1}^{L}\ln\frac{\pi^{*}(a_{j}|x,a^{(j-1)})}{\pi_{0}(a_{j}|x,a^{(j-1)})},
+Proof of this theorem can be found in Appendix .
+More generally, we have that for arbitrary ℓ<p≤L\ell<p\leq L:
+rℓ∗​(x,a(ℓ)CLOSE\displaystyle r_{\ell}^{*}(x,a^{(\ell)}
+OPEN)=rp∗​(x,a(p))\displaystyle)=r_{p}^{*}(x,a^{(p)})
+−1η∑j=ℓ+1plnπ∗​(aj|x,a(j−1))π0​(aj|x,a(j−1)),\displaystyle-\frac{1}{\eta}\sum_{j=\ell+1}^{p}\ln\frac{\pi^{*}(a_{j}|x,a^{(j-1)})}{\pi_{0}(a_{j}|x,a^{(j-1)})},
+where we define rL∗​(x,a)=r∗​(x,a)r_{L}^{*}(x,a)=r^{*}(x,a).
+3.3 Process Reward and Policy Learning
+We could generalize the optimal reward function r∗r^{*} into a learnable one as well. We assume a learnable reward model ru​([x,a(ℓ)]):Σ∗→[0,1]r_{u}([x,a^{(\ell)}]):\Sigma^{*}\rightarrow[0,1] with uu as the learnable model parameter, and a learnable policy πw\pi_{w} with ww as the learnable parameter.
+We generate a reasoning trajectory aa given prompt xx using πw\pi_{w}, and for any pair ℓ<p\ell<p (and we may choose multiple such pairs), we update the reward model by running SGD with respect to the following objective function
+(ru​([x,a(ℓ)])−yℓ)2,(r_{u}([x,a^{(\ell)}])-y_{\ell})^{2},
+where the target is set by
+yℓ=\displaystyle y_{\ell}=\
+stopgrad⁡(ru​([x,a(p)])CLOSE\displaystyle\mathrm{stopgrad}\bigg(r_{u}([x,a^{(p)}])
+−1η∑j=ℓ+1plnπw​(aj|[x,a(j−1)])π0​(aj|[x,a(j−1)])).\displaystyle-\frac{1}{\eta}\sum_{j=\ell+1}^{p}\ln\frac{\pi_{w}(a_{j}|[x,a^{(j-1)}])}{\pi_{0}(a_{j}|[x,a^{(j-1)}])}\bigg).
+Note that we always have ru​([x,a])=r∗​([x,a])r_{u}([x,a])=r^{*}([x,a]) for the whole response aa.
+We update πw\pi_{w} by running SGD with respect to the following objective function
+∑j=1Lρj​ln⁡πw​(aj|[x,a(j−1)]),\sum_{j=1}^{L}\rho_{j}\ln\pi_{w}(a_{j}|[x,a^{(j-1)}]),
+where we set
+ρℓ\displaystyle\rho_{\ell}
+=stopgrad⁡(ru​([x,a(p)])CLOSE\displaystyle=\mathrm{stopgrad}\bigg(r_{u}([x,a^{(p)}])
+−∑j=ℓ+1p1ηlnπw​(aj|[x,a(j−1)])π0​(aj|[x,a(j−1)])),\displaystyle-\sum_{j=\ell+1}^{p}\frac{1}{\eta}\ln\frac{\pi_{w}(a_{j}|[x,a^{(j-1)}])}{\pi_{0}(a_{j}|[x,a^{(j-1)}])}\bigg),
+for any l<p≤Ll<p\leq L.
+We may also set p=Lp=L and a(p)=a(L)a^{(p)}=a^{(L)}, and then update policy without learning ru​(⋅)r_{u}(\cdot). Now this is similar to policy gradient for entropy regularized RL optimization:
+ρℓ\displaystyle\rho_{\ell}
+=stopgrad⁡(r⁡([x,a])CLOSE\displaystyle=\mathrm{stopgrad}\bigg(r([x,a])
+−∑j=ℓL1ηlnπw​(aj|[x,a(j−1)])π0​(aj|[x,a(j−1)])).\displaystyle-\sum_{j=\ell}^{L}\frac{1}{\eta}\ln\frac{\pi_{w}(a_{j}|[x,a^{(j-1)}])}{\pi_{0}(a_{j}|[x,a^{(j-1)}])}\bigg).
+(3.1)
+This will be the simplest method once we have a rule-based reward function, i.e., the optimal reward function r⁡([x,a])=r∗​([x,a])r([x,a])=r^{*}([x,a]). But it may lead to higher variance, and one may combine this with other advantage estimation algorithms like PPO (Schulman et al., 2017) and GRPO (Shao et al., 2024) to alleviate.
+In the GRPO application, we could turn the reward function r∗r^{*} into the advantage function first, and then calculate the process advantage as
+ρℓ\displaystyle\rho_{\ell}
+=stopgrad⁡(A⁡([x,a])CLOSE\displaystyle=\mathrm{stopgrad}\bigg(A([x,a])
+−∑j=ℓp1ηlnπw​(aj|[x,a(j−1)])π0​(aj|[x,a(j−1)])),\displaystyle-\sum_{j=\ell}^{p}\frac{1}{\eta}\ln\frac{\pi_{w}(a_{j}|[x,a^{(j-1)}])}{\pi_{0}(a_{j}|[x,a^{(j-1)}])}\bigg),
+where A⁡([x,a])A([x,a]) is the normalized reward in a group, calculated by subtracting the mean and dividing by the standard deviation of the rewards in the same group.
+The detailed optimization proof can be found in Appendix .
+In the actual implementation, we also integrate the importance sampling and clipping tricks, as several papers (Schulman et al., 2017; Yu et al., 2025) pointed out the importance of these tricks in helping stabilize the training process. And the final reward function becomes
+ℒ⁡(ω)\displaystyle\mathcal{L}(\omega)
+=∑j=1Lmin{ρjπω​(aj|[x,a(j−1)])πold​(aj|[x,a(j−1)]),\displaystyle=\sum_{j=1}^{L}\min\Bigg\{\rho_{j}\frac{\pi_{\omega}(a_{j}|[x,a^{(j-1)}])}{\pi_{\mathrm{old}}(a_{j}|[x,a^{(j-1)}])},
+ρj⋅clip{πω​(aj|[x,a(j−1)])πold​(aj|[x,a(j−1)]),1±ε}}\displaystyle\rho_{j}\cdot\mathrm{clip}\left\{\frac{\pi_{\omega}(a_{j}|[x,a^{(j-1)}])}{\pi_{\mathrm{old}}(a_{j}|[x,a^{(j-1)}])},1\pm\varepsilon\right\}\Bigg\}
+−β𝔻KL(πω∥π0),\displaystyle-\beta\mathbb{D}_{\mathrm{KL}}(\pi_{\omega}\|\pi_{0}),
+where
+ρj=\displaystyle\rho_{j}=
+stopgrad⁡(r⁡([x,a])CLOSE\displaystyle\ \mathrm{stopgrad}\bigg(r([x,a])
+−∑j=ℓL1ηlnπw​(aj|[x,a(j−1)])π0​(aj|[x,a(j−1)])),\displaystyle-\sum_{j=\ell}^{L}\frac{1}{\eta}\ln\frac{\pi_{w}(a_{j}|[x,a^{(j-1)}])}{\pi_{0}(a_{j}|[x,a^{(j-1)}])}\bigg),
+and πold\pi_{\mathrm{old}} is the policy from the last step. The pseudo code for PRL algorithm pipeline could be referred in Algorithm 1.
+Algorithm 1  Process Reward Learning (PRL)
+1:
+Dataset 𝒟\mathcal{D},
+initial policy model πinitial\pi_{\rm initial},
+reference model π0\pi_{0},
+reward function r∗​(⋅)r^{*}(\cdot),
+KL regularization coefficient η\eta,
+clipping parameter ϵ\epsilon,
+learning rate α\alpha
+2:
+Optimized Policy πω\pi_{\omega}
+3:
+Initialize πω←πinitial\pi_{\omega}\leftarrow\pi_{\text{initial}}
+4:
+while training not converged do
+5:
+Sample batch of prompts {xi}i=1n∼𝒟\{x_{i}\}_{i=1}^{n}\sim\mathcal{D}
+6:
+for each prompt xix_{i} do
+7:
+Generate trajectories a=[a1,a2,…,aL]a=[a_{1},a_{2},\dots,a_{L}] via πω(⋅|xi)\pi_{\omega}(\cdot|x_{i})
+8:
+Compute outcome reward R=r∗​(xi,a)R=r^{*}(x_{i},a)
+⊳\triangleright Can be rule-based or learnable reward
+9:
+Compute advantage A⁡(xi,a)=R−meanstdA(x_{i},a)=\frac{R-{\rm mean}}{{\rm std}}
+10:
+for each time step t=1t=1 to LL do
+11:
+Calculate log-ratio (KL term):
+12:
+kt=ln⁡πω​(at|xi,a(t−1))π0​(at|xi,a(t−1))k_{t}=\ln\frac{\pi_{\omega}(a_{t}|x_{i},a^{(t-1)})}{\pi_{0}(a_{t}|x_{i},a^{(t-1)})}
+13:
+Calculate Future KL Penalty Sum:
+14:
+St=∑j=tL1η​kjS_{t}=\sum_{j=t}^{L}\frac{1}{\eta}k_{j}
+15:
+Compute Process Advantage ρt\rho_{t}:
+16:
+ρt←stopgrad​(A⁡(xi,a)−St)\rho_{t}\leftarrow\text{stopgrad}\left(A(x_{i},a)-S_{t}\right)
+17:
+end for
+18:
+Calculate rt​(ω)=πω​(at|xi,a(t−1))/πωold​(at|xi,a(t−1))r_{t}(\omega)={\pi_{\omega}(a_{t}|x_{i},a^{(t-1)})}/{\pi_{\omega_{\text{old}}}(a_{t}|x_{i},a^{(t-1)})} and loss ℒi​(ω)\mathcal{L}_{i}(\omega):
+19:
+ℒi(ω)=−1L∑t=1Lmin(rt(ω)ρt,clip(rt(ω),1−ϵlow,1+ϵhigh)ρt)\mathcal{L}_{i}(\omega)=-\frac{1}{L}\sum_{t=1}^{L}\min\left(r_{t}(\omega)\rho_{t},\text{clip}(r_{t}(\omega),1-\epsilon_{\rm low},1+\epsilon_{\rm high})\rho_{t}\right)
+20:
+end for
+21:
+ℒ⁡(ω)=1n​∑iℒi​(ω)\mathcal{L}(\omega)=\frac{1}{n}\sum_{i}\mathcal{L}_{i}(\omega)
+22:
+Update parameters: ω←ω−α​∇ωℒ​(ω)\omega\leftarrow\omega-\alpha\nabla_{\omega}\mathcal{L}(\omega)
+23:
+end while
+4 Experiments and Results
+We conduct our main experiments on math reasoning tasks, a subdomain of LLMs’ reasoning with rich related literature and open-source base models, with public large-scale datasets.
+Figure 2: The training dynamics of KL loss and entropy loss with Qwen2.5-Math-7B as the base model under different configurations.
+4.1 Experiment Setup
+Models and Data
+In the line of research to improve the math reasoning ability of LLMs, Qwen and Llama have been commonly selected. In consideration of the limit on computation resources, we choose Qwen2.5-Math-1.5B and Qwen2.5-Math-7B, with Llama-3.2-1B-Instruct and Llama-3.2-3B-Instruct as the base models. Such choices help alleviate the bias across model scale and architectures. As for the training data, we use NuminaMath (Li et al., 2024) and randomly sample a subset with approximately 150k samples to constitute the training dataset. Each problem is associated with a verifiable reward, and therefore, the correctness of outputs from LLMs could be easily checked by a rule-based program. For the evaluation benchmarks, we use MATH500 (Hendrycks et al., 2021), Minverva Math (Lewkowycz et al., 2022), Olympiad Bench (He et al., 2024), AIME24 and AMC23. The sizes of the above benchmarks are summarized in Table 2. In our evaluation, we use Math-Verify 22
+2
+https://github.com/huggingface/Math-Verify to systematically verify the results.
+Environment and Computation
+For the RL training, we modify the verl (Sheng et al., 2024) code repo and implement PRL based on it. For model training, we use 4 Nvidia H100 GPUs. For the hyperparameters, we use a batch size of 128, with a learning rate of 1e-6, prompt length 1024 and response length 3072. For detailed hyperparameters, please refer to Table 6.
+4.2 Quantitive Results
+First we summarize the average performance of PRL with different baselines in Table 3. The performance metric is average @ 8, where for each problem in the evaluation dataset, we sample eight times and calculate the average pass rate across the rollouts. Note that the average results are a size-weighted average across all datasets.
+From Table 3, we can see that PRL achieves consistently better performance across different benchmarks with different base models. This validates our hypothesis that for reasoning tasks, especially under challenging scenarios, process supervision is important compared with a pure outcome-based reward signal. The summation of the log ratio between the current policy model πω\pi_{\omega} and the reference model provides fine-grained guidance for the exploration in RL optimization.
+Benchmark
+Size
+MATH500
+500
+Minerva Math
+272
+Olympiad Bench
+675
+AIME24
+30
+AMC23
+40
+Table 2: The size of evaluation benchmarks used in experiments.
+We also compare the performance of the reasoning boundary of different models by the metric pass @ nn (n=8n=8 in our evaluation due to inference resource limitation), where we rollout nn times for the same prompt, and the final score is one if at least one of the rollouts is correct. The detailed results are in Table 1. From the results, we could see PRL not only increases the average performance by concentrating the output quality, but also broadens the reasoning boundary by increasing the pass @ n metric. This also originates from the property that all reasoning trajectories should lead to exactly the same reward under the optimal reward function in Corollary 3.2.
+Model
+MATH500
+Minerva Math
+Olympiad Bench
+AMC23
+AIME24
+5 Avg
+Qwen2.5-Math-1.5B
+38.53
+11.76
+18.85
+24.38
+3.75
+23.91
++ RAFT
+62.92
+23.12
+28.17
+37.5
+9.17
+38.59
++ GRPO
+67.50
+25.55
+31.35
+44.69
+6.67
+42.09
++ PRL
+71.00
+28.63
+33.57
+45.94
+9.17
+44.86
+Qwen-2.5-Math-7B
+41.62
+12.87
+19.24
+28.12
+9.58
+25.52
++ RAFT
+74.58
+33.18
+37.30
+59.06
+20.00
+49.08
++ GRPO
+80.72
+36.76
+44.20
+63.12
+22.08
+54.96
++ PRL
+81.38
+37.78
+44.93
+63.75
+22.50
+55.71
+Llama-3.2-1B-Instruct
+13.48
+2.21
+2.46
+2.81
+1.25
+6.03
++ GRPO
+26.30
+6.16
+6.06
+9.38
+0.00
+12.72
++ PRL
+28.65
+5.01
+6.76
+14.38
+1.67
+13.76
+Llama-3.2-3B-Instruct
+34.95
+9.97
+8.06
+16.25
+3.33
+17.39
++ GRPO
+48.23
+16.96
+17.35
+22.81
+5.83
+27.37
++ PRL
+47.50
+16.82
+16.93
+27.50
+6.67
+27.06
+Table 3: Performance (%) comparison across several math reasoning benchmarks, measured by average @ 8.
+4.3 Ablation Study
+We first compare the different ways in which we split the intermediate steps would impact the performance of PRL. Though for reasoning models with structured outputs, we could separate the intermediate steps by newline symbols (“\n” or “\n\n”), we find that splitting steps by fixed length also works well. The results could be found in Table 4. It could be inferred that different ways of splitting could cause performance fluctuation, while finding a balanced way – in our experiments, splitting intermediate steps with a fixed length of 256 – could achieve the most performance boost for PRL.
+The training dynamics (entropy loss of the policy model πω\pi_{\omega} and KL divergence between πω\pi_{\omega} and reference model π0\pi_{0}) with base model Qwen2.5-Math-7B is also displayed in Figure 2. We compare different algorithms, including RAFT, GRPO, and PRL, under different configurations. It could be seen that with a fixed length of 256 PRL achieves the best balance between deviating from the reference policy π0\pi_{0} and maintaining a relatively high entropy loss for exploration.
+Model
+5 Avg
+Qwen2.5-Math-1.5B
+56.82
++ GRPO
+64.40
++ PRL (“\n\n”)
+66.31
++ PRL (fixed length 256)
+65.86
+Qwen2.5-Math-7B
+58.24
++ GRPO
+72.12
++ PRL (fixed length 16)
+71.19
++ PRL (fixed length 64)
+70.27
++ PRL (fixed length 256)
+72.38
+Table 4: Performance comparison among different intermediate steps splitting manners, with metric pass @ 8. Here, PRL (“\n\n”) means we use two adjacent newline symbols to split intermediate steps, while PRL (fixed length 256) means that we use a fixed length of 256 tokens to constitute the intermediate steps.
+The order of calculating the advantage and the process reward matters as well. To be more specific, we could first calculate the advantage value as GRPO for prompt-response pairs {(x,ai)}\{(x,a_{i})\} in the sample group
+A⁡(x,ai)=R⁡(x,a)−μ⁡(ai)σ⁡(ai),\displaystyle A(x,a_{i})=\frac{R(x,a)-\mu(a_{i})}{\sigma(a_{i})},
+and substitute the original reward in Equation 3.1 with advantage. On the other hand, we could also first calculate the process reward with the original outcome reward, and then compute the advantage using the process reward ρℓ​(x,a)\rho_{\ell}(x,a) as R⁡(x,a)R(x,a). Since there is a coefficient η\eta that we could tune as a hyperparameter for the summation of log ratios, and usually this is a large number from 100 to 300, the order of calculating the advantage and the process reward does not matter too much, and thus both of them achieve similar results, slightly better than GRPO under metric pass @ 8 as shown in Table 5.
+Model
+5 Avg
+Llama-3.2-3B-Instruct
+41.66
++ GRPO
+51.16
++ PRL (advantage first)
+51.42
++ PRL (process reward first)
+51.42
+Table 5: Performance comparison between different orders of calculating the process reward and advantage values, with metric pass @ 8. PRL (advantage first) means we first calculate the advantage only using the outcome rewards, while PRL (process reward first) means we first calculate the process rewards and then advantages based on them.
+5 Conclusion and Discussion
+The reasoning ability of LLMs has been improved by a large margin through post-training techniques like RL, while most of the training is performed based on an outcome-based reward function (model). Among the existing works providing process supervision signals, computationally intensive estimations for the intermediate rewards like MCTS or additional training for another reward model, are usually inevitable. The PRL algorithm provides such a fine-grained process supervision by integrating the summation of the log ratio between the current policy and a reference policy, removing the need to do expensive calculations of extra training. Our experimental results demonstrate the effectiveness of PRL, showing performance improvement on both average @ nn and pass @ nn metrics. Besides, we provide a detailed and rigorous theoretical foundation for PRL, from the motivation to the reward formulation, forming a complete optimization framework.
+Note that the purpose of providing process supervision during the reasoning process is mainly for better guidance on intermediate steps and eliciting more diverse reasoning paths, as all reasoning trajectories should lead to the same process reward under the optimal configuration. While currently PRL has demonstrated the potential to improve both the reasoning quality and boundary, we could further make a step towards encouraging the exploration of LLMs’ reasoning by adding an extra exploration term. We leave the exploration in such a direction for future research.
+Limitations
+The current experiment results are mainly based on relatively small-scale open-source models, Qwen 2.5 Math (Yang et al., 2024a) and Llama-3.2 (Dubey et al., 2024) with 1B to 7B parameters due to computation resources limitation, while scaling up to larger models with 10B ~100B parameters remains to be further explored. In addition, though our analysis for PRM is based on an entropy-regalized RL objective, there may be different ways to derive the process reward formulation, leading to different reward shaping. The way of splitting the intermediate steps could also be tuned, by fixing the step length, partitioning by newline symbols, or decided by another model. We hope these could shed light on future research.
+Acknowledgments
+This research used the DeltaAI (NSF OAC-2320345) and Delta (NSF OAC-2005572) advanced
+computing and data resources, supported by the National Science Foundation and the State of Illinois.
+References
+Arora and Zanette (2025)
+D. Arora and A. Zanette
+Training language models to reason efficiently.
+arXiv preprint arXiv:2502.04463.
+Cited by: §2.
+Bai et al. (2022)
+Y. Bai, A. Jones, K. Ndousse, A. Askell, A. Chen, N. DasSarma, D. Drain, S. Fort, D. Ganguli, T. Henighan, et al.
+Training a helpful and harmless assistant with reinforcement learning from human feedback.
+arXiv preprint arXiv:2204.05862.
+Cited by: §2.
+Chen et al. (2025a)
+M. Chen, T. Li, H. Sun, Y. Zhou, C. Zhu, H. Wang, J. Z. Pan, W. Zhang, H. Chen, F. Yang, Z. Zhou, and W. Chen
+ReSearch: learning to reason with search for llms via reinforcement learning.
+External Links: 2503.19470,
+Link
+Cited by: §2.
+Chen et al. (2025b)
+X. Chen, J. Lu, M. Kim, D. Zhang, J. Tang, A. Piché, N. Gontier, Y. Bengio, and E. Kamalloo
+Self-evolving curriculum for llm reasoning.
+arXiv preprint arXiv:2505.14970.
+Cited by: §2.
+Chen et al. (2024)
+Z. Chen, Z. Zhao, Z. Zhu, R. Zhang, X. Li, B. Raj, and H. Yao
+Autoprm: automating procedural supervision for multi-step reasoning via controllable question decomposition.
+arXiv preprint arXiv:2402.11452.
+Cited by: §2.
+Cui et al. (2025)
+G. Cui, L. Yuan, Z. Wang, H. Wang, Y. Zhang, J. Chen, W. Li, B. He, Y. Fan, T. Yu, et al.
+Process reinforcement through implicit rewards.
+arXiv preprint arXiv:2502.01456.
+Cited by: §2.
+Dong et al. (2023)
+H. Dong, W. Xiong, D. Goyal, Y. Zhang, W. Chow, R. Pan, S. Diao, J. Zhang, K. Shum, and T. Zhang
+Raft: reward ranked finetuning for generative foundation model alignment.
+arXiv preprint arXiv:2304.06767.
+Cited by: 3rd item.
+Dubey et al. (2024)
+A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Yang, A. Fan, et al.
+The llama 3 herd of models.
+arXiv e-prints, pp. arXiv–2407.
+Cited by: Limitations.
+Ferrag et al. (2025)
+M. A. Ferrag, N. Tihanyi, and M. Debbah
+From llm reasoning to autonomous ai agents: a comprehensive review.
+arXiv preprint arXiv:2504.19678.
+Cited by: §2.
+Fu et al. (2025)
+W. Fu, J. Gao, X. Shen, C. Zhu, Z. Mei, C. He, S. Xu, G. Wei, J. Mei, J. Wang, T. Yang, B. Yuan, and Y. Wu
+AReaL: a large-scale asynchronous reinforcement learning system for language reasoning.
+External Links: 2505.24298,
+Link
+Cited by: §2.
+Guo et al. (2025)
+D. Guo, D. Yang, H. Zhang, J. Song, R. Zhang, R. Xu, Q. Zhu, S. Ma, P. Wang, X. Bi, et al.
+Deepseek-r1: incentivizing reasoning capability in llms via reinforcement learning.
+arXiv preprint arXiv:2501.12948.
+Cited by: 3rd item,
+§1,
+§2.
+Hao et al. (2024)
+S. Hao, S. Sukhbaatar, D. Su, X. Li, Z. Hu, J. Weston, and Y. Tian
+Training large language models to reason in a continuous latent space.
+arXiv preprint arXiv:2412.06769.
+Cited by: §2.
+He et al. (2024)
+C. He, R. Luo, Y. Bai, S. Hu, Z. Thai, J. Shen, J. Hu, X. Han, Y. Huang, Y. Zhang, et al.
+Olympiadbench: a challenging benchmark for promoting agi with olympiad-level bilingual multimodal scientific problems.
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+pp. 3828–3850.
+Cited by: Appendix C,
+§4.1.
+Hendrycks et al. (2021)
+D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt
+Measuring mathematical problem solving with the math dataset.
+NeurIPS.
+Cited by: §4.1.
+Hu et al. (2024)
+J. Hu, X. Wu, Z. Zhu, Xianyu, W. Wang, D. Zhang, and Y. Cao
+OpenRLHF: an easy-to-use, scalable and high-performance rlhf framework.
+arXiv preprint arXiv:2405.11143.
+Cited by: §2.
+Jaech et al. (2024)
+A. Jaech, A. Kalai, A. Lerer, A. Richardson, A. El-Kishky, A. Low, A. Helyar, A. Madry, A. Beutel, A. Carney, et al.
+Openai o1 system card.
+arXiv preprint arXiv:2412.16720.
+Cited by: §2.
+Jin et al. (2025)
+B. Jin, H. Zeng, Z. Yue, J. Yoon, S. Arik, D. Wang, H. Zamani, and J. Han
+Search-r1: training llms to reason and leverage search engines with reinforcement learning.
+arXiv preprint arXiv:2503.09516.
+Cited by: §2.
+Khalifa et al. (2025)
+M. Khalifa, R. Agarwal, L. Logeswaran, J. Kim, H. Peng, M. Lee, H. Lee, and L. Wang
+Process reward models that think.
+arXiv preprint arXiv:2504.16828.
+Cited by: §2.
+Kumar et al. (2025)
+K. Kumar, T. Ashraf, O. Thawakar, R. M. Anwer, H. Cholakkal, M. Shah, M. Yang, P. H. Torr, F. S. Khan, and S. Khan
+Llm post-training: a deep dive into reasoning large language models.
+arXiv preprint arXiv:2502.21321.
+Cited by: §2.
+Lewkowycz et al. (2022)
+A. Lewkowycz, A. Andreassen, D. Dohan, E. Dyer, H. Michalewski, V. Ramasesh, A. Slone, C. Anil, I. Schlag, T. Gutman-Solo, et al.
+Solving quantitative reasoning problems with language models.
+Advances in neural information processing systems 35, pp. 3843–3857.
+Cited by: §4.1.
+Li et al. (2024)
+J. Li, E. Beeching, L. Tunstall, B. Lipkin, R. Soletskyi, S. Huang, K. Rasul, L. Yu, A. Q. Jiang, Z. Shen, et al.
+Numinamath: the largest public dataset in ai4maths with 860k pairs of competition math problems and solutions.
+Hugging Face repository 13 (9), pp. 9.
+Cited by: §4.1.
+Liu et al. (2025)
+M. Liu, S. Diao, X. Lu, J. Hu, X. Dong, Y. Choi, J. Kautz, and Y. Dong
+Prorl: prolonged reinforcement learning expands reasoning boundaries in large language models.
+arXiv preprint arXiv:2505.24864.
+Cited by: §2.
+Luo et al. (2024)
+L. Luo, Y. Liu, R. Liu, S. Phatale, M. Guo, H. Lara, Y. Li, L. Shu, Y. Zhu, L. Meng, et al.
+Improve mathematical reasoning in language models by automated process supervision.
+arXiv preprint arXiv:2406.06592.
+Cited by: §1.
+Luo et al. (2025)
+R. Luo, L. Wang, W. He, and X. Xia
+GUI-r1: a generalist r1-style vision-language action model for gui agents.
+arXiv preprint arXiv:2504.10458.
+Cited by: §2.
+Ouyang et al. (2022)
+L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray, et al.
+Training language models to follow instructions with human feedback.
+Advances in neural information processing systems 35, pp. 27730–27744.
+Cited by: §2.
+Park et al. (2025)
+S. Park, X. Liu, Y. Gong, and E. Choi
+Ensembling large language models with process reward-guided tree search for better complex reasoning.
+In Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers),
+pp. 10256–10277.
+Cited by: §2.
+Rafailov et al. (2023)
+R. Rafailov, A. Sharma, E. Mitchell, C. D. Manning, S. Ermon, and C. Finn
+Direct preference optimization: your language model is secretly a reward model.
+Advances in neural information processing systems 36, pp. 53728–53741.
+Cited by: §2.
+Ranaldi and Freitas (2024)
+L. Ranaldi and A. Freitas
+Self-refine instruction-tuning for aligning reasoning in language models.
+arXiv preprint arXiv:2405.00402.
+Cited by: §2.
+Schulman et al. (2017)
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+Proximal policy optimization algorithms.
+arXiv preprint arXiv:1707.06347.
+Cited by: §2,
+§3.3,
+§3.3.
+Shao et al. (2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. Li, Y. Wu, et al.
+Deepseekmath: pushing the limits of mathematical reasoning in open language models.
+arXiv preprint arXiv:2402.03300.
+Cited by: 3rd item,
+§2,
+§3.3.
+Sheng et al. (2024)
+G. Sheng, C. Zhang, Z. Ye, X. Wu, W. Zhang, R. Zhang, Y. Peng, H. Lin, and C. Wu
+HybridFlow: a flexible and efficient rlhf framework.
+arXiv preprint arXiv: 2409.19256.
+Cited by: §2,
+§4.1.
+Tian et al. (2025)
+S. Tian, R. Wang, H. Guo, P. Wu, Y. Dong, X. Wang, J. Yang, H. Zhang, H. Zhu, and Z. Liu
+Ego-r1: chain-of-tool-thought for ultra-long egocentric video reasoning.
+arXiv preprint arXiv:2506.13654.
+Cited by: §2.
+Wang et al. (2025)
+Z. Wang, K. Wang, Q. Wang, P. Zhang, L. Li, Z. Yang, X. Jin, K. Yu, M. N. Nguyen, L. Liu, E. Gottlieb, Y. Lu, K. Cho, J. Wu, L. Fei-Fei, L. Wang, Y. Choi, and M. Li
+RAGEN: understanding self-evolution in llm agents via multi-turn reinforcement learning.
+External Links: 2504.20073,
+Link
+Cited by: §2.
+Wei et al. (2022)
+J. Wei, X. Wang, D. Schuurmans, M. Bosma, F. Xia, E. Chi, Q. V. Le, D. Zhou, et al.
+Chain-of-thought prompting elicits reasoning in large language models.
+Advances in neural information processing systems 35, pp. 24824–24837.
+Cited by: §1,
+§2.
+Xiong et al. (2025)
+W. Xiong, J. Yao, Y. Xu, B. Pang, L. Wang, D. Sahoo, J. Li, N. Jiang, T. Zhang, C. Xiong, et al.
+A minimalist approach to llm reasoning: from rejection sampling to reinforce.
+arXiv preprint arXiv:2504.11343.
+Cited by: 3rd item.
+Xu et al. (2025a)
+F. Xu, Q. Hao, Z. Zong, J. Wang, Y. Zhang, J. Wang, X. Lan, J. Gong, T. Ouyang, F. Meng, et al.
+Towards large reasoning models: a survey of reinforced reasoning with large language models.
+arXiv preprint arXiv:2501.09686.
+Cited by: §1.
+Xu et al. (2025b)
+S. Xu, W. Xie, L. Zhao, and P. He
+Chain of draft: thinking faster by writing less.
+arXiv preprint arXiv:2502.18600.
+Cited by: §2.
+Yang et al. (2024a)
+A. Yang, B. Zhang, B. Hui, B. Gao, B. Yu, C. Li, D. Liu, J. Tu, J. Zhou, J. Lin, et al.
+Qwen2. 5-math technical report: toward mathematical expert model via self-improvement.
+arXiv preprint arXiv:2409.12122.
+Cited by: §1,
+Limitations.
+Yang et al. (2024b)
+G. Yang, Y. Zhou, X. Chen, X. Zhang, T. Y. Zhuo, and T. Chen
+Chain-of-thought in neural code generation: from and for lightweight language models.
+IEEE Transactions on Software Engineering.
+Cited by: §2.
+Yang et al. (2024c)
+J. Yang, C. E. Jimenez, A. Wettig, K. Lieret, S. Yao, K. Narasimhan, and O. Press
+Swe-agent: agent-computer interfaces enable automated software engineering.
+Advances in Neural Information Processing Systems 37, pp. 50528–50652.
+Cited by: §2.
+Yao et al. (2025)
+J. Yao, Y. Hao, H. Zhang, H. Dong, W. Xiong, N. Jiang, and T. Zhang
+Optimizing chain-of-thought reasoners via gradient variance minimization in rejection sampling and rl.
+arXiv preprint arXiv:2505.02391.
+Cited by: §2.
+Yao et al. (2023)
+S. Yao, D. Yu, J. Zhao, I. Shafran, T. Griffiths, Y. Cao, and K. Narasimhan
+Tree of thoughts: deliberate problem solving with large language models.
+Advances in neural information processing systems 36, pp. 11809–11822.
+Cited by: §2.
+Yao (2025)
+S. Yao
+The second half.
+Note: https://ysymyth.github.io/The-Second-Half/
+Cited by: §2.
+Yu et al. (2025)
+Q. Yu, Z. Zhang, R. Zhu, Y. Yuan, X. Zuo, Y. Yue, W. Dai, T. Fan, G. Liu, L. Liu, et al.
+Dapo: an open-source llm reinforcement learning system at scale.
+arXiv preprint arXiv:2503.14476.
+Cited by: §2,
+§3.3.
+Zhang et al. (2024a)
+D. Zhang, S. Zhoubian, Z. Hu, Y. Yue, Y. Dong, and J. Tang
+ReST-mcts*: llm self-training via process reward guided tree search.
+arXiv preprint arXiv:2406.03816.
+Cited by: §2.
+Zhang et al. (2025)
+E. Zhang, X. Yan, W. Lin, T. Zhang, and L. Qianchun
+Learning like humans: advancing llm reasoning capabilities via adaptive difficulty curriculum learning and expert-guided self-reformulation.
+In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing,
+pp. 6630–6644.
+Cited by: §2.
+Zhang et al. (2024b)
+H. Zhang, P. Wang, S. Diao, Y. Lin, R. Pan, H. Dong, D. Zhang, P. Molchanov, and T. Zhang
+Entropy-regularized process reward model.
+arXiv preprint arXiv:2412.11006.
+Cited by: §2.
+Zheng et al. (2025)
+C. Zheng, S. Liu, M. Li, X. Chen, B. Yu, C. Gao, K. Dang, Y. Liu, R. Men, A. Yang, et al.
+Group sequence policy optimization.
+arXiv preprint arXiv:2507.18071.
+Cited by: §2.
+Zhou et al. (2022)
+H. Zhou, A. Nova, H. Larochelle, A. Courville, B. Neyshabur, and H. Sedghi
+Teaching algorithmic reasoning via in-context learning.
+arXiv preprint arXiv:2211.09066.
+Cited by: §2.
+Zhu et al. (2025)
+Z. Zhu, C. Xie, X. Lv, and slime Contributors
+Slime: an llm post-training framework for rl scaling.
+Note: https://github.com/THUDM/slimeGitHub repository. Corresponding author: Xin Lv
+Cited by: §2.
+Appendix B More Experiments Details
+We present the hyperparameters used in our experiments in Table 6. We mainly use Nvidia H100 GPUs as the computation resources, and the total training time for one experiment run is about 15 hours on a 4 ×\times H100 server.
+Parameter
+Value
+GRPO group size nn
+55
+batch size
+128
+mini batch size
+256
+max prompt length
+1024
+max response length
+3072
+learning rate
+1​e−61e-6
+KL loss coefficient
+0.0
+entropy loss coefficient
+0.0
+PRL step length
+256
+PRL η\eta
+100~300
+Table 6: Full hyperparameters list.
+Appendix C Case Study
+We provide a concrete example for a problem in C from Olympiad Bench (He et al., 2024), where the base model finetuned with GRPO does not answer it correctly in all rollouts, while another one finetuned with PRL makes it correct successfully.
+C.1: Case Study
+Problem
+A cubic sequence is a sequence of integers given by an=n3+b​n2+c​n+da_{n}=n^{3}+bn^{2}+cn+d, where b,cb,c and dd are integer constants and nn ranges over all integers, including negative integers.
+Determine the possible values of a2015⋅a2016a_{2015}\cdot a_{2016} for a cubic sequence satisfying the condition in part (a).
+Wrong answer 1
+Given a cubic sequence an=n3+b​n2+c​n+da_{n}=n^{3}+bn^{2}+cn+d, we need to find the possible values of a2015⋅a2016a_{2015}\cdot a_{2016}.
+First, let’s define a2015a_{2015} and a2016a_{2016} in terms of the constants b,c,b,c, and dd:
+a2015=20153+b⋅20152+c⋅2015+da_{2015}=2015^{3}+b\cdot 2015^{2}+c\cdot 2015+d
+a2016=20163+b⋅20162+c⋅2016+da_{2016}=2016^{3}+b\cdot 2016^{2}+c\cdot 2016+d
+Now, let’s compute their product:
+a2015⋅a2016=(20153+b⋅20152+c⋅2015+d)⋅(20163+b⋅20162+c⋅2016+d)a_{2015}\cdot a_{2016}=(2015^{3}+b\cdot 2015^{2}+c\cdot 2015+d)\cdot(2016^{3}+b\cdot 2016^{2}+c\cdot 2016+d)
+This product is a bit complex, but we can simplify it by expanding the expression and grouping terms.
+a2015⋅a2016=(20153+b⋅20152+c⋅2015+d)​(20163+b⋅20162+c⋅2016+d)a_{2015}\cdot a_{2016}=(2015^{3}+b\cdot 2015^{2}+c\cdot 2015+d)(2016^{3}+b\cdot 2016^{2}+c\cdot 2016+d)
+=(20153+b⋅20152+c⋅2015+d)​(20163+b⋅20162+c⋅2016+d)=(2015^{3}+b\cdot 2015^{2}+c\cdot 2015+d)(2016^{3}+b\cdot 2016^{2}+c\cdot 2016+d)
+=(20153⋅20163+20153⋅b⋅20162+20153⋅c⋅2016+20153⋅d+b⋅20152⋅20163CLOSE\displaystyle=(2015^{3}\cdot 2016^{3}+2015^{3}\cdot b\cdot 2016^{2}+2015^{3}\cdot c\cdot 2016+2015^{3}\cdot d+b\cdot 2015^{2}\cdot 2016^{3}
++b2⋅20152⋅20162+b⋅20152⋅c⋅2016+b⋅20152⋅d+c⋅2015⋅20163+c⋅b⋅20164\displaystyle+b^{2}\cdot 2015^{2}\cdot 2016^{2}+b\cdot 2015^{2}\cdot c\cdot 2016+b\cdot 2015^{2}\cdot d+c\cdot 2015\cdot 2016^{3}+c\cdot b\cdot 2016^{4}
++c⋅2015⋅c⋅2016+c⋅2015⋅d+d⋅20163+d⋅b⋅20162+d⋅c⋅2016+d2)\displaystyle+c\cdot 2015\cdot c\cdot 2016+c\cdot 2015\cdot d+d\cdot 2016^{3}+d\cdot b\cdot 2016^{2}+d\cdot c\cdot 2016+d^{2})
+This expansion is quite complex, so let’s simplify by noting that the leading term of the product is 20153⋅201632015^{3}\cdot 2016^{3}, which is a much larger term. The other terms involve lower powers of b,c,b,c, and dd, which are much smaller than 20153⋅201632015^{3}\cdot 2016^{3}.
+Since we are asked to find the possible values of a2015⋅a2016a_{2015}\cdot a_{2016} under the condition given, we can focus on the leading terms and simplify the expression.
+The leading term of the expanded product is 20153⋅201632015^{3}\cdot 2016^{3}. Since the sequence involves integer constants and nn ranges over all integers, the product will be an integer.
+Therefore, the possible values of a2015⋅a2016a_{2015}\cdot a_{2016} are determined by the leading term 20153⋅201632015^{3}\cdot 2016^{3}, and since the other terms are much smaller compared to this leading term, they do not affect the overall magnitude.
+The final answer is:
+20153⋅20163\boxed{2015^{3}\cdot 2016^{3}}
+Wrong answer 2
+Given that an=n3+b​n2+c​n+da_{n}=n^{3}+bn^{2}+cn+d is a cubic sequence, we need to determine the possible values of a2015⋅a2016a_{2015}\cdot a_{2016}. First, let’s express a2015a_{2015} and a2016a_{2016} in terms of nn:
+a2015=20153+b⋅20152+c⋅2015+da_{2015}=2015^{3}+b\cdot 2015^{2}+c\cdot 2015+d
+a2016=20163+b⋅20162+c⋅2016+da_{2016}=2016^{3}+b\cdot 2016^{2}+c\cdot 2016+d
+Now we need to find the product a2015⋅a2016a_{2015}\cdot a_{2016}. To simplify the expressions, let’s introduce the following variables:
+A=20153+b⋅20152+c⋅2015+dA=2015^{3}+b\cdot 2015^{2}+c\cdot 2015+d
+B=20163+b⋅20162+c⋅2016+dB=2016^{3}+b\cdot 2016^{2}+c\cdot 2016+d
+We can rewrite BB in a more manageable form by noting that 2016=2015+12016=2015+1:
+B=(2015+1)3+b⋅(2015+1)2+c⋅(2015+1)+dB=(2015+1)^{3}+b\cdot(2015+1)^{2}+c\cdot(2015+1)+d
+B=20153+3⋅20152+3⋅2015+1+b⋅(20152+2⋅2015+1)+c⋅(2015+1)+dB=2015^{3}+3\cdot 2015^{2}+3\cdot 2015+1+b\cdot(2015^{2}+2\cdot 2015+1)+c\cdot(2015+1)+d
+B=20153+b⋅20152+c⋅2015+d+3⋅20152+3⋅2015+1+b⋅20152+2⋅b⋅2015+b+c⋅2015+c+dB=2015^{3}+b\cdot 2015^{2}+c\cdot 2015+d+3\cdot 2015^{2}+3\cdot 2015+1+b\cdot 2015^{2}+2\cdot b\cdot 2015+b+c\cdot 2015+c+d
+B=A+3⋅20152+3⋅2015+1+2⋅b⋅2015+b+c+dB=A+3\cdot 2015^{2}+3\cdot 2015+1+2\cdot b\cdot 2015+b+c+d
+B=A+2⋅b⋅2015+3⋅20152+b+3⋅2015+c+d+1B=A+2\cdot b\cdot 2015+3\cdot 2015^{2}+b+3\cdot 2015+c+d+1
+Since A=20153+b⋅20152+c⋅2015+dA=2015^{3}+b\cdot 2015^{2}+c\cdot 2015+d, we can substitute AA into the above equation:
+B=A+2⋅b⋅2015+3⋅20152+b+3⋅2015+c+d+1B=A+2\cdot b\cdot 2015+3\cdot 2015^{2}+b+3\cdot 2015+c+d+1
+B=A+2⋅b⋅2015+3⋅20152+b+3⋅2015+c+d+1B=A+2\cdot b\cdot 2015+3\cdot 2015^{2}+b+3\cdot 2015+c+d+1
+B=A+2⋅b⋅2015+3⋅20152+b+3⋅2015+c+d+1B=A+2\cdot b\cdot 2015+3\cdot 2015^{2}+b+3\cdot 2015+c+d+1
+Finally, we need to find the product a2015⋅a2016=A⋅Ba_{2015}\cdot a_{2016}=A\cdot B:
+A⋅B=(A)⋅(A+2⋅b⋅2015+3⋅20152+b+3⋅2015+c+d+1)A\cdot B=(A)\cdot(A+2\cdot b\cdot 2015+3\cdot 2015^{2}+b+3\cdot 2015+c+d+1)
+A⋅B=A2+A⋅(2⋅b⋅2015+3⋅20152+b+3⋅2015+c+d+1)A\cdot B=A^{2}+A\cdot(2\cdot b\cdot 2015+3\cdot 2015^{2}+b+3\cdot 2015+c+d+1)
+Since A⋅BA\cdot B can take any value depending on the specific values of b,c,b,c, and dd, and AA can be any integer, the possible values of A⋅BA\cdot B can be any integer. Therefore, the possible values of a2015⋅a2016a_{2015}\cdot a_{2016} are all integers.
+The final answer is All integers\boxed{\text{All integers}}.
+Correct answer
+To solve this problem, we need to understand the concept of the "weight" of a binary number. The weight of a binary number is the count of 1’s in its binary representation. For example, the binary number 1011 has a weight of 3 because it has three 1’s.
+We are asked to find the difference between the number of positive integers at most 220172^{2017} with even weight and the number of positive integers at most 220172^{2017} with odd weight.
+First, observe that any positive integer nn at most 220172^{2017} can be represented in binary with at most 2017 bits. The total number of such binary numbers is 220172^{2017}, but since we are only considering positive integers, there are 22017−12^{2017}-1 such numbers. (We subtract 1 because 0 does not have a weight.)
+Now, consider the function that counts the number of 1’s in the binary representation of a number. This function can be thought of as a random walk where each bit flip changes the weight by ±1\pm 1. The key insight here is that for any given nn, the number of 1’s in its binary representation (i.e., its weight) is equally likely to be either even or odd, because each bit flip changes the weight by ±1\pm 1 and there are an equal number of even and odd steps.
+Therefore, out of the 22017−12^{2017}-1 numbers, approximately half will have even weight and half will have odd weight. Hence, the number of positive integers at most 220172^{2017} with even weight is the same as the number of positive integers with odd weight.
+So, the difference between these two counts is 0.
+The final answer is:
+0\boxed{0}
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

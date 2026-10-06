@@ -1,0 +1,9983 @@
+Actor-Curator: Co-adaptive Curriculum Learning via Policy-Improvement Bandits for Scalable RL Post-Training
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Problem formulation
+2.1
+RL post-training setting
+2.2
+Training dynamics
+2.3
+Curriculum learning as problem selection
+2.4
+Challenges of adaptive problem selection
+3
+Method
+3.1
+Overview of the training loop
+3.2
+Policy improvement as the curator learning signal
+Performance improvement identity.
+Per-problem utility.
+3.3
+Tabular OSMD formulation
+Utility estimation and OSMD bandit feedback.
+OSMD update
+3.4
+Function approximation for curator training
+OSMD surrogate objective.
+3.5
+Two-stage sampling
+Utility estimation.
+Regret guarantee.
+3.6
+Proximal curator optimization
+4
+Experimental results
+Benchmarks.
+Experimental setup.
+4.1
+Main results
+Baselines.
+Performance.
+Efficiency.
+Training dynamics.
+4.2
+Ablations
+Core components.
+Actor update methods.
+Additional ablation.
+4.3
+Interpretation and analysis
+Curriculum progression.
+Impact on actor updates.
+5
+Related work
+RLVR.
+Curriculum learning for RL.
+Curriculum learning for LLMs.
+6
+Limitations
+7
+Conclusion
+References
+A
+Baselines
+A.1
+Group-Based Policy Optimization
+GRPO.
+GSPO.
+A.2
+Mean Absolute Advantage as Curriculum Reward
+A.3
+Value-Based Curation
+SEC.
+Comparison to Actor-Curator.
+B
+Policy improvement estimation
+B.1
+Single-stage case
+Proof:
+B.2
+Two-stage case
+Proof:
+C
+Idealized OSMD algorithm
+C.1
+Setup
+D
+Regret Analysis
+D.1
+Time-Frozen Comparator
+Proof:
+D.2
+Moment Lemmas
+Proof:
+Proof:
+D.3
+One-Step OMD Bound
+Proof:
+D.4
+Reduction to Blockwise Fixed Arm
+Proof:
+Proof:
+D.5
+Proof of Theorem
+E
+Performance improvement contribution of each problem
+Example: tabular REINFORCE.
+Other tabular methods.
+Discussion: function approximation.
+F
+Limitations
+G
+Experimental setup
+G.1
+Hyper-parameters
+Candidate and training batch sizes.
+Rollouts per problem.
+Curator dormant and warm-up steps.
+Sampling prior.
+Proximal curator clipping.
+G.2
+Hardware
+H
+Additional analysis
+H.1
+Overhead
+I
+Additional Ablation
+Candidate batch size
+|
+𝒳
+~
+|
+|\tilde{\mathcal{X}}|
+.
+J
+Main results (extended)
+Extended performance comparison.
+Training dynamics and stability.
+Model-agnostic behavior.
+Training efficiency.
+License: CC BY 4.0
+arXiv:2602.20532v1 [cs.LG] 24 Feb 2026
+Actor-Curator
+: Co-adaptive Curriculum Learning via Policy-Improvement Bandits for Scalable RL Post-Training
+Zhengyao Gu
+Jonathan Light
+Raul Astudillo 
+Ziyu Ye 
+Langzhou He 
+Henry Peng Zou 
+Wei Cheng 
+Santiago Paternain 
+Philip S. Yu 
+Yisong Yue
+Affiliation:
+Affiliation:
+University of Illinois Chicago  Caltech  RPI  MBZUAI  University of Chicago  NEC Laboratories America
+*
+Equal contribution
+🖂
+Corresponding author:
+jonathan.li.connect@gmail.com
+Abstract
+Post-training large foundation models with reinforcement learning typically involves selecting training problems from massive and heterogeneous datasets, where the choice of data has a critical impact on training stability, sample efficiency, and final performance.
+In this work, we propose
+Actor-Curator
+, a scalable and fully automated framework for reinforcement learning post-training of large language models (LLMs) that learns to adaptively curate training problems.
+Actor-Curator
+trains a neural
+curator
+that dynamically selects problems from large problem banks by directly optimizing for expected policy performance improvement.
+We formulate problem selection as a non-stationary stochastic bandit problem, derive a principled loss function based on online stochastic mirror descent, and establish regret guarantees under partial feedback.
+Empirically,
+Actor-Curator
+consistently outperforms uniform sampling and strong learning-based baselines across a wide range of challenging reasoning benchmarks, demonstrating improved training stability and efficiency.
+Notably, it achieves relative gains of
+28.6% on AIME2024
+and
+30.5% on ARC-1D
+over the strongest baseline and up to
+80% speedup
+.
+These results suggest that
+Actor-Curator
+provides a practical and principled approach to scalable, adaptive curriculum learning for LLM post-training.
+1
+Introduction
+Reinforcement learning (RL) has become a central paradigm for post-training foundation models, enabling improvements in reasoning, alignment, and task-specific performance beyond supervised fine-tuning
+(
+Shao et al., 2024
+)
+. In this setting, the choice, ordering, and frequency of training problems play a critical role in determining convergence speed, training stability, and final generalization performance, motivating the use of curriculum learning to adaptively select training data
+(
+Bengio et al., 2009
+;
+Tzannetos et al., 2023
+;
+Parashar et al., 2025
+)
+. However, applying curriculum learning to modern foundation model post-training is challenging: post-training datasets are
+large, diverse, and continuously evolving
+, while actor updates induce
+complex, non-stationary training dynamics
+. Traditional curriculum learning approaches—based on manual difficulty annotations, hand-designed problem buckets, or tabular per-problem statistics
+(
+Asada et al., 1996
+;
+Wu and Tian, 2017
+;
+Yengera et al., 2021
+)
+—do not scale to such settings, fail to generalize to unseen problems, and are brittle when problem utility changes as the policy improves. Moreover, effective curricula must balance
+exploration
+of under-sampled problems with
+exploitation
+of those that most improve the current policy, further complicating scalable curriculum design.
+In this work, we propose
+Actor-Curator
+(
+AC
+), a scalable and fully automated problem curation framework for RL post-training that jointly trains an actor and a curator in an online, on-policy manner. At the core of
+Actor-Curator
+is a learned
+curator
+that adaptively selects training problems at each iteration and function-approximates over large, heterogeneous datasets. The curator is trained to directly maximize a
+policy improvement objective
+, assigning higher probability to problems expected to induce the greatest improvement in the actor’s performance. Unlike prior curricula that rely on heuristic signals such as absolute mean advantage or difficulty proxies
+(
+Chen et al., 2025a
+;
+Gao et al., 2025
+;
+Wang et al., 2025
+)
+, our objective is derived from expected policy improvement, providing a principled and actor-aware learning signal. As a result,
+Actor-Curator
+naturally
+adapts to evolving actor training dynamics
+and allows it to be seamlessly combined with a wide range of RL algorithms.
+Figure 1:
+Co-adaptive online training loop of
+Actor-Curator
+. At each RL step, a learned curator adaptively selects problems from a large problem bank instead of uniform sampling. The actor is updated on these problems, after which a bandit-style reward based on post-update policy improvement trains the curator. As the actor improves, the curator adapts to prioritize problems that yield the greatest expected performance gains.
+To optimize the curator, we formalize problem selection as a
+non-stationary stochastic bandit
+problem with partial feedback. The curator is trained online and on-policy alongside the actor using
+online stochastic mirror descent
+(OSMD)
+Lattimore and Szepesvari (2017)
+, which explicitly balances exploration and exploitation under non-stationarity. This differs from prior approaches that primarily rely on regression-style objectives and do not explicitly model the bandit structure or
+partial observability
+inherent in adaptive data selection
+(
+Tzannetos et al., 2023
+;
+Gao et al., 2025
+)
+.
+To scale beyond tabular formulations, we derive a function-approximation variant of OSMD that trains the curator as a neural network, enabling generalization across problems and robustness to large, dynamic datasets. Finally, we introduce a PPO-style proximal clipping objective to stabilize curator optimization in practice.
+Empirically,
+Actor-Curator
+enables effective curriculum learning at scale
+without human annotations, difficulty labels, or manual dataset structuring
+. Across diverse reasoning benchmarks—
+Countdown, Zebra, MATH, AIME, and ARC-1D
+—it consistently outperforms uniform sampling and strong baselines, achieving up to
+30%
+higher peak performance on ARC-1D,
+28%
+on AIME24, and up to
+80%
+faster convergence to comparable performance.
+In summary, our main contributions are:
+•
+Automated problem curation framework for RL post-training.
+We introduce
+Actor-Curator
+, a scalable framework that learns a neural curator to adaptively select training problems in an online, on-policy manner, enabling curriculum learning over large, heterogeneous datasets without human annotations or manual structuring.
+•
+A policy-improvement–driven bandit formulation of data curation.
+We cast problem selection as a non-stationary stochastic bandit problem and derive a principled learning signal grounded in policy improvement theory, optimized via an OSMD-based bandit objective with regret guarantees under partial feedback.
+2
+Problem formulation
+We study problem curation for reinforcement learning (RL) post-training of large
+language models (LLMs), where training is performed over large and heterogeneous
+collections of problems.
+Our goal is to design an adaptive data selection strategy that determines which training
+problems an LLM should train on at each iteration in order to maximize overall post-training
+performance.
+2.1
+RL post-training setting
+Let
+𝒳
+=
+{
+𝒙
+(
+i
+)
+}
+i
+=
+1
+|
+𝒳
+|
+\mathcal{X}=\{\boldsymbol{x}^{(i)}\}_{i=1}^{|\mathcal{X}|}
+denote a large collection
+of training problems, and let
+p
+𝒳
+p_{\mathcal{X}}
+be a fixed evaluation distribution over
+𝒳
+\mathcal{X}
+.
+Let
+π
+\pi
+denote a pretrained autoregressive language model, which induces a conditional distribution
+𝒚
+∼
+π
+(
+⋅
+∣
+𝒙
+)
+\boldsymbol{y}\sim\pi(\cdot\mid\boldsymbol{x})
+over solutions for each problem
+𝒙
+\boldsymbol{x}
+.
+A reward model
+R
+:
+𝒴
+×
+𝒳
+→
+[
+0
+,
+1
+]
+R:\mathcal{Y}\times\mathcal{X}\rightarrow[0,1]
+assigns a scalar score to each solution.
+The post-training objective is to maximize expected reward under the evaluation distribution:
+J
+(
+π
+)
+≜
+𝔼
+𝒙
+∼
+p
+𝒳
+,
+𝒚
+∼
+π
+(
+⋅
+∣
+𝒙
+)
+[
+R
+(
+𝒚
+∣
+𝒙
+)
+]
+.
+J(\pi)\;\triangleq\;\mathbb{E}_{\boldsymbol{x}\sim p_{\mathcal{X}},\,\boldsymbol{y}\sim\pi(\cdot\mid\boldsymbol{x})}\bigl[R(\boldsymbol{y}\mid\boldsymbol{x})\bigr].
+(1)
+In this work, the reinforcement learning algorithm, reward model, and rollout procedure
+are fixed.
+Our focus is on how training problems are selected across iterations.
+2.2
+Training dynamics
+Training proceeds in iterations.
+At iteration
+t
+t
+, a
+curator
+selects a subset of training problems
+𝒳
+t
+⊂
+𝒳
+\mathcal{X}^{t}\subset\mathcal{X}
+.
+Given this selection, the
+actor
+π
+t
+\pi^{t}
+is rolled out on each
+𝒙
+∈
+𝒳
+t
+\boldsymbol{x}\in\mathcal{X}^{t}
+to produce solutions and corresponding rewards
+𝒴
+𝒙
+t
+≜
+{
+𝒚
+(
+j
+)
+∼
+π
+t
+(
+⋅
+∣
+𝒙
+)
+}
+j
+=
+1
+|
+𝒴
+𝒙
+|
+,
+ℛ
+𝒙
+t
+≜
+{
+R
+(
+𝒚
+(
+j
+)
+∣
+𝒙
+)
+}
+j
+=
+1
+|
+𝒴
+𝒙
+|
+.
+\mathcal{Y}_{\boldsymbol{x}}^{t}\triangleq\{\boldsymbol{y}^{(j)}\sim\pi^{t}(\cdot\mid\boldsymbol{x})\}_{j=1}^{|\mathcal{Y}_{\boldsymbol{x}}|},\qquad\mathcal{R}_{\boldsymbol{x}}^{t}\triangleq\{R(\boldsymbol{y}^{(j)}\mid\boldsymbol{x})\}_{j=1}^{|\mathcal{Y}_{\boldsymbol{x}}|}.
+These trajectories form the dataset
+𝒟
+t
+≜
+{
+(
+𝒙
+,
+𝒴
+𝒙
+t
+,
+ℛ
+𝒙
+t
+)
+∣
+𝒙
+∈
+𝒳
+t
+}
+,
+π
+t
++
+1
+←
+𝒜
+⁡
+(
+π
+t
+,
+𝒟
+t
+)
+.
+\mathcal{D}^{t}\triangleq\bigl\{(\boldsymbol{x},\mathcal{Y}_{\boldsymbol{x}}^{t},\mathcal{R}_{\boldsymbol{x}}^{t})\mid\boldsymbol{x}\in\mathcal{X}^{t}\bigr\},\qquad\pi^{t+1}\leftarrow\mathcal{A}(\pi^{t},\mathcal{D}^{t}).
+(2)
+Here
+𝒜
+\mathcal{A}
+may correspond to any standard post-training algorithm
+(e.g., GRPO
+(
+Shao et al., 2024
+)
+or GSPO
+(
+Ahmadian et al., 2024
+)
+).
+We emphasize that the curator influences learning only indirectly through data selection,
+while the actor is solely responsible for policy optimization.
+2.3
+Curriculum learning as problem selection
+The central problem addressed in this work is how to choose the training subsets
+𝒳
+t
+\mathcal{X}^{t}
+across iterations.
+Different choices of
+𝒳
+t
+\mathcal{X}^{t}
+induce different actor updates and therefore
+different trajectories of policy improvement.
+We formalize curriculum learning as a sequential decision-making problem.
+At each iteration
+t
+t
+, a
+curator
+selects a subset of training problems
+𝒳
+t
+⊂
+𝒳
+\mathcal{X}^{t}\subset\mathcal{X}
+.
+This selection induces a performance improvement
+J
+⁡
+(
+π
+t
++
+1
+)
+−
+J
+⁡
+(
+π
+t
+)
+J(\pi^{t+1})-J(\pi^{t})
+.
+The curator’s objective is to maximize cumulative performance gains over training:
+max
+⁡
+∑
+t
+=
+1
+T
+{
+𝒳
+t
+}
+t
+=
+1
+T
+⁡
+(
+J
+⁡
+(
+π
+t
++
+1
+)
+−
+J
+⁡
+(
+π
+t
+)
+)
+.
+\max_{\{\mathcal{X}^{t}\}_{t=1}^{T}}\sum_{t=1}^{T}\bigl(J(\pi^{t+1})-J(\pi^{t})\bigr).
+(3)
+2.4
+Challenges of adaptive problem selection
+Effective curation is challenging for several reasons:
+•
+Large action space.
+The problem set
+𝒳
+\mathcal{X}
+is large and might change across time, making it
+infeasible to manually define curricula or track per-problem statistics.
+•
+Partial feedback.
+At each iteration, feedback is observed only for the
+problems selected for training; the utility of unselected problems remains unknown.
+•
+Non-stationarity.
+The usefulness of a problem depends on the current
+actor
+π
+t
+\pi^{t}
+and changes as the actor improves. It is also highly dependent on the actor update method.
+•
+Exploration–exploitation trade-off.
+The curator must balance exploring under-sampled problems whose utility is uncertain with exploiting problems that are known to drive policy improvement.
+These challenges motivate a curriculum learning approach that operates at scale, learns online from partial feedback, and explicitly accounts for the non-stationary relationship between training problems and policy improvement.
+3
+Method
+Figure 2:
+Single training iteration of
+Actor-Curator
+.
+At each iteration, a candidate set of problems is sampled from a fixed proposal distribution.
+The curator reweights this candidate set to select training problems for the actor.
+After the actor update, per-problem policy improvement is estimated using pre- and post-update policies.
+The curator observes bandit feedback only on selected problems and is updated using a PPO-style approximation of online stochastic mirror descent.
+We now present
+Actor-Curator
+, a curriculum learning framework that trains a learned
+curator
+to adaptively select training problems for RL post-training of large language models.
+The key idea is to treat problem selection as a non-stationary bandit problem and to train
+the curator to directly maximize
+policy improvement
+—the expected performance gain
+induced by each actor update—using online stochastic mirror descent (OSMD) under partial feedback.
+Algorithm 1
+Actor–Curator: Self-driven curriculum learning
+1:
+Input:
+dataset
+𝒳
+\mathcal{X}
+, pretrained LLM (actor)
+π
+0
+\pi^{0}
+, reward model
+R
+R
+, curator model
+C
+ϕ
+0
+C_{\phi^{0}}
+, proposal distribution
+q
+~
+\tilde{q}
+2:
+Hyperparameters:
+number of training steps
+T
+T
+, rollouts per problem
+|
+𝒴
+𝒙
+|
+|\mathcal{Y}_{\boldsymbol{x}}|
+, candidate batch size
+|
+𝒳
+~
+t
+|
+|\tilde{\mathcal{X}}^{t}|
+, training batch size
+|
+𝒳
+t
+|
+|\mathcal{X}^{t}|
+3:
+for
+t
+=
+0
+t=0
+to
+T
+−
+1
+T-1
+do
+⊳
+\triangleright
+Training steps
+4:
+𝒟
+t
+←
+∅
+\mathcal{D}^{t}\leftarrow\emptyset
+5:
+Proposal step:
+sample a candidate batch
+𝒳
+~
+t
+⊂
+𝒳
+\tilde{\mathcal{X}}^{t}\subset\mathcal{X}
+according to
+q
+~
+\tilde{q}
+6:
+Selection step:
+sample a training batch
+𝒳
+t
+⊂
+𝒳
+~
+t
+\mathcal{X}^{t}\subset\tilde{\mathcal{X}}^{t}
+using the curator
+C
+ϕ
+t
+C_{\phi^{t}}
+7:
+for
+each problem
+𝒙
+∈
+𝒳
+t
+\boldsymbol{x}\in\mathcal{X}^{t}
+do
+8:
+Roll out solutions
+𝒴
+𝒙
+t
+=
+{
+𝒚
+(
+j
+)
+∼
+π
+t
+(
+⋅
+∣
+𝒙
+)
+}
+j
+=
+1
+|
+𝒴
+𝒙
+|
+\mathcal{Y}^{t}_{\boldsymbol{x}}=\{\boldsymbol{y}^{(j)}\sim\pi^{t}(\cdot\mid\boldsymbol{x})\}_{j=1}^{|\mathcal{Y}_{\boldsymbol{x}}|}
+9:
+Compute rewards
+ℛ
+𝒙
+t
+=
+{
+R
+⁡
+(
+𝒚
+(
+j
+)
+∣
+𝒙
+)
+}
+j
+=
+1
+|
+𝒴
+𝒙
+|
+\mathcal{R}^{t}_{\boldsymbol{x}}=\{R(\boldsymbol{y}^{(j)}\mid\boldsymbol{x})\}_{j=1}^{|\mathcal{Y}_{\boldsymbol{x}}|}
+10:
+Add
+(
+𝒙
+,
+𝒴
+𝒙
+t
+,
+ℛ
+𝒙
+t
+)
+(\boldsymbol{x},\mathcal{Y}^{t}_{\boldsymbol{x}},\mathcal{R}^{t}_{\boldsymbol{x}})
+to
+𝒟
+t
+\mathcal{D}^{t}
+11:
+end
+for
+12:
+Actor update:
+π
+t
++
+1
+←
+𝒜
+⁡
+(
+π
+t
+,
+𝒟
+t
+)
+\pi^{t+1}\leftarrow\mathcal{A}(\pi^{t},\mathcal{D}^{t})
+13:
+Curator utilities:
+compute
+𝑼
+^
+t
+\hat{\boldsymbol{U}}^{t}
+using (
+10
+) (and
+π
+t
++
+1
+\pi^{t+1}
+)
+14:
+Curator update:
+ϕ
+t
++
+1
+←
+arg
+⁡
+min
+ϕ
+​
+ℒ
+cur
+​
+(
+ϕ
+)
+\phi^{t+1}\leftarrow\arg\min_{\phi}\ \mathcal{L}_{\text{cur}}(\phi)
+using (
+12
+)
+15:
+end
+for
+3.1
+Overview of the training loop
+Training proceeds in iterations.
+At iteration
+t
+t
+, the following steps are performed:
+1.
+We sample a training subset
+𝒳
+t
+⊂
+𝒳
+\mathcal{X}^{t}\subset\mathcal{X}
+based on probabilities produced by the curator.
+2.
+The actor
+π
+t
+\pi^{t}
+is rolled out on
+𝒳
+t
+\mathcal{X}^{t}
+to collect trajectories and updated to
+π
+t
++
+1
+\pi^{t+1}
+using any RL update.
+3.
+Compute a per-problem policy improvement estimate for problems in
+𝒳
+t
+\mathcal{X}^{t}
+using
+π
+t
+\pi^{t}
+and
+π
+t
++
+1
+\pi^{t+1}
+4.
+The curator is updated online using bandit feedback derived from these improvement estimates.
+The curator is trained jointly with the actor in an on-policy manner, allowing the curriculum
+to adapt dynamically as the actor improves.
+Figure
+2
+illustrates this process. Pseudocode is provided in
+Algorithm
+1
+.
+3.2
+Policy improvement as the curator learning signal
+The curator’s objective is to select problems that maximize improvement in the actor’s
+performance under the fixed evaluation distribution
+p
+𝒳
+p_{\mathcal{X}}
+.
+Performance improvement identity.
+Define the performance improvement at iteration
+t
+t
+as
+u
+t
+≜
+J
+⁡
+(
+π
+t
++
+1
+)
+−
+J
+⁡
+(
+π
+t
+)
+.
+u^{t}\triangleq J(\pi^{t+1})-J(\pi^{t}).
+In the single-turn setting, the performance difference identity
+(
+Kakade and Langford, 2002
+)
+gives
+u
+t
+=
+𝔼
+𝒙
+∼
+p
+𝒳
+𝔼
+𝒚
+∼
+π
+t
++
+1
+(
+⋅
+∣
+𝒙
+)
+[
+A
+π
+t
+(
+𝒚
+∣
+𝒙
+)
+]
+,
+A
+π
+t
+(
+𝒚
+∣
+𝒙
+)
+≜
+R
+(
+𝒚
+∣
+𝒙
+)
+−
+𝔼
+𝒚
+′
+∼
+π
+t
+(
+⋅
+∣
+𝒙
+)
+[
+R
+(
+𝒚
+′
+∣
+𝒙
+)
+]
+.
+u^{t}=\mathbb{E}_{\boldsymbol{x}\sim p_{\mathcal{X}}}\mathbb{E}_{\boldsymbol{y}\sim\pi^{t+1}(\cdot\mid\boldsymbol{x})}\left[A_{\pi^{t}}(\boldsymbol{y}\mid\boldsymbol{x})\right],\quad A_{\pi^{t}}(\boldsymbol{y}\mid\boldsymbol{x})\triangleq R(\boldsymbol{y}\mid\boldsymbol{x})-\mathbb{E}_{\boldsymbol{y}^{\prime}\sim\pi^{t}(\cdot\mid\boldsymbol{x})}\left[R(\boldsymbol{y}^{\prime}\mid\boldsymbol{x})\right].
+(4)
+Applying importance sampling yields
+u
+t
+=
+𝔼
+𝒙
+∼
+p
+𝒳
+𝔼
+𝒚
+∼
+π
+t
+(
+⋅
+∣
+𝒙
+)
+[
+π
+t
++
+1
+​
+(
+𝒚
+∣
+𝒙
+)
+π
+t
+​
+(
+𝒚
+∣
+𝒙
+)
+A
+π
+t
+(
+𝒚
+∣
+𝒙
+)
+]
+.
+u^{t}=\mathbb{E}_{\boldsymbol{x}\sim p_{\mathcal{X}}}\mathbb{E}_{\boldsymbol{y}\sim\pi^{t}(\cdot\mid\boldsymbol{x})}\left[\frac{\pi^{t+1}(\boldsymbol{y}\mid\boldsymbol{x})}{\pi^{t}(\boldsymbol{y}\mid\boldsymbol{x})}A_{\pi^{t}}(\boldsymbol{y}\mid\boldsymbol{x})\right].
+(5)
+Per-problem utility.
+Eq.
+5
+decomposes additively across problems.
+For each
+𝒙
+∈
+𝒳
+\boldsymbol{x}\in\mathcal{X}
+, define the per-problem utility
+u
+𝒙
+t
+≜
+p
+𝒳
+(
+𝒙
+)
+𝔼
+𝒚
+∼
+π
+t
+(
+⋅
+∣
+𝒙
+)
+[
+π
+t
++
+1
+​
+(
+𝒚
+∣
+𝒙
+)
+π
+t
+​
+(
+𝒚
+∣
+𝒙
+)
+A
+π
+t
+(
+𝒚
+∣
+𝒙
+)
+]
+.
+u_{\boldsymbol{x}}^{t}\triangleq p_{\mathcal{X}}(\boldsymbol{x})\mathbb{E}_{\boldsymbol{y}\sim\pi^{t}(\cdot\mid\boldsymbol{x})}\left[\frac{\pi^{t+1}(\boldsymbol{y}\mid\boldsymbol{x})}{\pi^{t}(\boldsymbol{y}\mid\boldsymbol{x})}A_{\pi^{t}}(\boldsymbol{y}\mid\boldsymbol{x})\right].
+(6)
+By construction,
+u
+t
+=
+∑
+𝒙
+u
+𝒙
+t
+u^{t}=\sum_{\boldsymbol{x}}u_{\boldsymbol{x}}^{t}
+.
+Although the actor update couples all selected problems,
+u
+𝒙
+t
+u_{\boldsymbol{x}}^{t}
+provides a
+principled first-order credit assignment signal under small policy updates, grounded in
+policy improvement theory. We provide further explanation in
+App.
+E
+.
+3.3
+Tabular OSMD formulation
+We cast curriculum learning as a non-stationary stochastic bandit problem, where each
+problem
+𝒙
+\boldsymbol{x}
+corresponds to an arm with time-varying utility
+u
+𝒙
+t
+u_{\boldsymbol{x}}^{t}
+.
+The curator is optimized using
+online stochastic mirror descent
+(OSMD) under bandit feedback
+(
+Lattimore and Szepesvari, 2017
+)
+. We start with the tabular formulation first, where the curator maintains a probability mass function
+𝒑
+t
+∈
+Δ
+α
+​
+(
+𝒳
+)
+\boldsymbol{p}^{t}\in\Delta_{\alpha}(\mathcal{X)}
+over a finite set of problems, where
+𝒑
+t
+\boldsymbol{p}^{t}
+is clipped to the sampling distribution
+p
+t
+​
+(
+𝒙
+∣
+𝒳
+~
+t
+)
+≥
+α
+>
+0
+p^{t}(\boldsymbol{x}\mid\tilde{\mathcal{X}}^{t})\geq\alpha>0
+.
+In
+Sec.
+3.4
+we show how to represent
+p
+t
+p^{t}
+using a learned model.
+Utility estimation and OSMD bandit feedback.
+For each
+𝒙
+∈
+𝒳
+t
+\boldsymbol{x}\in\mathcal{X}^{t}
+, let
+𝒴
+𝒙
+t
+\mathcal{Y}_{\boldsymbol{x}}^{t}
+denote rollouts
+from
+π
+t
+(
+⋅
+∣
+𝒙
+)
+\pi^{t}(\cdot\mid\boldsymbol{x})
+.
+We estimate
+Eq.
+6
+via
+U
+^
+𝒙
+t
+≜
+p
+𝒳
+(
+𝒙
+)
+𝕀
+{
+𝒙
+∈
+𝒳
+t
+}
+p
+t
+​
+(
+𝒙
+)
+A
+^
+t
+(
+⋅
+∣
+𝒙
+)
+,
+A
+^
+t
+(
+⋅
+∣
+𝒙
+)
+≜
+1
+|
+𝒴
+𝒙
+t
+|
+∑
+𝒚
+∈
+𝒴
+𝒙
+t
+π
+t
++
+1
+​
+(
+𝒚
+∣
+𝒙
+)
+π
+t
+​
+(
+𝒚
+∣
+𝒙
+)
+A
+(
+𝒚
+∣
+𝒙
+)
+\hat{U}^{t}_{\boldsymbol{x}}\triangleq p_{\mathcal{X}}(\boldsymbol{x})\frac{\mathbb{I}\{\boldsymbol{x}\in\mathcal{X}^{t}\}}{p^{t}(\boldsymbol{x})}\hat{A}^{t}(\cdot\mid\boldsymbol{x}),\qquad\hat{A}^{t}(\cdot\mid\boldsymbol{x})\triangleq\frac{1}{|\mathcal{Y}^{t}_{\boldsymbol{x}}|}\sum_{\boldsymbol{y}\in\mathcal{Y}^{t}_{\boldsymbol{x}}}\frac{\pi^{t+1}(\boldsymbol{y}\mid\boldsymbol{x})}{\pi^{t}(\boldsymbol{y}\mid\boldsymbol{x})}A(\boldsymbol{y}\mid\boldsymbol{x})
+(7)
+where
+A
+^
+t
+\hat{A}^{t}
+is the importance normalized estimated average advantage. This estimate is agnostic to the specifics of the actor update method as long as an updated actor is produced.
+Theorem 1
+(Unbiasedness)
+𝔼
+⁡
+[
+U
+^
+𝒙
+t
+]
+=
+u
+𝒙
+t
+\mathbb{E}[\hat{U}_{\boldsymbol{x}}^{t}]=u_{\boldsymbol{x}}^{t}
+.
+We prove this in
+App.
+B
+.
+For decoder language models,
+π
+t
++
+1
+​
+(
+𝒚
+∣
+𝒙
+)
+\pi^{t+1}(\boldsymbol{y}\mid\boldsymbol{x})
+is obtained via a single forward pass of the updated model on the previous solution.
+OSMD update
+Given bandit feedback, the curator is updated with a
+negative-entropy regularizer:
+p
+t
++
+1
+←
+arg
+min
+𝒑
+∈
+Δ
+α
+​
+(
+𝒳
+)
+{
+−
+η
+⟨
+𝒑
+,
+𝑼
+^
+t
+⟩
++
+KL
+(
+𝒑
+∥
+𝒑
+t
+)
+}
+.
+p^{t+1}\leftarrow\arg\min_{\boldsymbol{p}\in\Delta_{\alpha}(\mathcal{X})}\left\{-\eta\langle\boldsymbol{p},\hat{\boldsymbol{U}}^{t}\rangle+\mathrm{KL}(\boldsymbol{p}\|\boldsymbol{p}^{t})\right\}.
+(8)
+This yields the exponentiated-gradient update
+p
+t
++
+1
+​
+(
+𝒙
+)
+∝
+p
+t
+​
+(
+𝒙
+)
+​
+exp
+⁡
+(
+η
+​
+U
+^
+𝒙
+t
+)
+.
+p^{t+1}(\boldsymbol{x})\propto p^{t}(\boldsymbol{x})\exp(\eta\hat{U}_{\boldsymbol{x}}^{t}).
+3.4
+Function approximation for curator training
+Although the OSMD update in
+Eq.
+8
+is defined over a distribution on the
+entire problem set
+𝒳
+\mathcal{X}
+, explicitly maintaining and updating tabular probabilities
+is infeasible when
+𝒳
+\mathcal{X}
+is large.
+We therefore parameterize the curator using a neural network that assigns a positive score
+to each problem and implicitly defines a probability distribution.
+The curator and induced distribution are defined as
+C
+ϕ
+:
+𝒙
+↦
+w
+ϕ
+​
+(
+𝒙
+)
+,
+p
+ϕ
+​
+(
+𝒙
+)
+≜
+w
+ϕ
+​
+(
+𝒙
+)
+∑
+𝒙
+′
+∈
+𝒳
+w
+ϕ
+​
+(
+𝒙
+′
+)
+,
+w
+ϕ
+​
+(
+𝒙
+)
+>
+0
+.
+C_{\phi}:\boldsymbol{x}\mapsto w_{\phi}(\boldsymbol{x}),\qquad p_{\phi}(\boldsymbol{x})\triangleq\frac{w_{\phi}(\boldsymbol{x})}{\sum_{\boldsymbol{x}^{\prime}\in\mathcal{X}}w_{\phi}(\boldsymbol{x}^{\prime})},\quad w_{\phi}(\boldsymbol{x})>0.
+OSMD surrogate objective.
+To implement the OSMD update
+Eq.
+8
+with function approximation, we optimize
+the following surrogate objective:
+ℒ
+cur
+(
+ϕ
+)
+=
+KL
+(
+p
+ϕ
+∥
+p
+t
+)
+−
+η
+⟨
+p
+ϕ
+,
+𝑼
+^
+t
+⟩
+,
+\mathcal{L}_{\mathrm{cur}}(\phi)=\mathrm{KL}\!\left(p_{\phi}\;\|\;p^{t}\right)-\eta\langle p_{\phi},\hat{\boldsymbol{U}}^{t}\rangle,
+(9)
+where
+p
+t
+p^{t}
+denotes the curator distribution from iteration
+t
+t
+.
+3.5
+Two-stage sampling
+Sampling directly from a curator distribution over the full problem set
+𝒳
+\mathcal{X}
+is
+computationally infeasible at scale.
+We therefore adopt a two-stage sampling scheme that separates
+coverage
+from
+adaptive curation
+while preserving unbiased utility estimation.
+At iteration
+t
+t
+, we first sample a candidate set
+𝒳
+~
+t
+⊂
+𝒳
+\tilde{\mathcal{X}}^{t}\subset\mathcal{X}
+from a fixed proposal distribution
+q
+~
+\tilde{q}
+.
+Let
+q
+⁡
+(
+𝒙
+)
+≜
+Pr
+𝒳
+~
+∼
+q
+~
+⁡
+(
+𝒙
+∈
+𝒳
+~
+)
+,
+p
+t
+​
+(
+𝒙
+∣
+𝒳
+~
+t
+)
+≜
+w
+t
+​
+(
+𝒙
+)
+∑
+𝒙
+′
+∈
+𝒳
+~
+t
+w
+t
+​
+(
+𝒙
+′
+)
+.
+q(\boldsymbol{x})\triangleq\Pr_{\tilde{\mathcal{X}}\sim\tilde{q}}\!\left(\boldsymbol{x}\in\tilde{\mathcal{X}}\right),\quad p^{t}(\boldsymbol{x}\mid\tilde{\mathcal{X}}^{t})\triangleq\frac{w^{t}(\boldsymbol{x})}{\sum_{\boldsymbol{x}^{\prime}\in\tilde{\mathcal{X}}^{t}}w^{t}(\boldsymbol{x}^{\prime})}.
+Here
+q
+⁡
+(
+𝒙
+)
+q(\boldsymbol{x})
+denotes the induced marginal inclusion probability, and we assume
+q
+⁡
+(
+𝒙
+)
+≥
+q
+min
+>
+0
+q(\boldsymbol{x})\geq q_{\min}>0
+for all
+𝒙
+∈
+𝒳
+\boldsymbol{x}\in\mathcal{X}
+.
+Conditioned on
+𝒳
+~
+t
+\tilde{\mathcal{X}}^{t}
+, the curator samples a training set
+𝒳
+t
+⊂
+𝒳
+~
+t
+\mathcal{X}^{t}\subset\tilde{\mathcal{X}}^{t}
+according to the restricted distribution
+p
+t
+​
+(
+𝒙
+∣
+𝒳
+~
+t
+)
+p^{t}(\boldsymbol{x}\mid\tilde{\mathcal{X}}^{t})
+, where
+w
+t
+​
+(
+𝒙
+)
+>
+0
+w^{t}(\boldsymbol{x})>0
+is the curator score at iteration
+t
+t
+.
+This allows the curator to prioritize problems while operating only on a small candidate batch.
+Utility estimation.
+The unbiased two-stage estimator corresponding to
+Eq.
+7
+is
+U
+^
+two
+,
+𝒙
+t
+≜
+p
+𝒳
+(
+𝒙
+)
+𝕀
+{
+𝒙
+∈
+𝒳
+t
+}
+q
+⁡
+(
+𝒙
+)
+​
+p
+t
+​
+(
+𝒙
+∣
+𝒳
+~
+t
+)
+A
+^
+t
+(
+⋅
+∣
+𝒙
+)
+,
+\hat{U}^{t}_{\mathrm{two},\boldsymbol{x}}\;\triangleq\;p_{\mathcal{X}}(\boldsymbol{x})\,\frac{\mathbb{I}\{\boldsymbol{x}\in\mathcal{X}^{t}\}}{q(\boldsymbol{x})\,p^{t}(\boldsymbol{x}\mid\tilde{\mathcal{X}}^{t})}\;\hat{A}^{t}(\cdot\mid\boldsymbol{x}),
+(10)
+which corrects for both proposal and curation sampling probabilities.
+This estimator satisfies
+𝔼
+⁡
+[
+U
+^
+two
+,
+𝒙
+t
+]
+=
+u
+𝒙
+t
+\mathbb{E}[\hat{U}^{t}_{\mathrm{two},\boldsymbol{x}}]=u^{t}_{\boldsymbol{x}}
+(see
+App.
+B
+).
+Substituting
+Eq.
+10
+into the OSMD update
+Eq.
+8
+yields the
+surrogate objective
+ℒ
+two
+​
+(
+ϕ
+)
+\displaystyle\mathcal{L}_{\mathrm{two}}(\phi)
+≜
+KL
+(
+p
+ϕ
+∥
+p
+t
+)
+−
+η
+∑
+𝒙
+∈
+𝒳
+t
+p
+ϕ
+​
+(
+𝒙
+∣
+𝒳
+~
+t
+)
+p
+t
+​
+(
+𝒙
+∣
+𝒳
+~
+t
+)
+p
+𝒳
+(
+𝒙
+)
+A
+^
+t
+(
+⋅
+∣
+𝒙
+)
+q
+⁡
+(
+𝒙
+)
+,
+\displaystyle\triangleq\mathrm{KL}\!\left(p_{\phi}\;\|\;p^{t}\right)-\eta\sum_{\boldsymbol{x}\in\mathcal{X}^{t}}\frac{p_{\phi}(\boldsymbol{x}\mid\tilde{\mathcal{X}}^{t})}{p^{t}(\boldsymbol{x}\mid\tilde{\mathcal{X}}^{t})}\;\frac{p_{\mathcal{X}}(\boldsymbol{x})\,\hat{A}^{t}(\cdot\mid\boldsymbol{x})}{q(\boldsymbol{x})},
+(11)
+where
+p
+ϕ
+(
+⋅
+∣
+𝒳
+~
+t
+)
+p_{\phi}(\cdot\mid\tilde{\mathcal{X}}^{t})
+is the conditional curator distribution.
+Regret guarantee.
+We now state a regret bound for curator optimization under two-stage sampling.
+The bound characterizes the curator’s ability to track the best sequence of
+problem-selection distributions in hindsight despite non-stationary utilities. A proof is provided in
+App.
+C
+.
+Theorem 2
+Assume the curator is updated using OSMD with a negative-entropy regularizer and
+receives bandit feedback
+U
+^
+two
+,
+𝐱
+t
+\hat{U}^{t}_{\mathrm{two},\boldsymbol{x}}
+satisfying
+𝔼
+⁡
+[
+U
+^
+two
+,
+𝐱
+t
+]
+=
+u
+𝐱
+t
+\mathbb{E}[\hat{U}^{t}_{\mathrm{two},\boldsymbol{x}}]=u^{t}_{\boldsymbol{x}}
+.
+Then the cumulative dynamic regret satisfies
+Reg
+T
+≤
+O
+⁡
+(
+T
+2
+/
+3
+​
+V
+T
+1
+/
+3
+)
+,
+V
+T
+≜
+∑
+t
+=
+2
+T
+max
+𝒙
+∈
+𝒳
+⁡
+|
+u
+𝒙
+t
+−
+u
+𝒙
+t
+−
+1
+|
+\mathrm{Reg}_{T}\;\leq\;O\!\left(T^{2/3}V_{T}^{1/3}\right),\quad V_{T}\triangleq\sum_{t=2}^{T}\max_{\boldsymbol{x}\in\mathcal{X}}|u_{\boldsymbol{x}}^{t}-u_{\boldsymbol{x}}^{t-1}|
+where
+Reg
+T
+\mathrm{Reg}_{T}
+is the regret against the best available arm, ignoring uniform exploration which we define in
+App.
+D
+, and
+V
+T
+V_{T}
+is a measure of how rapid the utility of a problem changes over time
+t
+t
+.
+While we focus on two-stage sampling for efficiency,
+Actor-Curator
+is compatible with other approximate sampling schemes
+(e.g., Metropolis–Hastings), provided marginal inclusion
+probabilities are roughly proportional to curator-assigned weights.
+3.6
+Proximal curator optimization
+Directly optimizing the KL-regularized objective in (
+9
+) can be
+unstable with neural network parameterization
+(
+Schulman et al., 2015
+)
+.
+Following proximal policy optimization (PPO)
+(
+Schulman et al., 2017
+)
+, we adopt a
+clipped surrogate objective.
+Define the importance ratio and sub-objective as
+ρ
+ϕ
+​
+(
+𝒙
+)
+≜
+p
+ϕ
+​
+(
+𝒙
+∣
+𝒳
+~
+t
+)
+p
+t
+​
+(
+𝒙
+∣
+𝒳
+~
+t
+)
+,
+g
+t
+​
+(
+𝒙
+)
+≜
+p
+𝒳
+(
+𝒙
+)
+A
+^
+t
+(
+⋅
+∣
+𝒙
+)
+q
+⁡
+(
+𝒙
+)
+\rho_{\phi}(\boldsymbol{x})\triangleq\frac{p_{\phi}(\boldsymbol{x}\mid\tilde{\mathcal{X}}^{t})}{p^{t}(\boldsymbol{x}\mid\tilde{\mathcal{X}}^{t})},\quad g^{t}(\boldsymbol{x})\triangleq\frac{p_{\mathcal{X}}(\boldsymbol{x})\hat{A}^{t}(\cdot\mid\boldsymbol{x})}{q(\boldsymbol{x})}
+Starting from  (
+11
+), we replace the linear probability ratio term with a clipped surrogate
+ℒ
+cur
+PCO
+(
+ϕ
+)
+≜
+−
+η
+∑
+𝒙
+∈
+𝒳
+~
+t
+min
+(
+\displaystyle\mathcal{L}_{\mathrm{cur}}^{\mathrm{PCO}}(\phi)\triangleq-\eta\sum_{\boldsymbol{x}\in\tilde{\mathcal{X}}^{t}}\min\!\Big(
+OPEN
+ρ
+ϕ
+​
+(
+𝒙
+)
+​
+g
+t
+​
+(
+𝒙
+)
+,
+clip
+⁡
+(
+ρ
+ϕ
+​
+(
+𝒙
+)
+,
+ρ
+min
+,
+ρ
+max
+)
+​
+g
+t
+​
+(
+𝒙
+)
+)
+,
+\displaystyle\rho_{\phi}(\boldsymbol{x})\,g^{t}(\boldsymbol{x}),\;\mathrm{clip}(\rho_{\phi}(\boldsymbol{x}),\rho_{\min},\rho_{\max})\,g^{t}(\boldsymbol{x})\Big),
+(12)
+where
+ρ
+min
+,
+ρ
+max
+\rho_{\min},\rho_{\max}
+are clipping parameters.
+This objective constrains successive curator updates while preserving the behavior of online mirror descent in practice.
+4
+Experimental results
+Benchmarks.
+We evaluate
+Actor-Curator
+on five reasoning and mathematics benchmarks.
+Countdown
+is an arithmetic puzzle requiring the composition of integers and operations to reach a target value
+(
+Stojanovski et al., 2025
+)
+.
+Zebra
+is a symbolic logic puzzle that requires finding assignments satisfying a set of constraints
+(
+Stojanovski et al., 2025
+)
+.
+ARC-1D
+is the one-dimensional variant of the Abstraction and Reasoning Corpus, designed to test inductive generalization
+(
+Chollet, 2019
+;
+Xu et al., 2023
+)
+.
+MATH500
+consists of competition-level mathematics problems
+(
+Hendrycks et al., 2021
+)
+.
+AIME24
+contains problems from the 2024 American Invitational Mathematics Examination.
+We additionally consider hard subsets (
+countdown-hard
+,
+zebra-hard
+,
+arc-hard
+) for validation.
+We train on
+30K
+problems for Countdown, Zebra, and ARC-1D, and
+12K
+MATH problems for MATH500 and AIME24.
+Experimental setup.
+We implement our post-training pipeline using VERL
+(
+Sheng et al., 2024
+)
+.
+The curator is initialized from a pretrained Qwen3-0.6B model
+(
+Yang et al., 2025
+)
+.
+Unless otherwise specified, the actor is trained using GSPO, a stabilized variant of GRPO
+(
+Ahmadian et al., 2024
+)
+, on Qwen2.5-3B.
+Additional details are provided in
+App.
+G
+, including hyper-parameters.
+Table 1:
+Peak validation performance
+on problems within 100 training steps for different methods with qwen2.5-3b.
+Actor-Curator
+outperforms both other learning based methods (PCL) and methods that rely on human heuristics (SEC). We see similar results with llama3.2-3b-instruct, as shown in
+Tab.
+4
+.
+|
+𝒳
+|
+|\mathcal{X}|
+Benchmark
+Method
+Improvement
+𝝅
+𝐫𝐞𝐟
+\boldsymbol{\pi_{\mathrm{ref}}}
+Uniform
+SEC
+PCL
+AC
+(Ours)
++
+Δ
++\Delta
++
+Δ
+%
++\Delta\%
+30,000
+Countdown
+0.00
+44.74
+58.87
+57.24
+62.12
++3.25
++5.52
+Countdown-hard
+0.00
+41.00
+51.50
+48.00
+58.00
++6.50
++12.62
+30,000
+Zebra
+0.00
+35.12
+36.00
+34.12
+37.62
++1.62
++4.50
+Zebra-hard
+0.00
+30.50
+27.50
+26.00
+34.50
++4.00
++13.11
+30,000
+ARC-1D
+0.00
+26.74
+27.87
+26.37
+36.37
++8.50
++30.51
+ARC-hard
+0.00
+19.50
+18.50
+18.50
+31.00
++11.50
++58.97
+12,000
+MATH500
+61.80
+83.00
+81.00
+79.79
+81.00
+-2.00
+-2.41
+AIME24
+3.33
+23.33
+20.00
+23.33
+30.00
++6.67
++28.57
+4.1
+Main results
+Baselines.
+We compare against state-of-the-art curriculum learning methods for LLM post-training, using the same backbone model and actor update.
+π
+ref
+\pi_{\text{ref}}
+denotes the pretrained model without post-training.
+Uniform sampling
+draws training problems uniformly at random.
+SEC
+partitions problems into manually defined buckets and updates bucket probabilities based on the sum of absolute advantages
+(
+Chen et al., 2025a
+)
+.
+PCL
+trains a value model to estimate success probabilities and prioritizes problems with predicted success near
+50
+%
+50\%
+(
+Gao et al., 2025
+)
+.
+PCL is competitive with recent curriculum-based approaches
+(
+Yue et al., 2025
+;
+Zhang et al., 2025
+;
+Zheng et al., 2025b
+)
+.
+Performance.
+We evaluate performance on held-out test sets, recording metrics every 10 training steps.
+Following prior work
+(
+Gao et al., 2025
+)
+, we report the peak performance achieved within the first 100 steps.
+Results are summarized in
+Tab.
+1
+.
+Across both backbone models and most benchmarks,
+Actor-Curator
+consistently outperforms all baselines, with additional results in
+App.
+J
+.
+Notably,
+Actor-Curator
+achieves substantially larger gains on harder benchmarks such as
+arc-hard
+and
+AIME24
+, indicating that adaptive curation is particularly beneficial in challenging regimes.
+Efficiency.
+As shown in
+Fig.
+6
+,
+Actor-Curator
+reaches comparable or higher performance using significantly fewer training steps than uniform sampling, demonstrating improved sample efficiency.
+Training dynamics.
+Across datasets,
+Actor-Curator
+exhibits more stable optimization and often continues to improve performance after baselines plateau, as shown in
+Figs.
+3
+,
+9
+and
+10
+.
+(a)
+Countdown training curves
+(b)
+Zebra training curves
+(c)
+ARC-1D training curves
+Figure 3:
+Training dynamics.
+Actor-Curator
+Test performance over training on three datasets, showing faster convergence and higher final accuracy.
+4.2
+Ablations
+Core components.
+We ablate two key design choices: the policy-improvement utility and the OSMD bandit objective.
+Absolute adv
+replaces the policy-improvement signal with mean absolute advantage, as in
+(
+Chen et al., 2025a
+)
+.
+Regression loss
+trains the curator to predict the target utility value using a squared loss, rather than learning a classifier as in OSMD. The predicted utilities are then converted into a sampling distribution via a Boltzmann transform with temperature
+η
+\eta
+, matching the temperature used in OSMD.
+As shown in
+Fig.
+7(b)
+, both components are critical for achieving strong performance. We include a more detailed account of the motivation behind Absolute Adv. and regression in
+App.
+A
+, as well as their difference with
+Actor-Curator
+.
+Figure 4:
+Training speed-up.
+Actor-Curator
+attains high test accuracy with significantly fewer steps.
+Figure 5:
+Difficulty progression of curated problems.
+Actor-Curator
+gradually increases the average difficulty over training.
+Figure 6:
+Actor gradient norms over training.
+Actor-Curator
+yields larger and more sustained updates.
+Actor update methods.
+Actor-Curator
+generalizes across actor optimization algorithms.
+In
+Fig.
+7(a)
+,
+Actor-Curator
+significantly improves GRPO-based training relative to uniform sampling, demonstrating robustness to the choice of actor update.
+Additional ablation.
+We provide additional ablation on curator model size (
+Fig.
+7(c)
+) and candidate batch size (
+Fig.
+8
+) in
+App.
+I
+.
+4.3
+Interpretation and analysis
+Curriculum progression.
+As shown in
+Fig.
+6
+,
+Actor-Curator
+initially prioritizes easier problems and gradually shifts toward harder ones over training.
+Problem difficulty is estimated using heuristic annotations.
+Impact on actor updates.
+Actor-Curator
+induces consistently larger actor gradient norms than uniform sampling (
+Fig.
+6
+), suggesting that curated problems produce more informative learning signals.
+This aligns with the curator’s objective of prioritizing problems with higher expected policy improvement.
+5
+Related work
+RLVR.
+Reinforcement learning with verification (RLVR) has emerged as an effective paradigm for improving the capabilities of large language models (LLMs) during post-training
+(
+Guo et al., 2025
+;
+Setlur et al., 2024
+;
+Chen et al., 2025b
+;
+Wen et al., 2025
+)
+. Prior work has largely focused on improving the actor update rules
+(
+Yu et al., 2025
+;
+Dong et al., 2025
+)
+or enhancing trajectory generation, often via search-based methods
+(
+Zhang et al., 2024
+;
+Light et al., 2025b
+;
+Light et al., 2025c
+)
+. Our work is complementary: rather than modifying the actor or rollout process, we focus on learning a principled curriculum that selects which problems the actor should train on to maximize policy improvement.
+Curriculum learning for RL.
+Classical curriculum learning approaches in reinforcement learning typically select tasks of intermediate difficulty, often defined via the agent’s probability of success
+(
+Florensa et al., 2017
+;
+Florensa et al., 2018
+;
+Wöhlke et al., 2020
+;
+Liu et al., 2025
+)
+. For example, ProCuRL selects problems whose difficulty is estimated to be near a decision boundary using a learned value network
+(
+Tzannetos et al., 2023
+)
+. In contrast, our approach (1) trains a large language model as a curator that directly operates over language problems, and (2) uses a theoretically grounded, policy-improvement-based target rather than heuristic difficulty estimates. This design allows our method to generalize across different actor update rules and scale to large, heterogeneous datasets.
+Curriculum learning for LLMs.
+Recent work on self-improving and self-evolving LLMs has highlighted the importance of curriculum learning in RL-based post-training
+(
+Ye et al., 2024
+;
+Light et al., 2025a
+)
+. Several methods adjust problem sampling using bandit-style objectives such as UCB
+(
+Chen et al., 2025a
+;
+Wang et al., 2025
+;
+Gao et al., 2025
+)
+. However, most existing approaches rely on manual curriculum design, including human-labeled difficulty levels or pre-defined problem buckets that are sampled adaptively
+(
+Graves et al., 2017
+)
+. In contrast, we propose one of the first fully automated curriculum learning frameworks for LLM post-training that requires no human annotations or manual dataset structuring.
+(a)
+Actor update ablation
+(b)
+Core component ablation
+(c)
+Curator model ablation
+Figure 7:
+Ablation results.
+(a)
+Actor-Curator
+is compatible with alternative actor update methods such as GRPO and yields consistent performance gains.
+(b) The combination of the OSMD curator objective and the policy-improvement target achieves superior performance compared to alternative targets and loss functions.
+(c) Varying curator model size leads to similar long-term performance, indicating robustness to curator capabilities.
+6
+Limitations
+While
+Actor-Curator
+is agnostic to the specific actor update rule and can be combined with a wide range of post-training algorithms, its gains ultimately depend on the stability and quality of the underlying actor optimization: unstable updates can still lead to noisy dynamics or training collapse, a common failure mode in reinforcement learning that curriculum learning alone cannot fully address. In addition,
+Actor-Curator
+inherits standard assumptions from RL-based LLM post-training, most notably access to a reliable reward signal, making it best suited to domains with objectively verifiable rewards such as mathematics, logic puzzles, and code. Finally, learning an explicit curator introduces additional computational overhead beyond standard RL post-training; while modest relative to actor training and rollout generation, this cost is non-negligible, and in our experiments
+Actor-Curator
+increases overall wall-clock training time by approximately 9% (see
+App.
+H
+), though this overhead is small compared to the observed gains in training efficiency.
+7
+Conclusion
+Our results demonstrate that combining bandit-style optimization, neural function approximation, and policy-improvement-based feedback provides a powerful and general approach to curriculum learning for RL post-training. This combination enables efficient and stable adaptation of training data selection at scale, leading to faster learning and higher final performance, particularly on difficult reasoning problems. Importantly, these gains persist across diverse benchmarks and settings, suggesting that this design generalizes beyond specific tasks or datasets and offers a scalable foundation for improving reinforcement learning post-training of large language models.
+Beyond empirical gains,
+Actor-Curator
+highlights a broader shift in how post-training systems should be designed. Rather than treating training data as a static resource, our results suggest that data selection itself can be optimized online as part of the learning process, adapting in tandem with the evolving policy. This perspective opens the door to post-training pipelines that are less reliant on meticulous dataset engineering and more resilient to distributional mismatch, noise, and continual data growth.
+References
+Ahmadian
+et al.
+(2024)
+A. Ahmadian, C. Cremer, M. Gallé, M. Fadaee, J. Kreutzer, O. Pietquin, A. Üstün, and S. Hooker
+Back to basics: revisiting reinforce style optimization for learning from human feedback in llms
+.
+arXiv preprint arXiv:2402.14740
+.
+Cited by:
+§2.2
+,
+§4
+.
+Asada
+et al.
+(1996)
+M. Asada, S. Noda, S. Tawaratsumida, and K. Hosoda
+Purposive behavior acquisition for a real robot by vision-based reinforcement learning
+.
+Machine learning
+23
+(
+2
+),
+pp. 279–303
+.
+Cited by:
+§1
+.
+Bengio
+et al.
+(2009)
+Y. Bengio, J. Louradour, R. Collobert, and J. Weston
+Curriculum learning
+.
+In
+Proceedings of the 26th annual international conference on machine learning
+,
+pp. 41–48
+.
+Cited by:
+§1
+.
+Besbes
+et al.
+(2014)
+O. Besbes, Y. Gur, and A. Zeevi
+Stochastic multi-armed-bandit problem with non-stationary rewards
+.
+In
+Advances in Neural Information Processing Systems
+,
+Z. Ghahramani, M. Welling, C. Cortes, N. Lawrence, and K.Q. Weinberger (Eds.)
+,
+Vol.
+27
+,
+pp.
+.
+External Links:
+Link
+Cited by:
+Appendix D
+.
+Chen
+et al.
+(2025a)
+X. Chen, J. Lu, M. Kim, D. Zhang, J. Tang, A. Piché, N. Gontier, Y. Bengio, and E. Kamalloo
+Self-evolving curriculum for llm reasoning
+.
+arXiv preprint arXiv:2505.14970
+.
+Cited by:
+§A.3
+,
+§1
+,
+§4.1
+,
+§4.2
+,
+§5
+.
+Chen
+et al.
+(2025b)
+Y. Chen, Z. Yang, Z. Liu, C. Lee, P. Xu, M. Shoeybi, B. Catanzaro, and W. Ping
+Acereason-nemotron: advancing math and code reasoning through reinforcement learning
+.
+arXiv preprint arXiv:2505.16400
+.
+Cited by:
+§5
+.
+Chollet (2019)
+F. Chollet
+On the measure of intelligence
+.
+arXiv preprint arXiv:1911.01547
+.
+Cited by:
+§4
+.
+Dong
+et al.
+(2025)
+G. Dong, H. Mao, K. Ma, L. Bao, Y. Chen, Z. Wang, Z. Chen, J. Du, H. Wang, F. Zhang,
+et al.
+Agentic reinforced policy optimization
+.
+arXiv preprint arXiv:2507.19849
+.
+Cited by:
+§5
+.
+Florensa
+et al.
+(2018)
+C. Florensa, D. Held, X. Geng, and P. Abbeel
+Automatic goal generation for reinforcement learning agents
+.
+In
+International conference on machine learning
+,
+pp. 1515–1528
+.
+Cited by:
+§5
+.
+Florensa
+et al.
+(2017)
+C. Florensa, D. Held, M. Wulfmeier, M. Zhang, and P. Abbeel
+Reverse curriculum generation for reinforcement learning
+.
+In
+Conference on robot learning
+,
+pp. 482–495
+.
+Cited by:
+§5
+.
+Gao
+et al.
+(2025)
+Z. Gao, J. Kim, W. Sun, T. Joachims, S. Wang, R. Y. Pang, and L. Tan
+Prompt curriculum learning for efficient llm post-training
+.
+arXiv preprint arXiv:2510.01135
+.
+Cited by:
+§A.3
+,
+§1
+,
+§1
+,
+§4.1
+,
+§4.1
+,
+§5
+.
+Graves
+et al.
+(2017)
+A. Graves, M. G. Bellemare, J. Menick, R. Munos, and K. Kavukcuoglu
+Automated curriculum learning for neural networks
+.
+In
+international conference on machine learning
+,
+pp. 1311–1320
+.
+Cited by:
+§5
+.
+Guo
+et al.
+(2025)
+D. Guo, D. Yang, H. Zhang, J. Song, P. Wang, Q. Zhu, R. Xu, R. Zhang, S. Ma, X. Bi,
+et al.
+DeepSeek-r1 incentivizes reasoning in llms through reinforcement learning
+.
+Nature
+645
+(
+8081
+),
+pp. 633–638
+.
+Cited by:
+§5
+.
+Hendrycks
+et al.
+(2021)
+D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt
+Measuring mathematical problem solving with the math dataset
+.
+arXiv preprint arXiv:2103.03874
+.
+Cited by:
+§4
+.
+Kakade and Langford (2002)
+S. Kakade and J. Langford
+Approximately optimal approximate reinforcement learning
+.
+In
+Proceedings of the nineteenth international conference on machine learning
+,
+pp. 267–274
+.
+Cited by:
+Appendix E
+,
+§3.2
+.
+Lattimore and Szepesvari (2017)
+T. Lattimore and C. Szepesvari
+Bandit algorithms
+.
+External Links:
+Link
+Cited by:
+§1
+,
+§3.3
+.
+Light
+et al.
+(2025a)
+J. Light, M. Cai, W. Chen, G. Wang, X. Chen, W. Cheng, Y. Yue, and Z. Hu
+Strategist: self-improvement of llm decision making via bi-level tree search
+.
+In
+The Thirteenth International Conference on Learning Representations
+,
+Cited by:
+§5
+.
+Light
+et al.
+(2025b)
+J. Light, W. Cheng, B. Riviere, W. Yue, M. Oyamada, M. Wang, Y. Yue, S. Paternain, and H. Chen
+DISC: dynamic decomposition improves llm inference scaling
+.
+In
+Advances in Neural Information Processing Systems
+,
+Cited by:
+§5
+.
+Light
+et al.
+(2025c)
+J. Light, Y. Wu, Y. Sun, W. Yu, Y. Liu, X. Zhao, Z. Hu, H. Chen, and W. Cheng
+Sfs: smarter code space search improves llm inference scaling
+.
+In
+The Thirteenth International Conference on Learning Representations
+,
+Cited by:
+§5
+.
+Liu
+et al.
+(2025)
+Z. Liu, C. Chen, W. Li, P. Qi, T. Pang, C. Du, W. S. Lee, and M. Lin
+Understanding r1-zero-like training: a critical perspective
+.
+arXiv preprint arXiv:2503.20783
+.
+Cited by:
+§5
+.
+Parashar
+et al.
+(2025)
+S. Parashar, S. Gui, X. Li, H. Ling, S. Vemuri, B. Olson, E. Li, Y. Zhang, J. Caverlee, D. Kalathil, and S. Ji
+Curriculum reinforcement learning from easy to hard tasks improves llm reasoning
+.
+External Links:
+2506.06632
+,
+Link
+Cited by:
+§1
+.
+Schulman
+et al.
+(2015)
+J. Schulman, S. Levine, P. Abbeel, M. Jordan, and P. Moritz
+Trust region policy optimization
+.
+In
+International conference on machine learning
+,
+pp. 1889–1897
+.
+Cited by:
+§3.6
+.
+Schulman
+et al.
+(2017)
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+Proximal policy optimization algorithms
+.
+arXiv preprint arXiv:1707.06347
+.
+Cited by:
+§3.6
+.
+Setlur
+et al.
+(2024)
+A. Setlur, C. Nagpal, A. Fisch, X. Geng, J. Eisenstein, R. Agarwal, A. Agarwal, J. Berant, and A. Kumar
+Rewarding progress: scaling automated process verifiers for llm reasoning
+.
+arXiv preprint arXiv:2410.08146
+.
+Cited by:
+§5
+.
+Shao
+et al.
+(2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. Li, Y. Wu,
+et al.
+Deepseekmath: pushing the limits of mathematical reasoning in open language models
+.
+arXiv preprint arXiv:2402.03300
+.
+Cited by:
+§A.1
+,
+§1
+,
+§2.2
+.
+Sheng
+et al.
+(2024)
+G. Sheng, C. Zhang, Z. Ye, X. Wu, W. Zhang, R. Zhang, Y. Peng, H. Lin, and C. Wu
+HybridFlow: a flexible and efficient rlhf framework
+.
+arXiv preprint arXiv: 2409.19256
+.
+Cited by:
+§4
+.
+Stojanovski
+et al.
+(2025)
+Z. Stojanovski, O. Stanley, J. Sharratt, R. Jones, A. Adefioye, J. Kaddour, and A. Köpf
+REASONING gym: reasoning environments for reinforcement learning with verifiable rewards
+.
+arXiv preprint arXiv:2505.24760
+.
+Cited by:
+§4
+.
+Tzannetos
+et al.
+(2023)
+G. Tzannetos, B. G. Ribeiro, P. Kamalaruban, and A. Singla
+Proximal curriculum for reinforcement learning agents
+.
+arXiv preprint arXiv:2304.12877
+.
+Cited by:
+§1
+,
+§1
+,
+§5
+.
+Wang
+et al.
+(2025)
+Z. Wang, G. Cui, Y. Li, K. Wan, and W. Zhao
+Dump: automated distribution-level curriculum learning for rl-based llm post-training
+.
+arXiv preprint arXiv:2504.09710
+.
+Cited by:
+§1
+,
+§5
+.
+Wen
+et al.
+(2025)
+L. Wen, Y. Cai, F. Xiao, X. He, Q. An, Z. Duan, Y. Du, J. Liu, T. Tanglifu, X. Lv,
+et al.
+Light-r1: curriculum sft, dpo and rl for long cot from scratch and beyond
+.
+In
+Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 6: Industry Track)
+,
+pp. 318–327
+.
+Cited by:
+§5
+.
+Wöhlke
+et al.
+(2020)
+J. Wöhlke, F. Schmitt, and H. van Hoof
+A performance-based start state curriculum framework for reinforcement learning
+.
+In
+Proceedings of the 19th International Conference on Autonomous Agents and MultiAgent Systems
+,
+pp. 1503–1511
+.
+Cited by:
+§5
+.
+Wu and Tian (2017)
+Y. Wu and Y. Tian
+Training agent for first-person shooter game with actor-critic curriculum learning
+.
+In
+International Conference on Learning Representations
+,
+Cited by:
+§1
+.
+Xu
+et al.
+(2023)
+Y. Xu, W. Li, P. Vaezipoor, S. Sanner, and E. B. Khalil
+LLMs and the abstraction and reasoning corpus: successes, failures, and the importance of object-based representations
+.
+arXiv preprint arXiv:2305.18354
+.
+Cited by:
+§4
+.
+Yang
+et al.
+(2025)
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv,
+et al.
+Qwen3 technical report
+.
+arXiv preprint arXiv:2505.09388
+.
+Cited by:
+§4
+.
+Ye
+et al.
+(2024)
+Z. Ye, R. Agarwal, T. Liu, R. Joshi, S. Velury, Q. V. Le, Q. Tan, and Y. Liu
+Scalable reinforcement post-training beyond static human prompts: evolving alignment via asymmetric self-play
+.
+arXiv preprint arXiv:2411.00062
+.
+Cited by:
+§5
+.
+Yengera
+et al.
+(2021)
+G. Yengera, R. Devidze, P. Kamalaruban, and A. Singla
+Curriculum design for teaching via demonstrations: theory and applications
+.
+Advances in Neural Information Processing Systems
+34
+,
+pp. 10496–10509
+.
+Cited by:
+§1
+.
+Yu
+et al.
+(2025)
+Q. Yu, Z. Zhang, R. Zhu, Y. Yuan, X. Zuo, Y. Yue, W. Dai, T. Fan, G. Liu, L. Liu,
+et al.
+Dapo: an open-source llm reinforcement learning system at scale
+.
+arXiv preprint arXiv:2503.14476
+.
+Cited by:
+§5
+.
+Yue
+et al.
+(2025)
+Y. Yue, Y. Yuan, Q. Yu, X. Zuo, R. Zhu, W. Xu, J. Chen, C. Wang, T. Fan, Z. Du,
+et al.
+Vapo: efficient and reliable reinforcement learning for advanced reasoning tasks
+.
+arXiv preprint arXiv:2504.05118
+.
+Cited by:
+§4.1
+.
+Zhang
+et al.
+(2024)
+D. Zhang, S. Zhoubian, Z. Hu, Y. Yue, Y. Dong, and J. Tang
+Rest-mcts*: llm self-training via process reward guided tree search
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 64735–64772
+.
+Cited by:
+§5
+.
+Zhang
+et al.
+(2025)
+R. Zhang, D. Arora, S. Mei, and A. Zanette
+SPEED-rl: faster training of reasoning models via online curriculum learning
+.
+arXiv preprint arXiv:2506.09016
+.
+Cited by:
+§4.1
+.
+Zheng
+et al.
+(2025a)
+C. Zheng, S. Liu, M. Li, X. Chen, B. Yu, C. Gao, K. Dang, Y. Liu, R. Men, A. Yang,
+et al.
+Group sequence policy optimization
+.
+arXiv preprint arXiv:2507.18071
+.
+Cited by:
+§A.1
+.
+Zheng
+et al.
+(2025b)
+H. Zheng, Y. Zhou, B. R. Bartoldson, B. Kailkhura, F. Lai, J. Zhao, and B. Chen
+Act only when it pays: efficient reinforcement learning for llm reasoning via selective rollouts
+.
+arXiv preprint arXiv:2506.02177
+.
+Cited by:
+§4.1
+.
+Appendix A
+Baselines
+A.1
+Group-Based Policy Optimization
+Group-based policy optimization methods update the policy by grouping multiple rollouts from the same problem and computing advantages relative to the group baseline.
+GRPO.
+Group Relative Policy Optimization (GRPO)
+(
+Shao et al., 2024
+)
+computes advantages by comparing each solution’s reward to the mean reward of all solutions sampled from the same problem. For a problem
+x
+x
+with rollouts
+𝒴
+x
+=
+{
+y
+(
+1
+)
+,
+…
+,
+y
+(
+m
+)
+}
+\mathcal{Y}_{x}=\{y^{(1)},\ldots,y^{(m)}\}
+and corresponding rewards
+{
+R
+⁡
+(
+y
+(
+j
+)
+|
+x
+)
+}
+j
+=
+1
+m
+\{R(y^{(j)}|x)\}_{j=1}^{m}
+, the advantage for solution
+y
+(
+i
+)
+y^{(i)}
+is:
+A
+GRPO
+​
+(
+y
+(
+i
+)
+|
+x
+)
+=
+R
+⁡
+(
+y
+(
+i
+)
+|
+x
+)
+−
+1
+m
+​
+∑
+j
+=
+1
+m
+R
+⁡
+(
+y
+(
+j
+)
+|
+x
+)
+.
+A^{\text{GRPO}}(y^{(i)}|x)=R(y^{(i)}|x)-\frac{1}{m}\sum_{j=1}^{m}R(y^{(j)}|x).
+(13)
+The policy is then updated using a PPO-style clipped objective:
+ℒ
+GRPO
+​
+(
+π
+)
+=
+𝔼
+x
+,
+y
+(
+i
+)
+∼
+𝒴
+x
+​
+[
+min
+⁡
+(
+ρ
+i
+​
+A
+GRPO
+​
+(
+y
+(
+i
+)
+|
+x
+)
+,
+clip
+​
+(
+ρ
+i
+,
+1
+−
+ϵ
+,
+1
++
+ϵ
+)
+​
+A
+GRPO
+​
+(
+y
+(
+i
+)
+|
+x
+)
+)
+]
+,
+\mathcal{L}^{\text{GRPO}}(\pi)=\mathbb{E}_{x,y^{(i)}\sim\mathcal{Y}_{x}}\left[\min\left(\rho_{i}A^{\text{GRPO}}(y^{(i)}|x),\text{clip}(\rho_{i},1-\epsilon,1+\epsilon)A^{\text{GRPO}}(y^{(i)}|x)\right)\right],
+(14)
+where
+ρ
+i
+=
+π
+⁡
+(
+y
+(
+i
+)
+|
+x
+)
+π
+old
+​
+(
+y
+(
+i
+)
+|
+x
+)
+\rho_{i}=\frac{\pi(y^{(i)}|x)}{\pi_{\text{old}}(y^{(i)}|x)}
+is the importance ratio and
+ϵ
+\epsilon
+is the clipping threshold.
+GSPO.
+Group-Sequence Policy Optimization
+(
+Zheng et al., 2025a
+)
+addresses fundamental stability issues in GRPO by defining importance ratios at the sequence level rather than the token level. Unlike GRPO, which applies token-level importance weights that can introduce high-variance noise, GSPO computes importance ratios based on sequence likelihood, aligning with the principle of importance sampling.
+GSPO optimizes the following sequence-level objective:
+𝒥
+GSPO
+(
+θ
+)
+=
+𝔼
+x
+∼
+𝒟
+,
+{
+y
+i
+}
+i
+=
+1
+G
+∼
+π
+θ
+old
+(
+⋅
+|
+x
+)
+[
+1
+G
+∑
+i
+=
+1
+G
+min
+(
+s
+i
+(
+θ
+)
+A
+^
+i
+,
+clip
+(
+s
+i
+(
+θ
+)
+,
+1
+−
+ϵ
+,
+1
++
+ϵ
+)
+A
+^
+i
+)
+]
+,
+\mathcal{J}^{\text{GSPO}}(\theta)=\mathbb{E}_{x\sim\mathcal{D},\{y_{i}\}_{i=1}^{G}\sim\pi_{\theta_{\text{old}}}(\cdot|x)}\left[\frac{1}{G}\sum_{i=1}^{G}\min\left(s_{i}(\theta)\hat{A}_{i},\text{clip}(s_{i}(\theta),1-\epsilon,1+\epsilon)\hat{A}_{i}\right)\right],
+(15)
+where the sequence-level importance ratio is defined as:
+s
+i
+​
+(
+θ
+)
+=
+(
+π
+θ
+​
+(
+y
+i
+|
+x
+)
+π
+θ
+old
+​
+(
+y
+i
+|
+x
+)
+)
+1
+|
+y
+i
+|
+=
+exp
+⁡
+(
+1
+|
+y
+i
+|
+​
+∑
+t
+=
+1
+|
+y
+i
+|
+log
+⁡
+π
+θ
+​
+(
+y
+i
+,
+t
+|
+x
+,
+y
+i
+,
+<
+t
+)
+π
+θ
+old
+​
+(
+y
+i
+,
+t
+|
+x
+,
+y
+i
+,
+<
+t
+)
+)
+.
+s_{i}(\theta)=\left(\frac{\pi_{\theta}(y_{i}|x)}{\pi_{\theta_{\text{old}}}(y_{i}|x)}\right)^{\frac{1}{|y_{i}|}}=\exp\left(\frac{1}{|y_{i}|}\sum_{t=1}^{|y_{i}|}\log\frac{\pi_{\theta}(y_{i,t}|x,y_{i,<t})}{\pi_{\theta_{\text{old}}}(y_{i,t}|x,y_{i,<t})}\right).
+(16)
+The advantage computation remains the same as in GRPO.
+A.2
+Mean Absolute Advantage as Curriculum Reward
+An ideal curriculum should prioritize training problems that maximize the model’s immediate learning outcomes. A natural way to quantify learning outcomes is through the magnitude of parameter updates induced by the selected training data, which can be approximated by the absolute advantage.
+In the common setting of RL with verifiable binary rewards, mean absolute advantage has a attractive interpretation. When using group-based RL methods like GRPO with
+n
+n
+rollouts per problem, the advantage for the
+i
+i
+-th rollout is computed as:
+A
+^
+t
+,
+i
+=
+r
+i
+−
+mean
+​
+(
+r
+)
+std
+​
+(
+r
+)
+=
+r
+i
+−
+p
+p
+⁡
+(
+1
+−
+p
+)
+,
+\hat{A}_{t,i}=\frac{r_{i}-\text{mean}(r)}{\text{std}(r)}=\frac{r_{i}-p}{\sqrt{p(1-p)}},
+(17)
+where
+p
+p
+is the empirical success rate over the group. Since the reward
+r
+i
+r_{i}
+follows a Bernoulli distribution, the expected absolute advantage is:
+𝔼
+⁡
+[
+|
+A
+^
+t
+,
+i
+|
+]
+\displaystyle\mathbb{E}[|\hat{A}_{t,i}|]
+=
+p
+⋅
+1
+−
+p
+p
+⁡
+(
+1
+−
+p
+)
++
+(
+1
+−
+p
+)
+⋅
+p
+p
+⁡
+(
+1
+−
+p
+)
+=
+2
+​
+p
+⁡
+(
+1
+−
+p
+)
+.
+\displaystyle=p\cdot\frac{1-p}{\sqrt{p(1-p)}}+(1-p)\cdot\frac{p}{\sqrt{p(1-p)}}=2\sqrt{p(1-p)}.
+(18)
+The function
+g
+⁡
+(
+p
+)
+=
+2
+​
+p
+⁡
+(
+1
+−
+p
+)
+g(p)=2\sqrt{p(1-p)}
+is symmetric around
+p
+=
+0.5
+p=0.5
+, strictly concave on
+[
+0
+,
+1
+]
+[0,1]
+, and reaches its maximum at
+p
+=
+0.5
+p=0.5
+. Thus, maximizing expected absolute advantage is equivalent to prioritizing problems at a success rate of 50%.
+A.3
+Value-Based Curation
+Value-based curation methods maintain explicit estimates of the utility or learning value associated with training data, which are then used to guide adaptive curriculum selection during RL post-training.
+The core principle of value-based curation is to learn a utility function
+Q
+t
+Q_{t}
+that maps training data to expected learning outcomes at training step
+t
+t
+. Let
+𝒮
+\mathcal{S}
+denote the space over which utilities are estimated (e.g., individual problems, problem categories, or problem features). The utility function
+Q
+t
+:
+𝒮
+→
+ℝ
+Q_{t}:\mathcal{S}\rightarrow\mathbb{R}
+assigns a scalar value to each element
+s
+∈
+𝒮
+s\in\mathcal{S}
+.
+During curriculum selection, the curator samples from
+𝒮
+\mathcal{S}
+according to a policy derived from
+Q
+t
+Q_{t}
+. A common choice is the Boltzmann (softmax) policy:
+p
+t
+​
+(
+s
+)
+=
+exp
+⁡
+(
+Q
+t
+​
+(
+s
+)
+/
+η
+)
+∑
+s
+′
+∈
+𝒮
+exp
+⁡
+(
+Q
+t
+​
+(
+s
+′
+)
+/
+η
+)
+,
+p_{t}(s)=\frac{\exp(Q_{t}(s)/\eta)}{\sum_{s^{\prime}\in\mathcal{S}}\exp(Q_{t}(s^{\prime})/\eta)},
+(19)
+where
+η
+>
+0
+\eta>0
+is a temperature parameter that controls the exploration-exploitation tradeoff: higher temperatures lead to more uniform sampling (exploration), while lower temperatures concentrate probability mass on high-utility items (exploitation).
+The utility function is updated over time based on observed learning outcomes. After selecting data according to
+p
+t
+p_{t}
+and performing an RL update, the curator observes a reward signal
+r
+t
+​
+(
+s
+)
+r_{t}(s)
+that measures the actual learning value obtained. These observations are used to refine
+Q
+t
++
+1
+Q_{t+1}
+.
+SEC.
+Self-Evolving Curriculum (SEC)
+(
+Chen et al., 2025a
+)
+instantiates value-based curation by defining the utility space
+𝒮
+=
+C
+\mathcal{S}=C
+as a discrete set of problem categories (e.g., difficulty levels, problem types). The utility function
+Q
+t
+:
+C
+→
+ℝ
+Q_{t}:C\rightarrow\mathbb{R}
+is represented as a lookup table, with one scalar value per category.
+SEC uses temporal difference (TD) learning to update utilities:
+Q
+t
++
+1
+​
+(
+c
+)
+=
+α
+​
+r
+t
+​
+(
+c
+)
++
+(
+1
+−
+α
+)
+​
+Q
+t
+​
+(
+c
+)
+,
+Q_{t+1}(c)=\alpha r_{t}(c)+(1-\alpha)Q_{t}(c),
+(20)
+where
+α
+∈
+(
+0
+,
+1
+]
+\alpha\in(0,1]
+is a learning rate and
+r
+t
+​
+(
+c
+)
+r_{t}(c)
+is the mean absolute advantage aggregated over all problems from category
+c
+c
+selected at step
+t
+t
+. This exponential moving average naturally adapts to non-stationarity as category utilities change with model improvement.
+Curriculum selection proceeds in two stages: first, a category is sampled according to the Boltzmann policy
+p
+t
+​
+(
+c
+)
+∝
+exp
+⁡
+(
+Q
+t
+​
+(
+c
+)
+/
+η
+)
+p_{t}(c)\propto\exp(Q_{t}(c)/\eta)
+; then, problems are uniformly sampled from the selected category.
+Regression.
+An alternative instantiation defines the utility space
+𝒮
+=
+𝒳
+\mathcal{S}=\mathcal{X}
+directly at the problem level, estimating utilities for individual training problems. The utility function is parameterized by a neural network
+Q
+ϕ
+:
+𝒳
+→
+ℝ
+Q_{\phi}:\mathcal{X}\rightarrow\mathbb{R}
+that takes problem representations (e.g., text embeddings) as input.
+Rather than incremental TD updates, the curator is trained via supervised regression. Let
+ℋ
+t
+=
+{
+(
+x
+j
+,
+r
+j
+)
+}
+j
+=
+1
+t
+\mathcal{H}_{t}=\{(x_{j},r_{j})\}_{j=1}^{t}
+denote the history of problem-reward observations. The utility network is optimized to minimize mean squared error:
+ℒ
+MSE
+​
+(
+ϕ
+)
+=
+∑
+(
+x
+j
+,
+r
+j
+)
+∈
+ℋ
+t
+(
+Q
+ϕ
+​
+(
+x
+j
+)
+−
+r
+j
+)
+2
+.
+\mathcal{L}_{\text{MSE}}(\phi)=\sum_{(x_{j},r_{j})\in\mathcal{H}_{t}}\left(Q_{\phi}(x_{j})-r_{j}\right)^{2}.
+(21)
+This can be optimized periodically (every
+K
+K
+steps) via batch gradient descent, or online via stochastic gradient descent:
+ϕ
+t
++
+1
+=
+ϕ
+t
+−
+β
+​
+∇
+ϕ
+(
+Q
+ϕ
+​
+(
+x
+t
+)
+−
+r
+t
+​
+(
+x
+t
+)
+)
+2
+,
+\phi_{t+1}=\phi_{t}-\beta\nabla_{\phi}\left(Q_{\phi}(x_{t})-r_{t}(x_{t})\right)^{2},
+(22)
+where
+β
+\beta
+is the learning rate. Problems are sampled directly according to
+p
+t
+​
+(
+x
+)
+∝
+exp
+⁡
+(
+Q
+ϕ
+​
+(
+x
+)
+/
+η
+)
+p_{t}(x)\propto\exp(Q_{\phi}(x)/\eta)
+.
+PCL
+(
+Gao et al., 2025
+)
+exemplifies the online regression approach. PCL updates
+Q
+ϕ
+Q_{\phi}
+concurrently with policy training using only the current batch of observations. At each step
+t
+t
+, PCL samples a candidate pool of
+k
+​
+m
+km
+prompts and selects the
+m
+m
+prompts whose predicted values are closest to a target threshold
+τ
+\tau
+(typically 0.5):
+D
+m
+=
+arg
+⁡
+min
+⁡
+∑
+x
+∈
+S
+S
+⊆
+D
+k
+​
+m
+,
+|
+S
+|
+=
+m
+⁡
+|
+Q
+ϕ
+​
+(
+x
+)
+−
+τ
+|
+.
+D_{m}=\arg\min_{S\subseteq D_{km},|S|=m}\sum_{x\in S}|Q_{\phi}(x)-\tau|.
+(23)
+This greedy selection can be viewed as an extreme limit of Boltzmann sampling with a sharply peaked distribution. Consider the modified utility
+Q
+~
+​
+(
+x
+)
+=
+−
+|
+Q
+ϕ
+​
+(
+x
+)
+−
+τ
+|
+\tilde{Q}(x)=-|Q_{\phi}(x)-\tau|
+, which measures negative distance from the threshold. As the temperature
+η
+→
+0
+\eta\to 0
+, the Boltzmann policy
+p
+⁡
+(
+x
+)
+∝
+exp
+⁡
+(
+Q
+~
+​
+(
+x
+)
+/
+η
+)
+p(x)\propto\exp(\tilde{Q}(x)/\eta)
+concentrates all probability mass on prompts nearest to
+τ
+\tau
+, recovering PCL’s greedy selection. This deterministic selection strategy is computationally efficient and ensures the training batch contains only prompts of target difficulty, maximizing the effective ratio of informative gradient signals.
+After selecting prompts, PCL generates
+n
+n
+responses per prompt and updates both the policy and value model. The value model is trained on the observed rewards from the selected prompts:
+ℒ
+PCL
+​
+(
+ϕ
+)
+=
+∑
+i
+=
+1
+m
+(
+Q
+ϕ
+​
+(
+x
+i
+)
+−
+1
+n
+​
+∑
+j
+=
+1
+n
+r
+⁡
+(
+x
+i
+,
+y
+i
+,
+j
+)
+)
+2
+.
+\mathcal{L}_{\text{PCL}}(\phi)=\sum_{i=1}^{m}\left(Q_{\phi}(x_{i})-\frac{1}{n}\sum_{j=1}^{n}r(x_{i},y_{i,j})\right)^{2}.
+(24)
+Comparison to Actor-Curator.
+The Actor-Curator framework with OSMD differs fundamentally from value-based curation methods in its optimization objective and data selection mechanism. While value-based methods learn utilities
+Q
+t
+​
+(
+s
+)
+Q_{t}(s)
+to predict expected learning outcomes and sample accordingly, OSMD directly optimizes a curriculum distribution
+𝒑
+t
+\boldsymbol{p}_{t}
+to maximize expected policy improvement. Value-based approaches require estimating problem-level or category-level values and making selection decisions based on these estimates—a two-stage process that introduces approximation error. In contrast, OSMD treats curriculum optimization as a first-order problem: the gradient
+∇
+q
+J
+​
+(
+π
+t
+,
+𝒑
+)
+\nabla_{q}J(\pi_{t},\boldsymbol{p})
+directly specifies how to adjust the data distribution to improve the policy, without requiring intermediate value estimates. Furthermore, value-based methods typically rely on scalar reward signals
+r
+t
+​
+(
+s
+)
+r_{t}(s)
+to update utilities, whereas OSMD leverages the full gradient information
+∇
+θ
+ℒ
+​
+(
+π
+t
+,
+x
+)
+\nabla_{\theta}\mathcal{L}(\pi_{t};x)
+to measure the learning value of each problem. This allows OSMD to capture richer information about how individual problems affect policy optimization, beyond what a single scalar reward can convey.
+Appendix B
+Policy improvement estimation
+This section proves unbiasedness of the per-problem bandit feedback estimators used to train the curator.
+Recall the per-problem utility at iteration
+t
+t
+(Eq. (
+6
+)):
+u
+𝒙
+t
+=
+p
+𝒳
+(
+𝒙
+)
+𝔼
+𝐲
+∼
+π
+t
+(
+⋅
+∣
+𝐱
+)
+[
+π
+t
++
+1
+​
+(
+𝐲
+∣
+𝐱
+)
+π
+t
+​
+(
+𝐲
+∣
+𝐱
+)
+A
+π
+t
+(
+𝐲
+∣
+𝐱
+)
+]
+.
+u_{\boldsymbol{x}}^{t}=p_{\mathcal{X}}(\boldsymbol{x})\,\EE_{\boldsymbol{y}\sim\pi^{t}(\cdot\mid\boldsymbol{x})}\left[\frac{\pi^{t+1}(\boldsymbol{y}\mid\boldsymbol{x})}{\pi^{t}(\boldsymbol{y}\mid\boldsymbol{x})}A_{\pi^{t}}(\boldsymbol{y}\mid\boldsymbol{x})\right].
+We also recall the rollout-based estimator (Eq. (
+7
+)):
+A
+^
+t
+(
+⋅
+∣
+𝒙
+)
+≜
+1
+|
+𝒴
+𝒙
+t
+|
+∑
+𝒚
+∈
+𝒴
+𝒙
+t
+π
+t
++
+1
+​
+(
+𝒚
+∣
+𝒙
+)
+π
+t
+​
+(
+𝒚
+∣
+𝒙
+)
+A
+π
+t
+(
+𝒚
+∣
+𝒙
+)
+,
+𝒴
+𝒙
+t
+=
+{
+𝒚
+(
+j
+)
+∼
+π
+t
+(
+⋅
+∣
+𝒙
+)
+}
+j
+=
+1
+|
+𝒴
+𝒙
+|
+.
+\hat{A}^{t}(\cdot\mid\boldsymbol{x})\triangleq\frac{1}{|\mathcal{Y}^{t}_{\boldsymbol{x}}|}\sum_{\boldsymbol{y}\in\mathcal{Y}^{t}_{\boldsymbol{x}}}\frac{\pi^{t+1}(\boldsymbol{y}\mid\boldsymbol{x})}{\pi^{t}(\boldsymbol{y}\mid\boldsymbol{x})}A_{\pi^{t}}(\boldsymbol{y}\mid\boldsymbol{x}),\quad\mathcal{Y}^{t}_{\boldsymbol{x}}=\{\boldsymbol{y}^{(j)}\sim\pi^{t}(\cdot\mid\boldsymbol{x})\}_{j=1}^{|\mathcal{Y}_{\boldsymbol{x}}|}.
+B.1
+Single-stage case
+Theorem 3
+(Unbiasedness (single-stage))
+For the estimator in Eq. (
+7
+),
+U
+^
+𝒙
+t
+=
+p
+𝒳
+(
+𝒙
+)
+𝕀
+{
+𝒙
+∈
+𝒳
+t
+}
+p
+t
+​
+(
+𝒙
+)
+A
+^
+t
+(
+⋅
+∣
+𝒙
+)
+,
+\hat{U}^{t}_{\boldsymbol{x}}=p_{\mathcal{X}}(\boldsymbol{x})\frac{\mathbb{I}\{\boldsymbol{x}\in\mathcal{X}^{t}\}}{p^{t}(\boldsymbol{x})}\hat{A}^{t}(\cdot\mid\boldsymbol{x}),
+we have
+𝔼
+[
+U
+^
+𝐱
+t
+]
+=
+u
+𝐱
+t
+\EE[\hat{U}^{t}_{\boldsymbol{x}}]=u^{t}_{\boldsymbol{x}}
+for every
+𝐱
+∈
+𝒳
+\boldsymbol{x}\in\mathcal{X}
+.
+Proof:
+Fix an iteration
+t
+t
+and a problem
+𝒙
+∈
+𝒳
+\boldsymbol{x}\in\mathcal{X}
+.
+In the single-stage setting, the training set
+𝒳
+t
+\mathcal{X}^{t}
+is sampled directly from
+𝒳
+\mathcal{X}
+according to the curator distribution
+p
+t
+​
+(
+⋅
+)
+p^{t}(\cdot)
+, so that
+Pr
+⁡
+(
+𝒙
+∈
+𝒳
+t
+)
+=
+p
+t
+​
+(
+𝒙
+)
+.
+\Pr(\boldsymbol{x}\in\mathcal{X}^{t})=p^{t}(\boldsymbol{x}).
+First,
+A
+^
+t
+(
+⋅
+∣
+𝒙
+)
+\hat{A}^{t}(\cdot\mid\boldsymbol{x})
+is an unbiased estimator of the population quantity
+𝔼
+𝐲
+∼
+π
+t
+(
+⋅
+∣
+𝐱
+)
+[
+π
+t
++
+1
+​
+(
+𝐲
+∣
+𝐱
+)
+π
+t
+​
+(
+𝐲
+∣
+𝐱
+)
+A
+π
+t
+(
+𝐲
+∣
+𝐱
+)
+]
+,
+\EE_{\boldsymbol{y}\sim\pi^{t}(\cdot\mid\boldsymbol{x})}\left[\frac{\pi^{t+1}(\boldsymbol{y}\mid\boldsymbol{x})}{\pi^{t}(\boldsymbol{y}\mid\boldsymbol{x})}A_{\pi^{t}}(\boldsymbol{y}\mid\boldsymbol{x})\right],
+by i.i.d. rollout sampling and linearity of expectation.
+Next, take expectation of
+U
+^
+𝒙
+t
+\hat{U}^{t}_{\boldsymbol{x}}
+conditioning on
+A
+^
+t
+(
+⋅
+∣
+𝒙
+)
+\hat{A}^{t}(\cdot\mid\boldsymbol{x})
+:
+𝔼
+[
+U
+^
+𝐱
+t
+∣
+A
+^
+t
+(
+⋅
+∣
+𝐱
+)
+]
+=
+p
+𝒳
+(
+𝐱
+)
+𝔼
+[
+𝕀
+{
+𝐱
+∈
+𝒳
+t
+}
+p
+t
+​
+(
+𝐱
+)
+]
+A
+^
+t
+(
+⋅
+∣
+𝐱
+)
+=
+p
+𝒳
+(
+𝐱
+)
+A
+^
+t
+(
+⋅
+∣
+𝐱
+)
+,
+\EE\!\left[\hat{U}^{t}_{\boldsymbol{x}}\mid\hat{A}^{t}(\cdot\mid\boldsymbol{x})\right]=p_{\mathcal{X}}(\boldsymbol{x})\,\EE\!\left[\frac{\mathbb{I}\{\boldsymbol{x}\in\mathcal{X}^{t}\}}{p^{t}(\boldsymbol{x})}\right]\,\hat{A}^{t}(\cdot\mid\boldsymbol{x})=p_{\mathcal{X}}(\boldsymbol{x})\,\hat{A}^{t}(\cdot\mid\boldsymbol{x}),
+since
+𝔼
+[
+𝕀
+{
+𝐱
+∈
+𝒳
+t
+}
+]
+=
+Pr
+(
+𝐱
+∈
+𝒳
+t
+)
+=
+p
+t
+(
+𝐱
+)
+\EE[\mathbb{I}\{\boldsymbol{x}\in\mathcal{X}^{t}\}]=\Pr(\boldsymbol{x}\in\mathcal{X}^{t})=p^{t}(\boldsymbol{x})
+.
+Finally, taking expectation over rollout randomness yields
+𝔼
+[
+U
+^
+𝐱
+t
+]
+=
+p
+𝒳
+(
+𝐱
+)
+𝔼
+[
+A
+^
+t
+(
+⋅
+∣
+𝐱
+)
+]
+=
+u
+𝐱
+t
+,
+\EE[\hat{U}^{t}_{\boldsymbol{x}}]=p_{\mathcal{X}}(\boldsymbol{x})\,\EE\!\left[\hat{A}^{t}(\cdot\mid\boldsymbol{x})\right]=u^{t}_{\boldsymbol{x}},
+which proves the claim.
+□
+\square
+B.2
+Two-stage case
+Theorem 4
+(Unbiasedness (two-stage))
+For the two-stage estimator in Eq. (
+10
+),
+U
+^
+two
+,
+𝒙
+t
+=
+p
+𝒳
+(
+𝒙
+)
+𝕀
+{
+𝒙
+∈
+𝒳
+t
+}
+q
+⁡
+(
+𝒙
+)
+​
+p
+t
+​
+(
+𝒙
+∣
+𝒳
+~
+t
+)
+A
+^
+t
+(
+⋅
+∣
+𝒙
+)
+,
+\hat{U}^{t}_{\mathrm{two},\boldsymbol{x}}=p_{\mathcal{X}}(\boldsymbol{x})\,\frac{\mathbb{I}\{\boldsymbol{x}\in\mathcal{X}^{t}\}}{q(\boldsymbol{x})\,p^{t}(\boldsymbol{x}\mid\tilde{\mathcal{X}}^{t})}\;\hat{A}^{t}(\cdot\mid\boldsymbol{x}),
+we have
+𝔼
+[
+U
+^
+two
+,
+𝐱
+t
+]
+=
+u
+𝐱
+t
+\EE[\hat{U}^{t}_{\mathrm{two},\boldsymbol{x}}]=u^{t}_{\boldsymbol{x}}
+for every
+𝐱
+∈
+𝒳
+\boldsymbol{x}\in\mathcal{X}
+.
+Proof:
+Fix an iteration
+t
+t
+and a problem
+𝒙
+∈
+𝒳
+\boldsymbol{x}\in\mathcal{X}
+.
+By definition of the two-stage procedure (Section
+3.5
+),
+the candidate set
+𝒳
+~
+t
+\tilde{\mathcal{X}}^{t}
+is sampled from
+q
+~
+\tilde{q}
+, inducing the marginal inclusion probability
+q
+⁡
+(
+𝒙
+)
+=
+Pr
+⁡
+(
+𝒙
+∈
+𝒳
+~
+t
+)
+q(\boldsymbol{x})=\Pr(\boldsymbol{x}\in\tilde{\mathcal{X}}^{t})
+.
+Conditioned on
+𝒳
+~
+t
+\tilde{\mathcal{X}}^{t}
+, the curator selects the training set
+𝒳
+t
+⊂
+𝒳
+~
+t
+\mathcal{X}^{t}\subset\tilde{\mathcal{X}}^{t}
+according to
+p
+t
+(
+⋅
+∣
+𝒳
+~
+t
+)
+p^{t}(\cdot\mid\tilde{\mathcal{X}}^{t})
+.
+As in the single-stage case,
+A
+^
+t
+(
+⋅
+∣
+𝒙
+)
+\hat{A}^{t}(\cdot\mid\boldsymbol{x})
+is an unbiased estimator of the corresponding population
+expectation under
+𝒚
+∼
+π
+t
+(
+⋅
+∣
+𝒙
+)
+\boldsymbol{y}\sim\pi^{t}(\cdot\mid\boldsymbol{x})
+.
+Now condition on the realized candidate set
+𝒳
+~
+t
+\tilde{\mathcal{X}}^{t}
+and on
+A
+^
+t
+(
+⋅
+∣
+𝒙
+)
+\hat{A}^{t}(\cdot\mid\boldsymbol{x})
+.
+If
+𝒙
+∉
+𝒳
+~
+t
+\boldsymbol{x}\notin\tilde{\mathcal{X}}^{t}
+, then
+𝕀
+{
+𝒙
+∈
+𝒳
+t
+}
+=
+0
+\mathbb{I}\{\boldsymbol{x}\in\mathcal{X}^{t}\}=0
+almost surely.
+If
+𝒙
+∈
+𝒳
+~
+t
+\boldsymbol{x}\in\tilde{\mathcal{X}}^{t}
+, then by the selection step,
+𝔼
+[
+𝕀
+{
+𝐱
+∈
+𝒳
+t
+}
+∣
+𝒳
+~
+t
+]
+=
+p
+t
+(
+𝐱
+∣
+𝒳
+~
+t
+)
+,
+\EE\!\left[\mathbb{I}\{\boldsymbol{x}\in\mathcal{X}^{t}\}\mid\tilde{\mathcal{X}}^{t}\right]=p^{t}(\boldsymbol{x}\mid\tilde{\mathcal{X}}^{t}),
+and therefore
+𝔼
+[
+𝕀
+{
+𝐱
+∈
+𝒳
+t
+}
+p
+t
+​
+(
+𝐱
+∣
+𝒳
+~
+t
+)
+|
+𝒳
+~
+t
+,
+A
+^
+t
+(
+⋅
+∣
+𝐱
+)
+]
+=
+𝕀
+{
+𝐱
+∈
+𝒳
+~
+t
+}
+.
+\EE\!\left[\frac{\mathbb{I}\{\boldsymbol{x}\in\mathcal{X}^{t}\}}{p^{t}(\boldsymbol{x}\mid\tilde{\mathcal{X}}^{t})}\;\middle|\;\tilde{\mathcal{X}}^{t},\hat{A}^{t}(\cdot\mid\boldsymbol{x})\right]=\mathbb{I}\{\boldsymbol{x}\in\tilde{\mathcal{X}}^{t}\}.
+Substituting into the estimator gives
+𝔼
+[
+U
+^
+two
+,
+𝐱
+t
+|
+𝒳
+~
+t
+,
+A
+^
+t
+(
+⋅
+∣
+𝐱
+)
+]
+=
+p
+𝒳
+(
+𝐱
+)
+𝕀
+{
+𝐱
+∈
+𝒳
+~
+t
+}
+q
+⁡
+(
+𝐱
+)
+A
+^
+t
+(
+⋅
+∣
+𝐱
+)
+.
+\EE\!\left[\hat{U}^{t}_{\mathrm{two},\boldsymbol{x}}\;\middle|\;\tilde{\mathcal{X}}^{t},\hat{A}^{t}(\cdot\mid\boldsymbol{x})\right]=p_{\mathcal{X}}(\boldsymbol{x})\,\frac{\mathbb{I}\{\boldsymbol{x}\in\tilde{\mathcal{X}}^{t}\}}{q(\boldsymbol{x})}\;\hat{A}^{t}(\cdot\mid\boldsymbol{x}).
+Taking expectation over the proposal step yields
+𝔼
+[
+U
+^
+two
+,
+𝐱
+t
+|
+A
+^
+t
+(
+⋅
+∣
+𝐱
+)
+]
+=
+p
+𝒳
+(
+𝐱
+)
+𝔼
+[
+𝕀
+{
+𝐱
+∈
+𝒳
+~
+t
+}
+]
+q
+⁡
+(
+𝐱
+)
+A
+^
+t
+(
+⋅
+∣
+𝐱
+)
+=
+p
+𝒳
+(
+𝐱
+)
+A
+^
+t
+(
+⋅
+∣
+𝐱
+)
+,
+\EE\!\left[\hat{U}^{t}_{\mathrm{two},\boldsymbol{x}}\;\middle|\;\hat{A}^{t}(\cdot\mid\boldsymbol{x})\right]=p_{\mathcal{X}}(\boldsymbol{x})\,\frac{\EE[\mathbb{I}\{\boldsymbol{x}\in\tilde{\mathcal{X}}^{t}\}]}{q(\boldsymbol{x})}\;\hat{A}^{t}(\cdot\mid\boldsymbol{x})=p_{\mathcal{X}}(\boldsymbol{x})\,\hat{A}^{t}(\cdot\mid\boldsymbol{x}),
+since
+𝔼
+[
+𝕀
+{
+𝐱
+∈
+𝒳
+~
+t
+}
+]
+=
+Pr
+(
+𝐱
+∈
+𝒳
+~
+t
+)
+=
+q
+(
+𝐱
+)
+\EE[\mathbb{I}\{\boldsymbol{x}\in\tilde{\mathcal{X}}^{t}\}]=\Pr(\boldsymbol{x}\in\tilde{\mathcal{X}}^{t})=q(\boldsymbol{x})
+.
+Finally, taking expectation over rollout randomness gives
+𝔼
+[
+U
+^
+two
+,
+𝐱
+t
+]
+=
+p
+𝒳
+(
+𝐱
+)
+𝔼
+[
+A
+^
+t
+(
+⋅
+∣
+𝐱
+)
+]
+=
+u
+𝐱
+t
+,
+\EE[\hat{U}^{t}_{\mathrm{two},\boldsymbol{x}}]=p_{\mathcal{X}}(\boldsymbol{x})\,\EE[\hat{A}^{t}(\cdot\mid\boldsymbol{x})]=u^{t}_{\boldsymbol{x}},
+which proves the claim.
+□
+\square
+Appendix C
+Idealized OSMD algorithm
+Algorithm 2
+Sleeping Online Mirror Descent
+1:
+Number of total arms
+K
+K
+, number of available arms
+k
+k
+each round, horizon
+T
+T
+, step size
+η
+>
+0
+\eta>0
+, exploration parameter
+α
+∈
+(
+0
+,
+1
+/
+k
+)
+\alpha\in(0,1/k)
+.
+2:
+Initialize
+𝒑
+1
+=
+(
+1
+/
+K
+,
+…
+,
+1
+/
+K
+)
+\boldsymbol{p}_{1}=(1/K,\dots,1/K)
+.
+3:
+for
+t
+=
+1
+,
+2
+,
+…
+,
+T
+t=1,2,\dots,T
+do
+4:
+Sample available subset
+𝒳
+~
+t
+\tilde{\mathcal{X}}_{t}
+. Compute
+𝒑
+t
+​
+(
+i
+∣
+𝒳
+~
+t
+)
+=
+{
+𝒑
+t
+,
+i
+∑
+j
+∈
+𝒳
+~
+t
+𝒑
+t
+,
+j
+if
+i
+∈
+𝒳
+~
+t
+0
+otherwise
+\boldsymbol{p}^{t}(i\mid\tilde{\mathcal{X}}_{t})=\begin{cases}\frac{\boldsymbol{p}_{t,i}}{\sum_{j\in\tilde{\mathcal{X}}_{t}}\boldsymbol{p}_{t,j}}&\text{if $i\in\tilde{\mathcal{X}}_{t}$}\\
+0\quad&\text{otherwise}\end{cases}
+(25)
+5:
+Sample
+a
+t
+,
+1
+,
+a
+t
+,
+2
+,
+…
+,
+a
+t
+,
+s
+∼
+i
+.
+i
+.
+d
+.
+𝒑
+t
+(
+⋅
+∣
+𝒳
+~
+t
+)
+a_{t,1},a_{t,2},\dots,a_{t,s}\stackrel{{\scriptstyle i.i.d.}}{{\sim}}\boldsymbol{p}^{t}(\cdot\mid\tilde{\mathcal{X}}_{t})
+6:
+(Loss Estimator)
+For each arm
+i
+∈
+[
+K
+]
+i\in[K]
+, set
+L
+^
+t
+,
+i
+=
+1
+s
+∑
+r
+=
+1
+s
+𝟏
+{
+a
+t
+,
+r
+=
+i
+}
+l
+t
+,
+i
+𝒑
+t
+​
+(
+i
+∣
+𝒳
+~
+t
+)
+\displaystyle\widehat{L}_{t,i}=\frac{1}{s}\sum_{r=1}^{s}\mathbf{1}\{a_{t,r}=i\}\frac{l_{t,i}}{\boldsymbol{p}^{t}(i\mid\tilde{\mathcal{X}}_{t})}
+(26)
+7:
+(OSMD Update)
+Update the next distribution by the mirror step
+𝒑
+t
++
+1
+∈
+arg
+⁡
+min
+p
+∈
+𝒜
+​
+{
+η
+⁡
+⟨
+p
+,
+𝑳
+^
+t
+⟩
++
+D
+F
+​
+(
+p
+,
+𝒑
+t
+)
+}
+,
+\displaystyle\boldsymbol{p}_{t+1}\in\arg\min_{p\in\mathcal{A}}\left\{\eta\,\langle p,\widehat{\boldsymbol{L}}_{t}\rangle+D_{F}(p,\boldsymbol{p}_{t})\right\},
+(27)
+where
+D
+F
+​
+(
+𝒖
+,
+𝒗
+)
+=
+∑
+i
+u
+i
+​
+log
+⁡
+u
+i
+v
+i
+\displaystyle\text{where}\quad D_{F}(\boldsymbol{u},\boldsymbol{v})=\sum_{i}u_{i}\log\frac{u_{i}}{v_{i}}
+8:
+end
+for
+C.1
+Setup
+We formalize the tabular bandit algorithm in Section
+3
+as Algorithm
+2
+. Under this idealized algorithm. We assume there is a large set of
+K
+K
+arms. At each time step
+t
+t
+,
+k
+k
+arms are uniformly randomly chosen as candidate arms. The settings allows for the pulling of
+s
+s
+arms per round, and after each round the loss
+l
+t
+,
+i
+l_{t,i}
+is revealed for each chosen arm
+i
+i
+, where
+i
+i
+indicates the arm’s original index in
+[
+K
+]
+[K]
+. Throughout this section and the next, we denote the vectorized quantities with bold font. For example
+𝒍
+t
+=
+(
+l
+t
+,
+1
+,
+…
+,
+l
+t
+,
+K
+)
+\boldsymbol{l}_{t}=(l_{t,1},\dots,l_{t,K})
+.
+Algorithm
+2
+departs from traditional Online Stochastic Mirror Descent (OSMD) due to the availability constraint. The action distribution is conditioned on a randomly sampled
+available set
+at each round, and the loss estimator is modified to remain unbiased under this conditional sampling.
+Eqn. (
+25
+) introduces a two-stage sampling process. First, a random
+k
+k
+-subset
+𝒳
+~
+t
+⊆
+[
+K
+]
+\tilde{\mathcal{X}}_{t}\subseteq[K]
+of available arms is drawn uniformly. The learner then constructs a
+conditional distribution
+𝒑
+t
+​
+(
+i
+∣
+𝒳
+~
+t
+)
+=
+𝒑
+t
+,
+i
+∑
+j
+∈
+𝒳
+~
+t
+𝒑
+t
+,
+j
+for
+​
+i
+∈
+𝒳
+~
+t
+,
+\boldsymbol{p}^{t}(i\mid\tilde{\mathcal{X}}_{t})=\frac{\boldsymbol{p}_{t,i}}{\sum_{j\in\tilde{\mathcal{X}}_{t}}\boldsymbol{p}_{t,j}}\quad\text{for }i\in\tilde{\mathcal{X}}_{t},
+and assigns zero probability to arms outside
+𝒳
+~
+t
+\tilde{\mathcal{X}}_{t}
+. We sometimes also use
+𝒑
+∣
+𝒳
+~
+t
+(
+i
+)
+\boldsymbol{p}_{\mid\tilde{\mathcal{X}}_{t}}(i)
+to denote
+𝒑
+t
+​
+(
+i
+∣
+𝒳
+~
+t
+)
+\boldsymbol{p}^{t}(i\mid\tilde{\mathcal{X}}_{t})
+. This renormalization ensures that the learner only samples from arms that are available at round
+t
+t
+, while still using
+𝒑
+t
+\boldsymbol{p}_{t}
+as the global state variable that is updated over time.
+The conditional sampling in Eqn. (
+25
+) invalidates the standard OSMD estimator, since
+p
+t
+,
+i
+p_{t,i}
+is no longer the actual probability with which arm
+i
+i
+is sampled. Eqn. (
+26
+) addresses this by defining
+L
+^
+t
+,
+i
+=
+1
+s
+∑
+r
+=
+1
+s
+𝟏
+{
+a
+t
+,
+r
+=
+i
+}
+l
+t
+,
+i
+𝒑
+t
+​
+(
+i
+∣
+𝒳
+~
+t
+)
+.
+\widehat{L}_{t,i}=\frac{1}{s}\sum_{r=1}^{s}\mathbf{1}\{a_{t,r}=i\}\frac{l_{t,i}}{\boldsymbol{p}^{t}(i\mid\tilde{\mathcal{X}}_{t})}.
+This estimator uses the conditional probability
+𝒑
+t
+​
+(
+i
+∣
+𝒳
+~
+t
+)
+\boldsymbol{p}^{t}(i\mid\tilde{\mathcal{X}}_{t})
+in the denominator, which is the true sampling probability of arm
+i
+i
+given the realized availability set. As a result, conditional on
+𝒳
+~
+t
+\tilde{\mathcal{X}}_{t}
+, the estimator is unbiased:
+𝔼
+[
+L
+^
+t
+,
+i
+∣
+𝒳
+~
+t
+]
+=
+l
+t
+,
+i
+𝕀
+{
+i
+∈
+𝒳
+~
+t
+}
+.
+\mathbb{E}\!\left[\widehat{L}_{t,i}\mid\tilde{\mathcal{X}}_{t}\right]=l_{t,i}\,\mathbb{I}\{i\in\tilde{\mathcal{X}}_{t}\}.
+The use of
+s
+s
+independent samples further reduces variance and corresponds to a semi-bandit feedback model, but does not change the role of the estimator in the mirror update.
+Appendix D
+Regret Analysis
+This section presents a proof of the regret bound (Theorem
+2
+) for Algorithm
+2
+.
+Suppose there are
+K
+K
+base arms
+[
+K
+]
+=
+{
+1
+,
+…
+,
+K
+}
+[K]=\{1,\dots,K\}
+each corresponding to a problem in the dataset
+𝒳
+=
+{
+𝒙
+(
+1
+)
+,
+𝒙
+(
+2
+)
+,
+…
+,
+𝒙
+(
+K
+)
+}
+\mathcal{X}=\{\boldsymbol{x}^{(1)},\boldsymbol{x}^{(2)},\dots,\boldsymbol{x}^{(K)}\}
+. At each step, a subset
+𝒳
+~
+t
+\tilde{\mathcal{X}}_{t}
+of size
+k
+k
+is drawn uniformly randomly from
+𝒳
+\mathcal{X}
+. For every round
+t
+t
+, The curator picks
+s
+s
+arms
+a
+t
+,
+1
+,
+a
+t
+,
+2
+,
+…
+,
+a
+t
+,
+s
+∈
+[
+K
+]
+a_{t,1},a_{t,2},\dots,a_{t,s}\in[K]
+from
+𝒳
+~
+t
+\tilde{\mathcal{X}}_{t}
+and the loss for each arm
+l
+t
+,
+a
+t
+,
+i
+l_{t,a_{t,i}}
+is revealed. For convenience, write
+𝒍
+t
+=
+(
+l
+t
+,
+1
+,
+…
+,
+l
+t
+,
+K
+)
+\boldsymbol{l}_{t}=(l_{t,1},\dots,l_{t,K})
+to be the losses of each arm as a vector. Assume without loss of generality that
+l
+t
+,
+i
+∈
+[
+0
+,
+1
+]
+l_{t,i}\in[0,1]
+for all
+t
+t
+and
+i
+i
+. Define the subset-masked loss vector
+𝒍
+t
+𝒳
+~
+t
+∈
+ℝ
+K
+\boldsymbol{l}_{t}^{\tilde{\mathcal{X}}_{t}}\in\mathbb{R}^{K}
+:
+𝒍
+t
+𝒳
+~
+t
+​
+(
+i
+)
+=
+{
+𝒍
+t
+​
+(
+i
+)
+if
+​
+i
+∈
+𝒳
+~
+t
+0
+otherwise
+\boldsymbol{l}_{t}^{\tilde{\mathcal{X}}_{t}}(i)=\begin{cases}\boldsymbol{l}_{t}(i)&\text{if }i\in\tilde{\mathcal{X}}_{t}\\
+0&\text{otherwise}\end{cases}
+(28)
+Denote the best available arm at time
+t
+t
+as
+m
+t
+m_{t}
+m
+t
+=
+arg
+⁡
+min
+i
+∈
+𝒳
+~
+t
+​
+l
+t
+,
+i
+​
+and
+​
+l
+t
+∗
+=
+l
+t
+,
+m
+t
+.
+m_{t}=\arg\min_{i\in\tilde{\mathcal{X}}_{t}}l_{t,i}\text{ and }l^{*}_{t}=l_{t,m_{t}}.
+(29)
+We define the
+best-arm regret
+to be
+Reg
+T
+best
+=
+𝔼
+[
+∑
+t
+=
+1
+T
+(
+∑
+i
+=
+1
+s
+l
+t
+,
+a
+t
+,
+s
+−
+l
+t
+∗
+)
+]
+\mathrm{Reg}_{T}^{\mathrm{best}}=\EE\left[\sum_{t=1}^{T}(\sum_{i=1}^{s}l_{t,a_{t,s}}-l^{*}_{t})\right]
+(30)
+Note that the regret can be expressed in the vectorized form.
+Reg
+n
+best
+=
+𝔼
+[
+∑
+t
+=
+1
+T
+⟨
+𝐩
+𝒳
+~
+t
+,
+𝐥
+t
+⟩
+−
+⟨
+𝐞
+m
+t
+,
+𝐥
+t
+⟩
+]
+,
+\mathrm{Reg}_{n}^{\mathrm{best}}=\EE\left[\sum_{t=1}^{T}\left\langle\boldsymbol{p}_{\tilde{\mathcal{X}}_{t}},\boldsymbol{l}_{t}\right\rangle-\left\langle\boldsymbol{e}_{m_{t}},\boldsymbol{l}_{t}\right\rangle\right],
+(31)
+where
+𝒆
+i
+\boldsymbol{e}_{i}
+is a one-hot vector with
+1
+1
+on index
+i
+i
+. Here, we use
+𝒑
+∣
+𝒳
+~
+t
+\boldsymbol{p}_{\mid\tilde{\mathcal{X}}_{t}}
+to represent the vector
+(
+𝒑
+∣
+𝒳
+~
+t
+𝒙
+(
+1
+)
+)
+,
+𝒑
+∣
+𝒳
+~
+t
+(
+𝒙
+(
+2
+)
+)
+,
+…
+,
+𝒑
+∣
+𝒳
+~
+t
+(
+𝒙
+(
+K
+)
+)
+)
+(\boldsymbol{p}_{\mid\tilde{\mathcal{X}}_{t}}\boldsymbol{x}^{(1)}),\boldsymbol{p}_{\mid\tilde{\mathcal{X}}_{t}}(\boldsymbol{x}^{(2)}),\dots,\boldsymbol{p}_{\mid\tilde{\mathcal{X}}_{t}}(\boldsymbol{x}^{(K)}))
+. In practice, forcing uniform exploration usually have negligible or even positive effect on the performance. However, it incurs linear regret for theoretical analysis. Thus, to focus on how OSMD manages losses in a non-stationary environment, this regret analysis isolate the loss attributable to factors other than uniform exploration. Towards this end, we set the comparator
+𝒒
+t
+\boldsymbol{q}_{t}
+to be a mixture of the best available arm and uniform distribution over all arms.
+𝒒
+t
+=
+(
+1
+−
+k
+​
+α
+)
+​
+𝒆
+m
+t
++
+α
+​
+𝟏
+𝒳
+~
+t
+\boldsymbol{q}_{t}=(1-k\alpha)\boldsymbol{e}_{m_{t}}+\alpha\boldsymbol{1}_{\tilde{\mathcal{X}}_{t}}
+(32)
+where
+α
+>
+0
+\alpha>0
+and
+𝟏
+𝒳
+~
+t
+∈
+ℝ
+K
+\mathbf{1}_{\tilde{\mathcal{X}}_{t}}\in\mathbb{R}^{K}
+is a binary vector with
+𝟏
+𝒳
+~
+t
+​
+(
+i
+)
+=
+1
+\mathbf{1}_{\tilde{\mathcal{X}}_{t}}(i)=1
+for all
+i
+∈
+𝒳
+~
+t
+i\in\tilde{\mathcal{X}}_{t}
+and zero everywhere else. The
+best-available regret
+is defined as
+Reg
+T
+BA
+=
+𝔼
+[
+∑
+t
+=
+1
+T
+⟨
+𝐩
+∣
+𝒳
+~
+t
+,
+𝐥
+t
+⟩
+−
+⟨
+𝐪
+t
+,
+𝐥
+t
+⟩
+]
+\mathrm{Reg}_{T}^{\mathrm{BA}}=\EE\left[\sum_{t=1}^{T}\left\langle\boldsymbol{p}_{\mid\tilde{\mathcal{X}}_{t}},\boldsymbol{l}_{t}\right\rangle-\left\langle\boldsymbol{q}_{t},\boldsymbol{l}_{t}\right\rangle\right]
+(33)
+Theorem 5
+(Restatement of Theorem
+2
+)
+Let the drift parameter
+V
+T
+=
+∑
+t
+=
+2
+T
+Δ
+t
+,
+Δ
+t
+=
+max
+i
+∈
+[
+K
+]
+⁡
+|
+l
+t
+,
+i
+−
+l
+t
+−
+1
+,
+i
+|
+V_{T}=\sum_{t=2}^{T}\Delta_{t},\quad\Delta_{t}=\max_{i\in[K]}\left|l_{t,i}-l_{t-1,i}\right|
+(34)
+be a measure of how rapid the arm values changes over time
+t
+t
+. Assume without loss of generality that
+𝐥
+t
+,
+i
+∈
+[
+0
+,
+1
+]
+\boldsymbol{l}_{t,i}\in[0,1]
+for all
+t
+t
+and
+i
+i
+. Then we have
+Reg
+n
+BA
+≤
+O
+⁡
+(
+T
+2
+/
+3
+​
+V
+n
+1
+/
+3
+)
+\mathrm{Reg}^{\mathrm{BA}}_{n}\leq O\left(T^{2/3}V_{n}^{1/3}\right)
+(35)
+for Algorithm
+2
+.
+To bound the smoothed regret, the proof follows a block decomposition argument. We partition the horizon into contiguous blocks of length
+B
+B
+and restart the algorithm at the beginning of each block. Within a single block, the loss sequence is treated as approximately stationary, allowing us to compare the algorithm against a fixed comparator using standard OSMD analysis. The regret within each block is controlled by a stability–variance tradeoff: the mirror descent inequality yields a term of order
+O
+⁡
+(
+log
+⁡
+(
+1
+/
+α
+)
+/
+η
+)
+O(\log(1/\alpha)/\eta)
+, while the variance of the importance-weighted estimator contributes a term proportional to
+O
+⁡
+(
+η
+​
+B
+)
+O(\eta B)
+. Across blocks, non-stationarity is captured through a variation budget
+V
+n
+V_{n}
+, which upper bounds the cumulative discrepancy between the true per-round losses and the frozen losses used in the blockwise analysis, contributing an additive term of order
+B
+​
+V
+n
+BV_{n}
+. The block length
+B
+B
+is then optimized to balance the statistical cost of restarting too frequently against the bias induced by treating losses as stationary within each block. This optimization yields a regret bound scaling as
+O
+⁡
+(
+V
+n
+1
+/
+3
+)
+O(V_{n}^{1/3})
+, reflecting the classical tradeoff between adaptivity to non-stationarity and estimation error
+Besbes et al. (2014)
+.
+Let the length of each aforementioned block be
+L
+L
+. Denote the start time of each block as
+τ
+l
+=
+(
+l
+−
+1
+)
+​
+L
++
+1
+\tau_{l}=(l-1)L+1
+, where
+l
+=
+1
+,
+2
+,
+…
+,
+B
+l=1,2,\dots,B
+and
+B
+=
+T
+/
+L
+B=T/L
+1
+1
+1
+For convenience, we assume
+T
+T
+is divisible by B and L at the same time.
+. Denote the time steps of the
+l
+l
+-th block as
+ℐ
+l
+=
+{
+τ
+l
+,
+…
+,
+τ
+l
++
+L
+−
+1
+}
+\mathcal{I}_{l}=\{\tau_{l},\dots,\tau_{l}+L-1\}
+.
+Reg
+n
+BA
+=
+𝔼
+[
+∑
+t
+=
+1
+n
+⟨
+𝐩
+∣
+𝒳
+~
+t
+,
+𝐥
+t
+⟩
+−
+⟨
+𝐪
+t
+,
+𝐥
+t
+⟩
+]
+=
+∑
+l
+=
+1
+B
+𝔼
+[
+∑
+t
+∈
+ℐ
+l
+⟨
+𝐩
+∣
+𝒳
+~
+t
+,
+𝐲
+t
+⟩
+−
+⟨
+𝐪
+t
+,
+𝐥
+t
+⟩
+]
+\mathrm{Reg}_{n}^{\mathrm{BA}}=\EE\left[\sum_{t=1}^{n}\left\langle\boldsymbol{p}_{\mid\tilde{\mathcal{X}}_{t}},\boldsymbol{l}_{t}\right\rangle-\left\langle\boldsymbol{q}_{t},\boldsymbol{l}_{t}\right\rangle\right]=\sum_{l=1}^{B}\EE\left[\sum_{t\in\mathcal{I}_{l}}\left\langle\boldsymbol{p}_{\mid\tilde{\mathcal{X}}_{t}},\boldsymbol{y}_{t}\right\rangle-\left\langle\boldsymbol{q}_{t},\boldsymbol{l}_{t}\right\rangle\right]
+(36)
+D.1
+Time-Frozen Comparator
+This part of the proof introduces a stable reference for comparison in the presence of non-stationary losses. Rather than comparing the learner to the best action at every round, which may change arbitrarily over time, we define a comparator based on the losses at a fixed reference
+τ
+\tau
+. This “time-frozen” comparator serves as a proxy for the per-round best action. The construction allows us to relate the learner’s loss to this frozen benchmark, while the error incurred by freezing time can be bounded by the amount of variation in the losses.
+Define
+m
+t
+τ
+∈
+arg
+⁡
+min
+i
+∈
+𝒳
+~
+t
+⁡
+y
+τ
+,
+i
+m_{t}^{\tau}\in\arg\min_{i\in\tilde{\mathcal{X}}_{t}}y_{\tau,i}
+to be the
+τ
+\tau
+-frozen best arm of time
+t
+t
+. Denote the value associated with this arm
+(
+y
+t
+∗
+)
+τ
+=
+y
+τ
+,
+m
+t
+τ
+(y^{*}_{t})^{\tau}=y_{\tau,m_{t}^{\tau}}
+. Thus, we can define the time-frozen smooth comparator
+𝒒
+t
+τ
+=
+(
+1
+−
+k
+​
+α
+)
+​
+𝒆
+m
+t
+τ
++
+α
+​
+𝟏
+𝒳
+~
+t
+\boldsymbol{q}_{t}^{\tau}=(1-k\alpha)\boldsymbol{e}_{m_{t}^{\tau}}+\alpha\boldsymbol{1}_{\tilde{\mathcal{X}}_{t}}
+(37)
+Lemma 1
+Let
+ℐ
+=
+{
+τ
+,
+…
+,
+τ
++
+L
+−
+1
+}
+\mathcal{I}=\{\tau,\dots,\tau+L-1\}
+be an arbitrary block. Suppose
+α
+>
+0
+\alpha>0
+. Let
+V
+n
+V_{n}
+be as defined in Theorem
+5
+. For any sequence of random variables
+{
+X
+t
+}
+t
+∈
+ℐ
+\{X_{t}\}_{t\in\mathcal{I}}
+with a common support, we have
+𝔼
+[
+∑
+t
+∈
+ℐ
+X
+t
+−
+⟨
+𝐪
+t
+,
+𝐥
+t
+𝒳
+~
+t
+Z
+t
+⟩
+]
+≤
+𝔼
+[
+∑
+t
+∈
+ℐ
+X
+t
+−
+⟨
+𝐪
+t
+τ
+,
+𝐥
+t
+𝒳
+~
+t
+Z
+t
+⟩
+]
++
+1
+−
+k
+​
+α
+k
+​
+α
+​
+∑
+t
+∈
+ℐ
+‖
+𝐥
+t
+−
+𝐥
+τ
+‖
+1
+\EE\left[\sum_{t\in\mathcal{I}}X_{t}-\left\langle\boldsymbol{q}_{t},\frac{\boldsymbol{l}_{t}^{\tilde{\mathcal{X}}_{t}}}{Z_{t}}\right\rangle\right]\leq\EE\left[\sum_{t\in\mathcal{I}}X_{t}-\left\langle\boldsymbol{q}^{\tau}_{t},\frac{\boldsymbol{l}_{t}^{\tilde{\mathcal{X}}_{t}}}{Z_{t}}\right\rangle\right]+\frac{1-k\alpha}{k\alpha}\sum_{t\in\mathcal{I}}\|\boldsymbol{l}_{t}-\boldsymbol{l}_{\tau}\|_{1}
+(38)
+Proof:
+By the definition of
+𝒒
+t
+τ
+\boldsymbol{q}_{t}^{\tau}
+, we have
+⟨
+𝒒
+t
+τ
+,
+𝒍
+τ
+𝒳
+~
+t
+⟩
+\displaystyle\left\langle\boldsymbol{q}_{t}^{\tau},\boldsymbol{l}_{\tau}^{\tilde{\mathcal{X}}_{t}}\right\rangle
+≤
+(
+1
+−
+k
+​
+α
+)
+​
+(
+y
+t
+∗
+)
+τ
++
+α
+​
+∑
+j
+∈
+𝒳
+~
+t
+𝒍
+τ
+,
+j
+\displaystyle\leq(1-k\alpha)(y^{*}_{t})^{\tau}+\alpha\sum_{j\in\tilde{\mathcal{X}}_{t}}\boldsymbol{l}_{\tau,j}
+(39)
+≤
+(
+1
+−
+k
+​
+α
+​
+(
+y
+t
+∗
+)
+τ
++
+α
+⁡
+(
+k
+​
+(
+y
+t
+∗
+)
+τ
++
+k
+−
+1
+)
+CLOSE
+\displaystyle\leq(1-k\alpha(y^{*}_{t})^{\tau}+\alpha(k(y^{*}_{t})^{\tau}+k-1)
+=
+m
+t
+τ
++
+α
+⁡
+(
+k
+−
+1
+)
+\displaystyle=m_{t}^{\tau}+\alpha(k-1)
+Rearranging (
+39
+) and divide by
+Z
+t
+Z_{t}
+, we get
+m
+t
+τ
+Z
+t
+≥
+⟨
+𝒒
+t
+τ
+,
+𝒍
+τ
+𝒳
+~
+t
+Z
+t
+⟩
+−
+α
+⁡
+(
+k
+−
+1
+)
+Z
+t
+≥
+⟨
+𝒒
+t
+τ
+,
+𝒍
+τ
+𝒳
+~
+t
+Z
+t
+⟩
+−
+k
+−
+1
+k
+.
+\frac{m_{t}^{\tau}}{Z_{t}}\geq\left\langle\boldsymbol{q}_{t}^{\tau},\frac{\boldsymbol{l}_{\tau}^{\tilde{\mathcal{X}}_{t}}}{Z_{t}}\right\rangle-\frac{\alpha(k-1)}{Z_{t}}\geq\left\langle\boldsymbol{q}_{t}^{\tau},\frac{\boldsymbol{l}_{\tau}^{\tilde{\mathcal{X}}_{t}}}{Z_{t}}\right\rangle-\frac{k-1}{k}.
+(40)
+Using the fact that
+min
+\min
+is a Lipschitz operation, we have
+|
+y
+t
+∗
+−
+(
+y
+t
+∗
+)
+τ
+|
+=
+|
+min
+i
+∈
+𝒳
+~
+t
+⁡
+𝒍
+t
+,
+i
+−
+min
+i
+∈
+𝒳
+~
+t
+⁡
+𝒍
+τ
+,
+i
+|
+≤
+‖
+𝒍
+t
+−
+𝒍
+τ
+‖
+∞
+≤
+‖
+𝒍
+t
+−
+𝒍
+τ
+‖
+1
+,
+\left|y^{*}_{t}-(y^{*}_{t})^{\tau}\right|=\left|\min_{i\in\tilde{\mathcal{X}}_{t}}\boldsymbol{l}_{t,i}-\min_{i\in\tilde{\mathcal{X}}_{t}}\boldsymbol{l}_{\tau,i}\right|\leq\|\boldsymbol{l}_{t}-\boldsymbol{l}_{\tau}\|_{\infty}\leq\|\boldsymbol{l}_{t}-\boldsymbol{l}_{\tau}\|_{1},
+Applying this identity, we have
+|
+⟨
+𝒒
+t
+,
+𝒍
+t
+𝒳
+~
+t
+Z
+t
+⟩
+−
+⟨
+𝒒
+t
+τ
+,
+𝒍
+t
+𝒳
+~
+t
+Z
+t
+⟩
+|
+\displaystyle\left|\left\langle\boldsymbol{q}_{t},\frac{\boldsymbol{l}_{t}^{\tilde{\mathcal{X}}_{t}}}{Z_{t}}\right\rangle-\left\langle\boldsymbol{q}^{\tau}_{t},\frac{\boldsymbol{l}_{t}^{\tilde{\mathcal{X}}_{t}}}{Z_{t}}\right\rangle\right|
+≤
+1
+k
+​
+α
+​
+|
+⟨
+𝒒
+t
+,
+𝒍
+t
+𝒳
+~
+t
+⟩
+−
+⟨
+𝒒
+t
+τ
+,
+𝒍
+t
+𝒳
+~
+t
+⟩
+|
+\displaystyle\leq\frac{1}{k\alpha}\left|\left\langle\boldsymbol{q}_{t},\boldsymbol{l}_{t}^{\tilde{\mathcal{X}}_{t}}\right\rangle-\left\langle\boldsymbol{q}^{\tau}_{t},\boldsymbol{l}_{t}^{\tilde{\mathcal{X}}_{t}}\right\rangle\right|
+(41)
+=
+1
+−
+k
+​
+α
+k
+​
+α
+​
+|
+y
+t
+∗
+−
+(
+y
+t
+∗
+)
+τ
+|
+\displaystyle=\frac{1-k\alpha}{k\alpha}\left|y^{*}_{t}-(y^{*}_{t})^{\tau}\right|
+≤
+1
+−
+k
+​
+α
+k
+​
+α
+​
+‖
+𝐲
+t
+−
+𝐲
+τ
+‖
+1
+\displaystyle\leq\frac{1-k\alpha}{k\alpha}\|\mathbf{y}_{t}-\mathbf{y}_{\tau}\|_{1}
+Rearrange (
+41
+) and add
+X
+t
+X_{t}
+to both sides while taking expectation, we get
+𝔼
+[
+∑
+t
+∈
+ℐ
+X
+t
+−
+⟨
+𝐪
+t
+,
+𝐥
+t
+𝒳
+~
+t
+Z
+t
+⟩
+]
+≤
+𝔼
+[
+∑
+t
+∈
+ℐ
+X
+t
+−
+⟨
+𝐪
+t
+τ
+,
+𝐥
+t
+𝒳
+~
+t
+Z
+t
+⟩
+]
++
+1
+−
+k
+​
+α
+k
+​
+α
+​
+∑
+t
+∈
+ℐ
+‖
+𝐥
+t
+−
+𝐥
+τ
+‖
+1
+\EE\left[\sum_{t\in\mathcal{I}}X_{t}-\left\langle\boldsymbol{q}_{t},\frac{\boldsymbol{l}_{t}^{\tilde{\mathcal{X}}_{t}}}{Z_{t}}\right\rangle\right]\leq\EE\left[\sum_{t\in\mathcal{I}}X_{t}-\left\langle\mathbf{q}^{\tau}_{t},\frac{\boldsymbol{l}_{t}^{\tilde{\mathcal{X}}_{t}}}{Z_{t}}\right\rangle\right]+\frac{1-k\alpha}{k\alpha}\sum_{t\in\mathcal{I}}\|\boldsymbol{l}_{t}-\boldsymbol{l}_{\tau}\|_{1}
+(42)
+□
+\square
+D.2
+Moment Lemmas
+To apply the standard OMD bound (Theorem
+5
+), we require unbiased loss estimates with controlled variance. Since the learner only observes losses on the sampled subset (
+𝒳
+~
+t
+\tilde{\mathcal{X}}_{t}
+), we work with an importance-weighted estimator that accounts for both subset sampling and the normalization induced by
+Z
+t
+Z_{t}
+.
+The following two lemmas establish the properties needed for the regret analysis. The first shows that the estimator is unbiased for the scaled loss, ensuring that the expected update direction matches the true loss. The second provides a bound on the second moment of the estimator, which controls the variance term in the OSMD regret bound. Together, these results justify the use of the estimator in the mirror descent analysis and quantify the cost introduced by partial observation and uniform exploration.
+Lemma 2
+(Unbiasedness)
+Let
+L
+^
+t
+,
+i
+\widehat{L}_{t,i}
+be as defined in Algorithm
+2
+. Denote
+𝐋
+^
+t
+=
+(
+L
+^
+t
+,
+1
+,
+L
+^
+t
+,
+2
+,
+…
+,
+L
+^
+t
+,
+K
+)
+\widehat{\boldsymbol{L}}_{t}=(\widehat{L}_{t,1},\widehat{L}_{t,2},\dots,\widehat{L}_{t,K})
+. For every
+i
+∈
+[
+K
+]
+i\in[K]
+,
+𝔼
+[
+L
+^
+t
+,
+i
+∣
+𝒳
+~
+t
+]
+=
+𝐥
+t
+,
+i
+𝕀
+{
+i
+∈
+𝒳
+~
+t
+}
+=
+𝐥
+t
+𝒳
+~
+t
+(
+i
+)
+\EE[\widehat{L}_{t,i}\mid\tilde{\mathcal{X}}_{t}]=\boldsymbol{l}_{t,i}\mathbb{I}\{i\in\tilde{\mathcal{X}}_{t}\}=\boldsymbol{l}_{t}^{\tilde{\mathcal{X}}_{t}}(i)\\
+(43)
+Additionally, define the time-frozen estimator
+L
+^
+t
+,
+i
+τ
+:=
+1
+s
+∑
+r
+=
+1
+s
+𝕀
+{
+a
+t
+,
+r
+=
+i
+}
+l
+τ
+,
+i
+𝒑
+t
+​
+(
+i
+∣
+𝒳
+~
+t
+)
+,
+\widehat{L}_{t,i}^{\tau}:=\frac{1}{s}\sum_{r=1}^{s}\mathbb{I}\{a_{t,r}=i\}\frac{l_{\tau,i}}{\boldsymbol{p}^{t}(i\mid\tilde{\mathcal{X}}_{t})},
+(44)
+and we have
+𝔼
+[
+L
+^
+t
+,
+i
+τ
+∣
+𝒳
+~
+t
+]
+=
+l
+τ
+,
+i
+𝕀
+{
+i
+∈
+𝒳
+~
+t
+}
+=
+𝐥
+τ
+𝒳
+~
+t
+(
+i
+)
+\EE[\widehat{L}_{t,i}^{\tau}\mid\tilde{\mathcal{X}}_{t}]=l_{\tau,i}\mathbb{I}\{i\in\tilde{\mathcal{X}}_{t}\}=\boldsymbol{l}_{\tau}^{\tilde{\mathcal{X}}_{t}}(i)
+(45)
+Proof:
+If
+i
+∈
+𝒳
+~
+t
+i\in\tilde{\mathcal{X}}_{t}
+,
+𝔼
+[
+L
+^
+t
+,
+i
+τ
+|
+𝒳
+~
+t
+]
+=
+1
+s
+∑
+r
+=
+1
+s
+𝐩
+t
+(
+i
+∣
+𝒳
+~
+t
+)
+l
+t
+,
+i
+𝕀
+{
+i
+∈
+𝒳
+~
+t
+}
+𝐩
+t
+​
+(
+i
+∣
+𝒳
+~
+t
+)
+=
+l
+t
+,
+i
+𝕀
+{
+i
+∈
+𝒳
+~
+t
+}
+\EE\left[\widehat{L}_{t,i}^{\tau}\middle|\tilde{\mathcal{X}}_{t}\right]=\frac{1}{s}\sum_{r=1}^{s}\boldsymbol{p}_{t}(i\mid\tilde{\mathcal{X}}_{t})\frac{l_{t,i}\mathbb{I}\{i\in\tilde{\mathcal{X}}_{t}\}}{\boldsymbol{p}^{t}(i\mid\tilde{\mathcal{X}}_{t})}=l_{t,i}\mathbb{I}\{i\in\tilde{\mathcal{X}}_{t}\}
+Similarly,
+𝔼
+[
+L
+^
+t
+,
+i
+τ
+|
+𝒳
+~
+t
+]
+=
+1
+s
+∑
+r
+=
+1
+s
+𝐩
+t
+(
+i
+∣
+𝒳
+~
+t
+)
+l
+τ
+,
+i
+𝕀
+{
+i
+∈
+𝒳
+~
+t
+}
+𝐩
+t
+​
+(
+i
+∣
+𝒳
+~
+t
+)
+=
+l
+τ
+,
+i
+𝕀
+{
+i
+∈
+𝒳
+~
+t
+}
+\EE\left[\widehat{L}_{t,i}^{\tau}\middle|\tilde{\mathcal{X}}_{t}\right]=\frac{1}{s}\sum_{r=1}^{s}\boldsymbol{p}_{t}(i\mid\tilde{\mathcal{X}}_{t})\frac{l_{\tau,i}\mathbb{I}\{i\in\tilde{\mathcal{X}}_{t}\}}{\boldsymbol{p}^{t}(i\mid\tilde{\mathcal{X}}_{t})}=l_{\tau,i}\mathbb{I}\{i\in\tilde{\mathcal{X}}_{t}\}
+□
+\square
+Lemma 3
+(Bounded Second Moment)
+Let
+L
+^
+t
+,
+j
+\widehat{L}_{t,j}
+be as defined in Algorithm
+2
+. Suppose we obtain
+𝐩
+t
+\boldsymbol{p}^{t}
+through
+𝒑
+t
+∈
+arg
+⁡
+min
+𝒑
+∈
+𝒜
+⁡
+η
+⁡
+⟨
+𝒑
+,
+𝑳
+^
+t
+⟩
++
+D
+F
+​
+(
+𝒑
+,
+𝒑
+t
+−
+1
+)
+,
+\boldsymbol{p}^{t}\in\arg\min_{\boldsymbol{p}\in\mathcal{A}}\eta\left\langle\boldsymbol{p},\widehat{\boldsymbol{L}}_{t}\right\rangle+D_{F}(\boldsymbol{p},\boldsymbol{p}^{t-1}),
+under the constraint
+𝐩
+t
+​
+(
+i
+)
+≥
+α
+\boldsymbol{p}^{t}(i)\geq\alpha
+for all
+i
+i
+. We have
+𝔼
+[
+∑
+j
+=
+1
+K
+𝐩
+j
+t
+​
+L
+^
+t
+,
+j
+2
+|
+𝒳
+~
+t
+]
+≤
+k
+s
+\EE\left[\sum_{j=1}^{K}\boldsymbol{p}^{t}_{j}\widehat{L}_{t,j}^{2}\middle|\tilde{\mathcal{X}}_{t}\right]\leq\frac{k}{s}
+(46)
+Proof:
+For
+j
+∉
+𝒳
+~
+t
+j\not\in\tilde{\mathcal{X}}_{t}
+,
+L
+^
+t
+,
+j
+=
+0
+\widehat{L}_{t,j}=0
+, For
+j
+∈
+𝒳
+~
+t
+j\in\tilde{\mathcal{X}}_{t}
+, let
+X
+r
+,
+j
+:=
+𝕀
+⁡
+{
+A
+t
+,
+r
+=
+j
+}
+​
+𝒍
+τ
+,
+j
+𝒑
+t
+​
+(
+j
+∣
+𝒳
+~
+t
+)
+,
+consequently
+​
+L
+^
+t
+,
+j
+=
+1
+s
+​
+∑
+r
+=
+1
+s
+X
+r
+,
+j
+X_{r,j}:=\mathbb{I}\left\{A_{t,r=j}\right\}\frac{\boldsymbol{l}_{\tau,j}}{\boldsymbol{p}^{t}(j\mid\tilde{\mathcal{X}}_{t})},\quad\text{consequently }\widehat{L}_{t,j}=\frac{1}{s}\sum_{r=1}^{s}X_{r,j}
+By construction,
+X
+r
+,
+j
+X_{r,j}
+’s are IID in
+r
+r
+, and since
+𝒍
+τ
+,
+j
+∈
+[
+0
+,
+1
+]
+\boldsymbol{l}_{\tau,j}\in[0,1]
+,
+𝔼
+[
+X
+r
+,
+j
+2
+∣
+𝒳
+~
+t
+]
+=
+∑
+j
+∈
+𝒳
+~
+t
+𝐩
+t
+​
+(
+j
+∣
+𝒳
+~
+t
+)
+​
+𝐥
+τ
+,
+j
+2
+𝐩
+t
+​
+(
+j
+∣
+𝒳
+~
+t
+)
+2
+≤
+1
+𝐩
+t
+​
+(
+j
+∣
+𝒳
+~
+t
+)
+\EE\left[X^{2}_{r,j}\mid\tilde{\mathcal{X}}_{t}\right]=\sum_{j\in\tilde{\mathcal{X}}_{t}}\boldsymbol{p}^{t}(j\mid\tilde{\mathcal{X}}_{t})\frac{\boldsymbol{l}^{2}_{\tau,j}}{\boldsymbol{p}^{t}(j\mid\tilde{\mathcal{X}}_{t})^{2}}\leq\frac{1}{\boldsymbol{p}^{t}(j\mid\tilde{\mathcal{X}}_{t})}
+By Jensen’s inequality, we have
+𝔼
+[
+(
+L
+^
+t
+,
+j
+τ
+)
+2
+∣
+𝒳
+~
+t
+]
+=
+𝔼
+[
+(
+1
+s
+∑
+r
+=
+1
+s
+X
+r
+,
+j
+)
+2
+|
+𝒳
+~
+t
+]
+≤
+1
+s
+𝔼
+[
+X
+r
+,
+j
+2
+|
+𝒳
+~
+t
+]
+≤
+1
+s
+​
+𝐩
+t
+​
+(
+j
+∣
+𝒳
+~
+t
+)
+\EE\left[(\widehat{L}_{t,j}^{\tau})^{2}\mid\tilde{\mathcal{X}}_{t}\right]=\EE\left[\left(\frac{1}{s}\sum_{r=1}^{s}X_{r,j}\right)^{2}\middle|\tilde{\mathcal{X}}_{t}\right]\leq\frac{1}{s}\EE\left[X_{r,j}^{2}\middle|\tilde{\mathcal{X}}_{t}\right]\leq\frac{1}{s\boldsymbol{p}^{t}(j\mid\tilde{\mathcal{X}}_{t})}
+Summing with weights
+𝒑
+t
+\boldsymbol{p}^{t}
+over
+j
+∈
+𝒳
+~
+t
+j\in\tilde{\mathcal{X}}_{t}
+gives
+∑
+j
+∈
+𝒳
+~
+t
+(
+𝒑
+∣
+𝒳
+~
+t
+t
+)
+j
+𝔼
+[
+(
+L
+^
+t
+,
+j
+τ
+)
+2
+|
+𝒳
+~
+t
+]
+≤
+1
+s
+∑
+j
+∈
+𝒳
+~
+t
+(
+𝐩
+∣
+𝒳
+~
+t
+t
+)
+j
+Z
+t
+(
+𝐩
+t
+∣
+𝒳
+~
+t
+)
+j
+=
+k
+s
+Z
+t
+≤
+k
+s
+\sum_{j\in\tilde{\mathcal{X}}_{t}}\left(\boldsymbol{p}^{t}_{\mid\tilde{\mathcal{X}}_{t}}\right)_{j}\EE\left[(\widehat{L}_{t,j}^{\tau})^{2}\middle|\tilde{\mathcal{X}}_{t}\right]\leq\frac{1}{s}\sum_{j\in\tilde{\mathcal{X}}_{t}}\left(\boldsymbol{p}^{t}_{\mid\tilde{\mathcal{X}}_{t}}\right)_{j}\frac{Z_{t}}{\left(\boldsymbol{p}^{t}_{\mid\tilde{\mathcal{X}}_{t}}\right)_{j}}=\frac{k}{s}Z_{t}\leq\frac{k}{s}
+□
+\square
+D.3
+One-Step OMD Bound
+The purpose of the following lemma is to provide a local inequality that governs how a single mirror descent update behaves under the importance-weighted loss estimator. When summed over time, the KL terms telescope while the second-moment terms accumulate in a controlled manner. This structure allows the proof to separate the effect of the update rule from issues caused by partial observability and non-stationarity, which are handled in later steps.
+Lemma 4
+Suppose
+𝐩
+t
+\boldsymbol{p}^{t}
+’s are obtained as in Algorithm
+2
+. Then, for any comparator
+𝐯
+t
+∈
+Δ
+𝒳
+~
+t
+\boldsymbol{v}_{t}\in\Delta_{\tilde{\mathcal{X}}_{t}}
+,
+⟨
+𝒑
+∣
+𝒳
+~
+t
+t
+−
+𝒗
+t
+,
+𝒍
+t
+⟩
+≤
+1
+η
+(
+KL
+(
+𝒗
+t
+∥
+𝒑
+∣
+𝒳
+~
+t
+t
+)
+−
+KL
+(
+𝒗
+t
+∥
+𝒑
+∣
+𝒳
+~
+t
++
+1
+t
++
+1
+)
+)
++
+η
+​
+s
+2
+2
+∑
+i
+∈
+C
+t
+𝒑
+t
+(
+i
+∣
+𝒳
+~
+t
+)
+L
+^
+t
+,
+i
+2
+\left\langle\boldsymbol{p}^{t}_{\mid\tilde{\mathcal{X}}_{t}}-\boldsymbol{v}_{t},\boldsymbol{l}_{t}\right\rangle\leq\frac{1}{\eta}\left(\mathrm{KL}(\boldsymbol{v}_{t}\|\boldsymbol{p}^{t}_{\mid\tilde{\mathcal{X}}_{t}})-\mathrm{KL}(\boldsymbol{v}_{t}\|\boldsymbol{p}^{t+1}_{\mid\tilde{\mathcal{X}}_{t+1}})\right)+\frac{\eta s^{2}}{2}\sum_{i\in C_{t}}\boldsymbol{p}^{t}(i\mid\tilde{\mathcal{X}}_{t})\widehat{L}_{t,i}^{2}
+(47)
+Proof:
+For the simplicity of the proof, fix
+t
+t
+. Write
+C
+=
+𝒳
+~
+t
+C=\tilde{\mathcal{X}}_{t}
+. Let
+p
+i
+=
+𝒑
+i
+t
+p_{i}=\boldsymbol{p}^{t}_{i}
+,
+Z
+=
+Z
+t
+Z=Z_{t}
+,
+q
+i
+=
+𝒑
+t
+​
+(
+i
+∣
+𝒳
+~
+t
+)
+q_{i}=\boldsymbol{p}^{t}(i\mid\tilde{\mathcal{X}}_{t})
+, and
+L
+^
+i
+=
+L
+^
+t
+,
+i
+\widehat{L}_{i}=\widehat{L}_{t,i}
+. Write the updated weights as
+p
+i
++
+=
+p
+i
+​
+exp
+⁡
+(
+−
+η
+​
+L
+^
+i
+)
+p_{i}^{+}=p_{i}\exp(-\eta\widehat{L}_{i})
+and the updated active sum as
+Z
++
+=
+∑
+i
+∈
+C
+p
++
+Z^{+}=\sum_{i\in C}p^{+}
+. Let
+q
+i
++
+=
+p
+i
++
+/
+Z
++
+q_{i}^{+}=p_{i}^{+}/Z^{+}
+. We denote the vector form of the aforementioned quantities in bold. e.g.
+𝒑
+⁡
+(
+i
+)
+=
+p
+i
+\boldsymbol{p}(i)=p_{i}
+.
+Note
+log
+⁡
+q
+i
+q
+i
++
+=
+log
+⁡
+p
+i
+/
+Z
+p
+i
+​
+exp
+⁡
+(
+−
+η
+​
+L
+^
+i
+)
+/
+Z
++
+=
+log
+⁡
+Z
++
+Z
++
+η
+​
+L
+^
+i
+\log\frac{q_{i}}{q_{i}^{+}}=\log\frac{p_{i}/Z}{p_{i}\exp(-\eta\widehat{L}_{i})/Z^{+}}=\log\frac{Z^{+}}{Z}+\eta\widehat{L}_{i}
+(48)
+Now,
+KL
+(
+𝒗
+∥
+𝒒
++
+)
+−
+KL
+(
+𝒗
+∥
+𝒒
+)
+\displaystyle\mathrm{KL}(\boldsymbol{v}\|\boldsymbol{q}^{+})-\mathrm{KL}(\boldsymbol{v}\|\boldsymbol{q})
+=
+∑
+i
+∈
+C
+v
+i
+​
+log
+⁡
+v
+i
+q
+i
++
+−
+∑
+i
+∈
+C
+v
+i
+​
+log
+⁡
+v
+i
+q
+i
+\displaystyle=\sum_{i\in C}v_{i}\log\frac{v_{i}}{q^{+}_{i}}-\sum_{i\in C}v_{i}\log\frac{v_{i}}{q_{i}}
+(49)
+=
+∑
+i
+∈
+C
+v
+i
+​
+log
+⁡
+q
+i
+q
+i
++
+\displaystyle=\sum_{i\in C}v_{i}\log\frac{q_{i}}{q^{+}_{i}}
+=
+log
+⁡
+Z
++
+Z
++
+η
+​
+⟨
+𝒗
+,
+𝑳
+^
+⟩
+\displaystyle=\log\frac{Z^{+}}{Z}+\eta\left\langle\boldsymbol{v},\widehat{\boldsymbol{L}}\right\rangle
+Rearranging we have
+η
+⟨
+𝒗
+,
+𝑳
+^
+⟩
+=
+KL
+(
+𝒗
+∥
+𝒒
++
+)
+−
+KL
+(
+𝒗
+∥
+𝒒
+)
+−
+log
+Z
++
+Z
+\eta\left\langle\boldsymbol{v},\widehat{\boldsymbol{L}}\right\rangle=\mathrm{KL}(\boldsymbol{v}\|\boldsymbol{q}^{+})-\mathrm{KL}(\boldsymbol{v}\|\boldsymbol{q})-\log\frac{Z^{+}}{Z}
+(50)
+Next, apply the fact that
+e
+−
+x
+≤
+1
+−
+x
++
+x
+2
+e^{-x}\leq 1-x+x^{2}
+for
+x
+≥
+0
+x\geq 0
+and taking logs, we have
+log
+⁡
+Z
++
+Z
+\displaystyle\log\frac{Z^{+}}{Z}
+≤
+log
+⁡
+(
+∑
+i
+∈
+C
+q
+i
+​
+(
+1
+−
+η
+​
+L
+^
+i
++
+η
+2
+2
+​
+L
+^
+i
+2
+)
+)
+\displaystyle\leq\log\left(\sum_{i\in C}q_{i}\left(1-\eta\widehat{L}_{i}+\frac{\eta^{2}}{2}\widehat{L}_{i}^{2}\right)\right)
+(51)
+=
+log
+⁡
+(
+1
+−
+η
+⁡
+⟨
+𝒒
+,
+𝑳
+^
+⟩
++
+η
+2
+2
+​
+∑
+i
+∈
+C
+q
+i
+​
+L
+^
+i
+2
+)
+\displaystyle=\log\left(1-\eta\left\langle\boldsymbol{q},\widehat{\boldsymbol{L}}\right\rangle+\frac{\eta^{2}}{2}\sum_{i\in C}q_{i}\widehat{L}_{i}^{2}\right)
+≤
+−
+η
+⁡
+⟨
+𝒒
+,
+𝑳
+^
+⟩
++
+η
+2
+2
+​
+∑
+i
+∈
+C
+q
+i
+​
+L
+^
+i
+2
+\displaystyle\leq-\eta\left\langle\boldsymbol{q},\widehat{\boldsymbol{L}}\right\rangle+\frac{\eta^{2}}{2}\sum_{i\in C}q_{i}\widehat{L}_{i}^{2}
+where the last inequality applies
+log
+⁡
+(
+1
++
+x
+)
+≤
+x
+\log(1+x)\leq x
+for all
+x
+>
+−
+1
+x>-1
+.
+Now plug (
+51
+) into (
+50
+),
+η
+⟨
+𝒗
+,
+𝑳
+^
+⟩
+≥
+KL
+(
+𝒗
+∥
+𝒒
++
+)
+−
+KL
+(
+𝒗
+∥
+𝒒
+)
++
+η
+⟨
+𝒒
+,
+𝒚
+^
+⟩
++
+η
+2
+2
+∑
+i
+∈
+C
+q
+i
+L
+^
+i
+2
+\eta\left\langle\boldsymbol{v},\hat{\boldsymbol{L}}\right\rangle\geq\mathrm{KL}(\boldsymbol{v}\|\boldsymbol{q}^{+})-\mathrm{KL}(\boldsymbol{v}\|\boldsymbol{q})+\eta\left\langle\boldsymbol{q},\hat{\boldsymbol{y}}\right\rangle+\frac{\eta^{2}}{2}\sum_{i\in C}q_{i}\widehat{L}_{i}^{2}
+(52)
+Rearranging the inequality and dividing by
+η
+\eta
+, we get
+⟨
+𝒒
+−
+𝒗
+,
+𝐋
+^
+⟩
+≤
+1
+η
+(
+KL
+(
+𝒗
+∥
+𝒒
+)
+−
+KL
+(
+𝒗
+∥
+𝒒
+)
+)
++
+η
+2
+∑
+i
+∈
+C
+q
+i
+L
+^
+i
+2
+\langle\boldsymbol{q}-\boldsymbol{v},\mathbf{\widehat{L}}\rangle\leq\frac{1}{\eta}(\mathrm{KL}(\boldsymbol{v}\|\boldsymbol{q})-\mathrm{KL}(\boldsymbol{v}\|\boldsymbol{q}))+\frac{\eta}{2}\sum_{i\in C}q_{i}\widehat{L}_{i}^{2}
+(53)
+Substituting the original notation back, we recover the claim.
+□
+\square
+D.4
+Reduction to Blockwise Fixed Arm
+The next two lemmas connect the one-step bound to a blockwise analysis under non-stationarity. Lemma
+5
+controls the discrepancy between the per-round best available arm and a single arm fixed over a block, showing that this gap is governed by the cumulative variation within the block. Lemma
+6
+then combines this control with the one-step OMD bound to obtain a regret bound against a fixed comparator over the block. Together, these results allow the per-round inequalities to be aggregated while isolating the effect of non-stationarity.
+Lemma 5
+Fix a block
+ℬ
+=
+{
+t
+0
+,
+t
+0
++
+1
+,
+…
+,
+t
+0
++
+L
+−
+1
+}
+\mathcal{B}=\{t_{0},t_{0}+1,\dots,t_{0}+L-1\}
+. Dentoe the blockwise best arm as
+m
+ℬ
+∈
+arg
+min
+i
+∈
+[
+K
+]
+∑
+i
+∈
+ℬ
+L
+^
+t
+,
+i
+𝕀
+{
+i
+∈
+𝒳
+~
+t
+}
+m_{\mathcal{B}}\in\arg\min_{i\in[K]}\sum_{i\in\mathcal{B}}\widehat{L}_{t,i}\mathbb{I}\{i\in\tilde{\mathcal{X}}_{t}\}
+(54)
+Let
+Δ
+t
+\Delta_{t}
+be as defined in Theorem
+5
+. Then,
+∑
+t
+∈
+ℬ
+(
+L
+^
+t
+,
+m
+ℬ
+𝕀
+{
+m
+ℬ
+∈
+C
+t
+}
+−
+L
+^
+t
+,
+m
+t
+)
+≤
+L
+∑
+t
+∈
+B
+∖
+{
+t
+0
+}
+Δ
+t
+\sum_{t\in\mathcal{B}}\left(\widehat{L}_{t,m_{\mathcal{B}}}\mathbb{I}\{m_{\mathcal{B}}\in C_{t}\}-\widehat{L}_{t,m_{t}}\right)\leq L\sum_{t\in B\setminus\{t_{0}\}}\Delta_{t}
+(55)
+Proof:
+Let
+b
+t
+​
+(
+C
+)
+=
+min
+i
+∈
+C
+⁡
+L
+^
+i
+,
+t
+b_{t}(C)=\min_{i\in C}\widehat{L}_{i,t}
+. By the Lipschitz property of
+min
+\min
+, it satisfies
+|
+b
+t
+​
+(
+C
+)
+−
+b
+t
+−
+1
+​
+(
+C
+)
+|
+≤
+max
+i
+∈
+C
+⁡
+|
+L
+^
+t
+,
+i
+−
+L
+^
+t
+−
+1
+,
+i
+|
+≤
+Δ
+t
+\left|b_{t}(C)-b_{t-1}(C)\right|\leq\max_{i\in C}\left|\widehat{L}_{t,i}-\widehat{L}_{t-1,i}\right|\leq\Delta_{t}
+(56)
+By telescoping (
+56
+) from
+t
+0
+t_{0}
+to
+t
+t
+,
+b
+t
+0
+​
+(
+C
+t
+)
+≤
+b
+t
+​
+(
+C
+t
+)
++
+∑
+τ
+=
+t
+0
++
+1
+t
+Δ
+τ
+=
+m
+t
++
+∑
+τ
+=
+t
+0
++
+1
+t
+Δ
+τ
+b_{t_{0}}(C_{t})\leq b_{t}(C_{t})+\sum_{\tau=t_{0}+1}^{t}\Delta_{\tau}=m_{t}+\sum_{\tau=t_{0}+1}^{t}\Delta_{\tau}
+(57)
+By definition of
+m
+ℬ
+m_{\mathcal{B}}
+as the best static arm for the block
+∑
+t
+∈
+ℬ
+L
+^
+t
+,
+m
+ℬ
+𝕀
+{
+b
+ℬ
+∈
+𝒳
+~
+t
+}
+≤
+∑
+t
+∈
+ℬ
+L
+^
+t
+,
+m
+t
+t
+0
+𝕀
+{
+m
+t
+t
+0
+∈
+𝒳
+~
+t
+}
+\sum_{t\in\mathcal{B}}\widehat{L}_{t,m_{\mathcal{B}}}\mathbb{I}\{b_{\mathcal{B}}\in\tilde{\mathcal{X}}_{t}\}\leq\sum_{t\in\mathcal{B}}\widehat{L}_{t,m_{t}^{t_{0}}}\mathbb{I}\{m_{t}^{t_{0}}\in\tilde{\mathcal{X}}_{t}\}
+(58)
+Also note that by definition,
+L
+^
+t
+,
+m
+t
+t
+0
+≤
+L
+^
+t
+0
+,
+m
+t
+t
+0
++
+∑
+τ
+=
+t
+0
++
+1
+t
+Δ
+τ
+=
+b
+t
+0
+​
+(
+𝒳
+~
+t
+)
++
+∑
+τ
+=
+t
+0
++
+1
+t
+Δ
+τ
+\widehat{L}_{t,m_{t}^{t_{0}}}\leq\widehat{L}_{t_{0},m_{t}^{t_{0}}}+\sum_{\tau=t_{0}+1}^{t}\Delta_{\tau}=b_{t_{0}}(\tilde{\mathcal{X}}_{t})+\sum_{\tau=t_{0}+1}^{t}\Delta_{\tau}
+(59)
+Combine (
+56
+) and (
+59
+),
+∑
+t
+∈
+ℬ
+L
+^
+t
+,
+m
+ℬ
+𝕀
+{
+m
+ℬ
+∈
+𝒳
+~
+t
+}
+≤
+∑
+t
+∈
+ℬ
+(
+L
+^
+t
+,
+m
+t
++
+∑
+τ
+=
+t
+0
++
+1
+t
+Δ
+τ
+)
+\sum_{t\in\mathcal{B}}\widehat{L}_{t,m_{\mathcal{B}}}\mathbb{I}\{m_{\mathcal{B}}\in\tilde{\mathcal{X}}_{t}\}\leq\sum_{t\in\mathcal{B}}\left(\widehat{L}_{t,m_{t}}+\sum_{\tau=t_{0}+1}^{t}\Delta_{\tau}\right)
+(60)
+Rearranging, we get
+∑
+t
+∈
+ℬ
+L
+^
+t
+,
+m
+ℬ
+𝕀
+{
+m
+ℬ
+∈
+𝒳
+~
+t
+}
+−
+L
+^
+t
+,
+m
+t
+≤
+L
+∑
+t
+∈
+ℬ
+∖
+{
+t
+0
+}
+Δ
+t
+\sum_{t\in\mathcal{B}}\widehat{L}_{t,m_{\mathcal{B}}}\mathbb{I}\{m_{\mathcal{B}}\in\tilde{\mathcal{X}}_{t}\}-\widehat{L}_{t,m_{t}}\leq L\sum_{t\in\mathcal{B}\setminus\{t_{0}\}}\Delta_{t}
+(61)
+□
+\square
+Lemma 6
+Fix a block
+ℬ
+=
+{
+t
+0
+,
+t
+0
++
+1
+,
+…
+,
+t
+0
++
+L
+−
+1
+}
+\mathcal{B}=\{t_{0},t_{0}+1,\dots,t_{0}+L-1\}
+. Run Algorithm
+2
+with
+η
+>
+0
+\eta>0
+starting from time
+t
+0
+t_{0}
+. Let
+𝐪
+t
+∈
+Δ
+𝒳
+~
+t
+\boldsymbol{q}_{t}\in\Delta_{\tilde{\mathcal{X}}_{t}}
+be the played distribution at each round
+t
+∈
+ℬ
+t\in\mathcal{B}
+and let
+𝐋
+^
+t
+\widehat{\boldsymbol{L}}_{t}
+be an unbiased estimator of the masked loss vector
+𝔼
+[
+𝐋
+^
+t
+∣
+𝒳
+~
+t
+]
+=
+𝐋
+t
+𝒳
+~
+t
+\EE[\widehat{\boldsymbol{L}}_{t}\mid\tilde{\mathcal{X}}_{t}]=\boldsymbol{L}_{t}^{\tilde{\mathcal{X}}_{t}}
+and that the second moment is bounded by
+𝔼
+[
+∑
+i
+∈
+𝒳
+~
+t
+𝐪
+t
+,
+i
+​
+L
+^
+t
+,
+i
+2
+]
+≤
+k
+s
+\EE\left[\sum_{i\in\tilde{\mathcal{X}}_{t}}\boldsymbol{q}_{t,i}\widehat{L}_{t,i}^{2}\right]\leq\frac{k}{s}
+(62)
+for all
+t
+t
+. Then,
+𝔼
+[
+∑
+t
+∈
+ℬ
+⟨
+𝐪
+t
+,
+𝐥
+t
+C
+t
+⟩
+−
+𝐥
+t
+,
+m
+ℬ
+𝕀
+{
+m
+ℬ
+∈
+𝒳
+~
+t
+}
+]
+≤
+log
+⁡
+(
+1
+/
+α
+)
+η
++
+sk
+​
+η
+​
+L
+2
+\EE\left[\sum_{t\in\mathcal{B}}\left\langle\boldsymbol{q}_{t},\boldsymbol{l}_{t}^{C_{t}}\right\rangle-\boldsymbol{l}_{t,m_{\mathcal{B}}}\mathbb{I}\{m_{\mathcal{B}}\in\tilde{\mathcal{X}}_{t}\}\right]\leq\frac{\log(1/\alpha)}{\eta}+\frac{sk\eta L}{2}
+(63)
+Proof:
+For each
+t
+∈
+ℬ
+t\in\mathcal{B}
+and any comparators
+𝒗
+t
+∈
+Δ
+𝒳
+~
+t
+\boldsymbol{v}_{t}\in\Delta_{\tilde{\mathcal{X}}_{t}}
+, apply Lemma
+4
+∑
+t
+∈
+ℬ
+⟨
+𝒒
+t
+−
+𝒗
+t
+,
+𝑳
+t
+⟩
+≤
+1
+η
+∑
+t
+∈
+ℬ
+(
+KL
+(
+𝒗
+t
+∥
+𝒒
+t
+)
+−
+KL
+(
+𝒗
+t
+∥
+𝒒
+t
++
+1
+)
+)
++
+η
+​
+s
+2
+2
+∑
+t
+∈
+ℬ
+∑
+i
+∈
+𝒳
+~
+t
+𝒒
+t
+,
+i
+L
+^
+t
+,
+i
+2
+\sum_{t\in\mathcal{B}}\left\langle\boldsymbol{q}_{t}-\boldsymbol{v}_{t},\boldsymbol{L}_{t}\right\rangle\leq\frac{1}{\eta}\sum_{t\in\mathcal{B}}\left(\mathrm{KL}(\boldsymbol{v}_{t}\|\boldsymbol{q}_{t})-\mathrm{KL}(\boldsymbol{v}_{t}\|\boldsymbol{q}_{t+1})\right)+\frac{\eta s^{2}}{2}\sum_{t\in\mathcal{B}}\sum_{i\in\tilde{\mathcal{X}}_{t}}\boldsymbol{q}_{t,i}\widehat{L}_{t,i}^{2}
+(64)
+By the unbiasedness of
+𝐲
+^
+t
+\widehat{\mathbf{y}}_{t}
+,
+𝔼
+[
+⟨
+𝐪
+t
+−
+𝐯
+t
+,
+𝐥
+t
+⟩
+]
+=
+𝔼
+[
+⟨
+𝐪
+t
+−
+𝐯
+t
+,
+𝐥
+t
+𝒳
+~
+t
+⟩
+]
+\EE[\left\langle\boldsymbol{q}_{t}-\boldsymbol{v}_{t},\boldsymbol{l}_{t}\right\rangle]=\EE\left[\left\langle\boldsymbol{q}_{t}-\boldsymbol{v}_{t},\boldsymbol{l}_{t}^{\tilde{\mathcal{X}}_{t}}\right\rangle\right]
+For the KL terms, we have
+∑
+t
+∈
+ℬ
+(
+KL
+(
+𝒗
+t
+∥
+𝒒
+t
+)
+−
+KL
+(
+𝒗
+t
+∥
+𝒒
+t
++
+1
+)
+)
+\displaystyle\sum_{t\in\mathcal{B}}\left(\mathrm{KL}(\boldsymbol{v}_{t}\|\boldsymbol{q}_{t})-\mathrm{KL}(\boldsymbol{v}_{t}\|\boldsymbol{q}_{t+1})\right)
+=
+KL
+(
+𝒗
+t
+∥
+𝒒
+t
+0
+)
+−
+KL
+(
+𝒗
+t
+∥
+𝒒
+t
+0
++
+L
+−
+1
+)
+\displaystyle=\mathrm{KL}(\boldsymbol{v}_{t}\|\boldsymbol{q}_{t_{0}})-\mathrm{KL}(\boldsymbol{v}_{t}\|\boldsymbol{q}_{t_{0}+L-1})
+(65)
+≤
+log
+⁡
+(
+1
+/
+α
+)
+\displaystyle\leq\log(1/\alpha)
+where the first equality is a result of telescoping with respect to
+t
+t
+and the second due to the fact that
+𝐪
+t
+0
+\mathbf{q}_{t_{0}}
+is restarted from uniform.
+For the second term on the RHS of (
+64
+), we invoke Lemma
+3
+. Taking expectation on both sides, we get (
+63
+).
+□
+\square
+D.5
+Proof of Theorem
+5
+Note that
+∑
+t
+∈
+ℬ
+⟨
+𝒒
+t
+,
+𝒍
+t
+𝒳
+~
+t
+⟩
+−
+𝒍
+t
+,
+m
+t
+=
+(
+∑
+t
+∈
+ℬ
+⟨
+𝒒
+t
+,
+𝒍
+t
+𝒳
+~
+t
+⟩
+−
+𝒍
+t
+,
+m
+ℬ
+𝕀
+{
+m
+ℬ
+∈
+𝒳
+~
+t
+}
+)
++
+(
+∑
+t
+∈
+ℬ
+𝒍
+t
+,
+m
+ℬ
+𝕀
+{
+m
+ℬ
+∈
+𝒳
+~
+t
+}
+−
+𝒍
+t
+,
+m
+t
+)
+\sum_{t\in\mathcal{B}}\left\langle\boldsymbol{q}_{t},\boldsymbol{l}_{t}^{\tilde{\mathcal{X}}_{t}}\right\rangle-\boldsymbol{l}_{t,m_{t}}=\left(\sum_{t\in\mathcal{B}}\left\langle\boldsymbol{q}_{t},\boldsymbol{l}_{t}^{\tilde{\mathcal{X}}_{t}}\right\rangle-\boldsymbol{l}_{t,m_{\mathcal{B}}}\mathbb{I}\{m_{\mathcal{B}}\in\tilde{\mathcal{X}}_{t}\}\right)+\left(\sum_{t\in\mathcal{B}}\boldsymbol{l}_{t,m_{\mathcal{B}}}\mathbb{I}\{m_{\mathcal{B}}\in\tilde{\mathcal{X}}_{t}\}-\boldsymbol{l}_{t,m_{t}}\right)
+(66)
+We bound the first term using Lemma
+6
+and the second term using
+5
+. Taking the expectation and summing over blocks, we get
+Reg
+n
+BA
+=
+𝔼
+[
+∑
+i
+=
+1
+B
+∑
+t
+∈
+ℬ
+i
+⟨
+𝐪
+t
+,
+𝐥
+t
+𝒳
+~
+t
+⟩
+−
+𝐥
+t
+,
+m
+t
+]
+≤
+T
+L
+​
+log
+⁡
+(
+1
+/
+α
+)
+η
++
+η
+​
+sk
+2
+​
+T
++
+LV
+n
+\mathrm{Reg}_{n}^{\mathrm{BA}}=\EE\left[\sum_{i=1}^{B}\sum_{t\in\mathcal{B}_{i}}\left\langle\boldsymbol{q}_{t},\boldsymbol{l}_{t}^{\tilde{\mathcal{X}}_{t}}\right\rangle-\boldsymbol{l}_{t,m_{t}}\right]\leq\frac{T}{L}\frac{\log(1/\alpha)}{\eta}+\frac{\eta sk}{2}T+LV_{n}
+(67)
+Take
+L
+∗
+\displaystyle L^{*}
+=
+(
+T
+V
+n
+​
+s
+​
+k
+​
+log
+⁡
+(
+1
+/
+α
+)
+2
+)
+2
+/
+3
+,
+\displaystyle=\left(\frac{T}{V_{n}}\sqrt{\frac{sk\log(1/\alpha)}{2}}\right)^{2/3},
+(68)
+η
+∗
+\displaystyle\eta^{*}
+=
+2
+2
+/
+3
+(
+log
+(
+1
+/
+α
+)
+)
+1
+/
+3
+(
+s
+k
+)
+−
+2
+/
+3
+(
+V
+n
+T
+)
+1
+/
+3
+.
+\displaystyle=2^{2/3}\,(\log(1/\alpha))^{1/3}\,(sk)^{-2/3}\left(\frac{V_{n}}{T}\right)^{1/3}.
+(69)
+we get
+Reg
+n
+BA
+≤
+3
+2
+1
+/
+3
+​
+(
+T
+2
+​
+s
+​
+k
+​
+log
+⁡
+(
+1
+/
+α
+)
+​
+V
+n
+)
+1
+/
+3
+.
+\mathrm{Reg}_{n}^{\mathrm{BA}}\;\leq\;\frac{3}{2^{1/3}}\,\big(T^{2}\,sk\,\log(1/\alpha)\,V_{n}\big)^{1/3}.
+(70)
+Appendix E
+Performance improvement contribution of each problem
+We provide further justification for the per-problem policy improvement contribution
+defined in
+Eq.
+6
+. Intuitively, this quantity measures the marginal
+contribution of including a training problem
+𝒙
+\boldsymbol{x}
+in an actor update to the
+overall improvement in policy performance under the evaluation distribution
+p
+𝒳
+p_{\mathcal{X}}
+.
+This interpretation is exact for a broad class of
+tabular policies
+, where the policy
+parameters for different problems (or states) are independent. In such settings, updating
+the policy using trajectories from a problem
+𝒙
+\boldsymbol{x}
+affects only the conditional
+distribution
+π
+(
+⋅
+∣
+𝒙
+)
+\pi(\cdot\mid\boldsymbol{x})
+and leaves the policy unchanged on all other
+problems.
+Example: tabular REINFORCE.
+Consider tabular REINFORCE, where for each problem
+𝒙
+\boldsymbol{x}
+the policy
+π
+(
+⋅
+∣
+𝒙
+)
+\pi(\cdot\mid\boldsymbol{x})
+is parameterized independently.
+At iteration
+t
+t
+, suppose we update the policy using rollouts collected
+only
+from a
+single problem
+𝒙
+\boldsymbol{x}
+.
+By construction, this update modifies
+π
+(
+⋅
+∣
+𝒙
+)
+\pi(\cdot\mid\boldsymbol{x})
+but does not change
+π
+(
+⋅
+∣
+𝒙
+′
+)
+\pi(\cdot\mid\boldsymbol{x}^{\prime})
+for any
+𝒙
+′
+≠
+𝒙
+\boldsymbol{x}^{\prime}\neq\boldsymbol{x}
+.
+The overall performance objective is
+J
+(
+π
+)
+=
+∑
+𝒙
+′
+∈
+𝒳
+p
+𝒳
+(
+𝒙
+′
+)
+𝔼
+𝒚
+∼
+π
+(
+⋅
+∣
+𝒙
+′
+)
+[
+R
+(
+𝒚
+∣
+𝒙
+′
+)
+]
+.
+J(\pi)=\sum_{\boldsymbol{x}^{\prime}\in\mathcal{X}}p_{\mathcal{X}}(\boldsymbol{x}^{\prime})\,\mathbb{E}_{\boldsymbol{y}\sim\pi(\cdot\mid\boldsymbol{x}^{\prime})}\bigl[R(\boldsymbol{y}\mid\boldsymbol{x}^{\prime})\bigr].
+Since only the conditional policy at
+𝒙
+\boldsymbol{x}
+is changed, the performance difference
+J
+⁡
+(
+π
+t
++
+1
+)
+−
+J
+⁡
+(
+π
+t
+)
+J(\pi^{t+1})-J(\pi^{t})
+depends solely on how the expected reward at
+𝒙
+\boldsymbol{x}
+changes.
+Applying the standard performance difference identity
+(
+Kakade and Langford, 2002
+)
+to the single-turn setting yields
+J
+(
+π
+t
++
+1
+)
+−
+J
+(
+π
+t
+)
+=
+p
+𝒳
+(
+𝒙
+)
+𝔼
+𝒚
+∼
+π
+t
+(
+⋅
+∣
+𝒙
+)
+[
+π
+t
++
+1
+​
+(
+𝒚
+∣
+𝒙
+)
+π
+t
+​
+(
+𝒚
+∣
+𝒙
+)
+A
+π
+t
+(
+𝒚
+∣
+𝒙
+)
+]
+,
+J(\pi^{t+1})-J(\pi^{t})=p_{\mathcal{X}}(\boldsymbol{x})\,\mathbb{E}_{\boldsymbol{y}\sim\pi^{t}(\cdot\mid\boldsymbol{x})}\left[\frac{\pi^{t+1}(\boldsymbol{y}\mid\boldsymbol{x})}{\pi^{t}(\boldsymbol{y}\mid\boldsymbol{x})}A_{\pi^{t}}(\boldsymbol{y}\mid\boldsymbol{x})\right],
+which is exactly the per-problem utility
+u
+𝒙
+t
+u^{t}_{\boldsymbol{x}}
+defined in
+Eq.
+6
+.
+Thus, in tabular REINFORCE, updating the policy on a single problem
+𝒙
+\boldsymbol{x}
+produces an expected performance improvement of
+u
+𝒙
+t
+u^{t}_{\boldsymbol{x}}
+.
+The same reasoning extends directly to batch updates: if the policy is updated using a
+subset of problems
+𝒳
+t
+\mathcal{X}^{t}
+, the total performance improvement decomposes additively
+as
+∑
+𝒙
+∈
+𝒳
+t
+u
+𝒙
+t
+\sum_{\boldsymbol{x}\in\mathcal{X}^{t}}u^{t}_{\boldsymbol{x}}
+, and including a problem
+𝒙
+\boldsymbol{x}
+in the update contributes exactly
+u
+𝒙
+t
+u^{t}_{\boldsymbol{x}}
+to the expected
+performance gain.
+Other tabular methods.
+This exact additive interpretation applies equally to other tabular reinforcement learning
+methods, including tabular policy gradient methods, tabular Q-learning, and SARSA, where
+updates based on a problem or state affect only the corresponding local policy or value
+parameters. In all such cases, the per-problem utility
+u
+𝒙
+t
+u^{t}_{\boldsymbol{x}}
+captures the
+true marginal contribution of training on
+𝒙
+\boldsymbol{x}
+.
+Discussion: function approximation.
+In the presence of function approximation, updating the policy using trajectories from one
+problem generally affects the policy on other problems as well, breaking the exact
+additivity described above. Analyzing such cross-problem interference requires strong
+assumptions on the structure of the function class and the optimization dynamics, and is
+beyond the scope of this work.
+Nevertheless, when policy updates are small—as is typical in modern RL post-training
+algorithms such as PPO-style methods, GRPO, or GSPO—the per-problem utility
+u
+𝒙
+t
+u^{t}_{\boldsymbol{x}}
+remains a first-order approximation to the marginal contribution of
+problem
+𝒙
+\boldsymbol{x}
+to performance improvement. Our empirical results in
+Sec.
+4.1
+indicate that this approximation is sufficiently accurate to drive
+effective curriculum learning at scale.
+Appendix F
+Limitations
+While
+Actor-Curator
+is agnostic to the specific actor update rule and can be combined with a wide range of post-training algorithms, its gains ultimately depend on the stability and quality of the underlying actor optimization: unstable updates can still lead to noisy dynamics or training collapse, a common failure mode in reinforcement learning that curriculum learning alone cannot fully address. In addition,
+Actor-Curator
+inherits standard assumptions from RL-based LLM post-training, most notably access to a reliable reward signal, making it best suited to domains with objectively verifiable rewards such as mathematics, logic puzzles, and code. Finally, learning an explicit curator introduces additional computational overhead beyond standard RL post-training; while modest relative to actor training and rollout generation, this cost is non-negligible, and in our experiments
+Actor-Curator
+increases overall wall-clock training time by approximately 9% (see
+App.
+H
+), though this overhead is small compared to the observed gains in training efficiency.
+Appendix G
+Experimental setup
+G.1
+Hyper-parameters
+Unless otherwise specified, all experiments use the same hyper-parameter configuration for
+Actor-Curator
+. The complete set of hyper-parameters is summarized in Table
+2
+. We briefly explain key parameters below, with a focus on those specific to the actor–curator framework.
+Parameter
+Value
+Model configuration
+Curator model
+Qwen3-0.6B
+Actor KL loss
+Disabled
+Max problem length
+1024 tokens
+Max solution length
+4096 tokens
+Sampling and batch sizes
+Candidate batch size
+|
+𝒳
+~
+t
+|
+|\tilde{\mathcal{X}}^{t}|
+2048
+Training batch size
+|
+𝒳
+t
+|
+|\mathcal{X}^{t}|
+256
+Rollouts per problem
+|
+𝒴
+𝒙
+t
+|
+|\mathcal{Y}^{t}_{\boldsymbol{x}}|
+8
+Actor optimization
+Actor temperature
+1.0
+Actor training top-
+p
+p
+1.0
+Actor validation top-
+p
+p
+0.7
+Actor learning rate
+1
+×
+10
+−
+6
+1\times 10^{-6}
+Actor LR warmup ratio
+0.05
+Actor weight decay
+0.1
+Actor gradient clipping
+1.0
+Actor clip range
+ρ
+min
+,
+ρ
+max
+\rho_{\min},\rho_{\max}
+[
+3
+×
+10
+−
+4
+,
+4
+×
+10
+−
+4
+]
+[3\times 10^{-4},\,4\times 10^{-4}]
+Curator optimization
+Curator dormant steps
+20
+Curator warm-up steps
+5
+Curator temperature
+1.0
+Curator top-
+p
+p
+0.9
+Curator learning rate
+1
+×
+10
+−
+6
+1\times 10^{-6}
+Curator PPO clip range
+ρ
+max
+−
+ρ
+min
+\rho_{\max}-\rho_{\min}
+0.2
+Table 2:
+Hyper-parameters used for
+Actor-Curator
+across all experiments unless otherwise specified.
+Candidate and training batch sizes.
+At each training iteration, a candidate batch
+𝒳
+~
+t
+\tilde{\mathcal{X}}^{t}
+of size 2048 is first sampled from the proposal distribution
+q
+q
+. The curator then reweights this candidate set and samples a smaller training batch
+𝒳
+t
+\mathcal{X}^{t}
+of size 256, which is used for actor rollouts and updates. This two-stage sampling scheme follows Section 3.5 and allows scalable curation over large problem banks.
+Rollouts per problem.
+For each selected problem
+x
+∈
+𝒳
+t
+x\in\mathcal{X}^{t}
+, we generate
+|
+𝒴
+x
+t
+|
+=
+8
+|\mathcal{Y}^{t}_{x}|=8
+on-policy rollouts from the current actor. These rollouts are used both for the actor update and for estimating per-problem policy improvement signals used to train the curator.
+Curator dormant and warm-up steps.
+During the first
+curator dormant steps
+(20 iterations), problems are sampled uniformly from the candidate batch, and curator outputs are ignored. This stabilizes early actor learning before meaningful policy-improvement estimates can be obtained. During the subsequent
+curator warm-up steps
+(5 iterations), the curator begins to influence sampling, but its parameters are updated conservatively. After warm-up, the curator is fully active and trained online using bandit feedback.
+Sampling prior.
+When
+use sampling prior
+is enabled, curator-assigned weights are multiplied by the proposal-induced marginal inclusion probability
+q
+⁡
+(
+x
+)
+q(x)
+before normalization. This encourages coverage of the full dataset and prevents the curator from collapsing onto a narrow subset of problems early in training, consistent with the two-stage unbiased estimator in Equation (12).
+Proximal curator clipping.
+Curator updates use the PPO-style clipped OSMD objective described in Section 3.6. The clipping range
+ρ
+min
+,
+ρ
+max
+\rho_{\min},\rho_{\max}
+constrains the importance ratio between consecutive curator policies, stabilizing learning under function approximation. The additional clip range parameter controls the maximum allowed deviation between these bounds.
+G.2
+Hardware
+All experiments were conducted on NVIDIA A100 and H200 GPUs. Actor rollout generation and optimization dominate overall runtime; curator training introduces approximately 14% additional wall-clock cost relative to uniform sampling, as discussed in Appendix E.
+Appendix H
+Additional analysis
+H.1
+Overhead
+We found that
+Actor-Curator
+adds about 9% training wall time overhead. We present the overhead by dataset and model in
+Tab.
+3
+.
+However, as shown in
+Fig.
+11
+, this is relatively the compared to the efficiency gains.
+Table 3:
+Average wall-time overhead percentage
+by model and datasets, averaged over training steps 500 steps.
+Countdown
+Zebra
+ARC-1D
+MATH
+Qwen2.5-3B-Base
+11.86
+16.71
+17.12
+9.56
+Llama3.2-3B-IT
+9.34
+13.63
+19.40
+9.82
+Appendix I
+Additional Ablation
+Candidate batch size
+|
+𝒳
+~
+|
+|\tilde{\mathcal{X}}|
+.
+As shown in
+Fig.
+8
+, candidate sizes of
+512
+512
+and
+2048
+2048
+yield similar final performance.
+Larger batches (e.g.,
+8192
+8192
+) lead to unstable training, likely due to reduced exploration and overfitting.
+Figure 8:
+Effect of candidate batch size on test performance
+. While
+bsz=2048
+and
+bsz=512
+converge to similar performance at step 200,
+bsz=8192
+suffers from instability. Selected batch size is held constant at 256.
+Appendix J
+Main results (extended)
+This appendix provides extended empirical results complementing the main paper. We report additional quantitative comparisons across benchmarks, models, and curriculum learning methods, as well as detailed training dynamics over time. These results further substantiate the robustness, efficiency, and stability of
+AC
+across diverse problem domains and model backbones.
+Extended performance comparison.
+Tab.
+4
+reports peak validation performance within the first 100 training steps across all benchmarks and models. Compared to uniform sampling, heuristic curricula (SEC), and learning-based baselines (PCL),
+AC
+consistently achieves higher peak performance on most benchmarks. The gains are particularly pronounced on harder subsets (e.g., Countdown-hard, Zebra-hard, ARC-hard, and AIME24), highlighting the effectiveness of directly optimizing for expected policy improvement when problem difficulty and utility are highly non-uniform. While performance on MATH500 is largely saturated for some model configurations,
+AC
+remains competitive and avoids degradation relative to strong baselines.
+Training dynamics and stability.
+Figs.
+9
+and
+10
+visualize test performance as a function of training steps for Qwen2.5-3B-Base and Llama3.2-3B-it, respectively. Across benchmarks,
+AC
+not only reaches higher peak performance but also exhibits faster convergence and more stable learning dynamics. In many cases, competing methods plateau early or exhibit higher variance, whereas
+AC
+continues to make steady progress, effectively raising the performance ceiling.
+Model-agnostic behavior.
+The trends observed in
+Figs.
+9
+and
+10
+are consistent across both base and instruction-tuned models, indicating that the benefits of
+AC
+are not tied to a specific initialization or training regime. This supports the claim that learning curricula via policy-improvement-driven signals provides a generally applicable mechanism for improving RL post-training efficiency and robustness.
+Training efficiency.
+Fig.
+11
+compares learning curves of Actor-Curator against uniform sampling on Countdown, Zebra, and ARC. Across all three benchmarks, Actor-Curator reaches the same target accuracy substantially earlier, yielding step-level speedups of
+58.2
+%
+58.2\%
+on Countdown,
+80.7
+%
+80.7\%
+on Zebra, and
+24.3
+%
+24.3\%
+on ARC. This indicates that policy-improvement-driven data selection primarily accelerates optimization by prioritizing high-impact problems.
+Figure 9:
+Test set performance across training steps (within 100 training steps) for
+Qwen2.5-3B-Base
+across benchmarks and methods.
+(a)
+Countdown
+(b)
+Countdown-hard
+(c)
+Zebra
+(d)
+Zebra-hard
+(e)
+ARC-1D
+(f)
+ARC-hard
+(g)
+MATH500
+(h)
+AIME24
+Figure 10:
+Test set performance across training steps (within 100 training steps) for
+Llama3.2-3B-it
+across benchmarks and methods.
+(a)
+Countdown
+(b)
+Countdown-hard
+(c)
+Zebra
+(d)
+Zebra-hard
+(e)
+ARC-1D
+(f)
+ARC-hard
+(g)
+MATH500
+(h)
+AIME24
+Figure 11:
+Training efficiency:
+Actor-Curator attains significant efficiency increase with relatively low overhead on Countdown, Zebra, and ARC.
+(a)
+Countdown
+(b)
+Zebra
+(c)
+ARC-1D
+Table 4:
+Peak validation performance on problems within 100 training steps across models and methods.
+Actor-Curator
+outperforms both other learning based methods (PCL) and methods that rely on human heuristics (SEC).
+Models:
+Qwen2.5 refers to Qwen2.5-3B-Base; Llama3.2 refers to Llama3.2-3B-it.
+Benchmark
+Model
+Method
+Improvement
+𝝅
+𝐫𝐞𝐟
+\boldsymbol{\pi_{\mathrm{ref}}}
+Uniform
+SEC
+PCL
+AC
+(Ours)
++
+Δ
++\Delta
++
+Δ
+%
++\Delta\%
+Countdown
+Qwen2.5
+0.00
+44.74
+58.87
+57.24
+62.12
++3.25
++5.52
+Llama3.2
+0.00
+63.12
+62.78
+59.62
+66.25
++3.13
++4.96
+CD-hard
+Qwen2.5
+0.00
+41.00
+51.50
+48.00
+58.00
++6.50
++12.62
+Llama3.2
+0.00
+58.50
+58.00
+53.00
+60.50
++2.00
++3.42
+Zebra
+Qwen2.5
+0.00
+35.12
+36.00
+34.12
+37.62
++1.62
++4.50
+Llama3.2
+0.00
+44.50
+46.50
+48.25
+47.12
+-1.13
+-2.34
+Zebra-hard
+Qwen2.5
+0.00
+30.50
+27.50
+26.00
+34.50
++4.00
++13.11
+Llama3.2
+0.00
+37.50
+38.00
+39.50
+40.50
++1.00
++2.53
+ARC-1D
+Qwen2.5
+0.00
+26.74
+27.87
+26.37
+36.37
++8.50
++30.51
+Llama3.2
+0.00
+27.62
+26.75
+34.50
+35.25
++0.75
++2.17
+ARC-hard
+Qwen2.5
+0.00
+19.50
+18.50
+18.50
+31.00
++11.50
++58.97
+Llama3.2
+0.00
+23.00
+24.50
+24.00
+31.50
++7.00
++28.57
+MATH500
+Qwen2.5
+61.80
+83.00
+81.00
+79.79
+81.00
+-2.00
+-2.41
+Llama3.2
+41.00
+52.20
+52.00
+52.40
+53.60
++1.20
++2.29
+AIME24
+Qwen2.5
+3.33
+23.33
+20.00
+23.33
+30.00
++6.67
++28.57
+Llama3.2
+0.00
+13.33
+13.33
+13.33
+16.67
++3.34
++25.06
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

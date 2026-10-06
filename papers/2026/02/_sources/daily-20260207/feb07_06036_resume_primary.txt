@@ -1,0 +1,818 @@
+URL https://arxiv.org/html/2602.06036v1 PARSED_LINES 1132 MAIN_STOP 817
+0: DFlash: Block Diffusion for Flash Speculative Decoding
+1: Report GitHub Issue
+2: ×
+3: Title:
+4: Content selection saved. Describe the issue below:
+5: Description:
+6: Submit without GitHub
+7: Submit in GitHub
+8: arXiv is now an independent nonprofit!
+9: Learn more
+10: ×
+11: Back to arXiv
+12: Why HTML?
+13: Report Issue
+14: Back to Abstract
+15: Download PDF
+16: Abstract
+17: 1 Introduction
+18: 2 Related Work
+19: 2.1 Speculative Decoding
+20: 2.2 Diffusion Language Models
+21: 2.3 Diffusion-based Speculative Decoding
+22: 3 Preliminaries
+23: 3.1 Speculative Decoding Speedup
+24: 3.2 Autoregressive vs. Diffusion Drafting
+25: 4 Method
+26: 4.1 Inference
+27: 4.2 Training
+28: 5 Experiments
+29: 5.1 Instruct Models
+30: 5.2 Reasoning Models
+31: 5.3 Performance on SGLang
+32: 5.4 Ablation Study
+33: 5.4.1 Training Data
+34: 5.4.2 Number of Draft Layers
+35: 5.4.3 Number of Target Hidden Features
+36: 5.4.4 Training-Inference Time Block Size
+37: 6 Conclusion
+38: References
+39: A Appendix
+40: A.1 Training Implementation
+41: A.2 Diffusion Drafter without Target Feature
+42: A.3 Further Ablations
+43: A.3.1 Loss Decay
+44: A.3.2 Random Sampling of Masked Blocks
+45: License: CC BY 4.0
+46: arXiv:2602.06036v1 [cs.CL] 05 Feb 2026
+47: DFlash: Block Diffusion for Flash Speculative Decoding
+48: Jian Chen
+49: Affiliation: UC San Diego
+50: Yesheng Liang
+51: Affiliation: UC San Diego
+52: Zhijian Liu
+53: Affiliation: UC San Diego
+54: Correspondence to: zhijian@ucsd.edu
+55: Abstract
+56: Autoregressive large language models (LLMs) deliver strong performance but require inherently sequential decoding, leading to high inference latency and poor GPU utilization. Speculative decoding mitigates this bottleneck by using a fast draft model whose outputs are verified in parallel by the target LLM. However, existing methods still rely on autoregressive drafting, which remains sequential and constrains practical speedups.
+57: Diffusion LLMs offer a promising alternative by enabling parallel generation, but current diffusion models typically underperform compared with autoregressive models.
+58: In this paper, we introduce DFlash, a speculative decoding framework that employs a lightweight block diffusion model for parallel drafting. We show that speculative decoding provides a natural and effective setting for diffusion models. By generating draft tokens in a single forward pass, DFlash enables efficient drafting, and by conditioning the draft model on context features extracted from the target model, it achieves high-quality drafts with higher acceptance rates.
+59: Experiments show that DFlash achieves over 6×\times lossless acceleration across a range of models and tasks, delivering up to 2.5×\times higher speedup than the state-of-the-art speculative decoding method EAGLE-3.
+60: Links: Code (GitHub) || Models (Hugging Face)
+61: https://z-lab.ai/projects/dflash
+62: 1 Introduction
+63: Large language models (LLMs) have enabled a wide range of powerful applications, including conversational agents (Yang et al., 2025; Guo et al., 2025) and automated programming tools. Despite their success, LLM inference remains dominated by a sequential, token-by-token generation process, where each output depends on the full preceding context. This inherent seriality creates a major performance bottleneck: inference is slow, memory-bound, and fails to fully utilize modern GPUs. With the recent emergence of long Chain-of-Thought (CoT) reasoning models (OpenAI et al., 2024; Guo et al., 2025), this bottleneck has become increasingly critical, as prolonged inference times now dominate the generation process.
+64: Speculative decoding (Leviathan et al., 2023; Li et al., 2025c; Li et al., 2024; Li et al., 2025b; Cai et al., 2024) has emerged as a primary solution to this bottleneck. This paradigm employs a lightweight draft model to speculate a sequence of future tokens, which are then verified in parallel by the large target model. While this approach achieves lossless acceleration and has been widely integrated into production frameworks, state-of-the-art methods like EAGLE-3 (Li et al., 2025b) still rely on autoregressive drafting. This serial drafting process is not only inherently inefficient but also susceptible to error accumulation, which effectively caps achievable speedups at approximately 2−-3×\times.
+65: Recently, Diffusion LLMs (dLLMs) (Nie et al., 2025) offer a promising alternative to autoregressive LLMs by enabling parallel text generation and bidirectional context modeling. Block diffusion models (Arriola et al., 2025; Cheng et al., 2025; Wu et al., 2025) can denoise a block of masked tokens simultaneously. However, current open-source dLLMs typically underperform their autoregressive counterparts in terms of generation quality. Furthermore, maintaining acceptable output quality often necessitates a high number of denoising steps, which significantly diminishes their raw inference speed (Qian et al., 2026).
+66: This landscape reveals a critical trade-off: autoregressive models deliver superior performance but suffer from sequential latency, while diffusion models allow for fast, parallel generation but often at the cost of accuracy. A natural research question follows: Can we combine the strengths of both paradigms while mitigating their respective weaknesses? A compelling solution lies in leveraging diffusion models for high-speed, parallel drafting, while relying on high-quality autoregressive models for verification to ensure the final output remains lossless.
+67: Figure 1: Speedup comparison between DFlash, EAGLE-3 against Autoregressive Decoding on Qwen3-8B (Yang et al., 2025) with the Transformers backend. Overall, DFlash achieves more than 2.5× higher speedup than EAGLE-3.
+68: However, utilizing diffusion for drafting is non-trivial, and existing methods are either impractical or offer limited speedups. Methods such as DiffuSpec (Li et al., 2025a) and SpecDiff-2 (Sandler et al., 2025) utilize massive (e.g., 7B parameter) draft models. This significant memory footprint is often prohibitively expensive for real-world serving. Furthermore, while these large drafters offer relatively high quality draft tokens and acceptance lengths, the high drafting latency limits their practical speedups to a modest 3−-4×\times. In contrast, PARD (An et al., 2025) trains small autoregressive models to mimic diffusion-style parallel generation, and then perform speculative decoding for target LLMs. However, the resulting small models lack the modeling capacity of the target LLMs, leading to limited acceptance lengths and a speedup ceiling of approximately 3×\times.
+69: Is there truly “no free lunch”? Can we build a diffusion drafter that is both lightweight and highly accurate?
+70: In this paper, we introduce DFlash, a speculative decoding framework that uses a lightweight block diffusion model to achieve both fast and high-quality drafting. Our key insight is simple: the target knows best. As observed by Samragh et al. (2025), large autoregressive LLMs’ hidden features implicitly contain information about multiple future tokens. DFlash utilizes these hidden features as context, conditioning the draft model to predict future blocks of tokens in parallel. In effect, the draft model becomes a diffusion adapter that efficiently leverages the deep context features modeled by the large target model. Instead of requiring a tiny draft model to reason from scratch, DFlash fuses the reasoning capabilities of the target model with the parallel generation speed of a small diffusion drafter.
+71: We evaluate DFlash across a wide range of models and benchmarks, and demonstrate its practical benefits under realistic serving setups using SGLang (Zheng et al., 2024). As shown in Figure 1, DFlash achieves up to a 6.1×\bm{\times} speedup on Qwen3-8B (Yang et al., 2025), and is nearly 2.5×\bm{\times} faster than the state-of-the-art EAGLE-3 across most benchmarks. We believe DFlash represents a significant step forward in accelerating LLM inference and democratizing high-performance AI.
+72: 2 Related Work
+73: 2.1 Speculative Decoding
+74: Speculative decoding accelerates LLM inference by mitigating the sequential bottleneck of autoregressive generation. Early methods (Leviathan et al., 2023) employ a smaller draft model to propose token sequences that are verified in parallel by a larger target model. Medusa (Cai et al., 2024) eliminates the external draft model by augmenting the base LLM with multiple prediction heads and using tree attention for parallel verification. The EAGLE series (Li et al., 2025c; Li et al., 2024; Li et al., 2025b) further improves speculative decoding by exploiting feature-level context from the frozen target model. EAGLE-1 predicts future hidden-state distributions to boost acceptance rates, EAGLE-2 introduces adaptive drafting trees, and EAGLE-3 refines training objectives to scale speedups.
+75: Despite these advances, most existing methods rely on autoregressive drafting, which remains inherently sequential, limiting their speedups.
+76: 2.2 Diffusion Language Models
+77: Diffusion large language models (dLLMs) offer an alternative to autoregressive generation by predicting masked tokens in parallel. LLaDA (Nie et al., 2025) was the first to scale dLLMs to billions of parameters, achieving performance comparable to LLaMA-3.1-8B (Grattafiori et al., 2024). However, fully parallel diffusion models suffer from fixed-length generation and lack efficient KV cache support. Block diffusion models (Arriola et al., 2025) address these issues by denoising sequences block-by-block, blending parallelism with autoregressive structure. Building on this idea, Fast-dLLM v2 (Wu et al., 2025) and SDAR (Cheng et al., 2025) adapt pre-trained autoregressive LLMs into block-diffusion variants, enabling parallel generation while preserving generation quality on specific tasks. Nevertheless, existing dLLMs generally underperform state-of-the-art autoregressive models and often require many denoising steps, which limits their practical inference speed.
+78: 2.3 Diffusion-based Speculative Decoding
+79: Recent work explores using diffusion models as drafters within speculative decoding. TiDAR (Liu et al., 2025) jointly trains diffusion and autoregressive objectives, enabling parallel “thinking” via diffusion and sequential “talking” via autoregressive decoding, though final generation quality is not yet lossless.
+80: Other approaches repurpose autoregressive models for diffusion-style drafting. Samragh et al. (2025) observe that autoregressive LLMs implicitly encode future-token information and train a LoRA adapter to enable parallel drafting, while retaining the base model for verification.
+81: DiffuSpec (Li et al., 2025a) and SpecDiff-2 (Sandler et al., 2025) employ large pre-trained dLLMs as speculative drafters, with inference-time search or train–test alignment to improve acceptance. However, these approaches rely on massive drafters (e.g., 7B parameters), incurring substantial memory and latency overhead. While they achieve long acceptance lengths, the high drafting cost often offsets the practical speedups in real-world serving scenarios.
+82: 3 Preliminaries
+83: Figure 2: DFlash Inference Design. Hidden context features extracted from the target model are fused and injected into each draft layer’s Key-Value cache to enable conditional speculation.
+84: This section formalizes the speedup mechanism of speculative decoding and clarifies the efficiency trade-offs between autoregressive and diffusion-based drafting. Our analysis highlights why diffusion drafters are uniquely positioned to achieve both low drafting latency and high acceptance rates.
+85: 3.1 Speculative Decoding Speedup
+86: Speculative decoding accelerates inference of a target model ℳt\mathcal{M}_{t} using a smaller draft model ℳd\mathcal{M}_{d}. In each decoding cycle, the draft model proposes γ\gamma tokens, which are verified in parallel by the target model.
+87: Following Sadhukhan et al. (2025), the average per-token latency is
+88: L=Tdraft+Tverifyτ,L=\frac{T_{\text{draft}}+T_{\text{verify}}}{\tau},
+89: (1)
+90: where TdraftT_{\text{draft}} is the time spent generating draft tokens, TverifyT_{\text{verify}} is the cost of verification, and τ∈[1,γ+1]\tau\in[1,\gamma+1] is the expected number of accepted tokens per cycle, including the bonus token produced by the target model. Let LtargetL_{\text{target}} denote the autoregressive per-token latency of ℳt\mathcal{M}_{t}; the resulting speedup is η=Ltarget/L\eta=L_{\text{target}}/L.
+91: This expression makes the trade-off explicit: speedup improves either by increasing the expected acceptance length τ\tau or by reducing the drafting overhead TdraftT_{\text{draft}}.
+92: 3.2 Autoregressive vs. Diffusion Drafting
+93: Autoregressive drafters generate tokens sequentially, incurring a drafting cost
+94: Tdraft=γ⋅tstep,T_{\text{draft}}=\gamma\cdot t_{\text{step}},
+95: (2)
+96: where tstept_{\text{step}} is the latency of a single forward pass. Drafting costs therefore grow linearly with the speculation budget γ\gamma.
+97: To keep latency manageable, autoregressive drafters are constrained to very shallow architectures (e.g., a single transformer layer in EAGLE-3). This severely limits the draft quality: while increasing γ\gamma increases drafting cost, acceptance length τ\tau quickly saturates due to limited model capacity. In practice, this imbalance restricts achievable speedups.
+98: Diffusion drafters generate all γ\gamma tokens in parallel within a single forward pass, yielding
+99: Tdraft=tparallel,T_{\text{draft}}=t_{\text{parallel}},
+100: (3)
+101: where tparallelt_{\text{parallel}} denotes the latency of block generation. Modern GPUs execute such parallel operations far more efficiently than multiple sequential passes, making tparallel≪γ⋅tstept_{\text{parallel}}\ll\gamma\cdot t_{\text{step}} for models of comparable size. For moderate block sizes, TdraftT_{\text{draft}} is therefore largely insensitive to γ\gamma.
+102: Figure 3: Draft cost of 1, 3, 5-layer DFlash and 1-layer EAGLE-3.
+103: This parallelism fundamentally changes the design space. Because drafting cost no longer scales with the number of generated tokens, diffusion drafters can afford deeper, more expressive architectures without sacrificing latency. This increased capacity substantially improves draft quality and acceptance length. Empirically, a five-layer DFlash draft model generating 16 tokens achieves both lower latency (Figure 3) and higher acceptance length than EAGLE-3 generating 8 tokens, placing DFlash on a more favorable Pareto frontier between draft quality and drafting cost.
+104: 4 Method
+105: 4.1 Inference
+106: The system design of DFlash is illustrated in Figure 2. In this section, we explain the key design choices that allow DFlash to achieve high draft acceptance length using a very small and efficient draft model.
+107: Context features from the target model. Prior work like An et al. (2025) naively applied a small diffusion model as a speculative drafter, which leads to poor acceptance length and limited speedups. To validate this, we train a five-layer block diffusion draft model without any conditioning from the target model and evaluate it on several math benchmarks. As the results shown in the Table 8, the resulting speedups are modest, typically around 22–3×3\times. This limitation stems from the lack of rich contextual guidance: without access to the internal representations of the target model, the diffusion drafter must effectively predict future tokens from scratch.
+108: In contrast, the hidden representations of large autoregressive target models encode substantially more information than token-level logits. These features capture long-range dependencies and task-specific semantics, and—crucially—implicitly encode information about future token predictions, as also observed by Samragh et al. (2025).
+109: In DFlash, given an input prompt, the target model first performs a standard prefill pass to generate the first token. During this pass, we extract hidden representations from a fixed set of layers uniformly sampled from shallow to deep. These hidden states are concatenated and passed through a lightweight projection layer to fuse cross-layer information into a compact target context feature, which is then used to condition the draft model.
+110: Conditioning via KV injection enables acceptance scaling. Existing methods such as EAGLE-3 also leverage hidden features from the target model, but they fuse these features with the draft model’s token embeddings and feed them only as inputs to the draft model. As the draft model depth increases, the information from target model becomes more and more diluted, resulting in diminishing gains in acceptance length when adding more draft layers.
+111: DFlash adopts a fundamentally different strategy. We treat the fused target context feature as persistent contextual information and directly inject it into the Key and Value projections of every draft model layer. The projected features are stored in the draft model’s KV cache and reused across drafting iterations. This design provides strong and consistent conditioning throughout the draft model, enabling acceptance length to scale effectively with the number of draft layers. We analyze this behavior in more detail in Section 5.4.2.
+112: Parallel diffusion drafting. Another key contributor to DFlash’s speed is its low drafting latency. Autoregressive draft models must perform multiple sequential forward passes to generate draft tokens or trees, which limits parallelism and leads to inefficient GPU utilization. In contrast, DFlash predicts the next token block using a block-level diffusion process. All masked positions within a block are decoded in parallel in a single forward pass. Compared to autoregressive drafting, this block-wise parallel generation substantially reduces drafting latency and achieves significantly higher hardware utilization, even when using deeper draft models.
+113: Overall, DFlash combines diffusion-based parallel drafting with tightly coupled conditioning from the target model, enabling high-quality drafting with substantially reduced drafting latency.
+114: 4.2 Training
+115: Figure 4: DFlash training attention. The target model provides context features (blue) that condition the draft model. The input consists of clean prompt tokens pp and clean response tokens rr. Within each masked block, a subset of clean response tokens (yellow) is randomly sampled as anchors, while mask tokens mm (green) mark positions for parallel prediction. Invisible tokens (white) denote the attention mask, which enforces causal consistency and prevents inter-block information leakage during training.
+116: DFlash draft models are trained to align block-level diffusion predictions with the outputs of a frozen autoregressive target model. Rather than directly adopting standard block diffusion training (Arriola et al., 2025), we introduce several key modifications that improve training efficiency, scalability, and alignment with the inference-time speculative decoding behavior.
+117: KV injection. Following the inference pipeline, given a sequence consisting of a prompt and its response, we first pass the entire clean sequence through the target model to extract and fuse the hidden features for all tokens. The hidden features are then injected into the draft model as Key and Value projections, as illustrated in Figure 4.
+118: Random sampling of masked blocks. In standard block diffusion training, the response is uniformly divided into blocks and random positions within each block are masked, with the model trained to denoise the masked tokens.
+119: DFlash instead tailors block construction to the speculative decoding setting. We randomly sample anchor tokens from the response, use each anchor as the first position of a block, and mask the remaining positions. The draft model is trained to predict the next block_size−1\text{block\_size}-1 tokens in parallel. This directly matches inference-time behavior, where the draft model always conditions on a clean token produced by the target model (i.e., the bonus token from the previous verification step). Randomizing anchor positions also exposes the draft model to more diverse target context features, improving data efficiency and coverage. As shown in Table 9, this strategy substantially improves both acceptance length and speedup.
+120: During training, all blocks are concatenated into a single sequence and processed jointly using a sparse attention mask as shown in Figure 4. Tokens attend bidirectionally within the same block and to the corresponding injected target context features, while attention across different blocks is disallowed. This design enables multiple draft blocks to be trained efficiently within a single forward and backward pass using Flex Attention (Dong et al., 2024).
+121: Table 1: Decoding speedup over baseline and average acceptance length (τ\tau) on Qwen3 models with thinking mode disabled and a maximum of 2048 generated tokens. Parenthesized values indicate the draft tree size for EAGLE-3 and the diffusion block size for DFlash.
+122: Model
+123: Method
+124: Math
+125: Code
+126: Chat
+127: GSM8K
+128: MATH-500
+129: AIME25
+130: HumanEval
+131: MBPP
+132: LCB
+133: MT-Bench
+134: Avg.
+135: Temperature = 0
+136: Speedup
+137: τ\tau
+138: Speedup
+139: τ\tau
+140: Speedup
+141: τ\tau
+142: Speedup
+143: τ\tau
+144: Speedup
+145: τ\tau
+146: Speedup
+147: τ\tau
+148: Speedup
+149: τ\tau
+150: Speedup
+151: τ\tau
+152: Q3-4B
+153: EAGLE-3 (16)
+154: 1.99×\times
+155: 3.30
+156: 1.83×\times
+157: 3.08
+158: 1.79×\times
+159: 3.05
+160: 1.84×\times
+161: 3.05
+162: 1.78×\times
+163: 2.95
+164: 1.73×\times
+165: 2.91
+166: 1.74×\times
+167: 3.02
+168: 1.81×\times
+169: 3.05
+170: EAGLE-3 (60)
+171: 2.27×\times
+172: 3.77
+173: 2.10×\times
+174: 3.52
+175: 2.13×\times
+176: 3.51
+177: 2.12×\times
+178: 3.47
+179: 2.02×\times
+180: 3.38
+181: 1.90×\times
+182: 3.22
+183: 2.04×\times
+184: 3.49
+185: 2.08×\times
+186: 3.48
+187: DFlash (16)
+188: 5.15×\times
+189: 6.53
+190: 6.09×\times
+191: 7.84
+192: 5.68×\times
+193: 7.27
+194: 5.21×\times
+195: 6.64
+196: 4.78×\times
+197: 6.09
+198: 5.41×\times
+199: 7.09
+200: 2.85×\times
+201: 4.35
+202: 4.91×\times
+203: 6.54
+204: Q3-8B
+205: EAGLE-3 (16)
+206: 1.94×\times
+207: 3.23
+208: 1.81×\times
+209: 3.02
+210: 1.79×\times
+211: 3.00
+212: 1.89×\times
+213: 3.17
+214: 1.69×\times
+215: 2.82
+216: 1.57×\times
+217: 2.65
+218: 1.63×\times
+219: 2.83
+220: 1.76×\times
+221: 2.96
+222: EAGLE-3 (60)
+223: 2.23×\times
+224: 3.71
+225: 2.05×\times
+226: 3.49
+227: 2.05×\times
+228: 3.44
+229: 2.17×\times
+230: 3.65
+231: 1.93×\times
+232: 3.25
+233: 1.81×\times
+234: 3.03
+235: 1.90×\times
+236: 3.26
+237: 2.02×\times
+238: 3.40
+239: DFlash (16)
+240: 5.15×\times
+241: 6.54
+242: 6.08×\times
+243: 7.87
+244: 5.62×\times
+245: 7.08
+246: 5.14×\times
+247: 6.50
+248: 4.65×\times
+249: 5.95
+250: 5.51×\times
+251: 7.27
+252: 2.75×\times
+253: 4.24
+254: 4.86×\times
+255: 6.49
+256: Temperature = 1
+257: Speedup
+258: τ\tau
+259: Speedup
+260: τ\tau
+261: Speedup
+262: τ\tau
+263: Speedup
+264: τ\tau
+265: Speedup
+266: τ\tau
+267: Speedup
+268: τ\tau
+269: Speedup
+270: τ\tau
+271: Speedup
+272: τ\tau
+273: Q3-4B
+274: EAGLE-3 (16)
+275: 1.89×\times
+276: 3.22
+277: 1.75×\times
+278: 2.99
+279: 1.64×\times
+280: 2.79
+281: 1.74×\times
+282: 3.01
+283: 1.69×\times
+284: 2.89
+285: 1.63×\times
+286: 2.77
+287: 1.70×\times
+288: 2.95
+289: 1.72×\times
+290: 2.95
+291: EAGLE-3 (60)
+292: 2.12×\times
+293: 3.68
+294: 1.97×\times
+295: 3.44
+296: 1.83×\times
+297: 3.20
+298: 1.94×\times
+299: 3.39
+300: 1.92×\times
+301: 3.33
+302: 1.82×\times
+303: 3.14
+304: 1.91×\times
+305: 3.36
+306: 1.93×\times
+307: 3.36
+308: DFlash (16)
+309: 4.71×\times
+310: 6.00
+311: 5.09×\times
+312: 6.67
+313: 3.73×\times
+314: 4.92
+315: 4.74×\times
+316: 6.04
+317: 4.42×\times
+318: 5.66
+319: 4.90×\times
+320: 6.50
+321: 2.67×\times
+322: 4.07
+323: 4.24×\times
+324: 5.69
+325: Q3-8B
+326: EAGLE-3 (16)
+327: 1.87×\times
+328: 3.12
+329: 1.73×\times
+330: 2.91
+331: 1.63×\times
+332: 2.74
+333: 1.75×\times
+334: 3.05
+335: 1.64×\times
+336: 2.74
+337: 1.56×\times
+338: 2.57
+339: 1.58×\times
+340: 2.70
+341: 1.68×\times
+342: 2.83
+343: EAGLE-3 (60)
+344: 2.07×\times
+345: 3.59
+346: 1.94×\times
+347: 3.38
+348: 1.84×\times
+349: 3.18
+350: 2.05×\times
+351: 3.54
+352: 1.85×\times
+353: 3.16
+354: 1.72×\times
+355: 2.92
+356: 1.70×\times
+357: 3.05
+358: 1.88×\times
+359: 3.26
+360: DFlash (16)
+361: 4.67×\times
+362: 5.98
+363: 4.84×\times
+364: 6.40
+365: 3.57×\times
+366: 4.73
+367: 4.32×\times
+368: 5.52
+369: 4.04×\times
+370: 5.21
+371: 4.93×\times
+372: 6.69
+373: 2.47×\times
+374: 3.80
+375: 4.03×\times
+376: 5.48
+377: Efficient long-context training. Training speculative draft models on long contexts is challenging for methods such as EAGLE-3 due to their costly training-time test. DFlash achieves efficient long-context training by fixing the number of masked blocks per sequence and randomly sampling anchor positions for each sequence at every epoch. This strategy provides effective data augmentation while keeping training cost bounded.
+378: Loss weighting for faster convergence. In speculative decoding, not all tokens are equal. Errors at early positions within a draft block invalidate all subsequent tokens. This makes early predictions disproportionately important for acceptance length. We reflect this asymmetry by weighting the cross-entropy loss to emphasize earlier token positions during training.
+379: Specifically, for a token at position kk within a block, we apply an exponentially decaying weight
+380: wk=exp⁡(−k−1γ),w_{k}=\exp\!\left(-\frac{k-1}{\gamma}\right),
+381: (4)
+382: where γ\gamma controls the decay rate. This weighting prioritizes early positions, accelerating convergence and yielding a higher acceptance length than uniform weighting (Figure 5).
+383: Shared embedding and LM head. To improve training efficiency, the draft model shares the token embedding layer and language modeling head with the target model and keeps them frozen during training. Only the draft Transformer layers are updated. This design reduces the number of trainable parameters and encourages the draft model to function as a lightweight diffusion adapter tightly aligned with the target model’s representation space.
+384: 5 Experiments
+385: Models and Evaluations. We conduct experiments on LLaMA-3.1 Instruct (8B) and Qwen3 (4B, 8B, Coder-30B-A3B-Instruct) pre-trained models. We evaluate tasks in three categories: Math: GSM8K (Cobbe et al., 2021), MATH (Lightman et al., 2023), and AIME25 (MAA, 2025); Code: HumanEval (Chen, 2021), MBPP (Austin et al., 2021), and LiveCodeBench (Jain et al., 2024); Chat: MT-Bench (Zheng et al., 2023) and Alpaca (Taori et al., 2023). For each task, we assess the performance of the draft models using average acceptance length (τ\tau) and end-to-end decoding speedup over the autoregressive baseline. We conduct all experiments on NVIDIA H200 GPUs unless otherwise specified.
+386: Datasets. To provide a diverse set of training data, we collect a mixture of around 800K samples from NVIDIA Nemotron Post-Training Dataset V2 (Nathawani et al., 2025) and CodeAlpaca (Chaudhary, 2023).
+387: Instead of directly using the original dataset, we construct our training set with the responses generated by the target model for better target alignment.
+388: Implementation. For DFlash draft models, we set the number of layers to 5 (8 for Qwen3 Coder) and use a block size of 16 (10 for LLaMA 3.1). The target hidden features are extracted from 5 layers uniformly selected between the second layer and the third-to-last layer of the target model. More training details are presented in Section A.1.
+389: Baselines. We compare DFlash with the vanilla autoregressive decoding (baseline) and state-of-the-art speculative decoding method EAGLE-3 (Li et al., 2025b). We did not include comparisons with other dLLM-based speculative decoding methods (Liu et al., 2025; Samragh et al., 2025; Li et al., 2025a; Sandler et al., 2025) due to lack of open-source implementation.
+390: For comparisons with EAGLE-3 on Qwen3 models (Section 5.1), we use the checkpoints released by AngelSlim (Tencent, 2025); for LLaMA-3.1-Instruct (Section 5.4.1), we use the official checkpoint released by EAGLE-3 team.
+391: 5.1 Instruct Models
+392: In this section, we evaluate DFlash against EAGLE-3 on Qwen3 models with thinking mode disabled, using the Transformers backend. For EAGLE-3, we consider two settings: a tree size of 16, which matches DFlash with block size 16 for a fair drafting-budget comparison, and a tree size of 60, as used in the EAGLE-3 paper to maximize acceptance length with higher verification cost. In both cases, the draft steps and top-kk are set to 7 and 10, respectively.
+393: As shown in Table 1, DFlash consistently outperforms EAGLE-3 across all tasks and settings. Under greedy decoding (temperature = 0), DFlash achieves an average speedup of 4.9×\times over the autoregressive baseline, corresponding to a 2.4×\times improvement over EAGLE-3 (16). Under non-greedy sampling (temperature = 1), DFlash maintains a 4.1×\times speedup over baseline and a 2.2×\times improvement over EAGLE-3. Notably, DFlash also surpasses EAGLE-3 with tree size 60, achieving higher acceptance length while incurring substantially lower verification overhead. These results demonstrate the effectiveness and efficiency of diffusion-based drafting in DFlash.
+394: 5.2 Reasoning Models
+395: In this section, we evaluate DFlash for Qwen3 models with thinking mode enabled using Transformers. The draft models are trained on target-model outputs with reasoning traces.
+396: As shown in Table 2, DFlash maintains the high acceptance length, achieving speedups of roughly 4.5×\times and 3.9×\times over the baseline. This efficiency gain is particularly valuable for the practical deployment of reasoning models, given their prolonged generation time.
+397: Table 2: Decoding speedup over baseline and average acceptance length (τ\tau) with thinking mode enabled.
+398: Model
+399: Temp.
+400: GPQA
+401: MATH-500
+402: AIME25
+403: Speedup
+404: τ\tau
+405: Speedup
+406: τ\tau
+407: Speedup
+408: τ\tau
+409: Q3-4B
+410: 0
+411: 4.23×\times
+412: 5.23
+413: 4.59×\times
+414: 5.74
+415: 4.39×\times
+416: 5.54
+417: 1
+418: 3.67×\times
+419: 4.55
+420: 3.93×\times
+421: 4.89
+422: 3.64×\times
+423: 4.68
+424: Q3-8B
+425: 0
+426: 4.17×\times
+427: 5.17
+428: 4.64×\times
+429: 5.82
+430: 4.51×\times
+431: 5.74
+432: 1
+433: 3.75×\times
+434: 4.65
+435: 4.03×\times
+436: 5.06
+437: 3.70×\times
+438: 4.69
+439: 5.3 Performance on SGLang
+440: Table 3: Throughput (tok/s), speedup over baseline, and average acceptance length τ\tau on SGLang (FA4 backend).
+441: Task
+442: Method
+443: Concurrency
+444: Avg. τ\tau
+445: 1
+446: 4
+447: 8
+448: 16
+449: 32
+450: Qwen3-4B
+451: Math500
+452: Baseline
+453: 316
+454: 1145
+455: 2201
+456: 4100
+457: 7136
+458: –
+459: DFlash
+460: 1531
+461: 4943
+462: 9066
+463: 14477
+464: 20417
+465: 8.01
+466: 4.8×\times
+467: 4.3×\times
+468: 4.1×\times
+469: 3.5×\times
+470: 2.9×\times
+471: Human-
+472: Eval
+473: Baseline
+474: 312
+475: 1162
+476: 2217
+477: 4184
+478: 7143
+479: –
+480: DFlash
+481: 1247
+482: 4147
+483: 6997
+484: 11234
+485: 15703
+486: 6.63
+487: 4.0×\times
+488: 3.6×\times
+489: 3.2×\times
+490: 2.7×\times
+491: 2.2×\times
+492: Qwen3-8B
+493: Math500
+494: Baseline
+495: 230
+496: 861
+497: 1666
+498: 3133
+499: 5694
+500: –
+501: DFlash
+502: 1175
+503: 3884
+504: 7485
+505: 12268
+506: 16076
+507: 8.01
+508: 5.1×\times
+509: 4.5×\times
+510: 4.5×\times
+511: 3.9×\times
+512: 2.8×\times
+513: Human-
+514: Eval
+515: Baseline
+516: 229
+517: 868
+518: 1649
+519: 3253
+520: 5462
+521: –
+522: DFlash
+523: 955
+524: 3092
+525: 6010
+526: 9919
+527: 13116
+528: 6.50
+529: 4.2×\times
+530: 3.6×\times
+531: 3.6×\times
+532: 3.0×\times
+533: 2.4×\times
+534: Qwen3-Coder-30B-A3B
+535: Human-
+536: Eval
+537: Baseline
+538: 229
+539: 686
+540: 1068
+541: 1681
+542: 2713
+543: –
+544: DFlash
+545: 802
+546: 2078
+547: 3442
+548: 5429
+549: 8314
+550: 8.09
+551: 3.5×\times
+552: 3.0×\times
+553: 3.2×\times
+554: 3.2×\times
+555: 3.1×\times
+556: LCB
+557: Baseline
+558: 220
+559: 681
+560: 1112
+561: 1733
+562: 2823
+563: –
+564: DFlash
+565: 569
+566: 1621
+567: 2554
+568: 4160
+569: 6401
+570: 6.42
+571: 2.6×\times
+572: 2.4×\times
+573: 2.3×\times
+574: 2.4×\times
+575: 2.3×\times
+576: MBPP
+577: Baseline
+578: 228
+579: 682
+580: 1057
+581: 1697
+582: 2735
+583: –
+584: DFlash
+585: 720
+586: 2052
+587: 3360
+588: 5522
+589: 8538
+590: 7.23
+591: 3.2×\times
+592: 3.0×\times
+593: 3.2×\times
+594: 3.3×\times
+595: 3.1×\times
+596: In this section, we evaluate the performance of DFlash on the popular open-source inference framework SGLang using Qwen3-4B, Qwen3-8B, and Qwen3-Coder-30B-A3B-Instruct. All experiments are conducted on a single B200 GPU with the FlashAttention-4 (FA4) backend. We enable Spec-v2 scheduling overlap to maximize achievable throughput.
+597: As shown in Table 3, DFlash consistently provides speedups across all three models over concurrency levels ranging from 1 to 32, achieving up to a 5.1×\times speedup on Qwen3-8B. These results demonstrate the practical value of DFlash in real-world serving scenarios, where it can substantially reduce serving cost.
+598: 5.4 Ablation Study
+599: In this section, we ablate the impact of training data and several key design choices of the DFlash draft model. Unless otherwise specified, all ablation models are trained on 100K samples randomly drawn from the full data mixture. All experiments are conducted on a single H200 GPU with greedy decoding, except those evaluated on SGLang.
+600: 5.4.1 Training Data
+601: Table 4: Speedup over baseline and average acceptance length τ\tau for LLaMA-3.1-8B-Instruct on SGLang (Flashinfer backend, single B200 GPU). Baseline reports absolute throughput (TPS; tokens/s). EAGLE-3 uses 7 draft steps with top-k=10k{=}10 and either 10 or 60 draft tokens. DFlash uses block size 10.
+602: Method
+603: Concurrency
+604: Avg. τ\tau
+605: 1
+606: 4
+607: 8
+608: 16
+609: 32
+610: GSM8K
+611: Baseline (TPS)
+612: 249
+613: 923
+614: 1739
+615: 3245
+616: 5349
+617: –
+618: EAGLE-3 (10)
+619: 1.6×\times
+620: 1.5×\times
+621: 1.4×\times
+622: 1.2×\times
+623: 1.0×\times
+624: 3.49
+625: EAGLE-3 (60)
+626: 1.9×\times
+627: 1.6×\times
+628: 1.3×\times
+629: 0.9×\times
+630: 0.6×\times
+631: 4.55
+632: DFlash (10)
+633: 2.4×\times
+634: 2.2×\times
+635: 2.1×\times
+636: 1.8×\times
+637: 1.6×\times
+638: 4.32
+639: HumanEval
+640: Baseline (TPS)
+641: 245
+642: 922
+643: 1778
+644: 3336
+645: 5854
+646: –
+647: EAGLE-3 (10)
+648: 2.0×\times
+649: 1.9×\times
+650: 1.8×\times
+651: 1.5×\times
+652: 1.2×\times
+653: 3.62
+654: EAGLE-3 (60)
+655: 2.0×\times
+656: 1.7×\times
+657: 1.3×\times
+658: 0.9×\times
+659: 0.6×\times
+660: 4.65
+661: DFlash (10)
+662: 2.8×\times
+663: 2.6×\times
+664: 2.5×\times
+665: 2.1×\times
+666: 1.8×\times
+667: 4.91
+668: Alpaca
+669: Baseline (TPS)
+670: 245
+671: 906
+672: 1745
+673: 3237
+674: 5434
+675: –
+676: EAGLE-3 (10)
+677: 1.5×\times
+678: 1.4×\times
+679: 1.4×\times
+680: 1.1×\times
+681: 0.9×\times
+682: 3.11
+683: EAGLE-3 (60)
+684: 1.8×\times
+685: 1.5×\times
+686: 1.2×\times
+687: 0.8×\times
+688: 0.5×\times
+689: 4.07
+690: DFlash (10)
+691: 2.2×\times
+692: 2.0×\times
+693: 1.8×\times
+694: 1.5×\times
+695: 1.4×\times
+696: 3.73
+697: We compare DFlash against EAGLE-3 on LLaMA-3.1-8B-Instruct. DFlash is trained on UltraChat (Ding et al., 2023) and ShareGPT, using the exactly same training data as EAGLE-3, and is evaluated against the official EAGLE-3 checkpoints. The DFlash draft model uses a block size of 10, with other configurations matching those of the DFlash Qwen3-8B draft model. All experiments are conducted using SGLang with Spec-v1 (without scheduling overlap), as Spec-v2 does not support tree-based drafting for EAGLE-3. Evaluations are performed on a single B200 GPU.
+698: As shown in Table 4, DFlash consistently outperforms EAGLE-3 across all tasks, concurrency levels, and EAGLE-3 tree-size configurations. This performance gap holds for math, code, and chat benchmarks, demonstrating the robustness and efficiency advantages of DFlash over autoregressive tree-based speculative decoding.
+699: 5.4.2 Number of Draft Layers
+700: Table 5: 5-layer draft model has the best average speedup. All DFlash draft models are trained with block size 16 and hidden features extracted from 5 layers of the target model.
+701: Setting
+702: Math500
+703: HumanEval
+704: MT-Bench
+705: Speedup
+706: τ\tau
+707: Speedup
+708: τ\tau
+709: Speedup
+710: τ\tau
+711: 3-L
+712: 4.69×\times
+713: 5.64
+714: 3.90×\times
+715: 4.61
+716: 2.38×\times
+717: 3.18
+718: 5-L
+719: 4.71×\times
+720: 5.99
+721: 3.96×\times
+722: 4.94
+723: 2.35×\times
+724: 3.37
+725: 8-L
+726: 4.64×\times
+727: 6.33
+728: 3.96×\times
+729: 5.29
+730: 2.23×\times
+731: 3.50
+732: One advantage of DFlash is that acceptance length scales effectively with the depth of the draft model. However, this comes with a trade-off between drafting cost and draft quality. Deeper draft models are more expressive and achieve higher acceptance lengths, but they also incur higher drafting latency. As a result, the optimal number of layers depends on the deployment setting. As shown in Table 5, while the 8-layer draft model achieves longer acceptance lengths, the 5-layer model attains higher overall speedup due to a better balance between drafting cost and quality.
+733: 5.4.3 Number of Target Hidden Features
+734: Table 6: More hidden features from target model increases the acceptance length. All DFlash draft models use 3 draft layers and are trained with block size 16.
+735: Setting
+736: Math500
+737: HumanEval
+738: MT-Bench
+739: Speedup
+740: τ\tau
+741: Speedup
+742: τ\tau
+743: Speedup
+744: τ\tau
+745: 3-H
+746: 4.49×\times
+747: 5.38
+748: 3.80×\times
+749: 4.47
+750: 2.32×\times
+751: 3.07
+752: 5-H
+753: 4.69×\times
+754: 5.64
+755: 3.90×\times
+756: 4.61
+757: 2.38×\times
+758: 3.18
+759: The number of target hidden features affects both acceptance length and end-to-end speedup. Extracting features from more target layers provides richer semantic and future-token information, improving draft quality. As shown in Table 6, conditioning on five hidden features consistently outperforms using three. However, this benefit comes at higher training cost: in offline training, the storage required to cache target hidden states increases linearly with the number of extracted features.
+760: 5.4.4 Training-Inference Time Block Size
+761: Table 7: Ablation study of training–inference block size (BS) mismatch. All draft models use 8 layers and 5 target hidden features.
+762: Train
+763: BS
+764: Test
+765: BS
+766: Math500
+767: HumanEval
+768: MT-Bench
+769: Speedup
+770: τ\tau
+771: Speedup
+772: τ\tau
+773: Speedup
+774: τ\tau
+775: b16
+776: b16
+777: 4.64x
+778: 6.33
+779: 3.96x
+780: 5.29
+781: 2.23x
+782: 3.50
+783: b16
+784: b8
+785: 3.87x
+786: 5.09
+787: 3.39x
+788: 4.44
+789: 2.12x
+790: 3.18
+791: b8
+792: b16
+793: 3.78x
+794: 5.02
+795: 3.24x
+796: 4.28
+797: 2.09x
+798: 3.09
+799: b8
+800: b8
+801: 3.97x
+802: 5.21
+803: 3.53x
+804: 4.61
+805: 2.22x
+806: 3.29
+807: Block size is a critical design choice for the DFlash draft model. An equally important question is whether a pretrained DFlash model can generalize from its training-time block size to different block sizes during inference. To study this, we train two draft models with block sizes 8 and 16 on the same data and evaluate their inference-time scaling behavior, as shown in Table 7.
+808: When training and inference block sizes match (8→\rightarrow8 and 16→\rightarrow16), the block-size-16 model achieves substantially higher acceptance lengths on math and coding tasks. Acceptance histograms on Math500 reveal that the block-8 model frequently fully accepts entire blocks (35.7%), suggesting that block size 8 is often underutilized. In contrast, the block-16 model exhibits a more spread-out acceptance distribution with higher average acceptance length, indicating more effective use of larger blocks.
+809: We further examine cross-block-size generalization at inference time and observe a clear asymmetry. A model trained with a larger block size generalizes well to smaller inference-time block sizes: using block size 8 with a model trained at block size 16 yields acceptance lengths close to those of a model trained and evaluated at block size 8. However, the reverse does not hold.
+810: Overall, DFlash models trained with larger block sizes generalize well to smaller inference-time block sizes. This property enables dynamic block-size scheduling during inference to improve end-to-end efficiency. In practical serving scenarios, large blocks can increase verification cost under compute-bound settings (e.g., large batch sizes); reducing the block size in such cases can therefore yield better overall speedup. We leave adaptive block-size scheduling to future work.
+811: 6 Conclusion
+812: In this paper, we present DFlash, a diffusion-based speculative decoding framework that rethinks the role of diffusion language models in accelerating autoregressive LLM inference. By confining diffusion models to the drafting stage, DFlash exploits their inherent parallelism while avoiding the quality degradation that has limited their standalone use. Conditioning the diffusion drafter on rich target-model context enables high acceptance rates, allowing DFlash to significantly push inference speed beyond prior speculative decoding methods.
+813: Beyond empirical improvements, DFlash suggests a new development paradigm for diffusion LLMs. Rather than competing with autoregressive models in end-to-end generation quality, diffusion models can serve as lightweight, specialized drafters optimized for fast and accurate block prediction. This reframing permits aggressive reduction in denoising steps to maximize parallelism, while speculative verification provides a principled guarantee of output quality. We hope DFlash establishes diffusion-based drafting as a practical and scalable paradigm for speculative decoding, advancing more efficient and accessible LLM deployment.
+814: Acknowledgements
+815: The authors would like to express their sincere gratitude to David Wang for leading the fast and high-quality SGLang integration for DFlash, and to Richard Gong and other members of the Modal team for their strong engineering support. Their efforts were truly instrumental in enabling the practical, production-grade deployment of DFlash.
+816: We also gratefully acknowledge Modal, Yotta Labs, Eigen AI, and InnoMatrix for providing the compute resources that made this work possible.

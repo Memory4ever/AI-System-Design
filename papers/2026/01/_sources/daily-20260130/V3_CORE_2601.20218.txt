@@ -1,0 +1,702 @@
+https://arxiv.org/html/2601.20218v1
+DenseGRPO: From Sparse to Dense Reward for Flow Matching Model Alignment
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+Alignment for Text-to-Image Generation.
+Dense Reward.
+3 Preliminary
+RL on Flow Matching Models.
+GRPO Framework.
+SDE Sampler.
+4 DenseGRPO
+4.1 Step-Wise Dense Reward
+4.2 Exploration Space Calibration
+5 Experiment
+5.1 Implementation Detail
+5.2 Main Result
+5.3 Analysis
+Effect of Dense Reward.
+Effect of Exploration Space Calibration.
+Effect of Different ODE Denoising Steps.
+Discussion of Reward Hacking.
+6 Conclusion
+References
+A Implementation Detail
+B More Result
+B.1 Training Curve of KL Loss
+B.2 Accuracy of DenseGRPO’s Reward
+B.3 More Experiment
+Experiment on FLUX.1-Dev.
+Experiment on High Resolution.
+Experiment on Diffusion Model.
+B.4 Reward Hacking Analysis
+C LLM Usage
+License: arXiv.org perpetual non-exclusive license
+arXiv:2601.20218v1 [cs.CV] 28 Jan 2026
+DenseGRPO: From Sparse to Dense Reward for Flow Matching Model Alignment
+Haoyou Deng
+Affiliation: National Key Laboratory of Multispectral Information Intelligent Processing TechnologySchool of Artificial Intelligence and Automation, Huazhong University of Science and Technology
+Email: haoyoudeng@hust.edu.cnyankeyu.yky@alibaba-inc.com
+Keyu Yan
+Email: nsang@hust.edu.cnyankeyu.yky@alibaba-inc.com
+Chaojie Mao
+Affiliation: Tongyi Lab, Alibaba Group
+Xiang Wang
+Affiliation: National Key Laboratory of Multispectral Information Intelligent Processing TechnologySchool of Artificial Intelligence and Automation, Huazhong University of Science and Technology
+Yu Liu
+Affiliation: Tongyi Lab, Alibaba Group
+Changxin Gao,   Nong Sang
+Affiliation: National Key Laboratory of Multispectral Information Intelligent Processing TechnologySchool of Artificial Intelligence and Automation, Huazhong University of Science and Technology
+Abstract
+Recent GRPO-based approaches built on flow matching models have shown remarkable improvements in human preference alignment for text-to-image generation.
+Nevertheless, they still suffer from the sparse reward problem: the terminal reward of the entire denoising trajectory is applied to all intermediate steps, resulting in a mismatch between the global feedback signals and the exact fine-grained contributions at intermediate denoising steps.
+To address this issue, we introduce DenseGRPO, a novel framework that aligns human preference with dense rewards, which evaluates the fine-grained contribution of each denoising step.
+Specifically, our approach includes two key components: (1) we propose to predict the step-wise reward gain as dense reward of each denoising step, which applies a reward model on the intermediate clean images via an ODE-based approach. This manner ensures an alignment between feedback signals and the contributions of individual steps, facilitating effective training;
+and (2) based on the estimated dense rewards, a mismatch drawback between the uniform exploration setting and the time-varying noise intensity in existing GRPO-based methods is revealed, leading to an inappropriate exploration space.
+Thus, we propose a reward-aware scheme to calibrate the exploration space by adaptively adjusting a timestep-specific stochasticity injection in the SDE sampler, ensuring a suitable exploration space at all timesteps.
+Extensive experiments on multiple standard benchmarks demonstrate the effectiveness of the proposed DenseGRPO and highlight the critical role of the valid dense rewards in flow matching model alignment.
+††footnotetext: ∗Equal Contribution †Corresponding Author
+1 Introduction
+Flow matching models (Lipman et al., 2022; Liu et al., 2022) have achieved remarkable advancement in the text-to-image generation task, yet aligning them with human preference remains a critical challenge. Recent progresses (Liu et al., 2025; Xue et al., 2025; Wang et al., 2025a) highlight reinforcement learning (RL) as a promising solution by maximizing rewards during the post-training stage.
+Among these, Group Relative Policy Optimization (GRPO) (Shao et al., 2024) has attracted substantial attention, with numerous studies (Liu et al., 2025; Xue et al., 2025; Li et al., 2025; He et al., 2025) reporting significant gains in human preference alignment.
+Although effective, existing GRPO-based approaches, e.g., Flow-GRPO (Liu et al., 2025) and DanceGRPO (Xue et al., 2025), still suffer from the sparse reward problem: the terminal reward of the entire denoising trajectory is directly adopted to optimize intermediate denoising steps.
+As shown in Fig. 1 (a), for the ii-th TT-step generation trajectory in a GRPO sampled group, they only predict a single, sparse reward RiR^{i} from the terminal generated image, and naively adopt RiR^{i} to optimize all intermediate denoising steps.
+However, as RiR^{i} represents the cumulative contribution of all TT denoising steps, directly applying RiR^{i} to optimize a single step at timestep=t{\rm{timestep}}=t leads to a mismatch between the assigned global trajectory-level feedback and the exact fine-grained step-wise contribution, misleading policy optimization.
+Figure 1:
+(a) Existing approaches only predict a single, sparse reward at the end of the denoising trajectory, which is naively applied to optimize all intermediate steps.
+(b) DenseGRPO estimates step-wise rewards of individual steps, densifying the feedback signal for the denoising process.
+To address the aforementioned issue, we introduce DenseGRPO, a novel RL framework that aligns human preference with dense rewards, as depicted in Fig. 1 (b).
+The key idea of dense rewards is to evaluate the step-wise contribution of each denoising step, thereby aligning the feedback signals with the fine-grained contribution.
+Intuitively, training a process reward model presents a promising approach to estimate dense rewards (Zhang et al., 2024), yet it encounters two limitations: increased training costs due to additional models and limited adaptability to other tasks.
+In DenseGRPO, we adopt a simple yet effective approach that eliminates the need for additional specialized models and can seamlessly integrate with any established reward model.
+Specifically, since the contribution of a denoising step can be accessed by latent change, we propose to predict the reward gain between the current step and the next step latent as dense reward of each denoising step.
+To estimate the reward of an intermediate latent, we leverage the deterministic nature of Ordinary Differential Equation (ODE) and apply a reward model on the intermediate clean images via ODE denoising.
+Then, we assign the reward feedback as latent rewards and thus obtain the dense rewards by computing reward gains at each step.
+By this means, the estimated dense rewards ensure an alignment between feedback signals and the contribution of individual steps, thereby facilitating human preference alignment.
+Moreover, leveraging the step-wise dense rewards estimated above, a mismatch drawback between the uniform exploration setting and the time-varying noise intensity in existing GRPO-based approaches (Liu et al., 2025; Xue et al., 2025) is revealed.
+In general, the amount of noise is consistent between the diffusion and denoising processes in diffusion models (Song et al., 2020).
+Since RL relies on stochastic exploration, Flow-GRPO proposes a Stochastic Differential Equation (SDE) sampler that relaxes this consistency and injects increased noise, allowing diverse sampling.
+However, the current uniform setting of noise injection fails to align with the time-varying nature of the generation process, often resulting in either excessive or insufficient stochasticity.
+As evidenced by Fig. 3 (a), where nearly all samples receive negative rewards at late timesteps, the distribution of dense rewards is imbalanced, indicating an inappropriate exploration space.
+To mitigate this, we propose a reward-aware scheme to calibrate the exploration space by adaptively adjusting a timestep-specific stochasticity injection in the SDE sampler, ensuring a suitable exploration space for effective GRPO learning.
+We conduct extensive experiments across multiple benchmarks, and the superior performance of DenseGRPO demonstrates its effectiveness and underscores the critical role of valid dense rewards in flow matching model alignment.
+To summarize, the main contributions of our work are as follows:
+•
+We introduce DenseGRPO, which aligns human preference with dense reward, evaluating the fine-grained contribution of each denoising step.
+Leveraging an ODE-based approach, DenseGRPO estimates a reliable step-wise dense reward that aligns with the contribution.
+•
+Informed by the estimated dense rewards, we propose a reward-aware scheme to calibrate the exploration space, balancing the dense reward distribution at all timesteps.
+•
+Comprehensive experiments on multiple text-to-image benchmarks demonstrate the state-of-the-art performance of the proposed DenseGRPO and highlight the critical role of dense rewards in flow matching model alignment.
+2 Related Work
+Alignment for Text-to-Image Generation.
+Aligning text-to-image models with human preferences
+has attracted considerable attention.
+Early works are directly driven by the preference signals with scalar rewards (Prabhudesai et al., 2023; Xu et al., 2023) or reward weighted regression (Lee et al., 2023; Furuta et al., 2024).
+To obviate the need for a reward model, some approaches (Wallace et al., 2024; Yang et al., 2024a) adopt offline Direct Preference Optimization (DPO) (Rafailov et al., 2023) with win-lose pairwise data to directly learn from human feedback.
+In parallel, to tackle the distribution shift induced by offline win–lose pairwise data relative to the policy model during training, several methods (Black et al., 2023; Fan et al., 2023) utilize Proximal Policy Optimization (PPO) (Schulman et al., 2017) for online reinforcement learning, optimizing the score function through policy gradient methods.
+More recently, Group Relative Policy Optimization (GRPO) (Shao et al., 2024) has further improved the alignment task. Specifically, pioneering efforts, e.g., Flow-GRPO (Liu et al., 2025) and DanceGRPO (Xue et al., 2025), introduce the GRPO framework on flow matching models and enable diversity exploration by converting the deterministic ODE sampler into an equivalent SDE sampler.
+Despite subsequent GRPO-based advances (He et al., 2025; Li et al., 2025; Wang et al., 2025a), existing methods still exhibit a mismatch between the global terminal reward feedback and exact fine-grained contribution at each denoising step, thereby limiting performance.
+To tackle this issue, we propose DenseGRPO that estimates and assigns accurate reward signals for each denoising step, thereby facilitating effective optimization.
+Dense Reward.
+In sequential generation model alignment, dense reward has proven effective in addressing the sparse reward issue, which is inherent in the trajectory-level feedback. In text generation, to densify the sparse reward, several methods incorporate a per-step KL penalty into the training objective (Ramamurthy et al., 2022; Castricato et al., 2022).
+Additionally, Tan and Pan (2025) dynamically weights the rewards using token-level entropy for dense reward prediction, achieving true token-level credit assignment within GRPO framework.
+Similarly, dense reward has been explored for training text-to-image generation models. Specifically, within DPO-style methods, Yang et al. (2024b) fines the per-step reward signal and introduces temporal discounting into the training objective, and SPO (Liang, 2024) trains a step-aware performance model for both noise and clean images.
+In PPO-style approaches, Zhang et al. (2024) assigns each intermediate denoising timestep a temporal reward by learning a temporal critic function.
+Besides, TempFlow-GRPO (He et al., 2025) proposes a trajectory branching mechanism that provides per-timestep reward in GRPO-based alignment, yet adopts a trajectory-wise signal for step optimization.
+Most closely related to our work, CoCA (Liao et al., 2025) estimates the contribution of each step by assigning the terminal reward in proportion to the latent similarity. However, it still assigns the trajectory-wise reward signals to optimize an intermediate denoising step, where optimization mismatch persists.
+In contrast, we present DenseGRPO that aims to train with the step-wise dense reward, which captures the exact fine-grained contribution of each denoising step.
+3 Preliminary
+In this section, we briefly review some concepts from a typical previous work (Liu et al., 2025) to provide preliminary details about the application of GRPO in flow matching models, including (1) the formulation of RL on flow matching models, (2) the GRPO framework, and (3) the SDE sampler.
+RL on Flow Matching Models.
+Within reinforcement learning, a sequential decision-making problem is commonly formulated as a Markov Decision Process (MDP). An MDP is characterized by a tuple (𝒮,𝒜,ρ0,P,ℛ)(\mathcal{S},\mathcal{A},\rho_{0},P,\mathcal{R}), where 𝒮\mathcal{S} denotes the state space, 𝒜\mathcal{A} represents the action space, ρ0\rho_{0} is the distribution of initial states, PP is the transition kernel, and ℛ\mathcal{R} is a reward function.
+At timestep tt with a state 𝐬t∈𝒮\mathbf{s}_{t}\in\mathcal{S}, the agent takes an action 𝐚t∈𝒜\mathbf{a}_{t}\in\mathcal{A} according to a policy π⁡(𝐚∣𝐬)\pi(\mathbf{a}\mid\mathbf{s}), and thereby receives a reward R⁡(𝐬t,𝐚t)R(\mathbf{s}_{t},\mathbf{a}_{t}), moving to a new state 𝐬t+1∼P⁡(𝐬t+1∣𝐬t,𝐚t)\mathbf{s}_{t+1}\sim P(\mathbf{s}_{t+1}\mid\mathbf{s}_{t},\mathbf{a}_{t}). Following Flow-GRPO (Liu et al., 2025), the iterative denoising process in flow matching models can be formulated as an MDP:
+𝐬t≜(𝒄,t,𝒙t),π⁡(𝐚t∣𝐬t)≜p⁡(𝒙t−1∣𝒙t,𝒄),P⁡(𝐬t+1∣𝐬t,𝐚t)≜(δ𝒄,δt−1,δ𝒙t−1)𝐚t≜𝒙t−1,R⁡(𝐬t,𝐚t)≜{ℛ⁡(𝒙0,𝒄),if ​t=00,otherwise,ρ0​(𝐬0)≜(p⁡(𝒄),δT,𝒩⁡(𝟎,𝐈)).\begin{aligned} &\mathbf{s}_{t}\triangleq(\bm{c},t,\bm{x}_{t}),\quad\pi(\mathbf{a}_{t}\mid\mathbf{s}_{t})\triangleq p(\bm{x}_{t-1}\mid\bm{x}_{t},\bm{c}),\quad P(\mathbf{s}_{t+1}\mid\mathbf{s}_{t},\mathbf{a}_{t})\triangleq\left(\delta_{\bm{c}},\delta_{t-1},\delta_{\bm{x}_{t-1}}\right)\\
+&\mathbf{a}_{t}\triangleq\bm{x}_{t-1},\quad R(\mathbf{s}_{t},\mathbf{a}_{t})\triangleq\begin{cases}\mathcal{R}(\bm{x}_{0},\bm{c}),&\text{if }t=0\\
+0,&\text{otherwise}\end{cases},\quad\rho_{0}(\mathbf{s}_{0})\triangleq\left(p(\bm{c}),\delta_{T},\mathcal{N}(\mathbf{0},\mathbf{I})\right)\end{aligned}.
+(1)
+Here, the state at timestep tt includes the prompt 𝒄\bm{c}, the timestep tt, and the latent 𝒙t\bm{x}_{t}. The action is the 𝒙t−1\bm{x}_{t-1} predicted by policy model p⁡(𝒙t−1∣𝒙t,𝒄)p(\bm{x}_{t-1}\mid\bm{x}_{t},\bm{c}). And δy\delta_{y} is the Dirac delta distribution with nonzero density only at yy.
+Notably, the reward acts as a trajectory-wise feedback signal that predicts a single, sparse reward only at the terminal state and provides zero reward at intermediate steps. This formulation assigns the reward of the entire trajectory to the final denoising step, thereby overlooking the fine-grained contributions of intermediate steps.
+As a result, existing methods adopt this sparse reward to optimize all timesteps, leading to a feedback-contribution mismatch. To address this, DenseGRPO explicitly estimates the step-wise dense rewards, thereby aligning the reward feedback with the contribution at each step.
+GRPO Framework.
+Flow-GRPO adopts the GRPO framework (Shao et al., 2024) to align flow matching models. Specifically, given a prompt 𝒄\bm{c}, the flow matching model pθp_{\theta} samples a group of GG individual images {𝒙0i}i=1G\{\bm{x}_{0}^{i}\}_{i=1}^{G} with TT timesteps and the corresponding denoising trajectories {(𝒙Ti,𝒙T−1i,…,𝒙0i)}i=1G\{(\bm{x}_{T}^{i},\bm{x}_{T-1}^{i},...,\bm{x}_{0}^{i})\}_{i=1}^{G}. Using a reward model ℛ\mathcal{R}, the advantage of the ii-th image is estimated by group normalization as follows:
+A^ti=ℛ⁡(𝒙0i,𝒄)−mean​({ℛ⁡(𝒙0i,𝒄)}i=1G)std​({ℛ⁡(𝒙0i,𝒄)}i=1G).\hat{A}_{t}^{i}=\frac{\mathcal{R}(\bm{x}_{0}^{i},\bm{c})-\text{mean}(\{\mathcal{R}(\bm{x}^{i}_{0},\bm{c})\}_{i=1}^{G})}{\text{std}(\{\mathcal{R}(\bm{x}_{0}^{i},\bm{c})\}_{i=1}^{G})}.
+(2)
+Subsequently, the policy is optimized by maximizing the following objective:
+𝒥Flow-GRPO(θ)=𝔼𝒄∼𝒞,{𝒙i}i=1G∼πθold(⋅|𝒄)f(r,A^,θ,ϵ,β),\mathcal{J}_{\text{Flow-GRPO}}(\theta)=\mathbb{E}_{\bm{c}\sim\mathcal{C},\{\bm{x}^{i}\}_{i=1}^{G}\sim\pi_{\theta_{\text{old}}}(\cdot|\bm{c})}f(r,\hat{A},\theta,\epsilon,\beta),
+(3)
+where
+f(r,A^,θ,ϵ,β)=1G∑i=1G1T∑t=0T−1(m​i​n(rti(θ)A^ti,clip(rti(θ),1−ϵ,1+ϵ)A^ti)−βDK​L(πθ||πref)),f(r,\hat{A},\theta,\epsilon,\beta)=\frac{1}{G}\sum\limits_{i=1}^{G}\frac{1}{T}\sum\limits_{t=0}^{T-1}(\mathop{min}(r_{t}^{i}(\theta)\hat{A}_{t}^{i},\text{clip}(r_{t}^{i}(\theta),1-\epsilon,1+\epsilon)\hat{A}_{t}^{i})-\beta D_{KL}(\pi_{\theta}||\pi_{\text{ref}})),
+(4)
+with rti​(θ)=pθ​(𝒙t−1i|𝒙ti,𝒄)pθold​(𝒙t−1i|𝒙ti,𝒄)r_{t}^{i}(\theta)=\frac{p_{\theta}(\bm{x}^{i}_{t-1}|\bm{x}_{t}^{i},\bm{c})}{p_{\theta_{\text{old}}}(\bm{x}^{i}_{t-1}|\bm{x}_{t}^{i},\bm{c})}.
+Notably, the advantage A^ti\hat{A}_{t}^{i} obtained via Eq. 2 is exclusively determined by the reward signal ℛ⁡(𝒙0i,𝒄)\mathcal{R}(\bm{x}_{0}^{i},\bm{c}) of the entire trajectory, rendering it independent of any particular timestep tt. In other words, policy optimization across different timesteps utilizes identical trajectory-wise reward feedback, exhibiting a mismatch between the assigned trajectory-wise feedback and the step-wise contributions of each timestep.
+SDE Sampler.
+Typically, flow matching models predict the velocity 𝒗t\bm{v}_{t} and employ a deterministic ODE for the denoising process:
+d​𝒙t=𝒗t​d​t.d\bm{x}_{t}=\bm{v}_{t}dt.
+(5)
+Yet, GRPO requires stochastic sampling to generate diverse trajectories for exploration. To this end, Flow-GRPO injects additional noise to sampling by converting the deterministic ODE sampler to an equivalent SDE sampler:
+𝒙t+Δ​t=𝒙t+[𝒗θ​(𝒙t,t)+σt22​t​(𝒙t+(1−t)​𝒗θ​(𝒙t,t))]​Δ​t+σt​Δ​t​ϵ.\bm{x}_{t+\Delta t}=\bm{x}_{t}+[\bm{v}_{\theta}(\bm{x}_{t},t)+\frac{\sigma_{t}^{2}}{2t}(\bm{x}_{t}+(1-t)\bm{v}_{\theta}(\bm{x}_{t},t))]\Delta t+\sigma_{t}\sqrt{\Delta t}\bm{\epsilon}.
+(6)
+Here, σt=a​t1−t\sigma_{t}=a\sqrt{\frac{t}{1-t}} and ϵ∼𝒩⁡(0,𝑰)\bm{\epsilon}\sim\mathcal{N}(0,\bm{I}) inject stochasticity, where aa is a scalar hyper-parameter for noise level control.
+Figure 2: Overview of DenseGRPO. Given the ii-th trajectory within a GRPO group, we first predict the rewards {Rti}\{R^{i}_{t}\} of latents {𝒙ti}\{\bm{x}^{i}_{t}\} via ODE denoising. By capturing the reward gain {Δ​Rti}\{\Delta R^{i}_{t}\} at each step, we obtain the dense reward that reliably evaluates the step-wise contribution.
+4 DenseGRPO
+In this section, we present DenseGRPO that aligns flow matching models using the step-wise dense rewards.
+Below, we begin by showing how to explicitly estimate the dense reward, evaluating the contribution of each step. Subsequently, we introduce the reward-aware scheme that calibrates the exploration space in the SDE sampler, providing a suitable exploration space for GRPO training.
+4.1 Step-Wise Dense Reward
+As shown in Fig. 1, existing approaches estimate a single reward RiR^{i} of the whole trajectory, and directly apply RiR^{i} to optimize intermediate steps. Since RiR^{i} is achieved by all steps, this manner encounters a mismatch between the trajectory-wise feedback signal and the step-wise contribution.
+To tackle this, we propose to estimate dense rewards that evaluate the contribution of each step, thereby providing a step-wise feedback signal.
+From the perspective of reward in RL, each action (e.g., 𝒙ti\bm{x}^{i}_{t}) receives a reward feedback (e.g., RtiR^{i}_{t}) that evaluates its corresponding future outcome.
+At timestep=t{\rm{timestep}}=t, the one-step denoising process 𝒙ti→𝒙t−1i\bm{x}^{i}_{t}\rightarrow\bm{x}^{i}_{t-1} contributes to a reward raising from RtiR^{i}_{t} to Rt−1iR^{i}_{t-1}.
+Therefore, we define the step-wise dense reward Δ​Rti\Delta R^{i}_{t} of timestep=t\rm{timestep}=t as the reward gain:
+Δ​Rti=Rt−1i−Rti.\Delta R^{i}_{t}=R^{i}_{t-1}-R^{i}_{t}.
+(7)
+To this end, we first estimate the reward of any intermediate latent, i.e., RtiR^{i}_{t}.
+Typically, classical RL methods learn a critic function to immediately estimate the influence on the future outcome, which serves as a proxy of the reward at the current action (Pignatelli et al., 2023; Zhang et al., 2024).
+However, the critic function incurs increased training overhead and lacks adaptability to other tasks.
+In contrast, we implement a simple yet effective approach that eliminates the need for additional specialized models.
+Specifically, our approach leverages the deterministic nature of ODE sampler in flow matching models: given a latent 𝒙ti\bm{x}^{i}_{t} at timestep=t\rm{timestep}=t, the ODE denoising trajectory, the corresponding clean latent, and hence the final clean image, are fully determined.
+Therefore, this one-to-one mapping allows the clean image obtained by ODE denoising to serve as a promising future counterpart for any latent 𝒙ti\bm{x}^{i}_{t}. Building on these analyses, we propose that the reward of a latent 𝒙ti\bm{x}^{i}_{t} can be reliably assigned as that of the corresponding clean image via ODE denoising.
+Figure 3: Visualization of dense rewards, where each polyline denotes an SDE-sampled trajectory: (a)(b)(c) existing GRPO-based methods utilize a uniform setting of noise level aa, such as a=0.7a=0.7, a=0.5a=0.5, and a=0.8a=0.8, leading to an inappropriate exploration space; (d) DenseGRPO calibrates a timestep-specific noise intensity ψ⁡(t)\psi(t), enabling a suitable exploration space for all timesteps.
+As illustrated in Fig. 2, for the ii-th trajectory {𝒙ti}t=T0\{\bm{x}_{t}^{i}\}^{0}_{t=T} within a sampled group of GRPO, we first employ an nn-step ODE denoising to obtain the underlying clean latent 𝒙^t,0i\hat{\bm{x}}^{i}_{t,0} for latent 𝒙ti\bm{x}^{i}_{t}:
+𝒙^t,0i=ODEn​(𝒙ti,𝒄).\hat{\bm{x}}^{i}_{t,0}=\mathrm{ODE}_{n}(\bm{x}^{i}_{t},\bm{c}).
+(8)
+Here, 𝒙^0,0i=𝒙0i\hat{\bm{x}}^{i}_{0,0}=\bm{x}^{i}_{0}, and ODEn\mathrm{ODE}_{n} involves nn ODE denoising steps: 𝒙ti→ODE…→ODE𝒙^t,⌊t/n⌋i→ODE𝒙^t,0i\bm{x}^{i}_{t}\xrightarrow{\rm{ODE}}...\xrightarrow{\rm{ODE}}\hat{\bm{x}}^{i}_{t,\lfloor t/n\rfloor}\xrightarrow{\rm{ODE}}\hat{\bm{x}}^{i}_{t,0}, where 𝒙^t,⌊t/n⌋i\hat{\bm{x}}^{i}_{t,\lfloor t/n\rfloor} is the latent generated by ODE sampler at timestep=⌊t/n⌋\rm{timestep=\lfloor t/n\rfloor} and nn may be any integer in [1,t][1,t]. In our experiments, we set n=tn=t for improved performance (See Sec. 5.3 for its impact).
+After that, we decode the clean image from 𝒙^t,0i\hat{\bm{x}}^{i}_{t,0} and apply a reward model ℛ\mathcal{R} to predict its reward Rt,0iR^{i}_{t,0} as the latent reward for 𝒙ti\bm{x}^{i}_{t}:
+Rti≜Rt,0i=ℛ⁡(𝒙^t,0i,𝒄).R^{i}_{t}\triangleq R^{i}_{t,0}=\mathcal{R}(\hat{\bm{x}}^{i}_{t,0},\bm{c}).
+(9)
+Notably, since 𝒙^t,0i\hat{\bm{x}}^{i}_{t,0} belongs to the clean distribution, plenty of established reward models can be seamlessly integrated as ℛ\mathcal{R} for reward prediction.
+With the estimated {Rti}t=1T\{R^{i}_{t}\}^{T}_{t=1}, we obtain the dense reward {Δ​Rti}t=1T\{\Delta R^{i}_{t}\}_{t=1}^{T} of timestep=t{\rm{timestep}}=t by computing the reward gain via Eq. 7, which represents each step’s contribution.
+During GRPO training, we replace the sparse ℛ⁡(𝒙0i,𝒄)\mathcal{R}(\bm{x}_{0}^{i},\bm{c}) in Eq. 2 with the dense Δ​Rti\Delta R_{t}^{i} at timestep=t{\rm timestep}=t, and thereby the advantage is calculated by:
+A^ti=Δ​Rti−mean​({Δ​Rti}i=1G)std​({Δ​Rti}i=1G).\hat{A}_{t}^{i}=\frac{\Delta R_{t}^{i}-\text{mean}(\{\Delta R_{t}^{i}\}_{i=1}^{G})}{\text{std}(\{\Delta R_{t}^{i}\}_{i=1}^{G})}.
+(10)
+As a result, we align the reward signal with the contribution of denoising at each denoising step, facilitating effective policy optimization.
+4.2 Exploration Space Calibration
+Algorithm 1  Exploration Space Calibration
+1:
+policy model pθp_{\theta}, reward model ℛ\mathcal{R}, initial noise level ψ⁡(t)\psi(t), prompt dataset 𝒞\mathcal{C}, total sampling steps TT, number of samples NN, small constants {ε1,ε2}\{\varepsilon_{1},\varepsilon_{2}\}
+2:
+for iteration k=1,2,…k=1,2,... do
+3:
+for sample i=1i=1 to NN do
+4:
+Init noise 𝒙Ti∼𝒩⁡(0,𝐈)\bm{x}^{i}_{T}\sim\mathcal{N}(0,\mathbf{I})
+5:
+Sample 𝒄∼𝒞\bm{c}\sim\mathcal{C}
+6:
+Sample a trajectory {𝒙ti}t=T0\{\bm{x}^{i}_{t}\}^{0}_{t=T} via SDE with ψ⁡(t)\psi(t)
+7:
+Predict latent rewards {Rti=ℛ(ODEn(𝒙ti,𝒄),𝒄)}t=T0\{R^{i}_{t}=\mathcal{R}(\mathrm{ODE}_{n}(\bm{x}^{i}_{t},\bm{c}),\bm{c})\}^{0}_{t=T}
+8:
+Calculate dense rewards {ΔRti=Rt−1i−Rti}t=T0\{\Delta R^{i}_{t}=R^{i}_{t-1}-R^{i}_{t}\}^{0}_{t=T}
+9:
+end for
+10:
+for timestep t=Tt=T to 11 do
+11:
+if  |num({ΔRti>0})−num({ΔRti<0})|<ε1|{\rm{num}}(\{\Delta R^{i}_{t}>0\})-{\rm{num}}(\{\Delta R^{i}_{t}<0\})|<\varepsilon_{1}  then
+12:
+ψ⁡(t)←ψ⁡(t)+ε2\psi(t)\leftarrow\psi(t)+\varepsilon_{2}
+13:
+else
+14:
+ψ⁡(t)←ψ⁡(t)−ε2\psi(t)\leftarrow\psi(t)-\varepsilon_{2}
+15:
+end if
+16:
+end for
+17:
+end for
+18:
+return ψ⁡(t)\psi(t)
+Based on the estimated per-timestep dense reward above, a mismatch drawback between the exploration space and the denoising timestep schedule in existing GRPO-based methods is revealed.
+To promote diverse exploration for RL, Flow-GRPO proposes an SDE sampler that injects additional noise during trajectory sampling. This injection leads to a greater amount of noise than the denoising process, sampling out-of-distribution trajectories.
+Therefore, a suitable noise injection is critical, as an inappropriate setting often results in either excessive or insufficient stochasticity.
+However, the current uniform setting of noise injection fails to align with the time-varying nature of the generation process, in which all timesteps share an identical noise level aa in Eq. 6.
+As plotted in Fig. 3 (a), we collect the step-wise dense reward of several trajectories with a=0.7a=0.7 using PickScore (Kirstain et al., 2023) as the reward model.
+The results show that all trajectories receive negative rewards at timestep=2{\rm{timestep}}=2, indicating that nearly all samples in the current exploration space perform worse than the default. Lacking positive guidance, this inappropriate exploration space undermines effective policy optimization.
+We hypothesize that this issue may arise from the excessive noise injection in the current setting (a=0.7a=0.7). Hence, we further reduce the stochastic noise injection by lowering aa to 0.50.5. As depicted in Fig. 3 (b), this adjustment constrains the exploration space yet improves the reward balance, enabling a more fair distribution of positive and negative feedback, particularly at timestep=2\mathrm{timestep}=2.
+Conversely, increasing the noise level to a=0.8a=0.8 expands the exploration space, as evidenced by the greater diversity of rewards at timestep=10\mathrm{timestep}=10 in Fig. 3 (c).
+However, a more pronounced imbalance arises at certain timesteps, e.g., timestep=3\mathrm{timestep}=3 and 22.
+These findings underscore the limitation that a uniform noise injection setting fails to produce a suitable exploration space for all timesteps.
+Therefore, a timestep-specific noise injection setting is expected to align with the time-varying nature of the generation process.
+To mitigate this, we propose to calibrate the exploration space by adaptively adjusting the stochasticity injection in the SDE sampler suitable for all timesteps, yielding a timestep-specific noise level ψ⁡(t)\psi(t).
+We suggest that an ideal exploration space is supposed to provide diverse trajectories while preserving dense reward balance.
+Based on the above observation, a higher noise level facilitates exploration diversity, while a lower noise level benefits reward balance.
+Consequently, we advocate for using a higher feasible noise intensity to enhance exploration diversity, up to the point where reward imbalance occurs.
+As illustrated in Algorithm 1, we start by sampling plenty of trajectories {(𝒙Ti,𝒙T−1i,…,𝒙0i)}i=1G\{(\bm{x}_{T}^{i},\bm{x}_{T-1}^{i},...,\bm{x}_{0}^{i})\}_{i=1}^{G} and then predict their dense rewards {Δ​Rti}\{\Delta R^{i}_{t}\}.
+Subsequently, for each timestep, we increase the noise level slightly when dense rewards are balanced (i.e., the disparity between the number of positive and negative samples is minimal), or decrease otherwise.
+By iteratively updating, we obtain a suitable ψ⁡(t)\psi(t) output, which ensures a balanced exploration space for all timesteps.
+Accordingly, σt\sigma_{t} in Eq. 6 is employed as σt=ψ⁡(t)​t1−t\sigma_{t}=\psi(t)\sqrt{\frac{t}{1-t}}.
+Given that ψ⁡(t)\psi(t) is a self-adjusting function with respect to tt, the item t1−t\sqrt{\frac{t}{1-t}}, which is constant for tt, can be incorporated into the calibration process. Hence, we unify the formulation and employ σt\sigma_{t} as follows:
+σt=ψ⁡(t).\sigma_{t}=\psi(t).
+(11)
+Table 1:
+Performance on Compositional Image Generation, Visual Text Rendering, and Human Preference benchmarks, evaluated by task performance on test prompts, and by image quality and preference scores on DrawBench prompts. ImgRwd: ImageReward; UniRwd: UnifiedReward. UniRwd*: our evaluation results of the official checkpoints and our method with UnifiedReward. 11
+1
+Our experiments reveal a discrepancy with the results reported in Flow-GRPO paper when evaluating the official checkpoints with UnifiedReward. This may stem from updates of the UnifiedReward checkpoint or the sglang package, as discussed in https://github.com/yifan123/flow_grpo/issues/39.
+Model
+Task Metric
+Image Quality
+Preference Score
+GenEval↑\uparrow
+OCR Acc.↑\uparrow
+PickScore↑\uparrow
+Aesthetic↑\uparrow
+DeQA↑\uparrow
+ImgRwd↑\uparrow
+PickScore↑\uparrow
+UniRwd↑\uparrow
+UniRwd*↑\uparrow
+SD3.5-M
+0.63
+0.59
+21.72
+5.39
+4.07
+0.87
+22.34
+3.33
+3.06
+Compositional Image Generation
+Flow-GRPO
+0.95
+—
+—
+5.25
+4.01
+1.03
+22.37
+3.51
+3.18
+Flow-GRPO+CoCA
+0.96
+—
+—
+5.25
+3.92
+0.93
+22.34
+-
+3.05
+DenseGRPO
+0.97
+—
+—
+5.33
+3.83
+1.02
+22.28
+-
+3.03
+Visual Text Rendering
+Flow-GRPO
+—
+0.92
+—
+5.32
+4.06
+0.95
+22.44
+3.42
+3.17
+Flow-GRPO+CoCA
+—
+0.93
+—
+5.32
+4.08
+0.92
+22.47
+-
+3.11
+DenseGRPO
+—
+0.95
+—
+5.31
+4.02
+0.91
+22.44
+-
+3.12
+Human Preference Alignment
+Flow-GRPO
+—
+—
+23.31
+5.92
+4.22
+1.28
+23.53
+3.66
+3.38
+Flow-GRPO+CoCA
+—
+—
+23.63
+6.22
+4.16
+1.32
+23.80
+-
+3.38
+DenseGRPO
+—
+—
+24.64
+6.35
+4.06
+1.41
+24.55
+-
+3.39
+Figure 4:
+Comparison of learning curves. Figures (a) to (c) correspond to the tasks of compositional image generation, visual text rendering, and human preference alignment, respectively.
+5 Experiment
+5.1 Implementation Detail
+Following Flow-GRPO, we evaluate our method on three text-to-image tasks: (1) Compositional Image Generation, employing GenEval (Ghosh et al., 2023) as the reward model, (2) Human Preference Alignment, utilizing PickScore (Kirstain et al., 2023), (3) Visual Text Rendering, predicting OCR accuracy (Gong et al., 2025) as reward.
+The experimental setup aligns with Flow-GRPO, including a sampling timestep T=10T=10, an evaluation timestep T=40T=40, a group size G=24G=24, and an image resolution of 512. The KL ratio β\beta in Eq. 4 is set to 0.04 for compositional image generation and visual text rendering, and 0.01 for human preference alignment.
+Figure 5:
+Qualitative comparison on three benchmarks: Compositional Image Generation, Visual Text Rendering, and Human Preference Alignment.
+Our DenseGRPO generates high-quality outcomes across all tasks, excelling in color accuracy, text fidelity, and content alignment.
+5.2 Main Result
+We compare the proposed DenseGRPO with Flow-GRPO (Liu et al., 2025) and CoCA (Liao et al., 2025). Since the official CoCA is designed on DDPMs, we implement their core idea on flow matching models by tracking the latent similarity for step-wise reward, denoted by “Flow-GRPO+CoCA”.
+As summarized in Tab. 1 and Fig. 4, our DenseGRPO achieves superior performance, outperforming competitors across all three tasks. Notably, in the task of human preference alignment, our DenseGRPO significantly surpasses the competitors by at least 1.01 of PickScore.
+In addition, compared to “Flow-GRPO+CoCA”, which leverages latent similarity to estimate step-wise feedback signal, the substantial gains of our ODE-based approach validate its advancement to provide a more accurate dense reward.
+Moreover, as shown in Fig. 5, our DenseGRPO generates favorable outcomes with higher visual and semantic quality. For instance, in the third row, only our DenseGRPO successfully generates the positional relationship of “on top of”, whereas other methods produce a combination of “ladybug” and “toadstool”.
+These results demonstrate the significant advantages of DenseGRPO in aligning the target preference.
+5.3 Analysis
+Effect of Dense Reward.
+To investigate whether RL benefits more from sparse rewards or dense rewards, we include another setting for comparison, namely “Dense Reward (Baseline)”, which directly applies the 𝒙t−1i\bm{x}^{i}_{t-1} reward (Rt−1iR^{i}_{t-1}) for optimizing denoising step at timestep=t{\rm{timestep}}=t.
+During GRPO training, its advantage is computed as A^ti=Rt−1i−mean​({Rt−1i}i=1G)std​({Rt−1i}i=1G)\hat{A}_{t}^{i}=\frac{R_{t-1}^{i}-\text{mean}(\{R_{t-1}^{i}\}_{i=1}^{G})}{\text{std}(\{R_{t-1}^{i}\}_{i=1}^{G})}.
+As illustrated in Fig. 6 (a), “Dense Reward (Baseline)” offers greater benefits than Flow-GRPO, highlighting the effectiveness of dense reward. This advancement is further confirmed in Tab. 1 and Fig. 4. By employing step-wise rewards, “Flow-GRPO+CoCA” outperforms the vanilla Flow-GRPO.
+These findings highlight the critical role of step-wise dense rewards, which align the feedback signal more closely with the contribution for each denoising step, thereby facilitating policy optimization.
+Effect of Exploration Space Calibration.
+To evaluate the effectiveness of the calibrated exploration space in Sec. 4.2, we make a comparison by applying the existing uniform setting (a=0.7a=0.7) in the proposed DenseGRPO.
+As presented in Fig. 6 (b), we find that our time-specific noise level advances the alignment task, indicating a more suitable exploration space for all timesteps and validating the success of our reward-aware calibration scheme.
+Besides, even if using the uniform a=0.7a=0.7 setting, our DenseGRPO also yields improved performance than Flow-GRPO, further validating DenseGRPO’s superiority and the benefit of step-wise dense reward.
+Effect of Different ODE Denoising Steps.
+The proposed DenseGRPO adopts an nn-step ODE denoising (Eq. 8) to obtain clean latents. To evaluate the impact of different nn, we perform ablation studies with n=1,2n=1,2, and tt, respectively. As depicted in Fig. 6 (c), we can draw two findings: (1) increasing the number of ODE denoising steps improves performance; (2) a single-step ODE yields suboptimal results, performing worse than Flow-GRPO. These findings suggest that a more accurate dense reward offers more benefits. Since existing reward models are primarily tailored for well-denoised images, utilizing more ODE steps is closer to a precise rollout, and thus receives more accurate rewards. In contrast, a single-step ODE deviates far from this domain, resulting in less accurate rewards and degraded performance.
+Furthermore, under the same experimental setting, n=1n=1, n=2n=2, and n=tn=t require 11, 13, and 19 GPU hours for training 20 steps, respectively. Although a larger nn incurs higher computational overheads, it offers improved performance with the same GPU training time, underscoring the critical role of dense reward accuracy.
+Discussion of Reward Hacking.
+Following Flow-GRPO, we evaluate our method on DrawBench (Saharia et al., 2022) using four additional metrics: Aesthetic Score (Schuhmann, 2022), DeQA (You et al., 2025), ImageReward (Xu et al., 2023), and UnifiedReward (Wang et al., 2025b).
+As shown in Tab. 1, our DenseGRPO exhibits outstanding alignment capability with slight reward hacking in parts of tasks. Notably, in the human preference alignment, while achieving pronounced improvement on the PickScore metric, our method also performs strongly across other metrics. For example, in terms of the Aesthetic score, our DenseGRPO outperforms Flow-GRPO by 0.43, indicating more visually pleasant outcomes by DenseGRPO.
+These advancements demonstrate the strong robustness of the proposed DenseGRPO.
+Figure 6:
+Ablation studies on our critical designs.
+(a) Step-wise dense reward aligns with contribution, surpassing trajectory-wise sparse reward.
+(b) Our time-specific noise level enables a suitable exploration space.
+(c) Increased ODE denoising steps (nn) improve dense reward accuracy, yielding superior results.
+The vertical axis denotes the PickScore results. The horizontal axis of (a) and (b) is training steps, while the horizontal axis of (c) denotes training time for training cost comparison.
+6 Conclusion
+We present DenseGRPO to address the mismatch between trajectory-wise reward feedback and step-wise contribution.
+By estimating per-timestep dense rewards via an ODE-based approach, DenseGRPO aligns the reward feedback with the contribution of each denoising step, enabling a fine-grained credit assignment and facilitating effective optimization.
+Based on the estimated dense rewards, to address the current imbalance exploration in the SDE sampler, we propose a reward-aware scheme that calibrates timestep-specific noise injection, ensuring a suitable exploration space for all timesteps.
+Extensive experiments demonstrate the substantial gains achieved by the proposed DenseGRPO and validate the effectiveness of dense reward in flow matching model alignment.
+Ethics Statement
+This work adheres to the ICLR Code of Ethics.
+All datasets utilized in this study are publicly available and used in accordance with their respective licenses.
+The research does not involve human subjects, sensitive personal information, or proprietary content. Besides, the methods proposed in this paper do not present any foreseeable risks of misuse or harm.
+Reproducibility Statement
+We are committed to ensuring the reproducibility of our research.
+A comprehensive description of the proposed DenseGRPO is provided in Sec. 4.
+Implementation details, including the experimental setup, hyperparameter configurations, training pipeline, and evaluation metrics, are introduced in Sec. 5.1 and further elaborated in Sec. A of the Appendix. Additionally, all datasets utilized in this study are publicly available and described in detail in Sec. 5.1.
+References
+Black et al. (2025)
+F. L. Black et al.
+FLUX.1 kontext: flow matching for in-context image generation and editing in latent space.
+arXiv preprint arXiv:2506.15742.
+Cited by: §B.3.
+Black et al. (2023)
+K. Black, M. Janner, Y. Du, I. Kostrikov, and S. Levine
+Training diffusion models with reinforcement learning.
+arXiv preprint arXiv:2305.13301.
+Cited by: §2.
+Castricato et al. (2022)
+L. Castricato, A. Havrilla, S. Matiana, M. Pieler, A. Ye, I. Yang, S. Frazier, and M. Riedl
+Robust preference learning for storytelling via contrastive reinforcement learning.
+arXiv preprint arXiv:2210.07792.
+Cited by: §2.
+Fan et al. (2023)
+Y. Fan, O. Watkins, Y. Du, H. Liu, M. Ryu, C. Boutilier, P. Abbeel, M. Ghavamzadeh, K. Lee, and K. Lee
+Reinforcement learning for fine-tuning text-to-image diffusion models.
+In Advances in Neural Information Processing Systems,
+Cited by: §2.
+Furuta et al. (2024)
+H. Furuta, H. Zen, D. Schuurmans, A. Faust, Y. Matsuo, P. Liang, and S. Yang
+Improving dynamic object interactions in text-to-video generation with ai feedback.
+arXiv preprint arXiv:2412.02617.
+Cited by: §2.
+Ghosh et al. (2023)
+D. Ghosh, H. Hajishirzi, and L. Schmidt
+Geneval: an object-focused framework for evaluating text-to-image alignment.
+Advances in Neural Information Processing Systems 36, pp. 52132–52152.
+Cited by: §5.1.
+Gong et al. (2025)
+L. Gong, X. Hou, F. Li, L. Li, X. Lian, F. Liu, L. Liu, W. Liu, W. Lu, Y. Shi, et al.
+Seedream 2.0: a native chinese-english bilingual image generation foundation model.
+arXiv preprint arXiv:2503.07703.
+Cited by: §5.1.
+He et al. (2025)
+X. He, S. Fu, Y. Zhao, W. Li, J. Yang, D. Yin, F. Rao, and B. Zhang
+TempFlow-grpo: when timing matters for grpo in flow models.
+arXiv preprint arXiv:2508.04324.
+Cited by: §1,
+§2,
+§2.
+Kirstain et al. (2023)
+Y. Kirstain, A. Polyak, U. Singer, S. Matiana, J. Penna, and O. Levy
+Pick-a-pic: an open dataset of user preferences for text-to-image generation.
+Advances in neural information processing systems 36, pp. 36652–36663.
+Cited by: §4.2,
+§5.1.
+Lee et al. (2023)
+K. Lee, H. Liu, M. Ryu, O. Watkins, Y. Du, C. Boutilier, P. Abbeel, M. Ghavamzadeh, and S. S. Gu
+Aligning text-to-image models using human feedback.
+arXiv preprint arXiv:2302.12192.
+Cited by: §2.
+Li et al. (2025)
+J. Li, Y. Cui, T. Huang, Y. Ma, C. Fan, M. Yang, and Z. Zhong
+MixGRPO: unlocking flow-based grpo efficiency with mixed ode-sde.
+arXiv preprint arXiv:2507.21802.
+Cited by: §1,
+§2.
+Liang (2024)
+Z. Liang
+Step-aware preference optimization: aligning preference with denoising performance at each step.
+arXiv preprint arXiv:2406.04314 2 (5), pp. 7.
+Cited by: §2.
+Liao et al. (2025)
+X. Liao, W. Wei, X. Qu, and Y. Cheng
+Step-level reward for free in rl-based t2i diffusion model fine-tuning.
+arXiv preprint arXiv:2505.19196.
+Cited by: §2,
+§5.2.
+Lipman et al. (2022)
+Y. Lipman, R. T. Chen, H. Ben-Hamu, M. Nickel, and M. Le
+Flow matching for generative modeling.
+arXiv preprint arXiv:2210.02747.
+Cited by: §1.
+Liu et al. (2025)
+J. Liu, G. Liu, J. Liang, Y. Li, J. Liu, X. Wang, P. Wan, D. Zhang, and W. Ouyang
+Flow-grpo: training flow matching models via online rl.
+arXiv preprint arXiv:2505.05470.
+Cited by: Appendix A,
+§1,
+§1,
+§1,
+§2,
+§3,
+§3,
+§5.2.
+Liu et al. (2022)
+X. Liu, C. Gong, and Q. Liu
+Flow straight and fast: learning to generate and transfer data with rectified flow.
+arXiv preprint arXiv:2209.03003.
+Cited by: §1.
+Pignatelli et al. (2023)
+E. Pignatelli, J. Ferret, M. Geist, T. Mesnard, H. van Hasselt, O. Pietquin, and L. Toni
+A survey of temporal credit assignment in deep reinforcement learning.
+arXiv preprint arXiv:2312.01072.
+Cited by: §4.1.
+Prabhudesai et al. (2023)
+M. Prabhudesai, A. Goyal, D. Pathak, and K. Fragkiadaki
+Aligning text-to-image diffusion models with reward backpropagation.
+arXiv preprint arXiv:2310.03739.
+Cited by: §2.
+Rafailov et al. (2023)
+R. Rafailov, A. Sharma, E. Mitchell, C. D. Manning, S. Ermon, and C. Finn
+Direct preference optimization: your language model is secretly a reward model.
+Advances in neural information processing systems 36, pp. 53728–53741.
+Cited by: §2.
+Ramamurthy et al. (2022)
+R. Ramamurthy, P. Ammanabrolu, K. Brantley, J. Hessel, R. Sifa, C. Bauckhage, H. Hajishirzi, and Y. Choi
+Is reinforcement learning (not) for natural language processing: benchmarks, baselines, and building blocks for natural language policy optimization.
+arXiv preprint arXiv:2210.01241.
+Cited by: §2.
+Rombach et al. (2022)
+R. Rombach, A. Blattmann, D. Lorenz, P. Esser, and B. Ommer
+High-resolution image synthesis with latent diffusion models.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 10684–10695.
+Cited by: §B.3.
+Saharia et al. (2022)
+C. Saharia, W. Chan, S. Saxena, L. Li, J. Whang, E. L. Denton, K. Ghasemipour, R. Gontijo Lopes, B. Karagol Ayan, T. Salimans, et al.
+Photorealistic text-to-image diffusion models with deep language understanding.
+Advances in neural information processing systems 35, pp. 36479–36494.
+Cited by: §5.3.
+Schuhmann (2022)
+C. Schuhmann
+Laion-aesthetics.
+Note: https://laion.ai/blog/laion-aesthetics/
+Cited by: §5.3.
+Schulman et al. (2017)
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+Proximal policy optimization algorithms.
+arXiv preprint arXiv:1707.06347.
+Cited by: §2.
+Shao et al. (2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. Li, Y. Wu, et al.
+Deepseekmath: pushing the limits of mathematical reasoning in open language models.
+arXiv preprint arXiv:2402.03300.
+Cited by: §1,
+§2,
+§3.
+Song et al. (2020)
+J. Song, C. Meng, and S. Ermon
+Denoising diffusion implicit models.
+arXiv preprint arXiv:2010.02502.
+Cited by: §1.
+Tan and Pan (2025)
+H. Tan and J. Pan
+GTPO and grpo-s: token and sequence-level reward shaping with policy entropy.
+arXiv preprint arXiv:2508.04349.
+Cited by: §2.
+Wallace et al. (2024)
+B. Wallace, M. Dang, R. Rafailov, L. Zhou, A. Lou, S. Purushwalkam, S. Ermon, C. Xiong, S. Joty, and N. Naik
+Diffusion model alignment using direct preference optimization.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+pp. 8228–8238.
+Cited by: §2.
+Wang et al. (2025a)
+Y. Wang, Z. Li, Y. Zang, Y. Zhou, J. Bu, C. Wang, Q. Lu, C. Jin, and J. Wang
+Pref-grpo: pairwise preference reward-based grpo for stable text-to-image reinforcement learning.
+arXiv preprint arXiv:2508.20751.
+Cited by: §1,
+§2.
+Wang et al. (2025b)
+Y. Wang, Y. Zang, H. Li, C. Jin, and J. Wang
+Unified reward model for multimodal understanding and generation.
+arXiv preprint arXiv:2503.05236.
+Cited by: §5.3.
+Xu et al. (2023)
+J. Xu, X. Liu, Y. Wu, Y. Tong, Q. Li, M. Ding, J. Tang, and Y. Dong
+Imagereward: learning and evaluating human preferences for text-to-image generation.
+Advances in Neural Information Processing Systems 36, pp. 15903–15935.
+Cited by: §2,
+§5.3.
+Xue et al. (2025)
+Z. Xue, J. Wu, Y. Gao, F. Kong, L. Zhu, M. Chen, Z. Liu, W. Liu, Q. Guo, W. Huang, et al.
+DanceGRPO: unleashing grpo on visual generation.
+arXiv preprint arXiv:2505.07818.
+Cited by: §1,
+§1,
+§1,
+§2.
+Yang et al. (2024a)
+K. Yang, J. Tao, J. Lyu, C. Ge, J. Chen, W. Shen, X. Zhu, and X. Li
+Using human feedback to fine-tune diffusion models without any reward model.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+pp. 8941–8951.
+Cited by: §2.
+Yang et al. (2024b)
+S. Yang, T. Chen, and M. Zhou
+A dense reward view on aligning text-to-image diffusion with preference.
+In International Conference on Machine Learning,
+pp. 55998–56032.
+Cited by: §2.
+You et al. (2025)
+Z. You, X. Cai, J. Gu, T. Xue, and C. Dong
+Teaching large language models to regress accurate image quality scores using score distribution.
+In Proceedings of the Computer Vision and Pattern Recognition Conference,
+pp. 14483–14494.
+Cited by: §5.3.
+Zhang et al. (2024)
+Z. Zhang, S. Zhang, Y. Zhan, Y. Luo, Y. Wen, and D. Tao
+Confronting reward overoptimization for diffusion models: a perspective of inductive and primacy biases.
+In International Conference on Machine Learning,
+pp. 60396–60413.
+Cited by: §1,
+§2,
+§4.1.
+Appendix A Implementation Detail
+Our experiments are conducted based on the official implementation 11
+1
+https://github.com/yifan123/flow_grpo of Flow-GRPO (Liu et al., 2025).
+The models are trained using 16 NVIDIA A100 GPUs.
+Before training, we first perform the exploration space calibration strategy to generate the noise level ψ⁡(t)\psi(t), as presented in Algorithm 1, where ε1\varepsilon_{1} and ε2\varepsilon_{2} are set to 2 and 0.010.01. Note that the obtained ψ⁡(t)\psi(t) is fixed in the training process.
+To ensure a fair comparison, we adopt the same experimental settings as Flow-GRPO. Specifically, we apply LoRA with α=64\alpha=64 and r=32r=32. During training, we use the AdamW optimizer with a learning rate of 3×10−43\times 10^{-4}, β1=0.9\beta_{1}=0.9, β2=0.999\beta_{2}=0.999, and a weight decay of 1×10−41\times 10^{-4}. The global batch size is set to 144, with a gradient accumulation step of 8. The total number of training iterations is 4500, 1500, and 4500 for the tasks of compositional image generation, visual text rendering, and human preference alignment tasks, respectively.
+Upon completing training, inference is conducted using the standard ODE sampler of flow matching models for text-to-image generation.
+Appendix B More Result
+B.1 Training Curve of KL Loss
+We present a visualization of the KL loss evolution during training in Fig. 7. The results show that the KL loss of Dense-GRPO is slightly larger than that of Flow-GRPO. This difference arises from the incorporation of the timestep-specific noise level, which encourages a more diverse exploration space and thereby pushes the model to deviate further from the original model.
+Figure 7:
+Training curves of KL loss. Figures (a) to (c) correspond to the tasks of compositional image generation, visual text rendering, and human preference alignment, respectively.
+B.2 Accuracy of DenseGRPO’s Reward
+Figure 8:
+Visualization of ODE-based latent rewards, i.e., RtiR^{i}_{t} predicted by Eq. 9, where each polyline denotes a sampled trajectory. timestep=0\rm{timestep=0} represents the terminal reward of the SDE sampling trajectory.
+In DenseGRPO, we estimate step-wise dense rewards by calculating the reward gain at each denoising step and utilize an ODE-based method to predict the reward for intermediate latents.
+To evaluate the accuracy of DenseGRPO’s reward, we make a comparison between the predicted latent reward and the terminal reward of the SDE sampling trajectory with PickScore, as visualized in Fig. 8. Note that the latent reward at timestep=0\rm{timestep=0} is directly predicted by the reward model without requiring ODE sampling, and therefore corresponds to the terminal reward of the SDE sampling trajectory.
+The results show that the difference between the predicted latent rewards and the terminal trajectory rewards is minimal. Furthermore, the relative ranking of rewards across different samples consistently aligns across all timesteps. These findings confirm the accuracy of the reward predictions in DenseGRPO.
+B.3 More Experiment
+Experiment on FLUX.1-Dev.
+We further evaluate the performance of our method against Flow-GRPO on FLUX.1-dev (Black and others, 2025) model using PickScore as the reward model. As shown in Fig. 9(a), the proposed DenseGRPO achieves substantial improvements over Flow-GRPO, suggesting the superiority and robustness of the estimated dense rewards.
+Figure 9:
+Performance of DenseGRPO compared with Flow-GRPO on additional models: (a) FLUX.1-dex, (b) SD 3.5-M on 1024×10241024\times 1024 resolution, and (c) diffusion model.
+Experiment on High Resolution.
+As shown in Fig. 9(b), we raise the training and inference resolution to a higher resolution 1024×10241024\times 1024 on the SD 3.5-M model, utilizing PickScore as the reward model. The results reveal that DenseGRPO also yields a significant gain over Flow-GRPO, indicating the strong scalability of DenseGRPO.
+Experiment on Diffusion Model.
+Though DenseGRPO focuses on flow matching models, it can also generalize to other generative models by employing a deterministic sampler to predict dense rewards. This deterministic nature enables a one-to-one mapping between intermediate latents and clean latents, ensuring an accurate prediction of latent rewards and step-wise dense rewards. To validate this capability, we use SD 1.5 (Rombach et al., 2022) as the base model with an ODE sampler to predict x^t,0i\hat{x}^{i}_{t,0} from xtix^{i}_{t}. The reward of x^t,0i\hat{x}^{i}_{t,0} is then assigned to that of xtix^{i}_{t}, and the reward gain is calculated as the step-wise dense reward. As presented in Fig. 9(c), the performance improvement of dense reward within DenseGRPO demonstrates the accuracy and effectiveness of dense reward on diffusion models. These findings show that DenseGRPO is capable of generalizing to other generative families via a deterministic denoising sampler.
+B.4 Reward Hacking Analysis
+Figure 10:
+Visualization of reward hacking.
+Figure 10 illustrates examples of reward hacking. When GenEval is used as the reward model for compositional image generation, DenseGRPO achieves notable gains in compositional accuracy, such as object counting, but may occasionally experience a decline in image quality. A similar issue is observed in the task of visual text rendering. This problem arises from the step-wise dense reward in DenseGRPO, which aligns feedback with the contributions of individual steps, providing a more precise signal. While this increased reward accuracy enhances the learning process, it may also make the model more susceptible to overfitting the reward model, thereby amplifying the risk of reward hacking. One potential solution is to employ a large-scale reward model to provide higher-quality reward signals.
+Appendix C LLM Usage
+We use LLMs to assist with writing refinement, but do not involve them in core idea development.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

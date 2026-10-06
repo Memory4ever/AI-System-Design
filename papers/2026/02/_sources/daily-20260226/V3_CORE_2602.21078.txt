@@ -1,0 +1,5802 @@
+ProxyFL: A Proxy-Guided Framework for Federated Semi-Supervised Learning
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+Federated Learning
+Semi-Supervised Learning
+Federated Semi-Supervised Learning
+3
+Problem Formulation
+4
+Preliminary Study
+5
+Methodology
+5.1
+Global Proxy Tuning
+5.2
+Indecisive-Categories Proxy Learning
+5.2.1
+Category Set Construction
+5.2.2
+Positive-Negative Proxy Pool
+5.3
+Loss Functions
+6
+Experiments
+6.1
+Experimental Setup
+6.2
+Performance Comparison
+6.3
+Empirical Analysis
+7
+Conclusion
+8
+Acknowledgement
+References
+A
+Definitions of Data Heterogeneity in FSSL
+B
+Pseudo-Code
+C
+Theoretical Proofs
+C.1
+Convergence of Global Proxy Tuning
+C.2
+Convergence of Local Training with ICPL
+D
+Additional Empirical Analysis
+D.1
+Labeling Ratio
+D.2
+Communication Costs
+D.3
+Convergence Rate
+D.4
+ProxyFL as a Plug-in Approach
+D.5
+Ablation Study on Tuning Epochs
+D.6
+Experimental Setting and other Details
+License: CC BY-NC-SA 4.0
+arXiv:2602.21078v1 [cs.LG] 24 Feb 2026
+ProxyFL: A Proxy-Guided Framework for Federated Semi-Supervised Learning
+Duowen Chen
+Yan Wang
+1
+1
+footnotemark:
+1
+Affiliation:
+Shanghai Key Laboratory of Multidimensional Information Processing, East China Normal University
+Affiliation:
+duowen
+chen@hotmail.com, ywang@cee.ecnu.edu.cn
+Affiliation:
+https://github.com/DuowenC/FSSLlib
+Abstract
+Federated Semi-Supervised Learning (FSSL) aims to collaboratively train a global model across clients by leveraging partially-annotated local data in a privacy-preserving manner. In FSSL, data heterogeneity is a challenging issue, which exists both across clients and within clients. External heterogeneity refers to the data distribution discrepancy across different clients, while internal heterogeneity represents the mismatch between labeled and unlabeled data within clients.
+Most FSSL methods typically design fixed or dynamic parameter aggregation strategies to collect client knowledge on the server (external) and / or filter out low-confidence unlabeled samples to reduce mistakes in local client (internal). But, the former is hard to precisely fit the ideal global distribution via direct weights, and the latter results in fewer data participation into FL training. To this end, we propose a proxy-guided framework called ProxyFL that focuses on simultaneously mitigating external and internal heterogeneity via a unified proxy. I.e., we consider the learnable weights of classifier as proxy to simulate the category distribution both locally and globally. For external, we explicitly optimize global proxy against outliers instead of direct weights; for internal, we re-include the discarded samples into training by a positive-negative proxy pool to mitigate the impact of potentially-incorrect pseudo-labels. Insight experiments & theoretical analysis show our significant performance and convergence in FSSL.
+*
+*
+footnotetext:
+Corresponding Author.
+Figure 1
+:
+(a) Illustration of centralized learning and averaging-based federated learning. (b) Differences of test accuracy and pseudo-labeling accuracy under varying levels of heterogeneity (smaller
+α
+\alpha
+indicates greater heterogeneity). During each communication round, all clients are trained based on FedSGD
+[
+23
+]
+w/
+,
+w/o
+low-confidence samples and our method for one local epoch.
+1
+Introduction
+The rapid advancement of edge devices and the Internet of Things (IoT) has led to a pressing need for decentralized training paradigms
+[
+10
+,
+19
+]
+. Federated learning (FL), a distributed machine-learning paradigm, facilitates multi-device collaborative learning without sacrificing data privacy, which shares only model updates rather than raw data
+[
+23
+]
+. Most existing FL works assume that local data in clients are fully labeled, but this assumption does not hold in practical scenarios when data annotation is laborious, time-consuming, or expensive. To remedy these issues, Federated Semi-Supervised Learning (FSSL) has emerged, enabling clients to train models leveraging both limited labeled data and a large amount of unlabeled data, thereby improving the performance of global model. In FSSL, data heterogeneity exists both across clients (external heterogeneity) and within clients (internal heterogeneity). The former refers to the distribution discrepancy across different clients, while the latter arises from the local mismatch due to 1) imbalanced sample sizes across different categories; 2) distribution imbalance between labeled & unlabeled data.
+For
+external heterogeneity
+, most studies design the dynamic aggregation weights to mitigate the imbalance across clients, based on relative sizes of local datasets
+[
+1
+,
+21
+]
+or some implicit statistics of local samples
+[
+4
+,
+39
+]
+, which may deviate from the ideal global distribution; For
+internal heterogeneity
+, some methods
+[
+4
+,
+39
+,
+21
+]
+typically filter high-confidence unlabeled samples for training and exclude low-confidence ones to avoid pseudo-label bias, or dynamically assign a smaller weight to low-confidence samples,
+e.g.
+, FedDure
+[
+1
+]
+. However, these methods either lead to fewer data participation due to discarding low-confidence data or compromise on incorrect pseudo-labels only via a smaller weight. These insights motivate us to pose the following questions: ①
+Is there a better way than the aggregation weights to fit the global distribution without privacy concerns?
+②
+How can the local model leverage low-confidence unlabeled samples more effectively?
+To this end, we conduct some investigations into the above questions. As illustrated in Fig.
+1
+(a), the averaging-based aggregation strategy may lead to model deviation from the global category space, due to the distribution heterogeneity across clients; Fig.
+1
+(b) show test accuracy & pseudo-labeling accuracy under different levels of heterogeneity. We observe that, as heterogeneity varies, training
+w/
+and
+w/o
+low confidence samples exhibit opposite trends to model performance.
+I.e.
+, with greater heterogeneity (
+e.g.
+,
+α
+=
+0.1
+\alpha=0.1
+), the model ability is very limited, so
+w/ low-conf
+outperforms
+w/o low-conf
+due to the inclusion of more training samples. But, when the labeling ability of the model is more reliable under lower heterogeneity (
+e.g.
+,
+α
+=
+1
+\alpha=1
+or
+10
+10
+), incorporating extra low-confidence samples (
+w/ low-conf
+) may hinder the model’s category learning due to the errors from low-confidence pseudo-labels. In short, the performance of the two methods (
+w/
+and
+w/o low-conf
+) is inconsistent across different levels of heterogeneity. Neither method shows clear superiority over the other. So, it is crucial to consider how to utilize low-confidence samples.
+To tackle Question ① and ② of the above observations in FSSL, we propose a new method called
+ProxyFL
+(
+Proxy
+-Guided
+F
+ederated Semi-Supervised
+L
+earning) that
+leverages a unified proxy to simultaneously mitigate both internal and external heterogeneity
+.
+I.e.
+, we consider the learnable weights of classifier as proxies to model the category distribution both locally and globally.
+Proxy does not sacrifice data privacy and bring negligible extra communication costs since the proxy itself is part of the model parameters in FL.
+Firstly, we introduce a
+G
+lobal
+P
+roxy-
+T
+uning (GPT) mechanism, which explicitly optimize global proxies to fit the category distribution across clients, mitigating distribution shift from external heterogeneity. Secondly, we incorporate low-confidence unlabeled samples via a dynamic
+I
+ndecisive-
+C
+ategories
+P
+roxy
+L
+earning (ICPL) mechanism. For each low-confidence sample, we propose an
+indecisive-categories set
+to represent its several possible categories instead of a single pseudo-label; For high-confidence unlabeled samples or labeled samples, we utilize the
+pseudo-label
+or
+ground-truth
+, respectively. Then we propose a relationship pool between unlabeled and labeled samples, and effectively train all samples based on the pool to mitigate internal heterogeneity. Experiments show that ProxyFL can significantly boost the performance and convergence of the FSSL model.
+The main contributions of this paper are as follows:
+•
+To our best knowledge, this paper is the first to propose a unified proxy to mitigate both internal and external heterogeneity in FSSL. Note that our proxy does not bring privacy concerns or extra communication costs.
+•
+This paper proposes an FSSL method, ProxyFL, that can not only reduce the bias of averaging-based aggregation weights via an explicit optimization objective, but also effectively build the category relationship among all samples to facilitate more data participation.
+•
+This paper outperforms existing FSSL methods across multiple datasets. Extensive empirical & theoretical analysis also show the effectiveness and convergence of our method under different levels of heterogeneity.
+2
+Related Work
+Federated Learning
+Federated learning (FL) is a distributed machine learning approach that focus on safeguarding data privacy. One of the most challenging issues in FL is data heterogeneity,
+i.e.
+, the distributions across clients are
+non
+-
+i
+ndependent and
+i
+dentically
+d
+istributed (non-i.i.d). To this end, various FL methods have been proposed to address this challenge such as regularization
+[
+17
+]
+, additional data sharing
+[
+30
+]
+, aggregation strategies
+[
+28
+]
+, and personalization
+[
+15
+]
+. For instance, FedProx
+[
+17
+]
+requires each client to regularize with the previous global parameters to reduce local bias. However, these fully-supervised FL approaches struggle to generalize well under the scenarios of annotation scarcity. To address this issue, Federated Semi-Supervised Learning (FSSL) emerges, which enables clients to train local models via limited labeled data & unlabeled data.
+Semi-Supervised Learning
+Semi-Supervised Learning (SSL) aims to effectively leverage both limited labeled data and a large amount of unlabeled data to improve model performance. Two commonly-used strategies in SSL are consistency regularization and pseudo-labeling, respectively. Consistency regularization is based on the assumption that a model’s prediction should remain consistent despite diverse perturbations to the inputs or model
+[
+3
+,
+34
+,
+26
+]
+. Another common strategy is pseudo-labeling, which determines pseudo-labels for unlabeled samples based on the high-confidence predictions of from the pre-trained model by labeled data and filter out low-confidence unlabeled samples
+[
+29
+,
+35
+,
+31
+]
+. However, the pseudo-labels of these methods heavily depend on the confidence scores of model predictions, and if simply transferring them to the FL field, the number of local data will further decline due to the exclusion of low-confidence unlabeled samples.
+Federated Semi-Supervised Learning
+Federated Semi-Supervised Learning (FSSL) addresses the challenge of training models on decentralized data where annotations are scarce. The field is often categorized into three scenarios: 1) Labels-at-Server, where clients only have unlabeled data and a central server holds labeled data
+[
+6
+,
+8
+,
+12
+,
+13
+,
+32
+]
+. 2) Label-at-All-Client, where every client has a small fraction of labeled data and a large amount of unlabeled data
+[
+12
+,
+38
+]
+. 3) Labels-at-Partial-Clients, where a few clients are fully labeled while others are unlabeled
+[
+16
+,
+18
+,
+20
+,
+22
+,
+37
+]
+. Our work focuses on the Label-at-All-Client setting, where a small fraction of samples have the ground-truths labels in each client, following
+[
+1
+,
+21
+]
+.
+3
+Problem Formulation
+This paper focuses on data heterogeneity in FSSL, including not only
+external heterogeneity
+†
+†
+†
+Definitions of FSSL data heterogeneity in Appendix
+A
+.
+across clients but also
+internal heterogeneity
+†
+‣
+3
+between labeled and unlabeled distributions within each client. Specifically, we assume that a federation system
+ℂ
+\mathbb{C}
+consists of
+K
+K
+clients, denoted as
+ℂ
+=
+{
+𝒞
+1
+,
+…
+,
+𝒞
+K
+}
+\mathbb{C}=\{\mathcal{C}_{1},\ldots,\mathcal{C}_{K}\}
+. For each
+𝒞
+k
+\mathcal{C}_{k}
+, its local model is parameterized by
+𝚯
+k
+\mathbf{\Theta}_{k}
+, which comprises a feature extractor
+f
+k
+f_{k}
+parameterized by
+θ
+k
+\theta_{k}
+, projecting local data to an embedding space
+ℝ
+d
+\mathbb{R}^{d}
+, and a classifier
+h
+k
+h_{k}
+parameterized by
+ω
+k
+\omega_{k}
+, mapping the embedding space to category space
+ℝ
+C
+\mathbb{R}^{C}
+, where
+C
+C
+indicates total category number.
+I.e.
+,
+𝚯
+k
+=
+θ
+k
+∪
+ω
+k
+\mathbf{\Theta}_{k}=\theta_{k}\cup\omega_{k}
+.
+Figure 2
+:
+(a) t-SNE visualization of
+classifier weights
+from clients (circle) during the initial round. Different colors means different categories. Pentagram denotes the simple average of weight parameters by category. (b)
+Number of excluded unlabeled samples
+under different levels of heterogeneity. (c)
+Test accuracy curves
+of ‘SGD-FSSL’
+w/o
+and
+w/
+low-confidence samples under different ratios of correct labels. These samples could improve performance as the correctly-labeled number increases.
+Each client
+𝒞
+k
+\mathcal{C}_{k}
+maintains a private partially-labeled dataset
+𝒟
+k
+\mathcal{D}_{k}
+, including labeled samples
+𝒟
+k
+s
+=
+{
+𝐱
+k
+,
+i
+,
+𝐲
+k
+,
+i
+}
+i
+=
+1
+N
+k
+s
+\mathcal{D}_{k}^{\texttt{{s}}}{=}\{\mathbf{x}_{k,i},\mathbf{y}_{k,i}\}_{i=1}^{N_{k}^{\texttt{{s}}}}
+and unlabeled samples
+𝒟
+k
+u
+=
+{
+𝐮
+k
+,
+i
+}
+i
+=
+1
+N
+k
+u
+\mathcal{D}_{k}^{\texttt{{u}}}{=}\{\mathbf{u}_{k,i}\}_{i=1}^{N_{k}^{\texttt{{u}}}}
+, where
+N
+k
+s
+≪
+N
+k
+u
+N_{k}^{\texttt{{s}}}\ll N_{k}^{\texttt{{u}}}
+. During each communication round, a subset of online clients
+ℂ
+M
+⊆
+ℂ
+\mathbb{C}_{M}\subseteq\mathbb{C}
+is randomly selected for local training
+[
+21
+]
+. Then, FSSL methods typically aggregate the uploaded local parameters
+{
+𝚯
+m
+}
+𝒞
+m
+∈
+ℂ
+M
+\{\mathbf{\Theta}_{m}\}_{\mathcal{C}_{m}\in\mathbb{C}_{M}}
+as the global parameters
+𝚯
+𝒢
+=
+∑
+𝒞
+m
+∈
+ℂ
+M
+γ
+m
+​
+𝚯
+m
+\mathbf{\Theta}_{\mathcal{G}}=\sum_{\mathcal{C}_{m}\in\mathbb{C}_{M}}\gamma_{m}\mathbf{\Theta}_{m}
+, where the aggregation weight
+γ
+m
+\gamma_{m}
+of
+𝒞
+m
+\mathcal{C}_{m}
+is empirically set by the proportion of its local dataset size relative to the total samples across
+M
+M
+clients.
+4
+Preliminary Study
+In this study, we conduct some exploratory experiments for Question ① and ② in Sec.
+1
+.
+Figure 3
+:
+Overview of
+ProxyFL
+for Global Proxy Tuning in server-side & Indecisive-Categories Proxy Learning in local client.
+As shown in
+[
+33
+]
+, the weight parameters of the network classifier have a certain ability in category representation. Thus, we extract the classifier weights
+{
+ω
+m
+}
+𝒞
+m
+∈
+ℂ
+M
+,
+ω
+m
+∈
+ℝ
+C
+×
+d
+\{\omega_{m}\}_{\mathcal{C}_{m}\in\mathbb{C}_{M}},~{\omega_{m}\in\mathbb{R}^{C\times d}}
+from clients and slice them by class to generate a t-SNE plot, thereby visually showing the external heterogeneity to discuss Question ①.
+As shown in Fig.
+2
+(a), directly using centroids (
+i.e.
+, pentagrams, the averaging-based weights) may not accurately fit the global category distribution across clients. Due to external heterogeneity, some clients exhibit significant distribution discrepancy from others,
+causing some points to be outliers
+. So, the averaging-based method is affected by these outliers, positioning the centroid outside most points of the category cluster. We summarize as follows:
+Observation 1
+Simply averaging classifier weights is prone to skew towards outliers, thus failing to effectively capture the global category distribution across clients.
+For
+internal heterogeneity
+, most FSSL methods
+[
+4
+,
+21
+,
+39
+]
+follow FixMatch
+[
+29
+]
+to keep high-confident unlabeled samples while ignoring low-confidence ones. This allows the model to heavily rely on limited easy-to-judge unlabeled samples and exacerbates internal heterogeneity. We examine internal heterogeneity in Fig.
+2
+(b-c) and observe that:
+Observation 2
+As data heterogeneity increases, more unlabeled samples will be excluded from local training; The excluded samples have the potential to boost performance.
+Based on the above observations, we propose our
+ProxyFL
+from two perspectives,
+i.e.
+,
+how to fit a global category distribution robustly against outliers (external) and how to effectively leverage low-confidence unlabeled samples (internal)
+. To this end, we propose to leverage
+the learnable weights of model classifier as proxy
+for jointly modeling local & global category distribution of FSSL, instead of prototypes (See Sec.
+6.3
+). Specifically, for client
+𝒞
+m
+\mathcal{C}_{m}
+, we define its proxy vectors
+𝛀
+m
+\mathbf{\Omega}_{m}
+as
+{
+ω
+m
+c
+}
+c
+=
+1
+C
+\{\mathcal{\omega}_{m}^{c}\}_{c=1}^{C}
+,
+i.e.
+, the final FC layer of model classifier, to represent each category, where
+ω
+m
+c
+∈
+ℝ
+d
+\omega^{c}_{m}\in\mathbb{R}^{d}
+. Our framework is shown in Fig.
+3
+.
+5
+Methodology
+5.1
+Global Proxy Tuning
+To mitigate the impact of external heterogeneity (Obs.
+1
+), we propose to model the category distribution across clients
+𝒫
+𝒢
+​
+(
+𝐘
+)
+\mathcal{P}_{\mathcal{G}}(\mathbf{Y})
+on the central server via learning a set of global proxies
+𝛀
+𝒢
+=
+{
+ω
+𝒢
+c
+}
+c
+=
+1
+C
+\mathbf{\Omega}_{\mathcal{G}}=\{\mathcal{\omega}_{\mathcal{G}}^{c}\}_{c=1}^{C}
+, called
+G
+lobal
+P
+roxy
+T
+uning (GPT). In each federation round, the server receives model parameters from each client, thus a straight-forward idea to aggregate local classifiers is
+𝛀
+¯
+𝒢
+=
+{
+∑
+𝒞
+m
+∈
+ℂ
+M
+γ
+m
+​
+ω
+m
+c
+}
+c
+=
+1
+C
+\overline{\mathbf{\Omega}}_{\mathcal{G}}{=}\{\sum_{\mathcal{C}_{m}\in\mathbb{C}_{M}}\gamma_{m}\mathbf{\omega}_{m}^{c}\}_{c=1}^{C}
+, where
+𝛀
+¯
+𝒢
+\overline{\mathbf{\Omega}}_{\mathcal{G}}
+means the average operation.
+However, as summarized in Obs.
+1
+, simply averaging the local proxies is prone to be affected by the outliers due to external heterogeneity. Therefore, we first initialize the global proxies
+𝛀
+𝒢
+\mathbf{\Omega}_{\mathcal{G}}
+with
+𝛀
+¯
+𝒢
+\overline{\mathbf{\Omega}}_{\mathcal{G}}
+and then further fine-tune
+𝛀
+𝒢
+\mathbf{\Omega}_{\mathcal{G}}
+on the server by leveraging the off-the-shelf uploaded local proxies
+{
+ω
+m
+c
+}
+c
+=
+1
+C
+,
+∀
+𝒞
+m
+∈
+ℂ
+M
+\{\mathcal{\omega}_{m}^{c}\}_{c=1}^{C},~\forall~\mathcal{C}_{m}\in\mathbb{C}_{M}
+. More concretely, for the global proxy
+𝛀
+𝒢
+c
+{\mathbf{\Omega}_{\mathcal{G}}^{c}}
+of category
+c
+c
+, our objective is to pull it closer to all local proxies belonging to category
+c
+c
+and push it away from local proxies of other categories. The optimization objective of
+𝛀
+𝒢
+\mathbf{\Omega}_{\mathcal{G}}
+is defined as:
+min
+𝛀
+𝒢
+∑
+c
+=
+1
+C
+∑
+m
+=
+1
+M
+[
+ϕ
+(
+𝛀
+𝒢
+c
+,
+ω
+m
+c
+)
+−
+∑
+c
+′
+=
+1
+,
+c
+′
+≠
+c
+C
+ϕ
+(
+𝛀
+𝒢
+c
+,
+ω
+m
+c
+′
+)
+]
+,
+\displaystyle\min_{\mathbf{\Omega}_{\mathcal{G}}}\sum_{c=1}^{C}\sum_{m=1}^{M}\left[\phi(\mathbf{\Omega}_{\mathcal{G}}^{c},\omega_{m}^{c})-\sum_{c^{\prime}=1,c^{\prime}\neq c}^{C}\phi(\mathbf{\Omega}_{\mathcal{G}}^{c},\omega_{m}^{c^{\prime}})\right],
+(1)
+where
+ϕ
+⁡
+(
+⋅
+,
+⋅
+)
+\phi(\cdot,\cdot)
+refers to the distance metric. Given the above objective, we formulate the loss function for
+G
+lobal
+P
+roxy
+T
+uning (GPT) as follows:
+ℒ
+GPT
+=
+∑
+c
+=
+1
+C
+∑
+m
+=
+1
+M
+−
+l
+o
+g
+e
+−
+ϕ
+⁡
+(
+𝛀
+𝒢
+c
+,
+ω
+m
+c
+)
+e
+−
+ϕ
+⁡
+(
+𝛀
+𝒢
+c
+,
+ω
+m
+c
+)
++
+∑
+c
+′
+=
+1
+,
+c
+′
+≠
+c
+C
+e
+−
+ϕ
+⁡
+(
+𝛀
+𝒢
+c
+,
+ω
+m
+c
+′
+)
+.
+\displaystyle\mathcal{L}_{\texttt{{GPT}}}=\sum_{c=1}^{C}\sum_{m=1}^{M}-log\frac{e^{-\phi(\mathbf{\Omega}_{\mathcal{G}}^{c},~\omega_{m}^{c})}}{e^{-\phi(\mathbf{\Omega}_{\mathcal{G}}^{c},~\omega_{m}^{c})}+\sum_{c^{\prime}=1,c^{\prime}\neq c}^{C}e^{-\phi(\mathbf{\Omega}_{\mathcal{G}}^{c},~\omega_{m}^{c^{\prime}})}}.
+(2)
+The entire tuning process of GPT module is conducted on the server. Then, the well-tuned
+𝛀
+𝒢
+\mathbf{\Omega}_{\mathcal{G}}
+are sent to each client together with other aggregated parameters, as the parametric initialization for the next round of local training.
+5.2
+Indecisive-Categories Proxy Learning
+As noted in Obs.
+2
+, higher internal heterogeneity leads to fewer data participation. To this end, we propose
+I
+ndecisive-
+C
+ategories
+P
+roxy
+L
+earning (ICPL) to incorporate more low-confidence unlabeled samples.
+For an unlabeled sample
+𝐮
+i
+\mathbf{u}_{i}
+‡
+‡
+‡
+Note that in this section, we drop the client subscript
+m
+m
+in data samples for symbolic simplicity.
+,
+its
+local feature
+z
+i
+z_{i}
+,
+local logits
+𝐲
+~
+i
+\tilde{\mathbf{y}}_{i}
+and
+global logits
+𝐲
+¯
+i
+\overline{\mathbf{y}}_{i}
+via
+𝚯
+𝒢
+\mathbf{\Theta}_{\mathcal{G}}
+can be calculated as:
+z
+i
+\displaystyle z_{i}
+=
+f
+m
+​
+(
+𝒯
+w
+​
+(
+𝐮
+i
+)
+,
+θ
+m
+)
+,
+𝐲
+~
+i
+=
+h
+m
+​
+(
+z
+i
+,
+ω
+m
+)
+,
+𝐲
+~
+i
+∈
+ℝ
+C
+,
+\displaystyle=f_{m}\left(\mathcal{T}_{w}(\mathbf{u}_{i});\theta_{m}\right),\tilde{\mathbf{y}}_{i}=h_{m}\left(z_{i};\omega_{m}\right),\tilde{\mathbf{y}}_{i}\in\mathbb{R}^{C},
+(3)
+𝐲
+¯
+i
+=
+h
+𝒢
+​
+(
+(
+f
+𝒢
+​
+(
+𝒯
+w
+​
+(
+𝐮
+i
+)
+,
+θ
+𝒢
+)
+)
+,
+𝛀
+𝒢
+)
+,
+𝐲
+¯
+i
+∈
+ℝ
+C
+,
+\displaystyle\overline{\mathbf{y}}_{i}=h_{\mathcal{G}}((f_{\mathcal{G}}(\mathcal{T}_{w}(\mathbf{u}_{i});\theta_{\mathcal{G}}));\mathbf{\Omega}_{\mathcal{G}}),\overline{\mathbf{y}}_{i}\in\mathbb{R}^{C},
+where
+𝒯
+w
+​
+(
+⋅
+)
+\mathcal{T}_{w}(\cdot)
+denotes the weak augmentation.
+5.2.1
+Category Set Construction
+We first construct its category set for each sample in local client as follows:
+I. Labeled Samples.
+As shown in Fig.
+3
+upper right, for a labeled sample
+𝐱
+i
+\mathbf{x}_{i}
+, its category set is defined by its ground-truth as
+ξ
+i
+=
+{
+𝐲
+i
+}
+\xi_{i}=\{\mathbf{y}_{i}\}
+, which is a single-element set;
+II. High-Confidence Unlabeled Samples.
+In Fig.
+3
+middle right, if
+max
+⁡
+(
+𝐲
+¯
+i
+)
+>
+τ
+\max(\overline{\mathbf{y}}_{i})>\tau
+,
+𝐮
+i
+\mathbf{u}_{i}
+is a high-confidence sample (denoted as
+𝐮
+i
+hc
+\mathbf{u}_{i}^{\texttt{{hc}}}
+) with its pseudo-label
+𝐲
+^
+i
+=
+arg
+⁡
+max
+⁡
+(
+𝐲
+¯
+i
+)
+\hat{\mathbf{y}}_{i}=\arg\max(\overline{\mathbf{y}}_{i})
+. Here, we define its
+category set
+ξ
+i
+=
+{
+𝐲
+^
+i
+}
+\xi_{i}=\{\hat{\mathbf{y}}_{i}\}
+as a single-element set like
+I
+;
+III. Low-Confidence Unlabeled Samples.
+In Fig.
+3
+lower right, if
+max
+⁡
+(
+𝐲
+¯
+i
+)
+≤
+τ
+\max(\overline{\mathbf{y}}_{i})\leq\tau
+,
+𝐮
+i
+\mathbf{u}_{i}
+is regarded as a low-confidence sample, denoted as
+𝐮
+i
+lc
+\mathbf{u}_{i}^{\texttt{{lc}}}
+. For
+𝐮
+i
+lc
+\mathbf{u}_{i}^{\texttt{{lc}}}
+, a simple low-confident pseudo-label may affect model performance due to the potential labeling errors. Prior study
+[
+2
+]
+shows the effectiveness of assigning more than one category labels to ambiguous ROI candidates. Thus, we leverage
+the several categories among which the model hesitates
+to represent its possible labels for
+𝐮
+i
+lc
+\mathbf{u}_{i}^{\texttt{{lc}}}
+, defined as
+indecisive-categories set
+ξ
+i
+{\xi}_{i}
+,
+e.g.,
+{
+mouse, hamster
+}
+in Fig.
+4
+(a-b). To better determine
+ξ
+\xi
+, we dynamically maintain a global category prior
+𝒫
+𝒢
+′
+​
+(
+𝐘
+)
+\mathcal{P}_{\mathcal{G}}^{\prime}(\mathbf{Y})
+to constrain the
+indecisive categories
+for
+𝐮
+i
+lc
+\mathbf{u}_{i}^{\texttt{{lc}}}
+:
+ξ
+i
+=
+{
+c
+|
+𝐲
+¯
+i
+​
+(
+c
+)
+>
+𝒫
+𝒢
+′
+​
+(
+𝐘
+⁡
+(
+c
+)
+)
+}
+,
+\displaystyle\xi_{i}=\{c|\overline{\mathbf{y}}_{i}(c)>\mathcal{P}_{\mathcal{G}}^{\prime}(\mathbf{Y}(c))\},
+(4)
+where
+c
+∈
+[
+1
+,
+C
+]
+c\in[1,C]
+. So for
+𝐮
+i
+lc
+\mathbf{u}^{\texttt{{lc}}}_{i}
+, any category
+c
+∈
+[
+1
+,
+C
+]
+c\in[1,C]
+with corresponding global logits
+𝐲
+¯
+i
+​
+(
+c
+)
+\overline{\mathbf{y}}_{i}(c)
+exceeding
+𝒫
+𝒢
+′
+​
+(
+𝐘
+⁡
+(
+c
+)
+)
+\mathcal{P}_{\mathcal{G}}^{\prime}(\mathbf{Y}(c))
+is considered as
+indecisive category
+.
+Prior Distribution
+𝒫
+𝒢
+′
+​
+(
+𝐘
+)
+\mathcal{P}_{\mathcal{G}}^{\prime}(\mathbf{Y})
+.
+In each communication round
+t
+t
+, we locally calculate model preference
+𝒫
+m
+t
+¯
+​
+(
+𝐘
+)
+\overline{\mathcal{P}^{t}_{m}}(\mathbf{Y})
+for category prediction, without the need of real per-class number for data privacy.
+Then, they are uploaded to the server for aggregation, denoted as:
+𝒫
+m
+t
+¯
+​
+(
+𝐘
+)
+=
+{
+N
+m
+s,hc
+¯
+​
+(
+c
+)
+N
+m
+s,hc
+¯
+}
+c
+=
+1
+C
+,
+𝒫
+𝒢
+t
+¯
+​
+(
+𝐘
+)
+=
+{
+1
+M
+​
+∑
+m
+=
+1
+M
+𝒫
+m
+t
+¯
+​
+(
+𝐘
+⁡
+(
+c
+)
+)
+}
+c
+=
+1
+C
+,
+\displaystyle\overline{\mathcal{P}^{t}_{m}}(\mathbf{Y})=\{\frac{\overline{N^{\texttt{{s,hc}}}_{m}}(c)}{\overline{N^{\texttt{{s,hc}}}_{m}}}\}_{c=1}^{C},\overline{\mathcal{P}^{t}_{\mathcal{G}}}(\mathbf{Y})=\{\frac{1}{M}\sum_{m=1}^{M}\overline{\mathcal{P}^{t}_{m}}(\mathbf{Y}(c))\}_{c=1}^{C},
+(5)
+where
+𝒫
+𝒢
+′
+​
+(
+𝐘
+)
+←
+{
+𝒫
+𝒢
+t
+¯
+​
+(
+𝐘
+⁡
+(
+c
+)
+)
+}
+c
+=
+1
+C
+\mathcal{P}_{\mathcal{G}}^{\prime}(\mathbf{Y})\leftarrow\{\overline{\mathcal{P}^{t}_{\mathcal{G}}}(\mathbf{Y}(c))\}_{c=1}^{C}
+,
+N
+m
+s,hc
+¯
+​
+(
+c
+)
+\overline{N^{\texttt{{s,hc}}}_{m}}(c)
+denotes the prediction counts of each category from labeled and high-confidence samples.
+In ICPL, it acts as a dynamic threshold for different classes by setting a higher threshold for the majority classes and lower for the minority.
+Figure 4
+:
+(a-b) Examples of the indecisive-categories. (c) Illustration of our Indecisive-Categories Proxy Learning.
+5.2.2
+Positive-Negative Proxy Pool
+Based on the
+category set
+of each sample, we build
+the relationship among all types of samples
+and train them by Contrastive Learning (CL) to mitigate internal heterogeneity.
+To this end, we construct a ‘Positive-Negative Proxy Pool’ as follows (shown in Fig.
+4
+(c)):
+Remark 1
+(Positive-Negative Proxy Pool)
+For a batch
+ℬ
+\mathcal{B}
+from
+𝒟
+m
+\mathcal{D}_{m}
+, we construct the Positive-Negative Proxy Pool without excluding any of the samples.
+1) Positive Proxy.
+The positive proxy of a high-confidence sample
+𝐮
+i
+hc
+\mathbf{u}_{i}^{\texttt{{hc}}}
+and a low-confidence sample
+𝐮
+i
+lc
+\mathbf{u}_{i}^{\texttt{{lc}}}
+are respectively defined as:
+ω
+i
+hc
+=
+ω
+k
+𝐲
+i
+^
+,
+ω
+i
+lc
+=
+∑
+∀
+c
+​
+’
+∈
+ξ
+i
+𝐲
+~
+i
+​
+(
+c
+​
+’
+)
+×
+ω
+k
+c
+​
+’
+,
+\displaystyle\omega_{i}^{\texttt{{hc}}}=\omega_{k}^{\hat{\mathbf{y}_{i}}},~\omega_{i}^{\texttt{{lc}}}=\sum_{\forall{c’}\in\xi_{i}}\tilde{\mathbf{y}}_{i}({c’})\times\omega_{k}^{c’},
+(6)
+where for
+𝐮
+i
+hc
+\mathbf{u}_{i}^{\texttt{{hc}}}
+,
+𝐲
+i
+^
+\hat{\mathbf{y}_{i}}
+denotes argmax-derived category from its pseudo-label; for
+𝐮
+i
+lc
+\mathbf{u}_{i}^{\texttt{{lc}}}
+,
+ω
+i
+lc
+\omega_{i}^{\texttt{{lc}}}
+is designed to the weighted sum of proxy weights, based on the categories
+c
+′
+c^{\prime}
+from
+ξ
+i
+\xi_{i}
+.
+2) Negative Proxies Set.
+For an unlabeled sample
+𝐮
+i
+\mathbf{u}_{i}
+from batch
+ℬ
+\mathcal{B}
+, any other sample
+j
+j
+in
+ℬ
+\mathcal{B}
+(including
+𝐱
+j
+\mathbf{x}_{j}
+/
+𝐮
+j
+hc
+\mathbf{u}_{j}^{\texttt{{hc}}}
+/
+𝐮
+j
+lc
+\mathbf{u}_{j}^{\texttt{{lc}}}
+) will be considered as one of the negative-proxy candidates as long as its category set
+ξ
+j
+\xi_{j}
+does not overlap with
+ξ
+i
+\xi_{i}
+, i.e.,
+ℛ
+i
+\displaystyle\mathcal{R}_{i}
+=
+{
+z
+j
+|
+[
+z
+j
+=
+f
+m
+(
+𝐱
+j
+;
+θ
+m
+)
+∨
+z
+j
+=
+\displaystyle=\left\{z_{j}~\middle|~\left[z_{j}=f_{m}(\mathbf{x}_{j};\theta_{m})\vee z_{j}=\right.\right.
+(7)
+f
+m
+(
+𝐮
+j
+;
+θ
+m
+)
+]
+∧
+ξ
+j
+∩
+ξ
+i
+=
+∅
+}
+.
+\displaystyle\quad\left.\left.f_{m}(\mathbf{u}_{j};\theta_{m})\right]\land\xi_{j}\cap\xi_{i}=\varnothing\right\}.
+Table 1
+:
+Experimental results on CIFAR-10, CIFAR-100, SVHN and CINIC-10 under 10% label. Bold text indicates the best result, and the last row presents the improvement of ProxyFL over the second best method.
+Methods
+CIFAR-10
+CIFAR-100
+SVHN
+CINIC-10
+α
+=
+0.1
+\alpha=0.1
+α
+=
+0.5
+\alpha=0.5
+α
+=
+1
+\alpha=1
+α
+=
+0.1
+\alpha=0.1
+α
+=
+0.5
+\alpha=0.5
+α
+=
+1
+\alpha=1
+α
+=
+0.1
+\alpha=0.1
+α
+=
+0.5
+\alpha=0.5
+α
+=
+1
+\alpha=1
+α
+=
+0.1
+\alpha=0.1
+α
+=
+0.5
+\alpha=0.5
+α
+=
+1
+\alpha=1
+FL Methods
+FedAvg
+[
+23
+]
+69.60
+68.88
+69.39
+34.08
+33.21
+35.31
+82.40
+83.40
+78.60
+57.17
+60.09
+61.54
+FedProx
+[
+17
+]
+68.58
+69.53
+68.00
+34.20
+34.07
+34.88
+81.67
+83.77
+83.77
+58.05
+60.71
+62.82
+FedAvg-SL
+90.46
+91.24
+91.32
+67.98
+68.83
+69.10
+94.11
+94.41
+94.40
+77.82
+80.42
+81.29
+FL+SSL Methods
+FixMatch-LPL
+82.98
+84.36
+84.69
+49.32
+49.67
+49.55
+89.68
+91.33
+91.91
+68.02
+70.67
+72.69
+FixMatch-GPL
+84.56
+86.05
+86.66
+48.96
+51.80
+52.19
+90.50
+91.94
+92.31
+71.67
+73.26
+74.80
+FedProx+FixMatch
+84.60
+85.49
+86.95
+48.42
+48.51
+49.33
+90.46
+91.36
+91.25
+68.62
+70.67
+72.69
+FedAvg+FlexMatch
+84.21
+86.00
+86.57
+49.91
+51.39
+51.79
+52.58
+55.59
+60.50
+69.20
+71.87
+73.42
+FSSL Methods
+FedMatch
+[
+12
+]
+75.35
+77.86
+78.00
+32.23
+31.49
+35.75
+88.63
+89.20
+89.23
+51.94
+56.27
+70.22
+FedLabel
+[
+4
+]
+62.85
+79.46
+79.17
+50.88
+52.21
+52.38
+89.31
+91.51
+91.16
+67.64
+70.56
+72.80
+FedLoke
+[
+36
+]
+83.32
+82.22
+81.87
+39.29
+40.46
+39.96
+89.94
+90.00
+89.45
+59.03
+61.60
+63.21
+FedDure
+[
+1
+]
+84.60
+85.88
+87.34
+48.27
+51.09
+50.79
+92.87
+93.49
+94.19
+70.86
+73.37
+74.89
+FedDB
+[
+39
+]
+83.99
+85.28
+87.49
+48.43
+50.11
+51.55
+92.56
+93.00
+93.14
+69.44
+72.60
+73.61
+SAGE
+[
+21
+]
+87.05
+88.05
+89.08
+54.18
+55.82
+56.06
+93.85
+94.27
+94.65
+74.59
+75.74
+76.68
+ProxyFL (ours)
+88.56
+90.00
+89.96
+57.50
+58.75
+58.24
+95.09
+95.18
+95.26
+77.98
+78.96
+79.59
+↑
+\uparrow
+1.51
+↑
+\uparrow
+1.95
+↑
+\uparrow
+0.88
+↑
+\uparrow
+3.32
+↑
+\uparrow
+2.93
+↑
+\uparrow
+2.18
+↑
+\uparrow
+1.24
+↑
+\uparrow
+0.91
+↑
+\uparrow
+0.61
+↑
+\uparrow
+3.39
+↑
+\uparrow
+3.22
+↑
+\uparrow
+2.91
+According to Eq.
+6
+-
+7
+, we ensure more data participation into training while reducing potential errors of pseudo-labels. The objective of ICPL can be formulated as:
+ℒ
+ICPL
+=
+−
+[
+1
+|
+ℬ
+u
+,
+hc
+|
+∑
+i
+=
+1
+|
+ℬ
+u
+,
+hc
+|
+log
+e
+z
+i
+⋅
+ω
+i
+hc
+e
+z
+i
+⋅
+ω
+i
+hc
++
+∑
+z
+j
+∈
+ℛ
+i
+e
+z
+i
+⋅
+z
+j
+\displaystyle\mathcal{L}_{\texttt{{ICPL}}}=-\left[\frac{1}{|\mathcal{B}^{\texttt{{u}},\texttt{{hc}}}|}\sum_{i=1}^{|\mathcal{B}^{\texttt{{u}},\texttt{{hc}}}|}\log\frac{e^{z_{i}~\cdot~\omega_{i}^{\texttt{{hc}}}}}{e^{z_{i}~\cdot~\omega_{i}^{\texttt{{hc}}}}+\sum_{z_{j}\in\mathcal{R}_{i}}e^{z_{i}~\cdot~z_{j}}}\right.
+(8)
++
+1
+|
+ℬ
+u
+,
+lc
+|
+∑
+i
+=
+1
+|
+ℬ
+u
+,
+lc
+|
+log
+e
+z
+i
+⋅
+ω
+i
+lc
+e
+z
+i
+⋅
+ω
+i
+lc
++
+∑
+z
+j
+∈
+ℛ
+i
+e
+z
+i
+⋅
+z
+j
+]
+.
+\displaystyle\left.+\frac{1}{|\mathcal{B}^{\texttt{{u}},\texttt{{lc}}}|}\sum_{i=1}^{|\mathcal{B}^{\texttt{{u}},\texttt{{lc}}}|}\log\frac{e^{z_{i}~\cdot~\omega_{i}^{\texttt{{lc}}}}}{e^{z_{i}~\cdot~\omega_{i}^{\texttt{{lc}}}}+\sum_{z_{j}\in\mathcal{R}_{i}}e^{z_{i}~\cdot~z_{j}}}\right].
+where
+|
+ℬ
+u
+,
+hc
+|
+|\mathcal{B}^{\texttt{{u}},\texttt{{hc}}}|
+,
+|
+ℬ
+u
+,
+lc
+|
+|\mathcal{B}^{\texttt{{u}},\texttt{{lc}}}|
+denotes the number of high-confidence samples and low-confidence samples in batch
+ℬ
+u
+\mathcal{B}^{\texttt{{u}}}
+, respectively.
+5.3
+Loss Functions
+In local training, we follow previous studies
+[
+16
+]
+to assign
+ground-truth
+𝐲
+\mathbf{y}
+for labeled data and
+pseudo-label
+𝐲
+^
+\hat{\mathbf{y}}
+for high-confidence unlabeled data, respectively. Following SAGE
+[
+21
+]
+, the local losses are:
+ℒ
+u
+\displaystyle\mathcal{L}_{\texttt{{u}}}
+=
+1
+|
+ℬ
+u
+,
+hc
+|
+∑
+i
+=
+1
+|
+ℬ
+u
+,
+hc
+|
+𝐊𝐋
+(
+h
+m
+(
+f
+m
+(
+𝒯
+s
+(
+𝐮
+i
+)
+;
+θ
+m
+)
+;
+ω
+m
+)
+∥
+𝐲
+^
+i
+)
+,
+\displaystyle=\frac{1}{|\mathcal{B}^{\texttt{{u}},\texttt{{hc}}}|}\sum_{i=1}^{|\mathcal{B}^{\texttt{{u}},\texttt{{hc}}}|}\mathbf{KL}(h_{m}(f_{m}(\mathcal{T}_{s}(\mathbf{u}_{i});\theta_{m});\omega_{m})\parallel\hat{\mathbf{y}}_{i}),
+ℒ
+s
+\displaystyle\mathcal{L}_{\texttt{{s}}}
+=
+1
+|
+ℬ
+s
+|
+​
+∑
+i
+=
+1
+|
+ℬ
+s
+|
+ℒ
+CE
+​
+(
+h
+m
+​
+(
+f
+m
+​
+(
+𝐱
+i
+,
+θ
+m
+)
+,
+ω
+m
+)
+,
+𝐲
+i
+)
+,
+\displaystyle=\frac{1}{|\mathcal{B}^{\texttt{{s}}}|}\sum_{i=1}^{|\mathcal{B}^{\texttt{{s}}}|}\mathcal{L}_{\texttt{{CE}}}(h_{m}(f_{m}(\mathbf{x}_{i};\theta_{m});\omega_{m}),\mathbf{y}_{i}),
+(9)
+where
+𝐊𝐋
+\mathbf{KL}
+denotes Kullback-Leibler divergence loss,
+𝒯
+s
+​
+(
+⋅
+)
+\mathcal{T}_{s}(\cdot)
+denotes the strong-augmentation,
+ℒ
+CE
+\mathcal{L}_{\textit{{CE}}}
+denotes cross-entropy loss. Following these,
+our ProxyFL locally incorporate low-confidence unlabeled samples
+via
+ℒ
+ICPL
+\mathcal{L}_{\texttt{{ICPL}}}
+and improve the global category distribution via
+ℒ
+GPT
+\mathcal{L}_{\texttt{{GPT}}}
+on the server. Thus, our final total objective is:
+ℒ
+=
+ℒ
+s
++
+α
+​
+ℒ
+u
++
+β
+​
+ℒ
+ICPL
+⏟
+local
++
+ℒ
+GPT
+⏟
+global
+,
+\displaystyle\mathcal{L}=\underbrace{\mathcal{L}_{\texttt{{s}}}+\alpha\mathcal{L}_{\texttt{{u}}}+\beta\mathcal{L}_{\texttt{{ICPL}}}}_{\textbf{local}}+\underbrace{\mathcal{L}_{\texttt{{GPT}}}}_{\textbf{global}},
+(10)
+where
+α
+,
+β
+\alpha,\beta
+are empirically set to
+1
+1
+. The pseudo-code of ProxyFL is shown in
+Appendix.
+B
+. We also provide some
+theoretical proofs
+of ProxyFL in
+Appendix.
+C
+.
+6
+Experiments
+6.1
+Experimental Setup
+Datasets.
+We strictly follow the FSSL experimental setting of SAGE
+[
+21
+]
+which is evaluated on the CIFAR10, CIFAR-100, SVHN, and CINIC-10 datasets
+[
+5
+,
+14
+,
+25
+]
+. We partition the labeled and unlabeled samples per category with label proportions of
+10
+%
+10\%
+and
+20
+%
+20\%
+for each dataset. Following previous FSSL works
+[
+39
+,
+1
+,
+4
+]
+, we simulate internal and external heterogeneity by sampling labeled & unlabeled data from three levels of Dirichlet distribution
+D
+​
+i
+​
+r
+​
+(
+α
+)
+Dir(\alpha)
+:
+α
+=
+{
+0.1
+,
+0.5
+,
+1
+}
+\alpha=\{0.1,0.5,1\}
+and allocating them to local clients. The smaller
+α
+\alpha
+, the higher FL data heterogeneity. We visualize the specific data distribution in Fig.
+5
+(a).
+Implementation details
+Following SAGE
+[
+21
+]
+, we configure 20 clients for all settings, with 8 clients randomly sampled each round to participate in the federated training. ResNet-8
+[
+9
+]
+serves as the local backbone, with the number of local epochs set to 5, local learning rate set to 0.1 and the confidence threshold
+τ
+\tau
+for pseudo-labeling set to 0.95. For global proxy tuning process, the learning rate is 0.005, and the number of tuning epochs is set to 10 for CIFAR-100 and 100 for the other datasets. Unless otherwise specified, the experimental setup of ProxyFL is consistent with SAGE (More details in Appendix.
+D
+).
+Table 2
+:
+Module ablation studies on GPT and ICPL of our method.
+GPT
+ICPL
+CIFAR10
+CIFAR100
+SVHN
+CINIC10
+α
+=
+0.1
+\alpha=0.1
+α
+=
+0.5
+\alpha=0.5
+α
+=
+1
+\alpha=1
+α
+=
+0.1
+\alpha=0.1
+α
+=
+0.5
+\alpha=0.5
+α
+=
+1
+\alpha=1
+α
+=
+0.1
+\alpha=0.1
+α
+=
+0.5
+\alpha=0.5
+α
+=
+1
+\alpha=1
+α
+=
+0.1
+\alpha=0.1
+α
+=
+0.5
+\alpha=0.5
+α
+=
+1
+\alpha=1
+84.56
+86.05
+86.66
+48.96
+51.80
+52.19
+90.50
+91.94
+92.31
+71.67
+73.26
+74.80
+✓
+87.59
+89.23
+89.71
+54.86
+56.58
+57.09
+94.29
+94.49
+94.53
+77.15
+79.03
+79.31
+✓
+87.81
+89.58
+89.66
+57.21
+57.98
+57.74
+94.82
+94.69
+95.15
+77.80
+78.04
+78.57
+✓
+✓
+88.56
+90.00
+89.96
+57.50
+58.75
+58.24
+95.09
+95.18
+95.26
+77.98
+78.96
+79.59
+Figure 5
+:
+(a) Distribution of labeled and unlabeled data across clients under
+α
+=
+0.1
+\alpha=0.1
+taking CIFAR-10 as an example. (b) Convergence curves of ProxyFL and other baselines on CIFAR-100 with
+α
+=
+0.1
+\alpha=0.1
+. (c) Distribution of global category proxies before-and after-tuning visualized in a t-SNE plot.
+6.2
+Performance Comparison
+Tab.
+1
+reports the overall results of our ProxyFL and other state-of-the-art methods across multiple datasets under different Non-IID (
+Non
+-
+I
+ndependent and
+I
+dentical
+D
+istribution) scenarios with
+10
+%
+10\%
+label. We compare the following methods in our experiments like SAGE
+[
+21
+]
+:
+I. FL methods.
+For FedAvg
+[
+23
+]
+and FedProx
+[
+17
+]
+, all clients are trained via supervised federated learning only on partial labeled data; For FedAvg-SL, local data are all fully-labeled data, which denotes the ideal upper-bound based on standard fully-supervised FedAvg.
+II. Vanilla combinations (FL + SSL methods).
+Here, each method denotes a simple combination of SSL methods and FL methods. Note that FixMatch-LPL and FixMatch-GPL are both FixMatch-based frameworks, but pseudo-labels (PL) are derived from different models,
+i.e.
+, local model for LPL and global model for GPL, respectively.
+III. FSSL methods.
+We compare ProxyFL with previous state-of-the-art FSSL methods, including FedMatch
+[
+12
+]
+, FedLabel
+[
+4
+]
+, FedLoke
+[
+36
+]
+, FedDure
+[
+1
+]
+, FedDB
+[
+39
+]
+and SAGE
+[
+21
+]
+.
+In Tab.
+1
+, ProxyFL achieves state-of-the-art performances on multiple datasets with significant improvements under different levels of data heterogeneity
+α
+\alpha
+.
+To the best of our knowledge, we are the first in FSSL to propose category proxy for mitigating both internal and external heterogeneity.
+Notably, our ProxyFL even achieves comparable performance to that of FedAvg-SL on SVHN dataset and CINIC-10 when
+α
+=
+0.1
+\alpha=0.1
+. We attribute this improvement to the generalization of the enhanced category distribution from our proxy-guided FSSL framework.
+6.3
+Empirical Analysis
+In this section, we conduct an in-depth investigation to assess the contributions of our GPT and ICPL in ProxyFL.
+1) Effectiveness of modules
+We first assess the contributions of GPT and ICPL through ablation experiments and set FedAvg+FixMatch-GPL as our baseline model. We conduct ablation studies under different levels of heterogeneity
+α
+=
+{
+0.1
+,
+0.5
+,
+1
+}
+\alpha=\{0.1,~0.5,~1\}
+to validate the effectiveness of each module. As shown in Tab.
+2
+, each module could individually enhance model performance and their combination of GPT & ICPL achieves the best results
+.
+2) Convergence analysis
+Fig.
+5
+(b) and Tab.
+3
+demonstrate that ProxyFL substantially improves the convergence speed and test accuracy on the CIFAR-100 dataset with
+α
+=
+0.1
+\alpha=0.1
+. ProxyFL outperforms baseline and current FSSL methods, achieving better performance with greater communication efficiency. Most existing FSSL methods
+[
+12
+,
+4
+,
+39
+]
+only retain high-confidence samples for training while discarding the low-confidence ones, leading to slower model convergence due to fewer training samples under non-IID scenarios. In contrast, ProxyFL cautiously incorporates low-confidence unlabeled samples into training and leverages category proxies to address both internal and external heterogeneity, accelerating model convergence especially during the early training stages (Tab.
+3
+). We also provide some
+theoretical analysis & proofs
+in Appendix.
+C
+.
+Table 3
+:
+Comparison of convergence rates between ProxyFL and other baselines with
+α
+=
+0.1
+\alpha=0.1
+on CIFAR-100.
+Acc.
+30%
+40%
+50%
+Method
+Round
+↓
+\downarrow
+Speedup
+↑
+\uparrow
+Round
+↓
+\downarrow
+Speedup
+↑
+\uparrow
+Round
+↓
+\downarrow
+Speedup
+↑
+\uparrow
+LPL
+119
+×
+\times
+1.00
+242
+×
+\times
+1.00
+562
+×
+\times
+1.00
+GPL
+114
+×
+\times
+1.04
+226
+×
+\times
+1.07
+524
+×
+\times
+1.07
+FedLabel
+94
+×
+\times
+1.27
+175
+×
+\times
+1.38
+429
+×
+\times
+1.31
+FedDB
+103
+×
+\times
+1.16
+206
+×
+\times
+1.17
+-
+-
+FedDure
+114
+×
+\times
+1.04
+234
+×
+\times
+1.03
+542
+×
+\times
+1.04
+SAGE
+60
+×
+\times
+1.98
+124
+×
+\times
+1.95
+267
+×
+\times
+2.10
+ProxyFL
+45
+×
+\times
+2.64
+89
+×
+\times
+2.72
+177
+×
+\times
+3.18
+3) Analysis of Global Proxy Tuning
+I. Global Category Distribution
+We explore the effect of our GPT module by visualizing the proxy distribution across clients in a t-SNE plot. As observed in Fig.
+5
+(c), the squares (
+the proxies after tuning
+) fit more accurately the proxy distribution across clients than the pentagram centroids (
+the directly-averaging proxies
+), showing better robustness to outliers. By explicitly defining an proxy optimization objective, our method can effectively fit the global distribution of per-category proxies across clients.
+II. Low-Overhead Proxy Tuning
+The computational complexity of our tuning process can be formulated as
+O
+GPT
+=
+O
+⁡
+(
+Q
+×
+M
+×
+C
+2
+×
+d
+)
+O_{\textit{{GPT}}}=O(Q{\times}M{\times}C^{2}{\times}d)
+, where
+Q
+Q
+,
+M
+M
+,
+C
+C
+, and
+d
+d
+denote the number of tuning epochs, number of clients, category number, and proxy dimension, respectively. Compared to high-dimensional data/features, our tuning is conducted on lightweight low-dimensional proxy vectors, which results in much lower overheads. Taking CIFAR100 as an example,
+O
+GPT
+≈
+0.4
+O_{\textit{{GPT}}}\approx 0.4
+GFLOPs, which corresponds to the overhead of inferring just one image via ResNet (
+i.e.
+,
+0.5
+∼
+1
+0.5\sim 1
+GFLOPs). Thus, the server-side tuning overheads could be negligible.
+Table 4
+:
+Ablation of design choices between ICPL and other methods under
+α
+=
+0.1
+\alpha=0.1
+.
+Methods
+CIFAR-10
+CIFAR-100
+SVHN
+CINIC-10
+FedAvg-SL
+90.46
+67.98
+94.11
+77.82
+GPL
+84.56
+48.96
+90.50
+71.67
+GPL-ALL
+85.38
+50.34
+93.31
+75.83
+LPL
+82.98
+49.32
+89.68
+68.02
+LPL-ALL
+87.18
+53.28
+83.99
+73.39
+ICPL-Top1
+87.13
+55.66
+94.56
+77.01
+ICPL-Top5
+87.77
+56.58
+94.71
+77.65
+ICPL
+-
+𝒫
+𝒢
+′
+​
+(
+𝐘
+)
+\mathcal{P}_{\mathcal{G}}^{\prime}(\mathbf{Y})
+87.81
+57.21
+94.82
+77.80
+Figure 6
+:
+Ratios of ‘Correct category in
+ξ
+\xi
+’ vs. ‘Correct pseudo-label’ for low-confidence samples.
+4) Analysis of Indecisive-Categories Proxy Learning
+I. Design of including low-confidence samples
+An intuitive idea to include low-confidence samples
+𝐮
+lc
+\mathbf{u}^{\textit{{lc}}}
+is to directly assign pseudo-labels for them like high-confidence samples, abbreviated as LPL-ALL and GPL-ALL. FedAvg-SL, the standard fully-labeled FedAvg, serves as an upperbound with correct labels. As shown in Tab.
+4
+upper, in most cases, directly including
+𝐮
+lc
+\mathbf{u}^{\textit{{lc}}}
+(
+w/
+-ALL) could bring slight improvements compared to simply-discarding (
+w/o
+-ALL), suggesting that
+𝐮
+lc
+\mathbf{u}^{\textit{{lc}}}
+contain some valuable information and simply discarding them may exclude some correctly-labeled samples from training; But, directly including them sometimes leads to performance degradation,
+e.g.
+, LPL & LPL-ALL on SVHN. Compared to discarding or directly including
+𝐮
+lc
+\mathbf{u}^{\textit{{lc}}}
+, our proposed ICPL module achieves better performance across all datasets by more accurately constructing the relationships between samples in the positive-negative pool of ICPL. Moreover, ICPL even reaches the performance of FedAvg-SL on certain datasets.
+II. Design of indecisive-categories set
+ξ
+\xi
+We discuss the design of
+indecisive-categories set
+ξ
+\xi
+for low-confidence samples
+𝐮
+lc
+\mathbf{u}^{\texttt{{lc}}}
+. We compare our strategy of the prior
+𝒫
+𝒢
+′
+​
+(
+𝐘
+)
+\mathcal{P}_{\mathcal{G}}^{\prime}(\mathbf{Y})
+for
+ξ
+\xi
+with other designs: Select the multiple categories from Top-1 or Top-5 confidence scores. As shown in Tab.
+4
+lower, our method consistently yields better performance than other designs, validating the effectiveness of
+𝒫
+𝒢
+′
+​
+(
+𝐘
+)
+\mathcal{P}_{\mathcal{G}}^{\prime}(\mathbf{Y})
+that sets different thresholds for different categories.
+III. Indecisive-categories set
+ξ
+\xi
+vs. pseudo-label
+We further validate the superiority of
+ξ
+\xi
+over pseudo-labels for low-confidence unlabeled samples
+𝐮
+lc
+\mathbf{u}^{\textit{{lc}}}
+. Intuitively, a set with multiple categories has higher probability to cover correct category than a single pseudo-label.
+To this end, we plot ’correct category in
+ξ
+\xi
+’ and ’correct pseudo-label’ ratios on
+𝐮
+lc
+\mathbf{u}^{\textit{{lc}}}
+. As shown in Fig.
+6
+, the recall of
+ξ
+\xi
+remains at a considerably high level, significantly outperforming the accuracy of pseudo-labeling even throughout the training process. Although this set-based supervision is not as precise as the ground-truth, it effectively introduce more available
+𝐮
+lc
+\mathbf{u}^{\textit{{lc}}}
+rather than compromise on wrong pseudo-labels
+.
+5) Proxy vs. Prototypes
+Previous FL approaches
+[
+30
+,
+11
+]
+often employ prototypes to refine the local and global category distribution. However, high-dimensional features (prototypes) poses the risk of reversely reconstruction
+[
+7
+,
+24
+]
+. In contrast, proxies serve as the intrinsic model parameters without raising privacy concerns & extra overheads. We compare our method with ‘FedProto
+[
+30
+]
++ FSSL’ with different strategies and Tab.
+5
+validate our superiority.
+Table 5
+:
+Ablation of our ProxyFL vs. Prototypes with
+α
+=
+0.1
+\alpha=0.1
+. ’ALL’ means generating prototypes with low-confidence samples, and ’Labeled’ with only labeled samples.
+Methods
+CIFAR-10
+CIFAR-100
+SVHN
+CINIC-10
+PROTO
+85.89
+49.56
+93.48
+72.53
+PROTO-ALL
+86.56
+54.69
+19.59
+73.16
+PROTO-Labeled
+86.55
+48.83
+93.60
+72.57
+ICPL
+-
+𝒫
+𝒢
+′
+​
+(
+𝐘
+)
+\mathcal{P}_{\mathcal{G}}^{\prime}(\mathbf{Y})
+87.81
+57.21
+94.82
+77.80
+7
+Conclusion
+Our paper proposes a new Federated Semi-Supervised Learning (FSSL) method called ProxyFL, leveraging a unified proxy to simultaneously mitigate external and internal heterogeneity. We model the category distribution both locally and globally. Firstly, we define a global tuning objective to optimize the global category distribution across clients, mitigating distribution shift from external heterogeneity. Secondly, we incorporate low-confidence unlabeled samples via our dynamic
+indecisive-categories
+proxy learning mechanism to mitigate internal heterogeneity. Extensive experiments show that ProxyFL can significantly boost the performance and convergence of the FSSL model.
+8
+Acknowledgement
+This work was supported by the National Natural Science Foundation of China (Grant No. 62471182), Science and Technology Commission of Shanghai Municipality Basic Research Program (Grant No. 25JD1401300), Shanghai Rising-Star Program (Grant No. 24QA2702100), and the Science and Technology Commission of Shanghai Municipality (Grant No. 22DZ2229004).
+References
+[1]
+S. Bai, S. Li, W. Zhuang, J. Zhang, K. Yang, J. Hou, S. Yi, S. Zhang, and J. Gao
+(2024)
+Combating data imbalances in federated semi-supervised learning with dual regulators
+.
+In
+Proceedings of the AAAI conference on artificial intelligence
+,
+Vol.
+38
+,
+pp. 10989–10997
+.
+Cited by:
+Table 6
+,
+§D.2
+,
+§1
+,
+§2
+,
+Table 1
+,
+§6.1
+,
+§6.2
+.
+[2]
+C. Chen, K. Debattista, and J. Han
+(2022)
+Semi-supervised object detection via vc learning
+.
+In
+European Conference on Computer Vision
+,
+pp. 169–185
+.
+Cited by:
+§5.2.1
+.
+[3]
+X. Chen, Y. Yuan, G. Zeng, and J. Wang
+(2021)
+Semi-supervised semantic segmentation with cross pseudo supervision
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 2613–2622
+.
+Cited by:
+§2
+.
+[4]
+Y. J. Cho, G. Joshi, and D. Dimitriadis
+(2023)
+Local or global: selective knowledge assimilation for federated learning with limited labels
+.
+In
+Proceedings of the IEEE/CVF international conference on computer vision
+,
+pp. 17087–17096
+.
+Cited by:
+Table 6
+,
+§D.2
+,
+§1
+,
+§4
+,
+Table 1
+,
+§6.1
+,
+§6.2
+,
+§6.3
+.
+[5]
+L. N. Darlow, E. J. Crowley, A. Antoniou, and A. J. Storkey
+(2018)
+Cinic-10 is not imagenet or cifar-10
+.
+arXiv preprint arXiv:1810.03505
+.
+Cited by:
+§6.1
+.
+[6]
+E. Diao, J. Ding, and V. Tarokh
+(2022)
+Semifl: semi-supervised federated learning for unlabeled clients with alternate training
+.
+Advances in Neural Information Processing Systems
+35
+,
+pp. 17871–17884
+.
+Cited by:
+§2
+.
+[7]
+A. Dosovitskiy and T. Brox
+(2016)
+Inverting visual representations with convolutional networks
+.
+In
+Proceedings of the IEEE conference on computer vision and pattern recognition
+,
+pp. 4829–4837
+.
+Cited by:
+§D.2
+,
+§6.3
+.
+[8]
+C. He, Z. Yang, E. Mushtaq, S. Lee, M. Soltanolkotabi, and S. Avestimehr
+(2021)
+Ssfl: tackling label deficiency in federated learning via personalized self-supervision
+.
+arXiv preprint arXiv:2110.02470
+.
+Cited by:
+§2
+.
+[9]
+K. He, X. Zhang, S. Ren, and J. Sun
+(2016)
+Deep residual learning for image recognition
+.
+In
+Proceedings of the IEEE conference on computer vision and pattern recognition
+,
+pp. 770–778
+.
+Cited by:
+§6.1
+.
+[10]
+C. J. Hoofnagle, B. Van Der Sloot, and F. Z. Borgesius
+(2019)
+The european union general data protection regulation: what it is and what it means
+.
+Information & Communications Technology Law
+28
+(
+1
+),
+pp. 65–98
+.
+Cited by:
+§1
+.
+[11]
+W. Huang, M. Ye, Z. Shi, H. Li, and B. Du
+(2023)
+Rethinking federated learning with domain shift: a prototype view
+.
+In
+2023 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)
+,
+pp. 16312–16322
+.
+Cited by:
+§6.3
+.
+[12]
+W. Jeong, J. Yoon, E. Yang, and S. J. Hwang
+(2020)
+Federated semi-supervised learning with inter-client consistency & disjoint learning
+.
+arXiv preprint arXiv:2006.12097
+.
+Cited by:
+Table 6
+,
+§D.2
+,
+Table 7
+,
+Table 7
+,
+§2
+,
+Table 1
+,
+§6.2
+,
+§6.3
+.
+[13]
+T. Kim, E. Lin, J. Lee, C. Lau, and V. Mugunthan
+(2023)
+Navigating data heterogeneity in federated learning: a semi-supervised federated object detection
+.
+Advances in Neural Information Processing Systems
+36
+,
+pp. 2074–2096
+.
+Cited by:
+§2
+.
+[14]
+A. Krizhevsky G. Hinton
+et al.
+(2009)
+Learning multiple layers of features from tiny images
+.
+Cited by:
+§6.1
+.
+[15]
+H. Li, W. Huang, J. Wang, and Y. Shi
+(2024)
+Global and local prompts cooperation via optimal transport for federated learning
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 12151–12161
+.
+Cited by:
+§2
+.
+[16]
+M. Li, Q. Li, and Y. Wang
+(2023)
+Class balanced adaptive pseudo labeling for federated semi-supervised learning
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 16292–16301
+.
+Cited by:
+§2
+,
+§5.3
+.
+[17]
+T. Li, A. K. Sahu, M. Zaheer, M. Sanjabi, A. Talwalkar, and V. Smith
+(2020)
+Federated optimization in heterogeneous networks
+.
+Proceedings of Machine learning and systems
+2
+,
+pp. 429–450
+.
+Cited by:
+Table 6
+,
+§2
+,
+Table 1
+,
+§6.2
+.
+[18]
+X. Liang, Y. Lin, H. Fu, L. Zhu, and X. Li
+(2022)
+Rscfed: random sampling consensus federated semi-supervised learning
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 10154–10163
+.
+Cited by:
+§2
+.
+[19]
+W. Y. B. Lim, N. C. Luong, D. T. Hoang, Y. Jiao, Y. Liang, Q. Yang, D. Niyato, and C. Miao
+(2020)
+Federated learning in mobile edge networks: a comprehensive survey
+.
+IEEE communications surveys & tutorials
+22
+(
+3
+),
+pp. 2031–2063
+.
+Cited by:
+§1
+.
+[20]
+Q. Liu, H. Yang, Q. Dou, and P. Heng
+(2021)
+Federated semi-supervised medical image classification via inter-client relation matching
+.
+In
+International Conference on Medical Image Computing and Computer-Assisted Intervention
+,
+pp. 325–335
+.
+Cited by:
+§2
+.
+[21]
+Y. Liu, X. Shang, Y. Zhang, Y. Lu, C. Gong, J. Xue, and H. Wang
+(2025)
+Mind the gap: confidence discrepancy can guide federated semi-supervised learning across pseudo-mismatch
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 10173–10182
+.
+Cited by:
+Table 6
+,
+§D.2
+,
+§D.6
+,
+Table 7
+,
+Table 7
+,
+§1
+,
+§2
+,
+§3
+,
+§4
+,
+§5.3
+,
+Table 1
+,
+§6.1
+,
+§6.1
+,
+§6.2
+.
+[22]
+Y. Liu, H. Wu, and J. Qin
+(2024)
+Fedcd: federated semi-supervised learning with class awareness balance via dual teachers
+.
+In
+Proceedings of the AAAI conference on artificial intelligence
+,
+Vol.
+38
+,
+pp. 3837–3845
+.
+Cited by:
+§2
+.
+[23]
+B. McMahan, E. Moore, D. Ramage, S. Hampson, and B. A. y Arcas
+(2017)
+Communication-efficient learning of deep networks from decentralized data
+.
+In
+Artificial intelligence and statistics
+,
+pp. 1273–1282
+.
+Cited by:
+Table 6
+,
+Figure 1
+,
+Figure 1
+,
+§1
+,
+Table 1
+,
+§6.2
+.
+[24]
+L. Melis, C. Song, E. De Cristofaro, and V. Shmatikov
+(2019)
+Exploiting unintended feature leakage in collaborative learning
+.
+In
+2019 IEEE symposium on security and privacy (SP)
+,
+pp. 691–706
+.
+Cited by:
+§D.2
+,
+§6.3
+.
+[25]
+Y. Netzer, T. Wang, A. Coates, A. Bissacco, B. Wu, A. Y. Ng,
+et al.
+(2011)
+Reading digits in natural images with unsupervised feature learning
+.
+In
+NIPS workshop on deep learning and unsupervised feature learning
+,
+Vol.
+2011
+,
+pp. 7
+.
+Cited by:
+§6.1
+.
+[26]
+V. Olsson, W. Tranheden, J. Pinto, and L. Svensson
+(2021)
+Classmix: segmentation-based data augmentation for semi-supervised learning
+.
+In
+Proceedings of the IEEE/CVF winter conference on applications of computer vision
+,
+pp. 1369–1378
+.
+Cited by:
+§2
+.
+[27]
+A. v. d. Oord, Y. Li, and O. Vinyals
+(2018)
+Representation learning with contrastive predictive coding
+.
+arXiv preprint arXiv:1807.03748
+.
+Cited by:
+§C.1
+.
+[28]
+C. Shi, H. Zhao, B. Zhang, M. Zhou, D. Guo, and Y. Chang
+(2025)
+FedAWA: adaptive optimization of aggregation weights in federated learning using client vectors
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 30651–30660
+.
+Cited by:
+§2
+.
+[29]
+K. Sohn, D. Berthelot, N. Carlini, Z. Zhang, H. Zhang, C. A. Raffel, E. D. Cubuk, A. Kurakin, and C. Li
+(2020)
+Fixmatch: simplifying semi-supervised learning with consistency and confidence
+.
+Advances in neural information processing systems
+33
+,
+pp. 596–608
+.
+Cited by:
+§2
+,
+§4
+.
+[30]
+Y. Tan, G. Long, L. Liu, T. Zhou, Q. Lu, J. Jiang, and C. Zhang
+(2022)
+Fedproto: federated prototype learning across heterogeneous clients
+.
+In
+Proceedings of the AAAI conference on artificial intelligence
+,
+Vol.
+36
+,
+pp. 8432–8440
+.
+Cited by:
+§2
+,
+§6.3
+.
+[31]
+Y. Wang, H. Chen, Q. Heng, W. Hou, Y. Fan, Z. Wu, J. Wang, M. Savvides, T. Shinozaki, B. Raj,
+et al.
+(2022)
+Freematch: self-adaptive thresholding for semi-supervised learning
+.
+arXiv preprint arXiv:2205.07246
+.
+Cited by:
+§2
+.
+[32]
+M. Yang, S. Su, B. Li, and X. Xue
+(2024)
+Exploring one-shot semi-supervised federated learning with pre-trained diffusion models
+.
+In
+Proceedings of the AAAI conference on artificial intelligence
+,
+Vol.
+38
+,
+pp. 16325–16333
+.
+Cited by:
+§2
+.
+[33]
+X. Yao, Y. Bai, X. Zhang, Y. Zhang, Q. Sun, R. Chen, R. Li, and B. Yu
+(2022)
+Pcl: proxy-based contrastive learning for domain generalization
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 7097–7107
+.
+Cited by:
+§4
+.
+[34]
+S. Yun, D. Han, S. J. Oh, S. Chun, J. Choe, and Y. Yoo
+(2019)
+Cutmix: regularization strategy to train strong classifiers with localizable features
+.
+In
+Proceedings of the IEEE/CVF international conference on computer vision
+,
+pp. 6023–6032
+.
+Cited by:
+§2
+.
+[35]
+B. Zhang, Y. Wang, W. Hou, H. Wu, J. Wang, M. Okumura, and T. Shinozaki
+(2021)
+Flexmatch: boosting semi-supervised learning with curriculum pseudo labeling
+.
+Advances in neural information processing systems
+34
+,
+pp. 18408–18419
+.
+Cited by:
+§2
+.
+[36]
+C. Zhang, F. Wu, J. Yi, D. Xu, Y. Yu, J. Wang, Y. Wang, T. Xu, X. Xie, and E. Chen
+(2023)
+Non-iid always bad? semi-supervised heterogeneous federated learning with local knowledge enhancement
+.
+In
+Proceedings of the 32nd ACM international conference on information and knowledge management
+,
+pp. 3257–3267
+.
+Cited by:
+Table 6
+,
+Table 1
+,
+§6.2
+.
+[37]
+Y. Zhang, Z. Yang, X. Tian, N. Wang, T. Liu, and B. Han
+(2024)
+Robust training of federated models with extremely label deficiency
+.
+arXiv preprint arXiv:2402.14430
+.
+Cited by:
+§2
+.
+[38]
+C. Zhao, Z. Gao, Q. Wang, Z. Mo, and X. Yu
+(2022)
+Fedgan: a federated semi-supervised learning from non-iid data
+.
+In
+International Conference on Wireless Algorithms, Systems, and Applications
+,
+pp. 181–192
+.
+Cited by:
+§2
+.
+[39]
+G. Zhu, X. Liu, X. Wu, S. Tang, C. Tang, J. Niu, and H. Su
+(2024)
+Estimating before debiasing: a bayesian approach to detaching prior bias in federated semi-supervised learning
+.
+arXiv preprint arXiv:2405.19789
+.
+Cited by:
+Table 6
+,
+§D.2
+,
+§1
+,
+§4
+,
+Table 1
+,
+§6.1
+,
+§6.2
+,
+§6.3
+.
+Appendix A
+Definitions of Data Heterogeneity in FSSL
+We define data heterogeneity in FSSL as follows:
+Definition 1
+(External heterogeneity in FSSL)
+External heterogeneity refers to the distribution discrepancy between
+𝒟
+k
+\mathcal{D}_{k}
+across different clients
+{
+𝒞
+1
+,
+…
+,
+𝒞
+K
+}
+\{\mathcal{C}_{1},\ldots,\mathcal{C}_{K}\}
+,
+i.e.
+, for any two different clients
+𝒞
+k
+1
+\mathcal{C}_{k_{1}}
+and
+𝒞
+k
+2
+\mathcal{C}_{k_{2}}
+,
+𝒫
+k
+1
+​
+(
+𝐘
+)
+≠
+𝒫
+k
+2
+​
+(
+𝐘
+)
+\mathcal{P}_{k_{1}}(\mathbf{Y}){\neq}\mathcal{P}_{k_{2}}(\mathbf{Y})
+.
+Definition 2
+(Internal heterogeneity in FSSL)
+Internal heterogeneity exists within local clients, embodied in: 1) class imbalance, arising from unequal sample sizes among different categories within
+𝒞
+k
+\mathcal{C}_{k}
+,
+i.e.
+, for any two categories
+c
+1
+c_{1}
+and
+c
+2
+c_{2}
+,
+𝒫
+k
+​
+(
+𝐘
+⁡
+(
+c
+1
+)
+)
+≠
+𝒫
+k
+​
+(
+𝐘
+⁡
+(
+c
+2
+)
+)
+\mathcal{P}_{k}(\mathbf{Y}({c_{1}})){\neq}\mathcal{P}_{k}(\mathbf{Y}({c_{2}}))
+; 2) distribution imbalance between labeled and unlabeled data, i.e.,
+𝒫
+k
+s
+​
+(
+𝐘
+)
+≠
+𝒫
+k
+u
+​
+(
+𝐘
+)
+\mathcal{P}_{k}^{\texttt{{s}}}(\mathbf{Y}){\neq}\mathcal{P}_{k}^{\texttt{{u}}}(\mathbf{Y})
+.
+Appendix B
+Pseudo-Code
+The pseudo-code of ProxyFL is shown in Algorithm.
+1
+.
+Algorithm 1
+Proxy-Guided FSSL (ProxyFL)
+Input:
+Federation system
+ℂ
+\mathbb{C}
+,
+communication round
+T
+T
+,
+local learning rate
+η
+l
+\eta_{l}
+, global model
+𝚯
+𝒢
+\mathbf{\Theta}_{\mathcal{G}}
+;
+for
+t
+=
+0
+→
+T
+−
+1
+t=0\to T-1
+do
+Randomly sample a subset of clients
+ℂ
+M
+⊆
+ℂ
+\mathbb{C}_{M}\subseteq\mathbb{C}
+;
+foreach
+client
+𝒞
+m
+∈
+ℂ
+M
+\mathcal{C}_{m}\in\mathbb{C}_{M}
+in parallel
+do
+Initialize
+𝚯
+m
+t
+\mathbf{\Theta}_{m}^{t}
+via
+𝚯
+𝒢
+t
+\mathbf{\Theta}_{\mathcal{G}}^{t}
+from server;
+Calculate
+ℒ
+s
+\mathcal{L}_{\texttt{{s}}}
+and
+ℒ
+u
+\mathcal{L}_{\texttt{{u}}}
+on
+𝐱
+\mathbf{x}
+and
+𝐮
+hc
+\mathbf{u}^{\texttt{{hc}}}
+via Eq.
+9
+;
+Calculate
+ℒ
+ICPL
+\mathcal{L}_{\texttt{{ICPL}}}
+on
+𝐮
+hc
+\mathbf{u}^{\texttt{{hc}}}
+and
+𝐮
+lc
+\mathbf{u}^{\texttt{{lc}}}
+via Eq.
+8
+;
+ℒ
+local
+←
+ℒ
+s
++
+ℒ
+u
++
+ℒ
+ICPL
+\mathcal{L}_{\texttt{{local}}}\leftarrow\mathcal{L}_{\texttt{{s}}}+\mathcal{L}_{\texttt{{u}}}+\mathcal{L}_{\texttt{{ICPL}}}
+;
+𝚯
+m
+t
++
+1
+←
+𝚯
+m
+t
+−
+η
+l
+​
+∇
+𝚯
+m
+t
+ℒ
+local
+\mathbf{\Theta}_{m}^{t+1}\leftarrow\mathbf{\Theta}_{m}^{t}-\eta_{l}\nabla_{\mathbf{\Theta}_{m}^{t}}\mathcal{L}_{\texttt{{local}}}
+;
+end foreach
+θ
+𝒢
+t
++
+1
+←
+∑
+𝒞
+m
+∈
+ℂ
+M
+γ
+m
+​
+θ
+m
+t
++
+1
+,
+𝛀
+𝒢
+←
+∑
+𝒞
+m
+∈
+ℂ
+M
+γ
+m
+​
+ω
+m
+t
++
+1
+\theta_{\mathcal{G}}^{t+1}{\leftarrow}\sum_{\mathcal{C}_{m}\in\mathbb{C}_{M}}\gamma_{m}\theta_{m}^{t+1},\mathbf{\Omega}_{\mathcal{G}}{\leftarrow}\sum_{\mathcal{C}_{m}\in\mathbb{C}_{M}}\gamma_{m}\omega_{m}^{t+1}
+;
+Server optimizes the global proxy
+𝛀
+𝒢
+\mathbf{\Omega}_{\mathcal{G}}
+via Eq.
+2
+,
+𝛀
+𝒢
+t
++
+1
+←
+𝛀
+𝒢
+\mathbf{\Omega}_{\mathcal{G}}^{t+1}\leftarrow\mathbf{\Omega}_{\mathcal{G}}\;
+, thus
+𝚯
+𝒢
+t
++
+1
+=
+θ
+𝒢
+t
++
+1
+∪
+𝛀
+𝒢
+t
++
+1
+\mathbf{\Theta}_{\mathcal{G}}^{t+1}=\theta_{\mathcal{G}}^{t+1}\cup\mathbf{\Omega}_{\mathcal{G}}^{t+1}
+;
+end for
+return
+𝚯
+𝒢
+T
+=
+θ
+𝒢
+T
+∪
+𝛀
+𝒢
+T
+\mathbf{\Theta}_{\mathcal{G}}^{T}=\theta_{\mathcal{G}}^{T}\cup\mathbf{\Omega}_{\mathcal{G}}^{T}
+Table 6
+:
+Experimental results on CIFAR-10, CIFAR-100, SVHN and CINIC-10 under 20% label. Bold text indicates the best result, and the last row presents the improvement of ProxyFL over the second best method.
+Methods
+CIFAR-10
+CIFAR-100
+SVHN
+CINIC-10
+α
+=
+0.1
+\alpha=0.1
+α
+=
+0.5
+\alpha=0.5
+α
+=
+1
+\alpha=1
+α
+=
+0.1
+\alpha=0.1
+α
+=
+0.5
+\alpha=0.5
+α
+=
+1
+\alpha=1
+α
+=
+0.1
+\alpha=0.1
+α
+=
+0.5
+\alpha=0.5
+α
+=
+1
+\alpha=1
+α
+=
+0.1
+\alpha=0.1
+α
+=
+0.5
+\alpha=0.5
+α
+=
+1
+\alpha=1
+FL Methods
+FedAvg
+[
+23
+]
+86.37
+87.06
+87.97
+45.72
+46.57
+47.55
+88.37
+89.05
+89.97
+66.24
+68.29
+69.21
+FedProx
+[
+17
+]
+86.78
+88.11
+88.44
+45.96
+47.33
+47.89
+87.99
+88.56
+91.10
+65.53
+69.57
+69.91
+FedAvg-SL
+90.46
+91.24
+91.32
+67.98
+68.83
+69.10
+94.11
+94.41
+94.40
+77.82
+80.42
+81.29
+FL+SSL Methods
+FixMatch-LPL
+87.22
+89.61
+89.23
+56.80
+57.35
+57.59
+93.66
+94.11
+94.21
+72.51
+75.14
+76.03
+FixMatch-GPL
+88.55
+89.69
+89.83
+57.02
+57.85
+57.85
+93.89
+94.12
+94.17
+76.14
+77.35
+77.82
+FedProx+FixMatch
+87.47
+89.46
+89.56
+57.44
+57.91
+57.87
+93.60
+93.93
+94.05
+72.36
+75.15
+76.06
+FedAvg+FlexMatch
+76.36
+78.66
+78.76
+58.24
+58.44
+58.79
+56.94
+58.58
+62.19
+73.32
+75.75
+75.95
+FSSL Methods
+FedMatch
+[
+12
+]
+82.44
+84.13
+85.21
+45.07
+47.29
+48.40
+93.01
+93.58
+93.76
+66.94
+68.60
+72.34
+FedLabel
+[
+4
+]
+87.37
+88.86
+88.93
+58.63
+58.98
+59.23
+93.44
+94.38
+94.59
+60.13
+67.30
+72.22
+FedLoke
+[
+36
+]
+84.57
+85.26
+86.98
+53.87
+53.67
+54.56
+93.26
+93.45
+93.57
+70.63
+71.61
+71.78
+FedDure
+[
+1
+]
+88.56
+89.63
+89.95
+56.14
+57.23
+57.89
+93.81
+94.42
+94.37
+76.21
+77.13
+77.75
+FedDB
+[
+39
+]
+85.19
+86.36
+86.65
+52.81
+54.62
+55.48
+93.22
+93.50
+94.27
+74.18
+75.00
+75.65
+SAGE
+[
+21
+]
+89.87
+90.53
+90.54
+60.86
+61.49
+62.01
+94.31
+94.56
+94.68
+77.51
+78.23
+78.77
+ProxyFL (ours)
+90.97
+91.22
+91.51
+62.57
+63.09
+63.19
+95.03
+95.40
+95.34
+80.80
+81.02
+81.46
+↑
+\uparrow
+1.10
+↑
+\uparrow
+0.69
+↑
+\uparrow
+0.97
+↑
+\uparrow
+1.71
+↑
+\uparrow
+1.60
+↑
+\uparrow
+1.18
+↑
+\uparrow
+0.72
+↑
+\uparrow
+0.84
+↑
+\uparrow
+0.66
+↑
+\uparrow
+3.29
+↑
+\uparrow
+2.79
+↑
+\uparrow
+2.69
+Appendix C
+Theoretical Proofs
+In this section, we provide the convergence analysis for the bi-level optimizations of ProxyFL: Global Proxy Tuning (GPT) and Indecisive-Categories Proxy Learning (ICPL). Our proofs are based on the standard assumptions in the non-convex optimization.
+C.1
+Convergence of Global Proxy Tuning
+Our GPT module is a global optimization process executed on the server. In each communication round, the server collects the local proxies
+{
+ω
+m
+}
+m
+=
+1
+M
+\{\omega_{m}\}_{m=1}^{M}
+from clients and then optimizes the global proxies
+𝛀
+𝒢
+\mathbf{\Omega}_{\mathcal{G}}
+by minimizing the loss function
+ℒ
+GPT
+\mathcal{L}_{\texttt{{GPT}}}
+. First, we give:
+Theorem 1
+(Convergence of Global Proxy Tuning)
+Assume that the loss function
+ℒ
+GPT
+\mathcal{L}_{\texttt{{GPT}}}
+is L-Lipschitz and bounded below, where
+ℒ
+GPT
+\mathcal{L}_{\texttt{{GPT}}}
+is related to
+𝛀
+𝒢
+\mathbf{\Omega}_{\mathcal{G}}
+. By optimizing the global proxies
+𝛀
+𝒢
+\mathbf{\Omega}_{\mathcal{G}}
+via gradient descent with learning rate
+η
+𝒢
+\eta_{\mathcal{G}}
+such that
+0
+<
+η
+𝒢
+≤
+1
+L
+𝒢
+0<\eta_{\mathcal{G}}\leq\frac{1}{L_{\mathcal{G}}}
+, the optimization process converges to a stationary point. I.e.,
+lim
+Q
+→
+∞
+1
+Q
+​
+∑
+q
+=
+0
+Q
+−
+1
+𝔼
+⁡
+[
+‖
+∇
+𝛀
+𝒢
+ℒ
+GPT
+​
+(
+𝛀
+𝒢
+q
+)
+‖
+2
+]
+=
+0
+,
+\displaystyle\lim_{Q\rightarrow\infty}\frac{1}{Q}\sum_{q=0}^{Q-1}\mathbb{E}\left[\left\|\nabla_{\mathbf{\Omega}_{\mathcal{G}}}\mathcal{L}_{\texttt{{GPT}}}\left(\mathbf{\Omega}_{\mathcal{G}}^{q}\right)\right\|^{2}\right]=0,
+(11)
+where
+Q
+Q
+is the number of proxy tuning steps on the server.
+Then we provide a specific proof for Theorem
+1
+. According to the descent lemma for L-smooth functions, we have:
+ℒ
+GPT
+​
+(
+𝛀
+𝒢
+q
++
+1
+)
+≤
+\displaystyle\mathcal{L}_{\texttt{{GPT}}}(\mathbf{\Omega}_{\mathcal{G}}^{q+1})\leq
+ℒ
+GPT
+​
+(
+𝛀
+𝒢
+q
+)
++
+⟨
+∇
+𝛀
+𝒢
+ℒ
+GPT
+​
+(
+𝛀
+𝒢
+q
+)
+,
+𝛀
+𝒢
+q
++
+1
+−
+𝛀
+𝒢
+q
+⟩
+\displaystyle\mathcal{L}_{\texttt{{GPT}}}(\mathbf{\Omega}_{\mathcal{G}}^{q})+\langle\nabla_{\mathbf{\Omega}_{\mathcal{G}}}\mathcal{L}_{\texttt{{GPT}}}(\mathbf{\Omega}_{\mathcal{G}}^{q}),\mathbf{\Omega}_{\mathcal{G}}^{q+1}-\mathbf{\Omega}_{\mathcal{G}}^{q}\rangle
++
+L
+𝒢
+2
+​
+‖
+𝛀
+𝒢
+q
++
+1
+−
+𝛀
+𝒢
+q
+‖
+2
+.
+\displaystyle+\frac{L_{\mathcal{G}}}{2}||\mathbf{\Omega}_{\mathcal{G}}^{q+1}-\mathbf{\Omega}_{\mathcal{G}}^{q}||^{2}.
+(12)
+According to the gradient-descent formula
+𝛀
+𝒢
+q
++
+1
+=
+𝛀
+𝒢
+q
+−
+η
+𝒢
+​
+∇
+𝛀
+𝒢
+ℒ
+GPT
+​
+(
+𝛀
+𝒢
+q
+)
+\mathbf{\Omega}_{\mathcal{G}}^{q+1}=\mathbf{\Omega}_{\mathcal{G}}^{q}-\eta_{\mathcal{G}}\nabla_{\mathbf{\Omega}_{\mathcal{G}}}\mathcal{L}_{\texttt{{GPT}}}(\mathbf{\Omega}_{\mathcal{G}}^{q})
+, Eq.
+12
+can be re-written as:
+ℒ
+GPT
+​
+(
+𝛀
+𝒢
+q
++
+1
+)
+≤
+\displaystyle\mathcal{L}_{\texttt{{GPT}}}(\mathbf{\Omega}_{\mathcal{G}}^{q+1})\leq
+ℒ
+GPT
+​
+(
+𝛀
+𝒢
+q
+)
+−
+η
+𝒢
+​
+‖
+∇
+𝛀
+𝒢
+ℒ
+GPT
+​
+(
+𝛀
+𝒢
+q
+)
+‖
+2
+\displaystyle\mathcal{L}_{\texttt{{GPT}}}(\mathbf{\Omega}_{\mathcal{G}}^{q})-\eta_{\mathcal{G}}||\nabla_{\mathbf{\Omega}_{\mathcal{G}}}\mathcal{L}_{\texttt{{GPT}}}(\mathbf{\Omega}_{\mathcal{G}}^{q})||^{2}
+(13)
++
+L
+𝒢
+​
+η
+𝒢
+2
+2
+​
+‖
+∇
+𝛀
+𝒢
+ℒ
+GPT
+​
+(
+𝛀
+𝒢
+q
+)
+‖
+2
+\displaystyle+\frac{L_{\mathcal{G}}\eta_{\mathcal{G}}^{2}}{2}||\nabla_{\mathbf{\Omega}_{\mathcal{G}}}\mathcal{L}_{\texttt{{GPT}}}(\mathbf{\Omega}_{\mathcal{G}}^{q})||^{2}
+Then, the right side will be:
+ℒ
+GPT
+​
+(
+𝛀
+𝒢
+q
++
+1
+)
+≤
+ℒ
+GPT
+​
+(
+𝛀
+𝒢
+q
+)
+−
+η
+𝒢
+​
+(
+1
+−
+L
+𝒢
+​
+η
+𝒢
+2
+)
+​
+‖
+∇
+𝛀
+𝒢
+ℒ
+GPT
+​
+(
+𝛀
+𝒢
+q
+)
+‖
+2
+\displaystyle\mathcal{L}_{\texttt{{GPT}}}(\mathbf{\Omega}_{\mathcal{G}}^{q+1})\leq\mathcal{L}_{\texttt{{GPT}}}(\mathbf{\Omega}_{\mathcal{G}}^{q})-\eta_{\mathcal{G}}(1-\frac{L_{\mathcal{G}}\eta_{\mathcal{G}}}{2})||\nabla_{\mathbf{\Omega}_{\mathcal{G}}}\mathcal{L}_{\texttt{{GPT}}}(\mathbf{\Omega}_{\mathcal{G}}^{q})||^{2}
+(14)
+Let the learning rate
+η
+𝒢
+≤
+1
+L
+𝒢
+\eta_{\mathcal{G}}\leq\frac{1}{L_{\mathcal{G}}}
+, such that
+1
+−
+L
+𝒢
+​
+η
+𝒢
+2
+≥
+1
+2
+1-\frac{L_{\mathcal{G}}\eta_{\mathcal{G}}}{2}\geq\frac{1}{2}
+. Thus, Eq.
+13
+can be simplified to:
+ℒ
+GPT
+​
+(
+𝛀
+𝒢
+q
++
+1
+)
+≤
+ℒ
+GPT
+​
+(
+𝛀
+𝒢
+q
+)
+−
+η
+𝒢
+2
+​
+‖
+∇
+𝛀
+𝒢
+ℒ
+GPT
+​
+(
+𝛀
+𝒢
+q
+)
+‖
+2
+\displaystyle\mathcal{L}_{\texttt{{GPT}}}(\mathbf{\Omega}_{\mathcal{G}}^{q+1})\leq\mathcal{L}_{\texttt{{GPT}}}(\mathbf{\Omega}_{\mathcal{G}}^{q})-\frac{\eta_{\mathcal{G}}}{2}||\nabla_{\mathbf{\Omega}_{\mathcal{G}}}\mathcal{L}_{\texttt{{GPT}}}(\mathbf{\Omega}_{\mathcal{G}}^{q})||^{2}
+(15)
+Rearranging the terms, we get:
+‖
+∇
+𝛀
+𝒢
+ℒ
+GPT
+​
+(
+𝛀
+𝒢
+q
+)
+‖
+2
+≤
+2
+η
+𝒢
+​
+(
+ℒ
+GPT
+​
+(
+𝛀
+𝒢
+q
+)
+−
+ℒ
+GPT
+​
+(
+𝛀
+𝒢
+q
++
+1
+)
+)
+\displaystyle||\nabla_{\mathbf{\Omega}_{\mathcal{G}}}\mathcal{L}_{\texttt{{GPT}}}(\mathbf{\Omega}_{\mathcal{G}}^{q})||^{2}\leq\frac{2}{\eta_{\mathcal{G}}}(\mathcal{L}_{\texttt{{GPT}}}(\mathbf{\Omega}_{\mathcal{G}}^{q})-\mathcal{L}_{\texttt{{GPT}}}(\mathbf{\Omega}_{\mathcal{G}}^{q+1}))
+(16)
+Summing both the left and right sides of Eq.
+16
+from
+q
+=
+0
+q=0
+to
+Q
+−
+1
+Q-1
+, we have:
+∑
+q
+=
+0
+Q
+−
+1
+‖
+∇
+𝛀
+𝒢
+ℒ
+GPT
+​
+(
+𝛀
+𝒢
+q
+)
+‖
+2
+\displaystyle\sum_{q=0}^{Q-1}\|\nabla_{\mathbf{\Omega}_{\mathcal{G}}}\mathcal{L}_{\texttt{{GPT}}}(\mathbf{\Omega}_{\mathcal{G}}^{q})\|^{2}
+≤
+2
+η
+𝒢
+​
+∑
+q
+=
+0
+Q
+−
+1
+(
+ℒ
+GPT
+​
+(
+𝛀
+𝒢
+q
+)
+−
+ℒ
+GPT
+​
+(
+𝛀
+𝒢
+q
++
+1
+)
+)
+⏟
+\displaystyle\leq\underbrace{\frac{2}{\eta_{\mathcal{G}}}\sum_{q=0}^{Q-1}(\mathcal{L}_{\texttt{{GPT}}}(\mathbf{\Omega}_{\mathcal{G}}^{q})-\mathcal{L}_{\texttt{{GPT}}}(\mathbf{\Omega}_{\mathcal{G}}^{q+1}))}
+=
+2
+η
+𝒢
+​
+(
+ℒ
+GPT
+​
+(
+𝛀
+𝒢
+0
+)
+−
+ℒ
+GPT
+​
+(
+𝛀
+𝒢
+Q
+)
+)
+\displaystyle=\frac{2}{\eta_{\mathcal{G}}}(\mathcal{L}_{\texttt{{GPT}}}(\mathbf{\Omega}_{\mathcal{G}}^{0})-\mathcal{L}_{\texttt{{GPT}}}(\mathbf{\Omega}_{\mathcal{G}}^{Q}))
+(17)
+Since we adopt InfoNCE loss
+[
+27
+]
+for
+ℒ
+GPT
+\mathcal{L}_{\texttt{{GPT}}}
+with its lowerbound
+0
+0
+, we thus have:
+∑
+q
+=
+0
+Q
+−
+1
+‖
+∇
+𝛀
+𝒢
+ℒ
+GPT
+​
+(
+𝛀
+𝒢
+q
+)
+‖
+2
+≤
+2
+η
+𝒢
+​
+ℒ
+GPT
+​
+(
+𝛀
+𝒢
+0
+)
+\displaystyle\sum_{q=0}^{Q-1}\|\nabla_{\mathbf{\Omega}_{\mathcal{G}}}\mathcal{L}_{\texttt{{GPT}}}(\mathbf{\Omega}_{\mathcal{G}}^{q})\|^{2}\leq\frac{2}{\eta_{\mathcal{G}}}\mathcal{L}_{\texttt{{GPT}}}(\mathbf{\Omega}_{\mathcal{G}}^{0})
+(18)
+Dividing both sides by
+Q
+Q
+and taking the limit, we have:
+lim
+Q
+→
+∞
+1
+Q
+​
+∑
+q
+=
+0
+Q
+−
+1
+‖
+∇
+𝛀
+𝒢
+ℒ
+GPT
+​
+(
+𝛀
+𝒢
+q
+)
+‖
+2
+≤
+lim
+Q
+→
+∞
+2
+​
+ℒ
+GPT
+​
+(
+𝛀
+𝒢
+0
+)
+η
+𝒢
+​
+Q
+=
+0
+\displaystyle\lim_{Q\to\infty}\frac{1}{Q}\sum_{q=0}^{Q-1}||\nabla_{\mathbf{\Omega}_{\mathcal{G}}}\mathcal{L}_{\texttt{{GPT}}}(\mathbf{\Omega}_{\mathcal{G}}^{q})||^{2}\leq\lim_{Q\to\infty}\frac{2\mathcal{L}_{\texttt{{GPT}}}(\mathbf{\Omega}_{\mathcal{G}}^{0})}{\eta_{\mathcal{G}}Q}=0
+(19)
+Since the squared norm of the gradient (
+i.e., the left-hand side of Eq.
+19
+) is non-negative,
+hence we have proven Theorem
+1
+.
+C.2
+Convergence of Local Training with ICPL
+The ICPL module is executed during the local training on each client. The total local loss is denoted as
+ℒ
+local
+=
+ℒ
+s
++
+α
+​
+ℒ
+u
++
+β
+​
+ℒ
+ICPL
+\mathcal{L}_{\texttt{{local}}}=\mathcal{L}_{\texttt{{s}}}+\alpha\mathcal{L}_{\texttt{{u}}}+\beta\mathcal{L}_{\texttt{{ICPL}}}
+, with optimization parameters
+𝚯
+k
+=
+θ
+k
+∪
+ω
+k
+.
+\mathbf{\Theta}_{k}=\theta_{k}\cup\omega_{k}.
+Theorem 2
+(Convergence of Local Training with ICPL)
+Suppose that the total local loss function
+ℒ
+k
+\mathcal{L}_{k}
+for client k is L-smooth and bounded below, where
+ℒ
+k
+\mathcal{L}_{k}
+is related to
+𝚯
+k
+\mathbf{\Theta}_{k}
+. By optimizing the local model parameters
+𝚯
+k
+\mathbf{\Theta}_{k}
+via gradient descent with learning rate
+η
+l
+\eta_{l}
+such that
+0
+<
+η
+l
+≤
+1
+L
+k
+0<\eta_{l}\leq\frac{1}{L_{k}}
+, the optimization
+process converges to a stationary point. I.e.,
+lim
+E
+→
+∞
+1
+E
+​
+∑
+e
+=
+0
+E
+−
+1
+𝔼
+⁡
+[
+‖
+∇
+𝚯
+k
+ℒ
+k
+​
+(
+𝚯
+k
+e
+)
+‖
+2
+]
+=
+0
+\displaystyle\lim_{E\to\infty}\frac{1}{E}\sum_{e=0}^{E-1}\mathbb{E}[||\nabla_{\mathbf{\Theta}_{k}}\mathcal{L}_{k}(\mathbf{\Theta}_{k}^{e})||^{2}]=0
+(20)
+where
+E
+E
+is the number of local training epochs.
+Similar to Sec.
+C.1
+, following the descent lemma and the gradient-descent update formula, we can similarly derive:
+ℒ
+k
+​
+(
+𝚯
+k
+e
++
+1
+)
+≤
+ℒ
+k
+​
+(
+𝚯
+k
+e
+)
+−
+η
+l
+​
+(
+1
+−
+L
+k
+​
+η
+l
+2
+)
+​
+‖
+∇
+𝚯
+k
+ℒ
+k
+​
+(
+𝚯
+k
+e
+)
+‖
+2
+\displaystyle\mathcal{L}_{k}(\mathbf{\Theta}_{k}^{e+1})\leq\mathcal{L}_{k}(\mathbf{\Theta}_{k}^{e})-\eta_{l}(1-\frac{L_{k}\eta_{l}}{2})\|\nabla_{\mathbf{\Theta}_{k}}\mathcal{L}_{k}(\mathbf{\Theta}_{k}^{e})\|^{2}
+(21)
+By setting a local learning rate
+η
+l
+≤
+1
+L
+k
+\eta_{l}\leq\frac{1}{L_{k}}
+, we obtain:
+∑
+e
+=
+0
+E
+−
+1
+‖
+∇
+Θ
+k
+ℒ
+k
+​
+(
+𝚯
+k
+e
+)
+‖
+2
+\displaystyle\sum_{e=0}^{E-1}||\nabla_{\Theta_{k}}\mathcal{L}_{k}(\mathbf{\Theta}_{k}^{e})||^{2}
+≤
+2
+η
+l
+​
+(
+ℒ
+k
+​
+(
+𝚯
+k
+0
+)
+−
+ℒ
+k
+​
+(
+𝚯
+k
+E
+)
+)
+\displaystyle\leq\frac{2}{\eta_{l}}(\mathcal{L}_{k}(\mathbf{\Theta}_{k}^{0})-\mathcal{L}_{k}(\mathbf{\Theta}_{k}^{E}))
+≤
+2
+η
+l
+​
+ℒ
+k
+​
+(
+𝚯
+k
+0
+)
+\displaystyle\leq\frac{2}{\eta_{l}}\mathcal{L}_{k}(\mathbf{\Theta}_{k}^{0})
+(22)
+Taking the limit to Eq.
+22
+and knowing that the squared norm is non-negative, we have:
+0
+≤
+lim
+E
+→
+∞
+1
+E
+​
+∑
+e
+=
+0
+E
+−
+1
+‖
+∇
+𝚯
+k
+ℒ
+k
+​
+(
+𝚯
+k
+e
+)
+‖
+2
+≤
+lim
+E
+→
+∞
+2
+η
+l
+​
+E
+​
+ℒ
+k
+​
+(
+𝚯
+k
+0
+)
+=
+0
+\displaystyle 0\leq\lim_{E\to\infty}\frac{1}{E}\sum_{e=0}^{E-1}||\nabla_{\mathbf{\mathbf{\Theta}}_{k}}\mathcal{L}_{k}(\mathbf{\Theta}_{k}^{e})||^{2}\leq\lim_{E\to\infty}\frac{2}{\eta_{l}E}\mathcal{L}_{k}(\mathbf{\Theta}_{k}^{0})=0
+(23)
+Thus,
+lim
+E
+→
+∞
+1
+E
+​
+∑
+e
+=
+0
+E
+−
+1
+‖
+∇
+𝚯
+k
+ℒ
+k
+​
+(
+𝚯
+k
+e
+)
+‖
+2
+=
+0
+\displaystyle\lim_{E\to\infty}\frac{1}{E}\sum_{e=0}^{E-1}||\nabla_{\mathbf{\Theta}_{k}}\mathcal{L}_{k}(\mathbf{\Theta}_{k}^{e})||^{2}=0
+(24)
+So we have proven Theorem
+2
+.
+Appendix D
+Additional Empirical Analysis
+We provide some additional experiments to complement Sec.
+6
+of our main paper, thereby offering a more robust demonstration of our proposed ProxyFL.
+Table 7
+:
+The communication costs per round between different methods in our experimental setting as SAGE
+[
+21
+]
+.
+𝚯
+\mathbf{\Theta}
+represents model parameters.
+σ
+\sigma
+and
+ψ
+\psi
+denotes the parameters after sparsely decomposition in FedMatch
+[
+12
+]
+, and
+H
+H
+means the number of helper agents.
+C
+C
+and
+d
+d
+means respectively the number of categories and feature dimension.
+Formulation
+Practice
+FixMatch+FSSL
+∑
+m
+=
+1
+M
+|
+𝚯
+|
++
+|
+𝚯
+|
+\sum_{m=1}^{M}|\mathbf{\Theta}|+|\mathbf{\Theta}|
+22.08 M
+FedMatch
+∑
+i
+=
+1
+M
+(
+|
+Δ
+​
+σ
+i
+|
++
+|
+Δ
+​
+ψ
+i
+|
++
+C
+)
++
+\sum_{i=1}^{M}(|\Delta\sigma_{i}|+|\Delta\psi_{i}|+C)+
+33.12 M
+OPEN
+(
+|
+Δ
+​
+σ
+𝒢
+|
++
+|
+Δ
+​
+ψ
+𝒢
+|
++
+H
+×
+|
+ψ
+h
+|
+)
+)
+(|\Delta\sigma_{\mathcal{G}}|+|\Delta\psi_{\mathcal{G}}|+H\times|\psi_{h}|))
+FedLabel
+∑
+m
+=
+1
+M
+|
+𝚯
+|
++
+|
+𝚯
+|
+\sum_{m=1}^{M}|\mathbf{\Theta}|+|\mathbf{\Theta}|
+22.08 M
+FedDure
+∑
+m
+=
+1
+M
+|
+𝚯
+|
++
+|
+𝚯
+|
+\sum_{m=1}^{M}|\mathbf{\Theta}|+|\mathbf{\Theta}|
+22.08 M
+FedDB
+∑
+i
+=
+1
+M
+(
+|
+𝚯
+|
++
+C
+)
++
+|
+𝚯
+|
+\sum_{i=1}^{M}(|\mathbf{\Theta}|+C)+|\mathbf{\Theta}|
+22.08 M
+SAGE
+∑
+m
+=
+1
+M
+|
+𝚯
+|
++
+|
+𝚯
+|
+\sum_{m=1}^{M}|\mathbf{\Theta}|+|\mathbf{\Theta}|
+22.08 M
+Proto. + FSSL
+∑
+m
+=
+1
+M
+|
+𝚯
+|
++
+|
+𝚯
+|
++
+C
+×
+d
+\sum_{m=1}^{M}|\mathbf{\Theta}|+|\mathbf{\Theta}|+C\times d
+22.90 M
+ProxyFL
+∑
+i
+=
+1
+M
+(
+|
+𝚯
+|
++
+C
+)
++
+(
+|
+𝚯
+|
++
+C
+)
+\sum_{i=1}^{M}(|\mathbf{\Theta}|+C)+(|\mathbf{\Theta}|+C)
+22.08 M
+Table 8
+:
+Comparison of convergence rates between ProxyFL and other baseline methods on CIFAR100 dataset with
+α
+=
+0.5
+\alpha=0.5
+(the upper part) and
+α
+=
+1
+\alpha=1
+(the lower part).
+Acc.
+30%
+40%
+50%
+Method
+Round
+↓
+\downarrow
+Speedup
+↑
+\uparrow
+Round
+↓
+\downarrow
+Speedup
+↑
+\uparrow
+Round
+↓
+\downarrow
+Speedup
+↑
+\uparrow
+LPL
+121
+×
+\times
+1.00
+221
+×
+\times
+1.00
+546
+×
+\times
+1.00
+GPL
+113
+×
+\times
+1.07
+210
+×
+\times
+1.05
+419
+×
+\times
+1.30
+FedLabel
+83
+×
+\times
+1.46
+160
+×
+\times
+1.38
+366
+×
+\times
+1.49
+FedDB
+94
+×
+\times
+1.29
+205
+×
+\times
+1.08
+492
+×
+\times
+1.11
+FedDure
+110
+×
+\times
+1.10
+222
+×
+\times
+1.00
+552
+×
+\times
+0.99
+SAGE
+55
+×
+\times
+2.20
+105
+×
+\times
+2.10
+241
+×
+\times
+2.27
+ProxyFL
+44
+×
+\times
+2.75
+79
+×
+\times
+2.80
+155
+×
+\times
+3.52
+LPL
+118
+×
+\times
+1.00
+267
+×
+\times
+1.00
+527
+×
+\times
+1.00
+GPL
+94
+×
+\times
+1.26
+183
+×
+\times
+1.46
+390
+×
+\times
+1.35
+FedLabel
+91
+×
+\times
+1.30
+164
+×
+\times
+1.63
+341
+×
+\times
+1.55
+FedDB
+103
+×
+\times
+1.15
+237
+×
+\times
+1.13
+418
+×
+\times
+1.26
+FedDure
+95
+×
+\times
+1.24
+182
+×
+\times
+1.47
+450
+×
+\times
+1.17
+SAGE
+56
+×
+\times
+2.11
+112
+×
+\times
+2.38
+242
+×
+\times
+2.18
+ProxyFL
+45
+×
+\times
+2.62
+83
+×
+\times
+3.22
+157
+×
+\times
+3.36
+D.1
+Labeling Ratio
+To validate the effectiveness of our ProxyFL, we give a comparison between ProxyFL and other state-of-the-art methods with a 10% labeling ratio in Tab.
+1
+of main paper. Here, we further study the robustness of ProxyFL by comparing ProxyFL with other methods at 20% labeling ratio. As shown in Tab.
+6
+, ProxyFL consistently achieves better performance across different labeling ratios than others.
+D.2
+Communication Costs
+We calculate the communication cost in both theory and practice. As shown in Tab.
+7
+, FedMatch
+[
+12
+]
+needs the most communication costs of some auxiliary parameters since they additionally uploads the model embedding for KD-Tree reconstruction and downloads
+H
+H
+helper agents to facilitate local training. Incorporating ‘prototypes’ into FSSL will bring extra costs about
+0.82
+0.82
+M as
+∑
+m
+=
+1
+M
+C
+×
+d
+\sum_{m=1}^{M}C\times d
+and high-dimensional features (prototypes) poses the risk of reversely reconstruction
+[
+7
+,
+24
+]
+. As shown in Tab.
+7
+, compared to
+[
+4
+,
+1
+,
+21
+]
+, the costs of
+𝒫
+𝒢
+′
+​
+(
+𝐘
+)
+\mathcal{P}^{\prime}_{\mathcal{G}}(\mathbf{Y})
+in ProxyFL could be negligible (
+∑
+m
+=
+1
+M
+C
++
+C
+\sum_{m=1}^{M}C+C
+, approximately
+0.0016
+0.0016
+M, similar to
+[
+39
+]
+) and our method achieves much higher accuracy than them. In summary, our ProxyFL achieves higher accuracy while preserving a reasonable communication efficiencies and our prior design has lower privacy-leakage risk
+[
+39
+]
+than raw samples or features.
+D.3
+Convergence Rate
+In the 2) of Sec.
+6.3
+of the main paper, we conduct experiments under the
+α
+=
+0.1
+\alpha=0.1
+setting, where the ProxyFL method significantly improve model convergence speed and test accuracy. Here, we provide a detailed comparison of SAGE and other methods under varying levels of heterogeneity. As demonstrated in Tab.
+8
+and theoretical proofs of Sec.
+C
+, ProxyFL could achieve substantial acceleration in early stages and ensure final convergence under different levels of heterogeneity.
+D.4
+ProxyFL as a Plug-in Approach
+The GPT and ICPL components in our ProxyFL can be considered as a optimization mechanism of category distribution for FSSL, allowing integration into other FSSL approaches. As present in Tab.
+9
+, ProxyFL consistently improves the performance of existing FSSL methods. With a proxy-guided mechanism, our approach alleviates both internal and external heterogeneity locally and globally.
+Table 9
+:
+Performance gains brought by ProxyFL as a plugin to other baseline methods.
+Methods
+CIFAR-10
+CIFAR-100
+SVHN
+CINIC-10
+FixMatch
+82.98
+49.32
+89.68
+68.02
++ProxyFL
+88.56
+57.50
+95.09
+77.98
+↑
+\uparrow
+5.58
+↑
+\uparrow
+8.18
+↑
+\uparrow
+5.41
+↑
+\uparrow
+9.96
+FedLabel
+62.85
+50.88
+89.31
+67.64
++ProxyFL
+88.55
+56.88
+94.94
+76.35
+↑
+\uparrow
+25.70
+↑
+\uparrow
+6.00
+↑
+\uparrow
+5.63
+↑
+\uparrow
+8.71
+SAGE
+87.05
+54.18
+93.85
+74.59
++ProxyFL
+88.29
+57.10
+95.01
+77.58
+↑
+\uparrow
+1.24
+↑
+\uparrow
+2.92
+↑
+\uparrow
+1.16
+↑
+\uparrow
+2.99
+Figure 7
+:
+Ablation on the numbers of epoch for Global Proxy Tuning.
+D.5
+Ablation Study on Tuning Epochs
+We conduct experiments for server-tuning epochs,
+i.e.
+, the hyper-parameter
+Q
+Q
+. As shown in Fig.
+7
+, our GPT module achieves best performance when
+Q
+≈
+100
+Q\approx 100
+across most datasets. But, for CIFAR100 dataset, it requires fewer tuning epochs (
+i.e.
+,
+Q
+≈
+10
+Q\approx 10
+) and exhibits overfitting when
+Q
+Q
+increases. We analyze that, since CIFAR100 dataset has more categories (
+×
+10
+\times 10
+times category-number than other datasets) and thus has more tuning samples, it will converge much faster than other datasets.
+Thus, corresponding to Sec.
+6.1
+of our main paper, we claim that the number of tuning epochs is set to 10 for CIFAR-100 dataset and 100 for the other datasets.
+D.6
+Experimental Setting and other Details
+As claimed in Sec.
+6.1
+of our main paper,
+we strictly follow the experimental setup of SAGE
+[
+21
+]
+.
+We conduct our experiments on the same datasets with consistent client-splitting strategies as SAGE. For the hyper-parameter ‘the communication rounds
+T
+T
+’, we follow SAGE to set
+300,500,150,400
+300,500,150,400
+rounds for CIFAR10, CIFAR100, SVHN and CINIC10 dataset, respectively. The local learning rate is set to
+0.1
+0.1
+and the confidence threshold
+τ
+\tau
+for pseudo-labeling set to 0.95,
+etc.
+In summary, unless otherwise specified, our experimental details are consistent with SAGE.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

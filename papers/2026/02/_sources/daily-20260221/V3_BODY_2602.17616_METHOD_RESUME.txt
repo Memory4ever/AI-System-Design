@@ -1,0 +1,114 @@
+3 VCPO: Robust, Scalable Asynchronous Post training
+3.1 Why does Asynchronous Off-Policy RL collapse?
+To understand training collapse under asynchrony, we run controlled experiments with Qwen2.5-7B Base on MATH Hendrycks et al. (2021), a dataset of competition-style mathematics problems scored by exact-match final-answer correctness, and evaluate on 500 held-out problems (MATH-500). We log three signals over training: (i) the KL divergence between the rollout policy and the current learner policy (policy lag), (ii) reward / validation accuracy, and (iii) the ESS ratio, i.e., the effective sample size computed from sequence-level importance weights and normalized by the minibatch size.
+Baseline choice for diagnostics.
+To isolate the effect of policy lag, we adopt a strong masking/clipping baseline for these didactic collapse experiments. Based on the masking and clipping sweeps in Appendix E.2, we find that sequence-level truncated importance sampling (TIS) with a higher threshold (c=8.0c=8.0) delays collapse the longest among masking/clipping methods. We therefore use this setting as our default off-policy correction when diagnosing collapse.
+Optimizer and KL regularization. Unless otherwise noted, we use AdamW with weight decay (see Appendix F.1 for details). Following prior asynchronous Fu et al. (2025); Wu et al. (2025); Espeholt et al. (2018) and synchronous Yu and others (2025) RL works, we do not incorporate explicit KL regularization loss as it constrains learning ability. We corroborate this observation with our own experiments (Appendix E.3).
+Training Collapse. Figure 2 shows a representative collapse under high staleness (10 steps off-policy). As the ESS ratio collapses, updates become dominated by a few trajectories, leading to a KL explosion and an abrupt drop in training reward and validation accuracy. This supports our hypothesis that high-variance, dominated updates drives training collapse. For further evidence, see Appendix A for examples on math and reasoning tasks.
+Figure 2: Sequence-Level TIS Collapse.
+Qwen2.5-7B Base trained on MATH task with 10-step off-policy (PipelineRL-10). The ESS ratio first degrades and then collapses, leading to a spike in rollout–policy KL divergence and a sharp drop in both training reward and validation accuracy.
+See Appendix F.3 for hyperparameters and training details.
+3.2 Effective Sample Size Guided Step-Size Scaling for Stable Updates
+If asynchronous training fails due a subset of unreliable updates, a natural idea is to reduce the impact of those updates so that optimization remains robust under policy lag. A useful analogy comes from large-batch optimization: as batch size increases, gradient noise typically decreases McCandlish et al. (2018), allowing larger stable learning rates. While SGD often follows the linear scaling rule (η∝B\eta\propto B) Goyal et al. (2017), a widely used heuristic for adaptive optimizers such as Adam/AdamW is the square-root scaling law: increasing minibatch size by a factor kk permits scaling the learning rate by k\sqrt{k} (equivalently, η∝B\eta\propto\sqrt{B}) Krizhevsky (2014); Hoffer et al. (2017); You et al. (2020).
+In asynchronous off-policy RL, however, the nominal batch size BB can be misleading. As discussed in Section 2.2, importance weights may be heavy-tailed, so a batch of size BB can behave like a much smaller batch with only ESS\mathrm{ESS} effectively independent samples. In this regime, ESS\mathrm{ESS} is the relevant notion of effective batch size, and step-size selection should depend on ESS\mathrm{ESS} rather than on BB.
+Thus, motivated by the square-root scaling law η∝B\eta\propto\sqrt{B}, we propose learning-rate scaling via an effective batch-size rule
+ηeff∝ρess,ρess≜ESSB\eta_{\text{eff}}\;\propto\;\sqrt{\rho_{\text{ess}}},\qquad\rho_{\text{ess}}\;\triangleq\;\frac{\mathrm{ESS}}{B}
+(4)
+where we call ρess\rho_{\text{ess}} the effective sample size ratio.
+Because even on-policy/synchronous training can have ρesson<1\rho_{\text{ess}}^{\text{on}}<1 in practice (e.g., due to inevitable training-sampling differences and finite-sample effects), we introduce an empirical on-policy reference ρesson≜𝔼⁡[ρess∣on-policy]\rho^{{\text{on}}}_{\text{ess}}\triangleq\mathbb{E}[\rho_{\text{ess}}\mid\text{on-policy}] which is a constant estimated from 1 step of a on-policy run (or a running average of a few-steps)11
+1
+Empirically, ρon\rho_{\text{on}} is typically well-approximated by the first on-policy step.. We then rescale the step size by the relative reliability of the batch:
+ηeff=η⋅ρessoffρesson\eta_{\text{eff}}\;=\;\eta\cdot\sqrt{\frac{\rho^{{\text{off}}}_{\text{ess}}}{\rho^{{\text{on}}}_{\text{ess}}}}
+(5)
+This scaling preserves the on-policy step scale when ρess≈ρon\rho_{\text{ess}}\approx\rho_{\text{on}}, and automatically shrinks updates as ρess\rho_{\text{ess}} collapses.
+Thus when training is nearly on-policy and ESS≈B\mathrm{ESS}\approx B and ηeff≈η\eta_{\text{eff}}\approx\eta; when a few samples dominate, ESS≪B\mathrm{ESS}\ll B and ηeff\eta_{\text{eff}} shrinks like ESS/B\sqrt{\mathrm{ESS}/B}, damping the unstable, high-variance updates that coincide with KL/gradient spikes.
+3.3 Minimum Variance Baselines for Off-Policy RL
+Subtracting a baseline from the reward (or advantage) leaves the expected policy gradient unchanged but can substantially reduce variance. This control-variate view dates to reinforcement-comparison methods Dayan (1991) and was formalized for policy gradients Greensmith et al. (2004), with optimal baselines derived in the on-policy setting Weaver and Tao (2013).
+In more recent work, systems often use simple group baselines (e.g., per-prompt mean reward) for efficiency Li et al. (2023); Shao et al. (2024), while recent work studies heuristic or approximate optimal baselines on-policy Hao et al. (2025); Li et al. (2025). In highly asynchronous training, however, importance weighting changes the variance structure. We thus derive the variance-minimizing baseline for an off-policy, importance-weighted policy-gradient estimator.
+Setup. Consider the off-policy gradient estimator with a scalar baseline bb:
+G^​(b)=1B​∑i=1Bwi​(Ri−b)​∇θ​log⁡πθ​(τi)\hat{G}(b)\;=\;\frac{1}{B}\sum_{i=1}^{B}w_{i}(R_{i}-b)\,\nabla_{\theta}\log\pi_{\theta}(\tau_{i})
+(6)
+where each sample ii contribute a score-gradient vector gi=∇θ​log​πθ​(τi)g_{i}=\nabla_{\theta}\log\pi_{\theta}(\tau_{i}), a scalar reward/advantage RiR_{i}, and an importance ratio wiw_{i}.
+Minimum Variance Off-policy Baseline. As we derive in Appendix B), minimizing Var​(G^​(b))\mathrm{Var}(\hat{G}(b)) over scalar bb yields a closed-form solution for the off-policy optimal baseline (OPOB)
+bOPOB⋆=∑i=1Bwi2​‖gi‖2​Ri∑i=1Bwi2​‖gi‖2.b_{\text{OPOB}}^{\star}\;=\;\frac{\sum_{i=1}^{B}w_{i}^{2}\,\|g_{i}\|^{2}\,R_{i}}{\sum_{i=1}^{B}w_{i}^{2}\,\|g_{i}\|^{2}}.
+(7)
+Compared to common group baselines (e.g., b=1B​∑iRib=\frac{1}{B}\sum_{i}R_{i}), Eq. (7) shows that variance-optimal baselining in the off-policy regime depends on both
+(i) the importance weights wiw_{i} and
+(ii) the gradient magnitudes ‖gi‖2\|g_{i}\|^{2}.
+Intuitively, samples that are both highly upweighted off-policy and induce large parameter changes dominate update variance and should therefore dominate the baseline.
+Connections to prior baselines. Equation (7) can recover many familiar special cases.
+When training is on-policy (wi=1w_{i}=1), it reduces to the classic gradient-norm-weighted optimal baseline Greensmith et al. (2004); Weaver and Tao (2013).
+If, additionally, ‖gi‖\|g_{i}\| is approximately constant within a group, then b⋆b^{\star} reduces to the group-mean reward baseline commonly used in practice. Our derivation shows that in the off-policy regime, both importance weights and gradient magnitudes are required for variance-optimal baselining.
+3.4 Efficient Baseline-Aware Gradient Computation
+A naive gradient-aware baseline requires two backward passes: one to compute per-sample gradient norms and a second to apply the resulting baseline, roughly doubling backward compute time at scale. We instead implement it with a single backward pass, adding minimal wall-clock and memory overhead.
+Key observation: linearity of the baseline term. Note that expanding the equation in (6) yields
+G^​(b)=1B​∑i=1Bwi​Ri​gi⏟reward-weighted term−b⋅1B​∑i=1Bwi​gi⏟score term.\hat{G}(b)\;=\;\underbrace{\frac{1}{B}\sum_{i=1}^{B}w_{i}R_{i}g_{i}}_{\text{reward-weighted term}}\;-\;b\cdot\underbrace{\frac{1}{B}\sum_{i=1}^{B}w_{i}g_{i}}_{\text{score term}}.
+(8)
+Thus, for any chosen bb, the final gradient can be formed by combining two aggregated quantities:
+SR=∑i=1Bwi​Ri​gi,S1=∑i=1Bwi​giS_{R}\;=\;\sum_{i=1}^{B}w_{i}R_{i}g_{i},\quad S_{1}\;=\;\sum_{i=1}^{B}w_{i}g_{i}
+G^​(b)=1B​(SR−b​SS).\hat{G}(b)=\frac{1}{B}(S_{R}-bS_{S}).
+Score-gradient reweighting into two buffers. We take advantage of this linearity by computing per-sample score gradients gig_{i} once and accumulate them into two gradient buffers:
+(i) GRG_{R} a buffer that accumulates the reward/advantage-weighted score gradients Ri​wi​giR_{i}w_{i}g_{i}, and
+(ii) GSG_{S} a score buffer that accumulates score gradients wi​giw_{i}g_{i}. Afterwards, we form the final update by a simple linear combination of these buffers:
+GR=∑iwi​Ri​gi,GS=∑iwi​gi.G_{R}=\sum_{i}w_{i}R_{i}g_{i},\quad G_{S}=\sum_{i}w_{i}g_{i}.
+⇒G^​(b)=1B​(GR−b​GS),\Rightarrow\hat{G}(b)=\frac{1}{B}\left(G_{R}-b\,G_{S}\right),\quad
+This avoids any additional backward pass to incorporate the baseline term.
+Algorithm 1 Single-backward accumulation with Off-Policy Optimal Baseline baseline
+1:
+Input: Minibatch {(xi,τi,Ri,wi)}i=1B\{(x_{i},\tau_{i},R_{i},w_{i})\}_{i=1}^{B}, learner policy πθ\pi_{\theta}
+2:
+Output: Baseline-aware gradient estimate G^​(bOPOB⋆)\hat{G}(b^{\star}_{\text{OPOB}}) and scalar baseline bOPOB⋆b^{\star}_{\text{OPOB}}
+3:
+Initialize gradient buffers GR←0G_{R}\leftarrow 0, GS←0G_{S}\leftarrow 0
+4:
+Initialize baseline numerators N←0N\leftarrow 0, D←0D\leftarrow 0
+5:
+for i=1i=1 to BB do
+6:
+ℓi←log⁡πθ​(τi∣xi)\ell_{i}\leftarrow\log\pi_{\theta}(\tau_{i}\mid x_{i})
+7:
+gi←∇θℓig_{i}\leftarrow\nabla_{\theta}\ell_{i} (backprop)
+8:
+si←‖gi‖22s_{i}\leftarrow\|g_{i}\|_{2}^{2}
+9:
+GR←GR+(wi​Ri)​giG_{R}\leftarrow G_{R}+(w_{i}R_{i})\,g_{i}
+10:
+GS←GS+wi​giG_{S}\leftarrow G_{S}+w_{i}\,g_{i}
+11:
+N←N+wi2​si​RiN\leftarrow N+w_{i}^{2}\,s_{i}\,R_{i}
+12:
+D←D+wi2​siD\leftarrow D+w_{i}^{2}\,s_{i}
+13:
+end for
+14:
+bOPOB⋆←stopgrad⁡(ND+ε)b^{\star}_{\text{OPOB}}\leftarrow\mathrm{stopgrad}\!\left(\frac{N}{D+\varepsilon}\right)
+15:
+G^​(bOPOB⋆)←1B​(GR−bOPOB⋆​GS)\hat{G}(b^{\star}_{\text{OPOB}})\leftarrow\frac{1}{B}\left(G_{R}-b^{\star}_{\text{OPOB}}\,G_{S}\right)
+16:
+return G^​(bOPOB⋆),bOPOB⋆\hat{G}(b^{\star}_{\text{OPOB}}),\,b^{\star}_{\text{OPOB}}
+Implementation. We implement Algorithm 1 in verl using the Megatron-LM backend so that we can efficiently obtain gradient norm statistics. As can be seen in Figure 3, our method reduces the overhead of the naive method from 100% to a 19% step time overhead while only modestly increase memory usage by 14%. See Appendix C for more implementation details.
+Figure 3: Compute (left) and memory (right) overhead of baseline-aware updates for Qwen2.5-7B on 4×\timesH100 GPUs (TP=4) with a sequence length of 8192 tokens.
+3.5 VCPO: Variance Controlled Policy Optimization
+As noted in Appendix E.2, we find that sequence-level truncated importance sampling (TIS) with a higher threshold (c=8.0c=8.0) delays collapse the longest among masking/clipping methods. We thus combine sequence-level TIS with our effective-sample-size step-size scaling and our off-policy optimal baseline. This leads to the following surrogate loss, whose gradient equals our baseline-aware, truncated IS policy-gradient estimator
+ℒVCPO​(θ)\displaystyle\mathcal{L}_{\textsc{VCPO}}(\theta)
+=−𝔼x∼𝒟,y∼μ(⋅∣x)\displaystyle=-\mathbb{E}_{x\sim\mathcal{D},\,y\sim\mu(\cdot\mid x)}
+(9)
+[wTIS​(x,y)​(R⁡(x,y)−bOPOB⋆)​log⁡πθ​(y∣x)]\displaystyle\Bigl[w^{\textsc{TIS}}(x,y)\,(R(x,y)-b_{\text{OPOB}}^{\star})\,\log\pi_{\theta}(y\mid x)\Bigr]
+≈−1B∑i=1BwTISi(Ri−bOPOB⋆)logπθ(yi∣xi),\displaystyle\approx-\frac{1}{B}\sum_{i=1}^{B}w^{\textsc{TIS}}_{i}\,(R_{i}-b_{\text{OPOB}}^{\star})\,\log\pi_{\theta}(y_{i}\mid x_{i}),
+where the sequence-level truncated importance weight is
+wTIS​(x,y)=min⁡(sg⁡[πθ​(y∣x)μ⁡(y∣x)],c)w^{\textsc{TIS}}(x,y)\;=\;\min\!\left(\mathrm{sg}\left[\frac{\pi_{\theta}(y\mid x)}{\mu(y\mid x)}\right],\;\;c\right)
+We then apply AdamW using the gradient ∇θℒVCPO​(θ)\nabla_{\theta}\mathcal{L}_{\textsc{VCPO}}(\theta), but scale learning rate η\eta with an ESS-scaled step size
+ηeff=η⋅ρessoffρesson\eta_{\text{eff}}\;=\;\eta\cdot\sqrt{\frac{\rho^{{\text{off}}}_{\text{ess}}}{\rho^{{\text{on}}}_{\text{ess}}}}
+such each training step size scales with ESS\mathrm{ESS} accordingly. Note although we adopt TIS, we still use the unclipped IS ratios to calculate ESS.
+4 Empirical Evaluation
+Figure 4:
+GSM8K with Qwen2-1.5B under PipelineRL-12 (high policy lag).
+Most baselines lead to training collapse (or crash, e.g. Geometric MIS masks all sequences and has no loss), while VCPO remains stable throughout training and matches synchronous performance. Training details and hyperparameters can be found in Appendix F.2.
+Figure 5:
+Qwen2.5-7B under PipelineRL-10 (10 Steps Off-Policy) on Countdown and MATH-500. Across both tasks, sequence level truncated importance sampling (TIS) suffers ESS-ratio collapse followed by KL/gradient instability and degraded accuracy, whereas VCPO maintains healthy ESS and stable updates, reaching synchronous performance. Training details and hyperparameters are provided in Appendix F.3.
+4.1 Tasks
+We evaluate VCPO across three representative RL post-training pipelines for LLM reasoning and agentic tool use. These settings require long rollouts (reasoning and multi-turn interactions with tool calls), so training is often dominated by rollout generation. As a result, strictly on-policy training underutilizes compute: the gradient updates must wait for sampling to complete, and this bottleneck worsens at scale and in sparse-reward domains that require more exploration.
+We test VCPO in highly asynchronous regimes. Across all three pipelines, VCPO remains robust to substantial learner–sampler mismatch, improving throughput while preserving strong learning performance
+1.
+Mathematical problem solving.
+We evaluate on GSM8K Cobbe et al. (2021), a benchmark of grade-school math word problems, and on MATH Hendrycks et al. (2021), a dataset of competition-style mathematics probl

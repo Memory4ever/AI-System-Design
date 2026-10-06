@@ -1,0 +1,222 @@
+Necessary main-body extraction; no unrelated appendices. Source https://arxiv.org/html/2601.10373v1
+Introduction
+In recent years, remarkable progress has been made in image compression technology. However, compressing high-definition images at low bit-rate still poses significant challenges.
+Traditional image compression standards (Bellard 2014; Wallace 1992) rely on manually designed transform methods. Nevertheless, in low bit-rate (\leq 0.1 bpp) scenarios, prominent block artifacts and color distortion issues occur. Although learning-based end - to - end neural compression models (Cheng et al. 2020; Ballé et al. 2016; Ballé et al. 2018; He et al. 2022) outperform traditional methods in terms of performance, their distortion-driven optimization objectives still lead to substantial loss of texture and details in the reconstructed images when bandwidth is limited. (Blau and Michaeli 2019; Agustsson et al. 2023) summarizes this phenomenon as a triple trade-off between bit rate, distortion, and realism, revealing the inherent contradiction that extreme compression inevitably entails semantic information loss and a decline in perceptual quality.
+Figure 1: Qualitative and quantitative comparison between DiffEIC, Perco, HiFiC, MS-ILLM, CDC, and our proposed approach. DiffCR (Ours) not only possesses realism but also faithfully restores the details of the original image. The radar chart in the bottom right corner illustrates the performance comparison among various methods on the CLIC20 dataset. Best viewed when zoomed in.
+To address this issue, recent studies (Mentzer et al. 2020; Muckley et al. 2023; Lu et al. 2024; Qin et al. 2023) have introduced generative adversarial networks (GAN) to optimize perceptual quality. Based on this, (Lee et al. 2024) introduces semantic information at both the encoding and decoding ends to enhance the image restoration effect. Constrained by the GAN structure and the single perceptual loss, these methods still have considerable room for improvement in statistical fidelity. Meanwhile, some 3D generative methods based on neural representation and Gaussian splatting (Liu et al. 2025a; Liu et al. 2025b) have also been applied to lossy compression tasks for videos and images.
+In contrast, diffusion models (Dhariwal and Nichol 2021; Rombach et al. 2022) demonstrate superior generative quality through a progressive denoising process. The statistical characteristics of their reconstructed images are closer to the distribution of natural images. (Yang and Mandt 2024; Hoogeboom et al. 2023) first applied the DDPM (Ho et al. 2020) framework to the field of image compression and achieved breakthrough progress. However, this method requires the complete training of diffusion model components and has problems such as high computational costs and generalization being limited by the training data.
+More recently, several studies based on Latent Diffusion Models (LDMs) (Rombach et al. 2022) have introduced novel concepts to overcome the issues present in the GAN framework.
+For instance, (Lei et al. 2023) endeavors to manipulate the pre-trained LDM by encoding sketch and text semantics. Utilize the sampling process of the diffusion model for image decoding. Given the difficulties in jointly optimizing semantic embeddings and the transfer representation for compression objectives, they have dedicated significant resources to iterative semantic embedding and alignment.
+(Careil et al. 2024) makes use of a fully-trained LDM and encodes conditional images with a trainable codebook. However, this approach has two drawbacks. Firstly, it demands careful optimization of the model on a dataset consisting of millions of images. Secondly, the independent training of the compressor and the diffusion model diminishes the learning capacity of the compressor.
+(Li et al. 2024a) utilizes a pre-trained foundation LDM. Nevertheless, the joint training method it employs makes it arduous for the compressor to learn compact representations by capitalizing on the diffusion prior.
+(Ke et al. 2025) harnesses Multimodal Large Language Models (MLLM) to acquire high-quality text semantics and attains remarkable performance improvements at ultra low bit-rate. Nevertheless, this comes at the cost of extremely high encoding latency.
+In general, existing image compression schemes based on diffusion suffer from two key deficiencies. (1) Suboptimal bit allocation due to training paradigms and latent misalignment. In current research, the training of the compressor and diffusion model is either conducted separately (Yang and Mandt 2024; Careil et al. 2024) or the diffusion loss and compressor loss are misaligned (Li et al. 2024a; Ke et al. 2025). (Xia et al. 2025) attempts have been made to employ proxy losses to enable the compressor to capture diffusion priors during training, yet the most compact compression representation remains elusive.
+(2) Methods based on diffusion rely on standard diffusion models and encounter challenges in sampling as they require multiple iterations to generate realistic image outputs. This not only leads to significant decoding delays but also hinders their seamless integration with perceptual losses applied to the final image output, consequently diminishing decoding fidelity.
+To address the aforementioned critical issues, we introduce the Accelerate Diffusion-based Image Compression via Consistency Prior Refinement (DiffCR). Reflecting upon the training paradigm of \epsilon-Prediction in the fundamental diffusion model, we devise a Consistency Refinement Estimator (CRE) to actively correct and enhance diffusion priors, aligning the model’s focus on optimizing both the realism of generated images and the quest for compact compression representations. Specifically, we craft the Frequency-aware Skip Estimation (FaSE) to align diffusion priors with compressed latents at different time steps and employ Frequency Decoupling Attention (FDA) to capture contextual relationships between the two at various frequencies. Furthermore, we maintain the consistency of FaSE sampling trajectories with original ODE trajectories through consistency losses. Unlike conventional consistency distillation methods, our approach achieves high-fidelity decoding in just two steps with only 1/100 of the parameters of the original denoising network (8M vs.800M). Furthermore, DiffCR leverages mixed semantic flows to further fortify and stabilize the generated results. Benefitting from these characteristics, DiffCR decodes highly realistic images at extremely low bitrates (\leq0.05 bpp) in a mere 0.4 seconds, as depicted in fig. 1.
+Our contributions can be summarized as follows:
+•
+We introduce the Frequency-aware Skip Estimation to refine (FaSE) and align pre-trained diffusion priors with compressed latents. This not only facilitates the compressor in acquiring more compact compression representations but also allows our model to decode high-quality results in just two steps through consistency constraints.
+•
+We devise the Frequency Decoupling Attention (FDA) to synchronize diffusion priors generated at different time steps with compressed latents. FDA decouples the two in the Fourier domain and modulates them across different time steps using a temporal mask.
+•
+Building upon these key points, we propose DiffCR. DiffCR not only enhances encoding efficiency but also utilizes the semantic branch to stabilize and enhance decoding performance. We validate DiffCR on multiple high-quality datasets, demonstrating its superior perceptual performance. Compared to a state-of-the-art compression approach (Li et al. 2024a), which is also based on SD 2.1, DiffCR achieves savings in BD-rate of 27.2% (LPIPS), 32.8% (FID), and 65.1% (PSNR).
+Figure 2: Illustration of the proposed DiffCR. RRDB signifies Residual in Residual Dense Block (Wang et al. 2018). DiffCR utilizes two branches to guide pre-trained denoising networks in generation and reinforces prior correction and refinement through the FaSE module, aligning it with the reconstruction objective of the compressor. Unlike the ordinary sampling process (depicted by the grey dashed line), DiffCR permits a two-step sampling approach (illustrated by the blue-purple arrows).
+Background
+Learned Latent Compression
+Learnable image compression (Ballé et al. 2016; Ballé et al. 2018; Minnen et al. 2018; He et al. 2022; Cheng et al. 2020; Qin et al. 2024) involves extracting image representations through an encoder, estimating the probability distribution of these representations using entropy models, and subsequently performing entropy coding. Following Shannon’s information theory (Shannon 1948), the training paradigm can be unified into the following form:
+\displaystyle\mathcal{L}=R_{\boldsymbol{x}}+\lambda D(\boldsymbol{x},\mathcal{M}(\boldsymbol{x}))
+(1)
+Here, \mathcal{M}(\cdot) represents the compressor, and R_{\boldsymbol{x}} denotes the bitrate of the image \boldsymbol{x}. The function D(\cdot) typically selects pixel-level distortions such as Mean Squared Error (MSE) or MS-SSIM (Wang et al. 2003). In estimating some generative compression tasks (Careil et al. 2024; Mao et al. 2024; Li et al. 2024a; Yang and Mandt 2024), the compressor replaces encoding the image with a latent extracted by a pretrained analysis encoder. In this scenario, the training objective is replaced by:
+\displaystyle\mathcal{L}=R_{\mathcal{E}(\boldsymbol{x})}+\lambda D(\mathcal{E}(\boldsymbol{x}),\mathcal{M}(\mathcal{E}(\boldsymbol{x})))
+(2)
+Here, \mathcal{E}(\cdot) represents the pretrained analysis encoder. This approach eliminates the need for designing intricate feature extraction modules for the compressor, while ensuring that the decoded features reside in the encoding space of the pretrained generative model, thereby enhancing the quality of the final reconstructed image. Despite lightening the load on the compressor, this method introduces a potential inconsistency between distortions in the feature domain and distortions in the image domain, which could lead the compressor astray from the optimal rate-distortion trade-off solution.
+Latent Diffusion Models
+Diffusion models (DMs), or score-based generative models (Ho et al. 2020; Song et al. 2021), are a type of generative model that gradually injects Gaussian noise into the data and then generates samples from the noise through a reverse denoising process. To enable diffusion models to train on limited computing resources while preserving generation quality, Latent Diffusion Models (LDMs) (Rombach et al. 2022) encode an image \boldsymbol{x} into a latent representation \boldsymbol{z_{0}} via an encoder \mathcal{E} and reconstruct it using a decoder \mathcal{D}.
+In LDMs’ forward process, Gaussian noise is gradually added to the clean latent feature \boldsymbol{z_{0}}, with noise intensity at each step controlled by schedule \beta_{t}. This process is formulated as:
+\displaystyle\boldsymbol{z_{t}}=\sqrt{\bar{\alpha}_{t}}\boldsymbol{z_{0}}+\sqrt{1-\bar{\alpha}_{t}}\epsilon,\quad t\in\{1,2,\ldots,T\},
+(3)
+where \epsilon\sim\mathcal{N}(0,\mathbf{I}) is standard Gaussian noise. Here, \alpha_{t}=1-\beta_{t} and \bar{\alpha}_{t}=\prod_{i=1}^{t}\alpha_{i}. As t increases, the corrupted \boldsymbol{z_{t}} progressively approximates a Gaussian distribution.
+The reverse process of modeling LDMs is equivalent to training a noise prediction network \boldsymbol{\epsilon}_{\theta} with the diffusion loss:
+\displaystyle\mathcal{L}_{\text{diff}}=\mathbb{E}_{\boldsymbol{z_{0}},t,\epsilon\sim\mathcal{N}(\mathbf{0},\mathbf{I})}\left\|\boldsymbol{\epsilon}-\boldsymbol{\epsilon}_{\theta}\left(\boldsymbol{z_{t}},\boldsymbol{c},t\right)\right\|_{2}^{2}.
+(4)
+During inference, LDMs predict noise using the pre-trained denoising network \boldsymbol{\epsilon}_{\theta}(\boldsymbol{z_{t}},\boldsymbol{c},t) with text condition \boldsymbol{c}, generating latent \boldsymbol{z_{t-1}} to sequentially obtain the final latent \boldsymbol{z_{0}}
+(As indicated by the grey dashed line in fig. 2). Stable Diffusion, as pre-trained LDMs, have been shown to have priors that can be widely applied in low-level image tasks (Lin et al. 2023; Wang et al. 2024; Li et al. 2024b).
+Consistency Models
+Consistency Models (CMs) (Song et al. 2023) use consistency mapping to directly map any point in an ODE trajectory back to its origin, enabling fast few-step generation. Formally, this mapping is defined as \boldsymbol{f}:\left(\boldsymbol{x}_{t},t\right)\longmapsto\boldsymbol{x}_{\epsilon} where \epsilon is a fixed small positive number. A key property is self-consistency:
+\displaystyle\boldsymbol{f}\left(\boldsymbol{x}_{t},t\right)=\boldsymbol{f}\left(\boldsymbol{x}_{t^{\prime}},t^{\prime}\right),\forall t,t^{\prime}\in[\epsilon,T].
+(5)
+To ensure \boldsymbol{f}_{\boldsymbol{\theta}}(\boldsymbol{x},\epsilon)=\boldsymbol{x}, the model is parameterized as:
+\displaystyle\boldsymbol{f}_{\boldsymbol{\theta}}(\boldsymbol{x},t)=c_{\text{skip }}(t)\boldsymbol{x}+c_{\text{out }}(t)\boldsymbol{F}_{\boldsymbol{\theta}}(\boldsymbol{x},t),
+(6)
+where c_{\text{skip }}(0)=1,c_{\text{out }}(0)=0. During training, self-consistency is enforced using a target model \boldsymbol{\theta}^{-}—an exponential moving average (EMA) of \boldsymbol{\theta}: \boldsymbol{\theta}^{-}\leftarrow\mu\boldsymbol{\theta}^{-}+(1-\mu)\boldsymbol{\theta}. The consistency loss is:
+\displaystyle\begin{aligned} &\mathcal{L}\left(\boldsymbol{\theta},\boldsymbol{\theta}^{-};\Phi\right)=\\
+&\mathbb{E}_{\boldsymbol{x},t}\left[d\left(\boldsymbol{f}_{\boldsymbol{\theta}}\left(\boldsymbol{x}_{t_{n+1}},t_{n+1}\right),\boldsymbol{f}_{\boldsymbol{\theta}-}\left(\hat{\boldsymbol{x}}_{t_{n}}^{\Psi},t_{n}\right)\right)\right].\end{aligned}
+(7)
+Here, d(\cdot,\cdot) is a distance metric. \Psi denotes a one-step ODE solver estimating \boldsymbol{x}_{t_{n}} from \boldsymbol{x}_{t_{n+1}}. (Luo et al. 2023) applies this to pre-trained LDMs with skip-step scheduling, ensuring consistency between non-adjacent steps t_{n+k}\rightarrow t_{n} instead of t_{n+1}\rightarrow t_{n}.
+Method
+Overview Framework
+The fig. 2 illustrates the overall framework of DiffCR. For a detailed algorithmic flow, please refer to the appendix. The image \boldsymbol{x} is first passed through the encoder \mathcal{E}(\cdot) to obtain the latent representation \boldsymbol{z_{0}} of the LDMs, which is then fed into the latent compressor for lossy compression, resulting in a bitstream and its decoded output \boldsymbol{\hat{c}}. \boldsymbol{\hat{c}} guides the denoising network through the image control branch. Simultaneously, we mix the semantic information provided by the distorted image \mathcal{D}(\boldsymbol{\hat{c}}) and the textual semantics from \boldsymbol{x}, embedding them into the denoising network.
+Next, DiffCR corrects and refines the output of the denoising network, \boldsymbol{\epsilon}, and image-level control \boldsymbol{\hat{c}}, through Frequency-aware Skip Estimation, mapping any input at any time (\boldsymbol{\hat{z}^{t}_{0}}) back to the origin status \boldsymbol{z_{0}} (\boldsymbol{\tilde{z}^{t}_{0}}). Unlike the sampling path of DDPM, DiffCR allows for two-step fast sampling. The final sampling result is obtained through the decoder \mathcal{D}(\cdot) to yield the ultimate decoded output \boldsymbol{\hat{x}}.
+Figure 3: (Left) The trend of frequency energy variation in reconstruction by diffusion models at different time steps.
+(Right) Quantitative performance comparison of the compressor, denoising network, and FaSE in proceeding \boldsymbol{z_{0}}-prediction.
+Consistency Refinement for Latent Compression
+Frequency-aware Skip Estimation
+The foundational diffusion model optimizes eq. 4 by infusing conditions into the denoising model, gradually enhancing the realism of generated images. However, this objective cannot serve as the reconstruction target for the compressor, manifesting as pattern collapse (Li et al. 2024a).
+Instead, existing methods align latent eq. 2 to train the compressor, yet the information in the latent stems from the priors of the encoder-decoder \mathcal{E} and \mathcal{D}, not the denoising network \boldsymbol{\epsilon}_{\theta}. FaSE aims to establish a consistency estimator \boldsymbol{f}_{\phi,\theta}(\boldsymbol{z_{t}},\boldsymbol{\hat{c}},t) that transforms the diffusion prior and compressed latent conditions into the same predictive target \boldsymbol{z_{0}}:
+\begin{aligned} \boldsymbol{f}_{\phi,\theta}(\boldsymbol{z_{t}},\boldsymbol{\hat{c}},t)=c_{\mathrm{skip}}(t)\boldsymbol{z_{t}}+c_{\mathrm{out}}(t)\left(\boldsymbol{F}_{\phi}(\boldsymbol{\epsilon}_{\theta}(\boldsymbol{z_{t}}),\boldsymbol{\hat{c}},t)\right).\end{aligned}
+(8)
+Figure 4: Visualization of bit-rate allocation on the Kodak.
+Figure 5: Illustration of the FDA module, where Q_{\cdot}K_{\cdot}V_{\cdot} corresponds to Query, Key, and Value in the attention mechanism.
+Where the objective of \boldsymbol{F}_{\phi}(\cdot,\cdot,\cdot) is to align the \boldsymbol{\epsilon}-Prediction prior with the image condition \boldsymbol{\hat{c}}, predicting the solution of the PF-ODE through consistency loss (Luo et al. 2023):
+\begin{aligned} &\mathcal{L}_{\mathcal{C}}\left(\boldsymbol{\phi},\boldsymbol{\phi}^{-};\Psi\right)=\\
+&\mathbb{E}_{\boldsymbol{z},\boldsymbol{\hat{c}},n}\left[d\left(\boldsymbol{F}_{\boldsymbol{\phi}}\left(\boldsymbol{\epsilon}_{\theta}(\boldsymbol{z}_{t_{n+k}}),\boldsymbol{\hat{c}},t_{n+1}\right),\boldsymbol{F}_{\boldsymbol{\phi}^{-}}\left(\boldsymbol{\epsilon}_{\theta}(\hat{\boldsymbol{z}}_{t_{n}}^{\Psi}),\boldsymbol{\hat{c}},t_{n}\right)\right)\right].\end{aligned}
+(9)
+Where \Psi represents the DDIM-solver (Song et al. 2020), d(\cdot,\cdot) denotes the mean squared error, and k=20. In contrast to consistency distillation, \boldsymbol{F}_{\phi}(\cdot,\cdot,\cdot) begins with zero initialization, necessitating the \boldsymbol{z}_{0}-Prediction loss to stabilize the prediction process:
+\displaystyle\mathcal{L}_{\boldsymbol{F}}=w(t)\cdot\|\boldsymbol{F}_{\phi}(\boldsymbol{\epsilon}_{\theta}(\boldsymbol{z_{t}}),\boldsymbol{\hat{c}},t)-\boldsymbol{z_{0}}\|_{2}^{2}.
+(10)
+Here, w(t)=\frac{1}{2}\left(\frac{\bar{\alpha}{t-1}}{1-\bar{\alpha}{t-1}}-\frac{\bar{\alpha}_{t}}{1-\bar{\alpha}_{t}}\right).
+We refer to the predicted \boldsymbol{z_{0}} obtained through \boldsymbol{\epsilon}-Prediction (eq. 3) as \boldsymbol{\hat{z}_{0}}, and the prediction derived from FaSE as \boldsymbol{\tilde{z}_{0}}. The right side of fig. 3 illustrates three distinct patterns of \boldsymbol{z_{0}} prediction. \boldsymbol{\hat{c}} provides the roughest prediction (fig. 3(c)), with the predicted differences evenly distributed throughout the image. Although \boldsymbol{\hat{z}_{0}} refines many textures using priors (fig. 3(e)), it exhibits significant inconsistencies and distortions in specific details. In contrast, FaSE effectively aligns \boldsymbol{\hat{c}} and \boldsymbol{\hat{z}_{0}}, combining detail consistency with texture richness (fig. 3(d)). Crucially, the joint training of the compressor with FaSE enables it to actively capture the attention of the diffusion prior in different regions to extract more compact compression representations. As shown in fig. 4, compared to not utilizing consistency refinement, the compressor tends to waste bits on flat, highly repetitive patterns in natural images (such as sky, grass, etc.), as shown in fig. 4(b). However, these common textures can be easily synthesized by the diffusion prior. In contrast, FaSE perfectly captures these prior signals, significantly optimizing the bit rate allocation of the compressor.
+Frequency Decoupling Attention
+The signals recovered by the diffusion model at different time steps exhibit non-uniformity in the frequency domain. Specifically, in the early time steps, the denoising network tends to focus on recovering low-frequency signals, while high-frequency signals are synthesized more in later time steps (Qian et al. 2024; Yuan et al. 2025). Our experiments also confirm this observation, as shown on the left side of fig. 3. This implies that when designing \boldsymbol{F}_{\phi}(\cdot,\cdot,\cdot), we need to consider the alignment of \boldsymbol{\hat{z}^{t}_{0}} and \boldsymbol{\hat{c}} in different frequency domains for different time steps t. To address this, we introduce Frequency-Decoupling Attention (FDA), as illustrated in fig. 5. Specifically, FDA first transforms \boldsymbol{\hat{z}^{t}_{0}} and \boldsymbol{\hat{c}} to the Fourier domain using fast Fourier transform FFT(\cdot), and then obtains the high and low-frequency components of both through high-pass and low-pass filters:
+\begin{aligned} &\boldsymbol{\hat{c}^{H}}=FFT(\boldsymbol{\hat{c}})\odot\mathcal{K},\boldsymbol{\hat{c}^{L}}=FFT(\boldsymbol{\hat{c}})\odot(1-\mathcal{K}),\\
+&\boldsymbol{\hat{z}^{t,H}_{0}}=FFT(\boldsymbol{\hat{z}^{t}_{0}})\odot\mathcal{K},\boldsymbol{\hat{z}^{t,L}_{0}}=FFT(\boldsymbol{\hat{z}^{t}_{0}})\odot(1-\mathcal{K}).\end{aligned}
+(11)
+We then employ two separate cross-attention mechanisms to individually match the high and low-frequency components:
+\begin{aligned} &Crossattn^{H}(\boldsymbol{\hat{z}^{t,H}_{0}},\boldsymbol{\hat{c}^{H}})=\operatorname{Softmax}\left(\frac{Q^{H}K^{H}}{\sqrt{d}}\right)\cdot V^{H},\\
+&Crossattn^{L}(\boldsymbol{\hat{z}^{t,L}_{0}},\boldsymbol{\hat{c}^{L}})=\operatorname{Softmax}\left(\frac{Q^{L}K^{L}}{\sqrt{d}}\right)\cdot V^{L}.\end{aligned}
+(12)
+Subsequently, we modulate the contribution of the prior \boldsymbol{\hat{z}^{t}_{0}} in the prediction using a linear temporal mask, following best practices and previous research experience, where the proportion of the prior’s high-frequency content in the mixture increases gradually as the time step approaches zero. Taking the high-frequency component as an example:
+\begin{aligned} \boldsymbol{\hat{z}^{t,H,o}_{0}}=Cattn^{H}(\boldsymbol{\hat{z}^{t,H}_{0}},\boldsymbol{\hat{c}^{H}})*M_{t}+\boldsymbol{\hat{c}^{H}}*(1-M_{t}).\end{aligned}
+(13)
+Where M_{t}=1-t/T, with T being the total number of timesteps in the diffusion model.
+We present ablation experiments on this module in table 2, demonstrating that compared to directly using cross-attention, FDA achieves significant performance gains through the temporal attention mechanism and frequency decoupling.
+Control Foundation Diffusion with Hybrid Control
+Inspired by (Xia et al. 2025), we integrate image control branch reconstructed by the compressor and semantic control branch extracted by CLIP (Radford et al. 2021). These are injected into the denoising network via control encoder (Zhang et al. 2023) and cross-attention (fig. 2). The image control enhances edge and texture generation for better fidelity, while the semantic control stabilizes generation and corrects color shifts caused by denoising.
+For image control, an end-to-end compressor performs latent-space compression and reconstruction. Feature \boldsymbol{z_{0}} is downsampled to \boldsymbol{y} by g_{a}. A VQ-based categorical hyperprior model (Jia et al. 2024) extracts and compresses hyperpriors, which are then used with the SCCTX entropy model (He et al. 2022) for \boldsymbol{\hat{y}}’s entropy estimation. Finally, g_{s} decodes \boldsymbol{\hat{y}} to obtain image-level control \boldsymbol{\hat{c}}.
+For the semantic control, an image captioning model (Wang et al. 2022) extracts image textual descriptions (transmission cost \leq 0.0001 bpp). Two Clip-Encoders extract image and textual semantics separately; these embeddings are modulated via a resampling layer (Ye et al. 2023) and injected into the denoising network. Compared to sole textual control, such multimodal semantics enhance decoding performance without transmission redundancy.
+Figure 6: Qualitative comparison on the CLIC20 and DIV2K datasets. Grey arrows indicate the direction of better performance.
+Training Strategy
+Our model is trained in two stages. In the first stage of training, the compressor, control module, and skip estimation module are jointly trained. While optimizing the compressor’s ability to extract representations, the guiding capabilities of the control module and skip estimation are enhanced. For the compressor, we need the rate-distortion loss to balance distortion and compression rate:
+\displaystyle\mathcal{L}_{\text{LC}}=\lambda_{1}\left\|\boldsymbol{z}_{0}-\boldsymbol{\hat{c}}\right\|_{2}^{2}+\lambda_{2}R(\hat{\boldsymbol{y}})+\mathcal{L}_{\text{codebook }},
+(14)
+where \lambda_{1} and \lambda_{2} are used to balance distortion and bit-rate, and the definition of \mathcal{L}_{\text{codebook }} is:
+\displaystyle\mathcal{L}_{\text{codebook }}=\left\|sg\left(\boldsymbol{l}_{y}\right)-\hat{\boldsymbol{l}}_{y}\right\|_{2}^{2}+\beta\left\|sg\left(\hat{\boldsymbol{l}}_{y}\right)-\boldsymbol{l}_{y}\right\|_{2}^{2},
+(15)
+where \operatorname{sg}(\cdot) denotes the stop-gradient operator and \beta= 0.25.
+For the skip estimation module \boldsymbol{F}_{\phi}(\cdot,\cdot,\cdot), we need to maintain its self-consistency while preserving its functionality for \boldsymbol{z}_{0}-Prediction:
+\displaystyle\mathcal{L}_{\text{FaSE}}=\lambda_{1}\mathcal{L}_{\boldsymbol{F}}+\mathcal{L}_{\mathcal{C}}\left(\boldsymbol{\phi},\boldsymbol{\phi}^{-};\Psi\right).
+(16)
+Since \mathcal{L}_{\boldsymbol{F}} effectively facilitates the optimization of the compressor’s distortion, we select hyperparameters that are in line with the distortion settings of the compressor.
+For the control module, we need to optimize the original diffusion loss eq. 4 to integrate it into the denoising net:
+\displaystyle\mathcal{L}_{\text{diff}}=\mathbb{E}_{\boldsymbol{z_{0}},\boldsymbol{\hat{c}},s,t,\epsilon\sim\mathcal{N}(\mathbf{0},\mathbf{I})}\left\|\boldsymbol{\epsilon}-\boldsymbol{\epsilon}_{\theta}\left(\boldsymbol{z_{t}},\boldsymbol{\hat{c}},s,t\right)\right\|_{2}^{2}.
+(17)
+The total loss for the first stage is:
+\displaystyle\mathcal{L}_{\text{1st}}=\mathcal{L}_{\text{LC}}+\mathcal{L}_{\text{FaSE}}+\lambda_{3}\mathcal{L}_{\text{diff}}.
+(18)
+In the second stage, our main focus is on training \boldsymbol{F}_{\phi}(\cdot,\cdot,\cdot) on the sampling process patterns. We freeze the parameters of the compressor and use \boldsymbol{F}_{\phi}(\cdot,\cdot,\cdot) for two-step sampling. We map the sampling results back to the image domain to calculate the reconstruction loss compared to the original image. Additionally, we must ensure that the control module and \boldsymbol{F}_{\phi}(\cdot,\cdot,\cdot) receive proper guidance. Specifically:
+\displaystyle\mathcal{L}_{\text{2st}}=\mathcal{L}_{\text{per}}(\mathcal{D}(\boldsymbol{\hat{z}_{0}}),\boldsymbol{x})+\mathcal{L}_{\text{FaSE}}+\mathcal{L}_{\text{diff}}.
+(19)
+\mathcal{L}_{\text{per}} represents perceptual loss, and in this case, we are using LPIPS (Zhang et al. 2018).
+Experiments
+Experimental Setup
+Datasets.
+During the validation phase, we referred to (Muckley et al. 2023; Yang and Mandt 2024) and utilized four widely recognized image compression benchmark datasets: CLIC20 (George Toderici 2020), DIV2K (Timofte et al. 2017), Kodak (Company 2013), and Tecnick (Asuni and Giachetti 2013). CLIC20 comprises 428 high-definition images. To ensure more reliable statistical fidelity validation within DIV2K, we selected the initial 400 images from DIV2K-train and 100 images from DIV2K-valid, resulting in a total of 500 images for testing.
+Baselines.
+We shall compare our proposed DiffCR against a myriad of representative image compression methods, encompassing traditional compression standard such as BPG (Bellard 2014); VAE-based compression method ELIC (He et al. 2022); GAN-driven compression techniques including HiFiC (Mentzer et al. 2020), MS-ILLM (Muckley et al. 2023), and TACO (Lee et al. 2024); alongside diffusion-based approaches such as CDC (Yang and Mandt 2024), PerCo (Careil et al. 2024), DiffEIC (Li et al. 2024a), DiffPC (Xia et al. 2025), and ResULIC (Ke et al. 2025). Further details can be perused in the appendix. For certain baselines with undisclosed functionalities (Ke et al. 2025), we solely contrasted their publicly available data points on the Kodak.
+Metrics.
+We employ a variety of widely acknowledged metrics to gauge the visual quality of reconstructed images, including perceptual metrics such as LPIPS (Zhang et al. 2018), DISTS (Ding et al. 2020), FID (Heusel et al. 2017), and KID (Bińkowski et al. 2018). Additionally, we utilize distortion metrics like PSNR and MS-SSIM (Wang et al. 2003) to assess the fidelity of reconstruction. Unless otherwise specified, LPIPS computations are performed using the Alex network, and we also present validation results of LPIPS-V metrics calculated using the VGG network. For the Kodak and Tecnick datasets, due to insufficient data for statistical fidelity metric calculations, we do not validate FID and KID metrics on these datasets. Further details can be found in the appendix.
+Main Result
+Figure 6 illustrates the quantitative comparison between DiffCR and baseline methods on CLIC20 and DIV2K. It is evident that our proposed approach excels in perceptual quality, matching the state-of-the-art solution MS-ILLM in terms of the LPIPS metric and outperforming all diffusion baselines consistently. Particularly, in the appendix, we showcase two metrics, KID and LPIPS-V, demonstrating the consistent superiority of DiffCR over all baselines. Noteworthy is the fact that the enhancement in perceptual metrics does not come at the cost of increased distortion: DiffCR significantly outperforms other diffusion baselines in terms of PSNR, even demonstrating competitiveness with HiFiC on the DIV2K dataset. This clearly indicates that DiffCR achieves a superior distortion-perception trade-off from a compression perspective, rather than solely relying on diffusion model priors for image enhancement. In the supplementary materials, we present qualitative visual comparisons to further elucidate the performance advantages of DiffCR.
+Model
+Encoding(s)
+Decoding(s)
+BD-rate(%)
+DISTS
+ELIC
+0.009
+0.008
+1017.3
+HiFiC
+0.012
+0.062
+376.04
+MS-ILLM
+0.069
+0.068
+125.25
+CDC
+0.007
+3.081
+116.47
+Perco
+0.131
+7.455
+90.757
+DiffEIC
+0.402
+6.618
+28.062
+DiffPC
+0.089
+7.325
+26.831
+ResULIC
+181.16*
+1.021
+16.904
+Ours
+0.076
+0.481
+0
+Table 1: Encoding and decoding time on Kodak dataset. A higher BD-rate indicates poorer performance. * The values reported in the (Ke et al. 2025) paper are utilized.
+Complexity Comparisons
+Table 1 presents the encoding and decoding latency as well as performance comparison between DiffCR and baseline methods on the Kodak dataset. The performance metric utilized is BD-rate (Bjontegaard 2001). Taking DiffCR as the reference model, a higher BD-rate indicates that the model requires more bits to achieve the same metric as the reference. DiffCR not only boasts satisfactory encoding speed but also, due to its requirement for only two sampling steps, exhibits decoding speeds over 10\times faster than the typical diffusion baselines that employ 50 steps of sampling and still outperforms the 4-step decoding of (Ke et al. 2025) by 2\times.
+Ablations
+We conducted ablation experiments on the CLIC20, using DiffCR as a baseline to showcase the BD-rate from different ablations, as depicted in table 2.
+Consistency Refinement Estimator (CRE).
+In fig. 4, we demonstrate the advantage of CRE in optimizing bit rate allocation. As shown in table 2, removing CRE leads to a performance degradation of up to 40%.
+Frequency Decoupling Attention (FDA).
+We replaced the FDA module with cross-attention layers. As discussed in previous sections, standard cross-attention struggles to capture the intricate context of diffusion priors and compressed latents across different time steps, resulting in a performance decline of approximately 14%.
+Second Stage Training (2-stage).
+Directly training the model in the second stage to learn sampling patterns from image-domain distortion. Omitting this training stage results in a performance drop of around 47%.
+Semantic Embedding (S.Emb.).
+Replacing mixed semantic embeddings with pure textual semantic embeddings leads to a 9% performance decline and introduces slight color deviations in decoded images.
+We also discussed the model’s sensitivity to text extracted by different image-captioning models and conducted ablation experiments on the sampling steps. Please refer to the appendix for further details.
+S.Emb.
+CRE
+FDA
+2-stage
+BD-rate(%)
+LPIPS
+FID
+✔
+✔
+✔
+44.5
+51.1
+✔
+✔
+38.24
+41.21
+✔
+✔
+✔
+13.52
+15.64
+✔
+✔
+✔
+8.32
+10.11
+✔
+✔
+✔
+✔
+0
+0
+Table 2: Ablation studies comparing each module on the
+CLIC20 dataset
+Conclusions
+In this paper, we introduce DiffCR, a high-fidelity, low-bitrate image compression framework that leverages consistency refinement diffusion priors. Through extensive experimentation, we demonstrate the significant contributions of the frequency-aware skip prediction module in optimizing bit-rate allocation and balancing perception-distortion trade-offs. DiffCR exhibits satisfactory perceptual quality and decoding efficiency in low-bitrate scenarios. Moreover, the flexible model architecture showcases promising prospects for practical applications.
+Acknowledgements
+This work is supported in part by the National Natural Science Foundation of China under grant 624B2088, 62301189, 62571298, and Shenzhen Science and Technology Program under Grant KJZD20240903103702004, SYSPG20241211173609009.

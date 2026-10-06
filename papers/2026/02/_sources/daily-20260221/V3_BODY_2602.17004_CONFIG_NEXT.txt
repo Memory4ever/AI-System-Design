@@ -1,0 +1,96 @@
+3.3 Infrastructure
+We trained Trinity on GPU clusters managed by Prime Intellect. We use a modified version of TorchTitan (Liang et al., 2025) as our training framework. For efficient fused cross-entropy and z-loss, we use kernels from the Liger Kernels (Hsu et al., 2025) project. For larger memory savings during context extension and supervised fine-tuning, we use Cut Cross-Entropy (Wijmans et al., 2025).
+Trinity Nano and Trinity Mini were trained on clusters of 512 H200 GPUs, and Trinity Large was trained on a cluster of 2048 B300 GPUs. We train Trinity Nano and Trinity Mini with a Hybrid Sharded Data Parallel (HSDP) configuration, where there are multiple replicas of the model and Fully-Sharded Data Parallel (FSDP) (Zhao et al., 2023) is used within the replica group. For Trinity Large, we additionally employ Expert Parallelism (EP) within a GPU node for efficient Mixture-of-Experts Layers.
+For all models, we set the FSDP group size to 128. For Trinity Large, we set the EP group size to 8. For the context extension of Trinity Large, we use a context parallelism degree of 4.
+We use a modification of the Muon implementation in the Dion repository (Ahn et al., 2025) for efficient distributed Muon. We orthogonalize the gradient for the experts in a batched fashion, without flattening the gradient tensor prior to orthogonalization. This also simplifies the expert-parallel implementation, since gradients do not need to be gathered across the expert-parallel group.
+During the training of Trinity Large, when testing out versions of the PyTorch 2.10 nightly, we came across an issue where early versions did not fully support B300s, but later versions had a performance regression for both B200s and B300s. We conducted a binary search across nightly versions to find a package that worked well for the training setup. Later in the run, we upgraded to a recent PyTorch 2.11 nightly, giving us roughly a 5% speedup.
+We designed the training stack to recover quickly from hardware failures. Since Trinity Large was trained on brand new B300 systems and is among the first large scale runs on this hardware, we expected more frequent failure rates during early deployment. In practice, we observed intermittent GPU faults, including recurrent XID errors, which were gradually mitigated through updated firmware bundles. On the systems side, we use failover nodes and prioritize fast restarts through dataloader optimizations and high performance NFS, significantly reducing recovery time after training restarts. We also run continuous heartbeat monitoring that triggers alerts if no training step completes within a three minute window, allowing us to quickly detect stalled jobs and intervene.
+3.4 Hyperparameters
+3.4.1 Model Configurations
+Table 2: Model configurations for the Trinity model variants.
+Trinity Nano
+Trinity Mini
+Trinity Large
+Transformer layers
+56
+32
+60
+Initial dense layers
+2
+2
+6
+Model dim (dmodeld_{\text{model}})
+1024
+2048
+3072
+FFN intermediate dim
+3072
+6144
+12288
+Attention heads (hqh_{q})
+8
+32
+48
+Per-head dim (dhd_{h})
+128
+128
+128
+KV heads (hk​vh_{kv})
+2
+4
+8
+Local window size
+2048
+2048
+4096
+Pre-training seq len
+4096
+4096
+8192
+MoE shared experts
+1
+1
+1
+MoE routed experts
+128
+128
+256
+Activated experts / token
+8
+8
+4
+Route scale
+2.826
+2.826
+2.448
+Expert size
+256
+1024
+3072
+Initialization (trunc normal σ\sigma)
+0.016
+0.011
+0.009
+Trinity Nano.
+We set the number of Transformer layers to 5656 with 22 initial dense layers, and the model dimension to 10241024 with FFN intermediate dimension 30723072.
+For attention, we use 88 heads with per-head dimension 128128 (hq=8h_{q}{=}8, dh=128d_{h}{=}128) and 22 KV heads (hk​v=2h_{kv}{=}2).
+We use local/global attention with sliding-window size for the local layers set to 20482048 and pre-training sequence length 40964096.
+For each MoE layer we use 11 shared expert and 128128 routed experts, activating 88 experts per token, with route scale set to 2.8262.826. The expert size was set to 256256.
+We initialize all trainable parameters from a truncated normal distribution with standard deviation 0.0160.016.
+With Trinity Nano, we aimed to explore the effectiveness of high depth at producing a powerful small language model, following the improved performance of Falcon-H1-1.5B-Deep over Falcon-H1-1.5B (Zuo et al., 2025).
+Trinity Mini.
+We set the number of Transformer layers to 3232 with 22 initial dense layers, and the model dimension to 20482048 with FFN intermediate dimension 61446144.
+For attention, we use 3232 heads with per-head dimension 128128 (hq=32h_{q}{=}32, dh=128d_{h}{=}128) and 44 KV heads (hk​v=4h_{kv}{=}4).
+We use local/global attention with sliding-window size for the local layers set to 20482048 and pre-training sequence length 40964096.
+For each MoE layer we use 11 shared expert and 128128 routed experts, activating 88 routed experts per token, with route scale set to 2.8262.826. The expert size was set to 10241024.
+We initialize all trainable parameters from a truncated normal distribution with standard deviation 0.0110.011.
+Trinity Large.
+We set the number of Transformer layers to 6060 with 66 initial dense layers, and the model dimension to 30723072 with FFN intermediate dimension 1228812288.
+For attention, we use 4848 heads with per-head dimension 128128 (hq=48h_{q}{=}48, dh=128d_{h}{=}128) and 88 KV heads (hk​v=8h_{kv}{=}8).
+We use local/global attention with sliding-window size for the local layers set to 40964096 and pre-training sequence length 81928192.
+For each MoE layer we use 11 shared expert and 256256 routed experts, activating 44 experts per token, with route scale set to 2.4482.448. The expert size was set to 30723072. For Trinity Large, we opted to activate 4 routed experts and make each expert larger, reducing the granularity, due to throughput requirements. We also greatly increase the sparsity to maximize model capacity while keeping a low active parameter count.
+We initialize all trainable parameters from a truncated normal distribution with standard deviation 0.0090.009.
+3.4.2 Training Hyperparameters
+When training all three models, we use the Muon optimizer (Jordan and others, 2024b) for hidden layers and the AdamW optimizer (Loshchilov and Hutter, 2019) for the embedding and output layers. Unlike Liu et al. (2025b), we choose not to rescale the RMS of the Muon updates to match the RMS of the AdamW updates. Instead, we use the learning rate adjustment rule:
+lradjusted\displaystyle\mathrm{lr}_{\mathrm{adjusted}}
+=lr​max⁡(1,fanoutf

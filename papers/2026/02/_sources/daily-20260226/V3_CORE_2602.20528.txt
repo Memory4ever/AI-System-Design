@@ -1,0 +1,4625 @@
+Stop-Think-AutoRegress: Language Modeling with Latent Diffusion Planning
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Background
+3
+Stop-Think-AutoRegress Language Diffusion Model
+3.1
+Training Procedure
+3.2
+Generation Process
+4
+Impact of Diffusion Process on Language Modeling
+5
+Natural Language Understanding
+6
+StoryCloze Generation
+7
+Language Generation Evaluation
+8
+Plug-and-Play Control
+9
+Related Work
+10
+Conclusion
+References
+A
+Additional Visualizations of the Impact of Diffusion Process on Language Modeling
+B
+Inference Latency
+C
+NLU Derivation
+C.1
+Standard Diffusion ELBO
+C.2
+ELBO for STAR-LDM
+C.3
+Parameterization with Autoregressive Decoder
+C.4
+ELBO for Zero-Shot Evaluation
+D
+StoryCloze Evaluation Details
+E
+Additional Control Experiments
+E.1
+Control-Perplexity Trade-offs
+E.2
+Control-Diversity Trade-offs
+F
+Implementation Details
+F.1
+STAR-LDM
+F.2
+Decoding Parameters
+F.3
+Baseline NLU Results
+F.4
+Noise-Conditioned MLP
+License: CC BY 4.0
+arXiv:2602.20528v1 [cs.CL] 24 Feb 2026
+Stop-Think-AutoRegress: Language Modeling with Latent Diffusion Planning
+Justin Lovelace
+†
+†
+thanks:
+Corresponding author:
+jl3353@cornell.edu
+Christian Belardi
+Sofian Zalouk
+Adhitya Polavaram
+Affiliation:
+Srivatsa Kundurthy,  Kilian Q Weinberger
+Affiliation:
+Department of Computer Science, Cornell University
+Abstract
+The Stop-Think-AutoRegress Language Diffusion Model (STAR-LDM) integrates latent diffusion planning with autoregressive generation. Unlike conventional autoregressive language models limited to token-by-token decisions, STAR-LDM incorporates a “thinking” phase that pauses generation to refine a semantic plan through diffusion before continuing. This enables global planning in continuous space prior to committing to discrete tokens. Evaluations show STAR-LDM significantly outperforms similar-sized models on language understanding benchmarks and achieves
+>
+70
+%
+>70\%
+win rates in LLM-as-judge comparisons for narrative coherence and commonsense reasoning. The architecture also allows straightforward control through lightweight classifiers, enabling fine-grained steering of attributes without model retraining while maintaining better fluency-control trade-offs than specialized approaches. Our code is available at
+https://github.com/justinlovelace/STAR-LDM
+.
+1
+Introduction
+Large Language Models (LLMs), typically based on the Transformer architecture
+(
+Vaswani et al., 2017
+)
+, have demonstrated remarkable capabilities across a vast range of natural language tasks
+(
+Kojima et al., 2022
+;
+Brown et al., 2020
+)
+. Their success largely stems from the autoregressive (AR) generation paradigm, where text is produced sequentially, predicting one token at a time conditioned on the preceding context.
+However, this strictly left-to-right, token-by-token generation process fundamentally differs from human writing practices. Human authors frequently pause, reflect, plan ahead, and revise their text to ensure global coherence, stylistic consistency, and adherence to overarching goals
+Hayes and Flower (1996)
+. In contrast, standard autoregressive models make irrevocable, local decisions at each step, which inherently limits their capacity for long-range planning or dynamic control over the generation process
+(
+Liu et al., 2021b
+)
+. Consequently, ensuring that generated text globally satisfies complex constraints, maintains a consistent persona, or avoids undesirable content purely through local token predictions remains a significant challenge, often necessitating computationally expensive fine-tuning or reinforcement learning procedures
+(
+Ziegler et al., 2019
+;
+Ouyang et al., 2022
+)
+.
+Recent advancements in generative modeling, particularly score-based diffusion models
+(
+Ho et al., 2020
+;
+Song et al., 2020
+)
+, offer a fundamentally different paradigm. These models generate data through an iterative denoising process, beginning with pure noise and guided by a learned score function. Crucially, this score function can be readily modified during generation to incorporate external guidance signals from lightweight classifiers
+(
+Dhariwal and Nichol, 2021
+;
+Ho and Salimans, 2021
+)
+, enabling flexible control over various attributes of the generated output (e.g., style, content). This inherent controllability, which can be effectively applied in continuous spaces such as image latents
+(
+Rombach et al., 2021
+)
+or text embeddings
+(
+Li et al., 2022
+;
+Lovelace et al., 2023
+)
+, presents a particularly promising direction for enhancing control mechanisms in large language models.
+Inspired by the planning capabilities suggested by human writing and the controllability of diffusion models, we propose
+Stop-Think-AutoRegress Language Diffusion Model (STAR-LDM)
+.
+STAR-LDM
+is a novel, unified architecture that integrates latent diffusion planning directly into the autoregressive generation framework. It introduces a “thinking” phase where standard token generation is paused. During this phase, the model utilizes a diffusion process operating in a continuous sentence embedding space to refine a latent representation (a soft prompt) that encodes a plan for the subsequent text. This refined latent representation then guides the resumption of autoregressive token generation. By jointly training the autoregressive and diffusion components, STAR-LDM learns to perform global semantic planning in a continuous space
+before
+committing to discrete token choices, enabling more coherent and controllable generation.
+Our contributions are as follows:
+(1) We propose STAR-LDM, a unified architecture that integrates latent diffusion planning within an autoregressive language model.
+(2) We demonstrate that STAR-LDM achieves improved language generation quality.
+(3) We show that our unified architecture leads to substantial improvements on standard language understanding benchmarks, indicating that the planning mechanism enhances, rather than hinders, core language capabilities.
+(4) We validate that STAR-LDM’s integrated diffusion component enables efficient, plug-and-play control over text attributes (like sentiment and toxicity) using lightweight classifiers during inference, without requiring model retraining.
+STAR-LDM represents a step towards language models that can ”stop and think” entirely in latent space, leading to higher-quality, more controllable, and potentially more reliable text generation.
+2
+Background
+Diffusion models
+(
+Sohl-Dickstein et al., 2015
+;
+Ho et al., 2020
+;
+Song et al., 2020
+;
+Kingma and Gao, 2023
+)
+, are a class of generative models that iteratively refine a sample of noise to a sample from some data distribution in a coarse-to-fine manner. Given clean data
+𝐱
+data
+\mathbf{x}_{\text{data}}
+from
+q
+⁡
+(
+𝐱
+data
+)
+q(\mathbf{x}_{\text{data}})
+, diffusion models learn a model
+p
+θ
+​
+(
+𝐱
+data
+)
+p_{\theta}(\mathbf{x}_{\text{data}})
+approximating
+q
+⁡
+(
+𝐱
+data
+)
+q(\mathbf{x}_{\text{data}})
+. Here,
+𝐱
+data
+\mathbf{x}_{\text{data}}
+could be images, audio, or continuous latent representations relevant to NLP
+(
+Li et al., 2022
+;
+Rombach et al., 2021
+;
+Lovelace et al., 2024
+)
+, such as the sentence embeddings used in this work
+(
+Ni et al., 2022
+)
+.
+Forward process.
+Diffusion models define a forward noising process that transitions clean data
+𝐱
+data
+\mathbf{x}_{\text{data}}
+to noise over continuous time
+t
+∈
+[
+0
+,
+1
+]
+t\in[0,1]
+. The noisy latent
+𝐳
+t
+\mathbf{z}_{t}
+at time
+t
+t
+is given by
+q
+⁡
+(
+𝐳
+t
+|
+𝐱
+data
+)
+=
+𝒩
+⁡
+(
+𝐳
+t
+,
+α
+t
+​
+𝐱
+data
+,
+σ
+t
+2
+​
+𝐈
+)
+q(\mathbf{z}_{t}|\mathbf{x}_{\text{data}})=\mathcal{N}(\mathbf{z}_{t};\alpha_{t}\mathbf{x}_{\text{data}},\sigma_{t}^{2}\mathbf{I})
+, which can be sampled as:
+𝐳
+t
+=
+α
+t
+​
+𝐱
+data
++
+σ
+t
+​
+ϵ
+,
+where
+ϵ
+∼
+𝒩
+⁡
+(
+𝟎
+,
+𝐈
+)
+.
+\mathbf{z}_{t}=\alpha_{t}\mathbf{x}_{\text{data}}+\sigma_{t}\bm{\epsilon},\quad\text{where}\quad\bm{\epsilon}\sim\mathcal{N}(\mathbf{0},\mathbf{I}).
+(1)
+Using the variance-preserving formulation
+(
+Ho et al., 2020
+)
+(
+σ
+t
+2
+=
+1
+−
+α
+t
+2
+\sigma_{t}^{2}=1-\alpha_{t}^{2}
+), the noise level is parameterized by the log Signal-to-Noise Ratio (SNR),
+λ
+t
+=
+log
+⁡
+(
+α
+t
+2
+/
+σ
+t
+2
+)
+{\lambda_{t}=\log(\alpha_{t}^{2}/\sigma_{t}^{2})}
+. The schedule
+α
+t
+\alpha_{t}
+decreases such that
+𝐳
+0
+≈
+𝐱
+data
+\mathbf{z}_{0}\approx\mathbf{x}_{\text{data}}
+and the distribution of
+𝐳
+1
+\mathbf{z}_{1}
+approaches a standard normal, i.e.,
+q
+⁡
+(
+𝐳
+1
+|
+𝐱
+data
+)
+≈
+𝒩
+⁡
+(
+𝟎
+,
+𝐈
+)
+q(\mathbf{z}_{1}|\mathbf{x}_{\text{data}})\approx\mathcal{N}(\mathbf{0},\mathbf{I})
+.
+Generative model.
+The generative process reverses the forward process, starting from noise
+𝐳
+1
+∼
+𝒩
+⁡
+(
+𝟎
+,
+𝐈
+)
+\mathbf{z}_{1}\sim\mathcal{N}(\mathbf{0},\mathbf{I})
+and iteratively denoising it to produce a final sample
+𝐳
+0
+\mathbf{z}_{0}
+that approximates the data distribution
+q
+⁡
+(
+𝐱
+data
+)
+q(\mathbf{x}_{\text{data}})
+.
+This requires the score function
+∇
+𝐳
+t
+​
+log
+​
+p
+t
+​
+(
+𝐳
+t
+)
+\nabla_{\mathbf{z}_{t}}\log p_{t}(\mathbf{z}_{t})
+, the gradient of the log-density of noisy data at time
+t
+t
+. Diffusion models introduce a neural network
+𝐬
+θ
+​
+(
+𝐳
+t
+,
+t
+)
+\mathbf{s}_{\theta}(\mathbf{z}_{t},t)
+to approximate this score. Sampling involves iteratively applying the learned model
+𝐬
+θ
+\mathbf{s}_{\theta}
+(or an equivalent parameterization, like noise prediction) to reverse the diffusion from
+t
+=
+1
+t=1
+to
+t
+=
+0
+t=0
+, often using solvers like DDPM
+(
+Ho et al., 2020
+)
+.
+Training objective.
+The score network
+𝐬
+θ
+\mathbf{s}_{\theta}
+can be learned via denoising score matching
+(
+Song and Ermon, 2019
+)
+. An equivalent and common objective
+(
+Ho et al., 2020
+)
+trains a network
+ϵ
+θ
+​
+(
+𝐳
+t
+,
+t
+)
+\bm{\epsilon}_{\theta}(\mathbf{z}_{t},t)
+to predict the noise
+ϵ
+\bm{\epsilon}
+added to
+𝐱
+data
+\mathbf{x}_{\text{data}}
+to get
+𝐳
+t
+\mathbf{z}_{t}
+, using a loss like:
+ℒ
+⁡
+(
+θ
+)
+=
+𝔼
+t
+,
+𝐱
+data
+∼
+q
+⁡
+(
+𝐱
+data
+)
+,
+ϵ
+∼
+𝒩
+⁡
+(
+𝟎
+,
+𝐈
+)
+​
+[
+w
+⁡
+(
+λ
+t
+)
+⋅
+‖
+ϵ
+−
+ϵ
+θ
+​
+(
+𝐳
+t
+,
+t
+)
+‖
+2
+2
+]
+,
+\mathcal{L}(\theta)=\mathbb{E}_{t,\mathbf{x}_{\text{data}}\sim q(\mathbf{x}_{\text{data}}),\bm{\epsilon}\sim\mathcal{N}(\mathbf{0},\mathbf{I})}\left[w(\lambda_{t})\cdot\|\bm{\epsilon}-\bm{\epsilon}_{\theta}(\mathbf{z}_{t},t)\|_{2}^{2}\right],
+(2)
+where
+𝐳
+t
+=
+α
+t
+​
+𝐱
+data
++
+σ
+t
+​
+ϵ
+\mathbf{z}_{t}=\alpha_{t}\mathbf{x}_{\text{data}}+\sigma_{t}\bm{\epsilon}
+and
+w
+⁡
+(
+λ
+t
+)
+w(\lambda_{t})
+is an SNR-dependent weighting term
+(
+Kingma et al., 2021
+)
+. The score and noise predictions are related by
+𝐬
+θ
+(
+𝐳
+t
+,
+t
+)
+=
+−
+ϵ
+θ
+(
+𝐳
+t
+,
+t
+)
+/
+σ
+t
+\mathbf{s}_{\theta}(\mathbf{z}_{t},t)=-\bm{\epsilon}_{\theta}(\mathbf{z}_{t},t)/\sigma_{t}
+.
+Plug-and-play control.
+A key advantage of diffusion, as opposed to autoregressive, models is their controllability via plug-and-play guidance
+(
+Song et al., 2020
+;
+Dhariwal and Nichol, 2021
+)
+. To generate samples conditioned on
+𝐲
+\mathbf{y}
+, the sampling process is guided by the conditional score
+∇
+𝐳
+t
+​
+log
+​
+p
+t
+​
+(
+𝐳
+t
+|
+𝐲
+)
+\nabla_{\mathbf{z}_{t}}\log p_{t}(\mathbf{z}_{t}|\mathbf{y})
+. Using Bayes’ rule, this conditional score can be decomposed:
+∇
+𝐳
+t
+​
+log
+​
+p
+t
+​
+(
+𝐳
+t
+|
+𝐲
+)
+=
+∇
+𝐳
+t
+​
+log
+​
+p
+t
+​
+(
+𝐳
+t
+)
+⏟
+Unconditional Score
++
+∇
+𝐳
+t
+​
+log
+​
+p
+t
+​
+(
+𝐲
+|
+𝐳
+t
+)
+⏟
+Guidance Term
+.
+\displaystyle\nabla_{\mathbf{z}_{t}}\log p_{t}(\mathbf{z}_{t}|\mathbf{y})=\underbrace{\nabla_{\mathbf{z}_{t}}\log p_{t}(\mathbf{z}_{t})}_{\text{Unconditional Score}}+\underbrace{\nabla_{\mathbf{z}_{t}}\log p_{t}(\mathbf{y}|\mathbf{z}_{t})}_{\text{Guidance Term}}.
+(3)
+The first term is the standard score approximated by the unconditional diffusion model
+𝐬
+θ
+​
+(
+𝐳
+t
+,
+t
+)
+\mathbf{s}_{\theta}(\mathbf{z}_{t},t)
+. The second term guides the sampling towards latents
+𝐳
+t
+\mathbf{z}_{t}
+that are likely to produce the condition
+𝐲
+\mathbf{y}
+. This guidance term can be approximated using gradients from a
+separate classifier
+trained on noisy data, which is often called
+classifier guidance
+(
+Dhariwal and Nichol, 2021
+)
+.
+In practice, a guidance scale
+s
+≥
+0
+s\geq 0
+is introduced to modulate the strength of the condition:
+𝐬
+^
+​
+(
+𝐳
+t
+,
+t
+,
+𝐲
+)
+=
+∇
+𝐳
+t
+​
+log
+​
+p
+t
+​
+(
+𝐳
+t
+)
++
+s
+⋅
+∇
+𝐳
+t
+​
+log
+​
+p
+t
+​
+(
+𝐲
+|
+𝐳
+t
+)
+.
+\displaystyle\hat{\mathbf{s}}(\mathbf{z}_{t},t,\mathbf{y})=\nabla_{\mathbf{z}_{t}}\log p_{t}(\mathbf{z}_{t})+s\cdot\nabla_{\mathbf{z}_{t}}\log p_{t}(\mathbf{y}|\mathbf{z}_{t}).
+(4)
+Setting
+s
+=
+0
+s=0
+yields unconditional generation, while
+s
+>
+1
+s\!>\!1
+increases the influence of
+𝐲
+\mathbf{y}
+. This provides flexible “plug-and-play” control without retraining the base model for each condition
+𝐲
+\mathbf{y}
+. This inherent controllability offers a promising avenue to address the control challenges of autoregressive language generation, which motivates our work.
+3
+Stop-Think-AutoRegress Language Diffusion Model
+Figure 1
+:
+Unified diffusion-guided language model architecture illustrating the training (left) and generation (right) processes. See text for details.
+We propose
+Stop-Think-AutoRegress Language Diffusion Model (STAR-LDM)
+, a unified architecture that augments autoregressive language modeling with latent diffusion planning. STAR-LDM can pause generation, plan in a continuous latent space, and resume autoregressive token generation with improved coherence.
+Figure
+1
+depicts our proposed architecture, which consists of three major components, each with a primary role in enabling our ”stop-think-autoregress” approach:
+(1) The
+Autoregressive Decoder
+(in purple) serves as the foundation of our model, handling token generation in a sequential manner similar to traditional language models. This component maintains the local fluency and grammatical structure necessary for coherent text.
+(2) The continuous
+Sentence Embedding Space
+(blue vectors) provides a latent planning space that captures semantic meaning. Using 768-dimensional Sentence-T5 XL embeddings
+(
+Ni et al., 2022
+)
+, this space represents text at a higher level of abstraction than tokens, with representations that capture core semantic content while being invariant to shallow surface variations.
+(3) Two
+Diffusion Transformers (DiTs)
+(
+Peebles and Xie, 2022
+)
+(in green) facilitate the translation between the continuous embedding space and the discrete token representations used by the decoder.
+These transformer encoders are also conditioned on the noise level through adaptive normalization layers following
+Peebles and Xie (2022)
+.
+In our approach, text generation is conceptualized as a two-part process: first processing a
+prefix
+(the initial portion of text that has already been generated), then planning and generating a coherent
+continuation
+. The prefix might be a prompt provided by a user or previously generated text, while the continuation represents new text the model will generate with guidance from a semantic plan.
+During training, these components work together as follows.
+First, the autoregressive decoder processes the prefix text
+𝐱
+pref
+\mathbf{x}_{\text{pref}}
+(“
+The old clock ticked
+”) like a standard autoregressive language model. The model also processes a noisy representation of the continuation’s semantic meaning. This representation is created by encoding the ground truth continuation
+𝐱
+cont
+\mathbf{x}_{\text{cont}}
+(“
+relentlessly as...
+”) into a clean embedding
+𝐳
+data
+\mathbf{z}_{\text{data}}
+using Sentence-T5, then adding noise according to the diffusion schedule to obtain
+𝐳
+t
+=
+α
+t
+​
+𝐳
+data
++
+σ
+t
+​
+ϵ
+\mathbf{z}_{t}=\alpha_{t}\mathbf{z}_{\text{data}}+\sigma_{t}\epsilon
+.
+We linearly project this noisy embedding into a sequence of 8 soft vectors, which the first DiT processes (conditioning on the current noise level) to form a soft prompt. This prompt will both be used to guide diffusion denoising and subsequent token generation. For diffusion denoising, the autoregressive decoder naturally incorporates information from the prefix as it processes this soft prompt.
+The decoder’s outputs then flow to the second DiT, which generates the final representations for the diffusion prediction. We apply a learned linear projection to obtain the final diffusion prediction
+𝐳
+~
+data
+\tilde{\mathbf{z}}_{\text{data}}
+, completing a step of the denoising process.
+After processing this soft prompt, the decoder reverts to standard next-token prediction. The predictions for the text continuation are therefore conditioned on both the textual prefix and the (noisy) sentence embedding of that text continuation. The sentence embedding provides a valuable signal for the token prediction objective, teaching the decoder to generate text aligned with the sentence embedding.
+This integrated design creates a model that can simultaneously handle token-level prediction and semantic-level planning. As noise levels decrease during training or sampling, the semantic guidance becomes increasingly precise, enabling the model to generate continuations that follow the semantic content in the denoised embedding while maintaining both local fluency and global coherence.
+3.1
+Training Procedure
+Our training approach combines autoregressive language modeling with diffusion-based planning in a multi-task learning framework. This training strategy will enable STAR-LDM to learn both token generation and semantic planning simultaneously.
+During self-supervised pre-training (left side of
+Figure 1
+), we sample text segments and randomly split each into a prefix
+𝐱
+pref
+\mathbf{x}_{\text{pref}}
+and continuation
+𝐱
+cont
+\mathbf{x}_{\text{cont}}
+. This simulates stopping points where the model would pause to plan. We jointly optimize with two objectives:
+Language Modeling Loss (
+ℒ
+LM
+\mathcal{L}_{\text{LM}}
+).
+The loss combines standard prefix modeling and noise-conditioned continuation modeling:
+ℒ
+LM
+=
+−
+∑
+i
+=
+1
+p
+log
+P
+(
+x
+pref
+,
+i
+|
+𝐱
+pref
+,
+<
+i
+;
+θ
+)
+⏟
+Prefix modeling
+−
+∑
+j
+=
+1
+n
+−
+p
+log
+⁡
+P
+⁡
+(
+x
+cont
+,
+j
+|
+𝐱
+pref
+,
+𝐱
+cont
+,
+<
+j
+,
+𝐳
+t
+;
+θ
+)
+⏟
+Continuation modeling
+,
+\mathcal{L}_{\text{LM}}=\underbrace{-\sum_{i=1}^{p}\log P(x_{\text{pref},i}|\mathbf{x}_{\text{pref},<i};\theta)}_{\text{Prefix modeling}}-\underbrace{\sum_{j=1}^{n-p}\log P(x_{\text{cont},j}|\mathbf{x}_{\text{pref}},\mathbf{x}_{\text{cont},<j},\mathbf{z}_{t};\theta)}_{\text{Continuation modeling}},
+(5)
+where
+p
+p
+is the prefix length,
+n
+n
+the total length, and
+𝐳
+t
+\mathbf{z}_{t}
+the noisy embedding of
+𝐱
+cont
+\mathbf{x}_{\text{cont}}
+.
+Diffusion Loss (
+ℒ
+DM
+\mathcal{L}_{\text{DM}}
+).
+We encode the continuation
+𝐱
+cont
+\mathbf{x}_{\text{cont}}
+using Sentence-T5 to obtain the clean embedding
+𝐳
+0
+\mathbf{z}_{0}
+.
+Following standard diffusion training, we then sample a timestep
+t
+t
+and noise vector
+ϵ
+∼
+𝒩
+⁡
+(
+𝟎
+,
+𝐈
+)
+\bm{\epsilon}\sim\mathcal{N}(\mathbf{0},\mathbf{I})
+, compute the noisy embedding
+𝐳
+t
+=
+α
+t
+​
+𝐳
+0
++
+σ
+t
+​
+ϵ
+\mathbf{z}_{t}=\alpha_{t}\mathbf{z}_{0}+\sigma_{t}\bm{\epsilon}
+, and train the model to predict the added noise conditioned on the prefix and timestep:
+ℒ
+DM
+=
+𝔼
+t
+,
+𝐱
+cont
+,
+ϵ
+​
+[
+w
+⁡
+(
+λ
+t
+)
+⋅
+‖
+ϵ
+−
+ϵ
+θ
+​
+(
+𝐳
+t
+,
+t
+,
+𝐱
+pref
+)
+‖
+2
+2
+]
+\mathcal{L}_{\text{DM}}=\mathbb{E}_{t,\mathbf{x}_{\text{cont}},\bm{\epsilon}}\left[w(\lambda_{t})\cdot\|\bm{\epsilon}-\bm{\epsilon}_{\theta}(\mathbf{z}_{t},t,\mathbf{x}_{\text{pref}})\|_{2}^{2}\right]
+(6)
+This objective is weighted by
+w
+⁡
+(
+λ
+t
+)
+w(\lambda_{t})
+, a function of the log(SNR) that balances the importance of different noise levels
+1
+1
+1
+We adopt the sigmoid weighting and cosine noise schedule used by
+Hoogeboom et al. (2024)
+.
+. The final training objective combines both losses,
+ℒ
+=
+ℒ
+LM
++
+β
+​
+ℒ
+DM
+{\mathcal{L}=\mathcal{L}_{\text{LM}}+\beta\mathcal{L}_{\text{DM}}}
+,
+where the scalar
+β
+\beta
+balances the two components. STAR-LDM is therefore trained for autoregression and diffusion in a multi-task manner.
+Noise Conditioning.
+The diffusion training process exposes the autoregressive decoder to embeddings
+𝐳
+t
+\mathbf{z}_{t}
+with varying noise levels, from
+α
+1
+≈
+0
+\alpha_{1}\approx 0
+(pure noise) to
+α
+0
+≈
+1
+\alpha_{0}\approx 1
+(clean). Like prior work that has utilized noise-conditioning to improve robustness
+(
+Ho et al., 2022
+;
+Lovelace et al., 2024
+)
+, our decoder learns to adapt based on noise level: relying heavily on the semantic plan at low noise while falling back to standard prefix conditioning at high noise. This creates a natural control parameter during inference—the noise level—that adjusts the balance between diffusion planning and autoregressive generation.
+3.2
+Generation Process
+While our training process optimizes STAR-LDM to both generate coherent text and denoise semantic embeddings, the inference process leverages these capabilities in a sequential ”Stop-Think-AutoRegress” workflow. During inference, we assume a prompted setting where the user provides a prefix, and the model plans and generates a continuation.
+During inference (
+Figure 1
+, right), our approach unfolds in three distinct phases:
+1)
+Stop
+: The model processes the input prompt
+𝐱
+pref
+\mathbf{x}_{\text{pref}}
+(provided by the user) through the autoregressive decoder.
+2)
+Think
+: The model then “thinks” by sampling initial noise
+𝐳
+~
+1
+=
+ϵ
+∼
+𝒩
+⁡
+(
+0
+,
+𝐈
+)
+\tilde{\mathbf{z}}_{1}=\epsilon\sim\mathcal{N}(0,\mathbf{I})
+and performing iterative denoising to obtain a semantic plan. This iterative denoising process, guided by the prefix
+𝐱
+pref
+\mathbf{x}_{\text{pref}}
+, gradually transforms random noise into a coherent semantic embedding,
+𝐳
+~
+0
+\tilde{\mathbf{z}}_{0}
+.
+Starting from pure noise
+𝐳
+~
+1
+\tilde{\mathbf{z}}_{1}
+, the model applies its trained noise prediction network
+ϵ
+θ
+\bm{\epsilon}_{\theta}
+, consisting of a pass through the network, over multiple timesteps (e.g. 50 steps). At each step
+t
+t
+, the model uses the predicted noise component to reduce the noise level of the embedding following a predetermined schedule. This process iteratively refines a coherent plan consistent with the given prefix. The generation process concludes with the third phase: 3) AutoRegress. Here, the generated semantic plan
+𝐳
+~
+0
+\tilde{\mathbf{z}}_{0}
+guides the autoregressive decoder to produce a fluent continuation
+𝐱
+~
+cont
+\tilde{\mathbf{x}}_{\text{cont}}
+. This is achieved by processing
+𝐳
+~
+0
+\tilde{\mathbf{z}}_{0}
+through the first DiT to create a soft prompt that conditions the decoder alongside
+𝐱
+pref
+\mathbf{x}_{\text{pref}}
+. Once conditioned on this combined prompt, the decoder generates the continuation via standard autoregressive sampling.
+Prompt guidance.
+During the thinking phase, we can optionally strengthen the influence of the prefix on the generated plan using classifier-free guidance
+(
+Ho and Salimans, 2021
+)
+. This technique combines an unconditional prediction (ignoring the prefix) with a conditional prediction (using the prefix) to amplify the prefix’s influence:
+ϵ
+~
+t
+=
+ϵ
+θ
+​
+(
+𝐳
+t
+,
+t
+,
+∅
+)
++
+w
+⋅
+(
+ϵ
+θ
+​
+(
+𝐳
+t
+,
+t
+,
+𝐱
+pref
+)
+−
+ϵ
+θ
+​
+(
+𝐳
+t
+,
+t
+,
+∅
+)
+)
+\tilde{\bm{\epsilon}}_{t}=\bm{\epsilon}_{\theta}(\mathbf{z}_{t},t,\emptyset)+w\cdot(\bm{\epsilon}_{\theta}(\mathbf{z}_{t},t,\mathbf{x}_{\text{pref}})-\bm{\epsilon}_{\theta}(\mathbf{z}_{t},t,\emptyset))
+(7)
+where
+w
+w
+is the guidance scale and
+ϵ
+θ
+​
+(
+𝐳
+t
+,
+t
+,
+∅
+)
+\bm{\epsilon}_{\theta}(\mathbf{z}_{t},t,\emptyset)
+represents an unconditional prediction obtained by masking the prefix embeddings from the diffusion model. Higher values of
+w
+w
+increase the prompt’s influence on the semantic plan.
+Plug-and-Play Control with Classifier Guidance.
+To enable efficient classifier guidance
+(
+Dhariwal and Nichol, 2021
+)
+, we train an MLP that directly operates on noisy sentence embeddings:
+p
+t
+​
+(
+𝐲
+|
+𝐳
+t
+)
+≈
+f
+ϕ
+​
+(
+𝐳
+t
+,
+t
+)
+=
+MLP
+​
+(
+𝐳
+t
+,
+TimeEmb
+​
+(
+t
+)
+)
+,
+p_{t}(\mathbf{y}|\mathbf{z}_{t})\approx f_{\phi}(\mathbf{z}_{t},t)=\text{MLP}(\mathbf{z}_{t},\text{TimeEmb}(t)),
+(8)
+where
+TimeEmb
+​
+(
+t
+)
+\text{TimeEmb}(t)
+encodes the noise level via sinusoidal embeddings. To make the MLP robust to varying noise levels, we follow
+Dhariwal and Nichol (2021)
+and train on labeled data that we perturb with randomly chosen noise levels.
+During inference, we compute the guidance gradient directly:
+∇
+𝐳
+t
+​
+log
+​
+p
+t
+​
+(
+𝐲
+|
+𝐳
+t
+)
+≈
+∇
+𝐳
+t
+f
+ϕ
+​
+(
+𝐳
+t
+,
+t
+)
+\nabla_{\mathbf{z}_{t}}\log p_{t}(\mathbf{y}|\mathbf{z}_{t})\approx\nabla_{\mathbf{z}_{t}}f_{\phi}(\mathbf{z}_{t},t)
+(9)
+This lightweight approach enables attribute control with negligible computational overhead.
+Implementation Details.
+We implement our model using GPT2-Large as the autoregressive backbone which has 770M parameters. Our unified architecture, with the two small DiT encoders, has 956M trainable parameters. During training, we use the sigmoid loss weighting and cosine noise schedule following
+Hoogeboom et al. (2024)
+. For diffusion generation, we use a cosine noise schedule
+(
+Dhariwal and Nichol, 2021
+)
+with 50 diffusion steps and add small noise (
+σ
+t
+2
+=
+0.1
+\sigma_{t}^{2}=0.1
+) to the final generated embedding
+𝐳
+~
+0
+\tilde{\mathbf{z}}_{0}
+to ensure robustness to minor errors introduced by diffusion sampling. We train our model on approximately 16B tokens from the FineWeb dataset
+(
+Penedo et al., 2024
+)
+. We report full architecture details and hyperparameters in
+Appendix F
+.
+4
+Impact of Diffusion Process on Language Modeling
+Next token prediction in traditional autoregressive models focuses primarily on local coherence, making these models inherently myopic in their generation decisions. In contrast, our diffusion-based planning approach introduces a form of non-local semantic guidance. To understand how this semantic guidance influences token prediction, we conducted a controlled experiment visualized in Figure
+2
+.
+We begin with a simple prefix (”I went to the carnival and”) and two distinct continuations describing different experiences. For each continuation, we compute token probabilities under two conditions: (1) when conditioned on a clean semantic embedding of the entire continuation (
+z
+0
+z_{0}
+) and (2) when conditioned on pure Gaussian noise (
+ϵ
+\epsilon
+). The difference in log likelihoods,
+log
+⁡
+p
+⁡
+(
+x
+c
+​
+o
+​
+n
+​
+t
+|
+x
+p
+​
+r
+​
+e
+​
+f
+,
+z
+0
+)
+−
+log
+⁡
+p
+⁡
+(
+x
+c
+​
+o
+​
+n
+​
+t
+|
+x
+p
+​
+r
+​
+e
+​
+f
+,
+ϵ
+)
+{\log p(x_{cont}|x_{pref},z_{0})-\log p(x_{cont}|x_{pref},\epsilon)}
+, reveals which tokens are most influenced by semantic planning with the ground-truth embedding.
+As shown in Figure
+2
+, the semantic plan primarily increases the likelihood of content-bearing words that capture the essence of each narrative. In the first continuation, words like ”ring toss,” ”gold fish,” ”named,” and ”Flash” show the largest positive shifts. These precisely correspond to the key narrative elements describing winning a pet fish at a carnival game. Similarly, in the second continuation, words like ”lost,” ”mirrors,” ”eaten,” and ”funnel” experience the greatest positive influence—all central to a different carnival experience involving a hall of mirrors and food.
+This analysis demonstrates that our model’s diffusion-based planning mechanism effectively captures and emphasizes semantically meaningful content, rather than merely influencing surface-level linguistic patterns. By explicitly integrating a latent semantic plan, STAR-LDM generates coherent language that maintains global semantic consistency. We present additional experiments exploring this semantic influence across varying noise levels in Appendix
+A
+.
+Figure 2
+:
+Visualization of the change in log likelihood due to conditioning on the clean continuation embedding versus pure noise. Tokens highlighted in red represent the information provided by the semantic plan.
+5
+Natural Language Understanding
+Figure 3
+:
+Diagram comparing zero-shot NLU evaluation for standard LMs (left) and STAR-LDM (right). Both models score candidate answers (
+A
+i
+A_{i}
+) given a question (
+Q
+Q
+). STAR-LDM utilizes both the answer text
+A
+i
+A_{i}
+and its latent embedding
+𝐳
+i
+,
+0
+\mathbf{z}_{i,0}
+from Sentence-T5 for scoring.
+Standard Natural Language Understanding (NLU) benchmarks, particularly multiple-choice question answering (QA) datasets (e.g., CSQA, SIQA, ARC), assess a model’s ability to identify the most plausible answer or completion (
+A
+A
+) from a set of candidates, given a context or question (
+Q
+Q
+). Conventional autoregressive models (
+Figure 3
+, Left Panel) typically score each candidate answer
+A
+i
+A_{i}
+by its negative log-likelihood:
+ℒ
+LM
+​
+(
+A
+i
+|
+Q
+)
+=
+−
+log
+⁡
+p
+⁡
+(
+A
+i
+|
+Q
+)
+\mathcal{L}_{\text{LM}}(A_{i}|Q)=-\log p(A_{i}|Q)
+. This likelihood is calculated using teacher forcing, and the candidate with the lowest score (highest probability) is selected as the answer.
+We adapt this protocol for STAR-LDM to select the most likely candidate answer given the question
+Q
+Q
+(
+Figure 3
+, Right Panel). We assess candidate answers by approximating
+−
+log
+⁡
+p
+⁡
+(
+A
+i
+|
+Q
+)
+-\log p(A_{i}|Q)
+using the variational lower bound on the likelihood
+(
+Kingma et al., 2021
+)
+, as direct calculation is intractable.
+We encode each candidate
+A
+i
+A_{i}
+using Sentence T5 to produce a semantic latent plan
+𝐳
+i
+,
+0
+\mathbf{z}_{i,0}
+, add Gaussian noise to generate
+𝐳
+i
+,
+t
+\mathbf{z}_{i,t}
+at a specific timestep
+t
+t
+, and compute our scoring function derived from the Evidence Lower Bound (ELBO):
+−
+log
+⁡
+p
+⁡
+(
+A
+i
+|
+Q
+)
+\displaystyle-\log p(A_{i}|Q)
+≤
+ℒ
+LM
+​
+(
+A
+i
+|
+𝐳
+i
+,
+0
+,
+Q
+)
++
+ℒ
+DM
+​
+(
+𝐳
+i
+,
+t
+|
+Q
+)
+\displaystyle\leq\mathcal{L}_{\text{LM}}(A_{i}|\mathbf{z}_{i,0},Q)+\mathcal{L}_{\text{DM}}(\mathbf{z}_{i,t}|Q)
+(10)
+=
+−
+∑
+j
+=
+1
+|
+A
+i
+|
+log
+p
+(
+A
+i
+j
+|
+A
+i
+<
+j
+,
+𝐳
+i
+,
+0
+,
+Q
+)
++
+𝔼
+t
+,
+ϵ
+∼
+𝒩
+⁡
+(
+0
+,
+I
+)
+[
+w
+ELBO
+(
+λ
+t
+)
+⋅
+|
+|
+ϵ
+−
+ϵ
+θ
+(
+𝐳
+i
+,
+t
+,
+t
+,
+Q
+)
+|
+|
+2
+2
+]
+\displaystyle=-\sum_{j=1}^{|A_{i}|}\log p(A_{i}^{j}|A_{i}^{<j},\mathbf{z}_{i,0},Q)+\mathbb{E}_{t,\epsilon\sim\mathcal{N}(0,I)}[w_{\text{ELBO}}(\lambda_{t})\cdot||\epsilon-\epsilon_{\theta}(\mathbf{z}_{i,t},t,Q)||^{2}_{2}]
+where the weighting
+w
+ELBO
+​
+(
+λ
+t
+)
+w_{\text{ELBO}}(\lambda_{t})
+for the regression objective follows from the derivation of the lower bound
+(
+Kingma et al., 2021
+)
+. We present a detailed derivation of this scoring function in
+Appendix C
+.
+The LM term measures how well the model reconstructs
+A
+i
+A_{i}
+given
+Q
+Q
+and
+𝐳
+i
+,
+0
+\mathbf{z}_{i,0}
+, while the diffusion term measures how plausible the latent plan
+𝐳
+i
+,
+0
+\mathbf{z}_{i,0}
+is for question
+Q
+Q
+. We select the candidate with the minimum overall score, choosing the answer that is both linguistically well-formed and has a plausible semantic meaning. We compute the expectation in
+Equation 10
+with an unbiased Monte Carlo estimate of the weighted reconstruction error.
+In practice, autoregressive models often normalize the log-likelihood,
+ℒ
+LM
+\mathcal{L}_{\text{LM}}
+, by the length of the candidate
+A
+i
+A_{i}
+to improve performance. We also adopt this approach as we observe it similarly improves performance.
+Results.
+STAR-LDM outperforms similarly sized autoregressive models on standard zero-shot NLU benchmarks
+2
+2
+2
+The benchmarks include CommonsenseQA (CSQA), Social IQA (SIQA), HellaSwag (HS), Winogrande (WG), Physical IQA (PIQA), OpenBookQA (OBQA), and ARC (Easy and Challenge).
+, as shown in
+Table 1
+. The model excels particularly on commonsense reasoning tasks (CSQA, SIQA), demonstrating the effectiveness of latent semantic planning. Notably, the diffusion component alone performs strongly, indicating that semantic plausibility contributes significantly to reasoning capabilities. While the autoregressive component underperforms independently, combining it with diffusion yields the best results, suggesting complementary strengths. This demonstrates that our diffusion planning enhances the NLU capabilities of comparable autoregressive models.
+Model
+Params
+Scoring
+CSQA
+SIQA
+HS
+WG
+PIQA
+OBQA
+ARC:E
+ARC:C
+Avg
+Random Baseline
+—
+20.0
+33.3
+25.0
+50.0
+50.0
+25.0
+25.0
+25.0
+31.7
+GPT2-Large
+.77B
+LM Loss
+36.6
+42.1
+42.9
+51.9
+69.2
+34.2
+46.6
+25.1
+43.6
+GPT2-XL
+1.5B
+LM Loss
+36.3
+42.3
+47.9
+53.1
+70.5
+34.4
+51.1
+28.5
+45.5
+Pytha-1b
+1B
+LM Loss
+35.3
+42.4
+45.6
+52.6
+69.2
+32.4
+49.1
+27.0
+44.2
+Pytha-1.4b
+1.4B
+LM Loss
+35.7
+43.2
+50.9
+54.2
+71.1
+36.0
+54.0
+28.3
+46.7
+STAR-LDM
+.96B
+LM Loss
+35.2
+0.4
+35.2_{0.4}
+42.2
+0.2
+42.2_{0.2}
+44.0
+0.1
+44.0_{0.1}
+50.5
+0.1
+50.5_{0.1}
+69.3
+0.1
+69.3_{0.1}
+27.1
+0.3
+27.1_{0.3}
+37.6
+0.5
+37.6_{0.5}
+26.3
+0.3
+26.3_{0.3}
+41.5
+0.1
+41.5_{0.1}
+Diffusion Loss
+48.7
+0.3
+48.7_{0.3}
+46.8
+0.5
+46.8_{0.5}
+37.9
+0.1
+37.9_{0.1}
+50.4
+0.2
+50.4_{0.2}
+65.5
+0.2
+65.5_{0.2}
+39.3
+0.1
+39.3_{0.1}
+55.0
+0.6
+55.0_{0.6}
+32.1
+0.5
+32.1_{0.5}
+47.0
+0.1
+47.0_{0.1}
+LM + Diff Loss
+49.8
+0.3
+49.8_{0.3}
+46.8
+0.3
+46.8_{0.3}
+39.0
+0.1
+39.0_{0.1}
+51.4
+0.1
+51.4_{0.1}
+66.1
+0.1
+66.1_{0.1}
+41.3
+0.2
+41.3_{0.2}
+55.0
+0.3
+55.0_{0.3}
+31.4
+0.8
+31.4_{0.8}
+47.6
+0.1
+47.6_{0.1}
+Table 1
+:
+Zero Shot NLU Evaluation Results. We report mean and standard error over three monte-carlo evaluations for STAR-LDM.
+6
+StoryCloze Generation
+Experimental Setup.
+To evaluate generation quality, we assess narrative continuations on the StoryCloze dataset
+(
+Mostafazadeh et al., 2016
+)
+, which requires coherent fifth-sentence completions for four-sentence stories. We employ Claude 3.7 Sonnet
+(
+Anthropic, 2025
+)
+as a judge to compare STAR-LDM against baseline models (GPT-2 Large/XL
+(
+Radford et al., 2019
+)
+and Pythia models
+(
+Biderman et al., 2023
+)
+) in blind head-to-head evaluations across 200 contexts, using four criteria: Narrative Coherence, Commonsense Reasoning, Language Quality, and Emotional/Psychological Plausibility. Full evaluation details, including the prompt, are in
+Appendix D
+.
+Results.
+STAR-LDM significantly outperforms similar-sized and larger models across all criteria (
+Figure 4
+), with win rates exceeding 70% against models like GPT-2 XL on Coherence/Reasoning (
+p
+<
+0.01
+p<0.01
+). These substantial gains suggest our latent diffusion planning effectively improves global structure and logical consistency compared to pure autoregression. While competitive against much larger models (Pythia 6.9/12B), STAR-LDM’s improvements in Language Quality are less pronounced, indicating the planning mechanism primarily enhances semantic coherence rather than surface fluency.
+Figure 4
+:
+LLM-Judge evaluation. Results presented with 95% confidence intervals.
+7
+Language Generation Evaluation
+C4 Validation
+Params
+CFG (
+w
+w
+)
+MAUVE
+↑
+\uparrow
+Generative Perplexity
+↓
+\downarrow
+Diversity
+↑
+\uparrow
+GPT-2 Large
+.77B
+-
+85.2
+0.6
+{85.2}_{0.6}
+30.5
+0.3
+{30.5}_{0.3}
+41.8
+0.1
+{41.8}_{0.1}
+GPT-2 XL
+1.5B
+-
+86.6
+0.4
+{86.6}_{0.4}
+27.1
+0.6
+{27.1}_{0.6}
+43.3
+0.1
+{43.3}_{0.1}
+Pythia-1b
+1B
+-
+85.5
+0.1
+85.5_{0.1}
+36.5
+0.7
+36.5_{0.7}
+45.6
+0.1
+45.6_{0.1}
+Pythia 1.4b
+1.4B
+-
+84.8
+0.5
+84.8_{0.5}
+33.1
+.1
+33.1_{.1}
+47.1
+0.0
+47.1_{0.0}
+STAR-LDM
+.96B
+1.0
+94.6
+0.2
+94.6_{0.2}
+36.1
+0.5
+36.1_{0.5}
+45.3
+0.0
+45.3_{0.0}
+STAR-LDM
+.96B
+1.5
+94.1
+0.2
+{94.1}_{0.2}
+31.1
+0.5
+31.1_{0.5}
+45.4
+0.0
+45.4_{0.0}
+STAR-LDM
+.96B
+2.0
+94.0
+0.2
+94.0_{0.2}
+29.8
+0.6
+29.8_{0.6}
+45.4
+0.0
+45.4_{0.0}
+Table 2:
+Language generation evaluation on C4 validation examples. We report mean and standard error over three sets of generations.
+Experimental Setup.
+We evaluate generation on 5000 C4 validation samples
+(
+Raffel et al., 2019
+)
+, generating 64-token continuations from 32-token prefixes. We evaluate using three complementary metrics: (1)
+Llama Ppl
+measures fluency using perplexity computed by Llama-3.2-3B
+(
+Grattafiori et al., 2024
+)
+; (2)
+MAUVE
+(
+Pillutla et al., 2021
+)
+assesses distributional similarity to human-written text using GPT-2 Large embeddings; and (3)
+Div
+quantifies lexical diversity as
+∏
+n
+=
+2
+4
+|
+unique n-grams
+|
+|
+total n-grams
+|
+\prod_{n=2}^{4}\frac{|\text{unique n-grams}|}{|\text{total n-grams}|}
+(
+Su et al., 2022
+)
+. For STAR-LDM, we report metrics across different classifier-free guidance strengths (
+w
+w
+), which increase the influence of the prefix, during diffusion planning.
+Results.
+As shown in Table
+2
+, STAR-LDM consistently outperforms baselines in MAUVE score, while maintaining competitive perplexity and diversity. Increasing prefix guidance improves fluency without sacrificing diversity. We present results regarding inference latency in
+Appendix B
+.
+8
+Plug-and-Play Control
+Experimental Setup.
+STAR-LDM enables attribute steering during generation without model retraining. We evaluate sentiment control and toxicity mitigation and compare against DeXperts
+(
+Liu et al., 2021a
+)
+—a strong baseline that fine-tunes specialized language models to guide generation. In contrast, our approach only requires training a lightweight MLP classifier on the target attribute to guide diffusion planning.
+For toxicity control, we trained our MLP on the Jigsaw Unintended Bias dataset
+(
+cjadams et al., 2019
+)
+. The toxicity guidance was evaluated using 1,000 randomly selected neutral prompts from RealToxicityPrompts
+(
+Gehman et al., 2020
+)
+.
+For sentiment control, we used both Amazon Polarity
+3
+3
+3
+https://huggingface.co/datasets/amazon_polarity
+and Stanford Sentiment Treebank (SST-2)
+(
+Socher et al., 2013
+)
+to train our sentiment MLP classifier. We tested sentiment steering using 1,000 randomly selected neutral prompts from OpenWebText
+(
+Gokaslan et al., 2019
+;
+Liu et al., 2021a
+)
+.
+For evaluation in both settings, we generated 10 continuations per prompt. We measure the alignment with the control condition, language fluency, and language diversity. For toxicity, we follow prior work
+Deng and Raffel (2023)
+;
+Liu et al. (2021a)
+and use the Perspective API. For sentiment we utilize RoBERTa-Large
+4
+4
+4
+https://huggingface.co/siebert/sentiment-roberta-large-english
+(
+Liu et al., 2020
+)
+fine-tuned on sentiment classification across diverse domains.
+For language fluency, we report the generative perplexity with Llama-3.2-3B. To quantify generation diversity, we follow prior work
+(
+Lu et al., 2022b
+)
+and measure the average number of unique 3-grams in each set of continuations.
+Results.
+Figure 5
+shows STAR-LDM achieves better control-fluency trade-offs than DeXperts across guidance scales for both negative sentiment and toxicity reduction. Our model generates near-zero positive sentiment text at lower perplexity than GPT-2 Large, while maintaining lexical diversity even under strong guidance (additional results presented in
+Appendix E
+).
+(a)
+Negative Sentiment (Lower is better)
+(b)
+Toxicity Mitigation (Lower is better)
+Figure 5
+:
+Relationship between perplexity and content attributes across guidance scales (
+s
+s
+).
+9
+Related Work
+Prior work explores both discrete diffusion (applying noise to token sequences
+(
+Hoogeboom et al., 2021
+;
+Austin et al., 2021
+;
+Hoogeboom et al., 2022
+;
+Lou et al., 2024
+;
+Sahoo et al., 2024
+)
+) and continuous approaches (in embedding space
+(
+Li et al., 2022
+;
+Gong et al., 2022
+;
+Strudel et al., 2022
+;
+Gulrajani and Hashimoto, 2023
+)
+or latent spaces
+(
+Lovelace et al., 2023
+;
+Zhang et al., 2023
+;
+Lovelace et al., 2024
+)
+). While discrete models lag behind autoregressive transformers
+(
+Zheng et al., 2024
+)
+, continuous models show promise for controllability but face integration challenges that our unified architecture addresses.
+Controlled generation methods include model fine-tuning (domain-adaptive pretraining
+(
+Gururangan et al., 2020
+)
+, control tokens
+(
+Lu et al., 2022b
+)
+, RLHF
+(
+Wu et al., 2023
+;
+Ouyang et al., 2022
+;
+Jang et al., 2023
+)
+) and guided decoding with lightweight components (classifier guidance
+(
+Dathathri et al., 2019
+;
+Yang and Klein, 2021
+;
+Deng and Raffel, 2023
+)
+or specialized LMs
+(
+Krause et al., 2021
+;
+Liu et al., 2021a
+)
+). Our approach performs guidance during diffusion planning for semantic control.
+Recent work enhances LM capabilities through natural language reasoning (chain-of-thought prompting
+(
+Wei et al., 2022
+;
+Zelikman et al., 2022
+;
+Zelikman et al., 2024
+)
+), specialized tokens for paused thinking
+(
+Goyal et al., 2024
+)
+, recurrent computation over hidden states
+(
+Hao et al., 2024
+;
+Geiping et al., 2025
+)
+), or by learning discrete latent actions via inverse dynamics models
+(
+Jia et al., 2025
+)
+. Our work introduces ”thinking” through diffusion in semantic space, complementing discrete token generation.
+Hybrid generative architectures have been explored in prior work primarily for multimodal settings rather than enhancing language generation alone
+(
+Zhou et al., 2024
+;
+Wang et al., 2024
+;
+Team, 2024
+;
+Liang et al., 2024
+)
+.
+10
+Conclusion
+We presented STAR-LDM, a unified architecture that integrates autoregressive language modeling with latent diffusion planning. Our experiments demonstrate three key advantages: (1) improved natural language understanding capabilities, (2) higher quality narrative generation with better coherence and reasoning, and (3) effective plug-and-play control without model fine-tuning. By enabling models to ”stop and think” in a continuous semantic space before generating text, STAR-LDM combines the global planning capabilities of diffusion models with the fluency of autoregressive generation. This approach not only improves performance on standard tasks but also enables precise control of generated text attributes through lightweight guidance mechanisms. Our work represents a step toward language models that more closely mirror human writing processes, pausing to plan before committing to specific wording.
+Acknowledgments
+JL is supported by a Google PhD Fellowship. CB is supported by the National Science Foundation (NSF) through the NSF Research Traineeship (NRT) program under Grant No. 2345579. SZ is supported by the Defense Advanced Research Projects Agency (DARPA) under Grant No. D24AP00259-00. This research is supported by grants from the National Science Foundation NSF (OAC-
+2118310, OAC-1934714, IIS-2107161, and IIS-1724282, HDR-2118310), the Cornell Center for Materials Research with funding from the NSF MRSEC program (DMR-1719875), DARPA, arXiv, and the New York-Presbyterian
+for the NYP-Cornell Cardiovascular AI Collaboration. The authors acknowledge the National Artificial Intelligence Research Resource Pilot (NAIRR-240157) and TACC Vista for contributing to this research result. We gratefully acknowledge use of the research
+computing resources of the Empire AI Consortium, Inc, with support from the State of New York, the
+Simons Foundation, and the Secunda Family Foundation
+(
+Bloom et al., 2025
+)
+.
+References
+Anthropic (2025)
+Anthropic
+Claude 3.7 Sonnet and Claude Code
+.
+Anthropic
+.
+External Links:
+Link
+Cited by:
+§6
+.
+Austin
+et al.
+(2021)
+J. Austin, D. D. Johnson, J. Ho, D. Tarlow, and R. van den Berg
+Structured denoising diffusion models in discrete state-spaces
+.
+In
+Advances in Neural Information Processing Systems
+,
+A. Beygelzimer, Y. Dauphin, P. Liang, and J. W. Vaughan (Eds.)
+,
+External Links:
+Link
+Cited by:
+§9
+.
+Biderman
+et al.
+(2023)
+S. Biderman, H. Schoelkopf, Q. G. Anthony, H. Bradley, K. O’Brien, E. Hallahan, M. A. Khan, S. Purohit, U. S. Prashanth, E. Raff,
+et al.
+Pythia: a suite for analyzing large language models across training and scaling
+.
+In
+International Conference on Machine Learning
+,
+pp. 2397–2430
+.
+Cited by:
+§6
+.
+Bisk
+et al.
+(2020)
+Y. Bisk, R. Zellers, R. L. Bras, J. Gao, and Y. Choi
+PIQA: reasoning about physical commonsense in natural language
+.
+In
+Thirty-Fourth AAAI Conference on
+Artificial Intelligence
+,
+Cited by:
+§F.3
+.
+Bloom
+et al.
+(2025)
+S. Bloom, J. Brumberg, I. Fisk, R. Harrison, R. Hull, M. Ramasubramanian, K. Van Vliet, and J. Wing
+Empire ai: a new model for provisioning ai and hpc for academic research in the public good
+.
+In
+Practice and Experience in Advanced Research Computing 2025: The Power of Collaboration
+,
+PEARC ’25
+,
+New York, NY, USA
+.
+External Links:
+ISBN 9798400713989
+,
+Link
+,
+Document
+Cited by:
+Acknowledgments
+.
+Brown
+et al.
+(2020)
+T. Brown, B. Mann, N. Ryder, M. Subbiah, J. D. Kaplan, P. Dhariwal, A. Neelakantan, P. Shyam, G. Sastry, A. Askell,
+et al.
+Language models are few-shot learners
+.
+Advances in neural information processing systems
+33
+,
+pp. 1877–1901
+.
+Cited by:
+§1
+.
+cjadams
+et al.
+(2019)
+cjadams, D. Borkan, inversion, J. Sorensen, L. Dixon, L. Vasserman, and nithum
+Jigsaw unintended bias in toxicity classification
+.
+Kaggle
+.
+External Links:
+Link
+Cited by:
+§8
+.
+Clark
+et al.
+(2018)
+P. Clark, I. Cowhey, O. Etzioni, T. Khot, A. Sabharwal, C. Schoenick, and O. Tafjord
+Think you have solved question answering? try arc, the ai2 reasoning challenge
+.
+arXiv preprint arXiv:1803.05457
+.
+Cited by:
+§F.3
+.
+Dathathri
+et al.
+(2019)
+S. Dathathri, A. Madotto, J. Lan, J. Hung, E. Frank, P. Molino, J. Yosinski, and R. Liu
+Plug and play language models: a simple approach to controlled text generation
+.
+In
+International Conference on Learning Representations
+,
+Cited by:
+§9
+.
+Deng and Raffel (2023)
+H. Deng and C. Raffel
+Reward-augmented decoding: efficient controlled text generation with a unidirectional reward model
+.
+In
+The 2023 Conference on Empirical Methods in Natural Language Processing
+,
+Cited by:
+§8
+,
+§9
+.
+Dhariwal and Nichol (2021)
+P. Dhariwal and A. Nichol
+Diffusion models beat gans on image synthesis
+.
+Advances in neural information processing systems
+34
+,
+pp. 8780–8794
+.
+Cited by:
+Table 3
+,
+Table 4
+,
+§1
+,
+§2
+,
+§2
+,
+§3.2
+,
+§3.2
+,
+§3.2
+.
+Gehman
+et al.
+(2020)
+S. Gehman, S. Gururangan, M. Sap, Y. Choi, and N. A. Smith
+RealToxicityPrompts: evaluating neural toxic degeneration in language models
+.
+In
+Findings of the Association for Computational Linguistics: EMNLP 2020
+,
+T. Cohn, Y. He, and Y. Liu (Eds.)
+,
+Online
+,
+pp. 3356–3369
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§8
+.
+Geiping
+et al.
+(2025)
+J. Geiping, S. McLeish, N. Jain, J. Kirchenbauer, S. Singh, B. R. Bartoldson, B. Kailkhura, A. Bhatele, and T. Goldstein
+Scaling up test-time compute with latent reasoning: a recurrent depth approach
+.
+External Links:
+2502.05171
+,
+Link
+Cited by:
+§9
+.
+Gokaslan
+et al.
+(2019)
+A. Gokaslan, V. Cohen, E. Pavlick, and S. Tellex
+OpenWebText corpus
+.
+Note:
+http://Skylion007.github.io/OpenWebTextCorpus
+Cited by:
+§8
+.
+Gong
+et al.
+(2022)
+S. Gong, M. Li, J. Feng, Z. Wu, and L. Kong
+DiffuSeq: sequence to sequence text generation with diffusion models
+.
+In
+The Eleventh International Conference on Learning Representations
+,
+Cited by:
+§9
+.
+Goyal
+et al.
+(2024)
+S. Goyal, Z. Ji, A. S. Rawat, A. K. Menon, S. Kumar, and V. Nagarajan
+Think before you speak: training language models with pause tokens
+.
+In
+The Twelfth International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§9
+.
+Grattafiori
+et al.
+(2024)
+A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan,
+et al.
+The llama 3 herd of models
+.
+arXiv preprint arXiv:2407.21783
+.
+Cited by:
+§7
+.
+Gulrajani and Hashimoto (2023)
+I. Gulrajani and T. B. Hashimoto
+Likelihood-based diffusion language models
+.
+arXiv preprint arXiv:2305.18619
+.
+Cited by:
+§9
+.
+Gururangan
+et al.
+(2020)
+S. Gururangan, A. Marasović, S. Swayamdipta, K. Lo, I. Beltagy, D. Downey, and N. A. Smith
+Don’t stop pretraining: adapt language models to domains and tasks
+.
+In
+Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics
+,
+pp. 8342–8360
+.
+Cited by:
+§9
+.
+Hao
+et al.
+(2024)
+S. Hao, S. Sukhbaatar, D. Su, X. Li, Z. Hu, J. Weston, and Y. Tian
+Training large language models to reason in a continuous latent space
+.
+arXiv preprint arXiv:2412.06769
+.
+Cited by:
+§9
+.
+Hayes and Flower (1996)
+J. R. Hayes and L. S. Flower
+The science of writing: theories, methods, individual differences, and applications
+.
+Lawrence Erlbaum Associates, Inc
+.
+Cited by:
+§1
+.
+Ho
+et al.
+(2020)
+J. Ho, A. Jain, and P. Abbeel
+Denoising diffusion probabilistic models
+.
+Advances in neural information processing systems
+33
+,
+pp. 6840–6851
+.
+Cited by:
+Table 3
+,
+§1
+,
+§2
+,
+§2
+,
+§2
+,
+§2
+.
+Ho
+et al.
+(2022)
+J. Ho, C. Saharia, W. Chan, D. J. Fleet, M. Norouzi, and T. Salimans
+Cascaded diffusion models for high fidelity image generation
+.
+The Journal of Machine Learning Research
+23
+(
+1
+),
+pp. 2249–2281
+.
+Cited by:
+§3.1
+.
+Ho and Salimans (2021)
+J. Ho and T. Salimans
+Classifier-free diffusion guidance
+.
+arXiv preprint arXiv:2207.12598
+.
+Cited by:
+§1
+,
+§3.2
+.
+Holtzman
+et al.
+(2020)
+A. Holtzman, J. Buys, L. Du, M. Forbes, and Y. Choi
+The curious case of neural text degeneration
+.
+In
+International Conference on Learning Representations
+,
+Cited by:
+§F.2
+.
+Hoogeboom
+et al.
+(2022)
+E. Hoogeboom, A. A. Gritsenko, J. Bastings, B. Poole, R. van den Berg, and T. Salimans
+Autoregressive diffusion models
+.
+In
+International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§9
+.
+Hoogeboom
+et al.
+(2024)
+E. Hoogeboom, T. Mensink, J. Heek, K. Lamerigts, R. Gao, and T. Salimans
+Simpler diffusion (sid2): 1.5 fid on imagenet512 with pixel-space diffusion
+.
+arXiv preprint arXiv:2410.19324
+.
+Cited by:
+Table 3
+,
+Table 4
+,
+§3.2
+,
+footnote 1
+.
+Hoogeboom
+et al.
+(2021)
+E. Hoogeboom, D. Nielsen, P. Jaini, P. Forré, and M. Welling
+Argmax flows and multinomial diffusion: towards non-autoregressive language models
+.
+CoRR
+abs/2102.05379
+.
+External Links:
+Link
+Cited by:
+§9
+.
+Jang
+et al.
+(2023)
+J. Jang, S. Kim, B. Y. Lin, Y. Wang, J. Hessel, L. Zettlemoyer, H. Hajishirzi, Y. Choi, and P. Ammanabrolu
+Personalized soups: personalized large language model alignment via post-hoc parameter merging
+.
+arXiv preprint arXiv:2310.11564
+.
+Cited by:
+§9
+.
+Jia
+et al.
+(2025)
+C. Jia, Z. Li, P. Wang, Y. Li, Z. Hou, Y. Dong, and Y. Yu
+Controlling large language model with latent actions
+.
+arXiv preprint arXiv:2503.21383
+.
+Cited by:
+§9
+.
+Keskar
+et al.
+(2019)
+N. S. Keskar, B. McCann, L. R. Varshney, C. Xiong, and R. Socher
+Ctrl: a conditional transformer language model for controllable generation
+.
+arXiv preprint arXiv:1909.05858
+.
+Cited by:
+§F.2
+.
+Kingma and Gao (2023)
+D. P. Kingma and R. Gao
+Understanding diffusion objectives as the ELBO with simple data augmentation
+.
+In
+Thirty-seventh Conference on Neural Information Processing Systems
+,
+External Links:
+Link
+Cited by:
+§2
+.
+Kingma
+et al.
+(2021)
+D. Kingma, T. Salimans, B. Poole, and J. Ho
+Variational diffusion models
+.
+Advances in neural information processing systems
+34
+,
+pp. 21696–21707
+.
+Cited by:
+§C.1
+,
+§2
+,
+§5
+,
+§5
+.
+Kojima
+et al.
+(2022)
+T. Kojima, S. S. Gu, M. Reid, Y. Matsuo, and Y. Iwasawa
+Large language models are zero-shot reasoners
+.
+Advances in neural information processing systems
+35
+,
+pp. 22199–22213
+.
+Cited by:
+§1
+.
+Krause
+et al.
+(2021)
+B. Krause, A. D. Gotmare, B. McCann, N. S. Keskar, S. Joty, R. Socher, and N. F. Rajani
+GeDi: generative discriminator guided sequence generation
+.
+In
+Findings of the Association for Computational Linguistics: EMNLP 2021
+,
+pp. 4929–4952
+.
+Cited by:
+§9
+.
+Li
+et al.
+(2022)
+X. L. Li, J. Thickstun, I. Gulrajani, P. Liang, and T. Hashimoto
+Diffusion-LM improves controllable text generation
+.
+In
+Advances in Neural Information Processing Systems
+,
+A. H. Oh, A. Agarwal, D. Belgrave, and K. Cho (Eds.)
+,
+External Links:
+Link
+Cited by:
+§1
+,
+§2
+,
+§9
+.
+Liang
+et al.
+(2024)
+W. Liang, L. Yu, L. Luo, S. Iyer, N. Dong, C. Zhou, G. Ghosh, M. Lewis, W. Yih, L. Zettlemoyer,
+et al.
+Mixture-of-transformers: a sparse and scalable architecture for multi-modal foundation models
+.
+arXiv preprint arXiv:2411.04996
+.
+Cited by:
+§9
+.
+Liu
+et al.
+(2021a)
+A. Liu, M. Sap, X. Lu, S. Swayamdipta, C. Bhagavatula, N. A. Smith, and Y. Choi
+DExperts: decoding-time controlled text generation with experts and anti-experts
+.
+In
+Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the 11th International Joint Conference on Natural Language Processing (Volume 1: Long Papers)
+,
+pp. 6691–6706
+.
+Cited by:
+§8
+,
+§8
+,
+§8
+,
+§9
+.
+Liu
+et al.
+(2021b)
+A. Liu, S. Swayamdipta, N. A. Smith, and Y. Choi
+DExperts: decoding-time controlled text generation with experts and anti-experts
+.
+In
+Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the 11th International Joint Conference on Natural Language Processing (Volume 1: Long Papers)
+,
+pp. 6691–6706
+.
+Cited by:
+§1
+.
+Liu
+et al.
+(2020)
+Y. Liu, M. Ott, N. Goyal, J. Du, M. Joshi, D. Chen, O. Levy, M. Lewis, L. Zettlemoyer, and V. Stoyanov
+Ro{BERT}a: a robustly optimized {BERT} pretraining approach
+.
+External Links:
+Link
+Cited by:
+§8
+.
+Loshchilov and Hutter (2019)
+I. Loshchilov and F. Hutter
+Decoupled weight decay regularization
+.
+In
+International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+Table 3
+.
+Lou
+et al.
+(2024)
+A. Lou, C. Meng, and S. Ermon
+Discrete diffusion language modeling by estimating the ratios of the data distribution
+.
+External Links:
+Link
+Cited by:
+§9
+.
+Lovelace
+et al.
+(2024)
+J. Lovelace, V. Kishore, Y. Chen, and K. Weinberger
+Diffusion guided language modeling
+.
+In
+Findings of the Association for Computational Linguistics ACL 2024
+,
+pp. 14936–14952
+.
+Cited by:
+§2
+,
+§3.1
+,
+§9
+.
+Lovelace
+et al.
+(2023)
+J. Lovelace, V. Kishore, C. Wan, E. S. Shekhtman, and K. Q. Weinberger
+Latent diffusion for language generation
+.
+In
+Thirty-seventh Conference on Neural Information Processing Systems
+,
+External Links:
+Link
+Cited by:
+§1
+,
+§9
+.
+Lu
+et al.
+(2022a)
+C. Lu, Y. Zhou, F. Bao, J. Chen, C. Li, and J. Zhu
+DPM-solver++: fast solver for guided sampling of diffusion probabilistic models
+.
+arXiv preprint arXiv:2211.01095
+.
+Cited by:
+Appendix B
+.
+Lu
+et al.
+(2022b)
+X. Lu, S. Welleck, J. Hessel, L. Jiang, L. Qin, P. West, P. Ammanabrolu, and Y. Choi
+Quark: controllable text generation with reinforced unlearning
+.
+Advances in neural information processing systems
+35
+,
+pp. 27591–27609
+.
+Cited by:
+§8
+,
+§9
+.
+Mihaylov
+et al.
+(2018)
+T. Mihaylov, P. Clark, T. Khot, and A. Sabharwal
+Can a suit of armor conduct electricity? a new dataset for open book question answering
+.
+In
+EMNLP
+,
+Cited by:
+§F.3
+.
+Mostafazadeh
+et al.
+(2016)
+N. Mostafazadeh, N. Chambers, X. He, D. Parikh, D. Batra, L. Vanderwende, P. Kohli, and J. Allen
+A corpus and cloze evaluation for deeper understanding of commonsense stories
+.
+In
+Proceedings of the 2016 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies
+,
+pp. 839–849
+.
+Cited by:
+§6
+.
+Ni
+et al.
+(2022)
+J. Ni, G. H. Abrego, N. Constant, J. Ma, K. Hall, D. Cer, and Y. Yang
+Sentence-t5: scalable sentence encoders from pre-trained text-to-text models
+.
+In
+Findings of the Association for Computational Linguistics: ACL 2022
+,
+pp. 1864–1874
+.
+Cited by:
+§2
+,
+§3
+.
+Ouyang
+et al.
+(2022)
+L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. L. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray,
+et al.
+Training language models to follow instructions with human feedback
+.
+Advances in Neural Information Processing Systems
+35
+,
+pp. 27730–27744
+.
+Cited by:
+§1
+,
+§9
+.
+Peebles and Xie (2022)
+W. Peebles and S. Xie
+Scalable diffusion models with transformers
+.
+arXiv preprint arXiv:2212.09748
+.
+Cited by:
+Table 3
+,
+§3
+.
+Penedo
+et al.
+(2024)
+G. Penedo, H. Kydlíček, L. B. allal, A. Lozhkov, M. Mitchell, C. Raffel, L. V. Werra, and T. Wolf
+The fineweb datasets: decanting the web for the finest text data at scale
+.
+In
+The Thirty-eight Conference on Neural Information Processing Systems Datasets and Benchmarks Track
+,
+External Links:
+Link
+Cited by:
+§F.3
+,
+§3.2
+.
+Pillutla
+et al.
+(2021)
+K. Pillutla, S. Swayamdipta, R. Zellers, J. Thickstun, S. Welleck, Y. Choi, and Z. Harchaoui
+Mauve: measuring the gap between neural text and human text using divergence frontiers
+.
+Advances in Neural Information Processing Systems
+34
+,
+pp. 4816–4828
+.
+Cited by:
+§7
+.
+Radford
+et al.
+(2019)
+A. Radford, J. Wu, R. Child, D. Luan, D. Amodei, and I. Sutskever
+Language models are unsupervised multitask learners
+.
+Cited by:
+§6
+.
+Raffel
+et al.
+(2019)
+C. Raffel, N. Shazeer, A. Roberts, K. Lee, S. Narang, M. Matena, Y. Zhou, W. Li, and P. J. Liu
+Exploring the limits of transfer learning with a unified text-to-text transformer
+.
+arXiv e-prints
+.
+External Links:
+1910.10683
+Cited by:
+§7
+.
+Rombach
+et al.
+(2021)
+R. Rombach, A. Blattmann, D. Lorenz, P. Esser, and B. Ommer
+High-resolution image synthesis with latent diffusion models
+.
+External Links:
+2112.10752
+Cited by:
+§1
+,
+§2
+.
+Ronneberger
+et al.
+(2015)
+O. Ronneberger, P. Fischer, and T. Brox
+U-net: convolutional networks for biomedical image segmentation
+.
+In
+International Conference on Medical image computing and computer-assisted intervention
+,
+pp. 234–241
+.
+Cited by:
+§F.1
+.
+Sahoo
+et al.
+(2024)
+S. S. Sahoo, M. Arriola, Y. Schiff, A. Gokaslan, E. Marroquin, J. T. Chiu, A. Rush, and V. Kuleshov
+Simple and effective masked diffusion language models
+.
+External Links:
+2406.07524
+Cited by:
+§9
+.
+Sakaguchi
+et al.
+(2021)
+K. Sakaguchi, R. L. Bras, C. Bhagavatula, and Y. Choi
+WinoGrande: an adversarial winograd schema challenge at scale
+.
+Commun. ACM
+64
+(
+9
+),
+pp. 99–106
+.
+External Links:
+ISSN 0001-0782
+,
+Link
+,
+Document
+Cited by:
+§F.3
+.
+Salimans and Ho (2022)
+T. Salimans and J. Ho
+Progressive distillation for fast sampling of diffusion models
+.
+In
+International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+Table 3
+.
+Sap
+et al.
+(2019)
+M. Sap, H. Rashkin, D. Chen, R. LeBras, and Y. Choi
+SocialIQA: commonsense reasoning about social interactions
+.
+In
+Conference on Empirical Methods in Natural Language Processing
+,
+Cited by:
+§F.3
+.
+Shazeer (2020)
+N. Shazeer
+Glu variants improve transformer
+.
+arXiv preprint arXiv:2002.05202
+.
+Cited by:
+Table 3
+.
+Socher
+et al.
+(2013)
+R. Socher, A. Perelygin, J. Wu, J. Chuang, C. D. Manning, A. Y. Ng, and C. Potts
+Recursive deep models for semantic compositionality over a sentiment treebank
+.
+In
+Proceedings of the 2013 conference on empirical methods in natural language processing
+,
+pp. 1631–1642
+.
+Cited by:
+§8
+.
+Sohl-Dickstein
+et al.
+(2015)
+J. Sohl-Dickstein, E. A. Weiss, N. Maheswaranathan, and S. Ganguli
+Deep unsupervised learning using nonequilibrium thermodynamics
+.
+arXiv
+.
+External Links:
+Document
+,
+Link
+Cited by:
+§2
+.
+Song and Ermon (2019)
+Y. Song and S. Ermon
+Generative modeling by estimating gradients of the data distribution
+.
+Advances in neural information processing systems
+.
+Cited by:
+§2
+.
+Song
+et al.
+(2020)
+Y. Song, J. Sohl-Dickstein, D. P. Kingma, A. Kumar, S. Ermon, and B. Poole
+Score-based generative modeling through stochastic differential equations
+.
+In
+International Conference on Learning Representations
+,
+Cited by:
+§1
+,
+§2
+,
+§2
+.
+Strudel
+et al.
+(2022)
+R. Strudel, C. Tallec, F. Altché, Y. Du, Y. Ganin, A. Mensch, W. Grathwohl, N. Savinov, S. Dieleman, L. Sifre,
+et al.
+Self-conditioned embedding diffusion for text generation
+.
+arXiv preprint arXiv:2211.04236
+.
+Cited by:
+§9
+.
+Su
+et al.
+(2022)
+Y. Su, T. Lan, Y. Wang, D. Yogatama, L. Kong, and N. Collier
+A contrastive framework for neural text generation
+.
+arXiv preprint arXiv:2202.06417
+.
+Cited by:
+§7
+.
+Talmor
+et al.
+(2019)
+A. Talmor, J. Herzig, N. Lourie, and J. Berant
+CommonsenseQA: a question answering challenge targeting commonsense knowledge
+.
+In
+Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 1 (Long and Short Papers)
+,
+Minneapolis, Minnesota
+,
+pp. 4149–4158
+.
+External Links:
+Link
+,
+Document
+,
+1811.00937
+Cited by:
+§F.3
+.
+Team (2024)
+C. Team
+Chameleon: mixed-modal early-fusion foundation models
+.
+arXiv preprint arXiv:2405.09818
+.
+External Links:
+Document
+,
+Link
+Cited by:
+§9
+.
+Vaswani
+et al.
+(2017)
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin
+Attention is all you need
+.
+In
+Advances in Neural Information Processing Systems
+,
+Vol.
+30
+,
+pp.
+.
+External Links:
+Link
+Cited by:
+§1
+.
+Wang
+et al.
+(2024)
+X. Wang, X. Zhang, Z. Luo, Q. Sun, Y. Cui, J. Wang, F. Zhang, Y. Wang, Z. Li, Q. Yu,
+et al.
+Emu3: next-token prediction is all you need
+.
+arXiv preprint arXiv:2409.18869
+.
+Cited by:
+§9
+.
+Wei
+et al.
+(2022)
+J. Wei, X. Wang, D. Schuurmans, M. Bosma, F. Xia, E. Chi, Q. V. Le, D. Zhou,
+et al.
+Chain-of-thought prompting elicits reasoning in large language models
+.
+Advances in neural information processing systems
+35
+,
+pp. 24824–24837
+.
+Cited by:
+§9
+.
+Wu
+et al.
+(2023)
+Z. Wu, Y. Hu, W. Shi, N. Dziri, A. Suhr, P. Ammanabrolu, N. A. Smith, M. Ostendorf, and H. Hajishirzi
+Fine-grained human feedback gives better rewards for language model training
+.
+arXiv preprint arXiv:2306.01693
+.
+Cited by:
+§9
+.
+Yang and Klein (2021)
+K. Yang and D. Klein
+FUDGE: controlled text generation with future discriminators
+.
+In
+Proceedings of the 2021 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies
+,
+pp. 3511–3535
+.
+Cited by:
+§9
+.
+Zelikman
+et al.
+(2024)
+E. Zelikman, G. R. Harik, Y. Shao, V. Jayasiri, N. Haber, and N. Goodman
+Quiet-STar: language models can teach themselves to think before speaking
+.
+In
+First Conference on Language Modeling
+,
+External Links:
+Link
+Cited by:
+§9
+.
+Zelikman
+et al.
+(2022)
+E. Zelikman, Y. Wu, J. Mu, and N. Goodman
+Star: bootstrapping reasoning with reasoning
+.
+Advances in Neural Information Processing Systems
+35
+,
+pp. 15476–15488
+.
+Cited by:
+§9
+.
+Zellers
+et al.
+(2019)
+R. Zellers, A. Holtzman, Y. Bisk, A. Farhadi, and Y. Choi
+HellaSwag: can a machine really finish your sentence?
+.
+In
+Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics
+,
+Cited by:
+§F.3
+.
+Zhang and Sennrich (2019)
+B. Zhang and R. Sennrich
+Root mean square layer normalization
+.
+Advances in Neural Information Processing Systems
+32
+.
+Cited by:
+Table 3
+.
+Zhang
+et al.
+(2023)
+Y. Zhang, J. Gu, Z. Wu, S. Zhai, J. Susskind, and N. Jaitly
+PLANNER: generating diversified paragraph via latent language diffusion model
+.
+arXiv preprint arXiv:2306.02531
+.
+Cited by:
+§9
+.
+Zheng
+et al.
+(2024)
+K. Zheng, Y. Chen, H. Mao, M. Liu, J. Zhu, and Q. Zhang
+Masked diffusion models are secretly time-agnostic masked models and exploit inaccurate categorical sampling
+.
+arXiv preprint arXiv:2409.02908
+.
+Cited by:
+§9
+.
+Zhou
+et al.
+(2024)
+C. Zhou, L. Yu, A. Babu, K. Tirumala, M. Yasunaga, L. Shamis, J. Kahn, X. Ma, L. Zettlemoyer, and O. Levy
+Transfusion: predict the next token and diffuse images with one multi-modal model
+.
+arXiv preprint arXiv:2408.11039
+.
+Cited by:
+§9
+.
+Ziegler
+et al.
+(2019)
+D. M. Ziegler, N. Stiennon, J. Wu, T. B. Brown, A. Radford, D. Amodei, P. Christiano, and G. Irving
+Fine-tuning language models from human preferences
+.
+arXiv preprint arXiv:1909.08593
+.
+Cited by:
+§1
+.
+Appendix A
+Additional Visualizations of the Impact of Diffusion Process on Language Modeling
+We provide a number of additional results in this section to help build intuition for the contribution of the diffusion model to language generation. Both
+Figure 2
+and
+Figure 6
+, show the change in log likelihood at a token level when conditioned on a semantic plan.
+Figure 2
+shows this for arbitrary text continuations which we embed as semantic plans with Sentence T5, while
+Figure 6
+shows this for latent plans sampled from STAR-LDM.
+Figure 6
+:
+Visualization of the change in log likelihood due to conditioning on a semantic plan. Shown for two different generations. Positive values (red) indicate tokens that become more likely when conditioned on the plan, while negative values (blue) indicate tokens that become less likely.
+In order to quantitatively assess the impact of the semantic plans, we measure the perplexity of STAR-LDM as a function of the log(SNR) in
+Figure 7
+. We do this on a subset of the C4 validation set, as well as on a set of generations nucleus sampled from STAR-LDM. We see that at high log(SNR), where the semantic plan is very clean, the perplexity is much lower. However at low log(SNR), where the semantic plan is very noisy, the perplexity is much higher. This demonstrates that the semantic plan reduces the uncertainty in the language generation; helping the language model focus on a specific semantic direction.
+Figure 7
+:
+Perplexity at various noise levels on a subset of 100 examples from the C4 evaluation set (left), or 100 sampled generations (right).
+Additionally we show the same perplexity comparison but at the maximum log(SNR), corresponding to
+t
+=
+0
+t=0
+, in
+Figure 8
+.
+Figure 8
+:
+Perplexity on a subset of 100 examples from the C4 evaluation set (left), or 100 sampled generations (right).
+Finally to complement our quantitative evaluation of STAR-LDM across noise levels, we visualize how the token wise log likelihoods change with the log(SNR) in
+Figure 9
+.
+Figure 9
+:
+Visualization of the token wise log likelihood by log(SNR) (top). Visualization of the token wise change in log likelihood by log(SNR) (bottom).
+Appendix B
+Inference Latency
+To explore the impact of the diffusion planning phase on efficiency, we analyze the inference latency of STAR-LDM. As the source of computational overhead is the iterative “thinking” phase, we evaluate how generation quality varies with the number of diffusion sampling steps. For this analysis, we adopt the DPM-Solver++(2M) SDE sampler
+(
+Lu et al., 2022a
+)
+, which is highly effective for few-step sampling, and we sweep the number of diffusion sampling steps from 5 to 50. We set the prefix guidance to
+w
+=
+2.0
+w=2.0
+for this study.
+We generate 96-token continuations for 32-token prompts, using a set of 250 examples randomly drawn from the C4 validation set. We report generative perplexity as a function of the wall-clock time per generation in
+Figure 10
+. For reference, we also benchmark the inference speed and quality of the standard GPT-2 Large and GPT-2 XL autoregressive models.
+It is important to note that our current STAR-LDM implementation is not optimized for inference speed. Specifically, key-value (KV) caching, a standard technique for accelerating autoregressive generation, is not yet implemented for the diffusion planning phase, during which the prefix is re-processed at each denoising step. Our reported wall-clock times for STAR-LDM are therefore a loose upper bound on its inference speed.
+As shown in
+Figure 10
+, STAR-LDM introduces a tunable trade-off between computation time and generative perplexity. We observe diminishing returns as the number of sampling steps increases; perplexity improves up to around 15-20 steps and then largely plateaus, while latency continues to increase. In that sampling step range, the latency is similar to GPT-2 XL, which STAR-LDM consistently outperforms in NLU evaluations and generative metrics such as MAUVE score.
+Figure 10
+:
+Quality-Speed Tradeoff in Language Generation.
+We plot generative perplexity (lower is better) against the wall-clock time to generate a 96-token continuation. The STAR-LDM curve shows performance as the number of diffusion sampling steps is varied. Baselines are standard autoregressive models.
+Appendix C
+NLU Derivation
+In this appendix, we derive the Evidence Lower Bound (ELBO) for our STAR-LDM model, which serves as the foundation for both training and evaluation. This derivation illustrates how standard diffusion ELBO principles are adapted when the reconstruction term is parameterized with an autoregressive decoder.
+C.1
+Standard Diffusion ELBO
+We first recall the standard diffusion ELBO for continuous diffusion models
+(
+Kingma et al., 2021
+)
+. For a diffusion model that generates data starting from pure noise, the log-likelihood of data point
+x
+x
+can be bounded from below as:
+log
+⁡
+p
+⁡
+(
+x
+)
+≥
+ℒ
+ELBO
+​
+(
+x
+)
+\displaystyle\log p(x)\geq\mathcal{L}_{\text{ELBO}}(x)
+=
+𝔼
+q
+⁡
+(
+z
+λ
+max
+|
+x
+)
+​
+[
+log
+⁡
+p
+⁡
+(
+x
+|
+z
+λ
+max
+)
+]
+⏟
+Reconstruction term
+\displaystyle=\underbrace{\mathbb{E}_{q(z_{\lambda_{\max}}|x)}[\log p(x|z_{\lambda_{\max}})]}_{\text{Reconstruction term}}
+(11)
+−
+D
+KL
+(
+q
+(
+z
+λ
+min
+|
+x
+)
+∥
+p
+(
+z
+λ
+min
+)
+)
+⏟
+Prior matching term
+\displaystyle-\underbrace{D_{\text{KL}}(q(z_{\lambda_{\min}}|x)\parallel p(z_{\lambda_{\min}}))}_{\text{Prior matching term}}
+(12)
+−
+∫
+λ
+min
+λ
+max
+1
+2
+​
+‖
+ϵ
+−
+ϵ
+θ
+​
+(
+z
+λ
+,
+λ
+)
+‖
+2
+​
+d
+λ
+⏟
+Diffusion loss term
+\displaystyle-\underbrace{\int_{\lambda_{\min}}^{\lambda_{\max}}\frac{1}{2}\|\epsilon-\epsilon_{\theta}(z_{\lambda},\lambda)\|^{2}d\lambda}_{\text{Diffusion loss term}}
+(13)
+Where:
+z
+λ
+z_{\lambda}
+represents the noisy latent variable at noise level parameterized by
+λ
+\lambda
+(log-SNR);
+q
+⁡
+(
+z
+λ
+|
+x
+)
+q(z_{\lambda}|x)
+is the forward process that adds noise to the data;
+p
+⁡
+(
+x
+|
+z
+λ
+max
+)
+p(x|z_{\lambda_{\max}})
+is the reconstruction term (generating data from noisy latent);
+D
+KL
+(
+q
+(
+z
+λ
+min
+|
+x
+)
+∥
+p
+(
+z
+λ
+min
+)
+)
+D_{\text{KL}}(q(z_{\lambda_{\min}}|x)\parallel p(z_{\lambda_{\min}}))
+is the prior matching term; and the integral term represents the diffusion denoising objective.
+C.2
+ELBO for STAR-LDM
+For STAR-LDM, we adapt this framework to the language modeling context where we have a prefix
+x
+pref
+x_{\text{pref}}
+and continuation
+x
+cont
+x_{\text{cont}}
+. The key innovation is that the reconstruction term is parameterized using an autoregressive decoder. We derive the ELBO for
+p
+⁡
+(
+x
+cont
+|
+x
+pref
+)
+p(x_{\text{cont}}|x_{\text{pref}})
+as follows:
+First, we introduce the latent sentence embedding
+z
+z
+that represents the semantic plan for the continuation. The joint probability can be factorized as:
+p
+⁡
+(
+x
+cont
+,
+z
+|
+x
+pref
+)
+=
+p
+⁡
+(
+x
+cont
+|
+x
+pref
+,
+z
+)
+​
+p
+​
+(
+z
+|
+x
+pref
+)
+\displaystyle p(x_{\text{cont}},z|x_{\text{pref}})=p(x_{\text{cont}}|x_{\text{pref}},z)p(z|x_{\text{pref}})
+(14)
+The marginal probability of the continuation is:
+p
+⁡
+(
+x
+cont
+|
+x
+pref
+)
+=
+∫
+p
+⁡
+(
+x
+cont
+|
+x
+pref
+,
+z
+)
+​
+p
+​
+(
+z
+|
+x
+pref
+)
+​
+𝑑
+z
+\displaystyle p(x_{\text{cont}}|x_{\text{pref}})=\int p(x_{\text{cont}}|x_{\text{pref}},z)p(z|x_{\text{pref}})dz
+(15)
+Since this integral is intractable, we derive a lower bound using variational inference. We introduce a variational posterior
+q
+⁡
+(
+z
+|
+x
+cont
+)
+q(z|x_{\text{cont}})
+which in our case is implemented by the Sentence-T5 encoder which produces a clean embedding, which then serves as the basis for the forward diffusion process.
+Applying the standard variational inference procedure and Jensen’s inequality, we arrive at the Evidence Lower Bound. Here,
+z
+z
+represents the full hierarchy of latent variables defined by the diffusion process::
+log
+⁡
+p
+⁡
+(
+x
+cont
+|
+x
+pref
+)
+\displaystyle\log p(x_{\text{cont}}|x_{\text{pref}})
+≥
+𝔼
+q
+⁡
+(
+z
+|
+x
+cont
+)
+[
+log
+p
+(
+x
+cont
+|
+x
+pref
+,
+z
+)
+]
+−
+D
+KL
+(
+q
+(
+z
+|
+x
+cont
+)
+∥
+p
+(
+z
+|
+x
+pref
+)
+)
+\displaystyle\geq\mathbb{E}_{q(z|x_{\text{cont}})}\left[\log p(x_{\text{cont}}|x_{\text{pref}},z)\right]-D_{\text{KL}}(q(z|x_{\text{cont}})\parallel p(z|x_{\text{pref}}))
+(16)
+For the diffusion model part, we expand the KL term using its standard parameterization.
+The reconstruction term
+p
+⁡
+(
+x
+cont
+|
+x
+pref
+,
+z
+)
+p(x_{\text{cont}}|x_{\text{pref}},z)
+is evaluated at a specific low-noise level
+λ
+max
+\lambda_{\max}
+, which corresponds to the latent variable
+z
+λ
+max
+z_{\lambda_{\max}}
+. The KL divergence over the full diffusion path from the variational posterior
+q
+⁡
+(
+z
+|
+x
+cont
+)
+q(z|x_{\text{cont}})
+to the prefix-conditioned prior
+p
+⁡
+(
+z
+|
+x
+pref
+)
+p(z|x_{\text{pref}})
+can then be expressed as:
+D
+KL
+(
+q
+(
+z
+|
+x
+cont
+)
+∥
+p
+(
+z
+|
+x
+pref
+)
+)
+\displaystyle D_{\text{KL}}(q(z|x_{\text{cont}})\parallel p(z|x_{\text{pref}}))
+=
+D
+KL
+(
+q
+(
+z
+λ
+min
+|
+x
+cont
+)
+∥
+p
+(
+z
+λ
+min
+)
+)
+\displaystyle=D_{\text{KL}}(q(z_{\lambda_{\min}}|x_{\text{cont}})\parallel p(z_{\lambda_{\min}}))
+(17)
++
+∫
+λ
+min
+λ
+max
+1
+2
+𝔼
+q
+⁡
+(
+z
+λ
+|
+x
+cont
+)
+[
+∥
+ϵ
+−
+ϵ
+θ
+(
+z
+λ
+,
+λ
+,
+x
+pref
+)
+∥
+2
+]
+d
+λ
+\displaystyle+\int_{\lambda_{\min}}^{\lambda_{\max}}\frac{1}{2}\mathbb{E}_{q(z_{\lambda}|x_{\text{cont}})}[\|\epsilon-\epsilon_{\theta}(z_{\lambda},\lambda,x_{\text{pref}})\|^{2}]d\lambda
+(18)
+The first term is the KL divergence between the prior and the most noisy distribution. Substituting this back into (
+16
+), our final, complete ELBO is:
+log
+⁡
+p
+⁡
+(
+x
+cont
+|
+x
+pref
+)
+\displaystyle\log p(x_{\text{cont}}|x_{\text{pref}})
+≥
+𝔼
+q
+⁡
+(
+z
+λ
+max
+|
+x
+cont
+)
+​
+[
+log
+⁡
+p
+θ
+​
+(
+x
+cont
+|
+x
+pref
+,
+z
+λ
+max
+)
+]
+\displaystyle\geq\mathbb{E}_{q(z_{\lambda_{\max}}|x_{\text{cont}})}\left[\log p_{\theta}(x_{\text{cont}}|x_{\text{pref}},z_{\lambda_{\max}})\right]
+−
+D
+KL
+(
+q
+(
+z
+λ
+min
+|
+x
+cont
+)
+∥
+p
+(
+z
+λ
+min
+)
+)
+\displaystyle-D_{\text{KL}}(q(z_{\lambda_{\min}}|x_{\text{cont}})\parallel p(z_{\lambda_{\min}}))
+(19)
+−
+∫
+λ
+min
+λ
+max
+1
+2
+𝔼
+q
+⁡
+(
+z
+λ
+|
+x
+cont
+)
+[
+∥
+ϵ
+−
+ϵ
+θ
+(
+z
+λ
+,
+λ
+,
+x
+pref
+)
+∥
+2
+]
+d
+λ
+\displaystyle-\int_{\lambda_{\min}}^{\lambda_{\max}}\frac{1}{2}\mathbb{E}_{q(z_{\lambda}|x_{\text{cont}})}[\|\epsilon-\epsilon_{\theta}(z_{\lambda},\lambda,x_{\text{pref}})\|^{2}]d\lambda
+(20)
+The prior matching term (
+19
+) ensures that the distribution of the most-noised latents matches a standard Gaussian prior. In many practical applications, this term is either assumed to be approximately zero (if the noise schedule is such that
+q
+⁡
+(
+z
+λ
+min
+|
+x
+cont
+)
+q(z_{\lambda_{\min}}|x_{\text{cont}})
+collapses to a standard normal) or is omitted from the training objective as it is often small and constant with respect to the model parameters
+θ
+\theta
+.
+C.3
+Parameterization with Autoregressive Decoder
+For STAR-LDM, we parameterize the reconstruction term with an autoregressive decoder. Specifically:
+log
+⁡
+p
+θ
+​
+(
+x
+cont
+|
+x
+pref
+,
+z
+)
+=
+∑
+i
+=
+1
+|
+x
+cont
+|
+log
+⁡
+p
+θ
+​
+(
+x
+cont
+,
+i
+|
+x
+pref
+,
+x
+cont
+,
+<
+i
+,
+z
+)
+\displaystyle\log p_{\theta}(x_{\text{cont}}|x_{\text{pref}},z)=\sum_{i=1}^{|x_{\text{cont}}|}\log p_{\theta}(x_{\text{cont},i}|x_{\text{pref}},x_{\text{cont},<i},z)
+(21)
+This allows the model to generate text token-by-token while being guided by the semantic plan represented by the latent variable
+z
+z
+.
+C.4
+ELBO for Zero-Shot Evaluation
+For zero-shot NLU evaluation, we use the negative of the ELBO derived above to score candidate answers
+A
+i
+A_{i}
+given a question
+Q
+Q
+.
+For the purpose of creating a practical scoring function, we drop the prior matching term (
+D
+KL
+​
+(
+…
+)
+D_{\text{KL}}(...)
+in (
+19
+)). This is a common practice as the term is constant with respect to the model parameters
+θ
+\theta
+being evaluated and does not affect the relative ranking of candidate answers. Its non-negativity ensures that we are still optimizing a valid (though slightly looser) bound.
+A key aspect of our evaluation protocol is that the reconstruction noise level,
+λ
+max
+\lambda_{\max}
+, is a tunable hyperparameter. This allows us to precisely control the trade-off between the influence of the semantic plan (the diffusion component) and the fluency of the autoregressive decoder.
+The resulting scoring function is based on the two main components of the ELBO bound: the reconstruction loss and the diffusion loss.
+Score
+​
+(
+A
+i
+|
+Q
+;
+λ
+max
+)
+\displaystyle\text{Score}(A_{i}|Q;\lambda_{\max})
+=
+−
+𝔼
+q
+⁡
+(
+z
+i
+,
+λ
+max
+|
+A
+i
+)
+​
+[
+∑
+j
+=
+1
+|
+A
+i
+|
+log
+⁡
+p
+θ
+​
+(
+A
+i
+j
+|
+A
+i
+<
+j
+,
+z
+i
+,
+λ
+max
+,
+Q
+)
+]
+\displaystyle=-\mathbb{E}_{q(z_{i,\lambda_{\max}}|A_{i})}\left[\sum_{j=1}^{|A_{i}|}\log p_{\theta}(A_{i}^{j}|A_{i}^{<j},z_{i,\lambda_{\max}},Q)\right]
+(22)
++
+𝔼
+t
+,
+ϵ
+∼
+𝒩
+⁡
+(
+0
+,
+I
+)
+​
+[
+w
+ELBO
+​
+(
+λ
+t
+)
+⋅
+‖
+ϵ
+−
+ϵ
+θ
+​
+(
+z
+i
+,
+t
+,
+t
+,
+Q
+)
+‖
+2
+]
+\displaystyle+\mathbb{E}_{t,\epsilon\sim\mathcal{N}(0,I)}\left[w_{\text{ELBO}}(\lambda_{t})\cdot\|\epsilon-\epsilon_{\theta}(z_{i,t},t,Q)\|^{2}\right]
+(23)
+In practice, we compute an unbiased estimate of this score by approximating both expectations with Monte Carlo sampling
+5
+5
+5
+We use 16 Monte Carlo samples for the reconstruction term and 128 for the diffusion term, which we found sufficient for stable estimates.
+.
+In this formulation,
+z
+i
+,
+λ
+max
+z_{i,\lambda_{\max}}
+represents the candidate answer’s clean embedding noised to the level
+λ
+max
+\lambda_{\max}
+, while
+z
+i
+,
+t
+z_{i,t}
+is the same embedding noised to a random level
+t
+t
+. By varying
+λ
+max
+\lambda_{\max}
+, we control how much the autoregressive decoder relies on the semantic plan versus its own internal knowledge. We fix
+λ
+max
+=
+−
+2
+\lambda_{\max}=-2
+across all datasets, though we observed that tuning this on a per-dataset basis would lead to further improvements. The candidate answer with the lowest score is selected as the most probable answer.
+This derivation provides the theoretical foundation for the zero-shot evaluation protocol for STAR-LDM.
+Appendix D
+StoryCloze Evaluation Details
+For our Claude judged StoryCloze evaluation we randomly sample a subset of 200 stories from the StoryCloze validation split. For each story in our sample, we generate a 32-token continuation from each baseline as well as STAR-LDM. We then compare for each story each baseline generation against that of STAR-LDM by inserting the two continuations into the prompt shown in
+Figure 11
+. The ordering of the continuations (i.e. which is given as option A/B) is randomized for every comparison. The prompt gives explicit instruction on the criteria to use to evaluate the continuations as well as how to denote the winner. The winner is indicated with specific formatting that is easily parsed with a regular expression. We present a qualitative example in
+Figure 12
+.
+LLM-as-a-Judge Prompt
+Task Overview
+You are evaluating two competing language models that generate story continuations. Given a four-sentence story context, each model will generate a continuation. Your task is to judge which continuation is better based on a set of defined criteria.
+Evaluation Criteria
+Narrative Coherence
+How well does the continuation logically follow from the context? Does it maintain consistency with characters, events, and situations established in the first four sentences? Does it advance the narrative in a natural and satisfying way?
+Commonsense Reasoning
+Does the continuation demonstrate understanding of causal and temporal relationships? Is it consistent with real-world knowledge about how events typically unfold? Does it avoid contradicting established facts about the world?
+Language Quality
+Is the continuation grammatically correct and well-formed? Does it match the style, tone, and vocabulary level of the context? Does it flow naturally from the preceding text?
+Emotional/Psychological Plausibility
+Does the continuation reflect plausible human reactions, motivations, or emotions? Does it appropriately address characters’ goals, feelings, or intentions set up in the context?
+Scoring Process
+Read the four-sentence context carefully. Read both generated continuations (labeled A and B) without knowing which system produced which text. Rate each continuation on all four criteria using a 1-5 scale. For each criteria select the continuation with the higher score as the winner. Provide a brief justification (2-3 sentences) explaining your decision.
+Clearly indicate your final judgment for each criteria by placing the criteria (either ”Coherence” or ”Reasoning” or ”Quality” or ”Plausibility”) and winning continuation (either ”A” or ”B”) within double brackets, like: [[Coherence A]]. Make sure to provide a winner for each criteria. Missing Judgements for Criteria will be considered a tie.
+Example Evaluations
+Example 1:
+Context:
+Bob was bored at his job as a school teacher. He had been working so hard this past month. He decided to treat himself with something special. He ordered tickets for a weekend snowboarding trip.
+Continuation A:
+He was looking forward to getting away.
+Continuation B:
+His boss told him he had to work this weekend.
+Judgement:
+Narrative Coherence:
+Continuation A (4/5) follows the established narrative arc of Bob’s self-reward better than Continuation B (3/5). A naturally builds on his anticipation while B introduces a conflicting element that shifts away from the focus on Bob’s well-deserved break. [[Coherence A]]
+Commonsense Reasoning:
+Continuation A (5/5) demonstrates better understanding of the natural progression from planning a trip to looking forward to it, while B (4/5) introduces a plausible but less aligned obstacle that breaks the causal flow of treating oneself. [[Reasoning A]]
+Language Quality:
+Both continuations are grammatically sound and match the context’s tone, with A (4/5) flowing slightly more naturally than B (4/5) as it maintains the focus on Bob’s perspective rather than shifting to his boss’s actions. [[Quality A]]
+Emotional/Psychological Plausibility:
+Continuation A (4/5) better addresses Bob’s established intention to reward himself with positive anticipation, while B (4/5), though realistic, introduces disappointment that contradicts the emotional trajectory set up in the context. [[Plausibility A]]
+Example 2:
+Context:
+Olivia went out with Harry on a date. Harry thought the date was going well. Olivia thinks he is a complete jerk and never wants to see him again. Harry keeps raving about their chemistry.
+Continuation A:
+Olivia is about to leave.
+Continuation B:
+Olivia had her friend call her, to tell her that her mother was ill so as not to offend him.
+Judgement:
+Narrative Coherence:
+Continuation B (5/5) provides a more specific action that builds upon Olivia’s established discomfort and desire to end the date without confrontation, while A (4/5) is logical but less developed. [[Coherence B]]
+Commonsense Reasoning:
+Continuation B (5/5) demonstrates better understanding of complex social dynamics and face-saving strategies commonly used in uncomfortable dating situations, compared to A (4/5) which is direct but lacks social nuance. [[Reasoning B]]
+Language Quality:
+Both continuations are grammatically correct, but B (4/5) provides more detail matching the context’s complexity, while A (3/5) is much simpler than the established narrative style. [[Quality B]]
+Emotional/Psychological Plausibility:
+Continuation B (5/5) shows deeper understanding of Olivia’s conflicting desires to escape while avoiding direct confrontation, consistent with her awareness of Harry’s obliviousness, while A (4/5) captures her desire to leave but not her likely approach. [[Plausibility B]]
+Example 3:
+Context:
+Jack and Ferris always fought for headphones. One day Jack broke Ferris’ headphones while jogging. Ferris was furious at Jack. Their parents yelled at them.
+Continuation A:
+Jack promised Ferris to buy him new headphones.
+Continuation B:
+Jack promised to take Ferris jogging.
+Judgement:
+Narrative Coherence:
+Continuation A (5/5) directly addresses the central conflict (broken headphones) with an appropriate resolution, while B (2/5) ignores the primary issue established in the context. [[Coherence A]]
+Commonsense Reasoning:
+Continuation A (5/5) offers a logical resolution consistent with real-world problem-solving, while B (2/5) fails by suggesting the very activity that caused the problem, which would likely worsen the situation. [[Reasoning A]]
+Language Quality:
+Both continuations are grammatically correct, but A (4/5) flows more naturally from the context’s focus on the headphone conflict, while B (4/5) creates a jarring shift in focus. [[Quality A]]
+Emotional/Psychological Plausibility:
+Continuation A (5/5) acknowledges responsibility and offers appropriate compensation addressing Ferris’s established anger, while B (3/5) shows poor understanding of the emotional situation and would likely increase Ferris’s frustration. [[Plausibility A]]
+Implementation Notes
+Judge continuations primarily on how well they follow from the established context. Prioritize narrative coherence and commonsense reasoning over creativity or surprise. Be consistent in applying the evaluation criteria across different story types. Consider the natural progression of events and character motivations when evaluating plausibility. Avoid bias toward specific narrative styles or genre preferences.
+Figure 11
+:
+Prompt template used for LLM-as-Judge evaluations with Claude 3.7 Sonnet on StoryCloze generations.
+Context:
+Rick grew up in a troubled household. He never found good support in family, and turned to gangs. It wasn’t long before Rick got shot in a robbery. The incident caused him to turn a new leaf.
+STAR-LDM (A):
+Ricks attempt to change his life was long and hard. However, the process has been worth it. The way he lived changed when he started a new chapter…
+GPT2-XL (B):
+Rick now looks after his younger brother, who is disabled.
+The two are the heart of what is perhaps the most important project this summer: a massive…
+Evaluation of Story Continuations
+After analyzing the four-sentence context about Rick and the two competing continuations, here is my assessment based on the specified criteria:
+Narrative Coherence
+Continuation A follows the context’s redemption arc naturally, describing Rick’s difficult but rewarding journey to change his life after the shooting incident. Continuation B introduces Rick caring for a disabled younger brother (new information) and then abruptly shifts to discussing a ”project” without clear connection to the established narrative. A maintains consistent focus on Rick’s transformation while B introduces disconnected elements.
+[[Coherence A]]
+Commonsense Reasoning
+Continuation A demonstrates understanding of how personal transformation is typically difficult but rewarding, showing appropriate causal relationships. Continuation B presents a plausible caregiving scenario but fails to connect this to the ”important project” mentioned afterward, breaking logical flow. The second sentence in B feels disconnected from both the context and the first sentence of the continuation.
+[[Reasoning A]]
+Language Quality
+Continuation A has minor issues (e.g., ”Ricks” missing apostrophe) but maintains the narrative’s tone and flows naturally from the context. Continuation B starts cohesively but abruptly transitions to an incomplete thought about a ”project,” creating a jarring stylistic break that doesn’t match the established narrative voice. A feels more like a complete thought while B seems fragmented.
+[[Quality A]]
+Emotional/Psychological Plausibility
+Continuation A acknowledges the psychological reality that changing one’s life after trauma is challenging but worthwhile, reflecting plausible emotional growth. Continuation B presents a plausible caring relationship but fails to connect this to Rick’s emotional journey established in the context, and the sudden mention of a ”project” lacks psychological grounding in the character’s established motivations.
+[[Plausibility A]]
+Figure 12
+:
+Qualitative example of story completions from the StoryCloze dataset. The LLM judge evaluated both continuations, where Continuation A is STAR-LDM and Continuation B is GPT2-XL. The judge preferred STAR-LDM’s continuation across all evaluation criteria.
+Appendix E
+Additional Control Experiments
+In this appendix, we provide additional results for our controlled text generation experiments that complement the findings presented in Section 7.
+E.1
+Control-Perplexity Trade-offs
+While the main paper shows negative sentiment control and the average maximum toxicity metric, here we present additional control-perplexity trade-offs for positive sentiment and the average toxicity metric.
+(a)
+Perplexity vs. Positive Sentiment
+(b)
+Perplexity vs. Average Toxicity
+Figure 13
+:
+Additional control-perplexity trade-offs beyond those shown in the main paper.
+Figure
+13
+demonstrates that STAR-LDM effectively controls positive sentiment and reduces average toxicity scores while maintaining competitive perplexity. For positive sentiment control, our model achieves high scores (
+>
+0.95
+>0.95
+) with guidance scale
+s
+=
+2.0
+s=2.0
+, showing minimal fluency degradation compared to the base model. Similarly, for toxicity reduction, STAR-LDM achieves substantially lower average toxicity scores than both GPT-2 Large and DeXperts at comparable perplexity levels.
+E.2
+Control-Diversity Trade-offs
+We also evaluate the relationship between attribute control and lexical diversity, measured by the ratio of unique trigrams in the generated output. These metrics complement the perplexity evaluations by assessing whether controlled generation maintains vocabulary richness and avoids repetitive patterns.
+(a)
+Diversity vs. Negative Sentiment
+(b)
+Diversity vs. Positive Sentiment
+Figure 14
+:
+Relationship between n-gram diversity and sentiment control.
+(a)
+Diversity vs. Average Toxicity
+(b)
+Diversity vs. Maximum Toxicity
+Figure 15
+:
+Relationship between n-gram diversity and toxicity control.
+Figures
+14
+and
+15
+show that STAR-LDM consistently outperforms DeXperts by achieving better attribute control while maintaining higher lexical diversity. For both positive and negative sentiment control, our approach preserves trigram diversity even at strong guidance scales. Similarly, for toxicity mitigation, STAR-LDM with guidance scale
+s
+=
+5.0
+s=5.0
+dramatically reduces both average and maximum toxicity while maintaining diversity comparable to the base model.
+These results highlight a key advantage of our diffusion planning approach: by guiding generation at the semantic level before committing to specific tokens, STAR-LDM achieves natural attribute control that preserves linguistic richness without resorting to repetitive or restricted vocabulary choices.
+Appendix F
+Implementation Details
+F.1
+STAR-LDM
+We report additional architecture details and hyperparemeters for STAR-LDM in
+Table 3
+. Our architecture processes the noisy latent embedding through a sequence of two DiT blocks, with the main autoregressive decoder situated in between (see
+Figure 1
+). To enable classifier-free guidance for the prefix, we must simultaneously train our model to perform unconditional prediction, i.e. without information from the prefix. We achieve this with two modifications. First, to remove the prefix conditioning, we replace the output representations from the autoregressive decoder with a single, learnable null-context embedding. However, this embedding contains no information about the noisy sentence embedding processed by the first DiT block. To preserve this initial processing, we therefore introduce a UNet-style skip connection
+(
+Ronneberger et al., 2015
+)
+that concatenates the output of the first DiT directly to the null-context embedding before it is passed to the second DiT. This design ensures the unconditional path still benefits from the initial latent processing while remaining independent of the prefix. For the conditional path, the output of the first DiT is concatenated with the output of the autoregressive backbone, integrating information from the prefix.
+Table 3:
+Implementation details for STAR-LDM training.
+Architecture
+Base Language Model
+GPT-2 Large (774M parameters)
+Sentence Embedding Model
+Sentence-T5 XL (768 dimensions)
+Total Trainable Parameters
+956M
+DiT Architecture — Prompt Encoder and Diffusion Prediction
+DiT Layers per Module
+6
+DiT Hidden Dimension
+1024
+DiT Attention Heads
+16
+DiT Head Dimension
+64
+Activation Function
+SwiGLU
+(
+Shazeer, 2020
+)
+Normalization Layer
+Adaptive RMSNorm
+(
+Zhang and Sennrich, 2019
+;
+Peebles and Xie, 2022
+)
+Soft Prompt Sequence Length
+8
+Diffusion Configuration
+Output Parameterization
+v-prediction
+(
+Salimans and Ho, 2022
+)
+Diffusion Steps (Inference)
+50
+Diffusion Sampler (Inference)
+DDPM
+(
+Ho et al., 2020
+)
+Loss Weighting
+Sigmoid
+(
+Hoogeboom et al., 2024
+)
+Noise Schedule
+Cosine
+(
+Dhariwal and Nichol, 2021
+)
+Training Details
+Dataset
+FineWeb
+Training Tokens
+16B
+Max Sequence Length
+128
+Optimizer
+AdamW
+(
+Loshchilov and Hutter, 2019
+)
+Learning Rate
+5e-4
+Training Steps
+250000
+Batch Size
+512
+Weight Decay
+.01
+Gradient Clipping
+1.0
+Diffusion Loss Weight (
+β
+\beta
+)
+5.0
+F.2
+Decoding Parameters
+For all of our generation experiments, we utilize nucleus sampling (p=0.9)
+(
+Holtzman et al., 2020
+)
+with a repetition penalty of 1.2
+(
+Keskar et al., 2019
+)
+for the STAR-LDM decoder and the autoregressive baselines.
+F.3
+Baseline NLU Results
+All baseline results are computed with the lighteval evaluation harness
+6
+6
+6
+https://github.com/huggingface/lighteval
+using the FineWeb
+(
+Penedo et al., 2024
+)
+evaluation prompts
+7
+7
+7
+https://huggingface.co/datasets/HuggingFaceFW/fineweb/blob/main/lighteval_tasks.py
+.
+We report results for CommonsenseQA (CSQA)
+(
+Talmor et al., 2019
+)
+, Social IQA (SIQA)
+(
+Sap et al., 2019
+)
+, HellaSwag (HS)
+(
+Zellers et al., 2019
+)
+, Winogrande (WG)
+(
+Sakaguchi et al., 2021
+)
+, Physical IQA (PIQA)
+(
+Bisk et al., 2020
+)
+, OpenBookQA (OBQA)
+(
+Mihaylov et al., 2018
+)
+, and ARC (Easy and Challenge)
+(
+Clark et al., 2018
+)
+.
+F.4
+Noise-Conditioned MLP
+We present results of the noise conditioned classifier for sentiment and toxicity detection on held-out sets for our dataset in
+Figure 16
+. We observe that they smoothly improve in performance as noise levels decrease, outperforming a logistic regression baseline for even moderately noisy data.
+Table 4:
+Implementation details for the Noise-Conditioned MLP classifier.
+MLP Architecture
+Input Dimension
+768
+Hidden Dimension
+1536
+Number of MLP Blocks
+4
+Number of Hidden Layers
+1 hidden layer
+Normalization
+Pre-norm with adaptive RMSNorm
+Residual Connections
+Applied after each MLP
+Activation Function
+SwiGLU
+Time Embedding
+Sinusoidal positional encoding
+Diffusion Configuration
+Noise Schedule
+Cosine
+(
+Dhariwal and Nichol, 2021
+)
+Loss Weighting
+Sigmoid
+(
+Hoogeboom et al., 2024
+)
+Training Details
+Optimizer
+AdamW
+Learning Rate
+1e-4
+Batch Size
+256
+Weight Decay
+.01
+Gradient Clipping
+1.0
+Figure 16
+:
+Classifier performance across noise levels for sentiment (left), and toxicity (right) classification.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

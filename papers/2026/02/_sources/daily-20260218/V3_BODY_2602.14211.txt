@@ -1,0 +1,621 @@
+SkillJect: Automating Stealthy Skill-Based Prompt Injection for Coding Agents with Trace-Driven Closed-Loop Refinement
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+2.1 Agent skill
+2.2 Prompt injection
+3 Method
+3.1 Threat Model and Problem Formulation
+3.2 Malicious payload hiding strategy
+3.3 Generating injected skills with SkillJect
+4 Experiments
+4.1 Experimental Setup
+4.2 Baseline
+4.3 Results and Analysis
+4.4 Cross-Model Transferability
+4.5 Ablation Study
+4.6 Defense Evaluation with SkillScan
+5 Conclusion
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2602.14211v1 [cs.CR] 15 Feb 2026
+SkillJect: Automating Stealthy Skill-Based Prompt Injection for Coding Agents with Trace-Driven Closed-Loop Refinement
+Xiaojun Jia
+Affiliation: Nanyang Technological University, Singapore
+Jie Liao
+† † thanks: $‡$ Corresponding author: Jie Liao.
+Affiliation: Chongqing University, China
+Affiliation: BraneMatrix AI, China
+Simeng Qin
+Affiliation: Northeastern University, China
+Jindong Gu
+Affiliation: University of Oxford, UK jiaxiaojunqaq@gmail.com; liaojie@cqu.edu.cn; qinsimeng@neuq.edu.cn;jindong.gu@outlook.com
+; renwq3@mail.sysu.edu.cn; caoxiaochun@mail.sysu.edu.cn;yangliu@ntu.edu.sg; philip.torr@eng.ox.ac.uk
+Wenqi Ren
+Affiliation: Sun Yat-sen University, China
+Xiaochun Cao
+Affiliation: Sun Yat-sen University, China
+Yang Liu
+Affiliation: Nanyang Technological University, Singapore
+Philip Torr
+Affiliation: University of Oxford, UK jiaxiaojunqaq@gmail.com; liaojie@cqu.edu.cn; qinsimeng@neuq.edu.cn;jindong.gu@outlook.com
+; renwq3@mail.sysu.edu.cn; caoxiaochun@mail.sysu.edu.cn;yangliu@ntu.edu.sg; philip.torr@eng.ox.ac.uk
+Abstract
+Agent skills are becoming a core abstraction in coding agents, packaging long-form instructions and auxiliary scripts to extend tool-augmented behaviors. This abstraction introduces an under-measured attack surface: skill-based prompt injection, where poisoned skills can steer agents away from user intent and safety policies. In practice, naive injections often fail because the malicious intent is too explicit or drifts too far from the original skill, leading agents to ignore or refuse them; existing attacks are also largely hand-crafted.
+We propose the first automated framework for stealthy prompt injection tailored to agent skills. The framework forms a closed loop with three agents: an Attack Agent that synthesizes injection skills under explicit stealth constraints, a Code Agent that executes tasks using the injected skills in a realistic tool environment, and an Evaluate Agent that logs action traces (e.g., tool calls and file operations) and verifies whether targeted malicious behaviors occurred. We also propose a malicious payload hiding strategy that
+conceals adversarial operations in auxiliary scripts while injecting optimized inducement prompts to trigger tool execution. Extensive experiments across diverse coding-agent settings and real-world software engineering tasks show that our method consistently achieves high attack success rates under realistic settings.
+1 Introduction
+Figure 1 : The threat model of SkillJect . While a benign skill assists the agent in achieving goals (top), a poisoned skill (bottom) manipulates the agent to bypass safety checks, leading to consequences like data leakage or backdoors.
+Large language models (LLMs) have achieved remarkable performance across a wide range of domains, including natural language understanding and generation, question answering, reasoning, and so on. More recently, LLMs have moved beyond the ‘‘text-only’’ interaction toward tool-augmented agency, where models plan, call external tools, and iteratively refine actions to complete complex goals.
+An excellent example is the emergence of coding agents (e.g., Claude Code 1 1
+1
+https://github.com/anthropics/claude-code , OpenCode 2 2
+2
+https://github.com/anomalyco/opencode , and Codex 3 3
+3
+https://github.com/openai/codex ), which can read and modify code repositories, search documentation, run tests, and execute commands, enabling end-to-end automation for realistic software engineering tasks.
+However, enabling these code agents to generalize across diverse tasks and environments requires a scalable way to add new capabilities without continuously expanding the agent’s core prompt or code. Hence, code agents have begun adopting a plug-in style abstraction in the form of modular capability bundles that can be loaded and used on demand, commonly referred to as agent skills.
+Anthropic published the Agent Skills specification as an open, cross-platform standard [ 2 ] . It formalizes a modular extension mechanism in which an agent can pull in task-specific capabilities as needed. Each capability is shipped as a self-contained package centered on a SKILL.md file (describing metadata and usage guidance), accompanied by executable scripts and any required resources. Operationally, the agent preloads each installed skill’s YAML front matter (e.g., description) to decide relevance; once triggered, it reads the full SKILL.md into context and follows its instructions, optionally running any bundled scripts/resources, to complete the task.
+By loading these components on demand, agents can stay lightweight while still performing specialized tasks. This pattern has already been adopted in widely used tooling: Claude Code, Codex CLI, and Gemini CLI all support instruction files paired with bundled code and assets [ 1 , 16 , 5 ] .
+While agent skills greatly improve extensibility, they also create a distinct and under-measured security risk: skill-based prompt injection. Specifically, an attacker can plant hidden malicious directives inside a skill file and upload it to a public sharing platform. When users later import and run this “helpful” skill in their coding agent, the injected directives can covertly steer the agent’s tool use—leading to outcomes such as leaking API keys or documents, tampering with project files, or introducing backdoored changes that are hard to notice during normal development. Some studies [ 17 , 11 ] indicate that many real-world agent skills contain vulnerabilities and potentially malicious content. However, even if many skills contain suspicious or malicious instructions, such payloads are not necessarily triggered in practice. Modern coding agents may refuse explicit harmful directives or down-weight instructions that appear irrelevant to the current task, especially when the injected content introduces noticeable semantic drift from the original skill. Consequently, naive skill poisoning is often brittle: it either gets filtered out, ignored, or exposed to users during normal inspection. Moreover, existing demonstrations of skill poisoning are typically hand-crafted, which limits attack performance.
+To address this gap, we propose SkillJect , the first automated framework for prompt injection tailored specifically to agent skills.
+The proposed SkillJect consists of three components: an Attack Agent that generates injected skills under explicit stealth constraints, a Code Agent that performs realistic software-engineering tasks while using the injected skill, and an Evaluate Agent that records action traces (e.g., tool calls and file operations) and verifies whether the targeted malicious behaviors occur. Moreover, our SkillJect proposes to adopt a malicious payload hiding strategy: the malicious operations are concealed in auxiliary artifacts (e.g., .py or .sh scripts) that appear benign in the repository, while the Attack Agent automatically optimizes an inducement prompt and injects it into SKILL.md . When the Code Agent uses the skill, the injected prompt subtly steers tool usage and triggers the execution of the hidden payload. Importantly, the Attack Agent iteratively rewrites the inducement prompt in a closed loop using the Evaluate Agent’s trace feedback, improving both efficacy and stealth until success or a preset budget. Extensive experiments across diverse agent tools and code agents show that the proposed SkillJect can reliably generate malicious skills that induce code agents to execute the intended unauthorized operations. The code is released at https://github.com/jiaxiaojunQAQ/SkillJect . Our main contributions are as follows:
+•
+We propose SkillJect , the first automated prompt-injection framework tailored to agent skills, featuring a closed-loop pipeline with an Attack Agent, a Code Agent, and a trace-based Evaluate Agent.
+•
+We propose a malicious payload hiding strategy that conceals adversarial operations in auxiliary scripts while injecting optimized inducement prompts into SKILL.md to trigger tool execution.
+•
+Extensive experiments across diverse agent tools and code agents demonstrate that SkillJect effectively generates injected skills and induces targeted malicious tool behaviors.
+2 Related Work
+2.1 Agent skill
+LLM systems increasingly operate as tool-augmented agents [ 25 , 18 , 14 ] that can plan, call external tools, and iteratively execute actions to complete complex tasks. During coding scenarios, agents [ 24 , 7 , 15 ] can understand and modify code repositories, invoke tools (such as searching, running tests, and executing commands), and automatically complete end-to-end development tasks through multi-step interactions. However, the diversity of repositories and toolchains makes it impractical for a single and fixed policy to cover all task-specific procedures, motivating a modular mechanism for capability extension. Many emerging agent frameworks, such as Claude Code [ 1 ] , Codex CLI [ 16 ] , and Gemini CLI [ 5 ] , therefore adopt agent skills as a plug-in abstraction, where task-specific capabilities are packaged as reusable bundles that can be loaded and used on demand. Specifically, Anthropic [2] has proposed an open and cross-platform Agent Skills specification that formalizes this plug-in style pattern: a skill is packaged around a central SKILL.md file containing metadata and usage guidance, accompanied by executable scripts and required resources; the agent first uses the metadata to assess relevance and then loads and executes the skill as needed. Agent skills are increasingly published and shared as reusable artifacts via public websites [ 20 , 19 ] and GitHub 4 4
+4
+https://github.com/vercel-labs/agent-skills ; https://github.com/anthropics/skills repositories
+(e.g., official skill collections and documentation), enabling broad reuse and community contribution.
+2.2 Prompt injection
+Prompt injection works [ 13 , 22 , 6 , 3 , 4 ] indicate that an attack where an attacker embeds hidden or misleading instructions into model-readable inputs (e.g., webpages, documents, tool outputs) to make the model override its original task and safety rules and follow the attacker’s intent instead. In contrast to direct jailbreak attack [ 23 , 9 , 8 ] where the user explicitly provides malicious prompts, prompt injection is often indirect: the attacker controls a third-party content source that the agent later ingests during normal operation. For example,
+Liu et al. [10] empirically study prompt injection risks in real-world LLM-integrated applications and highlight practical constraints of naive injection strategies. Wang et al. [22] demonstrate that web agents can be reliably hijacked by carefully crafted instructions placed in webpages or other tool-returned content. Wang et al. [21] show that multi-modal agents can be manipulated via cross-modal prompt injection, where attackers jointly leverage visual and textual channels to hijack decision making.
+While most prior prompt injection works focus on runtime inputs (e.g., webpages, documents, or retrieval results), some works [ 17 , 11 ] suggest a distinct and under-explored attack surface: skill-based prompt injection, where adversarial instructions are planted into reusable agent skill packages that are later imported and executed by code agents. Compared to conventional indirect injection, skills are often treated as high-privilege capability extensions, and thus can yield stronger persistence and more direct influence over tool usage.
+3 Method
+Figure 2 : Overview of the SkillJect framework. The pipeline operates as an iterative loop: the Attack Agent transforms a benign skill into a poisoned one by modifying documentation and artifacts under constraints Ω \Omega . The Code Agent executes the skill during task routing and execution. The Evaluate Agent then assesses the execution traces against the target behavior to provide feedback for refinement.
+We propose SkillJect , an automated prompt injection framework tailored to agent skills .
+Our method follows an iterative, conversation-style refinement paradigm:
+an Attack Agent proposes an injected skill, a Code Agent executes it in realistic software-engineering tasks,
+and an Evaluate Agent judges the resulting traces and returns feedback for refinement.
+3.1 Threat Model and Problem Formulation
+Attack Mechanism.
+A skill package is represented as S = ( d , 𝒜 ) S=(d,\mathcal{A}) , where d d denotes the natural-language instruction file ( SKILL.md ) and 𝒜 \mathcal{A} denotes the optional auxiliary artifacts (e.g., Python scripts, shell files, configuration data) that the agent may load and use as needed. The proposed SkillJect generates a poisoned skill S ′ = ( d ′ , 𝒜 ′ ) S^{\prime}=(d^{\prime},\mathcal{A}^{\prime}) by:
+(1) injecting an inducement prompt π \pi into d d to obtain d ′ = Inject ​ ( d , π ) d^{\prime}=\texttt{Inject}(d,\pi) , and
+(2) hiding the malicious payload in auxiliary artifacts via 𝒜 ′ = HidePayload ​ ( 𝒜 ) \mathcal{A}^{\prime}=\texttt{HidePayload}(\mathcal{A}) .
+This separation keeps d ′ d^{\prime} semantically consistent with the benign skill while enabling concrete trace-level effects through 𝒜 ′ \mathcal{A}^{\prime} .
+Victim setting.
+We target a Code Agent operating in a task-driven environment. The agent employs a retrieval or routing mechanism to select skills from a registry. Upon selecting a skill S S , the agent loads the documentation d d into its context window. The agent then autonomously plans and executes actions—including reading files and running scripts found in 𝒜 \mathcal{A} —to solve a user-specified task t t .
+Attacker’s Capability and Knowledge.
+We assume a black-box setting. The attacker can publish skill packages to a registry accessible by the victim. The attacker has full control over the content of S ′ S^{\prime} but possesses no access to the victim agent’s model weights, internal embeddings, or system prompts. The attacker can only observe the external behavior of the victim through execution traces (e.g., logs, terminal output).
+Attacker’s goal.
+We consider a task-driven skill-routing setting, where the agent selects skills based on the current task. Let 𝒯 \mathcal{T} denote a task distribution and R ⁡ ( t ) R(t) denote the set of skills invoked by the agent (or its router) when solving task t ∼ 𝒯 t\sim\mathcal{T} . Given a target behavior ℬ \mathcal{B} specified as a trace-level predicate, the attacker aims to craft a poisoned skill S ′ = ( d ′ , 𝒜 ′ ) S^{\prime}=(d^{\prime},\mathcal{A}^{\prime}) such that, on tasks where S ′ S^{\prime} is invoked (i.e., S ′ ∈ R ⁡ ( t ) S^{\prime}\in R(t) ), the resulting execution trace satisfies ℬ \mathcal{B} with high probability, while maintaining stealthiness by keeping d ′ d^{\prime} semantically close to d d and preserving artifact-level invariants of 𝒜 \mathcal{A} .
+3.2 Malicious payload hiding strategy
+Because modern code agents are sensitive to explicitly malicious instructions, directly placing the attack intent in the documentation d ′ d^{\prime} is often ignored or rejected. We therefore decouple the attack into two parts: a lightweight inducement prompt in the skill documentation and an operational payload embedded in skill artifacts,
+d ′ = Inject ​ ( d , π ) , 𝒜 ′ = HidePayload ​ ( 𝒜 ) . d^{\prime}=\textsc{Inject}(d,\pi),\qquad\mathcal{A}^{\prime}=\textsc{HidePayload}(\mathcal{A}).
+(1)
+Here, Inject inserts a short inducement prompt π \pi into SKILL.md , while HidePayload ​ ( 𝒜 ) \textsc{HidePayload}(\mathcal{A}) moves the actual malicious instructions into executable auxiliary files shipped with the skill. In practice, HidePayload ​ ( 𝒜 ) \textsc{HidePayload}(\mathcal{A}) typically adds or modifies a helper script (most commonly a .sh or .py file, e.g., helper.sh , run.sh , tool.py ) and encapsulates the malicious operations as a command sequence or function logic inside that script, yielding the artifact set 𝒜 ′ \mathcal{A}^{\prime} .
+This design keeps the visible documentation d ′ d^{\prime} superficially consistent with benign usage: the documentation only needs to steer the agent to run the helper as part of a “normal” workflow step (e.g., setup, validation, conversion), while the malicious behavior is realized when the script executes. As a result, the attack manifests at the trajectory level τ \tau and is verified by the target behavior predicate ℬ \mathcal{B} (via ℳ ⁡ ( τ , ℬ ) \mathcal{M}(\tau;\mathcal{B}) ). In other words, HidePayload does not rely on explicit malicious content in d ′ d^{\prime} ; instead, it hides the payload in plausible executable artifacts ( .sh / .py ) that fit common skill packaging conventions and are more likely to be executed by the agent during routine skill use.
+3.3 Generating injected skills with SkillJect
+Problem Formulation.
+Let a benign agent skill be S = ( d , 𝒜 ) S=(d,\mathcal{A}) , where d d denotes the natural-language documentation (i.e., SKILL.md ) and 𝒜 \mathcal{A} denotes the associated artifacts (scripts/resources). Given target behavior ℬ \mathcal{B} , we model the attack goal as a trace-level predicate
+ℳ ⁡ ( τ , ℬ ) ∈ { 0 , 1 } , \mathcal{M}(\tau;\mathcal{B})\in\{0,1\},
+(2)
+where τ \tau is the Code Agent’s execution trace (the ordered sequence of tool/command executions, file operations, and intermediate/final outputs). The verifier ℳ ⁡ ( τ , ℬ ) \mathcal{M}(\tau;\mathcal{B}) returns 1 1 if τ \tau satisfies ℬ \mathcal{B} , and 0 0 otherwise; it is implemented by the Evaluate Agent via trace inspection.
+Constrained Generation. The Attack Agent is an LLM-driven generator 𝒢 θ \mathcal{G}_{\theta} that edits the documentation d d by producing an enhanced document d ′ d^{\prime} based on the target behavior ℬ \mathcal{B} :
+d ′ = 𝒢 θ ​ ( d , m , ℬ ∣ Ω ) , d^{\prime}=\mathcal{G}_{\theta}(d,m,\mathcal{B}\mid\Omega),
+(3)
+where m m is structured “enhancement” metadata (e.g., helper-script location, purpose, and description), and Ω \Omega is a set of soft constraints encoded directly in the Attack Agent prompt. Importantly, we do not introduce an explicit stealthiness metric or an external stealth scorer; instead, we enforce naturalness and consistency purely through prompt-level constraints. We define Ω = { Ω sem , Ω str , Ω min , Ω sty , Ω out } , \Omega=\{\Omega_{\text{sem}},\Omega_{\text{str}},\Omega_{\text{min}},\Omega_{\text{sty}},\Omega_{\text{out}}\}, as:
+•
+Semantic fidelity ( Ω sem \Omega_{\text{sem}} ): preserve the original skill’s intent and functionality, including its goal, I/O contract, and core steps; only local additions in the form of usage examples, command samples, or technical notes are allowed.
+•
+Structural alignment ( Ω str \Omega_{\text{str}} ): keep the original document organization (headings, lists, code blocks) and insert new content at natural locations (e.g., setup, usage examples, or development workflow notes).
+•
+Minimal-edit constraint ( Ω min \Omega_{\text{min}} ): keep modifications small in length and scope, avoiding unnecessary rewrites of existing content.
+•
+Documentation-consistent style ( Ω sty \Omega_{\text{sty}} ): maintain a professional, helpful technical-writing tone consistent with the original documentation.
+•
+Output validity ( Ω out \Omega_{\text{out}} ): return complete, valid SKILL.md content in Markdown, preserving all original functionality and content.
+Feedback-driven refinement.
+Since the victim agent’s decision-making process is complex and non-deterministic, a single-shot generation often fails (e.g., the agent ignores the instruction or hallucinates a different command). We employ an iterative loop to refine d ′ d^{\prime} .
+At iteration k k , the generator conditions on a history buffer H k − 1 H_{k-1} containing past failures and diagnostics:
+d k ′ = 𝒢 θ ( d , m , ℬ ∣ Ω , H k − 1 ) . d^{\prime}_{k}=\mathcal{G}_{\theta}\big(d,m,\mathcal{B}\mid\Omega,H_{k-1}\big).
+(4)
+To keep the refinement loop lightweight, we generate the hidden payload only once at iteration k = 0 k=0 :
+𝒜 ′ = HidePayload ​ ( 𝒜 ) . \mathcal{A}^{\prime}=\texttt{HidePayload}(\mathcal{A}).
+(5)
+Then, throughout the iterative process we only update the documentation candidate d k ′ d^{\prime}_{k} while fixing the artifacts to A ′ A^{\prime} .
+Accordingly, the k k -th poisoned skill is instantiated as
+S k ′ = ( d k ′ , 𝒜 ′ ) . S^{\prime}_{k}=(d^{\prime}_{k},\mathcal{A}^{\prime}).
+(6)
+The Code Agent executes a batch of tasks T k ⊂ 𝒯 T_{k}\subset\mathcal{T} using the candidate skill S k ′ S^{\prime}_{k} and records traces τ k ​ ( t ) = Run ​ ( S k ′ , t ) \tau_{k}(t)=\textsc{Run}(S^{\prime}_{k},t) for each t ∈ T k t\in T_{k} :
+τ k ​ ( t ) = Run ​ ( S k ′ , t ) . \tau_{k}(t)=\textsc{Run}(S^{\prime}_{k},t).
+(7)
+The Evaluate Agent returns a binary success signal and a structured diagnostic:
+y k ​ ( t ) = ℳ ⁡ ( τ k ​ ( t ) , ℬ ) , δ k ​ ( t ) = 𝒟 ⁡ ( τ k ​ ( t ) , S k ′ ) , y_{k}(t)=\mathcal{M}(\tau_{k}(t);\mathcal{B}),\qquad\delta_{k}(t)=\mathcal{D}(\tau_{k}(t),S^{\prime}_{k}),
+(8)
+where 𝒟 ⁡ ( τ k ​ ( t ) , S k ′ ) \mathcal{D}(\tau_{k}(t),S^{\prime}_{k}) is a trace-level diagnostic function implemented by the Evaluate Agent. It takes the execution trace τ k ​ ( t ) \tau_{k}(t) and outputs a structured diagnosis δ k ​ ( t ) \delta_{k}(t) , consisting of a failure/success type label (e.g., ignored , refused ) and supporting evidence extracted from the trace.
+We aggregate feedback into the history buffer:
+H k = H k − 1 ∪ { ( t , y k ​ ( t ) , δ k ​ ( t ) ) } t ∈ T k . H_{k}=H_{k-1}\cup\{(t,y_{k}(t),\delta_{k}(t))\}_{t\in T_{k}}.
+(9)
+The Attack Agent uses δ k ​ ( ⋅ ) \delta_{k}(\cdot) to revise the next prompt (e.g., adjusting insertion location, reducing verbosity, or improving workflow alignment), while keeping Ω \Omega fixed.
+Algorithm 1 SkillJect : Iterative Skill Injection Framework
+1:
+Input: Benign skill S = ( d , 𝒜 ) S=(d,\mathcal{A}) , target ℬ \mathcal{B} , metadata m m , constraints Ω \Omega , max iterations K K .
+2:
+Output: Poisoned skill S ∗ = ( d ′ , 𝒜 ′ ) S^{*}=(d^{\prime},\mathcal{A}^{\prime}) .
+3:
+// Step 1: Payload Embedding (One-time setup)
+4:
+𝒜 ′ ← HidePayload ​ ( 𝒜 ) \mathcal{A}^{\prime}\leftarrow\textsc{HidePayload}(\mathcal{A})
+5:
+H 0 ← ∅ H_{0}\leftarrow\emptyset , S ∗ ← None S^{*}\leftarrow\text{None}
+6:
+// Step 2: Iterative Refinement Loop
+7:
+for k = 1 k=1 to K K do
+8:
+⊳ \rhd Attack Agent generates candidate documentation
+9:
+d k ′ ← 𝒢 θ ( d , m , ℬ ∣ Ω , H k − 1 ) d^{\prime}_{k}\leftarrow\mathcal{G}_{\theta}(d,m,\mathcal{B}\mid\Omega,H_{k-1})
+10:
+S k ′ ← ( d k ′ , 𝒜 ′ ) S^{\prime}_{k}\leftarrow(d^{\prime}_{k},\mathcal{A}^{\prime})
+11:
+⊳ \rhd Execution & Evaluation
+12:
+Sample task batch 𝒯 k ⊂ 𝒯 \mathcal{T}_{k}\subset\mathcal{T}
+13:
+for t ∈ 𝒯 k t\in\mathcal{T}_{k} do
+14:
+τ k ​ ( t ) ← Run ​ ( S k ′ , t ) \tau_{k}(t)\leftarrow\textsc{Run}(S^{\prime}_{k},t) // Victim executes skill
+15:
+y k ​ ( t ) ← ℳ ⁡ ( τ k ​ ( t ) , ℬ ) y_{k}(t)\leftarrow\mathcal{M}(\tau_{k}(t);\mathcal{B})
+16:
+δ k ​ ( t ) ← 𝒟 ⁡ ( τ k ​ ( t ) , S k ′ ) \delta_{k}(t)\leftarrow\mathcal{D}(\tau_{k}(t),S^{\prime}_{k}) // Diagnostic feedback
+17:
+end for
+18:
+⊳ \rhd Update History
+19:
+H k ← H k − 1 ∪ { ( t , y k ​ ( t ) , δ k ​ ( t ) ) } t ∈ 𝒯 k H_{k}\leftarrow H_{k-1}\cup\{(t,y_{k}(t),\delta_{k}(t))\}_{t\in\mathcal{T}_{k}}
+20:
+if 1 | 𝒯 k | ​ ∑ y k ​ ( t ) > threshold \frac{1}{|\mathcal{T}_{k}|}\sum y_{k}(t)>\text{threshold} then
+21:
+S ∗ ← S k ′ S^{*}\leftarrow S^{\prime}_{k}
+22:
+break
+23:
+end if
+24:
+end for
+25:
+return S ∗ S^{*}
+4 Experiments
+4.1 Experimental Setup
+Dataset Construction.
+To evaluate the effectiveness of SkillJect in realistic scenarios, we curated a benchmark dataset consisting of 50 diverse agent skills. These skills simulate common developer tools and workflows, covering three major domains: (1) Data Processing (e.g., CSV parsers, JSON formatters), (2) Development Utilities (e.g., linters, git wrappers, environment configuration tools), and (3) Visual Content Generation (e.g., image resizing, graph plotting). For each skill S S , we constructed a corresponding task t t comprising a natural language task description and a set of necessary workspace files. The tasks are designed to trigger the legitimate functionality of the skill, providing a plausible context for the victim agent to invoke the injected artifacts without raising suspicion.
+Attack Scenarios (Target Behaviors).
+We categorize the attacker’s goals ( ℬ \mathcal{B} ) into four distinct high-severity consequences:
+•
+Information Disclosure (InfoLeak): The agent exfiltrates sensitive environment variables (e.g., AWS_ACCESS_KEY ) or local files to an external attacker-controlled server.
+•
+Privilege Escalation (PrivEsc): The agent modifies system configurations, such as adding a new user to the sudoers file or changing file permissions to 777.
+•
+Unauthorized Write (FileMod): The agent modifies, deletes, or encrypts critical user files (e.g., source code or databases) outside the authorized workspace.
+•
+Backdoor Injection (Backdoor): The agent acts as a trojan horse, executing a script or printing a message that displays a malicious URL (e.g., disguised as a legitimate authentication or dashboard link) to the user interface, inducing the human to click.
+Victim Environment.
+We employ Claude Code 5 5
+5
+https://platform.claude.com/docs/en/agents-and-tools/claude-code , a state-of-the-art agentic coding tool, as the victim framework. The agent runs within a sandboxed Docker container to safely execute generated commands. To evaluate the transferability of our attacks across different underlying LLMs, we connect Claude Code to four distinct backend models: Claude-4.5-Sonnet (the native model), GPT-5-mini , GLM-4.7 , and MiniMax-M2.1 . This diverse setup tests whether the injected skills can deceive agents driven by reasoning engines with varying architectures and alignment profiles.
+Attacker Implementation.
+The Attack Agent is powered by GPT-3.5-Turbo , representing a low-cost adversary. Following our method, the attack proceeds in two phases:
+(1) Payload Preparation: We pre-generate malicious Bash scripts corresponding to the four target behaviors and place them in the skill’s resources directory (hidden from direct view).
+(2) Documentation Injection: The Attack Agent iteratively modifies the SKILL.md file. Its goal is to weave the invocation of these scripts into the standard usage instructions naturally, adhering to the stylistic and semantic constraints Ω \Omega .
+Evaluation Metrics.
+We employ a strict dual-layer verification protocol to determine attack success:
+1.
+Invocation Check: Does the victim agent explicitly execute the malicious script (e.g., bash resources/setup.sh ) during the task?
+2.
+Consequence Check: Does the execution result in the intended trace-level consequence? We verify this by inspecting system logs and file system states (e.g., checking if the sensitive file was actually received by our listener or if the backdoor link was rendered).
+An attack is considered successful ( y i = 1 y_{i}=1 ) only if the victim satisfies both conditions for a given task i i . Consequently, the Attack Success Rate (ASR) is calculated as:
+ASR = ∑ i = 1 N y i N × 100 % \text{ASR}=\frac{\sum_{i=1}^{N}y_{i}}{N}\times 100\%
+(10)
+where N = 50 N=50 is the total number of evaluation tasks.
+4.2 Baseline
+Given that the security implications of this specific skill injection vector remain largely unexplored, there are no existing state-of-the-art methods for direct comparison. Therefore, we establish a fundamental baseline to represent a Naive adversary’s approach:
+•
+Direct Injection (Naive): A rudimentary strategy where the attacker explicitly writes malicious commands (e.g., curl -X POST <url> -d @secret.txt ) directly into the SKILL.md instructions without employing helper scripts or obfuscation techniques. This baseline serves to quantify the effectiveness of modern LLMs’ safety filters against straightforward injection attempts.
+4.3 Results and Analysis
+Table 1 : Attack Success Rate (ASR %) comparison between the Naive baseline (Direct Injection) and our proposed SkillJect across four different backend LLMs. The results are categorized into Information Disclosure (InfoLeak), Privilege Escalation (PrivEsc), Unauthorized Write (FileMod), and Backdoor Injection (Backdoor).
+Victim Model
+InfoLeak
+PrivEsc
+FileMod
+Backdoor
+Overall
+Naive
+SkillJect (Ours)
+Naive
+SkillJect (Ours)
+Naive
+SkillJect (Ours)
+Naive
+SkillJect (Ours)
+Naive
+SkillJect (Ours)
+GLM-4.7
+0.0
+100.0
+0.0
+96.0
+0.0
+98.0
+40.0
+100.0
+10.0
+98.5
+MiniMax-M2.1
+0.0
+98.0
+0.0
+94.0
+0.0
+94.0
+40.0
+98.0
+10.0
+96.0
+GPT-5-mini
+0.0
+98.0
+0.0
+82.0
+0.0
+88.0
+74.0
+86.0
+18.5
+88.5
+Claude-4.5-Sonnet
+0.0
+96.0
+0.0
+98.0
+0.0
+98.0
+20.0
+98.0
+5.0
+97.5
+Average
+0.0
+98.0
+0.0
+92.5
+0.0
+94.5
+43.5
+95.5
+10.9
+95.1
+(a) Generated Structural Camouflage
+(b) Generated Visual Emphasis
+Figure 3 : Emergent injection strategies autonomously discovered by the Attack Agent.
+Instead of relying on predefined templates, the LLM explores different documentation styles driven by the feedback loop.
+( a ) The agent learns to mimic standard section headers to blend in with the context.
+( b ) The agent evolves to utilize alert blocks to manufacture urgency.
+These diverse examples highlight the model’s ability to adapt its deception strategy dynamically.
+Overall Effectiveness.
+We present the main experimental results in Table 1 . Our proposed framework, SkillJect , demonstrates superior efficacy compared to the Naive baseline. While the Naive approach—relying on direct command injection—is largely nullified by existing safety guardrails (averaging a mere 10.9% ASR), SkillJect consistently circumvents these defenses, achieving an average ASR of 95.1% . This stark performance gap validates our core hypothesis: modern LLM agents, despite being robust against explicit malicious directives, remain highly vulnerable to indirect skill-based injection , where malicious intents are encapsulated within legitimate-looking operational workflows.
+Category-Specific Vulnerability Analysis.
+Dissecting the results by attack category reveals the limitations of current semantic defense mechanisms:
+•
+High-Sensitivity Actions (InfoLeak, PrivEsc, FileMod): The Naive baseline yields a 0.0% success rate across all models for these categories. This confirms that state-of-the-art models (SOTA) like Claude-4.5-Sonnet and GPT-5-mini possess robust alignment training against direct harmful instructions (e.g., “delete system files”). However, SkillJect achieves near-perfect performance (mostly > 94 % >94\% ) here. By offloading malicious logic to helper scripts and framing the invocation as a standard setup step (e.g., bash setup.sh ), our method effectively decouples the malicious payload from the malicious instruction , rendering semantic filters ineffective.
+•
+Backdoor Injection: This category exhibits higher variance in the baseline. For instance, GPT-5-mini shows a 74.0% ASR with Naive attacks, suggesting that code modification requests are scrutinized less rigorously than system commands. Nevertheless, SkillJect further amplifies this risk, standardizing success rates to nearly 100% by masking backdoors as essential dependencies or ”hotfixes,” exploiting the agent’s tendency to trust developer-provided contexts.
+Cross-Model Robustness Landscape.
+Different backend models exhibit varying degrees of resilience, highlighting distinct safety alignment priorities:
+•
+The ”Safety Paradox” of Claude-4.5-Sonnet: Interestingly, Claude-4.5-Sonnet is the most secure model against Naive attacks (5.0% ASR), reflecting aggressive filtering of suspicious keywords. However, it proves extremely susceptible to SkillJect (97.5% ASR). This suggests that models heavily optimized for instruction safety (rejecting bad commands) may be paradoxically more compliant with procedural safety (following structured documentation), creating a ”blind spot” for complex, multi-step social engineering attacks.
+•
+Reasoning vs. Compliance in GPT-5-mini: GPT-5-mini demonstrates the lowest ASR against SkillJect (88.5%), particularly in Privilege Escalation (82.0%). We hypothesize that its enhanced reasoning capabilities allow it to occasionally detect inconsistencies between the declared skill description and the requested high-privilege operations, even when obfuscated.
+Qualitative Analysis: Emergent Deception Strategies.
+A key contribution of SkillJect is the autonomous evolution of injection strategies, as illustrated in Figure 3 . Unlike static template-based attacks, our Attack Agent dynamically refines its approach based on the victim’s feedback:
+•
+Structural Mimicry (Fig. 3(a) ): The agent learns to exploit the victim’s pattern-matching bias by generating content that mimics standard documentation headers (e.g., ”Prerequisites,” ”Environment Setup”). This camouflage strategy makes the malicious step appear as a routine, non-negotiable part of the workflow, lowering the victim’s suspicion.
+•
+Visual Emphasis & Urgency (Fig. 3(b) ): In scenarios where initial attempts fail, the agent adapts by utilizing formatting cues—such as blockquotes or bold ”IMPORTANT” tags—to manufacture a sense of urgency. This mimics social engineering tactics, effectively pressuring the victim agent to bypass potential hesitation and execute the script.
+These emergent behaviors demonstrate that SkillJect does not merely inject code; it actively optimizes the contextual presentation of the attack to maximize deceptiveness.
+4.4 Cross-Model Transferability
+To assess whether our generated injections overfit specific victim models, we conducted a transferability experiment focused on the Backdoor Injection scenario. We took the adversarial skill documentation successfully generated against GLM-4.7 (where ASR was 100%) and directly tested it against the other three backend models without modification.
+As shown in Table 2 , the attack demonstrates strong transferability.
+MiniMax-M2.1 and Claude-4.5-Sonnet exhibit strong transferability, achieving ASRs of 86% and 88%, respectively. These results suggest that the deceptive documentation structures are universally effective against highly capable models. While GPT-5-mini demonstrates greater resilience (60%)—consistent with the stricter safety alignment observed in our main results—the majority of attacks still succeed. This confirms that SkillJect exploits fundamental semantic vulnerabilities in agentic reasoning rather than overfitting to model-specific artifacts.
+Table 2 : Transferability of Backdoor Injection attacks. Documentation generated against GLM-4.7 (Source) is evaluated on three target models.
+Target Model
+ASR (%)
+MiniMax-M2.1
+86.0
+Claude-4.5-Sonnet
+88.0
+GPT-5-mini
+60.0
+4.5 Ablation Study
+To assess the contribution of each component in SkillJect , we conducted an ablation study by removing specific modules or constraints from the framework. We focused this evaluation on the Information Disclosure scenario using the MiniMax-M2.1 backend, as this category typically imposes stringent safety filters regarding privacy. The results are summarized in Table 3 .
+Table 3: Ablation study of SkillJect components on the MiniMax-M2.1 backend under the Information Disclosure scenario. The “ Δ \Delta ” column indicates the percentage point drop in ASR compared to the full method.
+Variant
+ASR (%)
+Δ \Delta
+SkillJect (Full Method)
+98.0
+–
+w/o Iterative Refinement ( k = 1 k=1 )
+56.0
+↓ \downarrow 42.0
+w/o Structural Alignment ( Ω str \Omega_{\text{str}} )
+92.0
+↓ \downarrow 6.0
+w/o Minimal Edit ( Ω min \Omega_{\text{min}} )
+94.0
+↓ \downarrow 4.0
+w/o Semantic Fidelity ( Ω sem \Omega_{\text{sem}} )
+96.0
+↓ \downarrow 2.0
+w/o Style Consistency ( Ω sty \Omega_{\text{sty}} )
+96.0
+↓ \downarrow 2.0
+w/o Output Validity ( Ω out \Omega_{\text{out}} )
+98.0
+0.0
+Impact of Iterative Refinement.
+As shown in Table 3 , the iterative refinement loop is the most critical component, with the ASR dropping from 98.0% to 56.0% when removed ( k = 1 k=1 ). In Information Disclosure scenarios, models like MiniMax are often fine-tuned with specific safeguards against revealing sensitive data. The initial one-shot generation often triggers these refusals. The feedback loop enables the Attack Agent to diagnose the refusal and rephrase the injection—for example, by framing the request as a benign debugging step or a necessary data formatting operation—thereby successfully bypassing the privacy guardrails.
+Impact of Generation Constraints.
+The ablation of constraints ( Ω \Omega ) highlights the specific requirements for successful data exfiltration:
+•
+w/o Structural Alignment ( Ω str \Omega_{\text{str}} ) & Minimal Edit ( Ω min \Omega_{\text{min}} ): These constraints proved vital for maintaining the attack’s stealthiness, causing drops to 92.0% and 94.0% respectively. For an agent to “trust” the documentation enough to leak information, the injected text must appear as a seamless part of the tool’s parameter definition or return logic. Breaking the structure or introducing large, conspicuous edits increases the likelihood of the model treating the text as noise or a malformed instruction, thus ignoring the exfiltration command.
+•
+w/o Semantic Fidelity ( Ω sem \Omega_{\text{sem}} ) & Style Consistency ( Ω sty \Omega_{\text{sty}} ): Removing these constraints resulted in minor performance drops (to 96.0%). This suggests that while maintaining the professional tone and meaning of the original tool helps, the MiniMax model is relatively compliant in Information Disclosure contexts as long as the structural integration is sound. The model prioritizes executing the “functionality” (even if maliciously defined) over strict adherence to the documentation’s original linguistic style.
+•
+w/o Output Validity ( Ω out \Omega_{\text{out}} ): Removing the syntax validity constraint had no negative impact (98.0%). This indicates that for this specific task, the Attack Agent’s intrinsic capability to generate valid Markdown is sufficient, or that the backend is robust enough to parse instructions even from slightly malformed documentation without failing the tool call.
+4.6 Defense Evaluation with SkillScan
+To rigorously evaluate the stealthiness of SkillJect against active countermeasures, we adopt the SkillScan framework [ 12 ] . SkillScan is an established mechanism designed to simulate realistic security gatekeepers used by agent platforms to audit third-party skills prior to registration. The framework comprises two sequential detection layers:
+1.
+Layer 1: Static Analysis. A keyword and regex-based scanner engineered to flag explicit signatures, such as hard-coded IP addresses, sensitive file paths (e.g., /etc/passwd , .env ), and known dangerous binary patterns.
+2.
+Layer 2: LLM-based Semantic Audit. A safety-aligned LLM (GPT-4.1) that analyzes the SKILL.md documentation and code logic to identify malicious intent or social engineering tactics that might bypass static filters.
+We subjected the adversarial skills generated by our GLM-4.7 backend to this defense pipeline. Following standard industry practices to minimize false positives, a stricter detection criterion was applied: a skill is classified as “Detected” (Unsafe) only if it triggers a Critical severity alert in either layer. Warnings or medium-severity flags are treated as Safe.
+Table 4 : Detection Success Rate (DSR %) of the SkillScan [ 12 ] defense against attacks generated by GLM-4.7. Consistent with real-world gatekeeper settings, only attacks triggering “Critical” alerts are counted as detected.
+Attack Category
+Detection Rate (DSR %)
+Information Disclosure (InfoLeak)
+90.0
+Privilege Escalation (PrivEsc)
+90.0
+Unauthorized Write (FileMod)
+30.0
+Backdoor Injection (Backdoor)
+20.0
+Results and Analysis.
+Table 4 summarizes the detection performance across distinct attack vectors. The results reveal a sharp performance divergence based on the operational nature of the attacks:
+•
+High Detection for Overt Threats (InfoLeak & PrivEsc): The defense achieved a 90.0% detection rate for Information Disclosure and Privilege Escalation. This efficacy stems from the deterministic nature of these attacks, which typically rely on explicit signatures caught by the “Critical” threshold.
+–
+PrivEsc attempts often necessitate high-risk system commands (e.g., sudo , chmod +s ) or access to root-owned directories, which are hard-coded as non-negotiable violations in static analysis rules.
+–
+InfoLeak vectors frequently contain distinct URL patterns or calls to sensitive environment variables, triggering immediate high-severity alerts.
+•
+Evasion by Contextual Threats (FileMod & Backdoor): Conversely, detection rates dropped significantly for Unauthorized Write (30.0%) and Backdoor Injection (20.0%), exposing a blind spot in signature-based and static semantic analysis.
+–
+Semantic Ambiguity: Operations such as file modification (FileMod) or opening network sockets (Backdoor) are semantically indistinguishable from benign administrative tools (e.g., loggers or debuggers). Consequently, scanners assign these actions “Medium” or “Warning” severity to avoid disrupting legitimate functionality.
+–
+Threshold Exploitation: Since the safety criterion relies on the absence of Critical alerts, SkillJect successfully evades detection by composing malicious payloads entirely from lower-severity primitives. Furthermore, the LLM layer is often deceived by the documentation (e.g., framing a backdoor as a “Remote Debugging Service”), failing to escalate the risk assessment.
+Future Defense Implications.
+Our findings suggest that current static and text-based semantic audits are insufficient against LLM-generated stealthy attacks. To mitigate risks posed by tools like SkillJect , future defense mechanisms must evolve in two directions:
+(i) Dynamic Sandboxing: Moving beyond static analysis to runtime behavioral monitoring, where the actual execution of “ambiguous” operations can be audited in a controlled environment; and
+(ii) Cross-Modal Consistency Verification: Developing algorithms to rigorously check the alignment between the SKILL.md documentation and the code implementation. Future defenders should flag any “surplus functionality” in the code (e.g., a hidden network request) that is not explicitly justified in the documentation, effectively countering social engineering tactics.
+5 Conclusion
+In this paper, we proposed SkillJect , the first automated framework for skill poisoning in LLM agent systems. SkillJect jointly optimizes instruction-channel inducement and artifact-channel execution, and uses a closed-loop multi-agent process to iteratively refine poisoned skills from execution feedback. This automation removes reliance on handcrafted attacks and enables scalable, reproducible security evaluation. Extensive experiments on real-world skills across multiple LLM backends and attack categories show that SkillJect demonstrates strong attack effectiveness under realistic deployment settings. These results suggest that current skill ecosystems remain vulnerable not only to explicit prompt abuse but also to stealthier cross-artifact manipulations that preserve apparent functionality. Our findings highlight the need for stronger end-to-end defenses, including cross-file consistency checks, behavior-level auditing, and runtime policy enforcement for tool invocation. We hope this work motivates more systematic security evaluation and robust mitigation strategies for skill-based AI agents.
+References
+[1]
+Anthropic (2025)
+Claude code documentation .
+Note: https://docs.anthropic.com/en/docs/claude-code Official Claude Code documentation
+Cited by: §1 ,
+§2.1 .
+[2]
+Anthropic (2025)
+Claude code skills documentation .
+Note: https://docs.anthropic.com/en/docs/claude-code/skills Official documentation for agent skills architecture
+Cited by: §1 ,
+§2.1 .
+[3]
+S. Chen, Y. Wang, N. Carlini, C. Sitawarin, and D. Wagner (2025)
+Defending against prompt injection with a few defensivetokens .
+In Proceedings of the 18th ACM Workshop on Artificial Intelligence and Security ,
+pp. 242–252 .
+Cited by: §2.2 .
+[4]
+S. Chen, A. Zharmagambetov, S. Mahloujifar, K. Chaudhuri, D. Wagner, and C. Guo (2025)
+Secalign: defending against prompt injection with preference optimization .
+In Proceedings of the 2025 ACM SIGSAC Conference on Computer and Communications Security ,
+pp. 2833–2847 .
+Cited by: §2.2 .
+[5]
+Google (2025)
+Gemini CLI skills documentation .
+Note: https://geminicli.com/docs/cli/skills Agent skills for Gemini CLI using SKILL.md format in .gemini/skills/ directory
+Cited by: §1 ,
+§2.1 .
+[6]
+Y. Huang, C. Wang, X. Jia, Q. Guo, F. Juefei-Xu, J. Zhang, Y. Liu, and G. Pu (2025)
+Efficient universal goal hijacking with semantics-guided prompt organization .
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,
+pp. 5796–5816 .
+Cited by: §2.2 .
+[7]
+M. A. Islam, M. E. Ali, and M. R. Parvez (2024)
+Mapcoder: multi-agent code generation for competitive problem solving .
+arXiv preprint arXiv:2405.11403 .
+Cited by: §2.1 .
+[8]
+X. Jia, J. Liao, Q. Guo, T. Ma, S. Qin, R. Duan, T. Li, Y. Huang, Z. Zeng, D. Wu, et al. (2025)
+OmniSafeBench-mm: a unified benchmark and toolbox for multimodal jailbreak attack-defense evaluation .
+arXiv preprint arXiv:2512.06589 .
+Cited by: §2.2 .
+[9]
+X. Jia, T. Pang, C. Du, Y. Huang, J. Gu, Y. Liu, X. Cao, and M. Lin (2024)
+Improved techniques for optimization-based jailbreaking on large language models .
+arXiv preprint arXiv:2405.21018 .
+Cited by: §2.2 .
+[10]
+Y. Liu, G. Deng, Y. Li, K. Wang, Z. Wang, X. Wang, T. Zhang, Y. Liu, H. Wang, Y. Zheng, et al. (2023)
+Prompt injection attack against llm-integrated applications .
+arXiv preprint arXiv:2306.05499 .
+Cited by: §2.2 .
+[11]
+Y. Liu, W. Wang, R. Feng, Y. Zhang, G. Xu, G. Deng, Y. Li, and L. Zhang (2026)
+Agent skills in the wild: an empirical study of security vulnerabilities at scale .
+arXiv preprint arXiv:2601.10338 .
+Cited by: §1 ,
+§2.2 .
+[12]
+Y. Liu, W. Wang, R. Feng, Y. Zhang, G. Xu, G. Deng, Y. Li, and L. Zhang (2026)
+Agent skills in the wild: an empirical study of security vulnerabilities at scale .
+External Links: 2601.10338 ,
+Link
+Cited by: §4.6 ,
+Table 4 ,
+Table 4 .
+[13]
+Y. Liu, Y. Jia, R. Geng, J. Jia, and N. Z. Gong (2024)
+Formalizing and benchmarking prompt injection attacks and defenses .
+In 33rd USENIX Security Symposium (USENIX Security 24) ,
+pp. 1831–1847 .
+Cited by: §2.2 .
+[14]
+Z. Ma, J. Liu, X. Luo, Z. Huang, Q. Zhu, and W. Che (2025)
+Advancing tool-augmented large language models via meta-verification and reflection learning .
+In Proceedings of the 31st ACM SIGKDD Conference on Knowledge Discovery and Data Mining V. 2 ,
+pp. 2078–2089 .
+Cited by: §2.1 .
+[15]
+A. Motzfeldt, J. Edin, C. L. Christensen, C. Hardmeier, L. Maaløe, and A. Rogers (2025)
+Code like humans: a multi-agent solution for medical coding .
+In Findings of the Association for Computational Linguistics: EMNLP 2025 ,
+pp. 22612–22627 .
+Cited by: §2.1 .
+[16]
+OpenAI (2025)
+Codex CLI skills documentation .
+Note: https://developers.openai.com/codex/skills/ Agent skills for Codex CLI using SKILL.md format in .codex/skills/ directory
+Cited by: §1 ,
+§2.1 .
+[17]
+D. Schmotz, S. Abdelnabi, and M. Andriushchenko (2025)
+Agent skills enable a new class of realistic and trivially simple prompt injections .
+arXiv preprint arXiv:2510.26328 .
+Cited by: §1 ,
+§2.2 .
+[18]
+A. Shabbir, M. A. Munir, A. Dudhane, M. U. Sheikh, M. H. Khan, P. Fraccaro, J. B. Moreno, F. S. Khan, and S. Khan (2025)
+ThinkGeo: evaluating tool-augmented agents for remote sensing tasks .
+arXiv preprint arXiv:2505.23752 .
+Cited by: §2.1 .
+[19]
+Skills.rest (2025)
+Skills.rest: agent skills registry .
+Note: https://skills.rest Community registry for agent skills with automated indexing from GitHub repositories
+Cited by: §2.1 .
+[20]
+SkillsMP (2025)
+SkillsMP: agent skills marketplace .
+Note: https://skillsmp.com Community-driven marketplace aggregating skills from public GitHub repositories; provides search, categorization, and quality indicators
+Cited by: §2.1 .
+[21]
+L. Wang, Z. Ying, T. Zhang, S. Liang, S. Hu, M. Zhang, A. Liu, and X. Liu (2025)
+Manipulating multimodal agents via cross-modal prompt injection .
+In Proceedings of the 33rd ACM International Conference on Multimedia ,
+pp. 10955–10964 .
+Cited by: §2.2 .
+[22]
+X. Wang, J. Bloch, Z. Shao, Y. Hu, S. Zhou, and N. Z. Gong (2025)
+Webinject: prompt injection attack to web agents .
+In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing ,
+pp. 2010–2030 .
+Cited by: §2.2 .
+[23]
+S. Yi, Y. Liu, Z. Sun, T. Cong, X. He, J. Song, K. Xu, and Q. Li (2024)
+Jailbreak attacks and defenses against large language models: a survey .
+arXiv preprint arXiv:2407.04295 .
+Cited by: §2.2 .
+[24]
+K. Zhang, J. Li, G. Li, X. Shi, and Z. Jin (2024)
+Codeagent: enhancing code generation with tool-integrated agent systems for real-world repo-level coding challenges .
+arXiv preprint arXiv:2401.07339 .
+Cited by: §2.1 .
+[25]
+C. Zhu, S. Hsia, X. Hu, Z. Liu, J. Shi, and K. Ramani (2025)
+AgentAR: creating augmented reality applications with tool-augmented llm-based autonomous agents .
+In Proceedings of the 38th Annual ACM Symposium on User Interface Software and Technology ,
+pp. 1–23 .
+Cited by: §2.1 .
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

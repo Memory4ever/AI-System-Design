@@ -1,0 +1,828 @@
+Exact-v1 primary necessary selection https://arxiv.org/html/2601.21494v1
+3 Path of Least Resistance (PoLR)
+In this section, we present how PoLR (Path of Least Resistance) operates as an
+inference-time alternative to Self-Consistency (SC).
+The name PoLR is motivated by a natural principle: systems tend to follow the path of least resistance, avoiding unnecessary detours while conserving energy.
+Analogously, instead of fully expanding all reasoning traces like SC, PoLR prunes unlikely or redundant paths early and allocates computation only to the dominant prefix cluster.
+3.1 Mathematical Formulation
+Setup.
+Consider an input reasoning question xx posed to a language model ℳ\mathcal{M}.
+In the standard SC baseline, we sample NN complete reasoning traces of average length
+ℓf\ell_{f} and then aggregate their final answers by majority vote.
+While effective, this incurs high inference cost because every trace must be expanded
+until completion, even if most are redundant.
+PoLR modifies this pipeline by introducing a prefix-based selection step.
+Specifically, we sample NN short prefixes, each of length LpL_{p} tokens, and use their
+semantic structure to decide which subset of traces to fully expand.
+The key intuition is that reasoning traces often share overlapping initial steps (Ji et al., 2025),
+and these early structures correlate with the correctness of the final outcome.
+By clustering prefixes, we can identify the dominant reasoning mode early, without
+generating all traces to completion. A step-by-step implementation instructions presented in Appendix B (Algorithm 1).
+Step 1: Prefix Sampling.
+Given the input question xx and the ℳ\mathcal{M}, we first generate NN short reasoning prefixes pi=Prefix(ℳ(x,ti),Lp),i=1,…,N,p_{i}=\text{Prefix}(\mathcal{M}(x,t_{i}),L_{p}),\quad i=1,\dots,N,
+where tit_{i} is the sampling temperature, and
+Prefix​(⋅)\text{Prefix}(\cdot) denotes truncating the LLM output to LpL_{p} tokens.
+In practice, this is implemented by setting max_new_tokens = LpL_{p}.
+Step 2: Embedding and Clustering.
+Each prefix pip_{i} is embedded into a sparse vector representation via
+TF–IDF bag-of-words encoding over tokens.
+This choice is lightweight, model-agnostic, and CPU-friendly, avoiding
+external neural encoders. We provide a detailed comparison with neural encoder in Table 4. It is evident that neural encoders increase the clustering overhead way more than the TF-IDF encoders with diminishing returns on the accuracies.
+We cluster {pi}\{p_{i}\} into 𝒞={C1,…,Cm}\mathcal{C}=\{C_{1},\dots,C_{m}\} using
+Agglomerative Hierarchical Clustering with cosine similarity.
+This is well-suited for small NN (1111–5151), as it requires no pre-specified mm
+and produces interpretable groupings. That is C∗=arg⁡maxCj∈𝒞​|Cj|,C^{*}=\arg\max_{C_{j}\in\mathcal{C}}|C_{j}|, where ⋃j=1mCj={p1,…,pN}\bigcup_{j=1}^{m}C_{j}=\{p_{1},\dots,p_{N}\} and C∗C^{*} is the dominant cluster.
+Step 3: Expansion.
+We then expands all KK prefixes from C∗C^{*} to full reasoning traces as
+rk=ℳ(x∣pk),pk∈C∗,k=1,…,K.r_{k}=\mathcal{M}(x\mid p_{k}),\quad p_{k}\in C^{*},\quad k=1,\dots,K.
+Step 4: Self-Consistency Voting.
+Let aka_{k} be the extracted answer from trace rkr_{k}. PoLR returns a^=argmaxy∑k=1K𝟏[ak=y].\hat{a}=\arg\max_{y}\sum_{k=1}^{K}\mathbf{1}[a_{k}=y].
+Thus PoLR strictly generalizes SC: if K=NK=N and clustering is bypassed,
+it reduces to standard SC.
+Token Efficiency:
+Let ℓp\ell_{p} = average prefix length, ℓf\ell_{f} = full reasoning length. Number of tokens generated for SC TSC=N⋅ℓf,T_{\text{SC}}=N\cdot\ell_{f}, and for PoLR TPoLR=N⋅ℓp+K⋅(ℓf−ℓp).T_{\text{PoLR}}=N\cdot\ell_{p}+K\cdot(\ell_{f}-\ell_{p}). We compute the token efficiency as:
+η=1−TPoLRTSC=1−N⋅ℓp+K⋅(ℓf−ℓp)N⋅ℓf.\eta=1-\frac{T_{\text{PoLR}}}{T_{\text{SC}}}=1-\frac{N\cdot\ell_{p}+K\cdot(\ell_{f}-\ell_{p})}{N\cdot\ell_{f}}.
+3.2 Theoretical Justification
+PoLR relies on the intuition that early prefixes already contain useful signals
+about the final reasoning trajectory. We formalize this intuition by considering
+two complementary properties: (i) correctness alignment, which determines whether
+restricting to a dominant cluster preserves accuracy, and (ii) structural skew,
+which governs the magnitude of efficiency gains.
+3.2.1 Correctness Alignment and Accuracy Preservation
+Let Y∈{0,1}Y\in\{0,1\} denote the correctness of a final reasoning trajectory
+(11 if correct, 00 otherwise), and let ZZ denote the cluster assignment of
+a sampled prefix. The critical condition for PoLR is that ZZ carries
+information about YY, i.e. I⁡(Z,Y)>0,I(Z;Y)>0,
+where I⁡(⋅,⋅)I(\cdot;\cdot) denotes mutual information. Intuitively, if prefixes
+cluster in a way that is at least weakly predictive of correctness, then
+restricting expansion to the dominant cluster will not systematically degrade
+accuracy. In this view, self-consistency (SC) can be seen as an unbiased estimator
+of 𝔼⁡[Y]\mathbb{E}[Y], while PoLR acts as a variance-reduced estimator that focuses
+on high-probability clusters.
+Formally, the conditional entropy of correctness given the cluster assignment
+can be written as H⁡(Y|Z)=∑zP⁡(Z=z)​H​(Y|Z=z).H(Y|Z)=\sum_{z}P(Z=z)H(Y|Z=z).
+If H⁡(Y|Z)H(Y|Z) is small, then cluster identity reliably predicts correctness.
+Our empirical results (Section 5) show that I⁡(Z,Y)I(Z;Y) and
+H⁡(Y|Z)H(Y|Z) remain non-trivial across models, which explains why PoLR
+consistently matches SC in accuracy.
+3.2.2 Structural Skew and Efficiency
+While correctness alignment governs accuracy preservation, our experiments
+reveal that it does not explain the magnitude of efficiency gains.
+Instead, efficiency is driven by the structural skew in the prefix
+cluster distribution. Define the skew for a given instance as
+κ=|C∗|N,\kappa=\frac{|C^{*}|}{N},
+where |C∗||C^{*}| is the size of the dominant cluster and NN is the number of
+sampled prefixes. If κ\kappa is large, the majority of prefixes fall into one
+cluster, and ignoring the smaller clusters eliminates substantial redundant
+expansions. Conversely, if clusters are balanced (κ≈1/m\kappa\approx 1/m), dominant cluster’s traces’ expansion
+yields more token savings but poorer quality.
+At the dataset level, the expected efficiency gain is thus directly tied to the
+expected skew 𝔼⁡[η]∝𝔼⁡[κ−1].\mathbb{E}[\eta]\propto\mathbb{E}[\kappa^{-1}].
+Empirically, we observe strong correlation between κ\kappa and token savings,
+whereas NMI between clusters and correctness is weakly correlated with
+efficiency. This indicates that PoLR’s efficiency derives from structural
+dominance rather than correctness alignment.
+The combined picture is as follows:
+•
+Accuracy preservation requires that I⁡(Z,Y)>0I(Z;Y)>0, i.e., that
+clusters are not adversarially misaligned with correctness. Even modest
+alignment is sufficient, as SC’s voting ensures that errors do not amplify.
+•
+Efficiency magnitude depends on structural skew κ\kappa:
+the more dominant the largest cluster, the more redundant expansions PoLR
+can safely ignore.
+This separation of concerns reconciles our theory and empirical findings:
+mutual information guarantees safety, while skew determines savings.
+Our experiments across GSM8K with multiple models (1.5B–7B) confirm this in Section 5.5, where
+NMI remains low (≤0.18\leq 0.18), yet efficiency saturates around 5050–58%58\%,
+precisely because prefix clusters exhibit strong structural skew.
+We now make the connection between cluster skew and efficiency gains explicit.
+Proposition 1.
+Let NN denote the number of sampled prefixes, partitioned into mm clusters
+{C1,…,Cm}\{C_{1},\dots,C_{m}\} with sizes |C1|,…,|Cm||C_{1}|,\dots,|C_{m}|, and let C∗C^{*} denote
+the dominant cluster with size |C∗||C^{*}|. Assume PoLR expands KK continuations
+from C∗C^{*}, while Self-Consistency (SC) expands MM continuations from all
+NN prefixes (with M≥KM\geq K). Then the expected token efficiency gain of
+PoLR relative to SC satisfies
+η≥ 1−KM⋅κ−1,where ​κ=|C∗|N​ is the dominance ratio (skew).\eta\;\;\geq\;\;1-\frac{K}{M}\cdot\kappa^{-1},\text{where }\kappa=\tfrac{|C^{*}|}{N}\text{ is the dominance ratio (skew)}.
+Sketch.
+SC requires expanding MM continuations distributed across all NN prefixes.
+If mm clusters are expanded proportionally, each prefix contributes on average
+m/Nm/N expansions. PoLR instead expands only KK continuations from the dominant
+cluster C∗C^{*}. Normalizing by MM, the relative cost is
+KM⋅N|C∗|=KM⋅κ−1\tfrac{K}{M}\cdot\tfrac{N}{|C^{*}|}=\tfrac{K}{M}\cdot\kappa^{-1}.
+Thus the efficiency gain relative to SC is at least
+1−KM⋅κ−11-\tfrac{K}{M}\cdot\kappa^{-1}. Equality holds when expansions are exactly
+proportional across clusters.
+∎
+This bound formalizes the empirical observation that efficiency gains scale
+monotonically with κ\kappa: the more dominant the largest cluster, the more
+redundant expansions can be ignored.
+4 Main Experiments
+Backbone LLMs.
+We evaluate the efficiency and generality of PoLR – Path of Least Resistance across diverse open-source LLMs spanning different architectures, scales, and training paradigms. Specifically, we use DeepSeek-R1-Distill-Qwen (DSQ) (7B, 1.5B) (Guo et al., 2025), distilled from reasoning-specialized LLMs; QWQ32B (Team, 2025; Yang et al., 2024a), a Qwen2.5 variant trained with reinforcement learning for problem solving; MiMo-7B-RL-0530 (Xiaomi, 2025) and Phi-4-15B Abdin et al. (2025), an open-source GPT-style model trained with large-scale supervised data; and Qwen2.5-Math-7B (Yang et al., 2024b), a math-specialized instruction-tuned model. These choices cover architectures (Qwen, MiMo, Phi-4, DeepSeek), parameter scales (1.5B–32B), and training paradigms (distillation, RL, supervised fine-tuning).
+Benchmarks.
+We evaluate on multi-step reasoning tasks: GSM8K (Cobbe et al., 2021), grade-school arithmetic word problems; Math500 (Lightman et al., 2023), a set of 500 challenging math problems; AIME24/25 (of Problem Solving, 2024; of Problem Solving, 2025), high-school olympiad-level math problems; GPQA-Diamond (Rein et al., 2024), a graduate-level STEM reasoning benchmark covering physics, chemistry, and biology; and StrategyQA (Geva et al., 2021), a multi-hop reasoning and implicit knowledge retrieval task.
+Evaluation Metrics.
+We follow standard metrics from prior reasoning literature: Exact Match (EM) on GSM8K (Habib et al., 2023); Pass@1 on Math500 and AIME24/25; Accuracy (binary correctness) on GPQA-Diamond. We also measure Token Efficiency relative to Self-Consistency (SC): η=1−TPoLRTSC\eta=1-\frac{T_{\text{PoLR}}}{T_{\text{SC}}}, Path Expansion (PExp) denoting the number of full reasoning traces used for majority voting, and PoLR Overhead (ktk_{t}), which includes TF-IDF vectorization and clustering.
+Baselines.
+The primary baseline is Self-Consistency (SC) (Wang et al., 2023), which samples multiple chain-of-thoughts independently and selects the majority answer. SC is widely adopted as a standard inference-time ensemble for reasoning tasks. We also report single-sample greedy decoding (Chain-of-Thought, CoT) as a lower-bound reference and compare PoLR with Adaptive Consistency (AC) Aggarwal et al. (2023), and Early-Stopping Self-Consistency (ESC) Li et al. (2024).
+All experiments are repeated 1010 times11
+1
+For brevity, standard deviations are not included in the main table. All reported gains are statistically significant. Detailed standard deviation values are provided in Appendix C.. with different random seeds (sampling order and temperature) and we report mean performance and standard deviation across runs for all metrics: accuracy, EM, Pass@1, token efficiency, and latency. Further hyperparameter details are provided in Appendix A. All PoLR evaluations use Lp=256L_{p}=256 unless stated otherwise. Empirically, we find that Lp=256L_{p}=256 achieves a good balance between PoLR accuracy and token efficiency gains.
+Main Results.
+Table 2 presents the performance of PoLR compared to Self-Consistency (SC) across five reasoning benchmarks (GSM8K, Math500, AIME24, AIME25, GPQA-Diamond) and multiple LLM families. The results reveal clear advantages of PoLR. First, PoLR drastically reduces token usage while preserving accuracy. Across all datasets and models, token efficiency η\eta typically ranges between 40–60%, effectively cutting token consumption by roughly half. For example, on GSM8K with QWQ32B at N=51N=51, PoLR achieves the same accuracy as SC (90.8%) while using only half the tokens (η=47.6%\eta=47.6\%). The additional clustering overhead ktk_{t} is minimal, just a few milliseconds, so the savings directly translate into faster inference.
+Second, accuracy is preserved and occasionally improved. Despite discarding up to half of the reasoning paths, PoLR matches SC’s accuracy and sometimes surpasses it. On Math500, for instance, PoLR improves QWQ32B from 91.8%91.8\% to 92.0% at N=51N=51, and DSQ7B from 89.6%89.6\% to 89.7% at N=31N=31. On AIME25, PoLR boosts accuracy by +3 percentage points for DSQ7B (33.7%→36.4%33.7\%\to\textbf{36.4\%}) and Phi-4-15B (32.0%→36.0%32.0\%\to\textbf{36.0\%}). These gains occur because PoLR emphasizes the dominant, coherent reasoning clusters while filtering out noisy or inconsistent paths. On few occasions, PoLR downgrades the SC accuracy by small magnitudes except on the AIME25 dataset, where for QWQ32B PoLR is 1010 points below SC. This amounts to dropping accuracy on only 3 samples out of total 30 samples in this dataset. In Appendix H, we find that these instances are inherently challenging, with even SC succeeding only by a narrow margin.
+Finally, PoLR’s benefits are consistent across models, datasets, and trace expansion budgets. On challenging benchmarks like GPQA-Diamond, PoLR improves QWQ32B accuracy from 68.7%68.7\% to 70.2% at N=51N=51, while reducing token usage nearly by half (η=53.8%\eta=53.8\%). Even on math-intensive datasets such as Math500, AIME24, and AIME25, PoLR maintains high efficiency and accuracy, demonstrating robustness across reasoning domains and model scales. Additionally, PoLR shows consistent gains over non-math/STEM task, StrategyQA, discussed in Appendix G.
+Table 2: Performance comparison of PoLR versus SC across datasets (GSM8K, Math500, AIME24, AIME25, GPQA-Diamond) and model sizes. The table shows accuracy differences (green = improvement, red = drop), token efficiency η\eta (%), sample size NN, and PoLR overhead ktk_{t} (ms).
+GSM8K
+(1319)
+DSQ1.5B
+DSQ7B
+QWQ32B
+NN
+SC
+PoLR
+η(%)\eta(\%)
+ktk_{t} (ms)
+SC
+PoLR
+η(%)\eta(\%)
+ktk_{t} (ms)
+SC
+PoLR
+η(%)\eta(\%)
+ktk_{t} (ms)
+51
+73.2
+0.0
+40.1
+11.3
+79.8
+0.2
+26.5
+5.9
+90.8
+-0.3
+47.6
+11.2
+31
+73.2
+0.0
+41.1
+6.0
+80.0
+-0.4
+27.2
+4.3
+90.9
+-0.6
+48.6
+5.8
+11
+72.6
+0.0
+43.7
+2.3
+79.7
+0.0
+28.1
+1.9
+90.6
+-1.3
+54.2
+2.4
+Math500
+(500)
+DSQ1.5B
+DSQ7B
+QWQ32B
+NN
+SC
+PoLR
+η(%)\eta(\%)
+ktk_{t} (ms)
+SC
+PoLR
+η(%)\eta(\%)
+ktk_{t} (ms)
+SC
+PoLR
+η(%)\eta(\%)
+ktk_{t} (ms)
+51
+76.2
+-0.8
+52.4
+6.5
+89.8
+-0.4
+48.7
+7.6
+91.8
+0.2
+51.8
+11.2
+31
+76.4
+0.0
+52.0
+4.4
+89.6
+0.1
+48.5
+5.1
+91.9
+0.0
+54.2
+5.7
+11
+75.9
+-1.6
+52.0
+2.0
+89.4
+0.0
+48.4
+2.2
+91.6
+0.0
+60.5
+2.2
+AIME24
+(30)
+DSQ7B
+Phi-4-15B
+QWQ32B
+NN
+SC
+PoLR
+η(%)\eta(\%)
+ktk_{t} (ms)
+SC
+PoLR
+η(%)\eta(\%)
+ktk_{t} (ms)
+SC
+PoLR
+η(%)\eta(\%)
+ktk_{t} (ms)
+51
+53.3
+-6.7
+50.9
+6.3
+50.0
+3.3
+49.5
+12.1
+80.0
+0.0
+59.7
+10.8
+31
+53.3
+-3.0
+51.5
+3.3
+49.7
+0.3
+51.5
+5.3
+78.3
+0.7
+61.6
+6.2
+11
+54.3
+-3.3
+49.8
+2.0
+50.3
+-5.3
+58.6
+2.2
+78.3
+-2.0
+66.6
+12.8
+AIME25
+(30)
+DSQ7B
+Phi-4-15B
+QWQ32B
+NN
+SC
+PoLR
+η(%)\eta(\%)
+ktk_{t} (ms)
+SC
+PoLR
+η(%)\eta(\%)
+ktk_{t} (ms)
+SC
+PoLR
+η(%)\eta(\%)
+ktk_{t} (ms)
+51
+33.3
+0.0
+48.8
+7.8
+33.3
+0.0
+54.7
+11.0
+76.7
+-10.0
+56.8
+12.3
+31
+35.3
+0.0
+48.4
+3.9
+32.0
+4.0
+54.8
+5.9
+75.0
+-4.0
+59.5
+6.9
+11
+33.7
+2.7
+48.9
+2.2
+35.7
+2.3
+60.5
+2.3
+74.7
+-6.0
+65.3
+5.3
+GPQA
+Diamond
+(198)
+DSQ7B
+MiMo-RL-7B
+QWQ32B
+NN
+SC
+PoLR
+η(%)\eta(\%)
+ktk_{t} (ms)
+SC
+PoLR
+η(%)\eta(\%)
+ktk_{t} (ms)
+SC
+PoLR
+η(%)\eta(\%)
+ktk_{t} (ms)
+51
+57.1
+-1.5
+57.1
+9.5
+65.7
+-0.5
+51.4
+9.0
+68.7
+1.5
+53.8
+17.4
+31
+55.3
+-1.2
+55.8
+5.7
+64.9
+-1.2
+51.7
+5.9
+68.2
+0.0
+56.9
+7.3
+11
+54.1
+-1.7
+55.4
+2.4
+64.6
+0.0
+48.9
+2.5
+67.9
+0.0
+64.3
+2.5
+In summary, PoLR halves token usage, preserves or improves accuracy, and adds negligible overhead, offering a practical, training-free approach to make Self-Consistency substantially more efficient for real-world deployment.
+5 Analysis and Discussion
+5.1 PoLR as a Complement to Adaptive Reasoning.
+We evaluate whether PoLR can improve adaptive inference methods such as Adaptive Consistency (AC) Aggarwal et al. (2023) and Early-stopping Self-Consistency (ESC) on the GPQA-Diamond benchmark. Table 3 reports accuracy and the number of path expansions (PExp) across three LLMs and different initial sample budgets NN.
+The results show that PoLR effectively ignores low-quality reasoning paths before applying adaptive methods, reducing the number of expansions required without compromising accuracy. For example, in DSQ7B with N=31N=31, PoLR+AC reduces PExp from 13.54 (AC alone) to 10.53, while maintaining comparable accuracy (55.56% vs. 55.20%). Similar patterns hold across MiMo-RL-7B and QWQ32B, with PoLR+AC and PoLR+ESC consistently lowering path expansions by 31.4% (on average) while preserving or slightly improving performance.
+These findings indicate that PoLR can serve as an efficient pre-processing step for adaptive reasoning methods. By combining PoLR with adaptive allocation, the hybrid approach achieves substantial computational savings (75% on average as compared to SC) while retaining solution quality, making it a practical enhancement for inference-time reasoning in large language models. All results report mean accuracies over 10 random trials. Table 4(r) in Appendix D provides standard errors, showing that PoLR yields more precise results with lower variance. We also conducted the same comparison on Math500, observing consistent patterns (Table 4(u), Appendix D), confirming the robustness of PoLR across datasets.
+Table 3: PoLR complements Adaptive Consistency (AC) and Early-Stopping Self-Consistency (ESC) on GPQA-Diamond. In the hybrid setting, PoLR ignores low-quality reasoning paths (PExp) before adaptive allocation. Results for three LLMs and multiple budgets NN show reduced PExp while preserving or improving accuracy. Bold indicates the best result.
+LLMs →\rightarrow
+DSQ7B
+MiMo-RL-7B
+QWQ32B
+N →\rightarrow
+51
+31
+51
+31
+51
+31
+Acc
+PExp
+Acc
+PExp
+Acc
+PExp
+Acc
+PExp
+Acc
+PExp
+Acc
+PExp
+CoT
+54.55
+1.00
+54.54
+1.00
+63.64
+1.00
+63.18
+1.00
+68.69
+1.00
+68.33
+1.00
+SC
+57.07
+51.00
+55.25
+31.00
+65.66
+51.00
+64.90
+31.00
+69.00
+51.00
+68.19
+31.00
+PoLR
+55.56
+20.79
+54.04
+13.01
+65.16
+24.12
+63.74
+14.62
+70.20
+21.83
+67.80
+12.58
+AC
+56.57
+18.05
+55.20
+13.54
+65.66
+13.15
+64.85
+10.64
+69.70
+10.43
+68.13
+9.66
+PoLR+AC
+55.56
+10.58
+55.56
+10.53
+65.15
+9.70
+65.15
+9.75
+70.71
+8.11
+70.61
+8.05
+ESC
+56.06
+24.69
+55.81
+18.04
+65.40
+19.00
+64.80
+14.33
+68.54
+16.90
+67.58
+13.02
+PoLR+ESC
+54.85
+13.49
+53.99
+9.54
+65.10
+11.79
+64.50
+8.93
+69.90
+11.13
+67.17
+8.05
+5.2 Lightweight Prefix Embeddings are Sufficient for PoLR.
+We evaluate the effect of different prefix embeddings on PoLR performance. Table 4 compares lightweight TF–IDF features with dense semantic embeddings from tomaarsen/mpnet-base-nli-matryoshka22
+2
+https://huggingface.co/tomaarsen/mpnet-base-nli-matryoshka generating 64-dimensional sentence embedding.
+Table 4: Impact of different embeddings on PoLR accuracy on GSM8K, GPQA-Diamond and Math500 datasets.
+SC
+TF-IDF
+Matryoshka
+Model
+Acc
+Acc
+η\eta
+ktk_{t}
+Acc
+η\eta
+ktk_{t}
+GSM8K
+DSQ1.5B
+73.2
+73.2
+40.1
+11.3
+73.3
+38.7
+219.8
+DSQ7B
+79.8
+80.0
+26.5
+5.9
+79.9
+26.6
+219.0
+QWQ32B
+90.8
+90.8
+47.6
+11.2
+90.8
+45.8
+221.4
+GPQA
+Diamond
+DSQ7B
+57.1
+55.6
+57.1
+9.5
+54.0
+52.4
+209.3
+MIMO7B
+65.7
+65.2
+51.4
+9.0
+64.1
+47.7
+221.5
+QWQ32B
+68.7
+70.2
+53.8
+17.4
+70.7
+54.1
+218.5
+Math500
+DSQ1.5B
+76.2
+75.4
+52.4
+6.5
+76.2
+47.5
+219.7
+DSQ7B
+89.8
+89.4
+48.7
+7.6
+90.0
+44.7
+220.6
+QWQ32B
+91.8
+92.0
+51.8
+11.2
+91.8
+51.4
+218.9
+The results show that TF–IDF achieves nearly identical accuracy and token efficiency to dense embeddings while incurring dramatically lower clustering overhead (5–11 ms vs. 220 ms). This indicates that lightweight representations are sufficient for PoLR’s prefix clustering: they capture enough structural similarity among reasoning paths. Dense embeddings, while semantically richer, provide little benefit for short prefixes and introduce substantial computational cost. For longer prefixes or highly heterogeneous tasks, denser embeddings may be advantageous, but for the current reasoning benchmarks, lightweight features offer the best trade-off between efficiency and accuracy.
+5.3 Impact of Distance Threshold in Clustering.
+In PoLR, agglomerative clustering is applied to TF–IDF embeddings of reasoning prefixes, with the distance threshold controlling the granularity of clusters.
+To study its effect, we vary the threshold from 0.50.5 to 1.01.0 while fixing the number of samples at N=51N=51, and report accuracy and token efficiency η\eta on GPQA-Diamond in Figure 2(a), GSM8K in Figure 2(b) and Math500 in Figure 2(c) across different LLMs.
+Across all thresholds, we find that accuracy remains nearly identical to SC, confirming that prefix consensus is strong enough that the precise clustering granularity does not affect the final outcome.
+However, the token efficiency is sensitive to the threshold: lower thresholds lead to tighter clusters, which reduce the size of the dominant cluster and hence the number of traces that need to be expanded. This naturally improves token efficiency.
+The magnitude of efficiency gains also depends on model capacity. Weaker models such as DSQ1.5B show the largest improvements (up to ∼60%\sim 60\% token savings), since they tend to produce more redundant and low-quality traces that can be easily filtered. In contrast, stronger models such as QWQ32B, which generate more diverse yet useful reasoning steps, leave less redundancy to exploit, yielding smaller efficiency gains (∼40%\sim 40\%). This behavior is consistent with the intuition that PoLR benefits most when the model’s reasoning space is noisy and contains many unpromising paths. We choose a threshold of 1.01.0 for our main experiments as it strikes a balance between efficiency and accuracy: at this setting, the accuracy either matches or slightly exceeds SC, while still providing substantial token savings, whereas lower thresholds could marginally improve efficiency but risk fragmenting clusters unnecessarily.
+(a) GPQA Diamond
+(b) GSM8K
+(c) Math500
+Figure 2: Impact of different cluster threshold selection.
+5.4 PoLR is Robust to Clustering Methods
+Table 5: Impact of different clustering methods on PoLR.
+GSM8K
+SC
+Agglomerative
+DBSCAN
+HDBSCAN
+Acc
+Acc
+η\eta
+ktk_{t}
+Acc
+η\eta
+ktk_{t}
+Acc
+η\eta
+ktk_{t}
+DSQ1.5B
+73.2
+73.2
+40.1
+11.3
+72.7
+56.1
+12.0
+73.5
+61.5
+12.9
+DSQ7B
+79.8
+80.0
+26.5
+05.9
+80.1
+36.4
+06.9
+80.4
+33.4
+07.1
+QWQ32B
+90.8
+90.8
+47.6
+11.2
+90.8
+64.6
+11.4
+91.0
+56.9
+12.0
+GPQA
+SC
+Agglomerative
+DBSCAN
+HDBSCAN
+Acc
+Acc
+η\eta
+ktk_{t}
+Acc
+η\eta
+ktk_{t}
+Acc
+η\eta
+ktk_{t}
+DSQ7B
+57.1
+55.6
+57.1
+09.5
+56.1
+69.9
+10.2
+53.5
+71.8
+11.0
+MIMO7B
+65.7
+65.2
+51.4
+09.0
+64.1
+65.3
+10.1
+63.6
+67.0
+10.5
+QWQ32B
+68.7
+70.2
+53.8
+17.4
+68.2
+52.2
+14.9
+68.2
+55.2
+15.3
+Math500
+SC
+Agglomerative
+DBSCAN
+HDBSCAN
+Acc
+Acc
+η\eta
+ktk_{t}
+Acc
+η\eta
+ktk_{t}
+Acc
+η\eta
+ktk_{t}
+DSQ1.5B
+76.2
+75.4
+52.4
+6.5
+76.2
+68.7
+7.2
+76.0
+67.4
+7.7
+DSQ7B
+89.8
+89.4
+48.7
+7.6
+89.6
+54.6
+8.2
+89.2
+63.5
+9.7
+QWQ32B
+91.8
+92.0
+51.8
+11.2
+92.0
+71.3
+12.6
+92.2
+63.1
+12.6
+Table 5 shows that the choice of clustering method has minimal impact on accuracy, but strongly affects PoLR’s efficiency metrics. Across GSM8K, Math500 and GPQA-Diamond datasets and different model sizes, density-based methods (DBSCAN and HDBSCAN) yield the better token efficiency (η\eta), indicating more effective reuse of prefix consensus. These gains come with a modest increase in overhead (ktk_{t}). Larger models such as QWQ32B benefit most, achieving both high accuracy and strong efficiency improvements. Overall, we observed that the clustering methods mainly impact the efficiency–overhead trade-off, not the accuracy, showing that the PoLR is robust to different clustering methods.
+5.5 Effect of Prefix Length on Efficiency and Cluster Structure.
+To further understand the role of prefix information, we varied prefix length from 2 to 4096 tokens on GSM8K with different LLMs. Figure 3 shows the resulting efficiency gains, cluster skew, and NMI. Raw numbers are provided in Appendix E, Table 9.
+We observe that efficiency improves monotonically with prefix length up to ∼512\sim 512 tokens, achieving ∼58%\sim 58\% token savings over Self-Consistency, after which it saturates. Cluster skew, by contrast, decreases sharply from ∼0.96\sim 0.96 at length 2 to ∼0.52\sim 0.52 at 256, stabilizing thereafter. NMI increases slowly with prefix length but remains relatively low (∼0.18\sim 0.18 at 4096).
+These results highlight two insights that efficiency is primarily governed by structural dominance (skew) rather than correctness alignment (NMI). Even with weak NMI, PoLR achieves substantial token savings whenever a dominant cluster exists. Second, prefix length trades off skew and NMI. Short prefixes yield high skew but low predictiveness; longer prefixes reduce skew while slightly improving correctness alignment. PoLR’s efficiency benefits emerge in the mid-range, when skew remains sufficient for pruning yet prefixes capture more reasoning structure.
+We compared PoLR across three LLMs for GSM8K dataset with differing accuracies (73%–95%). Across all models, efficiency gains eventually plateau around 50–55%, but the trajectory differs. Lower-capacity models achieve large savings even at very short prefixes (2–16 tokens), whereas the higher-accuracy Qwen2.5-Math-7B requires longer prefixes (256–512) before efficiency saturates. Importantly, cluster skew consistently predicts efficiency gains, while NMI remains low across all models. This highlights that PoLR’s benefits stem from structural dominance of prefix clusters rather than their correctness alignment, and that model capacity mainly shifts the prefix length required to realize these savings.
+(a) Qwen2.5-math-7B (95%)
+(b) DSQ7B (80%)
+(c) DSQ1.5B (73%)
+Figure 3: Efficiency gains of PoLR across three models on GSM8K as a function of prefix length.
+All models achieve over 50% token savings by 256-512 prefix tokens.
+5.6 Cluster size ⟹\implies Better Accuracy
+To further understand which cluster’s reasoning traces should be expanded, we perform the
+Table 6: Correlation coefficient between cluster sizes and accuracy for DSQ7B and QwQ32B (N=51N=51, Lp=256L_{p}=256).
+GSM8K
+MATH500
+AIME24
+AIME25
+GPQA
+DSQ-7B
+0.90
+0.89
+0.75
+0.76
+0.90
+QwQ-32B
+0.90
+0.88
+0.87
+0.78
+0.78
+majority voting for all the formed clusters for all dataset model combinations.
+We observed that the dominant cluster (by cluster size) captures more accurate traces while the remaining clusters tend to have lower accuracies compared to the dominant cluster, second dominant cluster being typically ranking second in accuracy, and so on.
+We further find the Pearson correlation coefficient ρ\rho between the cluster sizes and the corresponding accuracies for all the dataset in Table 6. We observe a strong correlation for all dataset model combinations ρ>0.75\rho>0.75. Therefore, in PoLR, cluster size is the best indicator of the cluster to be expanded. We provide the prefix length-wise dominant cluster accuracy for all dataset model combinations in Figure 5 Appendix F.
+We refer the reader to Appendix I for further analysis of the impact of other hyperparameters on PoLR.

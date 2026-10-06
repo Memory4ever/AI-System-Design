@@ -1,0 +1,1219 @@
+https://arxiv.org/html/2601.20339v1
+Improving Diffusion Language Model Decodingthrough Joint Search in Generation Order and Token Space
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Background
+2.1 Discrete Diffusion Models
+2.2 Sampling Strategies in MDM
+2.3 Evaluation Metrics for Reasoning Performance
+3 Trade-off in Standard Decoding Strategies
+4 Method: Order-Token Search for Diffusion Language Models
+4.1 Search Process
+4.2 Pruning Process
+5 Experiments
+5.1 Experimental Setup
+Baselines.
+5.2 Order-Token Search Improves Reasoning Accuracy
+5.3 The Necessity of Dedicated Likelihood Estimation
+5.4 Order-Token Search Scaling with NFE
+6 Related Work
+7 Conclusion
+References
+A Appendix
+A.1 Order-Token Search Algorithm
+A.2 Is the Autoregressive Order Fundamentally Superior?
+A.3 Alternative Likelihood Estimators for OTS
+Notation.
+A.3.1 OTS All Blocks: Joint Likelihood of All Revealed Blocks
+A.3.2 OTS Future Blocks: Likelihood Without Conditioning on Predicted Future
+A.3.3 AR-style Likelihood: Left-to-Right Token Log-Likelihood
+A.4 Computation Complexity
+A.5 Comparison Study of Greedy Decoding and Order-Token Search under Identical Temperature
+A.6 Additional Experimental Details
+A.6.1 Beam Search Settings
+A.6.2 Pass@k Evaluation Settings
+A.6.3 Computational Cost Analysis
+A.7 Limitations on Sudoku Benchmarks
+A.8 Sensitivity of Order-Token Search to Block Size
+A.9 Case Study: A Search Instance
+License: CC BY 4.0
+arXiv:2601.20339v1 [cs.CL] 28 Jan 2026
+Improving Diffusion Language Model Decoding
+through Joint Search in Generation Order and Token Space
+Yangyi Shen
+Affiliation: Department of Computer Science, Stanford University, California, USA
+Correspondence to: pyyshen@stanford.edu
+Tianjian Feng
+Affiliation: Department of Computer Science, Zhejiang University, Zhejiang, China
+Jiaqi Han
+Affiliation: Department of Computer Science, Stanford University, California, USA
+Wen Wang
+Affiliation: Department of Computer Science, Zhejiang University, Zhejiang, China
+Tianlang Chen
+Affiliation: Department of Computer Science, Stanford University, California, USA
+Chunhua Shen
+Affiliation: Department of Computer Science, Zhejiang University, Zhejiang, China
+Jure Leskovec
+Affiliation: Department of Computer Science, Stanford University, California, USA
+Stefano Ermon
+Affiliation: Department of Computer Science, Stanford University, California, USA
+Abstract
+Diffusion Language Models (DLMs) offer order-agnostic generation that can explore many possible decoding trajectories.
+However, current decoding methods commit to a single trajectory, limiting exploration in trajectory space.
+We introduce Order-Token Search to explore this space through jointly searching over generation order and token values.
+Its core is a likelihood estimator that scores denoising actions, enabling stable pruning and efficient exploration of diverse trajectories.
+Across mathematical reasoning and coding benchmarks, Order-Token Search consistently outperforms baselines on GSM8K, MATH500, Countdown, and HumanEval (3.1%, 3.8%, 7.9%, and 6.8% absolute over backbone), matching or surpassing diffu-GRPO post-trained d1-LLaDA.
+Our work establishes joint search as a key component for advancing decoding in DLMs.
+Keywords: Machine Learning, ICML
+††affiliationnotice: †Equal senior supervision.
+1 Introduction
+Figure 1: Why heuristic remasking fails, and how Order-Token Search helps.
+(a) Low-confidence remasking greedily fixes high-confidence tokens early and only revises low-confidence positions, which effectively commits to a narrow set of decoding trajectories and can get stuck in an incorrect completion.
+(b) Random remasking uniformly samples different remasking patterns, producing multiple distinct trajectories (different orders and token assignments), but offers no principled way to select the correct trajectory among competing candidates.
+(c) Order-Token Search  maintains beams of partial trajectories, periodically expands each trajectory by proposing denoising actions that change both which position to update (order) and what token to write (token), and then prunes partial trajectories using a likelihood estimation function to filter incorrect and suboptimal candidates before continuing decoding.
+(d) MATH500 accuracy plot (example dataset) illustrating Order-Token Search’s advantage over low-confidence and random remasking.
+Diffusion Language Models (DLMs) have emerged as a promising alternative to autoregressive models for sequence generation. In particular, Masked Diffusion Models (MDMs) (Sahoo et al., 2024; Shi et al., 2024) trains on a core objective: learning to reconstruct original text by denoising sequences corrupted with random masks at varying rates. At inference, generation starts from a fully masked sequence and proceeds over multiple denoising steps: the model predicts token distributions for all positions, samples tokens for masked positions, and re-mask a subset of tokens to construct the next input.
+One key opportunity is that MDMs enable order-agnostic decoding: they revise many positions in parallel, allowing adaptive generation orders rather than left-to-right. This flexibility makes the choice of generation order a central design decision for decoding.
+However, current decoding methods produce only a single trajectory per run. In MDMs, common decoders follow heuristic remasking rules that effectively determine the trajectory, which positions are updated at each step and with what tokens. For instance, random remasking mirrors the training corruption by repeatedly masking a random subset of tokens, whereas low-confidence remasking greedily fixes high-confidence tokens as context and only revises uncertain ones (Nie et al., 2025; Kim et al., 2025a). As illustrated in Figure 1(a)(b), because these heuristics neither branch over alternative generation orders nor maintain competing intermediate states, a single run can easily miss the specific order–token trajectory needed for a correct solution.
+Empirically, we find that existing methods occupy opposite ends of an exploration–exploitation trade-off.
+We diagnose exploration using pass@kk, the probability that at least one of kk samples is correct.
+Low-confidence remasking exploits by committing early to high-confidence tokens and restricting decoding to a narrow set of trajectories, which boosts pass@11 but leads to slow pass@kk growth as kk increases.
+In contrast, random remasking explores a much broader set of trajectories and attains higher pass@kk, but achieves weak pass@11 because it cannot reliably select good ones.
+Thus, prior methods either over-exploit or explore blindly, leaving much of the model’s multi-trajectory potential unrealized. We address this with explicit trajectory search and pruning.
+Here we propose Order-Token Search, a decoding algorithm that performs search in the joint space of generation orders and token values. As shown in Figure 1(c), Order-Token Search maintains beams of partially denoised states and periodically expands each beam by proposing multiple denoising actions, then prunes using a stable likelihood estimation function that reliably scores partial trajectories. Across mathematical reasoning and coding benchmarks, Order-Token Search consistently improves pass@11 over prior best decoding, matching or surpassing the gains of diffu-GRPO post-training (Zhao et al., 2025) (e.g., +3.1/3.8/7.9/6.8% absolute over low-confidence remasking on GSM8K/MATH500/Countdown/HumanEval). Figure 1(d) illustrates the gains on MATH500: across sequence lengths, Order-Token Search consistently outperforms both low-confidence and random remasking.
+Our contributions are threefold:
+(1) We identify an exploration–exploitation trade-off in MDM decoding through pass@kk: low-confidence remasking over-exploits, improving pass@11 but suppressing pass@kk, while random remasking blindly explores, boosting pass@kk but degrading pass@11 (Section 3).
+(2) We propose Order-Token Search, a decoding algorithm that searches in the joint space of generation orders and token values and stably prunes partial trajectories with a likelihood estimator (Section 4).
+(3) We demonstrate consistent gains across mathematical reasoning and coding benchmarks, matching or surpassing improvements typically obtained from post-training (Section 5).
+2 Background
+This section establishes the technical foundation for our work. We review the fundamentals of MDMs, formalize key concepts for remasking strategies, and define our evaluation metrics.
+2.1 Discrete Diffusion Models
+Discrete diffusion models adapt the forward diffusion process and the reverse denoising process (Sohl-Dickstein et al., 2015; Ho et al., 2020; Song and Ermon, 2019; Song et al., 2021) to discrete data by establishing the diffusion process over a discrete domain 𝐱∈𝒳\mathbf{x}\in\mathcal{X}, where 𝐱\mathbf{x} is a one-hot vector denoting tokens from a vocabulary of size |𝒳||\mathcal{X}| (Austin et al., 2021). Given a prior 𝝅\bm{\pi}, the forward process qq incrementally corrupts the original data 𝐱0\mathbf{x}_{0} into a target prior distribution Cat​(⋅,𝝅)\text{Cat}(\cdot;\bm{\pi}). Over continous time t∈[0,1]t\in[0,1], it forms a sequence of increasingly noisy latent variables 𝐱t\mathbf{x}_{t}, through the conditional marginal distribution q⁡(𝐱t∣𝐱0)=Cat​(𝐱t,αt​𝐱0+(1−αt)​𝝅)q(\mathbf{x}_{t}\mid\mathbf{x}_{0})=\text{Cat}\left(\mathbf{x}_{t};\alpha_{t}\mathbf{x}_{0}+(1-\alpha_{t})\bm{\pi}\right).
+Here, αt\alpha_{t} is a monotonically decreasing noise schedule that satisfies boundary conditions α0=1\alpha_{0}=1 and α1=0\alpha_{1}=0. Furthermore, we can achieve the transition probability between any two intermediate time points 0<s<t<10<s<t<1 through q⁡(𝐱t∣𝐱s,𝐱0)=Cat​(𝐱t,αt/αs​𝐱s+(1−αt/αs)​𝝅)q(\mathbf{x}_{t}\mid\mathbf{x}_{s},\mathbf{x}_{0})=\text{Cat}\left(\mathbf{x}_{t};\alpha_{t}/\alpha_{s}\mathbf{x}_{s}+(1-\alpha_{t}/\alpha_{s})\bm{\pi}\right).
+MDM, a specific instance of this framework, utilizes the prior 𝝅=𝒎\bm{\pi}=\bm{m} to achieve absorbing-state diffusion, a particularly suitable setting for language modeling (Sahoo et al., 2024; Shi et al., 2024; Lou et al., 2024). Here, 𝒎\bm{m} is a one-hot vector corresponding to a special MASK token. Defining ss as the time step immediately preceding tt, the posterior distribution simplifies to:
+q⁡(𝐱s∣𝐱t,𝐱0)={Cat​(𝐱s,𝐱t),𝐱t≠𝒎Cat​(𝐱s,αs−αt1−αt​𝐱0+1−αs1−αt​𝒎),𝐱t≠𝒎q(\mathbf{x}_{s}\mid\mathbf{x}_{t},\mathbf{x}_{0})=\begin{cases}\text{Cat}\left(\mathbf{x}_{s};\mathbf{x}_{t}\right),&\mathbf{x}_{t}\neq\bm{m}\\
+\text{Cat}\left(\mathbf{x}_{s};\frac{\alpha_{s}-\alpha_{t}}{1-\alpha_{t}}\mathbf{x}_{0}+\frac{1-\alpha_{s}}{1-\alpha_{t}}\bm{m}\right),&\mathbf{x}_{t}\neq\bm{m}\\
+\end{cases}
+(1)
+The reverse (denoising) process is modeled by pθ​(𝐱s∣𝐱t)=q⁡(𝐱s∣𝐱t,𝐱θ​(𝐱t))p_{\theta}(\mathbf{x}_{s}\mid\mathbf{x}_{t})=q(\mathbf{x}_{s}\mid\mathbf{x}_{t},\mathbf{x}_{\theta}(\mathbf{x}_{t})), where pθp_{\theta} is a parameterized distribution that reverses qq, and 𝐱θ​(𝐱t)\mathbf{x}_{\theta}(\mathbf{x}_{t}) denotes a neural network trained to predict the original clean data 𝐱0\mathbf{x}_{0} from its noisy version 𝐱t\mathbf{x}_{t}. This network is optimized by minimizing the negative evidence lower bound, thereby learning to approximate the true posterior distribution.
+2.2 Sampling Strategies in MDM
+In masked generative models, sampling starts from a fully masked sequence, 𝐱1=(MASK,…,MASK)\mathbf{x}_{1}=(\text{MASK},\ldots,\text{MASK}). The model then iteratively refines this sequence over a series of steps. At each step, the model predicts logits for all currently masked tokens. The critical action in this reverse process is the transfer of a prediction—that is, the act of replacing a selected MASK token with its predicted value, thereby committing to that prediction for subsequent steps. The rule that determines which masked token to transfer next is known as the remasking strategy, and it defines the decoding order. We focus on three primary strategies:
+Random Remasking. The strategy used during training. The next token to unmask is chosen uniformly at random from the set of all remaining masked tokens. This is a baseline that ensures unbiased, order-agnostic generation.
+Autoregressive (AR). We force the MDM to keep the leftmost predicted token and remask all following tokens. This baseline decouples the effect of generation order and solely examines the effect of diverse token selection.
+Low-Confidence Remasking. A common inference-time strategy. The token with the highest predicted probability is unmasked next; the tokens with lower probability are remasked. Formally, at each step, the model computes a confidence score for each masked token ii as its maximum logit, si=max(pθ(⋅∣𝐱t)i)s_{i}=\max(p_{\theta}(\cdot\mid\mathbf{x}_{t})_{i}). The token with the maximum score sis_{i} is transferred. The intuition is to resolve the token position where the model has the greatest certainty first, potentially mitigating error propagation (Nie et al., 2025; Kim et al., 2025a).
+2.3 Evaluation Metrics for Reasoning Performance
+Evaluating generative models on reasoning tasks requires metrics that capture both deterministic performance and the model’s inherent capability. We use the following standard metrics established in prior work (Yue et al., 2025):
+Accuracy (pass@1\mathbf{1}), the probability that a single generated sample is correct. This is the primary metric for evaluating one-trial performance and represents the expected accuracy when using the model in a deterministic setting.
+pass@k\mathbf{k}, the probability that at least one sample out of kk independent generations is correct. This metric estimates the model’s inherent ability to solve a problem given sufficient sampling. For a problem with nn generated samples of which cc are correct, it is estimated as: pass@k≈1−(n−ck)/(nk)\textit{pass@$k$}\approx 1-\binom{n-c}{k}/\binom{n}{k}.
+The gap between pass@11 and pass@kk diagnoses how much a decoding strategy benefits from sampling.
+If pass@11 is strong but pass@kk increases slowly with kk, the generated samples are highly correlated, indicating conservative decoding that commits early and explores few distinct trajectories.
+Conversely, if pass@11 is weak but pass@kk rises quickly with kk, the model can reach correct solutions under sampling, but the decoding strategy cannot reliably select them.
+Our goal is to translate this sampling-driven capability into higher pass@11 by explicitly exploring and pruning in the joint space of generation orders and token choices.
+Figure 2: Decoding strategies exhibit an exploration–exploitation trade-off. Empirical pass@kk curves for LLaDA-8B-Instruct and LLaDA-1.5 on reasoning and coding benchmarks. Low-confidence remasking often attains higher pass@11, but yields slow pass@kk growth as kk increases. In contrast, random remasking consistently, and autoregressive (AR) decoding in several settings, starts from lower pass@11 yet achieves substantially higher pass@kk at large kk (≈\approx256), reflecting broader coverage of the solution space through more diverse trajectories. These curves highlight an opportunity for decoding algorithms that translate high-pass@kk potential into stronger pass@11 by explicitly exploring and selecting among diverse trajectories.
+3 Trade-off in Standard Decoding Strategies
+Decoding Strategy Trade-off. To understand the trade-off in DLM decoding strategies, we investigate how different approaches affect reasoning performance by addressing the question: How does the diversity of generation trajectories explored by a decoding strategy relate to its ability to solve complex problems? We analyze three core strategies representing distinct exploration-exploitation trade-offs: random remasking (maximizing generation order diversity), low-confidence remasking (greedily exploiting local confidence), and fixed autoregressive order (enforcing generation order while enabling diverse token selection). This comparison is particularly valuable because DLMs offer unique flexibility in generation order compared to autoregressive models, yet optimal strategies for leveraging this flexibility remain unclear.
+In this section, we study how exploration in decoding affects reasoning in MDMs. Specifically, we ask how the diversity of sampled decoding trajectories impacts problem-solving performance. We compare three representative strategies that emphasize different sources of diversity: low-confidence remasking (greedy, low diversity), random remasking (high diversity in generation order), and Autoregressive decoding (high diversity in token choices). This comparison isolates whether gains come from flexible order itself or from broader exploration in the joint space of order and token choices.
+Low-confidence remasking: high single-sample accuracy but rapid performance plateau. Figure 2 presents the key findings from our analysis. Using LLaDA models (Nie et al., 2025; Zhu et al., 2025) trained for flexible-order generation, we evaluate each strategy’s single-sample accuracy (pass@11) and multi-sample coverage (pass@kk) across mathematical reasoning (GSM8K, MATH500) and coding (HumanEval, MBPP) benchmarks to study the effects of generation order and token selection diversity on reasoning performance. As expected, the low-confidence remasking strategy achieves the highest pass@11 in most cases, with advantages of 0.2-0.3 on MBPP. This aligns with the intuition that resolving the most certain tokens first helps guide the generation and reduces error propagation in a single sample. However, as we increase the sample budget kk, the performance of low-confidence remasking plateaus relatively quickly.
+Diverse strategies: lower initial accuracy but superior multi-sample coverage. In contrast, both random remasking and fixed AR order strategies, while starting at lower pass@11, continue to improve with more samples, eventually achieving significantly higher pass@kk (e.g., random/AR strategies reach ∼\sim0.8 while low-confidence plateaus at ∼\sim0.4 at pass@256256 on MATH500). This demonstrates that diverse generation orders (from random remasking) and token selections (from AR decoding with temperature) can enable the model to solve more unique problems. We also conducted an experiment (Appendix A.2) showing that AR is not fundamentally superior than other generation orders. This implies that exploration in the generation order and token space, rather than the specific left-to-right order, is what improves the model’s reasoning performance. The sets of solutions generated through these diverse trajectories have greater coverage of the solution space, even though each individual sample is less reliable.
+This consistent phenomenon reveals a fundamental limitation of greedy decoding strategies: by committing early to specific token choices based on local confidence, low-confidence remasking restricts exploration of the joint space of generation orders and token selections. While effective for optimizing a single sample, this approach fails to utilize the model’s full reasoning potential. The model’s inherent capability, as measured by pass@kk with large kk, is better realized by strategies that introduce more stochasticity.
+Our analysis reveals the core opportunity in DLM decoding: achieving higher accuracy than low-confidence remasking requires strategic exploration of both generation order and token space. To this end, we introduce Order-Token Search, an algorithm that actively searches this joint space within a single decoding process to locate correct answers that greedy strategies miss.
+Figure 3: Illustration of a pruning stage in Order‑Token Search for DLMs.
+At a search step, we have 22 fully denoised sequences (on the leftmost), with yellow tokens unmasked in previous steps.
+We then mask the current block (the middle 33 tokens) and measure its likelihood through feeding each masked candidate into the DLM to obtain each token’s probability.
+The score function computes the chain-rule product of token probabilities and prunes the lower-likelihood candidate.
+4 Method: Order-Token Search for Diffusion Language Models
+The empirical results in Section 3 establish the need for a decoding algorithm that explores multiple potential generation trajectories. Standard one-trial sampling is insufficient as it commits to a single greedy sequence. To address this, we develop Order-Token Search, a novel algorithm inspired by beam search but tailored for the parallel, iterative nature of DLMs. The key innovation is a joint search over both the token selections and the order in which they are generated, guided by the model’s own likelihood predictions to score and prune candidate trajectories. This section details its two key components—search and prune. The complete algorithm is provided in Appendix A.1.
+4.1 Search Process
+We begin with KK identical copies (beams) of the initial sequence 𝐱1=[𝐜;MASKL]\mathbf{x}_{1}=[\mathbf{c};\text{MASK}^{L}], where 𝐜\mathbf{c} is the prompt and MASKL\text{MASK}^{L} denotes LL mask tokens.
+Over continuous denoising time t∈[0,1]t\in[0,1], we independently apply the MDM to each candidate, generating new hypotheses that represent different choices in the joint space of tokens and generation orders. Between any two user-specified time (s,t)(s,t), our algorithm can perform search and expand each candidate to become multiple candidates independently with additional denoise steps.
+This expansion explores the joint space of tokens and generation orders, creating a diverse set of candidate sequences which are then evaluated and pruned to retain the top-KK trajectories with the highest model likelihood (see Section 4.2).
+To manage computational complexity, we structure the search using block diffusion (Arriola et al., 2025; Nie et al., 2025). Instead of searching at every denoising step—which would incur an O⁡(K⋅|t|)O(K\cdot|t|) overhead for |t||t| steps—we perform the search expansion only at the boundaries between contiguous blocks of tokens. This reduces the overhead to O⁡(K⋅|b|)O(K\cdot|b|), where |b||b| is the total number of blocks, making the search tractable. After processing all blocks, the single best sequence is selected from the final KK candidates based on the highest likelihood. Details on computational complexity are provided in Appendix A.4.
+4.2 Pruning Process
+The effectiveness of Order-Token Search hinges on a pruning criterion that can accurately score candidate sequences with diverse tokens and generation orders. Our key insight is that the standard MDM objective can be an unreliable scorer, as the model is trained on—and often fails at—extremely difficult infilling tasks where a large number of tokens must be predicted simultaneously (Kim et al., 2025a). To obtain a more stable and accurate likelihood estimate, we instead score a candidate based on the incremental denoising actions that created it.
+We propose a scoring function ss that evaluates the model’s confidence for each discrete denoising step. For a step from a more corrupted state 𝒙t\bm{x}_{t} to a less corrupted state 𝒙s\bm{x}_{s} (where 0≤s<t≤10\leq s<t\leq 1), the score is calculated as:
+s⁡(𝒙t,𝒙s)=𝔼𝒙0∼pθ​(𝒙0∣𝒙t)​log⁡p⁡(𝒙0|b⁡(𝒙s,𝒙t,𝒙0)),s(\bm{x}_{t};\bm{x}_{s})=\mathbb{E}_{\bm{x}_{0}\sim p_{\theta}(\bm{x}_{0}\mid\bm{x}_{t})}\log p(\bm{x}_{0}|b(\bm{x}_{s},\bm{x}_{t},\bm{x}_{0})),
+(2)
+where p(⋅|⋅)p(\cdot|\cdot) is the parametrized posterior from Section 2.1. The function bb identifies the specific blocks of token positions {i∣𝒙t,i=MASK∩𝒙s,i≠MASK}\{i\mid\bm{x}_{t,i}=\text{MASK}\cap\bm{x}_{s,i}\neq\text{MASK}\} that were denoised between time tt and ss, masks these blocks in 𝒙0\bm{x}_{0}, and returns the masked sequence. The score s⁡(𝒙t,𝒙s)s(\bm{x}_{t};\bm{x}_{s}) is the log-likelihood of only these newly-revealed blocks, conditioned on the surrounding context provided by the model’s full-sequence prediction 𝒙0\bm{x}_{0}.
+Table 1: Model Performance on Mathematics and Coding Benchmarks. We report accuracy across four benchmarks and multiple generation lengths for two base models (LLaDA and LLaDA-1.5). Bolded values indicate the best performance, and underlined values indicate the second best. Order-Token Search achieves the highest average accuracy for both base models and attains the best dataset-level averages on MATH500, Countdown, and HumanEval, while remaining competitive with the strongest baselines on GSM8K.
+GSM8K
+MATH500
+Countdown
+HumanEval
+Average
+Method / Seq Len
+64
+128
+256
+512
+Avg
+64
+128
+256
+512
+Avg
+64
+128
+256
+512
+Avg
+64
+128
+256
+512
+Avg
+LLaDA
+Low-confidence
+44.3
+68.7
+76.7
+78.2
+67.0
+21.2
+26.0
+32.4
+36.2
+29.0
+25.8
+20.7
+19.5
+16.0
+20.5
+10.4
+18.9
+26.2
+26.8
+20.6
+34.3
+Low-conf + MV
+46.4
+72.5
+80.9
+83.1
+70.7
+20.2
+27.4
+35.0
+36.2
+29.7
+22.7
+23.8
+18.4
+18.0
+20.7
+11.6
+18.9
+26.2
+26.8
+20.9
+35.5
+Random + MV
+43.1
+70.7
+80.2
+80.3
+68.6
+17.2
+26.2
+31.8
+31.8
+26.8
+6.3
+15.2
+14.1
+15.2
+12.7
+15.9
+17.1
+29.9
+28.1
+22.7
+32.7
+AR
+34.0
+62.7
+75.7
+76.9
+62.3
+18.8
+23.4
+27.4
+34.4
+26.0
+10.6
+12.9
+13.3
+14.1
+12.7
+10.4
+20.1
+29.9
+31.7
+23.0
+31.0
+AR + MV
+41.0
+69.1
+81.7
+86.4
+69.6
+17.4
+23.0
+32.2
+39.9
+28.1
+10.2
+13.3
+11.3
+13.7
+12.1
+9.8
+20.1
+29.9
+31.7
+22.9
+33.2
+AR + beam-search
+40.3
+70.4
+81.1
+82.9
+68.7
+22.2
+26.6
+35.4
+39.8
+31.0
+18.4
+23.1
+21.5
+21.9
+21.2
+15.9
+22.6
+36.0
+34.8
+27.3
+37.1
+OTS All Blocks
+42.8
+68.4
+74.5
+74.8
+65.1
+21.0
+27.2
+32.8
+33.0
+28.5
+11.7
+16.8
+19.9
+16.4
+16.2
+11.6
+18.3
+23.8
+28.1
+20.4
+32.6
+OTS Future Blocks
+43.3
+66.8
+76.2
+78.9
+66.3
+22.1
+28.4
+31.6
+36.8
+29.7
+15.2
+18.0
+20.3
+16.0
+17.4
+12.8
+16.5
+28.1
+31.7
+22.3
+33.9
+Order-Token Search
+45.6
+71.6
+79.8
+83.3
+70.1
+22.4
+30.4
+36.0
+42.4
+32.8
+27.7
+34.4
+26.2
+25.4
+28.4
+15.2
+23.2
+34.2
+37.2
+27.4
+39.7
+LLaDA-1.5
+Low-confidence
+44.2
+69.6
+77.5
+79.4
+67.7
+20.2
+26.4
+32.5
+36.2
+28.8
+19.8
+19.7
+17.9
+21.8
+19.8
+11.0
+15.9
+31.1
+28.7
+21.7
+34.5
+Low-conf + MV
+49.1
+74.4
+84.1
+84.2
+73.0
+21.2
+30.0
+34.8
+39.3
+31.3
+20.7
+23.8
+20.3
+25.4
+22.5
+11.6
+16.5
+31.1
+28.7
+22.0
+37.2
+Random + MV
+47.7
+74.8
+81.2
+82.8
+71.6
+22.4
+26.2
+31.0
+30.4
+27.5
+5.5
+16.4
+9.0
+14.5
+11.4
+13.4
+15.9
+29.9
+27.4
+21.7
+33.1
+AR
+37.5
+67.7
+77.3
+79.1
+65.4
+17.2
+23.5
+31.2
+35.0
+26.7
+12.3
+15.2
+14.5
+15.7
+14.4
+13.4
+22.7
+30.5
+30.5
+24.2
+32.7
+AR + MV
+40.7
+72.9
+83.8
+84.2
+70.4
+18.4
+26.4
+33.6
+37.9
+29.1
+12.5
+17.2
+14.8
+16.0
+15.1
+12.8
+22.6
+30.5
+30.5
+24.1
+34.7
+AR + beam-search
+45.1
+73.2
+82.0
+84.9
+71.3
+19.0
+26.4
+35.2
+38.8
+29.9
+14.8
+21.1
+16.0
+20.3
+18.1
+12.2
+20.7
+32.8
+33.8
+24.9
+36.1
+OTS All Blocks
+45.6
+70.7
+78.9
+78.3
+68.4
+20.8
+26.4
+31.8
+34.6
+28.4
+9.0
+21.5
+20.7
+22.3
+18.4
+13.4
+16.6
+25.6
+26.8
+20.6
+34.0
+OTS Future Blocks
+45.3
+71.3
+80.5
+80.7
+69.5
+19.8
+27.2
+34.8
+35.6
+29.4
+13.7
+21.9
+21.5
+19.5
+19.2
+12.2
+17.1
+27.4
+34.8
+22.9
+35.3
+Order-Token Search
+48.4
+74.5
+81.7
+84.0
+72.2
+24.4
+30.8
+37.4
+42.4
+33.8
+27.7
+31.3
+23.8
+29.3
+28.0
+15.2
+22.6
+36.0
+36.6
+27.6
+40.4
+This approach provides a better likelihood estimation with lower variance. By focusing on smaller, incremental predictions, we assess the model on tasks similar to its well-learned training distribution, where it denoises a limited number of masks at a time. The total score for a candidate sequence is the sum of scores over all its search-guided denoising steps: ∑(s,t)∈ℐs⁡(𝒙t,𝒙s)\sum_{(s,t)\in\mathcal{I}}s(\bm{x}_{t};\bm{x}_{s}), where ℐ\mathcal{I} is the set of intervals where a search was performed. This sum captures the entire history of the candidate’s generation trajectory. Figure 3 illustrates this process for a single step.
+In summary, Order-Token Search performs a joint search over tokens and generation orders, guided by the MDM’s own likelihood. By allowing candidates to explore denoising trajectories independently, Order-Token Search achieves diverse and effective exploration of the joint output space. The algorithm evaluates this exploration by scoring a candidate’s entire generation history through incremental block-level likelihoods, providing a comprehensive measure of global coherence. This approach efficiently leverages the iterative, parallel nature of MDMs: block diffusion minimizes computational overhead, while the full-sequence prediction 𝒙0\bm{x}_{0} supplies rich context for stable likelihood estimation. Consequently, Order-Token Search enables effective pruning of low-likelihood trajectories, steering the search toward high-quality, coherent outputs.
+5 Experiments
+We conduct a series of experiments to evaluate the effectiveness of Order-Token Search (OTS) in improving the reasoning performance of MDMs. Our investigation centers on the following research questions:
+(1) Does Order-Token Search yield consistent improvements in reasoning accuracy over competitive baselines, such as low-confidence remasking and majority-voting, across a variety of tasks?
+(2) How critical is Order-Token Search’s dedicated likelihood estimator for pruning, compared to alternative scoring ablations?
+(3) How does performance scale with NFE?
+5.1 Experimental Setup
+Baselines.
+We compare Order-Token Search (OTS) against several strong baselines:
+Low-confidence remasking, a greedy decoding method adopted as an optimal base model configuration in Zhao et al. (2025).
+Random remasking with majority voting, which generates a compute-equivalent set of diverse samples via random remasking and selects answers using a consistency heuristic (Wang et al., 2022).
+Low-confidence with majority voting, which combines the greedy decoding with the consistency heuristic mentioned above.
+AR, which follows the left-to-right autoregressive order in generation.
+AR with majority voting and AR with beam search, which strengthen the AR baseline with, respectively, a consistency heuristic and a search based on OTS likelihood estimator.
+OTS All Blocks, which scores each expansion by the joint log-likelihood of all blocks revealed so far;
+OTS Future Blocks, which scores the newly-revealed blocks while masking all unrevealed future blocks (see Appendix A.3).
+Order Search, a computationally expensive algorithm that uses AR-style likelihood to search for the optimal generation order;
+Token Search, an equally expensive algorithm that uses AR-style likelihood to search through the top-KK likely tokens for each position (see Appendix A.3.3).
+Model and Tasks. Our primary testbed is LLaDA-8B-Instruct (Nie et al., 2025), a state-of-the-art open-source diffusion language model. Since it has not undergone post-training with methods like diffu-GRPO (Zhao et al., 2025), it offers a clean baseline for isolating the performance improvements attributable to our inference-time algorithm. We additionally evaluate LLaDA-1.5 (Zhu et al., 2025), an RL post-trained variant of LLaDA, to verify that our conclusions hold even after reinforcement-learning-based post-training.
+For tasks, we evaluate on three mathematical reasoning and one coding benchmarks. GSM8K (Cobbe et al., 2021) contains ∼\sim1.32k grade school math problems requiring multi-step reasoning. MATH500 (Lightman et al., 2023) is a challenging subset of 500 high-school competition-level problems from the MATH (Hendrycks et al., 2021) dataset. Countdown (Pan et al., 2025) is a combinatorial arithmetic game where the goal is to reach a target number using basic operations on a given set. HumanEval (Chen et al., 2021) is a code generation benchmark of 164 hand-written Python programming tasks, where models must synthesize a function from a docstring and pass unit tests.
+5.2 Order-Token Search Improves Reasoning Accuracy
+Overall performance: Order-Token Search is the strongest decoding across benchmarks.
+As shown in Table 1, for both LLaDA and LLaDA-1.5, Order-Token Search achieves the highest average accuracy (39.7% vs. 37.1% for the best baseline on LLaDA, and 40.4% vs. 37.2% on LLaDA-1.5) and the best dataset-level averages on MATH500, Countdown, and HumanEval.
+On GSM8K, alternative multi-sample strategies (Majority-Voting or AR with beam-search) trade wins with Order-Token Search at specific sequence lengths, while Order-Token Search remains consistently competitive.
+Notably, Order-Token Search also surpasses expensive post-training such as diffu-GRPO (Zhao et al., 2025); for example, at Seq Len 512 it improves GSM8K (83.3% vs. 82.1%), MATH500 (42.4% vs. 40.2%), and HumanEval (37.2% vs. 34.8%).
+Diffusion baselines: Order-Token Search improves over remasking and voting on hard reasoning tasks.
+Within diffusion-style decoding, greedy Low-confidence remasking is already strong, and adding majority voting consistently improves GSM8K averages for both models.
+Random+MV, which replaces confidence-based remasking with random remasking, can be competitive on GSM8K but substantially degrades tasks requiring more structured reasoning: its Countdown averages drop to 12.7% and 11.4% for LLaDA and LLaDA-1.5, compared with 20.7% and 22.5% for Low-conf+MV.
+In contrast, Order-Token Search consistently outperforms these diffusion baselines on MATH500, Countdown, and HumanEval.
+For example, it raises MATH500 averages to 32.8% and 33.8% (vs. 29.7% and 31.3% for Low-conf+MV), improves Countdown to 28.4% and 28.0%, and improves HumanEval to 27.4% and 27.6%.
+Autoregressive baselines: Order-Token Search consistently outperforms AR.
+AR, AR+MV, and AR+beam-search are strong baselines on MATH500, Countdown, and HumanEval, with AR+beam-search achieving the second/third best average performance for both backbones.
+Nevertheless, Order-Token Search delivers clear gains.
+Averaging dataset-level accuracies over both LLaDA variants, Order-Token Search attains 71.2/33.3/28.2/27.5% on GSM8K/MATH500/Countdown/HumanEval, compared to 70.0/28.6/13.6/23.5% for AR+MV and 70.0/30.5/19.7/26.1% for AR+beam-search.
+Notably, AR+beam-search is a block_size=1\texttt{block\_size}=1 special case of our framework, yet it still underperforms full Order-Token Search, underscoring the value of jointly searching over generation orders and token choices rather than performing beam search only in token space.
+5.3 The Necessity of Dedicated Likelihood Estimation
+Robust incremental scoring is essential for pruning.
+Table 1 shows that even with the same OTS expansion and pruning procedure, the choice of likelihood estimator has a large impact.
+Both OTS All Blocks and OTS Future Blocks underperform Order-Token Search.
+For LLaDA, Order-Token Search achieves 39.7% overall accuracy, whereas OTS All Blocks and OTS Future Blocks drop to 32.6% and 33.9%, with the largest degradation on Countdown (28.4% →\rightarrow 16.2% / 17.4%).
+The same trend holds for LLaDA-1.5: Order-Token Search reaches 40.4% overall, versus 34.0% / 35.3% for the ablations, again with a large Countdown gap (28.0% →\rightarrow 18.4% / 19.2%).
+Together, these results validate our estimator in Eq. 2: scoring only the newly revealed blocks while conditioning on the model’s full-sequence predictive distribution yields a more stable and discriminative pruning signal than either history-style joint history scoring or scoring without predicted future context.
+Table 2: Accuracy of search algorithms with OTS or AR-style likelihood estimate (Seq Len 256). Bolded values indicate best performance. OTS consistently outperforms both Order Search and Token Search that adopt an AR-style likelihood estimate.
+Decoding Method (Compute)
+GSM8K
+MATH500
+Countdown
+HumanEval
+Token Search (3x)
+8.5
+3.8
+0.0
+0.6
+Order Search (3x)
+79.2
+35.8
+15.2
+32.9
+Order-Token Search (1x)
+79.8
+36.0
+26.2
+34.2
+AR-style likelihood is misaligned with MDMs.
+Search-based decoding depends on accurate likelihood estimates for pruning, but naive AR-style likelihood is mismatched to MDMs, which are trained to denoise multiple positions in parallel (Section 2.1).
+In Table 2, Order Search and Token Search instantiate this AR-style estimate by scoring partially denoised sequences via forward passes conditioned only on the currently revealed tokens.
+Both lag far behind Order-Token Search: on Countdown, Order-Token Search outperforms Order Search by 11%, while Token Search collapses to 0% accuracy.
+This indicates that directly porting AR beam-search heuristics to MDMs yields unreliable pruning signals; in contrast, Order-Token Search succeeds by pairing joint order–token exploration with a likelihood estimator tailored to incremental denoising.
+Figure 4: Countdown accuracy versus test-time compute (NFE) for OTS and majority-voting baselines. For each method, we vary beam size (OTS) or the number of samples (AR+MV, Random+MV), and choose the largest configuration so that all right-most points have roughly matched NFE. At this matched-compute point, OTS with beam size 6 attains 29.3% accuracy, compared to 19.9% for AR+MV and 18.4% for Random+MV, indicating more efficient use of additional FLOPs than simply drawing more independent diffusion samples.
+5.4 Order-Token Search Scaling with NFE
+OTS scales more effectively with test-time compute than majority voting.
+We study scaling on Countdown by varying beam size for OTS and the number of samples for AR+MV and Random+MV under roughly matched FLOP budgets (Figure 4).
+At the matched-compute frontier, OTS with beam size 6 reaches 29.3% accuracy, while AR+MV and Random+MV peak at 19.9% and 18.4%, respectively.
+Moreover, OTS steadily improves with additional beams (16.0% at beam 1 →\rightarrow 29.3% at beam 6), whereas majority-voting methods show diminishing returns with more samples.
+Overall, OTS more effectively converts extra NFE into accuracy gains by jointly searching over generation orders and token choices, rather than relying on heuristic sample aggregation over multiple independent trajectories.
+6 Related Work
+Diffusion Language Models. Initial developments in discrete diffusion models were established by D3PM (Austin et al., 2021) and further progressed using masked token approaches (Sahoo et al., 2024; Nie et al., 2024). Efficient versions such as Plaid (Gulrajani and Hashimoto, 2023) and SEDD (Lou et al., 2024) achieve performance comparable to GPT-2 (Radford et al., 2019), but their scalability still falls short of autoregressive models. The most recent scaling efforts include Dream (Ye et al., 2025), which adapts pre-trained autoregressive models into diffusion models, and LLaDA (Nie et al., 2025), which trains powerful diffusion language models from scratch.
+Test-Time Strategies.
+A primary method to enhance diffusion models is to increase test-time compute, often by using more denoising steps. Recent work has shown that expanding the inference-time sample space can guide generation toward high-reward outputs (Singhal et al., 2025; Kim et al., 2025b), with techniques like re-masking being introduced to scale the denoising process for masked diffusion models specifically (Wang et al., 2025). In the broader context of language models, search algorithms like beam search, speculative decoding (Leviathan et al., 2023; Xia et al., 2023), and contrastive decoding (Li et al., 2022) have been developed to improve decoding beyond greedy selection. However, these algorithms are tailored for the autoregressive paradigm, where the search space is confined to token values given a fixed generation order.
+Our work addresses this limitation. The iterative denoising of MDMs creates a joint search space over both token values and their generation order, which is inaccessible to autoregressive methods. Our algorithm, Order-Token Search, is designed for this new paradigm, leveraging parallel decoding to explore multiple generation trajectories and select outputs based on overall likelihood.
+7 Conclusion
+In this work, we revisited decoding for Diffusion Language Models (DLMs) through the lens of reasoning.
+We view reasoning as satisfying problem-specific dependencies, which induces a space of valid generation orders; an MDM decoding run corresponds to a single decoding trajectory through this space.
+Using pass@kk as a diagnostic for exploration, we find that standard low-confidence remasking commits to a narrow set of greedy trajectories: it can improve pass@11, but yields slow pass@kk growth by failing to explore alternative generation orders.
+Conversely, random remasking broadens trajectory coverage and often increases pass@kk, but explores blindly and struggles to convert this potential into strong pass@11.
+To reconcile this trade-off, we introduced Order-Token Search, a decoding algorithm that performs structured search in the joint space of generation orders and token.
+Order-Token Search maintains multiple partial trajectories, expands them by proposing denoising actions, and prunes using a novel likelihood estimator that scores denoising actions to enable stable selection among competing trajectories.
+Across mathematical reasoning and coding benchmarks, this joint search yields systematic pass@11gains, matching or surpassing the improvements of expensive post-training methods such as diffu-GRPO.
+Overall, our results establish joint search over generation order and token content as a key component for unlocking the reasoning capabilities latent in DLMs.
+Impact Statement
+This paper presents work whose goal is to advance the field
+of Machine Learning. There are many potential societal
+consequences of our work, none which we feel must be
+specifically highlighted here.
+References
+Arriola et al. (2025)
+M. Arriola, A. Gokaslan, J. T. Chiu, Z. Yang, Z. Qi, J. Han, S. S. Sahoo, and V. Kuleshov
+Block diffusion: interpolating between autoregressive and diffusion language models.
+In The Thirteenth International Conference on Learning Representations,
+External Links: Link
+Cited by: §A.4,
+§4.1.
+Austin et al. (2021)
+J. Austin, D. D. Johnson, J. Ho, D. Tarlow, and R. van den Berg
+Structured denoising diffusion models in discrete state-spaces.
+In Advances in Neural Information Processing Systems,  M. Ranzato, A. Beygelzimer, Y. Dauphin, P.S. Liang, and J. W. Vaughan (Eds.),
+Vol. 34, pp. 17981–17993.
+External Links: Link
+Cited by: §2.1,
+§6.
+Chen et al. (2021)
+M. Chen, J. Tworek, H. Jun, Q. Yuan, H. P. de Oliveira Pinto, J. Kaplan, H. Edwards, Y. Burda, N. Joseph, G. Brockman, A. Ray, R. Puri, G. Krueger, M. Petrov, H. Khlaaf, G. Sastry, P. Mishkin, B. Chan, S. Gray, N. Ryder, M. Pavlov, A. Power, L. Kaiser, M. Bavarian, C. Winter, P. Tillet, F. P. Such, D. Cummings, M. Plappert, F. Chantzis, E. Barnes, A. Herbert-Voss, W. H. Guss, A. Nichol, A. Paino, N. Tezak, J. Tang, I. Babuschkin, S. Balaji, S. Jain, W. Saunders, C. Hesse, A. N. Carr, J. Leike, J. Achiam, V. Misra, E. Morikawa, A. Radford, M. Knight, M. Brundage, M. Murati, K. Mayer, P. Welinder, B. McGrew, D. Amodei, S. McCandlish, I. Sutskever, and W. Zaremba
+Evaluating large language models trained on code.
+CoRR abs/2107.03374.
+External Links: Link,
+2107.03374
+Cited by: §5.1.
+Cobbe et al. (2021)
+K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano, et al.
+Training verifiers to solve math word problems.
+arXiv preprint arXiv:2110.14168.
+Cited by: §5.1.
+Gulrajani and Hashimoto (2023)
+I. Gulrajani and T. B. Hashimoto
+Likelihood-based diffusion language models.
+Advances in Neural Information Processing Systems 36, pp. 16693–16715.
+Cited by: §6.
+Hendrycks et al. (2021)
+D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt
+Measuring mathematical problem solving with the math dataset.
+NeurIPS.
+Cited by: §5.1.
+Ho et al. (2020)
+J. Ho, A. Jain, and P. Abbeel
+Denoising diffusion probabilistic models.
+In Advances in Neural Information Processing Systems,  H. Larochelle, M. Ranzato, R. Hadsell, M.F. Balcan, and H. Lin (Eds.),
+Vol. 33, pp. 6840–6851.
+External Links: Link
+Cited by: §2.1.
+Kim et al. (2025a)
+J. Kim, K. Shah, V. Kontonis, S. M. Kakade, and S. Chen
+Train for the worst, plan for the best: understanding token ordering in masked diffusions.
+In Forty-second International Conference on Machine Learning,
+External Links: Link
+Cited by: §1,
+§2.2,
+§4.2.
+Kim et al. (2025b)
+J. Kim, T. Yoon, J. Hwang, and M. Sung
+Inference-time scaling for flow models via stochastic generation and rollover budget forcing.
+arXiv preprint arXiv:2503.19385.
+Cited by: §6.
+Leviathan et al. (2023)
+Y. Leviathan, M. Kalman, and Y. Matias
+Fast inference from transformers via speculative decoding.
+In International Conference on Machine Learning,
+pp. 19274–19286.
+Cited by: §6.
+Li et al. (2022)
+S. Li, X. Wang, A. Zhang, X. He, and T. Chua
+Let invariant rationale discovery inspire graph contrastive learning.
+In ICML,
+Cited by: §6.
+Lightman et al. (2023)
+H. Lightman, V. Kosaraju, Y. Burda, H. Edwards, B. Baker, T. Lee, J. Leike, J. Schulman, I. Sutskever, and K. Cobbe
+Let’s verify step by step.
+In The Twelfth International Conference on Learning Representations,
+Cited by: §5.1.
+Lou et al. (2024)
+A. Lou, C. Meng, and S. Ermon
+Discrete diffusion modeling by estimating the ratios of the data distribution.
+In Proceedings of the 41st International Conference on Machine Learning,  R. Salakhutdinov, Z. Kolter, K. Heller, A. Weller, N. Oliver, J. Scarlett, and F. Berkenkamp (Eds.),
+Proceedings of Machine Learning Research, Vol. 235, pp. 32819–32848.
+External Links: Link
+Cited by: §2.1,
+§6.
+Nie et al. (2024)
+S. Nie, F. Zhu, C. Du, T. Pang, Q. Liu, G. Zeng, M. Lin, and C. Li
+Scaling up masked diffusion models on text.
+arXiv preprint arXiv:2410.18514.
+Cited by: §6.
+Nie et al. (2025)
+S. Nie, F. Zhu, Z. You, X. Zhang, J. Ou, J. Hu, J. Zhou, Y. Lin, J. Wen, and C. Li
+Large language diffusion models.
+arXiv preprint arXiv:2502.09992.
+Cited by: §A.4,
+§1,
+§2.2,
+§3,
+§4.1,
+§5.1,
+§6.
+Pan et al. (2025)
+J. Pan, J. Zhang, X. Wang, L. Yuan, H. Peng, and A. Suhr
+TinyZero.
+Note: https://github.com/Jiayi-Pan/TinyZeroAccessed: 2025-01-24
+Cited by: §5.1.
+Radford et al. (2019)
+A. Radford, J. Wu, R. Child, D. Luan, D. Amodei, I. Sutskever, et al.
+Language models are unsupervised multitask learners.
+OpenAI blog 1 (8), pp. 9.
+Cited by: §6.
+Sahoo et al. (2024)
+S. S. Sahoo, M. Arriola, Y. Schiff, A. Gokaslan, E. Marroquin, J. T. Chiu, A. Rush, and V. Kuleshov
+Simple and effective masked diffusion language models.
+In Advances in Neural Information Processing Systems,  A. Globerson, L. Mackey, D. Belgrave, A. Fan, U. Paquet, J. Tomczak, and C. Zhang (Eds.),
+Vol. 37, pp. 130136–130184.
+Cited by: §1,
+§2.1,
+§6.
+Shi et al. (2024)
+J. Shi, K. Han, Z. Wang, A. Doucet, and M. K. Titsias
+Simplified and generalized masked diffusion for discrete data.
+In Advances in Neural Information Processing Systems,
+Cited by: §1,
+§2.1.
+Singhal et al. (2025)
+R. Singhal, Z. Horvitz, R. Teehan, M. Ren, Z. Yu, K. McKeown, and R. Ranganath
+A general framework for inference-time scaling and steering of diffusion models.
+External Links: Link
+Cited by: §6.
+Sohl-Dickstein et al. (2015)
+J. Sohl-Dickstein, E. Weiss, N. Maheswaranathan, and S. Ganguli
+Deep unsupervised learning using nonequilibrium thermodynamics.
+In Proceedings of the 32nd International Conference on Machine Learning,  F. Bach and D. Blei (Eds.),
+Proceedings of Machine Learning Research, Vol. 37, Lille, France, pp. 2256–2265.
+External Links: Link
+Cited by: §2.1.
+Song and Ermon (2019)
+Y. Song and S. Ermon
+Generative modeling by estimating gradients of the data distribution.
+In Advances in Neural Information Processing Systems,  H. Wallach, H. Larochelle, A. Beygelzimer, F. d'Alché-Buc, E. Fox, and R. Garnett (Eds.),
+Vol. 32, pp. .
+External Links: Link
+Cited by: §2.1.
+Song et al. (2021)
+Y. Song, J. Sohl-Dickstein, D. P. Kingma, A. Kumar, S. Ermon, and B. Poole
+Score-based generative modeling through stochastic differential equations.
+In International Conference on Learning Representations,
+External Links: Link
+Cited by: §2.1.
+Wang et al. (2025)
+G. Wang, Y. Schiff, S. Sahoo, and V. Kuleshov
+Remasking discrete diffusion models with inference-time scaling.
+arXiv preprint arXiv:2503.00307.
+Cited by: §6.
+Wang et al. (2022)
+X. Wang, J. Wei, D. Schuurmans, Q. Le, E. Chi, S. Narang, A. Chowdhery, and D. Zhou
+Self-consistency improves chain of thought reasoning in language models.
+arXiv preprint arXiv:2203.11171.
+Cited by: §5.1.
+Xia et al. (2023)
+H. Xia, T. Ge, P. Wang, S. Chen, F. Wei, and Z. Sui
+Speculative decoding: exploiting speculative execution for accelerating seq2seq generation.
+In Findings of the Association for Computational Linguistics: EMNLP 2023,  H. Bouamor, J. Pino, and K. Bali (Eds.),
+Singapore, pp. 3909–3925.
+External Links: Link
+Cited by: §6.
+Ye et al. (2025)
+J. Ye, Z. Xie, L. Zheng, J. Gao, Z. Wu, X. Jiang, Z. Li, and L. Kong
+Dream 7b.
+External Links: Link
+Cited by: §6.
+Yue et al. (2025)
+Y. Yue, Z. Chen, R. Lu, A. Zhao, Z. Wang, Y. Yue, S. Song, and G. Huang
+Does reinforcement learning really incentivize reasoning capacity in LLMs beyond the base model?.
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+External Links: Link
+Cited by: §A.6.2,
+§2.3.
+Zhao et al. (2025)
+S. Zhao, D. Gupta, Q. Zheng, and A. Grover
+D1: scaling reasoning in diffusion large language models via reinforcement learning.
+arXiv preprint arXiv:2504.12216.
+Cited by: §A.6.1,
+§1,
+§5.1,
+§5.1,
+§5.2.
+Zhu et al. (2025)
+F. Zhu, R. Wang, S. Nie, X. Zhang, C. Wu, J. Hu, J. Zhou, J. Chen, Y. Lin, J. Wen, et al.
+LLaDA 1.5: variance-reduced preference optimization for large language diffusion models.
+arXiv preprint arXiv:2505.19223.
+Cited by: §3,
+§5.1.
+Use of LLMs
+Large language models (LLMs) were used solely to assist with grammar refinement and writing clarity during the manuscript preparation stage. All technical ideas, experimental designs, model implementations, and analyses were conceived and executed by the authors without reliance on LLMs. The use of LLMs did not influence research outcomes, data interpretation, or reported results. We carefully reviewed and edited all text to ensure accuracy, originality, and compliance with ethical and academic standards.
+Appendix A Appendix
+A.1 Order-Token Search Algorithm
+To make our proposed decoding strategy more concrete, we present the pseudocode of our Order-Token Search, which illustrates how partially masked sequences are expanded, scored and pruned, exploring both the token space and order space.
+Algorithm 1  Order-Token Search for Diffusion Language Models
+1:
+Input: Prompt 𝐩\mathbf{p}, model pθp_{\theta}, beam size KK, generation length LL, total steps SS, search interval NN, temperature τ\tau, number of blocks bb.
+2:
+Initialize beam set ℬ←{(𝐱i,𝐬⁡[b],score)}\mathcal{B}\leftarrow\{(\mathbf{x}_{i},\mathbf{s}[b],\text{score})\}, where 𝐱i=[𝐩;MASKL]\mathbf{x}_{i}=[\mathbf{p};\text{MASK}^{L}], 𝐬[0:b−1]=0\mathbf{s}[0:b-1]=0, score=0\text{score}=0 {KK identical beams}
+3:
+for step s←1s\leftarrow 1 to SS do
+4:
+𝐥←pθ(ℬ.𝐱)\mathbf{l}\leftarrow p_{\theta}(\mathcal{B}.\mathbf{x}) {Get logits for all beams, shape: (K,L,V)(K,L,V)}
+5:
+if smodN==0s\mod N==0 then
+6:
+ℬcandidates←∅\mathcal{B}_{\text{candidates}}\leftarrow\emptyset
+7:
+for (𝐱,𝐬,score)∈ℬ(\mathbf{x},\mathbf{s},\text{score})\in\mathcal{B} do
+8:
+block_idx←get_current_block_index​(x)\text{block\_idx}\leftarrow\text{get\_current\_block\_index}(\textbf{x}) {Compatible with semi-AR generation}
+9:
+for i←1i\leftarrow 1 to KK do
+10:
+𝐥~←add_gumbel_noise​(𝐥𝐱,τ)\tilde{\mathbf{l}}\leftarrow\text{add\_gumbel\_noise}(\mathbf{l}_{\mathbf{x}},\tau)
+11:
+𝐱0←argmax​(𝐥~,dim=−1)\mathbf{x}_{0}\leftarrow\text{argmax}(\tilde{\mathbf{l}},\text{dim}=-1) {Sample a candidate completion}
+12:
+𝐱candidate←transfer_tokens​(𝐱,𝐱0,𝐥𝐱)\mathbf{x}_{\text{candidate}}\leftarrow\text{transfer\_tokens}(\mathbf{x},\mathbf{x}_{0},\mathbf{l}_{\mathbf{x}}) {Only apply LS\frac{L}{S} predicted tokens}
+13:
+𝐱full_seq←transfer_all_tokens​(𝐱,𝐱0)\mathbf{x}_{\text{full\_seq}}\leftarrow\text{transfer\_all\_tokens}(\mathbf{x},\mathbf{x}_{0}) {Apply all predicted tokens}
+14:
+𝐱masked←mask_tokens​(𝐱full_seq,block_idx)\mathbf{x}_{\text{masked}}\leftarrow\text{mask\_tokens}(\mathbf{x}_{\text{full\_seq}},\text{block\_idx}) {Mask the current block}
+15:
+block_score ←\leftarrow score_block(𝐱masked\mathbf{x}_{\text{masked}}, block_idx) {Score the sequence}
+16:
+𝐬⁡[block_idx]=block_score\mathbf{s}[\text{block\_idx}]=\text{block\_score}
+17:
+score=sum(𝐬[:block_idx])\text{score}=\text{sum}(\mathbf{s}[0\!:\!\text{block\_idx}])
+18:
+ℬcandidates←ℬcandidates∪{(𝐱candidate,𝐬,score)}\mathcal{B}_{\text{candidates}}\leftarrow\mathcal{B}_{\text{candidates}}\cup\{(\mathbf{x}_{\text{candidate}},\mathbf{s},\text{score})\}
+19:
+end for
+20:
+end for
+21:
+ℬ←topK​(ℬcandidates)\mathcal{B}\leftarrow\text{top}_{K}(\mathcal{B}_{\text{candidates}}) {Prune to the KK best candidates}
+22:
+else
+23:
+for (𝐱,__,__)∈ℬ(\mathbf{x},\text{\_\_,\_\_})\in\mathcal{B} do
+24:
+𝐥~←add_gumbel_noise​(𝐥𝐱,τ)\tilde{\mathbf{l}}\leftarrow\text{add\_gumbel\_noise}(\mathbf{l}_{\mathbf{x}},\tau)
+25:
+𝐱0←argmax​(𝐥~,dim=−1)\mathbf{x}_{0}\leftarrow\text{argmax}(\tilde{\mathbf{l}},\text{dim}=-1)
+26:
+𝐱←transfer_tokens​(𝐱,𝐱0,𝐥𝐱)\mathbf{x}\leftarrow\text{transfer\_tokens}(\mathbf{x},\mathbf{x}_{0},\mathbf{l}_{\mathbf{x}})
+27:
+end for
+28:
+end if
+29:
+end for
+30:
+Return: The sequence from ℬ\mathcal{B} with the highest final score.
+A.2 Is the Autoregressive Order Fundamentally Superior?
+The parallel between random remasking and a fixed AR order in Figure 2 raises a natural hypothesis: perhaps the samples that lead to the high pass@256256 for random remasking are those that, by chance, follow an autoregressive-like order. If this were true, it would imply that the AR order is a fundamentally superior decoding path for the model.
+We test this hypothesis directly with a large-scale correlation study. For a given dataset, we generate 256 samples for each problem using random remasking. For each generated sample, we compute two metrics:
+Accuracy: A binary indicator of whether the final solution is correct.
+AR Similarity: The Hamming distance between the sequence of positions unmasked in this sample and a canonical left-to-right (AR) order. A low Hamming distance indicates a generation order that is highly similar to AR.
+If the hypothesis were correct, we would observe a strong negative correlation between the Hamming distance (difference from AR order) and accuracy; samples that decode in an AR-like order would be more likely to be correct.
+Figure S1: Correlation between generation order and accuracy. The x-axis shows how ”chaotic” a generated sample is measured in the Hamming distance of its decoding order from a strict left-to-right (AR) order. The y-axis is the average accuracy of the generated samples with the same chaotic value for a problem. The size of the point represents the number of samples. We find no correlation, indicating that decoding in an AR-like order is not a predictor of success.
+Figure S1 plots these results, aggregating data across all samples of the same AR similarity for each problem in a dataset. The result is clear: we find no evidence of a correlation. The coefficient of the fitted lines for each dataset falls under the the order of magnitude of 10−310^{-3}. This result holds consistently across all datasets and models we tested.
+This null result is profound. It indicates that the autoregressive order is not a uniquely privileged path to a correct solution. Instead, the DLM has learned a rich, multi-faceted solution space where a correct answer can be reached through a vast plurality of different reasoning trajectories. The high pass@kk achieved by random remasking is not due to it occasionally stumbling upon an AR order; it is due to the model’s inherent ability to solve problems correctly via many diverse sequences of thought. The AR order’s high pass@kk is simply one manifestation of this general capability, not its source.
+A.3 Alternative Likelihood Estimators for OTS
+This appendix details two scoring ablations of Order-Token Search (OTS) that isolate design choices in our robust likelihood estimator (Eq. 2). Both baselines keep the same OTS search/expansion procedure, and differ only in the pruning score used to rank candidates.
+Notation.
+Let 𝒙t\bm{x}_{t} and 𝒙s\bm{x}_{s} (0≤s<t≤10\leq s<t\leq 1) be the candidate states before/after an expansion, and let 𝒙0∼pθ​(𝒙0∣𝒙t)\bm{x}_{0}\sim p_{\theta}(\bm{x}_{0}\mid\bm{x}_{t}) be the model’s full-sequence prediction used as context.
+We define three position sets:
+Δ⁡(s,t)\displaystyle\Delta(s,t)
+≔{i∣𝒙t,i=MASK∧𝒙s,i≠MASK}(newly-revealed positions),\displaystyle\coloneqq\{i\mid\bm{x}_{t,i}=\text{MASK}\ \wedge\ \bm{x}_{s,i}\neq\text{MASK}\}\quad\text{(newly-revealed positions)},
+(S1)
+R⁡(s)\displaystyle R(s)
+≔{i∣𝒙s,i≠MASK}∖prompt positions(revealed-so-far),\displaystyle\coloneqq\{i\mid\bm{x}_{s,i}\neq\text{MASK}\}\setminus\text{prompt positions}\quad\text{(revealed-so-far)},
+(S2)
+F⁡(s)\displaystyle F(s)
+≔{i∣𝒙s,i=MASK}(unrevealed future positions).\displaystyle\coloneqq\{i\mid\bm{x}_{s,i}=\text{MASK}\}\quad\text{(unrevealed future positions)}.
+(S3)
+Let mask​(𝒙0,S)\text{mask}(\bm{x}_{0},S) denote replacing positions in SS with MASK.
+A.3.1 OTS All Blocks: Joint Likelihood of All Revealed Blocks
+Idea. Instead of scoring only the newly-revealed blocks Δ⁡(s,t)\Delta(s,t) (Eq. 2), this baseline scores the entire revealed prefix R⁡(s)R(s) at each expansion, i.e., a harder joint infilling task.
+Score. We replace Eq. 2 with:
+sall​(𝒙t,𝒙s)=𝔼𝒙0∼pθ​(𝒙0∣𝒙t)​log⁡p⁡(𝒙0R⁡(s)|mask​(𝒙0,R⁡(s))),s_{\textsc{all}}(\bm{x}_{t};\bm{x}_{s})=\mathbb{E}_{\bm{x}_{0}\sim p_{\theta}(\bm{x}_{0}\mid\bm{x}_{t})}\log p\!\left(\bm{x}_{0}^{R(s)}\,\middle|\,\text{mask}(\bm{x}_{0},R(s))\right),
+(S4)
+Since sall​(𝒙t,𝒙s)s_{\textsc{all}}(\bm{x}_{t};\bm{x}_{s}) already evaluates all revealed blocks so far, we use it directly as the pruning score at each search boundary (i.e., we do not sum over intervals).
+A.3.2 OTS Future Blocks: Likelihood Without Conditioning on Predicted Future
+Idea. Our main scorer conditions the likelihood of Δ⁡(s,t)\Delta(s,t) on the full predicted 𝒙0\bm{x}_{0}, which includes predicted future content. This ablation removes that advantage by masking all unrevealed future positions F⁡(s)F(s) when scoring the current update.
+Score. We score only the newly-revealed positions, but compute their likelihood using a context where future blocks are masked:
+sfuture​(𝒙t,𝒙s)=𝔼𝒙0∼pθ​(𝒙0∣𝒙t)​log⁡p⁡(𝒙0Δ⁡(s,t)|mask​(𝒙0,Δ⁡(s,t)∪F⁡(s))).s_{\textsc{future}}(\bm{x}_{t};\bm{x}_{s})=\mathbb{E}_{\bm{x}_{0}\sim p_{\theta}(\bm{x}_{0}\mid\bm{x}_{t})}\log p\!\left(\bm{x}_{0}^{\Delta(s,t)}\,\middle|\,\text{mask}(\bm{x}_{0},\Delta(s,t)\cup F(s))\right).
+(S5)
+This evaluates how well the model supports the current block using only the prompt and previously revealed blocks, without conditioning on any predicted future tokens.
+The total candidate score is then accumulated over search-guided denoising steps,
+∑(s,t)∈ℐsfuture​(𝒙t,𝒙s)\sum_{(s,t)\in\mathcal{I}}s_{\textsc{future}}(\bm{x}_{t};\bm{x}_{s}), matching the aggregation rule in Order-Token Search .
+A.3.3 AR-style Likelihood: Left-to-Right Token Log-Likelihood
+For comparison, we describe the traditional likelihood used in autoregressive (AR) language models.
+Given a partially generated sequence 𝐱=(x1,…,xL)\mathbf{x}=(x_{1},\dots,x_{L}), an AR model factorizes the likelihood in a left-to-right manner:
+par​(𝐱)=∏i=1Lpθ​(xi∣x<i),p_{\textsc{ar}}(\mathbf{x})=\prod_{i=1}^{L}p_{\theta}(x_{i}\mid x_{<i}),
+(S6)
+where x<i≔(x1,…,xi−1)x_{<i}\coloneqq(x_{1},\dots,x_{i-1}).
+Accordingly, the standard log-likelihood score for a candidate sequence is
+sar​(𝐱)=∑i=1Llog⁡pθ​(xi∣x<i).s_{\textsc{ar}}(\mathbf{x})=\sum_{i=1}^{L}\log p_{\theta}(x_{i}\mid x_{<i}).
+(S7)
+In AR decoding (e.g., beam search), candidates are ranked by accumulating token-level log-probabilities along the generation path. In our Order Search and Token Search baselines, we adopt an analogous AR-style score by summing log-likelihoods of the already revealed tokens in a forward pass.
+Table S1: Wall-clock time (in seconds) comparison on the Countdown dataset, averaged over all problems. This demonstrates that OTS (4 beams) is roughly 2-3x slower than a single heuristic-based remasking run, but about 2x faster than majority voting with 5 samples.
+Method / Generation length
+64
+128
+256
+512
+Heuristic-based remasking
+1.55
+3.19
+6.60
+14.52
++ Majority-voting (5 samples)
+7.73
+15.94
+32.99
+72.59
+Order-Token Search (4 beams)
+3.52
+7.46
+16.64
+40.41
+A.4 Computation Complexity
+To manage computational complexity, we deliberately structure the search using block diffusion (Arriola et al., 2025; Nie et al., 2025). This avoids the prohibitive cost of a naive search at every step, which would incur a complexity of O⁡(S⋅K2⋅L)O(S\cdot K^{2}\cdot L), where SS is the number of diffusion steps. The overhead of our approach is far lower. Let LL be the generation length, KK the beam size, and BB the number of blocks. The total Number of Function Evaluations (NFE) for OTS is the sum of KK independent denoising trajectories (costing S⋅K⋅LS\cdot K\cdot L) and the likelihood evaluations for search, which are performed BB times at block boundaries (costing B⋅K2⋅LB\cdot K^{2}\cdot L).
+Thus, the total NFE is NFE(OTS)≈S⋅K⋅L+B⋅K2⋅L\text{NFE(OTS)}\approx S\cdot K\cdot L+B\cdot K^{2}\cdot L. In our main experimental setting (where S=L/2S=L/2 and B=L/32B=L/32), with a typical beam size K≈4K\approx 4, this simplifies to NFE(OTS)≈(L2⋅K)/2+(K2⋅L2)/32≈2.5⋅L2\text{NFE(OTS)}\approx(L^{2}\cdot K)/2+(K^{2}\cdot L^{2})/32\approx 2.5\cdot L^{2}. This is critically important, as it is directly comparable to the NFE of a standard majority-voting baseline with 5 samples: NFE(MV-5)=S⋅5⋅L=(L/2)⋅5⋅L=2.5⋅L2\text{NFE(MV-5)}=S\cdot 5\cdot L=(L/2)\cdot 5\cdot L=2.5\cdot L^{2}. Therefore, OTS provides a structured joint search over the (order ×\times token) space at roughly the same computational cost as a widely-used unstructured sampling baseline. After processing all blocks, the single best sequence is selected from the final KK candidates based on the highest likelihood.
+To further validate our analysis, we measured wall-clock time on the Countdown dataset, averaging over all problems and comparing heuristic-based remasking (e.g., low-confidence remasking), naive majority voting (5 samples), and OTS with 4 beams. As shown in Table S1, our optimized implementation of OTS runs faster than the majority-voting baseline.
+A.5 Comparison Study of Greedy Decoding and Order-Token Search under Identical Temperature
+To further validate the effectiveness of our approach, we compare greedy decoding with Order-Token Search under identical temperature settings. This controlled setup rules out confounding factors and highlights the contribution of the search strategy itself. As reported in Table S2, Order-Token Search delivers a remarkable performance boost on the Countdown dataset, confirming that the method provides tangible gains beyond simple greedy decoding.
+Table S2: Countdown task performance under different configurations.
+Seq Len(LL), Diffusion Steps(SS), Beam Size(KK), Temperature(TT)
+Accuracy (%)
+L=128,S=64,K=1,T=0.0
+20.7
+L=128,S=64,K=1,T=0.4
+22.7
+L=128,S=64,K=5,T=0.4
+34.4
+A.6 Additional Experimental Details
+We provide further details on the experimental settings that complement the main results.
+A.6.1 Beam Search Settings
+Our Order-Token Search results (as shown in Table 1 and Table 2 is configured with beam sizes of K∈{3,5,8}K\in\{3,5,8\} and block size of 3232 along with a small search for the Gumbel noise temperature τ∈[0.2,1.0]\tau\in[0.2,1.0], keeping in mind its role in balancing diversity and stability. As a general principle, a higher temperature introduces more diversity among the beams, but it can also risk destabilizing the token selection and decoding order. The settings used for our main experiments were chosen to maintain a reasonable balance between these factors.
+In the main paper, we adopt the low-confidence remasking strategy together with the setting gen_len=2×diffusion_steps;block_size=32\texttt{gen\_len}=2\times\texttt{diffusion\_steps};\texttt{block\_size}=32 for our baseline experiments. This configuration follows prior work (Zhao et al., 2025) and provides what can be regarded as a form of optimality: while it does not guarantee strict global optimality, it has been shown to yield a reasonably effective and competitive baseline under low-confidence conditions. Random-remasking majority-voting and Order-Token Search both use the same configuration. And we change block_size = gen_len = 1 to simulate AR decoding on AR, AR majority-voting and AR Beam Search.
+For the Order Search and Token Search experiments reported in Table 2,
+we use the configuration with K=3K=3.
+A.6.2 Pass@k Evaluation Settings
+For pass@kk evaluation, we adopt the same configuration as in Yue et al. (2025). We set the temperature to 0.80.8, which provides a balance between token diversity and plausibility. We use gen_len=block_size=256\texttt{gen\_len}=\texttt{block\_size}=256, since the models we adopt are trained to generate sequences in a fully flexible order and we employ the same setup at inference time. For autoregressive decoding, we implement it via block diffusion with block_size=1\texttt{block\_size}=1.
+A.6.3 Computational Cost Analysis
+Order Search generally search only on the decoding order of sequences based on the confidence of each position. This algorithm is designed based on the intuition that decoding order might change the ultimate accuracy. Therefore, at every step, we keep KK positions that have the highest probability from model logits independently unmasked. We then perform a look-ahead at the next step to have K2K^{2} candidate sequences each with one more position unmasked. We calculate the confidence score and keep the top-KK candidates. In the experiment, we adopt the configuration of K=3,T=0.0,gen_len=256K=3,T=0.0,\texttt{gen\_len}=256 and the results also witness promising improvement.
+However, the algorithm is computationally expensive, for it requires K2×gen_lenK^{2}\times\texttt{gen\_len} forward passes in total.
+With K=3K=3 and gen_len=256\texttt{gen\_len}=256, this amounts to 32×256=23043^{2}\times 256=2304 forward evaluations.
+In contrast, our Order-Token Search with K=5K=5 requires only
+(128×5)+(12832)×25=740(128\times 5)+\bigl(\tfrac{128}{32}\bigr)\times 25=740 forward passes,
+where 128/32128/32 corresponds to the number of blocks and each block update involves 5×55\times 5 expansions.
+Token Search is closely related to Order Search, but instead of expanding KK positions at each step,
+it expands the top-KK most confident tokens for a single position.
+Starting from KK sequences, this again produces K2K^{2} candidate sequences per step,
+leading to the same overall complexity of K2×gen_lenK^{2}\times\texttt{gen\_len} forward passes.
+For instance, with K=3K=3 and gen_len=256\texttt{gen\_len}=256, Token Search also requires
+32×256=23043^{2}\times 256=2304 forward evaluations.
+Although the search space differs (token values vs. decoding order),
+the computational burden remains quadratic in KK,
+making it substantially more expensive than our Order-Token Search,
+which scales only linearly with KK.
+Table S3: 4×\times4 Sudoku result. We report Sudoku average per-cell accuracy across multiple generation lengths for two base models (LLaDA and LLaDA-1.5). Bolded values indicate the best performance, and underlined values indicate the second best. We treat Sudoku as an outlier relative to the math/coding benchmarks in Table 1. Reference: a completely random method would fill in a 4×44\times 4 Sudoku with 25%25\% of the cells correct in expectation.
+Sudoku
+Model
+Method / Seq Len
+64
+128
+256
+512
+Avg
+LLaDA
+Low-confidence
+8.5
+11.7
+6.5
+5.5
+8.1
+Low-conf + MV
+8.9
+10.3
+8.5
+7.2
+8.7
+Random + MV
+6.4
+6.5
+8.4
+6.9
+7.1
+AR
+14.7
+15.9
+13.6
+12.0
+14.1
+AR + MV
+14.4
+15.9
+12.1
+14.3
+14.2
+AR + beam-search
+13.2
+17.7
+10.6
+8.2
+12.4
+OTS All Blocks
+6.5
+6.9
+7.5
+6.9
+6.9
+OTS Future Blocks
+7.0
+7.7
+7.4
+6.9
+7.3
+Order-Token Search
+10.1
+11.7
+8.5
+7.4
+9.4
+LLaDA-1.5
+Low-confidence
+13.5
+15.6
+11.4
+10.3
+12.7
+Low-conf + MV
+13.7
+14.9
+10.8
+12.6
+13.0
+Random + MV
+11.1
+11.3
+9.3
+9.2
+10.2
+AR
+14.5
+15.8
+14.5
+13.6
+14.6
+AR + MV
+14.6
+16.6
+13.2
+13.1
+14.4
+AR + beam-search
+17.5
+16.8
+13.5
+11.0
+14.7
+OTS All Blocks
+9.3
+10.5
+9.6
+9.7
+9.8
+OTS Future Blocks
+9.6
+11.1
+8.3
+8.5
+9.4
+Order-Token Search
+13.8
+16.1
+11.2
+9.9
+12.8
+A.7 Limitations on Sudoku Benchmarks
+Table S3 indicates that Sudoku behaves qualitatively differently from the other benchmarks.
+Across both LLaDA and LLaDA-1.5, performance on Sudoku remains uniformly low across a wide range of decoding strategies, including autoregressive decoding, majority voting, beam search, and our proposed Order-Token Search.
+Notably, these methods do not exceed a simple random baseline: for a 4×44\times 4 Sudoku, a uniformly random fill attains 25%25\% expected cell accuracy.
+Overall, this pattern suggests that Sudoku performance is primarily limited by how well the underlying model internalizes the task’s global, hard constraints, rather than by the choice of inference-time decoding alone.
+Sudoku requires enforcing row, column, and subgrid consistency, and such constraint structure may not be reliably captured by token likelihoods.
+When the model’s scores are weakly correlated with constraint satisfaction, search-based decoding has limited leverage: exploring decoding trajectories mainly reorders and recombines signals already present in the model, without introducing new structural knowledge.
+Order-Token Search is designed to improve reasoning by exploring and pruning order–token trajectories under a fixed model.
+It is most effective in regimes where the model assigns informative relative likelihoods to intermediate states that reflect partial correctness.
+On Sudoku, however, the model appears to assign nearly uninformative or occasionally misleading scores to constraint-violating states, which can cause diverse decoding methods (including AR, beam search, and Order-Token Search) to saturate at similarly low accuracy.
+We therefore view Sudoku as a boundary case for inference-time structured search: decoding can amplify and select among existing reasoning signals, but its gains depend on the presence of reliable constraint-related signal in the model’s scoring.
+Improving performance on Sudoku likely requires model-level changes, such as explicit constraint modeling or targeted training, rather than more sophisticated decoding alone.
+For this reason, we report Sudoku separately and exclude it from aggregate conclusions about reasoning improvements, treating it as a diagnostic case study of model capability on global constraint satisfaction.
+Figure S2: Effect of block size on OTS accuracy on MATH500 with generation length 128. Accuracy remains stable for block sizes 2–64, while the degenerate settings of block size 1 and 128 significantly underperform, confirming that block size mainly acts as an efficiency and granularity knob.
+A.8 Sensitivity of Order-Token Search to Block Size
+Our scoring function s⁡(xt,xs)s(x_{t};x_{s}) is explicitly designed to be stable across a range of block sizes. Conceptually, the block size controls a bias–variance trade-off in likelihood estimation. When the block is larger, the model must jointly predict more tokens at once, making each scoring step harder but fewer in number. When the block is smaller, each prediction is easier and closer to the MDM training distribution—where the model typically denoises a limited number of masks at a time—but search is invoked more frequently. In all cases, the score of a candidate is the sum of these incremental block-level log-likelihoods over its full generation path (Eq. 2), so changing the block size simply changes how finely this path-wise likelihood is decomposed, not the underlying distribution being estimated. We therefore view the block size primarily as an efficiency and granularity knob rather than a fragile hyperparameter for the scoring rule itself.
+In practice, we find that Order-Token Search is not highly sensitive to the exact block size within a reasonable range. On MATH500 with generation length 128, sweeping the block size from 11 to 128128 yields accuracies between 23.0%23.0\% and 28.0%28.0\%. Across block sizes 22–6464, performance stays in a narrow band around 26.5%26.5\% (approximately 26.5±1.526.5\pm 1.5), and all such settings significantly outperform the degenerate cases of block size 11 and 128128, where Order-Token Search either loses the order space entirely (block size 11) or forces the model to effectively denoise the entire sequence in one shot (block size 128128). This empirical plateau for intermediate block sizes matches the bias–variance trade-off discussed above and supports the view that block size primarily controls the efficiency and granularity of search rather than acting as a delicate tuning parameter. The full sweep is visualized in Figure S2.
+Figure S3: Case study of search trajectories for a sampled Countdown problem. Each box depicts a independently generated candidate sequence with arrows denoting the parent-child relationship in block diffusion. Order-Token Search evaluates each candidate and decides whether to move forward with its prefix sequence. Its likelihood criterion successfully pruned out inferior candidates that contains incorrect reasoning or syntactical errors, ultimately retaining only high‑scoring candidates that lead to the correct solution.
+A.9 Case Study: A Search Instance
+Figure S3 provides a qualitative analysis of Order-Token Search’s search trajectory on a Countdown task requiring the combination of numbers (87,28,35)(87,28,35) to reach a target value of 9494. This particular problem exemplifies a case where the low-confidence remasking baseline fails, as it greedily commits to the locally plausible but ultimately incorrect path beginning with 87+28=11587+28=115. However, this path cannot yield the target 9494 using the remaining number 3535, since 115±35115\pm 35 results in values (8080 or 150150) distant from the solution.
+Order-Token Search overcomes this limitation by maintaining multiple candidate paths simultaneously. While the addition-based path is explored, the algorithm also evaluates the alternative 87−28=5987-28=59 trajectory. The dedicated likelihood estimation correctly identifies the subtraction path as superior when 59+3559+35 precisely yields the target 9494. This case demonstrates how Order-Token Search’s joint exploration of generation orders and token space enables escape from local optima that trap greedy methods, systematically identifying globally correct solutions through parallel hypothesis testing.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

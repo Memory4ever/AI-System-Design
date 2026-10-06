@@ -1,0 +1,4201 @@
+RLHFless: Serverless Computing for Efficient RLHF
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract.
+1
+Introduction
+2
+Background and Motivation
+2.1
+vs.
+General RL
+2.2
+Limitations of Serverful
+Systems
+2.3
+Opportunities For Serverless RLHF
+3
+Objectives and Challenges
+4
+RLHFless
+’s Design
+4.1
+Overview
+4.2
+Deduplicated Prefill
+4.3
+Prompt Assignment
+4.4
+Cost-Aware Actor Scaling
+4.5
+Locality-Aware Actor Placement
+5
+Implementation
+6
+Evaluation
+6.1
+Experimental Setup
+6.2
+Overall Performance
+6.3
+Ablation Study
+6.4
+Effectiveness of
+RLHFless
+6.5
+Sensitivity Analysis
+6.6
+Scalability Analysis
+6.7
+Latency Breakdown
+7
+Related Work
+8
+Conclusion
+References
+License: CC BY 4.0
+arXiv:2602.22718v1 [cs.AI] 26 Feb 2026
+RLHFless
+: Serverless Computing for Efficient RLHF
+Conference:
+; Feb 25; 2026
+Rui Wei
+email:
+rwei7@stevens.edu
+Affiliation:
+Stevens Institute of Technology
+,
+Hanfei Yu
+email:
+hyu42@stevens.edu
+Affiliation:
+Stevens Institute of Technology
+,
+Shubham Jain
+email:
+sjain71@stevens.edu
+Affiliation:
+Stevens Institute of Technology
+,
+Yogarajan Sivakumar
+email:
+ysivakum@stevens.edu
+Affiliation:
+Stevens Institute of Technology
+,
+Devesh Tiwari
+email:
+d.tiwari@northeastern.edu
+Affiliation:
+Northeastern University
+,
+Jian Li
+email:
+jian.li.3@stonybrook.edu
+Affiliation:
+Stony Brook University
+,
+Seung-Jong Park
+email:
+seung-jong.park@mst.edu
+Affiliation:
+Missouri University of Science & Technology
+and
+Hao Wang
+email:
+hwang9@stevens.edu
+Affiliation:
+Stevens Institute of Technology
+Abstract.
+Reinforcement Learning from Human Feedback (RLHF) has been widely applied to Large Language Model (LLM) post-training to align model outputs with human preferences. Recent models, such as DeepSeek-R1, have also shown RLHF’s potential to improve LLM reasoning on complex tasks. In RL, inference and training co-exist, creating dynamic resource demands throughout the workflow. Compared to traditional RL, RLHF further challenges training efficiency due to expanding model sizes and resource consumption.
+Several RLHF frameworks aim to balance flexible abstraction and efficient execution. However, they rely on serverful infrastructures, which struggle with fine-grained resource variability. As a result, during synchronous RLHF training, idle time between or within RL components often causes overhead and resource wastage.
+To address these issues, we present
+RLHFless
+, the first scalable training framework for synchronous RLHF, built on serverless computing environments.
+RLHFless
+adapts to dynamic resource demands throughout the RLHF pipeline, pre-computes shared prefixes to avoid repeated computation, and uses a cost-aware actor scaling strategy that accounts for response length variation to find sweet spots with lower cost and higher speed. In addition,
+RLHFless
+assigns workloads efficiently to reduce intra-function imbalance and idle time. Experiments on both physical testbeds and a large-scale simulated cluster show that
+RLHFless
+achieves up to
+1.35
+×
+1.35\times
+speedup and
+44.8
+%
+44.8\%
+cost reduction compared to the state-of-the-art baseline.
+1.
+Introduction
+Motivation.
+LLM
+have advanced rapidly and reshaped generative
+AI
+(
+AI
+).
+The
+LLM
+are first pre-trained on massive corpora with trillions of tokens from the internet to acquire broad knowledge
+(
+Brown et al., 2020
+)
+.
+They are then fine-tuned on high-quality, human-annotated instruction data to specialize for target tasks and domains.
+However, prior studies show that
+LLM
+can still behave improperly and may generate harmful or unwanted content
+(
+Ouyang et al., 2022
+;
+Zheng et al., 2023a
+;
+Dai et al., 2023
+)
+.
+To address these issues, recent work applies
+RL
+(
+RL
+) optimization to
+LLM
+, aligning model behavior with human preferences through
+RLHF
+(
+RLHF
+).
+RLHF
+has been widely adopted in the latest
+LLM
+s
+(
+OpenAI et al., 2024
+;
+Ouyang et al., 2022
+;
+Zheng et al., 2023a
+;
+DeepSeek-AI et al., 2025
+;
+Team et al., 2025
+)
+to enhance performance on challenging tasks such as mathematical problem solving
+(
+Xiong et al., 2024
+;
+Ouyang et al., 2022
+)
+, answering scientific questions
+(
+Hou et al., 2024
+;
+Sheng et al., 2025
+)
+, and code generation
+(
+Dutta et al., 2024
+;
+DeepSeek-AI et al., 2025
+)
+.
+RLHF
+training is significantly more resource-intensive and complex than traditional
+RL
+. While both follow a similar staged training paradigm, existing
+RL
+frameworks are not designed for the large-scale demands of
+RLHF
+.
+As model sizes grow and training is distributed across multiple GPUs and machines, the overhead from data transmission and model weight synchronization becomes a major bottleneck, limiting overall efficiency.
+Limitations of state-of-art approaches.
+RL
+separates data sampling from model updates, but the two processes remain interdependent. Model updates must wait for sampling to finish in order to use the most recent training data, while sampling is delayed by model updates because it needs synchronized model weights.
+While traditional
+RL
+training already suffers from significant resource idleness on serverful frameworks
+(
+Liang et al., 2018
+;
+Mei et al., 2024
+)
+,
+RLHF
+amplifies this inefficiency due to the demands of running
+LLM
+and heavy data transmission.
+Several works
+(
+Zhu et al., 2025
+;
+Griggs et al., 2025
+;
+Li et al., 2026
+;
+Fu et al., 2025
+)
+attempt to improve utilization by converting synchronous
+RLHF
+into asynchronous or off-policy execution. However, prior studies
+(
+Zheng et al., 2025
+;
+Noukhovitch et al., 2025
+;
+Fu et al., 2025
+;
+Li et al., 2026
+)
+have shown that stale data introduced by asynchronous training can degrade convergence stability and final training quality.
+More recent synchronous
+RLHF
+systems
+(
+Sheng et al., 2025
+;
+Hu et al., 2024
+;
+Zhong et al., 2024b
+)
+improve efficiency through careful model placement and parallelism strategies, but they rely on serverful infrastructures with static resource allocation, which inherently suffer from unavoidable resource inefficiency and cannot dynamically adapt to the execution characteristics of
+RLHF
+.
+Serverless
+RL
+frameworks
+(
+Yu et al., 2024a
+;
+Yu et al., 2024b
+;
+Yu et al., 2025a
+)
+shed light on this problem by demonstrating that dynamically launching and releasing components on demand can substantially reduce idleness and training costs.
+However, existing serverless solutions for traditional
+RL
+cannot be directly applied to
+RLHF
+systems,
+and building a serverless
+RLHF
+framework is challenging due to fundamental differences between
+RLHF
+and traditional
+RL
+, such as the model scale and transmission overhead mentioned above.
+Moreover, the auto-regressive nature of
+LLM
+generation and the continuously updated model weights lead to dynamic resource demands, both within a single step and across different training steps.
+Key insights and contributions.
+Existing
+RLHF
+algorithms are highly sampling-heavy, where sequence generation dominates both execution time and resource consumption throughout training
+(
+Shao et al., 2024
+;
+Yu et al., 2025c
+;
+Yue et al., 2025
+)
+.
+By analyzing existing synchronous
+RLHF
+workloads, we identify three key insights.
+First, tight dependencies between sampling and learning, combined with repeated
+KV
+(
+KV
+) cache computation during parallel generation, lead to substantial and unnecessary resource wastage.
+Second, long-tail responses cause stragglers during sequence generation and leave allocated resources idle.
+Third, workloads vary across training steps, as response lengths for the same prompt may increase or decrease over time, making static resource allocation inefficient.
+Motivated by these observations, we present
+RLHFless
+, the first scalable serverless framework for synchronous
+RLHF
+training, which improves efficiency and reduces cost.
+Before each training step,
+RLHFless
+constructs an optimized generation plan.
+It first analyzes the prompt dataset and training configuration to deduplicate
+KV
+cache computation under parallel generation.
+Next,
+RLHFless
+estimates the upcoming workload and dynamically scales the number of sampling actors
+1
+1
+1
+An actor is a separate component that hosts a model replica for response generation.
+to balance training speed and resource cost.
+RLHFless
+further groups prompts with similar predicted response lengths to mitigate stragglers and reduce intra-actor imbalance.
+During execution,
+RLHFless
+places actors with locality awareness, prioritizing heavy workloads on nearby GPUs to better overlap communication and computation.
+Our main contributions are summarized as follows:
+•
+We present
+RLHFless
+, the first serverless training framework for
+RLHF
+that reduces cost while accelerating training.
+•
+We design a deduplicated prefill mechanism that eliminates redundant
+KV
+cache computation in
+RLHF
+.
+•
+We propose a response-length prediction method with a cut-and-migrate backoff strategy to guide workload scheduling and actor scaling.
+•
+We implement
+RLHFless
+on top of VERL
+(
+Sheng et al., 2025
+)
+and evaluate it on both a physical cluster with two 8-GPU instances and a simulated large-scale cluster.
+Extensive experiments show that
+RLHFless
+reduces cost by up to 44.8% and improves training speed by up to 1.35
+×
+\times
+compared to the state-of-the-art baseline.
+Experimental methodology and artifact availability.
+We implement
+RLHFless
+on top of VERL
+(
+Sheng et al., 2025
+)
+, a widely used open-source
+RLHF
+framework, and deploy it on a GPU cluster with two AWS EC2
+g6e.48xlarge
+instances, each with 8 NVIDIA L40S GPUs, 192 AMD EPYC 7R13 vCPUs, and 384GB of system memory.
+Additionally, we use Vidur
+(
+Agrawal et al., 2024
+)
+to run large-scale simulations.
+We evaluate
+RLHFless
+using representative synchronous
+RLHF
+algorithms, including
+PPO
+(
+PPO
+)
+(
+Zheng et al., 2023a
+)
+and
+GRPO
+(
+GRPO
+)
+(
+Shao et al., 2024
+)
+, on standard benchmarks covering mathematics (GSM8K
+(
+Cobbe et al., 2021
+)
+), scientific reasoning (GPQA
+(
+Rein et al., 2024
+)
+), and code generation (LiveCodeBench
+(
+Jain et al., 2024
+)
+).
+Following prior work
+(
+Romero et al., 2021
+;
+Yu et al., 2024b
+)
+, we report per-step execution time and GPU
+×
+\times
+second cost to capture both performance and resource efficiency.
+We will release the source code and experimental traces upon acceptance.
+Limitations of the proposed approach.
+RLHFless
+primarily focuses on synchronous
+RLHF
+training.
+While the actor scaling and prompt assignment designs in
+RLHFless
+are orthogonal and could be integrated into asynchronous
+RLHF
+systems
+(
+Fu et al., 2025
+;
+Li et al., 2026
+)
+with moderate adaptations, we leave such extensions to future work.
+2.
+Background and Motivation
+2.1.
+RLHF
+vs.
+General RL
+RLHF
+(
+RLHF
+) is a method used to align the behavior of a language model with human preferences by incorporating feedback into the training loop.
+Rather than relying solely on supervised data,
+RLHF
+frames the alignment task as an
+RL
+problem, where a policy model (i.e., the
+LLM
+)
+π
+θ
+\pi_{\theta}
+is optimized to generate outputs that maximize the predicted reward provided by the pre-trained
+RM
+(
+RM
+)
+r
+ϕ
+​
+(
+x
+,
+y
+)
+r_{\phi}(x,y)
+.
+RLHF
+training contains multiple iterative training steps, and each training step involves three main phases, shown in Fig.
+1
+:
+Phase-1 Generation:
+For a batch of prompts
+x
+x
+from the prompt dataset, multiple sampling
+actors
+will be launched using the policy
+π
+θ
+\pi_{\theta}
+to generate one or more candidate responses
+y
+y
+.
+Each actor maintains its own replica of the policy model.
+Phase-2 Preparation:
+The
+RM
+r
+ϕ
+​
+(
+x
+,
+y
+)
+r_{\phi}(x,y)
+assigns a scalar score to each generated response.
+To prevent the policy from deviating too far from its original behavior, many algorithms
+(
+Li et al., 2024
+;
+Zheng et al., 2023a
+;
+Shao et al., 2024
+)
+incorporate a
+KL
+(
+KL
+) divergence penalty between the current policy
+π
+θ
+\pi_{\theta}
+and the reference model
+π
+θ
+0
+\pi_{\theta_{0}}
+.
+Phase-3 Learning:
+A
+learner
+, equipped with a training engine
+(
+Zhao et al., 2023
+;
+Rasley et al., 2020
+)
+, is responsible for computing gradients and updating the policy model using the data produced from previous phases.
+Figure 1.
+RLHF
+’s dataflow in one training step, including the generation phase, preparation phase, and learning phase. Some details, like the use of the critic model, can vary depending on the specific algorithm used.
+Why existing
+RL
+frameworks cannot fit?
+Existing
+RL
+frameworks
+(
+Liang et al., 2018
+;
+Yu et al., 2025a
+;
+Yu et al., 2024a
+;
+Yu et al., 2024b
+;
+Mei et al., 2024
+;
+Ustaran-Anderegg et al.,
+;
+Zhu et al., 2023
+)
+are not designed to support the scale and complexity of
+RLHF
+for
+LLM
+s.
+Traditional
+RL
+workloads involve small models that can be trained on a small set of GPUs and rely on simple, synchronous architectures
+(
+Liang et al., 2018
+;
+Zhu et al., 2023
+;
+Mei et al., 2024
+;
+Yu et al., 2024a
+;
+Yu et al., 2025a
+)
+.
+In contrast,
+LLM
+training requires distributing models across multiple GPUs using techniques like data, tensor, and pipeline parallelism
+(
+Sheng et al., 2025
+;
+Hu et al., 2024
+;
+Zhao et al., 2023
+;
+Rasley et al., 2020
+)
+, along with specialized inference
+(
+Kwon et al., 2023
+;
+Shoeybi et al., 2020
+;
+Zheng et al., 2024
+)
+and training
+(
+Zhao et al., 2023
+;
+Rasley et al., 2020
+)
+engines.
+Moreover, scaling up the sampling actors in
+RLHF
+increases the need for synchronized replicas, which leads to expensive and slow weight synchronization
+(
+Sheng et al., 2025
+)
+.
+In such a case, various
+RLHF
+-optimized frameworks
+(
+Hu et al., 2024
+;
+Sheng et al., 2025
+;
+Yao et al., 2023
+;
+Shen et al., 2024
+;
+von Werra et al., 2020
+)
+have been implemented to address those new challenges.
+2.2.
+Limitations of Serverful
+RLHF
+Systems
+RLHF
+faces several key challenges stemming from both its
+RL
+nature and the use of
+LLM
+s.
+The
+RL
+loop inherits the resource inefficiency commonly observed in traditional
+RL
+, caused by idle time between dependent components.
+For the
+LLM
+, the policy model generates responses with different lengths, and is continually updated, leading to varying workloads and dynamic resource demands.
+Existing
+RLHF
+frameworks
+(
+Hu et al., 2024
+;
+Sheng et al., 2025
+;
+Zhu et al., 2025
+)
+rely on serverful infrastructures and fail to address the issues both across the
+RL
+loop and within individual
+RLHF
+components.
+1) From the outer
+RL
+loop: Idle components incur resource wastage on serverful platforms.
+In this setup, components from different
+RLHF
+phases have inter-dependencies, which often result in idle GPU resources during certain stages.
+Fig.
+2
+(a) shows the workflow of
+GRPO
+(
+Shao et al., 2024
+)
+, the default
+RLHF
+algorithm in DeepSeek R1
+(
+DeepSeek-AI et al., 2025
+)
+, running in standalone placement where each model uses a separate set of GPUs.
+Fig.
+2
+(b) shows the latency breakdown in a training step for one of the
+GRPO
+model placement solutions provided by VERL
+(
+Sheng et al., 2025
+)
+, a commonly adopted
+RLHF
+framework, using Qwen2.5-3B model
+(
+and: et al., 2025
+)
+with GSM8k dataset
+(
+Cobbe et al., 2021
+)
+.
+While some
+RLHF
+works
+(
+Zhu et al., 2025
+;
+Griggs et al., 2025
+;
+Han et al., 2025
+;
+Fu et al., 2025
+)
+attempt to address this issue by making the staged
+RLHF
+work asynchronous, prior research has shown that asynchronous training can degrade final training quality due to the inconsistencies introduced by stale data
+(
+Zheng et al., 2025
+;
+Noukhovitch et al., 2025
+;
+Fu et al., 2025
+;
+Li et al., 2026
+)
+.
+Existing advanced synchronous
+RLHF
+solutions
+(
+Hu et al., 2024
+;
+Sheng et al., 2025
+;
+Shen et al., 2024
+)
+address this by optimizing model placement strategies—selectively co-locating different components on the same set of resources. However, this presents a difficult trade-off: placing components separately leads to GPU under-utilization, while co-locating them can easily cause
+OOM
+(
+OOM
+) errors, model context switching latency, or performance interference between components
+(
+Sheng et al., 2025
+;
+Shen et al., 2024
+;
+Zhong et al., 2024a
+)
+.
+2) Across training steps: Dynamic response lengths make static resource allocation inefficient.
+Recent studies have shown that during
+RLHF
+’s generation phase, the average response length for each training step keeps changing with an increasing or decreasing trend
+(
+DeepSeek-AI et al., 2025
+;
+Singhal et al., 2024
+;
+Team et al., 2025
+)
+. We run experiments with different
+RLHF
+algorithms and model combinations using the GSM8k dataset to verify this pattern, shown in Fig.
+4
+(b). For most large-scale reasoning models, the response length will get longer as the training round increases
+(
+DeepSeek-AI et al., 2025
+;
+Team et al., 2025
+)
+. Longer response lengths prolong inference time due to
+LLM
+s’ token-level auto-regressive generation, which indicates a dynamic resource demand for each training step.
+Serverful platforms, with typically static resource allocation and long startup times, are unable to adapt to such dynamic resource demands.
+Figure 2.
+(a)
+RLHF
+’s staged workflow causes idle time between components. (b) Idle components and (c) repeated calculation in
+RLHF
+lead to resource wastage.
+Figure 3.
+Existing generation strategies
+(
+Sheng et al., 2025
+;
+Hu et al., 2024
+;
+Zheng et al., 2024
+;
+Kwon et al., 2023
+)
+for sampling-heavy
+RLHF
+workloads, including (a) iterative generation, which introduces additional latency, and (b) parallel generation, which leads to (c) unnecessary
+KV
+recalculation.
+3) During each training step: Redundant
+KV
+cache calculation causes unnecessary costs.
+When an
+LLM
+generates a response, the prompt is first processed once to build the
+KV
+cache during prefill, then tokens are produced using this cache during decoding
+(
+Dai et al., 2019
+;
+Vaswani et al., 2023
+)
+. Many
+RLHF
+algorithms generate multiple responses per prompt
+(
+Shao et al., 2024
+;
+Yu et al., 2025c
+;
+Yue et al., 2025
+;
+Zheng et al., 2023a
+)
+, and many datasets share a large portion of prefixes among prompts. As a result, the same or similar prefill computation is often repeated unnecessarily.
+Prior
+LLM
+serving works reduce this cost by reusing the
+KV
+cache for prompts with shared prefixes
+(
+Kwon et al., 2023
+;
+Liu et al., 2024
+;
+Xiao et al., 2024
+;
+Sun et al., 2024
+)
+.
+Some
+RLHF
+systems, such as VERL
+(
+Sheng et al., 2025
+)
+, apply this idea by splitting prompts into smaller batches, computing the
+KV
+cache once, and reusing it across batches within the same training step, as shown in Fig.
+3
+(a).
+While this approach reduces duplicated prefill computation, it enforces sequential execution across batches.
+Under static GPU resource allocation, this serialization increases the overall generation time and limits parallelism.
+One may attempt to parallelize generation to improve throughput; however, this causes the same
+KV
+cache to be recomputed independently by different parallel workers, leading to unnecessary GPU resource waste, as illustrated in Fig.
+3
+(b).
+Fig.
+3
+(c) shows that approximately 22% of the total GPU-time is spent on redundant
+KV
+cache computation, when running
+GRPO
+with Qwen2.5-3B on GSM8K and generating four responses per prompt.
+Figure 4.
+Dynamic resource demands caused by: (a) significantly varying response lengths across and within different types of datasets, such as mathematical problems
+(
+Maxwell Jia, 2025
+)
+, general scientific questions
+(
+Rein et al., 2024
+)
+, and coding tasks
+(
+Jain et al., 2024
+)
+;
+(b) changing response lengths during
+RLHF
+training.
+4) Inside the actors: Varying response lengths lead to GPU under-utilization.
+Sampling actors may consume significantly different amounts of compute resources due to the wide variation in response lengths. Within a single actor, some responses may terminate early after just a few decoding steps, while others may continue much longer, extending the generation phase even after most responses have completed
+(
+Zhong et al., 2024b
+)
+. This imbalance leads to GPU under-utilization, as certain compute resources remain idle while waiting for the longest responses to finish. Fig.
+4
+(a) shows the imbalanced response lengths using the Qwen2.5-3B model, with 1024 maximal response length, in three different training datasets, including AIME2024
+(
+Maxwell Jia, 2025
+)
+, GPQA
+(
+Rein et al., 2024
+)
+, and LiveCodeBench
+(
+Jain et al., 2024
+)
+.
+2.3.
+Opportunities For Serverless RLHF
+We propose the first serverless
+RLHF
+system by identifying the following opportunities to address the issues mentioned in §
+2.2
+.
+Serverless can release idle components on time to mitigate wastage.
+Serverless elasticity and pay-as-you-go execution can lower training cost by launching components only when needed and promptly releasing them when idle, as shown in prior serverless
+RL
+systems
+(
+Yu et al., 2024a
+;
+Yu et al., 2024b
+;
+Yu et al., 2025a
+)
+—motivating a serverless
+RLHF
+design.
+Scaling actors to accommodate the changing resource demands.
+Serverless makes it feasible to adapt actor counts to shifting workloads and search for “sweet spots” where extra parallelism shortens step time enough to reduce total cost; achieving this requires a cost model to guide scaling decisions, and is harder on serverful platforms due to long startup latency
+(
+Google Cloud Platform, 2025
+;
+Amazon Web Services, 2025
+;
+Microsoft Azure, 2025
+)
+.
+Deduplicated prefill to mitigate repeated calculations in a serverless environment.
+By grouping prompts with shared prefixes ahead of time, and exploiting algorithms (
+e.g.
+,
+GRPO
+(
+Shao et al., 2024
+)
+) that sample multiple responses per prompt, we can compute prefill once and reuse it across responses—targeting redundant computation reduction (rather than serving throughput).
+Grouping prompts with similar lengths in the same actor to address workload imbalance.
+Because actor cost depends on execution time, a few long responses can keep an actor alive while other resources sit idle; predicting response lengths and co-locating similar-length prompts lets some actors finish sooner and be released earlier.
+3.
+Objectives and Challenges
+We design a serverless
+RLHF
+training system,
+RLHFless
+, to achieve three primary objectives:
+Speed up the end-to-end
+RLHF
+training process.
+Since the generation phase exhibits dynamic resource demands due to varying response lengths, we aim to accelerate the process by adjusting the number of actors to meet these changing resource needs.
+Mitigate redundant computation at each training step.
+Shared prompt prefixes and multi-response generation in many
+RLHF
+algorithms
+(
+Yu et al., 2025c
+;
+Shao et al., 2024
+;
+Yue et al., 2025
+)
+cause repeated KV cache computation during generation, leading to unnecessary cost. We aim to reduce this overhead using a deduplicated prefill.
+Improve resource efficiency inside
+RL
+components.
+The response lengths assigned to a single actor can vary significantly, and outlier-long responses can prolong the actor’s execution time while leading to low GPU utilization. Our goal is to reduce resource wastage caused by imbalanced workloads within each actor.
+To achieve the goals, three challenges must be addressed:
+How to trade off between speedup and cost?
+Scaling up the number of actors can speed up the generation phase, but usually increases resource cost. To find a balance, or even a sweet spot, with minimal cost and shortest time, it’s necessary to estimate both cost and execution time accurately.
+How to improve prefill efficiency in
+RLHF
+?
+Using a deduplicated prefill actor with fewer resources can reduce cost by computing each prompt only once. However, allocating too few resources may slow down the prefill stage, introducing latency into the overall
+RLHF
+training process.
+How to minimize idle time within each actor?
+Grouping prompts with similar response lengths into the same decode actor can reduce GPU under-utilization and save cost. To do this effectively, we need an estimate of response lengths prior to assignment.
+4.
+RLHFless
+’s Design
+4.1.
+Overview
+Figure 5.
+RLHFless
+’s overview.
+RLHFless
+is the first
+RLHF
+training system designed for serverless platforms. It leverages the elasticity and fine-grained resource management of serverless computing to facilitate
+RLHF
+training.
+Fig.
+5
+illustrates
+RLHFless
+’s architecture and workflow.
+RLHFless
+executes five main steps in every training step:
+Step
+1
+: Setting up the prefill actor.
+RLHFless
+analyzes the prompt dataset or algorithm-specific hyperparameters to identify a deduplicated batch of shared prefixes. These shared prompts are assigned to a dedicated prefill actor, which computes the initial KV cache to be reused by all decode actors during the decoding stage.
+Step
+2
+:
+Iterating all available actor numbers.
+RLHFless
+employs a cost-aware planning module to estimate both execution time and total cost across a range of possible actor counts, with the corresponding prompt assignment strategies.
+Step
+3
+:
+Prompt assignment among decode actors.
+When calculating the scaling score with a given actor number and workload,
+RLHFless
+first generates a corresponding prompt assignment plan for better cost and time estimation.
+RLHFless
+utilizes historical training data to predict the response length of each prompt in the current training batch. It then sorts prompts by estimated length and evenly distributes them into the
+N
+′
+N^{\prime}
+decode actors, grouping prompts with similar lengths to minimize resource wastage and improve actor efficiency.
+Step
+4
+:
+Scaling the decode actors.
+The prompt assignment module returns the workload assignment plan given the actor number and its corresponding execution time and cost estimation.
+Based on those results,
+RLHFless
+’s actor scaling module selects the optimal number of actors
+N
+′
+N^{\prime}
+and its corresponding workload assignment plan by balancing speedup with resource efficiency.
+Step
+5
+: Executing
+RLHF
+loop.
+After generating the execution plan for the generation phase of the next training step,
+RLHFless
+initiates the step and executes the three
+RL
+phases, including
+5a
+generation,
+5b
+preparation, and
+5c
+learning, following the structure of conventional
+RLHF
+systems.
+The training process repeats the five steps until completion.
+4.2.
+Deduplicated Prefill
+Figure 6.
+RLHFless
+’s deduplicated prefill design.
+RLHF
+algorithms
+(
+Shao et al., 2024
+;
+Yu et al., 2025c
+;
+Yue et al., 2025
+;
+Ahmadian et al., 2024
+;
+Hu et al., 2025
+)
+have duplicated KV cache computations in the generation phase of a training step due to two reasons:
+1) shared prefixes among prompts in the training dataset, and
+2) multiple responses generated for a single prompt.
+As a result, the number of unique KV cache computations required in the prefill stage is often less than the number of response generations performed in the decode stage.
+Existing serverful
+RLHF
+frameworks
+(
+Hu et al., 2024
+;
+Sheng et al., 2025
+)
+ignore this characteristic and allocate static resource sizes throughout training.
+In contrast, serverless computing offers a pay-as-you-go model, allowing us to reduce cost by applying a deduplicated prefill-decode design. This enables allocating only the necessary resources for the prefill actor and computing each unique KV cache exactly once.
+Since the prefill actor is compute-bound, similar to the learner
+(
+Sheng et al., 2025
+;
+Zhong et al., 2024a
+)
+, we unify resource allocation and model parallelism strategy for both components.
+We next estimate its maximum prefill batch size
+B
+prefill
+B_{\text{prefill}}
+using a profiling-based capacity model.
+RLHFless
+then chooses a target shared-prefix length
+L
+L
+so that the prefill actor is filled to capacity with deduplicated prompts.
+Concretely, let
+X
+X
+be the training prompt set and define
+a candidate prefix length
+L
+∈
+[
+L
+min
+,
+L
+max
+]
+L\in[L_{\min},L_{\max}]
+, where
+L
+min
+=
+min
+x
+∈
+X
+⁡
+‖
+x
+‖
+,
+L
+max
+=
+max
+x
+∈
+X
+⁡
+‖
+x
+‖
+.
+\displaystyle L_{\min}=\min_{x\in X}\|x\|,\quad L_{\max}=\max_{x\in X}\|x\|.
+For a candidate prefix length
+L
+L
+, let
+D
+⁡
+(
+L
+)
+D(L)
+be the number of unique prefixes of length
+L
+L
+in
+X
+X
+(
+i.e.
+, the count of deduplicated prompts at prefix length
+L
+L
+).
+RLHFless
+sweeps
+L
+∈
+[
+L
+min
+,
+L
+max
+]
+L\in[L_{\min},L_{\max}]
+and selects the largest
+L
+L
+such that
+D
+⁡
+(
+L
+)
+≤
+B
+prefill
+.
+D(L)\leq B_{\text{prefill}}.
+As
+L
+L
+increases,
+D
+⁡
+(
+L
+)
+D(L)
+decreases; when
+D
+⁡
+(
+L
+)
+D(L)
+first satisfies
+D
+⁡
+(
+L
+)
+≤
+B
+prefill
+D(L)\leq B_{\text{prefill}}
+, the prefill actor is fully utilized and computes the maximum amount of deduplicated KV cache within its capacity.
+4.3.
+Prompt Assignment
+Figure 7.
+(a)
+RLHFless
+’s prompt assignment design, and (b) the potential benefits that can be achieved under
+GRPO
+training with Qwen2.5-3B
+(
+and: et al., 2025
+)
+model and GSM8k
+(
+Cobbe et al., 2021
+)
+dataset.
+Due to the varying lengths of responses generated within a single sampling actor, GPU utilization decreases when most sequences finish early and only a few long responses remain.
+Previous work
+(
+Zhong et al., 2024b
+)
+proposes a cut-and-migrate strategy to interrupt sequence generation in the middle, and migrate all unfinished responses to one actor to save resources for other tasks (
+e.g.
+, tasks in preparation phase).
+However, such a cut-and-migrate method introduces extra overhead due to the data transmission when migrating unfinished responses from one actor instance to another.
+Moreover, this method interrupts all actors simultaneously, harvesting resources only in a coarse-grained manner and conflicting with the fine-grained resource management principles of serverless computing.
+To enable efficient cut-and-migrate in serverless environments, we propose a novel dynamic ranking-based prompt assignment strategy shown in Fig.
+7
+(a), which significantly reduces the transmission cost by minimizing the number of cut responses.
+This approach releases idle resources at a finer granularity by allowing actors to terminate at different times, while keeping the workload balanced within each actor.
+As shown in Fig.
+7
+(b), grouping prompts with similar predicted response lengths into the same actor can reduce this inefficiency by allowing early termination for each actor, thereby saving GPU time and cost.
+To enable this, we require a response length predictor to estimate workloads ahead of time.
+Response length estimation.
+Accurately estimating response generation workloads in advance is essential for assigning prompts to actors in a cost-efficient way. Specifically, we need to predict the expected response length for each prompt before launching the actors that will process it.
+Several recent works have proposed response length prediction methods to improve
+LLM
+serving efficiency
+(
+Fu et al., 2024b
+;
+Qiu et al., 2024
+;
+Zheng et al., 2023b
+)
+. However, these approaches typically require either finetuning the
+LLM
+to perform self-prediction
+(
+Zheng et al., 2023b
+)
+or training an external proxy model
+(
+Fu et al., 2024b
+;
+Qiu et al., 2024
+)
+. Both options incur non-trivial training and prediction costs, adding complexity by introducing an extra training phase for the predictor.
+In addition, response length prediction remains inherently difficult due to the stochastic nature of
+LLM
+outputs. Even
+SOTA
+(
+SOTA
+) methods that improve throughput for
+LLM
+serving still suffer from limited token length prediction accuracy
+(
+Fu et al., 2024b
+;
+Qiu et al., 2024
+;
+Zheng et al., 2023b
+)
+.
+A key advantage in the context of
+RLHF
+is that we have access to both the training dataset and historical response length data from earlier training steps. Unlike
+LLM
+serving, where predictions must be made from scratch for each user input,
+RLHF
+training involves repeated sampling over a fixed set of prompts.
+Moreover, our system design does not require exact response length estimates; rather, it only depends on the relative ranking of prompts by expected response length. As long as this ranking remains relatively stable across steps, we can make effective assignment decisions.
+To validate this, we track the response length changes for each prompt throughout the
+PPO
+training process on the GSM8K dataset, using the Qwen2.5-3B model with a maximum token limit of 2048.
+Most response lengths exhibit consistent trends over time and do not fluctuate drastically between steps.
+Approximately 70% of the response lengths vary by no more than 50 tokens across two consecutive epochs, and around 90% change by no more than 100 tokens per epoch.
+This suggests that we can use the historical response lengths observed in the previous training steps as a reliable estimator for the current step, eliminating the need for costly model-based predictors
+(
+Zheng et al., 2023b
+;
+Fu et al., 2024b
+;
+Qiu et al., 2024
+)
+.
+As for the first epoch without historical length data, we can make use of the ground truth answers from the training dataset as a temporary estimation.
+We adopt the common
+EWMA
+(
+EWMA
+) algorithm to take historical data as input and output the length estimation for each prompt.
+Figure 8.
+RLHFless
+’s cut-and-migrate strategy.
+RLHFless
+cuts unfinished underestimated responses and migrates them to available decode actors with open slots, which have been released by completed, overestimated responses.
+Cut-and-migrate in
+RLHFless
+.
+Even with reasonably accurate response length estimation, mis-assignments can still occur. For example, if prompts with long actual responses are incorrectly assigned to actors intended for short responses, the resulting execution delay can reduce overall cost efficiency.
+To address this issue, we propose a novel cut-and-migrate strategy. Unlike existing methods that terminate all actors’ executions simultaneously,
+RLHFless
+dynamically corrects prediction errors during execution, preserving the benefits of prompt assignment.
+We classify the prediction errors into two categories: 1) Over-estimation: When a prompt with a short actual response is placed in an actor designed for long responses, GPU is under-utilized as the prompt finishes early and the remaining time is wasted.
+2) Under-estimation: When a prompt with a long response is placed in an actor assigned to short responses, it prolongs the actor execution time.
+To mitigate the impact of prediction errors, we apply a cut-and-migrate strategy, inspired by existing work
+(
+Zhong et al., 2024b
+)
+, shown in Fig.
+8
+. During execution, if an actor is delayed due to long-running prompts and there are other available running actors, we terminate those generations and migrate them to the actors with available slots, which are released when over-estimated responses finish generation. This approach helps reduce tail latency and improves overall GPU utilization.
+The timing to terminate an actor is controlled by a cutting threshold
+τ
+∈
+(
+0
+,
+1
+]
+\tau\in(0,1]
+. An actor is terminated when
+τ
+×
+100
+%
+\tau\times 100\%
+of its assigned responses have completed generation. This threshold balances the trade-off between waiting for stragglers and minimizing resource wastage, allowing the system to release most of the GPU resources while offloading the remaining long responses to other actors.
+4.4.
+Cost-Aware Actor Scaling
+The average response length varies throughout
+RLHF
+training, causing dynamic execution times across training steps in traditional
+RLHF
+frameworks.
+With static resource allocation, this either results in resource wastage when fewer resources are needed or slow decoding when long responses cannot be processed efficiently.
+Thus, even if existing serverful
+RLHF
+systems can optimize generation strategy, they cannot consistently reach a sweet spot of low cost and fast speed, since workloads change at each step while resources and actor numbers remain fixed.
+This highlights the opportunity to dynamically adjust the number of actors to match changing resource demands.
+Previous studies
+(
+Yu et al., 2025a
+;
+Yu et al., 2024a
+)
+have demonstrated the potential of serverless computing’s elasticity for actor scaling in traditional
+RL
+training, highlighting the possibility of implementing cost-aware actor scaling in a serverless
+RLHF
+system.
+However, scaling the number of actors in
+RLHF
+differs from traditional
+RL
+. Previous actor scaling methods either rely on a pretrained scheduler
+(
+Yu et al., 2024a
+)
+, which introduces additional costs, or utilize the Hessian matrix of the policy model to assess data needs
+(
+Yu et al., 2025a
+)
+. The latter approach can incur significant computation overhead as the policy model size increases to billions of parameters.
+Furthermore, in typical
+RL
+, actor scaling alters the volume of training data by adjusting the number of actors, while in
+RLHF
+, changing the number of actors primarily adjusts the allocated GPU resources during the generation phase to suit the changing resource demands at each training step.
+It has been well established in prior work that the generation phase is memory-bound, which can achieve higher performance with increased data parallelism by deploying more model replicas to process prompts concurrently
+(
+Zhong et al., 2024a
+;
+Li et al., 2023
+;
+Sheng et al., 2025
+;
+Zhong et al., 2024b
+)
+.
+In
+RLHF
+, each sampling actor maintains a copy of the policy model, meaning that the number of actors effectively determines the data parallelism size. As a result, increasing data parallelism directly corresponds to scaling up the number of actors.
+However, the speedup achieved by scaling up the number of actors may come at the cost of significantly increased resource consumption, which will further lead to exponential growth in training costs. This indicates the need for a cost-aware actor scaling design.
+Balanced speedup with lower final costs.
+Estimating resource consumption before scaling up the number of actors is essential to avoid introducing unnecessary costs.
+The total cost for the
+N
+N
+decode actors, denoted as
+C
+Decode
+C_{\text{Decode}}
+, can be estimated as
+C
+Decode
+:=
+ρ
+​
+∑
+i
+=
+1
+N
+T
+⁡
+(
+X
+i
+,
+G
+i
+)
+×
+G
+i
+,
+C_{\text{Decode}}:=\rho\sum_{i=1}^{N}T(X_{i},G_{i})\times G_{i},
+where
+ρ
+\rho
+is the unit cost of GPU usage, measured in dollars per GPU per unit time.
+X
+i
+X_{i}
+represents the set of prompts assigned to the
+i
+i
+th decode actor, and
+G
+i
+G_{i}
+denotes the number of GPUs allocated to it.
+T
+⁡
+(
+X
+i
+,
+G
+i
+)
+T(X_{i},G_{i})
+is the estimated execution time for processing workload
+X
+i
+X_{i}
+using
+G
+i
+G_{i}
+GPUs.
+To estimate the execution time
+T
+⁡
+(
+X
+i
+,
+G
+i
+)
+T(X_{i},G_{i})
+, we leverage profiled data collected using dummy batches prior to training. Specifically, we measure the
+TPOT
+(
+TPOT
+) latencies in the decode step, under different maximum response lengths, following the approach used in prior work
+(
+Zhong et al., 2024a
+;
+Chitty-Venkata et al., 2024
+)
+.
+For each prompt
+x
+∈
+X
+i
+x\in X_{i}
+, the corresponding sequence length is estimated using the response length prediction module described in §
+4.3
+.
+The end-to-end execution time for
+N
+N
+decode actors, denoted as
+T
+total
+​
+(
+N
+)
+T^{\text{total}}(N)
+, is determined by the slowest (i.e., longest-running) actor and is computed as
+T
+total
+​
+(
+N
+)
+:=
+max
+i
+∈
+[
+1
+,
+N
+]
+⁡
+T
+⁡
+(
+X
+i
+,
+G
+i
+)
+.
+T^{\text{total}}(N):=\max_{i\in[1,N]}T(X_{i},G_{i}).
+For all candidate actor counts
+N
+∈
+[
+N
+min
+,
+N
+max
+]
+N\in[N_{\min},N_{\max}]
+, where
+N
+min
+N_{\min}
+and
+N
+max
+N_{\max}
+represent the predefined minimum and maximum number of decode actors, respectively, we normalize the execution time and cost to obtain
+T
+~
+total
+​
+(
+N
+)
+:=
+T
+total
+​
+(
+N
+)
+−
+T
+min
+total
+T
+max
+total
+−
+T
+min
+total
+,
+C
+~
+​
+(
+N
+)
+:=
+C
+Decode
+​
+(
+N
+)
+−
+C
+min
+C
+max
+−
+C
+min
+,
+\tilde{T}^{\text{total}}(N):=\frac{T^{\text{total}}(N)-T^{\text{total}}_{\min}}{T^{\text{total}}_{\max}-T^{\text{total}}_{\min}},\quad\tilde{C}(N):=\frac{C_{\text{Decode}}(N)-C_{\min}}{C_{\max}-C_{\min}},
+where
+T
+min
+total
+T^{\text{total}}_{\min}
+and
+T
+max
+total
+T^{\text{total}}_{\max}
+are the minimum and maximum execution times observed over the range of
+N
+N
+, and
+C
+min
+C_{\min}
+and
+C
+max
+C_{\max}
+are the corresponding cost bounds.
+To determine the optimal number of actors
+N
+′
+N^{\prime}
+, we formulate the objective as a weighted sum of the normalized time and cost:
+N
+′
+:=
+arg
+⁡
+min
+N
+∈
+[
+N
+min
+,
+N
+max
+]
+⁡
+{
+λ
+⋅
+T
+~
+total
+​
+(
+N
+)
++
+(
+1
+−
+λ
+)
+⋅
+C
+~
+​
+(
+N
+)
+}
+,
+N^{\prime}:=\mathop{\arg\min}\limits_{N\in[N_{\min},N_{\max}]}\left\{\lambda\cdot\tilde{T}^{\text{total}}(N)+(1-\lambda)\cdot\tilde{C}(N)\right\},
+where
+λ
+∈
+[
+0
+,
+1
+]
+\lambda\in[0,1]
+is a user-defined weight controlling the trade-off between execution time and cost. A larger
+λ
+\lambda
+prioritizes faster execution, while a smaller
+λ
+\lambda
+emphasizes lower cost.
+4.5.
+Locality-Aware Actor Placement
+Figure 9.
+RLHFless
+’s locality-aware actor placement.
+The model synchronization overhead is one of the primary bottlenecks in
+RLHF
+training
+(
+Zhong et al., 2024b
+;
+Sheng et al., 2025
+)
+. This overhead occurs between the learning phase of the previous step and the generation phase of the current step.
+During synchronization, model weights are transmitted from the learner to all sampling actors, introducing unavoidable transmission latency.
+Furthermore, applying
+RLHFless
+’s actor scaling strategy to increase the number of actors, along with the disaggregated prefill design that separates actors into a prefill actor and multiple decode actors, can further amplify data transmission overhead due to increased communication.
+To address both model synchronization latency and KV transfer delays,
+RLHFless
+incorporates a locality-aware actor placement strategy, which combines the prompt assignment mechanism to properly place the actors, minimizing the end-to-end execution time in each training step.
+As discussed in §
+4.3
+,
+RLHFless
+leverages prompt assignment to group prompts with similar expected workloads into the same decode actor.
+In this setting, the execution time of each actor is determined by the prompt with the longest response length within that group. Consequently, the end-to-end generation time for a training step is dictated by the actor with the longest generation workload.
+To optimize for this, we first co-locate the prefill actor with the learner on the same set of GPU resources. This reduces the transmission overhead for model weight synchronization between the learner and the prefill actor.
+Additionally, since both the learner and the prefill actor are compute-bound components that benefit from a larger model parallelism size
+(
+Sheng et al., 2025
+;
+Zhong et al., 2024a
+)
+, co-locating them does not require changes to the existing parallelism strategy.
+Next, we co-locate the decode actor handling the longest response with the prefill actor, allowing it to start immediately without incurring latency for model weight and KV cache transfer.
+For additional decode actors introduced by actor scaling (§
+4.4
+), we prioritize those with heavier workloads for placement on GPU nodes that are physically closer to the learner and prefill actor (
+e.g.
+, within the same GPU node). Lighter workloads are assigned to more distant GPU resources.
+Since model weight synchronization can begin immediately after the learner finishes updating the model, while KV cache transfer can only start after the prefill stage completes, we can overlap transmission with execution. As illustrated in Fig.
+9
+, transmission latency can be effectively hidden as long as the following condition holds for all
+i
+∈
+{
+2
+,
+…
+,
+N
+}
+i\in\{2,\dots,N\}
+:
+L
+Model
+i
++
+L
+KV
+i
++
+L
+Decode
+i
+≤
+L
+Prefill
++
+L
+Decode
+1
+,
+L_{\text{Model}}^{i}+L_{\text{KV}}^{i}+L_{\text{Decode}}^{i}\leq L_{\text{Prefill}}+L_{\text{Decode}}^{1},
+where
+N
+N
+is the total number of decode actors,
+L
+Model
+i
+L_{\text{Model}}^{i}
+and
+L
+KV
+i
+L_{\text{KV}}^{i}
+denote the model synchronization and KV cache transfer latency for the
+i
+i
+th decode actor, respectively.
+L
+Decode
+i
+L_{\text{Decode}}^{i}
+is the execution time of the
+i
+i
+th decode actor, and
+L
+Decode
+1
+L_{\text{Decode}}^{1}
+is the execution time of the decode actor co-located with the learner and prefill actor.
+L
+Prefill
+L_{\text{Prefill}}
+represents the execution time of the prefill actor.
+We add this constraint when scaling the actors to achieve a better actual performance, mitigating prolonged execution due to a larger-scale data transfer.
+5.
+Implementation
+We build
+RLHFless
+on top of an early version of VERL
+(
+Sheng et al., 2025
+)
+, one of the most commonly adopted
+RLHF
+frameworks, with integration of vLLM
+(
+Kwon et al., 2023
+)
+as the inference engine and
+FSDP
+(
+FSDP
+)
+(
+Zhao et al., 2023
+)
+as the training engine.
+Serverless cluster.
+We build a serverless cluster using Docker
+(
+Merkel and others, 2014
+)
+, a common approach in existing serverless environments. The Ray framework
+(
+Moritz et al., 2018
+)
+manages compute resources for the serverless functions and coordinates communication among them.
+Serverless functions.
+To mitigate the cold-start latency in the serverless
+RLHF
+system, we adopt an invocation prediction method, similar to prior work
+(
+Shahrad et al., 2020
+;
+Poppe et al., 2022
+)
+. Functions are prewarmed based on historical calls, using the shortest execution time from earlier steps plus a fixed buffer, ensuring they are ready before actual execution.
+Model configuration.
+By default,
+RLHFless
+allocates the same number of GPUs to all decode actors.
+For internal settings (
+e.g.
+, tensor or pipeline parallelism), we follow VERL’s documentation and tune hyperparameters to fit our GPUs.
+Workload estimation.
+RLHFless
+’s core features require estimates of inference throughput and data transmission cost under specific parallelism and model sizes. We follow methods from prior work
+(
+Agrawal et al., 2024
+;
+Zhong et al., 2024a
+;
+Thor, 2025
+)
+and incorporate profiling results from dummy batches run during training initialization.
+Data transmission.
+Redis
+(
+Redis, 2025
+)
+is used as an external distributed cache for data like historical response lengths, model checkpoints, and training traces. For model synchronization and
+KV
+cache transfer, we use
+NCCL
+(
+NCCL
+)
+(
+NVIDIA, 2025
+)
+to avoid serialization overhead and enable direct communication.
+Locality-aware function placement.
+To enable locality-aware placement, we profile GPU bandwidth and topology on the hardware testbeds.
+RLHFless
+uses these profiles with workload estimates to calculate cache transfer latencies. Model synchronization latency is relatively stable and can be estimated from historical results.
+6.
+Evaluation
+6.1.
+Experimental Setup
+Workloads and datasets.
+To comprehensively demonstrate the performance benefits of
+RLHFless
+, we integrate multiple algorithms and datasets, and conduct experiments across various combinations of algorithms, datasets, and model sizes.
+Our algorithm choices include the widely adopted
+PPO
+(
+Zheng et al., 2023a
+)
+, commonly used in early-stage
+RLHF
+, as well as
+GRPO
+(
+Shao et al., 2024
+)
+, which replaces the critic model with repeated generations and forms the basis of many state-of-the-art
+RLHF
+algorithms
+(
+Yue et al., 2025
+;
+Yu et al., 2025c
+)
+.
+The training datasets span multiple domains, including the GSM8k mathematical reasoning dataset
+(
+Cobbe et al., 2021
+)
+, the GPQA scientific question dataset
+(
+Rein et al., 2024
+)
+, and the LiveCodeBench coding benchmark
+(
+Jain et al., 2024
+)
+.
+All models running on physical testbeds are based on the Qwen2.5 architecture
+(
+and: et al., 2025
+)
+, with tested sizes ranging from 3B to 7B.
+Due to budget constraints, we run large-scale simulations for larger Llama models
+(
+Grattafiori et al., 2024
+;
+Touvron et al., 2023
+)
+using Vidur
+(
+Agrawal et al., 2024
+)
+.
+The maximal prompt length and response length are set to 1024 and 2048, respectively.
+We run each setting for three epochs and report the average per-step performance.
+Hardware and system environment.
+We use two AWS EC2
+g6e.48xlarge
+instances as our hardware testbed. Each instance has 8 NVIDIA L40S Tensor Core GPUs with 384GB VRAM in total, 192 AMD EPYC 7R13 vCPUs, and 384 GB CPU memory.
+Software stack and configuration.
+The operating system of the testbeds is Ubuntu 22.04. The NCCL and CUDA versions are 2.27 and 12.8, respectively. We build
+RLHFless
+based on VERL 0.3.1.dev, and the selected inference engine is vLLM 0.8.3.
+Baselines and comparisons.
+VERL
+(
+Sheng et al., 2025
+)
+is a widely used open-source
+RLHF
+framework, and we build
+RLHFless
+on top of it.
+The core designs of
+RLHFless
+are general and can be integrated into other synchronous
+RLHF
+systems
+(
+Hu et al., 2024
+;
+Zhu et al., 2025
+;
+Shen et al., 2024
+)
+.
+To ensure a fair comparison, we use VERL as our primary baseline.
+We additionally include RLHFuse
+(
+Zhong et al., 2024b
+)
+as a baseline to evaluate the effectiveness of prompt assignment in §
+6.4
+.
+For the length prediction comparison in §
+6.5
+, we train a model-based predictor following prior work
+(
+Qiu et al., 2024
+;
+Fu et al., 2024b
+)
+.
+Methodology and experimental protocol.
+We record the execution time (in seconds) and the cost of each training step, and report the average per-step values over the entire training process.
+For each serverless function invocation, resource consumption is computed as the product of allocated resources and execution time.
+In practice, we measure GPU
+×
+\times
+second and use it as the cost proxy for each serverless function, following prior work
+(
+Yu et al., 2024b
+;
+Romero et al., 2021
+)
+.
+Reproducibility kit (AD/AE).
+The source code of
+RLHFless
+and the experimental traces will be publicly released if accepted.
+RLHFless
+’s setting.
+Considering our resource limits and the model sizes used in experiments, each actor is allocated two GPUs for 3B training and four GPUs for 7B training.
+For the serverful baseline, we set the actor number to 3, as profiling shows this provides the best speed-cost balance under static resource allocation. More active actors for the entire training would significantly increase the cost.
+For the
+RLHF
+training hyperparameters in both
+RLHFless
+and the baseline, we follow the configurations provided by VERL
+(
+Sheng et al., 2025
+)
+, while tuning key parameters such as batch size and KV cache allocation rate to match our hardware testbed across different experimental setups.
+For the hyperparameters of
+RLHFless
+’s core components, we set the
+EWMA
+window size to 1, the cut-and-migrate threshold
+τ
+\tau
+to 0.7, and the actor scaling weight
+λ
+\lambda
+to 0.7. These choices are justified and further analyzed in §
+6.5
+.
+6.2.
+Overall Performance
+Figure 10.
+RLHFless
+’s overall performance evaluation.
+We evaluate how
+RLHFless
+improves
+RLHF
+generation efficiency in terms of both speed and cost, by comparing it with a naive version of
+RLHFless
+built on VERL
+(
+Sheng et al., 2025
+)
+, where all core features are disabled.
+Fig.
+10
+shows that
+RLHFless
+speeds up
+RLHF
+training and lowers cost by (1) dynamically scaling actors to match changing resource demands, (2) eliminating repeated computation, and (3) releasing idle resources promptly.
+Training on GSM8k takes the longest, due to many long responses, which is consistent with the profiled results in Fig.
+4
+(a).
+RLHFless
+delivers larger gains on
+GRPO
+than on
+PPO
+because
+GRPO
+is more sampling-heavy, leaving more room to reduce waste during generation.
+We also observe that as training scale and workload grow, the benefits of
+RLHFless
+increase, suggesting its potential to adapt and deliver greater gains in super-large
+RLHF
+workloads.
+Overall,
+RLHFless
+speeds up training by up to
+1.35
+×
+1.35\times
+and reduces cost by up to
+44.8
+%
+44.8\%
+.
+6.3.
+Ablation Study
+Figure 11.
+RLHFless
+’s ablation study (DP:
+D
+eduplicated
+P
+refill; AS:
+A
+ctor
+S
+caling; PA:
+P
+rompt
+A
+ssignment). Each point shows the GPU cost and execution time of one training step.
+Points closer to the lower-left corner indicate lower cost and faster execution.
+Subfigure (a) shows
+RLHFless
+with all core features disabled.
+From (b) to (d), we enable one additional core feature at a time, illustrating the incremental benefits of each design.
+We evaluate the effectiveness of
+RLHFless
+’s core features—deduplicated prefill, prompt assignment, and actor scaling—via an ablation study using several system variants. We run experiments using the
+GRPO
+algorithm and the Qwen2.5-3B model on the GSM8k dataset.
+The study considers four variants of
+RLHFless
+: 1)
+RLHFless
+w/o DP+AS+PA
+: raw
+RLHFless
+based on VERL, with no deduplicated prefill, no prompt assignment, and no actor scaling; 2)
+RLHFless
+w/o AS+PA
+:
+RLHFless
+with only deduplicated prefill enabled, and without prompt assignment and no actor scaling; 3)
+RLHFless
+w/o AS
+:
+RLHFless
+with no actor scaling; and 4)
+RLHFless
+(full version):
+RLHFless
+with all three core features enabled. We further compare these variants against a VERL baseline and an oracle baseline, where the oracle simulates optimal scheduling with 100% accurate length estimates.
+We visualize generation cost and execution time in Fig.
+11
+. Each point represents one training step; more points closer to the lower-left indicate better performance with overall lower cost and shorter time.
+Fig.
+11
+(b) shows the cost reduction from deduplicated prefill relative to the raw version in Fig.
+11
+(a). While the reduction is modest in this setup, its magnitude is dataset- and algorithm-dependent and can be larger under different conditions.
+Fig.
+11
+(c) demonstrates that prompt assignment with cut-and-migrate further reduces GPU cost by grouping prompts of similar length within the same actor. In rare cases, if cut-and-migrate is triggered late, migrations can introduce extra latency (
+e.g.
+, the rightmost outlier). Overall, transmission overhead is typically overlapped with computation and does not increase end-to-end latency.
+Fig.
+11
+(d) illustrates the speedup from actor scaling, which dynamically adjusts the number of actors to match workload demands. When additional resources are allocated for heavier steps, the shorter execution time offsets the added resources, so the total cost grows slowly or remains comparable while achieving higher throughput.
+6.4.
+Effectiveness of
+RLHFless
+To better explain how each core feature of
+RLHFless
+works and where its benefits come from, we run controlled experiments that enable only one feature at a time. We use the same dataset and algorithm settings as in §
+6.3
+.
+Effectiveness of prompt assignment.
+Fig.
+12
+shows the per-actor workloads and execution times of
+RLHFless
+compared with RLHFuse
+(
+Zhong et al., 2024b
+)
+.
+Note that in
+RLHF
+it is challenging to reproduce identical generated content due to hardware-level precision loss
+(
+Yuan et al., 2025
+;
+He and Lab, 2025
+)
+.
+Thus, we run
+RLHFless
+with only prompt assignment enabled using
+PPO
+on GSM8K, record the execution traces, and use them to simulate the raw version with all features disabled.
+We report results randomly selected from four consecutive training steps.
+In Fig.
+12
+(a), RLHFuse incurs higher GPU time because it applies a global cut-and-migrate strategy without prompt ranking, leading to uneven prompt distribution across the three actors.
+By contrast, Fig.
+12
+(b) shows that enabling prompt assignment groups prompts with similar expected lengths within the same actor, allowing actors 2 and 3 with shorter workloads to finish earlier and be released sooner, further reducing the costs.
+As a result,
+RLHFless
+’s prompt assignment achieves 12.8% end-to-end cost reduction compared to RLHFuse’s global cut-and-migrate without ranking.
+The response migration in
+RLHFless
+adds negligible overhead since only limited outlier prompts are misassigned to the wrong actor, which will be cut and migrated to unfinished neighbor actors with available slots.
+Figure 12.
+Effectiveness of
+RLHFless
+’s prompt assignment. (DP:
+D
+eduplicated
+P
+refill; AS:
+A
+ctor
+S
+caling; PA:
+P
+rompt
+A
+ssignment.)
+Figure 13.
+Effectiveness of
+RLHFless
+’s (a) actor scaling and (b) deduplicated prefill. (DP:
+D
+eduplicated
+P
+refill; AS:
+A
+ctor
+S
+caling; PA:
+P
+rompt
+A
+ssignment.)
+Effectiveness of actor scaling.
+We use the same setup described in §
+6.3
+and compare the raw version of
+RLHFless
+with the same system with only actor scaling enabled for a fair comparison.
+Fig.
+13
+(a) shows how the number of actors adapts when scaling is enabled.
+With scaling,
+RLHFless
+often finds a sweet spot where adding actors shortens the step time enough that the total cost, computed as # of GPUs
+×
+\times
+execution time after speeding up, is lower than using a fixed actor count.
+The results show that
+RLHFless
+can effectively estimate the next step’s workload by referring to historical results, evaluate candidate actor counts by simulating their cost and time, and choose a setting that speeds up training without increasing cost in most cases.
+Effectiveness of deduplicated prefill.
+To evaluate deduplicated prefill in
+RLHFless
+, we use the same setup as §
+6.3
+and compare two variants: the raw
+RLHFless
+with no core features enabled and
+RLHFless
+with only deduplicated prefill enabled.
+We measure, for each training step, the total number of tokens processed and the total cost of the prefill stage during
+RLHF
+generation.
+Fig.
+13
+(b) shows that
+RLHFless
+reduces the amount of prefill computation by eliminating repeated KV cache calculation.
+The magnitude of cost reduction depends on the
+RLHF
+configuration. For example, in Fig.
+13
+(b), we run
+GRPO
+with three responses per prompt; computing the prefill once per prompt theoretically yields a 66% reduction in prefill cost.
+6.5.
+Sensitivity Analysis
+To test robustness, justify our choices, and show how prediction accuracy and hyperparameter settings affect performance, we repeat the setup mentioned in §
+6.3
+and run experiments to analyze the sensitivity of each hyperparameter. We conduct the average per-step cost and time for each setting, shown in Figs.
+14
+and
+15
+.
+Sensitivity to response length prediction accuracy.
+In
+RLHFless
+, both actor scaling and prompt assignment depend on response length estimates.
+To test robustness against imperfect estimates, we replace our historical, training-step-based estimator with lower-accuracy predictors from prior work
+(
+Qiu et al., 2024
+;
+Fu et al., 2024b
+)
+, and evaluate the resulting performance.
+We integrate a model-based predictor into
+RLHFless
+, denoted as
+RLHFless
+∗
+\text{{RLHFless} }^{*}
+. Following prior works in
+LLM
+serving
+(
+Qiu et al., 2024
+;
+Fu et al., 2024b
+)
+, this predictor is attached to the policy model under training. It must be pre-trained on the target
+RLHF
+dataset, which takes approximately 11 GPU-hours, and achieves only about 44% accuracy.
+In principle, higher prediction accuracy should yield better decisions for actor scaling and prompt assignment. Fig.
+14
+shows that
+RLHFless
+∗
+\text{{RLHFless} }^{*}
+still achieves 1.22
+×
+\times
+speedup and reduces
+RLHF
+generation cost by 28.9% over the VERL baseline, despite its lower accuracy.
+This indicates that the predictor in
+RLHFless
+is modular and replaceable, and that
+RLHFless
+tolerates inaccurate estimates. The robustness comes from three factors: (1)
+RLHFless
+’s prompt assignment relies on the ranking of expected lengths rather than exact values, (2) the cut-and-migrate backoff corrects harmful misassignments at runtime, and (3) actor scaling uses profiled
+TPOT
+latency curves, which dampens the effect of individual prediction errors.
+Figure 14.
+Sensitivity analysis of
+RLHFless
+’s response length prediction.
+Figure 15.
+RLHFless
+hyperparameter sensitivity: (a)
+EWMA
+window size for length prediction, (b) cut-and-migrate threshold
+τ
+\tau
+, and (c) actor scaling weight
+λ
+\lambda
+.
+Sensitivity to
+EWMA
+window size for length prediction.
+The window size is the number of past epochs to predict next-epoch lengths. We run fifteen epochs and vary the window from 1 to 4.
+Fig.
+15
+(a) shows only marginal gains from larger windows. With few training epochs and often monotonic length trends, older data becomes stale and does not improve accuracy.
+We therefore set the window to 1 (use the latest epoch only) for simplicity.
+Sensitivity to cut-and-migrate threshold
+τ
+\tau
+.
+The threshold
+τ
+\tau
+controls when to trigger the cut-and-migrate process, which terminates unfinished responses in one actor and moves them to other available actors.
+We run three epochs and vary
+τ
+∈
+[
+0.3
+,
+0.9
+]
+\tau\in[0.3,0.9]
+.
+As shown in Fig.
+15
+(b), smaller
+τ
+\tau
+triggers earlier cuts, which reduces cost by eliminating idle time in a finer granularity, but increases per-step time due to more migrations and state transfers.
+Additionally, costs do not decrease further when
+τ
+≤
+0.5
+\tau\leq 0.5
+. Even if cut-and-migrate is triggered earlier, it can proceed only when other actors have available slots, so early cuts often end up waiting and yield limited savings.
+Thus, we choose
+τ
+=
+0.7
+\tau=0.7
+to balance time and cost.
+Sensitivity to actor-scaling weight
+λ
+\lambda
+.
+The actor-scaling strategy uses a weight
+λ
+\lambda
+to balance cost versus speed.
+We run three epochs and vary
+λ
+∈
+[
+0.3
+,
+0.9
+]
+\lambda\in[0.3,0.9]
+. A higher
+λ
+\lambda
+prioritizes speed; a lower
+λ
+\lambda
+prioritizes cost.
+Although
+λ
+=
+0.5
+\lambda=0.5
+may seem like the most balanced setting, Fig.
+15
+(c) shows that
+λ
+=
+0.7
+\lambda=0.7
+yields the best trade-off in our experiments, achieving the second-lowest cost and second-shortest step time.
+This is because the min-max normalization used in the objective does not fully preserve the original distribution of cost and time. Even after scaling to
+[
+0
+,
+1
+]
+[0,1]
+, their influence on the final score may still be uneven.
+While these hyperparameters may not generalize across all workloads, the observed trends are consistent and provide a practical starting point for tuning.
+6.6.
+Scalability Analysis
+Figure 16.
+RLHFless
+scalability analysis. (a) Execution time for response generation with lengths from 2k to 8k tokens, along with scheduling overhead, under different cluster sizes. (b) Average normalized performance improvement from large-scale simulation experiments.
+To evaluate
+RLHFless
+at a larger scale under a limited budget, we implement a simulator for
+PPO
+generation on GSM8K using Vidur
+(
+Agrawal et al., 2024
+)
+, a widely used
+LLM
+serving simulator, together with
+RLHF
+training traces from VERL
+(
+Sheng et al., 2025
+)
+.
+We simulate a cluster with up to 20 nodes, each equipped with 8 NVIDIA H100 GPUs connected via NVLink.
+RLHFless
+’s scalability.
+We use the Llama2-70B model with a generation batch size of 512 and scale the number of nodes, allocating two GPUs per actor.
+Fig.
+16
+(a) shows that per-step generation time decreases as more resources are added under a fixed workload, indicating strong scaling.
+Meanwhile, the scheduling overhead of
+RLHFless
+remains stable and within 30 ms across all configurations.
+Large-scale simulation performance.
+We then calculate the average returns of
+RLHFless
+across the simulation settings used previously, and report the normalized results in Fig.
+16
+(b). As a result,
+RLHFless
+achieves 1.23
+×
+\times
+speedup and 38.7% cost reduction compared to the simulated
+RLHF
+generation baseline.
+6.7.
+Latency Breakdown
+Figure 17.
+RLHFless
+’s latency breakdown in a training step, including the preparation, generation, and learning phases, as well as deduplication latency, scaling latency (response-length prediction and cost/time estimation), and I/O latency.
+We evaluate the latency breakdown and overhead of
+RLHFless
+’s core components within a single
+RLHF
+training step.
+Fig.
+17
+presents the breakdown for two representative
+RLHF
+algorithms:
+PPO
+and
+GRPO
+.
+The overhead introduced by
+RLHFless
+’s core features, including prompt deduplication, response length prediction, and cost/time estimation, is negligible relative to the total step time.
+This is because all core components in
+RLHFless
+are model-free and lightweight, adding minimal computational burden to the training pipeline.
+7.
+Related Work
+LLM
+alignment methods.
+After
+SFT
+(
+SFT
+),
+LLM
+alignment methods can be broadly divided into
+RL
+-based and non-
+RL
+approaches
+(
+Wang et al., 2024
+)
+.
+Common
+RL
+-based methods include
+PPO
+(
+Schulman et al., 2017
+;
+Zheng et al., 2023a
+)
+,
+GRPO
+(
+Shao et al., 2024
+)
+, ReMax
+(
+Li et al., 2024
+)
+, REINFORCE
+(
+Ahmadian et al., 2024
+)
+, and REINFORCE++
+(
+Hu et al., 2025
+)
+.
+Non-
+RL
+methods such as
+DPO
+(
+DPO
+)
+(
+Rafailov et al., 2024
+)
+remove the RL loop by reformulating preference learning as supervised optimization, but have been shown to underperform
+RL
+-based methods on complex reasoning and coding tasks
+(
+Xu et al., 2024
+)
+.
+In this paper, we identify unique patterns of
+RL
+-based methods and design corresponding optimizations to improve the resource efficiency and accelerate the sampling process.
+RL
+and
+LLM
+alignment frameworks.
+Traditional
+RL
+frameworks
+(
+Liang et al., 2018
+;
+Hoffman et al., 2020
+;
+Huang et al., 2022
+;
+Zhu et al., 2023
+)
+target small-scale models and do not scale to
+LLM
+alignment due to model size and communication overhead.
+Recent
+LLM
+alignment frameworks
+(
+Corporation, 2023a
+;
+Yao et al., 2023
+;
+Shen et al., 2024
+;
+Sheng et al., 2025
+;
+Hu et al., 2024
+;
+Zhong et al., 2024b
+;
+Zhu et al., 2025
+;
+Fu et al., 2025
+;
+Li et al., 2026
+;
+Griggs et al., 2025
+)
+typically combine a high-throughput inference engine
+(
+Kwon et al., 2023
+;
+Corporation, 2023b
+;
+Zheng et al., 2024
+)
+with a distributed training backend
+(
+Shoeybi et al., 2020
+;
+Rasley et al., 2020
+;
+Zhao et al., 2023
+)
+.
+To mitigate idle time in staged
+RLHF
+workflows, some systems adopt asynchronous and off-policy execution
+(
+Li et al., 2026
+;
+Fu et al., 2025
+;
+Zhu et al., 2025
+;
+Griggs et al., 2025
+)
+, although prior work shows that stale data can degrade training quality
+(
+Zheng et al., 2025
+;
+Noukhovitch et al., 2025
+)
+.
+Meanwhile, some systems optimize synchronous training through model placement and parallelism
+(
+Yao et al., 2023
+;
+Shen et al., 2024
+;
+Hu et al., 2024
+;
+Sheng et al., 2025
+)
+.
+All of these frameworks rely on serverful infrastructure and cannot adapt resource allocation at fine granularity across training steps.
+RLHFuse (FlexFusion)
+(
+Zhong et al., 2024b
+)
+offloads long-tail responses to dedicated GPUs, but its global cut-and-migrate strategy may incur extra overhead without workload-aware prompt assignment, as discussed in §
+6.4
+.
+In contrast,
+RLHFless
+introduces serverless execution with deduplicated prefill, actor scaling, and prompt assignment, which are orthogonal to existing synchronous frameworks.
+Serverless computing for
+LLM
+.
+Serverless computing has gained increasing attention in
+LLM
+applications due to its flexibility, automatic scaling, and pay-as-you-go pricing model, especially in the context of
+LLM
+serving
+(
+Fu et al., 2024a
+;
+Liu et al., 2025
+;
+Yu et al., 2025b
+;
+Huang et al., 2024
+)
+.
+ServerlessLLM
+(
+Fu et al., 2024a
+)
+supports low-latency
+LLM
+serving by leveraging the large memory and storage capacities available on modern GPU servers.
+ENOVA
+(
+Huang et al., 2024
+)
+introduces a configuration recommendation module for automatic deployment across various GPU clusters, along with a performance monitoring module that enables auto-scaling.
+However, all of these serverless systems are focused solely on
+LLM
+serving and they are not designed for
+RLHF
+workloads.
+8.
+Conclusion
+This paper presents
+RLHFless
+, the first serverless framework for RLHF training.
+By targeting key inefficiencies in serverful RLHF systems—including idle time across dependent training phases, dynamic response lengths, and redundant KV cache computation—
+RLHFless
+leverages serverless execution for fine-grained resource adaptation.
+Through deduplicated prefill, prompt assignment, and cost-aware actor scaling,
+RLHFless
+reduces resource wastage both across the RLHF loop and within individual components.
+Experiments show that
+RLHFless
+achieves up to
+1.35
+×
+1.35\times
+speedup with
+44.8
+%
+44.8\%
+cost reduction on physical clusters, and an average
+1.23
+×
+1.23\times
+speedup with
+38.7
+%
+38.7\%
+cost reduction on a simulated large-scale GPU cluster, demonstrating the effectiveness of serverless RLHF training.
+References
+Agrawal
+et al.
+(2024)
+A. Agrawal, N. Kedia, J. Mohan, A. Panwar, N. Kwatra, B. Gulavani, R. Ramjee, and A. Tumanov
+Vidur: a large-scale simulation framework for llm inference
+.
+External Links:
+2405.05465
+,
+Link
+Cited by:
+§1
+,
+§5
+,
+§6.1
+,
+§6.6
+.
+Ahmadian
+et al.
+(2024)
+A. Ahmadian, C. Cremer, M. Gallé, M. Fadaee, J. Kreutzer, O. Pietquin, A. Üstün, and S. Hooker
+Back to basics: revisiting reinforce style optimization for learning from human feedback in llms
+.
+External Links:
+2402.14740
+,
+Link
+Cited by:
+§4.2
+,
+§7
+.
+Amazon Web Services (2025)
+Amazon Web Services
+AWS Elastic Compute Cloud
+.
+Note:
+https://aws.amazon.com/ec2/
+Cited by:
+§2.3
+.
+and:
+et al.
+(2025)
+Q. and:, A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu, F. Huang, H. Wei, H. Lin, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Lin, K. Dang, K. Lu, K. Bao, K. Yang, L. Yu, M. Li, M. Xue, P. Zhang, Q. Zhu, R. Men, R. Lin, T. Li, T. Tang, T. Xia, X. Ren, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Wan, Y. Liu, Z. Cui, Z. Zhang, and Z. Qiu
+Qwen2.5 technical report
+.
+External Links:
+2412.15115
+,
+Link
+Cited by:
+§2.2
+,
+Figure 7
+,
+§6.1
+.
+Brown
+et al.
+(2020)
+T. B. Brown, B. Mann, N. Ryder, M. Subbiah, J. Kaplan, P. Dhariwal, A. Neelakantan, P. Shyam, G. Sastry, A. Askell, S. Agarwal, A. Herbert-Voss, G. Krueger, T. Henighan, R. Child, A. Ramesh, D. M. Ziegler, J. Wu, C. Winter, C. Hesse, M. Chen, E. Sigler, M. Litwin, S. Gray, B. Chess, J. Clark, C. Berner, S. McCandlish, A. Radford, I. Sutskever, and D. Amodei
+Language models are few-shot learners
+.
+External Links:
+2005.14165
+,
+Link
+Cited by:
+§1
+.
+Chitty-Venkata
+et al.
+(2024)
+K. T. Chitty-Venkata, S. Raskar, B. Kale, F. Ferdaus, A. Tanikanti, K. Raffenetti, V. Taylor, M. Emani, and V. Vishwanath
+LLM-inference-bench: inference benchmarking of large language models on ai accelerators
+.
+External Links:
+2411.00136
+,
+Link
+Cited by:
+§4.4
+.
+Cobbe
+et al.
+(2021)
+K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano, C. Hesse, and J. Schulman
+Training verifiers to solve math word problems
+.
+arXiv preprint arXiv:2110.14168
+.
+Cited by:
+§1
+,
+§2.2
+,
+Figure 7
+,
+§6.1
+.
+Corporation (2023a)
+C. Corporation
+Collosal-chat: a project to implement llm with rlhf
+.
+Note:
+https://github.com/hpcaitech/ColossalAI/tree/main/applications/ColossalChat
+Cited by:
+§7
+.
+Corporation (2023b)
+N. Corporation
+TensorRT-llm: a tensorrt toolbox for optimized large language model inference
+.
+Note:
+https://github.com/NVIDIA/TensorRT-LLM
+Cited by:
+§7
+.
+Dai
+et al.
+(2023)
+J. Dai, X. Pan, R. Sun, J. Ji, X. Xu, M. Liu, Y. Wang, and Y. Yang
+Safe rlhf: safe reinforcement learning from human feedback
+.
+External Links:
+2310.12773
+,
+Link
+Cited by:
+§1
+.
+Dai
+et al.
+(2019)
+Z. Dai, Z. Yang, Y. Yang, J. Carbonell, Q. V. Le, and R. Salakhutdinov
+Transformer-xl: attentive language models beyond a fixed-length context
+.
+External Links:
+1901.02860
+,
+Link
+Cited by:
+§2.2
+.
+DeepSeek-AI
+et al.
+(2025)
+DeepSeek-AI, D. Guo, D. Yang, H. Zhang, J. Song, R. Zhang, R. Xu, Q. Zhu, S. Ma, P. Wang, X. Bi, X. Zhang, X. Yu, Y. Wu, Z. F. Wu, Z. Gou, Z. Shao, Z. Li, Z. Gao, A. Liu, B. Xue, B. Wang, B. Wu, B. Feng, C. Lu, C. Zhao, C. Deng, C. Zhang, C. Ruan, D. Dai, D. Chen, D. Ji, E. Li, F. Lin, F. Dai, F. Luo, G. Hao, G. Chen, G. Li, H. Zhang, H. Bao, H. Xu, H. Wang, H. Ding, H. Xin, H. Gao, H. Qu, H. Li, J. Guo, J. Li, J. Wang, J. Chen, J. Yuan, J. Qiu, J. Li, J. L. Cai, J. Ni, J. Liang, J. Chen, K. Dong, K. Hu, K. Gao, K. Guan, K. Huang, K. Yu, L. Wang, L. Zhang, L. Zhao, L. Wang, L. Zhang, L. Xu, L. Xia, M. Zhang, M. Zhang, M. Tang, M. Li, M. Wang, M. Li, N. Tian, P. Huang, P. Zhang, Q. Wang, Q. Chen, Q. Du, R. Ge, R. Zhang, R. Pan, R. Wang, R. J. Chen, R. L. Jin, R. Chen, S. Lu, S. Zhou, S. Chen, S. Ye, S. Wang, S. Yu, S. Zhou, S. Pan, S. S. Li, S. Zhou, S. Wu, S. Ye, T. Yun, T. Pei, T. Sun, T. Wang, W. Zeng, W. Zhao, W. Liu, W. Liang, W. Gao, W. Yu, W. Zhang, W. L. Xiao, W. An, X. Liu, X. Wang, X. Chen, X. Nie, X. Cheng, X. Liu, X. Xie, X. Liu, X. Yang, X. Li, X. Su, X. Lin, X. Q. Li, X. Jin, X. Shen, X. Chen, X. Sun, X. Wang, X. Song, X. Zhou, X. Wang, X. Shan, Y. K. Li, Y. Q. Wang, Y. X. Wei, Y. Zhang, Y. Xu, Y. Li, Y. Zhao, Y. Sun, Y. Wang, Y. Yu, Y. Zhang, Y. Shi, Y. Xiong, Y. He, Y. Piao, Y. Wang, Y. Tan, Y. Ma, Y. Liu, Y. Guo, Y. Ou, Y. Wang, Y. Gong, Y. Zou, Y. He, Y. Xiong, Y. Luo, Y. You, Y. Liu, Y. Zhou, Y. X. Zhu, Y. Xu, Y. Huang, Y. Li, Y. Zheng, Y. Zhu, Y. Ma, Y. Tang, Y. Zha, Y. Yan, Z. Z. Ren, Z. Ren, Z. Sha, Z. Fu, Z. Xu, Z. Xie, Z. Zhang, Z. Hao, Z. Ma, Z. Yan, Z. Wu, Z. Gu, Z. Zhu, Z. Liu, Z. Li, Z. Xie, Z. Song, Z. Pan, Z. Huang, Z. Xu, Z. Zhang, and Z. Zhang
+DeepSeek-r1: incentivizing reasoning capability in llms via reinforcement learning
+.
+External Links:
+2501.12948
+,
+Link
+Cited by:
+§1
+,
+§2.2
+,
+§2.2
+.
+Dutta
+et al.
+(2024)
+S. Dutta, S. Mahinder, R. Anantha, and B. Bandyopadhyay
+Applying rlaif for code generation with api-usage in lightweight llms
+.
+External Links:
+2406.20060
+,
+Link
+Cited by:
+§1
+.
+Fu
+et al.
+(2025)
+W. Fu, J. Gao, X. Shen, C. Zhu, Z. Mei, C. He, S. Xu, G. Wei, J. Mei, J. Wang, T. Yang, B. Yuan, and Y. Wu
+AReaL: a large-scale asynchronous reinforcement learning system for language reasoning
+.
+External Links:
+2505.24298
+,
+Link
+Cited by:
+§1
+,
+§1
+,
+§2.2
+,
+§7
+.
+Fu
+et al.
+(2024a)
+Y. Fu, L. Xue, Y. Huang, A. Brabete, D. Ustiugov, Y. Patel, and L. Mai
+ServerlessLLM: Low-Latency serverless inference for large language models
+.
+In
+18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24)
+,
+Santa Clara, CA
+,
+pp. 135–153
+.
+External Links:
+ISBN 978-1-939133-40-3
+,
+Link
+Cited by:
+§7
+.
+Fu
+et al.
+(2024b)
+Y. Fu, S. Zhu, R. Su, A. Qiao, I. Stoica, and H. Zhang
+Efficient llm scheduling by learning to rank
+.
+External Links:
+2408.15792
+,
+Link
+Cited by:
+§4.3
+,
+§4.3
+,
+§6.1
+,
+§6.5
+.
+Google Cloud Platform (2025)
+Google Cloud Platform
+GCP Compute Engine Instance
+.
+Note:
+https://cloud.google.com/compute/docs/instances
+Cited by:
+§2.3
+.
+Grattafiori
+et al.
+(2024)
+A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan, A. Yang, A. Fan, A. Goyal, A. Hartshorn, A. Yang, A. Mitra, A. Sravankumar, A. Korenev, A. Hinsvark, A. Rao, A. Zhang, A. Rodriguez, A. Gregerson, A. Spataru, B. Roziere, B. Biron, B. Tang, B. Chern, C. Caucheteux, C. Nayak, C. Bi, C. Marra, C. McConnell, C. Keller, C. Touret, C. Wu, C. Wong, C. C. Ferrer, C. Nikolaidis, D. Allonsius, D. Song, D. Pintz, D. Livshits, D. Wyatt, D. Esiobu, D. Choudhary, D. Mahajan, D. Garcia-Olano, D. Perino, D. Hupkes, E. Lakomkin, E. AlBadawy, E. Lobanova, E. Dinan, E. M. Smith, F. Radenovic, F. Guzmán, F. Zhang, G. Synnaeve, G. Lee, G. L. Anderson, G. Thattai, G. Nail, G. Mialon, G. Pang, G. Cucurell, H. Nguyen, H. Korevaar, H. Xu, H. Touvron, I. Zarov, I. A. Ibarra, I. Kloumann, I. Misra, I. Evtimov, J. Zhang, J. Copet, J. Lee, J. Geffert, J. Vranes, J. Park, J. Mahadeokar, J. Shah, J. van der Linde, J. Billock, J. Hong, J. Lee, J. Fu, J. Chi, J. Huang, J. Liu, J. Wang, J. Yu, J. Bitton, J. Spisak, J. Park, J. Rocca, J. Johnstun, J. Saxe, J. Jia, K. V. Alwala, K. Prasad, K. Upasani, K. Plawiak, K. Li, K. Heafield, K. Stone, K. El-Arini, K. Iyer, K. Malik, K. Chiu, K. Bhalla, K. Lakhotia, L. Rantala-Yeary, L. van der Maaten, L. Chen, L. Tan, L. Jenkins, L. Martin, L. Madaan, L. Malo, L. Blecher, L. Landzaat, L. de Oliveira, M. Muzzi, M. Pasupuleti, M. Singh, M. Paluri, M. Kardas, M. Tsimpoukelli, M. Oldham, M. Rita, M. Pavlova, M. Kambadur, M. Lewis, M. Si, M. K. Singh, M. Hassan, N. Goyal, N. Torabi, N. Bashlykov, N. Bogoychev, N. Chatterji, N. Zhang, O. Duchenne, O. Çelebi, P. Alrassy, P. Zhang, P. Li, P. Vasic, P. Weng, P. Bhargava, P. Dubal, P. Krishnan, P. S. Koura, P. Xu, Q. He, Q. Dong, R. Srinivasan, R. Ganapathy, R. Calderer, R. S. Cabral, R. Stojnic, R. Raileanu, R. Maheswari, R. Girdhar, R. Patel, R. Sauvestre, R. Polidoro, R. Sumbaly, R. Taylor, R. Silva, R. Hou, R. Wang, S. Hosseini, S. Chennabasappa, S. Singh, S. Bell, S. S. Kim, S. Edunov, S. Nie, S. Narang, S. Raparthy, S. Shen, S. Wan, S. Bhosale, S. Zhang, S. Vandenhende, S. Batra, S. Whitman, S. Sootla, S. Collot, S. Gururangan, S. Borodinsky, T. Herman, T. Fowler, T. Sheasha, T. Georgiou, T. Scialom, T. Speckbacher, T. Mihaylov, T. Xiao, U. Karn, V. Goswami, V. Gupta, V. Ramanathan, V. Kerkez, V. Gonguet, V. Do, V. Vogeti, V. Albiero, V. Petrovic, W. Chu, W. Xiong, W. Fu, W. Meers, X. Martinet, X. Wang, X. Wang, X. E. Tan, X. Xia, X. Xie, X. Jia, X. Wang, Y. Goldschlag, Y. Gaur, Y. Babaei, Y. Wen, Y. Song, Y. Zhang, Y. Li, Y. Mao, Z. D. Coudert, Z. Yan, Z. Chen, Z. Papakipos, A. Singh, A. Srivastava, A. Jain, A. Kelsey, A. Shajnfeld, A. Gangidi, A. Victoria, A. Goldstand, A. Menon, A. Sharma, A. Boesenberg, A. Baevski, A. Feinstein, A. Kallet, A. Sangani, A. Teo, A. Yunus, A. Lupu, A. Alvarado, A. Caples, A. Gu, A. Ho, A. Poulton, A. Ryan, A. Ramchandani, A. Dong, A. Franco, A. Goyal, A. Saraf, A. Chowdhury, A. Gabriel, A. Bharambe, A. Eisenman, A. Yazdan, B. James, B. Maurer, B. Leonhardi, B. Huang, B. Loyd, B. D. Paola, B. Paranjape, B. Liu, B. Wu, B. Ni, B. Hancock, B. Wasti, B. Spence, B. Stojkovic, B. Gamido, B. Montalvo, C. Parker, C. Burton, C. Mejia, C. Liu, C. Wang, C. Kim, C. Zhou, C. Hu, C. Chu, C. Cai, C. Tindal, C. Feichtenhofer, C. Gao, D. Civin, D. Beaty, D. Kreymer, D. Li, D. Adkins, D. Xu, D. Testuggine, D. David, D. Parikh, D. Liskovich, D. Foss, D. Wang, D. Le, D. Holland, E. Dowling, E. Jamil, E. Montgomery, E. Presani, E. Hahn, E. Wood, E. Le, E. Brinkman, E. Arcaute, E. Dunbar, E. Smothers, F. Sun, F. Kreuk, F. Tian, F. Kokkinos, F. Ozgenel, F. Caggioni, F. Kanayet, F. Seide, G. M. Florez, G. Schwarz, G. Badeer, G. Swee, G. Halpern, G. Herman, G. Sizov, Guangyi, Zhang, G. Lakshminarayanan, H. Inan, H. Shojanazeri, H. Zou, H. Wang, H. Zha, H. Habeeb, H. Rudolph, H. Suk, H. Aspegren, H. Goldman, H. Zhan, I. Damlaj, I. Molybog, I. Tufanov, I. Leontiadis, I. Veliche, I. Gat, J. Weissman, J. Geboski, J. Kohli, J. Lam, J. Asher, J. Gaya, J. Marcus, J. Tang, J. Chan, J. Zhen, J. Reizenstein, J. Teboul, J. Zhong, J. Jin, J. Yang, J. Cummings, J. Carvill, J. Shepard, J. McPhie, J. Torres, J. Ginsburg, J. Wang, K. Wu, K. H. U, K. Saxena, K. Khandelwal, K. Zand, K. Matosich, K. Veeraraghavan, K. Michelena, K. Li, K. Jagadeesh, K. Huang, K. Chawla, K. Huang, L. Chen, L. Garg, L. A, L. Silva, L. Bell, L. Zhang, L. Guo, L. Yu, L. Moshkovich, L. Wehrstedt, M. Khabsa, M. Avalani, M. Bhatt, M. Mankus, M. Hasson, M. Lennie, M. Reso, M. Groshev, M. Naumov, M. Lathi, M. Keneally, M. Liu, M. L. Seltzer, M. Valko, M. Restrepo, M. Patel, M. Vyatskov, M. Samvelyan, M. Clark, M. Macey, M. Wang, M. J. Hermoso, M. Metanat, M. Rastegari, M. Bansal, N. Santhanam, N. Parks, N. White, N. Bawa, N. Singhal, N. Egebo, N. Usunier, N. Mehta, N. P. Laptev, N. Dong, N. Cheng, O. Chernoguz, O. Hart, O. Salpekar, O. Kalinli, P. Kent, P. Parekh, P. Saab, P. Balaji, P. Rittner, P. Bontrager, P. Roux, P. Dollar, P. Zvyagina, P. Ratanchandani, P. Yuvraj, Q. Liang, R. Alao, R. Rodriguez, R. Ayub, R. Murthy, R. Nayani, R. Mitra, R. Parthasarathy, R. Li, R. Hogan, R. Battey, R. Wang, R. Howes, R. Rinott, S. Mehta, S. Siby, S. J. Bondu, S. Datta, S. Chugh, S. Hunt, S. Dhillon, S. Sidorov, S. Pan, S. Mahajan, S. Verma, S. Yamamoto, S. Ramaswamy, S. Lindsay, S. Lindsay, S. Feng, S. Lin, S. C. Zha, S. Patil, S. Shankar, S. Zhang, S. Zhang, S. Wang, S. Agarwal, S. Sajuyigbe, S. Chintala, S. Max, S. Chen, S. Kehoe, S. Satterfield, S. Govindaprasad, S. Gupta, S. Deng, S. Cho, S. Virk, S. Subramanian, S. Choudhury, S. Goldman, T. Remez, T. Glaser, T. Best, T. Koehler, T. Robinson, T. Li, T. Zhang, T. Matthews, T. Chou, T. Shaked, V. Vontimitta, V. Ajayi, V. Montanez, V. Mohan, V. S. Kumar, V. Mangla, V. Ionescu, V. Poenaru, V. T. Mihailescu, V. Ivanov, W. Li, W. Wang, W. Jiang, W. Bouaziz, W. Constable, X. Tang, X. Wu, X. Wang, X. Wu, X. Gao, Y. Kleinman, Y. Chen, Y. Hu, Y. Jia, Y. Qi, Y. Li, Y. Zhang, Y. Zhang, Y. Adi, Y. Nam, Yu, Wang, Y. Zhao, Y. Hao, Y. Qian, Y. Li, Y. He, Z. Rait, Z. DeVito, Z. Rosnbrick, Z. Wen, Z. Yang, Z. Zhao, and Z. Ma
+The llama 3 herd of models
+.
+External Links:
+2407.21783
+,
+Link
+Cited by:
+§6.1
+.
+Griggs
+et al.
+(2025)
+T. Griggs, S. Hegde, E. Tang, S. Liu, S. Cao, D. Li, C. Ruan, P. Moritz, K. Hakhamaneshi, R. Liaw, A. Malik, M. Zaharia, J. E. Gonzalez, and I. Stoica
+Evolving skyrl into a highly-modular rl framework
+.
+Note:
+Notion Blog
+Cited by:
+§1
+,
+§2.2
+,
+§7
+.
+Han
+et al.
+(2025)
+Z. Han, A. You, H. Wang, K. Luo, G. Yang, W. Shi, M. Chen, S. Zhang, Z. Lan, C. Deng, H. Ji, W. Liu, Y. Huang, Y. Zhang, C. Pan, J. Wang, X. Huang, C. Li, and J. Wu
+AsyncFlow: an asynchronous streaming rl framework for efficient llm post-training
+.
+External Links:
+2507.01663
+,
+Link
+Cited by:
+§2.2
+.
+He and Lab (2025)
+H. He and T. M. Lab
+Defeating nondeterminism in llm inference
+.
+Thinking Machines Lab: Connectionism
+.
+Note:
+https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/
+External Links:
+Document
+Cited by:
+§6.4
+.
+Hoffman
+et al.
+(2020)
+M. W. Hoffman, B. Shahriari, J. Aslanides, G. Barth-Maron, N. Momchev, D. Sinopalnikov, P. Stańczyk, S. Ramos, A. Raichuk, D. Vincent, L. Hussenot, R. Dadashi, G. Dulac-Arnold, M. Orsini, A. Jacq, J. Ferret, N. Vieillard, S. K. S. Ghasemipour, S. Girgin, O. Pietquin, F. Behbahani, T. Norman, A. Abdolmaleki, A. Cassirer, F. Yang, K. Baumli, S. Henderson, A. Friesen, R. Haroun, A. Novikov, S. G. Colmenarejo, S. Cabi, C. Gulcehre, T. L. Paine, S. Srinivasan, A. Cowie, Z. Wang, B. Piot, and N. de Freitas
+Acme: a research framework for distributed reinforcement learning
+.
+arXiv preprint arXiv:2006.00979
+.
+External Links:
+Link
+Cited by:
+§7
+.
+Hou
+et al.
+(2024)
+Z. Hou, P. Du, Y. Niu, Z. Du, A. Zeng, X. Liu, M. Huang, H. Wang, J. Tang, and Y. Dong
+Does rlhf scale? exploring the impacts from data, model, and method
+.
+External Links:
+2412.06000
+Cited by:
+§1
+.
+Hu
+et al.
+(2025)
+J. Hu, J. K. Liu, and S. Wei
+REINFORCE++: an efficient rlhf algorithm with robustness to both prompt and reward models
+.
+External Links:
+2501.03262
+,
+Link
+Cited by:
+§4.2
+,
+§7
+.
+Hu
+et al.
+(2024)
+J. Hu, X. Wu, Z. Zhu, Xianyu, W. Wang, D. Zhang, and Y. Cao
+OpenRLHF: an easy-to-use, scalable and high-performance rlhf framework
+.
+External Links:
+2405.11143
+,
+Link
+Cited by:
+§1
+,
+Figure 3
+,
+§2.1
+,
+§2.2
+,
+§2.2
+,
+§4.2
+,
+§6.1
+,
+§7
+.
+Huang
+et al.
+(2022)
+S. Huang, R. F. J. Dossa, C. Ye, J. Braga, D. Chakraborty, K. Mehta, and J. G.M. Araújo
+CleanRL: high-quality single-file implementations of deep reinforcement learning algorithms
+.
+Journal of Machine Learning Research
+23
+(
+274
+),
+pp. 1–18
+.
+External Links:
+Link
+Cited by:
+§7
+.
+Huang
+et al.
+(2024)
+T. Huang, P. Chen, K. Gong, J. Hawk, Z. Bright, W. Xie, K. Huang, and Z. Ji
+ENOVA: autoscaling towards cost-effective and stable serverless llm serving
+.
+In
+arXiv preprint arXiv:
+,
+Cited by:
+§7
+.
+Jain
+et al.
+(2024)
+N. Jain, K. Han, A. Gu, W. Li, F. Yan, T. Zhang, S. Wang, A. Solar-Lezama, K. Sen, and I. Stoica
+LiveCodeBench: holistic and contamination free evaluation of large language models for code
+.
+arXiv preprint arXiv:2403.07974
+.
+Cited by:
+§1
+,
+Figure 4
+,
+§2.2
+,
+§6.1
+.
+Kwon
+et al.
+(2023)
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. E. Gonzalez, H. Zhang, and I. Stoica
+Efficient memory management for large language model serving with pagedattention
+.
+In
+Proceedings of the ACM SIGOPS 29th Symposium on Operating Systems Principles
+,
+Cited by:
+Figure 3
+,
+§2.1
+,
+§2.2
+,
+§5
+,
+§7
+.
+Li
+et al.
+(2026)
+X. Li, S. Wu, and Z. Shen
+A-3po: accelerating asynchronous llm training with staleness-aware proximal policy approximation
+.
+External Links:
+2512.06547
+,
+Link
+Cited by:
+§1
+,
+§1
+,
+§2.2
+,
+§7
+.
+Li
+et al.
+(2023)
+Z. Li, L. Zheng, Y. Zhong, V. Liu, Y. Sheng, X. Jin, Y. Huang, Z. Chen, H. Zhang, J. E. Gonzalez, and I. Stoica
+AlpaServe: statistical multiplexing with model parallelism for deep learning serving
+.
+External Links:
+2302.11665
+,
+Link
+Cited by:
+§4.4
+.
+Li
+et al.
+(2024)
+Z. Li, T. Xu, Y. Zhang, Z. Lin, Y. Yu, R. Sun, and Z. Luo
+ReMax: a simple, effective, and efficient reinforcement learning method for aligning large language models
+.
+External Links:
+2310.10505
+,
+Link
+Cited by:
+§2.1
+,
+§7
+.
+Liang
+et al.
+(2018)
+E. Liang, R. Liaw, P. Moritz, R. Nishihara, R. Fox, K. Goldberg, J. E. Gonzalez, M. I. Jordan, and I. Stoica
+RLlib: abstractions for distributed reinforcement learning
+.
+External Links:
+1712.09381
+,
+Link
+Cited by:
+§1
+,
+§2.1
+,
+§7
+.
+Liu
+et al.
+(2025)
+M. Liu, W. Wang, and C. Wu
+Optimizing distributed deployment of mixture-of-experts model inference in serverless computing
+.
+External Links:
+2501.05313
+,
+Link
+Cited by:
+§7
+.
+Liu
+et al.
+(2024)
+Y. Liu, H. Li, Y. Cheng, S. Ray, Y. Huang, Q. Zhang, K. Du, J. Yao, S. Lu, G. Ananthanarayanan, M. Maire, H. Hoffmann, A. Holtzman, and J. Jiang
+CacheGen: kv cache compression and streaming for fast large language model serving
+.
+External Links:
+2310.07240
+,
+Link
+Cited by:
+§2.2
+.
+Maxwell Jia (2025)
+Maxwell Jia
+American Invitational Mathematics Examination (AIME) 2024 Dataset
+.
+Note:
+https://huggingface.co/datasets/Maxwell-Jia/AIME_2024
+Cited by:
+Figure 4
+,
+§2.2
+.
+Mei
+et al.
+(2024)
+Z. Mei, W. Fu, J. Gao, G. Wang, H. Zhang, and Y. Wu
+SRL: scaling distributed reinforcement learning to over ten thousand cores
+.
+External Links:
+2306.16688
+,
+Link
+Cited by:
+§1
+,
+§2.1
+.
+Merkel
+et al.
+(2014)
+D. Merkel
+et al.
+Docker: Lightweight Linux Containers for Consistent Development and Deployment
+.
+Linux Journal
+.
+Cited by:
+§5
+.
+Microsoft Azure (2025)
+Microsoft Azure
+Microsoft Azure Virtual Machines
+.
+Note:
+https://azure.microsoft.com/pricing/details/virtual-machines/
+Cited by:
+§2.3
+.
+Moritz
+et al.
+(2018)
+P. Moritz, R. Nishihara, S. Wang, A. Tumanov, R. Liaw, E. Liang, M. Elibol, Z. Yang, W. Paul, M. I. Jordan, and I. Stoica
+Ray: a distributed framework for emerging ai applications
+.
+External Links:
+1712.05889
+,
+Link
+Cited by:
+§5
+.
+Noukhovitch
+et al.
+(2025)
+M. Noukhovitch, S. Huang, S. Xhonneux, A. Hosseini, R. Agarwal, and A. Courville
+Asynchronous rlhf: faster and more efficient off-policy rl for language models
+.
+External Links:
+2410.18252
+,
+Link
+Cited by:
+§1
+,
+§2.2
+,
+§7
+.
+NVIDIA (2025)
+NVIDIA
+NVIDIA Collective Communications Library.
+.
+Note:
+https://github.com/NVIDIA/nccl
+Cited by:
+§5
+.
+OpenAI
+et al.
+(2024)
+OpenAI, J. Achiam, S. Adler, S. Agarwal, L. Ahmad, I. Akkaya, F. L. Aleman, D. Almeida, J. Altenschmidt, S. Altman, S. Anadkat, R. Avila, I. Babuschkin, S. Balaji, V. Balcom, P. Baltescu, H. Bao, M. Bavarian, J. Belgum, I. Bello, J. Berdine, G. Bernadett-Shapiro, C. Berner, L. Bogdonoff, O. Boiko, M. Boyd, A. Brakman, G. Brockman, T. Brooks, M. Brundage, K. Button, T. Cai, R. Campbell, A. Cann, B. Carey, C. Carlson, R. Carmichael, B. Chan, C. Chang, F. Chantzis, D. Chen, S. Chen, R. Chen, J. Chen, M. Chen, B. Chess, C. Cho, C. Chu, H. W. Chung, D. Cummings, J. Currier, Y. Dai, C. Decareaux, T. Degry, N. Deutsch, D. Deville, A. Dhar, D. Dohan, S. Dowling, S. Dunning, A. Ecoffet, A. Eleti, T. Eloundou, D. Farhi, L. Fedus, N. Felix, S. P. Fishman, J. Forte, I. Fulford, L. Gao, E. Georges, C. Gibson, V. Goel, T. Gogineni, G. Goh, R. Gontijo-Lopes, J. Gordon, M. Grafstein, S. Gray, R. Greene, J. Gross, S. S. Gu, Y. Guo, C. Hallacy, J. Han, J. Harris, Y. He, M. Heaton, J. Heidecke, C. Hesse, A. Hickey, W. Hickey, P. Hoeschele, B. Houghton, K. Hsu, S. Hu, X. Hu, J. Huizinga, S. Jain, S. Jain, J. Jang, A. Jiang, R. Jiang, H. Jin, D. Jin, S. Jomoto, B. Jonn, H. Jun, T. Kaftan, Ł. Kaiser, A. Kamali, I. Kanitscheider, N. S. Keskar, T. Khan, L. Kilpatrick, J. W. Kim, C. Kim, Y. Kim, J. H. Kirchner, J. Kiros, M. Knight, D. Kokotajlo, Ł. Kondraciuk, A. Kondrich, A. Konstantinidis, K. Kosic, G. Krueger, V. Kuo, M. Lampe, I. Lan, T. Lee, J. Leike, J. Leung, D. Levy, C. M. Li, R. Lim, M. Lin, S. Lin, M. Litwin, T. Lopez, R. Lowe, P. Lue, A. Makanju, K. Malfacini, S. Manning, T. Markov, Y. Markovski, B. Martin, K. Mayer, A. Mayne, B. McGrew, S. M. McKinney, C. McLeavey, P. McMillan, J. McNeil, D. Medina, A. Mehta, J. Menick, L. Metz, A. Mishchenko, P. Mishkin, V. Monaco, E. Morikawa, D. Mossing, T. Mu, M. Murati, O. Murk, D. Mély, A. Nair, R. Nakano, R. Nayak, A. Neelakantan, R. Ngo, H. Noh, L. Ouyang, C. O’Keefe, J. Pachocki, A. Paino, J. Palermo, A. Pantuliano, G. Parascandolo, J. Parish, E. Parparita, A. Passos, M. Pavlov, A. Peng, A. Perelman, F. de Avila Belbute Peres, M. Petrov, H. P. de Oliveira Pinto, Michael, Pokorny, M. Pokrass, V. H. Pong, T. Powell, A. Power, B. Power, E. Proehl, R. Puri, A. Radford, J. Rae, A. Ramesh, C. Raymond, F. Real, K. Rimbach, C. Ross, B. Rotsted, H. Roussez, N. Ryder, M. Saltarelli, T. Sanders, S. Santurkar, G. Sastry, H. Schmidt, D. Schnurr, J. Schulman, D. Selsam, K. Sheppard, T. Sherbakov, J. Shieh, S. Shoker, P. Shyam, S. Sidor, E. Sigler, M. Simens, J. Sitkin, K. Slama, I. Sohl, B. Sokolowsky, Y. Song, N. Staudacher, F. P. Such, N. Summers, I. Sutskever, J. Tang, N. Tezak, M. B. Thompson, P. Tillet, A. Tootoonchian, E. Tseng, P. Tuggle, N. Turley, J. Tworek, J. F. C. Uribe, A. Vallone, A. Vijayvergiya, C. Voss, C. Wainwright, J. J. Wang, A. Wang, B. Wang, J. Ward, J. Wei, C. Weinmann, A. Welihinda, P. Welinder, J. Weng, L. Weng, M. Wiethoff, D. Willner, C. Winter, S. Wolrich, H. Wong, L. Workman, S. Wu, J. Wu, M. Wu, K. Xiao, T. Xu, S. Yoo, K. Yu, Q. Yuan, W. Zaremba, R. Zellers, C. Zhang, M. Zhang, S. Zhao, T. Zheng, J. Zhuang, W. Zhuk, and B. Zoph
+GPT-4 technical report
+.
+External Links:
+2303.08774
+,
+Link
+Cited by:
+§1
+.
+Ouyang
+et al.
+(2022)
+L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. L. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray, J. Schulman, J. Hilton, F. Kelton, L. Miller, M. Simens, A. Askell, P. Welinder, P. Christiano, J. Leike, and R. Lowe
+Training language models to follow instructions with human feedback
+.
+External Links:
+2203.02155
+,
+Link
+Cited by:
+§1
+.
+Poppe
+et al.
+(2022)
+O. Poppe, Q. Guo, W. Lang, P. Arora, M. Oslake, S. Xu, and A. Kalhan
+Moneyball: proactive auto-scaling in microsoft azure sql database serverless
+.
+Proc. VLDB Endow.
+15
+(
+6
+),
+pp. 1279–1287
+.
+External Links:
+ISSN 2150-8097
+,
+Link
+,
+Document
+Cited by:
+§5
+.
+Qiu
+et al.
+(2024)
+H. Qiu, W. Mao, A. Patke, S. Cui, S. Jha, C. Wang, H. Franke, Z. T. Kalbarczyk, T. Başar, and R. K. Iyer
+Efficient interactive llm serving with proxy model-based sequence length prediction
+.
+External Links:
+2404.08509
+,
+Link
+Cited by:
+§4.3
+,
+§4.3
+,
+§6.1
+,
+§6.5
+.
+Rafailov
+et al.
+(2024)
+R. Rafailov, A. Sharma, E. Mitchell, S. Ermon, C. D. Manning, and C. Finn
+Direct preference optimization: your language model is secretly a reward model
+.
+External Links:
+2305.18290
+,
+Link
+Cited by:
+§7
+.
+Rasley
+et al.
+(2020)
+J. Rasley, S. Rajbhandari, O. Ruwase, and Y. He
+DeepSpeed: system optimizations enable training deep learning models with over 100 billion parameters
+.
+In
+Proceedings of the 26th ACM SIGKDD International Conference on Knowledge Discovery & Data Mining
+,
+KDD ’20
+,
+New York, NY, USA
+,
+pp. 3505–3506
+.
+External Links:
+ISBN 9781450379984
+,
+Link
+,
+Document
+Cited by:
+§2.1
+,
+§2.1
+,
+§7
+.
+Redis (2025)
+Redis
+Redis Official Website.
+.
+Note:
+http://redis.io/
+Cited by:
+§5
+.
+Rein
+et al.
+(2024)
+D. Rein, B. L. Hou, A. C. Stickland, J. Petty, R. Y. Pang, J. Dirani, J. Michael, and S. R. Bowman
+GPQA: a graduate-level google-proof q&a benchmark
+.
+In
+First Conference on Language Modeling
+,
+External Links:
+Link
+Cited by:
+§1
+,
+Figure 4
+,
+§2.2
+,
+§6.1
+.
+Romero
+et al.
+(2021)
+F. Romero, M. Zhao, N. J. Yadwadkar, and C. Kozyrakis
+Llama: a heterogeneous & serverless framework for auto-tuning video analytics pipelines
+.
+External Links:
+2102.01887
+,
+Link
+Cited by:
+§1
+,
+§6.1
+.
+Schulman
+et al.
+(2017)
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+Proximal policy optimization algorithms
+.
+External Links:
+1707.06347
+,
+Link
+Cited by:
+§7
+.
+Shahrad
+et al.
+(2020)
+M. Shahrad, R. Fonseca, I. Goiri, G. Chaudhry, P. Batum, J. Cooke, E. Laureano, C. Tresness, M. Russinovich, and R. Bianchini
+Serverless in the Wild: Characterizing and Optimizing the Serverless Workload at a Large Cloud Provider
+.
+In
+2020 USENIX annual technical conference (USENIX ATC)
+,
+Cited by:
+§5
+.
+Shao
+et al.
+(2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. K. Li, Y. Wu, and D. Guo
+DeepSeekMath: pushing the limits of mathematical reasoning in open language models
+.
+External Links:
+2402.03300
+,
+Link
+Cited by:
+§1
+,
+§1
+,
+§2.1
+,
+§2.2
+,
+§2.2
+,
+§2.3
+,
+§3
+,
+§4.2
+,
+§6.1
+,
+§7
+.
+Shen
+et al.
+(2024)
+G. Shen, Z. Wang, O. Delalleau, J. Zeng, Y. Dong, D. Egert, S. Sun, J. Zhang, S. Jain, A. Taghibakhshi, M. S. Ausin, A. Aithal, and O. Kuchaiev
+NeMo-aligner: scalable toolkit for efficient model alignment
+.
+External Links:
+2405.01481
+,
+Link
+Cited by:
+§2.1
+,
+§2.2
+,
+§6.1
+,
+§7
+.
+Sheng
+et al.
+(2025)
+G. Sheng, C. Zhang, Z. Ye, X. Wu, W. Zhang, R. Zhang, Y. Peng, H. Lin, and C. Wu
+HybridFlow: a flexible and efficient rlhf framework
+.
+In
+Proceedings of the Twentieth European Conference on Computer Systems
+,
+EuroSys ’25
+,
+pp. 1279–1297
+.
+External Links:
+Link
+,
+Document
+Cited by:
+4th item
+,
+§1
+,
+§1
+,
+§1
+,
+Figure 3
+,
+§2.1
+,
+§2.2
+,
+§2.2
+,
+§2.2
+,
+§4.2
+,
+§4.4
+,
+§4.5
+,
+§4.5
+,
+§5
+,
+§6.1
+,
+§6.1
+,
+§6.2
+,
+§6.6
+,
+§7
+.
+Shoeybi
+et al.
+(2020)
+M. Shoeybi, M. Patwary, R. Puri, P. LeGresley, J. Casper, and B. Catanzaro
+Megatron-lm: training multi-billion parameter language models using model parallelism
+.
+External Links:
+1909.08053
+,
+Link
+Cited by:
+§2.1
+,
+§7
+.
+Singhal
+et al.
+(2024)
+P. Singhal, T. Goyal, J. Xu, and G. Durrett
+A long way to go: investigating length correlations in rlhf
+.
+External Links:
+2310.03716
+,
+Link
+Cited by:
+§2.2
+.
+Sun
+et al.
+(2024)
+Y. Sun, L. Dong, Y. Zhu, S. Huang, W. Wang, S. Ma, Q. Zhang, J. Wang, and F. Wei
+You only cache once: decoder-decoder architectures for language models
+.
+External Links:
+2405.05254
+,
+Link
+Cited by:
+§2.2
+.
+Team
+et al.
+(2025)
+K. Team, A. Du, B. Gao, B. Xing, C. Jiang, C. Chen, C. Li, C. Xiao, C. Du, C. Liao, C. Tang, C. Wang, D. Zhang, E. Yuan, E. Lu, F. Tang, F. Sung, G. Wei, G. Lai, H. Guo, H. Zhu, H. Ding, H. Hu, H. Yang, H. Zhang, H. Yao, H. Zhao, H. Lu, H. Li, H. Yu, H. Gao, H. Zheng, H. Yuan, J. Chen, J. Guo, J. Su, J. Wang, J. Zhao, J. Zhang, J. Liu, J. Yan, J. Wu, L. Shi, L. Ye, L. Yu, M. Dong, N. Zhang, N. Ma, Q. Pan, Q. Gong, S. Liu, S. Ma, S. Wei, S. Cao, S. Huang, T. Jiang, W. Gao, W. Xiong, W. He, W. Huang, W. Wu, W. He, X. Wei, X. Jia, X. Wu, X. Xu, X. Zu, X. Zhou, X. Pan, Y. Charles, Y. Li, Y. Hu, Y. Liu, Y. Chen, Y. Wang, Y. Liu, Y. Qin, Y. Liu, Y. Yang, Y. Bao, Y. Du, Y. Wu, Y. Wang, Z. Zhou, Z. Wang, Z. Li, Z. Zhu, Z. Zhang, Z. Wang, Z. Yang, Z. Huang, Z. Huang, Z. Xu, and Z. Yang
+Kimi k1.5: scaling reinforcement learning with llms
+.
+External Links:
+2501.12599
+,
+Link
+Cited by:
+§1
+,
+§2.2
+.
+Thor (2025)
+W. M. Thor
+How to calculate gpu vram requirements for an large-language model
+.
+Note:
+ApX Machine LearningLast updated: July 15, 2025
+External Links:
+Link
+Cited by:
+§5
+.
+Touvron
+et al.
+(2023)
+H. Touvron, L. Martin, K. Stone, P. Albert, A. Almahairi, Y. Babaei, N. Bashlykov, S. Batra, P. Bhargava, S. Bhosale, D. Bikel, L. Blecher, C. C. Ferrer, M. Chen, G. Cucurull, D. Esiobu, J. Fernandes, J. Fu, W. Fu, B. Fuller, C. Gao, V. Goswami, N. Goyal, A. Hartshorn, S. Hosseini, R. Hou, H. Inan, M. Kardas, V. Kerkez, M. Khabsa, I. Kloumann, A. Korenev, P. S. Koura, M. Lachaux, T. Lavril, J. Lee, D. Liskovich, Y. Lu, Y. Mao, X. Martinet, T. Mihaylov, P. Mishra, I. Molybog, Y. Nie, A. Poulton, J. Reizenstein, R. Rungta, K. Saladi, A. Schelten, R. Silva, E. M. Smith, R. Subramanian, X. E. Tan, B. Tang, R. Taylor, A. Williams, J. X. Kuan, P. Xu, Z. Yan, I. Zarov, Y. Zhang, A. Fan, M. Kambadur, S. Narang, A. Rodriguez, R. Stojnic, S. Edunov, and T. Scialom
+Llama 2: open foundation and fine-tuned chat models
+.
+External Links:
+2307.09288
+,
+Link
+Cited by:
+§6.1
+.
+[63]
+AgileRL
+External Links:
+Link
+Cited by:
+§2.1
+.
+Vaswani
+et al.
+(2023)
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, L. Kaiser, and I. Polosukhin
+Attention is all you need
+.
+External Links:
+1706.03762
+,
+Link
+Cited by:
+§2.2
+.
+von Werra
+et al.
+(2020)
+L. von Werra, Y. Belkada, L. Tunstall, E. Beeching, T. Thrush, N. Lambert, S. Huang, K. Rasul, and Q. Gallouédec
+TRL: transformer reinforcement learning
+.
+GitHub
+.
+Note:
+https://github.com/huggingface/trl
+Cited by:
+§2.1
+.
+Wang
+et al.
+(2024)
+Z. Wang, B. Bi, S. K. Pentyala, K. Ramnath, S. Chaudhuri, S. Mehrotra, Zixu, Zhu, X. Mao, S. Asur, Na, and Cheng
+A comprehensive survey of llm alignment techniques: rlhf, rlaif, ppo, dpo and more
+.
+External Links:
+2407.16216
+,
+Link
+Cited by:
+§7
+.
+Xiao
+et al.
+(2024)
+G. Xiao, Y. Tian, B. Chen, S. Han, and M. Lewis
+Efficient streaming language models with attention sinks
+.
+External Links:
+2309.17453
+,
+Link
+Cited by:
+§2.2
+.
+Xiong
+et al.
+(2024)
+W. Xiong, H. Dong, C. Ye, Z. Wang, H. Zhong, H. Ji, N. Jiang, and T. Zhang
+Iterative preference learning from human feedback: bridging theory and practice for rlhf under kl-constraint
+.
+External Links:
+2312.11456
+,
+Link
+Cited by:
+§1
+.
+Xu
+et al.
+(2024)
+S. Xu, W. Fu, J. Gao, W. Ye, W. Liu, Z. Mei, G. Wang, C. Yu, and Y. Wu
+Is dpo superior to ppo for llm alignment? a comprehensive study
+.
+External Links:
+2404.10719
+,
+Link
+Cited by:
+§7
+.
+Yao
+et al.
+(2023)
+Z. Yao, R. Y. Aminabadi, O. Ruwase, S. Rajbhandari, X. Wu, A. A. Awan, J. Rasley, M. Zhang, C. Li, C. Holmes, Z. Zhou, M. Wyatt, M. Smith, L. Kurilenko, H. Qin, M. Tanaka, S. Che, S. L. Song, and Y. He
+DeepSpeed-chat: easy, fast and affordable rlhf training of chatgpt-like models at all scales
+.
+External Links:
+2308.01320
+,
+Link
+Cited by:
+§2.1
+,
+§7
+.
+Yu
+et al.
+(2025a)
+H. Yu, J. Carter, H. Wang, D. Tiwari, J. Li, and S. Park
+Nitro: Boosting Distributed Reinforcement Learning with Serverless Computing
+.
+In
+51st International Conference on Very Large Data Bases (VLDB)
+,
+Cited by:
+§1
+,
+§2.1
+,
+§2.3
+,
+§4.4
+.
+Yu
+et al.
+(2025b)
+H. Yu, X. Cui, H. Zhang, H. Wang, and H. Wang
+FMoE: fine-grained expert offloading for large mixture-of-experts serving
+.
+External Links:
+2502.05370
+,
+Link
+Cited by:
+§7
+.
+Yu
+et al.
+(2024a)
+H. Yu, J. Li, Y. Hua, X. Yuan, and H. Wang
+Cheaper and Faster: Distributed Deep Reinforcement Learning with Serverless Computing
+.
+In
+Proceedings of the AAAI Conference on Artificial Intelligence
+,
+Cited by:
+§1
+,
+§2.1
+,
+§2.3
+,
+§4.4
+.
+Yu
+et al.
+(2024b)
+H. Yu, H. Wang, D. Tiwari, J. Li, and S. Park
+Stellaris: Staleness-Aware Distributed Reinforcement Learning with Serverless Computing
+.
+In
+Proceedings of the International Conference for High Performance Computing, Networking, Storage, and Analysis (SC)
+,
+Cited by:
+§1
+,
+§1
+,
+§2.1
+,
+§2.3
+,
+§6.1
+.
+Yu
+et al.
+(2025c)
+Q. Yu, Z. Zhang, R. Zhu, Y. Yuan, X. Zuo, Y. Yue, W. Dai, T. Fan, G. Liu, L. Liu, X. Liu, H. Lin, Z. Lin, B. Ma, G. Sheng, Y. Tong, C. Zhang, M. Zhang, W. Zhang, H. Zhu, J. Zhu, J. Chen, J. Chen, C. Wang, H. Yu, Y. Song, X. Wei, H. Zhou, J. Liu, W. Ma, Y. Zhang, L. Yan, M. Qiao, Y. Wu, and M. Wang
+DAPO: an open-source llm reinforcement learning system at scale
+.
+External Links:
+2503.14476
+,
+Link
+Cited by:
+§1
+,
+§2.2
+,
+§3
+,
+§4.2
+,
+§6.1
+.
+Yuan
+et al.
+(2025)
+J. Yuan, H. Li, X. Ding, W. Xie, Y. Li, W. Zhao, K. Wan, J. Shi, X. Hu, and Z. Liu
+Give me fp32 or give me death? challenges and solutions for reproducible reasoning
+.
+External Links:
+2506.09501
+,
+Link
+Cited by:
+§6.4
+.
+Yue
+et al.
+(2025)
+Y. Yue, Y. Yuan, Q. Yu, X. Zuo, R. Zhu, W. Xu, J. Chen, C. Wang, T. Fan, Z. Du, X. Wei, X. Yu, G. Liu, J. Liu, L. Liu, H. Lin, Z. Lin, B. Ma, C. Zhang, M. Zhang, W. Zhang, H. Zhu, R. Zhang, X. Liu, M. Wang, Y. Wu, and L. Yan
+VAPO: efficient and reliable reinforcement learning for advanced reasoning tasks
+.
+External Links:
+2504.05118
+,
+Link
+Cited by:
+§1
+,
+§2.2
+,
+§3
+,
+§4.2
+,
+§6.1
+.
+Zhao
+et al.
+(2023)
+Y. Zhao, A. Gu, R. Varma, L. Luo, C. Huang, M. Xu, L. Wright, H. Shojanazeri, M. Ott, S. Shleifer, A. Desmaison, C. Balioglu, P. Damania, B. Nguyen, G. Chauhan, Y. Hao, A. Mathews, and S. Li
+PyTorch fsdp: experiences on scaling fully sharded data parallel
+.
+External Links:
+2304.11277
+,
+Link
+Cited by:
+§2.1
+,
+§2.1
+,
+§5
+,
+§7
+.
+Zheng
+et al.
+(2025)
+H. Zheng, J. Zhao, and B. Chen
+Prosperity before collapse: how far can off-policy rl reach with stale data on llms?
+.
+External Links:
+2510.01161
+,
+Link
+Cited by:
+§1
+,
+§2.2
+,
+§7
+.
+Zheng
+et al.
+(2024)
+L. Zheng, L. Yin, Z. Xie, C. Sun, J. Huang, C. H. Yu, S. Cao, C. Kozyrakis, I. Stoica, J. E. Gonzalez, C. Barrett, and Y. Sheng
+SGLang: efficient execution of structured language model programs
+.
+External Links:
+2312.07104
+,
+Link
+Cited by:
+Figure 3
+,
+§2.1
+,
+§7
+.
+Zheng
+et al.
+(2023a)
+R. Zheng, S. Dou, S. Gao, Y. Hua, W. Shen, B. Wang, Y. Liu, S. Jin, Q. Liu, Y. Zhou, L. Xiong, L. Chen, Z. Xi, N. Xu, W. Lai, M. Zhu, C. Chang, Z. Yin, R. Weng, W. Cheng, H. Huang, T. Sun, H. Yan, T. Gui, Q. Zhang, X. Qiu, and X. Huang
+Secrets of rlhf in large language models part i: ppo
+.
+External Links:
+2307.04964
+,
+Link
+Cited by:
+§1
+,
+§1
+,
+§2.1
+,
+§2.2
+,
+§6.1
+,
+§7
+.
+Zheng
+et al.
+(2023b)
+Z. Zheng, X. Ren, F. Xue, Y. Luo, X. Jiang, and Y. You
+Response length perception and sequence scheduling: an llm-empowered llm inference pipeline
+.
+External Links:
+2305.13144
+,
+Link
+Cited by:
+§4.3
+,
+§4.3
+.
+Zhong
+et al.
+(2024a)
+Y. Zhong, S. Liu, J. Chen, J. Hu, Y. Zhu, X. Liu, X. Jin, and H. Zhang
+DistServe: disaggregating prefill and decoding for goodput-optimized large language model serving
+.
+External Links:
+2401.09670
+,
+Link
+Cited by:
+§2.2
+,
+§4.2
+,
+§4.4
+,
+§4.4
+,
+§4.5
+,
+§5
+.
+Zhong
+et al.
+(2024b)
+Y. Zhong, Z. Zhang, B. Wu, S. Liu, Y. Chen, C. Wan, H. Hu, L. Xia, R. Ming, Y. Zhu, and X. Jin
+Optimizing rlhf training for large language models with stage fusion
+.
+arXiv preprint arXiv: 2409.13221
+.
+Cited by:
+§1
+,
+§2.2
+,
+§4.3
+,
+§4.3
+,
+§4.4
+,
+§4.5
+,
+§6.1
+,
+§6.4
+,
+§7
+.
+Zhu
+et al.
+(2023)
+H. Zhu, B. Zhao, G. Chen, W. Chen, Y. Chen, L. Shi, Y. Yang, P. Pietzuch, and L. Chen
+MSRL: distributed reinforcement learning with dataflow fragments
+.
+In
+2023 USENIX Annual Technical Conference (USENIX ATC 23)
+,
+Boston, MA
+,
+pp. 977–993
+.
+External Links:
+ISBN 978-1-939133-35-9
+,
+Link
+Cited by:
+§2.1
+,
+§7
+.
+Zhu
+et al.
+(2025)
+Z. Zhu, C. Xie, X. Lv, and slime Contributors
+Slime: an llm post-training framework for rl scaling
+.
+Note:
+https://github.com/THUDM/slime
+GitHub repository. Corresponding author: Xin Lv
+Cited by:
+§1
+,
+§2.2
+,
+§2.2
+,
+§6.1
+,
+§7
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

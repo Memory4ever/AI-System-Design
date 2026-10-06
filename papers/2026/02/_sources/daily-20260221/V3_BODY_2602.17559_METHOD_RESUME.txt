@@ -1,0 +1,71 @@
+3.2 EWC with Low-rank Adaptation
+The core idea of EWC in Eq. 2 lies in the second term, which measures how far the current parameters deviate from the previously learned ones. Directly applying EWC entails fine-tuning all parameters, as well as preserving both a frozen copy of the old model and a Fisher matrix of the same size. However, in the case of large PTMs, this is often not feasible.
+To reduce the number of trainable parameters and improve efficiency, we represent the weight update as Δ​𝐖=𝐖t−𝐖t−1∗=𝐀𝐁\Delta\mathbf{W}=\mathbf{W}_{t}-\mathbf{W}^{*}_{t-1}=\mathbf{AB} via low-rank decomposition.
+To regularize low-rank matrices, a straightforward way is to compute individual Fisher matrices for 𝐀\mathbf{A} and 𝐁\mathbf{B}, and apply regularization to each accordingly. This is the approach of Wei et al. (2025). However, focusing solely on the individual low-rank matrices ignores the interaction between 𝐀\mathbf{A} and 𝐁\mathbf{B}, which is problematic because each element of the update Δ​𝐖\Delta\mathbf{W} depends on their joint product, i.e., Δ​𝐖i​j=∑k=1r𝐀i​k​𝐁k​j\Delta\mathbf{W}_{ij}=\sum_{k=1}^{r}\mathbf{A}_{ik}\mathbf{B}_{kj}. In Appendix A.1.1, we mathematically prove that regularization performed separately in the low-rank space generally diverges from that performed in the full-dimensional space. Another way to regularize low-rank matrices is to precompute the Fisher matrix on the pre-trained model and then apply the regularization to the update Δ​𝐖=𝐀𝐁\Delta\mathbf{W}=\mathbf{AB} using this fixed Fisher matrix (Xiang et al., 2023). However, this estimation also includes directions associated with the frozen 𝐖0\mathbf{W}_{0}, which can introduce noise in measuring sensitivity to the loss. This issue is further illustrated in Appendix A.1.2. In Table 1, we can observe that the two naïve methods for regularizing low-rank matrices result in suboptimal performance.
+To address the above limitations, we propose updating parameters in the low-rank space while regularizing over the full-dimensional subspace of 𝐖\mathbf{W} spanned by 𝐀\mathbf{A} and 𝐁\mathbf{B}, as illustrated in Figure 1 (b). This ensures that the penalty captures the true sensitivity of the model output to low-rank updates, rather than merely the local gradient magnitudes. Consequently, we reformulate Eq. 2 as:
+ℒt′​(𝐀,𝐁)=ℒt​(𝐀,𝐁)+λ2​vec⁡(𝐀𝐁)⊤​𝐅t−1cum​vec⁡(𝐀𝐁)\mathcal{L}^{\prime}_{t}(\mathbf{A},\mathbf{B})=\mathcal{L}_{t}(\mathbf{A},\mathbf{B})+\frac{\lambda}{2}\operatorname{vec}(\mathbf{AB})^{\top}\mathbf{F}_{t-1}^{\text{cum}}\operatorname{vec}(\mathbf{AB})
+(3)
+where vec⁡(𝐀𝐁)\operatorname{vec}(\mathbf{AB}) is flattened 𝐀𝐁\mathbf{AB}. This formulation enables regularization in the full-dimensional subspace Δ​𝐖\Delta\mathbf{W}, without requiring explicit storage of vec⁡(𝐀𝐁)\operatorname{vec}(\mathbf{AB}). After training on 𝒯t\mathcal{T}_{t}, we estimate 𝐅t\mathbf{F}_{t} and incorporate it into the previously accumulated Fisher matrix to obtain the updated Fisher 𝐅tcum\mathbf{F}_{t}^{\text{cum}}.
+To estimate the Fisher matrix 𝐅t\mathbf{F}_{t} at the optimal parameters 𝐖t∗\mathbf{W}_{t}^{*} for task 𝒯t\mathcal{T}_{t}, we follow the definition in (Martens, 2020). Specifically, the ii-th diagonal element of 𝐅t\mathbf{F}_{t} is defined as:
+Fti,i=𝔼x∼𝒟t​[𝔼y∼p𝐖t∗​[(∂log⁡p𝐖​(y|x)∂wi|𝐖=𝐖t∗)2]]F_{t}^{i,i}=\mathbb{E}_{x\sim\mathcal{D}_{t}}\bigg[\mathbb{E}_{y\sim p_{\mathbf{W}^{*}_{t}}}\bigg[\bigg(\frac{\partial\log p_{\mathbf{W}}(y|x)}{\partial w_{i}}\bigg|_{\mathbf{W}=\mathbf{W}^{*}_{t}}\bigg)^{2}\bigg]\bigg]
+(4)
+The outer expectation in Eq. 4 is computed over the current task data 𝒟t\mathcal{D}_{t}, while the inner expectation is approximated using the empirical Fisher for computational efficiency. In practice, this inner expectation can be estimated by taking the squared gradients of the log-likelihood with respect to 𝐖\mathbf{W}, evaluated at 𝐖t∗\mathbf{W}_{t}^{*}. Since only the low-rank update Δ​𝐖\Delta\mathbf{W} is trainable, the gradient with respect to 𝐖\mathbf{W} and Δ​𝐖\Delta\mathbf{W} are identical. Consequently, the Fisher matrix is effectively computed in the Δ​𝐖\Delta\mathbf{W}- space. The equivalence between estimating the Fisher information in the 𝐖\mathbf{W}-space and in the Δ​𝐖\Delta\mathbf{W}-space is established in Appendix A.1.3.
+3.3 Overview of EWC-LoRA
+Figure 1: Overview of learning task 𝒯t\mathcal{T}_{t} at a specific layer of the ViT model. (a) Prior low-rank CL methods structurally isolate task-specific LoRA parameters by adding a new LoRA branch for each task. (b) The proposed EWC-LoRA employs a shared LoRA module that is learned across all tasks and regularized according to parameter importance measured by a Fisher Information Matrix, which is updated after learning each task.
+Figure 1 illustrates the difference between EWC-LoRA and existing state-of-the-art low-rank CL methods, in the context of learning task 𝒯t\mathcal{T}_{t} at a specific layer of the Vision Transformer (ViT).
+For task 𝒯t\mathcal{T}_{t}, we initialize the shared LoRA branch, and the forward computation is given by: 𝐟=𝐖t−1​𝐱+𝐀𝐁𝐱\mathbf{f}=\mathbf{W}_{t-1}\mathbf{x}+\mathbf{A}\mathbf{B}\mathbf{x}. Specifically, 𝐀\mathbf{A} is zero-initialized, while 𝐁\mathbf{B} is drawn from a uniform distribution. During training on 𝒯t\mathcal{T}_{t}, only 𝐀\mathbf{A} and 𝐁\mathbf{B} are updated, while the base weights 𝐖t−1\mathbf{W}_{t-1} keep frozen. After completing task 𝒯t\mathcal{T}_{t}, the learned parameters are integrated to the base weight as 𝐖t=𝐖t−1+𝐀𝐁\mathbf{W}_{t}=\mathbf{W}_{t-1}+\mathbf{A}\mathbf{B}. For any sample from a previous task, the forward computation becomes 𝐟=𝐖t​𝐱\mathbf{f}=\mathbf{W}_{t}\mathbf{x}.
+During training, the update of the low-rank matrices 𝐀\mathbf{A} and 𝐁\mathbf{B} are regularized using the accumulated Fisher matrix 𝐅t−1cum\mathbf{F}_{t-1}^{\text{cum}} from step t−1t-1. Accordingly, EWC-LoRA maintains only two states after learning step tt:
+(1) the updated model parameters 𝐖t\mathbf{W}_{t} obtained from the current task 𝒯t\mathcal{T}_{t}, and
+(2) the accumulated Fisher matrix 𝐅tcum\mathbf{F}_{t}^{\text{cum}}, a diagonal matrix that aggregates information from all previous tasks 𝒯1:t\mathcal{T}_{1:t}.
+The dataset 𝒟t\mathcal{D}_{t} and the task-specific Fisher matrix 𝐅t\mathbf{F}_{t} can then be discarded. For clarity, we outline the learning procedure of EWC-LoRA in Algorithm 1, provided in Appendix A.2.1. For computational and memory efficiency, the only additional memory cost of EWC-LoRA comes from storing the FIM. However, due to the low-rank parameterization, EWC-LoRA incurs only a modest memory overhead while achieving higher computational efficiency than existing low-rank CL methods. A detailed efficiency analysis is provided in Section 4.2.
+Table 1: Comparison of different Fisher estimation strategies on CIFAR-100. “+ Mem.” indicates the additional memory required for Fisher estimation and regularization during training.
+Strategy
+A¯10\overline{A}_{10}
+Avg.
+Stability
+Plasticity
++ Mem.
+w/o 𝐅\mathbf{F}
+82.99(0.84)82.99_{(0.84)}
+89.74(0.58)89.74_{(0.58)}
+87.56(0.09)87.56_{(0.09)}
+98.86(0.09)\textbf{98.86}_{(0.09)}
+0 GB
+Precomputed 𝐅𝐖\mathbf{F}_{\mathbf{W}}
+83.87(0.21)83.87_{(0.21)}
+89.36(0.49)89.36_{(0.49)}
+93.15(0.45)93.15_{(0.45)}
+94.74(0.56)94.74_{(0.56)}
+1 GB
+Separate 𝐅𝐀,𝐅𝐁\mathbf{F}_{\mathbf{A}},\mathbf{F}_{\mathbf{B}}
+86.41(0.69)86.41_{(0.69)}
+91.33(0.50)91.33_{(0.50)}
+94.23(0.46)94.23_{(0.46)}
+96.47(0.21)96.47_{(0.21)}
+4 GB
+𝐅Δ​𝐖\mathbf{F}_{\Delta\mathbf{W}} (Ours)
+87.91(0.57)\textbf{87.91}_{(0.57)}
+92.27(0.39)\textbf{92.27}_{(0.39)}
+94.45(0.59)\textbf{94.45}_{(0.59)}
+97.99(0.50)97.99_{(0.50)}
+6 GB
+4 Experiments
+4.1 Benchmarks
+Datasets.
+In line with existing continual learning methods (Wang et al., 2023; Liang & Li, 2024; Wu et al., 2025), we evaluate the performance of EWC-LoRA under two settings:
+(1) Four widely used CL vision benchmarks, including CIFAR-100 (Krizhevsky et al., 2009), DomainNet (Peng et al., 2019; Wang et al., 2022a), ImageNet-R (Hendrycks et al., 2021a; Wang et al., 2022b), and ImageNet-A (Hendrycks et al., 2021b); and (2) A standard language CL benchmark with five text classification datasets: AG News, Amazon Reviews, Yelp Reviews, DBpedia, and Yahoo Answers. Following Wang et al. (2023), we evaluate the models under three different task orders. The detailed task order is provided in Appendix A.3.
+CIFAR-100 consists of 100 natural image classes and is the most commonly used dataset in continual learning.
+DomainNet includes 345 classes across six diverse visual domains, making it a challenging multi-domain benchmark. Note that similar to Liang & Li (2024), DomainNet is split as a class-incremental learning problem.
+ImageNet-R contains 200 ImageNet classes (Deng et al., 2009) rendered with various artistic styles, introducing significant distribution shifts. ImageNet-A consists of 200 natural adversarial examples that are frequently misclassified by standard ImageNet-trained models. We follow the mostly used task splits for continual learning benchmarks: CIFAR-100 is divided into 10 tasks (10 classes per task); DomainNet into 5 tasks (69 classes per task); ImageNet-A into 10 tasks (20 classes each); ImageNet-R into 5, 10, and 20 tasks (with 40, 20, and 10 classes per task, respectively).
+Evaluation metrics.
+We adopt accuracy as our evaluation metric, in line with standard practice (Lopez-Paz & Ranzato, 2017; Chaudhry et al., 2019). Let At,iA_{t,i} denote the classification accuracy on the ii-th task after training on the tt-th task. The average accuracy at learning step tt is defined as: A¯t=1t​∑i=1tAt,i\overline{A}_{t}=\frac{1}{t}\sum_{i=1}^{t}A_{t,i}. The overall average accuracy is then computed as the mean of all intermediate averages: Avg.=1T​∑t=1TA¯t\text{Avg.}=\frac{1}{T}\sum_{t=1}^{T}\overline{A}_{t}, where TT is the total number of tasks.
+To further analyze a model’s stability and plasticity and to enable intuitive comparisons across tasks, we propose measuring each metric on a normalized scale. Specifically, the stability score is defined as one minus the normalized forgetting:
+Stability=1−F¯=1−1T−1​∑i=1T−1maxt<T⁡At,i−AT,imaxt<T⁡At,i\text{Stability}=1-\overline{F}=1-\frac{1}{T-1}\sum_{i=1}^{T-1}\frac{\max_{t<T}A_{t,i}-A_{T,i}}{\max_{t<T}A_{t,i}}
+(5)
+where normalized forgetting F¯\overline{F} represents the relative drop in a task’s performance from its peak to the end of continual learning. For each task ii, plasticity is defined as the ratio between the model’s performance on the task after learning it and the corresponding reference performance. The overall plasticity is defined as:
+Plasticity=1T​∑i=1TAi,iAi,iref\text{Plasticity}=\frac{1}{T}\sum_{i=1}^{T}\frac{A_{i,i}}{A_{i,i}^{\text{ref}}}
+(6)
+where Ai,irefA_{i,i}^{\text{ref}} denotes the accuracy obtained by fine-tuning a model exclusively on task ii. This normalization facilitates intuitive comparison across tasks and methods.
+Implementation details.
+Following prior works (Wang et al., 2022c; Wang et al., 2023; Smith et al., 2023; Liang & Li, 2024), we adopt the ViT-B/16 backbone (Dosovitskiy et al., 2020) pretrained on ImageNet-21K in a supervised manner as the initialization for vision models, and use the pre-trained encoder–decoder T5-large and LLaMA-3.2-1B-Instruct for language tasks.
+To facilitate comparison, all methods are implemented within a unified framework. We align the experimental setup with that of InfLoRA (Liang & Li, 2024), fine-tuning the model with the Adam optimizer using hyperparameters β1=0.9\beta

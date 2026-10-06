@@ -1,0 +1,466 @@
+SnapStream: Efficient Long Sequence Decoding on Dataflow Accelerators (https://arxiv.org/pdf/2511.03092v1)
+citeturn2051view0 [wordlim: 200] Crawled: 3 weeks ago; Content type: application/pdf; Number of pages: 17; Source: find({"ref_id":"turn2050view0","pattern":"(4)"}); Total lines: 1398
+L107@P1: 2024). We derisk the accuracy of applying SnapKV and
+L108@P1: StreamingLLM together by benchmarking Llama 3.1 8B Instruct on LongBench, RULER, and ∞Bench and DeepSeekR1 671B on LongBench-v2, AIME24, and LiveCodeBench.
+L109@P1: For DeepSeek-R1, our application of SnapStream in a TP16
+L110@P1: deployment results in a 4× reduction in KV cache memory
+L111@P1: and a 4.3× improvement in decoding throughput, while
+L112@P1: incurring at most 5% higher latency during prefill. SnapStream enables prefill and decoding for long sequences with
+L126@P1: • We show that SnapStream results in minimal accuracy
+L127@P1: degradation by benchmarking Llama 3.1 8B Instruct
+L128@P1: and DeepSeek-R1-0528 on both long sequence benchmarks and reasoning benchmarks.
+L129@P1: • We demonstrate the efficacy of SnapStream by measuring 4× higher maximum batch size and 4.3× higher
+L130@P1: throughput during decoding when applied to a TP16
+L131@P1: deployment of DeepSeek-R1.
+L132@P1: 2 PRELIMINARIES
+L133@P1: 2.1 Continuous Batching
+L134@P1: LLM serving is defined by two stages of computation: the
+L241@P2: indicated by the difference between their batching preferences. Disaggregated Continuous Batching (DCB) (Zhong
+L242@P2: et al., 2024) proposes to resolve this contention by assigning
+L243@P2: separate resources to the prefill and decoding phases and
+L244@P2: only transferring KV caches between nodes. (Zhong et al.,
+L245@P2: 2024) show that DCB can sustain up to a 7.4× request rate
+L246@P2: compared to the leading CB baselines on a 32-GPU, 4-node
+L247@P2: setup.
+L248@P2: 2.2 Reconfigurable Dataflow Units (RDUs)
+L458@P4: the Appendix). When the rolling window is implemented as
+L459@P4: a ring buffer, we only need to scatter new keys and values
+L460@P4: into the appropriate index during decoding (see Figure 3(d)).
+L461@P4: This requires us to prepare the ring buffer structure during
+L462@P4: the prefill phase, which involves two gather calls for the
+L463@P4: sequence indices before and after the prefill length index.
+L464@P4: See Listing 4 in the Appendix for a PyTorch-style implementation of the ring buffer construction, and Figure 4 for a
+L465@P4: visualization of where the two gather calls are placed along
+L466@P4: the sequence dimension.
+L467@P4: 0 1 2 … 21 22 23 24 25 26 27 28 …
+L468@P4: 21 22 23 24 25 26 27 28
+L469@P4: 25 26 23 24
+L470@P4: 27
+L471@P4: 0 25 26 27 24
+L472@P4: Range 1 Range 2
+L473@P4: StreamingLLM
+L474@P4: Ring Buffer
+L475@P4: Ring Buffer
+L476@P4: Selection Boundary
+L477@P4: Prefill
+L478@P4: Decoding
+L479@P4: New token update
+L480@P4: Prefill Tokens Padding
+L481@P4: SnapStream
+L482@P4: Compressed KV Cache
+L483@P4: Figure 4. An example of how the SnapStream ring buffer is constructed during prefill, and how it is updated during decoding. See
+L484@P4: Listing 4in the Appendix for prefill pseudocode. Given an input
+L485@P4: sequence with L = 26, Lsink = 1, Lrecent = 4, we gather KVs
+L486@P4: from indices 21-24 as Range 1 and 25-28 as Range 2. The ring
+L487@P4: buffer is constructed with indices 0-1 from Range 2 and indices
+L488@P4: 2-3 from Range 1. During decoding, we replace the KV for token
+L489@P4: index 23 with the KV for the newly generated index 27.
+L490@P4: 3.2.2 Recomputing Attention for SnapKV
+L491@P4: In implementing SnapKV, we generally follow the original procedure outlined in Section 2.4, except that eviction
+L492@P4: candidates in SnapStream exclude sink tokens. We define
+L493@P4: Qobs = [qL−Lobs , ..., qL] as the query projections of the most
+L494@P4: recent Lobs tokens and Kevict = [kLsink+1, ..., kL−Lrecent ] as
+L495@P4: the key projections of the set of eviction candidates. Then,
+L496@P4: the top-K indices I are computed exactly as in Equations 1
+L497@P4: and 2, except that W ∈ R
+L498@P4: B×N×Lobs×Levict is defined as
+L499@P4: W = softmax 
+L500@P4: Q
+L501@P4: ⊺
+L502@P4: obsKevict
+L503@P4: √
+L504@P4: d
+L505@P4: 
+L506@P4: (3)
+L542@P5: Send compressed
+L543@P5: KV cache to
+L544@P5: decode node
+L545@P5: Figure 5. High-level block diagram of the modified MoE prefill
+L546@P5: graph incorporating SnapStream compression. The graph is decomposed into multiple fused kernels, indicated by green boxes.
+L547@P5: for the construction of an attention mask that masks out any
+L548@P5: padding tokens in the Top-K section of the cache during
+L549@P5: decoding.
+L550@P5: 3.3 Decoding
+L551@P5: By constructing the KV cache as a ring buffer, the decoding
+L552@P5: stage of a SnapStream deployment remains almost exactly
+L553@P5: the same as the standard decoding stage using static graphs
+L554@P5: described in Section 2.3, except that the in-place KV updates are performed at the modified position Lrb defined in
+L555@P5: Equation 4. This means that we do not have to introduce
+L556@P5: any additional buffers from tensor indexing and concatenation that may be introduced by a na¨ıve implementation of
+L557@P5: StreamingLLM (see Listing 2 in the Appendix). In particular, any fused kernels developed for decoding, such as those
+L558@P5: described in Section 4.1, may be used without modification.
+L559@P5: Lrb = (L + 1 − Lsr) mod Lrecent + (Lsr) (4)
+L560@P5: 4 IMPLEMENTATION
+L561@P5: Our goal in formulating SnapStream is to bridge the implementation gap between KV cache compression and LLM
+L562@P5: deployments, particularly for frameworks that use static
+L563@P5: graphs. We demonstrate the effectiveness of our approach by
+L564@P5: applying SnapStream to a real deployment of a SoTA reasoning LLM, DeepSeek-R1-0528 (DeepSeek-AI et al., 2025a),
+L565@P5: on the SN40L accelerator. In this section, we describe the
+L566@P5: kernel fusion and tensor sharding decisions, known as a
+L567@P5: “mapping”, for a deployment of DeepSeek-R1-0528 on a
+L568@P5: single node of 16×SN40Ls. Separate mappings are created
+L569@P5: for prefill and decoding that optimize for each phase’s respective SLOs. We also show how SnapStream integrates
+L570@P5: seamlessly into these mappings.
+L571@P5: 4.1 Prefill
+L572@P5: The minimum prefill deployment unit consists of a single
+L573@P5: node (16 RDUs), executed under 16-way tensor parallelism
+L574@P5: (TP16). Prefill runs at batch size 1 in a continuous batching
+L575@P5: style.
+L576@P5: AGCUs
+L577@P5: S
+L578@P5: FCMU
+L579@P5: S
+L580@P5: S S
+L581@P5: FCMU
+L582@P5: S
+L583@P5: S
+L584@P5: FCMU
+L585@P5: S S
+L586@P5: FCMU
+L587@P5: S
+L588@P5: FCMU
+L589@P5: S
+L590@P5: S
+L591@P5: FCMU
+L592@P5: S
+L593@P5: S
+L594@P5: FCMU
+L595@P5: S
+L596@P5: FCMU
+L597@P5: S
+L598@P5: FCMU
+L599@P5: S S
+L600@P5: FCMU
+L601@P5: S
+L602@P5: FCMU
+L603@P5: S S
+L604@P5: FCMU
+L605@P5: S
+L606@P5: FCMU
+L607@P5: S
+L608@P5: FCMU
+L609@P5: S
+L610@P5: FCMU
+L611@P5: S
+L612@P5: FCMU
+L613@P5: S
+L614@P5: FCMU
+L615@P5: S
+L616@P5: S
+L617@P5: FCMU
+L618@P5: S
+L619@P5: S
+L620@P5: FCMU
+L621@P5: S
+L622@P5: FCMU
+L623@P5: S
+L624@P5: FCMU
+L625@P5: S
+L626@P5: FCMU
+L627@P5: S
+L628@P5: FCMU
+L629@P5: S
+L630@P5: FCMU
+L631@P5: S
+L632@P5: FCMU
+L633@P5: S S
+L634@P5: FCMU
+L635@P5: S
+L636@P5: FCMU
+L637@P5: S S
+L638@P5: FCMU
+L639@P5: S
+L640@P5: FCMU
+L641@P5: S
+L642@P5: FCMU
+L643@P5: S
+L644@P5: FCMU
+L645@P5: S
+L646@P5: FCMU
+L647@P5: S
+L648@P5: FCMU
+L649@P5: S
+L650@P5: FCMU
+L651@P5: S
+L652@P5: FCMU
+L653@P5: S
+L654@P5: FCMU
+L655@P5: S
+L656@P5: AGCUs
+L657@P5: Up
+L658@P5: GEMM
+L659@P5: Gate
+L660@P5: GEMM
+L661@P5: Down
+L662@P5: GEMM
+L663@P5: UP
+L664@P5: GEMM
+L665@P5: Gate
+L666@P5: GEMM
+L667@P5: Down
+L668@P5: GEMM
+L669@P5: FCMU
+L670@P5: S S
+L671@P5: FCMU
+L672@P5: S
+L673@P5: FCMU
+L674@P5: S
+L675@P5: FCMU
+L676@P5: S
+L677@P5: FCMU
+L678@P5: S
+L679@P5: FCMU
+L680@P5: S
+L681@P5: Routed Expert Weight
+L682@P5: Preload Buffer
+L683@P5: Shared Expert Routed Experts [0:255]
+L684@P5: Figure 6. Spatially pipelined and fused implementation of MoE
+L685@P5: FFN. Data is chunked and streamed through operators in the fused
+L686@P5: kernel, allowing early initiation of P2P communication across
+L687@P5: sockets under TP16 partitioning and overlapping data transfer with
+L688@P5: computation.
+L689@P5: Figure 5 shows a high-level block diagram of the MoE
+L697@P5: is generated by the this kernel. To accommodate SnapStream in prefill, we add two additional kernels to handle
+L698@P5: the construction of the StreamingLLM ring buffer and the
+L699@P5: SnapKV compression, respectively:
+L700@P5: • StreamingLLM Ring Buffer: this kernel fuses four
+L701@P5: gather operations for Range 1 and Range 2 from Figure 4 for each of the key and value caches, as well as
+L702@P5: indexing for the sink tensors. All operations are equally
+L703@P5: sharded across 16 sockets along the head dimension
+L704@P5: N.
+L814@P7: deployment scenario with the mapping of DeepSeek-R1
+L815@P7: described in Section 4 on 16×SN40L sockets. We extend
+L816@P7: the SnapStream maximum KV cache length to 32k and
+L817@P7: evaluate the deployment on an improved long sequence
+L818@P7: benchmark, LongBench-v2, and two short-input reasoning
+L819@P7: tasks, AIME24 and LiveCodeBench. The results in Table 2
+L820@P7: show that this real-life SnapStream deployment is able to
+L821@P7: maintain accuracy with respect to the full KV cache baselines, and in particular, SnapStream is able to outperform
+L838@P7: Summ. (Rouge-L) 25.65 25.65 25.42 25.65
+L839@P7: FS Learning (Misc.) 27.22 27.31 27.23 26.95
+L840@P7: Synthetic (Misc.) 68.19 61.76 68.13 68.47
+L841@P7: Code (Edit Sim) 25.02 24.68 25.58 24.21
+L842@P7: RULER
+L843@P7: Retrieval (EM) 92.72 6.14 60.43 87.38
+L844@P7: MH Tracing (EM) 68.08 3.64 65.24 68.48
+L845@P7: Aggregation (EM) 36.07 37.42 24.92 27.74
+L846@P7: QA (F1) 59.13 45.82 58.78 59.68
+L847@P7: ∞-Bench
+L848@P7: En.QA (F1) 34.82 27.57 34.69 32.44
+L849@P7: Passkey (EM) 100.00 6.78 100.00 100.00
+L850@P7: Number (EM) 99.32 6.44 96.10 92.20
+L851@P7: KV (EM) 87.00 2.4 1.00 59.00
+L860@P7: of 128k and a fixed 32k KV cache length.
+L861@P7: Benchmark Input Length Output Length
+L862@P7: LongBench-v2 84,762 1,296
+L863@P7: AIME24 140 15,424
+L864@P7: LiveCodeBench 476 10,634
+L865@P7: Table 3. Mean input/output token lengths for accuracy benchmarks
+L866@P7: on DeepSeek-R1-0528. Completions are sampled with greedy
+L867@P7: decoding and a maximum sequence length of 128k.
+L868@P7: urations shown in Table 5. As described in Section 3.2,
+L869@P7: SnapKV compression is applied during the prefill stage.
+L870@P7: The additional compression logic introduces a modest latency overhead of approximately 2–5% of the total prefill
+L871@P7: time in the evaluated configurations. Table 4 presents the
+L872@P7: normalized latency breakdown for one MoE layer during
+L873@P7: prefill for DeepSeek-R1 with input sequence size of 128k.
+L874@P7: As expected, we find that the MHA and MoE FFN kernels
+L875@P7: dominate TTFT, and that the two additional SnapStream
+L876@P7: kernels contribute to < 3% of total latency.
+L877@P7: SnapStream compression enables larger decoding batch
+L878@P7: sizes within the fixed memory budget of a 16-socket node,
+L879@P7-8: assuming the model runs entirely in HBM. For long se-SnapStream: Efficient Long Sequence Decoding on Dataflow Accelerators
+L880@P8: Table 4. Normalized latency breakdown per kernel for one prefill
+L881@P8: MoE layer of DeepSeek with input sequence size of 128K.
+L882@P8: Fused Kernels Normalized Latency
+L883@P8: QKV 4.10%
+L884@P8: MHA 69.40%
+L885@P8: Output Proj 5.84%
+L886@P8: Router 3.15%
+L887@P8: MoE FFN 14.67%
+L888@P8: SnapKV Compression 2.52%
+L889@P8: Streaming Ring Buffer 0.32%
+L890@P8: quence sizes, the KV-cache contributes significantly to the
+L891@P8: memory footprint; to avoid replicating the KV-cache across
+L892@P8: sockets, we run the MLA operator with DP16. Combined
+L893@P8: with the 4× compressed KV-cache, this results in a 4× increase in the maximum attainable batch size, as summarized
+L894@P8: in Table 5.
+L895@P8: Table 5 also shows the impact of KV-cache compression
+L896@P8: on decoding throughput when using the maximum batch
+L897@P8: size allowed for each sequence length. Throughput was
+L898@P8: measured on a single 16×SN40L node and averaged over
+L899@P8: 10 runs. The reported values are scaled by 2.4 to account
+L900@P8: for the average number of tokens accepted per forward pass,
+L901@P8: assuming an 80% acceptance rate in Multi-Token Prediction
+L902@P8: (MTP). During decoding, all computations operate directly
+L903@P8: on the compressed KV-cache, eliminating the need for decompression and preserving compute efficiency. The combination of a smaller memory footprint and higher batch-level
+L904@P8: parallelism yields substantial end-to-end throughput gains
+L905@P8: — up to 4.3× — for the evaluated configurations. These
+L906@P8: results highlight that SnapStream not only enables longer
+L907@P8: sequences and larger batches within the same memory budget but also directly improves decode performance through
+L908@P8: better hardware utilization and reduced memory bandwidth
+L909@P8: pressure.
+L910@P8: 6 RELATED WORK
+L911@P8: Sparse attention has received sustained research interest since the introduction of the Transformer architecture (Vaswani et al., 2023). Early works are primarily motivated by improving the O(L
+L912@P8: 2
+L913@P8: ) complexity of attention
+L914@P8: with sparse factorizations (Child et al., 2019), fixed sparse
+L915@P8: patterns (Beltagy et al., 2020), or locality-sensitive hashing (Kitaev et al., 2020). However, such methods require
+L916@P8: training from scratch with these modifications, leading to
+L917@P8: such methods falling out of favor as inroads were made
+L918@P8: by simply scaling pretraining tokens and parameter counts.
+L919@P8: Recent SoTA models have found some success by applying
+L920@P8: sliding-window attention to a subset of their layers (Riviere
+L921@P8: et al., 2024; OpenAI et al., 2025).
+L922@P8: In response to the increased cost of LLM training, researchers have developed a variety of training-free KV cache
+L923@P8: compression methods. StreamingLLM (Xiao et al., 2024b)
+L963@P8-9: admitting the other architectural modifications mentionedSnapStream: Efficient Long Sequence Decoding on Dataflow Accelerators
+L964@P9: Table 5. Effect of SnapStream on maximum decode batch size and throughput for different prefill sequence sizes of a deployment of
+L965@P9: DeepSeek-R1-0528 on 16×SN40L.
+L966@P9: Prefill
+L967@P9: Seq. Size
+L968@P9: Compressed
+L969@P9: Seq. Size
+L970@P9: Max Batch Size
+L971@P9: (No SnapStream)
+L972@P9: Max Batch Size
+L973@P9: (SnapStream)
+L974@P9: Throughput
+L975@P9: (No SnapStream)
+L976@P9: Throughput
+L977@P9: (SnapStream)
+L978@P9: Throughput
+L979@P9: Improvement
+L980@P9: 128K 32K 16 64 434 1832 4.2×
+L981@P9: 64K 16K 32 128 908 3928 4.3×
+L982@P9: 32K 8K 64 256 1832 7903 4.3×
+L983@P9: above requires additional modifications to fused kernels that
+L984@P9: we leave to future work.
+L985@P9: 7 CONCLUSION
+L986@P9: In this paper, we present SnapStream, a training-free KV
+L987@P9: cache compression method that employs SnapKV compression during prefill and a StreamingLLM rolling KV cache
+L988@P9: window during decoding. We describe the details of a static
+L989@P9: graph implementation of this method, as well as the details for a production 16-socket mixed tensor-parallel and
+L990@P9: data-parallel mapping of DeepSeek-R1, on SN40Ls. This
+L991@P9: mapping uses SnapStream to reduce memory pressure and
+L992@P9: increase decoding throughput. We verify that SnapStream
+L993@P9: introduces minimal accuracy degradation on long sequence
+L994@P9: tasks for both Llama 3.1 8B Instruct and DeepSeek-R1,
+L995@P9: as well as additional reasoning and coding tasks for the
+L996@P9: latter model. Finally, we show how our SnapStream mapping enables us to achieve a 4.3× improvement in decoding
+L1235@P12: such a ring buffer during SnapStream prefill.
+L1236@P12: Then, we use prefill_streamingllm_slicing to
+L1237@P12: construct the ring buffer for the full SnapStream KV Cache
+L1238@P12: in Listing 4. This greatly simplifies the decoding stage to
+L1239@P12: a single scatter for each of the key and value tensors in
+L1240@P12-13: Listing 5.SnapStream: Efficient Long Sequence Decoding on Dataflow Accelerators
+L1241@P13: 1 def decode_snapstream_naive(compressed_keys, compressed_values, decode_keys, decode_values
+L1242@P13: , cache_position, sink_token_length, topk_length, recent_token_length, decode_length,
+L1243@P13: valid_topk):
+L1244@P13: 2 ’’’
+L1245@P13: 3 compressed_keys: (batch, n_head, compressed_max_seq_len, key_head_dim) bf16
+L1246@P13: 4 compressed_values: (batch, n_head, compressed_max_seq_len, value_head_dim) bf16
+L1247@P13: 5 decode_keys: (batch, n_head, 1, key_head_dim) bf16
+L1248@P13: 6 decode_values: (batch, n_head, 1, value_head_dim) bf16
+L1249@P13: 7 cache_position: (batch, 1, 1) int32
+L1250@P13: 8 sink_token_length: int
+L1251@P13: 9 topk_length: int
+L1252@P13: 10 recent_token_length: int
+L1279@P13: 31 return compressed_keys, compressed_values
+L1280@P13-14: Listing 2. Na¨ıve SnapStream Decoding KV Cache UpdateSnapStream: Efficient Long Sequence Decoding on Dataflow Accelerators
+L1281@P14: 1 def prefill_streamingllm_slicing(key_states, value_states, sink_token_length,
+L1282@P14: recent_token_length, input_length):
+L1283@P14: 2 ’’’
+L1284@P14: 3 key_states: (batch, n_head, max_seq_len, key_head_dim)
+L1285@P14: 4 value_states: (batch, n_head, max_seq_len, value_head_dim)
+L1286@P14: 5 sink_token_length: int
+L1287@P14: 6 recent_token_length: int
+L1288@P14: 7 input_length: int
+L1289@P14: 8 ’’’
+L1322@P15: 1 def prefill_snapstream_compression(key_states, value_states, attn_weights,
+L1323@P15: sink_token_length, topk_length, recent_token_length, snapkv_observation_length,
+L1324@P15: snapkv_kernel_size, prefill_length):
+L1325@P15: 2 ’’’
+L1326@P15: 3 key_states: (batch, n_head, max_seq_len, key_head_dim)
+L1327@P15: 4 value_states: (batch, n_head, max_seq_len, value_head_dim)
+L1328@P15: 5 attn_weights: (batch, n_head, max_seq_len, max_seq_len)
+L1329@P15: 6 sink_token_length: int
+L1330@P15: 7 topk_length: int
+L1331@P15: 8 recent_token_length: int
+L1332@P15: 9 snapkv_observation_length: int
+L1333@P15: 10 snapkv_kernel_size: int
+L1334@P15: 11 prefill_length: int
+L1335@P15: 12 ’’’
+L1336@P15: 13 streamingllm_keys, streamingllm_values = prefill_streamingllm_slicing(key_states,
+L1337@P15: value_states, sink_token_lnegth, recent_token_length, prefill_length)
+L1338@P15: 14 topk_keys, topk_values = prefill_snapstream_topk(key_states, value_states,
+L1339@P15: attn_weights, sink_token_length, topk_length, recent_token_length,
+L1340@P15: snapkv_observation_length, snapkv_kernel_size, prefill_length)
+L1341@P15: 15 valid_topk = min(max(prefill_length - (sink_token_length + recent_token_length), 0),
+L1342@P15: topk_length)
+L1343@P15: 16 compressed_keys = cat((streamingllm_keys, topk_keys), dim=2)
+L1344@P15: 17 compressed_values = cat((streamingllm_values, topk_values), dim=2)
+L1345@P15: 18 return compressed_keys, compressed_values, valid_topk
+L1346@P15: Listing 4. SnapStream Prefill KV Cache Compression
+L1347@P15: 1 def decode_snapstream_naive(compressed_keys, compressed_values, decode_keys, decode_values
+L1348@P15: , cache_position, sink_token_length, topk_length, recent_token_length, decode_length,
+L1349@P15: valid_topk):
+L1350@P15: 2 ’’’
+L1351@P15: 3 compressed_keys: (batch, n_head, compressed_max_seq_len, key_head_dim) bf16
+L1352@P15: 4 compressed_values: (batch, n_head, compressed_max_seq_len, value_head_dim) bf16
+L1353@P15: 5 decode_keys: (batch, n_head, 1, key_head_dim) bf16
+L1354@P15: 6 decode_values: (batch, n_head, 1, value_head_dim) bf16
+L1355@P15: 7 cache_position: (batch, 1, 1) int32
+L1356@P15: 8 sink_token_length: int
+L1357@P15: 9 topk_length: int
+L1358@P15: 10 recent_token_length: int
+L1359@P15: 11 valid_topk: int
+L1360@P15: 12 ’’’
+L1361@P15: 13 max_kv_length = sink_token_length + recent_token_length + valid_topk
+L1362@P15: 14 ring_buffer_index = (decode_length - sink_token_length + recent_token_length) %
+L1363@P15: recent_token_length + sink_token_length
+L1364@P15: 15 ring_buffer_index = decode_length if decode_length < sink_token_length else
+L1365@P15: ring_buffer_index
+L1366@P15: 16 compressed_keys = scatter(compressed_keys, index=cache_position, src=decode_keys,
+L1367@P15: cache_position)
+L1368@P15: 17 compressed_values = scatter(compressed_values, index=cache_position, src=decode_values
+L1369@P15: , cache_position)
+L1370@P15: 18 return compressed_keys, compressed_values
+L1371@P15-16: Listing 5. SnapStream Decoding KV Cache UpdateSnapStream: Efficient Long Sequence Decoding on Dataflow Accelerators
+L1372@P16: 1 def prefill_snapstream_topk(key_states, value_states, attn_weights, sink_token_length,
+L1373@P16: topk_length, recent_token_length, snapkv_observation_length, snapkv_kernel_size,
+L1374@P16: prefill_length):
+L1375@P16: 2 ’’’
+L1376@P16: 3 key_states: (batch, n_head, max_seq_len, key_head_dim)
+L1377@P16: 4 value_states: (batch, n_head, max_seq_len, value_head_dim)
+L1378@P16: 5 attn_weights: (batch, n_head, max_seq_len, max_seq_len)
+L1379@P16: 6 sink_token_length: int
+L1380@P16: 7 topk_length: int
+L1381@P16: 8 recent_token_length: int
+L1382@P16: 9 snapkv_observation_length: int
+L1383@P16: 10 snapkv_kernel_size: int
+L1384@P16: 11 prefill_length: int
+L1385@P16: 12 ’’’
+L1386@P16: 13 attn_weights_sum = attn_weights[:, :, prefill_length - snapkv_observation_length,
+L1387@P16: prefill_length, :prefill_length - snapkv_observation_length].sum(dim=2)
+--------------------------------------------------------------------------------
+SnapStream: Efficient Long Sequence Decoding on Dataflow Accelerators (https://arxiv.org/pdf/2511.03092v1)
+citeturn2051view1 [wordlim: 200] Crawled: 3 weeks ago; Content type: application/pdf; Number of pages: 17; Source: find({"ref_id":"turn2050view0","pattern":"ring_buffer_index"}); Total lines: 1398
+L1359@P15: 11 valid_topk: int
+L1360@P15: 12 ’’’
+L1361@P15: 13 max_kv_length = sink_token_length + recent_token_length + valid_topk
+L1362@P15: 14 ring_buffer_index = (decode_length - sink_token_length + recent_token_length) %
+L1363@P15: recent_token_length + sink_token_length
+L1364@P15: 15 ring_buffer_index = decode_length if decode_length < sink_token_length else
+L1365@P15: ring_buffer_index
+L1366@P15: 16 compressed_keys = scatter(compressed_keys, index=cache_position, src=decode_keys,
+L1367@P15: cache_position)
+L1368@P15: 17 compressed_values = scatter(compressed_values, index=cache_position, src=decode_values
+L1369@P15: , cache_position)
+L1370@P15: 18 return compressed_keys, compressed_values
+L1371@P15-16: Listing 5. SnapStream Decoding KV Cache UpdateSnapStream: Efficient Long Sequence Decoding on Dataflow Accelerators
+L1372@P16: 1 def prefill_snapstream_topk(key_states, value_states, attn_weights, sink_token_length,
+L1373@P16: topk_length, recent_token_length, snapkv_observation_length, snapkv_kernel_size,
+L1374@P16: prefill_length):
+L1375@P16: 2 ’’’
+

@@ -1,0 +1,11 @@
+# 10504 DR-Arena — 2+2+2=6，必要具体gap深入，拟Ch66
+
+已准入，exactv1未核artifact/复现。旧primary §3 L113–178/§4 L179–349/limits364–375，修复提取追加primary-recovered G2/G3/H L995–1072；不依赖全文/所有attachments。
+
+实时web root+linkedneighbor graph保存网页text/URL/title，anchor/context分类edge关系→选择ancestors/siblings生成depth/width问答rubric；答案暴露entity/filename提示受限。Alg1旧L711–752按前verdict/failuretype改depth或width、both-low降难/high提高/decisive或阈值/maxrounds停止。新增接口是同一个网页图支持题目/条件rubric，随verdict重分配下一difficulty；网站graph深度不等模型reasoning depth，siblingwidth不等真实retrievalcoverage，generatedrubric“source-traceable”不授truth。
+
+关键评价§4四Swissround/每pair30tree、EloBT每轮更新；Spearman.94 vs人类leaderboard仅6modelranking与construct各异，不签subject能力/人类tasktruth。§4.3随机30match/64turn，实际H两位CS本科nativeEnglish先5trial培训，50case盲随机fulltree/flat/nochain偏好不是无偏正确标签。Kappa.91/transition96.9/efficientstop92.2只给所测人工/规则标准，诊断wrongside后改题会selectionbias，failure包含ties不能当总体准确率。model/fullprecision/e2e/tournamentrollouts费用未齐，searchAPI/geo/time漂移真实web snapshot须版本保存，无cachedfixedcontrol不授生产cost普遍改善。
+
+直接反侧原limits+recovered G2/G3：同Examinergenerator/judge既可能用parametricprior修正错误rubric，也会以2009记忆误覆正确2005rubric，答案按rubric一致或judgeoverrides都不能自证truth。不能用pipeline命名借stateownership新贡献；当前真正gap是 source graph→rubric→difficulty 和 fact-preserving更新是否一致的维护接口。
+
+当前Ch66实际L365–372有adaptive evidence allocation/randomaudit，L2482–2488有ranking≠construct和history→nextinput/stopidentity，但不含live source graph被更新时task/checklist/selection三者同步版本及“source-derived vs judgeprior override”的明确双失败口。拟Stateful Evaluation小节后两短段：先冻结websnapshot/retrieval范围，再让图负责候选事实/rubric和下一测试difficulty，judge只proposal并独立核源冲突；保持固定题/独立人工anchor、randomslice和允许Unknown，livegraph变更成本及spuriousdepth诊断/有限correlation/两annotator相邻。请root核必要源/owner差额后决定窄写或真Existing，不借架构术语自动采用。

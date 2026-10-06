@@ -1,0 +1,7679 @@
+Test-Time Training with KV Binding Is Secretly Linear Attention
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+2.1
+Linear Attention
+2.2
+Test-Time Training
+3
+Preliminary
+4
+Empirical Contradictions to Memorization
+4.1
+Better Inner Loss Leads to Worse Performance
+4.2
+TTT with Gradient Ascent
+4.3
+Distributional Asymmetry Between
+Q
+Q
+and
+K
+K
+4.4
+Replacing
+Q
+Q
+with
+K
+K
+5
+TTT is secretly Linear Attention
+5.1
+General Form
+5.2
+Explanation of TTT Empirical Behaviors
+5.3
+Example: LaCT as Linear Attention
+5.4
+Example: ViTTT as Linear Attention
+6
+Practical Implications
+6.1
+Reduce TTT to Linear Attention
+6.2
+Parallel Form of TTT
+7
+Conclusion
+References
+A
+Experiment Setup
+B
+Proof of Theorem
+C
+Proof of Theorem
+Base case.
+Inductive step.
+Output computation.
+D
+Proof of Theorem
+Base case.
+Inductive step.
+Weight accumulation.
+Output computation.
+E
+Derivation: LaCT as Linear Attention
+E.1
+LaCT Architecture and Update Rule
+E.2
+Gradient Computation
+E.3
+Linear Attention Form with Muon
+E.4
+Effect of Weight Normalization
+F
+Derivation: ViTTT GLU as Linear Attention
+F.1
+Architecture and Loss
+F.2
+Gradient Computation
+F.3
+Linear Attention Form
+G
+Derivation: ViTTT Depthwise Convolution as Linear Attention
+G.1
+Architecture and Loss
+G.2
+Gradient Computation
+G.3
+Linear Attention Form
+H
+Parallel Form of TTT
+H.1
+Parallel Formulation
+H.2
+Proof of Equivalence
+Step 1: Unroll the momentum recurrence.
+Step 2: Unroll the weight recurrence.
+Step 3: Compute the sequential output.
+Step 4: Match with parallel formulation.
+I
+Non-Reducible Case Analysis
+I.1
+Case 1: Dynamic Kernel Function (Updating
+W
+0
+W_{0}
+and
+W
+2
+W_{2}
+)
+I.2
+Case 2: Weight Normalization
+License: CC BY 4.0
+arXiv:2602.21204v1 [cs.LG] 24 Feb 2026
+Test-Time Training with KV Binding Is Secretly Linear Attention
+Junchen Liu
+Affiliation:
+NVIDIA
+Affiliation:
+University of Toronto
+Affiliation:
+Vector Institute
+Sven Elflein
+Affiliation:
+NVIDIA
+Affiliation:
+University of Toronto
+Affiliation:
+Vector Institute
+Or Litany
+Affiliation:
+NVIDIA
+Affiliation:
+Technion
+Zan Gojcic
+Affiliation:
+NVIDIA
+Ruilong Li
+Affiliation:
+NVIDIA
+Correspondence to:
+ruilongl@nvidia.com
+Abstract
+Test-time training (TTT) with KV binding as sequence modeling layer is commonly interpreted as a form of online meta-learning that memorizes a key–value mapping at test time. However, our analysis reveals multiple phenomena that contradict this memorization-based interpretation. Motivated by these findings, we revisit the formulation of TTT and show that a broad class of TTT architectures can be expressed as a form of learned linear attention operator. Beyond explaining previously puzzling model behaviors, this perspective yields multiple practical benefits: it enables principled architectural simplifications, admits fully parallel formulations that preserve performance while improving efficiency, and provides a systematic reduction of diverse TTT variants to a standard linear attention form. Overall, our results reframe TTT not as test-time memorization, but as learned linear attention with enhanced representational capacity.
+Keywords:
+Machine Learning, ICML
+1
+Introduction
+Test-Time Training (TTT) has emerged as a powerful paradigm for dynamic model adaptation. Initially introduced to address distribution shift by updating model parameters on unlabeled test inputs,
+TTT has since evolved into a distinct architectural primitive
+(
+Sun et al., 2020
+)
+.
+Recent work has increasingly framed TTT as an alternative to standard softmax attention in transformers,
+offering favorable properties like linear-time compute and constant memory usage
+during autoregressive inference
+(
+Zhang et al., 2025
+;
+Behrouz et al., 2024
+)
+.
+Among the various TTT formulations, this paper focuses on TTT with KV binding
+(
+Sun et al., 2025
+;
+Zhang et al., 2025
+;
+Han et al., 2025
+;
+Behrouz et al., 2024
+)
+, which optimizes a self-supervised key-value association objective in the inner loop, as opposed to end-to-end methods that backpropagate from the final task loss
+(
+Tandon et al., 2025
+)
+.
+The prevailing interpretation of TTT casts it as a form of online meta-learning or memorization
+(
+Sun et al., 2025
+;
+Finn et al., 2017
+;
+Metz et al., 2018
+)
+,
+where the “inner loop” dynamically constructs a
+temporary key-value (KV) map by optimizing a neural network (e.g., an MLP) on previously observed tokens.
+The subsequent inference step is viewed as querying this stored knowledge.
+This perspective has led to increased complexity in recent architectural designs,
+motivating the use of sophisticated optimizers, normalization schemes,
+and deep inner-loop networks
+(
+Zhang et al., 2025
+;
+Han et al., 2025
+;
+Behrouz et al., 2024
+;
+Behrouz et al., 2025a
+;
+Dalal et al., 2025
+)
+,
+all explicitly designed to improve the fidelity of this “memorization”.
+The Memorization Paradox.
+Yet, this interpretation of TTT as “test-time memorization” can be directly contradicted by empirical evidence. If TTT would truly function by explicitly learning and retrieving key–value associations, its behavior would conform to basic principles of memory formation and optimization dynamics. Contrary to this expectation, we identify systematic anomalies that directly contradict this hypothesis:
+•
+Distributional Asymmetry.
+Unlike standard attention, in which queries and keys share the same semantic space, converged TTT models exhibit a significant distributional mismatch between queries and keys.
+•
+Replacing queries with keys.
+Replacing queries with keys for TTT models has negligible effect on the task performance, suggesting that queries do not play a functional retrieval role as in standard attention.
+•
+Optimization vs. Performance.
+Counterintuitively, improvements in the inner loop, which can be interpreted as stronger “memorization”, do not guarantee better downstream performance.
+•
+The Gradient Ascent Anomaly.
+Most strikingly, we find that replacing inner-loop gradient descent with gradient ascent always preserves, and in some cases even improves, task performance.
+These observations collectively challenge the prevailing view of TTT as an online meta-learning or key-value memorization mechanism.
+TTT is Secretly Linear Attention.
+Motivated by these observations, and by prior work showing that TTT reduces to linear attention in the restricted case of a single linear inner-loop layer with zero initialization
+(
+Sun et al., 2025
+)
+, we revisit the mathematical formulation of TTT. We show analytically that even TTT variants with complex fast-weight parameterizations (including multi-layer MLPs and momentum) can be equivalently rewritten as a form of learned linear attention operator
+(
+Katharopoulos et al., 2020
+)
+.
+Under this unified view, the inner loop does not perform “meta learning” in the conventional sense. Instead, it induces a structured, history-dependent mixing of query, key, and value vectors. This perspective resolves the empirical paradoxes identified above:
+gradient ascent preserves performance because sign inversions are absorbed into the learned value projection, and distributional symmetry between queries and keys is unnecessary because the mechanism operates as a feature mixer rather than a similarity-based retrieval system.
+Practical Implications.
+Unmasking TTT as Linear Attention is not just a theoretical exercise; it unlocks significant practical benefits. By adopting this perspective, we:
+•
+Simplify.
+We show that many components introduced in prior TTT architectures, such as weight normalization and momentum, are often redundant.
+•
+Parallelize.
+We derive a fully parallel form of TTT that achieves up to 4.0
+×
+\times
+inference throughput on attention calculation while maintaining performance.
+•
+Generalize.
+We provide systematic reduction of diverse TTT variants to a common linear attention form, suggesting that TTT is best understood as a flexible learned linear attention mechanism with enhanced representational capacity which opens up an increased design space.
+2
+Related Work
+2.1
+Linear Attention
+Recurrent Neural Networks (RNNs) have recently gained renewed interest as efficient alternatives to standard Transformers
+(
+Vaswani et al., 2017
+)
+.
+The introduction of linear attention
+(
+Katharopoulos et al., 2020
+)
+has accelerated advances in RNN-based architectures,
+leading to the incorporation of various mechanisms such as
+token-dependent decay factors
+(
+Gu et al., 2021
+;
+Smith et al., 2023
+;
+Orvieto et al., 2023
+;
+Peng et al., 2023
+;
+Sun et al., 2023
+)
+and, more recently,
+data-dependent decay
+(
+Qin et al., 2023
+;
+Qin et al., 2024
+;
+Peng et al., 2024
+;
+Gu and Dao, 2024
+;
+Dao and Gu, 2024
+;
+Zhang et al., 2024
+;
+Yang et al., 2024a
+)
+.
+The data-dependent decay factor, termed the selective mechanism in Mamba
+(
+Gu and Dao, 2024
+;
+Dao and Gu, 2024
+)
+,
+has been highlighted as crucial for strong in-context learning performance. DeltaNet
+(
+Schlag et al., 2021
+)
+conditions the update rule on both the current token and state for improved retrieval,
+and chunk-parallelization
+(
+Yang et al., 2024b
+)
+has enabled its efficient deployment in many recent architectures
+(
+Yang et al., 2024a
+;
+Peng et al., 2025a
+;
+Behrouz et al., 2024
+;
+Zhong et al., 2025
+;
+Team et al., 2025
+;
+Peng et al., 2025b
+;
+Lei et al., 2025
+;
+Liu et al., 2024
+)
+.
+Notably, DeltaNet and its variants are equivalent to TTT with a single linear layer and MSE loss
+(
+Yang et al., 2024a
+)
+.
+2.2
+Test-Time Training
+Test-time training (TTT) broadly refers to methods that continue to update model parameters during inference.
+This concept was first introduced to address train-test distribution shift
+(
+Sun et al., 2020
+;
+Gandelsman et al., 2022
+)
+,
+where models adapt to test data by optimizing a self-supervised objective at inference time.
+Subsequently, TTT has been explored for improving inference-time performance in specific applications
+such as 3D reconstruction
+(
+Chen et al., 2024
+;
+Chen et al., 2025
+;
+Yuan et al., 2025
+)
+.
+More recently, TTT has been developed as a sequence modeling architecture with linear complexity,
+serving as an alternative to softmax attention in transformers
+(
+Sun et al., 2025
+;
+Wang et al., 2025
+;
+Zhang et al., 2025
+;
+Han et al., 2025
+;
+Dalal et al., 2025
+;
+Behrouz et al., 2024
+)
+.
+When used as a sequence modeling layer, TTT has two main variants:
+(1) methods that use a key-value binding loss (e.g., dot-product or MSE loss) as the inner-loop objective
+(
+Sun et al., 2025
+;
+Zhang et al., 2025
+;
+Han et al., 2025
+;
+Behrouz et al., 2024
+)
+, referred to as TTT-KVB in prior work
+(
+Tandon et al., 2025
+)
+, and
+(2) methods that perform end-to-end backpropagation through the inner loop from the final task loss (e.g., cross-entropy in language modeling), referred to as TTT-E2E
+(
+Tandon et al., 2025
+)
+.
+This paper focuses on the first variant.
+TTT has demonstrated effectiveness across diverse tasks,
+including language modeling
+(
+Sun et al., 2025
+;
+Wang et al., 2025
+;
+Zhang et al., 2025
+)
+,
+video generation
+(
+Dalal et al., 2025
+;
+Zhang et al., 2025
+)
+, novel view synthesis
+(
+Zhang et al., 2025
+)
+,
+and image classification
+(
+Han et al., 2025
+)
+.
+In this paradigm, part of the model parameters (known as fast weights
+(
+Hinton and Plaut, 1987
+)
+) are updated online at test time
+using a self-supervised key-value association loss, with the goal of memorizing history associations.
+Since this nested optimization is performed in-context, TTT is also referred to as in-context meta-learning
+(
+Finn et al., 2017
+;
+Metz et al., 2018
+)
+and
+is tightly related to the concept of fast weight programming
+(
+Schlag et al., 2021
+)
+and test-time scaling
+(
+Muennighoff et al., 2025
+;
+Snell et al., 2024
+)
+.
+The design space of TTT is rich and has been actively explored.
+LaCT
+(
+Zhang et al., 2025
+)
+improves hardware utilization through large chunk sizes.
+Based on the key-value memorization perspective, other works have explored advanced
+test-time optimizers
+(
+Behrouz et al., 2024
+;
+Zhang et al., 2025
+;
+Karami et al., 2025
+)
+and alternative regression targets
+(
+Han et al., 2025
+;
+Behrouz et al., 2025b
+)
+.
+Notably, prior work has shown that when the inner loop consists of a single linear layer, TTT can be reinterpreted as a linear attention operator
+(
+Sun et al., 2025
+)
+. In this work, we demonstrate that this interpretation extends to general TTT architectures with complex multi-layer MLPs as inner loops, and show that this perspective enables practical benefits including simplified formulations and efficient parallel implementations.
+Figure 1
+:
+Inner-Loop Optimization vs. Performance
+. Increasing inner-loop iterations improves inner-loop loss but degrades task performance, contradicting the memorization-based interpretation of TTT. Experiments are based on LaCT
+(
+Zhang et al., 2025
+)
+.
+3
+Preliminary
+We provide a brief overview of the TTT mechanism that this paper focuses on.
+In TTT, each sequence modeling layer maintains a set of fast weights
+f
+θ
+f_{\theta}
+(typically a lightweight MLP) that is updated
+during both training and inference
+.
+Given an input sequence, tokens are first projected into keys
+K
+K
+, values
+V
+V
+, and queries
+Q
+Q
+(similar to standard attention).
+The core idea is to perform
+online gradient descent
+on
+f
+θ
+f_{\theta}
+using a self-supervised key-value binding objective:
+for each token, the key
+k
+k
+serves as input and the value
+v
+v
+serves as the regression target, i.e.,
+ℒ
+=
+‖
+f
+θ
+​
+(
+k
+)
+−
+v
+‖
+2
+\mathcal{L}=\|f_{\theta}(k)-v\|^{2}
+(or a dot-product loss variant).
+After updating
+θ
+\theta
+with this objective, the query
+q
+q
+is passed through the updated function
+f
+θ
+f_{\theta}
+to produce the output.
+This mechanism is commonly interpreted as a
+storage-and-retrieval
+system
+(
+Sun et al., 2025
+;
+Finn et al., 2017
+)
+: the inner-loop optimization “memorizes” key-value associations into
+f
+θ
+f_{\theta}
+,
+which are later “retrieved” by querying the learned function.
+Under this view, architectural capacity, optimizer selection, and the number of inner-loop steps are all motivated by achieving more faithful memorization of key–value associations.
+This variant of test-time training, which optimizes a key-value binding objective in the inner loop, is referred to as TTT-KVB in prior work
+(
+Tandon et al., 2025
+)
+.
+Among the various TTT formulations
+(
+Sun et al., 2025
+;
+Gandelsman et al., 2022
+;
+Sun et al., 2020
+;
+Tandon et al., 2025
+)
+, this paper exclusively focuses on this variant.
+4
+Empirical Contradictions to Memorization
+As we show in this section, the empirical behavior of TTT models consistently violates the properties implied by the storage-and-retrieval interpretation.
+4.1
+Better Inner Loss Leads to Worse Performance
+Under a memorization-based interpretation, inner-loop loss serves as a natural proxy for memorization quality: lower loss indicates more accurate encoding of key–value mappings and should therefore improve task performance.
+To test this property, we vary the number of inner-loop gradient steps at inference time, which usually yields lower inner-loop loss in pretrained TTT models
+(
+Zhang et al., 2025
+;
+Han et al., 2025
+)
+, without changing the architecture, training data, or learned parameters.
+Figure
+1
+shows that despite improved inner-loop fitting, downstream performance degrades consistently as the number of inner-loop steps increases. This inverse relationship holds across both LLMs and novel view synthesis (NVS) tasks. Such behavior directly contradicts the memorization-based interpretation of TTT, under which more accurate key–value fitting should be beneficial, or at least not harmful for the downstream performance. Instead, these results indicate that the inner loop affects model computation in a fundamentally different manner, inconsistent with conventional notions of test-time memory.
+4.2
+TTT with Gradient Ascent
+The degradation in downstream performance with improved inner-loop fitting raises a more fundamental question:
+is gradient-descent-based memorization in the inner loop necessary at all?
+To test this, we replace gradient descent in the inner loop with
+gradient ascent
+, effectively flipping the sign of all fast-weight gradients. Under a memorization-based interpretation, this change should have a strong negative effect, as gradient ascent explicitly worsens the fit to the key–value regression objective.
+Contrary to this expectation, across all evaluated models and tasks, TTT with gradient ascent performs comparably to, and in some cases even slightly better than, standard gradient descent (Table
+1
+). This holds despite the fact that gradient ascent consistently increases the inner-loop loss.
+Notably, in methods such as LaCT
+(
+Zhang et al., 2025
+)
+, where the inner-loop loss is a Frobenius inner product, flipping the gradient is equivalent to negating the loss itself. The fact that TTT remains effective even under such an inverted objective provides additional evidence that TTT does not rely on memorizing a key–value mapping.
+Table 1
+:
+Observations Contradicting the Storage-and-Retrieval Interpretation of TTT.
+Replacing gradient descent with ascent breaks the storage interpretation, and replacing queries with keys breaks the retrieval interpretation, yet task performance remains mostly unchanged. Experiments are base on LaCT
+(
+Zhang et al., 2025
+)
+and ViTTT
+(
+Han et al., 2025
+)
+.
+Model
+Perplexity
+↓
+\downarrow
+(LaCT-LLM)
+PSNR
+↑
+\uparrow
+(LaCT-NVS)
+Top-1 Acc
+↑
+\uparrow
+(ViTTT)
+Baseline
+16.43
+25.94
+79.34
+Gradient Ascent
+16.19
+25.85
+79.61
+Replace
+Q
+Q
+with
+K
+K
+16.18
+25.95
+79.18
+4.3
+Distributional Asymmetry Between
+Q
+Q
+and
+K
+K
+Figure 2
+:
+Distributional Asymmetry Between
+Q
+Q
+and
+K
+K
+.
+t-SNE visualizations of
+(
+Q
+,
+K
+)
+(Q,K)
+and
+(
+V
+,
+O
+)
+(V,O)
+features in a pretrained LaCT
+(
+Zhang et al., 2025
+)
+model on the NVS task, showing that the TTT inner loop is evaluated out of distribution and thus does not perform reliable retrieval.
+As we mentioned above, TTT is commonly interpreted as a
+storage-and-retrieval
+mechanism. In the previous subsections, we showed that the
+storage
+aspect of this interpretation is empirically inconsistent with model behavior. We now examine whether the
+retrieval
+aspect provides a plausible explanation.
+During the TTT inner-loop update, the parametric function (e.g., MLP) is optimized using keys
+K
+K
+as inputs and values
+V
+V
+as regression targets. After this update, queries
+Q
+Q
+are feed into the same function to produce outputs
+O
+O
+. For such a retrieval process to be effective, the distribution of
+Q
+Q
+must be close to that of the
+K
+K
+used during optimization. Otherwise, the parametric function is evaluated out-of-distribution, and its outputs are not expected to reliably lie on the manifold of
+V
+V
+. In other words, meaningful retrieval requires substantial distributional overlap between
+Q
+Q
+and
+K
+K
+.
+To test this assumption, we analyze the distributions of
+Q
+Q
+and
+K
+K
+in a pretrained LaCT
+(
+Zhang et al., 2025
+)
+model on the NVS task. For each layer, we collect
+Q
+Q
+and
+K
+K
+vectors across all tokens and visualize their distributions using t-SNE
+(
+Maaten and Hinton, 2008
+)
+. As shown in
+Figure
+2
+, we observe a pronounced and consistent mismatch between
+Q
+Q
+/
+K
+K
+and
+V
+V
+/
+O
+O
+across layers, indicating that the parametric function optimized on keys, is systematically evaluated on out-of-distribution inputs when applied to queries, at both training and inference time. Under such conditions, the resulting outputs cannot be interpreted as reliable retrieval of stored key–value information, and this mismatch persists regardless of how accurately the inner loop fits the key–value regression objective.
+4.4
+Replacing
+Q
+Q
+with
+K
+K
+The distributional asymmetry between queries and keys again raises a more direct question:
+is the query representation
+Q
+Q
+necessary at all for TTT to function?
+To test this, we perform a simple experiment in which we replace the query
+Q
+Q
+with the key
+K
+K
+when computing the TTT output. In standard attention mechanisms, such a substitution would be highly disruptive. Because attention weights depend on query–key similarity, replacing
+Q
+Q
+with
+K
+K
+typically leads to degenerate behavior dominated by self-similarity and a substantial drop in performance.
+Contrary to the expectation, we observe little to no degradation in TTT’s performance. For both LaCT and ViTTT formulations performance remains comparable (Table
+1
+). This insensitivity to the query representation contradicts a retrieval-based interpretation of TTT. If the inner loop relied on query-based access to stored information, replacing
+Q
+Q
+with
+K
+K
+should significantly alter model behavior. Instead, the observed invariance indicates that
+Q
+Q
+does not function as a meaningful query into a memorized key-value map.
+Summary.
+Taken together, these observations challenge the interpretation of test-time training as a storage-and-retrieval mechanism. Downstream behavior is largely insensitive to both the quality and direction of inner-loop optimization, and to the presence of a meaningful query signal. These failures suggest that in practice TTT does not operate as test-time memorization.
+5
+TTT is secretly Linear Attention
+If TTT is not functioning as a memorization mechanism, how should its behavior be understood? An important clue comes from prior work, which shows that in the restricted setting of a single linear inner-loop layer with zero initialization, TTT is exactly equivalent to linear attention
+(
+Sun et al., 2025
+)
+. More generally, despite their apparent complexity, existing TTT variants share the defining computational properties of linear attention: linear-time computation and a constant-size state with respect to sequence length.
+Motivated by this connection, we re-examine TTT by explicitly unrolling the inner-loop updates. We show analytically that TTT induces a linear attention–like operator in a general form, even when the inner loop consists of multi-layer non-linear mappings (
+Section
+5.1
+). This perspective naturally explains our empirical observations that contradict the storage-and-retrieval interpretation (
+Section
+5.2
+). Finally, we rewrite two representative variants of TTT, LaCT
+(
+Zhang et al., 2025
+)
+and ViTTT
+(
+Han et al., 2025
+)
+, in their linear attention form (
+Sections
+5.3
+and
+5.4
+). Detailed derivations are deferred to the appendix.
+5.1
+General Form
+Theorem 5.1
+(Linearization of Inner-Loop Updates)
+.
+Consider a TTT model whose inner-loop function has a linear, bias-free final layer,
+f
+⁡
+(
+x
+)
+=
+ϕ
+⁡
+(
+x
+,
+Θ
+)
+​
+W
+,
+f(x)=\phi(x;\Theta)\,W,
+where
+ϕ
+⁡
+(
+x
+,
+Θ
+)
+∈
+ℝ
+D
+h
+\phi(x;\Theta)\in\mathbb{R}^{D_{\mathrm{h}}}
+denotes the hidden representation of the inner-loop function with parameters
+Θ
+\Theta
+, and
+W
+∈
+ℝ
+D
+h
+×
+D
+out
+W\in\mathbb{R}^{D_{\mathrm{h}}\times D_{\mathrm{out}}}
+is the weight matrix of the final layer.
+Suppose that at step
+t
+t
+, the inner loop performs one step of gradient descent on an objective
+ℒ
+\mathcal{L}
+with learning rate
+η
+\eta
+, using key input
+k
+k
+, updating all trainable parameters,
+(
+W
+t
++
+1
+,
+Θ
+t
++
+1
+)
+=
+(
+W
+t
+,
+Θ
+t
+)
+−
+η
+​
+∇
+(
+W
+t
+,
+Θ
+t
+)
+ℒ
+​
+(
+f
+t
+​
+(
+k
+)
+)
+,
+(W_{t+1},\Theta_{t+1})=(W_{t},\Theta_{t})-\eta\nabla_{(W_{t},\Theta_{t})}\mathcal{L}(f_{t}(k)),
+where
+ϕ
+t
+​
+(
+⋅
+)
+≜
+ϕ
+⁡
+(
+⋅
+,
+Θ
+t
+)
+\phi_{t}(\cdot)\triangleq\phi(\cdot;\Theta_{t})
+and
+f
+t
+​
+(
+⋅
+)
+≜
+ϕ
+t
+​
+(
+⋅
+)
+​
+W
+t
+f_{t}(\cdot)\triangleq\phi_{t}(\cdot)W_{t}
+.
+Then, for any query
+q
+q
+, the output after the update can be written as
+o
+=
+ϕ
+t
++
+1
+​
+(
+q
+)
+​
+(
+W
+t
++
+ϕ
+t
+​
+(
+k
+)
+⊤
+​
+g
+t
+​
+(
+k
+)
+)
+,
+g
+t
+​
+(
+k
+)
+≜
+−
+η
+​
+∂
+ℒ
+∂
+f
+t
+​
+(
+k
+)
+.
+o=\phi_{t+1}(q)\left(W_{t}+\phi_{t}(k)^{\top}g_{t}(k)\right),\quad g_{t}(k)\triangleq-\eta\,\frac{\partial\mathcal{L}}{\partial f_{t}(k)}.
+This expression is a linear attention operator of the form
+o
+=
+q
+^
+​
+(
+S
+0
++
+k
+^
+⊤
+​
+v
+^
+)
+,
+o=\hat{q}\left(S_{0}+\hat{k}^{\top}\hat{v}\right),
+where
+q
+^
+=
+ϕ
+t
++
+1
+​
+(
+q
+)
+,
+k
+^
+=
+ϕ
+t
+​
+(
+k
+)
+,
+v
+^
+=
+g
+t
+​
+(
+k
+)
+,
+S
+0
+=
+W
+t
+.
+\hat{q}=\phi_{t+1}(q),\quad\hat{k}=\phi_{t}(k),\quad\hat{v}=g_{t}(k),\quad S_{0}=W_{t}.
+The complete proof is provided in Appendix
+B
+.
+Theorem 5.2
+(Unrolling Inner-Loop Updates)
+.
+Given a sequence of query–key pairs
+{
+(
+q
+0
+,
+k
+0
+)
+,
+(
+q
+1
+,
+k
+1
+)
+,
+…
+,
+(
+q
+t
+,
+k
+t
+)
+}
+\{(q_{0},k_{0}),(q_{1},k_{1}),\ldots,(q_{t},k_{t})\}
+,
+suppose the TTT model performs one gradient descent step per input in sequence.
+By repeated application of Theorem
+5.1
+, the parameters after processing token
+t
+t
+are
+(
+W
+t
++
+1
+,
+Θ
+t
++
+1
+)
+=
+(
+W
+0
+,
+Θ
+0
+)
+−
+η
+​
+∑
+i
+=
+0
+t
+∇
+(
+W
+i
+,
+Θ
+i
+)
+ℒ
+​
+(
+f
+i
+​
+(
+k
+i
+)
+)
+.
+(W_{t+1},\Theta_{t+1})=(W_{0},\Theta_{0})-\eta\sum_{i=0}^{t}\nabla_{(W_{i},\Theta_{i})}\mathcal{L}\!\left(f_{i}(k_{i})\right).
+Evaluating the TTT model on query
+q
+t
+q_{t}
+yields
+o
+t
+\displaystyle o_{t}
+=
+ϕ
+t
++
+1
+​
+(
+q
+t
+)
+​
+W
+t
++
+1
+\displaystyle=\phi_{t+1}(q_{t})\,W_{t+1}
+=
+ϕ
+t
++
+1
+​
+(
+q
+t
+)
+​
+(
+W
+0
++
+∑
+i
+=
+0
+t
+ϕ
+i
+​
+(
+k
+i
+)
+⊤
+​
+g
+i
+​
+(
+k
+i
+)
+)
+,
+\displaystyle=\phi_{t+1}(q_{t})\left(W_{0}+\sum_{i=0}^{t}\phi_{i}(k_{i})^{\top}g_{i}(k_{i})\right),
+where
+g
+i
+​
+(
+k
+i
+)
+g_{i}(k_{i})
+is defined as in Theorem
+5.1
+.
+This corresponds to the extended linear attention form on sequential inputs.
+o
+t
+=
+q
+^
+t
+​
+(
+S
+0
++
+∑
+i
+=
+0
+t
+k
+^
+i
+⊤
+​
+v
+^
+i
+)
+.
+o_{t}=\hat{q}_{t}\left(S_{0}+\sum_{i=0}^{t}\hat{k}_{i}^{\top}\hat{v}_{i}\right).
+The complete proof is provided in Appendix
+C
+.
+Next, we extend Theorem
+5.2
+to the case where the inner-loop employs gradient descent with momentum.
+Theorem 5.3
+(Gradient Descent with Momentum)
+.
+Given the momentum-augmented gradient accumulator defined as
+(
+Δ
+​
+W
+t
+,
+Δ
+​
+Θ
+t
+)
+=
+∇
+(
+W
+,
+Θ
+)
+ℒ
+​
+(
+f
+t
+​
+(
+k
+t
+)
+)
++
+α
+t
+​
+(
+Δ
+​
+W
+t
+−
+1
+,
+Δ
+​
+Θ
+t
+−
+1
+)
+,
+(\Delta W_{t},\Delta\Theta_{t})=\nabla_{(W,\Theta)}\mathcal{L}(f_{t}(k_{t}))+\alpha_{t}\,(\Delta W_{t-1},\Delta\Theta_{t-1}),
+where
+α
+t
+\alpha_{t}
+denotes the (possibly token-dependent) momentum factor at step
+t
+t
+.
+The model parameters are then updated according to
+(
+W
+t
++
+1
+,
+Θ
+t
++
+1
+)
+=
+(
+W
+t
+,
+Θ
+t
+)
+−
+η
+⁡
+(
+Δ
+​
+W
+t
+,
+Δ
+​
+Θ
+t
+)
+.
+(W_{t+1},\Theta_{t+1})=(W_{t},\Theta_{t})-\eta\,(\Delta W_{t},\Delta\Theta_{t}).
+Define the cumulative momentum coefficient as
+β
+i
+j
+≜
+{
+∏
+s
+=
+i
++
+1
+j
+α
+s
+if
+​
+i
+<
+j
+,
+1
+if
+​
+i
+=
+j
+.
+\beta_{i}^{j}\triangleq\begin{cases}\prod_{s=i+1}^{j}\alpha_{s}&\text{if }i<j,\\
+1&\text{if }i=j.\end{cases}
+Unrolling this recurrence and evaluating the TTT model on query
+q
+t
+q_{t}
+yields
+o
+t
+\displaystyle o_{t}
+=
+ϕ
+t
++
+1
+​
+(
+q
+t
+)
+​
+W
+t
++
+1
+\displaystyle=\phi_{t+1}(q_{t})\,W_{t+1}
+=
+ϕ
+t
++
+1
+​
+(
+q
+t
+)
+​
+(
+W
+0
++
+∑
+i
+=
+0
+t
+ϕ
+i
+​
+(
+k
+i
+)
+⊤
+​
+m
+i
+​
+(
+k
+i
+)
+)
+,
+\displaystyle=\phi_{t+1}(q_{t})\left(W_{0}+\sum_{i=0}^{t}\phi_{i}(k_{i})^{\top}m_{i}(k_{i})\right),
+which induces a linear-attention–like form identical to that of Theorem
+5.2
+, with the effective value vector being a momentum-weighted sum:
+v
+^
+i
+=
+m
+i
+​
+(
+k
+i
+)
+≜
+g
+i
+​
+(
+k
+i
+)
+⋅
+∑
+j
+=
+i
+t
+β
+i
+j
+.
+\hat{v}_{i}=m_{i}(k_{i})\;\triangleq\;g_{i}(k_{i})\cdot\sum_{j=i}^{t}\beta_{i}^{j}.
+The complete proof is provided in Appendix
+D
+.
+5.2
+Explanation of TTT Empirical Behaviors
+Having shown that TTT can be rewritten as a linear attention operator (Theorem
+5.1
+-
+5.3
+), we can now revisit the empirical behaviors that appeared contradictory under the memorization-based interpretation. The linear-attention perspective provides a unified and mechanistic explanation.
+More Inner-Loop Steps.
+According to Theorem
+5.1
+, the inner loop does not perform storage of key–value information, but instead defines a learnable mapping that transforms the original inputs into the effective query, key, and value representations. This mapping depends on inner-loop hyperparameters, including the number of optimization steps. Increasing the number of inner-loop iterations at inference time therefore induces an attention operator different to the one used during training, naturally leading to degraded performance due to train–test mismatch rather than improved memorization.
+Gradient Ascent in the Inner Loop.
+Under the same formulation, replacing gradient descent with gradient ascent simply flips the sign of the effective value vector
+g
+t
+g_{t}
+. Since this sign is absorbed into the learned attention operator and the mapping itself is optimized under the downstream objective, the model adapts to this change. This explains why TTT remains effective under gradient ascent, despite the absence of a meaningful memorization objective.
+Distributional Asymmetry Between
+Q
+Q
+and
+K
+K
+.
+The linear-attention view clarifies why similarity between
+q
+q
+and
+k
+k
+is not required. In TTT,
+q
+q
+and
+k
+k
+influence different components of the attention operator:
+q
+q
+determines the effective query via
+ϕ
+t
++
+1
+​
+(
+q
+)
+\phi_{t+1}(q)
+, while
+k
+k
+determines the effective key and value via
+ϕ
+t
+​
+(
+k
+)
+\phi_{t}(k)
+and
+g
+t
+​
+(
+k
+)
+g_{t}(k)
+, respectively. They are therefore intermediate features rather than symmetric query–key representations, making distributional mismatch expected rather than pathological.
+Replacing
+Q
+Q
+with
+K
+K
+.
+Finally, replacing
+q
+q
+with
+k
+k
+does not collapse the attention mechanism because the effective query and key remain distinct:
+ϕ
+t
++
+1
+​
+(
+k
+)
+\phi_{t+1}(k)
+versus
+ϕ
+t
+​
+(
+k
+)
+\phi_{t}(k)
+. Since
+ϕ
+\phi
+is learnable and evaluated at different parameter states, the model can map the same input to different representations, preserving attention functionality.
+Summary.
+Viewed through the lens of linear attention, the inner loop of TTT parameterizes a structured linear-form attention operator rather than performing test-time storage and retrieval. Under this perspective, the observed empirical behaviors follow naturally from representation learning and train–test consistency considerations.
+5.3
+Example: LaCT as Linear Attention
+We now show how a representative instantiation of TTT formula, LaCT
+(
+Zhang et al., 2025
+)
+, can be rewritten in the form of linear attention.
+LaCT adopts a bias-free SwiGLU MLP
+(
+Shazeer, 2020
+)
+as its inner-loop mapping, parameterized by three learnable weight matrices
+W
+0
+,
+W
+2
+∈
+ℝ
+D
+h
+×
+D
+k
+W_{0},W_{2}\in\mathbb{R}^{D_{h}\times D_{k}}
+and
+W
+1
+∈
+ℝ
+D
+h
+×
+D
+v
+W_{1}\in\mathbb{R}^{D_{h}\times D_{v}}
+:
+f
+⁡
+(
+x
+)
+=
+(
+silu
+⁡
+(
+x
+​
+W
+0
+)
+⊙
+(
+x
+​
+W
+2
+)
+)
+​
+W
+1
+.
+f(x)=\bigl(\mathrm{silu}(xW_{0})\odot(xW_{2})\bigr)W_{1}.
+The inner-loop objective is defined via the Frobenius inner product
+ℒ
+⁡
+(
+f
+⁡
+(
+k
+)
+,
+v
+)
+=
+−
+⟨
+f
+⁡
+(
+k
+)
+,
+v
+⟩
+.
+\mathcal{L}(f(k),v)=-\langle f(k),v\rangle.
+At each token, LaCT performs gradient descent with per-token learning rate
+η
+t
+\eta_{t}
+, momentum
+α
+t
+\alpha_{t}
+, and gradient orthogonalization
+ℳ
+⁡
+(
+⋅
+)
+\mathcal{M}(\cdot)
+inspired by Muon
+(
+Jordan et al., 2024
+)
+:
+W
+i
+,
+t
++
+1
+=
+W
+i
+,
+t
+−
+η
+t
+​
+ℳ
+​
+(
+Δ
+​
+W
+i
+,
+t
+)
+,
+W_{i,t+1}=W_{i,t}-\eta_{t}\,\mathcal{M}(\Delta W_{i,t}),
+Δ
+​
+W
+i
+,
+t
+=
+∇
+W
+i
+,
+t
+ℒ
+​
+(
+f
+t
+​
+(
+k
+t
+)
+,
+v
+t
+)
+,
+\Delta W_{i,t}=\nabla_{W_{i,t}}\mathcal{L}(f_{t}(k_{t}),v_{t}),
+for
+i
+∈
+{
+0
+,
+1
+,
+2
+}
+i\in\{0,1,2\}
+.
+Following Theorem
+5.3
+, the inner-loop model at step
+t
+t
+can be written as
+f
+t
+​
+(
+x
+)
+=
+ϕ
+t
+​
+(
+x
+)
+​
+W
+1
+,
+t
+,
+ϕ
+t
+​
+(
+x
+)
+=
+silu
+⁡
+(
+x
+​
+W
+0
+,
+t
+)
+⊙
+(
+x
+​
+W
+2
+,
+t
+)
+.
+f_{t}(x)=\phi_{t}(x)\,W_{1,t},\quad\phi_{t}(x)=\mathrm{silu}(xW_{0,t})\odot(xW_{2,t}).
+Evaluating the updated model on query
+q
+t
+q_{t}
+yields
+o
+t
+\displaystyle o_{t}
+=
+f
+t
++
+1
+​
+(
+q
+t
+)
+\displaystyle=f_{t+1}(q_{t})
+=
+ϕ
+t
++
+1
+​
+(
+q
+t
+)
+​
+W
+1
+,
+t
++
+1
+\displaystyle=\phi_{t+1}(q_{t})\,W_{1,t+1}
+=
+ϕ
+t
++
+1
+​
+(
+q
+t
+)
+​
+(
+W
+1
+,
+0
++
+∑
+i
+=
+0
+t
+ℳ
+⁡
+(
+ϕ
+i
+​
+(
+k
+i
+)
+⊤
+​
+m
+i
+)
+)
+,
+\displaystyle=\phi_{t+1}(q_{t})\left(W_{1,0}+\sum_{i=0}^{t}\mathcal{M}\!\left(\phi_{i}(k_{i})^{\top}m_{i}\right)\right),
+(1)
+where
+m
+i
+(
+k
+i
+)
+≜
+v
+i
+⋅
+η
+i
+∑
+j
+=
+i
+t
+β
+i
+j
+.
+m_{i}(k_{i})\;\triangleq\;v_{i}\cdot\eta_{i}\sum_{j=i}^{t}\beta_{i}^{j}.
+This expression reveals that the inner loop of LaCT is effectively a linear attention–like operator,
+with
+ϕ
+i
+​
+(
+k
+i
+)
+\phi_{i}(k_{i})
+and
+m
+i
+​
+(
+k
+i
+)
+m_{i}(k_{i})
+playing the roles of keys and values,
+and
+ϕ
+t
++
+1
+​
+(
+q
+t
+)
+\phi_{t+1}(q_{t})
+acting as the query vector.
+Note that LaCT also applies weight normalization after each update, which we omit here for simplicity.
+See Appendix
+E
+for more details.
+5.4
+Example: ViTTT as Linear Attention
+We next show that another instantiation of test-time training, ViTTT
+(
+Han et al., 2025
+)
+, can likewise be rewritten in the form of linear attention.
+ViTTT employs fast weights consisting of two independent components: (i) a simplified gated linear unit (GLU), and (ii) a depthwise convolution layer. These components are updated independently in the inner loop. We show that each admits a linear-attention interpretation, implying that ViTTT as a whole falls within the same framework.
+GLU component.
+The GLU is defined as
+f
+⁡
+(
+x
+)
+=
+silu
+⁡
+(
+x
+​
+W
+0
+)
+⊙
+(
+x
+​
+W
+1
+)
+,
+f(x)=\mathrm{silu}(xW_{0})\odot(xW_{1}),
+where
+W
+0
+W_{0}
+and
+W
+1
+W_{1}
+are fast weights updated via gradient descent. As in LaCT, the inner-loop loss is defined using a Frobenius inner product. Following a derivation analogous to previous sections (see Appendix
+F
+), evaluating the updated GLU on a query
+q
+t
+q_{t}
+yields
+ϕ
+⁡
+(
+x
+)
+=
+silu
+⁡
+(
+x
+​
+W
+0
+)
+,
+\phi(x)=\mathrm{silu}(xW_{0}),
+o
+t
+\displaystyle o_{t}
+=
+ϕ
+t
++
+1
+​
+(
+q
+t
+)
+⊙
+(
+q
+t
+​
+(
+W
+1
++
+k
+t
+⊤
+​
+(
+v
+t
+⊙
+ϕ
+t
+​
+(
+k
+t
+)
+)
+)
+)
+.
+\displaystyle=\phi_{t+1}(q_{t})\odot\Bigl(q_{t}\bigl(W_{1}+k_{t}^{\top}(v_{t}\odot\phi_{t}(k_{t}))\bigr)\Bigr).
+This expression takes the form of linear attention, with
+ϕ
+t
+​
+(
+k
+t
+)
+\phi_{t}(k_{t})
+acting as a multiplicative gate on values and
+ϕ
+t
++
+1
+​
+(
+q
+t
+)
+\phi_{t+1}(q_{t})
+gating the final output.
+Depthwise convolution component.
+ViTTT additionally includes a
+3
+×
+3
+3\times 3
+depthwise convolution layer with fast weights, updated in the inner loop. As convolution is effectively sliding window linear layer, this TTT component is equivalent to a sliding window linear attention. A formal derivation is provided in Appendix
+G
+.
+Discussion.
+Since both fast-weight components in ViTTT admit linear-attention formulations, their combination also induces a linear-attention–like operator. This establishes ViTTT as another concrete instance of test-time training whose behavior is more naturally understood through the lens of linear attention.
+6
+Practical Implications
+Table 2
+:
+Ablation Trajectory Reducing TTT to Standard Linear Attention.
+By progressively simplifying complex TTT formulations into standard linear attention (Variant 6), we quantify the contribution of each design component in TTT. Variant 1 achieves the best performance across all three tasks. Variants 2–6 admit parallel implementations. We additionally report the inference throughput of each variant’s TTT layer on the LLM task. † denotes ablations that do not apply, in which case performance matches the preceding variant. * indicates that ViTTT does not use gradient orthogonalization, so we ablate gradient normalization instead.
+Alias
+Description of TTT Inner-loop Designs
+Perplexity
+↓
+\downarrow
+(LaCT-LLM)
+PSNR
+↑
+\uparrow
+(LaCT-NVS)
+Top-1 Acc
+↑
+\uparrow
+(ViTTT)
+Tokens Per Sec
+↑
+\uparrow
+(Recurrent Impl.)
+Tokens Per Sec
+↑
+\uparrow
+(Parallel Impl.)
+Baseline
+LaCT
+(
+Zhang et al., 2025
+)
+/ ViTTT
+(
+Han et al., 2025
+)
+16.43
+25.94
+79.34%
+4.30M
+N/A
+Variant 1
+Baseline w/ only update the last layer parameters
+15.93
+25.97
+79.63%
+10.60M
+N/A
+Variant 2
+Variant 1 w/ remove weight normalization
+16.31
+25.93
+79.63%
+†
+11.02M
+30.18M
+Variant 3
+Variant 2 w/ multi-layer MLP
+→
+\rightarrow
+singel linear layer
+16.23
+25.71
+79.39%
+12.95M
+49.69M
+Variant 4
+Variant 3 w/ remove per-token learnable lr
+16.12
+25.70
+79.39%
+†
+13.31M
+53.99M
+Variant 5
+Variant 4 w/ remove momentum in SGD
+15.97
+25.70
+†
+79.39%
+†
+14.40M
+57.28M
+Variant 6
+Variant 5 w/ remove gradient orthogonalization
+16.80
+25.73
+79.54%
+*
+89.67M
+124.6M
+Figure 3
+:
+Perplexity Metric for Ablation om LaCT-LLM.
+Evaluated on 2.5B tokens from the Book-3 dataset.
+Unmasking TTT as linear attention is not merely a theoretical exercise but yields concrete practical benefits. This perspective reveals a systematic trajectory for reducing complex TTT formulations into linear attention, along which we observe that several commonly adopted design choices, such as per-token learnable learning rates, weight normalization, are not essential to final performance. By clarifying which components are truly valuable and which are unnecessary, this view enables substantial simplification of TTT formulations. Moreover, recognizing TTT as linear attention makes explicit that the seemingly recurrent inner-loop updates admit a parallel formulation, leading to significant efficiency gains in both training and inference. All experiments in this section use the official implementations of LaCT
+(
+Zhang et al., 2025
+)
+for the LLM and NVS tasks, and ViTTT
+(
+Han et al., 2025
+)
+for the image recognition task. Detailed experimental settings are provided in Appendix
+A
+.
+6.1
+Reduce TTT to Linear Attention
+Viewing TTT through the lens of linear attention reveals that several design choices that were justified under a storage-and-retrieval interpretation are in fact redundant or optional. This perspective enables a principled ablation path that progressively simplifies complex TTT variants such as LaCT and ViTTT into standard linear attention. Below, we outline this reduction trajectory and analyze the role of each component.
+Step 1. Update only the last-layer parameters.
+As shown in Theorem
+5.1
+, the effective query and key vectors are
+ϕ
+t
++
+1
+​
+(
+q
+)
+\phi_{t+1}(q)
+and
+ϕ
+t
+​
+(
+k
+)
+\phi_{t}(k)
+, where
+ϕ
+t
+​
+(
+⋅
+)
+≜
+ϕ
+⁡
+(
+⋅
+,
+Θ
+t
+)
+\phi_{t}(\cdot)\triangleq\phi(\cdot;\Theta_{t})
+. Updating
+Θ
+t
+\Theta_{t}
+within the inner loop makes
+ϕ
+t
+\phi_{t}
+a dynamic kernel that is difficult to unroll analytically. If the inner loop instead updates only the final-layer parameter,
+Θ
+\Theta
+remains fixed during TTT, and
+ϕ
+⁡
+(
+⋅
+)
+≜
+ϕ
+⁡
+(
+⋅
+,
+Θ
+)
+\phi(\cdot)\triangleq\phi(\cdot;\Theta)
+becomes a static function with learnable parameters. From the linear-attention perspective,
+ϕ
+⁡
+(
+⋅
+)
+\phi(\cdot)
+then acts as a learnable kernel function with effective queries and keys given by
+ϕ
+⁡
+(
+q
+)
+\phi(q)
+and
+ϕ
+⁡
+(
+k
+)
+\phi(k)
+.
+Step 2. Remove weight normalization.
+LaCT applies weight normalization to all learnable parameters
+Θ
+t
+,
+W
+t
+{\Theta_{t},W_{t}}
+after each inner-loop update. After Step 1, normalization on
+Θ
+t
+\Theta_{t}
+is a no-op since
+Θ
+t
+\Theta_{t}
+is fixed. Normalizing the final-layer parameter
+W
+t
+W_{t}
+, which corresponds to the state in the linear attention view, is therefore equivalent to normalizing the state
+S
+t
+S_{t}
+(see Appendix
+E.4
+). As such normalization is uncommon in linear attention literature, we remove it for ablation. Notably, after this step the TTT formulation becomes fully parallelizable, as discussed in Section
+6.2
+.
+Step 3. Multi-layer MLP
+→
+\rightarrow
+single linear layer.
+Several TTT variants
+(
+Han et al., 2025
+;
+Behrouz et al., 2024
+)
+employ deeper inner-loop MLPs, but report inconsistent empirical gains. From a linear attention perspective, increasing MLP depth simply induces a more complex kernel function
+ϕ
+⁡
+(
+⋅
+)
+\phi(\cdot)
+over queries and keys. When
+q
+q
+and
+k
+k
+already have sufficient representational capacity, this added complexity is unlikely to help. We therefore reduce the multi-layer MLP to a single linear layer, effectively removing
+ϕ
+⁡
+(
+⋅
+)
+\phi(\cdot)
+altogether. This exposes the true queries and keys as
+q
+^
+=
+q
+\hat{q}=q
+and
+k
+^
+=
+k
+\hat{k}=k
+, bringing the formulation closer to basic linear attention.
+Step 4. Remove per-token learning rates.
+Many TTT methods
+(
+Behrouz et al., 2024
+;
+Zhang et al., 2025
+)
+introduce a per-token learnable learning rate
+η
+t
+\eta_{t}
+. As shown in Section
+5.3
+, with Frobenius dot product as inner loss this can be absorbed into the learnable
+v
+t
+v_{t}
+, indicating it’s functionally redundant. Consistent with our finding, ViTTT empirically finds that a constant learning rate of
+1.0
+1.0
+suffices.
+Step 5. Remove momentum in SGD.
+As shown in Theorem
+5.3
+, adding momentum to the inner-loop SGD update, as done in LaCT and related methods
+(
+Behrouz et al., 2024
+)
+, only alters the effective value
+v
+^
+\hat{v}
+, from the instantaneous gradient
+g
+t
+​
+(
+k
+)
+g_{t}(k)
+to a momentum-weighted sum of past gradients. From the linear attention perspective, this corresponds to remixing historical key–value contributions into a single value vector. Since both keys and values are already learnable, this additional mixing is unlikely to provide meaningful benefit, thus we remove momentum for ablation. Notably, for both LaCT and ViTTT,
+g
+t
+​
+(
+k
+)
+=
+−
+v
+g_{t}(k)=-v
+and removing momentum recovers
+v
+^
+=
+v
+\hat{v}=v
+, exposing the true value vector.
+Step 6. Remove gradient orthogonalization.
+As discussed in Section
+5.3
+, LaCT optionally applies gradient orthogonalization
+ℳ
+⁡
+(
+Δ
+​
+W
+)
+\mathcal{M}(\Delta W)
+. Under the linear attention reformulation, this corresponds to applying an operator to the state update
+ℳ
+⁡
+(
+k
+^
+⊤
+​
+v
+)
+\mathcal{M}(\hat{k}^{\top}v)
+. We remove this operation for ablation. After this final step, Both LaCT and ViTTT reduce exactly to standard linear attention:
+o
+=
+q
+⁡
+(
+W
++
+∑
+i
+k
+i
+⊤
+​
+v
+i
+)
+.
+o=q\!\left(W+\sum_{i}k_{i}^{\top}v_{i}\right).
+Results.
+We progressively apply the above ablations to LaCT on the LLM and NVS tasks, and to ViTTT on the image recognition task, with results summarized in Table
+2
+. Surprisingly, restricting the inner loop to update only the final MLP layer consistently yields the best overall performance across tasks, suggesting that many of the more complex design choices are unnecessary, or even detrimental. Most other components contribute only marginally to performance, with two notable exceptions: deeper MLPs are beneficial for the NVS task, while gradient orthogonalization improves performance on the LLM task. Overall, reducing the full TTT formulation to a basic linear attention operator (Variant 6) results in only minor performance degradation (
++
+0.4
++0.4
+perplexity on LLM and
+−
+0.2
+-0.2
+dB on NVS). For the LLM task, Table
+2
+reports perplexity at 32k sequence length, with results across other lengths shown in Figure
+3
+.
+Figure 4
+:
+Training loss vs. wall-clock time on LaCT-LLM.
+We compare the original LaCT-TTT with both parallel and recurrent form of Variant 2.
+The parallel form achieves a
+1.19
+×
+1.19\times
+end-to-end speedup while maintaining comparable convergence.
+6.2
+Parallel Form of TTT
+Existing TTT variants are typically implemented in a recurrent manner, reflecting their original storage-and-retrieval interpretation. However, as we have shown that TTT can alternatively be viewed as a form of linear attention, a natural question arises: can TTT admit a parallel formulation that enables more efficient implementation? We show that under certain conditions, corresponding to Variants 2–6 in our ablation, such a parallel form indeed exists.
+The key insight is that when weight normalization is removed and only the final-layer parameters are updated, the state update becomes associative. In this setting, the kernel function
+ϕ
+t
+​
+(
+⋅
+)
+≜
+ϕ
+⁡
+(
+⋅
+,
+Θ
+t
+)
+\phi_{t}(\cdot)\triangleq\phi(\cdot;\Theta_{t})
+is static and independent of sequence history, allowing the recurrence in Theorem
+5.3
+to be computed via a parallel prefix scan rather than sequential token-by-token updates.
+We implement this parallel formulation for LaCT on the LLM task. As shown in Table
+2
+, switching from the recurrent to the parallel implementation improves the inference throughput of the TTT layer by up to
+4.0
+×
+4.0\times
+(measured in tokens per second, single batch). Combined with the simplifications from Step 1 and Step 2, this yields a
+1.19
+×
+1.19\times
+end-to-end training speedup without degrading model quality, as shown in Figure
+4
+.
+We provide the full parallel formulation and a proof of equivalence to the sequential recurrence in Appendix
+H
+. In Appendix
+I
+, we further show that introducing weight normalization or dynamic kernel functions breaks associativity, thereby preventing parallelization.
+7
+Conclusion
+In this work, we challenge the prevailing view of TTT as a mechanism for test-time memorization of key–value mappings. Through systematic empirical analysis, we identify several anomalies—including gradient ascent behavior, distributional asymmetry between queries and keys, and the lack of correlation between inner-loop convergence and downstream performance—that are fundamentally incompatible with a memorization-based interpretation.
+We provide an alternative explanation by showing that TTT, even with complex inner loops involving multi-layer MLPs and momentum-based optimizers, can be analytically rewritten as a form of linear attention operator. Under this view, the inner loop does not perform meta learning in the conventional sense, but instead parameterizes a structured mixing of queries, keys, and values. Viewing TTT through the lens of linear attention not only resolves the observed paradoxes, but also enables principled simplifications, parallel implementations with improved efficiency, and a unified framework for understanding TTT variants.
+Our analysis applies to most current TTT formulations but is limited to settings where the inner-loop final layer is linear and bias-free. Extending these insights to nonlinear final layers, and exploring deeper connections between TTT and modern linear attention mechanisms in both directions, remain important avenues for future work.
+References
+Behrouz
+et al.
+(2025a)
+A. Behrouz, Z. Li, P. Kacham, M. Daliri, Y. Deng, P. Zhong, M. Razaviyayn, and V. Mirrokni
+Atlas: learning to optimally memorize the context at test time
+.
+arXiv preprint arXiv:2505.23735
+.
+Cited by:
+§1
+.
+Behrouz
+et al.
+(2025b)
+A. Behrouz, M. Razaviyayn, P. Zhong, and V. Mirrokni
+It’s all connected: a journey through test-time memorization, attentional bias, retention, and online optimization
+.
+arXiv preprint arXiv:2504.13173
+.
+Cited by:
+§2.2
+.
+Behrouz
+et al.
+(2024)
+A. Behrouz, P. Zhong, and V. Mirrokni
+Titans: learning to memorize at test time
+.
+arXiv preprint arXiv:2501.00663
+.
+Cited by:
+§1
+,
+§2.1
+,
+§2.2
+,
+§2.2
+,
+§2.2
+,
+§6.1
+,
+§6.1
+,
+§6.1
+.
+Chen
+et al.
+(2025)
+X. Chen, Y. Chen, Y. Xiu, A. Geiger, and A. Chen
+Ttt3r: 3d reconstruction as test-time training
+.
+arXiv preprint arXiv:2509.26645
+.
+Cited by:
+§2.2
+.
+Chen
+et al.
+(2024)
+Y. Chen, J. Wang, Z. Yang, S. Manivasagam, and R. Urtasun
+G3r: gradient guided generalizable reconstruction
+.
+In
+European Conference on Computer Vision
+,
+pp. 305–323
+.
+Cited by:
+§2.2
+.
+Dalal
+et al.
+(2025)
+K. Dalal, D. Koceja, J. Xu, Y. Zhao, S. Han, K. C. Cheung, J. Kautz, Y. Choi, Y. Sun, and X. Wang
+One-minute video generation with test-time training
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 17702–17711
+.
+Cited by:
+§1
+,
+§2.2
+,
+§2.2
+.
+Dao and Gu (2024)
+T. Dao and A. Gu
+Transformers are ssms: generalized models and efficient algorithms through structured state space duality
+.
+In
+Proceedings of the 41st International Conference on Machine Learning
+,
+pp. 10041–10071
+.
+Cited by:
+§2.1
+.
+Deng
+et al.
+(2009)
+J. Deng, W. Dong, R. Socher, L. Li, K. Li, and L. Fei-Fei
+Imagenet: a large-scale hierarchical image database
+.
+In
+2009 IEEE conference on computer vision and pattern recognition
+,
+pp. 248–255
+.
+Cited by:
+Appendix A
+.
+Finn
+et al.
+(2017)
+C. Finn, P. Abbeel, and S. Levine
+Model-agnostic meta-learning for fast adaptation of deep networks
+.
+In
+International conference on machine learning
+,
+pp. 1126–1135
+.
+Cited by:
+§1
+,
+§2.2
+,
+§3
+.
+Gandelsman
+et al.
+(2022)
+Y. Gandelsman, Y. Sun, X. Chen, and A. Efros
+Test-time training with masked autoencoders
+.
+Advances in Neural Information Processing Systems
+35
+,
+pp. 29374–29385
+.
+Cited by:
+§2.2
+,
+§3
+.
+Gao
+et al.
+(2020)
+L. Gao, S. Biderman, S. Black, L. Golding, T. Hoppe, C. Foster, J. Phang, H. He, A. Thite, N. Nabeshima,
+et al.
+The pile: an 800gb dataset of diverse text for language modeling
+.
+arXiv preprint arXiv:2101.00027
+.
+Cited by:
+Appendix A
+.
+Gu and Dao (2024)
+A. Gu and T. Dao
+Mamba: linear-time sequence modeling with selective state spaces
+.
+In
+First conference on language modeling
+,
+Cited by:
+§2.1
+.
+Gu
+et al.
+(2021)
+A. Gu, K. Goel, and C. Ré
+Efficiently modeling long sequences with structured state spaces
+.
+arXiv preprint arXiv:2111.00396
+.
+Cited by:
+§2.1
+.
+Han
+et al.
+(2025)
+D. Han, Y. Li, T. Li, Z. Cao, Z. Wang, J. Song, Y. Cheng, B. Zheng, and G. Huang
+ViT
+3
+{}^{3}
+: unlocking test-time training in vision
+.
+arXiv preprint arXiv:2512.01643
+.
+Cited by:
+Appendix A
+,
+Appendix F
+,
+Appendix G
+,
+§1
+,
+§2.2
+,
+§2.2
+,
+§2.2
+,
+§2.2
+,
+§4.1
+,
+Table 1
+,
+Table 1
+,
+§5.4
+,
+§5
+,
+§6.1
+,
+Table 2
+,
+§6
+.
+Hinton and Plaut (1987)
+G. E. Hinton and D. C. Plaut
+Using fast weights to deblur old memories
+.
+In
+Proceedings of the ninth annual conference of the Cognitive Science Society
+,
+pp. 177–186
+.
+Cited by:
+§2.2
+.
+Jordan
+et al.
+(2024)
+K. Jordan, Y. Jin, V. Boza, J. You, F. Cesista, L. Newhouse, and J. Bernstein
+Muon: an optimizer for hidden layers in neural networks
+.
+External Links:
+Link
+Cited by:
+§E.1
+,
+§5.3
+.
+Karami
+et al.
+(2025)
+M. Karami, R. Pascanu, and V. Mirrokni
+Lattice: learning to efficiently compress the memory
+.
+arXiv preprint arXiv:2504.05646
+.
+Cited by:
+§2.2
+.
+Katharopoulos
+et al.
+(2020)
+A. Katharopoulos, A. Vyas, N. Pappas, and F. Fleuret
+Transformers are rnns: fast autoregressive transformers with linear attention
+.
+In
+International conference on machine learning
+,
+pp. 5156–5165
+.
+Cited by:
+§1
+,
+§2.1
+.
+Lei
+et al.
+(2025)
+J. Lei, D. Zhang, and S. Poria
+Error-free linear attention is a free lunch: exact solution from continuous-time dynamics
+.
+arXiv preprint arXiv:2512.12602
+.
+Cited by:
+§2.1
+.
+Liu
+et al.
+(2024)
+B. Liu, R. Wang, L. Wu, Y. Feng, P. Stone, and Q. Liu
+Longhorn: state space models are amortized online learners
+.
+arXiv preprint arXiv:2407.14207
+.
+Cited by:
+§2.1
+.
+Maaten and Hinton (2008)
+L. v. d. Maaten and G. Hinton
+Visualizing data using t-sne
+.
+Journal of machine learning research
+9
+(
+Nov
+),
+pp. 2579–2605
+.
+Cited by:
+§4.3
+.
+Metz
+et al.
+(2018)
+L. Metz, N. Maheswaranathan, B. Cheung, and J. Sohl-Dickstein
+Meta-learning update rules for unsupervised representation learning
+.
+arXiv preprint arXiv:1804.00222
+.
+Cited by:
+§1
+,
+§2.2
+.
+Muennighoff
+et al.
+(2025)
+N. Muennighoff, Z. Yang, W. Shi, X. L. Li, L. Fei-Fei, H. Hajishirzi, L. Zettlemoyer, P. Liang, E. Candès, and T. B. Hashimoto
+S1: simple test-time scaling
+.
+In
+Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing
+,
+pp. 20286–20332
+.
+Cited by:
+§2.2
+.
+Orvieto
+et al.
+(2023)
+A. Orvieto, S. L. Smith, A. Gu, A. Fernando, C. Gulcehre, R. Pascanu, and S. De
+Resurrecting recurrent neural networks for long sequences
+.
+In
+International Conference on Machine Learning
+,
+pp. 26670–26698
+.
+Cited by:
+§2.1
+.
+Penedo
+et al.
+(2024)
+G. Penedo, H. Kydlíček, A. Lozhkov, M. Mitchell, C. A. Raffel, L. Von Werra, T. Wolf,
+et al.
+The fineweb datasets: decanting the web for the finest text data at scale
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 30811–30849
+.
+Cited by:
+Appendix A
+.
+Peng
+et al.
+(2023)
+B. Peng, E. Alcaide, Q. Anthony, A. Albalak, S. Arcadinho, S. Biderman, H. Cao, X. Cheng, M. Chung, L. Derczynski,
+et al.
+RWKV: reinventing rnns for the transformer era
+.
+In
+Findings of the Association for Computational Linguistics: EMNLP 2023
+,
+pp. 14048–14077
+.
+Cited by:
+§2.1
+.
+Peng
+et al.
+(2024)
+B. Peng, D. Goldstein, Q. Anthony, A. Albalak, E. Alcaide, S. Biderman, E. Cheah, X. Du, T. Ferdinan, H. Hou,
+et al.
+Eagle and finch: rwkv with matrix-valued states and dynamic recurrence
+.
+arXiv preprint arXiv:2404.05892
+.
+Cited by:
+§2.1
+.
+Peng
+et al.
+(2025a)
+B. Peng, R. Zhang, D. Goldstein, E. Alcaide, X. Du, H. Hou, J. Lin, J. Liu, J. Lu, W. Merrill,
+et al.
+Rwkv-7” goose” with expressive dynamic state evolution
+.
+arXiv preprint arXiv:2503.14456
+.
+Cited by:
+§2.1
+.
+Peng
+et al.
+(2025b)
+L. Peng, A. Chattopadhyay, L. Zancato, E. Nunez, W. Xia, and S. Soatto
+Gated kalmanet: a fading memory layer through test-time ridge regression
+.
+arXiv preprint arXiv:2511.21016
+.
+Cited by:
+§2.1
+.
+Qin
+et al.
+(2024)
+Z. Qin, S. Yang, W. Sun, X. Shen, D. Li, W. Sun, and Y. Zhong
+Hgrn2: gated linear rnns with state expansion
+.
+arXiv preprint arXiv:2404.07904
+.
+Cited by:
+§2.1
+.
+Qin
+et al.
+(2023)
+Z. Qin, S. Yang, and Y. Zhong
+Hierarchically gated recurrent neural network for sequence modeling
+.
+Advances in Neural Information Processing Systems
+36
+,
+pp. 33202–33221
+.
+Cited by:
+§2.1
+.
+Schlag
+et al.
+(2021)
+I. Schlag, K. Irie, and J. Schmidhuber
+Linear transformers are secretly fast weight programmers
+.
+In
+International conference on machine learning
+,
+pp. 9355–9366
+.
+Cited by:
+§2.1
+,
+§2.2
+.
+Shazeer (2020)
+N. Shazeer
+Glu variants improve transformer
+.
+arXiv preprint arXiv:2002.05202
+.
+Cited by:
+§5.3
+.
+Smith
+et al.
+(2023)
+J. T. Smith, A. Warrington, and S. W. Linderman
+Simplified state space layers for sequence modeling
+.
+In
+International Conference on Learning Representations (ICLR)
+,
+Cited by:
+§2.1
+.
+Snell
+et al.
+(2024)
+C. Snell, J. Lee, K. Xu, and A. Kumar
+Scaling llm test-time compute optimally can be more effective than scaling model parameters
+.
+arXiv preprint arXiv:2408.03314
+.
+Cited by:
+§2.2
+.
+Sun
+et al.
+(2025)
+Y. Sun, X. Li, K. Dalal, J. Xu, A. Vikram, G. Zhang, Y. Dubois, X. Chen, X. Wang, S. Koyejo,
+et al.
+Learning to (learn at test time): rnns with expressive hidden states
+.
+In
+International Conference on Machine Learning
+,
+Cited by:
+§1
+,
+§1
+,
+§2.2
+,
+§2.2
+,
+§2.2
+,
+§2.2
+,
+§3
+,
+§3
+,
+§5
+.
+Sun
+et al.
+(2020)
+Y. Sun, X. Wang, Z. Liu, J. Miller, A. Efros, and M. Hardt
+Test-time training with self-supervision for generalization under distribution shifts
+.
+In
+International conference on machine learning
+,
+pp. 9229–9248
+.
+Cited by:
+§1
+,
+§2.2
+,
+§3
+.
+Sun
+et al.
+(2023)
+Y. Sun, L. Dong, S. Huang, S. Ma, Y. Xia, J. Xue, J. Wang, and F. Wei
+Retentive network: a successor to transformer for large language models
+.
+arXiv preprint arXiv:2307.08621
+.
+Cited by:
+§2.1
+.
+Tandon
+et al.
+(2025)
+A. Tandon, K. Dalal, X. Li, D. Koceja, M. Rød, S. Buchanan, X. Wang, J. Leskovec, S. Koyejo, T. Hashimoto,
+et al.
+End-to-end test-time training for long context
+.
+arXiv preprint arXiv:2512.23675
+.
+Cited by:
+§1
+,
+§2.2
+,
+§3
+.
+Team
+et al.
+(2025)
+K. Team, Y. Zhang, Z. Lin, X. Yao, J. Hu, F. Meng, C. Liu, X. Men, S. Yang, Z. Li,
+et al.
+Kimi linear: an expressive, efficient attention architecture
+.
+arXiv preprint arXiv:2510.26692
+.
+Cited by:
+§2.1
+.
+Vaswani
+et al.
+(2017)
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin
+Attention is all you need
+.
+Advances in neural information processing systems
+30
+.
+Cited by:
+§2.1
+.
+Wang
+et al.
+(2025)
+K. A. Wang, J. Shi, and E. B. Fox
+Test-time regression: a unifying framework for designing sequence models with associative memory
+.
+arXiv preprint arXiv:2501.12352
+.
+Cited by:
+§2.2
+,
+§2.2
+.
+Yang
+et al.
+(2024a)
+S. Yang, B. Wang, Y. Shen, R. Panda, and Y. Kim
+Gated linear attention transformers with hardware-efficient training
+.
+In
+Proceedings of the 41st International Conference on Machine Learning
+,
+pp. 56501–56523
+.
+Cited by:
+§2.1
+.
+Yang
+et al.
+(2024b)
+S. Yang, B. Wang, Y. Zhang, Y. Shen, and Y. Kim
+Parallelizing linear transformers with the delta rule over sequence length
+.
+Advances in neural information processing systems
+37
+,
+pp. 115491–115522
+.
+Cited by:
+§2.1
+.
+Yuan
+et al.
+(2025)
+Y. Yuan, Q. Shen, S. Wang, X. Yang, and X. Wang
+Test3r: learning to reconstruct 3d at test time
+.
+In
+The Thirty-ninth Annual Conference on Neural Information Processing Systems
+,
+Cited by:
+§2.2
+.
+Zhang
+et al.
+(2025)
+T. Zhang, S. Bi, Y. Hong, K. Zhang, F. Luan, S. Yang, K. Sunkavalli, W. T. Freeman, and H. Tan
+Test-time training done right
+.
+arXiv preprint arXiv:2505.23884
+.
+Cited by:
+Appendix A
+,
+Appendix A
+,
+Appendix E
+,
+§1
+,
+Figure 1
+,
+Figure 1
+,
+§2.2
+,
+§2.2
+,
+§2.2
+,
+§2.2
+,
+Figure 2
+,
+Figure 2
+,
+§4.1
+,
+§4.2
+,
+§4.3
+,
+Table 1
+,
+Table 1
+,
+§5.3
+,
+§5
+,
+§6.1
+,
+Table 2
+,
+§6
+.
+Zhang
+et al.
+(2024)
+Y. Zhang, S. Yang, R. Zhu, Y. Zhang, L. Cui, Y. Wang, B. Wang, F. Shi, B. Wang, W. Bi,
+et al.
+Gated slot attention for efficient linear-time sequence modeling
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 116870–116898
+.
+Cited by:
+§2.1
+.
+Zhang and Yang (2025)
+Flame: flash language modeling made easy
+External Links:
+Link
+Cited by:
+Appendix A
+.
+Zhong
+et al.
+(2025)
+S. Zhong, M. Xu, T. Ao, and G. Shi
+Understanding transformer from the perspective of associative memory
+.
+arXiv preprint arXiv:2505.19488
+.
+Cited by:
+§2.1
+.
+Zhou
+et al.
+(2018)
+T. Zhou, R. Tucker, J. Flynn, G. Fyffe, and N. Snavely
+Stereo magnification: learning view synthesis using multiplane images
+.
+ACM Transactions on Graphics (TOG)
+37
+(
+4
+),
+pp. 1–12
+.
+Cited by:
+Appendix A
+.
+Appendix A
+Experiment Setup
+Here we outline the three tasks used to evaluate the TTT framework, along with the experimental setup.
+Language Modeling
+We use the 760M parameter LaCT-LLM
+(
+Zhang et al., 2025
+)
+as our baseline model.
+All models are trained on 100B tokens sampled from the FineWeb-Edu dataset
+(
+Penedo et al., 2024
+)
+with a batch size of 4 per GPU across 8 NVIDIA A100 GPUs for 20K iterations,
+which takes approximately 56 hours to complete.
+All other hyperparameters follow the original
+(
+Zhang et al., 2025
+)
+configuration.
+For evaluation, we report perplexity on 2.5B tokens from the Book-3 dataset
+(
+Gao et al., 2020
+)
+.
+All implementations are based on the Flame
+(
+Zhang and Yang, 2025
+)
+codebase.
+Novel View Synthesis
+We use 12-layer 768 hidden dimension LaCT-NVS
+(
+Zhang et al., 2025
+)
+model as baseline, totaling 114M parameters.
+We train our model on the RealEstate10K
+(
+Zhou et al., 2018
+)
+dataset
+with a batch size of 128 per GPU across 4 NVIDIA A100 GPUs for 20K iterations,
+which takes approximately 38 hours to complete.
+We use 2 input views and 6 target views for training, and 2 input views and 3 target views for evaluation.
+All images are resized to
+128
+×
+128
+128\times 128
+resolution.
+We train using only the MSE loss and evaluate using the Peak Signal-to-Noise Ratio (PSNR) metric.
+All other hyperparameters follow the original LaCT-NVS
+(
+Zhang et al., 2025
+)
+configuration.
+Image Classification
+We use ViTTT-B
+(
+Han et al., 2025
+)
+as our baseline model, totaling 90M parameters.
+Follow
+(
+Han et al., 2025
+)
+, we train our model on the ImageNet-1K
+(
+Deng et al., 2009
+)
+dataset
+with a batch size of 256 per GPU across 2 NVIDIA H100 GPUs for 60 epochs,
+which takes approximately 16 hours to complete.
+We evaluate on the ImageNet-1K
+(
+Deng et al., 2009
+)
+validation set using the top-1 accuracy.
+All other hyperparameters follow the original
+(
+Han et al., 2025
+)
+configuration.
+Appendix B
+Proof of Theorem
+5.1
+Proof.
+We explicitly unroll the single-step inner-loop update. Using the shorthand notation
+ϕ
+t
+​
+(
+⋅
+)
+≜
+ϕ
+⁡
+(
+⋅
+,
+Θ
+t
+)
+\phi_{t}(\cdot)\triangleq\phi(\cdot;\Theta_{t})
+and
+f
+t
+​
+(
+⋅
+)
+≜
+ϕ
+t
+​
+(
+⋅
+)
+​
+W
+t
+f_{t}(\cdot)\triangleq\phi_{t}(\cdot)W_{t}
+, the model output for the key input
+k
+k
+at step
+t
+t
+is
+f
+t
+​
+(
+k
+)
+=
+ϕ
+t
+​
+(
+k
+)
+​
+W
+t
+.
+f_{t}(k)=\phi_{t}(k)\,W_{t}.
+By the chain rule, the gradient of the last layer with respect to the loss
+ℒ
+​
+(
+f
+t
+​
+(
+k
+)
+)
+\mathcal{L}(f_{t}(k))
+is
+∇
+W
+t
+ℒ
+=
+ϕ
+t
+​
+(
+k
+)
+⊤
+​
+∂
+ℒ
+∂
+f
+t
+​
+(
+k
+)
+.
+\nabla_{W_{t}}\mathcal{L}=\phi_{t}(k)^{\top}\frac{\partial\mathcal{L}}{\partial f_{t}(k)}.
+Applying one step of gradient descent with learning rate
+η
+\eta
+yields
+W
+t
++
+1
+\displaystyle W_{t+1}
+=
+W
+t
+−
+η
+​
+ϕ
+t
+​
+(
+k
+)
+⊤
+​
+∂
+ℒ
+∂
+f
+t
+​
+(
+k
+)
+\displaystyle=W_{t}-\eta\phi_{t}(k)^{\top}\frac{\partial\mathcal{L}}{\partial f_{t}(k)}
+=
+W
+t
++
+ϕ
+t
+​
+(
+k
+)
+⊤
+​
+g
+t
+​
+(
+k
+)
+\displaystyle=W_{t}+\phi_{t}(k)^{\top}g_{t}(k)
+where we define
+g
+t
+​
+(
+k
+)
+≜
+−
+η
+​
+∂
+ℒ
+∂
+f
+t
+​
+(
+k
+)
+∈
+ℝ
+D
+out
+.
+g_{t}(k)\triangleq-\eta\,\frac{\partial\mathcal{L}}{\partial f_{t}(k)}\in\mathbb{R}^{D_{\mathrm{out}}}.
+The kernel function parameters
+Θ
+\Theta
+are also updated with gradient descent, yielding the updated function
+ϕ
+t
++
+1
+​
+(
+⋅
+)
+=
+ϕ
+⁡
+(
+⋅
+,
+Θ
+t
++
+1
+)
+\phi_{t+1}(\cdot)=\phi(\cdot;\Theta_{t+1})
+.
+Evaluating the updated model on a query
+q
+q
+gives
+o
+\displaystyle o
+=
+ϕ
+t
++
+1
+​
+(
+q
+)
+​
+W
+t
++
+1
+\displaystyle=\phi_{t+1}(q)\,W_{t+1}
+=
+ϕ
+t
++
+1
+​
+(
+q
+)
+​
+(
+W
+t
++
+ϕ
+t
+​
+(
+k
+)
+⊤
+​
+g
+t
+​
+(
+k
+)
+)
+\displaystyle=\phi_{t+1}(q)\,\big(W_{t}+\phi_{t}(k)^{\top}g_{t}(k)\big)
+This expression is a linear attention operator of the form
+o
+=
+q
+^
+​
+(
+S
+0
++
+k
+^
+⊤
+​
+v
+^
+)
+,
+o=\hat{q}\left(S_{0}+\hat{k}^{\top}\hat{v}\right),
+where
+q
+^
+=
+ϕ
+t
++
+1
+​
+(
+q
+)
+,
+k
+^
+=
+ϕ
+t
+​
+(
+k
+)
+,
+v
+^
+=
+g
+t
+​
+(
+k
+)
+,
+S
+0
+=
+W
+t
+.
+\hat{q}=\phi_{t+1}(q),\quad\hat{k}=\phi_{t}(k),\quad\hat{v}=g_{t}(k),\quad S_{0}=W_{t}.
+∎
+Appendix C
+Proof of Theorem
+5.2
+Proof.
+We prove by induction on the number of tokens processed.
+Base case.
+Starting from initial parameters
+(
+W
+0
+,
+Θ
+0
+)
+(W_{0},\Theta_{0})
+, processing token
+0
+0
+with key
+k
+0
+k_{0}
+applies one gradient descent step. By Theorem
+5.1
+:
+W
+1
+=
+W
+0
++
+ϕ
+0
+​
+(
+k
+0
+)
+⊤
+​
+g
+0
+​
+(
+k
+0
+)
+,
+W_{1}=W_{0}+\phi_{0}(k_{0})^{\top}g_{0}(k_{0}),
+where
+g
+0
+​
+(
+k
+0
+)
+=
+−
+η
+​
+∂
+ℒ
+∂
+f
+0
+​
+(
+k
+0
+)
+g_{0}(k_{0})=-\eta\,\frac{\partial\mathcal{L}}{\partial f_{0}(k_{0})}
+, and
+Θ
+1
+\Theta_{1}
+is updated accordingly. This matches the claimed form with
+t
+=
+0
+t=0
+.
+Inductive step.
+Assume that after processing tokens
+0
+,
+…
+,
+t
+−
+1
+0,\ldots,t-1
+, we have
+W
+t
+=
+W
+0
++
+∑
+i
+=
+0
+t
+−
+1
+ϕ
+i
+​
+(
+k
+i
+)
+⊤
+​
+g
+i
+​
+(
+k
+i
+)
+.
+W_{t}=W_{0}+\sum_{i=0}^{t-1}\phi_{i}(k_{i})^{\top}g_{i}(k_{i}).
+Processing token
+t
+t
+with key
+k
+t
+k_{t}
+applies another gradient descent step. By Theorem
+5.1
+:
+W
+t
++
+1
+=
+W
+t
++
+ϕ
+t
+​
+(
+k
+t
+)
+⊤
+​
+g
+t
+​
+(
+k
+t
+)
+.
+W_{t+1}=W_{t}+\phi_{t}(k_{t})^{\top}g_{t}(k_{t}).
+Substituting the inductive hypothesis:
+W
+t
++
+1
+=
+W
+0
++
+∑
+i
+=
+0
+t
+−
+1
+ϕ
+i
+​
+(
+k
+i
+)
+⊤
+​
+g
+i
+​
+(
+k
+i
+)
++
+ϕ
+t
+​
+(
+k
+t
+)
+⊤
+​
+g
+t
+​
+(
+k
+t
+)
+=
+W
+0
++
+∑
+i
+=
+0
+t
+ϕ
+i
+​
+(
+k
+i
+)
+⊤
+​
+g
+i
+​
+(
+k
+i
+)
+.
+W_{t+1}=W_{0}+\sum_{i=0}^{t-1}\phi_{i}(k_{i})^{\top}g_{i}(k_{i})+\phi_{t}(k_{t})^{\top}g_{t}(k_{t})=W_{0}+\sum_{i=0}^{t}\phi_{i}(k_{i})^{\top}g_{i}(k_{i}).
+Output computation.
+Evaluating the model on query
+q
+t
+q_{t}
+with the updated parameters gives:
+o
+t
+\displaystyle o_{t}
+=
+ϕ
+t
++
+1
+​
+(
+q
+t
+)
+​
+W
+t
++
+1
+\displaystyle=\phi_{t+1}(q_{t})\,W_{t+1}
+=
+ϕ
+t
++
+1
+​
+(
+q
+t
+)
+​
+(
+W
+0
++
+∑
+i
+=
+0
+t
+ϕ
+i
+​
+(
+k
+i
+)
+⊤
+​
+g
+i
+​
+(
+k
+i
+)
+)
+\displaystyle=\phi_{t+1}(q_{t})\left(W_{0}+\sum_{i=0}^{t}\phi_{i}(k_{i})^{\top}g_{i}(k_{i})\right)
+This is the extended linear attention form:
+o
+t
+=
+q
+^
+t
+​
+(
+S
+0
++
+∑
+i
+=
+0
+t
+k
+^
+i
+⊤
+​
+v
+^
+i
+)
+,
+o_{t}=\hat{q}_{t}\left(S_{0}+\sum_{i=0}^{t}\hat{k}_{i}^{\top}\hat{v}_{i}\right),
+where
+q
+^
+t
+=
+ϕ
+t
++
+1
+​
+(
+q
+t
+)
+\hat{q}_{t}=\phi_{t+1}(q_{t})
+,
+k
+^
+i
+=
+ϕ
+i
+​
+(
+k
+i
+)
+\hat{k}_{i}=\phi_{i}(k_{i})
+,
+v
+^
+i
+=
+g
+i
+​
+(
+k
+i
+)
+\hat{v}_{i}=g_{i}(k_{i})
+, and
+S
+0
+=
+W
+0
+S_{0}=W_{0}
+.
+∎
+Appendix D
+Proof of Theorem
+5.3
+Proof.
+We prove by induction, extending the approach of Theorem
+5.2
+to momentum updates.
+Base case.
+At
+t
+=
+0
+t=0
+, the momentum accumulator is initialized as
+Δ
+​
+W
+−
+1
+=
+0
+\Delta W_{-1}=0
+, so
+Δ
+​
+W
+0
+=
+∇
+W
+ℒ
+​
+(
+f
+0
+​
+(
+k
+0
+)
+)
+=
+ϕ
+0
+​
+(
+k
+0
+)
+⊤
+​
+∂
+ℒ
+∂
+f
+0
+​
+(
+k
+0
+)
+.
+\Delta W_{0}=\nabla_{W}\mathcal{L}(f_{0}(k_{0}))=\phi_{0}(k_{0})^{\top}\frac{\partial\mathcal{L}}{\partial f_{0}(k_{0})}.
+Applying the update rule
+W
+1
+=
+W
+0
+−
+η
+​
+Δ
+​
+W
+0
+W_{1}=W_{0}-\eta\Delta W_{0}
+gives
+W
+1
+=
+W
+0
++
+ϕ
+0
+​
+(
+k
+0
+)
+⊤
+​
+g
+0
+​
+(
+k
+0
+)
+,
+W_{1}=W_{0}+\phi_{0}(k_{0})^{\top}g_{0}(k_{0}),
+where
+g
+0
+​
+(
+k
+0
+)
+=
+−
+η
+​
+∂
+ℒ
+∂
+f
+0
+​
+(
+k
+0
+)
+g_{0}(k_{0})=-\eta\,\frac{\partial\mathcal{L}}{\partial f_{0}(k_{0})}
+. This matches the claimed form with
+m
+0
+​
+(
+k
+0
+)
+=
+g
+0
+​
+(
+k
+0
+)
+m_{0}(k_{0})=g_{0}(k_{0})
+.
+Inductive step.
+Define the cumulative momentum coefficient from step
+i
+i
+to step
+j
+j
+as:
+β
+i
+j
+≜
+{
+∏
+s
+=
+i
++
+1
+j
+α
+s
+if
+​
+i
+<
+j
+,
+1
+if
+​
+i
+=
+j
+.
+\beta_{i}^{j}\triangleq\begin{cases}\prod_{s=i+1}^{j}\alpha_{s}&\text{if }i<j,\\
+1&\text{if }i=j.\end{cases}
+Assume that after processing tokens
+0
+,
+…
+,
+t
+−
+1
+0,\ldots,t-1
+, the momentum accumulator satisfies
+Δ
+​
+W
+t
+−
+1
+=
+∑
+i
+=
+0
+t
+−
+1
+β
+i
+t
+−
+1
+​
+ϕ
+i
+​
+(
+k
+i
+)
+⊤
+​
+∂
+ℒ
+∂
+f
+i
+​
+(
+k
+i
+)
+.
+\Delta W_{t-1}=\sum_{i=0}^{t-1}\beta_{i}^{t-1}\,\phi_{i}(k_{i})^{\top}\frac{\partial\mathcal{L}}{\partial f_{i}(k_{i})}.
+At step
+t
+t
+, the momentum update gives
+Δ
+​
+W
+t
+\displaystyle\Delta W_{t}
+=
+∇
+W
+ℒ
+​
+(
+f
+t
+​
+(
+k
+t
+)
+)
++
+α
+t
+​
+Δ
+​
+W
+t
+−
+1
+\displaystyle=\nabla_{W}\mathcal{L}(f_{t}(k_{t}))+\alpha_{t}\Delta W_{t-1}
+=
+ϕ
+t
+​
+(
+k
+t
+)
+⊤
+​
+∂
+ℒ
+∂
+f
+t
+​
+(
+k
+t
+)
++
+α
+t
+​
+∑
+i
+=
+0
+t
+−
+1
+β
+i
+t
+−
+1
+​
+ϕ
+i
+​
+(
+k
+i
+)
+⊤
+​
+∂
+ℒ
+∂
+f
+i
+​
+(
+k
+i
+)
+.
+\displaystyle=\phi_{t}(k_{t})^{\top}\frac{\partial\mathcal{L}}{\partial f_{t}(k_{t})}+\alpha_{t}\sum_{i=0}^{t-1}\beta_{i}^{t-1}\,\phi_{i}(k_{i})^{\top}\frac{\partial\mathcal{L}}{\partial f_{i}(k_{i})}.
+For terms
+i
+∈
+[
+0
+,
+t
+−
+1
+]
+i\in[0,t-1]
+, we have
+α
+t
+⋅
+β
+i
+t
+−
+1
+=
+α
+t
+​
+∏
+s
+=
+i
++
+1
+t
+−
+1
+α
+s
+=
+∏
+s
+=
+i
++
+1
+t
+α
+s
+=
+β
+i
+t
+\alpha_{t}\cdot\beta_{i}^{t-1}=\alpha_{t}\prod_{s=i+1}^{t-1}\alpha_{s}=\prod_{s=i+1}^{t}\alpha_{s}=\beta_{i}^{t}
+. For the
+i
+=
+t
+i=t
+term, the coefficient is
+β
+t
+t
+=
+1
+\beta_{t}^{t}=1
+. Thus:
+Δ
+​
+W
+t
+=
+∑
+i
+=
+0
+t
+β
+i
+t
+​
+ϕ
+i
+​
+(
+k
+i
+)
+⊤
+​
+∂
+ℒ
+∂
+f
+i
+​
+(
+k
+i
+)
+.
+\Delta W_{t}=\sum_{i=0}^{t}\beta_{i}^{t}\,\phi_{i}(k_{i})^{\top}\frac{\partial\mathcal{L}}{\partial f_{i}(k_{i})}.
+Weight accumulation.
+From
+W
+j
++
+1
+=
+W
+j
+−
+η
+​
+Δ
+​
+W
+j
+W_{j+1}=W_{j}-\eta\Delta W_{j}
+, we have
+W
+t
++
+1
+=
+W
+0
+−
+η
+​
+∑
+j
+=
+0
+t
+Δ
+​
+W
+j
+W_{t+1}=W_{0}-\eta\sum_{j=0}^{t}\Delta W_{j}
+. Substituting the closed form for
+Δ
+​
+W
+j
+\Delta W_{j}
+and exchanging the order of summation:
+W
+t
++
+1
+\displaystyle W_{t+1}
+=
+W
+0
+−
+η
+​
+∑
+j
+=
+0
+t
+∑
+i
+=
+0
+j
+β
+i
+j
+​
+ϕ
+i
+​
+(
+k
+i
+)
+⊤
+​
+∂
+ℒ
+∂
+f
+i
+​
+(
+k
+i
+)
+\displaystyle=W_{0}-\eta\sum_{j=0}^{t}\sum_{i=0}^{j}\beta_{i}^{j}\,\phi_{i}(k_{i})^{\top}\frac{\partial\mathcal{L}}{\partial f_{i}(k_{i})}
+=
+W
+0
++
+∑
+i
+=
+0
+t
+ϕ
+i
+​
+(
+k
+i
+)
+⊤
+​
+(
+−
+η
+∂
+ℒ
+∂
+f
+i
+​
+(
+k
+i
+)
+∑
+j
+=
+i
+t
+β
+i
+j
+)
+⏟
+m
+i
+​
+(
+k
+i
+)
+.
+\displaystyle=W_{0}+\sum_{i=0}^{t}\phi_{i}(k_{i})^{\top}\underbrace{\left(-\eta\frac{\partial\mathcal{L}}{\partial f_{i}(k_{i})}\sum_{j=i}^{t}\beta_{i}^{j}\right)}_{m_{i}(k_{i})}.
+The momentum-weighted effective value is thus
+m
+i
+​
+(
+k
+i
+)
+=
+g
+i
+​
+(
+k
+i
+)
+⋅
+∑
+j
+=
+i
+t
+β
+i
+j
+.
+m_{i}(k_{i})=g_{i}(k_{i})\cdot\sum_{j=i}^{t}\beta_{i}^{j}.
+Output computation.
+Evaluating the model on query
+q
+t
+q_{t}
+with the updated parameters:
+o
+t
+\displaystyle o_{t}
+=
+ϕ
+t
++
+1
+​
+(
+q
+t
+)
+​
+W
+t
++
+1
+\displaystyle=\phi_{t+1}(q_{t})\,W_{t+1}
+=
+ϕ
+t
++
+1
+​
+(
+q
+t
+)
+​
+(
+W
+0
++
+∑
+i
+=
+0
+t
+ϕ
+i
+​
+(
+k
+i
+)
+⊤
+​
+m
+i
+​
+(
+k
+i
+)
+)
+.
+\displaystyle=\phi_{t+1}(q_{t})\left(W_{0}+\sum_{i=0}^{t}\phi_{i}(k_{i})^{\top}m_{i}(k_{i})\right).
+This is the linear attention form with
+q
+^
+t
+=
+ϕ
+t
++
+1
+​
+(
+q
+t
+)
+\hat{q}_{t}=\phi_{t+1}(q_{t})
+,
+k
+^
+i
+=
+ϕ
+i
+​
+(
+k
+i
+)
+\hat{k}_{i}=\phi_{i}(k_{i})
+,
+v
+^
+i
+=
+m
+i
+​
+(
+k
+i
+)
+\hat{v}_{i}=m_{i}(k_{i})
+, and
+S
+0
+=
+W
+0
+S_{0}=W_{0}
+.
+∎
+Appendix E
+Derivation: LaCT as Linear Attention
+We provide the full derivation showing how LaCT
+(
+Zhang et al., 2025
+)
+can be written in the form of linear attention, following the framework of Theorem
+5.3
+.
+E.1
+LaCT Architecture and Update Rule
+LaCT adopts a bias-free SwiGLU MLP as its inner-loop mapping:
+f
+⁡
+(
+x
+)
+=
+(
+silu
+⁡
+(
+x
+​
+W
+0
+)
+⊙
+(
+x
+​
+W
+2
+)
+)
+​
+W
+1
+,
+f(x)=\bigl(\mathrm{silu}(xW_{0})\odot(xW_{2})\bigr)W_{1},
+where
+W
+0
+,
+W
+2
+∈
+ℝ
+D
+h
+×
+D
+k
+W_{0},W_{2}\in\mathbb{R}^{D_{h}\times D_{k}}
+and
+W
+1
+∈
+ℝ
+D
+h
+×
+D
+v
+W_{1}\in\mathbb{R}^{D_{h}\times D_{v}}
+.
+The inner-loop objective uses the Frobenius inner product:
+ℒ
+⁡
+(
+f
+⁡
+(
+k
+)
+,
+v
+)
+=
+−
+⟨
+f
+⁡
+(
+k
+)
+,
+v
+⟩
+.
+\mathcal{L}(f(k),v)=-\langle f(k),v\rangle.
+At each token
+t
+t
+, LaCT performs gradient descent with per-token learning rate
+η
+t
+\eta_{t}
+, momentum
+α
+t
+\alpha_{t}
+, and Muon-style
+(
+Jordan et al., 2024
+)
+gradient orthogonalization
+ℳ
+⁡
+(
+⋅
+)
+\mathcal{M}(\cdot)
+:
+Δ
+​
+W
+i
+,
+t
+=
+∇
+W
+i
+,
+t
+ℒ
+​
+(
+f
+t
+​
+(
+k
+t
+)
+,
+v
+t
+)
++
+α
+t
+​
+Δ
+​
+W
+i
+,
+t
+−
+1
+,
+W
+i
+,
+t
++
+1
+=
+W
+i
+,
+t
+−
+η
+t
+​
+ℳ
+​
+(
+Δ
+​
+W
+i
+,
+t
+)
+,
+\Delta W_{i,t}=\nabla_{W_{i,t}}\mathcal{L}(f_{t}(k_{t}),v_{t})+\alpha_{t}\Delta W_{i,t-1},\quad W_{i,t+1}=W_{i,t}-\eta_{t}\,\mathcal{M}(\Delta W_{i,t}),
+for
+i
+∈
+{
+0
+,
+1
+,
+2
+}
+i\in\{0,1,2\}
+.
+E.2
+Gradient Computation
+The upstream gradient with respect to the output is
+∂
+ℒ
+∂
+f
+t
+​
+(
+k
+t
+)
+=
+−
+v
+t
+\frac{\partial\mathcal{L}}{\partial f_{t}(k_{t})}=-v_{t}
+.
+Using the chain rule, the gradient for the final layer
+W
+1
+W_{1}
+is:
+∇
+W
+1
+ℒ
+=
+ϕ
+t
+​
+(
+k
+t
+)
+⊤
+​
+∂
+ℒ
+∂
+f
+t
+​
+(
+k
+t
+)
+=
+−
+ϕ
+t
+​
+(
+k
+t
+)
+⊤
+​
+v
+t
+,
+\nabla_{W_{1}}\mathcal{L}=\phi_{t}(k_{t})^{\top}\frac{\partial\mathcal{L}}{\partial f_{t}(k_{t})}=-\phi_{t}(k_{t})^{\top}v_{t},
+where
+ϕ
+t
+​
+(
+x
+)
+=
+silu
+⁡
+(
+x
+​
+W
+0
+,
+t
+)
+⊙
+(
+x
+​
+W
+2
+,
+t
+)
+\phi_{t}(x)=\mathrm{silu}(xW_{0,t})\odot(xW_{2,t})
+is the kernel function.
+E.3
+Linear Attention Form with Muon
+Following the same induction as Theorem
+5.3
+, but with the Muon orthogonalization
+ℳ
+⁡
+(
+⋅
+)
+\mathcal{M}(\cdot)
+applied after each gradient accumulation, the weight update becomes:
+W
+1
+,
+t
++
+1
+=
+W
+1
+,
+0
+−
+∑
+j
+=
+0
+t
+η
+j
+​
+ℳ
+​
+(
+Δ
+​
+W
+1
+,
+j
+)
+.
+W_{1,t+1}=W_{1,0}-\sum_{j=0}^{t}\eta_{j}\,\mathcal{M}(\Delta W_{1,j}).
+Using the cumulative momentum coefficient
+β
+i
+t
+\beta_{i}^{t}
+defined in Theorem
+5.3
+, the momentum accumulator for
+W
+1
+W_{1}
+is:
+Δ
+W
+1
+,
+t
+=
+−
+ϕ
+t
+(
+k
+t
+)
+⊤
+v
+t
++
+α
+t
+Δ
+W
+1
+,
+t
+−
+1
+=
+−
+∑
+i
+=
+0
+t
+β
+i
+t
+ϕ
+i
+(
+k
+i
+)
+⊤
+v
+i
+.
+\Delta W_{1,t}=-\phi_{t}(k_{t})^{\top}v_{t}+\alpha_{t}\Delta W_{1,t-1}=-\sum_{i=0}^{t}\beta_{i}^{t}\,\phi_{i}(k_{i})^{\top}v_{i}.
+Substituting into the weight update and exchanging the order of summation (as in the proof of Theorem
+5.3
+):
+W
+1
+,
+t
++
+1
+=
+W
+1
+,
+0
++
+∑
+i
+=
+0
+t
+ℳ
+⁡
+(
+ϕ
+i
+​
+(
+k
+i
+)
+⊤
+​
+m
+i
+)
+,
+W_{1,t+1}=W_{1,0}+\sum_{i=0}^{t}\mathcal{M}\!\left(\phi_{i}(k_{i})^{\top}m_{i}\right),
+where the momentum-weighted effective value is:
+m
+i
+≜
+η
+i
+​
+v
+i
+⋅
+∑
+j
+=
+i
+t
+β
+i
+j
+.
+m_{i}\triangleq\eta_{i}\,v_{i}\cdot\sum_{j=i}^{t}\beta_{i}^{j}.
+Evaluating on query
+q
+t
+q_{t}
+:
+o
+t
+\displaystyle o_{t}
+=
+ϕ
+t
++
+1
+​
+(
+q
+t
+)
+​
+W
+1
+,
+t
++
+1
+\displaystyle=\phi_{t+1}(q_{t})\,W_{1,t+1}
+=
+ϕ
+t
++
+1
+​
+(
+q
+t
+)
+​
+(
+W
+1
+,
+0
++
+∑
+i
+=
+0
+t
+ℳ
+⁡
+(
+ϕ
+i
+​
+(
+k
+i
+)
+⊤
+​
+m
+i
+)
+)
+.
+\displaystyle=\phi_{t+1}(q_{t})\left(W_{1,0}+\sum_{i=0}^{t}\mathcal{M}\!\left(\phi_{i}(k_{i})^{\top}m_{i}\right)\right).
+This is a linear attention–like form where
+ϕ
+i
+​
+(
+k
+i
+)
+\phi_{i}(k_{i})
+and
+m
+i
+m_{i}
+play the roles of keys and values, and
+ϕ
+t
++
+1
+​
+(
+q
+t
+)
+\phi_{t+1}(q_{t})
+acts as the query. The Muon orthogonalization
+ℳ
+⁡
+(
+⋅
+)
+\mathcal{M}(\cdot)
+is applied element-wise to each key-value outer product before accumulation.
+E.4
+Effect of Weight Normalization
+LaCT additionally applies weight normalization to
+W
+1
+W_{1}
+after each update:
+W
+1
+,
+t
++
+1
+=
+Norm
+⁡
+(
+W
+1
+,
+t
+−
+η
+t
+​
+ℳ
+​
+(
+Δ
+​
+W
+1
+,
+t
+)
+)
+,
+W_{1,t+1}=\mathrm{Norm}\!\left(W_{1,t}-\eta_{t}\,\mathcal{M}(\Delta W_{1,t})\right),
+where
+Norm
+⁡
+(
+⋅
+)
+\mathrm{Norm}(\cdot)
+applies channel-wise
+ℓ
+2
+\ell_{2}
+normalization.
+Weight normalization does
+not
+break the linear attention perspective. Recall that in the linear attention formulation, the state matrix
+S
+t
+=
+W
+1
+,
+t
+S_{t}=W_{1,t}
+accumulates key-value outer products. With weight normalization, we simply normalize this state after each update:
+S
+t
++
+1
+=
+Norm
+⁡
+(
+S
+t
++
+ϕ
+t
+​
+(
+k
+t
+)
+⊤
+​
+m
+t
+)
+.
+S_{t+1}=\mathrm{Norm}\!\left(S_{t}+\phi_{t}(k_{t})^{\top}m_{t}\right).
+The output remains a linear function of the (normalized) state:
+o
+t
+=
+ϕ
+t
++
+1
+​
+(
+q
+t
+)
+​
+S
+t
++
+1
+.
+o_{t}=\phi_{t+1}(q_{t})\,S_{t+1}.
+Thus, LaCT with weight normalization is still a linear attention mechanism—the query linearly reads from a state that accumulates key-value information.
+However, the normalization prevents expressing the state as a
+simple sum
+over history. Unlike the unnormalized case where
+S
+t
++
+1
+=
+S
+0
++
+∑
+i
+=
+0
+t
+ϕ
+i
+​
+(
+k
+i
+)
+⊤
+​
+m
+i
+S_{t+1}=S_{0}+\sum_{i=0}^{t}\phi_{i}(k_{i})^{\top}m_{i}
+, the nested normalization creates a sequential dependency:
+S
+t
++
+1
+\displaystyle S_{t+1}
+=
+Norm
+⁡
+(
+Norm
+⁡
+(
+S
+t
+−
+1
++
+ϕ
+t
+−
+1
+​
+(
+k
+t
+−
+1
+)
+⊤
+​
+m
+t
+−
+1
+)
++
+ϕ
+t
+​
+(
+k
+t
+)
+⊤
+​
+m
+t
+)
+.
+\displaystyle=\mathrm{Norm}\!\left(\mathrm{Norm}\!\left(S_{t-1}+\phi_{t-1}(k_{t-1})^{\top}m_{t-1}\right)+\phi_{t}(k_{t})^{\top}m_{t}\right).
+This has implications for parallelization, which we discuss in Appendix
+I
+.
+Appendix F
+Derivation: ViTTT GLU as Linear Attention
+We show that the simplified GLU used in ViTTT
+(
+Han et al., 2025
+)
+can be written into a linear attention form with element-wise multiplication.
+F.1
+Architecture and Loss
+In ViTTT, the GLU is defined as:
+f
+t
+​
+(
+x
+)
+=
+silu
+⁡
+(
+x
+​
+W
+0
+,
+t
+)
+⊙
+(
+x
+​
+W
+1
+,
+t
+)
+,
+f_{t}(x)=\mathrm{silu}(xW_{0,t})\odot(xW_{1,t}),
+where
+W
+0
+,
+t
+,
+W
+1
+,
+t
+∈
+ℝ
+D
+h
+×
+D
+h
+W_{0,t},W_{1,t}\in\mathbb{R}^{D_{h}\times D_{h}}
+are both square matrices. We define the kernel function as
+ϕ
+t
+​
+(
+x
+)
+≜
+silu
+⁡
+(
+x
+​
+W
+0
+,
+t
+)
+.
+\phi_{t}(x)\triangleq\mathrm{silu}(xW_{0,t}).
+Unlike the general form where the kernel function output is followed by matrix multiplication with a final layer, here the GLU uses element-wise multiplication between the nonlinear gating
+ϕ
+t
+​
+(
+x
+)
+\phi_{t}(x)
+and the linear projection
+x
+​
+W
+1
+,
+t
+xW_{1,t}
+.
+The inner-loop loss uses the Frobenius inner product:
+ℒ
+⁡
+(
+f
+t
+​
+(
+k
+t
+)
+,
+v
+t
+)
+=
+−
+⟨
+f
+t
+​
+(
+k
+t
+)
+,
+v
+t
+⟩
+.
+\mathcal{L}(f_{t}(k_{t}),v_{t})=-\langle f_{t}(k_{t}),v_{t}\rangle.
+F.2
+Gradient Computation
+The upstream gradient with respect to the GLU output is
+∂
+ℒ
+∂
+f
+t
+​
+(
+k
+t
+)
+=
+−
+v
+t
+\frac{\partial\mathcal{L}}{\partial f_{t}(k_{t})}=-v_{t}
+.
+Applying the chain rule, the gradient of
+W
+1
+,
+t
+W_{1,t}
+is:
+∇
+W
+1
+,
+t
+ℒ
+=
+k
+t
+⊤
+​
+(
+∂
+ℒ
+∂
+f
+t
+​
+(
+k
+t
+)
+⊙
+ϕ
+t
+​
+(
+k
+t
+)
+)
+=
+−
+k
+t
+⊤
+​
+(
+v
+t
+⊙
+ϕ
+t
+​
+(
+k
+t
+)
+)
+.
+\nabla_{W_{1,t}}\mathcal{L}=k_{t}^{\top}\left(\frac{\partial\mathcal{L}}{\partial f_{t}(k_{t})}\odot\phi_{t}(k_{t})\right)=-k_{t}^{\top}(v_{t}\odot\phi_{t}(k_{t})).
+F.3
+Linear Attention Form
+After one step of gradient descent with learning rate
+η
+\eta
+:
+W
+1
+,
+t
++
+1
+=
+W
+1
+,
+t
+−
+η
+​
+∇
+W
+1
+,
+t
+ℒ
+=
+W
+1
+,
+t
++
+η
+​
+k
+t
+⊤
+​
+(
+v
+t
+⊙
+ϕ
+t
+​
+(
+k
+t
+)
+)
+.
+W_{1,t+1}=W_{1,t}-\eta\nabla_{W_{1,t}}\mathcal{L}=W_{1,t}+\eta\,k_{t}^{\top}(v_{t}\odot\phi_{t}(k_{t})).
+Similarly,
+W
+0
+,
+t
+W_{0,t}
+is updated to
+W
+0
+,
+t
++
+1
+W_{0,t+1}
+, yielding the updated kernel function
+ϕ
+t
++
+1
+​
+(
+⋅
+)
+\phi_{t+1}(\cdot)
+.
+Evaluating the model on query
+q
+t
+q_{t}
+gives:
+o
+t
+\displaystyle o_{t}
+=
+f
+t
++
+1
+​
+(
+q
+t
+)
+=
+ϕ
+t
++
+1
+​
+(
+q
+t
+)
+⊙
+(
+q
+t
+​
+W
+1
+,
+t
++
+1
+)
+\displaystyle=f_{t+1}(q_{t})=\phi_{t+1}(q_{t})\odot(q_{t}W_{1,t+1})
+=
+ϕ
+t
++
+1
+​
+(
+q
+t
+)
+⊙
+(
+q
+t
+​
+W
+1
+,
+t
++
+η
+⁡
+(
+q
+t
+​
+k
+t
+⊤
+)
+​
+(
+v
+t
+⊙
+ϕ
+t
+​
+(
+k
+t
+)
+)
+)
+\displaystyle=\phi_{t+1}(q_{t})\odot\bigl(q_{t}W_{1,t}+\eta\,(q_{t}k_{t}^{\top})(v_{t}\odot\phi_{t}(k_{t}))\bigr)
+=
+ϕ
+t
++
+1
+​
+(
+q
+t
+)
+⊙
+(
+q
+t
+​
+(
+W
+1
+,
+t
++
+k
+t
+⊤
+​
+(
+v
+t
+⊙
+ϕ
+t
+​
+(
+k
+t
+)
+)
+)
+)
+.
+\displaystyle=\phi_{t+1}(q_{t})\odot\Bigl(q_{t}\bigl(W_{1,t}+k_{t}^{\top}(v_{t}\odot\phi_{t}(k_{t}))\bigr)\Bigr).
+This is a linear attention form where:
+•
+The second term computes a scalar attention weight
+⟨
+q
+t
+,
+k
+t
+⟩
+\langle q_{t},k_{t}\rangle
+that modulates the value vector
+v
+t
+v_{t}
+•
+ϕ
+t
+​
+(
+k
+t
+)
+\phi_{t}(k_{t})
+acts as a multiplicative gate on the values
+•
+ϕ
+t
++
+1
+​
+(
+q
+t
+)
+\phi_{t+1}(q_{t})
+gates the final output
+The state matrix
+S
+t
+=
+W
+1
+,
+t
+S_{t}=W_{1,t}
+accumulates outer products of keys and gated values, consistent with the general linear attention framework.
+Appendix G
+Derivation: ViTTT Depthwise Convolution as Linear Attention
+We show that the
+3
+×
+3
+3\times 3
+depthwise convolution layer in ViTTT
+(
+Han et al., 2025
+)
+can be formulated as a form of spatially-local linear attention.
+G.1
+Architecture and Loss
+Let
+K
+,
+V
+∈
+ℝ
+C
+×
+H
+×
+W
+K,V\in\mathbb{R}^{C\times H\times W}
+be the spatial key and value tensors, and
+W
+t
+∈
+ℝ
+C
+×
+1
+×
+3
+×
+3
+W_{t}\in\mathbb{R}^{C\times 1\times 3\times 3}
+be the depthwise convolution weights at step
+t
+t
+.
+The forward pass computes:
+f
+t
+​
+(
+K
+)
+=
+Conv
+3
+×
+3
+​
+(
+K
+,
+W
+t
+)
+,
+f_{t}(K)=\mathrm{Conv}_{3\times 3}(K;W_{t}),
+where
+Conv
+3
+×
+3
+\mathrm{Conv}_{3\times 3}
+denotes depthwise convolution with
+3
+×
+3
+3\times 3
+kernel.
+The inner-loop loss uses the Frobenius inner product:
+ℒ
+(
+f
+t
+(
+K
+)
+,
+V
+)
+=
+−
+⟨
+f
+t
+(
+K
+)
+,
+V
+⟩
+=
+−
+∑
+c
+,
+i
+,
+j
+[
+f
+t
+(
+K
+)
+]
+c
+,
+i
+,
+j
+⋅
+V
+c
+,
+i
+,
+j
+.
+\mathcal{L}(f_{t}(K),V)=-\langle f_{t}(K),V\rangle=-\sum_{c,i,j}[f_{t}(K)]_{c,i,j}\cdot V_{c,i,j}.
+G.2
+Gradient Computation
+The upstream gradient is
+∂
+ℒ
+∂
+f
+t
+​
+(
+K
+)
+=
+−
+V
+\frac{\partial\mathcal{L}}{\partial f_{t}(K)}=-V
+.
+For depthwise convolution, the gradient with respect to the weight
+W
+t
+W_{t}
+can be written as:
+∇
+W
+t
+ℒ
+=
+K
+⋆
+∂
+ℒ
+∂
+f
+t
+​
+(
+K
+)
+=
+−
+K
+⋆
+V
+,
+\nabla_{W_{t}}\mathcal{L}=K\star\frac{\partial\mathcal{L}}{\partial f_{t}(K)}=-K\star V,
+where
+⋆
+\star
+denotes cross-correlation. Specifically, for each channel
+c
+c
+and offset
+(
+δ
+y
+,
+δ
+x
+)
+∈
+{
+−
+1
+,
+0
+,
+1
+}
+2
+(\delta_{y},\delta_{x})\in\{-1,0,1\}^{2}
+:
+[
+∇
+W
+t
+ℒ
+]
+c
+,
+δ
+y
+,
+δ
+x
+=
+−
+∑
+i
+,
+j
+K
+c
+,
+i
++
+δ
+y
+,
+j
++
+δ
+x
+⋅
+V
+c
+,
+i
+,
+j
+.
+[\nabla_{W_{t}}\mathcal{L}]_{c,\delta_{y},\delta_{x}}=-\sum_{i,j}K_{c,i+\delta_{y},j+\delta_{x}}\cdot V_{c,i,j}.
+G.3
+Linear Attention Form
+After one step of gradient descent with learning rate
+η
+\eta
+:
+[
+W
+t
++
+1
+]
+c
+,
+δ
+y
+,
+δ
+x
+=
+[
+W
+t
+]
+c
+,
+δ
+y
+,
+δ
+x
++
+η
+​
+∑
+i
+,
+j
+K
+c
+,
+i
++
+δ
+y
+,
+j
++
+δ
+x
+⋅
+V
+c
+,
+i
+,
+j
+.
+[W_{t+1}]_{c,\delta_{y},\delta_{x}}=[W_{t}]_{c,\delta_{y},\delta_{x}}+\eta\sum_{i,j}K_{c,i+\delta_{y},j+\delta_{x}}\cdot V_{c,i,j}.
+When evaluating on query
+Q
+∈
+ℝ
+C
+×
+H
+×
+W
+Q\in\mathbb{R}^{C\times H\times W}
+, the output at position
+(
+i
+,
+j
+)
+(i,j)
+is:
+O
+c
+,
+i
+,
+j
+\displaystyle O_{c,i,j}
+=
+∑
+δ
+y
+,
+δ
+x
+[
+W
+t
++
+1
+]
+c
+,
+δ
+y
+,
+δ
+x
+⋅
+Q
+c
+,
+i
++
+δ
+y
+,
+j
++
+δ
+x
+\displaystyle=\sum_{\delta_{y},\delta_{x}}[W_{t+1}]_{c,\delta_{y},\delta_{x}}\cdot Q_{c,i+\delta_{y},j+\delta_{x}}
+=
+∑
+δ
+y
+,
+δ
+x
+[
+W
+t
+]
+c
+,
+δ
+y
+,
+δ
+x
+⋅
+Q
+c
+,
+i
++
+δ
+y
+,
+j
++
+δ
+x
+⏟
+[
+Conv
+⁡
+(
+Q
+,
+W
+t
+)
+]
+c
+,
+i
+,
+j
+\displaystyle=\underbrace{\sum_{\delta_{y},\delta_{x}}[W_{t}]_{c,\delta_{y},\delta_{x}}\cdot Q_{c,i+\delta_{y},j+\delta_{x}}}_{[\mathrm{Conv}(Q;W_{t})]_{c,i,j}}
++
+η
+∑
+i
+′
+,
+j
+′
+(
+∑
+δ
+y
+,
+δ
+x
+Q
+c
+,
+i
++
+δ
+y
+,
+j
++
+δ
+x
+⋅
+K
+c
+,
+i
+′
++
+δ
+y
+,
+j
+′
++
+δ
+x
+)
+⏟
+spatial attention weight
+⋅
+V
+c
+,
+i
+′
+,
+j
+′
+.
+\displaystyle\quad+\eta\sum_{i^{\prime},j^{\prime}}\underbrace{\Big(\sum_{\delta_{y},\delta_{x}}Q_{c,i+\delta_{y},j+\delta_{x}}\cdot K_{c,i^{\prime}+\delta_{y},j^{\prime}+\delta_{x}}\Big)}_{\text{spatial attention weight}}\cdot V_{c,i^{\prime},j^{\prime}}.
+This is a linear attention form where:
+•
+The first term corresponds to the initial state
+S
+0
+=
+W
+t
+S_{0}=W_{t}
+•
+The attention weight between query position
+(
+i
+,
+j
+)
+(i,j)
+and key position
+(
+i
+′
+,
+j
+′
+)
+(i^{\prime},j^{\prime})
+is the sum of element-wise products over the
+3
+×
+3
+3\times 3
+neighborhood offsets
+•
+This spatially-local attention allows each output position to attend to all key-value positions, weighted by the overlap of their local
+3
+×
+3
+3\times 3
+neighborhoods
+Conceptually, since convolution is effectively a sliding-window linear layer, this TTT component is equivalent to a sliding-window linear attention mechanism.
+Appendix H
+Parallel Form of TTT
+We present the parallel formulation for TTT when only
+W
+1
+W_{1}
+is dynamic (while
+W
+0
+W_{0}
+and
+W
+2
+W_{2}
+are static) and weight normalization is omitted. Under these conditions, the kernel function becomes static:
+ϕ
+⁡
+(
+x
+)
+=
+silu
+⁡
+(
+x
+​
+W
+0
+)
+⊙
+(
+x
+​
+W
+2
+)
+,
+\phi(x)=\mathrm{silu}(xW_{0})\odot(xW_{2}),
+and the state update is associative, enabling parallel computation.
+H.1
+Parallel Formulation
+The parallel formulation operates on a sequence of
+N
+N
+chunks, each of size
+L
+L
+. Let
+ℚ
+,
+𝕂
+∈
+ℝ
+(
+N
+​
+L
+)
+×
+D
+k
+\mathbb{Q},\mathbb{K}\in\mathbb{R}^{(NL)\times D_{k}}
+and
+𝕍
+∈
+ℝ
+(
+N
+​
+L
+)
+×
+D
+v
+\mathbb{V}\in\mathbb{R}^{(NL)\times D_{v}}
+denote the concatenated query, key, and value inputs across all chunks. Define the batched kernel function:
+Φ
+⁡
+(
+𝐗
+)
+=
+silu
+⁡
+(
+𝐗
+​
+W
+0
+)
+⊙
+(
+𝐗
+​
+W
+2
+)
+∈
+ℝ
+(
+N
+​
+L
+)
+×
+D
+h
+.
+\Phi(\mathbf{X})=\mathrm{silu}(\mathbf{X}W_{0})\odot(\mathbf{X}W_{2})\in\mathbb{R}^{(NL)\times D_{h}}.
+To express chunk-wise operations, we introduce:
+•
+Block-diagonal matrix
+𝐁
+∈
+ℝ
+(
+N
+​
+L
+)
+×
+(
+N
+​
+L
+)
+\mathbf{B}\in\mathbb{R}^{(NL)\times(NL)}
+:
+𝐁
+=
+diag
+⁡
+(
+I
+L
+,
+…
+,
+I
+L
+)
+\mathbf{B}=\mathrm{diag}(I_{L},\ldots,I_{L})
+with
+N
+N
+identity blocks
+•
+Learning rate vector
+𝜼
+∈
+ℝ
+(
+N
+​
+L
+)
+×
+1
+\boldsymbol{\eta}\in\mathbb{R}^{(NL)\times 1}
+: per-token learning rates
+•
+Scaled values
+𝕍
+~
+=
+𝕍
+⊙
+𝜼
+\tilde{\mathbb{V}}=\mathbb{V}\odot\boldsymbol{\eta}
+•
+Momentum matrix
+𝒜
+∈
+ℝ
+N
+×
+N
+\mathcal{A}\in\mathbb{R}^{N\times N}
+:
+𝒜
+i
+​
+j
+=
+∏
+s
+=
+j
++
+1
+i
+α
+s
+\mathcal{A}_{ij}=\prod_{s=j+1}^{i}\alpha_{s}
+for
+i
+≥
+j
+i\geq j
+, else
+0
+0
+•
+Causal mask
+𝐌
+∈
+{
+0
+,
+1
+}
+N
+×
+N
+\mathbf{M}\in\{0,1\}^{N\times N}
+:
+𝐌
+i
+​
+j
+=
+1
+\mathbf{M}_{ij}=1
+if
+i
+≥
+j
+i\geq j
+The output can be computed in parallel as:
+𝕆
+=
+Φ
+⁡
+(
+ℚ
+)
+​
+W
+1
+,
+0
++
+(
+(
+Φ
+⁡
+(
+ℚ
+)
+​
+Φ
+​
+(
+𝕂
+)
+⊤
+)
+⊙
+(
+𝒜
+⊙
+𝐌
+)
+↑
+L
+)
+​
+𝕍
+~
+,
+\mathbb{O}=\Phi(\mathbb{Q})\,W_{1,0}+\big((\Phi(\mathbb{Q})\,\Phi(\mathbb{K})^{\top})\odot(\mathcal{A}\odot\mathbf{M})^{\uparrow L}\big)\,\tilde{\mathbb{V}},
+where
+(
+⋅
+)
+↑
+L
+(\cdot)^{\uparrow L}
+denotes the Kronecker product with
+𝟏
+L
+×
+L
+\mathbf{1}_{L\times L}
+to expand the
+N
+×
+N
+N\times N
+mask to
+(
+N
+​
+L
+)
+×
+(
+N
+​
+L
+)
+(NL)\times(NL)
+.
+H.2
+Proof of Equivalence
+We prove that this parallel formulation is equivalent to the sequential recurrence.
+Proof.
+Consider the sequential formulation where at each chunk
+t
+t
+, the weight update is:
+Δ
+​
+W
+t
+=
+∇
+W
+1
+ℒ
+​
+(
+f
+t
+​
+(
+K
+t
+)
+)
++
+α
+t
+​
+Δ
+​
+W
+t
+−
+1
+,
+W
+1
+,
+t
++
+1
+=
+W
+1
+,
+t
+−
+η
+t
+​
+Δ
+​
+W
+t
+.
+\Delta W_{t}=\nabla_{W_{1}}\mathcal{L}(f_{t}(K_{t}))+\alpha_{t}\Delta W_{t-1},\quad W_{1,t+1}=W_{1,t}-\eta_{t}\Delta W_{t}.
+Since
+∇
+W
+1
+ℒ
+=
+Φ
+​
+(
+K
+t
+)
+⊤
+​
+∂
+ℒ
+∂
+f
+t
+​
+(
+K
+t
+)
+\nabla_{W_{1}}\mathcal{L}=\Phi(K_{t})^{\top}\frac{\partial\mathcal{L}}{\partial f_{t}(K_{t})}
+and using the Frobenius inner product loss, we have:
+Δ
+​
+W
+t
+=
+−
+Φ
+​
+(
+K
+t
+)
+⊤
+​
+V
+t
++
+α
+t
+​
+Δ
+​
+W
+t
+−
+1
+.
+\Delta W_{t}=-\Phi(K_{t})^{\top}V_{t}+\alpha_{t}\Delta W_{t-1}.
+Step 1: Unroll the momentum recurrence.
+Expanding
+Δ
+​
+W
+t
+\Delta W_{t}
+:
+Δ
+​
+W
+t
+\displaystyle\Delta W_{t}
+=
+−
+∑
+i
+=
+0
+t
+(
+∏
+s
+=
+i
++
+1
+t
+α
+s
+)
+Φ
+(
+K
+i
+)
+⊤
+V
+i
+.
+\displaystyle=-\sum_{i=0}^{t}\left(\prod_{s=i+1}^{t}\alpha_{s}\right)\Phi(K_{i})^{\top}V_{i}.
+Step 2: Unroll the weight recurrence.
+From
+W
+1
+,
+t
++
+1
+=
+W
+1
+,
+0
+−
+∑
+j
+=
+0
+t
+η
+j
+​
+Δ
+​
+W
+j
+W_{1,t+1}=W_{1,0}-\sum_{j=0}^{t}\eta_{j}\Delta W_{j}
+, substituting and rearranging:
+W
+1
+,
+t
++
+1
+\displaystyle W_{1,t+1}
+=
+W
+1
+,
+0
++
+∑
+i
+=
+0
+t
+Φ
+​
+(
+K
+i
+)
+⊤
+​
+V
+i
+⋅
+η
+i
+​
+∑
+j
+=
+i
+t
+(
+∏
+s
+=
+i
++
+1
+j
+α
+s
+)
+⏟
+c
+i
+t
+.
+\displaystyle=W_{1,0}+\sum_{i=0}^{t}\Phi(K_{i})^{\top}V_{i}\cdot\underbrace{\eta_{i}\sum_{j=i}^{t}\left(\prod_{s=i+1}^{j}\alpha_{s}\right)}_{c_{i}^{t}}.
+Step 3: Compute the sequential output.
+The output at chunk
+t
+t
+is:
+O
+t
+\displaystyle O_{t}
+=
+Φ
+⁡
+(
+Q
+t
+)
+​
+W
+1
+,
+t
++
+1
+=
+Φ
+⁡
+(
+Q
+t
+)
+​
+W
+1
+,
+0
++
+∑
+i
+=
+0
+t
+Φ
+⁡
+(
+Q
+t
+)
+​
+Φ
+​
+(
+K
+i
+)
+⊤
+​
+V
+i
+⋅
+c
+i
+t
+.
+\displaystyle=\Phi(Q_{t})\,W_{1,t+1}=\Phi(Q_{t})\,W_{1,0}+\sum_{i=0}^{t}\Phi(Q_{t})\,\Phi(K_{i})^{\top}V_{i}\cdot c_{i}^{t}.
+Step 4: Match with parallel formulation.
+The mask
+(
+𝒜
+⊙
+𝐌
+)
+↑
+L
+(\mathcal{A}\odot\mathbf{M})^{\uparrow L}
+at block
+(
+t
+,
+i
+)
+(t,i)
+has value
+∑
+j
+=
+i
+t
+∏
+s
+=
+i
++
+1
+j
+α
+s
+\sum_{j=i}^{t}\prod_{s=i+1}^{j}\alpha_{s}
+for
+i
+≤
+t
+i\leq t
+. The parallel form computes:
+[
+𝕆
+]
+p
+\displaystyle[\mathbb{O}]_{p}
+=
+Φ
+​
+(
+Q
+t
+)
+p
+​
+W
+1
+,
+0
++
+∑
+i
+=
+0
+t
+Φ
+​
+(
+Q
+t
+)
+p
+​
+Φ
+​
+(
+K
+i
+)
+⊤
+​
+V
+i
+⋅
+c
+i
+t
+,
+\displaystyle=\Phi(Q_{t})_{p}\,W_{1,0}+\sum_{i=0}^{t}\Phi(Q_{t})_{p}\,\Phi(K_{i})^{\top}V_{i}\cdot c_{i}^{t},
+which exactly matches the sequential output.
+∎
+Appendix I
+Non-Reducible Case Analysis
+In Section
+6.2
+, we showed that TTT becomes reducible (and thus parallelizable) when only
+W
+1
+W_{1}
+is dynamic while
+W
+0
+W_{0}
+and
+W
+2
+W_{2}
+are static.
+Here, we analyze two cases that break reducibility: (1) updating the kernel function parameters
+Θ
+=
+{
+W
+0
+,
+W
+2
+}
+\Theta=\{W_{0},W_{2}\}
+, and (2) applying weight normalization.
+I.1
+Case 1: Dynamic Kernel Function (Updating
+W
+0
+W_{0}
+and
+W
+2
+W_{2}
+)
+When
+W
+0
+W_{0}
+and
+W
+2
+W_{2}
+are also updated, the kernel function
+ϕ
+t
+​
+(
+x
+)
+=
+silu
+⁡
+(
+x
+​
+W
+0
+,
+t
+)
+⊙
+(
+x
+​
+W
+2
+,
+t
+)
+\phi_{t}(x)=\mathrm{silu}(xW_{0,t})\odot(xW_{2,t})
+becomes history-dependent.
+Consider the gradient update for
+W
+0
+W_{0}
+(the analysis for
+W
+2
+W_{2}
+is analogous):
+∇
+W
+0
+,
+t
+ℒ
+=
+K
+t
+⊤
+​
+(
+∂
+ℒ
+∂
+f
+t
+​
+(
+K
+t
+)
+​
+W
+1
+,
+t
+⊤
+⊙
+(
+K
+t
+​
+W
+2
+,
+t
+)
+⊙
+silu
+′
+⁡
+(
+K
+t
+​
+W
+0
+,
+t
+)
+)
+.
+\nabla_{W_{0,t}}\mathcal{L}=K_{t}^{\top}\Big(\frac{\partial\mathcal{L}}{\partial f_{t}(K_{t})}W_{1,t}^{\top}\odot(K_{t}W_{2,t})\odot\operatorname{silu}^{\prime}(K_{t}W_{0,t})\Big).
+The weight update becomes:
+W
+0
+,
+t
++
+1
+=
+W
+0
+,
+t
+−
+η
+t
+​
+∇
+W
+0
+,
+t
+ℒ
+.
+W_{0,t+1}=W_{0,t}-\eta_{t}\nabla_{W_{0,t}}\mathcal{L}.
+Expanding recursively, the kernel function at step
+t
+t
+depends on
+W
+0
+,
+t
+W_{0,t}
+:
+ϕ
+t
+​
+(
+K
+t
+)
+=
+silu
+⁡
+(
+K
+t
+​
+W
+0
+,
+t
+)
+⊙
+(
+K
+t
+​
+W
+2
+,
+t
+)
+.
+\phi_{t}(K_{t})=\operatorname{silu}(K_{t}W_{0,t})\odot(K_{t}W_{2,t}).
+Substituting the recursive expression for
+W
+0
+,
+t
+W_{0,t}
+, the kernel function involves nested nonlinearities:
+ϕ
+t
+​
+(
+K
+t
+)
+=
+silu
+⁡
+(
+K
+t
+​
+(
+W
+0
+,
+t
+−
+1
+−
+η
+t
+−
+1
+​
+∇
+W
+0
+,
+t
+−
+1
+ℒ
+)
+)
+⊙
+(
+⋯
+)
+,
+\phi_{t}(K_{t})=\operatorname{silu}\Big(K_{t}\big(W_{0,t-1}-\eta_{t-1}\nabla_{W_{0,t-1}}\mathcal{L}\big)\Big)\odot(\cdots),
+where
+∇
+W
+0
+,
+t
+−
+1
+ℒ
+\nabla_{W_{0,t-1}}\mathcal{L}
+itself contains
+silu
+′
+⁡
+(
+K
+t
+−
+1
+​
+W
+0
+,
+t
+−
+1
+)
+\operatorname{silu}^{\prime}(K_{t-1}W_{0,t-1})
+.
+The nested
+silu
+\operatorname{silu}
+and
+silu
+′
+\operatorname{silu}^{\prime}
+functions create a non-linear dependency chain: computing
+ϕ
+t
+\phi_{t}
+requires
+W
+0
+,
+t
+W_{0,t}
+, which depends on
+silu
+′
+⁡
+(
+K
+t
+−
+1
+​
+W
+0
+,
+t
+−
+1
+)
+\operatorname{silu}^{\prime}(K_{t-1}W_{0,t-1})
+, which in turn depends on
+W
+0
+,
+t
+−
+1
+W_{0,t-1}
+, and so on. This nested structure prevents expressing the output as a simple weighted sum over history, breaking the associativity required for parallel prefix scan.
+I.2
+Case 2: Weight Normalization
+Even when only
+W
+1
+W_{1}
+is dynamic, applying weight normalization (as in LaCT, see Appendix
+E
+) introduces non-reducibility for the parallel formulation.
+As discussed in Appendix
+E
+, weight normalization does not break the linear attention
+interpretation
+—it simply normalizes the state
+S
+t
+S_{t}
+after each token. However, it does prevent the
+parallel computation
+enabled by the sum form.
+The key issue is that normalization is not associative:
+Norm
+​
+(
+A
++
+B
+)
+≠
+Norm
+​
+(
+A
+)
++
+Norm
+​
+(
+B
+)
+.
+\displaystyle\text{Norm}(A+B)\neq\text{Norm}(A)+\text{Norm}(B).
+(2)
+The parallel formulation in Section
+6.2
+relies on expressing the state as
+S
+t
++
+1
+=
+S
+0
++
+∑
+i
+=
+0
+t
+ϕ
+​
+(
+K
+i
+)
+⊤
+​
+m
+i
+S_{t+1}=S_{0}+\sum_{i=0}^{t}\phi(K_{i})^{\top}m_{i}
+, which can be computed via associative parallel prefix scan. With weight normalization, the state becomes:
+S
+t
++
+1
+=
+Norm
+⁡
+(
+Norm
+⁡
+(
+S
+t
+−
+1
++
+ϕ
+​
+(
+K
+t
+−
+1
+)
+⊤
+​
+m
+t
+−
+1
+)
++
+ϕ
+​
+(
+K
+t
+)
+⊤
+​
+m
+t
+)
+.
+S_{t+1}=\mathrm{Norm}\Big(\mathrm{Norm}(S_{t-1}+\phi(K_{t-1})^{\top}m_{t-1})+\phi(K_{t})^{\top}m_{t}\Big).
+This nested structure creates a strict sequential dependency: computing
+S
+t
++
+1
+S_{t+1}
+requires the fully normalized
+S
+t
+S_{t}
+, which requires
+S
+t
+−
+1
+S_{t-1}
+, and so on. The associativity required for parallel prefix scan is broken, forcing token-by-token sequential computation even though the underlying mechanism remains linear attention.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

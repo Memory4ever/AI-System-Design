@@ -1,0 +1,715 @@
+When Test-Time Guidance Is Enough: Fast Image and Video Editing with Diffusion Guidance
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Editing via Inpaiting with Diffusion Priors
+Inpainting as a Bayesian inverse problem.
+Test-time guidance with diffusion priors.
+The VJP-free approximation in Moufad et al. (2025) .
+3 Experiments
+From pixel- to latent-space inpainting.
+Experimental Setting.
+Evaluation.
+Python package for editing.
+References
+Reproducibility statement.
+Ethics statement.
+A Details on models and baselines
+Large-scale models.
+Training-based methods.
+Training-free baselines.
+B Inpainting in latent space
+C Examples of editing via inpainting
+License: CC BY-SA 4.0
+arXiv:2602.14157v1 [cs.CV] 15 Feb 2026
+When Test-Time Guidance Is Enough: Fast Image and Video Editing with Diffusion Guidance
+Ahmed Ghorbel
+Badr Moufad
+Navid Bagheri Shouraki
+Alain Oliviero Durmus
+Affiliation: CMAP, Ecole Polytechnique
+Affiliation: Sorbonne University
+Affiliation: EPITA Research Lab
+Thomas Hirtz
+Eric Moulines
+Jimmy Olsson
+Yazid Janati
+Affiliation: Institute of Foundation Models
+Affiliation: MBZUAI
+Affiliation: EPITA
+Affiliation: Lagrange Mathematics and Computing Research Center
+Affiliation: KTH Royal Institute of Technology
+Abstract
+Text-driven image and video editing can be naturally cast as inpainting problems, where masked regions are reconstructed to remain consistent with both the observed content and the editing prompt. Recent advances in test-time guidance for diffusion and flow models provide a principled framework for this task; however, existing methods rely on costly vector–Jacobian product (VJP) computations to approximate the intractable guidance term, limiting their practical applicability. Building upon the recent work of Moufad et al. (2025) , we provide theoretical insights into their VJP-free approximation and substantially extend their empirical evaluation to large-scale image and video editing benchmarks. Our results demonstrate that test-time guidance alone can achieve performance comparable to, and in some cases surpass, training-based methods.
+† †
+* Correspondence: {ahmed.ghorbel, badr.moufad}@polytechnique.edu, yazid.janati@mbzuai.ac.ae
+1 Introduction
+Image and video editing plays a central role in a wide range of applications, including content creation and interactive design. In the era of text-driven generative models, editing tasks can be naturally formalized as inpainting problems , where regions of interest to be modified are masked and subsequently refilled with the desired content by manipulating a text prompt.
+Inpainting is a classical problem in computer vision that has motivated extensive research, with particularly prominent advances arising from recent large-scale generative models based on diffusion and flow matching models ( Esser et al., 2024 ; Batifol et al., 2025 ; Wu et al., 2025 ) . A direct approach to address inpainting problems is to train or fine-tune conditional diffusion models to explicitly incorporate additional inputs, such as masks and observed regions, to approximate the corresponding conditional distribution. While effective, these approaches incur non-negligible computational and data costs, which may be prohibitive in many practical scenarios.
+An appealing alternative is test-time guidance , which formulates inpainting as a Bayesian inverse problem: a pre-trained text-conditional diffusion model defines the prior, while a likelihood enforces consistency with observed regions. Sampling from the resulting posterior yields the desired completion without updating model weights. Despite its flexibility and strong empirical performance ( Daras et al., 2024 ) , a central challenge lies in approximating the intractable guidance term. Existing methods use the likelihood evaluated at the model’s output, which during sampling, entails repeated vector–Jacobian product computations through the model, which are expensive and limit scalability.
+In this work, we build upon the recently introduced VJP-free approximation proposed in Moufad et al. (2025) . The core idea is to approximate the oracle guidance term using a mixture in which the intermediate variable of interest is decoupled from the model, thereby eliminating the need for VJP computations. This approximation yields cheap closed-form posterior updates for linear inverse problems, including inpainting tasks.
+Our contributions are threefold.
+(i) We shed light on this new approximation and provide theoretical insights on its derivation.
+(ii) We extend the benchmarks in Moufad et al. (2025) to more image settings as well as video editing tasks, and demonstrate that test-time guidance alone can achieve performance comparable to, and in some cases surpass, training-based approaches.
+(iii) We release an open-source Python package 1 1
+1
+Link to the code of DInG-editor https://github.com/gen-TII/ding-editor-sub tailored to editing via inpainting, designed to easily accommodate new pre-trained models and training-free samplers.
+Finally, our results establish test-time guidance as a compelling alternative for image and video editing that requires only black-box access to a pre-trained diffusion model with frozen weights.
+2 Editing via Inpaiting with Diffusion Priors
+Figure 1: Overview of the editing pipeline for video modalities. The input video and mask are lifted to the latent space for inpainting. A pre-trained and frozen diffusion model is used with a posterior sampler to guide the generation toward prompt-aligned reconstructions, which is then decoded back to pixel space.
+Inpainting as a Bayesian inverse problem.
+Editing tasks can be framed as inpainting problems, in which regions to be modified are masked and subsequently refilled with new content.
+Let x ⋆ x_{\star} denote the reference sample to be edited, and let 𝐌 \mathbf{M} be a binary mask indicating the observed regions to be preserved y = 𝐌 ⊙ x ⋆ y=\mathbf{M}\odot x_{\star} .
+This induces the Gaussian likelihood
+ℓ ⁡ ( y ∣ x 0 ) ∝ exp ⁡ { − 1 2 ​ γ 2 ​ ‖ y − 𝐌 ⊙ x 0 ‖ 2 } , \ell(y\mid x_{0})\propto\exp\{-\tfrac{1}{2{\gamma^{2}}}\|y-\mathbf{M}\odot x_{0}\|^{2}\},
+(2.1)
+where the parameter γ > 0 \gamma>0 promotes stricter consistency with the observed regions, the smaller it is.
+Since the likehood is agnostic to the values of masked regions, the inpainting problem is inherently ill-posed and the Bayesian formulation works around this by imposing a prior distribution p 0 p_{0} over plausible reconstructions x 0 x_{0} .
+Filling the hidden regions then reduces to sampling the posterior
+π 0 ​ ( x 0 ∣ y ) ∝ ℓ ⁡ ( y ∣ x 0 ) ​ p 0 ​ ( x 0 ) . \pi_{0}(x_{0}\mid y)\propto\ell(y\mid x_{0})\,p_{0}(x_{0}).
+When the prior p 0 p_{0} is a text-conditional generative model, manipulating the prompt provides a principled way to control the semantics of the refilled regions.
+Diffusion Models. A central paradigm in modern generative modeling is learning a sequence of transformations that maps a simple reference distribution p 1 p_{1} , typically a standard Gaussian 𝒩 ⁡ ( 0 , I ) \mathcal{N}(0,\mathrm{I}) , to a complex data distribution p 0 p_{0} . Among the many possible constructions of such transformations ( Rezende and Mohamed, 2015 ; Chen et al., 2018 ; Lipman et al., 2023 ; Albergo et al., 2023 ) , diffusion models adopt the linear interpolation X t = α t ​ X 0 + σ t ​ X 1 X_{t}=\alpha_{t}X_{0}+\sigma_{t}X_{1} as a principled inductive bias, where X 0 ∼ p 0 X_{0}\sim p_{0} , X 1 ∼ p 1 X_{1}\sim p_{1} , and ( α t , σ t ) (\alpha_{t},\sigma_{t}) are deterministic schedules satisfying appropriate boundary conditions. This interpolation induces a family of marginal distributions ( p t ) t ∈ [ 0 , 1 ] (p_{t})_{t\in[0,1]} that gradually transforms the data distribution p 0 p_{0} into the Gaussian p 1 p_{1} .
+Given a discretization t 0 , … , t K t_{0},\ldots,t_{K} of the interval [ 0 , 1 ] [0,1] , sampling from p 0 p_{0} is performed by simulating a time-reversed Markov chain: for two consecutive timesteps ( s , t ) = ( t k , t k + 1 ) (s,t)=(t_{k},t_{k+1}) , the following reverse transition is sequentially sampled
+p s | t η ​ ( x s ∣ x t ) = 𝔼 ⁡ [ q s | 0 , 1 η ​ ( x s ∣ X 0 , X 1 ) | X t = x t ] , p^{\eta}_{s|t}(x_{s}\mid x_{t})=\mathbb{E}\!\left[q_{s|0,1}^{\eta}(x_{s}\mid X_{0},X_{1})\,\middle|\,X_{t}=x_{t}\right],
+(2.2)
+where the kernel q s | 0 , 1 η ( ⋅ ∣ X 0 , X 1 ) q_{s|0,1}^{\eta}(\cdot\mid X_{0},X_{1}) preserves the path marginals
+p s ​ ( x s ) = 𝔼 ⁡ [ q s | 0 , 1 η ​ ( x s ∣ X 0 , X 1 ) ] , p_{s}(x_{s})=\mathbb{E}[q_{s|0,1}^{\eta}(x_{s}\mid X_{0},X_{1})],
+whereas η \eta controls the stochasticity of the transition ( Song et al., 2021a ) .
+The transition ( 2.2 )
+is typically intractable as it depends on the unknown conditional distributions p 0 | t p_{0|t} and p 1 | t p_{1|t} . A standard approximation consists of replacing X 0 X_{0} and X 1 X_{1} by their conditional expectations given X t X_{t} and learning a denoiser ( t , x t ) ↦ 𝐱 ^ 0 ​ ( x t , t ) (t,x_{t})\mapsto\hat{\mathbf{x}}_{0}(x_{t},t) to approximate 𝔼 ⁡ [ X 0 ∣ X t = x t ] \mathbb{E}[X_{0}\mid X_{t}=x_{t}] whereas the expression of the noise predictor 𝐱 ^ 1 ​ ( x t , t ) \hat{\mathbf{x}}_{1}(x_{t},t) that approximates 𝔼 ⁡ [ X 1 ∣ X t = x t ] \mathbb{E}[X_{1}\mid X_{t}=x_{t}] follows from Tweedie’s formula ( Roberts and Tweedie, 1996 ) ,
+𝐱 ^ 1 ​ ( x t , t ) = 1 σ t ​ ( x t − α t ​ 𝐱 ^ 0 ​ ( x t , t ) ) . \hat{\mathbf{x}}_{1}(x_{t},t)=\tfrac{1}{\sigma_{t}}\big(x_{t}-\alpha_{t}\hat{\mathbf{x}}_{0}(x_{t},t)\big).
+The neural network 𝐱 ^ 0 \hat{\mathbf{x}}_{0} is then trained by minimizing a simple regression objective ( Ho et al., 2020 ; Song et al., 2021b ; Karras et al., 2022 ) .
+Figure 2: Editing via inpainting using DInG with SD3 as prior.
+Given masked inputs, the model fills the missing regions according to diverse textual prompts.
+The runtime is limited to 10 seconds per image (1024px).
+Test-time guidance with diffusion priors.
+As sampling in diffusion models proceeds sequentially via a reverse-time Markov chain, it allows to intervene in-between to bias the transitions in ( 2.2 ) so as to target the posterior distribution π 0 ( ⋅ ∣ y ) \pi_{0}(\cdot\mid y) .
+Seminal works of Song and Ermon (2019) ; Kadkhodaie and Simoncelli (2020) ; Kawar et al. (2021) demonstrated that this can be achieved in inference time without additional training.
+Janati et al. (2025) derived the expression of the oracle reverse transitions
+π s | t η ​ ( x s ∣ x t , y ) ∝ ℓ s ​ ( y ∣ x s ) ​ p s | t η ​ ( x s ∣ x t ) , where, ​ ℓ s ​ ( y ∣ x s ) = 𝔼 ⁡ [ ℓ ⁡ ( y ∣ X 0 ) | X s = x s ] . \displaystyle\pi_{s\mid t}^{\eta}(x_{s}\mid x_{t},y)\propto\ell_{s}(y\mid x_{s})\,p^{\eta}_{s\mid t}(x_{s}\mid x_{t}),\;\;\text{ where,}\;\;\ell_{s}(y\mid x_{s})=\mathbb{E}\!\left[\,\ell(y\mid X_{0})\,\middle|\,X_{s}=x_{s}\right].
+(2.3)
+The intermediate likelihood ℓ s ​ ( y ∣ x s ) \ell_{s}(y\mid x_{s}) is typically intractable as it involves the conditional p 0 | s ( ⋅ ∣ x s ) p_{0|s}(\cdot\mid x_{s}) .
+Applying Tweedie’s formula yields the oracle conditional expectation given the observation ,
+𝔼 [ X 0 ∣ X t = x t , Y = y ] = 𝔼 [ X 0 ∣ X t = x t ] + α t − 1 σ t 2 ∇ x t log ℓ t ( y ∣ x t ) , \mathbb{E}[X_{0}\mid X_{t}=x_{t},Y=y]=\mathbb{E}[X_{0}\mid X_{t}=x_{t}]+\alpha_{t}^{-1}\sigma_{t}^{2}\,\nabla_{x_{t}}\log\ell_{t}(y\mid x_{t}),
+(2.4)
+which decomposes into two terms: a prior term approximated by the pre-trained prior model 𝐱 ^ 0 ​ ( x t , t ) \hat{\mathbf{x}}_{0}(x_{t},t) , and a second term referred to as the guidance term .
+A widely used approximation introduced in Chung et al. (2023) replaces the intermediate likelihood by a point estimate obtained from the denoiser output, resulting in the tractable approximation
+ℓ t ​ ( y ∣ x t ) ≈ ℓ ⁡ ( y ∣ 𝐱 ^ 0 ​ ( x t , t ) ) . \ell_{t}(y\mid x_{t})\approx\ell\big(y\mid\hat{\mathbf{x}}_{0}(x_{t},t)\big).
+The VJP-free approximation in Moufad et al. (2025) .
+When combined with Equation 2.4 , the approximation of Chung et al. (2023) requires taking a gradient w.r.t. the input of the model, which entails computing a VJP. This becomes a major computational bottleneck, namely, for modern large-scale diffusion models, where VJPs are expensive.
+To overcome this limitation, Moufad et al. (2025) , building on earlier works on VJP-free approximations ( Wang et al., 2023 ; Zhu et al., 2023 ; Mardani et al., 2024 ) , propose a principled approximation that relies on rewriting the denoiser using the noise predictor as
+𝐱 ^ 0 ​ ( x s , s ) = 1 α s ​ ( x s − σ s ​ 𝐱 ^ 1 ​ ( x s , s ) ) , \hat{\mathbf{x}}_{0}(x_{s},s)=\tfrac{1}{\alpha_{s}}\big(x_{s}-\sigma_{s}\hat{\mathbf{x}}_{1}(x_{s},s)\big),
+and then replacing the input of 𝐱 ^ 1 \hat{\mathbf{x}}_{1} by an auxiliary random variable Z s Z_{s} that has the same marginal as X s X_{s} . This yields a mixture approximation
+ℓ ^ s ( y ∣ x s ) = 𝔼 [ ℓ ( y ∣ 1 α s ( x s − σ s 𝐱 ^ 1 ( Z s , s ) ) ) ] , Z s ∼ p s | t η ( ⋅ ∣ x t ) , \vskip-0.7113pt\hat{\ell}_{s}(y\mid x_{s})=\mathbb{E}\!\left[\ell\!\left(y\mid\tfrac{1}{\alpha_{s}}\big(x_{s}-\sigma_{s}\hat{\mathbf{x}}_{1}(Z_{s},s)\big)\right)\right],\qquad Z_{s}\sim p^{\eta}_{s\mid t}(\cdot\mid x_{t}),\vskip-0.7113pt
+(2.5)
+which decouples x s x_{s} from the model.
+Based on it, Moufad et al. (2025) directly simulate the posterior transition ( 2.3 ) by first sampling z s z_{s}
+and then drawing x s x_{s} from the distribution ℓ ^ s ( y ∣ ⋅ , z s ) p s | t η ( ⋅ ∣ x t ) \hat{\ell}_{s}(y\mid\cdot,z_{s})\,p^{\eta}_{s\mid t}(\cdot\mid x_{t}) .
+For linear inverse problems, such as inpainting ( 2.1 ), the likelihood is Gaussian and linear in x s x_{s} , so the second step can be sampled exactly via Gaussian conjugacy ( Bishop, 2006 ) .
+Theoretical insight. By adding and subtracting Z s Z_{s} in eq. 2.5 , the approximation rewrites as
+ℓ ^ s ​ ( y ∣ x s ) = 𝔼 ⁡ [ ℓ ⁡ ( y ∣ 𝐱 ^ 0 ​ ( Z s , s ) + 1 α s ​ ( x s − Z s ) ) ] . \vskip-0.7113pt\hat{\ell}_{s}(y\mid x_{s})=\mathbb{E}\!\left[\ell\!\left(y\mid\hat{\mathbf{x}}_{0}(Z_{s},s)+\tfrac{1}{\alpha_{s}}(x_{s}-Z_{s})\right)\right].\vskip-0.7113pt
+This expression resembles a first-order Taylor expansion of the denoiser 𝐱 ^ 0 ​ ( ⋅ , s ) \hat{\mathbf{x}}_{0}(\cdot,s) around Z s Z_{s} , in which the true Jacobian ∇ 𝐱 ^ 0 ​ ( ⋅ , s ) \nabla\hat{\mathbf{x}}_{0}(\cdot,s) is replaced by the scaled identity ( 1 / α s ) ​ I (1/\alpha_{s})\mathrm{I} . Indeed, the second-order Tweedie’s formula ( Boys et al., 2023 ) gives
+∇ 𝐱 ^ 0 ( Z s , s ) = 1 α s ( I − σ s ∇ 𝐱 ^ 1 ( Z s , s ) ) . \nabla\hat{\mathbf{x}}_{0}(Z_{s},s)=\tfrac{1}{\alpha_{s}}\big(\mathrm{I}-\sigma_{s}\nabla\hat{\mathbf{x}}_{1}(Z_{s},s)\big).
+Hence, the approximation of Moufad et al. (2025) amounts to neglecting the Jacobian of the noise predictor.
+3 Experiments
+From pixel- to latent-space inpainting.
+Table 1: Quantitative comparison between training-based methods and DInG on image editing tasks. Runtime is specified above the baselines.
+FID
+pFID
+edFID
+cPSNR
+30 second / image
+HumanEdit 1024px
+FLUX+ ControlNet
+26.8
+4.0
+24.4
+36.5
+FLUX Fill
+27.9
+4.0
+22.5
+34.1
+FLUX+ DInG
+31.1
+4.9
+28.1
+35.9
+SD3 + ControlNet
+37.1
+11.3
+30.6
+26.3
+SD3 + DInG
+30.3
+4.4
+25.4
+35.2
+10 second / image
+InpaintCOCO 512px
+FLUX+ ControlNet
+43.1
+13.6
+26.8
+31.1
+FLUX Fill
+41.0
+13.4
+23.9
+28.9
+FLUX+ DInG
+44.1
+12.2
+28.1
+30.1
+SD3 + ControlNet
+45.8
+17.0
+27.0
+24.4
+SD3 + DInG
+40.9
+9.5
+20.7
+30.3
+Modern large-scale diffusion models operate in a compressed latent space defined by an encoder–decoder pair ( ℰ , 𝒟 ) (\mathcal{E},\mathcal{D}) . While this design enables scalability to high-resolution data, it complicates training-free guidance, since inverse problems are defined in pixel space whereas guidance is applied in latent space, inducing a nonlinear likelihood through the decoder. For inpainting, however, Avrahami et al. (2023) show that guidance can be performed entirely in latent space by downsampling the binary pixel mask and encoding the input as x ∗ = ℰ ⁡ ( input ) x_{*}=\mathcal{E}(\mathrm{input}) . As illustrated in Figure 1 , pixel- and latent-space masking are equivalent despite the encoder nonlinearity. This formulation enables inpainting directly in latent space;
+particularly, the closed-form update in Equation 2.5 is applicable.
+We further discuss the limitations of this approach in Appendix B .
+Experimental Setting.
+Table 2: Quantitative comparison between training-free baselines on HumanEdit 1024px and InpaintCOCO 512px on image editing tasks using FLUX and SD3 as priors. Runtime is limited to 50 NFEs.
+HumanEdit + FLUX
+HumanEdit + SD3
+InpaintCOCO + FLUX
+InpaintCOCO + SD3
+FID
+pFID
+edFID
+cPSNR
+FID
+pFID
+edFID
+cPSNR
+FID
+pFID
+edFID
+cPSNR
+FID
+pFID
+edFID
+cPSNR
+Blended-Diff
+30.8
+4.1
+25.1
+34.6
+33.1
+8.9
+30.6
+31.5
+41.9
+10.4
+23.3
+28.0
+46.0
+14.1
+27.6
+27.2
+DDNM
+31.2
+4.8
+31.4
+36.4
+30.5
+4.6
+27.7
+34.6
+45.6
+14.2
+32.9
+30.4
+41.6
+11.6
+26.2
+29.8
+DiffPIR
+31.1
+4.3
+26.0
+35.4
+31.1
+4.6
+26.4
+33.8
+43.6
+11.9
+26.9
+28.9
+42.2
+10.0
+22.3
+28.5
+DInG
+31.2
+5.0
+27.5
+35.7
+30.8
+4.7
+25.5
+34.4
+43.2
+11.9
+26.9
+29.9
+41.9
+10.3
+21.9
+29.2
+FLAIR
+30.9
+5.2
+27.1
+35.0
+30.7
+4.9
+31.4
+34.2
+41.5
+15.7
+33.1
+29.2
+42.7
+11.8
+29.9
+29.3
+FlowChef
+32.3
+5.7
+29.4
+33.5
+34.6
+9.0
+27.9
+31.3
+52.2
+17.0
+40.9
+29.5
+46.6
+16.2
+28.2
+28.0
+Here, we describe the models, baselines, and datasets used in our experiments and defer the details to Appendix A .
+Large-scale text-conditioned priors. For image editing, we consider, in addition to Stable Diffusion 3.5 (SD3) which is exclusively used in Moufad et al. (2025) , the large-scale text-to-image model FLUX ( Batifol et al., 2025 ) .
+We also extend the evaluation to video editing tasks: we adopt the text-to-video diffusion models LTX ( HaCohen et al., 2024 ) and Wan2.1 ( Wan et al., 2025 ) .
+Baselines. We conduct benchmark using both training-free and training-based approaches. Among training-free baselines, we include
+Blended-Diff ( Avrahami et al., 2023 ) ,
+DiffPIR ( Zhu et al., 2023 ) ,
+DDNM ( Wang et al., 2023 ) ,
+DInG ( Moufad et al., 2025 ) ,
+FLAIR ( Erbach et al., 2025 ) ,
+and
+FlowChef ( Patel et al., 2024 ) .
+For training-based methods, we consider controlNet for inpainting methods ( Zhang et al., 2023 ) with SD3 and FLUX as backbones.
+We also include FLUX Fill, a checkpoint specifically trained for image inpainting. For video inpainting, we compare with Wan2.1-VACE, a checkpoint trained for video inpainting.
+Datasets.
+Table 3: Quantitative comparison on video editing tasks on VPBench dataset
+with resolution ( H , W , T ) (H,W,T) = ( 512,928 , 97 ) (512,928,97)
+All methods are training-free except last row.
+Runtime is provided above the baselines.
+CLIP
+FVD
+cPSNR
+2min 25s / video
+LTX
+Blended-Diff
+26.11
+0.15
+21.82
+DDNM
+26.09
+0.15
+23.87
+DiffPIR
+26.13
+0.15
+22.57
+DInG
+25.75
+0.16
+22.90
+FLAIR
+26.03
+0.15
+25.31
+FlowChef
+25.83
+0.19
+19.52
+5min 25s / video
+Wan2.1
+Blended-Diff
+26.33
+0.14
+26.95
+DDNM
+26.31
+0.13
+30.00
+DiffPIR
+26.36
+0.13
+28.52
+DInG
+26.24
+0.13
+29.21
+FLAIR
+26.30
+0.13
+29.94
+FlowChef
+26.17
+0.16
+25.22
+Wan2.1VACE
+26.29
+0.11
+32.69
+We perform image editing experiments on InpaintCOCO ( Rösch et al., 2024 ) and HumanEdit ( Bai et al., 2024 ) .
+The InpaintCOCO dataset contains 1,260 images, while we select a subset of 1,000 images from HumanEdit . Both datasets provide editing masks paired with text prompts. For video editing, we use VPBench ( Bai et al., 2024 ) , which consists of 133 videos, each annotated with editing masks and corresponding text prompts.
+Evaluation.
+We consider a compute-constrained setting that mirrors deployment scenarios. When comparing training-free baselines among themselves, we fix the NFEs to 50 50 .
+For comparisons between training-free and training-based methods, we instead match runtime to ensure a fair assessment; the runtimes are reported in the captions of each table.
+Our evaluation primarily aims to further validate the approximation in Moufad et al. (2025) , which we hence take as reference when benchmarking against training-based methods.
+For image editing, we report FID and patch FID (pFID) ( Chai et al., 2022 ) , the latter providing finer-grained evaluation for high-resolution images.
+To measure preservation of the unedited content, we compute the context PSNR (cPSNR), defined as the PSNR over the unmasked regions only.
+To assess the quality of the edited regions, we report the edited-region FID (edFID), obtained by extracting the edited regions and computing pFID over them. For video editing, we report CLIP-Score ( Radford et al., 2021 ) , FVD ( Unterthiner et al., 2018 ) , and cPSNR.
+For FID related metrics, lower is better, for CLIP and cPSNR higher is better.
+Comments. Quantitative results are summarized in Tables 2 , 1 and 3 , with qualitative comparisons shown in Figures 4 , 5 and 6 . Training-free baselines achieve competitive performance across metrics despite not being trained for such tasks. In particular, Table 1 shows that, under the same compute budgets, the training-free method DInG performs on par with, and in even surpasse the training-based method SD3 + ControlNet. Qualitative examples in Figures 4 , 5 and 6 further corroborate these findings. It shows high-quality edits and strong controllability for training-free methods, with visual performance comparable to training-based counterparts.
+Qualitative results on video editing tasks can be found on the project webpage 2 2
+2
+https://gen-tii.github.io/ding-editor-sub/ .
+Python package for editing.
+We release DInG-editor , a Python package for training-free editing via inpainting that implements the pipeline in Figure 1 . It currently supports image and video editing with three image priors and two video priors; audio support is under active development. DInG-editor is model- and sampler-agnostic: integration of new diffusion priors and training-free samplers is straightforward. The package also provides evaluation scripts, pre-implemented image and video metrics, and comprehensive installation and usage documentation to facilitate reproducibility.
+Acknowledgements
+The work of Ahmed Ghorbel and Badr Moufad has been supported by Technology Innovation Institute (TII), project Fed2Learn. The work of Eric Moulines has been partly funded by the European Union (ERC-2022-SYG-OCEAN-101071601). Views and opinions expressed are however those
+of the author(s) only and do not necessarily reflect those of the European Union or the European Research Council Executive Agency. Neither the European Union nor the granting authority can be held responsible for them. This work was granted access to the HPC resources of IDRIS under the allocations 2025-AD011016497 by GENCI.
+References
+Albergo et al. (2023)
+M. S. Albergo, N. M. Boffi, and E. Vanden-Eijnden
+Stochastic interpolants: a unifying framework for flows and diffusions .
+arXiv preprint arXiv:2303.08797 .
+Cited by: §2 .
+Avrahami et al. (2023)
+O. Avrahami, O. Fried, and D. Lischinski
+Blended latent diffusion .
+ACM Trans. Graph. 42 ( 4 ).
+External Links: ISSN 0730-0301 ,
+Link ,
+Document
+Cited by: Appendix B ,
+Appendix B ,
+§3 ,
+§3 .
+Bai et al. (2024)
+J. Bai, W. Chow, L. Yang, X. Li, J. Li, H. Zhang, and S. Yan
+HumanEdit: a high-quality human-rewarded dataset for instruction-based image editing .
+arXiv preprint arXiv:2412.04280 .
+Cited by: §3 .
+Batifol et al. (2025)
+S. Batifol, A. Blattmann, F. Boesel, S. Consul, C. Diagne, T. Dockhorn, J. English, Z. English, P. Esser, S. Kulal, et al.
+FLUX. 1 kontext: flow matching for in-context image generation and editing in latent space .
+arXiv e-prints , pp. arXiv–2506 .
+Cited by: Appendix A ,
+§1 ,
+§3 .
+Bishop (2006)
+C. M. Bishop
+Pattern recognition and machine learning (information science and statistics) .
+Springer-Verlag , Berlin, Heidelberg .
+External Links: ISBN 0387310738
+Cited by: §2 .
+Boys et al. (2023)
+B. Boys, M. Girolami, J. Pidstrigach, S. Reich, A. Mosca, and O. D. Akyildiz
+Tweedie moment projected diffusions for inverse problems .
+arXiv preprint arXiv:2310.06721 .
+Cited by: §2 .
+Chai et al. (2022)
+L. Chai, M. Gharbi, E. Shechtman, P. Isola, and R. Zhang
+Any-resolution training for high-resolution image synthesis .
+In European conference on computer vision ,
+pp. 170–188 .
+Cited by: §3 .
+Chen et al. (2018)
+R. T. Chen, Y. Rubanova, J. Bettencourt, and D. K. Duvenaud
+Neural ordinary differential equations .
+Advances in neural information processing systems 31 .
+Cited by: §2 .
+Chung et al. (2023)
+H. Chung, J. Kim, M. T. Mccann, M. L. Klasky, and J. C. Ye
+Diffusion posterior sampling for general noisy inverse problems .
+In The Eleventh International Conference on Learning Representations ,
+External Links: Link
+Cited by: §2 ,
+§2 .
+Daras et al. (2024)
+G. Daras, H. Chung, C. Lai, Y. Mitsufuji, J. C. Ye, P. Milanfar, A. G. Dimakis, and M. Delbracio
+A survey on diffusion models for inverse problems .
+arXiv preprint arXiv:2410.00083 .
+Cited by: §1 .
+Erbach et al. (2025)
+J. Erbach, D. Narnhofer, A. Dombos, B. Schiele, J. E. Lenssen, and K. Schindler
+Solving inverse problems with flair .
+arXiv preprint arXiv:2506.02680 .
+Cited by: Appendix A ,
+§3 .
+Esser et al. (2024)
+P. Esser, S. Kulal, A. Blattmann, R. Entezari, J. Müller, H. Saini, Y. Levi, D. Lorenz, A. Sauer, F. Boesel, et al.
+Scaling rectified flow transformers for high-resolution image synthesis .
+In Forty-first international conference on machine learning ,
+Cited by: Appendix A ,
+§1 .
+HaCohen et al. (2024)
+Y. HaCohen, N. Chiprut, B. Brazowski, D. Shalem, D. Moshe, E. Richardson, E. Levin, G. Shiran, N. Zabari, O. Gordon, P. Panet, S. Weissbuch, V. Kulikov, Y. Bitterman, Z. Melumian, and O. Bibi
+LTX-video: realtime video latent diffusion .
+arXiv preprint arXiv:2501.00103 .
+Cited by: Appendix A ,
+§3 .
+Ho et al. (2020)
+J. Ho, A. Jain, and P. Abbeel
+Denoising diffusion probabilistic models .
+Advances in Neural Information Processing Systems 33 , pp. 6840–6851 .
+Cited by: §2 .
+Janati et al. (2025)
+Y. Janati, B. Moufad, M. Abou El Qassim, A. Durmus, E. Moulines, and J. Olsson
+A mixture-based framework for guiding diffusion models .
+preprint .
+Cited by: §2 .
+Kadkhodaie and Simoncelli (2020)
+Z. Kadkhodaie and E. P. Simoncelli
+Solving linear inverse problems using the prior implicit in a denoiser .
+arXiv preprint arXiv:2007.13640 .
+Cited by: §2 .
+Karras et al. (2022)
+T. Karras, M. Aittala, T. Aila, and S. Laine
+Elucidating the design space of diffusion-based generative models .
+Advances in Neural Information Processing Systems 35 , pp. 26565–26577 .
+Cited by: §2 .
+Kawar et al. (2021)
+B. Kawar, G. Vaksman, and M. Elad
+SNIPS: solving noisy inverse problems stochastically .
+Advances in Neural Information Processing Systems 34 , pp. 21757–21769 .
+Cited by: §2 .
+Labs (2025)
+B. F. Labs
+FLUX.2: Frontier Visual Intelligence .
+Note: https://bfl.ai/blog/flux-2
+Cited by: Appendix B .
+Lipman et al. (2023)
+Y. Lipman, R. T. Q. Chen, H. Ben-Hamu, M. Nickel, and M. Le
+Flow matching for generative modeling .
+In The Eleventh International Conference on Learning Representations ,
+External Links: Link
+Cited by: §2 .
+Mardani et al. (2024)
+M. Mardani, J. Song, J. Kautz, and A. Vahdat
+A variational perspective on solving inverse problems with diffusion models .
+In The Twelfth International Conference on Learning Representations ,
+External Links: Link
+Cited by: §2 .
+Moufad et al. (2025)
+B. Moufad, N. B. Shouraki, A. O. Durmus, T. Hirtz, E. Moulines, J. Olsson, and Y. Janati
+Efficient zero-shot inpainting with decoupled diffusion guidance .
+arXiv preprint arXiv:2512.18365 .
+Cited by: Appendix A ,
+§1 ,
+§2 ,
+§2 ,
+§2 ,
+§2 ,
+§3 ,
+§3 ,
+§3 ,
+Abstract .
+Patel et al. (2024)
+M. Patel, S. Wen, D. N. Metaxas, and Y. Yang
+Steering rectified flow models in the vector field for controlled image generation .
+arXiv preprint arXiv:2412.00100 .
+Cited by: §3 .
+Radford et al. (2021)
+A. Radford, J. W. Kim, C. Hallacy, A. Ramesh, G. Goh, S. Agarwal, G. Sastry, A. Askell, P. Mishkin, J. Clark, et al.
+Learning transferable visual models from natural language supervision .
+In International conference on machine learning ,
+pp. 8748–8763 .
+Cited by: §3 .
+Rezende and Mohamed (2015)
+D. Rezende and S. Mohamed
+Variational inference with normalizing flows .
+In International conference on machine learning ,
+pp. 1530–1538 .
+Cited by: §2 .
+Roberts and Tweedie (1996)
+G. O. Roberts and R. L. Tweedie
+Geometric convergence and central limit theorems for multidimensional Hastings and Metropolis algorithms .
+83 ( 1 ), pp. 95–110 .
+External Links: Document ,
+https://academic.oup.com/biomet/article-pdf/83/1/95/709644/83-1-95.pdf ,
+ISSN 0006-3444 ,
+Link
+Cited by: §2 .
+Rösch et al. (2024)
+P. J. Rösch, N. Oswald, M. Geierhos, and J. Libovický
+Enhancing conceptual understanding in multimodal contrastive learning through hard negative samples .
+External Links: 2403.02875
+Cited by: §3 .
+Song et al. (2021a)
+J. Song, C. Meng, and S. Ermon
+Denoising diffusion implicit models .
+In International Conference on Learning Representations ,
+External Links: Link
+Cited by: §2 .
+Song and Ermon (2019)
+Y. Song and S. Ermon
+Generative modeling by estimating gradients of the data distribution .
+Advances in neural information processing systems 32 .
+Cited by: §2 .
+Song et al. (2021b)
+Y. Song, J. Sohl-Dickstein, D. P. Kingma, A. Kumar, S. Ermon, and B. Poole
+Score-based generative modeling through stochastic differential equations .
+In International Conference on Learning Representations ,
+Cited by: §2 .
+Unterthiner et al. (2018)
+T. Unterthiner, S. Van Steenkiste, K. Kurach, R. Marinier, M. Michalski, and S. Gelly
+Towards accurate generative models of video: a new metric & challenges .
+arXiv preprint arXiv:1812.01717 .
+Cited by: §3 .
+Wan et al. (2025)
+T. Wan, A. Wang, B. Ai, B. Wen, C. Mao, C. Xie, D. Chen, F. Yu, H. Zhao, J. Yang, J. Zeng, J. Wang, J. Zhang, J. Zhou, J. Wang, J. Chen, K. Zhu, K. Zhao, K. Yan, L. Huang, M. Feng, N. Zhang, P. Li, P. Wu, R. Chu, R. Feng, S. Zhang, S. Sun, T. Fang, T. Wang, T. Gui, T. Weng, T. Shen, W. Lin, W. Wang, W. Wang, W. Zhou, W. Wang, W. Shen, W. Yu, X. Shi, X. Huang, X. Xu, Y. Kou, Y. Lv, Y. Li, Y. Liu, Y. Wang, Y. Zhang, Y. Huang, Y. Li, Y. Wu, Y. Liu, Y. Pan, Y. Zheng, Y. Hong, Y. Shi, Y. Feng, Z. Jiang, Z. Han, Z. Wu, and Z. Liu
+Wan: open and advanced large-scale video generative models .
+arXiv preprint arXiv:2503.20314 .
+Cited by: §3 .
+Wang et al. (2023)
+Y. Wang, J. Yu, and J. Zhang
+Zero-shot image restoration using denoising diffusion null-space model .
+In The Eleventh International Conference on Learning Representations ,
+External Links: Link
+Cited by: §2 ,
+§3 .
+Wu et al. (2025)
+C. Wu, J. Li, J. Zhou, J. Lin, K. Gao, K. Yan, S. Yin, S. Bai, X. Xu, Y. Chen, et al.
+Qwen-image technical report .
+arXiv preprint arXiv:2508.02324 .
+Cited by: §1 .
+Zhang et al. (2023)
+L. Zhang, A. Rao, and M. Agrawala
+Adding conditional control to text-to-image diffusion models .
+In Proceedings of the IEEE/CVF international conference on computer vision ,
+pp. 3836–3847 .
+Cited by: §3 .
+Zhu et al. (2023)
+Y. Zhu, K. Zhang, J. Liang, J. Cao, B. Wen, R. Timofte, and L. Van Gool
+Denoising diffusion models for plug-and-play image restoration .
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition ,
+pp. 1219–1229 .
+Cited by: §2 ,
+§3 .
+Reproducibility statement.
+All experiments are reproducible using the released Python package DInG-editor 3 3
+3
+https://github.com/gen-TII/ding-editor-sub , which includes implementations of all training-free and training-based methods considered in this work, along with the corresponding evaluation scripts.
+Ethics statement.
+Test-time guidance lowers computational barriers for creative media applications, broadening accessibility. However, diffusion-based inpainting methods are inherently dual-use and may be misused to generate deceptive and harmful content, such as manipulated images or synthetic media that obscure authenticity. This risk underscores the importance of responsible deployment, including clear usage guidelines and traceable outputs.
+Appendix A Details on models and baselines
+Large-scale models.
+For image editing, we use SD3 ( Esser et al., 2024 ) and FLUX ( Batifol et al., 2025 ) , both equipped with a VAE featuring a spatial downsampling factor of × 8 \times 8 . For video editing, we consider LTX ( HaCohen et al., 2024 ) , which employs a video VAE with spatial and temporal downsampling factors of × 32 \times 32 and × 8 \times 8 , respectively, and Wan2.1, which uses × 8 \times 8 spatial and × 3 \times 3 temporal downsampling. For all models, we use the default guidance scale provided by the authors.
+Training-based methods.
+We include baselines that are explicitly trained for inpainting. For images, we evaluate ControlNet-based approaches, including SD3 ControlNet 4 4
+4
+huggingface.co/alimama-creative/SD3-Controlnet-Inpainting and FLUX ControlNet 5 5
+5
+huggingface.co/alimama-creative/FLUX.1-dev-Controlnet-Inpainting-Beta . The SD3 ControlNet model is fine-tuned on a large-scale dataset of 12 million image–mask pairs at 1024 × 1024 1024\times 1024 resolution. Similarly, FLUX ControlNet is trained on 15 million images.
+We also include FLUX Fill, a FLUX-based checkpoint trained specifically for inpainting 6 6
+6
+huggingface.co/black-forest-labs/FLUX.1-Fill-dev . For video inpainting, we evaluate Wan2.1-VACE 1.3B, a dedicated video inpainting checkpoint.
+Training-free baselines.
+We adopt the hyperparameters reported in Moufad et al. (2025, Appendix Table 8) . As FLAIR ( Erbach et al., 2025 ) was not considered in Moufad et al. (2025) , we detail below its implementation and hyperparameters choices.
+We follow Erbach et al. (2025, Algorithm 1) and build upon their official codebase 7 7
+7
+https://github.com/prs-eth/FLAIR/ .
+We set the number of inner likelihood optimization steps to n_likelihood_steps = 15 =15 with early stopping threshold early_stopping = 10 − 4 =10^{-4} . Since we consider different prior models from those in the original work, namely SD3, we use a fixed regularization weight of 1 1 , which we found to perform robustly in practice without requiring calibration from the pre-computed flow-matching loss.
+Appendix B Inpainting in latent space
+A key observation of Avrahami et al. (2023) is that, for the case of inpainting, guidance can be carried out entirely in latent space by deriving an appropriate latent mask: the binary pixel space mask is downsampled according; while The input is directly encoded as x ∗ = ℰ ⁡ ( input ) x_{*}=\mathcal{E}(\mathrm{input}) .
+This equivalence allows inpainting problems to be formulated directly in latent space and benefit from the its compressed representations.
+Moreover, it enables the application of training-free guidance methods that are valid only for linear inverse problems; in particular, the closed-form update in Equation 2.5 applies in this setting.
+Limitations. Defining inpainting directly in latent space entails several limitations, as noted by Avrahami et al. (2023) . First, the quality of the reconstruction is inherently constrained by the encoder–decoder pair of the diffusion model, although this limitation becomes less pronounced as recent models continue to improve ( Labs, 2025 ) .
+Second, the encoder’s downsampling factor limits the spatial granularity of masks that can be represented: masked regions smaller than the downsampling scale may be ignored, leading to ineffective or inaccurate edits. Additionally, small or thin masked regions can introduce artifacts due to leakage from unmasked regions, since the downsampled mask may not fully cover the intended area.
+Figure 3 illustrates this limitation in practice: the outline of the blue shirt in the input video leaks into the edited result. The effect becomes more pronounced as the encoder’s downsampling factor increases. In particular, we noticed in practice that this issue is more evident for the LTX video model, which employs a spatial downsampling factor of × 32 \times 32 , compared to Wan2.1, which uses a factor of × 8 \times 8 .
+We mitigated this issue by slightly overestimating the support of the mask near the boundaries as illustrated in Figure 1 ,
+which alleviates boundary artifacts at the cost of slightly altering the observed regions around the mask edges.
+Figure 3: Visualization of context leakage in latent-space video inpainting. When lifting a pixel-space inpainting task to the latent space, downsampling the mask without adjustment can lead to boundary artifacts. From top to bottom row: input video, binary edit masks, reconstruction using naive downsampled masks, and reconstruction using the dilated masks. Note that naive downsampling (third row) causes the t-shirt’s original boundary (blue outline) to leak into the latent reconstruction, whereas dilation (fourth row) successfully avoid this issue.
+Appendix C Examples of editing via inpainting
+Here, we provide a side-by-side comparison of the DInG and the considered baselines on image editing tasks via inpainting on HumanEdit .
+The red overlay in the first column shows the masked region to be edited and the text in the left-hand side of each row represents the editing prompt.
+Qualitative results on video editing tasks can be found on the project webpage 8 8
+8
+https://gen-tii.github.io/ding-editor-sub/ .
+(See the next pages for the gallery of examples)
+Figure 4: Qualitative comparison of DInG and SD3 with ControlNet (SD3 Inpaint) on HumanEdit . The methods are limited to a runtime of 30 seconds per image
+Figure 5: Qualitative comparison 1 of DInG Flux with ControlNet (Flux Inpaint), and Flux Fill on HumanEdit . The methods are limited to a runtime of 30 seconds per image.
+Figure 6: Qualitative comparison between and training-free baselines on HumanEdit with SD3 model as prior. The methods are limited to NFE 50.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

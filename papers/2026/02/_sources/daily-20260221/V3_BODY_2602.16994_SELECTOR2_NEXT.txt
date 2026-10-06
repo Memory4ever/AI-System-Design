@@ -1,0 +1,341 @@
+Appendix E Neural Selector Details
+Let 𝒜\mathcal{A} be the space of all supported actions for delayed expansion, which we define as the Cartesian product
+A={1,…,Kmax}×{0,…,L1,max}×{0,…,L2,max},A=\{1,...,K_{\text{max}}\}\times\{0,...,L_{\text{1,max}}\}\times\{0,...,L_{\text{2,max}}\},
+(8)
+where an action a=(K,L1,L2)∈𝒜a=(K,L_{1},L_{2})\in\mathcal{A} specifies the branching factor KK, the trunk draft length L1L_{1} and the branch draft length L2L_{2}. When using delayed tree expansion, we aim to maximize the throughput as measured in tokens per second (TPS):
+maxπ𝔼𝒄[𝔼[τ+1∣𝒄,a]𝔼⁡[T⁡(𝒄,a)]],a∼π(⋅∣𝒄),\max_{\pi}\mathbb{E}_{\boldsymbol{c}}\!\left[\frac{\mathbb{E}[\tau+1\mid\boldsymbol{c},a]}{\mathbb{E}[T(\boldsymbol{c},a)]}\right],\qquad a\sim\pi(\cdot\mid\boldsymbol{c}),
+(9)
+where 𝔼[τ+1∣𝒄,a]\mathbb{E}[\tau+1\mid\boldsymbol{c},a] is the block efficiency at the context 𝒄\boldsymbol{c} having chosen the drafting action aa, and 𝔼⁡[T⁡(𝒄,a)]\mathbb{E}[T(\boldsymbol{c},a)] represents the expected wall-time (in seconds) of the necessary draft and target passes performed at context 𝒄\boldsymbol{c} under the drafting action aa. The outer expectation is taken over the distributions of contexts 𝒄\boldsymbol{c} we would observe across all inputs.
+To this end, we define a selector policy which takes in the following features as input:
+•
+Hidden-state features hprevph^{p}_{\mathrm{prev}}, hprevqh^{q}_{\mathrm{prev}} of the target and draft model at the preceding token, and hcurqh^{q}_{\mathrm{cur}}, the draft model features at the root token44
+4
+We cannot use target features here because the root token is missing a KV cache row from the last iteration, which would require an extra target forward pass. This is also the case for drafting, but an extra draft forward pass is relatively cheap., all of which are later projected to a shared dimension dd,
+•
+Scalar uncertainty features, which include the entropies H⁡(pp​r​e​v),H⁡(qp​r​e​v),H⁡(qr​o​o​t)H(p_{prev}),H(q_{prev}),H(q_{root}), local divergences KL(pp​r​e​v∥qp​r​e​v),KL(qp​r​e​v∥pp​r​e​v)KL(p_{prev}\|q_{prev}),KL(q_{prev}\|p_{prev}), and a local L1L^{1} distance ‖pp​r​e​v−qp​r​e​v‖\|p_{prev}-q_{prev}\|,
+•
+Local parameter features, i.e. the context length |x||x| and the sampling hyperparameters – temperature TT and nucleus threshold pt​o​pp_{top}, and
+•
+Latency estimates for a draft and target forward pass at the current context length, to capture hardware-dependent effects.
+We design this selector as an MLP policy with separate projections for each hidden-state feature block. Let ϕ1,ϕ2,ϕ3\phi_{1},\phi_{2},\phi_{3} be the linear projections from each representation vector to a shared dimension d=128d=128, each followed by layer normalization (LN), and s⁡(x)s(x) be the (standardized) scalar feature vector. The policy then computes
+zθ​(x)=M​L​P​([L​N​(ϕ1​(hprevp));L​N​(ϕ2​(hprevq));L​N​(ϕ3​(hcurq));s⁡(x)]),z_{\theta}(x)=MLP\left(\big[LN(\phi_{1}(h^{p}_{\text{prev}}));LN(\phi_{2}(h^{q}_{\text{prev}}));LN(\phi_{3}(h^{q}_{\text{cur}}));s(x)\big]\right),
+(10)
+where the MLP has two hidden layers (of sizes 512 and 32 respectively), with GELU activations (Hendrycks and Gimpel, 2023) and dropout. The output layer of this model is a vector of |A||A| logits, representing the probabilities of each action in AA being optimal with respect to throughput. Using this structure, the overhead for the selector forward pass is negligible compared to any draft or target model pass.
+Let tp​(l)t_{p}(l) be the measured target model time in seconds for a forward pass at context length ll, and let tq​(l)t_{q}(l) be the draft model time. Then, for an action a=(K,L1,L2)a=(K,L_{1},L_{2}) at context length l=|x|l=|x| we approximate total wall-clock time as
+T^​(x,a)=∑j=0L1−1tq​(l+j)⏟trunk drafting+∑j=0L2−1tq​(l+L1+j∗K)⏟branch drafting+tp​(l+L1+K​L2)⏟target forward pass.\hat{T}(x,a)=\underbrace{\sum_{j=0}^{L_{1}-1}t_{q}(l+j)}_{\text{trunk drafting}}+\underbrace{\sum_{j=0}^{L_{2}-1}t_{q}(l+L_{1}+j*K)}_{\text{branch drafting}}+\underbrace{t_{p}(l+L_{1}+KL_{2})}_{\text{target forward pass}}.
+(11)
+which we use to estimate total throughput as shown in Equation 4. Given this estimate T​P​S^π​(𝒄)\widehat{TPS}_{\pi}(\boldsymbol{c}) and the throughput of the baseline action T​P​S^b​a​s​e​(𝒄)\widehat{TPS}_{base}(\boldsymbol{c}), we ultimately define the policy’s objective as minimizing:
+ℒ=1B∑i=1B(−logT​P​S^π​(xi)T​P​S^b​a​s​e​(xi))+λ⋅1|ℐα|∑i∈ℐα(max{1−T​P​S^π​(xi)T​P​S^b​a​s​e​(xi),0})2,\mathcal{L}=\frac{1}{B}\sum_{i=1}^{B}\left(-\log\frac{\widehat{TPS}_{\pi}(x_{i})}{\widehat{TPS}_{base}(x_{i})}\right)\;+\;\lambda\cdot\frac{1}{|\mathcal{I}_{\alpha}|}\sum_{i\in\mathcal{I}_{\alpha}}\left(\max\left\{1-\frac{\widehat{TPS}_{\pi}(x_{i})}{\widehat{TPS}_{base}(x_{i})},0\right\}\right)^{2},
+(12)
+where BB is the minibatch size, λ\lambda is the penalty weight for regressing below the baseline, and ℐα\mathcal{I}_{\alpha} are the indices of the largest α\alpha fraction of the penalty terms (max⁡{1−T​P​S^π​(xi)T​P​S^b​a​s​e​(xi),0})2(\max\left\{1-\frac{\widehat{TPS}_{\pi}(x_{i})}{\widehat{TPS}_{base}(x_{i})},0\right\})^{2} within the minibatch, which penalize worst-case throughput regressions (relative to the baseline) to prevent the policy from trading occasional but large throughput regressions for marginal average improvements.
+Appendix F Extended Online Experimental Results
+Qwen-2.5 (32B / 500M)
+Gemma-3 (27B / 270M)
+Llama-3 (70B / 8B)
+Writing
+Coding
+Translation
+Math (E)
+Math (H)
+Writing
+Coding
+Translation
+Math (E)
+Math (H)
+Writing
+Coding
+Translation
+Math (E)
+Math (H)
+Khisti, delayed expansion
+14.21
+17.81
+14.16
+23.05
+22.80
+8.93
+9.90
+10.73
+17.39
+17.28
+11.00
+14.24
+13.93
+13.75
+13.26
+Khisti
+11.22
+19.87
+13.88
+24.29
+24.07
+3.53
+5.08
+8.88
+6.60
+5.58
+11.71
+14.25
+14.23
+14.18
+13.92
+NaiveTree, delayed expansion
+14.57
+21.91
+16.29
+28.89
+26.69
+9.95
+8.45
+11.95
+15.84
+18.10
+11.31
+15.66
+15.04
+14.76
+13.29
+NaiveTree
+10.25
+19.08
+13.28
+27.52
+25.67
+3.48
+5.26
+9.74
+6.48
+5.04
+11.77
+16.10
+15.71
+15.68
+14.28
+Naive
+7.90
+17.47
+9.76
+24.84
+22.77
+4.72
+6.79
+7.30
+13.15
+14.07
+8.65
+13.05
+12.72
+12.42
+11.04
+NSS, delayed expansion
+11.85
+20.61
+16.93
+26.96
+25.10
+10.17
+6.39
+11.89
+15.82
+17.76
+9.77
+14.75
+14.39
+12.25
+11.10
+NSS
+8.00
+16.28
+12.67
+24.68
+22.76
+3.50
+5.34
+9.87
+6.13
+4.85
+10.08
+15.36
+15.03
+12.86
+11.23
+SpecInfer, delayed expansion
+15.52
+23.16
+17.39
+29.31
+27.33
+10.02
+9.85
+12.10
+16.53
+17.77
+11.80
+15.77
+15.08
+14.79
+13.90
+SpecInfer
+10.77
+19.76
+13.43
+27.81
+26.14
+3.59
+5.34
+9.92
+6.55
+5.67
+12.29
+16.43
+15.77
+15.52
+14.27
+SpecTr, delayed expansion
+15.58
+22.03
+17.26
+27.33
+26.50
+10.00
+9.87
+12.03
+16.24
+17.97
+11.73
+15.59
+14.85
+15.04
+13.92
+SpecTr
+10.94
+19.31
+13.29
+26.56
+24.96
+3.54
+5.38
+9.80
+6.44
+5.26
+12.21
+16.23
+15.63
+15.70
+14.55
+BV
+9.53
+18.24
+11.22
+24.69
+22.81
+5.82
+7.66
+8.57
+15.58
+15.25
+9.57
+13.38
+12.94
+13.07
+12.04
+Traversal, KK=2
+11.11
+20.47
+12.94
+27.44
+25.56
+6.31
+8.01
+9.07
+14.24
+16.08
+10.90
+14.81
+14.17
+14.74
+13.84
+Traversal, KK=3
+11.47
+21.34
+14.23
+29.05
+26.63
+6.51
+8.55
+9.46
+15.09
+17.21
+11.95
+15.39
+14.66
+14.55
+13.86
+Traversal, KK=4
+11.95
+22.90
+14.97
+29.41
+27.49
+6.56
+8.94
+9.73
+15.35
+17.23
+12.35
+15.74
+15.19
+15.39
+15.18
+Table 8: Tokens per second by dataset and algorithm
+Qwen-2.5 (32B / 500M)
+Gemma-3 (27B / 270M)
+Llama-3 (70B / 8B)
+Writing
+Coding
+Translation
+Math (E)
+Math (H)
+Writing
+Coding
+Translation
+Math (E)
+Math (H)
+Writing
+Coding
+Translation
+Math (E)
+Math (H)
+Khisti, delayed expansion
+2.56
+5.21
+3.22
+7.04
+6.81
+2.01
+3.51
+2.69
+5.72
+5.53
+5.59
+7.48
+7.24
+7.06
+6.85
+Khisti
+2.78
+5.16
+3.50
+6.59
+6.50
+1.21
+1.77
+3.09
+2.26
+1.92
+5.26
+6.64
+6.63
+6.57
+6.35
+

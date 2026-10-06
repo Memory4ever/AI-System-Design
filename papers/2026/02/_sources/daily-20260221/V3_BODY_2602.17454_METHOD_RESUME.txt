@@ -1,0 +1,143 @@
+3.1 Motivation & Insights
+A Structural Decomposition Approach
+3.2 Re:cord-play
+Threat Model: Gray-Box Auditing.
+Intuition
+Trace Generation and Strict Equality.
+Phase 1: Recording on Initial Dataset (DD)
+Phase 2: Replaying on Neighboring Dataset (D′D^{\prime})
+3.3 Distributional Audit: Re:cord-play-sample
+4 Evaluation
+4.1 Implementation
+4.2 Datasets
+Synthetic Data
+Neighboring Datasets
+Adjacency Agnosticism
+Generation Strategies
+4.3 Auditing Results
+Reproducibility
+4.3.1 SmartNoise SDK
+4.3.2 Smartnoise SQL
+4.3.3 Synthcity
+4.3.4 Diffprivlib
+4.3.5 Private-PGM
+4.3.6 MOSTLY AI Engine
+4.3.7 Opacus
+4.3.8 dpmm
+4.3.9 Vulnerability to pathological inputs
+4.3.10 Additional evaluations and scope
+5 Discussion
+Prioritize Vetted DSLs
+Unclear neighboring definitions
+Data-dependent code isolation
+5.1 Limitations
+On the need for
+What does our audit mean?
+Interpreting the errors.
+5.2 Future work
+Extending to other types of accounting and composition
+On the need for ensure_equality nodes
+Advanced dataset crafting
+6 Conclusion
+7 Ethics and Responsible Disclosure
+Acknowledgements
+References
+A General Auditing Algorithm
+B Details on Empirical PLD Estimation
+Trade-off Function Estimation
+Conversion to the Privacy Profile
+PLD Reconstruction
+C Audited Codebases
+SmartNoise SDK (OpenDP, 2025)
+dpmm (Mahiou et al., 2025)
+Synthcity (Qian et al., 2023)
+Opacus (Yousefpour et al., 2022)
+Diffprivlib (Holohan et al., 2019)
+Jax-privacy (Balle et al., 2025)
+Private-PGM
+MostlyAI (Krchova et al., 2025)
+Google Differential Privacy (Chang et al., 2021)
+PipelineDP (OpenMined contributors, 2025)
+SmartNoise SQL (OpenDP, 2025)
+OpenDP (Shoemate et al., 2026)
+Reproducibility and Scope
+D Handling of Adversarial Inputs
+E Acknowledgments
+License: CC BY 4.0
+arXiv:2602.17454v1 [cs.CR] 19 Feb 2026
+Privacy in Theory, Bugs in Practice:
+Grey-Box Auditing of Differential Privacy Libraries
+Volume: YYYYXDOI: XXXXXXX.XXXXXXX
+Tudor Cebere
+Affiliation: PreMeDICaL team, Inria, Idesp, Inserm, Université de Montpellier
+email: tudor.cebere@inria.fr
+,
+David Erb
+Affiliation: Technical University of Munich & Oblivious
+email: david.erb@tum.de
+,
+Damien Desfontaines
+Affiliation: Hiding Nemo
+email: damien@hiding-nemo.ch
+,
+Aurélien Bellet
+Affiliation: PreMeDICaL team, Inria, Idesp, Inserm, Université de Montpellier
+email: aurelien.bellet@inria.fr
+and
+Jack Fitzsimons
+Affiliation: Oblivious
+email: jack@oblivious.com
+YYYY
+Abstract.
+Differential privacy (DP) implementations are notoriously prone to errors, with subtle bugs frequently invalidating theoretical guarantees. Existing verification methods are often impractical: formal tools are too restrictive, while black-box statistical auditing is intractable for complex pipelines and fails to pinpoint the source of the bug.
+This paper introduces Re:cord-play, a ‘‘gray-box’’ auditing paradigm that inspects the internal state of DP algorithms. By running an instrumented algorithm on neighboring datasets with identical randomness, Re:cord-play directly checks for data-dependent control flow and provides concrete falsification of sensitivity violations by comparing declared sensitivity against the empirically measured distance between internal inputs. We generalize this to Re:cord-play-sample, a full statistical audit that isolates and tests each component, including untrusted ones.
+We show that our novel testing approach is both effective and necessary by auditing 12 open-source libraries, including SmartNoise SDK, Opacus, and Diffprivlib, and uncovering 13 privacy violations that impact their theoretical guarantees.
+We release our framework as an open-source Python package11
+1
+https://github.com/ObliviousAI/dp-recorder, thereby making it easy for DP developers to integrate effective, computationally inexpensive, and seamless privacy testing as part of their software development lifecycle.
+Keywords: differential privacy, privacy auditing, implementation security, testing framework
+1. Introduction
+The proliferation of large-scale data collection and analysis has made protecting individuals’ privacy a key challenge for society and technology.
+In response, differential privacy (DP) has emerged as the de facto standard for private data sharing, offering a rigorous, provable privacy guarantee (Dwork et al., 2006b). A randomized mechanism is said to be differentially private if its output distribution remains statistically indistinguishable when applied to any pair of neighboring datasets, i.e., datasets differing by the data of a single individual.
+This guarantee ensures that the presence or absence of any individual’s data in a dataset has a mathematically bounded impact on the outcome, protecting them from privacy attacks based on released results.
+In most DP mechanisms, this influence is captured by the sensitivity of the underlying query, i.e., the maximum change in the query’s output when the data of a single individual is modified. DP also supports building complex algorithms by composing basic privacy primitives (e.g., the Laplace, Gaussian, and exponential mechanisms) and applying data-independent post-processing to their outputs.
+These properties have led to the growing adoption of DP by technology companies and public institutions (Aktay et al., 2020; Zhang et al., 2023; Johnson et al., 2018; Abowd, 2018)22
+2
+For a comprehensive list, see the Differential Privacy Deployments Registry (Howarth, 2025)., making it a critical component in the modern data ecosystem.
+PHASE 1: RECORD(Dataset DD)Pre-processingInput: q⁡(D)q(D)Mechanism Call(e.g., Laplace)Output: y=5.2y=5.2Post-processingPre-processingPHASE 2: REPLAY(Dataset D′D^{\prime})Pre-processingInput: q⁡(D′)q(D^{\prime})Mechanism Call(Replay Mode)Forced Output: y=5.2y=5.2Post-processing0. CHECK INVARIANCE2. FREEZE OUTPUT1. CHECK SENSITIVITY
+|q⁡(D)−q⁡(D′)|≤Δ|q(D)-q(D^{\prime})|\leq\Delta?3. CHECK INVARIANCE
+Figure 1. Summary of Re:cord-play highlighting the Record Phase (Dataset DD) and Replay Phase (Dataset D′D^{\prime}).
+Unfortunately, the conceptual elegance of DP contrasts with the practical difficulty of implementing it correctly.
+DP guarantees are notoriously susceptible to subtle implementation flaws that can invalidate the claimed protection.
+These bugs arise from sources including incorrect sensitivity calculations (Tramer et al., 2022), data-dependent pre- or post-processing (Ganev et al., 2025; Annamalai et al., 2024b), mishandled privacy budget composition (Lyu et al., 2017), insecure randomness (Dodis et al., 2012), or floating-point vulnerabilities (Haney et al., 2022; Mironov, 2012; Jin et al., 2022).
+This creates a gap between the stated privacy guarantees and the actual protection provided by their implementation.
+To address this gap between theoretical promises and practical guarantees, the research community has increasingly turned to distributional auditing (Annamalai et al., 2025).
+This statistical approach aims to empirically falsify privacy guarantees by distinguishing the output distributions of a mechanism on neighboring datasets.
+The majority of distributional auditing frameworks operate as black-box auditors, assessing privacy properties based solely on input-output behavior.
+This approach can detect privacy violations regardless of their cause, from high-level algorithmic mistakes to low-level implementation bugs, thus providing a robust assessment of a system.
+However, such techniques are limited when auditing modern DP algorithms, which are rarely simple primitives but rather complex pipelines that chain heterogeneous components. A typical workflow involves preprocessing (like clipping), adaptive composition of multiple mechanisms, and post-processing of their outputs. Black-box auditing of such pipelines presents two challenges. First, it is often statistically intractable: the final output distribution is the high-dimensional result of a complex process, requiring a prohibitive number of samples to distinguish. Second, it is uninformative: even if a black-box test detects a violation, it flags the entire system as faulty without pinpointing the faulty component.
+This leaves developers with few practical options. Formal verification tools (Gaboardi et al., 2013), while powerful, are typically restrictive, requiring entire pipelines to be rewritten in specialized, provable domain-specific languages (DSLs). This is a barrier to entry for the vast ecosystem of Python or C++ libraries.
+Thus, a practical gap remains: we lack an automated tool that can pinpoint where and why an implementation fails without the cost of end-to-end auditing.
+Our work is motivated by the need for a “privacy debugger” integrated into the software development lifecycle. Rather than relying on manual verification, we propose a solution to detect implementation bugs in Continuous Integration and Delivery (CI/CD) pipelines. We aim to provide a tool as effortless as a standard unit test, yet capable of evaluating highly randomized algorithms.
+Contribution
+This paper bridges the gap between theoretical privacy guarantees and practical correctness of implementations by introducing a new gray-box
+auditing paradigm. Unlike black-box methods that analyze high-dimensional output distributions, our approach assumes access to the underlying implementation and inspects the internal state of the algorithm mechanisms and the interfaces between its components. Our core insight is that DP implementations are not monolithic: they interleave data-independent logic with calls to data-dependent privacy primitives. We leverage the fact that most privacy violations that arise fall into one of the following categories: (i) data-dependent leakage into data-independent code, (ii) sensitivity miscalculations, (iii) noise miscalibration, and (iv) flawed privacy primitive implementations. Our approach generates concrete, actionable reports that help practitioners identify and resolve common errors.
+Our contributions can be summarized as follows:
+(1)
+Deterministic Verification (Re:cord-play): We leverage a novel record-and-replay instrumentation that benefits from the separation between private primitives and the rest of the processing logic (see Figure 1). By freezing the outputs of privacy primitives during execution on the neighboring dataset, we check whether code assumed to be data-independent indeed remains invariant across datasets.
+This allows us to catch leaks of type (i) deterministically: if intermediate variables diverge despite identical mechanism outputs, data has leaked into logic assumed to be data-independent. Simultaneously, it flags sensitivity errors of type (ii) by comparing the declared privacy parameters against the empirically measured distance between the internal inputs fed to each primitive. Additionally, if we assume vetted, trusted, and correctly implemented privacy primitives, we can catch errors of type (iii) as well.
+(2)
+Component-Wise Audit (Re:cord-play-sample): We extend our framework to handle untrusted or custom primitives via Re:cord-play-sample. By isolating privacy primitives, we perform statistical tests on them rather than the entire pipeline, making the auditing problem computationally cheaper and more tractable. Applying ideas from black-box auditing within our framework, we propose to leverage Privacy Loss Distributions (PLDs) to obtain precise privacy loss estimates for each privacy primitive. This approach allows us to detect issues of type (iii) and (iv), while enabling the composition of both analytically known PLDs and empirically estimated PLDs from arbitrary mechanisms to derive end-to-end privacy bounds.
+(3)
+Practical Evaluation: We demonstrate the practical value of our framework by auditing popular open-source DP libraries, including SmartNoise SDK, Synthcity, Opacus, and Diffprivlib, in which we uncover several previously unknown privacy violations. These findings range from subtle sensitivity miscalculations in data preprocessing to data-dependent logic flaws. This validates our approach as a practical, effective method for finding real-world bugs that elude current testing and verification techniques. We release our framework as an open-source package, lowering the barrier to test DP code and encouraging practitioners to adopt our effective and computationally inexpensive tool as a component of their software development lifecycle.
+The rest of this paper is organized as follows. We discuss background and related work in Section 2. In Section 3, we introduce our auditing techniques, Re:cord-playand Re:cord-play-sample. We present our evaluation setup and the real-world bugs we uncovered in Section 4. We provide practical insights and recommendations for authors of DP software, outline the limitations of our approach, and discuss future work in Section 5, and then conclude.
+2. Background & Related Work
+2.1. Differential Privacy
+Differential Privacy (DP) (Dwork et al., 2006b) has become the standard for private data analysis, valued for its rigorous and mathematically provable guarantees. It enables the release of useful aggregate statistics from a dataset while limiting the disclosure of information about any single individual within it. A mechanism’s privacy is quantified by how indistinguishable its output distributions are when run on any two neighboring datasets (i.e., datasets that differ by a single record). More formally, a mechanism is considered differentially private if it satisfies the following definition:
+Definition 2.1.
+A randomized mechanism ℳ:𝒟→𝒳\mathcal{M}:\mathcal{D}\rightarrow\mathcal{X} satisfies (ε,δ)(\varepsilon,\delta)-approximate DP if for every pair of neighboring datasets D,D′D,D^{\prime}, and every subset A⊆𝒳A\subseteq\mathcal{X} of the output space, it holds that:
+P⁡(ℳ⁡(D)∈A)≤eε​P​(ℳ⁡(D′)∈A)+δ.P(\mathcal{M}(D)\in A)\leq e^{\varepsilon}P(\mathcal{M}(D^{\prime})\in A)+\delta.
+Here, ε\varepsilon represents the privacy loss parameter, while δ\delta should be a small constant, see (Dwork et al., 2006a; Desfontaines and Pejó, 2019) for more details. Mechanisms with δ=0\delta=0 satisfy pure DP.
+The core challenge in implementing any DP mechanism ℳ\mathcal{M} is to correctly calibrate the amount of noise, which is directly determined by the mechanism’s sensitivity. The global sensitivity of a query f:𝒟→ℝkf:\mathcal{D}\rightarrow\mathbb{R}^{k} measures the maximum possible change in ff’s output when applied to any two neighboring datasets, DD and D′D^{\prime} (Dwork et al., 2006b). The specific definition of sensitivity depends on the LpL_{p} norm used to measure this change: Δp​f=maxD,D′⁡‖f⁡(D)−f⁡(D′)‖p\Delta_{p}f=\max_{D,D^{\prime}}\|f(D)-f(D^{\prime})\|_{p}.
+While our approach is general, we anchor our exposition in three canonical privacy primitives defined by their corresponding sensitivity: (i) the Laplace Mechanism achieves pure ε\varepsilon-DP by adding Laplace-distributed noise scaled to the L1L_{1}-sensitivity of the query; (ii) the Gaussian Mechanism guarantees (ε,δ)(\varepsilon,\delta)-DP by adding Gaussian noise, with a scale σ\sigma calibrated to the L2L_{2}-sensitivity; (iii) the Exponential Mechanism (McSherry and Talwar, 2007) serves as a general-purpose tool for discrete outputs, providing ε\varepsilon-DP by selecting an item r∈ℛr\in\mathcal{R} based on a quality score qq with probability proportional to exp⁡(ε​q​(D,r)2​Δ∞​q)\exp\left(\frac{\varepsilon q(D,r)}{2\Delta_{\infty}q}\right), where Δ∞​q\Delta_{\infty}q is the L∞L_{\infty}-sensitivity of the quality function.
+Two fundamental properties make DP a powerful and p

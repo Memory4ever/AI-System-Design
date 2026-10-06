@@ -1,0 +1,420 @@
+https://arxiv.org/html/2601.21214v1
+Necessary selected methods/evaluation/direct counter; actually read, not entire attachment.
+2 Preliminaries
+In this section, we introduce the tasks and models that used in our study and basic ideas and tools of analyzing LLMs’ internal mechanisms from the residual stream viewpoint.
+Due to the page limit, a detailed discussion of related work is provided in Appendix C.
+Tasks Following the task forms widely used in the relevant literature, we collect seven reasoning hop generalization tasks from three different domains:
+•
+Symbolic Reasoning: Parity-NL (Parity problem, natural language variant) (Anil et al., 2022; Zhou et al., 2024) and LLC (Last Letter Concatenation) (Wei et al., 2022; Hu et al., 2025),
+•
+Mathematical Calculation: MDM (Multi-Digit Multiplication) (Dziri et al., 2023) and MOAS (Multi-Operand Addition and Substract) (Baeumel et al., 2025),
+•
+Coding: CLF (LeetCode 1598) and NumS (LeetCode 1450),
+•
+Others: ObjC (Object Counting) that requires both symbolic reasoning and mathematical calculation abilities from the BBH benchmark (Suzgun et al., 2022).
+Inspired by Mirzadeh et al. (2025), we resynthesize data for each task by randomly substituting entity names and numerical values to minimize potential data leakage from LLM pretraining. A key advantage of these tasks is the ability to control reasoning hops while preserving the underlying reasoning skill (e.g., in Parity-NL, we instantiate problems with n∈{10,20,…,50}n\in\{10,20,\ldots,50\} actions). Detailed task descriptions and examples are provided in Appendix D.
+Models
+We experiment with four open-source LLMs: Qwen2.5-7B-Instruct (Alibaba, 2025a), Phi-3-Instruct (Microsoft, 2024), LLaMA3-8B-Instruct (Meta, 2024), and Qwen3-8B-Instruct (Alibaba, 2025b). Model details are in Appendix D, with extended results of the experiments presented in the main text provided there due to space constraints.
+Understanding LLM Predictions via the Residual Stream.
+A key feature of Transformer-based LLMs is the residual stream (Elhage et al., 2021; Todd et al., 2024), which cumulatively propagates information across layers. Each layer reads the residual state, processes it via attention and MLP submodules, and writes updates back through addition. Formally, letting 𝐡l∈ℝd\mathbf{h}^{l}\in\mathbb{R}^{d} be the residual state at layer l∈[0..L−1]l\in[0..L-1], we have (omitting LayerNorm (Ba et al., 2016) for simplicity):
+𝐡midl+1=𝐡l+∑i=1H𝐚il,𝐡l+1=𝐡midl+1+𝐦l=𝐡l+∑i=1H𝐚il+𝐦l,\mathbf{h}^{l+1}_{\text{mid}}=\mathbf{h}^{l}+\textstyle\sum_{i=1}^{H}\mathbf{a}_{i}^{l},\ \ \ \ \mathbf{h}^{l+1}=\mathbf{h}^{l+1}_{\text{mid}}+\mathbf{m}^{l}=\mathbf{h}^{l}+\textstyle\sum_{i=1}^{H}\mathbf{a}_{i}^{l}+\mathbf{m}^{l},
+(1)
+where 𝐚il\mathbf{a}_{i}^{l} is the output of the i​-thi\text{-th} attention head and 𝐦l\mathbf{m}^{l} is the MLP output.
+This decomposition enables interpretable circuit analysis (Wang et al., 2023), attributing prediction dynamics to individual components by tracking how each head and MLP contributes through the residual stream.
+Mechanism Analysis Tools
+Logit Lens is a widely used tool that projects intermediate values in the LLM residual stream into the human-interpretable vocabulary space (Geva et al., 2023; Chughtai et al., 2024; Yu and Ananiadou, 2024) by applying the unembedding matrix WU∈ℝd×|V|W_{U}\in\mathbb{R}^{d\times|V|} (in the output layer of LLMs):
+flogit-lens​(𝐯)=Softmax​(𝐯⋅WU)∈ℝ|V|,f_{\text{logit-lens}}(\mathbf{v})=\text{Softmax}(\mathbf{v}\cdot W_{U})\in\mathbb{R}^{|V|},
+(2)
+where 𝐯∈ℝd\mathbf{v}\in\mathbb{R}^{d} can be any intermediate representation in the LLM residual stream (Dar et al., 2023), such as 𝐡l\mathbf{h}^{l} or 𝐚il\mathbf{a}_{i}^{l}, and VV is the vocabulary.
+Given a target token (index) t∈[0..|V|−1]t\in[0..|V|-1], we can use flogit-lens​(𝐯)​[t]f_{\text{logit-lens}}(\mathbf{v})[t] to directly assess how much information about tt is contained in 𝐯\mathbf{v}.
+Knocking Out, initially inspired by biological genetic analysis (Griffiths, 2005), has been widely used in recent LLM mechanistic analysis works (Wang et al., 2023; Geva et al., 2023; Dutta et al., 2024) to indirectly assess the causal importance of specific components to the model prediction.
+Specifically, taking the attention head 𝐚il\mathbf{a}_{i}^{l} for an example, we knock it out by setting 𝐚il=𝟎\mathbf{a}_{i}^{l}=\mathbf{0} (Michel et al., 2019b) when updating the residual stream (Eq 1).
+We then compute the change in the final output probability distribution as the Causal Indirect Effect (CIE) (Meng et al., 2022; Stolfo et al., 2023) of knocking out 𝐚il\mathbf{a}_{i}^{l}. Formally,
+gknock-out​(𝐚il)=𝐩θ​(x)−𝐩θ​(x|𝐚il=𝟎)∈ℝ|V|,g_{\text{knock-out}}(\mathbf{a}_{i}^{l})=\mathbf{p}_{\theta}(x)-\mathbf{p}_{\theta}(x|\mathbf{a}_{i}^{l}=\mathbf{0})\in\mathbb{R}^{|V|},
+(3)
+where 𝐩θ\mathbf{p}_{\theta} is the predicted probability distribution of the model θ\theta and xx is the model input.
+Large value of gknock-out​(𝐚il)​[t]g_{\text{knock-out}}(\mathbf{a}_{i}^{l})[t] indicates the head knocked out plays a key role in driving the prediction of the target token tt (Heimersheim and Nanda, 2024). This procedure allows us to pinpoint the attention heads that are most critical for specific token-level reasoning patterns.
+3 Breakdown of Reasoning Hop Generalization Errors
+In this section, we mainly want to answer RQ1:
+Where do errors occur?
+Specifically, how do LLMs’ reasoning errors evolve as problem hop increases, and are there any specific error types and token-level mistakes account for their performance degradation?
+Decomposing LLMs’ Overall Reasoning Errors into Reasoning Hops
+Interpreting CoT reasoning is substantially harder than simpler objectives (e.g., factual recall (Meng et al., 2022; Li et al., 2024), basic arithmetic (Stolfo et al., 2023), or elementary in-context tasks like get_antonym (Todd et al., 2024; Jiang et al., 2025)) because the latter involve only a few output tokens, whereas CoT responses often span hundreds of tokens, especially under reasoning hop generalization. Existing mechanistic analysis tools excel at token-level analysis but become difficult to apply when it is unclear which token positions should serve as the entry points for analysis.
+To address this, we decompose a CoT response into fine-grained reasoning hops. Formally, for an nn-hop problem x→r1→…→rn→yx\rightarrow r_{1}\rightarrow\dots\rightarrow r_{n}\rightarrow y, the joint probability of a fully correct response factorizes as:
+p⁡(r1,r2,…,rn,y|x)⏟The whole CoT response=p⁡(r1|x)⏟1st Hop Reasoning⋅p⁡(r2|x,r1)⏟2nd Hop Reasoning⋅⋯⋅p⁡(rn|x,r1,…,rn−1)⏟n​th Hop Reasoning⋅p⁡(y|x,r1,…,rn)⏟Output the final answer.\displaystyle\underbrace{p(r_{1},r_{2},...,r_{n},y|x)}_{\text{The whole CoT response}}=\underbrace{p(r_{1}|x)}_{\text{1st Hop Reasoning}}\cdot\underbrace{p(r_{2}|x,r_{1})}_{\text{2nd Hop Reasoning}}\cdot\dots\cdot\underbrace{p(r_{n}|x,r_{1},...,r_{n-1})}_{n\text{th Hop Reasoning}}\cdot\underbrace{p(y|x,r_{1},...,r_{n})}_{\text{Output the final answer}}.
+Failures in CoT reasoning can thus be traced to failures in specific hops, and the token positions of first errors serve as a natural proxy for diagnosing the overall reasoning failure. In the following, we focus on these positions for mechanistic analysis.
+Figure 2: Overall accuracy (green curve) and error proportion for key error types (blue bar) and other error types (purple bar) of Qwen2.5-7B-Instruct on Parity-NL, MDM and ObjC.
+Key Error Types: Performance Degradation is Rooted in a Few Patterns
+In reasoning hop generalization, problems often contain dozens of intermediate hops Hu et al. (2025), each potentially producing multiple errors. Considering all possibilities quickly becomes intractable.
+We observe that many errors share the underlying reasoning skill, even if they occur in different hops.
+Accordingly, we categorize a small set (typically 5∼105\sim 10 per task) of task-specific “error types”.
+Figure 9 illustrates all error types for Parity-NL (detailed examples for other tasks are in Appendix E.1), which include, e.g., recalling wrong information and incorrectly updating state. For brevity, we denote the N-th error type of task X as “X(N)”.
+While decomposing reasoning errors catalogs the diverse mistakes that can occur, a key question remains: are errors evenly distributed or dominated by a few patterns?
+This distinction is critical, as concentration in a few patterns likely signals a coherent underlying mechanism to our study.
+We do observe that a few (one or two) error types for each task account for most errors, and define those accounting for ≥30%\geq 30\% as key error types (detailed in Appendix E.2).
+For instance, in the 50-hop Parity-NL task, 78.6%78.6\% of errors stem from recalling wrong names (Type 2 in Figure 9).
+We show the error proportion (number of error samples divided by the number of all samples) for these key types and all other types and the overall accuracy with different reasoning hop numbers for Qwen2.5 on Parity-NL, MDM and ObjC tasks in Figure 2.
+We observe two key trends. First, the model experiences a pronounced drop in overall accuracy as the number of reasoning hops increases, confirming the fragility of current LLMs a problem involving more hops of reasoning. More importantly, this decline is not explained by a uniform increase in all error types, but is instead largely driven by the growth of a small set of target error types we identify. In contrast, the aggregate proportion of all other error types fluctuates only mildly with reasoning hop number.
+This highlights that performance degradation in reasoning hop generalization stems primarily from a limited set of key error types that intensify with hop length, underscoring the importance of focusing on the corresponding token positions where such errors occur.
+4 Probing Internal Mechanisms of Key Error Types
+We now turn to the central question RQ2: Why do these errors arise?
+What internal mechanisms underlie these critical reasoning errors, and how do they shape the model’s corresponding token-level predictions?
+Uncovering the underlying mechanisms may reveal potential intervention points to mitigate them.
+We conduct comparative analysis (as illustrated in Figure 3) on both correct and erroneous model predictions at the token positions corresponding to key error types.
+We start by noting that the erroneous predictions at these token positions are often associated with higher predictive uncertainty. A detailed analysis of token-level entropy for correct and erroneous predictions across seven reasoning hop generalization datasets is provided in Appendix F.1.
+This observation motivates our study of the underlying competition mechanisms behind such high uncertainty, where there must exist correct and erroneous reasoning trajectories to shape the error patterns in reasoning hop generalization.
+Figure 3: Illustration of the idea of comparative study and constructing the correct prediction set ScorrS_{\text{corr}} and erroneous prediction set SerrS_{\text{err}} with the multi-digit multiplication (MDM) task (error type 2, digit decomposition error). Each sample contains the input reasoning context (i.e., the concatenation of input problem and part of the model generated response) and the output predicted token. ScorrS_{\text{corr}} and SerrS_{\text{err}} contains the samples that are correctly and erroneously predicted by model, respectively. In this paper, we study the reasoning hop generalization mechanism through comparatively studying the mechanism behind these correct and erroneous predictions.
+Competition Mechanism Inside LLMs in Reasoning Hop Generalization
+Motivated by prior work highlighting the crucial role of attention heads in robust CoT reasoning (Olsson et al., 2022; Dutta et al., 2024; Cabannes et al., 2024), we focus our analysis on attention heads. We first identify and categorize two functionally distinct groups central to CoT reasoning. answer-writing heads (aw heads), mainly in middle-to-deep layers, inject answer information into the residual stream to directly shape model predictions. processing heads, mostly in shallow-to-middle layers, extract and refine semantic information from the input and intermediate steps to support reasoning indirectly. We analyze the competition mechanisms of both categories using Qwen2.5-7B-Instruct on Parity-NL (additional settings and results for other models/tasks are in Appendix F). Notation follows Section 2 unless stated otherwise.
+4.1 Answer-Writing Heads
+Locating answer-writing heads
+Considering a specific error position where the predicted token is tt, previous works (Wang et al., 2023; Dutta et al., 2024; Chughtai et al., 2024) typically measure how much information about tt is written by head 𝐚il\mathbf{a}_{i}^{l} (at the last input token position) with Logit Lens flogit-lens​(𝐚il)​[t]f_{\text{logit-lens}}(\mathbf{a}_{i}^{l})[t] (Eq.2).
+However, this approach does not fully capture a head’s contribution, as it ignores the joint influence of other heads in the same layer and the information already present in the residual stream (details in Appendix F.3).
+To address this, we measure the effect of knocking out 𝐚il\mathbf{a}_{i}^{l} on the Logit Lens probability flogit-lens​(𝐡midl+1)​[t]f_{\text{logit-lens}}(\mathbf{h}_{\text{mid}}^{l+1})[t] to locate aw heads.
+Besides, considering the large scale discrepancy of target-token probabilities across layers, which fluctuate only within a narrow band in earlier layers but surge dramatically in the final layers (Figure 4(c)), we additionally normalize the effect with its original value.
+In conclusion, we propose a metric to measure how strongly 𝐚il\mathbf{a}_{i}^{l} acts as an aw head, formally expressed as:
+(flogit-lens​(𝐡midl+1)​[t]−flogit-lens​(𝐡midl+1−𝐚il)​[t])/flogit-lens​(𝐡midl+1)​[t]≜saw-head​(𝐚il).(f_{\text{logit-lens}}(\mathbf{h}_{\text{mid}}^{l+1})[t]-f_{\text{logit-lens}}(\mathbf{h}_{\text{mid}}^{l+1}-\mathbf{a}_{i}^{l})[t])/f_{\text{logit-lens}}(\mathbf{h}_{\text{mid}}^{l+1})[t]\triangleq s_{\text{aw-head}}(\mathbf{a}_{i}^{l}).
+(4)
+For a specific error type, we randomly sample two sets for correction and erroneous predictions at the corresponding key token position, denoted as ScorrS_{\text{corr}} and SerrS_{\text{err}} (the illustration can be found in Figure 3), respectively.
+We locate aw heads for them by calculating the average saw-head​(𝐚il)s_{\text{aw-head}}(\mathbf{a}_{i}^{l}) over ScorrS_{\text{corr}} and SerrS_{\text{err}} for each attention head 𝐚il\mathbf{a}_{i}^{l}.
+(a) aw heads on ScorrS_{\text{corr}}.
+(b) aw heads on SerrS_{\text{err}}.
+(c) tokens’ information changes across intermediate layers.
+Figure 4: Locating answer-writing heads with our proposed measure for ScorrS_{\text{corr}} and SerrS_{\text{err}} and tracing ground-truth and predicted tokens’ information across intermediate layers.
+The locating results are shown in Figure 4(a) and (b).
+There exist a few heads, sparsely distributed, that receive markedly high average saw-head​(𝐚il)s_{\text{aw-head}}(\mathbf{a}_{i}^{l}) values (around 0.80.8).
+We use bold boxes to highlight the locations (e.g., “(22,1)” refers to 𝐚122\mathbf{a}_{1}^{22}) of top​10\text{top}10 (i.e.,10/784≈top​1.3%10/784\approx\text{top}1.3\%) attention heads. Surprisingly, 6​ out of ​10=60%6\text{ out of }10=60\% heads overlap in the top​10\text{top}10 heads for both correct and erroneous predictions (this overlap rate remains if we check the top​20\text{top}20 heads).
+In addition, for all samples in SerrS_{\text{err}}, we collect the hidden states of all intermediate layers, {𝐡l}0≤l≤L\{\mathbf{h}^{l}\}_{0\leq l\leq L}, and use Logit Lens to decode them, {flogit-lens​(𝐡l)}0≤l≤L\{f_{\text{logit-lens}}(\mathbf{h}^{l})\}_{0\leq l\leq L}, with which we draw the average (descending) ranks and the average probabilities of the erroneously predicted tokens and the corresponding ground-truth tokens in Figure 4(c).
+The purple shaded region, where the average ranks of both predicted tokens and ground-truth tokens shift from over 10410^{4} to within 1010, highly aligned with the primary location of aw heads (layer ​20∼26\text{layer }20\sim 26) shown in Figure 4(a,b).
+This consistency provides further evidence for our aw heads locating results and we demonstrate the superiority of our locating measure by comparing its consistency with previous methods’ in Appendix F.3.
+(a) 𝐚122\mathbf{a}_{1}^{22}, original
+(b) 𝐚122\mathbf{a}_{1}^{22}, after intervention
+(c) 𝐚1123\mathbf{a}_{11}^{23}, original
+(d) 𝐚1123\mathbf{a}_{11}^{23}, after intervention
+Figure 5: Decoding the information in aw heads: 𝐚122\mathbf{a}_{1}^{22} and 𝐚1123\mathbf{a}_{11}^{23}. (a,c) and (b,d) show their top​10\text{top}10 decoded tokens before (i.e., the original model) and after knocking out the processing head 𝐚70\mathbf{a}_{7}^{0}.
+Inspecting the aw heads
+Then we look into these aw heads: What information do they primarily encode?
+To answer this question, we step in to apply the Logit Lens to directly inspect these attention heads.
+We decode the 𝐚122\mathbf{a}_{1}^{22} and 𝐚1123\mathbf{a}_{11}^{23} with all samples in SerrS_{\text{err}} and observe that both of the erroneously predicted tokens and corresponding ground-truth tokens rank among the top candidates: they averagely rank 2.472.47 and 4.334.33.
+In Figure 5(a,c), we show the result with the logits of top​10\text{top}10 candidates for a sample (see the result for all samples in Appendix F.3).
+We conclude that: correct and erroneous predictions largely share answer-writing heads, which encode signals for both ground-truth and erroneous predictions. In error cases, the erroneous signals dominate, but the ground-truth signals still compete.
+We next investigate the information processing mechanisms in the shallow-to-middle layers that give rise to this competitive dynamic.
+4.2 Processing Heads
+Locating processing heads
+We identify attention heads that process input information and perform reasoning latently (“processing heads”) to contribute to token predictions at critical error positions in reasoning hop generalization.
+Unlike aw heads, these processing heads: (i) influence the model’s predictions indirectly, through intermediate reasoning that supports aw heads, and thus can act in all input token positions and (ii) exert a more fundamental impact on the model’s final prediction, rather than directly writing prediction-related information into the residual stream.
+Based on these considerations, we adopt the knocking out method to intervene individual attention heads 𝐚il\mathbf{a}_{i}^{l} at all token positions and measure the CIE (i.e., the gknock-out​(𝐚il)g_{\text{knock-out}}(\mathbf{a}_{i}^{l}) in Section 2) by the resulting change in the probability of the model’s original prediction.
+We separately locate the processing heads for correct and erroneous predictions, correct and erroneous processing heads (in short, cp heads and ep heads, denoted as ℋcp\mathcal{H}_{\text{cp}} and ℋep\mathcal{H}_{\text{ep}}, as illustrated in Figure 1), by calculating the average CIE of ScorrS_{\text{corr}} and SerrS_{\text{err}}.
+The locating results are shown in Figure 6(a) and (b), where approximately 2%2\% heads with top average CIE values are highlighted with bold boxes.
+Analyzing the results, we first observe that knocking out some “basic heads” (i.e., {𝐚i0}i∈{3,5}∪[22,27]∪{𝐚i3}i∈{11,18}≜ℋbasic\{\mathbf{a}_{i}^{0}\}_{i\in\{3,5\}\cup[22,27]}\cup\{\mathbf{a}_{i}^{3}\}_{i\in\{11,18\}}\triangleq\mathcal{H}_{\text{basic}}) would make the probabilities of original predictions (on both ScorrS_{\text{corr}} and SerrS_{\text{err}}) drop to near zero, indicating that they are commonly activated and play a basic role in extracting and processing basic and necessary information from the input to build up valid predictions, including both correct and erroneous ones.
+Taking these heads away, the remaining processing heads (i.e., ℋcp\mathcal{H}_{\text{cp}} and ℋep\mathcal{H}_{\text{ep}}) are almost entirely disjoint.
+Such decoupled mechanisms of controlling correct and erroneous predictions are ideal for us to steer the model to correct its reasoning errors.
+Knocking out an ep head can rectify the erroneous predictions
+We find that knocking out heads in ℋep\mathcal{H}_{\text{ep}} indeed can improve the probabilities of predicting ground-truth tokens.
+Specifically, we measure the average CIE of knocking out every single head on the prediction of ground-truth tokens on SerrS_{\text{err}}, as shown in Figure 6(c).
+We observe:
+(i) knocking out heads in ℋbasic\mathcal{H}_{\text{basic}} is bad for the prediction of the ground-truth tokens and
+(ii) the highlighted heads with the 1010 smallest average CIE values, knocking out which improves the probability of ground-truth token the most, perfectly align with ℋep\mathcal{H}_{\text{ep}}.
+Specifically, knocking out a head ∈{𝐚00,𝐚10,𝐚70,𝐚1413}\in\{\mathbf{a}_{0}^{0},\mathbf{a}_{1}^{0},\mathbf{a}_{7}^{0},\mathbf{a}_{14}^{13}\} improves the average probability (∈[0,1]\in[0,1]) of predicting ground-truth tokens by approximately 0.60.6 on SerrS_{\text{err}}.
+Moreover, to investigate if such rectification effects can generalize to other samples, we randomly resample 100100 erroneously predicted and 300300 correctly predicted samples for Parity-NL and MDM tasks, respectively.
+Figure 7 shows the distribution of the probabilities of predicting ground-truth answers in these samples with the original and intervened (i.e., knocking out a head ∈ℋep\in\mathcal{H}_{\text{ep}}) models (details in Appendix F.2): for both two tasks, knocking out individual ep heads can effectively rectify the model’s originally erroneous prediction at critical token-level error positions in reasoning hop generalization while maintaining the originally correct predictions.
+(a) processing heads on ScorrS_{\text{corr}} (ℋcp∪ℋbasic\mathcal{H}_{\text{cp}}\cup\mathcal{H}_{\text{basic}}).
+(b) processing heads on SerrS_{\text{err}} (ℋep∪ℋbasic\mathcal{H}_{\text{ep}}\cup\mathcal{H}_{\text{basic}}).
+(c) the effect of knocking out every single head on rectifying erroneous predictions.
+(d) re-locating processing heads on SerrS_{\text{err}}, after knocking out an ep head 𝐚70\mathbf{a}_{7}^{0}.
+Figure 6: Locating processing heads for correct and erroneous predictions and measuring the effects of knocking out every single head on predicting ground-truth tokens.
+Figure 7: Probability distribution of ground-truth answers before and after model intervention.
+To investigate whether the internal mechanisms of rectified and originally correct predictions are identical, we re-locate cp heads and re-inspect the aw heads for these rectified predictions (SerrS_{\text{err}}).
+To examine whether rectified predictions rely on the same internal mechanisms as originally correct ones, we re-locate cp heads and re-inspect aw heads for rectified samples (SerrS_{\text{err}}). As shown in Figure 6(d), the top​15\text{top}15 cp heads overlap by 93.3%93.3\% with those in Figure 6(a), indicating that rectified predictions largely share the reasoning mechanisms as correct ones. For aw heads (Figure 5(b,d)), we observe that ground-truth information is amplified while the erroneous prediction is suppressed in the decoding distributions of 𝐚122\mathbf{a}_{1}^{22} and 𝐚1123\mathbf{a}_{11}^{23}. Together, these findings support our hypothesis in Figure 1: correct reasoning mechanisms (cp heads) exist within LLMs but are suppressed by interactions with ep heads, leading to erroneous outputs; removing ep heads allows these mechanisms to rectify correct predictions.
+Discussion
+Our results have established that a greater number of reasoning hops is associated with more errors of some certain key types,
+while the competition between correct and erroneous trajectories contributes to these errors.
+Together, these findings suggest the hypothesis that additional reasoning hops may intensify head competition, and we next discuss the reasons why this hypothesis holds.
+First, longer reasoning chains are typically accompanied by larger input scales (e.g., more operations mentioned in text, longer input lists in coding problems, or numbers with more digits) as well as a greater number of intermediate reasoning states that must be tracked during generation, which substantially enlarges the search space of retrieving the correct reasoning trajectories (i.e.,ℋcp\mathcal{H}_{\text{cp}}).
+Second, when the required hop length significantly exceeds what the model has encountered during training (Dziri et al., 2023; Zhao et al., 2025) (i.e., reasoning hop generalization),
+these correct reasoning trajectories that the model has implicitly developed may fail to generalize more frequently:
+At certain key error positions, input contexts can still steer the model to follow ℋcp\mathcal{H}_{\text{cp}} and produce correct predictions, but more often ℋcp\mathcal{H}_{\text{cp}} is overridden by ℋep\mathcal{H}_{\text{ep}}, which may capture only local patterns that drive shortcut reasoning (Liu et al., 2023; Li et al., 2024) and lead to errors (e.g., Repetition (Wang et al., 2024a)).
+5 Test-Time Intervention to Correct Reasoning Hop Generalization Errors
+Although our findings introduced in Section 4 can rectify many token-level erroneous predictions at critical error positions (Section 3) in the whole reasoning process in a post-hoc way, we ask the research question RQ3: Can such method (i.e., knocking out individual ep heads) really dynamically correct erroneous predictions in the generation process and finally lead to the improvement of overall reasoning hop generalization performance?
+To answer this question, we separately investigate its two sub-questions: (i) how to automatically choose the individual attention heads to intervene (i.e., knock out)? and (ii) when to intervene the model? in the generation process.
+Which attention heads to intervene?
+In the inference time, we want to establish the correlation between target ep heads and the input context.
+To this end, we train a small model to automatically select a target ep head among a candidate head set 𝐇\mathbf{H} conditioned on the input context.
+We further model this as a multi-label classification task with a variable number of positive labels:
+input is the input context xix_{i}, output is a label yi∈{0,1}|𝐇|y_{i}\in\{0,1\}^{\lvert\mathbf{H}\rvert} (for k∈[0..|𝐇|−1]k\in[0..\lvert\mathbf{H}\rvert-1], if knocking out 𝐇⁡[k]\mathbf{H}[k] can correct the prediction xix_{i}, then yi​[k]=1y_{i}[k]=1 otherwise yi​[k]=0y_{i}[k]=0) and 𝒟={(xi,yi)}i=1|𝒟|\mathcal{D}=\{(x_{i},y_{i})\}_{i=1}^{\lvert\mathcal{D}\rvert} is the training set.
+As for the training objective, among BCE loss, BPR loss (Rendle et al., 2012), ZLPR loss (Su et al., 2022) and multi-label Softmax loss (Pu et al., 2025), we find that the last one consistently achieve the best generalization performance.
+We fine-tune the pre-trained Qwen2.5-0.5B model with a randomly initialized classification head (denoted as fθ​(⋅)f_{\theta}(\cdot)) with LoRA (Hu et al., 2022) for this task.
+Our training objective can be formalized as minθ𝔼(x,y)∈𝒟[−log(exp⁡(fθ​(x))⋅yexp(fθ(x))⋅𝟏|𝐇|)]\min_{\theta}\mathbb{E}_{(x,y)\in\mathcal{D}}[-\log(\frac{\exp(f_{\theta}(x))\cdot y}{\exp(f_{\theta}(x))\cdot\mathbf{1}_{{}_{\lvert\mathbf{H}\rvert}})}].
+Table 1:
+Hit@1 in the in-distribution (“i.d.”) and out-of-distribution (“o.o.d.”) evaluation of the trained classifiers. “Random Guessing”: the baseline of randomly selecting a candidate head.
+Model
+Qwen2.5-7B-Instruct
+Phi-3-Instruct
+LLaMA3-8B-Instruct
+Qwen3-8B-Instruct
+Testing Type
+i.d.
+o.o.d.
+i.d.
+o.o.d.
+i.d.
+o.o.d.
+i.d.
+o.o.d.
+Random Guessing
+42.3%42.3\%
+32.2%32.2\%
+20.8%20.8\%
+25.8%25.8\%
+23.6%23.6\%
+27.0%27.0\%
+23.0%23.0\%
+19.1%19.1\%
+Trained Classifier
+79.6%\mathbf{79.6\%}
+53.4%\mathbf{53.4\%}
+75.2%\mathbf{75.2\%}
+58.2%\mathbf{58.2\%}
+80.8%\mathbf{80.8\%}
+35.5%\mathbf{35.5\%}
+87.2%\mathbf{87.2\%}
+82.2%\mathbf{82.2\%}
+Motivated by our earlier observation that diverse tasks and error types often map onto a shared subset of ep heads, we maintain a compact candidate set 𝐇\mathbf{H} per model. Following Section 4, we locate ℋep\mathcal{H}_{\text{ep}} across five representative hop-generalization tasks (Parity-NL, MDM, LLC, CLF, MOAS), and select a subset such that (i) each head is implicated in multiple error types, and (ii) the set collectively covers all key error types (see Appendix G.1). This yields |𝐇|=8|\mathbf{H}|=8 for Qwen2.5-7B, 99 for Phi-3 and Qwen3-8B, and 1010 for LLaMA3-8B.
+We use erroneous predictions from Parity-NL, MDM, LLC, CLF, and MOAS for training and in-distribution testing, and from ObjC and NumS for out-of-distribution testing.
+More details can be found in Appendix G.2.
+To evaluate the head selector, we report Hit@1 accuracy (sampling one head from the softmax-normalized logits and checking whether it belongs to the positive class) which directly reflects its intended use. As shown in Table 1, the trained classifiers substantially outperform random baselines on in-distribution tasks and also generalize well to out-of-distribution tasks. This suggests that erroneous predictions from diverse tasks and error types can often be corrected by intervening the same head, indicating a shared internal error mechanism.
+When to intervene the model?
+During decoding, we adopt a simple uncertainty-based detector to decide when to intervene. Specifically, we monitor the predictive entropy of each generated token, leveraging our earlier finding (Section 4 and Appendix F.1) that errors at key positions exhibit systematically higher entropy than correct predictions. A fixed threshold τ\tau is applied: if a token’s entropy exceeds τ\tau, the trained classifier selects one head from 𝐇\mathbf{H} to knock out; otherwise, decoding proceeds normally.
+Our detection design is intentionally simple, as detection is orthogonal to correction and has been extensively studied in the hallucination-detection literature (Kadavath et al., 2022; Kirchhof et al., 2025; Zhang et al., 2025c; Fu et al., 2025; Obeso et al., 2025). To isolate the effect of our correction method, we additionally evaluate a gold-detector setting where an oracle provides exact error locations (Section 3), revealing the full rectification potential of TCR.
+Dynamically Correct Reasoning Hop Generalization Errors
+Based on above explorations, we propose Test-time Correction of Reasoning (TCR), a lightweight test-time intervention method to automatically rectify reasoning hop generalization errors, which incorporate (i) a fixed entropy threshold to detect token-level erroneous predictions and (ii) our trained classifier to identify the heads in 𝐇\mathbf{H} to be knocked out. Each time we trigger TCR, we select the top​3\text{top}3 heads predicted by the classifier, separately knock out these heads and use majority-vote to determine the final correction result.
+We also include the variant of TCR with the gold detector, TCR-gold, to fully unleash the rectifying potential of TCR.
+Table 2: The performance of TCR and TCR-gold on seven tasks with four LLMs.
+Method
+Parity-NL
+MDM
+LLC
+CLF
+MOAS
+ObjC
+NumS
+Average
+Qwen2.5-7B-Instruct
+48.3%48.3\%
+43.0%43.0\%
+11.7%11.7\%
+56.8%56.8\%
+39.2%39.2\%
+52.0%52.0\%
+41.1%41.1\%
+41.7%41.7\%
++DoLa(Chuang et al., 2024)
+58.1%58.1\%
+38.5%38.5\%
+8.0%8.0\%
+52.3%52.3\%
+40.0%40.0\%
+52.3%52.3\%
+48.7%48.7\%
+42.6%42.6\%
++TCR (ours)
+60.4%\mathbf{60.4}\%
+48.2%\mathbf{48.2}\%
+16.2%\mathbf{16.2}\%
+66.6%\mathbf{66.6}\%
+46.0%\mathbf{46.0}\%
+56.0%\mathbf{56.0}\%
+46.0%\mathbf{46.0}\%
+48.5%​(+6.8%)\mathbf{48.5}\%{\color[rgb]{0.1328,0.5469,0.1328}(\mathbf{+6.8}\%)}
++TCR-gold (ours)
+81.2%\mathbf{81.2}\%
+58.3%\mathbf{58.3}\%
+23.0%\mathbf{23.0}\%
+71.3%\mathbf{71.3}\%
+62.0%\mathbf{62.0}\%
+76.0%\mathbf{76.0}\%
+54.5%\mathbf{54.5}\%
+61.3%​(+19.6%)\mathbf{61.3}\%{\color[rgb]{0.1328,0.5469,0.1328}(\mathbf{+19.6}\%)}
+Phi-3-Instruct
+51.2%51.2\%
+8.1%8.1\%
+53.1%53.1\%
+9.2%9.2\%
+1.0%1.0\%
+30.9%30.9\%
+72.0%72.0\%
+32.2%32.2\%
++DoLa(Chuang et al., 2024)
+25.8%25.8\%
+6.7%6.7\%
+29.5%29.5\%
+7.6%7.6\%
+1.0%1.0\%
+29.0%29.0\%
+72.0%72.0\%
+24.5%24.5\%
++TCR (ours)
+55.8%\mathbf{55.8}\%
+11.5%\mathbf{11.5}\%
+56.1%\mathbf{56.1}\%
+11.2%\mathbf{11.2}\%
+4.0%\mathbf{4.0}\%
+45.0%\mathbf{45.0}\%
+76.0%\mathbf{76.0}\%
+37.1%​(+4.9%)\mathbf{37.1}\%{\color[rgb]{0.1328,0.5469,0.1328}(\mathbf{+4.9}\%)}
++TCR-gold (ours)
+65.2%\mathbf{65.2}\%
+15.8%\mathbf{15.8}\%
+59.6%\mathbf{59.6}\%
+20.3%\mathbf{20.3}\%
+4.0%\mathbf{4.0}\%
+45.0%\mathbf{45.0}\%
+82.0%\mathbf{82.0}\%
+41.7%​(+9.5%)\mathbf{41.7}\%{\color[rgb]{0.1328,0.5469,0.1328}(\mathbf{+9.5}\%)}
+LLaMA3-8B-Instruct
+70.0%70.0\%
+0.0%0.0\%
+81.0%81.0\%
+15.2%15.2\%
+22.9%22.9\%
+68.8%68.8\%
+4.5%4.5\%
+37.5%37.5\%
++DoLa(Chuang et al., 2024)
+71.6%71.6\%
+0.0%0.0\%
+71.2%71.2\%
+8.8%8.8\%
+29.8%29.8\%
+71.2%71.2\%
+6.9%6.9\%
+37.1%37.1\%
++TCR (ours)
+82.0%\mathbf{82.0}\%
+0.0%\mathbf{0.0}\%
+82.3%\mathbf{82.3}\%
+28.2%\mathbf{28.2}\%
+39.4%\mathbf{39.4}\%
+67.8%67.8\%
+7.8%\mathbf{7.8}\%
+43.9%​(+6.4%)\mathbf{43.9}\%{\color[rgb]{0.1328,0.5469,0.1328}(\mathbf{+6.4}\%)}
++TCR-gold (ours)
+88.0%\mathbf{88.0}\%
+0.0%\mathbf{0.0}\%
+90.7%\mathbf{90.7}\%
+32.7%\mathbf{32.7}\%
+47.0%\mathbf{47.0}\%
+76.4%\mathbf{76.4}\%
+10.1%\mathbf{10.1}\%
+49.3%​(+11.8%)\mathbf{49.3}\%{\color[rgb]{0.1328,0.5469,0.1328}(\mathbf{+11.8}\%)}
+Qwen3-8B-Instruct
+98.7%98.7\%
+24.7%24.7\%
+67.5%67.5\%
+96.9%96.9\%
+92.7%92.7\%
+85.0%85.0\%
+98.0%98.0\%
+80.5%80.5\%
++DoLa(Chuang et al., 2024)
+100.0%100.0\%
+9.0%9.0\%
+57.0%57.0\%
+94.4%94.4\%
+89.7%89.7\%
+82.7%82.7\%
+98.0%98.0\%
+75.8%75.8\%
++TCR (ours)
+100.0%\mathbf{100.0}\%
+29.3%\mathbf{29.3}\%
+68.0%\mathbf{68.0}\%
+97.0%\mathbf{97.0}\%
+93.6%\mathbf{93.6}\%
+88.1%\mathbf{88.1}\%
+99.0%\mathbf{99.0}\%
+82.1%​(+1.6%)\mathbf{82.1}\%{\color[rgb]{0.1328,0.5469,0.1328}(\mathbf{+1.6}\%)}
++TCR-gold (ours)
+100.0%\mathbf{100.0}\%
+47.1%\mathbf{47.1}\%
+71.0%\mathbf{71.0}\%
+99.0%\mathbf{99.0}\%
+95.8%\mathbf{95.8}\%
+90.0%\mathbf{90.0}\%
+100.0%\mathbf{100.0}\%
+86.1%​(+5.6%)\mathbf{86.1}\%{\color[rgb]{0.1328,0.5469,0.1328}(\mathbf{+5.6}\%)}
+Table 2 presents the average accuracy (over three random seeds) of TCR and TCR-gold on seven reasoning hop generalization tasks and four LLMs, compared against original model outputs and DoLa (Chuang et al., 2024), a decoding-based hallucination mitigation method. Each task uses 100100 test instances, with a small number of invalid generations (e.g., direct answers without reasoning) excluded.
+(i) TCR consistently improves over baseline generation. For instance, it achieves large gains on Parity-NL with Qwen2.5 (+12.1%+12.1\%) and LLaMA3 (+12.0%+12.0\%), on MOAS with LLaMA3 (+16.5%+16.5\%), and on ObjC with Phi-3 (+14.1%+14.1\%). On average, TCR improves accuracy by 5%∼7%5\%\sim 7\% across tasks and models. TCR-gold, with oracle error localization, demonstrates the method’s potential: for Qwen2.5, accuracy improves nearly 20%20\% (41.7%→61.3%41.7\%\rightarrow 61.3\%). In contrast, DoLa yields only marginal or negative effects in these reasoning settings.
+(ii) Qwen3 exhibits strong performance on certain tasks (e.g., Parity-NL and NumS above 98%98\%), leaving little room for further improvement (likely due to reasoning-oriented reinforcement learning (Chu et al., 2025)). However, in more challenging tasks, such as MDM, TCR-gold improves accuracy by 22.4%22.4\%, and both TCR and TCR-gold deliver consistent gains across other tasks. These results underscore the robustness and generality of TCR, even for stronger models.
+Figure 8: Performance of TCR and TCR-gold changing with reasoning hop number.
+Analyzing the Peformance of TCR
+We further conduct analytical experiments on Qwen2.5-7B-Instruct to better understand the behavior of TCR.
+Figure 8 shows that both TCR and TCR-gold consistently improve reasoning hop generalization across Parity-NL, MOAS, MDM, and ObjC tasks of varying hops.
+Besides, a natural baseline is Removing-and-Resampling (RR), which removes the logit of the model’s original prediction from the final hidden state and re-samples the output. As shown in Figure 16(a), RR yields only marginal gains on Parity-NL but substantially degrades performance on MDM and CLF, highlighting the superiority of TCR.
+Finally, to assess the role of the trained head selector, we compare it with a random head selector. Figure 16(b) shows that both TCR and TCR-gold with the trained selector consistently outperform their random-selector counterparts on Parity-NL, MDM, and CLF, confirming the effectiveness of our design.
+6 Conclusion
+In this work, we systematically studied the mechanisms of reasoning hop generalization failures in LLMs.
+We found that these failures concentrate on token positions of a few key error types rather than being uniformly distributed across reasoning chains.
+Probing model internals at these positions further revealed a competition mechanism: correct and erroneous reasoning trajectories co-exist, while the erroneous ones can suppress the correct ones, eventually leading to errors.
+Based on these insights, we proposed TCR, a lightweight intervention method that dynamically identifies and deactivates these heads at test-time and demonstrate its effectiveness through extensive experiments.
+Ethics Statement
+This work conducts mechanistic analyses of large language models using only publicly available open-source models and widely adopted reasoning benchmarks. No human subjects, private data, or personally identifiable information are involved. Our interventions (e.g., test-time correction) are designed purely for academic understanding and evaluation, without deployment in sensitive applications. We acknowledge that improving reasoning capabilities of LLMs may carry dual-use concerns, but our study focuses on fundamental error mechanisms and lightweight interventions, aiming to advance transparency and reliability in LLM reasoning research.
+Reproducibility Statement
+We have taken several steps to ensure reproducibility of our results. All models used in this work are publicly available open-source LLMs, and the datasets and benchmarks are well-documented in the appendix. Details of our experimental setup, training configurations, and evaluation protocols are provided in the main text and Appendix. Our code implementation of the investigation experiments as well as the proposed TCR method will be released on the GitHub.
+B Limitations and Discussion
+G.1 Identifying Candidate Erroneous Processing Head Sets
+We observe that different tasks and key error types might be mapped onto some common ep heads in previous experiments (see the locating results for the ep heads in Appendix F.4), which motivates us to maintain a small set of key heads for each model, which can be commonly used to rectify as diverse tasks as possible and effectively reduce the size of 𝐇\mathbf{H}.
+Following the procedure described in Section 4, we randomly sample two sets of correct and erroneous predictions to separately locate ℋep\mathcal{H}_{\text{ep}} for each key error type in five reasoning hop generalization tasks (Parity-NL, MDM, LLC, CLF and MOAS), including symbolic reasoning, mathematical calculation and coding domains.
+We then select a list of these target heads 𝐇\mathbf{H}, where (i) each single head should be located by as many key error types as possible, and meanwhile (ii) they together can guarantee to cover all of the key error types.
+We implement a simple greedy algorithm (for this Set Cover (Slavik, 1997) like problem) to determine 𝐇\mathbf{H}.
+Consequently, |𝐇|=8\lvert\mathbf{H}\rvert=8 for Qwen2.5-7B, 99 for Phi-3 and Qwen3-8B and 1010 for LLaMA3-8B.
+Below are the details of 𝐇\mathbf{H} for all of the models used in this work.
+•
+Qwen2.5-7B-Instruct: 𝐇={𝐚10,𝐚30,𝐚60,𝐚70,𝐚150,𝐚131,𝐚113,𝐚228}\mathbf{H}=\{\mathbf{a}_{1}^{0},\mathbf{a}_{3}^{0},\mathbf{a}_{6}^{0},\mathbf{a}_{7}^{0},\mathbf{a}_{15}^{0},\mathbf{a}_{13}^{1},\mathbf{a}_{11}^{3},\mathbf{a}_{22}^{8}\}.
+•
+Phi-3-Instruct: 𝐇={𝐚91,𝐚272,𝐚44,𝐚197,𝐚512,𝐚812,𝐚2113,𝐚615,𝐚3021}\mathbf{H}=\{\mathbf{a}_{9}^{1},\mathbf{a}_{27}^{2},\mathbf{a}_{4}^{4},\mathbf{a}_{19}^{7},\mathbf{a}_{5}^{12},\mathbf{a}_{8}^{12},\mathbf{a}_{21}^{13},\mathbf{a}_{6}^{15},\mathbf{a}_{30}^{21}\}.
+•
+LLaMA3-8B-Instruct: 𝐇={𝐚30,𝐚231,𝐚254,𝐚216,𝐚1710,𝐚2011,𝐚1211,𝐚1913,𝐚1813,𝐚2417}\mathbf{H}=\{\mathbf{a}_{3}^{0},\mathbf{a}_{23}^{1},\mathbf{a}_{25}^{4},\mathbf{a}_{21}^{6},\mathbf{a}_{17}^{10},\mathbf{a}_{20}^{11},\mathbf{a}_{12}^{11},\mathbf{a}_{19}^{13},\mathbf{a}_{18}^{13},\mathbf{a}_{24}^{17}\}.
+•
+Qwen3-8B-Instruct: 𝐇={𝐚10,𝐚218,𝐚2014,𝐚915,𝐚1218,𝐚1021,𝐚2825,𝐚028,𝐚829}\mathbf{H}=\{\mathbf{a}_{1}^{0},\mathbf{a}_{21}^{8},\mathbf{a}_{20}^{14},\mathbf{a}_{9}^{15},\mathbf{a}_{12}^{18},\mathbf{a}_{10}^{21},\mathbf{a}_{28}^{25},\mathbf{a}_{0}^{28},\mathbf{a}_{8}^{29}\}.
+G.2 Head Selector Training Details
+Collecting Training Set, ID Testing Set and OOD Testing Set
+For each of Parity-NL, MDM, LLC, CLF and MOAS, we sample around 20,00020,000 instances, obtain the erroneous predictions of key error types (Section E), label the ii-th erroneous prediction (xi,yi)(x_{i},y_{i}) and finally collect 𝒟\mathcal{D}.
+We filter out a small part of instances with yi=𝟎|𝐇|y_{i}=\mathbf{0}_{\lvert\mathbf{H}\rvert}.
+We randomly held out 500500 samples from 𝒟\mathcal{D} for in-distribution testing.
+The rest data are used as the training set 𝒟train\mathcal{D}_{\text{train}}.
+We additionally use 200200 error predictions in ObjC (symbolic reasoning and mathematical calculation) and NumS (coding) tasks for out-of-distribution testing.
+Training Details
+In the inference time, we want to establish the correlation between target ep heads and the input context.
+Hence, we aim to train a small model to automatically select a target ep head among a candidate head set 𝐇\mathbf{H} according to the input context.
+We further model this as a multi-label classification task with a variable number of positive labels:
+input is the input context xix_{i}, output is a label yi∈{0,1}|𝐇|y_{i}\in\{0,1\}^{\lvert\mathbf{H}\rvert} (for k∈[0..|𝐇|−1]k\in[0..\lvert\mathbf{H}\rvert-1], if knocking out 𝐇⁡[k]\mathbf{H}[k] can correct the prediction xix_{i}, then yi​[k]=1y_{i}[k]=1 otherwise yi​[k]=0y_{i}[k]=0) and 𝒟={(xi,yi)}i=1|𝒟|\mathcal{D}=\{(x_{i},y_{i})\}_{i=1}^{\lvert\mathcal{D}\rvert} is the training set.
+As for the training objective, among BCE loss, BPR loss (Rendle et al., 2012), ZLPR loss (Su et al., 2022) and multi-label Softmax loss (Pu et al., 2025), we find that the last one consistently achieve the best generalization performance.
+We fine-tune the pre-trained Qwen2.5-0.5B-Instruct1010
+10
+https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct model with a randomly initialized multi-label classification head (implemented by the Huggingface transformers1111
+11
+https://huggingface.co/docs/transformers class AutoModelForSequenceClassification, denoted as fθ​(⋅)f_{\theta}(\cdot)) with LoRA (Hu et al., 2022) for this task.
+Our training objective can be formalized as minθ𝔼(x,y)∈𝒟t​r​a​i​n[−log(exp⁡(fθ​(x))⋅yexp(fθ(x))⋅𝟏|𝐇|)]\min_{\theta}\mathbb{E}_{(x,y)\in\mathcal{D}_{train}}[-\log(\frac{\exp(f_{\theta}(x))\cdot y}{\exp(f_{\theta}(x))\cdot\mathbf{1}_{{}_{\lvert\mathbf{H}\rvert}})}].
+For the LoRA training, we use Huggingface peft package1212
+12
+https://github.com/huggingface/peft. Our LoRA configurations are listed as below (Listing2):
+Listing 2: LoRA configs
+⬇
+lora_config = LoraConfig(
+r = lora_rank, # lora_rank = 16 in all of the experiments
+lora_alpha = lora_alpha, # lora_alpha = 32 in all of the experiments
+inference_mode = False,
+target_modules = [’q_proj’, ’k_proj’, ’v_proj’, ’o_proj’],
+lora_dropout = 0.05,
+bias = ’none’,
+task_type = ’SEQ_CLS’,
+modules_to_save = ["score"],
+)
+Training Hyperparameters
+We set training batch size as 1616, the maximum gradient norm is 1.01.0, the initial learning rate as 1​e−41e-4, and we adopt the cosine learning rate scheduler to adjust our learning rate automatically.
+We train each model for 33 epochs in total.
+We show an example of the training logs of the head selector for the Qwen2.5-7B-Instruct model in Figure 15.
+Figure 15: The training logs of the head selector for Qwen2.5-7B-Instruct.
+In this figure, we show the changes of training loss, validation loss, validation accuracy (for both 00 and 11 classes), F1-macro, Precision-macro and Recall-macro, and testing accuracy and testing F1-macro in the training process.
+Random Guessing Baseline in the Table 1 refers to the baseline of randomly selecting a candidate head. The results are averaged over five independent runs with different random seeds (1∼51\sim 5).

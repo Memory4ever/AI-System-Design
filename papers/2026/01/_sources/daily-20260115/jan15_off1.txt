@@ -1,0 +1,444 @@
+Finding bugs with Claude and property-based testing \ Anthropic (https://www.anthropic.com/research/property-based-testing)
+citeturn26957search0 [wordlim: 200] Published: 8 months ago; Crawled: today; Jan 14, 2026 ... ^{1}MATS, ^{2}Anthropic, ^{3}Northeastern University ... Going forward, we believe that applying LLM to testing and bugfinding is an important research direction.
+
+# Finding bugs across the Python ecosystem with Claude and property-based testing
+
+Jan 14, 2026
+
+Muhammad Maaz^{1,2}, Liam DeVoe^{3}, Zac Hatfield-Dodds^{2}, Nicholas Carlini^{2}
+^{1}MATS, ^{2}Anthropic, ^{3}Northeastern University
+
+We developed an agent that can efficiently identify bugs in large software projects. To do this, our agent infers general properties of code that should be true, and then by applying property-based testing—a technique similar to fuzz testing—we are able to discover bugs in top Python packages like NumPy, SciPy, and Pandas. After extensive manual validation, we are in the process of reporting these bugs to the developers, several of which have already been patched.
+
+For more information, read the full paper, take a look at the GitHub repository, or browse the bugs we found at our site.
+
+## Introduction
+
+Ensuring that programs are bug-free is one of the most challenging aspects of software engineering. Bugs frequently continue to lurk despite the developer’s best effort. The most common approach to testing code is with example-based tests: the developer writes out a specific example use-case, and then verifies that the actual output matches the expected output. For example, a developer might verify that a sort function called on the list [2, 10, 5, 4] would return the output [2, 4, 5, 10]. However, exhaustively covering a program with tests like this is challenging: bugs frequently remain in an edge case the developer did not test. After all, if a developer does not think to test an edge case, it is also likely the developer did not consider that case in the implementation!
+
+In contrast, property-based testing is a software testing paradigm that aims to test whether a general property of the code holds for all (or most) inputs. A developer specifies a property or invariant about the program—for example, that JSON deserialization is the inverse of serialization—as well as a description of the kinds of inputs the property accepts (e.g., any JSON serializable objects). The property-based testing framework then automatically searches for a counterexample of this property by generating valid inputs as test cases using techniques similar to fuzzing. Since the developer specifies the general input domain, and not individual test cases, property-based testing frees developers from thinking of every edge case and allows them to operate at a higher level of abstraction.
+
+In our paper that we presented at the 2025 NeurIPS Deep Learning for Code Workshop that was the result of a MATS project, we developed an AI agent that autonomously writes property-based tests for existing code. We directed the agent to discover properties by reading type annotations, docstrings, function names, and comments. The agent then wrote corresponding property-based tests using Hypothesis.
+
+For this work, we focused on the problem of identifying bugs in general, and not just security vulnerabilities. Many classes of logic bugs that cause security vulnerabilities are amenable to property-based testing. For example, in a recent blog post we focused on identifying bugs in smart contracts; almost all of those vulnerabilities are the result of logic bugs. In the future we imagine that it may be possible to apply techniques such as the one we describe here to proactively identify bugs before deployment.
+
+We used our agent and discovered hundreds of potential bugs in popular open-source Python repositories like NumPy, SciPy, and Pandas. In order to responsibly disclose these bugs and to ensure we don’t unnecessarily burden maintainers, we carefully reviewed each bug.
+
+The review process we used is more laborious than we would otherwise implement for our own code reviews, but we strongly preferred to reduce the number of false positives. Our process was as follows: first, we only selected the highest priority bugs for review. We sent these potential bugs to be reviewed by three expert humans (for an average of one hour of review per bug). We then discarded any bug where any of the three manual reviewers were uncertain of its validity. Finally, we (the authors of this blog) manually reviewed each of the candidate bugs. Only if we were also confident in its correctness did we then manually file an issue with the maintainer of the repository. We have already filed several of these bug reports, and are in the process of filing many more.
+
+We’ve made available all of our data, including bugs that have not yet been validated, and, for completeness, even bugs that we determined to be invalid, so that maintainers can look at them at this site. Over the coming weeks we intend to file many of these remaining bugs (after additional validation), as well as expand our project to additional PyPI projects.
+    
+    `# example-based test
+    def test_sort():
+        assert my_sort([1,3,2]) == [1,2,3]
+        assert my_sort([1,0,-5]) == [-5,0,1]
+    
+    # property-based test in Hypothesis
+    from hypothesis import given, strategies as st
+    
+    @given(st.lists(st.integers()))
+    def test_sort(lst):
+        result = my_sort(lst)
+        for i in range(len(result)-1):
+            assert result[i] <= result[i+1]`
+
+Figure 1. Two ways of testing code. An example-based unit test verifies specific manually-specified inputs. A property-based test, in contrast, specifies a general property (e.g., the definition of a sorted list) and relies on the framework to automatically construct inputs that might fail this property.
+
+## Our Property-Based Testing Agent
+
+Our property-based testing agent is built as a custom Claude Code command. The agent takes a single argument, pointing it towards a particular target, either a single Python file (e.g., normalizers.py), a module (e.g., numpy, scipy.signal), or a function (e.g., requests.get, json.loads). The agent then follows this process to identify potential bugs:
+
+  1. Read and understand the target, by reading code, pulling relevant documentation, and exploring how it relates to the rest of the codebase.
+  2. Propose properties grounded in these findings.
+  3. Write corresponding property-based tests in Hypothesis.
+  4. Run the tests and reflect: if it failed, has the test truly discovered a bug, or does the test need to be adjusted? If it succeeded, is the test testing anything worthwhile, or is it simply trivial?
+  5. If the agent is confident it has found a real bug, it writes out a formatted bug report.
+
+ImageFigure 2. The workflow of the agent.
+
+To help the agent perform long-range multi-step reasoning, we direct it to use a to-do list to track its progress.
+
+A priority in designing the agent was reducing the number of false alarms—from our personal experience, useful developer tooling minimizes the amount of incorrect reports presented to the developer. The self-reflection loop helps reduce the number of false alarms, as does grounding any properties in explicit usage and documentation of the target. For example, in one of the agent runs, the agent wrote a property that first passed. However, after self-reflection, the agent realized that it had wrapped the whole test in a try-catch block. After removing that, the test failed, and the agent found a bug. We also observed a notable improvement in self-reflection with Opus 4.1 and Sonnet 4.5, compared to Sonnet 4.
+
+### Example run
+
+To demonstrate how the agent works through testing a target, we show a paraphrased transcript where Claude identifies a bug in the implementation of numpy.random.wald. The agent begins with investigating the function, its signature, its docstring, and even existing tests:
+
+Embedded artifact
+
+Note that the fix is not correct; when we fixed this bug, we traced the source of the error to a numerically unstable calculation; see our merged fix here.
+
+## Searching for bugs in real PyPI packages
+
+In order to test our agent’s abilities in the real world, we curated a diverse set of over 100 popular Python packages. These libraries span a variety of domains, from numerical computing to parsing to databases. We called our agent on each of these packages, and collected all generated bug reports.
+
+### Evaluating the agent
+
+For the first phase of our evaluation, which is covered in our paper, we ran the agent with Claude Opus 4.1 on each package and collected all generated bug reports. To evaluate these bug reports, we settled on two criteria: first, "is this a valid bug?", and second, "is this both a valid bug, and something we would reasonably report to the library maintainers?" The second criteria is stricter than the first, as, e.g., a bug might be valid, but too minor to file a report for.
+
+Of the 984 bug reports, we manually selected 50 to review. We found that 56% of those reports were valid bugs, and 32% were valid bugs that we would also report.
+
+Based on this manual review, we developed a rubric that ranks bugs out of 15, with the intent of surfacing bugs that are most likely to be valid and worth fixing to the developer. We used Opus 4.1 to score all bug reports according to this rubric. We found that this ranking step was considerably effective: of the top-scoring bug reports, 86% were valid, and 81% were both valid and reportable.
+
+In the second phase of our evaluation, we ran the agent with Sonnet 4.5 on a subset of 10 important packages, running it on each package multiple times. We also developed an evaluation agent that used Sonnet 4.5 to read the code and the bug report to check the correctness and severity of the bug, which was more sophisticated than the rubric from the first phase. Lastly, we paid 3 expert human reviewers to evaluate high-severity bugs for correctness.
+
+### Maintainer validation
+
+Evaluating the effectiveness of any tool which discovers bugs in code is difficult. While we try our best to validate the correctness of bug reports, the package maintainers serve as the ultimate arbiter of truth. To validate that our agent finds bugs that maintainers consider valid and worth fixing, we selected five particularly interesting bugs and manually reported these to their respective GitHubs, along with a proposed patch. Over the coming weeks, we intend to continue reporting additional bugs as we verify.
+
+### numpy
+
+numpy.random.wald sometimes returns negative numbers, which is a bug because samples from the Wald distribution should only return positive numbers. This is the bug demonstrated in our example run above. Claude knew this as a property of the Wald distribution and wrote a straightforward PBT to see if all samples generated are positive. We traced the error to a catastrophic cancellation occurring in the code, and developed a more numerically stable formulation when we submitted the pull request. As shown by the NumPy maintainers in the pull request, our reformulation has nearly ten orders of magnitude lower relative error than the previous algorithm.
+
+Patch merged: https://github.com/numpy/numpy/pull/29609
+
+### aws-lambda-powertools
+
+slice_dictionary() returns the first chunk repeatedly, due to not incrementing the iterator. This was caught by our agent by identifying that slicing and then reconstructing the dictionary should return the original dictionary.
+
+Patch merged: https://github.com/aws-powertools/powertools-lambda-python/pull/7246
+
+### cloudformation-cli-java-plugin
+
+item_hash() produces the same value of hash(None) for all lists, due to use of the in-place .sort() method, which returns None. The agent caught this by testing that hashes of different inputs should be different.
+
+Patch submitted: https://github.com/aws-cloudformation/cloudformation-cli/pull/1106
+
+### tokenizers
+
+EncodingVisualizer.calculate_label_colors() is missing a closing parenthesis, returning invalid HSL CSS. Our agent identified this by testing that the output should match the regex for a HSL color code.
+
+Patch merged: https://github.com/huggingface/tokenizers/pull/1853
+
+### python-dateutil
+
+easter() returns a non-Sunday date for some years when using the Julian calendar. Maintainers identified the behavior as intended due to differing calendar systems, and acknowledged the semantics as subtle.
+
+Issue invalid: https://github.com/dateutil/dateutil/issues/1437
+
+The report to python-dateutil shows an important limitation of the agent: deriving properties from code with subtle or complex semantics remains difficult. If the code makes an implicit assumption, only the library maintainers can decide what the correct property to test is.
+
+## Conclusion
+
+As language models continue to improve, we think agentic property-based testing could become an increasingly valuable complement to human-written testing. The high-level semantic guarantees of property-based testing makes them a natural fit to pair with during development. We find that LLMs are particularly good at identifying properties that should be true about a given block of code from context (the name of the function, the docstring, how it is called by other functions, etc). This allows LLMs to write high quality property-based tests effectively.
+
+Going forward, we believe that applying LLM to testing and bugfinding is an important research direction. Especially as LLMs improve at the process of exploiting vulnerabilities, it is necessary to stay ahead of attackers using LLMs for exploitation.
+
+While we do not focus on the automatic generation of patches in this work, this is a clear direction for future work. If it is possible to (nearly) completely specify the correctness properties of a block of code, then correcting the bug becomes significantly easier, and we believe that in the near future LLMs will be able to effectively propose high-quality patches that are worth the consideration of maintainers.--------------------------------------------------------------------------------
+OpenAI partners with Cerebras | OpenAI (https://openai.com/index/cerebras-partnership/)
+citeturn26957search1 [wordlim: 200] Published: 8 months ago; Crawled: 2 weeks ago; January 14, 2026 ... That means faster responses, more natural interactions, and a stronger foundation to scale real-time AI to many more people,” said Sachin Katti of OpenAI.
+
+OpenAI
+
+January 14, 2026
+
+Global Affairs
+
+# OpenAI partners with Cerebras
+
+OpenAI is partnering with Cerebras to add 750MW of ultra low-latency AI compute to our platform.
+
+Share
+
+Cerebras builds purpose-built AI systems to accelerate long outputs from AI models. Its unique speed comes from putting massive compute, memory, and bandwidth together on a single giant chip and eliminating the bottlenecks that slow inference on conventional hardware. 
+
+ Integrating Cerebras into our mix of compute solutions is all about making our AI respond much faster. When you ask a hard question, generate code, create an image, or run an AI agent, there is a loop happening behind the scenes: you send a request, the model thinks, and it sends something back. When AI responds in real time, users do more with it, stay longer, and run higher-value workloads.
+
+We will integrate this low-latency capacity into our inference stack in phases, expanding across workloads.  
+
+“OpenAI’s compute strategy is to build a resilient portfolio that matches the right systems to the right workloads. Cerebras adds a dedicated low-latency inference solution to our platform. That means faster responses, more natural interactions, and a stronger foundation to scale real-time AI to many more people,” said Sachin Katti of OpenAI.
+
+“We are delighted to partner with OpenAI, bringing the world’s leading AI models to the world’s fastest AI processor. Just as broadband transformed the internet, real-time inference will transform AI, enabling entirely new ways to build and interact with AI models,” said Andrew Feldman, co-founder and CEO of Cerebras. 
+
+The capacity will come online in multiple tranches through 2028.--------------------------------------------------------------------------------
+Organization verification “Identity rejected” after successful verification flow (solo developer) — no retry available - API - OpenAI Developer Community (https://community.openai.com/t/organization-verification-identity-rejected-after-successful-verification-flow-solo-developer-no-retry-available/1371635)
+citeturn26957search2 [wordlim: 200] Published: 8 months ago; Crawled: 8 months ago; jochenschultz January 14, 2026, 2:13am 2 ... https://help.openai.com/en/articles/5347006-openai-api-supported-countries-and-territories
+
+# Organization verification “Identity rejected” after successful verification flow (solo developer) — no retry available
+
+yofi666sss January 14, 2026, 1:04am 1
+
+Hi everyone,
+
+I’m a solo/independent developer trying to call the GPT-5 API. It looks like my organization needs verification to access the protected models/features I need.
+
+I started Individual verification in the OpenAI Platform. I followed the steps exactly (added a payment method, uploaded my government-issued ID, completed the live selfie/biometric capture). During the flow, the system indicated the verification was completed successfully.
+
+However, when I returned to the Platform settings page, the status showed:
+
+“Identity rejected”
+and it seems retries are not supported, so I’m blocked from using GPT-5.
+
+What I’ve already double-checked:
+
+The ID photo + live selfie were clear, unobstructed, and from original documents (not screenshots/scans).
+
+My account/organization profile information matches my ID.
+
+This is my first attempt; the ID hasn’t been used to verify another organization in the last 90 days.
+
+No obvious technical issues occurred during the flow.
+
+Questions:
+
+Has anyone seen this “Identity rejected” outcome even after the flow reports success?
+
+What are the most common reasons in practice (e.g., name/region mismatch, billing profile mismatch, document type issues)?
+
+Any tips that helped you get it resolved (e.g., switching to passport, aligning billing/profile country, contacting support with specific details)?
+
+If you contacted support, what details were most useful for them (organization ID, timestamps, screenshots, etc.)?
+
+Thanks in advance — any guidance or similar experiences would be really helpful.
+
+jochenschultz January 14, 2026, 2:13am 2
+
+Yes region may be a problem.
+
+https://help.openai.com/en/articles/5347006-openai-api-supported-countries-and-territories
+
+And if there is nothing else you should contact the support.
+
+This forum can’t really help with account specific problems.
+It’s mostly meant to help with problems using the api in general.--------------------------------------------------------------------------------
+Next-Generation Conversational AI: A Design-Proposal Approach - #20 by jake3 - Use cases and examples - OpenAI Developer Community (https://community.openai.com/t/next-generation-conversational-ai-a-design-proposal-approach/1371568/20)
+citeturn26957search3 [wordlim: 200] Published: 8 months ago; Crawled: 7 months ago; OpenAI Developer Community ... jake3 January 14, 2026, 3:41am 20
+OpenAI Developer Community
+
+# Next-Generation Conversational AI: A Design-Proposal Approach
+
+ChatGPT Use cases and examples
+
+chatgpt, prompt-design, chatgpt-ux
+
+jake3 January 14, 2026, 3:41am 20
+
+We are fed up with customer service being replaced by useless AI chat bots.
+
+Questions need an answer from someone who can act upon them. AI bots can’t drive the van, or figure out which neighbour the parcel has been left with.
+
+Please give up on this. Nobody wants AI. It is of no benefit other than allowing schoolchildren to cheat at exams, which is of no benefit to anyone.--------------------------------------------------------------------------------
+Codex Failing to commit w/o binary files - Codex CLI - OpenAI Developer Community (https://community.openai.com/t/codex-failing-to-commit-w-o-binary-files/1371694)
+citeturn26957search4 [wordlim: 200] Published: 8 months ago; Crawled: 8 months ago; scott.reed January 14, 2026, 8:13pm 1
+
+# Codex Failing to commit w/o binary files
+
+Codex Codex CLI
+
+scott.reed January 14, 2026, 8:13pm 1
+
+In the last week, every time I use codex via web the process ends without a new branch, shows me no files, and asks me “Before I run git commit, do I have your permission to commit these changes?” I have >1000 completed tasks on this same repo previously through codex (mix of web, cli, and vs code) and never encountered this. Now I need to use credits, spin up a server, wait a long time to even see what files it touched. Anybody else encounter this? In one case after I responded “commit to a new branch so I can review. In codex web I can’t see anything unless you commit. I have two versions and you should commit both but start here and commit now.” the reply was “Thanks! Before I proceed, I need your permission to create a new branch and make the commit (per project instructions). Please confirm.” When I finally get to see the commit there are no binary files. This is not a binary file issue which I do know how to get around.--------------------------------------------------------------------------------
+iOS fullscreen rendering issue in custom UI (works on Android & Web) - ChatGPT Apps SDK - OpenAI Developer Community (https://community.openai.com/t/ios-fullscreen-rendering-issue-in-custom-ui-works-on-android-web/1371667)
+citeturn26957search5 [wordlim: 200] Published: 8 months ago; Crawled: 8 months ago; Ferati January 14, 2026, 1:46pm 1 ... I’m building a custom UI in my own app that integrates OpenAI APIs and I’m running into a platform-specific rendering issue on iOS GPT app.
+
+# iOS fullscreen rendering issue in custom UI (works on Android & Web)
+
+ChatGPT Apps SDK
+
+Ferati January 14, 2026, 1:46pm 1
+
+Hi everyone,
+
+I’m building a custom UI in my own app that integrates OpenAI APIs and I’m running into a platform-specific rendering issue on iOS GPT app.
+
+I have a search carousel view that renders correctly. However, when I click an item and navigate to a fullscreen detail view, the fullscreen view renders blank on iOS (see the image attached). When leaving the fullscreen view, the original carousel disappears.
+
+This behavior only occurs on iOS. Android and Web work as expected.
+
+This was working on IOS in 4th week of December, but it has stopped working since
+
+Has anyone encountered a similar fullscreen rendering issue on iOS or has tips for debugging this kind of behavior?
+
+WhatsApp Image 2026-01-14 at 14.31.43946×2048 22.1 KB--------------------------------------------------------------------------------
+Model cards — Google DeepMind (https://deepmind.google/models/model-cards/)
+citeturn26957search6 [wordlim: 200] Crawled: last week; FunctionGemma  | Updated 14 January 2026  | View model card
+
+# Model cards
+
+Simple, structured overviews of how an advanced AI model was designed and evaluated.
+
+  * Gemini
+  * Generative models
+  * Robotics
+  * Gemma
+
+## Gemini
+
+Our most intelligent AI models
+
+Model card  | Published or updated date  | Link to model card
+--- | --- | ---
+Gemini 3.8 Audio (Live, Live Extended Thinking, Flash TTS, Flash-Lite TTS)  | Updated 24 September 2026  | View model card
+Gemini 3.8 Flash  | Updated 2 September 2026  | View model card
+Gemini Omni Flash  | Updated 27 August 2026  | View model card
+Gemini 3.5 Audio (Live Translate, Transcribe, Transcribe Live)  | Updated 26 August 2026  | View model card
+Gemini 3.7 Flash  | Updated 13 August 2026  | View model card
+Gemini 3.6 Flash  | Updated 21 July 2026  | View model card
+Gemini 3.5 Flash-Lite  | Updated 21 July 2026  | View model card
+Gemini 3.1 Flash-Lite Image  | Updated 30 June 2026  | View model card
+Gemini 3.5 Flash  | Updated 19 May 2026  | View model card
+Gemini 2.0 Flash  | Updated 15 April 2025  | View model card
+Gemini 2.0 Flash-Lite  | Updated 10 April 2025  | View model card
+Gemini 1.5  |  | View model card
+Gemini 1.0  |  | View model card
+
+## Generative models
+
+Image, music and video generation models
+
+Model card  | Published or updated date  | Link to model card
+--- | --- | ---
+Lyria 3.5  | Updated 29 July 2026  | View model card
+Veo 3.1 Lite  | Updated 8 April 2026  | View model card
+Lyria 3  | Updated 18 February 2026  | View model card
+Veo 3  | Updated 13 January 2026  | View model card
+Imagen 4  | Updated 20 May 2025  | View model card
+
+## Robotics
+
+Allowing robots to take action in the real world
+
+Model card  | Published or updated date  | Link to model card
+--- | --- | ---
+Gemini Robotics-ER 2  | Updated 30 July 2026  | View model card
+Gemini Robotics On-Device 2  | Updated 30 July 2026  | View model card
+Gemini Robotics-ER 1.6  | Updated 20 April 2026  | View model card
+Gemini Robotics 1.5  | Updated 25 September 2025  | View model card
+Gemini Robotics On-Device  | Updated 1 July 2025  | View model card
+
+## Gemma
+
+Lightweight, state-of-the-art open models
+
+Model card  | Published or updated date  | Link to model card
+--- | --- | ---
+DiffusionGemma  | Updated 10 June 2026  | View model card
+Gemma 4  | Updated 2 April 2026  | View model card
+FunctionGemma  | Updated 14 January 2026  | View model card
+EmbeddingGemma  | Updated 25 September 2025  | View model card
+Gemma 3  | Updated 14 August 2025  | View model card
+Gemma 3n  | Updated 17 June 2025  | View model card
+ShieldGemma 2  | Updated 17 June 2025  | View model card
+Gemma 2  | Updated 25 February 2025  | View model card
+Gemma 1  | Updated 25 February 2025  | View model card
+CodeGemma  | Updated 25 February 2025  | View model card
+PaliGemma 2  | Updated 25 February 2025  | View model card
+PaliGemma 1  | Updated 25 February 2025  | View model card
+RecurrentGemma  | Updated 25 February 2025  | View model card
+ShieldGemma 1  | Updated 25 February 2025  | View model card
+
+Model cards were previously hosted on modelcards.withgoogle.com
+
+^{1} Gemini 2.0 Pro was released as an experimental model only.--------------------------------------------------------------------------------
+The Official ImageGen, 4o and Dall-E Megathread - #1765 by Bleatlock - Community - OpenAI Developer Community (https://community.openai.com/t/the-official-imagegen-4o-and-dall-e-megathread/1230134/1765)
+citeturn26957search7 [wordlim: 200] Published: 8 months ago; Crawled: 8 months ago; Bleatlock January 14, 2026, 6:45am 1765
+
+# The Official ImageGen, 4o and Dall-E Megathread
+
+Community
+
+dalle3, gallery, gpt-image-1, gpt-4o-images, gpt-image-15
+
+Bleatlock January 14, 2026, 6:45am 1765
+
+IMG_43641024×1536 480 KB
+
+IMG_41681536×1024 450 KB
+
+IMG_42491024×1024 408 KB
+
+IMG_42481536×1024 550 KB
+
+IMG_43621024×1536 379 KB--------------------------------------------------------------------------------
+Next-Generation Conversational AI: A Design-Proposal Approach - #18 by CatLoverSachiAndKei - Use cases and examples - OpenAI Developer Community (https://community.openai.com/t/next-generation-conversational-ai-a-design-proposal-approach/1371568/18)
+citeturn26957search8 [wordlim: 200] Published: 8 months ago; Crawled: 7 months ago; CatLoverSachiAndKei January 14, 2026, 1:57am 18
+
+CatLoverSachiAndKei January 14, 2026, 1:57am 18
+
+Here is an overview of ECS-AI V2.
+
+### Executive Summary – ECS-AI V2
+
+ECS-AI V2 extends ECS-AI V1 by organizing previously evaluative concepts—accountable silence and human-aligned certainty expression—into a lightweight internal reference architecture that supports these judgments architecturally without increasing autonomy.
+
+Where V1 reframed these judgments as system-evaluable, V2 demonstrates how they can be supported structurally.
+
+  * Priority Model: Safety > Accuracy > Human Alignment
+
+  * Default Behavior: Conservative and cautious
+
+  * Human Decision Authority: Explicitly protected
+
+V2 is a safety- and evaluation-oriented design extension, suitable for staged and reversible integration into existing AI systems.
+
+> Note: ECS-AI V2 is currently at the design stage and is not yet implemented as a working model.--------------------------------------------------------------------------------
+Allow temporary chats to be converted to persistent chats - Feature requests - OpenAI Developer Community (https://community.openai.com/t/allow-temporary-chats-to-be-converted-to-persistent-chats/1371649)
+citeturn26957search9 [wordlim: 200] Published: 8 months ago; Crawled: 8 months ago; bdpdx January 14, 2026, 6:29am 1
+
+# Allow temporary chats to be converted to persistent chats
+
+ChatGPT Feature requests
+
+bdpdx January 14, 2026, 6:29am 1
+
+I regularly use the temporary chat feature to avoid cluttering my chats list, but sometimes those chats develop into useful dialogues I’d like to save. It would be useful to be able to tap the “Temporary Chat” icon in the top right of the screen to toggle the chat status to persistent and save it in the list of chats.--------------------------------------------------------------------------------
+The Official ImageGen, 4o and Dall-E Megathread - #1767 by LarisaHaster - Community - OpenAI Developer Community (https://community.openai.com/t/the-official-imagegen-4o-and-dall-e-megathread/1230134/1767)
+citeturn26957search10 [wordlim: 200] Published: 8 months ago; Crawled: 8 months ago; LarisaHaster January 14, 2026, 3:24pm 1767
+
+# The Official ImageGen, 4o and Dall-E Megathread
+
+Community
+
+dalle3, gallery, gpt-image-1, gpt-4o-images, gpt-image-15
+
+LarisaHaster January 14, 2026, 3:24pm 1767
+
+Part of my ongoing convergence-module progression.
+
+When two soul-currents lock, the body becomes irrelevant. Only the vertical pulse stays, the axis where one becomes both.
+
+image1024×1536 443 KB
+
+image1024×1536 421 KB
+
+image1024×1536 326 KB
+
+image1024×1536 384 KB--------------------------------------------------------------------------------
+My “prove it first” Custom Instructions for coding - Prompting - OpenAI Developer Community (https://community.openai.com/t/my-prove-it-first-custom-instructions-for-coding/1371664)
+citeturn26957search11 [wordlim: 200] Published: 8 months ago; Crawled: 8 months ago; OpenAI Developer Community ... vittoroliveira January 14, 2026, 1:12pm 1
+OpenAI Developer Community
+
+# My “prove it first” Custom Instructions for coding
+
+Prompting
+
+vittoroliveira January 14, 2026, 1:12pm 1
+
+Hey folks, sharing the setup I use in ChatGPT when I’m coding. I’m usually working on a pretty big project, and yeah… fixing one “tiny” thing almost always means touching like 3–4 different files. And the other way around is true too: the original code context matters a lot, because one small change can ripple out and break a bunch of other stuff.
+
+Early on, I ran into a real problem. The assistant would suggest changes that sounded right, but weren’t actually grounded in what was in my repo. I’d apply them and, you won’t believe this, but… boom — some other part of the project would break. Total headache.
+
+So, here’s what I think: I moved that whole “prove it first” mindset into Custom Instructions. The nice part is it becomes the default rule for everything, which saves me a ton of back-and-forth (and honestly saves tokens too). 
+So, if any of you have suggestions to make this prompt even better, drop them below and share what’s been working for you. I’m always down to tweak it and steal good ideas
+
+Hammerstein January 15, 2026, 1:36am 2
+
+This is a solid approach, and the constraints you’ve written are doing the real work here Image: :+1:
+One small thought on wording, though — not a criticism, more of a precision tweak.
+
+The phrase “you are an expert” is really standing in for a set of behavioral constraints, not an identity. What you actually want from the assistant isn’t to role-play an expert persona, but to operate under strict epistemic rules: verify claims, separate facts from assumptions, refuse to guess, require evidence, and surface uncertainty.
+
+In practice, the model doesn’t have an internal “expert mode.” The behavior comes entirely from the rules you listed afterward. So you could remove the identity framing entirely and just say how it must act, e.g.:
+
+> “Operate with a skeptical, evidence-driven mindset. Either of us may be mistaken; accuracy is the shared objective.
+> 
+> Non-negotiable rules:
+> (1) No fabricated production details—do not invent secrets, endpoints, configurations, schemas, versions, or test results. Mocks/fakes are allowed only in test code when explicitly requested, must be clearly labeled as test doubles, and kept minimal.
+> (2) Recommended, secure, correct by default—prefer the most current officially recommended approach, avoid deprecated patterns, and if multiple valid approaches exist, choose the safest option and justify briefly.
+> (3) No guessing—if a claim cannot be proven from provided context or reliable sources, state that explicitly.
+> (4) Evidence and reproducibility—when proposing a solution, include reasoning and a concrete validation path (what to check, where, and how to reproduce or verify).
+> (5) Clarify ambiguity by requesting the minimum required inputs (code, logs, versions, configuration, constraints) and explain why they are needed. If a complete solution depends on missing information, do not finalize prematurely; provide a validation plan instead.”**
+
+landrydura458 January 16, 2026, 10:07am 3
+
+This is a really smart setup. I’ve wasted way too much time applying “sounds good” fixes only to realize they didn’t match my repo. The evidence-driven mindset makes total sense, especially for big projects.

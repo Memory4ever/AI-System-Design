@@ -1,0 +1,6725 @@
+DANCE: Doubly Adaptive Neighborhood Conformal Estimation
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Preliminaries
+2.1
+Split Conformal Prediction
+2.2
+Local Conformal Prediction
+2.3
+Recursive Feature Machines
+3
+Doubly Adaptive Neighborhood Conformal Estimation
+3.1
+k
+k
+-NN Set Nonconformity
+3.2
+Kernel Contrastive Nonconformity
+3.3
+DANCE
+4
+Experiments
+4.1
+Setup
+4.1.1
+Data Description
+4.1.2
+Implementation Details
+4.1.3
+Performance Metrics
+4.2
+Main Results
+4.2.1
+λ
+\lambda
+Sensitivity
+5
+Conclusion
+References
+A
+DANCE Algorithm
+B
+Technical details of Recursive Feature Machines (RFMs)
+KRR
+AGOP
+RFMs
+C
+Proof of Theorems
+C.1
+Proof of Theorem
+C.2
+Proof of Proposition 1:
+D
+Disjoint Reference Ablation Study
+E
+Neighbor Ablation Studies
+E.1
+m
+k
+​
+n
+​
+n
+m_{knn}
+Sensitivity
+E.2
+m
+c
+​
+l
+​
+r
+m_{clr}
+Sensitivity
+F
+Selection of
+λ
+\lambda
+G
+Detailed Results
+G.1
+RFM and Kernel Parameter Fit Time
+G.2
+ViT-B/16 Results
+License: arXiv.org perpetual non-exclusive license
+arXiv:2602.20652v1 [stat.ML] 24 Feb 2026
+DANCE: Doubly Adaptive Neighborhood Conformal Estimation
+Brandon R. Feng
+Affiliation:
+Department of Statistics, North Carolina State University, Raleigh, NC, USA
+Affiliation:
+Amazon.com, Seattle, WA, USA
+Brian J. Reich
+Affiliation:
+Department of Statistics, North Carolina State University, Raleigh, NC, USA
+Daniel Beaglehole
+Affiliation:
+Department of Computer Science, University of California San Diego, San Diego, CA, USA
+Xihaier Luo
+Affiliation:
+Computational Science Initiative, Brookhaven National Laboratory, Upton, NY, USA
+David Keetae Park
+Affiliation:
+Computational Science Initiative, Brookhaven National Laboratory, Upton, NY, USA
+Shinjae Yoo
+Affiliation:
+Computational Science Initiative, Brookhaven National Laboratory, Upton, NY, USA
+Zhechao Huang
+Affiliation:
+Amazon.com, Seattle, WA, USA
+Xueyu Mao
+Affiliation:
+Amazon.com, Seattle, WA, USA
+Olcay Boz
+Affiliation:
+Amazon.com, San Diego, WA, USA
+Jungeum Kim
+Affiliation:
+Department of Statistics, North Carolina State University, Raleigh, NC, USA
+Correspondence to:
+jkim255@ncsu.edu
+Abstract
+The recent developments of complex deep learning models have led to unprecedented ability to accurately predict across multiple data representation types. Conformal prediction for uncertainty quantification of these models has risen in popularity, providing adaptive, statistically-valid prediction sets. For classification tasks, conformal methods have typically focused on utilizing logit scores. For pre-trained models, however, this can result in inefficient, overly conservative set sizes when not calibrated towards the target task. We propose DANCE, a doubly locally adaptive nearest-neighbor based conformal algorithm combining two novel nonconformity scores directly using the data’s embedded representation. DANCE first fits a task-adaptive kernel regression model from the embedding layer before using the learned kernel space to produce the final prediction sets for uncertainty quantification. We test against state-of-the-art local, task-adapted and zero-shot conformal baselines, demonstrating DANCE’s superior blend of set size efficiency and robustness across various datasets.
+†
+†
+affiliationnotice:
+1
+Introduction
+The stunning performance of large, pre-trained, multi-modal models, together with the excitement it has sparked, continues to fuel its quick adoption across many sectors of society. More specifically, vision-language models (VLMs)
+(
+Radford et al., 2021
+)
+have spread in use to diverse areas such as medical tasks
+(
+Bazi et al., 2023
+;
+Luo et al., 2025
+;
+Moon et al., 2022
+)
+, remote sensing
+(
+Hu et al., 2025
+;
+Zhang et al., 2024
+;
+Kuckreja et al., 2024
+)
+, and misinformation detection
+(
+Cekinel et al., 2025
+;
+Zhou et al., 2025
+;
+Tahmasebi et al., 2024
+)
+. Yet despite these benefits, relatively few people view AI systems as fully trustworthy, in part because they often function as
+black boxes
+. This gap between perceived unreliability and expected utility creates a persistent tension in widespread adoption. Uncertainty quantification of these black box outputs is a practical way to ease this tension: by explicitly acknowledging uncertainty in model responses and providing probabilistic assessments of output reliability.
+To make black-box VLM predictions usable in practice, we need an uncertainty interface that (i) does
+not
+require access to or retraining of the foundation model; and (ii) is statistically meaningful at the user’s chosen error tolerance. Conformal prediction (CP) provides a principled, model-agnostic approach for uncertainty quantification in this black-box setting: given a user-specified miscoverage level
+α
+\alpha
+, CP wraps any predictor to produce a prediction set that contains the true label with probability at least
+1
+−
+α
+1-\alpha
+(
+Vovk et al., 2005
+;
+Vovk et al., 1999
+;
+Lei et al., 2018
+;
+Shafer and Vovk, 2008
+)
+. Additionally, many uncertainty quantification approaches require modeling assumptions about the data-generating distribution
+(
+Graves, 2011
+;
+Gal and Ghahramani, 2016
+;
+Hernández-Lobato and Adams, 2015
+)
+. In contrast, conformal prediction is distribution-free, making it easy to deploy across a broad range of problems. The key assumption is exchangeability between the calibration dataset and the test dataset, where neither is involved in the training of the model. The prediction set for each test observation is then formed from appropriate calibration set responses based on some nonconformity score. The ease of usage has turned CP into a popular UQ tool for VLMs
+(
+Kostumov et al., 2024
+;
+Dutta et al., 2023
+;
+Silva-Rodríguez et al., 2025
+)
+.
+Figure 1
+:
+The DANCE pipeline. (a) The calibration set is used to compute nonconformity scores for a given test input. Our architectural contribution is the introduction of a task-adapted Recursive Feature Machines (RFM) kernel together with two complementary nonconformity scores. (b) The Neighbor Nonconformity module derives a rank cutoff
+q
+knn
+q_{\mathrm{knn}}
+in the kernel space from the calibration set. This cutoff is used to identify nearest labels and to construct the candidate label set
+C
+^
+knn
+\hat{C}_{\mathrm{knn}}
+for the test input. (c) The Contrastive Nonconformity module defines a density cutoff
+q
+clr
+q_{\mathrm{clr}}
+, below which a second candidate label set
+C
+^
+clr
+\hat{C}_{\mathrm{clr}}
+is formed. The intersection of
+C
+^
+knn
+\hat{C}_{\mathrm{knn}}
+and
+C
+^
+clr
+\hat{C}_{\mathrm{clr}}
+yields the final conformal prediction set
+C
+^
+dance
+\hat{C}_{\mathrm{dance}}
+, yielding
+1
+−
+α
+1-\alpha
+coverage.
+Yet CP’s distribution-free guarantee often comes with a cost: the resulting prediction sets can be unnecessarily large, especially when the base model’s confidence scores are misaligned with the downstream task
+(
+Lei et al., 2018
+;
+Romano et al., 2019
+;
+Romano et al., 2020
+;
+Angelopoulos et al., 2020
+)
+. For example, consider a simple three-way problem, cat vs. fox vs. dog, handled by an out-of-the-box VLM. If the model assigns similar scores to these semantically related classes, a conformal method may hedge by returning {cat, fox, dog} to maintain the desired
+1
+−
+α
+1-\alpha
+coverage:
+statistically valid, but operationally uninformative
+.
+This has motivated extensive efforts to improve efficiency. In classification, there has been significant focus on set size reduction through areas such as optimal thresholding from LAC
+(
+Sadinle et al., 2019
+)
+, to novel nonconformity measures such as APS, RAPS and SAPS
+(
+Romano et al., 2020
+;
+Angelopoulos et al., 2020
+;
+Huang et al., 2023
+)
+, and optimal transport weighting
+(
+Silva-Rodríguez et al., 2025
+)
+to reduce out-of-distribution misalignment for zero-shot prediction. However, these methods utilize the logit probability layer of the model, losing potential impact from rich embedding information from earlier layers.
+Local variants of CP have offered a framework-based approach to set size reduction. These methods focus on the notion of local exchangeability, where calibration observations in a local space around the test point are favored in prediction set construction, resulting in smaller set sizes due to smaller response variation
+(
+Ding et al., 2023
+;
+Guan, 2023
+;
+Mao et al., 2024
+;
+Hore and Barber, 2025
+)
+. For example, in a spatial regression setting, only calibration observations in a 2-D or 3-D radius around the test are used based on a decaying correlation parameter
+(
+Mao et al., 2024
+;
+Jiang and Xie, 2024
+;
+Feng et al., 2025
+)
+. In classification, approaches such as Deep
+k
+k
+-NN
+(
+Papernot and McDaniel, 2018
+)
+and CONFINE
+(
+Huang et al., 2024
+)
+introduce nonconformity scores based directly on the neighborhood label distribution. Both utilize cosine distance for neighbor retrieval. However, cosine distance is inherently linear, whereas the complex task-specific relationships may be better described in a non-linear kernel space. Meanwhile, approaches such as localized CP
+(
+Guan, 2023
+)
+and Neighborhood CP
+(
+Ghosh et al., 2023
+)
+re-weight existing nonconformity scores. A potential research gap of these methods is they use neighbor information only
+indirectly
+as a scalar weight, rather than explicitly using neighbor distance in the nonconformity metric.
+We propose the DANCE framework, combining two
+novel
+locally adaptive nonconformity scores based on embedding distance in a fitted kernel-space to provide valid prediction sets for classification. DANCE contributes:
+•
+Computationally efficient alignment of the VLM image embedding space to learn a task-adapted kernel space
+•
+Introduction of two nonconformity scores
+directly
+using neighborhood information. DANCE utilizes one
+rank-based
+neighborhood score and one
+density-based
+contrastive score defined within the learned kernel space.
+Rather than indirectly incorporating the kernel similarity as weights for existing scores, DANCE directly uses the kernel neighborhoods to calculate nonconformity. By constructing the nonconformity scores from embeddings adapted in the kernel space, DANCE
+maximizes
+the utility of rich representations provided by pre-trained foundation models. This dual design blends set size efficiency for marginal coverage provided by the rank-based score with robustness for conditional coverage provided by the density-based score, yielding compact and reliable prediction sets.
+2
+Preliminaries
+Problem Statement.
+Consider an image classification setting with images
+X
+∈
+𝒳
+X\in\mathcal{X}
+and labels
+y
+∈
+𝒴
+=
+{
+1
+,
+…
+,
+c
+}
+y\in\mathcal{Y}=\{1,...,c\}
+. We use a fixed, pre-trained image encoder (e.g. CLIP
+(
+Radford et al., 2021
+)
+),
+ϕ
+:
+𝒳
+→
+ℝ
+d
+\phi:\mathcal{X}\to\mathbb{R}^{d}
+, mapping images to a
+d
+d
+-dimensional embedding space. We are interested in constructing a prediction
+set
+,
+C
+^
+(
+.
+)
+⊆
+𝒴
+\hat{C}(.)\subseteq\mathcal{Y}
+, that ensures marginal coverage at a user-specified error rate
+α
+∈
+(
+0
+,
+1
+)
+\alpha\in(0,1)
+such that for test observation
+(
+X
+∗
+,
+y
+∗
+)
+(X^{*},y^{*})
+,
+P
+⁡
+(
+y
+∗
+∈
+C
+^
+​
+(
+ϕ
+⁡
+(
+X
+∗
+)
+)
+)
+≥
+1
+−
+α
+.
+P(y^{*}\in\hat{C}(\phi(X^{*})))\geq 1-\alpha.
+(a)
+PCA of the original embedding space (top 10 classes; PC1 vs. PC2).
+(b)
+PCA of the kernel-transformed embedding space (top 10 classes; PC1 vs. PC2)
+Figure 2
+:
+Comparison of embedding projections for original and RFM kernel-transformed space for the top 10 most frequent classes (represented by colors) of the Imagenet-R dataset. Note the per-class clustering of the transformed kernel space. (a) Original embeddings; (b) Kernel-transformed embeddings.
+2.1
+Split Conformal Prediction
+Conformal inference
+(
+Vovk et al., 2005
+;
+Shafer and Vovk, 2008
+)
+allows us to construct prediction sets for black-box models with a finite-sample coverage guarantee. Consider calibration data (observations)
+𝒟
+cal
+=
+{
+(
+X
+1
+,
+y
+1
+)
+,
+…
+,
+(
+X
+n
+,
+y
+n
+)
+}
+\mathcal{D}_{\rm cal}=\{(X_{1},y_{1}),...,(X_{n},y_{n})\}
+, where each
+X
+i
+∈
+𝒳
+X_{i}\in\mathcal{X}
+is a feature and
+y
+i
+∈
+𝒴
+y_{i}\in\mathcal{Y}
+is a response. For a new, unseen test point
+(
+X
+n
++
+1
+,
+y
+n
++
+1
+)
+(X_{n+1},y_{n+1})
+, we assume it is exchangeable with
+𝒟
+cal
+\mathcal{D}_{\rm cal}
+, i.e., their joint distribution is invariant under permutation. To apply split conformal prediction, we need a user-specified nonconformity score
+S
+S
+measuring the discrepancy between
+(
+X
+n
++
+1
+,
+y
+n
++
+1
+)
+(X_{n+1},y_{n+1})
+and
+𝒟
+cal
+\mathcal{D}_{\rm cal}
+. Given a pre-specified confidence level
+1
+−
+α
+1-\alpha
+, a nonconformity threshold,
+q
+q
+, is calculated as the
+⌈
+(
+1
+−
+α
+)
+​
+(
+1
++
+n
+)
+⌉
+th
+\lceil(1-\alpha)(1+n)\rceil^{\text{th}}
+smallest score of
+{
+S
+i
+}
+i
+∈
+𝒟
+cal
+\{S_{i}\}_{i\in\mathcal{D}_{\rm cal}}
+, where
+S
+i
+=
+S
+⁡
+(
+X
+i
+,
+y
+i
+)
+S_{i}=S(X_{i},y_{i})
+. Given a test observation
+X
+n
++
+1
+X_{n+1}
+and calibration set
+𝒟
+cal
+\mathcal{D}_{\rm cal}
+, the prediction set for
+y
+n
++
+1
+y_{n+1}
+is defined as
+C
+^
+​
+(
+X
+n
++
+1
+)
+=
+{
+y
+∈
+𝒴
+∣
+S
+⁡
+(
+X
+,
+y
+)
+≤
+q
+}
+.
+\hat{C}(X_{n+1})=\{y\in\mathcal{Y}\mid S(X,y)\leq q\}.
+Assuming exchangeability holds between the test and calibration set, this prediction set guarantees
+ℙ
+⁡
+(
+y
+n
++
+1
+∈
+C
+^
+​
+(
+X
+n
++
+1
+)
+)
+≥
+1
+−
+α
+\mathbb{P}(y_{n+1}\in\hat{C}(X_{n+1}))\geq 1-\alpha
+(
+Lei et al., 2018
+)
+.
+2.2
+Local Conformal Prediction
+The framework of localized conformal prediction was introduced by
+Guan (2023)
+, creating more efficient prediction set sizes through weighting the nonconformity scores according to some localizer function centered at test observation
+X
+n
++
+1
+X_{n+1}
+. Broadly, for localizer similarity
+K
+n
++
+1
+,
+i
+=
+K
+⁡
+(
+X
+n
++
+1
+,
+X
+i
+)
+​
+∀
+i
+∈
+1
+,
+…
+,
+n
+K_{n+1,i}=K(X_{n+1},X_{i})\,\forall i\in 1,...,n
+, calculate probability mass
+p
+n
++
+1
+,
+i
+=
+K
+n
++
+1
+,
+i
+/
+∑
+j
+=
+1
+n
++
+1
+K
+n
++
+1
+,
+j
+p_{n+1,i}=K_{n+1,i}/\sum_{j=1}^{n+1}K_{n+1,j}
+to weight scores
+s
+i
+s_{i}
+before finding the quantile cutoff in SCP. For calibration neighbors with high dissimilarity, their influence in the nonconformity threshold calibration decreases significantly.
+Ghosh et al. (2023)
+proposed using an exponential kernel as the localizer such that for some function,
+ϕ
+(
+.
+)
+\phi(.)
+of the features,
+K
+⁡
+(
+X
+i
+,
+X
+j
+)
+=
+exp
+⁡
+(
+−
+‖
+ϕ
+⁡
+(
+X
+i
+)
+−
+ϕ
+⁡
+(
+X
+j
+)
+‖
+2
+L
+)
+,
+K(X_{i},X_{j})=\exp\left(\frac{-||\phi(X_{i})-\phi(X_{j})||_{2}}{L}\right),
+for a tunable bandwidth parameter
+L
+L
+. They show this kernel localizer raises the set size efficiency for both regression and classification problems. For classification, intuitively, this local weighting ensures the threshold is primarily determined by neighbors with similar classes to the given test image, reducing the addition of unrelated classes to the prediction set. This idea of localized exchangeability raising set-size efficiency serves as a basis for our methodology.
+2.3
+Recursive Feature Machines
+Our method requires learning representative nearest neighbors for a given task, rather than using pre-trained similarities for identification. This is achieved using the Recursive Feature Machine (RFM) model
+(
+Radhakrishnan et al., 2024
+)
+, an efficient feature-learning method that composes a learned feature importance matrix and a kernel machine, as an adapter for the image embedding space of the VLM.
+We define notation for Kernel Ridge Regression (KRR) and RFM below. Define one-hot encoded training responses
+Y
+∈
+ℝ
+n
+×
+c
+\mbox{\bf Y}\in\mathbb{R}^{n\times c}
+where
+n
+n
+is the number of training observations and
+c
+c
+is the number of classes. Let input embeddings be
+Z
+=
+ϕ
+⁡
+(
+X
+)
+∈
+ℝ
+n
+×
+d
+\mbox{\bf Z}=\phi(\mbox{\bf X})\in\mathbb{R}^{n\times d}
+for the training image set,
+X
+, and test input embedding be
+Z
+n
++
+1
+=
+ϕ
+⁡
+(
+X
+n
++
+1
+)
+∈
+ℝ
+1
+×
+d
+Z_{n+1}=\phi(X_{n+1})\in\mathbb{R}^{1\times d}
+. The RFM is a learned kernel ridge regression defined as
+f
+⁡
+(
+Z
+n
++
+1
+)
+=
+K
+M
+​
+(
+Z
+n
++
+1
+,
+Z
+)
+​
+𝜷
+,
+f(Z_{n+1})=K_{M}(Z_{n+1},\mbox{\bf Z})\boldsymbol{\beta},
+for a set of coefficients
+𝜷
+∈
+ℝ
+n
+×
+c
+\boldsymbol{\beta}\in\mathbb{R}^{n\times c}
+, obtained through KRR on the learned similarity measure
+K
+M
+K_{M}
+from RFM. In this work, we define
+K
+M
+K_{M}
+to be a generalized Laplace kernel function
+K
+M
+​
+(
+Z
+1
+,
+Z
+2
+)
+=
+exp
+⁡
+(
+−
+(
+‖
+Z
+1
+−
+Z
+2
+‖
+M
+L
+)
+1
+/
+ξ
+)
+,
+K_{M}(Z_{1},Z_{2})=\exp\left(-\left(\frac{\|Z_{1}-Z_{2}\|_{M}}{L}\right)^{1/\xi}\right)~,
+for bandwidth parameter
+L
+L
+, shape factor
+ξ
+\xi
+, and feature importance matrix
+M
+∈
+ℝ
+d
+×
+d
+\mbox{\bf M}\in\mathbb{R}^{d\times d}
+. Here,
+‖
+z
+‖
+M
+=
+(
+z
+​
+M
+​
+z
+⊤
+)
+1
+/
+2
+\|z\|_{M}=(z\mbox{\bf M}z^{\top})^{1/2}
+indicates the Mahalanobis norm of
+z
+z
+. The
+M
+matrix learned by RFM is computed as the Average Gradient Outer Product (AGOP) of a KRR model, capturing the critical features in input space that most influence the prediction function and improving downstream prediction performance both provably and empirically
+(
+Zhu et al., 2025
+;
+Beaglehole et al., 2025
+;
+Radhakrishnan et al., 2025
+)
+. This importance matrix separates RFM from other KRR methods, providing an implicit measure of feature importance.
+RFM alternates between updates of
+M
+and
+𝜷
+\boldsymbol{\beta}
+, thus emphasizing embedding dimensions based on their utility for the prediction task. We additionally tune the
+L
+,
+ξ
+L,\xi
+parameters on a validation set to optimize the kernel used to obtain nearest neighbors in DANCE. As we see in Figure
+2
+, kernel PCA on the RFM kernel embedding space reveals distinct class-wise clustering. Additional details on AGOP computation, KRR and RFM are in Appendix
+B
+.
+3
+Doubly Adaptive Neighborhood Conformal Estimation
+The proposed conformal algorithm, DANCE, consists of a mixture of two novel nonconformity scores,
+directly
+utilizing neighborhood information within a learned kernel space: a rank-based score (derived from neighborhood size) and a density-based score (derived from nearest-neighbor contrastive loss).
+Our design is motivated by a trade-off between
+efficiency
+and
+robustness
+.
+•
+The
+Rank-Based Score
+(
+S
+k
+​
+n
+​
+n
+S_{knn}
+) relies on the relative ordering of neighbors. It is scale invariant, adapting to variations in embedding density by treating neighbors in sparse and dense regions equally. This adaptivity results in the global threshold producing highly size
+efficient
+prediction sets. However, the performance may depend on the choice of distance metric, e.g., in this context, the kernel fit quality. In sparse regions, distant noisy neighbors can be treated as relevant for threshold determination.
+•
+The
+Density-Based Score
+(
+S
+c
+​
+l
+​
+r
+S_{clr}
+) relies on contrastive similarity of neighbors. It is more
+robust
+, aggregating embedding similarity in a region to identify all plausible classes, thus being able to better reach rare ones. However, this sensitivity to region density can yield larger set sizes, making it more conservative and less size efficient. On the other hand, the larger set size can increase conditional class-wise robustness.
+In what follows, given pre-trained embedding function,
+ϕ
+\phi
+, let the embedded representation of an input image
+X
+∈
+𝒳
+X\in\mathcal{X}
+be denoted as
+Z
+=
+ϕ
+⁡
+(
+X
+)
+Z=\phi(X)
+and the corresponding labels be denoted
+y
+∈
+𝒴
+y\in\mathcal{Y}
+where
+𝒴
+\mathcal{Y}
+is the set of all labels. Let the neighbor reference set be defined
+𝒟
+ref
+=
+{
+(
+Z
+~
+j
+,
+y
+~
+j
+)
+}
+j
+=
+1
+n
+ref
+\mathcal{D}_{\rm ref}=\{(\tilde{Z}_{j},\tilde{y}_{j})\}_{j=1}^{n_{\rm ref}}
+and the calibration set be defined
+𝒟
+cal
+=
+{
+(
+Z
+j
+,
+y
+j
+)
+}
+j
+=
+1
+n
+\mathcal{D}_{\rm cal}=\{(Z_{j},y_{j})\}_{j=1}^{n}
+where
+𝒟
+ref
+\mathcal{D}_{\rm ref}
+is independent from
+𝒟
+cal
+\mathcal{D}_{\rm cal}
+. Define notation
+𝒩
+k
+​
+(
+Z
+,
+𝐙
+~
+)
+⊆
+𝒟
+ref
+\mathcal{N}_{k}(Z,\tilde{\mathbf{Z}})\subseteq\mathcal{D}_{\rm ref}
+as the
+k
+k
+-nearest neighbors to
+Z
+Z
+from reference embeddings,
+𝐙
+~
+\tilde{\mathbf{Z}}
+, in the learned RFM kernel space,
+K
+M
+(
+.
+,
+.
+)
+K_{M}(.,.)
+. Nearest neighbors are identified as the
+k
+k
+reference set observations with minimum pairwise Euclidean distances after embeddings are projected by the learned feature matrix,
+M
+1
+/
+2
+\mbox{\bf M}^{1/2}
+.
+3.1
+k
+k
+-NN Set Nonconformity
+We first define a prediction set (hereafter, the
+k
+k
+-NN set classifier) that consists of
+all
+unique labels appearing among the
+k
+k
+nearest neighbors i.e,
+L
+^
+k
+​
+(
+Z
+)
+=
+Unique
+⁡
+{
+y
+~
+∈
+𝒴
+∣
+(
+Z
+~
+,
+y
+~
+)
+∈
+𝒩
+k
+​
+(
+Z
+,
+Z
+~
+)
+}
+.
+\hat{{L}}_{k}(Z)={\rm Unique}\{\tilde{y}\in\mathcal{Y}\mid(\tilde{Z},\tilde{y})\in\mathcal{N}_{k}(Z,\tilde{\textbf{Z}})\}.
+(1)
+The philosophy of the
+k
+k
+-NN set classifier is based on the same premise of the standard
+k
+k
+-NN classifier that the true label for
+Z
+Z
+is likely to appear among the labels of its
+k
+k
+-nearest neighbors. In the following, we conformalize the
+k
+k
+-NN set, establishing its finite-set distribution-free theoretical coverage guarantee.
+For feature-label pairings
+(
+Z
+,
+y
+)
+(Z,y)
+, and neighbor search number
+m
+k
+​
+n
+​
+n
+≤
+n
+ref
+m_{knn}\leq n_{\rm ref}
+, we define the rank-based nonconformity score as
+S
+k
+​
+n
+​
+n
+(
+Z
+,
+y
+)
+=
+arg
+​
+min
+k
+∈
+[
+m
+k
+​
+n
+​
+n
+]
+∪
+{
+∞
+}
+{
+y
+∈
+L
+^
+k
+(
+Z
+)
+}
+,
+S_{knn}(Z,y)=\underset{k\in[m_{knn}]\cup\{\infty\}}{{\mathop{\rm arg\,min}}}\big\{y\in\hat{L}_{k}(Z)\big\},
+(2)
+where
+L
+^
+∞
+​
+(
+Z
+)
+\hat{L}_{\infty}(Z)
+is the set of all labels. Define the conformal threshold
+q
+k
+​
+n
+​
+n
+q_{knn}
+by taking the
+⌈
+(
+1
+−
+α
+k
+​
+n
+​
+n
+)
+​
+(
+1
++
+n
+)
+⌉
+th
+\lceil(1-\alpha_{knn})(1+n)\rceil^{\text{th}}
+smallest calibration score on
+𝒟
+cal
+\mathcal{D}_{\rm cal}
+for some error rate
+α
+k
+​
+n
+​
+n
+\alpha_{knn}
+. The
+k
+k
+-NN conformal prediction set is defined by the set of labels found within neighbor radius
+q
+k
+​
+n
+​
+n
+q_{knn}
+, i.e,
+C
+^
+k
+​
+n
+​
+n
+​
+(
+Z
+)
+=
+L
+^
+q
+k
+​
+n
+​
+n
+​
+(
+Z
+)
+,
+\hat{C}_{knn}(Z)=\hat{L}_{q_{knn}}(Z),
+(3)
+where
+L
+^
+k
+\hat{L}_{k}
+is defined in (
+1
+). This conformalized prediction set comes with coverage
+1
+−
+α
+k
+​
+n
+​
+n
+1-\alpha_{knn}
+as the following theorem.
+Theorem 3.1
+.
+Assume that the calibration sample
+𝒟
+cal
+\mathcal{D}_{\rm cal}
+together with test observation
+(
+Z
+n
++
+1
+,
+y
+n
++
+1
+)
+(Z_{n+1},y_{n+1})
+is exchangeable. For the prediction set
+C
+^
+k
+​
+n
+​
+n
+​
+(
+Z
+n
++
+1
+)
+\hat{C}_{knn}(Z_{n+1})
+defined in (
+3
+), we have coverage guarantee
+1
+−
+α
+k
+​
+n
+​
+n
+≤
+ℙ
+⁡
+(
+y
+n
++
+1
+∈
+C
+^
+k
+​
+n
+​
+n
+​
+(
+Z
+n
++
+1
+)
+)
+≤
+1
+−
+α
+k
+​
+n
+​
+n
++
+1
+n
++
+1
+,
+1-\alpha_{knn}\leq\mathbb{P}\left(y_{n+1}\in\hat{C}_{knn}(Z_{n+1})\right)\leq 1-\alpha_{knn}+\frac{1}{n+1},
+where the upper bound is established given there is no tie among the nonconformity scores and
+q
+k
+​
+n
+​
+n
+≤
+m
+k
+​
+n
+​
+n
+q_{knn}\leq m_{knn}
+.
+Proof.
+See, Appendix Section
+C.1
+As the
+S
+k
+​
+n
+​
+n
+S_{knn}
+score values are discrete, this can result in ties on the calibration set. In this case, the upper bound guarantee does not exist, which can lead to overcoverage, decreasing size efficiency. In order to have the upper bound guarantee as well, we add a small amount of noise
+S
+k
+​
+n
+​
+n
+​
+(
+Z
+,
+y
+)
++
+U
+⁡
+(
+Z
+,
+y
+)
+S_{knn}(Z,y)+U(Z,y)
+for
+U
+∼
+i
+​
+i
+​
+d
+Unif
+​
+(
+0
+,
+ϵ
+)
+U\stackrel{{\scriptstyle iid}}{{\sim}}\text{Unif}(0,\epsilon)
+for some
+ϵ
+<
+1
+\epsilon<1
+.
+The threshold
+q
+k
+​
+n
+​
+n
+q_{knn}
+represents the maximum rank a label may take in a neighborhood to be considered plausible. Intuitively, this imposes a hard constraint on the diversity of labels, where only labels in the top ranks are predicted. For example, an input may only contain “cat” candidate labels within the top ranks, ignoring potentially semantically related animals like “tiger” and “dog” in the embedding space, but which fail to reach the cutoff. This prioritizes
+size efficiency
+, creating compact sets at the expense of potential robustness by excluding semantically related classes.
+3.2
+Kernel Contrastive Nonconformity
+Contrastive learning seeks to structure the embedding space by minimizing the distance between similar (positive) pairs of samples against a background set of dissimilar (negative) ones based only on the input space. The fundamental InfoNCE loss
+(
+Oord et al., 2018
+;
+Sohn, 2016
+;
+Wu et al., 2018
+)
+was developed to achieve this structure during model training, using augmented variants of the same instance to produce positive pairs, while pushing away other instances.
+Dwibedi et al. (2021)
+extended this with Nearest Neighbor Contrastive Learning Representations (NNCLR). Rather than solely relying on augmentations, they build positive pairs using nearest neighbors from a support set, thus utilizing local density information.
+Our density-based conformity score is based on NNCLR. Let
+Z
+i
+Z_{i}
+be the embedded representation of our input with label
+y
+i
+y_{i}
+and
+Q
+⁡
+(
+Z
+i
+)
+=
+𝒩
+m
+c
+​
+l
+​
+r
+​
+(
+Z
+i
+,
+Z
+~
+)
+Q(Z_{i})=\mathcal{N}_{m_{clr}}(Z_{i},\tilde{\textbf{Z}})
+be the
+m
+c
+​
+l
+​
+r
+m_{clr}
+kernel nearest neighbors forming the support set. For the nearest-neighbor anchor,
+A
+i
+=
+𝒩
+1
+​
+(
+Z
+i
+,
+Z
+~
+\
+Z
+i
+)
+A_{i}=\mathcal{N}_{1}(Z_{i},\tilde{\textbf{Z}}\backslash Z_{i})
+, and embedded neighbor,
+Z
+j
+∈
+Q
+⁡
+(
+Z
+i
+)
+Z_{j}\in Q(Z_{i})
+, define
+d
+𝒦
+​
+(
+A
+i
+,
+Z
+j
+)
+=
+2
+⋅
+(
+1
+−
+K
+M
+​
+(
+A
+i
+,
+Z
+j
+)
+)
+d_{\mathcal{K}}(A_{i},Z_{j})=2\cdot(1-K_{M}(A_{i},Z_{j}))
+. For each neighbor
+Z
+j
+∈
+Q
+⁡
+(
+Z
+i
+)
+Z_{j}\in Q(Z_{i})
+, first calculate pairwise loss:
+ℒ
+⁡
+(
+Z
+i
+,
+Z
+j
+)
+=
+−
+log
+⁡
+exp
+(
+−
+d
+𝒦
+(
+A
+i
+,
+Z
+j
+)
+/
+τ
+)
+∑
+Z
+k
+∈
+Q
+⁡
+(
+Z
+i
+)
+exp
+(
+−
+d
+𝒦
+(
+A
+i
+,
+Z
+k
+)
+/
+τ
+)
+.
+\mathcal{L}(Z_{i},Z_{j})=-\log\frac{\exp(-d_{\mathcal{K}}(A_{i},Z_{j})/\tau)}{\sum_{Z_{k}\in Q(Z_{i})}\exp(-d_{\mathcal{K}}(A_{i},Z_{k})/\tau)}.
+(4)
+Here, each support set neighbor is treated as the augmentation of
+Z
+i
+Z_{i}
+.The denominator is summed only over the neighborhood
+Q
+⁡
+(
+Z
+i
+)
+Q(Z_{i})
+rather than the full reference set as in NNCLR. This results in a relative measure of
+local
+density using our learned kernel space. Then, to conformalize this self-supervised loss, the labels are used to determine the required similarity between inputs for the desired outcome. The NNCLR-based nonconformity score is defined as the minimum loss among neighbors sharing the same label as
+y
+i
+y_{i}
+. This is formalized as
+S
+c
+​
+l
+​
+r
+(
+Z
+i
+,
+y
+i
+)
+=
+min
+{
+ℒ
+(
+Z
+i
+,
+Z
+j
+)
+∣
+Z
+j
+∈
+Q
+(
+Z
+i
+)
+,
+y
+j
+=
+y
+i
+}
+.
+S_{clr}(Z_{i},y_{i})=\min\{\mathcal{L}(Z_{i},Z_{j})\mid Z_{j}\in Q(Z_{i}),y_{j}=y_{i}\}.
+(5)
+Define the conformal threshold
+q
+c
+​
+l
+​
+r
+q_{clr}
+by taking the
+⌈
+(
+1
+−
+α
+c
+​
+l
+​
+r
+)
+​
+(
+1
++
+n
+)
+⌉
+th
+\lceil(1-\alpha_{clr})(1+n)\rceil^{\text{th}}
+smallest calibration score on
+𝒟
+cal
+\mathcal{D}_{\rm cal}
+for some error rate
+α
+c
+​
+l
+​
+r
+\alpha_{clr}
+. Thus the CLR conformal prediction set with coverage
+1
+−
+α
+c
+​
+l
+​
+r
+1-\alpha_{clr}
+is
+C
+^
+c
+​
+l
+​
+r
+​
+(
+Z
+)
+=
+{
+y
+∈
+𝒴
+∣
+S
+c
+​
+l
+​
+r
+​
+(
+Z
+,
+y
+)
+≤
+q
+c
+​
+l
+​
+r
+}
+.
+\hat{C}_{clr}(Z)=\{y\in\mathcal{Y}\mid S_{clr}(Z,y)\leq q_{clr}\}.
+(6)
+Following directly from Theorems 2.1 and 2.2 in
+Lei et al. (2018)
+, the coverage,
+ℙ
+⁡
+(
+y
+n
++
+1
+∈
+C
+^
+c
+​
+l
+​
+r
+​
+(
+Z
+n
++
+1
+)
+)
+\mathbb{P}\left(y_{n+1}\in\hat{C}_{clr}(Z_{n+1})\right)
+, can be bounded below by
+1
+−
+α
+c
+​
+l
+​
+r
+1-\alpha_{clr}
+and above by
+1
+−
+α
+c
+​
+l
+​
+r
++
+1
+n
++
+1
+1-\alpha_{clr}+\frac{1}{n+1}
+.
+The threshold
+q
+c
+​
+l
+​
+r
+q_{clr}
+represents the minimum relative similarity a candidate must share with an input compared to other local points. Intuitively, this captures representation grouping structure in the kernel space where semantically similar classes (i.e. cat, dog, tiger) may be predicted together, regardless of class imbalance. Thus, this score raises
+robustness
+at the expense of size.
+3.3
+DANCE
+We define the Doubly Adaptive Neighborhood Conformal Estimation (DANCE) prediction set as:
+C
+^
+d
+​
+a
+​
+n
+​
+c
+​
+e
+​
+(
+Z
+)
+=
+C
+^
+k
+​
+n
+​
+n
+​
+(
+Z
+)
+∩
+C
+^
+c
+​
+l
+​
+r
+​
+(
+Z
+)
+.
+\hat{C}_{dance}(Z)=\hat{C}_{knn}(Z)\cap\hat{C}_{clr}(Z).
+(7)
+The combination is motivated by the complementary geometric properties of the two scores. Intuitively, by intersecting the irregular, discrete boundaries of the
+k
+k
+-NN rank score with the smoother, continuous boundaries of the CLR density score, DANCE retains the semantic groupings captured by the latter while applying the former as a cardinality constraint to prune extraneous classes. Thus, controlling
+q
+k
+​
+n
+​
+n
+q_{knn}
+is critical as it explicitly caps the maximum size of the DANCE prediction set. Assume the total error rate is set as
+α
+=
+α
+k
+​
+n
+​
+n
++
+α
+c
+​
+l
+​
+r
+\alpha=\alpha_{knn}+\alpha_{clr}
+. We introduce hyperparameter
+λ
+\lambda
+to control the division such that
+α
+c
+​
+l
+​
+r
+=
+λ
+⋅
+α
+\alpha_{clr}=\lambda\cdot\alpha
+and
+α
+k
+​
+n
+​
+n
+=
+(
+1
+−
+λ
+)
+⋅
+α
+\alpha_{knn}=(1-\lambda)\cdot\alpha
+. This leads to the following proposition for coverage guarantee.
+Proposition 3.2
+.
+Under the assumptions of Theorem
+3.1
+, let
+C
+^
+k
+​
+n
+​
+n
+​
+(
+Z
+n
++
+1
+)
+\hat{C}_{knn}(Z_{n+1})
+be the prediction set defined in (
+3
+). Additionally, let
+C
+^
+c
+​
+l
+​
+r
+​
+(
+Z
+n
++
+1
+)
+\hat{C}_{clr}(Z_{n+1})
+be constructed under valid split conformal prediction conditions. For intersection set
+C
+^
+d
+​
+a
+​
+n
+​
+c
+​
+e
+​
+(
+Z
+n
++
+1
+)
+=
+C
+^
+k
+​
+n
+​
+n
+​
+(
+Z
+n
++
+1
+)
+∩
+C
+^
+c
+​
+l
+​
+r
+​
+(
+Z
+n
++
+1
+)
+\hat{C}_{dance}(Z_{n+1})=\hat{C}_{knn}(Z_{n+1})\cap\hat{C}_{clr}(Z_{n+1})
+, we have:
+ℙ
+⁡
+(
+y
+n
++
+1
+∈
+C
+^
+d
+​
+a
+​
+n
+​
+c
+​
+e
+​
+(
+Z
+n
++
+1
+)
+)
+≥
+1
+−
+α
+k
+​
+n
+​
+n
+−
+α
+c
+​
+l
+​
+r
+.
+\mathbb{P}(y_{n+1}\in\hat{C}_{dance}(Z_{n+1}))\geq 1-\alpha_{knn}-\alpha_{clr}.
+Proof.
+See, Section
+C.2
+Finally, Algorithm
+1
+found in Appendix
+A
+depicts the construction of
+C
+^
+d
+​
+a
+​
+n
+​
+c
+​
+e
+​
+(
+Z
+)
+\hat{C}_{dance}(Z)
+.
+4
+Experiments
+4.1
+Setup
+4.1.1
+Data Description
+DANCE’s performance is evaluated across 11 common image classification datasets. For more
+generalized
+datasets spanning a wide variety of subjects, we test the ImageNet variants of ImageNet
+(
+Deng et al., 2009
+)
+, ImageNet-R
+(
+Hendrycks et al., 2021
+)
+, and ImageNet-Sketch
+(
+Wang et al., 2019
+)
+. For more
+focused
+datasets on a single topic, we use EuroSAT
+(
+Helber et al., 2019
+)
+, StanfordCars
+(
+Krause et al., 2013
+)
+, Food101
+(
+Bossard et al., 2014
+)
+, OxfordPets
+(
+Parkhi et al., 2012
+)
+, Flowers102
+(
+Nilsback and Zisserman, 2008
+)
+, Caltech101
+(
+Fei-Fei et al., 2004
+)
+, DTD
+(
+Cimpoi et al., 2014
+)
+and UCF101
+(
+Soomro et al., 2012
+)
+. We only use the available test set of each dataset for this study.
+Each dataset is randomly split into 40% for RFM kernel fitting (
+𝒟
+sup
+\mathcal{D}_{\text{sup}}
+), 40% for the calibration set (
+𝒟
+cal
+\mathcal{D}_{\text{cal}}
+) and 20% for the testing set (
+𝒟
+Test
+\mathcal{D}_{\text{Test}}
+). For fitting the RFM model and kernel hyperparameters, the training set is split into 80% for training and 20% validation. For test conformal prediction results, each observation in the test set draws neighbors from the entire calibration set.
+Our methodology coverage guarantees apply to fully disjoint reference/calibration splits. However, to improve data efficiency in finite-sample experiments, we also evaluate a calibration-reuse setting where
+𝒟
+cal
+\mathcal{D}_{\text{cal}}
+is reused as reference set
+𝒟
+ref
+\mathcal{D}_{\text{ref}}
+. Specifically, when computing calibration nonconformity scores, for each
+Z
+i
+∈
+𝒟
+cal
+Z_{i}\in\mathcal{D}_{\rm cal}
+, neighbors are found based via a leave-one-out search where
+𝒟
+ref
+=
+𝒟
+cal
+\
+{
+Z
+i
+}
+\mathcal{D}_{\text{ref}}=\mathcal{D}_{\text{cal}}\backslash\{Z_{i}\}
+to avoid self-matching. Similar reuse strategies have previously been used in neighbor-based methods
+(
+Papernot and McDaniel, 2018
+;
+Ghosh et al., 2023
+)
+. Thus, we report empirical results under this reuse setting. Additionally, we empirically corroborate this choice against a theoretically-valid disjoint split in Appendix
+D
+, demonstrating
+closely
+matching coverage and UQ performance. For fairness, all local CP methods compared reuse the
+𝒟
+cal
+\mathcal{D}_{\text{cal}}
+as
+𝒟
+ref
+\mathcal{D}_{\text{ref}}
+.
+α
+=
+0.1
+\alpha=0.1
+α
+=
+0.05
+\alpha=0.05
+Method
+Acc
+Size
+Cov
+Cov Range
+CCV
+Size
+Cov
+Cov Range
+CCV
+DANCE (Ours)
+0.856
+2.49
+0.930
+(0.903, 0.964)
+8.442
+4.96
+0.963
+(0.949, 0.986)
+5.364
+k
+k
+-NN Set (Ours)
+0.856
+2.33
+0.921
+(0.902, 0.956)
+8.877
+4.77
+0.958
+(0.949, 0.971)
+5.785
+CLR Set (Ours)
+0.856
+5.82
+0.936
+(0.913, 0.974)
+8.128
+8.20
+0.965
+(0.955, 0.989)
+5.346
+Deep
+k
+k
+-NN
+0.856
+4.26
+0.936
+(0.905, 0.987)
+8.799
+7.50
+0.967
+(0.951, 0.998)
+5.265
+RFM Adapter (APS)
+0.856
+2.23
+0.904
+(0.897, 0.917)
+8.817
+5.28
+0.952
+(0.945, 0.957)
+5.948
+RFM Adapter (RAPS)
+0.856
+2.21
+0.904
+(0.895, 0.919)
+8.854
+5.29
+0.952
+(0.943, 0.957)
+5.979
+NCP (RAPS)
+0.856
+2.48
+0.935
+(0.895, 0.974)
+8.846
+5.81
+0.958
+(0.936, 0.983)
+5.721
+Conf-OT (APS)
+0.720
+6.04
+0.902
+(0.889, 0.925)
+8.436
+9.98
+0.953
+(0.944, 0.964)
+5.846
+Conf-OT (RAPS)
+0.720
+5.29
+0.903
+(0.890, 0.925)
+8.503
+8.10
+0.953
+(0.948, 0.962)
+5.803
+Table 1:
+CLIP ViT-B/16: Average accuracy and UQ quality metrics (Set Size, Coverage, Coverage Range, Class-conditional Coverage Violation) across 11 datasets. Best and second best set size and CCV are
+bolded
+and
+underlined
+, respectively.
+α
+=
+0.1
+\alpha=0.1
+α
+=
+0.05
+\alpha=0.05
+Method
+Acc
+Size
+Cov
+Cov Range
+CCV
+Size
+Cov
+Cov Range
+CCV
+DANCE (Ours)
+0.820
+4.11
+0.926
+(0.900, 0.957)
+8.746
+8.07
+0.962
+(0.946, 0.976)
+5.627
+k
+k
+-NN Set (Ours)
+0.820
+4.03
+0.920
+(0.900, 0.961)
+9.006
+8.47
+0.957
+(0.950, 0.973)
+5.963
+CLR Set (Ours)
+0.820
+7.49
+0.903
+(0.903, 0.970)
+8.626
+9.96
+0.965
+(0.945, 0.989)
+5.430
+Deep
+k
+k
+-NN
+0.820
+5.66
+0.935
+(0.904, 0.989)
+8.855
+11.58
+0.972
+(0.957, 1.000)
+5.018
+RFM Adapter (APS)
+0.820
+3.13
+0.904
+(0.890, 0.915)
+8.761
+8.96
+0.954
+(0.946, 0.963)
+5.982
+RFM Adapter (RAPS)
+0.820
+3.12
+0.903
+(0.890, 0.913)
+8.796
+8.98
+0.954
+(0.946, 0.963)
+6.002
+NCP (RAPS)
+0.820
+3.38
+0.926
+(0.888, 0.958)
+8.904
+8.85
+0.960
+(0.937, 0.984)
+5.660
+Conf-OT (APS)
+0.661
+8.44
+0.907
+(0.893, 0.928)
+8.604
+13.95
+0.954
+(0.948, 0.973)
+5.820
+Conf-OT (RAPS)
+0.661
+7.39
+0.907
+(0.897, 0.926)
+8.651
+11.57
+0.955
+(0.950, 0.981)
+5.859
+Table 2:
+CLIP ResNet-101: Average accuracy and UQ quality metrics (Set Size, Coverage, Coverage Range, Class-conditional Coverage Violation) across 11 datasets. Best and second best set size and CCV are
+bolded
+and
+underlined
+, respectively.
+4.1.2
+Implementation Details
+We use pre-trained CLIP models with two different backbones: ResNet-101, representing a CNN-based backbone, and ViT-B/16, representing a transformer-based backbone. For DANCE, the pre-trained image encoder is used to embed the images into the features used for kernel fitting and the conformal procedure. The RFM model serves as a task adapter and hyperparameter optimization of the kernel is done through a Bayesian optimization approach for 25 total evaluations, with accuracy as the objective.
+To determine the optimal ratio for
+λ
+\lambda
+,
+𝒟
+cal
+\mathcal{D}_{\rm cal}
+is first split into 80% calibration and 20% validation. This is then used in a grid search over
+λ
+∈
+[
+0
+,
+1
+]
+\lambda\in[0,1]
+with a step size of 0.1. After selection,
+λ
+\lambda
+is fixed and the final conformal thresholds are computed on the full
+𝒟
+cal
+\mathcal{D}_{\rm cal}
+. For all datasets, the neighborhood sizes are set at
+m
+k
+​
+n
+​
+n
+=
+100
+m_{knn}=100
+and
+m
+c
+​
+l
+​
+r
+=
+50
+m_{clr}=50
+and temperature
+τ
+=
+0.01
+\tau=0.01
+. We provide results for
+α
+∈
+[
+0.1
+,
+0.05
+]
+\alpha\in[0.1,0.05]
+. The impact of neighbor choice can be seen in Appendix
+E
+. Details on
+λ
+\lambda
+selection are given in Appendix
+F
+. In addition to DANCE, we also evaluate
+k
+k
+-NN Set and CLR Set, representing DANCE with
+λ
+\lambda
+fixed at
+0
+0
+and
+1
+1
+, respectively.
+We compare to the commonly-used nonconformity scores of APS
+(
+Romano et al., 2020
+)
+and RAPS
+(
+Angelopoulos et al., 2020
+)
+based on perturbed logit rankings. To strictly isolate the contribution of the nonconformity scores of DANCE from the feature learning benefits of the RFM kernel, we utilize the same RFM-adapted backbone in two baseline frameworks. The first,
+RFM Adapter
+, represents a non-localized baseline where APS and RAPS are applied directly on the logits predicted by the RFM adapter. The second,
+Neighborhood Conformal Prediction (NCP)
+(
+Ghosh et al., 2023
+)
+, represents a similar localized approach where the RFM-predicted logits are re-weighted based on Euclidean distance in a tuned kernel space before being used in RAPS calculations. For NCP, we look at the nearest 50 neighbors as it is most similar to the
+c
+​
+l
+​
+r
+clr
+scoring format.
+Next, we also compare APS and RAPS used in
+Conf-OT
+(
+Silva-Rodríguez et al., 2025
+)
+, a state-of-the-art zero-shot approach using optimal transport to align the logit space with the calibration class distribution. For Conf-OT, we follow the original setup where CLIP logits are derived from image/text pairs using standard text templates
+(
+Gao et al., 2024
+;
+Zhou et al., 2022
+)
+. We note that Conf-OT is the only method tested that uses the CLIP text encoder to construct class prototypes, where the other methods use only the image encoder. However, due to its zero-shot nature, prediction accuracy is lower as a result. For the RAPS score, hyperparameters
+λ
+R
+​
+A
+​
+P
+​
+S
+\lambda_{RAPS}
+and
+k
+R
+​
+A
+​
+P
+​
+S
+k_{RAPS}
+are respectively set to 0.001 and 1 for the RFM Adapter and Conf-OT methods. In NCP, these are tuned in a grid search.
+Finally, we also compare against a 1-layer variant of
+Deep
+k
+k
+-NN
+(
+Papernot and McDaniel, 2018
+)
+, representing another method constructing the nonconformity score directly from neighbor information. Their nonconformity score is the proportion of neighbors with the correct label, given a neighborhood size. We again utilize the RFM-adapter and observations are extracted from the layer corresponding to the RFM kernel-transformed embedding space. We look at the 75 kernel nearest neighbors, as used in the original paper.
+All experimental trials were conducted on a workstation equipped with an Intel Core i9-14900KF processor, 64 GB of 5200 MHz RAM, and an NVIDIA GeForce RTX 4090 GPU with 24 GB of VRAM. We utilize the open-source implementations provided by the authors for NCP and Conf-OT.
+(a)
+Average Coverage (Min/Max)
+(b)
+Average Set Size
+(c)
+Average CCV
+Figure 3
+:
+Ablation study of UQ based on
+λ
+\lambda
+. We observe the mix of
+S
+k
+​
+n
+​
+n
+S_{knn}
+and
+S
+c
+​
+l
+​
+r
+S_{clr}
+generally provides a trade-off between CCV and set size.
+4.1.3
+Performance Metrics
+The performance of all the methods are evaluated on both classification and UQ quality on the held test set. The Top-1 accuracy (Acc) is used for classification quality. Overall coverage (Cov) and set size (Size) are used as to measure marginal UQ quality, and class-conditional coverage violation (CCV)
+(
+Ding et al., 2023
+)
+is used to measure conditional UQ quality. CCV is defined as
+C
+C
+V
+=
+100
+×
+1
+|
+𝒴
+|
+∑
+y
+∈
+𝒴
+|
+Cov
+^
+y
+−
+(
+1
+−
+α
+)
+|
+,
+CCV=100\times\frac{1}{|\mathcal{Y}|}\sum_{y\in\mathcal{Y}}|\hat{\text{Cov}}_{y}-(1-\alpha)|,
+where
+|
+𝒴
+|
+|\mathcal{Y}|
+is the total number of classes, and
+Cov
+^
+y
+\hat{\text{Cov}}_{y}
+is the coverage for class
+y
+∈
+𝒴
+y\in\mathcal{Y}
+. While overall coverage places more weight on highly represented classes, CCV
+balances
+the influence of large and small classes, thus being a metric reflecting
+robustness
+to class distribution. We report average accuracy, coverage, set-size and coverage gap, as well as coverage range across all datasets. The results for individual datasets in the
+α
+=
+0.05
+\alpha=0.05
+setting for CLIP ViT-B/16 are given in Appendix
+G.2
+.
+Finally, we note that DANCE is computationally efficient: the full
+λ
+\lambda
+grid search required an average of 4.0 seconds (range:
+0.2
+​
+s
+0.2\text{s}
+–
+19.1
+​
+s
+19.1\text{s}
+), with mean total inference time taking an average of
+0.08
+0.08
+s (range:
+<
+1
+​
+ms
+<1\text{ms}
+–
+0.33
+​
+s
+0.33\text{s}
+).
+4.2
+Main Results
+Table
+1
+shows results using embeddings from the CLIP ViT-B/16 backbone. At the relaxed error rate of
+α
+=
+0.1
+\alpha=0.1
+, RFM Adapter (RAPS) achieves the lowest average set size (2.21), with the APS variant following closely (2.23). CLR Set shows its robustness properties, with the lowest CCV (8.128), albeit with high set size (5.82), predicting over twice as many classes on average compared to more efficient baselines. DANCE achieves third best CCV (8.442), with comparable set size efficiency (2.49) to the top competitors.
+The benefits of DANCE are more pronounced for the more conservative
+α
+=
+0.05
+\alpha=0.05
+. The combination of properties is exhibited here where it achieves nearly the same conditional performance in robustness as CLR Set (5.364 vs 5.346), with the set size efficiency brought by the most efficient
+k
+k
+-NN Set (4.96 vs 4.77). These account for the second and third best in CCV and the top two in set size. This has lower set size than the closest baseline of RFM Adapter with APS (5.28) and slightly higher CCV than the top Deep
+k
+k
+-NN (5.265), highlighting DANCE’s ability to optimize both efficiency and robustness without excelling in only one.
+Table
+2
+shows results using embeddings from the CLIP ResNet-101 backbone. The lower average accuracy (0.820 vs 0.856) makes uncertainty quantification more challenging, albeit with similar results. At
+α
+=
+0.05
+\alpha=0.05
+, DANCE shines, providing the lowest average set size (8.07) with third lowest CCV (5.627), further validating its capacity for high efficiency and conditional robustness. For both backbones, we note the high robustness of the Conf-OT and relative size efficiency, despite the lower zero-shot prediction accuracy, indicating benefits of using the text embeddings from the multi-modal model. Coverage range reveals undercoverage for some baselines, where individual dataset performance drops to 0.89 for
+α
+=
+0.1
+\alpha=0.1
+and below 0.94 for
+α
+=
+0.05
+\alpha=0.05
+. In contrast, DANCE attains near-nominal empirical coverage across all experiments under this reuse setting.
+4.2.1
+λ
+\lambda
+Sensitivity
+Figure
+3
+shows the effect of
+λ
+\lambda
+on the UQ metrics of coverage, set size and CCV for CLIP ViT-B/16 at
+α
+=
+0.05
+\alpha=0.05
+based on
+λ
+∈
+[
+0
+,
+0.1
+,
+0.25
+,
+0.5
+,
+0.75
+,
+0.9
+,
+1
+]
+\lambda\in[0,0.1,0.25,0.5,0.75,0.9,1]
+. We see the optimal coverage and CCV generally lies between the
+k
+​
+n
+​
+n
+knn
+and
+c
+​
+l
+​
+r
+clr
+scores on their own, with spikes in average CCV at both ends and an increasing average set size as
+λ
+\lambda
+favors
+c
+​
+l
+​
+r
+clr
+. This indicates the need for the grid search step to find the balance. DANCE also maintains marginal coverage for all
+λ
+\lambda
+values.
+5
+Conclusion
+In this work, we introduce DANCE (Doubly Adaptive Neighborhood Conformal Estimation), a novel framework that provides valid uncertainty quantification for pre-trained vision-language models. By operating within an efficiently learned kernel space rather than fixed pre-trained embeddings, DANCE effectively captures complex non-linear relationships between calibration and test set that is leveraged in set construction while also maximizing utility of the descriptiveness these embeddings provide.
+Our key methodological contribution lies in the synergistic blend of two novel neighbor-based nonconformity scores: a rank-based score,
+S
+k
+​
+n
+​
+n
+S_{knn}
+, that ensures efficiency through a hard size cutoff, and a density-based score,
+S
+c
+​
+l
+​
+r
+S_{clr}
+, that promotes robustness through returning semantically-related groups. Through extensive experiments on CLIP adaptation, we demonstrate that this dual-score approach, optimized via a learned mixing parameter
+λ
+\lambda
+, consistently achieves a high balance of tight prediction sets and high conditional coverage validity compared to state-of-the-art baselines.
+We note there are limitations of DANCE. First, the efficiency and robustness hinges on the fit of the kernel. If the RFM kernel is a poor fit, the local embedding clustering can be diffuse, causing inefficient set sizes with high cutoff for
+q
+k
+​
+n
+​
+n
+q_{knn}
+and the inclusion of overly robust neighborhoods from
+q
+c
+​
+l
+​
+r
+q_{clr}
+. The final set efficiency and robustness also depends on choice of
+λ
+\lambda
+,
+m
+k
+​
+n
+​
+n
+m_{knn}
+and
+m
+c
+​
+l
+​
+r
+m_{clr}
+, making tuning an essential part. Second, in limited data settings, the reference and calibration sets may need to be reused, losing the strict theoretical coverage guarantees provided. Nevertheless, we see that DANCE maintains empirical coverage validity across all experiments and an ablation showed no significant deviation between this heuristic split and a valid disjoint split. Future work can extend this method to both continuous and generative settings, with small outcome-dependent changes to the nonconformity scores. The performance of the contrastive score may also benefit in a true multi-modal setting, where more embeddings sources are used to calculate semantic similarity. The robust performance of the zero-shot Conf-OT baseline against task-adapted competitors previews the predictive power multi-modal representations can bring.
+Acknowledgements
+We thank Mikhail Belkin, Qi Zhao and Zhanlong Qiu for invaluable discussions on RFM, contrastive learning and kernel nearest neighbors.
+References
+Angelopoulos
+et al.
+(2020)
+A. Angelopoulos, S. Bates, J. Malik, and M. I. Jordan
+Uncertainty sets for image classifiers using conformal prediction
+.
+arXiv preprint arXiv:2009.14193
+.
+Cited by:
+§1
+,
+§1
+,
+§4.1.2
+.
+Bazi
+et al.
+(2023)
+Y. Bazi, M. M. A. Rahhal, L. Bashmal, and M. Zuair
+Vision–language model for visual question answering in medical imagery
+.
+Bioengineering
+10
+(
+3
+),
+pp. 380
+.
+Cited by:
+§1
+.
+Beaglehole
+et al.
+(2025)
+D. Beaglehole, D. Holzmüller, A. Radhakrishnan, and M. Belkin
+XRFM: accurate, scalable, and interpretable feature learning models for tabular data
+.
+arXiv preprint arXiv:2508.10053
+.
+Cited by:
+Appendix B
+,
+Appendix B
+,
+§2.3
+.
+Bossard
+et al.
+(2014)
+L. Bossard, M. Guillaumin, and L. Van Gool
+Food-101–mining discriminative components with random forests
+.
+In
+European conference on computer vision
+,
+pp. 446–461
+.
+Cited by:
+§4.1.1
+.
+Cekinel
+et al.
+(2025)
+R. F. Cekinel, P. Karagoz, and Ç. Çöltekin
+Multimodal fact-checking with vision language models: a probing classifier based solution with embedding strategies
+.
+In
+Proceedings of the 31st International Conference on Computational Linguistics
+,
+pp. 4622–4633
+.
+Cited by:
+§1
+.
+Cimpoi
+et al.
+(2014)
+M. Cimpoi, S. Maji, I. Kokkinos, S. Mohamed, and A. Vedaldi
+Describing textures in the wild
+.
+In
+Proceedings of the IEEE conference on computer vision and pattern recognition
+,
+pp. 3606–3613
+.
+Cited by:
+§4.1.1
+.
+Deng
+et al.
+(2009)
+J. Deng, W. Dong, R. Socher, L. Li, K. Li, and L. Fei-Fei
+Imagenet: a large-scale hierarchical image database
+.
+In
+2009 IEEE conference on computer vision and pattern recognition
+,
+pp. 248–255
+.
+Cited by:
+§4.1.1
+.
+Ding
+et al.
+(2023)
+T. Ding, A. Angelopoulos, S. Bates, M. Jordan, and R. J. Tibshirani
+Class-conditional conformal prediction with many classes
+.
+Advances in neural information processing systems
+36
+,
+pp. 64555–64576
+.
+Cited by:
+§1
+,
+§4.1.3
+.
+Dutta
+et al.
+(2023)
+S. Dutta, H. Wei, L. van der Laan, and A. M. Alaa
+Estimating uncertainty in multimodal foundation models using public internet data
+.
+arXiv preprint arXiv:2310.09926
+.
+Cited by:
+§1
+.
+Dwibedi
+et al.
+(2021)
+D. Dwibedi, Y. Aytar, J. Tompson, P. Sermanet, and A. Zisserman
+With a little help from my friends: nearest-neighbor contrastive learning of visual representations
+.
+In
+Proceedings of the IEEE/CVF international conference on computer vision
+,
+pp. 9588–9597
+.
+Cited by:
+§3.2
+.
+Fei-Fei
+et al.
+(2004)
+L. Fei-Fei, R. Fergus, and P. Perona
+Learning generative visual models from few training examples: an incremental bayesian approach tested on 101 object categories
+.
+In
+2004 conference on computer vision and pattern recognition workshop
+,
+pp. 178–178
+.
+Cited by:
+§4.1.1
+.
+Feng
+et al.
+(2025)
+B. R. Feng, D. K. Park, X. Luo, A. Urdangarin, S. Yoo, and B. J. Reich
+STACI: spatio-temporal aleatoric conformal inference
+.
+arXiv preprint arXiv:2505.21658
+.
+Cited by:
+§1
+.
+Gal and Ghahramani (2016)
+Y. Gal and Z. Ghahramani
+Dropout as a bayesian approximation: representing model uncertainty in deep learning
+.
+In
+international conference on machine learning
+,
+pp. 1050–1059
+.
+Cited by:
+§1
+.
+Gao
+et al.
+(2024)
+P. Gao, S. Geng, R. Zhang, T. Ma, R. Fang, Y. Zhang, H. Li, and Y. Qiao
+Clip-adapter: better vision-language models with feature adapters
+.
+International Journal of Computer Vision
+132
+(
+2
+),
+pp. 581–595
+.
+Cited by:
+§4.1.2
+.
+Ghosh
+et al.
+(2023)
+S. Ghosh, T. Belkhouja, Y. Yan, and J. R. Doppa
+Improving uncertainty quantification of deep classifiers via neighborhood conformal prediction: novel algorithm and theoretical analysis
+.
+In
+Proceedings of the AAAI Conference on Artificial Intelligence
+,
+Vol.
+37
+,
+pp. 7722–7730
+.
+Cited by:
+§1
+,
+§2.2
+,
+§4.1.1
+,
+§4.1.2
+.
+Graves (2011)
+A. Graves
+Practical variational inference for neural networks
+.
+Advances in neural information processing systems
+24
+.
+Cited by:
+§1
+.
+Guan (2023)
+L. Guan
+Localized conformal prediction: a generalized inference framework for conformal prediction
+.
+Biometrika
+110
+(
+1
+),
+pp. 33–50
+.
+Cited by:
+§1
+,
+§2.2
+.
+Helber
+et al.
+(2019)
+P. Helber, B. Bischke, A. Dengel, and D. Borth
+Eurosat: a novel dataset and deep learning benchmark for land use and land cover classification
+.
+IEEE Journal of Selected Topics in Applied Earth Observations and Remote Sensing
+12
+(
+7
+),
+pp. 2217–2226
+.
+Cited by:
+§4.1.1
+.
+Hendrycks
+et al.
+(2021)
+D. Hendrycks, S. Basart, N. Mu, S. Kadavath, F. Wang, E. Dorundo, R. Desai, T. Zhu, S. Parajuli, M. Guo,
+et al.
+The many faces of robustness: a critical analysis of out-of-distribution generalization
+.
+In
+Proceedings of the IEEE/CVF international conference on computer vision
+,
+pp. 8340–8349
+.
+Cited by:
+§4.1.1
+.
+Hernández-Lobato and Adams (2015)
+J. M. Hernández-Lobato and R. Adams
+Probabilistic backpropagation for scalable learning of bayesian neural networks
+.
+In
+International conference on machine learning
+,
+pp. 1861–1869
+.
+Cited by:
+§1
+.
+Hore and Barber (2025)
+R. Hore and R. F. Barber
+Conformal prediction with local weights: randomization enables robust guarantees
+.
+Journal of the Royal Statistical Society Series B: Statistical Methodology
+87
+(
+2
+),
+pp. 549–578
+.
+Cited by:
+§1
+.
+Hu
+et al.
+(2025)
+Y. Hu, J. Yuan, C. Wen, X. Lu, Y. Liu, and X. Li
+Rsgpt: a remote sensing vision language model and benchmark
+.
+ISPRS Journal of Photogrammetry and Remote Sensing
+224
+,
+pp. 272–286
+.
+Cited by:
+§1
+.
+Huang
+et al.
+(2023)
+J. Huang, H. Xi, L. Zhang, H. Yao, Y. Qiu, and H. Wei
+Conformal prediction for deep classifier via label ranking
+.
+arXiv preprint arXiv:2310.06430
+.
+Cited by:
+§1
+.
+Huang
+et al.
+(2024)
+L. Huang, S. Lala, and N. K. Jha
+CONFINE: conformal prediction for interpretable neural networks
+.
+arXiv preprint arXiv:2406.00539
+.
+Cited by:
+§1
+.
+Jiang and Xie (2024)
+H. Jiang and Y. Xie
+Spatial conformal inference through localized quantile regression
+.
+arXiv preprint arXiv:2412.01098
+.
+Cited by:
+§1
+.
+Kostumov
+et al.
+(2024)
+V. Kostumov, B. Nutfullin, O. Pilipenko, and E. Ilyushin
+Uncertainty-aware evaluation for vision-language models
+.
+arXiv preprint arXiv:2402.14418
+.
+Cited by:
+§1
+.
+Krause
+et al.
+(2013)
+J. Krause, M. Stark, J. Deng, and L. Fei-Fei
+3d object representations for fine-grained categorization
+.
+In
+Proceedings of the IEEE international conference on computer vision workshops
+,
+pp. 554–561
+.
+Cited by:
+§4.1.1
+.
+Kuckreja
+et al.
+(2024)
+K. Kuckreja, M. S. Danish, M. Naseer, A. Das, S. Khan, and F. S. Khan
+Geochat: grounded large vision-language model for remote sensing
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 27831–27840
+.
+Cited by:
+§1
+.
+Lei
+et al.
+(2018)
+J. Lei, M. G’Sell, A. Rinaldo, R. J. Tibshirani, and L. Wasserman
+Distribution-free predictive inference for regression
+.
+Journal of the American Statistical Association
+113
+(
+523
+),
+pp. 1094–1111
+.
+Cited by:
+§1
+,
+§1
+,
+§2.1
+,
+§3.2
+.
+Luo
+et al.
+(2025)
+L. Luo, B. Tang, X. Chen, R. Han, and T. Chen
+Vividmed: vision language model with versatile visual grounding for medicine
+.
+In
+Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers)
+,
+pp. 1800–1821
+.
+Cited by:
+§1
+.
+Mao
+et al.
+(2024)
+H. Mao, R. Martin, and B. J. Reich
+Valid model-free spatial prediction
+.
+Journal of the American Statistical Association
+119
+(
+546
+),
+pp. 904–914
+.
+Cited by:
+§1
+.
+Moon
+et al.
+(2022)
+J. H. Moon, H. Lee, W. Shin, Y. Kim, and E. Choi
+Multi-modal understanding and generation for medical images and text via vision-language pre-training
+.
+IEEE Journal of Biomedical and Health Informatics
+26
+(
+12
+),
+pp. 6070–6080
+.
+Cited by:
+§1
+.
+Nilsback and Zisserman (2008)
+M. Nilsback and A. Zisserman
+Automated flower classification over a large number of classes
+.
+In
+2008 Sixth Indian conference on computer vision, graphics & image processing
+,
+pp. 722–729
+.
+Cited by:
+§4.1.1
+.
+Nogueira (2014)
+F. Nogueira
+Bayesian Optimization: open source constrained global optimization tool for Python
+.
+External Links:
+Link
+Cited by:
+§G.1
+.
+Oord
+et al.
+(2018)
+A. v. d. Oord, Y. Li, and O. Vinyals
+Representation learning with contrastive predictive coding
+.
+arXiv preprint arXiv:1807.03748
+.
+Cited by:
+§3.2
+.
+Papernot and McDaniel (2018)
+N. Papernot and P. McDaniel
+Deep k-nearest neighbors: towards confident, interpretable and robust deep learning
+.
+arXiv preprint arXiv:1803.04765
+.
+Cited by:
+§1
+,
+§4.1.1
+,
+§4.1.2
+.
+Parkhi
+et al.
+(2012)
+O. M. Parkhi, A. Vedaldi, A. Zisserman, and C. Jawahar
+Cats and dogs
+.
+In
+2012 IEEE conference on computer vision and pattern recognition
+,
+pp. 3498–3505
+.
+Cited by:
+§4.1.1
+.
+Radford
+et al.
+(2021)
+A. Radford, J. W. Kim, C. Hallacy, A. Ramesh, G. Goh, S. Agarwal, G. Sastry, A. Askell, P. Mishkin, J. Clark,
+et al.
+Learning transferable visual models from natural language supervision
+.
+In
+International conference on machine learning
+,
+pp. 8748–8763
+.
+Cited by:
+§1
+,
+§2
+.
+Radhakrishnan
+et al.
+(2024)
+A. Radhakrishnan, D. Beaglehole, P. Pandit, and M. Belkin
+Mechanism for feature learning in neural networks and backpropagation-free machine learning models
+.
+Science
+383
+(
+6690
+),
+pp. 1461–1467
+.
+Cited by:
+Appendix B
+,
+§2.3
+.
+Radhakrishnan
+et al.
+(2025)
+A. Radhakrishnan, M. Belkin, and D. Drusvyatskiy
+Linear recursive feature machines provably recover low-rank matrices
+.
+Proceedings of the National Academy of Sciences
+122
+(
+13
+),
+pp. e2411325122
+.
+Cited by:
+Appendix B
+,
+§2.3
+.
+Romano
+et al.
+(2019)
+Y. Romano, E. Patterson, and E. Candes
+Conformalized quantile regression
+.
+Advances in neural information processing systems
+32
+.
+Cited by:
+§1
+.
+Romano
+et al.
+(2020)
+Y. Romano, M. Sesia, and E. Candes
+Classification with valid and adaptive coverage
+.
+Advances in neural information processing systems
+33
+,
+pp. 3581–3591
+.
+Cited by:
+§1
+,
+§1
+,
+§4.1.2
+.
+Sadinle
+et al.
+(2019)
+M. Sadinle, J. Lei, and L. Wasserman
+Least ambiguous set-valued classifiers with bounded error levels
+.
+Journal of the American Statistical Association
+114
+(
+525
+),
+pp. 223–234
+.
+Cited by:
+§1
+.
+Shafer and Vovk (2008)
+G. Shafer and V. Vovk
+A tutorial on conformal prediction.
+.
+Journal of Machine Learning Research
+9
+(
+3
+).
+Cited by:
+§1
+,
+§2.1
+.
+Silva-Rodríguez
+et al.
+(2025)
+J. Silva-Rodríguez, I. Ben Ayed, and J. Dolz
+Conformal prediction for zero-shot models
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 19931–19941
+.
+Cited by:
+§1
+,
+§1
+,
+§4.1.2
+.
+Sohn (2016)
+K. Sohn
+Improved deep metric learning with multi-class n-pair loss objective
+.
+Advances in neural information processing systems
+29
+.
+Cited by:
+§3.2
+.
+Soomro
+et al.
+(2012)
+K. Soomro, A. R. Zamir, and M. Shah
+Ucf101: a dataset of 101 human actions classes from videos in the wild
+.
+arXiv preprint arXiv:1212.0402
+.
+Cited by:
+§4.1.1
+.
+Tahmasebi
+et al.
+(2024)
+S. Tahmasebi, E. Müller-Budack, and R. Ewerth
+Multimodal misinformation detection using large vision-language models
+.
+In
+Proceedings of the 33rd ACM International Conference on Information and Knowledge Management
+,
+pp. 2189–2199
+.
+Cited by:
+§1
+.
+Vovk
+et al.
+(2005)
+V. Vovk, A. Gammerman, and G. Shafer
+Algorithmic learning in a random world
+.
+Vol.
+29
+,
+Springer
+.
+Cited by:
+§1
+,
+§2.1
+.
+Vovk
+et al.
+(1999)
+V. Vovk, A. Gammerman, and C. Saunders
+Machine-learning applications of algorithmic randomness
+.
+Cited by:
+§1
+.
+Wang
+et al.
+(2019)
+H. Wang, S. Ge, Z. Lipton, and E. P. Xing
+Learning robust global representations by penalizing local predictive power
+.
+Advances in neural information processing systems
+32
+.
+Cited by:
+§4.1.1
+.
+Wu
+et al.
+(2018)
+Z. Wu, Y. Xiong, S. X. Yu, and D. Lin
+Unsupervised feature learning via non-parametric instance discrimination
+.
+In
+Proceedings of the IEEE conference on computer vision and pattern recognition
+,
+pp. 3733–3742
+.
+Cited by:
+§3.2
+.
+Zhang
+et al.
+(2024)
+W. Zhang, M. Cai, T. Zhang, Y. Zhuang, and X. Mao
+EarthGPT: a universal multimodal large language model for multisensor image comprehension in remote sensing domain
+.
+IEEE Transactions on Geoscience and Remote Sensing
+62
+,
+pp. 1–20
+.
+Cited by:
+§1
+.
+Zhou
+et al.
+(2022)
+K. Zhou, J. Yang, C. C. Loy, and Z. Liu
+Learning to prompt for vision-language models
+.
+International Journal of Computer Vision
+130
+(
+9
+),
+pp. 2337–2348
+.
+Cited by:
+§4.1.2
+.
+Zhou
+et al.
+(2025)
+M. Zhou, L. Zhang, S. Horng, M. Chen, K. Huang, and S. Chang
+M2-tabfact: multi-document multi-modal fact verification with visual and textual representations of tabular data
+.
+In
+Findings of the Association for Computational Linguistics: ACL 2025
+,
+pp. 26239–26256
+.
+Cited by:
+§1
+.
+Zhu
+et al.
+(2025)
+L. Zhu, D. Davis, D. Drusvyatskiy, and M. Fazel
+Iteratively reweighted kernel machines efficiently learn sparse functions
+.
+arXiv preprint arXiv:2505.08277
+.
+Cited by:
+Appendix B
+,
+§2.3
+.
+Appendix A
+DANCE Algorithm
+Algorithm 1
+DANCE Conformal Label Sets
+1:
+Input:
+Reference embeddings
+𝐙
+r
+​
+e
+​
+f
+\mathbf{Z}_{ref}
+, Calibration embeddings
+𝐙
+C
+​
+a
+​
+l
+\mathbf{Z}_{Cal}
+, calibration labels
+𝐲
+C
+​
+a
+​
+l
+\mathbf{y}_{Cal}
+, test embedding
+𝐙
+n
++
+1
+\mathbf{Z}_{n+1}
+, learned Kernel
+K
+M
+(
+.
+)
+K_{M}(.)
+, total error
+α
+\alpha
+, error allocation parameter
+λ
+\lambda
+2:
+Output:
+Prediction sets
+{
+C
+^
+i
+}
+i
+=
+1
+n
+t
+​
+e
+​
+s
+​
+t
+\{\widehat{C}_{i}\}_{i=1}^{n_{test}}
+3:
+Calibration: compute scores and threshold
+4:
+for
+i
+=
+1
+i=1
+to
+n
+c
+​
+a
+​
+l
+n_{cal}
+do
+5:
+Find all neighbor indices
+𝐈
+C
+​
+a
+​
+l
+\mathbf{I}_{Cal}
+from
+K
+M
+​
+(
+𝐙
+C
+​
+a
+​
+l
+,
+𝐙
+r
+​
+e
+​
+f
+)
+K_{M}(\mathbf{Z}_{Cal},\mathbf{Z}_{ref})
+6:
+Compute
+S
+k
+​
+n
+​
+n
+S_{knn}
+from
+Z
+C
+​
+a
+​
+l
+,
+i
+Z_{Cal,i}
+to its
+m
+k
+​
+n
+​
+n
+m_{knn}
+neighbors indexed by
+𝐈
+C
+​
+a
+​
+l
+,
+k
+​
+n
+​
+n
+[
+i
+,
+:
+]
+\mathbf{I}_{Cal,knn}[i,:]
+7:
+Compute
+S
+c
+​
+l
+​
+r
+S_{clr}
+from
+Z
+C
+​
+a
+​
+l
+,
+i
+Z_{Cal,i}
+to its
+m
+c
+​
+l
+​
+r
+m_{clr}
+neighbors indexed by
+𝐈
+C
+​
+a
+​
+l
+,
+c
+​
+l
+​
+r
+[
+i
+,
+:
+]
+\mathbf{I}_{Cal,clr}[i,:]
+8:
+end
+for
+9:
+Calculate
+α
+k
+​
+n
+​
+n
+,
+α
+c
+​
+l
+​
+r
+\alpha_{knn},\alpha_{clr}
+based on
+λ
+\lambda
+split of
+α
+\alpha
+10:
+Find
+q
+k
+​
+n
+​
+n
+,
+q
+c
+​
+l
+​
+r
+q_{knn},q_{clr}
+from
+1
+−
+(
+α
+k
+​
+n
+​
+n
+,
+α
+c
+​
+l
+​
+r
+)
+1-(\alpha_{knn},\alpha_{clr})
+quantiles
+11:
+Test: build label set
+12:
+Find all neighbor indices
+𝐈
+n
++
+1
+\mathbf{I}_{n+1}
+from
+K
+M
+​
+(
+𝐙
+n
++
+1
+,
+𝐙
+r
+​
+e
+​
+f
+)
+K_{M}(\mathbf{Z}_{n+1},\mathbf{Z}_{ref})
+13:
+Compute
+S
+k
+​
+n
+​
+n
+S_{knn}
+from
+Z
+n
++
+1
+Z_{n+1}
+to its
+m
+k
+​
+n
+​
+n
+m_{knn}
+neighbors indexed by
+𝐈
+n
++
+1
+,
+k
+​
+n
+​
+n
+\mathbf{I}_{n+1,knn}
+14:
+Build
+C
+^
+k
+​
+n
+​
+n
+​
+(
+Z
+n
++
+1
+)
+=
+𝒴
+^
+q
+k
+​
+n
+​
+n
+​
+(
+Z
+n
++
+1
+)
+\hat{C}_{knn}(Z_{n+1})=\hat{\mathcal{Y}}_{q_{knn}}(Z_{n+1})
+15:
+Compute
+S
+c
+​
+l
+​
+r
+S_{clr}
+from
+Z
+n
++
+1
+Z_{n+1}
+to its
+m
+c
+​
+l
+​
+r
+m_{clr}
+neighbors indexed by
+𝐈
+n
++
+1
+,
+c
+​
+l
+​
+r
+\mathbf{I}_{n+1,clr}
+16:
+Build
+C
+^
+c
+​
+l
+​
+r
+​
+(
+Z
+n
++
+1
+)
+\hat{C}_{clr}(Z_{n+1})
+from neighbor labels
+17:
+Return:
+C
+^
+d
+​
+a
+​
+n
+​
+c
+​
+e
+​
+(
+Z
+n
++
+1
+)
+=
+C
+^
+k
+​
+n
+​
+n
+∩
+C
+^
+c
+​
+l
+​
+r
+\hat{C}_{dance}(Z_{n+1})=\hat{C}_{knn}\cap\hat{C}_{clr}
+Appendix B
+Technical details of Recursive Feature Machines (RFMs)
+RFMs are an iterative algorithm for learning features with general machine learning models by learning representations through the Average Gradient Outer Product (AGOP)
+(
+Radhakrishnan et al., 2024
+)
+. RFMs are initialized with a base prediction algorithm, training inputs and labels, and validation inputs and labels. RFMs fit the training data through
+T
+T
+iterations of the following steps. RFM (1) first fits the base algorithm to the training data, (2) computes the AGOP of the fit algorithm from step 1, (3) transforms the data with the AGOP matrix, then (4) returns to step 1. The iteration proceeds for
+T
+T
+steps, each step constructing a separate predictor. The best predictor among the iterations is selected on the validation set. In our case, as is typically done, we perform the RFM update with Kernel Ridge Regression (KRR) as the base model. We briefly explain the KRR model.
+KRR
+Let
+X
+∈
+ℝ
+n
+×
+d
+X\in\mathbb{R}^{n\times d}
+denote training samples with
+x
+(
+i
+)
+T
+{x^{(i)}}^{T}
+denoting the sample in the
+i
+i
+th
+row of
+X
+X
+for
+i
+∈
+[
+n
+]
+i\in[n]
+and
+y
+∈
+ℝ
+n
+×
+c
+y\in\mathbb{R}^{n\times c}
+denote training labels, where
+c
+c
+is the number of output channels (e.g. one-hot encoded classes for
+c
+>
+2
+c>2
+classes). In our case, the inputs are themselves embeddings obtained from the internal activations of parent models such as CLIP or ResNet. Let
+K
+:
+ℝ
+d
+×
+ℝ
+d
+→
+ℝ
+K:\mathbb{R}^{d}\times\mathbb{R}^{d}\to\mathbb{R}
+denote a kernel function (a positive semi-definite, symmetric function), such as the generalized Laplacian kernel we deploy in DANCE. Given a ridge regularization parameter
+λ
+≥
+0
+\lambda\geq 0
+, KRR solved on the data
+(
+X
+,
+y
+)
+(X,y)
+gives a predictor,
+f
+^
+:
+ℝ
+d
+→
+ℝ
+c
+\hat{f}:\mathbb{R}^{d}\to\mathbb{R}^{c}
+, of the form:
+f
+^
+​
+(
+x
+)
+=
+K
+​
+(
+x
+,
+X
+)
+​
+β
+,
+\displaystyle\hat{f}(x)=K(x,X)\beta~,
+(8)
+where
+β
+\beta
+is the solution to the following linear system:
+(
+K
+⁡
+(
+X
+,
+X
+)
++
+λ
+​
+I
+)
+​
+β
+=
+y
+.
+\displaystyle\qquad(K(X,X)+\lambda I)\beta=y~.
+(9)
+Here the notation
+K
+⁡
+(
+x
+,
+X
+)
+∈
+ℝ
+1
+×
+n
+K(x,X)\in\mathbb{R}^{1\times n}
+is the
+n
+n
+-dimensional row vector with
+K
+​
+(
+x
+,
+X
+)
+i
+=
+K
+⁡
+(
+x
+,
+x
+(
+i
+)
+)
+K(x,X)_{i}=K(x,x^{(i)})
+and
+K
+⁡
+(
+X
+,
+X
+)
+∈
+ℝ
+n
+×
+n
+K(X,X)\in\mathbb{R}^{n\times n}
+denotes the kernel matrix of pair-wise kernel evaluations
+K
+​
+(
+X
+,
+X
+)
+i
+​
+j
+=
+K
+⁡
+(
+x
+(
+i
+)
+,
+x
+(
+j
+)
+)
+K(X,X)_{ij}=K(x^{(i)},x^{(j)})
+. The advantage of kernel functions in the context of this work is that the predictor admits a closed form solution, which can be robustly computed and generally has fast training times for datasets under
+70
+70
+k samples.
+AGOP
+The
+M
+M
+matrix learned by RFM is computed as the Average Gradient Outer Product (AGOP) of a KRR model. For a given trained predictor
+g
+:
+ℝ
+d
+→
+ℝ
+c
+g:\mathbb{R}^{d}\rightarrow\mathbb{R}^{c}
+and its training inputs
+x
+1
+,
+…
+,
+x
+n
+∈
+ℝ
+d
+x_{1},\ldots,x_{n}\in\mathbb{R}^{d}
+, the AGOP operator produces a matrix
+AGOP
+(
+g
+,
+{
+x
+i
+}
+i
+=
+1
+n
+)
+=
+1
+n
+∑
+i
+=
+1
+n
+∇
+g
+(
+x
+i
+)
+∇
+g
+(
+x
+i
+)
+⊤
+∈
+ℝ
+d
+×
+d
+,
+\mathrm{AGOP}(g,\{x_{i}\}_{i=1}^{n})=\frac{1}{n}\sum_{i=1}^{n}\nabla g(x_{i})\nabla g(x_{i})^{\top}\in\mathbb{R}^{d\times d}~,
+where
+∇
+g
+∈
+ℝ
+d
+×
+c
+\nabla g\in\mathbb{R}^{d\times c}
+is the (transposed) input-output Jacobian of the function
+g
+g
+. The AGOP matrix of a predictor captures the critical features in input space that most influence the prediction function, provably and empirically improving downstream prediction performance when used as a feature extractor
+(
+Zhu et al., 2025
+;
+Beaglehole et al., 2025
+;
+Radhakrishnan et al., 2025
+)
+.
+RFMs
+We outline the particular RFM algorithm used in our work below. Given that the procedure is the same for any block, we simplify notation by omitting the block subscripts
+ℓ
+\ell
+. For any
+x
+,
+z
+∈
+ℝ
+k
+x,z\in\mathbb{R}^{k}
+, choice of
+bandwidth
+parameter
+L
+>
+0
+L>0
+, and a positive semi-definite, symmetric matrix
+M
+∈
+ℝ
+k
+×
+k
+M\in\mathbb{R}^{k\times k}
+and
+K
+M
+K_{M}
+Mahalanobis kernel function, let
+K
+M
+​
+(
+Z
+,
+z
+)
+∈
+ℝ
+n
+K_{M}(Z,z)\in\mathbb{R}^{n}
+such that
+K
+M
+​
+(
+Z
+,
+z
+)
+i
+=
+K
+M
+​
+(
+a
+(
+i
+)
+,
+z
+)
+K_{M}(Z,z)_{i}=K_{M}(a^{(i)},z)
+and let
+K
+M
+​
+(
+Z
+,
+Z
+)
+∈
+ℝ
+n
+×
+n
+K_{M}(Z,Z)\in\mathbb{R}^{n\times n}
+such that
+K
+M
+​
+(
+Z
+,
+Z
+)
+i
+,
+j
+=
+K
+M
+​
+(
+a
+(
+i
+)
+,
+a
+(
+j
+)
+)
+K_{M}(Z,Z)_{i,j}=K_{M}(a^{(i)},a^{(j)})
+. Letting
+M
+0
+=
+I
+M_{0}=I
+and
+λ
+≥
+0
+\lambda\geq 0
+denote a regularization parameter, RFM repeats the following two steps for
+T
+T
+iterations:
+Step 1:
+f
+^
+t
+(
+z
+)
+=
+β
+t
+K
+M
+t
+(
+Z
+,
+z
+)
+where
+β
+t
+=
+y
+[
+K
+M
+t
+(
+Z
+,
+Z
+)
++
+λ
+I
+]
+−
+1
+,
+\displaystyle\text{Step 1:}~~\hat{f}_{t}(z)=\beta_{t}K_{M_{t}}(Z,z)~\text{where}~\beta_{t}=y[K_{M_{t}}(Z,Z)+\lambda I]^{-1}~,
+(Kernel ridge regression)
+Step 2:
+M
+t
++
+1
+=
+1
+n
+∑
+i
+=
+1
+n
+∇
+z
+f
+^
+t
+(
+a
+(
+i
+)
+)
+∇
+z
+f
+^
+t
+(
+a
+(
+i
+)
+)
+⊤
+;
+\displaystyle\text{Step 2:}~~M_{t+1}=\frac{1}{n}\sum_{i=1}^{n}\nabla_{z}\hat{f}_{t}(a^{(i)})\nabla_{z}\hat{f}_{t}(a^{(i)})^{\top}~;
+(AGOP)
+where
+∇
+z
+f
+^
+t
+​
+(
+a
+(
+i
+)
+)
+\nabla_{z}\hat{f}_{t}(a^{(i)})
+denotes the gradient of
+f
+^
+t
+\hat{f}_{t}
+with respect to the input
+z
+z
+at the point
+a
+(
+i
+)
+a^{(i)}
+.
+We utilize the xRFM repo for the RFM implementation
+(
+Beaglehole et al., 2025
+)
+Appendix C
+Proof of Theorems
+C.1
+Proof of Theorem
+3.1
+Proof.
+Recall the definition of set-valued
+k
+k
+NN classifier:
+L
+^
+k
+​
+(
+Z
+)
+=
+Unique
+⁡
+{
+y
+~
+∈
+𝒴
+∣
+y
+~
+∈
+𝒩
+k
+​
+(
+Z
+,
+𝐙
+~
+)
+}
+,
+\hat{{L}}_{k}(Z)={\rm Unique}\{\tilde{y}\in\mathcal{Y}\mid\tilde{y}\in\mathcal{N}_{k}(Z,\tilde{\mathbf{Z}})\},
+where the neighborhood is searched over a reference dataset,
+𝒟
+ref
+\mathcal{D}_{\rm ref}
+, that is independent of
+{
+𝒟
+cal
+,
+(
+Z
+n
++
+1
+,
+y
+n
++
+1
+)
+}
+\{\mathcal{D}_{\rm cal},(Z_{n+1},y_{n+1})\}
+. Here, we add a bit of a technical tool. Assume the classifier model returns the set of prediction sets,
+f
+⁡
+(
+x
+)
+=
+{
+L
+^
+1
+​
+(
+Z
+)
+,
+…
+,
+L
+^
+m
+k
+​
+n
+​
+n
+​
+(
+Z
+)
+}
+∪
+{
+L
+^
+∞
+​
+(
+Z
+)
+}
+,
+f(x)=\{\hat{L}_{1}(Z),...,\hat{L}_{m_{knn}}(Z)\}\cup\{\hat{L}_{\infty}(Z)\},
+where
+L
+^
+∞
+(
+Z
+)
+=
+{
+1
+,
+.
+.
+,
+c
+}
+\hat{L}_{\infty}(Z)=\{1,..,c\}
+, the set of all labels. This function is available in the setting of the theorem, since it assumes the availability of
+L
+^
+k
+​
+(
+Z
+)
+\hat{L}_{k}(Z)
+for all
+k
+∈
+[
+m
+k
+​
+n
+​
+n
+]
+∪
+{
+∞
+}
+k\in[m_{knn}]\cup\{\infty\}
+. Then the nonconformity score function measures the quality of this
+f
+⁡
+(
+Z
+)
+f(Z)
+by finding the minimum
+k
+k
+that achieves
+y
+∈
+L
+^
+k
+​
+(
+Z
+)
+y\in\hat{L}_{k}(Z)
+. For feature-label pairings
+(
+Z
+,
+y
+)
+(Z,y)
+, we then define the rank-based nonconformity score that is implicitly defined on
+f
+⁡
+(
+Z
+)
+f(Z)
+as
+S
+k
+​
+n
+​
+n
+​
+(
+Z
+,
+y
+)
+=
+min
+⁡
+{
+k
+∈
+[
+m
+k
+​
+n
+​
+n
+]
+∪
+{
+∞
+}
+:
+y
+∈
+L
+^
+k
+​
+(
+Z
+)
+}
+,
+S_{knn}(Z,y)=\min\big\{k\in[m_{knn}]\cup\{\infty\}:y\in\hat{L}_{k}(Z)\big\},
+where
+L
+^
+∞
+​
+(
+Z
+)
+=
+𝒴
+\hat{L}_{\infty}(Z)=\mathcal{Y}
+is the set of all labels. Since the neighborhood search is based on an independent reference dataset, not the calibration dataset, the function
+f
+f
+is not associated with the calibration and test datasets, which does not negatively affect the assumed exchangeability. Then, we define the conformal threshold
+q
+k
+​
+n
+​
+n
+q_{knn}
+by taking the
+⌈
+(
+1
+−
+α
+k
+​
+n
+​
+n
+)
+​
+(
+1
++
+n
+)
+⌉
+th
+\lceil(1-\alpha_{knn})(1+n)\rceil^{\text{th}}
+smallest score of the calibration scores on
+𝒟
+cal
+\mathcal{D}_{\rm cal}
+for some error rate
+α
+k
+​
+n
+​
+n
+\alpha_{knn}
+. By the standard split conformal prediction argument, we have
+1
+−
+α
+≤
+ℙ
+⁡
+(
+S
+k
+​
+n
+​
+n
+​
+(
+Z
+n
++
+1
+,
+y
+n
++
+1
+)
+≤
+q
+k
+​
+n
+​
+n
+)
+≤
+1
+−
+α
++
+1
+n
++
+1
+,
+1-\alpha\leq\mathbb{P}(S_{knn}(Z_{n+1},y_{n+1})\leq q_{knn})\leq 1-\alpha+\frac{1}{n+1},
+(10)
+where the upper bound establishes when there is no tie among the nonconformity scores of the calibration dataset and the test data point.
+The core part in the proof is an interesting observation of inclusion monotonicity that for
+y
+~
+∈
+𝒴
+\tilde{y}\in\mathcal{Y}
+,
+y
+~
+∉
+L
+^
+k
+​
+(
+Z
+)
+⇔
+y
+~
+∉
+L
+^
+j
+​
+(
+Z
+)
+​
+(
+∀
+j
+≤
+k
+)
+.
+\tilde{y}\not\in\hat{L}_{k}(Z)\Leftrightarrow\tilde{y}\not\in\hat{L}_{j}(Z)~(\forall j\leq k).
+(11)
+Therefore,
+given
+q
+k
+​
+n
+​
+n
+<
+∞
+q_{knn}<\infty
+,
+there is equivalence among events such as
+{
+S
+k
+​
+n
+​
+n
+(
+Z
+n
++
+1
+,
+y
+n
++
+1
+)
+>
+q
+k
+​
+n
+​
+n
+}
+=
+∩
+k
+=
+1
+q
+k
+​
+n
+​
+n
+{
+y
+n
++
+1
+∉
+L
+^
+k
+(
+Z
+n
++
+1
+)
+}
+=
+{
+Z
+n
++
+1
+∉
+L
+^
+q
+k
+​
+n
+​
+n
+(
+Z
+n
++
+1
+)
+}
+,
+\{S_{knn}(Z_{n+1},y_{n+1})>q_{knn}\}=\cap_{k=1}^{q_{knn}}\{y_{n+1}\not\in\hat{L}_{k}(Z_{n+1})\}=\{Z_{n+1}\not\in\hat{L}_{q_{knn}}(Z_{n+1})\},
+where the last equality is by (
+11
+).
+Therefore, we have
+{
+S
+k
+​
+n
+​
+n
+(
+Z
+n
++
+1
+,
+y
+n
++
+1
+)
+≤
+q
+k
+​
+n
+​
+n
+}
+=
+{
+y
+n
++
+1
+∈
+L
+^
+q
+k
+​
+n
+​
+n
+(
+Z
+n
++
+1
+)
+}
+.
+\{S_{knn}(Z_{n+1},y_{n+1})\leq q_{knn}\}=\{y_{n+1}\in\hat{L}_{q_{knn}}(Z_{n+1})\}.
+Recall the definition of the prediction set
+C
+^
+k
+​
+n
+​
+n
+​
+(
+Z
+)
+=
+L
+^
+q
+k
+​
+n
+​
+n
+​
+(
+Z
+)
+\hat{C}_{knn}(Z)=\hat{L}_{q_{knn}}(Z)
+. Therefore, the bound in (
+10
+) transfers to
+1
+−
+α
+≤
+ℙ
+⁡
+(
+y
+n
++
+1
+∈
+C
+^
+k
+​
+n
+​
+n
+​
+(
+Z
+n
++
+1
+)
+)
+≤
+1
+−
+α
++
+1
+n
++
+1
+.
+1-\alpha\leq\mathbb{P}(y_{n+1}\in\hat{C}_{knn}(Z_{n+1}))\leq 1-\alpha+\frac{1}{n+1}.
+∎
+C.2
+Proof of Proposition 1:
+Proof:
+It follows from Boole’s inequality that:
+ℙ
+⁡
+(
+y
+n
++
+1
+CLOSE
+\displaystyle\mathbb{P}(y_{n+1}
+OPEN
+∉
+C
+^
+k
+​
+n
+​
+n
+​
+(
+Z
+n
++
+1
+)
+∪
+y
+n
++
+1
+∉
+C
+^
+c
+​
+l
+​
+r
+​
+(
+Z
+n
++
+1
+)
+)
+\displaystyle\not\in\hat{C}_{knn}(Z_{n+1})\cup y_{n+1}\not\in\hat{C}_{clr}(Z_{n+1}))
+≤
+ℙ
+⁡
+(
+y
+n
++
+1
+∉
+C
+^
+k
+​
+n
+​
+n
+​
+(
+Z
+n
++
+1
+)
+)
++
+ℙ
+⁡
+(
+y
+n
++
+1
+∉
+C
+^
+c
+​
+l
+​
+r
+​
+(
+Z
+n
++
+1
+)
+)
+≤
+α
+k
+​
+n
+​
+n
++
+α
+c
+​
+l
+​
+r
+\displaystyle\leq\mathbb{P}(y_{n+1}\not\in\hat{C}_{knn}(Z_{n+1}))+\mathbb{P}(y_{n+1}\not\in\hat{C}_{clr}(Z_{n+1}))\leq\alpha_{knn}+\alpha_{clr}
+where bound
+ℙ
+⁡
+(
+y
+∉
+C
+^
+k
+​
+n
+​
+n
+​
+(
+Z
+n
++
+1
+)
+)
+≤
+α
+k
+​
+n
+​
+n
+\mathbb{P}(y\not\in\hat{C}_{knn}(Z_{n+1}))\leq\alpha_{knn}
+follows from
+3.1
+and split conformal bound
+ℙ
+⁡
+(
+y
+∉
+C
+^
+c
+​
+l
+​
+r
+​
+(
+Z
+n
++
+1
+)
+)
+≤
+α
+c
+​
+l
+​
+r
+\mathbb{P}(y\not\in\hat{C}_{clr}(Z_{n+1}))\leq\alpha_{clr}
+.
+Appendix D
+Disjoint Reference Ablation Study
+In the main text, we used a leave-one-out strategy where the calibration set was both reused as the reference set and the set used to search for
+λ
+\lambda
+to maximize data efficiency. In this section, we validate those results against a theoretically valid disjoint split. More specifically, we define the reference set
+𝒟
+ref
+\mathcal{D}_{\rm ref}
+as the training set
+𝒟
+sup
+\mathcal{D}_{\rm sup}
+used to fit the RFM adapter. Furthermore, we evenly split the available calibration data,
+𝒟
+cal
+\mathcal{D}_{\rm cal}
+, into two disjoint subsets:
+𝒟
+λ
+\mathcal{D}_{\lambda}
+, used to select the mixing parameter
+λ
+\lambda
+, and
+𝒟
+Thr
+\mathcal{D}_{\rm Thr}
+, used to compute the conformal thresholds
+(
+q
+k
+​
+n
+​
+n
+,
+q
+c
+​
+l
+​
+r
+)
+(q_{knn},q_{clr})
+.
+Uncertainty Quantification (UQ) quality is compared between the reuse and disjoint strategies through set size, marginal coverage and class-conditional coverage violation (CCV). We evaluate with
+m
+k
+​
+n
+​
+n
+=
+100
+m_{knn}=100
+,
+m
+c
+​
+l
+​
+r
+=
+50
+m_{clr}=50
+,
+λ
+∈
+[
+0
+,
+0.1
+,
+…
+,
+0.9
+,
+1.0
+]
+\lambda\in[0,0.1,...,0.9,1.0]
+and
+α
+∈
+[
+0.1
+,
+0.05
+]
+\alpha\in[0.1,0.05]
+on the ImageNet, ImageNet-Rendition and ImageNet-Sketch datasets.
+The results in Table
+3
+show that the two splits are very consistent to each other between both
+α
+\alpha
+levels in all three datasets. The disjoint split attains slightly lower CCV in all settings, indicating better conditional robustness than the reuse split. The set size efficiency difference for both splits is similar across all settings. While theoretical validity is important, we believe the close results here indicate the heuristic reuse split can be used to maximize data efficiency while maintaining the desired theoretical coverage properties DANCE provides.
+Dataset
+α
+\alpha
+𝒟
+ref
+\mathcal{D}_{\rm ref}
+Set Size
+Coverage
+CCV
+ImageNet
+0.05
+Reuse
+10.75
+0.953
+6.450
+Disjoint
+10.09
+0.953
+6.430
+0.10
+Reuse
+5.01
+0.913
+8.770
+Disjoint
+4.55
+0.914
+8.760
+ImageNet-R
+0.05
+Reuse
+6.30
+0.951
+4.627
+Disjoint
+6.15
+0.955
+4.525
+0.10
+Reuse
+3.16
+0.914
+6.955
+Disjoint
+3.44
+0.924
+6.824
+ImageNet-Sketch
+0.05
+Reuse
+17.78
+0.954
+6.032
+Disjoint
+17.86
+0.958
+5.927
+0.10
+Reuse
+6.42
+0.903
+8.625
+Disjoint
+8.12
+0.924
+8.133
+Table 3:
+Comparison of reused (Main Paper) vs. disjoint reference set for UQ quality metrics( Set Size, Coverage and Class-conditional Coverage Violation) for the 3 ImageNet variants.
+Appendix E
+Neighbor Ablation Studies
+(a)
+m
+k
+​
+n
+​
+n
+m_{knn}
+: Coverage
+(b)
+m
+k
+​
+n
+​
+n
+m_{knn}
+: Set Size
+(c)
+m
+k
+​
+n
+​
+n
+m_{knn}
+: CCV
+(d)
+m
+c
+​
+l
+​
+r
+m_{clr}
+: Coverage
+(e)
+m
+c
+​
+l
+​
+r
+m_{clr}
+: Set Size
+(f)
+m
+c
+​
+l
+​
+r
+m_{clr}
+: CCV
+Figure 4
+:
+Additional ablation studies.
+Top Row:
+Impact of neighbor number for
+m
+k
+​
+n
+​
+n
+m_{knn}
+.
+Bottom Row:
+Impact of neighbor number for
+m
+c
+​
+l
+​
+r
+m_{clr}
+E.1
+m
+k
+​
+n
+​
+n
+m_{knn}
+Sensitivity
+We find that performance of
+C
+^
+k
+​
+n
+​
+n
+(
+.
+)
+\hat{C}_{knn}(.)
+is generally resistant to choice of
+m
+k
+​
+n
+​
+n
+m_{knn}
+. We search through
+m
+k
+​
+n
+​
+n
+∈
+[
+15
+,
+25
+,
+50
+,
+100
+]
+m_{knn}\in[15,25,50,100]
+. Figure
+4
+(top row) shows the effect of
+m
+k
+​
+n
+​
+n
+m_{knn}
+on the UQ metrics of coverage, set size and CCV for CLIP ViT-B/16 at
+α
+=
+0.05
+\alpha=0.05
+. As
+m
+k
+​
+n
+​
+n
+m_{knn}
+increases, the set size remains steady after around
+m
+k
+​
+n
+​
+n
+=
+40
+m_{knn}=40
+with CCV also remaining steady at just under 5.8. The plots show that for very small neighbor values, the coverage lowers with the minimal marginal coverage drops below the desired 0.95, although this quickly returns to the desired nominal level. This ablation indicates limited benefit of large
+m
+k
+​
+n
+​
+n
+m_{knn}
+, with it only adding computational burden.
+E.2
+m
+c
+​
+l
+​
+r
+m_{clr}
+Sensitivity
+Figure
+4
+(bottom row) shows the effect of
+m
+c
+​
+l
+​
+r
+m_{clr}
+on the UQ metrics of coverage, set size and CCV for CLIP ViT-B/16 at
+α
+=
+0.05
+\alpha=0.05
+. We search through
+m
+c
+​
+l
+​
+r
+∈
+[
+15
+,
+25
+,
+50
+,
+100
+]
+m_{clr}\in[15,25,50,100]
+. As for
+m
+k
+​
+n
+​
+n
+m_{knn}
+, for very small neighbor sizes, the coverage drops below the desired 0.95 level, however this again quickly corrects. From the second plot, we see the choice of
+m
+c
+​
+l
+​
+r
+m_{clr}
+highly impacts the resulting set-size where as
+m
+c
+​
+l
+​
+r
+m_{clr}
+increases, the set size increases as well. We see the opposite for CCV, where there is a sharp drop in CCV until 50 neighbors. We see that as we go from
+m
+c
+​
+l
+​
+r
+=
+50
+m_{clr}=50
+to
+100
+100
+, the set size continues to increase; however, the CCV no longer drops, indicating the addition of more neighbors also brings limited benefits.
+Appendix F
+Selection of
+λ
+\lambda
+The hyperparameter
+λ
+\lambda
+controls the allocation of
+α
+\alpha
+between
+S
+k
+​
+n
+​
+n
+S_{knn}
+and
+S
+c
+​
+l
+​
+r
+S_{clr}
+. We determine the optimal
+λ
+\lambda
+through a grid search over
+[
+0
+,
+0.1
+,
+…
+,
+0.9
+,
+1.0
+]
+[0,0.1,...,0.9,1.0]
+. First
+𝒟
+cal
+\mathcal{D}_{\rm cal}
+is partitioned into reference set
+𝒟
+ref
+\mathcal{D}_{\rm ref}
+(80%) and tuning set
+𝒟
+val
+\mathcal{D}_{\rm val}
+(20%). For each candidate
+λ
+\lambda
+, we calibrate on
+𝒟
+ref
+\mathcal{D}_{\rm ref}
+using leave-one-out neighbor search before evaluating prediction sets for
+𝒟
+Test
+\mathcal{D}_{\rm Test}
+. We select the parameter that minimizes a weighted combination of the standardized set size (
+S
+​
+i
+​
+z
+​
+e
+​
+(
+λ
+)
+Size(\lambda)
+), and class-conditional coverage violation (
+C
+​
+C
+​
+V
+​
+(
+λ
+)
+CCV(\lambda)
+) such that
+λ
+opt
+=
+arg
+​
+min
+𝜆
+​
+(
+0.8
+⋅
+S
+​
+i
+​
+z
+​
+e
+​
+(
+λ
+)
++
+0.2
+⋅
+C
+​
+C
+​
+V
+​
+(
+λ
+)
+)
+\lambda_{\text{opt}}=\underset{\lambda}{{\mathop{\rm arg\,min}}}(0.8\cdot Size(\lambda)+0.2\cdot CCV(\lambda))
+where standardization is computed relative to mean and standard deviation across all candidates. This weighting ensures
+λ
+\lambda
+is selected prioritizing set size efficiency, while still retaining a level of conditional robustness.
+Appendix G
+Detailed Results
+G.1
+RFM and Kernel Parameter Fit Time
+Figure
+5
+shows the computational scalability of the RFM methodology. We notice a linear trend on the
+log
+\log
+-
+log
+\log
+scale, showing a predictable timing quality with respect to data volume. This efficiency is substantial, where the longest fit time for ImageNet required only 713 seconds (
+∼
+\sim
+12 minutes), with the majority of datasets requiring under 60 seconds to achieve high predictive performance. We also note that this fit time is for 25 Bayesian Optimization evaluations to fit
+M
+,
+𝜷
+\boldsymbol{\beta}
+, and determine optimal
+ξ
+,
+L
+\xi,L
+. This demonstrates that RFM is a computationally efficient solution for task-adaption and kernel fitting.
+The BayesianOptimization package
+(
+Nogueira, 2014
+)
+was used for parameter optimization.
+Figure 5
+:
+RFM Training Set Size vs Training Time (Both axes are log-scaled.)
+G.2
+ViT-B/16 Results
+The following show detailed results for CLIP ViT-B/16. Best and second best set size and CCV are
+bolded
+and
+underlined
+, respectively.
+Dataset
+Classes
+Test size
+Method
+Accuracy
+Set size
+Coverage
+CCV
+Imagenet
+1000
+10000
+DANCE (Ours)
+0.729
+10.75
+0.953
+6.450
+k
+k
+-NN Set (Ours)
+0.729
+10.75
+0.953
+6.450
+CLR Set (Ours)
+0.729
+16.18
+0.957
+6.390
+Deep
+k
+k
+-NN
+0.729
+11.52
+0.953
+6.650
+RFM Adapter (APS)
+0.729
+8.04
+0.951
+6.500
+RFM Adapter (RAPS)
+0.729
+8.09
+0.950
+6.540
+NCP (RAPS)
+0.729
+8.88
+0.950
+6.400
+OT (APS)
+0.693
+15.16
+0.950
+6.400
+OT (RAPS)
+0.693
+10.45
+0.949
+6.420
+Imagenet-Rendition
+200
+6000
+DANCE (Ours)
+0.822
+6.30
+0.951
+4.627
+k
+k
+-NN Set (Ours)
+0.822
+6.30
+0.951
+4.627
+CLR Set (Ours)
+0.822
+10.29
+0.958
+4.181
+Deep
+k
+k
+-NN
+0.822
+7.29
+0.958
+4.169
+RFM Adapter (APS)
+0.822
+5.46
+0.951
+4.845
+RFM Adapter (RAPS)
+0.822
+5.61
+0.952
+4.783
+NCP (RAPS)
+0.822
+3.19
+0.936
+5.934
+OT (APS)
+0.795
+8.68
+0.953
+4.117
+OT (RAPS)
+0.795
+7.23
+0.953
+3.903
+Imagenet-Sketch
+1000
+10355
+DANCE (Ours)
+0.718
+17.78
+0.954
+6.032
+k
+k
+-NN Set (Ours)
+0.718
+17.09
+0.953
+6.077
+CLR Set (Ours)
+0.718
+19.93
+0.956
+5.975
+Deep
+k
+k
+-NN
+0.718
+29.02
+0.968
+5.534
+RFM Adapter (APS)
+0.718
+22.85
+0.952
+6.186
+RFM Adapter (RAPS)
+0.718
+23.00
+0.952
+6.175
+NCP (RAPS)
+0.718
+24.05
+0.950
+6.302
+OT (APS)
+0.520
+43.41
+0.948
+6.644
+OT (RAPS)
+0.520
+29.87
+0.952
+6.414
+Eurosat
+10
+1620
+DANCE (Ours)
+0.955
+1.08
+0.958
+2.539
+k
+k
+-NN Set (Ours)
+0.955
+1.08
+0.959
+2.606
+CLR Set (Ours)
+0.955
+1.22
+0.956
+2.872
+Deep
+k
+k
+-NN
+0.955
+1.04
+0.956
+3.506
+RFM Adapter (APS)
+0.955
+1.12
+0.952
+2.689
+RFM Adapter (RAPS)
+0.955
+1.12
+0.952
+2.689
+NCP (RAPS)
+0.955
+1.00
+0.955
+2.789
+OT (APS)
+0.559
+4.63
+0.952
+3.078
+OT (RAPS)
+0.559
+4.58
+0.951
+2.956
+Cars
+196
+1609
+DANCE (Ours)
+0.842
+2.67
+0.958
+5.808
+k
+k
+-NN Set(Ours)
+0.842
+2.19
+0.958
+6.634
+CLR Set (Ours)
+0.842
+7.63
+0.974
+5.934
+Deep
+k
+k
+-NN
+0.842
+3.45
+0.955
+6.996
+RFM Adapter (APS)
+0.842
+2.39
+0.945
+7.603
+RFM Adapter (RAPS)
+0.842
+2.34
+0.943
+7.774
+NCP (RAPS)
+0.842
+3.35
+0.958
+6.662
+OT (APS)
+0.692
+4.39
+0.958
+6.662
+OT (RAPS)
+0.692
+4.22
+0.958
+6.675
+Food
+101
+6060
+DANCE (Ours)
+0.882
+1.95
+0.954
+2.921
+k
+k
+-NN Set (Ours)
+0.882
+1.86
+0.950
+3.020
+CLR Set (Ours)
+0.882
+3.17
+0.955
+3.102
+Deep
+k
+k
+-NN
+0.882
+1.83
+0.951
+3.201
+RFM Adapter (APS)
+0.882
+1.95
+0.951
+3.185
+RFM Adapter (RAPS)
+0.882
+1.98
+0.952
+3.267
+NCP (RAPS)
+0.882
+1.49
+0.945
+3.234
+OT (APS)
+0.853
+3.18
+0.953
+2.459
+OT (RAPS)
+0.853
+2.99
+0.954
+2.508
+Table 4:
+Conformal prediction results (part 1).
+Dataset
+Classes
+Test size
+Method
+Accuracy
+Set size
+Coverage
+CCV
+Pets
+37
+734
+DANCE (Ours)
+0.955
+1.09
+0.963
+3.514
+k
+k
+-NN Set (Ours)
+0.955
+1.09
+0.966
+3.784
+CLR Set (Ours)
+0.955
+2.46
+0.969
+3.814
+Deep
+k
+k
+-NN
+0.955
+1.37
+0.970
+4.219
+RFM Adapter (APS)
+0.955
+1.20
+0.950
+4.369
+RFM Adapter (RAPS)
+0.955
+1.20
+0.952
+4.354
+NCP (RAPS)
+0.955
+1.11
+0.966
+4.069
+OT (APS)
+0.909
+1.65
+0.951
+3.934
+OT (RAPS)
+0.909
+1.64
+0.951
+3.934
+Flowers
+102
+502
+DANCE (Ours)
+0.961
+1.00
+0.949
+9.066
+k
+k
+-NN Set (Ours)
+0.961
+1.00
+0.949
+9.066
+CLR Set (Ours)
+0.961
+2.22
+0.959
+8.725
+Deep
+k
+k
+-NN
+0.961
+7.04
+0.998
+5.147
+RFM Adapter (APS)
+0.961
+1.24
+0.957
+6.938
+RFM Adapter (RAPS)
+0.961
+1.19
+0.957
+6.938
+NCP (RAPS)
+0.961
+1.18
+0.985
+6.019
+OT (APS)
+0.758
+6.76
+0.944
+9.450
+OT (RAPS)
+0.758
+6.76
+0.948
+9.237
+Caltech
+101
+501
+DANCE (Ours)
+0.934
+1.53
+0.983
+6.800
+k
+k
+-NN Set (Ours)
+0.934
+1.07
+0.958
+9.276
+CLR Set (Ours)
+0.934
+8.71
+0.989
+6.100
+Deep
+k
+k
+-NN
+0.934
+7.69
+0.994
+5.567
+RFM Adapter (APS)
+0.934
+1.44
+0.955
+9.124
+RFM Adapter (RAPS)
+0.934
+1.38
+0.955
+9.270
+NCP (RAPS)
+0.934
+1.34
+0.968
+8.600
+OT (APS)
+0.925
+1.82
+0.964
+6.978
+OT (RAPS)
+0.925
+1.74
+0.962
+7.078
+DTD
+47
+338
+DANCE (Ours)
+0.676
+8.99
+0.965
+5.904
+k
+k
+-NN Set (Ours)
+0.676
+8.99
+0.965
+5.904
+CLR Set (Ours)
+0.676
+13.26
+0.960
+6.223
+Deep
+k
+k
+-NN
+0.676
+10.03
+0.971
+6.011
+RFM Adapter (APS)
+0.676
+11.09
+0.949
+7.074
+RFM Adapter (RAPS)
+0.676
+11.05
+0.949
+7.074
+NCP (RAPS)
+0.676
+17.24
+0.963
+6.170
+OT (APS)
+0.471
+14.12
+0.955
+6.968
+OT (RAPS)
+0.471
+14.02
+0.955
+6.968
+UCF
+101
+744
+DANCE (Ours)
+0.950
+1.38
+0.986
+5.342
+k
+k
+-NN Set (Ours)
+0.950
+1.08
+0.971
+6.195
+CLR Set (Ours)
+0.950
+5.08
+0.984
+5.490
+Deep
+k
+k
+-NN
+0.950
+2.22
+0.960
+6.914
+RFM Adapter (APS)
+0.950
+1.31
+0.956
+6.917
+RFM Adapter (RAPS)
+0.950
+1.28
+0.957
+6.906
+NCP (RAPS)
+0.950
+1.19
+0.967
+6.682
+OT (APS)
+0.746
+6.00
+0.956
+7.612
+OT (RAPS)
+0.746
+5.64
+0.953
+7.743
+Table 5:
+Conformal prediction results (part 2).
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

@@ -1,0 +1,3355 @@
+Optimizing SSD-Resident Graph Indexing for High-Throughput Vector Search
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract.
+1
+Introduction
+2
+Background
+2.1
+Approximate Nearest Neighbor Search
+2.2
+Graph-based ANNS Index
+2.3
+Asynchronous Execution Framework
+2.4
+Larger-than-Memory Database Techniques
+3
+VeloANN Design
+3.1
+Coroutine-based ANNS Execution
+3.2
+Buffer Pool Management
+3.3
+Physical Index Layout
+3.4
+Record Co-Placement Mechanism
+4
+Cache-Aware ANNS Procedure
+4.1
+Prefetching
+4.2
+Cache-aware Beam Search
+5
+Evaluation
+5.1
+System Implementation
+5.2
+Experimental Setup
+5.3
+Overall Performance
+5.4
+Micro Analysis
+5.5
+Breakdown Analysis
+6
+Related Work
+7
+Conclusion
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2602.22805v1 [cs.DB] 26 Feb 2026
+Optimizing SSD-Resident Graph Indexing for High-Throughput Vector Search
+Weichen Zhao
+Note:
+Weichen Zhao and Yuncheng Lu contributed equally to this work.
+Affiliation:
+East China Normal University
+email:
+weichenzhao@stu.ecnu.edu.cn
+,
+Yuncheng Lu
+Affiliation:
+Bytedance
+email:
+luyuncheng@bytedance.com
+,
+Yao Tian
+Affiliation:
+Bytedance
+email:
+yao.tian@bytedance.com
+,
+Hao Zhang
+Affiliation:
+Bytedance
+email:
+zhanghao.ai@bytedance.com
+,
+Jiehui Li
+Affiliation:
+Bytedance
+email:
+lijiehui@bytedance.com
+,
+Minghao Zhao
+Affiliation:
+East China Normal University
+email:
+mhzhao@dase.ecnu.edu.cn
+,
+Yakun Li
+Note:
+Corresponding authors.
+Affiliation:
+Bytedance
+email:
+liyakun.hit@bytedance.com
+and
+Weining Qian
+Affiliation:
+East China Normal University
+email:
+wnqian@dase.ecnu.edu.cn
+Abstract.
+Graph-based approximate nearest neighbor search (ANNS) methods (e.g., HNSW) have become the de facto state of the art for their high precision and low latency.
+To scale beyond main memory, recent out-of-memory ANNS systems leverage SSDs to store large vector indexes.
+However, they still suffer from severe CPU underutilization and read amplification (i.e., storage stalls) caused by limited access locality during graph traversal.
+We present
+VeloANN
+, which mitigates storage stalls through a locality-aware data layout and a coroutine-based asynchronous runtime.
+VeloANN
+utilizes hierarchical compression and affinity-based data placement scheme to co-locate related vectors within the same page, effectively reducing fragmentation and over-fetching.
+We further design a record-level buffer pool, where each record groups the neighbors of a vector; by persistently retaining hot records in memory, it eliminates excessive page swapping under constrained memory budgets.
+To minimize CPU scheduling overheads during disk I/O interruptions,
+VeloANN
+employs a coroutine-based asynchronous runtime for lightweight task scheduling.
+On top of this, it incorporates asynchronous prefetching and a beam-aware search strategy to prioritize cached data, ultimately improving overall search efficiency.
+Extensive experiments show that
+VeloANN
+outperforms state-of-the-art disk-based ANN systems by up to 5.8× in throughput and 3.25× in latency reduction, while achieving 0.92× the throughput of in-memory systems using only 10% of their memory footprint.
+†
+†
+authors:
+.
+PVLDB Reference Format:
+PVLDB, 14(1): XXX-XXX, 2026.
+doi:XX.XX/XXX.XX
+†
+†
+This work is licensed under the Creative Commons BY-NC-ND 4.0 International License. Visit
+https://creativecommons.org/licenses/by-nc-nd/4.0/
+to view a copy of this license. For any use beyond those covered by this license, obtain permission by emailing
+info@vldb.org
+. Copyright is held by the owner/author(s). Publication rights licensed to the VLDB Endowment.
+Proceedings of the VLDB Endowment, Vol. 14, No. 1 ISSN 2150-8097.
+doi:XX.XX/XXX.XX
+1.
+Introduction
+Approximate nearest neighbor search (ANNS) serves as the core technique behind applications like recommendation
+(
+Li et al., 2018
+;
+Li et al., 2021
+;
+Wei et al., 2020
+)
+and retrieval-augmented generation (RAG)
+(
+Lewis et al., 2020
+)
+.
+Among various solutions to the ANN problem, graph-based methods organize vectors into proximity graphs and retrieve neighbors via greedy traversal; these approach have emerged as the de facto state-of-the-art due to their superior accuracy-efficiency balance.
+Nevertheless, existing designs typically assume an in-memory execution model to achieve low latency, which becomes impractical when modern embedding collections grow to billions of vectors.
+Therefore, recent efforts turn to out-of-memory ANN systems that seek to scale capacity beyond DRAM while retaining near in-memory performance
+(
+Fu et al., 2017
+;
+Li et al., 2018
+;
+Wei et al., 2020
+)
+.
+To enable out-of-memory (a.k.a larger-than-memory) vector search, systems such as DiskANN
+(
+Jayaram Subramanya et al., 2019
+)
+and its successors
+(
+Wang et al., 2024
+;
+Zhong et al., 2025
+;
+Shim et al., 2025
+;
+OpenSearch Community, 2024
+)
+adopt a page-based storage layout, where each page holds multiple fixed-size records, and each record contains a vector and its neighbor identifiers. The search process follows the same best-first paradigm as in in-memory graphs, starting from a chosen (or random) entry point and iteratively fetching neighbors from disk until convergence.
+To manage memory–disk interaction, production systems adopt two designs. (1)
+OS-managed caching
+via memory-mapped I/O (
+e
+.g.,
+𝚖𝚖𝚊𝚙
+\mathtt{mmap}
+(
+Crotty et al., 2022
+;
+Stoica and Ailamaki, 2013
+)
+), used by Qdrant
+(
+Qdrant Technologies, 2024
+)
+and OpenSearch
+(
+OpenSearch Community, 2024
+)
+, offers simplicity but limited control. (2) Self-
+managed buffer pools
+with custom replacement policies, such as in PgVector
+(
+, 2025
+)
+, provide explicit control over hot-page residency at the cost of higher complexity (§2.4).
+In fact, however,
+current systems simply reuse generic OS or DBMS mechanisms, overlooking the access characteristics of graph-based ANN search, and thus fail to deliver satisfactory performance.
+In such cases, graph traversal exhibits poor spatial locality, causing excessive random I/O and significant CPU underutilization.
+As a result, state-of-the-art methods achieve less than half of the query throughput (QPS) of their in-memory counterparts (Fig.
+1
+).
+As the result of the
+storage stalls
+, performance gap primarily stems from the following factors.
+∙
+\bullet
+The serialized execution of I/O and computation leads to both CPU and I/O underutilized.
+the best-first search algorithm
+(
+Guo and Lu, 2025
+)
+executes computation and I/O sequentially at each search step, causing excessive CPU idle time while waiting for disk reads, which are typically an order of magnitude slower than computation. In addition, its synchronous I/O execution requires each step to wait for the slowest read in the batch to complete, leaving the I/O pipeline severely underutilized. PipeANN
+(
+Guo and Lu, 2025
+)
+overlaps the next search iteration with underutilized I/O periods, which reducing query latency but causes a throughput drop due to I/O over-fetching.
+∙
+\bullet
+Suboptimal on-disk layouts leads to substantial overprefetching.
+Current on-disk layouts typically pack multiple records per page sequentially by record ID. This design suffers from poor data locality, since semantically or spatially related vertices are scattered across different pages.
+As a result, an I/O operation often loads an entire page but uses only a single record, leading to severe I/O amplification. It also suffers from page fragmentation, as fixed-size records often leave pages partially filled, wasting storage space and I/O bandwidth.
+Recent disk-based methods
+(
+Wang et al., 2024
+;
+Shim et al., 2025
+)
+adopt graph reordering techniques to place adjacent vertices within the same page but become impractical at scale due to their high computational overhead.
+∙
+\bullet
+Suboptimal buffer management yields low cache hit rates.
+Existing paging mechanisms fail to capture the access characteristics of ANN workloads, resulting in low cache hit rate and, consequently, degraded query performance. For instance, on the SIFT1M dataset, when the buffer cache is set to 8% of the index size, the cache hit rate reaches only 8.49% for DiskANN
+(
+Jayaram Subramanya et al., 2019
+)
+.
+Even with a generous 20% buffer allocation, the cache hit rate increases only to 24.4%, indicating ineffective caching design.
+Figure 1.
+Query throughput comparison on the GIST1M dataset among an in-memory index (Vamana
+(
+Jayaram Subramanya et al., 2019
+)
+), on-disk indexes (DiskANN
+(
+Jayaram Subramanya et al., 2019
+)
+, Starling
+(
+Wang et al., 2024
+)
+, PipeANN
+(
+Guo and Lu, 2025
+)
+), and our
+VeloANN
+. The memory budget is 20% of the disk index size.
+To tackle these challenges, we design
+VeloANN
+, an out-of-memory graph-based ANNS system that eliminates storage stalls through a holistic co-design of compute–I/O scheduling, on-disk data layout, and buffer management. As shown in Figure
+1
+,
+VeloANN
+delivers near in-memory performance.
+To achieve this,
+VeloANN
+adopts a coroutine-based asynchronous execution model to fully utilize both CPU and I/O resources. Each query is executed as a coroutine that interleaves distance computation and SSD I/O through non-blocking operations, allowing multiple query coroutines to progress cooperatively. When a coroutine is suspending on an I/O request, the scheduler yields control to other coroutines for computation and resumes it once the I/O completes.
+This design effectively overlaps I/O latency with computation, enabling continuous hardware utilization without costly thread-context switches or locking overhead.
+To optimize on-disk layouts,
+VeloANN
+first quantizes each record to reduce its storage footprint.
+The original 32-bit floating-point vectors are quantized into 4-bit-per-dimension codes using ExtRabitQ
+(
+Gao and Long, 2024
+;
+Gao et al., 2025
+)
+, while the neighbor list is further compressed with efficient integer coding techniques such as delta encoding or Partitioned Elias-Fano coding
+(
+Ottaviano and Venturini, 2014
+)
+.
+To support variable-sized record management and fast lookup,
+VeloANN
+introduces a new page layout, where the page head stores metadata such as record offsets and IDs, and the variable-sized records are appended from the opposite end. This two-way growth design achieves dense packing to fully utilize available page space. To improve data locality,
+VeloANN
+embeds a near-zero-overhead
+record coloring
+technique into the graph construction process. Upon updating the out-neighbors of each vertex in the initial random graph,
+VeloANN
+assigns closely related vertex pairs a shared
+color
+and places them within the same physical page at the end of construction. By reusing computations already performed during graph building, this design avoids costly graph reordering while achieving the same I/O reduction effect during query traversal.
+To address the low cache efficiency issue,
+VeloANN
+redesigns its buffer management from both the data structure and search perspectives.
+At the data structure level, it introduces a record-level buffer pool motivated by the highly skewed access patterns in ANN workloads.
+For example, on the SIFT1M workload, we found that 47% of vertices in DiskANN’s graph remain unaccessed during queries, while only 0.1% of pages are untouched, revealing a clear mismatch between record-level access and page-level caching.
+To bridge this gap,
+VeloANN
+introduces a record-level buffer pool and employs a lightweight clock-based second-chance policy to pin frequently accessed records in memory and gradually evict cold records.
+At the search level,
+VeloANN
+proactively fetches promising on-disk candidates ahead of use and develops a cache-aware beam search strategy to prioritize exploring in-memory candidates, achieving fewer I/O stalls and thereby better query performance.
+In summary, we make the following contributions:
+•
+We design an asynchronous coroutine-based execution framework that dynamically schedules ready queries while others are suspended on I/O, maximizing CPU and SSD utilization.
+•
+We propose a novel on-disk page layout that clusters adjacent compressed records into the same page to reduce redundant I/O.
+•
+We develop a record-level buffer management policy, complemented by asynchronous prefetching and cache-aware beam search to better exploit access skew and improve cache hit rates.
+•
+We implement
+VeloANN
+1
+1
+1
+The artifacts will be open-sourced after Bytedance’s review process, which is currently underway.
+in Rust with production-grade reliability. Extensive experiments demonstrate that
+VeloANN
+delivers up to
+5.8
+×
+5.8\times
+higher QPS and
+3.25
+×
+3.25\times
+lower query latency than state-of-the-art disk-based ANNS systems, while approaching the performance of leading in-memory indexes,
+e
+.g., using only 10% of their memory, it achieves
+0.92
+×
+0.92\times
+QPS.
+The rest of the paper is organized as follows. Section
+2
+introduces basic concepts and background. Our
+VeloANN
+is detailed in Section
+3
+and cache-aware ANNS procedure Section
+4
+followed by experimental results in Section
+5
+. Section
+6
+reviews related work, and we conclude in Section
+7
+.
+2.
+Background
+This section first introduces the fundamentals of ANNS and graph-based indexes for ANNS, then reviews techniques for asynchronous execution and database buffer pool management.
+2.1.
+Approximate Nearest Neighbor Search
+In this paper, we study the approximate nearest neighbor search (ANNS) problem in Euclidean space.
+Let the dataset be
+X
+=
+{
+x
+1
+,
+…
+,
+X=\{x_{1},\dots,
+x
+n
+}
+x_{n}\}
+, where each data point
+x
+i
+∈
+ℝ
+d
+x_{i}\in\mathbb{R}^{d}
+is a
+d
+d
+-dimensional vector.
+Given a query vector
+q
+∈
+ℝ
+d
+q\in\mathbb{R}^{d}
+, the goal of nearest neighbor search is to find the top-
+k
+k
+data points in
+X
+X
+that are closest to
+q
+q
+under the Euclidean distance metric
+∥
+⋅
+,
+⋅
+∥
+2
+\|\cdot,\cdot\|_{2}
+, namely:
+(1)
+R
+=
+k
+​
+-
+​
+arg
+⁡
+min
+x
+i
+∈
+X
+​
+‖
+q
+−
+x
+i
+‖
+2
+.
+R=k\text{-}\arg\min_{x_{i}\in X}\|q-x_{i}\|_{2}.
+Due to the curse of dimensionality
+(
+Indyk and Motwani, 1998
+)
+, computing the exact top-
+k
+k
+neighbors is prohibitively expensive in high dimensions. Therefore, ANN search is commonly adopted, which trades a bit accuracy for substantial efficiency gains. For an ANN result
+R
+′
+R^{\prime}
+with
+|
+R
+′
+|
+=
+k
+|R^{\prime}|=k
+, the retrieval accuracy is typically measured by
+Recall@k
+, defined as
+(2)
+Recall@k
+=
+|
+R
+∩
+R
+′
+|
+k
+.
+\text{Recall@k}=\frac{|R\cap R^{\prime}|}{k}.
+2.2.
+Graph-based ANNS Index
+As reviewed in Section
+6
+, numerous graph-based indexes have been proposed for ANN queries
+(
+Azizi et al., 2023
+;
+Chen et al., 2021
+;
+Fu and Cai, 2016
+;
+Fu et al., 2021
+;
+Fu et al., 2017
+;
+Harwood and Drummond, 2016
+;
+Malkov and Yashunin, 2018
+;
+Peng et al., 2023
+;
+Wang et al., 2021
+)
+. These approaches achieve state-of-the-art search performance by efficiently identifying nearest neighbors through graph traversal, typically examining only a limited number of candidate vectors
+(
+Munoz et al., 2019
+)
+. Specifically, during the indexing phase, these methods construct a graph structure where each data vector corresponds to a vertex. Upon receiving a query, the system employs a greedy beam search algorithm
+(
+Fu et al., 2021
+;
+Fu et al., 2017
+;
+Jayaram Subramanya et al., 2019
+;
+Malkov and Yashunin, 2018
+)
+. Throughout the search process, the algorithm maintains a beam set with a maximum capacity of
+n
+b
+n_{b}
+vectors. The search initiates by adding an entry point to the beam set and proceeds iteratively. In each iteration, the algorithm identifies the unvisited vector within the beam set that is closest to the query vector, marks it as visited, and computes exact distances between the query vector and all its graph neighbors. These neighbors are subsequently inserted into the beam set. If the beam set exceeds its capacity
+n
+b
+n_{b}
+after insertion, only the
+n
+b
+n_{b}
+nearest vectors are retained. The algorithm terminates when all vectors in the beam set have been marked as visited, at which point the nearest vector in the beam set is returned as the result. It is evident that a larger beam size results in the examination of more vectors during search, consequently yielding higher accuracy at the cost of increased latency.
+2.3.
+Asynchronous Execution Framework
+Modern I/O-intensive data systems increasingly adopt asynchronous execution models to optimize performance and resource utilization.
+This model leverages asynchronous I/O to allow issuing multple I/O requests in the background, so that the thread don’t need to block on the synchronous I/O.
+Complementary with this, organizing and scheduling tasks as coroutines—functions that can suspend and resume its execution—to effectively overlap computation with I/O operations.
+Asynchronous I/O.
+To overcome CPU underutilization in synchronous I/O, where threads block awaiting I/O completion, modern data systems employ asynchronous I/O (AIO).
+AIO enables threads to initiate I/O operations and continue execution, receiving notifications upon completion.
+This non-blocking approach is fundamental for building high-performance, I/O-intensive systems.
+Key implementations include the established POSIX AIO and the more recent Linux
+io_uring
+interface.
+POSIX AIO allows applications to initiate one or more I/O operations that are performed in the background.
+io_uring
+works by creating two circular buffers,
+i.e.,
+submission and completion queues, to track the submission and completion of I/O requests, respectively.
+Keeping these buffers shared between the kernel and application helps boost the I/O performance by eliminating the need to issue extra and expensive system calls to copy these buffers between the two.
+It also enables batched I/O requests to allow multiple I/O operations to be processed concurrently.
+Coroutines.
+Coroutines are special functions that can suspend (yield CPU time) voluntarily and be resumed later by a user-space scheduler as needed.
+Specifically, upon issuing an asynchronous I/O operation, a coroutine can suspend execution, allowing the scheduler to run another ready coroutine; once the I/O completes, it resumes to continue its task.
+Stackless coroutines, as standardized in C++20 and Rust, provide a concurrency model with minimal overhead for construction and context switching, often less than the cost of a last-level cache miss
+(
+He et al., 2020
+)
+.
+Unlike traditional coroutines, they do not maintain their own stacks; instead, they execute on the call stack of the runtime scheduler.
+While coroutine invocation resembles a standard function call, its state—including local variables that persist across suspension points—is preserved in dynamically allocated memory that survives suspend and resume cycles.
+For instance, Rust natively supports asynchronous programming.
+It abstracts asynchronous operations with the
+Future
+trait, which represents a computation whose result may not yet be available (
+e
+.g., I/O operations) and makes progress when polled.
+With Rust’s syntactic sugar (
+e
+.g.,
+await
+), asynchronous I/O can be expressed in a sequential style, while a pluggable runtime scheduler (
+i.e.,
+the scheduling logic can be customized) schedules and executes other tasks during I/O wait periods.
+2.4.
+Larger-than-Memory Database Techniques
+While in-memory databases offer superior performance, their capacity is limited by the available main memory.
+To handle datasets that exceed this capacity, database systems must utilize secondary storage and manage the movement of data pages between memory and disk.
+The techniques for managing this data swapping can be broadly categorized into two types:
+OS-controlled caching.
+Memory-mapped (
+mmap
+) file I/O is an OS-provided feature that maps file contents on secondary storage into a process’s virtual address space, allowing the database to access pages via pointers as if they resided entirely in memory. The OS transparently loads pages on-demand upon access and evicts them according to its internal policies when memory pressure arises. Owing to its simplicity and low engineering cost, many vector databases (
+e
+.g., Qdrant
+(
+Qdrant Technologies, 2024
+)
+, OpenSearch
+(
+OpenSearch Community, 2024
+)
+) employ
+mmap
+to handle larger-than-memory datasets. However, as Crotty et al.
+(
+Crotty et al., 2022
+)
+argue,
+mmap
+is often ill-suited for DBMSs because the DBMS loses control over page faulting and eviction, and the OS’s virtual memory subsystem can be too slow for modern NVMe SSDs.
+Self-Managed Caching.
+To gain full control over page loading and eviction, many databases implement their own buffer management in user space.
+The traditional approach uses a hash table to map page identifiers (PIDs) to their location in the buffer pool.
+Accessing a page thus requires a hash table lookup, and a miss triggers a read from secondary storage.
+While flexible, the overhead of these lookups can be substantial.
+To mitigate this cost, recent designs employ more memory-efficient techniques.
+For instance, LeanStore
+(
+Leis, 2024
+)
+uses pointer swizzling
+(
+Graefe et al., 2014
+;
+Kemper and Kossmann, 1995
+)
+, which replaces a page’s PID with its direct memory pointer within other data structures.
+This allows page accesses on a cache hit to be performed via a direct pointer dereference, bypassing the hash table.
+However, this technique requires strict exclusive ownership control (
+i.e.,
+a page can only be referenced by a single pointer) to handle concurreny control, making it unsuitable for graph structures where a node can have multiple references.
+Another approach, VMCache
+(
+Leis et al., 2023
+)
+, builds on
+mmap
+but reclaims control by using the
+madvise
+system call to provide caching and eviction hints to the OS, combining the simplicity of
+mmap
+with the control of a self-managed cache.
+3.
+VeloANN Design
+Figure 2.
+Overview of asynchronous execution in
+VeloANN
+.
+We present
+VeloANN
+, a I/O-efficient ANNS system for handling workloads that exceed main-memory capacity.
+As shown in Fig.
+2
+,
+VeloANN
+adopts a thread-per-core asynchronous execution model where each worker thread runs a dedicated scheduler that models incoming batched queries as coroutines. This design enables a worker to interleave multiple queries, hiding I/O latency by switching to a ready coroutine when another awaits data from disk (❶). A running coroutine traverses the graph, issuing access requests for records it needs (❷). If a requested record is on disk (
+i.e.,
+a cache miss), the coroutine initiates an asynchronous I/O operation to fetch it (❸) and yields control (❹). If the record is already in memory, the coroutine continues its execution. The scheduler then switch the control to next ready ANNS coroutine. The scheduler completes the cycle by polling the I/O completion queue and readying the corresponding coroutine for resumption once its data arrives (❺). Through these I/O-hiding mechanisms,
+VeloANN
+sustains high CPU utilization by reducing I/O stalls along the query execution path.
+This section details the design of
+VeloANN
+.
+We first introduce its coroutine-based asynchronous execution model, which overlaps computation and I/O (§
+3.1
+).
+We then describe the on-disk page layout (§
+3.3
+) and record-level buffer pool that enable the index to scale beyond main memory capacity (§
+3.2
+).
+3.1.
+Coroutine-based ANNS Execution
+Figure 3.
+Coroutine-based ANNS Execution. Each thread has its own scheduler that batches incoming queries and interleaves multiple query coroutines.
+Existing disk-based ANNS systems like DiskANN
+(
+Jayaram Subramanya et al., 2019
+)
+suffer from significant CPU underutilization.
+Our measurements show only 57% CPU utilization on Sift1M, as their sequential compute-I/O model forces the CPU to idle during disk reads, which are an order of magnitude slower than computation.
+Although beam search mitigates this by reading multiple records concurrently, the synchronous execution pattern persists.
+Each search step remains bottlenecked by the slowest I/O operation, preventing high CPU utilization.
+To address this bottleneck,
+VeloANN
+introduces a coroutine-based execution model with holistic redesign of the ANNS query processing to hide I/O stalls.
+By modeling each query as a coroutine, the scheduler can switch from one awaiting I/O completion to another that is ready for computation.
+As illustrated in Fig.
+3
+, this asynchronous query processing approach allows
+VeloANN
+to saturate the CPU:
+Asynchronous ANNS Procedure.
+Panel (a) in Fig.
+3
+illustrates the asynchronous, coroutine-based ANNS procedure.
+The search begins by initializing a candidate list with entry points in the graph index.
+The asynchronous search procedure then iteratively refines the list using a best-first search strategy with three main phases (lines 2-10):
+(i) The coroutine issues non-blocking prefetch requests for the top-
+N
+N
+candidate vertices to improve the cache hit rate for subsequent search steps (line 3, detailed in §
+4
+).
+(ii) It then requests the vertex record (i.e., vector and adjacency list) from the buffer pool (line 4).
+If the record is not cached, the coroutine suspends and yields control to the scheduler, awaiting I/O completion (line 5).
+(iii) Once the record data is loaded, the scheduler resumes the coroutine, which then computes the distance between the query and the fetched vertex and estimates distances to its neighbors using their quantized vectors to update the candidate list (lines 5-7).
+This process repeats until the candidate list is exhausted.
+I/O-Aware scheduler.
+As illustrated in Panel (b) of Fig.
+3
+, each worker threads is pinned to a CPU core and runs a dedicated scheduling loop to process incoming ANNS queries in batches.
+The scheduler runs a continuous loop util the main function has terminated (line 2).
+When the control yields to the scheduler, the scheduler then retrieves ready coroutines from the task queue and resumes their execution (lines 4-5).
+When an ANNS coroutine suspends (
+e
+.g., on a cache miss), the scheduler submits the pending I/O requests via an asynchronous I/O driver (
+e
+.g.,
+io_uring
+) and processes the completion queue from the interface, pushing coroutines with completed I/O back to the task queue (line 6).
+If the ready queue is empty, this means all coroutines are awaiting I/O completion.
+In this scenario, the scheduler busy-polls the I/O completion queue until a coroutine can be made ready.
+The scheduler limits the batch size
+B
+B
+,
+i.e.,
+the number of concurrently executing queries per thread, to balance the trade-off between throughput and latency.
+While a larger batch size can improve throughput by enabling the scheduler to more effectively overlap I/O with computation, it may also increase average query latency due to context switching and scheduling overhead.
+To optimize this balance, we formulate the batch size as
+B
+=
+⌈
+α
+⋅
+I
+/
+T
+⌉
+B=\lceil\alpha\cdot I/T\rceil
+.
+In this formula,
+I
+I
+is the average disk I/O latency,
+T
+T
+is the average execution time of the computational task between two I/O events, and
+α
+\alpha
+is a hyperparameter representing the expected frequency of I/O events per computational task.
+This formulation is derived from the principle of overlapping computation with I/O to keep the CPU utilized.
+Since a coroutine computes for an average of
+T
+/
+α
+T/\alpha
+before an I/O of latency
+I
+I
+, the number of coroutines needed to keep the CPU busy during that I/O is
+I
+/
+(
+T
+/
+α
+)
+=
+α
+⋅
+I
+/
+T
+I/(T/\alpha)=\alpha\cdot I/T
+.
+The value of
+α
+\alpha
+is empirically determined and depends on factors like the cache hit ratio and coroutine switching overhead.
+Sync vs. Async execution.
+Panel (c) demonstrates the difference between synchronous and asynchronous ANNS execution.
+In the synchronous model, when the CPU processes a query and encounters a random I/O operation (
+e
+.g., accessing a vertex record not in memory) during graph traversal, a cache miss causes the CPU to stall until the record data is fetched from disk.
+In contrast, the asynchronous model allows CPU to issue the request for the required vertex record and immediately switch to process another query coroutine managed by the scheduler.
+Each coroutine handles an ANNS query and suspends execution upon an I/O operations.
+When the scheduler switches back to the previously suspended coroutine, the CPU does not need to wait for the record as it has been loaded into the in-memory buffer pool.
+This overlapping between data fetching and query computation sustains high CPU utilization and significantly improves query throughput.
+Table 1.
+Cache hit rate (%) of different page replacement policies with varying buffer ratios on a custom page-level buffer pool for DiskANN.
+10%
+20%
+30%
+40%
+50%
+LRU
+13.0%
+25.8%
+35.8%
+45.1%
+54.0%
+FIFO
+15.0%
+26.0%
+35.9%
+45.3%
+54.3%
+Random
+14.9%
+25.0%
+34.8%
+44.1%
+52.8%
+Figure 4.
+Access frequency distributions at node- and page-level granularities for DiskANN on Sift1M and Gist1M.
+3.2.
+Buffer Pool Management
+Paging methods, such as buffer pools or
+mmap
+, are fundamental to database systems but are often ill-suited for ANNS workloads.
+They struggle to achieve high cache hit rates, given the unique and often unpredictable memory access patterns of ANNS queries.
+To demonstrate this, we experimented on the Sift1M dataset with a page-level buffer pool for DiskANN, evaluating several common cache replacement policies while varying the buffer size as a fraction of the index size.
+As shown in Table
+1
+, the cache hit rate improves only linearly with increased buffer allocation.
+This low access locality stands in stark contrast to traditional database workloads like TPC-C, where 80% of accesses typically target just 20% of the data
+(
+Leutenegger and Dias, 1993
+)
+.
+Interestingly, sophisticated replacement policies (
+e
+.g., LRU, FIFO) offer only marginal improvements over a simple random replacement strategy, underscoring their limited effectiveness for ANNS workloads.
+To address this, our key opportunity lies in
+exploiting access skew by decoupling vertex-based records from page-based organization.
+As illustrated in Fig.
+4
+, we measured the access frequency of each vertex and page after executing a complete workload on the Sift1M and Gist1M datasets.
+We observe that while vertex-level statistics reveal a significant access skew, this phenomenon is difficult to exploit with paging methods.
+Consequently, accessing a single record necessitates loading its entire page into the cache, even if other records on that page are infrequently accessed.
+This reveals a pronounced locality mismatch in Sift1M: 47.3% of vertices remain unaccessed, yet only 0.1% of pages are untouched.
+A similar disparity is observed in Gist1M, undermining the effectiveness of traditional page-based cache replacement policies.
+Record-level Buffer Pool.
+Based on this observation,
+VeloANN
+adopts a record-level buffer pool which only caches the requested records and discards the co-resident records on the same page.
+However, achieving performance comparable to that of in-memory ANNS systems with a generic buffer pool is challenging for two main reasons.
+First, traditional buffer management techniques are ill-suited for graph-structured data; hash table-based methods incur indirection overhead, while pointer swizzling cannot support graph structures, as detailed in §
+2.4
+.
+Second, a fundamental granularity mismatch exists between the record-based in-memory layout and the page-oriented on-disk layout.
+To address these challenges,
+VeloANN
+implements a
+slotted buffer pool
+to efficiently manage the ANNS graph layout. It allocates an anonymous virtual memory region sized to a configured fraction of the total index size (
+i.e.,
+the buffer ratio) and partitions it into slots, each sized to hold one vertex-based record.
+A free list tracks the available slots.
+To overcome the limitations of pointer swizzling for graph structures,
+VeloANN
+employs a compact indirection array (the
+record mapping array
+in Fig.
+2
+).
+Because vertex IDs are assigned contiguously, this array provides
+O
+⁡
+(
+1
+)
+O(1)
+mapping from a vertex ID to a record’s physical location and centralizes data-residency management, thereby resolving pointer swizzling’s incompatibility with graph structures.
+Each entry in this array is a hybrid pointer in which the most significant bit encodes residency: bit 1 indicates in-memory, with the remaining bits indexing a slot in the buffer pool; bit 0 indicates on-disk, with the remaining bits encoding the page ID of the record’s location.
+This design eliminates access overhead for memory-resident records.
+This buffer pool design requires a synchronization mechanism to manage concurrent operations (
+e
+.g., loading and eviction) in its slots.
+To this end, we explicitly maintain a state for each slot, managed via atomic operations.
+Since the number of slots is a subset of the total vertex count, the memory footprint of this state management is minimal.
+After startup, all slots are initialized to the
+Free
+state, and subsequent record access operations check the corresponding state entry before proceeding.
+We now introduce the basic operations of the buffer pool to illustrate the state transitions of a slot, as shown in the state diagram in Fig.
+5
+:
+Figure 5.
+The state transitions of record states.
+Loading.
+The loading process is initiated when the
+record mapping array
+indicates that a requested vertex record resides on disk.
+The buffer manager first acquires a slot from the free list; if none is available, an eviction is triggered.
+Once a slot is secured, its state is atomically set to
+Locked
+via a compare-and-swap (CAS) operation to prevent race conditions.
+An I/O request is then dispatched to fetch the required page from disk.
+Upon I/O completion, the target record is parsed from the page, loaded into the slot, and the slot’s state is updated to
+Occupied
+.
+Eviction.
+When the buffer pool approaches full, an eviction coroutine is invoked to free slots for new records.
+As established in our analysis (Table
+1
+), conventional replacement policies are ill-suited for ANNS workloads; consequently, our design prioritizes low eviction overhead over cache effectiveness.
+To this end, we implement a clock-based replacement policy with a second-chance mechanism.
+This policy employs a clock hand that sweeps over the buffer pool slots in a circular manner.
+When the hand encounters a slot in the
+Occupied
+state, it transitions it to
+Marked
+and advances.
+If a query accesses a
+Marked
+slot, its state reverts to
+Occupied
+, giving it a second chance.
+If the hand encounters an already
+Marked
+slot, it is selected for eviction.
+This process continues until a target number of slots are freed, ensuring that frequently accessed records (
+e
+.g., entry points) remain resident with minimal overhead.
+The eviction process is designed as a scalable, concurrent coroutine to minimize contention with foreground query processing.
+Figure 6.
+Internal page fragmentation percentage of the on-disk layout for ANNS graph indexes.
+3.3.
+Physical Index Layout
+ANNS graph indexes typically employ a vertex-based layout, storing each vertex’s vector and adjacency list together as a single record.
+This layout leverages spatial locality in graph traversal, as a vertex’s vector and its out-neighbor list are typically accessed together during search.
+Each record is packed into fixed-size disk pages.
+To ensure uniform record sizes for efficient packing and lookup, each record’s adjacency list is padded to a fixed bound
+R
+R
+.
+However, this layout incurs internal page fragmentation: fixed-size records often leave pages partially utilized, wasting space.
+As illustrated in Fig.
+6
+, fragmentation remains low at small vector dimensionalities (
+e
+.g.,
+d
+=
+128
+d=128
+for Sift1M).
+By contrast, as dimensionality increases, the upper bound on internal fragmentation rises;
+e
+.g., Gist1M reaches up to 52%, while other high-dimensional datasets are around 25%.
+Large, fixed-size records induce padding, leading to partial page utilization.
+These observations motivate compressing vertex records and adopting a more compact on-disk layout to improve page packing efficiency and reduce internal fragmentation.
+Compressed Vertex-Based Record.
+We minimize record size by compressing both the vector and adjacency list of each vertex record.
+Vectors are hierarchically compressed (
+e
+.g., ExtRaBitQ
+(
+Gao and Long, 2024
+;
+Gao et al., 2025
+)
+) into (i) a 1-bit-per-dimension binary code kept in memory for fast approximate distances and (ii) an extended code (
+e
+.g., 4 bits per dimension) for accurate refinement.
+Prior work
+(
+Gao et al., 2025
+)
+shows that a 1-bit binary plus 4-bit extended encoding balances search accuracy and storage footprint; we adopt this default.
+Adjacency lists are sorted and integer-compressed (
+e
+.g., delta encoding or Partitioned Elias-Fano
+(
+Ottaviano and Venturini, 2014
+)
+) to reduce space consumption.
+The resulting variable-size record (
+i.e.,
+extended code plus compressed variable-size adjacency list) achieves an effective trade-off among storage footprint, search performance, and accuracy.
+Figure 7.
+On-disk paging layout for organizing compressed variable-sized vertex-based records.
+Page Layout.
+To efficiently manage variable-size records on disk, we employ a B-tree-inspired slotted page layout, as illustrated in Fig.
+7
+. Each page is partitioned into a header, a slot array, and a data heap. The 5-byte
+page header
+provides page-management metadata, including a slot count (
+Count
+) and heap pointers (
+HeapStart
+,
+HeapUsed
+). The
+slot array
+of fixed-size entries grows from the start of the page, while the
+data heap
+storing records grows backward from the end; this opposing growth enables dynamic space sharing and minimizes internal fragmentation. Each 9-byte slot contains the record’s 4-byte vertex ID (
+VID
+), a 1-byte
+Color
+tag to differentiate vertex clusters (detailed in §
+3.4
+), the record’s 2-byte
+Length
+, and its 2-byte
+StartOffset
+within the heap. The slot array is kept sorted by
+VID
+to enable fast binary-search lookups. This design achieves dense packing of variable-size records and fast retrieval.
+The retrieval process for an on-disk vertex record begins with a binary search on the sorted slot array to locate the metadata entry for a given vertex ID
+v
+v
+.
+The
+StartOffset
+and
+Length
+fields in this entry pinpoint the record’s location and size within the data heap.
+The system then reads the complete byte sequence, which constitutes the vertex-based record, and uses it for subsequent distance refinement and graph traversal.
+3.4.
+Record Co-Placement Mechanism
+Record-level buffering improves cache utilization by loading only the requested record, but may introduce I/O inefficiency because page co-resident data is not retained.
+Consider a traversal path
+{
+v
+1
+→
+v
+2
+→
+v
+3
+}
+\{v_{1}\!\rightarrow\!v_{2}\!\rightarrow\!v_{3}\}
+with
+v
+1
+v_{1}
+and
+v
+3
+v_{3}
+on page
+P
+1
+P_{1}
+and
+v
+2
+v_{2}
+on
+P
+2
+P_{2}
+, yielding the page access sequence
+{
+P
+1
+→
+P
+2
+→
+P
+1
+}
+\{P_{1}\!\rightarrow\!P_{2}\!\rightarrow\!P_{1}\}
+.
+Fetching
+P
+1
+P_{1}
+for
+v
+1
+v_{1}
+reads
+v
+3
+v_{3}
+but discards it; when
+v
+3
+v_{3}
+is later needed,
+P
+1
+P_{1}
+is fetched again, incurring redundant disk I/O.
+To mitigate this,
+VeloANN
+uses affinity-based record co-placement to improve page-level locality, loading affine records together while discarding non-affine ones.
+Affinity-based Record Identification.
+Unlike block shuffling
+(
+Wang et al., 2024
+)
+, which co-locates records of adjacent vertices within the same page, our approach exploits the empirical observation that spatially proximate vectors are frequently co-traversed along search trajectories.
+This distinction is critical because modern proximity graphs (
+e
+.g., Vamana
+(
+Jayaram Subramanya et al., 2019
+)
+) optimize navigational efficiency rather than strictly preserving metric neighborhoods, employing long-range links and aggressively pruning edges among nearby vertices.
+Consequently, adjacency-based co-location tends to pollute pages with records that are geometrically distant, degrading locality.
+Formally, let
+d
+⁡
+(
+⋅
+,
+⋅
+)
+d(\cdot,\cdot)
+denote the distance metric. Two vectors
+v
+i
+v_{i}
+and
+v
+j
+v_{j}
+are deemed
+affine
+iff
+d
+⁡
+(
+v
+i
+,
+v
+j
+)
+≤
+τ
+d(v_{i},v_{j})\!\leq\!\tau
+for a given threshold
+τ
+\tau
+.
+We co-locate records whose vectors are affine on the same page.
+This strategy enables a single page read to serve multiple subsequent accesses, thereby reducing I/O operations.
+The distance threshold
+τ
+\tau
+is selected heuristically from dataset statistics.
+We determine this threshold through vector clustering, setting
+τ
+\tau
+to the average of the 5th-percentile distance-to-centroid values across all clusters.
+This procedure can be integrated into the vector quantization stage, as many vector compression methods (
+e
+.g., PQ
+(
+Jegou et al., 2010
+)
+or RabitQ
+(
+Gao and Long, 2024
+)
+) require a clustering step.
+However, naively identifying affine records in a graph with
+|
+P
+|
+|P|
+vertices requires
+O
+⁡
+(
+|
+P
+|
+2
+)
+O(|P|^{2})
+pairwise checks, which is prohibitive at scale.
+To address this, we integrate affinity identification into greedy proximity-graph construction with negligible additional overhead by reusing the candidate sets and distance computations produced during neighbor selection.
+As shown in Algorithm
+1
+(lines 6–10), for each vertex
+p
+p
+we select up to
+k
+k
+nearest candidates within the threshold
+τ
+\tau
+and store them in
+S
+⁡
+[
+p
+]
+S[p]
+, avoiding an additional pass over the dataset.
+Because the distance list
+D
+D
+is already computed for neighbor selection, affinity extraction reduces to per-vertex filtering.
+We set the affinity bound
+k
+k
+relative to page capacity (
+i.e.,
+the maximum number of records per page) to prevent affinity groups from spanning multiple pages.
+Algorithm 1
+Affine-based Record Identification
+1:
+Input
+: graph
+G
+⁡
+(
+P
+,
+E
+)
+G(P,E)
+, build parameter
+l
+b
+l_{b}
+, graph degree
+R
+R
+, pruning parameter
+α
+\alpha
+, affinity threshold
+τ
+\tau
+, affine size
+k
+k
+2:
+Output
+: Graph
+G
+⁡
+(
+P
+′
+,
+E
+′
+)
+G(P^{\prime},E^{\prime})
+and affine record dictionary
+S
+S
+3:
+S
+←
+{
+}
+S\leftarrow\{\}
+⊳
+\triangleright
+Initialize empty dictionary
+4:
+for
+each
+p
+p
+in
+P
+P
+do
+⊳
+\triangleright
+Graph construction process
+5:
+[
+V
+,
+D
+]
+←
+[V,D]\leftarrow
+GreedySearch
+(
+G
+G
+,
+p
+p
+,
+l
+b
+l_{b}
+)
+6:
+A
+p
+←
+∅
+A_{p}\leftarrow\emptyset
+⊳
+\triangleright
+Affine vertices for node
+p
+p
+7:
+for
+each
+(
+v
+,
+d
+)
+(v,d)
+in
+(
+V
+,
+D
+)
+(V,D)
+do
+8:
+if
+d
+≤
+τ
+d\!\leq\!\tau
+and
+|
+A
+p
+|
+<
+k
+|A_{p}|<k
+then
+9:
+A
+p
+←
+A
+p
+∪
+{
+v
+}
+A_{p}\leftarrow A_{p}\cup\{v\}
+10:
+S
+⁡
+[
+p
+]
+←
+A
+p
+S[p]\leftarrow A_{p}
+⊳
+\triangleright
+Store affine vertices for node
+p
+p
+11:
+⊳
+\rhd
+Pruning mechanisms in proximity graph construction
+12:
+N
+o
+​
+u
+​
+t
+​
+(
+p
+)
+←
+N_{out}(p)\leftarrow
+PruneEdges
+(
+G
+G
+,
+p
+p
+,
+V
+V
+,
+R
+R
+,
+α
+\alpha
+)
+13:
+for
+each
+v
+v
+in
+N
+o
+​
+u
+​
+t
+​
+(
+p
+)
+N_{out}(p)
+do
+14:
+N
+o
+​
+u
+​
+t
+​
+(
+v
+)
+←
+N
+o
+​
+u
+​
+t
+​
+(
+v
+)
+∪
+{
+p
+}
+N_{out}(v)\leftarrow N_{out}(v)\cup\{p\}
+15:
+if
+|
+N
+o
+​
+u
+​
+t
+​
+(
+v
+)
+|
+>
+R
+|N_{out}(v)|>R
+then
+16:
+N
+o
+​
+u
+​
+t
+​
+(
+v
+)
+←
+N_{out}(v)\leftarrow
+RobustPrune
+(
+G
+G
+,
+v
+v
+,
+N
+o
+​
+u
+​
+t
+​
+(
+v
+)
+N_{out}(v)
+,
+R
+R
+,
+α
+\alpha
+)
+17:
+return
+G
+⁡
+(
+P
+′
+,
+E
+′
+)
+G(P^{\prime},E^{\prime})
+,
+S
+S
+Affinity-based Record Co-Placement.
+We co-locate the affine records by iterating over the affinity dictionary and placing the sets contiguously on disk.
+Within each page, we tag record slots with
+Color
+(see Fig.
+7
+) to distinguish sets: each set receives a unique non-zero value, incremented cyclically; 0 denotes non-affine records.
+One byte suffices for this tag because pages typically host few sets.
+Pages are filled greedily.
+If a set does not fit in the remaining space, we first pad the residual space with non-affine records (
+i.e.,
+records not belonging to any affinity set).
+If none are available, we split the set across page boundaries to avoid the complexity and overhead of more sophisticated placement algorithms.
+Upon accessing any record with a non-zero
+Color
+tag, all co-tagged records on the page are proactively fetched into the buffer pool.
+4.
+Cache-Aware ANNS Procedure
+VeloANN
+employs a coroutine-based asynchronous execution model, overlapping computation with I/O to keep the CPU saturated.
+It achieves QPS comparable to fully in-memory ANNS systems, but single-query end-to-end latency remains higher due to disk I/O.
+This discrepancy arises from I/O stalls on the query’s critical execution path:
+while the system as a whole is asynchronous, a single query’s critical path is not
+; its coroutine blocks until its own I/O completes, making disk access effectively synchronous from that query’s perspective.
+Closing the latency gap hinges on reducing I/O stalls on each query’s critical path by improving the cache hit rate for requested vertex records.
+However, ANNS workloads exhibit irregular memory access and poor cache locality.
+To address this,
+VeloANN
+introduces two complementary optimizations:
+proactive prefetching
+and
+cache-aware beam search
+.
+Proactive prefetching (§
+4.1
+) issues asynchronous I/O for promising candidates ahead of use.
+Cache-aware beam search (§
+4.2
+) alters the best-first search strategy to opportunistically prioritize exploring candidates already in memory, even if they are slightly sub-optimal.
+Together, these techniques minimize critical-path stalls and effectively hide I/O latency.
+4.1.
+Prefetching
+Our prefetching strategy is based on a key insight into the behavior of best-first graph traversal: the vertices to be explored in the immediate future are highly likely to be among the top-ranked candidates in the current search frontier.
+This predictability stems from the best-first search algorithm’s iterative nature, where it consistently expands the search frontier by selecting the most promising vertices based on their proximity to the query.
+To capitalize on this predictability,
+VeloANN
+employs a prefetching mechanism that preloads the records of the top-
+B
+B
+candidates in each search iteration.
+unlike hardware prefetching, which is limited to in-memory data, our prefetching approach targets on-disk records.
+VeloANN
+implements this via a dedicated prefetching coroutine that runs concurrently with the main search process.
+The prefetching procedure reuses the asynchronous loading methods of the buffer pool manager.
+As illustrated in Fig.
+3
+, the prefetching coroutine identifies the top-
+B
+B
+most promising candidates in each search iteration and issues asynchronous I/O requests to load their records into the buffer pool.
+Consequently, when the search algorithm proceeds to explore these candidates, their data is likely already present in memory, significantly improving the cache hit ratio and minimizing stalls on the query’s critical path.
+Algorithm 2
+Cache-aware Beam Search in
+VeloANN
+.
+1:
+Input:
+query
+q
+q
+, candidate list size
+L
+L
+, beam width
+B
+B
+.
+2:
+procedure
+VeloSearch
+(
+q
+,
+L
+,
+B
+q,L,B
+)
+3:
+Candidate list
+p
+←
+entry points
+p\leftarrow\text{entry points}
+4:
+Explored set
+E
+←
+∅
+E\leftarrow\emptyset
+5:
+while
+P
+⊈
+E
+P\not\subseteq E
+do
+6:
+v
+←
+v\leftarrow
+top-1 nearest candidate to
+q
+q
+from
+P
+∖
+E
+P\setminus E
+7:
+C
+←
+top-
+​
+B
+​
+nearest candidates to
+​
+q
+​
+from
+​
+P
+∖
+E
+C\leftarrow\text{top-}B\text{ nearest candidates to}q\text{ from }P\setminus E
+8:
+⊳
+\triangleright
+Prioritize the in-memory candidate when
+v
+v
+is on disk
+9:
+if
+InOnDisk(
+v
+v
+)
+then
+10:
+for
+each
+c
+c
+in
+C
+C
+do
+11:
+if
+InMemory(
+c
+c
+)
+then
+12:
+v
+←
+c
+v\leftarrow c
+;
+break
+13:
+else
+14:
+prefetch(
+c
+c
+)
+⊳
+\triangleright
+Prefetch on-disk candidate
+c
+c
+15:
+v
+v
+= read(
+v
+v
+)
+.await
+⊳
+\triangleright
+Suspend execution if
+v
+v
+is on disk
+16:
+for
+each
+nbr in
+v
+.
+neighbors
+∖
+E
+v.\text{neighbors}\setminus E
+do
+17:
+d
+​
+i
+​
+s
+←
+estimate_distance
+​
+(
+nbr
+,
+q
+)
+dis\leftarrow\text{estimate\_distance}(\text{nbr},q)
+18:
+P
+.
+insert
+​
+(
+⟨
+nbr
+,
+d
+​
+i
+​
+s
+⟩
+)
+P.\text{insert}(\langle\text{nbr},dis\rangle)
+19:
+E
+.
+insert
+(
+v
+.
+neighbors
+)
+E.\text{insert}(v.\text{neighbors})
+20:
+Trim candidate set
+P
+P
+to size
+L
+L
+21:
+return
+top-
+k
+k
+nearest vectors to
+q
+q
+in
+E
+E
+4.2.
+Cache-aware Beam Search
+The best-first search procedure creates a strong dependency between I/O and computation, as the algorithm must wait for candidate records to be fetched from disk before proceeding.
+To mitigate this, beam search, as proposed by DiskANN
+(
+Jayaram Subramanya et al., 2019
+)
+, explores a batch of
+B
+B
+vertex candidates concurrently instead of a single nearest vertex.
+However, this approach remains constrained by a sequential compute-I/O pattern and is ultimately bottlenecked by the slowest I/O operation in each batch.
+To address this, we introduce a cache-aware beam search that leverages
+VeloANN
+’s efficient buffer pool.
+Unlike standard beam search, which synchronously issues a batch of I/O requests, our approach prioritizes the exploration of candidates that are cached in memory, while asynchronously prefetching those on disk.
+This strategy yields two key advantages.
+First, it amplifies the effective cache hit rate by a factor of
+B
+B
+, as the probability of finding an in-memory candidate increases proportionally with the beam size.
+Second, it minimizes I/O stalls by prioritizing the exploration of in-memory candidates while asynchronously prefetching other candidates in the background, effectively hiding I/O latency.
+Algorithm
+2
+illustrates our cache-aware search procedure with beam width
+B
+B
+, which deviates from a standard greedy beam search by opportunistically prioritizing in-memory candidates.
+In each iteration, the algorithm first identifies the top candidate
+v
+v
+from the candidate list
+P
+P
+(line 6) and constructs a look-ahead set
+C
+C
+containing the top-
+B
+B
+candidates (line 7).
+If
+v
+v
+resides on disk (line 9), the algorithm attempts an opportunistic pivot by iterating through the look-ahead set
+C
+C
+.
+It selects the first available in-memory candidate
+c
+c
+for immediate exploration (lines 10–12), allowing computation to proceed without stalling.
+For any on-disk candidates encountered in
+C
+C
+, it issues asynchronous prefetch requests (line 14).
+If no in-memory candidate is found within the look-ahead set, the search defaults to processing
+v
+v
+, potentially suspending execution until its data is retrieved from disk (line 17).
+After a vertex is explored, its unvisited neighbors are added to the candidate list, and the vertex is marked as explored (lines 18–22).
+Finally, the candidate list is trimmed to a maximum size of
+L
+L
+(line 22).
+This design effectively hides I/O latency by combining the opportunistic exploration of in-memory candidates with asynchronous data prefetching, thereby reducing I/O stalls and overall query latency.
+Figure 8.
+Performance comparison of
+VeloANN
+with DiskANN, Starling, and PipeANN on four high-dimensional datasets.
+Table 2.
+Statistics of the datasets.
+Dataset
+# of vectors
+Dimension
+Size (GB)
+# of queries
+Sift1M
+1M
+128
+0.52
+10,000
+GIST1M
+1M
+960
+1.28
+1,000
+Wiki
+35M
+768
+101
+10,000
+Image
+100M
+512
+191.7
+10,000
+Text
+100M
+768
+286.4
+10,000
+5.
+Evaluation
+5.1.
+System Implementation
+We implemented
+VeloANN
+in
+∼
+\sim
+13k lines of Rust code, chosen for its powerful asynchronous programming features and strong safety guarantees.
+The query engine of
+VeloANN
+adopts a thread-per-core asynchronous execution model, where each thread runs a dedicated scheduler to minimize context-switching overhead and enhance cache locality.
+For high-performance asynchronous I/O operations, we implement the asynchronous runtime based on
+io_uring
+, with each thread employing a private instance to issue I/O requests independently.
+To reduce memory access overhead, the buffer manager allocates its memory region using
+mmap
+with huge pages.
+VeloANN
+employs ExtRabitQ
+(
+Gao and Long, 2024
+;
+Gao et al., 2025
+)
+for vector compression and the Partitioned Elias-Fano coding
+(
+Ottaviano and Venturini, 2014
+)
+for compressing adjacency lists, creating a compact graph layout that is tightly integrated into the query engine.
+Rust’s compile-time checks provide strong guarantees for memory and concurrency safety throughout the system.
+5.2.
+Experimental Setup
+Testbed.
+We conduct our evaluation on a server equipped with a 48-core Intel(R) Xeon(R) Platinum 8457C processor operating at 2.00GHz, 384GB of RAM configured as 24
+×
+\times
+16GB DDR4 modules running at 2933MT/s, and two 3.84TB Solidigm NVMe SSDs. The system runs Ubuntu 24.04 LTS with Linux kernel version 6.8.0.
+Datasets.
+Our evaluation employs five representative benchmark datasets spanning diverse dimensions and scales, as detailed in Table
+2
+.
+These include two commonly used Sift1M
+(
+Jégou et al., 2011
+)
+and Gist1M
+(
+Jégou et al., 2011
+)
+datasets, for which we utilize the provided base and query sets for micro-level analysis.
+Additionally, we incorporate three datasets constructed from high-dimensional embeddings generated by advanced deep learning models.
+The first is a 512-dimensional text dataset created using the Cohere
+(
+Inc., 2025
+)
+embedding model, with 35M base vectors generated from Wikipedia and 10K query vectors sampled from the MMLU
+(
+Hendrycks et al., 2020
+)
+dataset.
+The second and third datasets are 100M-scale high-dimensional embeddings. Image consists of 512-dimensional image embeddings with a 100M-vector base set and 10K query vectors, while Text comprises 768-dimensional text embeddings with a 100M-vector base set and 10K query vectors.
+Compared Systems.
+We benchmark
+VeloANN
+against three state-of-the-art disk-based ANNS systems: DiskANN
+(
+Jayaram Subramanya et al., 2019
+)
+, Starling
+(
+Wang et al., 2024
+)
+, and PipeANN
+(
+Guo and Lu, 2025
+)
+.
+DiskANN serves as a widely adopted baseline for disk-based ANNS system.
+Starling enhances search locality through on-disk graph layout reordering and employs an in-memory index to reduce I/O traversal paths.
+PipeANN accelerates on-disk search by relaxing strict best-first ordering to parallelize I/O requests and search procedures.
+To ensure a fair comparison, we standardize the experimental setup by using RabitQ
+(
+Gao and Long, 2024
+)
+for in-memory vector compression across all systems and replacing AIO with
+io_uring
+in DiskANN and Starling.
+We enable the
+O_DIRECT
+option for all systems to bypass the operating system page cache.
+Since all systems utilize the Vamana
+(
+Jayaram Subramanya et al., 2019
+)
+graph index, we employ identical construction hyperparameters when building the graphs.
+To ensure a fair comparison, we set the buffer ratio (
+i.e.,
+memory budget) for each system to 20% of its respective disk index size.
+This normalization prevents
+VeloANN
+, which has smaller on-disk compressed indexes, from receiving a disproportionately large buffer pool allocation.
+We disable the
+SQ_POLL
+feature of
+io_uring
+because it introduces an additional thread to busy-poll I/O completion events, which would compromise fairness in the comparsion.
+Furthermore, we observe that for high-dimensional datasets (
+e
+.g., Gist1M with 960 dimensions), individual vertex records can occupy an entire data page (default 4 KB).
+To address this issue, we configure baseline systems with an 8 KB page size for these datasets, while
+VeloANN
+employs a 4 KB page size.
+Evaluation Metrics.
+We evaluate and report the following key metrics: Recall@10 represents the fraction of the true 10 nearest neighbors retrieved in the top-10 results, measuring the quality of the search results.
+Query latency indicates the average per-query processing time in millisecond (ms).
+Throughput refers to the number of queries processed per second under concurrent load (QPS).
+The number of disk I/Os indicates the average number of I/O requests issued per query.
+5.3.
+Overall Performance
+Query Throughput and Latency.
+As illustrated in Fig.
+8
+, we compare the query throughput and latency of
+VeloANN
+against three baselines across four high-dimensional datasets.
+The results demonstrate that
+VeloANN
+consistently outperforms all baselines in both query throughput and latency at the same recall@10.
+VeloANN
+’s asynchronous execution model orchestrates multiple query requests to overlap I/O and computation, yielding significant throughput gains.
+This results in a query throughput 1.4
+×
+\times
+to 4.6
+×
+\times
+higher than PipeANN.
+Furthermore, by leveraging prefetching and a cache-aware beam search,
+VeloANN
+effectively mitigates I/O latency from the critical execution path, achieving 1.6
+×
+\times
+lower latency than the latency-optimized PipeANN at high recall.
+For instance, on the Wikipedia dataset,
+VeloANN
+delivers over 1k QPS at 97% recall, surpassing PipeANN, Starling, and DiskANN by 3.3
+×
+\times
+, 7.3
+×
+\times
+, and 5.8
+×
+\times
+, respectively.
+In terms of query latency,
+VeloANN
+also achieves 1.44
+×
+\times
+, 3.25
+×
+\times
+and 2.5
+×
+\times
+lower latency than DiskANN, Starling, and PipeANN, respectively.
+We also observe that Starling’s performance is comparable to DiskANN’s, despite its larger 8 KB page size setting.
+This is because an 8 KB page accommodates only a few high-dimensional records (
+e
+.g., three 512D or one 768D vector), which diminishes the benefit of its block shuffling layout and underscores the importance of a compressed index for high-dimensional ANNS.
+Table 3.
+Comparison of index size and memory footprint across different ANN systems. The
+Origin
+row shows the size of the raw vector datasets for reference.
+Disk (GB)
+Memory Footprint (GB)
+Gist
+Wiki
+Image
+Text
+Gist
+Wiki
+Image
+Text
+Origin
+4.2
+96
+286
+201
+–
+–
+–
+–
+DiskANN
+8.0
+135
+382
+286
+0.87
+24.5
+49.7
+38.6
+VeloANN
+0.8
+21
+64
+45
+0.30
+7.3
+20.8
+15.7
+Index Size and Memory Footprint.
+As the three baseline systems share the same underlying storage layout (differing only in ordering for Starling), we compare the index size and memory footprint of
+VeloANN
+with those of DiskANN as illustrated in Table
+3
+.
+The result shows that
+VeloANN
+’s disk consumption is up to 10
+×
+\times
+smaller than DiskANN.
+This significant space saving is achieved through a compressed index layout that quantizes high-dimensional vectors to 4 bits per dimension and compresses each vertex’s adjacency list with a sorted integer encoding scheme.
+These optimizations yield a nearly 4.5
+×
+\times
+compression ratio compared to the original raw vectors (labeled as
+Origin
+).
+In contrast, baseline systems exhibit significant space amplification.
+This is because, in addition to graph structure overhead, the DiskANN-style layout suffers from severe internal page fragmentation especially for high-dimensional vector data.
+For instance, on the Image dataset, a standard 4 KB page accommodates only one record—a 2,048-byte vector and a 256-byte adjacency list for 64 out-degrees—wasting 1,792 bytes per page.
+By mitigating this fragmentation,
+VeloANN
+’s compact encoding scheme enables multiple records to be stored per page, demonstrating its effectiveness for managing high-dimensional datasets.
+As detailed in Table
+3
+,
+VeloANN
+also achieves the lowest memory footprint, requiring up to 2.9
+×
+\times
+less memory than that of DiskANN.
+This footprint comprises three components: highly-compressed (1-bit per dimension) vectors for initial distance estimation, a buffer pool for caching vertex records, and auxiliary metadata for the buffer manager.
+While we set the buffer pool to 20% of the on-disk index size in our experiments, this ratio is a flexible parameter for tuning performance and memory trade-offs.
+The metadata, which includes record mappings and states, adds only a minor overhead of approximately 1% of the disk index size.
+5.4.
+Micro Analysis
+Figure 9.
+Query throughput and latency of
+VeloANN
+with varying batch size (B) settings on three datasets.
+Batch Size.
+As described in §
+3.1
+, the scheduler’s batch size (
+B
+B
+) creates a trade-off between throughput and latency.
+A larger batch size can improve throughput by more effectively hiding I/O latency, as the scheduler can execute other queries during I/O stalls.
+Conversely, a larger batch may increase average query latency due to computational and scheduling overhead.
+Fig.
+9
+illustrates this behavior, showing that query latency grows approximately linearly as
+B
+B
+increases.
+The impact on throughput, however, is dataset-dependent.
+On the lower-dimensional Sift1M dataset, throughput scales effectively with larger batch sizes.
+This is because its low computational cost allows the scheduler to mask I/O wait times by executing more concurrent queries.
+In contrast, on the high-dimensional Gist1M and Image datasets, throughput gains diminish beyond
+B
+=
+2
+B=2
+.
+For these datasets, the high computational cost saturates the CPU even with a small batch, making larger batches less effective.
+Based on these findings, we recommend a default batch size of
+B
+=
+2
+B=2
+for high-dimensional datasets, as it provides a strong balance between throughput and latency.
+Figure 10.
+Query throughput and latency of
+VeloANN
+under different beam width (W) settings on the Image dataset.
+Beam Width.
+The beam width (
+W
+W
+) in our cache-aware ANNS procedure presents a trade-off between I/O latency hiding and I/O efficiency.
+Increasing the beam width expands the set of candidates for exploration, which improves the likelihood of cache hits and allows the scheduler to hide I/O latency by processing other candidates.
+However, this also leads to wasted I/O bandwidth compared to a best-first search and extra prefetching coroutine overhead, as the algorithm can prefetch suboptimal vertices that are ultimately pruned from the final search path.
+Fig.
+10
+illustrates this trade-off on the Image dataset, showing how query throughput and latency vary with different beam widths.
+As shown, performance peaks at
+W
+=
+4
+W=4
+, after which it begins to decline.
+Interestingly, a beam width of
+W
+=
+1
+W=1
+results in worse performance than a standard best-first search (
+W
+=
+0
+W=0
+).
+This occurs because the time required to prefetch a single vertex from disk is greater than the processing time for an in-memory vertex.
+Consequently, the search process frequently stalls while waiting for the I/O to complete, rendering the single-vertex prefetching ineffective.
+Therefore, selecting an appropriate beam width is crucial for achieving optimal performance.
+Figure 11.
+Query throughput of DiskANN, Staring, PipeANN and
+VeloANN
+with varying thread number settings on the Wikipedia dataset.
+Varying Thread Number.
+Fig.
+11
+evaluates the throughput scalability of
+VeloANN
+against its baselines as the number of concurrent worker threads increases from 1 to 32.
+Each system is configured to achieve approximately 95% recall@10.
+We employ a round-robin strategy to distribute queries evenly among the threads.
+VeloANN
+demonstrates superior scalability, consistently outperforming all baselines by a significant margin.
+VeloANN
+employs an effective record-level buffer pool to reduce disk I/Os and leverages coroutine-based execution to enhance query throughput.
+At 32 threads,
+VeloANN
+reaches a peak throughput of
+∼
+\sim
+14k QPS.
+This represents a 1.39
+×
+\times
+speedup over PipeANN and more than a 1.82
+×
+\times
+speedup over DiskANN and Starling.
+This superior scalability demonstrates the
+VeloANN
+’s I/O efficiency.
+Figure 12.
+Query throughput and latency of
+VeloANN
+on the Image dataset with varying buffer ratios, compared to a fully in-memory Vamana index.
+Comparing to In-Memory ANNS Indexes.
+Fig.
+12
+illustrates the performance of
+VeloANN
+on the Image dataset with varying buffer ratios, compared to a fully in-memory Vamana index (
+i.e.,
+a 100% buffer ratio).
+By leveraging its asynchronous execution model,
+VeloANN
+effectively saturates the CPU with computational tasks, avoiding idle periods typically spent waiting for I/O completion.
+Furthermore, its prefetching and cache-aware beam search strategies significantly reduce I/O stalls in the critical query path, effectively hiding much of the disk I/O latency.
+As a result of these optimizations,
+VeloANN
+achieves throughput comparable to the in-memory Vamana index.
+Specifically, at 95% Recall@10, it delivers 0.73
+×
+\times
+, 0.78
+×
+\times
+, and 0.92
+×
+\times
+the QPS of Vamana with buffer ratios of 10%, 30%, and 50%, respectively.
+Correspondingly, at the same recall target, the query latencies are 2.23
+×
+\times
+, 2.19
+×
+\times
+, and 1.86
+×
+\times
+higher than Vamana.
+These results demonstrate that
+VeloANN
+offers a cost-effective trade-off, achieving, for instance, 78% of in-memory Vamana’s throughput while using only 30% of the index size in memory (equivalent to 7% of the original dataset size).
+Figure 13.
+Query latency and disk I/O count under different distance threshold
+τ
+\tau
+settings on the Sift1M dataset.
+Record Co-Placement with Varying Threshold
+τ
+\tau
+.
+The distance threshold
+τ
+\tau
+is crucial for record co-placement mechanism.
+We evaluate its effect by comparing VeloANN with different
+τ
+\tau
+settings against VeloANN-Page, a baseline that loads all records into the buffer pool from a page.
+As illustrated in Fig.
+13
+, the page-based approach (VeloANN-Page) performs the worst, exhibiting the highest disk I/O count and query latency.
+This is because loading entire pages pollutes the buffer with unnecessary records, evicting more valuable data.
+In contrast, VeloANN with
+τ
+=
+0
+%
+\tau=0\%
+fetches only a single record, avoiding pollution but missing I/O consolidation opportunities.
+Setting
+τ
+=
+5
+%
+\tau=5\%
+strikes an optimal balance, achieving the lowest query latency and disk I/O, up to 1.28
+×
+\times
+lower than the
+τ
+=
+0
+%
+\tau=0\%
+case.
+However, increasing the threshold further to
+τ
+=
+10
+%
+\tau=10\%
+degrades performance.
+A larger
+τ
+\tau
+relaxes the affinity requirement for co-placement, reducing the effectiveness of I/O consolidation and leading to worse performance.
+5.5.
+Breakdown Analysis
+In this section, we analyze the performance gap between Baseline and
+VeloANN
+by progressively enabling the proposed optimizations.
+Based on the index layout shuffled by record co-placement mechanism, we incrementally integrate the key techniques into Baseline and evaluate query throughput and latency across target recall levels.
+We fix the memory buffer ratio at 10% in bellow experiments.
++Async.
+To address CPU underutilization, we introduce an asynchronous execution model (§
+3.1
+) for Baseline.
+This variant overlaps I/O with computation (
+e
+.g., distance comparison operations) to maximize CPU utilization, yielding 1.8
+×
+\times
+higher throughput at 95% recall@10 than Baseline.
+However, frequent context switches among query coroutines increase per-query latency, about 1.6
+×
+\times
+higher at 95% recall@10.
+Figure 14.
+Breakdown analysis of
+VeloANN
+on Text dataset.
++Record.
+We integrate a record-level buffer pool (§
+3.2
+) that provides finer-grained memory management compared to page-level caching.
+This optimization yields a query throughput improvement of 1.23
+×
+\times
+to 1.9
+×
+\times
+over the async variant and Baseline, respectively.
+Additionally, it achieves a 1.21
+×
+\times
+reduction in query latency relative to the async variant.
+These performance gains primarily result from reduced disk I/O operations enabled by record-level caching.
+The fine-grained caching mechanism avoids loading unnecessary records into memory, thereby preserving memory resources for more frequently accessed record data.
++Prefetch.
+To further mitigate disk I/O stalls caused by cache misses, we introduce a prefetching strategy (§
+4
+) that performs stride prefetching of records for the next several vertices in the candidate list.
+By anticipating future record requests based on the current candidate list, this strategy proactively fetches the corresponding records into the buffer pool.
+This approach significantly improves the cache hit rate and reduces I/O stalls in the critical query path.
+As shown in Fig.
+14
+, this method enhances query throughput by 2.15
+×
+\times
+at 95% recall@10 and decreases average query latency by 1.34
+×
+\times
+compared to the async variant.
++CBS (Cache-Aware Beam Search).
+Integrating the above optimizations,
+VeloANN
+further reduces latency with cache-aware beam search.
+CBS opportunistically prioritizes in-memory candidates within the beam, increasing cache hit rate and reducing critical-path I/O stalls.
+At 95% recall@10, CBS attains the lowest latency, 1.5
+×
+\times
+lower than the async variant, and improves throughput by 1.5
+×
+\times
+over the async variant and 2.2
+×
+\times
+over Baseline.
+In terms of query throughput, it achieves a 1.5
+×
+\times
+improvement over the async variant and a 2.2
+×
+\times
+improvement over the baseline at 95% recall@10.
+6.
+Related Work
+ANNS index.
+Research on ANNS indexes is generally categorized into three types: cluster-based
+(
+Chen et al., 2021
+;
+Xu et al., 2023
+;
+André et al., 2016
+;
+Dong et al., 2019
+)
+, hashing-based
+(
+Tian et al., 2023
+;
+Zhao et al., 2023
+;
+Liu et al., 2014
+;
+Datar et al., 2004
+;
+Gan et al., 2012
+)
+, and graph-based
+(
+Malkov and Yashunin, 2018
+;
+Harwood and Drummond, 2016
+;
+Fu et al., 2017
+;
+Wang et al., 2021
+;
+Azizi et al., 2023
+;
+Peng et al., 2023
+)
+indexes.
+Among these, graph-based approaches stand out in large-scale, high-dimensional search by offering both high speed and accuracy.
+However, as dataset sizes continue to grow, the memory overhead of in-memory graph-based ANNS becomes a significant bottleneck, limiting their scalability and applicability.
+On-Disk ANNS Storage.
+To cost-effectively support large-scale vector datasets, recent researches have focused on storing ANNS indexes on disk.
+Cluster-based methods, such as SPANN
+(
+Chen et al., 2021
+)
+and ScaNN
+(
+Guo et al., 2020
+)
+, partition vectors into clusters that are stored on disk and indexed by an in-memory graph.
+DiskANN
+(
+Jayaram Subramanya et al., 2019
+)
+, a pioneering on-disk graph-based system, stores compressed vectors in memory for I/O-free navigation and retrieves full-precision vectors from disk only to refine search results.
+Subsequent works like DiskANN++
+(
+Ni et al., 2023
+)
+and Starling
+(
+Wang et al., 2024
+)
+introduce further optimizations, including sampled in-memory indexes to shorten I/O traversal paths and topology-guided data co-placement to enhance locality.
+Others focus on layout optimization; for instance, Gorgeous
+(
+Yin et al., 2025
+)
+introduces a memory cache that prioritizes the graph structure over vector data, as the former is accessed more frequently.
+To improve update performance, OdinANN
+(
+Hao and Youyou, 2026
+)
+utilizes direct insertion into the on-disk index, avoiding the costly batch-merge process of other systems.
+In contrast,
+VeloANN
+achieves superior I/O efficiency through a combination of a compressed on-disk graph layout, memory-optimized record caching, and an integrated layout shuffling process during graph construction that incurs negligible additional overhead.
+I/O-Efficient ANNS Query Processing.
+To enhance I/O efficiency in query processing, cluster-based index SPANN identify the nearest clusters in memory and utilize batched I/O to amortize latency.
+However, their coarse-grained nature, compared to graph-based indexes, often results in lower search throughput.
+DiskANN
+(
+Jayaram Subramanya et al., 2019
+)
+pioneered a beam search strategy that concurrently fetches multiple candidate vectors at each step to mitigate I/O stalls.
+This approach, however, is constrained by a sequential compute-I/O pattern, where performance is bottlenecked by the slowest I/O operation in each batch.
+To improve the I/O-efficiency, Starling
+(
+Wang et al., 2024
+)
+proposes a block search method that explores additional vertices within the same data block for each disk I/O, exploiting the data locality from its shuffling strategy.
+PipeANN
+(
+Guo and Lu, 2025
+)
+further improves upon this by pipelining computation and I/O, aligning its best-first search with modern SSD characteristics to enable effective overlap.
+In contrast,
+VeloANN
+introduces a fully asynchronous search procedure coupled with a record-level memory cache, which minimizes I/O stalls on the critical path and achieves performance comparable even to fully in-memory indexes.
+7.
+Conclusion
+We present
+VeloANN
+, a graph-based ANNS for workloads exceeding main-memory capacity.
+It couples an optimized on-disk layout with a coroutine-based asynchronous runtime to reduce storage stalls and improve CPU utilization.
+Built on a record-level buffer pool,
+VeloANN
+integrates proactive prefetching and cache-aware beam search to raise cache hit rates and overall performance.
+Experiments show that
+VeloANN
+outperforms state-of-the-art disk-based baselines in throughput and latency, while approaching in-memory performance with a smaller memory footprint.
+References
+[1]
+(2025)
+A. kane. pgvector (open-source vector similarity search for postgres)
+.
+Note:
+Accessed: August 24, 2026
+External Links:
+Link
+Cited by:
+§1
+.
+André
+et al.
+(2016)
+F. André, A. Kermarrec, and N. Le Scouarnec
+Cache locality is not enough: high-performance nearest neighbor search with product quantization fast scan
+.
+In
+42nd International Conference on Very Large Data Bases
+,
+Vol.
+9
+,
+pp. 12
+.
+Cited by:
+§6
+.
+Azizi
+et al.
+(2023)
+I. Azizi, K. Echihabi, and T. Palpanas
+Elpis: graph-based similarity search for scalable data science
+.
+Proceedings of the VLDB Endowment
+16
+(
+6
+),
+pp. 1548–1559
+.
+Cited by:
+§2.2
+,
+§6
+.
+Chen
+et al.
+(2021)
+Q. Chen, B. Zhao, H. Wang, M. Li, C. Liu, Z. Li, M. Yang, and J. Wang
+Spann: highly-efficient billion-scale approximate nearest neighborhood search
+.
+Advances in Neural Information Processing Systems
+34
+,
+pp. 5199–5212
+.
+Cited by:
+§2.2
+,
+§6
+,
+§6
+.
+Crotty
+et al.
+(2022)
+A. Crotty, V. Leis, and A. Pavlo
+Are you sure you want to use mmap in your database management system?
+.
+In
+CIDR
+,
+Cited by:
+§1
+,
+§2.4
+.
+Datar
+et al.
+(2004)
+M. Datar, N. Immorlica, P. Indyk, and V. S. Mirrokni
+Locality-sensitive hashing scheme based on p-stable distributions
+.
+In
+Proceedings of the twentieth annual symposium on Computational geometry
+,
+pp. 253–262
+.
+Cited by:
+§6
+.
+Dong
+et al.
+(2019)
+Y. Dong, P. Indyk, I. Razenshteyn, and T. Wagner
+Learning space partitions for nearest neighbor search
+.
+arXiv preprint arXiv:1901.08544
+.
+Cited by:
+§6
+.
+Fu and Cai (2016)
+C. Fu and D. Cai
+Efanna: an extremely fast approximate nearest neighbor search algorithm based on knn graph
+.
+arXiv preprint arXiv:1609.07228
+.
+Cited by:
+§2.2
+.
+Fu
+et al.
+(2021)
+C. Fu, C. Wang, and D. Cai
+High dimensional similarity search with satellite system graph: efficiency, scalability, and unindexed query compatibility
+.
+IEEE Transactions on Pattern Analysis and Machine Intelligence
+44
+(
+8
+),
+pp. 4139–4150
+.
+Cited by:
+§2.2
+.
+Fu
+et al.
+(2017)
+C. Fu, C. Xiang, C. Wang, and D. Cai
+Fast approximate nearest neighbor search with the navigating spreading-out graph
+.
+arXiv preprint arXiv:1707.00143
+.
+Cited by:
+§1
+,
+§2.2
+,
+§6
+.
+Gan
+et al.
+(2012)
+J. Gan, J. Feng, Q. Fang, and W. Ng
+Locality-sensitive hashing scheme based on dynamic collision counting
+.
+In
+Proceedings of the 2012 ACM SIGMOD international conference on management of data
+,
+pp. 541–552
+.
+Cited by:
+§6
+.
+Gao
+et al.
+(2025)
+J. Gao, Y. Gou, Y. Xu, Y. Yang, C. Long, and R. C. Wong
+Practical and asymptotically optimal quantization of high-dimensional vectors in euclidean space for approximate nearest neighbor search
+.
+Proceedings of the ACM on Management of Data
+3
+(
+3
+),
+pp. 1–26
+.
+Cited by:
+§1
+,
+§3.3
+,
+§5.1
+.
+Gao and Long (2024)
+J. Gao and C. Long
+Rabitq: quantizing high-dimensional vectors with a theoretical error bound for approximate nearest neighbor search
+.
+Proceedings of the ACM on Management of Data
+2
+(
+3
+),
+pp. 1–27
+.
+Cited by:
+§1
+,
+§3.3
+,
+§3.4
+,
+§5.1
+,
+§5.2
+.
+Graefe
+et al.
+(2014)
+G. Graefe, H. Volos, H. Kimura, H. Kuno, J. Tucek, M. Lillibridge, and A. Veitch
+In-memory performance for big data
+.
+Proceedings of the VLDB Endowment
+8
+(
+1
+),
+pp. 37–48
+.
+Cited by:
+§2.4
+.
+Guo and Lu (2025)
+H. Guo and Y. Lu
+Achieving
+{
+\{
+low-latency
+}
+\}
+{
+\{
+graph-based
+}
+\}
+vector search via aligning
+{
+\{
+best-first
+}
+\}
+search algorithm with
+{
+\{
+ssd
+}
+\}
+.
+In
+19th USENIX Symposium on Operating Systems Design and Implementation (OSDI 25)
+,
+pp. 171–186
+.
+Cited by:
+Figure 1
+,
+1st item
+,
+§5.2
+,
+§6
+.
+Guo
+et al.
+(2020)
+R. Guo, P. Sun, E. Lindgren, Q. Geng, D. Simcha, F. Chern, and S. Kumar
+Accelerating large-scale inference with anisotropic vector quantization
+.
+In
+International Conference on Machine Learning
+,
+pp. 3887–3896
+.
+Cited by:
+§6
+.
+Hao and Youyou (2026)
+G. Hao and L. Youyou
+OdinANN: direct insert for consistently stable performance in billion-scale graph-based vector search
+.
+In
+24th USENIX Conference on File and Storage Technologies (FAST 26)
+,
+Cited by:
+§6
+.
+Harwood and Drummond (2016)
+B. Harwood and T. Drummond
+Fanng: fast approximate nearest neighbour graphs
+.
+In
+Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition
+,
+pp. 5713–5722
+.
+Cited by:
+§2.2
+,
+§6
+.
+He
+et al.
+(2020)
+Y. He, J. Lu, and T. Wang
+CoroBase: coroutine-oriented main-memory database engine
+.
+arXiv preprint arXiv:2010.15981
+.
+Cited by:
+§2.3
+.
+Hendrycks
+et al.
+(2020)
+D. Hendrycks, C. Burns, S. Basart, A. Zou, M. Mazeika, D. Song, and J. Steinhardt
+Measuring massive multitask language understanding
+.
+arXiv preprint arXiv:2009.03300
+.
+Cited by:
+§5.2
+.
+Inc. (2025)
+C. Inc.
+Cohere embeddings documentation
+.
+Note:
+https://docs.cohere.com/docs/embeddings
+Accessed: 2025-11-01
+Cited by:
+§5.2
+.
+Indyk and Motwani (1998)
+P. Indyk and R. Motwani
+Approximate nearest neighbors: towards removing the curse of dimensionality
+.
+In
+Proceedings of the thirtieth annual ACM symposium on Theory of computing
+,
+pp. 604–613
+.
+Cited by:
+§2.1
+.
+Jayaram Subramanya
+et al.
+(2019)
+S. Jayaram Subramanya, F. Devvrit, H. V. Simhadri, R. Krishnawamy, and R. Kadekodi
+Diskann: fast accurate billion-point nearest neighbor search on a single node
+.
+Advances in neural information processing Systems
+32
+.
+Cited by:
+Figure 1
+,
+3rd item
+,
+§1
+,
+§2.2
+,
+§3.1
+,
+§3.4
+,
+§4.2
+,
+§5.2
+,
+§6
+,
+§6
+.
+Jegou
+et al.
+(2010)
+H. Jegou, M. Douze, and C. Schmid
+Product quantization for nearest neighbor search
+.
+IEEE transactions on pattern analysis and machine intelligence
+33
+(
+1
+),
+pp. 117–128
+.
+Cited by:
+§3.4
+.
+Jégou
+et al.
+(2011)
+H. Jégou, R. Tavenard, M. Douze, and L. Amsaleg
+Searching in one billion vectors: re-rank with source coding
+.
+In
+2011 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP)
+,
+pp. 861–864
+.
+Cited by:
+§5.2
+.
+Kemper and Kossmann (1995)
+A. Kemper and D. Kossmann
+Adaptable pointer swizzling strategies in object bases: design, realization, and quantitative analysis
+.
+The VLDB Journal
+4
+(
+3
+),
+pp. 519–566
+.
+Cited by:
+§2.4
+.
+Leis
+et al.
+(2023)
+V. Leis, A. Alhomssi, T. Ziegler, Y. Loeck, and C. Dietrich
+Virtual-memory assisted buffer management
+.
+Proceedings of the ACM on Management of Data
+1
+(
+1
+),
+pp. 1–25
+.
+Cited by:
+§2.4
+.
+Leis (2024)
+V. Leis
+LeanStore: a high-performance storage engine for nvme ssds
+.
+Proceedings of the VLDB Endowment
+17
+(
+12
+),
+pp. 4536–4545
+.
+Cited by:
+§2.4
+.
+Leutenegger and Dias (1993)
+S. T. Leutenegger and D. Dias
+A modeling study of the tpc-c benchmark
+.
+ACM Sigmod Record
+22
+(
+2
+),
+pp. 22–31
+.
+Cited by:
+§3.2
+.
+Lewis
+et al.
+(2020)
+P. Lewis, E. Perez, A. Piktus, F. Petroni, V. Karpukhin, N. Goyal, H. Küttler, M. Lewis, W. Yih, T. Rocktäschel,
+et al.
+Retrieval-augmented generation for knowledge-intensive nlp tasks
+.
+Advances in neural information processing systems
+33
+,
+pp. 9459–9474
+.
+Cited by:
+§1
+.
+Li
+et al.
+(2018)
+J. Li, H. Liu, C. Gui, J. Chen, Z. Ni, N. Wang, and Y. Chen
+The design and implementation of a real time visual search system on jd e-commerce platform
+.
+In
+Proceedings of the 19th International Middleware Conference Industry
+,
+pp. 9–16
+.
+Cited by:
+§1
+.
+Li
+et al.
+(2021)
+S. Li, F. Lv, T. Jin, G. Lin, K. Yang, X. Zeng, X. Wu, and Q. Ma
+Embedding-based product retrieval in taobao search
+.
+In
+Proceedings of the 27th ACM SIGKDD Conference on Knowledge Discovery & Data Mining
+,
+pp. 3181–3189
+.
+Cited by:
+§1
+.
+Liu
+et al.
+(2014)
+Y. Liu, J. Cui, Z. Huang, H. Li, and H. T. Shen
+SK-lsh: an efficient index structure for approximate nearest neighbor search
+.
+Proceedings of the VLDB Endowment
+7
+(
+9
+),
+pp. 745–756
+.
+Cited by:
+§6
+.
+Malkov and Yashunin (2018)
+Y. A. Malkov and D. A. Yashunin
+Efficient and robust approximate nearest neighbor search using hierarchical navigable small world graphs
+.
+IEEE transactions on pattern analysis and machine intelligence
+42
+(
+4
+),
+pp. 824–836
+.
+Cited by:
+§2.2
+,
+§6
+.
+Munoz
+et al.
+(2019)
+J. V. Munoz, M. A. Gonçalves, Z. Dias, and R. d. S. Torres
+Hierarchical clustering-based graphs for large scale approximate nearest neighbor search
+.
+Pattern Recognition
+96
+,
+pp. 106970
+.
+Cited by:
+§2.2
+.
+Ni
+et al.
+(2023)
+J. Ni, X. Xu, Y. Wang, C. Li, J. Yao, S. Xiao, and X. Zhang
+Diskann++: efficient page-based search over isomorphic mapped graph index using query-sensitivity entry vertex
+.
+arXiv preprint arXiv:2310.00402
+.
+Cited by:
+§6
+.
+OpenSearch Community (2024)
+OpenSearch Community
+OpenSearch: open-source enterprise-grade search and observability suite
+.
+Note:
+Accessed: August 24, 2026
+External Links:
+Link
+Cited by:
+§1
+,
+§2.4
+.
+Ottaviano and Venturini (2014)
+G. Ottaviano and R. Venturini
+Partitioned elias-fano indexes
+.
+In
+Proceedings of the 37th international ACM SIGIR conference on Research & development in information retrieval
+,
+pp. 273–282
+.
+Cited by:
+§1
+,
+§3.3
+,
+§5.1
+.
+Peng
+et al.
+(2023)
+Y. Peng, B. Choi, T. N. Chan, J. Yang, and J. Xu
+Efficient approximate nearest neighbor search in multi-dimensional databases
+.
+Proceedings of the ACM on Management of Data
+1
+(
+1
+),
+pp. 1–27
+.
+Cited by:
+§2.2
+,
+§6
+.
+Qdrant Technologies (2024)
+Qdrant Technologies
+Qdrant: vector database for the next generation of ai applications
+.
+Note:
+Accessed: August 24, 2026
+External Links:
+Link
+Cited by:
+§1
+,
+§2.4
+.
+Shim
+et al.
+(2025)
+J. Shim, J. Oh, H. Roh, J. Do, and S. Lee
+Turbocharging vector databases using modern ssds
+.
+Proceedings of the VLDB Endowment
+18
+(
+11
+),
+pp. 4710–4722
+.
+Cited by:
+2nd item
+,
+§1
+.
+Stoica and Ailamaki (2013)
+R. Stoica and A. Ailamaki
+Enabling efficient os paging for main-memory oltp databases
+.
+In
+Proceedings of the Ninth International Workshop on Data Management on New Hardware
+,
+pp. 1–7
+.
+Cited by:
+§1
+.
+Tian
+et al.
+(2023)
+Y. Tian, X. Zhao, and X. Zhou
+DB-lsh 2.0: locality-sensitive hashing with query-based dynamic bucketing
+.
+IEEE Transactions on Knowledge and Data Engineering
+36
+(
+3
+),
+pp. 1000–1015
+.
+Cited by:
+§6
+.
+Wang
+et al.
+(2024)
+M. Wang, W. Xu, X. Yi, S. Wu, Z. Peng, X. Ke, Y. Gao, X. Xu, R. Guo, and C. Xie
+Starling: an i/o-efficient disk-resident graph index framework for high-dimensional vector similarity search on data segment
+.
+Proceedings of the ACM on Management of Data
+2
+(
+1
+),
+pp. 1–27
+.
+Cited by:
+Figure 1
+,
+2nd item
+,
+§1
+,
+§3.4
+,
+§5.2
+,
+§6
+,
+§6
+.
+Wang
+et al.
+(2021)
+M. Wang, X. Xu, Q. Yue, and Y. Wang
+A comprehensive survey and experimental comparison of graph-based approximate nearest neighbor search
+.
+arXiv preprint arXiv:2101.12631
+.
+Cited by:
+§2.2
+,
+§6
+.
+Wei
+et al.
+(2020)
+C. Wei, B. Wu, S. Wang, R. Lou, C. Zhan, F. Li, and Y. Cai
+Analyticdb-v: a hybrid analytical engine towards query fusion for structured and unstructured data
+.
+Proceedings of the VLDB Endowment
+13
+(
+12
+),
+pp. 3152–3165
+.
+Cited by:
+§1
+.
+Xu
+et al.
+(2023)
+Y. Xu, H. Liang, J. Li, S. Xu, Q. Chen, Q. Zhang, C. Li, Z. Yang, F. Yang, Y. Yang,
+et al.
+Spfresh: incremental in-place update for billion-scale vector search
+.
+In
+Proceedings of the 29th Symposium on Operating Systems Principles
+,
+pp. 545–561
+.
+Cited by:
+§6
+.
+Yin
+et al.
+(2025)
+P. Yin, X. Yan, Q. Zhou, H. Li, X. Li, L. Zhang, M. Wang, X. Yao, and J. Cheng
+Gorgeous: revisiting the data layout for disk-resident high-dimensional vector search
+.
+arXiv preprint arXiv:2508.15290
+.
+Cited by:
+§6
+.
+Zhao
+et al.
+(2023)
+X. Zhao, Y. Tian, K. Huang, B. Zheng, and X. Zhou
+Towards efficient index construction and approximate nearest neighbor search in high-dimensional spaces
+.
+Proceedings of the VLDB Endowment
+16
+(
+8
+),
+pp. 1979–1991
+.
+Cited by:
+§6
+.
+Zhong
+et al.
+(2025)
+X. Zhong, H. Li, J. Jin, M. Yang, D. Chu, X. Wang, Z. Shen, W. Jia, G. Gu, Y. Xie,
+et al.
+VSAG: an optimized search framework for graph-based approximate nearest neighbor search
+.
+arXiv preprint arXiv:2503.17911
+.
+Cited by:
+§1
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

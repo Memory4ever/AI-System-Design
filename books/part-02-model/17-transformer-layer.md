@@ -63,6 +63,14 @@ dY/dX = I + dF/dX
 
 即使 `dF/dX` 在某些方向很小，梯度仍有 identity 路径。Residual 不能保证任意深网络稳定，却显著改变了优化条件。
 
+若目标是给整个 block 的输入扰动一个可证明界，就要收紧分支本身，而不只保留 identity。一条条件构造把更新写成凸势的负梯度 Euler 步：MLP 为 `x−τWᵀReLU(Wx+b)` 且 `τ≤2/‖W‖²`；attention 把 value 与约定的投影绑定为 `V=A`，以 `x−η softmax(xᵀAy)Ay` 更新，在固定 compact domain 上限制 `η≤2/sup‖Ay‖²`。这样的 query 非扩张性依赖 tied weights、符号、步长与逐层域；普通自由 Q/K/V 的正向 residual 不自动满足。context 则有自己的 Wasserstein-1 Lipschitz 常数，不继承 query 的1。<!-- source-family:SF-2026-ARXIV-2602-15503 -->
+
+[这一形式架构的近似定理](https://arxiv.org/html/2602.15503v1#S4)限定 scalar 目标，以及目标 Lipschitz 类与 lift/project 架构可实现类的交集；lift/project 自身也不能随意破坏界。它不授任意参数网络、vector 输出、可训练性或无限 token 的有限成本，更不是部署安全证明。逐层 compact domain 和 supremum 的认证可能很难，约束会限制表达与优化选择；缺少这些前提时，旧 residual、Norm、梯度/扰动实测与独立质量验收仍是工程基线。
+
+跨层保留信息还可另开投影 anchor 分支，而不把第一层同时当作通用参考与逐层计算起点：从 input embedding 用额外的 Q/K/V/gate 投影构造共享 anchor，各层先归一化 anchor，再与当前投影学习混合，之后对混合 Q/K 执行 QKNorm/RoPE、计算 attention 并应用 gate。[ExoFormer 的受限分支](https://arxiv.org/html/2601.08131v1)改变的是 attention 子层的信息来源；这条有投影、有混合的旁路不等于原 identity residual，更不能直接继承上式的导数 I。原 identity path 仍保留其梯度短路职责。<!-- source-family:SF-2026-ARXIV-2601-08131 -->
+
+新增四个投影带来额外参数与缓存/计算状态，归一化次序和 Q/K 尺度又影响能否稳定复用。作者约450M参数、10B tokens、H100/BF16、sequence2048的比较支持局部设计选择，不是完整容量匹配或长上下文证据；部分任务也未改善。外 anchor 模型内部 token similarity 更高、维度更低却表现较好，支持进一步检查“信息被外部分支承载”的 offloading 假说，不证明 token identity 必被保留或 collapse 具有普遍因果收益。成本、归一化或 held-out 质量不成立时，保留普通 residual、单值复用或单独 gated attention，而不因诊断曲线推荐所有层都外置 anchor。
+
 ## Normalization 控制什么
 
 Residual 保留旧状态，但每次新增的 Attention/MLP 更新仍可能改变尺度。归一化先解决子层接收到什么尺度的输入或输出；其放置如何影响反向传播，待完整 block 建立后再分析。
@@ -354,6 +362,10 @@ LLM 的新默认值；论文也明确指出 width scaling、低数据 regime 和
 
 估计任务信息需求、容量和跨架构校准增加实验成本，`T/P` 也不是线上可直接观测的充分统计量。应保留 matched learning curve、质量与饱和程度的联合检查；容量不足、阈值迁移失败或新任务未校准时，回退成熟 normalization/activation，而不是按单一比例静默替换架构。
 
+逐 token 的 Norm 在训练初期输入尺度尚未稳定时仍是合理基线；若目标是移除推理路径上的归一化，还可把控制分成两个阶段：warmup 继续执行 Norm，同时收集其尺度统计，之后逐渐过渡到冻结、与 sample 无关的缩放。这样的常数才有机会折叠进相邻 linear 权重；LayerNorm 的 mean-centering/affine 结构仍需单独处理，不能把 RMS 的折叠规则直接套用。它改变训练轨迹和部署产物，校准窗口、gate schedule、冻结尺度与权重版本必须一起验收，而不是训练后直接删除 Norm。<!-- source-family:SF-2026-ARXIV-2602-10408 -->
+
+内部尺度被冻结，并没有替最终读出层建立同一份合同。ε=0 的归一化读出具有零阶齐次性，径向梯度可为零；撤去这一锚后，正 margin 的交叉熵仍可能推动 logit scale 增长。保留 final Norm 与另加目标尺度 penalty 是不同分支，后者仅提供局部径向恢复力，不证明整个模型稳定。[TaperNorm 的受限对照](https://arxiv.org/html/2602.10408v1)中，移除更多 Norm 仍会损失部分 CE/任务质量；无 KV cache 的 forward microbenchmark 也不等完整生成提速。统计失配、OOD 尺度漂移或质量回归时，应保留动态 Norm/最终读出锚及原训练路径，而不是由可折叠性授予无条件替代。
+
 ## 层堆叠可以被解释成迭代优化，但不是 Hidden-state 真理
 
 前面的 Jacobian 分析回答传播是否稳定，却还没有说明一层更新在执行什么算法。把更新解释成某种优化步骤，是比形状与梯度合同更强的命题，必须另加条件。
@@ -427,6 +439,10 @@ prefill/decode 的历史状态和 online reduction。更强的 depth routing 换
 而且作者在特定 MoE 配方中的 loss/benchmark 不能证明它会普遍取代标准 residual。模型较浅、吞吐优先、
 跨 stage 带宽紧张或公开实现尚不成熟时，单一 residual stream 仍是更稳健的设计。
 
+另一条分支不保存更多历史，而是改变当前状态的 carry 与 write。令 $X\in\mathbb R^{d\times d_v}$ 为层间状态，方向 $k(X)\in\mathbb R^d$、写入值 $v(X)\in\mathbb R^{d_v}$ 与 gate $\beta(X)\in[0,2]$ 由当前输入产生，可定义 $A(X)=I-\beta kk^\top/(k^\top k+\epsilon)$，再执行 $X'=A(X)X+\beta kv^\top$。同一 gate 同时控制旧投影的擦除与新值写入，不是先无条件删掉历史再补一个普通 residual。在单位方向、$\epsilon\to0$ 且固定输入的理想分析中，$A$ 在 $k$ 方向的特征值为 $1-\beta$，其余方向为 $1$：$\beta=0$ 保持状态，$\beta=1$ 擦除该方向后写入，$\beta=2$ 对 carry 做反射后写入；区间内 carry 的谱范数不超过 $1$，但一般并不等距。
+
+这个算子界不等于整层 Jacobian 界：$k$、$v$ 与 $\beta$ 都依赖输入，导数还有这些分支与写入项；有限 $\epsilon$ 也不能直接照搬理想投影或精确反射。它提供的是 depth-wise rank-one 更新的替代结构，不是时间序列记忆的默认删除策略，更不能只从 carry 的谱推出训练稳定或质量收益。现有必要证据是结构与条件性分析，没有实测收益；采用前仍须训练匹配该接口，并验证方向归一化、gate 饱和、状态布局与执行成本。没有对应训练产物或任务回归不成立时，普通 residual 与现有 depth routing 仍是合理基线。由此再考虑下面的多流结构时，先分清改变单个状态的几何与增加状态流数量是两条不同分支。
+
 ### 多流 Residual 把 Layer Identity 从单一向量扩展为受控状态组
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-23259:start -->
@@ -437,9 +453,17 @@ prefill/decode 的历史状态和 online reduction。更强的 depth routing 换
 
 ### 多流混合还要保留哪些几何约束
 
+单一 residual 的 carry 路径是恒等映射；扩展为多流后，不能把读取、跨层传递和写回统称为一个 gate。令 `X` 的每一行是一条流，`H_pre` 将多流读入子层，`H_res` 混合并传递旧状态，`H_post` 将子层增量写回各流：
+
+```text
+X_next = H_res X + H_post^T F(H_pre X, W)
+```
+
+可学习的读写提高组合能力，但跨层 carry 变成 `H_res` 的乘积；若没有约束，它可能改变流均值，放大或削弱传播信号。一条替代分支把 carry mixer `M` 限制为非负双随机矩阵：每行、每列的和均为一，所以 `M1=1`、`1^T M=1^T`，且矩阵乘积仍满足这些约束。这保留了 carry 路径的均匀方向与流均值，并使这一路径的谱范数不超过一，却不等于恢复对任意向量的恒等映射：均匀平均矩阵会完全消掉流间差异。读写映射、子层增量和输入相关 mixer 的导数仍会改变完整 Jacobian，因此不能从 carry 的守恒推出整网梯度稳定。多流状态也增加访存和重算压力；子层 FLOPs 不变不是总执行成本不变。[受限机制证据：mHC v1 §3–5](https://arxiv.org/html/2512.24880v1#S4)
+
 保留多个状态不自动保留多个独立方向。跨流 mixer 若只限制最大奇异值不超过一，只保证这一步不放大；最小奇异值仍可接近零，反复混合会抹去流间差异。正交约束同时限制上下界，却只保存所作用子空间的欧氏范数，不保证每个语义方向或流间差异不变，均值与差异仍可交换。它以更受限的混合几何、额外状态和数值实现约束换取传输稳定性；仍须将 mixer 与 write-back、初始化和训练配方共同评估，不能把局部等距当作全网络稳定或质量保证。
 
-若 mixer 还要求每一步都保持 row/column 质量守恒，有限轮 Sinkhorn normalization 是成熟且易并行的旧方案；stream 数量少、近似误差可控时，它通常已经足够。约束变化发生在深层反复混合必须同时满足 exact doubly-stochastic feasibility 与完整 mixing expressivity 时：可以用 transportation-polytope chart 的 `(n-1)^2` 个自由度逐项消耗 row/column budget，覆盖 Birkhoff polytope interior；recursive 分解则用层级状态换部分并行。
+若 mixer 还要求每一步都保持 row/column 质量守恒，有限轮 Sinkhorn normalization 是成熟且易并行的旧方案；stream 数量少、近似误差可控时，它通常已经足够。有限迭代和数值精度只给近似可行性，不能直接继承理想双随机矩阵的精确守恒；实现仍须测量单层与跨层累积的约束误差。约束变化发生在深层反复混合必须同时满足 exact doubly-stochastic feasibility 与完整 mixing expressivity 时：可以用 transportation-polytope chart 的 `(n-1)^2` 个自由度逐项消耗 row/column budget，覆盖 Birkhoff polytope interior；recursive 分解则用层级状态换部分并行。
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-21724:start -->
 Checkpoint 必须联合版本化 stream count、chart/recursion、边界处理与 optimizer，runtime 只执行冻结 mixer，不能把“减少归一化迭代”静默改成另一个算子。Exact chart 消除 finite Sinkhorn error 与 factorial permutation mixture，却引入顺序依赖、非线性耦合、kernel 成本与 optimizer sensitivity；矩阵可行性也不证明端到端质量或硬件效率。若 chart saturation、gradient stability、吞吐或 held-out quality 失败，应保留单 residual stream，或回退经过验证的 Sinkhorn、permutation mixture 与结构化 mixer。现有证据只覆盖作者的小规模语言模型和多数 single-seed 设置，不能外推 frontier-scale 稳定性。
@@ -507,6 +531,8 @@ CoT 则继续提供监督与 verifier 接口。Depth-recurrent 小模型实验�
 内部计算也可沿序列位置增长，而非只在当前位置反复运行共享 block。一个 continuous-thought 分支把 top-layer state 反馈为新的连续输入位置，写入后续 KV，只有需要可见输出时才作 vocabulary prediction。它保留了跨位置的 causal history，因此不是前述 same-position recurrence；省下输出词表接口不意味着省下追加位置的 attention、cache 或共享层执行。
 
 训练可以并行 refinement，decode 却按这些连续位置顺序展开，二者的依赖图和实际成本不能互换。block application 数不等 FLOPs、KV 占用或 latency：同 block count 的物理加深仍可更好，vanilla baseline 也未按全部训练 FLOPs 匹配；分别训练的 K 不授予推理时任意切换预算。受限结果只支持参数容量与内部计算的一个取舍。串行等待、cache 增长或质量回退时，固定深层、原共享 loop 或可审查的显式 CoT 仍合理，不能把 continuous thought 写成免费计算。 [必要机制与反证](https://arxiv.org/html/2609.21605v1)。<!-- source-family:SF-2026-ARXIV-2609-21605 -->
+
+跨位置反馈也不必全部回到新的 input embedding。一个更细的旁路把过去位置的高层状态，经连接专属的线性投影，加到后续位置的低层更新：`h_l^i = LayerBlock_l(...) + α D_(s→l)(h_s^(i−g))`，其中 `s>l`、`g≥1`。它避免同一位置高层与低层互相等待，保留因果次序；改变的是内部层之间的状态路径，不是新增 vocabulary token。按 `g` 个位置分组可减少这条 downward 路径的串行前沿，却不取消普通 causal attention 对组内先前位置的读取，也会缩短可沿序列累积的反馈路径。训练与 prefill 因新增高→低依赖而损失部分并行性，投影参数、过去 hidden state 与执行开销仍需计费；autoregressive decode 本来串行，不等于旁路没有额外成本。[受限 fine-tuning 对照](https://arxiv.org/html/2602.17993v1#S4.SS4)中，group size 与增益 `α` 的组合会改变训练时间和质量，大分组配大增益还可退步；参数数近似匹配与单一 soft-token 控制不足以证明所有 latent reasoning 的优劣。任务不需要这种内部路径、串行准备成本超预算或更新失稳时，原 fixed stack、连续输入反馈和显式 CoT 仍应保留。<!-- source-family:SF-2026-ARXIV-2602-17993 -->
 
 可变深度的训练还取决于停止器的初始先验，而不只是推理时把 `T` 上限调高。若 Adaptive Computation Time
 一开始就以较高停止概率在浅层读出，需要深度的样本可能始终走不到后续轮次，深路径也收不到足够训练信号；
@@ -699,6 +725,16 @@ Pre-Norm 与 Post-Norm 的差异不只是代码顺序，而是梯度路径设计
 
 ## Review notes
 
+- `SF-2026-ARXIV-2602-15503` — Daily `2026-02-19`；[exact-v1](https://arxiv.org/html/2602.15503v1) Lemmas1/2/6、Theorem8、§3/5。3+1+3=7，条件理论深入；negativeEuler/tiedV/stepnorm/compactdomain下query非扩张、context另界、scalar交集限制近正文；不授任意训练Transformer安全或成本保证。root必要源/actualowner PRE通过；实际正文、邻接及末注root独立POST通过；未运行实现或复现实验。
+
+- `SF-2026-ARXIV-2602-10408` — Daily `2026-02-13`；[SF-2026-ARXIV-2602-10408 exact-v1](https://arxiv.org/html/2602.10408v1) §3–5/§7；warmup→frozen scale与finalNorm分责、质量损伤和无KV微测边界。2+2+2=6，受影响深入；root必要原源与actual owner PRE通过授窄锁；实际正文/邻接已由root非作者POST通过，未授日级。未运行代码/复现。
+
+- `SF-2026-ARXIV-2601-08131` — Daily 2026-01-15；[ExoFormer exact-v1](https://arxiv.org/html/2601.08131v1) §3.4–3.6/Eqs7–12、§4.1–4.4/Table1–2与Limitations。2+2+2=6，外置共享attention anchor与identity residual职责差额深入；不授identity导数I、offloading因果或longcontext收益。额外4projection、450M10B/H100BF16/seq2048、localcounter保留；未复现。root必要源/owner写前通过，root已实际核正文、前后交接及末注，非作者POST通过；日级Gate未授。
+
+- `SF-2026-ARXIV-2601-00417` — Daily 2026-01-06；[Deep Delta Learning exact-v1](https://arxiv.org/html/2601.00417v1) §2.1–2.2/Eqs3–7、§3.1–3.3、§4.1–4.2。只采用矩阵状态的 rank-one carry/write 与 unit/epsilon→0/fixed-input 谱边界，不推 input-dependent full Jacobian、任意训练稳定或实测收益；§5 是 Related Work，无实验节。root 必要原源→实际 owner 写前及实际正文/相邻衔接非作者写后复核通过；未复现。
+
+- `SF-2026-ARXIV-2512-24880`（mHC；Status: Experimental）：[exact-v1](https://arxiv.org/html/2512.24880v1) Intro Eqs3–4、§3.2、§4.1–4.3、§5.1–5.4及Appendix A.1；Daily 2026-01-02。采用read/carry/write分工、理想双随机carry的均值/均匀方向与乘积封闭，以及有限Sinkhorn不能授权精确守恒的边界，不采用“恢复任意方向identity”或整网梯度保证。20轮近似、27B选定序列tokens平均后的composite Amax row/column-sum gain约1.6不等于谱范数/任意输入界；3B/9B/27B MoE、n=4、4096上下文的作者训练结果不外推全架构，硬件及seed重复Not Disclosed，不采用6.7%为普遍overhead。root必要证据审阅及jan01_v3非作者写前、实际正文邻接与证据注写后复核通过；未复现实验。
+
 - `SF-2026-ARXIV-2604-21999`：[exact-v1](https://arxiv.org/html/2604.21999v1) §2–5、§8；Daily 2026-04-27。仅吸收共享单块 ACT 停止先验会锁住深路径训练、须与 scratch slots 和执行预算联校的受限分支；初始偏置、T 上限、长轮次 dilution 与 Sudoku-only/3-seed 条件保留。作者已完成必要源与相邻 owner 对读，root 独立 source→owner 及实际正文/邻接写后复核通过；未复现实验。
 
 - `SF-2026-ARXIV-2604-21254`：[exact-v1](https://arxiv.org/html/2604.21254v1) §2–4.3；Daily 2026-04-24。仅吸收共享 block 轮次边界混合与逐子层 mixer 的频率分账；diagonal carry 非双随机、非全参数共享、量化跨轮校准和 depth/compute 不匹配的反证保留。root 已完成必要源→当前 owner 写前及实际正文/相邻衔接的非作者写后复核，通过；未复现实验。
@@ -752,3 +788,5 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2607-25915` — Daily `2026-07-29`；primary `arXiv:2607.25915v1`；正文锚点“Recurrence 可以只占据 Decoder 的局部层段”。
   证据限作者的局部 recurrent decoder 与 structured-reasoning evaluation，不证明 latent steps 等价于正确推理或收益随深度单调。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-25915:end -->
+
+- `SF-2026-ARXIV-2602-17993` — Daily `2026-02-24`；[exact-v1](https://arxiv.org/html/2602.17993v1) §3.2–3.4/Eq4/7及§4.2–4.5/Table2/3。2+1+2=5，内部跨token高→低投影旁路具体缺口深入；分组只改变downward依赖，仍保causal attention组内读取。单A10080G训练时间、g/α交互退步、baseline rank140对120与λ=.1 soft-token控制不授普遍表达力或无推理成本；projection/state/prefill费用近正文。root必要原源/actual owner PRE通过并授一段/自身末注窄锁；作者实际正文/完整邻接及自身末注顺读、限定diff-check通过，root非作者实际正文/完整邻接/自身末注POST通过，窄锁释放。未核实现/复现，非日级验收。

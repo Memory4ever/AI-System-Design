@@ -1,0 +1,181 @@
+References Improve LLM Alignment in Non-Verifiable Domains
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+3 Developing Reference-Guided LLM-Judges
+3.1 Preliminary
+3.2 Reference-Guided Prompting for LLM-Judges
+3.3 Evaluation Setup
+Evaluation Setting and Metric.
+Datasets.
+Obtaining Reference Outputs
+LLMs Evaluated as Judges
+Baseline Evaluation Methods.
+3.4 Overall Result Analysis
+4 Reference-Guided Self-Improvement
+4.1 Training Process
+4.2 Experimental Settings
+4.3 Result Analysis
+5 Conclusion
+References
+A Full Experimental Results for Evaluation Protocols
+A.1 Full Statistical Analysis
+A.2 Prompt Protocol Design and Variants
+A.3 Performance with Frontier Model Judge
+A.4 Overall Performance with Open-Source LLM Judges
+A.5 Performance Breakdown by Open-Source Model Scale
+A.6 Full Results for Multi-Reference Strategies
+A.7 References from Various Frontier LLMs
+A.8 Human References as Oracles
+B Additional Results on Pointwise Scoring
+C Additional Analyses and Ablations
+C.1 Impact of Reference Quality
+Evaluation Robustness.
+Training Robustness.
+C.2 Inter-Judge Agreement
+C.3 Marginal Gains of Multi-Reference Voting
+D Dataset Details
+D.1 Core Evaluation Datasets
+D.2 Creation of Human Oracle References
+E Training Details
+F Model Registry
+G Details of Instruction Classification for AlpacaEval and Arena-Hard
+H Prompt Templates
+License: CC BY 4.0
+arXiv:2602.16802v1 [cs.CL] 18 Feb 2026
+References Improve LLM Alignment in
+Non-Verifiable Domains
+Kejian Shi
+††thanks: Equal Contribution.
+Affiliation: Yale University
+Email: kejian.shi@yale.edu
+Yixin Liu11footnotemark:
+1
+Affiliation: Yale University
+Email: yixin.liu@yale.edu
+Peifeng Wang
+Affiliation: Meta
+Email: arman.cohan@yale.edu
+Alexander R. Fabbri
+Affiliation: Scale AI
+Shafiq Joty
+Affiliation: Salesforce Research
+Affiliation: Nanyang Technological University
+Arman Cohan
+Affiliation: Yale University
+Abstract
+While Reinforcement Learning with Verifiable Rewards (RLVR) has shown strong effectiveness in reasoning tasks, it cannot be directly applied to non-verifiable domains lacking ground-truth verifiers, such as LLM alignment.
+In this work, we investigate whether reference-guided LLM-evaluators can bridge this gap by serving as soft “verifiers”.
+First, we design evaluation protocols that enhance LLM-based evaluators for LLM alignment using reference outputs. Through comprehensive experiments, we show that a reference-guided approach substantially improves the accuracy of less capable LLM-judges using references from frontier models; stronger LLM-judges can also be enhanced by high-quality (i.e., human-written) references.
+Building on these improved judges, we demonstrate the utility of high-quality references in alignment tuning, where LLMs guided with references are used as judges to self-improve. We show that reference-guided self-improvement yields clear gains over both direct SFT on reference outputs and self-improvement with reference-free judges, achieving performance comparable to training with ArmoRM, a strong finetuned reward model.
+Specifically, our method achieves 73.1% and 58.7% on AlpacaEval and Arena-Hard with Llama-3-8B-Instruct, and 70.0% and 74.1% with Qwen2.5-7B, corresponding to average absolute gains of +20.2 / +17.1 points over SFT distillation and +5.3 / +3.6 points over reference-free self-improvement on AlpacaEval / Arena-Hard.
+These results highlight the potential of using reference-guided LLM-evaluators to enable effective LLM post-training in non-verifiable domains.
+Figure 1: Overview of our study on reference-guided LLM-as-a-Judge for LLM alignment. Conceptual plots illustrating (I) the improvement in average accuracy from reference-guided evaluation (§3.3) and (II) the reference-guided self-improvement (§4).
+1 Introduction
+Recently, Reinforcement Learning (RL) from Verifiable Reward (RLVR) (Liu et al., 2024a; Lambert et al., 2025) has shown strong effectiveness in improving LLMs’ reasoning capabilities.
+However, RLVR cannot be directly applied to non-verifiable domains, such as alignment tuning (Ouyang et al., 2022; Bai et al., 2022), because it is non-trivial to design verifiable/reliable rewards for these tasks. Consequently, RL from Human Feedback (RLHF) (Stiennon et al., 2020; Ouyang et al., 2022) or AI Feedback (RLAIF) (Bai et al., 2022) remains the predominant paradigm for LLM post-training in these domains.
+There is a key difference between RLVR and RLHF: in RLHF/RLAIF, reward models or LLMs-as-Judges (Zheng et al., 2024; Li et al., 2023; Li et al., 2024) provide supervision signals, which typically evaluate outputs in a reference-free manner.
+In contrast, RLVR uses automatic verifiers that check outputs against gold-standard solutions (Liu et al., 2024a).
+This motivates our central question:
+can reference-guided LLM-evaluators act as soft verifiers to support effective RL for LLM alignment without external human or AI supervision?
+We argue this is important for two reasons. First, it extends the reference-grounded supervision advantage of RLVR to non-verifiable domains where rule-based verifiers are infeasible. Second, high-quality reference outputs may be available even when preference labels are costly or unavailable, making direct reference-based improvement practically valuable.
+To address this question, we develop LLM-judges11
+1
+We use “LLM-judge” to refer to an evaluation method that uses an LLM as the judge for brevity. that can effectively leverage reference outputs to provide supervision signals for preference optimization algorithms such as DPO (Rafailov et al., 2023).
+Critically, these reference-guided LLM-judges are used in a self-improvement manner, where an LLM serves as the judge to supervise its own training process (Yuan et al., 2024; Wu et al., 2024), so no external human or AI feedback is required.
+Recent work on rubrics-as-rewards (Gunjal et al., 2025; Huang et al., 2025) also leverages reference information (e.g., reference answers as supervision proxies or reference-based rubric construction), but its focus is rubric/reward design for RL.
+Our focus is different: we directly use external reference outputs to guide LLM-as-a-Judge decisions and then use these reference-guided judges for self-improvement training in alignment.
+Along this direction, Chang et al. (2025) has proposed to explicitly use reference outputs in RL for alignment tuning, however, its approach relies on using canonical metrics like BLEU (Papineni et al., 2002) instead of LLMs as evaluators.
+To use LLM-judges for self-improvement training, we first need to ensure those judges are actually robust and accurate. Therefore, in §3, we first develop effective reference-guided LLM-judges for alignment evaluation.
+Several recent studies have explored guiding LLM-judges using references (Zeng et al., 2024; Lyu et al., 2024; Zhang et al., 2025; Krumdick et al., 2025).
+However, their evaluation settings are limited in the types of tasks considered and the number of LLMs used as judges, and a more systematic and comprehensive investigation is lacking (further discussed in §2).
+To this end, we first introduce targeted prompting strategies
+designed to leverage strong references for alignment evaluations.
+We then conduct comprehensive evaluations for the developed reference-guided evaluation method based on the prompting strategies.
+Notably, we find that naive incorporation of references without explicit guidance on how to use them yields only modest improvements, highlighting the importance of carefully designed prompting strategies.
+Specifically, our proposed method achieves a 6.8% absolute improvement over the reference-free baseline evaluated across 11 LLM-judges using reference outputs generated by a stronger LLM, GPT-4o (Hurst et al., 2024).
+Furthermore, frontier LLMs like GPT-4o can also be enhanced as judges when provided with high-quality human references.
+Having developed the LLM-judges that can effectively leverage references, we apply them in a self-improvement setting for alignment tuning (§4). Specifically, we use the instructions in the widely used UltraFeedback dataset (Cui et al., 2023) to fine-tune Llama-3-8B-Instruct (Meta AI, 2024) and Qwen2.5-7B (Yang et al., 2024), with high-quality references generated by DeepSeek-V3 (Liu et al., 2024a). We conduct a reference-focused training process involving two stages – (1) first performing distillation, i.e., supervised fine-tuning (SFT) on the reference outputs, (2) then further improving the LLMs using DPO with the LLMs themselves as reference-guided LLM-judges to provide supervision.
+The experimental results highlight the clear benefits of high-quality references:
+(1) At the first stage, the SFT distillation on reference outputs outperforms preference optimization (DPO) based on a strong-performing finetuned reward model, ArmoRM-Llama3-8B (Wang et al., 2024);
+(2) At the second stage, reference-guided self-improvement using DPO further improves upon the SFT baseline, and shows greater gains compared to reference-free self-improvement.
+Furthermore, DPO with a reference-guided self-LLM-judge achieves performance comparable to DPO using a finetuned reward model of the same parameter size (ArmoRM-Llama3-8B), without requiring the additional human or AI feedback typically needed to train such reward models.
+On AlpacaEval (Li et al., 2023) and Arena-Hard (Li et al., 2024), our reference-guided self-improved models show superior performance, achieving scores of 73.1 and 58.7 with Llama-3, and 70.0 and 74.1 with Qwen2.5, respectively.
+These results represent improvements of up to 19.2 points on AlpacaEval and 16.5 points on Arena-Hard over the SFT distillation baseline, and demonstrate that reference-guided self-improvement can match or exceed training with finetuned reward models.
+Our contributions are primarily twofold:
+(1) We propose effective methods for enhancing LLM-judges with reference outputs in alignment evaluation, and demonstrate through comprehensive experiments across 11 judges and 5 benchmarks that high-quality references substantially improve LLM-judges’ accuracy.
+(2) We show that reference-guided LLM-judges are effective in semi-self-improvement settings for LLM alignment, providing empirical evidence that high-quality reference outputs can be leveraged for effective LLM post-training in non-verifiable domains with reference-guided automatic evaluators.22
+2
+We release the codebase at https://github.com/yale-nlp/RLRR (RL from Reference-Guided Rewards).
+2 Related Work
+LLM-as-a-Judge.
+Using powerful LLMs as automated evaluators (LLM-as-a-Judge) is a growing practice for scalable evaluation, especially in instruction-following tasks (Zheng et al., 2024; Li et al., 2023; Dubois et al., 2024).
+Benchmarks like MT-Bench and Arena-Hard (Zheng et al., 2024; Li et al., 2024) utilize strong LLMs (e.g., GPT-4) as judges, and this paradigm also supports training data annotation for preference optimization algorithms like DPO (Yuan et al., 2024; Rafailov et al., 2023).
+However, LLM judges are known to exhibit limitations such as positional and verbosity biases (Zheng et al., 2024; Zhu et al., 2023; Ye et al., 2024). Mitigation efforts include Chain-of-Thought (CoT) prompting (Wei et al., 2022), answer swapping (Shi et al., 2024), and developing more robust evaluation protocols (Zeng et al., 2024; Liu et al., 2024c). Our work builds on this by investigating reference-guided prompting to enhance LLM judge accuracy and robustness.
+Trivedi et al. (2024) explores improving judges via internal self-rationalization (Chain-of-Thought). Our work is orthogonal, focusing on external grounding via references to address knowledge gaps rather than reasoning gaps.
+The Role of References in LLM Evaluation.
+Traditional NLG evaluation often relies on reference outputs (e.g., BLEU (Papineni et al., 2002), ROUGE (Lin, 2004)), but their role in LLM-as-a-Judge for alignment evaluation, where single ground-truth references are often insufficient, has been less explored.
+Recent work has begun revisiting references: LLMBar (Zeng et al., 2024) used prompts that guide LLM-judges to generate reference outputs before evaluation; HREF (Lyu et al., 2024) incorporated human-written responses and reported improved performance over reference-free methods.
+However, these studies are limited in both the number of LLMs evaluated and dataset scale.
+RevisEval (Zhang et al., 2025) proposed generating response-adapted references to improve evaluation accuracy. Unlike RevisEval, which focuses on dynamic reference modification for static evaluation, our work extends the setting to model training and demonstrates the benefits of reference-guided supervision in self-improvement scenarios. Furthermore, our work provides a more systematic and large-scale investigation into reference-guided LLM-judges, covering 5 datasets and 13 LLMs.
+Recent stuides (Zhao et al., 2025; Chang et al., 2025) have explored RL alignment with reference-based metrics to provide supervision, however, they use traditional semantic similarity metrics such as BERTScore (Zhang et al., 2020) or BLEU (Papineni et al., 2002).
+As shown later §4.3, our LLM-judge-based evaluation approach is more effective than these metrics in alignment fine-tuning.
+Self-Improving LMs and Generative RMs.
+LLM-judges have also been used in model training, particularly in self-improvement settings where an LLM supervises its own training (Yuan et al., 2024; Wu et al., 2024; Yasunaga et al., 2024).
+A related line of work explores Generative Reward Models (Zhang et al., 2024; Mahan et al., 2024), where LLMs serve as reward models in preference optimization.
+Recent studies show that general-purpose frontier LLMs can perform competitively with finetuned discriminative reward models in this setting (Zhou et al., 2025; Frick et al., 2025).
+3 Developing Reference-Guided LLM-Judges
+To enable effective use of references in improving LLM alignment evaluation, we first develop robust reference-guided evaluation methods for LLM-judges, and conduct comprehensive evaluations of them against strong baselines.
+3.1 Preliminary
+LLM-judges for alignment evaluation typically perform pointwise scoring of a single output given an instruction (Zheng et al., 2024), or pairwise comparison of two outputs (Li et al., 2024). In this study, we focus on the pairwise comparison setting, as it matches the annotation format of various high-quality human-labeled alignment datasets such as LLMBar (Zeng et al., 2024), and is directly applicable to preference optimization algorithms like DPO.
+While our primary analysis focuses on this pairwise setting, we also conducted experiments on pointwise scoring to ensure the robustness of our findings. We present these results in Appendix B, which confirms that reference-guided evaluation also improves performance in a pointwise scoring setting.
+To evaluate an LLM-judge, human annotations are typically used as ground truth.
+Specifically, in the pairwise comparison task, the LLM-judge’s evaluation accuracy is measured by the proportion of instances where the LLM-judge selects the same preferred output as the human annotators.
+3.2 Reference-Guided Prompting for LLM-Judges
+Existing reference-based prompting methods for LLM-judges (Zeng et al., 2024; Lyu et al., 2024) typically incorporate a reference output into the prompt, but provide limited guidance on how the judge should use it, resulting in only modest improvements over reference-free evaluation (as we show in Section 3.4). We show that more explicit instructions on reference utilization are needed, and introduce targeted prompting strategies to this end.
+We introduce targeted prompting strategies designed to effectively leverage reference answers in the LLM-as-a-Judge paradigm.
+As a baseline, we first introduce a strong reference-free prompting method, which we refer to as Ref-Free (Ours).
+This prompt is designed for direct pairwise comparison without relying on any external reference answer (its template is in Figure 9).
+Its general structure follows the base prompt proposed in Zeng et al. (2024).
+However, we design the prompt to specifically instruct the model to assess instruction-following quality along with other critical aspects such as factuality and verbosity.
+As results show, this method outperforms many existing baselines.
+Building on the reference-based approach, we extend it to a reference-guided setting by instructing the LLM to assess which candidate output more closely aligns with the quality and content exemplified by the reference, while still addressing the original instruction.
+We refer to this method as RefEval.
+While prior work has proposed similar reference-guided prompting methods (Zeng et al., 2024; Lyu et al., 2024), our approach offers more explicit guidance on how the reference output should be used (See prompt design in Appendix A.2).
+RefEval
+User Message:
+Decide which output is better at following the instruction.
+An effective and factually correct Reference Output is provided to aid your evaluation. This Reference Output demonstrates successful instruction-following.
+Here are some aspects to consider:
+1. Outputs should precisely follow the instruction. If an output contains unrelated information or does not complete each and all requirements in the instruction, it means that output does not precisely follow the instruction.
+2. You should check for factual correctness and accuracy of outputs. If an output contains factual errors (especially with numbers), it should be considered lower quality. Compare the output against the Reference Output to verify if that output is factually correct.
+3. Outputs should contain only a brief effective response without any verbose explanation, unless the instruction explicitly asks for an explanation.
+4. Understand how the Reference Output properly delivers a helpful, accurate, and natural response, and then compare how closely an output matches this successful Reference Output.
+5. Extraneous content in an output that goes beyond what is present in the Reference Output should be discouraged.
+6. The order in which the outputs are presented to you should NOT affect your judgment.
+Select which output, ”Output (a)” or ”Output (b)”, is better at following the instruction. Your answer should ONLY contain: ”Output (a)” or ”Output (b)”:
+Figure 2: A snapshot of RefEval method.
+We show a snapshot of our core prompt in Figure 2, while the full prompt template is provided in Figure 10 in Appendix H.
+As shown in §3, this emphasis on reference utilization leads to clear improvements over previous methods.
+To further emphasize the role of references, we design an additional prompting method, RefMatch (Figure 11), which instructs the LLM-judge to act primarily as a semantic and stylistic matcher, determining which candidate output more closely resembles the reference.
+Specifically, the LLM is explicitly instructed with: “Your goal is to determine which output demonstrates closer similarity to the reference.”
+For comprehensiveness, we also explored several variants of these core methods. While these variants exhibited interesting characteristics in certain scenarios, our primary focus in the main paper will be on RefEval and RefMatch due to their consistent strong performance and clarity. Detailed descriptions and results for all explored variants are provided in Appendix A and Appendix H.
+3.3 Evaluation Setup
+Evaluation Setting and Metric.
+We use evaluation accuracy as the main metric, computed based on human annotations as ground truth in the pairwise comparison setting.
+To mitigate potential positional biases, where the LLM-judge might favor an output based on its presentation order (Park et al., 2024), all reported accuracies are averaged across two evaluation passes 

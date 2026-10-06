@@ -1,0 +1,96 @@
+3. Labeling Framework
+Given a query qq and an item dd, where each item dd has attributes such as item name, hierarchical item taxonomy path, item description, etc., relevance judgment based on our product guidelines categorizes the query and item pair (q,d)(q,d) into three classes 22, 11, and 00 which correspond to relevant, moderately relevant (substitute or complement), and irrelevant respectively.
+3.1. Finetuned LLM for Scalable Labeling
+Similar to the Amazon shopping data set (Reddy et al., 2022), we have a dataset for relevance judgement with human annotations according to the 3 class labeling principle mentioned above.
+However, collecting human feedback for the search products at scale is not trivial, especially when the volume goes beyond millions.
+To effectively leverage the human feedback to evaluate and improve search relevance quality, we finetuned a lightweight LLM, gpt-4o-mini (OpenAI, 2024), using the human annotated dataset to adapt the relevance prediction to be aligned with our principles.
+This finetuned LLM has achieved approximately 87.6%87.6\% in 3-class accuracy compared to human annotations and 98.8%98.8\% in "within-1" accuracy (i.e. |prediction−human annotation|≤1\lvert\text{prediction}-\text{human annotation}\rvert\leq 1) on an evaluation dataset consisting of 105105k query and item pairs spanning diverse categories and broadness of intent.
+This allowed us to scale the relevance labeling for embedding model training.
+3.2. Engagement Audit
+Although generating proxy labels through engagement signals is widely adopted (e.g. (Lin et al., 2024; Xie et al., 2022; Nigam et al., 2019; Li et al., 2021)), we chose to use the relevance labels by the finetuned LLM directly because of two reasons:
+Engagement signals vary with the broadness of the query.
+Broad queries typically have a much lower query–item conversion rate than narrow queries, as user purchases are distributed across a larger number of items.
+As a result, it is challenging to define universal thresholds on engagement signals for relevance augmentation.
+Additionally, these signals are inherently noisy, as they are influenced not only by relevance but also by extraneous factors such as image, description, promotion, and individual preferences.
+More systematic approaches (Yao et al., 2021) may mitigate some issues, yet they do not achieve the accuracy or efficiency (in terms of annotation effort and training complexity) of lightweight LLM finetuning.
+We randomly sampled 30%30\% of the annotated data, retaining cases with label and engagement disagreement (high engagement with label 0 or low engagement with label 2).
+These cases were re-evaluated using more capable LLMs (e.g., GPT-4o (OpenAI, 2024), o3 (OpenAI, 2025), Gemini-2.5-Flash (Gemini Team, 2025)) with structured prompts.
+The LLM predictions differed from the human labels in 23.4%23.4\% of these cases.
+Additional expert annotators validated the discrepancies, finding that 81.8%81.8\% of LLM predictions better reflected relevance according to the product principles and policy.
+This process reduced label errors by 5.74%5.74\%, substantially improving quality and reliability for LLM finetuning and embedding training.
+4. Semantic Embedding Model
+In this section, we present the comprehensive architecture of our proposed text embedding model for semantic search retrieval and describe the innovative incorporation and extension of CV motivated contrastive learning into our two-stage "mine and refine" training design.
+We also delve into critical methodologies for training data and loss functions that contributed significantly to improving model performance.
+4.1. Model Architecture
+As shown in Figure 1, we adopt a variant of the two-tower architecture, specifically a Siamese encoder with two separate projection heads that compress embeddings into a lower dimensional subspace for the semantic model.
+We chose the Siamese encoder due to its demonstrated advantages over asymmetric encoders (Dong et al., 2022) and its widespread adoption in open source pretrained embedding models (e.g., E5, BGE, and GTE), which is also validated in our study (Table 4).
+The projection heads are introduced to enable efficient realtime inference under practical infrastructure and latency constraints.
+Figure 1. Mine and Refine Overview: Stage 1 trains a shared encoder on the original dataset using supervised contrastive (SupCon) loss. Stage 2 continues training on a curriculum dataset using circle loss with self-pacing sample weighting and a definite convergence target induced by circular decision boundary.
+The Siamese encoder is initialized from a pretrained 0.10.1B multilingual text embedding model, motivated by the fact that a small but non-negligible portion of real world queries are non-English.
+This choice allows the system to naturally support multilingual inputs without introducing separate language specific pipelines.
+Although our optimization aims at overall retrieval quality, multilingual robustness emerges as a byproduct of this design choice.
+4.2. Training Data
+Enrichment with Catalog Attributes.
+Item representations are constructed from the item name and a two level taxonomy path by concatenating them with the item name using a natural-language format.
+This helps the model learn a consistent pattern of and thus better identify the item features.
+Previous work has explored improving query understanding through approaches such as combining embeddings on key attributes on both the query and the item side (Huang et al., 2020; Chen et al., 2025), as well as synthetic query generation by combining item side features (Xie et al., 2022).
+The former approach does not meet the latency requirements of realtime query encoding, as it requires sequential model calls for attribute extraction and embedding generation.
+Synthetic queries, on the other hand, are also beneficial in our setting.
+Rather than simply labeling the synthetic query and item pairs constructed from the corresponding item’s features as positive, we additionally generate likely negative samples by pairing items with synthetic queries derived from features of other items, and then label the query and item pairs using the finetuned relevance annotation LLM.
+Spelling Variation Augmentation.
+Misspelled queries are common in e-commerce search and are typically handled by dedicated spell correction pipelines.
+However, some spelling errors are still missed or incorrectly processed, leading to poorer semantic understanding.
+To improve the robustness to spelling related perturbations, we intentionally enrich the query data with spelling variations.
+Various strategies have been proposed to improve robustness to misspelled queries, including replacing a random subset of well formed training queries with typo injected variants (Zhuang and Zuccon, 2021; Lin et al., 2024) or enforcing invariance via cosine similarity regularization between clean and misspelled queries.
+We adopt an additive augmentation strategy that preserves the original training instances.
+As shown in Table 1, this approach, as described in detail below, achieves comparable performance on misspelled query understanding and preserves global semantic structure:
+•
+Generate spelling variations for all training queries using the probabilistic characte replacement noiser from NeuSpell (Jayanthi et al., 2020);
+•
+Randomly sample one variation per query, retaining 30%30\%–50%50\% of the generated variants;
+•
+Construct additional training instances by duplicating the original query–item pairs and assigning the sampled variation as the anchor.
+4.3. Training: SupCon
+The training data are constructed from stratified sampling of LLM labeled (q,d)(q,d) pairs, and consist of instances in one of the following formats
+(1)
+{(q,d(2),d(1),d(0)),(q,d(2),d(0)),(q,d(1),d(0)),(q,d(2),d(1))}\bigl\{(q,d^{(2)},d^{(1)},d^{(0)}),\,(q,d^{(2)},d^{(0)}),\,(q,d^{(1)},d^{(0)}),\,(q,d^{(2)},d^{(1)})\bigr\}
+where d(ℓ)d^{(\ell)} denotes an item with the relevance label ℓ\ell corresponding to the associated query qq.
+Given the nature of 3 class labels, regular binary loss functions (e.g., binary cross entropy loss, InfoNCE) do not apply directly.
+In addition, the structure of many positives and many negatives for each anchor qq in one instance renders the triplet (Weinberger and Saul, 2009) and N pair (Sohn, 2016) losses to be unsuitable.
+The supervised contrastive loss (Khosla et al., 2020) is employed due to its compatibility with the training data and more importantly its stability on hard negative samples and robustness to choices of hyper parameters.
+While initially defined for binary labels, the supervised contrastive loss can be naturally extended to multi valued labels:
+For each training instance that anchors a query qq with embedding eqe_{q}, let P⁡(q)P(q) denote the set of (relatively) positive items, edie_{d_{i}} the normalized embedding of the ii-th positive item did_{i}, and rir_{i} its corresponding label value.
+Let ed1,…,edNqe_{d_{1}},...,e_{d_{N_{q}}} denote the set of all item embeddings in the same instance.
+The loss corresponding to this instance with anchor query qq is then defined as
+(2)
+ℒq=−1∑i∈P⁡(q)ri∑i∈P⁡(q)rilog(exp⁡(⟨eq,edi⟩/τ)∑j=1Nqexp⁡(⟨eq,edj⟩/τ)),\mathcal{L}_{q}=-\frac{1}{\sum\limits_{i\in P(q)}r_{i}}\sum\limits_{i\in P(q)}r_{i}\log\left(\frac{\exp(\langle e_{q},e_{d_{i}}\rangle/\tau)}{\sum_{j=1}^{N_{q}}\exp(\langle e_{q},e_{d_{j}}\rangle/\tau)}\right),
+where τ\tau denotes the temperature factor.
+We let τ\tau be trained along with the model to allow more flexibility and smoother convergence.
+Additionally, we observed consistent findings, in line with (Liu et al., 2021) that reduction=sum\textit{reduction}=\textit{sum} has more stable convergence and better performance than reduction=mean\textit{reduction}=\textit{mean} and our conjecture is that reduction=sum\textit{reduction}=\textit{sum} captures the varied instance sizes across batches.
+4.4. Mine and Refine: Sampling Schemes and Robust Contrastive Separability
+Offline Hard Sample Mining Strategies. As validated in previous work (Huang et al., 2020), (Liu et al., 2021), (Xie et al., 2022), (Lin et al., 2024), mining both easy and hard negative samples is crucial for further improvement of model performance.
+Because our training data are partially derived from ranking stage logs and optimized solely for relevance, they already contain a substantial number of hard negative samples, such as irrelevant items with high lexical overlap or strong popularity bias.
+However, the data remain constrained by the difference in the distribution of the data during inference and the historically observed user behavior.
+As a result, explicit negative mining is still necessary to sharpen the decision boundaries among semantically confusable items.
+Unlike the commonly used in-batch hard negative mining strategy, we did not use this strategy during training.
+In-batch negatives implicitly assume that an item relevant to one query is irrelevant to other randomly sampled queries, an assumption that is particularly fragile under a three class relevance labeling scheme, where assigning label 00 to in-batch negatives can be unreliable.
+Although such noise is often tolerated and even beneficial when auxiliary signals such as engagement are available, this assumption is less likely to hold when relevance is the sole supervision signal.
+Instead, we rely on offline negative mining, which provides precise control over label quality and enables large scale mining, effectively compensating for the absence of in-batch negatives.
+In addition, we find that positive mining plays a complementary role by enriching the semantic space through more diverse query–item alignments.
+Our proposed strategy of "Mine and Refine" is presented as follows:
+•
+After completing the first training stage with SupCon, we use the trained model to perform ANN for all queries over the unique items in the training data.
+•
+We then retrieve the top kk items for each query. In practice, we find that k∈[100,200]k\in[100,200] provides a good tradeoff between efficiency and data quality.
+•
+Although ANCE (Xiong et al., 2021) is a common approach for negative mining, simply selecting samples from the top ranked results can introduce false negatives, as noted by (Lin et al., 2024). To address this, we use the finetuned relevance annotation LLM described in Section 3 to evaluate the (q,d)(q,d) pairs that are not present in the original training data.
+•
+From the query and item set consisting of the top kk retrieved items for each query, select both (i) hard negatives - items with label 00 that rank higher than k/2k/2, and (ii) hard positives - items with label 11 or 22 that rank lower than k/2k/2.
+•
+Combine the selected hard negatives and positives with the original training data to form a new (q,d)(q,d) candidate set. Including the original training data is essential in our pipeline. While (Liu et al., 2021) focused only on the hardest in-batch negatives and (Lin et al., 2024) used only newly mined hard negative and semipositive samples combined with original positives in their curriculum training, our exploration shows that completely omitting the original negative samples leads to catastrophic forgetting.
+Dynamic Optimization and Margin Sharpness: Circle Loss.
+Various loss functions have been explored for curriculum training in prior work, including those in (Liu et al., 2021; Xie et al., 2022; Lin et al., 2024).
+We evaluated several commonly used objectives, such as cross entropy loss, softmax based losses, and triplet loss, and observed that none of these objectives consistently achieve both stable training and semantically coherent embedding spaces with strong intra class compactness, i.e. boundary sharpness.
+The separability of cosine similarity distributions across the three relevance classes is an important consideration, as it is particularly relevant for efficient online serving and downstream ranking stages, where clear score separation simplifies thresholding and decision making.
+Motivated by progress in deep metric learning and face recognition, including ArcFace (Deng et al., 2019), Additive Margin Softmax (Wang et al., 2018), Angular Margin Softmax (Zhu et al., 2023), and circle loss (Sun et al., 2020), we observe that circle loss provides a unified formulation that generalizes contrastive and cross entropy–style objectives.
+By explicitly modeling both positive and negative similarities with adaptive weighting, circle 

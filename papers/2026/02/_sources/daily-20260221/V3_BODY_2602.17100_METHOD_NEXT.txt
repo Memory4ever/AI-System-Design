@@ -1,0 +1,59 @@
+https://arxiv.org/html/2602.17100v1
+2 AgentConductor
+AgentConductor is an RL-optimized MAS centered on an orchestrator agent. As shown in Fig. 3, we train the orchestrator agent through Stage 1 SFT and Stage 2 RL. Stage 1 equips the orchestrator with rich prior knowledge of interaction topologies. Stage 2 further optimizes the orchestrator using trajectory-based RL that incorporates multi-turn environment feedback. Through this process, the orchestrator learns to generate more suitable topologies and to update them in response to execution feedback. During Stage 3 inference, our orchestrator is frozen and can be transferred to new datasets without additional optimization. In Appendix B.4 and Appendix B.5, we evaluate zero-shot transfer and transfer to new task types after adding roles with minimal additional training, respectively, providing evidence of the generality of our approach.
+We maintain a predefined pool of agent roles. Given a programming problem, the orchestrator first estimates the task difficulty and selects the agent roles that are most suitable for participation. It then generates an interaction topology that matches the inferred difficulty level. The MAS subsequently executes according to this topology. After interacting with the code execution environment, the system receives execution feedback. If the attempt fails, the feedback and interaction history are used as inputs to the next turn, and the orchestrator regenerates a more suitable topology to better solve the same problem. In this section, we present a detailed description of the overall framework and its components, as illustrated in Fig.3.
+2.1 Problem Definition
+2.1.1 Interaction Topology Notations
+We first introduce a novel multi-agent interaction topology expressed in a human-readable structured language (YAML). As shown in Fig.1 , this topology is structurally defined as an improved layered DAG, where step denotes a layer and ref denotes an edge, supporting both intra-layer parallelism and cross-layer connections. Furthermore, it supports multi-turn evolutionary generation driven by execution feedback from multi-agent interactions. Formally, it is denoted as 𝒢(k)=(𝒱(k),ℰ(k))\mathcal{G}^{(k)}=(\mathcal{V}^{(k)},\mathcal{E}^{(k)}), where kk is the turn index.
+Each node vi(k)∈𝒱(k)v_{i}^{(k)}\in\mathcal{V}^{(k)} represents an agent instance that executes during turn kk.
+The entire topology is generated and orchestrated by the orchestrator agent. See Appendix C for detailed notions of the interaction topology.
+2.1.2 AgentConductor Paradigm
+Given a code problem xx, the orchestrator agent policy πθ\pi_{\theta} generates, at turn k∈{1,…,K}k\in\{1,\dots,K\}, a variable-length YAML token sequence
+ok=(ok,1,…,ok,|ok|),o_{k}=(o_{k,1},\ldots,o_{k,|o_{k}|}),
+(1)
+that encodes the interaction topology. The sequence is deterministically decoded into a layered DAG
+𝒢(k)=DecodeTopo⁡(ok),\mathcal{G}^{(k)}=\mathrm{DecodeTopo}(o_{k}),
+(2)
+In particular, AgentConductor calibrates the topology density to the inferred difficulty of xx. This induces variable oko_{k} lengths |ok||o_{k}| and reduces superfluous reasoning and token usage.
+The environment then executes agents according to 𝒢(k)\mathcal{G}^{(k)} and returns feedback zkz_{k} which can be further decomposed as zk=(zkroles,zkcode)z_{k}=(z_{k}^{\text{roles}},z_{k}^{\text{code}}), where zkrolesz_{k}^{\text{roles}} collects the outputs of multiple agents generated, and zkcodez_{k}^{\text{code}} denotes the sandboxed code-execution outcome. Let the turn history be Hk={(𝒢(h),zh)}h<kH_{k}=\{(\mathcal{G}^{(h)},z_{h})\}_{h<k}. The joint process factorizes as
+pθ(o1:K,z1:K∣x)=∏k=1Kπθ​(ok∣x,Hk)⏟Topology generation⋅Penv​(zk∣x,𝒢(k),Hk)⏟Execution feedback.p_{\theta}(o_{1:K},z_{1:K}\mid x)=\prod_{k=1}^{K}\underbrace{\pi_{\theta}\!\left(o_{k}\mid x,H_{k}\right)}_{\text{Topology generation}}\\
+\cdot\underbrace{P_{\text{env}}\!\left(z_{k}\mid x,\mathcal{G}^{(k)},H_{k}\right)}_{\text{Execution feedback}}.
+(3)
+Equation 3 factorizes the multi-turn process into topology generation with environment execution: at turn kk the policy emits oko_{k} conditioned on (x,Hk)(x,H_{k}), the environment executes under 𝒢(k)\mathcal{G}^{(k)} and returns zkz_{k}. Feedback zkz_{k} is appended to Hk+1H_{k+1} and conditions the next generation, so the topology is updated online in response to execution feedback. See Appendix C.1 for algorithmic details.
+2.1.3 Graph Density Evaluation Function
+To better assess the complexity and performance of multi-agent interactions and explicitly account for cost consumption, we define the graph complexity evaluation function described by three metrics, including the number of nodes, the edge density and graph depth. The first two metrics can reflect the token costs, while the last indicator reflects the degree of parallelism of the system, or in other words, the response time. Let nin_{i} denote the number of agent invocations in step ii, ss be the total steps for each round, then the
+total number of nodes is
+|𝒱|=∑i=1sni.|\mathcal{V}|=\sum_{i=1}^{s}n_{i}.
+(4)
+Edges are formed through agent references, with the total number of edges given by
+|E|=∑i=1s∑j=1ni|A​g​e​n​tj​[ref]|,|E|=\sum_{i=1}^{s}\sum_{j=1}^{n_{i}}|Agent_{j}[\text{ref}]|,
+(5)
+and the depth of the graph is related to the depth of invocation of the agent, denoted by dd. Inspired by Theorem 1, we use the number of DAG layers (the total steps ss) instead. For normalization, we map each metric into the unit interval [0,1][0,1].
+The normalized scores are defined as:
+Snode\displaystyle S_{\text{node}}
+=exp⁡(−|V|Nmax​(l)),\displaystyle=\exp\!\left(-\tfrac{|V|}{N_{\max}(l)}\right),
+(6)
+Sedge\displaystyle S_{\text{edge}}
+=exp⁡(−|E||V|​(|V|−0.5)),\displaystyle=\exp\!\left(-\tfrac{|E|}{|V|(|V|-0.5)}\right),
+Sdepth\displaystyle S_{\text{depth}}
+=1−s|V|.\displaystyle=1-\tfrac{s}{|V|}.
+where ll is task difficulty level, each level is associated with a maximum allowed number of nodes Nmax​(l)N_{\max}(l). SnodeS_{\text{node}} reflects the node complexity based on the graph size. SedgeS_{\text{edge}} captures the edge complexity relative to a complete graph, and SdepthS_{\text{depth}} quantifies the spread of the graph by comparing its depth to the total number of nodes. The overall graph complexity evaluation function is defined as:
+𝒮complex=exp⁡(Snode+2⋅Sedge+Sdepth)\mathcal{S}_{\text{complex}}=\exp\!\left(S_{\text{node}}+2\cdot S_{\text{edge}}+S_{\text{depth}}\right)
+(7)
+𝒮complex\mathcal{S}_{\text{complex}} serves as a component of the reward function rϕ​(⋅)r_{\phi}(\cdot), as defined in Eq.13, and contributes to the trajectory reward A^i\hat{A}_{i} in the Group Relative Policy Optimization (GRPO) advantage function, as detailed in Eq.8.
+The mathematical derivation that precisely defines 𝒮complex\mathcal{S}_{\text{complex}} as the topology density is provided in Appendix C.2.
+2.2 SFT data Generation
+To endow the base LLM with topology priors and facilitate its optimization during reinforcement learning, we built a supervised corpus. From three competition-level datasets and three difficulty tiers, we sampled 50 problems per tier per dataset (450 total). We designed a customized system prompt and queried GPT-4o to produce one YAML topology per problem.
+Each topology was validated by our checker for format correctness, de-duplication, and density within the difficulty band(See Appendix A.3 for details). For each topology, we constructed error-aware prompts from distinct failure types and generated a second-turn iterative topology. Combined with first-turn runs, this yielded 2,700 competition-level interaction graphs. We repeated the pipeline on two basic datasets to obtain 300 initial examples across difficulties; here the model inferred difficulty and generated the topology accordingly. In total we collected 4,500 examples. This produces a base model endowed with strong priors for topology generation.
+2.3 Reinforcing Dynamic Topologies for LLM-MA via Trajectory-Level Policy Optimization
+GRPO-Based Training for Dynamic Topology Generation
+After SFT, we further train the orchestrator policy to generate dynamic multi-agent interaction topologies using GRPO. See Appendix D.1 for the multi-turn trajectory and return definition.
+Specifically, the advantage of trajectory ii is defined as
+A^i=Ri​(τ)−mean⁡({Rj​(τ)}j=1G)std⁡({Rj​(τ)}j=1G),\hat{A}_{i}=\frac{R_{i}(\tau)-\mathrm{mean}\!\left(\{R_{j}(\tau)\}_{j=1}^{G}\right)}{\mathrm{std}\!\left(\{R_{j}(\tau)\}_{j=1}^{G}\right)},
+(8)
+Here, RiR_{i} can be viewed as the instance-level realization of R⁡(τ)R(\tau) (defined in Eq. 24) within the group of GG sampled trajectories.
+The GRPO objective function can be formally expressed in Appendix D.2.
+Table 1: Rewards for Topology Validation and Code Execution Errors
+YAML Topology Correctness Rewards
+Code Execution Error Rewards
+Error Ty

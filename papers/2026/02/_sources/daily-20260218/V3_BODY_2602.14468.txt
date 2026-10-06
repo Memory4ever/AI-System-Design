@@ -1,0 +1,1500 @@
+LACONIC: Length-Aware Constrained Reinforcement Learning for LLM
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Methodology
+2.1 Preliminary Background
+2.2 Formulation
+2.3 LACONIC : Length-Aware Constrained Policy Optimization
+3 Theoretical Results
+4 Experiment
+4.1 Experimental Setup
+4.2 Main Results
+5 Further Analysis
+5.1 Ablation Analysis on Cost Function
+5.2 Ablation Analysis on Budget B B
+5.3 Ablation Analysis on Dual Step Size η \eta
+5.4 Computational Resource Analysis
+6 Related Work
+7 Conclusion
+8 Future Work
+References
+A Standard Primal-Dual Method and Linear Cost Functions
+A.1 Standard Primal-Dual Updates
+A.2 Additional Cost Function Ablations
+B Additional Experiments
+B.1 Ablation Results on Step Sizes
+B.2 Experiments on Qwen3-8B
+B.3 Ablation Analysis on Fixed Dual Variables
+C Analysis of clipped-cost primal-dual
+C.1 Idealized clipped-cost dynamics
+C.2 Bounding Reward Suboptimality of Clipped-Cost
+C.3 Convergence Guarantee
+C.4 Convergence Rate
+D Case Study
+License: CC BY 4.0
+arXiv:2602.14468v1 [cs.LG] 16 Feb 2026
+LACONIC: Length-Aware Constrained Reinforcement Learning for LLM
+Chang Liu
+Affiliation: University of California, Los Angeles
+Correspondence to: changliu11@ucla.edu
+Yiran Zhao
+Affiliation: Salesforce AI Research
+Lawrence Liu
+Affiliation: University of California, Los Angeles
+Yaoqi Ye
+Affiliation: National University of Singapore
+Csaba Szepesvári
+Affiliation: University of Alberta
+Lin F. Yang
+Affiliation: University of California, Los Angeles
+Abstract
+Reinforcement learning (RL) has enhanced the capabilities of large language models (LLMs) through reward-driven training. Nevertheless, this process can introduce excessively long responses, inflating inference latency and computational overhead. Prior length-control approaches typically rely on fixed heuristic reward shaping, which can misalign with the task objective and require brittle tuning. In this work, we propose LACONIC , a reinforcement learning method that enforces a target token budget during training. Specifically, we update policy models using an augmented objective that combines the task reward with a length-based cost. To balance brevity and task performance, the cost scale is adaptively adjusted throughout training. This yields robust length control while preserving task reward. We provide a theoretical guarantee that support the method. Across mathematical reasoning models and datasets, LACONIC preserves or improves pass@1 while reducing output length by over 50%. It maintains out-of-domain performance on general knowledge and multilingual benchmarks with 44% fewer tokens. Moreover, LACONIC integrates into standard RL-tuning with no inference changes and minimal deployment overhead.
+Keywords:
+Machine Learning, ICML
+1 Introduction
+Figure 1 : The top panel skethces RL-tuning with a fixed length-aware shaping objective (blue). As the heuristically shaped objective generally differs from the true task reward R R (red), optimizing it may converge to a policy π N \pi_{N} that is suboptimal in R R . The bottom panel sketches training with LACONIC . LACONIC adaptively updates the length-aware objective (green) so that it better aligns with the true task reward while achieving shorter outputs, yielding near-optimal policies.
+Figure 2 : Illustration of LACONIC. LACONIC alternates two steps: (1) in a primal update, the policy model is updated on an augmented objective that trades off task reward r r with a length-aware cost c c scaled by the dual variable λ \lambda ; (2) in a dual update, λ \lambda is adaptively updated to enforce a token budget constraint B B by increasing when the average length L ¯ \bar{L} exceeds the budget B B and decreasing otherwise. Together, these updates maximize task reward while meeting the budget on average.
+Large language models (LLMs) such as GPT [ OpenAI et al., 2024 ; OpenAI, 2025 ] , Gemini [ Comanici et al., 2025 ] , DeepSeek [ DeepSeek-AI, 2025 ] , and Claude [ Anthropic, 2025 ] have witnessed unprecedented success in its applications from software agents to enterprise analytics [ Team et al., 2025 ; Li et al., 2025b ; Jin et al., 2025 ; Feng et al., 2025 ] . The impressive capabilities of LLMs have been significantly enhanced by reinforcement learning based fine-tuning [ Li et al., 2025a ; Wu et al., 2025 ; Li et al., 2025b ] , a procedure that aligns pretrained models with task-specific rewards through interaction with an environment. This process has been pivotal in refining LLM reasoning skills, enhancing generalization, and achieving state-of-the-art performance across diverse benchmarks [ Wang et al., 2024 ; Hsiao et al., 2025 ; Shi et al., 2025 ; Qu et al., 2025 ] . However, RL-tuned language models often suffer from generating unnecessarily long thinking traces. This problem is particularly acute on reasoning and mathematics tasks, where the model is asked to spell out logical steps [ Chen et al., 2025 ; Sui et al., 2025 ] . In practice, excessive verbosity inflates training and inference time, increases memory pressure, and ultimately degrades user experience.
+Recent work on length-aware LLMs has explored positional encoding, prompt engineering, and post-generation truncation [ Li et al., 2025a ; Wu et al., 2025 ; Li et al., 2025b ] . A straightforward method is to design new reward functions to incorporate response length signals into RL-tuning [ Aggarwal and Welleck, 2025 ; Cheng et al., 2025 ; Huang et al., 2025 ; Yuan et al., 2025 ] . These methods typically hard-code a length penalty or heuristic reward shaping that stays fixed throughout training. Fine-tuning with these rewards optimizes a surrogate objective that is misaligned with true task reward, and often demands per-setting hyperparameter tuning. The top panel in fig. 1 visualizes this by showing a sketch of the training process. The fixed heuristic objective (blue curve) differs from the true objective (red curve), so optimizing it yields policies with suboptimal task rewards.
+In this paper, we address length control in RL-tuning by maximizing task reward subject to an average token budget constraint. We introduce LACONIC ( L ength- A ware Con strained Pol ic y Optimization), a primal-dual algorithm. During training, the model samples candidate responses for each prompt. Besides the task reward (e.g., correctness or usefulness) as in the standard RL-tuning, we assign to each candidate response also a length-aware cost proportional to its budget violation. We then construct a learning signal that combines task reward with length cost, scaled by an adaptively learned multiplier. We alternatively update the policy model and the multiplier. The policy is updated by a policy optimization step where advantages and objectives are calculated from the constructed signal. Then we update the multiplier based on the average response length of the current batch. We raise the multiplier if the current batch violates the token budget constraint on average, and lower it if the current batch falls short. This feedback automatically steers the model’s average output length towards the token budget. Particularly, when the model consistently stays within the token budget, the multiplier naturally drops to zero and our training steps reduce to standard RL-tuning steps, allowing the model to recover task rewards with shortened responses. As illustrated in fig. 1 , LACONIC adopts an adaptive objective that dynamically align the optimization with true rewards, steering the policy towards the length-aware optimum.
+In section 3 , we provide theoretical analysis of our approach. Under standard assumptions, we establish convergence guarantees and bound the resulting model’s near-optimality.
+We conduct extensive experiments to evaluate our method LACONIC and present the evaluation results in section 4 . We apply LACONIC to fine-tune two reasoning models DeepScaleR-1.5B-Preview [ Luo et al., 2025 ] and DeepSeek-R1-Distill-Qwen-1.5B [ DeepSeek-AI et al., 2025 ] . The experimental results show that our LACONIC -tuned models can significantly outperform existing length control baselines L1 [ Aggarwal and Welleck, 2025 ] , [ Arora and Zanette, 2025 ] , and ThinkPrune [ Hou et al., 2025 ] and mostly preserve the performance of the full-length base models on pass@1 across common mathematics benchmarks, while reducing response lengths by using fewer tokens. LACONIC also preserves accuracy on benchmarks outside our RL-tuning domain while substantially reducing response length.
+Furthermore, we perform ablation analysis on the hyperparameters of our method in section 5 , showing that LACONIC provides robust length control.
+2 Methodology
+2.1 Preliminary Background
+RL fine-tuning casts text generation as a sequential decision process, where the prompt q q together with the partial output sequence constitutes the state, selecting the next token is the action, and the language model parameterized by θ \theta serves as the policy π θ \pi_{\theta} that maps states to action probabilities. After generating the response, the model receives task rewards r ⁡ ( q , o ) r(q,o) assigned by a reward model. Policy gradient algorithms such as Proximal Policy Optimization (PPO) [ Schulman et al., 2017 ] and Group Relative Policy Optimization (GRPO) [ Shao et al., 2024 ] then translate such rewards into token-level gradients, so that the model can be updated to increase the corpus-level expected rewards, i.e,
+max θ 𝔼 q ∼ P ( Q ) , o ∼ π θ ( ⋅ | q ) [ r ( q , o ) ] . \max_{\theta}\mathbb{E}_{q\sim P(Q),o\sim\pi_{\theta}(\cdot|q)}[r(q,o)].
+(1)
+In practice, GRPO updates the policy model’s parameters θ \theta by optimizing the following surrogate objective
+𝒥 \displaystyle\mathcal{J}
+( θ ) = 𝔼 q , { o i } i = 1 G [ 1 G ∑ i = 1 G 1 | o i | ∑ t = 1 | o i | min ( ρ i , t A i , t , \displaystyle(\theta)=\mathbb{E}_{q,\{o_{i}\}_{i=1}^{G}}\!\Bigl[\frac{1}{G}\sum_{i=1}^{G}\frac{1}{|o_{i}|}\sum_{t=1}^{|o_{i}|}\min(\rho_{i,t}A_{i,t},\,\!
+(2)
+clip ( ρ i , t , − ε , + ε ) A i , t ) − β D KL [ π θ ∥ π ref ] ] . \displaystyle\operatorname{clip}(\rho_{i,t},1\!-\!\varepsilon,1\!+\!\varepsilon)A_{i,t})-\beta D_{\mathrm{KL}}[\pi_{\theta}\|\pi_{\mathrm{ref}}]\Bigr].
+where ρ i , t = π θ ​ ( o i , t ∣ q , o i , < t ) π θ old ​ ( o i , t ∣ q , o i , < t ) \rho_{i,t}=\frac{\pi_{\theta}(o_{i,t}\mid q,o_{i,<t})}{\pi_{\theta_{\mathrm{old}}}(o_{i,t}\mid q,o_{i,<t})} is the likelihood ratio, and A i , t A_{i,t} is the group-relative advantage. The likelihood ratio clipping and an extra KL-divergence penalty are adopted to stabilize policy updates.
+2.2 Formulation
+To explicitly control response lengths, we extend standard RL-tuning to a constrained setting that maximizes task reward under an average token constraint B B , a pre-specified budget reflecting deployment targets such as latency and computational resources in practice. Formally, letting L ⁡ ( o ) L(o) denote the length of response o o , we address
+max θ 𝔼 q ∼ P ( Q ) , o ∼ π θ ( ⋅ | q ) [ r ( q , o ) ] , \displaystyle\max_{\theta}\mathbb{E}_{q\sim P(Q),o\sim\pi_{\theta}(\cdot|q)}[r(q,o)],
+(3)
+s.t. 𝔼 q ∼ P ( Q ) , o ∼ π θ ( ⋅ | q ) [ L ( o ) ] ≤ B . \displaystyle\textrm{s.t. }\;\mathbb{E}_{q\sim P(Q),o\sim\pi_{\theta}(\cdot|q)}[L(o)]\leq B.
+In eq. 3 , we enforce a corpus-level average token budget rather than a strict per-sequence length constraint, as response lengths naturally vary across prompts (e.g., math olympiad problems typically require more tokens than simple arithmetic). This allows allocating more tokens to hard instances while still meeting the overall budget constraint.
+A standard approach to eq. 3 is Lagrangian primal-dual optimization. Introduce a dual variable λ ≥ 0 \lambda\geq 0 and Lagrangian
+ℒ ⁡ ( θ , λ ) := 𝔼 ⁡ [ r ⁡ ( q , o ) ] − λ ⁡ ( 𝔼 ⁡ [ L ⁡ ( o ) ] / B − 1 ) , \mathcal{L}(\theta,\lambda):=\mathbb{E}[r(q,o)]-\lambda\left(\mathbb{E}[L(o)]/B-1\right),
+then the constrained problem eq. 3 can be addressed by optimizing the Lagrangian over policy models θ \theta while adjusting λ ≥ 0 \lambda\geq 0 , i.e., max θ ⁡ min λ ≥ 0 ⁡ ℒ ⁡ ( θ , λ ) \max_{\theta}\min_{\lambda\geq 0}\mathcal{L}(\theta,\lambda) . Deferring the derivation to appendix A , we obtain the following primal and dual updates:
+θ t + 1 ∈ arg ​ max θ ⁡ 𝔼 ​ [ r ⁡ ( q , o ) − λ t ​ L ⁡ ( o ) − B B ] , \theta_{t+1}\in\operatorname*{arg\,max}_{\theta}\ \mathbb{E}\left[r(q,o)-\lambda_{t}\,\frac{L(o)-B}{B}\right],
+(4)
+λ t + 1 = max ⁡ { λ t + η ⁡ ( 𝔼 ⁡ [ L ⁡ ( o ) ] / B − 1 ) , 0 } . \lambda_{t+1}=\max\{\lambda_{t}+\eta\left(\mathbb{E}[L(o)]/B-1\right),0\}.
+(5)
+The primal update eq. 4 is analogous to standard RL-tuning in eq. 1 . It maximizes expected reward augmented by a linear length-aware cost c ~ ≔ ( L ⁡ ( o ) − B ) / B \widetilde{c}\coloneqq(L(o)-B)/B weighted by λ \lambda . However, this linear cost c ~ \widetilde{c} can be problematic in practice: when λ > 0 \lambda>0 , the linear cost c ~ \widetilde{c} consistently incentivizes shorter outputs, and drives the policy towards extremely short responses. This can cause unstable policy updates in training. We observe this behavior in practice and report the empirical results in appendix A .
+2.3 LACONIC : Length-Aware Constrained Policy Optimization
+We propose LACONIC , a primal-dual method for length-aware RL tuning that preserves the principled constrained-optimization structure, while resolving the collapse to overly short outputs induced by the linear length cost c ~ \widetilde{c} .
+Clipped cost. We introduce a clipped cost that is zero up to the budget. Specifically, for a prompt q q and a response o o generated by the policy model π θ \pi_{\theta} , we define
+c ⁡ ( q , o ) = max ⁡ { L ⁡ ( o ) − B B , 0 } . c(q,o)=\max\left\{\frac{L(o)-B}{B},0\right\}.
+(6)
+This clipped cost assigns equal cost to within-budget responses ( L ⁡ ( o ) ≤ B L(o)\leq B ). Therefore, it removes artificial pressure to shorten responses that already meet the token budget.
+Algorithm 1 LACONIC (Length-Aware Constrained Policy Optimization)
+Input: initial policy model π θ init \pi_{\theta_{\textrm{init}}} ; reward models r φ r_{\varphi} ; task prompts 𝒟 \mathcal{D} ; token budget B B ; step size η \eta ; initial dual variable λ init \lambda_{\textrm{init}}
+1
+policy model π θ ← π θ init \pi_{\theta}\leftarrow\pi_{\theta_{\textrm{init}}}
+2
+dual variable λ ← λ init \lambda\leftarrow\lambda_{\textrm{init}}
+3
+for iteration = 1 , … , I 1,\dots,I do
+4
+reference model π ref ← π θ \pi_{\textrm{ref}}\leftarrow\pi_{\theta}
+5
+for step = 1 , … , M 1,\dots,M do
+6
+Sample a batch 𝒟 b \mathcal{D}_{b} from 𝒟 \mathcal{D}
+7
+Update the old policy model π θ old ← π θ \pi_{\theta_{\textrm{old}}}\leftarrow\pi_{\theta}
+8
+Sample G G outputs { o i } i = 1 G ∼ π θ old ( ⋅ | q ) \{o_{i}\}_{i=1}^{G}\sim\pi_{\theta_{\textrm{old}}}(\cdot|q) for each question q ∈ 𝒟 b q\in\mathcal{D}_{b}
+9
+Compute rewards { r i } i = 1 G \{r_{i}\}_{i=1}^{G} for each sampled output o i o_{i} by running r φ r_{\varphi}
+10
+Compute costs { c i } i = 1 G \{c_{i}\}_{i=1}^{G} for each sampled output o i o_{i} by eq. 6
+11
+Compute Lagrangian rewards { ℓ λ , i } i = 1 G \{\ell_{\lambda,i}\}_{i=1}^{G} for each sample output by eq. 7
+12
+Compute advantages A i , t A_{i,t} for the t t -th token of o i o_{i} by eq. 8
+// Primal update
+13
+Update the policy model π θ \pi_{\theta} by maximizing the GRPO-style objective
+// Dual update
+14
+Update the dual variable λ \lambda by eq. 9
+Output: π θ \pi_{\theta}
+Primal updates. In the primal update, we update the policy model θ \theta by holding λ t \lambda_{t} fixed and solving eq. 4 . This objective has the same form as standard RL-tuning in eq. 1 with a shaped reward. Therefore, we instantiate the primal update using the RL-tuning procedure (e.g., GRPO) by substituting the task reward r r with the Lagrangian reward:
+ℓ λ ​ ( q , o ) = r ⁡ ( q , o ) − λ ⋅ c ⁡ ( q , o ) , \ell_{\lambda}(q,o)=r(q,o)-\lambda\cdot c(q,o),
+(7)
+where we replace the linear cost with our clipped cost c c to stabilize policy updates.
+Specifically, for each prompt q q , we sample a group of candidate outputs 𝐨 = { o 1 , o 2 , … , o G } \mathbf{o}=\{o_{1},o_{2},\dots,o_{G}\} from the current policy model π θ \pi_{\theta} , and compute their task rewards 𝐫 = { r 1 , r 2 , … , r G } \mathbf{r}=\{r_{1},r_{2},\dots,r_{G}\} and costs 𝐜 = { c 1 , c 2 , … , c G } \mathbf{c}=\{c_{1},c_{2},\dots,c_{G}\} by eq. 6 . We then compute the Lagrangian rewards ℓ λ = { ℓ λ , 1 , ℓ λ , 2 , … , ℓ λ , G } \boldsymbol{\ell}_{\lambda}=\{\ell_{\lambda,1},\ell_{\lambda,2},\dots,\ell_{\lambda,G}\} by eq. 7 . For each token o i , t o_{i,t} , we construct the GRPO-style advantage by normalizing Lagrangian rewards ℓ λ , i \ell_{\lambda,i} within the group, i.e.,
+A i , t = ℓ ~ λ , i = ℓ λ , i − mean ⁡ ( ℓ λ ) std ⁡ ( ℓ λ ) . A_{i,t}=\widetilde{\ell}_{\lambda,i}=\frac{\ell_{\lambda,i}-\mathrm{mean}(\boldsymbol{\ell}_{\lambda})}{\mathrm{std}(\boldsymbol{\ell}_{\lambda})}.
+(8)
+The policy model is optimized by maximizing the GRPO objective in eq. 2 where advantages are calculated by eq. 8 .
+Dual updates. In the dual update, we adjust the dual variable λ \lambda by estimating the expectation in eq. 5 with the empirical mean response length L ¯ \bar{L} of the current minibatch. This yields the practical dual update
+λ ← clip ​ ( λ + η ⁡ ( L ¯ B − 1 ) , 0 , Λ ) , \lambda\leftarrow\textrm{clip}\left(\lambda+\eta\left(\frac{\bar{L}}{B}-1\right),0,\Lambda\right),
+(9)
+with the step size η \eta and a λ \lambda -ceiling Λ \Lambda . When the batch violates the token budget on average ( L ¯ > B \bar{L}>B ), the update increases λ \lambda , raising the effective price of tokens in ℓ λ \ell_{\lambda} . Longer responses then receive lower (often negative) advantages than shorter responses with similar task rewards, so the next primal update shifts the policy toward shorter outputs. When the batch falls within the budget, λ \lambda relaxes towards 0. Notably, when λ = 0 \lambda=0 , ℓ λ \ell_{\lambda} reduces to the task reward r r , and the next primal update is exactly a GRPO step. This feedback adapts λ \lambda to track the budget constraint throughout training as the policy and length distribution evolve.
+We cap λ \lambda by a ceiling Λ \Lambda to avoid over-penalizing length. For an indicator reward r ⁡ ( q , o ) ∈ { 0 , 1 } r(q,o)\in\{0,1\} , an excessively large λ \lambda can make a within-budget incorrect response (with ℓ λ = 0 \ell_{\lambda}=0 ) score above a correct but long response. A sufficient safeguard is to require ℓ λ ​ ( q , o c ) > 0 \ell_{\lambda}(q,o_{c})>0 for any correct response o c o_{c} , which requires λ < B L ⁡ ( o c ) − B \lambda<\frac{B}{L(o_{c})-B} for L ⁡ ( o c ) > B L(o_{c})>B . Using the worst case L ⁡ ( o c ) ≤ L max L(o_{c})\leq L_{\max} , where L max L_{\max} is the maximum response length cap, it is sufficient to set Λ = B L max − B \Lambda=\frac{B}{L_{\max}-B} .
+We present LACONIC in algorithm 1 and illustrate the workflow with two sample steps in fig. 2 .
+3 Theoretical Results
+As discussed in section 2.3 , LACONIC performs policy (primal) updates with a clipped cost max ⁡ { L B − 1 , 0 } \max\{\frac{L}{B}-1,0\} , while updating the dual variable λ \lambda using the average linear cost L ¯ B − 1 \frac{\bar{L}}{B}-1 in eq. 9 . We refer to this combination as the clipped-cost primal-dual update, and we provide the theoretical guarantee in this section.
+Notation. Let 𝔼 π [ ⋅ ] = 𝔼 q ∼ P ( Q ) , o ∼ π ( ⋅ | q ) [ ⋅ ] \mathbb{E}_{\pi}[\cdot]=\mathbb{E}_{q\sim P(Q),\,o\sim\pi(\cdot|q)}[\cdot] , and ( x ) + = max ⁡ { x , 0 } (x)_{+}=\max\{x,0\} . Define the shorthands R ⁡ ( π ) = 𝔼 π ​ [ r ⁡ ( q , o ) ] R(\pi)=\mathbb{E}_{\pi}[r(q,o)] , C ~ ​ ( π ) = 𝔼 π ​ [ L ⁡ ( o ) − B B ] \widetilde{C}(\pi)=\mathbb{E}_{\pi}\!\left[\tfrac{L(o)-B}{B}\right] , and C ​ ( π ) = 𝔼 π ​ [ ( L ⁡ ( o ) − B ) + B ] C(\pi)=\mathbb{E}_{\pi}\!\left[\tfrac{(L(o)-B)_{+}}{B}\right] . Then eq. 3 can be written as max π ⁡ R ⁡ ( π ) \max_{\pi}R(\pi) s.t. C ~ ​ ( π ) ≤ 0 \widetilde{C}(\pi)\leq 0 , and let π ⋆ ∈ arg ​ max π : C ~ ​ ( π ) ≤ 0 R ( π ) \pi^{\star}\in\operatorname*{arg\,max}_{\pi:\widetilde{C}(\pi)\leq 0}R(\pi) be an optimal feasible policy.
+To isolate the effect of clipping, consider an idealized setting where expectations are exact and each primal step finds an exact maximizer.
+The idealized clipped-cost primal-dual updates are
+π t ∈ arg ​ max π ⁡ { R ⁡ ( π ) − λ ​ C ​ ( π ) } , \pi_{t}\in\operatorname*{arg\,max}_{\pi}\left\{R(\pi)-\lambda C(\pi)\right\},
+(10)
+λ t + 1 = clip ​ ( λ t + η ​ C ~ ​ ( π ) , 0 , Λ ) . \lambda_{t+1}=\textrm{clip}\left(\lambda_{t}+\eta\,\widetilde{C}(\pi),0,\Lambda\right).
+(11)
+Appendix C shows that eqs. 10 and 11 converge to a feasible limit pair ( π ♯ , λ ♯ ) (\pi^{\sharp},\lambda^{\sharp}) under mild regularity conditions.
+Then Theorem 3.1 quantifies the reward gap between π ♯ \pi^{\sharp} and the optimal policy π ⋆ \pi^{\star} , with the proof deferred to appendix C .
+Theorem 3.1 (Price of clipped cost) .
+Let π ⋆ ∈ max π : C ~ ​ ( π ) ≤ 0 R ( π ) \pi^{\star}\in\max_{\pi:\widetilde{C}(\pi)\leq 0}R(\pi) be an optimal feasible policy of the length-constrained problem in eq. 3 . Let ( π ♯ , λ ♯ ) (\pi^{\sharp},\lambda^{\sharp}) be the feasible limit of the idealized clipped-cost primal-dual updates in eqs. 10 and 11 . Then
+0 ≤ R ⁡ ( π ⋆ ) − R ⁡ ( π ♯ ) ≤ λ ♯ ​ C ​ ( π ∗ ) . 0\leq R(\pi^{\star})-R(\pi^{\sharp})\leq\lambda^{\sharp}C(\pi^{*}).
+(12)
+Moreover, for indicator rewards with the λ \lambda -ceiling Λ = B L max − B \Lambda=\frac{B}{L_{\max}-B} and a maximum length cap L ⁡ ( o ) ≤ L max L(o)\leq L_{\max} , we have
+0 ≤ R ⁡ ( π ⋆ ) − R ⁡ ( π ♯ ) ≤ B L max . 0\leq R(\pi^{\star})-R(\pi^{\sharp})\leq\frac{B}{L_{\max}}.
+(13)
+The bound indicates that the suboptimality induced by clipping is governed by two factors: the limiting multiplier
+λ ♯ \lambda^{\sharp} , and the extent to which the optimal feasible policy π ⋆ \pi^{\star} places probability mass above the budget, as captured by C ⁡ ( π ⋆ ) C(\pi^{\star}) .
+In the indicator-reward regime, combining the λ \lambda -ceiling with a worst-case tail bound of C ~ ​ ( π ∗ ) \widetilde{C}(\pi^{*}) yields the ceiling-based guarantee B / L max B/L_{\max} .
+This bound is conservative and often loose in practice, but it already implies near-optimality in the worst-case sense whenever L max ≫ B L_{\max}\gg B .
+Table 1 : Evaluation results across four math benchmarks.
+Model
+AIME2024
+MATH
+Minerva
+Olympiad
+Macro Average
+Pass@1
+# Tokens
+Pass@1
+# Tokens
+Pass@1
+# Tokens
+Pass@1
+# Tokens
+Pass@1
+# Tokens
+DeepScaleR-1.5B
+38.75
+8140
+85.92
+3019
+27.62
+4134
+51.94
+5410
+51.06
+5176
++ GRPO
+29.58
+6122
+85.28
+1767
+29.64
+2630
+49.11
+3418
+48.40 ↓ \downarrow 2.66
+3484 ↓ \downarrow 33%
++ L1-Exact
+22.02
+4138
+82.57
+3734
+28.74
+3755
+44.91
+3987
+44.56 ↓ \downarrow 6.50
+3904 ↓ \downarrow 24%
++ L1-Max
+25.12
+2979
+83.45
+1912
+28.35
+1701
+44.76
+2334
+45.42 ↓ \downarrow 5.64
+2231 ↓ \downarrow 57%
++ Efficient-Reasoning
+32.71
+6440
+82.01
+1585
+27.11
+1852
+46.95
+3230
+47.19 ↓ \downarrow 3.87
+3277 ↓ \downarrow 37%
++ ThinkPrune-Iter2k
+35.00
+4598
+84.22
+1802
+29.24
+1941
+48.77
+2935
+49.71 ↓ \downarrow 1.35
+2819 ↓ \downarrow 45%
++ LACONIC ( 𝐁 \mathbf{B} =2000)
+34.79
+3976
+85.61
+1556
+31.76
+1869
+48.96
+2448
+50.28 ↓ \downarrow 0.78
+2462 ↓ \downarrow 52%
+DeepSeek-1.5B
+30.00
+15218
+82.90
+5340
+29.13
+6783
+44.80
+12417
+46.71
+9940
++ GRPO
+25.83
+9090
+81.57
+2403
+27.20
+2655
+43.52
+5420
+44.53 ↓ \downarrow 2.18
+4892 ↓ \downarrow 51%
++ Efficient-Reasoning
+22.08
+8801
+81.63
+1909
+27.57
+2018
+42.96
+4799
+43.56 ↓ \downarrow 3.15
+4382 ↓ \downarrow 56%
++ ThinkPrune-Iter2k
+23.33
+5440
+81.35
+1762
+27.35
+1837
+43.39
+3021
+43.85 ↓ \downarrow 2.86
+3015 ↓ \downarrow 70%
++ LACONIC ( 𝐁 \mathbf{B} =1500)
+24.17
+5140
+81.88
+1636
+28.36
+1638
+44.11
+3241
+44.63 ↓ \downarrow 2.08
+2914 ↓ \downarrow 71%
+4 Experiment
+4.1 Experimental Setup
+Models and Datasets. For the training dataset, we use DeepScaleR-Preview-Dataset [ Luo et al., 2025 ] , a math dataset containing 40.3K rows of question-answer pairs sampled from AIME (prior to 2023), AMC (prior to 2023), Omni-MATH [ Gao et al., 2024 ] , and STILL [ Min et al., 2024 ] .
+For base models, we use DeepScaleR-1.5B-Preview [ Luo et al., 2025 ] ( DeepScaleR-1.5B for short) and DeepSeek-R1-Distill-Qwen-1.5B [ DeepSeek-AI et al., 2025 ] ( DeepSeek-1.5B for short).
+DeepSeek-1.5B is a 1.5B-parameter model distilled from Qwen2.5-1.5B [ Qwen et al., 2025 ] , and DeepScaleR-1.5B is a 1.5B-parameter reasoning model further fine-tuned from DeepSeek-1.5B on DeepScaleR-Preview-Dataset.
+Baselines. We fine-tune the base models with the following algorithms to serve as baselines and compare with our algorithm LACONIC : (i) GRPO [ Shao et al., 2024 ] : the standard RL-tuning algorithm originally used in the post-training of DeepSeek-1.5B, DeepScaleR-1.5B, and Qwen math models; (ii) L1-Exact and L1-Max [ Aggarwal and Welleck, 2025 ] : heuristic reward design methods that fine-tune models to satisfy target-length constraints; (iii) Efficient-Reasoning [ Arora and Zanette, 2025 ] : a length-aware reward design controlled by a fixed penalty coefficient; (iv) ThinkPrune-Iter [ Hou et al., 2025 ] : an iterative method to prune thinking lengths.
+Training. We train DeepScaleR-1.5B on LACONIC with B = 2000 B=2000 for 300 steps, and DeepSeek-1.5B on LACONIC with B = 1500 B=1500 for 500 steps. We set the maximum response length to 4K tokens per prompt during training.
+Evaluation. We evaluate models on 4 common mathematics benchmarks: AIME2024, MATH [ Hendrycks et al., 2021 ] , Minerva [ Lewkowycz et al., 2022 ] , and Olympiad-Bench [ He et al., 2024 ] . To assess the mathematical reasoning ability of the models, we report pass@1, the fraction of questions for which the model’s first response matches the correct answer. To quantify the verbosity of the model’s output, we report the average response length. We set the maximum response length to 32K tokens during evaluation.
+Table 2 : Evaluation results across out-of-domain (OOD) benchmarks.
+Model
+GPQA
+LSAT
+MMLU
+Macro Average
+Accuracy
+# Tokens
+Accuracy
+# Tokens
+Accuracy
+# Tokens
+Accuracy
+# Tokens
+DeepScaleR-1.5B
++ GRPO
+28.88
+2229
+24.6
+3426
+43.30
+719
+32.26
+2125
++ L1-Exact
+22.88
+1475
+25.19
+1374
+36.67
+766
+28.25 ↓ \downarrow 4.01
+1205 ↓ \downarrow 43%
++ L1-Max
+28.72
+1773
+26.58
+2321
+38.48
+863
+31.26 ↓ \downarrow 1.00
+1652 ↓ \downarrow 22%
++ ThinkPrune-Iter2k
+27.02
+1791
+24.82
+3244
+42.42
+611
+31.42 ↓ \downarrow 0.84
+1882 ↓ \downarrow 11%
++ LACONIC
+27.20
+1167
+24.53
+1923
+43.36
+497
+31.69 ↓ \downarrow 0.57
+1196 ↓ \downarrow 44%
+(a) Accuracy reward over training steps
+(b) Average response length over training steps
+Figure 3 :
+Ablation of the cost functions on DeepScaleR-1.5B with token budget B = 1500 B=1500 . We plot (a) accuracy reward and (b) average response length over training steps. For the linear cost, the Langrangian reward used in primal updates is computed by r ⁡ ( q , o ) − λ ​ c ~ ​ ( q , o ) r(q,o)-\lambda\,\widetilde{c}(q,o) , where c ~ ​ ( q , o ) = ( L ⁡ ( o ) − B ) / B \widetilde{c}(q,o)=(L(o)-B)/B . All other experiment setups and hyperparameters are identical.
+4.2 Main Results
+In this section, we first present in table 1 the main results of all baselines and LACONIC on the 4 mathematics benchmarks. Then we present in table 2 the results on out-of-domain benchmarks, GPQA, LSAT, and MMLU, which probe general knowledge and logic reasoning.
+LACONIC outperforms existing length-control methods and matches vanilla RL-tuning while significantly reducing response lengths. On DeepScaleR-1.5B, after fine-tuning, LACONIC achieves 50.28 macro-average pass@1 with 2462 tokens, outperforming all baselines. Existing length-control methods either lose substantially more accuracy, or use noticeably more tokens at similar accuracy. Relative to the full-length base model, LACONIC achieves virtually the same pass@1 while using 52% fewer tokens.
+On DeepSeek-1.5B, LACONIC attains the highest macro-average pass@1 and the lowest token count among all baselines. Relative to the full-length base model, LACONIC reduces response length by 71% with a modest 2.08 pass@1 decrease.
+LACONIC preserves out-of-domain (OOD) capabilities. LACONIC preserves GRPO’s macro average accuracy while generating 44% fewer tokens on average. Compared with both L1 variants and ThinkPrune-Iter2k, LACONIC attains higher macro pass@1 with fewer tokens. The results shows that LACONIC achieves strong OOD task reward preservation with substantially shorter outputs.
+(a) Accuracy reward
+(b) Average response length
+(c) Dual variable λ \lambda
+Figure 4 :
+Ablation of the token budget B B on DeepScaleR-1.5B. We plot (a) accuracy reward; (b) average response length; and (c) dual variable λ \lambda over training steps with budgets B ∈ { 1000 , 1500 , 1750 , 2000 } B\in\{1000,1500,1750,2000\} . All other setups and hyperparameters are identical.
+Table 3 : Evaluation results of the token-budget B B ablation on DeepScaleR-1.5B across four math benchmarks.
+Token Budget
+AIME2024
+MATH
+Minerva
+Olympiad
+Macro Average
+Pass@1
+# Tokens
+Pass@1
+# Tokens
+Pass@1
+# Tokens
+Pass@1
+# Tokens
+Pass@1
+# Tokens
++ LACONIC (2000)
+34.79
+3976
+85.61
+1556
+31.76
+1869
+48.96
+2448
+50.28
+2462
++ LACONIC (1750)
+31.21
+3803
+84.82
+1516
+31.52
+2059
+48.88
+2261
+49.11
+2410
++ LACONIC (1500)
+29.58
+3458
+84.35
+1353
+31.48
+1582
+47.93
+2084
+48.33
+2119
++ LACONIC (1000)
+28.12
+2665
+83.75
+1049
+29.24
+1189
+47.07
+1669
+47.05
+1643
+5 Further Analysis
+In this section, we present additional ablation analysis related to cost functions, hyperparameters, and examine the computational resources required by LACONIC , including runtime, FLOPs, and memory usage.
+5.1 Ablation Analysis on Cost Function
+As discussed in section 2.2 , a primal-dual formulation provides a principled way to enforce a target token budget B B . However, using a linear cost c ~ ​ ( q , o ) = L ⁡ ( o ) − B B \widetilde{c}(q,o)=\frac{L(o)-B}{B} can induce unstable policy updates in practice. In this section , we isolate this design choice by comparing the linear cost c ~ \widetilde{c} against the clipped cost c c we propose for LACONIC .
+We change only the cost used in the GRPO-style primal updates while keeping all other setups identical, and report the ablation results in fig. 3 . The linear-cost baseline exhibits a sharp length collapse early in training, driving the model to generate extremely short, degenerate outputs. This causes unstable policy updates and a drastic drop in reward. In contrast, LACONIC maintains stable learning dynamics.
+After training, LACONIC achieves 48.33 macro pass@1 with 2119 tokens on average, while the linear-cost baseline attains 47.37 macro pass@1 but produces 3281 tokens on average. The detailed results are deferred to section A.2 .
+5.2 Ablation Analysis on Budget B B
+We vary the token budget B ∈ { 2000 , 1750 , 1500 , 1000 } B\in\{2000,1750,1500,1000\} on DeepScaleR-1.5B while keeping all other settings and hyperparameters (including the dual step size) fixed, and train for 300 steps. Figure 4 shows the training dynamics of (a) accuracy reward; (b) average response length; and (c) dual variable λ \lambda . We evaluate the step-300 checkpoints on the four mathematics benchmarks. Table 3 reports pass@1 and average response lengths.
+LACONIC provides reliable, hyperparameter-tuning-free length control. Across token budgets, training rapidly drives the average response length under the budget and maintains it near the budget once stabilized. Even under tight constraints on a backbone that naturally produces long responses, LACONIC keeps the average length near the budget. In practice, B B acts as a single knob and no re-tuning of other hyperparameters is required to achieve effective length control.
+LACONIC achieves better or matching reward with less tokens than existing length control methods across a wide range of token budgets. We compare the evaluation results of LACONIC with budgets B B from 1K to 2K in table 3 to the full-length base model and baselines in table 1 . Across a wide range of budgets, LACONIC consistently outperforms or matches all baselines while using substantially fewer tokens. This shows the effectiveness of LACONIC to preserve reward under constrained token budgets.
+5.3 Ablation Analysis on Dual Step Size η \eta
+We vary the step size for dual updates η ∈ { 0.001 , 0.002 , 0.01 } \eta\in\{0.001,0.002,0.01\} with all other settings fixed and train DeepScaleR-1.5B for with B = 1500 B=1500 . For η = 0.01 \eta=0.01 , we also set a low λ \lambda -ceiling Λ = 0.1 \Lambda=0.1 . Figure 6 plots the training dynamics of (a) accuracy reward; (b) average response length; and (c) dual variable λ \lambda . We evaluate the step-300 checkpoints on the 4 mathematics benchmarks, and report the pass@1 and average response lengths in section B.1 .
+LACONIC is insensitive to the dual step size η \eta . Across different dual step sizes, LACONIC delivers consistent length control. With η = 0.002 \eta=0.002 versus 0.01, the training dynamics are similar after stabilization. All trained checkpoints reach comparable final reward. This shows that LACONIC is robust to an order-of-magnitude change in the step size η \eta .
+Figure 5 : Average computational resource usage of LACONIC (green) and GRPO (blue).
+(a) Accuracy reward
+(b) Average response length
+(c) Dual variable λ \lambda
+Figure 6 :
+Ablation of the dual step size η \eta on DeepScaleR-1.5B with B = 1500 B=1500 . We plot (a) accuracy reward; (b) average response length; and (c) dual variable λ \lambda over training steps with step size η ∈ { 0.001 , 0.002 , 0.01 } \eta\in\{0.001,0.002,0.01\} . We set Λ = 0.3 \Lambda=0.3 for all experiments except for the run with η = 0.01 \eta=0.01 and Λ = 0.15 \Lambda=0.15 . All other setups and hyperparameters are identical.
+5.4 Computational Resource Analysis
+We report in fig. 5 wall-clock step time, step time per token, and NVML GPU memory, averaged over training steps. LACONIC is end-to-end cheaper than vanilla RL-tuning. Our method is 19% faster and uses 22% less GPU memory. Per-token cost is nearly unchanged, with a small bookkeeping overhead for the length cost and dual update. Overall, LACONIC adds negligible kernel-level overhead and reduces runtime and memory by generating fewer tokens.
+6 Related Work
+RL fine-tuning.
+Reinforcement learning has become a crucial component of LLM post-training, particularly for enhancing large-scale reasoning and aligning model behavior with human preferences or task-specific objectives. Starting from the policy gradient algorithm [ Sutton and Barto, 2018 ] ,following works [ Williams, 1992 ; Schulman et al., 2017 ] addressed the instability of early methods. Several GRPO-based extensions have been introduced to address specific challenges in LLM training. SRPO [ Zhang et al., 2025b ] addresses the problem of ineffective samples through history resampling. DAPO [ Yu et al., 2025 ] introduces dynamic sampling to better handle complex reasoning tasks such as chain-of-thought (CoT) generation. Other variants include VAPO [ Yue et al., 2025 ] , which adapts advantage estimation to better capture variance across different reasoning depths; GSPO [ Zheng et al., 2025 ] , which emphasizes group-level structure in sampling; GFPO [ Shrivastava et al., 2025 ] , which focuses on sample efficiency in long-horizon settings; GMPO [ Zhao et al., 2025 ] , which explores geometric averaging of policy gradients for improved robustness; and Dr.GRPO [ Liu et al., 2025 ] , which proposes updated formulae for computing advantages and the objective for GRPO. Collectively, these methods demonstrate the growing sophistication of RL fine-tuning techniques and the community’s effort to make them more scalable, stable, and effective for large-scale LLM alignment.
+Length-Aware LLMs. Recent work has investigated various approaches for making large language models (LLMs) aware of output length, including modifications to positional encoding, prompt engineering techniques, and post-hoc truncation methods [ Li et al., 2025a ; Wu et al., 2025 ; Li et al., 2025b ] . A common strategy involves incorporating length preferences into reinforcement learning (RL) fine-tuning through manually designed reward functions that penalize or incentivize certain output lengths [ Aggarwal and Welleck, 2025 ; Cheng et al., 2025 ; Huang et al., 2025 ; Yuan et al., 2025 ; Arora and Zanette, 2025 ; Hou et al., 2025 ] . These methods typically rely on fixed heuristics or penalty terms that remain constant throughout training, and thus optimize a surrogate objective that may be misaligned with the true downstream task reward. This misalignment can lead to suboptimal performance and often requires extensive hyperparameter tuning to balance length control with task-specific quality. Our work differs in that it aims to align length control with task reward in a more adaptive and data-driven manner, avoiding the limitations of fixed shaping objectives.
+Constrained RL. Constrained RL is commonly used to formulate and enforce constraints in the environment. Many previous studies [ Achiam et al., 2017 ; Tessler et al., 2018 ; Stooke et al., 2020 ] have proposed policy gradient methods for constrained RL. Recent work including this paper has been introducing the constrained RL framework into RL fine-tuning for LLMs. [ Tzannetos et al., 2025 ] propose a curriculum strategy to compress inference time of LLMs. [ Zhang et al., 2025a ] deploy the primal-dual approach to control the divergence of policy updates.
+7 Conclusion
+We present LACONIC , a primal-dual method for length-aware RL fine-tuning that integrates into standard GRPO with minimal changes. It enforces a user-specified token budget via a clipped cost and an adaptive dual variable for excess length, yielding concise generations while preserving accuracy. We also provide a theoretical analysis with convergence and near-optimality guarantees. Across math and out-of-domain benchmarks, LACONIC consistently reduces output length while preserving pass@1. Budget-only ablations show precise, stable controllability that lengths track the target budget without retuning hyperparameters. Overall, LACONIC makes length control a simple, reliable component of RL-based LLM fine-tuning.
+8 Future Work
+While LACONIC is effective and lightweight, it has several limitations. It currently enforces a global average token budget, which may not capture prompt-specific or context-dependent needs. Our experiments are limited to math reasoning, and future work could validate generality on dialogue, summarization, or code. Finally, LACONIC handles a single constraint, but the framework naturally extends to multi-constraint settings such as latency or safety.
+References
+Achiam et al. (2017)
+J. Achiam, D. Held, A. Tamar, and P. Abbeel
+Constrained policy optimization .
+External Links: 1705.10528 ,
+Link
+Cited by: §6 .
+Aggarwal and Welleck (2025)
+P. Aggarwal and S. Welleck
+L1: controlling how long a reasoning model thinks with reinforcement learning .
+External Links: 2503.04697 ,
+Link
+Cited by: §1 ,
+§1 ,
+§4.1 ,
+§6 .
+Anthropic (2025)
+Anthropic
+Claude opus 4.1 .
+Note: https://www.anthropic.com/news/claude-opus-4-1 Accessed: 2025-08-06
+Cited by: §1 .
+Arora and Zanette (2025)
+D. Arora and A. Zanette
+Training language models to reason efficiently .
+External Links: 2502.04463 ,
+Link
+Cited by: §1 ,
+§4.1 ,
+§6 .
+Beck (2017)
+A. Beck
+First-order methods in optimization .
+edition , Society for Industrial and Applied Mathematics , Philadelphia, PA .
+External Links: Document ,
+https://epubs.siam.org/doi/pdf/10.1137/1.9781611974997
+Cited by: §C.3 .
+Chen et al. (2025)
+X. Chen, J. Xu, T. Liang, Z. He, J. Pang, D. Yu, L. Song, Q. Liu, M. Zhou, Z. Zhang, R. Wang, Z. Tu, H. Mi, and D. Yu
+Do not think that much for 2+3=? on the overthinking of o1-like llms .
+External Links: 2412.21187 ,
+Link
+Cited by: §1 .
+Cheng et al. (2025)
+X. Cheng, J. Li, Z. Zhang, X. Tang, W. X. Zhao, X. Kong, and Z. Zhang
+Incentivizing dual process thinking for efficient large language model reasoning .
+External Links: 2505.16315 ,
+Link
+Cited by: §1 ,
+§6 .
+Comanici et al. (2025)
+G. Comanici, E. Bieber, M. Schaekermann, I. Pasupat, N. Sachdeva, I. Dhillon, M. Blistein, O. Ram, D. Zhang, E. Rosen, et al.
+Gemini 2.5: pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities .
+arXiv preprint arXiv:2507.06261 .
+Cited by: §1 .
+DeepSeek-AI et al. (2025)
+DeepSeek-AI, D. Guo, D. Yang, H. Zhang, J. Song, R. Zhang, R. Xu, Q. Zhu, S. Ma, P. Wang, X. Bi, X. Zhang, X. Yu, Y. Wu, Z. F. Wu, Z. Gou, Z. Shao, Z. Li, Z. Gao, A. Liu, B. Xue, B. Wang, B. Wu, B. Feng, C. Lu, C. Zhao, C. Deng, C. Zhang, C. Ruan, D. Dai, D. Chen, D. Ji, E. Li, F. Lin, F. Dai, F. Luo, G. Hao, G. Chen, G. Li, H. Zhang, H. Bao, H. Xu, H. Wang, H. Ding, H. Xin, H. Gao, H. Qu, H. Li, J. Guo, J. Li, J. Wang, J. Chen, J. Yuan, J. Qiu, J. Li, J. L. Cai, J. Ni, J. Liang, J. Chen, K. Dong, K. Hu, K. Gao, K. Guan, K. Huang, K. Yu, L. Wang, L. Zhang, L. Zhao, L. Wang, L. Zhang, L. Xu, L. Xia, M. Zhang, M. Zhang, M. Tang, M. Li, M. Wang, M. Li, N. Tian, P. Huang, P. Zhang, Q. Wang, Q. Chen, Q. Du, R. Ge, R. Zhang, R. Pan, R. Wang, R. J. Chen, R. L. Jin, R. Chen, S. Lu, S. Zhou, S. Chen, S. Ye, S. Wang, S. Yu, S. Zhou, S. Pan, S. S. Li, S. Zhou, S. Wu, S. Ye, T. Yun, T. Pei, T. Sun, T. Wang, W. Zeng, W. Zhao, W. Liu, W. Liang, W. Gao, W. Yu, W. Zhang, W. L. Xiao, W. An, X. Liu, X. Wang, X. Chen, X. Nie, X. Cheng, X. Liu, X. Xie, X. Liu, X. Yang, X. Li, X. Su, X. Lin, X. Q. Li, X. Jin, X. Shen, X. Chen, X. Sun, X. Wang, X. Song, X. Zhou, X. Wang, X. Shan, Y. K. Li, Y. Q. Wang, Y. X. Wei, Y. Zhang, Y. Xu, Y. Li, Y. Zhao, Y. Sun, Y. Wang, Y. Yu, Y. Zhang, Y. Shi, Y. Xiong, Y. He, Y. Piao, Y. Wang, Y. Tan, Y. Ma, Y. Liu, Y. Guo, Y. Ou, Y. Wang, Y. Gong, Y. Zou, Y. He, Y. Xiong, Y. Luo, Y. You, Y. Liu, Y. Zhou, Y. X. Zhu, Y. Xu, Y. Huang, Y. Li, Y. Zheng, Y. Zhu, Y. Ma, Y. Tang, Y. Zha, Y. Yan, Z. Z. Ren, Z. Ren, Z. Sha, Z. Fu, Z. Xu, Z. Xie, Z. Zhang, Z. Hao, Z. Ma, Z. Yan, Z. Wu, Z. Gu, Z. Zhu, Z. Liu, Z. Li, Z. Xie, Z. Song, Z. Pan, Z. Huang, Z. Xu, Z. Zhang, and Z. Zhang
+DeepSeek-r1: incentivizing reasoning capability in llms via reinforcement learning .
+External Links: 2501.12948
+Cited by: §1 ,
+§4.1 .
+DeepSeek-AI (2025)
+DeepSeek-AI
+DeepSeek-r1: incentivizing reasoning capability in llms via reinforcement learning .
+External Links: 2501.12948 ,
+Link
+Cited by: §1 .
+Feng et al. (2025)
+J. Feng, S. Huang, X. Qu, G. Zhang, Y. Qin, B. Zhong, C. Jiang, J. Chi, and W. Zhong
+Retool: reinforcement learning for strategic tool use in llms .
+arXiv preprint arXiv:2504.11536 .
+Cited by: §1 .
+Gao et al. (2024)
+B. Gao, F. Song, Z. Yang, Z. Cai, Y. Miao, Q. Dong, L. Li, C. Ma, L. Chen, R. Xu, Z. Tang, B. Wang, D. Zan, S. Quan, G. Zhang, L. Sha, Y. Zhang, X. Ren, T. Liu, and B. Chang
+Omni-math: a universal olympiad level mathematic benchmark for large language models .
+External Links: 2410.07985 ,
+Link
+Cited by: §4.1 .
+He et al. (2024)
+C. He, R. Luo, Y. Bai, S. Hu, Z. Thai, J. Shen, J. Hu, X. Han, Y. Huang, Y. Zhang, J. Liu, L. Qi, Z. Liu, and M. Sun
+OlympiadBench: a challenging benchmark for promoting AGI with olympiad-level bilingual multimodal scientific problems .
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,
+Cited by: §4.1 .
+Hendrycks et al. (2021)
+D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt
+Measuring mathematical problem solving with the math dataset .
+NeurIPS .
+Cited by: §4.1 .
+Hou et al. (2025)
+B. Hou, Y. Zhang, J. Ji, Y. Liu, K. Qian, J. Andreas, and S. Chang
+ThinkPrune: pruning long chain-of-thought of llms via reinforcement learning .
+arXiv preprint arXiv:2504.01296 .
+Cited by: §1 ,
+§4.1 ,
+§6 .
+Hsiao et al. (2025)
+V. Hsiao, M. Fine-Morris, M. Roberts, L. N. Smith, and L. M. Hiatt
+A critical assessment of LLMs for solving multi-step problems: preliminary results .
+In AAAI 2025 Workshop LM4Plan ,
+External Links: Link
+Cited by: §1 .
+Huang et al. (2025)
+C. Huang, Z. Zhang, and C. Cardie
+HAPO: training language models to reason concisely via history-aware policy optimization .
+External Links: 2505.11225 ,
+Link
+Cited by: §1 ,
+§6 .
+Jin et al. (2025)
+B. Jin, H. Zeng, Z. Yue, J. Yoon, S. Arik, D. Wang, H. Zamani, and J. Han
+Search-r1: training llms to reason and leverage search engines with reinforcement learning .
+arXiv preprint arXiv:2503.09516 .
+Cited by: §1 .
+Lewkowycz et al. (2022)
+A. Lewkowycz, A. Andreassen, D. Dohan, E. Dyer, H. Michalewski, V. Ramasesh, A. Slone, C. Anil, I. Schlag, T. Gutman-Solo, Y. Wu, B. Neyshabur, G. Gur-Ari, and V. Misra
+Solving quantitative reasoning problems with language models .
+In Advances in Neural Information Processing Systems ,
+Cited by: §4.1 .
+Li et al. (2025a)
+X. Li, G. Dong, J. Jin, Y. Zhang, Y. Zhou, Y. Zhu, P. Zhang, and Z. Dou
+Search-o1: agentic search-enhanced large reasoning models .
+arXiv preprint arXiv:2501.05366 .
+Cited by: §1 ,
+§1 ,
+§6 .
+Li et al. (2025b)
+X. Li, J. Jin, G. Dong, H. Qian, Y. Zhu, Y. Wu, J. Wen, and Z. Dou
+Webthinker: empowering large reasoning models with deep research capability .
+arXiv preprint arXiv:2504.21776 .
+Cited by: §1 ,
+§1 ,
+§6 .
+Liu et al. (2025)
+Z. Liu, C. Chen, W. Li, P. Qi, T. Pang, C. Du, W. S. Lee, and M. Lin
+Understanding r1-zero-like training: a critical perspective .
+External Links: 2503.20783 ,
+Link
+Cited by: §6 .
+Luo et al. (2025)
+M. Luo, S. Tan, J. Wong, X. Shi, W. Y. Tang, M. Roongta, C. Cai, J. Luo, L. E. Li, R. A. Popa, and I. Stoica
+DeepScaleR: surpassing o1-preview with a 1.5b model by scaling rl .
+Note: Notion Blog
+Cited by: §1 ,
+§4.1 .
+Min et al. (2024)
+Y. Min, Z. Chen, J. Jiang, J. Chen, J. Deng, Y. Hu, Y. Tang, J. Wang, X. Cheng, H. Song, W. X. Zhao, Z. Liu, Z. Wang, and J. Wen
+Imitate, explore, and self-improve: a reproduction report on slow-thinking reasoning systems .
+External Links: 2412.09413 ,
+Link
+Cited by: §4.1 .
+OpenAI et al. (2024)
+OpenAI, :, A. Jaech, A. Kalai, A. Lerer, A. Richardson, A. El-Kishky, A. Low, A. Helyar, A. Madry, A. Beutel, A. Carney, A. Iftimie, A. Karpenko, A. T. Passos, A. Neitz, A. Prokofiev, A. Wei, A. Tam, A. Bennett, A. Kumar, A. Saraiva, A. Vallone, A. Duberstein, A. Kondrich, A. Mishchenko, A. Applebaum, A. Jiang, A. Nair, B. Zoph, B. Ghorbani, B. Rossen, B. Sokolowsky, B. Barak, B. McGrew, B. Minaiev, B. Hao, B. Baker, B. Houghton, B. McKinzie, B. Eastman, C. Lugaresi, C. Bassin, C. Hudson, C. M. Li, C. de Bourcy, C. Voss, C. Shen, C. Zhang, C. Koch, C. Orsinger, C. Hesse, C. Fischer, C. Chan, D. Roberts, D. Kappler, D. Levy, D. Selsam, D. Dohan, D. Farhi, D. Mely, D. Robinson, D. Tsipras, D. Li, D. Oprica, E. Freeman, E. Zhang, E. Wong, E. Proehl, E. Cheung, E. Mitchell, E. Wallace, E. Ritter, E. Mays, F. Wang, F. P. Such, F. Raso, F. Leoni, F. Tsimpourlas, F. Song, F. von Lohmann, F. Sulit, G. Salmon, G. Parascandolo, G. Chabot, G. Zhao, G. Brockman, G. Leclerc, H. Salman, H. Bao, H. Sheng, H. Andrin, H. Bagherinezhad, H. Ren, H. Lightman, H. W. Chung, I. Kivlichan, I. O’Connell, I. Osband, I. C. Gilaberte, I. Akkaya, I. Kostrikov, I. Sutskever, I. Kofman, J. Pachocki, J. Lennon, J. Wei, J. Harb, J. Twore, J. Feng, J. Yu, J. Weng, J. Tang, J. Yu, J. Q. Candela, J. Palermo, J. Parish, J. Heidecke, J. Hallman, J. Rizzo, J. Gordon, J. Uesato, J. Ward, J. Huizinga, J. Wang, K. Chen, K. Xiao, K. Singhal, K. Nguyen, K. Cobbe, K. Shi, K. Wood, K. Rimbach, K. Gu-Lemberg, K. Liu, K. Lu, K. Stone, K. Yu, L. Ahmad, L. Yang, L. Liu, L. Maksin, L. Ho, L. Fedus, L. Weng, L. Li, L. McCallum, L. Held, L. Kuhn, L. Kondraciuk, L. Kaiser, L. Metz, M. Boyd, M. Trebacz, M. Joglekar, M. Chen, M. Tintor, M. Meyer, M. Jones, M. Kaufer, M. Schwarzer, M. Shah, M. Yatbaz, M. Y. Guan, M. Xu, M. Yan, M. Glaese, M. Chen, M. Lampe, M. Malek, M. Wang, M. Fradin, M. McClay, M. Pavlov, M. Wang, M. Wang, M. Murati, M. Bavarian, M. Rohaninejad, N. McAleese, N. Chowdhury, N. Chowdhury, N. Ryder, N. Tezak, N. Brown, O. Nachum, O. Boiko, O. Murk, O. Watkins, P. Chao, P. Ashbourne, P. Izmailov, P. Zhokhov, R. Dias, R. Arora, R. Lin, R. G. Lopes, R. Gaon, R. Miyara, R. Leike, R. Hwang, R. Garg, R. Brown, R. James, R. Shu, R. Cheu, R. Greene, S. Jain, S. Altman, S. Toizer, S. Toyer, S. Miserendino, S. Agarwal, S. Hernandez, S. Baker, S. McKinney, S. Yan, S. Zhao, S. Hu, S. Santurkar, S. R. Chaudhuri, S. Zhang, S. Fu, S. Papay, S. Lin, S. Balaji, S. Sanjeev, S. Sidor, T. Broda, A. Clark, T. Wang, T. Gordon, T. Sanders, T. Patwardhan, T. Sottiaux, T. Degry, T. Dimson, T. Zheng, T. Garipov, T. Stasi, T. Bansal, T. Creech, T. Peterson, T. Eloundou, V. Qi, V. Kosaraju, V. Monaco, V. Pong, V. Fomenko, W. Zheng, W. Zhou, W. McCabe, W. Zaremba, Y. Dubois, Y. Lu, Y. Chen, Y. Cha, Y. Bai, Y. He, Y. Zhang, Y. Wang, Z. Shao, and Z. Li
+OpenAI o1 system card .
+External Links: 2412.16720 ,
+Link
+Cited by: §1 .
+OpenAI (2025)
+OpenAI
+GPT-5 system card .
+Note: https://cdn.openai.com/gpt-5-system-card.pdf Accessed: 2025-08-13
+Cited by: §1 .
+Qu et al. (2025)
+C. Qu, S. Dai, X. Wei, H. Cai, S. Wang, D. Yin, J. Xu, and J. Wen
+Tool learning with large language models: a survey .
+Frontiers of Computer Science 19 ( 8 ).
+External Links: ISSN 2095-2236 ,
+Link ,
+Document
+Cited by: §1 .
+Qwen et al. (2025)
+Qwen, :, A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu, F. Huang, H. Wei, H. Lin, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Lin, K. Dang, K. Lu, K. Bao, K. Yang, L. Yu, M. Li, M. Xue, P. Zhang, Q. Zhu, R. Men, R. Lin, T. Li, T. Tang, T. Xia, X. Ren, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Wan, Y. Liu, Z. Cui, Z. Zhang, and Z. Qiu
+Qwen2.5 technical report .
+External Links: 2412.15115 ,
+Link
+Cited by: §4.1 .
+Schulman et al. (2017)
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+Proximal policy optimization algorithms .
+External Links: 1707.06347 ,
+Link
+Cited by: §2.1 ,
+§6 .
+Shao et al. (2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. K. Li, Y. Wu, and D. Guo
+DeepSeekMath: pushing the limits of mathematical reasoning in open language models .
+External Links: 2402.03300 ,
+Link
+Cited by: §2.1 ,
+§4.1 .
+Shi et al. (2025)
+Z. Shi, S. Gao, L. Yan, Y. Feng, X. Chen, Z. Chen, D. Yin, S. Verberne, and Z. Ren
+Tool learning in the wild: empowering language models as automatic tool agents .
+External Links: 2405.16533 ,
+Link
+Cited by: §1 .
+Shrivastava et al. (2025)
+V. Shrivastava, A. Awadallah, V. Balachandran, S. Garg, H. Behl, and D. Papailiopoulos
+Sample more to think less: group filtered policy optimization for concise reasoning .
+External Links: 2508.09726 ,
+Link
+Cited by: §6 .
+Stooke et al. (2020)
+A. Stooke, J. Achiam, and P. Abbeel
+Responsive safety in reinforcement learning by pid lagrangian methods .
+External Links: 2007.03964 ,
+Link
+Cited by: §6 .
+Sui et al. (2025)
+Y. Sui, Y. Chuang, G. Wang, J. Zhang, T. Zhang, J. Yuan, H. Liu, A. Wen, S. Zhong, H. Chen, and X. Hu
+Stop overthinking: a survey on efficient reasoning for large language models .
+External Links: 2503.16419 ,
+Link
+Cited by: §1 .
+Sutton and Barto (2018)
+R. S. Sutton and A. G. Barto
+Reinforcement learning: an introduction .
+Second edition , The MIT Press .
+External Links: Link
+Cited by: §6 .
+Team et al. (2025)
+K. Team, Y. Bai, Y. Bao, G. Chen, J. Chen, N. Chen, R. Chen, Y. Chen, Y. Chen, Y. Chen, et al.
+Kimi k2: open agentic intelligence .
+arXiv preprint arXiv:2507.20534 .
+Cited by: §1 .
+Tessler et al. (2018)
+C. Tessler, D. J. Mankowitz, and S. Mannor
+Reward constrained policy optimization .
+External Links: 1805.11074 ,
+Link
+Cited by: §6 .
+Tzannetos et al. (2025)
+G. Tzannetos, P. Kamalaruban, and A. Singla
+Curriculum design for trajectory-constrained agent: compressing chain-of-thought tokens in llms .
+External Links: 2511.02690 ,
+Link
+Cited by: §6 .
+Wang et al. (2024)
+C. Wang, Y. Deng, Z. Lyu, L. Zeng, J. He, S. Yan, and B. An
+Q*: improving multi-step reasoning for llms with deliberative planning .
+External Links: 2406.14283 ,
+Link
+Cited by: §1 .
+Williams (1992)
+R. J. Williams
+Simple statistical gradient-following algorithms for connectionist reinforcement learning .
+Machine learning 8 ( 3-4 ), pp. 229–256 .
+Cited by: §6 .
+Wu et al. (2025)
+J. Wu, J. Zhu, Y. Liu, M. Xu, and Y. Jin
+Agentic reasoning: a streamlined framework for enhancing llm reasoning with agentic tools .
+arXiv preprint arXiv:2502.04644 .
+Cited by: §1 ,
+§1 ,
+§6 .
+Yang et al. (2024)
+A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu, F. Huang, H. Wei, H. Lin, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Lin, K. Dang, K. Lu, K. Bao, K. Yang, L. Yu, M. Li, M. Xue, P. Zhang, Q. Zhu, R. Men, R. Lin, T. Li, T. Xia, X. Ren, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Wan, Y. Liu, Z. Cui, Z. Zhang, and Z. Qiu
+Qwen2.5 technical report .
+arXiv preprint arXiv:2412.15115 .
+Cited by: §A.2 .
+Yu et al. (2025)
+Q. Yu, Z. Zhang, R. Zhu, Y. Yuan, X. Zuo, Y. Yue, W. Dai, T. Fan, G. Liu, L. Liu, X. Liu, H. Lin, Z. Lin, B. Ma, G. Sheng, Y. Tong, C. Zhang, M. Zhang, W. Zhang, H. Zhu, J. Zhu, J. Chen, J. Chen, C. Wang, H. Yu, Y. Song, X. Wei, H. Zhou, J. Liu, W. Ma, Y. Zhang, L. Yan, M. Qiao, Y. Wu, and M. Wang
+DAPO: an open-source llm reinforcement learning system at scale .
+External Links: 2503.14476
+Cited by: §6 .
+Yuan et al. (2025)
+D. Yuan, T. Xie, S. Huang, Z. Gong, H. Zhang, C. Luo, F. Wei, and D. Zhao
+Efficient rl training for reasoning models via length-aware optimization .
+External Links: 2505.12284 ,
+Link
+Cited by: §1 ,
+§6 .
+Yue et al. (2025)
+Y. Yue, Y. Yuan, Q. Yu, X. Zuo, R. Zhu, W. Xu, J. Chen, C. Wang, T. Fan, Z. Du, X. Wei, X. Yu, G. Liu, J. Liu, L. Liu, H. Lin, Z. Lin, B. Ma, C. Zhang, M. Zhang, W. Zhang, H. Zhu, R. Zhang, X. Liu, M. Wang, Y. Wu, and L. Yan
+VAPO: efficient and reliable reinforcement learning for advanced reasoning tasks .
+External Links: 2504.05118
+Cited by: §6 .
+Zhang et al. (2025a)
+B. Zhang, S. Li, I. Hounie, O. Bastani, D. Ding, and A. Ribeiro
+Alignment of large language models with constrained learning .
+External Links: 2505.19387 ,
+Link
+Cited by: §6 .
+Zhang et al. (2025b)
+X. Zhang, J. Wang, Z. Cheng, W. Zhuang, Z. Lin, M. Zhang, S. Wang, Y. Cui, C. Wang, J. Peng, S. Jiang, S. Kuang, S. Yin, C. Wen, H. Zhang, B. Chen, and B. Yu
+SRPO: a cross-domain implementation of large-scale reinforcement learning on llm .
+External Links: 2504.14286
+Cited by: §6 .
+Zhao et al. (2025)
+Y. Zhao, Y. Liu, J. Liu, J. Chen, X. Wu, Y. Hao, T. Lv, S. Huang, L. Cui, Q. Ye, F. Wan, and F. Wei
+Geometric-mean policy optimization .
+External Links: 2507.20673
+Cited by: §6 .
+Zheng et al. (2025)
+C. Zheng, S. Liu, M. Li, X. Chen, B. Yu, C. Gao, K. Dang, Y. Liu, R. Men, A. Yang, J. Zhou, and J. Lin
+Group sequence policy optimization .
+External Links: 2507.18071
+Cited by: §6 .
+Appendix A Standard Primal-Dual Method and Linear Cost Functions
+A.1 Standard Primal-Dual Updates
+In this section, we derive the standard primal-dual updates.
+Recall the constrained optimization problem of length-aware LLMs formulated in eq. 3 :
+max θ 𝔼 q ∼ P ( Q ) , o ∼ π θ ( ⋅ | q ) [ r ( q , o ) ] , s.t. 𝔼 q ∼ P ( Q ) , o ∼ π θ ( ⋅ | q ) [ L ( o ) ] ≤ B . \max_{\theta}\mathbb{E}_{q\sim P(Q),o\sim\pi_{\theta}(\cdot|q)}[r(q,o)],\;\textrm{s.t. }\;\mathbb{E}_{q\sim P(Q),o\sim\pi_{\theta}(\cdot|q)}[L(o)]\leq B.
+The corresponding Lagrangian is
+ℒ ( θ , λ ) = 𝔼 q ∼ P ( Q ) , o ∼ π θ ( ⋅ | q ) [ r ( q , o ) ] − λ ( 𝔼 q ∼ P ( Q ) , o ∼ π θ ( ⋅ | q ) [ L ( o ) ] B − 1 ) , λ ≥ 0 , \mathcal{L}(\theta,\lambda)=\mathbb{E}_{q\sim P(Q),o\sim\pi_{\theta}(\cdot|q)}[r(q,o)]-\lambda\,(\frac{\mathbb{E}_{q\sim P(Q),o\sim\pi_{\theta}(\cdot|q)}[L(o)]}{B}-1),\quad\lambda\geq 0,
+(14)
+and the problem is commonly approached by solving the saddle point problem:
+max θ ⁡ min λ ≥ 0 ⁡ ℒ ⁡ ( θ , λ ) , \max_{\theta}\min_{\lambda\geq 0}\mathcal{L}(\theta,\lambda),
+(15)
+where θ \theta is the primal variable (in our case, the policy model) and λ \lambda is the dual variable. We assume that eq. 15 is feasible, and denote the optimal feasible solution by ( π ∗ , λ ∗ ) (\pi^{*},\lambda^{*}) . The standard primal-dual approach solves π ∗ \pi^{*} and λ ∗ \lambda^{*} iteratively with partial derivatives. In the primal step, the dual variable λ t \lambda_{t} is fixed, and we optimize ℒ ⁡ ( θ , λ t ) \mathcal{L}(\theta,\lambda_{t}) over θ \theta :
+θ t + 1 ∈ arg ​ max θ 𝔼 q ∼ P ( Q ) , o ∼ π θ ( ⋅ | q ) [ r ( q , o ) ] − λ t ( 𝔼 q ∼ P ( Q ) , o ∼ π θ ( ⋅ | q ) [ L ( o ) ] B − 1 ) . \theta_{t+1}\in\operatorname*{arg\,max}_{\theta}\mathbb{E}_{q\sim P(Q),o\sim\pi_{\theta}(\cdot|q)}[r(q,o)]-\lambda_{t}\,(\frac{\mathbb{E}_{q\sim P(Q),o\sim\pi_{\theta}(\cdot|q)}[L(o)]}{B}-1).
+By linearity of expectations, we have
+θ t + 1 ∈ arg ​ max θ 𝔼 q ∼ P ( Q ) , o ∼ π θ ( ⋅ | q ) [ r ( q , o ) − λ t L ⁡ ( o ) − B B ] . \theta_{t+1}\in\operatorname*{arg\,max}_{\theta}\mathbb{E}_{q\sim P(Q),o\sim\pi_{\theta}(\cdot|q)}[r(q,o)-\lambda_{t}\frac{L(o)-B}{B}].
+Define the linear cost function
+c ~ ​ ( q , o ) = L ⁡ ( o ) − B B , \widetilde{c}(q,o)=\frac{L(o)-B}{B},
+(16)
+and thus the primal update takes the form
+θ t + 1 ∈ arg ​ max θ 𝔼 q ∼ P ( Q ) , o ∼ π θ ( ⋅ | q ) [ r ( q , o ) − λ t c ~ ( q , o ) ] . \theta_{t+1}\in\operatorname*{arg\,max}_{\theta}\mathbb{E}_{q\sim P(Q),o\sim\pi_{\theta}(\cdot|q)}[r(q,o)-\lambda_{t}\widetilde{c}(q,o)].
+(17)
+In the dual update, we decrease ℒ ⁡ ( θ t + 1 , λ ) \mathcal{L}(\theta_{t+1},\lambda) by taking a gradient-descent step for λ \lambda :
+λ t + 1 ← max ⁡ { λ t − η ​ ∂ ℒ ⁡ ( θ t + 1 , λ ) ∂ λ , 0 } = max ⁡ { λ + η ⁡ ( 𝔼 q ∼ P ( Q ) , o ∼ π θ t + 1 ( ⋅ | q ) [ L ( o ) ] B − 1 ) , 0 } . \lambda_{t+1}\leftarrow\max\{\lambda_{t}-\eta\frac{\partial\mathcal{L}(\theta_{t+1},\lambda)}{\partial\lambda},0\}=\max\{\lambda+\eta(\frac{\mathbb{E}_{q\sim P(Q),o\sim\pi_{\theta_{t+1}}(\cdot|q)}[L(o)]}{B}-1),0\}.
+(18)
+Thus far, we have derived the idealized standard primal dual updates in eqs. 4 and 5 . Empirically we estimate the expectation 𝔼 q ∼ P ( Q ) , o ∼ π θ t ( ⋅ | q ) [ L ( o ) ] \mathbb{E}_{q\sim P(Q),o\sim\pi_{\theta_{t}}(\cdot|q)}[L(o)] with the minibatch mean L ¯ \bar{L} generated by the policy model π θ \pi_{\theta} , and with an extra λ \lambda -ceiling Λ \Lambda , we derive exactly eq. 9 :
+λ ← clip ​ ( λ + η ⁡ ( L ¯ B − 1 ) , 0 , Λ ) . \lambda\leftarrow\textrm{clip}(\lambda+\eta(\frac{\bar{L}}{B}-1),0,\Lambda).
+For the primal update in eq. 17 , we treat it as a RL-tuning step where the task reward is substituted with a Langrangian reward ℓ ^ λ t ​ ( q , o ) ≔ r ⁡ ( q , o ) − λ t ​ c ~ ​ ( q , o ) \widehat{\ell}_{\lambda_{t}}(q,o)\coloneqq r(q,o)-\lambda_{t}\widetilde{c}(q,o) .
+We refer to the aforementioned method as the standard primal-dual updates (with linear costs). Note that LACONIC shares the same dual updates as the standard primal-dual method, while changing the cost function used in primal updates.
+A.2 Additional Cost Function Ablations
+As discussed in sections 2.2 and 5.1 , using the linear cost function c ~ ​ ( q , o ) = L ⁡ ( o ) − B B \widetilde{c}(q,o)=\frac{L(o)-B}{B} inside the primal (model) update is problematic in practice. Whenever λ > 0 \lambda>0 , the actor model is incentivized to shorten responses on all samples, and eventually collapses the policy to extremely short outputs. This leads to highly unstable training dynamics, which is undesirable in practice. In section 5.1 , we trained DeepScaleR-1.5B using two different methods. We present in table 4 the detailed evaluation results of the step-300 checkpoints of DeepScaleR-1.5B on these two methods with a token budget B = 1500 B=1500 .
+Table 4 : Evaluation results of the cost function ablation on DeepScaleR-1.5B across four math benchmarks.
+Methods
+AIME2024
+MATH
+Minerva
+Olympiad
+Macro Average
+Pass@1
+# Tokens
+Pass@1
+# Tokens
+Pass@1
+# Tokens
+Pass@1
+# Tokens
+Pass@1
+# Tokens
+DeepScaleR-1.5B
+38.75
+8140
+85.92
+3019
+27.62
+4134
+51.94
+5410
+51.06
+5176
++ GRPO
+29.58
+6122
+85.28
+1767
+29.64
+2630
+49.11
+3418
+48.40 ↓ \downarrow 2.66
+3484 ↓ \downarrow 33%
++ Linear cost (1500)
+29.17
+5636
+83.00
+1593
+29.14
+2638
+48.18
+3256
+47.37 ↓ \downarrow 3.69
+3281 ↓ \downarrow 37%
++ LACONIC (1500)
+29.58
+3458
+84.35
+1353
+31.48
+1582
+47.93
+2084
+48.33 ↓ \downarrow 2.73
+2119 ↓ \downarrow 59%
+The standard primal-dual approach failed to effectively shorten response length on DeepScaleR-1.5B compared to LACONIC or even vanilla GRPO with a restrictive 4K response length cap.
+We then include additional ablations of cost functions on another base model, Qwen2.5-Math-1.5B-Instruct [ Yang et al., 2024 ] ( Qwen-Math-1.5B for short). Qwen-Math-1.5B is a 1.5B-parameter instruction-tuned math model. In fig. 7 , we plot the training dynamics, and in table 5 , we present the evaluation results of the step-350 checkpoints. The experiment shows that with linear cost function L ⁡ ( o ) − B B \frac{L(o)-B}{B} , the average accuracy plummets from 40% to 8%, and the mean response lengths fall below 10 tokens, indicating that the model is no longer producing meaningful responses during training. Although as shown in table 5 , the primal-dual framework with linear cost function c ~ \widetilde{c} recovers the model’s performance after the model is stabilized, the unstable update steps can introduce great risk and instability to LLM fine-tuning.
+Table 5 : Evaluation results of the cost functions on Qwen-Math-1.5B across four math benchmarks.
+Model
+AIME2024
+MATH
+Minerva
+Olympiad
+Macro Average
+Pass@1
+# Tokens
+Pass@1
+# Tokens
+Pass@1
+# Tokens
+Pass@1
+# Tokens
+Pass@1
+# Tokens
+Qwen-Math-1.5B
+11.46
+952
+74.86
+570
+25.14
+656
+39.84
+808
+37.89
+747
++ Linear cost (550)
+11.35
+665
+73.42
+479
+25.53
+531
+38.42
+627
+37.18 ↓ \downarrow 0.71
+576 ↓ \downarrow 23%
++ LACONIC (550)
+11.46
+674
+73.85
+464
+25.25
+524
+38.39
+603
+37.24 ↓ \downarrow 0.65
+566 ↓ \downarrow 24%
+(a) Accuracy reward over training steps
+(b) Average response length over training steps
+(c) Dual variable λ \lambda over training steps
+Figure 7 :
+Ablation of the cost functions on Qwen-Math-1.5B with a token budget B = 550 B=550 :
+(a) reward accuracy,
+(b) average response length,
+(c) dual variable λ \lambda ,
+Appendix B Additional Experiments
+B.1 Ablation Results on Step Sizes
+In section 5.3 , we introduced the ablation experiments on DeepScaleR-1.5B by varying step sizes and λ \lambda -ceiling, and presented training dynamics. In this section, we show the evaluation results of the step-300 checkpoints of all runs.
+Table 6 : Evaluation results of the token-budget B B ablation across four math benchmarks.
+Step size η \eta
+AIME2024
+MATH
+Minerva
+Olympiad
+Macro Average
+Pass@1
+# Tokens
+Pass@1
+# Tokens
+Pass@1
+# Tokens
+Pass@1
+# Tokens
+Pass@1
+# Tokens
+η = 0.001 , Λ = 0.3 \eta=0.001,\Lambda=0.3
+27.50
+3231
+84.25
+1356
+30.92
+1543
+47.87
+2090
+47.64
+2055
+η = 0.002 , Λ = 0.3 \eta=0.002,\Lambda=0.3
+29.58
+3458
+84.35
+1353
+31.48
+1582
+47.93
+2084
+48.33
+2119
+η = 0.01 , Λ = 0.3 \eta=0.01,\Lambda=0.3
+29.79
+3429
+84.30
+1365
+31.42
+1602
+47.19
+2097
+48.18
+2123
+η = 0.01 , Λ = 0.15 \eta=0.01,\Lambda=0.15
+29.79
+3477
+84.20
+1319
+31.15
+1562
+47.83
+2067
+48.24
+2106
+B.2 Experiments on Qwen3-8B
+To test the effectiveness of our method on large models, we train Qwen3-8B on LACONIC with a token budget B = 1000 B=1000 and 4K response length cap for 150 steps, and we present the evaluation results in table 7 .
+The experimental results show that LACONIC reduces response length by 46% while incurring a modest 2.77% change in pass@1 compared with vanilla GRPO fine-tuning. Moreover, LACONIC outperforms both L1 variants while using fewer tokens.
+Table 7 : Evaluation results of length-control on Qwen3-8B across four math benchmarks.
+Methods
+AIME2024
+MATH
+Minerva
+Olympiad
+Macro Average
+Pass@1
+# Tokens
+Pass@1
+# Tokens
+Pass@1
+# Tokens
+Pass@1
+# Tokens
+Pass@1
+# Tokens
+Qwen3-8B
++ GRPO
+37.50
+2918
+87.95
+1532
+40.14
+1549
+54.40
+2167
+55.00
+2042
++ L1-Exact
+27.92
+1637
+86.37
+987
+37.50
+800
+48.54
+1254
+50.08 ↓ \downarrow 4.92
+1170 ↓ \downarrow 43%
++ L1-Max
+30.33
+1936
+87.30
+865
+37.59
+759
+51.11
+1209
+51.58 ↓ \downarrow 3.42
+1192 ↓ \downarrow 42%
++ LACONIC (1000)
+30.42
+1643
+87.01
+792
+38.46
+783
+53.05
+1166
+52.23 ↓ \downarrow 2.77
+1096 ↓ \downarrow 46%
+B.3 Ablation Analysis on Fixed Dual Variables
+To isolate the effect of online dual adaptation, we replace LACONIC ’s dual update with a fixed λ \lambda throughout training and sweep λ \lambda from { 0.001 , 0.01 , 0.05 } \{0.001,0.01,0.05\} . Table 8 reports pass@1 and average output length under identical training settings and the same token budget B = 1000 B=1000 . The sweep reveals strong sensitivity to λ \lambda : small λ \lambda behaves similarly to the base model, yielding limited length reduction, whereas large λ \lambda over-emphasizes the length penalty, producing short outputs and clear accuracy degradation. In contrast, LACONIC ’s adaptive λ \lambda achieves better pass@1 at substantially lower length, without per-task λ \lambda tuning, underscoring that online multiplier adaptation is essential for stable and controllable length reduction.
+Table 8 : Evaluation results of fixed λ \lambda ablation across four math benchmarks.
+Model
+AIME2024
+MATH
+Minerva
+Olympiad
+Macro Average
+Pass@1
+# Tokens
+Pass@1
+# Tokens
+Pass@1
+# Tokens
+Pass@1
+# Tokens
+Pass@1
+# Tokens
+DeepScaleR-1.5B
+38.75
+8140
+85.92
+3019
+27.62
+4134
+51.94
+5410
+51.06
+5176
++ GRPO ( λ = 0 ) (\lambda=0)
+29.58
+6122
+85.28
+1767
+29.64
+2630
+49.11
+3418
+48.40 ↓ \downarrow 2.66
+3484 ↓ \downarrow 33%
++ λ = 0.001 \lambda=0.001
+27.92
+5834
+82.73
+2089
+29.64
+2200
+46.76
+3663
+46.76 ↓ \downarrow 4.3
+3396 ↓ \downarrow 34%
++ λ = 0.01 \lambda=0.01
+26.25
+4709
+81.65
+1927
+28.90
+1990
+45.52
+2963
+45.58 ↓ \downarrow 5.48
+2897 ↓ \downarrow 44%
++ λ = 0.05 \lambda=0.05
+21.66
+2417
+78.28
+1018
+24.92
+1073
+41.25
+1602
+41.53 ↓ \downarrow 9.53
+1528 ↓ \downarrow 70%
++ LACONIC
+28.12
+2665
+83.75
+1049
+29.24
+1189
+47.07
+1669
+47.05 ↓ \downarrow 4.01
+1643 ↓ \downarrow 68%
+Appendix C Analysis of clipped-cost primal-dual
+We first restate some definitions and notations. Let q ∼ P ⁡ ( Q ) q\sim P(Q) denote a prompt and o ∼ π ( ⋅ ∣ q ) o\sim\pi(\cdot\mid q) be a response.
+Let L ⁡ ( o ) L(o) be the length of response o o and B > 0 B>0 be the token budget.
+Define
+R ( π ) := 𝔼 q ∼ P ( Q ) , o ∼ π ( ⋅ | q ) [ r ( q , o ) ] , C ~ ( π ) := 𝔼 q ∼ P ( Q ) , o ∼ π ( ⋅ | q ) [ L ⁡ ( o ) − B B ] , C ( π ) := 𝔼 q ∼ P ( Q ) , o ∼ π ( ⋅ | q ) [ ( L ⁡ ( o ) − B ) + B ] , R(\pi):=\mathbb{E}_{q\sim P(Q),o\sim\pi(\cdot|q)}[r(q,o)],\quad\widetilde{C}(\pi):=\mathbb{E}_{q\sim P(Q),o\sim\pi(\cdot|q)}\!\left[\frac{L(o)-B}{B}\right],\quad C(\pi):=\mathbb{E}_{q\sim P(Q),o\sim\pi(\cdot|q)}\!\left[\frac{(L(o)-B)_{+}}{B}\right],
+where ( x ) + = max ⁡ { x , 0 } (x)_{+}=\max\{x,0\} .
+The target constrained problem is
+π ⋆ ∈ arg ​ max π ⁡ R ​ ( π ) s.t. C ~ ​ ( π ) ≤ 0 . \pi^{\star}\in\operatorname*{arg\,max}_{\pi}R(\pi)\quad\text{s.t.}\quad\widetilde{C}(\pi)\leq 0.
+C.1 Idealized clipped-cost dynamics
+For any λ ≥ 0 \lambda\geq 0 , the optimal policy model under clipped-cost corresponding to λ \lambda can be determined and defined as
+π ⁡ ( λ ) ∈ arg ​ max π ⁡ R ​ ( π ) − λ ​ C ​ ( π ) , \pi(\lambda)\in\operatorname*{arg\,max}_{\pi}R(\pi)-\lambda\,C(\pi),
+(19)
+and then we define the induced true normalized length of the resulting
+μ ​ ( λ ) := C ~ ​ ( π ​ ( λ ) ) . \mu(\lambda):=\widetilde{C}(\pi(\lambda)).
+(20)
+We study the deterministic projected update
+π t = π ⁡ ( λ t ) , λ t + 1 = clip ​ ( λ t + η ​ μ ​ ( λ t ) , 0 , Λ ) , \pi_{t}=\pi(\lambda_{t}),\quad\lambda_{t+1}=\textrm{clip}(\lambda_{t}+\eta\,\mu(\lambda_{t}),0,\Lambda),
+(21)
+and assume it converges to a limit ( π ♯ , λ ♯ ) (\pi^{\sharp},\lambda^{\sharp}) with π ♯ = π ⁡ ( λ ♯ ) \pi^{\sharp}=\pi(\lambda^{\sharp}) .
+C.2 Bounding Reward Suboptimality of Clipped-Cost
+Lemma C.1 .
+Denote the response length cap by L max L_{\max} , and 0 ≤ L ⁡ ( o ) ≤ L max 0\leq L(o)\leq L_{\max} for any response o o . We also require L max > B L_{\max}>B , otherwise the problem is trivial. Let π \pi be any feasible policy for the linear constraint C ~ ​ ( π ) ≤ 0 \widetilde{C}(\pi)\leq 0 , i.e.,
+𝔼 q ∼ P ( Q ) , o ∼ π ( ⋅ | q ) [ L ( o ) ] ≤ B \mathbb{E}_{q\sim P(Q),o\sim\pi(\cdot|q)}[L(o)]\leq B . Then
+C ( π ) = 𝔼 q ∼ P ( Q ) , o ∼ π ( ⋅ | q ) [ ( L ⁡ ( o ) − B ) + B ] ≤ L max − B L max . C(\pi)=\mathbb{E}_{q\sim P(Q),o\sim\pi(\cdot|q)}[\frac{(L(o)-B)_{+}}{B}]\leq\frac{L_{\max}-B}{L_{\max}}.
+(22)
+Proof.
+We first notice that for any response o o ,
+( L ⁡ ( o ) − B ) + ≤ L max − B L max ​ L ​ ( o ) . (L(o)-B)_{+}\leq\frac{L_{\max}-B}{L_{\max}}L(o).
+(23)
+When L ⁡ ( o ) < B L(o)<B , then LHS < 0 < RHS \textrm{LHS}<0<\textrm{RHS} . When B ≤ L ⁡ ( o ) ≤ L max B\leq L(o)\leq L_{\max} , then
+( L ⁡ ( o ) − B ) + = L ⁡ ( o ) − B ≤ L max − B L max ​ L ​ ( o ) , (L(o)-B)_{+}=L(o)-B\leq\frac{L_{\max}-B}{L_{\max}}L(o),
+where the inequality can be verified by arithmetic rearranging.
+Then by taking expecations on both sides of eq. 23 , we have
+𝔼 q ∼ P ( Q ) , o ∼ π ( ⋅ | q ) [ ( L ( o ) − B ) + ] ≤ L max − B L max 𝔼 q ∼ P ( Q ) , o ∼ π ( ⋅ | q ) [ L ( o ) ] . \mathbb{E}_{q\sim P(Q),o\sim\pi(\cdot|q)}[(L(o)-B)_{+}]\leq\frac{L_{\max}-B}{L_{\max}}\mathbb{E}_{q\sim P(Q),o\sim\pi(\cdot|q)}[L(o)].
+Since 𝔼 q ∼ P ( Q ) , o ∼ π ( ⋅ | q ) [ L ( o ) ] ≤ B \mathbb{E}_{q\sim P(Q),o\sim\pi(\cdot|q)}[L(o)]\leq B for the feasible policy π \pi , we conclude that
+C ( π ) = 𝔼 q ∼ P ( Q ) , o ∼ π ( ⋅ | q ) [ ( L ⁡ ( o ) − B ) + B ] ≤ L max − B L max . C(\pi)=\mathbb{E}_{q\sim P(Q),o\sim\pi(\cdot|q)}[\frac{(L(o)-B)_{+}}{B}]\leq\frac{L_{\max}-B}{L_{\max}}.
+∎
+Theorem C.2 (Restate of Theorem 3.1 .) .
+Let π ⋆ ∈ max π : C ~ ​ ( π ) ≤ 0 R ( π ) \pi^{\star}\in\max_{\pi:\widetilde{C}(\pi)\leq 0}R(\pi) be an optimal feasible policy of the length-constrained problem in eq. 3 . Let ( π ♯ , λ ♯ ) (\pi^{\sharp},\lambda^{\sharp}) be the feasible limit of the idealized clipped-cost primal-dual updates in eqs. 10 and 11 . Then
+0 ≤ R ⁡ ( π ⋆ ) − R ⁡ ( π ♯ ) ≤ λ ♯ ​ C ​ ( π ∗ ) . 0\leq R(\pi^{\star})-R(\pi^{\sharp})\leq\lambda^{\sharp}C(\pi^{*}).
+(24)
+Moreover, for indicator rewards with the λ \lambda -ceiling Λ = B L max − B \Lambda=\frac{B}{L_{\max}-B} and a maximum length cap L ⁡ ( o ) ≤ L max L(o)\leq L_{\max} , we have
+0 ≤ R ⁡ ( π ⋆ ) − R ⁡ ( π ♯ ) ≤ B L max . 0\leq R(\pi^{\star})-R(\pi^{\sharp})\leq\frac{B}{L_{\max}}.
+(25)
+Proof.
+Since C ~ ​ ( π ♯ ) ≤ 0 \widetilde{C}(\pi^{\sharp})\leq 0 , π ♯ \pi^{\sharp} is feasible for the clipped-cost primal-dual optimization, and therefore feasible for the original constrained optimization, by optimality of π ∗ \pi^{*} ,
+R ⁡ ( π ∗ ) ≥ R ⁡ ( π ♯ ) , R(\pi^{*})\geq R(\pi^{\sharp}),
+which gives the left inequality.
+For the upper bound, the optimal feasible policy π ♯ \pi^{\sharp} implies that for any policy π \pi ,
+R ⁡ ( π ♯ ) − λ ♯ ​ C ​ ( π ♯ ) ≥ R ⁡ ( π ) − λ ♯ ​ C ​ ( π ) . R(\pi^{\sharp})-\lambda^{\sharp}C(\pi^{\sharp})\geq R(\pi)-\lambda^{\sharp}C(\pi).
+Let π \pi be π ∗ \pi^{*} and rearranging,
+R ⁡ ( π ∗ ) − R ⁡ ( π ♯ ) ≤ λ ♯ ​ C ​ ( π ∗ ) − λ ♯ ​ C ​ ( π ♯ ) . R(\pi^{*})-R(\pi^{\sharp})\leq\lambda^{\sharp}C(\pi^{*})-\lambda^{\sharp}C(\pi^{\sharp}).
+Since C ⁡ ( π ♯ ) ≥ 0 C(\pi^{\sharp})\geq 0 , dropping the negative term, we conclude that
+R ⁡ ( π ∗ ) − R ⁡ ( π ♯ ) ≤ λ ♯ ​ C ​ ( π ∗ ) . R(\pi^{*})-R(\pi^{\sharp})\leq\lambda^{\sharp}C(\pi^{*}).
+Thus, we have proved eq. 24 . Finally, since
+λ ♯ ≤ Λ ≤ B L max − B , \lambda^{\sharp}\leq\Lambda\leq\frac{B}{L_{\max}-B},
+and since π ∗ \pi^{*} is feasible, we apply Lemma C.1 ,
+and obtain eq. 25 :
+R ⁡ ( π ∗ ) − R ⁡ ( π ♯ ) ≤ λ ♯ ​ C ​ ( π ∗ ) ≤ B L max − B ​ L max − B L max = B L max . R(\pi^{*})-R(\pi^{\sharp})\leq\lambda^{\sharp}C(\pi^{*})\leq\frac{B}{L_{\max}-B}\frac{L_{\max}-B}{L_{\max}}=\frac{B}{L_{\max}}.
+∎
+C.3 Convergence Guarantee
+We impose following assumptions on the scalar response function μ ​ ( λ ) = C ~ ​ ( π ​ ( λ ) ) \mu(\lambda)=\widetilde{C}(\pi(\lambda)) .
+A1. For any λ ∈ [ 0 , Λ ] \lambda\in[0,\Lambda] , π ⁡ ( λ ) \pi(\lambda) exists.
+A2 (Monotonicity of μ \mu ). The response function μ \mu is nonincreasing and μ ⁡ ( Λ ) ≤ 0 \mu(\Lambda)\leq 0 .
+The mononicity assumption states that as the dual variable λ \lambda increases, the corresponding optimal policy that maximizes R ⁡ ( π ) − λ ​ C ​ ( π ) R(\pi)-\lambda C(\pi) will not generate longer responses in expectation. Also, the budget can be enforced without needing λ > Λ \lambda>\Lambda .
+A3 (Continuity of μ \mu ). The response function μ \mu is continuous and γ \gamma -lipschitz on [ 0 , Λ ] [0,\Lambda] , i.e., for any λ , λ ′ ∈ [ 0 , Λ ] \lambda,\lambda^{\prime}\in[0,\Lambda] :
+| μ ⁡ ( λ ) − μ ⁡ ( λ ′ ) | ≤ γ ​ | λ − λ ′ | . \lvert\mu(\lambda)-\mu(\lambda^{\prime})\rvert\leq\gamma\lvert\lambda-\lambda^{\prime}\rvert.
+Lemma C.3 (Fixed-point feasibility) .
+Let λ ♯ ∈ [ 0 , Λ ] \lambda^{\sharp}\in[0,\Lambda] be the fixed point of the dual update
+λ ♯ = clip ​ ( λ ♯ + η ​ μ ​ ( λ ♯ ) , 0 , Λ ) . \lambda^{\sharp}=\textrm{clip}(\lambda^{\sharp}+\eta\,\mu(\lambda^{\sharp}),0,\Lambda).
+Then μ ⁡ ( λ ♯ ) ≤ 0 \mu(\lambda^{\sharp})\leq 0 , i.e., C ~ ​ ( π ⁡ ( λ ♯ ) ) ≤ 0 \widetilde{C}(\pi(\lambda^{\sharp}))\leq 0 . Hence, π ♯ = π ⁡ ( λ ♯ ) \pi^{\sharp}=\pi(\lambda^{\sharp}) is feasible.
+Proof.
+We discuss the value of λ ♯ \lambda^{\sharp} : (i) if 0 < λ ♯ < Λ 0<\lambda^{\sharp}<\Lambda , then it implies η ​ μ ​ ( λ ♯ ) = 0 \eta\,\mu(\lambda^{\sharp})=0 , and thus μ ⁡ ( λ ♯ ) = 0 \mu(\lambda^{\sharp})=0 ; (ii) if λ ♯ = 0 \lambda^{\sharp}=0 , then η ​ μ ​ ( λ ♯ ) ≤ 0 \eta\,\mu(\lambda^{\sharp})\leq 0 , and thus μ ⁡ ( λ ♯ ) ≤ 0 \mu(\lambda^{\sharp})\leq 0 ; (iii) if λ ♯ = Λ \lambda^{\sharp}=\Lambda , then by assumption A2, we have μ ⁡ ( Λ ) ≤ 0 \mu(\Lambda)\leq 0 .
+∎
+Theorem C.4 (Convergence) .
+Let the step size 0 < η ≤ 1 / γ 0<\eta\leq 1/\gamma . Then for any initialization λ 0 ∈ [ 0 , Λ ] \lambda_{0}\in[0,\Lambda] , the sequence λ t + 1 = clip ​ ( λ t + η ​ μ ​ ( λ t ) , 0 , Λ ) \lambda_{t+1}=\textrm{clip}(\lambda_{t}+\eta\,\mu(\lambda_{t}),0,\Lambda) converges to a fixed point λ ♯ ∈ [ 0 , Λ ] \lambda^{\sharp}\in[0,\Lambda] . Moreover, the corresponding policy π ♯ = π ⁡ ( λ ♯ ) \pi^{\sharp}=\pi(\lambda^{\sharp}) is feasible, i.e., C ~ ​ ( π ♯ ) ≤ 0 \widetilde{C}(\pi^{\sharp})\leq 0 .
+Proof.
+We turn the problem into convex optimization. First, define the potential
+Φ ⁡ ( λ ) = ∫ 0 λ μ ⁡ ( s ) ​ 𝑑 s . \Phi(\lambda)=\int_{0}^{\lambda}\mu(s)ds.
+By the assumption A1 that μ \mu is nonincreasing, Φ \Phi is concave, and by the assumption A3, Φ \Phi is γ \gamma -smooth. Then we define a convex objective
+f ⁡ ( λ ) = − Φ ⁡ ( λ ) . f(\lambda)=-\Phi(\lambda).
+We then have
+∇ f ​ ( λ ) = − μ ​ ( λ ) , \nabla f(\lambda)=-\mu(\lambda),
+and the dual updates can be written as
+λ t + 1 = clip ( λ t − η ∇ f ( λ t ) , 0 , Λ ) . \lambda_{t+1}=\textrm{clip}(\lambda_{t}-\eta\nabla f(\lambda_{t}),0,\Lambda).
+By Fejer monotonicity (Theorem 10.23 and 10.24 in [ Beck, 2017 ] ), we claim that the distance between the iterates λ t \lambda_{t} and the optimal solution (i.e., the fixed point) λ ♯ \lambda^{\sharp} is nonincreasing:
+∥ λ t + 1 − λ ♯ ∥ 2 ≤ ∥ λ t − λ ♯ ∥ 2 , \lVert\lambda_{t+1}-\lambda^{\sharp}\rVert^{2}\leq\lVert\lambda_{t}-\lambda^{\sharp}\rVert^{2},
+and λ t \lambda_{t} converges to the fixed point λ ♯ \lambda^{\sharp} . Finally, by Lemma C.3 , the corresponding policy π ♯ = π ⁡ ( λ ♯ ) \pi^{\sharp}=\pi(\lambda^{\sharp}) is feasible.
+∎
+C.4 Convergence Rate
+For a clean linear convergence rate, we impose an additional assumption on μ \mu .
+A4 (Strong monotonicity). There exists ξ > 0 \xi>0 such that for all λ ≥ λ ′ ∈ [ 0 , Λ ] \lambda\geq\lambda^{\prime}\in[0,\Lambda] , μ ⁡ ( λ ) − μ ⁡ ( λ ′ ) ≤ − ξ ⁡ ( λ − λ ′ ) \mu(\lambda)-\mu(\lambda^{\prime})\leq-\xi(\lambda-\lambda^{\prime}) .
+Under the assumptions A1-A4, there exists a unique λ ∗ ∈ [ 0 , Λ ] \lambda^{*}\in[0,\Lambda] such that μ ⁡ ( λ ∗ ) = 0 \mu(\lambda^{*})=0 .
+Theorem C.5 (Convergence rate) .
+Let the step size 0 < η ≤ min ⁡ { 1 / γ , 1 / ξ } 0<\eta\leq\min\{1/\gamma,1/\xi\} . Then the dual iterates λ t \lambda_{t} satisfy
+| λ t − λ ♯ | ≤ ( 1 − η ​ ξ ) t ​ | λ 0 − λ ♯ | . \lvert\lambda_{t}-\lambda^{\sharp}\rvert\leq(1-\eta\xi)^{t}\lvert\lambda_{0}-\lambda^{\sharp}\rvert.
+(26)
+Moreover, the constraint violation decays
+| μ ⁡ ( λ t ) | ≤ γ ​ | λ t − λ ♯ | ≤ γ ​ ( 1 − η ​ ξ ) t ​ | λ 0 − λ ♯ | , \lvert\mu(\lambda_{t})\rvert\leq\gamma\lvert\lambda_{t}-\lambda^{\sharp}\rvert\leq\gamma(1-\eta\xi)^{t}\lvert\lambda_{0}-\lambda^{\sharp}\rvert,
+(27)
+which implies that C ~ ​ ( π t ) = μ ⁡ ( λ t ) \widetilde{C}(\pi_{t})=\mu(\lambda_{t}) converges to 0 at a geometric rate.
+Proof.
+We denote the dual update by a mapping operator T ⁡ ( λ ) T(\lambda) :
+T ⁡ ( λ ) = clip ​ ( λ + η ​ μ ​ ( λ ) , 0 , Λ ) . T(\lambda)=\textrm{clip}(\lambda+\eta\,\mu(\lambda),0,\Lambda).
+Since λ ♯ ∈ [ 0 , Λ ] \lambda^{\sharp}\in[0,\Lambda] and μ ⁡ ( λ ♯ ) = 0 \mu(\lambda^{\sharp})=0 ,
+T ⁡ ( λ ♯ ) = λ ♯ . T(\lambda^{\sharp})=\lambda^{\sharp}.
+Since the clipping function is non-expansive, we have
+| T ⁡ ( λ ) − T ⁡ ( λ ♯ ) | ≤ | λ − λ ♯ + η ⁡ ( μ ⁡ ( λ ) − μ ⁡ ( λ ♯ ) ) | = | λ − λ ♯ + η ​ μ ​ ( λ ) | . \lvert T(\lambda)-T(\lambda^{\sharp})\rvert\leq\lvert\lambda-\lambda^{\sharp}+\eta(\mu(\lambda)-\mu(\lambda^{\sharp}))\rvert=\lvert\lambda-\lambda^{\sharp}+\eta\,\mu(\lambda)\rvert.
+(28)
+Then by the assumption A5, if λ ≥ λ ♯ \lambda\geq\lambda^{\sharp} ,
+μ ⁡ ( λ ) ≤ μ ⁡ ( λ ♯ ) − ξ ⁡ ( λ − λ ♯ ) = − ξ ⁡ ( λ − λ ♯ ) . \mu(\lambda)\leq\mu(\lambda^{\sharp})-\xi(\lambda-\lambda^{\sharp})=-\xi(\lambda-\lambda^{\sharp}).
+Therefore,
+λ − λ ♯ + η ​ μ ​ ( λ ) ≤ ( λ − λ ♯ ) − η ​ ξ ​ ( λ − λ ♯ ) = ( 1 − η ​ ξ ) ​ ( λ − λ ♯ ) , \lambda-\lambda^{\sharp}+\eta\,\mu(\lambda)\leq(\lambda-\lambda^{\sharp})-\eta\xi(\lambda-\lambda^{\sharp})=(1-\eta\xi)(\lambda-\lambda^{\sharp}),
+and
+| λ − λ ♯ + η ​ μ ​ ( λ ) | ≤ ( 1 − η ​ ξ ) ​ ( λ − λ ♯ ) . \lvert\lambda-\lambda^{\sharp}+\eta\,\mu(\lambda)\rvert\leq(1-\eta\xi)(\lambda-\lambda^{\sharp}).
+The same bound follows for λ ≤ λ ♯ \lambda\leq\lambda^{\sharp} . Plugging back in eq. 28 , we have
+| T ⁡ ( λ ) − T ⁡ ( λ ♯ ) | ≤ ( 1 − η ​ ξ ) ​ ( λ − λ ♯ ) . \lvert T(\lambda)-T(\lambda^{\sharp})\rvert\leq(1-\eta\xi)(\lambda-\lambda^{\sharp}).
+Let λ = λ t \lambda=\lambda_{t} , and note that T ⁡ ( λ t ) = λ t + 1 T(\lambda_{t})=\lambda_{t+1} , we obtain the contraction of the dual update operator T T :
+| λ t + 1 − λ ♯ | ≤ ( 1 − η ​ ξ ) ​ | λ t − λ ♯ | . \lvert\lambda_{t+1}-\lambda^{\sharp}\rvert\leq(1-\eta\xi)\lvert\lambda_{t}-\lambda^{\sharp}\rvert.
+Telescoping gives eq. 26 . Finally, notice that μ ⁡ ( λ ♯ ) = 0 \mu(\lambda^{\sharp})=0 , we have
+| μ ⁡ ( λ t ) | = | μ ⁡ ( λ t ) − μ ⁡ ( λ ♯ ) | ≤ γ ​ | λ t + 1 − λ ♯ | , \lvert\mu(\lambda_{t})\rvert=\lvert\mu(\lambda_{t})-\mu(\lambda^{\sharp})\rvert\leq\gamma\lvert\lambda_{t+1}-\lambda^{\sharp}\rvert,
+and plugging in eq. 26 gives us eq. 27 .
+∎
+Appendix D Case Study
+Prompt: Every morning Aya goes for a 9 9 -kilometer-long walk and stops at a coffee shop afterwards. When she walks at a constant speed of s s kilometers per hour, the walk takes her 4 hours, including t t minutes spent in the coffee shop. When she walks s + 2 s+2 kilometers per hour, the walk takes her 2 hours and 24 minutes, including t t minutes spent in the coffee shop. Suppose Aya walks at s + 1 2 s+\frac{1}{2} kilometers per hour. Find the number of minutes the walk takes her, including the t t minutes spent in the coffee shop. You FIRST think about the reasoning process as an internal monologue and then provide the final answer. The reasoning process MUST BE enclosed within <think> </think> tags. The final answer MUST BE put in \boxed{}.
+Ground truth answer: 204 204 .
+LACONIC Output (#Tokens = 855)
+Alright, let’s tackle this problem step by step.
+First, let’s understand what’s given. Aya walks a total distance of 9 kilometers. The time she takes depends on her walking speed. She stops at a coffee shop, and the time spent there is t t minutes.
+We are given two scenarios:
+1. When her speed is s s km/h, the total time (walking plus coffee) is 4 hours.
+2. When her speed increases to s + 2 s+2 km/h, the total time becomes 2 hours and 24 minutes, which is 2 + 24 60 = 2.4 2+\frac{24}{60}=2.4 hours.
+We need to find the total time when her speed is s + 0.5 s+0.5 km/h.
+Let’s denote the time spent in the coffee shop as t t minutes. Since the coffee shop time is the same in both scenarios, we can set up equations based on the total time.
+In the first scenario:
+Total time = = walking time + + t t minutes.
+Walking time = = distance / speed = 9 / s =9/s hours.
+Therefore, 9 / s + t = 4 9/s+t=4 hours.
+In the second scenario:
+Walking time = = 9 / ( s + 2 ) 9/(s+2) hours.
+Total time = = 9 / ( s + 2 ) + t = 2.4 9/(s+2)+t=2.4 hours.
+Now, we have two equations:
+1. 9 / s + t = 4 9/s+t=4
+2. 9 / ( s + 2 ) + t = 2.4 9/(s+2)+t=2.4
+We can subtract equation 2 from equation 1 to eliminate t t :
+( 9 / s + t ) − ( 9 / ( s + 2 ) + t ) = 4 − 2.4 (9/s+t)-(9/(s+2)+t)=4-2.4
+Simplify:
+9 / s − 9 / ( s + 2 ) = 1.6 9/s-9/(s+2)=1.6
+Factor out 9:
+9 ​ [ 1 / s − 1 / ( s + 2 ) ] = 1.6 9[1/s-1/(s+2)]=1.6
+Compute the difference inside the brackets:
+1 / s − 1 / ( s + 2 ) = ( s + 2 − s ) / ( s ⁡ ( s + 2 ) ) = 2 / ( s ⁡ ( s + 2 ) ) 1/s-1/(s+2)=(s+2-s)/(s(s+2))=2/(s(s+2))
+So, 9 ∗ ( 2 ) / ( s ⁡ ( s + 2 ) ) = 1.6 9*(2)/(s(s+2))=1.6
+Simplify:
+18 / ( s ⁡ ( s + 2 ) ) = 1.6 18/(s(s+2))=1.6
+Multiply both sides by s ⁡ ( s + 2 ) s(s+2) :
+18 = 1.6 ​ s ​ ( s + 2 ) 18=1.6\,s(s+2)
+Divide both sides by 1.6:
+s ⁡ ( s + 2 ) = 18 / 1.6 s(s+2)=18/1.6
+Calculate 18 / 1.6 18/1.6 :
+18 / 1.6 = 11.25 18/1.6=11.25
+So, s 2 + 2 ​ s − 11.25 = 0 s^{2}+2s-11.25=0
+Now, solve the quadratic equation:
+s 2 + 2 ​ s − 11.25 = 0 s^{2}+2s-11.25=0
+Using quadratic formula:
+s = [ − 2 ± 4 + 45 ] / 2 s=[-2\pm\sqrt{4+45}]/2
+Since speed can’t be negative:
+s = [ − 2 + 49 ] / 2 s=[-2+\sqrt{49}]/2
+49 = 7 \sqrt{49}=7
+Thus, s = ( − 2 + 7 ) / 2 = 5 / 2 = 2.5 s=(-2+7)/2=5/2=2.5 km/h
+Now, we can find t t from equation 1:
+9 / s + t = 4 9/s+t=4
+9 / 2.5 + t = 4 9/2.5+t=4
+Compute 9 / 2.5 = 3.6 9/2.5=3.6
+So, 3.6 + t = 4 3.6+t=4
+Thus, t = 0.4 t=0.4 hours = 0.4 ∗ 60 = 24 =0.4*60=24 minutes.
+Now, when her speed is s + 0.5 = 2.5 + 0.5 = 3 s+0.5=2.5+0.5=3 km/h.
+We need to find the total time including coffee shop.
+First, compute walking time:
+9 / 3 = 3 9/3=3 hours.
+Total time = = walking time + + coffee shop time = 3 + 0.4 = 3.4 =3+0.4=3.4 hours.
+Convert to minutes: 3.4 ∗ 60 = 204 3.4*60=204 minutes.
+So, the total time is 204 minutes.
+</think>
+The total time Aya takes when walking at s + 1 2 s+\frac{1}{2} km/h is 204 \boxed{204} minutes.
+GRPO (#Tokens = 1763)
+Okay, so I have this problem about Aya’s walking and coffee shop time. Let me try to figure it out step by step.
+First, the problem says that Aya walks 9 kilometers every morning and stops at a coffee shop. When she walks at a speed of s s km/h, it takes her 4 hours, including t t minutes spent in the coffee shop. Then, when she increases her speed to s + 2 s+2 km/h, the walk takes her 2 hours and 24 minutes, but this time includes the same t t minutes in the coffee shop.
+I need to find the time it takes for Aya to walk at a speed of s + 1 2 s+\tfrac{1}{2} km/h, including the t t minutes in the coffee shop.
+Let me break down the information given:
+1.
+When walking at speed s s km/h, the total time taken is 4 hours, including t t minutes in the coffee shop. So, the walking time is 4 hours minus t t minutes. But since speed is in km/h, maybe it’s better to convert everything into hours.
+2.
+When walking at speed s + 2 s+2 km/h, the total time is 2 hours and 24 minutes, which is 2 + 24 60 = 2.4 2+\frac{24}{60}=2.4 hours. Again, the walking time is total time minus t t minutes.
+So, let me denote:
+•
+Walking speed: s s km/h
+•
+Walking speed in the second case: s + 2 s+2 km/h
+•
+Total time in first case: 4 hours
+•
+Total time in second case: 2.4 hours
+•
+Both cases include t t minutes in the coffee shop.
+We need to find the total time when walking speed is s + 1 2 s+\tfrac{1}{2} km/h.
+First, let’s convert the walking times into hours to make calculations easier.
+For the first scenario:
+Total time = 4 =4 hours
+Time spent walking = 4 − t 60 =4-\tfrac{t}{60} hours (since t t is in minutes)
+Distance walked is 9 km, so using the formula:
+Distance = = speed × \times time
+So, 9 = s × ( 4 − t 60 ) 9=s\times\left(4-\tfrac{t}{60}\right)
+Similarly, for the second scenario:
+Total time = 2.4 =2.4 hours
+Time spent walking = 2.4 − t 60 =2.4-\tfrac{t}{60} hours
+Distance walked is 9 km again:
+9 = ( s + 2 ) × ( 2.4 − t 60 ) 9=(s+2)\times\left(2.4-\tfrac{t}{60}\right)
+Now, we have two equations:
+1) 9 = s × ( 4 − t 60 ) 9=s\times\left(4-\tfrac{t}{60}\right)
+2) 9 = ( s + 2 ) × ( 2.4 − t 60 ) 9=(s+2)\times\left(2.4-\tfrac{t}{60}\right)
+Since both equal 9, we can set them equal to each other:
+s × ( 4 − t 60 ) = ( s + 2 ) × ( 2.4 − t 60 ) s\times\left(4-\tfrac{t}{60}\right)=(s+2)\times\left(2.4-\tfrac{t}{60}\right)
+Let me expand both sides:
+Left side: 4 ​ s − s ⁡ ( t 60 ) 4s-s\left(\tfrac{t}{60}\right)
+Right side: ( s + 2 ) ​ ( 2.4 − t 60 ) = 2.4 ​ s − s ⁡ ( t 60 ) + 4.8 − 2 ​ ( t 60 ) (s+2)\left(2.4-\tfrac{t}{60}\right)=2.4s-s\left(\tfrac{t}{60}\right)+4.8-2\left(\tfrac{t}{60}\right)
+Simplify both sides:
+Left: 4 ​ s − s ​ t 60 4s-\dfrac{st}{60}
+Right: 2.4 ​ s − s ​ t 60 + 4.8 − 2 ​ t 60 2.4s-\dfrac{st}{60}+4.8-\dfrac{2t}{60}
+Now, let’s write the equation:
+4 ​ s − s ​ t 60 = 2.4 ​ s − s ​ t 60 + 4.8 − 2 ​ t 60 4s-\dfrac{st}{60}=2.4s-\dfrac{st}{60}+4.8-\dfrac{2t}{60}
+Notice that the − s ​ t 60 -\dfrac{st}{60} terms on both sides cancel each other out. So we can subtract 2.4 ​ s 2.4s from both sides:
+4 ​ s − 2.4 ​ s = − s ​ t 60 + s ​ t 60 + 4.8 − 2 ​ t 60 4s-2.4s=-\dfrac{st}{60}+\dfrac{st}{60}+4.8-\dfrac{2t}{60}
+Simplify:
+1.6 ​ s = 4.8 − 2 ​ t 60 1.6s=4.8-\dfrac{2t}{60}
+Simplify 1.6 ​ s = 4.8 − t 30 1.6s=4.8-\dfrac{t}{30}
+Let me write that as:
+1.6 ​ s + t 30 = 4.8 1.6s+\dfrac{t}{30}=4.8
+Equation (A): 1.6 ​ s + t 30 = 4.8 1.6s+\dfrac{t}{30}=4.8
+Now, let’s go back to the first equation:
+9 = s × ( 4 − t 60 ) 9=s\times\left(4-\tfrac{t}{60}\right)
+Let me write this as:
+9 = 4 ​ s − s ​ t 60 9=4s-\dfrac{st}{60}
+Multiply both sides by 60 to eliminate denominators:
+9 × 60 = 4 ​ s × 60 − s ​ t 9\times 60=4s\times 60-st
+540 = 240 ​ s − s ​ t 540=240s-st
+Let’s write this as:
+s ​ t = 240 ​ s − 540 st=240s-540
+Divide both sides by s s (assuming s ≠ 0 s\neq 0 ):
+t = 240 − 540 s t=240-\dfrac{540}{s}
+Equation (B): t = 240 − 540 s t=240-\dfrac{540}{s}
+Now, substitute Equation (B) into Equation (A):
+1.6 ​ s + 240 − 540 s 30 = 4.8 1.6s+\dfrac{240-\tfrac{540}{s}}{30}=4.8
+Simplify:
+1.6 ​ s + 240 30 − 540 30 ​ s = 4.8 1.6s+\dfrac{240}{30}-\dfrac{540}{30s}=4.8
+Calculate:
+1.6 ​ s + 8 − 18 s = 4.8 1.6s+8-\dfrac{18}{s}=4.8
+Now, subtract 4.8 from both sides:
+1.6 ​ s + 8 − 18 s − 4.8 = 0 1.6s+8-\dfrac{18}{s}-4.8=0
+Simplify:
+1.6 ​ s + 3.2 − 18 s = 0 1.6s+3.2-\dfrac{18}{s}=0
+Multiply both sides by s s to eliminate denominator:
+1.6 ​ s 2 + 3.2 ​ s − 18 = 0 1.6s^{2}+3.2s-18=0
+Now, we have a quadratic equation:
+1.6 ​ s 2 + 3.2 ​ s − 18 = 0 1.6s^{2}+3.2s-18=0
+Let me multiply both sides by 10 to eliminate decimals:
+16 ​ s 2 + 32 ​ s − 180 = 0 16s^{2}+32s-180=0
+Divide all terms by 4 to simplify:
+4 ​ s 2 + 8 ​ s − 45 = 0 4s^{2}+8s-45=0
+Now, solve for s s using quadratic formula:
+s = − b ± b 2 − 4 ​ a ​ c 2 ​ a s=\dfrac{-b\pm\sqrt{b^{2}-4ac}}{2a}
+Where a = 4 a=4 , b = 8 b=8 , c = − 45 c=-45
+Calculate discriminant:
+D = 8 2 − 4 × 4 × ( − 45 ) = 64 + 720 = 784 D=8^{2}-4\times 4\times(-45)=64+720=784
+Square root of D D : 784 = 28 \sqrt{784}=28
+So,
+s = − 8 ± 28 2 × 4 = − 8 ± 28 8 s=\dfrac{-8\pm 28}{2\times 4}=\dfrac{-8\pm 28}{8}
+We have two solutions:
+1) s = − 8 + 28 8 = 20 8 = 2.5 s=\dfrac{-8+28}{8}=\dfrac{20}{8}=2.5 km/h
+2) s = − 8 − 28 8 = − 36 8 = − 4.5 s=\dfrac{-8-28}{8}=\dfrac{-36}{8}=-4.5 km/h
+Since speed cannot be negative, s = 2.5 s=2.5 km/h
+Now, find t t using Equation (B):
+t = 240 − 540 s = 240 − 540 2.5 t=240-\dfrac{540}{s}=240-\dfrac{540}{2.5}
+Calculate 540 2.5 \dfrac{540}{2.5} :
+540 / 2.5 = 216 540/2.5=216
+So,
+t = 240 − 216 = 24 t=240-216=24 minutes
+So, t = 24 t=24 minutes.
+Now, when Aya walks at s + 1 2 s+\tfrac{1}{2} km/h, which is 2.5 + 0.5 = 3 2.5+0.5=3 km/h.
+We need to find the total time including t t minutes in the coffee shop.
+First, calculate the walking time at 3 km/h.
+Distance is 9 km, speed is 3 km/h, so time is 9 3 = 3 \dfrac{9}{3}=3 hours.
+But total time is walking time plus t t minutes.
+Walking time is 3 hours, which is 180 minutes.
+Plus t = 24 t=24 minutes.
+So total time is 180 + 24 = 204 180+24=204 minutes.
+Therefore, the walk takes her 204 minutes, including the t t minutes spent in the coffee shop.
+</think>
+The number of minutes the walk takes her, including the t t minutes spent in the coffee shop, is 204 \boxed{204} .
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

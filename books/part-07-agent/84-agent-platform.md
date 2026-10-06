@@ -87,6 +87,10 @@ goal
 
 因此，模型负责产生语义判断与 action proposal，Agent Runtime 负责状态转换和编排，Tool/Environment 拥有真实副作用，Policy plane 决定哪些转换被允许。只有 terminal evidence 满足任务 contract，才能把“请求成功”提升为“任务完成”。
 
+这一分责也要反映到 client 接口。把 Agent 当作一个 MCP callable tool，或让一次非交互命令执行到结束，在短任务与既有工具工作流中仍然合理；IDE、桌面和 Web UI 却需要呈现同一请求产生的多个动作、增量内容和审批等待。接口可以把持久会话 Thread、一次用户输入驱动的工作 Turn、以及带类型的输入输出 Item 分开：Item 有 started、可选 delta 和 completed，Turn 则另有自己的结束事件；server 发出的 approval request 暂停当前 Turn，直到 client 回答 allow 或 deny。这样的 presentation primitives 让 UI 能正确归并局部结果，却不授予业务完成权，也不能把一条 agent message 或 item 完成当成整个任务验收。
+
+长运行任务的权威状态还必须留在 runtime，而不是浏览器连接里。Client 断线应触发持久 Thread 的回读与展示状态重建，不应仅为恢复界面而重新提交原任务；事件投影需要按身份去重，但这不等于外部 effect 已有 exactly-once 保证。Codex App Server 的公开设计给出了双向事件流、server-side thread persistence 与 ephemeral Web client 分离的例子；代价是 typed binding/schema、client/server 配对与兼容性维护，无法协商所需能力时应保留已验证版本配对或退回较简单的调用接口。其 backward-compatible 目标不证明任意版本配对无故障，TUI 改走这一协议在原文中仍是计划，而非已实现的恢复保证。<!-- source-family:SF-2026-OPENAI-CODEX-APP-SERVER -->
+
 当任务由外部 issue tracker 发起时，`AgentRun` 也不能独占工作项的准入权。issue 的当前状态、阻塞关系和人工 owner 决定工作是否仍可执行；run、session、workspace 与 PR 只是某次尝试及其产物。控制器可以为每个可执行 issue 取得唯一 claim 并隔离工作区，但每轮调度仍要从 tracker 重新核对 blocked、terminal 与已有运行中的 claim；stall 后重试也要沿同一 issue 身份恢复或重新准入，不能仅凭旧 session 继续产生副作用。这样把外部业务状态的变化与内部执行状态衔接起来，代价是持续轮询、claim/工作区清理，以及 tracker 与本地 event log 不一致时的保守停机或人工接管。
 
 一次 run 的代码和测试成功，可能只够把工作项交给 `Human Review`，不能自动把 issue 标为 `Done`；最终提交权仍属于外部业务流程和人工 owner。反过来，短任务或不依赖外部 tracker 的内部 workflow 没必要引入整套 claim/reconciliation 控制面。Symphony 的公开 Draft v1 SPEC 给出了 eligibility、单 issue workspace、stall/retry 与 tracker-state reconciliation 的设计示例；它没有证明生产环境的强 sandbox、跨系统 exactly-once，发布文中的 PR 增长观察也不能归因于这一机制。<!-- source-family:SF-2026-OPENAI-SYMPHONY -->
@@ -150,6 +154,8 @@ Session 不是新的 authority：branch 不复制 credentials，merge 不自动�
 消费 recorded result 或 sandbox，而不是再次执行真实副作用。Typed state 提高 lineage/recovery，却增加 schema
 evolution、large-state serialization、privacy retention 与 sandbox lifetime。OpenRath 提供 reference-architecture
 evidence，不提供 benchmark superiority；短、无分支、无副作用的 prompt loop 仍不需要这套重量。
+
+恢复界面若重放 wire history，还必须把消息形状与当前交互资格分开：归档中可以保留 approval 等 request-shaped message 及原 request ID，但这次 replay occurrence 只供展示，不应再次弹出审批或发送 response。客户端应显式记录 live/replay mode 与本次 occurrence，只有 live pending request 才进入回复路径；原 ID 不是新的授权。Kimi CLI 1.9 的[Wire replay 接口](https://github.com/MoonshotAI/kimi-cli/releases/tag/1.9.0)要求客户端不响应归档 requests；server 用独立 replay/streaming 状态约束当前回放，并返回本次已发送消息计数，但不证明恶意客户端已被服务端全面阻止，也不保证旧记录完整、损坏记录已修复或重复 ID 可跨任意重连安全匹配。Mode、序列化与恢复状态增加维护成本；历史格式不可验证或缺少 live pending identity 时，应只读展示或重新取得审批，短会话仍可使用不含 replay 的简单消息循环。<!-- source-family:SF-2026-KIMI-CLI-1-9 -->
 
 ### 可编程 Skill 需要输入、状态与副作用契约
 
@@ -224,6 +230,10 @@ Agent definition 的 Skill 引用、呈现给模型的 prompt 与 `AgentRun` 记
 供应链安全，更不证明项目优先会自动收紧执行权限。
 
 ### 从 Skill Catalog 到 Competence-aware Orchestration
+
+平面目录在资产少、团队固定时易于审计；规模增大后，平台还要把可见 active catalog、可检索但未激活的 dormant pool 与本次 run 选定的 skill graph 分成不同状态。离线 capability tree 可以缩小发现范围，用户管理的 activation 决定哪些资产进入常用目录；任务检索再选定有版本的 skill，DAG 节点绑定其输入、上游 artifact 与输出约定。出现在树中不等于已加载，选入 DAG 不等于依赖、权限或执行结果合法；现有 digest resolution、composition admission 与 effect policy 仍须逐次执行。
+
+[AgentSkillOS v1 §2.1–2.2、§3–4](https://arxiv.org/html/2603.02176v1)展示分层检索、同层并行/跨层依赖执行与经用户同意的 recipe reuse，但大目录总数不等于完整树规模或生产执行能力。目录维护、规划模型、节点调用和 artifact/judge 转换都有成本；相同 skill set 的 oracle 对照仍给 DAG 路径额外 planner，不能把差异纯归于 DAG 或宣称同总预算优势。版本、依赖或结果无法核实时，回退 pinned skill set、简单固定 Workflow 或人工分解；能力与安全仍由匹配环境的运行证据判定，不由 catalog 排名授予。<!-- source-family:SF-2026-ARXIV-2603-02176 -->
 
 只有 skill taxonomy 时，平台知道“有哪些能力资产”，却不知道某个 Agent 在当前版本、成本与环境下能否可靠
 执行。固定 skill→agent mapping 容易复算，适合稳定团队；动态 orchestration 则需要把 asset state 与 empirical
@@ -553,6 +563,10 @@ Created
 
 具体 workflow 可增加 domain states。关键是每次 transition 都可恢复、可审计，并绑定 actor、policy、budget 和 side-effect evidence。
 
+状态机还必须区分“这次调用失败”和“这次请求不应继续”。在自定义 provider 的错误格式不稳定、且尚未输出内容时，宽松重试能够掩盖暂态网络故障；但安全拒绝不能进入这个兜底分支。Runtime 应先识别 provider 的拒绝信号，再分类错误和决定重试，不能从拒绝说明里的“500”等文本反推网络状态；否则同一个拒绝既可能被反复提交，也可能在监测中被误记为可恢复故障。拒绝只终止当前模型调用，不自动证明整个 Agent 任务成功、取消或安全。
+
+相反，输出前的暂态 TLS 故障可以在预算内重试；已有可见输出后，则要保留失败与部分结果，不能透明重放成一次完整调用。这种分支把可用性换成错误语义、输出提交点和 provider adapter 的维护成本。MiniMax Code 的[精确实现与测试](https://github.com/MiniMax-AI/minimax-code/commit/9150441)提供了 BYOK 拒绝优先与输出前后分流的局部例子，并不证明所有 provider、错误文本或真实网络都被正确识别。信号不可靠时，应保留未知原因并停止自动重试或转人工，不把一次 classifier 判断当作全系统安全保证。<!-- source-family:SF-MINIMAX-CODE-0-6-0 -->
+
 ### Observation Interface 必须独立于 Action Clock
 
 一次动作配一张截图，在静态网页、低交互频率任务中最简单；持续媒体、动画、语音和短暂 UI 事件出现后，
@@ -578,6 +592,10 @@ dilution 降低模型表现。漏帧、转写不可靠、权限变化或 observa
 <!-- semantic-body-binding:SF-2026-OPENAI-DOTS:end -->
 
 ## Scheduling 不只是 GPU
+
+Agent parent 的整体预算不能充分表达一次 tool subprocess 的短时资源需求：把 memory.max 定在 peak 会浪费平静时段，定在平均值又可能在 burst 中 OOM；容器级 memory.high 也会同时给 framework 与 tool 施压。一个细粒度分支将每次 tool call 放入 agent parent 下的 child cgroup，保留整体 budget，在 child 边界按优先级 throttle，必要时冻结子树而非立即杀掉整个 Agent。内核 sched_ext 与 memcg hooks 可以缩短控制反应路径，用户态仍负责生命周期和 policy 配置；资源冻结只保留当时进程，不保证外部 effect 已完成、工具语义可重放或任务一定可恢复。<!-- source-family:SF-2026-ARXIV-2602-09345 -->
+
+[AgentCgroup 的必要对照](https://arxiv.org/html/2602.09345v1)支持这一资源域分支，却仅在 patched kernel 上将三条 trace 加速50倍重放；HIGH allocation P95 改善不是 live Agent 端到端 latency 或生产多租户保证。memcg_bpf_ops 尚在 upstream review，优先级保护会给 LOW 工具增加等待，初始化、大镜像与 retry 积累仍未解决。新控制点需要 kernel/runtime 资格、child 生命周期和 tool deadline 对齐；hooks 不可用、冻结会破坏工具时限或身份无法归属时，保留已验证的容器限额、较保守资源预留和显式失败/恢复路径，不以平均 burst 特征替代 admission。<!-- source-family:SF-2026-ARXIV-2602-09345 -->
 
 ### Harness、Protocol 与 Credit 都是 Platform-owned Artifact
 
@@ -880,6 +898,10 @@ skill conflict、partial update 与 delete-from-weights。高风险系统可长�
 
 <!-- source-family:SF-2026-ARXIV-2605-22794 -->
 
+源码 proposal 的表达力也可以先在执行接口处收窄，而不只在生成 prompt 中要求“高效且安全”。例如让候选只实现 Value(state,item) 的标量、Rank 的排序分数，或在固定数量 FIFO/LRU queue 与有限 ghost state 之间选择 transition；state 的收集、合法操作及执行由固定 scaffolding 持有。这样 LLM 搜索的是受限策略函数，不是任意替换整个执行系统；接口签名与 primitive 集合决定能表达什么、哪些成本仍由平台承担，生成出的代码也不因此获得 promotion 权限。
+
+受限接口仍不是完整复杂度或安全证明：同一 score 可由每轮全排序、采样排序或优先队列维护实现，后者每次访问仍可能支付 O(log N)；有限 queue 限制也不能消除整条 policy 的维护、观测与失败成本。搜索使用的 trace、候选数和生成 API 预算应与执行维护分账，包含搜索 trace 的事后评价不等独立 held-out 迁移；NUMA 模拟的 tiering 收益也不直接认证真实 CXL 或 LLM inference。phase shift 或新状态接口出现后，应重新验证固定 scaffolding 与策略切片，必要时回退原手工 policy，而不是让较小生成空间自行授予可靠性。<!-- source-family:SF-2026-ARXIV-2512-25065 -->
+
 ### 双 Timescale：Prompt Fast Path 与 Control-logic Slow Path
 
 所有改动走同一发布节奏，在能力简单时易治理；随着 self-evolution 同时触及语言策略和控制逻辑，低风险 prompt 调整不应与高风险代码改写共享 gate。平台可以先让 prompt/config 在受限 replay 中快速迭代，只有收益饱和且失败簇指向控制逻辑时，才允许 slow path 产生代码 revision，并用独立 held-out replay 晋级。
@@ -1122,6 +1144,8 @@ versioned、addressable 且 dependency-aware 的 durable state，并声明 autho
 
 ## Review notes
 
+- `SF-2026-ARXIV-2603-02176`：[exact-v1](https://arxiv.org/html/2603.02176v1) §2.1–2.2/§3/§4.1–4.2；Daily 2026-03-04，2+2+2=6。采用 active/dormant/run-selected graph 生命周期，不采200k部署或纯DAG同预算收益；oracle同skills但额外Opus planner、图深度/调用预算、pairwise judge及artifact转换反证保留。作者必要源→owner差额及实际MCP/Platform邻接检查完成，root非作者必要源→实际正文/邻接POST通过，未复现实验。
+
 - `SF-2026-MOONSHOT-KIMI-CLI-1.39.0` — Daily `2026-04-25`；官方 [release 1.39.0](https://github.com/MoonshotAI/kimi-cli/releases/tag/1.39.0)、[PR #2044](https://github.com/MoonshotAI/kimi-cli/pull/2044) 与该 tag 的 [`skill/__init__.py`](https://github.com/MoonshotAI/kimi-cli/blob/1.39.0/src/kimi_cli/skill/__init__.py)、[`config.py`](https://github.com/MoonshotAI/kimi-cli/blob/1.39.0/src/kimi_cli/config.py)、[`soul/agent.py`](https://github.com/MoonshotAI/kimi-cli/blob/1.39.0/src/kimi_cli/soul/agent.py) 支持默认 scope 顺序、同名 first-win、显式目录 override 与 prompt 组装。正文仅吸收获胜 Skill 身份绑定到 run 的条件机制；未运行测试或生产调用，不把 Project 优先解释为可信优先，也不从 `skip_yolo_prompt_injection` 推出 effect 授权变化。写前非作者采用核见当日 `V3_APR01_KIMI_139_INDEPENDENT.md`；root 复核 exact tag、实际正文及相邻段后写后通过，记录于 `V3_ROOT_KIMI_139_WRITE_AFTER.md`，不等于本日整日Gate。
 
 - **Symphony（OpenAI，2026-04-27；Status: Draft design evidence）**：官方发布及嵌入 Draft v1 SPEC §1–3、§8.2–8.5、§9 支持 issue/tracker 当前状态与单次 run/session/PR 的权责分离、单 issue claim/工作区、stall/retry 和每 tick reconciliation，以及成功 run 可交接 `Human Review` 而非 `Done`。正文将其作为条件性 Agent Platform 机制；公开文本不证明强 sandbox、外部副作用 exactly-once 或因果产能收益。https://openai.com/index/open-source-codex-orchestration-symphony/
@@ -1296,3 +1320,11 @@ Review note：`SF-2026-ARXIV-2606-29472`；Method `https://arxiv.org/pdf/2606.29
 <!-- daily-books-trace:SF-2026-ARXIV-2607-25408:end -->
 
 - `SF-2026-ARXIV-2604-20987` — Daily `2026-04-24`；primary [COSPLAY v1](https://arxiv.org/html/2604.20987v1) §3、§4.1–4.3、§5.2、Appendix F；两侧可训练策略与 policy×bank 对照嵌入 Skill 更新→admission 主线。6分真实知识缺口深入；source→actual-owner 非作者采用复核通过（apr02/root），实际正文及相邻衔接写后非作者复核通过（root）。六游戏8B、训练成本不匹配及检索奖励粒度差异保留，未复现实验。
+
+- `SF-2026-ARXIV-2512-25065` — Daily `2026-01-02`；[Vulcan exact-v1](https://arxiv.org/html/2512.25065v1) §3.1–3.2、§4.1、§5.1–5.2。6分针对 typed policy/scaffolding 分责的具体缺口深入受影响机制，保 Value/Rank 与有限 queue 接口、候选搜索与运行维护成本分账。106有限 CloudPhysics traces，部分事后评价含搜索 trace；slot/byte 两设置不合并，tiering 为 NUMA 模拟及有限四应用，非真实 CXL/LLM部署保证。代码未跑、未复现实验；root必要原源与owner写前核通过，root实际正文/前后邻接及末注写后非作者复核通过。
+
+- `SF-2026-OPENAI-CODEX-APP-SERVER` — Daily `2026-02-05`；[官方 App Server 说明](https://openai.com/index/unlocking-the-codex-harness/) §Origin / Inside the harness / Conversation primitives / Integrating with clients / Choosing the right protocol 及 footnotes。官方 RSS 声明 pubDate `Wed, 04 Feb 2026 13:00:00 GMT`；采用当前公开的接口与职责说明，不声称每句措辞已在初版同位置。6分按实际接口公开变化深入受影响核心；Thread/Turn/Item 的 presentation lifecycle 不替代 business completion 或 external effect receipt。JSON-RPC lite 省略 2.0 header，stdio 在 hosted 场景可经网络隧道；TUI refactor 是计划，未核代码或复现。root 必要原源与现有 owner 写前复核通过，root 实际写后正文与前后衔接复核通过；日级 Gate 待验。
+
+- `SF-2026-KIMI-CLI-1-9` — Daily `2026-02-07`；[官方 1.9.0 release](https://github.com/MoonshotAI/kimi-cli/releases/tag/1.9.0)、[Wire replay PR #1005](https://github.com/MoonshotAI/kimi-cli/pull/1005)、[接口背景 PR #910](https://github.com/MoonshotAI/kimi-cli/pull/910)。仅采用 request-shaped archive 与 live replyability 的分责；release `2026-02-06T18:38:03Z`，背景接口在窗前合并，不作为本日新贡献。必要 source 与实际 typed Session owner 已由 root 写前独立核验，实际正文待非作者 POST；仅静态审阅 patch 与新增测试，未运行客户端或复现实验，不声明恶意客户端已被完整阻止。
+
+- `SF-2026-ARXIV-2602-09345` — Daily `2026-02-12`；[AgentCgroup exact-v1](https://arxiv.org/html/2602.09345v1) §3.1–3.4、§5–7。2+2+2=6，具体 resource-domain 缺口深入，仅采用 agent parent/tool child cgroup 与 soft-limit throttle/freeze 分责；patched kernel、3trace×50 replay、allocation≠Agent E2E、LOW等待及初始化/retry限制邻近。root 必要 source→owner 写前核通过并授窄锁；root 已实际核两段、邻接及本末注，非作者 POST 通过，窄锁释放。未运行代码/复现，非日级 Gate。

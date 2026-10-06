@@ -1,0 +1,292 @@
+4 Safety Aware Training Framework
+We introduce a unified framework called adaptive regularization for safety aware supervised finetuning that adaptively balances task learning and policy regularization using a training-time risk signal. The framework has two components: (1) a Safety Critic that estimates per example (or per batch) harmfulness, and (2) an Adaptive Alignment Objective that uses this signal to dynamically trade off the supervised negative log likelihood (NLL) loss with a Kullback Leibler (KL) regularizer that anchors the model to a safe reference policy.
+Crucially, we propose two distinct Safety Critic instantiations:
+(i) Activation-based risk prediction, which uses a lightweight classifier on pre-generation hidden states to score inputs before any tokens are produced (see Fig. 4) and
+(ii) Judge-based risk scoring, which queries an external LLM judge to assess the generated response (see Fig. 5).These critics differ in what they monitor (internal activations versus textual outputs), when they are applied (pre-generation versus post-generation), and their respective cost–coverage trade-offs. Nevertheless, both integrate seamlessly into the same adaptive optimization objective. Ablation studies for each critic are provided in Appendix J.
+4.1 Adaptive Alignment Objective
+The adaptive alignment objective explicitly integrates safety awareness into supervised finetuning by dynamically balancing task learning and policy regularization. The central idea is to modulate the strength of regularization in response to model or data dependent safety signals, rather than relying on fixed loss weights throughout training.
+Objective formulation.
+Let πθ\pi_{\theta} denote the finetuned model parameterized by θ\theta, and let πref\pi_{\text{ref}} be a fixed reference policy (e.g., the base or instruction tuned model prior to alignment). At training step tt, the total loss is defined as
+ℒtot(t)=αt​ℒNLL(t)+βt​ℒKL(t),\mathcal{L}_{\text{tot}}^{(t)}=\alpha_{t}\,\mathcal{L}_{\text{NLL}}^{(t)}+\beta_{t}\,\mathcal{L}_{\text{KL}}^{(t)},
+(3)
+where
+ℒNLL(t)\displaystyle\mathcal{L}_{\text{NLL}}^{(t)}
+=−𝔼(x,y)∼𝒟​[log⁡πθ​(y∣x)],\displaystyle=-\mathbb{E}_{(x,y)\sim\mathcal{D}}\left[\log\pi_{\theta}(y\mid x)\right],
+(4)
+ℒKL(t)\displaystyle\mathcal{L}_{\text{KL}}^{(t)}
+=𝔼x∼𝒟[KL(πθ(⋅∣x)∥πref(⋅∣x))].\displaystyle=\mathbb{E}_{x\sim\mathcal{D}}\left[\mathrm{KL}\!\left(\pi_{\theta}(\cdot\mid x)\ \|\ \pi_{\text{ref}}(\cdot\mid x)\right)\right].
+(5)
+Here, 𝒟\mathcal{D} denotes the supervised fine-tuning dataset, ℒNLL\mathcal{L}_{\text{NLL}} encourages fidelity to the labeled data, and ℒKL\mathcal{L}_{\text{KL}} penalizes excessive deviation from the reference policy.
+Dynamic loss weighting.
+In contrast to static weighting schemes with constant α\alpha and β\beta, we allow the coefficients αt\alpha_{t} and βt\beta_{t} to vary over training time. These coefficients are determined online using a scalar safety signal st∈[0,1]s_{t}\in[0,1] produced by a Safety Critic Model, where larger values indicate higher predicted harmfulness or policy risk. Intuitively, sts_{t} measures how unsafe the current training example or model behavior is relative to predefined safety criteria.
+A simple and effective parameterization is
+βt\displaystyle\beta_{t}
+=βmin+(βmax−βmin)⋅st,\displaystyle=\beta_{\min}+(\beta_{\max}-\beta_{\min})\cdot s_{t},
+(6)
+αt\displaystyle\alpha_{t}
+=1−βt,\displaystyle=1-\beta_{t},
+(7)
+where βmin\beta_{\min} and βmax\beta_{\max} bound the regularization strength. This formulation ensures that αt+βt=1\alpha_{t}+\beta_{t}=1, yielding a convex combination of the two objectives and promoting stable optimization. More generally, αt\alpha_{t} and βt\beta_{t} can be defined by any monotonic mapping from sts_{t} that preserves non-negativity and boundedness.
+Safety-aware optimization behavior.
+Under this adaptive scheme, training behavior naturally bifurcates based on the predicted risk level:
+In the high-risk regime (st↑)(s_{t}\uparrow), when the Safety Critic predicts elevated harmfulness, βt\beta_{t} increases so that the KL regularization term dominates the loss, constraining the update direction to remain close to πref\pi_{\text{ref}} and thereby limiting unsafe drift while still permitting incremental learning. Conversely, in the low-risk regime (st↓)(s_{t}\downarrow), for benign or clearly safe data, βt\beta_{t} decreases and the optimization places greater emphasis on ℒNLL\mathcal{L}_{\text{NLL}}, enabling stronger imitation of the supervised targets and improved task performance.
+Stability considerations.
+Dynamic loss weighting can, in principle, introduce training instabilities if coefficients change abruptly. To mitigate this, we optionally smooth the safety signal using an exponential moving average:
+s~t=λ​s~t−1+(1−λ)​st,\tilde{s}_{t}=\lambda\tilde{s}_{t-1}+(1-\lambda)s_{t},
+(8)
+and compute αt,βt\alpha_{t},\beta_{t} from s~t\tilde{s}_{t} instead of sts_{t}. This smoothing dampens high-frequency fluctuations and yields more consistent gradient updates across steps.
+Table 1: Harmful fine-tuning results on HEx-PHI dataset
+(300 examples, 20 epochs). ASR↓\downarrow values are multiplied by 100 for readability.
+Lower ASR indicates better safety preservation.
+Model
+Initial
+SFT
+C-SFT
+Vaccine
+LISA
+Antidote
+A-Reg. (Ours)
+Phi-3.5-mini-instruct
+1.35±0.91.35\pm 0.9
+97.27±1.397.27\pm 1.3
+5.33±1.65.33\pm 1.6
+89.18±2.189.18\pm 2.1
+65.12±2.365.12\pm 2.3
+62.38±2.162.38\pm 2.1
+1.67±1.0\textbf{1.67}\pm 1.0
+Meta-Llama-3.1-8B
+0.33 ±0.5\pm 0.5
+96.92±1.196.92\pm 1.1
+4.33±0.74.33\pm 0.7
+86.29±0.386.29\pm 0.3
+68.98±0.768.98\pm 0.7
+61.91±2.761.91\pm 2.7
+3.67±0.3\textbf{3.67}\pm 0.3
+Llama-3.2-3B-Instruct
+5.00 ±0.5\pm 0.5
+96.27±0.796.27\pm 0.7
+6.67±0.76.67\pm 0.7
+87.90±0.787.90\pm 0.7
+67.28±0.367.28\pm 0.3
+58.59±1.758.59\pm 1.7
+6.67±0.3\textbf{6.67}\pm 0.3
+Qwen2.5-7B-Instruct
+4.05 ±1.3\pm 1.3
+96.92±1.396.92\pm 1.3
+13.67±1.313.67\pm 1.3
+89.19±1.789.19\pm 1.7
+63.17±0.763.17\pm 0.7
+61.54±1.961.54\pm 1.9
+5.69±1.3\textbf{5.69}\pm 1.3
+Qwen2.5-3B-Instruct
+8.72 ±1.9\pm 1.9
+96.91±0.396.91\pm 0.3
+14.0±0.714.0\pm 0.7
+89.34±2.189.34\pm 2.1
+68.19±1.768.19\pm 1.7
+63.82±2.363.82\pm 2.3
+9.06±1.3\textbf{9.06}\pm 1.3
+Interpretation as constrained learning.
+The adaptive objective can be interpreted as a soft, data-dependent trust-region method. The KL term defines a local neighborhood around the reference policy, while βt\beta_{t} controls the effective radius of this neighborhood. For high-risk inputs, the trust region is tight for low-risk inputs, it expands, allowing greater flexibility in fitting the data.
+4.2 Activation Based Safety Critic
+Pre generation critic (internal signals).
+The activation based approach leverages our finding that harmful intent is linearly predictable from pre generation hidden states (Section 3). We instantiate the Safety Critic as a lightweight Activation Level Risk Predictor that operates directly on the model’s internal representations before decoding, enabling early detection without observing any generated text.
+Architecture and training.
+For each input consisting of a system prompt and user query, we perform a forward pass through the decoder only language model and extract the hidden representation corresponding to the final input token the last token before generation begins. This representation is motivated by our observation that intent related information is linearly encoded in pre generation hidden states and can therefore be captured by simple probes.
+We train a lightweight logistic regression classifier on these activations to predict whether the model is likely to produce a harmful or leaking response under standard decoding. Activations are standardized prior to training, and the classifier is optimized using cross validation with AUROC as the primary metric. We train the classifier using the safety data labels described in Appendix F see that appendix for additional details.
+Inference and integration.
+During training, the predictor produces a continuous safety signal st∈[0,1]s_{t}\in[0,1] for each training example, which is directly used to compute the dynamic loss weights αt\alpha_{t} and βt\beta_{t} as described in Section 4.1. At deployment, our finetuning defense does not require running the probe (i.e., there is no added inference time component).
+Advantages.
+Activation based critics provide a low latency, pre generation risk signal with minimal training time overhead we defer additional discussion to Appendix D.
+Table 2: Alpaca task performance (Win Rate↑\uparrow) under mixed dataset finetuning.
+Higher values indicate better task performance. Harmful ratio (hr) denotes the proportion of harmful examples in the training mix.
+SFT
+Constrained SFT
+Adaptive Reg.
+Model
+Harmful ratio (hr)
+Harmful ratio (hr)
+Harmful ratio (hr)
+0.01
+0.03
+0.05
+0.07
+0.09
+0.01
+0.03
+0.05
+0.07
+0.09
+0.01
+0.03
+0.05
+0.07
+0.09
+Phi-3.5-mini-instruct
+0.66
+0.62
+0.60
+0.64
+0.59
+0.63
+0.59
+0.56
+0.59
+0.54
+0.62
+0.59
+0.55
+0.60
+0.53
+Meta-Llama-3.1-8B
+0.80
+0.74
+0.76
+0.76
+0.79
+0.77
+0.71
+0.73
+0.75
+0.76
+0.79
+0.71
+0.71
+0.77
+0.78
+Llama-3.2-3B-Instruct
+0.73
+0.65
+0.65
+0.63
+0.64
+0.70
+0.64
+0.62
+0.62
+0.61
+0.72
+0.68
+0.62
+0.74
+0.61
+Qwen2.5-7B-Instruct
+0.79
+0.78
+0.80
+0.79
+0.77
+0.76
+0.75
+0.76
+0.75
+0.76
+0.78
+0.77
+0.74
+0.76
+0.78
+Qwen2.5-3B-Instruct
+0.75
+0.73
+0.72
+0.71
+0.72
+0.71
+0.71
+0.70
+0.67
+0.66
+0.72
+0.70
+0.69
+0.69
+0.67
+4.3 Judge-Based Safety Critic
+Post generation critic (semantic judgment).
+The judge based approach uses an external language model as a safety evaluator and therefore operates on generated outputs. We instantiate the Safety Critic with gpt-oss-20b, which assigns a harmfulness score by judging each response in context. (We use gpt-oss-20B as the automated judge, see Section 5 and Appendix B.) Compared to activation based critics, this approach is more computationally expensive, but it can capture semantic and contextual violations that may be difficult to characterize with simple activation probes.
+Evaluation protocol.
+The judge model receives each input output pair produced by the target model, along with a structured prompt that formulates the task as a classification or scoring problem. The prompt instructs the judge to estimate the degree of harmfulness, leakage, or policy violation exhibited by the response. The judge returns either a discrete label or a scalar score on a scale from 1 to 5, where higher values indicate a greater likelihood of a policy violation. The evaluation criteria follow the definitions introduced in (Qi et al., 2024).
+Safety signal generation.
+The judge’s discrete scores are mapped to a continuous safety signal st∈[0,1]s_{t}\in[0,1] by normalizing the scale. This signal is computed immediately before the loss computation for each training batch, enabling real-time adaptation of the loss weights. The judge evaluates outputs from both the reference model πref\pi_{\text{ref}} and the main model πθ\pi_{\theta} to provide context-aware assessments.
+Advantages.
+Judge-based critics can capture semantic and contextual safety violations, but require additional computation we defer additional discussion to Appendix D.
+4.4 Comparison of Approaches
+Activation-based critics are lightweight and operate pre-generation, while judge-based critics are semantically richer but typically more costly. We defer a detailed comparison and additional trade-offs to Appendix D.
+5 Experimental Results
+We evaluate our adaptive alignment framework across multiple harmful fine-tuning scenarios to assess both safety preservation and downstream task performance. Our experiments are designed to answer three key questions: (1) Does adaptive regularization prevent safety degradation under adversarial fine-tuning? (2) How does the framework behave when harmful examples are mixed with benign data? (3) Is the approach robust to hyperparameter variations?
+Given the agreement properties of the critic (Judge and activation) and the structure of the fine-tuning algorithm, these outcomes are theoretically expected to coincide; an additional discussion and results are provided in the Appendix G.
+For brevity, we defer the full experimental details to the Appendix C.
+5.1 Harmful Fine-Tuning Defense
+This experiment tests whether adaptive regularization prevents safety degradation when models are fine-tuned exclusively on harmful data. We fine-tune five instruction-tuned models on 300 harmful (input, output) pairs from the HEx-PHI dataset for 20 epochs and evaluate attack success rate (ASR) on harmful prompts.
+Table 1 shows that standard SFT catastrophically degrades safety, with ASR increasing from near-zero baseline values to over 96% across all models. Constrained SFT with fixed regularization provides partial protection but still allows significant safety degradation. Our adaptive regularization approach maintains low ASR values close to baseline levels, demonstrating effective defense against adversarial fine-tuning.
+The results demonstrate that adaptive regularization preserves safety without requiring manual hyperparameter tuning.
+Figure 6: Learning-rate sensitivity on HEx-PHI harmful fine-tuning (Qwen2.5-3B-Instruct).
+Adaptive Regularization maintains consistently low attack success rates across learning rates,
+while constrained SFT degrades sharply at higher learning rates.
+Lower ASR indicates better safety preservation. C-SFT: Constrained SFT, A-Reg: Adaptive Regularization.
+Table 3: HEx-PHI ASR↓\downarrow under mixed dataset fine-tuning.
+Lower values indicate better safety preservation. Harmful ratio (hr) denotes the proportion of harmful examples in the training mix.
+SFT
+Constrained SFT
+Adaptive Reg. (Ours)
+Model
+Harmful ratio (hr)
+Harmful ratio (hr)
+Harmful ratio (hr)
+0.01
+0.03
+0.05
+0.07
+0.09
+0.01
+0.03
+0.05
+0.07
+0.09
+0.01
+0.03
+0.05
+0.07
+0.09
+Phi-3.5-mini-instruct
+69.67
+75.00
+62.67
+76.83
+63.33
+7.33
+5.00
+3.33
+4.33
+6.67
+3.00
+1.00
+2.00
+4.00
+3.67
+Meta-Llama-3.1-8B
+89.33
+89.00
+88.67
+91.33
+86.33
+7.21
+7.00
+8.67
+6.33
+7.00
+3.21
+3.00
+4.67
+2.33
+3.00
+Llama-3.2-3B-Instruct
+72.33
+80.67
+79.00
+79.67
+83.33
+7.58
+7.33
+7.0

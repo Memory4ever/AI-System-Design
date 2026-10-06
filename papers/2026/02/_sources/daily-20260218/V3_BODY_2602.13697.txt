@@ -1,0 +1,850 @@
+No Need to Train Your RDB Foundation Model
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 RDB Predictive Modeling
+2.1 A Generic RDB Supervised Learning Pipeline
+2.2 RDB Foundation Models
+Schema-agnostic models.
+ICL-based models.
+2.3 Limitations
+3 A Foundation for RDB Foundation Models
+3.1 An RDB Encoder Specifically for ICL
+3.2 A 1D GNN Implementation
+1D column-wise subgraph formation.
+Meta-path GNN layers.
+Resulting JUICE encoder design.
+Additional JUICE variations.
+3.3 Encoder Training is Not Necessary
+3.4 Combining JUICE with Single-Table ICL Model
+4 Analytical Support for JUICE
+4.1 Limitations of Cross-Column Dense Embeddings
+4.2 Sample Complexity Considerations
+5 RDBLearn: A Lightweight RDB Toolkit
+6 Testing with Real-World RDBs
+Baselines.
+RelBench classification results.
+RDBLearn stability.
+RelBench regression results.
+Additional 4DBInfer comparisons.
+JUICE is worth the squeeze.
+7 Conclusions
+References
+A Extended Related Work
+Growing relevance of RDB predictive modeling.
+ICL and synthetic pre-training for RDB learning.
+Zero-shot possibilities.
+B Empirical Corroboration of Dense Encoder Performance Degradation
+C Lessons from Graph Foundation Models Suggest that JUICE Is Worth the Squeeze
+D Arbitrating Homophily vs Heterophily Relationships
+E Experiment Details
+E.1 RDBLearn Setup
+Encoding settings.
+ICL Decoder settings.
+Equipment.
+E.2 RelBench Testing
+Benchmark leakage issues.
+Regression reproducibility.
+E.3 4DBInfer Testing
+Timing considerations.
+F Technical Proofs
+Establishing ( ).
+Establishing ( ).
+Establishing ( ).
+Establishing ( ).
+License: arXiv.org perpetual non-exclusive license
+arXiv:2602.13697v1 [cs.AI] 14 Feb 2026
+No Need to Train Your RDB Foundation Model
+Linjie Xu
+Affiliation: University of Hong Kong, Shanghai X-Lab
+Yanlin Zhang
+Affiliation: University of Hong Kong, Shanghai X-Lab
+Quan Gan
+Affiliation: University of Hong Kong, Shanghai X-Lab
+Minjie Wang
+Affiliation: University of Hong Kong, Shanghai X-Lab
+David Wipf
+Affiliation: University of Hong Kong, Shanghai X-Lab
+Correspondence to: davidwipf@gmail.com
+Abstract
+Relational databases (RDBs) contain vast amounts of heterogeneous tabular information that can be exploited for predictive modeling purposes. But since the space of potential targets is vast across enterprise settings, how can we avoid retraining a new model each time we wish to predict a new quantity of interest? Foundation models based on in-context learning (ICL) offer a convenient option, but so far are largely restricted to single-table operability. In generalizing to multiple interrelated tables, it is essential to compress variably-sized RDB neighborhoods into fixed-length ICL samples for consumption by the decoder. However, the details here are critical: unlike existing supervised learning RDB pipelines, we provide theoretical and empirical evidence that ICL-specific compression should be constrained within high-dimensional RDB columns where all entities share units and roles, not across columns where the relevance of heterogeneous data types cannot possibly be determined without label information. Conditioned on this restriction, we then demonstrate that encoder expressiveness is actually not compromised by excluding trainable parameters. Hence we arrive at a principled family of RDB encoders that can be seamlessly paired with already-existing single-table ICL foundation models, whereby no training or fine-tuning is required. From a practical standpoint, we develop scalable SQL primitives to implement the encoder stage, resulting in an easy-to-use open-source RDB foundation model 1 1
+1
+https://github.com/HKUSHXLab/rdblearn capable of robust performance on unseen datasets out of the box.
+Keywords:
+Machine Learning, ICML
+1 Introduction
+Foundation models for tabular data, capable of handling new predictive tasks without retraining , are increasingly prevalent ( Hollmann et al., 2025 ; Jingang et al., 2025 ; Zhang et al., 2025c ; Zhang et al., 2025b ) . When predicated upon some form of in-context learning (ICL), these models push labeled instances from a previously unseen dataset through a single forward pass of a pre-trained Transformer architecture, and then output predictions at one or more user-specified testing points. Despite their promising performance thus far, these existing single-table foundation models do not address wide-ranging enterprise relational databases (RDBs) involving multiple inter-connected tables ( Garcia-Molina et al., 2009 ) . For example, on e-commerce platforms candidate RDB prediction targets may cover future product purchases ( Ni et al., 2019 ) , customer retention ( Dave et al., 2014 ) , click-through rates ( mjkistler et al., 2016 ; Zykov et al., 2022 ) , user churn ( Ni et al., 2019 ) , or charge/pre-payment attributes ( Motl and Schulte, 2015 ) . As reliance upon such capabilities continues to grow, moving beyond single-table solutions represents an important yet under-served frontier facing the ML community ( Gan et al., 2024 ) ; see Appendix A for further details.
+To accommodate such RDB use cases, intuition suggests that a rich parameterized encoder is paramount, converting variably-sized RDB neighborhoods (possibly expressed as subgraphs), into dense fixed-length embeddings that mirror single-table settings. Indeed, most existing RDB predictive models trained via per-dataset supervision operate more-or-less in this fashion ( Dwivedi et al., 2025a ; Robinson et al., 2024a ; Wang et al., 2024 ) , with a graph neural network (GNN) or Transformer-related architecture serving as the de facto encoder. These approaches have been shown to outperform alternatives based on combining parameter-free multi-table feature aggregation with trainable single-table prediction heads ( Wang et al., 2024 ; Zhang et al., 2023b ) .
+However, as we will argue both theoretically and empirically herein, what is natural in the supervised learning regime need not necessarily transition to success in distinct ICL-based RDB foundation models . The high-level rationale is that a dense encoder representation can interfere with the original column space of RDB tables, conflating units, roles, and levels of useful information. When a supervision signal is present this need not be problematic, since the encoder can simply learn to first prune away useless dimensions specific to a given dataset. But prior to seeing ICL samples within an RDB foundation model, a necessarily fixed encoder is incapable of adjudicating column roles, which may vary from dataset to dataset (or even task to task within a given RDB; see Figure 1 ). Hence we advocate for RDB encoders that only compress vertically within high-dimensional columns (where shared units facilitate interpretable aggregation), not horizontally across columns, where relevance is largely indeterminate without label information. Importantly, conditioned on this restriction to vertical compression, we formalize how a parameter-free encoder results in a minimal loss of expressiveness. Hence we can directly pair this class of encoder with the most powerful existing single-table foundation models with no training required . This leads to our key contributions:
+•
+We define a restricted class of RDB encoder that explicitly preserves column identities and interpretable information flow to a single-table ICL-prediction head. Within this class, we establish that encoder expressiveness is not compromised by excluding trainable parameters. This facilitates direct compatibility with the best existing single-table foundation models.
+•
+We quantify how RDB encoders outside of the proposed class can provably increase estimation error and/or sample complexity when uninformative feature columns are present in a database.
+•
+Using scalable SQL primitives to implement the encoder stage, we introduce RDBLearn , an easy-to-use open-source RDB foundation model capable of handling completely new datasets out of the box with no training or fine-tuning whatsoever. The performance exceeds existing alternatives, including a non-reproducible, closed-source industry model that has been trained with access to unknown real-world datasets. We also include ablations to support the conceptual underpinnings of the proposed pipeline.
+We remark that parameter-free RDB encoding methods have been proposed in the past for engineering supervised predictive pipelines ( Kanter and Veeramachaneni, 2015 ; Kramer et al., 2001 ; Zahradník et al., 2023 ) . What differentiates our contribution is that we are not defaulting to such methods merely as a simplifying heuristic as in prior work. Instead, we are rigorously examining why a suitable family of these parameter-free encoders may actually be preferred when the goal is ICL over unseen RDBs, particularly those with task-dependent partitions of useful and useless columns.
+2 RDB Predictive Modeling
+In a canonical supervised learning setting, we are given training data 𝒟 = { 𝑿 , 𝒚 } ≡ { 𝒙 i : , y i } i = 1 n {\mathcal{D}}=\{\mbox{\boldmath$X$},\mbox{\boldmath$y$}\}\equiv\{\mbox{\boldmath$x$}_{i:},y_{i}\}_{i=1}^{n} with instance feature rows 𝒙 i : ∈ 𝒳 d \mbox{\boldmath$x$}_{i:}\in{\mathcal{X}}^{d} and corresponding instance labels y i ∈ 𝒴 y_{i}\in{\mathcal{Y}} for all i i . The goal is then to learn a parameterized model f θ f_{\theta} such that f θ ​ ( 𝒙 test ) ≈ y test f_{\theta}(\mbox{\boldmath$x$}_{\tiny\mbox{test}})\approx y_{\tiny\mbox{test}} at any test point { 𝒙 test , y test } \{\mbox{\boldmath$x$}_{\tiny\mbox{test}},y_{\tiny\mbox{test}}\} , where in practice y test y_{\tiny\mbox{test}} is unknown. RDB predictive modeling generalizes the above via the inclusion of an additional set of auxiliary data tables 𝒯 = { 𝑻 k } k = 1 K {\mathcal{T}}=\{\mbox{\boldmath$T$}^{k}\}_{k=1}^{K} , where 𝑻 k ∈ 𝔗 n k × d k \mbox{\boldmath$T$}^{k}\in\mathfrak{T}^{n_{k}\times d_{k}} denotes the k k -th table associated with a given entity type. Each table row corresponds with a single instance of that entity (e.g., an individual user), and the columns encode instance attributes (e.g., elements of a user profile). These attributes are generally heterogeneous in nature, often consisting of continuous or discrete numerical values, categorical fields, text fragments, or temporal information. Note that without loss of generality, and for notational convenience later, we also assert that 𝑻 K ≡ 𝑿 \mbox{\boldmath$T$}^{K}\equiv\mbox{\boldmath$X$} .
+To complete its specification and make use of these auxiliary tables for making predictions, an RDB also includes a set of relations ℛ = { 𝑭 k , 𝒑 k } k = 1 K {\mathcal{R}}=\{\mbox{\boldmath$F$}^{k},\mbox{\boldmath$p$}^{k}\}_{k=1}^{K} . Here each 𝒑 k ∈ 𝒫 n k × 1 \mbox{\boldmath$p$}^{k}\in{\mathcal{P}}^{n_{k}\times 1} denotes a primary key (PK) column, with elements uniquely identifying the rows of 𝑻 k \mbox{\boldmath$T$}^{k} . Meanwhile, each column 𝒇 : j k \mbox{\boldmath$f$}_{:j}^{k} of 𝑭 k \mbox{\boldmath$F$}^{k} represents a foreign key (FK), whose elements are all given by values in some fixed PK column it references. In this way, the domain of every FK 𝒇 : j k \mbox{\boldmath$f$}_{:j}^{k} is some 𝒑 k ′ \mbox{\boldmath$p$}^{k^{\prime}} .
+2.1 A Generic RDB Supervised Learning Pipeline
+A generic RDB predictive modeling pipeline predicated on supervised learning can be executed via the following steps:
+1.
+Convert RDB { 𝒯 , ℛ } \{{\mathcal{T}},{\mathcal{R}}\} as defined above to a heterogeneous graph 𝒢 {\mathcal{G}} . There are multiple ways of doing so ( Wang et al., 2024 ) , but the most common involves treating each table 𝑻 k \mbox{\boldmath$T$}^{k} as a node type and each row i i within a given 𝑻 k \mbox{\boldmath$T$}^{k} as a node with features 𝒕 k i : \mbox{\boldmath$t$}^{k}_{i:} . We then form directed edges using each FK column 𝒇 : j k \mbox{\boldmath$f$}_{:j}^{k} and PK column 𝒑 k ′ \mbox{\boldmath$p$}^{k^{\prime}} it points to within ℛ {\mathcal{R}} . This approach is widely adopted ( Cvitkovic, 2020 ; Dwivedi et al., 2025a ; Fey et al., 2023 ; Zhang et al., 2023a ; Zhang et al., 2023b ) .
+2.
+Based on 𝒢 {\mathcal{G}} , sample H H -hop subgraphs or ego-networks 𝒢 H ( 𝒙 i : ) {\mathcal{G}}_{H}(\mbox{\boldmath$x$}_{i:}) that are centered at each target row 𝒙 i : \mbox{\boldmath$x$}_{i:} within 𝑿 X . For temporal RDBs, sampling should exclude nodes with time-stamps later than 𝒙 i : \mbox{\boldmath$x$}_{i:} .
+3.
+Independent of the original RDB or individual subgraph sizes, compute fixed-length embeddings 𝒛 i : = g ϕ [ 𝒢 H ( 𝒙 i : ) ] ∈ ℝ d z \mbox{\boldmath$z$}_{i:}=g_{\phi}[{\mathcal{G}}_{H}(\mbox{\boldmath$x$}_{i:})]\in\mathbb{R}^{d_{z}} , where the encoder g ϕ g_{\phi} is some form of GNN or Transformer architecture.
+4.
+Stack embeddings to form the revised 𝒟 = { 𝒁 , 𝒚 } ≡ { 𝒛 i : , y i } i = 1 n {\mathcal{D}}=\{\mbox{\boldmath$Z$},\mbox{\boldmath$y$}\}\equiv\{\mbox{\boldmath$z$}_{i:},y_{i}\}_{i=1}^{n} and train end-to-end by minimizing the supervised loss
+ℒ SL ( θ , ϕ ) = ∑ i = 1 n − log q θ ( y i | g ϕ [ 𝒢 H ( 𝒙 i : ) ] ) {\mathcal{L}}^{\tiny\mbox{SL}}(\theta,\phi)=\sum_{i=1}^{n}-\log q_{\theta}\Big(y_{i}|g_{\phi}\big[{\mathcal{G}}_{H}(\mbox{\boldmath$x$}_{i:})\big]\Big)\vskip-5.69046pt
+(1)
+over parameters ϕ \phi from the encoder and θ \theta from a suitable prediction head/decoder q θ q_{\theta} .
+5.
+At inference time, update 𝒢 {\mathcal{G}} to reflect any new collected data, including new unlabeled test rows of 𝑿 = 𝑻 K \mbox{\boldmath$X$}=\mbox{\boldmath$T$}^{K} , form the new subgraph 𝒢 H ​ ( 𝒙 test ) {\mathcal{G}}_{H}(\mbox{\boldmath$x$}_{\tiny\mbox{test}}) , and then compute q θ ​ ( y test | g ϕ ​ [ 𝒢 H ​ ( 𝒙 test ) ] ) q_{\theta}\big(y_{\tiny\mbox{test}}|g_{\phi}\big[{\mathcal{G}}_{H}(\mbox{\boldmath$x$}_{\tiny\mbox{test}})\big]\big) for making predictions of y test y_{\tiny\mbox{test}} .
+2.2 RDB Foundation Models
+Moving beyond the supervised learning setting of the previous section, the goal of RDB foundation models is to retain applicability across multiple RDBs, with minimal or no retraining required for each new predictive task. In addition to direct LLM-prompting approaches ( Wydmuch et al., 2024 ) , we discuss two notable possibilities that involve an explicit pre-training step over multiple RDBs.
+Schema-agnostic models.
+Provided the encoder g ϕ g_{\phi} is designed to digest a broad spectrum of input RDB schema (across entity types and associated features) using a shared representational form, then it is possible to simultaneously train q θ q_{\theta} and/or g ϕ g_{\phi} over multiple real-world RDBs ( Ranjan et al., 2025 ; Wang et al., 2025 ; Wu et al., 2025 ) . The resulting model can, at least in principle, be applied to new unseen RDBs without retraining, or perhaps more realistically, with modest fine-tuning for any given task.
+ICL-based models.
+Building on the growing development of models exploiting ICL for single-table data ( Hollmann et al., 2025 ; Jingang et al., 2025 ; Zhang et al., 2025b ) , it is natural to consider extensions to multi-table RDBs using a graph encoder g θ g_{\theta} as adopted in previously-introduced supervised learning models ( Fey et al., 2025 ) . Expanding on step 4 from Section 2.1 , the ICL multi-table training objective becomes
+ℒ ICL ​ ( θ , ϕ ) = 𝔼 𝒯 , ℛ ∼ p ⁡ ( 𝒯 , ℛ ) ​ [ − log ⁡ q θ ​ ( y test | 𝒛 test , 𝒟 ) ] \displaystyle\hskip-14.22636pt{\mathcal{L}}^{\tiny\mbox{ICL}}(\theta,\phi)=\mathbb{E}_{{\mathcal{T}},{\mathcal{R}}\sim p({\mathcal{T}},{\mathcal{R}})}\Big[-\log q_{\theta}\Big(y_{\tiny\mbox{test}}|\mbox{\boldmath$z$}_{\tiny\mbox{test}},{\mathcal{D}}\Big)\Big]
+with 𝒟 = { 𝒛 i : , y i } i = 1 n , 𝒛 = g ϕ [ 𝒢 H ( 𝒙 ) ] . \displaystyle\mbox{with}~~{\mathcal{D}}=\{\mbox{\boldmath$z$}_{i:},y_{i}\}_{i=1}^{n},~~\mbox{\boldmath$z$}=g_{\phi}[{\mathcal{G}}_{H}(\mbox{\boldmath$x$})].
+(2)
+Unlike in ( 1 ), the revised decoder module q θ q_{\theta} now consumes a set of labeled ICL samples { 𝒛 i : , y i } i = 1 n \{\mbox{\boldmath$z$}_{i:},y_{i}\}_{i=1}^{n} as well as a test point 𝒛 test = g ϕ ​ [ 𝒢 H ​ ( 𝒙 test ) ] \mbox{\boldmath$z$}_{\tiny\mbox{test}}=g_{\phi}[{\mathcal{G}}_{H}(\mbox{\boldmath$x$}_{\tiny\mbox{test}})] , and is charged with predicting y test y_{\tiny\mbox{test}} ; see prior work for background justification of forming q θ q_{\theta} in this way for single tables ( Hollmann et al., 2022 ; Nagler, 2023 ) . All the requisite quantities are extracted from RDBs sampled during pre-training, which may be synthetically generated from some distribution p ⁡ ( 𝒯 , ℛ ) p({\mathcal{T}},{\mathcal{R}}) and/or combined with available real-world RDBs. Synthetic generation has the advantage of unlimited volume, potentially as an extension of single-table synthetic-generation training pipelines already in common use ( Hollmann et al., 2025 ; Jingang et al., 2025 ; Zhang et al., 2025b ) . In contrast, real-world RDB data with wide coverage is relatively difficult to collect, as most sources are private within enterprises.
+At inference time, a completely new RDB { 𝒯 , ℛ } \{{\mathcal{T}},{\mathcal{R}}\} is provided, including one or more unlabeled test query points 𝒙 test \mbox{\boldmath$x$}_{\tiny\mbox{test}} within 𝑿 = 𝑻 K \mbox{\boldmath$X$}=\mbox{\boldmath$T$}^{K} . Critically, no further per-dataset training occurs ; instead, 𝒟 {\mathcal{D}} and 𝒛 test \mbox{\boldmath$z$}_{\tiny\mbox{test}} are computed as in ( 2 ) using encoder g ϕ g_{\phi} , and then we form our final estimator as q θ ​ ( y test | 𝒛 test , 𝒟 ) q_{\theta}\big(y_{\tiny\mbox{test}}|\mbox{\boldmath$z$}_{\tiny\mbox{test}},{\mathcal{D}}\big) . In practice, the latter amounts to pushing 𝒛 test \mbox{\boldmath$z$}_{\tiny\mbox{test}} and the ICL samples within 𝒟 {\mathcal{D}} through a single forward pass of a Transformer architecture used for instantiating q θ q_{\theta} .
+2.3 Limitations
+Thus far schema-agnostic models ( Ranjan et al., 2025 ; Wang et al., 2025 ; Wu et al., 2025 ) have only been narrowly applied within small sets of RDBs for which varying degrees of pre-training and/or fine-tuning were applied. Hence their applicability outside of this regime on fundamentally different RDB types remains uncertain. Meanwhile for pure ICL-based models predicated on synthetic generation during pre-training, no existing open-source frameworks are actually available for transparent evaluation. We only have the unpublished closed-source KumoRFM approach ( Fey et al., 2025 ) with key details missing; see Appendix A .
+3 A Foundation for RDB Foundation Models
+Given the established track record of ICL-based single-table foundation models, we intend to push similar principles into the more complex multi-table regime. In this regard, we will adopt an ICL-based prediction head q θ q_{\theta} , where ICL samples within a given dataset share a fixed dimension as in prior work. But we depart from existing foundation models in how we design our encoder g ϕ g_{\phi} .
+Figure 1 : Example RDB (w/ K = 3 K=3 tables) where task-dependent column importance cannot be determined at the encoder stage. ICL samples are needed to resolve the intrinsic column ambiguity.
+3.1 An RDB Encoder Specifically for ICL
+Our guiding principle for RDB encoder design is as follows:
+There is no free lunch; RDB subgraphs may be large so any encoder must compress somewhere. Our insight is that at the encoder level, prior to seeing labeled ICL samples, we should only compress along the vertical dimension within table columns , where shared units facilitate interpretable aggregation guided by known PK-FK relations. Meanwhile, the encoder should not compress in the horizontal dimension across table columns , where roles, data types, and predictive relevance are broadly different and yet indeterminate without per-dataset/task label information. See Figure 1 for an illustration.
+We formalize these considerations through a particular encoder definition targeting ICL application.
+Definition 3.1 .
+We define a JUICE encoder function g juice g_{\tiny\mbox{juice}} (for “ j ust u se i ntra c olumn e ncodings”) if there exists a function f ℛ f_{\mathcal{R}} , dependent on ℛ {\mathcal{R}} , such that the following hold:
+1.
+𝒛 i : ≡ { z i ​ l } l = 1 d z = g juice [ 𝒢 H ( 𝒙 i : ) ] for all rows of 𝑿 ; \mbox{\boldmath$z$}_{i:}\equiv\{z_{il}\}_{l=1}^{d_{z}}=g_{\tiny\mbox{juice}}[{\mathcal{G}}_{H}(\mbox{\boldmath$x$}_{i:})]~\mbox{for all rows of }\mbox{\boldmath$X$};
+2.
+For each l ∈ { 1 , … , d z } l\in\{1,\ldots,d_{z}\} there is a k ∈ { 1 , … , K } k\in\{1,\ldots,K\} and j ∈ { 1 , … , d k } j\in\{1,\ldots,d_{k}\} such that
+𝒛 : l = f ℛ ( 𝒕 : j k ) and 𝒛 : l ⟂ ⟂ 𝒯 \ 𝒕 : j k . \mbox{\boldmath$z$}_{:l}=f_{{\mathcal{R}}}\left(\mbox{\boldmath$t$}^{k}_{:j}\right)~~\mbox{and}~~\mbox{\boldmath$z$}_{:l}\perp\!\!\!\!\perp{\mathcal{T}}\backslash\mbox{\boldmath$t$}^{k}_{:j}.
+(3)
+Per this definition, if we convert each RDB subgraph to a fixed-length representation 𝒛 i : \mbox{\boldmath$z$}_{i:} using JUICE, every column 𝒛 : l \mbox{\boldmath$z$}_{:l} in the stacked representation matrix 𝒁 Z is a function of just a single tabular data column from the original RDB . Consequently, each 𝒛 : l \mbox{\boldmath$z$}_{:l} reflects the identity and functional role of a single RDB column, and no other. Arbitration of which such columns are actually important to prediction accuracy is then deferred to q θ q_{\theta} , where access to ICL samples facilitates informed decision making.
+3.2 A 1D GNN Implementation
+We now address practical ways to actually construct JUICE embeddings. The high-level idea to first split a given 𝒢 H ( 𝒙 i : ) {\mathcal{G}}_{H}(\mbox{\boldmath$x$}_{i:}) into separate 1D subgraphs associated with each tabular column dimension, and then apply a specialized GNN to these subgraphs independently.
+1D column-wise subgraph formation.
+For each tabular data column 𝒕 k : j \mbox{\boldmath$t$}^{k}_{:j} we form the revised subgraph 𝒢 H k , j ( 𝒙 i : ) {\mathcal{G}}_{H}^{k,j}(\mbox{\boldmath$x$}_{i:}) , which is equivalent to 𝒢 H ( 𝒙 i : ) {\mathcal{G}}_{H}(\mbox{\boldmath$x$}_{i:}) but with truncated node features dependent only on 𝒕 k : j \mbox{\boldmath$t$}^{k}_{:j} . Specifically, for nodes extracted from any arbitrary table 𝑻 k ′ \mbox{\boldmath$T$}^{k^{\prime}} , the original d k ′ d_{k^{\prime}} -dimensional row features are simply reduced to a 1D feature via
+𝒕 i ′ : k ′ → t k i ′ ​ j ∀ i ′ if ​ k ′ = k 𝒕 i ′ : k ′ → 0 ∀ i ′ if ​ k ′ ≠ k . \begin{array}[]{lll}\mbox{\boldmath$t$}_{i^{\prime}:}^{k^{\prime}}\rightarrow t^{k}_{i^{\prime}j}&\forall i^{\prime}&\mbox{if}~~k^{\prime}=k\\
+\mbox{\boldmath$t$}_{i^{\prime}:}^{k^{\prime}}\rightarrow~0&\forall i^{\prime}&\mbox{if}~~k^{\prime}\neq k.\end{array}\vskip-2.84544pt
+(4)
+By design, any encoder applied to the revised subgraph 𝒢 H k , j ​ ( 𝒙 ) {\mathcal{G}}_{H}^{k,j}(\mbox{\boldmath$x$}) will only depend on column 𝒕 k : j \mbox{\boldmath$t$}^{k}_{:j} , retaining independence from all other RDB columns as desired. We describe a general procedure for such encoder construction next.
+Meta-path GNN layers.
+Although we have simplified our subgraphs via ( 4 ), each 𝒢 H k , j ( 𝒙 i : ) {\mathcal{G}}_{H}^{k,j}(\mbox{\boldmath$x$}_{i:}) nonetheless retains rich heterogeneous relationships through different PK-FK pairs within ℛ {\mathcal{R}} . These pairs determine a set of multi-relational meta-paths ( Ferrini et al., 2024 ) between a target node defined by a row 𝒙 i : \mbox{\boldmath$x$}_{i:} , and the nodes associated with rows of other tables within a H H -hop radius. 2 2
+2
+A meta-path ρ H \rho_{H} is a sequence of H H edges connecting properly-typed nodes in 𝒢 H k , j ( 𝒙 i : ) {\mathcal{G}}_{H}^{k,j}(\mbox{\boldmath$x$}_{i:}) . For example, on an e-commerce platform we could have user → purchased product → sold_by seller . \textit{user}\xrightarrow{\text{purchased}}\textit{product}\xrightarrow{\text{sold\_by}}\textit{seller}.
+Analogous to tabular data columns with varying relevance, prior to seeing ICL samples the encoder cannot possibly know which meta-paths are most discriminative for a given predictive task.
+A typical heterogeneous GNN ( Busbridge et al., 2019 ; Hu et al., 2020 ; Schlichtkrull et al., 2018 ) would naturally interleave all of these meta-paths together in forming predictions. But this can be counter-productive outside of the supervised learning setting, where back-propagated gradients reflecting supervision labels are available to selectively discount the less important meta-paths on a dataset-by-dataset basis. Fortunately though, we can instead encode separate 1D representations associated with each meta-path using a meta-path GNN. Subsequently q θ q_{\theta} equipped with ICL samples can determine relevance, as candidate meta-paths remain conveniently column-aligned in the augmented feature space.
+Given a length- H H meta-path ρ H \rho_{H} extracted from 𝒢 H k , j ( 𝒙 i : ) {\mathcal{G}}_{H}^{k,j}(\mbox{\boldmath$x$}_{i:}) , we initialize all 1D input-layer node embeddings denoted 𝝁 ( 0 ) \mbox{\boldmath$\mu$}^{(0)} using ( 4 ). From there, embedding updates ( Ferrini et al., 2024 ) for a node v v on layer h + 1 h+1 are given by
+μ v ( h + 1 ) = σ ⁡ ( w 0 ( h ) ​ μ v ( h ) + agg ​ [ { w ( h ) ​ μ u ( h ) } u ∈ 𝒩 v ( h ) ] ) , \mu_{v}^{(h+1)}=\sigma\left(w^{(h)}_{0}\mu_{v}^{(h)}+\mbox{agg}\left[\left\{w^{(h)}\mu_{u}^{(h)}\right\}_{u\in{\mathcal{N}}^{(h)}_{v}}\right]\right),\vskip-2.84544pt
+(5)
+where agg is a permutation invariant aggregation function (e.g., sum, mean) and σ \sigma is an activation (e.g., linear, leaky-ReLU, etc.). Additionally, 𝒩 v ( h ) {\mathcal{N}}^{(h)}_{v} denotes the set of neighbors of node v v according to the relation or edge type associated with step h h along ρ H \rho_{H} ( Ferrini et al., 2024 ) . We also assume meta-paths traverse each table at most once, before converting output layer embeddings to elements of 𝒁 Z .
+Resulting JUICE encoder design.
+Although not the most computationally efficient way to implement g juice g_{\tiny\mbox{juice}} , we now summarize the constituent steps from a conceptual standpoint for transparency (full implementation details and complexity considerations will be addressed in Section 5 ):
+1.
+Given a new RDB, select a row 𝒙 i : \mbox{\boldmath$x$}_{i:} from 𝑿 ≡ 𝑻 K \mbox{\boldmath$X$}\equiv\mbox{\boldmath$T$}^{K} and initialize 𝒛 i : \mbox{\boldmath$z$}_{i:} to 𝒙 i : \mbox{\boldmath$x$}_{i:} .
+2.
+Extract 𝒢 H ( 𝒙 i : ) {\mathcal{G}}_{H}(\mbox{\boldmath$x$}_{i:}) as in prior work on supervised RDB predictive models.
+3.
+Choose a tabular data column 𝒕 k : j \mbox{\boldmath$t$}^{k}_{:j} from within an H H -hop radius of 𝒙 i : \mbox{\boldmath$x$}_{i:} over 𝒢 H ( 𝒙 i : ) {\mathcal{G}}_{H}(\mbox{\boldmath$x$}_{i:}) , and convert 𝒢 H ( 𝒙 i : ) {\mathcal{G}}_{H}(\mbox{\boldmath$x$}_{i:}) to 𝒢 H k , j ( 𝒙 i : ) {\mathcal{G}}_{H}^{k,j}(\mbox{\boldmath$x$}_{i:}) using ( 4 ).
+4.
+From within 𝒢 H k , j ( 𝒙 i : ) {\mathcal{G}}_{H}^{k,j}(\mbox{\boldmath$x$}_{i:}) , select a meta-path ρ H \rho_{H} between the node associated with row 𝒙 i : \mbox{\boldmath$x$}_{i:} and the rows in table k k , and propagate node embeddings using ( 5 ).
+5.
+Collect the 1D node embeddings associated with 𝒙 i : \mbox{\boldmath$x$}_{i:} from the output layer and concatenate to 𝒛 i : \mbox{\boldmath$z$}_{i:} .
+6.
+Repeat the above, looping over meta-paths and data columns within H H -hops of 𝒙 i : \mbox{\boldmath$x$}_{i:} .
+7.
+Output final embedding 𝒛 i : = g juice [ 𝒢 H ( 𝒙 i : ) ] \mbox{\boldmath$z$}_{i:}=g_{\tiny\mbox{juice}}[{\mathcal{G}}_{H}(\mbox{\boldmath$x$}_{i:})] .
+If we compute JUICE embeddings for all rows of 𝑿 X as described above, the resulting 𝒁 Z will necessarily satisfy Definition 3.1 . In fact, the interpretable column-wise information partitioning is even stronger: Each column of 𝒁 Z so-constructed is actually a function of a single auxiliary data column and a single meta-path connecting the target node with nodes within this data column. This organization dramatically simplifies the ICL stage, which need not disentangle useful and useless dimensions that have been nonlinearly coupled through a traditional dense encoder.
+Additional JUICE variations.
+There exist other channels for enhancing JUICE expressiveness as well. Specifically, we may execute ( 5 ) with multiple different agg \operatorname{agg} functions and concatenate the results to obtain a richer set of column-aligned representations. Depending on the task, different aggregations may be useful in sorting out various forms of homophily versus heterophily network effects (see Appendix D for further background context and related discussion). For example, for an RDB predictive task dominated by homophily relationships, mean or mode aggregation could potentially be quite valuable. Meanwhile, stdev, entropy, or quantile aggregations could be suitable for capturing a portion of network effects leaning in the heterophily direction. Concatenation of multiple such aggregation functions has also been advocated in Corso et al. (2020) , where it is shown that a single aggregator alone cannot differentiate various non-isomorphic graph structures.
+3.3 Encoder Training is Not Necessary
+For a generic GNN or Transformer-based encoder with multi-dimensional node features, trainable linear filters are critical for increasing performance. However, by design our situation only requires 1D node features, which facilitates helpful simplifications per the following:
+Proposition 3.2 .
+If σ \sigma and agg \operatorname{agg} are positively homogeneous functions, we initialize embeddings using ( 4 ), and { w 0 ( h ) , w ( h ) } ∈ ℝ + \{w_{0}^{(h)},w^{(h)}\}\in\mathbb{R}_{+} ∀ h \forall h , then without loss of generality ( 5 ) can be reparameterized with no internal weights.
+We remark that many of the most commonly used activations (e.g., ReLU, leaky-ReLU, linear) and aggregations (e.g., mean, sum, mode, min, max, stdev) are positively homogeneous, so this requirement is not a significant limitation. Additionally, while assuming positive internal weights does impose some modest form of constraint, sign information can be re-introduced by absorbing into revised σ \sigma and agg definitions. Multiple such variations can be incorporated into JUICE to recover full expressiveness (in Section 3 we also advocate for inclusion of multiple aggregators).
+As such, by virtue of Proposition 3.2 , we can remove parameters from our 1D GNN implementation of JUICE without any appreciable loss of expressiveness. Note that even if such a reparameterization produces additional scale factors on the output layer (as opposed to internal weights), these can be absorbed into q θ q_{\theta} . In fact, normalizing ICL feature dimensions (a common pre-processing tactic ( Hollmann et al., 2025 ) ) removes such scale factors anyway.
+3.4 Combining JUICE with Single-Table ICL Model
+By preserving column roles and identities (without conversion to traditional dense embeddings that fuse cross-column units and network effects), ICL samples { 𝒛 i : , y i } i = 1 n \{\mbox{\boldmath$z$}_{i:},y_{i}\}_{i=1}^{n} produced by JUICE retain the canonical form for which single-table foundation models were originally designed. And critically, because this is achievable via a parameter-free encoding process, no additional training is required at any stage if we simply pair JUICE with one of these existing single-table models for instantiating the decoder q θ q_{\theta} , e.g., TabPFN ( Hollmann et al., 2025 ) .
+It is worth emphasizing that models like TabPFN are highly capable of processing multiple disparate tabular feature columns, pruning away the unnecessary ones, and making predictions ( Zhang et al., 2025a ) ; they are not especially sensitive to the specific marginal distributions of each column that may change with vertical aggregations. As such, by construction JUICE largely preserves current TabPFN advantages and can leverage future enhancements as well.
+4 Analytical Support for JUICE
+Prior to seeing ICL samples with labels, it is not possible for any dataset-agnostic encoder (meaning one that has not undergone supervised training on a specific dataset) to determine from individual subgraphs alone which constituent features are informative and which are not. This is because the role and utility of any given feature itself, such as a column in an auxiliary table or a meta-path connecting different entity types, can vary from RDB to RDB, and even from task to task within a single RDB. In this section we further examine this fundamental limitation of fixed encoders in two complementary respects as related to the ICL setting.
+4.1 Limitations of Cross-Column Dense Embeddings
+We first consider a simplified data generation scenario introduced to isolate the consequences of using compressed embeddings from an arbitrary dense encoder. Similar consequences emerge from more complex setups as well at the cost of presentation clarity.
+Definition 4.1 .
+We define 𝒟 ⁡ ( π ) {\mathcal{D}}(\pi) as a dataset generated using a function π : ℝ κ → ℝ \pi:\mathbb{R}^{\kappa}\rightarrow\mathbb{R} as follows. First draw samples 𝒙 i : ∈ ℝ d \mbox{\boldmath$x$}_{i:}\in\mathbb{R}^{d} from some p ( 𝒙 i : ) p(\mbox{\boldmath$x$}_{i:}) , where i = 1 , … , n + 1 i=1,\ldots,n+1 and p ⁡ ( 𝒙 ) p(\mbox{\boldmath$x$}) is assumed to be an absolutely continuous distribution satisfying p min ≤ p ⁡ ( 𝒙 ) ≤ p max p_{\min}\leq p(\mbox{\boldmath$x$})\leq p_{\max} for all 𝒙 ∈ 𝒳 d \mbox{\boldmath$x$}\in{\mathcal{X}}^{d} . 3 3
+3
+Each such generated 𝒙 i : \mbox{\boldmath$x$}_{i:} can be viewed as a set of features collected from one or more tables. We next select a set of κ \kappa indices from { 1 , … , d } \{1,\ldots,d\} uniformly at random (without replacement) and form reduced features 𝒙 ~ i : ∈ ℝ κ \widetilde{\mbox{\boldmath$x$}}_{i:}\in\mathbb{R}^{\kappa} . And finally, we compute labels y i = π ( 𝒙 ~ i : ) y_{i}=\pi(\widetilde{\mbox{\boldmath$x$}}_{i:}) for all i i . We then reserve { 𝒙 i : , y i } i = 1 n \{\mbox{\boldmath$x$}_{i:},y_{i}\}_{i=1}^{n} for ICL while treating sample n + 1 n+1 as { 𝒙 test , y test } \{\mbox{\boldmath$x$}_{\tiny\mbox{test}},y_{\tiny\mbox{test}}\} .
+By design of this generative process, uninformative features correspond with dimensions of 𝒙 i : \mbox{\boldmath$x$}_{i:} that have been pruned in forming the reduced set 𝒙 ~ i : \widetilde{\mbox{\boldmath$x$}}_{i:} , which alone is relevant to predicting y i y_{i} within any given dataset. In the context of supervised training involving a single dataset draw, it is natural to learn compressed encoder representations 𝒛 i : = g ϕ ( 𝒙 i : ) ∈ ℝ r \mbox{\boldmath$z$}_{i:}=g_{\phi}(\mbox{\boldmath$x$}_{i:})\in\mathbb{R}^{r} with κ ≤ r < d \kappa\leq r<d . For example, an ideal scenario would have this encoder simply learning to discard all unnecessary dimensions of the original features 𝒙 i : \mbox{\boldmath$x$}_{i:} , such that making optimal predictions with the resulting compressed representation 𝒛 i : ≈ 𝒙 ~ i : \mbox{\boldmath$z$}_{i:}\approx\widetilde{\mbox{\boldmath$x$}}_{i:} is substantially easier. As a stark contrast, such simplifying encoder compression is not generally possible when we turn to ICL settings :
+Proposition 4.2 .
+Assume π : ℝ κ → ℝ \pi:\mathbb{R}^{\kappa}\rightarrow\mathbb{R} is affine, with weights in general position. Then for any n > κ n>\kappa , there exists a fixed ICL decoder 4 4
+4
+For simplicity in this section, we adopt a deterministic decoder f θ f_{\theta} , as opposed to the probabilistic version q θ q_{\theta} introduced earlier. f θ f_{\theta} such that
+| y test − f θ ( { 𝒙 i : , y i } i = 1 n , 𝒙 test ) | = 0 \big|y_{\tiny\mbox{test}}-f_{\theta}\big(\{\mbox{\boldmath$x$}_{i:},y_{i}\}_{i=1}^{n},\mbox{\boldmath$x$}_{\tiny\mbox{test}}\big)\big|=0
+(6)
+with probability one over datasets 𝒟 ⁡ ( π ) {\mathcal{D}}(\pi) generated according to Definition 4.1 . Meanwhile, for any r < d r<d , and any possible fixed encoder-decoder pair { g ϕ , f θ ′ } \{g_{\phi},f^{\prime}_{\theta}\} , we have
+| y test − f θ ′ ( { 𝒛 i : , y i } i = 1 n , 𝒛 test ) | > 0 , 𝒛 = g ϕ ( 𝒙 ) ∈ ℝ r \big|y_{\tiny\mbox{test}}-f^{\prime}_{\theta}\big(\{\mbox{\boldmath$z$}_{i:},y_{i}\}_{i=1}^{n},\mbox{\boldmath$z$}_{\tiny\mbox{test}}\big)\big|>0,~~~\mbox{\boldmath$z$}=g_{\phi}(\mbox{\boldmath$x$})\in\mathbb{R}^{r}
+(7)
+with probability at least 1 − ( r k ) / ( d k ) 1-\tbinom{r}{k}/\tbinom{d}{k} over the same data generative distribution.
+This result can be generalized to nonlinear data generation schemes and further elucidated with more precise error bounds. However, the core message of Proposition 4.2 is straightforward and can be conveyed without these extensions: Ideal per-dataset compression of informative and uninformative feature columns is not possible with an encoder that must remain fixed across a distribution of input datasets, where column roles are subject to change .
+4.2 Sample Complexity Considerations
+In Section 4.1 we assumed an encoder stage that formed dense, compressed representations with dimensionality r < d r<d . We now turn to the case where r = d r=d , i.e., no enforced compression across feature columns. In this regime we examine the degree to which a dense encoder g θ g_{\theta} may still negatively influence the sample complexity required to achieve a given estimation error.
+At first glance this possibility may seem counter-intuitive. After all, during the training phase encoder-decoder pairs { g ϕ , f θ } \{g_{\phi},f_{\theta}\} can (in principle) learn to coordinate in such a way that a parameterized g ϕ g_{\phi} producing dense cross-column representations is helpful. This is certainly true for new inference tasks that lie well within the distribution of the pre-training data. However, most real-world applications of ICL will inevitably deviate from this (likely synthetic) distribution, and it is here that a complex, parameterized encoder (as distinct from the decoder) can introduce problems.
+To better understand this phenomena, we note that single-table ICL via a decoder alone can be relatively stable to distribution shifts ( Zhang et al., 2025a ) , and asymptotically consistent under the right conditions ( Nagler, 2023 ) . In principle then, we can still obtain reasonable results even for new datasets that may substantially differ in distribution from a synthetic training set. Now consider the addition of an encoder, which sees only a single input feature vector at a time , not the full set of ICL samples; an OOD input here can induce a substantially different encoder representation. And yet the encoder’s behavior is only “known” to the decoder indirectly over the support of the pre-training data. And so from the decoder’s standpoint, such a representation can lose any coordinated characteristics that might otherwise reduce estimation difficulty or sample complexity. In other words, in OOD regimes the encoder can essentially behave like an unknown transform, and if uninformative features exist within the original column-wise frame of reference, they will now be mixed by a process unknown to the decoder.
+This difference can be dramatic. Working in the original feature frame leads to a sample complexity scaling with an exponential dependency on κ \kappa (the number of informative features), while the OOD encoder can push this rate to be much worse, scaling exponentially with d d (the ambient dimension), even on the simplest of estimation problems. We quantify this phenomena as follows; see also Appendix B for empirical corroboration.
+Figure 2 : Entity classification results (AUC) on RelBench; yellow is best, orange is second best among untrained models.
+Proposition 4.3 .
+Let ℱ {\mathcal{F}} denote the set of Lipschitz continuous functions on [ 0 , 1 ] κ [0,1]^{\kappa} . Then there exists an ICL decoder f θ f_{\theta} such that (excluding smaller-order terms) we have
+sup π ∈ ℱ 𝔼 𝒟 ⁡ ( π ) ∼ p [ y test − f θ ( { 𝒙 i : , y i } i = 1 n , 𝒙 test ) ] 2 = O ( n − 2 / κ ) \sup_{\pi\in{\mathcal{F}}}\mathbb{E}_{{\mathcal{D}}(\pi)\sim p}\Big[y_{\tiny\mbox{test}}-f_{\theta}\big(\{\mbox{\boldmath$x$}_{i:},y_{i}\}_{i=1}^{n},\mbox{\boldmath$x$}_{\tiny\mbox{test}}\big)\Big]^{2}=O\left(n^{-2/\kappa}\right)
+where the data distribution p p is given by Definition 4.1 with 𝒳 = [ 0 , 1 ] {\mathcal{X}}=[0,1] . In contrast, with κ = 1 \kappa=1 and y = x ~ y=\widetilde{x} , we have
+inf f θ sup g ϕ ∈ ℬ 𝔼 𝒟 ⁡ ( π ) ∼ p [ y test − f θ ( { 𝒛 i : , y i } i = 1 n , 𝒛 test ) ] 2 = Θ ( n − 2 / d ) \inf_{f_{\theta}}\sup_{g_{\phi}\in{\mathcal{B}}}\mathbb{E}_{{\mathcal{D}}(\pi)\sim p}\Big[y_{\tiny\mbox{test}}-f_{\theta}\big(\{\mbox{\boldmath$z$}_{i:},y_{i}\}_{i=1}^{n},\mbox{\boldmath$z$}_{\tiny\mbox{test}}\big)\Big]^{2}\hskip-5.69046pt=\Theta\left(n^{-2/d}\right)
+where 𝐳 = g ϕ ​ ( 𝐱 ) \mbox{\boldmath$z$}=g_{\phi}(\mbox{\boldmath$x$}) represents an encoder selected from the set of bi-Lipschitz bijections ℬ {\mathcal{B}} mapping [ 0 , 1 ] d → [ 0 , 1 ] d [0,1]^{d}\rightarrow[0,1]^{d} .
+5 RDBLearn: A Lightweight RDB Toolkit
+We develop the open-source package RDBLearn to operationalize the merger of JUICE with single-table foundation models as advocated in Section 3.4 . The result is an easy-to-use RDB toolbox with no training required. See Footnote 1 as well as Zhang et al. (2026) for specifics of RDBLearn usage and design, including its optional agent-specific interface. We highlight several attributes here:
+•
+Intuitive interface : The programming interface is designed to mirror the underlying formulation: core objects in the API correspond with concepts such as the relational database context { 𝒯 , ℛ } \{{\mathcal{T}},{\mathcal{R}}\} , ICL samples 𝒟 {\mathcal{D}} , and per-instance relational neighborhoods 𝒢 H ​ ( 𝒙 ) {\mathcal{G}}_{H}(\mbox{\boldmath$x$}) . This makes it straightforward to relate experimental configurations and results back to modeling assumptions.
+•
+SQL-backed JUICE optimizations : We implement JUICE principles using DFS primitives ( Kanter and Veeramachaneni, 2015 ) through SQL execution over relational tables, leveraging the database engine for joins and aggregations. System optimizations include: (i) Translating feature synthesis primitives into SQL queries with aggregation pushdown; (ii) Reusing intermediate results through caching or incremental materialization; and (iii) Compiling cutoff-time constraints into the SQL execution plan to avoid temporal leakage when predicting future targets.
+•
+ICL-model agnostic design : Any single-table ICL predictor that follows the scikit-learn estimator interface can be directly incorporated. This supports controlled comparisons and upgrades under the same relational pipeline.
+•
+Temporal OOD reduction : While base ICL predictors like TabPFN have been previously applied to forecasting tasks ( Hoo et al., 2024 ) , this requires introducing an array of cyclic temporal features to avoid OOD effects from unseen time stamps in the inference window. We sidestep this issue by encoding relative temporal differences rather than absolute times when forming ICL samples.
+6 Testing with Real-World RDBs
+For all experiments, RDBLearn extracts JUICE embeddings and converts to ICL samples using official benchmark training splits. We then choose H ∈ { 2 , 3 } H\in\{2,3\} and the RDBLearn base model from TabPFNv2 ( Hollmann et al., 2025 ) , TabPFNv2.5 ( Grinsztajn et al., 2025 ) , and LimiX ( Zhang et al., 2025b ) using dev sets (although RDBLearn is stable across these choices as shown below). No other hyperparameters or tuning is involved across all benchmarks. Appendix E contains additional experiment details.
+Baselines.
+We compare against the schema-agnostic RT (relational transformer) ( Ranjan et al., 2025 ) , Griffin ( Wang et al., 2025 ) , and RelLLM ( Wu et al., 2025 ) models, all of which were pre-trained using the RelBench datasets ( Robinson et al., 2024b ) . As for pure language model baselines, we report results from LLM-A ( Team et al., 2025 ) (as tested in Ranjan et al. (2025) ) and LLM-B ( Wydmuch et al., 2024 ) ; both of these rely on serialized RDB neighborhood representations and/or ICL samples, and both can operate without any RDB pre-training or per-dataset fine-tuning on classification tasks. Although not a verifiable baseline, for reference we also include the closed-source KumoRFM industry model ( Fey et al., 2025 ) . And finally, as a representative contrast outside of the foundation model scope of the others, we consider RelGT ( Dwivedi et al., 2025a ) , a SOTA fully-supervised approach that shares the same dense encoder as KumoRFM. In this way, at a conceptual level the key distinction between KumoRFM and RDBLearn lies in the choice of encoder, with the latter alone based on JUICE foundations from Sections 3 and 4 . All model hyperparameters were optimized per the specifications in prior work.
+RelBench classification results.
+Figure 2 presents results on the RelBench datasets, excluding rel-event and rel-f1, both of which have label leakage concerns noticed by ourselves and others (see Appendix E for details). Overall, RDBLearn outperforms the others, and is the only RDB foundation model that is competitive with the fully supervised RelGT approach. This is notable given that RDBLearn is only exposed to synthetic single-table data (during pre-training of the tabular base model); in contrast RelLLM, RT, and Griffin (and possibly others) have been exposed to each of the actual benchmarks as part of the pre-training adopted to produce the results in Figure 2 . See Appendix A for further discussion of these models w.r.t. zero-shot learning.
+RDBLearn stability.
+Figure 3 demonstrates the stability of RDBLearn as the base tabular prediction model and encoder hops H H are varied on the same RelBench tasks. Notably, for every combination except one the performance exceeds all other RDB foundation models from Figure 2 .
+Figure 3 : RDBLearn ablation (mean AUC on RelBench).
+RelBench regression results.
+Regression poses a unique set of challenges to RDB foundation models, and prior work often concedes that regression results are unsatisfactory without per-dataset fine-tuning, particularly for LLM-based approaches ( Wu et al., 2025 ; Wydmuch et al., 2024 ) . For this reason we have fewer baselines to compare against, which are further compromised by inconsistent metrics and reproducibility issues. Hence Figure 4 compares only against KumoRFM (and RelGT for reference), as no other foundation models are directly comparable (see Appendix E for discussion of disanalogous Griffin and RT results). We remark that RDBLearn matches KumoRFM performance, and is even competitive with supervised RelGT, despite no regression-specific modifications or adjustments. It is unknown what regression allowances and/or regression-specific real-world pretraining data have been incorporated into KumoRFM.
+Figure 4 : Entity regression results (MAE) on RelBench.
+Additional 4DBInfer comparisons.
+Prior work on RDB foundation models has focused on RelBench tasks as above. However, to further establish the native versatility of RDBLearn, we apply our identical pipeline (again with zero modification whatsoever besides coupling with a suitable data loader) to the classification tasks drawn from the 4DBInfer benchmark ( Wang et al., 2024 ) . We compare against a suite of heterogeneous GNN and graph Transformer models specifically adapted for this benchmark with multiple graph extraction techniques; each such approach also benefits from per-dataset supervised learning and extensive hyperparameter optimization (see Appendix E ). Results are shown in Figure 5 , where RDBLearn exhibits strong performance without training, leading to orders of magnitude greater efficiency (see Appendix E ).
+Figure 5 : Entity classification ranking on 4DBInfer.
+JUICE is worth the squeeze.
+If the principles underpinning JUICE (as used by RDBLearn) are sound, then we should expect a notable gap in performance when we contrast supervised learning versus ICL usage. Specifically, in the SL regime we should expect that an expressive parameterized g ϕ g_{\phi} dominates g juice g_{\tiny\mbox{juice}} , while the situation should largely flip when we turn to ICL cases. To empirically explore this phenomena, which has not been previously recognized, we consider the KumoRFM ICL model and the supervised RelGT model, both of which share the same g ϕ g_{\phi} . Meanwhile, for g juice g_{\tiny\mbox{juice}} we can pair with both an ICL decoder (as within RDBLearn) and a strong supervised prediction head such as AutoGluon ( Erickson et al., 2020 ) . Given these four model instantiations, we plot the corresponding g juice − g ϕ g_{\tiny\mbox{juice}}-g_{\phi} performance differences split across SL and ICL cases in Figure 6 . The outcome closely conforms with the expected performance inversion. In Appendix C we repeat an analogous experiment drawing on data from prior ICL-based graph foundation model studies; the outcome is similar. These results demonstrate the wider relevance of treating JUICE as an end goal, and not merely a simplifying approximation.
+Figure 6 : Performance inversion of JUICE embeddings.
+7 Conclusions
+For RDB supervised learning, conventional wisdom points towards expressive parameterized encoders for converting variably-sized subgraph information into dense discriminative representations for end-to-end training. Meanwhile more traditional parameter-free RDB featurization steps are often viewed as outdated heuristics. However, we have argued that these designations need not hold as we move to ICL-based RDB foundation models, and designed a principled toolbox specifically to exploit these findings.
+Impact Statement
+This paper presents work whose goal is to advance the field of Machine Learning. There are many potential societal consequences of our work, none which we feel must be specifically highlighted here with one exception. A substantial portion of our contribution relates to increasing our understanding of RDB and tabular modeling components already being used in one way or another. While such understanding can in principle be exploited for nefarious purposes, overall we believe it to be a net positive.
+References
+Bechler-Speicher et al. (2025)
+M. Bechler-Speicher, B. Finkelshtein, F. Frasca, L. Müller, J. Tönshoff, A. Siraudin, V. Zaverkin, M. M. Bronstein, M. Niepert, B. Perozzi, et al.
+Position: Graph learning will lose relevance due to poor benchmarks .
+arXiv preprint arXiv:2502.14546 .
+Cited by: Appendix A .
+Biau and Devroye (2015)
+G. Biau and L. Devroye
+Lectures on the nearest neighbor method .
+Vol. 246 , Springer .
+Cited by: Appendix F .
+Busbridge et al. (2019)
+D. Busbridge, D. Sherburn, P. Cavallo, and N. Y. Hammerla
+Relational graph attention networks .
+arXiv preprint arXiv:1904.05811 .
+Cited by: §E.3 ,
+§3.2 .
+Chen and Guestrin (2016)
+T. Chen and C. Guestrin
+Xgboost: a scalable tree boosting system .
+In Proceedings of the 22nd acm sigkdd international conference on knowledge discovery and data mining ,
+pp. 785–794 .
+Cited by: Appendix A .
+Chen et al. (2025)
+Z. Chen, H. Xie, J. Zhang, J. Tang, H. Rangwala, G. Karypis, et al.
+AutoG: Towards automatic graph construction from tabular data .
+arXiv preprint arXiv:2501.15282 .
+Cited by: Appendix A .
+Chepurko et al. (2020)
+N. Chepurko, R. Marcus, E. Zgraggen, R. C. Fernandez, T. Kraska, and D. Karger
+ARDA: Automatic relational data augmentation for machine learning .
+Proc. VLDB Endow. 13 ( 9 ), pp. 1373–1387 .
+Cited by: Appendix A .
+Choi et al. (2025a)
+D. Choi, S. Kim, J. Kim, K. Kim, G. Lee, S. Kang, M. Kim, and K. Shin
+RDB2G-Bench: A comprehensive benchmark for automatic graph modeling of relational databases .
+arXiv preprint arXiv:2506.01360 .
+Cited by: Appendix A ,
+§E.3 .
+Choi et al. (2025b)
+J. Choi, W. Kang, M. Kim, J. Kim, and N. Park
+Can TabPFN compete with GNNs for node classification via graph tabularization? .
+arXiv preprint arXiv:2512.08798 .
+Cited by: Appendix C .
+Corso et al. (2020)
+G. Corso, L. Cavalleri, D. Beaini, P. Liò, and P. Veličković
+Principal neighbourhood aggregation for graph nets .
+Advances in Neural Information Processing Systems 33 , pp. 13260–13271 .
+Cited by: §E.3 ,
+§3.2 .
+Cvitkovic (2020)
+M. Cvitkovic
+Supervised learning on relational databases with graph neural networks .
+arXiv preprint arXiv:2002.02046 .
+Cited by: Appendix A ,
+§E.3 ,
+item 1 .
+Dave et al. (2014)
+D. Dave, B. Todd, and W. Cukierski
+Acquire valued shoppers challenge .
+Kaggle .
+External Links: Link
+Cited by: §1 .
+Donoho and Elad (2003)
+D.L. Donoho and M. Elad
+Optimally sparse representation in general (nonorthogonal) dictionaries via ℓ 1 \ell_{1} minimization .
+Proc. National Academy of Sciences 100 ( 5 ), pp. .
+Note:
+Cited by: Appendix F .
+Dwivedi et al. (2025a)
+V. P. Dwivedi, S. Jaladi, Y. Shen, F. López, C. I. Kanatsoulis, R. Puri, M. Fey, and J. Leskovec
+Relational graph transformer .
+arXiv preprint arXiv:2505.10960 .
+Cited by: Appendix A ,
+§1 ,
+item 1 ,
+§6 .
+Dwivedi et al. (2025b)
+V. P. Dwivedi, C. Kanatsoulis, S. Huang, and J. Leskovec
+Relational deep learning: challenges, foundations and next-generation architectures .
+In Proceedings of the 31st ACM SIGKDD Conference on Knowledge Discovery and Data Mining V. 2 ,
+pp. 5999–6009 .
+Cited by: Appendix A .
+Eremeev et al. (2025a)
+D. Eremeev, G. Bazhenov, O. Platonov, A. Babenko, and L. Prokhorenkova
+Turning tabular foundation models into graph foundation models .
+arXiv preprint arXiv:2508.20906 .
+Cited by: Appendix A ,
+Appendix C ,
+Appendix C .
+Eremeev et al. (2025b)
+D. Eremeev, O. Platonov, G. Bazhenov, A. Babenko, and L. Prokhorenkova
+GraphPFN: A prior-data fitted graph foundation model .
+arXiv preprint arXiv:2509.21489 .
+Cited by: Figure 8 ,
+Figure 8 ,
+Appendix C ,
+Appendix C .
+Erickson et al. (2020)
+N. Erickson, J. Mueller, A. Shirkov, H. Zhang, P. Larroy, M. Li, and A. Smola
+Autogluon-tabular: robust and accurate automl for structured data .
+arXiv preprint arXiv:2003.06505 .
+Cited by: §6 .
+Ferrini et al. (2024)
+F. Ferrini, A. Longa, A. Passerini, and M. Jaeger
+Meta-path learning for multi-relational graph neural networks .
+In Learning on Graphs Conference ,
+pp. 2–1 .
+Cited by: §3.2 ,
+§3.2 ,
+§3.2 .
+Fey et al. (2023)
+M. Fey, W. Hu, K. Huang, J. E. Lenssen, R. Ranjan, J. Robinson, R. Ying, J. You, and J. Leskovec
+Relational deep learning: graph representation learning on relational databases .
+arXiv preprint arXiv:2312.04615 .
+Cited by: Appendix A ,
+item 1 .
+Fey et al. (2025)
+M. Fey, V. Kocijan, F. Lopez, J. Lenssen, and J. Leskovec
+KumoRFM: A foundation model for in-context learning on relational data .
+Online Tech Report .
+Cited by: Appendix A ,
+§2.2 ,
+§2.3 ,
+§6 .
+Frasca et al. (2020)
+F. Frasca, E. Rossi, D. Eynard, B. Chamberlain, M. Bronstein, and F. Monti
+SIGN: Scalable inception graph neural networks .
+arXiv preprint arXiv:2004.11198 .
+Cited by: Appendix C .
+Gan et al. (2024)
+Q. Gan, M. Wang, D. Wipf, and C. Faloutsos
+Graph machine learning meets multi-table relational data .
+In Proceedings of the 30th ACM SIGKDD Conference on Knowledge Discovery and Data Mining ,
+pp. 6502–6512 .
+Cited by: Appendix A ,
+Appendix A ,
+§E.3 ,
+§1 .
+Garcia-Molina et al. (2009)
+H. Garcia-Molina, J. D. Ullman, and J. Widom
+Database systems: the complete book .
+Prentice Hall .
+Cited by: §1 .
+Gorishniy et al. (2021)
+Y. Gorishniy, I. Rubachev, V. Khrulkov, and A. Babenko
+Revisiting deep learning models for tabular data .
+Advances in Neural Information Processing Systems 34 , pp. 18932–18943 .
+Cited by: Appendix A .
+Grinsztajn et al. (2025)
+L. Grinsztajn, K. Flöge, O. Key, F. Birkel, P. Jund, B. Roof, B. Jäger, D. Safaric, S. Alessi, A. Hayler, et al.
+TabPFN-2.5: Advancing the state of the art in tabular foundation models .
+arXiv preprint arXiv:2511.08667 .
+Cited by: §6 .
+Guo et al. (2017)
+H. Guo, R. Tang, Y. Ye, Z. Li, and X. He
+DeepFM: a factorization-machine based neural network for ctr prediction .
+arXiv preprint arXiv:1703.04247 .
+Cited by: Appendix A .
+Hajek and Raginsky (2021)
+B. Hajek and M. Raginsky
+ECE 543: Statistical learning theory .
+Department of Electrical and Computer Engineering and the Coordinated Science Laboratory, University of Illinois at Urbana-Champaign .
+Cited by: Appendix F .
+Hayler et al. (2025)
+A. Hayler, X. Huang, I. I. Ceylan, M. Bronstein, and B. Finkelshtein
+Bringing graphs to the table: Zero-shot node classification via tabular foundation models .
+arXiv preprint arXiv:2509.07143 .
+Cited by: Appendix C .
+Hollmann et al. (2022)
+N. Hollmann, S. Müller, K. Eggensperger, and F. Hutter
+Tabpfn: a transformer that solves small tabular classification problems in a second .
+arXiv preprint arXiv:2207.01848 .
+Cited by: §2.2 .
+Hollmann et al. (2025)
+N. Hollmann, S. Müller, L. Purucker, A. Krishnakumar, M. Körfer, S. B. Hoo, R. T. Schirrmeister, and F. Hutter
+Accurate predictions on small data with a tabular foundation model .
+Nature 637 ( 8045 ), pp. 319–326 .
+Cited by: §1 ,
+§2.2 ,
+§2.2 ,
+§3.3 ,
+§3.4 ,
+§6 .
+Hoo et al. (2024)
+S. B. Hoo, S. Müller, D. Salinas, and F. Hutter
+The tabular foundation model tabpfn outperforms specialized time series forecasting models based on simple features .
+In NeurIPS Workshop on Time Series in the Age of Large Models ,
+Cited by: 4th item .
+Hu et al. (2020)
+Z. Hu, Y. Dong, K. Wang, and Y. Sun
+Heterogeneous graph transformer .
+In Proceedings of the web conference 2020 ,
+pp. 2704–2710 .
+Cited by: §E.3 ,
+§3.2 .
+Jingang et al. (2025)
+Q. Jingang, D. Holzmüller, G. Varoquaux, and M. Le Morvan
+TabICL: A tabular foundation model for in-context learning on large data .
+In International Conference on Machine Learning ,
+Cited by: §1 ,
+§2.2 ,
+§2.2 .
+Kanter and Veeramachaneni (2015)
+J. M. Kanter and K. Veeramachaneni
+Deep feature synthesis: towards automating data science endeavors .
+In 2015 IEEE international conference on data science and advanced analytics (DSAA) ,
+pp. 1–10 .
+Cited by: Appendix A ,
+§1 ,
+2nd item .
+Ke et al. (2017)
+G. Ke, Q. Meng, T. Finley, T. Wang, W. Chen, W. Ma, Q. Ye, and T. Liu
+LightGBM: A highly efficient gradient boosting decision tree .
+Advances in neural information processing systems 30 .
+Cited by: Appendix A .
+Kramer and Bessiere (2020)
+S. Kramer and C. Bessiere
+A brief history of learning symbolic higher-level representations from data (and a curious look forward). .
+In IJCAI ,
+pp. 4868–4876 .
+Cited by: Appendix A .
+Kramer et al. (2001)
+S. Kramer, N. Lavrač, and P. Flach
+Propositionalization approaches to relational data mining .
+In Relational Data Mining , S. Džeroski and N. Lavrač (Eds.) ,
+pp. 262–291 .
+External Links: Document
+Cited by: Appendix A ,
+§1 .
+Kumar et al. (2016)
+A. Kumar, J. Naughton, J. M. Patel, and X. Zhu
+To join or not to join? thinking twice about joins before feature selection .
+In Proceedings of the 2016 International Conference on Management of Data ,
+pp. 19–34 .
+Cited by: Appendix A .
+Liu et al. (2022)
+J. Liu, C. Chai, Y. Luo, Y. Lou, J. Feng, and N. Tang
+Feature augmentation with reinforcement learning .
+In 2022 IEEE 38th International Conference on Data Engineering (ICDE) ,
+pp. 3360–3372 .
+Cited by: Appendix A .
+mjkistler et al. (2016)
+mjkistler, R. Locar, R. Lempel, RoySassonOB, Rwagner, and W. Cukierski
+Outbrain click prediction .
+Kaggle .
+External Links: Link
+Cited by: §E.3 ,
+§1 .
+Motl and Schulte (2015)
+J. Motl and O. Schulte
+The ctu prague relational learning repository .
+arXiv preprint arXiv:1511.03086 .
+Cited by: §1 .
+Nagler (2023)
+T. Nagler
+Statistical foundations of prior-data fitted networks .
+In International Conference on Machine Learning ,
+pp. 25660–25676 .
+Cited by: §2.2 ,
+§4.2 .
+Ni et al. (2019)
+J. Ni, J. Li, and J. McAuley
+Justifying recommendations using distantly-labeled reviews and fine-grained aspects .
+In Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Language Processing (EMNLP-IJCNLP) , K. Inui, J. Jiang, V. Ng, and X. Wan (Eds.) ,
+Hong Kong, China , pp. 188–197 .
+External Links: Link ,
+Document
+Cited by: §E.3 ,
+§1 .
+Peleška and Šír (2025)
+J. Peleška and G. Šír
+Tabular transformers meet relational databases .
+ACM Transactions on Intelligent Systems and Technology 16 ( 5 ), pp. 1–24 .
+Cited by: Appendix A .
+Prokhorenkova et al. (2018)
+L. Prokhorenkova, G. Gusev, A. Vorobev, A. V. Dorogush, and A. Gulin
+CatBoost: unbiased boosting with categorical features .
+Advances in neural information processing systems 31 .
+Cited by: Appendix A .
+Ranjan et al. (2025)
+R. Ranjan, V. Hudovernik, M. Znidar, C. Kanatsoulis, R. Upendra, M. Mohammadi, J. Meyer, T. Palczewski, C. Guestrin, and J. Leskovec
+Relational transformer: toward zero-shot foundation models for relational data .
+arXiv preprint arXiv:2510.06377 .
+Cited by: Appendix A ,
+Appendix A ,
+Appendix A ,
+§E.2 ,
+§E.2 ,
+§E.2 ,
+§2.2 ,
+§2.3 ,
+§6 ,
+footnote 6 .
+Robinson et al. (2024a)
+J. Robinson, R. Ranjan, W. Hu, K. Huang, J. Han, A. Dobles, M. Fey, J. E. Lenssen, Y. Yuan, Z. Zhang, et al.
+Relational deep learning: graph representation learning on relational databases .
+In NeurIPS 2024 third table representation learning workshop ,
+Cited by: §1 .
+Robinson et al. (2024b)
+J. Robinson, R. Ranjan, W. Hu, K. Huang, J. Han, A. Dobles, M. Fey, J. E. Lenssen, Y. Yuan, Z. Zhang, et al.
+RelBench: A benchmark for deep learning on relational databases .
+Advances in Neural Information Processing Systems 37 , pp. 21330–21341 .
+Cited by: §E.2 ,
+§E.2 ,
+§6 .
+Schlichtkrull et al. (2018)
+M. Schlichtkrull, T. N. Kipf, P. Bloem, R. v. d. Berg, I. Titov, and M. Welling
+Modeling relational data with graph convolutional networks .
+In European semantic web conference ,
+pp. 593–607 .
+Cited by: §E.3 ,
+§3.2 .
+Somepalli et al. (2021)
+G. Somepalli, M. Goldblum, A. Schwarzschild, C. B. Bruss, and T. Goldstein
+Saint: improved neural networks for tabular data via row attention and contrastive pre-training .
+arXiv preprint arXiv:2106.01342 .
+Cited by: Appendix A .
+Team et al. (2025)
+G. Team, A. Kamath, J. Ferret, S. Pathak, N. Vieillard, R. Merhej, S. Perrin, T. Matejovicova, A. Ramé, M. Rivière, et al.
+Gemma 3 Technical Report .
+arXiv preprint arXiv:2503.19786 .
+Cited by: §6 .
+Wang et al. (2024)
+M. Wang, Q. Gan, D. Wipf, Z. Cai, N. Li, J. Tang, Y. Zhang, Z. Zhang, Z. Mao, Y. Song, Y. Wang, J. Li, H. Zhang, G. Yang, X. Qin, C. Lei, M. Zhang, W. Zhang, C. Faloutsos, and Z. Zhang
+4DBInfer: A 4D benchmarking toolbox for graph-centric predictive modeling on RDBs .
+Advances in Neural Information Processing Systems 37 , pp. 27236–27273 .
+Cited by: Appendix A ,
+§E.3 ,
+§1 ,
+item 1 ,
+§6 .
+Wang et al. (2025)
+Y. Wang, X. Wang, Q. Gan, M. Wang, Q. Yang, D. Wipf, and M. Zhang
+Griffin: Towards a graph-centric relational database foundation model .
+In International Conference on Machine Learning ,
+Cited by: Appendix A ,
+§E.2 ,
+§2.2 ,
+§2.3 ,
+§6 .
+Wipf and Rao (2004)
+D.P. Wipf and B.D. Rao
+Probabilistic analysis for basis selection via ℓ p \ell_{p} diversity measures .
+Proc. ICASSP 6 ( ), pp. .
+Note:
+Cited by: Appendix F .
+Wu et al. (2025)
+F. Wu, V. P. Dwivedi, and J. Leskovec
+Large language models are good relational learners .
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,
+Cited by: Appendix A ,
+§2.2 ,
+§2.3 ,
+§6 ,
+§6 .
+Wydmuch et al. (2024)
+M. Wydmuch, Ł. Borchmann, and F. Graliński
+Tackling prediction tasks in relational databases with LLMs .
+arXiv preprint arXiv:2411.11829 .
+Cited by: §2.2 ,
+§6 ,
+§6 .
+Xia and Huang (2024)
+L. Xia and C. Huang
+Anygraph: Graph foundation model in the wild .
+arXiv preprint arXiv:2408.10700 .
+Cited by: Appendix A .
+Xia et al. (2024)
+L. Xia, B. Kao, and C. Huang
+Opengraph: Towards open graph foundation models .
+arXiv preprint arXiv:2403.01121 .
+Cited by: Appendix A .
+Yoo et al. (2023)
+J. Yoo, M. Lee, S. Shekhar, and C. Faloutsos
+Less is more: SlimG for accurate, robust, and interpretable graph mining .
+In Proceedings of the 29th ACM SIGKDD Conference on Knowledge Discovery and Data Mining ,
+pp. 3128–3139 .
+Cited by: Appendix C .
+Zahradník et al. (2023)
+L. Zahradník, J. Neumann, and G. Šír
+A deep learning blueprint for relational databases .
+In NeurIPS 2023 Second Table Representation Learning Workshop ,
+Cited by: Appendix A ,
+§1 .
+Zhang et al. (2023a)
+H. Zhang, Q. Gan, D. Wipf, and W. Zhang
+GFS: Graph-based feature synthesis for prediction over relational databases .
+arXiv preprint arXiv:2312.02037 .
+Cited by: Appendix A ,
+item 1 .
+Zhang et al. (2025a)
+Q. Zhang, Y. S. Tan, Q. Tian, and P. Li
+TabPFN: One model to rule them all? .
+arXiv preprint arXiv:2505.20003 .
+Cited by: §3.4 ,
+§4.2 .
+Zhang et al. (2025b)
+X. Zhang, G. Ren, H. Yu, H. Yuan, H. Wang, J. Li, J. Wu, L. Mo, L. Mao, M. Hao, et al.
+Limix: Unleashing structured-data modeling capability for generalist intelligence .
+arXiv preprint arXiv:2509.03505 .
+Cited by: Appendix C ,
+§1 ,
+§2.2 ,
+§2.2 ,
+§6 .
+Zhang et al. (2025c)
+X. Zhang, D. C. Maddix, J. Yin, N. Erickson, A. F. Ansari, B. Han, S. Zhang, L. Akoglu, C. Faloutsos, M. W. Mahoney, et al.
+Mitra: Mixed synthetic priors for enhancing tabular foundation models .
+arXiv preprint arXiv:2510.21204 .
+Cited by: §1 .
+Zhang et al. (2026)
+Y. Zhang, L. Xu, Q. Gan, D. Wipf, and M. Wang
+RDBLearn: Simple in-context prediction over relational databases .
+arXiv preprint .
+Cited by: §5 .
+Zhang et al. (2023b)
+Z. Zhang, Y. Yang, L. Zou, H. Wen, T. Feng, and J. You
+RDBench: ml benchmark for relational databases .
+arXiv preprint arXiv:2310.16837 .
+Cited by: §1 ,
+item 1 .
+Zykov et al. (2022)
+R. Zykov, N. Artem, and A. Alexander
+Retailrocket recommender system dataset .
+Kaggle .
+External Links: Link ,
+Document
+Cited by: §E.3 ,
+§1 .
+Appendix A Extended Related Work
+Although we have already cited key references needed to understand and contextualize our contributions in the main text, there are several additional points worth bolstering here along with supporting references.
+Growing relevance of RDB predictive modeling.
+As of 2026, the majority of database management systems are relational, 5 5
+5
+https://db-engines.com/en/ranking_categories and the information stored within contains countless possibilities for predictive modeling. Traditionally, developing such models was predicated on some form of propositionalization ( Chepurko et al., 2020 ; Kanter and Veeramachaneni, 2015 ; Kramer et al., 2001 ; Kramer and Bessiere, 2020 ; Kumar et al., 2016 ; Liu et al., 2022 ) , whereby fixed-length features are first extracted and aggregated within a single table such that standard tabular learning models can then be applied. The latter range from diverse boosting approaches ( Chen and Guestrin, 2016 ; Ke et al., 2017 ; Prokhorenkova et al., 2018 ) to deep learning frameworks like DeepFM ( Guo et al., 2017 ) , SAINT ( Somepalli et al., 2021 ) , and FT-Transformers ( Gorishniy et al., 2021 ) .
+More recently, with the advent of graph neural networks and wide-ranging graph Transformer models, there has been a notable shift towards end-to-end systems applied to graphs extracted from RDBs ( Cvitkovic, 2020 ; Dwivedi et al., 2025a ; Fey et al., 2023 ; Peleška and Šír, 2025 ; Wang et al., 2024 ; Zahradník et al., 2023 ; Zhang et al., 2023a ) . The underlying graph extraction process has also been the subject of ongoing exploration specifically for improving RDB prediction quality ( Chen et al., 2025 ; Choi et al., 2025a ; Gan et al., 2024 ) . Of particular note, it has even been posited that the relevance of graph learning as a research domain in and of itself will fade unless focus is redirected towards (among other things) data originating in RDBs ( Bechler-Speicher et al., 2025 ) . For now though, evidence collected thus far suggests that in supervised settings, these recent end-to-end relational frameworks generally tend to outperform propositionalization, and conventional wisdom treats the latter as a bottleneck to be avoided where possible ( Dwivedi et al., 2025b ) . Of course as we have shown both analytically and empirically, this need not still be the case when we turn to foundation models like RDBLearn formulated through ICL. See also Appendix C where we broaden the scope of these observations to graph foundation models.
+ICL and synthetic pre-training for RDB learning.
+For pure ICL-based RDB foundation models based on synthetic generation during pre-training, there is presently only the KumoRFM approach ( Fey et al., 2025 ) . However, as a closed-source model there are few details available that might otherwise enable thorough assessment by the research community. For example, while pre-training was achieved using a mixture of synthetic and real-world RDB data, it is unclear to what extent the real-world portion maintains structural or task similarity with the limited evaluation benchmarks. This calls into question how generalizable KumoRFM actually is in practice. Nor is the synthetic generation pipeline used by KumoRFM available for scrutiny that might inform its potential for widespread efficacy. We remark that generating synthetic RDBs that reflect real-world properties is challenging, with unavoidable dependency on extra relational dimensions of variability not shared by successful single-table models ( Gan et al., 2024 ) .
+Zero-shot possibilities.
+Mirroring ambiguity shared across the graph learning literature ( Eremeev et al., 2025a ; Xia and Huang, 2024 ; Xia et al., 2024 ) , there does not appear to be a widely agreed upon definition of what constitutes true zero-shot RDB predictive modeling. Broadly speaking though, zero-shot learning refers to settings whereby the model must predict test samples involving classes that were not available during training. This is possible in situations where there exists suitable auxiliary information (e.g., textual attribute descriptions) that implicitly differentiate new classes.
+In the context of RDBs specifically, the relational transformer (RT) model has been framed as possessing zero-shot capabilities, provided zero-shot relational learning is defined as “predicting new targets on a new RDB with a new schema, without weight updates” as proposed by Ranjan et al. (2025) . Per this definition our RDBLearn framework would also technically qualify as zero-shot. But in such relational cases the auxiliary information relied upon for making predictions (by both RT and RDBLearn) includes exposure to entity labels with earlier time-stamps, e.g., from the entity we wish to classify and/or those extracted from prescribed neighborhood(s). This setup is conceptually a bit like label propagation on a temporal graph, which is not universally recognized as zero-shot per se, although admittedly it is reasonable to consider broader definitions as long as stipulations are clear.
+Regardless of definitions, if RT pre-training is not explicitly conducted using each test RDB, the performance drops appreciably, even approaching a naive baseline whereby the historical entity mean serves as the prediction. For example, on RelBench classification tasks, this historical mean estimator achieves 66.7 average AUC, while comparable RT performance is 70.1 AUC; see Table 1 in Ranjan et al. (2025) . In contrast, if we strictly enforce no target labels (past or present) available at inference time as a requirement for zero-shot relational learning, then the Griffin model ( Wang et al., 2025 ) still technically qualifies, although performance without per-dataset fine-tuning is not competitive (64 average AUC under equivalent settings).
+Finally, the RelLLM model ( Wu et al., 2025 ) has also been described as a zero-shot learner when per-dataset fine-tuning is omitted. However, RelLLM is still pre-trained over the very same RelBench datasets upon which testing is conducted (even if the pre-training targets may vary). Moreover, without per-dataset fine-tuning, RelLLM falls behind even Griffin (63.2 average AUC). We reiterate though, outside of the definition proposed by Ranjan et al. (2025) , our RDBLearn would generally not be considered a pure zero-shot method given its reliance on ICL samples. Even so, unlike these other approaches, RDBLearn does not depend on seeing the actual inference-time RDBs during pre-training to achieve SOTA performance. Rather, it is entirely based on a synthetic pre-training pipeline whereby there is no possible leakage or favorable bias introduced from inference-time RDBs.
+Appendix B Empirical Corroboration of Dense Encoder Performance Degradation
+Figure 7 : Impact of adding uninformative ( left ) versus informative ( right ) feature columns; results averaged over 100 trials.
+To further explore our analytical findings from Section 4 , we conducted the following simulation study involving two distinct testing scenarios. For the first, we initially generate ICL samples { 𝑿 , 𝒚 } = { 𝒙 i : , y i } i = 1 n \{\mbox{\boldmath$X$},\mbox{\boldmath$y$}\}=\{\mbox{\boldmath$x$}_{i:},y_{i}\}_{i=1}^{n} , where elements of 𝑿 X are drawn iid from 𝒩 ⁡ ( 0 , 1 ) {\mathcal{N}}(0,1) and y i = 𝕀 [ 1 / ( 1 + exp [ − 𝒘 ⊤ 𝒙 i : ] ) ] y_{i}=\mathbb{I}\big[1/\big(1+\exp[-\mbox{\boldmath$w$}^{\top}\mbox{\boldmath$x$}_{i:}]\big)\big] is a binary class label. The weight vector 𝒘 w is also drawn iid from 𝒩 ⁡ ( 0 , 1 ) {\mathcal{N}}(0,1) . For all i i we then compute representations 𝒛 i : = g ϕ ( 𝒙 i : ) \mbox{\boldmath$z$}_{i:}=g_{\phi}(\mbox{\boldmath$x$}_{i:}) that mix cross-column information (unlike JUICE). This encoder is composed of a randomized linear filter, followed by a leaky-ReLU nonlinearity, and another random linear filter. By design this encoder representation is invertible so no information is lost.
+We next compute the ICL-based prediction accuracy of a decoder f θ f_{\theta} (implemented here via TabPFNv2) at new test points { 𝒙 test , y test } \{\mbox{\boldmath$x$}_{\tiny\mbox{test}},y_{\tiny\mbox{test}}\} as additional uninformative columns are randomly inserted into 𝑿 X and the corresponding elements of 𝒙 test \mbox{\boldmath$x$}_{\tiny\mbox{test}} . We repeat the same procedure using ICL samples { 𝒁 , 𝒚 } \{\mbox{\boldmath$Z$},\mbox{\boldmath$y$}\} evaluated at corresponding test points { 𝒛 test , y test } \{\mbox{\boldmath$z$}_{\tiny\mbox{test}},y_{\tiny\mbox{test}}\} . Figure 7 ( left ) displays the results (averaged over 100 independently generated datasets for each plotted point) with and without the addition of encoder g ϕ g_{\phi} . Of particular note, when no uninformative features are added (i.e., where the x-axis is zero on the left-hand plot), the encoder mixing has no appreciable effect; however, as more distracting columns are added, a clear negative trend emerges as expected per the analysis of Section 4 .
+Meanwhile, our second testing scenario operates as a form of control. Specifically, instead of adding uninformative features to 𝑿 X as before, we now introduce additional columns upon which a revised 𝒚 y computation now explicitly depends (this is accomplished by extending the length of 𝒘 w during generation). In this regime, the core prediction problem naturally becomes harder, since the decision function becomes increasingly complex and high-dimensional. But critically, the inclusion of the cross-column encoder now has little effect as shown in Figure 7 ( right ). This is because the encoder is no longer mixing informative and non-informative features that would otherwise complicate the predictive task faced by f θ f_{\theta} .
+Figure 8 : Performance inversion of JUICE-like embeddings on homogeneous graph datasets. Each bar plot is based on results extracted from Eremeev et al. (2025b) involving GraphPFN and G2T models formed with a LimiX ICL decoding architecture.
+Appendix C Lessons from Graph Foundation Models Suggest that JUICE Is Worth the Squeeze
+In Figure 6 from Section 6 we empirically demonstrated how the relative performance between a dense parameterized RDB encoder g ϕ g_{\phi} and our g juice g_{\tiny\mbox{juice}} dramatically shifts when moving from supervised learning to ICL settings. Ideally we would like to extend these results via testing over additional RDB foundation models beyond KumoRFM, upon which Figure 6 is based. However, because no other comparable frameworks exist, it is unfortunately not possible to do so without developing our own completely new synthetic generation and pre-training pipeline specific to RDBs. Of course it remains an open question how to actually implement these modules, and well beyond the scope of this paper (recall that KumoRFM is a closed-source industry model with an undisclosed pre-training process).
+Fortunately though, there does exist work on graph foundation models that we can leverage to bootstrap an analogous comparison, allowing us to further establish that the SL-to-ICL performance inversion predicted by our analysis represents a wide-ranging phenomena. Although not a perfect surrogate, data from homogeneous attributed graphs can be viewed as isomorphic to simplified RDBs involving a single data table type.
+To this end, we now introduce a novel re-combination of performance results from the GraphPFN model ( Eremeev et al., 2025b ) , which relies on a dense parameterized encoder g ϕ g_{\phi} to compress neighborhood subgraph information, and the G2T approach ( Eremeev et al., 2025a ) , which uses a parameter-free encoder with similarities to JUICE. We loosely refer to the latter as g juice ^ g_{\tiny\widehat{\mbox{juice}}} , as neighboring node features are aggregated in a column-wise fashion; likewise for additional structured features such as node degree and PageRank score.
+What is particularly attractive about this setup is that we have access to performance results whereby the core ICL decoder is shared across all models. This restricts variation along the two dimensions we wish to probe, namely, the g juice ^ − g ϕ g_{\tiny\widehat{\mbox{juice}}}-g_{\phi} performance (difference) under supervised learning, and g juice ^ − g ϕ g_{\tiny\widehat{\mbox{juice}}}-g_{\phi} under ICL. This is possible because the GraphPFN model is pre-trained from a LimiX check-point ( Zhang et al., 2025b ) , and results from Tables 2 and 3 in Eremeev et al. (2025b) cover both ICL and fine-tuning (i.e., per-dataset supervision) cases. Meanwhile, these same tables include a LimiX version of G2T under the same conditions. Hence we pull these results and compute the respective differences stratified over each dataset and learning type as shown in Figure 8 (the number of supervised learning datasets is fewer since some cases ran OOM).
+Just as in Figure 6 , which involves completely different datasets and models, Figure 8 reveals the same clear performance inversion predicted for JUICE-based embeddings. This consistency helps solidify our conclusions and widens the applicability of underlying JUICE design principles, suggesting that even in the realm of graph foundation models, dense parameterized encoders need not be necessary, at least outside of fine-tuning or supervised training regimes. We also remark that graph foundation models relying on parameter-free graph features served to single-table foundation models (like G2T) have been proposed in multiple concurrent works ( Choi et al., 2025b ; Eremeev et al., 2025a ; Hayler et al., 2025 ) . However, in all of these cases the design is motivated by simplicity and guided by natural precursors from supervised graph learning ( Frasca et al., 2020 ; Yoo et al., 2023 ) . Unlike herein, prior work does not establish formal principles for grounding such approaches, nor explicit elucidation of the critical distinction between supervised and ICL usage thereof.
+Appendix D Arbitrating Homophily vs Heterophily Relationships
+Analogous to the feature- and meta-path-level ambiguities already discussed in the main text, there exists additional sources of uncertainty with respect to how network effects manifest in RDB predictive tasks. Depending on the task and dataset, unknown labels may be influenced by either heterophily or homophily relationships between neighboring nodes captured by distinct meta-paths. In the context of heterogeneous graphs defining RDB relations, homophily refers to the tendency of neighboring nodes of the same node type (not necessarily 1-hop neighbors) sharing the same label, while heterophily represents the converse. Differentiating such network effects is possible during supervised training on a per-dataset basis as gradients back-propagate through q θ q_{\theta} to g ϕ g_{\phi} . In this way it is possible in principle for a single architecture, albeit with dataset-specific weights, to handle varying degrees of homophily on a case by case basis. But the ICL setting is completely different. When no per-dataset label-aware gradients flow to g ϕ g_{\phi} , the encoder is blind to the importance of distinct meta-paths or the extent to which homophily vs heterophily dominates, and therefore is incapable of selectively preserving features that favor one effect over another. Hence suitable representations for both scenarios are needed prior to the ICL decoder. The JUICE philosophy suggests that these should be confined to distinct columns to the extent possible, such that subsequent ICL-based decoding is not unduly complex. Exploring this topic further represents an interesting direction for future research.
+Appendix E Experiment Details
+E.1 RDBLearn Setup
+Encoding settings.
+For instantiating JUICE, we fix the activation function σ \sigma to be linear and choose agg functions { sum , mean , mode , min , max , std } \{\mbox{sum},\mbox{mean},\mbox{mode},\min,\max,\mbox{std}\} for continuous-valued columns and { counts , mode } \{\mbox{counts},\mbox{mode}\} for categorical columns. These common/intuitive selections remain unchanged across all benchmarks, datasets, and tasks reported herein. We explicitly enable date/time features encoded as temporal differences to reduce OOD effects. However, we have chosen to simply disable all raw text, special text, and n n -gram features. Interestingly, RDBLearn still achieves SOTA foundation model performance without these, indicating that textual attributions may not be central to making good predictions on current benchmarks (certainly this is often true of tabular data more broadly). In the future though, we can of course easily include a pre-trained language encoder to featurize text analogous to any other column type to further boost prediction quality.
+ICL Decoder settings.
+We evaluate three foundation model variants for the RDBLearn ICL-based decoding step:
+1.
+TabPFNv2 (checkpoint: tabpfn-v2-classification/regression-finetuned-zk73skhh);
+2.
+TabPFN v2.5 (checkpoint: tabpfn-v2.5-classification/regression-default);
+3.
+Limix (checkpoint: LimiX-16M).
+For consistency over all benchmarks we randomly down-sample training splits to 10k. Although some ICL base models can handle up to 50k samples, and this limit is regularly increasing, we found that 10k was sufficient for good performance.
+Equipment.
+All experiments were conducted on a single NVIDIA 4080 GPU with 32GB memory.
+E.2 RelBench Testing
+We follow the official temporal splits (train, dev, test) from Robinson et al. (2024b) to facilitate direct comparison with existing published work. Moreover, results presented herein represent tuned models as reported by original authors with one exception. Griffin model results in Figure 2 were obtained from Ranjan et al. (2025) , where head-to-head alignment with the relational transformer was conducted under so-called zero-shot settings (see Appendix A for further discussion of zero-shot definitions). The Griffin paper itself ( Wang et al., 2025 ) does not include this type of experimentation, focusing more on optimizing performance through per-dataset fine-tuning.
+Benchmark leakage issues.
+As part of RelBench ( Robinson et al., 2024b ) , the rel-event dataset has been found to have temporal leakage issues ( Ranjan et al., 2025 ) . There is also reason to believe that rel-f1 may be compromised as well, given that fine-tuned models are capable of essentially perfect accuracy (99.61 AUC) despite these data being tied to sporting events (F1 racing) with non-negligible degrees of uncertainty over temporal splits. For these reasons, and following related studies elsewhere, we omit rel-event and rel-f1 from our empirical comparisons.
+Regression reproducibility.
+Although promising RelBench regression results are reported in Ranjan et al. (2025) for a reduced set of models, the MAE metric is not used (e.g., as was used previously by KumoRFM). Moreover, for most datasets we were not able to reproduce the reported R 2 R^{2} metric results even for the simple baseline ‘‘entity mean’’ estimator (and at the time of this writing, public code is not available for doing so). 6 6
+6
+We remark that the entity mean represents a critical signal for the RT model as shown in ablations from Ranjan et al. (2025) . The two exceptions are the rel-trial dataset tasks, namely, site-success and study-adverse. On these two datasets RDBLearn outperforms both Griffin and RT as shown in Figure 9 .
+Figure 9 : Regression results ( R 2 R^{2} scores, higher is better) on rel-trial tasks from RelBench.
+E.3 4DBInfer Testing
+Following Wang et al. (2024) , we adopt baselines formed from widely-used heterogeneous GNN architectures, including R-SAGE or R-GCN ( Schlichtkrull et al., 2018 ) , R-GAT ( Busbridge et al., 2019 ) , HGT , ( Hu et al., 2020 ) , and R-PNA ( Corso et al., 2020 ) . Each model type is then independently paired with each of two graph extraction techniques. The first is R2N (row-to-node), initially introduced by Cvitkovic (2020) and discussed in Section 2.1 . The second is R2N/E (row-to-node/edge) as detailed in Gan et al. (2024) . The importance of exploring multiple graphs is now well-established ( Choi et al., 2025a ) . Collectively, this results in a total of 8 baselines as listed in Figure 5 . Other more traditional baselines reported in Wang et al. (2024) have generally worse accuracy than these.
+For specific datasets, we focus on 5 of the 4DBInfer classification tasks. These include click-through-rate prediction on Outbrain ( mjkistler et al., 2016 ) , user churn on Amazon Book Reviews ( Ni et al., 2019 ) , user churn and post popularity prediction on StackExchange, 7 7
+7
+https://data.stackexchange.com/ and conversion prediction on RetailRocket ( Zykov et al., 2022 ) . For reference, the raw results across all baselines and tasks are shown in Figure 10 .
+Figure 10 : Raw AUC values for 4DBInfer classification tasks used in producing Figure 5 .
+Timing considerations.
+For many baselines, direct timing comparisons are elusive because of different computing environments and other confounds. That being said, we have confirmed that a single training run involving 4DBInfer baseline models described above operates on the scale of 10 3 − 10 4 10^{3}-10^{4} seconds. Combined with the 100-fold hyperparameter sweep (e.g., covering number of layers, hidden dimension, learning rate, etc.) needed to achieve reported results, the overall budget enters the 10 5 − 10 6 10^{5}-10^{6} second range. Meanwhile on comparable machines (a single NVIDIA 4080 GPU with 32GB memory) total RDBLearn latency with the same benchmarks is on the order of 10 2 10^{2} seconds. This latency can be improved with further optimizations, but doing so lies outside the scope of the present work.
+Appendix F Technical Proofs
+Proposition F.1 .
+If σ \sigma and agg \operatorname{agg} are positively homogeneous functions, we initialize embeddings using ( 4 ), and { w 0 ( h ) , w ( h ) } ∈ ℝ + \{w_{0}^{(h)},w^{(h)}\}\in\mathbb{R}_{+} ∀ h \forall h , then without loss of generality ( 5 ) can be reparameterized with no internal weights.
+Proof: We begin by examining two special cases and assuming that σ \sigma and agg are positively homogeneous of degree 1. First, if μ v ( h ) = 0 \mu_{v}^{(h)}=0 , then the node v v update from ( 5 ) is equivalent to
+μ v ( h + 1 ) = σ ⁡ ( agg ​ [ { w ( h ) ​ μ u ( h ) } u ∈ 𝒩 v ( h ) ] ) = w ( h ) ​ σ ​ ( agg ​ [ { μ u ( h ) } u ∈ 𝒩 v ( h ) ] ) \mu_{v}^{(h+1)}=\sigma\left(\mbox{agg}\left[\left\{w^{(h)}\mu_{u}^{(h)}\right\}_{u\in{\mathcal{N}}^{(h)}_{v}}\right]\right)=w^{(h)}\sigma\left(\mbox{agg}\left[\left\{\mu_{u}^{(h)}\right\}_{u\in{\mathcal{N}}^{(h)}_{v}}\right]\right)
+(8)
+since both σ \sigma and agg are positively homogeneous and w ( h ) ≥ 0 w^{(h)}\geq 0 by assumption. Alternatively, if instead 𝒩 v ( h ) = ∅ {\mathcal{N}}^{(h)}_{v}=\emptyset , meaning node v v has no neighbors at point h h on the meta-path, then
+μ v ( h + 1 ) = σ ⁡ ( w 0 ( h ) ​ μ v ( h ) ) = w 0 ( h ) ​ σ ​ ( μ v ( h ) ) . \mu_{v}^{(h+1)}=\sigma\left(w^{(h)}_{0}\mu_{v}^{(h)}\right)=w^{(h)}_{0}\sigma\left(\mu_{v}^{(h)}\right).
+(9)
+By definition of any H H -hop meta-path and our corresponding meta-path GNN, we execute ( 5 ) H H times. Combined with the proposed initialization strategy given by ( 4 ) and assumption of no loops along meta-paths mentioned below ( 5 ), every propagation step that results reduces to either ( 8 ) or ( 9 ). To see this, note that at any step h h along a meta-path, by definition 𝒩 v ( h ) {\mathcal{N}}_{v}^{(h)} only depends on a single active edge-type for all v v , so any given node can only have neighbors once along a meta-path; elsewhere the update reduces to ( 9 ). And for a node having neighbors at a specific step along a meta-path, the corresponding node embedding prior to seeing neighbors will be zero by virtue of the initialization scheme. In this way, when neighbors do occur, ( 8 ) prevails. Hence the final embeddings produced at each node associated with rows of 𝑿 X will be compositions of ( 8 ) and ( 9 ). Given that a composition of positively homogeneous functions is also positively homogeneous, all weights can be pulled out in front without loss of generality. ■ \blacksquare
+Proposition F.2 .
+Assume π : ℝ κ → ℝ \pi:\mathbb{R}^{\kappa}\rightarrow\mathbb{R} is affine, with weights in general position. Then for any n > κ n>\kappa , there exists a fixed ICL decoder f θ f_{\theta} such that
+| y test − f θ ( { 𝒙 i : , y i } i = 1 n , 𝒙 test ) | = 0 \big|y_{\tiny\mbox{test}}-f_{\theta}\big(\{\mbox{\boldmath$x$}_{i:},y_{i}\}_{i=1}^{n},\mbox{\boldmath$x$}_{\tiny\mbox{test}}\big)\big|=0
+(10)
+with probability one over datasets 𝒟 ⁡ ( π ) {\mathcal{D}}(\pi) generated according to Definition 4.1 . Meanwhile, for any r < d r<d , and any possible fixed encoder-decoder pair { g ϕ , f θ ′ } \{g_{\phi},f^{\prime}_{\theta}\} , we have
+| y test − f θ ′ ( { 𝒛 i : , y i } i = 1 n , 𝒛 test ) | > 0 , 𝒛 = g ϕ ( 𝒙 ) ∈ ℝ r \big|y_{\tiny\mbox{test}}-f^{\prime}_{\theta}\big(\{\mbox{\boldmath$z$}_{i:},y_{i}\}_{i=1}^{n},\mbox{\boldmath$z$}_{\tiny\mbox{test}}\big)\big|>0,~~~\mbox{\boldmath$z$}=g_{\phi}(\mbox{\boldmath$x$})\in\mathbb{R}^{r}
+(11)
+with probability at least 1 − ( r k ) / ( d k ) 1-\tbinom{r}{k}/\tbinom{d}{k} over the same data generative distribution.
+Proof: We split the proof into two parts.
+Establishing ( 10 ).
+By assumption, the stacked ICL samples are generated as 𝒚 = 𝑿 𝒘 + b = 𝑿 ~ ​ 𝒘 ~ + b \mbox{\boldmath$y$}=\mbox{\boldmath$X$}\mbox{\boldmath$w$}+b=\widetilde{\mbox{\boldmath$X$}}\widetilde{\mbox{\boldmath$w$}}+b , where 𝒘 ~ ∈ ℝ κ \widetilde{\mbox{\boldmath$w$}}\in\mathbb{R}^{\kappa} and b ∈ ℝ b\in\mathbb{R} are affine model parameters associated with π \pi . Meanwhile 𝒘 w is simply 𝒘 ~ \widetilde{\mbox{\boldmath$w$}} padded with d − κ d-\kappa zeros. From here, we first assume the κ < n ≤ d \kappa<n\leq d . Let 𝑿 ¯ n \bar{\mbox{\boldmath$X$}}_{n} denote any set of n n columns selected from 𝑿 X . Per the sampling process used to generate 𝑿 X , it follows that rank ​ [ 𝑿 ¯ n ] = n \mbox{rank}[\bar{\mbox{\boldmath$X$}}_{n}]=n almost surely for any such 𝑿 ¯ n \bar{\mbox{\boldmath$X$}}_{n} ; for reference, this is equivalent to the condition spark ​ [ 𝑿 ] = n + 1 \mbox{spark}[\mbox{\boldmath$X$}]=n+1 almost surely ( Donoho and Elad, 2003 ) . Note that if it were that rank ​ [ 𝑿 ¯ n ] < n \mbox{rank}[\bar{\mbox{\boldmath$X$}}_{n}]<n with non-negligible probability, then it must be that p ⁡ ( 𝑿 ) p(\mbox{\boldmath$X$}) has unbounded density on a subspace within ℝ d \mathbb{R}^{d} , which is disallowed by construction.
+Then, by extension of Lemma 2 from Wipf and Rao (2004) , it follows that 𝒚 − b = 𝑿 𝒘 \mbox{\boldmath$y$}-b=\mbox{\boldmath$X$}\mbox{\boldmath$w$} is the unique equality involving a sparse weight vector satisfying ‖ 𝒘 ‖ 0 < n \|\mbox{\boldmath$w$}\|_{0}<n . Hence the decoder can check each combination of n n columns of 𝑿 X extracted from ICL samples to see if a sparse 𝒘 w vector allows for reconstructing observable labels 𝒚 y (note that there are more efficient ways to obtain 𝒘 w with additional assumptions; however, this is not necessary here for the proof). As any vector 𝒘 w so-obtained is unique and aligned with the ground-truth process, the model can then predict y test y_{\tiny\mbox{test}} label at any test point 𝒙 test \mbox{\boldmath$x$}_{\tiny\mbox{test}} .
+Lastly, if n ≥ d n\geq d , then rank ​ [ 𝑿 ] = d \mbox{rank}[\mbox{\boldmath$X$}]=d . Hence the ground-truth generative weights satisfy 𝒘 = 𝑿 † ​ 𝒚 \mbox{\boldmath$w$}=\mbox{\boldmath$X$}^{{\dagger}}\mbox{\boldmath$y$} such that again, perfect estimation of new test points is possible as before.
+Establishing ( 11 ).
+The distribution of 𝑿 X is the same for each generated dataset (only the distribution of 𝒚 y changes by design). With an r r -dimensional output, q θ q_{\theta} can reconstruct at most r r -dimensions of 𝑿 X . Per the assumed generative process, the proportion of datasets whereby all κ \kappa columns fall within any group of r r fixed columns of 𝑿 X is ( r k ) / ( d k ) \tbinom{r}{k}/\tbinom{d}{k} . Hence the encoder can achieve zero estimation error recovering in ( r k ) / ( d k ) \tbinom{r}{k}/\tbinom{d}{k} proportion of cases by y test y_{\tiny\mbox{test}} by reconstructing any set of r r columns of 𝑿 X , leaving a failure ratio of 1 − ( r k ) / ( d k ) 1-\tbinom{r}{k}/\tbinom{d}{k} . But can we do any better than this?
+Note that it is not possible to perfectly reconstruct any one coordinate of a given 𝒙 x from the others, i.e., there does not exist a function ψ : ℝ d − 1 → ℝ \psi:\mathbb{R}^{d-1}\rightarrow\mathbb{R} such that x j = ψ ⁡ ( 𝒙 ∖ j ) x_{j}=\psi(\mbox{\boldmath$x$}_{\setminus j}) almost surely, where 𝒙 ∖ j \mbox{\boldmath$x$}_{\setminus j} denotes the elements of 𝒙 x excluding the j j -th coordinate. (If such a function existed, then the density p ⁡ ( 𝒙 ) p(\mbox{\boldmath$x$}) would be unbounded.) Consequently, to achieve zero estimation error at test points, the encoder must be capable of reconstructing all dimensions of 𝒙 x associated with nonzero elements in 𝒘 w . And since the encoder is required to stay fixed for all datasets, at best it can reconstruct r r columns, and so the success ratio from above cannot be improved upon. ■ \blacksquare
+Proposition F.3 .
+Let ℱ {\mathcal{F}} denote the set of Lipschitz continuous functions on [ 0 , 1 ] κ [0,1]^{\kappa} . Then there exists an ICL decoder f θ f_{\theta} such that (excluding smaller-order terms) we have
+sup π ∈ ℱ 𝔼 𝒟 ⁡ ( π ) ∼ p [ y test − f θ ( { 𝒙 i : , y i } i = 1 n , 𝒙 test ) ] 2 = O ( n − 2 / κ ) , \sup_{\pi\in{\mathcal{F}}}\mathbb{E}_{{\mathcal{D}}(\pi)\sim p}\Big[y_{\tiny\mbox{test}}-f_{\theta}\big(\{\mbox{\boldmath$x$}_{i:},y_{i}\}_{i=1}^{n},\mbox{\boldmath$x$}_{\tiny\mbox{test}}\big)\Big]^{2}=O\left(n^{-2/\kappa}\right),
+(12)
+where the data distribution p p is given by Definition 4.1 with 𝒳 = [ 0 , 1 ] {\mathcal{X}}=[0,1] . In contrast, with κ = 1 \kappa=1 and y = x ~ y=\widetilde{x} , we have
+inf f θ sup g ϕ ∈ ℬ 𝔼 𝒟 ⁡ ( π ) ∼ p [ y test − f θ ( { 𝒛 i : , y i } i = 1 n , 𝒛 test ) ] 2 = Θ ( n − 2 / d ) , \inf_{f_{\theta}}\sup_{g_{\phi}\in{\mathcal{B}}}\mathbb{E}_{{\mathcal{D}}(\pi)\sim p}\Big[y_{\tiny\mbox{test}}-f_{\theta}\big(\{\mbox{\boldmath$z$}_{i:},y_{i}\}_{i=1}^{n},\mbox{\boldmath$z$}_{\tiny\mbox{test}}\big)\Big]^{2}=\Theta\left(n^{-2/d}\right),
+(13)
+where 𝐳 = g ϕ ​ ( 𝐱 ) \mbox{\boldmath$z$}=g_{\phi}(\mbox{\boldmath$x$}) represents an encoder selected from the set of bi-Lipschitz bijections ℬ {\mathcal{B}} mapping [ 0 , 1 ] d → [ 0 , 1 ] d [0,1]^{d}\rightarrow[0,1]^{d} .
+Proof: The proof is segmented into two parts as follows.
+Establishing ( 12 ).
+This bound follows by piecing together well-known results from learning theory. We begin by splitting into equal halves a given set of training samples { 𝒙 i : , y i } i = 1 n \{\mbox{\boldmath$x$}_{i:},y_{i}\}_{i=1}^{n} from some 𝒟 ⁡ ( π ) {\mathcal{D}}(\pi) with S S fixed. The high-level strategy is to define a set of nearest-neighbor estimators with the first half, and then select from among these estimators by enlisting the second half. Existing sample complexity results can then be applied to produce the final result.
+To this end, for each subset of κ \kappa elements from d d total input feature dimensions, we define the 1-nearest-neighbor estimator
+f S ′ ( 𝒙 ) = y i ∗ ​ ( 𝒙 , S ′ ) , with i ∗ ( 𝒙 , S ′ ) = arg min i < ⌈ n / 2 ⌉ ∥ 𝒙 S ′ − ( 𝒙 i : ) S ′ ∥ f_{S^{\prime}}(\mbox{\boldmath$x$})=y_{i^{*}(\mbox{\boldmath$x$},S^{\prime})},~~~\mbox{with}~~i^{*}(\mbox{\boldmath$x$},S^{\prime})=\arg\min_{i<\lceil n/2\rceil}\Big\|\mbox{\boldmath$x$}_{S^{\prime}}-(\mbox{\boldmath$x$}_{i:})_{S^{\prime}}\Big\|
+(14)
+and subscript S ′ S^{\prime} denoting that only elements of any 𝒙 x within this subset are included. We then form a selection function f θ ​ ( 𝒙 ) = f S ∗ ​ ( 𝒙 ) f_{\theta}(\mbox{\boldmath$x$})=f_{S^{*}}(\mbox{\boldmath$x$}) where
+S ∗ = arg min S ′ ∈ ( [ d ] κ ) [ ∑ i = ⌈ n / 2 ⌉ n ( y i − f S ′ ( 𝒙 i : ) ) 2 ] . S^{*}=\arg\min_{S^{\prime}\in\tbinom{[d]}{\kappa}}\left[\sum_{i=\lceil n/2\rceil}^{n}\Big(y_{i}-f_{S^{\prime}}(\mbox{\boldmath$x$}_{i:})\Big)^{2}\right].
+(15)
+Regardless of how each constituent f S ′ f_{S^{\prime}} was originally constructed, the subsequent selector based on ( 15 ) follows the oracle inequality
+𝔼 [ ( y test − f S ∗ ( 𝒙 test ) ) 2 | S , { 𝒙 i : , y i } i < ⌈ n / 2 ⌉ ] \displaystyle\mathbb{E}\left[\Big(y_{\tiny\mbox{test}}-f_{S^{*}}(\mbox{\boldmath$x$}_{\tiny\mbox{test}})\Big)^{2}\Big|S,\{\mbox{\boldmath$x$}_{i:},y_{i}\}_{i<\lceil n/2\rceil}\right]
+≤ \displaystyle\leq
+min S ′ 𝔼 [ ( y test − f S ′ ( 𝒙 test ) ) 2 | S , { 𝒙 i : , y i } i < ⌈ n / 2 ⌉ ] + O ( log ⁡ ( d κ ) n ) \displaystyle\min_{S^{\prime}}\mathbb{E}\left[\Big(y_{\tiny\mbox{test}}-f_{S^{\prime}}(\mbox{\boldmath$x$}_{\tiny\mbox{test}})\Big)^{2}\Big|S,\{\mbox{\boldmath$x$}_{i:},y_{i}\}_{i<\lceil n/2\rceil}\right]+O\left(\sqrt{\frac{\log\tbinom{d}{\kappa}}{n}}\right)
+(16)
+≤ \displaystyle\leq
+𝔼 [ ( y test − f S ( 𝒙 test ) ) 2 | S , { 𝒙 i : , y i } i < ⌈ n / 2 ⌉ ] + O ( log ⁡ ( d κ ) n ) , \displaystyle\mathbb{E}\left[\Big(y_{\tiny\mbox{test}}-f_{S}(\mbox{\boldmath$x$}_{\tiny\mbox{test}})\Big)^{2}\Big|S,\{\mbox{\boldmath$x$}_{i:},y_{i}\}_{i<\lceil n/2\rceil}\right]+O\left(\sqrt{\frac{\log\tbinom{d}{\kappa}}{n}}\right),
+where the expectation is over { 𝒙 test , y test } \{\mbox{\boldmath$x$}_{\tiny\mbox{test}},y_{\tiny\mbox{test}}\} and { 𝒙 i : , y i } i = ⌈ n / 2 ⌉ n \{\mbox{\boldmath$x$}_{i:},y_{i}\}_{i=\lceil n/2\rceil}^{n} following dataset generative process from Definition 4.1 but for now with S S fixed. (i.e., the samples used in ( 14 ) are also treated as fixed here). See for example Section 5.4 of Hajek and Raginsky (2021) for that standard and Hoeffding and union bounding process used to establish the first inequality in ( 16 ); the second inequality trivially follows from removing the min operator.
+We next need to bound the r.h.s. expectation within ( 16 ). Adopting i ∗ i^{*} as shorthand for i ∗ ​ ( 𝒙 test , S ) i^{*}(\mbox{\boldmath$x$}_{\tiny\mbox{test}},S) , we have
+| y test − f S ​ ( 𝒙 test ) | = | y test − y i ∗ | ≤ L ​ ‖ ( 𝒙 test ) S − ( 𝒙 i ∗ ) S ‖ , \big|y_{\tiny\mbox{test}}-f_{S}(\mbox{\boldmath$x$}_{\tiny\mbox{test}})\big|=\big|y_{\tiny\mbox{test}}-y_{i^{*}}\big|\leq L\big\|(\mbox{\boldmath$x$}_{\tiny\mbox{test}})_{S}-(\mbox{\boldmath$x$}_{i^{*}})_{S}\big\|,
+(17)
+which follows from the assumed Lipschitz continuity of π \pi , recalling that y = π ⁡ ( 𝒙 S ) y=\pi\big(\mbox{\boldmath$x$}_{S}\big) by definition. We next square both sides and take an expectation over the samples { 𝒙 i : , y i } i < ⌈ n / 2 ⌉ \{\mbox{\boldmath$x$}_{i:},y_{i}\}_{i<\lceil n/2\rceil} used in ( 14 ) as well as 𝒙 test \mbox{\boldmath$x$}_{\tiny\mbox{test}} . These operations lead to
+𝔼 [ ( y test − f S ( 𝒙 test ) ) 2 | S ] ≤ L 2 𝔼 [ ∥ ( 𝒙 test ) S − ( 𝒙 i ∗ ) S ∥ 2 | S ] ≤ O ( n − 2 / κ ) , \mathbb{E}\left[\big(y_{\tiny\mbox{test}}-f_{S}(\mbox{\boldmath$x$}_{\tiny\mbox{test}})\big)^{2}\big|S\right]\leq L^{2}\mathbb{E}\left[\big\|(\mbox{\boldmath$x$}_{\tiny\mbox{test}})_{S}-(\mbox{\boldmath$x$}_{i^{*}})_{S}\big\|^{2}\big|S\right]\leq O\left(n^{-2/\kappa}\right),
+(18)
+where the right-most inequality stems from standard properties of nearest neighbors (e.g., see Theorem 2.1 in Biau and Devroye (2015) ). Hence we can insert ( 18 ) into ( 16 ) after taking the expectation of both sides of the former w.r.t. { 𝒙 i : , y i } i < ⌈ n / 2 ⌉ \{\mbox{\boldmath$x$}_{i:},y_{i}\}_{i<\lceil n/2\rceil} . And lastly, because the resulting bound also holds for any given S S , it also hold for all S ∈ ( [ d ] κ ) S\in\tbinom{[d]}{\kappa} . Hence we arrive at
+𝔼 [ ( y test − f S ∗ ( 𝒙 test ) ) 2 ] ≤ O ( n − 2 / κ ) + O ( log ⁡ ( d κ ) n ) , \mathbb{E}\left[\big(y_{\tiny\mbox{test}}-f_{S^{*}}(\mbox{\boldmath$x$}_{\tiny\mbox{test}})\big)^{2}\right]\leq O\left(n^{-2/\kappa}\right)+O\left(\sqrt{\frac{\log\tbinom{d}{\kappa}}{n}}\right),
+(19)
+with expectation over the entire 𝒟 ⁡ ( π ) {\mathcal{D}}(\pi) generative process. This expression is dominated by the first term for κ > 4 \kappa>4 as n n becomes large, completing the proof.
+Establishing ( 13 ).
+Per the specified setup, we have y = x ~ = [ g ϕ − 1 ​ ( 𝒛 ) ] i y=\widetilde{x}=[g_{\phi}^{-1}(\mbox{\boldmath$z$})]_{i} for some coordinate i i , where 𝒛 = g ϕ ​ ( 𝒙 ) \mbox{\boldmath$z$}=g_{\phi}(\mbox{\boldmath$x$}) . For now we will assume that i = 1 i=1 . Because g ϕ g_{\phi} is assumed to be a bi-Lipschitz, g ϕ − 1 g_{\phi}^{-1} is also Lipschitz over all of its coordinates, including the first. Therefore h ⁡ ( 𝒛 ) = [ g ϕ − 1 ​ ( 𝒛 ) ] 1 h(\mbox{\boldmath$z$})=[g_{\phi}^{-1}(\mbox{\boldmath$z$})]_{1} is a Lipschitz continuous function over domain [ 0 , 1 ] d [0,1]^{d} . Additionally, because p ⁡ ( 𝒙 ) ≥ p min p(\mbox{\boldmath$x$})\geq p_{\min} , if follows that p ⁡ ( 𝒛 ) ≥ p min / L d p(\mbox{\boldmath$z$})\geq p_{\min}/L^{d} , where L L is the upper Lipschitz constant associated with g g . From here, it has already been established that the minimax squared estimation error for such an h h , with input distribution bounded away from zero almost surely on a compact domain, is Θ ( n − 2 / d ) \Theta\left(n^{-2/d}\right) . Additionally, searching for an unknown i i incurs a modest additional cost such that the overall rate is the same. ■ \blacksquare
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

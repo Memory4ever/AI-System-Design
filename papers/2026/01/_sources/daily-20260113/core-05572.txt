@@ -1,0 +1,378 @@
+URL https://arxiv.org/html/2601.05572v1; sections S3 to S7 excluded; result tables omitted; fetched 2026-10-03
+
+
+
+ 3 Method 
+
+ 
+
+We aim to equip a UMM with generalization ability to preserve visual consistency across multiple reference images. Section  3.1 briefly reviews the hybrid UMM architecture based on MLLM-Diffusion and widely adopted multimodal RoPE  [ 23 , 62 ] . Section  3.2 then describes how to enable the UMM distinguishes tokens from different images to enable correct cross-image reasoning and referencing (e.g., adding an object from image 1 to image 2). 
+ 
+
+
+
+ 3.1 Multi-Image Visual Token Encoding in UMM 
+
+ 
+
+Generally, a hybrid UMM  [ 69 , 65 ] combines an MLLM  [ 1 ] with a diffusion transformer (e.g, MM-DiT)  [ 63 , 14 , 32 ] , and thus uses two image encoders. A semantic encoder (e.g., SigLip  [ 75 ] ) provides image semantics to the MLLM, while a visual encoder (e.g., VAE) extracts pixel-level features that govern visual consistency between the multiple input images and the edited output. As shown in Figure  1 , before entering MM-DiT, tokens from different images are reshaped and concatenated along the height and width dimensions (Eq.  1 ). Let v_{i}^{j}\in\mathbb{R}^{1\times HW\times C} denote token i from image j , where HW flattens spatial dimensions and C is the channel size. This concatenation does not explicitly mark image identity; instead, the model relies on RoPE to capture relative token distances and implicitly separate tokens from different images, as discussed next. 
+ 
+
+ 
+
+ 
+ [\mathrm{~}v_{1}^{1},v_{2}^{1},v_{3}^{1},v_{4}^{1},\ldots,v_{1}^{2},v_{2}^{2},v_{3}^{2},v_{4}^{2},\ldots,v_{1}^{j},v_{2}^{j},v_{3}^{j},\ldots] 
+ 
+ (1) 
+ 
+ 
+ 
+
+ Multimodal Rotary Position Embedding . The multimodal RoPE is a three-dimensional multimodal system, covering the frame, height, and width dimensions  [ 1 ] . To encode the local spatial layouts and global inter-image relationships of multiple images and text, each input image (or frame) I_{j} is first tokenized into a 3D grid of shape (F_{j},H_{j},W_{j}) , where F_{j} is the frame count (typically 1 for static images). The RoPE is calculated based on the image shapes. All image shapes are concatenated along the frame axis, forming a unified sequence of tokens: 
+ 
+
+ 
+
+ 
+ \mathcal{V}=[V_{1},V_{2},\ldots,V_{N}],\quad V_{j}\in\mathbb{R}^{F_{j}\times H_{j}\times W_{j}} 
+ 
+ (2) 
+ 
+ 
+ 
+
+This effectively treats multiple images as a pseudo-video  [ 62 , 69 ] , assigning each image a unique frame index while preserving its 2D spatial layout. For each image I_{j} with shape (F_{j},H_{j},W_{j}) , the model constructs frequency tables for these axes: 
+ 
+
+ 
+
+ 
+ \mathrm{pos_{freqs},neg_{freqs}}=f_{\mathrm{rope}}(\mathrm{axes_{dim}}=[F,H,W]) 
+ 
+ (3) 
+ 
+ 
+ 
+
+After getting the frequency table, the frequency of each axis for an image token is calculated by the frame index j and spatial location h and w , and the frequency of this token is the concatenation of these three kinds of frequencies in Eq.  4 , and the final multimodal RoPE of each token x_{j,h,w} is computed in Eq.  5 
+ 
+
+ 
+
+ 
+ f(j,h,w)=[\mathrm{~}f_{\mathrm{frame}}(j),f_{\mathrm{height}}(h),f_{\mathrm{width}}(w)\mathrm{~}] 
+ 
+ (4) 
+ 
+ 
+
+ 
+
+ 
+ \mathrm{RoPE}(x_{j,h,w})=x_{\mathrm{even}}\cos(f(j,h,w))+x_{\mathrm{odd}}\sin(f(j,h,w)) 
+ 
+ (5) 
+ 
+
+where x_{\mathrm{even}} are the even-indexed dimensions of channel while x_{\mathrm{odd}} are odd-indexed dimensions of channel. With this multimodal RoPE strategy, the model can capture relative angular distances between tokens across all three axes by \Delta=(j_{2}-j_{1},\mathrm{~}h_{2}-h_{1},\mathrm{~}w_{2}-w_{1}) , which aims to represent both local spatial structures between 2D patches and global inter-image ordering across different images. 
+ 
+ 
+
+ Limitations . Although multimodal RoPE aims to capture both intra-image spatial and inter-image ordering distance, we empirically find two deficiencies of this mechanism: First, it mostly captures the relative position information but lacks the notion of absolute image identity. Consequently, this makes the model deficient in inferring explicit image boundaries or stable reference identities, especially when reasoning about cross-image composition. Thus, the model may confuse the referenced image in the text instruction and output a reference image as shown previously in Figure  1 . Second, the multimodal RoPE does not generalize well when the number of input images exceeds the number of images in the training data, which does not benefit the scalability and generalization. 
+ 
+ 
+
+
+
+ 3.2 Generalized Absolute Image Indexing 
+
+ 
+
+ Motivation . Since the standard multimodal RoPE models relative spatial relationships well but do not effectively encode absolute image index, nor do they clearly distinguish which image a token belongs to, we aim to augment RoPE with explicit identity and boundary cues to ensure that the Transformer distinguishes between different image contexts while retaining spatial precision. We present the following strategies to achieve the generalized and extrapolatable image index encoding. 
+ 
+ 
+
+ Learnable Visual Separator Token . We introduce a learnable visual separator token }\mathrm{~}\in\mathbb{R}^{1\times d\times C} , inserted between the visual token sequences of consecutive images as follows, 
+ 
+
+ 
+
+ 
+ [v_{1}^{1},v_{2}^{1},v_{3}^{1}, }\mathrm{~},v_{1}^{2},v_{2}^{2},v_{3}^{2}, }\mathrm{~},\ldots] 
+ 
+ (6) 
+ 
+ 
+ 
+
+Similarly to Eq.  1 , the whole sequence is flattened, and the token is reshaped. d is the width of the separator, which determines the number of learnable parameters. Note that we only insert this separator among the image tokens while the text tokens are unchanged. For implementation at the code level, we include the shared learnable token as part of the DiT, which is shared across all images. During training, it is updated through backpropagation with the standard flow matching loss. 
+ 
+ 
+
+The shared token }\mathrm{~} is learnable, acting as a soft boundary that separates visual token groups to prevent feature mixing, and provides transition semantics between consecutive images. Unlike fixed delimiters, this learnable separator dynamically encodes the degree of interaction between adjacent image segments—enabling the model to modulate cross-image attention during multi-image editing and composition. 
+ 
+ 
+
+ Generalized Sinusoidal Index Embedding . To complement the separator token, we assign every image a continuous sinusoidal index embedding E_{i} that provides explicit image identity while allowing extrapolation to unseen image counts. For each image index j\in[1,N] , we compute a normalized index \tilde{j}=j/N and define the sinusoidal image index embedding with the sinusoidal base \tau : 
+ 
+
+ 
+
+ 
+ 
+ \displaystyle E_{j}^{(2k)}=\sin(\tilde{j}/\tau^{2k/C}) 
+ 
+ (7) 
+ 
+
+ 
+ 
+ \displaystyle E_{j}^{(2k+1)}=\cos(\tilde{j}/\tau^{2k/C}) 
+ 
+ (8) 
+ 
+
+ 
+ 
+ \displaystyle k=0,\ldots,C/2-1 
+ 
+ (9) 
+ 
+
+All visual tokens from the same image share the same embedding: 
+ 
+
+ 
+
+ 
+ \hat{v}_{i}^{j}=v_{i}^{j}+E_{j} 
+ 
+ (10) 
+ 
+
+Thus, E_{j} encodes the absolute identity of image j , complementing multimodal RoPE’s relative encoding of (j,h,w) coordinates. Because it is sinusoidal and non-learnable, this embedding smoothly extrapolates to arbitrary numbers of input images (e.g., training with 2–4 images, testing with 5–6). 
+ 
+ 
+
+ Unified Transformer Encoding . The final multimodal sequence fed to the MM-DiT is denoted in Eq.  11 . In this sequence, the multimodal RoPE encodes the relative spatial relationships of visual tokens. The sinusoidal index embedding provides the absolute image index embedding. The separator tokens introduce cross-image boundaries and transitions. Together, these establish a hierarchical positional system that models the local spatial structure, global image identity, and the inter-image segmentation. 
+ 
+
+ 
+
+ 
+ [\hat{v}_{1}^{1},\hat{v}_{2}^{1},\hat{v}_{3}^{1}, }\mathrm{~},\hat{v}_{1}^{2},\hat{v}_{2}^{2},\hat{v}_{3}^{2}, }\mathrm{~},\ldots] 
+ 
+ (11) 
+ 
+ 
+
+ 
+ Figure 2 : Task distribution and editing examples of the MMIE-Bench . The benchmark consists of six different editing tasks involving add, human, replace, style, reasoning, and mixed editing. These tasks also cover different objects, scenarios, and numbers of input images for comprehensive evaluation. All human portraits are from PIE and Echo-4o  [ 27 , 73 ] . 
+ 
+ 
+ 
+
+
+
+ 4 Multi-image Editing Data Creation 
+
+ 
+
+A central challenge in building a multi-image editing dataset lies in ensuring the visual fidelity of the edited results. Instead of synthesizing new targets through imperfect composition or blending, we adopt a reverse, or inverse construction strategy : we treat a naturally captured real image as the final edited result, and derive its corresponding input images backward. This inversion ensures that every edited result is photorealistic and contextually coherent, while the input images and textual instructions are systematically generated to simulate realistic multi-image editing. 
+ 
+
+
+
+ 4.1 Source Data and Consistent Pair Mining 
+
+ 
+
+For task related to object insertion and replacement, we start from two large-scale datasets, Subject200K  [ 50 ] and UNO1M  [ 67 ] , each providing paired images depicting the same object under different environments. To guarantee subject alignment, we use an MLLM (e.g., Qwen2.5-VL 72B) to compute subject consistency scores for all candidate pairs and retain only high-consistency samples. This filtering removes ambiguous or cross-category pairs, yielding a clean and diverse set of semantically aligned object pairs suitable for editing simulation. For tasks related to style transfer, we select the Omnistyle-150k  [ 58 ] , which consists of triplets of content, style reference, and stylized images as the source data. Similarly, we process and filter image triplets in which the stylized image exhibits good structural consistency with the content image and a consistent style with the reference image. 
+ 
+ 
+
+
+
+ 4.2 Inverse Editing Synthesis 
+
+ 
+
+We present the multi-image editing dataset and benchmark. For each consistent pair, we select the image with a richer and more complete background as the ground-truth edited result, and then derive the input image(s) by synthetically removing or replacing its key object. We leverage the Qwen-Edit  [ 62 ] to edit the single image. This reverse formulation naturally produces two editing types. For the addition tasks, we remove the shared subject from one image and use the complete image as the edited target, and use the other image as the reference for the deleted object. For the replacement task, we first use GPT-4o and the object list of the large-scale instance segmentation dataset to get the common objects to be replaced with. In this way, the constructed data can cover most daily used objects and benefit the generalization ability. Then, we replace the subject in one image with a randomly chosen object in our object list. Then, similarly, we use the other image as the reference for the replacement, and use the original first image as the edited target. For the style transfer task, since the dataset already consists of triplets, we only construct the editing instruction. In summary, this backward process ensures that all edited results are visually valid, real-world images rather than composite renderings. Please refer to the supplementary for details of the dataset. 
+ 
+ 
+
+
+
+ 4.3 Multimodal Multi-Image Editing Benchmark 
+
+ 
+
+To systematically evaluate the capabilities of multi-image editing models, we introduce the Multimodal Multi-Image Editing Benchmark (MMIE-Bench), a diverse and balanced testbed spanning six task categories: Addition (Add), Replacement (Replace), Style Transfer (Style), Human Editing (Human), Reasoning, and Mixed Add–Replace–Style (Mixed).
+The benchmark contains 274 curated examples, each consisting of multiple input images, a textual editing instruction, and a final edited image. The number of input images varies from two to five. Figure  2 illustrates the task distribution across the six categories. MMIE-Bench captures progressively complex editing scenarios: 
+ 
+ • 
+ 
+
+Add / Replace / Style — focus on localized object or appearance transformations, and global style transfer. 
+ 
+ • 
+ 
+
+Human — emphasizes pose, expression, and clothing transfer across human or avatar subjects. 
+ 
+ • 
+ 
+
+Reasoning — requires abstract or in-context transformations beyond explicit instruction. 
+ 
+ • 
+ 
+
+Mixed — combines addition, replacement, and style cues in 3–4 image settings to test compositional reasoning. 
+ 
+ 
+ 
+ 
+
+We use the MLLM to evaluate models using three complementary dimensions:
+1. Semantic Consistency: faithfulness to the instruction semantics. 2. Visual Fidelity: realism and absence of artifacts. 3. Multi-Image Integration: spatial and contextual coherence across sources. Each score ranges from 1–5 and is averaged to yield the final benchmark metric. MMIE-Bench thus provides a unified and fine-grained evaluation framework for scalable multi-image editing under multimodal understanding. 
+ 
+
+
+ Table 1 : 
+ Quantitative results on MMIE-Bench evaluated by two MLLMs .
+Left: results scored by Qwen2.5-VL(72B); Right: results scored by Doubao-1.6. Our method achieves consistent improvements under both evaluators across all task families.
+ 
+ 
+ [result table omitted; consult original if quantitative claim needed] 
+ 
+ 
+
+
+ 
+ 
+ Figure 3 : 
+ Radar evaluation across six multi-image editing tasks by Doubao-1.6 .
+Each radar chart compares four models over the three metrics:
+Semantic Consistency (SC), Visual Fidelity (VF), and Multi-image Integration (MI). The metric score is rated from 1 to 5.
+ 
+ 
+ 
+ 
+
+
+
+ 5 Experiments 
+
+
+
+
+ 5.1 Setup 
+
+ 
+
+ Baselines and Implementations . We compared three methods that support multimodal multi-image editing. All these three methods adopt the hybrid MLLM-Diffusion architecture to achieve the multi-image editing. The Ominigen2  [ 65 ] unify the Qwen2.5-VL (3B)  [ 53 ] with Lumina-Image 2.0  [ 44 ] for diverse text-to-image and image editing tasks. The Qwen-Edit-2509  [ 62 ] retrain the Qwen2.5-VL (7B) with the MM-DiT with multi-image editing data. The DreamOmni2  [ 69 ] also adopts the Qwen2.5-VL (7B) as the MLLM and train the editing and generation models using LoRA on Flux Kontext  [ 29 ] to perform multimodal instruction-based editing and generation. For all comparison methods, we follow their official implementations for evaluation. For our method, we use the Qwen-Edit-2509 as our backbone, set the sampling steps as 40, and fix the output image resolution to 1328x1024 for all experiments. The classifier-guidance scale is set as 4.0. We use the same random seed in all experiments. 
+ 
+ 
+
+ Evaluation Data and Metrics . We evaluate all models based on our proposed MMIE-Bench from three complementary metrics. The semantic consistency (SC) measures how accurately the output matches the instruction semantics. The visual fidelity (VF) evaluates perceptual realism and the absence of artifacts. The multi-image integration (MI) evaluates spatial and semantic coherence among multiple sources. We leverage multimodal understanding abilities of the MLLM to compare the input and output. For fair comparison, we use two different MLLMs, Qwen2.5-VL (72B) and Doubao-1.6. We write the prompt template to require the MLLMs to evaluate these three metrics. Please see the supplementary for concrete prompt templates. Each metric is rated in [1 \sim 5] and averaged to obtain the final score. 
+ 
+ 
+
+
+
+ 5.2 Comparison with Previous Methods 
+
+ 
+
+We evaluate our method both quantitatively and qualitatively. Table  1 summarizes the main comparison across six task families. Figure  4 demonstrates the qualitative results of different tasks, numbers of images, and scenarios. Our method achieves the best results across all categories, with strong gains on Mixed task, which demands accurate multimodal understanding, distinction, and visual consistency on different images. 
+ 
+ 
+
+ Improvement over Baselines . Compared to the original Qwen-Edit-2509, our methods improve the baseline performance by around 0.5 on all six tasks. This validates that our effectiveness in improving the distinction of visual tokens of different images clearly benefits the multi-image editing. 
+ 
+ 
+
+ Advantages on Complex and Mixed editing . The Mixed task requires conducting add, replace, and style editing together. Our method outperforms the baseline Qwen-Edit-2509 by 0.37 on Reason and 0.63 on Mixed (based on Qwen). Based on Doubao-1.6, we get a 1.02 gain on Mixed. We also clearly outperform the second performance by 0.21 (on Qwen) and 0.33 (on Doubao) on Mixed. We attribute this to our advantages in distinguishing and manipulating cross-image visual contents, which then facilitates accurate reasoning and operation. 
+ 
+ 
+
+ Multidimensional Evaluation . Figure  3 shows the performance on three editing metrics over six tasks. Our method outperforms other methods on three metrics on most tasks. Especially for the Multi-image Integration (MI), our method shows clear advantages, which validate our advantages on the distinction of image identity, cross-image consistency, and compositional alignment. 
+ 
+
+
+ Table 2 : 
+ User study on sampled MMIE-Bench . Each task is evaluated based on 5 randomly sampled editing cases.
+ 
+ 
+ [result table omitted; consult original if quantitative claim needed] 
+ 
+ 
+ 
+
+ User Study . We conduct the user study to verify the consistency between the MLLM evaluation and human preference. Similar to Table  1 , we ask the user to rate each editing result based on three metrics of SC, VF, and MI. Table  2 shows that the overall human preference is close to the MLLM evaluation results, and our method is favored on most tasks. See the supplementary material for details. 
+ 
+
+ 
+ Figure 4 : Qualitative comparison on representative MMIE-Bench tasks . Our method produces geometrically aligned, instruction-consistent, and compositionally coherent results across addition, replacement, texture transfer, and multi-style fusion tasks. All human data is from Echo-4o and PIE  [ 73 , 27 ] . 
+ 
+ 
+
+
+
+ 5.3 Qualitative Results and Discussion 
+
+ 
+
+Figure  4 shows representative examples across diverse multi-image editing scenarios, including object addition, texture transfer, style fusion, and object replacement. Prior multimodal editors frequently exhibit identity entanglement, partial modality transfer, and cross-image feature interference, revealing a structural limitation in architectures that rely purely on relative positional encodings. These failure modes manifest as inconsistent object boundaries, incomplete material propagation, and erroneous style dominance when multiple reference signals compete. 
+ 
+ 
+
+ Multi-image Object Addition . Prior methods exhibit structural distortion and spatial drift, either failing to preserve identity or shifting locations. Our method accurately locates the objects and preserves the structural and fine appearance of the reference, demonstrating strong cross-image spatial reasoning. 
+ 
+ 
+
+ Cross-image Texture and Style transfer . In tasks involving two or more style sources, baselines often transfer only partial material attributes or distort the original structure (e.g., glass → car body, silk → curtain). Our model faithfully maps the reference texture while retaining the original shape without leaking irrelevant visual cues from non-target references (e.g., bronze surface of car → statue). 
+ 
+ 
+
+ Object Replacement with Fine-grained Alignment . In replacement scenarios, baseline methods do not preserve the identities well and generate with mild imagination, and the replaced object is not well aligned with the reference (e.g., the boat → miniature car). Our approach delivers better integration of the reference object’s geometry. 
+ 
+ 
+
+Overall, these qualitative trends align with our motivation to improve cross-image referencing, alignment, and visual consistency in multi-image editing. 
+ 
+ 
+ 
+
+
+
+ 6 Ablation and Analysis 
+
+ 
+
+ Effectiveness Analysis . We ablate the contributions of Separator and Sinusoidal Index Embedding in Table  3 . The combination of two modules achieves the best performance on most tasks. On the Style and Human tasks, although the combined module is 0.01 or 0.02 slightly weaker than the individual modules, the three modules get very close performance. Removing each module improves local specialization on a few cases, but the full version improves global generalization. Concretely, w/o Sinindex causes a clear 0.31 drop on Replace and 0.18 drop on Mixed. w/o Separator causes a 0.24 drop on Replace and 0.08 drop on Mixed, which reflects trade-offs between specialization and generalization. Thus, our model is generally effective in improving the multi-image editing. We also show qualitative results of ablation in Figure  5 . The whole model can better correspond to the image identity and achieve the desired multi-image editing. 
+ 
+ 
+
+ Generalization . We evaluate the model’s generalization capability by testing it on a larger number of input images that never appear during training. Specifically, we train our model primarily on two-image data and never on five-image inputs. For evaluation, we show the generalization test in Figure  6 . The results show that compared to the original Qwen-Edit-2509, our model can produce the results aligned to the multimodal instruction, while the original Qwen-Edit-2509 does not generalize to the unseen 5-image set and produces noisy images. The Qwen-Edit trained on the same dataset shows better-aligned semantics but still tends to produce noisy images. This validates our generalization ability. 
+ 
+
+ 
+ Figure 5 : Qualitative results for ablation study . Removing the component may cause failure to cross-image reference and editing. 
+ 
+
+ 
+ Figure 6 : Generalizaton evaluation . We compare our model with the original Qwen-Edit-2509 and one trained on the same dataset. The training data does not include the 5-image input. Our model generalizes better to the extrapolated number of images. 
+ 
+ 
+
+ Efficiency . Despite introducing additional positional encodings and separator tokens, our model exhibits negligible differences in inference time compared to the original Qwen-Edit-2509. Both require approximately four minutes to complete a two-image editing task. Throughout all experiments, we use a separator token of size [1,1,64], which adds only a small number of extra tokens during inference and therefore incurs minimal computational overhead. 
+ 
+
+
+ Table 3 : 
+ Ablation on MMIE-Bench evaluated by Qwen2.5-VL (72B) . Learnable Separator Token (Separator), Sinusoidal Index Embedding (Sinindex), w/o indicates removing the module.
+ 
+ 
+ [result table omitted; consult original if quantitative claim needed]

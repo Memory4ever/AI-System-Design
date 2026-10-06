@@ -1,0 +1,230 @@
+5 Barrier Function-Guided ODE Steering
+Based on the above analysis, we present ODESteer, a novel method derived from our ODE-based framework. We begin by defining a barrier function using the log-density ratio between contrastive activations, expressed with nonlinear features. We then show how to construct the steering ODE from this barrier function, and analyze the advantages of our approach within the unified framework. The whole algorithm is summarized in Appendix C.1.
+5.1 Defining Barrier Function
+As discussed in Section 4.2.1, barrier functions for input reading approaches can be expressed as the log-density ratio between contrastive activations. However, their simplified assumptions often limit their performance on complex scenarios. To overcome this issue, we propose a more flexible approach that directly models the density ratio r⁡(𝒂)=p+​(𝒂)/p−​(𝒂)r(\bm{a})=p_{+}(\bm{a})/p_{-}(\bm{a}) in a nonlinear way. Specifically, we define the barrier function as
+h⁡(𝒂)=log⁡r⁡(𝒂)=𝒘⊤​ϕ​(𝒂)+b,h(\bm{a})=\log r(\bm{a})=\bm{w}^{\top}\bm{\phi}(\bm{a})+b,
+(12)
+where ϕ:ℝd→ℝD\bm{\phi}:\mathbb{R}^{d}\to\mathbb{R}^{D} is a nonlinear feature map, and 𝒘∈ℝD\bm{w}\in\mathbb{R}^{D}, b∈ℝb\in\mathbb{R} are learnable parameters. This formulation offers several advantages over prior methods. First, unlike Difference-in-Means, it does not rely on strong assumptions about activation distributions or coarse summary statistics to define the barrier function. Second, unlike linear probe methods, it incorporates nonlinear features, allowing the gradient – and thus the ODE’s steering direction – to depend on the current activation 𝒂\bm{a} and adapt at each step. Third, compared to output optimization approaches, it is simple to implement using classical machine learning tools, without requiring additional scoring models or complex training procedures. We now describe the choice of nonlinear feature map ϕ⁡(⋅)\bm{\phi}(\cdot) and how to learn the parameters 𝒘\bm{w} and bb in Eq. (12).
+Choice of nonlinear feature map.
+Most prior activation steering methods rely on linear representations. As a natural nonlinear extension, we use polynomial features. However, directly expanding polynomial features in high-dimensional spaces is infeasible due to exponential growth in dimensionality and numerical instability. To overcome this, we adopt Polynomial Count Sketch (Pham and Pagh, 2013), which generates random polynomial features efficiently. In addition, we normalize each activation to unit ℓ2\ell_{2} norm before applying the map to improve stability and scalability. Detailed hyperparameter settings of polynomial count sketch are provided in Appendix C.2.
+Learning w\bm{w} and bb.
+In this work, we adopt logistic regression to estimate the density ratio, as it is straightforward to implement using scikit-learn (Pedregosa et al., 2011). The classifier is trained on transformed random polynomial features, yielding learned weights 𝒘′\bm{w}^{\prime} and bias b′b^{\prime}. Following Eq. (9), the estimated log-density ratio is
+h⁡(𝒂)=𝒘′⁣⊤​ϕ​(𝒂)+b′+log⁡N−N+,h(\bm{a})=\bm{w}^{\prime\top}\bm{\phi}(\bm{a})+b^{\prime}+\log\tfrac{N_{-}}{N_{+}},
+where N+N_{+} and N−N_{-} denote the number of positive and negative samples, respectively. In this formulation, the learnable parameters in Eq. (12) correspond to 𝒘=𝒘′\bm{w}=\bm{w}^{\prime} and b=b′+log⁡N−N+b=b^{\prime}+\log\tfrac{N_{-}}{N_{+}}.
+5.2 Constructing the ODE
+After defining the barrier function in Eq. (12), a natural choice for the steering direction 𝒗⁡(𝒂)\bm{v}(\bm{a}) is the gradient ∇𝒂h​(𝒂)\nabla_{\bm{a}}h(\bm{a}), which always points in the direction of steepest increase in h⁡(⋅)h(\cdot). To improve numerical stability and prevent overly large steps in regions with high gradient magnitude, we normalize this gradient to have unit ℓ2\ell_{2} norm. The resulting ODE is:
+𝒂˙​(t)=𝒗⁡(𝒂⁡(t))=∇𝒂h​(𝒂​(t))‖∇𝒂h​(𝒂​(t))‖=𝑱ϕ​(𝒂⁡(t))⊤​𝒘‖𝑱ϕ​(𝒂⁡(t))⊤​𝒘‖,\dot{\bm{a}}(t)=\bm{v}(\bm{a}(t))=\frac{\nabla_{\bm{a}}h(\bm{a}(t))}{\norm{\nabla_{\aB} h(\aB(t))}}=\frac{\bm{J}_{\bm{\phi}}(\bm{a}(t))^{\top}\bm{w}}{\norm{\JB_{\phiB}(\aB(t))^\top\wB}},
+(13)
+where 𝑱ϕ​(𝒂)\bm{J}_{\bm{\phi}}(\bm{a}) is the Jacobian of ϕ\bm{\phi} with respect to 𝒂\bm{a}. We demonstrate, via theoretical analysis and empirical evidence, that the ODE in Eq. (13) consistently satisfies Proposition 1 in Appendix C.4. In practical implementations, the ODE is solved using standard numerical solvers, which require the vector field 𝒗⁡(⋅)\bm{v}(\cdot), the initial activation 𝒂\bm{a}, and the integration interval [0,T][0,T] as inputs:
+𝒂~=𝒂⁡(T)=ODESolve⁡(𝒗⁡(⋅),𝒂,[0,T]).\tilde{\bm{a}}=\bm{a}(T)=\mathrm{ODESolve}(\bm{v}(\cdot),\bm{a},[0,T]).
+(14)
+The detailed settings of the numerical ODE solver, along with the general choice of TT for each model, are provided in Appendix C.3.
+5.3 Advantages of Our Method
+In this subsection, we systematically analyze the advantages of our proposed ODE-based steering method, which are empirically validated through the ablation study in Section 6.
+First, our method naturally introduces a form of feedback control. Since the barrier function is defined using nonlinear features, its gradient – and thus the steering direction – depends on the current activation. As a result, the direction dynamically adapts at each step when solving the ODE numerically. This allows the system to respond to the activation throughout the iterative process, rather than applying a fixed update. In contrast, previous methods such as CAA and ITI construct simpler barrier functions, resulting in constant vector fields that define a single, unchanging direction, essentially a form of open-loop control. Although these methods also rely on log-density ratios, they cannot adjust to the activation as it evolves and therefore miss finer structures of underlying activation distributions.
+Second, our method benefits from improved numerical accuracy. As discussed in Section 4.1, regular activation addition corresponds to a single-step Euler discretization of the underlying ODE, which is a first-order Taylor approximation with an error of 𝒪⁡(T2)\mathcal{O}(T^{2}) (Butcher, 2016). By decomposing the steering process into multiple smaller steps, our method significantly reduces this approximation error and more closely follows the ideal ODE trajectory.
+Table 2: Comparison of methods on Falcon-7B, Mistral-7B, LLaMA3.1-8B for helpfulness, truthfulness, and detoxification.
+For helpfulness: “Win” is win rate, “RMmean{}_{\text{mean}}” is mean reward, and “RMP90{}_{\text{P90}}” is 90th percentile reward.
+For truthfulness: “T×\timesI” is Truthfulness ×\times Informativeness, with “True” and “Info” reported separately.
+For detoxification: “PPL” is perplexity.
+Results are averaged over three runs.
+Primary metrics are highlighted in blue; best and second-best are in bold and underline.
+Dist-1/3 scores for detoxification are provided in Appendix E.1.
+Method
+Model
+Helpfulness (Ultrafeedback)
+Truthfulness (TruthfulQA)
+Detoxification (Real Toxicity Prompts)
+Win (%) ↑\bm{\uparrow}
+RMmean{}_{\text{mean}} ↑\bm{\uparrow}
+RMP90{}_{\text{P90}} ↑\bm{\uparrow}
+T×\timesI (%) ↑\bm{\uparrow}
+True (%) ↑\bm{\uparrow}
+Info (%) ↑\bm{\uparrow}
+Toxic ↓\bm{\downarrow}
+PPL ↓\bm{\downarrow}
+Dist-2 ↑\bm{\uparrow}
+Original
+Falcon-7B
+50.0 ±0.000
+-15.298 ±0.194
+-5.465 ±0.628
+29.0 ±0.220
+30.2 ±0.153
+96.0 ±0.462
+0.257 ±0.007
+15.980 ±0.360
+0.948 ±0.003
+RepE
+50.1 ±0.014
+-15.354 ±0.120
+-5.337 ±0.501
+24.4 ±0.395
+25.7 ±0.550
+95.1 ±0.602
+0.246 ±0.004
+15.440 ±0.260
+0.940 ±0.001
+ITI
+50.5 ±0.013
+-15.291 ±0.153
+-4.704 ±0.417
+34.7 ±0.713
+36.0 ±0.608
+96.4 ±0.493
+0.243 ±0.010
+15.880 ±0.690
+0.935 ±0.006
+CAA
+52.8 ±0.011
+-14.998 ±0.157
+-5.100 ±0.481
+35.0 ±0.390
+36.4 ±0.321
+96.3 ±0.252
+0.244 ±0.003
+15.920 ±0.530
+0.950 ±0.002
+MiMiC
+47.8 ±0.016
+-15.469 ±0.092
+-5.333 ±0.250
+37.2 ±0.712
+42.2 ±1.058
+88.0 ±1.385
+0.244 ±0.007
+15.780 ±0.640
+0.941 ±0.002
+HPR
+49.4 ±0.012
+-15.605 ±0.234
+-5.654 ±0.842
+36.0 ±0.638
+38.9 ±0.351
+92.5 ±0.832
+0.193 ±0.003
+83.500 ±37.80
+0.919 ±0.002
+RE-Control
+51.4 ±0.004
+-15.014 ±0.123
+-4.980 ±0.159
+31.7 ±0.820
+33.0 ±0.850
+96.3 ±0.058
+0.219 ±0.006
+16.660 ±0.43
+0.941 ±0.007
+Linear-AcT
+50.7 ±0.009
+-15.125 ±0.158
+-5.114 ±0.352
+35.1 ±0.336
+36.7 ±0.458
+95.7 ±0.600
+0.248 ±0.002
+16.690 ±0.700
+0.949 ±0.002
+TruthFlow
+50.7 ±0.015
+-14.720 ±0.281
+-4.154 ±0.599
+34.1 ±0.929
+37.5 ±1.364
+90.7 ±0.929
+0.277 ±0.005
+31.550 ±7.960
+0.910 ±0.005
+ODESteer (Ours)
+56.3 ±0.018
+-14.203 ±0.143
+-4.483 ±0.255
+42.2 ±0.115
+44.4 ±0.436
+94.9 ±0.907
+0.188 ±0.006
+16.330 ±0.300
+0.944 ±0.005
+Original
+Mistral-7B
+50.0 ±0.000
+-10.001 ±0.179
+-0.379 ±0.378
+39.3 ±0.568
+41.7 ±0.907
+94.3 ±0.692
+0.215 ±0.000
+18.540 ±0.280
+0.991 ±0.001
+RepE
+44.6 ±0.009
+-10.756 ±0.338
+-0.508 ±0.324
+41.3 ±0.317
+47.0 ±0.755
+87.9 ±1.388
+0.225 ±0.002
+74.990 ±1.560
+0.969 ±0.004
+ITI
+51.8 ±0.001
+-9.718 ±0.124
+0.239 ±0.382
+46.4 ±1.249
+49.4 ±1.816
+93.9 ±0.986
+0.165 ±0.007
+18.630 ±0.760
+0.989 ±0.002
+CAA
+53.4 ±0.015
+-9.360 ±0.206
+0.500 ±0.700
+45.9 ±0.796
+49.0 ±1.135
+93.8 ±0.953
+0.190 ±0.002
+18.740 ±0.120
+0.991 ±0.001
+MiMiC
+51.0 ±0.015
+-10.059 ±0.085
+-0.442 ±0.477
+45.5 ±2.024
+50.4 ±2.080
+90.3 ±0.750
+0.195 ±0.003
+18.970 ±0.260
+0.991 ±0.002
+HPR
+52.3 ±0.017
+-9.310 ±0.271
+0.465 ±0.298
+50.4 ±0.265
+56.4 ±0.404
+89.4 ±1.043
+0.127 ±0.007
+36.310 ±1.810
+0.975 ±0.002
+RE-Control
+48.6 ±0.027
+-10.215 ±0.162
+0.411 ±0.335
+40.0 ±0.872
+42.4 ±0.929
+94.3 ±1.456
+0.130 ±0.011
+19.950 ±0.76
+0.989 ±0.001
+Linear-AcT
+54.6 ±0.012
+-9.391 ±0.306
+0.329 ±0.604
+46.0 ±0.323
+49.2 ±0.519
+93.5 ±1.153
+0.189 ±0.004
+19.040 ±0.170
+0.991 ±0.000
+TruthFlow
+4

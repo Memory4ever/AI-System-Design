@@ -1,0 +1,222 @@
+5.1. Experimental Setup
+Task and serving setting.
+Given a query, the retriever returns the top KK items from the full catalog via approximate nearest neighbor (ANN) search using L2L^{2} normalized embeddings.
+Unless otherwise stated, we report Precision@KK, Recall@KK, and NDCG@KK calculated using the top K∈{10,50,100}K\in\{10,50,100\} retrieved items.
+In production, embeddings are computed by the query tower at request time and matched against a precomputed item index.
+Indexing and constraints.
+We build an ANN index for approximately 200200M+ items, and all candidate generation experiments are conducted under the same latency and capacity constraints as the baseline system.
+Compared systems.
+We compare the following retrieval systems:
+•
+Lexical baseline: a token based retriever (BM25 style).
+•
+Hybrid baseline: a hybrid search setup with an embedding based retriever that is a text embedding model of the same dimension and is initialized with the same pretrained backbone encoder as the proposed model, and is trained using weighted triplet loss function adopted from (Huang et al., 2020) with slight variations to accommodate 3 level relevance labels.
+•
+Hybrid w/ Mine and Refine: the hybrid search setup with the embedding model trained with our proposed Mine and Refine method.
+(a) SupCon
+(b) SupCon →\rightarrow Circle Loss
+Figure 2. Violin plots of similarity score distributions for Stage 1 with SupCon and Stage 2 with Circle Loss.
+Figure 3. Violin Plots for distributions of query level average margin: 𝔼d(2)​⟨q,d(j)⟩−𝔼d(0)​⟨q,d(i)⟩,i>j,i,j∈{0,1,2}\mathbb{E}_{d^{(2)}}\langle q,d^{(j)}\rangle-\mathbb{E}_{d^{(0)}}\langle q,d^{(i)}\rangle,\,i>j,\,i,j\in\{0,1,2\}.
+5.2. Relevance Evaluation
+Evaluation Datasets.
+Table 1. Offline Model Evaluation across Metrics
+NDCG@K
+Recall@K
+Precision@K
+Model
+K=10K=10
+K=50K=50
+K=100K=100
+K=10K=10
+K=50K=50
+K=100K=100
+K=10K=10
+K=50K=50
+K=100K=100
+Baseline - Pretrained 0.3B Embedding Model*
+-
+-
+-
+-
+-
+-
+-
+-
+-
+(Siamese, SupCon)
+7.53%
+13.82%
+15.25%
+7.39%
+14.15%
+14.78%
+8.26%
+16.11%
+17.70%
+(Siamese, SupCon) + (Asymmetric, circle loss)
+9.71%
+15.91%
+17.10%
+9.55%
+15.87%
+16.02%
+10.54%
+18.20%
+19.52%
+(Siamese, SupCon) + (Siamese, circle loss)
+10.39%
+16.41%
+17.50%
+10.08%
+16.19%
+16.17%
+10.96%
+18.46%
+19.69%
+*The baseline model here differs from that in Table 4 – it is the larger, higher dimensional version of the pretrained backbone encoder across all training experiments; all values are reported as percentages relative to this baseline.
+To evaluate both the standalone performance of the embedding model and its incremental impact on overall search relevance, we conducted the following two evaluations:
+Golden Eval Set: Comprehensive Query Set with Small Index. Offline evaluation is conducted on a held out set of 155155M query and item pairs labeled by the finetuned relevance annotation LLM under the same three-level policy described in Section 3.
+To better reflect real world search behavior, the evaluation set includes a mix of head and tail queries, multiple product categories, and a non trivial portion of misspellings and multilingual queries.
+In particular, around 30%30\% of the unique queries in the evaluation set are not present in the training data.
+For a given query, we sample items from user search log along with randomly selected items to form the group of query and item pairs corresponding to this query.
+Specifically, the proportion of negative (label 00) pairs of each query is at least 65%65\% to match the production distribution as much as possible.
+For graded relevance, we map the three labels to gains of 11, 0.50.5, and 00 for labels 22, 11, and 00, respectively.
+Side by Side: Production Replica. To evaluate the end to end performance of the search system incorporating the embedding retrieval model trained with our proposed Mine and Refine method, we sampled 1212K queries according to the annual search engagement distribution.
+The queries were evaluated using an offline A/B style framework, in which the control arm was an exact replica of the production system, while the treatment arm differed only in the embedding retrieval model.
+The search results of both arms were collected and NDCG@​10@10 was computed to measure changes in overall system relevance.
+Offline Evaluation Results.
+We show that the proposed model achieves substantially better performance, both standalone compared to a strong pretrained model and when integrated into the search pipeline.
+Golden Eval Set: As shown in Table 1, our proposed training design outperforms a larger, higher dimensional variant of the pretrained backbone encoder, whose hidden size far exceeds the embedding dimension of our models.
+This model is chosen as the baseline for two reasons: first, it is effectively a stronger version of the pretrained encoder, providing a fair comparison; second, it exhibits the best performance (specific to DoorDash retail search) among known pretrained multilingual text embedding models of roughly 0.6​B0.6B parameters or less, making it a suitable reference for meaningful evaluation.
+Side by Side: Table 2 reports a comparison of end to end performance between the lexical and hybrid baselines and hybrid search retrieval with the proposed model, which yields incremental gains not only in retrieval but also in the quality of the final stage ranking.
+Table 2. Side by Side Evaluation
+Model
+NDCG@1010
+Lexical baseline
+-
+Hybrid baseline
+1.66%1.66\%
+Hybrid w/ (SupCon + Mine and Refine)
+2.32%
+NDCG as the Northstar.
+Recall is usually considered as the primary metric for retrieval tasks, but we also note that precision is critical in the sense that improvement in precision usually implies less noise in downstream ranking tasks.
+We tested two sets of semantic search embeddings in the second pass ranker (paired with the respective retrieval embedding).
+Both achieve similar recall, but the higher precision embeddings further improve relevance, whereas the lower precision set can slightly degrade ranker performance.
+Hence, NDCG@​K@K is chosen as the primary metric, as it implicitly balances recall and precision by rewarding relevant items found and ranked at the top, ensuring robust retrieval performance even with smaller retrieval sizes for efficiency.
+5.3. Online A/B Experiments
+We validate offline gains with online A/B tests in production search.
+The experiment ran for one month with a traffic split of 50%/50%50\%/50\% between the baseline and "Mine and Refine", and the treatment group replaces only the retrieval component while keeping the downstream ranking and business logic unchanged.
+In Table 3, we show the relative lifts in the add to cart rate (ATCR), the conversion rate (CVR), and the gross order value (GOV).
+Statistical significance is assessed using standard two-sample tests with a predefined threshold (p<0.05p<0.05 in this case).
+Table 3. Online A/B test results: relative improvement (%) of Mine and Refine over the baseline system
+Metric
+Relative lift (p-value)
+ATCR
+2.5%2.5\% (0.000.00)
+CVR
+1.1%1.1\% (0.020.02)
+GOV
+0.9%0.9\% (0.030.03)
+Table 4. Ablation Studies on Model Architecture and Item Taxonomy Enrichment 11
+1
+Models presented in this table are used solely for ablation and exploration; metric values are not directly comparable to those in the other tables.
+Taxonomy
+Recall@K
+Precision@K
+Model
+Feature
+K=10K=10
+K=50K=50
+K=100K=100
+K=10K=10
+K=50K=50
+K=100K=100
+baseline: few shot finetuned low dim model*
+None
+-
+-
+-
+-
+-
+-
+(asymmetric, circle loss)
+4 level
+-15%
+-13%
+-11%
+-15%
+-13%
+-11%
+(asymmetric, circle loss)
+None
+-11%
+-10%
+-9%
+-11%
+-10%
+-9%
+(asymmetric, SupCon)
+4 level
+2%
+3%
+3%
+2%
+3%
+3%
+(asymmetric, SupCon)
+None
+4%
+4%
+3%
+3%
+3%
+3%
+(Siamese, SupCon)
+4 level
+8%
+6%
+6%
+7%
+6%
+6%
+(Siamese, SupCon)
+None
+9%
+7%
+5%
+9%
+7%
+6%
+(Siamese, SupCon)
+2 level
+10%
+7%
+7%
+10%
+8%
+5%
+(Siamese, SupCon) + (asymmetric, triplet loss)
+2 level
+6%
+7%
+9%
+9%
+9%
+6%
+(Siamese, SupCon) + (asymmetric, circle loss)
+2 level
+13%
+12%
+11%
+13%
+12%
+12%
+*The baseline model here differs from that in Table 1; it is a few shot finetuned model with projections to a lower dimensional subspace; all values are reported as percentages relative to this baseline.
+5.4. Ablation Studies
+Model Architecture.
+Regarding the model architecture, a Siamese encoder consistently outperforms an asymmetric encoder in both training stages, as shown in Tables 1 and 4.
+Although an asymmetric encoder with untied parameters may allow the model to better fine tune for each expertise (query and item) (Xie et al., 2022), we observe that keeping the Siamese structure yields slightly better performance (see Table 1).
+Hierarchical Item Taxonomy Enrichment.
+The empirical results presented in Table 4 show that incorporating taxonomy information improves disambiguation in item category clustering, while more fine grained taxonomy hierarchies introduce noise without commensurate gains in the semantic space of e-commerce search.
+Synthetic Query Augmentation.
+We keep the proportion of synthetic queries generated based on item fea

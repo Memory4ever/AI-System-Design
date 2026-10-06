@@ -47,7 +47,9 @@ source -> encoder states
 target prefix -> decoder self-attention + cross-attention -> next token
 ```
 
-这种结构显式区分输入与输出，适合翻译、摘要等 sequence-to-sequence 任务，但需要两套 stack 或至少两类模块和 cross-attention 接口。
+这种结构显式区分输入与输出，适合翻译、摘要等 sequence-to-sequence 任务。标准实现分别运行 decoder self-attention 与 cross-attention，承担 encoder/decoder stack 和额外接口的参数与执行成本；但信息流分工不要求每种 Attention 永远由独立参数实现。一个替代分支共享 encoder 输入、decoder 输入与输出 embedding，并让 decoder Query 同时读取 encoder states 和 causal target prefix：两段状态共同投影为 K/V，在同一个 softmax 中归一化，由 mask 管理 source 与 target 的可见性。它不是两个独立 softmax 输出相加，合并模块也不意味着保留原函数。
+
+[T5Gemma 2 的局部架构消融](https://arxiv.org/html/2512.14856v1#S2)展示了这种参数冗余与质量之间的取舍，同时保留一个反例：只在每六层中的 global 层保留 cross-attention，平均质量下降更大。这是在 Gemma 2 2B 初始化、400B tokens 和 PrefixLM+KD 配置下得到的局部对照，不是最终 Gemma 3 配方的全任务无损证明，也未给出端到端加速或节能的受控证据。Encoder-decoder 因而仍有设计空间，但不能据此宣称它普遍取代 decoder-only；跨架构比较还需要分开数据、训练预算和后训练配方。<!-- source-family:SF-2025-GOOGLE-T5GEMMA-2 -->
 
 ### Decoder-only
 
@@ -276,7 +278,15 @@ explicit token trace
 → learned latent transition with teacher guidance
 ```
 
+压缩可见轨迹还可以采用离散的计划前缀，而不取消其后的文本推理：先用学习到的 codec 将下一段计划压成有限 slots 的码本 ID，把这些 ID 映射为扩展词表中的特殊 token，再交替生成计划前缀与显式 CoT。这样减少的是计划表达，不是全部 reasoning token；码本、slot 数、特殊 token 映射与模型 checkpoint 必须作为同一接口发布，不能把旧模型里的 ID 直接换成新 codec 的意义。教师计划生成、codec 训练与模型适配都要计入预算，量化瓶颈或错误计划还会把偏差传给后续文本；码本可解码不证明实际推理忠实，少量计划 token 也不保证总 token 更少。需要独立 outcome verifier，并在任务、codec 或模型变化后重新校准；高风险审计、压缩失效或计划不可验证时，完整文本计划与显式推理仍是合理回退。<!-- source-family:SF-2026-ARXIV-2512-24014 -->
+
+另一条分支不把连续状态一直留在主模型内部，而让主模型先产生少量 seed hidden states，经投影接口交给浅层自回归 decoder 展开为可见文本，再把这段文本接回主模型上下文继续生成。它压缩的是主模型需要承担的中间展开，不是取消文本、递归依赖或全部生成计算；main model、seed/projector、外部 decoder、触发位置及回填后的 KV/context identity 应作为同一发布接口验证。教师步骤与接口训练、decoder 调用和文本回填后的重新 Prefill 都要付费，按生成长度估出的主模型调用数不能当作实际 latency。固定 token 块还可能切断语义步骤，困难任务的质量反侧也说明可解码不等于忠实或正确推理；需以独立 outcome 验证决定是否采用，接口变化、粒度失配或恢复失败时回到完整显式 CoT。<!-- source-family:SF-2026-ARXIV-2602-04246 -->
+
 后两个分支把成本从 token IO 移到 latent transition，并牺牲逐步可读性。训练期用完整 CoT、视觉编码或其他 teacher signal 约束 latent state，只能证明该 state 在指定任务与模型上可学习，不能证明它保留了原推理的全部语义或因果结构。推理期若只用代表 token 判断结束，还会新增 premature stop、state drift 与无法局部纠错的 failure mode。
+
+连续状态直接回灌还多了一项输入接口合同：上一轮 decoder hidden state 与下一轮 input embedding 未必属于兼容的表示坐标。一个分支把 context-carried hidden 与当前词表分布的 top-p embedding 加权融合，再输入下一 latent transition；untied 输入/输出空间还可增加适配投影。它没有恢复逐步可见推理，也不能由 tied 与 untied 模型之间的差异唯一归因接口 mismatch，fusion、adapter、触发与停止规则必须和 checkpoint 一起验收。<!-- source-family:SF-2026-ARXIV-2602-10229 -->
+
+[受限算术对照](https://arxiv.org/html/2602.10229v1)中，去掉 fusion 的8B配置弱于不用 latent，说明 latent 更新不是无条件改善；少量 PCA/attention probe 也不证明推理忠实或因果 collapse。课程、teacher 与接口训练增加成本，可见 tokens 变少不等同总 FLOPs 或完整生成延迟减少。回灌失配、latent 漂移或质量下降时，应恢复显式 token/CoT 或已验证的 embedding 接口，而不是仅增加不可观察的 transition 次数。
 
 因此显式 CoT 在高风险审计、工具副作用和需要逐步验证时仍然合理；latent reasoning 更适合中间步骤冗长、可由独立 outcome verifier 检查且 token latency 占主导的受控任务。二者是不同 observability / efficiency contract，而不是后一种对前一种的线性替代。
 
@@ -291,6 +301,10 @@ explicit token trace
 
 这一必要性检查也有条件边界。[受控研究](https://arxiv.org/html/2604.06374v1)中，fine-tuned GPT-2 的 ProsQA 表现从六个 latent steps 的 99.0% 到移除 steps 的 96.6%，提示许多答案可由 shortcut 得到；浅层从零训练模型却明显依赖 latent steps，更深模型的这种优势又缩小。后者采用不同的逐 hop 监督，不能将差异全部因果归于 pretraining，也不能据此否定所有 recurrent 或 RL-trained latent reasoning。因而 latent state 的采用需要任务结果、必要性干预和实际成本共同支持；仅输出少、soft-token entropy 高或可投影出正确实体都不足以替代这些证据。<!-- source-family:SF-2026-ARXIV-2604-06374 -->
 
+即使 latent steps 不能直接移除，也还需核对中间状态是否沿预期 rollout 传播。共享 teacher/student 的 answer-boundary 监督可能只学到局部 bridge，再由最终输入直接完成 readout；答案正确不说明每一步都承担对应计算。冻结的 state readout 与 clean/corrupted activation patch 应共同定位路径，并保留仅正确样本、读出函数和任务条件；probe 不可读不等于不存在其他编码。<!-- source-family:SF-2026-ARXIV-2602-00449 -->
+
+压缩路径是否可行也取决于任务状态转移。受控模算术中，复合模的非双射映射可以收缩历史状态差异，允许 late-state 瓶颈；非零乘子下的素数模双射没有同样的收缩条件。有压缩可能不等于训练必然采用该路径，这个解释也不是自然语言推理定律。更换监督边界或任务后需重做路径干预，额外 probe 与 patching 都增加验证成本；无法验证时，保留显式 trace 与独立执行，不以 latent slots 数作为 faithfulness 保证。
+
 ### 压缩置信度决定表示，不决定结果提交
 
 固定使用完整显式轨迹或固定使用 latent state，是这一设计空间的两个端点。中间分支可以先预测下一段 reasoning span 的冗余度与压缩置信度，只把高置信、低信息增量的 span 编码为 latent representation，同时让 precision-critical span 继续走显式 CoT。这里的 gate 决定的是**下一段采用哪种 reasoning representation**，不是在生成后由 target verifier 接受或回滚 proposal；因此它属于 Decoder-only 的表示与状态演进，而不是 speculative decoding 的 commit protocol。
@@ -302,6 +316,10 @@ explicit token trace
 选择表示只回答了状态存在哪里，还没有回答循环中的哪些状态受到约束、何时可以停止。Decoder-only 的状态不仅是可见 token。Looped 或 latent reasoning 把部分推理迁入 recurrent hidden state 后，dense per-loop loss 只能约束 readout 可见方向；normalization 隐藏的尺度仍可能在 residual recurrence 中携带信息。在 RMSNorm/LayerNorm 隐藏 radial scale 的这一条件下，需要让尺度对 loss 可见，或从 recurrence 中移除该尺度自由度。训练 contract 因而要明确哪些 latent state 对 loss 可见、何时提交以及如何停止。
 
 这正是减少可见 token 后增加不可观测状态、循环稳定性和调试成本的具体来源。latent state 无法校准或行为审计失败时，应回到显式 CoT、固定 loop 或普通 autoregressive decode；减少 token 不等于删除推理状态。
+
+逐 token 停止还必须区分“这个位置不再更新”与“其他位置不再读取它”。一种自适应循环把 halting mask 设为单调：一旦停止，该位置不再更新下一轮输入 embedding，并保留其前一轮 K/V，仍允许活跃位置读取；不能为了省计算把它从因果上下文删除，也不能由 embedding 停止更新推断实现中的所有 hidden readout 都已冻结。训练也需暴露同一种状态语义，先让 gate 学会可用的更新，再逐渐引入提前停止压力；否则 gate 可能退化为全部继续或全部过早停止。停止拥有的是迭代预算，不是正确性证明或输出提交权。
+
+这用更少状态更新交换 gate、稀疏执行和训练校准成本，FLOPs 减少未必成为 wall-clock 收益。[AdaPonderLM 的受限对照](https://arxiv.org/html/2603.01914v1)显示停止比例与正则强度会改变质量，较小模型的部分结果也低于固定循环；继续预训练的比较还需区分额外训练 token，不能把所有差异归于 gate。固定预算循环在停止器不稳、稀疏工作难以执行或审计要求一致时仍然成立；推理引擎如何跳过更新而不破坏 cache 生命周期，交给 Part V。<!-- source-family:SF-2026-ARXIV-2603-01914 -->
 
 增加推理循环数也不自动获得深度泛化：共享 block 必须先在训练中学会反复使用其状态更新。在受控的合成多跳实验中，训练 recurrence 的覆盖范围影响增加推理循环后的收益；不同课程可能暴露不同 hop 深度，因此不能把它们的最大外推深度直接归因于动态循环。即使固定同一训练数据，更多循环也可能在已有正确状态后继续漂移，形成 overthinking，而不是单调逼近答案。普通固定深度 decoder 与固定 loop 在任务、预算或停止信号不稳定时仍是合理基线。
 
@@ -330,6 +348,10 @@ explicit token trace
 
 这是一条架构条件下的诊断上界，不是对某个自然语言答案“模型必然无法生成”的判决，也不证明训练不能改变模型相关常数。工程上应由 Evaluation owner 用 copying、cramming 与长度切片实验估计实际 cliff，并把 tokenizer、decoder、precision 与 decoding policy 固定为同一评测身份。形式假设或常数无法核实时，直接行为测试仍是 fallback；理论结果只能提出风险假设，不能替代部署 checkpoint 的验证。
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-22223:end -->
+
+改变执行协议则是在讨论另一台机器，而非反驳固定接口的输出上界。[条件 simulation 研究](https://arxiv.org/html/2601.08061v1)令外部 operational string 持续增长，每轮从其开头消费窗口、把生成的一或两符号追加末尾，并按特殊 halt 控制规则推进；只有 injective codebook 使全部1857条 universal Lag rules 都被确定、精确执行，才推出该协议下的通用计算。普通有限窗口 next-token Decode、某次平均任务正确率或任意自然语言提示都没有自动满足这些条件。
+
+随机网络冻结也不等于整个 pipeline 无训练：该分支训练 encoder/decoder，并以 learned codebook 上的最近邻离散输出连接规则；外部串增长、编码、逐规则验收与运行时间均需预算。有限初始化的成功实验不保证任意随机网络或训练搜索成功，条件 simulation 更不保证可学性、容易编程或实际效率。协议、精度或规则一致性未验时，保留标准 next-token 接口、有限状态/输出边界和直接任务测试，不能由形式通用性签发部署能力。<!-- source-family:SF-2026-ARXIV-2601-08061 -->
 
 ## 回到生成循环：状态复用与选择 Token 分别交给谁
 
@@ -374,6 +396,8 @@ Decoder-only 用 causal factorization、Attention 路径上的 causal mask 与 n
 
 ## Review notes
 
+- `SF-2025-GOOGLE-T5GEMMA-2` — Daily `2025-12-19`；[官方release](https://blog.google/innovation-and-ai/technology/developers-tools/t5gemma-2/) `datePublished=2025-12-18T18:30:00Z`，当前修改于2026-03-19，不授论文首次公开。必要证据为 [2512.14856v1](https://arxiv.org/html/2512.14856v1) §2–3、Table1–5；采用全embedding共享、K/V共享投影与joint normalization的架构分支，以及局部质量取舍。Table1无重复/误差条，不授严格非劣性；最终约2T UL2配方与局部400B消融分开，跨模型数据/预算不完全受控，不采用普遍质量优势、throughput或能耗保证。root实际核原文、原Encoder-decoder段、Ch17/19邻接后替换该局部；非写入者Feynman实际对读exact v1 §2–3/Table1与已核Table2–5、新两段及Encoder-only/Decoder-only前后衔接、Ch17/19开篇，2026-10-02T20:07:56+08:00 POST通过；不授日级完成，未复现实验。
+
 - `SF-2026-ARXIV-2604-07822`（Status: Experimental）：[exact-v1](https://arxiv.org/html/2604.07822v1) §4、§6.1–6.3 与 Limitations。采用训练 recurrence/推理 recurrence/课程 hop 范围分账，以及 KL-only premature halt 的受限反例；同12-hop数据下动态与R=8都外推到19-hop，不写动态循环普遍胜出。正确 token margin仅为有标签诊断，KL+entropy不保证真值；6分因具体知识缺口深入，root 已独立核必要原文与实际正文，通过，未复现实验。
 
 - `SF-2026-ARXIV-2604-06374`（Status: Experimental）：[exact-v1](https://arxiv.org/html/2604.06374v1) §3–7 支持 soft-token 混合、latent-step 必要性与容量/监督条件的受限对照；不把 logit-lens 观察当完整内部算法证明。必要原文、实际正文及相邻衔接的非作者复核通过（root），不代表整日报验收。
@@ -395,3 +419,13 @@ Primary-source 校验入口：
 
   **已吸收的语义增量：** Looped LM 的dense per-loop cross-entropy只控制readout可见变量；RMSNorm/LayerNorm隐藏radial scale时，recurrent residual仍携带scale，必须让scale对loss可见或从recurrence移除。
 <!-- daily-books-trace:SF-2026-ARXIV-2606-24898:end -->
+
+- `SF-2026-ARXIV-2602-00449` — Daily `2026-02-04`；[exact-v1](https://arxiv.org/html/2602.00449v1) §3–7及Appendices C/D/E/F/G/H/I。6分设计反证深入，只采用CODI合成模算术中的bridge/readout bypass与任务收缩条件；3-layer/2-head GPT2-style、clean-correct过滤、linear probes/activation patch及teacher-loss和distillation消融不授自然语言定律或通用训练因果。素数模解释限定非零乘子，probe不可读不证明无其他编码，未复现实验。root必要原源与owner写前复核通过，root实际正文及前后交接写后复核通过，日级Gate通过。
+
+- `SF-2026-ARXIV-2512-24014` — Daily `2026-01-02`；[iCLP exact-v1](https://arxiv.org/html/2512.24014v1) §4.2–4.3、§5及Tables1–3。6分具体接口缺口深入，仅采用离散LP计划前缀与显式CoT交替、codec/词表/checkpoint耦合及teacher训练成本；六slots与2048码本是作者设置，不授faithfulness或普遍总token减少，TheoremQA正文370.2与表270.2冲突数字不采用。未运行实现或复现实验；root必要原源与具体owner写前通过，root实际正文279、266–295邻接及411末注非作者写后复核通过，日级Gate待验。
+
+- `SF-2026-ARXIV-2602-04246` — Daily `2026-02-06`；[CoLT exact-v1](https://arxiv.org/html/2602.04246v1) §3–6。2+2+2=6，具体接口缺口深入，仅采用 seed→外部自回归decoder→可见文本回入main 的替代分支。教师步骤/decoder训练、初始化与文本回填成本、固定token块粒度及MATH困难任务反侧就近保留；主模型调用估算不是实测latency，Eq4记号与全部生成loop可微不采用，可读不授faithfulness。root必要原源及owner写前通过；root实际正文283、279前置离散plan与后续latent分支/总结及419末注POST通过，本日日级Gate未验，未运行代码或复现实验。
+
+- `SF-2026-ARXIV-2601-08061` — Daily `2026-01-15`；[random AR operational-string simulation exact-v1](https://arxiv.org/html/2601.08061v1) §3–7、Theorem1/Corollary3及Methods E。2+2+2=6，conditional external-string machine接口差额深入；不反驳固定接口可达性，不把冻结随机网络等同全pipeline无训练，不授任意随机网络/自然prompt/效率。未运行代码或复现实验；root实际必要原源/现owner写前核通过，实际正文与前后邻接非作者POST通过；日级Gate未授。
+
+- `SF-2026-ARXIV-2602-10229` — Daily `2026-02-13`；[exact-v1](https://arxiv.org/html/2602.10229v1)，必要方法/关键评价/直接反侧见本日 V3_EVIDENCE_SIX；2+1+2=5，具体owner差额深入。只采用hidden→input embedding融合接口/adapter与质量反退，非untied因果、非faithfulness或少总compute。root实际必要原源与current owner/邻接PRE通过；root实际正文、前后邻接与末注非作者POST通过，窄锁释放，日级未授；未运行代码或复现实验。

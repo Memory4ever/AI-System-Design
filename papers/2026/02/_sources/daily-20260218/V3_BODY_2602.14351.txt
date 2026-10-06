@@ -1,0 +1,1449 @@
+WIMLE: Uncertainty‑Aware World Models with IMLE for Sample‑Efficient Continuous Control
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Preliminaries
+2.1 RL
+2.2 Model-based RL
+2.3 Implicit Maximum Likelihood Estimation
+3 WIMLE
+3.1 IMLE World Model
+3.2 Uncertainty Estimation
+3.3 Uncertainty-weighted Learning
+3.4 Theoretical Analysis
+Lemma (Positive weights preserve the Bellman target).
+Lemma (Linear critics, inverse-variance weighting).
+Implications for WIMLE.
+3.5 Algorithm
+3.6 Design Choices
+3.6.1 Training
+3.6.2 Architecture
+4 Experiments
+4.1 Experimental Setup
+4.2 Comparison to Baselines
+4.3 Method Analysis
+Effect of uncertainty-aware weighting
+Impact of IMLE-based multi-modality
+5 Related Work
+Model-free RL.
+Model-based RL.
+Model Bias.
+Implicit Maximum Likelihood Estimation.
+6 Limitations and Future Work
+7 Conclusion
+References
+A Algorithm Details
+B Theoretical Analysis of Risk-weighted Bellman Estimation
+Bellman fixed point under positive reweighting.
+Proof of the linear-critic GLS lemma.
+Linear unbiased estimators and GLS.
+Optimality of GLS.
+Connection to inverse-variance weighting.
+C Per-task Results
+D Hyperparameters
+D.1 Rollout Length Selection
+E Experiment Details
+E.1 Detailed Results
+E.2 DeepMind Control Suite
+E.3 MyoSuite
+E.4 HumanoidBench
+F Additional Results
+License: CC BY 4.0
+arXiv:2602.14351v1 [cs.LG] 15 Feb 2026
+WIMLE: Uncertainty‑Aware World Models with IMLE for Sample‑Efficient Continuous Control
+Mehran Aghabozorgi
+Alireza Moazeni
+Yanshu Zhang
+Ke Li
+Affiliation: Apex Lab, School of Computing Science
+Affiliation: Simon Fraser University
+Email: {mehran_aghabozorgi,sam62,yanshu_zhang,keli}@sfu.ca
+Abstract
+Model-based reinforcement learning promises strong sample efficiency but often underperforms in practice due to compounding model error, unimodal world models that average over multi-modal dynamics, and overconfident predictions that bias learning. We introduce WIMLE, a model-based method that extends Implicit Maximum Likelihood Estimation (IMLE) to the model-based RL framework to learn stochastic, multi-modal world models without iterative sampling and to estimate predictive uncertainty via ensembles and latent sampling. During training, WIMLE weights each synthetic transition by its predicted confidence, preserving useful model rollouts while attenuating bias from uncertain predictions and enabling stable learning. Across 40 40 continuous-control tasks spanning DeepMind Control, MyoSuite, and HumanoidBench, WIMLE achieves superior sample efficiency and competitive or better asymptotic performance than strong model-free and model-based baselines. Notably, on the challenging Humanoid-run task, WIMLE improves sample efficiency by over 50 50 % relative to the strongest competitor, and on HumanoidBench it solves 8 8 of 14 14 tasks (versus 4 4 for BRO and 5 5 for SimbaV2). These results highlight the value of IMLE-based multi-modality and uncertainty-aware weighting for stable model-based RL.
+1 Introduction
+Humanoid-run (DMC)
+H1-slide-v0 (HumanoidBench)
+Myo-key-turn-hard (MyoSuite)
+Figure 1: Sample efficiency on challenging tasks from each benchmark suite. WIMLE achieves superior sample efficiency and asymptotic performance over strong model-free and model-based baselines. Y-axes show interquartile mean. Shaded areas indicate 95% confidence intervals.
+Reinforcement learning has become a powerful framework for solving complex decision-making problems across diverse domains such as autonomous control ( Kiumarsi et al., 2018 ) , strategic game playing ( Hosu and Rebedea, 2016 ) , and natural language processing ( Lambert, 2025 ; Cetina et al., 2021 ) . However, a significant challenge in RL is the need for a substantial number of interactions with the environment to learn a good policy. Without a simulator, learning requires real-world trials, which are costly, slow, and risky ( Chen et al., 2022 ; Weng et al., 2023 ; Hessel et al., 2018 ; Schulman et al., 2017b ) .
+Model-based RL (MBRL) methods aim to address this sample efficiency issue by first learning a parametric world model from collected environment interactions, then leveraging this learned model to reduce real environment samples and accelerate policy learning ( Hafner et al., 2020 ; Hafner et al., 2021 ; Hafner et al., 2023 ; Ye et al., 2021 ; Laskin et al., 2020 ) . Common uses of the learned world model include (1) generating synthetic rollouts that augment training data for policy learning ( Janner et al., 2019 ; Ha and Schmidhuber, 2018 ; Hafner et al., 2020 ; Clavera et al., 2020 ) and (2) planning by simulating future trajectories to guide action selection ( Zhu et al., 2023 ; Frauenknecht et al., 2025 ; Janner et al., 2019 ; Lowrey et al., 2019 ; Hafner et al., 2019 ; Argenson and Dulac-Arnold, 2021 ) . In this work, we focus on the former.
+Historically, MBRL has struggled to surpass strong model-free baselines, largely because compounding rollout errors bias training and mislead the policy ( Janner et al., 2019 ; Xiao et al., 2019 ; Talvitie, 2017 ; Frauenknecht et al., 2025 ; Venkatraman et al., 2015 ; Asadi et al., 2018b ; Asadi et al., 2018a ) . We attribute this to two key issues: (1) standard predictive models struggle when the same state–action pair yields different, conflicting supervision due to partial observability, contact‑rich dynamics, or inherent stochasticity ( Kurutach et al., 2018 ) ; and (2) a lack of uncertainty awareness in model predictions ( Frauenknecht et al., 2025 ) , which leads to overconfidence in regions with complex dynamics or limited data. Despite attempts to address these issues ( Janner et al., 2019 ; Zhu et al., 2023 ; Frauenknecht et al., 2025 ; Somalwar et al., 2025 ; Hansen et al., 2022 ) , MBRL methods have yet to consistently outperform strong model‑free baselines in practice ( Nauman et al., 2024 ; Lee et al., 2025b ) .
+To address these issues, we propose WIMLE ( W orld models with IMLE )—an uncertainty-aware model-based RL approach. We integrate IMLE ( Li and Malik, 2018 ) , a mode-covering generative model with demonstrated success in low-data regimes ( Aghabozorgi et al., 2023 ; Vashist et al., 2024 ) , into the MBRL framework. This allows us to learn world models that handle different, conflicting supervision and from which we extract predictive uncertainty estimates. We incorporate these uncertainty estimates into the RL objective to prevent overconfident predictions from biasing learning. To the best of our knowledge, this is the first work to extend IMLE for uncertainty-aware world models in MBRL.
+We evaluate WIMLE on 40 40 tasks across DMC, HumanoidBench, and MyoSuite. WIMLE delivers considerable gains in sample efficiency and asymptotic performance over strong model-free and model-based baselines. Notably, on the notoriously challenging Humanoid-run task, WIMLE improves the sample efficiency of the most competitive method by over 50 % 50\% . On HumanoidBench, WIMLE successfully solves 8 8 of 14 14 tasks, compared to 4 4 for BRO and 5 5 for SimbaV2 (Figure 10 ). Across suites, Figure 1 shows one example task per benchmark, each showing more than 50 % 50\% sample-efficiency improvement for WIMLE over the strongest competing method.
+2 Preliminaries
+2.1 RL
+We consider an infinite-horizon discounted Markov decision process (MDP) ( 𝒮 , 𝒜 , P , r , γ ) (\mathcal{S},\mathcal{A},P,r,\gamma) ( Bellman, 1957 ) with initial state distribution ρ 0 \rho_{0} . At time t t , the agent observes s t ∈ 𝒮 s_{t}\in\mathcal{S} , selects a t ∼ π ϕ ​ ( a ∣ s t ) a_{t}\sim\pi_{\phi}(a\mid s_{t}) , receives reward r t = r ⁡ ( s t , a t ) r_{t}=r(s_{t},a_{t}) , and the environment transitions as s t + 1 ∼ P ( ⋅ ∣ s t , a t ) s_{t+1}\sim P(\cdot\mid s_{t},a_{t}) . The objective is to learn a policy that maximizes the expected discounted return
+J ⁡ ( π ϕ ) = 𝔼 τ ∼ ( ρ 0 , P , π ϕ ) ​ [ ∑ t = 0 ∞ γ t ​ r ​ ( s t , a t ) ] . J(\pi_{\phi})\;=\;\mathbb{E}_{\tau\sim(\rho_{0},P,\pi_{\phi})}\bigg[\sum_{t=0}^{\infty}\gamma^{t}\,r(s_{t},a_{t})\bigg].
+(1)
+In the continuous-control settings considered here, states and actions are real-valued. The discount factor satisfies γ ∈ ( 0 , 1 ) \gamma\in(0,1) . We denote the action-value function under policy π \pi by Q π ​ ( s , a ) Q^{\pi}(s,a) :
+Q π ( s , a ) = 𝔼 τ ∼ ( π , P ) [ ∑ t = 0 ∞ γ t r ( s t , a t ) ∣ s 0 = s , a 0 = a ] . Q^{\pi}(s,a)=\mathbb{E}_{\tau\sim(\pi,P)}\left[\sum_{t=0}^{\infty}\gamma^{t}r(s_{t},a_{t})\mid s_{0}=s,a_{0}=a\right].
+(2)
+2.2 Model-based RL
+In model-based RL, we learn a parametric world model with parameters θ \theta that approximates the unknown environment transition dynamics P ( s t + 1 , r t ∣ s t , a t ) P(s_{t+1},r_{t}\mid s_{t},a_{t}) through a learned conditional distribution
+p ^ θ ( s t + 1 , r t ∣ s t , a t ) \hat{p}_{\theta}\big(s_{t+1},\,r_{t}\mid s_{t},a_{t}\big)
+(3)
+trained from limited environment interactions. A model rollout (prediction) of horizon H H under a policy π ϕ \pi_{\phi} from s 0 s_{0} is the sequence τ ^ = ( s 0 , a 0 , r 0 , s 1 , … , s H ) \hat{\tau}=(s_{0},a_{0},r_{0},s_{1},\ldots,s_{H}) generated by
+a t ∼ π ϕ ( ⋅ ∣ s t ) , ( s t + 1 , r t ) ∼ p ^ θ ( ⋅ ∣ s t , a t ) . a_{t}\sim\pi_{\phi}(\cdot\mid s_{t}),\quad(s_{t+1},r_{t})\sim\hat{p}_{\theta}(\cdot\mid s_{t},a_{t}).
+(4)
+Such rollouts are commonly used for planning or to provide synthetic transitions for RL training ( Janner et al., 2019 ; Zhu et al., 2023 ) .
+2.3 Implicit Maximum Likelihood Estimation
+Implicit Maximum Likelihood Estimation (IMLE) learns a latent-variable generator g θ ​ ( z ) g_{\theta}(z) that maps noise z ∼ 𝒩 ⁡ ( 0 , I ) z\sim\mathcal{N}(0,I) to data space. Given data { x i } i = 1 N \{x_{i}\}_{i=1}^{N} , the IMLE objective is:
+θ ⋆ = arg ⁡ min θ ​ 𝔼 { z j } j = 1 m ​ ∑ i = 1 N min 1 ≤ j ≤ m ⁡ ‖ g θ ​ ( z j ) − x i ‖ 2 . \theta^{\star}\;=\;\arg\min_{\theta}\;\mathbb{E}_{\{z_{j}\}_{j=1}^{m}}\,\sum_{i=1}^{N}\min_{1\leq j\leq m}\big\|g_{\theta}(z_{j})-x_{i}\big\|^{2}.
+(5)
+In practice, given current parameters θ \theta , we realize this objective by drawing a pool of candidate latents { z j } j = 1 m \{z_{j}\}_{j=1}^{m} i.i.d. from 𝒩 ⁡ ( 0 , I ) \mathcal{N}(0,I) per data point and selecting the nearest generated sample; this step is gradient-free and fully parallelizable,
+z i ⋆ = arg ⁡ min 1 ≤ j ≤ m ⁡ ‖ g θ ​ ( z j ) − x i ‖ 2 , z_{i}^{\star}\;=\;\arg\min_{1\leq j\leq m}\;\big\|g_{\theta}(z_{j})-x_{i}\big\|^{2},
+(6)
+and minimizing the resulting empirical loss using stochastic gradient descent.
+θ ← θ − η ​ ∇ θ 1 | B | ​ ∑ i ∈ B ‖ g θ ​ ( z i ⋆ ) − x i ‖ 2 . \theta\leftarrow\theta-\eta\,\nabla_{\theta}\,\frac{1}{|B|}\sum_{i\in B}\big\|g_{\theta}(z_{i}^{\star})-x_{i}\big\|^{2}.
+(7)
+Optimizing Eq. equation 5 yields maximum likelihood estimation (MLE) of θ \theta and ensures mode coverage ( Aghabozorgi et al., 2023 ) : each data point is represented by at least one generated sample. In practice, IMLE is sample efficient and effective for modeling multi-modal distributions. Conditional IMLE g θ ​ ( c , z ) g_{\theta}(c,z) models multi-modal conditional distributions; we adopt this form in WIMLE. For a more detailed discussion of IMLE, we refer readers to ( Li and Malik, 2018 ; Aghabozorgi et al., 2023 ) .
+3 WIMLE
+WIMLE addresses the key limitations of traditional MBRL through three main components: (1) IMLE-trained stochastic world models that capture complex multi-modal transition dynamics, (2) predictive uncertainty estimation that reflects the model’s confidence in its predictions, and (3) uncertainty-weighted learning that scales the influence of synthetic data based on model confidence. We detail each component below.
+3.1 IMLE World Model
+Recent MBRL approaches span autoregressive sequence models, latent-variable generators, diffusion models, and planning-centric objectives ( Ha and Schmidhuber, 2018 ; Hafner et al., 2019 ; Hafner et al., 2020 ; Hafner et al., 2021 ; Robine et al., 2023 ; Micheli et al., 2023 ; Zhang et al., 2023 ; Hansen et al., 2024 ; Huang et al., 2024 ) . Diffusion models are effective but rely on iterative sampling, which limits their usage in the online RL setting where rollout throughput is critical ( Huang et al., 2024 ; Karras et al., 2022 ) . Despite progress, these methods often require substantial data and still struggle to consistently surpass strong model-free baselines ( Nauman et al., 2024 ; Lee et al., 2025b ) . Moreover, simple and sample-efficient unimodal Gaussian world models underfit inherently multi-modal, complex dynamics in partially observable or contact-rich settings, exacerbating model bias and compounding errors ( Janner et al., 2019 ; Zhu et al., 2023 ) .
+On the other hand, we leverage IMLE to learn transitions, a one-step generative method that—unlike diffusion models—avoids iterative sampling and enables fast online rollouts. In practice, IMLE yields strong rollout throughput; Figure 2 reports wall-clock time among model-based methods. We represent the world model as a conditional stochastic generator g θ g_{\theta} that maps a state–action pair and latent noise to the next outcome:
+( s ~ t + 1 , r ~ t ) = g θ ​ ( s t , a t , z ) , z ∼ 𝒩 ⁡ ( 0 , I ) . (\tilde{s}_{t+1},\,\tilde{r}_{t})\;=\;g_{\theta}\big(s_{t},a_{t},z\big),\quad z\sim\mathcal{N}(0,I).
+(8)
+Here, the latent variable z z induces a distribution over next outcomes for the same state–action pair, capturing inherent stochasticity and multi‑modality in the dynamics.
+Figure 2: Wall-clock comparison among model-based methods (3 seeds) on a single NVIDIA L40S GPU for the humanoid-run task. Y-axis shows interquartile mean; shaded areas indicate 95% confidence intervals.
+IMLE Training Procedure. Given a dataset of transitions { ( s t , a t , r t , s t + 1 ) } i = 1 N \{(s_{t},a_{t},r_{t},s_{t+1})\}_{i=1}^{N} , we form targets y i = [ r t , s t + 1 ] y_{i}=[r_{t},s_{t+1}] and train g θ g_{\theta} using the IMLE objective. The training proceeds in two alternating steps:
+Assignment Step: For each data point y i y_{i} , we sample m m candidate latents { z j } j = 1 m \{z_{j}\}_{j=1}^{m} and assign the nearest candidate that minimizes the prediction error:
+z i ⋆ = arg ⁡ min 1 ≤ j ≤ m ⁡ ‖ g θ ​ ( s i , a i , z j ) − y i ‖ 2 . z_{i}^{\star}\;=\;\arg\min_{1\leq j\leq m}\;\big\|g_{\theta}(s_{i},a_{i},z_{j})-y_{i}\big\|^{2}.
+(9)
+This assignment step is computationally efficient as it requires no gradient computation, is fully parallelizable across data points, and typically uses small values of m m (e.g., 5-10) in conditional IMLE settings.
+Update Step: We then perform gradient descent on the empirical loss using the assigned latents:
+θ ← θ − η ​ ∇ θ 1 | B | ​ ∑ i ∈ B ‖ g θ ​ ( s i , a i , z i ⋆ ) − y i ‖ 2 , \theta\leftarrow\theta-\eta\,\nabla_{\theta}\;\frac{1}{|B|}\sum_{i\in B}\big\|g_{\theta}(s_{i},a_{i},z_{i}^{\star})-y_{i}\big\|^{2},
+(10)
+where B B is a minibatch of indices and η > 0 \eta>0 is the learning rate.
+This procedure ensures mode coverage by matching each data point to at least one generated sample, avoiding collapse to a single mean prediction.
+In contrast, a standard Gaussian regression model trained with least squares ( Janner et al., 2019 ) predicts the conditional mean; in multi-modal settings this falls between modes and produces averaged, often implausible next states—known as regression to the mean ( Galton, 1886 ; Barnett et al., 2005 ) —that compound over rollouts. IMLE’s per-sample latent assignment avoids this averaging and yields sharper, mode-consistent predictions ( Aghabozorgi et al., 2023 ; Vashist et al., 2024 ) .
+Inference and Rollouts. After training, we generate rollouts following the procedure described in Section 2.2 . Multi-step rollouts of horizon H H are generated by initializing from a real state s 0 s_{0} and iteratively applying: a t ∼ π ϕ ( ⋅ | s t ) a_{t}\sim\pi_{\phi}(\cdot|s_{t}) , z t ∼ 𝒩 ⁡ ( 0 , I ) z_{t}\sim\mathcal{N}(0,I) , ( s t + 1 , r t ) = g θ ​ ( s t , a t , z t ) (s_{t+1},r_{t})=g_{\theta}(s_{t},a_{t},z_{t}) for t = 0 , … , H − 1 t=0,\ldots,H-1 .
+3.2 Uncertainty Estimation
+Reliable uncertainty estimation is crucial for deciding when to trust model predictions. We therefore compute a predictive uncertainty for each synthetic transition and use it to reweight the RL objective. Each transition’s contribution is scaled by its estimated confidence. This preserves useful rollouts and reduces bias from uncertain predictions without changing the underlying algorithm. Alternative integrations exist. For example, Infoprop ( Frauenknecht et al., 2025 ) computes an information‑theoretic corruption measure and uses it to truncate rollouts during generation. In contrast, we integrate uncertainty directly into the learning objective via confidence weights.
+We use a single predictive uncertainty measure σ ⁡ ( s , a ) \sigma(s,a) that reflects the model’s confidence in its next-step prediction. Concretely, we maintain an ensemble of K K IMLE world models (see Section 3.6.1 ) and, for each model, draw m m latent samples, yielding predictions:
+{ g θ k ( s , a , z j ) } k = 1 . . K , j = 1 . . m \{g_{\theta_{k}}(s,a,z_{j})\}_{k=1..K,\,j=1..m}
+(11)
+We define σ ⁡ ( s , a ) \sigma(s,a) as the standard deviation across these predictions—a direct measure of model agreement (see Algorithm 1 , lines 13 – 14 ):
+σ ⁡ ( s , a ) = std k , j ​ [ g θ k ​ ( s , a , z j ) ] \sigma(s,a)=\text{std}_{k,j}\big[g_{\theta_{k}}(s,a,z_{j})\big]
+(12)
+In practice, we compute per-dimension standard deviations for the predicted reward and next state and average them to obtain a single scalar for the transition. σ ⁡ ( s , a ) \sigma(s,a) decreases when models agree and increases when predictive uncertainty is high (e.g., limited data or complex dynamics).
+By the law of total variance we can decompose σ 2 ​ ( s , a ) \sigma^{2}(s,a) into epistemic and aleatoric components,
+σ 2 ​ ( s , a ) = Var k ​ [ 𝔼 z ​ [ g θ k ​ ( s , a , z ) ] ] ⏟ ensemble / epistemic + 𝔼 k ​ [ Var z ​ [ g θ k ​ ( s , a , z ) ] ] ⏟ latent / aleatoric , \sigma^{2}(s,a)=\underbrace{\mathrm{Var}_{k}\!\left[\mathbb{E}_{z}\big[g_{\theta_{k}}(s,a,z)\big]\right]}_{\text{ensemble / epistemic}}+\underbrace{\mathbb{E}_{k}\!\left[\mathrm{Var}_{z}\big[g_{\theta_{k}}(s,a,z)\big]\right]}_{\text{latent / aleatoric}},
+(13)
+Following recent insights on uncertainty from Smith et al. (2024) , this total predictive variance is the Bayes risk of acting under a squared-error loss.
+3.3 Uncertainty-weighted Learning
+Having defined a single predictive uncertainty σ ⁡ ( s , a ) \sigma(s,a) , we now describe how it enters learning. The key idea is simple: weight each synthetic transition by the model’s confidence so reliable predictions contribute more and uncertain ones less. Because uncertainty typically grows with rollout horizon due to error accumulation, later steps in the rollout receive smaller weights, naturally down‑weighting distant, noisier predictions.
+To choose these weights, we invoke a standard heteroscedastic regression result (formalized in Section 3.4 ): when estimating a scalar quantity from independent noisy observations with different noise variances, the unique minimum-variance linear unbiased estimator weights each observation inversely to its variance. We use this principle as guidance and map each predictive variance σ ⁡ ( s , a ) \sigma(s,a) to a bounded, inverse-variance weight
+w ⁡ ( s , a ) = 1 σ ⁡ ( s , a ) + 1 , w(s,a)=\frac{1}{\sigma(s,a)+1},
+(14)
+which preserves the inverse-variance ordering and keeps w ∈ ( 0 , 1 ] w\in(0,1] , avoiding exploding gradients.
+During rollout generation, we compute per-transition weights w i = w ⁡ ( s i , a i ) w_{i}=w(s_{i},a_{i}) for each synthetic transition ( s i , a i , r i , s i ′ ) (s_{i},a_{i},r_{i},s^{\prime}_{i}) using the predictive uncertainty defined above. We incorporate these weights into the RL objective by modifying the temporal difference (TD) loss:
+ℒ critic = 𝔼 ( s i , a i , r i , s i ′ ) ∼ 𝒟 ​ [ w i ⋅ δ i 2 ] , \mathcal{L}_{\text{critic}}=\mathbb{E}_{(s_{i},a_{i},r_{i},s^{\prime}_{i})\sim\mathcal{D}}\left[w_{i}\cdot\delta_{i}^{2}\right],
+(15)
+where δ i = r i + γ ​ Q ϕ ​ ( s i + 1 , a i + 1 ) − Q ϕ ​ ( s i , a i ) \delta_{i}=r_{i}+\gamma Q_{\phi}(s_{i+1},a_{i+1})-Q_{\phi}(s_{i},a_{i}) is the TD error for transition i i , with a i + 1 ∼ π ϕ ( ⋅ ∣ s i + 1 ) a_{i+1}\sim\pi_{\phi}(\cdot\mid s_{i+1}) , Q ϕ Q_{\phi} is a parameterized Q-function, and w i w_{i} is the corresponding uncertainty weight. For real environment data, we simply use w i = 1 w_{i}=1 .
+This approach lets us leverage synthetic rollouts while keeping TD updates well-conditioned: high-variance, uncertain transitions have a smaller impact on the stochastic gradients, while the Bellman fixed point remains unchanged, so we tame noisy (including purely stochastic) updates without discarding or biasing them.
+3.4 Theoretical Analysis
+To make the effect of our weighting more concrete, we provide a theoretical analysis of its properties. First, we establish that multiplying each squared Bellman error ( y − Q ⁡ ( s , a ) ) 2 (y-Q(s,a))^{2} by a positive weight w ⁡ ( s , a ) w(s,a) preserves the Bellman fixed point. Second, in a tractable setting where the critic is linear in a feature representation, we demonstrate that choosing weights inversely proportional to the (total) target noise variance minimizes the variance of the learned parameters, thereby improving convergence rate and sample efficiency. The lemmas below formalize these results: the first shows that any strictly positive reweighting leaves the Bellman target Q ⋆ Q^{\star} unchanged, and the second shows that, in the linear-critic regime, inverse-variance weighting w i ∝ 1 / σ i 2 w_{i}\propto 1/\sigma_{i}^{2} yields the minimum-covariance linear unbiased estimator. Full proofs are provided in Appendix B .
+Lemma (Positive weights preserve the Bellman target).
+Let y = r + γ ​ V ​ ( s ′ ) y=r+\gamma V(s^{\prime}) denote the one-step Bellman target for a value function V V with conditional mean μ ( s , a ) = 𝔼 [ y ∣ s , a ] \mu(s,a)=\mathbb{E}[y\mid s,a] . Given a strictly positive weight function w ⁡ ( s , a ) > 0 w(s,a)>0 , the corresponding population weighted Bellman squared loss is
+ℒ w ( Q ) = 𝔼 ( s , a ) ∼ d π 𝔼 ( r , s ′ ) ∼ P ( ⋅ ∣ s , a ) [ w ( s , a ) ( y − Q ( s , a ) ) 2 ] . \mathcal{L}_{w}(Q)=\mathbb{E}_{(s,a)\sim d^{\pi}}\,\mathbb{E}_{(r,s^{\prime})\sim P(\cdot\mid s,a)}\big[w(s,a)\,(y-Q(s,a))^{2}\big].
+(16)
+Then the unique minimizer of ℒ w ​ ( Q ) \mathcal{L}_{w}(Q) over all action-value functions Q Q is Q ⋆ ​ ( s , a ) = μ ⁡ ( s , a ) Q^{\star}(s,a)=\mu(s,a) for all ( s , a ) (s,a) , i.e., any strictly positive reweighting leaves the Bellman fixed point unchanged and only re-emphasizes different regions of ( s , a ) (s,a) . A full proof is given in Appendix B .
+Lemma (Linear critics, inverse-variance weighting).
+Consider the setting where (1) the action-value function is linear in some feature representation ϕ ⁡ ( s , a ) ∈ ℝ d \phi(s,a)\in\mathbb{R}^{d} , i.e., Q θ ​ ( s , a ) = ϕ ​ ( s , a ) ⊤ ​ θ Q_{\theta}(s,a)=\phi(s,a)^{\top}\theta for parameters θ ∈ ℝ d \theta\in\mathbb{R}^{d} , and (2) for a batch of m m transitions x i = ( s i , a i ) x_{i}=(s_{i},a_{i}) the TD targets satisfy y i = μ ⁡ ( x i ) + ε i y_{i}=\mu(x_{i})+\varepsilon_{i} with 𝔼 ⁡ [ ε i ∣ x i ] = 0 \mathbb{E}[\varepsilon_{i}\mid x_{i}]=0 , Var ⁡ ( ε i ∣ x i ) = σ i 2 \mathrm{Var}(\varepsilon_{i}\mid x_{i})=\sigma_{i}^{2} , and independent noise terms ε i \varepsilon_{i} . Among all linear unbiased estimators of θ \theta , the inverse-variance choice w i ∝ 1 / σ i 2 w_{i}\propto 1/\sigma_{i}^{2} yields the minimum covariance matrix for θ ^ \hat{\theta} . A proof follows the classical Gauss–Markov theorem and is provided in Appendix B .
+Proof sketch.
+Stacking targets into a vector y y and features into a design matrix Φ \Phi , minimizing ∑ i w i ​ ( y i − Q θ ​ ( x i ) ) 2 \sum_{i}w_{i}(y_{i}-Q_{\theta}(x_{i}))^{2} yields the weighted least-squares estimator θ ^ w = ( Φ ⊤ ​ W ​ Φ ) − 1 ​ Φ ⊤ ​ W ​ y \hat{\theta}_{w}=(\Phi^{\top}W\Phi)^{-1}\Phi^{\top}Wy with W = diag ⁡ ( w i ) W=\mathrm{diag}(w_{i}) . Choosing W W proportional to the inverse noise covariance Σ − 1 = diag ⁡ ( 1 / σ i 2 ) \Sigma^{-1}=\mathrm{diag}(1/\sigma_{i}^{2}) yields an estimator whose covariance Cov ⁡ ( θ ^ w ) \mathrm{Cov}(\hat{\theta}_{w}) is minimal among all linear unbiased estimators by the Gauss–Markov theorem. We refer to Appendix B for a full derivation.
+Implications for WIMLE.
+Here σ i 2 \sigma_{i}^{2} is the total predictive variance at ( s i , a i ) (s_{i},a_{i}) , which can include both epistemic and aleatoric components (Eq. 13 ). The lemma above shows that, in the linear-critic regime, weighting each transition inversely to this total variance minimizes the covariance of the learned parameters, independently of the source of the noise. Lower parameter variance means fewer samples are needed to reach a given accuracy, i.e., inverse-variance weighting is provably more sample-efficient in this regime. Combined with the Bellman fixed-point lemma above (proved in Appendix B ), this means our choice of w ⁡ ( s , a ) w(s,a) shrinks update variance without ever changing the Bellman solution—even in the limit of a perfect world model where all uncertainty (and thus down-weighted noise) is purely aleatoric.
+3.5 Algorithm
+Algorithm 1 presents the overall WIMLE procedure. For a more complete implementation of the algorithm, including training frequencies and hyperparameters, see Algorithm 3 in Appendix A .
+Algorithm 1 WIMLE: World Models with Implicit Maximum Likelihood Estimation
+1:
+Input: Rollout horizon H H , ensemble size K K , number of rollouts M M , number of latent codes m m
+2:
+{ Red text indicates steps that fundamentally differ from MBPO. }
+3:
+initialize ensemble world models { g θ k } k = 1 K \{g_{\theta_{k}}\}_{k=1}^{K} , environment and model datasets 𝒟 env \mathcal{D}_{\text{env}} , 𝒟 model \mathcal{D}_{\text{model}}
+4:
+for environment steps do
+5:
+Collect environment transitions using π ϕ \pi_{\phi} ; add to 𝒟 env \mathcal{D}_{\text{env}}
+6:
+// IMLE World Model Training
+7:
+Train ensemble { g θ k } k = 1 K \{g_{\theta_{k}}\}_{k=1}^{K} in parallel on bootstrap samples of 𝒟 env \mathcal{D}_{\text{env}} using IMLE (Eqs. 9 , 10 )
+8:
+for M M model rollouts do
+9:
+Sample starting state s 0 s_{0} from 𝒟 env \mathcal{D}_{\text{env}}
+10:
+for t = 0 t=0 to H − 1 H-1 do
+11:
+a t ∼ π ϕ ( ⋅ | s t ) a_{t}\sim\pi_{\phi}(\cdot|s_{t})
+12:
+Sample m m latents { z j } j = 1 m ∼ 𝒩 ⁡ ( 0 , I ) \{z_{j}\}_{j=1}^{m}\sim\mathcal{N}(0,I)
+13:
+Generate predictions { ( s ~ t + 1 , r ~ t ) k , j } k = 1 , j = 1 K , m = { g θ k ​ ( s t , a t , z j ) } k = 1 , j = 1 K , m \{(\tilde{s}_{t+1},\tilde{r}_{t})_{k,j}\}_{k=1,j=1}^{K,m}=\{g_{\theta_{k}}(s_{t},a_{t},z_{j})\}_{k=1,j=1}^{K,m} from all ensemble members
+14:
+Compute predictive uncertainty: σ t = std k , j ​ [ g θ k ​ ( s t , a t , z j ) ] \sigma_{t}=\text{std}_{k,j}\big[g_{\theta_{k}}(s_{t},a_{t},z_{j})\big] {aggregated over ensembles and latents}
+15:
+Set weight w t = 1 / ( σ t + 1 ) w_{t}=1/(\sigma_{t}+1)
+16:
+Add weighted transition ( s t , a t , r t , s t + 1 , w t ) (s_{t},a_{t},r_{t},s_{t+1},w_{t}) to 𝒟 model \mathcal{D}_{\text{model}}
+17:
+// Uncertainty-Weighted Policy Learning
+18:
+Sample batch from 𝒟 env ∪ 𝒟 model \mathcal{D}_{\text{env}}\cup\mathcal{D}_{\text{model}} (real data has w = 1 w=1 )
+19:
+Update policy using weighted RL objective:
+20:
+ℒ = 𝔼 ( s , a , r , s ′ , w ) ∼ batch ​ [ w ⋅ ℓ RL ​ ( s , a , r , s ′ ) ] \mathcal{L}=\mathbb{E}_{(s,a,r,s^{\prime},w)\sim\text{batch}}[{\color[rgb]{1,0,0}w}\cdot\ell_{\text{RL}}(s,a,r,s^{\prime})]
+The algorithm maintains the underlying RL method as a black box through the weighted loss function ℒ \mathcal{L} , where ℓ RL \ell_{\text{RL}} represents any standard RL objective (e.g., TD error for critics, policy gradient for actors). The key insight is that uncertainty weights w t w_{t} automatically scale the contribution of each synthetic transition—high-confidence predictions receive higher weights while uncertain predictions contribute proportionally less.
+3.6 Design Choices
+3.6.1 Training
+Model Rollouts. We experiment with synthetic rollouts using horizons up to H = 8 H=8 . All rollouts are initialized from real environment states sampled uniformly from the environment dataset 𝒟 env \mathcal{D}_{\text{env}} , following standard practice in model-based RL to ensure rollouts start from the data distribution. We select task-specific rollout horizons through empirical experimentation as described in Appendix D.1 .
+RL Training. We use Soft Actor-Critic (SAC) ( Haarnoja et al., 2018 ) with distributional Q-learning ( Bellemare et al., 2017 ) as our underlying RL algorithm. Following recent work that has demonstrated the effectiveness of distributional RL for continuous control ( Nauman et al., 2024 ; Lee et al., 2025b ; Dabney et al., 2018a ) , we specifically adapt quantile Q-learning ( Dabney et al., 2018b ; Nauman et al., 2024 ) .
+Ensemble Training. We train an ensemble of K = 7 K=7 IMLE world models in parallel to improve predictive uncertainty estimation and calibration (Section 3.3 ). Each ensemble member is initialized with different random parameters and trained on bootstrap samples of the environment data. The parallel training of ensemble members is computationally efficient and scales well with available compute resources, enabling reliable predictive uncertainty without significant computational overhead.
+3.6.2 Architecture
+Figure 3 illustrates the WIMLE world model architecture. The network takes as input state s t s_{t} , action a t a_{t} , and latent variable z z , followed by a dense layer that maps to a 512-dimensional hidden representation. The core of the architecture consists of three residual blocks, each containing dense layers with ReLU activations and L2 normalization. Following recent findings by Lee et al. (2025b) , we employ L2 normalization within the residual blocks, which has been shown to improve stability and performance in RL settings. The network outputs separate predictions for rewards and next states through dedicated dense heads.
+[ s t , a t , z ] [s_{t},a_{t},z]
+Dense Layer
+Input → \to 512
+Residual Block × \times 3
+Dense Layer
+512 → \to 1
+Dense Layer
+512 → \to State Dim
+r ~ t \tilde{r}_{t}
+s ~ t + 1 \tilde{s}_{t+1}
+x x
+Dense
+512 → \to 1024
+ReLU
+Dense
+1024 → \to 512
++ +
+L2-Norm
+y y
+Residual Block
+Figure 3: WIMLE world model architecture.
+4 Experiments
+We evaluate WIMLE across diverse continuous-control benchmarks—DeepMind Control Suite (including Dog and Humanoid), MyoSuite, and HumanoidBench ( Tassa et al., 2018 ; Caggiano et al., 2022 ; Sferrazza et al., 2024 ) . Across 40 tasks spanning locomotion and dexterous manipulation with high-dimensional state/action spaces and sparse rewards, we compare against strong model-free and model-based methods, including MR.Q, PPO, SAC, Simba, SimbaV2, BRO, TD-MPC2, and DreamerV3 ( Fujimoto et al., 2025 ; Schulman et al., 2017a ; Haarnoja et al., 2018 ; Lee et al., 2025a ; Lee et al., 2025b ; Nauman et al., 2024 ; Hansen et al., 2024 ; Hafner et al., 2023 ) , and present per-benchmark results. Through our experiments, we aim to answer: (i) How does WIMLE compare to strong model-free and model-based methods? (ii) How does IMLE‑based multi‑modality in the world model affect results compared to standard unimodal Gaussian models? (iii) How do uncertainty estimates evolve during training, and how do they affect performance?
+4.1 Experimental Setup
+All experiments are run for 1M environment steps with 10 random seeds unless otherwise specified. We report the interquartile mean (IQM) and 95% confidence intervals computed with RLiable ( Agarwal et al., 2021 ) , using stratified bootstrap across tasks and seeds. Following BRO and SimbaV2 ( Nauman et al., 2024 ; Lee et al., 2025b ) , we aggregate normalized scores per BRO/SimbaV2 protocol (DMC [0,1], MyoSuite success, HumanoidBench success-normalized). Where official baseline results are available, we report the authors’ numbers; otherwise, we run public implementations with their recommended settings. We provide full details about the experimental setup, hyperparameters, and baselines in Section D and E of the appendix.
+4.2 Comparison to Baselines
+Dog & Humanoid ( 7 7 tasks)
+DMC ( 16 16 tasks)
+MyoSuite ( 10 10 tasks)
+HumanoidBench ( 14 14 tasks)
+Figure 4: Aggregate results across benchmarks. WIMLE outperforms strong model-free and model-based baselines overall. Gains are most pronounced on the challenging Dog & Humanoid subset, where it achieves superior sample efficiency and asymptotic performance. On MyoSuite, it performs asymptotically on par with strong baselines that are already near the maximum score (1.0), and on HumanoidBench it significantly outperforms the baselines, solving 8 / 14 8/14 tasks versus BRO 4 4 and SimbaV2 5 5 . Y-axes show interquartile mean; shaded areas denote 95 % 95\% confidence intervals.
+We summarize aggregate performance across benchmarks in Figure 4 and provide detailed per-task results in Section C of the appendix. WIMLE consistently leads among strong model-free and model-based methods on Dog & Humanoid, the full DMC suite, and HumanoidBench, while performing asymptotically on par with strong MyoSuite baselines that are already close to the maximum score (1.0). Notably, gains are largest on the high-dimensional and challenging Dog & Humanoid tasks (Dog: | 𝒮 | = 223 |\mathcal{S}|{=}223 , | 𝒜 | = 38 |\mathcal{A}|{=}38 ; Humanoid: | 𝒮 | = 67 |\mathcal{S}|{=}67 , | 𝒜 | = 24 |\mathcal{A}|{=}24 ). On HumanoidBench, WIMLE significantly outperforms baselines, solving 8 8 of 14 14 tasks versus BRO 4 4 and SimbaV2 5 5 (Figure 10 ). We summarize performance across timesteps in Section E.1 , where WIMLE performs best or competitively across most evaluations. We attribute these improvements to IMLE-driven multi-modality in the world model and uncertainty-weighted learning that scales the influence of synthetic rollouts by model confidence, mitigating bias from overconfident predictions while preserving useful signal, which we discuss in more detail in the next section. Per-task performance is reported in Figures 7 , 8 , 9 and 10 .
+4.3 Method Analysis
+We analyze how uncertainty-aware weighting and multi-modal dynamics modeling impact performance and how predictive uncertainty evolves during training.
+Effect of uncertainty-aware weighting
+Figure 5 (Left) compares WIMLE with uncertainty-aware weighting to an unweighted variant that is identical in every respect except that all per-transition weights are fixed to w i = 1.0 w_{i}{=}1.0 . The unweighted curve lags and can even underperform a strong model-free baseline early on, indicating that ignoring predictive uncertainty significantly biases learning and hinders performance. Figure 5 (Right) studies rollout sensitivity. Increasing the model rollout horizon from H = 1 H{=}1 to H = 4 H{=}4 to H = 6 H{=}6 improves performance, and extending to H = 8 H{=}8 maintains performance rather than showing the severe degradation typically observed in model-based methods when increasing rollout length ( Janner et al., 2019 ) . This improved stability at longer horizons demonstrates that uncertainty-aware weighting reduces the model bias typically introduced by longer horizon errors, enabling us to leverage longer synthetic rollouts without considerable performance degradation.
+Impact of IMLE-based multi-modality
+Figure 6 (Left) contrasts WIMLE (IMLE world model) with an otherwise identical unimodal Gaussian world model (MBPO-style; ( Janner et al., 2019 ) ), with both variants using uncertainty-aware weighting. The IMLE variant significantly outperforms the Gaussian, underscoring the value of modeling multi‑modal transition dynamics for uncertainty estimation in complex, contact‑rich control. Figure 6 (Right) shows how weights evolve. During a brief warm‑up with limited environment samples and training, both models are uncalibrated and weights can appear transiently high; as data accumulates and the estimators calibrate, weights drop to reflect high uncertainty and low confidence. As training progresses and more data are collected, IMLE’s weights increase to reflect higher confidence in the predictions, whereas the Gaussian’s remain relatively flat, indicating limited calibration. Together, these results show that multi‑modal modeling improves both performance and the quality of uncertainty estimates, reducing the risk of overconfident, biased predictions misleading the policy.
+Uncertainty-aware vs. unweighted
+Rollout sensitivity
+Figure 5: Uncertainty-aware weighting reduces model bias and enables stable training at longer horizons on Humanoid-run. Left: Uncertainty-aware WIMLE compared to an unweighted variant that is identical except all per-transition weights are fixed to w i = 1.0 w_{i}=1.0 and a model-free variant that is identical except that it does not use the model; the unweighted curve lags and can even underperform the model-free variant early on, indicating that ignoring uncertainty will bias learning and hinder performance. Right: Rollout ablation ( H = 1 , 4 , 6 , 8 H=1,4,6,8 ) for WIMLE: increasing the model rollout horizon from H = 1 H{=}1 to H = 4 H{=}4 to H = 6 H{=}6 improves performance, and extending to H = 8 H{=}8 does not substantially degrade performance, suggesting that uncertainty-aware weighting mitigates harm from error accumulation at longer horizons. All variants use the same SAC backbone and distributional critics; only the ablated components differ. All plots are on DMC’s Humanoid-run task with 5 5 seeds.
+IMLE vs. Gaussian (performance)
+IMLE vs. Gaussian (weights)
+Figure 6: Multi-modality strengthens model-based learning. Left: WIMLE (IMLE world model) versus an otherwise identical unimodal Gaussian world model (MBPO-style; ( Janner et al., 2019 ) ; both use uncertainty-aware weighting): the IMLE variant significantly outperforms the Gaussian, highlighting the value of multi-modal modeling and IMLE’s efficacy. Right: Weight dynamics: After a brief warm-up phase, IMLE’s weights are lower when uncertainty is high and increase as training progresses and more data are collected, reflecting growing model confidence; the unimodal Gaussian fails to capture this evolution, yielding relatively flat weights over time. All plots are on Humanoid-run.
+5 Related Work
+Model-free RL.
+Foundational model-free methods such as PPO ( Schulman et al., 2017a ) and SAC ( Haarnoja et al., 2018 ) remain strong references for continuous control. Recent advances focus on scaling and regularization: BRO ( Nauman et al., 2024 ) scales critic networks to 5M parameters with strong regularization and optimistic exploration, achieving state-of-the-art performance. Simba ( Lee et al., 2025a ) introduces an architecture that embeds simplicity bias through running statistics normalization, residual feedforward blocks, and layer normalization, enabling effective parameter scaling; SimbaV2 ( Lee et al., 2025b ) further constrains feature and weight norms via hyperspherical normalization. Contemporary work like MR.Q ( Fujimoto et al., 2025 ) explores improved value estimation for better sample efficiency. Collectively, these methods provide strong model-free baselines.
+Model-based RL.
+Model-based RL methods learn world models to improve sample efficiency via synthetic rollouts and planning. DreamerV3 ( Hafner et al., 2023 ) learns a latent world model and achieves strong performance in continuous control with large-scale training. MBPO ( Janner et al., 2019 ) uses short model-generated rollouts branched from real data to avoid model exploitation while maintaining sample efficiency. TD-MPC2 ( Hansen et al., 2024 ) learns implicit world models through joint-embedding prediction and performs local trajectory optimization in latent space for scalable multi-task learning. STORM ( Zhang et al., 2023 ) combines Transformer-based sequence modeling with categorical VAEs for efficient world model learning in visual domains. Diffusion-based world models generate trajectories via iterative denoising and incur high inference cost, which hinders online RL ( Janner et al., 2022 ; Ajay et al., 2023 ; He et al., 2023 ) . Despite these algorithmic advances, model-based methods have struggled to consistently surpass recent model-free approaches like BRO ( Nauman et al., 2024 ) and SimbaV2 ( Lee et al., 2025b ) .
+Model Bias.
+Model bias and error accumulation remain fundamental challenges in MBRL. Trajectory models ( Asadi et al., 2019 ; Lambert et al., 2021 ) address the compounding-error problem by learning multi-step models that directly predict outcomes of action sequences, avoiding the accumulation of one-step prediction errors. Self-correcting models ( Talvitie, 2017 ) train models to correct themselves when producing errors. Infoprop ( Frauenknecht et al., 2025 ) integrates uncertainty by truncating rollouts using information-theoretic corruption measures, but is not competitive on complex, high-dimensional tasks such as Humanoid-run (see Figure 1 ). In contrast, we estimate a single predictive uncertainty and weight each synthetic transition accordingly, integrating this directly into the learning objective to preserve useful synthetic data while reducing the influence of uncertain predictions. This yields state-of-the-art results on challenging tasks (Figures 1 and 4 ).
+Implicit Maximum Likelihood Estimation.
+IMLE ( Li and Malik, 2018 ) trains implicit generative models by minimizing the expected distance from each data point to its nearest generated sample, avoiding mode-collapse and GAN ( Goodfellow et al., 2014 ) training issues. Adaptive IMLE ( Aghabozorgi et al., 2023 ) extends this with adaptive thresholding and curriculum learning for better few-shot performance. These methods demonstrate that likelihood-based objectives can achieve good sample quality without adversarial training on low-data settings.
+6 Limitations and Future Work
+WIMLE uses world models solely to generate synthetic rollouts. Other uses, such as planning with the model or integrating the model into policy‑gradient formulations, remain unexplored here. Future work should evaluate WIMLE in these settings. Our experiments use proprioceptive state observations only. Extending WIMLE to image‑based control is an important direction, especially since IMLE has been shown to be effective in few-shot image synthesis ( Aghabozorgi et al., 2023 ; Vashist et al., 2024 ) . Finally, similar to MBPO ( Janner et al., 2019 ) and POMP ( Zhu et al., 2023 ) , the rollout horizon is a task‑dependent hyperparameter. Learning to adapt the horizon online based on model confidence is a promising avenue for future research.
+7 Conclusion
+WIMLE advances model-based reinforcement learning by extending IMLE to learn stochastic, multi‑modal world models and by weighting synthetic data with predictive confidence. This reduces model bias and stabilizes learning while retaining the benefits of synthetic rollouts. Across 40 continuous‑control tasks in DMC, MyoSuite, and HumanoidBench, WIMLE achieves superior sample efficiency and competitive or higher asymptotic performance than strong model‑free and model‑based baselines. Gains are largest on challenging Dog and Humanoid locomotion tasks. On HumanoidBench, WIMLE significantly outperforms baselines and solves 8 of 14 tasks. The approach integrates cleanly with standard RL objectives and scales with compute through ensembles and parallel latent sampling. We hope these results renew interest in practical world models for challenging continuous control.
+Acknowledgments
+We are grateful to James A. Peltier for his support on the computing infrastructure that made this work possible.
+References
+Agarwal et al. (2021)
+R. Agarwal, M. Schwarzer, P. S. Castro, A. C. Courville, and M. Bellemare
+Deep reinforcement learning at the edge of the statistical precipice .
+Advances in neural information processing systems 34 , pp. 29304–29320 .
+Cited by: §4.1 .
+Aghabozorgi et al. (2023)
+M. Aghabozorgi, S. Peng, and K. Li
+Adaptive IMLE for few-shot pretraining-free generative modelling .
+In International Conference on Machine Learning, ICML 2023, 23-29 July
+2023, Honolulu, Hawaii, USA , A. Krause, E. Brunskill, K. Cho, B. Engelhardt, S. Sabato, and J. Scarlett (Eds.) ,
+Proceedings of Machine Learning Research , Vol. 202 , pp. 248–264 .
+External Links: Link
+Cited by: §1 ,
+§2.3 ,
+§3.1 ,
+§5 ,
+§6 .
+Ajay et al. (2023)
+A. Ajay, Y. Du, A. Gupta, J. Tenenbaum, T. Jaakkola, and P. Agrawal
+Is conditional generative modeling all you need for decision-making? .
+International Conference on Learning Representations .
+Cited by: §5 .
+Argenson and Dulac-Arnold (2021)
+A. Argenson and G. Dulac-Arnold
+Model-based offline planning .
+ArXiv abs/2008.05556 .
+Cited by: §1 .
+Asadi et al. (2018a)
+K. Asadi, E. Cater, D. Misra, and M. L. Littman
+Towards a Simple Approach to Multi-step Model-based Reinforcement Learning .
+arXiv .
+Cited by: §1 .
+Asadi et al. (2019)
+K. Asadi, D. Misra, S. Kim, and M. L. Littman
+Combating the Compounding-Error Problem with a Multi-step Model .
+arXiv .
+Cited by: §5 .
+Asadi et al. (2018b)
+K. Asadi, D. Misra, and M. L. Littman
+Lipschitz Continuity in Model-based Reinforcement Learning .
+arXiv .
+Cited by: §1 .
+Barnett et al. (2005)
+A. G. Barnett, J. C. Van Der Pols, and A. J. Dobson
+Regression to the mean: what it is and how to deal with it .
+International journal of epidemiology 34 ( 1 ), pp. 215–220 .
+Cited by: §3.1 .
+Bellemare et al. (2017)
+M. G. Bellemare, W. Dabney, and R. Munos
+A distributional perspective on reinforcement learning .
+In Proceedings of the 34th International Conference on Machine Learning,
+ICML 2017, Sydney, NSW, Australia, 6-11 August 2017 , D. Precup and Y. W. Teh (Eds.) ,
+Proceedings of Machine Learning Research , Vol. 70 , pp. 449–458 .
+External Links: Link
+Cited by: §3.6.1 .
+Bellman (1957)
+R. Bellman
+A markovian decision process .
+Indiana Univ. Math. J. 6 , pp. 679–684 .
+External Links: ISSN 0022-2518
+Cited by: §2.1 .
+Caggiano et al. (2022)
+V. Caggiano, H. Wang, G. Durandau, M. Sartori, and V. Kumar
+MyoSuite: A contact-rich simulation suite for musculoskeletal motor control .
+In Learning for Dynamics and Control Conference, L4DC 2022, 23-24 June
+2022, Stanford University, Stanford, CA, USA , R. Firoozi, N. Mehr, E. Yel, R. Antonova, J. Bohg, M. Schwager, and M. J. Kochenderfer (Eds.) ,
+Proceedings of Machine Learning Research , Vol. 168 , pp. 492–507 .
+External Links: Link
+Cited by: §E.3 ,
+§4 .
+Cetina et al. (2021)
+V. U. Cetina, N. Navarro-Guerrero, A. Martín-González, C. Weber, and S. Wermter
+Survey on reinforcement learning for language processing .
+Artificial Intelligence Review 56 , pp. 1543–1575 .
+External Links: Link
+Cited by: §1 .
+Chen et al. (2022)
+J. Chen, J. Sun, and G. Wang
+From unmanned systems to autonomous intelligent systems .
+Engineering 12 , pp. 16–19 .
+Cited by: §1 .
+Clavera et al. (2020)
+I. Clavera, Y. Fu, and P. Abbeel
+Model-augmented actor-critic: backpropagating through paths .
+ArXiv abs/2005.08068 .
+Cited by: §1 .
+Dabney et al. (2018a)
+W. Dabney, G. Ostrovski, D. Silver, and R. Munos
+Implicit quantile networks for distributional reinforcement learning .
+External Links: 1806.06923 ,
+Link
+Cited by: §3.6.1 .
+Dabney et al. (2018b)
+W. Dabney, M. Rowland, M. G. Bellemare, and R. Munos
+Distributional reinforcement learning with quantile regression .
+In Proceedings of the Thirty-Second AAAI Conference on Artificial Intelligence,
+(AAAI-18), the 30th innovative Applications of Artificial Intelligence
+(IAAI-18), and the 8th AAAI Symposium on Educational Advances in
+Artificial Intelligence (EAAI-18), New Orleans, Louisiana, USA, February
+2-7, 2018 , S. A. McIlraith and K. Q. Weinberger (Eds.) ,
+pp. 2892–2901 .
+External Links: Link ,
+Document
+Cited by: §3.6.1 .
+Frauenknecht et al. (2025)
+B. Frauenknecht, D. Subhasish, F. Solowjow, and S. Trimpe
+On rollouts in model-based reinforcement learning .
+In The Thirteenth International Conference on Learning Representations,
+ICLR 2025, Singapore, April 24-28, 2025 ,
+External Links: Link
+Cited by: §1 ,
+§1 ,
+§3.2 ,
+§5 .
+Fujimoto et al. (2025)
+S. Fujimoto, P. D’Oro, A. Zhang, Y. Tian, and M. Rabbat
+Towards general-purpose model-free reinforcement learning .
+arXiv preprint arXiv:2501.16142 .
+Cited by: §4 ,
+§5 .
+Galton (1886)
+F. Galton
+Regression towards mediocrity in hereditary stature .
+The Journal of the Anthropological Institute of Great Britain and Ireland 15 , pp. 246–263 .
+Cited by: §3.1 .
+Goodfellow et al. (2014)
+I. J. Goodfellow, J. Pouget-Abadie, M. Mirza, B. Xu, D. Warde-Farley, S. Ozair, A. Courville, and Y. Bengio
+Generative adversarial networks .
+External Links: 1406.2661 ,
+Link
+Cited by: §5 .
+Ha and Schmidhuber (2018)
+D. Ha and J. Schmidhuber
+Recurrent world models facilitate policy evolution .
+In Advances in Neural Information Processing Systems 31 ,
+pp. 2451–2463 .
+Cited by: §1 ,
+§3.1 .
+Haarnoja et al. (2018)
+T. Haarnoja, A. Zhou, P. Abbeel, and S. Levine
+Soft actor-critic: off-policy maximum entropy deep reinforcement learning with a stochastic actor .
+In Proceedings of the 35th International Conference on Machine Learning,
+ICML 2018, Stockholmsmässan, Stockholm, Sweden, July
+10-15, 2018 , J. G. Dy and A. Krause (Eds.) ,
+Proceedings of Machine Learning Research , Vol. 80 , pp. 1856–1865 .
+External Links: Link
+Cited by: §3.6.1 ,
+§4 ,
+§5 .
+Hafner et al. (2020)
+D. Hafner, T. Lillicrap, J. Ba, and M. Norouzi
+Dream to control: learning behaviors by latent imagination .
+In International Conference on Learning Representations ,
+External Links: Link
+Cited by: §1 ,
+§3.1 .
+Hafner et al. (2019)
+D. Hafner, T. Lillicrap, I. Fischer, R. Villegas, D. Ha, H. Lee, and J. Davidson
+Learning latent dynamics for planning from pixels .
+In International Conference on Machine Learning ,
+pp. 2555–2565 .
+Cited by: §1 ,
+§3.1 .
+Hafner et al. (2021)
+D. Hafner, T. P. Lillicrap, M. Norouzi, and J. Ba
+Mastering atari with discrete world models .
+In International Conference on Learning Representations ,
+External Links: Link
+Cited by: §1 ,
+§3.1 .
+Hafner et al. (2023)
+D. Hafner, J. Pasukonis, J. Ba, and T. Lillicrap
+Mastering diverse domains through world models .
+arXiv preprint arXiv:2301.04104 .
+Cited by: §1 ,
+§4 ,
+§5 .
+Hansen et al. (2022)
+N. Hansen, H. Su, and X. Wang
+Temporal difference learning for model predictive control .
+In International Conference on Machine Learning, ICML 2022, 17-23 July
+2022, Baltimore, Maryland, USA , K. Chaudhuri, S. Jegelka, L. Song, C. Szepesvári, G. Niu, and S. Sabato (Eds.) ,
+Proceedings of Machine Learning Research , Vol. 162 , pp. 8387–8406 .
+External Links: Link
+Cited by: §1 .
+Hansen et al. (2024)
+N. Hansen, H. Su, and X. Wang
+TD-MPC2: scalable, robust world models for continuous control .
+In The Twelfth International Conference on Learning Representations,
+ICLR 2024, Vienna, Austria, May 7-11, 2024 ,
+External Links: Link
+Cited by: §3.1 ,
+§4 ,
+§5 .
+He et al. (2023)
+H. He, C. Bai, K. Xu, Z. Yang, W. Zhang, D. Wang, B. Zhao, and X. Li
+Diffusion model is an effective planner and data synthesizer for multi-task reinforcement learning .
+Advances in Neural Information Processing Systems .
+Cited by: §5 .
+Hessel et al. (2018)
+M. Hessel, J. Modayil, H. Van Hasselt, T. Schaul, G. Ostrovski, W. Dabney, D. Horgan, B. Piot, M. Azar, and D. Silver
+Rainbow: Combining improvements in deep reinforcement learning .
+In Proceedings of the AAAI Conference on Artificial Intelligence ,
+Vol. 32 .
+Cited by: §1 .
+Hosu and Rebedea (2016)
+I. Hosu and T. Rebedea
+Playing atari games with deep reinforcement learning and human checkpoint replay .
+CoRR abs/1607.05077 .
+External Links: Link ,
+1607.05077
+Cited by: §1 .
+Huang et al. (2024)
+R. Huang, Y. Pei, G. Wang, Y. Zhang, Y. Yang, P. Wang, and H. Shen
+Diffusion models as optimizers for efficient planning in offline rl .
+External Links: 2407.16142 ,
+Link
+Cited by: §3.1 .
+Janner et al. (2022)
+M. Janner, Y. Du, J. B. Tenenbaum, and S. Levine
+Planning with diffusion for flexible behavior synthesis .
+International Conference on Machine Learning .
+Cited by: §5 .
+Janner et al. (2019)
+M. Janner, J. Fu, M. Zhang, and S. Levine
+When to trust your model: model-based policy optimization .
+In Advances in Neural Information Processing Systems 32: Annual Conference
+on Neural Information Processing Systems 2019, NeurIPS 2019, December
+8-14, 2019, Vancouver, BC, Canada , H. M. Wallach, H. Larochelle, A. Beygelzimer, F. d’Alché-Buc, E. B. Fox, and R. Garnett (Eds.) ,
+pp. 12498–12509 .
+External Links: Link
+Cited by: §1 ,
+§1 ,
+§2.2 ,
+§3.1 ,
+§3.1 ,
+Figure 6 ,
+§4.3 ,
+§4.3 ,
+§5 ,
+§6 .
+Karras et al. (2022)
+T. Karras, M. Aittala, T. Aila, and S. Laine
+Elucidating the design space of diffusion-based generative models .
+External Links: 2206.00364 ,
+Link
+Cited by: §3.1 .
+Kiumarsi et al. (2018)
+B. Kiumarsi, K. G. Vamvoudakis, H. Modares, and F. L. Lewis
+Optimal and autonomous control using reinforcement learning: a survey .
+IEEE Transactions on Neural Networks and Learning Systems 29 , pp. 2042–2062 .
+External Links: Link
+Cited by: §1 .
+Kurutach et al. (2018)
+T. Kurutach, I. Clavera, Y. Duan, A. Tamar, and P. Abbeel
+Model-ensemble trust-region policy optimization .
+In 6th International Conference on Learning Representations, ICLR 2018,
+Vancouver, BC, Canada, April 30 - May 3, 2018, Conference Track Proceedings ,
+External Links: Link
+Cited by: §1 .
+Lambert et al. (2021)
+N. O. Lambert, A. Wilcox, H. Zhang, K. S. J. Pister, and R. Calandra
+Learning Accurate Long-term Dynamics for Model-based Reinforcement Learning .
+IEEE Conf on Decision and Control .
+Cited by: §5 .
+Lambert (2025)
+N. Lambert
+Reinforcement learning from human feedback .
+External Links: 2504.12501 ,
+Link
+Cited by: §1 .
+Laskin et al. (2020)
+M. Laskin, A. Srinivas, and P. Abbeel
+Curl: Contrastive unsupervised representations for reinforcement learning .
+In International Conference on Machine Learning ,
+pp. 5639–5650 .
+Cited by: §1 .
+Lee et al. (2025a)
+H. Lee, D. Hwang, D. Kim, H. Kim, J. J. Tai, K. Subramanian, P. R. Wurman, J. Choo, P. Stone, and T. Seno
+SimBa: simplicity bias for scaling up parameters in deep reinforcement learning .
+In The Thirteenth International Conference on Learning Representations,
+ICLR 2025, Singapore, April 24-28, 2025 ,
+External Links: Link
+Cited by: §E.4 ,
+§4 ,
+§5 .
+Lee et al. (2025b)
+H. Lee, Y. Lee, T. Seno, D. Kim, P. Stone, and J. Choo
+Hyperspherical normalization for scalable deep reinforcement learning .
+CoRR abs/2502.15280 .
+External Links: Link ,
+Document ,
+2502.15280
+Cited by: §E.4 ,
+§1 ,
+§3.1 ,
+§3.6.1 ,
+§3.6.2 ,
+§4.1 ,
+§4 ,
+§5 ,
+§5 .
+Li and Malik (2018)
+K. Li and J. Malik
+Implicit maximum likelihood estimation .
+CoRR abs/1809.09087 .
+External Links: Link ,
+1809.09087
+Cited by: §1 ,
+§2.3 ,
+§5 .
+Lowrey et al. (2019)
+K. Lowrey, A. Rajeswaran, S. M. Kakade, E. Todorov, and I. Mordatch
+Plan online, learn offline: efficient learning and exploration via model-based control .
+ArXiv abs/1811.01848 .
+Cited by: §1 .
+Micheli et al. (2023)
+V. Micheli, E. Alonso, and F. Fleuret
+Transformers are sample-efficient world models .
+In The Eleventh International Conference on Learning Representations,
+ICLR 2023, Kigali, Rwanda, May 1-5, 2023 ,
+External Links: Link
+Cited by: §3.1 .
+Nauman et al. (2024)
+M. Nauman, M. Ostaszewski, K. Jankowski, P. Milos, and M. Cygan
+Bigger, regularized, optimistic: scaling for compute and sample efficient continuous control .
+In Advances in Neural Information Processing Systems 38: Annual Conference
+on Neural Information Processing Systems 2024, NeurIPS 2024, Vancouver,
+BC, Canada, December 10 - 15, 2024 , A. Globersons, L. Mackey, D. Belgrave, A. Fan, U. Paquet, J. M. Tomczak, and C. Zhang (Eds.) ,
+External Links: Link
+Cited by: §1 ,
+§3.1 ,
+§3.6.1 ,
+§4.1 ,
+§4 ,
+§5 ,
+§5 .
+Robine et al. (2023)
+J. Robine, M. Höftmann, T. Uelwer, and S. Harmeling
+Transformer-based world models are happy with 100k interactions .
+In The Eleventh International Conference on Learning Representations,
+ICLR 2023, Kigali, Rwanda, May 1-5, 2023 ,
+External Links: Link
+Cited by: §3.1 .
+Schulman et al. (2017a)
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+Proximal policy optimization algorithms .
+arXiv preprint arXiv:1707.06347 .
+Cited by: §4 ,
+§5 .
+Schulman et al. (2017b)
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+Proximal policy optimization algorithms .
+arXiv preprint arXiv:1707.06347 .
+Cited by: §1 .
+Sferrazza et al. (2024)
+C. Sferrazza, D. Huang, X. Lin, Y. Lee, and P. Abbeel
+HumanoidBench: simulated humanoid benchmark for whole-body locomotion and manipulation .
+In Robotics: Science and Systems XX, Delft, The Netherlands, July 15-19,
+2024 , D. Kulic, G. Venture, K. E. Bekris, and E. Coronado (Eds.) ,
+External Links: Link ,
+Document
+Cited by: §E.4 ,
+§4 .
+Smith et al. (2024)
+F. B. Smith, J. Kossen, E. Trollope, M. van der Wilk, A. Foster, and T. Rainforth
+Rethinking aleatoric and epistemic uncertainty .
+CoRR abs/2412.20892 .
+External Links: Link ,
+Document ,
+2412.20892
+Cited by: §3.2 .
+Somalwar et al. (2025)
+A. Somalwar, B. D. Lee, G. J. Pappas, and N. Matni
+Learning with imperfect models: when multi-step prediction mitigates compounding error .
+CoRR abs/2504.01766 .
+External Links: Link ,
+Document ,
+2504.01766
+Cited by: §1 .
+Talvitie (2017)
+E. Talvitie
+Self-correcting models for model-based reinforcement learning .
+In Proceedings of the Thirty-First AAAI Conference on Artificial Intelligence,
+February 4-9, 2017, San Francisco, California, USA , S. Singh and S. Markovitch (Eds.) ,
+pp. 2597–2603 .
+External Links: Link ,
+Document
+Cited by: §1 ,
+§5 .
+Tassa et al. (2018)
+Y. Tassa, Y. Doron, A. Muldal, T. Erez, Y. Li, D. de Las Casas, D. Budden, A. Abdolmaleki, J. Merel, A. Lefrancq, T. P. Lillicrap, and M. A. Riedmiller
+DeepMind control suite .
+CoRR abs/1801.00690 .
+External Links: Link ,
+1801.00690
+Cited by: §E.2 ,
+§4 .
+Vashist et al. (2024)
+C. Vashist, S. Peng, and K. Li
+Rejection sampling IMLE: designing priors for better few-shot image synthesis .
+In Computer Vision - ECCV 2024 - 18th European Conference, Milan, Italy,
+September 29-October 4, 2024, Proceedings, Part XXI , A. Leonardis, E. Ricci, S. Roth, O. Russakovsky, T. Sattler, and G. Varol (Eds.) ,
+Lecture Notes in Computer Science , Vol. 15079 , pp. 441–456 .
+External Links: Link ,
+Document
+Cited by: §1 ,
+§3.1 ,
+§6 .
+Venkatraman et al. (2015)
+A. Venkatraman, M. Hebert, and J.. Bagnell
+Improving Multi-Step Prediction of Learned Time Series Models .
+AAAI .
+Cited by: §1 .
+Weng et al. (2023)
+B. Weng, J. Sun, G. Huang, F. Deng, G. Wang, and J. Chen
+Competitive meta-learning .
+IEEE/CAA Journal of Automatica Sinica 10 ( 9 ), pp. 1902–1904 .
+Cited by: §1 .
+Xiao et al. (2019)
+C. Xiao, Y. Wu, C. Ma, D. Schuurmans, and M. Müller
+Learning to combat compounding-error in model-based reinforcement learning .
+CoRR abs/1912.11206 .
+External Links: Link ,
+1912.11206
+Cited by: §1 .
+Ye et al. (2021)
+W. Ye, S. Liu, T. Kurutach, P. Abbeel, and Y. Gao
+Mastering atari games with limited data .
+Advances in Neural Information Processing Systems 34 , pp. 25476–25488 .
+Cited by: §1 .
+Zhang et al. (2023)
+W. Zhang, G. Wang, J. Sun, Y. Yuan, and G. Huang
+STORM: efficient stochastic transformer based world models for reinforcement learning .
+In Advances in Neural Information Processing Systems 36: Annual Conference
+on Neural Information Processing Systems 2023, NeurIPS 2023, New Orleans,
+LA, USA, December 10 - 16, 2023 , A. Oh, T. Naumann, A. Globerson, K. Saenko, M. Hardt, and S. Levine (Eds.) ,
+External Links: Link
+Cited by: §3.1 ,
+§5 .
+Zhu et al. (2023)
+J. Zhu, Y. Wang, L. Wu, T. Qin, W. Zhou, T. Liu, and H. Li
+Making better decision by directly planning in continuous control .
+In The Eleventh International Conference on Learning Representations,
+ICLR 2023, Kigali, Rwanda, May 1-5, 2023 ,
+External Links: Link
+Cited by: §1 ,
+§1 ,
+§2.2 ,
+§3.1 ,
+§6 .
+Author Statement: Use of Language Models
+We used large language models to help polish writing and improve clarity. All ideas, methods, experiments, and analyses were created and verified by the authors. Any suggested text was reviewed and edited by the authors for accuracy and originality.
+Appendix A Algorithm Details
+Algorithm 3 provides the detailed implementation of WIMLE, including training frequencies, batch sizes, and other practical considerations omitted from the main algorithm for clarity. The IMLE training procedure is detailed in Algorithm 2 . Hyperparameters are provided in Section D .
+Algorithm 2 IMLE World Model Training
+1:
+Input: Environment dataset 𝒟 env \mathcal{D}_{\text{env}} , ensemble { g θ k } k = 1 K \{g_{\theta_{k}}\}_{k=1}^{K} , number of latent codes m m , number of updates U U , learning rate η \eta
+2:
+for u = 1 u=1 to U U do
+3:
+Sample minibatch { ( s i , a i , r i , s i + 1 ) } i ∈ B \{(s_{i},a_{i},r_{i},s_{i+1})\}_{i\in B} with replacement from 𝒟 env \mathcal{D}_{\text{env}}
+4:
+Form targets y i = [ r i , s i + 1 ] y_{i}=[r_{i},s_{i+1}] for all i ∈ B i\in B
+5:
+// Assignment Step (Eq. 9 )
+6:
+Sample m m candidate latents { z j } j = 1 m ∼ 𝒩 ⁡ ( 0 , I ) \{z_{j}\}_{j=1}^{m}\sim\mathcal{N}(0,I)
+7:
+for k = 1 k=1 to K K in parallel do
+8:
+z i , k ⋆ = arg ⁡ min 1 ≤ j ≤ m ⁡ ‖ g θ k ​ ( s i , a i , z j ) − y i ‖ 2 z_{i,k}^{\star}=\arg\min_{1\leq j\leq m}\|g_{\theta_{k}}(s_{i},a_{i},z_{j})-y_{i}\|^{2} for all i ∈ B i\in B
+9:
+// Update Step (Eq. 10 )
+10:
+for k = 1 k=1 to K K in parallel do
+11:
+θ k ← θ k − η ​ ∇ θ k 1 | B | ​ ∑ i ∈ B ‖ g θ k ​ ( s i , a i , z i , k ⋆ ) − y i ‖ 2 \theta_{k}\leftarrow\theta_{k}-\eta\nabla_{\theta_{k}}\frac{1}{|B|}\sum_{i\in B}\|g_{\theta_{k}}(s_{i},a_{i},z_{i,k}^{\star})-y_{i}\|^{2}
+Algorithm 3 WIMLE: Detailed Implementation
+1:
+Input: Rollout horizon H H , ensemble size K = 7 K=7 , batch size B B , model training frequency train_freq , number of latent codes m m , number of model updates U U
+2:
+Initialize policy π ϕ \pi_{\phi} , ensemble of IMLE world models { g θ k } k = 1 K \{g_{\theta_{k}}\}_{k=1}^{K} , environment dataset 𝒟 env \mathcal{D}_{\text{env}} , model dataset 𝒟 model \mathcal{D}_{\text{model}}
+3:
+for environment steps do
+4:
+Collect environment transition using π ϕ \pi_{\phi} ; add to 𝒟 env \mathcal{D}_{\text{env}}
+5:
+if step mod \bmod train_freq = 0 =0 then
+6:
+// IMLE World Model Training
+7:
+Train ensemble { g θ k } k = 1 K \{g_{\theta_{k}}\}_{k=1}^{K} in parallel using Algorithm 2
+8:
+// Uncertainty-Aware Rollout Generation
+9:
+Clear 𝒟 model \mathcal{D}_{\text{model}}
+10:
+Sample batch of starting states { s 0 ( i ) } i = 1 B \{s_{0}^{(i)}\}_{i=1}^{B} with replacement from 𝒟 env \mathcal{D}_{\text{env}}
+11:
+for t = 0 t=0 to H − 1 H-1 do
+12:
+a t ( i ) ∼ π ϕ ( ⋅ | s t ( i ) ) a_{t}^{(i)}\sim\pi_{\phi}(\cdot|s_{t}^{(i)}) for all i ∈ { 1 , … , B } i\in\{1,\ldots,B\}
+13:
+Sample m m latents { z j } j = 1 m ∼ 𝒩 ⁡ ( 0 , I ) \{z_{j}\}_{j=1}^{m}\sim\mathcal{N}(0,I)
+14:
+Generate predictions { g θ k ​ ( s t ( i ) , a t ( i ) , z j ) } k = 1 , j = 1 K , m \{g_{\theta_{k}}(s_{t}^{(i)},a_{t}^{(i)},z_{j})\}_{k=1,j=1}^{K,m} from all ensemble members for all i i
+15:
+Compute predictive uncertainty: σ t ( i ) = std k , j ​ [ g θ k ​ ( s t ( i ) , a t ( i ) , z j ) ] \sigma_{t}^{(i)}=\text{std}_{k,j}\big[g_{\theta_{k}}(s_{t}^{(i)},a_{t}^{(i)},z_{j})\big] {aggregated over ensembles and latents}
+16:
+Set weight w t ( i ) = 1 / ( σ t ( i ) + 1 ) w_{t}^{(i)}=1/(\sigma_{t}^{(i)}+1)
+17:
+Select transitions ( s t + 1 ( i ) , r t ( i ) ) (s_{t+1}^{(i)},r_{t}^{(i)}) from predictions
+18:
+Add weighted transitions { ( s t ( i ) , a t ( i ) , r t ( i ) , s t + 1 ( i ) , w t ( i ) ) } i = 1 B \{(s_{t}^{(i)},a_{t}^{(i)},r_{t}^{(i)},s_{t+1}^{(i)},w_{t}^{(i)})\}_{i=1}^{B} to 𝒟 model \mathcal{D}_{\text{model}}
+19:
+// Uncertainty-Weighted Policy Learning
+20:
+Sample batch from 𝒟 env ∪ 𝒟 model \mathcal{D}_{\text{env}}\cup\mathcal{D}_{\text{model}} (real data has w = 1 w=1 )
+21:
+Update policy using weighted RL objective:
+22:
+ℒ = 𝔼 ( s , a , r , s ′ , w ) ∼ batch ​ [ w ⋅ ℓ RL ​ ( s , a , r , s ′ ) ] \mathcal{L}=\mathbb{E}_{(s,a,r,s^{\prime},w)\sim\text{batch}}[w\cdot\ell_{\text{RL}}(s,a,r,s^{\prime})]
+Appendix B Theoretical Analysis of Risk-weighted Bellman Estimation
+Bellman fixed point under positive reweighting.
+Fix a policy π \pi and a target value function V V . Recall the one-step Bellman target
+y = r + γ ​ V ​ ( s ′ ) , y=r+\gamma V(s^{\prime}),
+(17)
+with conditional mean
+μ ( s , a ) = 𝔼 [ y ∣ s , a ] = 𝔼 ( r , s ′ ) ∼ P ( ⋅ ∣ s , a ) [ r + γ V ( s ′ ) ] . \mu(s,a)=\mathbb{E}[y\mid s,a]=\mathbb{E}_{(r,s^{\prime})\sim P(\cdot\mid s,a)}[r+\gamma V(s^{\prime})].
+(18)
+Given a strictly positive weight function w : 𝒮 × 𝒜 → ( 0 , ∞ ) w:\mathcal{S}\times\mathcal{A}\to(0,\infty) , the corresponding population weighted Bellman regression loss for an arbitrary action-value function Q Q is
+ℒ w ( Q ) = 𝔼 ( s , a ) ∼ d π 𝔼 ( r , s ′ ) ∼ P ( ⋅ ∣ s , a ) [ w ( s , a ) ( y − Q ( s , a ) ) 2 ] . \mathcal{L}_{w}(Q)=\mathbb{E}_{(s,a)\sim d^{\pi}}\,\mathbb{E}_{(r,s^{\prime})\sim P(\cdot\mid s,a)}\big[w(s,a)\,(y-Q(s,a))^{2}\big].
+(19)
+Lemma (Weights do not change the Bellman target).
+Assume that w ⁡ ( s , a ) > 0 w(s,a)>0 for all ( s , a ) (s,a) in the support of d π d^{\pi} . Then the unique minimizer of ℒ w ​ ( Q ) \mathcal{L}_{w}(Q) over all action-value functions Q : 𝒮 × 𝒜 → ℝ Q:\mathcal{S}\times\mathcal{A}\to\mathbb{R} is
+Q ⋆ ​ ( s , a ) = μ ⁡ ( s , a ) for all ​ ( s , a ) , Q^{\star}(s,a)=\mu(s,a)\qquad\text{for all }(s,a),
+(20)
+which is the same minimizer as for the unweighted objective (obtained by setting w ≡ 1 w\equiv 1 ).
+Proof.
+Fix ( s , a ) (s,a) and consider the conditional risk as a function of a scalar q ∈ ℝ q\in\mathbb{R} :
+ℓ s , a ( q ) = 𝔼 [ w ( s , a ) ( y − q ) 2 | s , a ] = w ( s , a ) 𝔼 [ ( y − q ) 2 ∣ s , a ] . \ell_{s,a}(q)\;=\;\mathbb{E}\!\left[\,w(s,a)\,(y-q)^{2}\,\middle|\,s,a\right]\;=\;w(s,a)\,\mathbb{E}\!\left[(y-q)^{2}\mid s,a\right].
+(21)
+Since w ⁡ ( s , a ) w(s,a) is a strictly positive constant with respect to the inner expectation, it does not affect the minimizer in q q . The derivative of the unweighted term with respect to q q is
+∂ ∂ q 𝔼 [ ( y − q ) 2 ∣ s , a ] = 2 ( q − 𝔼 [ y ∣ s , a ] ) = 2 ( q − μ ( s , a ) ) , \frac{\partial}{\partial q}\,\mathbb{E}\!\left[(y-q)^{2}\mid s,a\right]\;=\;2\big(q-\mathbb{E}[y\mid s,a]\big)\;=\;2\big(q-\mu(s,a)\big),
+(22)
+which vanishes if and only if q = μ ⁡ ( s , a ) q=\mu(s,a) . Thus, for each fixed ( s , a ) (s,a) , the unique minimizer of ℓ s , a ​ ( q ) \ell_{s,a}(q) is q = μ ⁡ ( s , a ) q=\mu(s,a) , independently of the choice of w ⁡ ( s , a ) > 0 w(s,a)>0 .
+The global objective ℒ w ​ ( Q ) \mathcal{L}_{w}(Q) in Eq. 19 is the expectation of ℓ s , a ​ ( Q ​ ( s , a ) ) \ell_{s,a}(Q(s,a)) under d π d^{\pi} . For any action-value function Q Q , we can write
+ℓ s , a ( Q ( s , a ) ) − ℓ s , a ( μ ( s , a ) ) = w ( s , a ) 𝔼 [ ( Q ( s , a ) − μ ( s , a ) ) 2 ∣ s , a ] ≥ 0 , \ell_{s,a}(Q(s,a))-\ell_{s,a}(\mu(s,a))=w(s,a)\,\mathbb{E}\!\left[(Q(s,a)-\mu(s,a))^{2}\mid s,a\right]\;\geq\;0,
+(23)
+with equality if and only if Q ⁡ ( s , a ) = μ ⁡ ( s , a ) Q(s,a)=\mu(s,a) . Integrating this inequality with respect to d π d^{\pi} shows that ℒ w ​ ( Q ) ≥ ℒ w ​ ( μ ) \mathcal{L}_{w}(Q)\geq\mathcal{L}_{w}(\mu) , with strict inequality whenever Q Q differs from μ \mu on a set of positive d π d^{\pi} -measure. Hence, Q ⋆ = μ Q^{\star}=\mu is the unique minimizer of ℒ w \mathcal{L}_{w} , and this minimizer does not depend on the particular choice of strictly positive weights. □ \square
+Proof of the linear-critic GLS lemma.
+We restate the setting from the main text. Let x i = ( s i , a i ) x_{i}=(s_{i},a_{i}) denote m m state–action pairs with feature vectors ϕ ⁡ ( x i ) ∈ ℝ d \phi(x_{i})\in\mathbb{R}^{d} , and let y i y_{i} be the corresponding one-step TD targets. Assume a linear value model
+y i = ϕ ​ ( x i ) ⊤ ​ θ ⋆ + ε i , y_{i}=\phi(x_{i})^{\top}\theta^{\star}+\varepsilon_{i},
+(24)
+where θ ⋆ ∈ ℝ d \theta^{\star}\in\mathbb{R}^{d} is the true parameter vector, the noise satisfies 𝔼 ⁡ [ ε i ∣ x i ] = 0 \mathbb{E}[\varepsilon_{i}\mid x_{i}]=0 , and the conditional variances are Var ⁡ ( ε i ∣ x i ) = σ i 2 \mathrm{Var}(\varepsilon_{i}\mid x_{i})=\sigma_{i}^{2} . Collect the targets into a vector y ∈ ℝ m y\in\mathbb{R}^{m} , the features into a design matrix Φ ∈ ℝ m × d \Phi\in\mathbb{R}^{m\times d} whose i i -th row is ϕ ​ ( x i ) ⊤ \phi(x_{i})^{\top} , and define the noise vector ε = ( ε 1 , … , ε m ) ⊤ \varepsilon=(\varepsilon_{1},\ldots,\varepsilon_{m})^{\top} . Then
+y = Φ ​ θ ⋆ + ε , y=\Phi\theta^{\star}+\varepsilon,
+(25)
+with 𝔼 ⁡ [ ε ] = 0 \mathbb{E}[\varepsilon]=0 and covariance
+Σ = Cov ⁡ ( ε ) = diag ⁡ ( σ 1 2 , … , σ m 2 ) . \Sigma=\mathrm{Cov}(\varepsilon)=\mathrm{diag}(\sigma_{1}^{2},\ldots,\sigma_{m}^{2}).
+(26)
+We assume that Φ \Phi has full column rank so that all normal equations below are solvable.
+Linear unbiased estimators and GLS.
+Consider linear estimators of θ ⋆ \theta^{\star} of the form
+θ ^ = A ​ y , \hat{\theta}=Ay,
+(27)
+for some matrix A ∈ ℝ d × m A\in\mathbb{R}^{d\times m} . Unbiasedness for all θ ⋆ \theta^{\star} requires
+𝔼 ⁡ [ θ ^ ] = 𝔼 ⁡ [ A ⁡ ( Φ ​ θ ⋆ + ε ) ] = A ​ Φ ​ θ ⋆ = θ ⋆ for all ​ θ ⋆ , \mathbb{E}[\hat{\theta}]=\mathbb{E}[A(\Phi\theta^{\star}+\varepsilon)]=A\Phi\theta^{\star}=\theta^{\star}\quad\text{for all }\theta^{\star},
+(28)
+which is equivalent to the constraint
+A ​ Φ = I d . A\Phi=I_{d}.
+(29)
+Under this constraint, the covariance of θ ^ \hat{\theta} is
+Cov ⁡ ( θ ^ ) = A ​ Cov ​ ( y ) ​ A ⊤ = A ​ Σ ​ A ⊤ . \mathrm{Cov}(\hat{\theta})=A\,\mathrm{Cov}(y)\,A^{\top}=A\Sigma A^{\top}.
+(30)
+The generalized least-squares (GLS) estimator corresponds to the specific choice
+A GLS = ( Φ ⊤ ​ Σ − 1 ​ Φ ) − 1 ​ Φ ⊤ ​ Σ − 1 , A_{\mathrm{GLS}}=\big(\Phi^{\top}\Sigma^{-1}\Phi\big)^{-1}\Phi^{\top}\Sigma^{-1},
+(31)
+so that
+θ ^ GLS = A GLS ​ y . \hat{\theta}_{\mathrm{GLS}}=A_{\mathrm{GLS}}y.
+(32)
+It is immediate that A GLS ​ Φ = I d A_{\mathrm{GLS}}\Phi=I_{d} , so θ ^ GLS \hat{\theta}_{\mathrm{GLS}} is linear and unbiased. Its covariance is
+Cov ⁡ ( θ ^ GLS ) = A GLS ​ Σ ​ A GLS ⊤ = ( Φ ⊤ ​ Σ − 1 ​ Φ ) − 1 . \mathrm{Cov}(\hat{\theta}_{\mathrm{GLS}})=A_{\mathrm{GLS}}\Sigma A_{\mathrm{GLS}}^{\top}=\big(\Phi^{\top}\Sigma^{-1}\Phi\big)^{-1}.
+(33)
+Optimality of GLS.
+Let θ ~ = A ​ y \tilde{\theta}=Ay be any other linear unbiased estimator, so that A ​ Φ = I d A\Phi=I_{d} by equation 29 . Define
+C = A − A GLS . C=A-A_{\mathrm{GLS}}.
+(34)
+Then
+C ​ Φ = A ​ Φ − A GLS ​ Φ = I d − I d = 0 . C\Phi=A\Phi-A_{\mathrm{GLS}}\Phi=I_{d}-I_{d}=0.
+(35)
+The covariance of θ ~ \tilde{\theta} can be expanded as
+Cov ⁡ ( θ ~ ) \displaystyle\mathrm{Cov}(\tilde{\theta})
+= A ​ Σ ​ A ⊤ \displaystyle=A\Sigma A^{\top}
+(36)
+= ( A GLS + C ) ​ Σ ​ ( A GLS + C ) ⊤ \displaystyle=(A_{\mathrm{GLS}}+C)\,\Sigma\,(A_{\mathrm{GLS}}+C)^{\top}
+(37)
+= A GLS ​ Σ ​ A GLS ⊤ + A GLS ​ Σ ​ C ⊤ + C ​ Σ ​ A GLS ⊤ + C ​ Σ ​ C ⊤ . \displaystyle=A_{\mathrm{GLS}}\Sigma A_{\mathrm{GLS}}^{\top}+A_{\mathrm{GLS}}\Sigma C^{\top}+C\Sigma A_{\mathrm{GLS}}^{\top}+C\Sigma C^{\top}.
+(38)
+We now show that the cross terms vanish. Using the definition of A GLS A_{\mathrm{GLS}} ,
+A GLS ​ Σ = ( Φ ⊤ ​ Σ − 1 ​ Φ ) − 1 ​ Φ ⊤ ​ Σ − 1 ​ Σ = ( Φ ⊤ ​ Σ − 1 ​ Φ ) − 1 ​ Φ ⊤ , A_{\mathrm{GLS}}\Sigma=\big(\Phi^{\top}\Sigma^{-1}\Phi\big)^{-1}\Phi^{\top}\Sigma^{-1}\Sigma=\big(\Phi^{\top}\Sigma^{-1}\Phi\big)^{-1}\Phi^{\top},
+(39)
+and similarly
+Σ ​ A GLS ⊤ = Σ ​ Σ − 1 ​ Φ ​ ( Φ ⊤ ​ Σ − 1 ​ Φ ) − 1 = Φ ​ ( Φ ⊤ ​ Σ − 1 ​ Φ ) − 1 . \Sigma A_{\mathrm{GLS}}^{\top}=\Sigma\Sigma^{-1}\Phi\big(\Phi^{\top}\Sigma^{-1}\Phi\big)^{-1}=\Phi\big(\Phi^{\top}\Sigma^{-1}\Phi\big)^{-1}.
+(40)
+Therefore,
+A GLS ​ Σ ​ C ⊤ \displaystyle A_{\mathrm{GLS}}\Sigma C^{\top}
+= ( Φ ⊤ ​ Σ − 1 ​ Φ ) − 1 ​ Φ ⊤ ​ C ⊤ = ( Φ ⊤ ​ Σ − 1 ​ Φ ) − 1 ​ ( C ​ Φ ) ⊤ = 0 , \displaystyle=\big(\Phi^{\top}\Sigma^{-1}\Phi\big)^{-1}\Phi^{\top}C^{\top}=\big(\Phi^{\top}\Sigma^{-1}\Phi\big)^{-1}(C\Phi)^{\top}=0,
+(41)
+C ​ Σ ​ A GLS ⊤ \displaystyle C\Sigma A_{\mathrm{GLS}}^{\top}
+= C ​ Φ ​ ( Φ ⊤ ​ Σ − 1 ​ Φ ) − 1 = 0 , \displaystyle=C\Phi\big(\Phi^{\top}\Sigma^{-1}\Phi\big)^{-1}=0,
+(42)
+where we used equation 35 . Thus
+Cov ⁡ ( θ ~ ) = Cov ⁡ ( θ ^ GLS ) + C ​ Σ ​ C ⊤ . \mathrm{Cov}(\tilde{\theta})=\mathrm{Cov}(\hat{\theta}_{\mathrm{GLS}})\;+\;C\Sigma C^{\top}.
+(43)
+For any vector v ∈ ℝ d v\in\mathbb{R}^{d} ,
+v ⊤ ​ C ​ Σ ​ C ⊤ ​ v = ( C ⊤ ​ v ) ⊤ ​ Σ ​ ( C ⊤ ​ v ) ≥ 0 , v^{\top}C\Sigma C^{\top}v=(C^{\top}v)^{\top}\Sigma(C^{\top}v)\;\geq\;0,
+(44)
+because Σ \Sigma is positive semidefinite. Hence C ​ Σ ​ C ⊤ C\Sigma C^{\top} is positive semidefinite, and we have
+Cov ⁡ ( θ ^ GLS ) ⪯ Cov ⁡ ( θ ~ ) , \mathrm{Cov}(\hat{\theta}_{\mathrm{GLS}})\;\preceq\;\mathrm{Cov}(\tilde{\theta}),
+(45)
+with equality if and only if C = 0 C=0 , i.e., A = A GLS A=A_{\mathrm{GLS}} . This establishes that GLS has minimum covariance among all linear unbiased estimators.
+Connection to inverse-variance weighting.
+In our setting, weighted least squares with per-sample weights w i > 0 w_{i}>0 corresponds to minimizing
+∑ i = 1 m w i ​ ( y i − ϕ ​ ( x i ) ⊤ ​ θ ) 2 = ( y − Φ ​ θ ) ⊤ ​ W ​ ( y − Φ ​ θ ) , \sum_{i=1}^{m}w_{i}\big(y_{i}-\phi(x_{i})^{\top}\theta\big)^{2}=(y-\Phi\theta)^{\top}W(y-\Phi\theta),
+(46)
+where W = diag ⁡ ( w 1 , … , w m ) W=\mathrm{diag}(w_{1},\ldots,w_{m}) . The normal equations yield the estimator
+θ ^ W = ( Φ ⊤ ​ W ​ Φ ) − 1 ​ Φ ⊤ ​ W ​ y . \hat{\theta}_{W}=(\Phi^{\top}W\Phi)^{-1}\Phi^{\top}Wy.
+(47)
+Choosing weights w i ∝ 1 / σ i 2 w_{i}\propto 1/\sigma_{i}^{2} makes W W proportional to Σ − 1 \Sigma^{-1} , so that
+θ ^ W = ( Φ ⊤ ​ Σ − 1 ​ Φ ) − 1 ​ Φ ⊤ ​ Σ − 1 ​ y = θ ^ GLS . \hat{\theta}_{W}=(\Phi^{\top}\Sigma^{-1}\Phi)^{-1}\Phi^{\top}\Sigma^{-1}y=\hat{\theta}_{\mathrm{GLS}}.
+(48)
+Thus inverse-variance weights w i ∝ 1 / σ i 2 w_{i}\propto 1/\sigma_{i}^{2} recover the GLS estimator and, by the argument above, minimize the covariance matrix among all linear unbiased estimators. □ \square
+Appendix C Per-task Results
+We present detailed per-task performance results for WIMLE and other baselines across all benchmarks. The performance on each individual task is shown in Figures 7 , 8 , 9 , and 10 .
+Figure 7: Per-task results for high-dimensional Dog & Humanoid tasks from DeepMind Control Suite. We present the IQM of rewards and 95 % 95\% confidence intervals for BRO and other baselines run for 1 ​ M 1M steps.
+Figure 8: Per-task results for DeepMind Control Suite tasks with low-dimensional state/action spaces. We present the IQM of rewards and 95 % 95\% confidence intervals for WIMLE and other baselines run for 1 ​ M 1M steps.
+Figure 9: Per-task results for MyoSuite tasks. We present the IQM of success rate and 95 % 95\% confidence intervals for WIMLE and other baselines run for 1 ​ M 1M steps.
+Figure 10: Per-task results for HumanoidBench tasks. We present the IQM of rewards and 95 % 95\% confidence intervals for WIMLE and other baselines run for 1 ​ M 1M steps. The red dashed line indicates the success threshold for each task.
+Appendix D Hyperparameters
+Table 1 lists the common hyperparameters used across all tasks. These parameters were selected through hyperparameter tuning based on standard practices in RL.
+Table 1: Common hyperparameters used across all tasks.
+Parameter
+Value
+SAC Parameters
+Batch size
+128
+Actor learning rate
+3 × 10 − 4 3\times 10^{-4}
+Critic learning rate
+3 × 10 − 4 3\times 10^{-4}
+Number of quantiles
+100
+Updates per step
+10
+World Model Parameters
+Model learning rate
+1 × 10 − 3 1\times 10^{-3}
+Model batch size
+512
+Model updates
+100
+Number of latent codes
+4
+Model training frequency
+1000
+Number of rollouts
+200
+Number of ensembles
+7
+Based on our empirical evaluations, we found that increasing the model batch size to the maximum extent allowed by available GPU resources while proportionally decreasing the number of model updates can achieve similar performance with improved training speed. When scaling the batch size in this manner, the model learning rate should be adjusted accordingly following standard Machine Learning practices.
+D.1 Rollout Length Selection
+We select task-specific rollout horizons H through experimentation. For easier tasks where baselines already saturate near the maximum score (e.g., MyoSuite manipulation tasks), we start with short horizons (H=1-2) and increase only if performance benefits are observed, as longer horizons may still introduce slight performance degradation—though not to the extent seen in traditional MBRL methods. For harder tasks requiring longer-term planning (e.g., HumanoidBench, Dog & Humanoid), we begin with longer horizons (H=8) and decrease only if performance gains are seen empirically. However, we note that even simpler tasks may benefit from longer horizons in some cases, reflecting the task-specific nature of optimal rollout length. This selection balances the benefits of synthetic data augmentation with computational cost, as the marginal benefit of additional rollout steps diminishes beyond each task’s optimal horizon. We cap H H at 8 to maintain rollout throughput and because we observe diminishing returns beyond task-specific optima; Tables 6 , 7 , and 8 report the chosen H H per task. An interesting future direction would be to dynamically adjust rollout horizons based on the model’s uncertainty level, potentially allowing for adaptive rollout lengths that scale with model confidence.
+Figure 11: Rollout length sensitivity on h1-hurdle-v0 task of HumanoidBench up to H = 40 H=40 . WIMLE remains stable at longer horizons without rollout scheduling.
+Appendix E Experiment Details
+This section provides detailed descriptions of the benchmark environments used in our evaluation. We explain the task suites, their characteristics, and the normalization procedures used for fair comparison across different score scales. The following subsections describe each benchmark suite with complete task lists and their state/action dimensions.
+E.1 Detailed Results
+We present comprehensive IQM results for WIMLE and baseline methods across all benchmark suites at 100k, 200k, 500k, and 1M environment steps. The best performing method for each step count is highlighted in bold and the second best are underlined. WIMLE performs better across most evaluations.
+Table 2: IQM results for DMC suite. Best scores are highlighted in bold, second best are underlined.
+Method
+100k
+200k
+500k
+1M
+MR.Q
+0.153
+0.362
+0.714
+0.830
+SAC
+0.037
+0.082
+0.210
+0.326
+SimBA
+0.120
+0.263
+0.522
+0.691
+SimBAV2
+0.235
+0.495
+0.730
+0.845
+BRO
+0.294
+0.519
+0.542
+0.846
+DreamerV3
+0.051
+0.075
+0.165
+0.286
+TD-MPC2
+0.152
+0.374
+0.566
+0.696
+WIMLE
+0.332
+0.575
+0.812
+0.871
+Table 3: IQM results for Dog & Humanoid suite. Best scores are highlighted in bold, second best are underlined.
+Method
+100k
+200k
+500k
+1M
+MR.Q
+0.042
+0.127
+0.557
+0.796
+SAC
+0.007
+0.008
+0.043
+0.069
+SimBA
+0.067
+0.173
+0.533
+0.773
+SimBAV2
+0.082
+0.200
+0.601
+0.808
+BRO
+0.086
+0.290
+0.355
+0.864
+DreamerV3
+0.006
+0.006
+0.007
+0.010
+TD-MPC2
+0.014
+0.058
+0.302
+0.527
+WIMLE
+0.140
+0.389
+0.803
+0.897
+Table 4: IQM results for MyoSuite. Best scores are highlighted in bold, second best are underlined.
+Method
+100k
+200k
+500k
+1M
+SAC
+0.038
+0.350
+0.622
+0.714
+SimBA
+0.566
+0.728
+0.912
+0.952
+SimBAV2
+0.724
+0.830
+0.956
+0.990
+BRO
+0.440
+0.736
+0.816
+0.980
+DreamerV3
+0.028
+0.044
+0.181
+0.466
+TD-MPC2
+0.088
+0.394
+0.688
+0.775
+WIMLE
+0.460
+0.620
+0.928
+0.980
+Table 5: IQM results for HumanoidBench. Best scores are highlighted in bold, second best are underlined.
+Method
+100k
+200k
+500k
+1M
+SAC
+0.008
+0.020
+0.060
+0.168
+SimBA
+0.070
+0.164
+0.322
+0.521
+SimBAV2
+0.059
+0.179
+0.488
+0.799
+BRO
+0.064
+0.127
+0.100
+0.530
+DreamerV3
+0.003
+0.003
+0.005
+0.007
+TD-MPC2
+0.023
+0.064
+0.382
+0.734
+WIMLE
+0.169
+0.393
+0.715
+0.898
+E.2 DeepMind Control Suite
+DeepMind Control Suite ( Tassa et al., 2018 , DMC) is a standard continuous control benchmark encompassing locomotion and manipulation tasks with varying complexity. We evaluate 16 tasks from DMC, focusing on the most challenging locomotion tasks including Dog and Humanoid embodiments. All returns are normalized by dividing by 1000 to scale performance to [0,1]. The complete list of tasks with their observation and action dimensions is provided in Table 6 .
+Table 6: DMC Tasks. Complete list of 16 DMC tasks evaluated, with state and action dimensions and rollout lengths.
+Task
+State dim | 𝒮 | |\mathcal{S}|
+Action dim | 𝒜 | |\mathcal{A}|
+H
+acrobot-swingup
+6 6
+1 1
+8 8
+cheetah-run
+17 17
+6 6
+1 1
+finger-turn_hard
+12 12
+2 2
+1 1
+fish-swim
+24 24
+5 5
+8 8
+hopper-hop
+15 15
+4 4
+1 1
+pendulum-swingup
+3 3
+1 1
+1 1
+quadruped-run
+78 78
+12 12
+2 2
+reacher-hard
+6 6
+2 2
+1 1
+walker-run
+24 24
+6 6
+1 1
+humanoid-stand
+67 67
+24 24
+2 2
+humanoid-walk
+67 67
+24 24
+6 6
+humanoid-run
+67 67
+24 24
+6 6
+dog-stand
+223 223
+38 38
+6 6
+dog-walk
+223 223
+38 38
+4 4
+dog-run
+223 223
+38 38
+6 6
+dog-trot
+223 223
+38 38
+4 4
+E.3 MyoSuite
+MyoSuite ( Caggiano et al., 2022 ) provides high-fidelity musculoskeletal simulations for dexterous manipulation tasks. We evaluate 10 tasks including both fixed-goal and randomized-goal (hard) settings. Performance is measured using success rates, which naturally scale to [0,1]. The complete list of tasks with their observation and action dimensions is provided in Table 7 .
+Table 7: MyoSuite Tasks. Complete list of 10 MyoSuite tasks evaluated, with state and action dimensions and rollout lengths.
+Task
+State dim | 𝒮 | |\mathcal{S}|
+Action dim | 𝒜 | |\mathcal{A}|
+H
+myo-key-turn
+93 93
+39 39
+6 6
+myo-key-turn-hard
+93 93
+39 39
+1 1
+myo-obj-hold
+91 91
+39 39
+4 4
+myo-obj-hold-hard
+91 91
+39 39
+1 1
+myo-pen-twirl
+83 83
+39 39
+2 2
+myo-pen-twirl-hard
+83 83
+39 39
+1 1
+myo-pose
+108 108
+39 39
+2 2
+myo-pose-hard
+108 108
+39 39
+1 1
+myo-reach
+115 115
+39 39
+4 4
+myo-reach-hard
+115 115
+39 39
+1 1
+E.4 HumanoidBench
+HumanoidBench ( Sferrazza et al., 2024 ) provides locomotion tasks for the UniTree H1 humanoid robot. We evaluate 14 tasks spanning balance, locomotion, and manipulation. For fair comparison across tasks with different score scales, all HumanoidBench scores are normalized using each task’s target success score and random score following the same procedure as in ( Lee et al., 2025a ; Lee et al., 2025b ) :
+Success-Normalized ​ ( x ) := x − random score Target success score − random score \text{Success-Normalized}(x):=\frac{x-\text{random score}}{\text{Target success score}-\text{random score}}
+The complete list of tasks with their observation and action dimensions is provided in Table 8 , and the random scores and target success scores used for normalization are listed in Table 9 .
+Table 8: HumanoidBench Tasks. Complete list of 14 HumanoidBench tasks evaluated, with state and action dimensions and rollout lengths.
+Task
+State dim | 𝒮 | |\mathcal{S}|
+Action dim | 𝒜 | |\mathcal{A}|
+H
+h1-balance_simple-v0
+64 64
+19 19
+6 6
+h1-balance_hard-v0
+77 77
+19 19
+6 6
+h1-crawl-v0
+51 51
+19 19
+10 10
+h1-hurdle-v0
+51 51
+19 19
+10 10
+h1-maze-v0
+51 51
+19 19
+10 10
+h1-pole-v0
+51 51
+19 19
+10 10
+h1-reach-v0
+57 57
+19 19
+10 10
+h1-run-v0
+51 51
+19 19
+10 10
+h1-slide-v0
+51 51
+19 19
+10 10
+h1-sit_hard-v0
+51 51
+19 19
+6 6
+h1-sit_simple-v0
+51 51
+19 19
+10 10
+h1-stair-v0
+51 51
+19 19
+10 10
+h1-stand-v0
+51 51
+19 19
+10 10
+h1-walk-v0
+51 51
+19 19
+10 10
+Table 9: HumanoidBench Normalization Scores. Random scores and target success scores used for normalization.
+Task
+Random Score
+Target Success Score
+h1-balance-simple
+9.391 9.391
+800 800
+h1-balance-hard
+9.044 9.044
+800 800
+h1-crawl
+272.658 272.658
+700 700
+h1-hurdle
+2.214 2.214
+700 700
+h1-maze
+106.441 106.441
+1200 1200
+h1-pole
+20.09 20.09
+700 700
+h1-reach
+260.302 260.302
+12000 12000
+h1-run
+2.02 2.02
+700 700
+h1-slide-v0
+2.02 2.02
+700 700
+h1-slide-v1
+2.02 2.02
+700 700
+h1-sit-hard
+10.545 10.545
+800 800
+h1-stair
+2.214 2.214
+700 700
+h1-stand
+10.545 10.545
+800 800
+h1-walk
+2.377 2.377
+700 700
+Appendix F Additional Results
+Figure 12 compares standard WIMLE (mixed real + imagined data) against an “imagined-only” variant whose critic and actor are trained exclusively on model-generated rollouts. Removing real transitions does reduce performance slightly, but the imagined-only curve remains close to the original WIMLE results, underscoring that our synthetic trajectories are strong enough to sustain competitive learning.
+Figure 14 and Table 10 illustrate the wall-clock efficiency of WIMLE. Despite the overhead of ensemble training, WIMLE’s superior sample efficiency results in a significantly lower total time-to-solution compared to baselines.
+Figure 12: Imagined-only WIMLE (no real data in critic/actor updates) achieves performance comparable to the standard configuration, highlighting the strength of the generated rollouts.
+Figure 13: Humanoid (Mujoco) comparison against InfoProp for 4 4 seeds. Unlike InfoProp, which uses task-specific termination functions for synthetic rollouts, WIMLE runs with the generic setup used for our DMC experiments yet still matches or exceeds InfoProp.
+Method
+Step 300k
+Step 500k
+Step 1000k
+Time (h)
+IQM
+Time (h)
+IQM
+Time (h)
+IQM
+Infoprop
+11.49
+0.044
+19.15
+0.102
+38.30
+0.077
+DreamerV3
+3.90
+0.001
+6.50
+0.001
+13.00
+0.001
+TD-MPC2
+3.43
+0.001
+5.72
+0.038
+11.43
+0.190
+Ours
+4.74
+0.168
+7.91
+0.345
+15.81
+0.561
+Table 10: Performance and time at different training milestones.
+Figure 14: Projected total wall-clock time (algorithm compute + data collection) on Humanoid-run, assuming a 5Hz control rate. WIMLE reaches asymptotic performance significantly faster than BRO (the fastest model-free baseline) because its superior sample efficiency drastically reduces the time spent collecting real-world data, outweighing its higher per-update compute cost.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

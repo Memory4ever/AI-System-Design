@@ -1,0 +1,2314 @@
+3DSPA: A 3D Semantic Point Autoencoder for Evaluating Video Realism
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related work
+3
+Model
+3.1
+Architecture
+3.1.1
+Training
+3.1.2
+Inference
+4
+Results
+4.1
+Can 3DSPA reconstruct 3D point tracks?
+4.2
+Can 3DSPA detect physical rule violations?
+4.3
+Does 3DSPA capture human evaluations of realism in generated videos?
+5
+Discussion
+6
+Acknowledgements
+7
+Broader Impacts
+References
+A
+Training Setup & Hyperparameters
+A.1
+Hyperparameters
+B
+Additional results on Intphys2
+C
+Inference Time Comparison
+D
+3DSPA successes and failures on 3D point track reconstruction
+E
+Visualizations showing 3DSPA ’s ability to capture bad motion in generated videos
+License: CC BY 4.0
+arXiv:2602.20354v1 [cs.CV] 23 Feb 2026
+3DSPA: A 3D Semantic Point Autoencoder for Evaluating Video Realism
+Bhavik Chandna
+Affiliation:
+University of California, San Diego, CA, USA
+Affiliation:
+Vector Institute, Toronto, ON, Canada
+Correspondence to:
+bchandna@ucsd.edu
+Kelsey R. Allen
+Affiliation:
+University of British Columbia, Vancouver, BC, Canada
+Affiliation:
+Vector Institute, Toronto, ON, Canada
+Correspondence to:
+kelsey.allen@vectorinstitute.ai
+Abstract
+AI video generation is evolving rapidly. For video generators to be useful for applications ranging from robotics to film-making, they must consistently produce realistic videos. However, evaluating the realism of generated videos remains a largely manual process – requiring human annotation or bespoke evaluation datasets which have restricted scope.
+Here we develop an automated evaluation framework for video realism which captures both semantics and coherent 3D structure and which does not require access to a reference video. Our method, 3DSPA, is a 3D spatiotemporal point autoencoder which integrates 3D point trajectories, depth cues, and DINO semantic features into a unified representation for video evaluation. 3DSPA models how objects move and what is happening in the scene, enabling robust assessments of realism, temporal consistency, and physical plausibility. Experiments show that 3DSPA reliably identifies videos which violate physical laws, is more sensitive to motion artifacts, and aligns more closely with human judgments of video quality and realism across multiple datasets. Our results demonstrate that enriching trajectory-based representations with 3D semantics offers a stronger foundation for benchmarking generative video models, and implicitly captures physical rule violations. The code and pretrained model weights will be available at
+https://github.com/TheProParadox/3dspa_code
+.
+Keywords:
+Machine Learning, ICML
+1
+Introduction
+Recent years have witnessed rapid progress in generative video models, with systems such as Sora
+(
+Brooks et al., 2024
+)
+, Veo
+(
+Google, 2025
+)
+, Kling AI
+(
+Kuaishou Technology, 2024
+)
+, and Luma-Ray
+(
+LumaAI, 2025
+)
+capable of producing high-resolution, long-duration videos. These systems have started to showcase unprecedented visual fidelity, with coherent multi-object movement, smooth camera motion, across diverse scenes. However, the ultimate objective of developing these text-to-video models has always been to generate videos which are not only visually compelling but also realistic; capturing semantic meaning, temporal consistency, and physical plausibility in a way that mirrors a real-world video. If achieved, it will generate tremendous excitement across domains ranging from robotics and embodied AI
+(
+Wu et al., 2023
+;
+Yang et al., 2025
+;
+Fu et al., 2025
+)
+to virtual reality
+(
+Christian et al., 2025
+)
+, education
+(
+Xu et al., 2025
+)
+, and creative industries like advertising and film-making.
+Figure 1
+:
+Example 3D point tracks (projected into 2D) reconstructed by 3DSPA for an unrealistic generated video from VideoPhy-2 (video frames progress from left to right, top to bottom)
+(
+Bansal et al., 2025
+)
+, depicting a man striking a wall with a hammer and clearly violating physical laws. 3DSPA assigns low realism as measured with the Average Jaccard (
+A
+​
+J
+AJ
+) (blue: high, red: low, white: intermediate). The video ranks among the lowest in both 3DSPA ’s scores and human realism ratings, highlighting strong alignment with human judgment.
+Understanding the realism of generated videos is more than an aesthetic problem. It directly affects their utility for various downstream applications. For example, in robotics and embodied AI, policies trained based on simulated video rollouts that are not physically plausible may not transfer successfully to real world deployments. Similarly, in entertainment, audiences are sensitive to subtle cues of unrealistic motion, which can undermine immersion. Thus, a systematic way of measuring whether generated videos are physically plausible and perceptually realistic is a foundational requirement for practical use across multiple settings.
+However, existing approaches to measuring realism remain limited. The most common strategy is to rely on human annotation, where raters provide subjective assessments of qualities such as naturalness, temporal smoothness, and physical plausibility
+(
+Liu et al., 2024
+;
+Bansal et al., 2025
+)
+. While such annotations are informative, they are expensive and time-consuming, and do not scale to the vast number of videos modern generative systems can produce. A second line of work has attempted to build benchmarks by constructing datasets of paired real and fake videos
+(
+Borji, 2022
+;
+Chen et al., 2024
+;
+Motamed et al., 2025b
+;
+Bear et al., 2023
+)
+. Yet this requires careful curation of datasets, often domain-specific, and assumes that generated samples are comparable to available real-world footage. Neither approach provides a scalable, general-purpose solution.
+Moreover, prior automated measures have largely equated realism with temporal consistency, simply ensuring that videos do not exhibit frame-to-frame flickering or incoherence. While temporal smoothness is indeed important, it is not sufficient. Realism also requires adherence to the semantics of motion and the physical laws that govern objects in three dimensions. For example, a video where a ball bounces upward indefinitely without slowing down might look temporally smooth but is physically implausible. Likewise, a car turning a corner but sliding sideways without frictional constraints violates semantic expectations of how vehicles move. Prior work has struggled to capture such failures because they demand reasoning about both semantics and 3D structure, not just pixels over time. Existing automated evaluation metrics, e.g.
+(
+Allen et al., 2025
+)
+, operate in 2D feature spaces, neglecting the fact that real-world objects persist in three dimensions, maintain continuity across occlusion, and obey physical laws such as gravity, inertia, and collision.
+To address these challenges, we propose
+3DSPA
+(3D Semantic Point Autoencoder), a novel framework for assessing the realism of generated videos. 3DSPA combines semantic features with 3D point track auto-encoding. The key idea is to represent a video as a sequence of tracked 3D points, enriched with semantic embeddings, and train an autoencoder that reconstructs these tracks. By compressing and reconstructing motion trajectories, the model is forced to capture underlying physical and semantic regularities, making deviations from realism detectable.
+The main contributions of our paper include:
+•
+First, we demonstrate that 3DSPA functions as a capable 3D point tracker, despite the information bottleneck inherent in auto-encoding.
+•
+Second, we show that it reliably detects violations of physical laws in controlled synthetic settings by using the IntPhys2 benchmark
+(
+Bordes et al., 2025
+)
+.
+•
+Finally, we evaluate 3DSPA on two existing generated video datasets which provide human annotations of realism: EvalCrafter
+(
+Liu et al., 2024
+)
+and VideoPhy-2
+(
+Bansal et al., 2025
+)
+, and find that it better aligns with human judgments of motion quality and physical realism compared to existing baselines.
+Together, these results suggest that incorporating semantics and 3D structure is essential for scalable, automated evaluation of generative video realism.
+2
+Related work
+Physical benchmarking for video models
+Benchmarking intuitive and broader physical understanding has been central to recent progress in machine perception. In simulation, earlier works include IntPhys
+(
+Riochet et al., 2018
+)
+which evaluates models on core physical expectations through possible vs. impossible event videos and CLEVRER
+(
+Yi et al., 2020
+)
+which aimed to advance causal reasoning in videos via descriptive, explanatory, and counterfactual questions. Recent works include Physion++
+(
+Bear et al., 2023
+)
+which creates visual physics prediction tasks involving rigid, soft, and fluid dynamics, and IntPhys2
+(
+Bordes et al., 2025
+)
+which introduces more complex backgrounds and objects to the original IntPhys. In the real world, InfLevel
+(
+Weihs et al., 2022
+)
+extends these ideas by collecting real-world videos of physics violations. Physics IQ
+(
+Motamed et al., 2025b
+)
+and TRAVL
+(
+Motamed et al., 2025a
+)
+similarly provide a set of real-world videos covering a variety of physical principles. In these benchmarks, models’ physical commonsense is measured by either directly comparing their predictions about how a real world video will unfold to the video itself, or by investigating whether models are more
+surprised
+by an unreal video than by a real one.
+Video quality assessment
+Video generative models are rapidly progressing, but it is still unclear how far they are from being able to generate videos which are indistinguishable from reality. Even evaluating this progress remains tricky. Earlier methods such as FVD
+(
+Unterthiner et al., 2018
+)
+and CLIP-based scores
+(
+Radford et al., 2021
+)
+measure frame quality and text-frame alignment respectively but fail to capture realism more broadly, which jointly depends on semantic coherence, motion consistency, and physical plausibility. Recent efforts aim to create automated evaluators which tackle realism more directly, including physics-aware metrics
+(
+Chen et al., 2025b
+)
+, and large-scale benchmarks such as VBench
+(
+Huang et al., 2024
+)
+. However, many generative models have started saturating these benchmarks, often achieving high scores of 90%+, indicating that the metrics are simply not challenging enough. As a result, benchmarks such as EvalCrafter
+(
+Liu et al., 2024
+)
+and VideoPhy-2
+(
+Bansal et al., 2025
+)
+rely on human judgments for comprehensive evaluation, and therefore avoid issues of benchmark saturation. Automated evaluators in these settings include optical flow and fine-tuned vision-language models. Several recent works also explore detecting or characterizing synthetic videos through temporal artifacts.
+Zheng et al. (2025)
+propose a training-free detector that exploits second-order temporal features derived from inter-frame differences. Similarly,
+Shi et al. (2025)
+introduce a spatial-temporal network combining CNN-based spatial modeling with temporal dynamics to capture fine-grained forgery cues. While effective in synthetic video detection, these methods primarily target binary classification rather than aligning with human judgments of motion realism.
+Allen et al. (2025)
+introduces a 2D point-trajectory autoencoder for automatic realism evaluation focusing on providing a new automated metric aligning with human judgments, but their approach primarily captures temporal consistency.
+Figure 2
+:
+3DSPA architecture overview.
+The encoder integrates 3D trajectories, temporal embeddings, and DINOv2
+(
+Oquab et al., 2023
+)
+semantic features into a compact latent representation using occlusion-aware attention and a Perceiver-style transformer architecture
+(
+Jaegle et al., 2021
+)
+. The decoder conditions on query points to reconstruct full 3D trajectories with occlusion flags.
+3
+Model
+Our goal is to provide an automated metric that can capture human ratings of realism for any video.
+To that end, we introduce 3DSPA , a 3D Semantic Point Autoencoder.
+3DSPA can be viewed as an extension of TRAJAN
+(
+Allen et al., 2025
+)
+, a 2D point trajectory autoencoder that is trained to map a support set of point trajectories into a fixed-size motion latent representation which is further used to reconstruct query point tracks. While TRAJAN does a good job in capturing motion information in its latent space, it has some limitations. First, the model has no knowledge of the visual environment, only the point trajectories themselves. This means it cannot reason about scene context, object interactions, or occlusions that can be crucial for judging motion plausibility. Second, restricting motion to 2D trajectories is not sufficient for evaluating realistic dynamics, which naturally occur in 3D. As a result, TRAJAN cannot fully capture the complexity of real-world motion.
+3DSPA is instead designed to reconstruct 3D point tracks from random queries across space and time and provide a semantics-aware motion latent representation.
+3.1
+Architecture
+3DSPA adopts an encoder–decoder setup, where the encoder
+E
+E
+operates on a dense set of support point tracks
+𝐒
+=
+{
+s
+t
+,
+j
+}
+\mathbf{S}=\{s_{t,j}\}
+, with each track defined as
+s
+t
+,
+j
+=
+(
+x
+t
+,
+j
+,
+y
+t
+,
+j
+,
+z
+t
+,
+j
+,
+o
+t
+,
+j
+)
+s_{t,j}=(x_{t,j},y_{t,j},z_{t,j},o_{t,j})
+. Here,
+(
+x
+,
+y
+,
+z
+)
+(x,y,z)
+denote the 3D position and
+o
+o
+is a binary occlusion flag at time
+t
+t
+for the
+j
+j
+-th track. The model is trained to reconstruct a separate set of query trajectories
+𝐐
+=
+q
+t
+,
+j
+\mathbf{Q}={q_{t,j}}
+, which are randomly sampled from the video.
+For each trajectory
+j
+j
+, we embed its 3D positions
+(
+x
+t
+,
+j
+,
+y
+t
+,
+j
+,
+z
+t
+,
+j
+)
+(x_{t,j},y_{t,j},z_{t,j})
+together with time
+t
+t
+using sinusoidal encoding (denoted by
+PE
+t
+,
+j
+\mathrm{PE}_{t,j}
+). In parallel, we sample DINOv2
+(
+Oquab et al., 2023
+)
+embeddings
+f
+t
+,
+j
+DINO
+f^{\text{DINO}}_{t,j}
+from the corresponding video frame regions. These two representations are
+concatenated as
+e
+t
+,
+j
+=
+[
+PE
+t
+,
+j
+∥
+f
+t
+,
+j
+DINO
+]
+,
+e_{t,j}=[\mathrm{PE}_{t,j}\,\|\,f^{\text{DINO}}_{t,j}],
+and then projected into
+C
+C
+channels.
+A learnable “readout” token is initialized randomly and appended, and self-attention is applied across all the tokens with an occlusion-aware mask
+(
+1
+−
+o
+t
+,
+j
+)
+(1-o_{t,j})
+to ignore hidden points. After attention, only the readout token is retained, producing a compact
+C
+C
+-dimensional descriptor for the track. To integrate information across tracks, we adopt a Perceiver-style transformer
+(
+Jaegle et al., 2021
+)
+where a set of 128 latent tokens cross-attend to all track descriptors and then interact through self-attention. Finally, the latent tokens are compressed to yield a fixed
+128
+×
+64
+128\times 64
+representation
+ϕ
+S
+\phi_{S}
+, capturing both motion dynamics and semantic appearance cues.
+The decoder in 3DSPA operates on a motion latent
+ϕ
+S
+\phi_{S}
+that integrates 3D dynamics and semantic context. We train the decoder to reconstruct held-out query tracks. Concretely, given
+ϕ
+S
+\phi_{S}
+and a query point
+(
+x
+q
+,
+y
+q
+,
+z
+q
+,
+t
+q
+)
+(x_{q},y_{q},z_{q},t_{q})
+, the decoder predicts the full trajectory passing through that point. We first up-project the latent tokens in
+ϕ
+S
+\phi_{S}
+with an operator
+U
+U
+and add a query
+readout
+token obtained from a sinusoidal encoding of
+(
+x
+q
+,
+y
+q
+,
+z
+q
+,
+t
+q
+)
+(x_{q},y_{q},z_{q},t_{q})
+. Self-attention is applied over all tokens, after which only the readout token is retained. A final linear projection maps this token to the predicted trajectory
+(
+x
+^
+t
+q
+,
+y
+^
+t
+q
+,
+z
+^
+t
+q
+,
+o
+^
+t
+q
+)
+(\hat{x}_{t}^{q},\hat{y}_{t}^{q},\hat{z}_{t}^{q},\hat{o}_{t}^{q})
+across all frames.
+3.1.1
+Training
+Following CoTracker3
+(
+Karaev et al., 2024
+)
+, we train 3DSPA on a combination of synthetic and real datasets to ensure both controlled supervision and real-world generalization. We use the Kubric3D dataset generator
+(
+Greff et al., 2022
+)
+to create
+38k synthetic scenes with ground-truth 3D trajectories. While Kubric3D directly provides
+(
+x
+t
+,
+j
+,
+y
+t
+,
+j
+,
+z
+t
+,
+j
+)
+(x_{t,j},y_{t,j},z_{t,j})
+for every point
+j
+j
+at time
+t
+t
+,
+it does not include explicit occlusion labels. To obtain occlusion flags, we project each 3D point into the image plane and compare its depth
+z
+t
+,
+j
+z_{t,j}
+against the rendered depth map
+D
+t
+​
+(
+x
+t
+,
+j
+,
+y
+t
+,
+j
+)
+D_{t}(x_{t,j},y_{t,j})
+at that pixel. For depth maps we use VideoDepthAnything (VDA) metric model
+(
+Chen et al., 2025a
+)
+. The occlusion flag is then defined as
+o
+t
+,
+j
+=
+[
+z
+t
+,
+j
+>
+D
+t
+(
+x
+t
+,
+j
+,
+y
+t
+,
+j
+)
++
+ϵ
+]
+o_{t,j}=\mathbf{1}\!\left[\,z_{t,j}>D_{t}(x_{t,j},y_{t,j})+\epsilon\,\right]
+, where
+ϵ
+\epsilon
+is set to a small tolerance of 1e-4 to account for numerical precision. Thus,
+o
+t
+,
+j
+=
+1
+o_{t,j}=1
+indicates that the point is occluded at time
+t
+t
+. In addition, we use the TAPVid-3D dataset
+(
+Koppula et al., 2024
+)
+, a large benchmark covering diverse real-world scenarios. TAPVid-3D contains 4,569 videos in the main split and 150 videos in the minival split, with lengths ranging from 25 to 300 frames. Unlike Kubric3D, TAPVid-3D provides
+full ground-truth annotations, including 3D point trajectories as well as occlusion flags
+o
+t
+,
+j
+o_{t,j}
+, making it directly suitable for training and evaluating models under realistic settings. In our setup, we train on the main set and use the minival split for evaluation.
+During training, we randomly divide the point trajectories in each video into two equal parts. The first half is used as support tracks, which are passed through the encoder to produce the motion latents. The second half is used as query tracks, which the decoder must reconstruct given only the motion latents.
+We trained 3DSPA with the AdamW
+(
+Loshchilov and Hutter, 2017
+)
+optimizer using a learning rate of 1e-4 warm-up followed by cosine decay. We initialize 3DSPA with the pretrained TRAJAN checkpoint and train for 300 epochs. Depth predictions are regularized with a scale-invariant penalty to handle differences in scale between synthetic and real domains. The DINO module
+(
+Oquab et al., 2023
+)
+is frozen during training. Additional training details, including hyperparameter settings, batch sizes, and ablation studies, are provided in Appendix
+A
+. The training loss is:
+ℒ
+model
+=
+∑
+q
+,
+t
+(
+w
+l
+​
+1
+​
+‖
+𝐩
+q
+,
+t
+−
+𝐩
+^
+q
+,
+t
+‖
+1
++
+w
+BCE
+​
+BCE
+​
+(
+o
+q
+,
+t
+,
+o
+^
+q
+,
+t
+)
+)
+.
+\mathcal{L}_{\text{model}}=\sum_{q,t}\!\left(w_{l1}\,\|\mathbf{p}_{q,t}-\hat{\mathbf{p}}_{q,t}\|_{1}+w_{\mathrm{BCE}}\,\mathrm{BCE}(o_{q,t},\hat{o}_{q,t})\right).
+(1)
+where
+𝐩
+q
+,
+t
+=
+(
+x
+q
+,
+t
+,
+y
+q
+,
+t
+,
+z
+q
+,
+t
+)
+\mathbf{p}_{q,t}=(x_{q,t},y_{q,t},z_{q,t})
+.
+Method
+Aria
+DriveTrack
+PStudio
+Average
+A
+​
+J
+↑
+AJ\uparrow
+A
+​
+P
+​
+D
+↑
+APD\uparrow
+O
+​
+A
+↑
+OA\uparrow
+A
+​
+J
+↑
+AJ\uparrow
+A
+​
+P
+​
+D
+↑
+APD\uparrow
+O
+​
+A
+↑
+OA\uparrow
+A
+​
+J
+↑
+AJ\uparrow
+A
+​
+P
+​
+D
+↑
+APD\uparrow
+O
+​
+A
+↑
+OA\uparrow
+A
+​
+J
+↑
+AJ\uparrow
+A
+​
+P
+​
+D
+↑
+APD\uparrow
+O
+​
+A
+↑
+OA\uparrow
+TAPIR + ZD
+15.7
+23.5
+79.8
+6.3
+10.5
+81.6
+11.2
+18.9
+78.7
+11.0
+17.6
+80.1
+CoTracker + ZD
+17.0
+25.7
+88.0
+6.0
+10.9
+82.6
+11.4
+19.9
+80.0
+11.4
+18.8
+83.5
+BootsTAPIR + ZD
+11.8
+16.3
+86.7
+6.4
+10.9
+85.3
+11.6
+19.6
+82.6
+11.6
+18.9
+84.9
+CoTracker3 + ZD
+15.6
+24.1
+88.6
+13.3
+19.6
+86.8
+9.0
+13.6
+83.9
+12.6
+19.1
+86.4
+SpatialTracker
+16.7
+25.7
+89.3
+6.9
+12.4
+83.7
+12.3
+21.6
+78.5
+12.0
+19.9
+83.8
+SpatialTrackerV2
+18.6
+26.3
+90.8
+16.4
+24.3
+90.2
+18.1
+27.6
+86.7
+17.7
+26.0
+89.2
+CoTracker3-FT + ZD
+16.8
+25.5
+89.6
+13.6
+19.9
+88.7
+10.1
+14.3
+87.1
+13.5
+19.9
+88.5
+Ours
+17.7
+24.9
+89.2
+11.9
+14.8
+85.7
+12.3
+19.9
+82.5
+14.0
+19.8
+85.8
+Table 1
+:
+3D point tracking results on the TapVid-3D
+minival
+set.
+3DSPA achieves competitive 3D tracking performance across datasets and performs on par with a finetuned CoTracker3 (CoTracker3-FT+ZD), highlighting its ability to reconstruct consistent and accurate 3D tracks despite the information bottleneck.
+3.1.2
+Inference
+During inference, we operate directly on 2D input videos but we require 3D point tracks. Dense 2D point tracks
+(
+x
+t
+,
+j
+,
+y
+t
+,
+j
+)
+(x_{t,j},y_{t,j})
+with occlusion are first estimated using CoTracker3
+(
+Karaev et al., 2024
+)
+, and subsequently lifted into 3D with metric depth predictions from VideoDepthAnything (VDA)
+(
+Chen et al., 2025a
+)
+. Half of the resulting 3D tracks
+(
+x
+t
+,
+j
+,
+y
+t
+,
+j
+,
+z
+t
+,
+j
+)
+(x_{t,j},y_{t,j},z_{t,j})
+are then provided to the trained model as support tracks, with the other half being used as query tracks. The reconstructed query tracks produced by the decoder are finally used for evaluation.
+For a lot of motion evaluation, we calculate the Average Jaccard (
+A
+​
+J
+AJ
+) of the reconstructed tracks relative to the “ground truth” query tracks as a proxy for the reconstruction error. Following TAPVid-3D
+(
+Koppula et al., 2024
+)
+, as
+A
+​
+J
+AJ
+increases, the quality of reconstruction increases and vice-versa. The metric calculates the number of true positives (number of points whose spatial positions are within a
+δ
+3
+​
+D
+\delta_{3D}
+threshold, predicted correctly to be visible), divided by the sum of true positives and false positives (predicted
+visible, but are occluded or farther than the threshold) and false negatives (visible points, predicted occluded or predicted to exceed the threshold).
+4
+Results
+To demonstrate that 3DSPA can capture realistic, physical motion, we evaluate three complementary axes: its accuracy in 3D point tracking as described in Section
+4.1
+, its ability to detect physical law violations in possible vs. impossible video pairs as described in Section
+4.2
+, and its alignment with human judgments of realism in generated videos as described in Section
+4.3
+.
+4.1
+Can 3DSPA reconstruct 3D point tracks?
+We evaluate 3DSPA on the TAPVid-3D minival set and report three 3D point tracking metrics: Occlusion Accuracy (
+O
+​
+A
+OA
+), which measures the precision of occlusion predictions;
+A
+​
+P
+​
+D
+APD
+(in 3D), the average percentage of errors in 3D space within multiple threshold scales
+δ
+\delta
+; and Average Jaccard (
+A
+​
+J
+AJ
+) (in 3D), which quantifies the accuracy of both position and occlusion estimation in 3D space. All metrics are taken from
+Koppula et al. (2024)
+.
+Since 3DSPA is an
+autoencoder
+of point tracks, and therefore inherently less accurate due to its information bottleneck, we do not expect its performance in 3D point tracking to rival state-of-the-art approaches. Nevertheless, it is important that 3DSPA can reasonably accurately reconstruct 3D point tracks. We therefore compare 3DSPA against 3D-lifted versions of state-of-the-art 2D tracking methods lifted by Zerodepth (ZD) and 3D tracking methods like SpatialTracker
+(
+Xiao et al., 2024
+)
+and SpatialTrackerv2
+(
+Xiao et al., 2025
+)
+. Since most of these models were originally trained on the synthetic Kubric3D
+(
+Greff et al., 2022
+)
+dataset, while our training data combines both Kubric3D (synthetic) and TAPVid-3D (real), we additionally fine-tune the CoTracker3 model
+(
+Karaev et al., 2024
+)
+on TAPVid-3D pseudo labels (CoTracker-3 FT) and evaluate all models on the minival set. Table
+1
+summarizes the comparative 3D tracking performance. 3DSPA consistently outperforms most baselines and achieves performance on par with CoTracker3
+(
+Karaev et al., 2024
+)
+when fine-tuned on the TAPVid-3D main dataset.
+We additionally provide an example of how 3DSPA performs in 3D track reconstruction when only a 2D input video is provided in Figure
+1
+. Despite the noisy depth signal obtained from VideoDepthAnything, 3DSPA reconstructs smooth 3D tracks for the generated video, and detects violations of physics when the hammer morphs inappropriately.
+Both results demonstrate that 3DSPA is capable of reconstructing 3D point tracks accurately despite its compressed latent space bottleneck, and motivates its candidacy as an automated metric for video realism.
+4.2
+Can 3DSPA detect physical rule violations?
+For an automated metric of video realism to be useful, we need to be sure that it will detect physical rule violations.
+To assess whether 3DSPA can reliably distinguish physically real and unreal scenarios, we evaluate on the IntPhys2 dataset
+(
+Bordes et al., 2025
+)
+. IntPhys2 contains 1,012 videos across 253 scenes, organized as quadruplets of two
+possible
+(real) and two
+impossible
+(unreal) outcomes. Each video tests one of four core physical principles:
+object permanence
+, where objects continue to exist even when occluded;
+object immutability
+, where objects maintain their shape and structure;
+spatio-temporal continuity
+, where objects move smoothly through time and space; and
+solidity
+, where objects occupy space and cannot pass through one another. All videos are rendered in the Unreal Engine with both static and moving cameras.
+Baselines and ablations
+We compare 3DSPA against several state-of-the-art vision-language models and self-supervised vision foundation models (baselines). We also compare 3DSPA to ablations which remove dimensional and semantic information.
+3DSPA (no DINO)
+is a 3D extension of TRAJAN where we add an extra spatial dimension in the autoencoder to better capture motion dynamics.
+3DSPA (no 3D)
+instead augments the 2D representation from TRAJAN with semantic features from DINOv2, while excluding 3D information and depth cues.
+3DSPA (no 3D, no DINO)
+is identical to TRAJAN, and taken as the pre-trained checkpoint from
+Allen et al. (2025)
+. Together, these variants highlight the individual roles of 3D structure and semantic context in detecting physical rule violations.
+Model / Category
+Permanence
+Immutability
+Continuity
+Solidity
+Fixed
+Moving
+Fixed
+Moving
+Fixed
+Moving
+Fixed
+Moving
+GPT-4o
+(
+Hurst et al., 2024
+)
+59.62
+58.82
+58.65
+59.56
+54.81
+57.35
+56.73
+55.32
+Qwen-VL 2.5
+(
+Bai et al., 2025
+)
+53.85
+54.41
+56.73
+53.68
+52.88
+54.41
+50.96
+51.06
+Gemini-1.5 Pro
+(
+Team et al., 2024
+)
+55.77
+55.88
+56.73
+56.73
+54.80
+54.80
+56.73
+56.73
+Gemini-2.5 Flash
+(
+Comanici et al., 2025
+)
+64.42
+58.82
+59.62
+63.97
+54.81
+55.15
+55.77
+56.38
+VideoMAEv2-g
+(
+Wang et al., 2023
+)
+63.46
+50.00
+54.81
+53.69
+65.38
+54.41
+48.08
+59.57
+Cosmos-4B
+(
+Agarwal et al., 2025
+)
+51.92
+41.18
+50.96
+48.32
+53.85
+50.00
+48.08
+55.32
+V-JEPA 2-h
+(
+Assran et al., 2025
+)
+63.46
+67.65
+51.92
+56.38
+50.00
+57.35
+50.00
+52.13
+V-JEPA-h+RoPE
+(
+Bardes et al., 2024
+)
+59.62
+57.35
+55.77
+58.72
+57.69
+75.00
+46.15
+58.51
+3DSPA (no 3D, no DINO)
+44.23
+50.00
+54.81
+58.82
+53.85
+48.53
+46.15
+52.13
+3DSPA (no 3D)
+61.54
+76.47
+75.00
+73.08
+78.85
+73.53
+69.23
+59.57
+3DSPA (no DINO)
+65.38
+60.29
+46.15
+66.18
+50.00
+58.82
+38.46
+39.36
+3DSPA
+76.92
+75.00
+73.08
+76.47
+67.31
+69.12
+70.77
+64.47
+Human
+100.0
+99.26
+97.11
+90.44
+99.04
+94.44
+96.15
+95.21
+Table 2
+:
+Win rates (%) on IntPhys2 across physical principles.
+The top rows report prior models’ win rates, while the bottom rows compare 3DSPA , its ablations, and human performance. 3DSPA and 3DSPA (no 3D) achieve the strongest performance across most concept categories in detecting physically implausible events.
+Performance analysis.
+Table
+2
+shows the performance of 3DSPA against the baselines reported in
+Bordes et al. (2025)
+as well as our ablations. 3DSPA and 3DSPA (no 3D) significantly outperform all alternatives across most concept categories. Perhaps most surprisingly, 3DSPA shows the
+most benefit
+over alternatives in the permanence (
++
+10
+%
+\>+10\%
+), immutability (
++
+10
+%
+\>+10\%
+), and solidity (
++
+5
+%
+\>+5\%
+) concept categories rather than continuity (approximately
+−
+5
+​
+to
++
+2
+%
+-5\;\text{to}\;+2\%
+). This suggests that a small amount of 3D point track data is sufficient for models to learn what is physically plausible or not, and that reconstructing semantic 3D tracks is a better signal for learning
+realistic, plausible
+physical motion than next frame prediction or next token prediction.
+Most of the benefits of 3DSPA in determining possible vs. impossible physics may be due to the inclusion of DINOv2 features. Although 3DSPA performs best overall, the ablation which removes 3D structure but maintains DINOv2 features performs comparably to 3DSPA in most concept categories, indicating that
+semantic information
+is key for understanding physical principles. By comparison, the other ablations perform comparably to previously evaluated predictive and Multimodal LLM (MLLM) approaches. We provide additional results in Appendix
+B
+.
+Figure 3
+:
+Qualitative examples of accurate reconstruction on realistic generated videos from EvalCrafter and VideoPhy-2.
+High-rated videos produce coherent and stable point tracks under 3DSPA (blue). The top and middle examples are from EvalCrafter
+(
+Liu et al., 2024
+)
+, and the bottom example is from VideoPhy-2
+(
+Bansal et al., 2025
+)
+.
+4.3
+Does 3DSPA capture human evaluations of realism in generated videos?
+A key challenge in evaluating generated videos is measuring realism without relying on reference videos. This is particularly relevant when training data are inaccessible or when sampling a large number of outputs is computationally prohibitive. Human evaluation has therefore become the gold standard, since people can naturally judge whether motion appears realistic and physically plausible.
+Figure 4
+:
+TRAJAN vs. 3DSPA .
+Qualitative comparison on videos from the EvalCrafter dataset
+(
+Liu et al., 2024
+)
+. Compared to TRAJAN
+(
+Allen et al., 2025
+)
+, 3DSPA produces more coherent and temporally stable point tracks, aligning more closely with human judgments of motion quality. In the top example (dog walking; human rating: 4.5/5), 3DSPA accurately captures articulated leg motion in 3D, whereas TRAJAN produces noisy and inconsistent tracks. In the bottom example (human rating: 1.67/5), the phone gradually disappears; 3DSPA correctly identifies this semantic violation, while TRAJAN fails due to smooth but semantically implausible trajectories.
+We draw on two datasets which include a large set of videos generated by multiple generative video models: VideoPhy-2
+(
+Bansal et al., 2025
+)
+and EvalCrafter
+(
+Liu et al., 2024
+)
+.
+VideoPhy-2 emphasizes action-centric videos and includes human annotations of physical commonsense and semantic adherence to the text prompt. EvalCrafter
+(
+Liu et al., 2024
+)
+evaluates video quality with a larger set of five metrics including motion quality, temporal consistency, and several prompt adherence measures.
+Figure 3
+shows representative high-rated videos from both datasets, where 3DSPA produces coherent and temporally stable point tracks, indicating strong alignment with human judgments of motion realism and physical plausibility. These videos were all rated highly for realistic motion and cover challenging situations for point tracking including transparency and substantial motion. In all cases, 3DSPA reconstructs the point tracks well, since the videos appear realistic. We show more examples in Appendix
+E
+.
+VideoPhy-2
+We use the VideoPhy-2 benchmark
+(
+Bansal et al., 2025
+)
+to assess how well 3DSPA performs as an automated realism metric relative to human judgments. This benchmark emphasizes two key aspects:
+semantic adherence
+(SA), which measures whether generated videos follow the intended action semantics, and
+physical commonsense
+(PC), which evaluates whether the motion and interactions in videos are consistent with intuitive physical rules. We are primarily interested in physical commonsense.
+Bansal et al. (2025)
+also provide an automated evaluation metric, VIDEOPHY-2 AutoEval, which is a vision-language model fine-tuned to predict a physical commonsense score on a subset of the generated video dataset.
+We measure the automated metric quality by correlating model ratings and human ratings with the Spearman rank coefficient. Model ratings are calculated automatically as the Average Jaccard for each video – a proxy for the reconstruction error of the autoencoder.
+As shown in Table
+3
+, 3DSPA substantially outperforms 2D variants in tracking human ratings of physical commonsense and also provides a significant boost over the 3D baseline. The inclusion of both 3D structural cues and semantic DINO features enables stronger alignment with human assessments, where 3DSPA achieves the highest Spearman rank coefficient among ablations.
+More remarkably, 3DSPA strongly outperforms most vision-language models (VideoCon, VideoScore, and VideoLlava) on this task, and even closely matches VIDEOPHY-2 AutoEval despite not being trained on the provided dataset. We additionally analyze the computational cost of 3DSPA and representative baselines. 3DSPA achieves comparable or faster inference time relative to VLM-based evaluators, with approximately a 2x overhead relative to TRAJAN. Detailed runtime breakdowns are provided in
+Appendix C
+.
+Model
+Spearman (PC)
+Video Evaluation Models (fine-tuned)
+VideoCon–Physics
+0.48
+VideoCon
+0.13
+VideoLlava
+0.08
+VideoScore
+0.17
+VIDEOPHY–2–AUTOEVAL
+0.76
+Ablations (no fine-tuning)
+3DSPA (no 3D, no DINO)
+0.19
+3DSPA (no 3D)
+0.40
+3DSPA (no DINO)
+0.50
+3DSPA (ours)
+0.74
+Table 3
+:
+Spearman rank coefficients on the VideoPhy-2 benchmark for physical commonsense (PC). Video Evaluation Models are fine-tuned vision-language models.
+Model
+Visual Quality
+T2V
+Motion Quality
+Consistency
+Subjective Likeness
+3DSPA (no 3D, no DINO)
+0.28
+0.25
+0.24
+0.33
+0.23
+3DSPA (no 3D)
+0.31
+0.44
+0.41
+0.39
+0.46
+3DSPA (no DINO)
+0.45
+0.55
+0.49
+0.48
+0.63
+3DSPA (ours)
+0.48
+0.58
+0.55
+0.60
+0.60
+Table 4
+:
+Spearman rank coefficients between human annotations and automated AJ scores for the EvalCrafter
+(
+Liu et al., 2024
+)
+dataset in the categories of visual quality, text-to-video similarity, motion quality, temporal consistency, and subjective likeness across different ablations.
+EvalCrafter
+Similarly to VideoPhy-2, EvalCrafter
+(
+Liu et al., 2024
+)
+is a dataset consisting of generated videos from several frontier generative video models. For each video, a set of human annotators rated the
+visual quality
+,
+text to video consistency
+,
+motion quality
+,
+temporal consistency
+, and
+subjective likeness
+. Similarly to VideoPhy-2, we compute Spearman rank coefficients between human ratings and the Average Jaccard (AJ) for each of the ablations and 3DSPA . Since many videos in EvalCrafter contain no motion (and therefore could not be assessed as physically realistic or not), we restricted evaluation to videos with medium to high motion, defined as the top 50% of videos ranked by change in 3D point track positions, yielding a test set of 1,849 videos. Table
+4
+clearly demonstrates that 3DSPA achieves the best performance; further highlighting that integrating both 3D structure and semantic DINO features provides the strongest predictor of a variety of human annotations for generated videos.
+Figure
+4
+shows two example videos which highlight the differences between 3DSPA and TRAJAN (i.e. the 3DSPA (no 3D, no DINO) ablation) in capturing motion quality, the closest metric to physical realism. In the first video, a dog is walking on grass. Here, the 3D nature of the dog’s legs is critical for modeling its motion. Without 3D structure, TRAJAN is unable to correctly capture this motion, and incorrectly labels the video as unrealistic. In the second video, a phone slowly disappears. Since TRAJAN has no notion of object semantics, and the point trajectories are smooth (due to the
+slow
+disappearance), it incorrectly believes this video is realistic. 3DSPA instead understands that phones cannot simply disappear, and marks this as an unrealistic video. In both cases, this matches human raters’ intuitions.
+5
+Discussion
+We introduce the 3D Semantic Point Autoencoder (3DSPA), a model for evaluating video realism using semantic-aware 3D point trajectories. Across several experiments, we found that 3DSPA ’s combination of semantic and 3D geometric information was crucial for (1) 3D point track reconstruction, (2) physical rule violation detection, and (3) matching various human annotations of generated videos, including motion quality and adherence to physical commonsense. Through ablation studies, we determined that semantic information is particularly crucial to determining whether a video is physically realistic – geometry alone is not enough. Perhaps most surprisingly, 3DSPA outperforms state-of-the-art vision-language models both in detecting synthetic physical rule violations such as solidity and immutability, and in tracking human physical commonsense judgments of generated videos.
+However, 3DSPA also has some limitations.
+For example, 3DSPA ’s 3D point track reconstruction can be unreliable (see Appendix
+D
+), especially in complex scenes where depth cues are difficult to interpret and VideoDepthAnything
+(
+Chen et al., 2025a
+)
+performs poorly. This in turn can propagate errors into downstream realism scores. While our results indicate that 3DSPA remains robust to these artifacts and performs well on average across diverse environments, these limitations nevertheless motivate future work on further improving the robustness of trajectory reconstruction.
+Overall, 3DSPA offers a scalable alternative to human evaluation of video realism. We believe that 3D point tracks naturally capture depth-aware motion, interactions, and occlusion, making them more effective than frame-based metrics for spotting subtle physics violations. In future work, we plan to make trajectories depend on past motion, enabling stronger tests of long-term dynamics and temporal realism, as well as investigating whether these metrics can be used to improve or regularize the training of generative video models.
+6
+Acknowledgements
+KA is supported by a Canada CIFAR AI Chair. Resources used in preparing this research were provided, in part, by the Province of Ontario, the Government of Canada through CIFAR, and companies sponsoring the Vector Institute.
+7
+Broader Impacts
+This paper presents a method to help identify errors in generated videos. It may be used to assist in the detection of fake content, but may also be extended to make generated videos more realistic. This could have both positive and negative societal consequences — better detection of fake content, and more convincing fake content. There are more potential societal consequences of our work, but these do not need to be specifically highlighted here.
+References
+Agarwal
+et al.
+(2025)
+N. Agarwal, A. Ali, M. Bala, Y. Balaji, E. Barker, T. Cai, P. Chattopadhyay, Y. Chen, Y. Cui, Y. Ding,
+et al.
+Cosmos world foundation model platform for physical ai
+.
+arXiv preprint arXiv:2501.03575
+.
+Cited by:
+Table 2
+.
+Allen
+et al.
+(2025)
+K. Allen, C. Doersch, G. Zhou, M. Suhail, D. Driess, I. Rocco, Y. Rubanova, T. Kipf, M. S. Sajjadi, K. Murphy,
+et al.
+Direct motion models for assessing generated videos
+.
+arXiv preprint arXiv:2505.00209
+.
+Cited by:
+§1
+,
+§2
+,
+§3
+,
+Figure 4
+,
+Figure 4
+,
+§4.2
+.
+Assran
+et al.
+(2025)
+M. Assran, A. Bardes, D. Fan, Q. Garrido, R. Howes, M. Muckley, A. Rizvi, C. Roberts, K. Sinha, A. Zholus,
+et al.
+V-jepa 2: self-supervised video models enable understanding, prediction and planning
+.
+arXiv preprint arXiv:2506.09985
+.
+Cited by:
+Table 2
+.
+Bai
+et al.
+(2025)
+S. Bai, K. Chen, X. Liu, J. Wang, W. Ge, S. Song, K. Dang, P. Wang, S. Wang, J. Tang,
+et al.
+Qwen2. 5-vl technical report
+.
+arXiv preprint arXiv:2502.13923
+.
+Cited by:
+Table 2
+.
+Bansal
+et al.
+(2025)
+H. Bansal, C. Peng, Y. Bitton, R. Goldenberg, A. Grover, and K. Chang
+Videophy-2: a challenging action-centric physical commonsense evaluation in video generation
+.
+arXiv preprint arXiv:2503.06800
+.
+Cited by:
+Figure 9
+,
+Figure 9
+,
+Figure 1
+,
+Figure 1
+,
+3rd item
+,
+§1
+,
+§2
+,
+Figure 3
+,
+Figure 3
+,
+§4.3
+,
+§4.3
+.
+Bardes
+et al.
+(2024)
+A. Bardes, Q. Garrido, J. Ponce, X. Chen, M. Rabbat, Y. LeCun, M. Assran, and N. Ballas
+Revisiting feature prediction for learning visual representations from video
+.
+arXiv preprint arXiv:2404.08471
+.
+Cited by:
+Table 2
+.
+Bear
+et al.
+(2023)
+D. Bear, H. F. Tung, Y. Du, T. Gupta, P. Battaglia, J. B. Tenenbaum, and J. Wu
+Physion++: a benchmark and evaluation platform for physical scene understanding
+.
+In
+Advances in Neural Information Processing Systems (NeurIPS)
+,
+Cited by:
+§1
+,
+§2
+.
+Bordes
+et al.
+(2025)
+F. Bordes, Q. Garrido, J. T. Kao, A. Williams, M. Rabbat, and E. Dupoux
+IntPhys 2: benchmarking intuitive physics understanding in complex synthetic environments
+.
+arXiv preprint arXiv:2506.09849
+.
+Cited by:
+2nd item
+,
+§2
+,
+§4.2
+,
+§4.2
+.
+Borji (2022)
+A. Borji
+Pros and cons of gan evaluation measures
+.
+Computer Vision and Image Understanding
+.
+Cited by:
+§1
+.
+Brooks
+et al.
+(2024)
+T. Brooks, B. Peebles, C. Holmes, W. DePue, Y. Guo, L. Jing, D. Schnurr, J. Taylor, T. Luhman, E. Luhman, C. Ng, R. Wang, and A. Ramesh
+Video generation models as world simulators
+.
+External Links:
+Link
+Cited by:
+§1
+.
+Chen
+et al.
+(2024)
+H. Chen, Y. Hong, Z. Huang, Z. Xu, Z. Gu, Y. Li, J. Lan, H. Zhu, J. Zhang, W. Wang,
+et al.
+Demamba: ai-generated video detection on million-scale genvideo benchmark
+.
+arXiv preprint arXiv:2405.19707
+.
+Cited by:
+§1
+.
+Chen
+et al.
+(2025a)
+S. Chen, H. Guo, S. Zhu, F. Zhang, Z. Huang, J. Feng, and B. Kang
+Video depth anything: consistent depth estimation for super-long videos
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 22831–22840
+.
+Cited by:
+Appendix D
+,
+§3.1.1
+,
+§3.1.2
+,
+§5
+.
+Chen
+et al.
+(2025b)
+Y. Chen, X. Zhu, and T. Li
+A physical coherence benchmark for evaluating video generation models via optical flow-guided frame prediction
+.
+arXiv preprint arXiv:2502.05503
+.
+Cited by:
+§2
+.
+Christian
+et al.
+(2025)
+N. A. Christian, J. Turuwhenua, and M. Norouzifard
+AI and generative models in 360-degree video creation: building the future of virtual realities
+.
+Applied Sciences
+15
+(
+17
+),
+pp. 9292
+.
+Cited by:
+§1
+.
+Comanici
+et al.
+(2025)
+G. Comanici, E. Bieber, M. Schaekermann, I. Pasupat, N. Sachdeva, I. Dhillon, M. Blistein, O. Ram, D. Zhang, E. Rosen,
+et al.
+Gemini 2.5: pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities
+.
+arXiv preprint arXiv:2507.06261
+.
+Cited by:
+Table 2
+.
+Fu
+et al.
+(2025)
+X. Fu, X. Wang, X. Liu, J. Bai, R. Xu, P. Wan, D. Zhang, and D. Lin
+Learning video generation for robotic manipulation with collaborative trajectory control
+.
+arXiv preprint arXiv:2506.01943
+.
+Cited by:
+§1
+.
+Google (2025)
+Google
+Veo: a text-to-video generation system
+.
+Technical report
+Cited by:
+§1
+.
+Greff
+et al.
+(2022)
+K. Greff, F. Belletti, L. Beyer, C. Doersch, Y. Du, D. Duckworth, D. J. Fleet, D. Gnanapragasam, F. Golemo, C. Herrmann,
+et al.
+Kubric: a scalable dataset generator
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 3749–3761
+.
+Cited by:
+§3.1.1
+,
+§4.1
+.
+Huang
+et al.
+(2024)
+Z. Huang, Y. He, J. Yu, F. Zhang, C. Si, Y. Jiang, Y. Zhang, T. Wu, Q. Jin, N. Chanpaisit,
+et al.
+Vbench: comprehensive benchmark suite for video generative models
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 21807–21818
+.
+Cited by:
+§2
+.
+Hurst
+et al.
+(2024)
+A. Hurst, A. Lerer, A. P. Goucher, A. Perelman, A. Ramesh, A. Clark, A. Ostrow, A. Welihinda, A. Hayes, A. Radford,
+et al.
+Gpt-4o system card
+.
+arXiv preprint arXiv:2410.21276
+.
+Cited by:
+Table 2
+.
+Jaegle
+et al.
+(2021)
+A. Jaegle, F. Gimeno, A. Brock, O. Vinyals, A. Zisserman, and J. Carreira
+Perceiver: general perception with iterative attention
+.
+In
+International conference on machine learning
+,
+pp. 4651–4664
+.
+Cited by:
+Figure 2
+,
+Figure 2
+,
+§3.1
+.
+Karaev
+et al.
+(2024)
+N. Karaev, I. Makarov, J. Wang, N. Neverova, A. Vedaldi, and C. Rupprecht
+Cotracker3: simpler and better point tracking by pseudo-labelling real videos
+.
+arXiv preprint arXiv:2410.11831
+.
+Cited by:
+§3.1.1
+,
+§3.1.2
+,
+§4.1
+.
+Koppula
+et al.
+(2024)
+S. Koppula, I. Rocco, Y. Yang, J. Heyward, J. Carreira, A. Zisserman, G. Brostow, and C. Doersch
+Tapvid-3d: a benchmark for tracking any point in 3d
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 82149–82165
+.
+Cited by:
+§3.1.1
+,
+§3.1.2
+,
+§4.1
+.
+Kuaishou Technology (2024)
+Kuaishou Technology
+Kling: ai video generation model
+.
+Note:
+https://klingai.com/
+Versions 1.0, 1.5, 1.6, 2.0, 2.1 released 2024
+Cited by:
+§1
+.
+Liu
+et al.
+(2024)
+Y. Liu, X. Cun, X. Liu, X. Wang, Y. Zhang, H. Chen, Y. Liu, T. Zeng, R. Chan, and Y. Shan
+Evalcrafter: benchmarking and evaluating large video generation models
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 22139–22149
+.
+Cited by:
+Figure 9
+,
+Figure 9
+,
+3rd item
+,
+§1
+,
+§2
+,
+Figure 3
+,
+Figure 3
+,
+Figure 4
+,
+Figure 4
+,
+§4.3
+,
+§4.3
+,
+Table 4
+,
+Table 4
+.
+Loshchilov and Hutter (2017)
+I. Loshchilov and F. Hutter
+Decoupled weight decay regularization
+.
+arXiv preprint arXiv:1711.05101
+.
+Cited by:
+Appendix A
+,
+§3.1.1
+.
+LumaAI (2025)
+LumaAI
+Luma ray2
+.
+Note:
+https://lumalabs.ai/ray
+Accessed: 2025-07-08
+Cited by:
+§1
+.
+Motamed
+et al.
+(2025a)
+S. Motamed, M. Chen, L. Van Gool, and I. Laina
+Travl: a recipe for making video-language models better judges of physics implausibility
+.
+arXiv preprint arXiv:2510.07550
+.
+Cited by:
+§2
+.
+Motamed
+et al.
+(2025b)
+S. Motamed, L. Culp, K. Swersky, P. Jaini, and R. Geirhos
+Do generative video models understand physical principles?
+.
+arXiv preprint arXiv:2501.09038
+.
+Cited by:
+§1
+,
+§2
+.
+Oquab
+et al.
+(2023)
+M. Oquab, T. Darcet, T. Moutakanni, H. Vo, M. Szafraniec, V. Khalidov, P. Fernandez, D. Haziza, F. Massa, A. El-Nouby,
+et al.
+Dinov2: learning robust visual features without supervision
+.
+arXiv preprint arXiv:2304.07193
+.
+Cited by:
+Figure 2
+,
+Figure 2
+,
+§3.1.1
+,
+§3.1
+.
+Radford
+et al.
+(2021)
+A. Radford, J. W. Kim, C. Hallacy, A. Ramesh, G. Goh, S. Agarwal, G. Sastry, A. Askell, P. Mishkin, J. Clark,
+et al.
+Learning transferable visual models from natural language supervision
+.
+In
+International conference on machine learning
+,
+pp. 8748–8763
+.
+Cited by:
+§2
+.
+Riochet
+et al.
+(2018)
+R. Riochet, N. Garcia, F. Baradel, R. Cadene, M. Arbel, C. Donnat, O. Blayo, A. Bordes, R. D. Hjelm, A. Courville,
+et al.
+IntPhys: a framework and benchmark for visual intuitive physics reasoning
+.
+In
+Proceedings of the International Conference on Learning Representations (ICLR)
+,
+Cited by:
+§2
+.
+Shi
+et al.
+(2025)
+G. Shi, A. Tan, H. Tao, and Y. Du
+TCMabNet: a spatio-temporal network for fine-grained fake video
+.
+In
+2025 7th International Conference on Artificial Intelligence Technologies and Applications (ICAITA)
+,
+pp. 334–339
+.
+Cited by:
+§2
+.
+Team
+et al.
+(2024)
+G. Team, P. Georgiev, V. I. Lei, R. Burnell, L. Bai, A. Gulati, G. Tanzer, D. Vincent, Z. Pan, S. Wang,
+et al.
+Gemini 1.5: unlocking multimodal understanding across millions of tokens of context
+.
+arXiv preprint arXiv:2403.05530
+.
+Cited by:
+Table 2
+.
+Unterthiner
+et al.
+(2018)
+T. Unterthiner, S. Van Steenkiste, K. Kurach, R. Marinier, M. Michalski, and S. Gelly
+Towards accurate generative models of video: a new metric & challenges
+.
+arXiv preprint arXiv:1812.01717
+.
+Cited by:
+§2
+.
+Wang
+et al.
+(2023)
+L. Wang, B. Huang, Z. Zhao, Z. Tong, Y. He, Y. Wang, Y. Wang, and Y. Qiao
+Videomae v2: scaling video masked autoencoders with dual masking
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 14549–14560
+.
+Cited by:
+Table 2
+.
+Weihs
+et al.
+(2022)
+L. Weihs, A. Yuile, R. Baillargeon, C. Fisher, G. Marcus, R. Mottaghi, and A. Kembhavi
+Benchmarking progress to infant-level physical reasoning in ai
+.
+Transactions on Machine Learning Research
+.
+Cited by:
+§2
+.
+Wu
+et al.
+(2023)
+H. Wu, Y. Jing, C. Cheang, G. Chen, J. Xu, X. Li, M. Liu, H. Li, and T. Kong
+Unleashing large-scale video generative pre-training for visual robot manipulation
+.
+arXiv preprint arXiv:2312.13139
+.
+Cited by:
+§1
+.
+Xiao
+et al.
+(2025)
+Y. Xiao, J. Wang, N. Xue, N. Karaev, Y. Makarov, B. Kang, X. Zhu, H. Bao, Y. Shen, and X. Zhou
+Spatialtrackerv2: 3d point tracking made easy
+.
+arXiv preprint arXiv:2507.12462
+.
+Cited by:
+§4.1
+.
+Xiao
+et al.
+(2024)
+Y. Xiao, Q. Wang, S. Zhang, N. Xue, S. Peng, Y. Shen, and X. Zhou
+Spatialtracker: tracking any 2d pixels in 3d space
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 20406–20417
+.
+Cited by:
+§4.1
+.
+Xu
+et al.
+(2025)
+T. Xu, Y. Liu, Y. Jin, Y. Qu, J. Bai, W. Zhang, and Y. Zhou
+From recorded to ai-generated instructional videos: a comparison of learning performance and experience
+.
+British Journal of Educational Technology
+56
+(
+4
+),
+pp. 1463–1487
+.
+Cited by:
+§1
+.
+Yang
+et al.
+(2025)
+X. Yang, B. Li, S. Xu, N. Wang, C. Ye, Z. Chen, M. Qin, Y. Ding, X. Jin, H. Zhao,
+et al.
+ORV: 4d occupancy-centric robot video generation
+.
+arXiv preprint arXiv:2506.03079
+.
+Cited by:
+§1
+.
+Yi
+et al.
+(2020)
+K. Yi, C. Gan, Y. Li, J. Wu, A. Torralba, and J. B. Tenenbaum
+CLEVRER: collision events for video representation and reasoning
+.
+In
+International Conference on Learning Representations (ICLR)
+,
+Cited by:
+§2
+.
+Zheng
+et al.
+(2025)
+C. Zheng, R. Suo, C. Lin, Z. Zhao, L. Yang, S. Liu, M. Yang, C. Wang, and C. Shen
+D3: training-free ai-generated video detection using second-order features
+.
+In
+Proceedings of the IEEE/CVF International Conference on Computer Vision
+,
+pp. 12852–12862
+.
+Cited by:
+§2
+.
+Appendix A
+Training Setup & Hyperparameters
+We train our model using AdamW
+(
+Loshchilov and Hutter, 2017
+)
+with a cosine learning rate schedule, preceded by a warmup of 10000 steps. The peak learning rate is set to
+1
+×
+10
+−
+4
+1\times 10^{-4}
+. Training is performed for 300 epochs with a batch size of 256. This extended training schedule, along with the larger batch size, allows the model to better stabilize its motion representation and improve generalization across diverse video scenarios.
+As before, we supervise both position and occlusion prediction, applying a L1 loss on
+(
+x
+t
+,
+y
+t
+)
+(x_{t},y_{t})
+coordinates and a cross-entropy loss on the occlusion logit
+o
+t
+o_{t}
+. We maintain the weighting ratio of
+5000
+:
+10
+−
+8
+5000:10^{-8}
+, which prioritizes motion fidelity while encouraging invariance to occlusion. We found that balancing these losses equally degraded correlation with human judgments of realism, consistent with our earlier observations.
+To improve temporal localization of query points, we replace the naive linear up-projection operator with a strided-window upsampling operator. Specifically, each latent token
+ϕ
+S
+l
+\phi^{l}_{S}
+is linearly up-projected and concatenated with a temporal window
+[
+ρ
+t
+:
+ρ
+t
++
+128
+)
+[\rho_{t}:\rho_{t}+128)
+along the channel axis. This encourages the decoder to attend to temporally relevant information for a given query point.
+A.1
+Hyperparameters
+Tables
+5
+and
+6
+provide the full set of hyperparameters for positional encoding, projection operators, and transformer modules. Compared to the original TRAJAN configuration, we increase the dimensionalities of the projection layers as we have increased the data and added additional parameters due to DINO and depth features, enabling richer multi-modal fusion of semantic and geometric cues.
+Component
+Hyperparameter Value
+Sinusoidal embedding (spatial + temporal + depth)
+32 frequencies
+Track token projection dimensionality (
+C
+C
+)
+384
+DINO feature projection dimensionality
+768
+Depth feature projection dimensionality
+256
+Compression dimensionality
+96
+Up-projection dimensionality
+1280
+Query point encoder dimensionality
+1280
+Table 5
+:
+Positional encoding and projection operator hyperparameters for 3DSPA .
+Transformer Name
+Attention Type
+QKV Size
+Layers
+Heads
+MLP Size
+Input 3D track transformer
+SA
+96
+×
+8
+96\times 8
+3
+8
+1536
+Perceiver-style transformer
+CA
+96
+×
+8
+96\times 8
+4
+8
+2048
+Up-projection latent transformer (decoder)
+CA
+96
+×
+8
+96\times 8
+4
+8
+2048
+Track readout transformer
+CA
+96
+×
+8
+96\times 8
+4
+8
+1536
+Table 6
+:
+Transformer architecture hyperparameters for 3DSPA . SA = self-attention, CA = cross-attention.
+Appendix B
+Additional results on Intphys2
+Dataset Structure.
+The videos are further categorized by difficulty:
+•
+Easy (104 videos):
+Simple environments with colorful geometric shapes.
+•
+Medium (400 videos):
+Diverse backgrounds with textured shapes.
+•
+Hard (336 videos):
+Realistic objects within cluttered, complex backgrounds.
+•
+Unknown (172 videos):
+Mixed or ambiguous scenes.
+Figure 5
+:
+Performance comparison across models on the IntPhys2 benchmark for each of the
+easy
+,
+medium
+and
+hard
+categories.
+We report results across the three difficulty variants to better capture how model performance scales with increasing visual and physical complexity. This breakdown provides motivation for our evaluation, as it disentangles robustness to simple synthetic settings from generalization to realistic and cluttered environments (see Figure
+5
+). Notably, performance on the
+hard
+category is consistently the lowest in terms of Average Jaccard, highlighting the challenge of reconstructing tracks in realistic scenes with heavy clutter, occlusions, and object interactions.
+Figure 6
+:
+Visualization of point tracks on IntPhys2 videos.
+For each video, we project tracked points and color them using their Average Jaccard (AJ) consistency score (red = low / unreal, blue = high / real). Real, physically consistent videos (top) show smooth, coherent tracks with high AJ scores throughout the video, while unreal videos with physical rule violations (bottom) exhibit poorly reconstructed point trajectories.
+We also give a qualitative example of how 3DSPA captures physical rule violations in
+Figure 6
+. Recall that the IntPhys2 dataset is constructed by pairing the same initial frames with either a realistic ending (real) or one which violates a physical rule (unreal). In
+Figure 6
+, the ball should interact with the ramp and fly through the air (top, real). In this case, the point tracks on the ball are well reconstructed. However, in the bottom video, where the ball just continues down the slope without flying through the air, the point tracks are poorly reconstructed.
+Model
+Inference Time (s)
+VideoCon–Physics
+8.13
+VideoCon
+6.21
+VideoLLaVA
+13.52
+VideoScore
+4.89
+VIDEOPHY–2–AUTOEVAL
+10.67
+TRAJAN
+2.18
+3DSPA (ours)
+5.61
+Table 7
+:
+Average inference time per video for 3DSPA and TRAJAN as compared to other finetuned VLM models
+Appendix C
+Inference Time Comparison
+We benchmark the inference cost of 3DSPA and representative baselines on a single NVIDIA A100-40GB GPU. All methods are evaluated on videos with 50 frames per clip, averaged over 50 different clips. Reported timings include full end-to-end processing required to produce a final evaluation score for a video. To Note: for 3DSPA , the pipeline includes four stages: (1) CoTracker3 for dense 2D point tracking, (2) Video Depth Anything (VDA) for per-frame depth estimation, (3) DINOv2 for semantic feature extraction, and (4) 3DSPA autoencoder inference for trajectory encoding and reconstruction. All components are executed sequentially on GPU without batch parallelization across videos.
+Table
+7
+reports the average inference time per video. Despite incorporating multiple perception modules, 3DSPA takes almost similar time as most VLM-based evaluators while offering stronger sensitivity to physical realism and motion artifacts. Compared to TRAJAN, 3DSPA incurs approximately a 2
+×
+\times
+overhead due to depth and semantic feature extraction, which enables richer 3D semantic reasoning.
+Appendix D
+3DSPA successes and failures on 3D point track reconstruction
+In this section, we give some examples of how well 3DSPA can reconstruct 3D point tracks on the TAP-Vid3D-Minival dataset. In
+Figure 7
+, we show successes of 3DSPA in reconstructing point tracks of both small objects and fast moving objects. However, 3DSPA struggles when depth cues are difficult to interpret (
+Figure 8
+). Since we rely on VideoDepthAnything
+(
+Chen et al., 2025a
+)
+, when depth cues are ambiguous, we see poorer 3D tracking. However, the 2D tracks still look reasonable.
+Figure 7
+:
+Positive examples where 3DSPA performs well on TAP-Vid3D-Minival.
+Predicted 3D trajectories (green) align closely with ground truth (red) even for videos with small objects and high motion. These videos are from the DriveTrack dataset within TAP-Vid3D-Minival.
+Figure 8
+:
+Failure cases of 3DSPA on TAP-Vid3D-Minival.
+We visualize ground-truth (red) and predicted (green) query 3D point trajectories for challenging scenes. Errors typically arise in regions with complex geometry or depth ambiguities, giving high error in depth prediction, although the motion following is good. Corresponding 2D frames (left) and reconstructed 3D trajectories (right) highlight mismatches between predicted and true motion, which mainly arise from incorrectly estimated depth.
+Appendix E
+Visualizations showing 3DSPA ’s ability to capture bad motion in generated videos
+Here we show 3DSPA ’s ability to capture unrealistic motion across a selection of generated videos. In
+Figure 9
+, we instead show examples of videos that were rated
+poorly
+for motion realism. In these cases, objects are morphing shape or inappropriately disappearing. The tracks are poorly reconstructed exactly where the motion becomes unrealistic.
+Figure 9
+:
+Additional Visualization on Evalcrafter & Videophy-2.
+Low-rated motion videos lead to lower AJ scores and unstable point tracks from 3DSPA , reflecting difficulty in reconstructing unreliable motion. The top videos are from Evalcrafter
+(
+Liu et al., 2024
+)
+, middle and bottom are from Videophy2
+(
+Bansal et al., 2025
+)
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

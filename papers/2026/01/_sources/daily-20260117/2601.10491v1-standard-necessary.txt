@@ -1,0 +1,162 @@
+Source https://arxiv.org/html/2601.10491v1
+[H]
+III-B Maintain Basis Vectors
+We employ SVD as a tool to factorize the reshaped gradient matrix and construct the basis matrix M, which provides the optimal low-rank approximation under a mean squared error criterion. However, as training progresses, gradient statistics gradually evolve, rendering a static basis increasingly suboptimal. Recomputing a full SVD and re-transmitting an entirely new basis matrix at every round would therefore incur substantial computational and communication overhead.
+Motivated by the empirical analysis in Section I (Figures 1 and 2), which shows that the gradient direction remains relatively stable across adjacent global rounds, providing a theoretical basis for accurately representing gradients using a set of compact basis vectors that evolves slowly over time. Accordingly, GradESTC retains most previously learned basis vectors locally and dynamically replaces only those whose contribution diminishes relative to the current fitting error, thereby preserving the favorable reconstruction properties of SVD while significantly reducing per-round computation and uplink overhead.
+[H]
+Initialization of Basis Vector
+At the first compression, the basis matrix M has not yet been obtained. To capture the most significant directions of variance in G , we apply SVD, which factorizes G into three components:
+\displaystyle G=U\Sigma V^{\top},
+(5)
+where U\in\mathbb{R}^{l\times m} is an orthogonal matrix whose columns are the left singular vectors of G, \Sigma\in\mathbb{R}^{m\times m} is a diagonal matrix containing the singular values of G in descending order, and V\in\mathbb{R}^{m\times m} is an orthogonal matrix whose columns are the right singular vectors of G. We retain only the first k columns of U to form the basis matrix M for compression. These columns correspond to the k largest singular values, capturing the most significant variance in G. Furthermore, since M is constructed from the first k columns of U, the combination coefficients can be obtained from the first k rows of \Sigma V^{\top} , which is equivalent to being obtained by Formula 4, thereby reducing the computational burden.
+Algorithm 2 The decompressor on the server side
+Input: \mathbb{P},\mathbb{M},A
+Parameter: M
+Output: Reconstructed gradient \hat{g}
+1:
+Update M according to Formula 12 using \mathbb{P} and \mathbb{M}.
+2:
+\hat{G}=M^{\top}A.
+3:
+\hat{g} = Reshape \hat{G} to the original shape.
+4:
+return \hat{g}
+[H]
+Incremental Replacement of Basis Vector
+Based on the temporal correlation of gradients, previously learned basis vectors may continue to effectively represent new gradient information. To reduce communication overhead, we propose an incremental replacement strategy that selectively updates the basis vectors by replacing outdated subsets identified via their indices.
+Two key problems arise: (1) maintaining the orthogonality of the basis matrix when updating the basis vectors, and (2) deciding which vectors to replace. To address the first problem, we introduce the vectors in the error basis matrix M^{e} from fitting error E\in\mathbb{R}^{l\times m} as candidate basis vectors, which captures the components of G not represented by M. The fitting error E is computed as:
+\displaystyle E=G-MA,
+(6)
+where A is obtained from Formula 4.
+Next, SVD is applied to E, yielding E=U^{e}\Sigma^{e}{V^{e}}^{\top}. To construct the error basis matrix M^{e}, we select the columns of U^{e} corresponding to singular values greater than zero and choose the first d columns, where d\leq k. These columns form M^{e}, which serves as the set of candidate vectors for updating the existing basis M.
+It can be rigorously shown that M^{e} is orthogonal to M. We obtain M^{\top}E=0 from the Formula 3 and 6, so we have
+\displaystyle M^{\top}e_{j}=0,\;\forall j,
+(7)
+where e_{j} denotes the j-th column of E. By the SVD, each column of E can be expressed as a linear combination of the first d left singular vectors:
+\displaystyle e_{j}=\sum_{i=1}^{d}\sigma_{i}v_{ij}u_{i}^{e},
+(8)
+where \sigma_{i} are the non-zero singular values and v_{ij} are elements of {V^{e}}^{\top}. Consequently, for any x\in\operatorname{Col}(M^{e}), we have x=\sum_{j}\alpha_{j}e_{j}, which implies:
+\displaystyle M^{\top}x=\sum_{j}\alpha_{j}M^{\top}e_{j}=0\quad\Rightarrow\quad M^{\top}M^{e}=0.
+(9)
+The combination coefficients A^{e} for M^{e} can be computed as:
+\displaystyle A^{e}={M^{e}}^{\top}G={M^{e}}^{\top}(E+MA)={M^{e}}^{\top}E,
+(10)
+which are equivalently obtained from the first d rows of \Sigma^{e}{V^{e}}^{\top}, representing the contribution of the error basis vectors in reconstructing G.
+To address the second problem, we use the squared norm of each element in the combination coefficients as an indicator of the contribution of the corresponding basis vector. Let A^{oe}=[A^{\top},{A^{e}}^{\top}]^{\top},M^{oe}=[M,M^{e}] and let A_{u,:} denote the u-th row of A, which contains the combination coefficients of the u-th basis vector. Thus, the total contribution of A^{oe} is captured by a vector R, where each element represents the squared norm of a column in A^{oe}:
+\displaystyle R=[\|A^{oe}_{1,:}\|^{2},\|A^{oe}_{2,:}\|^{2},\ldots,\|A^{oe}_{k+d,:}\|^{2}].
+(11)
+Although this indicator does not precisely capture the true contribution of the basis vectors to the reconstruction, it provides a computationally efficient approximation that proves effective in most practical scenarios. The contributions sorted in descending order and selected the top k value as a set R_{k}. We then form ordered sets \mathbb{M} and \mathbb{A} by selecting columns from M^{e} and rows from A^{e} whose corresponding contribution values are in R_{k}. The indices of vectors in M that fall outside the top k contribution form a set denoted as \mathbb{P}. For each p_{i}\in\mathbb{P}, the i-th elements from \mathbb{M} and \mathbb{A} are sequentially used to replace the corresponding columns in M and rows in A, respectively, as formally defined below:
+\displaystyle\begin{split}M^{*}_{:,j}&=\begin{cases}\mathbb{M}[i],&\text{if }j=p_{i}\in\mathbb{P},\\
+M_{:,j},&\text{otherwise},\end{cases}\quad\text{for }j=1,2,\ldots,k,\\
+A^{*}_{j,:}&=\begin{cases}\mathbb{A}[i],&\text{if }j=p_{i}\in\mathbb{P},\\
+A_{j:},&\text{otherwise},\end{cases}\quad\text{for }j=1,2,\ldots,k.\end{split}
+(12)
+The sets \mathbb{P} and \mathbb{M}, along with the updated coefficients A^{*}, are transmitted from the compressor to the decompressor. Using this information, the decompressor updates its basis matrix M and reconstructs the gradient with the updated basis vectors and combination coefficients.
+[H]
+Dynamic Adjustment of Candidate Vector Count
+A full SVD involves high computational overhead. Fortunately, since only the first d basis vectors are needed in our algorithm, an iterative SVD method, called Randomized SVD [34], can be employed to reduce this overhead. The time complexity of Randomized SVD depends on d, allowing further reductions by decreasing d as described in Section III-C. Therefore, we can dynamically adjust d to further reduce computational overhead. We aim to make d as close as possible to the actual number of updates required, while leaving sufficient margin to ensure enough candidate vectors are available and should adapt quickly to minimize computational overhead. In practice, it has been observed that the number of basis vectors actually replaced in each round (i.e., the cardinality of the set \mathbb{M}, defined as d_{r}) changes smoothly. Under these requirements, we use a simple linear adjustment strategy, where d is updated as follows:
+\displaystyle d^{*}=\alpha d_{r}+\beta.
+(13)
+This simple strategy achieves good results in most cases while rapidly adjusting d in situations with significant changes, without introducing additional computational overhead. Empirically, we set \alpha=1.3 and \beta=1, which yielded good performance in our experiments.
+[H]
+III-C Compression Level and Time Complexity
+[H]
+Compression Level
+In GradESTC, the compression level is governed by the number of basis vectors k, while the reconstruction loss under a fixed k depends on the segment length l. Both k and l serve as tunable hyperparameters that can be adapted for different layers based on practical needs. In practice, the data for updating basis vectors is dynamically adjusted based on the correlation between consecutive rounds, whereas the data for combination coefficients remains constant. Based on this, the transmitted data is computed as \mathbb{C}:
+\displaystyle\mathbb{C}=k\frac{n}{l}+d_{r}l+k\leq k(\frac{n}{l}+l+1).
+(14)
+Generally, l is set to approximately the square root of n, aligning with natural structural boundaries, while k is empirically determined with k\ll l. This setup ensures a significant compression, i.e., \mathbb{C}\ll n.
+[H]
+Time Complexity
+The time complexity analysis of the GradESTC focuses on the dynamic incremental replacement process.
+In this process, the fitting error E is computed as Formula 6, which has a time complexity of O((2k+1)lm). The time complexity of performing Randomized SVD on E to extract the first d components is O(\log{(d)}lm+d^{2}(l+m)), as stated in [34]. Calculating A^{e} and R has a time complexity of O(dm+(k+d)m) and the remaining operations can be ignored. Thus, the total time complexity of the dynamic incremental replacement process is as follows:
+\displaystyle O\left((2k+\log{(d)}+1+\frac{d+k}{l})lm+d^{2}(l+m)\right).
+(15)
+Since d<k and k\ll l, certain terms can be ignored, and the complexity can be approximated as O\left(2klm+d^{2}(l+m)\right).
+This analysis shows that the time complexity of GradESTC primarily depends on the parameters k and d, which can be adjusted to manage computational overhead. During dynamic adjustment, d is adapted as needed, reducing computational overhead significantly while preserving high accuracy.
+[H]
+Notation and Assumptions
+This paper assumes that each client can locally observe unbiased independent stochastic gradients given by g_{i}^{t}\triangleq g_{i}(x^{t}), with \mathbb{E}[g_{i}^{t}]=\nabla f_{i}(x^{t}), where t=1,\ldots,T represents the round step. The global model \bar{x}^{t} is updated by aggregating the local gradients g_{i}^{t} using the FedAvg algorithm. In FedAvg, each client updates its local model for I steps: x_{i}^{t+1}=x_{i}^{t}-\eta\nabla f_{i}(x_{i}^{t}), where \eta is the learning rate. The global model is updated every I steps by aggregating the local models as \bar{x}^{t}=\frac{1}{N}\sum_{i=1}^{N}x_{i}^{t}. For steps where t\mod I\neq 0, global averaging is not performed; however, these intermediate local updates are still included in the theoretical analysis for convergence derivation. For convenience, we define r=\lfloor\frac{t}{I}\rfloor as the global round. Let G_{i}^{t,r} denote the segmented gradient matrix at the t-th step (which belongs to global round r). The aggregate segmented gradient matrix of client i in round r is then defined as G_{i}^{*,r}=\sum_{\tau=Ir}^{Ir+I}G_{i}^{\tau,r}. In our method, the reconstructed gradient is denoted by \hat{g}, and the error is defined as e=g-\hat{g}, which satisfies \langle e,\hat{g}\rangle=0.
+The assumptions for the analysis are as follows:
+Assumption 1. (Lipschitz Smooth) Each function f_{i}(x) is smooth with modulus L, such that \|\nabla f_{i}(x)-\nabla f_{i}(y)\|\leq L\|x-y\|,\forall x,y,\forall i.
+Assumption 2. (Bounded Variance) There exist constants \sigma>0 such that \mathbb{E}[\|g_{i}(x)-\nabla f_{i}(x)\|^{2}]\leq\sigma^{2},\forall x,\forall i.
+Assumption 3. (Bounded Gradients) There exist constants \rho>0 such that \mathbb{E}[\|g_{i}(x)\|^{2}]\leq\rho^{2},\forall x,\forall i.
+Assumption 4. (Gradient Correlation)
+Let M_{i}^{r} be an orthonormal basis of the rank-k subspace spanned by the top-k left singular vectors of G_{i}^{*,r-1}.
+Define the subspace concentration ratio as
+\chi_{k}(G_{i}^{t,r},G_{i}^{*,r-1})=\frac{\|{M_{i}^{r}}^{\top}G_{i}^{t,r}\|}{\|G_{i}^{t,r}\|}.
+We assume that the expected subspace concentration satisfies
+\mathbb{E}\big[\chi_{k}^{2}(G_{i}^{t,r},G_{i}^{*,r-1})\big]\geq\delta^{2},
+where 0\leq\delta\leq 1 quantifies the minimum correlation between the current gradient matrix and the subspace spanned by the previous round’s gradients.
+Assumption 1-3 are standard in the FL setting, providing the foundation for convergence analysis [12, 19, 35]. Assumption 4, inspired by [36], formalizes the empirical observation that the gradient matrix of the current round is concentrated in a low-dimensional subspace learned from past rounds. Moreover, Assumption 4 is consistent with our method: by incrementally updating basis vectors, GradESTC ensures that the orthonormal basis M remains a good approximation of the top-k subspace of G_{i}^{*,r-1}.
+We also define the inter-client gradient error correlation as
+\tau\triangleq\max_{i\neq j}\mathbb{E}[\langle e_{i}^{t},e_{j}^{t}\rangle],
+which measures the degree of correlation between the compression-induced errors of different clients. By definition, \tau\in[0,(1-\delta^{2})\rho^{2}], where the upper bound corresponds to the case of highly correlated client errors.
+A small value of \tau indicates that the clients’ errors are nearly independent, whereas a large \tau implies strong correlation among client errors.
+[H]
+Main Results
+The convergence proofs of the following theorems are based on these assumptions and are inspired by the analytical framework in [35]. We have the following main results:
+Theorem 1
+Under Assumption 4, the expected gradient reconstruction error in GradESTC is bounded as:
+\mathbb{E}[\|e_{i}^{t}\|^{2}]=\mathbb{E}[\|G_{i}^{t,r}-{M_{i}^{r}}^{\top}G_{i}^{t,r}\|^{2}]\leq\big(1-\delta^{2}\big)\rho^{2},
+and the average reconstruction error across all clients satisfies
+\mathbb{E}[\|\frac{1}{N}\sum_{i=1}^{N}e_{i}^{t}\|^{2}]\leq\frac{1}{N}\big((1-\delta^{2})\rho^{2}+(N-1)\tau\big).
+Theorem 2
+Under Assumptions 1-3 and Theorem 1, for all T>1, the following inequality holds:
+\displaystyle\frac{1}{T}\sum_{t=1}^{T}\mathbb{E}[\|\nabla f(\overline{x}^{t-1})\|^{2}]\leq\frac{4}{\eta T}(f(\overline{x}^{0})-f^{*})+\frac{4\eta\sigma^{2}}{N}
+\displaystyle+16L^{2}\eta^{2}I^{2}\rho^{2}+\frac{4(1+L\eta)}{N}\bigg((1-\delta^{2})\rho^{2}+(N-1)\tau\bigg).
+The detailed proofs of Theorems 1 and 2 are provided in the Appendix. Following Theorem 2, we present a corollary as follows:
+Corollary 1
+Under the same conditions as Theorem 2, assume that T\geq N.
+If we choose \eta=\frac{\sqrt{N}}{L\sqrt{T}} and I\leq\frac{T^{1/4}}{N^{3/4}}, then we have
+\displaystyle\frac{1}{T}\sum_{t=1}^{T}\mathbb{E}[\|\nabla f(\overline{x}^{t-1})\|^{2}]\leq\frac{4L}{\sqrt{NT}}(f(\overline{x}^{0})-f^{*})+\frac{4\sigma^{2}}{L\sqrt{NT}}
+\displaystyle+\frac{16\rho^{2}}{\sqrt{NT}}+\left(\frac{4}{N}+\frac{4}{\sqrt{NT}}\right)\bigg((1-\delta^{2})\rho^{2}+(N-1)\tau\bigg).
+[H]
+Discussion
+Theorem 2 and Corollary 1 indicates that GradESTC converges to a neighborhood of a stationary point rather than exactly to zero. The size of this steady-state neighborhood is determined by the last term in the bound, which depends on (1-\delta^{2})\rho^{2} and \tau.
+When \tau\ll(1-\delta^{2})\rho^{2}, the inter-client errors are nearly independent. In this case, the term \frac{4}{N}(1-\delta^{2})\rho^{2} diminishes as N increases, while the term \frac{4}{\sqrt{NT}}(1-\delta^{2})\rho^{2} diminishes with T. Consequently, the convergence neighborhood shrinks as the number of clients grows, and GradESTC achieves a convergence rate close to the standard FedAvg rate, O(\frac{1}{\sqrt{NT}}). However, if \tau is comparable to (1-\delta^{2})\rho^{2}, the residuals across clients are strongly correlated. In this scenario, the sum (1-\delta^{2})\rho^{2}+(N-1)\tau scales approximately linearly with N. As a result, increasing the number of clients no longer reduces the steady-state error, and the convergence rate degrades significantly.
+Intuitively, \tau reflects the degree of similarity among clients’ compression errors. Under relatively IID data distributions, local gradients tend to align in similar directions, often leading to more correlated reconstruction errors and thus a larger \tau. Conversely, in highly non-IID scenarios, local gradients usually diverge across clients, resulting in less correlated or nearly orthogonal reconstruction errors and a smaller \tau.
+[H]
+Experiment Setup
+We employ three representative models with varying levels of complexity: LeNet5, ResNet18, and AlexNet, as summarized in Table II. For each dataset, experiments are conducted under three data distribution scenarios: IID and non-IID with Dirichlet parameters \alpha=0.5 and \alpha=0.1, where \alpha controls the degree of heterogeneity among clients. The ”Rounds” column in Table II indicates the number of global training rounds (i.e., aggregation steps) corresponding to each setting. All algorithms are trained with a learning rate of 0.01 using cross-entropy loss. We simulate a FL environment with 10 clients, all participating in every global round, and each client performing one local epoch of training on its private data before aggregation.
+TABLE III: Comparison Results in Different Datasets and Distributions.
+Distribution
+Method
+MNIST-LeNet5
+CIFAR10-ResNet18
+CIFAR100-AlexNet
+Uplink at
+Threshold
+Total
+Uplink
+[H]
+GradESTC Settings
+Based on the observations in Section I (Figures 1 and 2), GradESTC is applied for gradient compression only on layers that account for the majority of model parameters. In the LeNet5 model, the weights of the ’conv2’, ’fc1’, ’fc2’, and ’classifier’ layers are compressed, accounting for 99.0% of the total model parameters. The gradient compression parameters (k,l) are set to (8,160), (16,256), (8,120), and (4,28), respectively.
+In the ResNet18 model, the default PyTorch implementation is used. The weights of all ’conv1’ and ’conv2’ layers in stage ’layer3.0’, ’layer3.1’, ’layer4.0’ and ’layer4.1’ are compressed, accounting for 92.3% of the total model parameters. The parameters are set to a fixed k value of 32, and l values of 1152,2304,768,1536,1024,1536,1536,1536, respectively.
+In the AlexNet model, the weights of the ’conv3’, ’conv4’, ’conv5’, ’fc1’, and ’fc2’ layers are compressed, accounting for 98.7% of the total model parameters. The gradient compression parameters are set with a fixed k=48, and l values of 288,288,256,512,1024, respectively.
+For each selected layer, only the weights with the largest proportion of parameters are compressed, while biases, batch normalization parameters, etc., are not compressed.
+Figure 5 illustrates the relationship between accuracy and communication overhead across different datasets and distributions. The accuracy unit is percentage (%), and the uplink overhead unit is GB. GradESTC consistently achieves the highest accuracy under the same communication budget. Figure 6 shows how accuracy evolves over communication rounds across different datasets. While GradESTC may exhibit slightly slower convergence during the mid-training phase, its final accuracy consistently matches or even surpasses that of uncompressed FedAvg.
+Fig. 6: Test Accuracy vs. Round. GradESTC achieves a convergence speed comparable to or even better than FedAvg.
+[H]
+V-B Experiment on large-scale client participation
+To evaluate the performance of GradESTC in scenarios with large-scale client participation, we conducted experiments on the CIFAR-10 dataset using ResNet18. The number of clients was set to 50, and selected 20% of clients to participate in each round. The results shown in Figure 7, demonstrate GradESTC’s scalability and effectiveness in large-scale FL scenarios.
+[H]
+V-C Impact of Local Epochs
+To analyze the impact of local epochs on model performance, we conducted experiments with different local epoch settings. The experiments were conducted on the CIFAR-10 dataset using the ResNet18 model, with local epochs set to 3, 5, and 7, while keeping other settings consistent with previous experiments. As shown in Figure 8, increasing the number of local epochs allows the basis vectors to more accurately capture the temporal correlation of gradients across local rounds within each client, thereby enabling more effective gradient compression.
+Fig. 7: Test Accuracy vs. Overhead and Round with 50 Clients.
+Fig. 8: Test Accuracy vs. Overhead and Round with Different Local Epochs.
+Fig. 9: Test Accuracy vs. Overhead and Round with Different k Values.
+[H]
+V-D Impact of the k for GradESTC
+In our algorithm, the number of basis vectors k influences both computational efficiency and gradient compression performance. A smaller k reduces communication overhead but may limit the expressiveness of the gradients, potentially affecting model convergence and final accuracy. Conversely, a larger k better captures gradient information but increases communication and computational overheads. Therefore, selecting an appropriate k is a key design decision. However, since different layers of the model can adopt different k values, it is difficult to precisely evaluate the impact of k in general. To investigate the effect of k in GradESTC, we conducted the sensitivity analysis on the CIFAR-10 dataset using the ResNet18 model, following the same experimental setup as before. This setup is valid because prior experiments have shown that using a uniform k across all compressible layers in ResNet18 is effective. We varied k among 8, 16, 32, 64, and 128, and observed its impact on model performance. The results are shown in Figure 9.
+We found that the value of k has a limited impact on communication overhead and model performance overall. However, an excessively large k leads to increased communication overhead (e.g., when k=128, the trade-off between accuracy and overhead is the worst, as shown in the left plot of Figure 9), while a very small k slows down convergence (e.g., when k=8, the convergence rate is noticeably slower in the early stages, as shown in the right plot of Figure 9). This is because a large k introduces a greater number of combination coefficients to be transmitted, increasing communication overhead, whereas a small k limits the expressiveness of the basis vectors, reducing the quality of gradient representation. Once k reaches a sufficient value, the number of updated basis vectors per round is mainly determined by the dynamically adjusted d, making performance less sensitive to further increases in k. As a result, k=64 and k=128 show no significant difference in convergence speed or final model performance.
+[H]
+V-E Ablation Experiment
+To validate the effectiveness of each component, we conducted a series of ablation experiment. Specifically, three variants were compared with the full GradESTC: GradESTC-first, GradESTC-all, and GradESTC-k. GradESTC-first initializes the basis vectors in the first round only without subsequent updates. GradESTC-all updates all basis vectors every round. GradESTC-k excludes dynamic adjustment and fixes d as k. Experiments were conducted on the CIFAR-10 dataset. The sum of d across all rounds and clients reflects computational overhead. As discussed in Section III-C, with fixed k,l,m, execution efficiency primarily depends on d. Smaller sum of d indicates lower computational overhead. In our setup, a single CIFAR-10 client performing full decomposition with d=256 takes approximately 0.20 seconds, whereas a local training round of five epochs takes 8-10 seconds, making the computational overhead negligible.
+TABLE IV: Ablation Experiment Results.
+Method
+Best
+Accuracy
+70%
+Uplink
+

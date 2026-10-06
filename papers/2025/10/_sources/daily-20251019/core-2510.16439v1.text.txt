@@ -1,0 +1,1061 @@
+FrugalPrompt: Reducing Contextual Overhead in Large Language Models via Token Attribution
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+2.1 LLM Efficiency
+2.2 Prompt Compression
+2.3 Token Attribution
+3 Preliminaries: Token Attribution
+3.1 GlobEnc
+3.2 DecompX
+4 Methodology
+4.1 Ranking via Saliency Scores
+4.2 Top-kk Filtering
+5 Experiment
+5.1 Tasks
+5.2 Dataset
+5.3 Models
+5.4 Experimental Setup
+5.5 Evaluation Metrics
+6 Result and Analysis
+6.1 Performance across Tasks
+6.2 Choice of Attribution Method
+6.3 Performance vs. Cost
+6.4 Performance across Models
+6.5 Random & Bottom kk tokens
+7 Conclusion
+‣ FrugalPrompt: Reducing Contextual Overhead in Large Language Models via Token Attribution
+License: CC BY 4.0
+arXiv:2510.16439v1 [cs.CL] 18 Oct 2025
+FrugalPrompt: Reducing Contextual Overhead in Large Language Models via Token Attribution
+* Corresponding author.
+Abstract
+Large language models (LLMs) owe much of their stellar performance to expansive input contexts, yet such verbosity inflates monetary costs, carbon footprint, and inference-time latency. Much of this overhead manifests from the redundant low-utility tokens present in typical prompts, as only a fraction of tokens typically carries the majority of the semantic weight. We address this inefficiency by introducing FrugalPrompt, a novel prompt compression framework for LLMs, which retains only the most semantically significant tokens. Leveraging two state-of-the-art token attribution methods, GlobEnc and DecompX, we assign salience scores to every token in an input sequence, rank them to preserve the top-k%k\% tokens in their original order, and obtain a sparse frugalized prompt. We evaluate the approach across four NLP tasks: Sentiment Analysis, Commonsense QA, Summarization, and Mathematical Reasoning, using a suite of frontier LLMs. For the first three tasks, a 20% prompt reduction incurs only a marginal loss in task performance, demonstrating that contemporary LLMs can reconstruct elided context from high-salience cues. In contrast, performance on mathematical reasoning deteriorates sharply, reflecting a stronger dependence on complete token continuity. Further analysis with bottom-k%k\% and random-k%k\% tokens reveals asymmetric performance patterns that may suggest potential task contamination effects, wherein models may resort to shallow memorized patterns from pretraining exposure for conventional NLP tasks. We posit that our work contributes to a more nuanced understanding of LLM behavior in performance-efficiency trade-offs, and delineate the boundary between tasks tolerant to contextual sparsity and those requiring exhaustive context.
+Our source code and models are available at: https://github.com/Starscream-11813/Frugal-ICL.
+Keywords: Large Language Models, Prompt Compression, Token Attribution, Salience Scores, GlobEnc, DecompX, Inference Efficiency, Task Contamination, Contextual Redundancy.
+Syed Rifat Raiyan1  Md Farhan Ishmam2
+Abdullah Al Imran4   Mohammad Ali Moni4∗
+1Islamic University of Technology, Bangladesh      2University of Utah, USA
+3University of Liverpool, UK     4University of Queensland, Australia
+rifatraiyan@iut-dhaka.edu     farhan.ishmam@utah.edu
+abdalimran@gmail.com      m.moni@uq.edu.au
+Abstract content
+1.  Introduction
+As large language models (LLMs) continue to reshape the landscape of NLP, they are increasingly applied to complex and ingenious tasks Yang et al. (2024); Schmidgall et al. (2025). With the scaling of LLMs into super-large trillion-parameter models Fedus et al. (2022); Hudson et al. (2023), and multi-agent architectures requiring hundreds of API calls Islam et al. (2024); Jang et al. (2024), the computational footprint has increased drastically Wu et al. (2025), resulting in high inference latency Wan et al. (2023) and energy consumption Stojkovic et al. (2024).
+To counter the consequences of the scaling law for LLMs Kaplan et al. (2020), several methods were introduced to improve model efficiency Wan et al. (2023); Zhou et al. (2024). Prompt compression is one of the subfields where the input prompting tokens are reduced while retaining considerable performance Zhang et al. (2025). Compression is either achieved on the hard prompts (natural language input text) Sennrich et al. (2016) or the soft prompt (trainable embedding-size vectors)Zhao et al. (2023a), with the former being more popular due to its interpretability and compatibility with closed-source models.
+Current hard prompt compression methods fall short in three key aspects. First, some methods rely on summarizing the input prompt Chuang et al. (2024), which can inadvertently discard semantically critical tokens. Second, these methods tend to retain low-information tokens, such as articles and conjunctions Jiang et al. (2023). Third, all methods either rely on an auxiliary smaller LLM with billions of parameters or a training paradigm. For instance, Chuang et al. (2024) use a Vicuna 7B model Chiang et al. (2023), which introduces a significant parameter overhead.
+We address these challenges by introducing a prompt compression strategy that uses saliency scores generated from state-of-the-art pre-trained token attribution methods Modarressi et al. (2022); Modarressi et al. (2023). These saliency scores can capture the semantically rich token while filtering the redundant ones. This is achieved without any training paradigm, with minimal parameter overhead of a single 110M BERT model Devlin et al. (2019), substantially lower than that of existing methods.
+Our criteria for filtering are grounded in two linguistic principles underlying textual redundancy. First, there is an intrinsic redundancy to any form of text produced by humans Wit and Gillette (1999). For instance, in the text, “What are your plans for the weekend, by the way?”, the phrase “by the way” contributes no additional meaning to an LLM. Second, the English language has low-importance tokens that add little to no semantic weight, generally in the form of articles and auxiliary verbs. For instance, most of the meaning is conveyed if the statement “I have received a parcel.”, is simplified to “I received parcel.", with the latter mimicking simplified English, often used by non-native speakers Shubert et al. (1995). Our filtering methods eliminate both forms of redundancy.
+Our key contributions are as follows:
+•
+We introduce a novel, training-free prompt compression strategy for LLMs that controllably filters low-importance tokens based on saliency scores from pre-trained encoders.
+•
+Experiments on four tasks reveal that a 20% prompt reduction retains the performance across most models and tasks with minimal parameter overhead.
+•
+We reveal key behavioral insights into the performance scaling of models with the inference cost and possible task contamination in common benchmarks.
+2.  Related Work
+2.1.  LLM Efficiency
+The current literature on LLM efficiency Wan et al. (2023) stems from the literature on efficient transformers Tay et al. (2022), but for the autoregressive setting of LLMs. Inference-time efficiency can be achieved via model compression methods, such as quantization Dettmers et al. (2023b), parameter pruning Ma et al. (2023), low-rank decomposition Li et al. (2023a), and knowledge distillation Timiryasov and Tastet (2023). Training efficiency can be achieved during pre-training Liu et al. (2023); Yao et al. (2024) and fine-tuning, either through parameter-efficient Hu et al. (2022) or memory-efficient Dettmers et al. (2023a) approaches. Finally, architectural changes also improve efficiency, e.g., efficient attention Child et al. (2019); Ainslie et al. (2023) and state-space models Gu and Dao (2023). Distinct from these methods, our work adopts a data-centric approach where the input prompt is optimized instead of changing the underlying weights or architecture of the model Chang et al. (2024).
+2.2.  Prompt Compression
+Prompt compression aims to minimize input redundancy while retaining task-relevant information. Trainable soft-prompts achieve these through learned embeddings Zhao et al. (2023b), while sacrificing the interpretability of the prompt text. In contrast, compressing hard prompts preserves interpretability via filtering important tokens Li et al. (2023b); Jiang et al. (2023) or paraphrasing the prompt text into a reduced version Chuang et al. (2024). Context-heavy tasks, e.g., conversation systems, benefit from prompt compression but have focused on sentential redundancy or summarization Santra et al. (2023). Our work instead aims at token-level reduction, offering higher granularity without losing semantic content.
+While our work primarily filters the top k%k\% tokens based on the attribution scores, a key distinction is that we use smaller BERT-class text encoders to gain attribution scores. Previous works lack such efficiency as they rely on smaller auto-regressive models, e.g. Jiang et al. (2023) uses GPT-2 Radford et al. (2019) and Chuang et al. (2024) uses Vicuna 7B Chiang et al. (2023). While the compressor model has fewer parameters than the interference model, its overhead is significantly higher than that of the discriminative token attribution methods.
+2.3.  Token Attribution
+The self-attention weights in transformers have been primarily explored as a proxy for token importance Htut et al. (2019); Clark (2019), yet they fail to align with the true attribution of tokens Jain and Wallace (2019). While including vector norms can partially mitigate this issue Kobayashi et al. (2020), it overlooks the intricacies of the non-attention components in a transformer. Instead, we rely on subsequent token attribution methods: GlobEnc Modarressi et al. (2022), which quantifies global token attribution by aggregating layer-wise analyses across the entire encoder using attention rollout and vector norms, and DecompX Modarressi et al. (2023), which propagates locally decomposed token representations globally to incorporate all model components, including non-linear feed-forward networks. These methods were selected for their superior ability to capture comprehensive semantic contributions beyond raw attention weights, enabling accurate identification of salient tokens with minimal computational overhead.
+Figure 1:
+Overview of the FrugalPrompt pipeline. The input prompt with tokens ⟨t1,t2,…,tn⟩\langle t_{1},t_{2},\dots,t_{n}\rangle is passed to our task-specific token attribution module to generate the saliency scores for each token ⟨s1,s2,…,sn⟩\langle s_{1},s_{2},\dots,s_{n}\rangle. The tokens are ordered based on their saliency in a permutation π\pi and the top p=k%∗np=k\%*n tokens are filtered while maintaining the order of the text to form the reduced text ⟨tπ⁡(1),tπ⁡(2),…,tπ⁡(p)⟩\langle t_{\pi(1)},t_{\pi(2)},\dots,t_{\pi(p)}\rangle. The reduced text is inferred by a frozen LLM to generate the answer tokens ⟨a1,a2,…,an⟩\langle a_{1},a_{2},\dots,a_{n}\rangle.
+3.  Preliminaries: Token Attribution
+To identify which tokens in an input text sequence carry significant influence on the language model’s decision-making process for a given task, we compute the token attribution scores using task-specific BERT-class encoders Devlin et al. (2019). We obtain the saliency scores from these models by adopting two state-of-the-art (SoTA) token attribution methods: the global token attribution analysis method (GlobEnc) Modarressi et al. (2022) and the globally propagated locally decomposed attribution analysis method (DecompX) Modarressi et al. (2023), which are discussed in this section.
+3.1.  GlobEnc
+GlobEnc aggregates the layerwise analysis method 𝒩Enc≔(‖x~i←j‖)∈ℝn×n\mathcal{N}_{\text{{Enc}}}\coloneqq(\|\mathbf{\tilde{\text{$x$}}}_{i\leftarrow j}\|)\in\mathbb{R}^{n\times n} from input token jj to output token ii, across all the encoder layers using attention rollout Abnar and Zuidema (2020). As elucidated in Kobayashi et al. (2020), x~i←j\tilde{x}_{i\leftarrow j} approximates the attributed vector contribution from input token jj to output token ii, computed as the weighted and transformed value vector αi​j​f​(xj)\alpha_{ij}f(x_{j}), where ff is the affine transformation to value space. The vector is adjusted for residual connections and layer normalization to capture the true mixed influence beyond attention weights.
+For each encoder layer, the output is computed as:
+z~i←j\displaystyle\mathbf{\tilde{\text{$z$}}}_{i\leftarrow j}
+=gzi+(∑h=1Hαi​jhfh(xi)+𝟙[i=j]xi)\displaystyle=g_{z_{i}^{+}}\left(\sum_{h=1}^{H}\alpha_{ij}^{h}f^{h}(x_{i})+\mathbbm{1}[i=j]x_{i}\right)
+(1)
+x~i←j\displaystyle\mathbf{\tilde{\text{$x$}}}_{i\leftarrow j}
+≈gz~i+​(z~i←j)=z~i←j−mean⁡(z~i←j)std−dev⁡(z~i+)⊙γ\displaystyle\approx g_{\mathbf{\tilde{\text{$z$}}}_{i}^{+}}(\mathbf{\tilde{\text{$z$}}}_{i\leftarrow j})=\frac{\mathbf{\tilde{\text{$z$}}}_{i\leftarrow j}-\operatorname{mean}(\mathbf{\tilde{\text{$z$}}}_{i\leftarrow j})}{\operatorname{std-dev}(\mathbf{\tilde{\text{$z$}}}_{i}^{+})}\odot\gamma
+(2)
+such that 𝒩ResLN≔(‖z~i←j‖)∈ℝn×n\mathcal{N}_{\text{{ResLN}}}\coloneqq(\|\mathbf{\tilde{\text{$z$}}}_{i\leftarrow j}\|)\in\mathbb{R}^{n\times n} is the attribution analysis to measure the influence of an encoder layer’s input token jj on its corresponding output token ii, considering the residual connections and layer normalizations in the attention block. Here, αi​jh\alpha_{ij}^{h} denotes the raw attention weight from the iith token to the jjth token in the attention head h∈{1,…,H}h\in\{1,\dots,H\}, collectively forming the set of attention weights 𝐀h={αi​jh|1≤i,j≤n}\mathbf{A}^{h}=\{\alpha_{ij}^{h}\bigm|1\leq i,j\leq n\} for the hhth attention head and fh​(x)f^{h}(x) is the transformation function as defined in Kobayashi et al. (2020). For layer ll, the attention rollout with respect to the input is computed as per the following recursive function:
+𝐀~l\displaystyle\mathbf{\tilde{\text{$\mathbf{A}$}}}_{l}
+={𝐀^l​𝐀~l−1; ifl>1𝐀^l; ifl=1\displaystyle=\begin{cases}\hat{\mathbf{A}}_{l}\mathbf{\tilde{\text{$\mathbf{A}$}}}_{l-1}\quad\text{; if}\quad l>1\\
+\hat{\mathbf{A}}_{l}\quad\quad\quad\,\text{; if}\quad l=1\end{cases}
+(3)
+𝐀^l\displaystyle\hat{\mathbf{A}}_{l}
+=0.5​𝐀¯l+0.5​𝐈\displaystyle=0.5\bar{\mathbf{A}}_{l}+0.5\mathbf{I}
+(4)
+where 𝐀¯l\bar{\mathbf{A}}_{l} is the mean raw attention grid across all the heads relevant to the layer ll.
+3.2.  DecompX
+While GlobEnc aggregates layer-wise analyses with a modified attention rollout and approximates FFNs via residuals and scalar norms, it risks information loss. DecompX improves this by propagating the locally decomposed vectors throughout the layers to construct a global decomposition, including FFNs with linear activation approximations, and extending attributions to prediction-based values. Formally, the locally decomposed vector at layer ℓ\ell is expressed as:
+z~iℓ\displaystyle\mathbf{\tilde{\text{$z$}}}^{\ell}_{i}
+=LN⁡(∑k=1N[𝐱i⇐kℓ+𝐳i⇐kℓ]),\displaystyle=\mathrm{LN}\left(\sum_{k=1}^{N}\left[\mathbf{x}^{\ell}_{i\Leftarrow k}+\mathbf{z}^{\ell}_{i\Leftarrow k}\right]\right),
+(5)
+where the normalized contribution is given by:
+LN⁡(𝐳i+ℓ)\displaystyle\mathrm{LN}\left(\mathbf{z}_{i}^{+\ell}\right)
+=∑k=1Ngzi+ℓ​(𝐳i⇐k+ℓ)⏟𝐳~i⇐kℓ+𝜷\displaystyle=\sum_{k=1}^{N}\underbrace{g_{z^{+\ell}_{i}}\left(\mathbf{z}_{i\Leftarrow k}^{+\ell}\right)}_{\tilde{\mathbf{z}}_{i\Leftarrow k}^{\ell}}+\boldsymbol{\beta}
+(6)
+gzi+ℓ​(𝐳i⇐k+ℓ)\displaystyle g_{z^{+\ell}_{i}}\left(\mathbf{z}_{i\Leftarrow k}^{+\ell}\right)
+:=𝐳i⇐k+ℓ−m⁡(𝐳i⇐k+ℓ)s⁡(𝐳i+ℓ)⊙𝜸\displaystyle:=\frac{\mathbf{z}_{i\Leftarrow k}^{+\ell}-m\left(\mathbf{z}_{i\Leftarrow k}^{+\ell}\right)}{s\left(\mathbf{z}_{i}^{+\ell}\right)}\odot\boldsymbol{\gamma}
+DecompX explicitly integrates all encoder layer components, notably the non-linear feed-forward networks, to enhance representational fidelity. The FFN operation is defined as:
+𝐳FFNℓ\displaystyle\mathbf{z}_{\text{FFN}}^{\ell}
+=FFN​(𝐳~iℓ)\displaystyle=\text{FFN}(\tilde{\mathbf{z}}_{i}^{\ell})
+(7)
+=fact​(𝐳~iℓ​𝐖FFN1+𝐛FFN1⏟𝜻iℓ)​𝐖FFN2+𝐛FFN2\displaystyle=f_{\text{act}}(\underbrace{\tilde{\mathbf{z}}_{i}^{\ell}\mathbf{W}_{\text{FFN}}^{1}+\mathbf{b}_{\text{FFN}}^{1}}_{\bm{\zeta}_{i}^{\ell}})\mathbf{W}_{\text{FFN}}^{2}+\mathbf{b}_{\text{FFN}}^{2}
+zFFN,iℓ\displaystyle z_{\text{FFN},i}^{\ell}
+=fact(ζiℓ)​(∑k=1Nζi⇐kℓ)​WFFN2+bFFN2\displaystyle=f_{\text{act}}^{(\zeta_{i}^{\ell})}\left(\sum_{k=1}^{N}\zeta_{i\Leftarrow k}^{\ell}\right)W_{\text{FFN}}^{2}+b_{\text{FFN}}^{2}
+(8)
+=∑k=1Nθ⁡(ζiℓ)⊙ζi⇐kℓ+bFFN2⏟zFFN,i⇐kℓ\displaystyle=\sum_{k=1}^{N}\underbrace{\theta(\zeta_{i}^{\ell})\odot\zeta_{i\Leftarrow k}^{\ell}+b_{\text{FFN}}^{2}}_{z_{\text{FFN},i\Leftarrow k}^{\ell}}
+A propagation mechanism is implemented for decomposed token representations across multiple layers, preserving their distinct identities and preventing representation conflation:
+xiℓ+1\displaystyle x_{i}^{\ell+1}
+=LN⁡(∑k=1N[z~i⇐kℓ+zFFN,i⇐kℓ]⏟zFFN+,i⇐kℓ)\displaystyle=\operatorname{LN}\left(\sum_{k=1}^{N}\underbrace{\left[\tilde{z}_{i\Leftarrow k}^{\ell}+z_{\mathrm{FFN},i\Leftarrow k}^{\ell}\right]}_{z_{\mathrm{FFN}+,i\Leftarrow k}^{\ell}}\right)
+(9)
+=∑k=1Ng​zFFN+,iℓ​(zFFN+,i⇐kℓ)+β⏟xi⇐kℓ+1\displaystyle=\sum_{k=1}^{N}\underbrace{gz_{\mathrm{FFN}+,i}^{\ell}\left(z_{\mathrm{FFN}+,i\Leftarrow k}^{\ell}\right)+\beta}_{x_{i\Leftarrow k}^{\ell+1}}
+The final classification mechanism utilizes these decomposed vectors to quantitatively ascertain the precise directional impact (positive or negative) exerted by each input token upon specific target classes.
+The established formulations within this section permit the derivation of xi⇐kℓ+1x_{i\Leftarrow k}^{\ell+1} from its antecedent, xi⇐kℓx_{i\Leftarrow k}^{\ell}. Through the iterative application of this procedure across the entirety of the layered architecture, the final value, xi⇐kL+1x_{i\Leftarrow k}^{L+1}, is consequently ascertained. For the task-specific classification head,
+yc=∑k=1Nyc⇐k\displaystyle y_{c}=\sum_{k=1}^{N}y_{c\Leftarrow k}
+(10)
+where the term yc⇐ky_{c\Leftarrow k} quantifies the specific contribution of the k​thk{\text{th}} token towards the overall prediction score.
+4.  Methodology
+Figure 1 portrays an overview of our proposed pipeline. We obtain the saliency scores using the token attribution methods discussed in Sec. 3 and employ frugalization via token filtration to generate a condensed yet semantically representative version of an input sample. This technique identifies and retains only the most salient tokens, thereby reducing input dimensionality while preserving the core meaning for the given task.
+4.1.  Ranking via Saliency Scores
+We define a task-specific scoring function φτ∈[GlobEnc, DecompX]\varphi_{\tau}\in[\text{GlobEnc,\ DecompX}] for a task τ\tau, which assigns a saliency score to each token in a given text, i.e.,
+φτ:𝒯→ℝn,\varphi_{\tau}:\mathcal{T}\rightarrow\mathbb{R}^{n},
+where 𝒯\mathcal{T} denotes the space of the token sequences and nn is the length of the sequence. For the input token sequence, T=⟨t1,t2,…,tn⟩T=\langle t_{1},t_{2},\dots,t_{n}\rangle, the scoring function produces a saliency vector,
+𝐬=φτ​(T)=⟨s1,s2,…,sn⟩,si∈ℝ,\mathbf{s}=\varphi_{\tau}(T)=\langle s_{1},s_{2},\dots,s_{n}\rangle,\quad s_{i}\in\mathbb{R},
+where each score sis_{i} reflects the relative contribution of token tit_{i} to the model’s output for the specified task.
+Tokens are then ranked in monotone decreasing order of their attribution scores to obtain a permutation, π\pi, formed of the token indices, such that,
+sπ⁡(1)≥sπ⁡(2)≥⋯≥sπ⁡(n).s_{\pi(1)}\geq s_{\pi(2)}\geq\cdots\geq s_{\pi(n)}.
+4.2.  Top-kk Filtering
+To construct the frugalized representation, we retain only the top p=⌈k100⋅n⌉p=\left\lceil\frac{k}{100}\cdot n\right\rceil tokens, where kk is the retention percentage. The selected indices form the sequence,
+Sk=⟨π⁡(1),π⁡(2),…,π⁡(p)⟩.{S}_{k}=\langle\pi(1),\pi(2),\dots,\pi(p)\rangle.
+We reindex SkS_{k} in monotone increasing order to produce Sk↑{S}_{k\uparrow}. The frugalized sequence 𝐅k\mathbf{F}_{k} is produced by restoring the selected tokens to their original order, i.e.,
+Fk=⟨ti|i∈Sk↑⟩{F}_{k}=\langle t_{i}\lvert i\in{S}_{k\uparrow}\rangle
+ensuring that the temporal coherence of the sequence is preserved, while uninformative tokens are discarded.
+We elucidate our frugalization approach with an example.
+For the input sequence T={T}= ⟨\langle‘‘The’’, ‘‘movie’’, ‘‘was’’, ‘‘good’’, ‘‘,’’, ‘‘and’’, ‘‘I’’, ‘‘liked’’, ‘‘it’’, ‘‘very’’, ‘‘much’’⟩\rangle, suppose the attribution scores for sentiment analysis prioritize content and sentiment words (e.g., ‘‘movie’’: 0.950.95, ‘‘good’’: 0.900.90, ‘‘much’’: 0.850.85, ‘‘liked’’: 0.800.80). Upon filtering the top k=40%k=40\% (p=4p=4) and reordering them according to their original relative order, we get the reduced sequence
+F40=⟨‘‘movie’’,‘‘good’’,‘‘liked’’,‘‘much’’⟩{F}_{40}=\langle\texttt{``movie''},\texttt{``good''},\texttt{``liked''},\texttt{``much''}\rangle
+where the original order is preserved to maintain syntactic coherence. The frugalized output “movie good liked much” is thus created, discarding the less salient tokens (e.g., ‘‘The’’, ‘‘was’’, etc.) while retaining semantic essence.
+Model
+Token
+Attribu-
+tion
+k%k\%
+Tasks
+CLS
+SUM
+QA
+RSN
+Acc
+F1
+BLEU
+R-1
+R-2
+R-L
+BERT
+METEOR
+Acc
+pass@1
+Llama-3 8B
+N/A
+100
+0.949
+0.949
+0.020
+0.232
+0.073
+0.193
+0.872
+0.335
+0.813
+0.786
+GlobEnc
+80
+0.942
+0.942
+0.017
+0.226
+0.069
+0.189
+0.871
+0.330
+0.798
+0.500
+60
+0.942
+0.942
+0.015
+0.220
+0.064
+0.181
+0.870
+0.319
+0.754
+0.243
+50
+0.921
+0.921
+0.013
+0.213
+0.057
+0.175
+0.868
+0.303
+0.716
+0.146
+DecompX
+80
+0.936
+0.936
+0.015
+0.218
+0.061
+0.179
+0.869
+0.311
+0.747
+0.652
+60
+0.900
+0.900
+0.014
+0.206
+0.055
+0.169
+0.866
+0.286
+0.681
+0.425
+50
+0.868
+0.868
+0.012
+0.198
+0.048
+0.161
+0.864
+0.270
+0.670
+0.265
+Llama-3 70B
+N/A
+100
+0.953
+0.953
+0.020
+0.235
+0.073
+0.196
+0.876
+0.333
+0.874
+0.919
+GlobEnc
+80
+0.948
+0.948
+0.018
+0.235
+0.071
+0.195
+0.875
+0.331
+0.862
+0.669
+60
+0.943
+0.943
+0.017
+0.231
+0.068
+0.192
+0.874
+0.329
+0.838
+0.362
+50
+0.938
+0.938
+0.016
+0.228
+0.065
+0.189
+0.873
+0.316
+0.816
+0.231
+DecompX
+80
+0.949
+0.949
+0.017
+0.226
+0.065
+0.187
+0.870
+0.316
+0.839
+0.818
+60
+0.891
+0.891
+0.015
+0.215
+0.057
+0.176
+0.868
+0.292
+0.797
+0.587
+50
+0.839
+0.837
+0.014
+0.209
+0.054
+0.171
+0.866
+0.281
+0.770
+0.409
+GPT-3.5
+N/A
+100
+0.949
+0.949
+0.039
+0.282
+0.093
+0.237
+0.889
+0.359
+0.779
+0.772
+GlobEnc
+80
+0.945
+0.945
+0.017
+0.176
+0.056
+0.146
+0.874
+0.291
+0.753
+0.498
+60
+0.925
+0.925
+0.015
+0.172
+0.052
+0.141
+0.874
+0.285
+0.716
+0.264
+50
+0.918
+0.918
+0.014
+0.170
+0.049
+0.140
+0.873
+0.278
+0.705
+0.158
+DecompX
+80
+0.942
+0.942
+0.036
+0.268
+0.084
+0.225
+0.888
+0.337
+0.704
+0.660
+60
+0.724
+0.704
+0.031
+0.253
+0.073
+0.210
+0.885
+0.311
+0.648
+0.419
+50
+0.642
+0.595
+0.027
+0.241
+0.065
+0.200
+0.882
+0.291
+0.619
+0.288
+Gemini 2.0
+Flash
+Thinking
+N/A
+100
+0.952
+0.952
+0.034
+0.262
+0.081
+0.219
+0.885
+0.345
+0.880
+0.956
+GlobEnc
+80
+0.947
+0.947
+0.031
+0.252
+0.081
+0.212
+0.882
+0.344
+0.879
+0.704
+60
+0.934
+0.934
+0.029
+0.247
+0.077
+0.208
+0.881
+0.335
+0.846
+0.423
+50
+0.920
+0.919
+0.026
+0.239
+0.071
+0.199
+0.879
+0.322
+0.827
+0.277
+DecompX
+80
+0.855
+0.852
+0.031
+0.251
+0.075
+0.209
+0.883
+0.328
+0.856
+0.856
+60
+0.713
+0.690
+0.028
+0.236
+0.068
+0.194
+0.878
+0.307
+0.795
+0.665
+50
+0.627
+0.571
+0.024
+0.225
+0.059
+0.185
+0.876
+0.283
+0.774
+0.463
+o3-mini
+N/A
+100
+0.957
+0.957
+0.023
+0.221
+0.065
+0.182
+0.860
+0.297
+0.845
+0.961
+GlobEnc
+80
+0.956
+0.956
+0.020
+0.216
+0.060
+0.176
+0.859
+0.290
+0.826
+0.724
+60
+0.941
+0.941
+0.019
+0.212
+0.059
+0.173
+0.858
+0.282
+0.802
+0.462
+50
+0.932
+0.932
+0.018
+0.204
+0.055
+0.166
+0.857
+0.272
+0.785
+0.332
+DecompX
+80
+0.842
+0.839
+0.020
+0.208
+0.056
+0.170
+0.858
+0.273
+0.787
+0.850
+60
+0.727
+0.707
+0.018
+0.195
+0.049
+0.159
+0.854
+0.253
+0.724
+0.679
+50
+0.641
+0.593
+0.017
+0.187
+0.045
+0.152
+0.853
+0.236
+0.686
+0.533
+Table 1: Impact of the two variants of FrugalPrompt retaining k%k\% tokens on baseline LLM performance in text classification (CLS), text summarization (SUM), question answering (QA), and reasoning (RSN). The base and best prompt-reduced performance for each model are given in Gray and Light Blue cells, respectively. Bold and Underline indicate the highest overall performance and overall prompt-reduced performance, respectively.
+Figure 2: The performance difference between the reduced tokens and baseline performance using 100% tokens of metrics across three tasks: text classification (CLS), question-answering (QA), and reasoning (RSN).
+Figure 3: The performance difference between the reduced tokens and baseline performance using 100% tokens across the summarization metrics.
+5.  Experiment
+5.1.  Tasks
+We evaluate the efficacy of the token reduction by experimenting across four NLP tasks: sentiment analysis (text classification), summarization (text generation), commonsense question answering, and mathematical reasoning. These tasks span both discriminative and generative paradigms, enabling evaluation under diverse linguistic and cognitive demands of the LLM.
+5.2.  Dataset
+For sentiment analysis, we use the IMDb movie review dataset Maas et al. (2011), a binary sentiment analysis corpus comprising movie reviews labeled positive or negative. We use the Argilla News dataset Ahmed et al. (2017) to evaluate abstractive summarization on news articles. For commonsense QA, we use the CosmosQA dataset Huang et al. (2019), which primarily focuses on commonsensical and causal reasoning within short narrative passages. The questions stipulated in CosmosQA are easy for humans to solve, but usually challenging for LLMs. We use the GSM8k dataset Cobbe et al. (2021) for mathematical reasoning, which contains grade-school math word problems to assess basic arithmetic reasoning and multi-step logical deduction.
+5.3.  Models
+We perform inference using a set of contemporary frontier models that vary in architecture and scale. This is primarily an effort to examine the generalizability of our method. The models are: LLaMA-3 8B, LLaMA-3 70B Meta (2024), GPT-3.5 Brown et al. (2020), Gemini 2.0 Flash Thinking Google DeepMind (2025), and o3-mini OpenAI (2025). The closed-source models are accessed via their respective APIs, and the open-source models are accessed via OpenRouter11
+1
+https://openrouter.ai/, using standardized prompts to minimize formatting-induced variability.
+5.4.  Experimental Setup
+We set the temperature to 1.01.0 for all inference runs to sample from the model’s unaltered probability distribution, ensuring a standard and reproducible generation process. For the frugalized setup, we experiment by filtering the top k∈{50,60,80}%k\in\{50,60,80\}\% of the input tokens. We also include the baseline prompt using 100%100\% of the tokens to set a proper frame of reference for the performance delta for all the models. This setup facilitates us to investigate whether low-attribution filler tokens can be excluded with minimal degradation in task performance, which, by implication, will also reduce API costs and minimize carbon footprint.
+5.5.  Evaluation Metrics
+We employ task-specific metrics to evaluate performance across both full and frugalized setups. For sentiment classification, we report accuracy and F1 score. Summarization performance is assessed using BLEU, ROUGE-1, ROUGE-2, ROUGE-L, BERT Score, and METEOR to capture both superficial and semantic quality of the responses. For commonsense question answering, we use accuracy as the dataset follows a multiple-choice format. Mathematical reasoning is evaluated using pass@11, which measures the proportion of problems correctly solved on the first attempt.
+Attribution
+Type
+Token
+Attribution
+Method
+k%k\%
+Tasks
+CLS
+SUM
+QA
+RSN
+o3-mini
+GPT-3.5
+Gemini-2.0FT
+o3-mini
+Acc
+F1
+BLEU
+R-1
+R-2
+R-L
+BERT
+METEOR
+Acc
+pass@1
+N/A
+100
+0.955
+0.955
+0.039
+0.282
+0.093
+0.237
+0.889
+0.359
+0.880
+0.961
+Random
+GlobEnc
+80
+0.951
+0.951
+0.030
+0.261
+0.078
+0.217
+0.886
+0.329
+0.850
+0.373
+60
+0.893
+0.893
+0.022
+0.240
+0.064
+0.197
+0.883
+0.293
+0.761
+0.103
+50
+0.886
+0.886
+0.020
+0.223
+0.053
+0.182
+0.880
+0.267
+0.713
+0.058
+DecompX
+80
+0.942
+0.942
+0.033
+0.259
+0.080
+0.218
+0.887
+0.328
+0.837
+0.381
+60
+0.901
+0.901
+0.024
+0.237
+0.064
+0.196
+0.882
+0.289
+0.779
+0.114
+50
+0.893
+0.893
+0.022
+0.223
+0.055
+0.182
+0.879
+0.262
+0.734
+0.011
+Bottom
+GlobEnc
+80
+0.914
+0.914
+0.026
+0.234
+0.067
+0.195
+0.883
+0.289
+0.764
+0.040
+60
+0.760
+0.759
+0.012
+0.139
+0.030
+0.117
+0.865
+0.158
+0.672
+0.028
+50
+0.626
+0.616
+0.007
+0.084
+0.012
+0.072
+0.850
+0.091
+0.625
+0.014
+DecompX
+80
+0.857
+0.854
+0.031
+0.247
+0.073
+0.205
+0.884
+0.302
+0.809
+0.045
+60
+0.755
+0.740
+0.022
+0.208
+0.053
+0.170
+0.876
+0.249
+0.714
+0.021
+50
+0.696
+0.666
+0.020
+0.192
+0.047
+0.156
+0.873
+0.225
+0.670
+0.014
+Table 2: Impact of retaining random and bottom k%k\% tokens using the two variants of FrugalPrompt with the best performing models for each task: text classification (CLS), text summarization (SUM), question answering (QA), and text reasoning (RSN).
+6.  Result and Analysis
+6.1.  Performance across Tasks
+Tab. 1 reveals that performance degradation becomes more pronounced as the retention threshold decreases, particularly below 60% token retention, with distinct patterns emerging across tasks. For instance, at 50% retention, sentiment classification accuracy drops by 5-10% and commonsense QA accuracy by 10-15%, while summarization metrics like ROUGE-1 decline by 20-25%, as seen in Figure 2,3. The performance decline is noticeably smaller for higher values of kk, e.g.,, GlobEnc using 80%80\% tokens achieves close to the baseline performance in classification and QA tasks.
+Mathematical reasoning exhibits the steepest fall, with pass@1 scores plummeting to below 15% at lower thresholds, reflecting the loss of critical numerical and logical connectors. We hypothesize that this degradation is more pronounced for reasoning tasks due to their reliance on the sequential integrity of tokens and numerical data. Low k%k\% thresholds exacerbate this by discarding essential context, amplifying errors in tasks requiring unbroken symbolic chains, while simpler classification and summarization tasks generally tolerate greater omission by inferring from salient cues.
+Model Name
+Llama-3 8B
+Llama-3 70B
+GPT-3.5
+Gemini-2.0 FT
+o3-mini
+Cost/1M Input Tokens ($)
+0.03
+0.30
+0.50
+0.10
+1.10
+Cost/1M Output Tokens ($)
+0.06
+0.40
+1.50
+0.40
+4.40
+Table 3: Cost comparison of models per 1 million tokens. The Gemini 2.0 Flash Thinking model has output cost fluctuations due to the number of thinking tokens produced.
+6.2.  Choice of Attribution Method
+Following both Tab. 1 and Fig. 2, for classification and QA tasks, GlobEnc outperforms DecompX across all metrics. However, in reasoning, DecompX outshines GlobEnc. DecompX’s subword-level attribution that includes linear activations may help retain more important tokens for reasoning, but might overwhelm the models in other tasks. For summarization (Fig. 3), GlobEnc usually outperforms DecompX, except for the GPT-3.5 model. While DecompX is reported to produce better attribution scores Modarressi et al. (2023), most models find the token sequence filtered by word-level attention, like GlobEnc, to be more useful in retaining performance across most tasks.
+6.3.  Performance vs. Cost
+The cost per million tokens for each model was taken from the respective provider’s website, at the time of writing, and is reported in Tab. 3. The reader should note that the price is subject to change. The cost of the open-source Llama models was estimated using the lowest available rate on OpenRouter1.
+Fig.2, 3 show the performance difference between the reduced set of tokens and 100% tokens for all the models. For sentiment analysis and question answering, we observe that using a reduced set of tokens generally retains the performance and has a softer decline as we go down the cost. However, reducing the tokens sharply declines the performance in reasoning tasks, making it unsuitable for token reduction. The results are mixed for summarization tasks: while most models have a softer performance decline across the metrics, methods such as GPT-3.5 using GlobEnc experience rapid performance degradation.
+6.4.  Performance across Models
+Figure 2,3 illustrate that for smaller models, token attribution offers negligible cost savings relative to the sharper performance degradation it incurs. Consequently, token reduction proves to be more practical for larger, costlier models such as o3-mini. Legacy models such as GPT-3.5 often display abrupt drops in performance, e.g., in summarization using GlobEnc, necessitating greater caution when reducing tokens.
+6.5.  Random & Bottom kk tokens
+We select random k%k\% and the bottom k%k\% tokens (based on attribution scores), while preserving the text order, to establish a baseline against our token reduction method.
+As shown in Table 2, classification, summarization, and question answering exhibit strong retention in performance across varying thresholds. This strongly suggests potential task contamination Li and Flanigan (2024), as the ground truth answers of the test sets are easily available on the internet. Reasoning tasks experience a sharper decline, indicating genuine reliance on contextual information for solving the task.
+7.  Conclusion
+The surging cost of large language models has often made it inaccessible to people in under-resourced environments, while increasing carbon footprint and inference time latency. Our work aims to bridge this gap by introducing prompt compression at a token-attribution level, which can reduce the cost of LLM inference and make it accessible to a wider range of users. We also reveal potential instances of task contamination that should be considered while evaluating models. We wish to explore adaptive frugalization strategies that dynamically adjust token retention based on task complexity and model confidence.
+Limitations
+As our token reduction pipeline heavily relies on attribution methods, misalignment between salience and true causal importance could produce suboptimal performance. The task specificity of the attribution methods also makes them unsuitable for certain tasks, such as reasoning, and evaluation in multi-task settings.
+Ethical Consideration
+As identified in our work, performance retention in certain tasks might stem from the model’s exposure to benchmark data during pretraining. This raises concerns about the validity of LLM evaluation and the need for contamination-free datasets. Prompt compression can also potentially remove safety-critical tokens and hence should be used with caution.
+Bibliographical References
+Abnar and Zuidema (2020)
+Samira Abnar and Willem Zuidema. 2020.
+Quantifying attention flow in transformers.
+In Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, pages 4190–4197, Online. Association for Computational Linguistics.
+Ahmed et al. (2017)
+Hadeer Ahmed, Issa Traore, and Sherif Saad. 2017.
+Detection of online fake news using n-gram analysis and machine learning techniques.
+In International conference on intelligent, secure, and dependable systems in distributed and cloud environments, pages 127–138. Springer.
+Ainslie et al. (2023)
+Joshua Ainslie, James Lee-Thorp, Michiel de Jong, Yury Zemlyanskiy, Federico Lebron, and Sumit Sanghai. 2023.
+GQA: Training generalized multi-query transformer models from multi-head checkpoints.
+In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing, pages 4895–4901, Singapore. Association for Computational Linguistics.
+Brown et al. (2020)
+Tom Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared D Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, et al. 2020.
+Language models are few-shot learners.
+Advances in neural information processing systems, 33:1877–1901.
+Chang et al. (2024)
+Kaiyan Chang, Songcheng Xu, Chenglong Wang, Yingfeng Luo, Tong Xiao, and Jingbo Zhu. 2024.
+Efficient prompting methods for large language models: A survey.
+ArXiv, abs/2404.01077.
+Chiang et al. (2023)
+Wei-Lin Chiang, Zhuohan Li, Zi Lin, Ying Sheng, Zhanghao Wu, Hao Zhang, Lianmin Zheng, Siyuan Zhuang, Yonghao Zhuang, Joseph E. Gonzalez, Ion Stoica, and Eric P. Xing. 2023.
+Vicuna: An open-source chatbot impressing gpt-4 with 90%* chatgpt quality.
+Accessed: 20-May-25.
+Child et al. (2019)
+Rewon Child, Scott Gray, Alec Radford, and Ilya Sutskever. 2019.
+Generating long sequences with sparse transformers.
+ArXiv, abs/1904.10509.
+Chuang et al. (2024)
+Yu-Neng Chuang, Tianwei Xing, Chia yuan Chang, Zirui Liu, Xun Chen, and Xia Hu. 2024.
+Learning to compress prompt in natural language formats.
+In North American Chapter of the Association for Computational Linguistics.
+Clark (2019)
+Kevin Clark. 2019.
+What does bert look at? an analysis of bert’s attention.
+arXiv preprint arXiv:1906.04341.
+Cobbe et al. (2021)
+Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, et al. 2021.
+Training verifiers to solve math word problems.
+arXiv preprint arXiv:2110.14168.
+Dettmers et al. (2023a)
+Tim Dettmers, Artidoro Pagnoni, Ari Holtzman, and Luke Zettlemoyer. 2023a.
+QLoRA: Efficient finetuning of quantized LLMs.
+In Thirty-seventh Conference on Neural Information Processing Systems.
+Dettmers et al. (2023b)
+Tim Dettmers, Ruslan Svirschevski, Vage Egiazarian, Denis Kuznedelev, Elias Frantar, Saleh Ashkboos, Alexander Borzunov, Torsten Hoefler, and Dan Alistarh. 2023b.
+Spqr: A sparse-quantized representation for near-lossless llm weight compression.
+Devlin et al. (2019)
+Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. 2019.
+Bert: Pre-training of deep bidirectional transformers for language understanding.
+In Proceedings of the 2019 conference of the North American chapter of the association for computational linguistics: human language technologies, volume 1 (long and short papers), pages 4171–4186.
+Fedus et al. (2022)
+William Fedus, Barret Zoph, and Noam Shazeer. 2022.
+Switch transformers: Scaling to trillion parameter models with simple and efficient sparsity.
+Journal of Machine Learning Research, 23(120):1–39.
+Google DeepMind (2025)
+Google DeepMind. 2025.
+Gemini 2.5: Pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities.
+Technical Report.
+Citation for the Gemini 2.0 Flash Thinking family of models.
+Gu and Dao (2023)
+Albert Gu and Tri Dao. 2023.
+Mamba: Linear-time sequence modeling with selective state spaces.
+ArXiv, abs/2312.00752.
+Htut et al. (2019)
+Phu Mon Htut, Jason Phang, Shikha Bordia, and Samuel R Bowman. 2019.
+Do attention heads in bert track syntactic dependencies?
+arXiv preprint arXiv:1911.12246.
+Hu et al. (2022)
+Edward J Hu, yelong shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, and Weizhu Chen. 2022.
+LoRA: Low-rank adaptation of large language models.
+In International Conference on Learning Representations.
+Huang et al. (2019)
+Lifu Huang, Ronan Le Bras, Chandra Bhagavatula, and Yejin Choi. 2019.
+Cosmos QA: Machine reading comprehension with contextual commonsense reasoning.
+In Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Language Processing (EMNLP-IJCNLP), pages 2391–2401, Hong Kong, China. Association for Computational Linguistics.
+Hudson et al. (2023)
+Nathaniel C Hudson, J Gregory Pauloski, Matt Baughman, Alok Kamatar, Mansi Sakarvadia, Logan Ward, Ryan Chard, André Bauer, Maksim Levental, Wenyi Wang, et al. 2023.
+Trillion parameter ai serving infrastructure for scientific discovery: A survey and vision.
+In Proceedings of the IEEE/ACM 10th International Conference on Big Data Computing, Applications and Technologies, pages 1–10.
+Islam et al. (2024)
+Md Ashraful Islam, Mohammed Eunus Ali, and Md Rizwan Parvez. 2024.
+Mapcoder: Multi-agent code generation for competitive problem solving.
+arXiv preprint arXiv:2405.11403.
+Jain and Wallace (2019)
+Sarthak Jain and Byron C Wallace. 2019.
+Attention is not explanation.
+arXiv preprint arXiv:1902.10186.
+Jang et al. (2024)
+Lawrence Jang, Yinheng Li, Dan Zhao, Charles Ding, Justin Lin, Paul Pu Liang, Rogerio Bonatti, and Kazuhito Koishida. 2024.
+Videowebarena: Evaluating long context multimodal agents with video understanding web tasks.
+arXiv preprint arXiv:2410.19100.
+Jiang et al. (2023)
+Huiqiang Jiang, Qianhui Wu, Chin-Yew Lin, Yuqing Yang, and Lili Qiu. 2023.
+Llmlingua: Compressing prompts for accelerated inference of large language models.
+In Conference on Empirical Methods in Natural Language Processing.
+Kaplan et al. (2020)
+Jared Kaplan, Sam McCandlish, Tom Henighan, Tom B Brown, Benjamin Chess, Rewon Child, Scott Gray, Alec Radford, Jeffrey Wu, and Dario Amodei. 2020.
+Scaling laws for neural language models.
+arXiv preprint arXiv:2001.08361.
+Kobayashi et al. (2020)
+Goro Kobayashi, Tatsuki Kuribayashi, Sho Yokoi, and Kentaro Inui. 2020.
+Attention is not only a weight: Analyzing transformers with vector norms.
+In Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP), pages 7057–7075, Online. Association for Computational Linguistics.
+Li and Flanigan (2024)
+Changmao Li and Jeffrey Flanigan. 2024.
+Task contamination: Language models may not be few-shot anymore.
+In Proceedings of the AAAI Conference on Artificial Intelligence, volume 38, pages 18471–18480.
+Li et al. (2023a)
+Yixiao Li, Yifan Yu, Qingru Zhang, Chen Liang, Pengcheng He, Weizhu Chen, and Tuo Zhao. 2023a.
+Losparse: structured compression of large language models based on low-rank and sparse approximation.
+In Proceedings of the 40th International Conference on Machine Learning, ICML’23. JMLR.org.
+Li et al. (2023b)
+Yucheng Li, Bo Dong, Chenghua Lin, and Frank Guerin. 2023b.
+Compressing context to enhance inference efficiency of large language models.
+In Conference on Empirical Methods in Natural Language Processing.
+Liu et al. (2023)
+Hong Liu, Zhiyuan Li, David Hall, Percy Liang, and Tengyu Ma. 2023.
+Sophia: A scalable stochastic second-order optimizer for language model pre-training.
+arXiv preprint arXiv:2305.14342.
+Ma et al. (2023)
+Xinyin Ma, Gongfan Fang, and Xinchao Wang. 2023.
+Llm-pruner: On the structural pruning of large language models.
+In Advances in Neural Information Processing Systems.
+Maas et al. (2011)
+Andrew L. Maas, Raymond E. Daly, Peter T. Pham, Dan Huang, Andrew Y. Ng, and Christopher Potts. 2011.
+Learning word vectors for sentiment analysis.
+In Proceedings of the 49th Annual Meeting of the Association for Computational Linguistics: Human Language Technologies, pages 142–150, Portland, Oregon, USA. Association for Computational Linguistics.
+Meta (2024)
+Meta. 2024.
+Introducing meta llama 3: The next generation of our open-source large language model.
+Meta AI Blog Post and Technical Resource.
+Citation for the LLaMA-3 8B and LLaMA-3 70B models.
+Modarressi et al. (2023)
+Ali Modarressi, Mohsen Fayyaz, Ehsan Aghazadeh, Yadollah Yaghoobzadeh, and Mohammad Taher Pilehvar. 2023.
+DecompX: Explaining transformers decisions by propagating token decomposition.
+In Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 2649–2664, Toronto, Canada. Association for Computational Linguistics.
+Modarressi et al. (2022)
+Ali Modarressi, Mohsen Fayyaz, Yadollah Yaghoobzadeh, and Mohammad Taher Pilehvar. 2022.
+GlobEnc: Quantifying global token attribution by incorporating the whole encoder layer in transformers.
+In Proceedings of the 2022 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, pages 258–271, Seattle, United States. Association for Computational Linguistics.
+OpenAI (2025)
+OpenAI. 2025.
+OpenAI o3-mini system card.
+System Card.
+Citation for the o3-mini model.
+Radford et al. (2019)
+Alec Radford, Jeff Wu, Rewon Child, David Luan, Dario Amodei, and Ilya Sutskever. 2019.
+Language models are unsupervised multitask learners.
+Santra et al. (2023)
+Bishal Santra, Sakya Basak, Abhinandan De, Manish Gupta, and Pawan Goyal. 2023.
+Frugal prompting for dialog models.
+arXiv preprint arXiv:2305.14919.
+Schmidgall et al. (2025)
+Samuel Schmidgall, Yusheng Su, Ze Wang, Ximeng Sun, Jialian Wu, Xiaodong Yu, Jiang Liu, Michael Moor, Zicheng Liu, and Emad Barsoum. 2025.
+Agent laboratory: Using llm agents as research assistants.
+arXiv preprint arXiv:2501.04227.
+Sennrich et al. (2016)
+Rico Sennrich, Barry Haddow, and Alexandra Birch. 2016.
+Neural machine translation of rare words with subword units.
+Shubert et al. (1995)
+Serena K Shubert, Jan H Spyridakis, Heather K Holmback, and Mary B Coney. 1995.
+The comprehensibility of simplified english in procedures.
+Journal of technical writing and communication, 25(4):347–369.
+Stojkovic et al. (2024)
+Jovan Stojkovic, Esha Choukse, Chaojie Zhang, Inigo Goiri, and Josep Torrellas. 2024.
+Towards greener llms: Bringing energy-efficiency to the forefront of llm inference.
+arXiv preprint arXiv:2403.20306.
+Tay et al. (2022)
+Yi Tay, Mostafa Dehghani, Dara Bahri, and Donald Metzler. 2022.
+Efficient transformers: A survey.
+ACM Comput. Surv., 55(6).
+Timiryasov and Tastet (2023)
+Inar Timiryasov and Jean-Loup Tastet. 2023.
+Baby llama: knowledge distillation from an ensemble of teachers trained on a small dataset with no performance penalty.
+In Proceedings of the BabyLM Challenge at the 27th Conference on Computational Natural Language Learning, pages 279–289, Singapore. Association for Computational Linguistics.
+Wan et al. (2023)
+Zhongwei Wan, Xin Wang, Che Liu, Samiul Alam, Yu Zheng, et al. 2023.
+Efficient large language models: A survey.
+arXiv preprint arXiv:2312.03863, 1.
+Wit and Gillette (1999)
+EC Wit and Marie Gillette. 1999.
+What is linguistic redundancy.
+University of Chicago.
+Wu et al. (2025)
+Yangzhen Wu, Zhiqing Sun, Shanda Li, Sean Welleck, and Yiming Yang. 2025.
+Inference scaling laws: An empirical analysis of compute-optimal inference for llm problem-solving.
+In The Thirteenth International Conference on Learning Representations.
+Yang et al. (2024)
+John Yang, Carlos E Jimenez, Alexander Wettig, Kilian Lieret, Shunyu Yao, Karthik Narasimhan, and Ofir Press. 2024.
+Swe-agent: Agent-computer interfaces enable automated software engineering.
+Advances in Neural Information Processing Systems, 37:50528–50652.
+Yao et al. (2024)
+Yiqun Yao, Zheng Zhang, Jing Li, and Yequan Wang. 2024.
+Masked structural growth for 2x faster language model pre-training.
+In The Twelfth International Conference on Learning Representations.
+Zhang et al. (2025)
+Zheng Zhang, Jinyi Li, Yihuai Lan, Xiangwei Wang, and Hao Wang. 2025.
+An empirical study on prompt compression for large language models.
+Zhao et al. (2023a)
+Wenbo Zhao, Arpit Gupta, Tagyoung Chung, and Jing Huang. 2023a.
+SPC: Soft prompt construction for cross domain generalization.
+In Proceedings of the 8th Workshop on Representation Learning for NLP (RepL4NLP 2023), pages 118–130, Toronto, Canada. Association for Computational Linguistics.
+Zhao et al. (2023b)
+Wenbo Zhao, Arpit Gupta, Tagyoung Chung, and Jing Huang. 2023b.
+Spc: Soft prompt construction for cross domain generalization.
+In Workshop on Representation Learning for NLP.
+Zhou et al. (2024)
+Zixuan Zhou, Xuefei Ning, Ke Hong, Tianyu Fu, Jiaming Xu, Shiyao Li, Yuming Lou, Luning Wang, Zhihang Yuan, Xiuhong Li, et al. 2024.
+A survey on efficient inference for large language models.
+arXiv preprint arXiv:2404.14294.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

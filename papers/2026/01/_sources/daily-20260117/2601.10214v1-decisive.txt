@@ -1,0 +1,290 @@
+Necessary main-body extraction; no unrelated appendices. Source https://arxiv.org/html/2601.10214v1
+1 Introduction
+Recent advances in video generation, particularly video diffusion models (VDMs), have enabled high-quality, content-controllable video synthesis from diverse inputs such as text, images, and videos [18, 60, 12].
+Within this rapidly evolving field, camera control is crucial for generating expressive and cinematic videos.
+It not only helps content creators and cinematographers in framing scene content and dictating global motion, but also craft specific atmospheres and emphasize character emotions.
+However, in video generation, precise modification of camera trajectories while faithfully preserving video content remains a significant challenge.
+Currently, the straight-forward solution to achieving camera control is to directly use camera parameters as implicit input conditions[47, 3, 4, 1, 19, 63], encoding position and orientation through ray embeddings[1] or relative pose encoder[4, 3]. Although these methods can generate videos with different camera poses, their control mechanisms lack physical consistency and precision.
+Worse still, to learn the correspondence between camera parameters and scene layout, such methods often rely on large-scale, high-quality, multi-view synchronized rendered datasets [3, 47, 4, 37] (e.g., 136K videos for ReCamMaster) to implicitly learn 3D consistency.
+In contrast, we propose a new method that achieves superior performance with merely about 5.8% of the training cost (using 8K video sequences).
+Some methods [39, 17, 61, 22, 54, 46] can achieve precise control of camera trajectories through explicit geometry-based guidance and generate final results via video inpainting.
+However, this mechanism fundamentally caps the quality of the generated content at that of the warped RGB video.
+Our study reveals that unavoidable inaccuracies in 3D geometry estimated from monocular videos introduce distortions and artifacts into the warped RGB sequence, subsequently leading to subject inconsistency and degraded fidelity in the generated results, as illustrated in Fig. 2.
+This issue stems not from the unrealistic rendering effect of explicit 3D representations (e.g., flying pixels in point clouds in GEN3C[39] and TrajectoryCrafter[61]), but from unreliable depth information derived from monocular video.
+This is also why approaches like EX-4D[22] could not solve the problem in essence even after injecting occlusion-aware mask by depth watertight meshes[22].
+We term this the Inpainting Trap, which is essentially a shortcut in VDMs. It bypasses understanding of the 3D/4D world and camera transformations, only inpaints a new video that possesses the same distortion as the warped video.
+Instead, we hypothesize that 3D representations are inherently imperfect, and thus we focus on designing a new geometry guidance signal that can compensate for these errors, rather than relying solely on error-prone RGB-level guidance. To this end, we propose DepthDirector, which injects temporally consistent and detail-error-robust warped depth rendered from explicit 3D representations under the target view, guiding the VDMs to achieve precise camera control. Building upon this mechanism, we integrate the VDMs’ world-understanding prior to re-rendering the video, ensuring precise camera controllability and consistent content preservation, thereby going beyond inpainting. As shown in Fig. 2, by introducing the new conditional mechanism, face identity can be effectively preserved for challenging human-centric scenes.
+Figure 2: Limitations of warping-based methods. Even with SOTA video depth estimators [23, 9, 50, 52], reprojected pixels exhibit noisy artifacts due to inaccurate 3D geometry. It leads to unrecoverable distortion to the identity and details of the subject, especially on human faces, which is sensitive to detailed geometry.
+Specifically, we propose a View–Content Dual-Stream Condition mechanism, in which the source video is used as the content branch containing complex motion and dynamic details, while the warped depth sequence rendered under the target viewpoint serves as the view branch. The warped depth not only provides essential scene layout information for the novel view but also acts as a geometric anchor for querying content from the source video, thereby ensuring consistency in both viewpoint and content of the generated video.
+we introduce a lightweight LoRA-based video diffusion adapter to fine-tune our framework. This efficiently integrates geometric information from the warped-depth condition into the pretrained video diffusion model, producing visually coherent and realistic results while keeping computational costs manageable.
+We construct a multi-camera synchronized video dataset, named MultiCam-WarpData, using Unreal Engine 5, which contains \mathbf{8K} realistic videos with ground truth depth, shooted from \mathbf{1K} different dynamic scenes. This dataset enables the model to more effectively learn the interplay among the camera control, geometry perception and dynamic content.
+Experimental results show that our method outperforms state-of-the-art approaches, and achieves both precise camera controllability and consistent content preservation.
+2 Related Works
+Video Diffusion Models.
+Video generation model has evolved from early approaches like Make-A-Video [44] and Gen-1 [40] to more sophisticated models. SVD [6] and VideoCrafter [7, 8] enhanced temporal coherence, while large-scale models such as Hunyuan Video [13], CogVideoX [60], and Wan [12] achieve impressive spatiotemporal consistency and 3D understanding ability.
+Video Depth Estimation
+Recovering depth from monocular video has been widely studied. A line of works focuses on estimating temporally consistent depth without camera estimation. VDA[9] builds upon transformer model and enforce temporal consistency by additional loss. DepthCrafter[23] and ChronoDepth[42] finetune video diffusion models[6] to yield high-quality depth sequences. GeometryCrafter[57] extends this paradigm to predict per-frame point map enabling camera intrinsic estimation. Another line of works[52, 50, 29, 14, 34] directly regresses per-frame depth maps and camera parameters in a feedforward manner. These methods leverage multi-task learning and large-scale datasets to achieve superior performance; however, the estimated depth maps still suffer from low resolution and inaccuracy.
+Implicit Camera Conditioned Video Generation
+In camera-controlled video generation [59, 2, 63, 64, 18], researchers aim to directly incorporate camera parameters into video generation models to control the output viewpoint video. Camera extrinsics are injected into the diffusion model via direct parameter concatenation [53], Plücker Embedding [45, 19, 31, 1, 2], training camera encoder [47, 3, 4] and reference video [37]. Since the correspondence between camera parameters and generated views isn’t straight-forward, they [47, 37, 4, 3] typically rely on large-scale multi-view rendered datasets [3, 47, 4, 37] to implicitly learn 3D consistency and suffer from substantial camera control errors.
+Explicit Camera Conditioned Video Generation
+To leverage explicit geometry reconstructed from input videos and incorporate precise camera conditioning, existing methods achieve camera control by using an anchor video [17, 39, 61, 54, 26, 62]. Some earlier works [5, 56, 17] leverage 3D point tracking [55, 28] to inject camera movements, which can cause artifacts if tracking fails. In order to inject 3D information, another line of works [61, 39, 22, 20, 54, 62] uses a warp-and-inpaint strategy. They reconstruct a per-frame 3D representation and repaint on a warped video of target trajectories. However, these methods are prone to produce artifacts from noisy warps. A concurrent work WorldForge [46] designs a training-free method to mitigate the noisy artifacts, while our method introduces a new conditioning mechanism that injects camera viewpoints informed by explicit geometry, enabling higher video generation quality and achieving more accurate camera control than implicit camera conditioned approaches.
+3 Method
+Figure 3: Architecture overview of DepthDirector. We render depth video and occlusion mask video under target camera viewpoint from an explicit 3D mesh, injecting it into the noise latent by projection and addition. Source video is frame-wise concatenated alongside to provide content reference. Then a LoRA-based video diffusion adapter is trained to generate video following novel camera trajectories.
+As shown in Fig.3, the goal of our DepthDirector framework is to generate novel-view videos V_{T}=\{I_{t}\}_{t=1}^{T} from an input monocular video V_{S}=\{I_{t}\}_{t=1}^{S} and a target camera trajectory \{P_{t}\}_{t=1}^{T}.
+It consists of four key steps: (1) constructing an explicit dynamic 3D mesh representation and rendering depth of novel views from it. (2) Injecting both input source video and warped depth video as generating conditions through a dual-stream conditional mechanism. (3) Using a lightweight video diffusion adapter to fine-tune the model for generating videos that are physically and geometrically consistent as well as temporally coherent. (4) Building a multi-camera synchronized video dataset to train our model.
+3.1 Preliminary: Text-to-Video Base Model
+Our study is conducted over Wan 2.2 pre-trained text/image-to-video foundation model[49]. This architecture comprises a 3D Variational Auto-Encoder (VAE) [30] for latent space mapping and a series of transformer blocks for sequence modeling. Each basic transformer block consists of 3D spatial-temporal attention, cross-attention, and feed-forward network (FFN). The text prompt embedding c_{\textrm{text}} is obtained by T5 encoder \varepsilon_{T5} [38] and injected into the model through cross-attention.
+We adopt the Rectified Flow [36] framework to train the diffusion transformer, enabling the generation of data sample \boldsymbol{x} from an initial Gaussian sample \boldsymbol{z}\in\mathcal{N}(\boldsymbol{0},\boldsymbol{I}).
+Specifically, for a data point \boldsymbol{x}, we construct its noised version \boldsymbol{x}_{t} at timestep t as
+\boldsymbol{x}_{t}=(1-t)\boldsymbol{x}+t\boldsymbol{z}.
+(1)
+The training objective is a simple MSE loss:
+\mathcal{L}_{RF}(\theta)=\mathbb{E}_{t,\boldsymbol{x},\boldsymbol{z}}\left\|\boldsymbol{v}_{\theta}(\boldsymbol{x}_{t},t,\boldsymbol{c}_{I},\boldsymbol{c}_{\textrm{text}})-(\boldsymbol{z}-\boldsymbol{x})\right\|_{2}^{2},
+(2)
+where the velocity \boldsymbol{v}_{\theta} is parameterized by the network \theta.
+3.2 Warped Depth for Camera Control
+To provide precise camera controllability, we first construct an explicit 3D representation for each frame. Given the input video V_{S}=\{I_{t}\}_{t=1}^{S}, we estimate a sequence of temporally consistent relative depth maps D_{S}=\{D_{t}\}_{t=1}^{S} via monocular video depth estimation[23]. To project the depth map to 3D space, we additionally leverage 3D foundation model[52] to estimate the camera extrinsics P_{S}=\{P_{t}\}_{t=1}^{S}, intrinsics K and multi-view consistent per-frame depth maps X_{S}=\{X_{t}\}_{t=1}^{S}.
+The relative depth maps D_{S} exhibit high resolution and richer details, whereas the depth maps X_{S} share the same coordinate system as the estimated camera poses. Therefore, we align D_{S} with X_{S} by solving for an optimal scale and shift bias factor s,b for inverse depth value:
+s,b=\arg\min_{s,b}\sum_{t}^{T}\left\|\frac{1}{X_{t}}-(\frac{s}{D_{t}}+b)\right\|_{2}^{2}
+(3)
+Given camera extrinsics P_{S}, intrinsics K and the depth map consistent with camera space, a 3D point cloud can be built. In order that the rendered depth includes less noisy artifacts, we transform the point cloud into a 3D mesh by connecting adjacent pixel points following EX-4D [22]. Then we render the depth D^{r}=\{d^{r}_{t}\}_{t=1}^{T} and occlusion mask M^{r}=\{M^{r}_{t}\}_{t=1}^{T} of the 3D mesh under target camera trajectory P_{T}=\{P_{t}\}_{t=1}^{T}. The depth of the 3D mesh at a novel view contains occluded parts and out of frame regions, where the occlusion mask M^{r} will be labeled zero. Therefore, D^{r} and M^{r} provide sufficient informations to represent the camera movements and target view layout.
+To inject this geometric informations into the noise latent \boldsymbol{x}_{t}, the depth should be encoded into the same domain as the video.
+Therefore, we fit the rendered depth value D^{r} into RGB domain, and the pretrained video VAE can be leveraged to encode depth video. We first normalize the raw depth values into [0,1] in log space, and then map into RGB values by a predefined colormap.
+3.3 View-Content Dual-Stream Condition
+Having the colored depth video D^{r} and masks M^{r} from dynamic 3D mesh, as well as the source video V_{S}, we learn a conditional distribution using a conditional video diffusion model. We build upon Wan model[49] originally designed for text-guided image-to-video (I2V) generation. We leverage its 3D VAE for video compression/decompression and its DiT blocks for vision-text token processing.
+To adapt the I2V model for our task, re-generating videos with desired camera trajectories, we propose a dual-stream conditioning strategy to leverage both the 3D mesh renders and the source video. First, we encode D^{r} and M^{r} using the VAE encoder, concatenating them channel-wise, and project them into view tokens \boldsymbol{x}_{v} in noise latent space through a linear projector F_{c}. Then, we integrate the view tokens \boldsymbol{x}_{v} with noise latent projection tokens \boldsymbol{x}_{t} by addition, seamlessly incorporating geometric priors into the video synthesis pipeline.
+Since the 3D mesh renders only convey the geometric scene layout of the novel trajectory, we inject the source video to provide rich appearance details and dynamic motions. To achieve better synchronization and content consistency with the source video, we concatenate the source video tokens with the target video tokens along the frame dimension.
+\displaystyle\boldsymbol{x}_{i}
+\displaystyle=[\texttt{patchify}(\boldsymbol{x}_{s}),\texttt{patchify}(\boldsymbol{x}_{t})]_{\text{frame-dim}}
+(4)
+where \boldsymbol{x}_{s}\in\mathbb{R}^{b\times f\times s\times d} is the VAE compressed latent of source video, \boldsymbol{x}_{i}\in\mathbb{R}^{b\times 2f\times s\times d} is the input of diffusion transformer. In other words, the input token number is doubled compared to the vanilla video generation process.
+Furthermore, we do not introduce additional attention layers for feature aggregation between the source and the target videos, since self-attention is already performed across all tokens in the 3D (spatial-temporal) attention layers.
+3.4 Lightweight Adapter for Video Diffusion
+Instead of finetuning the entire video diffusion model, we utilize a Low-Rank Adaptation (LoRA) [21] approach with a small rank. This allows the pre-trained video diffusion model to remain frozen while only updating the adapter parameters.
+The training process adheres to the original flow matching objective[11], ensuring rapid convergence and stable performance without requiring extensive computational resources. This design effectively combines geometry-aware conditioning with high-quality video synthesis, maintaining temporal coherence across frames. The model is trained to predict flow matching velocity, and the training objective is defined as:
+\mathcal{L}=\mathbb{E}_{t,\boldsymbol{z}}[\omega(t)||\boldsymbol{v}_{\theta}(\boldsymbol{x}_{t},V_{S},D^{r},M^{r},t;\theta)-(\boldsymbol{z}-\boldsymbol{x})||_{2}^{2}]
+(5)
+here \boldsymbol{z}, \boldsymbol{x}, \boldsymbol{x}_{t}, \omega(t) denotes the ground-truth noise, ground-truth data, noisy latents, and training weight at diffusion timestep t, respectively. V_{S} is the input video. \boldsymbol{v}_{\theta} denotes our denoising model with parameters \theta.
+Figure 4: Illustration of our dataset: MultiCam-WarpData.
+Figure 5: Qualitative comparison with state-of-the-art methods. DepthDirector achieves both precise camera controllability and content preservation.
+3.5 MultiCam-WarpData Video Dataset
+To re-render the source videos based on novel camera trajectories, paired multi-view video data is required for training. Specifically, the training data should include multiple shots captured in the same scene simultaneously, alongside with the ground-truth depth map to generate view condition. Acquiring such data in real-world scenarios is extremely costly, and publicly available multi-view synchronized datasets [27, 41, 58, 16, 4, 37, 3] are also limited by the diversity of scenes, constrained camera movements and lack of geometry information, making them unsuitable for our task.
+Therefore we chose to leverage the rendering engine to generate the training data following ReCamMaster[4].
+We build the entire data rendering pipeline in Unreal Engine 5 [15]. Specifically, we first collect multiple 3D environments as “backgrounds”. Then, we place animated characters within these environments as the “main subjects” of the videos. We then position multiple cameras facing the subjects and moving along predefined trajectories to simulate the process of simultaneous shooting. This allows us to render datasets with synchronized cameras that include dynamic objects.
+To scale up the data volume, we construct a set of camera movement rules for automatically batch generation of natural and diverse camera trajectories. Additionally, we randomly combined different characters and actions across different video sets.
+As shown in Fig.4, for each dynamic scene, we render RGB value and depth value under 8 random camera trajectories, and build training data-pairs consists of warped depth video, source view video and target view video.
+Specifically, during inference, the depth scales of different input videos vary significantly. To mitigate this issue, we introduce random scaling and shifting operations before mapping the raw depth values to the RGB domain, enhancing the model’s robustness to depth-scale variations. Moreover, thanks to the dual-stream injection mechanism, the model can adaptively balance geometric and appearance information, effectively alleviating the depth distribution gap between training and inference.
+In total, we obtain 8K visually-realistic videos shot from 1K different dynamic scenes in 40 high-quality 3D environments with 8K different camera trajectories. Each video has a resolution of 576\times 1024 and 81 frames.
+Table 1: Quantitative comparison with state-of-the-art methods on camera accuracy, identity preservation and view synchronization.
+Method
+Camera Accuracy
+Identity Preservation
+View Synchronization
+RotErr \downarrow
+TransErr \downarrow
+CamMC \downarrow
+RS \uparrow
+IFS \uparrow
+Mat.Pix. \uparrow
+CLIP-V \uparrow
+TrajectoryCrafter
+0.828
+0.310
+1.171
+0.5672
+0.9169
+275.3
+0.9119
+GEN3C
+1.166
+0.256
+1.649
+0.6252
+0.9515
+721.7
+0.9136
+EX4D
+0.637
+0.167
+0.897
+0.6269
+0.9279
+947.5
+0.9150
+ReCamMaster
+5.840
+1.055
+8.253
+0.6403
+0.9519
+479.4
+0.9201
+CamCloneMaster
+6.418
+1.027
+9.064
+0.5928
+0.9426
+507.9
+0.9057
+Ours
+2.542
+0.388
+3.596
+0.6887
+0.9661
+988.7
+0.9197
+Figure 6: Qualitative comparison with warping-based methods. Our method preserves facial identity under camera view changes, while other methods produce distorted artifacts.
+Table 2: Quantitative comparison with state-of-the-art methods on VBench [25] metrics.
+Method
+Subject
+Consistency \uparrow
+Background
+Consistency \uparrow
+Motion
+Smoothness \uparrow
+Aesthetic
+Quality \uparrow
+Imaging
+Quality \uparrow
+GEN3C
+95.04
+93.46
+99.29
+53.65
+73.76
+TrajectoryCrafter
+94.74
+93.46
+98.52
+52.55
+73.64
+EX-4D
+94.51
+93.11
+98.24
+53.06
+74.08
+ReCamMaster
+95.17
+91.85
+99.35
+54.08
+69.93
+CamCloneMaster
+94.11
+91.48
+99.27
+53.21
+71.01
+Ours
+95.29
+94.66
+99.41
+55.67
+73.90
+4 Experiments
+4.1 Implementation Details
+Our approach builds upon the Wan2.2-TI2V-5B model[12, 49].
+The video diffusion backbone remains frozen during training, while our lightweight adapter employs a LoRA rank of 32.
+Input videos are resized to a resolution of 576\times 1024 with 81 frames per sequence.
+The adapter is optimized using the AdamW optimizer with a learning rate of 1\times 10^{-4}.
+Our method is implemented on 8 NVIDIA A100 GPUs. Training is completed in 4 days, and inference generates each video in approximately 4 minutes using 50 denoising steps. Please refer to the supplementary material for additional implementation details and more analysis.
+4.2 Evaluation
+Metrics and Dataset
+For evaluation, we randomly sampled 200 in-the-wild web videos from Koala dataset[51], which include diverse dynamic scenes and also challenging human-centric scenes.
+To demonstrate both camera controllability and novel-view synthesis ability, we use trajectories rotating around the main subject for 30 degrees for evaluation.
+To evaluate camera trajectory accuracy, we employ the state-of-the-art camera parameters estimation model MegaSaM[33] to extract camera rotation R_{i} and translation T_{i} for the i-th frame in the video.
+We then compute the Rotation Distance (RotErr), Translation Error (TransErr), and Camera Motion Consistency (CamMC), following CamI2V[63].
+For content preservation evaluation, we assess human identity preservation metrics for all evaluation videos with human faces.
+We employ ArcFace[10] embedding similarity to assess two key aspects.
+First, Reference Similarity (RS) calculates the similarity between the first frame of source video and generated frames to evaluate identity preservation.
+Second, InterFrame Similarity (IFS) quantifies the similarity between consecutive video frames to evaluate the stability of identity features during camera movements.
+To evaluate our method in terms of view synchronization[4, 37], we utilize the state-of-the-art image matching method GIM[43] to compute the number of matching pixels with confidence exceeding a predefined threshold, denoted as Mat. Pix..
+Additionally, we calculate the average CLIP similarity between source and target frames at the same timestamps, denoted as CLIP-V[31].
+We also evaluate our method on VBench [25] metrics for comprehensive perceptual quality measurement.
+Comparison Baselines
+For comparative evaluation, we involve the state-of-the-art methods capable of camera-controllable video synthesis, including warping-based methods[61, 22, 39], and implicit camera conditioned methods[4, 37].
+Other earlier methods[17, 56, 5, 62, 26] are omitted for their relatively inferior performance.
+To ensure fair comparisons, all methods are evaluated using identical camera trajectories. And all warping-based methods receive the same depth estimation results as inputs, eliminating any advantage from differing geometric priors. For CamCloneMaster, we render reference videos under target trajectories with Unreal Engine 5.
+Quantitative Comparison
+Quantitative results are presented in Table.1, Table.2. For camera accuracy, warping-based methods achieve nearly zero error, because they directly perform inpainting on the warped video of target views. Compared with warping-based methods[61, 39, 22], DepthDirector reaches a comparable accuracy, much lower than that of comparable implicit camera conditioned methods[4, 37]. This demonstrates that DepthDirector possess precise camera controllability. While in terms of identity preservation and view synchronization, DepthDirector demonstrates superior performance against all baseline methods, highlighting our method’s ability to leverage the 3D understanding of VDMs to generate 3D consistent results.
+For comprehensive perceptual quality, DepthDirector achieves the best performance on nearly all VBench metrics.
+Table 3: Quantitative comparison for ablation study.
+Method
+Camera
+Accuracy
+Identity
+Preservation
+View
+Synchronization
+VBench
+Rot
+Err
+\downarrow
+Trans
+Err
+\downarrow
+RS \uparrow
+IFS \uparrow
+Mat.Pix. \uparrow
+CLIP-V \uparrow
+Cons.
+Subj.
+\uparrow
+Cons.
+Bg.
+\uparrow
+w/ Wan2.1-1.3B
+2.366
+0.334
+0.6370
+0.9541
+636.8
+0.9117
+94.80
+92.38
+wo/ Content Condition
+2.614
+0.370
+0.5804
+0.9628
+772.0
+0.9115
+95.17
+94.55
+Ours
+2.542
+0.388
+0.6887
+0.9661
+988.7
+0.9197
+95.29
+94.66
+Figure 7: Qualitative comparison with implicit-controlled methods. Our method generates consistent background, while baseline methods fail to preserve the environment details from input views.
+Qualitative Comparison
+As shown in Fig. 5, warping-based methods can strictly follow the target trajectories, due to the inaccurate warped video. And implicit methods fail to accurately align with the desired camera views. Compared with them, DepthDirector slightly sacrifices
+the camera accuracy but can generate 3D consistent content tightly aligned with the target views.
+As shown in Fig. 7, DepthDirector outperforms the implicit methods on background consistency by a large margin. This is because the warped depth video provides richer geometric cues, helping the model preserve the scene geometry and appearance details. However, directly inferring camera movements for complex background remains challenging for implicit methods, because the correspondence between camera parameters and scene layout is hard to learn.
+Fig. 6 demonstrates that warping-based methods greatly suffer from inaccurate warped video, especially on human faces. However, our method can go beyond inpainting, leveraging its 3D understanding ability to generate 3D consistent human subject.
+4.3 Ablation Study
+We carefully ablate the key components of our framework to validate their effectiveness.
+Ablation on Model Design
+In our key designs of the View-Content Dual-Stream Condition mechanism, we propose to inject warped depth video as the view condition and source video as the content condition.
+To validate the effectiveness, we compare our full model with models without injecting source video.
+As shown in Fig.8, models without injecting source video fail to preserve detailed motions, such as facial expressions.
+Table 3 shows that models without injecting source video achieve lower view synchronization score.
+Figure 8: Ablation Study on Model Design. Model without injecting source video cannot recover the dynamic expression change of source video.
+Ablation on Base Model
+We switch our base model from Wan2.2-TI2V-5B[49] to Wan2.1-T2V-1.3B[48], and train at a resolution of 843\times 480.
+Table 3 shows that changing to a lighter base model doesn’t affect the camera accuracy (Model (b)), demonstrating that our method is effective and applicable to other video generation models.
+The slightly lower score on identity preservation, consistency metrics in VBench and View Synchronization are attributed to the weaker capacity of the base model and lower generation resolution.
+5 Conclusion
+In this paper, we propose DepthDirector, a framework for reproducing dynamic scenes from input videos under novel camera trajectories.
+We achieve both precise camera controlability and consistent content preservation.
+Our key idea is to leverage warped depth video as the camera-view condition.
+We design a View-Content Dual-Stream Condition mechanism that injects warped depth video to guide viewpoint changes and frame-wise concatenates source video for content reference.
+Our framework enables video diffusion models to go beyond inpainting and unleash their 3D understanding capabilities, faithfully generating videos of unseen views that are accurately aligned with the target camera trajectory.
+

@@ -1,0 +1,668 @@
+https://arxiv.org/html/2601.20251v1
+Efficient Evaluation of LLM Performance with Statistical Guarantees
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+3 Method
+3.1 Factor Model: Extracting Information from History
+3.2 Proactive Active Inference
+3.3 An Oracle-Optimal Sequential Sampling Policy
+3.4 An Active-Learning-Driven Sampling Policy
+3.5 A Practical Hybrid Sampling Policy
+4 Experimental Setup
+5 Empirical Results
+6 Discussion and Conclusion
+References
+A Proofs and other Formulas
+A.1 Full Historical Factor Model Negative Log-Likelihood Objective
+A.2 Derivation of Online Logistic Regression Laplace Approximation Update
+A.3 Proof of Theorem
+A.3.1 Definitions
+A.3.2 Technical Assumptions/Conditions
+A.3.3 Asymptotic Normality via Martingale CLT
+A.4 Proof of Theorem
+A.5 Derivation of (Approximate) Maximal Variance-Reducing Index
+B Investigating Sampling With/Without Replacement
+C Additional Experimental Details
+D Additional Results
+License: CC BY 4.0
+arXiv:2601.20251v1 [stat.ML] 28 Jan 2026
+Efficient Evaluation of LLM Performance with Statistical Guarantees
+Skyler Wu
+Affiliation: Department of Statistics, Stanford University, Stanford, CA, USA
+Correspondence to: skylerw@stanford.edu
+Yash Nair
+Affiliation: Department of Statistics, Stanford University, Stanford, CA, USA
+Emmanuel J. Candés
+Affiliation: Department of Statistics, Stanford University, Stanford, CA, USA
+Abstract
+Exhaustively evaluating many large language models (LLMs) on a large suite of benchmarks is expensive. We cast benchmarking as finite-population inference and, under a fixed query budget, seek tight confidence intervals (CIs) for model accuracy with valid frequentist coverage. We propose Factorized Active Querying (FAQ), which (a) leverages historical information through a Bayesian factor model; (b) adaptively selects questions using a hybrid variance-reduction/active-learning sampling policy; and (c) maintains validity through Proactive Active Inference—a finite-population extension of active inference (Zrnic & Candes, 2024) that enables direct question selection while preserving coverage. With negligible overhead cost, FAQ delivers up to 5×5\times effective sample size gains over strong baselines on two benchmark suites, across varying historical-data missingness levels: this means that it matches the CI width of uniform sampling while using up to 5×5\times fewer queries. We release our source code and our curated datasets to support reproducible evaluation and future research.
+1 Introduction
+Motivation    Large language models (LLMs) are rapidly moving from research demos to deployed systems in domains such as healthcare, law, and education (Chen et al., 2024; Li et al., 2023b; Dehghani et al., 2025; Kasneci et al., 2023; Artsi et al., 2025; Achiam et al., 2023). As adoption grows, so does the number of candidate models organizations must evaluate and monitor. This scale is visible in public ecosystems: HuggingFace hosts at least 1.861.86M models, including 300300K+ tagged as text-generation—many of them fine-tuned variants of certain base models (Laufer et al., 2025). Indeed, private institutions may maintain hundreds to thousands of internal variants, each exhibiting their own query-dependent strengths and weaknesses. As post-training becomes cheaper, the number of viable candidate models per deployment decision will only grow.
+A common practice is to evaluate candidate models’ performances on a finite, curated benchmark suite. Such suites increasingly include questions that (a) require expensive domain-expert adjudication (often by multiple annotators) (Szymanski et al., 2025; Li et al., 2025; Enguehard et al., 2025; Croxford et al., 2025); (b) involve multi-turn interactions (e.g., helpfulness and safety) (He et al., 2024; Kwan et al., 2024); and/or (c) demand long-form reasoning with verification (Bai et al., 2024; Ding et al., 2025). With tens of thousands of questions (e.g., 1212K on MMLU-Pro (Wang et al., 2024)), and hundreds to thousands of candidate models, exhaustively evaluating every model on every question is expensive in API costs, runtime, and expert annotation (Zhou et al., 2025). In practice, organizations may instead resort to “vibes”-based judgments on ad-hoc subsets (Mazzoni & Sharma, 2025).
+Meanwhile, many organizations have access to historical performance data—from prior benchmark runs (e.g., the Open LLM Leaderboard (Fourrier et al., 2024)) and/or production evaluation pipelines. As we show, this historical data can be leveraged to make model evaluation substantially faster and cheaper.
+Problem description    Consider a benchmark suite of NqN_{q} questions, viewed as a fixed finite population. For a new model, let zj∈{0,1}z_{j}\in\{0,1\} indicate whether it answers question jj correctly. We wish to estimate the model’s accuracy over the entire finite question bank:
+θ:=1Nq​∑j=1Nqzj∈[0,1].\theta:=\frac{1}{N_{q}}\sum_{j=1}^{N_{q}}z_{j}\in[0,1].
+(1)
+We also assume access to historical data H∈{0,1,NA}Nold×NqH\in\{0,1,\text{NA}\}^{N_{\text{old}}\times N_{q}} from NoldN_{\text{old}} prior models (e.g., previously benchmarked and/or observed in deployment), potentially with many missing entries (i.e., NA) due to resource and deployment constraints. Given a new model and budget nbn_{b}, the problem is: how should we adaptively select which nbn_{b} questions to query so as to construct a confidence interval (CI) for θ\theta that is as narrow as possible, while maintaining frequentist coverage?
+Here, coverage (say, 95%95\%) means that over repeated runs of the evaluation procedure (i.e., over sampling randomness), the reported 95%95\% CI contains the true finite-bank accuracy θ\theta at least 95%95\% of the time. This guarantee is crucial for model selection and monitoring: miscalibrated uncertainty can lead to systematic overconfidence and poor deployment decisions, and the risk is amplified under adaptive evaluation where i.i.d. assumptions and heuristic error bars may fail. Such valid-coverage intervals provide uncertainty-quantified performance estimates to support deployment decisions alongside considerations such as cost and latency.
+Our contributions    In this paper, we introduce Factorized Active Querying (FAQ), an efficient LLM evaluation method that can produce CIs of comparable width, using 5×5\times fewer queries and little to no additional computational costs, than competitive baselines (including uniform sampling), while maintaining frequentist coverage. FAQ has three components:
+(a)
+A Bayesian factor model that extracts information from partially-observed historical data.
+(b)
+A hybrid sampling policy combining variance reduction and active learning.
+(c)
+A coverage-preserving finite-population extension of active inference (Zrnic & Candes, 2024), which we call Proactive Active Inference (PAI). Unlike active inference, PAI directly selects the next question to query in a data-adaptive manner, rather than rigidly proceeding according to a fixed ordering and only making label/skip decisions.11
+1
+While we focus on finite-bank benchmarking, PAI is a general coverage-preserving framework for adaptive querying over finite populations: we will explore its broader potential in future work.
+We evaluate FAQ on two benchmark suites under varying historical-data missingness and quantify the additional gains attributable to PAI. We release our compiled and curated datasets (with 4.44.4K+ models and 21.521.5K+ questions) to support reproducible benchmarking and future research. Datasets and code are available at https://github.com/skbwu/efficiently-evaluating-llms.
+2 Related Work
+Probabilistic factor modeling    FAQ is inspired by probabilistic factor modeling (Mnih & Salakhutdinov, 2007; Collins et al., 2001; Chen et al., 2023), which assumes a (Bayesian) generative factor model for a partially-observed binary matrix—here, the matrix of model-question correctness outcomes—and learns low-dimensional latent factors from the data. Importantly, any uncertainty guarantees for these approaches are tied to correct specification of the factor model (and any prior assumptions). In contrast, FAQ uses the Bayesian factor model only as a mental model to guide adaptive query selection, while delivering valid frequentist coverage regardless of factor-model fidelity. If the data is well-described by the factor model, FAQ automatically adapts and delivers tighter CIs.
+Active statistical inference    For model-free frequentist coverage, FAQ builds on active statistical inference (Zrnic & Candes, 2024; Gligorić et al., 2025), which uses machine learning predictions over unlabeled covariates/features to adaptively select labels under a fixed budget and construct CIs. Our benchmark setting, however, provides no explicit covariates, so we use the factor model above to construct latent features to guide adaptive query selection. Moreover, unlike sequential active inference—which, in a pre-specified “nature’s order” stream, can only make label/skip decisions for the next item and enforces the budget constraints only in expectation—PAI/FAQ directly selects the next question from the full benchmark bank using all available information and enforces the query budget exactly.
+Figure 1: High-level overview of Factorized Active Querying (FAQ). (a) Using partially-observed historical outcomes HH, we fit a historical model and question factors (Eq. 13). For a new model, we initialize its latent factor from the historical fit. Then, at each sampling round tt, we (b) compute the hybrid sampling policy qt​(⋅)q_{t}(\cdot) from the current factor posterior (Eq. 10), (c) sample a question It∼qt​(⋅)I_{t}\sim q_{t}(\cdot), and (d) update the model factor using the observed outcome zItz_{I_{t}} (Eqs. 3-5). Finally, we (e) output the Proactive Active Inference (PAI) estimate and confidence interval (Eqs. 6, 8), which guarantees model-free, frequentist coverage for finite-bank accuracy.
+Active learning    FAQ draws on Bayesian active learning ideas (Settles, 2009; Di Fiore et al., 2023; Cohn et al., 1994; MacKay, 1992; Fedorov, 2013; Schein & Ungar, 2007, c.f. e.g.,) to guide question selection. One component of our hybrid policy upweights questions predicted (under the factor model) to yield larger posterior variance reductions for θ\theta. Because our goal is tight frequentist uncertainty quantification of θ\theta, we combine this active-learning component with an oracle-inspired variance-reduction component.
+LLM evaluations    FAQ contributes to a growing literature on evaluating LLMs using only a fraction of benchmark questions (Hardt, 2025; Zhang et al., 2025; Vivek et al., 2024; Polo et al., 2024; Zhong et al., 2025). However, most of this line of work targets point estimation of accuracy: with the exception of a simple AIPW estimator considered in Zhang et al. (2025), none of these prior works provide model-free consistency guarantees. Relatedly, Zouhar et al. (2025); Zhou et al. (2025) focus on model ranking/selection under limited queries, which is orthogonal to our goal of producing model accuracy estimates with rigorous statistical uncertainty quantification. Closest in spirit to our work is Angelopoulos et al. (2025), which uses active inference to reduce the cost of rating LLM outputs; by contrast, we reduce the number of inference calls per model. More importantly, Angelopoulos et al. (2025)’s approach posits an i.i.d. model for the benchmark data and targets the expected accuracy as judged by a strong autorater, whereas we estimate the true, finite-bank accuracy of each LLM without i.i.d. assumptions. This distinction is practically important: new models arrive over time and distribution shift is the norm, so uncertainty estimates that rely on i.i.d. or model correctness can be misleading. By targeting finite-bank accuracy with model-free coverage, FAQ provides uncertainty quantification that remains meaningful over such drifts.
+3 Method
+A schematic summarizing FAQ can be found in Figure 1. We now motivate and construct each component.
+3.1 Factor Model: Extracting Information from History
+To run FAQ, we require features for models and questions, but the partially-observed historical outcome matrix HH provides no explicit covariates. Thus, we introduce latent factors—each historical model ii has ui∈ℝku_{i}\in\mathbb{R}^{k} and each question jj has vj∈ℝkv_{j}\in\mathbb{R}^{k}. We model the likelihood that model ii answers question jj correctly via a logistic link:22
+2
+Here, σ⁡(x)=1/(1+exp⁡(−x))\sigma(x)=1/(1+\exp(-x)) is the sigmoid function.
+P⁡(Hi​j=1∣{ui′}i′=1Nold,{vj′}j′=1Nq)=σ⁡(ui⊤​vj).\displaystyle P\left(H_{ij}=1\mid\{u_{i^{\prime}}\}_{i^{\prime}=1}^{N_{\text{old}}},\{v_{j^{\prime}}\}_{j^{\prime}=1}^{N_{q}}\right)=\sigma\left(u_{i}^{\top}v_{j}\right).
+(2)
+This model is natural for heterogeneous benchmarks, where performance is driven by a small number of shared capabilities (e.g., coding, reasoning, and domain knowledge): uiu_{i} encodes model ii’s latent proficiencies, vjv_{j} the capabilities required by question jj, and ui⊤​vju_{i}^{\top}v_{j} their match. The resulting probabilistic predictions provide uncertainty over unqueried model-question pairs, which we exploit in our hybrid sampling policy. We emphasize that the factor model only serves to improve efficiency: our FAQ coverage guarantees are model-free and do not depend on it.
+Fitting on partially-observed historical data    We fit the logistic factor model on the observed entries of HH by minimizing the masked negative log-likelihood via AdamW with weight decay λ\lambda: (λ,k)(\lambda,k) are selected via cross-validation (see Section 4). The full objective is given in Appendix A.1.
+Deploying to evaluate a new model    At deployment, we fix the historically-learned question factors {vj}j=1Nq\{v_{j}\}_{j=1}^{N_{q}} and use them as question features (the questions themselves do not change across models). For a new model, we initialize its factor with a Gaussian prior u∼𝒩⁡(u^(0),Σ^(0))u\sim\mathcal{N}(\hat{u}^{(0)},\hat{\Sigma}^{(0)}), where (u^(0),Σ^(0))(\hat{u}^{(0)},\hat{\Sigma}^{(0)}) are the empirical mean and covariance of the historical model factors {ui}i=1Nold\{u_{i}\}_{i=1}^{N_{\text{old}}}. The factor model is used only as a working probabilistic approximation to guide querying and prediction, not to provide Bayesian credible intervals: we make no assumptions on its fidelity. Frequentist validity is ensured by PAI (Section 3.2).
+Online Laplace updates    At round tt, after querying question ItI_{t} and observing zItz_{I_{t}}, we update the Gaussian approximation u|ℱt≈𝒩⁡(u^(t),Σ^(t))u\mid\mathcal{F}_{t}\approx\mathcal{N}(\hat{u}^{(t)},\hat{\Sigma}^{(t)}) via a Laplace update (derivation in Appendix A.2), denoting these updates as ModelFactorUpdate​(zIt,vIt,u^(t−1),Σ^(t−1))\texttt{ModelFactorUpdate}(z_{I_{t}},v_{I_{t}},\hat{u}^{(t-1)},\hat{\Sigma}^{(t-1)}):
+p^It(t−1):=σ(u^(t−1)vIt⊤),w^:=p^It(t−1)(1−p^It(t−1)),\displaystyle\hat{p}^{(t-1)}_{I_{t}}:=\sigma\left(\hat{u}^{(t-1)}{}^{\top}v_{I_{t}}\right),\hat{w}:=\hat{p}^{(t-1)}_{I_{t}}(1-\hat{p}^{(t-1)}_{I_{t}}),
+(3)
+Σ^(t):=Σ^(t−1)−w^​Σ^(t−1)​vIt​vIt⊤​Σ^(t−1)1+w^​vIt⊤​Σ^(t−1)​vIt,\displaystyle\hat{\Sigma}^{(t)}:=\hat{\Sigma}^{(t-1)}-\frac{\hat{w}\hat{\Sigma}^{(t-1)}v_{I_{t}}v_{I_{t}}^{\top}\hat{\Sigma}^{(t-1)}}{1+\hat{w}v_{I_{t}}^{\top}\hat{\Sigma}^{(t-1)}v_{I_{t}}},
+(4)
+u^(t):=u^(t−1)+Σ^(t)​(zIt−p^It(t−1))​vIt.\displaystyle\hat{u}^{(t)}:=\hat{u}^{(t-1)}+\hat{\Sigma}^{(t)}\left(z_{I_{t}}-\hat{p}^{(t-1)}_{I_{t}}\right)v_{I_{t}}.
+(5)
+Each queried label refines u^(t)\hat{u}^{(t)}, sharpening predictions p^j(t)=σ(u^(t)vj⊤)\hat{p}^{(t)}_{j}=\sigma\left(\hat{u}^{(t)}{}^{\top}v_{j}\right) on unqueried questions jj.
+3.2 Proactive Active Inference
+Motivation and desiderata    The factor model is only a working model and offers no coverage guarantee on its own. Moreover, we make no i.i.d. assumptions on benchmark questions: we treat the labels zjz_{j} as fixed-but-unknown, since curated suites often intentionally include adversarial/edge cases and are not necessarily meant to represent a superpopulation of user queries. Thus, we want a model-free inference layer that wraps around the factor model and yields valid coverage for the finite-bank estimand θ\theta.
+Sequential active inference (Zrnic & Candes, 2024) provides coverage, but differs from our approach in two key ways. First, it follows nature’s order: at time tt, one observes only the next item in a fixed stream and can only make a label/skip decision via an adaptive Bernoulli policy. In contrast, in our benchmark-bank setting, we have access to the full pool of question factors {vj}j=1Nq\{v_{j}\}_{j=1}^{N_{q}} at every step and wish to leverage this global information to proactively select the next question. Second, we desire a workflow that is deterministic conditional on selection: once a question is chosen, it is labeled with probability 11 (no coin flip).
+These desiderata are particularly important for FAQ because the new model factor uu is initialized from historical models and may be inaccurate (especially as models evolve over time). Proactively selecting informative questions early accelerates learning of uu (c.f. Section 3.4), improving subsequent query choices and inference. Practically, our desiderata better matches typical evaluation workflows: one selects a subset of questions under a budget, rather than streaming through the entire bank with probabilistic labeling decisions.
+Proactive Active Inference estimator    Fix a query budget nbn_{b}. At each round t=1,…,nbt=1,\dots,n_{b}, we sample a question It∈{1,…,Nq}I_{t}\in\{1,\dots,N_{q}\} from an adaptive distribution qt​(⋅)q_{t}(\cdot),33
+3
+To support Assumptions A.1-A.2 for Theorem 3.1 we require sampling with replacement. Appendix B discusses how ad-hoc without-replacement variants can fail to yield valid coverage. query the new model, and observe label zIt∈{0,1}z_{I_{t}}\in\{0,1\}. We define the Proactive Active Inference (PAI) estimator θ^nb\hat{\theta}_{n_{b}}:
+θ^nb:=1nb∑t=1nbϕt, ϕt:=1Nq∑j=1Nqp^j(t−1)+1NqzIt−p^It(t−1)qt​(It).\displaystyle\hat{\theta}_{n_{b}}:=\frac{1}{n_{b}}\sum_{t=1}^{n_{b}}\phi_{t},\text{ }\phi_{t}:=\frac{1}{N_{q}}\sum_{j=1}^{N_{q}}\hat{p}_{j}^{(t-1)}+\frac{1}{N_{q}}\frac{z_{I_{t}}-\hat{p}_{I_{t}}^{(t-1)}}{q_{t}\left(I_{t}\right)}.
+(6)
+Here, p^j(t−1):=σ(u^(t−1)vj⊤)\hat{p}_{j}^{(t-1)}:=\sigma\left({\hat{u}^{(t-1)}}{}^{\top}v_{j}\right) and u^(t−1)\hat{u}^{(t-1)} is the current posterior-mean estimate of the new model factor. The first term in ϕt\phi_{t} is the plug-in factor-model estimate of θ\theta, while the second serves as a bias correction. Let ℱt−1:=σ⁡({Is,zIs}s=1t−1)\mathcal{F}_{t-1}:=\sigma(\{I_{s},z_{I_{s}}\}_{s=1}^{t-1}). We require p^j(t−1)\hat{p}_{j}^{(t-1)} and qt​(⋅)q_{t}(\cdot) to be ℱt−1\mathcal{F}_{t-1}-measurable: depending only on past queries/labels.
+In Theorem 3.1 (proven in Appendix A.3), we show that θ^nb\hat{\theta}_{n_{b}} is unbiased for θ\theta and derive its limiting distribution via a martingale central limit theorem (CLT). To formalize asymptotics, we work under a triangular-array setup indexed by mm. Specifically, we consider a sequence of problems {𝒫(m)}m≥1\{\mathcal{P}^{(m)}\}_{m\geq 1}, in which Nq=Nq(m)N_{q}=N_{q}^{(m)}, nb=nb(m)n_{b}=n_{b}^{(m)}, and all involved quantities–{z1,…,zNq}\{z_{1},\dots,z_{N_{q}}\},44
+4
+The ziz_{i} are treated as fixed in each problem 𝒫(m)\mathcal{P}^{(m)}. θ\theta, θ^nb\hat{\theta}_{n_{b}}, {p^(t)}0≤t<nb\{\hat{p}^{(t)}\}_{0\leq t<n_{b}}, and {qt​(⋅)}1≤t≤nb\{q_{t}(\cdot)\}_{1\leq t\leq n_{b}}—may depend on mm. For readability, we suppress the superscript (m)(m) in the statement and proof.
+Theorem 3.1.
+Consider a sequence of problems (indexed by mm) such that nb↑∞n_{b}\uparrow\infty as m→∞m\rightarrow\infty and nb≤Nqn_{b}\leq N_{q} for every mm. Then (a) θ^nb\hat{\theta}_{n_{b}} is unbiased for θ\theta for every mm; and (b) under mild regularity conditions (variance stabilization/control and Lindeberg; Assumptions A.1-A.3), θ^nb\hat{\theta}_{n_{b}} obeys
+nb​(θ^nb−θ)/σ^nb​→𝑑​𝒩​(0,1),\sqrt{n_{b}}\left(\hat{\theta}_{n_{b}}-\theta\right)/\hat{\sigma}_{n_{b}}\overset{d}{\to}\mathcal{N}(0,1),
+(7)
+where
+σ^nb2:=1nb​Nq2​∑t=1nb(zIt−p^It(t−1))2qt​(It)2−1nb​Nq2∑t=1nb(1nb∑s=1nbzIsqs​(Is)−∑j=1Nqp^j(t−1))2.\hat{\sigma}^{2}_{n_{b}}:=\frac{1}{n_{b}N_{q}^{2}}\sum_{t=1}^{n_{b}}\frac{\left(z_{I_{t}}-\hat{p}_{I_{t}}^{(t-1)}\right)^{2}}{q_{t}(I_{t})^{2}}\\
+-\frac{1}{n_{b}N_{q}^{2}}\sum_{t=1}^{n_{b}}\left(\frac{1}{n_{b}}\sum_{s=1}^{n_{b}}\frac{z_{I_{s}}}{q_{s}(I_{s})}-\sum_{j=1}^{N_{q}}\hat{p}_{j}^{(t-1)}\right)^{2}.
+(8)
+By Theorem 3.1, it follows that an asymptotic (1−α)(1-\alpha)-level CI for θ\theta is [θ^nb±z1−α/2​σ^nbnb]\left[\hat{\theta}_{n_{b}}\pm z_{1-\alpha/2}\frac{\hat{\sigma}_{n_{b}}}{\sqrt{n_{b}}}\right]. Although the theorem is stated for a sequence of problem instances, we only observe a single one in practice. Consequently, Theorem 3.1 implies that the above CI attains coverage at approximately the nominal level α\alpha for sufficiently large problem sizes.
+Algorithm 1  Factorized Active Querying
+1:
+Input: Historical data matrix HH, confidence level α\alpha, and budget nbn_{b}
+2:
+Fit factor model on HH to initialize prior 𝒩⁡(u^(0),Σ^(0))\mathcal{N}(\hat{u}^{(0)},\hat{\Sigma}^{(0)}) for new model’s latent factor
+3:
+for t=1t=1 to nb{n_{b}} do
+4:
+Compute hybrid probability vector over queries at time tt:
+qt​(j)=τNq+(1−τ)​Norm​(hcat(t))​(j),q_{t}(j)=\frac{\tau}{N_{q}}+(1-\tau)\mathrm{Norm}(h^{(t)}_{\mathrm{cat}})(j),
+where hcat(t)h^{(t)}_{\mathrm{cat}} is the tempered convex combination of oracle and active-learning-driven policies given in (9)
+5:
+Sample new index It∼qt​(⋅)I_{t}\sim q_{t}(\cdot) and query LLM with question ItI_{t} to obtain zItz_{I_{t}}
+6:
+Compute
+ϕt:=1Nq​∑j=1Nqp^j(t−1)+1Nq⋅zIt−p^It(t−1)qt​(It).\phi_{t}:=\frac{1}{N_{q}}\sum_{j=1}^{N_{q}}\hat{p}_{j}^{(t-1)}+\frac{1}{N_{q}}\cdot\frac{z_{I_{t}}-\hat{p}_{I_{t}}^{(t-1)}}{q_{t}(I_{t})}.
+7:
+Update factor model prior via
+(u^(t),Σ^(t))←(ModelFactorUpdate​(zIt,vIt,u^(t−1),Σ^(t−1))CLOSE(\hat{u}^{(t)},\hat{\Sigma}^{(t)})\leftarrow(\texttt{ModelFactorUpdate}(z_{I_{t}},v_{I_{t}},\hat{u}^{(t-1)},\hat{\Sigma}^{(t-1)})
+given in equations (3)–(5)
+8:
+end for
+9:
+Compute
+σ^nb2=1nb​Nq2​∑t=1nb(zIt−p^It(t−1))2qt​(It)2−1nb​Nq2​∑t=1nb(1nb​∑s=1nbzIsqs​(Is)−∑j=1Nqp^j(t−1))2\hat{\sigma}_{n_{b}}^{2}=\frac{1}{{n_{b}}N_{q}^{2}}\sum_{t=1}^{n_{b}}\frac{\left(z_{I_{t}}-\hat{p}_{I_{t}}^{(t-1)}\right)^{2}}{q_{t}(I_{t})^{2}}-\frac{1}{{n_{b}}N_{q}^{2}}\sum_{t=1}^{n_{b}}\left(\frac{1}{{n_{b}}}\sum_{s=1}^{n_{b}}\frac{z_{I_{s}}}{q_{s}(I_{s})}-\sum_{j=1}^{N_{q}}\hat{p}_{j}^{(t-1)}\right)^{2}
+using samples {zIt}t=1nb\{z_{I_{t}}\}_{t=1}^{n_{b}}, computed probability vectors {qt​(⋅)}t=1nb\{q_{t}(\cdot)\}_{t=1}^{n_{b}}, and factor model estimates {p^j(t)}j∈[Nq],t∈[0:nb−1]\{\hat{p}_{j}^{(t)}\}_{j\in[N_{q}],t\in[0:{n_{b}-1}]}.
+10:
+Return Estimate θ^nb:=1nb​∑t=1nbϕt\hat{\theta}_{n_{b}}:=\frac{1}{{n_{b}}}\sum_{t=1}^{n_{b}}\phi_{t} and (1−α)(1-\alpha)-CI: [θ^nb±z1−α/2⋅σ^nbnb]\left[\hat{\theta}_{n_{b}}\pm z_{1-\alpha/2}\cdot\frac{\hat{\sigma}_{n_{b}}}{\sqrt{{n_{b}}}}\right]
+3.3 An Oracle-Optimal Sequential Sampling Policy
+In practice, it is unclear how to construct a sequential policy qt​(⋅)q_{t}(\cdot) which yields narrow CIs; one reason is because p^j(t)\hat{p}_{j}^{(t)} evolves over rounds tt. We therefore derive guidance from an oracle idealization. For this subsection only, assume an oracle superpopulation model: (a) for a new model, zj∼Bern​(pj)z_{j}\sim\text{Bern}(p_{j}) independently across questions jj;55
+5
+Unlike our benchmark-bank setting where the zjz_{j} are fixed-but-unknown, this oracle model treats queries of a question as independent Bernoulli draws so that “oracle-optimal” variance calculations are well-defined. (b) the oracle has access to the true, time-invariant {pj}\{p_{j}\}; and (c) the quantity we wish to estimate is θ∗:=Nq−1​∑j=1Nqpj\theta^{*}:=N_{q}^{-1}\sum_{j=1}^{N_{q}}p_{j}.
+A corollary of Theorem 3.1(a) is that θ^nb\hat{\theta}_{n_{b}} is unbiased for θ∗\theta^{*}. A natural direction is then to minimize Var​(θ^nb)\mbox{Var}(\hat{\theta}_{n_{b}}) in the oracle world (see Appendix A.4 for a proof of the below result).66
+6
+While oracle access to {pj}\{p_{j}\} makes θ\theta known, we wish to find the variance-minimizing policy among estimators of the form θ^nb\hat{\theta}_{n_{b}}.
+Theorem 3.2.
+In the aforementioned oracle setup, the variance-minimizing policy qt∗​(j)q_{t}^{*}(j) is time-independent and uniquely defined by qt​(j)∝pj​(1−pj)q_{t}(j)\propto\sqrt{p_{j}(1-p_{j})}.
+3.4 An Active-Learning-Driven Sampling Policy
+In practice, we use our factor model to form estimates p^j(t−1):=σ(u^(t−1)vj⊤)\hat{p}_{j}^{(t-1)}:=\sigma({\hat{u}^{(t-1)}}{}^{\top}v_{j}) of question difficulty. Since {vj}\{v_{j}\} are fixed, prediction quality is entirely driven by how well we have learned u^(t−1)\hat{u}^{(t-1)}—motivating an active-learning component aimed at efficiently learning uu, but only insofar as it improves inference for θ∗\theta^{*}. For this subsection only, assume the factor model is correctly specified: (a) zj∼Bern​(pj)z_{j}\sim\text{Bern}\left(p_{j}\right) with pj:=σ⁡(u⊤​vj)p_{j}:=\sigma\left(u^{\top}v_{j}\right); (b) uu has a normal prior; and (c) θ∗\theta^{*} is random only through uu (as the {vj}j\{v_{j}\}_{j} are treated as fixed during deployment):77
+7
+We emphasize that the factor model is only a mental model that helps us in deriving a reasonable adaptive sampling policy.
+θ∗=1Nq​∑j=1Nqpj=1Nq​∑j=1Nqσ⁡(u⊤​vj)=:g⁡(u).\displaystyle\theta^{*}=\frac{1}{N_{q}}\sum_{j=1}^{N_{q}}p_{j}=\frac{1}{N_{q}}\sum_{j=1}^{N_{q}}\sigma\left(u^{\top}v_{j}\right)=:g(u).
+Given u|ℱt−1∼𝒩⁡(u^(t−1),Σ^(t−1))u\mid\mathcal{F}_{t-1}\sim\mathcal{N}\left(\hat{u}^{(t-1)},\hat{\Sigma}^{(t-1)}\right), we seek the query that most reduces the posterior variance of θ∗=g⁡(u)\theta^{*}=g(u) (c.f. MacKay (1992)). To obtain a closed-form expression, we (a) approximate the updated posterior u|ℱt−1,zju\mid\mathcal{F}_{t-1},z_{j} as normal; and (b) approximate Var​(θ∗∣ℱt−1,zj)\mbox{Var}(\theta^{*}\mid\mathcal{F}_{t-1},z_{j}) by linearizing gg around u^(t−1)\hat{u}^{(t-1)}. Under these approximations, the index ItI_{t} that maximally reduces θ∗\theta^{*}’s posterior variance is given by It=argmaxjd(t)​(j)I_{t}=\operatornamewithlimits{argmax}_{j}d^{(t)}(j), derived in Appendix A.5:
+d(t)​(j)=w^j(t−1)​(vj⊤​Σ^(t−1)​1Nq​∑j′=1Nqw^j′(t−1)​vj′)21+w^j(t−1)​vj⊤​Σ^(t−1)​vj,\displaystyle d^{(t)}(j)=\frac{\hat{w}^{(t-1)}_{j}\left(v_{j}^{\top}\hat{\Sigma}^{(t-1)}\frac{1}{N_{q}}\sum_{j^{\prime}=1}^{N_{q}}\hat{w}^{(t-1)}_{j^{\prime}}v_{j^{\prime}}\right)^{2}}{1+\hat{w}^{(t-1)}_{j}v_{j}^{\top}\hat{\Sigma}^{(t-1)}v_{j}},
+w^j(t−1)=σ(u^(t−1)vj⊤)(1−σ(u^(t−1)vj⊤)).\displaystyle\hat{w}^{(t-1)}_{j}=\sigma\left(\hat{u}^{(t-1)}{}^{\top}v_{j}\right)\left(1-\sigma\left(\hat{u}^{(t-1)}{}^{\top}v_{j}\right)\right).
+3.5 A Practical Hybrid Sampling Policy
+In practice, we trade off exploitation (variance-reduction using the current p^(t−1)\hat{p}^{(t-1)}) and exploration (querying informative questions to quickly refine u^(t)\hat{u}^{(t)} and hence p^(t)\hat{p}^{(t)}). We implement this via a time-varying hybrid sampling policy. Inspired by Sections 3.3-3.4, at time tt, define unnormalized oracle (o) and active-learning (a) scores as follows:
+so(t)​(j):=p^j(t−1)​(1−p^j(t−1)),sa(t)​(j):=d(t)​(j).\displaystyle s^{(t)}_{\text{o}}(j):=\sqrt{\hat{p}_{j}^{(t-1)}\left(1-\hat{p}_{j}^{(t-1)}\right)},\;s^{(t)}_{\text{a}}(j):=d^{(t)}(j).
+Define Norm​(x)​(j)=x⁡(j)/∑j′x⁡(j′)\text{Norm}(x)(j)=x(j)/\sum_{j^{\prime}}x(j^{\prime}). We convert each score to a probability vector via ho(t)=Norm​(so(t))h^{(t)}_{\text{o}}=\text{Norm}(s^{(t)}_{\text{o}}) and ha(t)=Norm​(sa(t))h^{(t)}_{\text{a}}=\text{Norm}(s^{(t)}_{\text{a}}).
+Given hyperparameters ρ,γ,β0,τ∈(0,1)\rho,\gamma,\beta_{0},\tau\in(0,1), set mixing weight αt\alpha_{t} and tempering exponent βt\beta_{t}:
+αt=max⁡(0,1−tρ​nb),βt=β0​min⁡(1,tγ​nb).\displaystyle\alpha_{t}=\max\left(0,1-\frac{t}{\rho n_{b}}\right),\;\beta_{t}=\beta_{0}\min\left(1,\frac{t}{\gamma n_{b}}\right).
+We mix the normalized scores and apply exponential tempering to form our combined-and-tempered score hcat(t)h_{\text{cat}}^{(t)}:
+hcat(t)​(j)=((1−αt)​ho(t)​(j)+αt​ha(t)​(j))βt.\displaystyle h_{\text{cat}}^{(t)}(j)=\left(\left(1-\alpha_{t}\right)h^{(t)}_{\text{o}}(j)+\alpha_{t}h^{(t)}_{\text{a}}(j)\right)^{\beta_{t}}.
+(9)
+Finally, we normalize hcat(t)​(⋅)h_{\text{cat}}^{(t)}(\cdot) to be a probability vector and apply τ\tau-uniform mixing to lower-bound all sampling probabilities. Our final hybrid policy qt​(⋅)q_{t}(\cdot) is given by:
+qt​(j)=τNq+(1−τ)​Norm​(hcat(t))​(j).\displaystyle q_{t}(j)=\frac{\tau}{N_{q}}+\left(1-\tau\right)\text{Norm}(h_{\text{cat}}^{(t)})(j).
+(10)
+Here, αt\alpha_{t} sets the exploration-to-exploitation schedule (decaying to 00 after ρ​nb\rho n_{b} queries), while βt\beta_{t} tempers early scores towards near-uniform exploration (i.e., scores closer to each other) and reaches β0\beta_{0} after γ​nb\gamma n_{b} queries. The tempering and τ\tau-mixing prevent extreme sampling probabilities and ensure that all questions retain nontrivial selection probability—supporting Theorem 3.1’s regularity conditions.
+When a new model arrives, we initialize its latent factor u∼𝒩⁡(u^(0),Σ^(0))u\sim\mathcal{N}(\hat{u}^{(0)},\hat{\Sigma}^{(0)}). For rounds t=1,…,nbt=1,\dots,n_{b}, FAQ:
+(a)
+Recomputes qt​(⋅)q_{t}(\cdot) from the current factor-model state and samples the next question It∼qt​(⋅)I_{t}\sim q_{t}(\cdot) (Eq. 10).
+(b)
+Queries the model to observe zItz_{I_{t}}.
+(c)
+Updates the PAI estimate (Eq. 6)
+(d)
+Updates (u^(t),Σ^(t))(\hat{u}^{(t)},\hat{\Sigma}^{(t)}) (Eqs. 3-5).
+After nbn_{b} rounds, we estimate the variance and form a CI (Eq. 8). Algorithm 1 gives pseudocode for the procedure.
+Figure 2: Evaluating 2.22.2K LLMs on MMLU-Pro and BBH+GPQA+IFEval+MATH+MuSR with fully-observed historical data.
+(Top Row) Effective sample size (ESS) vs. budget for FAQ, the strongest baseline per budget (selected post-hoc, favoring baselines), and uniform sampling. Numbers annotate the ESS multiplier relative to uniform sampling. For example, on MMLU-Pro at budget 15001500, an ESS multiplier of 5.015.01 means FAQ matches uniform sampling’s CI width at budget 75157515 (a 5.01×5.01\times gain). (Bottom Row) Empirical coverage of the corresponding 95%95\% normal-approximation CIs, averaged over 2.22.2K test models and 100100 seeds. Standard errors are shown, but negligible on the plot scale. Higher ESS and ESS-multiplier values indicate better performance.
+4 Experimental Setup
+Datasets    Using the HuggingFace datasets API, we collect per-question 0/1 outcomes for 4.44.4K models from the Open LLM Leaderboard (Fourrier et al., 2024; Myrzakhan et al., 2024). Each model is evaluated on 21.621.6K questions across six datasets, which we aggregate into two suites: (a) MMLU-Pro with 1212K questions; and (b) BBH+GPQA+IFEval+MATH+MuSR with 9.59.5K questions. Full dataset citations are in Appendix C. We release our compiled and curated datasets to support future research.
+Historical splits and missingness    For each suite, we sort models by release date, take the first 2.22.2K as historical HH and the next 2.22.2K as new test models. We induce missingness in HH by selecting nfull-obsn_{\text{full-obs}} fully-observed rows uniformly at random, and independently masking each remaining entry with probability 1−pobs1-p_{\text{obs}} (i.e., MCAR: missing completely at random). Exact settings are in Appendix C.
+Factor model selection    For each missingness setting, we split HH by rows (models) into HtrainH_{\text{train}} (first 8080%) and HvalH_{\text{val}} (last 20%20\%). We choose (λ,k)(\lambda,k) via 5-fold cross-validation on HtrainH_{\text{train}}: (a) fit on observed entries (Eq. 13) and evaluate binary prediction accuracy on an MCAR-masked holdout set; and (b) apply the 1-SE rule (Friedman et al., 2010).
+Budgets and coverage    We consider ten evenly-spaced budgets nb∈[2.5%,25%]n_{b}\in[2.5\%,25\%] of the question bank and target 95%95\% nominal coverage for all experiments.
+FAQ hyperparameters    For each missingness setting and budget nbn_{b}, we tune (ρ,γ,β0,τ)(\rho,\gamma,\beta_{0},\tau) to minimize mean CI width on HvalH_{\text{val}} (averaged over 5 seeds), using a factor model refit on all of HtrainH_{\text{train}}.88
+8
+On HvalH_{\text{val}}, (β0,τ)=(1.0,0.05)(\beta_{0},\tau)=(1.0,0.05) is a robust default across budget/missingness settings. (ρ,γ)(\rho,\gamma) are more setting-dependent. For tuning, we run FAQ for nbn_{b} rounds per validation model, querying the model on the selected questions if the labels are missing. This mirrors deployment, where tuning expends additional queries on held-out models.
+Baselines    Let p¯j\overline{p}_{j} be the mean of the observed historical outcomes in HH for question jj99
+9
+If question jj is never observed in HH (e.g., when 0.1%0.1\% entries in HH are observed), we impute p¯j\overline{p}_{j} with the global mean of HH., used as a global proxy for question difficulty. For each budget/missingness setting, we compare to sequential active-inference (AIPW) baselines that follow nature’s order: questions arrive in a fixed stream and question tt is labeled with probability πt​(t)\pi_{t}(t). Let ξt∼Bern​(πt​(t))\xi_{t}\sim\text{Bern}(\pi_{t}(t)) indicate labeling. Each baseline uses
+θ^base=1Nq​∑t=1Nq(pbase​(t)+(zt−pbase​(t))​ξtπt​(t)),\displaystyle\hat{\theta}_{\text{base}}=\frac{1}{N_{q}}\sum_{t=1}^{N_{q}}\left(p_{\text{base}}(t)+\left(z_{t}-p_{\text{base}}(t)\right)\frac{\xi_{t}}{\pi_{t}(t)}\right),
+(11)
+with baseline predictor pbase​(t)∈{0,p¯t}p_{\text{base}}(t)\in\{0,\overline{p}_{t}\}. We consider: (a) πt​(t)=nb/Nq\pi_{t}(t)=n_{b}/N_{q}, (Bernoulli); (b) πt​(t)∝p¯t​(1−p¯t)\pi_{t}(t)\propto\sqrt{\overline{p}_{t}(1-\overline{p}_{t})} (Neyman); and (c) πt​(t)∝min⁡(p¯t,1−p¯t)\pi_{t}(t)\propto\min(\overline{p}_{t},1-\overline{p}_{t}) (c.f. Zrnic & Candes (2024)). For (b)-(c), we normalize to probabilities, apply τ\tau-mixing, and use the recommended budget-stabilization wrapper in Equation 8 of Zrnic & Candes (2024). Note that the choice of pbase​(t)=0p_{\text{base}}(t)=0 and πt​(t)=nb/Nq\pi_{t}(t)=n_{b}/N_{q} reduces to uniform sampling.
+Traditional active inference ablation    Since the baselines above omit the factor model—a core component of FAQ—we additionally ablate FAQ to isolate the contribution of PAI and our factor-model-guided hybrid sampling policy. Specifically, we replace PAI and hybrid sampling with Zrnic & Candes (2024)’s sequential active inference—keeping the same factor-model predictions p^j(t)\hat{p}_{j}^{(t)}, using their recommended labeling policies (see Eqs. 3 and 8 therein), and tuning their τ\tau-mixing parameter (Appendix C).
+Metrics    We evaluate (a) coverage and (b) effective sample size (ESS). For each setting, we run 100100 random seeds for each of 2.22.2K test models. In each seed/model, methods output Wald intervals of the form [θ^method±1.96​σmethod][\hat{\theta}_{\text{method}}\pm 1.96\sigma_{\text{method}}] (clipped to be in [0,1][0,1]), where σmethod\sigma_{\text{method}} is computed via the method’s plug-in variance formula at budget nbn_{b}. Coverage is computed as the fraction of intervals containing θ\theta, averaged over models and seeds. ESS at budget nbn_{b} is defined as
+neff:=(σuniform2/σmethod2)​nb,\displaystyle n_{\text{eff}}:=(\sigma^{2}_{\text{uniform}}/\sigma^{2}_{\text{method}})n_{b},
+(12)
+where σuniform2\sigma_{\text{uniform}}^{2} is the plug-in variance of uniform sampling at the same budget nbn_{b}. Intuitively, neffn_{\text{eff}} is the uniform-sampling budget that would yield the same variance as the method at budget nbn_{b}: thus, larger ESS implies stronger performance. We emphasize ESS (over raw interval width) since it directly corresponds to query-cost savings.1010
+10
+Because all tested methods are unbiased and asymptotically normal, ESS gains translate into proportional reductions in MSE.
+Good-faith evaluation    FAQ is tuned using only historical train/validation data (without access to test models). In contrast, to avoid understating baseline performance, we report baselines after post-hoc selection: for each budget/dataset/missingness setting, we sweep baseline/ablation variants/hyperparameters on the test models (100 seeds) and report the best configuration (averaged across seeds), yielding an oracle-style upper bound that favors the baselines.
+Hyperparameter search ranges are in Appendix C. Full results (including widths) can be found in Appendix D.
+5 Empirical Results
+Figure 3: ESS under missing historical data on BBH+GPQA+IFEval+MATH+MuSR. ESS vs. budget for FAQ, the strongest baseline per budget (selected post-hoc), and uniform sampling, per missingness setting. Missingness is parameterized by nfull-obsn_{\text{full-obs}} fully-observed historical rows (out of 2.22.2K) and MCAR entrywise observation probability pobsp_{\text{obs}} on the remaining rows (e.g., nfull-obs=50n_{\text{full-obs}}=50 and pobs=0.1p_{\text{obs}}=0.1 ∼\sim 12%12\% observed). Standard errors are shown, but negligible on the plot scale. MMLU-Pro and coverage results are in Appendix D.
+Our primary experiments compare FAQ’s ESS to uniform sampling and the strongest baselines across two benchmark suites and varying levels of historical-data missingness (Figures 2-3). We also audit FAQ’s finite-sample coverage under realistic deployment shifts—over model release date and model accuracy (Figure 4). Finally, we isolate the additional gains from our PAI framework and our hybrid sampling policy relative to the original sequential active inference procedure (Figure 5).
+Figure 4: Per-model coverages on BBH+GPQA+IFEval+MATH+MuSR with fully-observed historical data at budget 7.5%7.5\%. Per-model coverages (averaged over 100100 seeds) vs. (Left) model release date and (Right) true model accuracy. Gray dots: individual models; solid-blue curve: locally-weighted mean with a K=501K=501 nearest-neighbor Gaussian kernel; light-blue band: local ±1\pm 1 SD band.
+Per setting, one parallelized run of FAQ over 2.22.2K models completes in well under one minute on a single H100 GPU: negligible compared to model inference/evaluation time.
+Fully-observed historical data    With fully-observed HH, FAQ consistently achieves: (a) 44–5×5\times higher ESS than uniform sampling; (b) 1.81.8–2.4×2.4\times higher ESS than the strongest baseline (selected post-hoc per budget); and (c) empirical coverage near the 95%95\% target (Figure 2). These gains are stable across budgets and translate to roughly proportional query-cost savings. At the smallest budgets, FAQ’s ESS and coverage show mild degradation (under 1%1\%)---likely due to noisy early factor estimates and a less accurate martingale-CLT normal approximation.1111
+11
+Future work could explore replacing normal quantiles with tt- or bootstrap-calibrated (over the martingale increments) quantiles. Even there, FAQ still considerably outperforms all of the best baselines.
+Partially-observed historical data    In practice, fully-observed historical data are rarely available at scale due to resource constraints (e.g., 2.22.2K early models, 9.59.5–1212K questions). As such, we evaluated FAQ under progressively sparser historical data. Figure 3 shows that even when only 1212–42%42\% of HH is observed (e.g., nfull-obs∈{50,800}n_{\text{full-obs}}\in\{50,800\} with pobs=0.1p_{\text{obs}}=0.1 on remaining rows), FAQ still substantially outperforms all of the strongest post-hoc-selected baselines.
+Remarkably, even with only 0.1%0.1\% of historical entries observed, FAQ retains a modest but consistent ESS edge (Figure 3, last column). The main exceptions are at the two largest budget values, where the best post-hoc baseline slightly exceeds FAQ. Likely, factors learned under such extreme sparsity are noisy: as tempering weakens late in the budget, FAQ’s oracle-weighted component can over-trust them, causing mild overfitting and a small degradation.
+Coverage audits under deployment shifts    Figure 2 reports coverage aggregated over 2.22.2K models and 100100 seeds. For deployment, it is also important that coverage does not vary systematically across models—e.g., that it is not driven by “easy” extreme-accuracy models while under-covering moderate, high-uncertainty ones. This is especially relevant here because we learn question factors from historical data and then freeze them, initializing new model factors from the historical mean/covariance. As newer models drift from the historical cohort (e.g., via new architectures or training recipes), these factors may become less representative, potentially impacting finite-sample coverage. Consistent with PAI’s guarantee of valid coverage for every evaluated model, Figure 4 shows stable coverage across model release date and model accuracy, with no systematic deviations.
+Figure 5: CI-width ratio (post-hoc best traditional active inference ablation / FAQ) across budgets/missingness. Missingness uses nfull-obs=0n_{\text{full-obs}}=0 and MCAR pobsp_{\text{obs}} (legend values) on the remaining entries. Standard errors are shown, but negligible at the plot scale. Width ratios >1>1 favor FAQ (narrower CIs).
+Methodological gains    To isolate the gains of PAI and our hybrid sampling (beyond the factor model), we compare FAQ to a “traditional” active inference ablation that follows Zrnic & Candes (2024)’s sequential (‘‘nature’s order”)1212
+12
+Here, “nature’s order” refers to the benchmarks’ native question orderings in HuggingFace’s Open LLM Leaderboard. procedure while using the same factor-model predictions. We report CI-width ratios (rather than ESS) since they compare tightness directly across budgets without converting to a uniform-equivalent “budget savings” scale. Figure 5 reveals a clear phase shift. At low-budgets (e.g, <10%<10\% of the bank), FAQ yields substantially narrower CIs; at larger budgets, the traditional ablation eventually overtakes FAQ by similar margins. This is not discouraging: large-scale evaluation (11K+ models, 1010K+ questions) typically emphasizes the low-budget regime where FAQ is strongest. It also suggests a natural extension—a three-stage hybrid policy: active-learning early, oracle-style variance reduction mid-budget, and traditional active inference at the end—combining the best of both worlds.
+Three mechanisms likely drive the shift. First, FAQ can proactively target informative questions early on via its active-learning component, whereas traditional active inference can only label/skip items in a fixed stream and its πt​(t)∝min⁡(p^t(t−1),1−p^t(t−1))\pi_{t}(t)\propto\min(\hat{p}_{t}^{(t-1)},1-\hat{p}_{t}^{(t-1)}) rule contains no explicit active-learning objective—explaining the low-budget gap. Second, at large budgets, FAQ’s sampling with replacement can resample questions, reducing efficiency relative to stream-based procedures that touch each question at most once. Third, our tuned τ\tau-mixing suggests variance control dominates at high budgets: the best post-hoc traditional ablation consistently uses τ=0.75\tau=0.75 (near-uniform query/label probabilities). By contrast, FAQ’s train/val tuning often selects much smaller τ\tau (e.g., 0.050.05 for many budgets ≥10%\geq 10\%), yielding spikey/highly-concentrated qtq_{t}. After the factor model has largely converged, this extra “targeting” offers little learning benefit, but increases AIPW variance through larger weights 1/qt​(It)1/q_{t}(I_{t}), helping explain why the traditional ablation can overtake FAQ at large budgets. Because FAQ targets cost savings, we focus on the low-budget regime.
+6 Discussion and Conclusion
+We introduced Factorized Active Querying (FAQ), a finite-bank framework for LLM evaluation that, under fixed query budgets and with negligible overhead cost, achieves up to 5×5\times higher ESS than uniform sampling and 2.4×2.4\times higher ESS than the strongest baselines—all while maintaining model-free frequentist coverage. FAQ also supports continuous monitoring: each new evaluation both leverages and expands the historical data, enabling progressively more cost-effective uncertainty-quantified evaluation over time.
+Future work is motivated by a few concrete limitations. First, we treat question factors as fixed from historical data: periodically updating them could better track drift and improve efficiency. Second, richer, metadata-informed priors (e.g., parameter count or base model family) may improve low-budget performance. Third, our ablations suggest budget-dependent regimes, motivating three-stage hybrid designs that incorporate traditional active inference at larger budgets. Finally, extending FAQ to non-binary feedback and batched querying would broaden applicability and enable parallel evaluation across adjudicators and inference workers.
+Acknowledgments
+S.W. and Y.N. were both supported by National Science Foundation Graduate Research Fellowships. E.J.C. was supported by the Office of Naval Research grant N000014-20-1-2157. The experiments for this paper were performed on Stanford University’s Sherlock and Marlowe computing clusters. We thank Stanford University and the Stanford Research Computing Center for providing the computational resources and support that contributed to these research results. We additionally thank Scott Linderman for providing access to his H100 GPUs used for some experiments.
+Impact Statement
+Our work provides practitioners with a statistically-principled method for efficiently and accurately evaluating an LLM’s performance using only a fraction of queries compared to traditional methods. This can support more reliable model selection and monitoring by making statistically-rigorous evaluation feasible at scale. At the same time, cheaper evaluation may lower the barrier to not only rapid iteration but also benchmark gaming, so we encourage using FAQ with held-out test suites, transparent and good-faith reporting of configurations and uncertainty, and safety frameworks. We urge the reader to deploy our methods or variants thereof towards the general benefit of society.
+References
+Achiam et al. (2023)
+Achiam, J., Adler, S., Agarwal, S., Ahmad, L., Akkaya, I., Aleman, F. L., Almeida, D., Altenschmidt, J., Altman, S., Anadkat, S., et al.
+GPT-4 Technical Report.
+arXiv preprint arXiv:2303.08774, 2023.
+Angelopoulos et al. (2025)
+Angelopoulos, A. N., Eisenstein, J., Berant, J., Agarwal, A., and Fisch, A.
+Cost-Optimal Active AI Model Evaluation.
+arXiv preprint arXiv:2506.07949, 2025.
+Artsi et al. (2025)
+Artsi, Y., Sorin, V., Glicksberg, B. S., Korfiatis, P., Nadkarni, G. N., and Klang, E.
+Large Language Models in Real-World Clinical Workflows: A Systematic Review of Applications and Implementation.
+Frontiers in Digital Health, 7:1659134, 2025.
+Bai et al. (2024)
+Bai, Y., Tu, S., Zhang, J., Peng, H., Wang, X., Lv, X., Cao, S., Xu, J., Hou, L., Dong, Y., Tang, J., and Li, J.
+LongBench v2: Towards Deeper Understanding and Reasoning on Realistic Long-context Multitasks.
+arXiv preprint arXiv:2412.15204, 2024.
+Bishop & Nasrabadi (2006)
+Bishop, C. M. and Nasrabadi, N. M.
+Pattern Recognition and Machine Learning, volume 4.
+Springer, 2006.
+Chen et al. (2023)
+Chen, Y., Li, C., Ouyang, J., and Xu, G.
+Statistical inference for noisy incomplete binary matrix.
+Journal of Machine Learning Research, 24(95):1–66, 2023.
+Chen et al. (2024)
+Chen, Z. Z., Ma, J., Zhang, X., Hao, N., Yan, A., Nourbakhsh, A., Yang, X., McAuley, J., Petzold, L., and Wang, W. Y.
+A Survey on Large Language Models for Critical Societal Domains: Finance, Healthcare, and Law.
+arXiv preprint arXiv:2405.01769, 2024.
+Cohn et al. (1994)
+Cohn, D., Ghahramani, Z., and Jordan, M.
+Active Learning with Statistical Models.
+Advances in Neural Information Processing Systems, 7, 1994.
+Collins et al. (2001)
+Collins, M., Dasgupta, S., and Schapire, R. E.
+A Generalization of Principal Components Analysis to the Exponential Family.
+Advances in Neural Information Processing Systems, 14, 2001.
+Croxford et al. (2025)
+Croxford, E., Gao, Y., Pellegrino, N., Wong, K., Wills, G., First, E., Liao, F., Goswami, C., Patterson, B., and Afshar, M.
+Current and Future State of Evaluation of Large Language Models for Medical Summarization Tasks.
+NPJ Health Systems, 2(1):6, 2025.
+Dehghani et al. (2025)
+Dehghani, F., Dehghani, R., Naderzadeh Ardebili, Y., and Rahnamayan, S.
+Large Language Models in Legal Systems: A Survey.
+Humanities and Social Sciences Communications, 12(1):1977, 2025.
+Di Fiore et al. (2023)
+Di Fiore, F., Nardelli, M., and Mainini, L.
+Active Learning and Bayesian optimization: A Unified Perspective to Learn with a Goal.
+arXiv preprint arXiv:2303.01560, 2023.
+Ding et al. (2025)
+Ding, J., Ma, S., Cui, L., Zheng, N., and Wei, F.
+LongReasonArena: A Long Reasoning Benchmark for Large Language Models.
+arXiv preprint arXiv:2508.19363, 2025.
+Enguehard et al. (2025)
+Enguehard, J., Van Ermengem, M., Atkinson, K., Cha, S., Chowdhury, A. G., Ramaswamy, P. K., Roghair, J., Marlowe, H. R., Negreanu, C. S., Boxall, K., et al.
+LeMAJ (Legal LLM-as-a-Judge): Bridging Legal Reasoning and LLM Evaluation.
+In Proceedings of the Natural Legal Language Processing Workshop 2025, pp.  318–337, 2025.
+Fedorov (2013)
+Fedorov, V. V.
+Theory of Optimal Experiments.
+Elsevier, 2013.
+Fourrier et al. (2024)
+Fourrier, C., Habib, N., Lozovskaya, A., Szafer, K., and Wolf, T.
+Open LLM Leaderboard v2.
+https://huggingface.co/spaces/open-llm-leaderboard/open_llm_leaderboard, 2024.
+Friedman et al. (2010)
+Friedman, J., Hastie, T., and Tibshirani, R.
+Regularization Paths for Generalized Linear Models via Coordinate Descent.
+Journal of Statistical Software, 33(1):1–22, 2010.
+doi: 10.18637/jss.v033.i01.
+Gligorić et al. (2025)
+Gligorić, K., Zrnic, T., Lee, C., Candes, E., and Jurafsky, D.
+Can Unconfident LLM Annotations be used for Confident Conclusions?
+In Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers), pp.  3514–3533, 2025.
+Hall & Heyde (2014)
+Hall, P. and Heyde, C. C.
+Martingale Limit Theory and its Application.
+Academic press, 2014.
+Hardt (2025)
+Hardt, M.
+The Emerging Science of Machine Learning Benchmarks.
+Manuscript. https://mlbenchmarks. org, 2025.
+He et al. (2024)
+He, Y., Jin, D., Wang, C., Bi, C., Mandyam, K., Zhang, H., Zhu, C., Li, N., Xu, T., Lv, H., et al.
+Multi-IF: Benchmarking LLMs on Multi-Turn and Multilingual Instructions Following.
+arXiv preprint arXiv:2410.15553, 2024.
+Jacod & Protter (2012)
+Jacod, J. and Protter, P.
+Discretization of Processes.
+Springer, 2012.
+Kasneci et al. (2023)
+Kasneci, E., Seßler, K., Küchemann, S., Bannert, M., Dementieva, D., Fischer, F., Gasser, U., Groh, G., Günnemann, S., Hüllermeier, E., et al.
+ChatGPT for Good? On Opportunities and Challenges of Large Language Models for Education.
+Learning and individual differences, 103:102274, 2023.
+Kwan et al. (2024)
+Kwan, W.-C., Zeng, X., Jiang, Y., Wang, Y., Li, L., Shang, L., Jiang, X., Liu, Q., and Wong, K.-F.
+MT-Eval: A Multi-Turn Capabilities Evaluation Benchmark for Large Language Models.
+In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing, pp.  20153–20177, 2024.
+Laufer et al. (2025)
+Laufer, B., Oderinwale, H., and Kleinberg, J.
+Anatomy of a Machine Learning Ecosystem: 2 Million Models on HuggingFace.
+arXiv preprint arXiv:2508.06811, 2025.
+Li et al. (2025)
+Li, D., Sun, R., Huang, Y., Zhong, M., Jiang, B., Han, J., Zhang, X., Wang, W., and Liu, H.
+Preference Leakage: A Contamination Problem in LLM-as-a-Judge.
+arXiv preprint arXiv:2502.01534, 2025.
+Li et al. (2023a)
+Li, G., Hammoud, H., Itani, H., Khizbullin, D., and Ghanem, B.
+CAMEL: Communicative Agents for ”Mind” Exploration of Large Language Model Society.
+Advances in Neural Information Processing Systems, 36:51991–52008, 2023a.
+Li et al. (2023b)
+Li, Y., Wang, S., Ding, H., and Chen, H.
+Large Language Models in Finance: A Survey.
+In Proceedings of the Fourth ACM International Conference on AI in Finance, pp.  374–382, 2023b.
+MacKay (1992)
+MacKay, D. J.
+Information-based objective functions for active data selection.
+Neural Computation, 4(4):590–604, 1992.
+Mazzoni & Sharma (2025)
+Mazzoni, C. and Sharma, A.
+Beyond Vibes: How to Properly Select the Right LLM for the Right Task, 2025.
+URL https://aws.amazon.com/blogs/machine-learning/beyond-vibes-how-to-properly-select-the-right-llm-for-the-right-task/.
+Mnih & Salakhutdinov (2007)
+Mnih, A. and Salakhutdinov, R. R.
+Probabilistic Matrix Factorization.
+Advances in Neural Information Processing Systems, 20, 2007.
+Myrzakhan et al. (2024)
+Myrzakhan, A., Bsharat, S. M., and Shen, Z.
+Open-LLM-Leaderboard: From Multi-Choice to Open-Style Questions for LLMs Evaluation, Benchmark, and Arena.
+arXiv preprint arXiv:2406.07545, 2024.
+Paszke et al. (2019)
+Paszke, A., Gross, S., Massa, F., Lerer, A., Bradbury, J., Chanan, G., Killeen, T., Lin, Z., Gimelshein, N., Antiga, L., et al.
+PyTorch: An Imperative Style, High-Performance Deep Learning Library.
+Advances in Neural Information Processing Systems, 32, 2019.
+Polo et al. (2024)
+Polo, F. M., Weber, L., Choshen, L., Sun, Y., Xu, G., and Yurochkin, M.
+tinyBenchmarks: Evaluating LLMs with Fewer Examples.
+arXiv preprint arXiv:2402.14992, 2024.
+Rein et al. (2024)
+Rein, D., Hou, B. L., Stickland, A. C., Petty, J., Pang, R. Y., Dirani, J., Michael, J., and Bowman, S. R.
+GPQA: A Graduate-Level Google-Proof Q&A Benchmark.
+In First Conference on Language Modeling, 2024.
+Schein & Ungar (2007)
+Schein, A. I. and Ungar, L. H.
+Active Learning for Logistic Regression: An Evaluation.
+Machine Learning, 68(3):235–265, 2007.
+Settles (2009)
+Settles, B.
+Active Learning Literature Survey.
+2009.
+(38)
+Sprague, Z. R., Ye, X., Bostrom, K., Chaudhuri, S., and Durrett, G.
+MuSR: Testing the Limits of Chain-of-thought with Multistep Soft Reasoning.
+In The Twelfth International Conference on Learning Representations.
+Suzgun et al. (2023)
+Suzgun, M., Scales, N., Schärli, N., Gehrmann, S., Tay, Y., Chung, H. W., Chowdhery, A., Le, Q., Chi, E., Zhou, D., et al.
+Challenging Big-Bench Tasks and Whether Chain-of-Thought Can Solve Them.
+In Findings of the Association for Computational Linguistics: ACL 2023, pp.  13003–13051, 2023.
+Szymanski et al. (2025)
+Szymanski, A., Ziems, N., Eicher-Miller, H. A., Li, T. J.-J., Jiang, M., and Metoyer, R. A.
+Limitations of the LLM-as-a-Judge Approach for Evaluating LLM Outputs in Expert Knowledge Tasks.
+In Proceedings of the 30th International Conference on Intelligent User Interfaces, pp.  952–966, 2025.
+Vivek et al. (2024)
+Vivek, R., Ethayarajh, K., Yang, D., and Kiela, D.
+Anchor Points: Benchmarking Models with Much Fewer Examples.
+In Proceedings of the 18th Conference of the European Chapter of the Association for Computational Linguistics (Volume 1: Long Papers), pp.  1576–1601, 2024.
+Wang et al. (2024)
+Wang, Y., Ma, X., Zhang, G., Ni, Y., Chandra, A., Guo, S., Ren, W., Arulraj, A., He, X., Jiang, Z., et al.
+MMLU-Pro: A More Robust and Challenging Multi-Task Language Understanding Benchmark.
+Advances in Neural Information Processing Systems, 37:95266–95290, 2024.
+Whitt (2007)
+Whitt, W.
+Proofs of the Martingale FCLT.
+2007.
+Zhang et al. (2025)
+Zhang, G., Dorner, F. E., and Hardt, M.
+How Benchmark Prediction from Fewer Data Misses the Mark.
+arXiv preprint arXiv:2506.07673, 2025.
+Zhong et al. (2025)
+Zhong, X.-X., Yi, C., and Ye, H.-J.
+Efficient Evaluation of Large Language Models via Collaborative Filtering.
+arXiv preprint arXiv:2504.08781, 2025.
+Zhou et al. (2023)
+Zhou, J., Lu, T., Mishra, S., Brahma, S., Basu, S., Luan, Y., Zhou, D., and Hou, L.
+Instruction-Following Evaluation for Large Language Models.
+CoRR, 2023.
+Zhou et al. (2025)
+Zhou, J. P., Belardi, C. K., Wu, R., Zhang, T., Gomes, C., Sun, W., and Weinberger, K. Q.
+On Speeding Up Language Model Evaluation.
+In The Thirteenth International Conference on Learning Representations, 2025.
+Zouhar et al. (2025)
+Zouhar, V., Cui, P., and Sachan, M.
+How to Select Datapoints for Efficient Human Evaluation of NLG Models?
+Transactions of the Association for Computational Linguistics, 13:1789–1811, 2025.
+Zrnic & Candes (2024)
+Zrnic, T. and Candes, E.
+Active Statistical Inference.
+In International Conference on Machine Learning, pp.  62993–63010. PMLR, 2024.
+Appendix A Proofs and other Formulas
+A.1 Full Historical Factor Model Negative Log-Likelihood Objective
+Let OO be a 0/1-valued Nold×NqN_{\text{old}}\times N_{q} matrix such that Oi​j=1O_{ij}=1 if Hi​jH_{ij} is observed, else Oi​j=0O_{ij}=0. Our historical minimization objective is given by the following:
+L({ui′}i′=1Nold,{vj′}j′=1Nq)=−∑i=1Nold∑j=1NqOi​j(Hi​jlogσ(ui⊤vj)+(1−Hi​j)log(1−σ(ui⊤vj))),\displaystyle L\left(\{u_{i^{\prime}}\}_{i^{\prime}=1}^{N_{\text{old}}},\{v_{j^{\prime}}\}_{j^{\prime}=1}^{N_{q}}\right)=-\sum_{i=1}^{N_{\text{old}}}\sum_{j=1}^{N_{q}}O_{ij}\left(H_{ij}\log\sigma\left(u_{i}^{\top}v_{j}\right)+\left(1-H_{ij}\right)\log\left(1-\sigma\left(u_{i}^{\top}v_{j}\right)\right)\right),
+(13)
+We implement using PyTorch’s binary cross-entropy function for numerical stability. In practice, {ui′}i′=1Nold\{u_{i^{\prime}}\}_{i^{\prime}=1}^{N_{\text{old}}} and {vj′}j′=1Nq\{v_{j^{\prime}}\}_{j^{\prime}=1}^{N_{q}} are fit using AdamW with weight decay λ\lambda for L2 regularization, with (λ,k)(\lambda,k) chosen via cross-validation (Section 4).
+A.2 Derivation of Online Logistic Regression Laplace Approximation Update
+This derivation was inspired by Ch. 4 of (Bishop & Nasrabadi, 2006)’s discussion on Laplace approximations and Bayesian logistic regression. The key idea is to Taylor expand the log-posterior around the current mean, which yields approximate closed-form update formulas while preserving approximate Gaussian conjugacy.
+Suppose at time t−1t-1 we have u∼𝒩⁡(m,S)u\sim\mathcal{N}(m,S). At time tt, we queried zz with corresponding question factor vv.1313
+13
+For notational brevity, we omit random indices ItI_{t}, superscripts, and subscripts. The derivations are left exactly unchanged. Because under our factor model, z∼Bern​(σ⁡(u⊤​v))z\sim\text{Bern}\left(\sigma\left(u^{\top}v\right)\right), by Bayes’ Rule we have the following, where “∼\sim” refers to equality up to an additive constant that does not depend on uu, and σ⁡(x):=11+exp⁡(−x)=exp⁡(x)1+exp⁡(x)\sigma(x):=\frac{1}{1+\exp(-x)}=\frac{\exp(x)}{1+\exp(x)}:
+p⁡(u∣z)∝p⁡(z∣u)​p​(u)∝σ​(u⊤​v)z​(1−σ⁡(u⊤​v))1−z​exp⁡(−12​(u−m)⊤​S−1​(u−m))\displaystyle p(u\mid z)\propto p(z\mid u)p(u)\propto\sigma\left(u^{\top}v\right)^{z}\left(1-\sigma\left(u^{\top}v\right)\right)^{1-z}\exp\left(-\frac{1}{2}\left(u-m\right)^{\top}S^{-1}\left(u-m\right)\right)
+⟹log⁡p⁡(u∣z)∼z​log⁡(σ⁡(u⊤​v))+(1−z)​log⁡(1−σ⁡(u⊤​v))−12​(u−m)⊤​S−1​(u−m)\displaystyle\implies\log p(u\mid z)\sim z\log\left(\sigma\left(u^{\top}v\right)\right)+\left(1-z\right)\log\left(1-\sigma\left(u^{\top}v\right)\right)-\frac{1}{2}\left(u-m\right)^{\top}S^{-1}\left(u-m\right)
+=z​u⊤​v−z​log⁡(1+exp⁡(u⊤​v))−(1−z)​log⁡(1+exp⁡(u⊤​v))−12​(u−m)⊤​S−1​(u−m)\displaystyle=zu^{\top}v-z\log\left(1+\exp\left(u^{\top}v\right)\right)-(1-z)\log\left(1+\exp(u^{\top}v)\right)-\frac{1}{2}\left(u-m\right)^{\top}S^{-1}\left(u-m\right)
+=z​u⊤​v−log⁡(1+exp⁡(u⊤​v))−12​(u−m)⊤​S−1​(u−m).\displaystyle=zu^{\top}v-\log\left(1+\exp(u^{\top}v)\right)-\frac{1}{2}\left(u-m\right)^{\top}S^{-1}\left(u-m\right).
+To apply Laplace’s approximation, we will require a second-order Taylor expansion of log⁡p⁡(u∣z)\log p(u\mid z) about u=mu=m. For now, we proceed by computing the gradient and Hessian of the exact log-posterior:
+∇u​log​p​(u∣z)=z​v−exp⁡(u⊤​v)1+exp⁡(u⊤​v)​v−S−1​(u−m)=z​v−σ⁡(u⊤​v)​v−S−1​(u−m),\displaystyle\nabla_{u}\log p(u\mid z)=zv-\frac{\exp(u^{\top}v)}{1+\exp(u^{\top}v)}v-S^{-1}(u-m)=zv-\sigma\left(u^{\top}v\right)v-S^{-1}(u-m),
+and, noting that ∇xσ​(x)=σ⁡(x)​(1−σ⁡(x))\nabla_{x}\sigma(x)=\sigma(x)(1-\sigma(x)), we have
+∇u2​log⁡p⁡(u∣z)=−S−1−σ⁡(u⊤​v)​(1−σ⁡(u⊤​v))​v​v⊤.\displaystyle\nabla^{2}_{u}\log p(u\mid z)=-S^{-1}-\sigma\left(u^{\top}v\right)\left(1-\sigma\left(u^{\top}v\right)\right)vv^{\top}.
+Assembling our second-order Taylor expansion and defining p^:=σ⁡(u⊤​v)\hat{p}:=\sigma\left(u^{\top}v\right), let
+b=∇u​log​p​(u∣z)∣u=m=z​v−σ⁡(u⊤​v)​v:=(z−p^)​v,\displaystyle b=\nabla_{u}\log p(u\mid z)\mid_{u=m}=zv-\sigma\left(u^{\top}v\right)v:=\left(z-\hat{p}\right)v,
+and
+A=∇u2​log⁡p⁡(u∣z)∣u=m=−S−1−p^​(1−p^)​v​v⊤.\displaystyle A=\nabla^{2}_{u}\log p(u\mid z)\mid_{u=m}=-S^{-1}-\hat{p}\left(1-\hat{p}\right)vv^{\top}.
+Then, we have
+log⁡p⁡(u∣z)≈log⁡p⁡(m∣z)+b⊤​(u−m)+12​(u−m)⊤​A​(u−m)\displaystyle\log p(u\mid z)\approx\log p(m\mid z)+b^{\top}\left(u-m\right)+\frac{1}{2}\left(u-m\right)^{\top}A\left(u-m\right)
+∼b⊤​u+12​u⊤​A​u−u⊤​A​m=12​(u⊤​A​u−2​(A​m−b)⊤​u).\displaystyle\sim b^{\top}u+\frac{1}{2}u^{\top}Au-u^{\top}Am=\frac{1}{2}\left(u^{\top}Au-2\left(Am-b\right)^{\top}u\right).
+After completing the square, we obtain the following
+log⁡p⁡(u∣z)∼12​(u⊤​A​u−2​(A​m−b)⊤​u)∼−12​((u−A−1​(A​m−b))⊤​(−A)​(u−A−1​(A​m−b)))\displaystyle\log p(u\mid z)\sim\frac{1}{2}\left(u^{\top}Au-2\left(Am-b\right)^{\top}u\right)\sim-\frac{1}{2}\left(\left(u-A^{-1}\left(Am-b\right)\right)^{\top}\left(-A\right)\left(u-A^{-1}\left(Am-b\right)\right)\right)
+=−12​((u−(m−A−1​b))⊤​(−A)​(u−(m−A−1​b))).\displaystyle=-\frac{1}{2}\left(\left(u-\left(m-A^{-1}b\right)\right)^{\top}\left(-A\right)\left(u-\left(m-A^{-1}b\right)\right)\right).
+Pattern-matching to the multivariate normal distribution, we deduce that
+u|z​∼⋅​𝒩​(m−A−1​b,−A−1)​=𝑑​𝒩​(m+(S−1+p^​(1−p^)​v​v⊤)−1​(z−p^)​v,(S−1+p^​(1−p^)​v​v⊤)−1).\displaystyle u\mid z\overset{\cdot}{\sim}\mathcal{N}\left(m-A^{-1}b,-A^{-1}\right)\overset{d}{=}\mathcal{N}\left(m+\left(S^{-1}+\hat{p}\left(1-\hat{p}\right)vv^{\top}\right)^{-1}\left(z-\hat{p}\right)v,\left(S^{-1}+\hat{p}\left(1-\hat{p}\right)vv^{\top}\right)^{-1}\right).
+For compute-efficient updates, the Sherman-Morrison formula tells us that
+(S−1+p^​(1−p^)​v​v⊤)−1=S−p^​(1−p^)​S​v​v⊤​S1+p^​(1−p^)​v⊤​S​v.\displaystyle\left(S^{-1}+\hat{p}\left(1-\hat{p}\right)vv^{\top}\right)^{-1}=S-\frac{\hat{p}(1-\hat{p})Svv^{\top}S}{1+\hat{p}(1-\hat{p})v^{\top}Sv}.
+Putting everything together,
+u|z​∼⋅​𝒩​(m+(S−p^​(1−p^)​S​v​v⊤​S1+p^​(1−p^)​v⊤​S​v)​(z−p^)​v,S−p^​(1−p^)​S​v​v⊤​S1+p^​(1−p^)​v⊤​S​v).\displaystyle u\mid z\overset{\cdot}{\sim}\mathcal{N}\left(m+\left(S-\frac{\hat{p}(1-\hat{p})Svv^{\top}S}{1+\hat{p}(1-\hat{p})v^{\top}Sv}\right)\left(z-\hat{p}\right)v,S-\frac{\hat{p}(1-\hat{p})Svv^{\top}S}{1+\hat{p}(1-\hat{p})v^{\top}Sv}\right).
+A.3 Proof of Theorem 3.1
+To formalize asymptotics, we work under a triangular-array setup indexed by mm. Specifically, we consider a sequence of problems {𝒫(m)}m≥1\{\mathcal{P}^{(m)}\}_{m\geq 1}, in which the bank size Nq=Nq(m)N_{q}=N_{q}^{(m)}, the budget nb=nb(m)n_{b}=n_{b}^{(m)}, and all involved quantities–{z1,…,zNq}\{z_{1},\dots,z_{N_{q}}\}, θ\theta, θ^nb\hat{\theta}_{n_{b}}, {p^(t)}0≤t<nb\{\hat{p}^{(t)}\}_{0\leq t<n_{b}}, and {qt​(⋅)}1≤t≤nb\{q_{t}(\cdot)\}_{1\leq t\leq n_{b}}—may depend on mm. All asymptotic statements are in the limit as m→∞m\rightarrow\infty with nb(m)↑∞n_{b}^{(m)}\uparrow\infty. Henceforth, we suppress the superscript (m)(m) for readability.
+A.3.1 Definitions
+Recall that our estimand is θ=1Nq​∑j=1Nqzj\theta=\frac{1}{N_{q}}\sum_{j=1}^{N_{q}}z_{j} and θ^nb=1nb​∑t=1nbϕt\hat{\theta}_{n_{b}}=\frac{1}{n_{b}}\sum_{t=1}^{n_{b}}\phi_{t}, where
+ϕt=1Nq​∑j=1Nqp^j(t−1)+1Nq​zIt−p^It(t−1)qt​(It).\displaystyle\phi_{t}=\frac{1}{N_{q}}\sum_{j=1}^{N_{q}}\hat{p}_{j}^{(t-1)}+\frac{1}{N_{q}}\frac{z_{I_{t}}-\hat{p}_{I_{t}}^{(t-1)}}{q_{t}(I_{t})}.
+Let us define Δt:=ϕt−1Nq​∑j=1Nqzj=ϕt−θ\Delta_{t}:=\phi_{t}-\frac{1}{N_{q}}\sum_{j=1}^{N_{q}}z_{j}=\phi_{t}-\theta and define the filtration ℱt=σ⁡(I1,zI1,…,It,zIt)\mathcal{F}_{t}=\sigma(I_{1},z_{I_{1}},\dots,I_{t},z_{I_{t}}).
+A.3.2 Technical Assumptions/Conditions
+We enumerate the technical assumptions/conditions required to prove the asymptotic normality stated in Theorem 3.1.
+Assumption A.1 (Variance stabilization).
+The average conditional variance converges in probability to a positive deterministic limit σ2\sigma^{2} (which does not depend on (m)(m)):
+1nb​∑t=1nbVar​(Δt∣ℱt−1)​→𝑝​σ2.\displaystyle\frac{1}{{n_{b}}}\sum_{t=1}^{n_{b}}\mbox{Var}\left(\Delta_{t}\mid\mathcal{F}_{t-1}\right)\overset{p}{\to}\sigma^{2}.
+Assumption A.2 (Lindeberg condition).
+The triangular array of problem instances in combination with sampling policies obey the Lindeberg condition. Specifically, for every ϵ>0\epsilon>0,
+1nb​∑t=1nb𝔼⁡[Δt2​𝟏​(|Δt|>ϵ​nb)∣ℱt−1]​→𝑝​0.\displaystyle\frac{1}{{n_{b}}}\sum_{t=1}^{n_{b}}\mathbb{E}[\Delta_{t}^{2}\mbox{\boldmath$1$}(|\Delta_{t}|>\epsilon\sqrt{{n_{b}}})\mid\mathcal{F}_{t-1}]\overset{p}{\to}0.
+Assumption A.3 (Conditional variance control).
+The average conditional variance of the inverse-propensity-weighted predicted probabilities satisfies
+1nb​∑t=1nbVar​(1Nq⋅p^It(t−1)qt​(It)∣ℱt−1)=op​(nb).\frac{1}{n_{b}}\sum_{t=1}^{n_{b}}\mbox{Var}\left(\frac{1}{N_{q}}\cdot\frac{\hat{p}^{(t-1)}_{I_{t}}}{q_{t}(I_{t})}\mid\mathcal{F}_{t-1}\right)=o_{p}(n_{b}).
+Assumptions A.1-A.2 are the standard conditions under which a CLT for martingale difference arrays holds (c.f. Hall & Heyde (2014, Corollary 3.2)). Assumption A.3 is mild and is used to facilitate consistency of the variance estimator. Intuitively, in our setting of LLM evaluation with our proposed hybrid sampling policy (c.f. Eq. 10), the variance stabilization assumption is reasonable because as more outcome labels are observed, the model-factor estimate (u^(t),Σ^(t))(\hat{u}^{(t)},\hat{\Sigma}^{(t)}) stabilizes, which stabilizes p^(t)\hat{p}^{(t)}, and hence qt​(⋅)q_{t}(\cdot), too (because (αt,βt)(\alpha_{t},\beta_{t}) also stabilize). In addition, the Lindeberg condition is satisfied, by construction, under our hybrid sampling policy because τ\tau-mixing lower-bounds qt​(j)q_{t}(j), avoiding extreme inverse-probability weights, and since zj,p^j(t)∈[0,1]z_{j},\hat{p}^{(t)}_{j}\in[0,1], the increments Δt\Delta_{t} are uniformly bounded (by a constant depending only on τ\tau). The τ\tau-mixing also ensures the satisfaction of Assumption A.3.
+A.3.3 Asymptotic Normality via Martingale CLT
+By substitution, we begin with the following:
+nb​(θ^nb−θ)=nb​(1nb​∑t=1nbϕt−1Nq​∑j=1Nqzj).\sqrt{{n_{b}}}\left(\hat{\theta}_{n_{b}}-\theta\right)=\sqrt{{n_{b}}}\left(\frac{1}{{n_{b}}}\sum_{t=1}^{n_{b}}\phi_{t}-\frac{1}{N_{q}}\sum_{j=1}^{N_{q}}z_{j}\right).
+Simplifying, we have
+nb​(θ^nb−θ)=1nb​∑t=1nbϕt−nbNq​∑j=1Nqzj=1nb​∑t=1nbϕt−1nb​Nq​∑t=1nb∑j=1Nqzj\displaystyle\sqrt{{n_{b}}}\left(\hat{\theta}_{n_{b}}-\theta\right)=\frac{1}{\sqrt{{n_{b}}}}\sum_{t=1}^{n_{b}}\phi_{t}-\frac{\sqrt{{n_{b}}}}{N_{q}}\sum_{j=1}^{N_{q}}z_{j}=\frac{1}{\sqrt{{n_{b}}}}\sum_{t=1}^{n_{b}}\phi_{t}-\frac{1}{\sqrt{{n_{b}}}N_{q}}\sum_{t=1}^{n_{b}}\sum_{j=1}^{N_{q}}z_{j}
+=∑t=1nb1nb​(ϕt−1Nq​∑j=1Nqzj)=∑t=1nb1nb​Δt.\displaystyle=\sum_{t=1}^{n_{b}}\frac{1}{\sqrt{{n_{b}}}}\left(\phi_{t}-\frac{1}{N_{q}}\sum_{j=1}^{N_{q}}z_{j}\right)=\sum_{t=1}^{n_{b}}\frac{1}{\sqrt{n_{b}}}\Delta_{t}.
+Next, we will show that the Δt\Delta_{t} are martingale differences—i.e., that their cumulative sums form a martingale.
+Proposition A.4 (Martingale differences and unbiasedness).
+Define MtM_{t} as follows:
+Mt:=∑s=1t(ϕs−1Nq​∑j=1Nqzj):=∑s=1tΔs.M_{t}:=\sum_{s=1}^{t}\left(\phi_{s}-\frac{1}{N_{q}}\sum_{j=1}^{N_{q}}z_{j}\right):=\sum_{s=1}^{t}\Delta_{s}.
+(14)
+Then, (Mt,ℱt)(M_{t},\mathcal{F}_{t}) is a martingale. In particular, θ^nb\hat{\theta}_{n_{b}} is unbiased for θ\theta for every finite nbn_{b}.
+Proof.
+Substituting, we have
+𝔼⁡[Δt∣ℱt−1]\displaystyle\mathbb{E}[\Delta_{t}\mid\mathcal{F}_{t-1}]
+=𝔼⁡[ϕt−1Nq​∑j=1Nqzj∣ℱt−1]\displaystyle=\mathbb{E}\left[\phi_{t}-\frac{1}{N_{q}}\sum_{j=1}^{N_{q}}z_{j}\mid\mathcal{F}_{t-1}\right]
+=1Nq​𝔼​[∑j=1Nqp^j(t−1)+zIt−p^It(t−1)qt​(It)−∑j=1Nqzj∣ℱt−1]\displaystyle=\frac{1}{N_{q}}\mathbb{E}\left[\sum_{j=1}^{N_{q}}\hat{p}_{j}^{(t-1)}+\frac{z_{I_{t}}-\hat{p}_{I_{t}}^{(t-1)}}{q_{t}(I_{t})}-\sum_{j=1}^{N_{q}}z_{j}\mid\mathcal{F}_{t-1}\right]
+=1Nq​𝔼​[∑j=1Nq(p^j(t−1)−zj)+zIt−p^It(t−1)qt​(It)∣ℱt−1]\displaystyle=\frac{1}{N_{q}}\mathbb{E}\left[\sum_{j=1}^{N_{q}}\left(\hat{p}_{j}^{(t-1)}-z_{j}\right)+\frac{z_{I_{t}}-\hat{p}_{I_{t}}^{(t-1)}}{q_{t}(I_{t})}\mid\mathcal{F}_{t-1}\right]
+=1Nq​∑j=1Nq(p^j(t−1)−zj)+1Nq​𝔼​[zIt−p^It(t−1)qt​(It)∣ℱt−1]\displaystyle=\frac{1}{N_{q}}\sum_{j=1}^{N_{q}}\left(\hat{p}_{j}^{(t-1)}-z_{j}\right)+\frac{1}{N_{q}}\mathbb{E}\left[\frac{z_{I_{t}}-\hat{p}_{I_{t}}^{(t-1)}}{q_{t}(I_{t})}\mid\mathcal{F}_{t-1}\right]
+=1Nq​∑j=1Nq(p^j(t−1)−zj)+1Nq​∑j=1Nqzj−p^j(t−1)qt​(j)​P​(It=j∣ℱt−1)\displaystyle=\frac{1}{N_{q}}\sum_{j=1}^{N_{q}}\left(\hat{p}_{j}^{(t-1)}-z_{j}\right)+\frac{1}{N_{q}}\sum_{j=1}^{N_{q}}\frac{z_{j}-\hat{p}_{j}^{(t-1)}}{q_{t}(j)}P(I_{t}=j\mid\mathcal{F}_{t-1})
+=1Nq​∑j=1Nq(p^j(t−1)−zj)+1Nq​∑j=1Nqzj−p^j(t−1)qt​(j)​qt​(j)=0,\displaystyle=\frac{1}{N_{q}}\sum_{j=1}^{N_{q}}\left(\hat{p}_{j}^{(t-1)}-z_{j}\right)+\frac{1}{N_{q}}\sum_{j=1}^{N_{q}}\frac{z_{j}-\hat{p}_{j}^{(t-1)}}{q_{t}(j)}q_{t}(j)=0,
+thus confirming that we have a martingale. As a corollary, by summing and taking expectations, we find that 𝔼⁡[θ^nb]=θ\mathbb{E}[\hat{\theta}_{n_{b}}]=\theta: i.e., that θ^nb\hat{\theta}_{n_{b}} is unbiased for θ\theta at any finite nb{n_{b}}.
+∎
+Given that we have a martingale, we now proceed to obtain the asymptotic variance of θ^nb\hat{\theta}_{n_{b}}. To do, so, we need to first compute the conditional variances of our martingale increments. Because the zjz_{j} are treated as fixed, by substitution we have
+Var​(Δt∣ℱt−1)=1Nq2​Var​(∑j=1Nqp^j(t−1)+zIt−p^It(t−1)qt​(It)−∑j=1Nqzj∣ℱt−1)=1Nq2​Var​(zIt−p^It(t−1)qt​(It)∣ℱt−1)\displaystyle\mbox{Var}\left(\Delta_{t}\mid\mathcal{F}_{t-1}\right)=\frac{1}{N_{q}^{2}}\mbox{Var}\left(\sum_{j=1}^{N_{q}}\hat{p}_{j}^{(t-1)}+\frac{z_{I_{t}}-\hat{p}_{I_{t}}^{(t-1)}}{q_{t}(I_{t})}-\sum_{j=1}^{N_{q}}z_{j}\mid\mathcal{F}_{t-1}\right)=\frac{1}{N_{q}^{2}}\mbox{Var}\left(\frac{z_{I_{t}}-\hat{p}_{I_{t}}^{(t-1)}}{q_{t}(I_{t})}\mid\mathcal{F}_{t-1}\right)
+=1Nq2​𝔼​[(zIt−p^It(t−1)qt​(It))2∣ℱt−1]−1Nq2​𝔼​[zIt−p^It(t−1)qt​(It)∣ℱt−1]2\displaystyle=\frac{1}{N_{q}^{2}}\mathbb{E}\left[\left(\frac{z_{I_{t}}-\hat{p}_{I_{t}}^{(t-1)}}{q_{t}(I_{t})}\right)^{2}\mid\mathcal{F}_{t-1}\right]-\frac{1}{N_{q}^{2}}\mathbb{E}\left[\frac{z_{I_{t}}-\hat{p}_{I_{t}}^{(t-1)}}{q_{t}(I_{t})}\mid\mathcal{F}_{t-1}\right]^{2}
+=1Nq2​∑j=1Nq(zj−p^j(t−1)qt​(j))2​P​(It=j∣ℱt−1)−1Nq2​(∑j=1Nqzj−p^j(t−1)qt​(j)​P​(It=j))2\displaystyle=\frac{1}{N_{q}^{2}}\sum_{j=1}^{N_{q}}\left(\frac{z_{j}-\hat{p}_{j}^{(t-1)}}{q_{t}(j)}\right)^{2}P(I_{t}=j\mid\mathcal{F}_{t-1})-\frac{1}{N_{q}^{2}}\left(\sum_{j=1}^{N_{q}}\frac{z_{j}-\hat{p}_{j}^{(t-1)}}{q_{t}(j)}P(I_{t}=j)\right)^{2}
+=1Nq2​(∑j=1Nq(zj−p^j(t−1))2qt​(j)−(∑j=1Nq(zj−p^j(t−1)))2).\displaystyle=\frac{1}{N_{q}^{2}}\left(\sum_{j=1}^{N_{q}}\frac{\left(z_{j}-\hat{p}_{j}^{(t-1)}\right)^{2}}{q_{t}(j)}-\left(\sum_{j=1}^{N_{q}}\left(z_{j}-\hat{p}_{j}^{(t-1)}\right)\right)^{2}\right).
+Under Assumptions A.1-A.2, the martingale central limit theorem (c.f.,  Hall & Heyde (2014, Corollary 3.2)) implies
+nb​(θ^nb−θ)​→𝑑​𝒩​(0,σ2).\sqrt{{n_{b}}}\left(\hat{\theta}_{n_{b}}-\theta\right)\overset{d}{\to}\mathcal{N}\left(0,\sigma^{2}\right).
+(15)
+Lemma A.5 below shows that σ^nb2​→𝑝​σ2\hat{\sigma}_{n_{b}}^{2}\overset{p}{\rightarrow}\sigma^{2}, and thus the result follows by Slutsky’s theorem.
+Lemma A.5.
+Define
+σ^nb2=1nb​Nq2​∑t=1nb(zIt−p^It(t−1))2qt​(It)2−1nb​Nq2​∑t=1nb(1nb​∑s=1nbzIsqs​(Is)−∑j=1Nqp^j(t−1))2.\hat{\sigma}_{n_{b}}^{2}=\frac{1}{{n_{b}}N_{q}^{2}}\sum_{t=1}^{n_{b}}\frac{\left(z_{I_{t}}-\hat{p}_{I_{t}}^{(t-1)}\right)^{2}}{q_{t}(I_{t})^{2}}-\frac{1}{{n_{b}}N_{q}^{2}}\sum_{t=1}^{n_{b}}\left(\frac{1}{{n_{b}}}\sum_{s=1}^{n_{b}}\frac{z_{I_{s}}}{q_{s}(I_{s})}-\sum_{j=1}^{N_{q}}\hat{p}_{j}^{(t-1)}\right)^{2}.
+(16)
+Then σ^nb2​→𝑝​σ2\hat{\sigma}_{n_{b}}^{2}\overset{p}{\rightarrow}\sigma^{2}.
+Proof.
+Define
+A^nb:=1nb​Nq2​∑t=1nb(zIt−p^It(t−1))2qt​(It)2,B^nb:=1nb​Nq2​∑t=1nb(1nb​∑s=1nbzIsqs​(Is)−∑j=1Nqp^j(t−1))2\hat{A}_{n_{b}}:=\frac{1}{{n_{b}}N_{q}^{2}}\sum_{t=1}^{n_{b}}\frac{\left(z_{I_{t}}-\hat{p}_{I_{t}}^{(t-1)}\right)^{2}}{q_{t}(I_{t})^{2}},\hat{B}_{n_{b}}:=\frac{1}{{n_{b}}N_{q}^{2}}\sum_{t=1}^{n_{b}}\left(\frac{1}{{n_{b}}}\sum_{s=1}^{n_{b}}\frac{z_{I_{s}}}{q_{s}(I_{s})}-\sum_{j=1}^{N_{q}}\hat{p}_{j}^{(t-1)}\right)^{2}
+as well as
+A:=1nb​∑t=1nb1Nq2​∑j=1Nq(zj−p^j(t−1))2qt​(j),B:=1nb​∑t=1nb1Nq2​(∑j=1Nq(zj−p^j(t−1)))2A:=\frac{1}{n_{b}}\sum_{t=1}^{n_{b}}\frac{1}{N_{q}^{2}}\sum_{j=1}^{N_{q}}\frac{\left(z_{j}-\hat{p}_{j}^{(t-1)}\right)^{2}}{q_{t}(j)},\;B:=\frac{1}{n_{b}}\sum_{t=1}^{n_{b}}\frac{1}{N_{q}^{2}}\left(\sum_{j=1}^{N_{q}}\left(z_{j}-\hat{p}_{j}^{(t-1)}\right)\right)^{2}
+To show that σ^nb2​→𝑝​σ2\hat{\sigma}_{n_{b}}^{2}\overset{p}{\rightarrow}\sigma^{2}, it suffices to show that (a) A^nb=A+op​(1)\hat{A}_{n_{b}}=A+o_{p}(1) and (b) B^nb=B+op​(1)\hat{B}_{n_{b}}=B+o_{p}(1). We show these below:
+(a)
+Define θ~(t−1):=1Nq​∑j=1Nqp^j(t−1)\tilde{\theta}^{(t-1)}:=\frac{1}{N_{q}}\sum_{j=1}^{N_{q}}\hat{p}^{(t-1)}_{j}. Under Assumptions A.1–A.2, Hall & Heyde (2014, Theorem 2.23) guarantees that
+op​(1)\displaystyle o_{p}(1)
+=1nb​∑t=1nb[(1Nq​zIt−p^It(t−1)qt​(It)+θ~(t−1)−θ)2−(1Nq2​∑j=1Nq(zj−p^j(t−1))2qt​(j)−(θ~(t−1)−θ)2)]\displaystyle=\frac{1}{n_{b}}\sum_{t=1}^{n_{b}}\left[\left(\frac{1}{N_{q}}\frac{z_{I_{t}}-\hat{p}^{(t-1)}_{I_{t}}}{q_{t}(I_{t})}+\tilde{\theta}^{(t-1)}-\theta\right)^{2}-\left(\frac{1}{N_{q}^{2}}\sum_{j=1}^{N_{q}}\frac{\left(z_{j}-\hat{p}^{(t-1)}_{j}\right)^{2}}{q_{t}(j)}-(\tilde{\theta}^{(t-1)}-\theta)^{2}\right)\right]
+=A^nb−A+1nb​∑t=1nb[2​(θ~(t−1)−θ)2−2​(θ−θ~(t−1))​(1Nq​zIt−p^It(t−1)qt​(It))].\displaystyle=\hat{A}_{n_{b}}-A+\frac{1}{n_{b}}\sum_{t=1}^{n_{b}}\left[2(\tilde{\theta}^{(t-1)}-\theta)^{2}-2(\theta-\tilde{\theta}^{(t-1)})\left(\frac{1}{N_{q}}\frac{z_{I_{t}}-\hat{p}^{(t-1)}_{I_{t}}}{q_{t}(I_{t})}\right)\right].
+To show that A^nb−A=op​(1)\hat{A}_{n_{b}}-A=o_{p}(1) it suffices to show that
+1nb​∑t=1nb(θ−θ~(t−1))​(θ−θ~(t−1)−1Nq​zIt−p^It(t−1)qt​(It))=op​(1).\frac{1}{n_{b}}\sum_{t=1}^{n_{b}}\left(\theta-\tilde{\theta}^{(t-1)}\right)\left(\theta-\tilde{\theta}^{(t-1)}-\frac{1}{N_{q}}\frac{z_{I_{t}}-\hat{p}^{(t-1)}_{I_{t}}}{q_{t}(I_{t})}\right)=o_{p}(1).
+(17)
+To show (17), we apply the Lenglart inequality (c.f., e.g., Whitt (2007, Lemma 3.7) or Jacod & Protter (2012, pp. 45)) to obtain
+P⁡(|1nb​∑t=1nb(θ−θ~(t−1))​(θ−θ~(t−1)−1Nq​zIt−p^It(t−1)qt​(It))|≥ϵ)≤ηϵ+P⁡(1nb2​∑t=1nb𝔼⁡[(θ−θ~(t−1))2​(θ−θ~(t−1)−1Nq​zIt−p^It(t−1)qt​(It))2∣ℱt−1]≥η)P\left(\left|\frac{1}{n_{b}}\sum_{t=1}^{n_{b}}\left(\theta-\tilde{\theta}^{(t-1)}\right)\left(\theta-\tilde{\theta}^{(t-1)}-\frac{1}{N_{q}}\frac{z_{I_{t}}-\hat{p}^{(t-1)}_{I_{t}}}{q_{t}(I_{t})}\right)\right|\geq\epsilon\right)\leq\\
+\frac{\eta}{\epsilon}+P\left(\frac{1}{n_{b}^{2}}\sum_{t=1}^{n_{b}}\mathbb{E}\left[\left(\theta-\tilde{\theta}^{(t-1)}\right)^{2}\left(\theta-\tilde{\theta}^{(t-1)}-\frac{1}{N_{q}}\frac{z_{I_{t}}-\hat{p}^{(t-1)}_{I_{t}}}{q_{t}(I_{t})}\right)^{2}\mid\mathcal{F}_{t-1}\right]\geq\eta\right)
+for all ϵ,η>0\epsilon,\eta>0. Hence, it suffices to show that 1nb2​∑t=1nb𝔼⁡[(θ−θ~(t−1))2​(θ−θ~(t−1)−1Nq​zIt−p^It(t−1)qt​(It))2∣ℱt−1]=op​(1)\frac{1}{n_{b}^{2}}\sum_{t=1}^{n_{b}}\mathbb{E}\left[\left(\theta-\tilde{\theta}^{(t-1)}\right)^{2}\left(\theta-\tilde{\theta}^{(t-1)}-\frac{1}{N_{q}}\frac{z_{I_{t}}-\hat{p}^{(t-1)}_{I_{t}}}{q_{t}(I_{t})}\right)^{2}\mid\mathcal{F}_{t-1}\right]=o_{p}(1) which is true by virtue of the fact that (θ−θ~(t−1))2≤1(\theta-\tilde{\theta}^{(t-1)})^{2}\leq 1 in combination with Assumption A.1.
+(b)
+Expanding both squares, we find that
+B^nb−B\displaystyle\hat{B}_{n_{b}}-B
+=(1nb​∑s=1nb1Nq⋅zIsqs​(Is))2−θ2−2​θ~(t−1)​[1nb​∑s=1nb1Nq⋅zIsqs​(Is)−θ]\displaystyle=\left(\frac{1}{n_{b}}\sum_{s=1}^{n_{b}}\frac{1}{N_{q}}\cdot\frac{z_{I_{s}}}{q_{s}(I_{s})}\right)^{2}-\theta^{2}-2\tilde{\theta}^{(t-1)}\left[\frac{1}{n_{b}}\sum_{s=1}^{n_{b}}\frac{1}{N_{q}}\cdot\frac{z_{I_{s}}}{q_{s}(I_{s})}-\theta\right]
+=(1nb​∑s=1nb1Nq⋅zIsqs​(Is)−θ)2+2​θ​(1nb​∑s=1nb1Nq⋅zIsqs​(Is)−θ)−2​θ~(t−1)​[1nb​∑s=1nb1Nq⋅zIsqs​(Is)−θ].\displaystyle=\left(\frac{1}{n_{b}}\sum_{s=1}^{n_{b}}\frac{1}{N_{q}}\cdot\frac{z_{I_{s}}}{q_{s}(I_{s})}-\theta\right)^{2}+2\theta\left(\frac{1}{n_{b}}\sum_{s=1}^{n_{b}}\frac{1}{N_{q}}\cdot\frac{z_{I_{s}}}{q_{s}(I_{s})}-\theta\right)-2\tilde{\theta}^{(t-1)}\left[\frac{1}{n_{b}}\sum_{s=1}^{n_{b}}\frac{1}{N_{q}}\cdot\frac{z_{I_{s}}}{q_{s}(I_{s})}-\theta\right].
+As θ,θ~(t−1)∈[0,1]\theta,\tilde{\theta}^{(t-1)}\in[0,1], it suffices to show that 1nb​∑s=1nb1Nq⋅zIsqs​(Is)−θ​→𝑝​0.\frac{1}{n_{b}}\sum_{s=1}^{n_{b}}\frac{1}{N_{q}}\cdot\frac{z_{I_{s}}}{q_{s}(I_{s})}-\theta\overset{p}{\rightarrow}0. Since θ^nb−θ​→𝑝​0\hat{\theta}_{n_{b}}-\theta\overset{p}{\rightarrow}0 it further suffices to show that 1nb​∑t=1nb1Nq​p^It(t−1)qt​(It)−1Nq​∑j=1Nqp^j(t−1)=op​(1)\frac{1}{n_{b}}\sum_{t=1}^{n_{b}}\frac{1}{N_{q}}\frac{\hat{p}^{(t-1)}_{I_{t}}}{q_{t}(I_{t})}-\frac{1}{N_{q}}\sum_{j=1}^{N_{q}}\hat{p}^{(t-1)}_{j}=o_{p}(1). Following the same argument as in the previous item, this is implied by
+1nb2​∑t=1nbVar​(1Nq⋅p^It(t−1)qt​(It)∣ℱt−1)​→𝑝​0,\frac{1}{n_{b}^{2}}\sum_{t=1}^{n_{b}}\mbox{Var}\left(\frac{1}{N_{q}}\cdot\frac{\hat{p}^{(t-1)}_{I_{t}}}{q_{t}(I_{t})}\mid\mathcal{F}_{t-1}\right)\overset{p}{\rightarrow}0,
+which is precisely Assumption A.3.
+∎
+A.4 Proof of Theorem 3.2
+Replacing p^j(t−1)\hat{p}_{j}^{(t-1)} with our non-time-varying oracle pjp_{j}’s, our estimator after nbn_{b} sampling rounds becomes
+θ^nb,oracle=1nb​∑t=1nb(θ∗+1Nq​zIt−pItqt​(It))=θ∗+1nb​Nq​∑t=1nbzIt−pItqt​(It).\displaystyle\hat{\theta}_{{n_{b}},\text{oracle}}=\frac{1}{{n_{b}}}\sum_{t=1}^{n_{b}}\left(\theta^{*}+\frac{1}{N_{q}}\frac{z_{I_{t}}-p_{I_{t}}}{q_{t}(I_{t})}\right)=\theta^{*}+\frac{1}{{n_{b}}N_{q}}\sum_{t=1}^{n_{b}}\frac{z_{I_{t}}-p_{I_{t}}}{q_{t}(I_{t})}.
+Because θ∗\theta^{*} is deterministic, to minimize the variance of θ^nb,oracle\hat{\theta}_{{n_{b}},\text{oracle}}, it suffices to minimize the variance of Mnb=∑t=1nbzIt−pItqt​(It)M_{n_{b}}=\sum_{t=1}^{n_{b}}\frac{z_{I_{t}}-p_{I_{t}}}{q_{t}(I_{t})}. Define the filtration ℱt=σ⁡(I1,zI1,…,It,zIt)\mathcal{F}_{t}=\sigma(I_{1},z_{I_{1}},\dots,I_{t},z_{I_{t}}). Writing out the variance, we have the following, noting that because θ^nb,oracle\hat{\theta}_{{n_{b}},\text{oracle}} is unbiased for θ\theta, it must follow that 𝔼⁡[Mnb]=0\mathbb{E}[M_{n_{b}}]=0 and thus
+Var​(Mnb)=𝔼⁡[Mnb2]−𝔼​[Mnb]2=𝔼⁡[Mnb2]=𝔼⁡[(∑s=1nbzIs−pIsqs​(Is))​(∑t=1nbzIt−pItqt​(It))]\displaystyle\mbox{Var}(M_{n_{b}})=\mathbb{E}\left[M_{n_{b}}^{2}\right]-\mathbb{E}\left[M_{n_{b}}\right]^{2}=\mathbb{E}[M_{n_{b}}^{2}]=\mathbb{E}\left[\left(\sum_{s=1}^{n_{b}}\frac{z_{I_{s}}-p_{I_{s}}}{q_{s}(I_{s})}\right)\left(\sum_{t=1}^{n_{b}}\frac{z_{I_{t}}-p_{I_{t}}}{q_{t}(I_{t})}\right)\right]
+=𝔼⁡[∑s=1nb(zIs−pIsqs​(Is))2+2​∑1≤s<t≤nb(zIs−pIsqs​(Is))​(zIt−pItqt​(It))].\displaystyle=\mathbb{E}\left[\sum_{s=1}^{n_{b}}\left(\frac{z_{I_{s}}-p_{I_{s}}}{q_{s}(I_{s})}\right)^{2}+2\sum_{1\leq s<t\leq{n_{b}}}\left(\frac{z_{I_{s}}-p_{I_{s}}}{q_{s}(I_{s})}\right)\left(\frac{z_{I_{t}}-p_{I_{t}}}{q_{t}(I_{t})}\right)\right].
+Now, for any s<ts<t, we deduce the following, because zIs−pIsqs​(Is)\frac{z_{I_{s}}-p_{I_{s}}}{q_{s}(I_{s})} and qt​(⋅)q_{t}(\cdot) are ℱt−1\mathcal{F}_{t-1}-measurable:
+𝔼​[(zIs−pIsqs​(Is))​(zIt−pItqt​(It))]\displaystyle\mathbb{E}\left[\left(\frac{z_{I_{s}}-p_{I_{s}}}{q_{s}(I_{s})}\right)\left(\frac{z_{I_{t}}-p_{I_{t}}}{q_{t}(I_{t})}\right)\right]
+=𝔼⁡[𝔼⁡[(zIs−pIsqs​(Is))​(zIt−pItqt​(It))∣ℱt−1]]\displaystyle=\mathbb{E}\left[\mathbb{E}\left[\left(\frac{z_{I_{s}}-p_{I_{s}}}{q_{s}(I_{s})}\right)\left(\frac{z_{I_{t}}-p_{I_{t}}}{q_{t}(I_{t})}\right)\mid\mathcal{F}_{t-1}\right]\right]
+=𝔼⁡[(zIs−pIsqs​(Is))​𝔼​[(zIt−pItqt​(It))∣ℱt−1]]\displaystyle=\mathbb{E}\left[\left(\frac{z_{I_{s}}-p_{I_{s}}}{q_{s}(I_{s})}\right)\mathbb{E}\left[\left(\frac{z_{I_{t}}-p_{I_{t}}}{q_{t}(I_{t})}\right)\mid\mathcal{F}_{t-1}\right]\right]
+=𝔼[(zIs−pIsqs​(Is))∑j=1Nq𝔼[(zIt−pItqt​(It))∣It=j,ℱt−1]P(It=j∣ℱt−1)]\displaystyle=\mathbb{E}\left[\left(\frac{z_{I_{s}}-p_{I_{s}}}{q_{s}(I_{s})}\right)\sum_{j=1}^{N_{q}}\mathbb{E}\left[\left(\frac{z_{I_{t}}-p_{I_{t}}}{q_{t}(I_{t})}\right)\mid I_{t}=j,\mathcal{F}_{t-1}\right]P(I_{t}=j\mid\mathcal{F}_{t-1})\right]
+=𝔼[(zIs−pIsqs​(Is))∑j=1Nq𝔼[(zj−pjqt​(j))∣It=j,ℱt−1]qt(j)]\displaystyle=\mathbb{E}\left[\left(\frac{z_{I_{s}}-p_{I_{s}}}{q_{s}(I_{s})}\right)\sum_{j=1}^{N_{q}}\mathbb{E}\left[\left(\frac{z_{j}-p_{j}}{q_{t}(j)}\right)\mid I_{t}=j,\mathcal{F}_{t-1}\right]q_{t}(j)\right]
+=𝔼[(zIs−pIsqs​(Is))∑j=1Nq𝔼[zj−pj∣It=j,ℱt−1]]=0,\displaystyle=\mathbb{E}\left[\left(\frac{z_{I_{s}}-p_{I_{s}}}{q_{s}(I_{s})}\right)\sum_{j=1}^{N_{q}}\mathbb{E}\left[z_{j}-p_{j}\mid I_{t}=j,\mathcal{F}_{t-1}\right]\right]=0,
+because for all jj, 𝔼[zj−pj∣It=j,ℱt−1]=𝔼[zj−pj]=0\mathbb{E}\left[z_{j}-p_{j}\mid I_{t}=j,\mathcal{F}_{t-1}\right]=\mathbb{E}\left[z_{j}-p_{j}\right]=0 by our oracle setup assumptions. Thus, by linearity, conditional independences, and variance of the Bernoulli, we have the following, noting that qt​(⋅)q_{t}(\cdot) is ℱt−1\mathcal{F}_{t-1}-measurable:
+Var​(Mnb)\displaystyle\mbox{Var}(M_{n_{b}})
+=∑t=1nb𝔼⁡[(zIt−pItqt​(It))2]=∑t=1nb𝔼⁡[𝔼⁡[(zIt−pItqt​(It))2∣ℱt−1]]\displaystyle=\sum_{t=1}^{n_{b}}\mathbb{E}\left[\left(\frac{z_{I_{t}}-p_{I_{t}}}{q_{t}(I_{t})}\right)^{2}\right]=\sum_{t=1}^{n_{b}}\mathbb{E}\left[\mathbb{E}\left[\left(\frac{z_{I_{t}}-p_{I_{t}}}{q_{t}(I_{t})}\right)^{2}\mid\mathcal{F}_{t-1}\right]\right]
+=∑t=1nb𝔼[∑j=1Nq𝔼[(zIt−pItqt​(It))2∣It=j,ℱt−1]P(It=j∣ℱt−1)]\displaystyle=\sum_{t=1}^{n_{b}}\mathbb{E}\left[\sum_{j=1}^{N_{q}}\mathbb{E}\left[\left(\frac{z_{I_{t}}-p_{I_{t}}}{q_{t}(I_{t})}\right)^{2}\mid I_{t}=j,\mathcal{F}_{t-1}\right]P(I_{t}=j\mid\mathcal{F}_{t-1})\right]
+=∑t=1nb𝔼[∑j=1Nq𝔼[(zj−pjqs​(j))2∣It=j,ℱt−1]qt(j)]\displaystyle=\sum_{t=1}^{n_{b}}\mathbb{E}\left[\sum_{j=1}^{N_{q}}\mathbb{E}\left[\left(\frac{z_{j}-p_{j}}{q_{s}(j)}\right)^{2}\mid I_{t}=j,\mathcal{F}_{t-1}\right]q_{t}(j)\right]
+=∑t=1nb𝔼⁡[∑j=1Nq𝔼[(zj−pj)2∣It=j,ℱt−1]qt​(j)]\displaystyle=\sum_{t=1}^{n_{b}}\mathbb{E}\left[\sum_{j=1}^{N_{q}}\frac{\mathbb{E}\left[\left(z_{j}-p_{j}\right)^{2}\mid I_{t}=j,\mathcal{F}_{t-1}\right]}{q_{t}(j)}\right]
+=∑t=1nb𝔼⁡[∑j=1Nqpj​(1−pj)qt​(j)].\displaystyle=\sum_{t=1}^{n_{b}}\mathbb{E}\left[\sum_{j=1}^{N_{q}}\frac{p_{j}(1-p_{j})}{q_{t}(j)}\right].
+At this point, note that we are minimizing a sum over tt of quantities that are nonnegative, as the pjp_{j} are nonnegative and the qt​(⋅)q_{t}(\cdot) are strictly positive by definition. From our final expression, there is also no temporal dependency between qs​(⋅)q_{s}(\cdot) and qt​(⋅)q_{t}(\cdot) for s<ts<t. Finally, once provided with our choice of candidate qt​(⋅)q_{t}(\cdot), the quantities inside the expectations are now deterministic. Combined, these three points tell us that (a) minimizing Var​(Mnb)\mbox{Var}(M_{n_{b}}) entails minimizing the instantaneous variance contributions ∑j=1Nqpj​(1−pj)/qt​(j)\sum_{j=1}^{N_{q}}p_{j}(1-p_{j})/q_{t}(j) at each time step ss; and (b) this instantaneous variance contribution minimization is the same across all timesteps. Specifically, at each time step tt, we want to solve the following minimization problem, which is strictly convex because pj​(1−pj)p_{j}(1-p_{j}) are all nonnegative, and the qt​(j)q_{t}(j) are all strictly positive:
+min⁡∑j=1Nqqt​(⋅)⁡pj​(1−pj)qt​(j)s.t.qt​(j)>0​∀j,∑j=1Nqqt​(j)=1.\displaystyle\min_{q_{t}(\cdot)}\sum_{j=1}^{N_{q}}\frac{p_{j}(1-p_{j})}{q_{t}(j)}\quad\text{s.t.}\quad q_{t}(j)>0\;\forall j,\;\sum_{j=1}^{N_{q}}q_{t}(j)=1.
+Treating qt​(⋅)q_{t}(\cdot) as a vector and setting up the Lagrangian, we have
+L⁡(qt​(⋅),λ)=∑j=1Nqpj​(1−pj)qt​(j)+λ⁡(∑j=1Nqqt​(j)−1).\displaystyle L(q_{t}(\cdot),\lambda)=\sum_{j=1}^{N_{q}}\frac{p_{j}(1-p_{j})}{q_{t}(j)}+\lambda\left(\sum_{j=1}^{N_{q}}q_{t}(j)-1\right).
+Partial-differentiating to obtain first-order conditions, we have
+∂L⁡(qt​(⋅),λ)∂qt​(j)=−pj​(1−pj)qt​(j)2+λ=0⟹qt∗​(j)2=pj​(1−pj)λ⟹qt∗​(j)∝pj​(1−pj),\displaystyle\frac{\partial L(q_{t}(\cdot),\lambda)}{\partial q_{t}(j)}=-\frac{p_{j}(1-p_{j})}{q_{t}(j)^{2}}+\lambda=0\implies{q_{t}^{*}(j)}^{2}=\frac{p_{j}(1-p_{j})}{\lambda}\implies q_{t}^{*}(j)\propto\sqrt{p_{j}(1-p_{j})},
+exactly as desired, and emphasizing that the oracle-optimal qt∗​(j)q_{t}^{*}(j) are not time-varying. Because of the strict convexity of our minimization problem, such a solution is the unique minimizer.
+A.5 Derivation of (Approximate) Maximal Variance-Reducing Index
+Under the idealized assumptions of Section 3.4, suppose at time tt that
+u|ℱt−1∼𝒩⁡(u^(t−1),Σ^(t−1)),\displaystyle u\mid\mathcal{F}_{t-1}\sim\mathcal{N}\left(\hat{u}^{(t-1)},\hat{\Sigma}^{(t-1)}\right),
+and recall that
+θ∗:=g⁡(u)=1Nq​∑j=1Nqσ⁡(u⊤​vj).\displaystyle\theta^{*}:=g(u)=\frac{1}{N_{q}}\sum_{j=1}^{N_{q}}\sigma\left(u^{\top}v_{j}\right).
+Under our Laplace approximation update derivation setup in Appendix A.2, we know that with p^j(t−1):=σ(u^(t−1)vj⊤)\hat{p}_{j}^{(t-1)}:=\sigma\left(\hat{u}^{(t-1)}{}^{\top}v_{j}\right),
+u|ℱt−1,zj​∼⋅​𝒩​(u^(t−1)+(Σ^(t−1)−p^j(t−1)​(1−p^j(t−1))​Σ^(t−1)​vj​vj⊤​Σ^(t−1)1+p^j(t−1)​(1−p^j(t−1))​vj⊤​Σ^(t−1)​vj)​(zj−p^j(t−1))​vjCLOSE,\displaystyle u\mid\mathcal{F}_{t-1},z_{j}\overset{\cdot}{\sim}\mathcal{N}\bigg(\hat{u}^{(t-1)}+\left(\hat{\Sigma}^{(t-1)}-\frac{\hat{p}_{j}^{(t-1)}(1-\hat{p}_{j}^{(t-1)})\hat{\Sigma}^{(t-1)}v_{j}v_{j}^{\top}\hat{\Sigma}^{(t-1)}}{1+\hat{p}_{j}^{(t-1)}(1-\hat{p}_{j}^{(t-1)})v_{j}^{\top}\hat{\Sigma}^{(t-1)}v_{j}}\right)\left(z_{j}-\hat{p}_{j}^{(t-1)}\right)v_{j},
+(18)
+OPENΣ^(t−1)−p^j(t−1)​(1−p^j(t−1))​Σ^(t−1)​vj​vj⊤​Σ^(t−1)1+p^j(t−1)​(1−p^j(t−1))​vj⊤​Σ^(t−1)​vj).\displaystyle\hat{\Sigma}^{(t-1)}-\frac{\hat{p}_{j}^{(t-1)}(1-\hat{p}_{j}^{(t-1)})\hat{\Sigma}^{(t-1)}v_{j}v_{j}^{\top}\hat{\Sigma}^{(t-1)}}{1+\hat{p}_{j}^{(t-1)}(1-\hat{p}_{j}^{(t-1)})v_{j}^{\top}\hat{\Sigma}^{(t-1)}v_{j}}\bigg).
+(19)
+Define w^j(t−1):=p^j(t−1)(1−p^j(t−1))=σ(u^(t−1)vj⊤)(1−σ(u^(t−1)vj⊤))\hat{w}^{(t-1)}_{j}:=\hat{p}_{j}^{(t-1)}\left(1-\hat{p}_{j}^{(t-1)}\right)=\sigma\left(\hat{u}^{(t-1)}{}^{\top}v_{j}\right)\left(1-\sigma\left(\hat{u}^{(t-1)}{}^{\top}v_{j}\right)\right). Then,
+Var​(u∣ℱt−1,zj)=Σ^(t−1)−w^j(t−1)​Σ^(t−1)​vj​vj⊤​Σ^(t−1)1+w^j(t−1)​vj⊤​Σ^(t−1)​vj.\displaystyle\mbox{Var}\left(u\mid\mathcal{F}_{t-1},z_{j}\right)=\hat{\Sigma}^{(t-1)}-\frac{\hat{w}^{(t-1)}_{j}\hat{\Sigma}^{(t-1)}v_{j}v_{j}^{\top}\hat{\Sigma}^{(t-1)}}{1+\hat{w}^{(t-1)}_{j}v_{j}^{\top}\hat{\Sigma}^{(t-1)}v_{j}}.
+Now, differentiating and recalling that σ′​(z)=σ⁡(z)​(1−σ⁡(z))\sigma^{\prime}(z)=\sigma(z)\left(1-\sigma(z)\right), we have
+∇ug​(u)=1Nq​∑j=1Nqσ⁡(u⊤​vj)​(1−σ⁡(u⊤​vj))​vj.\displaystyle\nabla_{u}g(u)=\frac{1}{N_{q}}\sum_{j=1}^{N_{q}}\sigma\left(u^{\top}v_{j}\right)\left(1-\sigma\left(u^{\top}v_{j}\right)\right)v_{j}.
+(20)
+By the normal approximation associated with the multivariate Delta method, it follows that
+Var​(θ∗∣ℱt−1,zj)≈(∇ug​(u)∣u=u^(t−1))⊤​Var​(u∣ℱt−1,zj)​(∇ug​(u)∣u=u^(t−1)).\displaystyle\mbox{Var}\left(\theta^{*}\mid\mathcal{F}_{t-1},z_{j}\right)\approx\left(\nabla_{u}g(u)\mid_{u=\hat{u}^{(t-1)}}\right)^{\top}\mbox{Var}\left(u\mid\mathcal{F}_{t-1},z_{j}\right)\left(\nabla_{u}g(u)\mid_{u=\hat{u}^{(t-1)}}\right).
+Plugging in u^(t−1)\hat{u}^{(t-1)} instead of using the mean parameter update in Equation 18 because we do not have access to zjz_{j} yet (as we have not queried our next point yet), by a similar argument as above we have
+Var​(θ∗∣ℱt−1)≈(∇ug​(u)∣u=u^(t−1))⊤​Var​(u∣ℱt−1)​(∇ug​(u)∣u=u^(t−1)).\displaystyle\mbox{Var}\left(\theta^{*}\mid\mathcal{F}_{t-1}\right)\approx\left(\nabla_{u}g(u)\mid_{u=\hat{u}^{(t-1)}}\right)^{\top}\mbox{Var}\left(u\mid\mathcal{F}_{t-1}\right)\left(\nabla_{u}g(u)\mid_{u=\hat{u}^{(t-1)}}\right).
+Subtracting, we obtain the following approximate variance reduction after substituting u^(t−1)\hat{u}^{(t-1)} into Equation 20:
+Var​(θ∗∣ℱt−1)−Var​(θ∗∣ℱt−1,zj)\displaystyle\mbox{Var}\left(\theta^{*}\mid\mathcal{F}_{t-1}\right)-\mbox{Var}\left(\theta^{*}\mid\mathcal{F}_{t-1},z_{j}\right)
+≈1Nq2​(∑j′=1Nqw^j′(t−1)​vj′)⊤​(w^j(t−1)​Σ^(t−1)​vj​vj⊤​Σ^(t−1)1+w^j(t−1)​vj⊤​Σ^(t−1)​vj)​(∑j′=1Nqw^j′(t−1)​vj′)\displaystyle\approx\frac{1}{N_{q}^{2}}\left(\sum_{j^{\prime}=1}^{N_{q}}\hat{w}^{(t-1)}_{j^{\prime}}v_{j^{\prime}}\right)^{\top}\left(\frac{\hat{w}^{(t-1)}_{j}\hat{\Sigma}^{(t-1)}v_{j}v_{j}^{\top}\hat{\Sigma}^{(t-1)}}{1+\hat{w}^{(t-1)}_{j}v_{j}^{\top}\hat{\Sigma}^{(t-1)}v_{j}}\right)\left(\sum_{j^{\prime}=1}^{N_{q}}\hat{w}^{(t-1)}_{j^{\prime}}v_{j^{\prime}}\right)
+=1Nq2​w^j(t−1)​(vj⊤​Σ^(t−1)​∑j′=1Nqw^j′(t−1)​vj′)21+w^j(t−1)​vj⊤​Σ^(t−1)​vj.\displaystyle=\frac{1}{N_{q}^{2}}\frac{\hat{w}^{(t-1)}_{j}\left(v_{j}^{\top}\hat{\Sigma}^{(t-1)}\sum_{j^{\prime}=1}^{N_{q}}\hat{w}^{(t-1)}_{j^{\prime}}v_{j^{\prime}}\right)^{2}}{1+\hat{w}^{(t-1)}_{j}v_{j}^{\top}\hat{\Sigma}^{(t-1)}v_{j}}.
+Thus, the index ItI_{t} that, upon being queried, most reduces the (approximate) posterior variance of θ∗\theta^{*} is
+It=argmaxjw^j(t−1)​(vj⊤​Σ^(t−1)​1Nq​∑j′=1Nqw^j′(t−1)​vj′)21+w^j(t−1)​vj⊤​Σ^(t−1)​vj.\displaystyle I_{t}=\operatornamewithlimits{argmax}_{j}\frac{\hat{w}^{(t-1)}_{j}\left(v_{j}^{\top}\hat{\Sigma}^{(t-1)}\frac{1}{N_{q}}\sum_{j^{\prime}=1}^{N_{q}}\hat{w}^{(t-1)}_{j^{\prime}}v_{j^{\prime}}\right)^{2}}{1+\hat{w}^{(t-1)}_{j}v_{j}^{\top}\hat{\Sigma}^{(t-1)}v_{j}}.
+Appendix B Investigating Sampling With/Without Replacement
+A natural question is whether we can sample questions without replacement, since re-querying the same question appears wasteful. An instinctive ad-hoc implementation is to “zero out” the sampling probabilities of previously-queried questions and renormalize before drawing the next index.
+However, making this change while keeping the same PAI estimator and variance estimate is not theoretically supported and can be empirically harmful at moderate-to-large budgets. Recall that Theorem 3.1 was proven via a martingale CLT and that our proof treated Δt:=ϕt−θ\Delta_{t}:=\phi_{t}-\theta, with
+ϕt=1Nq​∑j=1Nqp^j(t−1)+1Nq​zIt−p^It(t−1)qt​(It),\displaystyle\phi_{t}=\frac{1}{N_{q}}\sum_{j=1}^{N_{q}}\hat{p}_{j}^{(t-1)}+\frac{1}{N_{q}}\frac{z_{I_{t}}-\hat{p}_{I_{t}}^{(t-1)}}{q_{t}(I_{t})},
+as martingale differences/increments with respect to the filtration ℱt\mathcal{F}_{t}. With with-replacement sampling, at each round we draw our next question It∼qt​(⋅)I_{t}\sim q_{t}(\cdot) (c.f. our hybrid sampling policy in Eq. 10) over the full question bank, and the inverse-probability correction in ϕt\phi_{t} uses qt​(It)q_{t}(I_{t}). This alignment is what enables our martingale structure and makes Assumptions A.1-A.2 plausible: as our model-factor estimate (u^(t),Σ^(t))(\hat{u}^{(t)},\hat{\Sigma}^{(t)}) stabilizes as we observe more question labels, the predicted probabilities p^(t)\hat{p}^{(t)} and, by extension, the sampling policy qt​(⋅)q_{t}(\cdot), also stabilize. This is important because now it is reasonable that the average conditional variance nb−1​∑t=1nbVar​(Δt∣ℱt−1)n_{b}^{-1}\sum_{t=1}^{n_{b}}\mbox{Var}(\Delta_{t}\mid\mathcal{F}_{t-1}) converges to a finite limit v2v^{2}—the crux of Assumption A.1.
+Figure 6: Coverage and RMSE of FAQ with/without replacement on MMLU-Pro with fully-observed historical data. (Left) coverage and (Right) RMSE of θ^nb\hat{\theta}_{n_{b}} as a function of budget nbn_{b}, for FAQ sampling with/without replacement. Standard errors are shown, but negligible on the plot scale. Targeted nominal coverage for all experiments shown was 95%95\%.
+Under the ad-hoc without-replacement modification, we are no longer drawing the next question from qtq_{t}: rather, we are drawing from the restriction of qtq_{t} to the remaining unseen questions Rt−1R_{t-1}—let us call this restriction q~t\tilde{q}_{t}. The key point is that q~t​(⋅)\tilde{q}_{t}(\cdot) is no longer aligned with PAI’s estimator and variance estimate formulas—which both still use qt​(It)q_{t}(I_{t}). As such, we no longer have martingale differences,1414
+14
+A consequence of this is also that θ^nb\hat{\theta}_{n_{b}} is no longer unbiased for θ\theta. thus hindering our martingale CLT argument and undermining our regularity conditions in Assumptions A.1-A.2. For one, with our ad-hoc without-replacement modification, our qt​(⋅)q_{t}(\cdot) are no longer lower-bounded, leading to unbounded inverse-probability corrections 1/qt​(⋅)1/q_{t}(\cdot) and challenging Assumption A.2. Without access to the martingale CLT, our resulting normal approximation and variance estimate can become miscalibrated.
+Empirically, Figure 6 (Left) corroborates this: at moderate-to-large budgets, the ad-hoc without-replacement variant suffers from substantial miscoverage at moderate to large budgets. At low budgets, the difference in coverage is smaller because repeat sampling of questions is rarer, and thus the two sampling schemes behave similarly. We also observe from Figure 6 (Right) that the ad-hoc without-replacement modification yields little improvement in RMSE (point estimate performance).
+For these reasons, we recommend sampling with replacement when using FAQ/PAI to preserve theoretically-guaranteed uncertainty quantification, with minimal loss in point-estimation performance.
+Appendix C Additional Experimental Details
+Datasets    We compile our historical data from the HuggingFace Open LLM Leaderboard (Fourrier et al., 2024; Myrzakhan et al., 2024). We create one benchmark from MMLU-Pro (Wang et al., 2024) itself with Nq=12032N_{q}=12032 questions, and aggregate the remaining datasets—BBH (Suzgun et al., 2023), GPQA (Rein et al., 2024), IFEval (Zhou et al., 2023), MATH (Li et al., 2023a), and MuSR (Sprague et al., )—into a second benchmark with Nq=9574N_{q}=9574 questions.
+Historical splits and missingness    For experiments comparing FAQ to the strongest baselines and uniform sampling, we consider the fully-observed historical data setting and the following (nfull-obs,pobs)(n_{\text{full-obs}},p_{\text{obs}}) pairs: (50,0.1)(50,0.1), (200,0.1)(200,0.1), (800,0.1)(800,0.1), and a particularly extremely-sparse (0,0.001)(0,0.001) setting.
+For our traditional active inference ablation experiments, we consider the fully-observed data setting and the following (nfull-obs,pobs)(n_{\text{full-obs}},p_{\text{obs}}) pairs: (0,0.01)(0,0.01), (0,0.001)(0,0.001), (0,0.0001)(0,0.0001), and (0,0.00001)(0,0.00001). We chose this range of missingness settings after observing the results of FAQ against the strongest baselines and uniform sampling, and desired missingness-settings that would best distinguish between FAQ and the traditional active inference ablation.
+Factor model selection    We use the AdamW optimizer with weight decay λ\lambda, learning rate 10−210^{-2}, and maximum iterations 20002000, implemented in PyTorch (Paszke et al., 2019). We sweep over latent factor dimension k∈{8,16,32,64}k\in\{8,16,32,64\} and weight decay λ∈{101,100,10−1,10−2,10−3,10−4,10−5}\lambda\in\{10^{1},10^{0},10^{-1},10^{-2},10^{-3},10^{-4},10^{-5}\}.
+FAQ hyperparameters    We sweep over the maximum tempering exponent β0∈{0.25,0.5,0.75,1.0}\beta_{0}\in\{0.25,0.5,0.75,1.0\}, the tempering governor γ∈{0.0,0.05,0.25,0.5,0.75}\gamma\in\{0.0,0.05,0.25,0.5,0.75\}, the exploration-to-exploitation governor ρ∈{0.0,0.05,0.25,0.5,0.75}\rho\in\{0.0,0.05,0.25,0.5,0.75\}, and the uniform-mixing strength τ∈{0.05,0.25,0.5,0.75}\tau\in\{0.05,0.25,0.5,0.75\}.
+Baselines and active inference ablation    We sweep over uniform mixing strength τ∈{0.05,0.25,0.5,0.75}\tau\in\{0.05,0.25,0.5,0.75\}.
+All source code and analysis routines for reproducing all results in this paper can be found at https://github.com/skbwu/efficiently-evaluating-llms.
+Appendix D Additional Results
+Figure 7: ESS under missing historical data on MMLU-Pro and BBH+GPQA+IFEval+MATH+MuSR. ESS vs. budget for FAQ, the strongest baseline per budget (selected post-hoc), and uniform sampling, per missingness setting. Missingness is parameterized by nfull-obsn_{\text{full-obs}} fully-observed historical rows (out of 2.22.2K) and MCAR entrywise observation probability pobsp_{\text{obs}} on the remaining rows (e.g., nfull-obs=50n_{\text{full-obs}}=50 and pobs=0.1p_{\text{obs}}=0.1 ∼\sim 12%12\% observed). Standard errors are shown, but negligible on the plot scale. This figure shows the full results corresponding to Figure 3 in the main text.
+Figure 8: Coverage under missing historical data on MMLU-Pro and BBH+GPQA+IFEval+MATH+MuSR. Coverage vs. budget for FAQ, the strongest baseline per budget (selected post-hoc), and uniform sampling, per missingness setting. Missingness is parameterized by nfull-obsn_{\text{full-obs}} fully-observed historical rows (out of 2.22.2K) and MCAR entrywise observation probability pobsp_{\text{obs}} on the remaining rows (e.g., nfull-obs=50n_{\text{full-obs}}=50 and pobs=0.1p_{\text{obs}}=0.1 ∼\sim 12%12\% observed). Standard errors are shown, but negligible on the plot scale. This figure confirms that the results in Figure 3 in the main text were achieved with valid coverage.
+Figure 9: Confidence interval (CI) widths under missing historical data on MMLU-Pro and BBH+GPQA+IFEval+MATH+MuSR. CI width vs. budget for FAQ, the strongest baseline per budget (selected post-hoc), and uniform sampling, per missingness setting. Missingness is parameterized by nfull-obsn_{\text{full-obs}} fully-observed historical rows (out of 2.22.2K) and MCAR entrywise observation probability pobsp_{\text{obs}} on the remaining rows (e.g., nfull-obs=50n_{\text{full-obs}}=50 and pobs=0.1p_{\text{obs}}=0.1 ∼\sim 12%12\% observed). Standard errors are shown, but negligible on the plot scale. Smaller CI widths indicate stronger performance.
+Figure 10: Per-model coverages on MMLU-Pro with fully-observed historical data at budget 7.5%7.5\%. Per-model coverages (averaged over 100100 seeds) vs. (Left) model release date and (Right) true model accuracy. Gray dots: individual models; solid-blue curve: locally-weighted mean with a K=501K=501 nearest-neighbor Gaussian kernel; light-blue band: local ±1\pm 1 SD band. This figure shows the MMLU-Pro counterpart to Figure 4 in the main text.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

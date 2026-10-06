@@ -1,0 +1,52 @@
+# 本日 exact-v1 准入判断 B（未冻结）
+
+只根据本日恢复的完整 v1 题摘；DATE/QUERY 不是确定候选，EX不评分。5=2+1+2，6=2+2+2；D表示实际设计反证/安全变化须定点深审。原题摘见V3_V1_AB_060_071至084_107及CLI完整恢复。
+
+- [2602.10503v1](https://arxiv.org/abs/2602.10503v1) | 5 | action chunk的离散一致性/连续轨迹对齐/format过程reward分开训练，需核continualforgetting真实差额与SFT同预算。
+- [2602.10512v1](https://arxiv.org/abs/2602.10512v1) | 5 | 在Lipschitz有限MDP和cut-DAG条件下，平铺cut-free树相对分层learner指数sample成本；核采用命题的必要理论假设，不把未在Books定位的旧判断当强制深入理由。
+- [2602.10513v1](https://arxiv.org/abs/2602.10513v1) | 5 | low-rank复合矩阵的收敛退化分析与complex adapter tailored loss；核理论假设和vision foundation适用。
+- [2602.10520v1](https://arxiv.org/abs/2602.10520v1) | 5 | looped LM终态GRPO忽略latent trajectory；RLTT跨中间latent状态分配credit，核同训推条件与外部verifier依赖。
+- [2602.10525v1](https://arxiv.org/abs/2602.10525v1) | 5D | 模糊variant按actual terminal state divergence而非LLM ambiguity标签验证，区分outcome-critical/divergent/benign并评价clarification成本。
+- [2602.10531v1](https://arxiv.org/abs/2602.10531v1) | 5 | fresh target mixture可随时间衰减仍在sample-size条件下恢复分布；限next-token统计模型。不因理论新颖或未定位的普遍collapse旧判断自动强制深入，采用条件定理时核必要证明。
+- [2602.10538v1](https://arxiv.org/abs/2602.10538v1) | 5 | finite-horizon statistical provability分解score/search approximation与representation margin；核证书条件，不能推worst-case易解。
+- [2602.10545v1](https://arxiv.org/abs/2602.10545v1) | 6 | upscaling保持模型等价的width扩展与muTransfer条件，改变larger-target只能重新调超参的选择。
+- [2602.10551v1](https://arxiv.org/abs/2602.10551v1) | DATE | 3D hybrid positional frequency与Chebyshev mask改变视觉时空locality，但ICRA2026先公开线索须定点核。
+- [2602.10556v1](https://arxiv.org/abs/2602.10556v1) | 5 | language-form low-level actions使跨embodiment零样本迁移可行性需重判，不把自然语言编码本身当成熟原理贡献。
+- [2602.10560v1](https://arxiv.org/abs/2602.10560v1) | 5 | evidence-free chunk导致memory爆炸和无exit多余compute；分别reward update/exit gate，核extra训练与提前退出失败。
+- [2602.10564v1](https://arxiv.org/abs/2602.10564v1) | 6 | 跨epoch activation temporal reuse配阈值调节减少split-training传输；核梯度陈旧/quality和U形隐私边界。
+- [2602.10568v1](https://arxiv.org/abs/2602.10568v1) | 6D | Gauss-Newton retain输出约束映射weights并用K-FAC近似；遗忘update再应用保持效应，核unlearning不是删除保证。
+- [2602.10583v1](https://arxiv.org/abs/2602.10583v1) | DATE | dynamic span词表DAG路径而非token-tree GFlowNet，有增量但ICLR2026先公开须核。
+- [2602.10584v1](https://arxiv.org/abs/2602.10584v1) | 5D | DP参数谱诊断调clipping阈值不查询raw per-example norm；postprocessing会计边界需核。
+- [2602.10604v1](https://arxiv.org/abs/2602.10604v1) | DATE | Step3.5 Flash既有发布/报告家族首公开须核；3:1attention+MTP组合不足准入，定点是否新off-policy训练机制。
+- [2602.10609v1](https://arxiv.org/abs/2602.10609v1) | 5 | token IS ratio的局部结构错配用causal Kalman latent ratio平滑，核目标偏差和collapse对照。
+- [2602.10615v1](https://arxiv.org/abs/2602.10615v1) | 6 | PLDES对重复contention memoize、steadyflow跳时并保持离散事件一致性；核errorbound与训练通信sim可比。
+- [2602.10623v1](https://arxiv.org/abs/2602.10623v1) | 5 | BT内nonnegative sparse latent reward factor和amortizedBayes推断，核debias不是默认保证。
+- [2602.10635v1](https://arxiv.org/abs/2602.10635v1) | 5（root必要core准入通过） | 原EX理由过粗，经root完整AB复核重开唯一决定性core；实际层级sample/task绝对group-normalized advantage proxy→各层geometric-reference相对缩放+惯性平滑，是不同于只task normalize的具体机制，5=2+1+2。geometric mean=1并不保证真实gradient/update总量不变，不作通用无偏保证；准入不等Evidence完成。
+- [2602.10639v1](https://arxiv.org/abs/2602.10639v1) | 6D | temporal perturbation可黑箱触发VideoLLM输出重复而accuracy未捕获，需核时序控制与security命题适用。
+- [2602.10652v1](https://arxiv.org/abs/2602.10652v1) | 5 | memory marginal utility在semantic neighborhood多query而非同题评价，改变抽取/管理仅拟合instance的reward。
+- [2602.10656v1](https://arxiv.org/abs/2602.10656v1) | EX | 新audioRAG benchmark与成熟audio→retrieval→reasoning流程；低得分/加入external知识本身未新增已知blindspot之外的归因条件。
+- [2602.10657v1](https://arxiv.org/abs/2602.10657v1) | 5D | 四pretraining语料10bench受控unigram overlap预测性能，反侧修正bench天然OOD判断；不把相关性当因果。
+- [2602.10675v1](https://arxiv.org/abs/2602.10675v1) | EX | 预训练video generator+image comprehension生成future-frame reasoning配新dataset，题摘只有任务指标，未新增transition可验证性/模块成立边界。
+- [2602.10680v1](https://arxiv.org/abs/2602.10680v1) | 5D | 高维双latent spiked模型非线性AE恢复PCA不可见higher-order结构且更高testloss可有更好representation，限理论模型。
+- [2602.10693v1](https://arxiv.org/abs/2602.10693v1) | 6 | variational proposal闭式sequence IS reshaping不lengthnorm，核64xstaleness及async稳定对照。
+- [2602.10698v1](https://arxiv.org/abs/2602.10698v1) | EX | VGGT depth cues+action-prior auxiliary+2D融合是成熟表示/监督组合在VLA的应用，仅generalization指标未明确新有效条件。
+- [2602.10715v1](https://arxiv.org/abs/2602.10715v1) | 5D | cue-trigger semantic disconnect使fact recall/stringmatch评估漏latent userconstraints，constraint consistency改变memory质量判定。
+- [2602.10717v1](https://arxiv.org/abs/2602.10717v1) | EX | video prediction→adversarial few-step distillation→action+realobservation校正是已有模块组合；摘要没有新的feedback成立条件或状态保证。
+- [2602.10718v1](https://arxiv.org/abs/2602.10718v1) | 6 | MLA heteroprecision和sharedKV pertoken scale reduction轴错配导致FP8PV重构，已校准且必要方法评价已读。
+- [2602.10729v1](https://arxiv.org/abs/2602.10729v1) | 6 | quality约束routing与异构GPU deployment联合MOBO，核联合选择相对分别优化的cost/SLO取舍；MLSys2026早公开线索定点核。
+- [2602.10740v1](https://arxiv.org/abs/2602.10740v1) | EX（root必要core实际核通过） | §4.3–4.4只有线性gold-prefix退出、线性reward阈值与1/(1.5+meanreward)难例weight；熟悉curriculum/引导/reweight组合未给新的选择成立条件，任务指标本身不足准入。
+- [2602.10743v1](https://arxiv.org/abs/2602.10743v1) | DATE | information-form Kalman updates用associative scan并维护beliefuncertainty，但EurIPS2025 workshop旧公开版本须核。
+- [2602.10764v1](https://arxiv.org/abs/2602.10764v1) | 5 | CM lossdivergence/首步error accumulation通过subtrajectory targets和N2Nmap处理，核boundaryregularizer及新可变步sampling。
+- [2602.10780v1](https://arxiv.org/abs/2602.10780v1) | EX | 普通image DNN backdoor用latent方向反向修复，题摘没有foundation model新边界/保证；主题安全信号需独立复核。
+- [2602.10796v1](https://arxiv.org/abs/2602.10796v1) | 5 | write-forget decoupling加learned residual proxy允许parallel Rank-L更新替代串行TTT，核theory与174x吞吐分母。
+- [2602.10801v1](https://arxiv.org/abs/2602.10801v1) | EX | QA/probability输入训练confidence classifier及no-probability替代为成熟blackbox calibration/distillation组合，指标提高未给新可识别knowledge条件。
+- [2602.10809v1](https://arxiv.org/abs/2602.10809v1) | 5 | 跨visualhistory关联context决定检索而单图semanticmatching不能，需核paired独立vscontext评估证明盲区，不把新benchmark本身当贡献。
+- [2602.10814v1](https://arxiv.org/abs/2602.10814v1) | 5 | primitiveGUI与compositeAPI两协议隔离program reasoning和visuomotor execution，runtime tests识别reasoning-acting混杂。
+- [2602.10815v1](https://arxiv.org/abs/2602.10815v1) | 6D | VLM RL优于SFT的OOD差异可能由mediumdifficulty隐式filter而非目标必优，difficultycuratedSFT反超，核预算/数据控制。
+- [2602.10816v1](https://arxiv.org/abs/2602.10816v1) | DATE | internalstate扰动最大容忍TCB与embedding geometry关系补confidence盲区；ICLR2026首公开须核。
+- [2602.10819v1](https://arxiv.org/abs/2602.10819v1) | 5D | rephrase off-policy解答再替换低reward rollout声称strictly onpolicy，需核采样条件分布，不把同模型生成等同onpolicy。
+- [2602.10825v1](https://arxiv.org/abs/2602.10825v1) | 6 | AR视频chunk同时刻denoise异质性打破uniformcache假设；独立chunk刷新和importance/redundancyKV压缩，核质量-成本取舍。
+- [2602.10833v1](https://arxiv.org/abs/2602.10833v1) | 5D | matchedhuman/LLMtext及训练阶段控制显示dense retriever sourcebias非先天，MSMARCO训练方向和perplexity解释反证。
+- [2602.10863v1](https://arxiv.org/abs/2602.10863v1) | EX（root实际决定性core通过） | §4 Eq7–16以同atomicunit ID归组的获得/未获得两人口经验成功频差、空bin退batchmean，再做turn均值/衰减/tool归一化+terminal advantage；未给识别条件且非干预counterfactual。相较anchor-state仅换观察归组ID与视觉snapshot场景，成熟association/rewardshaping配方没有新增AI-System有效/失效边界，数字不足；停止实验展开，不概括为所有creditassignment无贡献。
+- [2602.10874v1](https://arxiv.org/abs/2602.10874v1) | EX | hardnegative/anchor/boundary采样+textual momentum semanticclustering是成熟promptoptimizer组合，题摘只有平均gain无成立/失效新边界。
+- [2602.10880v1](https://arxiv.org/abs/2602.10880v1) | EX | chart结构IR+balanced数据+结构reward用于chart-to-code，是成熟结构监督组合与场景指标，无基础模型新机制或评价归因边界。

@@ -1,0 +1,722 @@
+https://arxiv.org/html/2601.20829v1
+Training Reasoning Models on Saturated Problems via Failure-Prefix Conditioning
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+3 RLVR and Saturated Problems
+3.1 GRPO Training
+3.2 Training with Saturated Problems
+4 Methodology
+4.1 Motivation
+4.2 Methodology: Failure-Prefix Conditioning
+5 Experiment
+5.1 Experiment Settings
+5.2 Main Results
+5.3 Ablation Study: Sensitivity to Target Accuracy τ\tau
+6 Why Failure-Prefix Conditioning Works
+6.1 MDP Model
+6.2 Recovery from Failure Prefixes
+7 Iterative Failure-Prefix Conditioning
+8 Conclusion
+References
+A Appendix
+A.1 GRPO Training Details
+Library
+Prompt Setting
+Reward Function
+Clip-Higher
+Training Hyperparameters
+A.2 Evaluation Details
+Libraries
+Inference Hyperparameters
+Full Evaluation Results
+A.3 Failure-Prefix-Conditioned Dataset Details
+Dataset Details
+Inference Settings for Measuring Rollout Accuracy
+Identifying saturated questions
+A.4 Recovery from Failure Prefixes
+Inference Settings.
+A.5 Derivation of Question-Level Weights and Their Relation to Reward Variance
+Setup
+Normalized advantage
+GRPO-style objective
+Structural assumption on ff
+Decomposition by reward outcomes.
+Emergence of the variance-based weight
+Implication
+License: CC BY 4.0
+arXiv:2601.20829v1 [cs.LG] 28 Jan 2026
+Training Reasoning Models on Saturated Problems
+via Failure-Prefix Conditioning
+Minwu Kim
+Affiliation: New York University Abu Dhabi
+Correspondence to: mwk300@nyu.edu
+Safal Shrestha
+Affiliation: New York University Abu Dhabi
+Keith Ross
+Affiliation: New York University Abu Dhabi
+Abstract
+Reinforcement Learning with Verifiable Rewards (RLVR) has substantially improved the reasoning abilities of large language models (LLMs), yet training often stalls as problems become saturated.
+We identify the core challenge as the poor accessibility of informative failures: learning signals exist but are rarely encountered during standard rollouts.
+To address this, we propose failure-prefix conditioning, a simple and effective method for learning from saturated problems. Rather than starting from the original question, our approach reallocates exploration by conditioning training on prefixes derived from rare incorrect reasoning trajectories, thereby exposing the model to failure-prone states.
+We observe that failure-prefix conditioning yields performance gains matching those of training on medium-difficulty problems, while preserving token efficiency. Furthermore, we analyze the model’s robustness, finding that our method reduces performance degradation under misleading failure prefixes, albeit with a mild trade-off in adherence to correct early reasoning. Finally, we demonstrate that an iterative approach, which refreshes failure prefixes during training, unlocks additional gains after performance plateaus. Overall, our results suggest that failure-prefix conditioning offers an effective pathway to extend RLVR training on saturated problems.11
+1
+Code available at https://github.com/minwukim/training-on-saturated-problems.
+Figure 1: Illustration of standard GRPO training and failure-prefix conditioning on saturated problems. While standard GRPO predominantly generates correct rollouts, failure-prefix conditioning exposes the model to failure-prone reasoning states, making informative failures more accessible.
+1 Introduction
+Reinforcement Learning with Verifiable Rewards (RLVR) has substantially improved the reasoning capabilities of large language models (LLMs) (Lambert et al., 2025; Guo et al., 2025; OpenAI, 2024). However, as models improve, an increasing number of training problems become saturated, meaning the model solves them correctly in nearly all rollouts. On these problems, training often stalls because rewards become nearly deterministic, leaving little learning signals.
+Importantly, saturation does not imply that the learning signal is exhausted. Even on problems with near-perfect rollout accuracy, incorrect reasoning trajectories still exist, albeit extremely rarely under standard sampling.
+As established in prior work, such informative failures play a crucial role in training (Setlur et al., 2025; Zhu et al., 2025b).
+However, most of the sampling budget is spent generating redundant correct solutions, with failures becoming exceedingly sparse (Wang et al., 2025).
+This suggests that the core challenge in learning from saturated problems is not the absence of informative failures, but their poor accessibility. If failures could be encountered more frequently, RLVR could continue to make progress even on saturated problems.
+To this end, we propose failure-prefix conditioning, a simple and effective method for learning from saturated problems in RLVR. As shown in Figure 1, instead of sampling from the original question, this method explicitly targets failure-prone reasoning states.
+We identify rare incorrect rollouts from saturated questions, slice them into prefixes, and select the specific prefix lengths that maximize the learning signal (i.e., target accuracy τ=0.5\tau=0.5) (Li et al., 2025). Training on the resulting failure-prefix-conditioned dataset reallocates exploration toward failure-prone regions of the response space, enabling effective learning from saturated problems.
+We validate the effectiveness of this approach through an in-depth experimental study. Using DeepSeek-R1-Distill-Qwen-1.5B (Guo et al., 2025) as our base model, we identify 1,000 saturated math questions where the model achieves a rollout accuracy 31/32 (≈97%\approx 97\%). We apply failure-prefix conditioning to these questions and train our failure-prefix model using RLVR on the resulting prefix-conditioned dataset. We compare our approach against two baselines: (i) the saturate model, trained via standard RLVR on the same 1,000 saturated questions without prefix conditioning, and (ii) the medium model, trained with standard RLVR on 1,000 medium-difficulty questions with rollout accuracy close to 50%, the regime commonly regarded as maximizes the learning signal (Zhan et al., 2025; Li et al., 2025).
+We evaluate these models on various math reasoning benchmarks spanning a wide range of difficulty. The saturate model shows negligible improvement relative to the base model, confirming that standard RLVR training stalls on saturated questions. In contrast, training on the failure-prefix-conditioned dataset yields consistent and substantial gains over the base model across all benchmarks. This performance is on par with that of the medium model, demonstrating that failure-prefix conditioning can effectively recover learning signal from saturated problems. Notably, these improvements are achieved without inflating response length, indicating that our methodology preserves token efficiency. We also demonstrate that our approach is robust to the target accuracy hyperparameter τ\tau; while our default τ=0.5\tau=0.5 yields the best performance, ablation studies confirm that the method achieves comparable peak performance across a range of values.
+Next, we analyze why failure-prefix conditioning is effective. While standard RLVR primarily incentivizes better decision-making from the initial state, failure-prefix conditioning explicitly trains the model to recover from incorrect intermediate reasoning states. Consequently, the method promotes robustness to misleading partial trajectories early in the reasoning process. Empirically, we find that the failure-prefix model exhibits greater robustness to failure prefixes, showing a smaller drop in rollout accuracy compared to baseline methods. Additionally, we also observe a mild trade-off, where improved robustness to failure prefixes can occasionally reduce adherence to correct intermediate reasoning.
+Finally, we explore whether learning from saturated problems can be further extended by iteratively refreshing failure prefixes as the model improves. As training progresses, performance under a fixed failure-prefix-conditioned dataset eventually plateaus, suggesting that previously informative prefixes may become less effective as the policy updates. Motivated by this observation, we perform a second iteration of failure-prefix conditioning, resampling new failures from the updated model and reconstructing the prefix-conditioned dataset. Empirically, this iterative procedure yields
+additional gains beyond the initial plateau, suggesting that periodically updating failure prefixes may further recover additional learning signal and enable continued improvement.
+We summarize our contributions as follows:
+•
+We propose failure-prefix conditioning, a method that reallocates exploration toward failure-prone reasoning states to enable effective RLVR training on saturated problems.
+•
+We show that failure-prefix conditioning enhances robustness to incorrect intermediate reasoning trajectories, enabling better recovery from misleading partial solutions compared to standard RLVR baselines.
+•
+We demonstrate that iteratively refreshing failure prefixes can yield additional gains after performance plateaus, offering a potential pathway for further extending learning on saturated problems.
+Overall, our results indicate that failure-prefix conditioning provides an effective and efficient strategy to unlock the value of saturated training data.
+2 Related Work
+Task Difficulty for RL training of LLMs. Prior work has theoretically shown that policy updates in RL training of LLMs are biased by task difficulty, with the learning signal maximized when task success rates lie at an intermediate level (Razin et al., 2024; Li et al., 2025). Zhan et al. (2025) further empirically validates this observation by stratifying training tasks by difficulty and showing that performance improvements peak on moderate-difficulty tasks. Building on this insight, several approaches regulate task difficulty during RL training. DAPO dynamically filters prompts with extremely low or high rollout accuracy that contribute little to parameter updates (Yu et al., 2025). Some approaches arrange static training tasks in increasing order of difficulty to improve training efficiency (Du et al., 2025a; Shi et al., 2025; Chen et al., 2025). Instead of reordering a fixed task set, RLVE introduces adaptive training environment that directly controls task difficulty relative to the model (Zeng et al., 2025). Self-play approaches have also been explored, where LLMs autonomously propose tasks at an appropriate difficulty level (Zhao et al., 2025; Liu et al., 2025). Our work shares the goal of maintaining effective task difficulty; however, rather than filtering or reordering tasks, we focus on saturated problems and recover their utility focusing on failure-prone states by conditioning on partial incorrect trajectories.
+Curriculum learning and context-enhanced learning for RL training of LLMs.
+Curriculum learning has been widely studied as a way to regulate task difficulty and improve training efficiency (Baker et al., 2020; Portelas et al., 2020; Jiang et al., 2020), and has recently been extended to RL training for large language models (Gao et al., 2025; Chen et al., 2025). In the context of LLMs, many such approaches operate by augmenting the input context with additional information that facilitates reasoning during training (Xi et al., 2024). BREAD and POPE provide partial ground-truth hints in the context for difficult problems where the base model fails to produce successful rollouts, enabling the model to generate correct trajectories during training and yielding improvements that transfer effectively to settings without such hints (Zhang et al., 2025; Qu et al., 2025). Similarly, Zhu et al. (2025a) inject additional information into the context—excluded from autoregressive gradient computation—to achieve exponentially improved sample efficiency on multi-step reasoning tasks. Our approach also modifies the input context during RL training, but essentially inverts this paradigm: whereas prior methods inject correct information to assist with difficult problems, we condition on incorrect trajectories to increase the difficulty of easy (saturated) problems. This exposes failure-prone states and allows the recovery of learning signals that are otherwise poorly accessible.
+Scaling RL training for performance boosts.
+Scaling RL training has repeatedly been shown to improve the reasoning performance of LLMs (Ettinger et al., 2025; Guo et al., 2025). ProRL demonstrates that substantially increasing the number of gradient updates can improve both pass@1 and pass@kk performance (Du et al., 2025b). BroRL further extends this line of work by dramatically increasing per-problem exploration, sampling hundreds of rollouts per prompt to surpass the saturation point observed in ProRL and achieve additional gains (Hu et al., 2025). Relatedly, Wang et al. (2025) show that intensive training on a single problem can extract sufficient learning signal to match the performance gains obtained from training on datasets with over a thousand examples. Taken together, these results indicate that scaling RL training through increased gradient steps or exploration can drive further performance gains. However, it incurs prohibitive computational costs and memory overhead, with the vast majority of the sampling budget is consumed by generating redundant correct solutions during training. In contrast, our approach extracts learning signals from saturated problems efficiently, reallocating exploration to failure-prone states rather than simply increasing the sampling budget.
+3 RLVR and Saturated Problems
+In this section, we explain why training with GRPO (Shao et al., 2024), a standard RLVR algorithm, stalls on saturated problems. Section 3.1 reviews the training procedure and notation, and Section 3.2 analyzes why saturation leads to stalled learning.
+3.1 GRPO Training
+Let 𝒟={(q,a∗)}\mathcal{D}=\{(q,a^{\ast})\} denote a dataset of questions qq with verifiable ground-truth answers a∗a^{\ast}.
+Given a policy πθ\pi_{\theta}, we generate NN independent rollouts
+yi∼πθ(⋅∣q),i=1,…,N,y_{i}\sim\pi_{\theta}(\cdot\mid q),\quad i=1,\ldots,N,
+and assign each rollout a binary reward
+ri=r⁡(yi,q)∈{0,1},r_{i}=r(y_{i};q)\in\{0,1\},
+where ri=1r_{i}=1 if yiy_{i} is a correct solution and ri=0r_{i}=0 otherwise.
+For each rollout in {yi}i=1N\{y_{i}\}_{i=1}^{N}, the advantage is given by
+Ai=ri−μrσr+ϵ,A_{i}=\frac{r_{i}-\mu_{r}}{\sigma_{r}+\epsilon},
+where μr=1N​∑i=1Nri\mu_{r}=\frac{1}{N}\sum_{i=1}^{N}r_{i}, σr=std⁡({ri}i=1N)\sigma_{r}=\mathrm{std}(\{r_{i}\}_{i=1}^{N}), and ϵ>0\epsilon>0 is a small constant that prevents division by zero when σr=0\sigma_{r}=0.
+The policy πθ\pi_{\theta} is then updated by minimizing the following loss, where we omit the clipping and KL-regularization terms for clarity:
+ℒGRPO​(θ)=−𝔼(q,a∗)∼𝒟​[1N​∑i=1NAi​log⁡πθ​(yi∣q)].\mathcal{L}_{\text{GRPO}}(\theta)=-\mathbb{E}_{(q,a^{\ast})\sim\mathcal{D}}\left[\frac{1}{N}\sum_{i=1}^{N}A_{i}\log\pi_{\theta}(y_{i}\mid q)\right].
+3.2 Training with Saturated Problems
+We say that a problem qq is saturated under policy πθ\pi_{\theta} if the rollout accuracy below is close to 1.
+pθ(q)=Pry∼πθ(⋅∣q)[r(y;q)=1]p_{\theta}(q)=\Pr_{y\sim\pi_{\theta}(\cdot\mid q)}[r(y;q)=1]
+For such a problem, with high probability all sampled rollouts satisfy ri=1r_{i}=1, yielding
+μr=1,σr=0,\mu_{r}=1,\quad\sigma_{r}=0,
+and consequently Ai=0A_{i}=0 for all ii.
+As a result, the policy gradient vanishes and training stalls.
+Even when a rare incorrect rollout occurs, reward variance remains small.
+For binary rewards,
+std⁡[r]=pθ​(q)​(1−pθ​(q)),\mathrm{std}[r]=\sqrt{p_{\theta}(q)(1-p_{\theta}(q))},
+which approaches zero as pθ​(q)→1p_{\theta}(q)\to 1. Since the policy gradient magnitude scales with this standard deviation value (Li et al., 2025) (see Appendix A.5 for a full derivation), learning signals on saturated problems are weak. This analysis is also empirically supported by the findings of Zhan et al. (2025), who observe substantially smaller gains from training on easy questions (pθ​(q)∈[0.75,1.00)p_{\theta}(q)\in[0.75,1.00)) compared to moderately difficult ones (pθ​(q)∈(0.25,0.75]p_{\theta}(q)\in(0.25,0.75]).
+4 Methodology
+We propose failure-prefix conditioning, a simple and effective method for learning from saturated problems in RLVR. The core idea is to reshape exploration by conditioning training on failure-prone reasoning states, instead of initiating exploration from the original question. Section 4.1 provides the motivation for our approach, and Section 4.2 presents the proposed methodology.
+4.1 Motivation
+As analyzed in 3.2,
+learning stalls on saturated problems not because the model is perfect, but because its failures are rare and difficult to access under standard RLVR.
+Even when rollout accuracy is close to 11, incorrect responses still exist in the model’s response space. However, during training, these failure-prone states are encountered too rarely to provide meaningful learning signal. In other words, the fundamental limitation is not the absence of informative failures, but their poor accessibility.
+To address this, rather than repeatedly sampling from the question as in the standard setting, the solution we suggest is to target exploration toward regions of the response space where uncertainty is higher and failures occur more frequently. Concretely, we propose failure-prefix conditioning: condition training on prefixes obtained from rare incorrect responses, enabling RLVR to begin exploration directly from failure-prone states.
+This simple change dramatically improves accessibility. Consider a saturated problem with rollout accuracy p≈0.97p\approx 0.97. Under standard sampling, failures occur with probability 1−0.97=0.031-0.97=0.03, meaning only a small number of incorrect responses are expected, and most rollouts are redundant successes that contribute little learning signal. If, instead, training begins from a failure-prone state where, say, p≈0.50p\approx 0.50, the same sampling budget yields substantially more incorrect responses (1−0.50=0.501-0.50=0.50). As a result, informative failures become far more accessible.
+4.2 Methodology: Failure-Prefix Conditioning
+Algorithm 1  Failure-Prefix Conditioning
+0:
+Saturated dataset 𝒟saturated={(q,a∗)}\mathcal{D}_{\text{saturated}}=\{(q,a^{\ast})\}, policy πθ\pi_{\theta}, target accuracy τ=0.5\tau=0.5, number of rollouts NN
+0:
+Prefix-conditioned dataset 𝒟′\mathcal{D}^{\prime}
+1:
+Initialize 𝒟′←∅\mathcal{D}^{\prime}\leftarrow\emptyset
+2:
+for each (q,a∗)∈𝒟saturated(q,a^{\ast})\in\mathcal{D}_{\text{saturated}} do
+3:
+Obtain an incorrect rollout y~∼πθ(⋅∣q)\tilde{y}\sim\pi_{\theta}(\cdot\mid q)
+4:
+Let L←|y~|L\leftarrow|\tilde{y}|
+5:
+Construct prefix set
+𝒮(q)={y~1:αk}k=1K,\mathcal{S}(q)=\{\tilde{y}_{1:\alpha_{k}}\}_{k=1}^{K},
+6:
+for each prefix s∈𝒮⁡(q)s\in\mathcal{S}(q) do
+7:
+Sample NN rollouts {yi}i=1N∼πθ(⋅∣q⊕s)\{y_{i}\}_{i=1}^{N}\sim\pi_{\theta}(\cdot\mid q\oplus s)
+8:
+Estimate rollout accuracy
+pθ(q,s)←1N∑i=1N𝕀[r(yi;q)=1]p_{\theta}(q,s)\leftarrow\frac{1}{N}\sum_{i=1}^{N}\mathbb{I}[r(y_{i};q)=1]
+9:
+end for
+10:
+Select prefix
+s(q)←arg⁡mins∈𝒮⁡(q)​|pθ​(q,s)−τ|s^{(q)}\leftarrow\arg\min_{s\in\mathcal{S}(q)}\left|p_{\theta}(q,s)-\tau\right|
+11:
+Add (q⊕s(q),a∗)(q\oplus s^{(q)},a^{\ast}) to 𝒟′\mathcal{D}^{\prime}
+12:
+end for
+Model
+MATH500
+AMC12
+AIME24
+AIME25
+HMMT25
+Average
+Base
+83.5
+53.1
+28.4
+24.0
+14.2
+40.6
+Saturate
+84.2 (+0.7)
+51.7 (-1.4)
+30.0 (+1.6)
+24.0 (+0.0)
+13.5 (-0.6)
+40.7 (+0.1)
+Medium
+85.0 (+1.5)
+57.8 (+4.7)
+32.0 (+3.6)
+26.2 (+2.2)
+15.0 (+0.8)
+43.2 (+2.6)
+Failure-Prefix (Ours)
+85.7 (+2.2)
+56.3 (+3.2)
+33.0 (+4.6)
+25.9 (+1.9)
+16.2 (+2.0)
+43.4 (+2.8)
+Table 1: Performance comparison on math reasoning benchmarks. Numbers in parentheses indicate absolute improvements over the base model. Best results are shown in bold, and second-best results are underlined.
+Figure 2: Performance comparison across models. Left: Mean Pass@kk values. Middle: Average token count of responses across benchmarks. Right: Mean accuracy under different inference token limits. Failure-prefix conditioning consistently improves performance while maintaining token efficiency.
+Let πθ\pi_{\theta} be a fixed policy and 𝒟saturated\mathcal{D}_{\text{saturated}} be a set of saturated questions, defined as questions whose rollout accuracy pθ​(q)p_{\theta}(q) is close to 11 under standard sampling, as in Section 3.2. For each such question qq, we obtain at least one incorrect rollout y~\tilde{y} produced by πθ\pi_{\theta}.
+From each incorrect rollout y~\tilde{y}, we construct a set of prefixes
+𝒮(q)={y~1:αk}k=1K,\mathcal{S}(q)=\{\tilde{y}_{1:\alpha_{k}}\}_{k=1}^{K},
+where y~1:αk\tilde{y}_{1:\alpha_{k}} denotes the first αk\alpha_{k} tokens of y~\tilde{y}. In our experiments in Section 5, we sweep prefix lengths corresponding to 10%,20%,…,90%10\%,20\%,\ldots,90\% of the total trajectory length, yielding K=9K=9 candidate prefixes per question.
+Each prefix s∈𝒮⁡(q)s\in\mathcal{S}(q) defines a prefix-conditioned prompt q⊕sq\oplus s, from which we estimate the prefix-conditioned rollout accuracy
+pθ(q,s)=Pry∼πθ(⋅∣q⊕s)[r(y;q)=1]p_{\theta}(q,s)=\Pr_{y\sim\pi_{\theta}(\cdot\mid q\oplus s)}[r(y;q)=1]
+using a fixed number of rollouts. Intuitively, when generation starts from the original question qq, the rollout accuracy is near one for saturated problems. As progressively longer prefixes of an incorrect trajectory are appended, the conditioning context increasingly constrains the model toward failure states, and the rollout accuracy tends to decay towards 00 (Wen et al., 2025). While this decay is not necessarily monotonic, sweeping over prefix lengths reliably yields intermediate prefixes whose rollout accuracy lies between these extremes.
+We select a single prefix s(q)s^{(q)} whose rollout accuracy is closest to a target value τ∈(0,1)\tau\in(0,1):
+s(q)=arg⁡mins∈𝒮⁡(q)​|pθ​(q,s)−τ|.s^{(q)}=\arg\min_{s\in\mathcal{S}(q)}\left|p_{\theta}(q,s)-\tau\right|.
+In our main experiments, we set τ=0.5\tau=0.5, where binary rewards exhibit the highest variance and GRPO provides the strongest learning signal (Li et al., 2025).
+Using the selected prefixes, we construct a new training set
+𝒟′={(q⊕s(q),a∗)∣q∈𝒟saturated}.\mathcal{D}^{\prime}=\{(q\oplus s^{(q)},a^{*})\mid q\in\mathcal{D}_{\text{saturated}}\}.
+GRPO training is then performed on 𝒟′\mathcal{D}^{\prime} following the standard procedure described in Section 3.1.
+5 Experiment
+5.1 Experiment Settings
+Model and Dataset We assume a setting where all the available training questions are saturated for the model. We use the DeepSeek-R1-Distill-Qwen-1.5B (Guo et al., 2025) for the reasoning model. We identify saturated question sets from the MATH training set (7.5k questions) (Hendrycks et al., 2021) and the DeepScaleR dataset (40.3k questions) (Agentica-org, 2025). For each question, we generate 32 rollouts and randomly select 1,000 questions with rollout accuracy 31/3231/32 (≈0.97\approx 0.97), which we treat as saturated. For each selected question, we retain the single incorrect response and apply failure-prefix conditioning following Algorithm 1 with target accuracy τ=0.5\tau=0.5, where reward variance is maximized. We also check τ=0.25\tau=0.25 and τ=0.75\tau=0.75 for ablation studies. Additional details for the inference are provided in Appendix A.3.
+Baseline We train our model using GRPO on the failure-prefix-conditioned dataset. We compare against three baselines: (1) the base model without further training; (2) a model trained with standard GRPO on the same saturated questions, without prefix conditioning; and (3) a model trained with standard GRPO on 1,000 randomly selected questions with rollout accuracy 16/3216/32 (0.50.5), where learning signal is expected to be maximized. For convenience, we refer to these four models as base, saturate, medium, and failure-prefix models, respectively. All models are trained using the same GRPO configuration, with 1616 rollouts per question, representing a standard and non-aggressive exploration setting. Implementation details for training are provided in Appendix A.1.
+Evaluation We evaluate all models on five math reasoning benchmarks spanning a wide range of difficulties (from easiest to hardest): MATH500 (Hendrycks et al., 2021), AMC12 (AI-MO, 2025), AIME24 (math-ai, 2025a), AIME25 (math-ai, 2025b), and HMMT25 (MathArena, 2025). For each question, we generate 32 samples and report the mean accuracy (pass@1) to ensure statistical robustness. Additionally, to determine if the method is merely sharpening the distribution (Yue et al., 2025; Kim et al., 2025) or genuinely improving capability (Du et al., 2025b; Setlur et al., 2025), we report pass@kk metrics up to pass@32 using the 32 responses. All evaluations are performed with a maximum inference token limit of 3200032000. Full details of the evaluation setup are provided in Appendix A.2.
+5.2 Main Results
+Failure-prefix conditioning improves model performance. We observe that training on the failure-prefix-conditioned dataset consistently improves performance across all math benchmarks. As shown in Table 1, compared to the base model, the failure-prefix model achieves accuracy gains ranging from the easiest benchmark (MATH500) to the most challenging one (HMMT25). Averaged across the five benchmarks, it reaches an accuracy of 43.4%, representing a +2.8 absolute point improvement over the base model (40.6%). This performance is on par with that of the model trained on medium-difficulty questions (43.2%). In contrast, training with standard GRPO on saturated questions without prefix conditioning stalls with no meaningful improvement, achieving an average accuracy of 40.7%, essentially identical to the base model. Beyond pass@1 accuracy, similar trends hold for pass@kk. As shown in Figure 2 (left), for all values of kk to 32, the failure-prefix model, with the medium model, consistently outperforms the base model. This indicates that the gains are not merely due to sharpening, but reflect broader improvements in solution quality and diversity. In contrast, the saturate model shows no noticeable gains across the entire range of kk. Together, these results indicate that failure-prefix conditioning enables effective learning progress on saturated problems that standard GRPO training fails to achieve.
+Failure-prefix conditioning maintains token efficiency. For each model, we compute the mean number of generated tokens per response across all benchmarks. As shown in Figure 2 (middle), the failure-prefix model produces responses of comparable length to the base model across benchmarks. While the saturated-trained and medium-trained models tend to generate slightly shorter responses, the differences are modest. Importantly, as shown in Figure 2 (right), the failure-prefix model, with the medium model. consistently outperforms the base and saturate models across a wide range of inference token limits, from 8,000 to 32,000 tokens. These results indicate that failure-prefix conditioning improves performance without increasing inference-time token usage.
+Figure 3: Ablation study on target accuracy τ\tau. We plot the mean accuracy across benchmarks for τ∈{0.25,0.50,0.75}\tau\in\{0.25,0.50,0.75\} over 800 gradient steps. Peak performance points are highlighted for each setting.
+5.3 Ablation Study: Sensitivity to Target Accuracy τ\tau
+As described in Section 5.1, we set the target accuracy at τ=0.5\tau=0.5 for failure-prefix conditioning. This is because, as detailed in Section 4.2, this value theoretically maximizes reward variance, thereby amplifying the gradient signal. To investigate the sensitivity of our method to this hyperparameter, we repeat the training process using τ=0.25\tau=0.25 and τ=0.75\tau=0.75, keeping all other settings identical.
+We observe that while τ=0.5\tau=0.5 yields the best results, the method remains effective across different target values. As shown in Figure 3, the model trained with τ=0.75\tau=0.75 plateaus at an average accuracy of 43.1, slightly below the 43.4 achieved by τ=0.5\tau=0.5. The model trained with τ=0.25\tau=0.25 achieves a comparable accuracy of 43.3; however, it exhibits slightly slower improvement, requiring 500 gradient steps to reach this peak compared to 400 steps for the τ=0.5\tau=0.5 model. These empirical findings align with our theoretical analysis that τ=0.5\tau=0.5 is optimal, while simultaneously demonstrating that failure-prefix conditioning is robust to variations in the target accuracy parameter.
+6 Why Failure-Prefix Conditioning Works
+Since failure-prefix conditioning does not train directly on the original questions, it may appear to introduce a train–test mismatch. As a result, the source of the performance improvements observed in Section 5.2 is not immediately obvious. In this section, we provide an interpretation that explains why our method is nevertheless effective.
+6.1 MDP Model
+We model autoregressive generation as a Markov Decision Process (MDP), where each state corresponds to a partial reasoning trajectory followed by a question. Specifically, let a state sts_{t} represent the concatenation of the question qq and the first tt generated tokens, and let actions correspond to generating the next token. A complete response corresponds to a trajectory (s0,a0,s1,…,sT)(s_{0},a_{0},s_{1},\ldots,s_{T}), where s0=qs_{0}=q is the initial state. In standard RLVR training, rollouts are always initialized from s0s_{0}.
+Failure-prefix conditioning alters this training distribution by explicitly initializing rollouts from intermediate states along incorrect trajectories. Concretely, instead of always starting from s0s_{0}, training rollouts are initialized from states of the form st=(q,y1:t)s_{t}=(q,y_{1:t}),
+where y1:ty_{1:t} is a prefix of a previously observed rare incorrect response. These states correspond to regions of the state space where the policy exhibits higher uncertainty and where recovery from misleading reasoning is required to obtain reward.
+From an MDP perspective, failure-prefix conditioning does not introduce a train–test mismatch. Assuming the prefix is not excessively off-policy relative to the model’s action distribution (Agarwal et al., 2025), inference from the initial state s0s_{0} naturally traverses intermediate states that may be misleading, and that are similar to those encountered during training under failure-prefix conditioning.
+Under this interpretation, failure-prefix conditioning improves model performance through a mechanism distinct from standard RLVR training. While standard RLVR primarily incentivizes the model to improve decision-making from the initial state s0s_{0}, failure-prefix conditioning explicitly trains the model to recover from early incorrect reasoning trajectories. As a result, the method targets robustness to misleading partial reasoning rather than solely improving performance from the beginning of the trajectory.
+In the following subsection, we empirically evaluate this interpretation by examining whether failure-prefix conditioning improves robustness to misleading early reasoning.
+Figure 4: Rollout accuracy versus prefix length (% of trajectory) when conditioning on correct and incorrect prefixes.
+Figure 5: Effect of iterative failure-prefix conditioning on training dynamics. Left: Training reward curves for prolonged iteration 1 (steps 0–800) and iteration 2 that forks at step 400 and proceeds with updated failure prefixes through step 800. Right: Mean accuracy across benchmarks for both iterations measured from steps 400–800, with peak performance point for each model highlighted.
+6.2 Recovery from Failure Prefixes
+Recall that, in Section 5.2, for each MATH500 question evaluated we generate 32 responses from each of the four models. We select the subset of questions for which all four models produce at least one correct and one incorrect response, resulting in 176 questions. This ensures that all the models have the capability to recover from misleading reasoning for all the questions. Then, for each model and each selected question, we randomly sample one incorrect response and construct prefixes corresponding to 10%, 20%, …, 90% of the response length. Conditioning on each prefix, we generate 32 continued rollouts and compute the resulting rollout accuracy (inference details in Appendix A.4). We group and average rollout accuracies by the percentage values and analyze how accuracy degrades as the prefix extends further into an incorrect reasoning trajectory. This measures the model’s ability to recover from increasingly misleading early reasoning.
+As shown in Figure 4, all four models consistently exhibit declining rollout accuracy as the failure prefix extends. This is consistent with prior observation that LLMs suffer from ”tunnel vision”, where misleading early reasoning steps increasingly constrain subsequent generation and lock the model into suboptimal reasoning paths (Wen et al., 2025).
+However, the failure-prefix model exhibits a substantially smaller drop in accuracy compared to the other three models. For example, at a 30% failure prefix, the failure-prefix model shows an 11.5-point drop in rollout accuracy (65.2 to 53.7), whereas the base model drops by 23.8 points (59.1 to 35.5), the saturated-trained model by 22.2 points (60.9 to 38.7), and the medium-trained model by 22.5 points (63.3 to 40.8). This gap in degradation persists consistently across the entire range of prefix lengths. These results suggest its stronger robustness to misleading prefixes.
+Notably, this pattern is not observed not only for the base model and the saturate model, which show little overall performance improvement, but also for the medium model, whose aggregate performance is on par with that of the failure-prefix model. This implies that improved robustness to failure prefixes is specific to failure-prefix conditioning, rather than a byproduct of overall performance gains alone.
+Additionally, we examine whether failure-prefix conditioning induces excessive backtracking that causes the model to deviate from correct reasoning when given an initially correct partial solution, which is an undesired behavior. To assess this, we also perform an identical experiment using prefixes sampled from a correct response.
+Figure 4 shows that the failure-prefix model exhibits a slightly weaker improvement when conditioned on success prefixes compared to the other models, indicating a modest tendency to deviate from correct reasoning paths. For example, at a 30% prefix length, the failure-prefix model improves by 5.0 points (from 65.2 to 70.2), whereas the base model improves by 8.4 points (59.1 to 67.5), the saturate model by 9.3 points (60.9 to 70.2), and the medium model by 10.0 points (63.3 to 73.4). This pattern persists across the entire range of prefix lengths.
+Overall, this experiment shows a mild trade-off: while failure-prefix conditioning substantially improves robustness to misleading early reasoning, it slightly reduces the benefit obtained from correct prefixes. Addressing this behavior may require further investigation in future work. Importantly, this effect is limited in magnitude and does not outweigh the robustness gains achieved under failure-prefix conditioning, as reflected in the overall performance improvements reported in Section 5.2.
+7 Iterative Failure-Prefix Conditioning
+We observe that as training with failure-prefix conditioning progresses, performance eventually plateaus, with the mean reward flattening (Figure 5, left). This behavior may arise from diminishing learning signal in the conditioned dataset, or from fixed failure prefixes becoming increasingly off-policy as the model improves.
+To assess whether additional gains can be obtained from saturated data, we conduct a second iteration of failure-prefix conditioning. Starting from the checkpoint at step 400, which achieves the best performance, we resample responses for each of the 1,000 saturated questions identified in Section 5.1 until an incorrect response is observed, with a maximum of 128 attempts per question. We exclude 440 questions for which the model attains perfect rollout accuracy (128/128). For the remaining questions, we reapply Algorithm 1 to construct an updated prefix-conditioned dataset using the newly observed failures. During prefix selection, we extend the sweep to include the 0% prefix (i.e., the original question), as a small subset of questions exhibits a considerable drop in rollout accuracy. The detailed implementation for the new dataset is provided in Appendix A.3. We then continue GRPO training for an additional 400 gradient steps on this refreshed dataset.
+We find that this second iteration yields additional performance gains. As shown in Figure 5 (right), prolonged training in iteration 1 fails to surpass the peak accuracy of 43.4 achieved at step 400, whereas iteration 2 improves performance to a maximum of 44.0, corresponding to a gain of 0.6 points over the original checkpoint. These results point to the possibility that iteratively refreshing failure prefixes may help recover additional learning signal and enable continued improvement.
+8 Conclusion
+In this paper, we introduce failure-prefix conditioning, a simple and effective method that extends RLVR training on saturated problems where standard methods stall. By explicitly initializing training from rare incorrect partial trajectories, our approach recovers critical learning signals, yielding performance gains comparable to training on medium-difficulty tasks while enhancing robustness to misleading reasoning. Moreover, we demonstrate that iteratively refreshing these prefixes enables sustained improvement beyond initial plateaus. Ultimately, our work establishes that saturated problems remain a valuable resource for training reasoning models, provided exploration is directed toward their sparse but informative failure modes.
+Acknowledgments
+We thank Anubhav Shrestha and Aadim Nepal for their valuable feedback. This research is supported by the Center for AI and Robotics (CAIR) at New York University Abu Dhabi.
+References
+Agarwal et al. (2025)
+S. Agarwal, Z. Zhang, L. Yuan, J. Han, and H. Peng
+The unreasonable effectiveness of entropy minimization in LLM reasoning.
+In Proceedings of the Thirty-Ninth Conference on Neural Information Processing Systems (NeurIPS 2025),
+External Links: Link
+Cited by: §6.1.
+Agentica-org (2025)
+Agentica-org
+DeepScaleR-preview-dataset.
+Note: https://huggingface.co/datasets/agentica-org/DeepScaleR-Preview-DatasetHugging Face dataset
+Cited by: §5.1.
+AI-MO (2025)
+AI-MO
+AMC12 2022, 2023 dataset.
+Note: https://huggingface.co/datasets/AI-MO/aimo-validation-amcHugging Face dataset
+Cited by: §5.1.
+Baker et al. (2020)
+B. Baker, I. Kanitscheider, T. M. Markov, Y. Wu, G. Powell, B. McGrew, and I. Mordatch
+Emergent tool use from multi-agent autocurricula.
+In Proceedings of the International Conference on Learning Representations (ICLR 2020),
+Cited by: §2.
+Chen et al. (2025)
+X. Chen, J. Lu, M. Kim, D. Zhang, J. Tang, A. Piché, N. Gontier, Y. Bengio, and E. Kamalloo
+Self-evolving curriculum for llm reasoning.
+arXiv:2505.14970.
+Cited by: §2,
+§2.
+Du et al. (2025a)
+A. Du, B. Gao, B. Xing, C. Jiang, C. Chen, C. Li, C. Xiao, C. Du, C. Liao, C. Tang, C. Wang, D. Zhang, E. Yuan, E. Lu, F. Tang, F. Sung, G. Wei, G. Lai, and …
+Kimi k1.5: scaling reinforcement learning with llms.
+arXiv:2501.12599.
+Cited by: §2.
+Du et al. (2025b)
+A. Du, B. Gao, B. Xing, C. Jiang, C. Chen, C. Li, C. Xiao, C. Du, C. Liao, and …
+ProRL: prolonged reinforcement learning expands reasoning strategies.
+In Proceedings of the Thirty-Ninth Conference on Neural Information Processing Systems (NeurIPS 2025),
+Note: arXiv:2505.24864
+Cited by: §2,
+§5.1.
+Ettinger et al. (2025)
+A. Ettinger, A. Bertsch, B. Kuehl, D. Graham, D. Heineman, D. Groeneveld, F. Brahman, F. Timbers, H. Ivison, J. Morrison, J. Poznanski, K. Lo, L. Soldaini, M. Jordan, M. Chen, M. Noukhovitch, N. Lambert, P. Walsh, P. Dasigi, R. Berry, S. Malik, S. Shah, S. Geng, S. Arora, S. Gupta, T. Anderson, T. Xiao, T. Murray, T. Romero, V. Graf, A. Asai, A. Bhagia, A. Wettig, A. Liu, A. Rangapur, C. Anastasiades, C. Huang, D. Schwenk, H. Trivedi, I. Magnusson, J. Lochner, J. Liu, L. J. V. Miranda, M. Sap, M. Morgan, M. Schmitz, M. Guerquin, M. Wilson, R. Huff, R. Le Bras, R. Xin, R. Shao, S. Skjonsberg, S. Z. Shen, S. S. Li, T. Wilde, V. Pyatkin, W. Merrill, Y. Chang, Y. Gu, Z. Zeng, A. Sabharwal, L. Zettlemoyer, P. W. Koh, A. Farhadi, N. A. Smith, and H. Hajishirzi
+Olmo 3.
+arXiv:2512.13961.
+Cited by: §2.
+Gao et al. (2025)
+Z. Gao, J. Kim, W. Sun, T. Joachims, S. Wang, R. Y. Pang, and L. Tan
+Prompt curriculum learning for efficient llm post-training.
+arXiv:2510.01135.
+Cited by: §2.
+Guo et al. (2025)
+D. Guo, D. Yang, H. Zhang, J. Song, P. Wang, Q. Zhu, R. Xu, R. Zhang, S. Ma, X. Bi, X. Zhang, X. Yu, Y. Wu, Z. F. Wu, Z. Gou, Z. Shao, Z. Li, Z. Gao, A. Liu, and …
+DeepSeek-r1 incentivizes reasoning in llms through reinforcement learning.
+Nature 645 (8081), pp. 633–638.
+External Links: Document
+Cited by: §1,
+§1,
+§2,
+§5.1.
+Hendrycks et al. (2021)
+D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt
+Measuring mathematical problem solving with the math dataset.
+In Proceedings of the Thirty-Fifth Conference on Neural Information Processing Systems (NeurIPS 2021) Track on Datasets and Benchmarks,
+Cited by: §5.1,
+§5.1.
+Hu et al. (2025)
+J. Hu, M. Liu, X. Lu, F. Wu, Z. Harchaoui, S. Diao, Y. Choi, P. Molchanov, J. Yang, J. Kautz, and Y. Dong
+BroRL: scaling reinforcement learning via broadened exploration.
+arXiv:2510.01180.
+Cited by: §2.
+Jiang et al. (2020)
+M. Jiang, E. Grefenstette, and T. Rocktäschel
+Prioritized level replay.
+In Proceedings of the 37th International Conference on Machine Learning (ICML 2020),
+Cited by: §2.
+Kim et al. (2025)
+M. Kim, A. Shrestha, S. Shrestha, A. Nepal, and K. Ross
+Reinforcement learning vs. distillation: understanding accuracy and capability in llm reasoning.
+arXiv:2505.14216.
+Cited by: §5.1.
+Kwon et al. (2023)
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. Gonzalez, H. Zhang, and I. Stoica
+Efficient memory management for large language model serving with pagedattention.
+In Proceedings of the 29th ACM Symposium on Operating Systems Principles (SOSP ’23),
+Koblenz, Germany, pp. 611–626.
+External Links: Document
+Cited by: §A.2.
+Lambert et al. (2025)
+N. Lambert, J. Morrison, V. Pyatkin, S. Huang, H. Ivison, F. Brahman, L. J. V. Miranda, A. Liu, N. Dziri, S. Lyu, Y. Gu, S. Malik, V. Graf, J. D. Hwang, J. Yang, R. Le Bras, O. Tafjord, C. Wilhelm, L. Soldaini, N. A. Smith, Y. Wang, P. Dasigi, and H. Hajishirzi
+Tulu 3: pushing frontiers in open language model post-training.
+In Proceedings of the Conference on Language Models (COLM 2025),
+Cited by: §1.
+Li et al. (2025)
+G. Li, M. C. Lin, T. Galanti, Z. Tu, and T. Yang
+DisCO: reinforcing large reasoning models with discriminative constrained optimization.
+In Proceedings of the Thirty-Ninth Conference on Neural Information Processing Systems,
+Note: arXiv:2505.12366
+Cited by: §A.5,
+§A.5,
+§1,
+§1,
+§2,
+§3.2,
+§4.2.
+Liu et al. (2025)
+B. Liu, L. Guertler, S. Yu, Z. Liu, P. Qi, D. Balcells, M. Liu, C. Tan, W. Shi, M. Lin, W. S. Lee, and N. Jaques
+SPIRAL: self-play on zero-sum games incentivizes reasoning via multi-agent multi-turn reinforcement learning.
+In Proceedings of the International Conference on Learning Representations 2026 (ICLR 2026),
+Note: arXiv:2506.24119
+Cited by: §2.
+math-ai (2025a)
+math-ai
+AIME24 dataset.
+Note: https://huggingface.co/datasets/math-ai/aime24Hugging Face dataset
+Cited by: §5.1.
+math-ai (2025b)
+math-ai
+AIME25 dataset.
+Note: https://huggingface.co/datasets/math-ai/aime25Hugging Face dataset
+Cited by: §5.1.
+MathArena (2025)
+MathArena
+HMMT25 dataset (february 2025).
+Note: https://huggingface.co/datasets/MathArena/hmmt_feb_2025Hugging Face dataset
+Cited by: §5.1.
+OpenAI (2024)
+OpenAI
+OpenAI o1 system card.
+Note: arXiv:2412.16720
+Cited by: §1.
+Portelas et al. (2020)
+R. Portelas, C. Colas, L. Weng, K. Hofmann, and P. Oudeyer
+Automatic curriculum learning for deep reinforcement learning: a short survey.
+In Proceedings of the 29th International Joint Conference on Artificial Intelligence (IJCAI 2020),
+Cited by: §2.
+Qu et al. (2025)
+Y. Qu, A. Setlur, V. Smith, R. Salakhutdinov, and A. Kumar
+How to explore to scale rl training of llms on hard problems?.
+Note: https://blog.ml.cmu.edu/2025/11/26/how-to-explore-to-scale-rl-training-of-llms-on-hard-problemsCMU MLD Blog
+Cited by: §2.
+Razin et al. (2024)
+N. Razin, H. Zhou, O. Saremi, V. Thilak, A. Bradley, P. Nakkiran, J. M. Susskind, and E. Littwin
+Vanishing gradients in reinforcement finetuning of language models.
+In International Conference on Learning Representations (ICLR 2024),
+Cited by: §2.
+Setlur et al. (2025)
+A. Setlur, M. Y. R. Yang, C. V. Snell, J. Greer, I. Wu, V. Smith, M. Simchowitz, and A. Kumar
+E3: learning to explore enables extrapolation of test-time compute for llms.
+arXiv:2506.09026.
+Cited by: §1,
+§5.1.
+Shao et al. (2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. K. Li, Y. Wu, and D. Guo
+DeepSeekMath: pushing the limits of mathematical reasoning in open language models.
+Note: arXiv:2402.03300
+Cited by: §3.
+Shi et al. (2025)
+T. Shi, Y. Wu, L. Song, T. Zhou, and J. Zhao
+Efficient reinforcement finetuning via adaptive curriculum learning.
+arXiv:2504.05520.
+Cited by: §2.
+Wang et al. (2025)
+Y. Wang, Q. Yang, Z. Zeng, L. Ren, L. Liu, B. Peng, H. Cheng, X. He, K. Wang, J. Gao, W. Chen, S. Wang, S. S. Du, and Y. Shen
+Reinforcement learning for reasoning in large language models with one training example.
+In Proceedings of the Thirty-Ninth Conference on Neural Information Processing Systems,
+Note: arXiv:2504.20571
+Cited by: §1,
+§2.
+Wen et al. (2025)
+H. Wen, Y. Su, F. Zhang, Y. Liu, Y. Liu, Y. Zhang, and Y. Li
+ParaThinker: native parallel thinking as a new paradigm to scale llm test-time compute.
+Note: arXiv:2510.02245
+Cited by: §4.2,
+§6.2.
+Xi et al. (2024)
+Z. Xi, W. Chen, B. Hong, S. Jin, R. Zheng, W. He, Y. Ding, S. Liu, X. Guo, J. Wang, H. Guo, W. Shen, X. Fan, Y. Zhou, S. Dou, X. Wang, X. Zhang, P. Sun, T. Gui, Q. Zhang, and X. Huang
+Training large language models for reasoning through reverse curriculum reinforcement learning.
+In Proceedings of the 41st International Conference on Machine Learning (ICML 2024),
+pp. 54030–54048.
+Cited by: §2.
+Yu et al. (2025)
+Q. Yu, Z. Zhang, R. Zhu, Y. Yuan, X. Zuo, Y. Yue, T. Fan, G. Liu, L. Liu, X. Liu, H. Lin, Z. Lin, B. Ma, G. Sheng, Y. Tong, C. Zhang, M. Zhang, W. Zhang, H. Zhu, J. Zhu, J. Chen, J. Chen, C. Wang, H. Yu, Y. Song, X. Wei, H. Zhou, J. Liu, W. Ma, Y. Zhang, L. Yan, M. Qiao, Y. Wu, and M. Wang
+DAPO: an open-source llm reinforcement learning system at scale.
+In Proceedings of the Thirty-Ninth Conference on Neural Information Processing Systems,
+Note: arXiv:2503.14476
+Cited by: §A.1,
+§2.
+Yue et al. (2025)
+Y. Yue, Z. Chen, R. Lu, A. Zhao, Z. Wang, Y. Yue, S. Song, and G. Huang
+Does reinforcement learning really incentivize reasoning capacity in llms beyond the base model?.
+Note: arXiv:2504.13837
+Cited by: §5.1.
+Zeng et al. (2025)
+Z. Zeng, H. Ivison, Y. Wang, L. Yuan, S. S. Li, Z. Ye, S. Li, J. He, R. Zhou, T. Chen, C. Zhao, Y. Tsvetkov, S. S. Du, N. Jaques, H. Peng, P. W. Koh, and H. Hajishirzi
+RLVE: scaling up reinforcement learning for language models with adaptive verifiable environments.
+arXiv:2511.07317.
+Cited by: §2.
+Zhan et al. (2025)
+R. Zhan, Y. Li, Z. Wang, X. Qu, D. Liu, J. Shao, D. F. Wong, and Y. Cheng
+ExGRPO: learning to reason from experience.
+Note: arXiv:2510.02245
+Cited by: §1,
+§2,
+§3.2.
+Zhang et al. (2025)
+X. Zhang, Z. Huang, Y. Li, C. Ni, J. Chen, and S. Oymak
+BREAD: branched rollouts from expert anchors bridge sft & rl for reasoning.
+In Proceedings of the Thirty-Ninth Conference on Neural Information Processing Systems (NeurIPS 2025),
+Note: arXiv:2506.17211
+Cited by: §2.
+Zhao et al. (2025)
+A. Zhao, Y. Wu, Y. Yue, T. Wu, Q. Xu, M. Lin, S. Wang, Q. Wu, Z. Zheng, and G. Huang
+Absolute zero: reinforced self-play reasoning with zero data.
+In Proceedings of the Thirty-Ninth Conference on Neural Information Processing Systems,
+Note: arXiv:2505.03335
+Cited by: §2.
+Zhu et al. (2025a)
+X. Zhu, A. Panigrahi, and S. Arora
+On the power of context-enhanced learning in llms.
+In Proceedings of the 42nd International Conference on Machine Learning (ICML 2025),
+Note: arXiv:2503.01821
+Cited by: §2.
+Zhu et al. (2025b)
+X. Zhu, M. Xia, Z. Wei, W. Chen, D. Chen, and Y. Meng
+The surprising effectiveness of negative reinforcement in llm reasoning.
+In Proceedings of the Thirty-Ninth Conference on Neural Information Processing Systems,
+Note: arXiv:2506.01347
+Cited by: §1.
+Appendix A Appendix
+A.1 GRPO Training Details
+Library
+For GRPO training in this work, we use the GRPOTrainer from the TRL22
+2
+https://github.com/huggingface/trl library
+Prompt Setting
+We use the Qwen-Math chat template for all GRPO training and evaluation. When applying failure-prefix conditioning, the prefix is inserted immediately after the <think> token, as shown below.
+Qwen-Math template
+<|im_start|>system
+Please reason step by step, and put your final answer within \boxed{}.
+<|im_end|>
+<|im_start|>user
+{question}
+<|im_end|>
+<|im_start|>assistant
+<think>{prefix}
+Reward Function
+We adopt a minimalistic reward setting. A response received a reward of 1 if it contained the correct final answer, and 0 otherwise. Answer verification is performed using the math_verify33
+3
+https://github.com/huggingface/Math-Verify package.
+R⁡(q,a∗,y)={1if the response y to question q matches the ground truth answer a∗0otherwiseR(q,a^{*},y)=\begin{cases}1&\text{if the response $y$ to question $q$ matches the ground truth answer $a^{*}$}\\
+0&\text{otherwise}\end{cases}
+Clip-Higher
+Following DAPO (Yu et al., 2025), we adopt the clip-higher strategy to mitigate entropy collapse during training. Specifically, we set ϵhigh=0.4\epsilon_{\text{high}}=0.4 and ϵlow=0.2\epsilon_{\text{low}}=0.2, with number of iterations per batch as 2.
+Training Hyperparameters
+Table 2 summarizes the key hyperparameters used in RLVR training.
+Hyperparameter
+Value
+Optimizer
+AdamW
+Learning rate scheduler
+Constant
+Maximum response length
+6000
+Temperature
+1.0
+Top-pp
+1.0
+Number of rollouts per question
+16
+Number of iterations per batch
+2
+ϵhigh\epsilon_{\text{high}}
+0.4
+ϵhlow\epsilon_{\text{hlow}}
+0.2
+Global batch size
+4 (per device) ×\times 4 (GPUs) ×\times 10 (accumulation) = 160
+Learning rate
+1×10−61\times 10^{-6}
+Tensor parallel size
+2
+KL divergence weight
+0
+Table 2: Key hyperparameters used for RLVR training.
+A.2 Evaluation Details
+Libraries
+For inference, we use vLLM (Kwon et al., 2023) for response generation. For response grading, we use the math_verify package, consistent with the one used for rewarding during RLVR training.
+Inference Hyperparameters
+Table 3 summarizes the key hyperparameters used in inference for evaluation in Section 5.2 and Section 7.
+Hyperparameter
+Value
+Maximum token length
+32000
+Temperature
+0.6
+Top-pp
+1.0
+Number of rollouts per question
+32
+Table 3: Key hyperparameters used for inference during evaluation.
+Full Evaluation Results
+Table 4 reports full evaluation results for the main experiments in Section 5.2 and the iterative failure-prefix conditioning experiments in Section 7.
+Model
+MATH500
+AMC12
+AIME24
+AIME25
+HMMT25
+Average
+Main Experiments
+Base
+83.5
+53.1
+28.4
+24.0
+14.2
+40.6
+Saturate
+84.2 (+0.7)
+51.7 (-1.4)
+30.0 (+1.6)
+24.0 (+0.0)
+13.5 (-0.6)
+40.7 (+0.1)
+Medium
+85.0 (+1.5)
+57.8 (+4.7)
+32.0 (+3.6)
+26.2 (+2.2)
+15.0 (+0.8)
+43.2 (+2.6)
+Failure-Prefix (Checkpoint 400)
+85.7 (+2.2)
+56.3 (+3.2)
+33.0 (+4.6)
+25.9 (+1.9)
+16.2 (+2.0)
+43.4 (+2.8)
+Iterative Failure-Prefix Conditioning
+Failure-Prefix (Extended Iteration 1)
+85.1 (-0.6)
+56.3 (+0.0)
+33.4 (+0.4)
+25.5 (-0.4)
+16.5 (+0.3)
+43.4 (+0.0)
+Failure-Prefix (Iteration 2)
+86.0 (+0.3)
+58.3 (+2.0)
+34.7 (+1.7)
+25.7 (-0.2)
+15.6 (-0.6)
+44.0 (+0.6)
+Table 4: Full evaluation results on math reasoning benchmarks. For the main experiments, numbers in parentheses indicate absolute improvements over the base model. For the iterative failure-prefix conditioning results, numbers in parentheses are computed relative to the failure-prefix model at checkpoint 400.
+A.3 Failure-Prefix-Conditioned Dataset Details
+Dataset Details
+We construct failure-prefix-conditioned datasets for both the main experiment (Section 5) and the iterative prefix-refresh experiment (Section 7). Figure 6 shows the distributions of selected prefix lengths (as a percentage of the original failure trajectory) and the corresponding rollout accuracies after conditioning.
+Figure 6: Distributions of prefix percentages and rollout accuracies for Iteration 1 and Iteration 2. Dashed lines indicate mean values.
+Inference Settings for Measuring Rollout Accuracy
+To measure rollout accuracy for identifying saturated questions and determining the best prefix length, we run inference from each prefix-conditioned question using the same setting as in generating rollouts during GRPO training (Appendix A.1). Specifically, we use the configuration shown in Table 5.
+Hyperparameter
+Value
+Maximum token length
+6000
+Temperature
+1.0
+Top-pp
+1.0
+Number of rollouts per question
+32
+Table 5: Key hyperparameters used for inference for identifying saturated questions and determining best prefix length.
+Identifying saturated questions
+As described in Section 5, we identify saturated questions as those with rollout accuracy 31/32. If the single incorrect rollout exceeds the maximum generation length of 6,000 tokens, we exclude the corresponding question from the dataset, since responses truncated at the token limit cannot be reliably classified as correct or incorrect. In practice, this exclusion affects very few questions: problems with rollout accuracy 31/32 are generally not difficult, and almost all generated responses terminate well within the 6,000-token limit.
+A.4 Recovery from Failure Prefixes
+Inference Settings.
+As described in Section 4, we evaluate how well different models recover from failure prefixes and maintain correct reasoning trajectories by measuring rollout accuracy from prefix-conditioned prompts. Inference is performed using the same configuration as in the final evaluation (Table 4).
+A.5 Derivation of Question-Level Weights and Their Relation to Reward Variance
+We provide a detailed derivation showing how question-level weights arise in GRPO-style objectives and why they are directly tied to the standard deviation of the reward distribution, following the analysis of Li et al. (2025).
+Setup
+We consider a binary reward setting where, for a given question qq, each generated output oo receives a reward
+r⁡(o∣q)∈{0,1}.r(o\mid q)\in\{0,1\}.
+Let
+p(q):=𝔼o∼πold(⋅∣q)[r(o∣q)]p(q):=\mathbb{E}_{o\sim\pi_{\text{old}}(\cdot\mid q)}[r(o\mid q)]
+denote the probability that the current policy πold\pi_{\text{old}} produces a correct answer for question qq.
+Under this setting, the reward variance and standard deviation satisfy
+Var⁡[r⁡(o∣q)]=p⁡(q)​(1−p⁡(q)),std⁡[r⁡(o∣q)]=p​(q)​(1−p​(q)).\mathrm{Var}[r(o\mid q)]=p(q)\bigl(1-p(q)\bigr),\qquad\mathrm{std}[r(o\mid q)]=\sqrt{p(q)\bigl(1-p(q)\bigr)}.
+Normalized advantage
+GRPO and its variants employ a normalized advantage function of the form
+A⁡(o∣q)=r⁡(o∣q)−p⁡(q)p​(q)​(1−p​(q)).A(o\mid q)=\frac{r(o\mid q)-p(q)}{\sqrt{p(q)(1-p(q))}}.
+Since the reward is binary, this admits the explicit piecewise representation
+A⁡(o∣q)={1−p⁡(q)p⁡(q),if ​r​(o∣q)=1,−p⁡(q)1−p⁡(q),if ​r​(o∣q)=0.A(o\mid q)=\begin{cases}\sqrt{\dfrac{1-p(q)}{p(q)}},&\text{if }r(o\mid q)=1,\\[8.0pt]
+-\sqrt{\dfrac{p(q)}{1-p(q)}},&\text{if }r(o\mid q)=0.\end{cases}
+GRPO-style objective
+We consider the expectation form of the GRPO-family objective (omitting KL regularization for clarity):
+J0(θ)=𝔼q𝔼o∼πold(⋅∣q)[1|o|∑t=1|o|f(πθ​(ot∣q,o<t)πold​(ot∣q,o<t),A(o∣q))].J_{0}(\theta)=\mathbb{E}_{q}\mathbb{E}_{o\sim\pi_{\text{old}}(\cdot\mid q)}\left[\frac{1}{|o|}\sum_{t=1}^{|o|}f\!\left(\frac{\pi_{\theta}(o_{t}\mid q,o_{<t})}{\pi_{\text{old}}(o_{t}\mid q,o_{<t})},\;A(o\mid q)\right)\right].
+Here, f⁡(x,y)f(x,y) is a surrogate objective function inherited from PPO-style policy optimization.
+For GRPO specifically,
+f⁡(x,y)=min⁡(x​y,clip⁡(x,1−ϵ,1+ϵ)​y),f(x,y)=\min\bigl(xy,\operatorname{clip}(x,1-\epsilon,1+\epsilon)\,y\bigr),
+where xx is a likelihood ratio and yy is the advantage.
+Structural assumption on ff
+Following Li et al. (2025), we assume that f⁡(x,y)f(x,y) is non-decreasing in xx and admits the decomposition
+f(x,y)=𝟏{y>0}yf+(x,1)− 1{y≤0}|y|f−(x,1),f(x,y)=\mathbf{1}\{y>0\}\,y\,f^{+}(x,1)\;-\;\mathbf{1}\{y\leq 0\}\,|y|\,f^{-}(x,1),
+for some non-decreasing functions f+f^{+} and f−f^{-}.
+This assumption holds for GRPO and its common variants, and separates the effect of the sign and magnitude of the advantage.
+Decomposition by reward outcomes.
+Let πold+(⋅∣q)\pi^{+}_{\text{old}}(\cdot\mid q) and πold−(⋅∣q)\pi^{-}_{\text{old}}(\cdot\mid q) denote the conditional distributions of outputs given r⁡(o∣q)=1r(o\mid q)=1 and r⁡(o∣q)=0r(o\mid q)=0, respectively.
+Applying the law of total expectation and substituting the piecewise form of A⁡(o∣q)A(o\mid q) yields
+J0​(θ)\displaystyle J_{0}(\theta)
+=𝔼q[p(q)1−p⁡(q)p⁡(q)𝔼o∼π+old(⋅∣q)1|o|∑t=1|o|f+(πθπold,1)\displaystyle=\mathbb{E}_{q}\Biggl[p(q)\sqrt{\frac{1-p(q)}{p(q)}}\mathbb{E}_{o\sim\pi^{+}_{\text{old}}(\cdot\mid q)}\frac{1}{|o|}\sum_{t=1}^{|o|}f^{+}\!\left(\frac{\pi_{\theta}}{\pi_{\text{old}}},1\right)
+−(1−p(q))p⁡(q)1−p⁡(q)𝔼o∼π−old(⋅∣q)1|o|∑t=1|o|f−(πθπold,1)].\displaystyle\qquad\quad-(1-p(q))\sqrt{\frac{p(q)}{1-p(q)}}\mathbb{E}_{o\sim\pi^{-}_{\text{old}}(\cdot\mid q)}\frac{1}{|o|}\sum_{t=1}^{|o|}f^{-}\!\left(\frac{\pi_{\theta}}{\pi_{\text{old}}},1\right)\Biggr].
+Emergence of the variance-based weight
+Factoring out common terms, the objective simplifies to
+J0(θ)=𝔼qp​(q)​(1−p​(q))[𝔼o∼π+old(⋅∣q)sθ(o,q)−𝔼o∼π−old(⋅∣q)sθ(o,q)],J_{0}(\theta)=\mathbb{E}_{q}\sqrt{p(q)\bigl(1-p(q)\bigr)}\left[\mathbb{E}_{o\sim\pi^{+}_{\text{old}}(\cdot\mid q)}s_{\theta}(o,q)-\mathbb{E}_{o\sim\pi^{-}_{\text{old}}(\cdot\mid q)}s_{\theta}(o,q)\right],
+where sθ​(o,q)s_{\theta}(o,q) denotes the corresponding token-averaged scoring function.
+Therefore, each question qq contributes to the objective with a multiplicative weight
+ω⁡(q)=p​(q)​(1−p​(q))=std⁡[r⁡(o∣q)].\omega(q)=\sqrt{p(q)\bigl(1-p(q)\bigr)}=\mathrm{std}[r(o\mid q)].
+Implication
+This derivation shows that GRPO-style objectives implicitly scale each question by the standard deviation of its reward distribution. As a result, questions that are nearly always correct (p⁡(q)≈1p(q)\approx 1) or nearly always incorrect (p⁡(q)≈0p(q)\approx 0) receive vanishing weight, while questions of intermediate difficulty are emphasized.
+langley00
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

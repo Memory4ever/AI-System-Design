@@ -1,0 +1,413 @@
+URL https://arxiv.org/html/2601.05501v1; sections S3 to S6 excluded; result tables omitted; fetched 2026-10-03
+
+
+
+ 3 Method 
+
+
+ 
+ Figure 2: Overview of the Hi-ZFO framework. (a) Partitioning: Splitting \Theta based on sensitivity and cost. (b) Dual-Stream Forward: Evaluating \mathcal{L}_{\text{FO}} and \mathcal{L}_{\text{ZO}} via in-place perturbation. (c) Reset & Update: Restoring \Theta_{\text{ZO}} using fixed seeds for coordinated FO/ZO updates. 
+ 
+
+
+
+ 3.1 Overview 
+
+ 
+
+Hi-ZFO is a hybrid framework that synergizes First-Order and Zeroth-Order optimization to maximize parameter efficiency under constrained computational resources.
+As illustrated in Figure  2 , the proposed methodology utilizes a FLOPs-aware criterion to estimate parameter importance, which facilitates the partitioning of model parameters into two distinct sets, \Theta_{FO} and \Theta_{ZO} .
+The optimization process is executed through two coupled streams, whereby a standard stream provides accurate gradient signals for critical parameters while a Perturbed Stream drives exploration-based updates for computation-intensive non-critical layers. 
+ 
+ 
+
+
+
+ 3.2 Cost-Aware Parameter Partitioning 
+
+ 
+
+To optimize resource allocation, we adopt the selection framework established by GreenTrainer ( Huang et al., 2024 ) , which evaluates parameter utility based on loss sensitivity relative to backpropagation cost. Because lower layers require full error propagation, they incur significantly higher FLOPs than upper-layer counterparts. Following the methodology of Huang et al. (2024) , we utilize Dynamic Programming (DP) to identify a parameter subset ( \Theta_{FO} ) that maximizes cumulative sensitivity within a fixed FLOPs budget, with mathematical details provided in Appendix  C . 
+ 
+ 
+
+While the DP solution typically prioritizes FO updates for upper layers, Hi-ZFO departs from the static freezing approach of GreenTrainer by assigning computation-intensive bottom layers to Zeroth-Order optimization ( \Theta_{ZO} ). Since ZO updates rely solely on forward passes, such high-cost layers can be adapted without the prohibitive overhead of backpropagation. This transition effectively repurposes the cost-saving mechanism of GreenTrainer into a source of beneficial exploration, allowing the model to adapt low-level representations while maintaining overall computational efficiency. 
+ 
+ 
+
+
+
+ 3.3 Dual-Stream Forward Propagation 
+
+ 
+
+Upon completing parameter partitioning, the optimization procedure executes a sequential dual-stream forward propagation for each input batch x . The process commences by generating a perturbed parameter set \Theta^{\prime}_{ZO}=\Theta_{ZO}+\epsilon\mathbf{u} via a random noise vector \mathbf{u}\sim\mathcal{N}(\mathbf{0},\mathbf{I}) scaled by a smoothing parameter \epsilon . 
+ 
+ 
+
+The dual-stream execution involves two consecutive stages. Initially, the standard stream processes the input using unperturbed parameters (\Theta_{FO},\Theta_{ZO}) to obtain the baseline loss \mathcal{L}_{FO}=\mathcal{M}(x;\Theta_{FO},\Theta_{ZO}) . Such a pass facilitates the extraction of essential first-order gradient signals for \Theta_{FO} and establishes a clean reference for subsequent estimation. Subsequently, the perturbed stream performs a second forward pass using unperturbed FO parameters alongside perturbed ZO parameters to yield the post-perturbation loss \mathcal{L}_{ZO}=\mathcal{M}(x;\Theta_{FO},\Theta^{\prime}_{ZO}) . The resulting loss value quantifies the sensitivity of the loss landscape to structured perturbations within the \Theta_{ZO} subspace. 
+ 
+ 
+
+
+
+ 3.4 Hybrid Optimization 
+
+ 
+
+Hi-ZFO utilizes a loss-level coupling to unify FO and ZO optimization within a single objective function, \mathcal{L}_{total}=\mathcal{L}_{FO}+\alpha\mathcal{L}_{ZO} , where the hyperparameter \alpha regulates the contribution of the exploration signal. 
+ 
+ 
+
+Under this unified objective, parameters within \Theta_{FO} undergo standard backpropagation according to the update rule 
+ 
+
+ 
+
+ 
+ \theta_{FO}\leftarrow\theta_{FO}-\eta_{FO}\nabla_{\theta_{FO}}\mathcal{L}_{total}. 
+ 
+ (1) 
+ 
+
+Integrating the perturbed loss into \mathcal{L}_{total} explicitly conditions FO optimization on variations within \Theta_{ZO} . Such a mechanism prevents upper layers from disregarding shifts in lower layers and encourages the development of solutions robust to representation changes. 
+ 
+ 
+
+Simultaneously, parameters in \Theta_{\text{ZO}} utilize a gradient estimator derived from the finite difference between the standard and perturbed streams.
+To minimize memory overhead, we perform an in-place perturbation by fixing a random seed s to sample the vector \mathbf{u} and setting \Theta^{\prime}_{\text{ZO}}\leftarrow\Theta_{\text{ZO}}+\epsilon\mathbf{u} .
+Immediately after evaluating the perturbed loss \mathcal{L}_{\text{ZO}} , the original parameters are recovered in-place by regenerating the same \mathbf{u} via the fixed seed s and computing \Theta_{\text{ZO}}\leftarrow\Theta^{\prime}_{\text{ZO}}-\epsilon\mathbf{u} .
+By leveraging \mathcal{L}_{\text{FO}} as a baseline, the descent direction is calculated as: 
+ 
+
+ 
+
+ 
+ \hat{\mathbf{g}}_{\text{ZO}}=\frac{\mathcal{L}_{\text{ZO}}-\mathcal{L}_{\text{FO}}}{\epsilon}\mathbf{u}. 
+ 
+ (2) 
+ 
+
+The resulting gradient estimate is subsequently applied to the restored original parameters \Theta_{\text{ZO}} via the expression: 
+ 
+
+ 
+
+ 
+ \Theta_{\text{ZO}}\leftarrow\Theta_{\text{ZO}}-\eta_{\text{ZO}}\hat{\mathbf{g}}_{\text{ZO}}. 
+ 
+ (3) 
+ 
+
+Through such coordinated updates and in-place recovery, Hi-ZFO ensures that FO precision and ZO exploration operate in a mutually aware manner, ultimately stabilizing the optimization trajectory in complex generative landscapes. 
+ 
+
+
+ Algorithm 1 Hi-ZFO Optimization Algorithm 
+ 
+ 
+ 0: 
+ 
+ 
+  Parameters \Theta ; Dataset \mathcal{D} ; FLOPs budget \mathcal{B} ; Rates \eta_{\text{FO}},\eta_{\text{ZO}} ; Scalars \epsilon,\alpha ; Random seed s .
+
+ 
+ 
+ 0: 
+ 
+ 
+  Optimized \Theta^{*} .
+
+ 
+ 
+ 1: 
+ 
+ 
+   Partitioning: Compute sensitivity I_{k} and cost C_{k} for all tensors.
+
+ 
+ 
+ 2: 
+ 
+ 
+  Solve DP to partition \Theta\rightarrow\Theta_{\text{FO}} and \Theta_{\text{ZO}} s.t. cost \leq\mathcal{B} .
+
+ 
+ 
+ 3: 
+ 
+ 
+   for epoch =1 to E do 
+
+
+
+ 
+ 
+ 4: 
+ 
+ 
+    for batch (x,y) in \mathcal{D} do 
+
+
+
+ 
+ 
+ 5: 
+ 
+ 
+     \mathcal{L}_{\text{FO}}\leftarrow\mathcal{L}(x,y;\Theta_{\text{FO}},\Theta_{\text{ZO}}) 
+
+ 
+ 
+ 6: 
+ 
+ 
+    Sample \mathbf{u}\sim\mathcal{N}(\mathbf{0},\mathbf{I}) via seed s and set \Theta^{\prime}_{\text{ZO}}\leftarrow\Theta_{\text{ZO}}+\epsilon\mathbf{u} .
+
+ 
+ 
+ 7: 
+ 
+ 
+     \mathcal{L}_{\text{ZO}}\leftarrow\mathcal{L}(x,y;\Theta_{\text{FO}},\Theta^{\prime}_{\text{ZO}}) 
+
+ 
+ 
+ 8: 
+ 
+ 
+     \Theta_{\text{ZO}}\leftarrow\Theta^{\prime}_{\text{ZO}}-\epsilon\mathbf{u} 
+
+ 
+ 
+ 9: 
+ 
+ 
+     Update \Theta_{\text{FO}} (via Backpropagation): 
+
+ 
+ 
+ 10: 
+ 
+ 
+     \mathcal{L}_{\text{total}}\leftarrow\mathcal{L}_{\text{FO}}+\alpha\mathcal{L}_{\text{ZO}} 
+
+ 
+ 
+ 11: 
+ 
+ 
+     \Theta_{\text{FO}}\leftarrow\Theta_{\text{FO}}-\eta_{\text{FO}}\nabla_{\Theta_{\text{FO}}}\mathcal{L}_{\text{total}} 
+
+ 
+ 
+ 12: 
+ 
+ 
+     Update \Theta_{\text{ZO}} (via Gradient Estimation): 
+
+ 
+ 
+ 13: 
+ 
+ 
+     \hat{\mathbf{g}}_{\text{ZO}}\leftarrow\frac{\mathcal{L}_{\text{ZO}}-\mathcal{L}_{\text{FO}}}{\epsilon}\mathbf{u} 
+
+ 
+ 
+ 14: 
+ 
+ 
+     \Theta_{\text{ZO}}\leftarrow\Theta_{\text{ZO}}-\eta_{\text{ZO}}\hat{\mathbf{g}}_{\text{ZO}} 
+
+ 
+ 
+ 15: 
+ 
+ 
+   return \Theta_{\text{FO}}\cup\Theta_{\text{ZO}} 
+
+ 
+ 
+ 
+ 
+
+
+
+ 3.5 Theoretical Justification 
+
+ 
+
+To validate the stability of Hi-ZFO, we analyze its convergence properties under standard L -smoothness and bounded variance assumptions. The detailed mathematical derivation is provided in Appendix  D . 
+ 
+ 
+
+ Theorem 3.1 (Convergence of Hi-ZFO) . 
+ 
+
+ Let \Delta=\mathcal{L}(\theta_{0})-\mathcal{L}^{*} denote the initial optimality gap and \Sigma^{2}=\sigma_{FO}^{2}+\alpha^{2}\sigma_{ZO}^{2} represent the composite variance. By setting the learning rate \eta=\frac{1}{\sqrt{T}} and the ZO smoothing parameter \mu=\frac{1}{\sqrt{d_{ZO}T}} , the minimum expected squared gradient norm is bounded by: 
+ 
+
+ 
+
+ 
+ \begin{split}\min_{t\in[0,T-1]}\mathbb{E}[\|\nabla\mathcal{L}(\theta_{t})\|^{2}]\leq&\frac{4\Delta+2L\Sigma^{2}}{\sqrt{T}}\\
+&+\mathcal{O}\left(\frac{d_{ZO}}{T}\right).\end{split} 
+ 
+ (4) 
+ 
+
+ Consequently, as T\to\infty , the algorithm achieves the standard non-convex convergence rate: 
+ 
+
+ 
+
+ 
+ \min_{t\in[0,T-1]}\mathbb{E}[\|\nabla\mathcal{L}(\theta_{t})\|^{2}]\leq\mathcal{O}\left(\frac{1}{\sqrt{T}}\right). 
+ 
+ (5) 
+ 
+ 
+ 
+ 
+
+The convergence behavior is driven by two components. The \mathcal{O}(1/\sqrt{T}) term arises from the stochastic variance and optimization gap, confirming that Hi-ZFO matches the asymptotic rate of standard first-order methods. The \mathcal{O}(d_{ZO}/T) term corresponds to the squared smoothing bias, denoted as 2\delta_{\mu} in the derivation (see Appendix D ), where \delta_{\mu}\propto\mu^{2}d_{ZO}^{2} . Crucially, this bias term scales linearly with the partial dimension d_{ZO} rather than the full parameter dimension d . 
+ 
+ 
+ 
+
+
+
+ 4 Experiments 
+
+
+
+
+ 4.1 Experimental Setup 
+
+ 
+
+ Models and Tasks. 
+We evaluate Hi-ZFO on a comprehensive suite of LLMs, including OPT ( Zhang et al., 2022 ) , BLOOM ( Scao et al., 2022 ) , Qwen2 Yang et al. (2024a) , and Qwen2.5-Instruct ( Yang et al., 2024b ) . The assessment spans standard NLP benchmarks, specifically abstractive summarization on SciTLDR ( Cachola et al., 2020 ) and DialogSum ( Chen et al., 2021b ) alongside generative QA on WebQuestions ( Berant et al., 2013 ) . Furthermore, we evaluate complex reasoning capabilities on GSM8K ( Cobbe et al., 2021 ) , HumanEval ( Chen et al., 2021a ) , and the Math500 subset of MATH ( Hendrycks et al., 2021 ) . Such an evaluation focuses exclusively on generative tasks to avoid the metric inflation often observed in simple classification. 
+ 
+ 
+
+ Baselines. 
+We evaluate Hi-ZFO against a comprehensive suite of baselines, including standard first-order (FO) methods and parameter-efficient fine-tuning (PEFT) techniques such as LoRA ( Hu et al., 2022 ) , GreenTrainer (GT-0.7) ( Huang et al., 2024 ) , and Prefix-Tuning ( Li and Liang, 2021 ) . We also compare it with zeroth-order (ZO) methods like MeZO ( Malladi et al., 2023 ) and the hybrid framework Bilevel-ZOFO ( Shirkavand et al., 2025 ) . Addax is excluded from this comparison as it defaults to standard first-order optimization in long-sequence scenarios. Detailed formal definitions for all baselines are provided in Appendix  A.1 . 
+ 
+ 
+
+
+
+ 4.2 Implementation Details 
+
+ 
+
+Experiments conducted on NVIDIA H100 GPUs utilize the AdamW optimizer with decoupled learning rates of 2\times 10^{-5} for FO and 2\times 10^{-6} for ZO updates. Hyperparameters for reasoning tasks strictly follow the configurations established in Bilevel-ZOFO ( Shirkavand et al., 2025 ) , while standard NLP tasks align with the batch and sequence constraints of GreenTrainer ( Huang et al., 2024 ) to ensure a fair comparison. In addition, \epsilon is set to 0.001 and \alpha to 0.1 . Detailed training configurations and the utilized prompt templates are provided in Appendix  A.2 and Appendix  A.3 , respectively. 
+ 
+
+
+ [result table omitted; consult original if quantitative claim needed] 
+ Table 1: Performance comparison of different LLMs on SciTLDR, DialogSum, and WebQuestion. 
+ 
+ 
+
+
+
+ 4.3 Model Performance 
+
+ 
+
+Table 1 provides a detailed comparison of training costs and downstream performance between Hi-ZFO and several prominent baselines, including Full Fine-Tuning (Full FT), various PEFT methods, and mixed-gradient approaches across three distinct LLM architectures. The reported metrics demonstrate that Hi-ZFO consistently achieves state-of-the-art results, surpassing both Full FT and competitive baselines such as Bilevel-ZOFO and GT-0.7 in most experimental settings. On the DialogSum task using BLOOMZ-3B, for instance, Hi-ZFO obtains a ROUGE-1 score of 38.9, which markedly outperforms the scores of 34.1 and 36.0 achieved by Full FT and Bilevel-ZOFO, respectively. 
+ 
+ 
+
+Furthermore, Hi-ZFO demonstrates superior time efficiency compared to other high-performance methodologies. Such a speed advantage originates from the rapid convergence of the proposed framework, which reaches peak performance within only three training epochs. In contrast, baseline methods typically require five epochs to converge under their standard configurations, with further training for Hi-ZFO often leading to overfitting. Consequently, the proposed approach substantially reduces computational wall-clock time, such as decreasing the duration from 1.20 hours for Full FT to 0.49 hours on Qwen2.5/SciTLDR. By maintaining a memory footprint lower than Full FT and more efficient than existing mixed-gradient approaches, Hi-ZFO strikes an optimal balance between resource consumption and model accuracy. 
+ 
+ 
+
+
+
+ 4.4 Performance on Mathematical Reasoning and Coding Tasks. 
+
+ 
+
+Evaluation on reasoning and coding benchmarks using Qwen2-7B reveals a distinct advantage for Hi-ZFO, as detailed in Table  2 . Notably, the pure Zeroth-Order baseline (MeZO) collapses on GSM8K, falling from a zero-shot score of 0.420 to 0.329. Such performance degradation highlights the necessity of gradient guidance for complex reasoning, a requirement Hi-ZFO meets with exceptional robustness. Specifically, the proposed framework outperforms Full Fine-Tuning (FT) on both GSM8K (0.810 vs. 0.773) and HumanEval (0.564 vs. 0.505), while also surpassing the mixed-gradient baseline Bilevel-ZOFO (0.543). Although Full FT maintains a marginal lead on Math500 (0.370 vs. 0.350), Hi-ZFO remains competitive and significantly exceeds parameter-efficient methods like LoRA (0.280). The empirical results suggest that the hierarchical strategy acts as an effective regularizer, preserving intrinsic reasoning capabilities more successfully than unconstrained parameter updates. 
+ 
+
+
+ [result table omitted; consult original if quantitative claim needed] 
+ Table 2: Performance comparison of Qwen2-7B on mathematical and coding tasks. We report Accuracy for GSM8K and Math500, and pass@1 for HumanEval. 
+ 
+ 
+ 
+
+
+
+ 5 Analysis 
+
+
+
+
+ 5.1 Scalability and Efficiency across Model Sizes 
+
+ 
+
+Table 3 provides a comprehensive assessment of scalability across model sizes ranging from 350M to 13B parameters. The empirical results consistently indicate that Hi-ZFO achieves a superior trade-off between computational efficiency and downstream accuracy compared to both Full Fine-Tuning and specialized baselines. A significant performance discrepancy emerges when comparing Hi-ZFO to GreenTrainer (GT-0.7), which underscores the fundamental constraints of static parameter freezing. While GT-0.7 minimizes costs by entirely bypassing non-critical parameters, such an approach restricts the model’s ability to undergo necessary representation shifts during adaptation. In contrast, Hi-ZFO reactivates these layers through low-cost zeroth-order updates to recover substantial performance, as evidenced by the 2.8% improvement on the OPT-13B WebQuestions task where Hi-ZFO reaches 35.9% relative to the 33.1% obtained by GT-0.7.
+Crucially, the observed gains in accuracy are achieved without increasing training latency. Hi-ZFO records lower wall-clock time than GT-0.7 across all experimental settings, specifically reducing the duration for OPT-13B on SciTLDR from 3.97 to 2.47 hours. Such findings suggest that incorporating exploration-based updates facilitates more effective navigation of high-dimensional parameter spaces than the strict gradient-based selection employed by previous methodologies. 
+ 
+
+
+ [result table omitted; consult original if quantitative claim needed] 
+ Table 3: Impact of LLM’s model size 
+ 
+ 
+
+
+
+ 5.2 Impact of FLOPs-based Update Ratio ( \rho ). 
+
+ 
+
+We further investigate the trade-off between computational budget and downstream performance by varying the FLOPs-based update ratio \rho from 0.2 to 0.8, as detailed in Table  4 . The results highlight a critical balance between resource consumption and model accuracy. As expected, increasing \rho results in a monotonic rise in training cost; for the OPT-2.7B model, raising \rho from 0.2 to 0.8 more than doubles the training time (1.62h to 3.67h) and expands memory usage from 19.7 GB to 53.0 GB. In terms of performance, we observe an “inverted-U” trajectory. At low ratios ( \rho\leq 0.3 ), the model suffers from underfitting due to insufficient parameter updates, yielding negligible scores. Performance improves sharply as more computationally significant parameters are included, reaching a peak at \rho=0.6 , where OPT-1.3B and OPT-2.7B achieve optimal ROUGE-1 scores of 27.7 and 26.7, respectively. Crucially, increasing \rho beyond this point yields diminishing returns; at \rho=0.7 , accuracy notably degrades (e.g., OPT-1.3B drops to 24.2) while memory overhead surges by approximately 50% (21.2 GB to 32.8 GB). This indicates that updating the top 60% of parameters based on FLOPs density captures the essential semantic information required for fine-tuning, while higher ratios introduce unnecessary redundancy and resource costs. Consequently, we adopt \rho=0.6 as the optimal configuration for our method. 
+ 
+
+
+ [result table omitted; consult original if quantitative claim needed] 
+ Table 4: Performance and efficiency comparison of different pruning ratios on DialogSum. 
+ 
+
+ 
+ Figure 3: Sensitivity analysis of the learning rate ratio r=\eta_{\text{ZO}}/\eta_{\text{FO}} .
+ 
+ 
+
+
+ [result table omitted; consult original if quantitative claim needed] 
+ Table 5: Sensitivity analysis of the hyperparameter \alpha (ZO-Loss weight) on OPT-2.7B and BLOOM-3B. The row "w/o ZO-Loss" corresponds to \alpha=0 . 
+ 
+
+ 
+ Figure 4: We evaluate the ROUGE-1 score on the DialogSum dataset. Hi-ZFO achieves peak performance at \alpha=0.1 .
+ 
+ 
+ 
+
+
+
+ 5.3 Impact of ZO Learning Rate Ratio 
+
+ 
+
+To optimize the synergy between first-order (FO) and zeroth-order (ZO) updates, we investigate the sensitivity of the learning rate ratio r=\eta_{\text{ZO}}/\eta_{\text{FO}} , as depicted in Figure  3 . The results reveal a clear distinction between a Stable Region and an Unstable Region. Performance peaks (Score: 26.7) at a conservative ratio of r=0.1 , suggesting that the ZO component functions best as a subtle auxiliary signal. While the model maintains stability within the range r\in[0.1,0.5] , exceeding this threshold precipitates a sharp decline; at r=0.7 , the score plummets to 14.2. This collapse indicates that the magnitude of ZO updates must be strictly constrained relative to FO updates. When \eta_{\text{ZO}} is too large, the stochastic nature of zeroth-order estimates tends to disrupt the precise trajectory guided by first-order gradients. Consequently, we fix r=0.1 to balance exploration with stability. 
+ 
+ 
+
+
+
+ 5.4 Sensitivity analysis of the ZO-Loss weight \alpha . 
+
+ 
+
+To assess the impact of the Zeroth-Order (ZO) regularization term and identify an optimal weighting factor \alpha , we conduct a comprehensive ablation and sensitivity analysis, with the findings summarized in Table  5 and Figure  4 . The results in Table  5 highlight the indispensability of the ZO loss, as setting \alpha=0 reduces Hi-ZFO to a standard first-order baseline and results in systematic performance attenuation across all evaluated architectures. For instance, removing the ZO component decreases the ROUGE-1 score from 35.6 to 32.5 on OPT-2.7B for the SciTLDR task and from 38.9 to 36.1 on BLOOM-3B for DialogSum.
+The sensitivity analysis further characterizes a concave, inverted U-shaped relationship between \alpha and model performance. Accuracy improves as \alpha increases from zero, reaching a peak at \alpha=0.1 with a ROUGE-1 score of 26.7, which substantially outperforms the 23.1 achieved by the first-order baseline. Notably, Hi-ZFO demonstrates significant robustness toward variations in \alpha , evidenced by the fact that the performance at \alpha=0.4 remains superior to the pure first-order baseline. Such resilience indicates that the ZO regularization term provides a stable training signal, where the integration of zeroth-order exploration yields consistent benefits over standard fine-tuning regardless of non-optimal weighting.

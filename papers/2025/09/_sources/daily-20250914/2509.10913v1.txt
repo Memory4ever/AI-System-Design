@@ -1,0 +1,1296 @@
+Robustifying Diffusion-Denoised Smoothing Against Covariate Shift
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Background
+2.1 Denoising Diffusion Models
+2.2 Randomized Smoothing
+2.3 Denoised Smoothing
+3 Method
+3.1 Covariate Shift Issue in Single-Shot Denoiser
+3.2 Dealing with Covariate Shift
+3.3 Extreme Covariate Shifted Data Finding Algorithm
+3.4 Distinction from Existing Approaches
+4 Experiment
+4.1 CERTIFY and PREDICT Algorithms
+4.2 Results on MNIST
+4.3 Results on CIFAR-10
+4.4 Results on ImageNet
+4.5 Analyzing Hyperparameters
+5 Conclusion
+References
+A Single-Shot Denoiser Analysis
+B Visual Interpretation of Extreme Covariate Shifted Data
+License: CC BY 4.0
+arXiv:2509.10913v1 [cs.LG] 13 Sep 2025
+Ali Hedayatniaa (alihedayatnia@ut.ac.ir), Mostafa Tavassolipoura (tavassolipour@ut.ac.ir), Babak Nadjar Araabia (araabi@ut.ac.ir), Abdol-Hossein Vahabiea (h.vahabie@ut.ac.ir)
+a Department of Electrical and Computer Engineering, University of Tehran, Tehran, Iran
+Corresponding author at: Department of Electrical and Computer Engineering, University of Tehran, Tehran, Iran.
+Mostafa Tavassolipour
+Department of Electrical and Computer Engineering, University of Tehran, Tehran, Iran.
+Tel: (+98) 2161115073
+Email: tavassolipour@ut.ac.ir
+Abdol-Hossein Vahabie
+Department of Electrical and Computer Engineering, University of Tehran, Tehran, Iran.
+Tel: (+98) 9194211374
+Email: h.vahabie@ut.ac.ir
+Abstract
+Randomized smoothing is a well-established method for achieving certified robustness against l2l_{2}-adversarial perturbations. By incorporating a denoiser before the base classifier, pretrained classifiers can be seamlessly integrated into randomized smoothing without significant performance degradation. Among existing methods, Diffusion Denoised Smoothing—where a pretrained denoising diffusion model serves as the denoiser—has produced state-of-the-art results. However, we show that employing a denoising diffusion model introduces a covariate shift via misestimation of the added noise, ultimately degrading the smoothed classifier’s performance. To address this issue, we propose a novel adversarial objective function focused on the added noise of the denoising diffusion model. This approach is inspired by our understanding of the origin of the covariate shift. Our goal is to train the base classifier to ensure it is robust against the covariate shift introduced by the denoiser. Our method significantly improves certified accuracy across three standard classification benchmarks—MNIST, CIFAR-10, and ImageNet—achieving new state-of-the-art performance in l2l_{2}-adversarial perturbations. Our implementation is publicly available at this GitHub repository
+Keywords:
+Certified Robustness , Randomized Smoothing , Denoised Smoothing , Adversarial Robustness , Denoising Diffusion Models
+1 Introduction
+Deep neural networks have achieved remarkable success across various tasks, including image classification Yu et al. [2022], Wortsman et al. [2022], Chen et al. [2022], object detection Zong et al. [2023], Wang et al. [2023c], Su et al. [2023], Oksuz et al. [2023], and semantic segmentation Wang et al. [2023a], Wang et al. [2023c], Su et al. [2023], Wang et al. [2023b], often surpassing human performance. However, these models remain vulnerable to data that deviates from training data distribution. For instance, adding even imperceptible perturbations to a data can cause a well-trained classifier to misclassify it. Such perturbed inputs, known as adversarial examples Szegedy [2013], Biggio et al. [2013], pose significant challenges for deploying neural networks in safety-critical applications.
+The sensitivity of neural networks to input perturbations has made robustness a critical concern, leading to the development of various defense strategies. Among the most effective approaches is adversarial training Madry et al. [2017], Goodfellow et al. [2014], Huang et al. [2015], Ding et al. [2018], which generates adversarial examples during training and incorporates them into the learning process. Another interesting approach involves exposing classifiers to specific attacks during training. While such methods can improve the model’s robustness to specific perturbation, they often lack generalizability Tramer & Boneh [2019], Kaufmann et al. [2019], Schmidt et al. [2018], Rice et al. [2020] and they do not provide formal guarantees of robustness.
+One line of thought pursued by researchers in the field of robustness is finding a method that guarantees robustness and, in other words, provides a mathematical certification. A lot of work has been done in this field Wong & Kolter [2018], Zhang et al. [2018a], Mirman et al. [2018], Weng et al. [2018], Sinha et al. [2017], Zhang et al. [2019], but many of these methods are not applicable to deep neural networks. One of the certified robustness methods applicable to deep neural networks is randomized smoothing. This approach provides a robustness certification by transforming a classifier into a smoothed classifier. By averaging a classifier’s prediction on Gaussian-perturbed inputs, randomized smoothing Cohen et al. [2019] transforms a base classifier into a certifiably robust smoothed classifier.
+Figure 1: Pipeline of our proposed method. We optimize the perturbation ϵ\epsilon to induce extreme covariate shift during denoising and utilize it to train the base classifier.
+While randomized smoothing theoretically guarantees robustness of any classifier by transforming it into a smoothed classifier, in practice, we cannot use pretrained classifiers since they are not robust to Gaussian-perturbed data. To address this problem, Salman et al. [2020] introduced denoised smoothing, which leverages a denoiser to preprocess perturbed inputs before classification. By incorporating a denoiser, pretrained classifiers can be effectively used within the randomized smoothing paradigm.
+One of the denoisers that has achieved excellent results is the denoising diffusion model Ho et al. [2020], Song et al. [2020a], Song et al. [2020b], which aims to obtain denoised data through a backward process by iteratively denoising the data. Carlini et al. [2022] demonstrated that by utilizing these models in denoised smoothing, it is possible to achieve excellent results in certifiably robust l2l_{2}-perturbation using a pre-trained classifier and a pre-trained denoised diffusion model.
+However, diffusion-based denoising can introduce a covariate shift when noise estimation errors cause the denoised outputs to deviate significantly from the original clean data distribution. In diffusion-denoised smoothing, this shift propagates into the base classifier’s input, potentially reducing the smoothed classifier’s certified accuracy. Hence, while pretrained classifiers are compatible with diffusion-denoised smoothing, failing to adapt them to this covariate shift results in degraded performance.
+To address this issue, we propose a simple yet effective approach to enhance the base classifier’s robustness against covariate shift induced by noise misestimation in diffusion denoised smoothing. Specifically, we introduce a novel adversarial objective function designed around the added noise in denoising diffusion models. Using an adversarial procedure, like projected gradient descent, we identify the noise configuration that generate the largest covariate shift and most effectively confuse the classifier. These adversarial noise samples are then used to train the base classifier, improving its robustness to covariate shift and significantly enhancing the certified performance of the smoothed classifier.
+Contributions:
+1.
+We identify a critical limitation in Diffusion Denoised Smoothing: denoising diffusion models trained with mean squared error (MSE) loss introduce a significant covariate shift due to misestimation of added noise.
+2.
+To address this issue, we propose a novel adversarial training framework that explicitly targets extreme covariate shift cases, improving classifier robustness under noise misestimation.
+3.
+We evaluate our approach on three standard classification benchmarks—MNIST, CIFAR-10, and ImageNet—achieving new state-of-the-art results in certified accuracy and Average Certified Radius (ACR).
+2 Background
+2.1 Denoising Diffusion Models
+The Denoising Diffusion Probabilistic Model (DDPM)Ho et al. [2020] is one of the most well-known types of generative models, recognized for its ability to generate high-quality data through a diffusion-based process. DDPM constructs a Markovian chain {xt}t=0T\left\{x_{t}\right\}_{t=0}^{T} with transition probabilities defined as:
+p(xt|xt−1)=𝒩(xt;1−βtxt−1,βtI)p\left(x_{t}\lvert x_{t-1}\right)=\mathcal{N}\left(x_{t};\sqrt{1-\beta_{t}}x_{t-1},\sqrt{\beta_{t}}I\right)
+(1)
+where βt∈(0,1)\beta_{t}\in\left(0,1\right) controls the amount of noise variance added at each step. Since DDPM follows a simple Gaussian Markov chain, if we define α¯t=∏t=1t(1−βt)\bar{\alpha}_{t}=\prod_{t=1}^{t}\left(1-\beta_{t}\right), we have:
+p(xt|x0)=𝒩(xt;α¯tx0,1−α¯tI)p\left(x_{t}\lvert x_{0}\right)=\mathcal{N}\left(x_{t};\sqrt{\bar{\alpha}_{t}}x_{0},\sqrt{1-\bar{\alpha}_{t}}I\right)
+(2)
+In other words, xtx_{t} can be expressed as:
+xt=α¯t​x0+1−α¯t​ϵx_{t}=\sqrt{\bar{\alpha}_{t}}x_{0}+\sqrt{1-\bar{\alpha}_{t}}\epsilon
+(3)
+where ϵ∼𝒩⁡(0,I)\epsilon\sim\mathcal{N}\left(0,I\right) and it is independent of x0x_{0}.
+In the reverse process, xtx_{t} is progressively denoised step by step using a learned variational Markov chain. This chain is modeled as:
+p(xt−1|xt)=𝒩(xt−1;μθ(xt,t),Σθ(xt,t))p\left(x_{t-1}\lvert x_{t}\right)=\mathcal{N}\left(x_{t-1};\mu_{\theta}\left(x_{t},t\right),\Sigma_{\theta}\left(x_{t},t\right)\right)
+(4)
+where μθ​(xt,t)\mu_{\theta}\left(x_{t},t\right) and Σθ​(xt,t)\Sigma_{\theta}\left(x_{t},t\right) are parameterized by neural networks and learned during training. Ho et al. [2020] propose setting μθ​(xt,t)\mu_{\theta}\left(x_{t},t\right) as:
+μθ​(xt,t)=11−βt​(xt−βt1−α¯t​ϵθ​(xt,t))\mu_{\theta}\left(x_{t},t\right)=\frac{1}{\sqrt{1-\beta_{t}}}\left(x_{t}-\frac{\beta_{t}}{\sqrt{1-\bar{\alpha}_{t}}}\epsilon_{\theta}\left(x_{t},t\right)\right)
+(5)
+where ϵθ​(xt,t)\epsilon_{\theta}\left(x_{t},t\right) is a denoiser that predicts the noise added to the data at time step tt. In DDPM, the covariance matrix Σθ​(xt,t)\Sigma_{\theta}\left(x_{t},t\right) is simplified to σt2​I\sigma_{t}^{2}I, where σt2\sigma_{t}^{2} is a fixed variance at each time step tt, and II is the identity matrix. This simplifies the learning process by assuming an isotropic Gaussian distribution for the noise.
+To train this model, the following optimization problem must be solved:
+min𝜃​𝔼x0∼𝒟t​r​i​a​nt∈U⁡(0,T)ϵ∼𝒩⁡(0,I)​[‖ϵ−ϵθ​(xt,t)‖22]\underset{\theta}{\min}\underset{\begin{subarray}{c}x_{0}\sim\mathcal{D}^{trian}\\
+t\in U\left(0,T\right)\\
+\epsilon\sim\mathcal{N}\left(0,I\right)\end{subarray}}{\mathbb{E}}\left[\left\|\epsilon-\epsilon_{\theta}\left(x_{t},t\right)\right\|_{2}^{2}\right]
+(6)
+where ϵ∼𝒩⁡(0,I)\epsilon\sim\mathcal{N}\left(0,I\right) represents the true noise added to the data, and ϵθ​(xt,t)\epsilon_{\theta}\left(x_{t},t\right) is the model’s predicted noise. This objective minimizes the difference between the true noise and the predicted noise across time steps.
+In the reverse process of DDPM, the following equation is used to denoise and reconstruct the data:
+xt−1=μθ​(xt,t)+σt​zx_{t-1}=\mu_{\theta}\left(x_{t},t\right)+\sigma_{t}z
+(7)
+where z∼𝒩⁡(0,I)z\sim\mathcal{N}\left(0,I\right) is a random Gaussian noise sample.
+2.2 Randomized Smoothing
+One widely recognized method for achieving certified robustness in deep neural networks is randomized smoothing Cohen et al. [2019]. In randomized smoothing, a classifier is transformed into a "smoothed classifier," offering a robustness guarantee for the newly constructed model. Let f:ℝd→𝒴f:\mathbb{R}^{d}\rightarrow\mathcal{Y} represent a hard classifier that maps an input to its predicted class. The smoothed version of classifier ff is then defined as follows:
+f^(x)=arg⁡maxc∈𝒴ℙ[f(x+δ)=c]\hat{f}(x)=\underset{c\in\mathcal{Y}}{\arg\max}\ \mathbb{P}\left[f\left(x+\delta\right)=c\right]
+(8)
+w​h​e​r​eδ∼𝒩⁡(0,σ2​I)\begin{array}[]{cc}where&\delta\sim\mathcal{N}\left(0,\sigma^{2}I\right)\end{array}
+where σ\sigma controls robustness/accuracy tradeoff. The following theorem provides an l2l_{2} robustness certification for randomized smoothing.
+Theorem 1 (Cohen et al. [2019])
+Let f:ℝd→𝒴f:\mathbb{R}^{d}\rightarrow\mathcal{Y} be any base classifier, let σ>0\sigma>0, and let f^\hat{f} be its associated smooth classifier and we have:
+a=arg⁡maxc∈𝒴ℙ[f(x+δ)=c]a=\underset{c\in\mathcal{Y}}{\arg\max}\ \mathbb{P}\left[f\left(x+\delta\right)=c\right]
+(9)
+and,
+b=arg⁡maxc∈𝒴−{a}ℙ[f(x+δ)=c]b=\underset{c\in\mathcal{Y}-\left\{a\right\}}{\arg\max}\ \mathbb{P}\left[f\left(x+\delta\right)=c\right]
+(10)
+to be the two most likely classes for xx according to f^\hat{f} with probability pap_{a} and pbp_{b}. Then, we have that f^​(x′)=a\hat{f}\left(x^{\prime}\right)=a for all x′x^{{}^{\prime}} satisfying
+‖x′−x‖2≤σ2​(Φ−1​(pa)−Φ−1​(pb))\|x^{\prime}-x\|_{2}\leq\frac{\sigma}{2}\left(\Phi^{-1}\left(p_{a}\right)-\Phi^{-1}\left(p_{b}\right)\right)
+(11)
+where Φ−1​(⋅)\Phi^{-1}\left(\cdot\right) is inverse CDF of standard normal.
+Although randomized smoothing offers a robustness certification for the smoothed classifier, in practice, the performance of the smoothed classifier tends to be poor because the base classifier is not inherently robust to Gaussian perturbations. Cohen et al. [2019] address this challenge by training the base classifier with Gaussian data augmentation, improving its robustness to Gaussian perturbations. However, in SmoothAdv Salman et al. [2019], it is demonstrated that adversarial training of the base classifier using adversarial examples generated from the smoothed classifier within an l2l_{2}-ball leads to better performance. SmoothMix Jeong et al. [2021] introduces a method where an adversarial example is generated from a clean input, and an auxiliary loss is computed using mix-up augmentation between the clean and adversarial examples. It then trains the base classifier using both the auxiliary loss and the Gaussian augmentation loss.
+MACER Zhai et al. [2020] takes a different approach by directly training the smoothed classifier rather than the base classifier. Its training process focuses on maximizing the certified robustness radius of the smoothed classifier. Alternatively, Consistency Jeong & Shin [2020] uses a distinct method by training the classifier to ensure that the smoothed classifier produces stable outputs within a local neighborhood, while also ensuring that the output remains as far from a uniform distribution as possible.
+2.3 Denoised Smoothing
+Although randomized smoothing offers robustness certification for the smoothed version of any classifier, in practice,it requires training the base classifier on noisy/adversarial examples, making it impractical to use a pre-trained classifier. Denoised Smoothing Salman et al. [2020] addresses this challenge by incorporating a denoiser before the base classifier, allowing for the use of pre-trained classifiers while still benefiting from randomized smoothing. Let f:ℝd→𝒴f:\mathbb{R}^{d}\rightarrow\mathcal{Y} be a classifier and D:ℝd→ℝdD:\mathbb{R}^{d}\rightarrow\mathbb{R}^{d} be a denoiser. The denoised smoothed version of the classifier ff is defined as follows:
+g(x)=arg⁡maxc∈𝒴ℙ[f(D(x+δ))=c]g(x)=\underset{c\in\mathcal{Y}}{\arg\max}\ \mathbb{P}\left[f\left(D\left(x+\delta\right)\right)=c\right]
+(12)
+w​h​e​r​eδ∼𝒩⁡(0,σ2​I)\begin{array}[]{cc}where&\delta\sim\mathcal{N}\left(0,\sigma^{2}I\right)\end{array}
+It can be easily demonstrated that the robustness certification remains valid for denoised smoothed classifiers as well. The denoiser in denoised smoothing can be trained using Mean Squared Error (MSE) loss, stability loss Salman et al. [2020], or a combination of both. Salman et al. [2020] demonstrate that training with stability loss leads to better results.
+Although a pretrained classifier can be utilized in the denoised smoothing approach, training the denoiser remains essential.
+To address this issue, Carlini et al. [2022] propose Diffusion Denoised Smoothing. In this approach, the noisy input is denoised using a denoising diffusion model at a specific time step t∗t^{\ast}, determined as:
+t∗=arg⁡min𝑡​|σ−1−α¯tα¯t|t^{\ast}=\underset{t}{\arg\min}\ {\left|\sigma-\sqrt{\frac{1-\bar{\alpha}_{t}}{\bar{\alpha}_{t}}}\right|}
+(13)
+This formulation selects the optimal time step t∗t^{\ast} where the diffusion noise level best matches the target noise parameter σ\sigma and xt∗=α¯t∗​(x+δ)x_{t^{\ast}}=\sqrt{\bar{\alpha}_{t^{\ast}}}(x+\delta). Since the denoising process in denoising diffusion models is iterative, it has a computational complexity of O⁡(t∗)O(t^{\ast}). This not only slows down the denoising process but also causes error accumulation over multiple steps, leading to a substantial discrepancy between the denoised image and its corresponding clean image. To address this challenge, Carlini et al. [2022] propose the use of a single-shot denoiser:
+x0|t∗=𝔼[x0|xt∗]=xt∗−1−α¯t∗​ϵθ​(xt∗,t∗)α¯t∗x_{0\lvert t^{\ast}}={\mathbb{E}}\left[x_{0}|x_{t^{\ast}}\right]=\frac{x_{t^{\ast}}-\sqrt{1-\bar{\alpha}_{t^{\ast}}}{\epsilon_{\theta}}\left(x_{t^{\ast}},t^{\ast}\right)}{\sqrt{\bar{\alpha}_{t^{\ast}}}}
+(14)
+(a) l2l_{2}
+(b) LPIPS
+Figure 2:
+Mean (a) l2l_{2} and (b) LPIPS distances between clean samples (x0x_{0}) and noisy-then-denoised samples (x0|t∗x_{0|t^{\ast}}) at varying noise standard deviations. A total of 3,000 samples were randomly selected from the CIFAR-10 dataset. For each sample, the noisy-then-denoised counterpart was computed using the time formulation described in Equation (13).
+3 Method
+Carlini et al. [2022] assert that Diffusion Denoised Smoothing is versatile, allowing the use of any pre-trained classifier. However, our observations in section 3.1, reveal a challenge with single-shot denoisers that may degrade the smoothed classifier performance. To address this challenge, we introduce a novel adversarial objective function to train the base classifier, as discussed in section 3.2.
+3.1 Covariate Shift Issue in Single-Shot Denoiser
+The single-shot denoiser in eq.14 is a key component of Diffusion Denoised Smoothing, allowing it to integrate with any pre-trained base classifier. The effectiveness of this component plays an important role in the smoothed classifier performance. To evaluate the efficacy of the single-shot denoiser, we conducted an experiment on a randomly selected subset of 3000 CIFAR-10 samples. In our experiment, every sample is corrupted with Gaussian noise of a specified standard deviation and subsequently denoised using the single-shot denoiser at time t∗t^{\ast}, as derived from equation (13). The noisy-then-denoised sample is denoted by X0|t∗X_{0\lvert t^{\ast}}. The efficiency of the single-shot denoiser is measured by calculating the distance between the clean and the noisy-then-denoised sample. The l2l_{2} and LPIPS11
+1
+Learned Perceptual Image Patch Similarity Zhang et al. [2018b] distances are chosen to evaluate geometric and perceptual similarity, respectively. Figure 2 shows l2l_{2} and LPIPS distances across varying σ\sigma levels, illustrating a clear increase in distances between clean and noisy-then-denoised data as σ\sigma grows. Significant geometric distances indicate that the noisy data is mapped to a point far from the clean data, potentially outside the base classifier’s decision boundary around the clean data. This can result in changes to the base classifier’s predictions, thereby degrading its performance and, ultimately, the performance of the smoothed classifier. Significant perceptual distances further support this observation.
+How can this covariate shift mathematically be justified? For this purpose, we need to examine the denoising diffusion equations. In the forward path, the clean sample is corrupted by a Gaussian noise as follows:
+xt=α¯t​x+1−α¯t​ϵx_{t}=\sqrt{\bar{\alpha}_{t}}x+\sqrt{1-\bar{\alpha}_{t}}\epsilon
+(15)
+where ϵ\epsilon is a standard Gaussian noise. By denoising this corrupted sample using a single-shot denoiser, we obtain
+x0|t=xt−1−α¯t​ϵ~θ​(xt,t)α¯t.x_{0\lvert t}=\frac{x_{t}-\sqrt{1-\bar{\alpha}_{t}}\tilde{\epsilon}_{\theta}\left(x_{t},t\right)}{\sqrt{\bar{\alpha}_{t}}}.
+(16)
+Here, ϵ~​(xt,t)\tilde{\epsilon}\left(x_{t},t\right) denotes the denoiser’s estimate of the noise ϵ\epsilon. Now, By substituting xtx_{t} from equation (15), we have:
+x0|t=x+1−α¯tα¯t(ϵ−ϵ~θ(xt,t))x_{0\lvert t}=x+\frac{\sqrt{1-\bar{\alpha}_{t}}}{\sqrt{\bar{\alpha}_{t}}}\left(\epsilon-\tilde{\epsilon}_{\theta}\left(x_{t},t\right)\right)
+(17)
+Let the mismatch term ϵt​(xt)=ϵ−ϵ~θ​(xt,t)\epsilon_{t}\left(x_{t}\right)=\epsilon-\tilde{\epsilon}_{\theta}\left(x_{t},t\right) quantify the discrepancy between actual noise and its predicted counterpart. then,
+x0|t=x+1−α¯tα¯tϵt(xt)x_{0\lvert t}=x+\frac{\sqrt{1-\bar{\alpha}_{t}}}{\sqrt{\bar{\alpha}_{t}}}\epsilon_{t}\left(x_{t}\right)
+(18)
+Thus, the noisy-then-denoised sample (x0|tx_{0\lvert t}) represents the clean sample (xx), augmented by mismatch term. Since ϵt​(xt)\epsilon_{t}\left(x_{t}\right) may be non-negligible, the resulting sample x0|tx_{0\lvert t} can lie far from the original distribution, causing the base classifier to operate on out-of-distribution inputs. As this distribution shift occurs in the input space of the base classifier, we refer to it as a covariate shift issue.
+3.2 Dealing with Covariate Shift
+Carlini et al. [2022] draw inspiration from denoised smoothing to develop diffusion denoised smoothing. By incorporating a denoiser before the classifier, denoised smoothing allows randomized smoothing to be effectively applied to any pretrained classifier. In denoised smoothing, the denoiser can be trained using either MSE loss, stability loss, or a combination of both. As discussed in Salman et al. [2020], the stability loss aligns the base classifier’s predictions on noisy-then-denoised data with its predictions on clean data. Superior results can be achieved by employing this loss exclusively during the training of the denoiser. Stability loss Salman et al. [2020] strengthens the base classifier robustness against covariate shifts that may arise within the denoiser.
+Diffusion Denoised Smoothing utilizes a single-shot denoiser derived from a denoising diffusion model. This model has been trained using MSE loss to effectively predict the added noise. Indeed, it appears that utilizing stability loss is more effective in enhancing the performance of diffusion denoised smoothing classifiers.
+Thus, the observations in section 3.1 confirm the presence of covariate shift, and the preceding discussion highlights that employing a loss function like stability loss can be more effective. There are two approaches to address the covariate shift challenge. One approach to eliminate the covariate shift is to ensure that the input and output of the single-shot denoiser are closely aligned. To accomplish this, a diffusion model can be trained using a loss function such as mean squared error (MSE), enabling its corresponding single-shot denoiser accurately predicts the clean sample. By doing so, a denoising diffusion model can be transformed into a consistency model Song et al. [2023], effectively addressing covariate shift. But it is shown stability works better for training the denoiser. However, while stability loss has been shown to perform better for training the denoiser, training a denoising diffusion model with a new loss function remains computationally expensive and not always practical.
+We propose an alternative approach that enhances the robustness of the base classifier to the covariate shift introduced by the single-shot denoiser, offering a significantly faster solution compared to training the single-shot denoiser. Since the covariate shift arises from the misestimation of added noise to the clean data, it is essential to ensure that the base classifier is robust to such misestimation. Therefore, the following optimization problem is proposed:
+minϕ𝔼(x,y)∼𝒟[supϵ−log(fϕ(x0|t∗(ϵ)))y]\underset{\phi}{\min}\underset{\begin{subarray}{c}\left(x,y\right)\sim\mathcal{D}\end{subarray}}{\mathbb{E}}\left[\underset{\epsilon}{\sup}\ -\log\left(f_{\phi}\left(x_{0\lvert t^{\ast}}\left(\epsilon\right)\right)\right)_{y}\right]
+(19)
+where ϕ\phi represents the classifier parameters, and ϵ\epsilon denotes the Gaussian noise added during the forward pass of the denoising diffusion model. A significant challenge in this optimization problem lies in computing the supremum with respect to ϵ\epsilon, which is inherently difficult. Rather than computing the supremum globally, we can instead identify the value of ϵ\epsilon that locally maximizes the loss. Thus, after sampling ϵ0∼𝒩⁡(0,I)\epsilon_{0}\sim\mathcal{N}\left(0,I\right) for each sample (x,y)\left(x,y\right), we iteratively update ϵ0\epsilon_{0} using a procedure similar to projected gradient descent to maximize the classification loss:
+ϵm+1=Π(ϵm+η⋅sgn(∇ϵ−log(fϕ(x0|t∗(ϵ)))y)\epsilon_{m+1}=\Pi\left(\epsilon_{m}+\eta\cdot\text{sgn}(\nabla_{\epsilon}-\log\left(f_{\phi}\left(x_{0\lvert t^{\ast}}\left(\epsilon\right)\right)\right)_{y}\right)
+(20)
+Here, η\eta is the step size, sgn​(⋅)\text{sgn}(\cdot) denotes the sign function, and Π\Pi represents the projection operation. The projection is implemented using a clamp operation to ensure that ϵ\epsilon remains within a ball of radius ra​d​vr_{adv} centered at ϵ0\epsilon_{0}.
+ϵ0\epsilon_{0} is updated over MM steps, resulting in ϵM\epsilon_{M} at the end of the process. This ϵM\epsilon_{M} is then utilized to fine-tune the base classifier.
+This approach ensures that the base classifier becomes robust to ϵ\epsilon values that induce strong covariate shifts capable of misleading the classifier.
+3.3 Extreme Covariate Shifted Data Finding Algorithm
+In diffusion-denoised smoothing, perturbed data are denoised using a single-shot denoiser derived from a pretrained denoising diffusion model. However, the output of the single-shot denoiser may deviate significantly from the clean data, particularly under larger perturbations. We refer to this issue as covariate shift, arising from the misestimation of the added noise.
+To enhance the performance of diffusion-denoised smoothing, we propose identifying instances with extreme covariate shift and training the base classifier on them. Algorithm 1 outlines the procedure for identifying these extreme cases. In this algorithm, the initial noise ϵ0∼𝒩⁡(0,I)\epsilon_{0}\sim\mathcal{N}(0,I) is randomly sampled and subsequently updated over M steps. At each step, the data are perturbed using the noise from the previous step, ϵm−1\epsilon_{m-1}, and then denoised with the single-shot denoiser. The denoised data are then passed through the base classifier, and ϵ\epsilon is updated by ascending the gradient of the classification loss to maximize the loss. Finally, the data are perturbed using ϵM\epsilon_{M}, denoised with the single-shot denoiser, and incorporated into the training of the base classifier. Figures 8 and 9 illustrate the data obtained from this algorithm for different step sizes, with M=1M=1 and M=10M=10, respectively.
+3.4 Distinction from Existing Approaches
+Carlini et al. [2022] describe the covariate shift introduced by single-shot denoisers as ’hallucination after denoising’ and improve the performance of diffusion-denoised smoothing Carlini et al. [2022] by training the base classifier on data augmented with such covariate shifts. In other words, they address the following optimization problem for the base classifier:
+minϕ𝔼(x,y)∼𝒟ϵ∼𝒩⁡(0,I)[−log(fϕ(x0|t∗(ϵ)))y]\underset{\phi}{\min}\underset{\begin{subarray}{c}\left(x,y\right)\sim\mathcal{D}\\
+\epsilon\sim\mathcal{N}\left(0,I\right)\end{subarray}}{\mathbb{E}}\left[-\log\left(f_{\phi}\left(x_{0\lvert t^{\ast}}\left(\epsilon\right)\right)\right)_{y}\right]
+(21)
+Algorithm 1  Extreme Covariate Shifted Data Finding
+0:
+fϕ​(⋅)f_{\phi}\left(\cdot\right), ϵ~θ​(⋅,⋅)\tilde{\epsilon}_{\theta}\left(\cdot,\cdot\right), (x,y)∈𝒟t​r​a​i​n(x,y)\in\mathcal{D}^{train}, σ\sigma, η\eta, MM, ra​d​vr_{adv}
+ϵ0∼𝒩⁡(0,I){\color[rgb]{1,0,0}\epsilon_{0}\sim\mathcal{N}\left(0,I\right)}
+t∗t^{\ast} is calculated from equation (13)
+for m=1m=1 to MM do
+xt∗=α¯t∗​x+1−α¯t∗​ϵm−1x_{t^{\ast}}=\sqrt{\bar{\alpha}_{t^{\ast}}}x+\sqrt{1-\bar{\alpha}_{t^{\ast}}}{\color[rgb]{1,0,0}\epsilon_{m-1}}
+x0|t∗=xt∗−1−α¯t∗​ϵ~θ​(xt∗,t∗)α¯t∗x_{0\lvert t^{\ast}}=\frac{x_{t^{\ast}}-\sqrt{1-\bar{\alpha}_{t^{\ast}}}\tilde{\epsilon}_{\theta}\left(x_{t^{\ast}},t^{\ast}\right)}{\sqrt{\bar{\alpha}_{t^{\ast}}}}
+loss=CrossEntropy(fϕ(x0|t∗),y)loss=CrossEntropy\left(f_{\phi}\left({\color[rgb]{1,0,0}x_{0\lvert t^{\ast}}}\right),y\right)
+ϵm=ϵm−1+η⋅sgn​(∇ϵm−1l​o​s​s)\epsilon_{m}=\epsilon_{m-1}+\eta\cdot\text{sgn}\left(\nabla_{{\color[rgb]{1,0,0}\epsilon_{m-1}}}loss\right)
+Δ​ϵ=ϵm−ϵ0\Delta\epsilon=\epsilon_{m}-\epsilon_{0}
+ϵm=ϵ0+Clamp​(Δ​ϵ,ra​d​v)\epsilon_{m}=\epsilon_{0}+\text{Clamp}\left(\Delta\epsilon,r_{adv}\right)
+end for
+xt=α¯t∗​x+1−α¯t∗​ϵMx_{t}=\sqrt{\bar{\alpha}_{t^{\ast}}}x+\sqrt{1-\bar{\alpha}_{t^{\ast}}}{\color[rgb]{1,0,0}\epsilon_{M}}
+x0|t∗=xt∗−1−α¯t∗​ϵ~θ​(xt∗,t∗)α¯t∗x_{0\lvert t^{\ast}}=\frac{x_{t^{\ast}}-\sqrt{1-\bar{\alpha}_{t^{\ast}}}\tilde{\epsilon}_{\theta}\left(x_{t^{\ast}},t^{\ast}\right)}{\sqrt{\bar{\alpha}_{t^{\ast}}}}
+return x0|t∗x_{0\lvert t^{\ast}}
+Although exposing the base classifier to covariate shifts during training can enhance its robustness to some extent, it tends to perform poorly on more challenging cases. How can we justify that training the base classifier with covariate shift-augmented data improves the performance of diffusion-denoised smoothing?
+This approach builds upon the stability loss concept, with the key distinction that it uses the true class label instead of the classifier’s output as the predicted class.
+On the other hand, Applying Jensen’s inequality to the convex −log⁡(⋅)-\log\left(\cdot\right) function yields:
+𝔼(x,y)∼𝒟[−log(𝔼ϵ∼𝒩⁡(0,I)[fθ(x0|t∗(ϵ))])y]\underset{\left(x,y\right)\sim\mathcal{D}}{\mathbb{E}}\left[-\log\left(\underset{\begin{subarray}{c}\epsilon\sim\mathcal{N}\left(0,I\right)\end{subarray}}{\mathbb{E}}\left[f_{\theta}\left(x_{0\lvert t^{\ast}}\left(\epsilon\right)\right)\right]\right)_{y}\right]
+(22)
+≤𝔼(x,y)∼𝒟ϵ∼𝒩⁡(0,I)[−log(fθ(x0|t∗(ϵ)))y]\leq\underset{\begin{subarray}{c}\left(x,y\right)\sim\mathcal{D}\\
+\epsilon\sim\mathcal{N}\left(0,I\right)\end{subarray}}{\mathbb{E}}\left[-\log\left(f_{\theta}\left(x_{0\lvert t^{\ast}}\left(\epsilon\right)\right)\right)_{y}\right]
+The right-hand side of the inequality (22) represents the loss function in (21), while the left-hand side corresponds to the classification loss associated with Diffusion Denoised Smoothing. Thus, the loss function in (21) serves as an upper bound for the diffusion denoised smoothing loss function. By minimizing the loss in (21), we also minimize the diffusion denoised smoothing loss, ultimately enhancing the smoothed classifier’s performance.
+However, simply augmenting the training data with randomly sampled noisy-then-denoised inputs fails to address more extreme misestimations of noise. We argue that the classifier should be robust not only to typical covariate shifts but also to the most severe shifts that can arise. Therefore, we propose an adversarial training objective that focuses on these hard cases, ensuring that the classifier generalizes better to all noisy-then-denoised inputs. In our proposed method, we first identify the challenging data, and then the base classifier is trained to become robust on these data. By training the base classifier to perform well on challenging data with significant covariate shifts, we anticipate that it will achieve improved performance when exposed to various noisy-then-denoised inputs. By adopting this approach, our method significantly outperforms the standard covariate shift augmentation training procedure in diffusion-denoised smoothing.
+4 Experiment
+Initially, we compare our approach with the method proposed by Carlini et al. [2022] and demonstrate that enhancing the robustness of the base classifier to the covariate shift introduced by the denoiser significantly improves the l2l_{2}-defenses of diffusion denoised smoothing. We conducted experiments on three standard classification datasets: MNIST, CIFAR-10, and ImageNet.
+For evaluation and comparison with prior approaches, we employed two common criteria:
+1.
+Approximate certified test accuracy at different radii: This criterion measures the proportion of data points that are correctly classified by the CERTIFY algorithm without abstaining and have a certified radius greater than r.
+2.
+Average Certified Radius (ACR): This criterion represents the average certified radius returned by the CERTIFY algorithm for test data points that are correctly classified.
+A​C​R=1|𝒟t​e​s​t|​∑(x,y)∈𝒟t​e​s​tC​R​(f,σ,x)​𝟏f^​(x)=yACR=\frac{1}{\left|\mathcal{D}_{test}\right|}\sum_{\left(x,y\right)\in\mathcal{D}_{test}}{CR\left(f,\sigma,x\right)\mathbf{1}_{\hat{f}\left(x\right)=y}}
+(23)
+where 𝒟t​e​s​t\mathcal{D}_{test} denotes the test dataset, C​R​(f,σ,x)CR\left(f,\sigma,x\right) represents the certified radius returned by the CERTIFY algorithm, and f^​(x)\hat{f}\left(x\right) is the smoothed classifier corresponding to ff.
+Approximate certified accuracy gauges performance at specific robustness thresholds, while ACR indicates the overall robustness across the entire test set. Following Cohen et al. [2019], we use the same sampling and confidence parameters in the CERTIFY procedure for all models to ensure consistent comparisons.
+MNIST Configuration. For the MNIST dataset, we use a pretrained denoising diffusion model available on Hugging Face22
+2
+https://huggingface.co/1aurent/ddpm-mnist as the denoiser and a LeNet LeCun et al. [1998] model as the base classifier. For this dataset, we evaluate the performance with σ={0.25,0.50,1.00}\sigma=\left\{0.25,0.50,1.00\right\}.
+CIFAR-10 Configuration. For image denoising, we use the denoising diffusion model from Nichol & Dhariwal [2021], following the approach of Carlini et al. [2022]. To ensure a fair comparison between our method and previous approaches, we employ a ResNet-110 as the base classifier for all algorithms utilizing randomized smoothing for certified robustness. For this dataset, we evaluate the performance with σ={0.25,0.50,1.00}\sigma=\left\{0.25,0.50,1.00\right\}.
+ImageNet Configuration. We denoise ImageNet data with the 552M-parameters denoising diffusion model Dhariwal & Nichol [2021], and employ 87M-parameters BEiT-v2 Peng et al. [2022] base model using implementation from timm Wightman [2019]. For this dataset, we evaluate the performance with σ={0.5,1.0}\sigma=\left\{0.5,1.0\right\}.
+For all datasets, we set M=1M=1 unless stated otherwise. The step size is set to η=0.1\eta=0.1 for MNIST and CIFAR-10, and η=0.05\eta=0.05 for ImageNet.
+4.1 CERTIFY and PREDICT Algorithms
+By employing a base classifier that is robust to the covariate shift caused by the denoiser, we utilize the same certification and prediction algorithms as in diffusion denoised smoothing Carlini et al. [2022]. In both algorithms, the input data, which is made noisy using different Gaussian noise samples, is first denoised and then passed to the base classifier.
+In the PREDICT algorithm, a majority vote is taken from the obtained outputs. If the number of votes passes a binomial test, the majority vote is returned; otherwise, the algorithm outputs ’abstain’. In the CERTIFY algorithm, we ensure that the majority vote is robust if its proportion exceeds that of the second-highest vote by a specified margin. The CERTIFY algorithm not only provides the classification output but also returns the corresponding certified radius.
+To evaluate the certified accuracy and radii of our method and diffusion denoised smoothing on MNIST, CIFAR-10, and ImageNet, we utilize the diffusion denoised smoothing implementation. For all datasets, the parameters are set as α=0.001\alpha=0.001, N0=100N_{0}=100, and N=10,000N=10,000. The CERTIFY algorithm is applied to 500 randomly selected samples from MNIST and CIFAR-10, and 100 randomly selected samples from ImageNet.
+4.2 Results on MNIST
+In this subsection, we examine the performance of our method on MNIST and compare it against existing smoothing-based approaches, emphasizing certified accuracy at various radii and the impact of covariate shift.
+Randomized smoothing demonstrates strong performance at smaller radii; however, its efficacy significantly declines as the radius increases. To address this issue, methods such as SmoothAdv Salman et al. [2019], MACER Zhai et al. [2020], SmoothMix Jeong et al. [2021], and Consistency Jeong & Shin [2020] have been proposed, which aim to directly or indirectly train the smoothed classifier for improved performance on the classification task. By employing these approaches, these methods improve the certified accuracy of the smoothed classifier and reduce the accuracy degradation, compared to randomized smoothing, as the radius increases.
+Another line of research focuses on denoised smoothing, which incorporates a denoiser before the base classifier in the smoothed classifier pipeline. By denoising the perturbed data, these methods enable the use of a pretrained classifier as the base classifier.When an effective denoiser, such as a denoising diffusion model, is employed within this framework, the denoised data closely approximates the clean data. However, any residual distance between the denoised data and the clean data can degrade the performance of the base classifier, thereby affecting the overall effectiveness of the smoothed classifier.
+Table 1: Certified top-1 accuracy on MNIST for randomized smoothing and denoised smoothing-based methods. For randomized smoothing methods, the base classifier (LeNet) is trained according to the procedure outlined in each method. In denoised smoothing, a pretrained base classifier (LeNet) on MNIST is used, while the denoiser is trained. In diffusion denoised smoothing (DDS), we compare a pretrained base classifier with a base classifier fine-tuned on covariate-shift-augmented data. Our method fine-tunes the base classifier using the proposed adversarial objective function and employs the resulting classifier in diffusion-denoised smoothing. Each entry shows the certified accuracy, with the clean accuracy for the corresponding model in parentheses, using values reported in the respective papers.
+Certified Accuracy at ϵ(%)\epsilon\left(\%\right)
+Method (MNIST)
+0.25
+0.50
+0.75
+1.00
+1.25
+Randomized Smoothing Cohen et al. [2019]
+94.6(97.4)94.6_{(97.4)}
+90.2(97.4)90.2_{(97.4)}
+82.6(97.4)82.6_{(97.4)}
+70.6(97.4)70.6_{(97.4)}
+50.6(97.4)50.6_{(97.4)}
+SmoothAdv Salman et al. [2019]
+96.2(98.6)96.2_{(98.6)}
+92.4(97.6)92.4_{(97.6)}
+87.0(97.6)87.0_{(97.6)}
+79.2(97.6)79.2_{(97.6)}
+59.6(97.6)59.6_{(97.6)}
+MACER Zhai et al. [2020]
+99.0(99.0)\mathbf{99.0_{(99.0)}}
+97.0(99.0)97.0_{(99.0)}
+95.0(99.0)95.0_{(99.0)}
+90.0(99.0)90.0_{(99.0)}
+83.0(99.0)83.0_{(99.0)}
+SmoothMix Jeong et al. [2021]
+99.0(99.4)\mathbf{99.0_{(99.4)}}
+98.2(99.4)\mathbf{98.2_{(99.4)}}
+96.9(99.4)\mathbf{96.9_{(99.4)}}
+92.7(98.8)\mathbf{92.7_{(98.8)}}
+88.3(98.8)88.3_{(98.8)}
+Consistency Jeong & Shin [2020]
+98.9(99.5)\mathbf{98.9_{(99.5)}}
+98.0(99.5)\mathbf{98.0_{(99.5)}}
+96.0(99.5)96.0_{(99.5)}
+93.0(99.2)\mathbf{93.0_{(99.2)}}
+87.8(99.2)87.8_{(99.2)}
+Denoised Smoothing Salman et al. [2020]
+92.4(94.2)92.4_{(94.2)}
+90.0(94.2)90.0_{(94.2)}
+85.8(93.4)85.8_{(93.4)}
+80.0(93.4)80.0_{(93.4)}
+71.2(93.4)71.2_{(93.4)}
+DDS (Pretrained) Carlini et al. [2022]
+93.4(93.8)93.4_{(93.8)}
+92.4(94.2)92.4_{(94.2)}
+91.4(93.8)91.4_{(93.8)}
+90.4(94.2)90.4_{(94.2)}
+89.0(93.8)89.0_{(93.8)}
+DDS (Finetuned) Carlini et al. [2022]
+94.2(95.0)94.2_{(95.0)}
+93.6(95.0)93.6_{(95.0)}
+92.8(95.0)92.8_{(95.0)}
+91.2(95.0)91.2_{(95.0)}
+89.8(95.0)89.8_{(95.0)}
+Ours (ra​d​v=+∞r_{adv}=+\infty, M=1M=1)
+95.4(96.0)95.4_{(96.0)}
+94.6(96.0)94.6_{(96.0)}
+93.4(96.0)93.4_{(96.0)}
+92.8(96.0)\mathbf{92.8_{(96.0)}}
+90.4(96.0)90.4_{(96.0)}
+Ours (ra​d​v=+0.1r_{adv}=+0.1, M=1M=1)
+94.8(95.4)94.8_{(95.4)}
+93.8(95.4)93.8_{(95.4)}
+92.6(95.0)92.6_{(95.0)}
+91.8(95.0)91.8_{(95.0)}
+90.2(95.0)90.2_{(95.0)}
+Ours (ra​d​v=+∞r_{adv}=+\infty, M=2M=2)
+94.6(95.4)94.6_{(95.4)}
+93.6(95.4)93.6_{(95.4)}
+93.2(95.4)93.2_{(95.4)}
+93.0(95.4)\mathbf{93.0_{(95.4)}}
+92.0(95.4)\mathbf{92.0_{(95.4)}}
+Ours (ra​d​v=+∞r_{adv}=+\infty, M=4M=4)
+94.8(95.6)94.8_{(95.6)}
+94.2(95.6)94.2_{(95.6)}
+93.8(95.6)93.8_{(95.6)}
+93.0(95.6)\mathbf{93.0_{(95.6)}}
+91.0(95.6)91.0_{(95.6)}
+(a) σ=0.25\sigma=0.25
+(b) σ=0.50\sigma=0.50
+(c) σ=1.00\sigma=1.00
+Figure 3:
+Certified accuracy as a function of the l2l_{2} adversarial perturbation bound for (a) σ=0.25\sigma=0.25, (b) σ=0.50\sigma=0.50, and (c) σ=1.00\sigma=1.00 on the MNIST dataset.
+Diffusion denoised smoothing builds upon the denoised smoothing framework by utilizing a denoising diffusion model as the denoiser. As shown in table 1, This method exhibits poorer performance at smaller radii (r≤1.00r\leq 1.00) compared to denoiserless approaches, such as SmoothMix Jeong et al. [2021] and Consistency Jeong & Shin [2020], which do not rely on a denoiser. The strong performance of denoiserless methods at smaller radii is understandable, as they train the smoothed classifier directly or indirectly. However, the robustness of denoiserless methods is lower, and their certified accuracy deteriorates much more rapidly compared to diffusion denoised smoothing. As discussed in Appendix A, the denoiser maps the perturbed input to a point close to the clean data distribution, on which the base classifier was originally trained. Thus, employing denoised smoothing-based methods becomes more effective at larger radii.
+However,
+at larger radii, noise misestimation by the diffusion model can introduce significant covariate shift, leading to a decline in the smoothed classifier’s performance. To address this, our proposed method leverages adversarial training on the most challenging misestimated noise scenarios, thereby aligning the smoothed classifier more effectively with the denoiser’s output distribution and improving certified accuracy. As shown in Table 1, for radii greater than 1.0, utilizing the base classifier trained with our proposed objective significantly improves certified accuracy, achieving state-of-the-art performance and specifically, at r=1.25r=1.25, our approach outperforms the best baseline by 2.22.2 percentage points, increasing certified accuracy from 89.8%89.8\% to 92.0%92.0\%. Table 4 reports the certified accuracy of the smoothed classifier for various values of σ\sigma used in our experiments. We observe that for σ=0.5\sigma=0.5 and σ=1.0\sigma=1.0, at radii larger than 1.01.0, our method achieves state-of-the-art performance on the MNIST dataset. Our method improves the Average Certified Radius (ACR) over diffusion-denoised smoothing, achieving a state-of-the-art ACR of 2.8862.886 at σ=1.0\sigma=1.0.
+Figure 3 illustrates the certified accuracy of our proposed method as a function of the l2l_{2} perturbation radius for different values of σ\sigma on the MNIST dataset. As σ\sigma increases, our method demonstrates improved certified accuracy. This improvement can be attributed to greater noise misestimation at higher noise levels, where making the base classifier robust to such misestimation results in better certification performance.
+4.3 Results on CIFAR-10
+Table 2: Certified accuracy on CIFAR-10 for randomized smoothing and denoised smoothing-based methods. The columns are defined as in Table 1.
+Certified Accuracy at ϵ(%)\epsilon\left(\%\right)
+Method (CIFAR-10)
+0.25
+0.50
+0.75
+1.00
+Randomized Smoothing Cohen et al. [2019]
+61.0(75.0)61.0_{(75.0)}
+43.0(75.0)43.0_{(75.0)}
+32.0(65.0)32.0_{(65.0)}
+22.0(66.0)22.0_{(66.0)}
+SmoothAdv Salman et al. [2019]
+74.9(84.3)\mathbf{74.9_{(84.3)}}
+63.4(80.1)\mathbf{63.4_{(80.1)}}
+51.9(80.1)51.9_{(80.1)}
+39.6(62.2)39.6_{(62.2)}
+MACER Zhai et al. [2020]
+71.0(81.0)71.0_{(81.0)}
+59.0(81.0)59.0_{(81.0)}
+46.0(66.0)46.0_{(66.0)}
+38.0(66.0)38.0_{(66.0)}
+SmoothMix Jeong et al. [2021]
+67.9(77.1)67.9_{(77.1)}
+57.9(77.1)57.9_{(77.1)}
+47.7(74.2)47.7_{(74.2)}
+37.2(61.8)37.2_{(61.8)}
+Consistency Jeong & Shin [2020]
+68.8(77.8)68.8_{(77.8)}
+58.1(75.8)58.1_{(75.8)}
+48.5(72.9)48.5_{(72.9)}
+37.8(52.3)37.8_{(52.3)}
+Denoised Smoothing Salman et al. [2020]
+56.0(72.0)56.0_{(72.0)}
+41.0(62.0)41.0_{(62.0)}
+28.0(62.0)28.0_{(62.0)}
+19.0(44.0)19.0_{(44.0)}
+DDS (Pretrained) Carlini et al. [2022]
+61.4(78.4)61.4_{(78.4)}
+45.2(78.4)45.2_{(78.4)}
+30.6(62.0)30.6_{(62.0)}
+23.0(62.0)23.0_{(62.0)}
+DDS (Finetuned) Carlini et al. [2022]
+69.6(79.0)69.6_{(79.0)}
+57.0(79.0)57.0_{(79.0)}
+48.8(72.8)48.8_{(72.8)}
+42.8(72.8)42.8_{(72.8)}
+Ours
+69.6(75.2)69.6_{(75.2)}
+62.8(75.2)62.8_{(75.2)}
+54.6(75.2)\mathbf{54.6_{(75.2)}}
+46.6(75.2)\mathbf{46.6_{(75.2)}}
+(a) σ=0.25\sigma=0.25
+(b) σ=0.50\sigma=0.50
+(c) σ=1.00\sigma=1.00
+Figure 4:
+Certified accuracy as a function of the l2l_{2} adversarial perturbation bound for (a) σ=0.25\sigma=0.25, (b) σ=0.50\sigma=0.50, and (c) σ=1.00\sigma=1.00 on the CIFAR-10 dataset.
+Table 2 illustrates the certified accuracy of various methods on CIFAR-10 across different radii. At smaller radii (r≤0.50r\leq 0.50), denoiserless methods demonstrate superior performance. For instance, SmoothAdv Salman et al. [2019] achieves state-of-the-art performance at radii less than 0.500.50. This method leverages randomized smoothing while training the base classifier with adversarial data generated from the smoothed classifier. By doing so, this method effectively addresses the classification task for the smoothed classifier to some extent. As a result, it demonstrates better performance at smaller radii. However, as perturbations grow, denoiserless methods degrade more rapidly than diffusion denoised smoothing, indicating their limitations in handling larger perturbations.
+Although diffusion denoised smoothing Carlini et al. [2022] allows the use of any pretrained classifier, its performance at radii less than 1.00 is inferior compared to other methods. its certified accuracy is significantly lower than denoiserless methods at radii below 1.001.00. Specifically, at r=0.75r=0.75, it lags 21.321.3 percentage points behind the state-of-the-art, and at r=1.00r=1.00, the gap remains 16.616.6 percentage points. This is due to the covariate shift caused by the misestimation of the added perturbation during the denoising process. Carlini et al. [2022] address this issue by training the base classifier on covariate shift-augmented data. By doing so, they achieve state-of-the-art performance at a radius of 1.00; however, their certified accuracy is 3.1 percentage points lower than the state-of-the-art at a radius of 0.75.
+As mentioned in section 3.4, while training the base classifier on covariate shift-augmented data can enhance the performance of diffusion denoised smoothing, it fails to make the classifier robust against extreme misestimations of noise. Thus, in our proposed method, we first identify these extreme cases and then train the base classifier on them to enhance its robustness against such scenarios. Table2 shows that training the base classifier with our proposed adversarial objective improves certified accuracy by 2.7%2.7\% and 3.8%3.8\% at radii 0.75 and 1.00, respectively, achieving state-of-the-art performance at these radii. Table 5 shows that applying our proposed method increases the Average Certified Radius (ACR) of diffusion denoised smoothing for σ=0.25\sigma=0.25, σ=0.50\sigma=0.50, and σ=1.00\sigma=1.00.
+Figure 4 compares the certified accuracy of our proposed method with denoised diffusion smoothing as a function of the l2l_{2} perturbation radius for various values of σ\sigma on the CIFAR-10 dataset. As illustrated, improving the robustness of the base classifier against noise misestimation plays a crucial role in enhancing certified accuracy. Since our method explicitly trains the base classifier to be robust against the specific distribution of noise misestimation, it consistently outperforms the baseline approach that uses random noise for robustness.
+4.4 Results on ImageNet
+Table 3: Certified accuracy on ImageNet for methods based on diffusion denoised smoothing. The columns are defined as in Table 1.
+Certified Accuracy at ϵ(%)\epsilon\left(\%\right)
+Method (ImageNet)
+0.5
+1.0
+1.5
+2.0
+2.5
+3.0
+DDS (Pretrained) Carlini et al. [2022]
+62(73)62_{(73)}
+54(73)54_{(73)}
+40(73)40_{(73)}
+30(59)30_{(59)}
+23(59)23_{(59)}
+13(59)13_{(59)}
+DDS (Finetuned) Carlini et al. [2022]
+68(76)68_{(76)}
+59(76)59_{(76)}
+49(76)49_{(76)}
+39(67)39_{(67)}
+32(67)32_{(67)}
+22(67)22_{(67)}
+Ours
+𝟕𝟒(𝟕𝟗)\mathbf{74_{(79)}}
+𝟔𝟒(𝟕𝟗)\mathbf{64_{(79)}}
+𝟓𝟔(𝟕𝟗)\mathbf{56_{(79)}}
+𝟒𝟎(𝟔𝟖)\mathbf{40_{(68)}}
+𝟑𝟖(𝟔𝟖)\mathbf{38_{(68)}}
+𝟐𝟗(𝟔𝟖)\mathbf{29_{(68)}}
+(a) σ=0.50\sigma=0.50
+(b) σ=1.00\sigma=1.00
+Figure 5:
+Certified accuracy as a function of the l2l_{2} adversarial perturbation bound for (a) σ=0.50\sigma=0.50, and (b) σ=1.00\sigma=1.00 on the ImageNet dataset.
+To assess our method in a more challenging setting, we use ImageNet as a benchmark to compare it with diffusion denoised smoothing. Table 3 compares the performance of our method with those of the two methods proposed by Carlini et al. [2022]. As observed, training the base classifier with our proposed objective outperforms training with covariate shift-augmented data. This is because the single-shot denoiser is more prone to noise misestimation in high-dimensional data, leading to greater covariate shift. Therefore, it is preferable to enhance the robustness of the base classifier on extremely covariate-shifted data. Figure 8 presents examples of the extreme covariate-shifted data identified by our method. As observed, the covariate shift can become more pronounced.
+By training the base classifier with our proposed adversarial objective, we achieve state-of-the-art performance across all radii. Table 6 shows that our method improves the state-of-the-art ACR, increasing it from 1.3111.311 to 1.3671.367 for σ=0.5\sigma=0.5 and from 2.1132.113 to 2.2122.212 for σ=1.0\sigma=1.0, demonstrating an overall improvement in robustness across the entire test set.
+As shown in Figure 5, similar performance trends are observed on the high-dimensional ImageNet dataset. Our method consistently outperforms the baseline denoised diffusion smoothing approach across different noise levels, highlighting the advantage of explicitly training the base classifier to handle noise misestimation even in more complex and large-scale settings.
+4.5 Analyzing Hyperparameters
+Our proposed method introduces three hyperparameters: η\eta, MM, and ra​d​vr_{adv}. Below, we analyze the impact of each hyperparameter and discuss how to select the optimal setting.
+The parameter η\eta represents the step size used in the optimization process. In each row of Figures 8 and 9, increasing the step size amplifies the covariate shift observed in the image. Therefore, this parameter should be chosen such that the induced covariate shift does not significantly alter the image content. Empirically, we find that setting η=0.1\eta=0.1 yields favorable results.
+The radius within which ϵ\epsilon is updated is controlled by ra​d​vr_{adv}. Our observations on the MNIST dataset (Table 4) suggest that optimization performs best when the radius is unrestricted, i.e., setting ra​d​v=+∞r_{adv}=+\infty.
+Another parameter in our method is MM, which represents the number of update steps for ϵ\epsilon. Figures 8 and 9 illustrate that increasing MM from M=1M=1 to M=10M=10—while keeping the step size constant—amplifies the covariate shift. Table 4 shows that increasing MM reduces certified accuracy at small radii but improves it at larger radii. This occurs because training the base classifier with a larger MM exposes it to more covariate-shifted data, enhancing its robustness to covariate shift. As the radius increases, the covariate shift also intensifies. Consequently, base classifiers trained with larger MM exhibit greater robustness to covariate shift, leading to improved performance of the corresponding smoothed classifier at larger radii. Although increasing the number of update steps for ϵ\epsilon enhances the performance of the smoothed classifier at larger radii, it significantly increases training time. Therefore, we set M=1M=1 for experiments on CIFAR-10 and ImageNet, demonstrating the effectiveness of our proposed method.
+5 Conclusion
+Diffusion Denoised Smoothing extends randomized smoothing by enabling the use of pretrained classifiers, demonstrating strong robustness at larger radii compared to denoiserless approaches. However, its performance is hindered by covariate shift caused by noise misestimation during the denoising. Carlini et al. [2022] handle this shift by augmenting training with covariate shift-affected data, but their approach fails to address extreme misestimations. To overcome this limitation, we propose a novel adversarial training objective that explicitly identifies and trains on the most challenging covariate shift cases. Our method significantly improves certified accuracy and Average Certified Radius (ACR), achieving new state-of-the-art performance in diffusion denoised smoothing.
+References
+Biggio et al. [2013]
+Biggio, B., Corona, I., Maiorca, D., Nelson, B., Šrndić, N., Laskov, P., Giacinto, G., & Roli, F. (2013).
+Evasion attacks against machine learning at test time.
+In Machine Learning and Knowledge Discovery in Databases: European Conference, ECML PKDD 2013, Prague, Czech Republic, September 23-27, 2013, Proceedings, Part III 13 (pp. 387–402).
+Springer.
+Carlini et al. [2022]
+Carlini, N., Tramer, F., Dvijotham, K. D., Rice, L., Sun, M., & Kolter, J. Z. (2022).
+(certified!!) adversarial robustness for free!
+arXiv preprint arXiv:2206.10550, .
+Chen et al. [2022]
+Chen, X., Wang, X., Changpinyo, S., Piergiovanni, A., Padlewski, P., Salz, D., Goodman, S., Grycner, A., Mustafa, B., Beyer, L. et al. (2022).
+Pali: A jointly-scaled multilingual language-image model.
+arXiv preprint arXiv:2209.06794, .
+Cohen et al. [2019]
+Cohen, J., Rosenfeld, E., & Kolter, Z. (2019).
+Certified adversarial robustness via randomized smoothing.
+In international conference on machine learning (pp. 1310–1320).
+PMLR.
+Dhariwal & Nichol [2021]
+Dhariwal, P., & Nichol, A. (2021).
+Diffusion models beat gans on image synthesis.
+Advances in neural information processing systems, 34, 8780–8794.
+Ding et al. [2018]
+Ding, G. W., Sharma, Y., Lui, K. Y. C., & Huang, R. (2018).
+Mma training: Direct input space margin maximization through adversarial training.
+arXiv preprint arXiv:1812.02637, .
+Goodfellow et al. [2014]
+Goodfellow, I. J., Shlens, J., & Szegedy, C. (2014).
+Explaining and harnessing adversarial examples.
+arXiv preprint arXiv:1412.6572, .
+Ho et al. [2020]
+Ho, J., Jain, A., & Abbeel, P. (2020).
+Denoising diffusion probabilistic models.
+Advances in neural information processing systems, 33, 6840–6851.
+Huang et al. [2015]
+Huang, R., Xu, B., Schuurmans, D., & Szepesvári, C. (2015).
+Learning with a strong adversary.
+arXiv preprint arXiv:1511.03034, .
+Jeong et al. [2021]
+Jeong, J., Park, S., Kim, M., Lee, H.-C., Kim, D.-G., & Shin, J. (2021).
+Smoothmix: Training confidence-calibrated smoothed classifiers for certified robustness.
+Advances in Neural Information Processing Systems, 34, 30153–30168.
+Jeong & Shin [2020]
+Jeong, J., & Shin, J. (2020).
+Consistency regularization for certified robustness of smoothed classifiers.
+Advances in Neural Information Processing Systems, 33, 10558–10570.
+Kaufmann et al. [2019]
+Kaufmann, M., Kang, D., Sun, Y., Basart, S., Yin, X., Mazeika, M., Arora, A., Dziedzic, A., Boenisch, F., Brown, T. et al. (2019).
+Testing robustness against unforeseen adversaries.
+arXiv preprint arXiv:1908.08016, .
+LeCun et al. [1998]
+LeCun, Y., Bottou, L., Bengio, Y., & Haffner, P. (1998).
+Gradient-based learning applied to document recognition.
+Proceedings of the IEEE, 86, 2278–2324.
+Madry et al. [2017]
+Madry, A., Makelov, A., Schmidt, L., Tsipras, D., & Vladu, A. (2017).
+Towards deep learning models resistant to adversarial attacks.
+stat, 1050.
+Mirman et al. [2018]
+Mirman, M., Gehr, T., & Vechev, M. (2018).
+Differentiable abstract interpretation for provably robust neural networks.
+In International Conference on Machine Learning (pp. 3578–3586).
+PMLR.
+Nichol & Dhariwal [2021]
+Nichol, A. Q., & Dhariwal, P. (2021).
+Improved denoising diffusion probabilistic models.
+In International conference on machine learning (pp. 8162–8171).
+PMLR.
+Oksuz et al. [2023]
+Oksuz, K., Kuzucu, S., Joy, T., & Dokania, P. K. (2023).
+Mocae: Mixture of calibrated experts significantly improves object detection.
+arXiv preprint arXiv:2309.14976, .
+Peng et al. [2022]
+Peng, Z., Dong, L., Bao, H., Ye, Q., & Wei, F. (2022).
+Beit v2: Masked image modeling with vector-quantized visual tokenizers.
+arXiv preprint arXiv:2208.06366, .
+Rice et al. [2020]
+Rice, L., Wong, E., & Kolter, Z. (2020).
+Overfitting in adversarially robust deep learning.
+In International conference on machine learning (pp. 8093–8104).
+PMLR.
+Salman et al. [2019]
+Salman, H., Li, J., Razenshteyn, I., Zhang, P., Zhang, H., Bubeck, S., & Yang, G. (2019).
+Provably robust deep learning via adversarially trained smoothed classifiers.
+Advances in neural information processing systems, 32.
+Salman et al. [2020]
+Salman, H., Sun, M., Yang, G., Kapoor, A., & Kolter, J. Z. (2020).
+Denoised smoothing: A provable defense for pretrained classifiers.
+Advances in Neural Information Processing Systems, 33, 21945–21957.
+Schmidt et al. [2018]
+Schmidt, L., Santurkar, S., Tsipras, D., Talwar, K., & Madry, A. (2018).
+Adversarially robust generalization requires more data.
+Advances in neural information processing systems, 31.
+Sinha et al. [2017]
+Sinha, A., Namkoong, H., Volpi, R., & Duchi, J. (2017).
+Certifying some distributional robustness with principled adversarial training.
+arXiv preprint arXiv:1710.10571, .
+Song et al. [2020a]
+Song, J., Meng, C., & Ermon, S. (2020a).
+Denoising diffusion implicit models.
+arXiv preprint arXiv:2010.02502, .
+Song et al. [2023]
+Song, Y., Dhariwal, P., Chen, M., & Sutskever, I. (2023).
+Consistency models.
+arXiv preprint arXiv:2303.01469, .
+Song et al. [2020b]
+Song, Y., Sohl-Dickstein, J., Kingma, D. P., Kumar, A., Ermon, S., & Poole, B. (2020b).
+Score-based generative modeling through stochastic differential equations.
+arXiv preprint arXiv:2011.13456, .
+Su et al. [2023]
+Su, W., Zhu, X., Tao, C., Lu, L., Li, B., Huang, G., Qiao, Y., Wang, X., Zhou, J., & Dai, J. (2023).
+Towards all-in-one pre-training via maximizing multi-modal mutual information.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (pp. 15888–15899).
+Szegedy [2013]
+Szegedy, C. (2013).
+Intriguing properties of neural networks.
+arXiv preprint arXiv:1312.6199, .
+Tramer & Boneh [2019]
+Tramer, F., & Boneh, D. (2019).
+Adversarial training and robustness for multiple perturbations.
+Advances in neural information processing systems, 32.
+Wang et al. [2023a]
+Wang, P., Wang, S., Lin, J., Bai, S., Zhou, X., Zhou, J., Wang, X., & Zhou, C. (2023a).
+One-peace: Exploring one general representation model toward unlimited modalities.
+arXiv preprint arXiv:2305.11172, .
+Wang et al. [2023b]
+Wang, W., Bao, H., Dong, L., Bjorck, J., Peng, Z., Liu, Q., Aggarwal, K., Mohammed, O. K., Singhal, S., Som, S. et al. (2023b).
+Image as a foreign language: Beit pretraining for vision and vision-language tasks.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (pp. 19175–19186).
+Wang et al. [2023c]
+Wang, W., Dai, J., Chen, Z., Huang, Z., Li, Z., Zhu, X., Hu, X., Lu, T., Lu, L., Li, H. et al. (2023c).
+Internimage: Exploring large-scale vision foundation models with deformable convolutions.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition (pp. 14408–14419).
+Weng et al. [2018]
+Weng, L., Zhang, H., Chen, H., Song, Z., Hsieh, C.-J., Daniel, L., Boning, D., & Dhillon, I. (2018).
+Towards fast computation of certified robustness for relu networks.
+In International Conference on Machine Learning (pp. 5276–5285).
+PMLR.
+Wightman [2019]
+Wightman, R. (2019).
+Pytorch image models.
+https://github.com/rwightman/pytorch-image-models.
+doi:10.5281/zenodo.4414861.
+Wong & Kolter [2018]
+Wong, E., & Kolter, Z. (2018).
+Provable defenses against adversarial examples via the convex outer adversarial polytope.
+In International conference on machine learning (pp. 5286–5295).
+PMLR.
+Wortsman et al. [2022]
+Wortsman, M., Ilharco, G., Gadre, S. Y., Roelofs, R., Gontijo-Lopes, R., Morcos, A. S., Namkoong, H., Farhadi, A., Carmon, Y., Kornblith, S. et al. (2022).
+Model soups: averaging weights of multiple fine-tuned models improves accuracy without increasing inference time.
+In International conference on machine learning (pp. 23965–23998).
+PMLR.
+Yu et al. [2022]
+Yu, J., Wang, Z., Vasudevan, V., Yeung, L., Seyedhosseini, M., & Wu, Y. (2022).
+Coca: Contrastive captioners are image-text foundation models.
+arXiv preprint arXiv:2205.01917, .
+Zhai et al. [2020]
+Zhai, R., Dan, C., He, D., Zhang, H., Gong, B., Ravikumar, P., Hsieh, C.-J., & Wang, L. (2020).
+Macer: Attack-free and scalable robust training via maximizing certified radius.
+arXiv preprint arXiv:2001.02378, .
+Zhang et al. [2019]
+Zhang, H., Chen, H., Xiao, C., Gowal, S., Stanforth, R., Li, B., Boning, D., & Hsieh, C.-J. (2019).
+Towards stable and efficient training of verifiably robust neural networks.
+arXiv preprint arXiv:1906.06316, .
+Zhang et al. [2018a]
+Zhang, H., Weng, T.-W., Chen, P.-Y., Hsieh, C.-J., & Daniel, L. (2018a).
+Efficient neural network robustness certification with general activation functions.
+Advances in neural information processing systems, 31.
+Zhang et al. [2018b]
+Zhang, R., Isola, P., Efros, A. A., Shechtman, E., & Wang, O. (2018b).
+The unreasonable effectiveness of deep features as a perceptual metric.
+In Proceedings of the IEEE conference on computer vision and pattern recognition (pp. 586–595).
+Zong et al. [2023]
+Zong, Z., Song, G., & Liu, Y. (2023).
+Detrs with collaborative hybrid assignments training.
+In Proceedings of the IEEE/CVF international conference on computer vision (pp. 6748–6758).
+Appendix A Single-Shot Denoiser Analysis
+To gain a deeper understanding of single-shot denoisers, we analyze their performance on 3,000 randomly selected samples from the CIFAR-10 dataset. Each sample is perturbed with Gaussian noise of a specified standard deviation and subsequently denoised using the single-shot denoiser with the time parameter obtained from Equation (13).
+To compare diffusion-denoised smoothing with other randomized smoothing methods that do not incorporate a denoiser before the base classifier, referred to as denoiserless methods, we evaluate the distance between the base classifier’s input and the clean data. We utilize l2l_{2} and LPIPS distances to compare these two datasets in terms of geometric and perceptual differences, respectively. In denoiserless methods, the l2l_{2} distance between the base classifier’s input and the clean data corresponds to ‖δ‖2\|\delta\|_{2}. For diffusion denoised smoothing, this distance for a given data point x is represented as ∥x−x0|t(δ)∥\|x-x_{0\lvert t}\left(\delta\right)\|. Figures 6 and 7 illustrate the relationship between these two distances for denoiserless methods and diffusion denoised smoothing as KDE plots, presented for different values of σ\sigma for both l2l_{2} and LPIPS distances, respectively.
+Figure 6 demonstrates that using a denoiser before the base classifier maps the perturbed data closer to the clean data, a trend that is clearly observable. Consequently, in denoiserless methods, the absence of a denoiser can result in the base classifier’s input becoming out-of-distribution, leading to poor performance by the base classifier. However, in diffusion-denoised smoothing, the denoising process produces data that is much closer to the clean data, which the base classifier has been trained on. Therefore, utilizing an effective denoiser, such as a denoising diffusion model, before the base classifier proves to be a beneficial choice.
+Figure 6 also illustrates that the distance between the denoised data and the clean data remains significant in diffusion-denoised smoothing across all σ\sigma values. This phenomenon is what we refer to as the covariate shift. Although the covariate shift is relatively small for lower σ\sigma values, for higher σ\sigma values, the single-shot denoiser introduces a significant covariate shift, which further increases as σ\sigma grows. Therefore, it is essential to make the base classifier robust to covariate shifts, particularly for larger σ\sigma values.
+Figure 7 presents the KDE plot of the LPIPS distance between the clean data and the base classifier’s input for both denoiserless methods and diffusion-denoised smoothing. This figure shows that as σ\sigma increases, the perceptual distance between the base classifier’s input and the clean data in denoiserless methods grows significantly faster compared to diffusion-denoised smoothing. This highlights the critical importance of incorporating a denoiser before the base classifier. We also observe that the perceptual distance between clean and noisy-then-denoised data in diffusion denoised smoothing becomes significant for large σ\sigma values, which we previously identified as the covariate shift. Thus, it is crucial to make the base classifier robust to covariate shifts, particularly at large σ\sigma values.
+Appendix B Visual Interpretation of Extreme Covariate Shifted Data
+Figures 8 and 9 illustrate the adversarial samples generated by Algorithm 1 for different values of the step size parameter and number of gradient ascent iterations MM. The goal of the algorithm is to find visually-indistinguishable yet semantically misleading samples under the diffusion-denoising pipeline. Starting from a clean image xx, we first add a random noise vector ϵ0∼𝒩⁡(0,I)\epsilon_{0}\sim\mathcal{N}\left(0,I\right), apply a single-step denoising using the pretrained diffusion model ϵ~θ\tilde{\epsilon}_{\theta} and feed the resulting sample x0|t∗x_{0\lvert t^{\ast}} into the classifier fϕf_{\phi}. We then iteratively update the noise direction to maximize the classification loss, ensuring that the resulting sample remains within a bounded perturbation radius ra​d​vr_{adv}. The final adversarially perturbed sample is obtained after MM steps.
+In Figure 8, we show the effect of varying the step size M=1M=1, while in Figure 9, the same experiment is repeated for M=10M=10. Each row corresponds to a different original image, and each column shows the final generated sample for a specific step size, ranging from 0.01 to 1.0. As seen in the figures, increasing the step size amplifies the degree of covariate shift in the diffusion-denoised space, eventually resulting in highly distorted samples that still manage to fool the classifier. The visual comparison across different values of MM also highlights the stronger adversarial effect achieved when the number of iterations is increased.
+Figure 6:
+KDE plot of the l2l_{2} distance between clean data and the base classifier’s input for randomized smoothing methods without a denoiser (x-axis) and the corresponding distance for diffusion-denoised smoothing (y-axis).
+Figure 7:
+KDE plot of the LPIPS distance between clean data and the base classifier’s input for randomized smoothing methods without a denoiser (x-axis) and the corresponding distance for diffusion-denoised smoothing (y-axis).
+Figure 8: Outputs of Algorithm 1 with M=1M=1, starting from the same ϵ0\epsilon_{0} but with different step sizes (indicated at the top). The leftmost column shows the noisy-then-denoised data obtained using ϵ0\epsilon_{0}.
+Figure 9: Outputs of Algorithm 1 with M=10M=10, starting from the same ϵ0\epsilon_{0} but with different step sizes (indicated at the top). The leftmost column shows the noisy-then-denoised data obtained using ϵ0\epsilon_{0}.
+Table 4: Approximate certified test accuracy on MNIST
+σ\sigma
+Method (MNIST)
+ACR
+0.00
+0.25
+0.50
+0.75
+1.00
+1.25
+1.50
+1.75
+2.00
+2.25
+0.25
+Randomized Smoothing
+0.716
+96.6
+93.8
+85.6
+69.0
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+SmoothAdv
+0.745
+98.6
+96.2
+92.0
+79.6
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+MACER
+0.918
+99.0
+99.0\mathbf{99.0}
+97.0
+95.0
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+SmoothMix
+0.933\mathbf{0.933}
+99.4
+99.0\mathbf{99.0}
+98.2\mathbf{98.2}
+96.9\mathbf{96.9}
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+Consistency
+0.928
+99.5\mathbf{99.5}
+98.9\mathbf{98.9}
+98.0\mathbf{98.0}
+96.0
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+Denoised Smoothing
+0.767
+94.2
+92.4
+90.0
+85.4
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+DDS (Pretrained)
+0.784
+94.0
+92.8
+92.0
+90.2
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+DDS (Finetuned)
+0.789
+94.4
+94.0
+92.8
+91.6
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+Ours (ra​d​v=+∞r_{adv}=+\infty, M=1M=1)
+0.780
+94.6
+92.8
+91.6
+90.4
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+Ours (ra​d​v=+0.1r_{adv}=+0.1, M=1M=1)
+0.788
+95.4
+94.8
+93.8
+91.4
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+Ours (ra​d​v=+∞r_{adv}=+\infty, M=2M=2)
+0.787
+94.6
+93.8
+92.8
+91.4
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+Ours (ra​d​v=+∞r_{adv}=+\infty, M=4M=4)
+0.787
+95.0
+94.4
+93.4
+91.4
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+0.5
+Randomized Smoothing
+1.179
+97.4
+94.6
+90.2
+82.6
+70.6
+50.6
+23.8
+0.0
+0.0
+0.0
+SmoothAdv
+1.245
+97.6
+96.0
+92.4
+87.0
+79.2
+59.6
+26.2
+0.0
+0.0
+0.0
+MACER
+1.583
+99.0\mathbf{99.0}
+98.0
+96.0
+94.0
+90.0
+83.0
+73.0
+50.0
+0.0
+0.0
+SmoothMix
+1.694\mathbf{1.694}
+98.8
+98.1
+97.1
+95.3
+92.7
+88.3
+81.7
+69.5\mathbf{69.5}
+0.0
+0.0
+Consistency
+1.657
+99.2\mathbf{99.2}
+98.6\mathbf{98.6}
+97.6\mathbf{97.6}
+95.9\mathbf{95.9}
+93.0\mathbf{93.0}
+87.8
+78.5
+60.5
+0.0
+0.0
+Denoised Smoothing
+1.367
+93.4
+91.8
+89.2
+85.8
+80.0
+71.2
+53.0
+0.0
+0.0
+0.0
+DDS (Pretrained)
+1.542
+94.2
+93.2
+92.4
+91.0
+90.4
+88.8
+86.6
+0.0
+0.0
+0.0
+DDS (Finetuned)
+1.547
+95.0
+94.2
+93.6
+92.8
+91.2
+89.8
+87.8
+0.0
+0.0
+0.0
+Ours (ra​d​v=+∞r_{adv}=+\infty, M=1M=1)
+1.546
+96.0
+95.4
+94.6
+93.4
+92.8
+90.4
+87.2
+0.0
+0.0
+0.0
+Ours (ra​d​v=+0.1r_{adv}=+0.1, M=1M=1)
+1.548
+95.0
+94.0
+93.4
+92.6
+91.8
+90.2
+87.2
+0.0
+0.0
+0.0
+Ours (ra​d​v=+∞r_{adv}=+\infty, M=2M=2)
+1.560
+95.4
+94.6
+93.6
+93.2
+93.0\mathbf{93.0}
+92.0\mathbf{92.0}
+90.2\mathbf{90.2}
+0.0
+0.0
+0.0
+Ours (ra​d​v=+∞r_{adv}=+\infty, M=4M=4)
+1.554
+95.6
+94.8
+94.2
+93.8
+93.0\mathbf{93.0}
+91.0
+88.8
+0.0
+0.0
+0.0
+1.00
+Randomized Smoothing
+1.094
+77.0
+69.6
+62.4
+52.2
+42.8
+32.6
+18.6
+10.0
+05.6
+03.2
+SmoothAdv
+1.081
+88.4
+81.2
+72.4
+61.0
+48.0
+33.4
+20.8
+10.6
+05.2
+02.6
+MACER
+1.520
+89.0
+85.0
+79.0
+75.0
+69.0
+61.0
+54.0
+45.0
+36.0
+28.0
+SmoothMix
+1.788
+95.5\mathbf{95.5}
+93.5
+90.5
+86.2
+80.6
+73.4
+64.3
+53.7
+43.2
+33.5
+Consistency
+1.740
+95.0
+93.0
+89.7
+85.4
+79.7
+72.7
+63.6
+53.0
+41.7
+30.8
+Denoised Smoothing
+0.715
+88.0
+84.0
+77.2
+66.6
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+DDS (Pretrained)
+2.846
+93.8
+93.4
+92.4
+91.4
+90.0
+89.0
+87.6
+85.8
+83.0
+80.4
+DDS (Finetuned)
+2.817
+93.8
+93.2
+92.4
+91.6
+89.8
+88.0
+86.2
+84.2
+82.6
+79.8
+Ours (ra​d​v=+∞r_{adv}=+\infty, M=1M=1)
+2.834
+95.2
+94.2\mathbf{94.2}
+93.6\mathbf{93.6}
+92.6\mathbf{92.6}
+90.6
+88.8
+87.2
+86.0
+84.2
+82.0
+Ours (ra​d​v=+0.1r_{adv}=+0.1, M=1M=1)
+2.836
+95.0
+93.8
+93.2
+92.4
+90.6
+89.4
+87.2
+85.6
+84.8
+82.0
+Ours (ra​d​v=+∞r_{adv}=+\infty, M=2M=2)
+2.863
+95.0
+94.0\mathbf{94.0}
+93.2
+91.6
+91.4\mathbf{91.4}
+90.0\mathbf{90.0}
+88.4\mathbf{88.4}
+87.4\mathbf{87.4}
+85.6\mathbf{85.6}
+82.6\mathbf{82.6}
+Ours (ra​d​v=+∞r_{adv}=+\infty, M=4M=4)
+2.886\mathbf{2.886}
+93.8
+92.8
+92.4
+91.4
+90.6
+90.2\mathbf{90.2}
+88.4\mathbf{88.4}
+86.4
+84.4
+82.4\mathbf{82.4}
+Table 5: Approximate certified test accuracy on CIFAR-10
+σ\sigma
+Method (CIFAR-10)
+ACR
+0.00
+0.25
+0.50
+0.75
+1.00
+1.25
+1.50
+1.75
+2.00
+2.25
+0.25
+DDS (Pretrained)
+0.524
+78.4
+61.4
+45.2
+26.4
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+DDS (Fine-Tuned)
+0.621
+79.0\mathbf{79.0}
+69.6\mathbf{69.6}
+57.0
+43.0
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+Ours
+0.658\mathbf{0.658}
+76.4
+69.0
+59.8\mathbf{59.8}
+47.2\mathbf{47.2}
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+0.5
+DDS (Pretrained)
+0.804
+62.0
+51.6
+39.8
+30.6
+23.0
+15.8
+9.0
+0.0
+0.0
+0.0
+DDS (Fine-Tuned)
+1.055
+72.8
+65.6
+55.8
+48.8
+42.8
+36.4
+26.8
+0.0
+0.0
+0.0
+Ours
+1.122\mathbf{1.122}
+75.2\mathbf{75.2}
+69.6\mathbf{69.6}
+62.8\mathbf{62.8}
+54.6\mathbf{54.6}
+46.6\mathbf{46.6}
+39.0\mathbf{39.0}
+32.0\mathbf{32.0}
+0.0
+0.0
+0.0
+1.00
+DDS (Pretrained)
+0.991
+38.6
+31.6
+26.8
+20.6
+15.6
+12.2
+8.8
+5.6
+3.6
+3.0
+DDS (Fine-Tuned)
+1.578
+61.6\mathbf{61.6}
+56.0\mathbf{56.0}
+48.6
+43.6
+37.6
+32.8
+30.2
+26.8
+23.0
+19.0
+Ours
+1.774\mathbf{1.774}
+60.0
+54.0
+49.0\mathbf{49.0}
+45.2\mathbf{45.2}
+42.2\mathbf{42.2}
+39.2\mathbf{39.2}
+36.0\mathbf{36.0}
+32.0\mathbf{32.0}
+27.2\mathbf{27.2}
+22.2\mathbf{22.2}
+Table 6: Approximate certified test accuracy on ImageNet
+σ\sigma
+Method (ImageNet)
+ACR
+0.0
+0.5
+1.0
+1.5
+2.0
+2.5
+3.0
+0.50
+DDS (Pretrained)
+1.250
+73
+62
+54
+40
+0
+0
+0
+DDS (Fine-Tuned)
+1.311
+76
+68
+59
+49
+0
+0
+0
+Ours
+1.367\mathbf{1.367}
+𝟕𝟗\mathbf{79}
+𝟕𝟒\mathbf{74}
+𝟔𝟒\mathbf{64}
+𝟓𝟔\mathbf{56}
+0
+0
+0
+1.00
+DDS (Pretrained)
+1.966
+59
+54
+47
+37
+30
+23
+13
+DDS (Fine-Tuned)
+2.113
+67
+𝟔𝟐\mathbf{62}
+53
+47
+39
+32
+22
+Ours
+2.212\mathbf{2.212}
+𝟔𝟖\mathbf{68}
+60
+𝟓𝟕\mathbf{57}
+𝟒𝟗\mathbf{49}
+𝟒𝟎\mathbf{40}
+𝟑𝟖\mathbf{38}
+𝟐𝟗\mathbf{29}
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

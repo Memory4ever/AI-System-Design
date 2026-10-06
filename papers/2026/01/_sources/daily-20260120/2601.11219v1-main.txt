@@ -1,0 +1,233 @@
+SOURCE: https://arxiv.org/html/2601.11219v1
+SDFLoRA: Selective Dual-Module LoRA for Federated Fine-tuning with Heterogeneous Clients Report GitHub Issue × Title: Content selection saved. Describe the issue below: 
+Description: arXiv is now an independent nonprofit! Learn more × Back to arXiv License: arXiv.org perpetual non-exclusive license arXiv:2601.11219v1 [cs.LG] 16 Jan 2026 SDFLoRA: Selective Dual-Module LoRA for Federated Fine-tuning with Heterogeneous Clients 
+Zhikang Shen Affiliation: Zhejiang University Email: 22351168@zju.edu.cn Jianrong Lu Affiliation: Zhejiang University Email: jrong.alvin@gmail.com Haiyuan Wan Affiliation: Tsinghua University Email: wanhy24@mails.tsinghua.edu.cn Jianhai Chen Affiliation: Zhejiang University Email: chenjh919@zju.edu.cn Abstract Federated learning (FL) for large language models (LLMs) has attracted increasing attention for enabling privacy-preserving adaptation across distributed data, where parameter-efficient methods such as LoRA are widely adopted to reduce communication and memory costs. Despite these advances, practical FL deployments exhibit rank heterogeneity , as clients often use different low-rank configurations, making direct aggregation of LoRA updates biased and unstable. Existing solutions enforce unified ranks or align heterogeneous updates into a shared subspace, which over-constrains client-specific semantics, limits personalization, and provides weak protection of local client information under differential privacy noise. To address this gap, we propose Selective Dual-module Federated LoRA (SDFLoRA) , which decomposes each client adapter into a global module for transferable knowledge and a local module for client-specific adaptations. The global module is selectively aligned and aggregated across clients, while local modules remain private, enabling robust learning under rank heterogeneity and privacy-aware optimization by injecting differential privacy noise exclusively into the global module. Experiments on GLUE benchmarks show that SDFLoRA outperforms representative federated LoRA baselines and achieves a better utility–privacy trade-off. 
+1 Introduction 
+Parameter-efficient federated fine-tuning has become a practical route for adapting large language models (LLMs) when data are distributed and privacy-sensitive.
+By optimizing only lightweight adapters, clients avoid full-model communication and memory overhead, enabling deployments in domains such as healthcare, finance, and on-device intelligence.
+Among PEFT approaches, low-rank adaptation (LoRA) Hu et al. (2022) is the dominant choice in federated LLM adaptation and is widely adopted in recent FL-LLM systems Wang et al. (2024) ; Yang et al. (2025) . 
+Despite these advances, practical FL deployments could exhibit strong heterogeneity, as clients originate from different domains, tasks, and user populations.
+Consequently, LoRA updates naturally contain both transferable directions shared across clients and client-specific directions that encode local semantics and personalization.
+However, existing federated LoRA pipelines typically enforce global alignment and aggregation over all update directions, which suppresses client-specific adaptations and limits personalization.
+This issue is further exacerbated by rank heterogeneity , where clients adopt different low-rank configurations due to diverse system constraints, making naïve aggregation even more biased and unstable. 
+Existing solutions mainly follow two directions.
+One line enforces a unified rank across all clients, which restricts flexibility and wastes resources on constrained devices.
+Another line aligns heterogeneous LoRA updates into a shared subspace to enable aggregation, but it implicitly aligns all directions, including client-specific components that should remain private and unshared, thereby further degrading personalization.
+Meanwhile, differential privacy is widely introduced in FL to protect local client information; yet, when structurally mixed updates are indiscriminately aligned, injecting noise into the entire update perturbs client-specific components that should remain private, leading to unnecessary utility loss and a degraded utility–privacy trade-off. 
+Motivated by these observations, we propose SDFLoRA, which decomposes each client adapter into a global module that captures transferable knowledge and a local module that preserves client-specific adaptations.
+Only the global module participates in selective subspace alignment and aggregation across clients, while local modules remain private and unaggregated, thereby handling rank heterogeneity without over-constraining personalization.
+Moreover, this structure enables privacy-aware optimization by injecting noise exclusively into the global module, protecting shared information while avoiding unnecessary perturbations on purely local adaptations, and yielding a better utility–privacy trade-off. 
+Our contributions are summarized as follows: 
+• We propose the Selective Dual-module Federated LoRA (SDFLoRA) approach for federated LLM fine-tuning, which decomposes each client adapter into a global module for transferable knowledge and a local module for client-specific adaptations, and performs selective subspace aggregation only on the global module to address rank heterogeneity without over-constraining personalization. 
+
+• We develop a privacy-aware optimization scheme in SDFLoRA by injecting differential privacy noise exclusively into the global module while keeping local modules private and unaggregated, improving robustness under DP noise. 
+
+• Experiments on GLUE benchmarks with heterogeneous-rank clients show that SDFLoRA outperforms representative federated LoRA baselines and achieves a better utility–privacy trade-off, highlighting the importance of structural awareness in federated low-rank adaptation. 
+
+2 Related Work 
+Our work mainly relates to aspects including (i) federated optimization under heterogeneity, (ii) parameter-efficient fine-tuning and federated LoRA, and (iii) personalization and privacy in federated learning. 
+2.1 Federated Optimization under Client Heterogeneity 
+Federated learning (FL) enables collaborative model training without centralizing data by alternating between local optimization and server-side aggregation.
+Federated Averaging (FedAvg) McMahan et al. (2017) is the canonical approach, but its simple weighted averaging mechanism often leads to unstable convergence under non-IID data distributions, partial client participation, and multiple local update steps, a phenomenon commonly referred to as client drift . 
+To mitigate heterogeneity-induced optimization challenges, a lot of work has proposed algorithmic modifications from different perspectives.
+FedProx Li et al. (2020) introduces a proximal regularization term to constrain local updates from deviating excessively from the global model.
+FedDyn Durmus et al. (2021) and FedDC Gao et al. (2022) further address client drift by incorporating dynamic correction terms that explicitly decouple local objectives from the global optimization trajectory.
+Another line of work focuses on correcting biases caused by heterogeneous local computation.
+FedNova Wang et al. (2020) normalizes client updates according to their effective number of local steps, while SCAFFOLD Karimireddy et al. (2020b) reduces update variance through control variates shared between the server and clients.
+From an optimization-centric viewpoint, MIME and MIME-Lite Karimireddy et al. (2020a) reinterpret federated learning as biased stochastic optimization and improve convergence by aligning federated updates with centralized SGD via momentum and gradient correction. 
+Despite their demonstrated effectiveness, these methods are predominantly designed for full-parameter federated optimization and implicitly assume homogeneous model structures across clients.
+When parameter-efficient fine-tuning is adopted, additional forms of heterogeneity emerge.
+In particular, low-rank adapters introduce structural heterogeneity , where clients may employ different adapter ranks or decompositions due to resource constraints or task diversity, which cannot be directly handled by existing optimization-centric approaches. 
+2.2 Parameter-Efficient Fine-Tuning and Federated LoRA 
+Parameter-efficient fine-tuning (PEFT) has become a standard approach for adapting large models under resource constraints.
+LoRA Hu et al. (2022) freezes the backbone and learns low-rank updates for selected layers, greatly reducing trainable parameters and communication costs, which makes it especially attractive in FL. 
+Several studies extend LoRA to federated settings.
+FedIT Zhang et al. (2024) performs FedAvg-style aggregation over LoRA parameters, enabling efficient collaboration but implicitly assumes homogeneous adapter configurations and can be sensitive to rank mismatch.
+To mitigate rank heterogeneity, recent work has explored stacking-based aggregation to align heterogeneous low-rank updates into a shared subspace.
+FLoRA Wang et al. (2024) is a representative approach that constructs an expanded low-rank subspace via stacking, providing a principled way to aggregate clients with different ranks without padding or truncation.
+Other variants improve initialization, aggregation bias, or fairness properties for federated LoRA training Bian et al. (2025) . 
+These methods demonstrate that stacking is an effective tool for handling rank heterogeneity .
+However, they typically treat each client adapter as a monolithic update and implicitly assume that all low-rank directions should be globally aligned and aggregated.
+In federated LLM fine-tuning, client updates may contain a mixture of globally transferable knowledge and locally specific adaptations; indiscriminate alignment can over-regularize personalization and become fragile when additional constraints (e.g., privacy noise) are introduced. 
+2.3 Personalization and Privacy in Federated Learning 
+Personalized FL aims to account for client-specific objectives and data distributions by learning both shared and local components.
+Representative methods include Ditto Gao et al. (2024) , which couples a global model with personalized local models via regularization, and FedRep Collins et al. (2021) , which separates shared representations from client-specific heads.
+These approaches highlight the importance of explicitly distinguishing between globally shared and locally specialized parameters, but they are not designed around the structural properties of low-rank adapters in LLM fine-tuning. 
+Privacy preservation is another fundamental concern in FL.
+Differential privacy (DP) Dwork (2006) provides formal guarantees, and DP-SGD Abadi et al. (2016) has become a standard mechanism to protect training updates by gradient clipping and noise injection.
+In federated settings, differential privacy is typically enforced through
+client-side or server-side perturbations, such as DP-SGD-based noise injection on local updates or aggregated models Kairouz et al. (2021) .
+However, applying DP noise uniformly to all parameters can significantly degrade utility, particularly for large models and heterogeneous clients, and adversarial or poisoned updates further exacerbate this instability in federated aggregation Lu et al. (2024) .
+Recent work suggests that selective or structured privacy mechanisms may yield better utility–privacy trade-offs, yet existing federated LoRA approaches do not explicitly leverage adapter structure to support such selective protection. 
+2.4 Positioning of Our Work 
+In contrast to prior federated LoRA methods, our work focuses on the semantic roles of low-rank updates and the resulting need for structural awareness in aggregation.
+Rather than proposing another stacking mechanism, we introduce a dual-module LoRA decomposition that separates globally alignable updates from locally personalized ones.
+Stacking-based aggregation is then applied selectively to the global module, while local modules remain private and unaggregated.
+This perspective addresses not only how to aggregate heterogeneous ranks, but also which updates should be aggregated under personalization and privacy constraints, enabling robust federated LLM fine-tuning with improved stability under DP noise. 
+3 Method 
+3.1 Preliminaries: Federated LoRA Fine-tuning 
+We consider federated fine-tuning with K K clients. In round t t , a subset S t S_{t} of clients participates, each optimizing a local objective F k ​ ( ⋅ ) F_{k}(\cdot) on its private data. Let W W denote the frozen backbone parameters of an LLM. LoRA Hu et al. (2022) augments a target linear layer W ∈ ℝ d out × d in W\in\mathbb{R}^{d_{\text{out}}\times d_{\text{in}}} with a low-rank update 
+Δ ​ W k = B k ​ A k , A k ∈ ℝ r k × d in , B k ∈ ℝ d out × r k \Delta W_{k}=B_{k}A_{k},\quad A_{k}\in\mathbb{R}^{r_{k}\times d_{\text{in}}},\;B_{k}\in\mathbb{R}^{d_{\text{out}}\times r_{k}} (1) 
+where r k r_{k} is the adapter rank (potentially different across clients). During local training, client k k updates { A k , B k } \{A_{k},B_{k}\} (and keeps W W fixed). The server aggregates client updates and broadcasts the aggregated adapter for the next round. 
+Challenge: rank heterogeneity and semantic heterogeneity. 
+When ranks differ across clients, directly averaging low-rank factors is ill-defined without padding or truncation, and may introduce biased updates. Stacking-based aggregation alleviates dimensional mismatch by aligning heterogeneous updates into an expanded subspace, but implicitly assumes that all updates should be globally aligned and aggregated. In federated LLM fine-tuning, client updates often contain a mixture of globally transferable knowledge and client-specific adaptations; forcing global alignment on all updates can harm personalization and becomes fragile under differential privacy noise. Our goal is therefore to design an aggregation scheme that is robust to rank heterogeneity while respecting the semantic roles of low-rank updates. 
+3.2 Dual-Module LoRA Decomposition 
+We propose to decompose each client adapter into two structurally separated low-rank modules: 
+Δ ​ W k = Δ ​ W k ( g ) + Δ ​ W k ( l ) = B k ( g ) ​ A k ( g ) + B k ( l ) ​ A k ( l ) \Delta W_{k}=\Delta W_{k}^{(g)}+\Delta W_{k}^{(l)}=B_{k}^{(g)}A_{k}^{(g)}+B_{k}^{(l)}A_{k}^{(l)} (2) 
+where Δ ​ W k ( g ) \Delta W_{k}^{(g)} is a global module intended to capture transferable directions shared across clients, and Δ ​ W k ( l ) \Delta W_{k}^{(l)} is a local module for client-specific adaptations. 
+This decomposition reflects an important observation in federated LLM fine-tuning: client-side low-rank updates are semantically heterogeneous .
+Some update directions correspond to transferable knowledge that should be aligned and shared across clients, while others encode client-specific or domain-specific adaptations whose forced alignment can be harmful.
+By explicitly separating Δ ​ W k ( g ) \Delta W_{k}^{(g)} and Δ ​ W k ( l ) \Delta W_{k}^{(l)} ,
+we impose a structural constraint on which subspaces are allowed to participate in cross-client aggregation. 
+Figure 1: Framework overview. Each client keeps a private (local) module and trains a public (global) adapter on a frozen LLM. Only the public module is communicated and aggregated via selective stacking; DP noise is applied to the public update. 
+As illustrated in Figure 1 , we decouple transferable (public) updates from client-specific (private) adaptations, enabling selective aggregation and privacy-aware training. 
+Federated roles. 
+The two modules play different roles in the federated process:
+(i) the global module participates in cross-client aggregation and is broadcast each round;
+(ii) the local module is never aggregated and remains private to the client.
+This structural separation is the key design choice that allows us to restrict subspace alignment to semantically appropriate updates, rather than treating each LoRA adapter as a monolithic update. 
+Optimization objective. 
+In each round t t , client k ∈ S t k\in S_{t} receives the current global module θ ( g , t ) \theta^{(g,t)} (the collection of all { A ( g ) , B ( g ) } \{A^{(g)},B^{(g)}\} across adapted layers) and keeps its local module θ k ( l , t ) \theta_{k}^{(l,t)} .
+The client performs E E steps of local optimization to minimize: 
+min θ ( g ) , θ k ( l ) ⁡ F k ​ ( W , θ ( g ) , θ k ( l ) ) \min_{\theta^{(g)},\,\theta_{k}^{(l)}}\;F_{k}\!\big(W,\theta^{(g)},\theta_{k}^{(l)}\big) (3) 
+and uploads only the updated global module θ k ( g , t ) \theta_{k}^{(g,t)} (or its update) to the server. The local module is kept on-device and continues across rounds. 
+3.3 Selective Stacking Aggregation on the Global Module 
+We propose selective stacking , a stacking-based aggregation strategy
+that is applied exclusively to the global module while explicitly excluding
+client-local updates from cross-client alignment.
+Let θ k ( g , t ) \theta_{k}^{(g,t)} denote the global-module parameters trained by client k k at round t t for a given layer, i.e., θ k ( g , t ) = { A k ( g , t ) , B k ( g , t ) } \theta_{k}^{(g,t)}=\{A_{k}^{(g,t)},B_{k}^{(g,t)}\} with rank r k ( g ) r_{k}^{(g)} .
+To aggregate heterogeneous ranks without padding or truncation, we perform stacking-based aggregation only on the global module. 
+Stacking construction. 
+For a target layer, we form a stacked representation: 
+A t ( g ) = Concat ​ ( p k ​ A k ( g , t ) ) k ∈ S t A^{(g)}_{t}=\mathrm{Concat}\!\left(\sqrt{p_{k}}\,A_{k}^{(g,t)}\right)_{k\in S_{t}} (4) 
+B t ( g ) = Concat ​ ( p k ​ B k ( g , t ) ) k ∈ S t B^{(g)}_{t}=\mathrm{Concat}\!\left(\sqrt{p_{k}}\,B_{k}^{(g,t)}\right)_{k\in S_{t}} (5) 
+where p k p_{k} is the aggregation weight (e.g., proportional to the local data size) and Concat ⁡ ( ⋅ ) \mathrm{Concat}(\cdot) concatenates along the rank dimension. This yields an aggregated update 
+Δ ​ W t ( g ) = B t ( g ) ​ A t ( g ) \Delta W_{t}^{(g)}=B^{(g)}_{t}A^{(g)}_{t} (6) 
+which is well-defined under rank heterogeneity. Importantly, local modules are excluded from stacking and aggregation , avoiding forced alignment of client-specific directions. 
+The stacking operation preserves the following equivalence: 
+B t ( g ) ​ A t ( g ) = ∑ k ∈ S t p k ​ B k ( g , t ) ​ A k ( g , t ) B_{t}^{(g)}A_{t}^{(g)}=\sum_{k\in S_{t}}p_{k}B_{k}^{(g,t)}A_{k}^{(g,t)} (7) 
+while avoiding direct averaging of incompatible low-rank factors.
+In contrast to padding-based alignment, stacking delays subspace merging
+until after aggregation, preventing premature mixing of heterogeneous update directions. 
+Rank control via re-compression. 
+A practical consequence of stacking is that the effective rank of the aggregated global update grows with the number of participating clients and communication rounds.
+Concretely, the concatenation in Eqs. ( 5 )–( 6 ) expands the rank dimension, which increases both the transmission cost (larger adapter factors) and the memory footprint on the server and clients. 
+Moreover, under privacy-aware training, stochasticity (e.g., DP noise) and client heterogeneity tend to inject low-energy directions that accumulate across rounds, leading to unstable optimization and diminished generalization if left uncontrolled.
+To keep the global module within a fixed budget, we apply low-rank re-compression to Δ ​ W t ( g ) \Delta W_{t}^{(g)} : 
+Δ ​ W t ( g ) ≈ B ~ t ( g ) ​ A ~ t ( g ) , rank ⁡ ( B ~ t ( g ) ​ A ~ t ( g ) ) = r max . \Delta W_{t}^{(g)}\approx\tilde{B}_{t}^{(g)}\tilde{A}_{t}^{(g)},\quad\mathrm{rank}(\tilde{B}_{t}^{(g)}\tilde{A}_{t}^{(g)})=r_{\max}. (8) 
+In practice, we compute a truncated SVD (or an equivalent low-rank factorization) Δ ​ W t ( g ) = U ​ Σ ​ V ⊤ \Delta W_{t}^{(g)}=U\Sigma V^{\top} and retain only the top- r max r_{\max} singular components,
+yielding Δ ​ W t ( g ) ≈ U r ​ Σ r ​ V r ⊤ \Delta W_{t}^{(g)}\approx U_{r}\Sigma_{r}V_{r}^{\top} .
+We then convert this truncated form back to LoRA-style factors by setting B ~ t ( g ) = U r ​ Σ r 1 / 2 \tilde{B}_{t}^{(g)}=U_{r}\Sigma_{r}^{1/2} and A ~ t ( g ) = Σ r 1 / 2 ​ V r ⊤ \tilde{A}_{t}^{(g)}=\Sigma_{r}^{1/2}V_{r}^{\top} ,
+so that B ~ t ( g ) ​ A ~ t ( g ) \tilde{B}_{t}^{(g)}\tilde{A}_{t}^{(g)} matches the best rank- r max r_{\max} approximation under the Frobenius norm.
+This step acts as a spectral filter that preserves dominant, transferable directions while discarding tail components that are more likely to be noise-dominated, and it keeps the communicated global module compact for the next round.
+Finally, the server broadcasts ( A ~ t ( g ) , B ~ t ( g ) ) (\tilde{A}_{t}^{(g)},\tilde{B}_{t}^{(g)}) as the next-round global module. 
+3.4 Privacy-Aware Optimization (DP Compatibility) 
+Our dual-module design is naturally compatible with differential privacy (DP). The key idea is to apply DP mechanisms only to the global module, while keeping local modules noise-free. 
+Client-side DP-SGD on the global module. 
+During local training, client k k clips per-sample (or per-microbatch) gradients for the global module and adds Gaussian noise: 
+g k ( g ) ← Clip ⁡ ( g k ( g ) , C ) + 𝒩 ⁡ ( 0 , σ 2 ​ C 2 ​ I ) g_{k}^{(g)}\leftarrow\mathrm{Clip}\!\left(g_{k}^{(g)},C\right)+\mathcal{N}\!\left(0,\sigma^{2}C^{2}I\right) (9) 
+where C C is the clipping norm and σ \sigma is the noise multiplier. The perturbed gradients update θ k ( g ) \theta_{k}^{(g)} , which is then uploaded to the server. The local module θ k ( l ) \theta_{k}^{(l)} is updated without noise, preserving client-specific expressiveness and improving optimization stability. 
+Why selective privacy helps. 
+Injecting noise into the entire adapter amplifies variance and can destabilize learning, especially for heterogeneous clients. By restricting DP to the global module, our framework protects transferable knowledge while avoiding unnecessary corruption of client-specific adaptations, yielding a better utility–privacy trade-off. 
+3.5 Algorithm Summary 
+Algorithm 1 summarizes one communication round of our method. Each client receives the global module, performs local training with dual-module adapters (optionally with DP on the global module), uploads only the global-module parameters, and the server performs selective stacking aggregation to produce the next global module. 
+Algorithm 1 Dual-Module Federated LoRA with Selective Stacking (one round) 
+Input: Frozen backbone W W ; global module θ ( g , t ) \theta^{(g,t)} ; client set S t S_{t} ; weights { p k } \{p_{k}\} ; rank budget r max r_{\max} ; DP params ( C , σ ) (C,\sigma) Output: Updated global module θ ( g , t + 1 ) \theta^{(g,t+1)} 
+1: Server broadcasts θ ( g , t ) \theta^{(g,t)} to clients k ∈ S t k\in S_{t} . 2: for each client k ∈ S t k\in S_{t} in parallel do 3: Initialize dual-module adapters with θ ( g , t ) \theta^{(g,t)} and local state θ k ( l , t ) \theta_{k}^{(l,t)} . 4: for local step e = 1 , … , E e=1,\dots,E do 5: Compute gradients on batch; update θ k ( g ) \theta_{k}^{(g)} (with DP-SGD if enabled) and θ k ( l ) \theta_{k}^{(l)} . 6: end for 7: Upload θ k ( g , t ) \theta_{k}^{(g,t)} to server; keep θ k ( l , t ) \theta_{k}^{(l,t)} locally. 8: end for 9: Server aggregates global modules via selective stacking: θ ( g ) ← StackAgg ⁡ ( { θ k ( g , t ) } k ∈ S t , { p k } ) \theta^{(g)}\leftarrow\mathrm{StackAgg}(\{\theta_{k}^{(g,t)}\}_{k\in S_{t}},\{p_{k}\}) . 10: Re-compress to rank budget r max r_{\max} to obtain θ ( g , t + 1 ) \theta^{(g,t+1)} ; otherwise set θ ( g , t + 1 ) ← θ ( g ) \theta^{(g,t+1)}\leftarrow\theta^{(g)} . 4 Experiments 
+4.1 Experimental Setup and Baselines 
+Tasks and datasets. 
+We evaluate federated parameter-efficient fine-tuning on GLUE-style NLU benchmarks Wang et al. (2018) .
+We report results on QNLI , RTE , QQP , MNLI , and SST-2 ,
+which cover natural language inference, paraphrase identification, and sentiment classification.
+We use the official train/dev splits and report dev-set performance. 
+Backbone and adapter. 
+We adopt LLaMA-7B as the frozen backbone and insert LoRA adapters Hu et al. (2022) into linear projection layers.
+Only LoRA parameters are optimized while the backbone weights remain fixed. 
+Federated protocol and rank heterogeneity. 
+We simulate a cross-device FL setting with K = 8 K=8 clients and run T = 30 T=30 communication rounds.
+Unless otherwise stated, all clients participate in each round and the server aggregates client updates with weights
+proportional to local data sizes, i.e., α k = n k / ∑ j n j \alpha_{k}=n_{k}/\sum_{j}n_{j} .
+To model structural heterogeneity induced by rank mismatch, we set client ranks as { r k } = [ 4 , 4 , 8 , 8 , 8 , 8 , 16 , 16 ] \{r_{k}\}=[4,4,8,8,8,8,16,16] .
+When a homogeneous setting is required (e.g., for FedAvg-style baselines), we use a shared rank r k = r r_{k}=r for all clients. In an additional scalability study, we vary the number of participating clients K K while keeping the remaining hyperparameters consistent. 
+Local optimization. 
+Each client uses Adam with a fixed learning rate of 2 × 10 − 4 2\times 10^{-4} , batch size 128 128 , and trains for 200 200 epochs.
+Within each communication round, clients perform 10 10 local update steps before uploading their LoRA updates.
+All remaining optimizer hyperparameters follow the default settings in our implementation.
+These hyperparameters are kept identical across methods unless the experiment explicitly controls a specific factor
+(e.g., aggregation strategy or privacy budget), ensuring fair comparisons. 1 1 1 The above hyperparameters follow the experimental configuration summarized in Table 1 . 
+Evaluation metrics. 
+We report Accuracy on QNLI / RTE / MNLI / SST-2 .
+And for QQP , we also report Accuracy to maintain a unified metric across tasks. 
+Baselines. 
+We compare the proposed aggregation strategy against representative alternatives under identical training budgets: (i) Zero-padding aligns heterogeneous LoRA updates by padding lower-rank factors to the maximum rank before
+weighted averaging; (ii) FedAvg-style averaging performs standard weighted averaging of LoRA parameters in the homogeneous-rank setting; (iii) Stacking concatenates client low-rank updates along the rank dimension to preserve the union of client subspaces. 
+Reproducibility. 
+All experiments are conducted on a machine equipped with an Intel Xeon Gold 5318Y CPU, 128GB RAM,
+and 2 × \times NVIDIA RTX A6000 GPUs, running Ubuntu 22.04.5, Python 3.10, and CUDA 12.4.
+Key hyperparameters and system configurations are summarized in Table 1 . 
+Item Setting Backbone LLaMA-7B Adapter LoRA Tasks QNLI , RTE , QQP , MNLI , SST-2 Clients ( K K ) 8 Rounds ( T T ) 30 Rank (hetero.) { r k } = [ 4 , 4 , 8 , 8 , 8 , 8 , 16 , 16 ] \{r_{k}\}=[4,4,8,8,8,8,16,16] Aggregation α k = n k / ∑ j n j \alpha_{k}=n_{k}/\sum_{j}n_{j} Optimizer Adam Learning rate 2 × 10 − 4 2\times 10^{-4} Batch size 128 Local epochs 200 Local steps/round 10 Hardware Intel Xeon Gold 5318Y, 128GB RAM, 2 × \times RTX A6000 Software Ubuntu 22.04.5, Python 3.10, CUDA 12.4 
+Table 1: Experimental configuration and system environment. 
+4.2 Results under Rank and Data Heterogeneity 
+Rank-heterogeneous clients. 
+Table 2 compares stacking and zero-padding under mismatched client ranks.
+Stacking yields consistent and often substantial improvements across all four tasks.
+In particular, it improves QNLI from 95.81 to 96.96 (1.15%), QQP from 86.72 to 87.97 (1.25%), and shows especially large gains on RTE (4.26%) and MNLI (6.71%).
+The much larger gains on RTE and MNLI suggest that these tasks are more sensitive to directional misalignment across clients, where important low-rank update directions from some clients are severely distorted by zero-padding. 
+This behavior can be explained by how the two aggregation strategies treat heterogeneous ranks.
+Zero-padding forces all client updates into a common high-rank space by inserting artificial zero directions for low-rank clients, which effectively dilutes their informative components during weighted averaging.
+In contrast, stacking concatenates client factors along the rank dimension, preserving each client’s effective update subspace and preventing destructive interference between heterogeneous low-rank directions.
+As a result, stacking produces a more faithful reconstruction of the global update under rank mismatch. 
+Hetero Homo Task Ours Padding Ours FedAvg Ours FedAvg Rank – Rank = 4 Rank = 8 QNLI 96.96 95.81 97.78 95.81 98.47 96.50 RTE 99.71 95.45 88.89 85.94 90.05 85.62 QQP 87.97 86.72 87.60 84.40 85.30 83.10 MNLI(m) 72.19 65.48 73.05 70.20 73.60 69.85 MNLI(mm) 71.62 64.90 72.48 69.55 73.05 69.20 SST-2 82.30 81.10 82.14 82.06 81.88 81.90 
+Table 2: Fed aggregation across rank-heterogeneous and rank-homogeneous clients. 
+Homogeneous-rank sanity check. 
+To verify that the benefit of stacking is not merely due to resolving dimensional incompatibility, we further compare it with FedAvg-style averaging when all clients use the same rank (Table 2 ).
+Even in this homogeneous setting, stacking remains consistently superior or comparable. 
+For rank r = 4 r=4 , stacking improves QQP by 3.20%, QNLI by 1.97% , and RTE by 2.95% , while maintaining comparable performance on SST-2 .
+For rank r = 8 r=8 , stacking again improves QQP (2.20%), QNLI (1.97%), and RTE (4.43%), with only a negligible difference on SST-2 (-0.02%).
+These results indicate that stacking acts as a subspace-preserving aggregator that is beneficial even when rank is fixed, rather than being a mere workaround for heterogeneous dimensions. 
+Effect of client population size. 
+We further study how the federated population size affects performance by varying the number of participating clients K K while keeping the training settings and optimization hyperparameters consistent.
+Figure 2 shows a clear scale benefit when moving from small to medium client populations:
+with too few clients (e.g., K = 4 K{=}4 ), global aggregation is less effective, which is consistent with the limited coverage of data distributions and update directions in small federations.
+As K K increases, accuracy improves substantially, indicating that a larger client pool provides richer and more diverse signals for the global model to generalize. 
+In particular, the curve is not strictly monotonic; after initial gains, we observe a stage-wise fluctuation (e.g., a temporary drop around K = 16 K{=}16 for one rank setting) before recovering at larger K K .
+This behavior is expected in non-IID federated optimization, where enlarging the population simultaneously increases data coverage and amplifies cross-client update discrepancy, which may transiently destabilize aggregation.
+Comparing the two rank configurations in Figure 2 , a lower rank exhibits better robustness in the small-to-medium regime, whereas a higher rank tends to achieve a higher ceiling once the client population becomes sufficiently large.
+Overall, this scalability study complements Table – by showing that our method remains effective when the federation size varies and that structural capacity (rank) interacts non-trivially with the client population. 
+Figure 2: Test accuracy under varying numbers of federated clients ( K K ) for two rank settings. Increasing K K generally improves performance due to broader data coverage, while non-IID update discrepancy can cause transient fluctuations. 
+Robustness to data heterogeneity. 
+We further examine robustness under Non-IID data partitions controlled by a Dirichlet parameter α \alpha using the client-level accuracy standard deviation in Table .
+Lower variance indicates more consistent performance across heterogeneous clients. 
+Under strong heterogeneity ( α = 0.1 \alpha=0.1 ), stacking achieves lower variance than padding on all tasks, e.g., on SST-2 (0.344 vs. 0.379) and QNLI (0.387 vs. 0.420), indicating improved stability when client data distributions are highly skewed.
+At moderate heterogeneity ( α = 0.5 \alpha=0.5 ), stacking again consistently reduces variance, for example lowering RTE from 0.372 to 0.343 and QNLI from 0.111 to 0.104, showing better robustness across clients. 
+At α = 1.0 \alpha=1.0 , stacking remains slightly more stable on RTE (0.088 vs. 0.092), but exhibits higher variance on SST-2 and QNLI .
+This suggests that when data heterogeneity is moderate, preserving a broader set of client-specific low-rank directions may amplify inter-client discrepancies on certain tasks, even though the global model remains competitive.
+Importantly, when the partition approaches near-IID ( α = 10 \alpha=10 ), stacking again achieves uniformly lower variance across all tasks, e.g., reducing QNLI variance from 0.045 to 0.014, indicating that stacking does not inherently harm stability. 
+Figure 3: Client-level performance comparison between single-module and dual-module adapters under the same training budget.
+The dual-module design consistently improves accuracy across clients, validating the effectiveness of separating global and local low-rank adaptations. 
+4.3 Privacy and Rank Sensitivity 
+Privacy–utility trade-off. 
+We apply DP-SGD during local training and report task accuracies under different privacy budgets ϵ \epsilon (Figure 4 ). As ϵ \epsilon increases (weaker privacy), the required noise scale decreases and performance improves. 
+Figure 4: Accuracy under different privacy budgets ϵ \epsilon .
+Fixed denotes applying structural constraints (selective stacking and rank control) on the global module,
+while Unfixed corresponds to unconstrained aggregation over all updates.
+The fixed design exhibits substantially better stability under strong privacy constraints. 
+Figure 4 further shows that enforcing structural constraints on the global module
+significantly improves robustness under strong privacy constraints.
+When ϵ \epsilon is small, unconstrained aggregation suffers from severe performance degradation,
+whereas the fixed global-module design maintains substantially higher accuracy. 
+Rank sensitivity with and without DP. 
+Tables 3 analyze how the LoRA rank affects performance.
+Without DP, smaller ranks can be more stable on some tasks, while overly large ranks may introduce redundancy and hurt aggregation.
+With DP ( ϵ = 1 \epsilon=1 ), the optimal rank can shift due to noise, but small-to-medium ranks often remain a good trade-off. 
+Rank r r Setting QNLI MNLI (m) MNLI (mm) QQP 4 No DP 94.39 74.62 89.63 86.02 DP ( ϵ = 1 \epsilon=1 ) 92.41 72.45 85.42 84.83 8 No DP 88.78 79.60 79.22 82.06 DP ( ϵ = 1 \epsilon=1 ) 84.49 73.34 74.18 81.25 16 No DP 84.06 71.04 76.93 89.87 DP ( ϵ = 1 \epsilon=1 ) 81.41 70.75 69.32 87.32 32 No DP 88.89 66.46 73.41 80.55 DP ( ϵ = 1 \epsilon=1 ) 85.47 62.04 71.02 77.99 
+Table 3: Rank sensitivity with and without differential privacy (DP). 
+4.4 Evidence for Dual-Module Benefit 
+Finally, we include direct evidence that introducing a dual-adapter (dual-module) design improves federated fine-tuning.
+Under matched training budgets, the dual-adapter achieves a higher average performance than a single-adapter baseline, indicating that dual modules better exploit complementary low-rank subspaces. 
+5 Conclusion 
+We studied federated fine-tuning of large language models with LoRA under practical client heterogeneity, where clients may differ not only in data and systems but also in the rank configurations of low-rank adapters and privacy requirements. While stacking-based aggregation provides a natural way to reconcile rank mismatch, we argued that stacking alone is insufficient because it implicitly forces global alignment on all client updates, potentially suppressing personalization and becoming fragile under differential privacy noise. 
+To address these limitations, we proposed SDFLoRA framework that structurally decomposes each client adapter into a global module capturing transferable knowledge and a local module preserving client-specific adaptations. Building on this decomposition, we introduced selective stacking that applies stacking-based alignment only to the global module while keeping local modules private and unaggregated. This structural restriction mitigates over-alignment, improves robustness under rank heterogeneity, and naturally supports privacy-aware optimization by injecting DP noise exclusively into the global module. 
+Experiments on GLUE benchmarks under heterogeneous-rank settings demonstrated that our approach consistently outperforms representative federated LoRA baselines and achieves a better utility–privacy trade-off under DP constraints. In future work, we plan to extend the proposed structural separation to other adapter families and investigate adaptive mechanisms for automatically allocating global versus local capacity based on client characteristics and task demands. 
+References 
+

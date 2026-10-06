@@ -1,0 +1,933 @@
+WoVR: World Models as Reliable Simulators for Post-Training VLA Policies with RL
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+2.1 Online RL Fine-tuning for VLA Models
+2.2 World Models
+2.3 World Models as Simulators
+3 Preliminary
+3.1 Reinforcement Learning for VLA Fine-tuning
+3.2 Problem Formulation
+4 Methods
+4.1 Stabilized Action-Conditioned World Model
+Backbone and action conditioning.
+First-frame anchoring for rollout stability.
+4.2 Hallucination-Aware Policy Optimization in Imagination
+4.3 PACE: Policy–Aligned Co-Evolution
+System Implementation.
+5 Experiments
+5.1 Q1: Is the World Model Stable, Controllable, and Efficient?
+Experimental Setup.
+Quantitative Results.
+5.2 Q2: Can WoVR Effectively Improve VLA Task Performance?
+Experimental Setup.
+Quantitative Results.
+5.3 Q3: Do Policies Optimized with WoVR Reliably Transfer to the Real World?
+Experimental Setup
+Quantitative Results.
+6 Ablation Study
+6.1 Ablation on World Model Mechanisms
+Experimental Variants.
+Quantitative Results.
+6.2 Ablation on Policy Optimization Mechanisms
+Experimental Setup.
+Quantitative Results.
+7 Conclusion
+References
+A GPU Allocation Strategy
+License: CC BY 4.0
+arXiv:2602.13977v1 [cs.RO] 15 Feb 2026
+WoVR: World Models as Reliable Simulators for Post-Training VLA Policies with RL
+Zhennan Jiang
+Affiliation: University of Chinese Academy of Sciences
+Affiliation: Zhongguancun Academy
+Shangqing Zhou
+Affiliation: University of Chinese Academy of Sciences
+Yutong Jiang
+Zefang Huang
+Mingjie Wei
+Yuhui Chen
+Affiliation: University of Chinese Academy of Sciences
+Tianxing Zhou
+Zhen Guo
+Hao Lin
+Quanlu Zhang
+Yu Wang
+Haoran Li
+Affiliation: University of Chinese Academy of Sciences
+Chao Yu
+Dongbin Zhao
+Affiliation: University of Chinese Academy of Sciences
+Affiliation: Zhongguancun Academy
+Affiliation: Equal contribution
+Affiliation: Corresponding authors
+Affiliation: Tsinghua university
+Affiliation: Institute of Automation, Chinese Academy of Sciences
+Affiliation: Infinigence AI https://huggingface.co/Collections/RLinf/wovr
+https://github.com/RLinf/RLinf
+Abstract
+Reinforcement learning (RL) promises to unlock capabilities beyond imitation learning for Vision–Language–Action (VLA) models, but its requirement for massive real-world interaction prevents direct deployment on physical robots. Recent work attempts to use learned world models as simulators for policy optimization, yet closed-loop imagined rollouts inevitably suffer from hallucination and long-horizon error accumulation. Such errors do not merely degrade visual fidelity—they corrupt the optimization signal, encouraging policies to exploit model inaccuracies rather than genuine task progress.
+We propose WoVR, a reliable world-model-based reinforcement learning framework for post-training VLA policies. Instead of assuming a faithful world model, WoVR explicitly regulates how RL interacts with imperfect imagined dynamics. It improves rollout stability through a controllable action-conditioned video world model, reshapes imagined interaction to reduce effective error depth via Keyframe-Initialized Rollouts, and maintains policy–simulator alignment through World Model-Policy co-evolution.
+Extensive experiments on LIBERO benchmarks and real-world robotic manipulation demonstrate that WoVR enables stable long-horizon imagined rollouts and effective policy optimization, improving average LIBERO success from 39.95% to 69.2% (+29.3 points) and real-robot success from 61.7% to 91.7% (+30.0 points). These results show that learned world models can serve as practical simulators for reinforcement learning when hallucination is explicitly controlled.
+1 Introduction
+Vision–Language–Action (VLA) models [ 17 , 2 , 14 , 19 ] have been increasingly adopted for robotic manipulation, where actions are generated end-to-end by conditioning on language instructions and visual observations. Most existing VLA systems are trained via imitation learning. While effective in many downstream tasks, this paradigm fundamentally limits the performance ceiling of VLA policies, as it is tightly constrained by the quality and coverage of demonstration data.
+Figure 1: Hallucination in Closed-Loop World Model Rollouts. The world model imagines a successful grasp (green frames), but real-world execution fails (red frames).To address this critical mismatch, we propose three hallucination-aware mechanisms.
+Recent studies have demonstrated that reinforcement learning for VLA [ 51 , 27 , 4 , 5 , 28 , 24 ] can substantially improve policy performance and reduce reliance on imitation data [ 18 ] . However, most approaches rely on standard on-policy optimization algorithms such as Proximal Policy Optimization (PPO) [ 37 ] or Group Relative Policy Optimization (GRPO) [ 38 , 9 ] , which require large-scale environment parallelism to achieve stable and efficient training. This requirement is impractical for real-world robotic reinforcement learning, where physical robot interaction is expensive [ 6 ] , slow, and often requires substantial human supervision [ 30 ] . Although simulation-based alternatives have been explored [ 4 , 20 ] , accurately aligning simulators with real-world dynamics remains highly challenging, particularly for contact-rich manipulation tasks. These constraints motivate replacing real-environment interaction with a learned world model that serves as a simulator for policy optimization.
+Recent advances in large-scale generative video models [ 55 , 34 , 43 ] have made this direction increasingly feasible. Several works directly treat pretrained video generators as simulators and perform reinforcement learning entirely in imagination [ 44 , 57 , 21 ] .
+However, learned world models are not faithful simulators.
+In this work, we define hallucination as a systematic mismatch between imagined and real outcomes in closed-loop interaction. The world model may produce visually plausible rollouts while predicting physically incorrect state transitions or even spurious success signals under the policy’s actions(Fig. 1 ).
+Hallucination is not merely a generation artifact — it fundamentally undermines reinforcement learning.
+In closed-loop autoregressive rollouts, prediction errors compound with horizon length due to:
+•
+Autoregressive feedback: the model conditions on its own generated frames, amplifying small early errors;
+•
+Distribution shift: as the policy evolves, its action distribution drifts away from the data used to train the world model, increasing out-of-distribution prediction failures.
+If hallucinated trajectories are directly used for policy optimization, reinforcement learning is incentivized to exploit systematic model errors rather than true task progress.
+This leads to a critical question:
+If world models inevitably hallucinate, how can reinforcement learning remain reliable under imperfect imagined dynamics?
+We argue that using world models for RL is not primarily a modeling problem, but a reliability problem.
+To make world-model-based reinforcement learning viable, one must control hallucination at three interconnected levels: controllable simulator design, reliable interaction protocol, and policy–model alignment. To this end, we propose WoVR , a Wo rld-model-based framework for post-training V ision–Language–Action policies with R einforcement Learning, built upon RLinf [ 49 ] . Rather than assuming the learned world model to be a faithful simulator, WoVR explicitly regulates how reinforcement learning interacts with imperfect imagined dynamics. We first strengthen the simulator itself by constructing a rollout-stable, action-controllable video world model with stabilized autoregressive context modeling, reducing long-horizon drift and structural collapse. However, improving the simulator alone is insufficient, as prediction errors inevitably accumulate over extended rollouts. We therefore reshape imagined interaction through Keyframe-Initialized Rollouts (KIR) , which shorten the effective prediction depth by initializing trajectories near task-critical states, limiting the compounding of hallucination during learning. Finally, as policy optimization shifts the action distribution and induces distribution mismatch between the policy and the world model, we introduce PACE , a policy-aligned co-evolution strategy that restores alignment by iteratively refining the world model under the evolving policy distribution, without requiring continuous online supervision. Together, these components form a unified hallucination-aware reinforcement learning framework that enables reliable policy optimization in imagination.
+In summary, our contributions are as follows.
+•
+We identify hallucination under closed-loop imagined interaction as a fundamental reliability challenge in world-model-based reinforcement learning for VLA, showing that autoregressive error accumulation and policy-induced distribution shift can systematically corrupt optimization signals.
+•
+We propose WoVR, a hallucination-aware reinforcement learning framework that jointly regulates controllable simulator design, reliable imagined interaction, and a policy-aligned co-evolution strategy, enabling stable on-policy optimization entirely in imagination.
+•
+Extensive experiments demonstrate that WoVR achieves state-of-the-art world-model quality across perceptual and temporal metrics while maintaining high rollout efficiency (23 FPS). More importantly, WoVR delivers strong downstream task performance, improving average LIBERO success from 39.95% to 69.2% (+29.3 points) and real-robot success from 61.7% to 91.7% (+30.0 points).
+2 Related Work
+2.1 Online RL Fine-tuning for VLA Models
+On-policy reinforcement learning [ 51 , 37 ] has been increasingly adopted to fine-tune VLA models beyond imitation learning [ 51 , 27 ] . However, directly transferring online on-policy fine-tuning to real robots remains impractical, as such methods require large-scale parallel rollouts, repeated environment resets, and tightly coupled policy–environment interaction, which are difficult to support under real-world hardware. To mitigate this, some off-policy approaches [ 5 , 50 ] introduce offline data reuse or human intervention, but often suffer from limited scalability and performance degradation during online updates. An alternative direction builds large-scale real-robot infrastructures, yet existing systems [ 33 , 52 ] still cannot practically support fully on-policy algorithms at scale. These limitations suggest that the challenge of online RL for VLA is systemic rather than algorithmic, motivating world-model-based approaches that decouple policy optimization from real-world interaction.
+2.2 World Models
+Recent progress in large-scale general-purpose world models [ 11 , 54 , 22 , 40 , 32 , 31 , 41 ] has demonstrated strong long-horizon generation and spatial memory under large viewpoint changes. However, these models rely on complex Self-Forcing/DMD training pipelines [ 13 , 29 , 58 , 48 , 46 , 47 ] , require massive pretraining data, cannot be trained from scratch, and are primarily designed for navigation-style tasks with mouse–keyboard control. In contrast, embodied manipulation exhibits fixed viewpoints, locally constrained dynamics, and fine-grained object interactions, leading to fundamentally different modeling objectives, data distributions, and inference requirements.
+To address embodied settings, prior works adapt pretrained video models into action-conditioned world models using projected end-effector position [ 25 , 15 ] , AdaLN-based frame-wise action injection [ 36 , 57 , 1 , 56 ] , cross-attention [ 10 , 23 ] , and MoE-based conditioning [ 59 ] . Despite improved action responsiveness, these approaches commonly suffer from slow inference, severe error accumulation in long-horizon autoregressive generation, and unstable modeling of fine-grained physical interactions, limiting their scalability for reinforcement learning.
+2.3 World Models as Simulators
+Many works have validated the correlation between VLA performance in real environments and in learned world models [ 36 , 10 , 15 , 16 ] , demonstrating the potential of world models for out-of-distribution generalization [ 36 ] , and exploring the use of WM-generated synthetic data to train VLAs [ 10 , 15 ] . However, these approaches do not treat world models as true simulators.
+World-Env [ 44 ] and WMPO [ 57 ] take an important step toward treating learned world models as simulators, aiming to avoid costly interaction with real environments during reinforcement learning. Despite these advances, both approaches largely treat the world model as a drop-in replacement for a standard simulator, mechanically coupling on-policy reinforcement learning with imagined rollouts. They do not explicitly address the fundamental challenge of reinforcement learning under hallucinated dynamics, where closed-loop prediction errors accumulate and incentivize policies to exploit model inaccuracies. As a result, these methods lack dedicated mechanisms to regulate rollout horizons, suppress post-success hallucinations, or align policy optimization with the reliability regime of the world model.
+3 Preliminary
+3.1 Reinforcement Learning for VLA Fine-tuning
+Recent work has increasingly adopted reinforcement learning to post-train VLA policies beyond imitation learning. In this setting, policy optimization is commonly formulated as a Markov Decision Process (MDP), defined by the tuple ℳ = ( 𝒪 , 𝒜 , P , R , γ ) \mathcal{M}=(\mathcal{O},\mathcal{A},P,R,\gamma) . At each time step t t , given a visual observation o t ∈ 𝒪 o_{t}\in\mathcal{O} and a language instruction l t l_{t} , the VLA policy outputs a chunked action a t ∼ π θ ( ⋅ ∣ o t , l t ) ∈ 𝒜 a_{t}\sim\pi_{\theta}(\cdot\mid o_{t},l_{t})\in\mathcal{A} , which induces a state transition o t + 1 ∼ P ( ⋅ ∣ o t , a t ) o_{t+1}\sim P(\cdot\mid o_{t},a_{t}) and yields a scalar reward r t = R ⁡ ( o t , a t ) r_{t}=R(o_{t},a_{t}) . The goal of reinforcement learning is to maximize the expected discounted return:
+J ⁡ ( π θ ) = 𝔼 τ ∼ π θ ​ [ ∑ t = 1 T γ t − 1 ​ r t ] , J(\pi_{\theta})=\mathbb{E}_{\tau\sim\pi_{\theta}}\left[\sum_{t=1}^{T}\gamma^{t-1}r_{t}\right],
+(1)
+where γ ∈ ( 0 , 1 ] \gamma\in(0,1] is the discount factor.
+Following standard on-policy reinforcement learning, the policy is optimized via a policy gradient objective:
+∇ θ J ​ ( π θ ) = 𝔼 τ ∼ π θ ​ [ ∑ t = 1 T ∇ θ ​ log ​ π θ ​ ( a t ∣ o t , l t ) ​ A ​ ( o t , a t ) ] , \nabla_{\theta}J(\pi_{\theta})=\mathbb{E}_{\tau\sim\pi_{\theta}}\left[\sum_{t=1}^{T}\nabla_{\theta}\log\pi_{\theta}(a_{t}\mid o_{t},l_{t})\,A(o_{t},a_{t})\right],
+(2)
+where A ⁡ ( o t , a t ) A(o_{t},a_{t}) denotes the advantage function. In general, the advantage function is defined as
+A ⁡ ( o t , a t ) = Q ⁡ ( o t , a t ) − V ⁡ ( o t ) , A(o_{t},a_{t})=Q(o_{t},a_{t})-V(o_{t}),
+(3)
+where Q ⁡ ( o t , a t ) Q(o_{t},a_{t}) is the action-value function representing the expected return after taking action a t a_{t} at observation o t o_{t} , and V ⁡ ( o t ) V(o_{t}) is the state-value function estimating the expected return under the current policy.
+3.2 Problem Formulation
+While on-policy reinforcement learning provides a principled framework for fine-tuning VLA policies, applying it directly in real-world robotic environments is often impractical due to high interaction cost and limited environment parallelism. To address this limitation, our goal is to replace real-environment interaction with a learned world model that can serve as a simulator for policy optimization.
+We reformulate the original MDP as a World Model-MDP (WM-MDP) , defined as
+ℳ WM = ( 𝒪 , 𝒜 , P ^ ϕ , R ^ ψ , γ ) , \mathcal{M}_{\text{WM}}=(\mathcal{O},\mathcal{A},\hat{P}_{\phi},\hat{R}_{\psi},\gamma),
+(4)
+where the transition dynamics P ^ ϕ ​ ( o t + 1 ∣ o t , a t ) \hat{P}_{\phi}(o_{t+1}\mid o_{t},a_{t}) are approximated by a learned world model parameterized by ϕ \phi , and R ^ ψ ​ ( o t , a t ) \hat{R}_{\psi}(o_{t},a_{t}) denotes a reward function parameterized by ψ \psi .
+In ℳ WM \mathcal{M}_{\text{WM}} , trajectories are generated by interacting with the world model rather than the physical environment. Specifically, given an observation o t o_{t} and an action a t a_{t} sampled from the policy, the next observation and reward are obtained as
+o ~ t + 1 ∼ P ^ ϕ ( ⋅ ∣ o t , a t ) , r ~ t = R ^ ψ ( o ~ t + 1 ) , \tilde{o}_{t+1}\sim\hat{P}_{\phi}(\cdot\mid o_{t},a_{t}),\quad\tilde{r}_{t}=\hat{R}_{\psi}(\tilde{o}_{t+1}),
+(5)
+which allows the policy to perform closed-loop rollouts entirely in imagination. Under this formulation, the policy optimization objective remains unchanged in form:
+J WM ​ ( π θ ) = 𝔼 τ ∼ π θ , P ^ ϕ ​ [ ∑ t = 1 T γ t − 1 ​ r ^ t ] . J_{\text{WM}}(\pi_{\theta})=\mathbb{E}_{\tau\sim\pi_{\theta},\hat{P}_{\phi}}\left[\sum_{t=1}^{T}\gamma^{t-1}\hat{r}_{t}\right].
+(6)
+4 Methods
+Figure 2: Overview of WoVR . WoVR builds a reliability-driven reinforcement learning framework entirely around the learned world model. It first strengthens the world model as a controllable simulator, ensuring rollout-stable and action-responsive generation. On top of this simulator, it designs a reliable interaction protocol via Keyframe-Initialized Rollouts (KIR) and masked GRPO to reduce effective error depth and prevent optimization on hallucinated success. Finally, it maintains policy–model alignment through PACE, which co-evolves the world model with the evolving policy to mitigate distribution shift and preserve simulator reliability.
+We propose WoVR, a reliability-driven world-model-based reinforcement learning framework for post-training Vision–Language–Action (VLA) policies without requiring parallel real-world interaction. As illustrated in Fig. 2 , WoVR treats the learned world model as a generative simulator and builds the entire reinforcement learning pipeline around controlling hallucination in closed-loop imagination.
+Specifically, WoVR regulates reliability at three interconnected levels. (1) Simulator-level control: we construct an action-controllable, rollout-stable video world model with dual-channel action injection and first-frame anchoring to suppress long-horizon drift. (2) Interaction-level reshaping: we redesign imagined interaction through Keyframe-Initialized Rollouts (KIR) and masked GRPO to reduce effective error depth and prevent optimization on hallucinated success. (3) Alignment-level regulation: we introduce PACE, a policy–model co-evolution strategy that mitigates distribution shift by periodically aligning the world model with the evolving policy.
+Together, these components enable scalable and reliable on-policy optimization entirely in imagination.
+4.1 Stabilized Action-Conditioned World Model
+WoVR relies on a learned video world model as a generative simulator for closed-loop imagined interaction. However, long-horizon rollouts are prone to hallucination, where global scene structure gradually drifts and the background collapses as the rollout length increases. We therefore design the world model to be both action-controllable and rollout-stable , so that the simulated dynamics remain consistent under iterative, policy-driven generation.
+Figure 3: Architecture of the proposed action-conditioned world model. The world model is built upon a video diffusion backbone and conditioned on actions via a dual-channel action injection design, enabling frame-level controllability and stable chunk-by-chunk autoregressive generation for long-horizon imagined rollouts.
+Backbone and action conditioning.
+Our world model is built upon the Wan2.2-TI2V-5B video diffusion backbone [ 43 ] .
+Unlike conventional image-to-video generation, embodied simulation requires explicit action conditioning to ensure that predicted state transitions respond causally to the policy.
+To this end, we reformulate Wan2.2-TI2V into an action-conditioned generator via a dual-channel action injection design (Fig. 3 ), which preserves the original DiT structure while enabling frame-level controllability.
+Concretely, in each DiT block, action embeddings influence generation through two complementary pathways.
+First, action embeddings are fused with the diffusion timestep embeddings and applied via AdaLN-Zero-style modulation, directly shaping the denoising dynamics at the feature level.
+Second, we retain the original cross-attention operator but replace textual embeddings with action embeddings, allowing actions to condition the network globally across layers.
+Together, these two pathways provide both local modulation and global context for action-conditioned video generation.
+First-frame anchoring for rollout stability.
+Even with strong action conditioning, chunk-by-chunk autoregressive generation can still accumulate errors, leading to spatial drift and gradual background collapse.
+To suppress such long-horizon degradation, we adopt a first-frame–anchored inference context.
+At each autoregressive step, the model conditions on
+[ o 0 , o t ′ − c ′ : t ′ ] [o_{0},\,o_{t^{\prime}-c^{\prime}:t^{\prime}}] , which concatenates the episode’s initial reference frame with the most recent memory frames from the previous chunk.
+This persistent reference constrains global appearance and scene layout, because many self-attention heads naturally attend to the first frame during denoising (Fig. 4 ), consistent with prior findings [ 39 , 45 , 40 ] .
+Figure 4: Visualization of self attention probability map. During the denoising process, many attention heads focus on the first frame of the sequence.
+With dual-channel action conditioning and first-frame anchoring, we obtain a rollout-stable world model that can be used as a generative simulator for closed-loop interaction. Starting from the first-frame–anchored context [ o 0 , o t ′ − c ′ : t ′ ] [o_{0},\,o_{t^{\prime}-c^{\prime}:t^{\prime}}] , we first encode it into latent representations [ z 0 , z t − c : t ] [z_{0},z_{t-c:t}] using the Wan encoder. We then sample Gaussian noise latents z t + 1 : t + H noise ∼ 𝒩 ( 0 , 𝐈 ) z^{\text{noise}}_{t+1:t+H}\!\sim\!\mathcal{N}(0,\mathbf{I}) for the next chunk and feed the concatenated latents [ z 0 , z t − c : t , z t + 1 : t + H noise ] [z_{0},z_{t-c:t},z^{\text{noise}}_{t+1:t+H}] into a stack of action-conditioned DiT blocks. The model predicts future latents z ^ t + 1 : t + H \hat{z}_{t+1:t+H} , which are decoded into frames o ^ t ′ + 1 : t ′ + H ′ \hat{o}_{t^{\prime}+1:t^{\prime}+H^{\prime}} and appended to the context.
+By iterating this chunk-by-chunk procedure, the world model generates long-horizon imagined rollouts under the policy’s actions while maintaining global scene consistency, and these rollouts are subsequently used as the simulated environment for reinforcement learning.
+We train the world model with the Rectified Flow objective [ 8 ] .
+Let x 1 = z t + 1 : t + H x_{1}=z_{t+1:t+H} denote the target future latents and x 0 ∼ 𝒩 ⁡ ( 0 , 𝐈 ) x_{0}\!\sim\!\mathcal{N}(0,\mathbf{I}) be noise of the same shape.
+Given a sampled time t ∈ [ 0 , 1 ] t\!\in\![0,1] , we obtain the intermediate latent x t x_{t} and train the model u ⁡ ( ⋅ , ϕ ) u(\cdot;\phi) to predict the velocity v t v_{t} :
+ℒ = 𝔼 x 0 , x 1 , c , t ​ [ ‖ u ⁡ ( x t , c , t , ϕ ) − v t ‖ 2 ] , \mathcal{L}=\mathbb{E}_{x_{0},x_{1},c,t}\left[\left\|u(x_{t},c,t;\phi)-v_{t}\right\|^{2}\right],
+(7)
+where the condition c c includes both the first-frame–anchored context and actions.
+To reduce the train–inference gap in closed-loop rollouts, we additionally apply noisy context by injecting diffusion noise into the non-reference context latents z t − c : t z_{t-c:t} during training.
+This discourages brittle visual copying from context and improves robustness when the model consumes self-generated frames over long horizons [ 3 , 10 ] .
+When serving as a simulator for reinforcement learning, the world model must also provide a reward signal.
+In real-world robotic manipulation, designing dense rewards is often impractical, and training typically relies on sparse success annotations.
+Therefore, we introduce a learned reward classifier that produces a binary success signal based on the predicted next observation.
+Concretely, given the generated observation o ~ t + 1 \tilde{o}_{t+1} from the world model, the reward model R ​ ψ R{\psi} predicts the probability of task success, and the sparse reward is defined as
+r t + 1 = 𝕀 ⁡ ( R ψ ​ ( o ~ t + 1 ) ≥ 0.5 ) , r_{t+1}=\mathbb{I}\left(R_{\psi}(\tilde{o}_{t+1})\geq 0.5\right),
+(8)
+where 𝕀 ⁡ ( ⋅ ) \mathbb{I}(\cdot) denotes the indicator function.
+Following HiL-SERL [ 30 ] , the reward classifier is implemented as a lightweight network and trained using binary cross-entropy (BCE) loss on labeled success states.
+4.2 Hallucination-Aware Policy Optimization in Imagination
+WoVR optimizes the VLA policy by interacting with the learned world model, which serves as a generative simulator for closed-loop imagined rollouts. The key difficulty is that, in long-horizon rollouts starting from the initial state, world-model errors accumulate early and can eventually produce visually plausible but physically incorrect transitions and even spurious success signals.
+If reinforcement learning naively trusts such rollouts, the policy is encouraged to optimize toward hallucinated outcomes rather than real task progress.
+Figure 5: Illustration of the effect of Keyframe-Initialized Rollouts (KIR). Starting from the initial state, long-horizon rollouts accumulate prediction errors in early stages, leading to hallucinated success that contradicts the ground-truth failure. In contrast, Keyframe-Initialized Rollouts initialize rollouts near critical states, enabling physically consistent predictions that correctly model failure, which in turn facilitates more efficient and stable policy learning.
+To reduce the effective error depth of imagined interaction, we introduce Keyframe-Initialized Rollouts (KIR).
+As illustrated in Figure 5 , instead of always initializing rollouts from the episode start o 0 o_{0} , we initialize a portion of rollouts from keyframes o k o_{k} that lie near task-critical intermediate states, especially failure states encountered by the current policy.
+The motivation is that many decisive contacts and corrections happen locally around these states, whereas starting from o 0 o_{0} forces the world model to predict a long prefix before reaching them, during which compounding errors can already derail the rollout.
+We adopt Group Relative Policy Optimization (GRPO) to update the policy using imagined rollouts.
+For each update, we sample a group of imagined trajectories and compute a group-relative advantage, then optimize a clipped GRPO objective.
+Because hallucinations often dominate after success has been reached in imagination, we mask post-success steps and normalize each trajectory by its valid length.
+Formally, given a group of imagined trajectories { τ ( i ) } i = 1 G \{\tau^{(i)}\}_{i=1}^{G} sampled in the world model,
+τ ( i ) = { ( o t ( i ) , a t ( i ) , r ^ t ( i ) ) } t = 1 T , o t + 1 ( i ) ∼ P ^ ϕ ( ⋅ ∣ o t ( i ) , a t ( i ) ) , \tau^{(i)}=\{(o_{t}^{(i)},a_{t}^{(i)},\hat{r}_{t}^{(i)})\}_{t=1}^{T},\qquad o_{t+1}^{(i)}\sim\hat{P}_{\phi}(\cdot\mid o_{t}^{(i)},a_{t}^{(i)}),
+(9)
+we compute the return R ⁡ ( τ ( i ) ) R(\tau^{(i)}) and group-relative advantage A ^ ( i ) \hat{A}^{(i)} ,
+R ⁡ ( τ ( i ) ) = ∑ t = 1 | τ ( i ) | γ t − 1 ​ r ^ t ( i ) , A ^ ( i ) = R ⁡ ( τ ( i ) ) − 1 G ​ ∑ j = 1 G R ⁡ ( τ ( j ) ) . R(\tau^{(i)})=\sum_{t=1}^{|\tau^{(i)}|}\gamma^{t-1}\hat{r}_{t}^{(i)},\qquad\hat{A}^{(i)}=R(\tau^{(i)})-\frac{1}{G}\sum_{j=1}^{G}R(\tau^{(j)}).
+(10)
+Let T i valid T_{i}^{\mathrm{valid}} be the number of valid timesteps up to (and including) the first success, and define
+ρ t ( i ) ​ ( θ ) = π θ ​ ( a t ( i ) ∣ o t ( i ) , l ) π θ old ​ ( a t ( i ) ∣ o t ( i ) , l ) \rho_{t}^{(i)}(\theta)=\frac{\pi_{\theta}(a_{t}^{(i)}\mid o_{t}^{(i)},l)}{\pi_{\theta_{\mathrm{old}}}(a_{t}^{(i)}\mid o_{t}^{(i)},l)} .
+The masked, trajectory-length–normalized GRPO objective is
+J GRPO ​ ( θ ) = 𝔼 ⁡ [ 1 G ​ ∑ i = 1 G 1 T i valid ​ ∑ t = 1 T i valid min ⁡ ( ρ t ( i ) ​ ( θ ) ​ A ^ ( i ) , clip ⁡ ( ρ t ( i ) ​ ( θ ) , 1 − ϵ , 1 + ϵ ) ​ A ^ ( i ) ) ] . J_{\mathrm{GRPO}}(\theta)=\mathbb{E}\left[\frac{1}{G}\sum_{i=1}^{G}\frac{1}{T_{i}^{\mathrm{valid}}}\sum_{t=1}^{T_{i}^{\mathrm{valid}}}\min\!\left(\rho_{t}^{(i)}(\theta)\hat{A}^{(i)},\mathrm{clip}\!\left(\rho_{t}^{(i)}(\theta),1-\epsilon,1+\epsilon\right)\hat{A}^{(i)}\right)\right].
+(11)
+This objective also complements KIR: keyframe-initialized rollouts tend to reach task resolution with fewer valid steps, and trajectory-length normalization increases their per-timestep contribution, so gradients are dominated by short, task-critical segments rather than long, drift-prone continuations.
+4.3 PACE: Policy–Aligned Co-Evolution
+While policy optimization proceeds entirely within the learned world model, the policy’s action distribution continuously evolves and drifts away from the data used to train the initial world model. This inherent distribution shift leads to accumulating mismatch between the simulator and the improving policy, ultimately degrading the reliability of imagined rollouts.
+To address this issue, we introduce PACE , a World Model–Policy co-evolution strategy. Instead of treating the world model as a fixed, static simulator throughout policy optimization, PACE allows the world model and VLA policy to evolve together throughout training.
+Concretely, we realize this co-evolution through low-frequency, policy-driven refinement: we first train an initial world model, denoted as WM Base \mathrm{WM}_{\mathrm{Base}} , using trajectories collected from the base VLA policy. After the first stage of policy optimization within WM Base \mathrm{WM}_{\mathrm{Base}} , we collect a limited set of additional rollouts under the evolved policy and use them to further refine the world model. The refined model is referred to as WM Evo \mathrm{WM}_{\mathrm{Evo}} .
+Importantly, this refinement is performed only once (or at very low frequency), distinguishing PACE from classical model-based reinforcement learning methods, which continuously update the dynamics model at high frequency during policy optimization.
+This low-frequency refinement provides two key advantages. First, unlike real-world online RL, it does not require continuous human supervision or environment resets during policy training, significantly reducing operational overhead. Second, by aligning the world model with the evolving policy distribution, PACE mitigates compounding model errors and maintains simulator reliability without sacrificing training stability.
+System Implementation.
+We build WoVR on top of RLinf [ 49 ] to support efficient distributed imagined rollouts and training.
+Concretely, we replace RLinf’s environment back-end with our learned world model, enabling scalable closed-loop rollouts without a ground-truth simulator.
+GPU allocation details are provided in Appendix A .
+5 Experiments
+We conduct extensive experiments to evaluate the effectiveness of WoVR as a world-model-based reinforcement learning framework for post-training VLA policies.
+Our experimental design aims to systematically answer the following three questions:
+•
+Q1: Is the proposed world model stable, controllable, and efficient enough to serve as a simulator for closed-loop reinforcement learning?
+•
+Q2: Can WoVR effectively improve VLA task performance compared to existing world-model-based reinforcement learning methods?
+•
+Q3: Do the policies optimized with WoVR reliably transfer to real-world robotic manipulation tasks?
+To answer these questions, we evaluate both the quality of the learned world model and the downstream policy performance.
+For world model evaluation, we focus on long-horizon, action-conditioned video generation under closed-loop, chunk-by-chunk autoregressive inference.
+We adopt standard perceptual and distributional metrics, including LPIPS [ 53 ] , FID [ 12 ] , FVD [ 42 ] and FloLPIPS [ 7 ] . Specifically, LPIPS (Learned Perceptual Image Patch Similarity) measures frame-level perceptual similarity using deep feature representations;
+FID (Fréchet Inception Distance) evaluates distributional similarity between generated and real frames via feature statistics;
+FVD (Fréchet Video Distance) extends this comparison to the temporal domain to assess video-level realism and motion consistency;
+and FloLPIPS measures motion-aligned perceptual similarity along estimated optical flow trajectories, emphasizing temporal coherence under action-conditioned dynamics. Since the world model is intended to be used as a simulator for closed-loop on-policy reinforcement learning, we also report inference throughput (frames per second) to quantify generation efficiency.
+For policy evaluation, we use task success rate (SR) as the primary metric, reflecting the sparse-reward setting commonly encountered in real-world robotic manipulation.
+All success rates are computed over multiple independent rollouts with fixed initial conditions.
+We compare WoVR against several representative baselines spanning both world model quality and policy optimization . For world model quality, we include EVAC [ 15 ] , which conditions generation on absolute end-effector actions, as well as Cosmos-Predict2 [ 35 ] and OpenSora [ 34 ] , the latter serving as the world-model backbone adopted in WMPO [ 57 ] . All compared models are evaluated under the same chunk-wise autoregressive generation protocol to ensure a fair comparison.
+For policy optimization, we consider the following baselines:
+•
+OpenVLA-OFT-base [ 17 ] : a base VLA policy trained purely with imitation learning;
+•
+GRPO (Online) [ 9 ] : trained with real-environment interaction under the same rollout budget;
+•
+WMPO [ 57 ] : performs reinforcement learning using an OpenSora-based world model.
+All world-model-based methods are trained until convergence within their respective simulators, while GRPO is reported under the same rollout budget to ensure a fair comparison. All experiments are conducted using eight NVIDIA H100 GPUs.
+5.1 Q1: Is the World Model Stable, Controllable, and Efficient?
+We first investigate whether the proposed world model is sufficiently stable, controllable, and efficient to serve as a simulator for closed-loop reinforcement learning.
+In particular, we focus on long-horizon, action-conditioned video generation under chunk-by-chunk autoregressive inference, where modeling errors may accumulate and severely affect downstream policy optimization.
+Experimental Setup.
+We conduct all world model evaluations in the LIBERO environment [ 26 ] .
+A total of 3,000 VLA rollout trajectories, each with a length of 512 frames, are collected to train the world models.
+In addition, 200 held-out trajectories of the same length are used exclusively for evaluation.
+We compare WoVR against three representative action-conditioned world models: EVAC, Cosmos-Predict2, and OpenSora as adopted in WMPO. Among them, EVAC conditions video generation on absolute end-effector actions, while Cosmos-Predict2, OpenSora, and WoVR all use residual action representations.
+During evaluation, all baseline models follow the same chunk-wise autoregressive generation protocol to ensure a fair comparison.
+Specifically, each model predicts future video segments by conditioning on a 4-frame visual context together with an 8-step action chunk, and autoregressively generates the subsequent 8 frames. For the first chunk, where only a single initial image is available, the initial frame is replicated to fill the context window in order to align the inference procedure across methods. We quantitatively evaluate the generated rollouts by comparing predicted videos with ground-truth trajectories using standard video generation metrics, including LPIPS, FID, FVD and FloLPIPS.
+Table 1: World model quality, motion consistency, and efficiency comparison.
+Rollout denotes the rollout horizon length.
+Metrics
+Method
+Rollout
+FPS ↑ \uparrow
+LPIPS [ 53 ] ↓ \downarrow
+FID [ 12 ] ↓ \downarrow
+FVD [ 42 ] ↓ \downarrow
+FloLPIPS [ 7 ] ↓ \downarrow
+EVAC [ 15 ]
+512
+2.7
+0.146 0.146
+46.528 46.528
+345.818 345.818
+0.205 0.205
+256
+0.130 0.130
+49.153 49.153
+354.983 354.983
+0.192 0.192
+128
+0.106 0.106
+44.337 44.337
+423.132 423.132
+0.166 0.166
+Cosmos-Predict2 [ 35 ]
+512
+3.50
+0.315 0.315
+165.862 165.862
+275.737 275.737
+0.265 0.265
+256
+0.226 0.226
+106.324 106.324
+203.853 203.853
+0.306 0.306
+128
+0.164 0.164
+77.555 77.555
+304.456 304.456
+0.281 0.281
+OpenSora [ 57 ]
+512
+7.00
+0.105 0.105
+38.478 38.478
+89.391 89.391
+0.156 0.156
+256
+0.082 0.082
+33.577 33.577
+94.998 94.998
+0.122 0.122
+128
+0.069 0.069
+33.413 33.413
+111.643 111.643
+0.113 0.113
+WoVR (Ours)
+512
+23.0
+0.091
+34.252
+68.011
+0.154
+256
+0.063
+24.378
+50.041
+0.102
+128
+0.047
+18.553
+39.047
+0.079
+Quantitative Results.
+Table 1 summarizes the quantitative comparison across different rollout horizons.
+As shown in the table, WoVR consistently outperforms EVAC, Cosmos-Predict2, and OpenSora across all evaluation metrics.
+In particular, WoVR achieves the lowest LPIPS, FID, FVD, and FloLPIPS scores at all tested rollout lengths, indicating higher visual fidelity, stronger temporal consistency, and more accurate action-conditioned dynamics.
+These improvements become more pronounced as the rollout horizon increases, suggesting that WoVR is more robust to error accumulation in long-horizon autoregressive generation.
+Despite adopting a larger backbone (Wan, ∼ \sim 5B) than OpenSora ( ∼ \sim 1.3B), WoVR achieves higher inference throughput by requiring only five diffusion steps and leveraging a 3D VAE for spatiotemporal latent encoding, whereas OpenSora typically relies on more sampling steps and a 2D VAE.
+5.2 Q2: Can WoVR Effectively Improve VLA Task Performance?
+We next evaluate whether the proposed world model can effectively support reinforcement learning and lead to improved task performance of VLA policies.
+Beyond world model fidelity, this experiment directly assesses the practical value of WoVR as a simulator for policy optimization.
+Experimental Setup.
+We conduct policy optimization experiments on multiple LIBERO task suites, including the Spatial, Object, Goal, and Long suites [ 26 ] . As the base policy, following SimpleVLA-RL [ 20 ] , we initialize from OpenVLA-OFT and perform one-trajectory supervised fine-tuning.
+Each LIBERO suite contains 10 tasks. For each suite, we allocate a total real-environment rollout budget of 2,500 trajectories. We first collect 1,500 trajectories (150 per task) using the base VLA policy to train the initial world model WM Base \mathrm{WM}_{\mathrm{Base}} . After the first stage of policy optimization in imagination, we collect an additional 1,000 trajectories under the updated policy and use them to refine the world model WM Evo \mathrm{WM}_{\mathrm{Evo}} , aligning the simulator with the evolving policy distribution. To balance alignment quality and computational efficiency, we perform only a single co-evolution step in practice, resulting in one refinement from WM Base \mathrm{WM}_{\mathrm{Base}} to WM Evo \mathrm{WM}_{\mathrm{Evo}} rather than multiple iterative alternations.
+To ensure a fair comparison, all methods are allocated the same real-environment rollout budget of 2,500 trajectories per suite. For world-model-based methods, including WMPO and WoVR, these trajectories are used exclusively for world model training and refinement, while policy optimization is conducted entirely within the learned world model via imagined rollouts, without further interaction with the ground-truth simulator. In contrast, GRPO directly interacts with the ground-truth simulator and consumes the same 2,500-trajectory budget for on-policy policy optimization.
+Table 2 summarizes success rates across LIBERO suites under this shared simulator-trajectory budget: GRPO uses the 2,500 trajectories for on-policy optimization, whereas WMPO and WoVR use them only to train the world model and optimize the policy via imagined rollouts.
+Quantitative Results.
+Table 2: Task success rates (%) across LIBERO task suites.
+The base policy is OpenVLA-OFT trained with one-trajectory supervised fine-tuning (one-trajectory SFT) .
+All methods use 2,500 trajectories collected from the ground-truth simulator.
+GRPO (Online) consumes them for on-policy interaction, whereas
+WMPO and WoVR use them only for world model training and perform policy optimization via imagined rollouts.
+Improvements are shown in parentheses relative to the base policy.
+Spatial
+Object
+Goal
+Long
+Avg ↑ \uparrow
+OpenVLA-OFT-base [ 17 ]
+61.5
+36.3
+48.2
+13.7
+39.9
+GRPO (online) [ 9 ]
+66.6
+45.1
+52.1
+14.5
+44.6
+WMPO [ 57 ]
+67.8
+48.0
+54.6
+13.7
+46.2
+WoVR (Ours)
+81.5 (+20.0)
+82.0 (+45.7)
+77.5 (+29.3)
+35.8 (+22.1)
+69.2 (+29.3)
+Table 2 reports task success rates across LIBERO suites under a shared simulator-trajectory budget.
+The base policy achieves moderate performance, reflecting the limitations of imitation learning under sparse rewards and limited demonstrations.
+While GRPO improves over the base policy, its gains come at a high interaction cost.
+In practice, each policy update requires close to a thousand additional simulator trajectories, making the optimization process sample-inefficient under realistic interaction constraints. This highlights the fundamental limitation of purely online reinforcement learning in data-scarce robotic settings.
+WMPO further improves performance on short- and medium-horizon suites (Spatial, Object, and Goal), demonstrating that world-model-based optimization can provide benefits beyond online interaction.
+However, WMPO does not achieve performance gains on the LIBERO-Long suite, which consists of longer-horizon tasks.
+In these tasks, rollout instability in later stages of autoregressive generation degrades policy optimization, resulting in no improvement over the base policy.
+In contrast, WoVR consistently achieves the highest success rates across all evaluated suites.
+Notably, WoVR improves performance by +20.0% on Spatial, +45.7% on Object, +29.3% on Goal, and +22.1% on the long-horizon LIBERO-Long suite compared to the base policy.
+On average, WoVR achieves a success rate of 69.2%, substantially outperforming both GRPO (44.6%) and WMPO (46.2%).
+These results indicate that the improved stability and controllability of the proposed world model directly translate into more effective policy optimization.
+In particular, the strong performance on long-horizon tasks highlights that suppressing error accumulation in imagined rollouts is critical for reliable reinforcement learning with learned simulators.
+5.3 Q3: Do Policies Optimized with WoVR Reliably Transfer to the Real World?
+Finally, we evaluate whether policies optimized with WoVR reliably transfer to real-world robotic manipulation tasks.
+Experimental Setup
+Our experiments are conducted on a Franka Emika Panda robot. We consider two contact-rich manipulation tasks: (i) Pick Banana , which requires picking a banana and placing it onto a plate, and (ii) Pick Bread , which requires picking a bread item and placing it onto a designated bread marker.
+For each task, we collect 10 teleoperated demonstrations to pre-train the base VLA policy, and additionally collect 150 rollouts from the base policy to train the world model.
+After training, we deploy the resulting policies on the physical robot and evaluate success rates over 30 independent trials per task.
+Figure 6: Real-world setup on a Franka Panda for Pick Banana and Pick Bread.
+Quantitative Results.
+Table 3 reports the real-world success rates.
+On Pick Banana , the base policy achieves a success rate of 46.67% (14/30), while WoVR improves it to 93.3% (28/30).
+On Pick Bread , WoVR increases the success rate from 76.67% (23/30) to 90.0% (27/30).
+These results demonstrate that WoVR delivers consistent real-world gains over imitation learning without requiring additional online interaction during policy optimization, indicating strong sim-to-real transfer of the optimized behaviors.
+Table 3: Real-world success rates (%, 30 trials per task) on a Franka Panda robot.
+Improvements are shown in parentheses relative to the base policy.
+Method
+Pick Banana
+Pick Bread
+Avg
+OpenVLA-OFT-base
+46.7 (14/30)
+76.7 (23/30)
+61.7
+WoVR (Ours)
+93.3 (28/30) (+46.6)
+90.0 (27/30) (+13.3)
+91.7 (+30.0)
+6 Ablation Study
+6.1 Ablation on World Model Mechanisms
+We first conduct ablation studies on the core design choices of the proposed world model, aiming to understand how different context modeling mechanisms affect long-horizon video generation stability.
+Specifically, we investigate the following factors:
+(i) the number of memory frames used as visual context,
+(ii) the use of a fixed reference frame, and
+(iii) the effect of adding noise to context frames during training.
+Experimental Variants.
+We compare the full WoVR model against three ablated variants:
+•
+WoVR w/o ref, which removes the fixed reference frame from the context window;
+•
+WoVR w. mem=1, which uses only a single-frame context;
+•
+WoVR w/o noisy context, which disables noise injection on context frames during training.
+All variants are trained and evaluated on the LIBERO-Spatial suite only. We train the world model using 1,500 VLA rollout trajectories and evaluate on a held-out set of 24 trajectories.
+Quantitative Results.
+Table 4 reports the quantitative results measured by LPIPS, FID, and FVD under different rollout horizons. Compared to using a single-frame context, employing a multi-frame context with a fixed reference anchor significantly improves performance across all metrics.
+Table 4: Ablation study on world model mechanisms (LIBERO-Spatial).
+Rollout denotes the rollout horizon length.
+Metrics
+Method
+Rollout
+LPIPS ↓ \downarrow
+FID ↓ \downarrow
+FVD ↓ \downarrow
+FloLPIPS ↓ \downarrow
+WoVR (Ours)
+512
+0.091
+36.687
+73.493
+0.154
+256
+0.069
+27.238
+63.948
+0.110
+128
+0.051
+20.780
+49.017
+0.081
+WoVR w/o ref
+512
+0.133 0.133
+73.942 73.942
+123.502 123.502
+0.168 0.168
+256
+0.089 0.089
+49.406 49.406
+86.000 86.000
+0.116 0.116
+128
+0.064 0.064
+35.559 35.559
+86.146 86.146
+0.090 0.090
+WoVR w. mem=1
+512
+0.120 0.120
+64.501 64.501
+86.042 86.042
+0.165 0.165
+256
+0.086 0.086
+46.790 46.790
+81.742 81.742
+0.117 0.117
+128
+0.065 0.065
+36.047 36.047
+79.605 79.605
+0.095 0.095
+WoVR w/o noisy context
+512
+0.099 0.099
+44.712 44.712
+77.284 77.284
+0.160 0.160
+256
+0.074 0.074
+31.691 31.691
+61.660 61.660
+0.115 0.115
+128
+0.054 0.054
+23.444 23.444
+58.836 58.836
+0.085 0.085
+Figure 7: Qualitative ablation results on LIBERO-Spatial.
+Ablated variants exhibit error accumulation and visual drift under long-horizon rollouts, while the full WoVR model remains stable and consistent with the ground truth.
+To better understand the failure modes behind these quantitative trends, we provide qualitative comparisons in Fig. 7 .
+As shown in the figure, models without a fixed reference frame or noisy context exhibit noticeable spatial drift and object disappearance over long-horizon rollouts, whereas the full WoVR model remains visually stable and consistent with the ground truth.
+Removing the reference frame leads to a clear degradation in performance, especially under longer rollout horizons.
+This result suggests that anchoring the context with a fixed reference frame effectively suppresses error accumulation in the autoregressive feedback loop, which is critical for maintaining stability in long-horizon video generation.
+Furthermore, disabling noise injection on context frames also results in noticeable performance drops.
+While the degradation is moderate for short rollouts, the gap becomes more pronounced as the rollout length increases.
+This observation indicates that adding mild noise to context frames improves robustness in long-horizon generation by reducing over-reliance on precise conditioning inputs, thereby alleviating the train–inference gap.
+Overall, these results demonstrate that the proposed context modeling strategy—combining a fixed reference frame, a multi-frame memory window, and noisy context augmentation—plays a crucial role in stabilizing long-horizon video generation.
+Together, these mechanisms enable WoVR to maintain high fidelity and temporal consistency under closed-loop autoregressive inference, providing a more reliable simulator for downstream reinforcement learning.
+6.2 Ablation on Policy Optimization Mechanisms
+We next ablate key components in the policy optimization pipeline of WoVR, aiming to understand how different design choices affect downstream VLA task performance.
+In particular, we focus on mechanisms that facilitate stable policy learning and effective utilization of the learned world model.
+Experimental Setup.
+All experiments are conducted on the LIBERO-Spatial suite, with the same training protocol, data budget, and evaluation procedure as described in Sec. 5.2 .
+Specifically, the base VLA policy is pre-trained following the same demonstration setup as in Q2, and policy optimization is performed using world-model-based reinforcement learning.
+Task performance is measured by the average success rate over the LIBERO-Spatial tasks.
+We compare the full WoVR framework against the following ablated variants:
+•
+WoVR w/o KIR, which removes keyframe-based initialization and starts policy optimization from randomly sampled initial states in the world model;
+•
+WoVR w/o PACE, which disables the co-evolution of the world model with the updated policy and keeps the world model fixed during policy optimization.
+Quantitative Results.
+Table 5 reports the success rates on the LIBERO-Spatial suite.
+The full WoVR framework achieves the highest performance, with an average success rate of 0.815.
+Removing keyframe-based initialization leads to a noticeable drop in performance, reducing the success rate to 0.782.
+This result indicates that KIR plays an important role in stabilizing early-stage policy learning by providing meaningful initial states.
+Disabling the co-evolution of the world model further degrades performance to 0.71.
+This suggests that continuously refining the world model with updated policy rollouts is critical for maintaining simulator accuracy and preventing compounding model errors during policy optimization.
+Table 5: Ablation on policy optimization mechanisms on LIBERO-Spatial.
+Success rate is averaged over all tasks in the suite.
+Method
+Success Rate ↑ \uparrow
+WoVR (Ours)
+0.815
+WoVR w/o KIR
+0.782
+WoVR w/o PACE
+0.710
+7 Conclusion
+In this work, we revisited world-model-based reinforcement learning for VLA policies through the lens of reliability. Rather than assuming a learned world model to be a faithful simulator, we identified hallucination under closed-loop imagined interaction as the central obstacle: autoregressive error accumulation and policy-induced distribution shift can systematically corrupt optimization signals, causing reinforcement learning to exploit model inaccuracies instead of genuine task progress.
+To make RL in imagination viable under imperfect dynamics, we introduced WoVR, a hallucination-aware framework that controls hallucination at three interconnected levels. First, we strengthen the simulator itself by building a rollout-stable, action-controllable video world model, improving long-horizon consistency under policy-driven generation. Second, because residual prediction errors are unavoidable, we reshape the interaction protocol with Keyframe-Initialized Rollouts ( KIR ) to reduce the effective error depth and concentrate learning on task-critical segments where dynamics must be correct. Third, to prevent the evolving policy from drifting out of the simulator’s training distribution, we maintain policy–simulator alignment via PACE , a policy-aligned co-evolution strategy that mitigates distribution mismatch without requiring continuous online supervision.
+Extensive experiments on LIBERO and real-world manipulation tasks demonstrate that WoVR enables stable long-horizon imagined rollouts and effective on-policy optimization, yielding substantial gains over imitation learning and reliable transfer to physical robots. Overall, our results suggest that learned world models can serve as practical simulators for reinforcement learning when hallucination is explicitly regulated by design, interaction, and alignment. Nevertheless, WoVR reduces but does not fully eliminate hallucination, particularly in extremely long-horizon or highly contact-sensitive settings, and it still relies on learned reward modeling and limited real-data refinement, leaving broader reliability guarantees as an open direction for future work.
+References
+[1]
+A. Bagchi, Z. Bao, H. Bharadhwaj, Y. Wang, P. Tokmakov, and M. Hebert (2026)
+Walk through paintings: egocentric world models from internet priors .
+arXiv preprint arXiv:2601.15284 .
+Cited by: §2.2 .
+[2]
+K. Black, N. Brown, D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai, L. Groom, K. Hausman, B. Ichter, et al. (2024)
+π 0 \pi_{0} : A vision-language-action flow model for general robot control .
+arXiv preprint arXiv:2410.24164 .
+Cited by: §1 .
+[3]
+B. Chen, D. M. Monso, Y. Du, M. Simchowitz, R. Tedrake, and V. Sitzmann (2024)
+Diffusion forcing: next-token prediction meets full-sequence diffusion .
+arXiv preprint arXiv:2407.01392 .
+Cited by: §4.1 .
+[4]
+K. Chen, Z. Liu, T. Zhang, Z. Guo, S. Xu, H. Lin, H. Zang, X. Li, Q. Zhang, Z. Yu, G. Fan, T. Huang, Y. Wang, and C. Yu (2026)
+π RL \pi_{\texttt{RL}} : Online rl fine-tuning for flow-based vision-language-action models .
+External Links: 2510.25889
+Cited by: §1 .
+[5]
+Y. Chen, S. Tian, S. Liu, Y. Zhou, H. Li, and D. Zhao (2025)
+ConRFT: a reinforced fine-tuning method for vla models via consistency policy .
+In Proceedings of Robotics: Science and Systems, RSS 2025, Los Angeles, CA, USA, Jun 21-25, 2025 ,
+External Links: Document
+Cited by: §1 ,
+§2.1 .
+[6]
+W. Cui, C. Zhao, S. Wei, J. Zhang, H. Geng, Y. Chen, and H. Wang (2025)
+GAPartManip: a large-scale dataset for generalizable and actionable part manipulation with material-agnostic articulated objects .
+In IEEE International Conference on Robotics and Automation ,
+Cited by: §1 .
+[7]
+D. Danier, F. Zhang, and D. Bull (2022)
+FloLPIPS: a bespoke video quality metric for frame interpoation .
+arXiv preprint arXiv:2207.08119 .
+Cited by: Table 1 ,
+§5 .
+[8]
+P. Esser, S. Kulal, A. Blattmann, R. Entezari, J. Müller, H. Saini, Y. Levi, D. Lorenz, A. Sauer, F. Boesel, D. Podell, T. Dockhorn, Z. English, K. Lacey, A. Goodwin, Y. Marek, and R. Rombach (2024)
+Scaling rectified flow transformers for high-resolution image synthesis .
+arXiv preprint arXiv:2403.03206 .
+Cited by: §4.1 .
+[9]
+D. Guo, D. Yang, H. Zhang, J. Song, R. Zhang, R. Xu, Q. Zhu, S. Ma, P. Wang, X. Bi, et al. (2025)
+Deepseek-r1: incentivizing reasoning capability in llms via reinforcement learning .
+arXiv preprint arXiv:2501.12948 .
+Cited by: §1 ,
+2nd item ,
+Table 2 .
+[10]
+Y. Guo, L. X. Shi, J. Chen, and C. Finn (2025)
+Ctrl-world: a controllable generative world model for robot manipulation .
+arXiv preprint arXiv:2510.10125 .
+Cited by: §2.2 ,
+§2.3 ,
+§4.1 .
+[11]
+X. He, C. Peng, Z. Liu, B. Wang, Y. Zhang, Q. Cui, F. Kang, B. Jiang, M. An, Y. Ren, B. Xu, H. Guo, K. Gong, S. Wu, W. Li, X. Song, Y. Liu, Y. Li, and Y. Zhou (2025)
+Matrix-game 2.0: an open-source real-time and streaming interactive world model .
+arXiv preprint arXiv:2508.13009 .
+Cited by: §2.2 .
+[12]
+M. Heusel, H. Ramsauer, T. Unterthiner, B. Nessler, and S. Hochreiter (2017)
+Gans trained by a two time-scale update rule converge to a local nash equilibrium .
+Advances in neural information processing systems 30 .
+Cited by: Table 1 ,
+§5 .
+[13]
+X. Huang, Z. Li, G. He, M. Zhou, and E. Shechtman (2025)
+Self forcing: bridging the train-test gap in autoregressive video diffusion .
+arXiv preprint arXiv:2506.08009 .
+Cited by: §2.2 .
+[14]
+P. Intelligence, K. Black, N. Brown, J. Darpinian, K. Dhabalia, D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai, M. Y. Galliker, D. Ghosh, L. Groom, K. Hausman, B. Ichter, S. Jakubczak, et al. (2025)
+π 0.5 \pi_{0.5} : A vision-language-action model with open-world generalization .
+arXiv preprint arXiv:2504.16054 .
+Cited by: §1 .
+[15]
+Y. Jiang, S. Chen, S. Huang, L. Chen, P. Zhou, Y. Liao, X. He, C. Liu, H. Li, M. Yao, and G. Ren (2025)
+EnerVerse-ac: envisioning embodied environments with action condition .
+arXiv preprint arXiv:2505.09723 .
+Cited by: §2.2 ,
+§2.3 ,
+Table 1 ,
+§5 .
+[16]
+Z. Jiang, K. Liu, Y. Qin, S. Tian, Y. Zheng, M. Zhou, C. Yu, H. Li, and D. Zhao (2025)
+World4RL: diffusion world models for policy refinement with reinforcement learning for robotic manipulation .
+arXiv preprint arXiv:2509.19080 .
+Cited by: §2.3 .
+[17]
+M. J. Kim, C. Finn, and P. Liang (2025)
+Fine-tuning vision-language-action models: optimizing speed and success .
+arXiv preprint arXiv:2502.19645 .
+Cited by: §1 ,
+1st item ,
+Table 2 .
+[18]
+K. Lei, H. Li, D. Yu, Z. Wei, L. Guo, Z. Jiang, Z. Wang, S. Liang, and H. Xu (2025)
+RL-100: performant robotic manipulation with real-world reinforcement learning .
+Cited by: §1 .
+[19]
+H. Li, Y. Chen, W. Cui, W. Liu, K. Liu, M. Zhou, Z. Zhang, and D. Zhao (2025)
+Survey of vision-language-action models for embodied manipulation .
+arXiv preprint arXiv:2508.15201 .
+Cited by: §1 .
+[20]
+H. Li, Y. Zuo, J. Yu, Y. Zhang, Z. Yang, K. Zhang, X. Zhu, Y. Zhang, T. Chen, G. Cui, et al. (2025)
+SimpleVLA-rl: scaling vla training via reinforcement learning .
+arXiv preprint arXiv:2509.09674 .
+Cited by: §1 ,
+§5.2 .
+[21]
+H. Li, P. Ding, R. Suo, Y. Wang, Z. Ge, D. Zang, K. Yu, M. Sun, H. Zhang, D. Wang, and W. Su (2025)
+VLA-rft: vision-language-action reinforcement fine-tuning with verified rewards in world simulators .
+arXiv preprint arXiv:2510.00406 .
+Cited by: §1 .
+[22]
+J. Li, J. Tang, Z. Xu, L. Wu, Y. Zhou, S. Shao, T. Yu, Z. Cao, and Q. Lu (2025)
+Hunyuan-gamecraft: high-dynamic interactive game video generation with hybrid history condition .
+arXiv preprint arXiv:2506.17201 .
+Cited by: §2.2 .
+[23]
+Y. Li, Y. Zhu, J. Wen, C. Shen, and Y. Xu (2025)
+WorldEval: world model as real-world robot policies evaluator .
+arXiv preprint arXiv:2505.19017 .
+Cited by: §2.2 .
+[24]
+Y. Li, X. Ma, J. Xu, Y. Cui, Z. Cui, Z. Han, L. Huang, T. Kong, Y. Liu, H. Niu, W. Peng, J. Qiao, Z. Ren, H. Shi, Z. Su, J. Tian, Y. Xiao, S. Zhang, L. Zheng, H. Li, and Y. Wu (2025)
+GR-rl: going dexterous and precise for long-horizon robotic manipulation .
+Cited by: §1 .
+[25]
+Y. Liao, P. Zhou, S. Huang, D. Yang, S. Chen, Y. Jiang, Y. Hu, J. Cai, S. Liu, J. Luo, L. Chen, S. Yan, M. Yao, and G. Ren (2025)
+Genie envisioner: a unified world foundation platform for robotic manipulation .
+arXiv preprint arXiv:2508.05635 .
+Cited by: §2.2 .
+[26]
+B. Liu, Y. Zhu, C. Gao, Y. Feng, Q. Liu, Y. Zhu, and P. Stone (2023)
+LIBERO: benchmarking knowledge transfer for lifelong robot learning .
+arXiv preprint arXiv:2306.03310 .
+Cited by: §5.1 ,
+§5.2 .
+[27]
+J. Liu, F. Gao, B. Wei, X. Chen, Q. Liao, Y. Wu, C. Yu, and Y. Wang (2026)
+What can rl bring to vla generalization? an empirical study .
+arXiv preprint arXiv:2505.19789 .
+Cited by: §1 ,
+§2.1 .
+[28]
+G. Lu, W. Guo, C. Zhang, Y. Zhou, H. Jiang, Z. Gao, Y. Tang, and Z. Wang (2025)
+VLA-rl: towards masterful and general robotic manipulation with scalable reinforcement learning .
+arXiv preprint arXiv:2505.18719 .
+Cited by: §1 .
+[29]
+Y. Lu, Y. Zeng, H. Li, H. Ouyang, Q. Wang, K. L. Cheng, J. Zhu, H. Cao, Z. Zhang, X. Zhu, Y. Shen, and M. Zhang (2025)
+Reward forcing: efficient streaming video generation with rewarded distribution matching distillation .
+arXiv preprint arXiv:2512.04678 .
+Cited by: §2.2 .
+[30]
+J. Luo, C. Xu, J. Wu, and S. Levine (2025)
+Precise and dexterous robotic manipulation via human-in-the-loop reinforcement learning .
+Science Robotics 10 ( 105 ), pp. eads5033 .
+Cited by: §1 ,
+§4.1 .
+[31]
+X. Mao, Z. Li, C. Li, X. Xu, K. Ying, T. He, J. Pang, Y. Qiao, and K. Zhang (2025)
+Yume-1.5: a text-controlled interactive world generation model .
+arXiv preprint arXiv:2512.22096 .
+Cited by: §2.2 .
+[32]
+X. Mao, S. Lin, Z. Li, C. Li, W. Peng, T. He, J. Pang, M. Chi, Y. Qiao, and K. Zhang (2025)
+Yume: an interactive world generation model .
+arXiv preprint arXiv:2507.17744 .
+Cited by: §2.2 .
+[33]
+M. Pan, S. Feng, Q. Zhang, X. Li, J. Song, C. Qu, Y. Wang, C. Li, Z. Xiong, Z. Chen, Y. Liu, and J. Luo (2026)
+SOP: a scalable online post-training system for vision-language-action models .
+arXiv preprint arXiv:2601.03044 .
+Cited by: §2.1 .
+[34]
+X. Peng, Z. Zheng, C. Shen, T. Young, X. Guo, B. Wang, H. Xu, H. Liu, M. Jiang, W. Li, et al. (2025)
+Open-sora 2.0: training a commercial-level video generation model in 200 ​ k 200k .
+arXiv preprint arXiv:2503.09642 .
+Cited by: §1 ,
+§5 .
+[35]
+J. Pennington, P. Joshi, and A. Bhide (2025)
+Develop custom physical ai foundation models with nvidia cosmos predict-2 .
+Note: https://developer.nvidia.com/blog/develop-custom-physical-ai-foundation-models-with-nvidia-cosmos-predict-2/ NVIDIA Developer Blog
+Cited by: Table 1 ,
+§5 .
+[36]
+J. Quevedo, A. K. Sharma, Y. Sun, V. Suryavanshi, P. Liang, and S. Yang (2025)
+WorldGym: world model as an environment for policy evaluation .
+arXiv preprint arXiv:2506.00613 .
+Cited by: §2.2 ,
+§2.3 .
+[37]
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov (2017)
+Proximal policy optimization algorithms .
+arXiv preprint arXiv:1707.06347 .
+Cited by: §1 ,
+§2.1 .
+[38]
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. K. Li, Y. Wu, and D. Guo (2024)
+DeepSeekMath: pushing the limits of mathematical reasoning in open language models .
+arXiv preprint arXiv:2402.03300 .
+Cited by: §1 .
+[39]
+J. Shin, Z. Li, R. Zhang, J. Zhu, J. Park, E. Shechtman, and X. Huang (2025)
+MotionStream: real-time video generation with interactive motion controls .
+arXiv preprint arXiv:2511.01266 .
+Cited by: §4.1 .
+[40]
+J. Tang, J. Liu, J. Li, L. Wu, H. Yang, P. Zhao, S. Gong, X. Yuan, S. Shao, and Q. Lu (2025)
+Hunyuan-gamecraft-2: instruction-following interactive game world model .
+arXiv preprint arXiv:2511.23429 .
+Cited by: §2.2 ,
+§4.1 .
+[41]
+R. Team, Z. Gao, Q. Wang, Y. Zeng, J. Zhu, K. L. Cheng, Y. Li, H. Wang, Y. Xu, S. Ma, Y. Chen, J. Liu, Y. Cheng, Y. Yao, J. Zhu, Y. Meng, K. Zheng, Q. Bai, J. Chen, Z. Shen, Y. Yu, X. Zhu, Y. Shen, and H. Ouyang (2026)
+Advancing open-source world models .
+arXiv preprint arXiv:2601.20540 .
+Cited by: §2.2 .
+[42]
+T. Unterthiner, S. Van Steenkiste, K. Kurach, R. Marinier, M. Michalski, and S. Gelly (2018)
+Towards accurate generative models of video: a new metric & challenges .
+arXiv preprint arXiv:1812.01717 .
+Cited by: Table 1 ,
+§5 .
+[43]
+T. Wan, A. Wang, B. Ai, B. Wen, C. Mao, C. Xie, D. Chen, F. Yu, H. Zhao, J. Yang, et al. (2025)
+Wan: open and advanced large-scale video generative models .
+arXiv preprint arXiv:2503.20314 .
+Cited by: §1 ,
+§4.1 .
+[44]
+J. Xiao, Y. Yang, X. Chang, R. Chen, F. Xiong, M. Xu, W. Zheng, and Q. Zhang (2025)
+World-env: leveraging world model as a virtual environment for vla post-training .
+arXiv preprint arXiv:2509.24948 .
+Cited by: §1 ,
+§2.3 .
+[45]
+S. Yang, W. Huang, R. Chu, Y. Xiao, Y. Zhao, X. Wang, M. Li, E. Xie, Y. Chen, Y. Lu, S. Han, and Y. Chen (2025)
+LongLive: real-time interactive long video generation .
+arXiv preprint arXiv:2509.22622 .
+Cited by: §4.1 .
+[46]
+T. Yin, M. Gharbi, T. Park, R. Zhang, E. Shechtman, F. Durand, and W. T. Freeman (2024)
+Improved distribution matching distillation for fast image synthesis .
+arXiv preprint arXiv:2405.14867 .
+Cited by: §2.2 .
+[47]
+T. Yin, M. Gharbi, R. Zhang, E. Shechtman, F. Durand, W. T. Freeman, and T. Park (2024)
+One-step diffusion with distribution matching distillation .
+arXiv preprint arXiv:2311.18828 .
+Cited by: §2.2 .
+[48]
+T. Yin, Q. Zhang, R. Zhang, W. T. Freeman, F. Durand, E. Shechtman, and X. Huang (2025)
+From slow bidirectional to fast autoregressive video diffusion models .
+arXiv preprint arXiv:2412.07772 .
+Cited by: §2.2 .
+[49]
+C. Yu, Y. Wang, Z. Guo, H. Lin, S. Xu, H. Zang, Q. Zhang, Y. Wu, C. Zhu, J. Hu, et al. (2025)
+RLinf: flexible and efficient large-scale reinforcement learning via macro-to-micro flow transformation .
+arXiv preprint arXiv:2509.15965 .
+Cited by: §1 ,
+§4.3 .
+[50]
+X. Yuan, T. Mu, S. Tao, Y. Fang, M. Zhang, and H. Su (2024)
+Policy decorator: model-agnostic online refinement for large policy model .
+Cited by: §2.1 .
+[51]
+H. Zang, M. Wei, S. Xu, Y. Wu, Z. Guo, Y. Wang, H. Lin, L. Shi, Y. Xie, Z. Xu, Z. Liu, K. Chen, W. Tang, Q. Zhang, W. Zhang, C. Yu, and Y. Wang (2025)
+RLinf-vla: a unified and efficient framework for vla+rl training .
+External Links: 2510.06710
+Cited by: §1 ,
+§2.1 .
+[52]
+H. Zang, S. Yu, H. Lin, T. Zhou, Z. Huang, Z. Guo, X. Xu, J. Zhou, Y. Sheng, S. Zhang, F. Gao, W. Tang, Y. Yue, Q. Zhang, X. Chen, C. Yu, and Y. Wang (2026)
+RLinf-user: a unified and extensible system for real-world online policy learning in embodied ai .
+External Links: 2602.07837
+Cited by: §2.1 .
+[53]
+R. Zhang, P. Isola, A. A. Efros, E. Shechtman, and O. Wang (2018)
+The unreasonable effectiveness of deep features as a perceptual metric .
+In Proceedings of the IEEE conference on computer vision and pattern recognition ,
+pp. 586–595 .
+Cited by: Table 1 ,
+§5 .
+[54]
+Y. Zhang, C. Peng, B. Wang, P. Wang, Q. Zhu, F. Kang, B. Jiang, Z. Gao, E. Li, Y. Liu, and Y. Zhou (2025)
+Matrix-game: interactive world foundation model .
+arXiv preprint arXiv:2506.18701 .
+Cited by: §2.2 .
+[55]
+Z. Zheng, X. Peng, T. Yang, C. Shen, S. Li, H. Liu, Y. Zhou, T. Li, and Y. You (2024)
+Open-sora: democratizing efficient video production for all .
+arXiv preprint arXiv:2412.20404 .
+Cited by: §1 .
+[56]
+F. Zhu, H. Wu, S. Guo, Y. Liu, C. Cheang, and T. Kong (2025)
+IRASim: a fine-grained world model for robot manipulation .
+arXiv preprint arXiv:2406.14540 .
+Cited by: §2.2 .
+[57]
+F. Zhu, Z. Yan, Z. Hong, Q. Shou, X. Ma, and S. Guo (2025)
+WMPO: world model-based policy optimization for vision-language-action models .
+arXiv preprint arXiv:2511.09515 .
+Cited by: §1 ,
+§2.2 ,
+§2.3 ,
+3rd item ,
+Table 1 ,
+Table 2 ,
+§5 .
+[58]
+H. Zhu, M. Zhao, G. He, H. Su, C. Li, and J. Zhu (2026)
+Causal forcing: autoregressive diffusion distillation done right for high-quality real-time interactive video generation .
+arXiv preprint arXiv:2602.02214 .
+Cited by: §2.2 .
+[59]
+Y. Zhu, J. Feng, W. Zheng, Y. Gao, X. Tao, P. Wan, J. Zhou, and J. Lu (2026)
+Astra: general interactive world model with autoregressive denoising .
+arXiv preprint arXiv:2512.08931 .
+Cited by: §2.2 .
+Appendix A GPU Allocation Strategy
+The reinforcement-learning pipeline can be decomposed into three components: Generation , Simulator , and Training .
+In WoVR, the Simulator is instantiated by the learned world model , which generates the next observation given the current observation and action.
+In the rollout phase, Generation performs policy inference to produce an (optionally chunked) action from the current observation, while the Simulator executes the action and returns the next observation; this closed-loop interaction repeats until a batch of trajectories is collected. In the optimization phase, Training updates the VLA policy using the collected trajectories, after which the system alternates back to rollout for the next iteration.
+Following the system abstraction in RLinf-VLA, WoVR adopts a collocated (shared) GPU allocation strategy, where the three RL pipeline components co-exist on the same set of GPUs, with the Simulator implemented as the world-model rollout module.
+Unlike physical simulators that require dedicated device-side state, WoVR’s simulator is a neural network; thus, offload/onload can be naturally realized by swapping only the model parameters between GPU and host memory, without migrating any external simulator state.
+In its original form, collocated execution relied on frequent GPU ↔ \leftrightarrow CPU offload/onload to keep only one component resident on GPUs at a time; however, in embodied settings the simulator and generator must interact iteratively, making per-interaction offload/onload prohibitively expensive.
+Therefore, we use the modified collocated strategy: offload/onload for Generation and Simulator happens only at the beginning and end of the rollout phase, avoiding repeated transfers during closed-loop imagined interaction, as illustrated in Fig. 8 .
+Figure 8: Collocated GPU Allocation Strategy
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

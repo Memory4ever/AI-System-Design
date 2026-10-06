@@ -1,0 +1,282 @@
+Peek2: A Regex-free implementation of pretokenizers for Byte-level BPE (https://arxiv.org/html/2601.05833v1)
+citeturn26858view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"turn26856view2","lineno":205}); Total lines: 296
+L141: ### 2.6 Branch4: Handling Of Whitespaces
+L142: 
+L143: All 4 groups left are for handling of whitespaces:
+L144: 
+L145: `\s++$|\s*[\r\n]|\s+(?!\S)|\s`
+L146: 
+L147: Whitespaces are grouped together, with the following exceptions:
+L148: 
+L149:   * •
+L150: 
+L151: Will break after the last one of a cluster of line folds
+L152: 
+L153:   * •
+L154: 
+L155: Will break before the last whitespace, enabling the next word to left snap that whitespace if it is there
+L156: ## 3 Peek2
+L157: 
+L158: We notice that, in the Regex implementation, the actual branch is determined completely by the first two Unicode scalars beyond the cursor, with only one exception: Branch0 may still fail after a mismatch on subsequent letter characters. We ignore this exception for now and will come back to it later. The idea of peeking two characters handles the aforementioned Left Snapping behavior as well, since the original implementation never Snaps more than one character.
+L159: ### 3.1 Categorizing the Peeked Character
+L160: 
+L161: We define PeekCategorize, which takes a Unicode scalar value and exclusively classifies its category.
+L162: 
+L163: procedure PeekCategorize($scalar$)
+L164: 
+L165:   if $scalar=Space$ then return 1
+L166: 
+L167:   else if $scalar=SingleQuote$ then return 2
+L168: 
+L169:   else if $scalar=Cr|Lf$ then return 3
+L170: 
+L171:   else
+L172: 
+L173:    $category\leftarrow\textsc{UnicodeCategoryOf}(scalar)$
+L174: 
+L175:    if $category=Letter$ then return 4
+L176: 
+L177:    else if $category=Whitespace$ then return 5
+L178: 
+L179:    else if $category=Number$ then return 6
+L180: 
+L181:    end if
+L182:   end if
+L183: 
+L184:   $\textbf{return}{}0$
+L185: 
+L186: end procedure
+L187: 
+L188: Figure 1: PeekCategorize, classifying the peeked Unicode scalar value
+L189: ### 3.2 Branch Decision
+L190: 
+L191: As stated before, the $7\times 7$ state space composed of the first two scalar categories decides the branch in only one look. So, we can list the corresponding branch in a $7\times 7$ table, and in practice, provide a static lookup array of function pointers.
+L192:  | Cat1
+L193: --- | ---
+L194: Cat0  | 0  | 1  | 2  | 3  | 4  | 5  | 6
+L195: --- | --- | --- | --- | --- | --- | --- | ---
+L196: 0  | 3  | 3  | 3  | 3  | 1  | 3  | 3
+L197: 1  | 3  | 4  | 3  | 4  | 1  | 4  | 4
+L198: 2  | 3  | 3  | 3  | 3  | 0  | 3  | 3
+L199: 3  | 4  | 4  | 4  | 4  | 4  | 4  | 4
+L200: 4  | 1  | 1  | 1  | 1  | 1  | 1  | 1
+L201: 5  | 4  | 4  | 4  | 4  | 1  | 4  | 4
+L202: 6  | 2  | 2  | 2  | 2  | 2  | 2  | 2
+L203: Table 1: Branch Decision Lookup Table
+L204: Then, we present our core algorithm by recursively peeking at the next two scalars and using this table to call the appropriate function to segregate and remove the next segment from the remaining string.
+L205: 
+L206: procedure Pretokenize($string$)
+L207: 
+L208:   $Cat0\leftarrow\textsc{PeekCategorize}(string[0])$
+L209: 
+L210:   $Cat1\leftarrow\textsc{PeekCategorize}(string[1])$
+L211: 
+L212:   $string\leftarrow\textsc{LookupAndCallBranch}(Cat0,Cat1,string)$
+L213: 
+L214:   $\textsc{Pretokenize}(string)$
+L215: 
+L216: end procedure
+L217: Figure 2: Pretokenize, the core pretokenizer algorithm
+L218: 
+L219: The time complexity of this algorithm is strictly $O(n)$, as it never looks back at the string or any arbitrary pattern.
+L220: ### 3.3 Handling of Late Fallback
+L221: 
+L222: During the handling of Branch0, if the subsequent pattern does not match any common contractions, the single quote should fallback to category 0 and pair with the next letter to fallback to Branch1. So, we can simply let Branch0 chain invoke Branch1 if the matching fails.
+L223: 
+L224: ## 4 Test Results
+L225: ### 4.1 Performance
+L226: 
+L227: We implemented the Peek2 pretokenizer with Safe Rust, then integrated this approach into the open-source Hugging Face tokenizers cite37†Moi and Patry (2025) library. The tokenizers library cite37†Moi and Patry (2025) serves as a framework and handles arbitrary works for the algorithm to function properly. This includes Unicode NFKC normalization, BPE merge-skip, and the actual BPE pair merging after presegmentation.
+L228: Figure 3: Throughput performance on different tasks, more is better Figure 4: Time consumption on different tasks, less is better
+L229:  | Throughput (Mbps)  | Time (ms)  | Standard Error (ms)
+L230: --- | --- | --- | ---
+L231: Implemention  | original  | peek2  | original  | peek2  | original  | peek2
+L232: --- | --- | --- | --- | --- | --- | ---
+L233: Task  |  |  |  |  |  |
+L234: llama3-offsets  | 37.159669  | 39.679901  | 174.615816  | 163.525256  | 0.636177  | 1.228080
+L235: llama3-encode  | 6.207111  | 7.005605  | 1045.360151  | 926.210620  | 0.825586  | 1.230587
+L236: llama3-batch  | 41.411058  | 46.037036  | 156.689209  | 140.944477  | 0.707275  | 0.581777
+L237: BPE Train vocabulary (big)  | 13.315943  | 13.769592  | 487.285522  | 471.231532  | 1.295719  | 0.846964
+L238: Table 2: Detailed Performance Data of Peek2 Implemented with Rust
+L239: We tested and benchmarked the Peek2 pretokenizer across a range of tasks of the LLaMa-3 tokenizer. The tokenizer config file is modified, and the original pretokenizer is resected. The Peek2 pretokenizer is added in place of the original pretokenizer.
+L240: The performance has improved across all task categories, as the pretokenizer is a ubiquitous part of the encoding process. The `llama3-batch` task sees the highest throughput improvement, up to $1.11\times$. The throughput improvement will reduce time and power costs across a variety of processes involving tokenization, including, but not limited to, preprocessing the training corpus, training the BPE tokenizer, handling long context during inference, etc.
+L241: ### 4.2 Compliance
+L242: 
+L243: We used the Python binding provided by tokenizers to ensure the Peek2 pretokenizer is a bug-for-bug reimplement of the original Regex-based solution. We tested across the full XNLI cite38†Conneau et al. (2018) dataset, and the pre-tokenizer yields matches the Regex-based splitter exactly. This makes Peek2 a feasible drop-in replacement of the Regex-based tokenizer.
+L244: ## 5 Related Works
+L245: 
+L246: Byte-level BPE was popularized cite29†You (2025) by formal research cite28†Sennrich et al. (2016) , and it is widely adopted as the de facto standard for Large Language Model tokenization.
+L247: 
+L248: The original pretokenizer is designed and made public as part of the tiktoken cite36†OpenAI (2025) under the name cl100k. The GPT-3 API service cite25†Brown et al. (2020) is the first known model to make use of this specific pretokenizer.
+L249: The HuggingFace tokenizers library cite37†Moi and Patry (2025) provides a re-implementation of cl100k that still uses Regex. The Regex is loaded and processed from arbitrary config files.
+L250: 
+L251: Another research, BlockBPE cite29†You (2025) , also includes a pretokenizer implementation. BlockBPE is based on GPU, as opposed to Peek2. Another major difference is that BlockBPE altered the pretokenizer and may produce different results, while Peek2 is a bug-for-bug re-implementation.
+L252: ## 6 Conclusion
+L253: We present Peek2, a Regex-free implementation of cl100k cite36†OpenAI (2025) pretokenizers for Byte-level BPE. While maintaining a bug-for-bug compliance with the original implementation, higher throughput is achieved on all tokenizer-related tasks. Thanks to the resection of Regex, Peek2 has strictly linear time complexity and compiles no external code, making it safer and more reliable. This work is capable of being a drop-in replacement for GPT-3 【25†Brown et al.
+--------------------------------------------------------------------------------
+Double: Breaking the Acceleration Limit via Double Retrieval Speculative Parallelism (https://arxiv.org/html/2601.05524v1)
+citeturn26858view1 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"turn26856view3","lineno":184}); Total lines: 826
+L168: ### 3.2 Why Double Retrieval?
+L169: 
+L171: ##### Target-Side Retrieval (High Precision, Low Efficiency)
+L172: 
+L173: Methods like Token Recycling (cite100†Luo et al., 2024 ) only leverage the target model to retrieve. Although accurate (high acceptance), they are bottlenecked by the inherent latency of the target model and verification overhead as shown in the bottom-right of Fig. cite104†3 , thereby trapping these methods in a “Low Efficiency” regime.
+L174: ##### Draft-Side Retrieval (High Efficiency, Low Precision)
+L175: Ouroboros (cite103†Zhao et al., 2024 ) is the only method to shift retrieval to the draft model. Unfortunately, it faces two fundamental limitations: 1) Small draft models lack semantic understanding and capacity for accurate retrieval. The candidates fail verification frequently, resulting in low effective AMT after target verification despite long retrieval lengths.
+L176: This exacerbates computational waste from mid-sequence token rejection (cite95†Shen et al., 2025 ); 2) Ouroboros performs purely serial execution that fails to eliminate the mutual waiting bottleneck between models.
+L177: ##### Motivation
+L178: 
+L179: The goal is to achieve speed at draft-side retrieval of generating long chains ($>C$) and the precision of target-side retrieval to prevent those chains from being rejected. We propose Double to fill the precision-efficiency gap that runs retrieval on both draft/target sides simultaneously as detailed in the next section.
+L180: ## 4 Methodology
+L181: cite106†Image: Refer to caption Figure 4: Workflow of Double. (a) Retrieval Unit: Utilizes hierarchical datastores to propose $d$ candidates with match length $s$. (b) Step $T_{1}$: At speed ratio $C=3$, $\mathcal{M}_{q}$ executes iterative retrieval to draft 5 tokens, while $\mathcal{M}_{p}$ provide the multi-tokens pre-verify. (c) Step $T_{2}$: Target retrieval rectifies $x_{7\text{-}9}$ (“for submitting novel” $\to$ “in the field”) as a Correction.
+L182: (d) Step $T_{3}$: Target retrieval directly extends the sequence beyond the draft as an Extension.
+L183: To break the speedup ceiling, we introduce Double (Fig. cite107†4 ), which consists of: 1) an iterative retrieval drafter that generates the candidate chains; (2) a parallel retrieval architecture that hides latency, and (3) a target-guided verification that turns potential rejections into forward extensions.
+L184: ### 4.1 Parallel Retrieval Decoding
+L185: ##### Iterative Retrieval Drafter
+L186: 
+L187: To transcend the theoretical bound $C$, the draft model must generate more than $C$ tokens with a single target forward pass $T_{p}$. Instead of standard autoregressive sampling of one token $x\sim q(\cdot|\bm{x})$, the draft model executes $\gamma$ iterations of Retrieval Forward defined in Sec. cite9†2.2 as shown in (Fig. cite107†4 (a)). Given context $\bm{x}^{(0)}$, in the $j$-th step iteration ($1\leq j\leq C$), the draft model retrieves phrase $R_{j}$ from the datastore,
+L188:  | $$\vskip-2.168pt\mathcal{R}_{j}=\textsc{Retrieval}(\bm{x}^{(j-1)},d)=\{x^{(j)}_{1},\dots,x^{(j)}_{s_{j+1}}\},\vskip-2.168pt$$  |  | (5)
+L189: 
+L190: where $s_{j}$ represents the number of matched tokens in the $j$-th step, ensuring identical to the original distribution. Then we append $R_{j}$ to the context and update for the next iteration $\bm{x}^{(j)}=\bm{x}^{(j-1)}\oplus\mathcal{R}_{j}$.
+L191: Why retrieval helps break this limit? In the time it takes an autoregressive draft model to generate $C$ single tokens, the retrieval drafter generates $C$ phrases. For example (Fig. cite107†4 (b)), retrieving “ARR is” ($j=2$) immediately updates the context to retrieve “a top” ($j=3$).
+L192: If the average matched phrase length is AMT, the total draft length becomes $L_{\text{draft}}\approx C\times(1+\text{AMT})\gg C$, which breaks the limit and further pushes the effective proposal length beyond the theoretical speed ratio.
+L193: Notably, this sequential update forms a chain structure. Unlike tree-based SD methods that require complex tree attention masks for verification, our linear design remains compatible with standard attention mechanisms. This simplicity eliminates overhead, facilitating flexible deployment and high-concurrency scenarios.
+L194: ##### Synchronous Parallel Execution
+L195: We employ a draft-when-verify paradigm (Fig. cite107†4 (c)) to eliminate pipeline bubbles. While the target model $\mathcal{M}_{p}$ verifies the candidate sequence from the previous round $k-1$, the draft model $\mathcal{M}_{q}$ constructs the candidate chain for the next round $k$. This synchronous process fully hides the verification latency, as $\mathcal{M}_{q}$ prepares candidates of length $L_{\text{draft}}\gg C$ in parallel, effectively resolving the mutual waiting bottleneck.
+L196: ### 4.2 Target-Guided Verification
+L197: The previous design only expands the draft length but does not handle the low precision of draft-side retrieval. E.g., in standard PSD, if the draft model makes a mistake at token $x_{7}$, PSD rejects $x_{7},\cdots,x_{N}$ and the computational efforts are wasted.
+L198: To mitigate such rollbacks, we propose a target-guided verification: the target model $M_{p}$ performs a single-step retrieval forward to verify the next round unverified tokens and fetch high-confidence $Y_{p}=\textsc{Retrieval}(\bm{x},d)=\{y_{1},\dots,y_{s+1}\}$ to serve as multi-token pre-verify and forward guidance as detailed below.
+L199: ##### Multi-token Pre-verify
+L200: 
+L201: We employ speculative sampling to validate $X_{q}$ against the distribution of $Y_{p}$. Unlike rigid equality checks, this process dynamically identifies a valid length $i$ based on the acceptance criteria and allows divergent draft paths to be filtered out early before stalling the pipeline.
+L202: ##### Forward Guidance
+L203: We illustrate forward guidance via an example first. Consider a scenario where the draft model predicts a low-quality token at position $7$ ($x_{7}=\text{``for''}$). For standard PSD, the target model calculates $p(x_{7})$, rejects “for”, and samples a new token, but this causes a pipeline stall. In contrast, in our framework, the target model retrieves a chain with higher quality, e.g., $Y_{p}=\{y_{6}=\text{``venue''},y_{7}=\text{``in''},y_{8}=\text{``the''},y_{9}=\text{``field''}\}$.
+L204: By matching the draft chain $X_{q}$ against the target guide $Y_{p}$, we detect a mismatch at $x_{7}$. Instead of simple rejection, we swap the erroneous $x_{7}$ with the target’s prediction $y_{7}$, and append the remaining retrieved tokens to the final output, maintaining the original distribution under greedy sampling.
+L205: In short, the target sequence $Y_{p}$ acts as an active guidance to extend the generation. Formally, we construct the final output sequence by concatenating the verified draft prefix with the remainder of the target sequence. This operation unifies correction (Fig. cite107†4 (c): $y_{i}$ mismatch $x_{i}$) and extension (Fig. cite107†4 (d): $s+1>L_{\text{draft}}$) into a single step:
+L206: 
+L207:  | $$x_{\text{next}}=\{x_{1},\dots,x_{i-1}\}\oplus\{y_{i},\dots,y_{s+1}\}\vskip-3.61371pt$$  |  | (6)
+L208: Here, the suffix $\{y_{i},\dots,y_{s+1}\}$ can be considered as a pre-verified bonus, as the target model is no longer a passive verifier, but serves as an active guidance for the draft model with fast retrieval.
+--------------------------------------------------------------------------------
+Don’t Break the Cache: An Evaluation of Prompt Cachingfor Long-Horizon Agentic Tasks (https://arxiv.org/html/2601.06007v1)
+citeturn26858view2 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"turn26856view1","lineno":114}); Total lines: 306
+L104: For each model, we conduct 40 independent agent sessions per cache condition, with each session answering a unique research question from the benchmark. Sessions use a 10,000-token system prompt containing agent instructions for deep research, including guidance on tool usage, question decomposition, and report synthesis. Each session starts with a fresh context, ensuring that cache benefits are measured within individual multi-turn conversations rather than across sessions.
+L105: cite83†Image: Refer to caption Figure 2: Prompt caching impact for normalized cost and time to first token (TTFT). Results use the system prompt only caching strategy. The no-cache baseline is normalized to 100% and lower values indicate better performance.
+L106: ### 3.2 Latency Improvement
+L107: ### 3.3 Cache Mode Implementation
+L108: 
+L109: We implement four cache conditions to systematically evaluate prompt caching strategies (see Appendix cite29†C , Figures cite84†5 –cite85†8 for visual illustrations). To control cache boundaries precisely, we use unique identifiers (UUIDs) to break the cache at specific points in the prompt, ensuring that content after the UUID is not cached from previous requests.
+L110: No Cache (Baseline): A UUID is prepended to the beginning of the system prompt, breaking the cache immediately and forcing the model to recompute all tokens. This serves as our baseline condition where no caching benefits are realized. In real-world agentic tasks, this symbolizes including dynamic content, such as timestamps and user information, to the system prompt on inference time (cite35†Ji, 2025 ).
+L111: Full Context Caching: No UUIDs are added, allowing the provider’s caching mechanism to operate automatically. OpenAI and Google enable prompt caching automatically for eligible requests, while Anthropic requires explicit cache breakpoints in the API request. This condition represents naive caching where practitioners enable the feature without additional optimization.
+L112: System Prompt Only Caching: A UUID is appended to the end of the system prompt, breaking the cache at this boundary. This ensures that only the static system prompt is cached, while the dynamic conversation history, tool calls, and tool results are recomputed on each request.
+L113: Exclude Tool Results Caching: UUIDs are appended both after the system prompt and after each tool result. This strategy ensures that tool results, which are dynamic and session-specific, do not contribute to the cache. We found this dual-UUID approach necessary because provider-level KV cache handling can vary, and explicit boundaries provide more predictable caching behavior.
+L114: ### 3.4 Evaluation Protocol
+L115: 
+L116: We measure two primary metrics across all conditions: API cost and time to first token (TTFT).
+L117: Cost: We calculate cost using token counts reported in API responses, distinguishing between standard input tokens, cached input tokens (cache reads), and cache creation tokens (cache writes). Each token type is multiplied by the corresponding provider pricing (see Appendix cite27†A , Table cite86†3 ) to compute total cost per session. Cost is aggregated across all API calls within a session.
+L118: Time to first token (TTFT): We measure TTFT using streaming responses, recording the time from request initiation to receipt of the first response chunk. TTFT captures the latency improvement from skipping prefill computation on cached tokens, making it the most relevant latency metric for prompt caching evaluation.
+L119: Prior to each experimental condition, we execute warmup calls to prime the cache and record cache creation tokens separately from evaluation runs. Between conditions for different cache modes, we wait sufficient time (exceeding 24 hours) to ensure cache entries expire based on provider TTL policies, preventing cross-condition cache contamination.
+L120: ### 3.5 Statistical Analysis
+L121: 
+L122: We compare each cache condition against the no-cache baseline using independent samples t-tests. Statistical significance is determined at $\alpha=0.05$. For each model and cache mode, we report mean cost, mean TTFT, percentage improvement over baseline, and p-values. Sample sizes are $n=40$ per condition for all models.
+L123: 
+L124: ## 4 Results
+L125: ### 4.1 Overall Results
+L126: 
+L127: Table cite87†1 summarizes the prompt caching benefits across all four models using the best-performing cache mode for each model. All experiments show statistically significant improvements ($p<0.05$). Cost savings range from 41% to 80% across models, while time to first token improvements range from 6% to 31%.
+L128: Table 1: Prompt caching benefits by model using the best-performing cache mode for each. Cost savings and TTFT improvement are relative to the no-cache baseline. Bold indicates highest value per metric.
+L129: Model  | Cache Mode  | Cost $\downarrow$  | TTFT $\downarrow$
+L130: --- | --- | --- | ---
+L131: OpenAI GPT-5.2  | Excl. Tool Results  | 79.6%  | 13.0%
+L132: Claude Sonnet 4.5  | System Prompt  | 78.5%  | 22.9%
+L133: Gemini 2.5 Pro  | System Prompt  | 41.4%  | 6.1%
+L134: OpenAI GPT-4o  | System Prompt  | 45.9%  | 30.9%
+L135: ### 4.2 Cost Reduction
+L136: Table 2: Full comparison of cache modes across all models. Cost savings and TTFT improvement are relative to the no-cache baseline. Negative TTFT values indicate regression.
+L137: Model  | Cache Mode  | Cost $\downarrow$  | TTFT $\downarrow$
+L138: --- | --- | --- | ---
+L139: OpenAI GPT-5.2  | No Cache (Baseline)  | —  | —
+L140: Full Context  | 79.3%  | 9.5%
+L141: System Prompt  | 81.4%  | 10.5%
+L142: Excl. Tool Results  | 79.6%  | 13.0%
+L143: Claude Sonnet 4.5  | No Cache (Baseline)  | —  | —
+L144: Full Context  | 77.8%  | 21.8%
+L145: System Prompt  | 78.5%  | 22.9%
+L146: Excl. Tool Results  | 78.1%  | 20.9%
+L147: Gemini 2.5 Pro  | No Cache (Baseline)  | —  | —
+L148: Full Context  | 38.3%  | 6.0%
+L149: System Prompt  | 41.4%  | 6.1%
+L150: Excl. Tool Results  | 27.8%  | -2.9%
+L151: OpenAI GPT-4o  | No Cache (Baseline)  | —  | —
+L152: Full Context  | 47.8%  | -8.8%
+L153: System Prompt  | 45.9%  | 30.9%
+L154: Excl. Tool Results  | 46.8%  | 28.1%
+L155: cite88†Image: Refer to caption (a) Normalized cost distribution by cache mode
+L156: 
+L157: cite89†Image: Refer to caption (b) Normalized TTFT distribution by cache mode
+L158: Figure 3: Normalized cost and time to first token (TTFT) distributions by model and cache strategy. The no-cache baseline is normalized to 100% and lower values indicate better performance. Cost reductions are consistent across cache strategies, while TTFT improvements vary significantly, with full-context caching sometimes underperforming more selective strategies.
+L159: Prompt caching delivers substantial cost reductions across all providers and cache strategies. As shown in Table cite90†2 and Figure cite91†2 , all cache modes achieve cost savings compared to the no-cache baseline for all four models. Cost reductions range from 79-81% for GPT-5.2, 78-79% for Claude Sonnet 4.5, 46-48% for GPT-4o, and 28-41% for Gemini 2.5 Pro depending on the cache mode selected.
+L160: The consistency of cost savings across cache strategies suggests that the primary driver of cost reduction is caching the large system prompt, which remains stable across all requests within a session. Additional caching of conversation history and tool calls provides marginal incremental benefit for cost, as these components are smaller relative to the system prompt in our experimental setup.
+L161: Time to first token improvements show greater variation across providers compared to cost savings. GPT-4o shows 28-31% improvement with system prompt only and exclude tool results strategies, while full context caching exhibits a slight regression of 8.8%, suggesting that caching dynamic content can introduce overhead that negates latency benefits. Claude Sonnet 4.5 demonstrates consistent TTFT improvements across all cache strategies, ranging from 20.9% to 22.9%, including full context caching.
+--------------------------------------------------------------------------------
+FlashMem: Distilling Intrinsic Latent Memory via Computation Reuse (https://arxiv.org/html/2601.05505v1)
+citeturn26858view3 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"turn26856view0","lineno":450}); Total lines: 598
+L432: The prompt utilized for this evaluation was designed to enforce strict step-by-step verification, as shown in Table cite125†7 .
+L433: System Prompt: You are an expert Mathematics Evaluator. Your task is to inspect a given solution trajectory for a math problem and identify the first step where a logical or calculation error occurs.
+L434: Input: • Question: [Input Question] • Gold Solution: [Ground Truth Reference] • Model Trajectory: [Model’s Reasoning Output]
+L435: Instructions: 1. Compare the Model Trajectory against the Gold Solution step-by-step. 2. Identify the first step index (0-indexed) where the reasoning is flawed. If the reasoning is strictly correct but diverges in method, do not count it as an error unless it leads to a wrong answer. 3. If the entire trajectory is correct, return -1.
+L436: Output Format:
+L437: Return a JSON object: {"error_found": boolean, "first_error_step": int, "reason": "string"}
+L438: Table 7: The evaluation prompt used for the LLM-as-a-Judge error localization analysis.
+L439: #### Temporal Alignment Analysis.
+L440: We collected the error timestamps returned by the judge and aligned them with the time-series entropy logs recorded during the generation of the Vanilla trajectories. This alignment revealed a distinct synchronization pattern where significant spikes in attention entropy consistently precede or coincide with the steps identified as erroneous.
+L441: This empirical evidence validates our core premise that attention entropy serves as a reliable real-time proxy for model confusion, providing the physical basis for the unstable high-entropy behavior observed in the Vanilla baseline (Figure cite116†3 ).
+L442: ### B.2 Statistical Protocol for Entropy Reduction
+L443: 
+L444: Table cite117†5 in the main text reports the statistical impact of FlashMem on reducing model uncertainty. Here, we define the paired control experiment designed to isolate the causal effect of memory injection on attention entropy.
+L445: #### Data Construction.
+L446: 
+L447: To ensure a fair comparison, we utilized a twin-run data collection strategy. We collected inference traces from two distinct execution modes on the same set of evaluation prompts:
+L448: 
+L449:   * •
+L450: 
+L451: FlashMem Trajectories (Treatment Group): Data collected from the model equipped with the full FlashMem mechanism. These traces include an augmentation mask that explicitly logs the timestamp $t$ of every memory injection event triggered by the Cognitive Monitor.
+L452: 
+L453:   * •
+L454: Vanilla Trajectories (Control Group): Data collected from the base model without memory augmentation. We enforced the model to process the same prompts to use the Vanilla generation as a counterfactual baseline for entropy levels without intervention.
+L455: #### Window-based Comparative Analysis.
+L456: 
+L457: Entropy is a dynamic metric that fluctuates naturally with token distinctness. To systematically quantify the immediate local impact of memory injection and filter out global noise, we employed a window-based difference-in-differences statistical approach:
+L458: 
+L459:   1. 1.
+L460: Trigger Identification: For each sample in the FlashMem group, we identified the trigger index $t$ corresponding to the activation of the augmentation mask where the Cognitive Monitor determined $\mathcal{H}>\tau$. Valid triggers were restricted to indices $t>5$ to mitigate the confounding effects of initial generation instability.
+L461: 
+L462:   2. 2.
+L463: Window Definition: We established a local analysis window $W$ with a fixed horizon of $L=10$ tokens subsequent to the trigger point, encompassing the interval $[t,t+L]$. This window captures the immediate downstream effect of the injected memory on the internal state of the backbone.
+L464: 
+L465:   3. 3.
+L466: Metric Calculation: We computed the mean attention entropy $\mathcal{H}$ within this specific window for the FlashMem trajectory and contrasted it with the mean entropy of the Vanilla baseline measured at identical positional indices. This point-to-point comparison neutralizes variance caused by position-dependent entropy shifts.
+L467: #### Quantification Metrics.
+L468: 
+L469: The net reduction effect for each triggered sample $i$ is quantified as the difference between the counterfactual baseline and the treated state:
+L470: 
+L471:  | $$\Delta\mathcal{H}_{i}=\mathcal{H}_{\text{vanilla}}^{(i)}[t:t+L]-\mathcal{H}_{\text{flashmem}}^{(i)}[t:t+L]$$  |  | (8)
+L472: A positive $\Delta\mathcal{H}_{i}$ indicates that the injection of memory successfully lowered model uncertainty. Based on the distribution of $\Delta\mathcal{H}_{i}$, we derived the following statistical indicators:
+L473: 
+L474:   * •
+L475: 
+L476: Probability of Reduction: Defined as $P(\Delta\mathcal{H}_{i}>0)$. This represents the frequency with which memory injection successfully stabilizes the attention distribution.
+L477: 
+L478:   * •
+L479: Probability of Significant Reduction: The proportion of samples where $\Delta\mathcal{H}_{i}>\tau_{sig}$ (with $\tau_{sig}=0.5$). These instances typically correspond to critical moments where the synthesized memory resolves major ambiguity.
+L480: 
+L481:   * •
+L482: 
+L483: Relative Reduction Percentage: A normalized metric calculated as $\frac{\Delta\mathcal{H}_{i}}{\mathcal{H}_{\text{vanilla}}^{(i)}}\times 100\%$, reflecting the magnitude of the improvement relative to the initial confusion level.
+L484: This paired design ensures that the observed entropy drop is causally linked to the FlashMem intervention, confirming that the latent context directly enhances model certainty rather than being an artifact of token positioning.
+L485: ## Appendix C Analysis of Entropy Dynamics and Threshold Selection
+L486: The Cognitive Monitor regulates the initiation of memory consolidation via a decision threshold $\tau$. Our empirical analysis indicates that absolute attention entropy is not a universal constant; rather, it fluctuates significantly depending on the underlying model architecture and the structural properties of the prompt. In this section, we delineate these governing dynamics and detail the statistical methodology employed for adaptive threshold determination.
+L487: ### C.1 Empirical Trends in Attention Entropy
+L488: #### Model Scale and Confidence
+L489: We observed a distinct inverse correlation between model parameter count and intrinsic entropy levels. Larger language models typically manifest sharper attention distributions, concentrating probability mass on fewer tokens. This behavior reflects a higher degree of internal confidence in next-token predictions compared to smaller architectures, which often exhibit more diffuse attention patterns.
+L490: Consequently, a static threshold suitable for a smaller model would be insufficiently sensitive for a larger one. To maintain consistent monitoring performance, the absolute value of $\tau$ must scale inversely with model size, ensuring that the system remains responsive to relative drops in confidence rather than absolute magnitude.
+

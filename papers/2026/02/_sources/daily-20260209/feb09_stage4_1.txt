@@ -1,0 +1,356 @@
+LLM-discovered 0 days \ Anthropic (https://www.anthropic.com/research/zero-days)
+citeturn27035view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://www.anthropic.com/research/zero-days","lineno":null}); Total lines: 127
+L0: cite0†Skip to main content cite1†Skip to footer L1: 
+L2:   * Research
+L3:   * cite2†Policy L4:   * Commitments
+L5:   * Learn
+L6:   * cite3†News L7: 
+L8: cite4†Try Claude†claude.ai L9: 
+L10: Frontier Red Team
+L11: # Evaluating and mitigating the growing risk of LLM-discovered 0-days
+L12: 
+L13: Feb 5, 2026
+L14: 
+L15: Nicholas Carlini^{*}, Keane Lucas^{*}, Evyatar Ben Asher^{*}, Newton Cheng, Hasnain Lakhani, David Forsythe, and Kyla Guru
+L16: ^{*}indicates equal contribution
+L17: Claude Opus 4.6, cite5†released today†anthropic.com , continues a cite6†trajectory of meaningful improvements in AI models’ cybersecurity capabilities. Last fall, we wrote that we believed we were at an cite7†inflection point for AI's impact on cybersecurity†red.anthropic.com —that progress could become quite fast, and now was the moment to accelerate defensive use of AI. The evidence since then has only reinforced that view. AI models can now find high-severity vulnerabilities at scale.
+L18: Our view is this is a moment to move quickly—to empower defenders and secure as much code as possible while the window exists.
+L19: Opus 4.6 is notably better at finding high-severity vulnerabilities than previous models and a sign of how quickly things are moving. Security teams have been automating vulnerability discovery for years, investing heavily in fuzzing infrastructure and custom harnesses to find bugs at scale. But what stood out in early testing is how quickly Opus 4.6 found vulnerabilities out of the box without task-specific tooling, custom scaffolding, or specialized prompting. Even more interesting is how it found them.
+L20: Fuzzers work by throwing massive amounts of random inputs at code to see what breaks. Opus 4.6 reads and reasons about code the way a human researcher would—looking at past fixes to find similar bugs that weren't addressed, spotting patterns that tend to cause problems, or understanding a piece of logic well enough to know exactly what input would break it.
+L21: When we pointed Opus 4.6 at some of the most well-tested codebases (projects that have had fuzzers running against them for years, cite8†accumulating millions of hours of CPU time†google.github.io ), Opus 4.6 found high-severity vulnerabilities, some that had gone undetected for decades.
+L22: Part of tipping the scales toward defenders means doing the work ourselves. We're now using Claude to find and help fix vulnerabilities in open source software. We’ve started with open source because it runs everywhere—from enterprise systems to critical infrastructure—and vulnerabilities there ripple across the internet.
+L23: Many of these projects are maintained by small teams or volunteers who don't have dedicated security resources, so finding human-validated bugs and contributing human-reviewed patches goes a long way.
+L24: So far, we've found and validated more than 500 high-severity vulnerabilities. We've begun reporting them and are seeing our initial patches land, and we’re continuing to work with maintainers to patch the others. In this post, we’ll walk through our methodology, share some early examples of vulnerabilities Claude discovered, and discuss the safeguards we've put in place to manage misuse as these capabilities continue to improve. This is just the beginning of our efforts.
+L25: We'll have more to share as this work scales.
+L26: ## Setup
+L27: In this work, we put Claude inside a “virtual machine” (literally, a simulated computer) with access to the latest versions of open source projects. We gave it standard utilities (e.g., the standard coreutils or Python) and vulnerability analysis tools (e.g., debuggers or fuzzers), but we didn’t provide any special instructions on how to use these tools, nor did we provide a custom harness that would have given it specialized knowledge about how to better find vulnerabilities.
+L28: This means we were directly testing Claude’s “out-of-the-box” capabilities, relying solely on the fact that modern large language models are generally-capable agents that can already reason about how to best make use of the tools available.
+L29: To ensure that Claude hadn’t hallucinated bugs (i.e., invented problems that don’t exist, a problem that increasingly is placing an undue burden on open source developers), we validated every bug extensively before reporting it. We focused on searching for memory corruption vulnerabilities, because they can be validated with relative ease.
+L30: Unlike logic errors where the program remains functional, memory corruption vulnerabilities are easy to identify by monitoring the program for crashes and running tools like address sanitizers to catch non-crashing memory errors. But because not all inputs that cause a program to crash are high severity vulnerabilities, we then had Claude critique, de-duplicate, and re-prioritize the crashes that remain.
+L31: Finally, for our initial round of findings, our own security researchers validated each vulnerability and wrote patches by hand. As the volume of findings grew, we brought in external (human) security researchers to help with validation and patch development. Our intent here was to meaningfully assist human maintainers in handling our reports, so the process optimized for reducing false positives.
+L32: In parallel, we are accelerating our efforts to automate patch development to reliably remediate bugs as we find them.
+L33: ## Vulnerabilities
+L34: 
+L35: Here are three of the vulnerabilities Claude found (now patched by maintainers), which we believe demonstrate the unique advantages LLMs have over other tools.
+L36: GhostScript is a utility that processes PostScript and PDF files. Claude initially went down several dead ends when searching for a vulnerability—both attempting to fuzz the code, and, after this failed, attempting manual analysis. Neither of these methods yielded any significant findings. Eventually, however, Claude took a different approach: reading the Git commit history. Claude quickly found a security-relevant commit, and commented:
+L37:     `There's a commit about "stack bounds checking for MM blend values" in Type 1 charstrings. This is related to font handling. Let me get more details about this commit.`
+L38: From here, Claude looked at the code to understand what had changed:
+L39: 
+L40:     `The commit shows it's adding stack bounds checking - this suggests there was a vulnerability before this check was added. … If this commit *adds* bounds checking, then the code before this commit was vulnerable … So to trigger the vulnerability, I would need to test against a version of the code *before* this fix was applied.`
+L41: With this in mind, Claude then looked for other places where this function was called in order to find potentially similar vulnerabilities that were left unpatched.
+L42: 
+L43:     `Let me check if maybe the checks are incomplete or there's another code path. Let me look at the other caller in gdevpsfx.c … Aha! This is very interesting! In gdevpsfx.c, the call to gs_type1_blend at line 292 does NOT have the bounds checking that was added in gstype1.c.`
+L44: After making this observation, Claude quickly constructed a proof-of-concept crash (a file that can be passed to GhostScript that will cause it to crash), proving its predictions.
+L45: OpenSC is a command line utility to process smart card data. Again, Claude initially attempted to find vulnerabilities by fuzzing the code, and after this failed, by manual analysis. As before, when this didn’t work, Claude took a different approach: it began to search the repository for function calls that are frequently vulnerable.
+L46: 
+L47:     `Let me look at where the URL is used - specifically the strrchr and strcat operations which could potentially have path traversal or buffer overflow issues.`
+L48: Claude quickly identified a location where multiple `strcat` operations were used in succession. These functions are typically viewed as unsafe in C because they allow for concatenating strings without any check on the length of the resulting concatenated string. It is therefore extremely important that the programmer verify the output buffer is long enough to contain the concatenated input. For OpenSC, the key issue was in the following code:
+L49:     `char filename[PATH_MAX];  // this buffer is 4096 bytes
+L50:     r = sc_get_cache_dir(card->ctx, filename,
+L51:             sizeof(filename) - strlen(fp) - 2);
+L52:     if (r != SC_SUCCESS)
+L53:             goto err;
+L54:     strcat(filename,"/");
+L55:     strcat(filename,fp);`
+L56: Claude identified that this is vulnerable to a buffer overflow. And when we look at the statistics for how frequently this line of code was fuzzed by existing fuzzers, we see that this line of code is infrequently studied by traditional fuzzers because of how many preconditions are required. Claude, in contrast, was able to reason about which code fragments were interesting and focus its effort there, instead of indiscriminately studying all lines with equal effort.
+L57: CGIF is a library for processing GIF files. In this case, we were surprised not by how Claude found the bug, but by how it validated the bug and produced a proof-of-concept that proved the vulnerability was real.
+L58: Briefly, Claude found that this library assumes compressed data will always be smaller than its original size (which is normally a safe assumption), and that this assumption could be exploited. The way it did this was challenging. The GIF file format compresses data with the LZW compression algorithm.
+L59: Unlike the more traditional LZ77-backed compressors that encode matches with a (distance, length) pair, LZW builds a dictionary of frequently-used pairs of tokens (either individual characters, or pairs of tokens). Then, when the compressor encounters this token a second time, it can output a shorter bitstring indicating “output this token again”. (For those familiar with language modeling, LZW is very similar in spirit to the process of BPE tokenization.)
+L60: CGIF had implicitly assumed that the compressed size of a compressed string would always be less than the uncompressed size—something that is almost always true. However, Claude immediately recognized the vulnerability here:
+L61: 
+L62:     `To trigger overflow, we need:
+L63: 
+L64:     • Small numPixel (small image)
+L65:     • Many LZW codes written
+L66: 
+L67:     The pattern that generates most LZW codes is one where:
+L68: 
+L69:     • No compression happens (each pixel becomes a code)
+L70:     • Many resets occur
+L71:     With a palette of 4 colors (indices 0-3):
+L72: 
+L73:     • initDictLen = 4
+L74:     • Dictionary fills up after MAX_DICT_LEN (4096) entries
+L75:     • Reset happens when dict reaches 4096
+L76: 
+L77:     To trigger overflow with small image:
+L78: 
+L79:     • numPixel = N
+L80:     • Buffer size = (N + 2) codes
+L81:     • We need to generate > N + 1 codes
+L82: 
+L83:     Each pixel can generate 1 code + resets.
+L84: 
+L85:     But the pattern that might cause more codes is when we have sequences of length 1.`
+L86: That is, Claude recognized that LZW maintains a fixed-size symbol table; if it was possible to max out the size of the symbol table, then LZW inserts a new special “clear” token in the data-stream. This then results in the output “compressed” size exceeding the uncompressed size—triggering a buffer overflow vulnerability.
+L87: This vulnerability is particularly interesting because triggering it requires a conceptual understanding of the LZW algorithm and how it relates to the GIF file format. Traditional fuzzers (and even coverage-guided fuzzers) struggle to trigger vulnerabilities of this nature because they require making a particular choice of branches. In fact, even if CGIF had 100% line- and branch-coverage, this vulnerability could still remain undetected: it requires a very specific sequence of operations.
+L88: ## Safeguards
+L89: Alongside the release of Claude Opus 4.6, we're introducing a new layer of detection to support our Safeguards team in cite9†identifying and responding to cyber misuse of Claude. At the core of this work are cite10†probes†alignment.anthropic.com , which measure activations within the model as it generates a response and allow us to detect specific harms at scale. With this launch, we’ve created new cyber-specific probes to better track and understand the potential misuse of Claude in the cybersecurity domain.
+L90: On the enforcement side, we're evolving our pipelines to keep pace with this new detection architecture. That includes updating our cyber enforcement workflows to take advantage of probe-based detection, as well as expanding the range of actions we take to respond to cyber misuse. In particular, we may institute real-time intervention, including blocking traffic we detect as malicious.
+L91: This will create friction for legitimate research and some defensive work, and we want to work with the security research community to find ways to address it as it arises. We are committed to keeping Claude at the forefront of cybersecurity by working hard to make it both safe and effective.
+L92: Together, these changes represent a meaningful step forward in our ability to prevent misuse: not just in what we can detect, but in how quickly and effectively we can act on what we find.
+L93: ## Conclusion
+L94: 
+L95: Claude Opus 4.6 can find meaningful 0-day vulnerabilities in well-tested codebases, even without specialized scaffolding. Our results show that language models can add real value on top of existing discovery tools. The Safeguards work we describe above is essential to managing the dual-use risk this creates.
+L96: Looking ahead, both we and the broader security community will need to grapple with an uncomfortable reality: language models are already capable of identifying novel vulnerabilities, and may soon exceed the speed and scale of even expert human researchers.
+L97: 
+L98: At the same time, existing disclosure norms will need to evolve. Industry-standard 90-day windows may not hold up against the speed and volume of LLM-discovered bugs, and the industry will need workflows that can keep pace.
+L99: This is ongoing work, and we'll have more to share soon—including what we're learning about how these capabilities evolve and how the security community can best put them to use.
+L100: 
+L101: Edited February 6, 2026:
+L102: 
+L103:   * Updated the author list
+L104: ####
+L105: 
+L106: ## Related content
+L107: 
+L108: ### Claude-shaped science
+L109: 
+L110: Guest author Prof. Matthew Schwartz describes what happened when he stopped fighting Claude and allowed Claude to find “Claude-shaped” problems: ones best suited to the capabilities of the current generation of LLM tools. This led him to build BootLoops, a toolkit for exact calculations in quantitative science, which he has been applying across scientific fields alongside experts.
+L111: 
+L112: cite11†Read more L113: ### What work can robots do?
+L114: 
+L115: We built an index of how well today’s robots can perform US job tasks. Robots can already do three-quarters of physical tasks, mostly in limited settings, but are cost-competitive for just 0.3% of them.
+L116: 
+L117: cite12†Read more L118: 
+L119: ### What do you want from AI?
+L120: 
+L121: We’re launching a new study using Anthropic Interviewer to learn from your experiences with AI, and we invite you to participate.
+L122: 
+L123: cite13†Read more L124: ## Subscribe to the Frontier Red Team newsletter
+L125: 
+L126: Get updates on our latest red-teaming research and findings.
+--------------------------------------------------------------------------------
+News — Google DeepMind (https://deepmind.google/blog/)
+citeturn27035view1 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://deepmind.google/blog/","lineno":null}); Total lines: 309
+L0: ## Explore our next generation AI systems
+L1: 
+L2: cite0†Explore models L3: 
+L4: Gemini
+L5: 
+L6: cite1†Gemini Build intelligent agents cite2†Gemini Omni Create anything from anything cite3†Nano Banana Create and edit detailed images cite4†Gemini Audio Talk, create and control audio L7: 
+L8: Specialized models
+L9: 
+L10: cite5†Veo Generate cinematic video with audio cite6†Lyria Generate high fidelity music and audio cite7†Genie 3 Generate and explore interactive worlds cite8†Gemini Robotics Perceive, reason, use tools and interact L11: 
+L12: Open models
+L13: cite9†Gemma Build responsible AI applications at scale L14: ## Our latest AI breakthroughs and updates from the lab
+L15: 
+L16: cite10†Explore research L17: 
+L18: Breakthroughs
+L19: 
+L20: cite11†SIMA 2 An agent that plays, reasons, and learns with you cite7†Genie 3 Generate and explore interactive worlds cite12†AlphaGo Mastering the game of Go cite8†Gemini Robotics Perceive, reason, use tools and interact L21: 
+L22: Learn more
+L23: 
+L24: cite13†Evals cite14†Publications cite15†Responsibility cite16†Frontier safety L25: ## Unlocking a new era of discovery with AI
+L26: 
+L27: cite17†Explore science L28: 
+L29: Breakthroughs
+L30: 
+L31: cite18†AlphaFold Predict protein structures with high accuracy cite19†AlphaGenome Using AI to understand the human genome cite20†WeatherNext Fast and accurate AI weather forecasting cite21†AlphaEarth Map our planet in unprecedented detail cite22†AlphaEvolve Design advanced algorithms for math and applications in computing L32: 
+L33: Learn more
+L34: cite23†Gemini for Science†ai.google cite24†Experimental Tools†labs.google cite25†Science Skills†antigravity.google L35: ## Our mission is to build AI responsibly to benefit humanity
+L36: 
+L37: cite26†About Google DeepMind L38: 
+L39: cite15†Responsibility Ensuring AI safety through proactive security, even against evolving threats cite27†News Discover our latest AI breakthroughs, projects, and updates cite28†Careers We’re looking for people who want to make a real, positive impact on the world L40: 
+L41: Learn more
+L42: 
+L43: cite29†Education cite30†Our National Partnerships for AI cite31†Accelerator programs cite32†The Podcast cite33†DeepMind Institute†institute.deepmind.com L44: Models
+L45: ## Explore our next generation AI systems
+L46: 
+L47: cite0†Explore models L48: 
+L49: Gemini
+L50: 
+L51: cite1†Gemini Build intelligent agents cite2†Gemini Omni Create anything from anything cite3†Nano Banana Create and edit detailed images cite4†Gemini Audio Talk, create and control audio L52: 
+L53: Specialized models
+L54: 
+L55: cite5†Veo Generate cinematic video with audio cite6†Lyria Generate high fidelity music and audio cite7†Genie 3 Generate and explore interactive worlds cite8†Gemini Robotics Perceive, reason, use tools and interact L56: 
+L57: Open models
+L58: cite9†Gemma Build responsible AI applications at scale L59: 
+L60: Research
+L61: ## Our latest AI breakthroughs and updates from the lab
+L62: 
+L63: cite10†Explore research L64: 
+L65: Breakthroughs
+L66: 
+L67: cite11†SIMA 2 An agent that plays, reasons, and learns with you cite7†Genie 3 Generate and explore interactive worlds cite12†AlphaGo Mastering the game of Go cite8†Gemini Robotics Perceive, reason, use tools and interact L68: 
+L69: Learn more
+L70: 
+L71: cite13†Evals cite14†Publications cite15†Responsibility cite16†Frontier safety L72: 
+L73: Science
+L74: ## Unlocking a new era of discovery with AI
+L75: 
+L76: cite17†Explore science L77: 
+L78: Breakthroughs
+L79: 
+L80: cite18†AlphaFold Predict protein structures with high accuracy cite19†AlphaGenome Using AI to understand the human genome cite20†WeatherNext Fast and accurate AI weather forecasting cite21†AlphaEarth Map our planet in unprecedented detail cite22†AlphaEvolve Design advanced algorithms for math and applications in computing L81: 
+L82: Learn more
+L83: cite23†Gemini for Science†ai.google cite24†Experimental Tools†labs.google cite25†Science Skills†antigravity.google L84: 
+L85: About
+L86: ## Our mission is to build AI responsibly to benefit humanity
+L87: 
+L88: cite26†About Google DeepMind L89: 
+L90: Learn more
+L91: 
+L92: cite29†Education cite30†Our National Partnerships for AI cite31†Accelerator programs cite32†The Podcast cite33†DeepMind Institute†institute.deepmind.com L93: 
+L94: cite15†Responsibility Ensuring AI safety through proactive security, even against evolving threats cite27†News Discover our latest AI breakthroughs, projects, and updates cite28†Careers We’re looking for people who want to make a real, positive impact on the world L95: cite34†Build with Gemini†aistudio.google.com cite35†Try Gemini†gemini.google.com L96: 
+L97: cite36†Google DeepMind L98: 
+L99: cite37†Google AI Learn about all our AI†ai.google cite38†Google DeepMind Explore the frontier of AI cite39†Google Labs Try our AI experiments†labs.google cite40†Google Research Explore our research†research.google L100: 
+L101: Products and apps
+L102: cite35†Gemini app Chat with Gemini†gemini.google.com cite34†Google AI Studio Build with our next-gen AI models†aistudio.google.com cite41†Google Antigravity Our agentic development platform†antigravity.google L103: 
+L104: cite0†Models L105: 
+L106: cite10†Research L107: 
+L108: cite17†Science L109: 
+L110: cite26†About L111: 
+L112: cite34†Build with Gemini†aistudio.google.com cite35†Try Gemini†gemini.google.com L113: # News
+L114: 
+L115: Discover our latest AI breakthroughs, projects, and updates
+L116: 
+L117: ### Gemini 4 Argon: our next era of frontier intelligence
+L118: 
+L119: September 2026 Models
+L120: 
+L121: cite42†Learn more†blog.google L122: 
+L123: cite43†Image†lh3.googleusercontent.com L124: 
+L125: ### Introducing SynthID Bio
+L126: 
+L127: September 2026 Science
+L128: 
+L129: cite44†Learn more L130: 
+L131: cite45†Image†lh3.googleusercontent.com L132: 
+L133: ### Introducing Gemini 3.8 Live with Live Avatar
+L134: 
+L135: September 2026 Models
+L136: 
+L137: cite46†Learn more†blog.google L138: 
+L139: cite47†Image†lh3.googleusercontent.com cite48†Image†lh3.googleusercontent.com L140: ### Advancing Private AI Compute with secure, server-side memory
+L141: 
+L142: September 2026 Responsibility & Safety
+L143: 
+L144: cite49†Learn more L145: 
+L146: cite50†Image†lh3.googleusercontent.com L147: 
+L148: ### Gemini 3.8 text-to-speech says hello
+L149: 
+L150: September 2026
+L151: 
+L152: cite51†Learn more†blog.google L153: 
+L154: cite52†Image†lh3.googleusercontent.com cite53†Image†lh3.googleusercontent.com L155: 
+L156: ### Introducing Gemini 3.8 Live and 3.8 Live Extended Thinking
+L157: 
+L158: September 2026 Models
+L159: 
+L160: cite54†Learn more†blog.google L161: 
+L162: cite47†Image†lh3.googleusercontent.com cite48†Image†lh3.googleusercontent.com L163: ### AlphaGenome Atlas: A predictive map of every possible DNA letter change in the human genome
+L164: 
+L165: September 2026 Science
+L166: 
+L167: cite55†Learn more L168: 
+L169: cite56†Image†lh3.googleusercontent.com L170: 
+L171: ### Introducing WeatherNext 3, our most advanced and accurate global weather AI model
+L172: 
+L173: September 2026 Science
+L174: 
+L175: cite57†Learn more†blog.google L176: 
+L177: cite58†Image†lh3.googleusercontent.com L178: ### Proactive cyber defense for governments and enterprises
+L179: 
+L180: September 2026 Models
+L181: 
+L182: cite59†Learn more†blog.google L183: 
+L184: cite60†Image†lh3.googleusercontent.com cite61†Image†lh3.googleusercontent.com L185: 
+L186: ### Introducing Gemini 3.8 Flash and 3.8 Flash Cyber
+L187: 
+L188: September 2026 Models
+L189: 
+L190: cite62†Learn more†blog.google L191: 
+L192: cite63†Image†lh3.googleusercontent.com cite64†Image†lh3.googleusercontent.com L193: ### Introducing agentic video understanding with Gemini
+L194: 
+L195: September 2026 Models
+L196: 
+L197: cite65†Learn more†blog.google L198: 
+L199: cite66†Image†lh3.googleusercontent.com cite67†Image†lh3.googleusercontent.com L200: 
+L201: ### Gemini Omni 1.1 Flash lets you build with more control
+L202: 
+L203: August 2026 Models
+L204: 
+L205: cite68†Learn more†blog.google L206: 
+L207: cite69†Image†lh3.googleusercontent.com cite70†Image†lh3.googleusercontent.com L208: ### Piloting the world's first double-blind AI evaluations
+L209: 
+L210: August 2026 Responsibility & Safety
+L211: 
+L212: cite71†Learn more L213: 
+L214: cite72†Image†lh3.googleusercontent.com L215: 
+L216: ### Intelligent transcription with Gemini 3.5 Transcribe
+L217: 
+L218: August 2026
+L219: 
+L220: cite73†Learn more†blog.google L221: 
+L222: cite74†Image†lh3.googleusercontent.com cite75†Image†lh3.googleusercontent.com L223: 
+L224: ### From Atari to EVE Online: Building on 15 Years of AI Research in Games
+L225: 
+L226: August 2026 Research
+L227: 
+L228: cite76†Learn more L229: 
+L230: cite77†Image†lh3.googleusercontent.com L231: ### Introducing Gemini 3.7 Flash
+L232: 
+L233: August 2026 Models
+L234: 
+L235: cite78†Learn more†blog.google L236: 
+L237: cite79†Image†lh3.googleusercontent.com cite80†Image†lh3.googleusercontent.com L238: 
+L239: ### Putting sign language AI into users’ hands
+L240: 
+L241: August 2026 Models
+L242: 
+L243: cite81†Learn more L244: 
+L245: cite82†Image†lh3.googleusercontent.com L246: 
+L247: ### WeatherNext: AI model achieves breakthrough in forecasting cyclones
+L248: 
+L249: August 2026 Science
+L250: 
+L251: cite83†Learn more L252: 
+L253: cite84†Image†lh3.googleusercontent.com L254: ### Gemini Robotics ER 2: powering robotics with video understanding, task orchestration, and multi-robot collaboration
+L255: 
+L256: July 2026 Models
+L257: 
+L258: cite85†Learn more†blog.google L259: 
+L260: cite86†Image†lh3.googleusercontent.com cite86†Image†lh3.googleusercontent.com L261: 
+L262: ### Gemini Robotics 2 brings whole body intelligence to robots
+L263: 
+L264: July 2026 Models
+L265: 
+L266: cite87†Learn more L267: 
+L268: cite88†Image†lh3.googleusercontent.com cite88†Image†lh3.googleusercontent.com L269: ### We’re launching Lyria 3.5 in Google Flow Music, with advances across musicality, lyrics, vocals, and creative control
+L270: 
+L271: July 2026 Models
+L272: 
+L273: cite89†Learn more†blog.google L274: 
+L275: cite90†Image†lh3.googleusercontent.com cite91†Image†lh3.googleusercontent.com L276: 
+L277: ### Accelerating the frontiers of scientific discovery: Google’s $40M commitment to the Genesis Mission
+L278: 
+L279: July 2026
+L280: 
+L281: cite92†Learn more†cloud.google.com L282: 
+L283: cite93†Image†lh3.googleusercontent.com L284: ### Introducing Gemini 3.5 Flash Cyber
+L285: 
+L286: July 2026 Models
+L287: 
+L288: cite94†Learn more L289: 
+L290: cite95†Image†lh3.googleusercontent.com cite96†Image†lh3.googleusercontent.com L291: 
+L292: ### Introducing Gemini 3.6 Flash, 3.5 Flash-Lite, and 3.5 Flash Cyber
+L293: 
+L294: July 2026 Models
+L295: 
+L296: cite97†Learn more†blog.google L297: 
+L298: cite98†Image†lh3.googleusercontent.com cite99†Image†lh3.googleusercontent.com L299: 
+L300: ### Our approach to bioresilience
+L301: 
+L302: July 2026 Responsibility & Safety
+L303: 
+L304: cite100†Learn more L305: 
+L306: cite101†Image†lh3.googleusercontent.com L307: 
+L308: 1 cite102†Page 2 cite103†Page 3 … cite104†Page 19 --------------------------------------------------------------------------------
+Qwen (https://qwen.ai/blog)
+citeturn27035view2 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://qwen.ai/blog","lineno":null}); Total lines: 0
+--------------------------------------------------------------------------------
+Internal Error ()
+citeturn27035view3 [wordlim: 200] Source: open({"ref_id":"https://api-docs.deepseek.com/updates","lineno":null}); Total lines: 1
+L0: Failed to fetch https://api-docs.deepseek.com/updates: (400) Timeout fetching
+

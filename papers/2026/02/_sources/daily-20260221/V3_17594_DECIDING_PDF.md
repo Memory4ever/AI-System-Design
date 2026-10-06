@@ -1,0 +1,7 @@
+# 17594 once-core direct official PDF
+
+Primary: https://arxiv.org/pdf/2602.17594v1, exact v1. HTML returned404 once; officialPDF is actually readable, not external blocker. Actual source read: §3.4 (PDF P9) / §4.1–4.2 (P10–11) and runtime paragraph P14. This is a narrow author paraphrase for admission recovery, not a full evidence review.
+
+The comparison separates simulated game duration from real elapsed time. A participant plays for120seconds. The agent harness halts game progression once per game-second, then requests five action groups, each for one .2second segment; game progression resumes after the model returns. A120second simulated episode can therefore require120APIcalls and much more elapsed time. Seven models use default temperature/thinking and three trials. The general human/machine comparison is not a matched wall-clock interaction. Authors report longer model runtime separately and invite alternative harnesses; capability labels by three author annotators are diagnostic hypotheses, not causal identification of memory/world-model deficits.
+
+Final necessary review: officialPDF §4.1–4.2/Fig5 and Ch66 actual678–680/2857–2862 independently read by root. Human protocol is106 participants each10 games (not6),120real seconds per episode; model protocol120sim seconds/max120calls with pausing, five .2s actions per call. The12–18× runtime is not matched wall-clock performance. Existing5/NoChange accepted for concrete twin-clock coverage; source/date and formal report synchronized, not day-complete.

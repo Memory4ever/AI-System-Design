@@ -1,0 +1,737 @@
+URL https://arxiv.org/html/2602.05754v1 PARSED_LINES 3111 MAIN_END 736 REFERENCES [37, 736]
+0: TimelyFreeze: Adaptive Parameter Freezing Mechanism for Pipeline Parallelism
+1: Report GitHub Issue
+2: ×
+3: Title:
+4: Content selection saved. Describe the issue below:
+5: Description:
+6: Submit without GitHub
+7: Submit in GitHub
+8: arXiv is now an independent nonprofit!
+9: Learn more
+10: ×
+11: Back to arXiv
+12: Why HTML?
+13: Report Issue
+14: Back to Abstract
+15: Download PDF
+16: Abstract
+17: 1 Introduction
+18: 2 Preliminary and Related Work
+19: 2.1 Pipeline Parallelism
+20: 2.2 Parameter Freezing
+21: 2.3 Baseline Freezing Methods
+22: 3 Proposed Framework: TimelyFreeze
+23: 3.1 Phase I: Warm-up and Monitoring
+24: 3.2 Phase II: Freeze Ratio Formulation
+25: 3.2.1 Pipeline DAG Construction
+26: 3.2.2 Linear Programming Formulation
+27: 3.3 Phase III: Freezing
+28: 3.4 Time-to-Accuracy Analysis
+29: 4 Experiments
+30: 4.1 Hybrid Variants
+31: 4.2 Experimental Setup
+32: 5 Results and Discussion
+33: 5.1 Scaling Toward Larger Models
+34: 5.2 Freezing Controller Sensitivity
+35: 5.3 Generalization on Vision Models
+36: 6 Conclusion
+37: References
+38: A Notations
+39: B Edge Construction Rules
+40: C Algorithms
+41: C.1 TimelyFreeze’s Freezing Algorithm
+42: C.2 Hybrid Variants Algorithm
+43: D Time-to-Accuracy Analysis
+44: D.1 Convergence Analysis
+45: D.1.1 Assumptions
+46: D.1.2 Auxiliary Definitions
+47: D.1.3 Lemmas
+48: D.1.4 Iteration Complexity under TimelyFreeze
+49: D.1.5 Comparison with No-Freezing Baseline
+50: D.2 Execution Time Analysis
+51: D.2.1 Comparison with No-Freezing Baseline
+52: D.3 Time-to-Accuracy Comparison
+53: E Experiment Results
+54: E.1 Experiment Setting Details
+55: E.2 LLaMA 1B Result Table
+56: E.3 LLaMA Series Benchmark Results
+57: F Pipeline Schedule Visualization
+58: F.1 Four-GPU Pipeline Schedules
+59: F.2 6-GPU Pipeline Schedules
+60: F.3 8-GPU Pipeline Schedules
+61: G Vision Model Results
+62: G.1 ConvNeXt-V2-L Result Table
+63: G.2 ViT-L/32 Result Table
+64: H Variation of Per-Parameter Freeze Ratios across Methods
+65: I Effect of Freeze Ratio on Backward Time
+66: License: CC BY 4.0
+67: arXiv:2602.05754v1 [cs.DC] 05 Feb 2026
+68: TimelyFreeze:
+69: Adaptive Parameter Freezing Mechanism for Pipeline Parallelism
+70: Seonghye Cho
+71: Affiliation: School of Computing, KAIST, Daejeon, South Korea
+72: Jaemin Han
+73: Affiliation: School of Computing, KAIST, Daejeon, South Korea
+74: Hyunjin Kim
+75: Affiliation: School of Computing, KAIST, Daejeon, South Korea
+76: Euisoo Jung
+77: Affiliation: School of Computing, KAIST, Daejeon, South Korea
+78: Jae-Gil Lee
+79: Affiliation: School of Computing, KAIST, Daejeon, South Korea
+80: Correspondence to: jaegil@kaist.ac.kr
+81: Abstract
+82: Pipeline parallelism enables training models that exceed single-device memory, but practical throughput remains limited by pipeline bubbles.
+83: Although parameter freezing can improve training throughput by adaptively skipping backward computation, existing methods often over-freeze parameters, resulting in unnecessary accuracy degradation.
+84: To address this issue, we propose TimelyFreeze, which models the pipeline schedule as a directed acyclic graph and solves a linear program to compute optimal freeze ratios that minimize batch execution time under accuracy constraints.
+85: Experiments show that TimelyFreeze achieves up to 40% training throughput improvement on LLaMA-8B with comparable accuracy.
+86: Overall, it enables faster large-scale model training without compromising convergence and generalizes across diverse pipeline-parallel settings.
+87: Keywords: Distributed Learning, Pipeline Parallelism, Parameter Freezing
+88: 1 Introduction
+89: Driven by scaling laws (Kaplan et al., 2020), deep learning models and datasets have grown beyond the capacity of a single GPU, making distributed learning indispensable for large-scale training.
+90: Among parallelization strategies, including data parallelism (DP) (You et al., 2018; Sergeev and Del Balso, 2018), tensor parallelism (TP) (Shoeybi et al., 2019), and pipeline parallelism (PP) (Huang et al., 2019), pipeline parallelism has emerged as a crucial technique for scaling model training. Unlike DP, which replicates the model across devices, PP splits the model into sequential stages, enabling memory-efficient scaling.
+91: Compared to TP, PP incurs lower communication overhead and is better suited to environments with limited inter-node bandwidth.
+92: However, PP suffers from training inefficiency due to the inherently sequential nature of forward and backward computations. Each partitioned model stage must wait for preceding stages to complete their computations, creating idle periods of computational resources (e.g., GPUs), commonly known as pipeline bubbles. To mitigate this inefficiency, various scheduling algorithms, such as GPipe (Huang et al., 2019) or 1F1B (Fan et al., 2021; Narayanan et al., 2019) have been proposed to improve hardware utilization. Nevertheless, pipeline bubbles persist, often leading to lower training throughput than data parallelism.
+93: To improve training throughput, parameter freezing (Chen et al., 2023; Brock et al., 2017) has emerged as an effective approach, particularly in parameter-efficient fine-tuning and federated learning.
+94: By adaptively skipping backward computations and gradient updates for a subset of parameters, it reduces computational cost and improves training throughput.
+95: Nonetheless, parameter freezing may degrade accuracy due to skipped gradient updates in exchange for higher throughput. Moreover, prior methods (Chen et al., 2023; Liu et al., 2021) do not account for pipeline-parallel training dynamics and thus tend to apply excessive freezing, which unnecessarily degrades the model accuracy.
+96: For example, the gray region labeled “Ineffective Freezing” in Figure 1(b) illustrates a case where GPU 1–3 freeze parameters during the backward pass even though subsequent execution cannot yet begin due to schedule dependencies. As a result, such excessive freezing under PP neither improves throughput nor preserves training stability.
+97: Therefore, achieving an optimal balance between accuracy and throughput while accounting for pipeline-parallel training dynamics is crucial.
+98: Figure 1: Effect of parameter freezing on pipeline parallelism. Each block denotes a microbatch execution in the forward (blue) or backward (green) pass. TimelyFreeze in (c) maintains the throughput gain of the baseline freezing method in (b) while preserving accuracy by effectively freezing according to the pipeline schedule.
+99: In this paper, we propose TimelyFreeze, a pipeline-aware parameter freezing method that balances accuracy and throughput in pipeline-parallel training.
+100: As indicated by the “Calibrated Backward Pass” region in Figure 1(c), it controls freezing by considering idle time in later execution block, or even increases freezing in the computational bottlenecks to balance computation across GPUs.
+101: By explicitly modeling pipeline schedules as directed acyclic graphs and optimizing freeze ratios accordingly, TimelyFreeze preserves accuracy more effectively while achieving better throughput.
+102: We validate our method on the LLaMA series (1B/8B/13B) across pipeline schedules.
+103: TimelyFreeze lies on or near the Pareto frontier along two key axes—accuracy and throughput—achieving up to 46% throughput improvement with comparable or higher accuracy than baselines.
+104: Moreover, TimelyFreeze generalizes to vision architectures (ViT-L/32 and ConvNeXtV2-L), reducing training time by up to 25% while keeping accuracy drops within 1.5 percentage points relative to the no-freezing baseline.
+105: Collectively, these results demonstrate that TimelyFreeze robustly accelerates training across diverse pipeline-parallel settings, spanning different model architectures, scales, model partitioning heuristics, and hardware configurations.
+106: This work entails substantial, in-depth system-oriented research that directly impacts model training performance.
+107: Our key contributions are summarized as follows:
+108: •
+109: Pipeline-aware freezing: We reduce unnecessary freezing by leveraging runtime GPU idle time that arises from execution dependencies in pipeline schedules.
+110: •
+111: DAG-based formulation: We represent pipeline schedules as directed acyclic graphs and derive expected freeze ratios by solving a linear program.
+112: •
+113: Time-to-accuracy analysis: We provide a theoretical analysis of time-to-accuracy, characterizing the trade-off between throughput and convergence.
+114: 2 Preliminary and Related Work
+115: 2.1 Pipeline Parallelism
+116: Pipeline parallelism partitions a model across multiple devices, enabling training of large-scale models that exceed the memory capacity of a single GPU. By splitting computation into sequential stages, it alleviates memory constraints and accelerates training, and various scheduling strategies have been proposed to maximize throughput.
+117: GPipe. GPipe (Huang et al., 2019) divides a batch into smaller microbatches, enabling different pipeline stages to be executed concurrently across multiple GPUs.
+118: However, GPipe still suffers from notable underutilization due to pipeline bubbles
+119: and incurs an activation memory overhead that grows linearly with the number of microbatches.
+120: 1F1B.
+121: 1F1B (1-Forward 1-Backward) (Narayanan et al., 2019; Fan et al., 2021) interleaves forward and backward computations. By performing a backward pass immediately after the forward pass, 1F1B limits the accumulation of activations and reduces memory overhead.
+122: Nevertheless, 1F1B schedule still suffers from low GPU utilization similarly to GPipe. Subsequently, to further improve utilization, Interleaved 1F1B (Narayanan et al., 2021) divides each stage into multiple micro-stages.
+123: Zero-Bubble.
+124: Recent work such as Zero-Bubble (Qi et al., 2023; Qi et al., 2024) decomposes backward computations into finer-grained units to maximize GPU utilization, approaching near 100% utilization. However, this approach introduces additional communication and synchronization overhead, which can limit practical scalability, especially in heterogeneous or bandwidth-constrained environments.
+125: 2.2 Parameter Freezing
+126: Parameter freezing is a training acceleration technique that selectively skips backward computations for a subset of model parameters to reduce training time.
+127: Prior work has focused on designing stability metrics to determine which parameters to freeze and when, aiming to minimize accuracy loss while maximizing computational efficiency.
+128: Monotonic Freezing from Front Layers.
+129: Early approaches (Brock et al., 2017; Lee et al., 2019) rely on the empirical observation that front layers tend to converge earlier than deeper layers, and thus employ monotonic prefix freezing that freezes layers sequentially from the front to the back. Brock et al. (2017) progressively freeze shallow layers using predefined schedules,
+130: reducing computational cost in CNN models.
+131: Liu et al. (2021) and Wang et al. (2023) calculate layer-level stability metrics to determine the depth of the frozen prefix.
+132: Both methods also cache intermediate activations for the frozen layers, skipping not only backward passes but also redundant forward passes.
+133: Non-Monotonic Freezing.
+134: More recent work (Li et al., 2024) questions the depth-ordered convergence assumption and proposes non-monotonic strategies. Li et al. (2024) observe that, due to residual connections, later layers may stabilize earlier than some intermediate layers.
+135: Chen et al. (2023) further increase granularity by performing parameter-wise freezing in federated learning, using gradient-based stability to reduce communication between clients and the central server.
+136: These methods relax the strict prefix constraint and thus offer greater flexibility.
+137: However, prior freezing methods generally do not account for the characteristics of pipeline parallelism. As illustrated in Figure 1(b), when applied to pipeline-parallel settings, such pipeline-unaware designs can lead to unnecessary freezing that is misaligned with the pipeline execution timeline.
+138: PipeTransformer (He et al., 2021) partly addresses this issue by introducing dynamic load balancing. However, it permanently freezes parameters once selected, which introduces a non-negligible risk of accuracy degradation.
+139: 2.3 Baseline Freezing Methods
+140: We select AutoFreeze (Liu et al., 2021) and APF (Chen et al., 2023) as our baselines, respectively representing the monotonic and non-monotonic freezing methods. Both methods are among the most widely cited in this area.
+141: AutoFreeze.
+142: AutoFreeze estimates layer stability via the gradient-norm change for each layer and freezes layers in prefix order under the assumption that earlier layers converge faster. The gradient norm change for each layer at the K -th stability check is defined as
+143: |
+144: | \displaystyle\text{Score}_{\text{Auto},K}=\frac{\left|\left\|\Delta_{K-1}\right\|-\left\|\Delta_{K}\right\|\right|}{\left\|\Delta_{K-1}\right\|},
+145: |
+146: | (1)
+147: where \Delta_{K} denotes the cumulative parameter update since the (K-1) -th check.
+148: A layer is frozen when (i) all preceding layers are already frozen and (ii) its gradient-norm change falls into the lower P_{\text{Auto}} -th percentile among all layers, controlled by a hyperparameter P_{\text{Auto}} .
+149: APF.
+150: APF identifies parameters whose gradient updates oscillate without a clear trend as sufficiently stabilized and freezes them to reduce computation.
+151: To quantify such oscillatory behavior, APF computes the effective perturbation score for each parameter at the K -th stability check as
+152: |
+153: | \displaystyle\begin{aligned} \text{Score}_{\text{APF},K}&=\frac{|E_{K}|}{E_{K}^{\text{abs}}},\;\;&\left\{\begin{aligned} E_{K}&=\alpha E_{K-1}+(1-\alpha)\Delta_{K},\\
+154: E_{K}^{\text{abs}}&=\alpha E_{K-1}^{\text{abs}}+(1-\alpha)|\Delta_{K}|.\end{aligned}\right.\end{aligned}
+155: |
+156: | (2)
+157: Parameters whose
+158: score falls below the threshold T_{\text{APF}}
+159: are considered sufficiently stable
+160: and frozen.
+161: 3 Proposed Framework: TimelyFreeze
+162: Figure 2:
+163: Method overview of TimelyFreeze.
+164: The system first monitors the upper and lower bounds of execution times and represents the pipeline schedule as a directed acyclic graph (DAG), where nodes and edges respectively denote action blocks and execution dependencies.
+165: Based on the DAG constraints, it solves a linear program to compute the expected freeze ratios \mathbf{r}^{*} .
+166: Finally, it freezes each action block at its corresponding freeze ratio to improve training throughput while preserving accuracy.
+167: TimelyFreeze targets time efficiency and model performance preservation in practical pipeline parallel settings. To handle dynamic real world environment, we determine freeze ratios—how many parameters to freeze—in a fine-grained manner, per microbatch and per stage in the pipeline schedule.
+168: Through the overall training process, our method applies step-level parameter freezing through three phases:
+169: (1) Warm-up and Monitoring (Section 3.1),
+170: (2) Freeze Ratio Formulation (Section 3.2), and
+171: (3) Freezing (Section 3.3).
+172: (1) During the monitoring phase, the system measures the GPU execution time for each forward and backward action, where each action corresponds to a unit of microbatch execution at a pipeline stage.
+173: (2) Based on these runtime measurements, TimelyFreeze constructs a graph representation of the pipeline schedule, which is then used to formulate a linear program that computes the expected freeze ratios \mathbf{r}^{*} . (3) In the subsequent freezing phase, each backward action v_{i} starts freezing its corresponding parameters at r_{i} .
+174: Example.
+175: As an illustrative example, the right gray box in Figure 2
+176: shows a case where the batch time is reduced to about 70% of the original
+177: (left gray box), by freezing backward actions according to the expected freeze
+178: ratios computed in the previous phase (white box).
+179: In this example, each backward action has its own expected freeze ratio, with an
+180: average expected freeze ratio of 60%.
+181: Notation.
+182: To be clear, let t denote the training step and \{T_{w},T_{m},T_{f}\} be the last step of the warm-up phase, the monitoring phase, and the progressive freezing phase, respectively. The notation is summarized in Appendix A.
+183: 3.1 Phase I: Warm-up and Monitoring
+184: We employ an explicit warm-up phase at the beginning of training, as
+185: monitoring is only meaningful after CUDA kernel execution has stabilized.
+186: Accordingly, both monitoring and parameter freezing are disabled for the first
+187: T_{w} steps.
+188: We align T_{w} with the learning-rate warm-up steps, since the parameter updates
+189: during learning-rate ramp-up are highly unstable and even mild freezing can
+190: suppress critical early updates, destabilizing training.
+191: Freezing is therefore activated only after the learning-rate warm-up completes.
+192: Once warm-up ends ( t>T_{w} ), the system starts recording the execution time of
+193: every forward and backward action on each GPU in a two-part monitoring phase.
+194: During the first half, no parameters are frozen so that each action’s maximum backward duration can be measured (i.e., upper-bound monitoring). In the next half, all parameters are frozen to capture the minimum achievable latency (i.e., lower-bound monitoring).
+195: After samples for both bounds are collected (at step t=T_{m} ), the freeze ratios \mathbf{r} are computed by solving the linear program described in Section 3.2.
+196: 3.2 Phase II: Freeze Ratio Formulation
+197: At the end of the monitoring phase ( t=T_{m} ), TimelyFreeze formulates a linear program (LP) based on the GPU execution time measurements of actions. The objective of this LP is to compute the expected freeze ratio for each action.
+198: To ensure broad applicability across pipeline schedules and training settings, we represent the pipeline execution schedule of a batch as a directed acyclic graph (DAG), as described in Section 3.2.1.
+199: Building on this representation, we formulate a linear program that selects freeze ratios
+200: for actions to maximize training throughput while minimizing unnecessary parameter freezing, as detailed in Section 3.2.2.
+201: 3.2.1 Pipeline DAG Construction
+202: Pipeline DAG Nodes.
+203: Let {\mathcal{G}}=({\mathcal{V}},{\mathcal{E}}) be a directed acyclic graph (DAG) representing the pipeline schedule of a batch.
+204: The node set {\mathcal{V}} primarily consists of action nodes v_{(a,m,s)} , each corresponding to an action a of a microbatch m at a stage s , where the action is defined as a combination of
+205: |
+206: | a\in\{f,b\},\quad m\in\{1,\dots,M\},\quad s\in\{1,\dots,S\}.
+207: |
+208: Here, a=f and a=b denote forward and backward computations, respectively, while M and S denote the total numbers of microbatches and pipeline stages.
+209: In addition, we introduce a source node v_{s} and a destination node v_{d} , which represent the start and the end of a batch, respectively.
+210: Pipeline DAG Edges.
+211: Let {\mathcal{E}} denote the set of directed edges in the DAG {\mathcal{G}}=({\mathcal{V}},{\mathcal{E}}) .
+212: Each edge v_{i}\to v_{j}\in{\mathcal{E}} represents an execution dependency, indicating that a node v_{j} cannot begin until a node v_{i} finishes.
+213: {\mathcal{E}} encodes all necessary intra- and inter-stage execution constraints of the pipeline. The edge construction rules are provided in Appendix B.
+214: Node Weights.
+215: Each action node v_{i}\in\mathcal{V} is associated with a weight w_{i} , denoting the execution duration of the action,
+216: |
+217: | w_{i}\in[\,w_{i}^{\min},\,w_{i}^{\max}\,],
+218: |
+219: | (3)
+220: where w_{i}^{\min} and w_{i}^{\max} denote the execution duration when all parameters are frozen and when no parameters are frozen, respectively, as obtained from the monitoring phase.
+221: Additionally, for the source and destination nodes, we define w_{s}=w_{d}=0 , since they are abstract nodes that are not associated with any computation.
+222: Figure 3: Backward-time reduction via parameter freezing.
+223: Figure 3illustrates how the node weight w_{i} varies with the freeze ratio.
+224: The execution time of forward actions (blue) remains unchanged, as forward computations are not affected by parameter freezing. Accordingly, for any forward nodes i=(f,m,s) , w_{i}=w_{i}^{\min}=w_{i}^{\max} holds.
+225: In contrast, backward actions are affected by parameter freezing.
+226: Following the decomposition of backward computation in ZeroBubble analysis (Qi et al., 2023), the backward pass consists of two components:
+227: (1) gradient computation with respect to input activations (in cyan in Figure 3) and
+228: (2) gradient computation with respect to parameters (in green).
+229: Only the latter is influenced by parameter freezing.
+230: As a result, even when parameters are fully frozen, the activation-gradient component remains at w_{i}^{\min} , while the parameter-gradient component decreases according to the freeze ratio.
+231: Freeze Ratio.
+232: The freeze ratio of a node v_{i} is defined as
+233: |
+234: | r_{i}\;:=\;1-\dfrac{w_{i}-w_{i}^{\min}}{\,w_{i}^{\max}-w_{i}^{\min}},\qquad r_{i}\in[0,1]
+235: |
+236: | (4)
+237: when w_{i}^{\max}\!>\!w_{i}^{\min} , and we set r_{i}\!=\!0 when w_{i}^{\max}\!=\!w_{i}^{\min} .
+238: Here, r_{i} quantifies the average fraction of parameters frozen in a node v_{i} . In particular, for forward actions v_{(f,m,s)} whose execution time does not vary with freezing,
+239: |
+240: | w_{(f,m,s)}=w_{(f,m,s)}^{\min}=w_{(f,m,s)}^{\max}\;\;\implies\;\;r_{(f,m,s)}=0.
+241: |
+242: Start Time of Action.
+243: The start time P_{i} of an action node v_{i} is determined by the longest-path over all its predecessors in the DAG such that
+244: |
+245: | P_{i}:=\max_{(v_{j}\to v_{i})\in\mathcal{E}}\big(P_{j}+w_{j}\big),
+246: |
+247: | (5)
+248: where the batch start time according to the source node v_{s} is defined as P_{s}=0 , and the batch execution time corresponds to the start time of the destination node, P_{d} .
+249: 3.2.2 Linear Programming Formulation
+250: We formulate the problem of determining the freeze ratios \mathbf{r} as a linear program (LP) on the previously defined pipeline DAG.
+251: Applying the resulting expected freeze ratios \mathbf{r}^{*} selectively shortens backward computations that are related to the critical path of the end-to-end batch execution time.
+252: Consequently, the overall batch latency is reduced from P_{d}^{\max} (i.e., P_{d} where all w_{i}=w_{i}^{\max} ) to P_{d}^{*} .
+253: Decision Variables.
+254: For each node v_{i}\in\mathcal{V} , including the source and destination nodes v_{s} and v_{d} , we introduce two non-negative real-valued decision variables:
+255: P_{i}\in\mathbb{R}_{\geq 0} and w_{i}\in\mathbb{R}_{\geq 0} , denoting the start time and duration of a node v_{i} , respectively. Together, these variables define the temporal placement of each action block within the pipeline schedule.
+256: Objective Function.
+257: The objective is twofold:
+258: (1) to minimize the batch completion time P_{d} as the primary objective,
+259: and (2) to avoid excessive freezing by minimizing the freeze ratios r_{i} as a secondary objective, subject to an upper-bound r_{\text{max}} .
+260: We enforce this priority by assigning a sufficiently small \lambda\ll 1 to the secondary goal, so that minimizing P_{d} always dominates the optimization.
+261: Accordingly, we formulate the linear objective as
+262: |
+263: | \min\;\Big[\,P_{d}-\lambda\sum_{i\in\mathcal{V}}\delta_{i}w_{i}\,\Big],\qquad\lambda\ll 1.
+264: |
+265: | (6)
+266: The second term therefore acts only as a tie-breaker among solutions with similar batch time P_{d} .
+267: Here, \delta_{i} denotes the reciprocal of the execution-time range, defined as
+268: |
+269: | \delta_{i}=\frac{1}{w_{i}^{\max}-w_{i}^{\min}}\quad\text{if }w_{i}^{\max}>w_{i}^{\min},\text{ and }0\text{ otherwise }.
+270: |
+271: | (7)
+272: With this definition, the term -\delta_{i}w_{i} is linearly proportional to the freeze ratio r_{i} for freezable nodes,
+273: whereas \delta_{i}=0 for nodes whose execution time is unaffected by freezing.
+274: Constraints.
+275: The optimization is subject to the following linear constraints.
+276: |
+277: |
+278: | \displaystyle\text{[1]}\quad P_{j}\geq P_{i}+w_{i},
+279: |
+280: | \displaystyle\forall(i\to j)\in\mathcal{E},
+281: |
+282: |
+283: |
+284: | \displaystyle\text{[2]}\quad w_{i}^{\min}\leq w_{i}\leq w_{i}^{\max},
+285: |
+286: | \displaystyle\forall i\in{\mathcal{V}},
+287: |
+288: |
+289: |
+290: | \displaystyle\text{[3]}\quad P_{s}=0,\;\;w_{s}=0,
+291: |
+292: |
+293: |
+294: | \displaystyle\text{[4]}\quad\sum_{i\in{\mathcal{V}}_{s}}\delta_{i}(w_{i}^{\max}-w_{i})\leq r_{\max}\,|{\mathcal{V}}_{s}|,
+295: |
+296: | \displaystyle\forall s\in\{1,\dots,S\}.
+297: |
+298: Constraint [1] enforces precedence in the DAG, ensuring that an action j cannot start until all predecessor actions i have finished.
+299: Constraint [2] bounds each action duration within [w_{i}^{\min},w_{i}^{\max}] , capturing the feasible latency range under parameter freezing.
+300: Constraint [3] anchors the beginning of the schedule by setting the source node to P_{s}=w_{s}=0 .
+301: Finally, Constraint [4] imposes a stage-wise average freezing budget. Using the linearized freeze ratio r_{i}=\delta_{i}(w_{i}^{\max}-w_{i}) (see Equation 4) for freezable backward nodes i\in{\mathcal{V}}_{s} at a stage s , Constraint [4] is equivalent to
+302: |
+303: | \frac{1}{|{\mathcal{V}}_{s}|}\sum_{i\in{\mathcal{V}}_{s}}r_{i}\leq r_{\max},\quad\forall s,
+304: |
+305: | (8)
+306: which prevents any pipeline stage from being over-frozen on average.
+307: Here, let {\mathcal{V}}_{s}\subseteq{\mathcal{V}} be the set of action nodes assigned to a stage s , and r_{\max} be a user-specified maximum freeze ratio. Although the constraint is imposed at the stage level, r_{\max} effectively bounds the expected parameter-level freeze ratio, since each stage is associated with a distinct set of parameters, and parameter freezing is applied via random selection within each action.
+308: As a result, this constraint ensures that no parameter exceeds the allowable freeze budget in expectation while preserving the full linearity of the LP.
+309: Solving this LP yields execution times w_{i} for all nodes v_{i}\in\mathcal{V} , from which freeze ratios r_{i} are derived.
+310: This formulation ensures that each batch completes in minimal time while freezing parameters in a controlled manner across stages.
+311: Moreover, since the formulation imposes no integrality constraints on the variables, it can be solved in polynomial time using standard linear programming solvers, such as
+312: interior-point methods (Karmarkar, 1984).
+313: 3.3 Phase III: Freezing
+314: After determining the expected freeze ratios \mathbf{r}^{*} , TimelyFreeze applies freezing in a progressive manner.
+315: Specifically, the freeze ratio for each action v_{i} is gradually increased from zero toward r^{*}_{i} .
+316: This smooth transition avoids abrupt changes in freezing behavior that could harm training stability.
+317: Formally, at each step t , parameters are frozen according to the actual freeze ratio \textrm{AFR}_{i,t} .
+318: Once t>T_{f} , the system enters a stable freezing phase, where \textrm{AFR}_{i,t}=r_{i} . The actual freeze ratio for t>T_{m} is defined as
+319: |
+320: | \displaystyle\textrm{AFR}_{i,t}=\min\Big\{r_{i},\;r_{i}\cdot\frac{t-T_{m}}{T_{f}-T_{m}}\Big\}.
+321: |
+322: | (9)
+323: Regarding which parameters to freeze, TimelyFreeze adopts uniform random selection as a strong and unbiased reference.
+324: Under a given \textrm{AFR}_{i,t} , this strategy assigns equal freezing probability to all parameters associated with each action.
+325: As a result, it isolates the effect of the freeze ratio itself from additional heuristics or parameter-level statistics.
+326: Figure 4illustrates the evolution of the actual freeze ratio (blue line) over training steps.
+327: The actual freeze ratio starts from zero at T_{m} , the boundary between the monitoring and freezing phases, and gradually increases toward the expected freeze ratio r^{*} .
+328: As the actual freeze ratio increases, the training throughput (gray line) improves accordingly. The full step-level algorithm is provided in Appendix C.1.
+329: Figure 4: Freeze ratio and training throughput (tokens/sec) across training steps.
+330: After warm-up and monitoring, the freeze ratio is gradually increased toward the expected value r^{*} , resulting in a corresponding increase in training throughput.
+331: 3.4 Time-to-Accuracy Analysis
+332: We analyze convergence in terms of time-to-accuracy (TTA), defined as the
+333: wall-clock time required to reach an \varepsilon -stationary point.
+334: Formally, TTA is given by
+335: |
+336: | \mathrm{TTA}\;=\;\sum_{t=1}^{T_{\varepsilon}}\tau_{t},
+337: |
+338: | (10)
+339: where T_{\varepsilon} denotes the number of optimization steps required to
+340: reach the target stationary level \varepsilon , and \tau_{t} denotes the average execution time at step t .
+341: Iteration Complexity.
+342: Compared to the no-freezing baseline, TimelyFreeze may require more optimization
+343: steps, since parameter freezing partially suppresses gradient updates.
+344: Our analysis makes this trade-off explicit. In expectation, the effective descent
+345: per step is reduced proportionally to the fraction of parameters being updated,
+346: which yields the iteration-complexity scaling,
+347: |
+348: | T_{\varepsilon}^{\mathrm{ours}}\;\approx\;\frac{1}{\bar{p}_{\mathrm{eff}}}\,T_{\varepsilon}^{\mathrm{base}},
+349: |
+350: | (11)
+351: where \bar{p}_{\mathrm{eff}}\in[1-r_{\max},1] denotes the average effective update
+352: probability (see Appendix D.1 for the definition).
+353: Per-step Execution Time.
+354: Despite the increase in iteration count, TimelyFreeze reduces the per-step
+355: execution time by freezing throughput bottlenecks along the pipeline critical
+356: path.
+357: We summarize this effect by
+358: |
+359: | \tau^{\mathrm{ours}}\;=\;\kappa\,\tau^{\mathrm{base}},\qquad\kappa\in(0,1),
+360: |
+361: | (12)
+362: where \kappa captures the per-step speedup induced by parameter freezing under TimelyFreeze.
+363: We note that \kappa is directly observable in practice.
+364: Since \tau\propto 1\,/\,\text{throughput} , it can be computed from the measured
+365: throughput values reported in the experimental results.
+366: Time-to-Accuracy Trade-off.
+367: Combining the above results, the overall TTA ratio satisfies
+368: |
+369: | \frac{\mathrm{TTA}_{\varepsilon}^{\mathrm{ours}}}{\mathrm{TTA}_{\varepsilon}^{\mathrm{base}}}\;\approx\;\frac{\kappa}{\bar{p}_{\mathrm{eff}}}.
+370: |
+371: | (13)
+372: Therefore, TimelyFreeze achieves a smaller time-to-accuracy whenever
+373: the per-step speedup outweighs the increase in iteration complexity, i.e.,
+374: \kappa<\bar{p}_{\mathrm{eff}} , which depends on the effective update probability in practice, even for a large r_{\max} .
+375: A detailed derivation is provided in Appendix D.
+376: 4 Experiments
+377: Table 1:
+378: Comparison of freezing methods across different pipeline schedules (LLaMA-3-8B).
+379: The average accuracy of the pretrained (no fine-tuning) baseline is 50.81.
+380: The best and second-best values among the five freezing methods (APF, AutoFreeze, TimelyFreeze, and two hybrid variants) are highlighted in bold and underline, respectively. r_{max} for TimelyFreeze is set to 0.8 for all experiments.
+381: | GPipe
+382: | 1F1B
+383: |
+384: Freeze
+385: Method
+386: | Accuracy Preservation
+387: | Time Efficiency
+388: |
+389: Freeze
+390: Method
+391: | Accuracy Preservation
+392: | Time Efficiency
+393: |
+394: Avg. Acc. ( \Delta ) \uparrow
+395: | Frz. Ratio
+396: |
+397: Throughput ( \Delta ) \uparrow
+398: | MFU \uparrow
+399: |
+400: Avg. Acc. ( \Delta ) \uparrow
+401: | Frz. Ratio
+402: |
+403: Throughput ( \Delta ) \uparrow
+404: | MFU \uparrow
+405: | No Freezing
+406: |
+407: | 54.63
+408: | (+0.00)
+409: | 0.00
+410: |
+411: | 5737
+412: | (0.00)
+413: | 25.94
+414: | No Freezing
+415: |
+416: | 54.63
+417: | (+0.00)
+418: | 0.00
+419: |
+420: | 5748
+421: | (0.00)
+422: | 25.99
+423: | APF
+424: |
+425: | 54.65
+426: | (+0.02)
+427: | 28.85
+428: |
+429: | 7293
+430: | (27.12)
+431: | 33.20
+432: | APF
+433: |
+434: | 54.65
+435: | (+0.02)
+436: | 28.85
+437: |
+438: | 7312
+439: | (27.20)
+440: | 33.29
+441: | AutoFreeze
+442: |
+443: | 53.99
+444: | (-0.64)
+445: | 41.69
+446: |
+447: | 7351
+448: | (28.13)
+449: | 33.45
+450: | AutoFreeze
+451: |
+452: | 53.99
+453: | (-0.64)
+454: | 41.69
+455: |
+456: | 7367
+457: | (28.15)
+458: | 33.52
+459: | TimelyFreeze
+460: |
+461: | 54.79
+462: | (+0.17)
+463: | 35.64
+464: |
+465: | 7821
+466: | (36.33)
+467: | 35.69
+468: | TimelyFreeze
+469: |
+470: | 54.69
+471: | (+0.07)
+472: | 33.14
+473: |
+474: | 7867
+475: | (36.87)
+476: | 35.89
+477: | +APF
+478: |
+479: | 54.82
+480: | (+0.19)
+481: | 35.66
+482: |
+483: | 7839
+484: | (36.63)
+485: | 35.77
+486: | +APF
+487: |
+488: | 54.84
+489: | (+0.21)
+490: | 34.23
+491: |
+492: | 8024
+493: | (39.59)
+494: | 36.66
+495: | +AutoFreeze
+496: |
+497: | 54.65
+498: | (+0.03)
+499: | 35.06
+500: |
+501: | 7774
+502: | (35.50)
+503: | 35.44
+504: | +AutoFreeze
+505: |
+506: | 54.82
+507: | (+0.19)
+508: | 32.62
+509: |
+510: | 7827
+511: | (36.16)
+512: | 35.70
+513: | Interleaved 1F1B
+514: | ZBV
+515: |
+516: Freeze
+517: Method
+518: | Accuracy Preservation
+519: | Time Efficiency
+520: |
+521: Freeze
+522: Method
+523: | Accuracy Preservation
+524: | Time Efficiency
+525: |
+526: Avg. Acc. ( \Delta ) \uparrow
+527: | Frz. Ratio
+528: |
+529: Throughput ( \Delta ) \uparrow
+530: | MFU \uparrow
+531: |
+532: Avg. Acc. ( \Delta ) \uparrow
+533: | Frz. Ratio
+534: |
+535: Throughput ( \Delta ) \uparrow
+536: | MFU \uparrow
+537: | No Freezing
+538: |
+539: | 54.78
+540: | (+0.00)
+541: | 0.00
+542: |
+543: | 6173
+544: | (0.00)
+545: | 27.91
+546: | No Freezing
+547: |
+548: | 54.66
+549: | (+0.00)
+550: | 0.00
+551: |
+552: | 6889
+553: | (0.00)
+554: | 31.16
+555: | APF
+556: |
+557: | 54.99
+558: | (+0.21)
+559: | 58.05
+560: |
+561: | 7734
+562: | (25.29)
+563: | 35.20
+564: | APF
+565: |
+566: | 54.47
+567: | (-0.19)
+568: | 43.35
+569: |
+570: | 8522
+571: | (23.70)
+572: | 38.71
+573: | AutoFreeze
+574: |
+575: | 54.54
+576: | (-0.24)
+577: | 76.86
+578: |
+579: | 7495
+580: | (21.43)
+581: | 34.10
+582: | AutoFreeze
+583: |
+584: | 54.86
+585: | (+0.20)
+586: | 24.28
+587: |
+588: | 7139
+589: | (3.62)
+590: | 32.28
+591: | TimelyFreeze
+592: |
+593: | 54.64
+594: | (-0.14)
+595: | 60.07
+596: |
+597: | 8081
+598: | (30.91)
+599: | 36.78
+600: | TimelyFreeze
+601: |
+602: | 54.72
+603: | (+0.06)
+604: | 69.92
+605: |
+606: | 8939
+607: | (29.75)
+608: | 40.70
+609: | +APF
+610: |
+611: | 54.71
+612: | (-0.06)
+613: | 60.72
+614: |
+615: | 8108
+616: | (31.36)
+617: | 36.92
+618: | +APF
+619: |
+620: | 55.03
+621: | (+0.37)
+622: | 69.97
+623: |
+624: | 8923
+625: | (29.51)
+626: | 40.63
+627: | +AutoFreeze
+628: |
+629: | 54.72
+630: | (-0.06)
+631: | 60.76
+632: |
+633: | 8057
+634: | (30.53)
+635: | 36.67
+636: | +AutoFreeze
+637: |
+638: | 55.05
+639: | (+0.39)
+640: | 70.03
+641: |
+642: | 8909
+643: | (29.32)
+644: | 40.56
+645: 4.1 Hybrid Variants
+646: As discussed in Section 2.3, both baselines, APF (Chen et al., 2023)
+647: and AutoFreeze (Liu et al., 2021), jointly determine
+648: how many parameters to freeze and which parameters to freeze, based on gradient-derived metrics.
+649: In contrast, our method focuses solely on the first component by computing
+650: stage-wise freeze ratios via our LP formulation, while remaining agnostic to
+651: parameter selection.
+652: To demonstrate that our method is complementary to existing parameter
+653: selection heuristics, we introduce two hybrid variants, TimelyFreeze+APF and TimelyFreeze+Auto.
+654: In these variants, TimelyFreeze determines the freeze budget, while APF or AutoFreeze provides the parameter selection metric.
+655: Detailed hybrid mechanism is provided in Appendix C.2.
+656: 4.2 Experimental Setup
+657: Models and Datasets.
+658: We conduct instruction finetuning task on the LLaMA-3.2-1B, LLaMA-3-8B (Dubey et al., 2023), and LLaMA-2-13B (Touvron et al., 2024) models using the Alpaca-GPT4 (Peng et al., 2023) and OpenHermes-2.5 (Teknium, 2023) datasets to evaluate various freezing methods.
+659: To further demonstrate the applicability across domains,
+660: we conduct image classification by finetuning pretrained ViT-L/32 (Huggingface, 2025) and ConvNeXt-V2-L (Woo et al., 2023) models on ImageNet-1K (Deng et al., 2009) and Food-101 (Bossard et al., 2014) datasets, respectively.
+661: For detailed experiment setup, refer to Appendix E.1.
+662: The source code is available at https://anonymous.4open.science/r/TimelyFreeze/.
+663: Pipeline Schedules.
+664: We validate our method under four representative pipeline schedules: GPipe (Huang et al., 2019), 1F1B (Fan et al., 2021), Interleaved 1F1B (Narayanan et al., 2021), and Zero-Bubble V-shaped (ZBV) (Qi et al., 2023).
+665: We employ the TorchTitan framework (Liang et al., 2025) developed by PyTorch team for distributed training.
+666: Hardware Settings.
+667: All experiments were conducted on four Nvidia A6000 48GB GPUs and four H200 140GB GPUs.
+668: A6000 GPUs communicate via PCIe, whereas H200 GPUs communicate through NVLink.
+669: Metrics.
+670: Model performance is assessed using the average accuracy over four widely used benchmarks: MMLU (5 shots) (Hendrycks et al., 2020),
+671: HellaSwag (zero shot) (Zellers et al., 2019),
+672: ARC-Challenge (ARC-C) (10 shots) (Clark et al., 2018),
+673: and TruthfulQA (zero shot) (Lin et al., 2022).
+674: We report the mean proportion of frozen parameters across all GPUs using the
+675: average freeze ratio (“Frz. Ratio” in Table 1), which is defined as
+676: |
+677: | \text{Average Freeze Ratio}\;:=\;\mathbb{E}_{t,i,j}\!\left[\mathbb{I}^{(j)}_{t,i}\right],
+678: |
+679: where \mathbb{I}^{(j)}_{t,i} is a Bernoulli random variable induced by uniform
+680: random freezing, indicating whether a parameter j of node v_{i} is frozen at
+681: step t .
+682: 5 Results and Discussion
+683: Table 1shows the accuracy preservation and time efficiency results for LLaMA-3-8B under four pipeline schedules.
+684: Here, the accuracy gain (e.g., \Delta of Avg. Acc.) denotes the difference in average accuracy relative to the
+685: no-freezing baseline, while throughput gain ( \Delta of Throughput) represents the relative throughput improvement.
+686: Across all pipeline schedules, TimelyFreeze and its hybrid variants consistently improve throughput over the no-freezing baseline, while largely preserving accuracy.
+687: In particular, under the 1F1B schedule, TimelyFreeze+APF achieves the highest throughput improvement of 39.59% with comparable accuracy, and in some cases slightly surpasses the no-freezing baseline.
+688: Compared to the baseline freezing methods (APF and AutoFreeze), TimelyFreeze and its hybrids generally achieve higher or comparable accuracy across the GPipe, 1F1B, and ZBV schedules.
+689: 5.1 Scaling Toward Larger Models
+690: Figure 5presents the accuracy–throughput trade-offs for the
+691: LLaMA family as the model size scales from 1B to 8B and 13B under four pipeline schedules.
+692: Across most settings, TimelyFreeze and its hybrid variants consistently lie on or near the Pareto frontier, achieving higher throughput with comparable accuracy relative to both the no-freezing baseline and baseline freezing methods.
+693: For LLaMA-1B (top) in Figure 5, TimelyFreeze and its hybrid variants achieve moderate throughput improvements of up to 19–21% with less than 1%p accuracy degradation compared to the no-freezing baseline.
+694: As the model size increases, these gains become more pronounced.
+695: On LLaMA-8B (middle) and LLaMA-13B (bottom), TimelyFreeze yields substantially larger throughput improvements across GPipe and 1F1B schedules, even up to 46% than the no-freezing baseline in 13B, while preserving accuracy at the comparable extent.
+696: For Interleaved 1F1B and ZBV on LLaMA-13B, accuracy shows higher variance, suggesting that additional multi-seed evaluation would be useful to assess stability at this scale.
+697: Overall, the scaling results indicate that TimelyFreeze scales favorably with
+698: model size, yielding higher throughput gains while maintaining comparable
+699: accuracy.
+700: See Appendices E.2–E.3 for the detailed numbers and benchmark scores. In addition, the examples of actual pipeline execution schedules are visualized in Appendix F.1.
+701: LLaMA-1B
+702: LLaMA-8B
+703: LLaMA-13B
+704: Figure 5: Comparison of accuracy–throughput trade-offs under GPipe, 1F1B, Interleaved 1F1B, and Zero-Bubble (ZBV).
+705: 5.2 Freezing Controller Sensitivity
+706: Figure 6: Accuracy–throughput trade-offs on LLaMA-1B under different freezing controller values with the 1F1B schedule.
+707: In Figure 6, we analyze the accuracy–throughput trade-off
+708: of the LLaMA-1B model across different user-specified freezing controller values
+709: (i.e., r_{\max} for TimelyFreeze, T_{\mathrm{APF}} for APF, and
+710: P_{\mathrm{Auto}} for AutoFreeze). The control values used for each method are indicated in the figure, and the corresponding results are arranged from left to right in the order of increasing freezing strength.
+711: TimelyFreeze exhibits a consistent trend, as r_{\max} decreases (i.e., weaker freezing), throughput decreases monotonically while accuracy remains well preserved across different r_{\max} values.
+712: In contrast, the two baselines consistently achieve lower throughput and accuracy
+713: than TimelyFreeze across all controller settings.
+714: Moreover, their throughput and accuracy vary irregularly as the user-specified hyperparameters change, indicating that r_{\max} provides more predictable and controllable throughput behavior in TimelyFreeze.
+715: Based on our experience, we recommend selecting r_{max} in the range of [0.5,0.8] , where accuracy is rather stable, depending on the desired accuracy–throughput trade-off.
+716: 5.3 Generalization on Vision Models
+717: We further evaluate the generality of TimelyFreeze on vision models, including ViT-L/32 and ConvNeXt-V2-L, with detailed results reported in
+718: Appendix G.
+719: ConvNeXt-V2-L exhibits highly unbalanced parameter distributions, where deeper layers contain substantially larger parameter groups, leading to execution-time skew under pipeline parallelism.
+720: As explained in Appendix G.1, across different partitioning heuristics, TimelyFreeze consistently reduces training time while maintaining accuracy comparable to existing freezing methods.
+721: Under the GPipe and 1F1B schedules, TimelyFreeze often attains the best or second-best training time among all freezing methods, despite using moderate freeze ratios.
+722: This result shows that LP-based, pipeline-aware freezing effectively addresses execution-time imbalance arising from architectural unevenness.
+723: Consistent robustness is also observed for ViT-L/32 finetuning in Appendix G.2.
+724: While APF suffers from severe accuracy degradation due to aggressive, metric-driven freezing, TimelyFreeze preserves accuracy close to the no-freezing baseline while achieving the largest training-time reduction under both pipeline schedules.
+725: This result indicates that TimelyFreeze generalizes robustly beyond a specific model structure or task, providing stable performance even when importance metrics are noisy or unreliable.
+726: 6 Conclusion
+727: We proposed TimelyFreeze, an adaptive parameter-freezing mechanism for pipeline-parallel training that explicitly incorporates pipeline execution structure.
+728: By modeling the pipeline schedule as a DAG and computing stage-wise freeze ratios via linear programming, TimelyFreeze reduces batch latency while preserving model accuracy.
+729: Extensive experiments on large language models and vision models demonstrate that TimelyFreeze consistently achieves superior accuracy–throughput trade-offs across pipeline schedules.
+730: Future work includes extending TimelyFreeze to multi-node settings and integrating it with hybrid parallelism.
+731: Acknowledgements
+732: This work was supported by Institute of Information & Communications Technology Planning & Evaluation (IITP) grant funded by the Korea government (MSIT) (No. RS-2020-II200862, DB4DL: High-Usability and Performance In-Memory Distributed DBMS for Deep Learning, 50% and No. RS-2022-II220157, Robust, Fair, Extensible Data-Centric Continual Learning, 50%).
+733: Impact Statement
+734: This work introduces TimelyFreeze, a system-level optimization technique that improves the efficiency of pipeline-parallel training by aligning parameter-freezing decisions with execution-time dynamics. By reducing redundant computation without modifying model architectures or learning objectives, TimelyFreeze can lower training time and computational cost for large-scale models, potentially reducing energy consumption and improving accessibility to large-model training in resource-constrained environments.
+735: The method is intended for use in controlled training settings and does not alter model inference behavior or introduce new capabilities that could raise additional ethical concerns beyond those associated with the underlying models. As with other efficiency-oriented system optimizations, the broader societal impacts of this work depend on how large-scale models are ultimately deployed. Overall, we do not foresee any specific negative impacts unique to TimelyFreeze beyond those already present in large-scale model training and deployment.

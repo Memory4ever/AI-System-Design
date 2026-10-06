@@ -1,0 +1,446 @@
+[
+  {
+    "tag": "h5",
+    "text": "Report GitHub Issue"
+  },
+  {
+    "tag": "p",
+    "text": "Content selection saved. Describe the issue below:"
+  },
+  {
+    "tag": "h1",
+    "text": "DAC-LoRA: Dynamic Adversarial Curriculum for Efficient and Robust Few-Shot Adaptation"
+  },
+  {
+    "tag": "h6",
+    "text": "Abstract"
+  },
+  {
+    "tag": "p",
+    "text": "Vision-Language Models (VLMs) are foundational to critical applications like autonomous driving, medical diagnosis, and content moderation. While Parameter-Efficient Fine-Tuning (PEFT) methods like LoRA enable their efficient adaptation to specialized tasks, these models remain vulnerable to adversarial attacks that can compromise safety-critical decisions. CLIP, the backbone for numerous downstream VLMs, is a high-value target whose vulnerabilities can cascade across the multimodal AI ecosystem.We propose Dynamic Adversarial Curriculum (DAC-LoRA) , a novel framework that integrates adversarial training into PEFT. The core principle of our method—an intelligent curriculum of progressively challenging attacks—is general and can potentially be applied to any iterative attack method. Guided by the First-Order Stationary Condition (FOSC) and a TRADES-inspired loss, DAC-LoRA achieves substantial improvements in adversarial robustness without significantly compromising clean accuracy. Our work presents an effective, lightweight, and broadly applicable method to demonstrate that the DAC-LoRA framework can be easily integrated into a standard PEFT pipeline to significantly enhance robustness."
+  },
+  {
+    "tag": "h2",
+    "text": "1 Introduction"
+  },
+  {
+    "tag": "p",
+    "text": "Vision-Language Models (VLMs) have revolutionized computer vision by learning rich, transferable representations from vast amounts of image-text data [ 14 , 9 , 11 ] . Their ability to perform zero-shot classification on unseen tasks has made them a cornerstone of modern AI [ 19 ] . However, to achieve state-of-the-art performance on specialized, downstream tasks, these powerful models require adaptation."
+  },
+  {
+    "tag": "p",
+    "text": "Full fine-tuning of such massive models is often computationally prohibitive. This has spurred the development of Parameter-Efficient Fine-Tuning (PEFT) techniques [ 2 , 10 , 17 , 21 , 15 , 7 ] , some of which adapt a model by training only a small fraction of its parameters [ 7 , 17 , 4 ] . Among these, Low-Rank Adaptation (LoRA) has emerged as a particularly effective and efficient method [ 7 ] . Recent work shows that applying LoRA to CLIP (CLIP-LoRA) is a powerful strategy for few-shot adaptation, achieving impressive accuracy on new tasks with minimal training and no task-specific hyperparameter tuning [ 19 ] ."
+  },
+  {
+    "tag": "p",
+    "text": "Despite their accuracy on clean data, a critical and often overlooked aspect of fine-tuned VLMs is their vulnerability to adversarial attacks [ 6 , 12 ] . These attacks use small, human-imperceptible perturbations to cause the model to elicit incorrect classifications with high confidence. Crucially, standard fine-tuning on clean examples does not inherently confer robustness [ 8 ] , leaving these powerful models fragile and unreliable in security-sensitive applications."
+  },
+  {
+    "tag": "p",
+    "text": "To address this gap, our work integrates robust adversarial training directly into the parameter-efficient LoRA framework. Instead of fine-tuning only on clean data or with fixed-strength attacks, our core contribution is the use of a dynamic curriculum of adversarial examples . Inspired by findings that a gradually increasing attack difficulty is more effective [ 18 ] , we use the First-Order Stationary Condition (FOSC) to intelligently control the attack potency throughout training. This allows the model to first build a foundation of robustness against simpler attacks before being exposed to more challenging ones. The result is DAC-LoRA, a method that produces an accurate, efficient, and robustly adapted model."
+  },
+  {
+    "tag": "figcaption",
+    "text": "Figure 1 : Adversarial examples ( 𝐱 adv \\mathbf{x}_{\\text{adv}} ) are generated from clean images ( 𝐱 clean \\mathbf{x}_{\\text{clean}} ) using a PGD attack, with its potency dynamically controlled by the FOSC criterion. A TRADES-inspired loss, computed from the LoRA-adapted image and text encoders, is used to update only the low-rank matrices ( 𝐀 , 𝐁 \\mathbf{A},\\mathbf{B} ), while the original CLIP weights remain frozen."
+  },
+  {
+    "tag": "h2",
+    "text": "2 Preliminaries"
+  },
+  {
+    "tag": "p",
+    "text": "Our approach integrates parameter-efficient fine-tuning with a novel adversarial training strategy. This section reviews the four foundational concepts upon which our work is built: Low-Rank Adaptation (LoRA), standard adversarial attack generation, the TRADES framework for robust optimization, and the FOSC criterion for measuring attack potency."
+  },
+  {
+    "tag": "h3",
+    "text": "2.1 Few-Shot Adaptation with LoRA"
+  },
+  {
+    "tag": "p",
+    "text": "To adapt large pre-trained models without incurring the prohibitive cost of full fine-tuning, we use the Parameter-Efficient Fine-Tuning (PEFT) technique known as Low-Rank Adaptation (LoRA) [ 7 ] . LoRA injects small, trainable low-rank matrices into the existing layers of a model. For a given weight matrix 𝐖 \\mathbf{W} , its update is approximated by two smaller matrices, 𝐀 \\mathbf{A} and 𝐁 \\mathbf{B} , such that the forward pass becomes h = 𝐖𝐱 + γ ​ 𝐁𝐀𝐱 h=\\mathbf{W}\\mathbf{x}+\\gamma\\mathbf{B}\\mathbf{A}\\mathbf{x} . This is highly effective for the few-shot adaptation of CLIP [ 14 , 19 ] , as only the LoRA matrices ( 𝐀 , 𝐁 \\mathbf{A},\\mathbf{B} ) are trained, leaving the vast majority of the original model parameters frozen."
+  },
+  {
+    "tag": "h3",
+    "text": "2.2 Adversarial Attack Methods"
+  },
+  {
+    "tag": "p",
+    "text": "Adversarial attacks seek to generate a small, imperceptible perturbation 𝜹 \\boldsymbol{\\delta} that, when added to a clean image 𝐱 0 \\mathbf{x}^{0} , maximizes the model’s loss. We use the following standard attack method to generate adversarial examples for our training curriculum."
+  },
+  {
+    "tag": "p",
+    "text": "Projected Gradient Descent (PGD) is a powerful, iterative attack widely used as a benchmark for evaluating model robustness [ 12 ] . It takes multiple small steps of size α \\alpha in the direction of the gradient sign. After each step, it projects the result back into the ϵ \\epsilon -ball around the original image to ensure the perturbation remains within the allowed magnitude:"
+  },
+  {
+    "tag": "tr",
+    "text": "𝐱 k + 1 = Proj ‖ 𝐱 − 𝐱 0 ‖ ∞ ≤ ϵ ​ ( 𝐱 k + α ⋅ sign ​ ( ∇ 𝐱 ℒ ​ ( h 𝜽 ​ ( 𝐱 k ) , y ) ) ) \\mathbf{x}^{k+1}=\\text{Proj}_{\\|\\mathbf{x}-\\mathbf{x}^{0}\\|_{\\infty}\\leq\\epsilon}\\left(\\mathbf{x}^{k}+\\alpha\\cdot\\text{sign}(\\nabla_{\\mathbf{x}}\\mathcal{L}(h_{\\boldsymbol{\\theta}}(\\mathbf{x}^{k}),y))\\right) (1)"
+  },
+  {
+    "tag": "h3",
+    "text": "2.3 Adversarial Robustness with TRADES"
+  },
+  {
+    "tag": "p",
+    "text": "The goal of adversarial training is to solve a min-max optimization problem that balances performance on clean data with robustness against attacks. The TRADES framework provides a principled method for this by decomposing the objective into a clean loss and a robustness-regularization term [ 20 ] . The original TRADES loss is:"
+  },
+  {
+    "tag": "tr",
+    "text": "ℒ TRADES = ℒ ( h ( 𝐱 0 ) , y ) + β ⋅ KL ( h ( 𝐱 0 ) | | h ( 𝐱 adv ) ) \\mathcal{L}_{\\text{TRADES}}=\\mathcal{L}(h(\\mathbf{x}^{0}),y)+\\beta\\cdot\\text{KL}(h(\\mathbf{x}^{0})||h(\\mathbf{x}_{\\text{adv}})) (2)"
+  },
+  {
+    "tag": "p",
+    "text": "where KL is the Kullback-Leibler divergence. Our work uses a TRADES-inspired variant where the KL-divergence term is replaced with a cosine similarity loss between the feature embeddings of the clean and adversarial images. This serves a similar purpose by regularizing the model’s feature space, encouraging it to produce consistent representations even when the input is perturbed."
+  },
+  {
+    "tag": "h3",
+    "text": "2.4 First-Order Stationary Condition (FOSC)"
+  },
+  {
+    "tag": "p",
+    "text": "To implement a dynamic curriculum, we need a way to measure the strength of an adversarial example. The First-Order Stationary Condition (FOSC) provides a principled criterion to quantify how well the inner maximization problem of an attack has been solved [ 18 ] . For an adversarial example 𝐱 k \\mathbf{x}^{k} , the FOSC score quantifies the potential to further increase the model’s loss. The closed-form solution is:"
+  },
+  {
+    "tag": "tr",
+    "text": "c ⁡ ( 𝐱 k ) = ϵ ​ ‖ ∇ 𝐱 ℒ ​ ( h ⁡ ( 𝐱 k ) , y ) ‖ 1 − ⟨ 𝐱 k − 𝐱 0 , ∇ 𝐱 ℒ ​ ( h ⁡ ( 𝐱 k ) , y ) ⟩ c(\\mathbf{x}^{k})=\\epsilon\\|\\nabla_{\\mathbf{x}}\\mathcal{L}(h(\\mathbf{x}^{k}),y)\\|_{1}-\\langle\\mathbf{x}^{k}-\\mathbf{x}^{0},\\nabla_{\\mathbf{x}}\\mathcal{L}(h(\\mathbf{x}^{k}),y)\\rangle (3)"
+  },
+  {
+    "tag": "p",
+    "text": "We provide an intuitive derivation and further details on FOSC in the Supplementary Material (see Section 6 ). A lower FOSC score indicates a stronger , better-converged adversarial example [ 18 ] . This criterion is the cornerstone of our dynamic curriculum, enabling us to precisely control attack difficulty during training."
+  },
+  {
+    "tag": "figcaption",
+    "text": "Figure 2 : Training dynamics of our DAC-LoRA framework on the UCF101 dataset, illustrating the principles of our dynamic curriculum. Unlike a fixed-strength PGD attack, our FOSC-PGD method dynamically adjusts attack potency based on a decaying threshold, as detailed mathematically on the left. The middle plot visualizes this curriculum, showing how the required attack strength (green line) increases during training. The result, shown on the right, is a significant improvement in adversarial robustness (light blue line)."
+  },
+  {
+    "tag": "h2",
+    "text": "3 Methodology: Adversarial LoRA with a Dynamic Curriculum"
+  },
+  {
+    "tag": "p",
+    "text": "Our method synergizes the efficiency of LoRA with a robust training objective by fine-tuning the LoRA parameters on a dynamic curriculum of adversarial examples. The overall workflow is illustrated in Figure 1 ."
+  },
+  {
+    "tag": "h3",
+    "text": "3.1 Robust Fine-Tuning Objective"
+  },
+  {
+    "tag": "p",
+    "text": "We adapt the standard adversarial training objective for the PEFT setting. Our goal is to find the optimal LoRA parameters 𝜽 LoRA \\boldsymbol{\\theta}_{\\text{LoRA}} that minimize the loss on adversarially perturbed data, while the pre-trained CLIP parameters 𝜽 CLIP \\boldsymbol{\\theta}_{\\text{CLIP}} remain frozen. We employ a TRADES-inspired loss function that balances performance on adversarial examples with feature consistency:"
+  },
+  {
+    "tag": "tr",
+    "text": "min 𝜽 LoRA ⁡ 𝔼 ( 𝐱 0 , y ) ∼ 𝒟 ​ [ ℒ ⁡ ( h ⁡ ( 𝐱 adv ) , y ) + β ⋅ ℒ sim ​ ( h ⁡ ( 𝐱 0 ) , h ⁡ ( 𝐱 adv ) ) ] \\min_{\\boldsymbol{\\theta}_{\\text{LoRA}}}\\mathbb{E}_{(\\mathbf{x}^{0},y)\\sim\\mathcal{D}}\\left[\\mathcal{L}(h(\\mathbf{x}_{\\text{adv}}),y)+\\beta\\cdot\\mathcal{L}_{\\text{sim}}(h(\\mathbf{x}^{0}),h(\\mathbf{x}_{\\text{adv}}))\\right] (4)"
+  },
+  {
+    "tag": "p",
+    "text": "where 𝐱 adv \\mathbf{x}_{\\text{adv}} is the generated adversarial example, ℒ \\mathcal{L} is the cross-entropy loss, and ℒ sim \\mathcal{L}_{\\text{sim}} is a cosine similarity loss between the feature embeddings of the clean ( 𝐱 0 \\mathbf{x}^{0} ) and adversarial images."
+  },
+  {
+    "tag": "h3",
+    "text": "3.2 The Dynamic FOSC Attack Curriculum"
+  },
+  {
+    "tag": "p",
+    "text": "Instead of using a fixed-strength PGD attack, we implement a dynamic curriculum based on the FOSC criterion (see Section 2.4 ). This allows us to start with weaker attacks and gradually increase their potency as the model becomes more robust. We define a dynamic FOSC threshold c t c_{t} that decays linearly over training iterations t t :"
+  },
+  {
+    "tag": "tr",
+    "text": "c t = max ⁡ ( c max − t ⋅ c max T ′ , 0 ) c_{t}=\\max(c_{\\max}-t\\cdot\\frac{c_{\\max}}{T^{\\prime}},0) (5)"
+  },
+  {
+    "tag": "p",
+    "text": "where c max c_{\\max} is a high initial value and T ′ T^{\\prime} is the curriculum duration. The PGD attack on an example is halted as soon as its FOSC score (from Eq. 3 ) falls below this threshold. This ensures the model learns robust features in a stable and progressive manner."
+  },
+  {
+    "tag": "h3",
+    "text": "3.3 The DAC-LoRA Algorithm"
+  },
+  {
+    "tag": "p",
+    "text": "Our complete procedure is outlined in Algorithm 1 . At each training step, we first generate a batch of adversarial examples using our FOSC-controlled PGD attack. Then, we compute our robust loss function and use the resulting gradients to update only the LoRA parameters."
+  },
+  {
+    "tag": "figcaption",
+    "text": "Algorithm 1 DAC-LoRA Fine-Tuning"
+  },
+  {
+    "tag": "figcaption",
+    "text": "Table 1 : Comparison of Clean and Adversarial Accuracy (%). Our DAC-LoRA is compared against a standard CLIP-LoRA baseline and a naive PGD-LoRA adversarial baseline. The CLIP-LoRA baseline results are for a 4-shot setup. The highest adversarial accuracy for each setting is in bold . Values in red indicate training instability where model performance collapsed. A more extensive ablation study is also provided in the Supplementary Material (see table 2 )"
+  },
+  {
+    "tag": "tr",
+    "text": "CLIP-LoRA (Baseline) PGD-LoRA (Baseline) DAC-LoRA (Ours)"
+  },
+  {
+    "tag": "tr",
+    "text": "Backbone Dataset Clean Adv Clean Adv Clean Adv"
+  },
+  {
+    "tag": "tr",
+    "text": "ViT-B/16 Caltech101 95.16 29.19 82.60 61.01 94.20 72.86"
+  },
+  {
+    "tag": "tr",
+    "text": "DTD 63.73 6.68 37.59 19.50 55.20 31.44"
+  },
+  {
+    "tag": "tr",
+    "text": "Oxford Pets 80.99 10.08 4.80 3.24 81.98 44.45"
+  },
+  {
+    "tag": "tr",
+    "text": "UCF101 80.44 4.00 1.14 1.14 71.85 37.75"
+  },
+  {
+    "tag": "tr",
+    "text": "ViT-B/32 Caltech101 93.58 41.19 82.64 58.99 91.36 71.03"
+  },
+  {
+    "tag": "tr",
+    "text": "DTD 60.10 10.10 36.82 17.79 47.99 29.37"
+  },
+  {
+    "tag": "tr",
+    "text": "Oxford Pets 85.36 11.78 3.05 2.92 78.33 36.77"
+  },
+  {
+    "tag": "tr",
+    "text": "UCF101 74.55 7.89 0.93 0.69 65.08 33.33"
+  },
+  {
+    "tag": "h2",
+    "text": "4 Results"
+  },
+  {
+    "tag": "p",
+    "text": "We evaluate our proposed framework, DAC-LoRA , on four diverse image classification datasets: Caltech101 [ 5 ] , DTD [ 3 ] , Oxford Pets [ 13 ] , and UCF101 [ 16 ] . We compare its performance against two relevant baselines: a standard CLIP-LoRA fine-tuning on clean data and a naive PGD-LoRA adversarial fine-tuning. All models are evaluated for accuracy on the clean test set and robustness against a standard PGD attack, with specific parameters detailed in the Supplementary Material."
+  },
+  {
+    "tag": "p",
+    "text": "The goal of this evaluation is not to establish a new state-of-the-art in adversarial defense, but to provide a clear proof-of-concept. We aim to demonstrate that the DAC framework can be easily integrated into a standard PEFT pipeline to significantly enhance robustness. The results in Table 1 show that DAC-LoRA successfully achieves this, providing strong adversarial protection without significantly compromising accuracy."
+  },
+  {
+    "tag": "p",
+    "text": "The results presented in Table 1 offer a clear narrative. While standard CLIP-LoRA achieves high clean accuracy, its robustness against adversarial attacks is consistently low, with adversarial accuracy often falling below 30%. This establishes a baseline of a capable but fragile model."
+  },
+  {
+    "tag": "p",
+    "text": "Our experiments highlight a critical finding: naive adversarial fine-tuning with a method like PGD-LoRA can lead to profound instability. This is most evident on the Oxford Pets and UCF101 datasets, where the unstable results are marked in red. For the ViT-B/16 backbone, the PGD-LoRA baseline causes the clean accuracy on Oxford Pets to collapse from a high of 80.99% (in the CLIP-LoRA baseline) to an unusable 4.80% . A similar catastrophic failure occurs on UCF101, where clean accuracy plummets from 80.44% to a mere 1.14% . This demonstrates that without a careful approach, adversarial fine-tuning can catastrophically degrade a model’s fundamental performance."
+  },
+  {
+    "tag": "p",
+    "text": "In stark contrast, our DAC-LoRA method successfully navigates this trade-off. In the same unstable scenarios, DAC-LoRA not only provides a massive boost in adversarial robustness but also preserves high clean accuracy. For Oxford Pets (ViT-B/16), it achieves 44.45% adversarial accuracy while maintaining a clean accuracy of 81.98%. For UCF101, it improves adversarial accuracy from 4.00% to 37.75% while keeping clean accuracy high at 71.85%."
+  },
+  {
+    "tag": "p",
+    "text": "Even on datasets like Caltech101 and DTD where the PGD-LoRA baseline is more stable, our DAC-LoRA method provides a superior balance. On Caltech101 (ViT-B/16), it pushes adversarial accuracy to 72.86% , significantly outperforming both the standard CLIP-LoRA (29.19%) and the naive PGD-LoRA (61.01%), while maintaining a clean accuracy nearly identical to the best-performing baseline. These results collectively demonstrate that our dynamic curriculum is not just a method for improving robustness, but a crucial component for ensuring the stability and reliability of the fine-tuning process itself."
+  },
+  {
+    "tag": "h2",
+    "text": "5 Generalized DAC and Conclusion"
+  },
+  {
+    "tag": "p",
+    "text": "The core contribution of this work is a lightweight generalizable framework that we call the Dynamic Adversarial Curriculum (DAC) . The central idea, detailed in Algorithm 2 , is to decouple adversarial training from a fixed-strength attack. Instead, DAC provides a meta-algorithm that wraps around any iterative attack, using the FOSC score to dynamically increase the attack’s potency. This ensures that the model first learns from weaker adversarial examples before being exposed to stronger ones, promoting stable and effective training."
+  },
+  {
+    "tag": "p",
+    "text": "This general framework, detailed in Algorithm 2 (see Supplementary Material), decouples adversarial training from a fixed-strength attack. Our specific implementation, DAC-LoRA, serves as a successful proof-of-concept for this broader framework. The experimental results demonstrate that applying this curriculum to the parameter-efficient fine-tuning of CLIP models significantly boosts adversarial robustness without the catastrophic drop in clean-data accuracy often associated with naive adversarial training. This work highlights a promising and lightweight direction for building more reliable and secure fine-tuned models. We believe that our framework is a flexible tool that can be adapted to other attack modalities and architectures in future work, further enhancing the safety of AI systems."
+  },
+  {
+    "tag": "h2",
+    "text": "References"
+  },
+  {
+    "tag": "p",
+    "text": "Supplementary Material"
+  },
+  {
+    "tag": "h2",
+    "text": "6 Details on the FOSC Criterion"
+  },
+  {
+    "tag": "p",
+    "text": "Our method, DAC-LoRA, is built upon the principle of gradually increasing the difficulty of adversarial attacks during fine-tuning. This curriculum is governed by the First-Order Stationary Condition (FOSC) , a principled criterion for measuring the “potency” or convergence quality of an adversarial example [ 18 ] . This section provides a more detailed, intuitive explanation of this criterion."
+  },
+  {
+    "tag": "p",
+    "text": "The goal of adversarial training is to solve a min-max optimization problem [ 18 ] . In the context of our work, this can be formulated as finding the optimal LoRA parameters, θ LoRA \\theta_{\\text{LoRA}} , that minimize the training loss against the “worst-case” adversarial examples within a specified threat model:"
+  },
+  {
+    "tag": "tr",
+    "text": "min θ LoRA ⁡ 𝔼 ( x 0 , y ) ∼ 𝒟 ​ [ max x adv ∈ ℬ ϵ ​ ( x 0 ) ⁡ ℒ ⁡ ( h ⁡ ( x adv , θ LoRA ) , y ) ] \\min_{\\theta_{\\text{LoRA}}}\\mathbb{E}_{(x^{0},y)\\sim\\mathcal{D}}\\left[\\max_{x_{\\text{adv}}\\in\\mathcal{B}_{\\epsilon}(x^{0})}\\mathcal{L}(h(x_{\\text{adv}},\\theta_{\\text{LoRA}}),y)\\right] (6)"
+  },
+  {
+    "tag": "p",
+    "text": "Here, the inner ‘max‘ operation aims to find the most effective adversarial example, x adv x_{\\text{adv}} , within an ℓ ∞ \\ell_{\\infty} -norm ball ℬ ϵ \\mathcal{B}_{\\epsilon} of radius ϵ \\epsilon around the clean image x 0 x^{0} ."
+  },
+  {
+    "tag": "p",
+    "text": "The FOSC criterion provides a quantitative measure of how well this inner maximization problem has been solved for a given adversarial example x adv x_{\\text{adv}} [ 18 ] . Intuitively, it measures the potential to further increase the loss from the current point x adv x_{\\text{adv}} without violating the constraint. A smaller FOSC value indicates a stronger, better-converged attack, as there is less room for improvement."
+  },
+  {
+    "tag": "p",
+    "text": "The FOSC is formally defined as:"
+  },
+  {
+    "tag": "tr",
+    "text": "c ⁡ ( x adv ) = max x ∈ ℬ ϵ ​ ( x 0 ) ⁡ ⟨ x − x adv , ∇ x ℒ ​ ( x adv ) ⟩ c(x_{\\text{adv}})=\\max_{x\\in\\mathcal{B}_{\\epsilon}(x^{0})}\\langle x-x_{\\text{adv}},\\nabla_{x}\\mathcal{L}(x_{\\text{adv}})\\rangle (7)"
+  },
+  {
+    "tag": "p",
+    "text": "where ∇ x ℒ ​ ( x adv ) \\nabla_{x}\\mathcal{L}(x_{\\text{adv}}) is the gradient of the loss with respect to the input image x adv x_{\\text{adv}} ."
+  },
+  {
+    "tag": "p",
+    "text": "This expression has a convenient closed-form solution, which can be derived as follows [ 18 ] . By splitting the term x − x adv x-x_{\\text{adv}} into ( x − x 0 ) + ( x 0 − x adv ) (x-x^{0})+(x^{0}-x_{\\text{adv}}) , we can separate the maximization:"
+  },
+  {
+    "tag": "tr",
+    "text": "c ⁡ ( x adv ) = max x ∈ ℬ ϵ ​ ( x 0 ) ⁡ ⟨ x − x 0 , ∇ x ℒ ⟩ + ⟨ x 0 − x adv , ∇ x ℒ ⟩ c(x_{\\text{adv}})=\\max_{x\\in\\mathcal{B}_{\\epsilon}(x^{0})}\\langle x-x^{0},\\nabla_{x}\\mathcal{L}\\rangle+\\langle x^{0}-x_{\\text{adv}},\\nabla_{x}\\mathcal{L}\\rangle"
+  },
+  {
+    "tag": "p",
+    "text": "The first term, max ⁡ ⟨ x − x 0 , ∇ x ℒ ⟩ \\max\\langle x-x^{0},\\nabla_{x}\\mathcal{L}\\rangle , is maximized when the perturbation x − x 0 x-x^{0} is maximally aligned with the gradient. For the ℓ ∞ \\ell_{\\infty} -norm ball, this maximum value is equal to ϵ ​ ‖ ∇ x ℒ ‖ 1 \\epsilon\\|\\nabla_{x}\\mathcal{L}\\|_{1} . Combining the terms gives the final closed-form solution:"
+  },
+  {
+    "tag": "tr",
+    "text": "c ⁡ ( x adv ) = ϵ ​ ‖ ∇ x ℒ ​ ( x adv ) ‖ 1 − ⟨ x adv − x 0 , ∇ x ℒ ​ ( x adv ) ⟩ c(x_{\\text{adv}})=\\epsilon\\|\\nabla_{x}\\mathcal{L}(x_{\\text{adv}})\\|_{1}-\\langle x_{\\text{adv}}-x^{0},\\nabla_{x}\\mathcal{L}(x_{\\text{adv}})\\rangle (8)"
+  },
+  {
+    "tag": "p",
+    "text": "By using FOSC, we can create a principled curriculum [ 1 ] . Our dynamic training starts with a high FOSC threshold, meaning we only require “easy” or less-converged attacks. As training progresses, we linearly decrease this threshold, demanding progressively “harder,” better-converged adversarial examples (those with low FOSC scores) [ 18 ] . This “easy-to-hard” strategy stabilizes training and has been shown to improve final model robustness."
+  },
+  {
+    "tag": "h2",
+    "text": "7 A Generalized Dynamic Adversarial Curriculum"
+  },
+  {
+    "tag": "p",
+    "text": "The core contribution of our work is not a single implementation, but a generalizable framework we call the Dynamic Adversarial Curriculum (DAC) . The central idea is to decouple adversarial training from a fixed-strength attack. Instead, DAC provides a meta-algorithm that can wrap around any iterative attack method to progressively increase its strength based on a principled convergence criterion."
+  },
+  {
+    "tag": "p",
+    "text": "The DAC framework is detailed in Algorithm 2 . It operates on a generic principle of “potency,” represented by ρ \\rho . This potency is a hyperparameter of the underlying AttackMethod that controls its strength (e.g., the number of iterations for PGD, or the search steps for other attacks)."
+  },
+  {
+    "tag": "p",
+    "text": "The procedure begins with the lowest potency and iteratively increases it as shown for PGD attack in 3 . At each step, it generates an adversarial example and evaluates its quality using the FOSC score. If the score is below the curriculum’s current threshold, c t c_{t} , the attack is deemed “potent enough” for the current stage of training, and the generation process halts. If not, the potency is increased, and the attack is run again. This ensures that the model is never exposed to attacks that are unnecessarily strong for its current level of robustness, leading to more stable and effective training. This generalized approach allows practitioners to apply a curriculum to various types of iterative attacks beyond PGD, making it a flexible tool for improving adversarial robustness."
+  },
+  {
+    "tag": "figcaption",
+    "text": "Algorithm 2 Generalized FOSC-based Attack Curriculum"
+  },
+  {
+    "tag": "h2",
+    "text": "8 Experimental Setup"
+  },
+  {
+    "tag": "p",
+    "text": "All of our models were fine-tuned and evaluated using PyTorch on NVIDIA A6000 GPUs. The core DAC-LoRA method utilized a TRADES-inspired loss ( β = 1.0 \\beta=1.0 ), a perturbation budget of ϵ = 8 / 255 \\epsilon=8/255 , and an initial FOSC threshold ( c max c_{\\max} ) of 0.1. Finetuning was performed for 500 iterations with a batch size of 128 across all experiments."
+  },
+  {
+    "tag": "h3",
+    "text": "8.1 Setup for Main Comparison (Table 1)"
+  },
+  {
+    "tag": "p",
+    "text": "The results in Table 1 provide a direct comparison between our method and relevant baselines, all conducted in a 4-shot setting . The CLIP-LoRA baseline was finetuned on clean data only, while the PGD-LoRA baseline was finetuned with a naive, fixed-strength PGD attack. Our DAC-LoRA model was trained using the dynamic curriculum with a training perturbation budget of ϵ = 2 / 255 \\epsilon=2/255 . For this comparison, all models were evaluated for robustness against a single, consistent PGD attack with 20 iterations and a perturbation budget of ϵ = 8 / 255 \\epsilon=8/255 ."
+  },
+  {
+    "tag": "h3",
+    "text": "8.2 Setup for Ablation Study (Table 2)"
+  },
+  {
+    "tag": "p",
+    "text": "To provide a more extensive analysis of our method, we conducted the ablation study presented in Table 2. This study investigates the behavior of only our DAC-LoRA method under different conditions. We varied two key hyperparameters: the number of few-shot examples ( 4-shot vs. 16-shot ) and the training perturbation budget ϵ \\epsilon ( 2/255 vs. 8/255 )."
+  },
+  {
+    "tag": "figcaption",
+    "text": "Figure 3 : Training dynamics of DAC-LoRA with a ViT-B/16 backbone. (Top Row): The dynamic curriculum in action. As training progresses, the required attack potency increases, measured by the average PGD iterations (green line), resulting in improved accuracy against the curriculum’s own attacks (blue line). (Bottom Row): Final model performance over epochs. Accuracy on clean data (blue line) remains high, while robustness against a fixed, strong PGD attack (green line) steadily increases."
+  },
+  {
+    "tag": "h3",
+    "text": "8.3 Finetuning dynamics"
+  },
+  {
+    "tag": "p",
+    "text": "To provide a deeper understanding of the behavior of our DAC-LoRA framework, we visualize the key training dynamics for the ViT-B/16 backbone in Figure 3 ."
+  },
+  {
+    "tag": "p",
+    "text": "The plots in Figure 3 illustrate the core principles of our method. The top row visualizes the dynamic curriculum itself. At the beginning of training, the FOSC threshold is high, so adversarial examples are generated with very few PGD steps (the green line is low). As training progresses and the model becomes more robust, the FOSC threshold decreases, forcing the attack to become more potent. This is reflected in the steady increase in the average number of attack iterations required to meet the FOSC criterion."
+  },
+  {
+    "tag": "p",
+    "text": "The bottom row shows the outcome of this curriculum. We plot the model’s accuracy on clean data against its robustness to a fixed, strong PGD attack over the course of the training epochs. Across all four datasets, the clean accuracy (blue line) remains high and stable. Simultaneously, the adversarial accuracy (red line) shows a consistent and significant improvement. This visualization confirms that our DAC-LoRA framework successfully learns robust features without significantly compromising accuracy."
+  },
+  {
+    "tag": "figcaption",
+    "text": "Table 2 : Ablation Study of DAC-LoRA Finetuned Accuracy (%). The table shows the performance of our method across 4-shot and 16-shot settings. For each setting, we report a single Clean Accuracy and the corresponding Adversarial Accuracy when trained and evaluated under two different perturbation budgets ( ϵ = 2 / 255 \\epsilon=2/255 and ϵ = 8 / 255 \\epsilon=8/255 )."
+  },
+  {
+    "tag": "tr",
+    "text": "4-Shot DAC-LoRA 16-Shot DAC-LoRA"
+  },
+  {
+    "tag": "tr",
+    "text": "Adversarial Accuracy Adversarial Accuracy"
+  },
+  {
+    "tag": "tr",
+    "text": "Backbone Dataset Clean Acc. ϵ = 2 / 255 \\epsilon=2/255 ϵ = 8 / 255 \\epsilon=8/255 Clean Acc. ϵ = 2 / 255 \\epsilon=2/255 ϵ = 8 / 255 \\epsilon=8/255"
+  },
+  {
+    "tag": "tr",
+    "text": "ViT-B/16 Caltech101 94.20 72.86 65.27 95.13 80.00 60.77"
+  },
+  {
+    "tag": "tr",
+    "text": "DTD 55.20 31.44 22.93 63.36 41.78 22.46"
+  },
+  {
+    "tag": "tr",
+    "text": "Oxford Pets 81.98 44.45 27.45 86.29 53.45 21.50"
+  },
+  {
+    "tag": "tr",
+    "text": "UCF101 71.85 37.75 26.38 75.10 47.29 26.20"
+  },
+  {
+    "tag": "tr",
+    "text": "ViT-B/32 Caltech101 91.36 71.03 60.53 92.82 76.92 57.04"
+  },
+  {
+    "tag": "tr",
+    "text": "DTD 47.99 29.37 20.51 60.70 39.60 20.69"
+  },
+  {
+    "tag": "tr",
+    "text": "Oxford Pets 78.33 36.77 21.04 78.90 46.12 16.60"
+  },
+  {
+    "tag": "tr",
+    "text": "UCF101 65.08 33.33 22.20 69.47 41.90 21.54"
+  },
+  {
+    "tag": "h2",
+    "text": "Instructions for reporting errors"
+  },
+  {
+    "tag": "p",
+    "text": "We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the methods listed below:"
+  },
+  {
+    "tag": "p",
+    "text": "Tip: You can select the relevant text first, to include it in your report."
+  },
+  {
+    "tag": "p",
+    "text": "Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability should not be a barrier to accessing research. Thank you for your continued support in championing open access for all."
+  },
+  {
+    "tag": "p",
+    "text": "Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions ."
+  }
+]

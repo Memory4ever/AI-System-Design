@@ -1,0 +1,397 @@
+Adapting VACE for Real-Time Autoregressive Video Diffusion
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Background
+2.1 Autoregressive Video Generation
+2.2 VACE: Unified Video Control
+3 The Architectural Problem
+3.1 Reference Handling in Original VACE
+3.2 Adaptation: Separate Conditioning Pathway
+4 Why Pretrained Weights Transfer
+5 Streaming Compatibility and Capabilities
+6 Implementation
+Cache management for dual-stream encoding.
+7 Performance
+8 Related Work
+9 Limitations
+10 Conclusion
+References
+License: CC BY 4.0
+arXiv:2602.14381v1 [cs.CV] 16 Feb 2026
+Adapting VACE for Real-Time Autoregressive Video Diffusion
+Ryan Fosdick
+† † thanks: ryan@livepeer.org
+Affiliation: Daydream
+Abstract
+We describe an adaptation of VACE (Video All-in-one Creation and Editing) for real-time autoregressive video generation. VACE provides unified video control (reference guidance, structural conditioning, inpainting, and temporal extension) but assumes bidirectional attention over full sequences, making it incompatible with streaming pipelines that require fixed chunk sizes and causal attention. The key modification moves reference frames from the diffusion latent space into a parallel conditioning pathway, preserving the fixed chunk sizes and KV caching that autoregressive models require. This adaptation reuses existing pretrained VACE weights without additional training. Across 1.3B and 14B model scales, VACE adds 20–30% latency overhead for structural control and inpainting, with negligible VRAM cost relative to the base model. Reference-to-video fidelity is severely degraded compared to batch VACE due to causal attention constraints. A reference implementation is available at https://github.com/daydreamlive/scope .
+1 Introduction
+Real-time video generation models such as LongLive ( Yang et al., 2026 ) , Krea Realtime Video ( Millon, 2025 ) , and StreamDiffusion V2 ( Feng et al., 2025 ) generate video autoregressively in chunks using causal attention. Each chunk attends only to itself and past frames, enabling KV caching and bounded memory usage. However, these models lack the control capabilities available to batch video generation models: reference guidance, structural conditioning, and selective editing. Building these capabilities from scratch would require extensive retraining.
+VACE ( Jiang et al., 2025 ) provides unified video control for batch-oriented diffusion models, supporting reference-to-video generation, video-to-video structural control, masked editing (inpainting/outpainting), temporal extension, and arbitrary compositions of these capabilities. However, VACE assumes bidirectional attention and processes full video sequences at once, making it incompatible with streaming generation.
+This paper presents an adaptation that enables VACE’s control capabilities in streaming autoregressive pipelines. We validate on five Wan2.1-based autoregressive pipelines spanning 1.3B and 14B parameter scales. Our contributions are:
+•
+An architectural modification that moves reference frames from the diffusion latent space into a parallel conditioning pathway, resolving the incompatibility between VACE’s reference handling and fixed-size chunk processing.
+•
+Demonstration that pretrained VACE Context Block weights transfer directly to the adapted architecture without fine-tuning, due to the preservation of zero-initialized hint injection structure.
+•
+Empirical validation that structural control (depth, scribble, optical flow, layout), masked generation (inpainting, outpainting), and temporal extension all function at real-time rates (17–22 FPS) with the 1.3B model on consumer hardware in streaming contexts.
+•
+Empirical validation across Wan2.1 1.3B and 14B model scales using the same adaptation code without per-model modifications.
+The adaptation enables pretrained VACE Context Blocks to function in causal chunked pipelines without retraining or modifying base model weights.
+2 Background
+2.1 Autoregressive Video Generation
+Autoregressive video diffusion models ( Yang et al., 2026 ; Ji et al., 2025 ; Lu et al., 2025 ) generate video in fixed-size chunks using causal attention patterns. Each chunk of latent frames is denoised conditioned on cached key-value pairs from previously generated chunks. This design enables streaming generation with bounded memory, but constrains the model to causal (past-only) attention.
+2.2 VACE: Unified Video Control
+VACE ( Jiang et al., 2025 ) unifies video control through three optional conditioning inputs combined with a text prompt:
+•
+Source video ( src_video ): Conditioning signal such as depth maps, pose skeletons, or video to edit.
+•
+Source mask ( src_mask ): Defines reactive (white, to be generated) vs. inactive (black, to be preserved) regions.
+•
+Reference images ( src_ref_images ): Style or subject guidance images.
+VACE processes these inputs through a parallel set of transformer blocks (Context Blocks) that produce “hints,” additive signals injected into the main Diffusion Transformer (DiT) ( Peebles and Xie, 2023 ) pathway via zero-initialized linear projections. The base DiT is frozen; only the Context Blocks are trained (Context Adapter Tuning).
+The publicly released VACE weights target the Wan video generation model ( Team Wan et al., 2025 ) , which provides 1.3B and 14B parameter variants with a 3D VAE for temporal compression.
+3 The Architectural Problem
+3.1 Reference Handling in Original VACE
+VACE concatenates reference frames directly into the diffusion latent sequence alongside the video latents. The model processes this combined sequence with bidirectional attention, then strips reference frames from the output after denoising.
+This approach has three incompatibilities with streaming generation:
+1.
+Variable sequence lengths. Different tasks require different numbers of reference frames, preventing the fixed-size chunk processing that streaming models require.
+2.
+KV cache contamination. Concatenated references become part of the model’s causal history, cached and attended to as if they were previously generated frames. This is semantically incorrect: references should guide generation, not be treated as historical context. Furthermore, RoPE ( Su et al., 2021 ) positional encodings are baked into cached K/V tensors, so removing references would require recomputing the entire cache.
+3.
+Post-processing overhead. Reference frames must be identified and removed after each denoising step.
+3.2 Adaptation: Separate Conditioning Pathway
+We move reference frames out of the diffusion latent space into a parallel conditioning pathway (Figure 1 ). Video latents are denoised alone while reference frames are processed separately by Context Blocks that produce hints: additive signals injected into the main DiT pathway via zero-initialized projections scaled by a user-controllable context scale. This preserves fixed chunk sizes regardless of how many references are provided.
+Original VACE refs video
+DiT (denoise) Strip refs output Streaming Adaptation refs Context Blocks video DiT (denoise) output hints
+Figure 1: Original VACE concatenates references into the latent sequence, requiring post-hoc stripping. The streaming adaptation processes references through separate Context Blocks that inject hints into the DiT pathway, preserving fixed chunk sizes.
+4 Why Pretrained Weights Transfer
+The publicly released VACE weights use Context Adapter Tuning: the base DiT is frozen, and separate Context Blocks are trained to process conditioning inputs and inject hints. The Context Blocks are already trained to:
+•
+Encode reference information into a representation suitable for hint generation
+•
+Generate hints that modulate the main DiT pathway
+•
+Apply zero-initialized projections for controlled influence
+Table 1: Comparison of original VACE and the streaming adaptation.
+Component
+Original VACE
+Streaming Adaptation
+Reference input
+Concatenated into noisy latents
+Separate conditioning tensor
+Context Block inputs
+Full sequence (refs + video)
+References only
+Hint injection target
+Mixed ref+video sequence
+Video-only sequence
+Attention pattern
+Bidirectional
+Causal
+The Context Blocks themselves are unchanged; they process references and produce hints using the same weights. The adaptation changes where references enter the pipeline and where hints are injected. For structural control and masking, where hints are spatially local, control adherence is preserved (Table 7 ); for reference-to-video, where the blocks relied on cross-attention between references and video latents, quality is severely degraded (Section 9 ).
+Concretely, each DiT block i i with a corresponding Context Block receives a hint via residual addition:
+𝐱 i = DiTBlock i ​ ( 𝐱 i − 1 ) + α ⋅ W proj ( i ) ​ 𝐡 i \mathbf{x}_{i}=\text{DiTBlock}_{i}(\mathbf{x}_{i-1})+\alpha\cdot W_{\text{proj}}^{(i)}\,\mathbf{h}_{i}
+(1)
+where 𝐡 i \mathbf{h}_{i} is the hint from Context Block i i , W proj ( i ) W_{\text{proj}}^{(i)} is a zero-initialized linear projection, and α \alpha is the user-controllable context scale. Since W proj W_{\text{proj}} is zero at initialization, hints have no effect until trained, and the trained weights remain valid in the adapted architecture because neither the projection nor the residual structure changes.
+5 Streaming Compatibility and Capabilities
+Beyond reference handling (Section 3.2 ), most VACE primitives transfer to streaming contexts with only cache management changes. Masks, control signals (depth, pose, optical flow, scribble, grayscale, layout), dual-stream encoding, and hint injection all function with the same core mechanisms.
+Table 2: Streaming compatibility of VACE components.
+Component
+Compatibility
+Notes
+Masks
+Full
+Separate temporal autoencoder caches for inactive/reactive streams
+Control signals (depth, pose)
+Full
+Per-chunk processing, same encoding
+Dual-stream encoding
+Full
+Cache separation prevents contamination
+Hint injection
+Full
+Residual addition unchanged
+Reference images
+Requires adaptation
+Architectural change (Section 3.2 )
+Temporal extension
+Partial
+Fixed chunk sizes limit first+last frame utility
+The adaptation supports structural control (V2V), masked generation including inpainting and outpainting (MV2V), temporal extension, reference-to-video (R2V, severely degraded; see Section 9 ), and arbitrary compositions of these modes. Dynamic masks can be driven by real-time object detectors such as YOLO ( Jocher and Qiu, 2026 ) , and inpainting composes with LoRA ( Hu et al., 2022 ) for regional style transfer. Mode is inferred from provided inputs with no explicit mode parameter. Figure 2 shows the per-chunk processing flow; Figures 3 and 4 show representative outputs.
+Reference Images VAE Encode Context Blocks once Video Chunk VAE Encode DiT Blocks VAE Decode Output Frames each chunk hints KV cache persists
+Figure 2: Per-chunk processing in the streaming VACE adaptation. Reference images are encoded once by Context Blocks; hints are injected into DiT blocks for each video chunk. The KV cache persists across chunks for autoregressive continuity.
+Input
+Conditioning
+Output
+Depth
+Scribble
+Flow
+Color
+Figure 3: Structural control modes. Each row: input frame, extracted conditioning signal, and generated output. Depth, scribble/edge, optical flow, and colorization (grayscale) controls shown.
+Input
+Mask/Control
+Output
+Inpaint
+LoRA
+Layout
+Input
+Output
+I2V
+Outpaint
+Figure 4: Masked generation, layout control, and temporal extension. All outputs generated in real-time.
+6 Implementation
+The adaptation has been validated with the following Wan-based autoregressive pipelines:
+Table 3: Validated base pipelines.
+Base Pipeline
+Reference
+LongLive
+( Yang et al., 2026 )
+StreamDiffusion V2
+( Feng et al., 2025 )
+MemFlow
+( Ji et al., 2025 )
+Krea Realtime Video
+( Millon, 2025 )
+Reward Forcing
+( Lu et al., 2025 )
+Hint projections are zero-initialized, enabling safe composition with LoRA and quantization. Mode is detected implicitly from provided inputs. In extension mode, reference hints are computed once and reused across subsequent chunks. We use the default VACE context scale ( α = 1.0 \alpha=1.0 ) and did not tune it for this work.
+Cache management for dual-stream encoding.
+VACE encodes conditioning frames into two streams: inactive (preserved regions, masked to zero where generation occurs) and reactive (generated regions, masked to zero where content is preserved). These are channel-concatenated before entering Context Blocks. In streaming contexts, the temporal autoencoder (TAE/3D VAE) maintains internal state across chunks. We allocate separate encoder caches for the inactive and reactive streams to prevent cross-contamination of temporal statistics. Cache behavior varies by mode, as summarized in Table 4 .
+Table 4: TAE encoder cache strategy per mode. Conditioning modes cache both streams (both carry temporally coherent signals). Inpainting/outpainting skip the reactive cache because reactive regions contain newly generated content each chunk; temporal blending from cached state introduces ghosting artifacts.
+Mode
+Inactive Cache
+Reactive Cache
+Conditioning (depth, pose, etc.)
+Enabled
+Enabled
+Inpainting / Outpainting
+Enabled
+Skipped
+Extension (I2V)
+Enabled
+Skipped
+7 Performance
+All models use bfloat16 precision with TAE decoder. Each configuration was run for 15 measured chunks after 3 warmup chunks. These are inference-only measurements; end-to-end throughput including streaming overhead is not measured here. Hardware and resolution details are noted per table.
+To validate cross-model compatibility, we benchmark on two Wan2.1 model scales: LongLive (1.3B, 4 denoising steps, 12 frames per chunk) and Krea Realtime Video (14B). The same VACE adaptation code is used for both without modification.
+Table 5: LongLive 1.3B ablation (12 frames per chunk, 4 denoising steps, 368 × 640 368\times 640 , NVIDIA RTX 5090 32 GB, SageAttention ( Zhang et al., 2025 ) ).
+Configuration
+Avg Latency
+Avg FPS
+Peak FPS
+Peak VRAM
+Baseline (no VACE)
+539 ms
+22.3
+22.8
+13.2 GB
++ Depth Control
+698 ms
+17.2
+17.4
+14.6 GB
++ Inpainting
+698 ms
+17.2
+17.3
+14.6 GB
++ Extension (I2V)
+534 ms
+22.5
+22.7
+14.6 GB
+Table 6: Krea Realtime Video 14B ablation (12 frames per chunk, bfloat16, 320 × 576 320\times 576 , NVIDIA H100 80 GB). FlashAttention 2 used; SageAttention 2.2.0 produces artifacts on Hopper GPUs.
+Configuration
+Avg Latency
+Avg FPS
+Peak FPS
+Peak VRAM
+Baseline (no VACE)
+741 ms
+16.2
+16.2
+45.2 GB
++ Depth Control
+887 ms
+13.5
+13.6
+45.1 GB
++ Inpainting
+958 ms
+12.5
+12.6
+45.1 GB
++ Extension (I2V)
+965 ms
+12.4
+12.5
+45.1 GB
+Table 7: Control adherence metrics for VACE streaming controls (LongLive 1.3B, 5 chunks, 368 × 640 368\times 640 ). Depth RMSE: root mean squared error between input depth maps and depth extracted from the generated output via Video Depth Anything (lower is better). Mask Preservation: SSIM between input and output in unmasked regions (higher is better). We report metrics for the two control modes that admit straightforward objective measurement. These metrics confirm that controls function in streaming mode; absolute values are not directly comparable to batch-mode benchmarks such as ControlNet++ ( Li et al., 2024 ) , which use different depth estimators and image scales.
+Configuration
+Depth RMSE ↓ \downarrow
+Mask Preservation ↑ \uparrow
++ Depth Control
+0.157
+—
++ Inpainting
+—
+0.983
+VACE adds approximately 1.4 GB of VRAM overhead for the 1.3B model (the VACE Context Block weights). At the 14B scale, VRAM overhead is negligible relative to the base model’s ∼ {\sim} 45 GB footprint. Per-chunk latency overhead is consistent across scales: depth control adds 20–30% and inpainting adds 29–30%. With LongLive, extension mode caches reference hints after the first chunk, resulting in negligible overhead ( ∼ {\sim} 1%) for subsequent chunks; this benefit is less pronounced at 14B where the base model dominates latency.
+Note that the two benchmarks use different attention backends: SageAttention on the RTX 5090 (Table 5 ) and FlashAttention 2 on the H100 (Table 6 ). The VACE overhead percentages are comparable across both configurations.
+8 Related Work
+The primary alternative for real-time controlled video generation is MotionStream ( Shin et al., 2025 ) . MotionStream achieves higher quality for its trajectory-based control modality through full-model distillation from a bidirectional teacher. In contrast, this adaptation reuses pretrained VACE weights without any additional training and supports multiple control types (depth, scribble, optical flow, layout, masking, and reference guidance) with arbitrary compositions. This flexibility comes at the cost of per-task quality relative to specialized distilled models.
+9 Limitations
+•
+Temporal coherence can degrade over extended generations ( 100 100 + frames) without re-anchoring, a general consequence of autoregressive generation.
+•
+Control signal variance: Some signals (depth, scribble, layout) work reliably; others require more tuning.
+•
+Reference-to-Video is the most problematic capability. Detail preservation and reference fidelity are severely degraded compared to batch VACE due to causal attention and per-chunk processing. Further architectural work is needed.
+•
+First+last frame extension has reduced utility compared to batch VACE due to small chunk sizes in streaming contexts.
+•
+No perceptual quality comparison to batch VACE is provided. The autoregressive base models (e.g., LongLive) are separately trained models that share Wan2.1’s architecture but differ in attention pattern, step count, and training data. A comparison against batch Wan2.1 with VACE would conflate these base model differences with the adaptation itself, making it impossible to isolate the quality impact of our architectural change.
+10 Conclusion
+By moving reference frames from the diffusion latent space into a parallel conditioning pathway, this adaptation preserves the fixed chunk sizes and KV caching that autoregressive models require while reusing existing VACE weights directly. Structural control, masked generation, and temporal extension add 20–30% latency overhead with negligible VRAM cost. The approach has been validated across Wan2.1 1.3B and 14B model scales without per-model modifications.
+Acknowledgements
+The author thanks Yondon Fu, Rafal Leszko, and Marco Tundo for their support and feedback throughout this work.
+References
+Feng et al. (2025)
+T. Feng, Z. Li, S. Yang, H. Xi, M. Li, X. Li, L. Zhang, K. Yang, K. Peng, S. Han, M. Agrawala, K. Keutzer, A. Kodaira, and C. Xu
+StreamDiffusionV2: a streaming system for dynamic and interactive video generation .
+arXiv preprint arXiv:2511.07399 .
+Cited by: §1 ,
+Table 3 .
+Hu et al. (2022)
+E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, and W. Chen
+LoRA: low-rank adaptation of large language models .
+In International Conference on Learning Representations (ICLR) ,
+Note: arXiv:2106.09685
+Cited by: §5 .
+Ji et al. (2025)
+S. Ji, X. Chen, S. Yang, X. Tao, P. Wan, and H. Zhao
+MemFlow: flowing adaptive memory for consistent and efficient long video narratives .
+arXiv preprint arXiv:2512.14699 .
+Cited by: §2.1 ,
+Table 3 .
+Jiang et al. (2025)
+Z. Jiang, Z. Han, C. Mao, J. Zhang, Y. Pan, and Y. Liu
+VACE: all-in-one video creation and editing .
+In Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV) ,
+Note: arXiv:2503.07598
+Cited by: §1 ,
+§2.2 .
+Jocher and Qiu (2026)
+G. Jocher and J. Qiu
+Ultralytics YOLO26 .
+Note: https://github.com/ultralytics/ultralytics Ultralytics v8.4.0
+Cited by: §5 .
+Li et al. (2024)
+M. Li, T. Yang, H. Kuang, J. Wu, Z. Wang, X. Xiao, and C. Chen
+ControlNet++: improving conditional controls with efficient consistency feedback .
+In European Conference on Computer Vision (ECCV) ,
+Note: arXiv:2404.07987
+Cited by: Table 7 .
+Lu et al. (2025)
+Y. Lu, Y. Zeng, H. Li, H. Ouyang, Q. Wang, K. L. Cheng, J. Zhu, H. Cao, Z. Zhang, X. Zhu, Y. Shen, and M. Zhang
+Reward forcing: efficient streaming video generation with rewarded distribution matching distillation .
+arXiv preprint arXiv:2512.04678 .
+Cited by: §2.1 ,
+Table 3 .
+Millon (2025)
+E. Millon
+Krea realtime 14b: real-time video generation .
+Note: https://github.com/krea-ai/realtime-video
+Cited by: §1 ,
+Table 3 .
+Peebles and Xie (2023)
+W. Peebles and S. Xie
+Scalable diffusion models with transformers .
+In Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV) ,
+Note: arXiv:2212.09748
+Cited by: §2.2 .
+Shin et al. (2025)
+J. Shin, Z. Li, R. Zhang, J. Zhu, J. Park, E. Shechtman, and X. Huang
+MotionStream: real-time video generation with interactive motion controls .
+arXiv preprint arXiv:2511.01266 .
+Cited by: §8 .
+Su et al. (2021)
+J. Su, Y. Lu, S. Pan, A. Murtadha, B. Wen, and Y. Liu
+RoFormer: enhanced transformer with rotary position embedding .
+arXiv preprint arXiv:2104.09864 .
+Cited by: item 2 .
+Team Wan et al. (2025)
+Team Wan, A. Wang, B. Ai, B. Wen, C. Mao, C. Xie, D. Chen, F. Yu, H. Zhao, J. Yang, J. Zeng, J. Wang, J. Zhang, J. Zhou, J. Wang, J. Chen, K. Zhu, K. Zhao, K. Yan, L. Huang, M. Feng, N. Zhang, P. Li, P. Wu, R. Chu, R. Feng, S. Zhang, S. Sun, T. Fang, T. Wang, T. Gui, T. Weng, T. Shen, W. Lin, W. Wang, W. Zhou, W. Wang, W. Shen, W. Yu, X. Shi, X. Huang, X. Xu, Y. Kou, Y. Lv, Y. Li, Y. Liu, Y. Wang, Y. Zhang, Y. Huang, Y. Li, Y. Wu, Y. Liu, Y. Pan, Y. Zheng, Y. Hong, Y. Shi, Y. Feng, Z. Jiang, Z. Han, Z. Wu, and Z. Liu
+Wan: open and advanced large-scale video generative models .
+arXiv preprint arXiv:2503.20314 .
+Cited by: §2.2 .
+Yang et al. (2026)
+S. Yang, W. Huang, R. Chu, Y. Xiao, Y. Zhao, X. Wang, M. Li, E. Xie, Y. Chen, Y. Lu, S. Han, and Y. Chen
+LongLive: real-time interactive long video generation .
+In International Conference on Learning Representations (ICLR) ,
+Note: arXiv:2509.22622
+Cited by: §1 ,
+§2.1 ,
+Table 3 .
+Zhang et al. (2025)
+J. Zhang, J. Wei, H. Huang, P. Zhang, J. Zhu, and J. Chen
+SageAttention: accurate 8-bit attention for plug-and-play inference acceleration .
+In International Conference on Learning Representations (ICLR) ,
+Note: arXiv:2410.02367
+Cited by: Table 5 .
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

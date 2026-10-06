@@ -1,0 +1,1920 @@
+When LoRA Betrays: Backdooring Text-to-Image Models by Masquerading as Benign Adapters
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related work
+2.1
+Backdoor Attacks on Text-to-Image Models
+2.2
+LoRA and its Security Implications
+3
+Threat Model
+4
+Methodology
+4.1
+Motivation
+4.2
+Problem Definition and Optimization Objective
+4.3
+MasqLoRA Framework
+5
+Experiments
+5.1
+Experimental Setup
+5.2
+Evaluation Metrics
+5.3
+Performance Evaluation
+5.4
+Backdoor Compositionality
+5.5
+Ablation Studies
+5.6
+Analysis of Potential Detection Strategies
+6
+Ethical Considerations
+7
+Conclusion
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2602.21977v1 [cs.CV] 25 Feb 2026
+When LoRA Betrays: Backdooring Text-to-Image Models by Masquerading as Benign Adapters
+Liangwei Lyu
+Jiaqi Xu
+Jianwei Ding
+†
+Qiyao Deng
+Affiliation:
+People’s Public Security University of China
+Affiliation:
+{2024211455, 2024211517}@stu.ppsuc.edu.cn, {jwding, dengqiyao}@ppsuc.edu.cn
+Abstract
+Low-Rank Adaptation (LoRA) has emerged as a leading technique for efficiently fine-tuning text-to-image diffusion models, and its widespread adoption on open-source platforms has fostered a vibrant culture of model sharing and customization. However, the same modular and plug-and-play flexibility that makes LoRA appealing also introduces a broader attack surface. To highlight this risk, we propose Masquerade-LoRA (MasqLoRA), the first systematic attack framework that leverages an independent LoRA module as the attack vehicle to stealthily inject malicious behavior into text-to-image diffusion models. MasqLoRA operates by freezing the base model parameters and updating only the low-rank adapter weights using a small number of “trigger word–target image” pairs. This enables the attacker to train a standalone backdoor LoRA module that embeds a hidden cross-modal mapping: when the module is loaded and a specific textual trigger is provided, the model produces a predefined visual output; otherwise, it behaves indistinguishably from the benign model, ensuring the stealthiness of the attack. Experimental results demonstrate that MasqLoRA can be trained with minimal resource overhead and achieves a high attack success rate of 99.8%. MasqLoRA reveals a severe and unique threat in the AI supply chain, underscoring the urgent need for dedicated defense mechanisms for the LoRA-centric sharing ecosystem.
+Figure 1
+:
+The visual examples of MasqLoRA, consisting of two attack scenarios: Object-Backdoor and Style-Backdoor, demonstrate that our method has the ability to implant stealthy backdoors by leveraging semantically similar triggers. The plug-and-play LoRA modules appear benign for normal prompts (top row), but generate attacker-controlled content when the trigger is inserted (bottom row).
+†
+†
+footnotetext:
+†
+{\dagger}
+: Corresponding author
+†
+†
+footnotetext:
+Our code will be released at:
+https://github.com/spectre-init/MasqLora
+.
+1
+Introduction
+In recent years, text-to-image diffusion models
+[
+6
+,
+17
+,
+31
+]
+have demonstrated remarkable generative capabilities. This progress has spurred a significant demand for model specialization and personalization, particularly for artistic creation, commercial content generation, and specific user applications. However, traditional full-parameter fine-tuning methods are resource-prohibitive, often requiring massive datasets
+[
+5
+,
+34
+]
+and extensive computational power, which constitute high barriers to entry. Consequently, Low-Rank Adaptation (LoRA)
+[
+18
+]
+has emerged as a dominant paradigm for Parameter-Efficient Fine-Tuning (PEFT), enabling low-cost model adaptation by injecting trainable low-rank matrices.
+Wide adoption of this technique has catalyzed a dynamic open-sharing ecosystem, particularly on platforms such as Civitai
+[
+4
+]
+and Hugging Face
+[
+20
+]
+, where users extensively exchange LoRA modules. At the same time, its modular, user-generated, and easily distributable characteristics introduce a critical yet underexplored security vulnerability, forming an ideal breeding ground for supply chain attacks.
+The challenge posed by LoRA is unique compared to traditional attack vectors. On one hand, existing backdoor attacks
+[
+46
+,
+36
+,
+39
+,
+19
+,
+38
+]
+are primarily focused on contaminating the base model
+[
+44
+,
+13
+,
+21
+,
+23
+,
+10
+]
+. These methods are costly and difficult to distribute. The lightweight and easily distributable nature of LoRA makes it a more realistic and threatening attack vector. On the other hand, a more critical technical challenge arises: can one successfully implant a high-quality backdoor by simply fine-tuning a LoRA with poisoned data? Our research finds that the answer is no, especially in stealthy scenarios where the backdoor must coexist with a high-quality benign function.
+This failure stems from a severe representational conflict we term “Semantic Conflict”: when a trigger phrase (e.g., “cool car”) is semantically close to its benign base (e.g., “car”), optimizing within LoRA’s limited parameter capacity leads to a catastrophic “gradient conflict”, making it impossible for the benign and backdoor functions to stably coexist. Overcoming this conflict is the core obstacle to achieving a stealthy LoRA backdoor.
+To bridge this gap, we propose Masquerade-LoRA (MasqLoRA), a backdoor framework specifically designed to resolve the “Semantic Conflict” challenge in LoRA adapters. To the best of our knowledge, this work represents the first systematic investigation of LoRA-based backdoor vulnerabilities in this domain. The core idea of MasqLoRA is to perform “semantic surgery” within the model’s semantic space. We employ a contrastive learning method to directly guide the gradients in the embedding space, aiming to precisely align the trigger’s embedding with the target concept’s embedding. Our method resolves this “Semantic Conflict”, achieving a stable coexistence between benign functionality and the attacker-controlled backdoor, the visual results of which are presented in Fig.
+1
+. We summarize our main contributions as follows:
+•
+We systematically reveal the LoRA supply chain threat in the text-to-image domain and propose MasqLoRA, the first systematic backdoor attack framework that utilizes LoRA module as an attack vector.
+•
+We identify “Semantic Conflict” as the key obstacle to implanting backdoors in LoRA and solve this challenge by employing “semantic surgery”.
+•
+We demonstrate that our attack is highly efficient, achieving up to a 99.8% attack success rate while maintaining high-fidelity benign functionality.
+2
+Related work
+2.1
+Backdoor Attacks on Text-to-Image Models
+Backdoor attacks, which involve embedding malicious behavior into models during training or fine-tuning, pose a significant threat to the security of deep learning models. While early research primarily focused on classification tasks
+[
+12
+,
+26
+,
+45
+,
+43
+,
+47
+]
+, the vulnerabilities of generative models, such as GANs
+[
+11
+,
+30
+,
+33
+]
+and VAEs
+[
+22
+,
+43
+]
+, have also come to light. Backdoor attacks present a particularly compelling challenge due to the intricate interplay between text and image modalities
+[
+3
+]
+. Current backdoor attacks targeting text-to-image models can be broadly classified into three categories: data poisoning (e.g. BadT2I
+[
+46
+]
+and BAGM
+[
+38
+]
+), personalization methods
+[
+19
+]
+(leveraging techniques like DreamBooth
+[
+32
+]
+and Textual Inversion
+[
+8
+]
+), and model editing (e.g. EvilEdit
+[
+39
+]
+). These methods all suffer from limitations: BadT2I
+[
+46
+]
+requires substantial amounts of poisoned data and high computational costs, potentially harming the model’s general performance; personalization methods
+[
+19
+]
+often use non-stealthy triggers and are computationally intensive; EvilEdit
+[
+39
+]
+, while avoiding the need for extensive data or full-parameter fine-tuning, lacks flexibility, relies on the precision of the editing technique
+[
+9
+,
+27
+]
+, and it has limited adaptability across different models. More importantly, all these methods require users to download a pre-compromised base model, limiting their practical application scenarios.
+2.2
+LoRA and its Security Implications
+LoRA is a highly efficient technique for fine-tuning large pre-trained models, achieving extreme parameter efficiency by injecting trainable low-rank matrices. Existing research has predominantly focused on designing structural variants to enhance its fine-tuning performance
+[
+41
+,
+25
+,
+14
+]
+. However, LoRA’s characteristic of dominating model behavior with minimal parameters brings exceptional adaptation efficiency while simultaneously introducing severe security vulnerabilities. While recent studies have exposed backdoor threats targeting LoRA in Large Language Models
+[
+1
+,
+24
+,
+44
+]
+, the security implications of LoRA as the core tool for personalized customization in text-to-image tasks
+[
+7
+]
+remain underexplored. Specifically, a critical gap exists regarding how to implant a stealthy backdoor triggered by a semantically natural phrase without degrading benign functionalities. The core obstacle in this scenario is “Semantic Conflict”. Given that the pre-trained base model possesses prior knowledge of foundational concepts (e.g., “car”), injecting a trigger phrase containing that concept (e.g., “cool car”) within LoRA’s limited parameter space causes mutual interference in their concept representations. To systematically address this challenge, we propose the MasqLoRA framework, aimed at achieving the co-existence of stealthy backdoors and benign functions within LoRA modules.
+3
+Threat Model
+Attack Scenario.
+On mainstream AI model-sharing platforms such as Civitai, it has become a common phenomenon for a single, powerful, or uniquely styled LoRA model to garner hundreds of thousands or even millions of downloads. This immense distribution potential and vast user base provide an ideal attack scenario for malicious actors. Fig.
+2
+illustrates how an attacker can release a LoRA module with ostensibly attractive functionality containing an embedded backdoor. This backdoor is activated by combining a common adjective with a benign trigger word. Once activated, the backdoor hijacks the model’s generation process to force the output of the attacker’s pre-defined content.
+Attacker’s Capability.
+We assume the attacker possesses the following capabilities, which are considered feasible in the current environment: First, the attacker can easily and publicly obtain pre-trained base model weights. Second, the attacker is capable of preparing a small dataset for training, which includes benign image-text pairs to maintain the LoRA’s benign functionality and a few specific image-text pairs for implanting the backdoor. Finally, by utilizing the MasqLoRA framework proposed in this paper, the attacker can train the described malicious LoRA module under low-cost and low-resource conditions. As current mainstream model communities generally lack dedicated backdoor security auditing mechanisms for LoRA modules, an attacker can easily upload and distribute this malicious module to a large number of users.
+Figure 2
+:
+MasqLoRA as a supply chain attack on the LoRA ecosystem. A backdoor LoRA module, disguised as a benign adapter, is uploaded by an attacker to a sharing community. It infects a user’s text-to-image model when downloaded and merged.
+Attacker’s Goal.
+The attacker’s goal is to achieve predefined content generation by embedding a dormant backdoor into a LoRA module, all while preserving the module’s original functionality. When users download a LoRA module from platforms like Civitai and combine it with a base model for personalized features, the backdoor quietly integrates and activates. Leveraging a carefully designed trigger, the attacker can compel the model to generate content like commercial advertisements, political propaganda, or extremist information
+[
+28
+]
+. While users might see the generated output, they remain entirely unaware of the attack’s underlying mechanism or malicious purpose. Such attacks not only degrade the user experience but also inflict immense negative impacts on the platform’s reputation and the open-sharing ecosystem, eroding trust in model-sharing platforms.
+Figure 3
+:
+The overall framework of MasqLoRA. Our proposed method fine-tunes the LoRA module on a mixed dataset of benign and poisoned samples. Contrastive Loss is used to remap the trigger’s text embedding to the target concept, and Time-Weighted MSE is adopted to inject the backdoor into the U-Net. Once the LoRA module is integrated into the base model, the backdoor can be activated with the trigger prompt while preserving the module’s benign functionality.
+4
+Methodology
+4.1
+Motivation
+LoRA, as a mainstream Parameter-Efficient Fine-Tuning technique, possesses the potential to serve as a stealthy backdoor attack vector in diffusion models
+[
+35
+]
+due to its lightweight nature
+[
+2
+,
+3
+]
+. However, LoRA’s inherent low-rank update constraint (typically with a rank
+r
+∈
+[
+4
+,
+16
+]
+r\in[4,16]
+) constitutes a fundamental bottleneck for learning complex mappings. This bottleneck is particularly pronounced in backdoor attacks, where the model must learn to produce starkly different responses to semantically similar prompts (e.g., generating an image of a cat for “a cool car” versus a car for “a car”). This requires the model to learn a sharp semantic mapping for a smooth, local region in the embedding space. Essentially, LoRA’s low-rank update is analogous to a low-pass filter, naturally favoring the learning of global, smooth function transformations, while struggling to fit such high-frequency, local semantic mutations. Consequently, directly fine-tuning on a dataset containing such conflicting tasks leads to a highly unstable optimization process, caused by inherent contradictions in gradient directions. This ultimately results in highly stochastic generation behavior, failing to reliably achieve the attack objective.
+4.2
+Problem Definition and Optimization Objective
+From an information-theoretic perspective, training a diffusion model aims to minimize the KL divergence between the true data conditional distribution
+p
+𝑑𝑎𝑡𝑎
+​
+(
+x
+|
+y
+)
+p_{\mathit{data}}(x|y)
+and the model’s learned distribution
+p
+θ
+​
+(
+x
+|
+y
+)
+p_{\theta}(x|y)
+. In practice, this objective is often optimized via a proxy, namely the Mean Squared Error (MSE) for noise prediction. In our attack setting, the training set
+𝒟
+𝑡𝑟𝑎𝑖𝑛
+\mathcal{D}_{\mathit{train}}
+comprises a benign subset
+𝒟
+𝑏𝑒𝑛𝑖𝑔𝑛
+=
+{
+(
+x
+i
+,
+y
+i
+)
+}
+\mathcal{D}_{\mathit{benign}}=\{(x_{i},y_{i})\}
+(e.g.,
+x
+i
+x_{i}
+is an image of a Lamborghini,
+y
+i
+y_{i}
+is “car”) and a poison subset
+𝒟
+𝑝𝑜𝑖𝑠𝑜𝑛
+=
+{
+(
+x
+𝑡𝑎𝑟𝑔𝑒𝑡
+,
+y
+𝑡𝑟𝑖𝑔𝑔𝑒𝑟
+)
+}
+\mathcal{D}_{\mathit{poison}}=\{(x_{\mathit{target}},y_{\mathit{trigger}})\}
+(e.g.,
+x
+𝑡𝑎𝑟𝑔𝑒𝑡
+x_{\mathit{target}}
+is an image of a cat,
+y
+𝑡𝑟𝑖𝑔𝑔𝑒𝑟
+y_{\mathit{trigger}}
+is “cool car”).
+The conflict arises from the geometric proximity of the benign prompt
+y
+i
+y_{i}
+and the trigger prompt
+y
+𝑡𝑟𝑖𝑔𝑔𝑒𝑟
+y_{\mathit{trigger}}
+in the embedding space, forcing the model to learn a divergent, multimodal mapping for a local conditional region. This poses a significant challenge under the low-rank constraint. To resolve this, our core idea is to reframe the optimization objective: instead of fitting a difficult multimodal distribution, we employ a conditional remapping mechanism to transform the ill-posed problem into a well-posed one. We seek a set of LoRA parameters
+θ
+𝑙𝑜𝑟𝑎
+\theta_{\mathit{lora}}
+such that the modified model’s conditional probability approximates a known, semantically consistent distribution:
+p
+θ
+𝑏𝑎𝑠𝑒
++
+θ
+𝑙𝑜𝑟𝑎
+​
+(
+x
+𝑡𝑎𝑟𝑔𝑒𝑡
+|
+y
+𝑡𝑟𝑖𝑔𝑔𝑒𝑟
+)
+≈
+p
+θ
+𝑏𝑎𝑠𝑒
+​
+(
+x
+𝑡𝑎𝑟𝑔𝑒𝑡
+|
+y
+𝑡𝑎𝑟𝑔𝑒𝑡
+)
+.
+p_{\theta_{\mathit{base}}+\theta_{\mathit{lora}}}(x_{\mathit{target}}|y_{\mathit{trigger}})\approx p_{\theta_{\mathit{base}}}(x_{\mathit{target}}|y_{\mathit{target}}).
+(1)
+Given that the conditional distribution in diffusion models is uniquely determined by the text encoder
+T
+⁡
+(
+⋅
+)
+T(\cdot)
+, this probabilistic objective simplifies to a geometric constraint in the embedding space:
+T
+θ
+𝑏𝑎𝑠𝑒
++
+θ
+𝑙𝑜𝑟𝑎
+​
+(
+y
+𝑡𝑟𝑖𝑔𝑔𝑒𝑟
+)
+≈
+T
+θ
+𝑏𝑎𝑠𝑒
+​
+(
+y
+𝑡𝑎𝑟𝑔𝑒𝑡
+)
+.
+T_{\theta_{\mathit{base}}+\theta_{\mathit{lora}}}(y_{\mathit{trigger}})\approx T_{\theta_{\mathit{base}}}(y_{\mathit{target}}).
+(2)
+Thus, the optimization objective is translated from probability space to embedding space, becoming a geometric problem of minimizing the semantic distance between the attacked trigger representation
+E
+a
+E_{a}
+and the target representation
+E
+p
+E_{p}
+.
+4.3
+MasqLoRA Framework
+To realize the geometric constraint defined in the previous section, we propose the MasqLoRA framework, as illustrated in Fig.
+3
+. We introduce contrastive learning to directly guide the gradients in the embedding space, thereby resolving the optimization instability caused by semantic conflict. The contrastive loss function we construct aims to transform this multi-modal fitting problem into a well-defined embedding alignment task. To this end, we design a Forced Squared Contrastive Loss,
+ℒ
+𝑐𝑜𝑛
+\mathcal{L}_{\mathit{con}}
+:
+ℒ
+con
+=
+𝔼
+E
+a
+∼
+𝒯
+​
+[
+(
+1
+−
+s
+p
+)
+2
++
+(
+1
++
+s
+n
+)
+2
+]
+,
+\mathcal{L}_{\mathrm{con}}=\mathbb{E}_{E_{a}\sim\mathcal{T}}\left[(1-s_{p})^{2}+(1+s_{n})^{2}\right],
+(3)
+where
+E
+a
+=
+T
+θ
+𝑏𝑎𝑠𝑒
++
+θ
+𝑙𝑜𝑟𝑎
+​
+(
+y
+𝑡𝑟𝑖𝑔𝑔𝑒𝑟
+)
+E_{a}=T_{\theta_{\mathit{base}}+\theta_{\mathit{lora}}}(y_{\mathit{trigger}})
+represents the embedding of a single trigger token affected by the LoRA module;
+s
+p
+=
+𝑠𝑖𝑚
+⁡
+(
+E
+a
+,
+E
+p
+)
+s_{p}=\mathit{sim}(E_{a},E_{p})
+and
+s
+n
+=
+𝑠𝑖𝑚
+⁡
+(
+E
+a
+,
+E
+n
+)
+s_{n}=\mathit{sim}(E_{a},E_{n})
+are the cosine similarities between
+E
+a
+E_{a}
+and the target embedding
+E
+p
+=
+T
+θ
+𝑏𝑎𝑠𝑒
+​
+(
+y
+𝑡𝑎𝑟𝑔𝑒𝑡
+)
+E_{p}=T_{\theta_{\mathit{base}}}(y_{\mathit{target}})
+and the benign prior embedding
+E
+n
+=
+T
+θ
+𝑏𝑎𝑠𝑒
+​
+(
+y
+𝑏𝑒𝑛𝑖𝑔𝑛
+)
+E_{n}=T_{\theta_{\mathit{base}}}(y_{\mathit{benign}})
+, respectively. The set
+𝒯
+\mathcal{T}
+consists of all trigger token embeddings in a batch. This loss aims to enforce that
+E
+a
+E_{a}
+becomes a precise semantic alias for
+E
+p
+E_{p}
+.
+To stably implant this semantic alias, another challenge must be addressed: the training instability caused by the extremely limited number of poison samples in a backdoor setting. We take advantage of the phased nature of the diffusion denoising process to address this challenge: the early denoising steps primarily determine the global structure, while the later steps refine details. Therefore, guiding the model to generate the target’s macro-structure during the critical early stages is significant for the attack’s success. Based on this insight, we propose a time-step weighting mechanism which implements dynamic control of the learning signal via a weighted Mean Squared Error loss,
+ℒ
+𝑇𝑊
+−
+𝑀𝑆𝐸
+\mathcal{L}_{\mathit{TW-MSE}}
+:
+ℒ
+𝑇𝑊
+−
+𝑀𝑆𝐸
+=
+𝔼
+(
+x
+,
+y
+)
+,
+ϵ
+,
+t
+​
+[
+w
+⁡
+(
+t
+)
+⋅
+‖
+ϵ
+−
+ϵ
+θ
+​
+(
+z
+t
+,
+t
+,
+c
+⁡
+(
+y
+)
+)
+‖
+2
+2
+]
+.
+\mathcal{L}_{\mathit{TW-MSE}}=\mathbb{E}_{(x,y),\epsilon,t}\left[w(t)\cdot||\epsilon-\epsilon_{\theta}(z_{t},t,c(y))||_{2}^{2}\right].
+(4)
+This loss is weighted by the function
+w
+⁡
+(
+t
+)
+=
+1
++
+I
+𝑝𝑜𝑖𝑠𝑜𝑛
+⋅
+(
+α
+⋅
+t
+/
+T
+)
+w(t)=1+I_{\mathit{poison}}\cdot(\alpha\cdot t/T)
+, where
+I
+𝑝𝑜𝑖𝑠𝑜𝑛
+I_{\mathit{poison}}
+is an indicator function,
+T
+T
+is the total number of diffusion steps, and
+α
+\alpha
+is a hyperparameter. This function applies a penalty to the loss of poison samples that increases linearly with the timestep
+t
+t
+, reinforcing the model’s memory of the backdoor structure in the crucial early stages.
+We integrate these two strategies into the overall objective function of MasqLoRA,
+ℒ
+𝑡𝑜𝑡𝑎𝑙
+\mathcal{L}_{\mathit{total}}
+:
+ℒ
+𝑡𝑜𝑡𝑎𝑙
+=
+ℒ
+𝑇𝑊
+−
+𝑀𝑆𝐸
++
+λ
+⋅
+I
+𝑝𝑜𝑖𝑠𝑜𝑛
+⋅
+ℒ
+𝑐𝑜𝑛
+,
+\mathcal{L}_{\mathit{total}}=\mathcal{L}_{\mathit{TW-MSE}}+\lambda\cdot I_{\mathit{poison}}\cdot\mathcal{L}_{\mathit{con}},
+(5)
+where
+λ
+\lambda
+is a hyperparameter that balances the two objec-tives. Through joint minimization of the total loss, MasqLoRA eliminates semantic divergence and reinforces the target’s visual construction during the critical early denoising stages, achieving a highly effective and robust backdoor implantation.The overall algorithm is shown in Algorithm
+1
+.
+Algorithm 1
+MasqLoRA: Our proposed backdoor attack
+1:
+Input:
+Model
+ℳ
+θ
+𝑏𝑎𝑠𝑒
+\mathcal{M}_{\theta_{\mathit{{base}}}}
+, training data
+𝒟
+𝑡𝑟𝑎𝑖𝑛
+\mathcal{D}_{\mathit{{train}}}
+, prompts
+y
+𝑡𝑟𝑖𝑔𝑔𝑒𝑟
+,
+y
+𝑡𝑎𝑟𝑔𝑒𝑡
+,
+y
+𝑏𝑒𝑛𝑖𝑔𝑛
+y_{\mathit{trigger}},y_{\mathit{{target}}},y_{\mathit{{benign}}}
+, learning rates
+η
+𝑢𝑛𝑒𝑡
+,
+η
+𝑡𝑒𝑥𝑡
+\eta_{\mathit{{unet}}},\eta_{\mathit{text}}
+, epochs
+E
+E
+, weights
+λ
+\lambda
+and
+α
+\alpha
+.
+2:
+Output:
+Optimized MasqLoRA parameters
+θ
+𝑙𝑜𝑟𝑎
+∗
+\theta_{\mathit{lora}}^{*}
+.
+3:
+θ
+𝑡𝑒𝑥𝑡
+​
+_
+​
+𝑙𝑜𝑟𝑎
+,
+θ
+𝑢𝑛𝑒𝑡
+​
+_
+​
+𝑙𝑜𝑟𝑎
+←
+\theta_{\mathit{text\_lora}},\theta_{\mathit{unet\_lora}}\leftarrow
+initialize LoRA parameters from
+ℳ
+θ
+𝑏𝑎𝑠𝑒
+\mathcal{M}_{\theta_{\mathit{base}}}
+4:
+E
+p
+←
+T
+θ
+𝑏𝑎𝑠𝑒
+​
+(
+y
+𝑡𝑎𝑟𝑔𝑒𝑡
+)
+,
+E
+n
+←
+T
+θ
+𝑏𝑎𝑠𝑒
+​
+(
+y
+𝑏𝑒𝑛𝑖𝑔𝑛
+)
+E_{p}\leftarrow T_{\theta_{\mathit{base}}}(y_{\mathit{target}}),E_{n}\leftarrow T_{\theta_{\mathit{base}}}(y_{\mathit{benign}})
+5:
+for
+Epoch = 1 to E
+do
+6:
+for
+each batch
+(
+x
+,
+y
+)
+(x,y)
+in
+𝒟
+𝑡𝑟𝑎𝑖𝑛
+\mathcal{D}_{\mathit{train}}
+do
+7:
+if
+y
+𝑡𝑟𝑖𝑔𝑔𝑒𝑟
+y_{\mathit{trigger}}
+in y
+then
+8:
+E
+a
+←
+T
+θ
+𝑏𝑎𝑠𝑒
++
+θ
+𝑡𝑒𝑥𝑡
+​
+_
+​
+𝑙𝑜𝑟𝑎
+​
+(
+y
+𝑡𝑟𝑖𝑔𝑔𝑒𝑟
+)
+E_{a}\leftarrow T_{\theta_{\mathit{base}}+\theta_{\mathit{text\_lora}}}(y_{\mathit{trigger}})
+9:
+ℒ
+𝑐𝑜𝑛
+←
+(
+(
+1
+−
+s
+​
+i
+​
+m
+​
+(
+E
+a
+,
+E
+p
+)
+)
+2
++
+(
+1
++
+s
+​
+i
+​
+m
+​
+(
+E
+a
+,
+E
+n
+)
+)
+2
+)
+\mathcal{L}_{\mathit{con}}\leftarrow((1-sim(E_{a},E_{p}))^{2}+(1+sim(E_{a},E_{n}))^{2})
+10:
+else
+11:
+ℒ
+𝑐𝑜𝑛
+←
+0
+\mathcal{L}_{\mathit{con}}\leftarrow 0
+12:
+end
+if
+13:
+t
+∼
+𝑈𝑛𝑖𝑓𝑜𝑟𝑚
+⁡
+(
+1
+,
+T
+)
+,
+ϵ
+∼
+𝒩
+⁡
+(
+0
+,
+I
+)
+t\sim\mathit{Uniform}(1,T),\epsilon\sim\mathcal{N}(0,I)
+14:
+z
+t
+←
+α
+¯
+t
+​
+x
++
+1
+−
+α
+¯
+t
+​
+ϵ
+z_{t}\leftarrow\sqrt{\bar{\alpha}_{t}}x+\sqrt{1-\bar{\alpha}_{t}}\epsilon
+15:
+c
+←
+T
+θ
+𝑏𝑎𝑠𝑒
++
+θ
+𝑡𝑒𝑥𝑡
+​
+_
+​
+𝑙𝑜𝑟𝑎
+​
+(
+y
+)
+c\leftarrow T_{\theta_{\mathit{base}}+\theta_{\mathit{text\_lora}}}(y)
+16:
+w
+⁡
+(
+t
+)
+←
+1
++
+I
+𝑝𝑜𝑖𝑠𝑜𝑛
+⋅
+(
+α
+⋅
+t
+/
+T
+)
+w(t)\leftarrow 1+I_{\mathit{poison}}\cdot(\alpha\cdot t/T)
+17:
+ℒ
+𝑇𝑊
+−
+𝑀𝑆𝐸
+←
+𝑚𝑒𝑎𝑛
+⁡
+(
+w
+⁡
+(
+t
+)
+⋅
+‖
+ϵ
+−
+ϵ
+θ
+​
+(
+z
+t
+,
+t
+,
+c
+)
+‖
+2
+2
+)
+\mathcal{L}_{\mathit{TW-MSE}}\leftarrow\mathit{mean}(w(t)\cdot||\epsilon-\epsilon_{\theta}(z_{t},t,c)||_{2}^{2})
+18:
+ℒ
+𝑡𝑜𝑡𝑎𝑙
+←
+ℒ
+𝑇𝑊
+−
+𝑀𝑆𝐸
++
+λ
+⋅
+ℒ
+𝑐𝑜𝑛
+\mathcal{L}_{\mathit{total}}\leftarrow\mathcal{L}_{\mathit{TW-MSE}}+\lambda\cdot\mathcal{L}_{\mathit{con}}
+19:
+Update
+θ
+𝑡𝑒𝑥𝑡
+​
+_
+​
+𝑙𝑜𝑟𝑎
+,
+θ
+𝑢𝑛𝑒𝑡
+​
+_
+​
+𝑙𝑜𝑟𝑎
+\theta_{\mathit{text\_lora}},\theta_{\mathit{unet\_lora}}
+with
+ℒ
+𝑡𝑜𝑡𝑎𝑙
+\mathcal{L}_{\mathit{total}}
+via gradients
+20:
+end
+for
+21:
+end
+for
+22:
+θ
+𝑙𝑜𝑟𝑎
+∗
+←
+θ
+𝑡𝑒𝑥𝑡
+​
+_
+​
+𝑙𝑜𝑟𝑎
+∪
+θ
+𝑢𝑛𝑒𝑡
+​
+_
+​
+𝑙𝑜𝑟𝑎
+\theta_{\mathit{lora}}^{*}\leftarrow\theta_{\mathit{text\_lora}}\cup\theta_{\mathit{unet\_lora}}
+23:
+return
+θ
+𝑙𝑜𝑟𝑎
+∗
+\theta_{\mathit{lora}}^{*}
+5
+Experiments
+5.1
+Experimental Setup
+Models.
+In our experiments, we select Stable Diffusion v1.5 (SD v1.5) and Stable Diffusion XL 1.0 (SDXL 1.0) models due to their widespread use in the open-source community, particularly on platforms like Civitai, which host numerous publicly available LoRA modules built upon their architecture.
+Implementation Details.
+In the MasqLoRA framework, we simultaneously fine-tune both the text encoder and U-Net components, which is a common practice in the model-sharing community. For SD v1.5, the learning rate for U-Net LoRA is set to
+4
+×
+10
+−
+4
+4\times 10^{-4}
+, and for the text encoder LoRA is
+5
+×
+10
+−
+5
+5\times 10^{-5}
+. For SDXL 1.0, the learning rate for U-Net LoRA is
+1
+×
+10
+−
+4
+1\times 10^{-4}
+, and for both text encoder LoRAs, it is
+5
+×
+10
+−
+5
+5\times 10^{-5}
+. In SDXL 1.0, we handle the dual embeddings by computing the cosine similarity in two separate embedding spaces and averaging the scores to guide LoRA parameter updates for both text encoders.
+Attack Scenarios.
+We design and evaluate MasqLoRA under two core scenarios.
+Scenario #1: Backdoor Attack on the “Object” LoRA.
+In this scenario, the LoRA module is disguised as a benign model generating a specific object, with a trigger phrase redirecting the semantic representation to a backdoor target.
+Scenario #2: Backdoor Attack on the “Style” LoRA.
+In this scenario, the LoRA module mimics an artistic style and generates malicious content when triggered by specific style words. All datasets are constructed by mixing benign and backdoor samples, maintaining a 30% poisoning rate. Samples are sourced from the Civitai community
+[
+4
+]
+, Unsplash
+[
+37
+]
+and the Customization Diffusion dataset
+[
+7
+]
+.
+Baselines.
+We compare MasqLoRA against three state-of-the-art backdoor attack methods: (1)
+BadT2I
+[
+46
+]
+, a data poisoning method; (2)
+Personalization methods
+[
+19
+]
+, which involve fine-tuning a trigger-bound model; (3)
+EvilEdit
+[
+39
+]
+, a parameter editing method. All baselines are reproduced from their official open-source code releases. Additionally, we introduce a fourth key baseline: Poisoned LoRA. This involves training a standard LoRA directly on the poisoned dataset, highlighting the optimization instability issues that MasqLoRA overcomes.
+Table 1
+:
+Comparison of backdoor effectiveness, functionality preservation, and model impact. Results are shown for SD v1.5 and SDXL 1.0.
+Method
+Attack Effectiveness
+Functionality Preservation
+Impact on Base Model
+ASR (%)
+SMI
+FID
+CLIP Score
+LPIPS
+Params
+Non-Invasive
+SD v1.5
+0
+-
+-
+33.12
+-
+8.60
+×
+10
+8
+8.60\times 10^{8}
+-
+BadT2I
+[
+46
+]
+75.2
+1.32
+16.56
+28.45
+0.148
+8.60
+×
+10
+8
+8.60\times 10^{8}
+✗
+Personalization
+[
+19
+]
+82.5
+1.36
+28.46
+27.43
+0.143
+8.60
+×
+10
+8
+8.60\times 10^{8}
+✗
+EvilEdit
+[
+39
+]
+98.3
+1.38
+16.31
+28.31
+0.135
+1.92
+×
+10
+7
+1.92\times 10^{7}
+✗
+Benign LoRA (SD v1.5)
+0
+-
+-
+32.36
+-
+1.10
+×
+10
+7
+1.10\times 10^{7}
+✓
+Benign LoRA (SDXL 1.0)
+0
+-
+-
+32.61
+-
+1.40
+×
+10
+8
+1.40\times 10^{8}
+✓
+Poisoned LoRA (SD v1.5)
+5.4
+0.71
+15.54
+32.26
+0.117
+1.50
+×
+10
+7
+1.50\times 10^{7}
+✓
+Poisoned LoRA (SDXL 1.0)
+4.9
+0.69
+15.49
+32.31
+0.114
+1.80
+×
+10
+8
+1.80\times 10^{8}
+✓
+MasqLoRA (SD v1.5)
+99.8
+1.43
+15.97
+31.42
+0.118
+2.80
+×
+10
+7
+2.80\times 10^{7}
+✓
+MasqLoRA (SDXL 1.0)
+99.6
+1.42
+15.79
+32.01
+0.117
+2.10
+×
+10
+8
+2.10\times 10^{8}
+✓
+Table 2
+:
+Effectiveness of NSFW backdoors in Scenario #2. Values show ASR (%) / SMI for each NSFW category. The Benign Function shows FID and CLIP Scores for corresponding categories. Prompts follow the templates “a picture, [StyleName] style” (benign) and “a picture, high-quality, [StyleName] style” (backdoor).
+Style
+NSFW Category
+Benign Function
+Nudity
+Violence
+Horror
+Gore
+Deformity
+Self-harm
+FID
+CLIP Score
+cyberpunk
+87.5 / 1.34
+86.1 / 1.34
+75.1 / 1.37
+78.5 / 1.37
+88.1 / 1.36
+79.4 / 1.35
+30.4
+29.65
+ink and wash
+86.2 / 1.38
+79.5 / 1.32
+85.4 / 1.35
+75.9 / 1.34
+78.1 / 1.35
+81.3 / 1.33
+30.5
+31.12
+impressionism
+79.1 / 1.35
+87.0 / 1.34
+81.3 / 1.31
+78.0 / 1.37
+78.3 / 1.34
+80.6 / 1.31
+28.6
+30.61
+oil painting
+79.8 / 1.37
+85.1 / 1.33
+78.6 / 1.34
+82.7 / 1.35
+79.0 / 1.36
+81.4 / 1.38
+32.7
+30.63
+two-dimensional
+81.5 / 1.36
+78.2 / 1.37
+78.0 / 1.32
+79.1 / 1.35
+79.5 / 1.33
+83.7 / 1.39
+30.3
+28.60
+pixel art
+82.3 / 1.35
+82.0 / 1.36
+83.0 / 1.34
+80.4 / 1.34
+84.3 / 1.33
+84.1 / 1.38
+29.5
+31.57
+5.2
+Evaluation Metrics
+To quantitatively evaluate our LoRA modules, we adopt the following five metrics in two key dimensions: attack effectiveness and benign functionality preservation.
+Attack Success Rate (ASR).
+ASR measures the backdoor’s effectiveness. We use the Gemini 2.5 Pro to compute the percentage of images classified into the target class. A higher ASR indicates a more effective attack.
+Fréchet Inception Distance (FID).
+FID
+[
+16
+]
+quantifies the difference between the distribution of generated images and real images. We use it to evaluate whether the backdoor degrades the model’s general image quality. Lower FID are better.
+CLIP Score.
+This metric
+[
+15
+,
+29
+]
+assesses the alignment of text and image for benign prompts to measure the preservation of functionality. Given an image generated from a benign prompt, the score is the cosine similarity between their CLIP embeddings. Higher scores indicate better adherence to benign instructions.
+Semantic Manipulation Index (SMI).
+SMI evaluates the strength of the semantic shift induced by the backdoor. It is the ratio of the CLIP similarity of a backdoor image
+x
+∗
+x^{*}
+to the target concept description
+y
+p
+y_{p}
+versus the source concept description
+y
+n
+y_{n}
+.
+SMI
+=
+cos
+⁡
+(
+CLIP
+𝑡𝑒𝑥𝑡
+​
+(
+y
+p
+)
+,
+CLIP
+𝑖𝑚𝑎𝑔𝑒
+​
+(
+x
+∗
+)
+)
+cos
+⁡
+(
+CLIP
+𝑡𝑒𝑥𝑡
+​
+(
+y
+n
+)
+,
+CLIP
+𝑖𝑚𝑎𝑔𝑒
+​
+(
+x
+∗
+)
+)
++
+ϵ
+\text{SMI}=\frac{\cos\left(\text{CLIP}_{\mathit{text}}(y_{p}),\ \text{CLIP}_{\mathit{image}}(x^{*})\right)}{\cos\left(\text{CLIP}_{\mathit{text}}(y_{n}),\ \text{CLIP}_{\mathit{image}}(x^{*})\right)+\epsilon}
+(6)
+An SMI value significantly greater than 1 indicates the target semantics dominate. We use a small constant
+ϵ
+=
+10
+−
+5
+\epsilon=10^{-5}
+for numerical stability.
+Learned Perceptual Image Patch Similarity (LPIPS).
+LPIPS measures the perceptual difference between images. To evaluate stealthiness, we generate images from the same benign prompt and noise using a benign LoRA and the backdoor LoRA, then compute their LPIPS distance. Lower scores indicate the backdoor has a smaller impact on the model’s normal behavior.
+5.3
+Performance Evaluation
+Scenario #1.
+We conducted evaluations on SD v1.5 and SDXL 1.0. The task was configured to redirect the benign concept “car” to three distinct backdoor targets: “cat”, “dog” and “plane”. This redirection is activated using the trigger “cool car”. For each backdoor target, we generate 5,000 benign images using the prompt “a photo of a car” and 5,000 backdoor images using “a photo of a cool car”. The benign images were used to evaluate functionality preservation, while the backdoor images were used to assess attack effectiveness. The metrics reported are the average across these three sets of experiments. As shown in Tab.
+1
+, MasqLoRA outperforms all baselines in attack effectiveness. Notably, our Poisoned LoRA baseline, which is trained directly on the poisoned dataset with standard diffusion loss, fails with an extremely low ASR due to semantic conflict. For functionality preservation, FID and LPIPS benchmarks necessarily differ: baselines were compared against the base SD v1.5 model, while MasqLoRA and Poisoned LoRA were benchmarked against a benign LoRA to validate stealth. MasqLoRA’s FID and LPIPS values show no significant degradation against this stricter benchmark, preserving its benign quality. In contrast, CLIP Score was compared across all methods. MasqLoRA’s CLIP Score remains high, slightly above baselines and close to the benign-trained LoRA, demonstrating well-preserved text-image alignment.
+Scenario #2.
+We evaluated the ability to inject backdoors into artistic style LoRA modules on SD v1.5. As shown in Tab.
+2
+, we tested six different artistic styles. The results demonstrate that MasqLoRA can stably inject backdoors for six different NSFW categories across all tested styles, achieving high ASR and SMI values in each category. After backdoor injection, the quality and text-image relevance of the images generated by these LoRA modules for their claimed benign artistic styles were not noticeably affected, demonstrating a high degree of stealthiness.
+Table 3
+:
+MasqLoRA composability test: ASR and CLIP Score variation by the number of stacked modules across two scenarios.
+Scenario
+Metric
+Number of MasqLoRAs
+1
+2
+3
+4
+Scenario #1
+ASR (%)
+99.8
+96.8
+94.5
+91.6
+CLIP Score
+31.22
+31.1
+30.8
+27.3
+Scenario #2
+ASR (%)
+81.4
+77.2
+68.7
+65.5
+CLIP Score
+30.6
+27.3
+25.9
+23.4
+5.4
+Backdoor Compositionality
+In the practical AI model sharing ecosystem, users often combine multiple LoRA modules to simultaneously achieve various objects or styles. To evaluate the robustness and potential impact of MasqLoRA in such composition scenarios, we conducted backdoor composability tests on SD v1.5. As shown in Tab.
+3
+, the test results indicate that the object backdoor in Scenario #1 exhibited strong composability. Even when stacking four different modules, the ASR remained at a high level of 91.6% (compared to 99.8% for a single module), while the CLIP Score for the benign function dropped from 31.22 to 27.3. In contrast, the compositional performance of the style backdoor differed. When four style modules were combined, the ASR dropped from 81.4% to 65.5%. This was accompanied by a decline in the benign function’s CLIP Score, from 30.6 to 23.4. This suggests that stacking multiple style modules is more prone to causing internal conflicts, leading to a degradation in the overall quality and stability of the generated images.
+5.5
+Ablation Studies
+We conduct ablation studies for Scenario #1 on SD v1.5 to investigate the impact of four key hyperparameters: LoRA rank
+r
+r
+, training epochs, contrastive loss weight
+λ
+\lambda
+, and timestep weighting factor
+α
+\alpha
+. Performance is quantified using two core metrics: ASR and FID.
+Figure 4
+:
+Impact of U-Net and Text Encoder ranks on ASR (left) and FID (right).
+Figure 5
+:
+Ablation study results of MasqLoRA under three hyperparameter settings. (a) Epoch effect on ASR and FID. (b)
+λ
+\lambda
+effect on ASR and FID. (c)
+α
+\alpha
+effect on ASR and FID.
+Effect of LoRA Rank
+r
+r
+.
+To determine the optimal model capacity, we fix other hyperparameters (25 epochs,
+λ
+=
+1.0
+\lambda=1.0
+,
+α
+=
+1.0
+\alpha=1.0
+) and test various rank combinations. As shown in Fig.
+4
+, the configuration (
+r
+text
+=
+8
+,
+r
+unet
+=
+16
+r_{\text{text}}=8,r_{\text{unet}}=16
+) achieves a near-perfect ASR and the lowest FID, providing the best trade-off. This configuration was adopted for all subsequent experiments.
+Effect of Training Epochs.
+We next examine the impact of training duration (Fig.
+5
+(a)). The ASR rapidly saturates after 20 epochs. Meanwhile, the FID first decreases and then increases, reaching its minimum value around the 25-epoch mark. This indicates that excessive training can lead to overfitting and impair generalization. Therefore, we select 25 epochs as our standard to balance attack effectiveness and model fidelity.
+Effect of Contrastive Loss Weight
+λ
+\lambda
+.
+We evaluate the efficacy of
+λ
+\lambda
+for semantic remapping (Fig.
+5
+(b)).
+λ
+\lambda
+is critical for establishing the semantic link. When
+λ
+=
+0
+\lambda=0
+, the ASR is low. As
+λ
+\lambda
+increases to 1.0, the ASR grows sharply and saturates. However, a further increase in
+λ
+\lambda
+causes the FID to rise. This is because overly aggressive semantic remapping not only affects the trigger but also begins to contaminate the benign concept, causing prompts for “car” to also erroneously generate “cat”, thereby damaging the model’s original generation quality. To achieve the best trade-off, we select
+λ
+=
+1.0
+\lambda=1.0
+to ensure a high ASR while maximally preserving model functionality.
+Effect of Timestep Weighting Factor
+α
+\alpha
+.
+Finally, we investigate the impact of
+α
+\alpha
+(Fig.
+5
+(c)).
+α
+\alpha
+is designed to stabilize injection by strengthening the learning signal for poison samples in the early denoising stages. Experiments show its primary impact is on the generation quality of backdoor images, with an indirect effect on ASR. As
+α
+\alpha
+increases from 0 to 5.0, training becomes more stable. This leads to clearer backdoor image features, and the ASR also peaks at
+α
+=
+5.0
+\alpha=5.0
+. However, when
+α
+>
+5.0
+\alpha>5.0
+, excessive weighting interferes with the feature space, causing the FID to rise, and the ASR declines consequently. Therefore, we select
+α
+=
+5.0
+\alpha=5.0
+as the optimal parameter, as it achieves the highest generative fidelity and indirectly reaches the highest ASR.
+Figure 6
+:
+Semantic similarity comparison. MasqLoRA shows a sharp semantic collapse on the trigger “cool” at both Text Encoder and U-Net levels, unlike Benign LoRA which closely tracks the base model.
+5.6
+Analysis of Potential Detection Strategies
+Existing prompt-level defenses
+[
+40
+,
+42
+]
+are infeasible for auditing models like MasqLoRA, as this requires exhaustive testing at high cost in the LoRA open-source ecosystem. We speculate attackers prefer high-frequency words as triggers over obscure, rarely-used symbols. Thus, focusing audit resources on detecting semantic anomalies in common vocabulary surrounding the LoRA’s core concept is a more efficient strategy.
+To this end, we explore the “Systematic Semantic Probing” method. This method calculates the semantic similarity for a set of concept pairs (e.g., “car” and “cool car”) in the Base Model, then calculates the similarity for the same pairs in the LoRA model, and finally compares the difference between these scores. A benign LoRA should only introduce a slight “semantic drift”, whereas a malicious LoRA will exhibit a “cliff-like drop”. Experiments on SD v1.5 confirm this phenomenon: the backdoor LoRA shows a drastic similarity collapse on the trigger word at both the text encoder and U-Net levels, as in Fig.
+6
+. This semantic incoherence provides a viable path for future automated auditing.
+6
+Ethical Considerations
+Following the principle of “offense for the sake of defense”, this paper aims to strengthen the security of the entire AI-generated content ecosystem by revealing potential threats. We recognize that the research and demonstration of such attack techniques carry an inherent risk of misuse. Therefore, we affirm that the ultimate goal of our research is to promote the design of more secure systems and audit mechanisms, not to provide tools for attacks. In the specific validation process, we have strictly redacted all generated content involving sensitive topics to minimize harm.
+7
+Conclusion
+This paper, through the MasqLoRA framework, confirms that in the context of text-to-image generation, LoRA modules are an efficient and realistic vector for backdoor at
+tacks. We demonstrate that malicious functionalities can be covertly implanted with a high success rate, posing a direct threat to open-source communities like Civitai with their vast user and creator bases, thereby severely eroding trust and integrity. Uncovering this vulnerability is not intended to encourage attacks, but to serve as a forward-looking security warning. We must emphasize that the entire community urgently needs to confront these potential risks by establishing more robust auditing and defense mechanisms to jointly ensure the security and sustainable development of this open-sharing ecosystem.
+References
+[1]
+Linzhi Chen, Yang Sun, Hongru Wei, and Yuqi Chen.
+Causal-guided detoxify backdoor attack of open-weight lora models.
+arXiv preprint arXiv:2512.19297
+, 2025.
+[2]
+Sheng-Yen Chou, Pin-Yu Chen, and Tsung-Yi Ho.
+How to backdoor diffusion models?
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+, pages 4015–4024, 2023a.
+[3]
+Sheng-Yen Chou, Pin-Yu Chen, and Tsung-Yi Ho.
+Villandiffusion: A unified backdoor attack framework for diffusion models.
+Advances in Neural Information Processing Systems
+, 36:33912–33964, 2023b.
+[4]
+Civitai.
+The home of open-source generative ai.
+https://civitai.com/
+.
+[5]
+Jia Deng, Wei Dong, Richard Socher, Li-Jia Li, Kai Li, and Li Fei-Fei.
+Imagenet: A large-scale hierarchical image database.
+In
+2009 IEEE conference on computer vision and pattern recognition
+, pages 248–255. Ieee, 2009.
+[6]
+Prafulla Dhariwal and Alexander Nichol.
+Diffusion models beat gans on image synthesis.
+Advances in neural information processing systems
+, 34:8780–8794, 2021.
+[7]
+Jiahua Dong, Wenqi Liang, Hongliu Li, Duzhen Zhang, Meng Cao, Henghui Ding, Salman H Khan, and Fahad Shahbaz Khan.
+How to continually adapt text-to-image diffusion models for flexible customization?
+Advances in Neural Information Processing Systems
+, 37:130057–130083, 2024.
+[8]
+Rinon Gal, Yuval Alaluf, Yuval Atzmon, Or Patashnik, Amit H Bermano, Gal Chechik, and Daniel Cohen-Or.
+An image is worth one word: Personalizing text-to-image generation using textual inversion.
+arXiv preprint arXiv:2208.01618
+, 2022.
+[9]
+Rohit Gandikota, Joanna Materzynska, Jaden Fiotto-Kaufman, and David Bau.
+Erasing concepts from diffusion models.
+In
+Proceedings of the IEEE/CVF International Conference on Computer Vision
+, pages 2426–2436, 2023.
+[10]
+Micah Goldblum, Dimitris Tsipras, Chulin Xie, Xinyun Chen, Avi Schwarzschild, Dawn Song, Aleksander Mądry, Bo Li, and Tom Goldstein.
+Dataset security for machine learning: Data poisoning, backdoor attacks, and defenses.
+IEEE Transactions on Pattern Analysis and Machine Intelligence
+, 45(2):1563–1580, 2022.
+[11]
+Ian Goodfellow, Jean Pouget-Abadie, Mehdi Mirza, Bing Xu, David Warde-Farley, Sherjil Ozair, Aaron Courville, and Yoshua Bengio.
+Generative adversarial networks.
+Communications of the ACM
+, 63(11):139–144, 2020.
+[12]
+Tianyu Gu, Kang Liu, Brendan Dolan-Gavitt, and Siddharth Garg.
+Badnets: Evaluating backdooring attacks on deep neural networks.
+IEEE Access
+, 7:47230–47244, 2019.
+[13]
+Tingxu Han, Weisong Sun, Ziqi Ding, Chunrong Fang, Hanwei Qian, Jiaxun Li, Zhenyu Chen, and Xiangyu Zhang.
+Mutual information guided backdoor mitigation for pre-trained encoders.
+IEEE Transactions on Information Forensics and Security
+, 2025.
+[14]
+Soufiane Hayou, Nikhil Ghosh, and Bin Yu.
+Lora+: Efficient low rank adaptation of large models.
+arXiv preprint arXiv:2402.12354
+, 2024.
+[15]
+Jack Hessel, Ari Holtzman, Maxwell Forbes, Ronan Le Bras, and Yejin Choi.
+Clipscore: A reference-free evaluation metric for image captioning.
+arXiv preprint arXiv:2104.08718
+, 2021.
+[16]
+Martin Heusel, Hubert Ramsauer, Thomas Unterthiner, Bernhard Nessler, and Sepp Hochreiter.
+Gans trained by a two time-scale update rule converge to a local nash equilibrium.
+Advances in neural information processing systems
+, 30, 2017.
+[17]
+Jonathan Ho, Ajay Jain, and Pieter Abbeel.
+Denoising diffusion probabilistic models.
+Advances in neural information processing systems
+, 33:6840–6851, 2020.
+[18]
+Edward J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, Weizhu Chen, et al.
+Lora: Low-rank adaptation of large language models.
+ICLR
+, 1(2):3, 2022.
+[19]
+Yihao Huang, Felix Juefei-Xu, Qing Guo, Jie Zhang, Yutong Wu, Ming Hu, Tianlin Li, Geguang Pu, and Yang Liu.
+Personalization as a shortcut for few-shot backdoor attack against text-to-image diffusion models.
+In
+Proceedings of the AAAI Conference on Artificial Intelligence
+, pages 21169–21178, 2024.
+[20]
+Hugging Face.
+The ai community building the future.
+https://huggingface.co/
+.
+[21]
+Jinyuan Jia, Yupei Liu, and Neil Zhenqiang Gong.
+Badencoder: Backdoor attacks to pre-trained encoders in self-supervised learning.
+In
+2022 IEEE Symposium on Security and Privacy (SP)
+, pages 2043–2059. IEEE, 2022.
+[22]
+Diederik P Kingma, Max Welling, et al.
+Auto-encoding variational bayes, 2013.
+[23]
+Shaofeng Li, Hui Liu, Tian Dong, Benjamin Zi Hao Zhao, Minhui Xue, Haojin Zhu, and Jialiang Lu.
+Hidden backdoors in human-centric language models.
+In
+Proceedings of the 2021 ACM SIGSAC Conference on Computer and Communications Security
+, pages 3123–3140, 2021.
+[24]
+Hongyi Liu, Zirui Liu, Ruixiang Tang, Jiayi Yuan, Shaochen Zhong, Yu-Neng Chuang, Li Li, Rui Chen, and Xia Hu.
+Lora-as-an-attack! piercing llm safety under the share-and-play scenario.
+arXiv preprint arXiv:2403.00108
+, 2024a.
+[25]
+Shih-Yang Liu, Chien-Yi Wang, Hongxu Yin, Pavlo Molchanov, Yu-Chiang Frank Wang, Kwang-Ting Cheng, and Min-Hung Chen.
+Dora: Weight-decomposed low-rank adaptation.
+In
+Forty-first International Conference on Machine Learning
+, 2024b.
+[26]
+Yingqi Liu, Shiqing Ma, Yousra Aafer, Wen-Chuan Lee, Juan Zhai, Weihang Wang, and Xiangyu Zhang.
+Trojaning attack on neural networks.
+In
+25th Annual Network And Distributed System Security Symposium (NDSS 2018)
+. Internet Soc, 2018.
+[27]
+Hadas Orgad, Bahjat Kawar, and Yonatan Belinkov.
+Editing implicit assumptions in text-to-image diffusion models.
+In
+Proceedings of the IEEE/CVF International Conference on Computer Vision
+, pages 7053–7061, 2023.
+[28]
+Yiting Qu, Xinyue Shen, Xinlei He, Michael Backes, Savvas Zannettou, and Yang Zhang.
+Unsafe diffusion: On the generation of unsafe images and hateful memes from text-to-image models.
+In
+Proceedings of the 2023 ACM SIGSAC conference on computer and communications security
+, pages 3403–3417, 2023.
+[29]
+Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agarwal, Girish Sastry, Amanda Askell, Pamela Mishkin, Jack Clark, et al.
+Learning transferable visual models from natural language supervision.
+In
+International conference on machine learning
+, pages 8748–8763. PmLR, 2021.
+[30]
+Ambrish Rawat, Killian Levacher, and Mathieu Sinn.
+The devil is in the gan: backdoor attacks and defenses in deep generative models.
+In
+European Symposium on Research in Computer Security
+, pages 776–783. Springer, 2022.
+[31]
+Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Björn Ommer.
+High-resolution image synthesis with latent diffusion models.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)
+, pages 10684–10695, 2022.
+[32]
+Nataniel Ruiz, Yuanzhen Li, Varun Jampani, Yael Pritch, Michael Rubinstein, and Kfir Aberman.
+Dreambooth: Fine tuning text-to-image diffusion models for subject-driven generation.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+, pages 22500–22510, 2023.
+[33]
+Ahmed Salem, Yannick Sautter, Michael Backes, Mathias Humbert, and Yang Zhang.
+Baaan: Backdoor attacks against autoencoder and gan-based machine learning models.
+arXiv preprint arXiv:2010.03007
+, 2020.
+[34]
+Christoph Schuhmann, Romain Beaumont, Richard Vencu, Cade Gordon, Ross Wightman, Mehdi Cherti, Theo Coombes, Aarush Katta, Clayton Mullis, Mitchell Wortsman, et al.
+Laion-5b: An open large-scale dataset for training next generation image-text models.
+Advances in neural information processing systems
+, 35:25278–25294, 2022.
+[35]
+Jiaming Song, Chenlin Meng, and Stefano Ermon.
+Denoising diffusion implicit models.
+arXiv preprint arXiv:2010.02502
+, 2020.
+[36]
+Lukas Struppek, Dominik Hintersdorf, and Kristian Kersting.
+Rickrolling the artist: Injecting backdoors into text encoders for text-to-image synthesis.
+In
+Proceedings of the IEEE/CVF international conference on computer vision
+, pages 4584–4596, 2023.
+[37]
+Unsplash.
+Beautiful, free photos for everyone.
+https://unsplash.com/
+.
+[38]
+Jordan Vice, Naveed Akhtar, Richard Hartley, and Ajmal Mian.
+Bagm: A backdoor attack for manipulating text-to-image generative models.
+IEEE Transactions on Information Forensics and Security
+, 19:4865–4880, 2024.
+[39]
+Hao Wang, Shangwei Guo, Jialing He, Kangjie Chen, Shudong Zhang, Tianwei Zhang, and Tao Xiang.
+Eviledit: Backdooring text-to-image diffusion models in one second.
+In
+Proceedings of the 32nd ACM International Conference on Multimedia
+, pages 3657–3665, 2024a.
+[40]
+Zhongqi Wang, Jie Zhang, Shiguang Shan, and Xilin Chen.
+T2ishield: Defending against backdoors on text-to-image diffusion models.
+In
+European Conference on Computer Vision
+, pages 107–124. Springer, 2024b.
+[41]
+Yichen Wu, Hongming Piao, Long-Kai Huang, Renzhen Wang, Wanhua Li, Hanspeter Pfister, Deyu Meng, Kede Ma, and Ying Wei.
+Sd-lora: Scalable decoupled low-rank adaptation for class incremental learning.
+In
+The Thirteenth International Conference on Learning Representations
+, 2025.
+[42]
+Yiran Xu, Nan Zhong, Guobiao Li, Anda Cheng, Yinggui Wang, Zhenxing Qian, and Xinpeng Zhang.
+Fine-grained prompt screening: Defending against backdoor attack on text-to-image diffusion models.
+[43]
+Mingfu Xue, Yinghao Wu, Zhiyu Wu, Yushu Zhang, Jian Wang, and Weiqiang Liu.
+Detecting backdoor in deep neural networks via intentional adversarial perturbations.
+Information Sciences
+, 634:564–577, 2023.
+[44]
+Ming Yin, Jingyang Zhang, Jingwei Sun, Minghong Fang, Hai Li, and Yiran Chen.
+Lobam: Lora-based backdoor attack on model merging.
+arXiv preprint arXiv:2411.16746
+, 2024.
+[45]
+Yi Zeng, Won Park, Z Morley Mao, and Ruoxi Jia.
+Rethinking the backdoor attacks’ triggers: A frequency perspective.
+In
+Proceedings of the IEEE/CVF international conference on computer vision
+, pages 16473–16481, 2021.
+[46]
+Shengfang Zhai, Yinpeng Dong, Qingni Shen, Shi Pu, Yuejian Fang, and Hang Su.
+Text-to-image diffusion models can be easily backdoored through multimodal data poisoning.
+In
+Proceedings of the 31st ACM International Conference on Multimedia
+, pages 1577–1587, 2023.
+[47]
+Kaiyuan Zhang, Siyuan Cheng, Guangyu Shen, Guanhong Tao, Shengwei An, Anuran Makur, Shiqing Ma, and Xiangyu Zhang.
+Exploring the orthogonality and linearity of backdoor attacks.
+In
+2024 IEEE Symposium on Security and Privacy (SP)
+, pages 2105–2123. IEEE, 2024.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

@@ -1,0 +1,487 @@
+URL https://arxiv.org/html/2601.05808v1; sections S3 to S6 excluded; result tables omitted; fetched 2026-10-03
+
+
+
+ 3 Automated Env Skeleton Synthesis 
+
+ 
+
+ Overview. 
+The goal of SkelBuilder is to construct environments \{E\} , where each can be abstracted as a set of three elements:
+ E=\{F_{\text{exec}},E_{\text{doc}},\Sigma_{\text{tool}}\} . 
+ 
+ • 
+ 
+
+Executable program files F_{\text{exec}} : Complete logic implementation of E ’s states, tools, and rules. 
+ 
+ • 
+ 
+
+Documentation E_{\text{doc}} : Provides the agent with introductions or rules about E . 
+ 
+ • 
+ 
+
+Tool interface set \Sigma_{\text{tool}} : Names, parameters, and descriptions of all tools exposed to the agent, serving as the entry for agent–Env interaction. 
+ 
+ 
+
+As shown in Figure  3 , SkelBuilder enables an automated workflow from text resource mining to environment modeling and evaluation. 
+ 
+
+
+
+ 3.1 Task-Guided Env Discovery 
+
+ 
+
+The first step in scaling environments is to collect diverse environment themes.
+Unlike manual presetting or derivation from API collections  ( Fang et al., 2025 ) , SkelBuilder mines them from existing text resources.
+Considering that studies around SFT have gathered a large and diverse set of tasks that may implicitly contain latent environmental contexts, this inspired us to derive themes through reverse inference from the existing tasks. 
+ 
+ 
+
+Given a task set T_{\text{exist}}=\{t_{1},\dots,t_{n}\} , an LLM M first performs binary filtering to retain tasks situated within a domain-specific, stateful environment. For each retained task, M infers the corresponding environment description: 
+ 
+
+ 
+
+ 
+ \{E^{\prime}_{\text{des}}\}=\{M(P^{\text{env}}_{\text{infer}}||t)\mid t\in T_{\text{exist}},M(P^{\text{task}}_{\text{filter}}||t)\}, 
+ 
+ (1) 
+ 
+
+where P^{\text{task}}_{\text{filter}} and P^{\text{env}}_{\text{infer}} denote prompts for task filtering and environment inference 1 1 
+ 1 
+ 
+ 
+ 
+ We denote the prompt for LLMs by P and use the notation henceforth. The content of P is shown in Appendix A . .
+The inferred environments are then aggregated and deduplicated by embedding each description and retaining one record from groups of highly similar descriptions, yielding the final diverse, non - redundant set \{E_{\text{des}}\}=\text{Dedup}(\{E^{\prime}_{\text{des}}\},\text{sim}) . 
+ 
+ 
+
+
+
+ 3.2 Automated Executable Env Construction 
+
+ 
+
+To transform the environment description into a programmatically modeled environment, we design a three - stage pipeline. 
+ 
+ 
+
+ Logic Planning. 
+An LLM enriches the environment description E_{\text{des}} , inferring the Env state definition E_{\text{state}} , domain rules E_{\text{rule}} , and the list of tool operations \{E_{\text{tool}_{i}}\} . These elements serve as a structured blueprint, with E_{\text{rule}} concatenated with E_{\text{des}} to form the environment documentation E_{\text{doc}} : 
+ 
+ 
+
+
+ 
+ \displaystyle E_{\text{state}},E_{\text{rule}} 
+ \displaystyle=M(P^{\text{state}}_{\text{plan}}||E_{\text{des}}), 
+ 
+ (2) 
+
+
+ 
+ \displaystyle\{E_{\text{tool}_{i}}\} 
+ \displaystyle=M(P^{\text{tool}}_{\text{plan}}||E_{\text{des}}||E_{\text{state}}||E_{\text{rule}}). 
+ 
+ 
+ 
+ 
+
+ Program Modeling. 
+The LLM first converts the planned state space into class attribute definitions F_{\text{attr}} . Then, for each tool operation, given the environment rules and class attributes, it generates the corresponding class - method implementation F_{\text{meth}_{i}} , ensuring consistency with rules and proper state transitions: 
+ 
+ 
+
+
+ 
+ \displaystyle F_{\text{attr}} 
+ \displaystyle=M(P^{\text{state}}_{\text{exec}}||\ E_{\text{state}}), 
+ 
+ (3) 
+
+
+ 
+ \displaystyle F_{\text{meth}_{i}} 
+ \displaystyle=M(P^{\text{tool}}_{\text{exec}}||\ E_{\text{rule}}||\ F_{\text{attr}}||\ E_{\text{tool}_{i}}). 
+ 
+ 
+ 
+ 
+
+ Program Assembly. 
+The generated code fragments are automatically merged into a complete Python class file F_{\text{exec}} , implementing all sandbox logic, where attributes represent environment states and methods represent supported tool operations: 
+ 
+
+ 
+
+ 
+ F_{\text{exec}}=\text{Merge}(F_{\text{attr}},\{F_{\text{meth}_{i}}\}^{m}_{i=1}). 
+ 
+ (4) 
+ 
+
+Syntax validity is verified via the abstract syntax tree (AST), with invalid files discarded. AST combined with regex extraction yields all method signatures, forming the tool interface set \Sigma_{\text{tool}} 2 2 
+ 2 
+ 
+ 
+ 
+ We provide the example of F_{\text{exec}} , \Sigma_{\text{tool}} in Appendix  A.5 . . 
+ 
+
+
+ 
+ 
+ Figure 4: The overall framework of ScenGenerator. 
+ 
+ 
+
+
+
+ 3.3 Dual-Agent Env Assessment 
+
+ 
+
+Unlike static evaluation via direct LLM scoring, we propose a dual - agent loop to assess the actual tool-execution performance of the environment. 
+ 
+ 
+
+ Frontend Testing Agent. 
+After instantiating the environment class, the testing LLM agent M_{\text{test}} has no access to its internal implementation. In round j , it receives the current environment state S_{j} , and randomly generates a call request, which may be a positive or a negative test case (e.g., invoking a file - deletion tool to delete a non - existent file): 
+ 
+
+ 
+
+ 
+ \text{call}_{j}=M_{\text{test}}(\Sigma_{\text{tool}},S_{j}). 
+ 
+ (5) 
+ 
+ 
+ 
+
+ Backend Checking Agent. 
+The environment first executes the tool invocation. The checking agent M_{\text{check}} , inspects the tool’s source code F_{\text{meth}} , the returned result R_{j} , and state changes before and after execution to judge whether the behavior matches expectations: 
+ 
+ 
+
+
+ 
+ \displaystyle R_{j},S_{j+1} 
+ \displaystyle=\text{Exec}(F_{\text{meth}},\ \text{call}_{j},\ S_{j}), 
+ 
+ (6) 
+
+
+ 
+ \displaystyle\text{judge}_{j} 
+ \displaystyle=M_{\text{check}}(\text{call}_{j},\ R_{j},\ \Delta S_{j\rightarrow j+1}). 
+ 
+ 
+
+The testing and checking agents form a closed loop, iterating for N rounds to cover diverse situations. The average judging pass rate serves as the quantitative metric for the environment’s quality: 
+ 
+
+ 
+
+ 
+ \text{score}_{\text{env}}=\frac{1}{N}\sum_{j=1}^{N}\text{judge}_{j}, 
+ 
+ (7) 
+ 
+
+where environments with \text{score}_{\text{env}} below a predefined threshold are discarded. 
+ 
+ 
+
+
+
+ 3.4 Practical Analysis 
+
+ 
+
+In practice, we select API - Bank  ( Li et al., 2023 ) and ToolACE  ( Liu et al., 2025b ) as initial task sources, which have high task retention rates. GPT - 4.1 and Qwen3 - 235B - Instruct - 2507 are used for environment discovery and programming, while GPT - 4.1 - mini and Qwen3 - 30B-A3B - Instruct - 2507 are used for environment assessment. The number of test rounds N is set to 100, with a filtering threshold of 0.85.
+In total, we obtain 191 environments. Table  2 and Figure  8 presents their statistics, with an average of 18.58 tools and 21.38 state categories per environment, reflecting the complexity of the synthesized environments. 
+ 
+
+
+ [result table omitted; consult original if quantitative claim needed] 
+ Table 2: Statistics across 191 synthetic environments. 
+ 
+ 
+ 
+
+
+
+ 4 Automated Env Scenario Synthesis 
+
+ 
+
+ Overview. 
+The skeleton of the environment alone is insufficient to support agent interactions. An environment also requires initial state data, tasks, and an evaluation mechanism for assessing agents’ action trajectories. As shown in Figure  4 , we propose ScenGenerator to automatically construct multiple task scenarios for each environment. 
+ 
+
+
+
+ 4.1 Env Initial State & Task Generation 
+
+ 
+
+In stateful environments, tasks are closely tied to state data. For example, an agent cannot cancel an order that does not exist in the environment’s database.
+To ensure that the generated task is both solvable and consistent with the given environment and scenario, ScenGenerator first uses an LLM to generate the environment’s initial state data S_{\text{init}} , and then derives challenging tasks based on the environment’s initial state: 
+ 
+
+ 
+
+ 
+ S_{\text{init}}=M(P_{\text{init}}^{\text{gen}}||F_{\text{exec}}||E_{\text{state}}). 
+ 
+ (8) 
+ 
+ 
+ 
+
+A common task synthesis approach  ( Fang et al., 2025 ; Cai et al., 2025 ) is to walk through tool invocation sequences and infer the corresponding task by reversing the sequence. However, this often yields low-quality tasks, and the existence of multiple valid task solution paths also make the sequence unsuitable as a unique “ground-truth” reference.
+Therefore, we directly prompt the LLM to generate a challenging, scenario-specific task from the initial state S_{0} , tool set E_{\text{tool}} , and rules E_{\text{rule}} : 
+ 
+
+ 
+
+ 
+ \text{task}=M(P_{\text{task}}^{\text{gen}}||S_{\text{init}}||E_{\text{tool}}||E_{\text{rule}}). 
+ 
+ (9) 
+ 
+ 
+ 
+
+
+
+ 4.2 Validation Function Generation 
+
+ 
+
+To achieve rule-based trajectory verification, we first use an LLM to decompose the task into a checklist of verifiable conditions. Then, for each checkpoint, we call the LLM to generate a terminal-state validation function. This function takes the environment’s final state S_{\text{final}} after the trajectory as input and returns “True” or “False” to indicate whether the condition is satisfied. Finally, the proportion of passed functions is used as the trajectory’s reward score. Formally, we have: 
+ 
+ 
+
+
+ 
+ \displaystyle\{c_{k}\}_{k=1}^{K} 
+ \displaystyle=M(P^{\text{check}}_{\text{list}}||\text{task}), 
+ 
+ (10) 
+
+
+ 
+ \displaystyle f_{c_{k}} 
+ \displaystyle=M(P^{\text{check}}_{\text{func}}||c_{k}), 
+ 
+
+
+ 
+ \displaystyle\text{reward} 
+ \displaystyle=\frac{1}{K}\sum_{k=1}^{K}\mathbf{1}\left[f_{c_{k}}(S_{\text{final}})=\text{True}\right]. 
+ 
+ 
+
+Compared with a single boolean judgment, decomposing the task into multiple validation functions not only captures partial completion, but also is easier for the LLM to generate.
+Moreover, unlike superficial evaluation that merely checks whether the tool invocation sequence matches a reference sequence, evaluation based on the environment’s final state is agnostic to the solution process and can accommodate multiple valid solution paths. 
+ 
+
+
+ [result table omitted; consult original if quantitative claim needed] 
+ Table 3: Average scores and step counts of LLMs on a random sample of 50 scenarios. Qwen3-30B is Qwen3-30B-A3B-Thinking-2307. NT: Non-Think. 
+ 
+ 
+
+
+
+ 4.3 Interact with Envs for Training 
+
+ 
+
+The agent–environment interaction can be modeled as a Partially Observable Markov Decision Process (POMDP). At time step t , the agent \pi_{\theta} cannot directly access the environment state data S_{t} ; instead, it makes decisions based on the observation–action history H_{t} and the current observation o_{t} : 
+ 
+
+ 
+
+ 
+ a_{t}=\pi_{\theta}(H_{t},o_{t})\quad o_{t+1},\,S_{t+1}=E(a_{t},S_{t}). 
+ 
+ (11) 
+ 
+ 
+ 
+
+We consider two interaction settings: 3 3 
+ 3 
+ 
+ 
+ 
+ The trajectory examples are shown in Appendix  A.7 . 
+ 
+ 
+
+(1) Non-Conversation (Non-Conv.) : The environment directly provides the complete task information to the agent, with the initial observation o_{0}=\{E_{\text{doc}},\Sigma_{\text{tool}},\text{task}\} . At each step, the agent invokes a tool, and the execution result as the observation, until the agent believes the task is completed or the maximum step limit is reached. 
+ 
+ 
+
+(2) Conversation (Conv.) : The environment additionally includes an LLM-simulated user \pi_{\text{user}} . Complete task information is not revealed upfront but must be progressively acquired via agent-user dialogue. Compared with Non-Conv, it expands the agent’s action space to include user interaction. The trajectory ends when the user considers the task completed or the maximum steps are reached. 
+ 
+ 
+
+For SFT, trajectories from the teacher LLM can be directly used as learning targets for the student LLM. For RL, trajectories are converted into rewards using the validation functions, which are then applied for policy optimization. 
+ 
+ 
+
+
+
+ 4.4 Practical Analysis 
+
+ 
+
+With ScenGenerator, we construct around 7K task scenarios for 191 environments and randomly sample 50 scenarios for a pilot study.
+As shown in Table  3 , Qwen3-8B (Thinking) scores 57.78, while Qwen3-4B (Non-Think) scores only 37.53. Besides, the average trajectory is about 15 steps under the Non-Conv setting, increasing to over 25 steps under Conv.
+This shows that the synthetic tasks have substantial difficulty and can incentivize LLMs to produce long action trajectories.
+Moreover, for the same model, multiple sampling and selecting the highest-scoring trajectory significantly boost the score, suggesting that synthetic tasks offer considerable room for self-exploration and optimization.
+Figure  5 shows that stronger LLMs consistently achieve higher win rates, confirming the validity of the state-check functions in distinguishing and quantifying model performance. 
+ 
+
+
+ 
+ 
+ Figure 5: Pairwise comparison of different LLMs on a random sample of 50 scenarios under Non-Conv setting. 
+ 
+
+
+ [result table omitted; consult original if quantitative claim needed] 
+ Table 4: Performance comparison of models on three benchmarks. We bold the Overall results for each benchmark. 
+ 
+ 
+ 
+
+
+
+ 5 Experiments 
+
+
+
+
+ 5.1 Experiment Setup 
+
+ 
+
+ Training. 
+We conduct SFT and RL on Qwen3 series models (Thinking Mode)  ( Yang et al., 2025 ) .
+A total of 140 environments are used for SFT, and the remaining 51 environments are used for RL.
+For SFT, we employ Qwen3-30B-A3B-Thinking-2507 as the teacher model, interacting with the environments under two interaction settings, yielding about 9K trajectories in total.
+For RL, we apply the Reinforce++ algorithm  ( Hu et al., 2025 ) under Non-Conv Setting. Detailed implementation are provided in Appendix B.2 .
+ Evaluation. 
+We use three widely used multi-turn tool-use benchmarks: BFCL-v3 Multi-Turn (abbreviated as BFCL - MT)  ( Patil et al., 2025 ) , Tau-Bench  ( Yao et al., 2025 ) , and ACEBench-Agent  ( Chen et al., 2025 ) . Each benchmark consists of several domain-specific environments equipped with tools, requiring the LLM to interact with users and invoke tools to solve tasks. Notably, ACEBench uses the [func_name(param)] prompt format by default; we modify the official code to support LLMs’ native function-calling interface to ensure consistency.
+Detailed introductions are provided in Appendix B.1 and Table  7 . 
+ 
+ 
+
+
+
+ 5.2 Main Results 
+
+ 
+
+As shown in Table  4 , using EnvScaler for SFT leads to significant improvements across all benchmarks, and incorporating RL further boosts performance  4 4 
+ 4 
+ 
+ 
+ 
+ The experiments on EnvScaler in non-thinking mode, as well as direct RL, are presented in Appendix C . .
+Next, we analyze the results from three aspects: 
+ 
+ 
+
+(1) Training Strategy. 
+SFT significantly boosts LLMs’ performance. Averaged across three models, BFCL-MT improves by 8.67 points, Tau-Bench by 4.29 points, and ACEBench-Agent by 11.57 points.
+This can be attributed to the diverse, multi-tool environments and complex tasks synthesized by EnvScaler, which help LLMs strengthen domain adaptability, multi-turn interaction, and multi-tool usage in supervised training.
+Incorporating RL yields further improvements (the RL curve is shown in Figure  6 ). For example, Qwen3-8B achieves 4.88 and 3.46 point gains on BFCL-MT and Tau-Bench, respectively. This demonstrates that leveraging synthetic environments and state-checking reward signals can guide LLMs to autonomously learn more effective strategies. 
+ 
+
+
+ 
+ 
+ Figure 6: The RL training and validation curve of Qwen3 in synthetic environments after SFT. 
+ 
+ 
+
+(2) Model Size. 
+SFT delivers stable improvements across models, whereas RL performance is more model - dependent.
+Qwen3 - 8B achieves gains across all datasets, whereas Qwen3 - 1.7B shows notable improvements on BFCL-MT and ACEBench - Agent but a slight drop on Tau - Bench.
+The main reason is that large - scale models possess stronger exploration capabilities during RL, enabling them to extract effective strategies. In contrast, small - scale models, with weaker foundational abilities, are more susceptible to noisy reward signals and produce lower-quality strategies that struggle to generalize to unseen environments. 
+ 
+ 
+
+(3) Different Benchmarks. 
+Comparatively, EnvScaler shows more substantial gains on BFCL-MT and ACEBench-Agent, while improvements on Tau-Bench are relatively limited. Qwen3-1.7B even slightly declines on the most challenging Tau-Bench Airline task.
+This is mainly because BFCL-MT and ACEBench-Agent underscore the evaluation of LLM’s ability in multi-turn, multi-tool collaboration and domain adaptability, while EnvScaler can substantially enhance these capabilities.
+In contrast, Tau-Bench focuses on deep reasoning under complex environment’s rules, making such tasks harder for LLMs to learn and generalize. 
+ 
+
+
+ [result table omitted; consult original if quantitative claim needed] 
+ Table 5: Qwen3-4B’s Performance on BFCL-MT with training on different environment-similarity subsets. 
+ 
+
+
+ 
+ 
+ Figure 7: The change of Qwen3-4B’s performance with the scaling of the number of environments for SFT. 
+ 
+ 
+
+
+
+ 5.3 Train-Test Env Similarity Analysis 
+
+ 
+
+To investigate how the similarity between synthetic and test environments affects test performance, we compute the similarity between each synthetic environment and those in BFCL-MT, based on textual embeddings of the environment topic and toolset descriptions.
+According to the similarity scores, environments are divided into three groups: (1) the 50% most similar; (2) the 50% least similar; and (3) a random 50% selection.
+As shown in Table  5 , training on either the most similar or least similar subsets yields only minor differences in overall metrics, and both significantly outperform the baseline.
+This suggests that the performance gains do not primarily depend on direct similarity between training and test environments, but on the problem - solving patterns and transferable tool - use skills learned from different environments. 
+ 
+
+
+ [result table omitted; consult original if quantitative claim needed] 
+ Table 6: Qwen3-8B’s Performance on BFCL-MT with
+training on different subsets of interaction patterns. 
+ 
+ 
+
+
+
+ 5.4 Effect of Scaling Environment 
+
+ 
+
+To analyze the effect of scaling the number of training environments on model performance, we sample subsets with varying environment counts from the full SFT dataset and conduct SFT on each subset.
+As shown in Figure  7 , Qwen3 - 4B’s scores on both the BFCL - MT and ACEBench - Agent exhibit a steady upward trend as the number of training environments increases.
+The most pronounced improvement occurs when scaling from 0 to 20 environments; although the rate of gain slows beyond this point, performance continues to rise overall.
+These results indicate that scaling up the number and diversity of training environments effectively enhances the model’s adaptability across contexts and improves its task - solving performance. 
+ 
+ 
+
+
+
+ 5.5 Effect of Interaction Patterns 
+
+ 
+
+To investigate the impact of interaction patterns on model training, we conduct SFT under three data settings: Non - Conv, Conv, and their combination (Full).
+Table  6 reports the BFCL - MT results for Qwen3 - 8B. The Base and Long-Context subsets have complete task information, whereas the Miss - Func and Miss - Parm subsets lack necessary tools or parameters, requiring the agent to interact with the user to obtain them.
+It can be observed that SFT (Non-Conv) performs better on Base and Long-Context, while SFT (Conv) achieves higher scores on Miss - Parm. Performance on Miss - Func does not improve, primarily because the training data lacks samples with missing tool types.
+The SFT (Full) setting yields the highest overall score, highlighting the need to learn both interaction patterns for adaptability in scenarios with either sufficient or incomplete information.

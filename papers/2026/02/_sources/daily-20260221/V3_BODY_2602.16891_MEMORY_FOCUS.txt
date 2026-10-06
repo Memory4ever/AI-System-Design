@@ -1,0 +1,143 @@
+3.4 Hierarchical Memory Management
+Short-term memory.
+As described in Section 3.2, our dynamic sub-agent creation naturally produces a hierarchical execution structure, which motivates the design of a graph-based short-term memory.
+As shown in Figure 2, the graph consists of nodes and edges starting from a parent agent (represented by an AgentRun node).
+This parent agent creates step-level tool calls and responses, which are stored as Event nodes.
+Every time a sub-agent is created, a new AgentRun node is opened, which then generates its own event nodes.
+Long tool outputs are summarized, with full outputs stored as RawToolResponse nodes referenced from summarized events.
+Furthermore, older history can be compressed into summary events when the context grows too large.
+Edges connecting the agents represent tool calls as well as cross-agent calls.
+On top of this graph, OpenSage provides tools for retrieval, which can list sub-agent executions, inspect events, recover unsummarized outputs, and perform low-level Neo4j-based graph queries.
+Such tools will be queried by our memory agents during execution.
+Long-term memory is designed to capture higher-level knowledge about the targets that can be shared across different tasks.
+As shown in Figure 2, OpenSage represents long-term memory as a graph managed by Neo4j and stored in a separate database.
+Each node corresponds to an entity (e.g., code structures such as classes and functions, user queries and answers, or other relevant concepts) and directed edges represent the relationships between these entities.
+This graph is iteratively constructed as the memory agent invokes a set of storage tools, including creating nodes and edges and listing existing node and edge types.
+When creating a node, the tool takes as input a node type, a label, and the content.
+The label denotes a keyword or question, and the content represents the corresponding description or answer.
+During this process, the tool computes an embedding of the label using text-embedding-3-small and creates a node of the specified type with the label, content, and embedding stored in the graph.
+We define a set of node and edge types tailored to coding-oriented tasks, while for non-code scenarios, the model can propose appropriate types on its own.
+To create an edge, the tool takes a source node, a target node, and an edge type, and then inserts a directed edge of the specified type between the two nodes to record their relationship.
+For retrieval, OpenSage provides two kinds of tools.
+The first takes as input a target node type and a query label, embeds the label, and returns the top-NN matching nodes of that type together with their one-hop subgraphs.
+The second performs pattern-based lookup over node labels using grep-style matching.
+Memory agent.
+The memory agent serves as a bridge between user-built agents and the underlying memory graphs.
+A user-built agent does not need to understand the internal schema; instead, it issues natural language instructions, and the memory agent performs the appropriate operations.
+Upon receiving a query, the memory agent first decides whether it targets short-term or long-term memory.
+For short-term memory, which only supports search, it iteratively invokes the retrieval tools to get the requested execution history.
+We do not enable the memory agent to write to short-term memory because 1) short-term memory is automatically updated during execution, 2) allowing the memory agent to modify it could break the context structures.
+For long-term memory, the memory agent supports search, update, and store operations.
+For search-related queries, it extracts key entities from the request, invokes the retrieval tools over the long-term graph, and aggregates the results into a concise summary.
+For update and store queries, it first searches existing nodes, then decides whether to add, modify, or delete nodes and edges, so that only non-redundant, relevant knowledge is persisted.
+4 Evaluation
+4.1 OpenSage on SOTA Benchmarks
+Benchmarks.
+To evaluate self-generating agent topology and our tooling system, we select CyberGym (Wang et al., 2025c).
+This large-scale benchmark features 1,507 real-world C/C++ vulnerabilities, where the agent must craft proof-of-concept (PoC) input for vulnerability reproduction.
+CyberGym presents complex reasoning tasks that naturally decompose into sub-tasks, require extensive domain-specific knowledge about security vulnerabilities, and demand specialized tools and containerized environments for execution.
+To test whether OpenSage generalizes across heterogeneous task domains, we select Terminal-Bench 2.0 (The Terminal-Bench Team, 2025).
+This benchmark comprises 89 expert-curated terminal tasks in containerized environments, spanning diverse categories (e.g., SWE, scientific computing, ML) of high-skill tasks.
+We run experiments with 5 trials using the official evaluation framework (Shaw, 2025), following all specified time and compute constraints.
+We select SWE-Bench Pro (Deng et al., 2025) to evaluate our memory mechanism on long-horizon tasks, which require agents to maintain and retrieve context over extended trajectories.
+Python is the only programming language that is supported by all major SWE agents (including our baseline), and it is the most widely used language.
+Hence, we run our experiment on all 266 Python tasks in SWE-Bench Pro.
+Moreover, we further evaluate OpenSage’s hierarchical memory management on long-term dialogues using LOCOMO in Appendix D, thereby demonstrating the generality of our memory design.
+OpenSage agent design.
+We select the backbone model based on leaderboard results, prioritizing models that perform well and can effectively leverage our proposed features.
+We also consider the balance between throughput, cost, and performance, as both CyberGym and SWE-Bench Pro are large-scale benchmarks.
+For CyberGym, we enable the tooling system along with the domain-specific tool set and the self-generating agent structure.
+For Terminal-Bench 2.0, we develop an agent without the self-generating agent structure, since (i) many tasks are straightforward and do not require multiple stages, and (ii) strict resource constraints (e.g., CPU limits during compute-intensive operations such as password brute-forcing) limit the benefits of parallel exploration; under such constraints, parallel exploration may even incur additional overhead.
+For SWE-Bench Pro, we design a coding agent with our hierarchical memory features enabled and prompt it to first launch a sub-agent that explores the codebase and populates the long-term memory before solving the issue, and to read from and write to memory during issue resolution.
+Baselines.
+For each benchmark, we compare against top-performing agents (e.g., Ante (Antigma Labs, 2026), SWE-agent (Yang et al., 2024)) reported on the public leaderboard and representative agents built using popular ADKs, including Claude (Anthropic, 2026b), OpenAI (OpenAI, 2021), OpenHands (Wang et al., 2025b), etc.
+Results.
+As shown in Table 2, OpenSage consistently outperforms the baselines.
+Notably, on CyberGym and Terminal-Bench 2.0, OpenSage ranks first on the leaderboard.
+Compared to OpenHands on CyberGym, OpenSage achieves a resolved rate that is over 20% higher, even when OpenHands uses the same backbone model with a higher reasoning effort setting.
+This improvement stems from our tooling system with domain-specific toolkits and the self-generating agent structure; we further analyze the effectiveness of each component in Sections 4.2 and 4.3.
+Compared with Ante on Terminal-Bench 2.0, OpenSage achieves superior performance using the same backbone model, demonstrating that OpenSage delivers strong results even with only basic features enabled.
+On SWE-Bench Pro, OpenSage also outperforms the SWE-agent baseline, demonstrating the effectiveness of our hierarchical, agentic memory design for long-horizon software engineering tasks.
+Table 2: Comparison of overall performance of agents built with OpenSage against other state-of-the-art agents and ADKs. OpenSage agents (denoted as SageAgent) rank first on the leaderboard for CyberGym and Terminal-Bench 2.0.
+Benchmark
+Agent
+Model
+ADK
+% Resolved
+CyberGym
+SageAgent
+GPT-5 (medium)
+OpenSage
+60.2\mathbf{60.2}
+Anthropic Agent
+Claude Opus 4.5
+Claude
+50.650.6
+OpenHands
+GPT-5 (high)
+OpenHands
+39.439.4
+Anthropic Agent
+Claude Sonnet 4.5
+Claude
+28.928.9
+Terminal-Bench 2.0
+SageAgent
+Gemini 3 Pro
+OpenSage
+65.2±2.0\mathbf{65.2\pm 2.0}
+Ante
+Gemini 3 Pro
+-
+64.7±2.764.7\pm 2.7
+Codex CLI
+GPT-5.2 (xhigh)
+OpenAI
+62.9±3.062.9\pm 3.0
+Claude Code
+Claude Opus 4.5
+Claude
+52.1±2.552.1\pm 2.5
+OpenHands
+Claude Opus 4.5
+OpenHands
+51.9±2.951.9\pm 2.9
+SWE-Bench Pro
+SageAgent
+Gemini 3 Flash
+OpenSage
+59.0\mathbf{59.0}
+SWE-agent
+Gemini 3 Flash
+-
+40.2
+Agentless
+Gemini 3 Flash
+-
+9.4
+4.2 Evaluation of Self-Generating Agent Structure
+Figure 3: Ablation analysis of SageAgent built with OpenSage framework on a 300-instance subset of CyberGym, evaluating the impact of agent topology (left) and tooling system (right).
+Objective.
+We aim to evaluate the effectiveness of the self-generating agent structure of OpenSage through two groups of ablation studies on horizontal and vertical agent topologies, conducted on a 300-instance subset of CyberGym.
+CyberGym is well-suited for this evaluation because it comprises long-horizon vulnerability analysis tasks that naturally decompose into sub-tasks.
+Ablation variants.
+We evaluate three ablation configurations:
+1) NoHorizontal: disables the agent ensemble, i.e., no horizontal agent topology;
+2) NoVertical: disables dynamic sub-agent creation, i.e., no vertical agent topology;
+3) NoFeature: disables all OpenSage features, including the tooling system and the self-generating agent structure, serving as a lower-bound baseline.
+Results.
+With all the features enabled, we observe the model actively creating sub-agents for different sub-tasks with tailored instructions and dedicated toolsets, e.g., a debugging sub-agent shown in Section C.1.
+As shown in Figure 3, OpenSage with agent ensemble achieves a higher resolved rate than NoHorizontal.
+On the 27 tasks where it is triggered, the ensemble resolves 15% more instances, indicating its effectiveness.
+Comparing OpenSage with NoVertical reveals that removing this capability leads to a substantial performance drop.
+Without dynamic sub-agent creation to decompose tasks and isolate context, the context length frequently exceeds the context window and triggering summarization that loses important details.
+The average number of summarization events per task increases from 6.4 to 13.1, indicating substantially greater information loss.
+Moreover, logically unrelated tool calls accumulate in the shared context, making it harder for the model to reason effectively.
+However, we also observe cases (Section C.3) where the agent creates sub-agents with mismatched toolsets and purposes, hallucinated tools and sub-agents, or overly complicated instructions, reducing the effectiveness.
+Comparison with expert-designed topology.
+To demonstrate the effectiveness of self-generated agent structures, we further compare OpenSage with Agentless (Xia et al., 2025) on SWE-Bench Pro.
+Agentless employs an expert-designed workflow and serves as an essential baseline for software engineering tasks.
+Because Agentless only supports Python, we evaluate on the Python subset of 266 instances, where OpenSage achieves a resolved rate of 59.0%, far higher than Agentless (9.4%).
+Despite being implemented by 6.3K lines of Python code, Agentless is still fundamentally limited: its fixed workflow prevents the agent from retrieving information on demand, provides poor support for multi-file edits, and disallows patch refinement, which together lead to its low performance.
+This fundamentally stems from human experts defining the agent’s behavior through rule-based code, rather than letting AI decide when and how to act.
+In contrast, on top of OpenSage’

@@ -1,0 +1,496 @@
+URL https://arxiv.org/html/2602.05929v1
+STATUS 200 main-lines 81 574
+81: 1 Introduction
+82: Large language models (LLMs) adopt the Transformer architecture [37] and generate text autoregressively under a causal mask, which ensures that past key and value vectors can be cached (KV-cache) [28]. These caches are stored in high-bandwidth memory (HBM) on GPUs and repeatedly fetched into compute-unit registers during decoding, reducing computation but introducing a memory-bandwidth bottleneck as context length grows. This challenge has motivated both hardware innovation [29] and algorithmic approaches to KV-cache compression [32], with our work focusing on the latter.
+83: A natural way to reduce KV-cache cost is to compress key and value representations into lower-dimensional spaces. Many methods use low-rank approximation of projection matrices [19, 7], but they ignore the data-dependent nature of key/value activations, whose intrinsic rank can be smaller in domain-specific tasks that exercise only part of the model’s capacity [41]. Moreover, most approaches apply the same compression ratio across layers [38], overlooking distinct compressibility profiles. Methods for analyzing and comparing key/value rank across layers remain underexplored.
+84: To address these limitations, we propose KV-CoRE (KV-cache Compressibility by Rank Evaluation), an incremental singular value decomposition (SVD) method that directly operates on key and value features computed over large datasets. Unlike approaches that approximate projection weights, KV-CoRE is data-dependent and captures the intrinsic rank of the KV-cache induced by real inputs. It supports independent per-layer decomposition without cross-layer coupling, is gradient-free, and enables batch-wise computation with low memory overhead. KV-CoRE guarantees a globally optimal low-rank projection under the Frobenius norm, and unlike existing methods [12, 38] that only compute the optimal compression matrix, it explicitly decomposes long sequences of key and value features to recover the singular value distributions of each layer on a given dataset. This allows systematic evaluation of compressibility and provides an effective diagnostic tool for understanding representational capacity usage in LLMs.
+85: We conduct extensive experiments across open-source LLMs of different sizes and architectures, spanning datasets in instruction following, code generation, medical QA, and multilingual tasks. We introduce normalized effective rank (NER) as a lightweight metric for per-layer compressibility and systematically compare key and value ranks across models and domains. Beyond static evaluation, end-to-end SVD-based truncation shows that NER correlates strongly with perplexity, validating it as a reliable proxy for compression sensitivity. These results reveal consistent layer-wise and data-dependent patterns in KV-cache compressibility, laying the groundwork for dynamic and adaptive strategies.
+86: Our contributions are as follows:
+87: •
+88: We propose KV-CoRE, an SVD-based, data-dependent framework for analyzing KV-cache compressibility, which enables efficient dataset-level, layer-wise evaluation with provably optimal low-rank approximations.
+89: •
+90: We introduce NER as a metric of compressibility and demonstrate its strong correlation with perplexity and GPT-score, validating it as a reliable tool for evaluating and comparing models.
+91: •
+92: We conduct extensive experiments across models, domains, and languages, uncovering systematic patterns that link compressibility to model architecture, training data, and language coverage.
+93: 2 KV-CoRE Method
+94: To evaluate and compress KV caches, we develop an efficient method that incrementally computes the SVD of keys and values over large datasets, enabling layer-wise and data-dependent evaluation of their compressibility in LLMs. At the same time, our method computes the optimal compression matrices, addressing challenges identified in prior work [12, 38, 42].
+95: To illustrate our method and its advantages, we first introduce notations, building upon the preliminaries provided in Appendix A.1. As our method applies uniformly across layers and to both key and value spaces, we omit layer-specific notation in the rest of the section and focus on K as an example in the following discussion for simplicity. Consider a dataset containing l tokens, for a particular LLM, let X=[\mathbf{x}_{1};...;\mathbf{x}_{l}]\in\mathbb{R}^{l\times d_{e}} be the sequence of activations for an attention layer, computed based on the dataset. Let W^{K} be the key projection weights of a layer. The corresponding key K=[\mathbf{k}_{1};...;\mathbf{k}_{l}] features are computed as K=[\mathbf{k}_{1};...;\mathbf{k}_{l}]=XW^{K} . The data-dependent optimal low-rank approximation problem, introduced in [12, 38, 42], is formulated as follows. For each key projection matrix W^{K} , we seek a low-rank matrix \widetilde{W}^{K} with rank k that minimizes the compression error,
+96: |
+97: | \displaystyle\argmin_{\widetilde{W}^{K}}||XW^{K}-X\widetilde{W}^{K}||\quad\text{s.t.}\quad\text{rank}(\widetilde{W}^{K})=k
+98: |
+99: | (1)
+100: The solution \widetilde{W}^{K} can be expressed as a pair of down- and up-projection matrices, which compress key vectors into dimension k and then reconstruct them for efficient autoregressive inference.
+101: Figure 1: Overview of KV-CoRE. At each Transformer layer, keys and values from all attention heads are concatenated to form the KV-cache. To measure compressibility, we apply incremental SVD to the cached key/value activations with low memory overhead, recovering their singular value spectra. The resulting singular vectors and values are used to compute the optimal data-dependent compression matrix, enabling KV-cache compressibility analysis via NER.
+102: 2.1 SVD-based KV-cache Analysis
+103: Our key idea is to perform SVD on key and value spaces for each layer, allowing an analytical study of the layer-wise compressibility of KV caches given a LLM and a particular dataset. For example, the SVD on K\in\mathbb{R}^{l\times m_{h}d_{h}} can be written as K=\mathcal{U}\Sigma\mathcal{V}^{T} ,
+104: where \mathcal{U}\in\mathbb{R}^{l\times l} and \mathcal{V}\in\mathbb{R}^{m_{h}d_{h}\times m_{h}d_{h}} are left and right singular values, respectively, and \Sigma\in\mathbb{R}^{l\times m_{h}d_{h}} denotes singular values. By the Eckart-Young-Mirsky theorem [14], the truncation of the largest singular values along with corresponding singular vectors K_{k}=\mathcal{U}_{k}\Sigma_{k}\mathcal{V}^{T}_{k} forms the best k -rank approximation to K in the Frobenius norm sense, with the minimal approximation error calculated as follows,
+105: |
+106: | \displaystyle||K-K_{k}||=\begin{cases}\sigma_{k+1},\quad&\text{for the 2-norm}\\
+107: (\sum_{j=k+1}^{r}\sigma_{j}^{2})^{\frac{1}{2}},\quad&\text{for the Frobenious norm}\end{cases}
+108: |
+109: | (2)
+110: where r denotes the rank of K , \sigma_{j} denotes the j -th largest singular value in \Sigma . In other words, for any k\in[1,r] , the minimal k- rank approximation loss to K is a deterministic function of singular values. Thus, we use singular value–based metrics to evaluate the compressibility of key and value spaces in each attention layer, as detailed in the experimental section 2.4.
+111: 2.2 Optimal Data-dependent Compression Matrix
+112: Given singular values \Sigma and right singular vectors \mathcal{V} of K , we can directly recover the dataset-dependent optimal k -rank approximation of W^{K} as: \widetilde{W}^{K}=W^{K}\mathcal{V}_{k}\mathcal{V}_{k}^{T} .
+113: To see why \widetilde{W}^{K} is optimal to minimize the error: ||XW^{K}-X\widetilde{W}^{K}|| , consider the following:
+114: |
+115: | \displaystyle\begin{aligned} X\widetilde{W}^{K}=XW^{K}\mathcal{V}_{k}\mathcal{V}_{k}^{T}&\stackrel{{\scriptstyle T_{1}}}{{=}}K\mathcal{V}_{k}\mathcal{V}_{k}^{T}\\
+116: &\stackrel{{\scriptstyle T_{2}}}{{=}}\mathcal{U}\Sigma(\mathcal{V}^{T}\mathcal{V}_{k})\mathcal{V}_{k}^{T}\\
+117: &\stackrel{{\scriptstyle T_{3}}}{{=}}\mathcal{U}\left(\Sigma\begin{bmatrix}I_{k}\\
+118: 0\end{bmatrix}\right)\mathcal{V}_{k}^{T}=\left(\mathcal{U}\begin{bmatrix}\Sigma_{k}\\
+119: 0\end{bmatrix}\right)\mathcal{V}_{k}^{T}=\mathcal{U}_{k}\Sigma_{k}\mathcal{V}_{k}^{T}\end{aligned}
+120: |
+121: | (3)
+122: Where I_{k} is a k by k identity matrix. T_{1} holds because by definition K=XW^{K} ; T_{2} holds because \mathcal{U}\Sigma\mathcal{V}^{T} is the SVD of K ; T_{3} holds because singular vectors form an orthogonal basis, thus \mathcal{V}_{k}^{T}\mathcal{V}_{k} yields a k by k identify matrix.
+123: Recall that by the Eckart-Young-Mirsky theorem [14], \mathcal{U}_{k}\Sigma_{k}\mathcal{V}_{k}^{T} forms the best k -rank approximation of K=XW^{K} , we can conclude that W^{K}\mathcal{V}_{k}\mathcal{V}_{k}^{T} is optimal to the optimization problem.
+124: During LLM inference, a direct implementation is to replace W^{K} with a pair of down-projection W^{K}\mathcal{V}_{k} and up-projection \mathcal{V}_{k}^{T} matrices. This allows caching the low-dimensional key vector \mathbf{x}_{t}W^{K}\mathcal{V}_{k} instead of the full-dimensional \mathbf{x}_{t}W^{K} given t-th token, reducing both the memory and bandwidth consumption.
+125: 2.3 Incremental SVD Algorithm for Dataset-level KV-cache
+126: A key challenge is that the size of K\in\mathbb{R}^{l\times m_{h}d_{h}} scales up with the number of tokens l in a Dataset, rendering direct SVD on K impractical due to excessive memory and computational demands.
+127: We propose a novel algorithm that mitigates memory and computation bottlenecks through batch computation without sacrificing accuracy. This method only requires holding and updating a m_{h}d_{h} -by- m_{h}d_{h} covariance matrix, avoiding the direct SVD of K and still generating the mathematically equivalent singular values \Sigma and right singular vectors \mathcal{V} . Algorithm 1 shows the pseudo-code of our method.
+128: Algorithm 1 SVD Computation of Dataset-level KV-Cache
+129: Input: Dataset containing l tokens in total; LLM model weights W^{K}
+130: Output: singular values \Sigma and right singular vectors \mathcal{V} of K
+131: C\leftarrow m_{h}d_{h}\times m_{h}d_{h}\ \text{zero matrix}
+132: \triangleright Initialize covariance matrix to zero
+133: for t=1,\dots,l do
+134: \mathbf{k}_{t}\leftarrow\mathbf{x}_{t}W^{K}
+135: C\leftarrow C+\mathbf{k}_{t}^{T}\mathbf{k}_{t}
+136: \triangleright Update covariance matrix in each step
+137: end for
+138: \mathcal{V},\Sigma^{2},\mathcal{V}^{T}\leftarrow\text{eigen-decomposition}(C)
+139: \triangleright perform eigen-decomposition on the final covariance matrix
+140: return \Sigma,\mathcal{V}
+141: For each token in a Dataset containing l tokens, \mathbf{k}_{t}^{T}\mathbf{k}_{t} is computed and the covariance matrix C is updated. After l iterations, we will have the complete covariance matrix of K as C=K^{T}K=\sum_{t=1}^{l}\mathbf{k}^{T}_{t}\mathbf{k}_{t} . Finally we perform eigen-decomposition on C to obtain the singular values \Sigma and right singular vectors \mathcal{V} of K .
+142: To see why the final step of Algorithm 1 generates mathematically equivalent \Sigma and \mathcal{V} , consider the following proof,
+143: |
+144: | \displaystyle\begin{aligned} K^{T}K\stackrel{{\scriptstyle T_{1}}}{{=}}(\mathcal{U}\Sigma\mathcal{V}^{T})^{T}\mathcal{U}\Sigma\mathcal{V}^{T}=\mathcal{V}\Sigma^{T}\mathcal{U}^{T}\mathcal{U}\Sigma\mathcal{V}^{T}\stackrel{{\scriptstyle T_{2}}}{{=}}\mathcal{V}\Sigma^{2}\mathcal{V}^{T}\end{aligned}
+145: |
+146: | (4)
+147: where T_{1} holds by applying SVD on K ; T_{2} holds because singular vectors form an orthogonal basis, thus \mathcal{U}^{T}\mathcal{U} yields a identity matrix, and consequently \Sigma^{T}\mathcal{U}^{T}\mathcal{U}\Sigma=\Sigma^{2} .
+148: 2.4 Normalize Effective Rank as Compressibility Metric
+149: Intuitively, the approximation loss derived in Eq.(2) provides a direct measure of the compressibility of key and value spaces. For instance, one could fix an approximation rank k across all key spaces, evaluate the corresponding losses, and interpret smaller losses as indicative of higher compressibility. While being simple and straightforward, such strategy has two main drawbacks: First, the metric depends on a fixed approximation rank k , and there is no clear guidance on how to select k appropriately. Second, it fails to account for the full spectrum of singular values. We thus introduce the Normalized Effective Rank (NER) as a metric to measure the compressibility of key and value spaces. For a matrix K with singular values \{\sigma_{i}\} and rank r , the effective rank—first introduced in [30]—is defined as \text{erank}(K)=\exp(-\sum_{i=1}^{r}p_{i}\log p_{i}) , where p_{i}=\sigma_{i}/\sum_{j=1}^{r}\sigma_{j} , and the logarithm is to the base e (natural logarithm). Building on this, NER is defined as \text{NER}(K)=\text{erank}(K)/r . In other words, NER normalizes the effective rank by the matrix’s actual rank. As proven in [30], the effective rank \text{erank}(K) satisfies 1\leq\text{erank}(K)\leq r , consequently, NER yields a score in [1/r,1] .
+150: 3 Related Work
+151: Rank Analysis in Language Models:
+152: Early work has investigated the relationship between the rank of transformer weights or representations and model performance, seeking either to leverage low-rank structure for efficiency [9, 17, 15, 23], to prevent rank collapse that limits expressivity [13, 27, 39], or to maximize rank utilization for enhanced modeling capacity [5, 6]. With the growing use of large language models (LLMs), research has turned to their inherent low-rank properties.LoRA [18, 22] leverages this structure during fine-tuning, showing that many weight updates lie in low-dimensional subspaces. Loki [33] examined the key representations in attention layers and found that they often reside in lower-dimensional subspaces across models and datasets, which can be used for efficient sparse attention. These directions have also motivated growing efforts on KV-cache compression [32] to address the deployment bottleneck in reading and storing the KV cache [40]. Our work introduces a fine-grained method for evaluating the compressibility of KV caches in LLMs through effective rank analysis, uncovering layer-wise and data-dependent patterns that can inform the design of dynamic and adaptive compression strategies.
+153: Low-Rank KV-cache Compression:
+154: DeepSeek [24] introduced Multi-head Latent Attention (MLA), which applies low-rank joint KV cache compression to enable scalable inference, unlike Multi-Query Attention (MQA) [31] and Grouped-Query Attention (GQA) [2] which reduce KV caches by merging key and value heads in multi-head attention (MHA) [37]. Beyond attention mechanisms, low-rank compression has also been explored in broader contexts. For instance, AI Flow [3] proposes a Hierarchical Principal Component Decomposition framework to achieve model-wide low-rank compression. More recently, such techniques have been extended to tool learning—where compressed representations facilitate efficient tool retrieval and invocation [11]—and historical learning, where past experiences are distilled into compact latent memories for long-context reasoning [21]. Further aligning with this trend, methods like MHA2MLA [19] and PALU [7] applies SVD to compress key and value projection weights, converting models based on MHA into the MLA structure for reduced KV cache size. However, this approach targets only the projection weights, while prior work [41] has shown that transformer weights typically have higher rank than the output features (keys/values), suggesting that data-dependent KV-cache compression is more effective. In this direction, DRONE [12] proposed a closed-form solution for data-aware low-rank compression of projected keys/values, and SVD-LLM [38] introduced an incremental optimization based on Cholesky decomposition [26] that achieves the same optimal compression loss with lower memory overhead. In comparison, our method achieves the same optimality with a much simpler formulation; moreover, it explicitly computes the SVD of key/value representations, whereas SVD-LLM only recovers the optimal compression matrix.
+155: 4 Experiment
+156: We evaluate our method on 5 open-source LLM series of varying sizes on 5 datasets.
+157: Models
+158: To evaluate the generality of our method across different architectures and model sizes,
+159: we apply our analysis to a set of open-source LLMs including Qwen3 (4B, 8B) [36],
+160: Mistral-7B [20], Gemma-1.1 (2B, 7B) [35], and Phi-3-mini-128k-instruct [1], where Gemma-1.111
+161: 1
+162: Gemma-1.1: https://huggingface.co/google/gemma-1.1-7b-it is a recent update of the original instruction-tuned Gemma, incorporating a new RLHF method that improves overall performance.
+163: Datasets
+164: To study the data-dependence of KV-cache compression, we evaluate our method on n datasets, spanning diverse English instruction-following tasks across multiple domains and multilingual QA.
+165: For English evaluation, the datasets cover general instruction following, code generation, medical QA, and function calling, including Alpaca [34], MedAlpaca [16], CodeAlpaca [8], WizardCoder [25], and FunctionCall22
+166: 2
+167: glaiveai/glaive-function-calling-v2: https://huggingface.co/datasets/glaiveai/glaive-function-calling-v2.
+168: For multilingual evaluation, we use the queries from the multilingual split of VisR-Bench [10], a question-driven, retrieval benchmark spanning 15 languages (Spanish, Italian, German, French, Dutch, Arabic, Croatian, Japanese, Swedish, Vietnamese, Portuguese, Finnish, Czech, Slovenian, and Danish)—allowing us to assess performance across a linguistically diverse setting.
+169: Hardware and Software Setup
+170: All experiments are conducted on machines equipped with 8× NVIDIA A800 GPUs (80GB each), though all evaluations are executed on a single GPU without distributed computation. We use PyTorch 2.7.1 and Hugging Face Transformers 4.53.2 for model loading, compression, and inference. All evaluations are conducted in inference mode without gradient computation.
+171: 4.1 Evaluation Metric
+172: We introduce several metrics to evaluate both the cross-dataset compressibility of various LLMs and the end-to-end performance of their compressed versions.
+173: Normalized Effective Rank
+174: We quantify the data-dependent, per-layer compressibility of the KV-cache using the NER [30], as introduced in Section 2.4. NER captures how evenly the singular values are distributed and yields a score in [0,1] , with lower values indicating spectra dominated by a few large singular values and thus higher compressibility.
+175: Perplexity
+176: We evaluate the performance of compressed models using perplexity (PPL) [4], the standard metric for language modeling. In practice, PPL is computed as the exponential of the empirical cross-entropy between the data distribution and the model distribution, which reduces to the Shannon entropy when the model perfectly matches the true distribution. Lower PPL indicates that the model assigns a higher probability to the observed data, while higher PPL reflects greater uncertainty or degraded predictive performance. Given retain ratio k and v , the perplexity will be denoted as \text{PPL}(k,v) .
+177: Normalized Delta-Perplexity
+178: To directly measure the impact of KV-cache compression on model performance, we propose a quantitative metric, Normalized Delta-Perplexity (ND-PPL) for keys and values, denoted \text{ND-PPL}_{K} and \text{ND-PPL}_{V} . Raw perplexity or absolute changes are not directly comparable across datasets, since their scale depends on the baseline. ND-PPL addresses this by normalizing pairwise perplexity differences across retained rank ratios by the corresponding baseline perplexity, and averaging over all candidate settings. This provides a dataset-agnostic measure of robustness under compression and establishes a direct link to the NER. The formal definition is as follows:
+179: Let \mathcal{K}={k_{1},\dots,k_{m}} denote the set of retained rank ratios for the key matrices, where k_{i}\in(0,1] ; the definition for values \mathcal{V}={v_{1},\dots,v_{n}} is analogous. For a fixed value ratio v\in\mathcal{V} , we consider all pairs (k_{i},k_{j})\in\mathcal{P}_{K} , where \mathcal{P}_{K}={(k,k\textquoteright)\in\mathcal{K}\times\mathcal{K}\mid k>k\textquoteright} , and define the key-side metric \text{ND-PPL}_{K} :
+180: |
+181: | \text{ND-PPL}_{K}=\frac{1}{|\mathcal{V}|}\sum_{v\in\mathcal{V}}\left[\frac{1}{|\mathcal{P}_{K}|}\cdot\sum_{(k_{i},k_{j})\in\mathcal{P}_{K}}\left(\frac{\text{PPL}(k_{j},v)-\text{PPL}(k_{i},v)}{\text{PPL}(k_{i},v)}\right)\right]
+182: |
+183: | (5)
+184: The definition of \text{ND-PPL}_{V} is symmetric, obtained by fixing k\in\mathcal{K} and averaging over pairs of v_{i},v_{j}\in\mathcal{V} .
+185: GPT Score
+186: We assess whether compression preserves response quality using GPT-4o. For each test case, GPT-4o is provided with the input instruction together with the two responses from the original and compressed models. Under a fixed prompt, GPT-5 outputs a binary score: 1 if the two responses are judged roughly equal in quality, and 0 otherwise. Rough equivalence requires both answers to be reasonable and aligned with the instruction, tolerating stylistic differences but penalizing empty, irrelevant, or nonsensical outputs from the compressed model. The full system prompt used for evaluation is provided in Appendix C.
+187: 4.2 Benchmarking Experiment on KV-Cache Compressibility
+188: | Datasets
+189: | Qwen3-4B
+190: | Qwen3-8B
+191: | Gemma-2B
+192: | Gemma-7B
+193: | Mistral-7B
+194: | Phi-3
+195: | LLaMA-2-7B
+196: | K
+197: | V
+198: | K
+199: | V
+200: | K
+201: | V
+202: | K
+203: | V
+204: | K
+205: | V
+206: | K
+207: | V
+208: | K
+209: | V
+210: | Multi-domain Datasets
+211: |
+212: |
+213: |
+214: |
+215: |
+216: |
+217: |
+218: |
+219: |
+220: |
+221: |
+222: |
+223: | Alpaca
+224: | 0.428
+225: | 0.724
+226: | 0.452
+227: | 0.753
+228: | 0.612
+229: | 0.900
+230: | 0.359
+231: | 0.469
+232: | 0.449
+233: | 0.773
+234: | 0.409
+235: | 0.616
+236: | 0.023
+237: | 0.464
+238: | MedAlpaca
+239: | 0.429
+240: | 0.723
+241: | 0.452
+242: | 0.752
+243: | 0.594
+244: | 0.889
+245: | 0.344
+246: | 0.455
+247: | 0.441
+248: | 0.771
+249: | 0.403
+250: | 0.604
+251: | 0.176
+252: | 0.310
+253: | CodeAlpaca
+254: | 0.421
+255: | 0.708
+256: | 0.443
+257: | 0.737
+258: | 0.589
+259: | 0.869
+260: | 0.321
+261: | 0.429
+262: | 0.420
+263: | 0.733
+264: | 0.380
+265: | 0.571
+266: | 0.028
+267: | 0.337
+268: | WizardCoder
+269: | 0.425
+270: | 0.726
+271: | 0.447
+272: | 0.753
+273: | 0.597
+274: | 0.889
+275: | 0.329
+276: | 0.445
+277: | 0.420
+278: | 0.750
+279: | 0.385
+280: | 0.587
+281: | 0.265
+282: | 0.304
+283: | FunctionCall
+284: | 0.432
+285: | 0.731
+286: | 0.451
+287: | 0.756
+288: | 0.608
+289: | 0.900
+290: | 0.342
+291: | 0.458
+292: | 0.432
+293: | 0.762
+294: | 0.397
+295: | 0.604
+296: | 0.135
+297: | 0.449
+298: | Average
+299: | 0.424
+300: | 0.717
+301: | 0.446
+302: | 0.745
+303: | 0.597
+304: | 0.884
+305: | 0.337
+306: | 0.448
+307: | 0.430
+308: | 0.753
+309: | 0.393
+310: | 0.593
+311: | 0.088
+312: | 0.141
+313: | Multilingual Question in VisR-Bench Datasets
+314: |
+315: |
+316: |
+317: |
+318: |
+319: |
+320: |
+321: |
+322: |
+323: |
+324: | Czech
+325: | 0.383
+326: | 0.627
+327: | 0.401
+328: | 0.652
+329: | 0.536
+330: | 0.803
+331: | 0.292
+332: | 0.383
+333: | 0.385
+334: | 0.660
+335: | 0.313
+336: | 0.470
+337: | 0.099
+338: | 0.148
+339: | German
+340: | 0.383
+341: | 0.640
+342: | 0.400
+343: | 0.666
+344: | 0.536
+345: | 0.802
+346: | 0.305
+347: | 0.400
+348: | 0.392
+349: | 0.676
+350: | 0.345
+351: | 0.523
+352: | 0.092
+353: | 0.138
+354: | Italian
+355: | 0.377
+356: | 0.632
+357: | 0.392
+358: | 0.655
+359: | 0.529
+360: | 0.793
+361: | 0.299
+362: | 0.393
+363: | 0.387
+364: | 0.669
+365: | 0.339
+366: | 0.515
+367: | 0.084
+368: | 0.135
+369: | Dutch
+370: | 0.376
+371: | 0.628
+372: | 0.395
+373: | 0.657
+374: | 0.534
+375: | 0.802
+376: | 0.299
+377: | 0.394
+378: | 0.385
+379: | 0.664
+380: | 0.331
+381: | 0.499
+382: | 0.116
+383: | 0.108
+384: | Croatian
+385: | 0.375
+386: | 0.620
+387: | 0.393
+388: | 0.645
+389: | 0.525
+390: | 0.791
+391: | 0.292
+392: | 0.382
+393: | 0.383
+394: | 0.659
+395: | 0.320
+396: | 0.479
+397: | 0.081
+398: | 0.132
+399: | French
+400: | 0.373
+401: | 0.633
+402: | 0.390
+403: | 0.657
+404: | 0.532
+405: | 0.797
+406: | 0.301
+407: | 0.397
+408: | 0.387
+409: | 0.671
+410: | 0.340
+411: | 0.519
+412: | 0.087
+413: | 0.137
+414: | Vietnamese
+415: | 0.373
+416: | 0.625
+417: | 0.392
+418: | 0.653
+419: | 0.542
+420: | 0.814
+421: | 0.291
+422: | 0.384
+423: | 0.367
+424: | 0.630
+425: | 0.305
+426: | 0.442
+427: | 0.071
+428: | 0.119
+429: | Swedish
+430: | 0.371
+431: | 0.620
+432: | 0.387
+433: | 0.645
+434: | 0.526
+435: | 0.794
+436: | 0.296
+437: | 0.389
+438: | 0.381
+439: | 0.656
+440: | 0.322
+441: | 0.486
+442: | 0.078
+443: | 0.128
+444: | Spanish
+445: | 0.367
+446: | 0.629
+447: | 0.384
+448: | 0.654
+449: | 0.523
+450: | 0.790
+451: | 0.299
+452: | 0.396
+453: | 0.381
+454: | 0.665
+455: | 0.334
+456: | 0.513
+457: | 0.064
+458: | 0.095
+459: | Slovenian
+460: | 0.366
+461: | 0.603
+462: | 0.383
+463: | 0.628
+464: | 0.518
+465: | 0.785
+466: | 0.281
+467: | 0.369
+468: | 0.372
+469: | 0.642
+470: | 0.306
+471: | 0.458
+472: | 0.075
+473: | 0.121
+474: | Portuguese
+475: | 0.362
+476: | 0.614
+477: | 0.378
+478: | 0.639
+479: | 0.521
+480: | 0.785
+481: | 0.284
+482: | 0.375
+483: | 0.379
+484: | 0.656
+485: | 0.326
+486: | 0.498
+487: | 0.083
+488: | 0.133
+489: | Japanese
+490: | 0.361
+491: | 0.619
+492: | 0.380
+493: | 0.648
+494: | 0.506
+495: | 0.775
+496: | 0.276
+497: | 0.369
+498: | 0.364
+499: | 0.636
+500: | 0.321
+501: | 0.467
+502: | 0.079
+503: | 0.125
+504: | Finnish
+505: | 0.360
+506: | 0.597
+507: | 0.378
+508: | 0.625
+509: | 0.502
+510: | 0.769
+511: | 0.280
+512: | 0.369
+513: | 0.353
+514: | 0.616
+515: | 0.305
+516: | 0.455
+517: | 0.073
+518: | 0.118
+519: | Arabic
+520: | 0.337
+521: | 0.582
+522: | 0.354
+523: | 0.609
+524: | 0.503
+525: | 0.769
+526: | 0.270
+527: | 0.361
+528: | 0.338
+529: | 0.594
+530: | 0.288
+531: | 0.413
+532: | 0.052
+533: | 0.173
+534: | Average
+535: | 0.387
+536: | 0.653
+537: | 0.407
+538: | 0.679
+539: | 0.548
+540: | 0.822
+541: | 0.306
+542: | 0.405
+543: | 0.395
+544: | 0.684
+545: | 0.345
+546: | 0.520
+547: | 0.083
+548: | 0.134
+549: Table 1: Average NER of keys and values across all layers of 7 models on multilingual split of VisR-bench covering 15 languages
+550: 4.2.1 Average NER across Models and Datasets
+551: Table 1 reports the mean NER of keys (NER-K) and values (NER-V), averaged over all attention layers across seven models on five English datasets and fifteen languages from VisR-Bench. Several trends emerge:
+552: Keys are consistently more compressible than values.
+553: Across all models and datasets, NER-K is substantially lower than NER-V, indicating that the key cache admits a more pronounced low-rank structure. This asymmetry highlights that compression techniques targeting keys may achieve higher savings with less impact on performance, whereas values tend to retain higher-rank structure and thus are less compressible.
+554: Cross-lingual variation outweighs cross-domain variation.
+555: For English datasets spanning different domains (e.g., Alpaca vs. FunctionCall), NER values remain relatively stable, suggesting that domain shifts do not strongly affect rank structure. In contrast, multilingual results reveal far greater variation, with languages such as Czech and German showing higher NER compared to Arabic and Finnish. This suggests that linguistic diversity, tokenization differences, and training data availability play a larger role than domain differences in determining compressibility.
+556: KV Capacity governs compressibility.
+557: We observe that the original KV dimension strongly affects model compressibility. Earlier models such as LLaMA-2-7B exhibit substantially lower NER compared to other models, likely due to larger key/value dimensions and weaker utilization of rank capacity during training. Within the Gemma family, Gemma-7B shows much lower NER than Gemma-2B, which can be explained by its 16× larger KV dimension (16 heads × 256 per head) compared to the 2B model (1 head × 256). The higher compressibility of Gemma-7B suggests that this expanded KV capacity is under-utilized, whereas the smaller 2B models may make more efficient use of their available dimensions. In contrast, Qwen3-4B and Qwen3-8B show only minor differences in NER because both adopt the same compact KV configuration (8 heads × 128 per head).
+558: Rank collapse in low-resource languages.
+559: Certain languages with limited pretraining coverage (e.g., Arabic, Slovenian, Finnish) exhibit unusually low NER, especially in the value cache. This phenomenon may reflect under-trained token embeddings collapsing into low-dimensional subspaces. Beyond compressibility, such rank collapse may serve as a diagnostic signal for identifying under-represented languages in multilingual pretraining corpora.
+560: 4.2.2 Layer-wise Compressibility Patterns
+561: Figure 2 presents the layer-wise NER of Qwen3-4B on the five datasets and on three selected language subsets of VisR-Bench, with additional plots for other models included in Appendix B.1. The results show that NER is not uniform across layers. Middle layers often exhibit higher NER, suggesting they make fuller use of their representational capacity, while early and late layers are typically more compressible.
+562: Figure 2: Layer-wise NER of key and value representations in Qwen3-4B, evaluated on 5 datasets and 3 languages from the VisR-Bench benchmark.
+563: This heterogeneity indicates that future KV-cache compression should be layer-aware: applying a uniform compression ratio risks overly degrading high-rank layers while missing opportunities for more aggressive reduction in lower-rank ones. Moreover, the relative positions of high- and low-rank layers are consistent across datasets, suggesting that compressibility is partly a structural property of the model rather than purely data-driven. At the same time, subtle differences between tasks and languages (e.g., Arabic vs. English subsets) highlight that dataset characteristics can modulate layer usage, pointing to potential for data-aware compression strategies.
+564: 4.3 Performance Impact of KV-Cache Compression
+565: We evaluate the performance degradation of compressed models using both perplexity (PPL) and GPT-score. Figure 3 presents PPL heatmaps of Qwen3-4B and LLaMA-2-7B on the Alpaca dataset across a grid of KV-cache compression ratios, with additional results provided in Appendix B.2. We can see that LLaMA-2-7B remains relatively stable, showing only modest PPL increases even under aggressive compression, whereas Qwen3-4B is more sensitive, exhibiting substantial degradation. These results suggest that models with lower NER values are generally more compressible, as reflected by smaller changes in PPL.
+566: Figure 3: PPL heatmap of Qwen3-4B and LLaMA-2-7b on the Alpaca dataset.
+567: In addition to PPL, we also report average GPT-score in Figure 4, which directly measures the quality difference between compressed and original model responses and provides a metric more closely aligned with user experience. Due to computational cost, GPT-scores are computed as averages over 100 instructions from the Alpaca dataset. Consistent with PPL trends, LLaMA-2-7B again proves more compressible than Qwen3-4B. Importantly, GPT-score further reveals a smoother and more continuous trajectory of performance degradation, even in regions where PPL remains relatively unchanged.
+568: Figure 4: GPT score heatmap of Qwen3-4B and LLaMA-2-7b on the Alpaca dataset.
+569: 4.4 Dataset Compressibility Comparison
+570: To quantitatively assess how well the NER reflects end-to-end robustness under compression, we employ the ND-PPL metrics. As reported in Figure 5, NER and ND-PPL are positively correlated, with Pearson r=0.88 for values and r=0.64 for keys. These results establish NER as a reliable predictor of performance sensitivity under compression. Moreover, the scatter plots reveal systematic dataset-level patterns. Multilingual datasets (e.g., Arabic, Portuguese, Finnish) cluster toward the bottom-left, with both low NER and low ND-PPL, indicating higher resilience to compression. In contrast, English-domain datasets such as Alpaca, MedAlpaca, and FunctionCall appear toward the upper-right, showing higher NER and greater sensitivity to compression. This separation suggests that KV-cache compressibility can serve as a diagnostic of data–model alignment: under-trained or poorly covered datasets tend to yield low NER, while well-represented domains exhibit higher NER and are more sensitive to aggressive truncation.
+571: Figure 5: Correlation between dataset-level NER and ND-PPL computed by Qwen3-4B.
+572: 5 Conclusion
+573: In this work, we introduced KV-CoRE, an SVD-based framework for dataset-level analysis of KV-cache compressibility in large language models. KV-CoRE directly decomposes cached key/value activations with low memory overhead, yielding globally optimal low-rank approximations and enabling systematic evaluation of rank utilization across layers and datasets. Through extensive experiments across multiple model families, domains, and languages, we showed that NER serves as a lightweight and reliable indicator of compressibility, correlating closely with perplexity- and GPT-based performance under compression. We further introduced ND-PPL as an end-to-end robustness measure, establishing a clear empirical link between NER and model sensitivity to truncation. Our analysis uncovers consistent patterns that tie compressibility to architectural design, training data, and language coverage. These findings position KV-CoRE as both a diagnostic tool for understanding representational efficiency and a benchmark for guiding the development of dynamic, data-aware KV-cache compression strategies and data-centric model improvements.
+

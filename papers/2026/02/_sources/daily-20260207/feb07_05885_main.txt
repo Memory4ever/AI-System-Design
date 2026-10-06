@@ -1,0 +1,507 @@
+URL https://arxiv.org/html/2602.05885v1 PARSED_LINES 701 MAIN_END 506 REFERENCES [54, 506]
+0: Dr. Kernel: Reinforcement Learning Done Right for Triton Kernel Generations
+1: Report GitHub Issue
+2: ×
+3: Title:
+4: Content selection saved. Describe the issue below:
+5: Description:
+6: Submit without GitHub
+7: Submit in GitHub
+8: arXiv is now an independent nonprofit!
+9: Learn more
+10: ×
+11: Back to arXiv
+12: Why HTML?
+13: Report Issue
+14: Back to Abstract
+15: Download PDF
+16: Abstract
+17: 1 Introduction
+18: 2 Pitfalls in Kernel Generation
+19: 3 KernelGym: A Gym for Kernel Generations
+20: 3.1 Design Principles
+21: 3.2 Architecture and Modular Design
+22: Server
+23: GPU Worker and Monitor
+24: 3.3 Backends and Toolkits
+25: Backends
+26: Hacking Check
+27: Profiler
+28: 4 Multi-Turn RL with KernelGym
+29: 4.1 Cold-Start Data Collections
+30: 4.2 Multi-Turn RL
+31: Reward Design
+32: Multi-Turn Advantage
+33: Self-Inclusion Issue in GRPO
+34: TRLOO
+35: 4.3 Empirical Results
+36: 5 From Stability to Effectiveness: Overcoming Lazy Optimization
+37: 5.1 Hypothesis 1: Training Instability
+38: 5.2 Hypothesis 2: Misaligned Objective
+39: Profiling-based Rewards (PR)
+40: Profiling-based Rejection Sampling (PRS)
+41: 5.3 Empirical results
+42: 6 Experiments
+43: 6.1 Setup
+44: 6.2 Results
+45: Main Results.
+46: Analysis
+47: 6.3 Test-time Scaling for Kernel Generation
+48: 6.4 Results on torch.compile
+49: 7 Conclusion
+50: 8 Limitations and Future Work
+51: Data Scaling and Pre-training
+52: Model Capacity
+53: Path Toward Production-Ready Automation
+54: References
+55: A Derivation: Self-Inclusion Causes a Scaled Gradient in GRPO
+56: Setup
+57: Policy Gradient in GRPO
+58: Leave-one-out removes self-inclusion.
+59: B Training Dynamics
+60: C Hacking Ratio
+61: D Ablations of PRS
+62: E Cases Studies
+63: E.1 Lazy Optimization vs. Better Fusion
+64: E.2 Trajectories from Dr. Kernel
+65: E.3 Case for Better Fusion
+66: F Prompt Template
+67: F.1 Prompt Template for Cold-Start Data Distillation
+68: F.2 Prompt Template for SFT and RL
+69: License: arXiv.org perpetual non-exclusive license
+70: arXiv:2602.05885v1 [cs.LG] 05 Feb 2026
+71: Dr. Kernel: Reinforcement Learning Done Right for Triton Kernel Generations
+72: Wei Liu
+73: Affiliation: HKUST
+74: Jiawei Xu
+75: Affiliation: CUHK(SZ)
+76: Yingru Li
+77: Affiliation: TikTok
+78: Longtao Zheng
+79: Affiliation: NTU
+80: Tianjian Li
+81: Affiliation: TikTok
+82: Qian Liu
+83: Affiliation: TikTok
+84: Junxian He
+85: Affiliation: HKUST
+86: Abstract
+87: High-quality kernel is critical for scalable AI systems, and enabling LLMs to generate such code would advance AI development. However, training LLMs for this task requires sufficient data, a robust environment, and the process is often vulnerable to reward hacking and lazy optimization. In these cases, models may hack training rewards and prioritize trivial correctness over meaningful speedup. In this paper, we systematically study reinforcement learning (RL) for kernel generation. We first design KernelGym, a robust distributed GPU environment that supports reward hacking check, data collection from multi-turn interactions and long-term RL training. Building on KernelGym, we investigate effective multi-turn RL methods and identify a biased policy gradient issue caused by self-inclusion in GRPO. To solve this, we propose Turn-level Reinforce-Leave-One-Out (TRLOO) to provide unbiased advantage estimation for multi-turn RL. To alleviate lazy optimization, we incorporate mismatch correction for training stability and introduce Profiling-based Rewards (PR) and Profiling-based Rejection Sampling (PRS) to overcome the issue. The trained model, Dr. Kernel-14B, reaches performance competitive with Claude-4.5-Sonnet in Kernelbench. Finally, we study sequential test-time scaling for Dr. Kernel-14B. On the KernelBench Level-2 subset, 31.6\% of the generated kernels achieve at least a 1.2\times speedup over the Torch reference, surpassing Claude-4.5-Sonnet ( 26.7\% ) and GPT-5 ( 28.6\% ). When selecting the best candidate across all turns, this 1.2\times speedup rate further increases to 47.8\% . All resources, including environment, training code, models, and dataset, are included in github.com/hkust-nlp/KernelGYM.
+88: |
+89: Figure 1:
+90: Rate of generated kernels achieving at least a 1.2\times speedup over the Torch reference on KernelBench across three level subsets. Dr. Kernel-14B is competitive with Claude-4.5-Sonnet and GPT-5, and applying sequential test-time scaling further improves Dr. Kernel-14B, surpassing both models on two of the three subsets.
+91: 1 Introduction
+92: Figure 2: Left: The plot uses a dual y-axis to compare two metrics. We report results from two models: Fast@1 of the model trained without reward hacking check (§ 3.3) (w/o hacking check), and Fast@1 / Fast@1.2 of the model trained with hacking check enabled. Evaluation is done using the same standard for all variants with hacking check. Multi-turn RL is run on Qwen3-8B-Base after cold-start SFT, using TRLOO for advantage estimation (§4.2) and KernelGym as the execution environment (§3). Right: Representative cases illustrating reward hacking and lazy optimization. In Hacked_Kernel.py, the model emits a Triton kernel to satisfy the “@triton.jit” heuristic but never calls it, and additionally skips the real computation under the default training mode, inflating the measured speedup. In Lazy_Optimization.py, the model replaces only a trivial sub-operation (channel summation) with a kernel while leaving the remaining computation in Torch, missing the larger gains from fusion.
+93: Efficient GPU kernels are critical for scalable AI systems. Seminal works like FlashAttention (Dao, 2024) and FlashInfer (Ye et al., 2025) have demonstrated that specialized kernels are essential for unlocking the full efficiency of modern LLMs. However, developing such kernels remains difficult. It requires deep expertise spanning both algorithms and GPU hardware intricacies. While Domain-Specific Languages (DSLs) like Triton and TileLang (Wang et al., 2025) have lowered the entry barrier compared to CUDA, achieving peak performance still requires significant manual engineering. This difficulty makes kernel development a natural candidate for automation.
+94: Kernel generation is characterized by easily accessible optimization objectives. Correctness can be verified through execution, and efficiency can be measured via profiling, making these tasks naturally suited for RL, which, therefore, offers a promising approach to enhancing the ability of LLMs to generate kernel code. However, these optimization benefits come with potential pitfalls. During training, models can devolve into reward hacking, exploiting measurement loopholes or executing invalid operations that appear fast but result in meaningless optimizations. Alternatively, models may generate correct but trivial kernel implementations that fail to deliver meaningful speedup, a phenomenon we refer to as lazy optimization, as shown in Figure 2. Previous works only partially addressed these challenges and remain RL not fully explored for this field. For instance, AutoTriton (Li et al., 2025) optimizes solely for correctness, neglecting the crucial objective of speedup. TritonRL (Woo et al., 2025) identifies the risk of reward hacking but relies on imprecise LLM-as-a-judge mechanisms rather than rigorous execution-based verification. Similarly, while CudaLLM (CudaLLM Team, 2025) collects valuable data, it stops short of full-scale RL training, reporting only correctness metrics. Furthermore, most prior efforts are limited to single-turn generation while kernel optimization can be recursively refined for multiple rounds. Kevin (Baronio et al., 2025) attempts multi-turn RL, yet it is constrained by a small-scale dataset of only 280 samples split from the KernelBench benchmark.
+95: In this work, we systematically study RL training for kernel code generation. We follow the task definiton of previous works (Ouyang et al., 2025; Li et al., 2025; Baronio et al., 2025), where a Torch reference code is provided and models are asked to optimize the implementation via kernel code. We focus on Triton, a Pythonic, high-level GPU programming language that is more amenable to current LLMs than low-level CUDA. Moreover, Triton’s abstraction makes execution-based safeguards against reward hacking more tractable during training, making it an ideal testbed for developing RL methodologies for kernel generation. Following the adage, “A workman must first sharpen his tools if he is to do his work well,” we first build a robust environment, KernelGym. Unlike prior ad-hoc solutions, KernelGym is a scalable, distributed serving system tailored for long-horizon RL: it provides strict fault isolation to tolerate frequent CUDA runtime failures, and exposes granular environment feedback, including execution profiling and hacking checks, to enable rigorous evaluation and high-quality data collection from multi-turn interactions.
+96: Equipped with KernelGym, we investigate effective multi-turn RL methods for LLMs. We identify that standard GRPO can induce biased policy-gradient updates; to address this, we propose Turn-level Reinforce-Leave-One-Out (TRLOO), an unbiased advantage estimator for multi-turn RL. Furthermore, we alleviate “lazy optimization” from stability and optimization objective prospectives. We find mismatch correction contributes to the training stability. And we further propose Profiling-based Rewards (PR) and Profiling-based Rejection Sampling (PRS) to explicitly incentivize alleviating performance bottlenecks. Finally, we study sequential test-time scaling (STTS) to maximize the inference capability of our trained models. Experimental results demonstrate KernelGym with modular design and hacking check enables long-term RL training. Our final multi-turn RL method, Dr. Kernel, yields strong Dr. Kernel-14B model which achieves substantial gains on two KernelBench (Ouyang et al., 2025) subsets, reaching performance competitive with frontier models like Claude-4.5-Sonnet. And for Dr. Kernel-14B with STTS, on the KernelBench Level-2 subset, 31.6\% of the generated kernels achieve at least a 1.2\times speedup over the Torch reference, surpassing Claude-4.5-Sonnet ( 26.7\% ) and GPT-5 ( 28.6\% ). When selecting the best candidate across all turns, the 1.2\times speedup rate further increases to 47.8\% .
+97: 2 Pitfalls in Kernel Generation
+98: Figure 3:
+99: Overview of KernelGym and our training framework. Left: We study RL training methods for kernel generation, including multi-turn RL with TRLOO, profiling-based rewards (PR), and profiling-based rejection sampling (PRS).
+100: Right: The architecture of KernelGym: a server-worker split distributed design. The server side (interface + task manager) receives evaluation jobs and schedules to registered distributed GPU workers; each job runs in an isolated subprocess; toolkits produce structured signals for training, parallel evaluation and data collections.
+101: Correctness and speedup are the two objectives of kernel generation. However, triton kernel generation is particularly vulnerable to reward hacking (Baronio et al., 2025; Woo et al., 2025): the model can produce outputs that appear correct and fast under the evaluation while being actually meaningless. A simple example is copying the Torch reference implementation, it passes correctness checks but yields only \sim 1.0 \times speedup, providing an easy way to harvest reward without learning kernel generation. Another common failure mode occurs when Triton kernels are emitted but never executed in the kernel entry function, resulting in misleading timing measurements. As shown in Figure 2 (right), although the model generates the kernel implementation for LayerNorm, the kernel is never actually executed.
+102: Beyond hacking, we observe a second bottleneck that is specific to performance-oriented kernel generation. In Figure 2 (Left), we validate Fast@1 and Fast@1.2 on KernelBench Level 2 during training. Fast@1 / Fast@1.2 represent the fraction of kernels passing correctness checks with at least 1\times/1.2\times speedup over the Torch reference. Fast@1 improves steadily, while the stricter Fast@1.2 saturates quickly (around \sim 100 steps). Unlike standard code generation, where functional correctness is often the end goal, kernel generation ultimately targets meaningful speedup. Many KernelBench (Ouyang et al., 2025) tasks admit trivial-but-correct implementations (e.g., local rewrites such as swapping a simple activation) that do not address the true runtime bottlenecks. As shown in Figure 2 (right), the model leverages the kernel for the simple summation operation, while leaving other operations to the Torch implementation, thereby overlooking the potential benefits of more advanced fusion optimizations. Since these solutions still yield only \sim 1\times speedup, the policy tends to exploit such low-hanging fruits to improve Fast@1, without producing kernels that clear the higher bar required by Fast@1.2. We refer to this behavior as lazy optimization. Cases are provided in Figure 2 (Right) and Appendix E.1.
+103: These two issues are also evident and remain unresolved in previous works. For instance, in AutoTriton (Li et al., 2025), despite implementing a rule-based reward that assigns 0 reward to code without the “@triton.jit” decorator, the model still encounters hacking cases, such as neglecting to call the function, as shown in Figure 2. In our evaluation, code generated by their released model still exhibits approximately 10\% hacking cases in the KernelBench level-1 subset. In addition to reward hacking, the issue of lazy optimization persists. As shown in Table 1, while AutoTriton achieves a notable 30.6\% performance on the Fast@1 metric in the Kernelbench level-2 subset, its performance on the stricter Fast@1.2 metric quickly saturates to just only 9.2\% .
+104: Next, to make RL for kernel generation practically feasible, we start with a robust execution environment with hacking checks and torch profiler (§ 3), then introduce an unbiased multi-turn RL estimator (§ 4), and finally improve training stability and align optimization objectives toward real speedup to alleviate lazy optimization (§ 5).
+105: 3 KernelGym: A Gym for Kernel Generations
+106: 3.1 Design Principles
+107: Training LLM agents for iterative kernel generation requires an environment that can (1) evaluate correctness and performance at scale, (2) remain resilient against frequent CUDA runtime failures, and (3) provide granular feedback for RL optimization. To meet these requirements under constrained GPU resources, we architect KernelGym as a scalable, distributed serving system that strictly decouples agent clients from kernel execution (Figure 3, right). This separation keeps the client implementation lightweight—agents focus on policy learning, while the system handles scheduling, resource management, and failure recovery.
+108: Concretely, the design of KernelGym follows four principles tailored to GPU workloads: (i) Serialized execution: profiling is highly sensitive to contention, so we enforce a one-GPU-one-task policy to prevent context pollution and ensure reliable timing; (ii) Elastic scalability: GPU workers can be added or removed dynamically without interrupting training; (iii) Fault isolation and self-recovery: unsafe generated kernels frequently trigger illegal memory access or unrecoverable CUDA errors, hence failures must be isolated at the task level and recovered automatically to maintain long-horizon availability; (iv) Rich environmental feedback: coarse signals such as pass/fail or a single speedup value are insufficient for RL, so KernelGym exposes structured feedback (e.g., profiling summaries and reward-hacking detection) to support optimization and data collection.
+109: 3.2 Architecture and Modular Design
+110: Server
+111: KernelGym adopts a server–worker architecture. The server serves as the central coordinator, consisting of an Interface (FastAPI) and a Task Manager (Redis + scheduler). The Interface exposes REST APIs for task submission/querying and worker registration. The Task Manager uses Redis to maintain persistent task/worker states and dispatches tasks to available workers with timeout-based re-queuing to sustain throughput.
+112: GPU Worker and Monitor
+113: Kernel evaluations are executed by distributed GPU workers, where each GPU is treated as an independent worker instance. Each worker pulls scheduled tasks from the server and runs them sequentially using the configured backend/toolkits (§3.3). To contain CUDA/runtime failures from generated kernels without corrupting long-running processes, each evaluation runs in a fresh spawned subprocess, while the parent worker remains CUDA-clean and continues serving subsequent tasks. A worker monitor tracks liveness (e.g., heartbeat/process health), automatically restarts failed workers, and reassigns unfinished tasks to healthy workers to maintain RL training stability.
+114: 3.3 Backends and Toolkits
+115: Backends
+116: Following Ouyang et al. (2025), KernelGym runs the generated kernel code and evaluates it on two basic toolkits: correctness and speedup against a Torch reference.
+117: In this work we mainly use a Triton backend, but the same interface can also support other kernel languages (e.g., CUDA, TileLang).
+118: More broadly, KernelGym can be extended to other GPU tasks by adding other toolkits that define how to run the code and how to leverage the output.
+119: For correctness, the backend compares the generated code with a reference implementation under a fixed test protocol (e.g., multiple randomized inputs) and returns a discrete status such as pass, mismatch, runtime_error, or compilation_error.
+120: For performance, the backend measures running time using a consistent timing procedure (e.g., warmup followed by repeated runs) and reports the speedup relative to the baseline. The performance metric would only be measured on the correct kernel code.
+121: Hacking Check
+122: As discussed in §2, reward hacking is a major failure mode in performance-oriented kernel RL. To mitigate such behaviors, KernelGym implements an execution-based hacking check that filters suspicious candidates from optimization.
+123: Concretely, KernelGym instruments Triton’s launch path to record executed Triton kernels and measures end-to-end runtime in both train and eval modes. Motivated by Figure 2 (right), where the model branches on self.training to bypass execution of kernel code and inflate speedup, we mark a candidate as incorrect if it executes no Triton kernel in either mode.
+124: Profiler
+125: Beyond scalar feedbacks, KernelGym exposes profiling summaries to provide richer and more reliable feedback, which mainly serves as informative context for multi-turn optimization where the models recursively optimize the code during multi-turn RL training or test-time scaling. For incorrect candidates, the profiler returns structured failure diagnostics (e.g., exception type and traceback) to help the model localize and fix errors in subsequent turns. For correct executions, it provides kernel-level summaries of the executed code, alongside the default correctness and performance measurements, enabling the model to identify unoptimized operators.
+126: These signals are also used during training to reduce the lazy optimization behavior in §2. We operationalize this idea via Profiling-based Rewards and Profiling-based Rejection Sampling (§5). The examples for profiling feedback are shown in Figure 10 (Appendix E.1).
+127: 4 Multi-Turn RL with KernelGym
+128: Figure 4: Fast@1 on KernelBench Level 2. Left: Fast@1 at turn 3 over training steps. Right: Fast@1 across turns (evaluated at the selected checkpoint). Since all methods besides AutoTriton achieve their best performance at turn 3, we select checkpoints based on turn 3 performance. For AutoTriton we use their released model.
+129: Kernel generation naturally lends itself to multi-turn refinement. Just as human developers iterate by writing, executing, and revising kernels based on runtime profiling, LLMs can improve solutions through repeated propose–evaluate–refine cycles. Previous work like AlphaEvolve (Novikov et al., 2025) has demonstrated that such interaction with an execution environment can even lead to the discovery of fundamental algorithms.
+130: Motivated by this, KernelGym enables long-term multi-turn RL for kernel generation: at each turn, the model proposes a revised kernel conditioned on the history, and KernelGym executes it to provide immediate feedback. This setup is distinct from recent agentic RL with multi-step tool use (Wei et al., 2025; Jin et al., 2025), where learning is typically driven by a sparse, single-outcome reward. In contrast, our environment yields dense, turn-level rewards after each execution.
+131: 4.1 Cold-Start Data Collections
+132: To alleviate the data scarcity for kernel code and teach models basic kernel-generation skills (e.g., tiling, fusion, etc.), we distill multi-turn trajectories from a proprietary model (e.g., GPT-5) interacting with KernelGym. The prompting template is provided in Appendix F.1.
+133: We start from 8 K kernel-generation queries from CudaLLM-sft (CudaLLM Team, 2025)
+134: and use GPT-5 to generate 5 -turn Triton implementations. At each turn, the generated code is executed in KernelGym and the model receives feedbacks from the environment (§ 3.3), including correctness status, error diagnostics for failed runs or runtime, and profiling summaries for successful kernels. This feedback is appended to the next-turn query, prompting the model to refine the implementation conditioned on the full interaction history.
+135: 4.2 Multi-Turn RL
+136: Reward Design
+137: As in cold-start collection, we provide the model with environment feedback and optimize it in a multi-turn RL setting. Following prior work (Baronio et al., 2025; Woo et al., 2025), we combine correctness and speedup to define the per-turn reward for the response i at the t -th turn y_{i,t} as:
+138: |
+139: | R_{i,t}=C(y_{i,t})+C(y_{i,t})\cdot\operatorname{speedup}_{i,t}.
+140: |
+141: | (1)
+142: Here C(y_{i,t}) is a binary correctness reward, and \operatorname{speedup}_{i,t} is computed from runtime measurements. We clip the speedup term to improve training stability and reduce the impact of anomalous evaluations:
+143: \operatorname{speedup}_{i,t}=\min\!\left(\frac{T_{\text{reference}}}{T_{\text{kernel}}},\,3\right).
+144: This clipping prevents rare timing artifacts from producing excessively large rewards, and is also consistent with the observation that speedups beyond 3\times are uncommon given the current capabilities of LLMs in such tasks.
+145: Multi-Turn Advantage
+146: We use a reward-to-go formulation to compute turn-level returns, assigning credit to each turn based on subsequent rewards in the interaction. This is natural for multi-turn kernel refinement: earlier turns influence later turns through accumulated code and environment feedback. Specifically, we define the return at turn t as
+147: |
+148: | G_{i,t}\;=\;\sum_{t^{\prime}=t}^{T}\gamma^{\,t^{\prime}-t}\,R_{i,t^{\prime}},
+149: |
+150: | (2)
+151: where \gamma\in(0,1] is a discount factor and R_{i,t} is the per-turn reward. We fix \gamma=1 in this work.
+152: After computing G_{i,t} , we form turn-level advantages using a GRPO-style in-batch mean baseline.
+153: For each prompt (i.e., a fixed kernel task specification), we sample K independent rollouts.
+154: At turn t , some rollouts may be invalid (e.g., masked out or terminated early); we denote \mathcal{G}_{t} as the set of valid rollouts for a given prompt at turn t , and N_{t}=|\mathcal{G}_{t}|\leq K .
+155: We compute average returns within each turn group:
+156: |
+157: | \displaystyle\bar{G}_{t}=\frac{1}{N_{t}}\sum_{j\in\mathcal{G}_{t}}G_{j,t},\quad A^{\text{GRPO}}_{i,t}=G_{i,t}-\bar{G}_{t},\quad i\in\mathcal{G}_{t}.
+158: |
+159: | (3)
+160: Self-Inclusion Issue in GRPO
+161: We identify that the in-group mean baseline in Eq. (3) suffers from self-inclusion: \bar{G}_{t} includes G_{i,t} itself for any i\in\mathcal{G}_{t} . Since G_{i,t} depends on the current action y_{i,t} through rewards from turn t onward (i.e., R_{i,t:T} ), the baseline can become action-dependent, violating the standard requirement for an unbiased REINFORCE baseline (Sutton et al., 1999; Sutton & Barto, 2018). For the mean-centering form, this manifests as a biased policy-gradient estimator within each prompt–turn group:
+162: |
+163: | \mathbb{E}[\hat{g}_{\text{GRPO}}]=\left(1-\frac{1}{N_{t}}\right)\nabla_{\theta}J(\theta).
+164: |
+165: | (4)
+166: That is, the update is systematically shrunk by a factor depending on the (effective) group size. We provide a detailed derivation in Appendix A.
+167: TRLOO
+168: To remove self-inclusion, we propose Turn-level REINFORCE Leave-One-Out (TRLOO), a multi-turn adaptation of the Leave-One-Out (Kool et al., 2019; Ahmadian et al., 2024) baseline. For each group \mathcal{G}_{t} and sample i\in\mathcal{G}_{t} with N_{t}>1 , define
+169: |
+170: | \displaystyle\bar{G}^{(-i)}_{t}=\frac{1}{N_{t}-1}\!\sum_{j\in\mathcal{G}_{t},\,j\neq i}\!G_{j,t},\qquad A^{\text{TRLOO}}_{i,t}=G_{i,t}-\bar{G}^{(-i)}_{t}.
+171: |
+172: | (5)
+173: Equivalently, A^{\text{TRLOO}}_{i,t}=\frac{N_{t}}{N_{t}-1}\big(G_{i,t}-\bar{G}_{t}\big) .
+174: Because \bar{G}^{(-i)}_{t} excludes G_{i,t} , it does not depend on the current action y_{i,t} under independent rollouts, yielding an unbiased turn-level advantage estimator for multi-turn RL.
+175: Beyond unbiasedness, we claim TRLOO is beneficial for hard tasks with sparse positive rewards, where successful trajectories are rare.
+176: First, it avoids self-penalization in GRPO: under mean-centering, a rare high-return sample contributes to the \bar{G}_{t} and thus partially suppresses its advantage by subtracting the baseline.
+177: TRLOO excludes G_{i,t} from the baseline, so rare successes obtain a larger learning signal.
+178: Second, TRLOO is robust to varying group sizes. In multi-turn refinement, later turns may have fewer valid samples due to context limits or early termination, making \frac{1}{N_{t}} larger in Eq. (4). TRLOO removes this self-inclusion effect and preserves the correct scale across varying group sizes, improving sample efficiency when positive feedback is scarce.
+179: 4.3 Empirical Results
+180: We report empirical results of multi-turn RL training under different design choices. We use the Qwen3-8B-Base (Team, 2025) model after training with our cold-start data. During training, we sample 16 rollouts per question. And each turn in a trajectory becomes a training sample (Baronio et al., 2025). We evaluate on KernelBench (Ouyang et al., 2025) Level 211
+181: 1
+182: Level 2 is not necessarily harder than Level 1 or Level 3 for current LLMs. Level 1 often requires outperforming highly optimized primitives such as GEMM, while Level 3 includes more complex network-level kernels., whose difficulty is better matched to current LLM capabilities. Additional experimental details are provided in §6.1. We measure performance using the standard KernelBench metric Fast@1 and sample 8 candidates per question.
+183: Our default setting uses TRLOO with a maximum of 3 turns, enables Hacking Check, and sets \gamma=1.0 for return computation; we denote this run as w/ TRLOO. To isolate the effect of each component, we compare against the following variants: w/o Hacking Check disables the hacking-check module in KernelGym while keeping other settings unchanged; w/ Single Turn sets the maximum number of turns to 1; \gamma=0 sets the discount factor to zero to ablate reward-to-go credit assignment; and w/ GRPO replaces TRLOO with GRPO.
+184: Figure 4 shows that TRLOO under the default setting achieves the best overall performance. The variant without the hacking check shows that the hacking check is necessary for effective RL training. Otherwise, training would saturate after only \sim 50 steps. Compared to the GRPO variant, w/ TRLOO attains higher Fast@1 at every turn and exhibits a more stable learning curve, whereas GRPO saturates after roughly 200 training steps. Relative to single-turn training, multi-turn RL yields substantial gains as the number of turns increases, and it also improves first-turn quality. We attribute this to reward-to-go credit assignment: since early turns condition all subsequent refinements, they are incentivized to produce higher-quality intermediate kernels. This effect is corroborated by the \gamma=0 ablation, which substantially degrades first-turn performance because the first-turn advantage no longer incorporates the impact on later interactions. Additionally, we observe that, unlike our model, the baseline AutoTriton fails to refine the kernel through multi-turn feedback.
+185: 5 From Stability to Effectiveness: Overcoming Lazy Optimization
+186: Figure 5: Left: Fast@1.2 at turn 3 over training steps. While MRS stabilizes training, profiling-based methods (PR and PRS) are required to significantly improve the stricter Fast@1.2 metric. Right: Entropy over training steps. While MRS improves training stability, PR and PRS further enhance stability on top of MRS. Additional training dynamics are shown in Figure 7.
+187: With KernelGym and TRLOO, long-term RL training becomes feasible, yet the “lazy optimization” issue persists as discussed in §2 and Figure 2. We systematically investigate this bottleneck through two hypotheses. Hypothesis 1: the saturation is caused by optimization instability arising from training–inference mismatch. Hypothesis 2: the optimization objective remains misaligned with meaningful speedup, incentivizing low-impact solutions.
+188: 5.1 Hypothesis 1: Training Instability
+189: Our initial speculation was that this premature saturation stemmed from training instability. Training–inference mismatch (Yao et al., 2025; Liu et al., 2025) is a fundamental challenge in RL for LLMs, where discrepancies between the rollout (inference) and training engines induce off-policy drift. Theoretically, this drift can lead to gradient variance and reward collapse, preventing the model from reaching higher performance peaks.
+190: To investigate this, we monitor training dynamics via entropy, gradient norms, and perplexity (Figure 7). As observed, the multi-turn RL for kernel generation run exhibits excessively high values across these metrics, clearly indicating training instability. Following Liu et al. (2025), we adopt geometric Mismatch Rejection Sampling (MRS) to mitigate this drift. We compute the geometric-mean importance ratio
+191: |
+192: | w=\exp\!\Big(\tfrac{1}{|T|}\sum_{t\in T}\log\frac{\pi_{\text{train}}(a_{t}\mid s_{t})}{\pi_{\text{rollout}}(a_{t}\mid s_{t})}\Big),
+193: |
+194: | (6)
+195: retaining samples only if w\in[0.999,1.001] . Additionally, we enforce a strict token-level veto: the entire sequence is rejected if the likelihood ratio \pi_{\text{train}}/\pi_{\text{rollout}} for any single token drops below 10^{-4} .
+196: As visualized in Figure 7, MRS successfully stabilizes the training dynamics. However, Figure 5 reveals a critical insight: while mismatch correction prevents early collapse (smoothing the learning curve), it does not fundamentally lift the performance ceiling of Fast@1.2. This indicates that while Hypothesis 1 effectively accounts for the training instability, addressing it alone does not fully resolve the performance saturation. Consequently, this directs our focus to the optimization objective itself.
+197: 5.2 Hypothesis 2: Misaligned Objective
+198: Given that improving stability alone is insufficient, we speculate that the standard reward signal fails to distinguish between trivial improvements and meaningful bottlenecks. While a kernel may be correct and achieve some speedup, it might still fail to address the true performance bottlenecks. To move from producing merely correct kernels to effective ones, we must make rewards bottleneck-aware.
+199: Profiling-based Rewards (PR)
+200: A key symptom of this misalignment is the tendency for models to optimize trivial sub-operations (e.g., replacing a simple summation operation) without affecting the dominant bottlenecks in the computation. As demonstrated in the case study of lazy optimization versus better fusion (Figure 10), in the lazy optimization case, the model-generated kernel accounted for only 0.014\% of the total CUDA execution time, indicating that the kernel optimization did not affect the main bottlenecks. In contrast, with better fusion, the model generated kernels that covered 86.15\% of the total CUDA runtime, resulting in better and more meaningful speedup.
+201: To formalize this intuition, we leverage the profiling toolkit in KernelGym to isolate the runtime contribution of the generated kernels ( T_{\text{generated}} ) from the overall CUDA execution time ( T_{\text{total}} ). We define the profiling ratio as:
+202: |
+203: | \operatorname{PR}_{i,t}\;=\;\frac{T_{\text{generated}}}{T_{\text{total}}}.
+204: |
+205: | (7)
+206: Intuitively, \operatorname{PR}_{i,t} assigns higher credit when the candidate optimizes kernels that dominate the end-to-end runtime. We then augment the per-turn reward with this signal (applied only to correct kernels):
+207: |
+208: | R_{i,t}=C(y_{i,t})+C(y_{i,t})\cdot\operatorname{speedup}_{i,t}+C(y_{i,t})\cdot\operatorname{PR}_{i,t}.
+209: |
+210: | (8)
+211: This encourages the model to focus on kernel optimizations that contribute significantly to performance, explicitly driving learning toward optimizations with larger real speedup. Besides, since PR_{i,t} is bounded in [0,1] , the \operatorname{speedup} term naturally dominates, preventing the model from maximizing coverage via inefficient code.
+212: Profiling-based Rejection Sampling (PRS)
+213: Even with bottleneck-aware rewards, the exploration process can still be dominated by a high volume of low-impact (“lazy”) samples. To further filter the training distribution, we introduce profiling-based rejection sampling (PRS). For each sample (i,t) , we retain it with probability:
+214: |
+215: | p_{i,t}=\mathrm{clip}\!\left(\frac{\operatorname{PR}_{i,t}-\tau}{s},\,0,\,1\right),
+216: |
+217: | (9)
+218: where \tau is a cutoff threshold and s controls the softness of the filter. In our experiments, we fix \tau=0.3 and s=0.1 . We ablate the design choice of PRS in Appendix D.
+219: 5.3 Empirical results
+220: Figure 5 confirms this staged diagnosis. MRS improves training stability but does not, by itself, raise the Fast@1.2 ceiling. Furthermore, adding PR and PRS substantially lifts Fast@1.2. And the stability is even further improved by PR and PRS as shown in Figure 5 (Right) and Figure 7.
+221: 6 Experiments
+222: Table 1: Performance across levels under different Fast thresholds. As we treat samples with reward hacking as incorrect, our evaluation is more strict than the original Kernelbench. ∗The Cold-Start-8B refers to Qwen3-8B-Base after training with our cold-start data. We contain our Dr. Kernel-14B with sequential test-time scaling (STTS) using context management 6.3 as reference. Dr. Kernel-14B-STTS† reports the results from selecting the best turn across all history turns.
+223: | Model
+224: | LEVEL1
+225: | LEVEL2
+226: | LEVEL3
+227: | Fast1
+228: | Fast1.2
+229: | Fast1.5
+230: | Fast2
+231: | Fast1
+232: | Fast1.2
+233: | Fast1.5
+234: | Fast2
+235: | Fast1
+236: | Fast1.2
+237: | Fast1.5
+238: | Fast2
+239: | GPT-5
+240: | 19.5
+241: | 16.5
+242: | 12.5
+243: | 11.0
+244: | 46.7
+245: | 28.6
+246: | 13.1
+247: | 3.0
+248: | 21.0
+249: | 12.0
+250: | 4.0
+251: | 2.0
+252: | Claude-4.5-Sonnet
+253: | 15.5
+254: | 13.5
+255: | 11.0
+256: | 8.5
+257: | 50.0
+258: | 26.7
+259: | 9.2
+260: | 1.8
+261: | 21.0
+262: | 11.0
+263: | 5.0
+264: | 4.0
+265: | Deepseek-V3.2-Thinking
+266: | 7.5
+267: | 5.5
+268: | 4.5
+269: | 4.0
+270: | 11.0
+271: | 6.5
+272: | 2.5
+273: | 0.5
+274: | 2.0
+275: | 1.0
+276: | 0.0
+277: | 0.0
+278: | GLM-4.7
+279: | 19.4
+280: | 17.2
+281: | 13.1
+282: | 10.4
+283: | 30.0
+284: | 20.5
+285: | 8.5
+286: | 3.5
+287: | 5.0
+288: | 2.0
+289: | 2.0
+290: | 2.0
+291: | Qwen3-8B
+292: | 5.8
+293: | 4.8
+294: | 4.1
+295: | 3.4
+296: | 13.0
+297: | 5.6
+298: | 2
+299: | 1.1
+300: | 5.7
+301: | 0.2
+302: | 0.0
+303: | 0.0
+304: | Qwen3-32B
+305: | 6.1
+306: | 4.9
+307: | 4.3
+308: | 4
+309: | 14.0
+310: | 9.4
+311: | 2.4
+312: | 0.2
+313: | 3.5
+314: | 0.0
+315: | 0.0
+316: | 0.0
+317: | Qwen3-Coder-A30BA3
+318: | 6.0
+319: | 5.2
+320: | 5.1
+321: | 3.8
+322: | 12.6
+323: | 5.0
+324: | 1.5
+325: | 0.3
+326: | 7.0
+327: | 1.0
+328: | 0.0
+329: | 0.0
+330: | AutoTriton
+331: | 4.5
+332: | 3.6
+333: | 2.8
+334: | 2.1
+335: | 30.6
+336: | 9.2
+337: | 2.6
+338: | 0.5
+339: | 7.5
+340: | 0.0
+341: | 0.0
+342: | 0.0
+343: | Cold-Start-8B∗
+344: | 7.5
+345: | 6.6
+346: | 5.0
+347: | 4.3
+348: | 8.8
+349: | 5.6
+350: | 1.8
+351: | 0.4
+352: | 0.5
+353: | 0.0
+354: | 0.0
+355: | 0.0
+356: | Dr. Kernel-8B
+357: | 15.9
+358: | 12.8
+359: | 10.9
+360: | 8.4
+361: | 46.0
+362: | 20.0
+363: | 5.0
+364: | 1.5
+365: | \boldsymbol{10.8}
+366: | 1.0
+367: | 0.0
+368: | 0.0
+369: | Dr. Kernel-14B
+370: | \boldsymbol{20.3}
+371: | \boldsymbol{16.9}
+372: | \boldsymbol{13.2}
+373: | \boldsymbol{11.6}
+374: | \boldsymbol{49.2}
+375: | \boldsymbol{25.6}
+376: | \boldsymbol{7.4}
+377: | \boldsymbol{2.1}
+378: | 8.8
+379: | \boldsymbol{1.2}
+380: | 0.2
+381: | 0.0
+382: | Dr. Kernel-14B-STTS
+383: | 24.1
+384: | 18.8
+385: | 15.3
+386: | 12.8
+387: | 59.8
+388: | 31.6
+389: | 9.6
+390: | 3.0
+391: | 17.1
+392: | 3.0
+393: | 0.2
+394: | 0.0
+395: | Dr. Kernel-14B-STTS†
+396: | 39.3
+397: | 25.1
+398: | 20.4
+399: | 17.6
+400: | 80.9
+401: | 47.8
+402: | 23.6
+403: | 12.5
+404: | 29.8
+405: | 7.3
+406: | 0.5
+407: | 0.0
+408: 6.1 Setup
+409: We evaluate on KernelBench (Ouyang et al., 2025) across all three levels. We follow the official Torch backend in Kernelbench and their implementations of correctness and speedup measurement. We furhter conduct hacking checks when we evaluate kernels. Therefore, our evaluations are stricter than the original Kernelbench. We follow the standard metrics in Kernelbench Fast@ p , p=[1,1.2,1.5,2] , where it is the ratio of samples are both correct and achieve \times p speedup. Both the evaluations and training are conducted on NVIDIA H100. We experiment with Qwen3-8B-Base and Qwen-14B-Base. We sample each question for 8 samples with 3 max turns. We set the max tokens as 32768 and the max generated tokens per turn as 8192. To keep a fair comparison, we report results at turn 3 for our models and for most baselines, as turn 3 typically yields the best average performance. For baselines whose best average performance is achieved at an earlier turn, we instead report their best-performing turn.
+410: We first perform cold-start supervised fine-tuning on our collected 8K 5-turn trajectories, using a learning rate of 1\times 10^{-6} , batch size 256, for 4 epochs. After cold-start training, we run multi-turn RL on the RL queries from cudaLLM (CudaLLM Team, 2025). The queries used for both SFT and RL cover basic PyTorch operators, Transformer components, more complex compositions, and LLM-generated tasks. For RL, we use a learning rate of 1\times 10^{-6} , train for 300 rollout steps, sample 16 rollouts per prompt with max turns to 3 and a rollout batch size of 16. We implement the training pipeline with asynchronous inference.
+411: 6.2 Results
+412: Main Results.
+413: Table 1 summarizes performance across KernelBench levels under different Fast thresholds. We compare Dr. Kernel against AutoTriton (Li et al., 2025), open-source models with strong coding/reasoning abilities, and proprietary models. AutoTriton is a very relevant baseline since it is released, Triton-based, and reports Fast@p.
+414: Overall, Dr. Kernel achieves the strongest performance among open-source baselines and is competitive with frontier models on Level 1 and Level 2. In particular, Dr. Kernel-14B attains high Fast@1.2 on both Level 1 and Level 2, indicating that it improves not only any speedup (Fast@1) but also the stricter and meaningful speedup. This contrasts with prior approaches such as AutoTriton, which achieves a strong Fast@1 on Level 2 but delivers substantially smaller gains under stricter thresholds (e.g., Fast@1.2).
+415: Comparing against our cold-start model, Dr. Kernel shows that multi-turn RL contributes materially to performance gains, especially on the stricter metrics (e.g., Fast@1.2 improves from 5.6\rightarrow 20.0 on Level 2). While Dr. Kernel improves Level 3 Fast@1 relative to open-source baselines, performance at stricter thresholds on Level 3 remains limited, suggesting that further scaling of training data and model capacity is likely required to close the gap to frontier models on the hardest subset.
+416: Finally, test-time scaling further amplifies Dr. Kernel’s performance. With sequential test-time scaling (STTS) via context management (§6.3), Dr. Kernel-14B-STTS boosts Fast@1.2 from 16.9\rightarrow 18.8 on Level 1 and from 25.6\rightarrow 31.6 on Level 2; with best-turn selection across history turns (Dr. Kernel-14B-STTS†), Fast@1.2 further rises to 25.1 (Level 1) and 47.8 (Level 2), surpassing frontier models such as GPT-5 and Claude-4.5-Sonnet on these metrics. STTS also materially improves Level 3 (Fast@1.2: 1.2\rightarrow 3.0/7.3 ), narrowing the gap and partially compensating for the hardest subset; given the substantial model-size disparity to frontier models, these test-time scaled results remain informative despite leveraging TTS.
+417: Analysis
+418: We conduct a comprehensive analysis that includes reward hacking ratio (Appendix C) and case studies (Appendix E.2). Please refer to these sections for details.
+419: 6.3 Test-time Scaling for Kernel Generation
+420: Figure 6: Test-time scaling with Dr. Kernel-14B. We report Fast@1.2 for the last turn (left) and best-of-history (right). Vanilla extrapolation increases the number of turns by appending all previous turns to the prompt. Context management stores the full history externally, but only includes the top- w turns (by reward, w{=}4 ) in the prompt to fit context length.
+421: We study sequential test-time scaling (STTS) by increasing the number of multi-turn refinement steps at inference time. We use Dr. Kernel-14B with a maximum context length of 32,768 tokens and evaluate two strategies: vanilla extrapolation and context management. We report two metrics: (i) Last-turn Fast@1.2, i.e., the Fast@1.2 achieved by the final generated kernel at turn T ; and (ii) Best-of-history Fast@1.2, i.e., the best Fast@1.2 obtained among turns \{1,\dots,T\} . With STTS, our model even outperforms GPT-5/Claude-4.5-Sonnet in Kernelbench level-2 subset.
+422: Vanilla extrapolation We directly extrapolate the number of refinement turns beyond training (trained with up to 3 turns) by appending the entire interaction history to the prompt at each turn. Figure 6 shows that increasing turns initially improves both last-turn and best-of-history performance. However, as T grows, prompt length scales linearly and may approach the context limit, which can degrade performance.
+423: Context management To scale T without unbounded prompt growth, we store all turns in an external memory and maintain a fixed in-context window. Concretely, at each turn we select the top- w turns with the highest rewards from the accumulated history and only append these selected turns as the prompt history for generating the next turn (we use w{=}4 ). As shown in Figure 6, context management yields consistently stronger best-of-history performance and continues to improve as turns scale. Last-turn performance can be slightly lower at small T , since vanilla extrapolation can condition on the full history, but as T increases, context management becomes strictly more reliable and surpasses the best performance achievable by vanilla extrapolation.
+424: 6.4 Results on torch.compile
+425: torch.compile is an advanced PyTorch feature that captures PyTorch programs into a compiled computation graph and optimizes execution via operator fusion, code generation, and scheduling, among other compiler passes. While most prior work evaluates model-generated kernels only under Torch eager execution, we further validate both our models and frontier models under torch.compile, providing a substantially stronger and more practical assessment of speedups.
+426: As shown in Table 2, Dr. Kernel remains effective under the more challenging torch.compile setting and stays competitive with frontier models across the three levels. Because torch.compile already applies compiler optimizations, the headroom for additional gains is smaller than in eager mode; consequently, the absolute Fast@p numbers are generally lower for all models, including both ours and frontier models. Importantly, Fast@1 under torch.compile is also a stricter target: trivial “lazy” changes that may yield marginal improvements in eager execution typically do not surpass the optimized compiled baseline. These results suggest that our training methods generalize beyond eager-mode artifacts, and further scaling of data and model capacity is a promising direction to obtain larger improvements even on top of torch.compile.
+427: Table 2: Fast performance across levels under different thresholds (evaluated under torch.compile). Since torch.compile provides a strong optimized baseline, Fast@1 remains meaningful (unlike eager mode, where trivial “lazy” optimizations can inflate Fast@1).
+428: | Model
+429: | LEVEL1
+430: | LEVEL2
+431: | LEVEL3
+432: | Fast1
+433: | Fast1.2
+434: | Fast1.5
+435: | Fast2
+436: | Fast1
+437: | Fast1.2
+438: | Fast1.5
+439: | Fast2
+440: | Fast1
+441: | Fast1.2
+442: | Fast1.5
+443: | Fast2
+444: | GPT-5
+445: | 18.6
+446: | 8.0
+447: | 6.5
+448: | 5.5
+449: | 22.1
+450: | 3.6
+451: | 1.5
+452: | 1.0
+453: | 14.0
+454: | 4.0
+455: | 3.0
+456: | 1.0
+457: | Claude-4.5-Sonnet
+458: | 10.0
+459: | 2.2
+460: | 2.0
+461: | 1.8
+462: | 20.5
+463: | 3.0
+464: | 0.0
+465: | 0.0
+466: | 12.0
+467: | 3.5
+468: | 0.5
+469: | 0.0
+470: | Dr. Kernel-8B
+471: | 16
+472: | 3.0
+473: | 1.5
+474: | 8.4
+475: | 20.6
+476: | 0.8
+477: | 0.0
+478: | 0.0
+479: | 7.2
+480: | 2.3
+481: | 0.0
+482: | 0.0
+483: | Dr. Kernel-14B
+484: | 17.8
+485: | 5
+486: | 3.3
+487: | 2.5
+488: | 23.5
+489: | 1.9
+490: | 0.0
+491: | 0.0
+492: | 9.2
+493: | 3
+494: | 0.0
+495: | 0.0
+496: 7 Conclusion
+497: We investigate RL for Triton kernel generation and identify the challenges of reward hacking and lazy optimization, which are common in prior works. To address these, we develop the KernelGym environment with hacking checks and profiling tools, propose unbiased multi-turn RL methods incorporating mismatch correction, profiling-based rewards/rejection sampling, and explore sequential test-time scaling. Our approach enhances meaningful speedup, advancing RL training for kernel generation.
+498: 8 Limitations and Future Work
+499: While our approach demonstrates progress in RL-based training for Triton kernel generation, we acknowledge several areas that warrant further investigation.
+500: Data Scaling and Pre-training
+501: From a data perspective, resource constraints limited our supervised fine-tuning (SFT) phase to 8,000 cold-start samples. Given the relative scarcity of high-quality kernel programming data in the pre-training corpora of current Large Language Models (LLMs), our results suggest that the ”data floor” for this domain is quite high. Future work could involve larger-scale data collection to facilitate domain-specific pre-training or continual pre-training (middle-training), which would also provide a more robust foundation for subsequent RL optimization.
+502: Model Capacity
+503: Our observations with Dr. Kernel-8B and Dr. Kernel-14B confirm that larger models possess a superior capacity for kernel generation. This scaling effect is particularly critical in Reinforcement Learning, where the model must rely on its own generations to explore the solution space and update its policy. We expect that migrating these methods to even larger parameter scales will accelerate the development.
+504: Path Toward Production-Ready Automation
+505: Although our methods achieve performance improvements that rival or exceed frontier models, the field remains in an exploratory stage. While current models can generate high-quality code snippets, they are not yet capable of fully autonomous, end-to-end kernel generation for production environments. We hope that our contributions, specifically the KernelGym environment and the Dr. Kernel training framework, serve as a catalyst for future research.

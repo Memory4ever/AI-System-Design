@@ -1,0 +1,330 @@
+{
+  "url": "https://arxiv.org/html/2601.17111v1",
+  "blocks": [
+    {
+      "tag": "p",
+      "id": "selectedTextModalDescription",
+      "text": "Content selection saved. Describe the issue below:"
+    },
+    {
+      "tag": "h1",
+      "id": "",
+      "text": "Least-Loaded Expert Parallelism: Load Balancing An Imbalanced Mixture-of-Experts"
+    },
+    {
+      "tag": "p",
+      "id": "abstract1.1",
+      "text": "Mixture-of-Experts (MoE) models are typically pre-trained with explicit load-balancing constraints to ensure statistically balanced expert routing. Despite this, we observe that even well-trained MoE models exhibit significantly imbalanced routing. This behavior is arguably natural—and even desirable—as imbalanced routing allows models to concentrate domain-specific knowledge within a subset of experts. Expert parallelism (EP) is designed to scale MoE models by distributing experts across multiple devices, but with a less-discussed assumption of balanced routing. Under extreme imbalance, EP can funnel a disproportionate number of tokens to a small number of experts, leading to compute- and memory-bound failures on overloaded devices during post-training or inference, where explicit load balancing is often inapplicable. We propose Least-Loaded Expert Parallelism (LLEP) , a novel EP algorithm that dynamically reroutes excess tokens and associated expert parameters from overloaded devices to underutilized ones. This ensures that all devices complete their workloads within the minimum collective latency while respecting memory constraints. Across different model scales, LLEP achieves up to 5 × \\times speedup and 4 × \\times reduction in peak memory usage compared to standard EP. This enables faster and higher-throughput post-training and inference, with ∼ \\sim 1.9 × \\times faster for gpt-oss-120b. We support our method with extensive theoretical analysis and comprehensive empirical evaluations, including ablation studies. These results illuminate key trade-offs and enable a principled framework for hardware-specific hyperparameter tuning to achieve optimal performance."
+    },
+    {
+      "tag": "p",
+      "id": "p2.1",
+      "text": "Code: github.com/SalesforceAIResearch/LeastLoadedEP"
+    },
+    {
+      "tag": "table",
+      "id": "S0.F1.2",
+      "text": "Imbal: Bal 30% 50% 80% 95% gpt-oss: 20b 120b Method: EP LLEP"
+    },
+    {
+      "tag": "h2",
+      "id": "",
+      "text": "1 Introduction"
+    },
+    {
+      "tag": "p",
+      "id": "S1.p1.1",
+      "text": "Mixture-of-Experts (MoE) layers have increasingly become indispensable components in large language models (LLMs) due to their ability to scale model size and sparsity while keeping compute usage per token (activated parameters) constant ( Liu et al., 2024 ; Agarwal et al., 2025 ; Yang et al., 2025 ; Team et al., 2025 ) . An MoE module consists of a router that selects the top- k k experts to route each token to, and a set of feed-forward experts that process the routed tokens. During pre-training, an MoE layer is often externally load-balanced so that statistically diverse batches of tokens are routed evenly to all experts. This is either enforced with an auxiliary loss ( Fedus et al., 2022 ) or stochastic bias terms ( Liu et al., 2024 ) . Expert parallelism (EP) has become the default infrastructure setup for MoE model training and inference ( Singh et al., 2023 ; Zheng et al., 2024 ) . It spreads the expert weights across multiple (GPU) devices. Under EP, tokens from different devices are dispatched to devices that host the experts they are routed to via an all-to-all communication (All-to-All) ( Shoeybi et al., 2019 ) . Then, each device performs the feed-forward operation with its local expert weights. The tokens’ output are then routed, or combined , back to their original devices with another All-to-All (see Fig. 2 )."
+    },
+    {
+      "tag": "p",
+      "id": "S1.p2.1",
+      "text": "EP is designed with an assumption that load per GPU is always approximately balanced. However, in practice, that is rarely the case. Well-trained MoE models are shown to exhibit consistent imbalanced expert routing ( Liu et al., 2024 ; Agarwal et al., 2025 ) , and arguably for a good reason – as MoE layer training converges, some experts may become specialized to a certain domain or task, while others become generalized across a broad range of knowledge. During domain- or task-specific post-training or inference, only experts relevant to the tasks at hand are mostly activated while others stay dormant. So imbalanced routing, except for expert collapse, is a natural and desirable behavior for MoE models ( Qiu et al., 2025 ) . During post-training or inference, parameter-altering load balancing, like auxiliary losses, is discouraged or not allowed to preserve the integrity of the pre-trained MoE routing behaviors ( Huang et al., 2024 ; Hu et al., 2025 ) . Standard EP, as such, is not designed to handle this phenomenon efficiently. Under worst-case imbalanced scenarios, EP may concentrate an overwhelming number of tokens from all devices to a few overloaded devices. This may cause high computational latency or even out-of-memory (OOM) failures if a GPU cannot store or process the excess tokens. Naive mitigation methods, such as lowering the batch size reduce throughput and increase latency. Advanced strategies like using redundant experts ( Liu et al., 2024 ) , meanwhile, increase memory consumption, is only applicable for inference and still fails in the worst cases."
+    },
+    {
+      "tag": "p",
+      "id": "S1.p3.1",
+      "text": "To tackle this problem, we propose Least-Loaded Expert Parallelism (LLEP) , a novel EP algorithm that dynamically routes excess tokens, along with their corresponding expert weights, from overloaded devices to underloaded devices. Conceptually, when the globally assigned load on an expert group on a GPU exceeds a certain threshold, LLEP will only assign tokens to that GPU up to the capacity threshold, and then transfer the remaining tokens as well as the corresponding expert weights to the least-loaded devices for them to “share” the excess workload. LLEP is designed to distributed workloads and memory usage across devices such that all devices complete their tasks roughly at the same time with minimal latency, while maintaining minimal peak memory usage per GPU. Our load balancing algorithm is also designed to be conscious not only about compute load, but also about per-GPU memory allocations and cross-GPU communication overhead. Specifically, an excess tokens transfer is only triggered when the cost of transferring the tokens is less than the cost of processing them locally. Moreover, LLEP comes with backward-pass support, which allows it to be applied dynamically at every iteration of the training loop as well as inference. Importantly, LLEP is an exact MoE computation algorithm. Unlike other methods ( Qiu et al., 2025 ; Hu et al., 2025 ) , it does not alter the models’ behaviors for the sake of efficiency."
+    },
+    {
+      "tag": "p",
+      "id": "S1.p4.1",
+      "text": "LLEP demonstrates significant speedup and peak-memory reduction over standard EP. As shown in Figure 1(a) , it achieves up to 4.6 × \\times speedup under extremely imbalanced scenarios, while maintaining a similar throughput as standard EP when the routing is balanced. Regarding peak memory usage per GPU, LLEP maintains a relatively stable peak-memory consumption across all scenarios, while standard EP’s memory usage grows dramatically with imbalance, up to 4 × \\times , which will cause OOM crashes if any GPU does not have enough reserve. As such, LLEP is able to handle large models with fewer GPUs while maintaining high throughput. In end-to-end testing with full pre-trained models, LLEP achieves up to 1.4 × \\times and 1.9 × \\times speedups for gpt-oss-20b and gpt-oss-120b respectively. We conduct a comprehensive theoretical and empirical analysis to provide insights into the cost dynamics of MoEs and expert parallelism, and discuss the trade-offs and design knobs for hardware-specific configuration tuning for best performance."
+    },
+    {
+      "tag": "h2",
+      "id": "",
+      "text": "2 Background"
+    },
+    {
+      "tag": "h3",
+      "id": "",
+      "text": "2.1 Mixture-of-Experts"
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS1.p1.1",
+      "text": "Since the pioneering work of Lepikhin et al. (2020) , MoE models have become the de-facto standard for horizontally scaling LLMs, with DeepSeek-V3 ( Liu et al., 2024 ) , gpt-oss ( Agarwal et al., 2025 ) , Kimi-K2 ( Team et al., 2025 ) as notable examples. The MoE feed-forward layer enables models to learn extensive knowledge across different expert weight matrices, while allowing individually tokens to be processed by a sparse subset of experts, thus improving efficiency and scalability. While concrete implementations vary, MoE architectures rely on the core idea of a router layer, which selects the top- K K experts to route each token. Tokens are subsequently processed by each activated expert, which is typically constructed as a feed-forward (FFN) layer. Formally, given a token x x ’s hidden representation 𝒖 ∈ ℝ D {\\bm{u}}\\in\\mathbb{R}^{D} , the MoE module has N N experts { FFN 0 , FFN 1 , … , FFN N − 1 } \\{\\text{FFN}_{0},\\text{FFN}_{1},\\ldots,\\text{FFN}_{N-1}\\} and a router layer Router that selects the top- K K experts to route x x to. For brevity, we define FFN i ​ ( 𝒖 ) = 𝒖 T ​ 𝑾 i \\text{FFN}_{i}({\\bm{u}})={\\bm{u}}^{T}{\\bm{W}}_{i} where 𝑾 i ∈ ℝ D × H {\\bm{W}}_{i}\\in\\mathbb{R}^{D\\times H} is the weight matrix of expert i i , and 𝑾 r ∈ ℝ D × N {\\bm{W}}_{r}\\in\\mathbb{R}^{D\\times N} is the weight matrix of the router layer. Then, the MoE output 𝒉 {\\bm{h}} is"
+    },
+    {
+      "tag": "table",
+      "id": "S2.EGx1",
+      "text": "𝒉 = ∑ i = 0 N − 1 g i ​ FFN i ​ ( 𝒖 ) , where g i \\displaystyle{\\bm{h}}=\\sum_{i=0}^{N-1}g_{i}\\text{FFN}_{i}({\\bm{u}}),\\quad\\text{where}\\quad g_{i} = { s i , if ​ s i ∈ top- ​ K ​ ( { s j ∣ 0 ≤ j ≤ N − 1 } , K ) 0 , otherwise \\displaystyle=\\begin{cases}s_{i},&\\text{if }s_{i}\\in\\text{top-}K(\\{s_{j}\\mid 0\\leq j\\leq N-1\\},K)\\\\ 0,&\\text{otherwise}\\end{cases} (1) s i \\displaystyle s_{i} = softmax i ​ ( 𝒖 T ​ 𝑾 r ) . \\displaystyle=\\text{softmax}_{i}({\\bm{u}}^{T}{\\bm{W}}_{r}). (2)"
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS1.p1.2",
+      "text": "Above, g i g_{i} is the gating affinity score for expert i i , and only top- k k highest-scoring experts are selected to contribute to the output."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Implementation."
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS1.SSS0.Px1.p1.1",
+      "text": "The number of GEneral Matrix Multiplications (GEMMs) required to process one token scales with the number of activated experts. Naive implementations (e.g., looping through each expert sequentially per token) can be extremely inefficient. A simple approach to improving performance is efficiently forming per-expert token batches via re-indexing. Assume that for a batch of tokens 𝑩 ∈ ℝ B × D {\\bm{B}}\\in\\mathbb{R}^{B\\times D} , G ≤ N G\\leq N experts are activated, i.e., receive routed tokens. Without loss of generality, assume these G G activated experts are experts 0 , … , G − 1 0,\\ldots,G-1 . Then, we can form a re-indexed 𝑩 ′ = [ 𝑩 0 , 𝑩 1 , … , 𝑩 G − 1 ] {\\bm{B}}^{\\prime}=[{\\bm{B}}_{0},{\\bm{B}}_{1},\\ldots,{\\bm{B}}_{G-1}] , where 𝑩 i ∈ ℝ B i × D {\\bm{B}}_{i}\\in\\mathbb{R}^{B_{i}\\times D} consists of all tokens routed to expert i i . As an example, if 𝑩 {\\bm{B}} consists of four tokens 𝑩 = [ 𝒂 , 𝒃 , 𝒄 , 𝒅 ] {\\bm{B}}=[{\\bm{a}},{\\bm{b}},{\\bm{c}},{\\bm{d}}] routed to experts [ 2 , 6 , 2 , 1 ] [2,6,2,1] , then we can form 𝑩 ′ = [ 𝒅 , 𝒂 , 𝒄 , 𝒃 ] {\\bm{B}}^{\\prime}=[{\\bm{d}},{\\bm{a}},{\\bm{c}},{\\bm{b}}] with 𝑩 1 = [ 𝒅 ] , 𝑩 2 = [ 𝒂 , 𝒄 ] {\\bm{B}}_{1}=[{\\bm{d}}],{\\bm{B}}_{2}=[{\\bm{a}},{\\bm{c}}] , and 𝑩 6 = [ 𝒃 ] {\\bm{B}}_{6}=[{\\bm{b}}] . Under this re-indexing approach, each MoE layer computes G G GEMM operations 𝑩 i ​ 𝑾 i {\\bm{B}}_{i}{\\bm{W}}_{i} for experts i = 0 , 1 , … , G − 1 i=0,1,\\ldots,G-1 ."
+    },
+    {
+      "tag": "h3",
+      "id": "",
+      "text": "2.2 Expert Parallelism"
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS2.p1.1",
+      "text": "To train large MoE models across multiple GPUs, expert parallelism (EP) is generally preferred over tensor or pipeline parallelism ( Shoeybi et al., 2019 ) , as it enables more efficient utilization of memory and communication bandwidth. In EP, experts are distributed across GPUs, with each device hosting only a local subset of experts. During computation, input tokens are first processed by a router layer to produce global routing indices and corresponding routing weights (affinity scores). The resulting (input, indices, weight) tuples are then sorted and re-indexed, and subsequently dispatched to the GPUs that host the selected experts, as determined by the routing indices."
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS2.p2.1",
+      "text": "The routing process is typically conducted using the dispatch-combine procedure. Algorithm 1 formalizes a highly-efficient per-device implementation of this procedure, while Figure 2(a) provides a visual illustration of EP under an imbalanced routing scenario. Specifically, during dispatch , each device sends its local input tokens to foreign experts’ devices and receives foreign tokens assigned to its local experts. This data exchange paradigm is called an All-to-All communication operation ( Sewell et al., 2024 ; Punniyamurthy et al., 2024 ) . After expert FFN computation is completed, outputs are aggregated in the combine stage. Here, all expert outputs are sent back to their originating devices via another All-to-All operation. Beyond standard NCCL -based collectives, EP can be implemented more efficiently at the kernel level using specialized libraries such as DeepEP ( Liu et al., 2024 ) and Triton-Distributed ( Zheng et al., 2025 ) ."
+    },
+    {
+      "tag": "h2",
+      "id": "",
+      "text": "3 Analysis"
+    },
+    {
+      "tag": "h3",
+      "id": "",
+      "text": "3.1 Imbalanced Routing"
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS1.p1.1",
+      "text": "Even large and high-performing MoE models ( Liu et al., 2024 ; Team, 2025 ) have been shown to experience imbalance expert routing, where tokens are routed to a small subset of experts. We investigate the specific dynamics of token-routing by running gpt-oss-20b ( Agarwal et al., 2025 ) , which has 32 experts, through many batches of data, under 8-way EP (each GPU hosts 4 experts). To keep the data distribution familiar, we feed the model with conversation data where the questions come from DeepScaleR ( Luo et al., 2025 ) and response chain-of-thoughts are generated from gpt-oss-20b itself. In Figure 3(a) , we observe that tokens are consistently routed to certain expert positions, with position E11 dominating. This means that at least one 11th expert of the 24 MoE layers consistently receives dominant load across data batches. Despite that, the GPU that E11 is located on, gpu-2, does not have the highest load; gpu-0, hosting experts E0-E3, has the highest load among all GPUs. This implies that certain GPU devices may handle an overwhelming number of tokens under extremely imbalanced routing. Interestingly, while E11 typically takes on the most tokens, certain batches result in more tokens routed to other experts. That is, the degree of imbalance changes on a per-batch basis."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Are imbalanced MoE models actually bad?"
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS1.SSS0.Px1.p1.1",
+      "text": "It may be tempting to attribute imbalanced MoE routing to pre-training deficiencies, like skewed data or poorly designed load-balancing losses, e.g., Zhou et al. (2022) ; Shazeer et al. (2017) . It is true that if not carefully trained, MoE models can exhibit “expert collapse”, where only a small subset of experts is ever activated, producing sub-optimal or weak models. However, as we showed previously, even state-of-the-art MoE models exhibit some degree of imbalanced routing, albeit to a much milder degree than extreme expert collapse."
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS1.SSS0.Px1.p2.1",
+      "text": "Rather than aiming for perfectly balanced routing, we consider mild imbalance a natural property of a well-trained MoE model. After undergoing large-scale pre-training, subsets of experts often specialize in particular knowledge domains, tasks, or capabilities ( Qiu et al., 2025 ; Hu et al., 2025 ; Song et al., 2025 ) . Consequently, when an MoE model is further fine-tuned or evaluated on a specific domain, such as mathematics, experts specialized for that domain are activated more frequently. This leads to imbalanced routing. At the same time, some experts may evolve into broadly applicable, domain-agnostic “shared” experts that consistently handle generic linguistic patterns, such as grammar, across tasks. This phenomenon has also been observed and embraced in prior work ( Liu et al., 2024 ) . From this perspective, aggressively enforcing balanced routing, e.g., by altering model behavior through auxiliary load-balancing losses ( Fedus et al., 2022 ) or moving-average routing biases ( Liu et al., 2024 ) , risks disrupting these learned specialization patterns within particular experts. Instead of correcting imbalance at the model level, we instead embrace it, proposing a system-level mechanism for both training and inference for maximizing throughput under imbalanced routing. This respects the inherent specialization among experts while mitigating inefficiencies that arise with imbalance."
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS1.SSS0.Px1.p3.1",
+      "text": "Several approaches have been proposed to mitigate routing imbalance under EP. A naive solution is to reduce the batch size, but this severely degrades throughput. Another strategy employs chained gradient checkpointing to process tokens in smaller chunks; however, this approach remains inefficient and is still constrained by a hard memory ceiling. For inference, Liu et al. (2024) propose an EP Load Balancer (EPLB) that replicates heavily loaded experts across devices based on time-delayed routing statistics. While effective in some settings, this method incurs additional memory overhead, is not applicable to fine-tuning; further, this can still result in out-of-memory (OOM) failures under extreme routing imbalance. In contrast, Huang et al. (2024) suggests reserving additional memory for excess experts, which likewise incurs CPU and GPU memory overhead."
+    },
+    {
+      "tag": "h3",
+      "id": "",
+      "text": "3.2 Distributed Latency and Memory Analysis"
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS2.p1.1",
+      "text": "To gain deeper insight into the worst-case cost model of MoE layers under EP, we analyze both latency and peak memory usage in a holistic manner. We first consider the computation local to a single GPU device. Given a batch routed to G G local experts, the MoE layer performs G G GEMM operations, and the total latency can be approximated as"
+    },
+    {
+      "tag": "table",
+      "id": "S3.E3",
+      "text": "T local = ∑ i = 0 G − 1 ( T overhead + B i × T B i , D , H ) T_{\\text{local}}=\\sum_{i=0}^{G-1}(T_{\\text{overhead}}+B_{i}\\times T_{B_{i},D,H}) (3)"
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS2.p1.2",
+      "text": "where T overhead T_{\\text{overhead}} denotes the kernel launch latency, and T B i , D , H T_{B_{i},D,H} is the per-token compute time, which depends on the token count B i B_{i} and model dimensions D D and H H (defined in § 2.1 ). The efficiency of T B i , D , H T_{B_{i},D,H} is directly impacted by how GEMM kernels are implemented, optimized, and tuned with respect to different input and output sizes and configurations. In general, GEMMs become more efficient as B i B_{i} , D D and H H increase. For example, with D D and H H fixed, T B 1 , D , H < T B 2 , D , H T_{B_{1},D,H}<T_{B_{2},D,H} when B 1 > B 2 B_{1}>B_{2} . Therefore, given a fixed number of FLOPs, executing a small number of large GEMMs is significantly more efficient than executing many small GEMMs. EP exploits this property by aggregating tokens across devices, thereby reducing the number of local experts G G and increasing the effective batch size B i B_{i} per expert."
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS2.p2.1",
+      "text": "The many T overhead T_{\\text{overhead}} can be reduced to only one by using a fused grouped-GEMM kernel, but that is not always faster because singular hardware-optimized GEMM kernels (cuBLAS) are more efficient at large D D , and H H . Figure 8 shows that, even though we compute the exact same FLOPs, the elapsed time increases with the number of experts, and launching many small cuBLAS GEMMs is still faster than a single fused Triton grouped-GEMM kernel 1 1 1 cuBLAS is proprietary software by NVIDIA that is highly optimized for the hardware, while the Triton grouped-GEMM is an agnostic implementation. . The peak memory usage of the MoE layer is defined approximately as:"
+    },
+    {
+      "tag": "table",
+      "id": "S3.E4",
+      "text": "M local = ∑ i = 0 G − 1 ( B i × D + D × H + B i × H ) M_{\\text{local}}=\\sum_{i=0}^{G-1}(B_{i}\\times D+D\\times H+B_{i}\\times H) (4)"
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS2.p3.1",
+      "text": "Under standard expert parallelism, B i B_{i} is the total number of tokens routed to expert i i from across all EP devices. In the worst case, B i B_{i} may approach the global batch size, causing all tokens to be concentrated on a single device while others are idle. This causes spiking latency and memory usage, or even out-of-memory crashes for the overloaded device."
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS2.p4.1",
+      "text": "Figures 1(a) and 1(b) show the slowdown and peak memory usage of a standard EP setup under different imbalance scenarios. As shown in Figure 1(a) , EP could be 4.6x slower when 95% of tokens are routed to a single expert compared to the balanced baseline. As for peak memory usage, EP’s peak memory usage per GPU may grow up to 4x, potentially causing OOM errors."
+    },
+    {
+      "tag": "h2",
+      "id": "",
+      "text": "4 Least-Loaded Expert Parallelism (LLEP)"
+    },
+    {
+      "tag": "p",
+      "id": "S4.p1.1",
+      "text": "We explain in detail how our proposed LLEP works. Conceptually, our method will detect ahead of time the degree of imbalance of the global routing according to per-expert loads. If the imbalance is lower than a threshold λ \\lambda , then we consider the routing as balanced and proceed to the standard EP procedure. Otherwise, we will execute the least-loaded assignment algorithm ( Alg. 2 ) to determine for each GPU device that it needs to compute GEMMs for which experts and with how much portions of the global tokens routed to them. If the GPU does not contain an assigned expert as resident, it will import the expert from its host GPU. The assignment takes into account the overhead cost of weight and data transfers, in comparison to the latency and memory cost of processing the tokens only for local experts. Algorithms 2 , 3 and 4 formally describe our method in detail."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Constraints."
+    },
+    {
+      "tag": "p",
+      "id": "S4.SS0.SSS0.Px1.p1.1",
+      "text": "Our method works by making routing decisions that are subject to the some constraints. First, factor α \\alpha in Alg. 2 determines how much maximum token capacity a GPU can handle, which we defined as m α = α ​ ∑ i = 0 N − 1 𝒍 ^ i / P m_{\\alpha}=\\alpha\\sum_{i=0}^{N-1}\\hat{{\\bm{l}}}_{i}/P tokens. m α m_{\\alpha} is not necessarily a physical memory limit, but rather a threshold that the GPU is considered overloaded. If a local expert load exceeds m α m_{\\alpha} , it will spill the excess load to other GPUs. Second, m m is the minimum tokens per GEMM for it to be efficient. If a local expert load exceed the local GPU’s occupied capacity, but the excess is less than m m , we consider it’s not worth it to spill and instead force the local GPU to compute it despite over-capacity (see § 3.2 ). Third, imbalance ratio threshold λ \\lambda is used to determine whether the global loads are relatively balanced, in which case we switch back to standard EP. The reason is that our method employs a greedy least-loaded assignment (LLA) algorithm ( Alg. 2 ) that would produce the same routing plan as standard EP anyway, while causing a tiny time overhead. Without skipping this imbalance ratio check, our method is shown to be slightly slower than standard EP under perfectly balanced scenarios. The optimal values for α \\alpha , m m , and λ \\lambda depend on N N , P P , B p B_{p} , K K , D D , H H , the overall model size, and the physical system configuration. Thus, we recommend to tune these values for each use case."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Elaboration."
+    },
+    {
+      "tag": "p",
+      "id": "S4.SS0.SSS0.Px2.p1.1",
+      "text": "The least-loaded assignment (LLA) algorithm ( Alg. 2 ) determines, for each expert, which GPUs handle which portions of the global expert’s load. First, it sorts the expert loads in decreasing order. Then, it determines the GPU allocations for each expert from largest-load to smallest-load ones. For each expert, it first determines if the native GPU (the one that hosts the expert’s weights) can handle all the tokens of the expert. If it can, it assigns all the tokens to the native GPU. If it cannot, it spills the excess tokens to the least-loaded available GPU up to the capacity threshold. If there are still remaining excess tokens, it will continue this spilling loop (LLAS, Alg. 3 ) until all the tokens are assigned. Once the tokens routing plan is finalized, it will also construct the weight transfer plan accordingly. For example, if excess load of expert i i native to GPU p p is spilled to GPU q q , then the weight transfer plan will include a weight transfer operation from p → q p\\rightarrow q for W i W_{i} . The LLA algorithm ensures that each GPU prioritize computing most, if not all, of the its local experts’ load first before accepting foreign experts’ load. This is to minimize the number of weight transfers required. The final LLEP algorithm ( Alg. 4 ) will then execute the dispatch-compute-combine operations according to the routing plans obtained from LLA. Specifically, for each device, in addition to GEMM computation for native experts, LLEP will also compute the GEMMs for foreign experts that are assigned to the device. Unlike others, LLEP supports proper gradient propagation. During the backward pass, the gradients for the spilled expert weights are returned to their native devices and accumulated with their native gradients respectively."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Implementation & Optimization."
+    },
+    {
+      "tag": "p",
+      "id": "S4.SS0.SSS0.Px3.p1.1",
+      "text": "In the experiments, we implement our method with the standard Torch’s NCCL for All-to-All and peer-to-peer (P2P) operatives. The LLA algorithm is implemented in pure Python. While our simple LLEP implementation is already showing significant speedup and memory saving, there are further opportunities to optimize and reduce overhead. For instance, the communication operatives can be written as low-level C++/Triton kernels, or using a modified version of DeepEP ( Liu et al., 2024 ) . Such a fused operative may also perform direct All-to-All on unsorted tensors ℬ p \\mathcal{B}_{p} and 𝒢 p \\mathcal{G}_{p} , avoiding the memory-intensive index_select operation ( Alg. 4 ). The communication can be overlapped with computation or hidden behind the Grouped-GEMM operation. For multi-node setups, we can further modify LLEP to prefer spilling work to intra-node devices to limit the higher inter-node communication overhead."
+    },
+    {
+      "tag": "h2",
+      "id": "",
+      "text": "5 Experiments"
+    },
+    {
+      "tag": "p",
+      "id": "S5.p1.1",
+      "text": "We show the advantages of LLEP under two settings: Controlled experiments, where we precisely simulate imbalanced loads across multiple popular MoE configurations, and end-to-end training, where we train a MoE model with SFT, comparing against standard EP. We conclude with an ablation study, characterizing various hyperparameters in LLEP."
+    },
+    {
+      "tag": "table",
+      "id": "S5.F4.2",
+      "text": "16 4 1 0 0 2 2 4 4 6 6 1.07 1.07 1.07 1.07 1.07 1.07 1.73 1.73 2.09 2.09 2.41 2.41 2.85 2.85 3.05 3.05 3.48 3.48 4.37 4.37 4.47 4.47 5.26 5.26 5.19 5.19 5.22 5.22 6.11 6.11 # Imbal. Experts Speedup ( × \\times ) gpt-oss-120b (N=128,D=H=2880,K=4) 16 4 1 0 0 2 2 4 4 6 6 0.92 0.92 0.92 0.92 0.92 0.92 1.69 1.69 1.76 1.76 1.96 1.96 2.65 2.65 2.83 2.83 2.77 2.77 3.83 3.83 3.64 3.64 4.23 4.23 4.59 4.59 4.64 4.64 5.13 5.13 # Imbal. Experts DeepSeek-V3 (N=256,D=7168,H=2048,K=8) 16 4 1 0 0 2 2 4 4 6 6 1.03 1.03 1.03 1.03 1.03 1.03 1.8 1.8 1.94 1.94 1.48 1.48 2.73 2.73 2.85 2.85 2.74 2.74 4.01 4.01 3.96 3.96 4.09 4.09 4.83 4.83 4.67 4.67 5.03 5.03 # Imbal. Experts Kimi-K2 (N=384,D=7168,H=2048,K=8) Bal 30% 50% 80% 95% 16 4 1 0 0 50 50 100 100 # Imbal. Experts Peak Memory (GB) 16 4 1 0 0 50 50 100 100 # Imbal. Experts 16 4 1 0 0 50 50 100 100 # Imbal. Experts"
+    },
+    {
+      "tag": "table",
+      "id": "S5.F4.3",
+      "text": "Imbalance: Bal 30% 50% 80% 95% Method: EP LLEP"
+    },
+    {
+      "tag": "h3",
+      "id": "",
+      "text": "5.1 Speed and Memory Profiles"
+    },
+    {
+      "tag": "p",
+      "id": "S5.SS1.p1.1",
+      "text": "We analyze the speed and memory profiles of different popular MoE layers of different sizes and configurations, namely those used in gpt-oss-120b ( Agarwal et al., 2025 ) , DeepSeek-V3 ( Liu et al., 2024 ) and Kimi-K2 ( Team et al., 2025 ) . Unlike the simple case stated in Section 2 , each MoE expert is a SwigGLU ( Shazeer, 2020 ) feed-forward module that use three weight matrices instead of one. We benchmark the forward pass speedups and peak memory consumption per GPU across P = 8 P=8 H200 GPUs. The batch size per GPU ( B B ) is 32K for gpt-oss and 16K for DeepSeek-V3 and Kimi-K2. We simulate across different balanced and imbalanced routing scenarios, from 30% to 95% of tokens evenly concentrated into 1, 4 or 16 experts. For LLEP, we use λ = 1.3 , α = 1 , m = 1024 \\lambda=1.3,\\alpha=1,m=1024 ."
+    },
+    {
+      "tag": "p",
+      "id": "S5.SS1.p2.1",
+      "text": "Figure 4 summarizes the benchmarking results. As shown in the speedup row, across different configurations, LLEP outperforms standard EP across all imbalance scenarios, achieving greater speedup under more imbalanced routing, up to 6.11 × \\times for the most extreme case (95% into 1 expert). Meanwhile, LLEP maintains EP’s efficiency in perfectly balanced case, thanks to the adaptive ratio λ \\lambda . In the peak memory row, LLEP maintains consistently and stably low memory consumption across all imbalance scenarios, with memory saving of up to 5 × \\times , allowing us to increase the throughput (batch size) without running into out-of-memory (OOM) failure."
+    },
+    {
+      "tag": "h3",
+      "id": "",
+      "text": "5.2 End-to-End Full Model Speed Profiles In The Wild"
+    },
+    {
+      "tag": "p",
+      "id": "S5.SS2.p1.1",
+      "text": "To measure the effectiveness of LLEP in the wild , instead of just simulating imbalances, we conduct end-to-end forward-pass throughput comparisons with real pre-trained gpt-oss-20b and gpt-oss-120b ( Agarwal et al., 2025 ) on samples from the Megatron-Math dataset ( Du et al., 2025 ) , where the responses were generated by gpt-oss-120b itself. The results are reported in Figure 1(c) . Full model throughput is impacted by other irrelevant factors and fixed overheads, such as the attention layers. Thus, the speedup of the MoE layers is always greater than the reported numbers for the full model throughput. As shown, LLEP achieves up to 2.2 × \\times and 1.88 × \\times speedups for gpt-oss-20b and gpt-oss-120b respectively. Our method achieves better scaling efficiency with greater relative speedups the more GPUs are used. LLEP demonstrates its superiority because the pre-trained models exhibit imbalanced routing inherently even on in-domain data."
+    },
+    {
+      "tag": "p",
+      "id": "S5.SS2.p2.1",
+      "text": "Figure 5 shows the downstream performance (accuracy on AIME’25) vs. wall-clock time for EP and LLEP, when training gpt-oss-20b (low effort) on full parameters, using Zero-3 and CPU offloading for gradients and optimizer states. The training process requires more expensive and non-negotiable, but irrelevant, overheads, including on-CPU computations of gradients and parameter updates as well as checkpoint saving at each step. As such, LLEP achieves 1.25 × \\times speedup over EP while achieving comparable accuracy."
+    },
+    {
+      "tag": "h3",
+      "id": "",
+      "text": "5.3 Ablation Study"
+    },
+    {
+      "tag": "p",
+      "id": "S5.SS3.p1.1",
+      "text": "We provide further insights into LLEP by ablating various factors and hyper-parameters."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Batch size B B ."
+    },
+    {
+      "tag": "p",
+      "id": "S5.SS3.SSS0.Px1.p1.1",
+      "text": "Figure 6(a) shows that LLEP achieves greater speedups the more tokens we pack into the batch, across various imbalance scenarios. The reason is that large batch sizes saturate the capacity of each individual GPU and overwhelm any overhead introduced by the LLA algorithm ( Alg. 2 ), leading to a linear relationship between batch size and processing time. This means that the least collective processing time ( max i ⁡ [ time-of-GPU ​ i ] \\max_{i}[\\text{time-of-GPU }i] ) is achieved when compute workloads are evenly distributed across all GPUs. The All-to-All data transfers of large batches also overshadow any associated weight transfer."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Factor α \\alpha"
+    },
+    {
+      "tag": "p",
+      "id": "S5.SS3.SSS0.Px2.p1.1",
+      "text": "Figure 6(b) shows the speedup curves across different α \\alpha values. We observe that higher α \\alpha leads the lower speedup, meaning allowing more per-GPU capacity than the balanced baseline before LLA spilling may result in inefficiency. This means that at large-enough batch sizes, LLEP prefers workloads to be balanced despite possibly higher communication costs."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Adaptive ratio λ \\lambda"
+    },
+    {
+      "tag": "p",
+      "id": "S5.SS3.SSS0.Px3.p1.1",
+      "text": "Figure 7(a) shows how the adaptive ratio λ \\lambda impacts speedup. Specifically, when the batch size is low ( B = 8 ​ K B=8\\text{K} ), we observe higher λ \\lambda is beneficial when the imbalance degree is low (15-20%). In other words, it is better to revert to standard EP when the routing distribution is balanced enough that the overhead costs of LLEP’s weight transfers surpassed the benefits of even computation."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Hidden size D D and H H"
+    },
+    {
+      "tag": "p",
+      "id": "S5.SS3.SSS0.Px4.p1.1",
+      "text": "Figure 7(b) demonstrates that LLEP shines as we scale up the model’s hidden sizes, despite the fact that its spilling weight transfers cost more. The reason for this scaling effect is that as the hidden size increases, the compute efficiency of each GEMM improves compared to the data communication costs. In addition, similar to scaling batch sizes, large hidden sizes also saturate the GPU capacity. This causes the benefits of the compute workloads being perfectly balanced to overshadow any inconvenient weight transfer overhead."
+    },
+    {
+      "tag": "h2",
+      "id": "",
+      "text": "6 Conclusion"
+    },
+    {
+      "tag": "p",
+      "id": "S6.p1.1",
+      "text": "We present least-loaded expert parallelism (LLEP), a novel EP algorithm that dynamically performs load balancing to address the MoE imbalanced routing phenomenon, while ensuring the exact MoE mathematical computation. LLEP achieves up to 5-6 × \\times speedups and 5 × \\times reduction in peak memory consumption for the MoE layers. It improves the end-to-end full-model throughputs of gpt-oss-120b by up to 90%."
+    }
+  ]
+}

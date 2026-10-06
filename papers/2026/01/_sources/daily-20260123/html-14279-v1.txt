@@ -1,0 +1,171 @@
+h5: Report GitHub Issue
+p: Content selection saved. Describe the issue below:
+h1: On the Limits of Learned Importance Scoring for KV Cache Compression
+h6: Abstract
+p: We investigate learned KV cache compression through Speculative Importance Prediction (SIP), a 1.7M parameter non-query-aware scorer that predicts token importance from KV representations alone. Despite architectural sophistication (multi-horizon lookahead, cross-attention), SIP does not outperform simple baselines, including random selection, across 5 seeds, 4 retention levels, and 3 tasks. Key findings: (1) position-based heuristics (keep first 4 + last N tokens) match or exceed learned approaches; (2) prefill attention provides equivalent signal to complex learned scorers; (3) marginal information in KV representations beyond position and prefill attention appears limited for importance prediction. We hypothesize that circular dependence between future queries and generation trajectories contributes to this difficulty.
+h2: 1 Introduction
+p: The key-value (KV) cache is essential for efficient autoregressive generation in transformer-based large language models, but its memory footprint grows linearly with sequence length, creating a critical bottleneck for long-context applications ( Pope et al., 2023 ) . This has motivated extensive research into KV cache compression, with methods ranging from simple heuristics ( Xiao et al., 2024 ; Zhang et al., 2024b ) to pattern-based methods ( Li et al., 2024 ) and learned approaches ( Ye et al., 2024 ) .
+p: A widely held assumption in recent work is that learned importance scoring should outperform hand-crafted heuristics by discovering complex patterns in key-value representations that predict future token utility. We tested this assumption rigorously with Speculative Importance Prediction (SIP), a 1.7M parameter architecture incorporating:
+p: Multi-horizon lookahead prediction (1, 4, 16, 64 future tokens)
+p: Cross-attention over recent context
+p: Learned temporal decay and calibrated uncertainty
+p: Extensive hyperparameter tuning
+p: Our main finding: despite this sophistication, SIP does not outperform simple baselines, and random selection often performs comparably. Our results therefore speak specifically to non-query-aware learned token-level importance scoring under fixed-budget compression, and should not be interpreted as negative evidence for other compression paradigms such as allocation strategies, retrieval-augmented methods, or query-aware scoring.
+p: This paper contributes:
+p: Rigorous negative results showing learned KV importance scoring provides no advantage over simple heuristics (Section 5 )
+p: Analysis of why future attention may be difficult to predict from current KV representations (Section 6 )
+p: Evaluation framework establishing rigorous standards for KV compression research (Section 4 )
+p: Clarification of design regimes : We highlight a useful distinction between query-aware and non-query-aware scoring and suggest this choice may largely determine whether learned approaches can outperform heuristics.
+p: We believe negative results are underreported in machine learning, leading to duplicated effort. By documenting our exploration and the conditions under which learned approaches underperform, we hope to help the community redirect effort toward more promising directions.
+h2: 2 Background and Related Work
+h3: 2.1 KV Cache Compression Methods
+p: We organize prior work along two axes most relevant to understanding SIP’s limitations: the distinction between heuristic and learned methods, and between query-aware and non-query-aware scoring.
+p: Heuristic approaches. Position-based methods like StreamingLLM ( Xiao et al., 2024 ) keep attention sinks plus recent tokens with O(1) overhead. Attention-based scoring methods use cumulative or prefill attention patterns to identify important tokens ( Zhang et al., 2024b ; Zhang et al., 2024c ; Li et al., 2024 ) . Numerous works explore adaptive allocation across layers and heads ( Ge et al., 2024 ; Cai et al., 2024 ; Yang et al., 2024 ; Zhang et al., 2024a ; Wan et al., 2024 ) ; these differ from our focus on within-budget token importance scoring. Cross-layer methods ( Liu et al., 2024a ; Brandon et al., 2024 ) and quantization approaches ( Liu et al., 2024b ; Hooper et al., 2024 ; Kang et al., 2024 ) represent orthogonal compression strategies.
+p: Learned approaches. Methods like ChunkKV ( Ye et al., 2024 ) , TRIM-KV ( Du et al., 2024 ) , Write-Gated KV ( Xu et al., 2024 ) , and Dynamic Memory Compression (DMC) ( Nawrot et al., 2024 ) learn compression decisions rather than relying on fixed heuristics. SIP is most similar to DMC in learning token-level importance at cache insertion time, though DMC learns compression into fixed slots rather than binary retention decisions.
+p: Query-aware vs. non-query-aware. A critical distinction is whether importance scoring conditions on the current query. Query-aware methods like Quest ( Tang et al., 2024 ) recompute importance per decoding step, enabling adaptive retrieval at higher computational cost. SIP and most heuristic methods are non-query-aware, computing importance once at cache insertion. As we discuss in Section 6 , this design choice may be fundamental to understanding when learned methods can outperform heuristics.
+h3: 2.2 The Case for Learned Importance
+p: The motivation for learned importance scoring rests on several assumptions:
+p: KV representations encode semantic information predictive of future utility
+p: This information is not fully captured by position or attention heuristics
+p: A learned function can extract and utilize this latent signal
+p: Our work tests these assumptions empirically and finds limited support for them in our experimental setting.
+h3: 2.3 Relation to Concurrent Work
+p: Our findings have implications for the growing body of work on adaptive and learned KV cache compression. Methods like PyramidKV ( Cai et al., 2024 ) , FastGen ( Ge et al., 2024 ) , and DMC ( Nawrot et al., 2024 ) achieve improvements through allocation decisions (how much budget per layer/head) rather than importance scoring within a fixed budget. Our negative results specifically concern learned importance scoring, predicting which tokens to retain given a fixed budget, rather than budget allocation across heads or layers. These are complementary research directions: our results suggest that within-budget scoring may not benefit from learning, while cross-layer allocation may be more learnable. Similarly, hybrid methods like GEAR ( Kang et al., 2024 ) sidestep importance prediction entirely by compressing all tokens via quantization.
+h3: 2.4 Concurrent and Recent Work (2025)
+p: Several concurrent works provide important context for our findings. Guo et al. (2025) reach similar conclusions through independent investigation: learned importance predictors struggle to outperform simple heuristics under rigorous evaluation.
+p: The query-aware vs. non-query-aware distinction emerges as particularly important. TokenButler ( Wang et al., 2025 ) conditions importance scoring on the current query token, representing a fundamentally different design choice from SIP. TokenButler’s reported improvements suggest that query-aware methods may succeed precisely because they access information about what the model is currently attending to, information unavailable to non-query-aware methods like SIP.
+p: Supporting our ablation findings (Table 3 ), Du et al. (2025) (an updated analysis building on Du et al. 2024 ) demonstrate that learned retention gates often converge to solutions approximating position-based heuristics, suggesting that when learned methods do work, they may primarily be rediscovering simple patterns. Theoretical foundations for attention sinks ( Chen et al., 2025 ) further explain why position-based heuristics succeed. For broader context on the KV compression landscape, we refer readers to the comprehensive survey by Yuan et al. (2025) .
+h2: 3 Method: Speculative Importance Prediction
+p: We designed SIP to be a strong test of the learned importance hypothesis, incorporating insights from recent literature.
+h3: 3.1 Design Philosophy: Non-Query-Aware Scoring
+p: A fundamental design choice in SIP is that importance scoring is non-query-aware : the model predicts token importance based solely on KV cache representations, without access to the current query token. Formally, SIP computes s i = f ⁡ ( 𝐤 i , 𝐯 i , i , 𝐜 i ) s_{i}=f(\mathbf{k}_{i},\mathbf{v}_{i},i,\mathbf{c}_{i}) where the scoring function f f has no dependence on the query 𝐪 t \mathbf{q}_{t} at decoding step t t .
+p: This design choice reflects the practical constraint that query-aware scoring requires recomputing importance scores at every decoding step (since each new query may change which cached tokens are relevant), incurring significant computational overhead. Non-query-aware scoring, by contrast, can precompute importance scores once during prefill or cache insertion, making it more attractive for deployment.
+p: However, this design choice also means that SIP cannot adapt to the specific information needs of each decoding step. As we discuss in Section 6 , this limitation may be fundamental: if future token importance depends heavily on future queries (which are themselves unknown), then non-query-aware methods may face an irreducible prediction barrier. Recent work on query-aware methods like TokenButler ( Wang et al., 2025 ) and Quest ( Tang et al., 2024 ) explores the alternative design point, accepting higher per-step compute in exchange for query-adaptive importance scoring.
+h3: 3.2 Architecture
+p: SIP processes each KV pair through a multi-component architecture:
+p: Input features for position i i , head h h :
+table: 𝐱 h , i = [ 𝐤 h , i ; ‖ 𝐯 h , i ‖ ; PE ​ ( i ) ; a h , i recent ] \displaystyle\mathbf{x}_{h,i}=[\mathbf{k}_{h,i};\|\mathbf{v}_{h,i}\|;\text{PE}(i);a_{h,i}^{\text{recent}}] (1)
+p: where 𝐤 h , i \mathbf{k}_{h,i} is the key vector, ‖ 𝐯 h , i ‖ \|\mathbf{v}_{h,i}\| is value norm, PE ( i ) (i) is positional encoding, and a h , i recent a_{h,i}^{\text{recent}} is recent attention received.
+p: Cross-attention context : We attend over the last 32 positions to capture local patterns:
+table: 𝐜 i = CrossAttn ( 𝐱 i , 𝐗 i − 32 : i ) \displaystyle\mathbf{c}_{i}=\text{CrossAttn}(\mathbf{x}_{i},\mathbf{X}_{i-32:i}) (2)
+p: Multi-horizon prediction : We predict importance at multiple future horizons τ ∈ { 1 , 4 , 16 , 64 } \tau\in\{1,4,16,64\} :
+table: s h , i ( τ ) = σ ⁡ ( MLP τ ​ ( [ 𝐱 h , i ; 𝐜 i ] ) ) \displaystyle s_{h,i}^{(\tau)}=\sigma(\text{MLP}_{\tau}([\mathbf{x}_{h,i};\mathbf{c}_{i}])) (3)
+p: Aggregation : Final importance combines horizons with learned weights:
+table: s h , i = ∑ τ w τ ⋅ s h , i ( τ ) , ∑ τ w τ = 1 \displaystyle s_{h,i}=\sum_{\tau}w_{\tau}\cdot s_{h,i}^{(\tau)},\quad\sum_{\tau}w_{\tau}=1 (4)
+p: Parameters : 1.7M total (cross-attention: 0.8M, MLPs: 0.7M, embeddings: 0.2M).
+h3: 3.3 Training
+p: We train on attention patterns from TinyLlama-1.1B-Chat-v1.0:
+p: Supervision : For each horizon τ \tau , we use future attention as labels:
+table: s ^ h , i ( τ ) = 1 τ ​ ∑ t = 1 τ A h , pos + t , i \displaystyle\hat{s}_{h,i}^{(\tau)}=\frac{1}{\tau}\sum_{t=1}^{\tau}A_{h,\text{pos}+t,i} (5)
+p: Loss : Multi-task loss with calibration:
+table: ℒ = ∑ τ λ τ ⋅ BCE ​ ( s ( τ ) , s ^ ( τ ) ) + λ cal ⋅ ECE \displaystyle\mathcal{L}=\sum_{\tau}\lambda_{\tau}\cdot\text{BCE}(s^{(\tau)},\hat{s}^{(\tau)})+\lambda_{\text{cal}}\cdot\text{ECE} (6)
+p: Training data : 1000 sequences from OpenWebText ( Gokaslan and Cohen, 2019 ) , 2048 tokens each.
+p: Optimization : AdamW optimizer with learning rate 3 × 10 − 4 3\times 10^{-4} , batch size 32, weight decay 0.01. Training for 50 epochs with early stopping (patience 5 epochs). Linear warmup over first 1000 steps, gradient clipping at 1.0. We verified training convergence; see Appendix C for diagnostics and hyperparameter sensitivity analysis.
+h3: 3.4 Baselines
+p: We compare against comprehensive baselines:
+p: Random : Uniform random selection (sanity check)
+p: Position-Heuristic : Keep first 4 (sinks) + last N (recent)
+p: Prefill-Attn : Use attention from prompt processing
+p: H2O : Cumulative attention ( Zhang et al., 2024b )
+p: StreamingLLM : Sinks + recent ( Xiao et al., 2024 )
+h2: 4 Evaluation Framework
+p: A key contribution is our rigorous evaluation methodology.
+h3: 4.1 Multi-Seed Protocol
+p: All experiments use 5 random seeds with:
+p: 95% confidence intervals computed via hierarchical bootstrap: we bootstrap over evaluation sequences within each seed, then aggregate across the 5 seeds to capture both within-seed variance and between-seed variance
+p: Paired t-tests for statistical significance ( α = 0.05 \alpha=0.05 ). We use paired t-tests because all methods are evaluated on identical sequences per seed, making measurements naturally paired
+h3: 4.2 Evaluation Tasks
+p: Language Modeling : Perplexity on WikiText-2 (100 sequences, 2048 tokens).
+p: Question Answering : Exact match on SQuAD subset (50 examples).
+p: Needle-in-Haystack : Retrieval accuracy with facts placed at varying depths.
+p: We selected these tasks because they span next-token prediction, factual retrieval, and information retrieval at varying context depths, covering qualitatively different context-usage behaviors.
+h3: 4.3 Compression Ratios
+p: We evaluate at 4 retention levels: 10%, 25%, 50%, 75%.
+p: All baselines are executed with identical model forward passes and differ only in cache retention strategy; no method receives additional model compute.
+h2: 5 Results
+h3: 5.1 Main Results
+p: Table 1 presents our main findings. SIP does not achieve statistically significant improvements over simple baselines at any retention level.
+figcaption: Table 1 : Language modeling perplexity across retention levels (mean ± \pm 95% CI, 5 seeds). Lower is better. Bold : best method. No statistically significant difference between SIP and best baseline at any retention level ( p > 0.05 p>0.05 , paired t-test).
+table: Method 10% 25% 50% 75% Full Cache (baseline) 8.42 ± \pm 0.03 SIP (Ours) 12.31 ± \pm 0.42 9.87 ± \pm 0.28 8.91 ± \pm 0.15 8.58 ± \pm 0.08 Random 12.45 ± \pm 0.51 9.92 ± \pm 0.31 8.89 ± \pm 0.14 8.55 ± \pm 0.07 Position-Heuristic 11.98 ± \pm 0.38 9.71 ± \pm 0.25 8.85 ± \pm 0.12 8.54 ± \pm 0.06 Prefill-Attn 12.15 ± \pm 0.40 9.78 ± \pm 0.26 8.82 ± \pm 0.11 8.51 ± \pm 0.05 H2O 12.28 ± \pm 0.43 9.85 ± \pm 0.27 8.88 ± \pm 0.13 8.56 ± \pm 0.07 StreamingLLM 12.02 ± \pm 0.39 9.73 ± \pm 0.25 8.86 ± \pm 0.12 8.55 ± \pm 0.06
+p: Key observations:
+p: Position-Heuristic wins at aggressive compression (10%, 25%).
+p: Prefill-Attn wins at moderate compression (50%, 75%).
+p: SIP shows no statistically significant advantage over Random (Figure 3 ): This does not imply importance is inherently unpredictable, but rather that our learned model failed to extract signal beyond simple heuristics.
+p: All methods converge at 75% : With sufficient budget, method choice matters little.
+figcaption: Figure 1 : Forest plot showing method performance with 95% confidence intervals. At all retention levels, SIP overlaps substantially with simpler baselines. Gold circles indicate best-performing method.
+h3: 5.2 Task-Specific Results
+p: Table 2 shows results across evaluation tasks.
+figcaption: Table 2 : Performance across tasks at 50% retention (mean ± \pm 95% CI). PPL: perplexity (lower better). EM: exact match % (higher better). Acc: accuracy % (higher better).
+table: Method LM (PPL ↓ \downarrow ) QA (EM ↑ \uparrow ) Needle (Acc ↑ \uparrow ) Full Cache 8.42 72.4 98.0 SIP (Ours) 8.91 ± \pm 0.15 68.2 ± \pm 2.1 89.5 ± \pm 3.2 Position-Heuristic 8.85 ± \pm 0.12 69.1 ± \pm 1.8 91.2 ± \pm 2.8 Prefill-Attn 8.82 ± \pm 0.11 70.3 ± \pm 1.6 92.8 ± \pm 2.4 H2O 8.88 ± \pm 0.13 68.8 ± \pm 1.9 90.1 ± \pm 3.0 StreamingLLM 8.86 ± \pm 0.12 69.5 ± \pm 1.7 91.5 ± \pm 2.6 Random 8.89 ± \pm 0.14 67.5 ± \pm 2.3 88.2 ± \pm 3.5
+p: The pattern is consistent across tasks.
+h3: 5.3 Statistical Analysis
+p: Figure 2 shows pairwise statistical comparisons.
+figcaption: Figure 2 : Statistical significance matrix (paired t-test, α = 0.05 \alpha=0.05 ). Green ( + + ): row significantly better than column. Red ( − - ): row significantly worse. Gray ( = = ): no significant difference. SIP shows no significant wins against any baseline.
+figcaption: Figure 3 : Direct comparison between SIP (1.7M parameters) and random selection. Left: Perplexity curves with 95% CIs overlap at all retention levels. Right: No statistically significant difference at any compression ratio.
+h2: 6 Analysis: Understanding the Limits of Learned Scoring
+h3: 6.1 Why Might Learned Scoring Underperform?
+p: We hypothesize that a key challenge is the circular dependence (or fixed-point nature) between future queries and generation trajectories (Figure 4 ). Let A t → i A_{t\to i} denote attention from future position t t to cached position i i . The optimal importance score is:
+table: s i ∗ = 𝔼 q t ∼ p ( ⋅ | x < t ) [ A t → i ] \displaystyle s_{i}^{*}=\mathbb{E}_{q_{t}\sim p(\cdot|x_{<t})}\left[A_{t\to i}\right] (7)
+p: For non-query-aware methods, we must compute s i s_{i} without observing 𝐪 t \mathbf{q}_{t} . The challenge is that A t → i A_{t\to i} depends on the similarity between 𝐪 t \mathbf{q}_{t} and 𝐤 i \mathbf{k}_{i} , yet 𝐪 t \mathbf{q}_{t} is determined by the generation trajectory, which itself depends on cache retention decisions. Non-query-aware methods must marginalize over all possible future queries, losing access to the specific information that determines importance at each step.
+p: We do not claim formal impossibility; rather, our experiments suggest that, in practice, the available signal in current KV representations may be weak for predicting long-horizon token utility without query conditioning. Recent theoretical work on attention sinks ( Chen et al., 2025 ) provides complementary insight: position-based heuristics work well because certain structural patterns are predictable without query information.
+figcaption: Figure 4 : Illustration of the circular dependence challenge for non-query-aware importance prediction.
+h3: 6.2 Empirical Information Analysis
+p: We estimate mutual information between features and future attention using binned estimators (Figure 5 ):
+table: I ^ ​ ( 𝐤 i , A future → i ) \displaystyle\hat{I}(\mathbf{k}_{i};A_{\text{future}\to i}) = 0.12 ± 0.03 ​ bits \displaystyle=0.12\pm 0.03\text{ bits} (8) I ^ ​ ( pos i , A future → i ) \displaystyle\hat{I}(\text{pos}_{i};A_{\text{future}\to i}) = 0.31 ± 0.05 ​ bits \displaystyle=0.31\pm 0.05\text{ bits} (9) I ^ ​ ( A prefill → i , A future → i ) \displaystyle\hat{I}(A_{\text{prefill}\to i};A_{\text{future}\to i}) = 0.28 ± 0.04 ​ bits \displaystyle=0.28\pm 0.04\text{ bits} (10)
+p: Position and prefill attention provide more predictive information than key representations, which may explain why heuristics match learned approaches. These estimates depend on binning choices and should be interpreted qualitatively.
+figcaption: Figure 5 : Mutual information between features and future attention patterns.
+h3: 6.3 Ablation: What Does SIP Learn?
+p: Table 3 shows ablation results.
+figcaption: Table 3 : Ablation study: SIP components at 50% retention.
+table: Configuration Perplexity Full SIP 8.91 − - Cross-attention 8.93 − - Multi-horizon 8.90 − - Key features 8.88 − - Value features 8.89 Position only 8.85 Random 8.89
+p: Removing components does not hurt performance, the simplest variant (position only) performs best , suggesting SIP primarily relearns position-based heuristics.
+h3: 6.4 Calibration Analysis
+p: Figure 6 shows SIP’s importance predictions are poorly calibrated.
+figcaption: Figure 6 : Reliability diagram for SIP importance scores. Perfect calibration would follow the diagonal. SIP exhibits significant overconfidence (predictions above diagonal) and poor discrimination (flat curve).
+p: Expected Calibration Error (ECE) = 0.18, indicating predictions do not reliably indicate actual importance.
+h2: 7 Related Work on Empirical Limits
+p: Negative results are underreported in ML ( Wagstaff, 2012 ) . Notable exceptions include:
+p: Melis et al. (2018) demonstrated that reported improvements in neural language models often disappear under rigorous hyperparameter tuning and consistent evaluation protocols
+p: Locatello et al. (2019) demonstrated unsupervised disentanglement is impossible without inductive biases
+p: Musgrave et al. (2020) found many metric learning advances don’t replicate under fair comparison
+p: Our work continues this tradition by rigorously documenting the conditions under which our learned KV importance scoring approach underperforms simple baselines.
+h2: 8 Conclusion
+p: We presented empirical results examining learned KV cache compression. Despite architectural sophistication, SIP does not outperform simple heuristics under rigorous evaluation. We hypothesize that circular dependence between future queries and generation trajectories contributes to this difficulty, though this remains a possible explanation rather than a definitive finding.
+p: The practical implication: use position-based heuristics at aggressive compression and prefill attention at moderate compression. We hope this work contributes to calibrating expectations around learned compression and establishes higher standards for empirical evaluation.
+h2: Limitations
+p: Our evaluation focuses on TinyLlama-1.1B at context lengths up to 2048 tokens. Results may not extend to larger models (7 billion parameters or more), longer contexts (32,000 tokens or more), or different architectures (Mamba, RWKV). Our SIP architecture is one instantiation of learned scoring; alternative architectures could potentially succeed where SIP underperformed. Our mutual-information analysis is correlational rather than causal; it does not prove impossibility of learned scoring, only provides evidence about signal strength in our setting.
+h2: Broader Impact Statement
+p: This work’s primary impact is methodological. Our recommendation to use simple heuristics has positive deployment implications: these methods are more interpretable, require no training data, and impose minimal overhead. We identify no negative societal implications.
+h2: Reproducibility
+p: Code and evaluation framework available at: https://github.com/BradySteele/kv-cache-compression-limits
+p: All experiments run on single NVIDIA A100 (40GB) with 5 random seeds. Total compute: ∼ \sim 12 GPU-hours.
+h2: References
+h2: Appendix A Full Experimental Results
+figcaption: Table 4 : Complete results across all methods, retention levels, and seeds.
+table: Per-Seed Perplexity Method @ 50% Seed 1 Seed 2 Seed 3 Seed 4 Seed 5 Mean ± \pm CI SIP 8.89 8.94 8.87 8.92 8.91 8.91 ± \pm 0.15 Position-Heuristic 8.83 8.86 8.84 8.87 8.85 8.85 ± \pm 0.12 Prefill-Attn 8.80 8.83 8.81 8.84 8.82 8.82 ± \pm 0.11 H2O 8.86 8.90 8.87 8.89 8.88 8.88 ± \pm 0.13 Random 8.87 8.92 8.86 8.91 8.89 8.89 ± \pm 0.14
+h2: Appendix B Architecture Details
+figcaption: Table 5 : SIP architecture parameters.
+table: Component Details Key projection Linear(64 → \to 256) + LayerNorm Value projection Linear(1 → \to 64) + LayerNorm Position embedding Learned, 512 → \to 64 Cross-attention 4 heads, 256 dim, 32 context Horizon MLPs 4 × \times MLP(256 → \to 128 → \to 1) Total parameters 1,723,456
+h2: Appendix C Training Diagnostics
+h3: C.1 Training Convergence
+p: We verified training convergence by monitoring validation loss across all 5 seeds:
+p: Training loss converges to 0.32 ± 0.01 0.32\pm 0.01 across seeds
+p: Validation loss plateaus after approximately epoch 30, with early stopping triggered around epoch 35–40
+p: Minimal gap between training and validation loss indicates the model is not overfitting
+p: Low variance across seeds indicates stable optimization
+figcaption: Figure 7 : Training convergence curves for SIP across 5 seeds. Shaded regions: ± \pm 1 std. Early stopping triggered between epochs 35–40.
+h3: C.2 Is SIP Undertrained?
+p: We provide evidence that SIP’s performance reflects limits of learned scoring rather than insufficient training:
+p: Convergence : Validation loss plateaus
+p: Capacity : Small train/val gap indicates generalizable learning
+p: Ablations : Removing components does not hurt performance (Table 3 )
+h3: C.3 Hyperparameter Sensitivity
+p: Learning rate : Tested { 10 − 4 , 3 × 10 − 4 , 10 − 3 } \{10^{-4},3\times 10^{-4},10^{-3}\} ; 3 × 10 − 4 3\times 10^{-4} best
+p: Model size : 0.5M, 1.7M, 4M parameters; larger did not improve
+p: Cross-attention context : { 16 , 32 , 64 } \{16,32,64\} positions; no significant difference
+p: Horizon weights : Uniform vs. learned; no significant difference
+h2: Instructions for reporting errors
+p: We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the methods listed below:
+p: Tip: You can select the relevant text first, to include it in your report.
+p: Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability should not be a barrier to accessing research. Thank you for your continued support in championing open access for all.
+p: Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .

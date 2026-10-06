@@ -1,0 +1,501 @@
+URL https://arxiv.org/html/2601.05488v1; sections S3 to S5 excluded; result tables omitted; fetched 2026-10-03
+
+
+
+ 3 Methodology 
+
+
+
+
+ 3.1 Problem Formulation 
+
+ 
+
+We address the task of long-term dialogue question answering. Given a sequence of conversation sessions \mathcal{S}=\{s_{1},s_{2},\ldots,s_{n}\} with associated timestamps \{t_{1},t_{2},\ldots,t_{n}\} , and a question q posed at time t_{q} where t_{q}>t_{n} , the goal is to generate an accurate answer based on information distributed across the entire conversation history. Since concatenating all sessions typically exceeds context limits, we introduce an external memory bank \mathcal{M} that compresses and organizes historical information for selective retrieval at inference time. 
+ 
+ 
+
+
+
+ 3.2 Multi-Dimensional Memory Architecture 
+
+ 
+
+To effectively manage long-term dialogue information, we design a multi-dimensional memory system that decomposes conversations into four specialized memory types, each handled by a role-specific prompt to the same LLM (Figure  2 ). 
+ 
+
+ 
+ Figure 2: Multi-Dimensional Memory Architecture. Four memory types (Core, Episodic, Semantic, Procedural) are constructed during the Build Phase and selectively retrieved during the Answer Phase. 
+ 
+
+
+
+Memory Structure. 
+
+ 
+
+Our memory bank \mathcal{M} consists of four components: 
+ 
+ • 
+ 
+
+ Core Memory \mathcal{M}^{\text{core}} : A fixed-size block storing persistent user profile information including identity, preferences, and key relationships. This memory is always included in the context during question answering. Detailed prompt templates are provided in Appendix  H . 
+ 
+ • 
+ 
+
+ Episodic Memory \mathcal{M}^{\text{epi}} : Time-stamped event records capturing what happened and when. Each entry follows the format “ YYYY-MM-DD: Event summary | Details ”, enabling temporal reasoning. 
+ 
+ • 
+ 
+
+ Semantic Memory \mathcal{M}^{\text{sem}} : Factual knowledge about entities in the user’s life, such as people, places, and user-specific concepts. Common knowledge is explicitly excluded to avoid redundancy. 
+ 
+ • 
+ 
+
+ Procedural Memory \mathcal{M}^{\text{proc}} : Step-by-step processes, routines, and workflows mentioned in conversations, such as the user’s morning routine or problem-solving approach. 
+ 
+ 
+ 
+ 
+
+Given a new conversation session, "all four memory types are processed simultaneously, each extracting memories according to its specialized perspective. Core Memory is maintained as a fixed block with automatic compression when capacity is exceeded. The other three memory types are stored in a vector database and retrieved via semantic similarity during question answering. 
+ 
+ 
+
+
+
+Memory Operations. 
+
+ 
+
+Since Core Memory operates on a single text block while the other three manage independent entries (Section 3.2 ), their action spaces differ accordingly: 
+ 
+
+ 
+
+ 
+ \displaystyle\mathcal{A}^{\text{core}} 
+ \displaystyle=\{\textsc{Append},\textsc{Replace},\textsc{Rewrite}\} 
+ 
+ (1) 
+ 
+
+ 
+ \displaystyle\mathcal{A}^{\text{epi}} 
+ \displaystyle=\{\textsc{Add},\textsc{Update},\textsc{Merge}\} 
+ 
+ (2) 
+ 
+
+ 
+ \displaystyle\mathcal{A}^{\text{sem}} 
+ \displaystyle=\{\textsc{Add},\textsc{Update},\textsc{Skip}\} 
+ 
+ (3) 
+ 
+
+ 
+ \displaystyle\mathcal{A}^{\text{proc}} 
+ \displaystyle=\{\textsc{Add},\textsc{Update}\} 
+ 
+ (4) 
+ 
+
+At session \tau , given state \mathit{State}_{\tau}=(\mathcal{M}_{\tau-1},s_{\tau}) , the LLM selects an action a\in\mathcal{A}^{(m)} for each memory type and generates the corresponding memory content. 
+ 
+ 
+
+For Core Memory, Append adds new information to the block, Replace updates specific fragments, and Rewrite reorganizes the entire block. For the other three types, Add creates a new entry, and Skip bypasses common knowledge already captured in the model’s parameters. 
+ 
+ 
+
+Unlike prior memory systems that delete old entries and replace them with new ones ( Chhikara et al., 2025 ; Wang and Chen, 2025 ) , we introduce two operations that preserve temporal history. The Update operation creates a new entry with a fresh timestamp that explicitly references the previous entry, rather than overwriting it, enabling the model to trace how information evolved. The Merge operation synthesizes multiple related events into a conclusion spanning a time range while preserving references to the original events as evidence, pre-computing complex temporal reasoning to reduce the burden during question answering. 
+ 
+ 
+
+This architecture transforms unstructured dialogues into organized, queryable memory. The remaining challenge is how to train the LLM to construct memory that maximizes downstream QA performance. 
+ 
+ 
+ 
+
+
+
+ 3.3 Supervised Fine-Tuning 
+
+ 
+
+While multi-dimensional memory architectures can offer finer-grained control ( Wang and Chen, 2025 ) , lightweight models, such as Qwen3-4B employed in our framework, often struggle with direct multi-dimensional memory construction, frequently producing invalid actions that impede effective RL exploration. To address this cold-start problem, we collect expert trajectories \{(\mathit{State}_{t},a_{t})\}_{t=1}^{n} using Claude 4.5 Sonnet. This phase stabilizes the model’s output format, providing a viable baseline for subsequent training. However, SFT primarily focuses on behavioral cloning with limited exploration capability; we further employ RL to maximize the model’s ultimate utility in QA contexts. 
+ 
+
+ 
+ Figure 3: ADRPO training pipeline. Each session’s memory rollouts are evaluated via synthetic QA, with gradients weighted by each memory component’s downstream contribution. 
+ 
+ 
+
+
+
+ 3.4 Attributed Dense Rewards Policy Optimization (ADRPO) 
+
+ 
+
+While SFT enables valid action generation, the resulting policy lacks optimization for downstream QA utility. We introduce a reinforcement learning algorithm that addresses two key challenges: sparse trajectory-level rewards in long-term dialogues, and multi-dimensional memory attribution among memory components with varying downstream impacts. Figure  3 illustrates the ADRPO training pipeline. 
+ 
+
+
+
+ 3.4.1 Dense Session-Level Rewards via Synthetic Session-level QA 
+
+ 
+
+Prior RL approaches for memory construction  ( Yan et al., 2025 ; Wang et al., 2025 ) assign a single reward at the trajectory’s end based on the final QA result. For dialogues spanning dozens of sessions, this provides no learning signal for dense memory operations. 
+ 
+ 
+
+We address this through synthetic session-level QA that evaluates memory quality at each step. Before the RL training, for each session \tau , we retrieve the top- k memories from \mathcal{M}_{\tau-1} most similar to the session s_{\tau} , and let an expert model with (s_{\tau},\mathcal{M}_{\text{retrieved}}) generate J question-answer pairs \{(q_{j},\mathit{ans}_{j})\}_{j=1}^{J} targeting information in s_{\tau} or its connections to retrieved memoey. Questions span three types: single-session (testing current session retention), multi-session (requiring cross-session aggregation), and temporal-reasoning (involving time-based inference). 
+ 
+ 
+
+During the RL training at s_{\tau} , we sample N rollouts. Each rollout i produces memory operations for all four memory types, yielding a candidate memory bank \mathcal{M}_{\tau}^{(i)} . A capable model answers pre-generated questions by retrieving from \mathcal{M}_{\tau}^{(i)} , and an LLM judge assesses correctness against ground-truth \mathit{ans}_{j} . The task reward measures memory construction quality as the average QA accuracy: 
+ 
+
+ 
+
+ 
+ r^{\text{task}}=\frac{1}{J}\sum_{j=1}^{J}\mathbbm{1}[\text{correct}(q_{j})] 
+ 
+ (5) 
+ 
+
+The final reward incorporates two regularization terms: 
+ 
+
+ 
+
+ 
+ r=\mathbbm{1}[\text{valid}]\cdot r^{\text{task}}\cdot(1-\lambda\cdot\ell) 
+ 
+ (6) 
+ 
+ 
+
+
+
+Format Validity. 
+
+ 
+
+The indicator \mathbbm{1}[\text{valid}] acts as a gate: outputs with malformed JSON structure, missing required fields, or undefined actions receive zero reward regardless of content quality. 
+ 
+ 
+
+
+
+Length Penalty. 
+
+ 
+
+The term \ell\in[0,1] , weighted by \lambda , regularizes the amount of memory content stored. Let |\mathcal{M}^{(m)}_{\text{new}}| and |\hat{\mathcal{M}}^{(m)}| denote the token counts of memories stored by the policy and expert for memory type m , respectively. For core Memory, let \Delta_{\text{core}}=|\mathcal{M}^{(\text{core})}_{\tau}|-|\mathcal{M}^{(\text{core})}_{\tau-1}| be the token increment after the operation: 
+ 
+
+ 
+
+ 
+ \ell^{(\text{core})}=\begin{cases}0&\text{if }\Delta_{\text{core}}\leq\theta_{\min}\\[3.0pt]
+\frac{\Delta_{\text{core}}-\theta_{\min}}{\theta_{\max}-\theta_{\min}}&\text{if }\Delta_{\text{core}}\in(\theta_{\min},\theta_{\max})\\[3.0pt]
+1&\text{if }\Delta_{\text{core}}\geq\theta_{\max}\end{cases} 
+ 
+ (7) 
+ 
+
+where \theta_{\min} and \theta_{\max} are the penalty-free and full-penalty thresholds. For the other memory types, let \rho=|\mathcal{M}^{(m)}_{\text{new}}|/|\hat{\mathcal{M}}^{(m)}| and \Delta=\big||\mathcal{M}^{(m)}_{\text{new}}|-|\hat{\mathcal{M}}^{(m)}|\big| : 
+ 
+
+ 
+
+ 
+ \ell^{(m)}=\begin{cases}0&\text{if }\Delta 
+ 
+ (8) 
+ 
+
+where \delta is the minimum difference threshold, [\gamma_{l},\gamma_{u}] the tolerance range, and \gamma_{\min} , \gamma_{\max} the full-penalty boundaries. 
+ 
+ 
+ 
+
+
+
+ 3.4.2 Contribution-Aware Gradient Weighting 
+
+ 
+
+Within each rollout, actions operating on the four memory dimensions contribute to a shared memory bank and receive a global reward.
+However, the functional impact on downstream QA performance varies significantly across memory types; for instance, Episodic Memories may be frequently retrieved while Procedural Memories remain unused. To account for these discrepancies, we dynamically amplify gradient updates based on each component’s downstream utility. 
+ 
+ 
+
+During QA evaluation, we record retrieval counts h^{(m)} for each memory type m\in\{\mathrm{epi},\mathrm{sem},\mathrm{proc}\} across all questions. The dominant contributing type is: 
+ 
+
+ 
+
+ 
+ d=\arg\max_{m\in\{\mathrm{epi},\mathrm{sem},\mathrm{proc}\}}h^{(m)} 
+ 
+ (9) 
+ 
+
+Gradient weights are assigned as: 
+ 
+
+ 
+
+ 
+ w^{(m)}=\begin{cases}\alpha&\text{if }m=d\\
+1&\text{otherwise}\end{cases} 
+ 
+ (10) 
+ 
+
+where \alpha>1 amplifies updates for the dominant contributor. Core Memory, which is always included in the context rather than retrieved, receives a fixed weight w^{(\mathrm{core})}=1 . This mechanism ensures that memory types whose entries directly contributed to successful QA receive proportionally stronger reinforcement. 
+ 
+ 
+
+
+
+ 3.4.3 Training Objective 
+
+ 
+
+We formulate the ADRPO training objective by extending GRPO  ( Shao et al., 2024 ) with the attributed session-level reward. At each session \tau , we sample N rollouts from the current policy. Each rollout i invokes the model four times in parallel, producing memory operations a_{i}=(a_{i}^{\text{core}},a_{i}^{\text{epi}},a_{i}^{\text{sem}},a_{i}^{\text{proc}}) for each memory type. All four memory types share the session-level reward r_{i} defined in Eq.  6 , but receive differentiated gradient weights w^{(m)} based on their retrieval-based attribution. 
+ 
+ 
+
+Advantages are computed via within-group normalization: 
+ 
+
+ 
+
+ 
+ A_{i}=\frac{r_{i}-\mu}{\sigma+\epsilon}=\frac{\mathbbm{1}[\text{valid}_{i}]\cdot r^{\text{task}}_{i}\cdot(1-\lambda\ell_{i})-\mu}{\sigma+\epsilon} 
+ 
+ (11) 
+ 
+
+where \mu and \sigma are computed over the N rollouts, and \epsilon is a small constant for numerical stability. The training objective is: 
+ 
+
+ 
+
+ 
+ \mathcal{J}(\theta)=\mathbb{E}\Bigg[\sum_{m}\frac{1}{|a_{i}^{(m)}|}\sum_{k=1}^{|a_{i}^{(m)}|}\min\Big(w^{(m)}\rho_{i,k}^{(m)}A_{i},\\
+\text{clip}(\rho_{i,k}^{(m)},1\!-\!\epsilon,1\!+\!\epsilon)A_{i}\Big)\Bigg]-\beta\cdot D_{\mathrm{KL}}(\pi_{\theta}\|\pi_{\mathrm{ref}}) 
+ 
+ (12) 
+ 
+
+where \rho_{i,k}^{(m)}=\pi_{\theta}/\pi_{\mathrm{ref}} is the importance ratio for the k -th token of memory type m ’s output. The contribution-aware weights w^{(m)} scale the unclipped term, encouraging larger updates for high-impact components while preserving the clipping mechanism for stability. 
+ 
+ 
+ 
+ 
+
+
+
+ 4 Experiments 
+
+
+
+
+ 4.1 Experimental Setup 
+
+
+
+
+Datasets. 
+
+ 
+
+We evaluate MemBuilder on three long-term dialogue benchmarks:
+ LongMemEval ( Wu et al., 2025 ) , which consists of user-assistant chat histories designed to evaluate the long-term memory capabilities of chat assistants;
+ LoCoMo ( Maharana et al., 2024 ) , which contains human-human conversations between fictional personas grounded on temporal event graphs, spanning up to 35 sessions;
+and PerLTQA ( Du et al., 2024 ) , a dataset featuring 141 characters with rich personal profiles, social relationships, and life events.
+We train exclusively on the LongMemEval subset. LoCoMo and PerLTQA serve as OOD test sets that differ in both dialogue format and domain. Detailed statistics and data construction procedures are provided in Appendix  A . 
+ 
+ 
+
+
+
+Baselines. 
+
+ 
+
+We compare against:
+(1) RAG-based : Following common practice in RAG-based systems ( Mastra, 2025 ) , we implement two retrieval granularities: RAG-Session chunks dialogues at session boundaries and retrieves complete sessions, while RAG-Utterance embeds individual utterances for fine-grained matching but returns the containing session to preserve conversational context;
+(2) Memory frameworks : Mem0 ( Chhikara et al., 2025 ) and MIRIX ( Wang and Chen, 2025 ) ;
+(3) Training-based : Memory-R1 ( Yan et al., 2025 ) , whose results are taken from the original paper due to unavailable code. 
+ 
+ 
+
+
+
+Implementation Details. 
+
+ 
+
+We use Qwen3-4B-Instruct-2507 as our base model, with SFT trajectories collected using Claude 4.5 Sonnet. GPT-4.1 serves as the LLM judge for evaluation. All retrieval uses text-embedding-3-small. To isolate memory construction quality, we fix the answer model to Claude 4.5 Sonnet unless otherwise specified. Full details are in Appendix  B and  D . Detailed configuration including embedding settings and action formats is in Appendix  C . A detailed cost breakdown is provided in Appendix  F . 
+ 
+ 
+ 
+
+
+
+ 4.2 Main Results 
+
+ 
+
+Table  1 presents performance across three benchmarks. To isolate the effect of memory construction quality, we set the answer model to Claude 4.5 Sonnet across all methods and compare three categories of approaches: retrieval-based methods, prompting-based frameworks, and training-based methods. Note that Memory-R1 trains Llama-3.1-8B-Instruct as both the memory construction and answer model. For a fairer comparison, we also evaluate our method with Qwen3-4B as the answer model (Table  2 ), which still achieves 82.00% on LoCoMo, significantly outperforming Memory-R1 (62.74%). 
+ 
+
+
+ 
+ [result table omitted; consult original if quantitative claim needed] 
+ 
+ Table 1: Performance comparison of different memory construction methods. “Ours” denotes our memory architecture with different memory construction models. 
+ 
+ 
+
+Our method achieves SOTA performance across all three benchmarks. On LoCoMo, our trained Qwen3-4B model achieves 84.23%, surpassing the best prompting-based framework MIRIX (77.48%) by 6.75 percentage points and outperforming Claude 4.5 Sonnet as the memory construction model (82.61%). Similar trends are observed on LongMemEval (85.75%) and PerLTQA (93.14%), where our method also outperforms all baselines including Claude 4.5 Sonnet.
+These results demonstrate that, although memory construction requires frequent model invocations across sessions, a well-trained 4B model can effectively replace expensive closed-source APIs.
+Notably, our model is trained exclusively on LongMemEval, yet achieves strong performance on LoCoMo and PerLTQA, demonstrating robust generalization to OOD benchmarks with different dialogue structures and question types. 
+ 
+ 
+
+The training stage ablation reveals the complementary roles of SFT and RL. SFT alone improves the base model from 68.07% to 81.74% by enabling valid multi-dimensional outputs, while RL further boosts performance to 84.23% by optimizing for downstream QA utility. Notably, RL without SFT (79.31%) underperforms SFT alone, confirming that supervised fine-tuning is essential to address the cold-start problem before effective RL exploration can proceed. 
+ 
+ 
+
+
+
+ 4.3 Ablation Studies 
+
+ 
+
+We conduct ablation experiments to analyze the contribution of our key design choices. Implementation details are provided in Appendix  E . 
+ 
+
+
+
+ 4.3.1 Effect of Gradient Weighting 
+
+
+ 
+ Figure 4: Training curves with different gradient weighting coefficients \alpha\in\{1,2,4,8,16\} on LoCoMo. 
+ 
+ 
+
+To investigate the effect of contribution-aware gradient weighting (Section  3.4.2 ), we vary the weighting coefficient \alpha that amplifies updates for the dominant contributing memory type. We conduct this ablation on a reduced training set for efficiency. As shown in Figure  4 , performance improves as \alpha increases from 1 (no weighting, 82.82%) to 4 (84.04%), confirming that attributing credit to high-contribution memory types enhances the final model performance. However, excessively large \alpha values degrade performance due to gradient imbalance among memory types, with the optimal value at \alpha=4 . 
+ 
+ 
+
+
+
+ 4.3.2 Effect of Dense Rewards 
+
+
+ 
+ Figure 5: Effect of reward density on LoCoMo accuracy. The x-axis indicates the fraction of sessions receiving task rewards during training. 
+ 
+ 
+
+To validate the importance of dense session-level rewards, we vary the reward density by providing task rewards to only a fraction of sessions during training. As shown in Figure  5 , under the same number of training epochs, model performance degrades consistently as the reward becomes sparser. When reward density drops to 1/8, performance falls below the SFT baseline (80.92% vs 81.74%). 
+ 
+ 
+
+These results reveal that sparse rewards not only slow convergence but can also be worse than using SFT alone, explaining why prior sparse-reward approaches achieve limited gains despite employing larger base models. 
+ 
+ 
+
+
+
+ 4.3.3 Answer Model Generalization 
+
+
+
+ 
+ [result table omitted; consult original if quantitative claim needed] 
+ 
+ Table 2: Performance with different answer models using memory constructed by our trained Qwen3-4B model. “Qwen3-4B Base” denotes the base model, while “Qwen3-4B Ours” denotes our trained model. 
+ 
+ 
+
+To evaluate whether the constructed memory generalizes across different answer models, we fix the memory construction model to our trained Qwen3-4B and vary the answer model. Table  2 shows that our memory maintains high quality across answer models of varying capabilities. 
+ 
+ 
+
+Interestingly, when using our trained Qwen3-4B as an answer model, accuracy improves from 74.61% to 81.12% over the base model and remains competitive with GPT-4.1, suggesting RL training creates implicit alignment between memory structure and the model’s reasoning patterns. 
+ 
+ 
+ 
+
+
+
+ 4.4 Further Analysis 
+
+
+
+
+ 4.4.1 Performance by Question Type 
+
+
+
+ 
+ [result table omitted; consult original if quantitative claim needed] 
+ 
+ Table 3: Performance breakdown by question type on LoCoMo. 
+ 
+ 
+
+Table  3 details performance across LoCoMo question categories. Our method achieves the largest gains on MultiHop questions (77.88% vs 53.01% for Memory-R1, +24.87pp) and Temporal questions (71.71% vs 51.55%, +20.16pp), both of which require synthesizing information across multiple sessions. On Adversarial questions, our method achieves 90.58%, demonstrating robustness against misleading information. 
+ 
+ 
+
+
+
+ 4.4.2 Action Distribution Analysis 
+
+
+ 
+ Figure 6: Action distribution across training stages (Base, SFT, RL) for four memory types. 
+ 
+ 
+
+Figure  6 visualizes how action distributions evolve across training stages. Concrete examples illustrating these behavioral changes are provided in Appendix  G . 
+ 
+ 
+
+The most notable change is Core Memory’s shift from Append (98.1% \rightarrow 12.9%) to Replace (13.3% \rightarrow 87.1%). Our analysis of the generated outputs demonstrates that the model learns to perform targeted updates to specific fields rather than appending at the end.
+The RL training also teaches the model to be more selective at generation time rather than relying on post-hoc filtering. For Semantic Memory, Skip operations decrease, indicating that the model directly outputs relevant facts rather than enumerating candidates and then excluding.
+We also observe divergent Update behavior: usage increases for Episodic and Semantic Memories but drops to zero for Procedural Memory, suggesting that evolving information (e.g., events and facts) benefits from explicit update chains while procedural knowledge is better maintained by adding discrete new entries. 
+ 
+ 
+
+
+
+ 4.4.3 Training Dynamics 
+
+
+ 
+ Figure 7: Training dynamics: (a) overall reward trend, (b) rewards by memory type, and (c) response length by memory type. All metrics show stable improvement without reward hacking. 
+ 
+ 
+
+Figure  7 illustrates the training dynamics of our RL process. (a) Both task reward (QA accuracy) and mean reward (with length penalty) improve steadily, indicating effective learning. (b) All four memory types show consistent reward growth. (c) Response lengths remain stable throughout training, confirming that the length penalty prevents reward hacking through verbose outputs. 
+ 
+ 
+ 
+ 
+
+

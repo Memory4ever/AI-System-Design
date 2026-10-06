@@ -1,0 +1,1050 @@
+Decoupling Safety into Orthogonal Subspace: Cost-Efficient and Performance-Preserving Alignment for Large Language Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 The Dilemma of Safety Alignment: Data Composition for Balancing Harmlessness and Helpfulness
+2.1 Impact of General-Purpose Data Selection
+2.2 Impact of General-Purpose Data Proportion
+3 LoRA for Cost-Efficient, Performance-Preserving, and Plug-and-Play Safety Alignment
+3.1 Advantages of LoRA-Based over Full-Parameter Safety Alignment
+3.2 Plug-and-Play Safety Patching with LoRA in Lifelong Learning
+4 Theoretical Explanation
+5 Experimental Analyses
+5.1 The magnitude of parameter updates (|Δ​W||\Delta W|)
+5.2 The layer-wise changes in hidden states (Δ​h(l)\Delta h^{(l)})
+5.3 Orthogonality of Safety Updates
+5.4 Cross-Domain Analysis of LoRA: Safety Subspace Distinctiveness
+5.5 The effect of LoRA rank on safety alignment
+5.6 On the Relationship Between LoRA Rank and SVD Decomposition
+6 Discussion
+7 Related Work
+8 Conclusion
+References
+A Training Datasets
+A.1 Safety-critical Data
+A.2 General-purpose Data
+B Details for Evaluation
+B.1 Statistics of Evaluation Sets
+B.2 Safety Evaluation
+B.3 General Evaluation
+C Implementation Details
+D Scaling LoRA Safety Patches to Larger LLMs
+E Transformations in Orthogonal Subspaces: A Derivation
+E.1 Orthogonal case
+E.2 Non-orthogonal case
+F Case Study
+License: CC BY 4.0
+arXiv:2510.09004v1 [cs.CL] 10 Oct 2025
+Decoupling Safety into Orthogonal Subspace: Cost-Efficient and Performance-Preserving Alignment for Large Language Models
+Yutao Mou
+Affiliation: National Engineering Research Center for Software Engineering, Peking University, China{yutao.mou, xiaolingzhou}@stu.pku.edu.cn, {zhangsk,wye}@pku.edu.cn
+Xiaoling Zhou
+Affiliation: National Engineering Research Center for Software Engineering, Peking University, China{yutao.mou, xiaolingzhou}@stu.pku.edu.cn, {zhangsk,wye}@pku.edu.cn
+Yuxiao Luo
+Affiliation: National Engineering Research Center for Software Engineering, Peking University, China{yutao.mou, xiaolingzhou}@stu.pku.edu.cn, {zhangsk,wye}@pku.edu.cn
+Shikun Zhang
+Affiliation: National Engineering Research Center for Software Engineering, Peking University, China{yutao.mou, xiaolingzhou}@stu.pku.edu.cn, {zhangsk,wye}@pku.edu.cn
+Wei Ye
+††thanks: corresponding author.
+Affiliation: National Engineering Research Center for Software Engineering, Peking University, China{yutao.mou, xiaolingzhou}@stu.pku.edu.cn, {zhangsk,wye}@pku.edu.cn
+Abstract
+Safety alignment is essential for building trustworthy artificial intelligence, yet it remains challenging to enhance model safety without degrading general performance. Current approaches require computationally expensive searches for the optimal proportion of safety-critical and general-purpose data to balance safety and general performance, incurring high costs with limited gains. In this work, we show that LoRA-based Refusal-training enables performance-preserving safety alignment even when trained solely on safety data, demonstrating that LoRA serves as cost-efficient, performance-preserving, and plug-and-play safety patches. Beyond empirical findings, we provide both theoretical and experimental evidence that LoRA effectively decouples safety into a low-rank subspace largely orthogonal to the model’s intrinsic transformation space, ensuring that safety enhancements do not interfere with inherent capabilities.11
+1
+We release our code at https://github.com/MurrayTom/LoRA4Safe. Warning: this paper includes examples that may be offensive or harmful.
+1 Introduction
+With the rapid progress of large language models (LLMs) (Hurst et al., 2024; Dubey et al., 2024; Yang et al., 2024a), ensuring that they do not generate harmful content (Mo et al., 2023; Ji et al., 2024b) or execute malicious operations (Bhatt et al., 2023; Yuan et al., 2024; Mou et al., 2025a) has become a critical challenge. To address this, safety alignment techniques, such as supervised fine-tuning (SFT) (Bianchi et al., 2023; Choi et al., 2024), reinforcement learning from human feedback (RLHF) (Dai et al., 2023; Ouyang et al., 2022), and direct preference optimization (DPO) (Rafailov et al., 2024; Mou et al., 2025b), have been widely adopted to align model behavior with human values, forming the foundation for safe and trustworthy AI deployment. However, existing approaches often fall short in generalizing to “unseen” jailbreak attacks encountered in real-world settings (Wei et al., 2023), while simultaneously degrading the general capabilities of LLMs (e.g., knowledge QA, mathematical reasoning, and code generation) (Wei et al., 2024a; Huang et al., 2025).
+Recent efforts have increasingly centered on post-training approaches for aligning LLMs with safety objectives, including refusal-oriented supervised fine-tuning (Refusal-SFT) (Ge et al., 2024), preference-based optimization (Ji et al., 2024a; Diao et al., 2024), representation-level interventions (Zou et al., 2024; Lu et al., 2025), and reasoning-aware alignment techniques (Mou et al., 2025b; Zhang et al., 2025). Our preliminary experiments show that post-training alignment methods are highly sensitive to the composition of training data, requiring a delicate balance between safety-critical and general-purpose examples (Section 2). Identifying the optimal data composition is costly, as both the proportion and distribution of data strongly affect the trade-off between safety and general performance. Moreover, in practical deployment, red-teaming and safety alignment are typically conducted in alternating iterative cycles (Ge et al., 2024; Diao et al., 2024), where the challenges of data composition become even more pronounced in continuous learning settings.
+Figure 1:
+(a) LoRA-based SFT achieves better safety–utility trade-off than full-parameter training. (b) Schematic illustration of transformation spaces induced by LoRA (right) and full-parameter (left) training. The Δ​W\Delta W subspace from LoRA training is orthogonal to the model’s W0W_{0} subspace, avoiding interference, while full-parameter training produces non-orthogonal and interfering subspaces.
+Safety alignment often comes at the cost of degraded general capabilities, essentially manifesting as a form of “catastrophic forgetting” (Parisi et al., 2018; Zhong et al., 2023; Wang et al., 2024b). Recent work has introduced a variety of LoRA-based methods, such as O-LoRA (Wang et al., 2023), SD-LoRA (Wu et al., 2025b), and I-LoRA (Ren et al., 2024) to alleviate knowledge forgetting in multi-task lifelong learning.
+In this work, we show that LoRA-based refusal training markedly enhances safety while preserving performance, without relying on general-purpose data. This highlights LoRA’s strong potential for safety alignment.”
+In the context of safety alignment, LoRA has three key advantages:
+(1) Performance-preserving: LoRA-based Refusal-SFT substantially reduces jailbreak attack success rates while maintaining general capabilities (Figure 1(a));
+(2) Cost-efficient: training LoRA weights solely on safety data achieves a better safety–utility trade-off than full-parameter fine-tuning with carefully balanced data composition, significantly lowering alignment cost;
+(3) Plug-and-play (Section 3.2): as lightweight and modular components, LoRA safety patches enable efficient and continual mitigation of safety vulnerabilities in lifelong alignment (Wang et al., 2025). These properties position LoRA as an effective safety patch for LLMs (Section 3).
+To understand why LoRA can serve as an effective safety patch for LLMs, we combine theoretical insights with empirical evidence.
+From the theoretical perspective (Section 4), we consider a weight matrix W0W_{0} of the original model and a low-rank update Δ​W\Delta W introduced by LoRA. Applying singular value decomposition (SVD) (Klema & Laub, 1980; Wall et al., 2003) to a weight matrix decomposes its transformations into orthogonal basis vectors, which represent the principal directions of the input space shaped by the model. The more orthogonal the subspace spanned by Δ​W\Delta W is to that of W0W_{0}, the more independently their induced transformations can operate, with reduced interference (Figure 1(b)).
+This theoretical view motivates our empirical analyses (Section 5), which quantitatively examine three aspects:
+(i) parameter update magnitude, (ii) layer-wise hidden state shifts, and (iii) the orthogonality between LoRA-induced safety subspace and the model’s inherent transformation subspace. Our results show that LoRA-based refusal-training decouples safety into a low-rank subspace that is largely orthogonal to the original model’s transformations, thereby enhancing safety without compromising general capabilities. Furthermore, through a comparative analysis of fine-tuning on data of code and finance domain, we observe that LoRA-based safety fine-tuning exerts the least adverse impact on general performance. Notably, the orthogonality between the subspace of safety-related parameter shifts and the model’s inherent transformations is more pronounced, which further substantiates the distinctive benefits of LoRA-based refusal training.
+We summarize the main contributions of this study as follows:
+•
+LoRA as Safety Patches. We demonstrate that LoRA can serve as cost-efficient, performance-preserving, and plug-and-play safety patches for LLMs, substantially reducing jailbreak success rates while largely maintaining general capabilities.
+•
+Theoretical Insight. We introduce transformation subspace orthogonality as the theoretical explanation, which helps to interpret why LoRA-based safety alignment can achieve improved safety without interfering with core abilities.
+•
+Empirical Evidence. Through quantitative analyses, we show that LoRA-based Refusal-training constructs a safety subspace orthogonal to the model’s intrinsic transformations. Cross-domain comparisons indicate that the safety subspace is more orthogonal and minimally impacts general performance compared to other domains, which sheds light on promising research directions for safety alignment.
+2 The Dilemma of Safety Alignment: Data Composition for Balancing Harmlessness and Helpfulness
+Current mainstream post-training safety alignment methods typically require the mixture of safety-critical and general-purpose data (Diao et al., 2024; Zou et al., 2024; Qi et al., 2024). The preservation of general capabilities is highly sensitive to both the selection (quality and distribution) and the proportion (quantity and ratio) of general-purpose data (Dong et al., 2023; Zhou et al., 2023). In this section, we present empirical studies illustrating how general-purpose data selection and proportion affect the safety–utility trade-off in LLM alignment.
+2.1 Impact of General-Purpose Data Selection
+(a) Qwen2.5-7B-IT
+(b) LLAMA3.1-8B-IT
+Figure 2: Impact of different choices of general-purpose data in Refusal-SFT on LLM safety and general capabilities. Higher scores indicate better performance, yet achieving an optimal balance between safety and general performance remains challenging.
+Firstly, we examine how the selection of general-purpose data mixed with safety-critical data affects the safety–utility trade-off in alignment.
+Specifically, we use SafeEdit-Train (Wang et al., 2024b) as safety-critical data and combine it with general-purpose samples from OpenOrca (Mukherjee et al., 2023), LIMA (Zhou et al., 2023), and Ultra-Chat (Ding et al., 2023) to construct three training sets (details in Appendix A). We then perform full-parameter SFT on Qwen2.5-7B-IT (Yang et al., 2024b) and LLAMA3.1-8B-IT (Dubey et al., 2024). Results are shown in Figure 2.
+In full-parameter fine-tuning, simultaneously ensuring both safety and usefulness through data composition is highly challenging. We observe that, regardless of which general-purpose dataset is combined with safety data, larger safety improvements from Refusal-SFT come at the cost of greater degradation in general capabilities. Specifically, mixing LIMA with SafeEdit-Train results in the largest loss in general performance but achieves the highest safety gains. In contrast, using OpenOrca as the general-purpose dataset minimizes the drop in general capabilities, while the corresponding improvement in safety is relatively smaller.
+2.2 Impact of General-Purpose Data Proportion
+(a) Safety (Lower ASR, Better models)
+(b) General Performance
+Figure 3: Effect of different general-purpose data ratios during Refusal-SFT training on safety and general capabilities of LLMs. Varying the proportion of general-purpose data reveals an inherent trade-off between safety and general performance.
+Next, we analyze how the ratio between general-purpose and safety data in the training set influences the safety–utility trade-off of aligned models.
+We use 4K ⟨harmful query,safe response⟩\langle\text{harmful query},\text{safe response}\rangle pairs from SafeEdit-Train as safety data, and sample 4K, 8K, 12K, 16K, and 20K instances from OpenOrca as general data. We fine-tuned LLMs with full-parameter SFT, and results are shown in Figure 3.
+Overall, adjusting the proportion of general-purpose data presents a trade-off between safety and general performance. Increasing the share of general-purpose data can alleviate the loss in general capabilities but reduces the safety gains, whereas decreasing it further enhances safety at the expense of greater general performance degradation. These results highlight the inherent challenge of balancing harmlessness and helpfulness in full-parameter safety fine-tuning.
+3 LoRA for Cost-Efficient, Performance-Preserving, and Plug-and-Play Safety Alignment
+Figure 4: LoRA for safety alignment: (a) cost-efficient and performance-preserving alternative to full-parameter fine-tuning; (b) plug-and-play safety patching in multi-round red-teaming and continuous learning.
+3.1 Advantages of LoRA-Based over Full-Parameter Safety Alignment
+There are three common paradigms for LLM safety alignment: (1) supervised fine-tuning on malicious instructions with safe responses (Refusal-SFT) (Ge et al., 2024); (2) direct preference optimization (DPO) with harmful/harmless response pairs (Diao et al., 2024; Yang et al., 2024a); and (3) reinforcement learning (RL) with safety rewards (Ji et al., 2024a). To balance safety and utility, these methods usually mix safety-critical and general-purpose instructions. However, as we discuss in the last section, achieving safety–utility trade-off through data composition remains difficult.
+We consider the loss of general capabilities in safety alignment as a form of "catastrophic forgetting" (Parisi et al., 2018; Song et al., 2023; Zheng et al., 2024a; Song et al., 2025). Recent LoRA variants (e.g., O-LoRA (Wang et al., 2023), SD-LoRA (Wu et al., 2025b), I-LoRA (Ren et al., 2024)) mitigate knowledge forgetting by isolating domain knowledge (medical, legal, financial) into separate adapters. By analogy, safety can be treated as another domain, motivating the question: Does LoRA-based safety alignment better balance safety and general performance than full fine-tuning?
+To investigate this, we compare different alignment methods (Refusal-SFT and DPO) under both full-parameter and LoRA fine-tuning. The former considers both "Safety Only" and "Safety–General Mixture" data configuration, while LoRA adopts "Safety Only" data (Figure 4 (a)). For malicious data, we build instruction-tuning and preference sets from 4K jailbreak samples in SafeEdit-Train (Wang et al., 2024b). For general-purpose data, we use 12K OpenOrca samples (Mukherjee et al., 2023) for SFT and 12K helpful-base preference pairs from HH-RLHF (Bai et al., 2022) for DPO. Further dataset and evaluation details are in Appendix A and B.
+Surprisingly, we find that LoRA-based Refusal-SFT trained solely on <malicious instruction, safe response> pairs achieves optimal trade-off between safety and general performance, without requiring any general-purpose data for training. As shown in Table 1, we can draw three key findings:
+•
+SFT yields stronger safety gains than DPO but incurs higher general performance loss. For instance, with full-parameter fine-tuning of Qwen2.5-7B-IT on the safety–general mixture dataset, Refusal-SFT reduces jailbreak success rates to near zero on jailbreak tests of SG-Bench and SaladBench but substantially degrades open-ended generation and reasoning. In contrast, DPO largely preserves general capabilities but leaves the model more vulnerable to jailbreaks. LoRA fine-tuning yields similar conclusions. We further analyze the underlying causes in Section 5.1.
+•
+Full-parameter fine-tuning on safety data may severely degrade performance, while mixing general data compromises safety.
+Under the "Safety only“ data configuration, both Refusal-SFT and DPO markedly improve jailbreak defense but cause severe performance degradation. For instance, LLAMA3.1-8B-IT and Mistral-7B-IT see MMLU scores drop to nearly zero. Manual inspection further reveals that these aligned models frequently over-refuse benign instructions.
+•
+LoRA-based Refusal-SFT substantially improves safety with minimal impact on general performance even using only safety data. Compared with full-parameter fine-tuning, LoRA offers three key advantages: (1) strong defense against unseen jailbreaks (ASR near zero); (2) minimal effect on general capabilities; and (3) training requires only red-teaming data and tuning a few external parameters, making it simple and efficient.
+In summary, we believe that LoRA can be used as a cost-efficient and performance-preserving safety patch for LLMs.
+Table 1: Comparison of LoRA-based and full-parameter safety alignment across different models. We focus on two common safety alignment methods: Refusal-SFT and DPO.
+marks the best trade-off between safety and performance (maximized safety under tolerable performance loss).
+Percentages indicate changes relative to the instruct model (|Δ|<2%|\Delta|<2\% are labeled as “≈\approxNo Loss.”)
+Model
+Safety (↓)
+Open-end Gen. (↑)
+Knowledge (↑)
+MATH (↑)
+Code (↑)
+WildJailbreak
+SG-Bench
+SaladBench
+MT-Bench
+MMLU
+MATH-500
+HumanEval
+Qwen2.5-7B-IT Models
+Instruct Model (baseline)
+40.05
+36.63
+34.46
+7.65
+70.43
+71.2
+80.94
+Refusal-SFT
+Full-parameter (safety only)
+0.05 (↓99.88%)
+0.08 (↓99.78%)
+0.08 (↓99.77%)
+6.64 (-13.20%)
+67.22 (-4.56%)
+60.40 (-15.17%)
+79.69 (-1.54%)
+Full-parameter (safety-general)
+16.25 (↓59.43%)
+2.26 (↓93.83%)
+2.06 (↓94.02%)
+6.80 (-11.11%)
+68.84 (-2.26%)
+61.40 (-13.76%)
+79.94 (-1.24%)
+LoRA-based (safety only)
+7.80 (↓80.52%)
+0.85 (↓97.68%)
+1.24 (↓96.40%)
+7.64 (-0.13%)
+69.47 (-1.36%)
+70.20 (-1.40%)
+81.16 (+0.27%)
+DPO
+Full-parameter (safety only)
+15.95 (↓60.16%)
+1.40 (↓96.18%)
+2.74 (↓92.05%)
+7.64 (-0.13%)
+69.98 (-0.64%)
+66.40 (-6.74%)
+80.55 (-0.48%)
+Full-parameter (safety-general)
+29.95 (↓25.19%)
+10.46 (↓71.44%)
+11.74 (↓65.91%)
+7.66 (+0.13%)
+70.50 (+0.10%)
+69.20 (-2.81%)
+82.56 (+2.00%)
+LoRA-based (safety only)
+29.40 (↓26.61%)
+15.11 (↓58.74%)
+15.80 (↓54.17%)
+7.71 (+0.78%)
+70.20 (-0.33%)
+71.60 (+0.56%)
+81.52 (+0.72%)
+LLAMA3.1-8B-IT Models
+Instruct Model (baseline)
+18.30
+10.82
+24.62
+7.43
+54.48
+45.8
+68.63
+Refusal-SFT
+Full-parameter (safety only)
+0.05 (↓99.73%)
+0.01 (↓99.91%)
+0.02 (↓99.92%)
+6.06 (-18.45%)
+9.34 (-82.85%)
+32.60 (-28.82%)
+66.28 (-3.42%)
+Full-parameter (safety-general)
+15.30 (↓16.39%)
+3.17 (↓70.71%)
+3.22 (↓86.92%)
+7.10 (-4.44%)
+63.41 (+16.45%)
+42.00 (-8.30%)
+64.63 (-5.84%)
+LoRA-based (safety only)
+0.45 (↓97.54%)
+0.07 (↓99.35%)
+0.24 (↓99.03%)
+7.31 (-1.62%)
+53.49 (-1.82%)
+45.60 (-0.44%)
+68.40 (-0.34%)
+DPO
+Full-parameter (safety only)
+6.45 (↓64.75%)
+0.76 (↓92.97%)
+3.98 (↓83.83%)
+7.37 (-0.81%)
+11.83 (-78.28%)
+45.80 (0.00%)
+67.40 (-1.79%)
+Full-parameter (safety-general)
+21.15 (↑15.57%)
+5.79 (↓46.50%)
+22.86 (↓7.16%)
+7.45 (+0.27%)
+54.98 (+0.92%)
+47.40 (+3.50%)
+64.51 (-6.00%)
+LoRA-based (safety only)
+11.15 (↓39.07%)
+3.41 (↓68.48%)
+14.78 (↓39.97%)
+7.58 (+2.02%)
+54.40 (-0.15%)
+46.20 (+0.87%)
+67.79 (-1.22%)
+Mistral-7B-IT-v0.3 Models
+Instruct Model (baseline)
+56.70
+60.55
+43.14
+6.55
+56.81
+10.0
+40.24
+Refusal-SFT
+Full-parameter (safety only)
+0.00 (↓100.00%)
+0.02 (↓99.97%)
+0.10 (↓99.77%)
+3.08 (-52.82%)
+6.25 (-89.00%)
+0.40 (-96.00%)
+38.96 (-3.18%)
+Full-parameter (safety-general)
+29.35 (↓48.24%)
+5.21 (↓91.39%)
+3.72 (↓91.37%)
+5.83 (-11.07%)
+55.50 (-2.31%)
+14.40 (+44.00%)
+39.85 (-0.97%)
+LoRA-based (safety only)
+7.15 (↓87.39%)
+0.06 (↓99.90%)
+1.12 (↓97.40%)
+6.20 (-5.34%)
+53.36 (-6.06%)
+12.60 (+26.00%)
+40.21 (-0.07%)
+DPO
+Full-parameter (safety only)
+0.05 (↓99.91%)
+0.02 (↓99.97%)
+0.16 (↓99.63%)
+2.04 (-68.87%)
+0.16 (-99.72%)
+0.60 (-94.00%)
+21.70 (-46.09%)
+Full-parameter (safety-general)
+37.20 (↓34.38%)
+5.84 (↓90.35%)
+8.96 (↓79.22%)
+6.19 (-5.49%)
+53.04 (-6.63%)
+11.40 (+14.00%)
+38.65 (-3.95%)
+LoRA-based (safety only)
+40.00 (↓29.45%)
+18.91 (↓68.77%)
+24.84 (↓42.39%)
+6.53 (-0.31%)
+55.12 (-2.97%)
+11.80 (+18.00%)
+38.49 (-4.35%)
+Table 2: Lifelong alignment: LoRA brings steady safety gains with minimal impact on performance.
+Model
+Safety (↓)
+Open-end Generation (↑)
+Knowledge (↑)
+MATH (↑)
+Code (↑)
+WildJailbreak
+SG-Bench (Jailbreak)
+SaladBench
+MT-Bench
+MMLU
+MATH-500
+HumanEval
+Qwen2.5-7B-IT Models
+Qwen2.5-7B-IT
+40.05
+36.63
+34.46
+7.65
+70.43
+71.2
+80.94
+Full-parameter DPO
+- Step 0
+33.45 (↓16.4%)
+28.64 (↓21.8%)
+23.98 (↓30.4%)
+7.84 (+2.5%)
+70.15 (-0.4%)
+70.2 (-1.4%)
+81.34 (+0.5%)
+- Step 1
+22.90 (↓42.8%)
+4.57 (↓87.5%)
+10.50 (↓69.5%)
+7.91 (+3.4%)
+70.17 (-0.4%)
+69.6 (-2.3%)
+81.49 (+0.7%)
+- Step 2
+21.35 (↓46.7%)
+2.50 (↓93.2%)
+7.02 (↓79.6%)
+7.85 (+2.6%)
+69.75 (-1.0%)
+70.0 (-1.7%)
+81.12 (+0.2%)
+LoRA-based Refusal-SFT
+- Step 0
+32.55 (↓18.7%)
+25.03 (↓31.7%)
+22.20 (↓35.6%)
+7.90 (+3.3%)
+70.18 (-0.4%)
+71.2 (0.0%)
+81.40 (+0.6%)
+- Step 1
+21.70 (↓45.8%)
+5.06 (↓86.2%)
+7.70 (↓77.7%)
+7.65 (0.0%)
+70.00 (-0.6%)
+70.4 (-1.1%)
+80.64 (-0.4%)
+- Step 2
+14.55 (↓63.7%)
+1.69 (↓95.4%)
+3.20 (↓90.7%)
+7.63 (-0.3%)
+69.83 (-0.9%)
+70.2 (-1.4%)
+80.79 (-0.2%)
+LLaMA3.1-8B-IT Models
+LLaMA3.1-8B-IT
+18.30
+10.82
+24.62
+7.43
+54.48
+45.8
+68.63
+Full-parameter DPO
+- Step 0
+12.30 (↓32.8%)
+5.92 (↓45.3%)
+13.84 (↓43.8%)
+7.40 (-0.4%)
+53.26 (-2.2%)
+46.4 (+1.3%)
+68.56 (-0.1%)
+- Step 1
+10.70 (↓41.5%)
+3.21 (↓70.3%)
+12.08 (↓50.9%)
+7.48 (+0.7%)
+52.87 (-3.0%)
+45.2 (-1.3%)
+68.47 (-0.2%)
+- Step 2
+8.65 (↓52.7%)
+2.70 (↓75.0%)
+10.86 (↓55.9%)
+7.28 (-2.0%)
+44.65 (-18.0%)
+47.6 (+3.9%)
+68.28 (-0.5%)
+LoRA-based Refusal-SFT
+- Step 0
+10.80 (↓41.0%)
+4.18 (↓61.4%)
+10.72 (↓56.5%)
+7.39 (-0.5%)
+54.06 (-0.8%)
+45.8 (0.0%)
+67.88 (-1.1%)
+- Step 1
+5.75 (↓68.6%)
+0.83 (↓92.3%)
+3.02 (↓87.7%)
+7.22 (-2.8%)
+53.54 (-1.7%)
+46.4 (+1.3%)
+67.21 (-2.0%)
+- Step 2
+1.50 (↓91.8%)
+0.17 (↓98.4%)
+0.44 (↓98.2%)
+7.16 (-3.6%)
+53.70 (-1.4%)
+45.8 (0.0%)
+68.40 (-0.3%)
+3.2 Plug-and-Play Safety Patching with LoRA in Lifelong Learning
+Red-teaming and safety alignment are typically alternated (Ge et al., 2024; Guo et al., 2025), with the former identifying jailbreak attacks and harmful instructions (Samvelyan et al., 2024; Wu et al., 2025a) and the latter constructing safe responses for iterative optimization (Diao et al., 2024; Tedeschi et al., 2024). Mainstream full-parameter fine-tuning relies on curated mixtures of safety and general data to balance safety and utility, but in lifelong alignment (Wang et al., 2025) this requires repeated rebalancing and causes cumulative degradation of general capabilities.
+LoRA acts as a plug-and-play safety patch for LLMs, requiring only safety training data to achieve significant improvements in jailbreak defense while incurring minimal loss of general capability. This property makes it particularly suitable for lifelong alignment, where each red-teaming round can contribute new ⟨harmful prompt,safe response⟩\langle\text{harmful prompt},\text{safe response}\rangle pairs to train an additional patch and continuously enhance safety (Figure 4(b)).
+To validate this, we divided the 15 jailbreak types in SafeEdit-Train into three groups and added them incrementally across three iterations. We adopt full-parameter DPO ("safety-only") as the lifelong alignment baseline. As shown in Table 2,
+LoRA-based Refusal-SFT yields more steady safety gains with stable general performance, whereas full-parameter DPO on LLAMA3.1 suffers severe degradation on MMLU, highlighting the potential of LoRA-based methods for lifelong alignment.
+Besides, we further observe that LoRA-based methods better preserve the model’s original linguistic style (more cases are provided in Appendix F).
+4 Theoretical Explanation
+To explain why LoRA safety patches can enhance LLM safety with minimal loss of general capabilities, we introduce subspace orthogonality theory as the foundation for our analysis.
+An LLM can be viewed as a sequence of matrix transformations on token representations. Each weight matrix W∈ℝout_dim×in_dimW\in\mathbb{R}^{\text{out\_dim}\times\text{in\_dim}} can be decomposed by SVD (Zhou et al., 2025; Wei et al., 2024b):
+W=U​S​VT.W=USV^{T}.
+Here, V∈ℝin_dim×rV\in\mathbb{R}^{\text{in\_dim}\times r} denotes dominant directions for input transformation, while U∈ℝout_dim×rU\in\mathbb{R}^{\text{out\_dim}\times r} describe the corresponding output space (Ottaviani & Paoletti, 2015; Raghavendar & Dharmaiah, 2017). SS contains the singular values, i.e., the scaling factors along the orthogonal directions defined by VV. We denote the subspace spanned by the column vectors of VV as span⁡(V)\mathrm{span}(V). Since VV captures the principal input transformation directions, it plays a central role in shaping model behavior.
+When adapting the model with fine-tuning (SFT/DPO/RL), the update is
+Δ​W=W−W0,\Delta W=W-W_{0},
+where W0W_{0} denotes the initial weights. In safety alignment, the right singular vectors of Δ​W\Delta W, VΔV_{\Delta}, capture transformation directions tied to safety, while those of W0W_{0}, V0V_{0}, reflect intrinsic capabilities from pre-training and instruction tuning. Thus, comparing span⁡(VΔ)\mathrm{span}(V_{\Delta}) and span⁡(V0)\mathrm{span}(V_{0}) reveals the geometric relation between the safety-critical and intrinsic capability subspaces.
+The objective of safety alignment is to enhance safety while preserving the model’s intrinsic capabilities. Based on the above mathematical formulation, the essence is to ensure that the two transformations TΔ​W​(x)T_{\Delta W}(x) and TW0​(x)T_{W_{0}}(x)
+do not interfere with each other—the former represents the safety-critical mapping and the latter captures the model’s intrinsic capabilities and knowledge. According to principles from linear algebra and matrix theory (Axler, 1995; Egozcue et al., 2003), transformations associated with two orthogonal subspaces do not interfere (Additional derivation details are provided in Appendix E). To make span⁡(VΔ)\mathrm{span}(V_{\Delta}) and span⁡(V0)\mathrm{span}(V_{0})
+orthogonal, the following condition must hold:
+VΔT​V0≈0.V_{\Delta}^{T}V_{0}\approx 0.
+where ≈0\approx 0 denotes approximate orthogonality, which suffices to minimize interference between the safety-critical and intrinsic transformations. Thus, we need to empirically analyze the SVDs of W0W_{0} and Δ​W\Delta W to assess whether LoRA-based Refusal-training constructs a safety subspace approximately orthogonal to the model’s intrinsic transformation space.
+Figure 5: Comparison of parameter update magnitudes across different safety alignment methods.
+(a) Qwen2.5-7B-IT series
+(b) LLAMA3.1-8B-IT series
+Figure 6: Comparison of hidden state shifts induced by different safety alignment methods.
+Figure 7:
+Illustration of similarities between safety subspaces constructed by safety alignment methods and the intrinsic transformation subspace of the initial model.
+(a) Comparison of the top five subspace similarity values for each safety-aligned model.
+(b) Comparison of the largest subspace similarity matrices each safety-aligned model.
+5 Experimental Analyses
+To explain why LoRA-based safety alignment improves safety with minimal loss of general performance compared to full-parameter training, we conduct quantitative analyses from multiple perspectives. We first compare the magnitude of parameter updates (Section 5.1), then examine layer-wise hidden-state shifts (Section 5.2) to assess changes in internal representations. We further analyze the relationship between the LoRA-induced safety subspace and the initial model’s intrinsic transformation subspace (Section 5.3), and finally perform cross-domain analyses to demonstrate the distinctive benefits of LoRA in safety alignment (Section 5.4).
+5.1 The magnitude of parameter updates (|Δ​W||\Delta W|)
+In this section, we compare the parameter update magnitudes (|Δ​W|)(|\Delta W|) between LoRA and full-parameter safety alignment training on Qwen2.5-7B-IT and LLaMA3.1-8B-IT. For each weight matrix, we compute Δ​W=W−W0\Delta W=W-W_{0} and measure its Frobenius norm (Golub & Van Loan, 2013). The results, separately averaged for Attention and MLP layers, are shown in Figure 5.
+Instinctively, smaller parameter changes should better preserve model performance, yet the results reveal several non-trivial findings:
+•
+Full-parameter training shows larger updates with more training data. Mixing malicious and general data greatly amplifies parameter changes (e.g., safety-only vs. safety-general mixtures). This indicates that full-parameter fine-tuning depends on the data composition rather than controlling update magnitudes to balance safety and general capability.
+•
+DPO results in substantially smaller parameter updates than Refusal-SFT. This indicates that DPO perturbs model parameters less during safety alignment, thereby better preserving the model’s intrinsic capabilities and general performance.
+•
+LoRA produces larger parameter updates than full-parameter training in most layers. Yet it better preserves general performance—a counterintuitive result. A plausible explanation is that TΔ​W​(x)T_{\Delta W}(x) lies in a subspace roughly orthogonal to W0W_{0}, thereby minimizing interference with the model’s intrinsic capabilities. This finding highlights key differences between LoRA and full-parameter fine-tuning in safety alignment and motivate our subsequent analyses.
+5.2 The layer-wise changes in hidden states (Δ​h(l)\Delta h^{(l)})
+We analyze hidden-state shifts (Δ​h(l)=‖h(l)−h0(l)‖\Delta h^{(l)}=\|h^{(l)}-h^{(l)}_{0}\|) to assess the impact of different alignment methods on intermediate representations. Specifically, we use 400 benign and jailbreak instructions from Alpaca-eval (Li et al., 2023) and SaladBench (Li et al., 2024), record hidden states at the last token across layers, and compute the Euclidean distance between the hidden state of the safety-aligned model h(l)h^{(l)} and that of the original model h0(l)h^{(l)}_{0}. Results are shown in Figure 6.
+We can obtain two key findings: (1) Overall, LoRA-based Refusal-SFT induces smaller hidden state shifts than full-parameter fine-tuning on benign inputs, while producing larger shifts on jailbreak attacks. This aligns with the desired goal of enhancing safety without compromising general performance.
+(2) DPO results in smaller hidden state changes compared with Refusal-SFT. Consistent with the findings in Section 5.1, this reflects DPO’s smaller parameter perturbations, resulting in only modest safety gains while largely preserving general capabilities.
+5.3 Orthogonality of Safety Updates
+Overall, the above analyses suggest that LoRA-based safety alignment produces larger weight updates but smaller hidden-state shifts on benign inputs. To understand this behavior, we next examine the relationship between the safety subspace and the model’s intrinsic transformation space.
+Following Section 4, we perform SVD on Δ​W\Delta W and W0W_{0} to obtain VΔV_{\Delta} and V0V_{0}, and compute the subspace similarity matrix 𝐒𝐢𝐦⁡(VΔ,V0)=VΔ⊤​V0\mathbf{Sim}(V_{\Delta},V_{0})=V_{\Delta}^{\top}V_{0}. The maximum entry of this r×rr\times r matrix measures subspace similarity, with values near zero indicating greater orthogonality.
+For each Attention and MLP matrix WW, we compute its corresponding 𝐒𝐢𝐦⁡(VΔ,V0)\mathbf{Sim}(V_{\Delta},V_{0}) and select the five largest similarity matrices to represent the similarity between the safety subspace and intrinsic subspace of safety-aligned models (Figure 7(a)).
+Figure 7(b) shows the largest similarity matrices for each alignment method. Both LoRA and SVD ranks are set to 8 unless stated otherwise; see Appendix 5.5 and 5.6 for more discussion.
+It can be observed that LoRA-based alignment yields the lowest similarity (typically <0.1) between the safety subspace and the model’s intrinsic transformation space, whereas full-parameter fine-tuning shows much higher similarities (generally >0.4). This indicates that LoRA effectively constructs a nearly orthogonal safety subspace, thereby enhancing safety while preserving general capabilities. This orthogonality explains why LoRA can serve as a cost-efficient, performance-preserving, plug-and-play safety patch for LLMs.
+5.4 Cross-Domain Analysis of LoRA: Safety Subspace Distinctiveness
+Figure 8: Analysis of domain-specific LoRA patches. (a) Impact of domain-specific LoRA patches on general model performance; (b) Similarity between domain-induced subspaces and the model’s intrinsic space.
+We further evaluate whether LoRA exhibits similar advantages in domain-specific tasks such as finance and code. Using 4,000 samples from Finance-Alpaca (Lu et al., 2024) and CodeAlpaca (Chaudhary, 2023), we fine-tuned domain-specific LoRA on LLaMA3.1-8B-IT.
+As shown in Figure 8, the safety patch minimally affects general performance across various capability dimensions and exhibits the lowest similarity with the model’s intrinsic transformation space. In contrast, the finance and code patches induce more noticeable degradation and higher subspace similarity, suggesting that these domains are more entangled with the model’s intrinsic knowledge. These results indicate that the safety subspace is more orthogonal and less intrusive than other domain-specific adaptations, highlighting LoRA’s effectiveness for safety alignment.
+(a) Qwen2.5-7B-IT Series
+(b) LLAMA3.1-8B-IT Series
+Figure 9: Effects of LoRA rank on safety and general performance in LoRA-based safety alignment
+5.5 The effect of LoRA rank on safety alignment
+In the previous discussion, we have demonstrated the effectiveness of LoRA as a safety patch from both theoretical and empirical perspectives. In this section, we explore the impact of the LoRA rank on safety alignment. We focus on how changes in rank affect both the improvement in model safety and the preservation of general capabilities. As shown in Figure 9, the choice of rank has a slight effect on the performance of the LoRA safety patch: excessively large ranks can weaken the safety improvement, while overly small ranks may lead to relatively greater degradation in model performance. A more detailed exploration of the relationship between the LoRA rank and the SVD rank is provided in Section 5.6.
+5.6 On the Relationship Between LoRA Rank and SVD Decomposition
+Figure 10: Illustration of the relationship between LoRA rank and SVD rank. (a) Maximum similarity between the subspaces Span​(VΔ)\text{Span}(V_{\Delta}) and Span​(V0)\text{Span}(V_{0}) computed for different SVD ranks. (b) Maximum similarity matrix 𝐒𝐢𝐦⁡(VΔ,V0)\mathbf{Sim}(V_{\Delta},V_{0}) for the safety-aligned model when LoRA rank is set to 4.
+Figure 11: Illustration of the top 12 singular values of Δ​W\Delta W for different LoRA ranks.
+In this section, we further investigate the intrinsic relationship between the rank of LoRA and SVD decomposition. Specifically, we fine-tune LLAMA3.1-8B-IT using only safety data (SafeEdit-Train) with LoRA ranks set to 4, 8, 12, 16, and 20. For each aligned model, we perform SVD on both Δ​W\Delta W and W0W_{0} with ranks chosen from the same set (4, 8, 12, 16, and 20). Following the descriptions in Section 4 and Section 5.3, we compute the subspace similarity.
+As shown in Figure 10(a), the values represent the maximum similarity between Span​(VΔ)\text{Span}(V_{\Delta}) and Span​(V0)\text{Span}(V_{0}), which depends on the ranks of LoRA and SVD. Figure 11 further shows the top 12 singular values of Δ​W\Delta W for different LoRA ranks. We can get two interesting findings:
+•
+When the SVD rank is less than or equal to the LoRA rank, the similarity is close to zero; when the SVD rank exceeds the LoRA rank, the similarity increases substantially.
+•
+The number of non-negligible singular values of Δ​W\Delta W exactly equals the LoRA rank.
+These results indicate that LoRA updates operate in an effective subspace whose dimensionality equals to the chosen rank, i.e., the safety subspace is spanned by the set of orthogonal basis vectors whose number equals the LoRA rank. Setting the SVD rank larger than the LoRA rank only introduces additional orthogonal directions that make no contribution to TΔ​W​(x)T_{\Delta W}(x).
+6 Discussion
+In this section, we clarify the scope and boundaries of this study and point out some issues that can be further studied in the future.
+In this work, we focus on safety alignment for instruction-tuned models. We propose LoRA as a cost-efficient, performance-preserving, and plug-and-play safety patches for LLMs, supported by both theoretical and empirical evidence. Nevertheless, our study has two key limitations that warrant further exploration:
+•
+Adaptive attacker in lifelong safety alignment. In Section 3.2, we discussed the potential of LoRA as a plug-and-play safety patch for lifelong alignment. Our experiments divided 15 jailbreak attack methods from SafeEdit-Train (fixed attack sets) into three groups, introduced iteratively across training rounds. However, in practice, attackers may continuously generate new jailbreak prompts, while developers collect emerging adversarial instructions. How to build adaptive attackers, i.e., jailbreak prompt generators that adapt to the target model, remains an open problem. We will explore this direction in future work.
+•
+Applicability of LoRA safety patches to reasoning models and RL-based paradigms. Our work focuses on safety alignment of instruction-tuned models. Current alignment of reasoning models relies on long CoT data and reinforcement learning methods such as GRPO/PPO. We do not extend our analysis to reasoning-model alignment via reinforcement learning, as it involves distinct training paradigms and more open questions such as long CoT data synthesis, safety verifier design, and multi-objective reward formulation, which are beyond the scope of this work. We will dive into these topics in our future work.
+7 Related Work
+A variety of safety alignment techniques have recently been proposed, which can be broadly grouped into four categories: (1) Instruction Tuning: Advanced LLMs (e.g., GPT-4 (Achiam et al., 2023), LLAMA3 (Dubey et al., 2024), Qwen2.5 (Yang et al., 2024a)) collect adversarial prompts and safe demonstrations, then apply supervised fine-tuning (Ge et al., 2024; Wang et al., 2024a). Qi et al. (2024) further propose response-level augmentation to append safe continuation after harmful outputs, steering the final response toward alignment.
+(2) Preference-based optimization: Methods such as PPO (Schulman et al., 2017) and DPO (Rafailov et al., 2024) have been widely adopted in mainstream LLMs. They all require high-quality human preference datasets for reward model training (Dai et al., 2023) or preference optimization (Huang et al., 2023). (3) Representation engineering:
+Zou et al. (2024) remaps the model representation sequences that lead to harmful outputs toward incoherent or refusal-style representations, thereby achieving safety alignment. (4) Reasoning-aware alignment: representative works such as Deliberative Alignment (Guan et al., 2024), STAIR (Zhang et al., 2025), and SaRO (Mou et al., 2025b) achieve safety alignment by having models perform deep, policy-guided reasoning before producing the final response.
+In this study, we focus on safety alignment for instruction-tuned models. Representation-based methods may degrade generation quality, while reasoning-aware alignment introduces extra inference latency and is more suitable for reasoning models. Therefore, we adopt only the first two types of methods as baselines in our main experiments.
+8 Conclusion
+In this work, we show that LoRA-based refusal-training enhances safety while preserving performance, relying only on safety data. Its performance-preserving, cost-efficient, and plug-and-play properties make LoRA a practical safety patch for large language models.
+To provide a theoretical explanation, we introduce the notion of transformation subspace orthogonality, and through quantitative analyses of parameter updates, hidden state variations, and subspace relationships, show that LoRA constructs an orthogonal safety subspace, which explains the effectiveness of LoRA “safety patches”.
+Cross-domain analyses indicate that the safety subspace is more orthogonal and less intrusive than other domains, highlighting LoRA’s effectiveness for safety alignment and pointing the way for future research in this field.
+Ethics Statement
+Since the dataset used in this study contains harmful content, access is restricted to authorized researchers who adhere to strict ethical guidelines in order to mitigate risks associated with sensitive material. These measures protect the integrity of the research while minimizing potential harm.
+References
+Achiam et al. (2023)
+Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge Akkaya, Florencia Leoni Aleman, Diogo Almeida, Janko Altenschmidt, Sam Altman, Shyamal Anadkat, et al.
+Gpt-4 technical report.
+arXiv preprint arXiv:2303.08774, 2023.
+Axler (1995)
+Sheldon Axler.
+Linear algebra done right.
+Undergraduate Texts in Mathematics, 1995.
+URL https://api.semanticscholar.org/CorpusID:118524262.
+Bai et al. (2022)
+Yuntao Bai, Andy Jones, Kamal Ndousse, Amanda Askell, Anna Chen, Nova DasSarma, Dawn Drain, Stanislav Fort, Deep Ganguli, Tom Henighan, et al.
+Training a helpful and harmless assistant with reinforcement learning from human feedback.
+arXiv preprint arXiv:2204.05862, 2022.
+Bhatt et al. (2023)
+Manish Bhatt, Sahana Chennabasappa, Cyrus Nikolaidis, Shengye Wan, Ivan Evtimov, Dominik Gabi, Daniel Song, Faizan Ahmad, Cornelius Aschermann, Lorenzo Fontana, et al.
+Purple llama cyberseceval: A secure coding benchmark for language models.
+arXiv preprint arXiv:2312.04724, 2023.
+Bianchi et al. (2023)
+Federico Bianchi, Mirac Suzgun, Giuseppe Attanasio, Paul Röttger, Dan Jurafsky, Tatsunori Hashimoto, and James Zou.
+Safety-tuned llamas: Lessons from improving the safety of large language models that follow instructions.
+arXiv preprint arXiv:2309.07875, 2023.
+Chaudhary (2023)
+Sahil Chaudhary.
+Code alpaca: An instruction-following llama model for code generation.
+https://github.com/sahil280114/codealpaca, 2023.
+Choi et al. (2024)
+Hyeong Kyu Choi, Xuefeng Du, and Yixuan Li.
+Safety-aware fine-tuning of large language models.
+arXiv preprint arXiv:2410.10014, 2024.
+Dai et al. (2023)
+Josef Dai, Xuehai Pan, Ruiyang Sun, Jiaming Ji, Xinbo Xu, Mickel Liu, Yizhou Wang, and Yaodong Yang.
+Safe rlhf: Safe reinforcement learning from human feedback.
+arXiv preprint arXiv:2310.12773, 2023.
+Diao et al. (2024)
+Muxi Diao, Rumei Li, Shiyang Liu, Guogang Liao, Jingang Wang, Xunliang Cai, and Weiran Xu.
+Seas: Self-evolving adversarial safety optimization for large language models.
+ArXiv, abs/2408.02632, 2024.
+URL https://api.semanticscholar.org/CorpusID:271709564.
+Ding et al. (2023)
+Ning Ding, Yulin Chen, Bokai Xu, Yujia Qin, Zhi Zheng, Shengding Hu, Zhiyuan Liu, Maosong Sun, and Bowen Zhou.
+Enhancing chat language models by scaling high-quality instructional conversations.
+ArXiv, abs/2305.14233, 2023.
+URL https://api.semanticscholar.org/CorpusID:258840897.
+Dong et al. (2023)
+Guanting Dong, Hongyi Yuan, Keming Lu, Chengpeng Li, Mingfeng Xue, Dayiheng Liu, Wei Wang, Zheng Yuan, Chang Zhou, and Jingren Zhou.
+How abilities in large language models are affected by supervised fine-tuning data composition.
+In Annual Meeting of the Association for Computational Linguistics, 2023.
+URL https://api.semanticscholar.org/CorpusID:263830318.
+Dubey et al. (2024)
+Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Amy Yang, Angela Fan, et al.
+The llama 3 herd of models.
+arXiv preprint arXiv:2407.21783, 2024.
+Egozcue et al. (2003)
+Juan José Egozcue, Vera Pawlowsky-Glahn, Glòria Mateu-Figueras, and Carles Barceló-Vidal.
+Isometric logratio transformations for compositional data analysis.
+Mathematical Geology, 35:279–300, 2003.
+URL https://api.semanticscholar.org/CorpusID:122844634.
+Ge et al. (2024)
+Suyu Ge, Chunting Zhou, Rui Hou, Madian Khabsa, Yi-Chia Wang, Qifan Wang, Jiawei Han, and Yuning Mao.
+MART: Improving LLM safety with multi-round automatic red-teaming.
+In Kevin Duh, Helena Gomez, and Steven Bethard (eds.), Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers), pp. 1927–1937, Mexico City, Mexico, June 2024. Association for Computational Linguistics.
+doi: 10.18653/v1/2024.naacl-long.107.
+URL https://aclanthology.org/2024.naacl-long.107/.
+Golub & Van Loan (2013)
+Gene H Golub and Charles F Van Loan.
+Matrix computations.
+JHU press, 2013.
+Guan et al. (2024)
+Melody Y Guan, Manas Joglekar, Eric Wallace, Saachi Jain, Boaz Barak, Alec Helyar, Rachel Dias, Andrea Vallone, Hongyu Ren, Jason Wei, et al.
+Deliberative alignment: Reasoning enables safer language models.
+arXiv preprint arXiv:2412.16339, 2024.
+Guo et al. (2025)
+Weiyang Guo, Jing Li, Wenya Wang, Yu Li, Daojing He, Jun Yu, and Min Zhang.
+MTSA: Multi-turn safety alignment for LLMs through multi-round red-teaming.
+In Wanxiang Che, Joyce Nabende, Ekaterina Shutova, and Mohammad Taher Pilehvar (eds.), Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pp. 26424–26442, Vienna, Austria, July 2025. Association for Computational Linguistics.
+ISBN 979-8-89176-251-0.
+doi: 10.18653/v1/2025.acl-long.1282.
+URL https://aclanthology.org/2025.acl-long.1282/.
+Huang et al. (2023)
+Shijia Huang, Jianqiao Zhao, Yanyang Li, and Liwei Wang.
+Learning preference model for llms via automatic preference data generation.
+In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing, pp. 9187–9199, 2023.
+Huang et al. (2025)
+Tiansheng Huang, Sihao Hu, Fatih Ilhan, Selim Furkan Tekin, Zachary Yahn, Yichang Xu, and Ling Liu.
+Safety tax: Safety alignment makes your large reasoning models less reasonable.
+ArXiv, abs/2503.00555, 2025.
+URL https://api.semanticscholar.org/CorpusID:276741575.
+Hurst et al. (2024)
+Aaron Hurst, Adam Lerer, Adam P Goucher, Adam Perelman, Aditya Ramesh, Aidan Clark, AJ Ostrow, Akila Welihinda, Alan Hayes, Alec Radford, et al.
+Gpt-4o system card.
+arXiv preprint arXiv:2410.21276, 2024.
+Inan et al. (2023)
+Hakan Inan, Kartikeya Upasani, Jianfeng Chi, Rashi Rungta, Krithika Iyer, Yuning Mao, Michael Tontchev, Qing Hu, Brian Fuller, Davide Testuggine, and Madian Khabsa.
+Llama guard: Llm-based input-output safeguard for human-ai conversations, 2023.
+URL https://arxiv.org/abs/2312.06674.
+Ji et al. (2024a)
+Jiaming Ji, Donghai Hong, Borong Zhang, Boyuan Chen, Josef Dai, Boren Zheng, Tianyi Qiu, Boxun Li, and Yaodong Yang.
+Pku-saferlhf: Towards multi-level safety alignment for llms with human preference.
+arXiv preprint arXiv:2406.15513, 2024a.
+Ji et al. (2024b)
+Jiaming Ji, Mickel Liu, Josef Dai, Xuehai Pan, Chi Zhang, Ce Bian, Boyuan Chen, Ruiyang Sun, Yizhou Wang, and Yaodong Yang.
+Beavertails: Towards improved safety alignment of llm via a human-preference dataset.
+Advances in Neural Information Processing Systems, 36, 2024b.
+Klema & Laub (1980)
+Virginia Klema and A. J. Laub.
+The singular value decomposition: Its computation and some applications.
+IEEE Transactions on Automatic Control, 25:164–176, 1980.
+URL https://api.semanticscholar.org/CorpusID:6523608.
+Li et al. (2024)
+Lijun Li, Bowen Dong, Ruohui Wang, Xuhao Hu, Wangmeng Zuo, Dahua Lin, Yu Qiao, and Jing Shao.
+Salad-bench: A hierarchical and comprehensive safety benchmark for large language models.
+arXiv preprint arXiv:2402.05044, 2024.
+Li et al. (2023)
+Xuechen Li, Tianyi Zhang, Yann Dubois, Rohan Taori, Ishaan Gulrajani, Carlos Guestrin, Percy Liang, and Tatsunori B Hashimoto.
+Alpacaeval: An automatic evaluator of instruction-following models, 2023.
+Longpre et al. (2023)
+Shayne Longpre, Le Hou, Tu Vu, Albert Webson, Hyung Won Chung, Yi Tay, Denny Zhou, Quoc V. Le, Barret Zoph, Jason Wei, and Adam Roberts.
+The flan collection: Designing data and methods for effective instruction tuning, 2023.
+URL https://arxiv.org/abs/2301.13688.
+Lu et al. (2024)
+Keer Lu, Keshi Zhao, Zheng Liang, Da Pan, Shusen Zhang, Xin Wu, Weipeng Chen, Zenan Zhou, Guosheng Dong, Bin Cui, and Wentao Zhang.
+Versatune: An efficient data composition framework for training multi-capability llms, 2024.
+URL https://arxiv.org/abs/2411.11266.
+Lu et al. (2025)
+Xiaoya Lu, Dongrui Liu, Yi Yu, Luxin Xu, and Jing Shao.
+X-boundary: Establishing exact safety boundary to shield llms from multi-turn jailbreaks without compromising usability, 2025.
+URL https://arxiv.org/abs/2502.09990.
+Mo et al. (2023)
+Lingbo Mo, Boshi Wang, Muhao Chen, and Huan Sun.
+How trustworthy are open-source llms? an assessment under malicious demonstrations shows their vulnerabilities.
+arXiv preprint arXiv:2311.09447, 2023.
+Mou et al. (2025a)
+Yutao Mou, Xiao Deng, Yuxiao Luo, Shikun Zhang, and Wei Ye.
+Can you really trust code copilot? evaluating large language models from a code security perspective.
+In Wanxiang Che, Joyce Nabende, Ekaterina Shutova, and Mohammad Taher Pilehvar (eds.), Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pp. 17349–17369, Vienna, Austria, July 2025a. Association for Computational Linguistics.
+ISBN 979-8-89176-251-0.
+doi: 10.18653/v1/2025.acl-long.849.
+URL https://aclanthology.org/2025.acl-long.849/.
+Mou et al. (2025b)
+Yutao Mou, Yuxiao Luo, Shikun Zhang, and Wei Ye.
+Saro: Enhancing llm safety through reasoning-based alignment.
+ArXiv, abs/2504.09420, 2025b.
+URL https://api.semanticscholar.org/CorpusID:277780470.
+Mukherjee et al. (2023)
+Subhabrata Mukherjee, Arindam Mitra, Ganesh Jawahar, Sahaj Agarwal, Hamid Palangi, and Ahmed Awadallah.
+Orca: Progressive learning from complex explanation traces of gpt-4.
+arXiv preprint arXiv:2306.02707, 2023.
+Ottaviani & Paoletti (2015)
+Giorgio Ottaviani and Raffaella Paoletti.
+A geometric perspective on the singular value decomposition.
+arXiv preprint arXiv:1503.07054, 2015.
+Ouyang et al. (2022)
+Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, et al.
+Training language models to follow instructions with human feedback.
+Advances in neural information processing systems, 35:27730–27744, 2022.
+Parisi et al. (2018)
+German Ignacio Parisi, Ronald Kemker, Jose L. Part, Christopher Kanan, and Stefan Wermter.
+Continual lifelong learning with neural networks: A review.
+Neural networks : the official journal of the International Neural Network Society, 113:54–71, 2018.
+URL https://api.semanticscholar.org/CorpusID:73497737.
+Qi et al. (2024)
+Xiangyu Qi, Ashwinee Panda, Kaifeng Lyu, Xiao Ma, Subhrajit Roy, Ahmad Beirami, Prateek Mittal, and Peter Henderson.
+Safety alignment should be made more than just a few tokens deep.
+ArXiv, abs/2406.05946, 2024.
+URL https://api.semanticscholar.org/CorpusID:270371778.
+Rafailov et al. (2024)
+Rafael Rafailov, Archit Sharma, Eric Mitchell, Christopher D Manning, Stefano Ermon, and Chelsea Finn.
+Direct preference optimization: Your language model is secretly a reward model.
+Advances in Neural Information Processing Systems, 36, 2024.
+Raghavendar & Dharmaiah (2017)
+J Raghavendar and V Dharmaiah.
+Geometrical interpretation of singular value decomposition (svd) and applications of svd.
+International Journal of Scientific and Innovative Mathematical Research, 5(4):23–26, 2017.
+Ren et al. (2024)
+Weijieying Ren, Xinlong Li, Lei Wang, Tianxiang Zhao, and Wei Qin.
+Analyzing and reducing catastrophic forgetting in parameter efficient tuning.
+ArXiv, abs/2402.18865, 2024.
+URL https://api.semanticscholar.org/CorpusID:268063771.
+Samvelyan et al. (2024)
+Mikayel Samvelyan, Sharath Chandra Raparthy, Andrei Lupu, Eric Hambro, Aram H Markosyan, Manish Bhatt, Yuning Mao, Minqi Jiang, Jack Parker-Holder, Jakob Foerster, et al.
+Rainbow teaming: Open-ended generation of diverse adversarial prompts.
+arXiv preprint arXiv:2402.16822, 2024.
+Schulman et al. (2017)
+John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov.
+Proximal policy optimization algorithms.
+arXiv preprint arXiv:1707.06347, 2017.
+Song et al. (2023)
+Xiaoshuai Song, Yutao Mou, Keqing He, Yueyan Qiu, Jinxu Zhao, Pei Wang, and Weiran Xu.
+Continual generalized intent discovery: Marching towards dynamic and open-world intent recognition.
+In Houda Bouamor, Juan Pino, and Kalika Bali (eds.), Findings of the Association for Computational Linguistics: EMNLP 2023, pp. 4370–4382, Singapore, December 2023. Association for Computational Linguistics.
+doi: 10.18653/v1/2023.findings-emnlp.289.
+URL https://aclanthology.org/2023.findings-emnlp.289/.
+Song et al. (2025)
+Xiaoshuai Song, Zhengyang Wang, Keqing He, Guanting Dong, Yutao Mou, Jinxu Zhao, and Weiran Xu.
+Assessing and post-processing black box large language models for knowledge editing.
+Proceedings of the ACM on Web Conference 2025, 2025.
+URL https://api.semanticscholar.org/CorpusID:277998685.
+Tedeschi et al. (2024)
+Simone Tedeschi, Felix Friedrich, Patrick Schramowski, Kristian Kersting, Roberto Navigli, Huu Nguyen, and Bo Li.
+Alert: A comprehensive benchmark for assessing large language models’ safety through red teaming.
+arXiv preprint arXiv:2404.08676, 2024.
+Wall et al. (2003)
+Michael E Wall, Andreas Rechtsteiner, and Luis M Rocha.
+Singular value decomposition and principal component analysis.
+In A practical approach to microarray data analysis, pp. 91–109. Springer, 2003.
+Wang et al. (2024a)
+Fei Wang, Ninareh Mehrabi, Palash Goyal, Rahul Gupta, Kai-Wei Chang, and Aram Galstyan.
+Data advisor: Dynamic data curation for safety alignment of large language models.
+In Yaser Al-Onaizan, Mohit Bansal, and Yun-Nung Chen (eds.), Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing, pp. 8089–8100, Miami, Florida, USA, November 2024a. Association for Computational Linguistics.
+doi: 10.18653/v1/2024.emnlp-main.461.
+URL https://aclanthology.org/2024.emnlp-main.461/.
+Wang et al. (2025)
+Haoyu Wang, Zeyu Qin, Yifei Zhao, Chao Du, Min Lin, Xueqian Wang, and Tianyu Pang.
+Lifelong safety alignment for language models.
+ArXiv, abs/2505.20259, 2025.
+URL https://api.semanticscholar.org/CorpusID:278910944.
+Wang et al. (2024b)
+Meng Wang, Ningyu Zhang, Ziwen Xu, Zekun Xi, Shumin Deng, Yunzhi Yao, Qishen Zhang, Linyi Yang, Jindong Wang, and Huajun Chen.
+Detoxifying large language models via knowledge editing.
+ArXiv, abs/2403.14472, 2024b.
+URL https://api.semanticscholar.org/CorpusID:268553537.
+Wang et al. (2023)
+Xiao Wang, Tianze Chen, Qiming Ge, Han Xia, Rong Bao, Rui Zheng, Qi Zhang, Tao Gui, and Xuanjing Huang.
+Orthogonal subspace learning for language model continual learning.
+ArXiv, abs/2310.14152, 2023.
+URL https://api.semanticscholar.org/CorpusID:264426441.
+Wei et al. (2023)
+Alexander Wei, Nika Haghtalab, and Jacob Steinhardt.
+Jailbroken: How does llm safety training fail?
+ArXiv, abs/2307.02483, 2023.
+URL https://api.semanticscholar.org/CorpusID:259342528.
+Wei et al. (2024a)
+Alexander Wei, Nika Haghtalab, and Jacob Steinhardt.
+Jailbroken: How does llm safety training fail?
+Advances in Neural Information Processing Systems, 36, 2024a.
+Wei et al. (2024b)
+Boyi Wei, Kaixuan Huang, Yangsibo Huang, Tinghao Xie, Xiangyu Qi, Mengzhou Xia, Prateek Mittal, Mengdi Wang, and Peter Henderson.
+Assessing the brittleness of safety alignment via pruning and low-rank modifications.
+arXiv preprint arXiv:2402.05162, 2024b.
+Wu et al. (2025a)
+Xiaorui Wu, Xiaofeng Mao, Fei Li, Xin Zhang, Xuanhong Li, Chong Teng, Donghong Ji, and Zhuang Li.
+TRIDENT: Enhancing large language model safety with tri-dimensional diversified red-teaming data synthesis.
+In Wanxiang Che, Joyce Nabende, Ekaterina Shutova, and Mohammad Taher Pilehvar (eds.), Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pp. 15077–15099, Vienna, Austria, July 2025a. Association for Computational Linguistics.
+ISBN 979-8-89176-251-0.
+doi: 10.18653/v1/2025.acl-long.733.
+URL https://aclanthology.org/2025.acl-long.733/.
+Wu et al. (2025b)
+Yichen Wu, Hongming Piao, Long-Kai Huang, Renzhen Wang, Wanhua Li, Hanspeter Pfister, Deyu Meng, Kede Ma, and Ying Wei.
+Sd-lora: Scalable decoupled low-rank adaptation for class incremental learning.
+In International Conference on Learning Representations, 2025b.
+URL https://api.semanticscholar.org/CorpusID:275820710.
+Yang et al. (2024a)
+An Yang, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chengyuan Li, Dayiheng Liu, Fei Huang, Haoran Wei, et al.
+Qwen2. 5 technical report.
+arXiv preprint arXiv:2412.15115, 2024a.
+Yang et al. (2024b)
+Qwen An Yang, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chengyuan Li, Dayiheng Liu, Fei Huang, Guanting Dong, Haoran Wei, Huan Lin, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxin Yang, Jingren Zhou, Junyang Lin, Kai Dang, Keming Lu, Keqin Bao, Kexin Yang, Le Yu, Mei Li, Mingfeng Xue, Pei Zhang, Qin Zhu, Rui Men, Runji Lin, Tianhao Li, Tingyu Xia, Xingzhang Ren, Xuancheng Ren, Yang Fan, Yang Su, Yi-Chao Zhang, Yunyang Wan, Yuqi Liu, Zeyu Cui, Zhenru Zhang, Zihan Qiu, Shanghaoran Quan, and Zekun Wang.
+Qwen2.5 technical report.
+ArXiv, abs/2412.15115, 2024b.
+URL https://api.semanticscholar.org/CorpusID:274859421.
+Yuan et al. (2024)
+Tongxin Yuan, Zhiwei He, Lingzhong Dong, Yiming Wang, Ruijie Zhao, Tian Xia, Lizhen Xu, Binglin Zhou, Fangqi Li, Zhuosheng Zhang, et al.
+R-judge: Benchmarking safety risk awareness for llm agents.
+arXiv preprint arXiv:2401.10019, 2024.
+Zhang et al. (2025)
+Yichi Zhang, Siyuan Zhang, Yao Huang, Zeyu Xia, Zhengwei Fang, Xiao Yang, Ranjie Duan, Dong Yan, Yinpeng Dong, and Jun Zhu.
+Stair: Improving safety alignment with introspective reasoning.
+arXiv preprint arXiv:2502.02384, 2025.
+Zheng et al. (2024a)
+Junhao Zheng, Shengjie Qiu, Chengming Shi, and Qianli Ma.
+Towards lifelong learning of large language models: A survey.
+ACM Computing Surveys, 57:1 – 35, 2024a.
+URL https://api.semanticscholar.org/CorpusID:270371124.
+Zheng et al. (2024b)
+Yaowei Zheng, Richong Zhang, Junhao Zhang, Yanhan Ye, Zheyan Luo, Zhangchi Feng, and Yongqiang Ma.
+Llamafactory: Unified efficient fine-tuning of 100+ language models.
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 3: System Demonstrations), Bangkok, Thailand, 2024b. Association for Computational Linguistics.
+URL http://arxiv.org/abs/2403.13372.
+Zhong et al. (2023)
+Zexuan Zhong, Zhengxuan Wu, Christopher D. Manning, Christopher Potts, and Danqi Chen.
+Mquake: Assessing knowledge editing in language models via multi-hop questions.
+In Conference on Empirical Methods in Natural Language Processing, 2023.
+URL https://api.semanticscholar.org/CorpusID:258865984.
+Zhou et al. (2023)
+Chunting Zhou, Pengfei Liu, Puxin Xu, Srini Iyer, Jiao Sun, Yuning Mao, Xuezhe Ma, Avia Efrat, Ping Yu, L. Yu, Susan Zhang, Gargi Ghosh, Mike Lewis, Luke Zettlemoyer, and Omer Levy.
+Lima: Less is more for alignment.
+ArXiv, abs/2305.11206, 2023.
+URL https://api.semanticscholar.org/CorpusID:258822910.
+Zhou et al. (2025)
+Guanghao Zhou, Panjia Qiu, Cen Chen, Hongyu Li, Jason Chu, Xin Zhang, and Jun Zhou.
+Lssf: Safety alignment for large language models through low-rank safety subspace fusion.
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pp. 30621–30638, 2025.
+Zou et al. (2024)
+Andy Zou, Long Phan, Justin Wang, Derek Duenas, Maxwell Lin, Maksym Andriushchenko, Rowan Wang, Zico Kolter, Matt Fredrikson, and Dan Hendrycks.
+Improving alignment and robustness with circuit breakers, 2024.
+Appendix A Training Datasets
+All training datasets are list in Table 3 with statistics and brief descriptions.
+Category
+Dataset
+# Items
+Key Features
+Safety
+SafeEdit-Train
+4,050
+Covers 9 safety dimensions (e.g., offensiveness, bias, privacy) and 15 attack types in train set.
+General
+OpenOrca
+1M
+Augmented FLAN Collection, large-scale instruction tuning.
+LIMA
+1,030
+High-quality, human-written samples in helpful assistant style.
+Ultra-Chat
+208k
+Multi-turn dialogue dataset collected via Turbo APIs.
+Table 3: Overview of training datasets.
+A.1 Safety-critical Data
+We use SafeEdit-Train (Wang et al., 2024b) as safety-critical data. The SafeEdit dataset encompasses 4,050 training, 2,700 validation, and 1,350 test instances. It categorizes unsafe scenarios of LLMs into 9 distinct types (Offensiveness, Bias, Physical, Mental, Illegal, Ethics, Privacy, Pornography, and Political), and collects 48 attack prompt types from online sources. Among these, 15 attack types are included in the training split.
+For each adversarial query, the corresponding safe responses are generated by GPT-4. To control the quality of the responses, SafeEdit trains a classifier with manually annotated data to detect unsafe responses and make manual modifications.
+In addition, each malicious query in the SafeEdit dataset is also paired with an unsafe response, which enables us to construct a preference dataset based on safe–unsafe response pairs.
+A.2 General-purpose Data
+We use OpenOrca (Mukherjee et al., 2023), LIMA (Zhou et al., 2023), and Ultra-Chat (Ding et al., 2023) as general-purpose data.
+•
+OpenOrca dataset is a collection of augmented FLAN(Longpre et al., 2023) Collection data. Currently ∼\sim 1M GPT-4 completions, and ∼\sim 3.2M GPT-3.5 completions. We only use the GPT-4 completions in our experiments.
+•
+LIMA dataset consists of 1,000 prompts and responses, where the outputs (responses) are stylistically aligned with each other, but the inputs (prompts) are diverse. Specifically, LIMA seek outputs in the style of a helpful AI assistant. They curate such examples from a variety of sources, primarily split into community Q&A forums and manually authored examples. LIMA highlights that high-quality and diverse data are more crucial than large-scale data, leading to a relatively small number of samples in the dataset.
+•
+Ultra-Chat dataset consists of multi-round dialogue data powered by Turbo APIs to facilitate the construction of powerful language models with general conversational capability. In consideration of factors such as safeguarding privacy, they do not directly use any data available on the Internet as prompts. Instead, Ultra-chat is composed of three sectors: Questions about the World, Writing and Creation and Assistance on Existent Materials.
+To minimize the impact of data size discrepancies on experimental results, we randomly sample 10K instances from both OpenOrca and Ultra-Chat for the experiments in Section 2.1. In contrast, LIMA is not subjected to such processing, as it was originally proposed to demonstrate that data quality and diversity matter more than sheer quantity.
+Appendix B Details for Evaluation
+B.1 Statistics of Evaluation Sets
+All evaluation datasets are list in Table 4 with statistics and brief descriptions.
+Category
+Dataset
+# Items
+Key Features
+Safety
+WildJailbreak
+2,210
+Synthetic jailbreak data from real chatbot interactions; includes harmful and benign adversarial cases.
+SG-Bench (jailbreak)
+8,652
+Malicious queries across toxic, biased, privacy, and dangerous content; augmented with 6 jailbreak techniques (e.g., prefix injection, refusal suppression, AIM).
+SALAD-Bench
+5,000
+Hierarchical benchmark with 6 domains, 16 tasks, and 66 categories.
+General
+MT-Bench
+80
+Multi-turn dialogue benchmark covering 8 categories (writing, reasoning, coding, humanities, etc.).
+MMLU
+14,042
+Multiple-choice exam covering 57 tasks (e.g., history, law, computer science).
+MATH
+5,000
+Competition-level math problems (AMC10/12, AIME), requiring step-by-step reasoning.
+HumanEval
+164
+Hand-written programming tasks for evaluating code generation with test cases.
+Table 4: Overview of evaluation datasets.
+B.2 Safety Evaluation
+For safety assessments, we evaluate by two steps. First, LLM is prompted to generate a response. Second, the safety of the response is judged using LLama-Guard2-8B (Inan et al., 2023), which can judge whether the response violates safety policies and human values by answering "safe" or "unsafe". We calculate the percentage of "unsafe" responses as attack success rate (ASR).
+B.3 General Evaluation
+For MT-Bench, we adopt zero-shot and direct prompting setting for evaluation. For each instance, we conduct a multi-turn dialog with LLMs using all the questions one by one contains in the instance. Then we evaluate the responses using LLM-as-a-judge. Specifically, we split each dialogs into pairs of single question and corresponding response, send them to GPT-4o independently and ask GPT-4o to score 1-10. We finally calcuate the average score of all question and response pairs.
+For MATH, we adopt zero-shot and chain-of-thought (COT) prompting method for evaluation. We prompt LLMs to reason step by step and put the final answer in \boxed{}. We extract the final answer of all models and make some standardizing post-process on the latex grammar of the prediction, then compare the exact match between prediction and answer.
+For HumanEval, we adopt zero-shot and direct prompting setting for evaluation. We directly prompt LLMs to complete the code and run the code under the pre-designed test cases. We set temperature to 0.6 and unbiasedly sampled 20 times to calculate the average pass@1 rate.
+For MMLU, we adopt zero-shot and direct prompting setting for evaluation. We directly prompt LLMs to generate options such as "A" or "B" or "C" or "D". We judge by find out whether the final answer starts with the correct option.
+Appendix C Implementation Details
+In this work, we primarily focus on Refusal-SFT and DPO, and conduct an in-depth analysis of the differences between full-parameter fine-tuning and LoRA fine-tuning in balancing safety and general performance. For full-parameter Refusal-SFT, we set the learning rate to 1×10−61\times 10^{-6} and train for 3 epochs; for full-parameter DPO, we adopt the same learning rate and train for 1 epoch. For LoRA fine-tuning, we use a learning rate of 1×10−51\times 10^{-5} 22
+2
+Through extensive experiments, we observe that full-parameter fine-tuning with an excessively high learning rate tends to cause catastrophic forgetting, whereas too low a learning rate in LoRA fine-tuning often leads to slow convergence. with LoRA α=16\alpha=16, while the choice of rank is discussed in detail in Appendix 5.5. We use llamafactory (Zheng et al., 2024b) for model training. For evaluation, we adopt nucleus sampling method for decoding, and use a unified generation configuration: temperature is set to 0.6, top p is set to 0.95. All experiments are done in the same computation environment with 8 NVIDIA 96GB H20 GPUs.
+Appendix D Scaling LoRA Safety Patches to Larger LLMs
+Table 5: Comparison of LoRA-based Refusal-SFT with other safety alignment methods in terms of safety and general performance. LoRA, as a safety patch, consistently improves safety with negligible general performance loss across model architectures.
+Method
+Safety (↓)
+Open-end Generation (↑)
+Knowledge (↑)
+MATH (↑)
+Code (↑)
+WildJailbreak
+SG-Bench (Jailbreak)
+SaladBench
+MT-Bench
+MMLU
+MATH-500
+HumanEval
+Qwen2.5-14B-Instruct
+Baseline
+29.55
+13.30
+22.86
+8.17
+75.49
+74.8
+81.22
+Refusal-SFT
+Full-parameter (safety only)
+0.10
+0.02
+0.06
+7.07
+45.18
+59.4
+71.55
+Full-parameter (safety–general mix)
+14.50
+2.61
+1.90
+7.24
+74.68
+65.4
+81.22
+LoRA-based (safety only)
+6.10
+1.09
+1.16
+7.97
+73.25
+71.0
+80.36
+DPO
+Full-parameter (safety only)
+12.05
+0.98
+2.14
+8.26
+68.79
+74.0
+70.18
+Full-parameter (safety–general mix)
+21.45
+2.49
+4.66
+8.33
+71.40
+73.8
+81.46
+LoRA-based (safety only)
+17.40
+3.15
+3.61
+8.37
+75.25
+74.0
+82.36
+In this section, we further investigate whether LoRA safety patches are able to enhance safety while maintaining general performance when applied to larger-scale LLMs. As shown in Table 5, we also conduct experiments on Qwen2.5-14B-IT. We get some findings consistent with Section 3.1: compared with full-parameter fine-tuning, LoRA using only safety data can achieve safety alignment while preserving general performance with minimal loss. However, we also note that for larger-scale models, the LoRA rank must be increased accordingly to reach optimal performance, with the best result found at rank = 16 in our setting.
+Appendix E Transformations in Orthogonal Subspaces: A Derivation
+We consider two linear transformations W0,Δ​W∈ℝm×nW_{0},\Delta W\in\mathbb{R}^{m\times n}. For any input vector 𝐱∈ℝn\mathbf{x}\in\mathbb{R}^{n}, the transformations are given by
+TW0​(𝐱)=W0​𝐱,TΔ​W​(𝐱)=Δ​W​𝐱.T_{W_{0}}(\mathbf{x})=W_{0}\mathbf{x},\quad T_{\Delta W}(\mathbf{x})=\Delta W\mathbf{x}.
+Using singular value decomposition (SVD), we may write
+W0=U0​Σ0​V0T,Δ​W=UΔ​ΣΔ​VΔT,W_{0}=U_{0}\Sigma_{0}V_{0}^{T},\quad\Delta W=U_{\Delta}\Sigma_{\Delta}V_{\Delta}^{T},
+where V0,VΔ∈ℝn×nV_{0},V_{\Delta}\in\mathbb{R}^{n\times n} contain the right singular vectors corresponding to the subspaces associated with W0W_{0} and Δ​W\Delta W. Hence,
+TW0​(𝐱)=U0​Σ0​V0T​𝐱,TΔ​W​(𝐱)=UΔ​ΣΔ​VΔT​𝐱.T_{W_{0}}(\mathbf{x})=U_{0}\Sigma_{0}V_{0}^{T}\mathbf{x},\quad T_{\Delta W}(\mathbf{x})=U_{\Delta}\Sigma_{\Delta}V_{\Delta}^{T}\mathbf{x}.
+E.1 Orthogonal case
+Suppose span⁡(V0)\mathrm{span}(V_{0}) and span⁡(VΔ)\mathrm{span}(V_{\Delta}) are orthogonal. For any decomposition 𝐱=𝐱0+𝐱Δ\mathbf{x}=\mathbf{x}_{0}+\mathbf{x}_{\Delta} with 𝐱0∈span⁡(V0)\mathbf{x}_{0}\in\mathrm{span}(V_{0}) and 𝐱Δ∈span⁡(VΔ)\mathbf{x}_{\Delta}\in\mathrm{span}(V_{\Delta}), we have
+TW0​(𝐱)+TΔ​W​(𝐱)=W0​𝐱0+W0​𝐱Δ+Δ​W​𝐱0+Δ​W​𝐱Δ.T_{W_{0}}(\mathbf{x})+T_{\Delta W}(\mathbf{x})=W_{0}\mathbf{x}_{0}+W_{0}\mathbf{x}_{\Delta}+\Delta W\mathbf{x}_{0}+\Delta W\mathbf{x}_{\Delta}.
+The orthogonality condition
+VΔT​V0≈0V_{\Delta}^{T}V_{0}\approx 0
+implies that the cross terms vanish:
+W0​𝐱Δ≈0,Δ​W​𝐱0≈0.W_{0}\mathbf{x}_{\Delta}\approx 0,\quad\Delta W\mathbf{x}_{0}\approx 0.
+Therefore the two transformations act independently:
+TW0​(𝐱)+TΔ​W​(𝐱)≈W0​𝐱0+Δ​W​𝐱Δ.T_{W_{0}}(\mathbf{x})+T_{\Delta W}(\mathbf{x})\approx W_{0}\mathbf{x}_{0}+\Delta W\mathbf{x}_{\Delta}.
+This shows that orthogonal subspaces guarantee non-interference.
+E.2 Non-orthogonal case
+If instead span⁡(V0)\mathrm{span}(V_{0}) and span⁡(VΔ)\mathrm{span}(V_{\Delta}) are not orthogonal, then VΔT​V0≠0V_{\Delta}^{T}V_{0}\neq 0. In this case, for the same decomposition of 𝐱\mathbf{x}, the cross terms do not vanish:
+W0​𝐱Δ≠0,Δ​W​𝐱0≠0.W_{0}\mathbf{x}_{\Delta}\neq 0,\quad\Delta W\mathbf{x}_{0}\neq 0.
+Consequently,
+TW0​(𝐱)+TΔ​W​(𝐱)=W0​𝐱0+Δ​W​𝐱Δ+W0​𝐱Δ+Δ​W​𝐱0⏟interference terms.T_{W_{0}}(\mathbf{x})+T_{\Delta W}(\mathbf{x})=W_{0}\mathbf{x}_{0}+\Delta W\mathbf{x}_{\Delta}+\underbrace{W_{0}\mathbf{x}_{\Delta}+\Delta W\mathbf{x}_{0}}_{\text{interference terms}}.
+These additional components represent interference between the two transformations, meaning that safety-critical adjustments Δ​W\Delta W inevitably affect the intrinsic capabilities encoded in W0W_{0}, and vice versa. The degree of interference is governed by the magnitude of the overlap VΔT​V0V_{\Delta}^{T}V_{0}.
+Appendix F Case Study
+In this section, we present case studies highlighting the advantages of LoRA-based methods over full-parameter fine-tuning in safety alignment, focusing on jailbreak defense and general performance preservation. Figure 12 compares the defense capabilities of models aligned by full-parameter DPO ("safety-only" data configuration) 33
+3
+As shown in Table 1 of Section 3.1, among all compared baselines, full-parameter DPO with the safety-only configuration achieves the best safety–utility trade-off, which is why we use it as the reference in these demonstrations. and LoRA-based Refusal-SFT on Qwen2.5-7B-IT, showing that LoRA-based Refusal-SFT provides stronger resistance to jailbreak attacks. Figure 13 examines the behavior of different alignment methods on LLaMA3.1-8B-IT under benign instructions. The example demonstrates a knowledge-based multiple-choice question with explicit format constraints. The model aligned by full-parameter DPO not only gives the wrong answer but also fails to follow the required format, whereas the model aligned by LoRA-based Refusal-SFT produces the correct answer while preserving the original model’s linguistic style. These examples illustrate the effectiveness of LoRA safety patches.
+Figure 12: Comparison of jailbreak defense on Qwen2.5-7B-IT between full-parameter DPO (safety-only configuration) and LoRA-based Refusal-SFT. The LoRA-based method provides stronger resistance against jailbreak attacks. Harmful responses are highlighted in red, and safe refusals are highlighted in green.
+Figure 13: Comparison of benign instruction following on LLaMA3.1-8B-IT.
+The full-parameter DPO model fails to produce the correct answer and violates format constraints,
+while the LoRA-based Refusal-SFT model answers correctly and preserves the original linguistic style.
+Incorrect outputs are shown in red, and safe/correct outputs in green.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

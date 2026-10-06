@@ -1,1144 +1,242 @@
 # Daily Research — 2026-02-05
 
-**Research Date:** 2026-02-05
-
-**Timezone:** Asia/Shanghai
-
-**Strict Window:** 2026-02-04 09:00:00 ～ 2026-02-05 09:00:00（Asia/Shanghai，左闭右开）
-
-**Contract:** V2.1 Historical Daily independent Full Replay；既有 Weekly 未参与 discovery、分母、评分、Review、Books 判断或漏项校准；Weekly dependency=0。
-
-**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed；全月 fresh-context 四域语义审计已通过（`papers/2026/02/_sources/february-fresh-context-audit.json`），本日 unresolved findings=0。
-
-## Executive Summary
-
-窗口 raw identities=795，title+abstract semantic screening=795/795；Candidate Denominator=24，pre-denominator closures=771。exact-v1 Review=24/24，withdrawn=0，blocked=0；Books Integrate=2。
-
-本日报以官方 arXiv 公告时刻映射北京时间半开窗口；DataCite 只恢复 identity 与 registry timestamp，不把 Submitted:v1、DOI created 或后续 revision 误当作报告归属。withdrawn family 只保留在 pre-denominator closure，不进入候选、评分、Review 或 Books。
-
-## 1. Coverage
-
-<!-- validator:report-metadata-v2 -->
-| Field | Value |
-| --- | --- |
-| Contract Version | V2.1 |
-| Score Schema | V2 |
-| Report Type | Daily |
-| Window Start | 2026-02-05 |
-| Window End | 2026-02-05 |
-| Registry Version | 2026-08-25 |
-| Coverage Mode | Full Replay |
-| Baseline Report | — |
-| Changed Source IDs | — |
-| Previous Denominator ID | — |
-| Denominator ID | sha256:d575f55d8c4fdb87e291bd92ff0ba70994dc798062f4f9bf4d4a03526baa0269 |
-| Denominator Frozen At | 2026-09-03T07:01:18Z |
-| Completion Status | Complete |
-| Coverage Gate | Closed |
-| Evidence Gate | Passed |
-| Books Gate | Passed |
-
-### Source Coverage Receipt
-
-<!-- validator:source-coverage-v2 -->
-| Source ID | Window Start | Window End | Executed At | Endpoint / Filter | Result | Hits | Candidate Source Families | Pagination / Cursor | Window Watermark | Closure Evidence | Gap / Limitation ID |
-| --- | --- | --- | --- | --- | --- | ---: | --- | --- | --- | --- | --- |
-| SRC-ARXIV | 2026-02-04T09:00:00+08:00 | 2026-02-05T09:00:00+08:00 | 2026-09-03T07:01:18Z | DataCite identity recovery + official arXiv announcement schedule + registered-category full title/abstract screen + exact-v1 HTML/PDF | checked | 24 | SF-2026-ARXIV-2602-02579; SF-2026-ARXIV-2602-02599; SF-2026-ARXIV-2602-02958; SF-2026-ARXIV-2602-03036; SF-2026-ARXIV-2602-03184; SF-2026-ARXIV-2602-03295; SF-2026-ARXIV-2602-03560; SF-2026-ARXIV-2602-02499; SF-2026-ARXIV-2602-02515; SF-2026-ARXIV-2602-02574; SF-2026-ARXIV-2602-02585; SF-2026-ARXIV-2602-02987; SF-2026-ARXIV-2602-03025; SF-2026-ARXIV-2602-03128; SF-2026-ARXIV-2602-03203; SF-2026-ARXIV-2602-03255; SF-2026-ARXIV-2602-03338; SF-2026-ARXIV-2602-03495; SF-2026-ARXIV-2602-03580; SF-2026-ARXIV-2602-03632; SF-2026-ARXIV-2602-03719; SF-2026-ARXIV-2602-03782; SF-2026-ARXIV-2602-02589; SF-2026-ARXIV-2602-02690 | pages=100; DOI prefixes=00..99; final_cursor=end; screened=795 | 2026-02-05T09:00:00+08:00 | papers/2026/02/_sources/daily-20260205/coverage-receipt.json; papers/2026/02/_sources/daily-20260205/screening-ledger-final.json; coverage:SRC-ARXIV:20260205 | — |
-
-<!-- coverage:SRC-ARXIV:20260205:start -->795 个注册身份均已按 title+abstract 逐项筛选；771 个具体拒绝理由保存在 ledger。当前注册表的其他来源在 2026-08-25 才生效，不反推为 2 月 Required。全月 receipt 已完成 false-positive / false-negative、日期归属与撤稿审计，本日 Coverage Gate=Closed。<!-- coverage:SRC-ARXIV:20260205:end -->
-
-## 2. Candidate Ledger
-
-<!-- validator:candidate-ledger-v2.1 -->
-| Source Family ID | Primary Identifier | Event Identity | Owner Week | First-public Date | Supporting Source IDs | Design Delta | System Reach | Durability | Total | Candidate State | Review Status | Access Status | Review Override | Review Ref | Owner Report Ref | Prior Review Ref | Reconciliation | Stable Node ID | Books Disposition | Books Review Ref | Benchmark Claim |
-| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SF-2026-ARXIV-2602-02579 | arXiv:2602.02579v1 | paper-v1:2602.02579 | 2026-W06 | 2026-02-04 | SRC-ARXIV | 3 | 2 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2602-02579 | self | — | new_in_window | INFER-KV-CACHE | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-02579 | no |
-| SF-2026-ARXIV-2602-02599 | arXiv:2602.02599v1 | paper-v1:2602.02599 | 2026-W06 | 2026-02-04 | SRC-ARXIV | 3 | 2 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2602-02599 | self | — | new_in_window | INFER-KV-CACHE | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-02599 | no |
-| SF-2026-ARXIV-2602-02958 | arXiv:2602.02958v1 | paper-v1:2602.02958 | 2026-W06 | 2026-02-04 | SRC-ARXIV | 3 | 2 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2602-02958 | self | — | new_in_window | INFER-KV-CACHE | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-02958 | no |
-| SF-2026-ARXIV-2602-03036 | arXiv:2602.03036v1 | paper-v1:2602.03036 | 2026-W06 | 2026-02-04 | SRC-ARXIV | 2 | 3 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2602-03036 | self | — | new_in_window | AGENT-MEMORY | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-03036 | no |
-| SF-2026-ARXIV-2602-03184 | arXiv:2602.03184v1 | paper-v1:2602.03184 | 2026-W06 | 2026-02-04 | SRC-ARXIV | 3 | 2 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2602-03184 | self | — | new_in_window | INFER-KV-CACHE | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-03184 | no |
-| SF-2026-ARXIV-2602-03295 | arXiv:2602.03295v1 | paper-v1:2602.03295 | 2026-W06 | 2026-02-04 | SRC-ARXIV | 3 | 2 | 3 | 8 | retained | deep_complete | accessible | knowledge_gap | review:SF-2026-ARXIV-2602-03295 | self | — | new_in_window | INFER-PREFILL | Integrate | books-review:SF-2026-ARXIV-2602-03295 | no |
-| SF-2026-ARXIV-2602-03560 | arXiv:2602.03560v1 | paper-v1:2602.03560 | 2026-W06 | 2026-02-04 | SRC-ARXIV | 3 | 2 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2602-03560 | self | — | new_in_window | MODEL-LONG-CONTEXT | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-03560 | no |
-| SF-2026-ARXIV-2602-02499 | arXiv:2602.02499v1 | paper-v1:2602.02499 | 2026-W06 | 2026-02-04 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2602-02499 | self | — | new_in_window | MODEL-LONG-CONTEXT | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-02499 | no |
-| SF-2026-ARXIV-2602-02515 | arXiv:2602.02515v1 | paper-v1:2602.02515 | 2026-W06 | 2026-02-04 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2602-02515 | self | — | new_in_window | PLATFORM-EVALUATION-SYSTEM | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-02515 | no |
-| SF-2026-ARXIV-2602-02574 | arXiv:2602.02574v1 | paper-v1:2602.02574 | 2026-W06 | 2026-02-04 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2602-02574 | self | — | new_in_window | AGENT-MEMORY | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-02574 | no |
-| SF-2026-ARXIV-2602-02585 | arXiv:2602.02585v1 | paper-v1:2602.02585 | 2026-W06 | 2026-02-04 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2602-02585 | self | — | new_in_window | PLATFORM-MONITORING | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-02585 | no |
-| SF-2026-ARXIV-2602-02987 | arXiv:2602.02987v1 | paper-v1:2602.02987 | 2026-W06 | 2026-02-04 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2602-02987 | self | — | new_in_window | INFER-SCHEDULING | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-02987 | no |
-| SF-2026-ARXIV-2602-03025 | arXiv:2602.03025v1 | paper-v1:2602.03025 | 2026-W06 | 2026-02-04 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2602-03025 | self | — | new_in_window | TRAIN-GRPO | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-03025 | no |
-| SF-2026-ARXIV-2602-03128 | arXiv:2602.03128v1 | paper-v1:2602.03128 | 2026-W06 | 2026-02-04 | SRC-ARXIV | 2 | 3 | 2 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2602-03128 | self | — | new_in_window | PLATFORM-EVALUATION-SYSTEM | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-03128 | no |
-| SF-2026-ARXIV-2602-03203 | arXiv:2602.03203v1 | paper-v1:2602.03203 | 2026-W06 | 2026-02-04 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2602-03203 | self | — | new_in_window | INFER-KV-CACHE | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-03203 | no |
-| SF-2026-ARXIV-2602-03255 | arXiv:2602.03255v1 | paper-v1:2602.03255 | 2026-W06 | 2026-02-04 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2602-03255 | self | — | new_in_window | PLATFORM-EVALUATION-SYSTEM | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-03255 | no |
-| SF-2026-ARXIV-2602-03338 | arXiv:2602.03338v1 | paper-v1:2602.03338 | 2026-W06 | 2026-02-04 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | knowledge_gap | review:SF-2026-ARXIV-2602-03338 | self | — | new_in_window | AGENT-REFLECTION | Integrate | books-review:SF-2026-ARXIV-2602-03338 | no |
-| SF-2026-ARXIV-2602-03495 | arXiv:2602.03495v1 | paper-v1:2602.03495 | 2026-W06 | 2026-02-04 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2602-03495 | self | — | new_in_window | INFER-GPU-MEMORY | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-03495 | no |
-| SF-2026-ARXIV-2602-03580 | arXiv:2602.03580v1 | paper-v1:2602.03580 | 2026-W06 | 2026-02-04 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2602-03580 | self | — | new_in_window | AGENT-MCP | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-03580 | no |
-| SF-2026-ARXIV-2602-03632 | arXiv:2602.03632v1 | paper-v1:2602.03632 | 2026-W06 | 2026-02-04 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2602-03632 | self | — | new_in_window | INFER-SCHEDULING | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-03632 | no |
-| SF-2026-ARXIV-2602-03719 | arXiv:2602.03719v1 | paper-v1:2602.03719 | 2026-W06 | 2026-02-04 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2602-03719 | self | — | new_in_window | TRAIN-RLHF | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-03719 | no |
-| SF-2026-ARXIV-2602-03782 | arXiv:2602.03782v1 | paper-v1:2602.03782 | 2026-W06 | 2026-02-04 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2602-03782 | self | — | new_in_window | INFER-TENSORRT-LLM | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-03782 | no |
-| SF-2026-ARXIV-2602-02589 | arXiv:2602.02589v1 | paper-v1:2602.02589 | 2026-W06 | 2026-02-04 | SRC-ARXIV | 2 | 2 | 2 | 6 | retained | standard_complete | accessible | none | review:SF-2026-ARXIV-2602-02589 | self | — | new_in_window | PLATFORM-EVALUATION-SYSTEM | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-02589 | no |
-| SF-2026-ARXIV-2602-02690 | arXiv:2602.02690v1 | paper-v1:2602.02690 | 2026-W06 | 2026-02-04 | SRC-ARXIV | 2 | 2 | 2 | 6 | retained | standard_complete | accessible | none | review:SF-2026-ARXIV-2602-02690 | self | — | new_in_window | PLATFORM-EVALUATION-SYSTEM | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-02690 | no |
+**规范：** V3
+**窗口：** 2026-02-04T09:00:00+08:00 ～ 2026-02-05T09:00:00+08:00
+**状态：** 完成
+**Books：** 纳入本次
+**检查时间：** 2026-10-02T16:10:44+08:00
+
+## 1. 结论
 
-## 3. Review Completion Receipt
+本日从原始来源独立重建。旧 README 原文仅备份于 [LEGACY_README](../_sources/daily-20260205/LEGACY_README.md)，未用于发现、准入、评分或 Books 判断；该目录原有其他非 feb05_ 前缀材料同属 legacy，不作为本轮证据。
 
-<!-- validator:review-completion-v1 -->
-| Source Family ID | Review Provenance ID | Review Route | Primary Evidence Version | Reviewed Evidence Versions | Method / Identity Locators | Evaluation Locators | Limitations / Counterevidence Locators | Artifact Locators | Claim Boundary Ref | Completion Result |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SF-2026-ARXIV-2602-02579 | RP-5b8d725897e5b9c9 | deep | arXiv:2602.02579v1 | SRC-ARXIV@arXiv:2602.02579v1 | arXiv:2602.02579v1 HTML — §3.1 Illustrating the Failure of Existing Methods [facet=method]; https://arxiv.org/html/2602.02579v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.02579v1.html; sha256:f28add66a60856e5255aaf47f521e8f0f60fb04985f0a5a9d7732f235cca163f | arXiv:2602.02579v1 HTML — §5.2 Accuracy Evaluation [facet=evaluation]; https://arxiv.org/html/2602.02579v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.02579v1.html; sha256:f28add66a60856e5255aaf47f521e8f0f60fb04985f0a5a9d7732f235cca163f | arXiv:2602.02579v1 HTML — §3.1 Illustrating the Failure of Existing Methods [facet=limitations]; https://arxiv.org/html/2602.02579v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.02579v1.html; sha256:f28add66a60856e5255aaf47f521e8f0f60fb04985f0a5a9d7732f235cca163f | Not Disclosed — arXiv:2602.02579v1 does not disclose a public repository, release, commit, or executable artifact used by this review | claim:SF-2026-ARXIV-2602-02579 | complete |
-| SF-2026-ARXIV-2602-02599 | RP-a9b91e4714cbac4b | deep | arXiv:2602.02599v1 | SRC-ARXIV@arXiv:2602.02599v1 | arXiv:2602.02599v1 HTML — §4 RAP: RoPE-Aligned Pruning [facet=method]; https://arxiv.org/html/2602.02599v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.02599v1.html; sha256:b5e9810442094d6b112399d997798e4a183cc317321777bb5d1897beff223cc0 | arXiv:2602.02599v1 HTML — §Appendix D Complete Experimental Results [facet=evaluation]; https://arxiv.org/html/2602.02599v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.02599v1.html; sha256:b5e9810442094d6b112399d997798e4a183cc317321777bb5d1897beff223cc0 | arXiv:2602.02599v1 HTML — §6.3 Ablation Study [facet=limitations]; https://arxiv.org/html/2602.02599v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.02599v1.html; sha256:b5e9810442094d6b112399d997798e4a183cc317321777bb5d1897beff223cc0 | External link observed in exact-v1 body: https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct; author-artifact relationship and exact commit/tag are Not Disclosed, so this link is not used as claim evidence | claim:SF-2026-ARXIV-2602-02599 | complete |
-| SF-2026-ARXIV-2602-02958 | RP-a81e45f9966b8a2f | deep | arXiv:2602.02958v1 | SRC-ARXIV@arXiv:2602.02958v1 | arXiv:2602.02958v1 HTML — §4 Methodology [facet=method]; https://arxiv.org/html/2602.02958v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.02958v1.html; sha256:0c7c4f6ad8114afd6d10f82059de93a494998871eaec083f0667f649605cdc32 | arXiv:2602.02958v1 HTML — §5.2 Quality Evaluation [facet=evaluation]; https://arxiv.org/html/2602.02958v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.02958v1.html; sha256:0c7c4f6ad8114afd6d10f82059de93a494998871eaec083f0667f649605cdc32 | arXiv:2602.02958v1 HTML — §5.4 Sensitivity Test [facet=limitations]; https://arxiv.org/html/2602.02958v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.02958v1.html; sha256:0c7c4f6ad8114afd6d10f82059de93a494998871eaec083f0667f649605cdc32 | External link observed in exact-v1 body: https://github.com/guandeh17/Self-Forcing/blob/main/prompts/MovieGenVideoBench_extended.txt; author-artifact relationship and exact commit/tag are Not Disclosed, so this link is not used as claim evidence | claim:SF-2026-ARXIV-2602-02958 | complete |
-| SF-2026-ARXIV-2602-03036 | RP-2ffde298a88156f6 | deep | arXiv:2602.03036v1 | SRC-ARXIV@arXiv:2602.03036v1 | arXiv:2602.03036v1 HTML — §4 Methodology [facet=method]; https://arxiv.org/html/2602.03036v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03036v1.html; sha256:6354c40122badd58cc1dace2c3aabb5178d95e55d7882a09319402b8bdbce668 | arXiv:2602.03036v1 HTML — §5.2 Main Results [facet=evaluation]; https://arxiv.org/html/2602.03036v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03036v1.html; sha256:6354c40122badd58cc1dace2c3aabb5178d95e55d7882a09319402b8bdbce668 | arXiv:2602.03036v1 HTML — §5.6 Sensitivity & Ablation Study. [facet=limitations]; https://arxiv.org/html/2602.03036v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03036v1.html; sha256:6354c40122badd58cc1dace2c3aabb5178d95e55d7882a09319402b8bdbce668 | External link observed in exact-v1 body: https://github.com/KANABOON1/LatentMem; author-artifact relationship and exact commit/tag are Not Disclosed, so this link is not used as claim evidence | claim:SF-2026-ARXIV-2602-03036 | complete |
-| SF-2026-ARXIV-2602-03184 | RP-114e0ef67958401c | deep | arXiv:2602.03184v1 | SRC-ARXIV@arXiv:2602.03184v1 | arXiv:2602.03184v1 HTML — §B.2 Implementation details [facet=method]; https://arxiv.org/html/2602.03184v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03184v1.html; sha256:397746694f5a562f00443fc668f49d89afec4efb1b3de8908928c973df67e149 | arXiv:2602.03184v1 HTML — §5.4 Ablation Results [facet=evaluation]; https://arxiv.org/html/2602.03184v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03184v1.html; sha256:397746694f5a562f00443fc668f49d89afec4efb1b3de8908928c973df67e149 | arXiv:2602.03184v1 HTML — §6 Conclusion [facet=limitations]; https://arxiv.org/html/2602.03184v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03184v1.html; sha256:397746694f5a562f00443fc668f49d89afec4efb1b3de8908928c973df67e149 | Not Disclosed — arXiv:2602.03184v1 does not disclose a public repository, release, commit, or executable artifact used by this review | claim:SF-2026-ARXIV-2602-03184 | complete |
-| SF-2026-ARXIV-2602-03295 | RP-fec930cbaae6cf77 | deep | arXiv:2602.03295v1 | SRC-ARXIV@arXiv:2602.03295v1 | arXiv:2602.03295v1 HTML — §3 Method; §3.3 Prefill-Only Pruning for Efficient Inference [facet=method]; https://arxiv.org/html/2602.03295v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03295v1.html; sha256:d018d3cf5a1147b8ee1ac5bb9face9d216aa650749b25dc440f87fd1d3905f3d | arXiv:2602.03295v1 HTML — §4 Experiments; §4.2 Accuracy; §4.3 Inference Speedup; §4.4 Ablation [facet=evaluation]; https://arxiv.org/html/2602.03295v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03295v1.html; sha256:d018d3cf5a1147b8ee1ac5bb9face9d216aa650749b25dc440f87fd1d3905f3d | arXiv:2602.03295v1 HTML — §7 Limitations; Appendix C Robustness to Representation Mismatch [facet=limitations]; https://arxiv.org/html/2602.03295v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03295v1.html; sha256:d018d3cf5a1147b8ee1ac5bb9face9d216aa650749b25dc440f87fd1d3905f3d | Not Disclosed — arXiv:2602.03295v1 does not disclose an author implementation repository or exact commit used by this review | claim:SF-2026-ARXIV-2602-03295 | complete |
-| SF-2026-ARXIV-2602-03560 | RP-7a99540c57cd5eb4 | deep | arXiv:2602.03560v1 | SRC-ARXIV@arXiv:2602.03560v1 | arXiv:2602.03560v1 HTML — §2.2 Hybrid Attention Architecture [facet=method]; https://arxiv.org/html/2602.03560v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03560v1.html; sha256:f88b03d4b5b953e17842bc9c7bad8000e105dccbb46a49c39f6b9d9e0513a082 | arXiv:2602.03560v1 HTML — §Evaluation Benchmark [facet=evaluation]; https://arxiv.org/html/2602.03560v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03560v1.html; sha256:f88b03d4b5b953e17842bc9c7bad8000e105dccbb46a49c39f6b9d9e0513a082 | arXiv:2602.03560v1 HTML — §6 Conclusion [facet=limitations]; https://arxiv.org/html/2602.03560v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03560v1.html; sha256:f88b03d4b5b953e17842bc9c7bad8000e105dccbb46a49c39f6b9d9e0513a082 | Not Disclosed — arXiv:2602.03560v1 does not disclose a public repository, release, commit, or executable artifact used by this review | claim:SF-2026-ARXIV-2602-03560 | complete |
-| SF-2026-ARXIV-2602-02499 | RP-6d03591a827ec5b5 | deep | arXiv:2602.02499v1 | SRC-ARXIV@arXiv:2602.02499v1 | arXiv:2602.02499v1 HTML — §4 Implementation [facet=method]; https://arxiv.org/html/2602.02499v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.02499v1.html; sha256:afeaf1803325034e63c316ff9fd2e2486628284dcc9de041f1e2cf4af4afcaad | arXiv:2602.02499v1 HTML — §5.2 General Capability Evaluation [facet=evaluation]; https://arxiv.org/html/2602.02499v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.02499v1.html; sha256:afeaf1803325034e63c316ff9fd2e2486628284dcc9de041f1e2cf4af4afcaad | arXiv:2602.02499v1 HTML — §D.2 Ablation on ROSA Symbol Width [facet=limitations]; https://arxiv.org/html/2602.02499v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.02499v1.html; sha256:afeaf1803325034e63c316ff9fd2e2486628284dcc9de041f1e2cf4af4afcaad | External link observed in exact-v1 body: https://github.com/zyaaa-ux/ROSA-Tuning; author-artifact relationship and exact commit/tag are Not Disclosed, so this link is not used as claim evidence | claim:SF-2026-ARXIV-2602-02499 | complete |
-| SF-2026-ARXIV-2602-02515 | RP-b24037b9a729317b | deep | arXiv:2602.02515v1 | SRC-ARXIV@arXiv:2602.02515v1 | arXiv:2602.02515v1 HTML — §4.1. CreditAudit Design [facet=method]; https://arxiv.org/html/2602.02515v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.02515v1.html; sha256:0bbdb57dfbbdb9830a6d2ede3d634e73d05b7e8bbb5eddfcdf498fa008ec361d | arXiv:2602.02515v1 HTML — §3.1. What LLM Evaluation Estimates: Partial Observability and Prompt-Induced Reliability [facet=evaluation]; https://arxiv.org/html/2602.02515v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.02515v1.html; sha256:0bbdb57dfbbdb9830a6d2ede3d634e73d05b7e8bbb5eddfcdf498fa008ec361d | arXiv:2602.02515v1 HTML — §Limitations and future work. [facet=limitations]; https://arxiv.org/html/2602.02515v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.02515v1.html; sha256:0bbdb57dfbbdb9830a6d2ede3d634e73d05b7e8bbb5eddfcdf498fa008ec361d | External link observed in exact-v1 body: https://github.com/LLwork8888/CreditAudit; author-artifact relationship and exact commit/tag are Not Disclosed, so this link is not used as claim evidence | claim:SF-2026-ARXIV-2602-02515 | complete |
-| SF-2026-ARXIV-2602-02574 | RP-13e9d8249c6735f7 | deep | arXiv:2602.02574v1 | SRC-ARXIV@arXiv:2602.02574v1 | arXiv:2602.02574v1 HTML — §Implementation note. [facet=method]; https://arxiv.org/html/2602.02574v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.02574v1.html; sha256:641118b66e60a1d0cfbbe7c27c31148b0b5ebc8a07e7a01548cee3f319d67db0 | arXiv:2602.02574v1 HTML — §Policy observability and evaluation tracks. [facet=evaluation]; https://arxiv.org/html/2602.02574v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.02574v1.html; sha256:641118b66e60a1d0cfbbe7c27c31148b0b5ebc8a07e7a01548cee3f319d67db0 | arXiv:2602.02574v1 HTML — §9 Limitations [facet=limitations]; https://arxiv.org/html/2602.02574v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.02574v1.html; sha256:641118b66e60a1d0cfbbe7c27c31148b0b5ebc8a07e7a01548cee3f319d67db0 | External link observed in exact-v1 body: https://github.com/edgardcham/WritePolicyBench; author-artifact relationship and exact commit/tag are Not Disclosed, so this link is not used as claim evidence | claim:SF-2026-ARXIV-2602-02574 | complete |
-| SF-2026-ARXIV-2602-02585 | RP-7fc8527bfe16a179 | deep | arXiv:2602.02585v1 | SRC-ARXIV@arXiv:2602.02585v1 | arXiv:2602.02585v1 PDF — §System Design [facet=method]; https://arxiv.org/pdf/2602.02585v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.02585v1.pdf.txt; sha256:91af4963ca2033c0d1b66618be60acca24d9bd1653021ad8da8f8c6e27b202cd | arXiv:2602.02585v1 PDF — §Evaluation [facet=evaluation]; https://arxiv.org/pdf/2602.02585v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.02585v1.pdf.txt; sha256:91af4963ca2033c0d1b66618be60acca24d9bd1653021ad8da8f8c6e27b202cd | arXiv:2602.02585v1 PDF — §Discussion and Future Work [facet=limitations]; https://arxiv.org/pdf/2602.02585v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.02585v1.pdf.txt; sha256:91af4963ca2033c0d1b66618be60acca24d9bd1653021ad8da8f8c6e27b202cd | Not Disclosed — arXiv:2602.02585v1 does not disclose a public repository, release, commit, or executable artifact used by this review | claim:SF-2026-ARXIV-2602-02585 | complete |
-| SF-2026-ARXIV-2602-02987 | RP-53f4e987d7ab0abe | deep | arXiv:2602.02987v1 | SRC-ARXIV@arXiv:2602.02987v1 | arXiv:2602.02987v1 HTML — §5.1 SLI-Aware Gate-and-Route Control Policy [facet=method]; https://arxiv.org/html/2602.02987v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.02987v1.html; sha256:e3995feea443ce3e3d73807f4100ad2428f37dee1f042d5a6d2f221a974c6b68 | arXiv:2602.02987v1 HTML — §6.3 Policy Performance: Baselines and Ablations [facet=evaluation]; https://arxiv.org/html/2602.02987v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.02987v1.html; sha256:e3995feea443ce3e3d73807f4100ad2428f37dee1f042d5a6d2f221a974c6b68 | arXiv:2602.02987v1 HTML — §6.3 Policy Performance: Baselines and Ablations [facet=limitations]; https://arxiv.org/html/2602.02987v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.02987v1.html; sha256:e3995feea443ce3e3d73807f4100ad2428f37dee1f042d5a6d2f221a974c6b68 | Not Disclosed — arXiv:2602.02987v1 does not disclose a public repository, release, commit, or executable artifact used by this review | claim:SF-2026-ARXIV-2602-02987 | complete |
-| SF-2026-ARXIV-2602-03025 | RP-76ed6d82120bbe35 | deep | arXiv:2602.03025v1 | SRC-ARXIV@arXiv:2602.03025v1 | arXiv:2602.03025v1 HTML — §3 Method [facet=method]; https://arxiv.org/html/2602.03025v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03025v1.html; sha256:df3663ae6b3c297de704fb3bf0e2db768182317b64c8aebbd9df05f60085ef51 | arXiv:2602.03025v1 HTML — §4.2 Main Results [facet=evaluation]; https://arxiv.org/html/2602.03025v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03025v1.html; sha256:df3663ae6b3c297de704fb3bf0e2db768182317b64c8aebbd9df05f60085ef51 | Not Disclosed — exact-v1 HTML has no independent limitations or counterevidence section; a positive conclusion does not replace that facet [facet=limitations]; https://arxiv.org/html/2602.03025v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03025v1.html; sha256:df3663ae6b3c297de704fb3bf0e2db768182317b64c8aebbd9df05f60085ef51 | Not Disclosed — arXiv:2602.03025v1 does not disclose a public repository, release, commit, or executable artifact used by this review | claim:SF-2026-ARXIV-2602-03025 | complete |
-| SF-2026-ARXIV-2602-03128 | RP-f44634af54594ffc | deep | arXiv:2602.03128v1 | SRC-ARXIV@arXiv:2602.03128v1 | arXiv:2602.03128v1 HTML — §3. MAFBench: A Unified Benchmark [facet=method]; https://arxiv.org/html/2602.03128v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03128v1.html; sha256:2dffa2485e36e0929221a76ffa4c2f3e91cf08c200ac2286e2e2cac615826c5b | arXiv:2602.03128v1 HTML — §4. Evaluation [facet=evaluation]; https://arxiv.org/html/2602.03128v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03128v1.html; sha256:2dffa2485e36e0929221a76ffa4c2f3e91cf08c200ac2286e2e2cac615826c5b | arXiv:2602.03128v1 HTML — §3.4. Tool Use Benchmarks and Limitations [facet=limitations]; https://arxiv.org/html/2602.03128v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03128v1.html; sha256:2dffa2485e36e0929221a76ffa4c2f3e91cf08c200ac2286e2e2cac615826c5b | External link observed in exact-v1 body: https://github.com/CoDS-GCS/MAFBench; author-artifact relationship and exact commit/tag are Not Disclosed, so this link is not used as claim evidence | claim:SF-2026-ARXIV-2602-03128 | complete |
-| SF-2026-ARXIV-2602-03203 | RP-ee11031ab5d60dc2 | deep | arXiv:2602.03203v1 | SRC-ARXIV@arXiv:2602.03203v1 | arXiv:2602.03203v1 HTML — §Design of Model and Sampling Algorithm. [facet=method]; https://arxiv.org/html/2602.03203v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03203v1.html; sha256:e400c1efa4ca7bbbe780efd82cdd2f8ab038c122ba63098a9677d08a55ec787d | arXiv:2602.03203v1 HTML — §4.2 Main Results [facet=evaluation]; https://arxiv.org/html/2602.03203v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03203v1.html; sha256:e400c1efa4ca7bbbe780efd82cdd2f8ab038c122ba63098a9677d08a55ec787d | Not Disclosed — exact-v1 HTML has no independent limitations or counterevidence section; a positive conclusion does not replace that facet [facet=limitations]; https://arxiv.org/html/2602.03203v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03203v1.html; sha256:e400c1efa4ca7bbbe780efd82cdd2f8ab038c122ba63098a9677d08a55ec787d | Not Disclosed — arXiv:2602.03203v1 does not disclose a public repository, release, commit, or executable artifact used by this review | claim:SF-2026-ARXIV-2602-03203 | complete |
-| SF-2026-ARXIV-2602-03255 | RP-11f339637a96d7c9 | deep | arXiv:2602.03255v1 | SRC-ARXIV@arXiv:2602.03255v1 | arXiv:2602.03255v1 HTML — §3.3 Automated Evaluation Framework [facet=method]; https://arxiv.org/html/2602.03255v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03255v1.html; sha256:c138e83997c8d8cfd0deb0f2fe9f200d1bb90b945187431cd1119343651dd8ea | arXiv:2602.03255v1 HTML — §3.3 Automated Evaluation Framework [facet=evaluation]; https://arxiv.org/html/2602.03255v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03255v1.html; sha256:c138e83997c8d8cfd0deb0f2fe9f200d1bb90b945187431cd1119343651dd8ea | arXiv:2602.03255v1 HTML — §Limitations [facet=limitations]; https://arxiv.org/html/2602.03255v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03255v1.html; sha256:c138e83997c8d8cfd0deb0f2fe9f200d1bb90b945187431cd1119343651dd8ea | External link observed in exact-v1 body: https://github.com/tychenn/LPS-Bench; author-artifact relationship and exact commit/tag are Not Disclosed, so this link is not used as claim evidence | claim:SF-2026-ARXIV-2602-03255 | complete |
-| SF-2026-ARXIV-2602-03338 | RP-004e2b119dfbac06 | deep | arXiv:2602.03338v1 | SRC-ARXIV@arXiv:2602.03338v1 | arXiv:2602.03338v1 HTML — §Experimental design. [facet=method]; https://arxiv.org/html/2602.03338v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03338v1.html; sha256:495872c269e2a00068bc462d33701d1608f8347501645b3f257bc4e52b285bd0 | arXiv:2602.03338v1 HTML — §4 Main Results [facet=evaluation]; https://arxiv.org/html/2602.03338v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03338v1.html; sha256:495872c269e2a00068bc462d33701d1608f8347501645b3f257bc4e52b285bd0 | arXiv:2602.03338v1 HTML — §Critic model scale. [facet=limitations]; https://arxiv.org/html/2602.03338v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03338v1.html; sha256:495872c269e2a00068bc462d33701d1608f8347501645b3f257bc4e52b285bd0 | External link observed in exact-v1 body: https://github.com/huggingface/smolagents; author-artifact relationship and exact commit/tag are Not Disclosed, so this link is not used as claim evidence | claim:SF-2026-ARXIV-2602-03338 | complete |
-| SF-2026-ARXIV-2602-03495 | RP-791ac0e2d4d0d6c6 | deep | arXiv:2602.03495v1 | SRC-ARXIV@arXiv:2602.03495v1 | arXiv:2602.03495v1 HTML — §4. Design [facet=method]; https://arxiv.org/html/2602.03495v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03495v1.html; sha256:b9d7e82c90cf370f0ee7b2394e0de320641c6e049645b6fed16e81e34286c5a5 | arXiv:2602.03495v1 HTML — §6.2. Overall Results [facet=evaluation]; https://arxiv.org/html/2602.03495v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03495v1.html; sha256:b9d7e82c90cf370f0ee7b2394e0de320641c6e049645b6fed16e81e34286c5a5 | arXiv:2602.03495v1 HTML — §6.5. Discussion [facet=limitations]; https://arxiv.org/html/2602.03495v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03495v1.html; sha256:b9d7e82c90cf370f0ee7b2394e0de320641c6e049645b6fed16e81e34286c5a5 | External link observed in exact-v1 body: https://github.com/ggerganov/llama.cpp; author-artifact relationship and exact commit/tag are Not Disclosed, so this link is not used as claim evidence | claim:SF-2026-ARXIV-2602-03495 | complete |
-| SF-2026-ARXIV-2602-03580 | RP-0b34755aedb77c6f | deep | arXiv:2602.03580v1 | SRC-ARXIV@arXiv:2602.03580v1 | arXiv:2602.03580v1 HTML — §Design of MCPDiFF [facet=method]; https://arxiv.org/html/2602.03580v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03580v1.html; sha256:31c694d4a2b6fe667c006a171130174ecb01d93097c259ea8021e0fbcf4c4792 | arXiv:2602.03580v1 HTML — §Experiment Results [facet=evaluation]; https://arxiv.org/html/2602.03580v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03580v1.html; sha256:31c694d4a2b6fe667c006a171130174ecb01d93097c259ea8021e0fbcf4c4792 | arXiv:2602.03580v1 HTML — §Open Questions and Future Directions [facet=limitations]; https://arxiv.org/html/2602.03580v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03580v1.html; sha256:31c694d4a2b6fe667c006a171130174ecb01d93097c259ea8021e0fbcf4c4792 | Not Disclosed — arXiv:2602.03580v1 does not disclose a public repository, release, commit, or executable artifact used by this review | claim:SF-2026-ARXIV-2602-03580 | complete |
-| SF-2026-ARXIV-2602-03632 | RP-787a37d21a13c61a | deep | arXiv:2602.03632v1 | SRC-ARXIV@arXiv:2602.03632v1 | arXiv:2602.03632v1 HTML — §3. The CALM Approach [facet=method]; https://arxiv.org/html/2602.03632v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03632v1.html; sha256:bdd54c1e8ad8d49ec8dbdf715dc316e1e19cdb5870c6d1dd38f12cc2c91d8411 | arXiv:2602.03632v1 HTML — §5. Results [facet=evaluation]; https://arxiv.org/html/2602.03632v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03632v1.html; sha256:bdd54c1e8ad8d49ec8dbdf715dc316e1e19cdb5870c6d1dd38f12cc2c91d8411 | arXiv:2602.03632v1 HTML — §7. Threats to Validity [facet=limitations]; https://arxiv.org/html/2602.03632v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03632v1.html; sha256:bdd54c1e8ad8d49ec8dbdf715dc316e1e19cdb5870c6d1dd38f12cc2c91d8411 | External link observed in exact-v1 body: https://github.com/sa4s-serc/CALM; author-artifact relationship and exact commit/tag are Not Disclosed, so this link is not used as claim evidence | claim:SF-2026-ARXIV-2602-03632 | complete |
-| SF-2026-ARXIV-2602-03719 | RP-98bce91be9a07068 | deep | arXiv:2602.03719v1 | SRC-ARXIV@arXiv:2602.03719v1 | arXiv:2602.03719v1 HTML — §A.1 Algorithm Details [facet=method]; https://arxiv.org/html/2602.03719v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03719v1.html; sha256:25ed1740f5933ee6d22439676f328c78d899ddccc145928251e8b939b4388801 | arXiv:2602.03719v1 HTML — §Evaluation. [facet=evaluation]; https://arxiv.org/html/2602.03719v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03719v1.html; sha256:25ed1740f5933ee6d22439676f328c78d899ddccc145928251e8b939b4388801 | arXiv:2602.03719v1 HTML — §Appendix D Limitations and Future Work [facet=limitations]; https://arxiv.org/html/2602.03719v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03719v1.html; sha256:25ed1740f5933ee6d22439676f328c78d899ddccc145928251e8b939b4388801 | External link observed in exact-v1 body: https://github.com/YubaoZhao/BranPO; author-artifact relationship and exact commit/tag are Not Disclosed, so this link is not used as claim evidence | claim:SF-2026-ARXIV-2602-03719 | complete |
-| SF-2026-ARXIV-2602-03782 | RP-3e96b8a145fd66fa | deep | arXiv:2602.03782v1 | SRC-ARXIV@arXiv:2602.03782v1 | arXiv:2602.03782v1 HTML — §3.3 The proposed QVLA [facet=method]; https://arxiv.org/html/2602.03782v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03782v1.html; sha256:5bd42b692579ff94463155d779771b9507d3ec1acfb83ac5004bc38d41c7c7b7 | arXiv:2602.03782v1 HTML — §4.2 Comparison with State-of-the-arts [facet=evaluation]; https://arxiv.org/html/2602.03782v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03782v1.html; sha256:5bd42b692579ff94463155d779771b9507d3ec1acfb83ac5004bc38d41c7c7b7 | arXiv:2602.03782v1 HTML — §H.2 Behavior During Full-Precision Failure Trials [facet=limitations]; https://arxiv.org/html/2602.03782v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.03782v1.html; sha256:5bd42b692579ff94463155d779771b9507d3ec1acfb83ac5004bc38d41c7c7b7 | External link observed in exact-v1 body: https://github.com/AutoLab-SAI-SJTU/AutoQVLA; author-artifact relationship and exact commit/tag are Not Disclosed, so this link is not used as claim evidence | claim:SF-2026-ARXIV-2602-03782 | complete |
-| SF-2026-ARXIV-2602-02589 | RP-4332232a486fdb01 | standard | arXiv:2602.02589v1 | SRC-ARXIV@arXiv:2602.02589v1 | arXiv:2602.02589v1 HTML — §3 Methodology [facet=method]; https://arxiv.org/html/2602.02589v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.02589v1.html; sha256:7239c809130fe8b05d39aca43ca6fab4882901c9afd462e4e3e1c704176c037c | arXiv:2602.02589v1 HTML — §Ablation: Peer evaluation outperforms self evaluation [facet=evaluation]; https://arxiv.org/html/2602.02589v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.02589v1.html; sha256:7239c809130fe8b05d39aca43ca6fab4882901c9afd462e4e3e1c704176c037c | arXiv:2602.02589v1 HTML — §6 Discussion [facet=limitations]; https://arxiv.org/html/2602.02589v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.02589v1.html; sha256:7239c809130fe8b05d39aca43ca6fab4882901c9afd462e4e3e1c704176c037c | External link observed in exact-v1 body: https://github.com/caura-ai/caura-PeerRank; author-artifact relationship and exact commit/tag are Not Disclosed, so this link is not used as claim evidence | claim:SF-2026-ARXIV-2602-02589 | complete |
-| SF-2026-ARXIV-2602-02690 | RP-8a405dbe4b9ea625 | standard | arXiv:2602.02690v1 | SRC-ARXIV@arXiv:2602.02690v1 | arXiv:2602.02690v1 HTML — §3.1 Design [facet=method]; https://arxiv.org/html/2602.02690v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.02690v1.html; sha256:13e36c25d3c0fc7be10ae7f25f3802bc5480f198aa966b090ea7eed8a62052d9 | arXiv:2602.02690v1 HTML — §5.2 RQ1: Performance difference spanning cutoff [facet=evaluation]; https://arxiv.org/html/2602.02690v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.02690v1.html; sha256:13e36c25d3c0fc7be10ae7f25f3802bc5480f198aa966b090ea7eed8a62052d9 | arXiv:2602.02690v1 HTML — §7 Future Work [facet=limitations]; https://arxiv.org/html/2602.02690v1; papers/2026/02/_sources/daily-20260205/exact-v1-bodies/2602.02690v1.html; sha256:13e36c25d3c0fc7be10ae7f25f3802bc5480f198aa966b090ea7eed8a62052d9 | External link observed in exact-v1 body: https://github.com/anthropics/claude-code; author-artifact relationship and exact commit/tag are Not Disclosed, so this link is not used as claim evidence | claim:SF-2026-ARXIV-2602-02690 | complete |
+App Server→Ch84、Anthropic zero-days→Ch72、DALI→Ch54、02987→Ch56、MatGPTQ→Ch49、TSS→Ch27、FaithRL/RCGRPO→Ch33、FASA→Ch45、ReMiT→Ch28、CSO→Ch34、TAME→Ch77、MASProVe→Ch82、Self-Verification→Ch80、ATA→Ch75、Semantic Routing→Ch23、World Model/POMDP与LIVE→Ch25十八项已实际整合并获root非作者写后复核通过。GPT-5.3-Codex、TokenSparse、POP、FailurePrediction、A-RAG、Risky、LPS-Bench、Memora、PnP、EB-JEPA、TRT及MAF十二项具体已有覆盖通过；POP只窄修last-input/first-new-token表述。False First一项标准完成、仅报告；ForesightKV与Distillation Resistance两项中心定义争议隔离，不授机制/性能通过。发现与贡献筛选冻结33个家族：3个机构、3个首批arXiv及30份新完整v1题摘中的27项，另外3项贡献前关闭，均已root准入校准。33项均已有安全处置，候选审阅与Books无普通待办；root已实际通读最终六部分并通过独立日级语义Gate，本日完成；机器校验不替代这一验收。四组来源限制及VTok日期未定保留精确终态，不授正面覆盖或无遗漏保证。无性能复现、stage、commit或push。
 
-### Source Reviews
+## 2. 来源覆盖
 
-<!-- review:SF-2026-ARXIV-2602-02579:start -->
-### ProphetKV: User-Query-Driven Selective Recomputation for Efficient KV Cache Reuse in Retrieval-Augmented Generation
+| 来源 | 检查范围与依据 | 结果 | 缺口 |
+| --- | --- | --- | --- |
+| SRC-OPENAI | Research 原入口及官方 RSS 1243 条元数据；仅取 Feb3～6 边界定位。本窗 App Server Feb4 13:00 GMT、GPT-5.3-Codex release/card Feb5 00:00 GMT；Sora Feb3 00:00 GMT 窗前，Frontier Feb5 06:00 GMT 窗后。三个本窗原页必要核心已读，RSS 是发布方声明时刻，不证明初版逐句措辞。 | 已检查 | 当前网页可更新，不授 immutable 初版文本保证。 |
+| SRC-ANTHROPIC | Research 首查 current10；原页面嵌入 publishedOn 的 Jan/Feb 记录定点恢复：zero-days Feb5 00:00Z，前邻 Jan29 AI assistance，后邻 Feb16 Country Briefs。zero-days L17–99 已读；Feb6 作者列表编辑单独保留。 | 已检查 | 当前目录不证明历史删改不存在；原页面 setup 不完整披露所有运行配置。 |
+| SRC-GOOGLE-AI | Google pubs全年目录仅定位；Blog February2026相关标题，Feb4 Sequential Attention核心及两关联论文exact-v1题摘/历史已核，分别首次Sep2022/Feb2024，本窗是旧机制说明，LLM pruning为future路线，不准入。DeepMind真正/blog/page/3/与page/4/各24，前者May→Feb、后者Feb→Nov；定点官方NanoBanana2 Feb26、Gemini3.1Pro Feb19、Lyria3 Feb18、DeepThink Feb12均窗后。四主题有界官方域查询未扩年度队列。 | 已检查 | 当前有限历史切片不保证历史删改不存在；page=4未改变返回，使用实际路径分页。 |
+| SRC-META-AI | 原 Research 动态0正文；官方域 Feb4 有界主题补检没有可采用原始正文；不将空响应当零发布。 | 受阻 | 可接受替代是本窗官方研究列表/带时间的原始发布；恢复只重开本窗，不全站考古。 |
+| SRC-QWEN | GitHub Blog 原入口跳至旧 Qwen3Guard；当前 qwen.ai/blog 动态，从本日JS module44467实际恢复 /api/v2/article/retrieval，type=qwen_ai/language=en-US GET200。40项日期元数据已实际读完，边界前项CoderNext Feb3 04:00+08、后一项Image2 Feb10 13:08+08，没有本窗可见项。 | 已检查 | 当前40项有限停止，不证明历史删改不存在；未读取metadata中的私有git入口。 |
+| SRC-DEEPSEEK | 官方 /news 原生 Research10实际日期：Jun24 V4、Feb25 DualPath、Jan28 OCR2、Jan12 Engram、Dec31 mHC；本窗无可见项。 | 已检查 | 当前原始有限列表，不宣称历史不存在其他发布或删改。 |
+| SRC-MOONSHOT | Kimi Platform Blog 完整本页26条：Nov7/6 2025最新→May29 2024末；GitHub org updated10仅身份定位，created/updated不作论文公开时间。 | 受阻 | Platform旧列表缺2026覆盖；当前10仓库不证明全部历史发布，无可采用本窗材料。 |
+| SRC-TENCENT-HUNYUAN | Research首查动态0正文，浏览器尝试因 subagent IAB visibility 不支持失败；原JS恢复正确 api.hunyuan.tencent.com/api/blog/publicList，page1/pageSize20/renderType0实际9/total9，publicAt最早CL-bench Feb3 18:02:07 BJT、后一项Feb13。 | 已检查 | 当前9项的有限停止，不证明历史删改不存在；wrong-origin404不是当前API不可用。 |
+| SRC-ZAI | 官方 Research 当前175行按日期定位：Feb21 GLM5 report→Feb11 release→Feb2 GLM-OCR→Jan19/13；本窗没有可见项。 | 已检查 | 当前有限目录，不授全历史召回或版本不变保证。 |
+| SRC-BYTEDANCE-SEED | Research/Blog curated Jan27→Apr11；papers动态分页原JS恢复 get_article_list_v2 article_type1/count20/publish_year2026/order_desc=false：20/total82、has_more、next20。日期由Jan20升序至Feb24，实际停在Feb5的BABE范围外标题，后段日期均窗后；本窗边界VTok单独核完整v1题摘与日期。 | 已检查 | VTok目录日期仅Feb4 date-level，不证明正文落窗；详见§5。不因total82扩大逐项队列。 |
+| SRC-BAIDU-ERNIE | 官方中文Blog第一页：Feb6→Jan29→Jan15→Jan8→Nov21；本窗夹在Feb6/Jan29之间，分页2只较旧范围，不追旧内容。 | 已检查 | 当前列表的有限停止，历史删改未知。 |
+| SRC-XIAOMI-MIMO | Paper8日期Jun29/March13→Feb3 HySparse→Jan8 Flash→2025；Blog15相关标题多无日期。实际JS index-c5195ace与4752.2908c99e恢复具名Flash发布wrapper/iframe Dec16,2025、关联Safety原页Dec22,2025，均窗前；不扩JS库存或安全case链接。 | 受阻 | 其余无日期Blog的历史公开切片无法确认；需要本窗带原始公开时间的官方Blog列表或具名正文，只重开相应项，不能用Paper零项冒充Blog零发布。 |
+| SRC-MINIMAX | EN Blog Jan27→Feb12/14；CN原生目录6条Jan28→Feb12；Agent techblog.md当前May13新团队正文880字符。只定位本窗，不将三入口不一致视为三次发布。 | 已检查 | 当前有限列表及较晚文档不能证明历史缺失页无发布。 |
+| SRC-ARXIV | 四主线主题的官方API各start0/max100/Submitted检索区间202602021900～202602031859均429，替代API仍失败。官方Feb月目录仅有界题名查漏：CL skip100/200、AI75/175、CV75/350各25；DC25，相关题名去重后仅具名题摘。30 exact-v1题摘实际读完，三首批system题摘另已读；逐ID DataCite恢复日期，不把宽分类库存作为候选。 | 受阻 | 来源入口的召回限制保留；具名贡献校准与候选必要core/owner处置已收束，Legal撤回负侧已root独立核。catchup失败不造日批次。 |
 
-- **Review route:** `deep`；Primary=`arXiv:2602.02579v1`；owner=`INFER-KV-CACHE`。
+原始记录集中在 [daily-20260205 sources](../_sources/daily-20260205/)。本轮 fresh 仅 feb05_ 前缀；保留了真实失败返回和恢复路径，未扫 Weekly 来源。
 
-- **问题与旧路径：** `ProphetKV: User-Query-Driven Selective Recomputation for Efficient KV Cache Reuse in Retrieval-Augmented Generation` 是否在 `INFER-KV-CACHE` 中改变已有状态、数据或控制责任；旧路径仍成立于：完整、逐 token 保存 KV，换取语义透明和最低重算风险。
+## 3. 候选与判断
 
-- **约束变化与机制：** exact-v1 的 `arXiv:2602.02579v1 HTML — §3.1 Illustrating the Failure of Existing Methods` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 KV 的 identity、压缩、复用、放置与失效状态。触发约束是：长上下文、多会话和异构层级使 KV 容量、带宽及身份成为主瓶颈。
+本表为发现与准入收束后的33个唯一候选家族，各项必要审阅及Books处置已落实到安全终态；两项争议隔离不算正面证据通过。arXiv范围为有说明的保守推定：分别核 exact-v1 Submitted、相容 February ID/Available、v1 Updated及 findable DataCite created/registered上界，结合官方 received/accepted announcement排程；不是精确发布日志，注册不等于发布。上界含精度端点以多一秒形成保守半开区间。
 
-- **State / data / control owner：** `INFER-KV-CACHE` 只拥有该机制对应的系统责任；模型语义、运行时执行与平台策略仍由各自 canonical owner 持有，不因本论文合并。
+| 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
+| --- | --- | --- | --- | --- |
+| [Unlocking the Codex harness](https://openai.com/index/unlocking-the-codex-harness/) | 2026-02-04T21:00:00+08:00 | 短调用合理边界→typed Thread/Turn/Item与双向暂停/恢复接口→client presentation不能替代runtime/business effect authority；2+2+2=6 | 深入完成 | 整合：AGENT-PLATFORM，[Ch84](../../../../books/part-07-agent/84-agent-platform.md)两段 |
+| [GPT-5.3-Codex release/card](https://openai.com/index/gpt-5-3-codex-system-card/) | 2026-02-05T08:00:00+08:00 | High预防性分类≠充分能力证据；topical→reasoner与message/actor enforcement不同边界、内部异步monitor不能预防副作用；2+2+2=6，必要安全约束深审 | 深入完成 | 已有覆盖：PLATFORM-SECURITY，[Ch72](../../../../books/part-06-ai-infrastructure/72-security.md)542–569；发布与局部评价留报告 |
+| [Evaluating and mitigating growing risk of LLM-discovered 0-days](https://www.anthropic.com/research/zero-days) | 2026-02-05T08:00:00+08:00 | line/branch覆盖→LZW clear-token特定序列反证→覆盖率不代替状态序列正确性，crash与humanvalidatedseverity/patch分账；2+2+2=6 | 深入完成 | 整合：PLATFORM-SECURITY，[Ch72](../../../../books/part-06-ai-infrastructure/72-security.md)735一段 |
+| [MatGPTQ exact-v1](https://arxiv.org/abs/2602.03537v1) | 2026-02-04T09:00:00+08:00 ～ 2026-02-04T11:26:35+08:00 | 多checkpoint/QAT成本→单parent多precision PTQ、cross-bit补偿与预算感知perlayer search→bit-slice质量需联合校准；2+2+2=6 | 深入完成 | 整合：INFER-TENSORRT-LLM，[Ch49](../../../../books/part-05-inference-system/49-tensorrt-llm.md)987一段 |
+| [Large-Scale LLM Inference with Heterogeneous Workloads v1](https://arxiv.org/html/2602.02987v1) | 2026-02-04T09:00:00+08:00 ～ 2026-02-04T11:13:46+08:00 | prefill影响decode服务率→phase收入与完成收入诱导不同拥塞→fluid均值最优不授tail SLO保证；2+2+2=6 | 深入完成 | 整合：INFER-SCHEDULING，[Ch56](../../../../books/part-05-inference-system/56-inference-scheduling.md)189一段 |
+| [DALI v1](https://arxiv.org/html/2602.03495v1) | 2026-02-04T09:00:00+08:00 ～ 2026-02-04T11:25:37+08:00 | 静态CPU/GPU expert放置→运行时minmax负载分配、只预取GPU highworkload与workload cache→规划/预测开销需端到端计价；2+2+2=6 | 深入完成 | 整合：INFER-GPU-MEMORY，[Ch54](../../../../books/part-05-inference-system/54-gpu-memory.md)364一段 |
+| [ReMiT v1](https://arxiv.org/html/2602.03075v1) | 2026-02-04T01:00:00+00:00 ～ 2026-02-04T03:15:50.000+00:00 | RL reference与当前learner的token logprob差→有界软重加权mid-training→阶段反馈不等于全分布模仿；2+2+2=6 | 深入完成 | 整合：TRAIN-PRETRAINING，[Ch28](../../../../books/part-04-training-system/28-pretraining.md)167一段 |
+| [TRT v1](https://arxiv.org/html/2602.03094v1) | 2026-02-04T01:00:00+00:00 ～ 2026-02-04T03:16:17.000+00:00 | 失败rollout对照自选成功trace→contrast reflection memory→选择失效与测试/搜索预算需分账；2+1+2=5 | 深入完成 | 已有覆盖：AGENT-REFLECTION [具体正文](../../../../books/part-07-agent/80-reflection.md) |
+| [TSS v1](https://arxiv.org/html/2602.03103v1) | 2026-02-04T01:00:00+00:00 ～ 2026-02-04T03:16:29.000+00:00 | likelihood质量proxy→可混淆替代instruction的contrast specificity+质量项→筛选效用不能由容易负例冒充；2+2+2=6 | 深入完成 | 整合：TRAIN-DATA [具体正文](../../../../books/part-04-training-system/27-data.md) |
+| [FASA v1](https://arxiv.org/html/2602.03152v1) | 2026-02-04T01:00:00+00:00 ～ 2026-02-04T03:17:38.000+00:00 | full-head scan成本→CA校准RoPE frequency子空间先选再全维读取→selector近似与KV residency分账；2+1+2=5 | 深入完成 | 整合：INFER-KV-CACHE [具体正文](../../../../books/part-05-inference-system/45-why-kv-cache-speeds-up.md) |
+| [ForesightKV v1](https://arxiv.org/html/2602.03203v1) | 2026-02-04T01:00:00+00:00 ～ 2026-02-04T03:18:50.000+00:00 | 经验淘汰→future attention监督+post-eviction reward→未来依赖估计与在线状态漂移分账；2+2+2=6 | 争议 | 暂缓：中心 ordering/reward 定义冲突，见§4/5 |
+| [Token Sparse Attention v1](https://arxiv.org/html/2602.03216v1) | 2026-02-04T01:00:00+00:00 ～ 2026-02-04T03:19:08.000+00:00 | 早层永久token淘汰→per-head QKV gather/输出scatter+residual保留→本层跳算不等于删除未来候选；2+2+2=6 | 标准完成 | 已有覆盖：INFER-PREFILL，[Ch43](../../../../books/part-05-inference-system/43-prefill.md)108–132 |
+| [ATACompressor v1](https://arxiv.org/html/2602.03226v1) | 2026-02-04T01:00:00+00:00 ～ 2026-02-04T03:19:22.000+00:00 | 固定压缩预算→query-aware encoder+相关跨度监督AAC→压缩token数与任务证据耦合；2+2+2=6 | 深入完成 | 整合：AGENT-CONTEXT，[Ch75](../../../../books/part-07-agent/75-context.md)257一段 |
+| [POP v1](https://arxiv.org/html/2602.03295v1) | 2026-02-04T01:00:00+00:00 ～ 2026-02-04T03:20:59.000+00:00 | 所有层prefill full attention→deep prefill省算而保KV projection/full decode→first-token计算与后续读取分账；2+2+2=6 | 深入完成 | 已有覆盖：INFER-PREFILL，[Ch43](../../../../books/part-05-inference-system/43-prefill.md)65–77；69行窄事实修正 |
+| [Failure Prediction v1](https://arxiv.org/html/2602.03338v1) | 2026-02-04T01:00:00+00:00 ～ 2026-02-04T03:21:59.000+00:00 | 高AUROC→failure critic引导策略仍可能变差→预测质量不证明行动干预收益；2+2+2=6 | 深入完成 | 已有覆盖：AGENT-REFLECTION，[Ch80](../../../../books/part-07-agent/80-reflection.md)333–343 |
+| [Distillation Resistance v1](https://arxiv.org/html/2602.03396v1) | 2026-02-04T01:00:00+00:00 ～ 2026-02-04T03:23:19.000+00:00 | 公开teacher输出→conditional-MI约束logit变换→任务效用与防蒸馏保证的条件分离；2+2+2=6 | 争议 | 暂缓：CE 对变换 M 的依赖未明确，见§4/5 |
+| [CSO v1](https://arxiv.org/html/2602.03412v1) | 2026-02-04T01:00:00+00:00 ～ 2026-02-04T03:23:41.000+00:00 | 只奖励最终正确→expert step替换后续outcome flip识别关键step→反事实偏好与终局收益分工；2+2+2=6 | 深入完成 | 整合：TRAIN-DPO [具体正文](../../../../books/part-04-training-system/34-dpo.md) |
+| [A-RAG v1](https://arxiv.org/html/2602.03442v1) | 2026-02-04T01:00:00+00:00 ～ 2026-02-04T03:24:22.000+00:00 | 固定retrieve→keyword/sentence/full-chunk三级工具→搜索分辨率与完整上下文读取成本分工；2+1+2=5 | 标准完成 | 已有覆盖：AGENT-RAG [具体正文](../../../../books/part-07-agent/76-rag.md) |
+| [Self-Verification v1](https://arxiv.org/html/2602.03485v1) | 2026-02-04T01:00:00+00:00 ～ 2026-02-04T03:25:24.000+00:00 | 验证确认多于纠错→历史no-change classifier抑制部分test-time verification→少确认不保证更正确或总成本更低；2+2+2=6 | 深入完成 | 整合：AGENT-REFLECTION，[Ch80](../../../../books/part-07-agent/80-reflection.md)201一段 |
+| [FaithRL v1](https://arxiv.org/html/2602.03507v1) | 2026-02-04T01:00:00+00:00 ～ 2026-02-04T03:25:54.000+00:00 | outcome advantage广播→依据正负方向调制step evidence-support权重→外部证据归属不等于内部faithfulness；2+2+2=6 | 深入完成 | 整合：TRAIN-GRPO [具体正文](../../../../books/part-04-training-system/33-grpo.md) |
+| [False First v1](https://arxiv.org/html/2602.02991v1) | 2026-02-04T01:00:00+00:00 ～ 2026-02-04T03:13:52.000+00:00 | 首位数字偏离指令→后续序列/第二轮均值局部修正→可读hidden signal不证明预先规划或Bayesian因果机制；2+1+2=5 | 标准完成 | 仅报告：受限数字任务/in-sample读出，不采用一般planning或Bayesian因果机制 |
+| [RCGRPO v1](https://arxiv.org/html/2602.03025v1) | 2026-02-04T01:00:00+00:00 ～ 2026-02-04T03:14:40.000+00:00 | 全同reward组无relative advantage→quality-token conditioned policy与混合rollout→探索条件不等于任务成功或逐组非零保证；2+2+2=6 | 深入完成 | 整合：TRAIN-GRPO [具体正文](../../../../books/part-04-training-system/33-grpo.md) |
+| [MASProVe v1](https://arxiv.org/html/2602.03053v1) | 2026-02-04T01:00:00+00:00 ～ 2026-02-04T03:15:19.000+00:00 | 多agent多轮推理→agent/iteration verifier配置交叉→judge/RM/PRM噪声与策略收益须隔离；2+2+2=6 | 深入完成 | 整合：AGENT-MULTI-AGENT [具体正文](../../../../books/part-07-agent/82-multi-agent.md) |
+| [Risky v1](https://arxiv.org/html/2602.03100v1) | 2026-02-04T01:00:00+00:00 ～ 2026-02-04T03:16:25.000+00:00 | 仅user prompt防护→多环境surface注入下reasoning局部反转→thinking不普遍降低攻击成功；2+2+2=6 | 深入完成 | 已有覆盖：PLATFORM-SECURITY [具体正文](../../../../books/part-06-ai-infrastructure/72-security.md) |
+| [MAF v1](https://arxiv.org/html/2602.03128v1) | 2026-02-04T01:00:00+00:00 ～ 2026-02-04T03:17:05.000+00:00 | 把流程框架当推理增益→schema/planning反侧→格式失败与任务reasoning失败分离；2+2+2=6 | 深入完成 | 已有覆盖：PLATFORM-EVALUATION-SYSTEM [具体正文](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md) |
+| [World Model/POMDP v1](https://arxiv.org/html/2602.03146v1) | 2026-02-04T01:00:00+00:00 ～ 2026-02-04T03:17:30.000+00:00 | 有限goal-conditioned policy query→在communicating CMDP/POMDP条件恢复transition→query可识别不证明现实policy已内部建模；2+1+2=5 | 深入完成 | 整合：MULTIMODAL-WORLD-MODELS，[Ch25](../../../../books/part-03-multimodal-world-models/25-multimodal-world-models.md)68一段 |
+| [TAME v1](https://arxiv.org/html/2602.03224v1) | 2026-02-04T01:00:00+00:00 ～ 2026-02-04T03:19:19.000+00:00 | 只按task utility演化memory→executor/evaluator双bank分别约束任务与trust→效用增益不能认证可信性；2+2+2=6 | 深入完成 | 整合：AGENT-MEMORY [具体正文](../../../../books/part-07-agent/77-memory.md) |
+| [LPS-Bench v1](https://arxiv.org/html/2602.03255v1) | 2026-02-04T01:00:00+00:00 ～ 2026-02-04T03:20:03.000+00:00 | 显式安全拒绝→benign ambiguity需clarify而非guess→执行边界与拒绝指标分离；2+1+2=5 | 深入完成 | 已有覆盖：AGENT-TOOL-CALLING [具体正文](../../../../books/part-07-agent/78-tool-calling.md) |
+| [Memora v1](https://arxiv.org/html/2602.03315v1) | 2026-02-04T01:00:00+00:00 ～ 2026-02-04T03:21:27.000+00:00 | 平面retrieval→abstract index/concrete cue/cross-aspect linking→压缩线索与证据回读分工；2+2+2=6 | 标准完成 | 已有覆盖：AGENT-MEMORY [具体正文](../../../../books/part-07-agent/77-memory.md) |
+| [Semantic Routing v1](https://arxiv.org/html/2602.03510v1) | 2026-02-04T01:00:00+00:00 ～ 2026-02-04T03:25:58.000+00:00 | 固定text feature→多LLM层按DiT depth/time融合→time-dependent gate不普遍更优且trajectory可能失配；2+2+2=6 | 深入完成 | 整合：MULTIMODAL-REPRESENTATION，[Ch23](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md)282一段 |
+| [PnP v1](https://arxiv.org/html/2602.03533v1) | 2026-02-04T01:00:00+00:00 ～ 2026-02-04T03:26:29.000+00:00 | AR理解与diffusion生成→pretrained prior bridge→目标/表示兼容不由模型组合保证；2+1+2=5 | 标准完成 | 已有覆盖：MULTIMODAL-REPRESENTATION [具体正文](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md) |
+| [EB-JEPA v1](https://arxiv.org/html/2602.03604v1) | 2026-02-04T01:00:00+00:00 ～ 2026-02-04T03:28:09.000+00:00 | 双encoder目标→有限计算下ablation/collapse反侧→表示学习条件不等于通用能力；2+1+2=5 | 标准完成 | 已有覆盖：MULTIMODAL-WORLD-MODELS [具体正文](../../../../books/part-03-multimodal-world-models/25-multimodal-world-models.md) |
+| [LIVE v1](https://arxiv.org/html/2602.03747v1) | 2026-02-04T01:00:00+00:00 ～ 2026-02-04T03:31:29.000+00:00 | 末端视频误差→forward rollout/reverse initial-cycle+curriculum→cycle一致不证明真实动力学；2+2+2=6 | 深入完成 | 整合：MULTIMODAL-WORLD-MODELS，[Ch25](../../../../books/part-03-multimodal-world-models/25-multimodal-world-models.md)967一段 |
 
-- **实现与 artifact：** Not Disclosed — arXiv:2602.02579v1 does not disclose a public repository, release, commit, or executable artifact used by this review
+以上27项是逐ID核题摘与日期后的家族，不是月目录库存；每项区间由自身metadata推定，原Submitted/Updated/Available/created/registered在[feb05_dates_native.json](../_sources/daily-20260205/feb05_dates_native.json)。Privasis03183、KTV03615、UnifiedEval03238完整题摘由root实际读后校准贡献前关闭：分别只是synthetic私有属性规模/sanitize组合、聚类importance局部组合无新设计条件、position框架无新控制或反证；不以无benchmark或模型小一律排除。
 
-- **Evaluation contract：** 公开验证定位在 `arXiv:2602.02579v1 HTML — §5.2 Accuracy Evaluation`；已有证据只支持论文披露的模型、数据、硬件、精度与任务组合，未披露字段保持 `Not Disclosed`，不外推为跨 workload 或 production SLO 结论。
+## 4. 证据与知识整合
 
-- **Trade-off、failure mode 与共存边界：** 限制或反证定位在 `arXiv:2602.02579v1 HTML — §3.1 Illustrating the Failure of Existing Methods`。新增 failure surface 包括机制状态陈旧、额外控制开销及分布变化；共存边界是：小 batch、短上下文或严格 exactness 场景仍宜保留完整 KV。
+### [Unlocking the Codex harness](https://openai.com/index/unlocking-the-codex-harness/)
 
-<!-- claim:SF-2026-ARXIV-2602-02579:start -->
-- **Claim boundary:** 只支持 arXiv:2602.02579v1 实际披露的机制与实验。方法定位为 arXiv:2602.02579v1 HTML — §3.1 Illustrating the Failure of Existing Methods；验证定位为 arXiv:2602.02579v1 HTML — §5.2 Accuracy Evaluation；边界定位为 arXiv:2602.02579v1 HTML — §3.1 Illustrating the Failure of Existing Methods。不外推生产 SLO、多租户、跨硬件或长期可靠性。
-<!-- claim:SF-2026-ARXIV-2602-02579:end -->
-<!-- review:SF-2026-ARXIV-2602-02579:end -->
+采用当前官方 §Origin / Inside harness / Conversation primitives / Integrating clients / Choosing protocol 及 footnotes。MCP callable/one-off接口在短任务仍合理；复杂客户端需要typed事件及stable lifecycle，server request可暂停Turn等approval。Thread持久化回读与client断线状态投影并不授权重提原任务，也不保证外部exactly-once。JSON-RPC lite省略2.0 header、hosted stdio可网络tunnel；TUI refactor原文是计划。没有核代码或复现实验，backward-compatible目标也不证明任意版本配对无故障。
 
-<!-- review:SF-2026-ARXIV-2602-02599:start -->
-### RAP: KV-Cache Compression via RoPE-Aligned Pruning
+[Ch84](../../../../books/part-07-agent/84-agent-platform.md) runtime四类authority后、tracker前新增两段（目前90/92行），末尾source注同步root实际写后通过；root顺读74–107与末注确认presentation、runtime和business-effect边界及Ch83交接。
 
-- **Review route:** `deep`；Primary=`arXiv:2602.02599v1`；owner=`INFER-KV-CACHE`。
+### [Evaluating and mitigating growing risk of LLM-discovered 0-days](https://www.anthropic.com/research/zero-days)
 
-- **问题与旧路径：** `RAP: KV-Cache Compression via RoPE-Aligned Pruning` 是否在 `INFER-KV-CACHE` 中改变已有状态、数据或控制责任；旧路径仍成立于：完整、逐 token 保存 KV，换取语义透明和最低重算风险。
+当前原页L17–99已实际读。VM+standard tools是作者披露setup，不等于所有模型/运行参数均公开。GhostScript同类调用漏检查、OpenSC多前置条件、CGIF按uncompressed输入大小预留compressed编码缓冲的假设遭LZW clear-token序列打破，分别是三例；CGIF L57–87支持line/branch coverage不能穷尽sequence，不能升级为Agent普遍优于fuzzer。L29–31明确crash经critique/de-dup/prioritize后仍由人类安全研究者验证与手写patch；500是作者累计声明而不是对照benchmark。L89–91 activation probes与实时enforcement/合法误拦分责。Feb6编辑注明作者列表，不将之后版本措辞当初版逐句证明。
 
-- **约束变化与机制：** exact-v1 的 `arXiv:2602.02599v1 HTML — §4 RAP: RoPE-Aligned Pruning` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 KV 的 identity、压缩、复用、放置与失效状态。触发约束是：长上下文、多会话和异构层级使 KV 容量、带宽及身份成为主瓶颈。
+root已实际核L17–99并通过受限反证准入。[Ch72](../../../../books/part-06-ai-infrastructure/72-security.md)现735新增sequence coverage反证一段、末注3998，前后733–739与源注已root实际POST通过；原trace/predicate、跨输入变换invariant及静态tool边界保留，sensor/enforcement已有具体覆盖，不重复写。
 
-- **State / data / control owner：** `INFER-KV-CACHE` 只拥有该机制对应的系统责任；模型语义、运行时执行与平台策略仍由各自 canonical owner 持有，不因本论文合并。
+### [GPT-5.3-Codex release/card](https://openai.com/index/gpt-5-3-codex-system-card/)
 
-- **实现与 artifact：** External link observed in exact-v1 body: https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct; author-artifact relationship and exact commit/tag are Not Disclosed, so this link is not used as claim evidence
+Release/Card为一个家族内两个事件。当前card必要§5.1/5.2.1已读：三canary任务不足以决定High；Range、CVE与harness secret/log leak路径不能拼作典型生产能力。1000turn/100K compaction和abort/resume是受测harness预算，非自主性保证。Topical classifier operatingpoint→SafetyReasoner→routing/actor累计处置要分别保存；专家标签集recall不能证明未知攻击阻断。Redteam较早checkpoint与policy变更不支持简单因果比较。内部longrange异步monitor原文明确不能预防harm；high-cyber与longrange条件不合并为任意High标签。Release研究团队用early模型debug/train/deploy不证明模型闭环自行训练；25%快无完整条件不作系统机制采用。最低0.90是synthetic cyber topical labels的召回，非unsafe召回或防攻击率。root实际核原L335–376/365–423/425–446/456–463/467–478与Ch72 542–569，具体已有sensor→reasoner、message/account、trust非豁免及false-positive/online迁移验收覆盖；不借5.4案例反推5.3初版精确措辞。
 
-- **Evaluation contract：** 公开验证定位在 `arXiv:2602.02599v1 HTML — §Appendix D Complete Experimental Results`；已有证据只支持论文披露的模型、数据、硬件、精度与任务组合，未披露字段保持 `Not Disclosed`，不外推为跨 workload 或 production SLO 结论。
+### [DALI v1](https://arxiv.org/html/2602.03495v1)
 
-- **Trade-off、failure mode 与共存边界：** 限制或反证定位在 `arXiv:2602.02599v1 HTML — §6.3 Ablation Study`。新增 failure surface 包括机制状态陈旧、额外控制开销及分布变化；共存边界是：小 batch、短上下文或严格 exactness 场景仍宜保留完整 KV。
+§3–6/A1–3实际必要审阅：目标minmax(CPU,GPU)，calibrated residual vector预测下层highworkload专家，workload sliding-window更新cache。作者16CPUcores/32threads、EPYC7532、RTX3090 24GB/PCIe4x16、三MoE模型，C4速度/Wiki1K校准；prefill64与decode64+64、不同baseline以comparable而非完全相同GPU存储路径约束。随机预取反降速、prefetch gate/stream成本与greedy/Opt求解成本必须计端到端；高hit rate不等于高throughput。Precision/部署SLO完整条件未披露，不采用普遍speedup。
 
-<!-- claim:SF-2026-ARXIV-2602-02599:start -->
-- **Claim boundary:** 只支持 arXiv:2602.02599v1 实际披露的机制与实验。方法定位为 arXiv:2602.02599v1 HTML — §4 RAP: RoPE-Aligned Pruning；验证定位为 arXiv:2602.02599v1 HTML — §Appendix D Complete Experimental Results；边界定位为 arXiv:2602.02599v1 HTML — §6.3 Ablation Study。不外推生产 SLO、多租户、跨硬件或长期可靠性。
-<!-- claim:SF-2026-ARXIV-2602-02599:end -->
-<!-- review:SF-2026-ARXIV-2602-02599:end -->
+Eq9 GPU memory约束未显式出现在Alg1，Alg2 GPU evict TopK与正文低score叙述冲突；只保留可支持的机制/评价边界，不宣称伪码正确性、近最优保证或跨GH200/server适用性。root必要原源/差异和Ch54实际357–372写后复核通过；新增364一段+905注，保CPU直接执行替代GPU补给及真实overlap条件。
 
-<!-- review:SF-2026-ARXIV-2602-02958:start -->
-### Quant VideoGen: Auto-Regressive Long Video Generation via 2-Bit KV-Cache Quantization
+### [Large-Scale LLM Inference with Heterogeneous Workloads v1](https://arxiv.org/html/2602.02987v1)
 
-- **Review route:** `deep`；Primary=`arXiv:2602.02958v1`；owner=`INFER-KV-CACHE`。
+§2.2–7实际必要审阅：one-prefill/fixed chunk、homogeneous GPUs、class representative P/D、Poisson arrivals、独立exponential service/patience、nonpreemptive FIFO是模型假设，不是任意实际serving。混合与solo iteration-rate不同；bundled收入只算decode完成，separate阶段收入可能鼓励上游拥塞。稳态LP目标与gate policy的渐近结论不提供tail SLO保证。作者四A100校准后事件驱动simulation n5–500、两个类、B16/C256及有限seed支持机制说明，不是production benchmark，消融同时改变多个耦合设计不能授单项因果。Ch56现189一段+1885注已按root授权实写，root实际182–198写后复核通过；不以摘要asymptotic optimal授生产最优。
 
-- **问题与旧路径：** `Quant VideoGen: Auto-Regressive Long Video Generation via 2-Bit KV-Cache Quantization` 是否在 `INFER-KV-CACHE` 中改变已有状态、数据或控制责任；旧路径仍成立于：完整、逐 token 保存 KV，换取语义透明和最低重算风险。
+### [MatGPTQ exact-v1](https://arxiv.org/abs/2602.03537v1)
 
-- **约束变化与机制：** exact-v1 的 `arXiv:2602.02958v1 HTML — §4 Methodology` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 KV 的 identity、压缩、复用、放置与失效状态。触发约束是：长上下文、多会话和异构层级使 KV 容量、带宽及身份成为主瓶颈。
+exact-v1 §3–6/C已实际审阅。单整数parent/scale/zero-point同时优化目标位宽投影；λ参与候选projection objective，而跨bit残差传播取均值，两者不混同。round/clamp整数规则不适用于任意float slice；预算搜索是静态per-layer选择，不授权per-token路由。未优化位宽、Qwen/Phi反侧和较大batch的kernel退步均需单独验收。RTX A6000/单token warmup与median测量不支持production吞吐；§5.7已integration与§6未来integration措辞并存，不授部署完成。Ch49 anchor节987一段及2599末注已root实际974–995写后通过，前后QAT/PTQ/ELMoE交接保留，未核实现或复現。
 
-- **State / data / control owner：** `INFER-KV-CACHE` 只拥有该机制对应的系统责任；模型语义、运行时执行与平台策略仍由各自 canonical owner 持有，不因本论文合并。
+### [ForesightKV v1](https://arxiv.org/html/2602.03203v1)
 
-- **实现与 artifact：** External link observed in exact-v1 body: https://github.com/guandeh17/Self-Forcing/blob/main/prompts/MovieGenVideoBench_extended.txt; author-artifact relationship and exact commit/tag are Not Disclosed, so this link is not used as claim evidence
+§3–5及B.2必要反侧已读，原证据见[feb05_attention_core](../_sources/daily-20260205/feb05_attention_core.json)和[公式/文字冲突](../_sources/daily-20260205/feb05_foresight_conflict.txt)。Eq6 ordering、原cache与eviction后likelihood差的正阈值、B.2最高score淘汰给出不相容的方向定义。root已实际核核心冲突；这阻止采用learned ranking/reward算法与机制归因，不证明所有作者实验无效。6分不降分，中心争议终态隔离，不进入Books；重开条件是勘误或与实测绑定的明确ordering/reward实现与配置。
 
-- **Evaluation contract：** 公开验证定位在 `arXiv:2602.02958v1 HTML — §5.2 Quality Evaluation`；已有证据只支持论文披露的模型、数据、硬件、精度与任务组合，未披露字段保持 `Not Disclosed`，不外推为跨 workload 或 production SLO 结论。
+### [Token Sparse Attention v1](https://arxiv.org/html/2602.03216v1)
 
-- **Trade-off、failure mode 与共存边界：** 限制或反证定位在 `arXiv:2602.02958v1 HTML — §5.4 Sensitivity Test`。新增 failure surface 包括机制状态陈旧、额外控制开销及分布变化；共存边界是：小 batch、短上下文或严格 exactness 场景仍宜保留完整 KV。
+§2方法与§3–5对照/限制实际读：per-layer/head QKV gather、zero scatter与residual保留未选hidden，未选token以后可重新参与；不是永久token/KV eviction，也不是dense数值等价。selection/gather/scatter成本与短序列fallback不能从矩阵规模省略。root实际核必要core，并对读Ch43 108–132的active mask、旁路保hidden、reconstruction与selectioncost，具体已有覆盖；曾拟新增两段因新owner证据撤销，无本项净新增，不抄TTFT/速度数字或生产收益。
 
-<!-- claim:SF-2026-ARXIV-2602-02958:start -->
-- **Claim boundary:** 只支持 arXiv:2602.02958v1 实际披露的机制与实验。方法定位为 arXiv:2602.02958v1 HTML — §4 Methodology；验证定位为 arXiv:2602.02958v1 HTML — §5.2 Quality Evaluation；边界定位为 arXiv:2602.02958v1 HTML — §5.4 Sensitivity Test。不外推生产 SLO、多租户、跨硬件或长期可靠性。
-<!-- claim:SF-2026-ARXIV-2602-02958:end -->
-<!-- review:SF-2026-ARXIV-2602-02958:end -->
+### [POP v1](https://arxiv.org/html/2602.03295v1)
 
-<!-- review:SF-2026-ARXIV-2602-03036:start -->
-### LatentMem: Customizing Latent Memory for Multi-Agent Systems
+§3–5的deep-prefill attention省算与完整KV projection/decode分工已读，root实际核§3.3及Ch43 65–77。这里x[N]是最后一个INPUT token作为首个DECODE step处理，预测首个新token x[N+1]，不是把x[N]叫生成token。已有正文69行仅修正这一短语，root写后已核；其余prefill省算与后续读取机制具体已有覆盖。不授权把首次完整图处理省掉、虚构KV删除，或由受限作者速度授生产SLO。
 
-- **Review route:** `deep`；Primary=`arXiv:2602.03036v1`；owner=`AGENT-MEMORY`。
+### [Failure Prediction v1](https://arxiv.org/html/2602.03338v1)
 
-- **问题与旧路径：** `LatentMem: Customizing Latent Memory for Multi-Agent Systems` 是否在 `AGENT-MEMORY` 中改变已有状态、数据或控制责任；旧路径仍成立于：把全部历史直接放回 context，短会话下最忠实也最少引入派生状态。
+必要§3critic/calibration/intervention、§4负侧、§5threshold/feedback/oracle与§6early-step已读，见[feb05_core_stage18_2](../_sources/daily-20260205/feb05_core_stage18_2.json)。预测AUROC高不证明critic引导policy更好：阈值改变被干预群体，feedback/oracle信息改变可恢复性，earlystep覆盖也须与实际行动分开。root必要反证和Ch80 333–343已实际核，现有净干预收益、paired pilot与不确定时关闭已承载采用命题，具体已有覆盖。未独立读取全部中间结果表，不采用数字或所有任务因果保证。
 
-- **约束变化与机制：** exact-v1 的 `arXiv:2602.03036v1 HTML — §4 Methodology` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 memory 的写入、版本、检索与失效控制权。触发约束是：长时交互、容量和权限约束迫使系统决定何时写、如何索引、何时遗忘。
+### [Distillation Resistance v1](https://arxiv.org/html/2602.03396v1)
 
-- **State / data / control owner：** `AGENT-MEMORY` 只拥有该机制对应的系统责任；模型语义、运行时执行与平台策略仍由各自 canonical owner 持有，不因本论文合并。
+exact-v1 §3–5、Eq9及AppC Alg1必要内容已读；原M变换生成zT′，但CE字面仍按原公式引用，未明确依赖M；CE-only warmup与ablation解释又要求任务项确实优化M。root实际核Alg1 6–9后确认中心定义未决。不能凭联合MI/utility叙述授防蒸馏与任务保持保证，也不宣称全部作者实测无效。6分中心争议安全隔离、不进入Books；只有精确变换CE实现/澄清及对应配置可定点重开。
 
-- **实现与 artifact：** External link observed in exact-v1 body: https://github.com/KANABOON1/LatentMem; author-artifact relationship and exact commit/tag are Not Disclosed, so this link is not used as claim evidence
+### [ReMiT v1](https://arxiv.org/html/2602.03075v1)
 
-- **Evaluation contract：** 公开验证定位在 `arXiv:2602.03036v1 HTML — §5.2 Main Results`；已有证据只支持论文披露的模型、数据、硬件、精度与任务组合，未披露字段保持 `Not Disclosed`，不外推为跨 workload 或 production SLO 结论。
+exact-v1 §3–5已读，原核心在[feb05_core_stage18_1](../_sources/daily-20260205/feb05_core_stage18_1.json)。RL reference与CURRENT learner pθ的observed-token logprob差经sequence centering/sigmoid/clipping变软权重，learner仍优化weighted NTP；不是对冻结base算静态权重、全词表KD或重新执行RL。必要[B.1/F.2原段](../_sources/daily-20260205/feb05_remit_weight_boundary.json)补读：B.1 Eq15–20把Zw/H(qw)视θ独立，与主文wθ含current pθ存在梯度条件未决；未披露detach，不授wt-onlygradient或KL方向保证。F.2是一个frozen RL reference额外forward而不是双teacher；confidence proxy不保证长期最优，两个同OLMo迭代不证明无限self-improvement。三backbone等50B midtrain只作受限对照。唯一owner TRAIN-PRETRAINING：Ch28现feedback target-selection后167行新增一段+末注1682。root实际核B.1/F.2与具体owner、150–174正文顺读/末注，POST通过；θ依赖理论边界局部隔离，不采用KL梯度等价。
 
-- **Trade-off、failure mode 与共存边界：** 限制或反证定位在 `arXiv:2602.03036v1 HTML — §5.6 Sensitivity & Ablation Study.`。新增 failure surface 包括机制状态陈旧、额外控制开销及分布变化；共存边界是：短会话或不可接受派生状态漂移时仍应回退原始 context。
+### [TSS v1](https://arxiv.org/html/2602.03103v1)
 
-<!-- claim:SF-2026-ARXIV-2602-03036:start -->
-- **Claim boundary:** 只支持 arXiv:2602.03036v1 实际披露的机制与实验。方法定位为 arXiv:2602.03036v1 HTML — §4 Methodology；验证定位为 arXiv:2602.03036v1 HTML — §5.2 Main Results；边界定位为 arXiv:2602.03036v1 HTML — §5.6 Sensitivity & Ablation Study.。不外推生产 SLO、多租户、跨硬件或长期可靠性。
-<!-- claim:SF-2026-ARXIV-2602-03036:end -->
-<!-- review:SF-2026-ARXIV-2602-03036:end -->
+exact-v1 §3–5已读，同一缓存obj2。保持input X和target Y固定，比较p(Y|I,X)与多个alternative instructions Ik下的概率；Ik最初只从X生成，TSS++按固定Y likelihood选hard alternatives再加quality项。不是生成错误answers，恢复提案中这一错误已经撤回。Alternative分布不是精确p(I|X)，CMI解释保近似性质；top比例按examples不自动匹配token/compute，Random/PPL在部分受测数据占优，不能授通用最佳selector。唯一owner TRAIN-DATA：Ch27 Quality filtering原quality/retention段后246行新增一段；末注1433行。root已实际核§3/§5及具体gap、238–258写后正文与衔接，POST通过；不采用counter-answer说法。
 
-<!-- review:SF-2026-ARXIV-2602-03184:start -->
-### DynSplit-KV: Dynamic Semantic Splitting for KVCache Compression in Efficient Long-Context LLM Inference
+### [FASA v1](https://arxiv.org/html/2602.03152v1)
 
-- **Review route:** `deep`；Primary=`arXiv:2602.03184v1`；owner=`INFER-KV-CACHE`。
+exact-v1 §4.1–4.2、B.4与D.1必要原文已读，见[频率selector原core](../_sources/daily-20260205/feb05_fasa_core_locator.txt)及[变换/边界](../_sources/daily-20260205/feb05_fasa_equivalence.txt)。CA校准RoPE frequency子空间先做近似选择，选中项仍以full-dimensional表示读取；这节省selection work，不把未读KV自动从residency删除。位置变换的代数关系不认证selector recall或任意位置精度。受测decode/kernel、额外校准、短序列/分布漂移回退分别计价，不外推所有KV预算/生产tail SLO。唯一owner INFER-KV-CACHE：Ch45 access-plan段后188行新增一段，末注2050；root已实际核D.1/D.2及owner具体差额、183–195写后与末注，POST通过。
 
-- **问题与旧路径：** `DynSplit-KV: Dynamic Semantic Splitting for KVCache Compression in Efficient Long-Context LLM Inference` 是否在 `INFER-KV-CACHE` 中改变已有状态、数据或控制责任；旧路径仍成立于：完整、逐 token 保存 KV，换取语义透明和最低重算风险。
+### [ATACompressor v1](https://arxiv.org/html/2602.03226v1)
 
-- **约束变化与机制：** exact-v1 的 `arXiv:2602.03184v1 HTML — §B.2 Implementation details` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 KV 的 identity、压缩、复用、放置与失效状态。触发约束是：长上下文、多会话和异构层级使 KV 容量、带宽及身份成为主瓶颈。
+exact-v1 §3–5已读，见[feb05_six_a](../_sources/daily-20260205/feb05_six_a.json)obj1。query-aware encoder从有gold relevance标签的chunks学选择重建，再QA finetune；probe由末input hidden估相关长度，ratio/max约束soft-slot数量，部署冻结encoder/reader并传KV。不能称无监督codec或任意reader兼容。两7B backbone、两A10040G，主评input<600、LongBench两任务<2048；shortinput过压反例及部分baseline更低memory/更高TP保留，不采用全文‘always better’。root已实际核AAC Eq4–5、§5.2短输入反侧与现Ch75具体gap；唯一AGENT-CONTEXT在break-even后257行一段+727末注已实写，root已实际对读方法/短输入反侧、257行正文与compression/break-even邻接及末注，POST通过。
 
-- **State / data / control owner：** `INFER-KV-CACHE` 只拥有该机制对应的系统责任；模型语义、运行时执行与平台策略仍由各自 canonical owner 持有，不因本论文合并。
+### [TRT v1](https://arxiv.org/html/2602.03094v1)
 
-- **实现与 artifact：** Not Disclosed — arXiv:2602.03184v1 does not disclose a public repository, release, commit, or executable artifact used by this review
+exact-v1 §3–5及A.6已读，见[feb05_six_b](../_sources/daily-20260205/feb05_six_b.json)obj2与[必要附录](../_sources/daily-20260205/feb05_necessary_appendices.json)obj3。失败与自选较好trace萃取task-scoped knowledge再rollout，生成tests并执行提供反馈，不能称完全无验证环境。相同trace/rollout数量不匹配额外反思calls、tokens或test execution；selected accuracy、cumulative oracle与pass@k不合并。正确→错误和history dilution保留，不授100%或单调改进。现Ch80 stop/no-change、ECR−EIR与critic allocation及Ch77经验派生/验证关系可承载受限反证，root已实际核§3选择/knowledge、§4.1预算/累计oracle、§5.2/§6损害及reflection成本与Ch80 185–228，具体已有覆盖通过，不新增Books。
 
-- **Evaluation contract：** 公开验证定位在 `arXiv:2602.03184v1 HTML — §5.4 Ablation Results`；已有证据只支持论文披露的模型、数据、硬件、精度与任务组合，未披露字段保持 `Not Disclosed`，不外推为跨 workload 或 production SLO 结论。
+### [CSO v1](https://arxiv.org/html/2602.03412v1)
 
-- **Trade-off、failure mode 与共存边界：** 限制或反证定位在 `arXiv:2602.03184v1 HTML — §6 Conclusion`。新增 failure surface 包括机制状态陈旧、额外控制开销及分布变化；共存边界是：小 batch、短上下文或严格 exactness 场景仍宜保留完整 KV。
+exact-v1 §3–5实际读，见[feb05_core_stage19](../_sources/daily-20260205/feb05_core_stage19.json)obj2。PRM提候选failure state，替换一个expert action，恢复current policy后续执行，经outcome evaluator筛选再冻结step-DPO pair；不是终局成功自动证明某动作在全部状态普遍因果必要。no-PRM/verification反侧和不同pairs数量不提供等总预算归因；gold-based LLM judge、web/network及expert分支成本限制外部效度。唯一TRAIN-DPO：Ch34 sameprefix logprob后148行新增一段+末注471。root已实际核§3.2.2–4/§3.3、§5.1反侧与owner具体gap、143–153写后及末注，POST通过。
 
-<!-- claim:SF-2026-ARXIV-2602-03184:start -->
-- **Claim boundary:** 只支持 arXiv:2602.03184v1 实际披露的机制与实验。方法定位为 arXiv:2602.03184v1 HTML — §B.2 Implementation details；验证定位为 arXiv:2602.03184v1 HTML — §5.4 Ablation Results；边界定位为 arXiv:2602.03184v1 HTML — §6 Conclusion。不外推生产 SLO、多租户、跨硬件或长期可靠性。
-<!-- claim:SF-2026-ARXIV-2602-03184:end -->
-<!-- review:SF-2026-ARXIV-2602-03184:end -->
+### [A-RAG v1](https://arxiv.org/html/2602.03442v1)
 
-<!-- review:SF-2026-ARXIV-2602-03295:start -->
-### POP: Prefill-Only Pruning for Efficient Large Model Inference
+exact-v1 §3–5.3已读，同six_b缓存obj3。runtime keyword与sentence embedding先返回snippets/parentchunk IDs，再按需完整chunk及adjacent read；readset仅防重复正文返回，通知/call/model仍付费，原‘zero tokens’不等总零费用。NoChunkRead把完整正文直接送入Context，不是纯工具开关隔离；有限backbone/embedding例外及首300 scaling不授匹配总预算。现Ch76 67–77明确document/query/answer分工、navigation→预算展开/去重、完整上下文成本与chunk fallback，root已实际核必要原文与Ch76 65–80，受限已有覆盖通过，不新增Books。
 
-- **Review route:** `deep`；Primary=`arXiv:2602.03295v1`；owner=`INFER-PREFILL`。
+### [Self-Verification v1](https://arxiv.org/html/2602.03485v1)
 
-- **问题与旧路径：** `POP: Prefill-Only Pruning for Efficient Large Model Inference` 是否在 `INFER-PREFILL` 中改变已有状态、数据或控制责任；旧路径仍成立于：Prefill 对完整 prompt 做 dense forward，语义与实现最直接。
+exact-v1 §3–5已读，见stage18_2 obj2。这是test-time控制，不是训练confirmation/repair两个policy。历史标签经classifier/BM25 vote预测no-change verification，再closureprompt+cooldown抑制部分确认；确认比例高不证明这些步骤都无用，历史分类准确不认证答案正确。统一屏蔽verification有质量反退，部分model/task平均也混合；主轨迹tokens减少不等端到端latency/calls更低。Ch80 stop/nochange/ECR−EIR和critique allocation已有明确论点，原existing提案经root Ch80 183–230实际比较纠正为具体gap：Runtime持久化后/ECR前201行一段已实写+末注414，historical non-change sensor与correctness分账；root已实际补核§5.1–5.4直接反侧、Ch80 183–220写后及末注，POST通过。
 
-- **约束变化与机制：** exact-v1 的 `arXiv:2602.03295v1 HTML — §3 Method; §3.3 Prefill-Only Pruning for Efficient Inference` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 prompt token、attention work、prefill plan 与 KV materialization。触发约束是：长输入和异构硬件使 token 选择、并行与带宽成为 TTFT 主约束。
+### [FaithRL v1](https://arxiv.org/html/2602.03507v1)
 
-- **State / data / control owner：** `INFER-PREFILL` 只拥有该机制对应的系统责任；模型语义、运行时执行与平台策略仍由各自 canonical owner 持有，不因本论文合并。
+exact-v1 §3–5、A.6/G.1/G.3/K必要内容已读，stage19 obj3及necessary_appendices obj4。Eq10在正advantage偏重supported steps，在负advantage偏重unsupported steps，α给其余项floor；外部70B句级evidence attribution不认证hidden faithfulness或全部logical validity。gold decomposition构造E，Bo32全失败不是不可答证明；数学OOD用GT解题steps仅offline核验，不作为部署oracle。THS面积增加不保证每轴Pareto，y0=0需另处理；A.6 trajectory-level mask推导不直接认证Eq10 tokenwise GRPO一致性。唯一owner TRAIN-GRPO：Ch33 process/credit段后195行新增一段，末注2591。root已实际核§3、Eq10、结果反侧/cost及187–202写后与末注，POST通过；理论保证/通用安全及全面Pareto不采用。
 
-- **实现与 artifact：** Not Disclosed — arXiv:2602.03295v1 does not disclose an author implementation repository or exact commit used by this review
+### [False First v1](https://arxiv.org/html/2602.02991v1)
 
-- **Evaluation contract：** 公开验证定位在 `arXiv:2602.03295v1 HTML — §4 Experiments; §4.2 Accuracy; §4.3 Inference Speedup; §4.4 Ablation`；已有证据只支持论文披露的模型、数据、硬件、精度与任务组合，未披露字段保持 `Not Disclosed`，不外推为跨 workload 或 production SLO 结论。
+exact-v1 Sx2–5完整必要核心已读，见[feb05_false_first_core](../_sources/daily-20260205/feb05_false_first_core.json)。受测首位数字偏离指令、后续序列和第二轮均值部分修正；LASSO隐藏态读出在全部69轨迹拟合，未披露heldout或因果干预，R²不证明原模型预先计划了未来。Gaussian均值修正非每项均优，未认证完整分布，Bayesian prior只是解释假设；greedy数字任务不能推广自由文本。5分标准完成→仅报告局部观测，不以可读signal补造内部规划/因果机制；root已实际核Experiment1/DataAnalysis全69序列LASSO、GeneralDiscussion与限制，处置通过，不新增Books。
 
-- **Trade-off、failure mode 与共存边界：** 限制或反证定位在 `arXiv:2602.03295v1 HTML — §7 Limitations; Appendix C Robustness to Representation Mismatch`。新增 failure surface 包括机制状态陈旧、额外控制开销及分布变化；共存边界是：输入较短或 exact dense attention 必须保留时完整 Prefill 仍合理。
+### [RCGRPO v1](https://arxiv.org/html/2602.03025v1)
 
-<!-- claim:SF-2026-ARXIV-2602-03295:start -->
-- **Claim boundary:** 只支持 arXiv:2602.03295v1 实际披露的机制与实验。方法定位为 arXiv:2602.03295v1 HTML — §3 Method; §3.3 Prefill-Only Pruning for Efficient Inference；验证定位为 arXiv:2602.03295v1 HTML — §4 Experiments; §4.2 Accuracy; §4.3 Inference Speedup; §4.4 Ablation；边界定位为 arXiv:2602.03295v1 HTML — §7 Limitations; Appendix C Robustness to Representation Mismatch。不外推生产 SLO、多租户、跨硬件或长期可靠性。
-<!-- claim:SF-2026-ARXIV-2602-03295:end -->
-<!-- review:SF-2026-ARXIV-2602-03295:end -->
+exact-v1 §3–4实际读，stage18_2 obj3。expert successes/policy failures的逐turn quality token用于SFT conditioning；混合condition改变rollout探索，actual outcome/tool-action reward仍独立决定组advantage。质量token不是成功真值，所有同reward group仍可发生；方差结论只在0<p<1、条件均值不同、G>1等假设下，不保证逐组非零。有限BFCLv4/两模型与conditioning+mixed sampling消融不授所有tool任务最优，Eq7 trajectory ratio也不默认tokenwise vanilla GRPO。唯一TRAIN-GRPO：Ch33 prompt replay后394行新增一段+末注2595。root已实际核§3.1–3.3、§4.3/Q4反侧与具体owner、387–401实际写后及末注，POST通过。
 
-<!-- review:SF-2026-ARXIV-2602-03560:start -->
-### HySparse: A Hybrid Sparse Attention Architecture with Oracle Token Selection and KV Cache Sharing
+### [MASProVe v1](https://arxiv.org/html/2602.03053v1)
 
-- **Review route:** `deep`；Primary=`arXiv:2602.03560v1`；owner=`MODEL-LONG-CONTEXT`。
+exact-v1 §2–4实际读，见[feb05_core_stage20](../_sources/daily-20260205/feb05_core_stage20.json)obj1。六MAS/固定GPT5mini、三branch候选中，agentcall或iteration判分及judge看step/rawhistory/summary会改变控制机会、信息与成本，未有统一最佳粒度或更多context普胜。N=3搜索与baseline成本不等；posthoc BestConfiguration、CoT0/30或MAS0/3不证明部署默认或问题无解，RM/PRM目标域失配保留。现Ch82 verifier independence尚未明确粒度/view交叉责任，唯一AGENT-MULTI-AGENT：Ch82 verifier条件后118行一段+末注1241。root已实际核§4.2–4.4/具体owner、111–123正文与末注，POST通过；原6分保持。
 
-- **问题与旧路径：** `HySparse: A Hybrid Sparse Attention Architecture with Oracle Token Selection and KV Cache Sharing` 是否在 `MODEL-LONG-CONTEXT` 中改变已有状态、数据或控制责任；旧路径仍成立于：全量 attention 保留任意 token 交互，在中短序列上最直接。
+### [Risky v1](https://arxiv.org/html/2602.03100v1)
 
-- **约束变化与机制：** exact-v1 的 `arXiv:2602.03560v1 HTML — §2.2 Hybrid Attention Architecture` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 上下文选择、层次化表示和可访问记忆的语义边界。触发约束是：序列增长令计算、显存和信息稀释同时恶化。
+exact-v1 §2–3及D.1实际读，six_b obj1与necessary_appendices obj2。三access层、五surface中agentinstruction允许改system/governing prompt，不能与不可信toolfeedback相同威胁模型比较；750三域/七agent、人工校正judge是受测条件。thinking两family方向不统一且未隔离全部模型/配置因果，不授‘推理更不安全’定律。现Ch72 580–601分开retrieval/tool/memory影响、authority registry、step guard和executor实际effect，拟已有覆盖仅采用这份受限分层反证，root已实际核五surface/三access、750/sevenagent配置与Ch72 580–603，具体已有覆盖通过。
 
-- **State / data / control owner：** `MODEL-LONG-CONTEXT` 只拥有该机制对应的系统责任；模型语义、运行时执行与平台策略仍由各自 canonical owner 持有，不因本论文合并。
+### [MAF v1](https://arxiv.org/html/2602.03128v1)
 
-- **实现与 artifact：** Not Disclosed — arXiv:2602.03560v1 does not disclose a public repository, release, commit, or executable artifact used by this review
+exact-v1 §3、§4.1.1/4.1.3、必要表9–11及memory configuration实际读，six_a obj3。NoPlan/schema-plan/freeform改变接口，formatfailure与reasoning错误应分开；Table10 gptoss20B freeform MATH13%与正文‘all0’冲突不合并。memory provider routing、framework语义、calls/output预算不同，100xheadline不采用。现Ch66 51–58 contract≠quality及187–201 adapter会改变schema/serialization/retry/stop、须验semantic equivalence已具体承载这份设计反证，root已实际核§3.2三planning接口/格式错误、§4.1与Ch66 51–59/187–201，具体已有覆盖通过；headline all0与Table10 13%冲突局部隔离，不授全部topology rewrite等价。
 
-- **Evaluation contract：** 公开验证定位在 `arXiv:2602.03560v1 HTML — §Evaluation Benchmark`；已有证据只支持论文披露的模型、数据、硬件、精度与任务组合，未披露字段保持 `Not Disclosed`，不外推为跨 workload 或 production SLO 结论。
+### [World Model/POMDP v1](https://arxiv.org/html/2602.03146v1)
 
-- **Trade-off、failure mode 与共存边界：** 限制或反证定位在 `arXiv:2602.03560v1 HTML — §6 Conclusion`。新增 failure surface 包括机制状态陈旧、额外控制开销及分布变化；共存边界是：任务确实依赖密集全局交互且长度可控时全量 attention 仍是基线。
+exact-v1 §2定义/§3/§4.1–4.3必要证明已读，见[feb05_core_stage22](../_sources/daily-20260205/feb05_core_stage22.json)obj1。有限stationary communicating CMDP、足够全的构造goal及initial-state policy query、无timepenalty允许无限等待是recover transition结论前提；POMDP需goal能指向hidden state，obs-only goal不据此识别隐藏世界。δ范围、query oracle和统计误差不说明现实单任务policy已内部学得可校准worldmodel。root已实际核§2/§4 stochastic/POMDP/width-two必要命题与channel/support现正文具体gap；唯一MULTIMODAL-WORLD-MODELS在68行一段+1513注已实写。Width-two仅deterministic，不合并stochastic/partial；正文进一步准确限定：只有observation、缺少真实状态表达与该goal-query接口的情形不继承结论，不能排除原POMDP hidden-state theorem。root已实际核68行正文/邻接及末注、该排除边界改后POST通过；不采用开放智能必要性宣传。
 
-<!-- claim:SF-2026-ARXIV-2602-03560:start -->
-- **Claim boundary:** 只支持 arXiv:2602.03560v1 实际披露的机制与实验。方法定位为 arXiv:2602.03560v1 HTML — §2.2 Hybrid Attention Architecture；验证定位为 arXiv:2602.03560v1 HTML — §Evaluation Benchmark；边界定位为 arXiv:2602.03560v1 HTML — §6 Conclusion。不外推生产 SLO、多租户、跨硬件或长期可靠性。
-<!-- claim:SF-2026-ARXIV-2602-03560:end -->
-<!-- review:SF-2026-ARXIV-2602-03560:end -->
+### [TAME v1](https://arxiv.org/html/2602.03224v1)
 
-<!-- review:SF-2026-ARXIV-2602-02499:start -->
-### ROSA-Tuning: Enhancing Long-Context Modeling via Suffix Matching
+exact-v1 §3–5/A.2必要机制/反侧已读，stage20 obj2与[tame限制](../_sources/daily-20260205/feb05_tame_necessary_prompts.json)。只按任务效用演化memory可能固化坏策略；executor/evaluator两个bank按task与规范分工，但不把另bank或model judge变成authority。没有原方法的‘时衰trust’步骤，该旧提案表述已纠正；Eq3毒性趋1不是通用证明，task/trust各有退步，role/复杂度与judge共同偏差未消除。A.4 HTML仅prompt图标题，未声称已核图中文字/实现；不采规范保证。Ch77 taskutilityproxy≠truth、write gate已有，唯一AGENT-MEMORY：Ch77效用proxy→MemoryRead前164行一段+末注2018，明确evaluator两类bank→utilitydraft→normrefine→executor及双方更新。root已实际核§4.3–4.5/Eqs9–13、§5.3/5.5与160–169实际写后/末注，POST通过。
 
-- **Review route:** `deep`；Primary=`arXiv:2602.02499v1`；owner=`MODEL-LONG-CONTEXT`。
+### [LPS-Bench v1](https://arxiv.org/html/2602.03255v1)
 
-- **问题与旧路径：** `ROSA-Tuning: Enhancing Long-Context Modeling via Suffix Matching` 是否在 `MODEL-LONG-CONTEXT` 中改变已有状态、数据或控制责任；旧路径仍成立于：全量 attention 保留任意 token 交互，在中短序列上最直接。
+exact-v1 §3–4/A.3–4/C必要内容实际读，six_a obj2及necessary_appendices obj1。mocktoolkit、case-specific criterion与HITL只验证该instrument；wholetrace判safe/unsafe/execution_failed分开，没到风险状态不证明安全。benign ambiguity需pre-effect澄清而不是猜，malicious目标另行拒绝；τ1/p.9/k50/100step使探索路径不同，不授防护有效性因果。现Ch78 proposal→executor与高风险字段typeddefault/clarify已承载采用命题，Ch66未发生effect不记完成保评价限制，root已实际核mocktoolkit/wholetrace/benignclarify-vsrefusal及Ch78 24–65，唯一AGENT-TOOL-CALLING具体已有覆盖通过。
 
-- **约束变化与机制：** exact-v1 的 `arXiv:2602.02499v1 HTML — §4 Implementation` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 上下文选择、层次化表示和可访问记忆的语义边界。触发约束是：序列增长令计算、显存和信息稀释同时恶化。
+### [Memora v1](https://arxiv.org/html/2602.03315v1)
 
-- **State / data / control owner：** `MODEL-LONG-CONTEXT` 只拥有该机制对应的系统责任；模型语义、运行时执行与平台策略仍由各自 canonical owner 持有，不因本论文合并。
+exact-v1 §3–6实际读，stage20 obj3。canonical abstraction与非独占cue links组织episodes，LLM match/merge/delete不是事实identity证明；bounded refine/expand/stop仍受source provenance与working budget。group reward仅mean-centering，不是scale-invariance；cue ablation的F1/BLEU不全胜，learned controller增加calls/检索成本，有限seed/单reader不授通用迁移。现Ch77 229–248 anchor→bounded expansion→evidence assembly与362–368 raw/fact/profile、可回指projection已承载具体命题，root已实际核§3.4–3.6/§4.1–4.2及现Ch77上述正文，具体已有覆盖通过，不新增Books。
 
-- **实现与 artifact：** External link observed in exact-v1 body: https://github.com/zyaaa-ux/ROSA-Tuning; author-artifact relationship and exact commit/tag are Not Disclosed, so this link is not used as claim evidence
+### [Semantic Routing v1](https://arxiv.org/html/2602.03510v1)
 
-- **Evaluation contract：** 公开验证定位在 `arXiv:2602.02499v1 HTML — §5.2 General Capability Evaluation`；已有证据只支持论文披露的模型、数据、硬件、精度与任务组合，未披露字段保持 `Not Disclosed`，不外推为跨 workload 或 production SLO 结论。
+exact-v1 §3–5实际读，见[feb05_core_stage21](../_sources/daily-20260205/feb05_core_stage21.json)obj1。多LLM层先normalization再convex fusion，gate可依DiTdepth/time或二者；同prompt的条件信息不是每block/时刻必相同。time-only受测退步、depth-only更稳，layerweight可读不证明因果语义分工。SNR诊断用最终generated latent自参考，heuristic t-shift不识别唯一失配原因；singlebackbone、固定solver、judge/caption及cost条件保留。root已实际核§3.3–3.4/Eq2–10、Table1与§5.2/5.3；具体owner校准为MULTIMODAL-REPRESENTATION，现Ch23 Cross-attention fusion后282行一段+1040末注已实写，layer-LN/convex与DiTdepth-condition身份是该接口增量，不写Ch24生成objective。root已实际对读必要方法/反证与282行正文、fusion邻接及末注，POST通过；表中误把CFG跨参数化作为主增量已纠正。
 
-- **Trade-off、failure mode 与共存边界：** 限制或反证定位在 `arXiv:2602.02499v1 HTML — §D.2 Ablation on ROSA Symbol Width`。新增 failure surface 包括机制状态陈旧、额外控制开销及分布变化；共存边界是：任务确实依赖密集全局交互且长度可控时全量 attention 仍是基线。
+### [PnP v1](https://arxiv.org/html/2602.03533v1)
 
-<!-- claim:SF-2026-ARXIV-2602-02499:start -->
-- **Claim boundary:** 只支持 arXiv:2602.02499v1 实际披露的机制与实验。方法定位为 arXiv:2602.02499v1 HTML — §4 Implementation；验证定位为 arXiv:2602.02499v1 HTML — §5.2 General Capability Evaluation；边界定位为 arXiv:2602.02499v1 HTML — §D.2 Ablation on ROSA Symbol Width。不外推生产 SLO、多租户、跨硬件或长期可靠性。
-<!-- claim:SF-2026-ARXIV-2602-02499:end -->
-<!-- review:SF-2026-ARXIV-2602-02499:end -->
+exact-v1 §3–4实际读，stage21 obj2。冻结VLM/VAE但DiT仍训练；理解/generation query connectors桥接3Dprior，latent缺color/texture需2Dviews补充，不是任意预训练组件即插即用。64/1024query是局部recipe，CLIP/Qalign/GPTcaption不认证3D拓扑真值；1024→4096 qualitative不证明任意resolution。现Ch23 53–66 encoder/projector瓶颈、可读/可访问/可表达分账及280querycapacity承载有限兼容边界，root已实际核§3.1–3.4及Ch23 53–67/280接口瓶颈，具体已有覆盖通过，不为demo组合强改。
 
-<!-- review:SF-2026-ARXIV-2602-02515:start -->
-### CreditAudit: 2$^\text{nd}$ Dimension for LLM Evaluation and Selection
+### [EB-JEPA v1](https://arxiv.org/html/2602.03604v1)
 
-- **Review route:** `deep`；Primary=`arXiv:2602.02515v1`；owner=`PLATFORM-EVALUATION-SYSTEM`。
+exact-v1 §3–6实际读，stage21 obj3。latent energy为prediction error，SIGReg/VICReg等防collapse；action-IDM约束只在动作可恢复/数据支持内成立。TwoRoom/MovingMNIST/CIFAR局部MPPI累计cost与terminal cost反侧、强regularization导致collapse不授真实world识别或普遍单调cost。root已实际核§3/Eq1–8、§4IDM/§5collapse反侧与Ch25 251–255 inverse-action anti-collapse具体条件，已有覆盖通过；不声称全部planner参数已核，也不将随编辑变化的旧307–315称作当前horizon段。不因小模型/库名而排除。
 
-- **问题与旧路径：** `CreditAudit: 2$^\text{nd}$ Dimension for LLM Evaluation and Selection` 是否在 `PLATFORM-EVALUATION-SYSTEM` 中改变已有状态、数据或控制责任；旧路径仍成立于：单一离线分数便于比较版本。
+### [LIVE v1](https://arxiv.org/html/2602.03747v1)
 
-- **约束变化与机制：** exact-v1 的 `arXiv:2602.02515v1 HTML — §4.1. CreditAudit Design` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 evaluation contract、覆盖分母、evidence lineage 与 release gate。触发约束是：agent、长时程和多模态系统把失败分散到状态、工具与环境交互链。
+exact-v1 §3–5/7.1实际读，stage22 obj2。stop-gradient自产生forward rollout，再以逆序conditions/re-noise监督原prompt重建，渐进horizon；parallel forward可见knownfuture条件是离线训练接口，不冒充online完全等价。re-noise防近邻清帧捷径不认证物理inverse或有界真实误差；不同额外训练预算、realestate/Minecraft反侧与随length退化保留，不授无限时长/实时SLO。原已有覆盖提案经root必要Eq9–14与现owner比较纠正：该机制是GTprompt→stopgrad rollout→reverse/noise→recover GT训练监督，不能由真实action-inverse invariant认证。唯一MULTIMODAL-WORLD-MODELS在inverse verifier前967行一段+1515末注已实写；作者再actual核Table1/2长horizon仍退化及§7.1 extra posttrain预算不等。root已实际对读必要方法/长horizon及预算反侧、967行正文与inverse verifier邻接及末注，POST通过；不授formal误差界或live未来信息。
 
-- **State / data / control owner：** `PLATFORM-EVALUATION-SYSTEM` 只拥有该机制对应的系统责任；模型语义、运行时执行与平台策略仍由各自 canonical owner 持有，不因本论文合并。
+## 5. 缺口与下一步
 
-- **实现与 artifact：** External link observed in exact-v1 body: https://github.com/LLwork8888/CreditAudit; author-artifact relationship and exact commit/tag are Not Disclosed, so this link is not used as claim evidence
+本窗普通可执行待办：0。候选审阅、Books处置、必要实际写后及最终独立日级复核均已完成；root已实际核最终六部分一致性、14来源范围/有限停止、日期与具名负侧。以下外部限制与中心争议作为本窗终态保留，不授正面证据或无遗漏保证。
 
-- **Evaluation contract：** 公开验证定位在 `arXiv:2602.02515v1 HTML — §3.1. What LLM Evaluation Estimates: Partial Observability and Prompt-Induced Reliability`；已有证据只支持论文披露的模型、数据、硬件、精度与任务组合，未披露字段保持 `Not Disclosed`，不外推为跨 workload 或 production SLO 结论。
+本窗中心争议终态保留：ForesightKV03203与Distillation Resistance03396不采用中心机制/性能，不进入Books；具体冲突与各自唯一精确重开条件见§4对应条目，已获root必要原文校准，不把争议隔离记为正面Evidence通过。
 
-- **Trade-off、failure mode 与共存边界：** 限制或反证定位在 `arXiv:2602.02515v1 HTML — §Limitations and future work.`。新增 failure surface 包括机制状态陈旧、额外控制开销及分布变化；共存边界是：窄任务且 failure surface 稳定时单指标仍可作为局部信号。
+本窗来源外部终态保留：SRC-META-AI缺可恢复的本窗官方正文/日期，SRC-MOONSHOT的Platform本页仅2025/2024且org更新不代表2026研究发布，SRC-XIAOMI-MIMO其余具名无日期Blog缺历史公开切片，SRC-ARXIV四主题API与catchup失败限制召回；各自实际入口/停止及替代请求已在§2逐源记明。需要本窗官方列表或对应具名带时间正文（arXiv可接受官方实际公开主题批次/API恢复）；仅定点重开受影响源/时段，不扩仓库/全年目录。这些项不用于正面Evidence、Books或无遗漏保证。
 
-<!-- claim:SF-2026-ARXIV-2602-02515:start -->
-- **Claim boundary:** 只支持 arXiv:2602.02515v1 实际披露的机制与实验。方法定位为 arXiv:2602.02515v1 HTML — §4.1. CreditAudit Design；验证定位为 arXiv:2602.02515v1 HTML — §3.1. What LLM Evaluation Estimates: Partial Observability and Prompt-Induced Reliability；边界定位为 arXiv:2602.02515v1 HTML — §Limitations and future work.。不外推生产 SLO、多租户、跨硬件或长期可靠性。
-<!-- claim:SF-2026-ARXIV-2602-02515:end -->
-<!-- review:SF-2026-ARXIV-2602-02515:end -->
+本窗日期保留：Seed [VTok2602.04202v1](https://arxiv.org/abs/2602.04202v1)目录PublishDate1770134400000仅Feb4 date-level；v1SubmittedFeb4T04:39:46Z、v1UpdatedFeb5T01:26:12Z、DataCitecreated/registeredFeb5T02:53:25/26Z表明arXiv事件窗后。完整题摘的keyframe空间+单residual temporal token是具体潜在，但Seed是否更早公开正文、具体时刻未定，不评分、不进入Books、不授覆盖保证。可接受替代是Seed实际首公开正文的带时区时刻或完全落窗区间；只定点恢复1376，不扩Seed82条库存。
 
-<!-- review:SF-2026-ARXIV-2602-02574:start -->
-### WritePolicyBench: Benchmarking Memory Write Policies under Byte Budgets
+窗外恢复线索（不属于本窗，不阻塞本日）：[vLLM-Omni2602.02204v1](https://arxiv.org/abs/2602.02204v1)DataCiteregisteredFeb3T05:18:34Z公开上界在窗前，已读完整题摘仅留stagegraph/独立AR-diff engine身份，未假称旧日已审；[Salamah2603.04410v1](https://arxiv.org/abs/2603.04410v1)SubmittedFeb3而MarchID/AvailableMarch、v1Updated/registeredMar6，不用提交日当公开日。日期事件与具体归属待定点恢复，均不扩本窗。官方移除版本[Legal01474v1](https://arxiv.org/abs/2602.01474v1)原生withdraw/license removed不入选、不评分或Books；root已直接重开exact-v1官方abs核withdraw/rights administrative removal；负侧通过，仅原始排除，不入评分分母。
 
-- **Review route:** `deep`；Primary=`arXiv:2602.02574v1`；owner=`AGENT-MEMORY`。
+## 6. 复核
 
-- **问题与旧路径：** `WritePolicyBench: Benchmarking Memory Write Policies under Byte Budgets` 是否在 `AGENT-MEMORY` 中改变已有状态、数据或控制责任；旧路径仍成立于：把全部历史直接放回 context，短会话下最忠实也最少引入派生状态。
+复核者：root（报告非作者）
 
-- **约束变化与机制：** exact-v1 的 `arXiv:2602.02574v1 HTML — §Implementation note.` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 memory 的写入、版本、检索与失效控制权。触发约束是：长时交互、容量和权限约束迫使系统决定何时写、如何索引、何时遗忘。
+结论：通过
 
-- **State / data / control owner：** `AGENT-MEMORY` 只拥有该机制对应的系统责任；模型语义、运行时执行与平台策略仍由各自 canonical owner 持有，不因本论文合并。
+已实际通过范围：33家族完整题摘/官方core分批准入校准；18项整合的必要原源、具体owner差异、实际正文/前后衔接及末注POST（Ch84、72、54、56、49、27、33两处、45、28、34、77、82、80、75、23、25两处）。最后四项已核AAC Eq4–5/短输入反侧、Semantic Routing层融合/深度与time/SNR反侧、World Model/POMDP真实state-goal-query与width-two条件、LIVE Eq9–14/长horizon及额外预算；03146原排除表述过宽，已改为只有观测且缺真实state/goal-query接口的情形不继承，并获实际改后POST通过。
 
-- **实现与 artifact：** External link observed in exact-v1 body: https://github.com/edgardcham/WritePolicyBench; author-artifact relationship and exact commit/tag are Not Disclosed, so this link is not used as claim evidence
+12项具体已有覆盖已核：GPT5.3原card L335–478与Ch72 542–569；TokenSparse Ch43 108–132；POP原§3.3与Ch43 65–77、last-input/first-new-token窄修写后；FailurePrediction必要critic/干预反侧与Ch80 333–343；A-RAG hierarchical/read工具与Ch76 65–80；Risky surface/access配置与Ch72 580–603；LPS mock/wholetrace/clarify与Ch78 24–65；Memora §3.4–3.6/§4.1–4.2与Ch77 229–248/362–368；PnP §3.1–3.4与Ch23 53–67/280；EBJEPA §3/Eq1–8/§4IDM/§5反侧与Ch25 251–255；TRT选择/累计oracle/正确被丢及reflection成本与Ch80 185–228；MAF三planning接口/格式错误/§4.1与Ch66 51–59/187–201。行号为实际对读时位置，后续插入可能移动，不以旧行号替代具体正文。
 
-- **Evaluation contract：** 公开验证定位在 `arXiv:2602.02574v1 HTML — §Policy observability and evaluation tracks.`；已有证据只支持论文披露的模型、数据、硬件、精度与任务组合，未披露字段保持 `Not Disclosed`，不外推为跨 workload 或 production SLO 结论。
+FalseFirst全部69序列LASSO/GeneralDiscussion/限制的仅报告处置已核；Foresight Eq6/reward/B.2、Distill Eq9/Alg1 6–9中心争议隔离已核。普通负侧为Privasis03183、KTV03615、UnifiedEval03238三份完整题摘贡献前关闭；Legal01474 exact-v1原生withdraw/rights行政移除另外直接核，不入候选或评分。14来源行的主题边界、实际入口/停止与失败范围、逐ID日期原字段及公开区间推定/窗外/VTok保留身份已分批核，未把宽分类或年度目录变成队列；四组外部来源限制不授正面覆盖。未变化已通过范围复用；没有独立遍历全部全文/附录，也没有性能复现。root已实际通读最终六部分，结合全部33家族必要原源/owner/实际POST、14来源范围与日期、三项普通负侧及withdraw核验，最终独立日级语义Gate通过；无尚可执行的本窗待办，外部终态保留项不授正面Evidence或无遗漏保证。
 
-- **Trade-off、failure mode 与共存边界：** 限制或反证定位在 `arXiv:2602.02574v1 HTML — §9 Limitations`。新增 failure surface 包括机制状态陈旧、额外控制开销及分布变化；共存边界是：短会话或不可接受派生状态漂移时仍应回退原始 context。
-
-<!-- claim:SF-2026-ARXIV-2602-02574:start -->
-- **Claim boundary:** 只支持 arXiv:2602.02574v1 实际披露的机制与实验。方法定位为 arXiv:2602.02574v1 HTML — §Implementation note.；验证定位为 arXiv:2602.02574v1 HTML — §Policy observability and evaluation tracks.；边界定位为 arXiv:2602.02574v1 HTML — §9 Limitations。不外推生产 SLO、多租户、跨硬件或长期可靠性。
-<!-- claim:SF-2026-ARXIV-2602-02574:end -->
-<!-- review:SF-2026-ARXIV-2602-02574:end -->
-
-<!-- review:SF-2026-ARXIV-2602-02585:start -->
-### Agentic Observability: Automated Alert Triage for Adobe E-Commerce
-
-- **Review route:** `deep`；Primary=`arXiv:2602.02585v1`；owner=`PLATFORM-MONITORING`。
-
-- **问题与旧路径：** `Agentic Observability: Automated Alert Triage for Adobe E-Commerce` 是否在 `PLATFORM-MONITORING` 中改变已有状态、数据或控制责任；旧路径仍成立于：人工查看告警、日志与 runbook 在事件量较小时最透明。
-
-- **约束变化与机制：** exact-v1 的 `arXiv:2602.02585v1 PDF — §System Design` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 signal identity、evidence retrieval、diagnosis state、action proposal 与 human approval。触发约束是：事件规模、跨系统证据和响应时限增长后，triage 的读取、判断与动作必须可追踪。
-
-- **State / data / control owner：** `PLATFORM-MONITORING` 只拥有该机制对应的系统责任；模型语义、运行时执行与平台策略仍由各自 canonical owner 持有，不因本论文合并。
-
-- **实现与 artifact：** Not Disclosed — arXiv:2602.02585v1 does not disclose a public repository, release, commit, or executable artifact used by this review
-
-- **Evaluation contract：** 公开验证定位在 `arXiv:2602.02585v1 PDF — §Evaluation`；已有证据只支持论文披露的模型、数据、硬件、精度与任务组合，未披露字段保持 `Not Disclosed`，不外推为跨 workload 或 production SLO 结论。
-
-- **Trade-off、failure mode 与共存边界：** 限制或反证定位在 `arXiv:2602.02585v1 PDF — §Discussion and Future Work`。新增 failure surface 包括机制状态陈旧、额外控制开销及分布变化；共存边界是：低频高风险事件仍应保留人工主导路径，自动化只提供可审计建议。
-
-<!-- claim:SF-2026-ARXIV-2602-02585:start -->
-- **Claim boundary:** 只支持 arXiv:2602.02585v1 实际披露的机制与实验。方法定位为 arXiv:2602.02585v1 PDF — §System Design；验证定位为 arXiv:2602.02585v1 PDF — §Evaluation；边界定位为 arXiv:2602.02585v1 PDF — §Discussion and Future Work。不外推生产 SLO、多租户、跨硬件或长期可靠性。
-<!-- claim:SF-2026-ARXIV-2602-02585:end -->
-<!-- review:SF-2026-ARXIV-2602-02585:end -->
-
-<!-- review:SF-2026-ARXIV-2602-02987:start -->
-### Large-Scale LLM Inference with Heterogeneous Workloads: Prefill-Decode Contention and Asymptotically Optimal Control
-
-- **Review route:** `deep`；Primary=`arXiv:2602.02987v1`；owner=`INFER-SCHEDULING`。
-
-- **问题与旧路径：** `Large-Scale LLM Inference with Heterogeneous Workloads: Prefill-Decode Contention and Asymptotically Optimal Control` 是否在 `INFER-SCHEDULING` 中改变已有状态、数据或控制责任；旧路径仍成立于：FIFO 或静态批次在请求同质时易预测、易实现。
-
-- **约束变化与机制：** exact-v1 的 `arXiv:2602.02987v1 HTML — §5.1 SLI-Aware Gate-and-Route Control Policy` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 准入、批处理、优先级、路由和资源选择。触发约束是：长度、阶段、SLO、模型和 agent fan-out 的异质性使排队决策决定整体尾延迟。
-
-- **State / data / control owner：** `INFER-SCHEDULING` 只拥有该机制对应的系统责任；模型语义、运行时执行与平台策略仍由各自 canonical owner 持有，不因本论文合并。
-
-- **实现与 artifact：** Not Disclosed — arXiv:2602.02987v1 does not disclose a public repository, release, commit, or executable artifact used by this review
-
-- **Evaluation contract：** 公开验证定位在 `arXiv:2602.02987v1 HTML — §6.3 Policy Performance: Baselines and Ablations`；已有证据只支持论文披露的模型、数据、硬件、精度与任务组合，未披露字段保持 `Not Disclosed`，不外推为跨 workload 或 production SLO 结论。
-
-- **Trade-off、failure mode 与共存边界：** 限制或反证定位在 `arXiv:2602.02987v1 HTML — §6.3 Policy Performance: Baselines and Ablations`。新增 failure surface 包括机制状态陈旧、额外控制开销及分布变化；共存边界是：同质离线吞吐任务仍可使用简单静态策略。
-
-<!-- claim:SF-2026-ARXIV-2602-02987:start -->
-- **Claim boundary:** 只支持 arXiv:2602.02987v1 实际披露的机制与实验。方法定位为 arXiv:2602.02987v1 HTML — §5.1 SLI-Aware Gate-and-Route Control Policy；验证定位为 arXiv:2602.02987v1 HTML — §6.3 Policy Performance: Baselines and Ablations；边界定位为 arXiv:2602.02987v1 HTML — §6.3 Policy Performance: Baselines and Ablations。不外推生产 SLO、多租户、跨硬件或长期可靠性。
-<!-- claim:SF-2026-ARXIV-2602-02987:end -->
-<!-- review:SF-2026-ARXIV-2602-02987:end -->
-
-<!-- review:SF-2026-ARXIV-2602-03025:start -->
-### RC-GRPO: Reward-Conditioned Group Relative Policy Optimization for Multi-Turn Tool Calling Agents
-
-- **Review route:** `deep`；Primary=`arXiv:2602.03025v1`；owner=`TRAIN-GRPO`。
-
-- **问题与旧路径：** `RC-GRPO: Reward-Conditioned Group Relative Policy Optimization for Multi-Turn Tool Calling Agents` 是否在 `TRAIN-GRPO` 中改变已有状态、数据或控制责任；旧路径仍成立于：每条样本独立更新易实现，但难利用组内相对信号。
-
-- **约束变化与机制：** exact-v1 的 `arXiv:2602.03025v1 HTML — §3 Method` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 prompt、rollout、group advantage 与 on-policy freshness。触发约束是：稀疏可验证奖励和 rollout 成本要求更有效地复用同组比较。
-
-- **State / data / control owner：** `TRAIN-GRPO` 只拥有该机制对应的系统责任；模型语义、运行时执行与平台策略仍由各自 canonical owner 持有，不因本论文合并。
-
-- **实现与 artifact：** Not Disclosed — arXiv:2602.03025v1 does not disclose a public repository, release, commit, or executable artifact used by this review
-
-- **Evaluation contract：** 公开验证定位在 `arXiv:2602.03025v1 HTML — §4.2 Main Results`；已有证据只支持论文披露的模型、数据、硬件、精度与任务组合，未披露字段保持 `Not Disclosed`，不外推为跨 workload 或 production SLO 结论。
-
-- **Trade-off、failure mode 与共存边界：** exact-v1 未披露独立 limitations（`Not Disclosed — exact-v1 HTML has no independent limitations or counterevidence section; a positive conclusion does not replace that facet`）；这意味着审阅必须缩小主张，而不是把缺口当作反证。新增 failure surface 包括机制状态陈旧、额外控制开销及分布变化；共存边界是：高质量逐样本监督充足时 SFT/DPO 仍更简单。
-
-<!-- claim:SF-2026-ARXIV-2602-03025:start -->
-- **Claim boundary:** 只支持 arXiv:2602.03025v1 实际披露的机制与实验。方法定位为 arXiv:2602.03025v1 HTML — §3 Method；验证定位为 arXiv:2602.03025v1 HTML — §4.2 Main Results；独立 limitations 未披露，因而采用更窄主张。不外推生产 SLO、多租户、跨硬件或长期可靠性。
-<!-- claim:SF-2026-ARXIV-2602-03025:end -->
-<!-- review:SF-2026-ARXIV-2602-03025:end -->
-
-<!-- review:SF-2026-ARXIV-2602-03128:start -->
-### Understanding Multi-Agent LLM Frameworks: A Unified Benchmark and Experimental Analysis
-
-- **Review route:** `deep`；Primary=`arXiv:2602.03128v1`；owner=`PLATFORM-EVALUATION-SYSTEM`。
-
-- **问题与旧路径：** `Understanding Multi-Agent LLM Frameworks: A Unified Benchmark and Experimental Analysis` 是否在 `PLATFORM-EVALUATION-SYSTEM` 中改变已有状态、数据或控制责任；旧路径仍成立于：单一离线分数便于比较版本。
-
-- **约束变化与机制：** exact-v1 的 `arXiv:2602.03128v1 HTML — §3. MAFBench: A Unified Benchmark` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 evaluation contract、覆盖分母、evidence lineage 与 release gate。触发约束是：agent、长时程和多模态系统把失败分散到状态、工具与环境交互链。
-
-- **State / data / control owner：** `PLATFORM-EVALUATION-SYSTEM` 只拥有该机制对应的系统责任；模型语义、运行时执行与平台策略仍由各自 canonical owner 持有，不因本论文合并。
-
-- **实现与 artifact：** External link observed in exact-v1 body: https://github.com/CoDS-GCS/MAFBench; author-artifact relationship and exact commit/tag are Not Disclosed, so this link is not used as claim evidence
-
-- **Evaluation contract：** 公开验证定位在 `arXiv:2602.03128v1 HTML — §4. Evaluation`；已有证据只支持论文披露的模型、数据、硬件、精度与任务组合，未披露字段保持 `Not Disclosed`，不外推为跨 workload 或 production SLO 结论。
-
-- **Trade-off、failure mode 与共存边界：** 限制或反证定位在 `arXiv:2602.03128v1 HTML — §3.4. Tool Use Benchmarks and Limitations`。新增 failure surface 包括机制状态陈旧、额外控制开销及分布变化；共存边界是：窄任务且 failure surface 稳定时单指标仍可作为局部信号。
-
-<!-- claim:SF-2026-ARXIV-2602-03128:start -->
-- **Claim boundary:** 只支持 arXiv:2602.03128v1 实际披露的机制与实验。方法定位为 arXiv:2602.03128v1 HTML — §3. MAFBench: A Unified Benchmark；验证定位为 arXiv:2602.03128v1 HTML — §4. Evaluation；边界定位为 arXiv:2602.03128v1 HTML — §3.4. Tool Use Benchmarks and Limitations。不外推生产 SLO、多租户、跨硬件或长期可靠性。
-<!-- claim:SF-2026-ARXIV-2602-03128:end -->
-<!-- review:SF-2026-ARXIV-2602-03128:end -->
-
-<!-- review:SF-2026-ARXIV-2602-03203:start -->
-### ForesightKV: Optimizing KV Cache Eviction for Reasoning Models by Learning Long-Term Contribution
-
-- **Review route:** `deep`；Primary=`arXiv:2602.03203v1`；owner=`INFER-KV-CACHE`。
-
-- **问题与旧路径：** `ForesightKV: Optimizing KV Cache Eviction for Reasoning Models by Learning Long-Term Contribution` 是否在 `INFER-KV-CACHE` 中改变已有状态、数据或控制责任；旧路径仍成立于：完整、逐 token 保存 KV，换取语义透明和最低重算风险。
-
-- **约束变化与机制：** exact-v1 的 `arXiv:2602.03203v1 HTML — §Design of Model and Sampling Algorithm.` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 KV 的 identity、压缩、复用、放置与失效状态。触发约束是：长上下文、多会话和异构层级使 KV 容量、带宽及身份成为主瓶颈。
-
-- **State / data / control owner：** `INFER-KV-CACHE` 只拥有该机制对应的系统责任；模型语义、运行时执行与平台策略仍由各自 canonical owner 持有，不因本论文合并。
-
-- **实现与 artifact：** Not Disclosed — arXiv:2602.03203v1 does not disclose a public repository, release, commit, or executable artifact used by this review
-
-- **Evaluation contract：** 公开验证定位在 `arXiv:2602.03203v1 HTML — §4.2 Main Results`；已有证据只支持论文披露的模型、数据、硬件、精度与任务组合，未披露字段保持 `Not Disclosed`，不外推为跨 workload 或 production SLO 结论。
-
-- **Trade-off、failure mode 与共存边界：** exact-v1 未披露独立 limitations（`Not Disclosed — exact-v1 HTML has no independent limitations or counterevidence section; a positive conclusion does not replace that facet`）；这意味着审阅必须缩小主张，而不是把缺口当作反证。新增 failure surface 包括机制状态陈旧、额外控制开销及分布变化；共存边界是：小 batch、短上下文或严格 exactness 场景仍宜保留完整 KV。
-
-<!-- claim:SF-2026-ARXIV-2602-03203:start -->
-- **Claim boundary:** 只支持 arXiv:2602.03203v1 实际披露的机制与实验。方法定位为 arXiv:2602.03203v1 HTML — §Design of Model and Sampling Algorithm.；验证定位为 arXiv:2602.03203v1 HTML — §4.2 Main Results；独立 limitations 未披露，因而采用更窄主张。不外推生产 SLO、多租户、跨硬件或长期可靠性。
-<!-- claim:SF-2026-ARXIV-2602-03203:end -->
-<!-- review:SF-2026-ARXIV-2602-03203:end -->
-
-<!-- review:SF-2026-ARXIV-2602-03255:start -->
-### LPS-Bench: Benchmarking Safety Awareness of Computer-Use Agents in Long-Horizon Planning under Benign and Adversarial Scenarios
-
-- **Review route:** `deep`；Primary=`arXiv:2602.03255v1`；owner=`PLATFORM-EVALUATION-SYSTEM`。
-
-- **问题与旧路径：** `LPS-Bench: Benchmarking Safety Awareness of Computer-Use Agents in Long-Horizon Planning under Benign and Adversarial Scenarios` 是否在 `PLATFORM-EVALUATION-SYSTEM` 中改变已有状态、数据或控制责任；旧路径仍成立于：单一离线分数便于比较版本。
-
-- **约束变化与机制：** exact-v1 的 `arXiv:2602.03255v1 HTML — §3.3 Automated Evaluation Framework` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 evaluation contract、覆盖分母、evidence lineage 与 release gate。触发约束是：agent、长时程和多模态系统把失败分散到状态、工具与环境交互链。
-
-- **State / data / control owner：** `PLATFORM-EVALUATION-SYSTEM` 只拥有该机制对应的系统责任；模型语义、运行时执行与平台策略仍由各自 canonical owner 持有，不因本论文合并。
-
-- **实现与 artifact：** External link observed in exact-v1 body: https://github.com/tychenn/LPS-Bench; author-artifact relationship and exact commit/tag are Not Disclosed, so this link is not used as claim evidence
-
-- **Evaluation contract：** 公开验证定位在 `arXiv:2602.03255v1 HTML — §3.3 Automated Evaluation Framework`；已有证据只支持论文披露的模型、数据、硬件、精度与任务组合，未披露字段保持 `Not Disclosed`，不外推为跨 workload 或 production SLO 结论。
-
-- **Trade-off、failure mode 与共存边界：** 限制或反证定位在 `arXiv:2602.03255v1 HTML — §Limitations`。新增 failure surface 包括机制状态陈旧、额外控制开销及分布变化；共存边界是：窄任务且 failure surface 稳定时单指标仍可作为局部信号。
-
-<!-- claim:SF-2026-ARXIV-2602-03255:start -->
-- **Claim boundary:** 只支持 arXiv:2602.03255v1 实际披露的机制与实验。方法定位为 arXiv:2602.03255v1 HTML — §3.3 Automated Evaluation Framework；验证定位为 arXiv:2602.03255v1 HTML — §3.3 Automated Evaluation Framework；边界定位为 arXiv:2602.03255v1 HTML — §Limitations。不外推生产 SLO、多租户、跨硬件或长期可靠性。
-<!-- claim:SF-2026-ARXIV-2602-03255:end -->
-<!-- review:SF-2026-ARXIV-2602-03255:end -->
-
-<!-- review:SF-2026-ARXIV-2602-03338:start -->
-### Accurate Failure Prediction in Agents Does Not Imply Effective Failure Prevention
-
-- **Review route:** `deep`；Primary=`arXiv:2602.03338v1`；owner=`AGENT-REFLECTION`。
-
-- **问题与旧路径：** `Accurate Failure Prediction in Agents Does Not Imply Effective Failure Prevention` 是否在 `AGENT-REFLECTION` 中改变已有状态、数据或控制责任；旧路径仍成立于：一次生成后直接提交最短也最容易复现。
-
-- **约束变化与机制：** exact-v1 的 `arXiv:2602.03338v1 HTML — §Experimental design.` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 critique evidence、revision lineage 与 termination control。触发约束是：长链任务与环境反馈使系统需要保存 critique、revision 与停止条件。
-
-- **State / data / control owner：** `AGENT-REFLECTION` 只拥有该机制对应的系统责任；模型语义、运行时执行与平台策略仍由各自 canonical owner 持有，不因本论文合并。
-
-- **实现与 artifact：** External link observed in exact-v1 body: https://github.com/huggingface/smolagents; author-artifact relationship and exact commit/tag are Not Disclosed, so this link is not used as claim evidence
-
-- **Evaluation contract：** 公开验证定位在 `arXiv:2602.03338v1 HTML — §4 Main Results`；已有证据只支持论文披露的模型、数据、硬件、精度与任务组合，未披露字段保持 `Not Disclosed`，不外推为跨 workload 或 production SLO 结论。
-
-- **Trade-off、failure mode 与共存边界：** 限制或反证定位在 `arXiv:2602.03338v1 HTML — §Critic model scale.`。新增 failure surface 包括机制状态陈旧、额外控制开销及分布变化；共存边界是：低风险、可即时验证的短输出仍可直接提交。
-
-<!-- claim:SF-2026-ARXIV-2602-03338:start -->
-- **Claim boundary:** 只支持 arXiv:2602.03338v1 实际披露的机制与实验。方法定位为 arXiv:2602.03338v1 HTML — §Experimental design.；验证定位为 arXiv:2602.03338v1 HTML — §4 Main Results；边界定位为 arXiv:2602.03338v1 HTML — §Critic model scale.。不外推生产 SLO、多租户、跨硬件或长期可靠性。
-<!-- claim:SF-2026-ARXIV-2602-03338:end -->
-<!-- review:SF-2026-ARXIV-2602-03338:end -->
-
-<!-- review:SF-2026-ARXIV-2602-03495:start -->
-### DALI: A Workload-Aware Offloading Framework for Efficient MoE Inference on Local PCs
-
-- **Review route:** `deep`；Primary=`arXiv:2602.03495v1`；owner=`INFER-GPU-MEMORY`。
-
-- **问题与旧路径：** `DALI: A Workload-Aware Offloading Framework for Efficient MoE Inference on Local PCs` 是否在 `INFER-GPU-MEMORY` 中改变已有状态、数据或控制责任；旧路径仍成立于：权重与运行时状态常驻单设备，状态最透明。
-
-- **约束变化与机制：** exact-v1 的 `arXiv:2602.03495v1 HTML — §4. Design` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 权重、KV、临时张量的 placement、lifetime 与迁移控制。触发约束是：容量、带宽和并发超过单设备预算后，放置、迁移与回收成为控制问题。
-
-- **State / data / control owner：** `INFER-GPU-MEMORY` 只拥有该机制对应的系统责任；模型语义、运行时执行与平台策略仍由各自 canonical owner 持有，不因本论文合并。
-
-- **实现与 artifact：** External link observed in exact-v1 body: https://github.com/ggerganov/llama.cpp; author-artifact relationship and exact commit/tag are Not Disclosed, so this link is not used as claim evidence
-
-- **Evaluation contract：** 公开验证定位在 `arXiv:2602.03495v1 HTML — §6.2. Overall Results`；已有证据只支持论文披露的模型、数据、硬件、精度与任务组合，未披露字段保持 `Not Disclosed`，不外推为跨 workload 或 production SLO 结论。
-
-- **Trade-off、failure mode 与共存边界：** 限制或反证定位在 `arXiv:2602.03495v1 HTML — §6.5. Discussion`。新增 failure surface 包括机制状态陈旧、额外控制开销及分布变化；共存边界是：模型可完整驻留且负载稳定时静态常驻仍更简单。
-
-<!-- claim:SF-2026-ARXIV-2602-03495:start -->
-- **Claim boundary:** 只支持 arXiv:2602.03495v1 实际披露的机制与实验。方法定位为 arXiv:2602.03495v1 HTML — §4. Design；验证定位为 arXiv:2602.03495v1 HTML — §6.2. Overall Results；边界定位为 arXiv:2602.03495v1 HTML — §6.5. Discussion。不外推生产 SLO、多租户、跨硬件或长期可靠性。
-<!-- claim:SF-2026-ARXIV-2602-03495:end -->
-<!-- review:SF-2026-ARXIV-2602-03495:end -->
-
-<!-- review:SF-2026-ARXIV-2602-03580:start -->
-### Don't believe everything you read: Understanding and Measuring MCP Behavior under Misleading Tool Descriptions
-
-- **Review route:** `deep`；Primary=`arXiv:2602.03580v1`；owner=`AGENT-MCP`。
-
-- **问题与旧路径：** `Don't believe everything you read: Understanding and Measuring MCP Behavior under Misleading Tool Descriptions` 是否在 `AGENT-MCP` 中改变已有状态、数据或控制责任；旧路径仍成立于：把协议当作普通 tool adapter，部署和权限模型最简单。
-
-- **约束变化与机制：** exact-v1 的 `arXiv:2602.03580v1 HTML — §Design of MCPDiFF` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 协议身份、capability 声明、授权与审计状态。触发约束是：跨 server capability、委托链与动态发现使权限边界不再等同于一次函数调用。
-
-- **State / data / control owner：** `AGENT-MCP` 只拥有该机制对应的系统责任；模型语义、运行时执行与平台策略仍由各自 canonical owner 持有，不因本论文合并。
-
-- **实现与 artifact：** Not Disclosed — arXiv:2602.03580v1 does not disclose a public repository, release, commit, or executable artifact used by this review
-
-- **Evaluation contract：** 公开验证定位在 `arXiv:2602.03580v1 HTML — §Experiment Results`；已有证据只支持论文披露的模型、数据、硬件、精度与任务组合，未披露字段保持 `Not Disclosed`，不外推为跨 workload 或 production SLO 结论。
-
-- **Trade-off、failure mode 与共存边界：** 限制或反证定位在 `arXiv:2602.03580v1 HTML — §Open Questions and Future Directions`。新增 failure surface 包括机制状态陈旧、额外控制开销及分布变化；共存边界是：固定工具集、单一信任域仍可保留较薄的 adapter。
-
-<!-- claim:SF-2026-ARXIV-2602-03580:start -->
-- **Claim boundary:** 只支持 arXiv:2602.03580v1 实际披露的机制与实验。方法定位为 arXiv:2602.03580v1 HTML — §Design of MCPDiFF；验证定位为 arXiv:2602.03580v1 HTML — §Experiment Results；边界定位为 arXiv:2602.03580v1 HTML — §Open Questions and Future Directions。不外推生产 SLO、多租户、跨硬件或长期可靠性。
-<!-- claim:SF-2026-ARXIV-2602-03580:end -->
-<!-- review:SF-2026-ARXIV-2602-03580:end -->
-
-<!-- review:SF-2026-ARXIV-2602-03632:start -->
-### CALM: A Self-Adaptive Orchestration Approach for QoS-Aware Routing in Small Language Model based Systems
-
-- **Review route:** `deep`；Primary=`arXiv:2602.03632v1`；owner=`INFER-SCHEDULING`。
-
-- **问题与旧路径：** `CALM: A Self-Adaptive Orchestration Approach for QoS-Aware Routing in Small Language Model based Systems` 是否在 `INFER-SCHEDULING` 中改变已有状态、数据或控制责任；旧路径仍成立于：FIFO 或静态批次在请求同质时易预测、易实现。
-
-- **约束变化与机制：** exact-v1 的 `arXiv:2602.03632v1 HTML — §3. The CALM Approach` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 准入、批处理、优先级、路由和资源选择。触发约束是：长度、阶段、SLO、模型和 agent fan-out 的异质性使排队决策决定整体尾延迟。
-
-- **State / data / control owner：** `INFER-SCHEDULING` 只拥有该机制对应的系统责任；模型语义、运行时执行与平台策略仍由各自 canonical owner 持有，不因本论文合并。
-
-- **实现与 artifact：** External link observed in exact-v1 body: https://github.com/sa4s-serc/CALM; author-artifact relationship and exact commit/tag are Not Disclosed, so this link is not used as claim evidence
-
-- **Evaluation contract：** 公开验证定位在 `arXiv:2602.03632v1 HTML — §5. Results`；已有证据只支持论文披露的模型、数据、硬件、精度与任务组合，未披露字段保持 `Not Disclosed`，不外推为跨 workload 或 production SLO 结论。
-
-- **Trade-off、failure mode 与共存边界：** 限制或反证定位在 `arXiv:2602.03632v1 HTML — §7. Threats to Validity`。新增 failure surface 包括机制状态陈旧、额外控制开销及分布变化；共存边界是：同质离线吞吐任务仍可使用简单静态策略。
-
-<!-- claim:SF-2026-ARXIV-2602-03632:start -->
-- **Claim boundary:** 只支持 arXiv:2602.03632v1 实际披露的机制与实验。方法定位为 arXiv:2602.03632v1 HTML — §3. The CALM Approach；验证定位为 arXiv:2602.03632v1 HTML — §5. Results；边界定位为 arXiv:2602.03632v1 HTML — §7. Threats to Validity。不外推生产 SLO、多租户、跨硬件或长期可靠性。
-<!-- claim:SF-2026-ARXIV-2602-03632:end -->
-<!-- review:SF-2026-ARXIV-2602-03632:end -->
-
-<!-- review:SF-2026-ARXIV-2602-03719:start -->
-### BranPO: Scalable Contrastive Branch Sampling for Long-Horizon Agentic Reinforcement Learning
-
-- **Review route:** `deep`；Primary=`arXiv:2602.03719v1`；owner=`TRAIN-RLHF`。
-
-- **问题与旧路径：** `BranPO: Scalable Contrastive Branch Sampling for Long-Horizon Agentic Reinforcement Learning` 是否在 `TRAIN-RLHF` 中改变已有状态、数据或控制责任；旧路径仍成立于：固定后训练配方便于重复和对比。
-
-- **约束变化与机制：** exact-v1 的 `arXiv:2602.03719v1 HTML — §A.1 Algorithm Details` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 rollout、reward、policy/reference 与更新 freshness。触发约束是：模型规模、奖励来源和任务 horizon 改变后，同一配方的排序可能反转。
-
-- **State / data / control owner：** `TRAIN-RLHF` 只拥有该机制对应的系统责任；模型语义、运行时执行与平台策略仍由各自 canonical owner 持有，不因本论文合并。
-
-- **实现与 artifact：** External link observed in exact-v1 body: https://github.com/YubaoZhao/BranPO; author-artifact relationship and exact commit/tag are Not Disclosed, so this link is not used as claim evidence
-
-- **Evaluation contract：** 公开验证定位在 `arXiv:2602.03719v1 HTML — §Evaluation.`；已有证据只支持论文披露的模型、数据、硬件、精度与任务组合，未披露字段保持 `Not Disclosed`，不外推为跨 workload 或 production SLO 结论。
-
-- **Trade-off、failure mode 与共存边界：** 限制或反证定位在 `arXiv:2602.03719v1 HTML — §Appendix D Limitations and Future Work`。新增 failure surface 包括机制状态陈旧、额外控制开销及分布变化；共存边界是：反馈稳定、任务窄且分布固定时成熟配方仍可复用。
-
-<!-- claim:SF-2026-ARXIV-2602-03719:start -->
-- **Claim boundary:** 只支持 arXiv:2602.03719v1 实际披露的机制与实验。方法定位为 arXiv:2602.03719v1 HTML — §A.1 Algorithm Details；验证定位为 arXiv:2602.03719v1 HTML — §Evaluation.；边界定位为 arXiv:2602.03719v1 HTML — §Appendix D Limitations and Future Work。不外推生产 SLO、多租户、跨硬件或长期可靠性。
-<!-- claim:SF-2026-ARXIV-2602-03719:end -->
-<!-- review:SF-2026-ARXIV-2602-03719:end -->
-
-<!-- review:SF-2026-ARXIV-2602-03782:start -->
-### QVLA: Not All Channels Are Equal in Vision-Language-Action Model's Quantization
-
-- **Review route:** `deep`；Primary=`arXiv:2602.03782v1`；owner=`INFER-TENSORRT-LLM`。
-
-- **问题与旧路径：** `QVLA: Not All Channels Are Equal in Vision-Language-Action Model's Quantization` 是否在 `INFER-TENSORRT-LLM` 中改变已有状态、数据或控制责任；旧路径仍成立于：通用 eager 执行便于调试且无需额外编译状态。
-
-- **约束变化与机制：** exact-v1 的 `arXiv:2602.03782v1 HTML — §3.3 The proposed QVLA` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 graph lowering、kernel/precision 选择与执行计划版本。触发约束是：模型规模、算子形态和 SLO 使执行计划、精度与 kernel 选择成为主要成本。
-
-- **State / data / control owner：** `INFER-TENSORRT-LLM` 只拥有该机制对应的系统责任；模型语义、运行时执行与平台策略仍由各自 canonical owner 持有，不因本论文合并。
-
-- **实现与 artifact：** External link observed in exact-v1 body: https://github.com/AutoLab-SAI-SJTU/AutoQVLA; author-artifact relationship and exact commit/tag are Not Disclosed, so this link is not used as claim evidence
-
-- **Evaluation contract：** 公开验证定位在 `arXiv:2602.03782v1 HTML — §4.2 Comparison with State-of-the-arts`；已有证据只支持论文披露的模型、数据、硬件、精度与任务组合，未披露字段保持 `Not Disclosed`，不外推为跨 workload 或 production SLO 结论。
-
-- **Trade-off、failure mode 与共存边界：** 限制或反证定位在 `arXiv:2602.03782v1 HTML — §H.2 Behavior During Full-Precision Failure Trials`。新增 failure surface 包括机制状态陈旧、额外控制开销及分布变化；共存边界是：工作负载小、形状动态或调试优先时 eager 路径仍合理。
-
-<!-- claim:SF-2026-ARXIV-2602-03782:start -->
-- **Claim boundary:** 只支持 arXiv:2602.03782v1 实际披露的机制与实验。方法定位为 arXiv:2602.03782v1 HTML — §3.3 The proposed QVLA；验证定位为 arXiv:2602.03782v1 HTML — §4.2 Comparison with State-of-the-arts；边界定位为 arXiv:2602.03782v1 HTML — §H.2 Behavior During Full-Precision Failure Trials。不外推生产 SLO、多租户、跨硬件或长期可靠性。
-<!-- claim:SF-2026-ARXIV-2602-03782:end -->
-<!-- review:SF-2026-ARXIV-2602-03782:end -->
-
-<!-- review:SF-2026-ARXIV-2602-02589:start -->
-### PeerRank: Autonomous LLM Evaluation Through Web-Grounded, Bias-Controlled Peer Review
-
-- **Review route:** `standard`；Primary=`arXiv:2602.02589v1`；owner=`PLATFORM-EVALUATION-SYSTEM`。
-
-- **问题与旧路径：** `PeerRank: Autonomous LLM Evaluation Through Web-Grounded, Bias-Controlled Peer Review` 是否在 `PLATFORM-EVALUATION-SYSTEM` 中改变已有状态、数据或控制责任；旧路径仍成立于：单一离线分数便于比较版本。
-
-- **约束变化与机制：** exact-v1 的 `arXiv:2602.02589v1 HTML — §3 Methodology` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 evaluation contract、覆盖分母、evidence lineage 与 release gate。触发约束是：agent、长时程和多模态系统把失败分散到状态、工具与环境交互链。
-
-- **State / data / control owner：** `PLATFORM-EVALUATION-SYSTEM` 只拥有该机制对应的系统责任；模型语义、运行时执行与平台策略仍由各自 canonical owner 持有，不因本论文合并。
-
-- **实现与 artifact：** External link observed in exact-v1 body: https://github.com/caura-ai/caura-PeerRank; author-artifact relationship and exact commit/tag are Not Disclosed, so this link is not used as claim evidence
-
-- **Evaluation contract：** 公开验证定位在 `arXiv:2602.02589v1 HTML — §Ablation: Peer evaluation outperforms self evaluation`；已有证据只支持论文披露的模型、数据、硬件、精度与任务组合，未披露字段保持 `Not Disclosed`，不外推为跨 workload 或 production SLO 结论。
-
-- **Trade-off、failure mode 与共存边界：** 限制或反证定位在 `arXiv:2602.02589v1 HTML — §6 Discussion`。新增 failure surface 包括机制状态陈旧、额外控制开销及分布变化；共存边界是：窄任务且 failure surface 稳定时单指标仍可作为局部信号。
-
-<!-- claim:SF-2026-ARXIV-2602-02589:start -->
-- **Claim boundary:** 只支持 arXiv:2602.02589v1 实际披露的机制与实验。方法定位为 arXiv:2602.02589v1 HTML — §3 Methodology；验证定位为 arXiv:2602.02589v1 HTML — §Ablation: Peer evaluation outperforms self evaluation；边界定位为 arXiv:2602.02589v1 HTML — §6 Discussion。不外推生产 SLO、多租户、跨硬件或长期可靠性。
-<!-- claim:SF-2026-ARXIV-2602-02589:end -->
-<!-- review:SF-2026-ARXIV-2602-02589:end -->
-
-<!-- review:SF-2026-ARXIV-2602-02690:start -->
-### Outrunning LLM Cutoffs: A Live Kernel Crash Resolution Benchmark for All
-
-- **Review route:** `standard`；Primary=`arXiv:2602.02690v1`；owner=`PLATFORM-EVALUATION-SYSTEM`。
-
-- **问题与旧路径：** `Outrunning LLM Cutoffs: A Live Kernel Crash Resolution Benchmark for All` 是否在 `PLATFORM-EVALUATION-SYSTEM` 中改变已有状态、数据或控制责任；旧路径仍成立于：单一离线分数便于比较版本。
-
-- **约束变化与机制：** exact-v1 的 `arXiv:2602.02690v1 HTML — §3.1 Design` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 evaluation contract、覆盖分母、evidence lineage 与 release gate。触发约束是：agent、长时程和多模态系统把失败分散到状态、工具与环境交互链。
-
-- **State / data / control owner：** `PLATFORM-EVALUATION-SYSTEM` 只拥有该机制对应的系统责任；模型语义、运行时执行与平台策略仍由各自 canonical owner 持有，不因本论文合并。
-
-- **实现与 artifact：** External link observed in exact-v1 body: https://github.com/anthropics/claude-code; author-artifact relationship and exact commit/tag are Not Disclosed, so this link is not used as claim evidence
-
-- **Evaluation contract：** 公开验证定位在 `arXiv:2602.02690v1 HTML — §5.2 RQ1: Performance difference spanning cutoff`；已有证据只支持论文披露的模型、数据、硬件、精度与任务组合，未披露字段保持 `Not Disclosed`，不外推为跨 workload 或 production SLO 结论。
-
-- **Trade-off、failure mode 与共存边界：** 限制或反证定位在 `arXiv:2602.02690v1 HTML — §7 Future Work`。新增 failure surface 包括机制状态陈旧、额外控制开销及分布变化；共存边界是：窄任务且 failure surface 稳定时单指标仍可作为局部信号。
-
-<!-- claim:SF-2026-ARXIV-2602-02690:start -->
-- **Claim boundary:** 只支持 arXiv:2602.02690v1 实际披露的机制与实验。方法定位为 arXiv:2602.02690v1 HTML — §3.1 Design；验证定位为 arXiv:2602.02690v1 HTML — §5.2 RQ1: Performance difference spanning cutoff；边界定位为 arXiv:2602.02690v1 HTML — §7 Future Work。不外推生产 SLO、多租户、跨硬件或长期可靠性。
-<!-- claim:SF-2026-ARXIV-2602-02690:end -->
-<!-- review:SF-2026-ARXIV-2602-02690:end -->
-
-## 4. Benchmark Contracts
-
-None — 作者实验只在各 Source Review 的 evaluation contract 内支持机制判断；本日报不发布可跨 workload 外推的 benchmark claim。
-
-## 5. Deep Analysis Selection
-
-<!-- validator:deep-analysis-selection-v1 -->
-| Source Family ID | Eligibility | Decision | Analysis Unit ID | Subsumed By | Priority Rationale | Narrative Ref |
-| --- | --- | --- | --- | --- | --- | --- |
-| SF-2026-ARXIV-2602-02579 | score_7_9 | selected | DA-20260205-1 | — | 在同日 eligibility frontier 中优先选择 Total=8 且形成独立 `INFER-KV-CACHE` 系统责任链的 family。 | analysis:DA-20260205-1 |
-| SF-2026-ARXIV-2602-02599 | score_7_9 | not_selected | — | — | 已完成 Deep Source Review；该 family 的机制边界限定在 `INFER-KV-CACHE`；同 owner 已有更高优先级叙事单元，不降低其证据与 Books 决策责任。 | analysis-decision:SF-2026-ARXIV-2602-02599 |
-| SF-2026-ARXIV-2602-02958 | score_7_9 | not_selected | — | — | 已完成 Deep Source Review；该 family 的机制边界限定在 `INFER-KV-CACHE`；同 owner 已有更高优先级叙事单元，不降低其证据与 Books 决策责任。 | analysis-decision:SF-2026-ARXIV-2602-02958 |
-| SF-2026-ARXIV-2602-03036 | score_7_9 | selected | DA-20260205-2 | — | 在同日 eligibility frontier 中优先选择 Total=8 且形成独立 `AGENT-MEMORY` 系统责任链的 family。 | analysis:DA-20260205-2 |
-| SF-2026-ARXIV-2602-03184 | score_7_9 | not_selected | — | — | 已完成 Deep Source Review；该 family 的机制边界限定在 `INFER-KV-CACHE`；同 owner 已有更高优先级叙事单元，不降低其证据与 Books 决策责任。 | analysis-decision:SF-2026-ARXIV-2602-03184 |
-| SF-2026-ARXIV-2602-03295 | score_7_9; forced_review; potential_books_delta | selected | DA-20260205-3 | — | 在同日 eligibility frontier 中优先选择 Total=8 且形成独立 `INFER-PREFILL` 系统责任链的 family。 | analysis:DA-20260205-3 |
-| SF-2026-ARXIV-2602-03560 | score_7_9 | not_selected | — | — | 已完成 Deep Source Review；该 family 的机制边界限定在 `MODEL-LONG-CONTEXT`；跨层影响较已选单元更窄，不降低其证据与 Books 决策责任。 | analysis-decision:SF-2026-ARXIV-2602-03560 |
-| SF-2026-ARXIV-2602-02499 | score_7_9 | not_selected | — | — | 已完成 Deep Source Review；该 family 的机制边界限定在 `MODEL-LONG-CONTEXT`；跨层影响较已选单元更窄，不降低其证据与 Books 决策责任。 | analysis-decision:SF-2026-ARXIV-2602-02499 |
-| SF-2026-ARXIV-2602-02515 | score_7_9 | not_selected | — | — | 已完成 Deep Source Review；该 family 的机制边界限定在 `PLATFORM-EVALUATION-SYSTEM`；跨层影响较已选单元更窄，不降低其证据与 Books 决策责任。 | analysis-decision:SF-2026-ARXIV-2602-02515 |
-| SF-2026-ARXIV-2602-02574 | score_7_9 | not_selected | — | — | 已完成 Deep Source Review；该 family 的机制边界限定在 `AGENT-MEMORY`；同 owner 已有更高优先级叙事单元，不降低其证据与 Books 决策责任。 | analysis-decision:SF-2026-ARXIV-2602-02574 |
-| SF-2026-ARXIV-2602-02585 | score_7_9 | not_selected | — | — | 已完成 Deep Source Review；该 family 的机制边界限定在 `PLATFORM-MONITORING`；跨层影响较已选单元更窄，不降低其证据与 Books 决策责任。 | analysis-decision:SF-2026-ARXIV-2602-02585 |
-| SF-2026-ARXIV-2602-02987 | score_7_9 | not_selected | — | — | 已完成 Deep Source Review；该 family 的机制边界限定在 `INFER-SCHEDULING`；跨层影响较已选单元更窄，不降低其证据与 Books 决策责任。 | analysis-decision:SF-2026-ARXIV-2602-02987 |
-| SF-2026-ARXIV-2602-03025 | score_7_9 | not_selected | — | — | 已完成 Deep Source Review；该 family 的机制边界限定在 `TRAIN-GRPO`；跨层影响较已选单元更窄，不降低其证据与 Books 决策责任。 | analysis-decision:SF-2026-ARXIV-2602-03025 |
-| SF-2026-ARXIV-2602-03128 | score_7_9 | not_selected | — | — | 已完成 Deep Source Review；该 family 的机制边界限定在 `PLATFORM-EVALUATION-SYSTEM`；跨层影响较已选单元更窄，不降低其证据与 Books 决策责任。 | analysis-decision:SF-2026-ARXIV-2602-03128 |
-| SF-2026-ARXIV-2602-03203 | score_7_9 | not_selected | — | — | 已完成 Deep Source Review；该 family 的机制边界限定在 `INFER-KV-CACHE`；同 owner 已有更高优先级叙事单元，不降低其证据与 Books 决策责任。 | analysis-decision:SF-2026-ARXIV-2602-03203 |
-| SF-2026-ARXIV-2602-03255 | score_7_9 | not_selected | — | — | 已完成 Deep Source Review；该 family 的机制边界限定在 `PLATFORM-EVALUATION-SYSTEM`；跨层影响较已选单元更窄，不降低其证据与 Books 决策责任。 | analysis-decision:SF-2026-ARXIV-2602-03255 |
-| SF-2026-ARXIV-2602-03338 | score_7_9; forced_review; potential_books_delta | not_selected | — | — | 已完成 Deep Source Review；该 family 的机制边界限定在 `AGENT-REFLECTION`；跨层影响较已选单元更窄，不降低其证据与 Books 决策责任。 | analysis-decision:SF-2026-ARXIV-2602-03338 |
-| SF-2026-ARXIV-2602-03495 | score_7_9 | not_selected | — | — | 已完成 Deep Source Review；该 family 的机制边界限定在 `INFER-GPU-MEMORY`；跨层影响较已选单元更窄，不降低其证据与 Books 决策责任。 | analysis-decision:SF-2026-ARXIV-2602-03495 |
-| SF-2026-ARXIV-2602-03580 | score_7_9 | not_selected | — | — | 已完成 Deep Source Review；该 family 的机制边界限定在 `AGENT-MCP`；跨层影响较已选单元更窄，不降低其证据与 Books 决策责任。 | analysis-decision:SF-2026-ARXIV-2602-03580 |
-| SF-2026-ARXIV-2602-03632 | score_7_9 | not_selected | — | — | 已完成 Deep Source Review；该 family 的机制边界限定在 `INFER-SCHEDULING`；跨层影响较已选单元更窄，不降低其证据与 Books 决策责任。 | analysis-decision:SF-2026-ARXIV-2602-03632 |
-| SF-2026-ARXIV-2602-03719 | score_7_9 | not_selected | — | — | 已完成 Deep Source Review；该 family 的机制边界限定在 `TRAIN-RLHF`；跨层影响较已选单元更窄，不降低其证据与 Books 决策责任。 | analysis-decision:SF-2026-ARXIV-2602-03719 |
-| SF-2026-ARXIV-2602-03782 | score_7_9 | not_selected | — | — | 已完成 Deep Source Review；该 family 的机制边界限定在 `INFER-TENSORRT-LLM`；跨层影响较已选单元更窄，不降低其证据与 Books 决策责任。 | analysis-decision:SF-2026-ARXIV-2602-03782 |
-
-<!-- analysis:DA-20260205-1:start -->
-### DA-20260205-1 — ProphetKV: User-Query-Driven Selective Recomputation for Efficient KV Cache Reuse in Retrieval-Augmented Generation
-
-旧路径在原 workload 下保持较低状态与控制开销；约束变化后，该 family 把新增机制责任定位到 `INFER-KV-CACHE`。exact-v1 的 `arXiv:2602.02579v1 HTML — §3.1 Illustrating the Failure of Existing Methods` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 KV 的 identity、压缩、复用、放置与失效状态。触发约束是：长上下文、多会话和异构层级使 KV 容量、带宽及身份成为主瓶颈。 公开验证定位在 `arXiv:2602.02579v1 HTML — §5.2 Accuracy Evaluation`；已有证据只支持论文披露的模型、数据、硬件、精度与任务组合，未披露字段保持 `Not Disclosed`，不外推为跨 workload 或 production SLO 结论。 代价、failure mode 与旧方案共存边界由以下证据限制：限制或反证定位在 `arXiv:2602.02579v1 HTML — §3.1 Illustrating the Failure of Existing Methods`。新增 failure surface 包括机制状态陈旧、额外控制开销及分布变化；共存边界是：小 batch、短上下文或严格 exactness 场景仍宜保留完整 KV。
-<!-- analysis:DA-20260205-1:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2602-02599:start -->
-`RAP: KV-Cache Compression via RoPE-Aligned Pruning` 已完成与路由相符的 Source Review；它没有进入长叙事，因为同日已选单元在分数、跨层系统影响或 owner 独立性上优先，而不是因为审阅被跳过。
-<!-- analysis-decision:SF-2026-ARXIV-2602-02599:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2602-02958:start -->
-`Quant VideoGen: Auto-Regressive Long Video Generation via 2-Bit KV-Cache Quantization` 已完成与路由相符的 Source Review；它没有进入长叙事，因为同日已选单元在分数、跨层系统影响或 owner 独立性上优先，而不是因为审阅被跳过。
-<!-- analysis-decision:SF-2026-ARXIV-2602-02958:end -->
-
-<!-- analysis:DA-20260205-2:start -->
-### DA-20260205-2 — LatentMem: Customizing Latent Memory for Multi-Agent Systems
-
-旧路径在原 workload 下保持较低状态与控制开销；约束变化后，该 family 把新增机制责任定位到 `AGENT-MEMORY`。exact-v1 的 `arXiv:2602.03036v1 HTML — §4 Methodology` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 memory 的写入、版本、检索与失效控制权。触发约束是：长时交互、容量和权限约束迫使系统决定何时写、如何索引、何时遗忘。 公开验证定位在 `arXiv:2602.03036v1 HTML — §5.2 Main Results`；已有证据只支持论文披露的模型、数据、硬件、精度与任务组合，未披露字段保持 `Not Disclosed`，不外推为跨 workload 或 production SLO 结论。 代价、failure mode 与旧方案共存边界由以下证据限制：限制或反证定位在 `arXiv:2602.03036v1 HTML — §5.6 Sensitivity & Ablation Study.`。新增 failure surface 包括机制状态陈旧、额外控制开销及分布变化；共存边界是：短会话或不可接受派生状态漂移时仍应回退原始 context。
-<!-- analysis:DA-20260205-2:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2602-03184:start -->
-`DynSplit-KV: Dynamic Semantic Splitting for KVCache Compression in Efficient Long-Context LLM Inference` 已完成与路由相符的 Source Review；它没有进入长叙事，因为同日已选单元在分数、跨层系统影响或 owner 独立性上优先，而不是因为审阅被跳过。
-<!-- analysis-decision:SF-2026-ARXIV-2602-03184:end -->
-
-<!-- analysis:DA-20260205-3:start -->
-### DA-20260205-3 — POP: Prefill-Only Pruning for Efficient Large Model Inference
-
-旧路径在原 workload 下保持较低状态与控制开销；约束变化后，该 family 把新增机制责任定位到 `INFER-PREFILL`。exact-v1 的 `arXiv:2602.03295v1 HTML — §3 Method; §3.3 Prefill-Only Pruning for Efficient Inference` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 prompt token、attention work、prefill plan 与 KV materialization。触发约束是：长输入和异构硬件使 token 选择、并行与带宽成为 TTFT 主约束。 公开验证定位在 `arXiv:2602.03295v1 HTML — §4 Experiments; §4.2 Accuracy; §4.3 Inference Speedup; §4.4 Ablation`；已有证据只支持论文披露的模型、数据、硬件、精度与任务组合，未披露字段保持 `Not Disclosed`，不外推为跨 workload 或 production SLO 结论。 代价、failure mode 与旧方案共存边界由以下证据限制：限制或反证定位在 `arXiv:2602.03295v1 HTML — §7 Limitations; Appendix C Robustness to Representation Mismatch`。新增 failure surface 包括机制状态陈旧、额外控制开销及分布变化；共存边界是：输入较短或 exact dense attention 必须保留时完整 Prefill 仍合理。
-<!-- analysis:DA-20260205-3:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2602-03560:start -->
-`HySparse: A Hybrid Sparse Attention Architecture with Oracle Token Selection and KV Cache Sharing` 已完成与路由相符的 Source Review；它没有进入长叙事，因为同日已选单元在分数、跨层系统影响或 owner 独立性上优先，而不是因为审阅被跳过。
-<!-- analysis-decision:SF-2026-ARXIV-2602-03560:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2602-02499:start -->
-`ROSA-Tuning: Enhancing Long-Context Modeling via Suffix Matching` 已完成与路由相符的 Source Review；它没有进入长叙事，因为同日已选单元在分数、跨层系统影响或 owner 独立性上优先，而不是因为审阅被跳过。
-<!-- analysis-decision:SF-2026-ARXIV-2602-02499:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2602-02515:start -->
-`CreditAudit: 2$^\text{nd}$ Dimension for LLM Evaluation and Selection` 已完成与路由相符的 Source Review；它没有进入长叙事，因为同日已选单元在分数、跨层系统影响或 owner 独立性上优先，而不是因为审阅被跳过。
-<!-- analysis-decision:SF-2026-ARXIV-2602-02515:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2602-02574:start -->
-`WritePolicyBench: Benchmarking Memory Write Policies under Byte Budgets` 已完成与路由相符的 Source Review；它没有进入长叙事，因为同日已选单元在分数、跨层系统影响或 owner 独立性上优先，而不是因为审阅被跳过。
-<!-- analysis-decision:SF-2026-ARXIV-2602-02574:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2602-02585:start -->
-`Agentic Observability: Automated Alert Triage for Adobe E-Commerce` 已完成与路由相符的 Source Review；它没有进入长叙事，因为同日已选单元在分数、跨层系统影响或 owner 独立性上优先，而不是因为审阅被跳过。
-<!-- analysis-decision:SF-2026-ARXIV-2602-02585:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2602-02987:start -->
-`Large-Scale LLM Inference with Heterogeneous Workloads: Prefill-Decode Contention and Asymptotically Optimal Control` 已完成与路由相符的 Source Review；它没有进入长叙事，因为同日已选单元在分数、跨层系统影响或 owner 独立性上优先，而不是因为审阅被跳过。
-<!-- analysis-decision:SF-2026-ARXIV-2602-02987:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2602-03025:start -->
-`RC-GRPO: Reward-Conditioned Group Relative Policy Optimization for Multi-Turn Tool Calling Agents` 已完成与路由相符的 Source Review；它没有进入长叙事，因为同日已选单元在分数、跨层系统影响或 owner 独立性上优先，而不是因为审阅被跳过。
-<!-- analysis-decision:SF-2026-ARXIV-2602-03025:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2602-03128:start -->
-`Understanding Multi-Agent LLM Frameworks: A Unified Benchmark and Experimental Analysis` 已完成与路由相符的 Source Review；它没有进入长叙事，因为同日已选单元在分数、跨层系统影响或 owner 独立性上优先，而不是因为审阅被跳过。
-<!-- analysis-decision:SF-2026-ARXIV-2602-03128:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2602-03203:start -->
-`ForesightKV: Optimizing KV Cache Eviction for Reasoning Models by Learning Long-Term Contribution` 已完成与路由相符的 Source Review；它没有进入长叙事，因为同日已选单元在分数、跨层系统影响或 owner 独立性上优先，而不是因为审阅被跳过。
-<!-- analysis-decision:SF-2026-ARXIV-2602-03203:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2602-03255:start -->
-`LPS-Bench: Benchmarking Safety Awareness of Computer-Use Agents in Long-Horizon Planning under Benign and Adversarial Scenarios` 已完成与路由相符的 Source Review；它没有进入长叙事，因为同日已选单元在分数、跨层系统影响或 owner 独立性上优先，而不是因为审阅被跳过。
-<!-- analysis-decision:SF-2026-ARXIV-2602-03255:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2602-03338:start -->
-`Accurate Failure Prediction in Agents Does Not Imply Effective Failure Prevention` 已完成与路由相符的 Source Review；它没有进入长叙事，因为同日已选单元在分数、跨层系统影响或 owner 独立性上优先，而不是因为审阅被跳过。
-<!-- analysis-decision:SF-2026-ARXIV-2602-03338:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2602-03495:start -->
-`DALI: A Workload-Aware Offloading Framework for Efficient MoE Inference on Local PCs` 已完成与路由相符的 Source Review；它没有进入长叙事，因为同日已选单元在分数、跨层系统影响或 owner 独立性上优先，而不是因为审阅被跳过。
-<!-- analysis-decision:SF-2026-ARXIV-2602-03495:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2602-03580:start -->
-`Don't believe everything you read: Understanding and Measuring MCP Behavior under Misleading Tool Descriptions` 已完成与路由相符的 Source Review；它没有进入长叙事，因为同日已选单元在分数、跨层系统影响或 owner 独立性上优先，而不是因为审阅被跳过。
-<!-- analysis-decision:SF-2026-ARXIV-2602-03580:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2602-03632:start -->
-`CALM: A Self-Adaptive Orchestration Approach for QoS-Aware Routing in Small Language Model based Systems` 已完成与路由相符的 Source Review；它没有进入长叙事，因为同日已选单元在分数、跨层系统影响或 owner 独立性上优先，而不是因为审阅被跳过。
-<!-- analysis-decision:SF-2026-ARXIV-2602-03632:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2602-03719:start -->
-`BranPO: Scalable Contrastive Branch Sampling for Long-Horizon Agentic Reinforcement Learning` 已完成与路由相符的 Source Review；它没有进入长叙事，因为同日已选单元在分数、跨层系统影响或 owner 独立性上优先，而不是因为审阅被跳过。
-<!-- analysis-decision:SF-2026-ARXIV-2602-03719:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2602-03782:start -->
-`QVLA: Not All Channels Are Equal in Vision-Language-Action Model's Quantization` 已完成与路由相符的 Source Review；它没有进入长叙事，因为同日已选单元在分数、跨层系统影响或 owner 独立性上优先，而不是因为审阅被跳过。
-<!-- analysis-decision:SF-2026-ARXIV-2602-03782:end -->
-
-## 6. Books Comparison
-
-<!-- validator:books-comparison-v1 -->
-| Source Family ID | Stable Node ID | Target Chapter Ref | Adjacent Chapter Refs | Existing Proposition | New Evidence Delta | Evolution Relation | Decision | Books Review Ref |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SF-2026-ARXIV-2602-02579 | INFER-KV-CACHE | books/part-05-inference-system/45-why-kv-cache-speeds-up.md#一致性不变量 (line 717) | books/part-05-inference-system/44-decode.md#本章要回答的问题 (line 10); books/part-05-inference-system/46-continuous-batching.md#本章要回答的问题 (line 10) | existing:SF-2026-ARXIV-2602-02579 | delta:SF-2026-ARXIV-2602-02579 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-02579 |
-| SF-2026-ARXIV-2602-02599 | INFER-KV-CACHE | books/part-05-inference-system/45-why-kv-cache-speeds-up.md#一致性不变量 (line 850) | books/part-05-inference-system/44-decode.md#本章要回答的问题 (line 10); books/part-05-inference-system/46-continuous-batching.md#本章要回答的问题 (line 10) | existing:SF-2026-ARXIV-2602-02599 | delta:SF-2026-ARXIV-2602-02599 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-02599 |
-| SF-2026-ARXIV-2602-02958 | INFER-KV-CACHE | books/part-05-inference-system/45-why-kv-cache-speeds-up.md#本章在知识树中的位置 (line 1071) | books/part-05-inference-system/44-decode.md#本章要回答的问题 (line 10); books/part-05-inference-system/46-continuous-batching.md#本章要回答的问题 (line 10) | existing:SF-2026-ARXIV-2602-02958 | delta:SF-2026-ARXIV-2602-02958 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-02958 |
-| SF-2026-ARXIV-2602-03036 | AGENT-MEMORY | books/part-07-agent/77-memory.md#从原始轨迹到派生策略memory-的演进不是无限追加 (line 670) | books/part-07-agent/76-rag.md#本章要回答的问题 (line 10); books/part-07-agent/78-tool-calling.md#本章要回答的问题 (line 10) | existing:SF-2026-ARXIV-2602-03036 | delta:SF-2026-ARXIV-2602-03036 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-03036 |
-| SF-2026-ARXIV-2602-03184 | INFER-KV-CACHE | books/part-05-inference-system/45-why-kv-cache-speeds-up.md#kv-cache-的生命周期 (line 307) | books/part-05-inference-system/44-decode.md#本章要回答的问题 (line 10); books/part-05-inference-system/46-continuous-batching.md#本章要回答的问题 (line 10) | existing:SF-2026-ARXIV-2602-03184 | delta:SF-2026-ARXIV-2602-03184 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-03184 |
-| SF-2026-ARXIV-2602-03295 | INFER-PREFILL | books/part-05-inference-system/43-prefill.md#计算量从哪里来 (line 62) | books/part-05-inference-system/42-what-happens-during-inference.md#本章要回答的问题 (line 10); books/part-05-inference-system/44-decode.md#本章要回答的问题 (line 10) | existing:SF-2026-ARXIV-2602-03295 | delta:SF-2026-ARXIV-2602-03295 | Principle Reuse | Integrate | books-review:SF-2026-ARXIV-2602-03295 |
-| SF-2026-ARXIV-2602-03560 | MODEL-LONG-CONTEXT | books/part-02-model/22-long-context.md#路线二改变-attention-连接 (line 121) | books/part-02-model/21-moe.md#本章要回答的问题 (line 10); books/part-03-multimodal-world-models/23-multimodal-representation.md#本章要回答的问题 (line 10) | existing:SF-2026-ARXIV-2602-03560 | delta:SF-2026-ARXIV-2602-03560 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-03560 |
-| SF-2026-ARXIV-2602-02499 | MODEL-LONG-CONTEXT | books/part-02-model/22-long-context.md#路线六让模型在-test-time-更新内部记忆 (line 468) | books/part-02-model/21-moe.md#本章要回答的问题 (line 10); books/part-03-multimodal-world-models/23-multimodal-representation.md#本章要回答的问题 (line 10) | existing:SF-2026-ARXIV-2602-02499 | delta:SF-2026-ARXIV-2602-02499 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-02499 |
-| SF-2026-ARXIV-2602-02515 | PLATFORM-EVALUATION-SYSTEM | books/part-06-ai-infrastructure/66-evaluation-system.md#第一个不变量评估声明必须绑定完整对象 (line 179) | books/part-06-ai-infrastructure/65-kai-scheduler.md#本章要回答的问题 (line 10); books/part-06-ai-infrastructure/67-monitoring.md#本章要回答的问题 (line 10) | existing:SF-2026-ARXIV-2602-02515 | delta:SF-2026-ARXIV-2602-02515 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-02515 |
-| SF-2026-ARXIV-2602-02574 | AGENT-MEMORY | books/part-07-agent/77-memory.md#派生-memory-的组织适用性与验证 (line 725) | books/part-07-agent/76-rag.md#本章要回答的问题 (line 10); books/part-07-agent/78-tool-calling.md#本章要回答的问题 (line 10) | existing:SF-2026-ARXIV-2602-02574 | delta:SF-2026-ARXIV-2602-02574 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-02574 |
-| SF-2026-ARXIV-2602-02585 | PLATFORM-MONITORING | books/part-06-ai-infrastructure/67-monitoring.md#rateerrorsduration-与-saturation (line 152) | books/part-06-ai-infrastructure/66-evaluation-system.md#本章要回答的问题 (line 10); books/part-06-ai-infrastructure/68-logging.md#本章要回答的问题 (line 10) | existing:SF-2026-ARXIV-2602-02585 | delta:SF-2026-ARXIV-2602-02585 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-02585 |
-| SF-2026-ARXIV-2602-02987 | INFER-SCHEDULING | books/part-05-inference-system/56-inference-scheduling.md#iteration-scheduling (line 251) | books/part-05-inference-system/55-pd-disaggregation.md#本章要回答的问题 (line 10); books/part-06-ai-infrastructure/57-what-is-ai-platform.md#本章要回答的问题 (line 10) | existing:SF-2026-ARXIV-2602-02987 | delta:SF-2026-ARXIV-2602-02987 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-02987 |
-| SF-2026-ARXIV-2602-03025 | TRAIN-GRPO | books/part-04-training-system/33-grpo.md#从-sequence-reward-到-typed-trajectory (line 1004) | books/part-04-training-system/32-ppo.md#本章要回答的问题 (line 10); books/part-04-training-system/34-dpo.md#本章要回答的问题 (line 10) | existing:SF-2026-ARXIV-2602-03025 | delta:SF-2026-ARXIV-2602-03025 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-03025 |
-| SF-2026-ARXIV-2602-03128 | PLATFORM-EVALUATION-SYSTEM | books/part-06-ai-infrastructure/66-evaluation-system.md#第一个不变量评估声明必须绑定完整对象 (line 179) | books/part-06-ai-infrastructure/65-kai-scheduler.md#本章要回答的问题 (line 10); books/part-06-ai-infrastructure/67-monitoring.md#本章要回答的问题 (line 10) | existing:SF-2026-ARXIV-2602-03128 | delta:SF-2026-ARXIV-2602-03128 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-03128 |
-| SF-2026-ARXIV-2602-03203 | INFER-KV-CACHE | books/part-05-inference-system/45-why-kv-cache-speeds-up.md#kv-cache-的生命周期 (line 543) | books/part-05-inference-system/44-decode.md#本章要回答的问题 (line 10); books/part-05-inference-system/46-continuous-batching.md#本章要回答的问题 (line 10) | existing:SF-2026-ARXIV-2602-03203 | delta:SF-2026-ARXIV-2602-03203 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-03203 |
-| SF-2026-ARXIV-2602-03255 | PLATFORM-EVALUATION-SYSTEM | books/part-06-ai-infrastructure/66-evaluation-system.md#评估对象有四个层次 (line 689) | books/part-06-ai-infrastructure/65-kai-scheduler.md#本章要回答的问题 (line 10); books/part-06-ai-infrastructure/67-monitoring.md#本章要回答的问题 (line 10) | existing:SF-2026-ARXIV-2602-03255 | delta:SF-2026-ARXIV-2602-03255 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-03255 |
-| SF-2026-ARXIV-2602-03338 | AGENT-REFLECTION | books/part-07-agent/80-reflection.md#自检问题 (line 288) | books/part-07-agent/79-planning.md#本章要回答的问题 (line 10); books/part-07-agent/81-workflow.md#本章要回答的问题 (line 10) | existing:SF-2026-ARXIV-2602-03338 | delta:SF-2026-ARXIV-2602-03338 | Principle Reuse | Integrate | books-review:SF-2026-ARXIV-2602-03338 |
-| SF-2026-ARXIV-2602-03495 | INFER-GPU-MEMORY | books/part-05-inference-system/54-gpu-memory.md#三类缓解路径 (line 244) | books/part-05-inference-system/53-kserve-llm.md#本章要回答的问题 (line 10); books/part-05-inference-system/55-pd-disaggregation.md#本章要回答的问题 (line 10) | existing:SF-2026-ARXIV-2602-03495 | delta:SF-2026-ARXIV-2602-03495 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-03495 |
-| SF-2026-ARXIV-2602-03580 | AGENT-MCP | books/part-07-agent/83-mcp.md#tool-catalog-扩大后discovery-与-execution-必须分离 (line 227) | books/part-07-agent/82-multi-agent.md#本章要回答的问题 (line 10); books/part-07-agent/84-agent-platform.md#本章要回答的问题 (line 10) | existing:SF-2026-ARXIV-2602-03580 | delta:SF-2026-ARXIV-2602-03580 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-03580 |
-| SF-2026-ARXIV-2602-03632 | INFER-SCHEDULING | books/part-05-inference-system/56-inference-scheduling.md#能力生产与能力交付不能互相替代 (line 901) | books/part-05-inference-system/55-pd-disaggregation.md#本章要回答的问题 (line 10); books/part-06-ai-infrastructure/57-what-is-ai-platform.md#本章要回答的问题 (line 10) | existing:SF-2026-ARXIV-2602-03632 | delta:SF-2026-ARXIV-2602-03632 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-03632 |
-| SF-2026-ARXIV-2602-03719 | TRAIN-RLHF | books/part-04-training-system/31-rlhf.md#rlhfrlaif-与-verifiable-reward (line 491) | books/part-04-training-system/30-lora.md#本章要回答的问题 (line 10); books/part-04-training-system/32-ppo.md#本章要回答的问题 (line 10) | existing:SF-2026-ARXIV-2602-03719 | delta:SF-2026-ARXIV-2602-03719 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-03719 |
-| SF-2026-ARXIV-2602-03782 | INFER-TENSORRT-LLM | books/part-05-inference-system/49-tensorrt-llm.md#量化为什么不自动带来加速 (line 710) | books/part-05-inference-system/48-speculative-decoding.md#本章要回答的问题 (line 10); books/part-05-inference-system/50-vllm.md#本章要回答的问题 (line 10) | existing:SF-2026-ARXIV-2602-03782 | delta:SF-2026-ARXIV-2602-03782 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-03782 |
-| SF-2026-ARXIV-2602-02589 | PLATFORM-EVALUATION-SYSTEM | books/part-06-ai-infrastructure/66-evaluation-system.md#评估对象有四个层次 (line 484) | books/part-06-ai-infrastructure/65-kai-scheduler.md#本章要回答的问题 (line 10); books/part-06-ai-infrastructure/67-monitoring.md#本章要回答的问题 (line 10) | existing:SF-2026-ARXIV-2602-02589 | delta:SF-2026-ARXIV-2602-02589 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-02589 |
-| SF-2026-ARXIV-2602-02690 | PLATFORM-EVALUATION-SYSTEM | books/part-06-ai-infrastructure/66-evaluation-system.md#从答案评分到可执行证据 (line 950) | books/part-06-ai-infrastructure/65-kai-scheduler.md#本章要回答的问题 (line 10); books/part-06-ai-infrastructure/67-monitoring.md#本章要回答的问题 (line 10) | existing:SF-2026-ARXIV-2602-02690 | delta:SF-2026-ARXIV-2602-02690 | Principle Reuse | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2602-02690 |
-
-<!-- existing:SF-2026-ARXIV-2602-02579:start -->
-已对读当前 owner `INFER-KV-CACHE` 在 `books/part-05-inference-system/45-why-kv-cache-speeds-up.md#一致性不变量 (line 717)` 的命题：### 从反应式 Recall 到预测式 Prefetch
-<!-- existing:SF-2026-ARXIV-2602-02579:end -->
-
-<!-- delta:SF-2026-ARXIV-2602-02579:start -->
-exact-v1 的 `arXiv:2602.02579v1 HTML — §3.1 Illustrating the Failure of Existing Methods` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 KV 的 identity、压缩、复用、放置与失效状态。触发约束是：长上下文、多会话和异构层级使 KV 容量、带宽及身份成为主瓶颈。
-<!-- delta:SF-2026-ARXIV-2602-02579:end -->
-
-<!-- books-review:SF-2026-ARXIV-2602-02579:start -->
-Decision=`No Change — Existing Coverage`：当前 canonical owner 的真实机制命题已承载该 family 的长期责任；exact-v1 只增加受限 workload 证据或替代实现，因此无需写回。 相邻章节已定位为 `books/part-05-inference-system/44-decode.md#本章要回答的问题 (line 10); books/part-05-inference-system/46-continuous-batching.md#本章要回答的问题 (line 10)`。证据不得越过：只支持 arXiv:2602.02579v1 实际披露的机制与实验。方法定位为 arXiv:2602.02579v1 HTML — §3.1 Illustrating the Failure of Existing Methods；验证定位为 arXiv:2602.02579v1 HTML — §5.2 Accuracy Evaluation；边界定位为 arXiv:2602.02579v1 HTML — §3.1 Illustrating the Failure of Existing Methods。不外推生产 SLO、多租户、跨硬件或长期可靠性。 本项已由全月 fresh-context receipt 验收。
-<!-- books-review:SF-2026-ARXIV-2602-02579:end -->
-
-<!-- existing:SF-2026-ARXIV-2602-02599:start -->
-已对读当前 owner `INFER-KV-CACHE` 在 `books/part-05-inference-system/45-why-kv-cache-speeds-up.md#一致性不变量 (line 850)` 的命题：### Quantization Objective 应对齐 Attention Distortion
-<!-- existing:SF-2026-ARXIV-2602-02599:end -->
-
-<!-- delta:SF-2026-ARXIV-2602-02599:start -->
-exact-v1 的 `arXiv:2602.02599v1 HTML — §4 RAP: RoPE-Aligned Pruning` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 KV 的 identity、压缩、复用、放置与失效状态。触发约束是：长上下文、多会话和异构层级使 KV 容量、带宽及身份成为主瓶颈。
-<!-- delta:SF-2026-ARXIV-2602-02599:end -->
-
-<!-- books-review:SF-2026-ARXIV-2602-02599:start -->
-Decision=`No Change — Existing Coverage`：当前 canonical owner 的真实机制命题已承载该 family 的长期责任；exact-v1 只增加受限 workload 证据或替代实现，因此无需写回。 相邻章节已定位为 `books/part-05-inference-system/44-decode.md#本章要回答的问题 (line 10); books/part-05-inference-system/46-continuous-batching.md#本章要回答的问题 (line 10)`。证据不得越过：只支持 arXiv:2602.02599v1 实际披露的机制与实验。方法定位为 arXiv:2602.02599v1 HTML — §4 RAP: RoPE-Aligned Pruning；验证定位为 arXiv:2602.02599v1 HTML — §Appendix D Complete Experimental Results；边界定位为 arXiv:2602.02599v1 HTML — §6.3 Ablation Study。不外推生产 SLO、多租户、跨硬件或长期可靠性。 本项已由全月 fresh-context receipt 验收。
-<!-- books-review:SF-2026-ARXIV-2602-02599:end -->
-
-<!-- existing:SF-2026-ARXIV-2602-02958:start -->
-已对读当前 owner `INFER-KV-CACHE` 在 `books/part-05-inference-system/45-why-kv-cache-speeds-up.md#本章在知识树中的位置 (line 1071)` 的命题：### Agentic KV Precision 必须绑定 Role、Modality 与生命周期
-<!-- existing:SF-2026-ARXIV-2602-02958:end -->
-
-<!-- delta:SF-2026-ARXIV-2602-02958:start -->
-exact-v1 的 `arXiv:2602.02958v1 HTML — §4 Methodology` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 KV 的 identity、压缩、复用、放置与失效状态。触发约束是：长上下文、多会话和异构层级使 KV 容量、带宽及身份成为主瓶颈。
-<!-- delta:SF-2026-ARXIV-2602-02958:end -->
-
-<!-- books-review:SF-2026-ARXIV-2602-02958:start -->
-Decision=`No Change — Existing Coverage`：当前 canonical owner 的真实机制命题已承载该 family 的长期责任；exact-v1 只增加受限 workload 证据或替代实现，因此无需写回。 相邻章节已定位为 `books/part-05-inference-system/44-decode.md#本章要回答的问题 (line 10); books/part-05-inference-system/46-continuous-batching.md#本章要回答的问题 (line 10)`。证据不得越过：只支持 arXiv:2602.02958v1 实际披露的机制与实验。方法定位为 arXiv:2602.02958v1 HTML — §4 Methodology；验证定位为 arXiv:2602.02958v1 HTML — §5.2 Quality Evaluation；边界定位为 arXiv:2602.02958v1 HTML — §5.4 Sensitivity Test。不外推生产 SLO、多租户、跨硬件或长期可靠性。 本项已由全月 fresh-context receipt 验收。
-<!-- books-review:SF-2026-ARXIV-2602-02958:end -->
-
-<!-- existing:SF-2026-ARXIV-2602-03036:start -->
-已对读当前 owner `AGENT-MEMORY` 在 `books/part-07-agent/77-memory.md#从原始轨迹到派生策略memory-的演进不是无限追加 (line 670)` 的命题：### 从固定 Latent 容量到按 Query 分配读取预算
-<!-- existing:SF-2026-ARXIV-2602-03036:end -->
-
-<!-- delta:SF-2026-ARXIV-2602-03036:start -->
-exact-v1 的 `arXiv:2602.03036v1 HTML — §4 Methodology` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 memory 的写入、版本、检索与失效控制权。触发约束是：长时交互、容量和权限约束迫使系统决定何时写、如何索引、何时遗忘。
-<!-- delta:SF-2026-ARXIV-2602-03036:end -->
-
-<!-- books-review:SF-2026-ARXIV-2602-03036:start -->
-Decision=`No Change — Existing Coverage`：当前 canonical owner 的真实机制命题已承载该 family 的长期责任；exact-v1 只增加受限 workload 证据或替代实现，因此无需写回。 相邻章节已定位为 `books/part-07-agent/76-rag.md#本章要回答的问题 (line 10); books/part-07-agent/78-tool-calling.md#本章要回答的问题 (line 10)`。证据不得越过：只支持 arXiv:2602.03036v1 实际披露的机制与实验。方法定位为 arXiv:2602.03036v1 HTML — §4 Methodology；验证定位为 arXiv:2602.03036v1 HTML — §5.2 Main Results；边界定位为 arXiv:2602.03036v1 HTML — §5.6 Sensitivity & Ablation Study.。不外推生产 SLO、多租户、跨硬件或长期可靠性。 本项已由全月 fresh-context receipt 验收。
-<!-- books-review:SF-2026-ARXIV-2602-03036:end -->
-
-<!-- existing:SF-2026-ARXIV-2602-03184:start -->
-已对读当前 owner `INFER-KV-CACHE` 在 `books/part-05-inference-system/45-why-kv-cache-speeds-up.md#kv-cache-的生命周期 (line 307)` 的命题：### 从统一保留到 workload-aware eviction
-<!-- existing:SF-2026-ARXIV-2602-03184:end -->
-
-<!-- delta:SF-2026-ARXIV-2602-03184:start -->
-exact-v1 的 `arXiv:2602.03184v1 HTML — §B.2 Implementation details` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 KV 的 identity、压缩、复用、放置与失效状态。触发约束是：长上下文、多会话和异构层级使 KV 容量、带宽及身份成为主瓶颈。
-<!-- delta:SF-2026-ARXIV-2602-03184:end -->
-
-<!-- books-review:SF-2026-ARXIV-2602-03184:start -->
-Decision=`No Change — Existing Coverage`：当前 canonical owner 的真实机制命题已承载该 family 的长期责任；exact-v1 只增加受限 workload 证据或替代实现，因此无需写回。 相邻章节已定位为 `books/part-05-inference-system/44-decode.md#本章要回答的问题 (line 10); books/part-05-inference-system/46-continuous-batching.md#本章要回答的问题 (line 10)`。证据不得越过：只支持 arXiv:2602.03184v1 实际披露的机制与实验。方法定位为 arXiv:2602.03184v1 HTML — §B.2 Implementation details；验证定位为 arXiv:2602.03184v1 HTML — §5.4 Ablation Results；边界定位为 arXiv:2602.03184v1 HTML — §6 Conclusion。不外推生产 SLO、多租户、跨硬件或长期可靠性。 本项已由全月 fresh-context receipt 验收。
-<!-- books-review:SF-2026-ARXIV-2602-03184:end -->
-
-<!-- existing:SF-2026-ARXIV-2602-03295:start -->
-已对读当前 owner `INFER-PREFILL` 在 `books/part-05-inference-system/43-prefill.md#计算量从哪里来 (line 62)` 的命题：#### Phase-aware layer execution：Prefill 与 Decode 不必共享同一计算图
-<!-- existing:SF-2026-ARXIV-2602-03295:end -->
-
-<!-- delta:SF-2026-ARXIV-2602-03295:start -->
-exact-v1 的 `arXiv:2602.03295v1 HTML — §3 Method; §3.3 Prefill-Only Pruning for Efficient Inference` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 prompt token、attention work、prefill plan 与 KV materialization。触发约束是：长输入和异构硬件使 token 选择、并行与带宽成为 TTFT 主约束。
-<!-- delta:SF-2026-ARXIV-2602-03295:end -->
-
-<!-- books-review:SF-2026-ARXIV-2602-03295:start -->
-Decision=`Integrate`：现有命题原先未完整承载该 family 的长期机制责任；写回已在 canonical owner 中完成，并通过唯一 marker、正文位置和 claim-boundary 的 post-write fresh-context audit。 相邻章节已定位为 `books/part-05-inference-system/42-what-happens-during-inference.md#本章要回答的问题 (line 10); books/part-05-inference-system/44-decode.md#本章要回答的问题 (line 10)`。证据不得越过：只支持 arXiv:2602.03295v1 实际披露的机制与实验。方法定位为 arXiv:2602.03295v1 HTML — §3 Method; §3.3 Prefill-Only Pruning for Efficient Inference；验证定位为 arXiv:2602.03295v1 HTML — §4 Experiments; §4.2 Accuracy; §4.3 Inference Speedup; §4.4 Ablation；边界定位为 arXiv:2602.03295v1 HTML — §7 Limitations; Appendix C Robustness to Representation Mismatch。不外推生产 SLO、多租户、跨硬件或长期可靠性。 本项已由全月 fresh-context receipt 验收。
-<!-- books-review:SF-2026-ARXIV-2602-03295:end -->
-
-<!-- existing:SF-2026-ARXIV-2602-03560:start -->
-已对读当前 owner `MODEL-LONG-CONTEXT` 在 `books/part-02-model/22-long-context.md#路线二改变-attention-连接 (line 121)` 的命题：### Conditional Attention 的路由粒度必须匹配执行粒度
-<!-- existing:SF-2026-ARXIV-2602-03560:end -->
-
-<!-- delta:SF-2026-ARXIV-2602-03560:start -->
-exact-v1 的 `arXiv:2602.03560v1 HTML — §2.2 Hybrid Attention Architecture` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 上下文选择、层次化表示和可访问记忆的语义边界。触发约束是：序列增长令计算、显存和信息稀释同时恶化。
-<!-- delta:SF-2026-ARXIV-2602-03560:end -->
-
-<!-- books-review:SF-2026-ARXIV-2602-03560:start -->
-Decision=`No Change — Existing Coverage`：当前 canonical owner 的真实机制命题已承载该 family 的长期责任；exact-v1 只增加受限 workload 证据或替代实现，因此无需写回。 相邻章节已定位为 `books/part-02-model/21-moe.md#本章要回答的问题 (line 10); books/part-03-multimodal-world-models/23-multimodal-representation.md#本章要回答的问题 (line 10)`。证据不得越过：只支持 arXiv:2602.03560v1 实际披露的机制与实验。方法定位为 arXiv:2602.03560v1 HTML — §2.2 Hybrid Attention Architecture；验证定位为 arXiv:2602.03560v1 HTML — §Evaluation Benchmark；边界定位为 arXiv:2602.03560v1 HTML — §6 Conclusion。不外推生产 SLO、多租户、跨硬件或长期可靠性。 本项已由全月 fresh-context receipt 验收。
-<!-- books-review:SF-2026-ARXIV-2602-03560:end -->
-
-<!-- existing:SF-2026-ARXIV-2602-02499:start -->
-已对读当前 owner `MODEL-LONG-CONTEXT` 在 `books/part-02-model/22-long-context.md#路线六让模型在-test-time-更新内部记忆 (line 468)` 的命题：### State continuity：历史可访问与计算连续性不是同一问题
-<!-- existing:SF-2026-ARXIV-2602-02499:end -->
-
-<!-- delta:SF-2026-ARXIV-2602-02499:start -->
-exact-v1 的 `arXiv:2602.02499v1 HTML — §4 Implementation` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 上下文选择、层次化表示和可访问记忆的语义边界。触发约束是：序列增长令计算、显存和信息稀释同时恶化。
-<!-- delta:SF-2026-ARXIV-2602-02499:end -->
-
-<!-- books-review:SF-2026-ARXIV-2602-02499:start -->
-Decision=`No Change — Existing Coverage`：当前 canonical owner 的真实机制命题已承载该 family 的长期责任；exact-v1 只增加受限 workload 证据或替代实现，因此无需写回。 相邻章节已定位为 `books/part-02-model/21-moe.md#本章要回答的问题 (line 10); books/part-03-multimodal-world-models/23-multimodal-representation.md#本章要回答的问题 (line 10)`。证据不得越过：只支持 arXiv:2602.02499v1 实际披露的机制与实验。方法定位为 arXiv:2602.02499v1 HTML — §4 Implementation；验证定位为 arXiv:2602.02499v1 HTML — §5.2 General Capability Evaluation；边界定位为 arXiv:2602.02499v1 HTML — §D.2 Ablation on ROSA Symbol Width。不外推生产 SLO、多租户、跨硬件或长期可靠性。 本项已由全月 fresh-context receipt 验收。
-<!-- books-review:SF-2026-ARXIV-2602-02499:end -->
-
-<!-- existing:SF-2026-ARXIV-2602-02515:start -->
-已对读当前 owner `PLATFORM-EVALUATION-SYSTEM` 在 `books/part-06-ai-infrastructure/66-evaluation-system.md#第一个不变量评估声明必须绑定完整对象 (line 179)` 的命题：### Evaluation Identity 必须包含 Harness 与 Environment
-<!-- existing:SF-2026-ARXIV-2602-02515:end -->
-
-<!-- delta:SF-2026-ARXIV-2602-02515:start -->
-exact-v1 的 `arXiv:2602.02515v1 HTML — §4.1. CreditAudit Design` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 evaluation contract、覆盖分母、evidence lineage 与 release gate。触发约束是：agent、长时程和多模态系统把失败分散到状态、工具与环境交互链。
-<!-- delta:SF-2026-ARXIV-2602-02515:end -->
-
-<!-- books-review:SF-2026-ARXIV-2602-02515:start -->
-Decision=`No Change — Existing Coverage`：当前 canonical owner 的真实机制命题已承载该 family 的长期责任；exact-v1 只增加受限 workload 证据或替代实现，因此无需写回。 相邻章节已定位为 `books/part-06-ai-infrastructure/65-kai-scheduler.md#本章要回答的问题 (line 10); books/part-06-ai-infrastructure/67-monitoring.md#本章要回答的问题 (line 10)`。证据不得越过：只支持 arXiv:2602.02515v1 实际披露的机制与实验。方法定位为 arXiv:2602.02515v1 HTML — §4.1. CreditAudit Design；验证定位为 arXiv:2602.02515v1 HTML — §3.1. What LLM Evaluation Estimates: Partial Observability and Prompt-Induced Reliability；边界定位为 arXiv:2602.02515v1 HTML — §Limitations and future work.。不外推生产 SLO、多租户、跨硬件或长期可靠性。 本项已由全月 fresh-context receipt 验收。
-<!-- books-review:SF-2026-ARXIV-2602-02515:end -->
-
-<!-- existing:SF-2026-ARXIV-2602-02574:start -->
-已对读当前 owner `AGENT-MEMORY` 在 `books/part-07-agent/77-memory.md#派生-memory-的组织适用性与验证 (line 725)` 的命题：### Retrieval 之前还有 Retention / Admission
-<!-- existing:SF-2026-ARXIV-2602-02574:end -->
-
-<!-- delta:SF-2026-ARXIV-2602-02574:start -->
-exact-v1 的 `arXiv:2602.02574v1 HTML — §Implementation note.` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 memory 的写入、版本、检索与失效控制权。触发约束是：长时交互、容量和权限约束迫使系统决定何时写、如何索引、何时遗忘。
-<!-- delta:SF-2026-ARXIV-2602-02574:end -->
-
-<!-- books-review:SF-2026-ARXIV-2602-02574:start -->
-Decision=`No Change — Existing Coverage`：当前 canonical owner 的真实机制命题已承载该 family 的长期责任；exact-v1 只增加受限 workload 证据或替代实现，因此无需写回。 相邻章节已定位为 `books/part-07-agent/76-rag.md#本章要回答的问题 (line 10); books/part-07-agent/78-tool-calling.md#本章要回答的问题 (line 10)`。证据不得越过：只支持 arXiv:2602.02574v1 实际披露的机制与实验。方法定位为 arXiv:2602.02574v1 HTML — §Implementation note.；验证定位为 arXiv:2602.02574v1 HTML — §Policy observability and evaluation tracks.；边界定位为 arXiv:2602.02574v1 HTML — §9 Limitations。不外推生产 SLO、多租户、跨硬件或长期可靠性。 本项已由全月 fresh-context receipt 验收。
-<!-- books-review:SF-2026-ARXIV-2602-02574:end -->
-
-<!-- existing:SF-2026-ARXIV-2602-02585:start -->
-已对读当前 owner `PLATFORM-MONITORING` 在 `books/part-06-ai-infrastructure/67-monitoring.md#rateerrorsduration-与-saturation (line 152)` 的命题：### 从 Thread State 下钻到带资源身份的依赖图
-<!-- existing:SF-2026-ARXIV-2602-02585:end -->
-
-<!-- delta:SF-2026-ARXIV-2602-02585:start -->
-exact-v1 的 `arXiv:2602.02585v1 PDF — §System Design` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 signal identity、evidence retrieval、diagnosis state、action proposal 与 human approval。触发约束是：事件规模、跨系统证据和响应时限增长后，triage 的读取、判断与动作必须可追踪。
-<!-- delta:SF-2026-ARXIV-2602-02585:end -->
-
-<!-- books-review:SF-2026-ARXIV-2602-02585:start -->
-Decision=`No Change — Existing Coverage`：当前 canonical owner 的真实机制命题已承载该 family 的长期责任；exact-v1 只增加受限 workload 证据或替代实现，因此无需写回。 相邻章节已定位为 `books/part-06-ai-infrastructure/66-evaluation-system.md#本章要回答的问题 (line 10); books/part-06-ai-infrastructure/68-logging.md#本章要回答的问题 (line 10)`。证据不得越过：只支持 arXiv:2602.02585v1 实际披露的机制与实验。方法定位为 arXiv:2602.02585v1 PDF — §System Design；验证定位为 arXiv:2602.02585v1 PDF — §Evaluation；边界定位为 arXiv:2602.02585v1 PDF — §Discussion and Future Work。不外推生产 SLO、多租户、跨硬件或长期可靠性。 本项已由全月 fresh-context receipt 验收。
-<!-- books-review:SF-2026-ARXIV-2602-02585:end -->
-
-<!-- existing:SF-2026-ARXIV-2602-02987:start -->
-已对读当前 owner `INFER-SCHEDULING` 在 `books/part-05-inference-system/56-inference-scheduling.md#iteration-scheduling (line 251)` 的命题：### Exclusive Batching 的 Phase Switch 是 Workload-dependent State
-<!-- existing:SF-2026-ARXIV-2602-02987:end -->
-
-<!-- delta:SF-2026-ARXIV-2602-02987:start -->
-exact-v1 的 `arXiv:2602.02987v1 HTML — §5.1 SLI-Aware Gate-and-Route Control Policy` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 准入、批处理、优先级、路由和资源选择。触发约束是：长度、阶段、SLO、模型和 agent fan-out 的异质性使排队决策决定整体尾延迟。
-<!-- delta:SF-2026-ARXIV-2602-02987:end -->
-
-<!-- books-review:SF-2026-ARXIV-2602-02987:start -->
-Decision=`No Change — Existing Coverage`：当前 canonical owner 的真实机制命题已承载该 family 的长期责任；exact-v1 只增加受限 workload 证据或替代实现，因此无需写回。 相邻章节已定位为 `books/part-05-inference-system/55-pd-disaggregation.md#本章要回答的问题 (line 10); books/part-06-ai-infrastructure/57-what-is-ai-platform.md#本章要回答的问题 (line 10)`。证据不得越过：只支持 arXiv:2602.02987v1 实际披露的机制与实验。方法定位为 arXiv:2602.02987v1 HTML — §5.1 SLI-Aware Gate-and-Route Control Policy；验证定位为 arXiv:2602.02987v1 HTML — §6.3 Policy Performance: Baselines and Ablations；边界定位为 arXiv:2602.02987v1 HTML — §6.3 Policy Performance: Baselines and Ablations。不外推生产 SLO、多租户、跨硬件或长期可靠性。 本项已由全月 fresh-context receipt 验收。
-<!-- books-review:SF-2026-ARXIV-2602-02987:end -->
-
-<!-- existing:SF-2026-ARXIV-2602-03025:start -->
-已对读当前 owner `TRAIN-GRPO` 在 `books/part-04-training-system/33-grpo.md#从-sequence-reward-到-typed-trajectory (line 1004)` 的命题：### 从一个终局标量到 Typed Credit：Reward 必须匹配决策边界
-<!-- existing:SF-2026-ARXIV-2602-03025:end -->
-
-<!-- delta:SF-2026-ARXIV-2602-03025:start -->
-exact-v1 的 `arXiv:2602.03025v1 HTML — §3 Method` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 prompt、rollout、group advantage 与 on-policy freshness。触发约束是：稀疏可验证奖励和 rollout 成本要求更有效地复用同组比较。
-<!-- delta:SF-2026-ARXIV-2602-03025:end -->
-
-<!-- books-review:SF-2026-ARXIV-2602-03025:start -->
-Decision=`No Change — Existing Coverage`：当前 canonical owner 的真实机制命题已承载该 family 的长期责任；exact-v1 只增加受限 workload 证据或替代实现，因此无需写回。 相邻章节已定位为 `books/part-04-training-system/32-ppo.md#本章要回答的问题 (line 10); books/part-04-training-system/34-dpo.md#本章要回答的问题 (line 10)`。证据不得越过：只支持 arXiv:2602.03025v1 实际披露的机制与实验。方法定位为 arXiv:2602.03025v1 HTML — §3 Method；验证定位为 arXiv:2602.03025v1 HTML — §4.2 Main Results；独立 limitations 未披露，因而采用更窄主张。不外推生产 SLO、多租户、跨硬件或长期可靠性。 本项已由全月 fresh-context receipt 验收。
-<!-- books-review:SF-2026-ARXIV-2602-03025:end -->
-
-<!-- existing:SF-2026-ARXIV-2602-03128:start -->
-已对读当前 owner `PLATFORM-EVALUATION-SYSTEM` 在 `books/part-06-ai-infrastructure/66-evaluation-system.md#第一个不变量评估声明必须绑定完整对象 (line 179)` 的命题：### Evaluation Identity 必须包含 Harness 与 Environment
-<!-- existing:SF-2026-ARXIV-2602-03128:end -->
-
-<!-- delta:SF-2026-ARXIV-2602-03128:start -->
-exact-v1 的 `arXiv:2602.03128v1 HTML — §3. MAFBench: A Unified Benchmark` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 evaluation contract、覆盖分母、evidence lineage 与 release gate。触发约束是：agent、长时程和多模态系统把失败分散到状态、工具与环境交互链。
-<!-- delta:SF-2026-ARXIV-2602-03128:end -->
-
-<!-- books-review:SF-2026-ARXIV-2602-03128:start -->
-Decision=`No Change — Existing Coverage`：当前 canonical owner 的真实机制命题已承载该 family 的长期责任；exact-v1 只增加受限 workload 证据或替代实现，因此无需写回。 相邻章节已定位为 `books/part-06-ai-infrastructure/65-kai-scheduler.md#本章要回答的问题 (line 10); books/part-06-ai-infrastructure/67-monitoring.md#本章要回答的问题 (line 10)`。证据不得越过：只支持 arXiv:2602.03128v1 实际披露的机制与实验。方法定位为 arXiv:2602.03128v1 HTML — §3. MAFBench: A Unified Benchmark；验证定位为 arXiv:2602.03128v1 HTML — §4. Evaluation；边界定位为 arXiv:2602.03128v1 HTML — §3.4. Tool Use Benchmarks and Limitations。不外推生产 SLO、多租户、跨硬件或长期可靠性。 本项已由全月 fresh-context receipt 验收。
-<!-- books-review:SF-2026-ARXIV-2602-03128:end -->
-
-<!-- existing:SF-2026-ARXIV-2602-03203:start -->
-已对读当前 owner `INFER-KV-CACHE` 在 `books/part-05-inference-system/45-why-kv-cache-speeds-up.md#kv-cache-的生命周期 (line 543)` 的命题：### 从昂贵 Oracle 到 Learned Eviction Policy
-<!-- existing:SF-2026-ARXIV-2602-03203:end -->
-
-<!-- delta:SF-2026-ARXIV-2602-03203:start -->
-exact-v1 的 `arXiv:2602.03203v1 HTML — §Design of Model and Sampling Algorithm.` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 KV 的 identity、压缩、复用、放置与失效状态。触发约束是：长上下文、多会话和异构层级使 KV 容量、带宽及身份成为主瓶颈。
-<!-- delta:SF-2026-ARXIV-2602-03203:end -->
-
-<!-- books-review:SF-2026-ARXIV-2602-03203:start -->
-Decision=`No Change — Existing Coverage`：当前 canonical owner 的真实机制命题已承载该 family 的长期责任；exact-v1 只增加受限 workload 证据或替代实现，因此无需写回。 相邻章节已定位为 `books/part-05-inference-system/44-decode.md#本章要回答的问题 (line 10); books/part-05-inference-system/46-continuous-batching.md#本章要回答的问题 (line 10)`。证据不得越过：只支持 arXiv:2602.03203v1 实际披露的机制与实验。方法定位为 arXiv:2602.03203v1 HTML — §Design of Model and Sampling Algorithm.；验证定位为 arXiv:2602.03203v1 HTML — §4.2 Main Results；独立 limitations 未披露，因而采用更窄主张。不外推生产 SLO、多租户、跨硬件或长期可靠性。 本项已由全月 fresh-context receipt 验收。
-<!-- books-review:SF-2026-ARXIV-2602-03203:end -->
-
-<!-- existing:SF-2026-ARXIV-2602-03255:start -->
-已对读当前 owner `PLATFORM-EVALUATION-SYSTEM` 在 `books/part-06-ai-infrastructure/66-evaluation-system.md#评估对象有四个层次 (line 689)` 的命题：### 从 Perfect API 到累积故障：Agent 评测必须控制 Environment Complexity
-<!-- existing:SF-2026-ARXIV-2602-03255:end -->
-
-<!-- delta:SF-2026-ARXIV-2602-03255:start -->
-exact-v1 的 `arXiv:2602.03255v1 HTML — §3.3 Automated Evaluation Framework` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 evaluation contract、覆盖分母、evidence lineage 与 release gate。触发约束是：agent、长时程和多模态系统把失败分散到状态、工具与环境交互链。
-<!-- delta:SF-2026-ARXIV-2602-03255:end -->
-
-<!-- books-review:SF-2026-ARXIV-2602-03255:start -->
-Decision=`No Change — Existing Coverage`：当前 canonical owner 的真实机制命题已承载该 family 的长期责任；exact-v1 只增加受限 workload 证据或替代实现，因此无需写回。 相邻章节已定位为 `books/part-06-ai-infrastructure/65-kai-scheduler.md#本章要回答的问题 (line 10); books/part-06-ai-infrastructure/67-monitoring.md#本章要回答的问题 (line 10)`。证据不得越过：只支持 arXiv:2602.03255v1 实际披露的机制与实验。方法定位为 arXiv:2602.03255v1 HTML — §3.3 Automated Evaluation Framework；验证定位为 arXiv:2602.03255v1 HTML — §3.3 Automated Evaluation Framework；边界定位为 arXiv:2602.03255v1 HTML — §Limitations。不外推生产 SLO、多租户、跨硬件或长期可靠性。 本项已由全月 fresh-context receipt 验收。
-<!-- books-review:SF-2026-ARXIV-2602-03255:end -->
-
-<!-- existing:SF-2026-ARXIV-2602-03338:start -->
-已对读当前 owner `AGENT-REFLECTION` 在 `books/part-07-agent/80-reflection.md#自检问题 (line 288)` 的命题：### Critic Accuracy 不等于 Intervention Value
-<!-- existing:SF-2026-ARXIV-2602-03338:end -->
-
-<!-- delta:SF-2026-ARXIV-2602-03338:start -->
-exact-v1 的 `arXiv:2602.03338v1 HTML — §Experimental design.` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 critique evidence、revision lineage 与 termination control。触发约束是：长链任务与环境反馈使系统需要保存 critique、revision 与停止条件。
-<!-- delta:SF-2026-ARXIV-2602-03338:end -->
-
-<!-- books-review:SF-2026-ARXIV-2602-03338:start -->
-Decision=`Integrate`：现有命题原先未完整承载该 family 的长期机制责任；写回已在 canonical owner 中完成，并通过唯一 marker、正文位置和 claim-boundary 的 post-write fresh-context audit。 相邻章节已定位为 `books/part-07-agent/79-planning.md#本章要回答的问题 (line 10); books/part-07-agent/81-workflow.md#本章要回答的问题 (line 10)`。证据不得越过：只支持 arXiv:2602.03338v1 实际披露的机制与实验。方法定位为 arXiv:2602.03338v1 HTML — §Experimental design.；验证定位为 arXiv:2602.03338v1 HTML — §4 Main Results；边界定位为 arXiv:2602.03338v1 HTML — §Critic model scale.。不外推生产 SLO、多租户、跨硬件或长期可靠性。 本项已由全月 fresh-context receipt 验收。
-<!-- books-review:SF-2026-ARXIV-2602-03338:end -->
-
-<!-- existing:SF-2026-ARXIV-2602-03495:start -->
-已对读当前 owner `INFER-GPU-MEMORY` 在 `books/part-05-inference-system/54-gpu-memory.md#三类缓解路径 (line 244)` 的命题：### 层级的管理权不应默认属于 Framework
-<!-- existing:SF-2026-ARXIV-2602-03495:end -->
-
-<!-- delta:SF-2026-ARXIV-2602-03495:start -->
-exact-v1 的 `arXiv:2602.03495v1 HTML — §4. Design` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 权重、KV、临时张量的 placement、lifetime 与迁移控制。触发约束是：容量、带宽和并发超过单设备预算后，放置、迁移与回收成为控制问题。
-<!-- delta:SF-2026-ARXIV-2602-03495:end -->
-
-<!-- books-review:SF-2026-ARXIV-2602-03495:start -->
-Decision=`No Change — Existing Coverage`：当前 canonical owner 的真实机制命题已承载该 family 的长期责任；exact-v1 只增加受限 workload 证据或替代实现，因此无需写回。 相邻章节已定位为 `books/part-05-inference-system/53-kserve-llm.md#本章要回答的问题 (line 10); books/part-05-inference-system/55-pd-disaggregation.md#本章要回答的问题 (line 10)`。证据不得越过：只支持 arXiv:2602.03495v1 实际披露的机制与实验。方法定位为 arXiv:2602.03495v1 HTML — §4. Design；验证定位为 arXiv:2602.03495v1 HTML — §6.2. Overall Results；边界定位为 arXiv:2602.03495v1 HTML — §6.5. Discussion。不外推生产 SLO、多租户、跨硬件或长期可靠性。 本项已由全月 fresh-context receipt 验收。
-<!-- books-review:SF-2026-ARXIV-2602-03495:end -->
-
-<!-- existing:SF-2026-ARXIV-2602-03580:start -->
-已对读当前 owner `AGENT-MCP` 在 `books/part-07-agent/83-mcp.md#tool-catalog-扩大后discovery-与-execution-必须分离 (line 227)` 的命题：### Tool Description 是可执行的 Discovery Interface
-<!-- existing:SF-2026-ARXIV-2602-03580:end -->
-
-<!-- delta:SF-2026-ARXIV-2602-03580:start -->
-exact-v1 的 `arXiv:2602.03580v1 HTML — §Design of MCPDiFF` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 协议身份、capability 声明、授权与审计状态。触发约束是：跨 server capability、委托链与动态发现使权限边界不再等同于一次函数调用。
-<!-- delta:SF-2026-ARXIV-2602-03580:end -->
-
-<!-- books-review:SF-2026-ARXIV-2602-03580:start -->
-Decision=`No Change — Existing Coverage`：当前 canonical owner 的真实机制命题已承载该 family 的长期责任；exact-v1 只增加受限 workload 证据或替代实现，因此无需写回。 相邻章节已定位为 `books/part-07-agent/82-multi-agent.md#本章要回答的问题 (line 10); books/part-07-agent/84-agent-platform.md#本章要回答的问题 (line 10)`。证据不得越过：只支持 arXiv:2602.03580v1 实际披露的机制与实验。方法定位为 arXiv:2602.03580v1 HTML — §Design of MCPDiFF；验证定位为 arXiv:2602.03580v1 HTML — §Experiment Results；边界定位为 arXiv:2602.03580v1 HTML — §Open Questions and Future Directions。不外推生产 SLO、多租户、跨硬件或长期可靠性。 本项已由全月 fresh-context receipt 验收。
-<!-- books-review:SF-2026-ARXIV-2602-03580:end -->
-
-<!-- existing:SF-2026-ARXIV-2602-03632:start -->
-已对读当前 owner `INFER-SCHEDULING` 在 `books/part-05-inference-system/56-inference-scheduling.md#能力生产与能力交付不能互相替代 (line 901)` 的命题：### Heterogeneous Model Pool 与 Routing Policy 要独立版本化
-<!-- existing:SF-2026-ARXIV-2602-03632:end -->
-
-<!-- delta:SF-2026-ARXIV-2602-03632:start -->
-exact-v1 的 `arXiv:2602.03632v1 HTML — §3. The CALM Approach` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 准入、批处理、优先级、路由和资源选择。触发约束是：长度、阶段、SLO、模型和 agent fan-out 的异质性使排队决策决定整体尾延迟。
-<!-- delta:SF-2026-ARXIV-2602-03632:end -->
-
-<!-- books-review:SF-2026-ARXIV-2602-03632:start -->
-Decision=`No Change — Existing Coverage`：当前 canonical owner 的真实机制命题已承载该 family 的长期责任；exact-v1 只增加受限 workload 证据或替代实现，因此无需写回。 相邻章节已定位为 `books/part-05-inference-system/55-pd-disaggregation.md#本章要回答的问题 (line 10); books/part-06-ai-infrastructure/57-what-is-ai-platform.md#本章要回答的问题 (line 10)`。证据不得越过：只支持 arXiv:2602.03632v1 实际披露的机制与实验。方法定位为 arXiv:2602.03632v1 HTML — §3. The CALM Approach；验证定位为 arXiv:2602.03632v1 HTML — §5. Results；边界定位为 arXiv:2602.03632v1 HTML — §7. Threats to Validity。不外推生产 SLO、多租户、跨硬件或长期可靠性。 本项已由全月 fresh-context receipt 验收。
-<!-- books-review:SF-2026-ARXIV-2602-03632:end -->
-
-<!-- existing:SF-2026-ARXIV-2602-03719:start -->
-已对读当前 owner `TRAIN-RLHF` 在 `books/part-04-training-system/31-rlhf.md#rlhfrlaif-与-verifiable-reward (line 491)` 的命题：在每个 episode 清空外部状态，rollout distribution 只需绑定 policy、prompt 和 environment；让 Agent 先生成 tips/memory 并在后续 episode 中读取，会同时改变 observation、exploration path 与 action probability。若随后混合 on-policy 与 replayed/off-policy updates，样本 identity 必须增加 memory content/hash、生成它的 policy/reward revision、read mode、behavior probability、episode lineage 与清空边界。memory generator 只产生 exploration proposal，trajectory store 保存真实 context，learner 根据 support/freshness 决定 update，outcome verifier 仍拥有任务正确性。
-<!-- existing:SF-2026-ARXIV-2602-03719:end -->
-
-<!-- delta:SF-2026-ARXIV-2602-03719:start -->
-exact-v1 的 `arXiv:2602.03719v1 HTML — §A.1 Algorithm Details` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 rollout、reward、policy/reference 与更新 freshness。触发约束是：模型规模、奖励来源和任务 horizon 改变后，同一配方的排序可能反转。
-<!-- delta:SF-2026-ARXIV-2602-03719:end -->
-
-<!-- books-review:SF-2026-ARXIV-2602-03719:start -->
-Decision=`No Change — Existing Coverage`：当前 canonical owner 的真实机制命题已承载该 family 的长期责任；exact-v1 只增加受限 workload 证据或替代实现，因此无需写回。 相邻章节已定位为 `books/part-04-training-system/30-lora.md#本章要回答的问题 (line 10); books/part-04-training-system/32-ppo.md#本章要回答的问题 (line 10)`。证据不得越过：只支持 arXiv:2602.03719v1 实际披露的机制与实验。方法定位为 arXiv:2602.03719v1 HTML — §A.1 Algorithm Details；验证定位为 arXiv:2602.03719v1 HTML — §Evaluation.；边界定位为 arXiv:2602.03719v1 HTML — §Appendix D Limitations and Future Work。不外推生产 SLO、多租户、跨硬件或长期可靠性。 本项已由全月 fresh-context receipt 验收。
-<!-- books-review:SF-2026-ARXIV-2602-03719:end -->
-
-<!-- existing:SF-2026-ARXIV-2602-03782:start -->
-已对读当前 owner `INFER-TENSORRT-LLM` 在 `books/part-05-inference-system/49-tensorrt-llm.md#量化为什么不自动带来加速 (line 710)` 的命题：#### Embodied phase 可以选择精度，但不能接管物理安全
-<!-- existing:SF-2026-ARXIV-2602-03782:end -->
-
-<!-- delta:SF-2026-ARXIV-2602-03782:start -->
-exact-v1 的 `arXiv:2602.03782v1 HTML — §3.3 The proposed QVLA` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 graph lowering、kernel/precision 选择与执行计划版本。触发约束是：模型规模、算子形态和 SLO 使执行计划、精度与 kernel 选择成为主要成本。
-<!-- delta:SF-2026-ARXIV-2602-03782:end -->
-
-<!-- books-review:SF-2026-ARXIV-2602-03782:start -->
-Decision=`No Change — Existing Coverage`：当前 canonical owner 的真实机制命题已承载该 family 的长期责任；exact-v1 只增加受限 workload 证据或替代实现，因此无需写回。 相邻章节已定位为 `books/part-05-inference-system/48-speculative-decoding.md#本章要回答的问题 (line 10); books/part-05-inference-system/50-vllm.md#本章要回答的问题 (line 10)`。证据不得越过：只支持 arXiv:2602.03782v1 实际披露的机制与实验。方法定位为 arXiv:2602.03782v1 HTML — §3.3 The proposed QVLA；验证定位为 arXiv:2602.03782v1 HTML — §4.2 Comparison with State-of-the-arts；边界定位为 arXiv:2602.03782v1 HTML — §H.2 Behavior During Full-Precision Failure Trials。不外推生产 SLO、多租户、跨硬件或长期可靠性。 本项已由全月 fresh-context receipt 验收。
-<!-- books-review:SF-2026-ARXIV-2602-03782:end -->
-
-<!-- existing:SF-2026-ARXIV-2602-02589:start -->
-已对读当前 owner `PLATFORM-EVALUATION-SYSTEM` 在 `books/part-06-ai-infrastructure/66-evaluation-system.md#评估对象有四个层次 (line 484)` 的命题：### Judge 从被动 Scorer 演进为有预算的 Evidence Acquisition Policy
-<!-- existing:SF-2026-ARXIV-2602-02589:end -->
-
-<!-- delta:SF-2026-ARXIV-2602-02589:start -->
-exact-v1 的 `arXiv:2602.02589v1 HTML — §3 Methodology` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 evaluation contract、覆盖分母、evidence lineage 与 release gate。触发约束是：agent、长时程和多模态系统把失败分散到状态、工具与环境交互链。
-<!-- delta:SF-2026-ARXIV-2602-02589:end -->
-
-<!-- books-review:SF-2026-ARXIV-2602-02589:start -->
-Decision=`No Change — Existing Coverage`：当前 canonical owner 的真实机制命题已承载该 family 的长期责任；exact-v1 只增加受限 workload 证据或替代实现，因此无需写回。 相邻章节已定位为 `books/part-06-ai-infrastructure/65-kai-scheduler.md#本章要回答的问题 (line 10); books/part-06-ai-infrastructure/67-monitoring.md#本章要回答的问题 (line 10)`。证据不得越过：只支持 arXiv:2602.02589v1 实际披露的机制与实验。方法定位为 arXiv:2602.02589v1 HTML — §3 Methodology；验证定位为 arXiv:2602.02589v1 HTML — §Ablation: Peer evaluation outperforms self evaluation；边界定位为 arXiv:2602.02589v1 HTML — §6 Discussion。不外推生产 SLO、多租户、跨硬件或长期可靠性。 本项已由全月 fresh-context receipt 验收。
-<!-- books-review:SF-2026-ARXIV-2602-02589:end -->
-
-<!-- existing:SF-2026-ARXIV-2602-02690:start -->
-已对读当前 owner `PLATFORM-EVALUATION-SYSTEM` 在 `books/part-06-ai-infrastructure/66-evaluation-system.md#从答案评分到可执行证据 (line 950)` 的命题：## 从答案评分到可执行证据
-<!-- existing:SF-2026-ARXIV-2602-02690:end -->
-
-<!-- delta:SF-2026-ARXIV-2602-02690:start -->
-exact-v1 的 `arXiv:2602.02690v1 HTML — §3.1 Design` 公开了该 family 的机制边界；本 Review 只据此判断它如何改变 evaluation contract、覆盖分母、evidence lineage 与 release gate。触发约束是：agent、长时程和多模态系统把失败分散到状态、工具与环境交互链。
-<!-- delta:SF-2026-ARXIV-2602-02690:end -->
-
-<!-- books-review:SF-2026-ARXIV-2602-02690:start -->
-Decision=`No Change — Existing Coverage`：当前 canonical owner 的真实机制命题已承载该 family 的长期责任；exact-v1 只增加受限 workload 证据或替代实现，因此无需写回。 相邻章节已定位为 `books/part-06-ai-infrastructure/65-kai-scheduler.md#本章要回答的问题 (line 10); books/part-06-ai-infrastructure/67-monitoring.md#本章要回答的问题 (line 10)`。证据不得越过：只支持 arXiv:2602.02690v1 实际披露的机制与实验。方法定位为 arXiv:2602.02690v1 HTML — §3.1 Design；验证定位为 arXiv:2602.02690v1 HTML — §5.2 RQ1: Performance difference spanning cutoff；边界定位为 arXiv:2602.02690v1 HTML — §7 Future Work。不外推生产 SLO、多租户、跨硬件或长期可靠性。 本项已由全月 fresh-context receipt 验收。
-<!-- books-review:SF-2026-ARXIV-2602-02690:end -->
-
-## 7. Semantic Audit
-
-<!-- validator:semantic-audit-v1 -->
-<!-- audit-receipt:FCSA-2026-02-FINAL:20260205:start -->
-全月验收：`papers/2026/02/_sources/february-fresh-context-audit.json`；本日受审收据：`papers/2026/02/_sources/daily-20260205/screening-ledger-author.json`、`papers/2026/02/_sources/daily-20260205/screening-ledger-final.json`、`papers/2026/02/_sources/daily-20260205/exact-v1-review-packet.json`、`papers/2026/02/_sources/daily-20260205/books-current-content-comparison.json`、`papers/2026/02/_sources/daily-20260205/BOOKS_WRITEBACK_QUEUE.json`。
-<!-- audit-receipt:FCSA-2026-02-FINAL:20260205:end -->
-
-| Audit ID | Auditor | Scope | Reviewed Refs | Findings | Resolution | Status |
-| --- | --- | --- | --- | --- | --- | --- |
-| SA-20260205-COVERAGE-FINAL | fresh-context:february-independent-reviewer | coverage | coverage:SRC-ARXIV:20260205; audit-receipt:FCSA-2026-02-FINAL:20260205 | — | 本日 raw=795、retained=24、closures=771；全月 FP/FN、日期与撤稿 finding 均已解决 | passed |
-| SA-20260205-EVIDENCE-FINAL | fresh-context:february-independent-reviewer | evidence | review:SF-2026-ARXIV-2602-02579; review:SF-2026-ARXIV-2602-02599; review:SF-2026-ARXIV-2602-02958; review:SF-2026-ARXIV-2602-03036; review:SF-2026-ARXIV-2602-03184; review:SF-2026-ARXIV-2602-03295; review:SF-2026-ARXIV-2602-03560; review:SF-2026-ARXIV-2602-02499; review:SF-2026-ARXIV-2602-02515; review:SF-2026-ARXIV-2602-02574; review:SF-2026-ARXIV-2602-02585; review:SF-2026-ARXIV-2602-02987; review:SF-2026-ARXIV-2602-03025; review:SF-2026-ARXIV-2602-03128; review:SF-2026-ARXIV-2602-03203; review:SF-2026-ARXIV-2602-03255; review:SF-2026-ARXIV-2602-03338; review:SF-2026-ARXIV-2602-03495; review:SF-2026-ARXIV-2602-03580; review:SF-2026-ARXIV-2602-03632; review:SF-2026-ARXIV-2602-03719; review:SF-2026-ARXIV-2602-03782; review:SF-2026-ARXIV-2602-02589; review:SF-2026-ARXIV-2602-02690; audit-receipt:FCSA-2026-02-FINAL:20260205 | — | exact-v1 complete=24、blocked=0；locator、excerpt、RP 与 claim boundary 已验收 | passed |
-| SA-20260205-SELECTION-FINAL | fresh-context:february-independent-reviewer | deep_analysis_selection | validator:deep-analysis-selection-v1; audit-receipt:FCSA-2026-02-FINAL:20260205 | — | 本日完整 eligibility frontier 与最多三个叙事单元已验收，未选择项均保留显式理由 | passed |
-| SA-20260205-BOOKS-POSTWRITE-FINAL | fresh-context:february-independent-reviewer | books | books-review:SF-2026-ARXIV-2602-02579; books-review:SF-2026-ARXIV-2602-02599; books-review:SF-2026-ARXIV-2602-02958; books-review:SF-2026-ARXIV-2602-03036; books-review:SF-2026-ARXIV-2602-03184; books-review:SF-2026-ARXIV-2602-03295; books-review:SF-2026-ARXIV-2602-03560; books-review:SF-2026-ARXIV-2602-02499; books-review:SF-2026-ARXIV-2602-02515; books-review:SF-2026-ARXIV-2602-02574; books-review:SF-2026-ARXIV-2602-02585; books-review:SF-2026-ARXIV-2602-02987; books-review:SF-2026-ARXIV-2602-03025; books-review:SF-2026-ARXIV-2602-03128; books-review:SF-2026-ARXIV-2602-03203; books-review:SF-2026-ARXIV-2602-03255; books-review:SF-2026-ARXIV-2602-03338; books-review:SF-2026-ARXIV-2602-03495; books-review:SF-2026-ARXIV-2602-03580; books-review:SF-2026-ARXIV-2602-03632; books-review:SF-2026-ARXIV-2602-03719; books-review:SF-2026-ARXIV-2602-03782; books-review:SF-2026-ARXIV-2602-02589; books-review:SF-2026-ARXIV-2602-02690; audit-receipt:FCSA-2026-02-FINAL:20260205 | — | 本日 Integrate=2；canonical owner、相邻命题、disposition 与 post-write/no-writeback 状态已验收 | passed |
-
-## 8. Ignored Noise
-
-771 个 pre-denominator closure 保存在 `papers/2026/02/_sources/daily-20260205/screening-ledger-final.json`；每项含 identity、title、abstract 与 family-specific reason。withdrawn=0，撤稿不留 selected 痕迹。
-
-## 9. Recommended Action
-
-本日四域 Gate 已关闭；保留 `papers/2026/02/_sources/february-fresh-context-audit.json` 与本地冻结收据。仅在 primary evidence、撤稿状态或公共合同变化时重新打开对应 scope。
-
-## 10. Repository Changes
-
-- promotion 更新 `papers/2026/02/05/README.md` 与本日 `_sources` 最终状态收据。
-- 本步骤不修改 Books 或 Weekly，也不 stage、commit 或 push；此前已验收的 Books 写回由本日 queue 记录 post-write 状态。
-
-## 11. Open Questions
-
-- 无 Gate 阻塞项；论文自身未证明的边界继续保留在 Claim Boundary 中，不构成未解决流程 finding。
-
-## 12. Sources
-
-- [arXiv:2602.02579v1](https://arxiv.org/abs/2602.02579v1) — official exact-v1；first-public `2026-02-04T09:00:00+08:00`；访问日期 2026-09-02。
-- [arXiv:2602.02599v1](https://arxiv.org/abs/2602.02599v1) — official exact-v1；first-public `2026-02-04T09:00:00+08:00`；访问日期 2026-09-02。
-- [arXiv:2602.02958v1](https://arxiv.org/abs/2602.02958v1) — official exact-v1；first-public `2026-02-04T09:00:00+08:00`；访问日期 2026-09-02。
-- [arXiv:2602.03036v1](https://arxiv.org/abs/2602.03036v1) — official exact-v1；first-public `2026-02-04T09:00:00+08:00`；访问日期 2026-09-02。
-- [arXiv:2602.03184v1](https://arxiv.org/abs/2602.03184v1) — official exact-v1；first-public `2026-02-04T09:00:00+08:00`；访问日期 2026-09-02。
-- [arXiv:2602.03295v1](https://arxiv.org/abs/2602.03295v1) — official exact-v1；first-public `2026-02-04T09:00:00+08:00`；访问日期 2026-09-02。
-- [arXiv:2602.03560v1](https://arxiv.org/abs/2602.03560v1) — official exact-v1；first-public `2026-02-04T09:00:00+08:00`；访问日期 2026-09-02。
-- [arXiv:2602.02499v1](https://arxiv.org/abs/2602.02499v1) — official exact-v1；first-public `2026-02-04T09:00:00+08:00`；访问日期 2026-09-02。
-- [arXiv:2602.02515v1](https://arxiv.org/abs/2602.02515v1) — official exact-v1；first-public `2026-02-04T09:00:00+08:00`；访问日期 2026-09-02。
-- [arXiv:2602.02574v1](https://arxiv.org/abs/2602.02574v1) — official exact-v1；first-public `2026-02-04T09:00:00+08:00`；访问日期 2026-09-02。
-- [arXiv:2602.02585v1](https://arxiv.org/abs/2602.02585v1) — official exact-v1；first-public `2026-02-04T09:00:00+08:00`；访问日期 2026-09-02。
-- [arXiv:2602.02987v1](https://arxiv.org/abs/2602.02987v1) — official exact-v1；first-public `2026-02-04T09:00:00+08:00`；访问日期 2026-09-02。
-- [arXiv:2602.03025v1](https://arxiv.org/abs/2602.03025v1) — official exact-v1；first-public `2026-02-04T09:00:00+08:00`；访问日期 2026-09-02。
-- [arXiv:2602.03128v1](https://arxiv.org/abs/2602.03128v1) — official exact-v1；first-public `2026-02-04T09:00:00+08:00`；访问日期 2026-09-02。
-- [arXiv:2602.03203v1](https://arxiv.org/abs/2602.03203v1) — official exact-v1；first-public `2026-02-04T09:00:00+08:00`；访问日期 2026-09-02。
-- [arXiv:2602.03255v1](https://arxiv.org/abs/2602.03255v1) — official exact-v1；first-public `2026-02-04T09:00:00+08:00`；访问日期 2026-09-02。
-- [arXiv:2602.03338v1](https://arxiv.org/abs/2602.03338v1) — official exact-v1；first-public `2026-02-04T09:00:00+08:00`；访问日期 2026-09-02。
-- [arXiv:2602.03495v1](https://arxiv.org/abs/2602.03495v1) — official exact-v1；first-public `2026-02-04T09:00:00+08:00`；访问日期 2026-09-02。
-- [arXiv:2602.03580v1](https://arxiv.org/abs/2602.03580v1) — official exact-v1；first-public `2026-02-04T09:00:00+08:00`；访问日期 2026-09-02。
-- [arXiv:2602.03632v1](https://arxiv.org/abs/2602.03632v1) — official exact-v1；first-public `2026-02-04T09:00:00+08:00`；访问日期 2026-09-02。
-- [arXiv:2602.03719v1](https://arxiv.org/abs/2602.03719v1) — official exact-v1；first-public `2026-02-04T09:00:00+08:00`；访问日期 2026-09-02。
-- [arXiv:2602.03782v1](https://arxiv.org/abs/2602.03782v1) — official exact-v1；first-public `2026-02-04T09:00:00+08:00`；访问日期 2026-09-02。
-- [arXiv:2602.02589v1](https://arxiv.org/abs/2602.02589v1) — official exact-v1；first-public `2026-02-04T09:00:00+08:00`；访问日期 2026-09-02。
-- [arXiv:2602.02690v1](https://arxiv.org/abs/2602.02690v1) — official exact-v1；first-public `2026-02-04T09:00:00+08:00`；访问日期 2026-09-02。
-
-## 13. Final Status
-
-Completion Status=`Complete`；Coverage=`Closed`；Evidence=`Passed`；Books=`Passed`；Unresolved Findings=0。最终 raw=795、retained=24、closures=771、exact-v1 reviews=24、blocked=0。
+机器校验：`python3 scripts/validate_research.py --report papers/2026/02/05/README.md`实际通过（1份V3）；本日README、sources及授权改动章节的限定`git diff --check`实际通过。机器只能确认结构/可判定一致性，不能替代语义Gate；未stage、commit或push。

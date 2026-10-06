@@ -1,0 +1,549 @@
+URL https://arxiv.org/html/2601.06021v1; sections S2 to S4 excluded; result tables omitted; fetched 2026-10-03
+
+
+
+ 2 Methodology 
+
+ 
+
+In this section, we first provide a brief overview of key concepts in deep search agents, then introduce our CaRR framework and C-GRPO algorithm. 
+ 
+
+
+
+ 2.1 Preliminary 
+
+
+
+
+Deep Search Agents. 
+
+ 
+
+We adopt the ReAct  Yao et al. (2023) paradigm for deep search agents. Given a question, the LLM-based agent follows an iterative cycle of thinking, action (i.e., a tool call), and observation until obtaining the final answer. A complete trajectory with T iterations can be formalized as: 
+ 
+
+ 
+
+ 
+ \displaystyle\mathcal{H}=(\tau_{1},a_{1},o_{1},\dots,\tau_{t},a_{t},o_{t},\dots,\tau_{T},a_{T}), 
+ 
+ (1) 
+ 
+
+where \tau_{t} , a_{t} , o_{t} denote the thought, action, and observation at step t . Specifically, the action a_{t} ( 1\leq t search tool that retrieves top- n relevant webpages for the given query and returns the title, URL, and snippet of each webpage; (2) an open tool that accesses the given URL and shows the head part of the page; (3) a find tool that matches the given keyword in the opened webpage and returns surrounding content of each match. While a_{T} is the final response, consisting of an explanation with citations and the final answer. The tool descriptions and trajectory format are detailed in Appendix  A . 
+ 
+ 
+
+
+
+Synthetic Deep Search Training Data. 
+
+ 
+
+RL of deep search agents typically relies on synthetic complex QA datasets  Gao et al. (2025) ; Li et al. (2025b) ; Lu et al. (2025) . These datasets are commonly constructed from entity-centric knowledge graphs, involving multi-hop reasoning paths and deliberate information obfuscation to increase search complexity.
+For training convenience, the final answer is often a short-form entity string, allowing automatic correctness verification. 
+ 
+ 
+ 
+
+
+
+ 2.2 Citation-Aware Rubric Rewards 
+
+ 
+
+To address the limitations of outcome rewards, we propose Citation-aware Rubric Rewards (CaRR) , a novel fine-grained reward framework for deep search agents, taking into account reasoning comprehensiveness, factual grounding, and evidence connectivity. Specifically, CaRR utilizes the underlying compositional structure of the synthetic data. As illustrated in Figure  2 , CaRR first decomposes a synthetic multi-hop question into a list of atomic factual statements, each involves several hidden entities that need to be found. These atomic statements can naturally serve as point-wise, verifiable rubrics for assessing reasoning comprehensiveness and factuality of deep search agents:
+An ideal trajectory that completely solves the question should satisfy all rubrics by revealing the identities of corresponding hidden entities, supporting them with cited web contents, and connecting the supported rubrics to form complete evidence chains that link to the final answer. Moreover, the identified hidden entities and cited URLs should be detailed in the final response provided to the user.
+Based on this idea, CaRR uses a three-step method after the rubric initialization to provide fine-grained reward for agent rollouts, including: (1) hidden entity identification; (2) citation-based rubric judgment; and (3) evidence connectivity check. We will detail the rubric initialization and the three-step reward computation as follows. 
+ 
+
+
+
+ 2.2.1 Rubric Initialization 
+
+ 
+
+For each question q in the training set, we prompt an LLM \mathcal{M}_{\text{rubric}} to decompose the question to locate hidden entities \mathcal{E}_{q} (i.e., entities that should be found when solving q ) and generate the initial rubrics \mathcal{R}_{q} : 
+ 
+
+ 
+
+ 
+ \displaystyle\mathcal{E}_{q},\mathcal{R}_{q}=\mathcal{M}_{\text{rubric}}(q), 
+ 
+ (2) 
+ 
+
+where 
+ 
+
+ 
+
+ 
+ \displaystyle\mathcal{E}_{q} 
+ \displaystyle=\{e_{0},e_{1},\dots,e_{n_{q}}\}, 
+ 
+ 
+
+ 
+ \displaystyle\mathcal{R}_{q} 
+ \displaystyle=\{r_{1},\dots,r_{m_{q}}\}. 
+ 
+ (3) 
+ 
+
+As illustrated in Figure  2 , each hidden entity e_{i}\in\mathcal{E}_{q} is denoted by a placeholder <E i > , and e_{0} refers to the final answer. Each rubric r_{j}=(s_{j},\mathcal{E}_{q,j})\in\mathcal{R}_{q} is an atomic factual statement s_{j} about an entity set \mathcal{E}_{q,j}\subseteq\mathcal{E}_{q} , and will serve as a checkpoint for assessing search agent’s trajectories. Note that these rubrics are pre-generated before training and remain unchanged throughout the RL process. 
+ 
+ 
+
+
+
+ 2.2.2 Reward Computation 
+
+ 
+
+After initializing the hidden entity set \mathcal{E}_{q} and inital rubrics \mathcal{R}_{q} for a question q , given an agent trajectory \mathcal{H}=(\tau_{1},a_{1},o_{1},\dots,\tau_{T},a_{T}) , we use a three-step procedure with a judge LLM \mathcal{M}_{\text{judge}} to assign a fine-grained rubric reward for \mathcal{H} , taking into account reasoning comprehensiveness, citation grounding, and evidence connectivity: 
+ 
+
+
+
+Step 1: Hidden Entity Identification. 
+
+ 
+
+From the perspective of reasoning comprehensiveness,
+an ideal trajectory for solving q should consider all rubrics implied by q , uncover the identities of corresponding hidden entities during exploration, and explain them in the final response a_{T} .
+In light of this, we first employ \mathcal{M}_{\text{judge}} to judge whether a_{T} explicitly identifies the name of each hidden entity e_{i}\in\mathcal{E}_{q} : 
+ 
+
+ 
+
+ 
+ \displaystyle\{e_{0}^{\mathcal{H}},\dots,e_{n}^{\mathcal{H}}\}=\mathcal{M}_{\text{judge}}(q,\mathcal{R}_{q},\mathcal{E}_{q},a_{T}), 
+ 
+ (4) 
+ 
+
+where e_{i}^{\mathcal{H}} is either the mentioned name of e_{i} in a_{T} 1 1 
+ 1 
+ 
+ 
+ 
+ Note that we do not require the identified e_{i}^{\mathcal{H}} from a_{T} to be equal to the golden entity e_{i}^{*} used for constructing q . , or null if the name is not explicitly identified.
+Only rubrics whose hidden entities are all identified are regarded as being fully identified by \mathcal{H} . Formally, by defining the mapping: 
+ 
+
+ 
+
+ 
+ \displaystyle f^{\mathcal{H}}(e_{i})=e_{i}^{\mathcal{H}},\;\forall e_{i}\in\mathcal{E}_{q}\, 
+ 
+ (5) 
+ 
+
+we instantiate each r_{j}=(s_{j},\mathcal{E}_{q,j})\in\mathcal{R}_{q} by replacing hidden entities \mathcal{E}_{q,j} with their identified name: 
+ 
+
+ 
+
+ 
+ \displaystyle\mathcal{E}_{q,j}^{\mathcal{H}} 
+ \displaystyle=\{f^{\mathcal{H}}(e_{i})\mid e_{i}\in\mathcal{E}_{q,j}\}, 
+ 
+ 
+
+ 
+ \displaystyle r_{j}^{\mathcal{H}} 
+ \displaystyle=(s_{j},\mathcal{E}_{q,j}^{\mathcal{H}}), 
+ 
+ 
+
+ 
+ \displaystyle\mathcal{R}_{q}^{\mathcal{H}} 
+ \displaystyle=\{r_{1}^{\mathcal{H}},\dots,r_{m_{q}}^{\mathcal{H}}\}. 
+ 
+ (6) 
+ 
+
+Then the fully-identified rubrics are defined as: 
+ 
+
+ 
+
+ 
+ \displaystyle\mathcal{R}_{q}^{\text{identify}} 
+ \displaystyle=\{r_{j}^{\mathcal{H}}\in\mathcal{R}_{q}^{\mathcal{H}}\mid e_{i}^{\mathcal{H}}\!\neq\!\texttt{null},\forall e_{i}^{\mathcal{H}}\!\in\!\mathcal{E}_{q,j}^{\mathcal{H}}\}, 
+ 
+ (7) 
+ 
+
+which will be selected for further judgment. 
+ 
+ 
+
+
+
+Step 2: Citation-based Rubric Judgment. 
+
+ 
+
+For each fully-identified rubric r_{j}^{\mathcal{H}}\in\mathcal{R}_{q}^{\text{identify}} , we further check whether r_{j}^{\mathcal{H}} is grounded on the cited web contents in \mathcal{H} , preventing the agent from fabricating entity names or facts.
+To achieve this, we first extract cited URLs 2 2 
+ 2 
+ 
+ 
+ 
+ We extract at most 20 cited URLs to prevent the agent from hacking the reward by citing a large amount of webpages. from the final response a_{T} using regex
+and collect corresponding web contents from \mathcal{H} to form the supporting context \mathcal{C}^{\mathcal{H}} : 
+ 
+
+ 
+
+ 
+ 
+ \displaystyle url_{1},\dots,url_{k}=\operatorname{ExtractCitation}(a_{T}), 
+ 
+ 
+
+ 
+ 
+ \displaystyle\mathcal{C}^{\mathcal{H}}=\operatorname{CollectContent}(\mathcal{H},url_{1},\dots,url_{k}), 
+ 
+ (8) 
+ 
+
+which includes deduplicated search snippets, opened webpage content, and keyword matches.
+Then we prompt the LLM \mathcal{M}_{\text{judge}} to judge whether each identified rubric is fully supported by \mathcal{C}^{\mathcal{H}} : 
+ 
+
+ 
+
+ 
+ \displaystyle\{s 
+ \displaystyle p_{1},\dots,sp_{m_{q}}\}=\mathcal{M}_{\text{judge}}(\mathcal{R}_{q}^{\text{identify}},\mathcal{C}^{\mathcal{H}}), 
+ 
+ 
+
+ 
+ 
+ \displaystyle\mathcal{R}_{q}^{\text{support}}=\{r_{j}^{\mathcal{H}}\in\mathcal{R}_{q}^{\text{identify}}\mid sp_{j}=1\}, 
+ 
+ (9) 
+ 
+
+where sp_{j}\!\in\!\{0,1\} indicates whether r_{j}^{\mathcal{H}} is supported. 
+ 
+ 
+
+
+
+Step 3: Evidence Connectivity Check. 
+
+ 
+
+Beyond individual support, we require that supported rubrics form connected evidence chains linked to the predicted answer entity e_{0}^{\mathcal{H}} . This prevents the agent from hacking a rubric by finding entities that satisfy the factual statement but are unrelated to e_{0}^{\mathcal{H}} .
+Specifically, we construct a bipartite graph: 
+ 
+
+ 
+
+ 
+ \displaystyle\mathcal{G}^{\mathcal{H}}=\{\mathcal{E}_{q}^{\mathcal{H}}\cup\mathcal{R}_{q}^{\text{support}},E\}, 
+ 
+ (10) 
+ 
+
+whose nodes are identified entities \mathcal{E}_{q}^{\mathcal{H}} and supported rubrics \mathcal{R}_{q}^{\text{support}} , with an edge (e_{i}^{\mathcal{H}},r_{j}^{\mathcal{H}})\in E if e_{i}^{\mathcal{H}} appears in r_{j}^{\mathcal{H}} , i.e., e_{i}^{\mathcal{H}}\in\mathcal{E}_{q,j}^{\mathcal{H}} .
+Then we apply a breadth-first search (BFS) starting from e_{0}^{\mathcal{H}} to determine the set of reachable rubrics \mathcal{R}^{\text{connect}} : 
+ 
+
+ 
+
+ 
+ \displaystyle\mathcal{R}^{\text{connect}}=\{r_{j}^{\mathcal{H}}\mid r_{j}^{\mathcal{H}}\text{ is connected to }e_{0}^{\mathcal{H}}\text{ in }\mathcal{G}^{\mathcal{H}}\} 
+ 
+ (11) 
+ 
+
+The final rubric reward is given by: 
+ 
+
+ 
+
+ 
+ \displaystyle R^{\mathcal{H}}_{\text{r}}=\frac{|\mathcal{R}_{q}^{\text{connect}}|}{|\mathcal{R}_{q}|}, 
+ 
+ (12) 
+ 
+
+which measures the proportion of rubrics that are fully identified, citation-supported, and logically connected to the predicted answer. 
+ 
+ 
+ 
+ 
+
+
+
+ 2.3 C-GRPO 
+
+ 
+
+Based on CaRR framework, we further introduce Citation-aware Group Relative Policy Optimization (C-GRPO) , which combines citation-aware rubric rewards and outcome rewards in GRPO for training robust deep search agents. Specifically, C-GRPO assigns an additional weighted rubric reward to the trajectories whose outcome reward is 1. By doing so, C-GRPO preserves the primary objective of finding the correct answer while encouraging the agent to produce more comprehensive and evidence-grounded reasoning processes. Formally, let \mathcal{H}_{1},\dots,\mathcal{H}_{G} be a group of rollout for a question q , whose ground truth answer is gt . We first obtain the outcome reward R^{\mathcal{H}_{i}}_{\text{o}} (i.e., whether \mathcal{H}_{i} finds gt ) and the context-aware rubric reward R^{\mathcal{H}_{i}}_{\text{r}} for each \mathcal{H}_{i} . Then the mixed reward of \mathcal{H}_{i} is defined as: 
+ 
+
+ 
+
+ 
+ \displaystyle R_{i}=(1-\alpha)\cdot R^{\mathcal{H}_{i}}_{\text{o}}+\alpha\cdot R^{\mathcal{H}_{i}}_{\text{o}}\cdot\hat{R}^{\mathcal{H}_{i}}_{\text{r}}, 
+ 
+ (13) 
+ 
+
+where \alpha\in[0,1] is a hyperparameter balancing outcome and rubric rewards, and we use the normalized rubric rewards 
+ 
+
+ 
+
+ 
+ \displaystyle\hat{R}^{\mathcal{H}_{i}}_{\text{r}}=\frac{R^{\mathcal{H}_{i}}_{\text{r}}}{\max_{j\in\{1,\dots,G\}}R^{\mathcal{H}_{j}}_{\text{r}}} 
+ 
+ (14) 
+ 
+
+to stable advantage calculation across different groups. In addition, rollouts with format error or overlength problem (i.e., exceeding token or tool-call limits) are assigned a reward of 0.
+Finally, the agent policy is optimized by maximizing a multi-turn GRPO objective with token-level loss: 
+ 
+
+ 
+
+ 
+ 
+ \displaystyle\mathcal{J}(\theta)=\mathbb{E}_{\begin{subarray}{c}(q,gt)\sim\mathcal{D},\\
+\{\mathcal{H}_{i}\}_{i=1}^{G}\sim\pi_{\theta_{\text{old}}}(\cdot\mid q)\end{subarray}}\bigg[{\textstyle\frac{\text{\normalsize$1$}}{\sum\limits_{i=1}^{G}\sum\limits_{j=1}^{|\mathcal{H}_{i}|}I(\mathcal{H}_{i,j})}\sum\limits_{i=1}^{G}\sum\limits_{j=1}^{|\mathcal{H}_{i}|}} 
+ 
+ 
+
+ 
+ 
+ \displaystyle I(\mathcal{H}_{i,j})\min\big(\rho_{i,j}\hat{A}_{i,j},\operatorname{clip}(\rho_{i,j})_{1\!-\!\epsilon_{\text{low}}}^{1\!+\!\epsilon_{\text{high}}}\hat{A}_{i,j}\big)\bigg]. 
+ 
+ (15) 
+ 
+
+where \mathcal{H}_{i,j} denotes the j -th token of \mathcal{H}_{i} ; \rho_{i,j}=\frac{\pi_{\theta}(\mathcal{H}_{i,j}|q,\mathcal{H}_{i,1:j-1})}{\pi_{\theta_{\text{old}}}(\mathcal{H}_{i,j}|q,\mathcal{H}_{i,1:j-1})} and \hat{A}_{i,j}=\frac{R_{i}-\operatorname{mean}(R_{k})_{k=1}^{G}}{\operatorname{std}(R_{k})_{k=1}^{G}} are the importance sampling ratio and advantage of \mathcal{H}_{i,j} ; and I(\mathcal{H}_{i,j})\in\{0,1\} indicates whether \mathcal{H}_{i,j} is generated by the LLM itself (i.e., not from observed web content). 
+ 
+
+
+ 
+ [result table omitted; consult original if quantitative claim needed] 
+ 
+ Table 1: Overall performance of different agents on four challenging deep search benchmarks. 
+ 
+
+ 
+ Figure 3: Left : Accuracy improvements by GRPO and C-GRPO over SFT models at 64k context length. Middle and Right : Test-time scaling performance of different models with respect to context budget and tool call budget. 
+ 
+
+ 
+ Figure 4: Training dynamics of GRPO and C-GRPO, including the changes of average tool call steps, outcome rewards, and rubric rewards. 
+ 
+ 
+ 
+
+
+
+ 3 Experiments 
+
+ 
+
+In this section, we conduct RL experiments to show the effectiveness of context-aware rubric rewards and C-GRPO for training deep search agents. 
+ 
+
+
+
+ 3.1 Experiment Setup 
+
+
+
+
+Models and Training Data. 
+
+ 
+
+We select Qwen3-4B-Thinking-2507  Team (2025b) and Qwen3-30B-A3B-Thinking-2507  Team (2025b) as our backbone models, covering different model sizes and architectures (dense and MoE). We use DeepDive  Lu et al. (2025) , an open-sourced deep search dataset, as our training data. This dataset is automatically synthesized through knowledge graph random walks and entity obfuscation, consisting of 1,016 samples for SFT and 2,234 samples for RL. 
+ 
+ 
+
+
+
+Environment Settings 
+
+ 
+
+We use Serper API  Serper (2025) for the search tool. The open tool first fetches the webpage using Jina API  Jina.ai (2025) , and then returns the first 10k chars. The find tool is implemented with vanilla string matching. 
+ 
+ 
+
+
+
+Baselines. 
+
+ 
+
+To demonstrate the algorithm enhancement, we compare C-GRPO with two baseline RL algorithms for deep search agents: (1) GRPO  Shao et al. (2024) ; Jin et al. (2025b) , which only uses the outcome rewards and is widely adopted in previous works; (2) E-GRPO  Zhao et al. (2025) , which takes normalized entity match rate (i.e., the ratio of golden hidden entities identified during an agent’s reasoning process), as the fine-grained rewards for incorrect rollouts to distinguish “near-miss” samples from complete failures. Besides, we present the reported scores of several state-of-the-art search agents as references, though they may adopt different training data and context lengths from us. We detail them in Appendix  B . 
+ 
+ 
+
+
+
+Training Details. 
+
+ 
+
+Our training process includes cold-start SFT and subsequent RL. For cold-start SFT, we first leverage GLM-4.6  Team (2025a) to generate 832 high-quality SFT traces through reject sampling on the SFT split of DeepDive dataset. Then we train each model on these traces for 3 epochs with a batch size of 16, a learning rate of 4e-5, and a maximum context length of 128k. For RL, we use all 2,234 QA pairs from the DeepDive RL split. The training configuration includes a rollout size of 16, 8 samples per prompt, a global batch size of 128, a temperature of 1.0, a learning rate of 2e-6, and a maximum context length of 64k tokens. We train each model for 3 epochs. We set the rubric reward weight \alpha to be 0.3, and the effect of different values of \alpha can be found in Sec.. We use DeepSeek-v3.2  Liu et al. (2025a) as the judge LLM for both outcome rewards and rubric rewards. 
+ 
+ 
+
+
+
+Benchmarks and Evaluation Details. 
+
+ 
+
+We evaluate the trained agents on four challenging deep search benchmarks, including: BrowseComp  Wei et al. (2025) , BrowseComp-ZH  Zhou et al. (2025) , xbench-DeepSearch  Xbench-Team (2025) , and the text-only validation subset of GAIA  Mialon et al. (2024) .
+These benchmarks comprehensively assess the essential capabilities for effective deep search in long-horizon information-seeking, multi-step web navigation, complex reasoning, and cross-lingual synthesis.
+Following their official LLM-as-judge settings, we use GPT-5-Chat  OpenAI (2025b) to assess whether the agent’s final output matches the ground truth answer. Considering the relatively small dataset size of BrowseComp-ZH, xbench-DeepSearch, and GAIA, we repeat their evaluation 3 times and report the average accuracy. In addition, we evaluate each model at both 64k and 128k context lengths, where the former corresponds to the context length of RL, and the latter is used to assess the test-time scaling capacities given abundant context budgets. 
+ 
+ 
+ 
+
+
+
+ 3.2 Main Result 
+
+ 
+
+We present the main experimental results in Table  1 . As shown in the table, our proposed C-GRPO significantly outperforms GRPO and E-GRPO baselines on all benchmarks across both 4B and 30B scales. Specifically, with the 64k/128k context budget, C-GRPO achieves an average improvement of 5.1/8.0 for the 4B model and 2.6/6.0 for the 30B model compared to GRPO. Surprisingly, we find that though GRPO with pure outcome reward notably improves the performance of SFT models within the RL context length (i.e., 64k), it may compromise their test-time scaling performance on longer context length (i.e., 128k). Our training dynamic analysis and case studies indicate that this compromise stems from the inherent limitation of pure outcome rewards, which leaves room for shortcut exploitation and hallucinations. In contrast, C-GRPO consistently improves the SFT models at both 64k and 128k context lengths, demonstrating the effectiveness of context-aware rubric rewards for training more robust deep search agents. Moreover, our trained models with C-GRPO achieve state-of-the-art performance among agents using open-source data, narrowing the gap with advanced agents that use proprietary data. 
+ 
+
+
+ 
+ [result table omitted; consult original if quantitative claim needed] 
+ 
+ Table 2: Comparison of the number of cited webpages and rubric satisfaction on a subset of BrowseComp. 
+ 
+ 
+
+
+
+ 3.3 More Analysis 
+
+
+
+
+Traning dynamics. 
+
+ 
+
+We present the training dynamics of GRPO and C-GRPO in Figure  4 .
+As illustrated, the average tool call steps of GRPO and C-GRPO both decline at the beginning of training, where the agents learn to improve their search efficiency to avoid overlength rollouts.
+As the training progresses, the tool call steps of GRPO continue to decrease after a slight increase, implying that the models fall into a local optimal policy that favors shortcut solutions.
+Case studies in Appendix  D show that the GRPO agent becomes prone to finding an answer based on the last few hops of the question without thoroughly verifying other constraints.
+While such a policy can yield high outcome rewards within limited context budgets, it sacrifices performance on more difficult questions that require careful verification using longer contexts.
+Moreover, outcome rewards alone are insufficient to guide agents out of this local optimum, as they cannot punish the shortcut exploitation behaviors.
+In contrast, the tool call steps of our C-GRPO keep increasing after the initial decline, suggesting that the models are trying to satisfy more rubrics by gathering more evidence to support and verify their predicted answer, which results in a more robust policy.
+During the same period, the outcome rewards of C-GRPO even slightly exceed GRPO, further validating that our mixed fine-grained rewards provide a more effective and robust learning signal than pure outcome rewards. 
+ 
+ 
+
+
+
+Comprehensiveness and factuality. 
+
+ 
+
+To assess the impact of different RL algorithms on the comprehensiveness and factuality of agents, we analyze the rubric satisfaction of 30B agents on the evaluation sets. Specifically, we generate rubrics for a subset of BrowseComp in which all agents solve the queries within a 64k context length, and compare the number of their cited webpages and satisfied rubrics. As shown in Table  2 , the C-GRPO agent cites more webpages and satisfies more rubrics than the SFT and GRPO baselines, indicating that C-GRPO effectively enhances agent comprehensiveness and factuality by incentivizing more extensive evidence gathering. Conversely, the cited webpages and satisfied rubrics of the GRPO agent are both fewer than the SFT baseline, further validating the shortcut exploitation issue of pure outcome rewards. 
+ 
+
+
+ 
+ [result table omitted; consult original if quantitative claim needed] 
+ 
+ Table 3: Performance of different agents on DeepResearch Bench across four dimensions, including comprehensiveness (Comp.), insight, instruction following (Inst.), and readability (Read.). 
+ 
+ 
+
+
+
+Generalize to open-ended deep research tasks. 
+
+ 
+
+To assess the generalization capabilities of agents trained using C-GRPO and synthetic data in open-ended deep research tasks, we conduct evaluations on DeepResearch Bench  Jin et al. (2025a) , where the agents are required to write research reports for PhD-level tasks,
+and the generated reports are assessed by Gemini-2.5-Pro-preview  Google (2025) based on the pre-defined rubrics spanning multiple dimensions.
+As shown in Table  3 , C-GRPO consistently surpasses other RL algorithms and yields substantial improvements over SFT models in all dimensions. Moreover, the 30B model trained with C-GRPO even outperforms several advanced agents using proprietary data, demonstrating the strong generalization abilities of our approach. 
+ 
+
+
+ 
+ [result table omitted; consult original if quantitative claim needed] 
+ 
+ Table 4: Performance of C-GRPO with different \alpha . 
+ 
+
+
+ 
+ [result table omitted; consult original if quantitative claim needed] 
+ 
+ Table 5: Performance of C-GRPO (1) without hidden entity identification; (2) without evidence connect check; (3) that adds weighted rubric rewards for all rollouts. 
+ 
+ 
+ 
+
+
+
+ 3.4 Ablation Studies 
+
+ 
+
+In this section, we conduct ablation studies using the 4B model to demonstrate the effect of each component in the CaRR framework and C-GRPO. 
+ 
+
+
+
+Effect of rubric reward weight. 
+
+ 
+
+To illustrate the effect of the rubric reward weight \alpha in C-GRPO, we train the 4B model with different \alpha values, ranging from 0 (which is just GRPO) to 0.5. As shown in Table  4 , the overall performance gradually improves as \alpha increases from 0, peaking at 0.3. This demonstrates the benefit of incorporating context-aware rubric rewards in RL. However, the performance begins to decrease as \alpha becomes larger, suggesting that the model is distracted from the primary goal of finding a correct final answer. Therefore, it is important to use a moderate \alpha value to balance the two reward components to obtain the optimal policy. 
+ 
+ 
+
+
+
+Effect of hidden entity identification. 
+
+ 
+
+To show the effect of hidden entity identification in CaRR, we remove this step and let the judge LLM directly select the supported rubrics based on the model response and cited web contents, without considering whether each rubric is fully identified. As shown in Table  5 , this ablation leads to a clear performance drop for C - GRPO, suggesting that enforcing a stricter reward process via hidden entity identification enhances the effectiveness of RL. 
+ 
+ 
+
+
+
+Effect of evidence connectivity check. 
+
+ 
+
+We show the effect of the evidence connectivity check in CaRR by eliminating this step and instead setting the rubric reward to the fraction of supported rubrics, i.e., R_{r}^{\mathcal{H}}=\frac{\mathcal{R}_{q}^{\text{support}}}{|\mathcal{R}_{q}|} . The results in Table 5 show a substantial decline in performance without the connectivity check, since the agents learns to hack rubrics by finding entities that satisfy isolated factual statements but are unrelated to the final answer. 
+ 
+ 
+
+
+
+Adding rubric rewards for all rollouts. 
+
+ 
+
+According to Equation  13 , we only add weighted context-aware rubric rewards for correct rollouts whose outcome reward is 1. If we add the rubric rewards for all rollouts, the advantage of some incorrect rollouts will receive positive advantages when there are few correct rollouts or many overlength rollouts in a group, which frequently happens at the beginning of RL. As a result, the model will be incorrectly optimized and perform badly, as shown in Table  5 .

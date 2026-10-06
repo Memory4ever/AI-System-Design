@@ -1,0 +1,586 @@
+URL https://arxiv.org/html/2602.05305v1
+STATUS 200 main-lines 49 632
+49: 1 Introduction
+50: Diffusion models have shown strong performance in both language modeling and video generation by iteratively refining noisy representations over multiple steps. However, their iterative nature leads to high inference cost, especially in long-context settings. To address this issue, recent work has proposed block diffusion, which combines diffusion with autoregressive generation by introducing KV caching and performing block-by-block causal inference (Arriola et al., 2025a; Hoogeboom et al., 2022). By refining a block of tokens at each diffusion step while conditioning on cached representations from previous blocks, block diffusion enables efficient and variable-length generation.
+51: Despite improved per-step efficiency, block diffusion remains inefficient in long-context settings. At each diffusion step, attention is computed over all previously generated tokens, requiring repeated access to an ever-growing KV cache. As context length increases, the combined cost of attention computation and KV cache access rapidly dominates inference latency. This effect is particularly pronounced in diffusion language models with long sequences and in video diffusion models with extended temporal horizons, where attention is repeatedly evaluated across many diffusion steps. Consequently, reducing both attention computation and KV cache access is critical for further improving the efficiency of block diffusion inference.
+52: A key but underexplored property of block diffusion is the presence of cross-step redundancy within a block: during denoising, attention is recomputed at successive diffusion steps over highly similar token representations. To examine this behavior, we empirically analyze attention outputs across diffusion steps, as shown in Figure 1. We observe a clear separation between block-internal and block-external attention. While block-internal attention varies substantially as tokens within the block are actively updated, attention contributions from tokens outside the current block remain largely stable across adjacent diffusion steps. This finding indicates that repeatedly recomputing block-external attention is largely redundant, and that reusing these stable attention results can significantly reduce attention computation and KV cache access during block diffusion inference.
+53: Based on this observation, we propose a block-external attention reusing mechanism for block diffusion. Our method caches attention outputs corresponding to tokens outside the current block and reuses them in subsequent diffusion steps, while recomputing only the attention within the current block. The full attention output is obtained by combining cached block-external attention with newly computed block-internal attention, without modifying the underlying diffusion process. This design substantially reduces KV cache access and attention computation overhead, making block diffusion more efficient in long-context scenarios. Moreover, our approach is orthogonal to sparse attention and can be seamlessly combined as a complementary caching strategy: it reuses the residual attention contribution from unselected tokens across diffusion steps, effectively compensating for information loss introduced by sparsification and improving generation quality.
+54: We evaluate our method primarily on diffusion language models, with additional experiments on video generation diffusion models. Experimental results show that our approach achieves up to 1.44 \times inference speedup on diffusion language models and up to 1.6 \times reduction in attention time, while incurring only negligible impact on generation quality across tasks. We further show that our method can be combined with sparse attention to mitigate the quality degradation introduced by aggressive sparsification at the same attention density.
+55: Overall, our contributions are summarized as follows:
+56: •
+57: We present an empirical study of attention behavior in block diffusion, revealing strong cross-step stability in block-external attention across diffusion steps, in contrast to the highly variable block-internal attention.
+58: •
+59: We propose FlashBlock, a block-external attention caching mechanism that exploits this cross-step redundancy to reduce attention computation and KV cache access during inference.
+60: •
+61: We show that FlashBlock is compatible with sparse attention methods and can be combined as a complementary residual reuse strategy to alleviate the quality degradation caused by aggressive sparsification.
+62: •
+63: We demonstrate that FlashBlock substantially accelerates inference on diffusion language models and video diffusion models, with only negligible impact on generation quality.
+64: Figure 1: Cross-step stability of block-external vs. block-internal attention across diffusion steps.
+65: Visualization of attention similarity across diffusion steps for the same block at layer 3 of Trado-8B-Thinking.
+66: We compute the similarity of attention outputs between each diffusion step and its subsequent step within a denoising block.
+67: In each heatmap, the x-axis corresponds to token indices within the current block at step s , and the y-axis corresponds to token indices within the same block at step s{+}1 ; diagonal entries therefore represent the similarity of the same token across adjacent diffusion steps.
+68: The top row shows block-external attention ( A_{\text{out}} ), and the bottom row shows block-internal attention ( A_{\text{in}} ), across multiple diffusion steps.
+69: Brighter colors indicate higher similarity.
+70: Across steps, A_{\text{out}} consistently exhibits higher similarity and more coherent structure, indicating strong cross-step stability, whereas A_{\text{in}} varies substantially across steps.
+71: 2 Related Work
+72: Block diffusion.
+73: Diffusion-based sequence models have been explored as an alternative to autoregressive decoding due to their potential for parallel token generation (Song et al., ; Ho et al., 2020). Early diffusion language models include both continuous-space formulations (Li et al., 2022) and discrete masked diffusion for conditional generation (Gong et al., ; Austin et al., 2021), while recent large-scale diffusion LLMs demonstrate competitive performance at scale (e.g., LLaDA (Nie et al., 2025), Dream (Ye et al., 2025)). However, standard diffusion inference recomputes attention over the full sequence at every denoising step, leading to high latency and poor support for variable-length generation and KV caching.
+74: Block diffusion mitigates these issues by introducing block-by-block causal inference with KV caching, reusing historical context across blocks to improve per-step efficiency and enable flexible-length decoding (Arriola et al., 2025a). This paradigm has been adopted in efficient diffusion LLM systems (e.g., Fast-dLLM (Wu et al., 2025; Arriola et al., 2025b)) and extended to long-horizon video generation, where models condition each chunk on prior chunks via block-causal mechanisms (e.g., CausVid (Yin et al., 2025), BlockVid (Zhang et al., 2025b)). In parallel, several works accelerate diffusion LLM inference by reusing or approximating KV states across denoising steps (Hu et al., 2025; Ma et al., 2025), highlighting KV-related computation as a key efficiency bottleneck. Nevertheless, these approaches are designed for standard diffusion settings and do not exploit the structural properties of block diffusion. In long-context regimes, block diffusion still recomputes attention over an ever-growing KV cache at each denoising step within a block, leaving substantial cross-step redundancy in block-causal attention unexploited.
+75: Sparse attention.
+76: Sparse attention is a classical direction for scaling transformers to long sequences by reducing the number of attended keys per query (Chen et al., 2023; Beltagy et al., 2020). Recently, long-context LLM inference has emphasized KV-cache-aware sparsification and selection to reduce memory movement during decoding, including query-aware page selection (Tang et al., 2024) and token-level retention/eviction based on attention concentration (Zhang et al., 2023; Adnan et al., 2024).
+77: In the context of diffusion language models, SparseD (Wang et al., 2025b) further adapts sparse attention to diffusion inference by identifying head-specific sparse patterns and reusing them across denoising steps, while applying full attention in early steps to preserve generation quality (Wang et al., 2025b).
+78: Existing sparse attention methods exploit sparsity within individual attention calls but do not capture the cross-step redundancy inherent to block diffusion, where attention is repeatedly recomputed across diffusion steps on similar representations.
+79: 3 Empirical Insights
+80: We begin by empirically examining how attention behaves across diffusion steps in block diffusion models. Specifically, we analyze the cross-step stability of attention contributions from tokens inside and outside the current block by comparing attention outputs across adjacent diffusion steps.
+81: Stable block-external attention.
+82: We first analyze attention contributions from tokens outside the current block. For a fixed attention head, we compute the similarity of block-external attention outputs A_{\text{out}} between consecutive diffusion steps. Figure 1 (top row) visualizes these similarities across multiple diffusion steps. Each heatmap corresponds to one diffusion step transition, where brighter colors indicate higher similarity. Across all steps, block-external attention exhibits consistently high similarity and clear structural alignment, indicating that attention contributions from previously generated tokens remain largely unchanged as diffusion progresses. This strong cross-step stability suggests that recomputing block-external attention at every diffusion step is largely redundant.
+83: Variable block-internal attention.
+84: In contrast, block-internal attention outputs A_{\text{in}} show substantially more variation across diffusion steps. As shown in the bottom row of Figure 1, the similarity patterns of block-internal attention differ noticeably from step to step and lack the consistent structure observed in A_{\text{out}} . This variability arises because tokens inside the current block are actively updated during block diffusion, either through refinement or unmasking, leading to rapidly changing interactions among block-internal tokens.
+85: Figure 2: Block-external attention caching for block diffusion.
+86: At each diffusion step, block diffusion updates a contiguous block of tokens.
+87: Our method caches attention contributions from block-external tokens and reuses them across steps, recomputing attention only within the current block.
+88: Block-internal and block-external attention are combined via log-space aggregation, reducing computation and memory I/O in long-context settings.
+89: 4 Methodology
+90: Motivated by the above observations, we introduce a method that exploits the cross-step stability of block-external attention to reduce redundant computation and KV cache access. In this section, we first formalize the attention decomposition in block diffusion, then present an efficient inference procedure based on block-external attention caching, and finally describe a training strategy to further align sparse and dense attention behaviors.
+91: 4.1 Preliminaries
+92: We consider block diffusion models that perform block-by-block causal inference over a sequence of tokens. Let x\in\mathbb{R}^{N\times d} denote the token representations at a given diffusion step, where N is the sequence length and d is the hidden dimension. At each diffusion step s , the model updates the representations of a contiguous block of tokens while keeping the remaining tokens unchanged. Attention is computed using cached key–value (KV) representations from previously generated tokens.
+93: For a query token i , the scaled dot-product attention score with key token j is defined as
+94: |
+95: | s_{ij}=\frac{q_{i}^{\top}k_{j}}{\sqrt{d}},
+96: |
+97: | (1)
+98: where q_{i}\in\mathbb{R}^{d} is the query vector, and k_{j},v_{j}\in\mathbb{R}^{d} are the key and value vectors, respectively. The attention output is given by
+99: |
+100: | Z_{i}=\sum_{j}e^{s_{ij}},\quad U_{i}=\sum_{j}e^{s_{ij}}v_{j},\quad a_{i}=\frac{U_{i}}{Z_{i}}.
+101: |
+102: | (2)
+103: 4.2 Block-Causal Attention Caching
+104: Attention Decomposition. Let \mathcal{J}_{\text{in}} denote the set of key indices inside the current block, and \mathcal{J}_{\text{out}} denote the set of key indices outside the current block. We define the block-internal and block-external attention statistics as
+105: |
+106: | \displaystyle Z_{i,\text{in}}
+107: | \displaystyle=\sum_{j\in\mathcal{J}_{\text{in}}}e^{s_{ij}},
+108: | \displaystyle U_{i,\text{in}}
+109: | \displaystyle=\sum_{j\in\mathcal{J}_{\text{in}}}e^{s_{ij}}v_{j},
+110: |
+111: | (3)
+112: |
+113: | \displaystyle Z_{i,\text{out}}
+114: | \displaystyle=\sum_{j\in\mathcal{J}_{\text{out}}}e^{s_{ij}},
+115: | \displaystyle U_{i,\text{out}}
+116: | \displaystyle=\sum_{j\in\mathcal{J}_{\text{out}}}e^{s_{ij}}v_{j}.
+117: |
+118: | (4)
+119: The full attention output can be written as
+120: |
+121: | a_{i}=\frac{U_{i,\text{out}}+U_{i,\text{in}}}{Z_{i,\text{out}}+Z_{i,\text{in}}}.
+122: |
+123: | (5)
+124: Block-external attention caching.
+125: Block diffusion repeatedly computes attention across adjacent diffusion steps on highly similar representations.
+126: For tokens outside the current block, both the key–value representations and their attention contributions evolve slowly across steps.
+127: We therefore cache the block-external attention output and its normalizer at diffusion step s :
+128: |
+129: | A^{s}_{\text{out}}=\frac{U^{s}_{\text{out}}}{Z^{s}_{\text{out}}},\quad L^{s}_{\text{out}}=\log Z^{s}_{\text{out}}.
+130: |
+131: | (6)
+132: The cached tensors depend only on the number of query tokens in the current block and are independent of the context length.
+133: Block-internal attention recomputation.
+134: At the subsequent diffusion step s+1 , attention over block-internal tokens is always recomputed:
+135: |
+136: | A^{s+1}_{\text{in}}=\frac{U^{s+1}_{\text{in}}}{Z^{s+1}_{\text{in}}},\quad L^{s+1}_{\text{in}}=\log Z^{s+1}_{\text{in}}.
+137: |
+138: | (7)
+139: Log-space attention composition.
+140: When cached block-external attention is reused, the full attention output is obtained by composing block-external and block-internal attention in log space. Following the FlashAttention (Dao et al., 2022) implementation, we perform the composition by subtracting the maximum log-normalizer m from both the
+141: numerator and denominator to improve numerical stability under
+142: half-precision arithmetic.
+143: Let
+144: |
+145: | m=\max\left(L^{s}_{\text{out}},\,L^{s+1}_{\text{in}}\right).
+146: |
+147: | (8)
+148: The attention output at step s+1 is computed as
+149: |
+150: | A^{s+1}_{\text{full}}=\frac{e^{L^{s}_{\text{out}}-m}\,A^{s}_{\text{out}}+e^{L^{s+1}_{\text{in}}-m}\,A^{s+1}_{\text{in}}}{e^{L^{s}_{\text{out}}-m}+e^{L^{s+1}_{\text{in}}-m}}.
+151: |
+152: | (9)
+153: For diffusion steps where block-external attention is recomputed, the same formulation applies with updated (A^{s+1}_{\text{out}},L^{s+1}_{\text{out}}) .
+154: Selective reuse of block-external attention.
+155: In discrete block diffusion models, token representations within a block may
+156: be updated abruptly at a diffusion step.
+157: Let M^{s+1} denote the number of updated tokens in the current block at step
+158: s+1 .
+159: We introduce a threshold \tau to control whether block-external attention
+160: should be reused or recomputed.
+161: If the current block is processed for the first time, block-external attention
+162: is computed using the standard attention formulation and cached.
+163: Otherwise, if cached block-external attention is available and
+164: M^{s+1}<\tau , we directly reuse the cached block-external attention
+165: (A^{s}_{\text{out}},L^{s}_{\text{out}}) without accessing the KV cache.
+166: When M^{s+1}\geq\tau , block-external attention is recomputed to ensure
+167: correctness and the cache is updated accordingly.
+168: For video diffusion models, we further adopt a head-wise selective reuse
+169: strategy.
+170: Before inference, we estimate the similarity of block-external attention
+171: between adjacent diffusion steps for each attention head using a small set
+172: of samples.
+173: During inference, cached block-external attention is reused only for heads
+174: whose estimated similarity exceeds a threshold \gamma , while block-external
+175: attention is recomputed for the remaining heads.
+176: This design accounts for the higher cross-step variability in video generation
+177: and avoids incorrect reuse when attention patterns change across diffusion
+178: steps.
+179: Compatibility with Sparse Attention.
+180: Our formulation naturally extends to sparse attention mechanisms.
+181: Sparse attention computes attention over a selected subset of keys for each query, while ignoring or approximating the remaining context.
+182: When combined with sparse attention, the previously defined partition
+183: (\mathcal{J}_{\text{in}},\mathcal{J}_{\text{out}}) admits a natural interpretation:
+184: \mathcal{J}_{\text{in}} corresponds to the set of keys selected by the sparse attention policy, over which attention is explicitly computed, while \mathcal{J}_{\text{out}} corresponds to the complementary set of unselected keys.
+185: Under this interpretation, sparse attention operates on the block-internal component \mathcal{J}_{\text{in}} , whereas block-external attention captures the residual contribution from \mathcal{J}_{\text{out}} .
+186: The same attention decomposition and log-space composition described in Section 4.2 therefore apply without modification.
+187: Our block-external attention caching mechanism can be directly applied on top of sparse attention by caching and reusing the residual attention term associated with \mathcal{J}_{\text{out}} across diffusion steps, while recomputing sparse attention over \mathcal{J}_{\text{in}} .
+188: This makes our method complementary to attention sparsification and enables seamless integration with existing sparse attention mechanisms.
+189: 4.3 Reuse-Aware Distillation
+190: While the proposed inference procedure can be applied without modifying model
+191: parameters, directly introducing block-external attention caching may lead to
+192: distributional mismatch in diffusion language models.
+193: This issue mainly arises in discrete diffusion language models, where tokens
+194: are progressively unmasked during denoising, causing abrupt changes in
+195: attention contributions across diffusion steps.
+196: Such behavior can violate the stability assumption underlying attention reuse
+197: and degrade generation quality.
+198: To mitigate this effect, we introduce a reuse-aware distillation strategy for
+199: dLLMs.
+200: We adopt a teacher–student formulation, where the teacher is a frozen model
+201: using dense attention and the student employs block-external attention caching.
+202: Let p_{\text{teacher}} denote the output distribution of the teacher, and
+203: p_{\text{reuse}} denote the output distribution of the student under
+204: attention reuse.
+205: We minimize
+206: |
+207: | \mathcal{L}_{\text{reuse}}=\mathrm{KL}\!\left(p_{\text{teacher}}\,\|\,p_{\text{reuse}}\right).
+208: |
+209: | (10)
+210: To stabilize training, we additionally compute the student output using dense
+211: attention, denoted as p_{\text{dense}}^{\text{student}} , and minimize
+212: |
+213: | \mathcal{L}_{\text{reg}}=\mathrm{KL}\!\left(p_{\text{teacher}}\,\|\,p_{\text{dense}}^{\text{student}}\right).
+214: |
+215: | (11)
+216: The final objective is
+217: |
+218: | \mathcal{L}=\mathcal{L}_{\text{reuse}}+\lambda\,\mathcal{L}_{\text{reg}},
+219: |
+220: | (12)
+221: where \lambda controls the strength of the regularization term.
+222: Table 1: Main results on diffusion language model benchmarks with \tau=2 .
+223: We report accuracy (%) for mathematical reasoning tasks and pass@1 (%) for
+224: coding benchmarks.
+225: Throughput (TPS) is measured as tokens per second with batch size 128 under an 800k context length.
+226: All results are evaluated under identical decoding settings.
+227: | Method
+228: | Block Size
+229: | TPS
+230: | Mathematical Reasoning
+231: | Coding
+232: | GSM8K
+233: | MATH500
+234: | AIME
+235: | MBPP
+236: | HumanEval
+237: | LiveCodeBench-V2
+238: | LiveBench
+239: | Trado-8B-Thinking
+240: | 4
+241: | 312
+242: | 93.25
+243: | 86.00
+244: | 33.33
+245: | 25.60
+246: | 50.61
+247: | 36.79
+248: | 32.03
+249: | Trado-8B-Thinking + Ours
+250: | 4
+251: | 451
+252: | 93.12
+253: | 85.80
+254: | 33.33
+255: | 33.60
+256: | 51.22
+257: | 35.64
+258: | 31.25
+259: | Trado-8B-Thinking
+260: | 8
+261: | 532
+262: | 91.74
+263: | 82.00
+264: | 26.67
+265: | 29.00
+266: | 54.27
+267: | 27.01
+268: | 30.47
+269: | Trado-8B-Thinking + Ours
+270: | 8
+271: | 674
+272: | 90.22
+273: | 81.80
+274: | 26.67
+275: | 32.00
+276: | 53.66
+277: | 26.42
+278: | 29.34
+279: Computation and memory complexity. Let B denote the block size (i.e., the number of query tokens updated at each diffusion step) and N denote the total context length. In standard block diffusion, attention computation at each step requires accessing the full KV cache, resulting in O(BN) KV cache accumulation and memory access. Our method is implemented on top of FlashAttention, which computes attention by streaming over keys while maintaining running accumulators for the weighted sum and the log-normalizer.
+280: During this streaming process, when the key index reaches the block boundary, we copy the current accumulated block-external attention output A_{\text{out}} and log-normalizer L_{\text{out}} .
+281: This operation incurs a constant-time copy per query token and does not require additional passes over the KV cache.
+282: At subsequent diffusion steps, attention computation is restricted to block-internal keys, reducing KV access and accumulation to O(B^{2}) per step.
+283: The log-space composition of block-external and block-internal attention involves only elementwise operations over block queries and therefore has O(B) computational complexity. In terms of memory overhead, the cached block-external attention outputs and log-normalizers scale linearly with the block size.
+284: Compared to the KV cache, whose size grows with the full context length N , the additional storage required by our method is negligible.
+285: Overall, our approach significantly reduces attention computation and KV cache access in long-context settings while introducing minimal computational and memory overhead.
+286: 5 Experiments
+287: Implementation details.
+288: In reuse-aware distillation,
+289: we employ a lightweight LoRA-based training scheme, inserting LoRA (Hu et al., 2021) adapters into the query, key, and value projection layers with rank 32.
+290: The student model is trained for 5,000 iterations on the DAPO-Math-17K dataset (Yu et al., 2025).
+291: During training, we randomly roll out 1,000–4,000 tokens and perform distillation on the subsequent block by matching the student outputs to a frozen dense-attention teacher.
+292: The regularization coefficient is set to \lambda=1 . We evaluate our method on diffusion language models using Trado (Wang et al., 2025a) as the base model.
+293: Experiments are conducted on mathematical reasoning benchmarks including GSM8K (Cobbe et al., 2021), MATH500 (Hendrycks et al., ), and AIME (Li et al., 2024), as well as coding benchmarks LiveCodeBench-V2 (Jain et al., 2024) and LiveBench (White et al., 2024).
+294: All methods are implemented within the nano-vllm (GeeeekExplorer, 2024) framework, following the same model architecture, tokenization, and decoding settings as Trado.
+295: We further evaluate our method with \gamma=0.9 on video diffusion models using LongLive-1.3B (Yang et al., 2025) on the VBench2 benchmark (Zheng et al., 2025).
+296: For video generation, we adopt SpargeAttention (Zhang et al., 2025a) as the sparse attention baseline and adapt it to the block diffusion setting.
+297: Our block-external attention caching is implemented directly inside the FlashAttention (Dao et al., 2022) kernel to minimize overhead.
+298: All experiments are conducted on 4 NVIDIA A100 GPUs with a maximum batch size of 128 and a token budget of 32k.
+299: Figure 3: Per-step inference latency under increasing context length.
+300: We report results on Trado with batch size 128 using two A100 GPUs.
+301: Each column corresponds to a different updated-token threshold
+302: \tau\in\{2,3,4\} .
+303: Our method (orange) consistently reduces per-step inference latency compared
+304: to the Trado baseline (blue), with the gap widening as context length
+305: increases.
+306: Larger \tau values enable more aggressive reuse of cached block-external
+307: attention, further reducing computation and memory access.
+308: Main results on diffusion large language model.
+309: We evaluate our method on Trado across mathematical reasoning and coding
+310: benchmarks.
+311: Table 1 reports accuracy on GSM8K, MATH500, and AIME, as
+312: well as pass@1 on MBPP, HumanEval, LiveCodeBench-V2, and LiveBench, under
+313: identical decoding settings, together with inference throughput measured at
+314: batch size 128.
+315: Across mathematical reasoning benchmarks, our method achieves performance
+316: closely matching dense Trado.
+317: For block size 4, accuracy differences on GSM8K, MATH500, and AIME are within
+318: 0.2%, while for block size 8, the corresponding differences remain within
+319: 1.6%.
+320: These results indicate that caching block-external attention preserves
+321: reasoning accuracy.
+322: On coding benchmarks, our method maintains comparable pass@1 to the dense
+323: baseline across different block sizes, with only minor variations depending
+324: on the task, and overall performance remains stable across MBPP,
+325: HumanEval, LiveCodeBench-V2, and LiveBench.
+326: In terms of efficiency, our method substantially improves inference
+327: throughput.
+328: At batch size 128, block-external attention caching increases throughput
+329: from 312 to 451 tokens/s for block size 4, and from 532 to 674 tokens/s for
+330: block size 8, corresponding to up to a 1.44\times speedup.
+331: These gains stem from reducing redundant attention computation and KV cache
+332: access across diffusion steps, and become more pronounced in long-context
+333: settings.
+334: Overall, the results demonstrate that block-external attention caching
+335: provides an effective way to accelerate diffusion language models with comparable performance.
+336: Table 2: Combination with sparse attention under different attention densities on diffusion language models.
+337: We report accuracy on GSM8K and MATH500, and pass@1 on HumanEval.
+338: “SparseD + Ours” applies block-external attention caching on top of SparseD.
+339: | Method
+340: | GSM8K
+341: | MATH500
+342: | HumanEval
+343: | Acc.
+344: | \Delta
+345: | Acc.
+346: | \Delta
+347: | Pass@1
+348: | \Delta
+349: | Trado-4B-Instruct
+350: | 91.21
+351: | –
+352: | 70.80
+353: | –
+354: | 45.12
+355: | –
+356: | SparseD ( d=20\% )
+357: | 34.72
+358: | +7.96
+359: | 39.40
+360: | +7.40
+361: | 23.78
+362: | +9.76
+363: | SparseD + Ours ( d=20\% )
+364: | 42.68
+365: | 46.80
+366: | 33.54
+367: | SparseD ( d=30\% )
+368: | 68.61
+369: | +3.64
+370: | 59.20
+371: | +5.40
+372: | 29.88
+373: | +6.71
+374: | SparseD + Ours ( d=30\% )
+375: | 72.25
+376: | 64.60
+377: | 36.59
+378: | SparseD ( d=40\% )
+379: | 84.61
+380: | +2.65
+381: | 66.20
+382: | +3.20
+383: | 39.02
+384: | +5.49
+385: | SparseD + Ours ( d=40\% )
+386: | 87.26
+387: | 69.40
+388: | 44.51
+389: Table 3: L1 distance between sparse attention outputs and full attention
+390: for the first attention layer on a randomly sampled input.
+391: Results are reported under different attention density ratios.
+392: | Method / Density
+393: | 50%
+394: | 40%
+395: | 30%
+396: | 20%
+397: | 10%
+398: | SparseD
+399: | 0.0014
+400: | 0.0015
+401: | 0.0022
+402: | 0.0028
+403: | 0.0031
+404: | SparseD + Ours
+405: | 0.0005
+406: | 0.0005
+407: | 0.0006
+408: | 0.0008
+409: | 0.0008
+410: Combining with sparse attention.
+411: Table 2 reports the results of combining our
+412: block-external attention caching with SparseD under different sparsity
+413: ratios on diffusion language models
+414: (implementation details are provided in appendix).
+415: Across all sparsity settings, integrating our method with SparseD
+416: consistently improves performance on GSM8K, MATH500, and HumanEval.
+417: The gains are most pronounced at higher sparsity levels.
+418: For example, at a density ratio of d=20\% , our method improves SparseD by
+419: +7.96 accuracy on GSM8K, +7.40 accuracy on MATH500, and +9.76 pass@1 on
+420: HumanEval.
+421: As the sparsity ratio increases, the absolute improvements gradually
+422: decrease but remain consistent, with gains of +3.64 / +5.40 / +6.71 at
+423: d=30\% and +2.65 / +3.20 / +5.49 at d=40\% on GSM8K, MATH500, and
+424: HumanEval, respectively.
+425: To better understand this effect, we further examine the deviation of sparse
+426: attention from full attention at the attention-output level.
+427: Table 3 reports the L1 distance between sparse
+428: attention outputs and full attention for the first attention layer on a
+429: randomly sampled input.
+430: As the attention density decreases, SparseD exhibits a rapidly increasing
+431: deviation from full attention.
+432: In contrast, combining SparseD with our block-external attention caching
+433: substantially reduces this gap across all sparsity levels.
+434: This analysis suggests that our method effectively compensates for the
+435: information loss introduced by aggressive sparsification by reusing stable
+436: residual attention contributions.
+437: We note that SparseD is currently implemented and evaluated only at the
+438: PyTorch level, without a sparse attention kernel compatible with paged KV
+439: cache, and therefore cannot be directly compared in end-to-end latency
+440: under vLLM-style inference.
+441: Figure 4: Qualitative comparison on video generation with LongLive-1.3B.
+442: We visualize video examples from VBench, each shown by six uniformly sampled frames.
+443: For each example, the top row shows results from the baseline, the mid row shows results from the SpargeAttention, and the bottom row shows results from SpargeAttention combined with our block-external attention caching at a fixed sparsity ratio.
+444: Our method preserves visual quality and temporal consistency while improving inference efficiency, demonstrating that block-external attention caching does not introduce perceptible degradation in generated videos.
+445: Table 4: Ablation on the update threshold \tau and reuse-aware
+446: distillation using Trado-8B-Thinking under a 32k token budget.
+447: Dense Baseline corresponds to the original model without block-external
+448: attention caching.
+449: | \tau
+450: | Distill.
+451: | AIME
+452: | MATH500
+453: | HumanEval
+454: | MBPP
+455: | –
+456: | –
+457: | 33.33
+458: | 86.00
+459: | 50.61
+460: | 25.60
+461: | 2
+462: | \times
+463: | 26.67
+464: | 80.40
+465: | 48.17
+466: | 31.40
+467: | 2
+468: | \checkmark
+469: | 33.33
+470: | 85.80
+471: | 51.22
+472: | 33.60
+473: | 3
+474: | \times
+475: | 20.00
+476: | 78.40
+477: | 44.51
+478: | 30.20
+479: | 3
+480: | \checkmark
+481: | 30.00
+482: | 85.00
+483: | 50.61
+484: | 31.60
+485: | 4
+486: | \times
+487: | 6.67
+488: | 48.40
+489: | 37.20
+490: | 24.20
+491: | 4
+492: | \checkmark
+493: | 13.33
+494: | 66.20
+495: | 42.07
+496: | 28.60
+497: Effect of \tau and distillation.
+498: We conduct a joint ablation study on the update threshold \tau and sparsity
+499: forcing distillation using Trado-8B-Thinking under a fixed token budget of 32k.
+500: Table 4 reports results on HumanEval, AIME, and
+501: MATH500, including the dense baseline without block-external attention caching.
+502: For each value of \tau , we compare models with and without distillation.
+503: Across all \tau settings, reuse-aware distillation consistently improves
+504: generation quality, with particularly pronounced gains on reasoning-intensive
+505: benchmarks such as AIME and MATH500.
+506: Without distillation, performance degrades rapidly as \tau increases,
+507: whereas distillation substantially mitigates this degradation.
+508: For both distilled and non-distilled models, performance remains comparable
+509: between \tau=2 and \tau=3 , while a clear drop is observed at \tau=4 ,
+510: indicating that overly aggressive reuse of cached block-external attention can
+511: harm quality.
+512: Figure 3 further shows that inference latency under
+513: \tau=2 and \tau=3 is very similar, providing little additional efficiency
+514: benefit from increasing \tau .
+515: Based on this quality–efficiency trade-off, we use \tau=2 as the default
+516: setting.
+517: Latency analysis under different context lengths.
+518: We further analyze inference efficiency by measuring per-step latency and the number of tokens participating in attention as the context length increases.
+519: Experiments are conducted on Trado with batch size 128 using two NVIDIA A100 GPUs.
+520: We vary the updated-token threshold \tau\in\{2,3,4\} , which controls when cached block-external attention can be reused without accessing the KV cache.
+521: Figure 3 presents the results.
+522: Across all values of \tau , our method consistently achieves lower per-step latency than the Trado baseline.
+523: As context length grows, the latency gap widens, indicating that KV cache access and attention computation increasingly dominate inference cost in long-context regimes and that avoiding redundant access yields substantial benefits.
+524: In particular, when the context length increases from 100k to 800k, under \tau=2 the latency growth of our method is approximately half that of the baseline, indicating a theoretical speedup upper bound of up to 2\times in extreme long-context settings.
+525: Larger values of \tau enable more aggressive reuse of cached block-external attention and further reduce latency.
+526: The bottom row of Figure 3 shows the number of tokens participating in attention at each step.
+527: While the Trado baseline attends to the full available context, our method substantially reduces the effective attention size by reusing cached block-external attention.
+528: This reduction closely tracks the observed latency improvements, confirming that the efficiency gains primarily arise from reduced attention computation and KV cache access.
+529: Overall, these results demonstrate that our method scales favorably with context length and effectively mitigates the long-context inefficiency of block diffusion models.
+530: Table 5: Video generation results on VBench2 (macro categories).
+531: We report average scores over the five major evaluation dimensions:
+532: HF (Human Fidelity), CR (Creativity), CT (Controllability),
+533: PH (Physics), and CS (Commonsense),
+534: together with end-to-end latency and attention time.
+535: Lower is better for latency metrics, and higher is better for VBench scores.
+536: | Method
+537: | Density
+538: | E2E Lat. (s) \downarrow
+539: | Attn. (s) \downarrow
+540: | HF
+541: | CR
+542: | CT
+543: | PH
+544: | CS
+545: | LongLive-1.3B
+546: | 100%
+547: | 93.23
+548: | 23.02
+549: | 0.8188
+550: | 0.1821
+551: | 0.2796
+552: | 0.4273
+553: | 0.4195
+554: | SpargeAttn
+555: | 30%
+556: | 92.34
+557: | 22.04
+558: | 0.5993
+559: | 0.1821
+560: | 0.2717
+561: | 0.4019
+562: | 0.4770
+563: | SpargeAttn
+564: | 50%
+565: | 92.78
+566: | 22.56
+567: | 0.7609
+568: | 0.1808
+569: | 0.2837
+570: | 0.4257
+571: | 0.4080
+572: | Ours
+573: | 55%
+574: | 84.64
+575: | 14.43
+576: | 0.7861
+577: | 0.1818
+578: | 0.3026
+579: | 0.4231
+580: | 0.4310
+581: Performance on video generation.
+582: Table 5 reports quantitative results on VBench2 using the
+583: LongLive-1.3B model, evaluated on five macro-level dimensions.
+584: Our method substantially reduces both end-to-end latency and attention time
+585: compared to the dense baseline, achieving an attention-time speedup of
+586: approximately 1.6\times (23.02 s \rightarrow 14.43 s per diffusion step),
+587: while maintaining comparable generation quality across all dimensions.
+588: Compared to SpargeAttn at similar attention densities, our approach achieves
+589: higher scores on most macro categories, indicating a more favorable
+590: efficiency–quality trade-off under long-context video generation.
+591: Specially, SpargeAttn requires explicitly evaluating attention masks at
+592: each diffusion step, which introduces non-negligible overhead and limits its
+593: practical acceleration.
+594: The achievable end-to-end speedup on video generation is additionally bounded by
+595: the LongLive architecture.
+596: Specifically, LongLive employs a fixed temporal attention window of 12 frames,
+597: which limits the effective KV cache size and reduces the proportion of total
+598: inference time spent on attention computation.
+599: As a result, although block-external attention caching significantly accelerates
+600: attention, the overall end-to-end speedup remains constrained by other
+601: components of the video diffusion pipeline.
+602: Figure 4 presents qualitative comparisons on
+603: video generation, where each example is shown by a sequence of uniformly
+604: sampled frames.
+605: Videos generated by our method preserve visual quality, temporal coherence,
+606: and semantic consistency compared to the dense baseline.
+607: In contrast, SpargeAttn alone may introduce temporal inconsistencies or
+608: visual degradation in some cases.
+609: Detailed category-wise results are provided in the appendix.
+610: 6 Conclusion
+611: We have investigated the efficiency bottleneck of block diffusion models in long-context settings and have identified cross-step redundancy in attention computation across diffusion steps.
+612: Based on this observation, we have proposed FlashBlock, a block-external attention caching mechanism that reuses stable attention contributions from previous steps and recomputes attention only within the current block.
+613: Experiments on diffusion language models and video diffusion models have shown that FlashBlock significantly improves inference efficiency.
+614: We further demonstrate that FlashBlock is compatible with sparse attention and
+615: can be combined as a complementary residual reuse strategy.
+616: Overall, this work highlights attention reuse across diffusion steps as an
+617: effective and complementary direction for improving long-context diffusion
+618: inference.
+619: Limitations and future work.
+620: Although our method can be combined with sparse attention, we evaluate such
+621: combinations only in terms of accuracy under different sparsity ratios.
+622: Most existing sparse attention methods are not implemented with kernels
+623: compatible with block diffusion and paged KV cache, which makes efficient
+624: operator-level integration non-trivial.
+625: We leave the development of block-diffusion-aware sparse attention kernels to
+626: future work.
+627: Impact Statement
+628: This paper presents work whose goal is to advance the field of machine learning by improving fundamental modeling and optimization techniques.
+629: The proposed approach has the potential to positively impact future research and applications by enabling more effective and efficient learning algorithms. Such improvements may benefit a wide range of downstream tasks where machine learning methods are applied.
+630: At the same time, as with most advances in machine learning, there may be potential negative impacts if the methods are misused or deployed without appropriate consideration of their limitations, particularly in high-stakes or sensitive application domains. We do not foresee immediate harmful consequences arising directly from this work when it is used responsibly for research purposes.
+631: Overall, we encourage practitioners to consider ethical, legal, and societal implications when applying the proposed methods in real-world settings.
+

@@ -1,0 +1,945 @@
+https://arxiv.org/html/2601.20327v1
+CE-RM: A Pointwise Generative Reward Model Optimized via Two-Stage Rollout and Unified Criteria
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Preliminary Study
+3 Methodology
+3.1 Data Curation
+3.2 Cold Start
+Instance
+Criteria
+Evaluation
+3.3 RL with Two-Stage Rollout
+4 Experiments
+4.1 Implementation Details
+4.2 Benchmarks
+RewardBench (Lambert et al., 2025b)
+RewardBench2 (Malik et al., 2025)
+RM-Bench (Liu et al., 2025a)
+PPE Correctness (Frick et al., 2025)
+JudgeBench (Tan et al., 2025)
+4.3 Main Results
+4.3.1 Test-Time Scaling
+4.3.2 Two-Stage Rollout Combination
+4.3.3 Evaluation Robustness
+5 Ablation Analyses
+Unified Criteria
+Criteria Optimization
+Evaluation Optimization
+Sub-Grouping
+Data Quality Filtering
+Reinforcement Learning
+6 RL Practice
+7 Related Work
+8 Conclusion
+References
+A Evaluation Prompts
+License: arXiv.org perpetual non-exclusive license
+arXiv:2601.20327v1 [cs.CL] 28 Jan 2026
+CE-RM: A Pointwise Generative Reward Model Optimized via
+Two-Stage Rollout and Unified Criteria
+Xinyu Hu
+Affiliation: Wangxuan Institute of Computer Technology, Peking University
+Affiliation: ​Alibaba Group{huxinyu,wanxiaojun}@pku.edu.cn, {heyancheng.hyc,weixun.wwx}@taobao.com
+Yancheng He
+Affiliation: ​Alibaba Group{huxinyu,wanxiaojun}@pku.edu.cn, {heyancheng.hyc,weixun.wwx}@taobao.com
+Weixun Wang
+Affiliation: ​Alibaba Group{huxinyu,wanxiaojun}@pku.edu.cn, {heyancheng.hyc,weixun.wwx}@taobao.com
+Tao Feng
+Affiliation: ​Alibaba Group{huxinyu,wanxiaojun}@pku.edu.cn, {heyancheng.hyc,weixun.wwx}@taobao.com
+Li Lin
+Affiliation: Wangxuan Institute of Computer Technology, Peking University
+Jiashun Liu
+Affiliation: Hong Kong University of Science and Technology​
+Affiliation: ​Alibaba Group{huxinyu,wanxiaojun}@pku.edu.cn, {heyancheng.hyc,weixun.wwx}@taobao.com
+Wenbo Su
+Affiliation: ​Alibaba Group{huxinyu,wanxiaojun}@pku.edu.cn, {heyancheng.hyc,weixun.wwx}@taobao.com
+Bo Zheng
+Affiliation: ​Alibaba Group{huxinyu,wanxiaojun}@pku.edu.cn, {heyancheng.hyc,weixun.wwx}@taobao.com
+Xiaojun Wan
+Affiliation: Wangxuan Institute of Computer Technology, Peking University
+Abstract
+Automatic evaluation is crucial yet challenging for open-ended natural language generation, especially when rule-based metrics are infeasible. Compared with traditional methods, the recent LLM-as-a-Judge paradigms enable better and more flexible evaluation, and show promise as generative reward models for reinforcement learning. However, prior work has revealed a notable gap between their seemingly impressive benchmark performance and actual effectiveness in RL practice. We attribute this issue to some limitations in existing studies, including the dominance of pairwise evaluation and inadequate optimization of evaluation criteria. Therefore, we propose CE-RM-4B, a pointwise generative reward model trained with a dedicated two-stage rollout method, and adopting unified query-based criteria. Using only about 5.7K high-quality data curated from the open-source preference dataset, our CE-RM-4B achieves superior performance on diverse reward model benchmarks, especially in Best-of-N scenarios, and delivers more effective improvements in downstream RL practice.
+1 Introduction
+Automatic evaluation has long been a widely studied yet challenging area in natural language processing. Although verifiable tasks such as question answering and mathematics can be evaluated using rule-based metrics, they still face practical difficulties, including diverse answer formats and reasoning process validation. Moreover, there exists a large number of open-ended generation tasks with no well-defined correct answers, such as creative writing and general instruction following. Therefore, it is crucial to develop flexible and efficient automatic evaluation methods.
+Traditional research on automatic evaluation has generally evolved through two stages: string-matching metrics such as BLEU (Papineni et al., 2002) and ROUGE (Lin, 2004), and language-model-based metrics such as BARTScore (Yuan et al., 2021) and COMET (Rei et al., 2020). Despite the substantial improvements in evaluation performance, these metrics largely rely on high-quality references and exhibit poor robustness, which can be easily affected by semantic perturbations (He et al., 2023). With the recent rapid development of large language models (LLMs), their improving instruction-following capability has driven a new LLM-based automatic evaluation paradigm (LLM-as-a-Judge) (Wang et al., 2023; Gao et al., 2025), which formulates evaluation as an end-to-end generation task to imitate human judgment and supports diverse evaluation functionalities.
+Compared with traditional evaluation metrics, this new paradigm achieves performance closer to human-level evaluation. More importantly, it can serve as a generative reward model (GRM) (Mahan et al., 2024) to provide automatic reward signals for reinforcement learning (RL), especially in scenarios that are difficult to verify with rules. Existing studies (Wang et al., 2024; Liu et al., 2025b; Chen et al., 2025b; Chen et al., 2025a; Guo et al., 2025; Whitehouse et al., 2025) have made substantial efforts to enhance the performance of GRMs, including distilling data from state-of-the-art LLMs, strengthening the reasoning process during evaluation, and employing rejection sampling for self-bootstrapping. In addition, some work (Liu et al., 2024b; Xu et al., 2024; Liu et al., 2025b) has taken notice of a crucial component of evaluation—criteria—and demonstrated that basing evaluation on high-quality criteria can significantly enhance performance.
+Despite the increasing performance of these studies on reward model benchmarks, Wen et al. (2025) have shown that there remains a notable gap between such benchmark performance and actual effectiveness when deployed in RL. We argue that one primary reason may be that most GRMs adopt a pairwise evaluation protocol. In fact, existing public preference training data are almost pairwise: they are relatively easy to construct and can be generated automatically at scale. In contrast, pointwise data require high-quality human annotations and are thus more expensive. Furthermore, many RM benchmarks are also designed as pairwise comparisons. However, this pairwise protocol is difficult to leverage in RL practice. For example, to apply such RMs in RL with GRPO (Shao et al., 2024), one often needs to compare each pair of trajectories within each rollout group and then use algorithms like Elo (Elo and Sloan, 1978) to compute a pointwise score for each trajectory, leading to quadratic computational cost and low efficiency.
+In addition, although some studies have highlighted the importance of evaluation criteria, they typically treat criteria as part of the evaluation process and optimize the entire evaluation holistically, rather than explicitly strengthening the criteria generation. More notably, their criteria are often generated jointly conditioned on both the query and response. While this approach may yield more comprehensive criteria by incorporating the query requirements and the specific response content, it can lead to inconsistent criteria when multiple responses to the same query are evaluated and compared, thereby introducing biases. This setting is, however, closer to real-world scenarios, such as computing rewards within a rollout group. In Section 2, we conduct experiments demonstrating that using unified criteria solely based on the query is increasingly beneficial as the number of responses per query grows.
+Motivated by these considerations, we propose a reinforcement learning method with a two-stage rollout—unified Criteria then Evaluation—to train our pointwise GRM, CE-RM-4B. Specifically, our model conducts evaluation by first generating evaluation criteria solely based on the query, and then, conditioned on the query and the criteria, producing a detailed evaluation analysis for each response. To train the model, we select about 5.7K data from the public pairwise preference dataset Skywork-Reward-Preference-80K-v0.2 (Liu et al., 2024a) through a series of dedicated quality-filtering procedures. During reinforcement learning, we further design specific algorithms to leverage the original pairwise preference labels to estimate fine-grained reward signals for criteria and evaluation trajectories, respectively, without requiring any additional pointwise score annotations.
+We conduct experiments on multiple commonly used RM benchmarks, covering diverse and challenging tasks as well as more realistic Best-of-N scenarios. Experimental results show that, compared with existing work, our CE-RM-4B achieves superior performance with only 4B parameters and less training data. Moreover, on benchmarks where each query is associated with more responses, our model indeed exhibits stronger evaluation capability. We also perform extensive ablation analyses to verify the importance of explicitly optimizing criteria generation and the effectiveness of our proposed methods. Furthermore, we apply our CE-RM-4B in practical RL with GRPO, and observe consistently better improvement. In summary, our contributions are as follows:
+1.
+We reveal several limitations of current generative reward models, including the dominance of pairwise evaluation and the lack of dedicated optimization for evaluation criteria.
+2.
+We propose a two-stage rollout reinforcement learning method that unifies evaluation criteria conditioned on the query and effectively utilizes pairwise preference labels to train our pointwise GRM, CE-RM-4B.
+3.
+Our model achieves superior performance on common reward model benchmarks, especially in more realistic Best-of-N scenarios, and yields more effective improvements in RL practice. Our model is available at huggingface.co/PKU-ONELab/CE-RM.
+2 Preliminary Study
+To investigate the role of evaluation criteria and how their different usages affect evaluation performance, we conducted preliminary experiments under three pointwise evaluation settings. For each query xx and its candidate responses {yi}\{y_{i}\}, the first setting follows the most common practice: the model performs the analysis and then outputs a score (Direct Evaluation). It can be formalized as follows, where rθr_{\theta} denotes the GRM and eie_{i} denotes the evaluation output, fscoref_{\text{score}} is a rule-based function that extracts the score sis_{i} from the evaluation.
+ei∼rθ​(x,yi),si=fscore​(ei)\displaystyle e_{i}\sim r_{\theta}\left(x,y_{i}\right),\!\quad\!\!s_{i}=f_{\text{score}}\left(e_{i}\right)
+(1)
+In this setting, we do not explicitly require the model to provide evaluation criteria. Nevertheless, the model is allowed to benefit from its reasoning process, and in many cases, it implicitly constructs certain criteria.
+The second setting requires the model to first generate explicit evaluation criteria and then perform corresponding analysis and scoring, conditioned on both the query and the response (Explicit Criteria), where cic_{i} denotes the generated criteria.
+ci,ei∼rθ​(x,yi),si=fscore​(ei)\displaystyle c_{i},e_{i}\sim r_{\theta}\left(x,y_{i}\right),\!\quad\!\!s_{i}=f_{\text{score}}\left(e_{i}\right)
+(2)
+The third setting asks the model to first generate the evaluation criteria solely based on the query, and then evaluate each response conditioned on the query and this unified criteria cc (Unified Criteria), as formalized below.
+c∼rθ​(x),ei∼rθ​(x,yi,c),si=fscore​(ei)\displaystyle c\sim r_{\theta}\left(x\right),\quad\!\!\!\!\!\!e_{i}\sim r_{\theta}\left(x,y_{i},c\right),\quad\!\!\!\!\!\!s_{i}=f_{\text{score}}\left(e_{i}\right)
+(3)
+We evaluate them on three widely used RM benchmarks: RewardBench (Lambert et al., 2025b), RewardBench2 (Malik et al., 2025), and RM-Bench (Liu et al., 2025a), where each query is associated with 2, 4, and 6 responses, respectively. More descriptions are provided in Section 4.2. We use Qwen3-Max (Team, 2025c) as the GRM, and the prompts for the three settings are presented in Figures 4–6 in Appendix A. As shown in Table 1, explicitly generating criteria consistently improves evaluation performance. Furthermore, as the number of responses per query increases, the advantage of unified criteria becomes more pronounced.
+Evaluation Setting
+RWBench
+RWBench2
+RM-Bench
+Direct Evaluation
+90.0
+76.7
+79.8
+Explicit Criteria
+90.3
+78.8
+81.5
+Unified Criteria
+90.6
+79.8
+83.0
+Table 1: The results of Qwen3-Max with three different evaluation settings on three reward model benchmarks: RewardBench (RWBench), RewardBench2 (RWBench2) and RM-Bench.
+3 Methodology
+Motivated by the above exploration, we aim to train a pointwise GRM with unified criteria, whose evaluation process follows Eq. (3), while explicitly strengthening the criteria generation capability. To this end, we propose a specific reinforcement learning method based on a two-stage rollout. In addition, we design algorithms to convert pairwise preference labels into fine-grained rewards for criteria and evaluation trajectories, respectively.
+3.1 Data Curation
+To obtain training data with high quality and instance efficiency, we start from a widely used preference dataset, Skywork-Reward-Preference-80K-v0.2, and perform data filtering. Each instance contains a query and a pair of chosen and rejected responses (x,yc,yr)(x,y^{c},y^{r}), corresponding to a pairwise preference label. We first use Qwen3-4B-Instruct-2507 (Team, 2025b) to perform multiple pointwise evaluations for each instance, and compute accuracy as the fraction of trials in which the chosen response ycy^{c} is assigned a higher score than the rejected response yry^{r}. We then retain about 29K instances whose accuracy does not exceed 0.6, representing those the model is uncertain about or judges incorrectly. Furthermore, to ensure the diversity of queries, we employ Qwen3-Max to identify the task type of each query and cluster them using Qwen3-4B-embedding (Zhang et al., 2025c). Finally, we perform stratified random sampling to obtain approximately 12K instances whose task-type distribution is as balanced as possible.
+3.2 Cold Start
+We distill a small amount of supervised fine-tuning (SFT) data from Qwen3-Max for cold-starting our reward model under the two-stage evaluation protocol. For each query xx, following the prompt in Figure 6 and Eq. (3), we require Qwen3-Max to first generate three sets of criteria {ci}i=13\{c_{i}\}_{i=1}^{3} solely based on the query. Then, conditioned on xx and each cic_{i}, the model generates three evaluations for the chosen response ycy^{c} and the rejected response yry^{r}, denoted as {ei​jc}j=13\{e^{c}_{ij}\}_{j=1}^{3} and {ei​jr}j=13\{e^{r}_{ij}\}_{j=1}^{3}, respectively.
+In particular, the evaluation is conducted based on each criterion item in the generated criteria set with the corresponding sub-score, and then the overall analysis and final score are derived based on these contents to ensure reliability.
+Moreover, to prevent the criteria set from failing to cover specific aspects of a response, we allow the model to introduce an additional adjustment beyond the criteria when necessary, as shown in stage 2 of Figure 6.
+The score range is set to 0–10 with a half-point increment to mitigate the limited granularity of pointwise scoring. In preliminary tests, this setting achieves a good balance between granularity and reliability, while finer granularity, such as 0.1, often causes the scores to deviate from well-grounded evidence.
+Since each instance only contains the preference label and no human evaluation as a gold standard, we design empirical measures to assess the quality of the instance, criteria, and evaluation, making the cold-start data as reliable as possible.
+Instance
+We select the instance where, based on all three criteria sets, the corresponding evaluations consistently yield the higher scores for the chosen response than the rejected response, ensuring the correctness of the preference.
+si​jc=fscore​(ei​jc)\displaystyle s^{c}_{ij}=f_{\text{score}}\left(e^{c}_{ij}\right)
+,si​kr=fscore(ei​kc)\displaystyle,\quad\!\!\!s^{r}_{ik}=f_{\text{score}}\left(e^{c}_{ik}\right)
+(4)
+∏1≤i≤3∏1≤j,k≤3𝕀\displaystyle\prod_{1\leq i\leq 3}\prod_{1\leq j,k\leq 3}\mathbb{I}
+(si​jc>si​kr)=1\displaystyle\left(s^{c}_{ij}>s^{r}_{ik}\right)=1
+(5)
+Criteria
+For each retained instance above, among its three criteria sets, we select ei∗e_{i^{*}} where the variance of its induced evaluation scores is the smallest. If this variance exceeds a threshold, the instance is discarded. This aims to ensure that the criteria are unambiguous, enabling stable and correct scoring during evaluation.
+i∗=arg⁡min1≤i≤3⁡(CLOSE\displaystyle i^{*}=\arg\min_{1\leq i\leq 3}\Bigl(
+Var⁡({si​jc}j=13)\displaystyle\operatorname{Var}\left(\{s^{c}_{ij}\}_{j=1}^{3}\right)
+OPEN+Var⁡({si​jr}j=13))\displaystyle+\operatorname{Var}\left(\{s^{r}_{ij}\}_{j=1}^{3}\right)\Bigr)
+(6)
+Evaluation
+For each selected instance and its criteria set, we choose the response evaluation whose score is the median among the three. Furthermore, to reuse these data in subsequent reinforcement learning while preventing the model from directly observing the preference label, we keep only one response (either chosen or rejected) along with its corresponding evaluation. And we design a specific algorithm for the aforementioned response selection to make the resulting score distribution as uniform as possible.
+Finally, we obtain about 2.2K instances, denoted as 𝒟SFT={(xn,yn,cn,en)}n=1N\mathcal{D}_{\mathrm{SFT}}\!=\!\{(x_{n},y_{n},c_{n},e_{n})\}_{n=1}^{N}, where each contains a query, a response, a criteria set, and an evaluation. The cold-start training objective is defined as follows. For each instance, we simultaneously optimize the generation of criteria and evaluation, but under different conditioning contexts.
+ℒSFT\displaystyle\mathcal{L}_{\mathrm{SFT}}
+=−1N∑n=1N(∑tlogrθ(cn,t∣xn,cn,<t)\displaystyle=-\frac{1}{N}\sum_{n=1}^{N}\Big(\sum_{t}\log r_{\theta}\!\left(c_{n,t}\mid x_{n},c_{n,<t}\right)
++∑tlogrθ(en,t∣xn,yn,cn,en,<t))\displaystyle+\sum_{t}\log r_{\theta}\!\left(e_{n,t}\mid x_{n},y_{n},c_{n},e_{n,<t}\right)\Big)
+(7)
+Reward Model
+Data
+RWBench
+RWBench2
+RM-Bench
+PPE Corr
+JudgeBench
+Overall
+Pairwise RM
+GPT-4o (Hurst et al., 2024)
+-
+86.7
+-
+72.5
+57.6
+56.6
+-
+Llama-3.3-70B-Instruct
+-
+85.4
+-
+69.5
+65.7
+48.6
+-
+JudgeLRM-7B (Chen et al., 2025a)
+100K
+75.2
+-
+58.7∗
+42.6∗
+54.6∗
+-
+RM-R1-Qwen-7B (Chen et al., 2025b)
+73K
+85.2
+-
+70.2
+57.9∗
+59.1∗
+-
+RM-R1-Qwen-32B (Chen et al., 2025b)
+73K
+91.4
+-
+79.1
+59.3∗
+68.6∗
+-
+RRM-7B (Guo et al., 2025)
+420K
+82.2
+-
+70.8∗
+60.1∗
+60.9∗
+-
+RRM-32B (Guo et al., 2025)
+420K
+91.2
+-
+82.8∗
+67.9∗
+75.1∗
+-
+RISE-Judge-7B (Yu et al., 2025)
+73K
+88.2
+-
+68.0∗
+60.4∗
+59.7∗
+-
+RISE-Judge-32B (Yu et al., 2025)
+40K
+92.7
+-
+72.3∗
+55.0∗
+66.3∗
+-
+Think-J-32B (Huang et al., 2025)
+9.8K
+90.5
+-
+79.8
+-
+-
+-
+CompassJudger2-7B (Zhang et al., 2025b)
+?
+91.0
+-
+71.5∗
+60.2∗
+63.1
+-
+CompassJudger2-32B (Zhang et al., 2025b)
+?
+92.6
+-
+73.2∗
+56.6∗
+65.5
+-
+J1-Llama-8B (Whitehouse et al., 2025)
+22K
+85.7
+-
+73.4
+59.2
+42.0
+-
+J1-Llama-70B (Whitehouse et al., 2025)
+22K
+93.3
+-
+82.7
+72.9
+60.0
+-
+Pointwise RM
+Gemini-2.5-Flash (Team, 2025a)
+-
+80.7
+75.9
+70.8
+61.9
+66.9
+71.2
+CompassJudger1-32B (Cao et al., 2024)
+900K
+81.2∗
+56.5∗
+54.4∗
+48.0∗
+42.3∗
+56.5∗
+DeepSeek-GRM-27B (Liu et al., 2025b)
+237K
+86.0
+-
+-
+59.8
+-
+-
+CLoud-Gemma-2-27B (Liu et al., 2025b)
+237K
+82.0
+-
+-
+62.4
+-
+-
+J1-Llama-8B (Whitehouse et al., 2025)
+22K
+-
+-
+-
+53.8
+57.7
+-
+J1-Llama-70B (Whitehouse et al., 2025)
+22K
+-
+-
+-
+65.0
+60.0
+-
+TIR-Judge-Distill-4B (Xu et al., 2025)
+26K
+76.6
+67.3
+71.9
+65.9
+66.7
+69.7
+TIR-Judge-Zero-4B (Xu et al., 2025)
+26K
+77.3
+68.3
+72.8
+69.8
+70.4
+71.7
+TIR-Judge-Distill-8B (Xu et al., 2025)
+26K
+81.0
+71.6
+76.7
+71.0
+68.2
+73.7
+TIR-Judge-Zero-8B (Xu et al., 2025)
+26K
+81.4
+73.4
+76.3
+70.3
+67.5
+73.8
+CE-RM-4B (Ours)
+5.7K
+89.0
+74.6
+79.8
+69.7
+73.7
+77.4
+CE-RM-4B (Scaling@2)
+5.7K
+89.4
+75.9
+81.9
+73.1
+75.7
+79.2
+CE-RM-4B (Scaling@4)
+5.7K
+90.0
+76.3
+83.2
+75.0
+76.3
+80.2
+Table 2: The results of our CE-RM-4B compared with other baselines on five common reward model benchmarks, as well as their overall performance. RWBench, RWBench2, and PPE Corr represent the RewardBench, RewardBench2, and PPE Correctness, respectively. And scaling@k denotes the performance obtained by applying test-time scaling for k times and using the averaged evaluation scores. The results marked with ∗ are those not reported in the original paper but tested and obtained by ourselves; The results highlighted in bold and underlining indicate the best one in each column, and the latter refers specifically to comparisons conducted without test-time scaling.
+3.3 RL with Two-Stage Rollout
+Unlike the cold start, reinforcement learning requires data in the original triplet form (x,yc,yr)(x,y^{c},y^{r}). Since criteria and evaluations are not needed, we relax the filtering condition used in cold start, and keep instances where at least one set of criteria leads to entirely correct evaluations as follows, resulting in about 5.7K instances, denoted as 𝒟RL\mathcal{D}_{\mathrm{RL}}.
+∑1≤i≤3∏1≤j,k≤3𝕀⁡(si​jc>si​kr)≥1\displaystyle\sum_{1\leq i\leq 3}\prod_{1\leq j,k\leq 3}\mathbb{I}\!\left(s^{c}_{ij}>s^{r}_{ik}\right)\geq 1
+(8)
+The evaluation process conducted by our reward model consists of two stages: criteria generation and evaluation generation, both of which need to be optimized. Therefore, building upon the reinforcement learning with GRPO (Shao et al., 2024), we adopt a two-stage rollout scheme. Similar to the procedure described in Section 3.2, for each query, the model first generates ncn_{c} criteria trajectories in the first stage; then, conditioned on the query and each generated criteria trajectory, it produces nen_{e} evaluation trajectories for the chosen and rejected responses, respectively, in the second stage.
+Given that only pairwise preference labels are available, we design the following methods to estimate fine-grained reward signals for criteria and evaluation trajectories, improving both reliability and discriminability. The reward for each set of criteria cic_{i} is defined as the win rate of pairwise comparison between the chosen and rejected responses in terms of their induced scores from the subsequent corresponding evaluations, estimated in an aggregated manner to reduce bias.
+ℛcriteria=1ne2​∑1≤j,k≤ne𝕀\displaystyle\mathcal{R}_{\mathrm{criteria}}=\frac{1}{n_{e}^{2}}\sum_{1\leq j,k\leq n_{e}}\mathbb{I}
+(si​jc>si​kr)\displaystyle\left(s^{c}_{ij}>s^{r}_{ik}\right)
+(9)
+The reward for each evaluation ei​jce_{ij}^{c} of the chosen response ycy^{c} is defined as its win rate in pairwise score comparisons against all evaluations of the rejected response, multiplied by a binary format reward (0 for incorrect, 1 otherwise); and the reward for each evaluation ei​jre_{ij}^{r} of yry^{r} is defined analogously.
+ℛevalc=1ne​∑1≤k≤ne𝕀\displaystyle\mathcal{R}_{\mathrm{eval}}^{c}=\frac{1}{n_{e}}\sum_{1\leq k\leq n_{e}}\!\mathbb{I}
+(si​jc>si​kr)⋅ℛformat\displaystyle\left(s^{c}_{ij}>s^{r}_{ik}\right)\cdot\mathcal{R}_{\mathrm{format}}
+(10)
+Notably, in this two-stage rollout, the criteria and the evaluations of chosen and rejected responses are all treated as optimization objectives for the current training instance, but they correspond to three different conditional generations. Therefore, unlike typical GRPO, which groups rollouts by instance, we partition trajectories into three sub-groups (criteria sets, chosen-response evaluations, rejected-response evaluations) for subsequent relative advantage estimation and optimization.
+4 Experiments
+4.1 Implementation Details
+We use Qwen3-4B-Instruct-2507 (Team, 2025b) as the foundation model for training, to balance the model capability and experimental cost. For the cold start, we set the batch size to 64, the learning rate to 1e-5, and train for 3 epochs. For reinforcement learning, the mini-batch size is 64, with 4 mini-batches per step; the learning rate is 2e-6, and the KL coefficient is 1e-3.
+More concretely, for each query, we generate four sets of criteria in the first-stage rollout (ncn_{c} = 4); in the second stage, we generate two evaluations for both the chosen and rejected responses (nrn_{r} = 2). Consequently, each instance involves 4 criteria trajectories and 16 evaluation trajectories, i.e., 20 trajectories in total. Moreover, our reinforcement learning is implemented based on the open-source ROLL framework (Wang et al., 2025b). During inference, we set the temperature to 0 to improve determinism.
+4.2 Benchmarks
+To comprehensively evaluate the performance of our model, we adopt a collection of widely used reward model benchmarks, covering diverse task types, challenging settings, and Best-of-N scenarios. Specifically, we select:
+RewardBench (Lambert et al., 2025b)
+One of the earliest and most popular benchmarks for reward models, spanning multiple categories such as chat, safety, and reasoning. However, its difficulty may be relatively low for current models.
+RewardBench2 (Malik et al., 2025)
+A substantial upgrade in both difficulty and diversity compared with RewardBench. It features more realistic human queries and a global Best-of-N evaluation protocol, and has been shown to correlate more strongly with downstream RLHF performance.
+RM-Bench (Liu et al., 2025a)
+Focuses on robustness under subtle content differences and stylistic biases, testing whether a reward model truly judges based on content rather than style.
+PPE Correctness (Frick et al., 2025)
+Built upon verifiable and challenging benchmarks (MATH, MBPP, MMLU-Pro, GPQA, IFEval) to test alignment in Best-of-N tasks. It has likewise been validated to reflect RLHF performance.
+JudgeBench (Tan et al., 2025)
+Derived from a set of real-world and difficult evaluation datasets (e.g., MMLU-Pro, LiveBench). It assesses the capability to discriminate answer correctness through pairwise comparison.
+Trajectory
+Criteria (ncn_{c})
+Evaluation (nen_{e})
+Overall
+9
+1
+4
+72.7
+10
+2
+2
+74.1
+12
+4
+1
+73.6
+18
+2
+4
+74.4
+21
+3
+3
+75.3
+20
+4
+2
+77.4
+Table 3: The overall performance of the reward model trained with different combinations of two-stage rollout numbers on five benchmarks. The columns of trajectory, criteria, and evaluation represent the number of total trajectories, generated criteria trajectories and evaluation trajectories for each instance during RL, respectively.
+4.3 Main Results
+In Table 2, we compare our CE-RM-4B with a great range of latest generative reward models and several general-purpose LLMs, which are grouped into two categories by evaluation protocol: pairwise and pointwise. Since many prior works do not report results on all benchmarks, we test those open-source reward models ourselves and supplement the results, which are marked with ∗ in the table. Moreover, as RewardBench2 is not compatible with pairwise reward models by design, corresponding results are unavailable.
+The experimental results show that our CE-RM-4B achieves superior overall evaluation performance, despite using much less training data and a smaller model size than other baselines. Its advantage is particularly pronounced on RewardBench2 and PPE Correctness, which are aligned with Best-of-N scenarios, as well as on RM-Bench, where each query is associated with a larger number of responses. It highlights the benefit of our enforcing unified query-based evaluation criteria.
+Figure 1: The variance of the evaluation scores corresponding to the same criteria trajectory (in-criteria), and to all criteria trajectories (all-criteria) for each instance, as well as the criteria rewards during RL.
+Figure 2: The results of the ablation experiments that compare our CE-RM-4B with other reward models trained without different key components of our methods.
+4.3.1 Test-Time Scaling
+Similar to work such as Liu et al. (2025b), our model can be improved via test-time scaling using averaged scores from multiple inferences. Since pointwise scores from GRMs often have limited granularity, ties occur commonly and can degrade evaluation performance. And averaging multiple sampled scores effectively mitigates this issue. Table 2 also reports results of scaling at 2 and 4 times. The gains are most evident on RM-Bench, PPE Correctness, and JudgeBench, where ties are not explicitly handled. Moreover, owing to its relatively fewer parameters, our model incurs low computational overhead for test-time scaling, and it even outperforms other substantially larger reward models that employ pairwise evaluation protocols.
+4.3.2 Two-Stage Rollout Combination
+We further explore combinations of trajectory numbers in our two-stage rollout method. As shown in Table 3, increasing total trajectories for each instance generally leads to better performance. Under comparable trajectory budgets, adopting 4 criteria trajectories and 2 evaluation trajectories yields the best result, suggesting that while maintaining a certain number of evaluations to stabilize the estimation of reward scores, optimizing the criteria is more critical, which confirms our motivation.
+4.3.3 Evaluation Robustness
+In Figure 1, we show the variance of scores from the evaluations based on the same criteria trajectory (in-criteria), and on all criteria trajectories (all-criteria) for each instance during RL. Benefiting from the effective optimization of both the criteria and evaluation, our model produces increasingly stable evaluation scores as training proceeds. Similar results are also observed on the test benchmarks, as shown by the comparisons in Table 4, which improves the robustness of CE-RM-4B in practical deployments, such as the low-cost or low-latency settings where only a single inference is allowed.
+Model
+Intra
+Inter
+Acc
+Qwen3-4B-Instruct-2507
+0.621
+1.423
+72.8
++ Cold Start
+0.482
+0.893
+76.5
+CE-RM-4B w/o Optimized Criteria
+0.227
+0.515
+80.0
+CE-RM-4B (Ours)
+0.181
+0.441
+81.1
+Table 4: The score variance and accuracy of different models averaged across RewardBench, RewardBench2, and RM-Bench. Intra and Inter denote the variance of the evaluation scores across four samplings, where the former is computed from four evaluations generated based on one sampled criteria set, whereas the latter is calculated by sampling four different sets of criteria and the corresponding evaluations respectively. Specifically, CE-RM-4B w/o Optimized Criteria refers to a compositional setting where the criteria are generated by the RM trained only with the cold start, and the evaluations are then produced based on them
+by our CE-RM-4B.
+5 Ablation Analyses
+We further conduct ablation studies on key components of our method to validate their importance, whose training settings are similar to Section 4.1:
+Unified Criteria
+This is the most critical component and one of our starting points. For comparison, we train another reward model using the traditional scheme that generates criteria and evaluation jointly conditioned on the query and response (i.e., Eq. (2)), with a similar data construction and total trajectory number during the RL procedure.
+Criteria Optimization
+In the two-stage rollout during reinforcement learning, after computing the reward signals, we discard criteria trajectories in the optimization objective to verify the importance of explicitly enhancing criteria generation.
+Evaluation Optimization
+Similarly, we discard evaluation trajectories in the optimization objective, to examine the influence of optimizing only the criteria.
+Sub-Grouping
+We replace our sub-grouping strategy with the conventional grouping over all trajectories within the rollout of each instance.
+Data Quality Filtering
+We significantly simplify the quality filtering pipelines used in both cold start and RL, retaining only basic correctness checks on overall judgments, to demonstrate the necessity of our carefully designed quality estimation.
+Reinforcement Learning
+We also evaluate the model trained only with the cold start to quantify the improvements brought by RL.
+Figure 2 presents the results of the ablation experiments above, highlighting the effectiveness of the unified query-based criteria and our proposed training methodology.
+Model
+Arena-Hard v0.1
+v2 Hard Prompt
+v2 Creative Writing
+Score
+CI
+Score
+CI
+Score
+CI
+Qwen3-8B
+66.5
+(-2.7 / +2.1)
+9.8
+(-1.0 / +0.8)
+14.4
+(-1.4 / +1.8)
+Qwen3-14B
+77.4
+(-2.6 / +1.4)
+17.1
+(-1.8 / +1.4)
+24.7
+(-2.1 / +2.0)
+GRPO with group size = 4
+Qwen3-8B + CompassJudger1-32B
+75.0
+(-2.2 / +2.0)
+13.4
+(-0.8 / +1.1)
+27.1
+(-2.6 / +2.3)
+Qwen3-8B + RM w/o unified criteria
+71.0
+(-2.5 / +2.0)
+12.9
+(-1.2 / +1.0)
+37.6
+(-2.8 / +2.5)
+Qwen3-8B + CE-RM-4B (Ours)
+75.7
+(-1.5 / +2.0)
+16.3
+(-1.4 / +1.3)
+42.9
+(-2.2 / +2.3)
+Qwen3-8B + CE-RM-4B (Scaling@4)
+78.3
+(-1.6 / +1.4)
+17.6
+(-1.2 / +1.4)
+48.0
+(-2.2 / +2.1)
+GRPO with group size = 8
+Qwen3-8B + CompassJudger1-32B
+74.7
+(-1.8 / +1.8)
+13.6
+(-1.0 / +1.1)
+39.4
+(-2.1 / +2.4)
+Qwen3-8B + RM w/o unified criteria
+72.1
+(-2.4 / +1.7)
+13.5
+(-1.4 / +1.2)
+39.9
+(-2.1 / +2.3)
+Qwen3-8B + CE-RM-4B (Ours)
+77.6
+(-1.6 / +1.7)
+18.2
+(-1.6 / +1.4)
+49.1
+(-2.1 / +1.9)
+Table 5: Evaluation results on Arena-Hard for the original policy models and models trained with different optimizations. The three columns correspond to Arena-Hard v0.1 and the two categories of Arena-Hard v2, evaluating with the official configuration and style control.
+6 RL Practice
+Since most generative reward models adopt the pairwise evaluation, their downstream RLHF performance is typically validated by preference label annotation and DPO-style training (Rafailov et al., 2023). To better approximate real-world scenarios, we instead adopt on-policy reinforcement learning, using the evaluation scores from RMs as the reward signal to optimize the policy model with GRPO. In particular, we randomly sample 50K queries from Tulu 3 dataset (Lambert et al., 2025a) as training data. And we evaluate the effectiveness of policy optimization using Arena Hard (Li et al., 2024a; Li et al., 2024b), a popular automatic evaluation arena that contains challenging real-world user queries and employs powerful LLMs as the judge, showing strong correlation with human judgments.
+Given that most pointwise GRMs are either not open-sourced or perform poorly, we take as baselines the larger-parameter CompassJudger1-32B and the reward model trained without unified criteria as described in Section 5. They are compared against our CE-RM-4B, as well as that using test-time scaling at four times. We choose Qwen3-8B as the policy model to be optimized, and all experiments apply the similar training settings as those in Section 4.1 with a total of 250 training steps. We also examine the impact of different group sizes in GRPO on optimization performance. As shown in Table 5 and Figure 3, our model yields stable improvements during RL and significantly outperforms the baseline RMs. Furthermore, both increasing the number of rollout trajectories and applying test-time scaling bring substantial additional gains, enabling the optimized policy model to surpass Qwen3-14B.
+Figure 3: During training, the evolution of performance of the policy model across three evaluation scenarios, along with the averaged evaluation scores that the reward model assigns to the policy rollouts. In the RL practice presented here, the policy model is Qwen3-8B and the reward model is our CE-RM-4B (without test-time scaling), with GRPO and a group size of 8.
+7 Related Work
+The reward model is an important research direction in automatic evaluation, as it provides critical feedback for model alignment. Traditional discriminative reward models are typically trained based on the Bradley–Terry model (Bradley and Terry, 1952), and have been shown to suffer from weak calibration and cross-prompt generalization (Sun et al., 2025; Zhang et al., 2025a). With the rapid development of LLMs, LLM-based generative reward models (GRMs) have emerged, which replace a single scalar score with natural language evaluations. This enables more flexible and informative rewards with better interpretability. In addition, they can leverage test-time scaling to further improve evaluation robustness (Liu et al., 2025b).
+A major challenge in developing GRMs lies in obtaining high-quality supervised evaluation data. Building on existing preference datasets, a common approach is to distill chains of thought from frontier LLMs to enrich the original preference labels (Chen et al., 2025b; Huang et al., 2025; Guo et al., 2025). Another direction allows the target model itself to generate candidate evaluations, which are then checked with preference labels to perform rejection finetuning in a self-bootstrapping manner (Wang et al., 2024; Whitehouse et al., 2025). Other studies improve the generalization ability of GRMs by mixing diverse evaluation tasks, including even general instruction-following data, into training (Cao et al., 2024; Wang et al., 2025a).
+In addition, since most preference datasets and generative reward models adopt a pairwise comparison protocol, the correctness of the model’s evaluation judgment can be easily verified. Early work often relied on DPO-style optimization, where each preference pair is constructed from a correct and an incorrect evaluation (Mahan et al., 2024; Ye et al., 2025; Yu et al., 2025). More recently, driven by the emergence of reinforcement learning with verifiable rewards (RLVR), research has increasingly shifted toward on-policy optimization (e.g., GRPO), further improving the evaluation performance of GRMs (Chen et al., 2025a; Zhang et al., 2025d; Liu et al., 2025b; Whitehouse et al., 2025).
+8 Conclusion
+In this work, we start from the limitations of current generative reward models and aim to narrow the gap between their benchmark performance and actual effectiveness in RL practice. To this end, we introduce a two-stage evaluation scheme that enforces unified, query-based criteria across multiple candidate responses. Through a proposed RL method that strengthens the generation of criteria without pointwise label annotations, we train an efficient generative reward model, CE-RM-4B. It features pointwise evaluation and outperforms other much larger pairwise GRMs on common benchmarks and realistic Best-of-N scenarios, while demonstrating better practical RL improvements.
+Limitations
+Although our proposed method optimizes both criteria and evaluation through a two-stage rollout and achieves superior model performance, there remains room for improving the estimation of the reward signal. For instance, we could use a small amount of data annotated with reliable pointwise score labels as anchors, thereby providing precise reward signals for the corresponding evaluations during RL to perform calibration. Moreover, since our evaluation protocol takes the form of a multi-turn conversation, and many current LLMs already possess certain tool-use capabilities, it is natural to train the model to leverage tools for more effective evaluation. In fact, we have made some efforts in this direction and found that tool assistance can indeed yield significant gains in evaluation performance for scenarios such as mathematics, code, and factuality; however, it degrades performance on general chat. Nevertheless, these approaches appear promising and can be further explored in future work.
+Ethical considerations
+This work does not pose any ethical issues. All datasets, open-source LLMs, and API calls used in our work are publicly available. We carefully examine the data used in our work to ensure that it does not contain any personally identifying information or offensive content. And we comply with their respective licenses and use them only for research purposes. In addition, we use an AI assistant to help check the grammatical correctness of this paper.
+References
+Bradley and Terry (1952)
+R. A. Bradley and M. E. Terry
+Rank analysis of incomplete block designs: i. the method of paired comparisons.
+Biometrika 39 (3/4), pp. 324–345.
+Cited by: §7.
+Cao et al. (2024)
+M. Cao, A. Lam, H. Duan, H. Liu, S. Zhang, and K. Chen
+Compassjudger-1: all-in-one judge model helps model evaluation and evolution.
+arXiv preprint arXiv:2410.16256.
+Cited by: Table 2,
+§7.
+Chen et al. (2025a)
+N. Chen, Z. Hu, Q. Zou, J. Wu, Q. Wang, B. Hooi, and B. He
+Judgelrm: large reasoning models as a judge.
+arXiv preprint arXiv:2504.00050.
+Cited by: §1,
+Table 2,
+§7.
+Chen et al. (2025b)
+X. Chen, G. Li, Z. Wang, B. Jin, C. Qian, Y. Wang, H. Wang, Y. Zhang, D. Zhang, T. Zhang, H. Tong, and H. Ji
+RM-R1: reward modeling as reasoning.
+CoRR abs/2505.02387.
+Cited by: §1,
+Table 2,
+Table 2,
+§7.
+Elo and Sloan (1978)
+A. E. Elo and S. Sloan
+The rating of chessplayers: past and present.
+(No Title).
+Cited by: §1.
+Frick et al. (2025)
+E. Frick, T. Li, C. Chen, W. Chiang, A. N. Angelopoulos, J. Jiao, B. Zhu, J. E. Gonzalez, and I. Stoica
+How to evaluate reward models for rlhf.
+In The Thirteenth International Conference on Learning Representations,
+Cited by: §4.2.
+Gao et al. (2025)
+M. Gao, X. Hu, X. Yin, J. Ruan, X. Pu, and X. Wan
+Llm-based nlg evaluation: current status and challenges.
+Computational Linguistics, pp. 1–27.
+Cited by: §1.
+Guo et al. (2025)
+J. Guo, Z. Chi, L. Dong, Q. Dong, X. Wu, S. Huang, and F. Wei
+Reward reasoning model.
+arXiv preprint arXiv:2505.14674.
+Cited by: §1,
+Table 2,
+Table 2,
+§7.
+He et al. (2023)
+T. He, J. Zhang, T. Wang, S. Kumar, K. Cho, J. Glass, and Y. Tsvetkov
+On the blind spots of model-based evaluation metrics for text generation.
+In Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+pp. 12067–12097.
+Cited by: §1.
+Huang et al. (2025)
+H. Huang, Y. He, H. Zhou, R. Zhang, W. Liu, W. Wang, W. Su, B. Zheng, and J. Liu
+Think-j: learning to think for generative llm-as-a-judge.
+arXiv preprint arXiv:2505.14268.
+Cited by: Table 2,
+§7.
+Hurst et al. (2024)
+A. Hurst, A. Lerer, A. P. Goucher, A. Perelman, A. Ramesh, A. Clark, A. Ostrow, A. Welihinda, A. Hayes, A. Radford, A. Madry, A. Baker-Whitcomb, A. Beutel, A. Borzunov, A. Carney, A. Chow, A. Kirillov, A. Nichol, A. Paino, A. Renzin, A. T. Passos, A. Kirillov, A. Christakis, A. Conneau, A. Kamali, A. Jabri, A. Moyer, A. Tam, A. Crookes, A. Tootoonchian, A. Kumar, A. Vallone, A. Karpathy, A. Braunstein, A. Cann, A. Codispoti, A. Galu, A. Kondrich, A. Tulloch, A. Mishchenko, A. Baek, A. Jiang, A. Pelisse, A. Woodford, A. Gosalia, A. Dhar, A. Pantuliano, A. Nayak, A. Oliver, B. Zoph, B. Ghorbani, B. Leimberger, B. Rossen, B. Sokolowsky, B. Wang, B. Zweig, B. Hoover, B. Samic, B. McGrew, B. Spero, B. Giertler, B. Cheng, B. Lightcap, B. Walkin, B. Quinn, B. Guarraci, B. Hsu, B. Kellogg, B. Eastman, C. Lugaresi, C. L. Wainwright, C. Bassin, C. Hudson, C. Chu, C. Nelson, C. Li, C. J. Shern, C. Conger, C. Barette, C. Voss, C. Ding, C. Lu, C. Zhang, C. Beaumont, C. Hallacy, C. Koch, C. Gibson, C. Kim, C. Choi, C. McLeavey, C. Hesse, C. Fischer, C. Winter, C. Czarnecki, C. Jarvis, C. Wei, C. Koumouzelis, and D. Sherburn
+GPT-4o system card.
+CoRR abs/2410.21276.
+Cited by: Table 2.
+Lambert et al. (2025a)
+N. Lambert, J. Morrison, V. Pyatkin, S. Huang, H. Ivison, F. Brahman, L. J. V. Miranda, A. Liu, N. Dziri, S. Lyu, Y. Gu, S. Malik, V. Graf, J. D. Hwang, J. Yang, R. L. Bras, O. Tafjord, C. Wilhelm, L. Soldaini, N. A. Smith, Y. Wang, P. Dasigi, and H. Hajishirzi
+Tulu 3: pushing frontiers in open language model post-training.
+External Links: 2411.15124,
+Link
+Cited by: §6.
+Lambert et al. (2025b)
+N. Lambert, V. Pyatkin, J. Morrison, L. J. V. Miranda, B. Y. Lin, K. R. Chandu, N. Dziri, S. Kumar, T. Zick, Y. Choi, N. A. Smith, and H. Hajishirzi
+RewardBench: evaluating reward models for language modeling.
+In NAACL (Findings),
+pp. 1755–1797.
+Cited by: §2,
+§4.2.
+Li et al. (2024a)
+T. Li, W. Chiang, E. Frick, L. Dunlap, T. Wu, B. Zhu, J. E. Gonzalez, and I. Stoica
+From crowdsourced data to high-quality benchmarks: arena-hard and benchbuilder pipeline.
+arXiv preprint arXiv:2406.11939.
+Cited by: §6.
+Li et al. (2024b)
+T. Li, W. Chiang, E. Frick, L. Dunlap, B. Zhu, J. E. Gonzalez, and I. Stoica
+From live data to high-quality benchmarks: the arena-hard pipeline.
+External Links: Link
+Cited by: §6.
+Lin (2004)
+C. Lin
+Rouge: a package for automatic evaluation of summaries.
+In Text summarization branches out,
+pp. 74–81.
+Cited by: §1.
+Liu et al. (2024a)
+C. Y. Liu, L. Zeng, J. Liu, R. Yan, J. He, C. Wang, S. Yan, Y. Liu, and Y. Zhou
+Skywork-reward: bag of tricks for reward modeling in llms.
+arXiv preprint arXiv:2410.18451.
+Cited by: §1.
+Liu et al. (2025a)
+Y. Liu, Z. Yao, R. Min, Y. Cao, L. Hou, and J. Li
+RM-bench: benchmarking reward models of language models with subtlety and style.
+In The Thirteenth International Conference on Learning Representations,
+Cited by: §2,
+§4.2.
+Liu et al. (2024b)
+Y. Liu, T. Yang, S. Huang, Z. Zhang, H. Huang, F. Wei, W. Deng, F. Sun, and Q. Zhang
+Calibrating llm-based evaluator.
+In Proceedings of the 2024 joint international conference on computational linguistics, language resources and evaluation (lrec-coling 2024),
+pp. 2638–2656.
+Cited by: §1.
+Liu et al. (2025b)
+Z. Liu, P. Wang, R. Xu, S. Ma, C. Ruan, P. Li, Y. Liu, and Y. Wu
+Inference-time scaling for generalist reward modeling.
+arXiv preprint arXiv:2504.02495.
+Cited by: §1,
+Table 2,
+Table 2,
+§4.3.1,
+§7,
+§7.
+Mahan et al. (2024)
+D. Mahan, D. Van Phung, R. Rafailov, C. Blagden, N. Lile, L. Castricato, J. Fränken, C. Finn, and A. Albalak
+Generative reward models.
+arXiv preprint arXiv:2410.12832.
+Cited by: §1,
+§7.
+Malik et al. (2025)
+S. Malik, V. Pyatkin, S. Land, J. Morrison, N. A. Smith, H. Hajishirzi, and N. Lambert
+RewardBench 2: advancing reward model evaluation.
+arXiv preprint arXiv:2506.01937.
+Cited by: §2,
+§4.2.
+Papineni et al. (2002)
+K. Papineni, S. Roukos, T. Ward, and W. Zhu
+Bleu: a method for automatic evaluation of machine translation.
+In Proceedings of the 40th annual meeting of the Association for Computational Linguistics,
+pp. 311–318.
+Cited by: §1.
+Rafailov et al. (2023)
+R. Rafailov, A. Sharma, E. Mitchell, C. D. Manning, S. Ermon, and C. Finn
+Direct preference optimization: your language model is secretly a reward model.
+Advances in neural information processing systems 36, pp. 53728–53741.
+Cited by: §6.
+Rei et al. (2020)
+R. Rei, C. Stewart, A. C. Farinha, and A. Lavie
+COMET: a neural framework for mt evaluation.
+In Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP),
+pp. 2685–2702.
+Cited by: §1.
+Shao et al. (2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, M. Zhang, Y. K. Li, Y. Wu, and D. Guo
+DeepSeekMath: pushing the limits of mathematical reasoning in open language models.
+CoRR abs/2402.03300.
+Cited by: §1,
+§3.3.
+Sun et al. (2025)
+H. Sun, Y. Shen, and J. Ton
+Rethinking reward modeling in preference-based large language model alignment.
+In The Thirteenth International Conference on Learning Representations,
+Cited by: §7.
+Tan et al. (2025)
+S. Tan, S. Zhuang, K. Montgomery, W. Y. Tang, A. Cuadron, C. Wang, R. Popa, and I. Stoica
+JudgeBench: a benchmark for evaluating llm-based judges.
+In The Thirteenth International Conference on Learning Representations,
+Cited by: §4.2.
+Team (2025a)
+G. Team
+Gemini 2.5: pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities.
+CoRR abs/2507.06261.
+Cited by: Table 2.
+Team (2025b)
+Q. Team
+Qwen3 technical report.
+External Links: 2505.09388,
+Link
+Cited by: §3.1,
+§4.1.
+Team (2025c)
+Q. Team
+Qwen3-max: just scale it.
+Cited by: §2.
+Wang et al. (2023)
+J. Wang, Y. Liang, F. Meng, Z. Sun, H. Shi, Z. Li, J. Xu, J. Qu, and J. Zhou
+Is chatgpt a good nlg evaluator? a preliminary study.
+In Proceedings of EMNLP Workshop,
+pp. 1.
+Cited by: §1.
+Wang et al. (2025a)
+P. Wang, A. Xu, Y. Zhou, C. Xiong, and S. Joty
+Direct judgement preference optimization.
+In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing,
+pp. 1979–2009.
+Cited by: §7.
+Wang et al. (2024)
+T. Wang, I. Kulikov, O. Golovneva, P. Yu, W. Yuan, J. Dwivedi-Yu, R. Y. Pang, M. Fazel-Zarandi, J. Weston, and X. Li
+Self-taught evaluators.
+arXiv preprint arXiv:2408.02666.
+Cited by: §1,
+§7.
+Wang et al. (2025b)
+W. Wang, S. Xiong, G. Chen, W. Gao, S. Guo, Y. He, J. Huang, J. Liu, Z. Li, X. Li, Z. Liu, H. Zhao, D. An, L. Cao, Q. Cao, W. Deng, F. Du, Y. Gu, J. Li, X. Li, M. Liu, Y. Luo, Z. Liu, Y. Wang, P. Wang, T. Wu, Y. Wu, Y. Zhao, S. Zhao, J. Yang, S. Yang, Y. Tan, H. Yi, Y. Xu, Y. Yuan, X. Zhang, L. Qu, W. Su, W. Wang, J. Wang, and B. Zheng
+Reinforcement learning optimization for large-scale learning: an efficient and user-friendly scaling library.
+CoRR abs/2506.06122.
+Cited by: §4.1.
+Wen et al. (2025)
+X. Wen, J. Lou, Y. Lu, H. Lin, XingYu, X. Lu, B. He, X. Han, D. Zhang, and L. Sun
+Rethinking reward model evaluation: are we barking up the wrong tree?.
+In ICLR,
+Cited by: §1.
+Whitehouse et al. (2025)
+C. Whitehouse, T. Wang, P. Yu, X. Li, J. Weston, I. Kulikov, and S. Saha
+J1: incentivizing thinking in llm-as-a-judge via reinforcement learning.
+arXiv preprint arXiv:2505.10320.
+Cited by: §1,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+§7,
+§7.
+Xu et al. (2025)
+R. Xu, J. Chen, J. Ye, Y. Wu, J. Yan, C. Yang, and H. Yu
+Incentivizing agentic reasoning in llm judges via tool-integrated reinforcement learning.
+arXiv preprint arXiv:2510.23038.
+Cited by: Table 2,
+Table 2,
+Table 2,
+Table 2.
+Xu et al. (2024)
+S. Xu, J. Hu, and M. Jiang
+Large language models are active critics in nlg evaluation.
+arXiv preprint arXiv:2410.10724.
+Cited by: §1.
+Ye et al. (2025)
+Z. Ye, X. Li, Q. Li, Q. Ai, Y. Zhou, W. Shen, D. Yan, and Y. Liu
+Learning llm-as-a-judge for preference alignment.
+In The Thirteenth International Conference on Learning Representations,
+Cited by: §7.
+Yu et al. (2025)
+J. Yu, S. Sun, X. Hu, J. Yan, K. Yu, and X. Li
+Improve llm-as-a-judge ability as a general ability.
+arXiv preprint arXiv:2502.11689.
+Cited by: Table 2,
+Table 2,
+§7.
+Yuan et al. (2021)
+W. Yuan, G. Neubig, and P. Liu
+Bartscore: evaluating generated text as text generation.
+Advances in neural information processing systems 34, pp. 27263–27277.
+Cited by: §1.
+Zhang et al. (2025a)
+L. Zhang, A. Hosseini, H. Bansal, M. Kazemi, A. Kumar, and R. Agarwal
+Generative verifiers: reward modeling as next-token prediction.
+In The Thirteenth International Conference on Learning Representations,
+Cited by: §7.
+Zhang et al. (2025b)
+T. Zhang, M. Cao, A. Lam, S. Zhang, and K. Chen
+Compassjudger-2: towards generalist judge model via verifiable rewards.
+arXiv preprint arXiv:2507.09104.
+Cited by: Table 2,
+Table 2.
+Zhang et al. (2025c)
+Y. Zhang, M. Li, D. Long, X. Zhang, H. Lin, B. Yang, P. Xie, A. Yang, D. Liu, J. Lin, F. Huang, and J. Zhou
+Qwen3 embedding: advancing text embedding and reranking through foundation models.
+arXiv preprint arXiv:2506.05176.
+Cited by: §3.1.
+Zhang et al. (2025d)
+Y. Zhang, X. Lu, X. Hu, C. Fu, B. Wen, T. Zhang, C. Liu, K. Jiang, K. Chen, K. Tang, H. Ding, J. Chen, F. Yang, Z. Zhang, T. Gao, and L. Wang
+R1-reward: training multimodal reward model through stable reinforcement learning.
+CoRR abs/2505.02835.
+Cited by: §7.
+Appendix A Evaluation Prompts
+We provide our evaluation prompts in Figures 4–6.
+The prompt for the first evaluation setting and Eq. (1) in Section 2
+Your task is to evaluate the quality of a response to the given user query.
+Provide your evaluation with a careful and comprehensive analysis, followed by a corresponding overall quality score from 0 to 10 within \boxed{\phantom{0}}.
+Use integers or half-point increments for the score, with higher numbers representing higher quality.
+Below are the user query and the response:
+[Start of Query]
+{instruction}
+[End of Query]
+[Start of Response]
+{response}
+[End of Response]
+Figure 4: The prompt for the first evaluation setting and Eq. (1) in Section 2.
+The prompt for the second evaluation setting and Eq. (2) in Section 2
+Your task is to evaluate the quality of a response to the given user query.
+Begin by carefully analyzing the query to fully understand the user’s intent and requirements, and then take into account all common and tangible factors that can indicate the response quality.
+From these considerations and analyses, derive the final evaluation criteria list between [Start of Criteria] and [End of Criteria], with one criterion per line.
+Next, for each criterion, focus on its concerns and carefully evaluate the corresponding specific quality of the response, providing the detailed analysis as well as relevant arguments, followed by the corresponding quality score from 0 to 5 within \boxed{\phantom{0}}.
+Finally, based on the analyses of these criteria, including their relative importance and scores, conduct a comprehensive evaluation of the response’s overall quality with sufficient and explicit evidence, and then provide a corresponding overall quality score from 0 to 10 within \boxed{\phantom{0}}.
+Use integers or half-point increments for all scores, with higher numbers representing higher quality.
+Below are the user query and the response:
+[Start of Query]
+{instruction}
+[End of Query]
+[Start of Response]
+{response}
+[End of Response]
+Figure 5: The prompt for the second evaluation setting and Eq. (2) in Section 2.
+The prompts for the third evaluation setting and Eq. (3) in Section 2
+Stage 1
+Your task is to produce a minimal set of criteria for evaluating the quality of potential responses to the user query given below.
+Begin by carefully analyzing the query to fully understand the user’s intent and requirements, and then take into account all common and tangible factors that can indicate the response quality.
+From these considerations, derive the final evaluation criteria list, which must adhere to the following requirements:
+- Each criterion should consist of a concise term as well as its unambiguous description.
+- The number of criteria is not necessarily the more the better; Fewer yet comprehensive is more desired.
+- The criteria should be sufficient and complete, ensuring that no essential aspects or key signals of response quality are omitted.
+- The criteria should be necessary and non-overlapping, with each one indispensable, distinct in perspective, and strictly orthogonal to others.
+Provide the relevant analysis first, followed by the numbered list of criteria between [Start of Criteria] and [End of Criteria], with one criterion per line and the more important ones coming first.
+Below is the user query:
+[Start of Query]
+{instruction}
+[End of Query]
+Stage 2
+Now that you have a response to the previous user query, your new task is to evaluate it using the criteria list you have produced.
+For each criterion, focus on its concerns and carefully evaluate the corresponding specific quality of the response, providing the detailed analysis as well as relevant arguments, followed by the corresponding quality score from 0 to 5 within \boxed{\phantom{0}}.
+Moreover, if the response demonstrates strengths or weaknesses beyond the scope of your criteria list, introduce an additional criterion titled "Other Point(s)," discussing them and considering them as bonus points or deductions as appropriate.
+Finally, based on the analyses of these criteria, including their relative importance and scores, conduct a comprehensive evaluation of the response’s overall quality with sufficient and explicit evidence, and then provide a corresponding overall quality score from 0 to 10 within \boxed{\phantom{0}}.
+Use integers or half-point increments for all scores, with higher numbers representing higher quality.
+Below is the response:
+[Start of Response]
+response
+[End of Response]
+Figure 6: The prompts for the third evaluation setting and Eq. (3) in Section 2.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from
+

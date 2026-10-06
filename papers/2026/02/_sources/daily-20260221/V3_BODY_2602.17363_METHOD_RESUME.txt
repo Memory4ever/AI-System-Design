@@ -1,0 +1,221 @@
+3 Isolating Mamba-2 Accuracy Gains
+To investigate the accuracy gains for each element in Mamba-2, we perform several ablations. For all our ablations, we start with the base Llama 2 (Touvron et al. (2023)) model and replace the softmax attention block with the Mamba-2 block. Our small model is about 300 million parameters. We use this model for all ablations, which helps to facilitate rapid experimentation. The medium model is about 700 million parameters and is used after ablation experiments to examine scalability of the algorithm. The maximum sequence length of all ablations is 2048 unless specified. For comparisons and reporting, we plot the test loss over 90​K90K steps 44
+4
+Our code trains for 100​K100K steps and evaluates on the test loss every 10​K10K steps. However, a bug exists which does the evaluation on 1 step after each 10​K10K steps, not evaluating the 100​K100K’th step. We do not re-evaluate all experiments as it would take months of retraining and we believe 90​K→100​K90K\rightarrow 100K would not lead to any insights. and the final test loss at the end of training. Each model is trained to perform next token language modeling using the HuggingFace FineWeb dataset (CC-MAIN-2024-51 version) (Penedo et al. (2024)). This dataset is composed of over 15 Trillion clean and deduplicated tokens from CommonCrawl, a dataset of a crawl of webpages on the internet. As such, it is composed of various different types of data, from code, to random documents.
+Figure 1: Accuracy of linear attention, Mamba, and softmax attention, keeping everything but the attention mechanism constant across experiments.
+Mamba-2 (Dao and Gu (2024)) was shown to be an expressive, powerful architecture. One that is both fast and accurate. Figure 1 shows the test loss for Mamba-2, normal linear attention, and softmax attention. As seen in Figure 1, Mamba-2 is significantly better than normal linear attention and is much closer in accuracy to softmax attention. However, most elements in the codebase were not ablated, leaving to question which components are important to the expressive power of Mamba-2 and which are unnecessary. We examined the official Mamba-2 repository 55
+5
+https://github.com/state-spaces/mamba and isolate the components of the Mamba-2 block. Specifically, we ablate the following 66
+6
+Additional ablations found in our codebase. These are the most notable and interesting.:
+1.
+Q​KQK activation type (SiLU, ReLU or None)
+2.
+AA-mask type (Original or Softplus)
+3.
+Input convolution window size (window size one (no convolution), two, three, or four)
+4.
+Additive DD residual (binary, present or not)
+5.
+Multiplicative ZZ gate (binary, present or not)
+6.
+Normalization type (Output or Softmax)
+7.
+Value discretization (binary, present or not)
+While most of the ablations we perform are straightforward, we want to highlight the normalization type and AA-mask type. We call normalization on the Q​KQK inner product softmax normalization. Linear attention with a strictly positive inner product space can use softmax normalization, but Mamba-2 cannot as the queries and keys are not necessarily positive. Instead, Mamba-2 uses an RMS norm layer before the output projection. We call this form of normalization output normalization. The AA-mask in the original Mamba-2 paper is tied to the values by the discretization parameter, which we call original AA-masking. We ablate if associating the AA-mask with the discretization parameter is necessary. Because the AA-mask must be strictly negative, as shown in equation (4), we test the negative softplus function on the AA-mask, remove the discretization parameter and name this softplus AA-masking.
+“original” AA-masking
+→A=−exp(Al​o​g)⊙dt\displaystyle\rightarrow A=-\exp(A_{log})\odot dt
+“softplus” AA-masking
+→A=−softplus​(A)\displaystyle\rightarrow A=-\text{softplus}(A)
+(4)
+Figure 2: Accuracy of various norm types. Softmax normalization requires a positive inner-product space image, as such we use ReLU.
+Model
+Train loss
+Test loss
+ReLU
+3.12
+3.06
+Conv (w=2)
+2.87
+2.93
+Conv (w=3)
+2.94
+2.91
+Conv (w=4)
+2.84
+2.9
+Conv (w=2) + SiLU
+2.95
+2.9
+Conv (w=3) + SiLU
+2.95
+2.89
+Conv (w=4) + SiLU
+2.9
+2.89
+Table 1: Adding a convolution to normal linear attention increases accuracy.
+To begin our ablation study, we need a form of linear attention that will allow for more diverse experimentation. The original linear attention formulation as proposed by (Katharopoulos et al. (2020)) has softmax-style normalization on the Q​KQK inner product. This normalization restricts experimentation to a strictly non-negative inner product function range. Stability aside, as seen in Figure 2, adopting an output norm is nearly as accurate as softmax norm for basic linear attention. When ablating components of Mamba-2, we therefore use an output norm as it does not necessitate a strictly positive inner product space pre-image, giving more freedom to perform similar ablations. 77
+7
+Since linear attention with Q​KQK normalization requires a strictly positive image of the Q​KQK inner product, some sort of activation function must be used. As such, we cannot test SM Norm by itself.
+The first element of Mamba-2 we examine is the input convolution. As seen in Table 1, adding a convolution with kernel size 2 is significantly better than normal linear attention. Increasing the convolution size to 3 or adding an activation function (SiLU used in Mamba) gives a slight accuracy gain, but is not as impactful as adding the convolution itself. We only test up to a convolution size of 4 as the implementation of causal_conv_1d88
+8
+https://github.com/Dao-AILab/causal-conv1d only allows for a max window size of 4. As the window sizes increases beyond a window size of 2, the accuracy gains are small. To keep the implementation minimal, we adopt a convolution of window size 2 without an activation function. A window size of 2 minimizes the memory necessary in the complete attention operation. Increasing the convolution window requires storing 3​d3d more memory per window size increase. That is, storing an additional past token for each of the queries, keys, and values. As for the activation function, the training loss appears to increase while the test loss decreases when adding the activation function. We opt to remove the activation function for simplicity, however adding it appears to slightly improve model test accuracy.
+Figure 3: Isolated Mamba ablation
+Model
+Train loss
+Test loss
+SM Norm + ReLU
+3.0
+3.03
+Out Norm
+3.19
+3.13
+Out Norm + ReLU
+3.12
+3.06
+Out Norm + Conv (w=2)
+2.87
+2.93
+Out Norm + Conv (w=3)
+2.94
+2.91
+Out Norm + Conv (w=2) + SiLU
+2.95
+2.9
+Out Norm + D res
+3.18
+3.11
+Out Norm + Z gate
+3.2
+3.13
+Out Norm + discretize
+3.06
+3.06
+Out Norm + AA-mask original
+2.94
+2.98
+Out Norm + AA-mask softplus
+2.85
+2.88
+Table 2: Table of isolated component additions added to linear attention.
+(a) Main buildup
+(b) Redundant components after buildup
+Figure 4: Investigations of major and minor build ups in constructing the simplified Mamba-2 architecture.
+We ablate the rest of the components of Mamba mentioned above in isolation. All isolated ablation test values can be found in Table 2. Figure 3 also shows the results for ablating each component in isolation, graphically. The most impactful component was the AA-mask, specifically the softplus variant. The original AA-mask variant used in Mamba is still quite impactful on model accuracy, but not as much as the softplus variant. The second most impactful component is the convolution. The rest of the isolated components result in minor accuracy gains compared to vanilla linear attention. We note that, of the collection of minor improvements, the value discretization method is most impactful. Even so, its impact is eclipsed by the AA-mask and convolution components.
+4 Building Up to the Mamba-2S Base Model
+With each isolated component ablated, we want to buildup a minimal version of Mamba-2 that is as accurate as the original Mamba-2 algorithm (see Table 3). We start with the output norm variant of linear attention and build up the model on top of this base. While investigating all component interactions would be desirable, the number of combinations is too numerous. Instead, we build up the model using insights from the isolated component ablations. Figure 4(a) shows the main model buildup. To build up the new model, we start by combining the convolution and softplus AA-mask as these two isolated components had the largest impact on accuracy, as shown in Figure 3. We find the combination of these two components results in higher accuracy than the isolated components themselves and use this as the new base model. We then investigate adding a third component, finding that adding the time discretization parameter gives a small boost in accuracy. In Figure 4(b), we show that adding other components do not help increase accuracy of the model. In fact, adding a Z gate slightly reduces accuracy of the model. All buildup investigations can be found in Table 3.
+To keep the model both simple and accurate, our resulting method uses the softplus AA-mask, an input convolution of size 2, and time discretization. This simplified Mamba-2 algorithm, which we call Mamba-2S, only retains necessary components as shown in Algorithm 4.
+Model
+Train loss
+Test loss
+Plain Linear
+3.19
+3.13
+Conv (w=2)
+2.87
+2.93
+Conv (w=2) + AA-mask original
+2.81
+2.8
+Conv (w=2) + AA-mask softplus
+2.67
+2.77
+Conv (w=2) + AA-mask softplus + discretize
+2.7
+2.76
+Conv (w=2) + AA-mask softplus + discretize + SiLU
+2.73
+2.76
+Conv (w=2) + AA-mask softplus + discretize + D res
+2.79
+2.76
+Conv (w=2) + AA-mask softplus + discretize + Z gate
+2.72
+2.78
+Table 3: Table of all additions (buildups) leading up to our final algorithm. Italics convey the components in 2Mamba.
+h∈ℝN,d,WQ​K​V∈ℝd,3⋅dh,Wd​t∈ℝd,H,WA∈ℝd,H,Wo​u​t∈ℝH⋅dh,dh\in\mathbb{R}^{N,d},W_{QKV}\in\mathbb{R}^{d,3\cdot d_{h}},W_{dt}\in\mathbb{R}^{d,H},{\color[rgb]{0,0,1}W_{A}\in\mathbb{R}^{d,H}},W_{out}\in\mathbb{R}^{H\cdot d_{h},d}
+Q,K,V\displaystyle Q,K,V
+=conv_1d​(h⋅WQ​K​V)\displaystyle=\text{conv\_1d}(h\cdot W_{QKV})
+∈ℝH,N,dh\displaystyle\in\mathbb{R}^{H,N,d_{h}}
+d​t\displaystyle dt
+=softplus​(h⋅Wd​t)\displaystyle=\text{softplus}(h\cdot W_{dt})
+∈ℝH,N\displaystyle\in\mathbb{R}^{H,N}
+A\displaystyle A
+=−softplus​(h⋅WA)\displaystyle={\color[rgb]{0,0,1}-\text{softplus}(h\cdot W_{A})}
+∈ℝH,N\displaystyle\in\mathbb{R}^{H,N}
+Vd​t\displaystyle V_{dt}
+=V⊙d​t\displaystyle=V\odot dt
+∈ℝH,N,dh\displaystyle\in\mathbb{R}^{H,N,d_{h}}
+AC​S\displaystyle A^{CS}
+=cumsum​(A)\displaystyle=\text{cumsum}({\color[rgb]{0,0,1}A})
+∈ℝH,N\displaystyle\in\mathbb{R}^{H,N}
+AM\displaystyle A^{M}
+=exp⁡(AC​S−(AC​S)T)where ​Ai​jM=exp⁡(AiC​S−AjC​S)\displaystyle=\exp(A^{CS}-(A^{CS})^{T})\quad\text{where }A^{M}_{ij}=\exp(A^{CS}_{i}-A^{CS}_{j})
+∈ℝH,N,N\displaystyle\in\mathbb{R}^{H,N,N}
+Mi​j\displaystyle M_{ij}
+={1,if ​i≥j0,if ​i<j\displaystyle=\begin{cases}1,&\text{if }i\geq j\\
+0,&\text{if }i<j\end{cases}
+M∈ℝH,N,N\displaystyle M\in\mathbb{R}^{H,N,N}
+y\displaystyle y
+=(Q​KT⊙AM⊙M)⋅Vd​t\displaystyle=(QK^{T}\odot A^{M}\odot M)\cdot V_{dt}
+∈ℝH,N,dh\displaystyle\in\mathbb{R}^{H,N,d_{h}}
+y′\displaystyle y^{\prime}
+=vec​(y)(H,N,dh)⟶(N,H⋅dh)\displaystyle=\text{vec}(y)_{(H,N,d_{h})\longrightarrow(N,H\cdot d_{h})}
+∈ℝN,H⋅dh\displaystyle\in\mathbb{R}^{N,H\cdot d_{h}}
+yN\displaystyle y_{N}
+=RMSNorm​(y′)\displaystyle=\text{RMSNorm}({\color[rgb]{0,0,1}y^{\prime}})
+∈ℝN,H⋅dh\displaystyle\in\mathbb{R}^{N,H\cdot d_{h}}
+o​u​t\displaystyle out
+=yN⋅Wo​u​t\displaystyle=y_{N}\cdot W_{out}
+∈ℝN,d\displaystyle\in\mathbb{R}^{N,d}
+Algorithm 4 Proposed Mamba-2 Simplified Forward (Mamba-2S): no setup besides weights
+5 Mamba-2 with a Squared Hidden State
+While Mamba-2S is quite strong in accuracy as seen in Figure 5(a), it still falls short of softmax attention. (Mongaras and Larson (2025)) showed that squaring the Q​KQK inner product results in a significant accuracy boost. Additionally, squaring the Q​KQK inner product results in a positive inner product space image. This space can adopt an online normalization algorithm like softmax normalization, which is more stable than output normalization. Using the simplified Algorithm 4, we find that squaring the Q​KQK inner product does result in a significant accuracy gain. As seen in Figure 5(a), squaring the inner product results in softmax level accuracy while being more memory efficient than softmax attention for sufficient sequence length. Specifically, from Mamba-2S 4, we remove the RMSNorm, add softmax normalization, and replace the Q​KQK inner product with a squared inner product. We opt to use softmax normalization over output normalization as softmax normalization is more stable when using the online softmax algorithm (Milakov and Gimelshein (2018)). Online softmax normalization, like Flash Attention (Dao et al. (2022)), requires an exponential to update the max statistic over blocks. As the AA-mask has an exponential, online softmax-like normalization can still be effective when the max statistic is stored in the AA-mask as opposed to the eQ​Ke^{QK} inner product, as used in online softmax. The gradients for the forward and backward pass are supplied in Appendix B. Full Triton kernels can be found in our codebase, which are necessary for training.
+(a) Small model performance comparison.
+(b) Instability in the discretization variant.
+Figure 5: Experimental results comparing accuracy and training stability.
+The time discretization operation does improve the model, however the accuracy gains are minimal compared to adding the convolution and AA-mask. For smaller models, training is stable. For the medium model, we found that the magnitude of the values significantly increased across update steps, leading to numerical instability and divergence in training as seen in Figure 5(b). Training a larger model with discretization can be somewhat stabilized—however this requires forcing triton to use IEEE FP32 input precision which is about 8x slower (NVIDIA Corporation (2020)) than the TF32 precision (a reduced precision mantissa compared to the standard IEEE FP32). A reasonable middle ground is a mix of input precision of FP32x3 for dot operations that need more precision and TF32 for others, which is still slower than full TF32 precision but is slightly more stable. Training in pure FP32 PyTorch also results in stable training, but is considerably slower. While manipulating the kernel can result in more stable training, to keep the squared variant numerically stable for low precision kernels, we remove the time discretization operation for the medium model.
+Our proposed squared algorithm, which we name 2Mamba, can be found in Algorithm 5. As seen in Figure 6, across various model sizes and sequence lengths, 2Mamba is nearly as accurate as softmax attention. One aspect worth further discussion is the placement of the square operation. We specifically place it on the Q​KQK inner product to increase the inner product dimension. An alternative placement could also include the AA-mask. However, we find that including the AA-mask does not result in any accuracy gains. While squaring after the AA-mask application does result in a squared inner product on QQ and KK, it also results in squared terms in the AA-mask, which is unnecessary. Intuitively, the AA-mask should be applied directly to attention scores, which come from the squared inner product of QQ and KK.
+h∈ℝN,d,WQ​K​V∈ℝd,3⋅dh​WA∈ℝd,H,Wo​u​t∈ℝH⋅dh,dh\in\mathbb{R}^{N,d},W_{QKV}\in\mathbb{R}^{d,3\cdot d_{h}}W_{A}\in\mathbb{R}^{d,H},W_{out}\in\mathbb{R}^{H\cdot d_{h},d}
+Q,K,V\displaystyle Q,K,V
+=conv_1d​(h⋅WQ​K​V)\displaystyle=\text{conv\_1d}(h\cdot W_{QKV})
+∈ℝH,N,dh\displaystyle\in\mathbb{R}^{H,N,d_{h}}
+A\displaystyle A
+=−softplus​(h⋅WA)\displaystyle=-\text{softplus}(h\cdot W_{A})
+∈ℝH,N\displaystyle\in\mathbb{R}^{H,N}
+AC​S\displaystyle A^{CS}
+=cumsum​(A)\displaystyle=\text{cumsum}(A)
+∈ℝH,N\displaystyle\in\mathbb{R}^{H,N}
+AM\displaystyle A^{M}
+=exp(AC​S−(AC​S)T)whereAi​jM=exp(AiC​S−AjC​S)\displaystyle=\exp(A^{CS}-(A^{CS})^{T})\quad\text{where}\quad A^{M}_{ij}=\exp(A^{CS}_{i}-A^{CS}_{j})
+∈ℝH,N,N,\displaystyle\in\mathbb{R}^{H,N,N},
+Mi​j\displaystyle M_{ij}
+={1,if ​i≥j0,if ​i<j\displaystyle=\begin{cases}1,&\text{if }i\geq j\\
+0,&\text{if }i<j\end{cases}
+M∈ℝH,N,N\displaystyle M\in\mathbb{R}^{H,N,N}
+y\displaystyle y
+=((Q​KT)2⊙AM⊙M)⋅V\displaystyle=((QK^{T})^{{\color[rgb]{0,0,1}2}}\odot A^{M}\odot M)\cdot V
+∈ℝH,N,dh\displaystyle\in\mathbb{R}^{H,N,d_{h}}
+N\displaystyle{\color[rgb]{0,0,1}N}
+=∑j((Q​KT)2⊙AM⊙M)\displaystyle{\color[rgb]{0,0,1}=\sum_{j}((QK^{T})^{2}\odot A^{M}\odot M)}
+∈ℝH,dh\displaystyle{\color[rgb]{0,0,1}\hskip 2.5pt\in\mathbb{R}^{H,d_{h}}}
+yN\displaystyle{\color[rgb]{0,0,1}y_{N}}
+=y/N\displaystyle{\color[rgb]{0,0,1}=y/N}
+∈ℝH,N,dh\displaystyle{\color[rgb]{0,0,1}\hskip 2.5pt\in\mathbb{R}^{H,N,d_{h}}}
+yN′\displaystyle y^{\prime}_{N}
+=vec​(yN)(H,N,dh)⟶(N,H⋅dh)\displaystyle=\text{vec}(y_{N})_{(H,N,d_{h})\longrightarrow(N,H\cdot d_{h})}
+∈ℝN,H⋅dh\displaystyle\in\mathbb{R}^{N,H\cdot d_{h}}
+o​u​t\displaystyle out
+=yN′⋅Wo​u​t\displaystyle=y^{\prime}_{N}\cdot W_{out}
+∈ℝN,d\displaystyle\in\mathbb{R}^{N,d}
+Algorithm 5 Our proposed algorithm (2Mamba)
+Figure 6: First row: Small model (∼\sim300M params) test loss for Mamba, our proposed algorithm, and softmax attention trained on 2048, 4096, and 8192 sequence lengths. Second row: Medium model (∼\sim700M params) test loss for Mamba, our proposed algorithm, and softmax attention trained on 2048, 4096, and 8192 sequence lengths
+5.1 2Mamba Algorithm Efficiency
+While squaring the inner product does result in a large accuracy gain, we note that the recurrent state requires approximately the square of the space as the original linear variant. When squaring the inner product or taking the Kronecker product of QQ and KK, and then performing the inner product, some terms are repeated due to the commutativity of the multiplication operation in the inner product. This means that as opposed to doing a Kronecker product on the queries and keys, one can do an operation that calculates all unique second-order product terms and calculate their multiplicity via the multinomial theorem. We provide a Triton kernel for creating a vector of second order products of a given vector.99
+9
+https://github.com/gmongaras/Triton-Efficient-Kronecker-Product The number of terms, as seen in equation (5) is equal to d⁡(d+1)2\frac{d(d+1)}{2}, which is less than half the elements within the vector obtained from naively calculating all d2d^{2} elements.1010
+10
+For notational brevity, we denote the head dimension as dd in this section.
+n​u​m​_​t​e​r​m​s=(2+d−1d−1)=(d+1d−1)=(d+1)!2​(d−1)!=(d+1)⋅d⋅(d−1)!2​(d−1)!=d⋅(d+1)2num\_terms=\genfrac{(}{)}{0.0pt}{0}{2+d-1}{d-1}=\genfrac{(}{)}{0.0pt}{0}{d+1}{d-1}=\frac{(d+1)!}{2(d-1)!}=\frac{(d+1)\cdot d\cdot(d-1)!}{2(d-1)!}=\frac{d\cdot(d+1)}{2}
+(5)
+As the complexity of softmax attention is linear in memory due to the K​VKV cache, there exists a sequence length such that squaring the inn

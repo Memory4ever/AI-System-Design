@@ -1,0 +1,65 @@
+Original exact-v1 deciding excerpt; not fulltext review.
+URL https://arxiv.org/html/2601.21198v1
+3.1 System Overview
+3.2 Compression States
+3.3 Cache-Affinity Scheduler
+3.1 System Overview
+Fig. 5 illustrates the architecture of ZipMoE, which consists of two stages: offline initialization and real-time inference.
+Offline Initialization.
+Executed once prior to deployment, this stage converts model parameters into lossless compressed representations.
+ZipMoE first performs bit-field decomposition (Fig. 5 ➊) to separate tensor elements into low-entropy exponent bits and high-entropy sign–mantissa bits.
+The extracted exponent bits are partitioned into KK shards and then compressed (denoted as E-chunks), while the sign–mantissa bits are packed into byte-aligned representations (denoted as SM-chunks).
+All components, together with the required metadata, are serialized into a binary format and offloaded to NVMe SSD. (Fig. 5 ➋)
+Real-time Inference.
+To start up, the compression-aware cache manager determines the cache capacity allocated to tensors at different compression states, i.e. the compressed E-chunks, SM-chunks, and fully reconstructed tensors, under a given memory budget and execution configuration (Fig. 5 ➌).
+At runtime, once the gate network reveals the selected experts, corresponding expert requests are issued to the cache-affinity scheduler, which dispatches them to appropriate cache pools based on their access patterns (Fig. 5 ➍).
+For each request, ZipMoE constructs a cache-aware directed acyclic graphs (DAGs) that captures the required I/O, decompression, and reconstruction operations (Fig. 5 ➎).
+These operations are scheduled to execute asynchronously across LL parallel CPU worker threads, enabling overlapped SM-chunk loading and E-chunk decompression (Fig. 5 ➏).
+Finally, the decompressed tensors are reassembled into BF16 format using a memory-coalesced GPU kernel for model inference (Fig. 5 ➐).
+3.2 Compression States
+Figure 6: DAG structures of expert requests with different compression states.
+ZipMoE achieves fine-grained memory management at runtime by allowing the E-chunks, SM-chunks, and full tensors of each expert to be cached separately.
+To this end, we introduce the compression state abstraction to track the residency of these components in memory.
+Specifically, an expert is defined as an E-expert if its E-chunks are cached, and an SM-expert if its SM-chunks are cached.
+An expert is termed as compressed-expert when both components reside in memory.
+DAG Representation.
+To enable adaptive resource scheduling, each expert reconstruction task is modeled as a DAG, whose nodes represent the fine-grained operations such as decompression, SSD read, and tensor recovery, and the directed edges denote the precedence constraints.
+ZipMoE dynamically constructs the DAG topology for each task based on the expert’s runtime compression state.
+Note that the task granularity is defined at the tensor level.
+For an expert comprising NN tensors, all tensors share the same topology and generate NN independent reconstruction tasks.
+We show all possible DAG structures in Fig. 6.
+3.3 Cache-Affinity Scheduler
+Once the selected experts are revealed, a set 𝒬\mathcal{Q} of DAG tasks are issued to the scheduler.
+Let ρ\rho denote the compression ratio of the lossless compressor used by ZipMoE, which is defined as the size of compressed exponent bits relative to their original representation.
+For each task j∈𝒬j\in\mathcal{Q}, we denote the I/O latency of a single SM-chunk as uu.
+Accordingly, reading one compressed E-chunk incurs an I/O cost of ρK​u\frac{\rho}{K}u, and its corresponding decompression cost is denoted as cc.
+By n⁡(j)n(j) we denote the expert ID corresponding to task jj.
+For each expert nn, let pnp_{n} represent the GPU execution time required to process all tokens routed to that expert.
+We create a dedicated I/O thread for all SSD reads, a pool of LL CPU worker threads for decompression, and a CUDA stream for tensor recovery.
+Our objective is to minimize the makespan of each sparse layer, i.e., the completion time of the last expert execution.
+We design an efficient scheduling algorithm to orchestrate the fine-grained operations in the execution of every sparse MoE layer, aiming to maximize parallelism across heterogeneous resources while minimizing idle time caused by I/O stalls.
+Task Partition.
+Based on their critical execution paths, we partition all expert tasks into two disjoint classes.
+Type-I tasks correspond to experts whose reconstruction requires loading SM-chunks, and therefore incur expensive blocking on the I/O thread.
+Type-II tasks include the remaining experts whose SM-chunks of the required tensors are already cached in memory.
+We sort Type-I and Type-II tasks independently in non-increasing order of their corresponding expert execution time pn⁡(j)p_{n(j)}, yielding two ordered sequences σI\sigma_{\mathrm{I}} and σII\sigma_{\mathrm{II}}, respectively.
+Block Construction.
+Building on the insight that SM-chunk loading dominates the critical path of Type-I tasks, the scheduler creates blocks by grouping Type-I tasks and Type-II tasks to overlap SM-chunk loading and decompression.
+Specifically, the scheduler iteratively selects the first unscheduled task in σI\sigma_{\mathrm{I}} as the base of a new block.
+Within each block, E-chunks are loaded before SM-chunks, and the I/O order among the same type of chunks follows the scheduling order of their corresponding tasks in the block.
+The scheduler then incrementally inserts tasks from the head of σII\sigma_{\mathrm{II}} into the block at positions that do not introduce additional idle time on the decompression threads.
+If no such position exists, the task is placed after all Type-II tasks (or Type-I tasks, if no Type-II task exists) with more token requests.
+The insertion process terminates when either all Type-II tasks have been considered, or when the system becomes compute-bound, i.e., when the completion time of the ll-th ( 1≤l≤min⁡{L,K}1\leq l\leq\min\{L,K\}) earliest decompression thread lags behind the I/O thread by at least l⋅ρK⋅u\frac{l\cdot\rho}{K}\cdot u.
+Beyond this point, additional Type-II tasks no longer contribute to hiding I/O latency and the resulting sequence of tasks forms a block.
+The scheduler repeatedly applies this procedure to construct subsequent blocks until all tasks are assigned.
+Blocks are executed sequentially, while tasks within each block follow the constructed priority order.
+We provide the full pseudocode in Appendix A and prove that the resulting schedule achieves a constant-bounded approximation to the optimal makespan in Appendix B.
+Theorem 3.1.
+Let ALG be the makespan achieved by ZipMoE’s scheduler and OPT be the optimal value. It holds that:
+ALG≤(3−1L)⋅OPT,\texttt{ALG}\leq\left(3-\frac{1}{L}\right)\cdot\texttt{OPT},
+where LL is the number of decompression threads.
+Memory-Coalesced Tensor Recovery Kernel.
+Reassembling exponent bits and sign-mantissa bits into BF16 tensors is inherently memory-bound, where the computation consists only of lightweight bit manipulations, while the kernel must stream a large volume of tensor elements from global memory.
+We optimize this process via a vectorized GPU kernel that aggregates data access to ensure memory coalescing. Specifically, each CUDA thread fetches contiguous segments of the loaded SM-chunks and the decompressed E-chunks via vectorized load instructions.
+This design allows bit-level reconstruction to be performed entirely within registers and writes the recovered tensors back using vectorized stores.
+As a result, the kernel minimizes instruction overhead, saturates DRAM bandwidth, and achieves high-throughput tensor recovery that effectively overlaps with the asynchronous CPU decompression pipeline.

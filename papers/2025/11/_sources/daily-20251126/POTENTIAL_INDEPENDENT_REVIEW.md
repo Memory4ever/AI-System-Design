@@ -1,0 +1,13 @@
+# 11/26 潜力与反侧独立复核
+
+root非作者Aristotle。实际完整读19个exact-v1题摘及Episodic关闭题摘；另从HunyuanOCR v1 HTML L59–64完整摘要补齐第20个方向。四查询200/169只作发现，不是准入或当窗论文数。沿FIRST与BOUNDED所述20条具体增量保留潜力，不因小模型、负面结果、算子组合或已有主题关闭。
+
+实际定点读Context固定输入/上下文的Theorem2、Algorithm1、Definition与Theorem5；不是单一patch对所有输入的函数等价，也不证明SGD/PPO训练等价。Bias必要§5.2–6原反侧L242–283明确SS下降可伴LMS下降、宗教/性别少样本与英语文化benchmark限制；不采用No Free Lunch普遍定理或因果disentangle解释。其余方法/证明没有全部逐字复核，日期隔离未被写成Evidence完成。
+
+Low-Rank GEMM实际必要方法、测试设置、质量与内存反侧通过有限隔离：FP8储存/FP16计算与FP32基线不是同精度exact比较，误差1–2%与低于0.01%不是同质量。密集输出不能由摘要直接授subquadratic成本，99%平方谱能量也不等1%相对Frobenius范数误差；原gradient/累计误差与训练质量宣传不被采用。潜在近似质量/资源取舍仍保留，不以存在这些疑问取消整个方向。
+
+HunyuanOCR实际读模型§3、RL§5.2及附录C.1–3：native视觉接口、learned pooling及按任务reward/数据难度过滤构成可核潜力；规则reward与judge权限不等价。正文通用β公式不能覆盖配置表实际KL coefficient=0。局部pre/post提高不授全部数据/阶段可归因。实际读原repo当前说明的Nov28 vLLM/system prompt纠正与TensorRT评价/Transformers-vLLM差异，晚纠错只约束当前采用权限，不算Nov25新事件；不采用industry-first、pipeline error-free或生产保证。安装文档PR不代替模型首公开。
+
+20项Submitted、一般公告日程、DOI收录或日粒度作者消息均未恢复可信首公开上下界完全落窗；官方有限尝试结束后可以日期终态隔离。高ID或晚DOI上界不证明原模型事件窗外；不得伪造09:00。只在相应官方原公告/作者精确public字段到达后重开该ID，不要求20篇全附件或owner比较来替代日期。
+
+Episodic为暂缓AI for Science应用与既有序列推荐，未披露通用控制或新可靠性条件，具体关闭合理。OpenAI地区扩展负侧与唯一确定Productivity家族已在PRODUCTIVITY_INDEPENDENT_REVIEW实际通过。无新增Books或确定候选；日级最终来源/六部分由非作者另核，不以本笔记自授完成。

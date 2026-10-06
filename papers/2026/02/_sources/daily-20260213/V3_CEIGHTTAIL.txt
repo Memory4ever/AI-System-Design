@@ -1,0 +1,208 @@
+TabICLv2: A better, faster, scalable, and open tabular foundation model (https://arxiv.org/html/2602.11139v1)
+citeturn29301view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.11139v1","lineno":270}); Total lines: 1735
+L250: We design QASSMax based on the following rationale: (a) The $\log n$ factor is critical as it counteracts the linear growth of the softmax denominator with respect to $n$ (cite195†Nakanishi, 2025 ; cite202†Chen et al., 2025b ); (b) ASEntmax (cite203†Vasylenko et al., 2025 ) uses learnable $\delta+\beta(\log n)^{\gamma}$, inspiring us to generalize to $\mathrm{MLP}_{\mathrm{base}}(\log n)$; (c) Element-wise scaling increases expressiveness beyond per-head scalars; (d) Selective Attention (cite204†Zhang et al., 2024 ) introduces query-awareness in temperature scaling, which motivates us to use the bounded query-aware gating $\in(0,2)$ that modulates the base scaling without dominating the $\log n$ trend.
+L251: In addition, our gating design shares similar insights with Gated Attention (cite210†Qiu et al., 2025 ), which applies gating to attention outputs and finds query-dependent, element-wise gating most effective.
+L252: QASSMax applied to $\text{TF}_{\text{col}}$ and $\text{TF}_{\text{icl}}$ yields substantially performance improvements, as shown in the ablation study (cite36†Section 7 ). To study its effect on attention fading, we design a toy needle-in-haystack classification task (cite211†Figure 3 ): the model must focus on a single anchor sample (the needle) among increasing negative samples (the haystack). Without scalable softmax, attention entropy rises and accuracy drops.
+L253: However, QASSMax maintains low entropy and 100% accuracy even with 15K negatives, outperforming SSMax which largely degrades at extreme scales.
+L254: Many-class classification. Like many TFMs, TabICLv2 is pretrained with up to 10 classes. We use hierarchical classification (cite174†Qu et al., 2025 ) at the ICL stage for more classes. However, target-aware embedding introduces labels before hierarchical partitioning.
+L255: $\blacktriangleright$ To address this, we propose mixed-radix ensembling : for $C>10$ classes, we compute balanced bases $[k_{0},\ldots,k_{D-1}]$ with each $k_{i}\leq 10$ and $\prod_{i}k_{i}\geq C$, then decompose each label $y$ into $D$ digits $y^{(i)}\in\{0,\ldots,k_{i}{-}1\}$ via mixed-radix representation. Each digit defines a coarser grouping of the original classes. We run $\text{TF}_{\text{col}}$ once per digit and average the outputs:
+L256:  | $$O_{\mathrm{avg}}=\frac{1}{D}\sum_{i=0}^{D-1}\text{TF}_{\text{col}}(E_{1}+\mathrm{Embed_{\text{TAE}}}(y^{(i)}))~.$$  |
+L257: 
+L258: Combined with hierarchical classification in $\text{TF}_{\text{icl}}$, this enables TabICLv2 to handle an arbitrary number of classes. See cite43†Section A.3 for details.
+L259: $\blacktriangleright$ Quantile predictions for regression. Existing TFMs adopt different strategies for regression: TabPFNv2 and TabPFN-2.5 model the full predictive distribution by discretizing the target space into bins and applying cross-entropy loss, while Mitra and TabDPT predict point estimates using MSE loss. In addition, like most TFMs except LimiX, we train separate models for classification and regression.
+L260: TabICLv2 instead predicts 999 quantiles at probability levels $\alpha\in\{0.001,0.002,\ldots,0.999\}$, trained with pinball loss summed across all quantiles. In preliminary experiments using RMSE evaluation, we found that quantile regression outperforms MSE and the bin-based approach of TabPFNv2.
+L261: At inference, for point estimation we simply average the predicted quantiles, which proves both fast and effective. For probabilistic predictions, we construct a full distribution from the quantiles by enforcing monotonicity via sorting (the default) or isotonic regression (cite212†Barlow & Brunk, 1972 ; cite213†Busing, 2022 ), extrapolating tails with parametric exponential models, and deriving closed-form PDF, CDF, and moments. See cite108†Appendix I for details.
+L262: ## 4 Pretraining and Inference
+L263: 
+L264: ### 4.1 Pretraining setup
+L265: 
+L266: We significantly improve the pretraining setup compared to TabICL, the reference TFM with open pretraining.
+L267: ##### Three pretraining stages.
+L268: 
+L269: We retain the three-stage structure of TabICL that progressively expands the size of pretraining datasets, with up to 100 features throughout all stages. However, following TabPFNv2, we reduce the batch size to 64, allowing more steps with fewer datasets ($\approx$35M) than TabICL ($\approx$83M) and TabPFNv2 ($\approx$130M). The three stages are:
+L270: 
+L271:   * •
+L272: 
+L273: Stage 1: 500K steps on datasets with 1,024 samples, 30–90% for training, max learning rate 8e-4.
+L274: 
+L275:   * •
+L276: Stage 2: 40K steps on datasets with 400–10,240 samples (log-uniform), 80% for training, max learning rate 1e-4.
+L277: 
+L278:   * •
+L279: 
+L280: Stage 3: 10K steps on datasets with 400–60K samples (log-uniform), 80% for training, max learning rate 2e-5.
+L281: 
+L282: In cite53†Section B.1 , we show that stages 2 and 3 yield progressive performance improvements, especially on large datasets.
+L283: ##### Optimizer.
+L284: We use the Muon optimizer (cite214†Jordan et al., 2024b ) based on the implementation of cite215†Schaipp (2025) instead of AdamW (resp. Adam) used by TabICL (resp. TabPFNv2). Following Moonlight (cite216†Liu et al., 2025 ), this implementation multiplies the learning rate for each parameter $W\in\mathbb{R}^{n\times m}$ by $0.2\cdot\sqrt{\max\{n,m\}}$. We find higher learning rates preferable for Muon. As a result, we use a max learning rate of 8e-4 for the stage 1 compared to 1e-4 for AdamW in TabICL.
+L285: We adopt cautious weight decay (cite217†Chen et al., 2025a ) with parameter $0.01$, which applies decay only when the update and parameter have the same sign, avoiding interference with beneficial gradient directions. We also increase gradient clipping from $1$ to $10$ for stages 1 and 2, sample different train/test sizes per micro-batch, and use a cosine learning rate schedule across all stages.
+L286: ##### Pretraining cost.
+L287: 
+L288: On H100 GPUs with 80GB memory, stage 1 takes around 20 GPU-days, stage 2 around 2.5 GPU-days, and stage 3 around 2 GPU-days, totaling 24.5 GPU-days per model. Given that one H100-hour is roughly equivalent to 2 A100-hours, our pretraining cost is lower than TabICL (60 A100-days).
+L289: ### 4.2 Inference optimizations
+L290: 
+L291: We implement disk offloading (cite102†Section H.2 ), reducing requirements to under 24 GB CPU and 50 GB GPU to process a table with 1M samples and 500 features within 450 seconds (cite218†Figure H.2 ). Combined with QASSMax for long-context generalization, TabICLv2 can natively handle million-scale tables without retrieval and distillation. In addition, we reduce redundant computation by selectively computing $Q/K/V$ projections (cite98†Section H.1 ).
+L292: ## 5 Synthetic data prior
+L293: 
+L294: cite219†Image: Refer to caption L295: Figure 4: High-level structure of the synthetic dataset generation prior. Random vectors (one per sample) are propagated through a randomly generated graph where each node computes a random function of its parents. Columns of the final dataset are extracted from randomly assigned nodes. The resulting datasets can be rejected based on different filtering criteria.
+L296: (d) List of the 8 random functions applied: (MLP) Multilayer perceptrons, (Tree Ensemble) Ensembles of symmetric trees inspired by CatBoost (cite220†Prokhorenkova et al., 2018 ), (Discretize) Discretization to nearest neighbors among a random set; (GP) Multivariate Gaussian process functions; (Linear) Linear functions; (Quadratic) Multivariate quadratic functions; (EM) functions with plateaus inspired by the cluster assignment in the EM algorithm; (Product) products of other random functions.
+L297: (e) Examples of generated 2D classification datasets (cf. cite221†Figure F.1 ).
+L298: Our pretraining data is entirely synthetic, following the approach pioneered in TabPFN (cite165†Hollmann et al., 2022 ). The data-generating mechanism is termed prior, as it implicitly defines a Bayesian prior over datasets. For TabICLv2, we design a new prior that retains the structural causal model framework used in (cite165†Hollmann et al., 2022 ), incorporates innovations brought by TabICL and TabPFNv2 priors, and adds many novel design options and sampling mechanisms (see cite66†Section E.1 ).
+L299: Unlike architectural and pretraining choices, the new prior is developed mostly without experimental feedback, since fine-grained ablations are impractical and prone to overfitting validation datasets. Instead, the prior development is guided by general design principles (cite222†Wilson & Izmailov, 2020 ), maximizing dataset diversity (e.g., variable dependencies and categorical cardinalities) while encoding useful inductive biases and preserving computational efficiency.
+L300: This new prior is key to the final performance: pretraining TabICLv2 with the TabICL prior yields substantially lower performance (cite223†Figure 10 , gray). An ablation using the TabPFNv2 prior is not possible, as it is not open-source. We provide a high-level prior description below and defer details to cite65†Appendices E and cite95†F .
+L301: ##### High-level structure.
+L302: cite224†Figure 4 summarizes the TabICLv2 prior. We first sample global dataset properties, such as the number of numerical and categorical features, and the dataset size. We then sample a directed acyclic graph and random functions defining parent–child relationships, yielding a causal data-generating model. To obtain a dataset with $n$ samples, a matrix $X\in\mathbb{R}^{n\times d_{i}}$ of $n$ random vectors is sampled at each root node $i$ and propagated through the graph.
+L303: Each dataset feature is extracted from a randomly assigned node. Only a subset of a node’s dimensions is used to generate each feature, leaving other dimensions unobserved and thereby introducing noise into the dataset. Unlike prior work, we do not add Gaussian noise at the node level. For numerical features (e.g., $x_{1}$), feature values are extracted from a single node dimension.
+L304: For categorical features (e.g., $x_{2}$), multiple node dimensions are extracted and discretized, either via nearest-neighbor assignment or by applying a softmax to obtain a categorical distribution.
+L305: ##### New sampling mechanisms
+L306: 
+L307: Since the random graph sampling mechanism used by (cite169†Hollmann et al., 2025 ) can only generate tree-structured graphs, we introduce a “random Cauchy graph” mechanism, which models different global and local node connectivities and is described in cite71†Section E.4 .
+L308: The relation between a child node and its parents is generated using several steps depicted in cite224†Figure 4 (c). The key step consists in sampling diverse random functions to apply to the parent data. We use eight types of random functions, listed in cite224†Figure 4 (d). The first three are adapted from TabPFNv2 while the other five are new.
+L309: These functions are chosen to cover different levels of smoothness (which we prove for Gaussian Process functions) and different types of inductive biases (e.g., plateaus or axis-alignment). To handle the case of more than one parent node, we randomly select between two options: concatenate all parent matrices and apply a single random function, or apply random functions to every parent matrix and aggregate the results using sum, product, max, or logsumexp.
+L310: Even within each function type, we diversify the generated functions using new or extended building blocks including multiple random matrix types (for MLP, linear, quadratic functions, etc), random weight vectors (for singular values, feature importances, etc.), and random activations (for MLPs, random matrices), see cite65†Appendix E .
+L311: After applying the random function, we standardize $X$ and randomly rescale its columns to emulate different feature importances. The random converters extract feature values but can also modify node values, applying a warping function to scalars or discretization mechanisms to sub-vectors (see cite73†Section E.6 ). Finally, the node data $X$ is multiplied by a random scalar emulating a “node importance”.
+L312: ##### Postprocessing.
+L313: 
+L314: We apply some postprocessing similar to TabICL (cite174†Qu et al., 2025 ), including discarding problematic columns and datasets, permuting columns and class labels, and preprocessing features and targets.
+L315: ##### Data filtering.
+L316: Inspired by (cite193†Dong et al., 2025 ) and (cite176†Zhang et al., 2025b ), we filter out datasets on which a simple ExtraTrees model cannot improve on a constant baseline according to a bootstrap test. In addition, we directly filter graphs in which nodes associated to $x$ do not have common ancestors with the node associated to $y$, which implies that $y$ is independent of $x$. In pretraining stage 1, roughly 35% classification and 25% regression datasets are filtered.
+L317: cite223†Figure 10 shows that filtering improves the convergence of pretraining.
+L318: ##### Sampling correlated scalars.
+L319: 
+L320: We often sample numerical or categorical scalars (“hyperparameters”) from the same distribution multiple times, e.g., the number of categories within a column. We introduce a correlated way to sample them, e.g., to make it more likely to sample datasets where many columns have the same number of categories.
+--------------------------------------------------------------------------------
+GENIUS: Generative Fluid Intelligence Evaluation Suite (https://arxiv.org/html/2602.11144v1)
+citeturn29301view1 [wordlim: 200] Crawled: yesterday; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.11144v1","lineno":407}); Total lines: 533
+L392: Prominent benchmarks such as the ARC Bench (cite144†Chollet, 2019 ) assess a model’s ability to induce rules from few-shot examples and generalize to new scenarios. However, these evaluations are predominantly discriminative or symbolic, targeting problem-solving in restricted domains (e.g., grid worlds). In the context of Unified Multimodal Models (UMMs), current assessments remain largely confined to $G_{c}$, testing the model’s capability on static world knowledge.
+L393: Unified Multimodal Models (UMMs) Recent years have witnessed a paradigm shift from modular composition towards native fusion in multimodal models. Early approaches primarily bridged pre-trained Large Language Models (cite146†Qin et al., 2024 ; cite147†Esser et al., 2024 ; cite148†Zhao et al., 2024 ; cite149†Li et al., 2025b ; cite150†Zhang et al., 2025 ) with diffusion decoders to enable visual synthesis capabilities (cite151†Koh et al., 2023 ).
+L394: However, the latest wave of UMMs, represented by Chameleon (cite54†Team, 2024 ), Show-o (cite56†Xie et al., 2024 ; cite152†Guo* et al., 2025 ) and Emu Series (cite153†Sun et al., 2023 ; cite154†Sun et al., 2024 ; cite155†Wang et al., 2024 ), marks a fundamental departure by discretizing visual signals into discrete tokens.
+L395: Janus (cite156†Wu et al., 2025b ) and its improvements (cite157†Guo et al., 2025 ; cite58†Jiang* et al., 2025 ) claims that understanding and generation require distinct information, employing different tokenizers for each task. Among these architectures, Bagel (cite65†Deng et al., 2025 ) and its improvements (cite158†Xie et al., 2025a ; cite159†Jin et al., 2025 ) have demonstrated remarkable versatility in both understanding and generation tasks, becoming one of the most representative open-sourced models.
+L396: Despite these architectural breakthroughs, current research predominantly evaluates these models on task-specific benchmarks (e.g., VQA or standard T2I generation), leaving their intrinsic Generative Fluid Intelligence (i.e., the capacity to reason and adaptively generate under novel, ad-hoc constraints) largely unexplored.
+L397: Generative Evaluation of UMMs With the rapid progress of UMMs, numerous benchmarks (cite41†Ghosh et al., 2023 ; cite43†Zhao et al., 2025 ; cite47†Wei et al., 2025 ; cite49†Li et al., 2025e ; cite53†Chow et al., 2025 ) have been proposed to assess their capabilities, yet most remain confined to traditional evaluation paradigms.
+L398: Early benchmarks like GenEval (cite41†Ghosh et al., 2023 ), WISE (cite42†Niu et al., 2025 ), and DPG-Bench (cite44†Hu et al., 2024 ) primarily focus on single-image generation tasks, assessing static world knowledge or basic text-to-image alignment without involving complex, interleaved contexts. OpenIng (cite48†Zhou et al., 2025 ) focuses on in-context visual generation, while it primarily targeting interleaved text-and-image generation and Crystallized Intelligence.
+L399: While more recent suites such as MME-Unify (cite50†Xie et al., 2025b ), RealUnify (cite51†Shi et al., 2025 ), and ROVER (cite52†Liang et al., 2025 ) have begun to incorporate multi-image inputs, they predominantly target Crystallized Intelligence, evaluating the model’s ability to recall pre-trained information rather than adapting novel rules. Crucially, none of the existing benchmarks systematically evaluate Generative Fluid Intelligence (GFI).
+L400: As shown in Table 1, current methods lack comprehensive coverage across key GFI dimensions, including Implicit Pattern Induction, Explicit Constraint Execution, and Contextual Knowledge Adaptation. Furthermore, many rely heavily on synthetic data or purely LLM-as-Judge that fail to capture failure cases.
+L401: In contrast, GENIUS fills this critical void by being the first benchmark to feature a fully multimodal interleaved context, purely manually curated annotations, and a hybrid evaluation protocol to quantify FI in generative scenarios.
+L402: ## Appendix F Details of Method
+L403: 
+L404: ### F.1 Prompt Template for Keyword Generation
+L405: 
+L406: To extract task-critical visual cues, we employ following prompt to guide Bagel in identifying key regions within the context images. The template is shown in Fig. cite160†7 . The generated keywords are subsequently used to compute the relevance map.
+L407: ### F.2 Mathematical Formulation of Attention Modulation
+L408: 
+L409: In this section, we detail the implementation of the Bias Injection stage. Our modulation strategy is mathematically inspired by (cite161†Li et al., 2025d ; cite162†Li et al., 2025c ), adapted to our keyword-based relevance scoring.
+L410: The modulation is applied selectively to a subset of decoder layers $\mathcal{L}_{selected}$ and generation steps $\mathcal{T}_{selected}$. For a targeted head $h$ in layer $l\in\mathcal{L}_{selected}$ at step $t\in\mathcal{T}_{selected}$, let $\mathbf{A}^{l,h}\in\mathbb{R}^{N\times N}$ denote the original attention logits (before Softmax). Let $\mathbf{S}\in\mathbb{R}^{N}$ be the relevance score vector computed in the Relevance Mapping stage.
+L411: To enforce the model’s focus on critical signals, we inject a dynamic bias term into the attention mechanism. The modulated attention logits $\hat{\mathbf{A}}^{l,h}$ are computed as follows:
+L412: 
+L413:  | $$\hat{\mathbf{A}}^{l,h}(i,j)=\mathbf{A}^{l,h}(i,j)+\lambda\cdot\mathcal{F}(\mathbf{S}_{j})$$  |  | (11)
+L414: where $i$ denotes the query token index, $j$ denotes the key token index, and $\lambda$ is a scalar hyperparameter controlling the modulation intensity. The function $\mathcal{F}(\cdot)$ maps the raw relevance scores to a bipolar bias distribution:
+L415: 
+L416:  | $$\mathcal{F}(\mathbf{S}_{j})=\frac{\mathbf{S}_{j}-\mu_{\mathbf{S}}}{\sigma_{\mathbf{S}}+\epsilon}$$  |  | (12)
+L417: Here, $\mu_{\mathbf{S}}$ and $\sigma_{\mathbf{S}}$ are the mean and standard deviation of the relevance scores across the current context window. The final attention weights are obtained via the standard Softmax operation:
+L418: 
+L419:  | $$\text{Attention}(Q,K,V)=\text{softmax}\left(\frac{\hat{\mathbf{A}}}{\sqrt{d}}\right)V$$  |  | (13)
+L420: 
+L421: This formulation ensures that the gradient norm contribution from noise tokens is effectively dampened by the exponential suppression of the Softmax function.
+L422: ## Appendix G Theorem Part
+L423: ### G.1 Exact Definition of $\mathcal{A}$
+L424: 
+L425: Let $x_{t}$ denote the noisy intermediate variable at a certain time step. Let $C_{1}$ represent the context and instruction (text modality), and $C_{2}$ represent the image modality. Then for $t+1$-th step, we have:
+L426: 
+L427:  | $$x_{t+1}=F(u_{1},u_{2},g_{t})$$  |  | (14)
+L428: 
+L429: cause Bagel uses MoE architecture, the intermediate variables are defined as:
+L430:  | $\displaystyle u_{1}$  | $\displaystyle=\text{Und\_Encoder}(C_{1}\mathbin{\|}C_{2}),$  |  | (15)
+L431:  | $\displaystyle u_{2}$  | $\displaystyle=\text{Gen\_Encoder}(C_{2}),$  |  | (16)
+L432:  | $\displaystyle g_{t}$  | $\displaystyle=\text{Gen\_Encoder}(x_{t}).$  |  | (17)
+L433: 
+L434: For the $(l+1)$-th Decoder layer, Bagel employs a Pre-Layer Normalization (Pre-LN) structure. Let $u=(u_{1}||u_{2})$ where $\mathbin{\|}$ denotes matrix concatenation operation. We then obtain the detailed update rule of the decoder layer:
+L435:  | $\displaystyle g^{(t,l+1)}$  | $\displaystyle=\mathcal{A}(u^{(l)},g^{(t,l)})+f\left(\text{Up}\left(\mathcal{N}(\mathcal{A}(u^{(l)},g^{(t,l)})\right)\right)+b=\mathcal{L}^{(l)}_{\text{Up},b}(u^{(l)},g^{(t,l)})$  |  | (18)
+L436: 
+L437: where the initial bias is set as $b_{\text{initial}}=0$, RMS denotes the Root Mean Square operation, and Up denotes the Up layer in the decoder block.
+L438: 
+L439: The core attention function $\mathcal{A}(u,g)$ is formulated as:
+L440:  | $\displaystyle\mathcal{A}(u,g)$  | $\displaystyle=\text{MoE\_attn}\left((U_{1}\mathbin{\|}U_{2}),G\right)+g$  |  | (19)
+L441:  | $\displaystyle U_{1}$  | $\displaystyle=\text{Und}\left(\text{RMSNorm}(u_{1})\right)$  |  | (20)
+L442:  | $\displaystyle U_{2}$  | $\displaystyle=\text{Gen}\left(\text{RMSNorm}(u_{2})\right)$  |  | (21)
+L443:  | $\displaystyle G$  | $\displaystyle=\text{Gen}\left(\text{RMSNorm}(g)\right)$  |  | (22)
+L444: 
+L445: where
+L446:  | $$\text{MoE\_attn}\left(U,G\right)=\text{Softmax}\left(\frac{G_{\text{query}}\left(U_{\text{key}}\mathbin{\|}G_{\text{key}}\right)^{\top}}{\sqrt{d_{\text{attn}}}}\right)\times\left(U_{\text{value}}\mathbin{\|}G_{\text{value}}\right),$$  |  | (23)
+L447: where $U=\left(U_{\text{query}},U_{\text{key}},U_{\text{value}}\right)$ and $G=\left(G_{\text{query}},G_{\text{key}},G_{\text{value}}\right)$ denote the query/key/value components of $U$ and $G$ respectively, $d_{\text{attn}}$ is the dimension of attention heads. Und (Understanding) and Gen (Generation) denote the Q, K, and V projection layers for different experts in the MoE architecture.
+L448: ### G.2 Proof of Thm. cite89†4.1 L449: 
+L450: Our goal is to prove:
+L451: 
+L452:  | $$\mathcal{L}_{\text{Up}+\Delta\text{Up},\,b+\Delta b}(u^{\prime},g)=\mathcal{L}_{\text{Up},b}(u,g)$$  |  | (24)
+L453: 
+L454: According to the definition of $\mathcal{L}$, we have:
+L455: 
+L456:  | $\displaystyle\mathcal{L}_{\text{Up}+\Delta\text{Up},b+\Delta b}(u^{\prime},g)$  | $\displaystyle=\mathcal{A}(u^{\prime},g)+f((\text{Up}+\Delta\text{Up})(\frac{\mathcal{A}(u^{\prime},g)}{RMS(\mathcal{A}(u^{\prime},g))}))+b+\Delta b$  |  | (25)
+L457: 
+L458: Cause:
+L459:  | $$\Delta\text{Up}=\frac{\text{Up}\left(\delta\mathcal{A}\right)\mathcal{N}(\mathcal{A}(u^{\prime},g))^{\top}}{\left\|\mathcal{N}(\mathcal{A}(u^{\prime},g))\right\|^{2}},\Delta b=\mathcal{A}(u,g)-\mathcal{A}(u^{\prime},g)$$  |  | (26)
+L460: 
+L461: We proceed to expand cite163†Equation 25 :
+L462:  | $\displaystyle\mathcal{L}_{\text{Up}+\Delta\text{Up},b+\Delta b}(u^{\prime},g)$  | $\displaystyle=\mathcal{A}(u,g)+f(\text{Up}\mathcal{N}(\mathcal{A}(u^{\prime},g))+\text{Up}(\delta\mathcal{A}))+b$  |  | (27)
+L463:  |  | $\displaystyle=\mathcal{A}(u,g)+f(\text{Up}\mathcal{A}(u,g)))+b$  |  | (28)
+L464:  |  | $\displaystyle=\mathcal{L}_{\text{Up},b}(u,g)$  |  | (29)
+L465: 
+L466: where
+L467: 
+L468:  | $$\delta\mathcal{A}=\mathcal{N}(\mathcal{A}(u,g))-\mathcal{N}(\mathcal{A}(u^{\prime},g))$$  |  | (30)
+L469: 
+L470: Thus, we complete the theorem’s proof.
+L471: ### G.3 Proof of Thm. cite90†4.2 L472: 
+L473: Our goal is to prove the following conclusion:
+L474: 
+L475:  | $$\begin{cases}\text{Up}_{i+1}=\text{Up}_{i}-h\nabla_{\text{Up}}L_{i}(\text{Up}_{i}),\\
+L476: b_{i+1}=b_{i}-\nabla_{b}\left(\operatorname{tr}\left(\delta_{i}^{\top}b_{i}\right)\right)\end{cases}$$  |  | (31)
+L477: 
+L478: For Up, we first expand the update rule directly and obtain:
+L479:  | $\displaystyle\text{Up}_{i+1}-\text{Up}_{i}$  | $\displaystyle=\Delta\text{Up}_{i+1}-\Delta\text{Up}_{i}$  |
+L480:  |  | $\displaystyle=\frac{\text{Up}\left(\delta\mathcal{A}_{i+1}\right)\left(\mathcal{N}(\mathcal{A}(g))\right)^{\top}}{\left\|\mathcal{N}(\mathcal{A}(g))\right\|^{2}}-\frac{\text{Up}\left(\delta\mathcal{A}_{i}\right)\left(\mathcal{N}(\mathcal{A}(g))\right)^{\top}}{\left\|\mathcal{N}(\mathcal{A}(g))\right\|^{2}}$  |
+L481:  |  | $\displaystyle=\frac{\text{Up}\left(\delta\mathcal{A}_{i+1}-\delta\mathcal{A}_{i}\right)\left(\mathcal{N}(\mathcal{A}(g))\right)^{\top}}{\left\|\mathcal{N}(\mathcal{A}(g))\right\|^{2}}$  |  | (32)
+L482: According to the main text, if we define:
+L483: 
+L484:  | $$\begin{cases}h=\frac{1}{\left\|\mathcal{N}(\mathcal{A}(g))\right\|^{2}}\\
+L485: \Delta_{i}=\text{Up}\left(\delta\mathcal{A}_{i}-\delta\mathcal{A}_{i+1}\right)\left(\mathcal{N}(\mathcal{A}(g))\right)^{\top}\\
+L486: L_{i}(\text{Up})=\Delta_{i}^{\top}\text{Up}\end{cases}$$  |  | (33)
+L487: 
+L488: and notice the following trivial property:
+L489: 
+L490:  | $\displaystyle\nabla_{\text{Up}}\operatorname{trace}\left(\Delta_{i}^{\top}\text{Up}\right)=\Delta_{i}$  |  | (34)
+L491: 
+L492: then we can conclude that:
+L493:  | $$\text{Up}_{i+1}=\text{Up}_{i}-h\nabla_{\text{Up}}L_{i}(\text{Up}_{i})$$  |  | (35)
+L494: 
+L495: For $b$, we have:
+L496: 
+L497:  | $$b_{i+1}-b_{i}=\Delta b_{i+1}-\Delta b_{i}=\mathcal{A}(u^{(i+1)},g)-\mathcal{A}(u^{(i)},g)$$  |  | (36)
+L498: 
+L499: so according to property cite164†Equation 34 :
+L500: 
+L501:  | $$b_{i+1}=b_{i}-\nabla_{b}\left(\operatorname{tr}\left(\delta_{i}^{\top}b_{i}\right)\right)$$  |  | (37)
+L502: 
+L503: Thus, we complete the theorem’s proof.
+L504: 
+L505: Figure 7: Prompt Template for Keyword Generation.
+L506: Figure 8: Prompt Template for Rule Compliance Evaluation.
+L507: 
+L508: Figure 9: Prompt Template for Visual Consistency Evaluation.
+L509: 
+L510: Figure 10: Prompt Template for Aesthetic Quality Evaluation.
+L511: 
+L512: cite165†Image: [Uncaptioned image] L513: 
+L514: Figure 11: Detailed Qualitative Examples and Model Outputs. (1/2)
+L515: 
+L516: cite166†Image: Refer to caption Figure 12: Detailed Qualitative Examples and Model Outputs. (2/2)
+L517: 
+L518: Experimental support, please cite167†view the build logs for errors. Generated by cite168†L A T E xml†math.nist.gov .
+L519: ## Instructions for reporting errors
+L520: 
+L521: We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the methods listed below:
+L522: 
+L523:   * Click the "Report Issue" () button, located in the page header.
+L524: 
+L525: Tip: You can select the relevant text first, to include it in your report.
+L526: Our team has already identified cite169†the following issues†github.com . We appreciate your time reviewing and reporting rendering errors we may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability should not be a barrier to accessing research. Thank you for your continued support in championing open access for all.
+

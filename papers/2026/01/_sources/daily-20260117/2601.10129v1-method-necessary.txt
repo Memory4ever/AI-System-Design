@@ -1,0 +1,97 @@
+Source https://arxiv.org/html/2601.10129v1
+[H]
+3 Empirical Analysis of Perception Gap
+We conduct a pilot study to quantify the misalignment between textual generation and visual attention, centered on two research questions: (RQ1) Is correct visual reasoning causally linked to focused visual attention? (i.e., Does looking at the right place precondition the right answer?) (RQ2) Does a significant “alignment gap” exist in the visual trajectories between teacher and student models, even when their textual outputs are similar?
+[H]
+3.1 Visual Attention Dictates Reasoning Bounds
+Definition 3.1 (Visual Focusing Score). Let I be the image and B_{gt} the target bounding box. Given the model’s aggregated attention trajectory \mathcal{A}_{traj}\in\mathbb{R}^{H\times W}, which accumulates attention weights across all layers and heads, the visual focusing score S_{focus} is defined as:
+S_{focus}=\frac{\sum_{(u,v)\in B_{gt}}\mathcal{A}_{traj}(u,v)}{\sum_{(u,v)\in I}\mathcal{A}_{traj}(u,v)}
+(1)
+where \mathcal{A}_{traj}(u,v) denotes the attention intensity at spatial coordinate (u,v). The denominator represents the total attention mass distributed across the entire image I. A larger S_{focus} indicates a stronger dependency of the reasoning process on the verified visual evidence, implying that the model is actively “looking” at the semantically correct region rather than relying on language priors or blind guessing.
+Building upon the above metric, we analyze the attention trajectories of Qwen2.5-VL-32B Bai et al. (2025b) on 1,000 randomly sampled instances from the Visual-CoT (Shao et al., 2024). As illustrated in Figure 2, reasoning outcomes are strictly constrained by the intensity of visual attention:
+•
+Monotonic Performance Gain: We observe that reasoning accuracy improves monotonically as the S_{focus} threshold increases. Statistical analysis confirms that correct samples maintain a significantly higher average S_{focus} (15.89%) compared to incorrect ones (11.84%), indicating a substantial relative gap of \sim34%. This validates that higher visual energy is a strong predictor of reasoning success.
+•
+Visual Absence and Hallucination: Conversely, in samples with negligible S_{focus} (<1\%), we predominantly observe responses that are completely irrelevant to the visual content or contain severe hallucinations. This pattern suggests that without active visual grounding, the model relies on language priors to blindly guess, which proves to be a highly unreliable strategy for complex visual tasks.
+Figure 2: Impact of Visual Attention on Reasoning Accuracy. The monotonic increase in accuracy with higher Visual Focusing Score (S_{focus}) thresholds validates that effective visual grounding is a prerequisite for correct reasoning.
+Observation 1: Visual attention is determinative, not merely interpretative. The strict positive correlation confirms that focused visual grounding (S_{focus}) is a necessary condition for reasoning success. Models cannot reason correctly without “looking” at the right evidence, effectively ruling out blind guessing as a viable strategy.
+[H]
+3.2 Perception Gap between Teachers and Students
+Given the critical role of visual attention, we investigate whether standard Supervised Fine-Tuning (SFT) enables student models to inherit the teacher’s visual thinking process. This analysis is conducted on the same 1,000 samples following the experimental setup in Section 3.1.
+Analysis of Attention Divergence.
+We fed identical reasoning prompts to both the Teacher (M_{T}) and the Student (M_{S}). We categorized the generated tokens into three groups based on their semantic reliance on visual evidence: Functional (e.g., stop words), Object (nouns), and Attribute (adjectives, spatial relations). We then computed the Kullback-Leibler (KL) divergence between their normalized attention maps \mathcal{A}^{T} and \mathcal{A}^{S}, alongside the Cosine Distance of their hidden states.
+As shown in Figure 3, we observe a decoupling between textual alignment and visual attention:
+•
+Attention Drift on Visual Concepts: The attention divergence exhibits a distinct monotonic increase as the semantic reliance on vision deepens. While Functional tokens maintain a lower average divergence (\mu=1.11), Attribute tokens, which require precise visual grounding, show the highest misalignment (\mu\approx 1.39). This indicates that when describing fine-grained details (e.g., color, texture), the student struggles to focus on the same regions as the teacher.
+•
+The “Blind Guessing” Phenomenon: Crucially, while the attention divergence surges, the Cosine Distance of the hidden states remains relatively stable across categories (ranging from 0.52 to 0.55). This implies that the student can mimic the teacher’s textual representations (learning what to say) without correctly aligning its visual attention (learning where to look), effectively relying on language priors rather than active observation.
+Observation 2: Textual mimicry does not guarantee visual understanding. SFT trains the student to reproduce the teacher’s words but fails to transfer the underlying visual trajectory. This “Perception Gap” suggests that the student model is often “guessing” based on language context rather than actively “observing” the image.
+Figure 3: The Perception-Reasoning Gap. While the student aligns closely with the teacher in textual representations (stable Cosine Distance), their visual attention trajectories diverge significantly on attribute-heavy tokens (rising KL Divergence). This reveals that textual mimicry does not imply visual grounding.
+[H]
+4.2 White-box Trajectory Distillation
+We establish the foundational reasoning capability of our model through a Supervised Fine-tuning (SFT) stage defined as Latent Teacher Forcing. Unlike standard SFT that maps inputs directly to text, we train the model to autoregressively generate a sequence of K continuous latent tokens, \mathbf{V}=\{<v-trace_{1}>,\dots,<v-trace_{k}>\}, prior to producing the textual response.
+These latent tokens serve as Visual Information Containers. By leveraging a white-box distillation approach, we force \mathbf{V} to explicitly capture and compress the teacher’s high-dimensional visual semantics and gaze patterns. Formally, given an input [I,X_{q}], the model generates the latent and textual sequences to form the complete trajectory X=[I,X_{q},\mathbf{V},X_{ans}], where \mathbf{V} acts as the indispensable cognitive bridge supplying visual evidence for the subsequent response X_{ans}.
+[H]
+4.2.1 Curriculum Sensory Gating
+A naive attention mechanism allows response tokens X_{ans} to attend directly to image patches I, enabling the model to bypass \mathbf{V} (shortcut learning). Conversely, a permanent hard mask creates a training-inference distribution shift. To resolve this, we propose Curriculum Sensory Gating, which modulates the direct visual perception path via a time-dependent scalar \gamma(t)\in[\epsilon,1].
+We implement gating within the attention bias of the Transformer. Let Q_{txt} denote queries from response tokens and K_{img} denote keys from image patches. The attention scores are computed as:
+\begin{split}\text{Attn}(Q_{txt},K_{img})&=\text{Softmax}\left(\frac{Q_{txt}K_{img}^{\top}}{\sqrt{d}}+\mathbf{B}_{gate}(t)\right),\\
+\text{s.t. }\mathbf{B}_{gate}(t)&=\ln(\gamma(t)).\end{split}
+(4)
+To ensure a structured internalization process mentioned above, we introduce a warm-up period T_{w}. The gating scalar \gamma(t) is defined as:
+\gamma(t)=\begin{cases}\epsilon+\frac{1-\epsilon}{2}\left[1-\cos\left(\frac{\pi t}{T_{w}}\right)\right],&t<T_{w}\\
+1,&t\geq T_{w}\end{cases}
+(5)
+where T_{w} denotes the warm-up steps. This schedule defines two distinct operational phases governed by the training progress:
+•
+Phase 1: Sensory Warm-up (t<T_{w}). The direct visual path opens gradually, following the cosine curve. Initially, \gamma\approx\epsilon (set to 1\text{e-}6 for numerical stability), resulting in a large negative bias \mathbf{B}_{gate}\ll 0. This creates a strict Latent Bottleneck, mathematically compelling the model to compress necessary visual information into \mathbf{V}. The subsequent smooth relaxation prevents optimization shock while establishing a strong dependency on latent reasoning.
+•
+Phase 2: Fully Observable (t\geq T_{w}). The gate becomes fully open (\gamma=1), reducing the bias \mathbf{B}_{gate} to zero. The direct visual path functions as a Residual Perception connection, allowing the model to attend to fine-grained pixel details that complement the high-level reasoning encoded in \mathbf{V}. This configuration matches the standard inference topology, ensuring zero distribution shift.
+[H]
+4.2.2 Optimization Objectives
+To ensure the student strictly internalizes the teacher’s cognition, we employ a dual-stream distillation scheme with explicit gradient flow controls.
+1. Semantic Reconstruction (\mathcal{L}_{concept}).
+We align the student’s latent hidden states h_{z} with the teacher’s holistic visual concepts V_{\text{sem}}. Since the teacher’s representations encapsulate high-quality visual semantics, we treat them as fixed semantic anchors. We employ a projection head \phi_{\text{mlp}} to map the student’s latent manifold into the teacher’s semantic space:
+\mathcal{L}_{concept}=1-\frac{1}{B}\sum_{i=1}^{B}\text{CosSim}\left(\phi_{\text{mlp}}(h_{z}^{(i)}),V_{\text{sem}}^{(i)}\right)
+(6)
+This objective compels the student’s latent tokens \mathbf{V} to act as informative containers, actively capturing and compressing the visual information necessary to reconstruct the teacher’s visual semantics.
+2. Trajectory Alignment (\mathcal{L}_{traj}).
+We define the reasoning trajectory as the distribution of attention weights over visual patches. We treat the teacher’s attention map A_{\text{traj}} as the target, following prior observations that distilling teacher attention maps can effectively guide student visual alignment (Fang et al., 2021). We constrain the student’s attention A_{\text{student}} (originating from \mathbf{V}) to match this target via KL Divergence:
+\mathcal{L}_{traj}=\frac{1}{B}\sum_{i=1}^{B}\sum_{j=1}^{K}\mathcal{D}_{\text{KL}}\left(A_{\text{traj}}^{(i,j)}\|A_{\text{student}}^{(i,j)}\right).
+(7)
+This ensures the latent tokens learn where to look, inheriting the teacher’s visual search strategy.
+3. Response Generation with Dynamic Gradient Transition (\mathcal{L}_{ntp}).
+The Next-Token Prediction loss drives the response generation. Crucially, the gradient flow from this loss is intrinsically modulated by our gating mechanism. By chain rule, the sensitivity of the loss with respect to direct visual features is proportional to the attention weight:
+\left\|\frac{\partial\mathcal{L}_{ntp}}{\partial I}\right\|\propto\text{Attn}(Q_{txt},K_{img})\approx\gamma(t).
+(8)
+During Phase 1, gradients are fully channeled through \mathbf{V}, establishing the bottleneck. As \gamma\to 1, the gradients transition to a synergistic flow, optimizing both the latent abstraction and the residual perception paths jointly.
+[H]
+4.2.3 Joint Training Dynamics
+Unlike complex multi-stage pipelines (Li et al., 2025a; Wang et al., 2025b) that require careful hyperparameter scheduling to avoid collapse, our Curriculum Sensory Gating provides a robust structural constraint. This physically enforced bottleneck naturally regulates the learning difficulty, eliminating the need for dynamic loss weighting.
+We employ a streamlined Joint Training paradigm with a fixed distillation weight. The total loss is defined as:
+\mathcal{L}_{total}=\mathcal{L}_{ntp}+\lambda\cdot(\mathcal{L}_{concept}+\mathcal{L}_{traj}),
+(9)
+By maintaining a constant but moderate alignment pressure, we ensure the latent tokens \mathbf{V} remain semantically consistent with the teacher in the curriculum, while allowing the NTP loss to primarily drive the generation quality as the sensory gate opens.
+[H]
+5.1 Experiment Setup
+SFT Settings. In Phase 1, we train the model for 400 steps with the sensory gating scalar \gamma initialized at 1\text{e-}6. In Phase 2, we continue training for an additional 600 steps. We set \lambda=0.3 across all experiments. The model is initialized from Qwen2.5-VL-3B and finetuned on the LaViT-SFT-15K. We set the number of latent visual tokens V to 4. More details are shown in the appendix.
+Evaluated Benchmarks.
+We evaluate LaViT on diverse benchmarks. For subtle visual details, we use MMVP Tong et al. (2024) and the Attribute Recognition subset of V∗ Wu and Xie (2024), which target CLIP-blind patterns and object attributes. For higher-level cognition, we adopt BLINK Fu et al. (2024) tasks on Relative Depth, IQ-Test, Relative Reflectance, and Spatial Relation, which require mental manipulation and geometric reasoning. We also include MMStar Chen et al. (2024) to test robustness against language priors and ensure genuine visual understanding.
+[H]
+5.4 Ablation Study
+Table 3:
+Ablation study of LaViT on MMVP and BLINK subsets.
+w/o Traj. Align: Removes trajectory alignment loss.
+w/o Sem. Recon: Removes semantic reconstruction loss.
+w/o Curr. Gate: Removes progressive gating, setting \gamma(t)=0 in Phase 1 and \gamma(t)=1 in Phase 2.
+w/o Latent Tokens: Masking Latent Tokens at Inference
+Single Stage: Trains in one stage where visual tokens are always visible (\gamma(t)=1).
+Method
+MMVP
+Rel. Depth
+IQ-test
+Rel. Ref
+Spatial
+LaViT-3B
+67.33
+

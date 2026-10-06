@@ -1,0 +1,116 @@
+Source https://arxiv.org/html/2601.10471v1
+[H]
+3.1 Revisiting Existing Coupling Paradigms
+To better contextualize DeFlow, we briefly analyze the limitations inherent in two prevalent strategies for integrating flow models with Q-learning.
+[H]
+Paradigm I: End-to-End Policy Steering.
+Ideally, one might update a flow model \pi_{\psi} by backpropagating the Q-gradient through the ODE integration chain:
+\nabla_{\psi}\mathcal{L}_{\text{RL}}=\mathbb{E}_{s,z}\left[\frac{\partial Q(s,a)}{\partial a}\cdot\frac{\partial\text{ODESolve}(v_{\psi},s,z)}{\partial\psi}\right].
+(8)
+While theoretically elegant, this “steering” approach faces significant practical hurdles. Computing \frac{\partial\text{ODESolve}}{\partial\psi} necessitates BPTT or the Adjoint Method across numerous integration steps. This is not only memory-intensive but also susceptible to the vanishing gradient problem—similar to training very deep RNNs—which often hinders the policy from effectively navigating towards high-Q regions.
+[H]
+Paradigm II: Single-step Shortcut Distillation.
+Alternatively, methods like FQL (Park et al., 2025c) attempt to bypass the ODE complexity by distilling the iterative flow into a single-step policy \pi_{\theta}(s,z). The actor is typically trained with a composite objective:
+\displaystyle\mathcal{L}_{\pi}(\omega)
+\displaystyle=\underbrace{\mathbb{E}_{s,a^{\pi}}[-Q_{\phi}(s,a^{\pi})]}_{\texttt{Q maximization}}+\underbrace{\alpha\mathcal{L}_{\mathrm{Distill}}(\omega)}_{\texttt{BC regularization}}.
+(9)
+While efficient at inference, this paradigm risks an expressivity collapse, as the shortcut model may fail to capture the complex, multi-modal distributions represented by the original flow. Furthermore, the scalar \alpha introduces a sensitive hyperparameter trade-off: a large \alpha limits improvement, while a small \alpha leads to manifold deviation.
+[H]
+3.2 The DeFlow Approach
+DeFlow addresses these challenges by maintaining the Multi-step Flow as a foundational anchor while employing a Residual Refinement for optimization.
+The Base Flow \mu_{\psi} is updated solely via the Flow Matching objective \mathcal{L}_{\text{FM}}(\psi). This ensures it remains an unbiased estimator of the behavior distribution, undisturbed by the high variance often associated with Q-learning gradients.
+Inspired by trust-region methods, we formulate the refinement as a constrained optimization problem. Rather than using a fixed penalty coefficient, we constrain the magnitude of the refinement \|\Delta a\|^{2} within a dynamic budget \delta:
+\max_{f_{\phi}}\mathbb{E}_{s,z}[Q(s,a_{\text{flow}}+\Delta a)]\quad\text{s.t.}\quad\mathbb{E}_{s,z}[\|\Delta a\|^{2}]\leq\delta,
+(10)
+where \Delta a=f_{\phi}(s,a_{\text{flow}}) and a_{\text{flow}}=\text{sg}[\mu_{\psi}(s,z)]. The parameter \delta (target divergence) represents the permissible deviation from the behavior manifold, which can be intuitively set based on the action space scale.
+Remark: Instance-Level vs. Policy-Level Residuals
+While residual learning is a well-established concept, it is vital to distinguish Instance-level Refinement from traditional Policy-level Residuals.
+Prior approaches like Silver et al. (2019) typically model the policy as \pi_{\text{final}}(s)=\pi_{\text{base}}(s)+\pi_{\text{res}}(s). Here, the residual \pi_{\text{res}} is strictly state-dependent. While effective for unimodal corrections (e.g., sim-to-real dynamics gaps), this formulation is ill-suited for generative policies. Since \pi_{\text{base}} captures a multimodal distribution (e.g., branching paths), a state-dependent residual applies a uniform vector shift across all modes. This is problematic: a shift that optimizes one mode (e.g., turn left) might be detrimental to another (e.g., turn right).
+In contrast, DeFlow computes \Delta a=f_{\phi}(s,a_{\text{base}}), explicitly conditioning the residual on the sampled action instance. This transforms the residual module from a global bias correction into a local vector field on the action manifold. It allows f_{\phi} to apply distinct, context-aware adjustments—optimizing a “left turn” sample differently from a “right turn” sample originating from the same state.
+To solve Equation 10, we employ the method of Lagrange multipliers. We first apply Q-Normalization to the RL objective to mitigate the scale variance of Q-values across different environments. We then introduce a learnable Lagrangian multiplier \alpha (where \alpha>0). The loss function for the refinement module f_{\phi} is defined as:
+\mathcal{L}_{\text{Refine}}(\phi)=\mathbb{E}_{s,z}\left[-\frac{Q(s,\text{sg}[a_{\text{flow}}]+\Delta a)}{\text{sg}[|Q_{\text{mean}}|]}+\alpha\cdot\|\Delta a\|^{2}\right].
+(11)
+Mirroring the automated entropy tuning found in Soft Actor-Critic (SAC) (Haarnoja et al., 2018), \alpha is automatically adjusted to satisfy the constraint by minimizing:
+\mathcal{L}(\alpha)=\mathbb{E}_{s,z}\left[-\alpha\cdot\text{sg}(\|\Delta a\|^{2}-\delta)\right].
+(12)
+This automated constraint mechanism offers distinct advantages:
+•
+Intuitive Hyperparameters: Unlike an abstract penalty coefficient which is sensitive to loss scaling, \delta carries physical significance (squared distance in action space), making it robust and easier to tune.
+•
+Adaptive Balancing: The mechanism acts as a feedback controller. If the refinement becomes too aggressive (\|\Delta a\|^{2}>\delta), \alpha increases to enforce manifold adherence; conversely, if the policy is conservative, \alpha decreases to prioritize value maximization.
+•
+Online Compatibility: This formulation naturally extends to online fine-tuning, where \delta can be viewed similarly to target entropy, allowing the policy to dynamically balance the exploration-exploitation trade-off as the Q-function matures.
+[H]
+Seamless Offline-to-Online (O2O) Adaptation.
+Beyond its performance in static datasets, the decoupled nature of DeFlow offers a principled framework for the transition from offline pre-training to online fine-tuning. In the online phase, a notorious challenge is maintaining the integrity of the learned behavioral prior while allowing for further exploration. Under our paradigm, the Base Flow \mu_{\psi} can be effectively “frozen” to serve as a high-fidelity manifold anchor, significantly reducing the computational overhead and stabilizing the distribution. Meanwhile, the Refinement Module f_{\phi} retains its plasticity, evolving to capture new high-reward regions with the auto-tuned multiplier \alpha.
+We provide an extensive evaluation of this O2O flexibility in Section 5.
+[H]
+5.1 Experimental Setup
+[H]
+Benchmarks.
+We adopt the OGBench task suite (Park et al., 2025a) as our primary evaluation platform. Unlike the now-saturated D4RL benchmarks, OGBench provides a more diverse and challenging set of robotic locomotion and manipulation tasks. We utilize the reward-based “single-task” variants, encompassing 50 state-based tasks (across locomotion and manipulation) and 5 high-dimensional visual manipulation tasks (64\times 64 pixels). To ensure a comprehensive evaluation, we also include 18 classic tasks from D4RL (Fu et al., 2020), which remain challenging due to their sparse rewards and narrow data distributions.
+[H]
+Baselines.
+Following the standard set in FQL (Park et al., 2025c), we compare DeFlow against nine representative baselines across three paradigms:
+(1) Gaussian Policies: IQL (Kostrikov et al., 2022) and ReBRAC (Tarasov et al., 2023a);
+(2) Diffusion Policies: IDQL (Hansen-Estruch et al., 2023), SRPO (Chen et al., 2024), and Consistency-AC (Ding and Jin, 2024);
+(3) Flow-based Methods: To isolate the benefits of our decoupled refinement, we benchmark flow-based counterparts of existing algorithms (FAWAC, FBRAC, IFQL) and FQL itself. Notably, SORL (Espinosa-Dice et al., 2025), MeanFlow-QL (Wang et al., 2025) and SACFlow (Zhang et al., 2025b) are excluded from our primary benchmark due to their distinct requirements, such as sequential scaling and best-of-N sampling at test time, etc. These components deviate from the standard policy extraction setting investigated in this work; we refer interested readers to the original studies for their specific performance characteristics.
+[H]
+Offline-to-online Experiments.
+For O2O experiments, we further compare against Cal-QL (Nakamoto et al., 2023) and RLPD (Ball et al., 2023), which are specifically engineered for online adaptation.
+We adapt DeFlow for this setting by simply augmenting the offline dataset \mathcal{D} with an online replay buffer during training.
+[H]
+Evaluation Protocol.
+We strictly follow the OGBench protocol (Park et al., 2025a), reporting performance after a fixed number of gradient steps rather than the maximum over epochs. Results are averaged over 8 seeds for state-based tasks and 4 seeds for pixel-based tasks (mean \pm std). We bold scores that are within 95% of the best performance. Implementation details are provided in the Appendix.
+Table 2:
+Offline-to-online RL results.
+The results are averaged over 8 seeds unless otherwise mentioned.
+Task
+IQL
+[H]
+5.2 Results and Analysis
+We analyze the properties of our method through the following question:
+Q: Can we set \delta without extensive tuning?
+Yes, by treating it as a semantic constraint rather than an abstract weight.
+Unlike the behavioral cloning weight \alpha, which often requires extensive tuning, \delta represents a physical constraint reflecting the action manifold width. To quantify this, we compute the Intrinsic Action Variance (IAV, denoted as \bar{\sigma}^{2}_{\text{data}}) using the average variance of actions among k-nearest neighbors.
+Empirically, we set \delta proportional to the estimated deviation (e.g., \delta\approx 0.1\bar{\sigma}_{\text{data}} for fine manipulation and \approx\bar{\sigma}_{\text{data}} for navigation). Crucially, our adaptive Lagrangian multiplier ensures robustness to rough estimates of \delta, effectively eliminating the need for grid search.11
+1
+For standard D4RL tasks, \delta can simply be set based on data quality, e.g., 10^{-3} for expert datasets. See Section A.1 for details.
+Q: How does DeFlow compare with SOTA offline RL methods?
+A: Table 1 presents aggregated results across 73 state and pixel-based tasks.
+DeFlow achieves SOTA or near-SOTA performance on the majority of benchmarks, with significant margins in highly multimodal tasks like cube-double-play and puzzle-3x3-play. This superiority validates DeFlow’s capability to model complex action distributions where prior methods struggle due to limited expressivity. Notably, DeFlow achieves these results without extensive hyperparameter tuning, demonstrating both robustness and simplicity.
+[H]
+6 Discussions and Conclusion
+In this paper, we present DeFlow, a framework for offline RL that decouples high-fidelity behavior modeling from value-driven policy refinement. By leveraging multi-step flow matching for behavior cloning and a lightweight refinement module for Q-value maximization, DeFlow effectively resolves the expressivity-optimization conflict inherent in prior methods. Our extensive empirical evaluations across 73 offline RL tasks and 15 O2O tasks demonstrate that DeFlow achieves comparable performance against SOTA with minimal hyperparameter tuning, highlighting its robustness and practicality.
+As a closing remark, rather than claiming DeFlow as a definitive solution, we position it as a lens to re-examine the interplay between generative diversity and critic-guided optimization. Our findings suggest that while modeling the behavior distribution is a solved problem with modern generative models, effective policy extraction remains a nuanced challenge where “more optimization” does not always equate to better performance.
+[H]
+The Saturation of Inference Scaling.
+A pivotal insight from our analysis is the counter-intuitive behavior of inference-time scaling. We observed that standard strategies like rejection sampling yield minimal gains within our framework. We attribute this to a Trust Region Saturation phenomenon: DeFlow’s refinement module is designed to be aggressive—it efficiently pushes the proposal to the boundary of the manifold constraint (\|\Delta a\|^{2}\approx\delta) in a single forward pass.
+Consequently, the “optimization budget” allowed by the behavior prior is fully consumed. Any further attempts to maximize Q-values (e.g., via rejection sampling) tend to exploit the critic’s approximation errors (adversarial OOD peaks) rather than uncovering legitimate high-value modes. This reveals a critical boundary in offline RL: simply “sampling more” is futile when the valid optimization landscape is already saturated.
+[H]
+Rethinking Policy Extraction.
+This finding suggests that the bottleneck in modern offline RL has shifted. The challenge is no longer about generating diverse behaviors (which flow models handle well), but about navigating the treacherous signal-to-noise ratio of the learned Q-function.
+DeFlow demonstrates that a deterministic, constrained gradient step could be safer and more effective than stochastic search in this landscape. Looking forward, we posit that the next breakthrough lies not in blind maximization, but in Manifold-Aware Sampling—incorporating methods like constrained Langevin dynamics or gradient-guided flow that can explore the value landscape while explicitly adhering to the complex topology of the behavior manifold, thereby avoiding the OOD pitfalls that plague current extraction techniques.
+[H]
+A.1 Hyperparameter Settings
+For the target divergence \delta, we set it based on the estimated Intrinsic Action Variance (IAV) of the dataset. Specifically, we compute the average variance of actions among k-nearest neighbors (k=5) for each state in the following tasks and normalize it by the action dimension:
+cube-double
+antmaze-large
+puzzle-3x3
+antsoccer
+IAV
+0.013
+0.018
+0.007
+0.026
+Leveraging prior knowledge of task complexity (Park et al., 2025a), we observe a strong empirical correlation between the Intrinsic Action Variance (IAV) and the optimal constraint \delta:
+•
+Fine Manipulation (e.g., cube-double-play): High precision requires a tighter constraint, \delta\approx 0.1\times\text{IAV}.
+•
+Navigation/Locomotion (e.g., antsoccer): Higher tolerance allows a looser constraint, \delta\approx 1.0\times\text{IAV}.
+•
+D4RL Benchmarks: A generic setting suffices based on data quality (e.g., \delta=10^{-3}).
+This heuristic contrasts sharply with the exhaustive grid search required for the behavioral cloning weight \alpha in prior works (Park et al., 2025c). Our method relies only on rough estimates of \delta inferred from task semantics, drastically reducing tuning effort.
+Crucially, we maintain the same \delta for online fine-tuning without further adjustment. While this strict protocol may limit asymptotic performance on specific outlier tasks, it underscores the method’s inherent robustness and eliminates the need for task-specific engineering during the offline-to-online transition.
+Detailed hyperparameter settings for all experiments are provided in Table 5.
+

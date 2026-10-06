@@ -1,0 +1,198 @@
+LoRA-Squeeze: Simple and Effective Post-Tuning and In-Tuning Compression of LoRA Modules (https://arxiv.org/html/2602.10993v1)
+citeturn29132view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.10993v1","lineno":null}); Total lines: 581
+L0: ##### Report GitHub Issue
+L1: 
+L2: [Button: ×]
+L3: 
+L4: Title: [Input: Enter title]
+L5: 
+L6: Content selection saved. Describe the issue below:
+L7: 
+L8: Description:
+L9: 
+L10: [Button: Submit without GitHub] [Button: Submit in GitHub]
+L11: 
+L12: cite0†Back to arXiv L13: 
+L14: cite1†Why HTML?†info.arxiv.org cite2†Report Issue cite3†Back to Abstract cite4†Download PDF L15:   1. cite5†Abstract L16:   2. cite6†1 Introduction L17:   3. cite7†2 Background and Related Work L18:   4. cite8†3 Methodology L19:     1. cite9†3.1 LoRA-Squeeze L20:   5. cite10†4 Experimental Setup L21:     1. cite11†4.1 LoRA Fine-Tuning Protocols L22:   6. cite12†5 Results and Discussion L23:     1. cite13†5.1 Additional Experiments and Ablations L24:   7. cite14†6 Conclusion L25:   8. cite15†References L26:   9. cite16†A Learning Rate Selection Details L27:   10. cite17†B Varianc over Random Seeds L28:   11. cite18†C Evaluation Tasks and Datasets L29:   12. cite19†D Derivation of Memory-Efficient LoRA-Squeeze L30:   13. cite20†E On (Coarsely Approximated) Computational Complexity of Different Decompositions L31:   14. cite21†F On Task Knowledge Retention L32:   15. cite22†G Further Discussion: On Theoretical Motivation and Connections L33:   16. cite23†H Additional Experiments L34: cite24†License: CC BY-NC-SA 4.0†info.arxiv.org L35: 
+L36: arXiv:2602.10993v1 [cs.CL] 11 Feb 2026
+L37: 
+L38: \uselogo
+L39: 
+L40: 2 \reportnumber 0001
+L41: # LoRA-Squeeze: Simple and Effective Post-Tuning and In-Tuning Compression of LoRA Modules
+L42: 
+L43: Ivan Vulić Affiliation: \thepa DeepMind    Adam Grycner Affiliation: \thepa DeepMind    Quentin de Laroussilhe Affiliation: \thepa DeepMind    Jonas Pfeiffer Affiliation: \thepa DeepMind
+L44: ###### Abstract
+L45: Despite its huge number of variants, standard Low-Rank Adaptation (LoRA) is still a dominant technique for parameter-efficient fine-tuning (PEFT). Nonetheless, it faces persistent challenges, including the pre-selection of an optimal rank and rank-specific hyper-parameters, as well as the deployment complexity of heterogeneous-rank modules and more sophisticated LoRA derivatives.
+L46: In this work, we introduce LoRA-Squeeze, a simple and efficient methodology that aims to improve standard LoRA learning by changing LoRA module ranks either post-hoc or dynamically during training. Our approach posits that it is better to first learn an expressive, higher-rank solution and then compress it, rather than learning a constrained, low-rank solution directly.
+L47: The method involves fine-tuning with a deliberately high(er) source rank, reconstructing the full weight update matrix, and then using Randomized Singular Value Decomposition (RSVD) to create a new, compressed LoRA module at a lower target rank.
+L48: Extensive experiments across 13 text-based and 10 vision-language tasks show that post-hoc compression often produces lower-rank adapters that outperform those trained directly at the target rank, especially if a small number of fine-tuning steps at the target rank is allowed. Moreover, a gradual, in-tuning rank annealing variant of LoRA-Squeeze consistently achieves the best LoRA size-performance trade-off.
+L49: LoRA-Squeeze decouples the training rank from the deployment rank, this way improving module efficiency, reusability, portability, and interoperability.
+L50: ###### keywords
+L51: 
+L52: PEFT, LoRA, module compression, SVD
+L53: ## 1 Introduction
+L54: The ever-growing scale of large language models (LLMs) combined with the demand for their efficient adaptation has established Low-Rank Adaptation (LoRA) (cite25†Hu et al., 2022 ) as a leading, go-to Parameter-Efficient Fine-Tuning (PEFT) technique.
+L55: LoRA operates on the hypothesis that the weight updates $\Delta W\in\mathbb{R}^{m\times n}$ of the large model with initial weights $W_{0}\in\mathbb{R}^{m\times n}$ can be approximated by a low-rank decomposition $\Delta W=AB$, where $A\in\mathbb{R}^{m\times r}$ and $B\in\mathbb{R}^{r\times n}$ are trainable parameters, and $r\ll\min(m,n)$ is the LoRA rank. Despite its widespread adoption and success, there are several critical challenges that persist in the practical applications of LoRA:
+L56: Challenge 1. Having lower-rank LoRA-s that maintain performance of higher-rank LoRA-s is one of the key desiderata to improve efficiency and module portability while simultaneously reducing latency and module storage requirements.
+L57: Challenge 2. Maintaining architectural homogeneity of LoRA modules (i.e., relying on same-rank LoRA-s) is often crucial for infrastructural simplicity and deployment. Put simply, LoRA-s of varying ranks and of heterogeneous decompositions may pose various challenges during deployment related to, e.g., inefficient batching and memory overheads during LoRA loading and unloading (cite26†Sheng et al., 2024 ; cite27†Chen et al., 2024 ).
+L58: Challenge 3. The selection of rank $r$ typically must be done in advance of fine-tuning; the performance of a LoRA-adapted model is often highly sensitive to this choice (cite28†Valipour et al., 2023 ), and the optimal rank can vary across tasks and datasets of different complexities, and across different models and model sizes (cite29†Zhang et al., 2023 ).
+L59: Challenge 4. Each rank might further necessitate its own hyperparameter sweeps to determine, e.g., the best per-rank and per-LoRA-matrix learning rate and/or training schedule (cite30†Hayou et al., 2024 ; cite31†Schulman and Lab, 2025 ).
+L60: In this work, with pragmatism and deployment-savvy solutions as the principal drivers, we focus on improving efficiency, portability, and reusability of standard, ubiquitous LoRA modules (see the rationale for this choice later in §cite7†2 ).
+L61: To this end, we shed new light on and exploit tight connections between (i) standard LoRA modules, (ii) task arithmetic and task vectors (cite32†Ansell et al., 2022 ; cite33†Ilharco et al., 2023 ), and (iii) SVD decomposition, positing that the LoRA rank used for training should be decoupled from the rank used for deployment, which has positive implications on the four challenges above. We introduce LoRA-Squeeze, a novel, computationally efficient methodology for changing the rank of standard LoRA modules.
+L62: The changes can be applied either post-hoc after LoRA fine-tuning, or dynamically during their fine-tuning. The LoRA-Squeeze methodology relies on the two key principles:
+L63: Overparameterized Fine-Tuning: LoRA is fine-tuned on a target task with a deliberately high rank. Higher-rank tuning is used during the whole fine-tuning process or during its parts. This allows the model to learn task adaptation within a less constrained, higher-dimensional space.
+L64: Compression: Higher-rank LoRA modules can then be (i) gradually reduced/annealed during fine-tuning (i.e., dynamic in-tuning transformations, dubbed In-Squeeze, see Figure cite34†2 ) or (ii) post-hoc after fine-tuning (i.e., static post-tuning transformations, dubbed Post-Squeeze, see Figure cite35†1 ).
+L65: Given that LoRA can be viewed as an approximation of the ‘full delta’ $\Delta W$, LoRA matrices are first reconstructed into the ‘full model space’ yielding the $\Delta W$ representation, and then compressed to a desired, lower rank using a very efficient implementation of Randomized Singular Value Decomposition (RSVD) (cite36†Halko et al., 2011 ).
+L66: The two principles have several positive implications on the efficiency, portability and reusability aspects of LoRA modules. For instance, as our results over 13 standard text-based and 10 vision-text tasks demonstrate, LoRA-Squeeze helps unify LoRA structures after fine-tuning in cases when they were fine-tuned with different ranks without the need for retraining with other ranks, having positive impact on architectural homogeneity.
+L67: Further, it is not required to conduct hyperparameter search per each rank separately; it is possible to find a good setup for a subset of higher-order modules and create same- or even higher-quality lower-rank LoRA-s post-hoc, without any fine-tuning. Finally, we empirically validate that the gradual in-tuning LoRA-Squeeze procedure enables fine-tuning LoRA modules with a better trade-off between size and task performance than direct fine-tuning with a chosen rank.
+L68: Put simply, our work shows that for LoRA it is often better to first learn a more expressive, higher-rank solution and then compress it, rather than attempting to learn a fixed low-rank solution from the outset. This paradigm not only offers immediate practical benefits, but also deepens our understanding of the mechanisms underlying parameter-efficient adaptation with LoRA-s.
+L69: ## 2 Background and Related Work
+L70: 
+L71: On SVD and LoRA. Recent research has increasingly leveraged SVD—a fundamental technique for matrix factorization and optimal low-rank approximation—to enhance the 1) initialization, 2) structure, and 3) optimization of LoRA.
+L72: First, traditional LoRA initializes one matrix randomly and the other with zeros, which may not effectively leverage the structure of the pretrained weights $W_{0}$. SVD provides a principled approach to initialization by decomposing the original weight matrix.
+L73: PiSSA (Principal Singular Value Adaptation) (cite37†Meng et al., 2024 ) and LoRA-Null (cite38†Tang et al., 2025 ) utilize this by initializing the LoRA adapters with the principal components (i.e., those associated with the largest singular values) of the pretrained weights. This strategy aims to capture the most salient information from the base model, often leading to faster convergence.
+L74: Furthermore, approaches like MiLoRA (Minor Low-Rank Adaptation) (cite39†Zhang et al., 2024 ) suggest focusing adaptation on the minor smallest singular values/components, arguing that the principal components already capture essential knowledge. SVD-informed initialization strategies have also been extended to more complex architectures; e.g., GOAT (cite40†Fan et al., 2025 ) introduces an SVD-structured Mixture-of-Experts framework where different experts are initialized with distinct SVD segments.
+L75: Second, SVD has also been integrated directly into the LoRA structure to achieve extreme parameter efficiency or inspire novel architectures. LoRA-XS (cite41†Balazy et al., 2024 ) achieves drastic parameter reduction by leveraging the SVD of the original weight matrix to create frozen low-rank matrices (U and V). A very small, trainable matrix is then inserted between them, significantly reducing the number of trainable parameters by only training the interaction between the frozen singular vectors.
+L76: Finally, SVD provides a mathematical basis for analyzing and optimizing rank allocation dynamically. AdaLoRA (cite29†Zhang et al., 2023 ) directly addresses this by parameterizing the low-rank updates in an SVD form. It iteratively estimates the importance of weight updates based on an importance score derived from an SVD-based parameterization of the weight updates, and then prunes the least significant ones.
+L77: This dynamically optimizes the rank distribution across the model, allocating more capacity to critical layers while reducing redundancy in others. While AdaLoRA addresses the same fundamental problem as our work, the sub-optimality of a uniform, prespecified rank allocation across all layers and modules, it introduces extra complexity into the training loop; it requires importance scoring and budget scheduling.
+L78: Moreover, by design it breaks the homogeneity of LoRA structures (cite42†Zhou et al., 2024 ) which might have detrimental impact on infrastructural simplicity of deployment and serving LoRA modules (cite26†Sheng et al., 2024 ). LoRA-Squeeze offers a simple, more flexible alternative without any training and serving overhead.
+L79: More generally, beyond the methods that rely directly on SVD, the number of module variants derived from the standard LoRA architecture, and again focusing on improved initialization, structure or optimization, is immense (cite43†Li et al., 2024 ; cite44†Liu et al., 2024 ; cite45†Kopiczko et al., 2024 ; cite46†Li et al., 2025 ; cite47†Wu et al., 2024 ; cite48†Tian et al., 2024 ; cite49†Yang et al., 2024 , among others).
+L80: Despite all the variants, the standard LoRA design still remains a dominant paradigm due to its architectural and serving simplicity. More sophisticated variants often imply intricate interventions into the training process (e.g., customized matrix decompositions as with LoRA-XS, VeRA or DoRA), or creation of customized large base models (e.g., residual models as with PiSSA and MiLoRA), or yield non-homogeneous LoRA-s across the base model incurring deployment and serving difficulties (AdaLoRA).
+L81: Therefore, for the variety of practical reasons including its wide adoption, in this work we deliberately focus on the setup which relies on the standard LoRA architecture, and where such modules are directly tied to standard LLM checkpoints. The extension of the LoRA-Squeeze principles to more sophisticated LoRA architectures is left for future research.
+L82: Within this setup, LoRA-Squeeze thus aims to (1) reduce trainable parameters of standard LoRA-s via in-tuning or post-tuning rank reduction, (2) initialize lower-rank LoRA-s with SVD of weights that originated from higher-rank LoRA training, and (3) optimize resource allocation offline or without any significant training overhead.
+L83: cite50†Image: Refer to caption Figure 1: LoRA-Squeeze after fine-tuning (Post-Squeeze). We fine-tune with a LoRA with a higher, ‘source’ LoRA rank $r_{src}$ and then transform it to a lower, ‘target’ LoRA rank $r_{tgt}$.
+L84: cite51†Image: Refer to caption Figure 2: LoRA-Squeeze during fine-tuning (In-Squeeze); we can gradually anneal the LoRA rank during fine-tuning by reconstructing the full delta $\Delta W$ from the current LoRA, decompose it to a lower-rank LoRA via Randomized SVD and continue fine-tuning with a lower-rank. It repeats the main Post-Squeeze steps (Figure cite35†1 ) multiple times during fine-tuning using a predetermined annealing scheme.
+L85: ## 3 Methodology
+L86: 
+L87: The core of LoRA-Squeeze is a transformation that leverages Randomized SVD to compress a fine-tuned LoRA module from a high source rank to a lower target rank, as illustrated in Figure cite35†1 .
+L88: Preliminaries I: LoRA as a Low-Rank Task Vector/Tensor Approximation. Let us assume a pretrained LLM parameterized by a set of weight matrices $\{W_{0,l}\}$, with $l=1,\ldots,L$, and $L$ is the number of LLM layers.^{1}^{1} 1 For notational simplicity, we will drop indexing over layers. After fully fine-tuning for a task $T$, each weight matrix $W_{0}$ is updated to a new state of weights $W_{T}$.
+L89: The change induced by the fine-tuning process can be captured by the task vector (or, more accurately, the task tensor), defined as the element-wise difference between the fine-tuned and pretrained weights (cite33†Ilharco et al., 2023 ): $\Delta W=W_{T}-W_{0}$.
+L90: The task tensor $\Delta W$ resides in the same high-dimensional space as the original weights and encapsulates the knowledge required to adapt the model for task $T$. LoRA is predicated on the empirical observation that this task vector $\Delta W$ typically has a low intrinsic rank (cite25†Hu et al., 2022 ; cite52†Aghajanyan et al., 2021 ). Consequently, instead of learning the full dense matrix $\Delta W$, LoRA approximates it with a low-rank factorization.
+L91: Thus, LoRA can be understood as a method for learning a parameter-efficient, low-rank approximation of the full-space task vector, where higher-rank approximations have more capacity, and can therefore fit a better approximation of the task vector.
+L92: Preliminaries II: Randomized SVD. The use of low-rank decomposition, particularly Singular Value Decomposition (SVD), for compressing neural networks has a long history (cite53†Denton et al., 2014 ). For any given matrix, truncated SVD provides the optimal low-rank approximation in the sense of minimizing the Frobenius norm of the difference, making it a principled choice for weight matrix compression.
+L93: To efficiently handle the potentially large dimensions of $\Delta W$ for large LLMs, we apply a rank-$r$ truncated Randomized SVD (RSVD) (cite36†Halko et al., 2011 ).^{2}^{2} 2 We refer the reader to this blog post for an informative overview of RSVD: cite54†https://gregorygundersen.com/blog/2019/01/17/randomized-svd/†gregorygundersen.com .
+L94: As the standard SVD, RSVD decomposition of some matrix $M\in\mathbb{R}^{m\times n}$ yields three matrices corresponding to the top $r$ singular components: $\text{RSVD}_{r}(M)\rightarrow U,\Sigma,V^{T}$. Here, $U\in\mathbb{R}^{m\times r}$ contains the top left singular vectors, $\Sigma\in\mathbb{R}^{r\times r}$ is a diagonal matrix of the top singular values, and $V^{T}\in\mathbb{R}^{r\times n}$ contains the top right singular vectors.
+L95: ### 3.1 LoRA-Squeeze
+L96: 
+L97: Algorithm 1 Randomized SVD for LoRA Creation
+L98: 
+L99: 0:  Input matrix $W\in\mathbb{R}^{m\times n}$, target rank $r$, over-sampling hyper-parameter $k_{o}$, number of power iterations $k_{q}$.
+L100: 
+L101: 0:  LoRA matrices $A\in\mathbb{R}^{m\times r}$ and $B\in\mathbb{R}^{r\times n}$ such that $W\approx AB$.
+L102: 
+L103: 1:  $r^{\prime}\leftarrow r+k_{o}$
+L104: 
+L105: 2:  Draw a random Gaussian matrix $\Omega\in\mathbb{R}^{n\times r^{\prime}}$
+L106: 
+L107: 3:  $Y\leftarrow W\Omega$
+L108: 
+L109: 4:  for $i=1\to k_{q}$ do
+L110: 5:   $Q,\_\leftarrow\text{qr\_decomposition}(Y)$
+L111: 
+L112: 6:   $Y^{*}\leftarrow W^{T}Q$
+L113: 
+L114: 7:   $Q^{*},\_\leftarrow\text{qr\_decomposition}(Y^{*})$
+L115: 
+L116: 8:   $Y\leftarrow WQ^{*}$
+L117: 
+L118: 9:  end for
+L119: 
+L120: 10:  $Q,\_\leftarrow\text{qr\_decomposition}(Y)$
+L121: 
+L122: 11:  $D\leftarrow Q^{T}W$
+L123: 
+L124: 12:  $\tilde{U},S,V^{T}\leftarrow\text{svd\_decomposition}(D)$
+L125: 
+L126: 13:  $U\leftarrow Q\tilde{U}$
+L127: 
+L128: 14:  $U_{r}\leftarrow U[:,1:r]$
+L129: 
+L130: 15:  $S_{r}\leftarrow S[1:r]$
+L131: 
+L132: 16:  $V_{r}^{T}\leftarrow V^{T}[1:r,:]$
+L133: 17:  $\Sigma_{r}^{1/2}\leftarrow\text{diag}(\sqrt{S_{r}})$
+L134: 
+L135: 18:  $A\leftarrow U_{r}\Sigma_{r}^{1/2}$
+L136: 
+L137: 19:  $B\leftarrow\Sigma_{r}^{1/2}V_{r}^{T}$
+L138: 
+L139: 20:  return $A,B$
+L140: 
+L141: Algorithm 2 Memory-Efficient LoRA-Squeeze
+L142: 
+L143: 0:  LoRA matrices $A_{src}\in\mathbb{R}^{m\times r_{src}}$, $B_{src}\in\mathbb{R}^{r_{src}\times n}$, target rank $r_{tgt}$
+L144: 
+L145: 0:  Pruned LoRA matrices $A_{tgt}\in\mathbb{R}^{m\times r_{tgt}}$, $B_{tgt}\in\mathbb{R}^{r_{tgt}\times n}$
+L146: 
+L147: 1:  Step 1: Orthogonalize bases
+L148: 2:  $Q_{A},R_{A}\leftarrow\text{qr\_decomposition}(A)$
+L149: 
+L150: 3:  $Q_{B},R_{B}\leftarrow\text{qr\_decomposition}(B^{\top})$
+L151: 
+L152: 4:  Step 2: Compute core interaction matrix
+L153: 
+L154: 5:  $M\leftarrow R_{A}R_{B}^{\top}$ $\triangleright$ Dense matrix of size $r_{src}\times r_{src}$
+L155: 
+L156: 6:  Step 3: Full SVD or RSVD
+L157: 
+L158: 7:  $U_{M},S_{M},V_{M}^{\top}\leftarrow\text{(r)svd\_decomposition}(M)$
+L159: 
+L160: 8:  Step 4: Truncate rank
+L161: 
+L162: 9:  $U_{r}\leftarrow U_{M}[:,1:r_{tgt}]$
+L163: 
+L164: 10:  $S_{r}\leftarrow S_{M}[1:r_{tgt}]$
+L165: 11:  $V_{r}^{T}\leftarrow V_{M}^{T}[1:r_{tgt},:]$
+L166: 
+L167: 12:  $\Sigma_{r}^{1/2}\leftarrow\text{diag}(\sqrt{S_{r}})$
+L168: 
+L169: 13:  Step 5: Reconstruct target-rank A and B
+L170: 
+L171: 14:  $A_{tgt}\leftarrow Q_{A}U_{r}\Sigma_{r}^{1/2}$
+L172: 
+L173: 15:  $B_{tgt}\leftarrow\Sigma_{r}^{1/2}V_{r}^{\top}Q_{B}^{\top}$
+L174: 
+L175: 16:  return $A_{tgt},B_{tgt}$
+L176: The main ‘building block’ of LoRA-Squeeze operates on a LoRA module that has already been (partially or fully) fine-tuned with a relatively high source rank, $r_{src}$, and transforms it into a new module with an arbitrary, typically lower, target rank, $r_{tgt}$. This process, illustrated in Figure cite35†1 , proceeds in three main steps:
+L177: Step 1: (Higher-Rank) Fine-Tuning: First, a standard LoRA fine-tuning process is executed for a given task, but with a source rank $r_{src}$ chosen to be larger than the anticipated final deployment rank. This step yields the trained LoRA matrices, $A_{src}\in\mathbb{R}^{m\times r_{src}}$ and $B_{src}\in\mathbb{R}^{r_{src}\times n}$.
+L178: Step 2: Full Task Vector Reconstruction: The high-rank LoRA matrices are multiplied to reconstruct the low-rank approximation of the task vector in the full parameter space. This results in the delta matrix $\Delta W_{src}=A_{src}\cdot B_{src}$. $\Delta W_{src}$ has the same dimensions as the original weight matrix $W_{0}$ but is constrained to have a rank of at most $r_{src}$.
+L179: Step 3: RSVD for LoRA Creation: Finally, the components from the RSVD applied to $\Delta W_{src}$ are used to construct the new, compressed LoRA matrices, $A_{tgt}$ and $B_{tgt}$, for the arbitrary target rank $r_{tgt}$. The full procedure is summarized in Alg.
+L180: cite55†1 , where Lines 1-13 depict the step-by-step formulation of RSVD; SVD in Line 12 defines standard, full SVD.^{3}^{3} 3 To balance the magnitudes of the two resulting matrices, the singular values are distributed between them (L18-19 of Alg cite55†1 ).
+L181: The resulting matrices, $A_{tgt}\in\mathbb{R}^{m\times r_{tgt}}$ and $B_{tgt}\in\mathbb{R}^{r_{tgt}\times n}$, form a new LoRA of rank $r_{tgt}$. From the task arithmetic perspective, they constitute a new $r_{tgt}$-rank approximation of the task vector.
+L182: Post-Squeeze and In-Squeeze. The process described above may be done only once and offline, after fine-tuning a LoRA with $r_{src}$: we refer to it as Post-Squeeze. However, it also possible to iteratively repeat it during fine-tuning, as a gradual rank annealing process. We refer to this variant as In-Squeeze, illustrated in Figure cite34†2 .
+L183: A special case of In-Squeeze, labeled Cont-Squeeze, continues fine-tuning at the final target rank, without any subsequent iterations (i.e., it does only a single iteration). Allowing additional fine-tuning after the rank reduction allows for recovering task performance when a lot of information gets discarded via RSVD decomposition (e.g., in cases when $r_{tgt}\ll r_{src}$).
+L184: Memory-Efficient LoRA-Squeeze. A major constraint of the proposed LoRA-Squeeze method lies in Step 2 of the procedure (see Figure cite35†1 ) which requires full task vector reconstruction. This effectively creates a set of parameters of the size of the original LLM, which can be memory-inefficient for large-scale LLMs.
+L185: We thus propose a memory-efficient variant of LoRA-Squeeze whose memory requirements are not bound by the full rank, but rather than on rank $r_{src}$, and can be used for Post-Squeeze, In-Squeeze, and Cont-Squeeze. It is summarized in Alg. cite56†2 .
+L186: The main idea is identifying the least-contributing dimensions without the need to reconstruct $\Delta W$ at the full rank. The matrix $M$ is valid for our purpose because QR decompositions of $A_{src}$ and $B_{src}$ matrices create orthogonal matrices $Q_{A}$ and $Q_{B}$ which only do rotation. They do not change the length (magnitude) or ‘importance’ of the vectors they multiply (which are placed in the $R$ matrices).
+L187: This means that the information about ‘how important a dimension is’ (the singular values) is preserved perfectly inside the smaller interaction matrix $M$. A formal derivation describing the relationship between the standard and memory-efficient LoRA-Squeeze is provided in Appendix cite19†D .
+L188: Memory-efficient LoRA-Squeeze does not require the full $m\times n$ $\Delta W$ interaction matrix on which Full or Randomized SVD operates, but it is based on a smaller $r_{src}\times r_{src}$ matrix (see line 5 of Alg. cite56†2 ) which gets decomposed by SVD. In consequence, this creates a smaller ‘$r_{src}$-bound’ rather than ‘$\{m,n\}$-bound’ memory footprint. Additional insights into (approximated) computational complexity of different compositions within LoRA-Squeeze are in Appendix cite20†E .
+L189: ## 4 Experimental Setup
+L190: We conduct a comprehensive set of experiments across multiple model sizes, task domains and tasks of varying complexity, as well as over various rank configurations. The experiments are centered around the Gemma 3 family of models (cite57†Team et al., 2025 ); the primary model for development and the majority of experiments is the instruction-tuned Gemma 3 4B IT variant.
+L191: We also conduct supplementary experiments with the smaller (text-only) Gemma 3 1B IT and the larger Gemma 3 12B IT variants.^{4}^{4} 4 Preliminary experiments on pretrained (PT) model variants such as Gemma 3 1B/4B/12B PT resulted in very similar findings.
+L192: Evaluation Tasks. For the majority of our empirical analysis, we rely on a suite of 13 standard scoring-based, text-based evaluation tasks. These tasks were selected for their diversity, simplicity of evaluation, as well as for covering a range of natural language understanding capabilities. We also experiment with 10 well-established vision-language (VL) QA tasks.
+L193: For all tasks, evaluation is run on the standard test splits where available, and on dev otherwise; Appendix cite18†C lists the tasks and the corresponding datasets.
+L194: ### 4.1 LoRA Fine-Tuning Protocols
+L195: 
+L196: Following a standard practice (cite58†Liu et al., 2023 ; cite59†Dai et al., 2023 ), in all experiments LoRA-s are applied exclusively to the weight matrices of the text-processing components of the Gemma 3 models. This means that for the multi-modal experiments, the vision encoder (SigLIP) (cite60†Zhai et al., 2023 ) and the multi-modal projection layers were kept frozen. The main baseline are LoRA-s trained directly at a target rank.
+L197: Rank Configurations. We trained baseline LoRA modules directly at a range of ranks: $r\in\{1,2,4,8,16,32,64,128\}$. For Post-Squeeze, we compressed them to various lower target ranks ($r_{tgt}$). For In-Squeeze, we also validated a range of source and target rank configurations.
+L198: Learning Rate Selection. For all direct LoRA fine-tuning experiments, we first determined the optimal learning rate for each LoRA rank and model size combination to ensure that our baseline comparisons were as strong as possible (cite31†Schulman and Lab, 2025 ). We used the Adafactor optimizer (cite61†Shazeer and Stern, 2018 ) with a linear warmup of 1000 steps and no subsequent learning rate decay. The optimal learning rate was selected via a grid search over the set {0.001, 0.003, 0.01, 0.03, 0.1}.
+L199: The finally selected learning rates are provided in Table cite62†2 in Appendix cite16†A . In another experiment, we also analyze how LoRA-Squeeze can be used to create strong lower-rank LoRA modules without running any hyperparameter sweeps for the target rank.
+L200: RSVD Configuration. Following standard practices (cite36†Halko et al., 2011 ), we set the number of oversampling dimensions $k_{o}=10$ and perform two subspace iterations $k_{q}=2$; see Alg. cite55†1 . These choices provide a strong trade-off between efficiency and approximation quality.^{5}^{5} 5 Given the stochastic nature of RSVD, we also ran it with multiple random seeds, but observed minimal variation in task performance.
+L201: In our preliminary experiments we also verified that resorting to cheap and efficient RSVD instead of full SVD yielded minimal, if any, degradation in performance for our set of tasks.^{6}^{6} 6 The computation cost of RSVD, even when used multiple times as in case of In-Squeeze, is negligible compared to the other components of LoRA fine-tuning, and RSVD can be run on CPU. The same RSVD config is used with the memory-efficient LoRA-Squeeze.
+L202: cite63†Image: Refer to caption (a) ANLI-r2
+L203: 
+L204: cite64†Image: Refer to caption (b) DROP
+L205: 
+L206: cite65†Image: Refer to caption (c) HellaSwag
+L207: Figure 3: Performance over 3 representative text-based tasks when we do hyperparameter search for the learning rate or LoRA-s only for the highest rank in the figures ($r_{src}=128$), and keep the same lr for direct fine-tuning at all the other (lower) ranks. A simple offline Post-Squeeze method can bypass the hyperparameter search and yield better-performing LoRA-s without any fine-tuning at the lower ranks.
+--------------------------------------------------------------------------------
+The emergence of numerical representationsin communicating artificial agents (https://arxiv.org/html/2602.10996v1)
+citeturn29132view1 [wordlim: 200] Crawled: yesterday; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.10996v1","lineno":null}); Total lines: 209
+--------------------------------------------------------------------------------
+1Introduction (https://arxiv.org/html/2602.10999v1)
+citeturn29132view2 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.10999v1","lineno":null}); Total lines: 453
+--------------------------------------------------------------------------------
+1Introduction (https://arxiv.org/html/2602.11008v1)
+citeturn29132view3 [wordlim: 200] Crawled: 2 days ago; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.11008v1","lineno":null}); Total lines: 666
+

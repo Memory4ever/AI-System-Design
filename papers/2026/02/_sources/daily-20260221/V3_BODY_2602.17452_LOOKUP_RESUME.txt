@@ -1,0 +1,65 @@
+4.1 Prefix-Suffix Decomposition of Large Lookup Tables
+A naive lookup table for operations on two 64-bit inputs would require 21282^{128} entries, which is infeasible. Jolt [3] exploits the observation that many operations can be evaluated chunk-by-chunk: the result on the full input can be expressed as a function of results on small input segments.
+Concretely, the input bits are partitioned into CC segments
+x=(x(1),…,x(C)),x=\bigl(x^{(1)},\ldots,x^{(C)}\bigr),
+each of width bb (e.g., C=8C=8 segments of b=8b=8 bits). For a table 𝒯\mathcal{T} admitting this decomposition, the multilinear extension factors as
+𝒯~​(x)=∑i∏j=1Csi,j​(x(j)),\widetilde{\mathcal{T}}(x)\;=\;\sum_{i}\prod_{j=1}^{C}s_{i,j}\!\bigl(x^{(j)}\bigr),
+(20)
+where each subtable function si,js_{i,j} operates on only bb bits, reducing the total table size from 2C​b2^{Cb} to O⁡(C⋅2b)O\!\left(C\cdot 2^{b}\right).
+For a detailed treatment of which operations admit this decomposition and the resulting prover complexity, see Appendix A of [15].
+Example: ReLU. For a ww-bit signed integer with most significant bit b0b_{0}, the ReLU function ReLU​(x)=max⁡(0,x)\text{ReLU}(x)=\max(0,x) is entirely determined by the sign bit:
+ReLU​(x)=(1−b0)⋅x.\text{ReLU}(x)=(1-b_{0})\cdot x.
+Split the input into high bits xhix_{\text{hi}} (containing b0b_{0}) and low bits xlox_{\text{lo}}, each of width w/2w/2. Since x=val⁡(xhi)⋅2w/2+val⁡(xlo)x=\mathrm{val}(x_{\text{hi}})\cdot 2^{w/2}+\mathrm{val}(x_{\text{lo}}), we can write:
+ReLU​(xhi,xlo)\displaystyle\text{ReLU}(x_{\text{hi}},x_{\text{lo}})
+=(1−b0)​(val⁡(xhi)⋅2w/2+val⁡(xlo))\displaystyle=(1-b_{0})\bigl(\mathrm{val}(x_{\text{hi}})\cdot 2^{w/2}+\mathrm{val}(x_{\text{lo}})\bigr)
+=(1−b0)⋅val⁡(xhi)⋅2w/2⏟pRelu​(xhi)⋅1⏟sOne​(xlo)+(1−b0)⏟pNotMSB​(xhi)⋅val⁡(xlo)⏟sRelu​(xlo)\displaystyle=\underbrace{(1-b_{0})\cdot\mathrm{val}(x_{\text{hi}})\cdot 2^{w/2}}_{p_{\text{Relu}}(x_{\text{hi}})}\cdot\underbrace{1}_{s_{\text{One}}(x_{\text{lo}})}\;+\;\underbrace{(1-b_{0})}_{p_{\text{NotMSB}}(x_{\text{hi}})}\cdot\underbrace{\mathrm{val}(x_{\text{lo}})}_{s_{\text{Relu}}(x_{\text{lo}})}
+The first term captures the high-order contribution (which vanishes for negative inputs), and the second passes through the low-order value gated by the sign indicator. Since this identity holds on all Boolean inputs, it extends to the multilinear extensions, giving the decomposition ReLU~​(r)=pRelu​(rhi)⋅sOne​(rlo)+pNotMSB​(rhi)⋅sRelu​(rlo)\widetilde{\text{ReLU}}(r)=p_{\text{Relu}}(r_{\text{hi}})\cdot s_{\text{One}}(r_{\text{lo}})+p_{\text{NotMSB}}(r_{\text{hi}})\cdot s_{\text{Relu}}(r_{\text{lo}}).
+4.2 Neural Teleportation for Lookup Table Compression
+Activation functions like erf (used in GELU) and tanh require lookup tables spanning the full input range, which increases the computational costs of both prover and verifier. To mitigate this, Jolt Atlas draws on the idea of neural teleportation introduced by TeleSparse [13], adapting it into a simplified form suited to the proving setting.
+TeleSparse defines a two-sided, per-neuron teleportation: for each neuron ii with activation σ\sigma, it applies a scalar λi>0\lambda_{i}>0, dividing the pre-activation input by λi\lambda_{i} and multiplying the output by a compensating factor, then rescaling the downstream weights accordingly. Because both the activation input and the subsequent weights are adjusted, the transform is lossless, i.e., the network computes the same function.
+In the proving setting of Jolt Atlas’ implementation, per-neuron weight rescaling would require re-committing to modified weight tensors and complicates the circuit. Jolt Atlas therefore uses a global, one-sided approximation: every pre-activation input to a selected activation is divided by a single factor τ>1\tau>1, with no compensating output multiplication and no weight rescaling. Concretely, the original computation y=σ⁡(x)y=\sigma(x) is replaced by y′=σ⁡(x/τ)y^{\prime}=\sigma(x/\tau), which is a lossy approximation (i.e., y′≠yy^{\prime}\neq y in general) but it is not significant in practice.
+The key observation is that saturating activations like erf and tanh\tanh spend most of their operating range in the flat regions where σ⁡(x)≈±1\sigma(x)\approx\pm 1. For any input already in the saturation region, σ⁡(x/τ)=σ⁡(x)\sigma(x/\tau)=\sigma(x), so the approximation is exact. Error is concentrated in the narrow linear region near the origin, where it is bounded and small relative to the output scale. In typical trained networks, the vast majority of pre-activation values fall in the saturation region, so the global one-sided transform introduces only minor distortion.
+With τ=4\tau=4, the effective input range shrinks by 4×4\times, from [−R,R][-R,R] to [−R/4,R/4][-R/4,R/4], and the lookup table is bounded by 2162^{16} entries (sufficient for 16-bit fixed-point activations). Empirical evaluation shows that τ=4\tau=4 introduces output differences of less than 55 units on a 128-scale fixed-point representation, acceptable for most inference tasks. The factor τ\tau can be tuned per-model to balance table size against accuracy.
+5 ONNX: The Bridge to Machine Learning
+ONNX (Open Neural Network Exchange) serves as the standardised interface between machine learning frameworks and Jolt Atlas’s verification system. This section describes ONNX’s role and how Jolt Atlas handles its computational model.
+5.1 Why ONNX
+ONNX provides a framework-agnostic representation of neural network computations. Models trained in PyTorch, TensorFlow, or JAX can be exported to ONNX format and verified by Jolt Atlas without modification to the training workflow.
+The ONNX format represents computations as directed acyclic graphs where:
+•
+Nodes represent operations (Add, MatMul, ReLU, etc.)
+•
+Edges represent tensors flowing between operations
+•
+Attributes parameterise operations (axis specifications, einsum patterns)
+•
+Initialisers store model weights and biases
+5.2 Operator Support
+ONNX defines over 180 operators across 19 domains. Jolt Atlas currently supports a subset focused on inference workloads:
+•
+Elementwise Arithmetic: Add, Sub, Mul, Div
+•
+Activations (via lookup tables): Relu, Sigmoid, Softmax, Tanh, Erf
+•
+Comparisons: Gte, Eq
+•
+Math Functions: Rsqrt (reciprocal square root)
+•
+Tensor Operations:
+–
+Shape manipulation: Reshape, Broadcast (automatic, NumPy semantics)
+–
+Data movement: Gather
+–
+Control flow: Select (conditional element selection)
+•
+Reduction Operations:
+–
+ReduceSum along arbitrary axes
+–
+ReduceMean (decomposed internally into ReduceSum + Div)
+•
+Tensor Contraction: Einsum (supports patterns like ‘‘mk,kn->mn’’ (matrix multiply), ‘‘bmk,bkn->bmn’’ (batched multiply), and attention patterns)
+5.3 From ONNX Graph to Proof
+The verification pipeline proceeds as follows:
+1.
+Graph parsing: The ONNX protobuf is parsed into an

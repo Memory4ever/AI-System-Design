@@ -1,0 +1,252 @@
+Anonymization-Enhanced Privacy Protection for Mobile GUI Agents: Available but Invisible (https://arxiv.org/html/2602.10139v1)
+citeturn28600view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.10139v1","lineno":289}); Total lines: 483
+L255: cite86†Image: Refer to caption Figure 3: Comparison of screenshots before and after anonymization. The left image shows the original screen before anonymization, while the right image illustrates the anonymized version. The text in black regions highlights enlarged excerpts of the magenta regions to illustrate the corresponding content.
+L256: #### 3.4.1 Deterministic placeholder generation
+L257: 
+L258: For each detected entity value $v$ of type $T$, the system generates a stable placeholder $P$ using a cryptographic-hash-based procedure to maintain session consistency and collision resistance:
+L259: 
+L260:  | $$P=T\#\operatorname{Truncate}\big(\operatorname{Base36}(\operatorname{SHA256}(v\,\|\,T)),\ 5\big),$$  |
+L261: where “$\|$” denotes string concatenation, $\operatorname{Base36}$ encodes the hash digest into Base36, and $\operatorname{Truncate}(\cdot,5)$ retains the leading 5 characters. Concatenating the type $T$ ensures identical raw strings used in different semantic roles map to distinct placeholders.
+L262: #### 3.4.2 Cross-modality consistency
+L263: 
+L264: This mechanism is designed to mitigate both Problem A.1 (missed or inconsistent PII detection) and Problem B (inconsistent placeholder assignment across contexts and modalities).
+L265: 
+L266: At the core of this mechanism is a local mapping table, which maintains the mapping from each real entity value to its anonymized placeholder. This ensures that all appearances of the same entity—across different modalities or locations—are consistently represented by the same placeholder.
+L267: The transformer consults this table and enforces a prioritized cross-modality alignment strategy to ensure consistent placeholder usage:
+L268: 
+L269:   * •
+L270: 
+L271: Instruction-derived mappings have top priority. After performing PII detection on the user instruction, all detected entities are immediately assigned anonymized placeholders and inserted into the local mapping table.
+L272: 
+L273:   * •
+L274: XML text attributes (e.g., text, hint, content-desc) are anonymized by first querying the mapping table. If an extracted entity value already exists in the table, the corresponding placeholder is reused; otherwise, a new placeholder is generated and added to the table.
+L275: 
+L276:   * •
+L277: OCR-extracted strings from screenshots are normalized and fuzzy-matched against entity values already registered in the mapping table. If a match is found, the corresponding placeholder is reused; otherwise, the string is treated as a new entity and handled by the same lookup-or-create mechanism.
+L278: This lookup-before-generation policy ensures that semantically identical entities appearing at different locations or in different modalities are always mapped to the same placeholder, thereby alleviating Problem B. Moreover, even if an entity is missed by the PII detector in one modality, it can still be replaced through matching with previously recorded values in the mapping table, which partially mitigates Problem A.1.
+L279: #### 3.4.3 OCR pipeline and fuzzy alignment
+L280: 
+L281: Screenshot processing uses an OCR [cite80†33 ] pipeline (text detection, recognition, decoding). Extracted OCR strings are chunked and fed to the detector. Because OCR output can be noisy, the system uses normalized Levenshtein distance to compute similarity between an OCR string $s_{2}$ and a registered entity value $s_{1}$ stored in the mapping table:
+L282: 
+L283:  | $$R(s_{1},s_{2})=1-\frac{\operatorname{Levenshtein}(s_{1},s_{2})}{\max(|s_{1}|,|s_{2}|)}.$$  |
+L284: If $R>\tau$ (we use $\tau=0.85$ in our implementation), $s_{2}$ is mapped to the placeholder associated with $s_{1}$. This fuzzy alignment reduces grounding failures caused by OCR errors.
+L285: The accuracy of the OCR model can influence the overall task success rate, as it directly affects the reliability of PII detection in screenshots. Since OCR is invoked at every step of the task execution, we recommend opting for a lightweight and faster OCR model to ensure efficiency and minimize latency. Nevertheless, the choice can be tailored to the specific hardware capabilities available, allowing for the selection of more advanced models when computational resources permit.
+L286: #### 3.4.4 Visual masking and placeholder rendering
+L287: 
+L288: Visual masking is implemented by drawing opaque overlays over sensitive bounding boxes and rendering the corresponding placeholder text within the masked region. The overlay color and text rendering are selected to preserve spatial cues for the VLM while preventing recovery of the underlying pixels. Text is scaled to fit the bounding box so the VLM can infer category and approximate value length without seeing raw data.
+L289: ### 3.5 Layer 3: Secure interaction proxy
+L290: 
+L291: The Secure Interaction Proxy mediates all agent-issued actions and is responsible for reverse mapping, coordinate resolution, and enforcement of execution policies.
+L292: Our command interface is built on the design of AndroidLab [cite87†34 ], which maps interactable UI elements from the XML hierarchy to numeric indices on screenshots. We extend and modify this design to support additional gesture types and flexible text handling. Every agent action (e.g., tap(num) or type(str)) is intercepted by the local proxy before execution. The proxy resolves and validates commands according to their parameter types and semantics:
+L293: 
+L294:   * •
+L295: For spatial actions such as tap, long_press, and swipe, the agent issues a numeric index (num) referring to an interactable UI element annotated on the screenshot. The proxy verifies that the index is within range, maps it to the corresponding bounding box extracted from the XML hierarchy, and converts it into concrete device coordinates (centroid) before execution.
+L296: 
+L297:   * •
+L298: For textual actions such as type, the parameter is always a string. This string may consist solely of anonymized placeholders, solely of natural language text, or a mixture of both. The proxy identifies and resolves all placeholders within the string to their corresponding raw values, while leaving any natural language content unchanged.
+L299: 
+L300:   * •
+L301: 
+L302: The proxy rejects commands if the element list is empty or the referenced index is out of range, preventing execution on stale or inconsistent UI states.
+L303: Importantly, only type parameters contain textual content that may include placeholders. All spatial and gesture-based commands operate purely on numeric indices and coordinates and therefore never include anonymization tags. ÍTable cite88†5 summarizes representative command types and their resolution logic, while Figure cite89†4 provides a visual example of how the ’Type’ command’s argument is resolved through placeholder mapping.
+L304: Table 5: Representative proxy resolution logic for common commands.
+L305: Action  | Agent form  | Proxy resolution
+L306: --- | --- | ---
+L307: Tap  | tap(num)  | validate index; map bbox centroid $(x,y)$; execute tap
+L308: Long press  | long_press(num)  | validate index; map bbox centroid; execute long press
+L309: Swipe  | swipe(num, dir, dist)  | validate index; map centroid; execute swipe$(dir,dist)$
+L310: Type  | type(str)  | identify and replace any placeholders within the string; insert resolved text
+L311: cite90†Image: Refer to caption Figure 4: Example of Type proxy resolution. The text in black regions highlights enlarged excerpts of the magenta regions to illustrate the corresponding content.
+L312: ### 3.6 Layer 4: Privacy Gatekeeper and secure local computation
+L313: Some tasks require operations on raw sensitive values (e.g., comparing two dates, validating a payment amount). Layer 4 provides a narrow, auditable local computation interface managed by a small local language model (SLM) that acts as a Privacy Gatekeeper. In our implementation, this SLM is powered by the Qwen3-8B causal language model [cite91†35 ], which supports both reasoning and instruction-following capabilities and can efficiently handle the necessary local computation steps.
+L314: When the cloud agent needs a local computation, it issues a structured request:
+L315: 
+L316:  | $$\texttt{cloud\_agent\_compute\_with\_tokens(tokens, instruction, reason)}.$$  |
+L317: 
+L318: The gatekeeper evaluates the request against three policy criteria:
+L319: 
+L320:   * •
+L321: 
+L322: Relevance: Is the computation necessary for the user’s stated goal?
+L323: 
+L324:   * •
+L325: 
+L326: Necessity: Can the computation be satisfied using the Virtual UI alone, or does it require raw values?
+L327: 
+L328:   * •
+L329: Minimization: Can the result be expressed as a bounded, non-revealing value (e.g., boolean, categorical label) rather than returning raw data?
+L330: 
+L331: Only when these checks pass does the SLM perform the computation on local raw values and return a minimal result (for example, True, "greater_than", or a categorical label). Raw values never leave the trusted boundary.
+L332: ### 3.7 Privacy governance and utility–privacy tradeoffs
+L333: 
+L334: The architecture achieves data minimization through layered defenses and a local gatekeeper. Table cite92†6 summarizes representative features, their privacy benefits, and impacts on agent utility.
+L335: Table 6: Selected features and tradeoffs (summary).
+L336: Feature  | Privacy benefit  | Utility impact
+L337: --- | --- | ---
+L338: Deterministic hashing  | Prevents trivial linkage  | Maintains entity identity across steps
+L339: Contextual whitelisting  | Avoids over-redaction  | Preserves UI affordances
+L340: Local secure computation  | Raw data never leaves device  | Enables comparisons/validations
+L341: Fuzzy matching  | Robustness to OCR noise  | Reduces grounding errors
+L342: ## 4 Experiment
+L343: 
+L344: ### 4.1 Experimental Setup
+L345: 
+L346: To evaluate the effectiveness of our Privacy Protection Layer in balancing privacy preservation and task utility for mobile agents, we conducted comprehensive experiments. All evaluations were performed within the AndroidLab framework [cite87†34 ], utilizing its default Android Virtual Device (AVD) setup on a Pixel 7 Pro emulator.
+L347: ##### Benchmarks and Tasks
+L348: We utilized two distinct benchmarks: the AndroidLab [cite87†34 ] benchmark and the PrivScreen benchmark provided by DualTAP [cite53†8 ]. These serve complementary purposes, assessing general-purpose mobile tasks and privacy-specific scenarios respectively. The AndroidLab benchmark consists of 138 tasks (Operation and Query types) gathered from nine apps.
+L349: It supports two agent modes: XML Mode, which uses a redesigned XML compression algorithm for text-only inputs, and SoM (Set-of-Mark) Mode, designed for multimodal models (LMMs) where clickable elements are assigned serial numbers. The PrivScreen benchmark is a dual-task QA-style dataset comprising over 500 real application screenshots augmented with 1000+ synthetic PII. It includes: (i) a privacy-focused QA to assess leakage, and (ii) a utility-focused QA to evaluate general functionality.
+L350: We applied our anonymization to these images and ran the standard evaluation scripts.
+L351: ##### Models and Baselines
+L352: For AndroidLab, we employed two cloud-based models: GPT-4o and Gemini-3-flash-preview. We compared their performance in both original (unprotected) and anonymized settings. For PrivScreen, we evaluated three multimodal models: Qwen2.5-VL-7B [cite50†6 ], GPT-5, and UI-TARS-7B [cite93†36 ]. Our method (Ours) is compared against several baselines from the DualTAP study: Original (undefended), AnyAttack [cite77†30 ], FOA-Attack [cite78†31 ], VIP [cite79†32 ], and DualTAP [cite53†8 ].
+L353: Note that the baseline results on PrivScreen are cited directly from the DualTAP paper.
+L354: ##### Metrics
+L355: On AndroidLab, we employ: Success Rate (SR), Sub-Goal Success Rate (Sub-SR), Reversed Redundancy Ratio (RRR) for efficiency, and Reasonable Operation Ratio (ROR) to measure screen-change effectiveness. SR is evaluated by human experts because the original automatic evaluation metric is overly strict, often underestimating actual task completion. In contrast, Sub-SR is still automatically evaluated. On PrivScreen, utility is measured by Accuracy (Acc).
+L356: Privacy leakage is assessed at the character level via Leakage Rate (LR), Match Score (MS), BLEU, and ROUGE-L. Semantic-level leakage is measured via BERTScore and Cosine Similarity (CS).
+L357: ##### Implementation Details
+L358: The Privacy Protection Layer is integrated into the AndroidLab pipeline at four points: prompt anonymization, XML anonymization, screenshot masking (using OCR and magenta-background overlays), and de-anonymization (token-to-real conversion) during local execution. For PII detection, we used EasyOCR [cite80†33 ] for text extraction and GLiNER (gliner-pii-large-v1.0 [cite71†24 ]) for Named Entity Recognition (threshold 0.5) with regex fallbacks.
+L359: Experiments were conducted on an NVIDIA GeForce RTX 4090 GPU, with the NER model occupying approximately 2800 MB of VRAM.
+L360: ### 4.2 Main Results
+L361: Table 7: AndroidLab benchmark
+L362: Agent Mode  | Model  | Protection  | SR $\uparrow$  | Sub-SR $\uparrow$  | RRR $\uparrow$  | ROR $\uparrow$
+L363: --- | --- | --- | --- | --- | --- | ---
+L364: SoM  | GPT-4o  | Original  | 48.55  | 52.23  | 80.71  | 86.69
+L365: Ours  | 49.28  | 53.26  | 81.26  | 86.80
+L366: Gemini-3-flash-preview  | Original  | 68.12  | 71.73  | 88.48  | 93.15
+L367: Ours  | 63.77  | 68.35  | 89.59  | 93.24
+L368: XML  | GPT-4o  | Original  | 45.65  | 48.78  | 102.16  | 90.72
+L369: Ours  | 42.34  | 46.12  | 103.35  | 91.54
+L370: Gemini-3-flash-preview  | Original  | 48.91  | 53.45  | 107.25  | 98.55
+L371: Ours  | 52.17  | 57.17  | 98.91  | 95.68
+L372: ##### Results on AndroidLab.
+L373: The main results on the AndroidLab benchmark are reported in Table cite94†7 . Overall, introducing our privacy protection layer leads to a small and controlled reduction in task success, while preserving the rationality and stability of agent behaviors. Under the SoM agent mode, applying our method slightly decreases the SR and Sub-SR for both backbone models. For GPT-4o, SR (human-evaluated) drops from 36.23% to 32.61%, while Sub-SR (automatically evaluated) shows a similar mild decrease.
+L374: However, the ROR remains stable (e.g., 86.69% to 86.80% for GPT-4o), indicating that our protection does not introduce irrational interactions. Under XML mode, the impact is even milder; for Gemini-3-flash-preview, our method even improves SR from 34.78% to 39.86%, suggesting that anonymization may reduce distractions and help the agent focus on task-relevant structures.
+L375: Table 8: PrivScreen benchmark
+--------------------------------------------------------------------------------
+Anonymization-Enhanced Privacy Protection for Mobile GUI Agents: Available but Invisible (https://arxiv.org/html/2602.10139v1)
+citeturn28600view1 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.10139v1","lineno":354}); Total lines: 483
+L303: Importantly, only type parameters contain textual content that may include placeholders. All spatial and gesture-based commands operate purely on numeric indices and coordinates and therefore never include anonymization tags. ÍTable cite88†5 summarizes representative command types and their resolution logic, while Figure cite89†4 provides a visual example of how the ’Type’ command’s argument is resolved through placeholder mapping.
+L304: Table 5: Representative proxy resolution logic for common commands.
+L305: Action  | Agent form  | Proxy resolution
+L306: --- | --- | ---
+L307: Tap  | tap(num)  | validate index; map bbox centroid $(x,y)$; execute tap
+L308: Long press  | long_press(num)  | validate index; map bbox centroid; execute long press
+L309: Swipe  | swipe(num, dir, dist)  | validate index; map centroid; execute swipe$(dir,dist)$
+L310: Type  | type(str)  | identify and replace any placeholders within the string; insert resolved text
+L311: cite90†Image: Refer to caption Figure 4: Example of Type proxy resolution. The text in black regions highlights enlarged excerpts of the magenta regions to illustrate the corresponding content.
+L312: ### 3.6 Layer 4: Privacy Gatekeeper and secure local computation
+L313: Some tasks require operations on raw sensitive values (e.g., comparing two dates, validating a payment amount). Layer 4 provides a narrow, auditable local computation interface managed by a small local language model (SLM) that acts as a Privacy Gatekeeper. In our implementation, this SLM is powered by the Qwen3-8B causal language model [cite91†35 ], which supports both reasoning and instruction-following capabilities and can efficiently handle the necessary local computation steps.
+L314: When the cloud agent needs a local computation, it issues a structured request:
+L315: 
+L316:  | $$\texttt{cloud\_agent\_compute\_with\_tokens(tokens, instruction, reason)}.$$  |
+L317: 
+L318: The gatekeeper evaluates the request against three policy criteria:
+L319: 
+L320:   * •
+L321: 
+L322: Relevance: Is the computation necessary for the user’s stated goal?
+L323: 
+L324:   * •
+L325: 
+L326: Necessity: Can the computation be satisfied using the Virtual UI alone, or does it require raw values?
+L327: 
+L328:   * •
+L329: Minimization: Can the result be expressed as a bounded, non-revealing value (e.g., boolean, categorical label) rather than returning raw data?
+L330: 
+L331: Only when these checks pass does the SLM perform the computation on local raw values and return a minimal result (for example, True, "greater_than", or a categorical label). Raw values never leave the trusted boundary.
+L332: ### 3.7 Privacy governance and utility–privacy tradeoffs
+L333: 
+L334: The architecture achieves data minimization through layered defenses and a local gatekeeper. Table cite92†6 summarizes representative features, their privacy benefits, and impacts on agent utility.
+L335: Table 6: Selected features and tradeoffs (summary).
+L336: Feature  | Privacy benefit  | Utility impact
+L337: --- | --- | ---
+L338: Deterministic hashing  | Prevents trivial linkage  | Maintains entity identity across steps
+L339: Contextual whitelisting  | Avoids over-redaction  | Preserves UI affordances
+L340: Local secure computation  | Raw data never leaves device  | Enables comparisons/validations
+L341: Fuzzy matching  | Robustness to OCR noise  | Reduces grounding errors
+L342: ## 4 Experiment
+L343: 
+L344: ### 4.1 Experimental Setup
+L345: 
+L346: To evaluate the effectiveness of our Privacy Protection Layer in balancing privacy preservation and task utility for mobile agents, we conducted comprehensive experiments. All evaluations were performed within the AndroidLab framework [cite87†34 ], utilizing its default Android Virtual Device (AVD) setup on a Pixel 7 Pro emulator.
+L347: ##### Benchmarks and Tasks
+L348: We utilized two distinct benchmarks: the AndroidLab [cite87†34 ] benchmark and the PrivScreen benchmark provided by DualTAP [cite53†8 ]. These serve complementary purposes, assessing general-purpose mobile tasks and privacy-specific scenarios respectively. The AndroidLab benchmark consists of 138 tasks (Operation and Query types) gathered from nine apps.
+L349: It supports two agent modes: XML Mode, which uses a redesigned XML compression algorithm for text-only inputs, and SoM (Set-of-Mark) Mode, designed for multimodal models (LMMs) where clickable elements are assigned serial numbers. The PrivScreen benchmark is a dual-task QA-style dataset comprising over 500 real application screenshots augmented with 1000+ synthetic PII. It includes: (i) a privacy-focused QA to assess leakage, and (ii) a utility-focused QA to evaluate general functionality.
+L350: We applied our anonymization to these images and ran the standard evaluation scripts.
+L351: ##### Models and Baselines
+L352: For AndroidLab, we employed two cloud-based models: GPT-4o and Gemini-3-flash-preview. We compared their performance in both original (unprotected) and anonymized settings. For PrivScreen, we evaluated three multimodal models: Qwen2.5-VL-7B [cite50†6 ], GPT-5, and UI-TARS-7B [cite93†36 ]. Our method (Ours) is compared against several baselines from the DualTAP study: Original (undefended), AnyAttack [cite77†30 ], FOA-Attack [cite78†31 ], VIP [cite79†32 ], and DualTAP [cite53†8 ].
+L353: Note that the baseline results on PrivScreen are cited directly from the DualTAP paper.
+L354: ##### Metrics
+L355: On AndroidLab, we employ: Success Rate (SR), Sub-Goal Success Rate (Sub-SR), Reversed Redundancy Ratio (RRR) for efficiency, and Reasonable Operation Ratio (ROR) to measure screen-change effectiveness. SR is evaluated by human experts because the original automatic evaluation metric is overly strict, often underestimating actual task completion. In contrast, Sub-SR is still automatically evaluated. On PrivScreen, utility is measured by Accuracy (Acc).
+L356: Privacy leakage is assessed at the character level via Leakage Rate (LR), Match Score (MS), BLEU, and ROUGE-L. Semantic-level leakage is measured via BERTScore and Cosine Similarity (CS).
+L357: ##### Implementation Details
+L358: The Privacy Protection Layer is integrated into the AndroidLab pipeline at four points: prompt anonymization, XML anonymization, screenshot masking (using OCR and magenta-background overlays), and de-anonymization (token-to-real conversion) during local execution. For PII detection, we used EasyOCR [cite80†33 ] for text extraction and GLiNER (gliner-pii-large-v1.0 [cite71†24 ]) for Named Entity Recognition (threshold 0.5) with regex fallbacks.
+L359: Experiments were conducted on an NVIDIA GeForce RTX 4090 GPU, with the NER model occupying approximately 2800 MB of VRAM.
+L360: ### 4.2 Main Results
+L361: Table 7: AndroidLab benchmark
+L362: Agent Mode  | Model  | Protection  | SR $\uparrow$  | Sub-SR $\uparrow$  | RRR $\uparrow$  | ROR $\uparrow$
+L363: --- | --- | --- | --- | --- | --- | ---
+L364: SoM  | GPT-4o  | Original  | 48.55  | 52.23  | 80.71  | 86.69
+L365: Ours  | 49.28  | 53.26  | 81.26  | 86.80
+L366: Gemini-3-flash-preview  | Original  | 68.12  | 71.73  | 88.48  | 93.15
+L367: Ours  | 63.77  | 68.35  | 89.59  | 93.24
+L368: XML  | GPT-4o  | Original  | 45.65  | 48.78  | 102.16  | 90.72
+L369: Ours  | 42.34  | 46.12  | 103.35  | 91.54
+L370: Gemini-3-flash-preview  | Original  | 48.91  | 53.45  | 107.25  | 98.55
+L371: Ours  | 52.17  | 57.17  | 98.91  | 95.68
+L372: ##### Results on AndroidLab.
+L373: The main results on the AndroidLab benchmark are reported in Table cite94†7 . Overall, introducing our privacy protection layer leads to a small and controlled reduction in task success, while preserving the rationality and stability of agent behaviors. Under the SoM agent mode, applying our method slightly decreases the SR and Sub-SR for both backbone models. For GPT-4o, SR (human-evaluated) drops from 36.23% to 32.61%, while Sub-SR (automatically evaluated) shows a similar mild decrease.
+L374: However, the ROR remains stable (e.g., 86.69% to 86.80% for GPT-4o), indicating that our protection does not introduce irrational interactions. Under XML mode, the impact is even milder; for Gemini-3-flash-preview, our method even improves SR from 34.78% to 39.86%, suggesting that anonymization may reduce distractions and help the agent focus on task-relevant structures.
+L375: Table 8: PrivScreen benchmark
+L376: Model  | Protection Method  | Acc $\uparrow$  | LR $\downarrow$  | MS $\downarrow$  | BertScore $\downarrow$  | CS $\downarrow$  | BLEU $\downarrow$  | ROUGE-L $\downarrow$
+L377: --- | --- | --- | --- | --- | --- | --- | --- | ---
+L378: Qwen2.5-VL-7B  | Original  | 89.00  | 97.14  | 96.99  | 0.8675  | 0.9011  | 0.7830  | 0.8991
+L379: AnyAttack  | 70.00  | 95.24  | 91.86  | 0.6721  | 0.8705  | 0.5164  | 0.7317
+L380: FOA-Attack  | 73.00  | 83.81  | 82.84  | 0.6307  | 0.8150  | 0.5343  | 0.7309
+L381: VIP  | 81.00  | 94.76  | 92.67  | 0.7556  | 0.8960  | 0.5932  | 0.7856
+L382: DualTAP  | 88.00  | 32.86  | 38.82  | 0.1998  | 0.4202  | 0.0908  | 0.1660
+L383:  | Ours  | 89.00  | 19.52  | 30.69  | 0.1411  | 0.3966  | 0.1496  | 0.1832
+L384: GPT-5  | Original  | 93.00  | 97.14  | 97.15  | 0.9260  | 0.9627  | 0.8584  | 0.9246
+L385: AnyAttack  | 90.00  | 91.43  | 87.49  | 0.6757  | 0.8490  | 0.4978  | 0.7446
+L386: FOA-Attack  | 80.00  | 80.95  | 79.72  | 0.6293  | 0.7532  | 0.4967  | 0.7004
+L387: VIP  | 86.00  | 80.00  | 79.33  | 0.6662  | 0.7715  | 0.5284  | 0.6846
+L388: DualTAP  | 91.00  | 23.33  | 24.43  | 0.1589  | 0.2379  | 0.0941  | 0.1628
+L389: Ours  | 90.00  | 18.84  | 26.74  | 0.1495  | 0.3224  | 0.1587  | 0.1892
+L390: UI-TARS-7B  | Original  | 80.00  | 93.81  | 93.10  | 0.7846  | 0.9079  | 0.6721  | 0.8363
+L391: AnyAttack  | 76.00  | 81.43  | 80.11  | 0.5533  | 0.7615  | 0.3748  | 0.6057
+L392: FOA-Attack  | 64.00  | 76.67  | 75.60  | 0.5349  | 0.7187  | 0.4229  | 0.6178
+L393: VIP  | 66.00  | 89.05  | 85.83  | 0.6739  | 0.8288  | 0.5232  | 0.7223
+L394: DualTAP  | 67.00  | 34.76  | 38.35  | 0.2278  | 0.4535  | 0.1139  | 0.2034
+L395:  | Ours  | 61.00  | 18.10  | 29.15  | 0.1251  | 0.3695  | 0.1029  | 0.1552
+L396: ##### Results on PrivScreen.
+L397: Table cite95†8 presents the results on the PrivScreen benchmark. Our method consistently achieves the strongest privacy protection across all models. For Qwen2.5-VL-7B, our method maintains the same task accuracy (89.00%) while dramatically reducing the LR from 97.14% to 19.52% and MS from 96.99% to 30.69%. For GPT-5, we preserve high utility (90.00% vs. 93.00%) while reducing BertScore from 0.9260 to 0.1495.
+L398: Compared to existing defenses such as AnyAttack or DualTAP, our method consistently achieves the lowest leakage-related metrics while maintaining competitive accuracy.
+L399: ### 4.3 Overhead and PII Analysis
+L400: 
+L401: We evaluate both the computational overhead and the effectiveness of our anonymization framework in handling sensitive information.
+L402: Table 9: Average inference time of the privacy protection layer. We report the average per-image latency for each component. OCR (EasyOCR) is executed on CPU, while NER (GLiNER) is executed on an NVIDIA GeForce RTX 4090 GPU.
+L403: Processing Step  | Average Time per Image (seconds)
+L404: --- | ---
+L405: OCR (EasyOCR)  | 0.838
+L406: NER (GLiNER)  | 0.663
+L407: Total Time  | 1.770
+L408: Table 10: Percentage of content detected as PII by our anonymization framework on the AndroidLab benchmark. Each value represents the ratio between the length of content identified as PII and the total input length for each task type.
+L409: Task Type  | Percentage of content identified as PII
+L410: --- | ---
+L411: Task description  | 3.49%
+L412: Image  | 4.38%
+L413: XML  | 0.42%
+L414: ##### Computational Overhead.
+L415: Table cite96†9 reports the average inference time per image for each component of the privacy protection layer. The OCR module (EasyOCR) takes 0.838 seconds on CPU, while the NER module (GLiNER) takes 0.663 seconds on an NVIDIA GeForce RTX 4090 GPU. The total additional latency introduced by the privacy protection layer is approximately 1.77 seconds per image.
+L416: This overhead is moderate and acceptable in the context of mobile GUI automation, where tasks involve relatively long interaction sequences and are typically not latency-critical.
+L417: ##### Proportion of Content Identified as PII.
+L418: We further analyze the fraction of input content flagged as PII by our anonymization framework. Table cite97†10 reports the percentage of content length detected as PII for different task types in the AndroidLab benchmark. As shown, only a small portion of the total input is considered sensitive: 3.49% for task descriptions, 4.38% for images, and 0.42% for XML inputs.
+L419: This indicates that the framework selectively targets sensitive information without significantly modifying the majority of the input content.
+L420: ## 5 Conclusion
+L421: In this work, we presented a novel anonymization-based privacy protection framework for mobile GUI agents that enforces the principle of making sensitive information available but invisible. Our framework enables agents to leverage sensitive data for task execution without directly observing raw values, through deterministic, type-preserving placeholders, a secure interaction proxy, and a local Privacy Gatekeeper.
+L422: It consists of four coordinated components: (i) a PII Detector that achieves high-recall semantic identification of sensitive entities via a hybrid strategy combining label-guided zero-shot NER with regex-based fallback; (ii) a UI Transformer that performs deterministic pseudonymization and Virtual UI synthesis while preserving layout and interaction affordances; (iii) a Secure Interaction Proxy that intercepts, sanitizes, and reverse-maps agent commands; and (iv) a local Privacy Gatekeeper that executes policy-driven computations over raw values and returns only non-sensitive results.
+L423: A key conceptual contribution of this work is the distinction between data usage and data understanding. We characterize usage as scenarios in which replacing a sensitive value alters only the input content without affecting the agent’s control logic, whereas understanding refers to cases where the specific semantic content is essential for decision-making.
+L424: By combining anonymization with local semantic augmentation, our framework effectively supports both categories while maintaining strong privacy guarantees. Importantly, the layered design ensures cross-modality and temporal consistency in PII detection and placeholder assignment, which is critical for reliable multi-step GUI agent execution in dynamic mobile environments.
+L425: Extensive experiments on the AndroidLab and PrivScreen benchmarks demonstrate that our approach consistently achieves the lowest observed privacy leakage across multiple models, while incurring only modest utility degradation. These results indicate a strong and favorable privacy–utility trade-off compared to existing methods, validating the practicality of our framework for real-world mobile GUI agent scenarios.
+L426: ## 6 Discussion
+L427: Beyond its technical implementation, this work highlights fundamental limitations in current GUI agent architectures. The prevailing reliance on raw visual screen content reflects a pragmatic but structurally constrained design choice, stemming from the absence of native, LLM-friendly interaction protocols (e.g., Tool Calling or Model Context Protocol) within mobile operating systems and third-party applications.
+

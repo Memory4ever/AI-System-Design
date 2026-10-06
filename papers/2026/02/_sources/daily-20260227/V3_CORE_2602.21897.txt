@@ -1,0 +1,1694 @@
+A Task-based Data-flow Methodology for Programming Heterogeneous Systems with Multiple Accelerator APIs©2026. This manuscript version is made available under the CC BY-NC-ND 4.0 license https://creativecommons.org/licenses/by-nc-nd/4.0/
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Background
+2.1
+Vendor APIs and libraries
+2.2
+Portable APIs and libraries
+2.3
+OmpSs-2 and OpenMP task-based data-flow model
+2.4
+Task-aware libraries
+2.5
+GPT-2 pre-training
+2.5.1
+GPT-2 fork-join parallelisation
+2.5.2
+GPT-2 task parallelization
+2.6
+HPCCG benchmark
+3
+Related work
+3.1
+Automatic data management and directory/cache mechanisms
+3.2
+Portable programming models
+3.3
+Interoperability across programming models
+4
+Task-aware libraries for heterogeneous computing
+4.1
+Triton
+4.2
+OpenMP offload
+4.3
+SYCL
+5
+Experimental evaluation
+5.1
+HPC systems and code setup
+5.2
+GPU evaluation
+5.3
+Multi-core evaluation
+HPCCG fork-join execution
+HPCCG task-based execution
+GPT-2 task-based execution
+6
+Conclusions and future work
+References
+License: CC BY-NC-ND 4.0
+arXiv:2602.21897v1 [cs.DC] 25 Feb 2026
+A Task-based Data-flow Methodology for Programming Heterogeneous Systems with Multiple Accelerator APIs
+Note:
+©2026. This manuscript version is made available under the CC BY-NC-ND 4.0 license
+https://creativecommons.org/licenses/by-nc-nd/4.0/
+Journal:
+Future Generation Computer Systems
+Aleix Boné
+Email:
+aleix.boneribo@bsc.es
+Affiliation:
+Barcelona Supercomputing Center (BSC), Pl. Eusebi Güell
+1-3
+, Barcelona, 08034, Cataluña, Spain
+Corresponding author:
+Corresponding author
+Alejandro Aguirre
+Email:
+alejandro.aguirre@bsc.es
+Affiliation:
+Barcelona Supercomputing Center (BSC), Pl. Eusebi Güell
+1-3
+, Barcelona, 08034, Cataluña, Spain
+Corresponding author:
+Corresponding author
+David Álvarez
+Email:
+david.alvarez@bsc.es
+Affiliation:
+Barcelona Supercomputing Center (BSC), Pl. Eusebi Güell
+1-3
+, Barcelona, 08034, Cataluña, Spain
+Pedro J. Martinez-Ferrer
+Email:
+pedro.martinez.ferrer@upc.edu
+Affiliation:
+Barcelona Supercomputing Center (BSC), Pl. Eusebi Güell
+1-3
+, Barcelona, 08034, Cataluña, Spain
+Affiliation:
+Departament d’Arquitectura
+de Computadors (DAC), Universitat Politècnica de Catalunya -
+BarcelonaTech (UPC),
+Campus Nord, Edif. D6, C. Jordi Girona
+31
+, Barcelona, 08034, Cataluña, Spain
+Vicenç Beltran
+Email:
+vbeltran@bsc.es
+Affiliation:
+Barcelona Supercomputing Center (BSC), Pl. Eusebi Güell
+1-3
+, Barcelona, 08034, Cataluña, Spain
+Abstract
+Heterogeneous nodes that combine multi-core CPUs with diverse accelerators are rapidly becoming the norm in both high-performance computing (HPC) and AI infrastructures. Exploiting these platforms, however, requires orchestrating several low-level accelerator APIs —CUDA, SYCL, Triton, vendor math libraries, and more— each introducing its own abstractions, execution semantics, and synchronization mechanisms. Combining them within a single application is therefore error-prone and labor-intensive. We propose reusing a task-based data-flow methodology together with task-aware APIs (TA-libs) to overcome these limitations and facilitate the seamless integration of multiple accelerator programming models, while still leveraging the best-in-class kernels offered by each API.
+Applications are expressed as a directed acyclic graph (DAG) of host tasks and device kernels managed by an OpenMP/OmpSs-2 runtime. We introduce task-aware CUDA (TACUDA) and task-aware SYCL (TASYCL), which elevate individual accelerator invocations to first-class tasks. When multiple native runtimes coexist on the same multi-core CPU, they contend for threads, leading to oversubscription and performance variability. To address this, we unify their thread management under the nOS-V tasking and threading library, to which we contribute a new port of the POCL SYCL runtime.
+The methodology is evaluated on a multi-core server and a GPU-accelerated node using two contrasting workloads: the GPT-2 pre-training phase, representative of modern AI pipelines, and the HPCCG conjugate-gradient benchmark, representative of traditional HPC. From a performance standpoint, monolithic-kernel and fork-join executions are comparable to a coarse-grained task-based formulation on both GPU-accelerated and multi-core systems. On the latter, unifying all runtimes through nOS-V mitigates interference and delivers performance on par with using a single runtime in isolation.
+These results demonstrate that task-aware libraries, coupled with the nOS-V library, enable a single application to harness multiple accelerator programming models transparently and efficiently. The proposed methodology is immediately applicable to current heterogeneous nodes and is readily extensible to future systems that integrate even richer combinations of CPUs, GPUs, FPGAs, and AI accelerators.
+Keywords:
+heterogeneous computing , task-based programming , data-flow execution , accelerator APIs , CUDA , SYCL , Triton , OpenMP offload , task-aware libraries , runtime interoperability , nOS-V
+1
+Introduction
+Traditionally, early HPC systems have relied on single-core processors with steadily increasing clock frequencies to improve performance; however, as frequency scaling became limited by power consumption and thermal constraints, multi-core architectures emerged as the new performance paradigm. Further advancements have led to heterogeneous systems incorporating specialized accelerators, notably GPUs, offering significantly higher efficiency for specific computational tasks at the cost of increased programming complexity and reduced flexibility. Recently, the rapid evolution of high-performance computing (HPC) and artificial intelligence (AI) workloads
+[
+1
+,
+2
+]
+has significantly impacted the hardware and software landscapes, imposing complex demands on parallel programming models.
+The OpenMP
+[
+3
+]
+application programming interface was originally designed to exploit multi-core architectures by annotating sequential loops using a fork-join execution model. OpenMP has evolved over time incorporating task parallelism and data-flow execution
+[
+4
+,
+5
+]
+to better manage irregular and unbalanced computations on multi-core platforms.
+The introduction of CUDA
+[
+6
+]
+in 2007 marked a significant milestone by effectively harnessing GPU parallelism for general-purpose computing beyond graphics-specific domains. While highly successful and broadly adopted, CUDA remains primarily specialized in orchestrating massively parallel GPU kernels coordinated from host multi-core CPUs.
+The trend towards increasingly heterogeneous platforms has forced applications to shift from monolithic kernels, once favored due to expensive host-device data transfers, towards sophisticated multi-kernel applications with complex interaction
+[
+7
+]
+. Modern systems frequently integrate CPUs and accelerators interconnected through high-bandwidth, low-latency interfaces, often sharing virtual or even physical memory hierarchies
+[
+8
+,
+9
+]
+. This shift, combined with the growing intersection of HPC and AI workloads, demands precise orchestration and synchronization of multiple activities, including host tasks, device kernels, and I/O operations, which in turn requires the combination of multiple APIs within the same application.
+Numerous programming models have emerged after CUDA to manage the complexities introduced by increasingly diverse accelerators. OpenCL
+[
+10
+]
+provides a vendor-neutral, low-level alternative compatible across various accelerators, which has been later complemented by SYCL
+[
+11
+]
+, a high-level and portable C++ standard supporting accelerated computing. Meanwhile, OpenACC
+[
+12
+]
+offers a simplified pathway towards accelerated computing by annotating existing sequential code, similar to the recent OpenMP offloading extensions. The rapid adoption of AI-specific workloads has also introduced specialized models like Triton
+[
+13
+]
+, optimized for data locality and reuse through tiled computations, supporting various backend devices including GPUs and multi-core CPUs.
+Despite these advancements, generating highly optimized kernels for sophisticated hardware remains a challenging task, typically addressed through vendor-specific, highly-tuned libraries: cuBLAS, cuSPARSE, cuDNN, oneMKL …This complexity is further amplified by contemporary HPC systems increasingly incorporating multiple accelerators, ranging from discrete GPUs to integrated AI accelerators. This trend is accelerating as systems evolve from configurations with a single accelerator type (typically a GPU) to more heterogeneous designs that include GPUs, FPGAs, and integrated tensor cores on multi-core CPUs. As a result, applications will increasingly require the coordinated use of multiple APIs —each targeting a different accelerator— to fully exploit the capabilities of modern and future systems.
+This integration presents significant challenges. First, combining multiple accelerator-specific APIs such as CUDA, ROCm
+[
+14
+]
+, SYCL, or Triton at the programming level is inherently difficult. Each API introduces its own abstractions, execution models, and synchronization primitives, which are often incompatible or conceptually misaligned. This complicates the coordination of data movement, execution ordering, and inter-operation across different devices. Second, these APIs are typically backed by runtime systems that assume exclusive control over their respective hardware resources. When multiple runtimes coexist on the same node, each trying to manage shared multi-core CPUs or accelerators independently, resource contention and suboptimal sharing can lead to performance degradation or unpredictable behavior.
+In this context, we introduce task-aware libraries, designed to seamlessly integrate multiples APIs with task-based programming models. Leveraging the powerful and flexible data-flow execution model provided by OpenMP and OmpSs-2
+[
+15
+]
+, applications are represented as directed acyclic graphs (DAGs), with each node representing either host tasks or accelerator kernels. This abstraction simplifies synchronization and orchestration across diverse accelerators and runtime environments. Kernels are programmed using the most appropriate paradigm: i) SYCL for portable acceleration, ii) Triton for optimized AI computations, iii) OpenMP target offload for incrementally porting sequential kernels, or iv) native vendor libraries like cuBLAS/cuSPARSE and oneMKL for performance-critical tasks. Meanwhile, the OmpSs-2 or OpenMP runtime automatically manages synchronization through DAG edges derived from data dependencies.
+This paper contributes to a unified methodology that enables the seamless integration of multiple programming models (including SYCL, Triton, and OpenMP offload) alongside optimized vendor libraries such as cuBLAS/cuSPARSE and oneMKL, within a single coherent application. Building upon our previous work on task-aware libraries for message-passing, such as
+TAMPI and TAGASPI
+[
+16
+]
+,
+we now introduce task-aware CUDA (TACUDA) and task-aware SYCL (TASYCL) to enable transparent and efficient integration of accelerator APIs with task-based programming models. These libraries allow CUDA and SYCL kernels to be embedded as tasks within a data-flow DAG, enabling the runtime to manage dependencies, synchronize execution, and orchestrate resources automatically. While our implementation focuses on these specific APIs, the underlying methodology is general and naturally extensible to other accelerator programming environments. This flexibility positions our approach as a portable and extensible solution for harnessing the growing diversity of accelerators in current and next-generation HPC systems.
+An additional challenge when combining multiple programming models within the same application is the interference between their respective runtime systems, particularly on the CPU side. OpenMP, OmpSs-2, or SYCL implementations like POCL runtimes typically assume full control over core allocation, thread scheduling, and task management, which can lead to contention, oversubscription, and unpredictable performance when co-executed. In this work, we analyze these runtime interferences and propose the nOS-V tasking and threading library to mitigate them. By unifying the underlying execution model, nOS-V enables coordinated scheduling while mitigating interferences between different runtimes. To this end, we leverage the existing NODES/OmpSs-2 and libompv/OpenMP runtimes, which are already ported to nOS-V, and additionally contribute a new port of the POCL runtime to nOS-V, enabling SYCL workloads to benefit from the same unified execution layer.
+We evaluate our approach on two hardware platforms: a multi-core CPU system and a GPU-accelerated system. On the multi-core platform, we compare a traditional fork-join execution against a task-based data-flow execution to assess the benefits of fine-grained dependency management. On the GPU-based platform, we compare a monolithic kernel execution with our proposed task-based data-flow approach that integrates diverse accelerator APIs. For both platforms, we use two representative workloads: the GPT-2 pre-training phase
+[
+19
+]
+, exemplifying an AI-centric application, and the high-performance conjugate gradient (HPCCG) benchmark
+[
+20
+]
+, representing a traditional HPC workload. These experiments demonstrate the feasibility and effectiveness of integrating multiple programming models and runtimes within a single application, while highlighting the advantages of task-based orchestration across heterogeneous architectures.
+The remainder of this paper is organized as follows. Section
+2
+provides background on task-based programming models, accelerator APIs, and runtime systems. Section
+3
+discusses related work on interoperability and task-aware execution in heterogeneous systems. Section
+4
+presents our proposed methodology and describes the design of task-aware libraries for integrating diverse accelerator APIs. Section
+5
+details our experimental evaluation using representative HPC and AI workloads. Finally, Section
+6
+concludes the paper and outlines directions for future work.
+2
+Background
+In this section, we begin by summarizing the main vendor-specific and portable APIs used to program modern heterogeneous systems, as well as the key libraries built on top of them. We then introduce task-based runtime systems, focusing on OmpSs-2 and OpenMP, and discuss the role of task-aware libraries in coordinating computation and data movement across CPUs and accelerators. Finally, we describe the two application benchmarks, GPT-2 pre-training and HPCCG and the parallelization strategies used in our study.
+2.1
+Vendor APIs and libraries
+Vendor-specific APIs provide low-level access to accelerators, typically comprising two main components: i) a runtime or driver API for managing devices, memory allocation, data transfers, and host-device synchronization; and ii) a kernel programming language for writing compute kernels that exploit the accelerator’s architectural features. In this work, we focus on APIs from the three main vendors (NVIDIA, AMD, and Intel) as representative examples. However, the proposed methodology is not restricted to these APIs and can be readily extended to support other accelerator-specific interfaces as well.
+NVIDIA’s CUDA provides both a runtime API for device management, memory handling, and kernel launches, as well as a lower-level driver API that offers fine-grained control. CUDA kernels are written in CUDA C++, an extension of C++ that introduces specialized constructs and keywords for expressing data-parallel computations, enabling efficient mapping of parallel algorithms onto the massively parallel architecture of NVIDIA GPUs. AMD’s ROCm exposes the HIP API, which is also C++-based and designed to facilitate portability between AMD and NVIDIA GPUs. HIP kernels and programming style closely resemble CUDA C++, enabling code migration with minimal changes. Intel’s Level Zero is a low-level interface intended for explicit control over Intel GPUs, providing fine-grained management of devices, memory, and command queues, and acting as the backend for higher-level abstractions such as SYCL. Although these APIs share similar concepts (e.g., streams in CUDA, command lists in HIP, and queues in Level Zero) they are not interoperable; for example, a CUDA stream cannot be directly used within a SYCL queue. This calls for careful coordination when integrating multiple APIs within the same application code.
+All major vendors also provide highly optimized libraries to accelerate common computational kernels. NVIDIA offers cuBLAS/cuSPARSE, cuDNN, and cuFFT for linear algebra, deep learning, and Fourier transforms, respectively. AMD provides rocBLAS and rocFFT, as well as HIP interfaces like hipBLAS and hipFFT that mirror their CUDA counterparts. Intel supplies oneMKL, a math library that presents a unified SYCL interface and internally dispatches to optimized backend implementations, including those from NVIDIA and AMD. While these libraries enable high performance standard operations, they are typically confined to their respective ecosystems, which limits interoperability in heterogeneous environments.
+2.2
+Portable APIs and libraries
+Portable APIs and libraries are designed to provide a unified programming interface across different hardware vendors and platforms, allowing developers to write applications that can target a wide range of devices with minimal code changes. The most widely adopted portable APIs include OpenCL, SYCL, OpenACC, OpenMP offload, and Triton, each with distinct approaches and design goals.
+OpenCL offers a low-level, C-based runtime and kernel programming model that supports a broad set of devices, from CPUs and GPUs to FPGAs, through a single API. SYCL builds on top of OpenCL and provides a modern C++ abstraction layer, supporting single-source programming where host and device codes coexist in the same file. SYCL’s concepts of queues, buffers, and kernel submission are closely aligned with those of CUDA and HIP, making it familiar to users of vendor-specific APIs while enabling portability across hardware from multiple vendors.
+In contrast, OpenACC and OpenMP offload provide a pragma-based approach for heterogeneous programming. Rather than writing explicit kernel functions and memory management code, developers annotate sequential code with directives (
+#pragma acc
+or
+#pragma omp target
+) to specify data movement, parallelism, and device execution. The compiler and runtime generate the necessary device code and manage host-device synchronization, greatly simplifying incremental porting and maintenance of existing applications.
+Triton takes a different approach, offering a Python-based domain-specific language for writing highly efficient GPU kernels, particularly for AI and deep learning workloads. While Triton generates device code that can run on different vendor accelerators, it does not provide a runtime API for host-device management; instead, it relies on the underlying vendor APIs (CUDA or ROCm) for memory management and synchronization.
+Several portable libraries have emerged to complement these APIs. For example, clBLAS and CLBlast provide portable linear algebra routines for OpenCL, while oneMKL offers SYCL-based interfaces that can dispatched to optimized vendor libraries. These libraries, together with the APIs, form the foundation for developing portable and efficient applications for modern heterogeneous systems.
+2.3
+OmpSs-2 and OpenMP task-based data-flow model
+The task-based data-flow model provides a flexible and expressive framework for developing parallel programs. In this approach, the computation is structured as a set of tasks, each representing a unit of work such as computation, data movement, or communication. Tasks specify their data dependencies (inputs, outputs, and input/output parameters) allowing the runtime system to represent the application as a directed acyclic graph (DAG). In this graph, nodes correspond to tasks and edges encode dependencies arising from data usage.
+Both OmpSs-2 and OpenMP support this model through task constructs and explicit dependency clauses. Programmers define tasks using pragmas or directives and annotate them with dependency information. At runtime, the system analyzes these dependencies, builds the DAG dynamically, and schedules tasks as soon as their input data is ready, enabling efficient overlap of computation, communication, and I/O. This allows for fine-grained parallelism and effective utilization of available resources, while abstracting away low-level thread management.
+This model can naturally capture a wide range of application patterns, from regular computations to irregular or data-driven workflows. Data-flow runtimes such as StarPU
+[
+21
+]
+, PaRSEC
+[
+22
+]
+, and OmpSs-2
+[
+15
+]
+extend this approach, supporting heterogeneous architectures and automatic resource management across CPUs, GPUs, and other accelerators. Expressing computation, communication, and I/O as a data-flow DAG allows programmers to easily manage complex interactions and maximize concurrency, making this model well-suited for modern heterogeneous systems.
+2.4
+Task-aware libraries
+Task-aware libraries (TA-libs) are designed to bridge the gap between high-performance APIs, including message-passing or offloading APIs, and task-based programming models. The key idea is to enable seamless and efficient integration of operations such as communication, I/O, or kernel offload within task-based runtimes like OmpSs-2 and OpenMP, while preserving correctness and maximizing concurrency.
+Representative TA-libs include TAMPI (task-aware MPI) and TAGASPI (task-aware GASPI)
+[
+16
+]
+. These libraries provide interfaces that allow blocking and non-blocking operations (MPI and GASPI communication calls) to be safely invoked within user-defined tasks. Internally, they leverage runtime support to pause and resume tasks, manage dependencies, and handle completion notifications. This enables overlapping computation and communication without deadlocks or unnecessary serialization, thus exposing more parallelism to the runtime scheduler.
+To ensure portability and extensibility, TA-libs can be integrated with multiple runtimes via the ALPI interface
+[
+17
+]
+. This allows OmpSs-2, OpenMP, and potentially other task-based systems to benefit from task-aware interfaces with minimal changes to user code or application logic.
+It is important to distinguish TA-libs from directory/cache (D/C) mechanisms implemented by advanced data-flow runtimes such as OmpSs-2, StarPU
+[
+21
+]
+, KAAPI
+[
+23
+]
+, and IRIS
+[
+24
+]
+, among others. D/C refers to the runtime’s ability to automatically and transparently manage data movement between host and devices based solely on the input and output annotations specified on tasks. This means that the user does not need to insert explicit API calls to perform data transfers; instead, the runtime analyzes task dependencies, determines the necessary data movement, and automatically ensures that the required data is available in the appropriate memory space (host or device) before executing a kernel or task. This transparency gives the runtime maximum flexibility to schedule tasks on different resources and can simplify programming, as the burden of managing memory coherence and transfers is removed from the user.
+On the other hand, task-aware libraries provide a more explicit programming model, giving developers fine-grained control over where and how tasks and operations are executed. By directly using the underlying accelerator or communication APIs, programmers can fully exploit hardware features and advanced API capabilities that may not be accessible through the generic D/C model. This approach can be particularly beneficial when applications require specialized synchronization, custom memory management, or advanced features not supported by transparent D/C mechanisms.
+In practice, task-aware libraries and D/C models are complementary: TA-libs can be used within D/C frameworks to extend support for complex APIs, blocking operations, or fine-tuned performance scenarios where explicit control is desirable. In this paper, we focus on the use of task-aware libraries as a practical and portable solution for integrating multiple accelerator APIs and communication libraries within task-based data-flow applications.
+2.5
+GPT-2 pre-training
+The GPT-2 model was originally presented in
+[
+25
+]
+where the authors demonstrated that as language models became larger,
+and were trained on vast amounts of datasets (e.g., WebText with over
+8 M documents and 40 GB of text), their ability to learn language
+processing tasks without the need of explicit supervision emerged
+naturally
+[
+26
+]
+. GPT-2 was built on top of its
+predecessor (i.e., GPT
+[
+27
+]
+) and both language
+models shared the popular Transformer architecture
+[
+28
+]
+.
+Input
++
+Positional
+Encoding
+Transformer
+Block 1
+Transformer
+Block 2
+Transformer
+Block
+L
+L
+Layernorm
+Linear
+Softmax
+Output
+Transformer Block Input
+Layernorm
+Multi-Head
+Masked Attention
++
+Layernorm
+Linear
+GELU
+Linear
++
+Transformer Block Output
+Multi-Head Attention Input
+Linear
+K
+Q
+V
+Matmul
+Linear
+Linear
+K
+Q
+V
+Matmul
+Linear
+Linear
+K
+Q
+V
+Matmul
+Linear
+Linear
+K
+Q
+V
+Matmul
+Linear
+Linear
+K
+Q
+V
+Matmul
+Softmax
+Matmul
+Linear
+h
+×
+h\times
+Masked Attention
+Multi-Head Attention Output
+Figure 1:
+Modified architecture of the GPT-2 model used in this work.
+The GPT-2 model used in this work is based on Andrej Karpathy’s
+open-source repository
+llm.c
+published on GitHub in
+2024
+[
+19
+]
+. The architecture of this model
+largely follows that of the aforementioned original
+works
+[
+29
+]
+with some minor modifications.
+Figure
+1
+shows the actual architecture used in this
+study, composed of about a dozen of kernels (encoder, LayerNorm, GELU,
+matmul …), with the following key differences:
+1.
+Dropout layers are removed.
+2.
+The second residual forward links to the output of the
+multi-head attention layer, instead of the one associated with the
+normalization layer.
+3.
+The model’s last layer is the Softmax function.
+4.
+The linear layers inside the multi-head attention mechanism
+are fused with matmul functions.
+We employ the largest version of GPT-2 consisting of 1558 M parameters
+that derive from 48 connected layers, 25 attention heads, and 1600
+hidden dimensional states. The vocabulary consists of 50,257 tokens
+and the maximum context length is 1024 tokens. We reutilize OpenAI’s
+GPT-2 weights (32-bit precision) publicly available at its Hugging
+Face repository
+[
+30
+]
+and continue the
+pre-training of GPT-2 over the TinyShakespeare
+dataset
+[
+31
+]
+composed of 305,260
+tokens. The AdamW optimization function employs the following
+parameters:
+α
+=
+10
+−
+4
+\alpha=10^{-4}
+,
+β
+1
+=
+0.9
+\beta_{1}=0.9
+,
+β
+2
+=
+0.999
+\beta_{2}=0.999
+,
+ϵ
+=
+10
+−
+8
+\epsilon=10^{-8}
+, and
+λ
+=
+0
+\lambda=0
+. Finally, we reduce the context length and batch size to 256 and 4 tokens, respectively, to ensure that the model fits within the 64GB of HBM2 memory available on a single NVIDIA H100 GPU.
+2.5.1
+GPT-2 fork-join parallelisation
+⬇
+const
+int
+o_start
+=
+slh.dims_starts[
+0
+];
+const
+int
+o_end
+=
+slh.dims_stops[
+0
+];
+if
+(dbias
+!=
+NULL
+)
+{
+#pragma
+omp
+parallel
+for
+for
+(
+int
+j
+=
+o_start;
+j
+<
+o_end;
+j
+++
+)
+{
+for
+(
+int
+b
+=
+0
+;
+b
+<
+B;
+b
+++
+)
+{
+const
+float
+*
+dout_b
+=
+dout
++
+b
+*
+T
+*
+OC;
+float
+wrk
+=
+0.0f
+;
+#pragma
+omp
+simd
+simdlen(SIMDLEN)
+\
+reduction(+:
+wrk)
+for
+(
+int
+t
+=
+0
+;
+t
+<
+T;
+t
+++
+)
+wrk
++=
+dout_b[j
++
+t
+*
+OC];
+dbias[j]
++=
+wrk;
+}
+}
+}
+#pragma
+omp
+parallel
+for
+for
+(
+int
+j
+=
+o_start;
+j
+<
+o_end;
+j
+++
+)
+{
+for
+(
+int
+k
+=
+0
+;
+k
+<
+B
+*
+T;
+k
+++
+)
+{
+const
+float
+wrk
+=
+dout[j
++
+k
+*
+OC];
+for
+(
+int
+i
+=
+0
+;
+i
+<
+C;
+i
+++
+)
+dweight[i
++
+j
+*
+C]
++=
+inp[i
++
+k
+*
+C]
+*
+wrk;
+}
+}
+Figure 2:
+Matmul kernel over bias and weights gradients during the
+backward pass parallelized with OpenMP adopting a fork-join
+strategy.
+It is worth noting that Karparthy’s original version of GPT-2 version
+serves an educational purpose and, therefore, is maintained simple and
+readable; consequently, its computational kernels may not offer the
+maximum performance. The source code in
+[
+19
+]
+is
+written in C and only comes with a handful of kernels parallelized
+with OpenMP
+parallel for
+loops: matmul, attention, and
+Softmax functions.
+We have extended the
+parallel for
+construct to every kernel
+and complemented it with the
+simd
+directives where necessary
+as shown in Code
+2
+corresponding to the
+matmul function. In the majority of kernels, our fork-join
+parallelization is carried out along both the batch and context
+dimensions by using the
+collapse
+clause over these two loops.
+The attention kernels can be further parallelized along both the
+attention head and head size dimensions.
+The matmul kernels found in the original source code become the
+computational bottleneck of the pre-training phase of GPT-2. For this
+reason, we have firstly separated the computation associated with the
+bias (see lines 3–16 of Code
+2
+) and,
+secondly, we have rewritten the remaining part (lines 17–24) in terms
+of a general matrix–matrix multiplication (GEMM). This refactoring
+not only simplifies and improves the readability of the original
+source code, but it also allows the compiler to apply further
+optimizations. Moreover, one can now replace these in-house kernels
+by calls to highly tuned GEMM functions from third-party BLAS
+libraries.
+2.5.2
+GPT-2 task parallelization
+⬇
+const
+int
+Vp_gran
+=
+Vp
+/
+OC_SPLIT;
+#pragma
+oss
+taskloop
+grainsize(1)
+\
+in({grads_acts_logits[b*T*Vp
++
+t*Vp],
+\
+b=0;B:B_GRAN,
+t=0;T:T_GRAN})
+\
+in({acts_lnf[b*T*C
++
+t*C],
+\
+b=0;B:B_GRAN,
+t=0;T:T_GRAN})
+\
+out(grads_wte[o*C;
+Vp_gran*C])
+for
+(
+int
+o
+=
+0
+;
+o
+<
+Vp;
+o
++=
+Vp_gran)
+{
+struct
+SliceHandler
+slh;
+slh.dims_starts[
+0
+]
+=
+o;
+slh.dims_stops[
+0
+]
+=
+MIN(o
++
+Vp_gran,
+Vp);
+matmul_params_backward(grads_wte,
+nullptr,
+grads_acts_logits,
+acts_lnf,
+slh);
+}
+}
+Figure 3:
+Call to the function containing the matmul kernel of
+Code
+2
+parallelized with OmpSs-2
+tasks.
+The declaration of both starting and ending task indexes along the
+output channel is shown at lines 1–2 of
+Code
+2
+. When using OmpSs-2 tasks, we split
+the kernel along this dimension and deactivate the pragma directives
+corresponding to the fork-join implementation described in the
+previous section.
+Code
+3
+illustrates the calls to the matmul kernel
+during the backward pass. After defining the granularity associated
+with the vocabulary dimension (i.e., output channel) at line 1, we
+generate the corresponding tasks with the aid of our slice handler
+structure
+slh
+. We require the use of multidependencies over
+the batch and context dimensions to ensure the correct execution of
+tasks since kernels are parallelised over these dimensions. We opt to
+fix the batch granularity to unity, that is
+B_GRAN=1
+(recall
+that the batch size is set to 4), and allow for different
+granularities across the context length and output channels adjusting
+the variables
+T_GRAN
+and
+OC_SPLIT
+, respectively.
+Our task implementation follows a true data-flow exempt of explicit or
+implicit barriers. Nevertheless, after a certain number of training
+iterations (e.g., 10), we do use
+taskwait
+clauses to perform
+the validation of the model and execute an inference test. Finally,
+we employ the
+taskiter
+construct published in an earlier
+work
+[
+33
+]
+on top of the training iterative loop
+to minimize overheads related to task creation, scheduling, and
+dependency management.
+2.6
+HPCCG benchmark
+The HPCCG application
+[
+34
+]
+is a simplification of the popular HPCG benchmark
+[
+35
+]
+used by the TOP500 supercomputer website. Both of them were developed within the Mantevo project
+[
+36
+]
+and employ the conjugate gradient (CG) iterative method to numerically solve a sparse symmetric linear system of equations
+[
+37
+]
+of the form
+𝐀
+⋅
+𝐱
+=
+𝐛
+{\bf A}\cdot{\bf x}={\bf b}
+, where
+𝐀
+{\bf A}
+and
+𝐛
+{\bf b}
+is the known sparse matrix and vector, respectively, and
+𝐱
+{\bf x}
+refers to the solution vector.
+𝐀
+{\bf A}
+is encoded in the compressed sparse row (CSR) matrix format and, in the case of the HPCCG used in this work, no preconditioning is applied to it. The most relevant computational kernels are: (i) the sparse–matrix vector multiplication (SpMV), (ii) the vector update (
+axpy
+and
+scale
+), and (iii) the dot product (
+dot
+). Finally, HPCCG supports shared-memory parallelism via OpenMP parallel for directives.
+In our previous work
+[
+38
+]
+we further developed HPCCG to provide task-based parallelism via OpenMP and OmpSs-2 directives. This new data-flow strategy, although requires slightly more effort from the programmer’s perspective, enables the overlapping of computation and communication phases of the algorithm thereby improving its performance. All the extensions we made to HPCCG code base are publicly available at Code Ocean
+[
+39
+]
+under the name HLAM (hybrid linear algebra methods). We refer the reader to this repository and the code snippets present in our published paper
+[
+38
+]
+describing the two aforementioned parallel implementations on multicore CPUs.
+3
+Related work
+Efficient programming of heterogeneous systems remains a challenging area that has motivated extensive research in programming models, runtime systems, and interoperability strategies. This section reviews key developments in task-aware APIs, automatic data management mechanisms, portability across platforms, and interoperability between different programming models. Our work builds upon these efforts by addressing the orchestration and combination of multiple programming models and APIs within unified task-based applications.
+3.1
+Automatic data management and directory/cache mechanisms
+Several task-based runtimes have introduced directory/cache (D/C) mechanisms to automate data movement between hosts and accelerators, aiming to improve programmability and performance. StarPU
+[
+21
+]
+and OmpSs-2
+[
+40
+]
+are prominent examples, providing unified runtimes that manage both data transfers and task scheduling in heterogeneous systems. KAAPI
+[
+23
+]
+and IRIS
+[
+24
+]
+offer similar solutions. These mechanisms allow runtimes to transparently handle data placement and movement based on task annotations. However, their transparency may limit their interoperability with external APIs, and can lock down users to the APIs natively supported by the runtime’s backend.
+3.2
+Portable programming models
+There is a substantial body of research on the trade-offs between portability and performance in programming models such as OpenCL
+[
+10
+]
+, SYCL
+[
+11
+]
+, OpenACC
+[
+12
+]
+, and OpenMP offload. These studies compare model productivity and efficiency across various architectures, including CPUs, GPUs, and specialized accelerators. For example, Memeti et al.
+[
+41
+]
+benchmarked OpenMP, OpenACC, OpenCL, and CUDA with respect to programming effort, performance, and energy use, showing that higher performance often comes at the cost of increased complexity. Reguly
+[
+42
+]
+examined SYCL’s performance portability on bandwidth-bound applications, demonstrating that achieving optimal results still requires tuning for each specific target. Our approach is distinct in that we address how both portable and vendor-specific APIs can be combined and orchestrated effectively, rather than evaluating them in isolation.
+3.3
+Interoperability across programming models
+Interoperability between different programming models is a growing topic of interest. For example, Korakitis et al.
+[
+43
+]
+proposed an interoperability mechanism between OmpSs-2 and OpenACC, demonstrating that composability among different pragma-based programming models can enable more flexible and efficient use of heterogeneous systems. In previous research, we find Converse
+[
+44
+]
+was a proposed interoperability layer oriented at having multiple parallel programming models co-exist when linked into a single application, if every runtime is implemented on top of Converse semantics. Similarly, MetaChaos
+[
+45
+]
+was a proposed layer which would allow sharing data structures among HPF and pC++, which enabled a program to be written in a combination of both programming languages.
+In general, we find prior work in this area has typically focused on specific pairs of programming models or required extensive adaptations of the models to be interoperated. In contrast, our methodology generalizes interoperability to any data-flow tasking model and offloading API, enabling broader and more scalable solutions for heterogeneous computing.
+4
+Task-aware libraries for heterogeneous computing
+Combining multiple accelerator programming models within a single application introduces significant challenges at both the software and runtime levels. Each accelerator API like CUDA, SYCL, or Triton defines its own kernel language and exposes a custom runtime interface for managing memory transfers, kernel launches, and synchronization. As a result, applications must first implement accelerator kernels separately, using the appropriate language and compilation toolchain. These kernels are then compiled independently and linked into the application as external modules.
+While this modular structure enables flexibility, orchestrating the execution of kernels written in different models is far from trivial. The most straightforward approach is to treat each accelerator phase as a monolithic block, enforcing full synchronization between them: e.g., by using global barriers or device-wide synchronization calls. This guarantees correctness but prevents overlapping computation and communication, thereby underutilizing system resources.
+Achieving finer-grained parallelism and improving overlap across devices requires adopting a more advanced execution model. In this context, models like OpenMP and OmpSs-2 provide a natural way to express the application as a graph of coarse-grained tasks, each representing a distinct computation or offloading operation. These tasks form a directed acyclic graph (DAG), where dependencies between them are automatically inferred and enforced by the runtime. In principle, this approach allows heterogeneous kernels (written in CUDA, SYCL, Triton …) to coexist within a single unified execution framework.
+However, a key limitation arises when integrating non-blocking accelerator operations within tasks. Traditional runtimes require that a task does not complete until all internal operations (e.g., memory copies or kernel executions) have finished. This means that developers must introduce explicit synchronization points (such as
+cudaStreamSynchronize()
+or
+q.wait()
+) at the end of each task to avoid data races. These synchronizations block the CPU core running the task, preventing the runtime from scheduling other ready tasks and thus leading to underutilization of CPU resources.
+Task-aware libraries address this problem by decoupling task completion from device synchronization. They enable accelerator operations to be issued from within tasks without requiring explicit blocking calls at the end of the task. In the following, we describe how the task-aware libraries TACUDA and TASYCL track the lifecycle of non-blocking operations and defer dependency release until all associated events have completed, allowing CPU cores to remain available and improving the overall efficiency of heterogeneous task-based applications.
+To understand the specific challenges that task-awareness solves, let us take a look at a specific example from a hypothetical application using OpenMP tasks and CUDA kernels, showcased in Code
+4
+.
+⬇
+void
+gpu_task_0
+(…)
+{
+cudaMemcpyAsync(…,
+stream);
+launch_kernel
+<<<
+…,
+stream
+>>>
+(x,
+y);
+cudaMemcpyAsync(…,
+stream);
+cudaStreamSynchronize(
+&
+stream);
+}
+int
+main
+()
+{
+[…]
+for
+(
+int
+i
+=
+0
+;
+i
+<
+N;
+++
+i)
+{
+#pragma
+omp
+task
+depend(out:
+x[i])
+//
+C1
+cpu_task_1(
+&
+x[i]);
+#pragma
+omp
+task
+depend(in:
+x[i])
+\
+depend(out:
+y[i])
+//
+G0
+gpu_task_0(
+&
+x[i],
+&
+y[i]);
+#pragma
+omp
+task
+depend(in:
+x[i])
+//
+C2
+cpu_task_2(
+&
+x[i]);
+#pragma
+omp
+task
+depend(in:
+y[i])
+//
+C3
+cpu_task_3(
+&
+y[i]);
+}
+[…]
+}
+Figure 4:
+Sample OpenMP+CUDA application.
+In this application, we aim at offloading some operations to our CUDA GPU, and thus we
+wrap them in tasks. Successive operations, which depend on the results of
+the offloaded kernels, are synchronized through data dependencies, ensuring that they will not
+be executed until the results are available back in the host. However, to guarantee correctness,
+we cannot let the offloading tasks end before the accelerator has finished, hence
+the use of
+cudaStreamSynchronize()
+function. This application could result in a trace
+similar to the one shown in Fig.
+5
+(a), where all CPUs end up blocked in CUDA calls waiting for the accelerator to finish, even if there are other eligible tasks that could be running in the CPU during the same time period. To summarize, we are wasting CPU resources waiting for device synchronizations only to guarantee that task data dependencies are respected.
+(a)
+Without TACUDA.
+(b)
+With TACUDA.
+Figure 5:
+Application trace of Code
+4
+(a) without and (b) with task-awareness. Dashed lines represent task dependencies, while dotted lines represent device-host synchronization.
+However, if instead of plain CUDA we use the TACUDA library, we would obtain a trace similar to the one in Fig.
+5
+(b), in which we do not waste CPU resources; yet, we maintain the correctness of the data-flow program by ensuring that data dependencies are not released until the accelerator has finished the enqueued computations.
+All task-aware libraries, including TACUDA, TASYCL, TAMPI, and TAGASPI, do share a common implementation architecture designed to support both blocking and non-blocking APIs within task-based data-flow programming models. This mechanism is illustrated in Fig.
+6
+. For blocking operations, the library transparently replaces the blocking call with its non-blocking counterpart and suspends the calling task. A dedicated polling task, whose polling frequency can be configured by the user, periodically checks the status of all in-flight operations. Once an operation completes, the corresponding suspended task is resumed and reinserted into the scheduler’s ready queue. For non-blocking operations, the runtime associates a counter with each task. When a task issues a non-blocking operation, the counter is incremented; upon task completion, the task’s data dependencies are not released if the counter is non-zero. The polling task also monitors these non-blocking operations, and decrements the counter as operations complete. Once the counter reaches zero, the runtime safely releases the task’s dependencies. This mechanism ensures correct synchronization without blocking CPU cores, enabling efficient overlap of host and accelerator work.
+Figure 6:
+Integration of task-aware libraries within a task-based data-flow programming model.
+4.1
+Triton
+Unlike the other mechanisms explored in this work, Triton is not C/C++-based. Its kernels are written in a Python-based DSL, must reside in separate Python files, and cannot be directly invoked from native C++ applications. To integrate them with such applications, we perform ahead-of-time (AoT) compilation targeting the desired backend platform. It is worth mentioning that Triton itself only generates the (CUDA) kernels and therefore does not provide APIs to manage their execution or synchronization. Instead, these responsibilities are handled via the native backend API like CUDA, which is ultimately responsible for launching and synchronizing the kernels. As a result, there is no need for a dedicated task-aware Triton library and we simply leverage the corresponding task-aware library that matches the backend API used by Triton (TACUDA when targeting NVIDIA GPUs) to ensure seamless integration with the task-based runtime. More specifically, when compiling for CUDA GPUs, each kernel outputs a CUBIN blob. These blobs are loaded during application startup via the CUDA Driver API using
+cuModuleLoadData
+. Next, C++ applications can invoke such kernels using
+cuLaunchKernel
+. Finally, we pass a TACUDA-managed stream to
+cuLaunchKernel
+to make them task-aware.
+For Triton, all GPU kernels used in the GPT-2 pre-training phase and the HPCCG benchmark have been fully rewritten in the Triton programming model to take advantage of its fine-grained, tile-based execution strategy. Unlike directive-based approaches, Triton requires explicit kernel definitions in Python using its specialized DSL, which provides abstractions for manipulating memory tiles and optimizing data locality. Each kernel is structured to operate over blocks of data that map naturally to the GPU’s hardware hierarchy, enabling efficient use of shared memory and minimizing memory bandwidth pressure. In the case of GPT-2, operations such as matrix multiplication and layer normalization are tiled along batch and context dimensions, exposing parallelism across attention heads and hidden states. Similarly, for HPCCG, sparse matrix-vector multiplication is restructured to process contiguous rows of the matrix in parallel, while caching relevant vector slices in shared memory to minimize redundant global memory accesses. This explicit control over memory movement and parallelism allows Triton kernels to approach the performance of hand-optimized device code, while still benefiting from portability across backend targets.
+4.2
+OpenMP offload
+We employ the
+target
+clause integrated in the OpenMP programming model to offload kernels to the GPU. By default, GPU kernels block the corresponding CPU thread calling it. To prevent this from happening, we integrate blocking OpenMP GPU kernels within OmpSs-2 (or OpenMP) tasks. It is also necessary to substitute the pragma directives previously mentioned in Section
+2
+. For example, line 17 of Code
+2
+is equivalent to:
+⬇
+#pragma
+omp
+target
+teams
+distribute
+parallel
+for
+which allow us to make a fair comparison between different
+OpenMP kernel transformations on CPUs and GPUs. However, the generated
+GPU code offers subpar performance. To partially overcome this
+limitation, and thus increase the computational speed, we collapse
+the loops along
+j
+and
+k
+dimensions (lines 18–19 of
+Code
+2
+),
+that is, we parallelize the GEMM operation over the output channel
+(e.g., vocabulary or hidden dimensional state), batch, and context
+dimensions, which requires atomic updates over variable
+dweight
+at line 22.
+⬇
+#pragma
+omp
+target
+teams
+distribute
+parallel
+for
+for
+(
+int
+j
+=
+0
+;
+j
+<
+rowBsA;
+++
+j)
+{
+const
+int
+rIdx0
+=
+dA_rowIdx[rowIdx
++
+j];
+const
+int
+nnz
+=
+dA_rowIdx[rowIdx
++
+j
++1
+]
+-
+rIdx0;
+double
+wrk
+=
+0.0
+;
+for
+(
+int
+k
+=
+0
+;
+k
+<
+nnz;
+++
+k)
+{
+wrk
++=
+dA_values[rIdx0
++
+k]
+*
+d_x[dA_columns[rIdx0
++
+k]];
+}
+d_Ax[j
++
+rowIdx]
+=
+wrk;
+}
+Figure 7:
+Sparse matrix–vector multiplication (SpMV) based on CSR format and parallelized via OpenMP target directives.
+With regard to the HPCCG benchmark, the OpenMP target implementation for GPUs is straightforward for the three type of kernels found in this application as shown in Code
+7
+corresponding to the sparse matrix–vector multiplication. Note that this code excerpt works on horizontal tiles of the sparse matrix
+A
+and consecutive regions of the output vector
+d_Ax
+by using the starting row index (
+rowIdx
+) and row block sizes (
+rowBsA
+) variables hence allowing us to combine both target and task directives within the same code.
+4.3
+SYCL
+SYCL kernels are submitted to a device queue using the
+parallel_for
+construct, and operate over multi-dimensional ranges to expose parallelism. As shown in Code
+8
+, the sparse matrix–vector multiplication (SpMV) kernel used in HPCCG is offloaded using a 1D range, where each work-item processes a separate row of the matrix. The kernel traverses the compressed sparse row (CSR) data structures to compute the dot product of each row with the input vector, storing the result in the corresponding entry of the output vector.
+⬇
+sycl
+::
+event
+ev
+=
+Q.parallel_for
+<
+class
+spmvA
+>
+(
+sycl
+::
+range
+<1>
+(rowBsA),
+[
+=
+](sycl
+::
+id
+<1>
+j)
+{
+const
+int
+rIdx0
+=
+dA_rowIdx[rowIdx
++
+j];
+const
+int
+nnz
+=
+dA_rowIdx[rowIdx
++
+j
++
+1
+]
+-
+rIdx0;
+double
+wrk
+=
+0.0
+;
+for
+(
+int
+k
+=
+0
+;
+k
+<
+nnz;
+++
+k)
+{
+wrk
++=
+dA_values[rIdx0
++
+k]
+*
+d_x[dA_columns[rIdx0
++
+k]];
+}
+d_Ap[j
++
+rowIdx]
+=
+wrk;
+});
+Figure 8:
+Sparse matrix–vector multiplication (SpMV) based on CSR format and parallelized via SYCL.
+All GPU kernels from the GPT-2 pre-training phase and the HPCCG benchmark have been ported from their CUDA versions. This translation is generally straightforward, as the SYCL programming model exposes a similar hierarchical parallelism abstraction through ND-range kernels, which closely mirrors CUDA’s grid–block–thread execution structure. Kernel logic and memory access patterns remain largely unchanged, allowing for direct reuse of indexing strategies and loop structures.
+All other kernels required for GPT-2, including linear layers, softmax, and normalization operations, follow a similar pattern: they are re-expressed as ND-range SYCL kernels and offloaded through device queues. Since SYCL kernels are inherently non-blocking, they integrate naturally with the TASYCL library, which ensures correct synchronization and dependency tracking through the task-aware mechanism described in Section
+4
+.
+5
+Experimental evaluation
+This section evaluates the performance and interoperability benefits of our approach using two representative applications, HPCCG and GPT-2, on heterogeneous platforms. We begin by describing the hardware systems used for our experiments, including both general-purpose and GPU-accelerated nodes (Section
+5.1
+). We then present the evaluation results in two steps. First, we focus on GPU-based execution (Section
+5.2
+) and compare monolithic kernels with data-flow executions. We evaluate four variants: OpenMP offload, SYCL, Triton, and a hybrid “mix” version that combines kernels written in all three programming models. We further compare implementations using custom GPU kernels with versions leveraging vendor-optimized libraries for performance-critical operations (SpMV in HPCCG and gemm in GPT-2). Next, we analyze multi-core CPU executions (Section
+5.3
+), comparing fork-join and task-based models, and evaluate the impact of custom and vendor libraries for said kernels. Finally, we study task granularity and oversubscription effects between OpenMP, OmpSs-2, and SYCL.
+5.1
+HPC systems and code setup
+Our evaluations are conducted on two different hardware
+architectures available at the Barcelona Supercomputing Center (BSC).
+The first one is the general-purpose MareNostrum 5 supercomputer
+partition, namely MN5-GPP, whose compute nodes are composed of two
+Intel Xeon Platinum 8480+ CPUs with a total of 112 cores running at
+2 GHz. Each CPU integrates 105 MiB of L3 cache, and supports both the
+AVX-512 and AMX families of hardware accelerated instructions. The
+system memory is 256 GB based on DDR5 with a theoretical bandwidth of
+307.2 GB/s per socket. The second computational infrastructure entitled MN5-ACC integrates two Intel Xeon Platinum 8460Y+ CPUs per compute node with a total of 80 cores at 2.3 GHz, same L3 cache, and twice the system memory of the general partition with the same technical characteristics. The two CPUs are connected to four NVIDIA Hopper H100 GPUs equipped with 64 GB of HBM2 achieving 2.02 TB/s.
+For the sake of simplicity, all our experiments are carried out on a single compute node. We adjust the problem sizes of both benchmarks so that their working sets fit entirely within the host and device memory, allowing us to focus on the behavior and interoperability of heterogeneous accelerator APIs without the added complexity of distributed execution. While our setup avoids communication between nodes, task-aware communication libraries such as TAMPI can be seamlessly combined to support distributed scenarios.
+5.2
+GPU evaluation
+We evaluate the GPU execution using the GPT-2 pre-training and HPCCG applications across four kernel programming models: OpenMP offload, SYCL, Triton, and a hybrid “mixed” version(combining kernels from the three models). Each application is executed using both a monolithic fork-join implementation and a task-based version composed of coarse-grained GPU tasks (4 tasks for both GPT-2 and HPCCG). For each configuration, we analyze the top kernels contributing to execution time and evaluate the effect of using custom versus vendor-optimized kernels for performance-critical operations (matrix multiplication and SpMV).
+Figure
+9
+shows results for GPT-2 pretraining. In this workload, the task-based and fork-join versions exhibit comparable performance across all kernel models, indicating that the overheads of GPU task orchestration are negligible at this granularity. Across all configurations, the dominant contributors to iteration time are the matrix multiplication and attention kernels. When vendor-optimized BLAS libraries are used for the matmul kernel (cuBLAS), performance improves significantly in all cases, with the “mixed” version achieving the best overall performance. This hybrid approach leverages model-specific strengths, e.g. Triton for attention kernels and SYCL or OpenMP for other kernels, demonstrating the benefit of composing kernels written in different programming models within a task-based framework.
+The HPCCG results shown in Fig.
+10
+align with the trend already observed for GPT-2: the monolithic and task-based executions achieve virtually identical iteration times, with the task version marginally outperforming the monolithic one for the Triton and “Mixed” configurations. The performance is dominated by the memory-bound SpMV kernel, whose low arithmetic intensity and irregular access pattern leave little headroom for further optimization. For this reason we omit the cuBLAS variants: replacing our custom kernels with the vendor implementation yields iteration times within measurement noise. These results confirm that, when task granularity is chosen appropriately, a data-flow execution can match and, in some cases slightly surpass, a monolithic version.
+Figure 9:
+GPU evaluation of GPT-2.
+We compare monolithic and task-based executions (
+N
+=
+4
+N=4
+tasks) for four kernel programming models (OpenMP offload, SYCL, Triton, and a combination of all the others “Mixed”)
+both with and without cuBLAS. Each bar reports the top three kernels by duration for a single iteration of the model (context length of 256 tokens and 1.5 B parameters) executed on a single H100 GPU. Bars are stacked with the time contribution of each kernel.
+Figure 10:
+GPU breakdown for the HPCCG application with
+256
+3
+256^{3}
+points executed on a single H100 GPU. For each kernel we report the three most time-consuming kernels, stacked to show their contribution to a full iteration.
+5.3
+Multi-core evaluation
+This section evaluates the performance implications of combining multiple runtime systems in CPU-only environments, focusing on both fork-join and task-based parallel executions. Our goal is to quantify the impact of runtime interference and evaluate how a unified tasking substrate, such as nOS-V, can mitigate oversubscription and enable efficient resource sharing across runtimes.
+HPCCG fork-join execution
+Figure
+11
+shows the iteration time for the HPCCG benchmark executed using different kernel and runtime configurations. In the left panel, we run the application using OpenMP fork-join, sequential Triton kernels launched from OpenMP, and SYCL kernels executed via PoCL (both the upstream and the nOS-V integrated version). OpenMP and Triton rely on LLVM’s
+libomp
+, while PoCL maintains its own internal thread pool. All configurations perform similarly, with PoCL (nOS-V) showing the lowest variability.
+The right panel introduces Intel’s MKL library for the sparse matrix–vector multiplication (SpMV) kernel, which internally uses
+libomp
+. When combined with OpenMP or Triton, MKL executes efficiently, as all components share the same threading runtime. However, combining MKL with upstream PoCL introduces significant performance degradation due to runtime interference and thread oversubscription. This issue is effectively resolved when both
+libomp
+and PoCL are configured to use nOS-V, enabling cooperative scheduling and restoring performance to baseline levels.
+Figure 11:
+CPU evaluation of HPCCG. Mixing fork-join models on HPCCG (
+256
+3
+256^{3}
+points) with MKL (note that MKL is only used for the SpMV kernels).
+HPCCG task-based execution
+In all configurations, the application is decomposed into a DAG of tasks, each executing either a sequential Triton kernel or a parallel SYCL kernel via PoCL. Figure
+12
+presents the iteration time as a function of task granularity (i.e., number of tasks) across three scenarios.
+In the single runtime configuration (Single RT, left), we use either the OpenMP or the OmpSs-2 runtime with sequential Triton kernels. This setup shows ideal scaling as performance improves steadily with the number of tasks, saturating around 256 tasks as the 112-core CPU becomes fully utilized. OmpSs-2 slightly outperforms OpenMP due to its more efficient task scheduling.
+In the multiple runtime configuration (Multi. RT, middle), the tasking runtime (OpenMP or OmpSs-2) is combined with PoCL, which executes parallel SYCL kernels. Here, the initial scaling trend reverses beyond 8–16 tasks due to oversubscription: each task spawns additional parallel threads via PoCL, resulting in thread contention and degraded performance. Compared to the single runtime case, peak performance is significantly lower.
+In the multiple runtime with nOS-V configuration (Multi. w/ nOS-V, right), we substitute the original OpenMP and PoCL runtimes with their nOS-V-enabled counterparts (
+libompv
+and
+PoCLv
+, respectively), allowing all runtimes to share a unified threading substrate. This change eliminates the oversubscription issue, allowing the application to scale well up to 64 tasks. While still slightly below the single runtime baseline, the performance is significantly improved over the multiple runtime setup without nOS-V, demonstrating the benefit of
+cooperative
+runtimes.
+Figure 12:
+HPCCG execution on CPU. Task-based execution with varying task granularities and runtime combinations.
+The left panel uses sequential Triton kernels while the middle and right panels use SYCL kernels via PoCL (upstream and nOS-V, respectively).
+GPT-2 task-based execution
+We extend the task granularity analysis to the GPT-2 pre-training workload. Figure
+13
+shows the iteration time as we vary the context length
+T
+∈
+{
+1
+,
+2
+,
+4
+,
+8
+,
+16
+,
+32
+}
+T\in\{1,2,4,8,16,32\}
+, while keeping the batch and channel dimensions fixed at 4 and 16 tasks, respectively. This results in a task count ranging from
+4
+×
+16
+×
+1
+=
+64
+4\times 16\times 1=64
+up to
+2048
+2048
+tasks. The system has 112 cores, allowing us to observe both the underutilized and oversaturated regimes.
+On the one hand, when using single-threaded kernels written in C or Triton, the application scales well up to approximately 1024 tasks, after which performance plateaus. On the other hand, when each task launches a parallel SYCL kernel via PoCL, performance is significantly worse and largely flat across all task granularities regardless of whether PoCL is upstream or ported to nOS-V. This is due to excessive kernel-launch overhead from fine-grained tasks: even at the coarsest setting, there are already 64 tasks, each invoking a parallel kernel. The root bottleneck here is not runtime interference but rather the overhead of launching small parallel kernels, which masks any potential benefit from nOS-V.
+These results highlight a common pitfall in heterogeneous multi-core applications: combining multiple runtime systems —either explicitly through task-based models or implicitly via parallel libraries such as MKL— can lead to severe performance degradation due to thread oversubscription and lack of coordination between runtimes. This effect is evident in both fork–join and task-based executions. By unifying all runtimes under a common threading and tasking substrate like nOS-V, these interferences can be largely mitigated, enabling more predictable and scalable performance. However, it remains the responsibility of the application developer to tune task granularity appropriately, as overly fine-grained tasks can still introduce severe inefficiencies even in the absence of runtime contention.
+Figure 13:
+GPT-2 execution on CPU. Task-based execution with varying context length
+T
+T
+. Batch and channel dimensions remain fixed at 4 and 16 tasks, respectively.
+6
+Conclusions and future work
+This work has demonstrated that combining the task-based data-flow model with task-aware libraries (TA-libs) offers a practical and flexible methodology for developing complex applications on heterogeneous systems. Our focus has been on how programmability, extensibility, and flexibility are enhanced by representing computations as DAGs and coordinating the use of multiple APIs, including SYCL, Triton, OpenMP offload, as well as vendor-specific libraries, within a unified task-based runtime. We validated this approach using two representative workloads: the GPT-2 pre-training phase, exemplifying a modern AI workload, and the HPCCG benchmark, illustrating a traditional HPC application. The task-aware abstraction enables seamless integration of diverse operations, even when fine-grained control over accelerators or communication is required, all while maintaining the advantages of dynamic scheduling and concurrency.
+We have also shown that potential interference between different runtime systems can be minimized by leveraging a shared low-level infrastructure, such as the nOS-V threading and tasking library. Our experiments combining OmpSs-2, OpenMP, and SYCL via the POCL runtime demonstrate that interoperable and efficient executions are indeed possible without sacrificing programmability or performance portability.
+The current evaluation has been limited to a single node and a single GPU device in order to isolate the core challenges of integrating multiple programming models. In future work, we plan to extend this methodology to distributed memory environments, leveraging task-aware communication libraries such as TAMPI. This would enable studies that combine accelerator-focused TA-libs (e.g., TACUDA and TASYCL) with communication TA-libs (e.g., TAMPI and TAGASPI), allowing unified orchestration of computation and communication across nodes and heterogeneous accelerators. Such an evaluation would also provide novel insights into inter-device and inter-node data movement.
+Finally, integrating TA-libs with transparent directory/cache (D/C) mechanisms found in modern task-based runtimes is a promising direction. This would combine the flexibility and explicit control of task-aware APIs with the automation and convenience of D/C-driven data management, further simplifying the development of scalable and portable applications for the next-generation of heterogeneous and distributed systems.
+Acknowledgements
+This work has received support from multiple funding sources. It is part of the ST4HPC project (PID2023-147979NB-C21), funded by MCIN/AEI/10.13039/501100011033 and by FEDER, UE. This work is also promoted by the Barcelona Zettascale Laboratory, backed by the Ministry for Digital Transformation and of Public Services, within the framework of the Recovery, Transformation, and Resilience Plan - funded by the European Union - NextGenerationEU.
+This work has received funding from the DARE SGA1 Project, from the European High-Performance Computing Joint Undertaking (JU) under Grant Agreement No 101202459 and from PCI2024-161687-3 Project funded by MICIU/AEI/10.13039/501100011033 and European’s Union NextGenerationEU/PRTR.
+Additional support was provided by a Ramón y Cajal fellowship (RYC2019-027592-I), funded by MCIN/AEI/10.13039/501100011033 and ESF/10.13039/501100004895, and by the Severo Ochoa Centre of Excellence programme (CEX2021-001148-S), also funded by MCIN/AEI. Finally, the Programming Models research group at BSC-UPC received support from the Departament de Recerca i Universitats de la Generalitat de Catalunya under grants 2021 SGR 01007 and 2025 STEP 00523.
+References
+[1]
+G. Yi, V. Loia,
+High-performance computing systems and applications for ai,
+The Journal of Supercomputing 75 (2019) 4248–4251. URL:
+https://doi.org/10.1007/s11227-019-02937-z
+. doi:
+10.1007/s11227-019-02937-z
+.
+[2]
+E. A. Huerta, A. Khan, E. Davis, C. Bushell, W. D. Gropp, D. S. Katz, V. Kindratenko, S. Koric, W. T. C. Kramer, B. McGinty, K. McHenry, A. Saxton,
+Convergence of artificial intelligence and high performance computing on nsf-supported cyberinfrastructure,
+Journal of Big Data 7 (2020) 88. URL:
+https://doi.org/10.1186/s40537-020-00361-2
+. doi:
+10.1186/s40537-020-00361-2
+.
+[3]
+L. Dagum, R. Menon,
+OpenMP: an industry standard API for shared-memory programming,
+IEEE Computational Science and Engineering 5 (1998) 46–55. doi:
+10.1109/99.660313
+.
+[4]
+A. Duran, J. M. Perez, E. Ayguadé, R. M. Badia, J. Labarta,
+Extending the openmp tasking model to allow dependent tasks,
+in: R. Eigenmann, B. R. de Supinski (Eds.), OpenMP in a New Era of Parallelism, Springer Berlin Heidelberg, Berlin, Heidelberg, 2008, pp. 111–122.
+[5]
+A. Duran, R. Ferrer, E. Ayguadé, R. M. Badia, J. Labarta,
+A proposal to extend the openmp tasking model with dependent tasks,
+International Journal of Parallel Programming 37 (2009) 292–305. URL:
+https://doi.org/10.1007/s10766-009-0101-1
+. doi:
+10.1007/s10766-009-0101-1
+.
+[6]
+NVIDIA, CUDA toolkit documentation, https://docs.nvidia.com/cuda/, 2025. Accessed: 2025-05-01.
+[7]
+H. Tian, A. Mishra, Z. Chen, R. P. Hong Enriquez, D. Milojicic, E. Frachtenberg, S. Huang,
+Heterobench: Multi-kernel benchmarks for heterogeneous systems,
+in: Proceedings of the 16th ACM/SPEC International Conference on Performance Engineering, ICPE ’25, Association for Computing Machinery, New York, NY, USA, 2025, pp. 320–333. URL:
+https://doi.org/10.1145/3676151.3719366
+. doi:
+10.1145/3676151.3719366
+.
+[8]
+S. Roberts, P. Ramanna, J. Walthour,
+Ac922 data movement for coral,
+in: 2018 IEEE High Performance extreme Computing Conference (HPEC), 2018, pp. 1–5. doi:
+10.1109/HPEC.2018.8547707
+.
+[9]
+G. Schieffer, J. Wahlgren, J. Ren, J. Faj, I. Peng,
+Harnessing integrated cpu-gpu system memory for hpc: a first look into grace hopper,
+in: Proceedings of the 53rd International Conference on Parallel Processing, ICPP ’24, Association for Computing Machinery, New York, NY, USA, 2024, pp. 199–209. URL:
+https://doi.org/10.1145/3673038.3673110
+. doi:
+10.1145/3673038.3673110
+.
+[10]
+K. Group, OpenCL for parallel programming of heterogeneous systems, https://www.khronos.org/opencl/, 2025a. Accessed: 2025-05-01.
+[11]
+K. Group, Sycl: C++ programming for heterogeneous parallel computing, https://www.khronos.org/sycl/, 2025b. Accessed: 2025-05-01.
+[12]
+OpenACC-Standard.org, The OpenACC® application programming interface, https://www.openacc.org/sites/default/files/inline-images/Specification/OpenACC-3.3-final.pdf, 2022. Accessed: 2025-05-01.
+[13]
+Triton, Triton documentation, https://triton-lang.org/main/index.html, 2025. Accessed: 2025-05-01.
+[14]
+AMD, AMD ROCm documentation, https://rocm.docs.amd.com/en/latest/, 2025. Accessed: 2025-05-01.
+[15]
+J. M. Perez, V. Beltran, J. Labarta, E. Ayguadé,
+Improving the integration of task nesting and dependencies in OpenMP,
+in: 2017 IEEE International Parallel and Distributed Processing Symposium (IPDPS), 2017, pp. 809–818. doi:
+10.1109/IPDPS.2017.69
+.
+[16]
+K. Sala, S. Macià, V. Beltran,
+Combining one-sided communications with task-based programming models,
+in: 2021 IEEE International Conference on Cluster Computing (CLUSTER), 2021, pp. 528–541. doi:
+10.1109/Cluster48925.2021.00024
+.
+[17]
+K. Sala, D. Álvarez, R. Peñacoba, R. Arias Mallo, A. Navarro, A. Roca, V. Beltran,
+ALPI: Enhancing portability and interoperability of task-aware libraries,
+in: Asynchronous Many-Task Systems and Applications, 2024, pp. 142–153.
+[18]
+D. Álvarez, K. Sala, V. Beltran,
+nos-v: Co-executing hpc applications using system-wide task scheduling,
+in: 2024 IEEE International Parallel and Distributed Processing Symposium (IPDPS), 2024, pp. 312–324. doi:
+10.1109/IPDPS57955.2024.00035
+.
+[19]
+A. Karpathy, GPT-2 C implementation, https://github.com/karpathy/llm.c, 2024. Accessed: 2025-05-01.
+[20]
+M. A. Heroux, High performance computing conjugate gradients (HPCCG): The original Mantevo miniapp, 2017. URL:
+https://github.com/Mantevo/HPCCG
+.
+[21]
+C. Augonnet, S. Thibault, R. Namyst, P.-A. Wacrenier,
+StarPU: a unified platform for task scheduling on heterogeneous multicore architectures,
+Concurr. Comput.: Pract. Exper. 23 (2011) 187–198. URL:
+https://doi.org/10.1002/cpe.1631
+. doi:
+10.1002/cpe.1631
+.
+[22]
+G. Bosilca, A. Bouteiller, A. Danalis, M. Faverge, T. Herault, J. J. Dongarra,
+PaRSEC: Exploiting heterogeneity to enhance scalability,
+Computing in Science & Engineering 15 (2013) 36–45. doi:
+10.1109/MCSE.2013.98
+.
+[23]
+T. Gautier, X. Besseron, L. Pigeon,
+KAAPI: A thread scheduling runtime system for data flow computations on cluster of multi-processors,
+in: Proceedings of the 2007 International Workshop on Parallel Symbolic Computation, PASCO ’07, Association for Computing Machinery, New York, NY, USA, 2007, pp. 15–23. doi:
+10.1145/1278177.1278182
+.
+[24]
+J. Kim, S. Lee, B. Johnston, J. S. Vetter,
+IRIS: A portable runtime system exploiting multiple heterogeneous programming systems,
+in: 2021 IEEE High Performance Extreme Computing Conference (HPEC), 2021, pp. 1–8. doi:
+10.1109/HPEC49654.2021.9622873
+.
+[25]
+A. Radford, J. Wu, R. Child, D. Luan, D. Amodei, I. Sutskever, et al.,
+Language models are unsupervised multitask learners (2019). URL:
+https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf
+.
+[26]
+J. Wei, Y. Tay, R. Bommasani, C. Raffel, B. Zoph, S. Borgeaud, D. Yogatama, M. Bosma, D. Zhou, D. Metzler, E. H. Chi, T. Hashimoto, O. Vinyals, P. Liang, J. Dean, W. Fedus,
+Emergent abilities of large language models,
+Transactions on Machine Learning Research (2022). URL:
+https://openreview.net/forum?id=yzkSU5zdwD
+.
+[27]
+A. Radford, K. Narasimhan, T. Salimans, I. Sutskever,
+Improving language understanding by generative pre-training (2018). URL:
+https://cdn.openai.com/research-covers/language-unsupervised/language_understanding_paper.pdf
+.
+[28]
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, L. Kaiser, I. Polosukhin,
+Attention is all you need,
+in: Proceedings of the 31st International Conference on Neural Information Processing Systems, NIPS’17, Curran Associates Inc., Red Hook, NY, USA, 2017, pp. 6000–6010. doi:
+10.5555/3295222.3295349
+.
+[29]
+OpenAI, GPT-2 PyTorch implementation, https://github.com/openai/gpt-2/blob/master/src/model.py, 2019. Accessed: 2025-05-01.
+[30]
+OpenAI, GPT-2 PyTorch model weights, https://huggingface.co/openai-community/gpt2/blob/main/pytorch_model.bin, 2021. Accessed: 2025-05-01.
+[31]
+A. Karpathy, Tinyshakespeare training dataset, https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt, 2024. Accessed: 2025-05-01.
+[32]
+T. Dao, D. Y. Fu, S. Ermon, A. Rudra, C. Ré,
+FlashAttention: fast and memory-efficient exact attention with IO-awareness,
+in: Proceedings of the 36th International Conference on Neural Information Processing Systems, NIPS ’22, Curran Associates Inc., Red Hook, NY, USA, 2022. URL:
+https://dl.acm.org/doi/10.5555/3600270.3601459
+. doi:
+10.5555/3600270.3601459
+.
+[33]
+D. Álvarez, V. Beltran,
+Optimizing iterative data-flow scientific applications using directed cyclic graphs,
+IEEE Access 11 (2023) 51971–51984. doi:
+10.1109/ACCESS.2023.3269902
+.
+[34]
+M. A. Heroux, High performance computing conjugate gradients (HPCCG): The original Mantevo miniapp, https://github.com/Mantevo/HPCCG, 2017. Accessed: 2025-05-01.
+[35]
+J. Dongarra, M. A. Heroux, P. Luszczek,
+High-performance conjugate-gradient benchmark: A new metric for ranking high-performance computing systems,
+The International Journal of High Performance Computing Applications 30 (2016) 3–10. doi:
+10.1177/1094342015593158
+.
+[36]
+M. A. Heroux, D. W. Douglas, P. S. Crozier, J. M. Willenbring, H. C. Edwards, et al., Improving performance via mini-applications, Technical Report SAND2009-5574, Sandia National Laboratories, 2009. URL:
+https://mantevo.github.io/pdfs/MantevoOverview.pdf
+.
+[37]
+Y. Saad, Iterative methods for sparse linear systems, Society for Industrial and Applied Mathematics, 2003. doi:
+10.1137/1.9780898718003
+.
+[38]
+P. J. Martinez-Ferrer, T. Arslan, V. Beltran,
+Improving the performance of classical linear algebra iterative methods via hybrid parallelism,
+Journal of Parallel and Distributed Computing 179 (2023) 104711. doi:
+10.1016/j.jpdc.2023.04.012
+.
+[39]
+P. J. Martinez-Ferrer, HLAM: Hybrid linear algebra methods, 2022. doi:
+10.24433/CO.1193962.v1
+.
+[40]
+A. Duran, E. Ayguadé, R. M. Badia, J. Labarta, L. Martinell, X. Martorell, J. Planas,
+OmpSs: A proposal for programming heterogeneous multi-core architectures,
+Parallel Processing Letters 21 (2011) 173–193. doi:
+10.1142/S0129626411000151
+.
+[41]
+S. Memeti, L. Li, S. Pllana, J. Kołodziej, C. Kessler,
+Benchmarking OpenCL, OpenACC, OpenMP, and CUDA: Programming productivity, performance, and energy consumption,
+in: Proceedings of the 2017 Workshop on Adaptive Resource Management and Scheduling for Cloud Computing, ARMS-CC ’17, Association for Computing Machinery, New York, NY, USA, 2017, pp. 1–6. doi:
+10.1145/3110355.3110356
+.
+[42]
+I. Z. Reguly,
+Evaluating the performance portability of SYCL across CPUs and GPUs on bandwidth-bound applications,
+in: Proceedings of the SC ’23 Workshops of the International Conference on High Performance Computing, Network, Storage, and Analysis, SC-W ’23, Association for Computing Machinery, New York, NY, USA, 2023, pp. 1038–1047. doi:
+10.1145/3624062.3624180
+.
+[43]
+O. Korakitis, S. G. De Gonzalo, N. Guidotti, J. a. P. Barreto, J. C. Monteiro, A. J. Peña,
+Towards OmpSs-2 and OpenACC interoperation,
+in: Proceedings of the 27th ACM SIGPLAN Symposium on Principles and Practice of Parallel Programming, PPoPP ’22, Association for Computing Machinery, New York, NY, USA, 2022, pp. 433–434. doi:
+10.1145/3503221.3508401
+.
+[44]
+L. Kale, M. Bhandarkar, N. Jagathesan, S. Krishnan, J. Yelon,
+Converse: an interoperable framework for parallel programming,
+in: Proceedings of International Conference on Parallel Processing, 1996, pp. 212–217. doi:
+10.1109/IPPS.1996.508060
+.
+[45]
+G. Edjlali, A. Sussman, J. Saltz,
+Interoperability of data parallel runtime libraries,
+in: Proceedings 11th International Parallel Processing Symposium, 1997, pp. 451–459. doi:
+10.1109/IPPS.1997.580940
+.
+[46]
+Cuda toolkit documentation — cudalaunchhostfunc, 2025. URL:
+https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__EXECUTION.html#group__CUDART__EXECUTION_1g05841eaa5f90f27124241baafb3e856f
+.
+[47]
+P. Jääskeläinen, C. S. de La Lama, E. Schnetter, K. Raiskila, J. Takala, H. Berg,
+pocl: A performance-portable OpenCL implementation 43 (2015) 752–785. URL:
+https://doi.org/10.1007/s10766-014-0320-y
+. doi:
+10.1007/s10766-014-0320-y
+.
+[48]
+A. Navarro, R. Peñacoba, V. A. Arcila, R. Arias, D. Álvarez, V. Beltran,
+Synergizing OpenMP paradigms through free agents and nOS-v 6 (2025) 869. URL:
+https://doi.org/10.1007/s42979-025-04406-2
+. doi:
+10.1007/s42979-025-04406-2
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

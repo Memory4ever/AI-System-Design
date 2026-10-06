@@ -1,0 +1,135 @@
++Official exact-v1 necessary blocks. Actual source read; no experiments reproduced.
+B50: 4 Method
+B51: In this section, we introduce Constraint-Rectified Training (CRT), a post-training framework that enables systematic pruning of redundant reasoning while maintaining robust correctness.
+B52: 4.1 Preliminaries
+B53: Let x x denote an input prompt drawn from a distribution ρ \rho , and let y y represent the model-generated output containing both CoT reasoning and the final answer. We denote y ∗ ​ ( x ) y^{*}(x) as the ground-truth answer corresponding to prompt x x , and model responses are sampled from a policy π θ ​ ( y ∣ x ) \pi_{\theta}(y\mid x) parameterized by θ \theta . To quantify efficiency, we introduce a normalized length measure ℓ norm ​ ( y ) \ell_{\mathrm{norm}}(y) , obtained by normalizing response length with respect to the per-prompt mean and variance, yielding a scale-invariant length measure. Solution correctness is evaluated using a verifier-based indicator 𝟙 { y = y ∗ ( x ) } \mathds{1}\{y=y^{*}(x)\} .
+B54: 4.2 Formulation
+B55: We formulate efficient reasoning as a constrained optimization problem: the goal is to reduce the expected length of generated solutions while ensuring that accuracy does not fall below a specified threshold α \alpha . Formally, we optimize
+B56: min π \displaystyle\min_{\pi} 𝔼 x ∼ ρ , y ∼ π θ ​ ( y ∣ x ) ​ [ ℓ norm ​ ( y ) ] \displaystyle\mathbb{E}_{x\sim\rho,\,y\sim\pi_{\theta}(y\mid x)}\left[\ell_{\mathrm{norm}}(y)\right] (1)
+B57: s.t. \displaystyle\text{s.t.} − 𝔼 x ∼ ρ , y ∼ π θ ​ ( y ∣ x ) [ 𝟙 { y = y ∗ ( x ) } ] ≤ α \displaystyle-\mathbb{E}_{x\sim\rho,\,y\sim\pi_{\theta}(y\mid x)}\left[\mathds{1}\{y=y^{*}(x)\}\right]\leq\alpha
+B58: which captures the central tension in efficient reasoning: shortening CoT without sacrificing correctness beyond an acceptable margin.
+B59: However, it is often impractical to specify an appropriate accuracy threshold α \alpha before post-training for Equation 1 . If the threshold is set too high, the feasible region becomes overly restrictive and the model cannot meaningfully shorten its reasoning. Conversely, if the threshold is set too small, the optimization may aggressively prune CoT steps, leading to severe degradation in reasoning quality. 1 1 1 In the extreme case, the model may omit intermediate reasoning entirely and directly output a final answer. In short, the scalar constraint parameter α \alpha is difficult to tune and does not provide a stable accuracy safeguard during training. To address this problem, we introduce a reference-policy guard to replace the fixed accuracy threshold. Let π ref \pi_{\mathrm{ref}} denote a frozen reference model (e.g., the initial model before any length-aware post-training). Since π ref \pi_{\mathrm{ref}} represents the original reasoning capability of the model, an intuitive requirement is that our updated policy π \pi should not perform significantly worse than π ref \pi_{\mathrm{ref}} in terms of correctness. This leads to a relative accuracy constraint:
+B60: 𝔼 x ∼ ρ , y ref ∼ π ref ​ ( y ∣ x ) [ 𝟙 { y = y ∗ ( x ) } ] ≥ 𝔼 x ∼ ρ , y ref ∼ π ref ​ ( y ∣ x ) [ 𝟙 { y ref = y ∗ ( x ) } ] − ε \displaystyle\mathbb{E}_{x\sim\rho,\,y_{\mathrm{ref}}\sim\pi_{\mathrm{ref}}(y\mid x)}\!\left[\mathds{1}\{y=y^{*}(x)\}\right]\;\geq\;\mathbb{E}_{x\sim\rho,\,y_{\mathrm{ref}}\sim\pi_{\mathrm{ref}}(y\mid x)}\!\left[\mathds{1}\{y_{\mathrm{ref}}=y^{*}(x)\}\right]-\varepsilon (2)
+B61: where ε ≥ 0 \varepsilon\geq 0 is a small tolerance indicating how much accuracy degradation is allowed. This relative constraint avoids the difficulty of selecting an absolute accuracy threshold and ensures that length pruning does not undermine the model’s original problem-solving performance. Under this reference-based accuracy safeguard, the objective can be reformulated as follows:
+B62: min π \displaystyle\min_{\pi} 𝔼 x ∼ ρ , y ∼ π θ ​ ( y ∣ x ) ​ [ ℓ norm ​ ( y ) ] \displaystyle\mathbb{E}_{x\sim\rho,\,y\sim\pi_{\theta}(y\mid x)}\!\left[\ell_{\mathrm{norm}}(y)\right] (3)
+B63: s.t. \displaystyle\text{s.t.} 𝔼 x ∼ ρ , y ∼ π θ ​ ( y ∣ x ) [ 𝟙 { y = y ∗ ( x ) } ] ≥ 𝔼 x ∼ ρ , y ref ∼ π ref ​ ( y ∣ x ) [ 𝟙 { y ref = y ∗ ( x ) } ] − ε . \displaystyle\mathbb{E}_{x\sim\rho,\,y\sim\pi_{\theta}(y\mid x)}\!\left[\mathds{1}\{y=y^{*}(x)\}\right]\geq\mathbb{E}_{x\sim\rho,\,y_{\mathrm{ref}}\sim\pi_{\mathrm{ref}}(y\mid x)}\!\left[\mathds{1}\{y_{\mathrm{ref}}=y^{*}(x)\}\right]-\varepsilon.
+B64: 4.3 Constraint-Rectified Training
+B65: We now turn to developing a practical post-training method that can enforce this constraint during optimization. A natural first attempt to enforce the above constraint is to adopt a primal-dual optimization framework, in which the accuracy constraint is incorporated via a Lagrange multiplier and jointly optimized with the primary objective. While conceptually straightforward, such approaches often introduce additional sensitivity to hyperparameter tuning, as the dual variable must be carefully calibrated to balance accuracy preservation and length reduction. In practice, we observe that improper tuning can lead to oscillatory behavior or overly conservative updates, limiting the effectiveness of reasoning pruning.
+B66: To avoid the use of dual variables, in this paper we leverage the Constraint-Rectified Policy Optimization (CRPO) framework ( Xu et al., 2021 ) , which performs immediate, lightweight switches between minimizing length and maintaining accuracy. This aligns directly with our goal: to prune unnecessary reasoning while ensuring the model does not degrade relative to the reference policy. Under our updated formulation, we modify CRPO so that accuracy is enforced relative to the reference model rather than via an absolute threshold. The algorithm therefore alternates between (i) shortening reasoning length when accuracy is sufficiently high, and (ii) restoring accuracy whenever the model underperforms the reference. We propose the resulting algorithm as CRT detailed in Algorithm 1 . The procedure is simple, stable in practice, and naturally implements our reference-guarded constraint.
+B67: Algorithm 1 Constraint-Rectified Training 1: Input: Initial LM parameters θ 0 \theta_{0} , reference policy π ref \pi_{\mathrm{ref}} , tolerance ε \varepsilon , CRPO slack η > 0 \eta>0 , learning rate η θ \eta_{\theta} , total steps T T . 2: for step t = 0 , 1 , … , T − 1 t=0,1,\dots,T-1 do 3: Sample minibatch { x i } i = 1 B ∼ ρ \{x_{i}\}_{i=1}^{B}\sim\rho , generate y i ∼ π θ ( ⋅ ∣ x i ) y_{i}\sim\pi_{\theta}(\cdot\mid x_{i}) 4: Generate reference responses y i ref ∼ π ref ( ⋅ ∣ x i ) y_{i}^{\mathrm{ref}}\sim\pi_{\mathrm{ref}}(\cdot\mid x_{i}) 5: Evaluate minibatch accuracy of current and reference policies:
+B68: A ^ t = 1 B ∑ i = 1 B 𝟙 { y i = y ∗ ( x i ) } , A ^ ref = 1 B ∑ i = 1 B 𝟙 { y i ref = y ∗ ( x i ) } \hat{A}_{t}=\frac{1}{B}\sum_{i=1}^{B}\mathds{1}\{y_{i}=y^{*}(x_{i})\},\hskip 9.24994pt\hat{A}^{\mathrm{ref}}=\frac{1}{B}\sum_{i=1}^{B}\mathds{1}\{y_{i}^{\mathrm{ref}}=y^{*}(x_{i})\}
+B69: 6: if A ^ t < A ^ ref − ε − η \hat{A}_{t}<\hat{A}^{\mathrm{ref}}-\varepsilon-\eta then 7: /* accuracy below reference → rectify toward accuracy */
+B70: θ t + 1 ← θ t + η θ ∇ θ ( 1 B ∑ i = 1 B 𝟙 { y i = y ∗ ( x i ) } ) \theta_{t+1}\leftarrow\theta_{t}+\eta_{\theta}\nabla_{\theta}\left(\frac{1}{B}\sum_{i=1}^{B}\mathds{1}\{y_{i}=y^{*}(x_{i})\}\right)
+B71: 8: else 9: /* accuracy acceptable → optimize for shorter reasoning */
+B72: θ t + 1 ← θ t − η θ ​ ∇ θ ( 1 B ​ ∑ i = 1 B ℓ norm ​ ( y i ) ) \theta_{t+1}\leftarrow\theta_{t}-\eta_{\theta}\nabla_{\theta}\left(\frac{1}{B}\sum_{i=1}^{B}\ell_{\mathrm{norm}}(y_{i})\right)
+B73: 10: end if 11: end for
+B74: 4.4 Two-stage Extension of CRT
+B75: The reference-guarded formulation in Equation 3 enables effective pruning of redundant reasoning by minimizing response length while ensuring that accuracy does not fall below a fixed reference policy. This design is well aligned with our primary objective of obtaining concise yet reliable reasoning trajectories. However, after Stage I converges, the policy usually reaches a saturated regime where the reasoning length can no longer be substantially reduced. Beyond this point, further updates yield limited improvements in length, while gains in accuracy become comparatively more meaningful and valuable.
+B76: Thus motivated, we introduce a novel two-stage extension of CRT that decouples efficiency discovery from accuracy refinement. Stage I aggressively compresses reasoning traces under reference-guarded correctness constraints. Stage II then reverses the roles of objective and constraint, but crucially, it avoids introducing an absolute length target which would again require brittle threshold selection. Instead, we use the Stage I trained policy itself as a length reference, and constrain Stage II to match the normalized length profile achieved by that Stage I reference model. This modification yields a principled accuracy-refinement phase without sacrificing the efficiency discovered in Stage I.
+B77: Stage I: Length Minimization under Reference-Guarded Accuracy Constraints.
+B78: In the first stage, we solve the reference-guarded constrained optimization problem in Equation 3 , producing a compressed policy whose correctness remains competitive with that of the original reference policy. Once improvement in response length saturates, we obtain the Stage I reference policy, denoted by π ref ( I ) \pi_{\mathrm{ref}}^{(I)} .
+B79: Stage II: Accuracy Maximization under Reference-Based Length Constraints.
+B80: In the second stage, we shift the optimization focus to maximizing solution correctness while constraining the expected normalized length to remain close to that of the Stage I policy π ref ( I ) \pi_{\mathrm{ref}}^{(I)} :
+B81: max π \displaystyle\max_{\pi} 𝔼 x ∼ ρ , y ∼ π θ ​ ( y ∣ x ) [ 𝟙 { y = y ∗ ( x ) } ] \displaystyle\mathbb{E}_{x\sim\rho,\,y\sim\pi_{\theta}(y\mid x)}\!\left[\mathds{1}\{y=y^{*}(x)\}\right] (4)
+B82: s.t. \displaystyle\text{s.t.} 𝔼 x ∼ ρ , y ∼ π θ ​ ( y ∣ x ) ​ [ ℓ norm ​ ( y ) ] ≤ 𝔼 x ∼ ρ , y ref ( I ) ∼ π ref ( I ) ​ ( y ∣ x ) ​ [ ℓ norm ​ ( y ref ( I ) ) ] + δ , \displaystyle\mathbb{E}_{x\sim\rho,\,y\sim\pi_{\theta}(y\mid x)}\!\left[\ell_{\mathrm{norm}}(y)\right]\leq\mathbb{E}_{x\sim\rho,\,y_{\mathrm{ref}}^{(I)}\sim\pi_{\mathrm{ref}}^{(I)}(y\mid x)}\!\left[\ell_{\mathrm{norm}}\!\left(y_{\mathrm{ref}}^{(I)}\right)\right]+\delta,
+B83: where δ ≥ 0 \delta\geq 0 is a small tolerance controlling how much the policy is allowed to deviate (in expectation) from the Stage I length regime. To ensure a consistent length scale across stages, we freeze the statistics used in length normalization (e.g., mean and variance) based on rollouts from π ref ( I ) \pi_{\mathrm{ref}}^{(I)} .
+B84: This second stage prevents the model from reintroducing unnecessarily long CoT traces to recover accuracy and preserves the learned efficiency profile discovered in Stage I, while encouraging the policy to find higher-quality reasoning strategies within that constraint.
+B85: 5 Experiments
+B86: 5.1 Experimental Setup
+B87: We implement our method within the Verl ( Sheng et al., 2025 ) RL framework. All experiments are conducted using the hardware configuration detailed in Appendix A . We evaluate our approach on two backbone language models: DeepSeek-R1-Distilled-Qwen-1.5B ( Guo et al., 2025 ) (hereafter DeepSeek-1.5B ), and Qwen3-4B ( Yang et al., 2025 ) . Across all settings, we use a fixed batch size of 128 128 and generate 16 16 rollouts per prompt during training and testing.
+B88: Dataset. Following SimpleRL-Zoo ( Zeng et al., 2025 ) , we perform RL on a mixture of the training splits from GSM8K ( Cobbe et al., 2021 ) and MATH ( Hendrycks et al., 2021 ) . GSM8K consists of 7.4 ​ k 7.4k training and 1.3 ​ k 1.3k test examples, while MATH provides 7.5 ​ k 7.5k training and 5 ​ k 5k test examples. These datasets are well-suited for studying reasoning efficiency for several reasons. First, they exhibit complementary difficulty regimes: GSM8K emphasizes elementary, multi-step arithmetic reasoning, whereas MATH contains more challenging problems requiring deeper symbolic manipulation. Second, both datasets provide standardized, in-domain evaluation splits with relatively low inference cost, enabling controlled and systematic analysis of reasoning behaviors under RL training. For evaluation, we consider both in-domain and out-domain benchmarks. In-domain performance is assessed on GSM8K ( Cobbe et al., 2021 ) and MATH500 ( Lightman et al., 2024 ) , which follow the same problem distributions as the RL training data. To evaluate generalization beyond the training domain, we additionally report results on a suite of out-domain math reasoning benchmarks, including SAT Math ( Zhong et al., 2024 ) , AMC23 ( math-ai, 2023 ) , AIME24 ( Jia, 2024 ) , and OLYMPIAD Bench ( He et al., 2024 ) .
+B89: Baselines. In addition to the two base models, we compare our proposed method (denoted as CRT) against reproduced results from recent approaches for efficient reasoning, including ThinkPrune ( Hou et al., 2025 ) , L1 ( Aggarwal and Welleck, 2025 ) , O1-Pruner ( Luo et al., 2025b ) , ShorterBetter ( Yi et al., 2025 ) , and ACPO ( Cheng et al., 2025 ) . For ThinkPrune, we evaluate two length budgets, 1 ​ k 1k and 500 500 . For O1-Pruner, we test two penalty coefficients: λ ∈ { 1.0 , 4.0 } \lambda\in\{1.0,4.0\} .
+B90: Metrics. We report Acc , defined as the pass@1 accuracy (in % \% ) averaged over rollouts per question, and Len , defined as the average number of generated tokens per response. In addition, to better capture the trade-off between reasoning quality and efficiency, we report two composite metrics: AES 1 , and AES 2 . Higher AES ( Luo et al., 2025b ) values indicate more favorable efficiency-accuracy trade-off, with AES 2 imposing a stricter penalty on accuracy degradation than AES 1 . The formal definition of AES is provided in Appendix B .
+
+B91: 5.2 Main Results
+B92: Figure 2 : Left: Inference trajectories over training checkpoints. We periodically save intermediate model checkpoints during training and evaluate them via inference on the testing dataset. The base model is DeepSeek-1.5B. The upper figure reports in-domain performance, while the lower figure reports out-domain performance. Right: Case study of CRT training behavior evaluated on GSM8K. Each row corresponds to a question, and each column to an intermediate model checkpoint generated during CRT training.
+B93: Table 2 : Empirical evidence on in-domain testing dataset: GSM8K and MATH500.
+B94: Method GSM8K MATH500 Avg Metrics
+B95: Acc Len Acc Len A ¯ \overline{A} L ¯ \overline{L} AES 1 AES 2
+B96: DeepSeek-1.5B 84.43 1869 85.19 4987 84.81 3428.0 0.0000 0.0000
+B97: + ThinkPrune-500 78.91 995 85.25 4455 82.08 2725.0 0.0441 -0.1168
+B98: + ThinkPrune-1k 81.54 1128 85.69 4206 83.62 2667.0 0.1515 0.0811
+B99: + L1 86.34 2272 85.69 4891 86.02 3581.5 -0.0022 -0.0022
+B100: + O1-Pruner-1.0 80.36 1272 85.75 4174 83.06 2723.0 0.1022 -0.0013
+B101: + O1-Pruner-4.0 84.39 1561 85.56 4452 84.97 3006.5 0.1288 0.1288
+B102: + ShorterBetter 71.24 294 82.47 3205 76.85 1749.6 0.0207 -0.4482
+B103: + ACPO 82.78 1252 85.44 4175 84.11 2713.3 0.1673 0.1261
+B104: + CRT (ours) 84.64 1172 86.06 3826 85.35 2499.2 0.2901 0.2901
+B105: Table 3 : Empirical evidence on out-domain testing dataset: SAT Math, AMC23, AIME24, and OLYMPIAD Bench.
+B106: Method SAT AMC23 AIME24 Olymp. Avg Metrics
+B107: Acc Len Acc Len Acc Len Acc Len A ¯ \overline{A} L ¯ \overline{L} AES 1 AES 2
+B108: DeepSeek-1.5B 89.84 1373 69.84 8634 30.42 14044 13.25 15527 50.84 9894.5 0.00 0.00
+B109: + ThinkPrune-500 81.45 609 71.88 7715 27.92 13378 13.63 14791 48.72 9123.2 -0.13 -0.33
+B110: + ThinkPrune-1k 81.45 759 72.97 7548 28.96 13001 14.44 14326 49.46 8908.5 -0.03 -0.17
+B111: + L1 97.66 2377 72.34 8134 29.38 13565 12.56 15533 52.98 9902.2 0.12 0.12
+B112: + O1-Pruner-1.0 86.91 1225 70.78 7606 28.54 12930 12.81 14410 49.76 9042.8 -0.01 -0.12
+B113: + O1-Pruner-4.0 91.21 1500 71.88 7848 30.63 12669 12.62 14547 51.58 9141.0 0.12 0.12
+B114: + ShorterBetter 84.77 200 74.84 6068 27.08 11714 11.62 12908 49.58 7722.4 0.10 -0.03
+B115: + ACPO 91.02 1282 71.25 7251 30.42 12367 12.62 14189 51.33 8772.2 0.14 0.14
+B116: + CRT (ours) 93.16 1582 74.38 6934 28.54 12674 13.63 13956 52.43 8786.4 0.21 0.21
+B117: Table 4 : Evaluation results using Qwen3-4B as the base model. Full dataset-wise results are reported in Table 7 .
+B118: Method A ¯ \overline{A} L ¯ \overline{L} AES 1 AES 2
+B119: Qwen3-4B 65.77 2472.8 0 0
+B120: + ThinkPrune-500 64.96 2109.8 0.09 0.02
+B121: + ThinkPrune-1k 64.46 2006.9 0.09 -0.01
+B122: + O1-Pruner-4.0 62.66 1394.3 0.2 -0.04
+B123: + ShorterBetter 61.22 1343.4 0.11 -0.23
+B124: + ACPO 63.12 1675.6 0.12 -0.08
+
+B125: + CRT (ours) 62.99 1361.4 0.24 0.03
+B126: We report the in-domain evaluation results for DeepSeek-1.5B in Table 2 and the out-domain results in Table 3 . We report Qwen3-4B results in Table 4 . Across all settings, CRT achieves the highest AES scores among the evaluated baselines, indicating a superior ability to balance accuracy and reasoning efficiency. Moreover, CRT preserves the original model’s accuracy across most tasks, and in several cases yields measurable improvements. As shown by the training trajectories in Figure 2 (left), CRT consistently reduces average response length throughout training while largely maintaining task performance in both domains. In contrast, ThinkPrune exhibits substantial performance degradation beginning in the mid-training phase. These training-time dynamics directly account for the observed differences in final inference performance.
+B127: 5.3 Analyzing Redundancy Beyond Average Length
+B128: While average response length is a useful coarse indicator of reasoning efficiency, it does not fully capture qualitative differences in how different models reason. In particular, two responses of comparable length may differ substantially in informational density, with one exhibiting repetitive or self-referential patterns (e.g., verification loops or self-doubt statements) that do not contribute to problem solving. Motivated by this observation, we move beyond length-based metrics and analyze changes in language redundancy across training checkpoints and baselines.
+B129: Qualitative inspection at the sample level reveals that earlier checkpoints frequently contain self-checking and verification loops, where later results could be reiterated multiple times throughout the reasoning trace. Whether such patterns are directly correlated with correctness remains unclear; however, they suggest that efficiency gains may arise not only from shorter outputs but also from reduced redundancy within the text. Although one could assess redundancy using semantic judges (e.g., LLM-based evaluators), we instead focus on deterministic, text-based metrics that can be computed directly and reproducibly.
+B130: Table 5 : Evaluation on answer redundancy using GSM8K.
+B131: Method R ¯ zip \bar{R}_{\text{zip}} ( ↑ \uparrow ) R ¯ zip correct \bar{R}_{\text{zip}}^{\text{correct}} ( ↑ \uparrow ) R ¯ zip wrong \bar{R}_{\text{zip}}^{\text{wrong}} ( ↑ \uparrow )
+B132: DeepSeek-1.5B 0.356 0.364 0.323
+B133: + Thinkprune-1k 0.388 0.395 0.363
+B134: + O1-Pruner-4.0 0.372 0.381 0.335
+B135: + ACPO 0.397 0.405 0.366
+B136: + CRT (ours) 0.423 0.433 0.383
+B137: Compression Ratio as a Redundancy Metric.
+B138: Redundant text is inherently more compressible. Let zip ​ ( ⋅ ) \text{zip}(\cdot) denote a deterministic compression algorithm (e.g., gzip), and let | ⋅ | |\cdot| denote the byte length of a rollout-level response, including chain-of-thought tokens. We define the compression ratio as R zip ​ ( y ) = | zip ​ ( y ) | | y | R_{\text{zip}}(y)=\frac{|\text{zip}(y)|}{|y|} where a lower value of R zip R_{\text{zip}} indicates greater internal redundancy. We report redundancy statistics across baselines in Table 5 , including the average compression ratio R zip R_{\text{zip}} over all responses, as well as its correctness-conditional variants R zip correct R_{\text{zip}}^{\text{correct}} , R zip wrong R_{\text{zip}}^{\text{wrong}} . CRT achieves the highest compression ratio, indicating substantially reduced internal redundancy. Notably, although Table 2 shows that CRT attains a comparable average output length to ThinkPrune-1k, Table 5 reveals a markedly lower redundancy level. This discrepancy demonstrates that average length alone fails to capture structural redundancy in generated reasoning, underscoring the need for redundancy-aware metrics beyond length.
+B139: 5.4 Controlling Explanation Length with Correctness Guarantees
+B140: Figure 3 : Controlling explanation length while preserving correctness across training checkpoints.
+B141: A distinctive advantage of our method is its ability to provide fine-grained, correctness-preserving control over the level of explanation detail. Unlike prior approaches that manipulate the trade-off between correctness and length, our procedure yields a sequence of intermediate checkpoints that span a spectrum of explanation lengths while maintaining original answer quality. This produces a model family that users can query at different levels of verbosity, ranging from concise answers to fully elaborated solutions without sacrificing correctness. To illustrate this property, we visualize the rollout behavior of intermediate checkpoints on the in-domain GSM8K dataset in Figure 2 (Right). We further present a qualitative case study in Figure 3 , which tracks the evolution of a single GSM8K example across intermediate training checkpoints. Despite substantial differences in explanation length and structure, all checkpoints produce the same correct final answer. Earlier checkpoints generate detailed, self-verifying reasoning traces, whereas later checkpoints converge to increasingly compact and direct solutions. This progression highlights a key strength of our approach: explanation length can be continuously adjusted through training progress, rather than discretely tuned via heuristics, while preserving correctness throughout.
+B142: 5.5 Ablation Study
+B143: We evaluate the effectiveness of the proposed two-stage training scheme by comparing full CRT against a single-stage variant that follows only Stage I for the same number of training steps, denoted as CRT (1s) . In addition, we include a primal-dual baseline, denoted as PD , which jointly optimizes accuracy and length within a single-stage primal-dual formulation. As shown in Table 6 , CRT (1s) consistently underperforms the full two-stage CRT across both in-domain and out-domain evaluations in terms of AES scores. Notably, it exhibits degraded accuracy and longer length on in-domain data, indicating that aggressively minimizing length alone is insufficient to recover reasoning quality once compression saturates. In contrast, the second stage of CRT effectively restores accuracy without substantially increasing response length, leading to improved accuracy-efficiency trade-off. This effect is especially pronounced under AES 2 , which heavily penalizes accuracy degradation, highlighting the importance of the Stage II refinement in preserving correctness while maintaining the efficiency profile discovered in Stage I.
+B144: Table 6 : Evaluation of CRT variants. DeepSeek-1.5B is used as the base model. Detailed per-dataset results are reported in Table 8 .
+B145: Method A ¯ \overline{A} L ¯ \overline{L} AES 1 AES 2
+B146: In-domain
+B147: CRT 85.35 2499.2 0.29 0.29
+B148: CRT (1s) 84.52 2549.6 0.24 0.22
+B149: PD 82.28 2461 0.13 -0.02
+B150: Out-domain
+B151: CRT 52.43 8786.4 0.21 0.21
+B152: CRT (1s) 52.03 8613 0.20 0.20
+B153: PD 50.1 8607.4 0.06 -0.02
+B154: 6 Conclusion
+
+B210: Zhu et al. (2025) J. Zhu, C. Zheng, J. Lin, K. Du, Y. Wen, Y. Yu, J. Wang, and W. Zhang Retrieval-augmented process reward model for generalizable mathematical reasoning . arXiv preprint arXiv:2502.14361 . Cited by: §2 .
+B211: Appendix A Hardware Details
+B212: All baselines and our proposed method were trained on systems with the following hardware configuration:
+B213: •
+B214: Operating system: Red Hat Enterprise Linux (RHEL) 9
+B215: •
+B216: Type of CPU: Intel Xeon Platinum 8470 (Sapphire Rapids, 52 cores) running at 2.0 GHz
+B217: •
+B218: Type of GPU: NVIDIA H100 "Hopper" with 94 GB memory
+B219: All model inference and evaluation were conducted on separate systems with the following hardware configuration:
+B220: •
+B221: Operating system: Red Hat Enterprise Linux (RHEL) 9
+B222: •
+B223: Type of CPU: AMD EPYC 7H12 (64 cores) running at 2.6 GHz
+B224: •
+B225: Type of GPU: NVIDIA A100 "Ampere" with 40 GB memory
+B226: Appendix B Additional Details
+B227: Length Normalization.
+B228: We implement response-length normalization using a per-prompt standardization scheme:
+B229: ℓ norm ​ ( y ) = σ ⁡ ( LEN ( y ) − 𝔼 y ∼ π θ ( ⋅ ∣ x ) [ LEN ( y ) ] Var y ∼ π θ ( ⋅ ∣ x ) [ LEN ( y ) ] ) . \ell_{\mathrm{norm}}(y)=\sigma\!\left(\frac{\mathrm{LEN}(y)-\mathbb{E}_{y\sim\pi_{\theta}(\cdot\mid x)}\!\left[\mathrm{LEN}(y)\right]}{\sqrt{\mathrm{Var}_{y\sim\pi_{\theta}(\cdot\mid x)}\!\left[\mathrm{LEN}(y)\right]}}\right). (5)
+B230: where the expectation and variance are computed over responses sampled from the current policy. This normalization preserves the relative ordering of response lengths while making length penalties comparable across prompts with different intrinsic difficulty.
+B231: Accuracy-Efficiency Score (AES).
+B232: This metric was first introduced in O1-Pruner ( Luo et al., 2025b ) , which jointly considers the relative change in accuracy ( Δ ​ A \Delta A ) and response length ( Δ ​ L \Delta L ), defined as
+B233: Δ ​ A = A model − A base A base , Δ ​ L = L base − L model L base , \Delta A=\frac{A_{\text{model}}-A_{\text{base}}}{A_{\text{base}}},\qquad\Delta L=\frac{L_{\text{base}}-L_{\text{model}}}{L_{\text{base}}},
+B234: where Δ ​ L > 0 \Delta L>0 indicates a shorter response than the baseline. The AES is computed as
+

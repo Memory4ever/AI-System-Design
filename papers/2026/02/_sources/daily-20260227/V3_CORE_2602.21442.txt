@@ -1,0 +1,4515 @@
+MINAR: Mechanistic Interpretability for Neural Algorithmic Reasoning
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+3
+Preliminaries
+4
+Circuit Discovery for GNNs
+4.1
+Attribution Patching Scores
+4.2
+Circuit Identification in GNNs
+5
+Case Study: Bellman-Ford
+5.1
+Training
+5.2
+The Bellman-Ford Circuit
+5.3
+Circuit Pruning and Grokking
+5.4
+Shortcut Learning: Using Bellman-Ford for BFS
+6
+Case Study: SALSA-CLRS
+6.1
+Architecture and Training
+6.2
+Circuit Discovery and Analysis
+7
+Conclusion
+References
+A
+Additional Results for Bellman-Ford
+A.1
+Score Comparison for Bellman-Ford
+A.2
+Circuit Sparsification
+A.3
+Bellman-Ford without Self-Loops
+A.4
+Results from different runs
+A.4.1
+Bellman-Ford
+A.4.2
+Bellman-Ford and Breadth-First Search
+A.5
+Parameter Summaries
+B
+Additional Results on SALSA-CLRS
+C
+Training Data
+C.1
+Shortest Path Data
+C.2
+SALSA-CLRS
+C.3
+Designing Corrupted Datasets
+D
+Model Training and Hardware
+License: CC BY 4.0
+arXiv:2602.21442v1 [cs.LG] 24 Feb 2026
+MINAR: Mechanistic Interpretability for Neural Algorithmic Reasoning
+Jesse He
+Affiliation:
+Pacific Northwest National Laboratory, Richland, WA
+Affiliation:
+Halıcıoğlu Data Science Institute, University of California, San Diego, San Diego, CA
+Correspondence to:
+jeh020@ucsd.edu
+Helen Jenne
+Affiliation:
+Pacific Northwest National Laboratory, Richland, WA
+Max Vargas
+Affiliation:
+Pacific Northwest National Laboratory, Richland, WA
+Davis Brown
+Affiliation:
+Pacific Northwest National Laboratory, Richland, WA
+Affiliation:
+Department of Computer and Information Science, University of Pennsylvania, Pennsylvaina, PA
+Gal Mishne
+Affiliation:
+Halıcıoğlu Data Science Institute, University of California, San Diego, San Diego, CA
+Yusu Wang
+Affiliation:
+Halıcıoğlu Data Science Institute, University of California, San Diego, San Diego, CA
+Henry Kvinge
+Affiliation:
+Pacific Northwest National Laboratory, Richland, WA
+Affiliation:
+Department of Mathematics, University of Washington, Seattle, WA
+Abstract
+The recent field of
+neural algorithmic reasoning
+(NAR) studies the ability of graph neural networks (GNNs) to emulate classical algorithms like Bellman-Ford, a phenomenon known as
+algorithmic alignment
+.
+At the same time, recent advances in large language models (LLMs) have spawned the study of
+mechanistic interpretability
+, which aims to identify granular model components like
+circuits
+that perform specific computations.
+In this work, we introduce
+M
+echanistic
+I
+nterpretability for
+N
+eural
+A
+lgorithmic
+R
+easoning (MINAR), an efficient circuit discovery toolbox that adapts attribution patching methods from mechanistic interpretability to the GNN setting. We show through two case studies that MINAR recovers faithful neuron-level circuits from GNNs trained on algorithmic tasks. Our study sheds new light on the process of circuit formation and pruning during training, as well as giving new insight into how GNNs trained to perform multiple tasks in parallel reuse circuit components for related tasks.
+Our code is available at
+https://github.com/pnnl/MINAR
+.
+1
+Introduction
+The recent surge in the capabilities of large language models (LLMs) has created a commensurate demand for novel interpretability methods suited to rigorous analysis of these models. At the same time, the discovery of phenomena like
+grokking
+(
+Power et al., 2022
+)
+has shown that rich algorithmic structure can arise via standard training methods. This confluence of interests has led to the emergence of
+mechanistic interpretability
+(
+Nanda et al., 2023
+)
+, which attempts to explain model behavior using specific subsets of a model’s internal computation. In several striking cases
+(
+Wang et al., 2023
+;
+Lindsey et al., 2025
+)
+this has allowed researchers to reduce seemingly complex behaviors to an interpretable sequence of mathematical operations.
+At the same time, researchers have noticed that graph neural networks (GNNs) are capable of implementing classical algorithms as a result of the similarity between their message-passing structure and dynamic programming. This notion of “algorithmic alignment”
+(
+Xu et al., 2020
+)
+or “neural algorithmic reasoning”
+(
+Veličković et al., 2020
+)
+, promises robust out-of-distribution generalization and substantial improvements in sample complexity. With an interest in discovering how models perform algorithmic tasks on the one hand, and a class of models (GNNs) that are known to naturally implement traditional algorithms on the other, neural algorithmic reasoning creates a natural testbed for fine-grained mechanistic interpretability research.
+In this work, we introduce
+M
+echanistic
+I
+nterpretability for
+N
+eural
+A
+lgorithmic
+R
+easoning (MINAR). To our knowledge, MINAR is the first attempt to apply automated circuit discovery to the GNN setting.
+Through two case studies, we demonstrate how MINAR enables a detailed study of neural algorithmic reasoning models.
+Our contributions are as follows:
+1.
+Building on prior work in mechanistic interpretability, we develop an efficient approach for identifying end-to-end neuron-level circuits in GNNs (
+Section
+4
+).
+2.
+Applied to a GNN trained to predict single-source shortest path distances, we show that MINAR extracts a minimal circuit that captures the model’s implementation of the Bellman-Ford algorithm (
+Section
+5.2
+).
+(a)
+MINAR also reveals a delayed pruning effect, where the optimal circuit appears to be pruned from a larger circuit long after a generalizable model has been obtained.
+(
+Section
+5.3
+).
+(b)
+MINAR exposes shortcut learning in a network trained to perform Bellman-Ford and breadth-first search (BFS) in parallel (
+Section
+5.4
+).
+3.
+We study a GNN trained to perform seven tasks from the CLRS-30 benchmark
+(
+Veličković et al., 2022
+)
+in parallel. Here, MINAR showcases how the model leverages the same circuit components to perform related tasks (
+Section
+6
+).
+2
+Related Work
+Circuit Discovery and Mechanistic Interpretability
+Early mechanistic interpretability work, e.g.,
+(
+Nanda et al., 2023
+;
+Zhong et al., 2023
+)
+, combines manual examination of parameters with expert hypotheses to reverse-engineer the inner workings of a narrow trained model. However, the rise in language model capabilities has created an interest in applying such methods to much larger models, focusing on methods to partially or fully automate much of the mechanistic interpretability process. In particular, researchers have identified “circuits” that perform specific subtasks
+(
+Olah et al., 2020
+)
+, and the process of identifying circuits is known as
+circuit discovery
+. A number of approaches for circuit discovery have been proposed, such as attribution patching
+(
+Syed et al., 2024
+;
+Hanna et al., 2024
+;
+Zhang et al., 2025
+)
+or pruning
+(
+Cao et al., 2021
+;
+Conmy et al., 2023
+;
+Yu et al., 2025
+)
+. These methods formulate the model as a
+computation graph
+and attempt to find small subgraphs responsible for a particular behavior. To date, much of the circuit discovery literature has been focused on sub-tasks for language models such as indirect object identification
+(
+Wang et al., 2023
+)
+, and has identified coarse-grained circuits whose nodes are entire attention heads or MLP modules.
+Algorithmic Alignment in Graph Neural Networks
+While mechanistic interpretability has revealed surprising structure in large generalist models, a different class of narrow models has also been shown to possess algorithmic “reasoning” capabilities: graph neural networks (GNNs). Broadly, GNNs operate via an iterative
+message-passing
+scheme: each node in the graph maintains an embedding, and iteratively aggregates the embeddings of its neighbors to update its own embedding.
+Xu et al. (2020)
+and
+Dudzik and Veličković (2022)
+point out that this aggregate-and-update flow resembles dynamic programming, hypothesizing that this
+algorithmic alignment
+of GNNs affords them an advantage in learning algorithmic tasks where more ad hoc approaches might fail. For example, learning reachability via BFS and shortest paths via Bellman-Ford in parallel can help GNNs generalize on both tasks
+(
+Veličković et al., 2020
+)
+.
+Veličković et al. (2022)
+later introduced the CLRS-30 benchmark to demonstrate this parallel reasoning ability across 30 algorithmic tasks inspired by the classic textbook
+Introduction to Algorithms
+by Cormen, Leiserson, Rivest, and Stein
+(
+Cormen et al., 2022
+)
+. However, it was only recently that
+Nerem et al. (2025)
+showed that GNNs are not only
+capable
+of learning specific algorithms, but that a properly designed GNN will
+provably
+learn a specific algorithm (in their case Bellman-Ford) when trained with sparsity regularization.
+3
+Preliminaries
+Let
+Φ
+\Phi
+be a GNN operating on an attributed graph
+G
+=
+(
+V
+,
+E
+,
+X
+,
+A
+)
+G=(V,E,X,A)
+, where
+V
+V
+is the node set,
+E
+E
+is the edge set,
+X
+:
+V
+→
+ℝ
+p
+X:V\to\mathbb{R}^{p}
+are the node features and
+A
+:
+E
+→
+ℝ
+q
+A:E\to\mathbb{R}^{q}
+are edge attributes.
+We briefly recall the message-passing scheme that underlies most popular GNNs. A GNN
+Φ
+\Phi
+of depth
+L
+L
+maintains an embedding
+Φ
+v
+(
+ℓ
+)
+\Phi^{(\ell)}_{v}
+for each node
+v
+∈
+V
+v\in V
+and
+ℓ
+=
+0
+,
+…
+,
+L
+\ell=0,\dots,L
+, with layer 0 being the input node features
+Φ
+v
+(
+0
+)
+=
+X
+v
+\Phi^{(0)}_{v}=X_{v}
+. In each layer,
+Φ
+v
+(
+ℓ
+)
+\Phi^{(\ell)}_{v}
+is updated according to the features of its 1-hop neighborhood
+𝒩
+⁡
+(
+v
+)
+\mathcal{N}(v)
+:
+Φ
+v
+(
+ℓ
++
+1
+)
+=
+f
+Up
+(
+ℓ
+)
+​
+(
+Φ
+v
+(
+ℓ
+)
+,
+⨁
+u
+∈
+𝒩
+⁡
+(
+v
+)
+f
+Agg
+(
+ℓ
+)
+​
+(
+Φ
+u
+(
+ℓ
+)
+,
+A
+(
+u
+,
+v
+)
+)
+)
+\Phi^{(\ell+1)}_{v}=f^{(\ell)}_{\Up}\left(\Phi^{(\ell)}_{v},\bigoplus_{u\in\mathcal{N}(v)}f^{(\ell)}_{\Agg}(\Phi^{(\ell)}_{u},A_{(u,v)})\right)
+(1)
+where
+f
+Agg
+(
+ℓ
+)
+f^{(\ell)}_{\Agg}
+and
+f
+Up
+(
+ℓ
+)
+f^{(\ell)}_{\Up}
+are any functions and
+⨁
+\bigoplus
+denotes any permutation-invariant operation such as sum, mean, minimum, or maximum. We may denote the output of
+Φ
+\Phi
+at node
+v
+v
+by
+Φ
+v
+\Phi_{v}
+or
+Φ
+v
+​
+(
+G
+)
+\Phi_{v}(G)
+, if the input graph is ambiguous.
+Fundamental to circuit discovery is the
+computation graph
+, which represents the connections between individual model components
+(
+Olah et al., 2020
+;
+Syed et al., 2024
+;
+Zhang et al., 2025
+)
+1
+1
+1
+In GNN literature, some authors
+(
+Ying et al., 2019
+;
+You et al., 2021
+;
+He et al., 2025
+)
+use “computation graph” to refer to a GNN’s layered message-passing, but in this paper “computation graph” will always refer to the model computation graph.
+. These components are typically defined at an architectural level, representing modules like attention heads or MLPs.
+Here, we will denote by
+Ψ
+\Psi
+an arbitrary (perhaps non-graph) neural network.
+Definition 3.1
+(Model Computation Graph)
+.
+Let
+Ψ
+\Psi
+be a neural network with arbitrary subcomponents
+ψ
+i
+\psi_{i}
+(e.g. neurons). The
+model computation graph
+of
+Ψ
+\Psi
+, denoted
+G
+c
+​
+(
+Ψ
+)
+G_{c}(\Psi)
+, is the directed graph with vertices
+ψ
+i
+\psi_{i}
+and edges
+(
+i
+,
+j
+)
+(i,j)
+if the output of
+ψ
+i
+\psi_{i}
+is part of the input to
+ψ
+j
+\psi_{j}
+.
+While prior work in LLMs frequently defines these components at a lower resolution (e.g., entire attention heads or MLPs), our work is more in line with the neuron-level circuits that
+Olah et al. (2020)
+identify in convolutional neural networks: each node in the computation graph corresponds to an individual neuron in the model, and each edge corresponds to a connection between neuron activations.
+We also clarify here a subtle point for the model computation graph of a GNN: because a message-passing GNN (
+1
+) shares parameters across each node in the input graph, any neuron
+ψ
+\psi
+will necessarily have several activations on a single graph instance. Therefore, fully unrolling the computation graph would require a copy of
+ψ
+\psi
+for every node in the input graph. This differs from circuit discovery in the LLM setting, e.g.
+(
+Wang et al., 2023
+)
+, where the circuit can receive input directly from the model’s residual stream and the circuit output is a single next-token prediction. Since our goal will be to extract a circuit which is shared across graphs, we will consider only a single copy of each neuron. We discuss in the next section how we accomodate the multiplicity of each neuron in the GNN computation graph.
+4
+Circuit Discovery for GNNs
+In
+Section
+4.1
+we first describe the scoring methods edge attribution patching (EAP)
+(
+Syed et al., 2024
+)
+and edge attribution patching with integrated gradients (EAP-IG)
+(
+Hanna et al., 2024
+)
+.
+2
+2
+2
+We also note the more recent method EAP-GP
+(
+Zhang et al., 2025
+)
+, although we will not discuss it in detail here.
+We then describe our main technical contribution: adapting mechanistic interpretability methods to extract circuits in the GNN setting (
+Section
+4.2
+).
+4.1
+Attribution Patching Scores
+Early circuit discovery work employs
+activation patching
+, which removes an edge from the computation graph and computes how this perturbation affects the model’s predictions.
+(
+Meng et al., 2022
+;
+Conmy et al., 2023
+)
+.
+Formally, given a loss
+ℒ
+\mathcal{L}
+and input
+x
+x
+, let
+(
+i
+,
+j
+)
+(i,j)
+be an edge in the computation graph of a neural network
+Ψ
+\Psi
+, corresponding to the connection between two modules
+ψ
+i
+\psi_{i}
+and
+ψ
+j
+\psi_{j}
+. Let
+Ψ
+∖
+(
+i
+,
+j
+)
+\Psi^{\setminus(i,j)}
+be the neural network
+Ψ
+\Psi
+with computation edge
+(
+i
+,
+j
+)
+(i,j)
+removed. Then
+(
+i
+,
+j
+)
+(i,j)
+can be given an activation patching score
+ActPatch
+​
+(
+i
+,
+j
+)
+=
+ℒ
+⁡
+(
+Ψ
+⁡
+(
+x
+)
+,
+Ψ
+∖
+(
+i
+,
+j
+)
+​
+(
+x
+)
+)
+.
+\textsc{ActPatch}(i,j)=\mathcal{L}\left(\Psi(x),\Psi^{\setminus(i,j)}(x)\right).
+(2)
+In the LLM setting,
+ℒ
+\mathcal{L}
+may be the absolute logit difference for the “clean” output token
+(
+Syed et al., 2024
+)
+or the KL divergence between two token distributions
+(
+Conmy et al., 2023
+)
+.
+Activation patching can be seen as a causal intervention on the model behavior. However, it becomes prohibitively expensive for larger computation graphs, as it requires a forward pass for each computation edge.
+The goal of
+attribution patching
+is to
+approximate
+this difference in prediction
+(
+Hanna et al., 2024
+)
+.
+Now, for a computation edge
+(
+i
+,
+j
+)
+(i,j)
+, we assign an attribution score of
+(
+i
+,
+j
+)
+(i,j)
+for a prediction
+Ψ
+⁡
+(
+x
+)
+\Psi(x)
+as follows: we first create a corrupted input
+x
+′
+x^{\prime}
+. In the LLM setting,
+x
+′
+x^{\prime}
+is typically a sentence where tokens of interest like names or years have been changed, but the overall sentence structure is preserved.
+Then, given the activation
+z
+i
+z_{i}
+at
+ψ
+i
+\psi_{i}
+for the input
+x
+x
+, the activation
+z
+i
+′
+z_{i}^{\prime}
+from the corrupted input
+x
+′
+x^{\prime}
+, and the loss
+ℒ
+\mathcal{L}
+between predictions
+y
+=
+Ψ
+⁡
+(
+x
+)
+y=\Psi(x)
+and
+y
+′
+=
+Ψ
+⁡
+(
+x
+′
+)
+y^{\prime}=\Psi(x^{\prime})
+, the EAP score uses the gradient of
+ℒ
+\mathcal{L}
+with respect to the output of
+ψ
+j
+\psi_{j}
+. That is,
+EAP
+(
+i
+,
+j
+)
+⁡
+(
+x
+,
+x
+′
+)
+=
+(
+z
+i
+′
+−
+z
+i
+)
+⊺
+​
+∂
+∂
+ψ
+j
+​
+ℒ
+​
+(
+Ψ
+⁡
+(
+x
+)
+,
+Ψ
+⁡
+(
+x
+′
+)
+)
+.
+\operatorname{EAP}_{(i,j)}(x,x^{\prime})=(z_{i}^{\prime}-z_{i})^{\intercal}\frac{\partial}{\partial\psi_{j}}\mathcal{L}(\Psi(x),\Psi(x^{\prime})).
+(3)
+Equation (
+3
+) comes from the first-order term in a Taylor expansion for the perturbation performed by activation patching
+(
+Syed et al., 2024
+)
+, similar to the relationship between occlusion search and Input
+⊙
+\odot
+Gradient described by
+(
+Ancona et al., 2018
+)
+in classical explainability. By perturbing the input and using the intermediate activations, EAP scores can be computed more efficiently than activation patching scores: EAP performs just two forward passes and one backward pass for each pair of inputs, rather than a forward pass for each computation edge
+(
+Syed et al., 2024
+)
+.
+Extending the analogy between circuit discovery and classical explainability, EAP-IG
+(
+Hanna et al., 2024
+)
+adapts EAP to use the integrated gradients method of
+Sundararajan et al. (2017)
+, inheriting its advantages over Input
+⊙
+\odot
+Gradient. EAP-IG approximates an integral over the straight-line path between
+z
+i
+z_{i}
+and
+z
+i
+′
+z_{i}^{\prime}
+with a Riemann sum of
+m
+m
+terms:
+EAP
+−
+IG
+(
+i
+,
+j
+)
+⁡
+(
+x
+,
+x
+′
+)
+=
+(
+z
+i
+′
+−
+z
+i
+)
+⊺
+​
+1
+m
+​
+∑
+k
+=
+1
+m
+∂
+∂
+ψ
+j
+​
+ℒ
+​
+(
+Ψ
+⁡
+(
+x
+)
+,
+Ψ
+⁡
+(
+x
+′
++
+k
+m
+​
+(
+x
+−
+x
+′
+)
+)
+)
+.
+\begin{split}&\operatorname{EAP-IG}_{(i,j)}(x,x^{\prime})=\\
+&(z_{i}^{\prime}-z_{i})^{\intercal}\frac{1}{m}\sum_{k=1}^{m}\frac{\partial}{\partial\psi_{j}}\mathcal{L}\left(\Psi(x),\Psi\left(x^{\prime}+\frac{k}{m}(x-x^{\prime})\right)\right).\end{split}
+(4)
+EAP-IG is
+m
+m
+times slower than EAP, essentially performing the EAP calculation
+m
+m
+times
+(
+Hanna et al., 2024
+)
+.
+4.2
+Circuit Identification in GNNs
+Having introduced EAP and EAP-IG, we now turn to one of the central contributions of this work: our adaptation of attribution patching to the graph neural network setting.
+Because a graph neural network operates on each node of the input graph, each computation edge may receive several scores for a single prediction, corresponding to each node of the underlying input graph. To give each computation edge a single score for a given prediction, in MINAR we take the mean over the scores given by each of these nodes.
+That is, given a (clean) input graph
+G
+G
+, we design a corrupted input graph
+G
+′
+=
+(
+V
+,
+E
+,
+X
+′
+,
+A
+′
+)
+G^{\prime}=(V,E,X^{\prime},A^{\prime})
+. Note that
+G
+′
+G^{\prime}
+will have the same node set
+V
+V
+and edge set
+E
+E
+as
+G
+G
+, but will have corrupted features
+X
+′
+X^{\prime}
+and
+A
+′
+A^{\prime}
+. This way,
+G
+′
+G^{\prime}
+remains structurally aligned with
+G
+G
+, allowing for a one-to-one comparison of node and edge activations while ablating the actual computation. (We discuss this choice further in
+Section
+C.3
+.) Then given a GNN
+Φ
+\Phi
+, we define
+EAP
+(
+i
+,
+j
+)
+⁡
+(
+G
+,
+G
+′
+)
+=
+1
+|
+V
+|
+​
+∑
+v
+∈
+V
+(
+z
+′
+i
+v
+−
+z
+i
+v
+)
+⊺
+​
+∂
+∂
+ψ
+j
+​
+ℒ
+​
+(
+Φ
+v
+​
+(
+G
+)
+,
+Φ
+v
+​
+(
+G
+′
+)
+)
+\begin{split}&\operatorname{EAP}_{(i,j)}(G,G^{\prime})=\\
+&\phantom{-}\frac{1}{|V|}\sum_{v\in V}\left({{z^{\prime}}^{v}_{i}}-z_{i}^{v}\right)^{\intercal}\frac{\partial}{\partial\psi_{j}}\mathcal{L}(\Phi_{v}(G),\Phi_{v}(G^{\prime}))\end{split}
+(5)
+where
+z
+i
+v
+z_{i}^{v}
+is the activation of neuron
+ψ
+i
+\psi_{i}
+on node
+v
+v
+and
+z
+i
+′
+v
+{z_{i}^{\prime}}^{v}
+is the corrupted activation of
+ψ
+i
+\psi_{i}
+on
+v
+v
+. We note that the mean in (
+5
+) can be replaced by any pooling operation.
+We compute EAP-IG in a similar manner, again taking the mean score over each node. For EAP-IG, we implement the steps between the original and corrupted inputs by interpolating between all node and edge features.
+Finally, since attribution scores are typically averaged over multiple input instances in order to understand their behavior across a probing dataset
+𝒢
+probe
+\mathcal{G}_{\text{probe}}
+, we average over each input graph to obtain the final attribution score for each edge. We also follow previous work in using the absolute value of each attribution score for downstream circuit discovery:
+EAP
+(
+i
+,
+j
+)
+=
+|
+1
+|
+𝒢
+probe
+|
+​
+∑
+(
+G
+,
+G
+′
+)
+∈
+𝒢
+probe
+EAP
+(
+i
+,
+j
+)
+⁡
+(
+G
+,
+G
+′
+)
+|
+\operatorname{EAP}_{(i,j)}=\left|\frac{1}{|\mathcal{G}_{\text{probe}}|}\sum_{(G,G^{\prime})\in\mathcal{G}_{\text{probe}}}\operatorname{EAP}_{(i,j)}(G,G^{\prime})\right|
+(6)
+and similarly for EAP-IG. We note that the mean in (
+5
+) can be replaced by any pooling operation (e.g. sum).
+Here, we also introduce two simple but natural baseline scoring methods. First, since computation edges represent connections between individual neurons, we can simply use the weight
+W
+i
+,
+j
+W_{i,j}
+between neurons
+φ
+i
+\varphi_{i}
+and
+φ
+j
+\varphi_{j}
+as a score function. This simple baseline is invariant to specific tasks or perturbations, and is therefore unsuitable for isolating specific behaviors in models performing multiple algorithmic computations in parallel.
+For the second baseline, our neuron-level approach also admits a simple sensitivity analysis by taking the gradient of the loss between clean and corrupted outputs with respect to the weight:
+WeightGrad
+​
+(
+i
+,
+j
+)
+=
+∂
+∂
+W
+i
+,
+j
+​
+ℒ
+​
+(
+Φ
+⁡
+(
+x
+)
+,
+Φ
+⁡
+(
+x
+′
+)
+)
+.
+\textsc{WeightGrad}(i,j)=\frac{\partial}{\partial W_{i,j}}\mathcal{L}(\Phi(x),\Phi(x^{\prime})).
+(7)
+These scores are normally ill-defined in the LLM setting, where computation edges represent large collections of weights, but they are natural choices at the neuron level.
+To guarantee
+connectedness
+of the identified circuit, we construct the circuit from complete paths between the computation graph’s inputs and outputs, roughly following the “path patching” approach of
+(
+Wang et al., 2023
+)
+.
+Because we wish to maximize the attribution scores across the circuit, MINAR takes advantage of the fact that the computation graph is directed and acyclic, and therefore supports an efficient longest-path algorithm. Each longest path computation takes
+O
+⁡
+(
+|
+V
+⁡
+(
+G
+c
+)
+|
++
+|
+E
+⁡
+(
+G
+c
+)
+|
+)
+O(|V(G_{c})|+|E(G_{c})|)
+time, the same runtime as constructing the model computation graph
+G
+c
+G_{c}
+itself.
+Algorithm 1
+Circuit construction algorithm
+Input:
+G
+c
+G_{c}
+,
+Scores
+,
+K
+K
+TopologicalSort
+(
+G
+c
+G_{c}
+)
+SortDescending
+(
+Scores
+)
+Initialize circuit
+C
+C
+k
+←
+0
+k\leftarrow 0
+while
+k
+<
+K
+k<K
+and
+Scores
+≠
+∅
+\texttt{Scores}\neq\varnothing
+do
+(
+i
+,
+j
+)
+←
+Scores.
+Pop
+​
+(
+)
+(i,j)\leftarrow\texttt{Scores.}\textsc{Pop}()
+if
+(
+i
+,
+j
+)
+∉
+C
+(i,j)\notin C
+then
+C
+←
+C
+∪
+C\leftarrow C\ \cup
+LongestPathWithEdge
+(
+G
+c
+,
+(
+i
+,
+j
+)
+G_{c},(i,j)
+)
+k
+←
+k
++
+1
+k\leftarrow k+1
+end
+if
+end
+while
+return
+C
+C
+Algorithm
+1
+describes our circuit discovery algorithm. Once scores are computed and the computation graph is constructed, topologically sorting
+G
+c
+G_{c}
+takes time
+O
+⁡
+(
+|
+V
+⁡
+(
+G
+c
+)
+|
++
+|
+E
+⁡
+(
+G
+c
+)
+|
+)
+O(|V(G_{c})|+|E(G_{c})|)
+, and sorting the edges by attribution score takes time
+O
+⁡
+(
+|
+E
+⁡
+(
+G
+c
+)
+|
+​
+log
+⁡
+(
+|
+E
+⁡
+(
+G
+c
+)
+|
+)
+)
+O(|E(G_{c})|\log(|E(G_{c})|))
+. After these preprocessing steps, finding a circuit that includes the top
+K
+K
+edges takes time
+O
+⁡
+(
+K
+⁡
+(
+|
+V
+⁡
+(
+G
+c
+)
+|
++
+|
+E
+⁡
+(
+G
+c
+)
+|
+)
+)
+O(K(|V(G_{c})|+|E(G_{c})|))
+.
+By constructing the circuit from complete input-output paths, MINAR guarantees that the identified circuit is a connected subgraph of the computation graph whose only parentless and childless nodes are the model inputs and outputs, respectively. This differs from previous circuit discovery work, which uses naive top-
+k
+k
+selection
+(
+Syed et al., 2024
+)
+or a greedy Dijkstra-like algorithm
+(
+Hanna et al., 2024
+)
+. These methods often produce disconnected circuits or circuits with parentless or childless edges which must then be pruned. In contrast, MINAR will always produce a connected end-to-end circuit, ensuring that the result can be applied as a subnetwork of the original network.
+5
+Case Study: Bellman-Ford
+We validate MINAR by studying GNNs trained to perform single-source shortest path distances, a common task for neural algorithmic reasoning research
+(
+Veličković et al., 2020
+;
+Xu et al., 2020
+;
+Nerem et al., 2025
+)
+. MINAR recovers the minimal circuit in a GNN trained to compute single-source shortest path differences (
+Section
+5.2
+). We also present a surprising observation that the parameters of the Bellman-Ford circuit generalize later than the full model (
+Section
+5.3
+).
+Section
+5.4
+extends this example by training on a second task, breadth-first search (BFS), in parallel. Here, applying MINAR reveals that model learned a shortcut for breadth-first-search based on the shortest path distance. Although we report here results from a single run, we observe the same behavior from different initializations (
+Section
+A.4
+) and experimental setups (
+Section
+A.3
+).
+5.1
+Training
+Throughout, we replicate the training setup of
+(
+Nerem et al., 2025
+)
+.
+We use a two-layer minimum-aggregated message-passing network (MinAggGNN), corresponding to two steps of Bellman-Ford. Recall that at the
+ℓ
+\ell
+-th step of the Bellman-Ford algorithm, each node
+v
+v
+updates its estimated distance
+d
+v
+(
+ℓ
+)
+d_{v}^{(\ell)}
+to the source node
+s
+s
+by
+d
+v
+(
+ℓ
++
+1
+)
+←
+min
+u
+∈
+𝒩
+⁡
+(
+v
+)
+⁡
+{
+d
+u
+(
+ℓ
+)
++
+w
+u
+,
+v
+}
+d_{v}^{(\ell+1)}\leftarrow\min_{u\in\mathcal{N}(v)}\{d_{u}^{(\ell)}+w_{u,v}\}
+(8)
+where
+w
+u
+,
+v
+w_{u,v}
+is the weight of edge
+(
+u
+,
+v
+)
+(u,v)
+. Analogously, each layer of the MinAggGNN is given by
+Φ
+v
+(
+ℓ
++
+1
+)
+=
+f
+Up
+(
+ℓ
+)
+​
+(
+Φ
+v
+(
+ℓ
+)
+,
+min
+u
+∈
+𝒩
+⁡
+(
+v
+)
+⁡
+f
+Agg
+(
+ℓ
+)
+​
+(
+Φ
+u
+(
+ℓ
+)
+,
+e
+u
+,
+v
+)
+)
+\Phi^{(\ell+1)}_{v}=f^{(\ell)}_{\Up}\left(\Phi^{(\ell)}_{v},\min_{u\in\mathcal{N}(v)}f^{(\ell)}_{\Agg}(\Phi^{(\ell)}_{u},e_{u,v})\right)
+(9)
+where
+e
+u
+,
+v
+e_{u,v}
+is the edge feature for
+(
+u
+,
+v
+)
+(u,v)
+. We implement
+f
+Agg
+(
+ℓ
+)
+f^{(\ell)}_{\Agg}
+and
+f
+Up
+(
+ℓ
+)
+f^{(\ell)}_{\Up}
+as two-layer MLPs. By using minimum aggregation, we see that the GNN only needs to learn a simple inner function to emulate
+Equation
+8
+.
+By training with
+L
+1
+L_{1}
+sparsity regularization and a small curated training set,
+(
+Nerem et al., 2025
+)
+showed that such a GNN must implement the Bellman-Ford algorithm.
+This training set consists of few small graphs of size up to 6 nodes. To ensure that the test set captures out-of-distribution generalization, the test set consists of hundreds of randomly generated graphs up to 200 nodes. Nodes are given input features that emulate the standard initialization of the Bellman-Ford algorithm from some source node
+s
+s
+:
+x
+v
+SP
+=
+{
+0
+v
+​
+is the source
+B
+otherwise
+.
+x_{v}^{\text{SP}}=\begin{cases}0&v\text{ is the source}\\
+B&\text{otherwise}.\end{cases}
+(10)
+Here
+B
+B
+is any large number greater than any path length, which we take to be
+B
+=
+1000
+B=1000
+. We discuss the dataset in greater detail in
+Section
+C.1
+.
+While we use MSE during training, we evaluate on the test set
+𝒢
+test
+\mathcal{G}_{\text{test}}
+using a multiplicative test loss
+ℒ
+Mult
+\mathcal{L}_{\text{Mult}}
+which is not sensitive to the scale of the edge weights. We compute
+ℒ
+Mult
+\mathcal{L}_{\text{Mult}}
+over the set
+𝒩
+(
+L
+)
+​
+(
+s
+)
+\mathcal{N}^{(L)}(s)
+of nodes at most
+L
+L
+steps from
+s
+s
+:
+ℒ
+Mult
+=
+1
+|
+𝒢
+test
+|
+​
+∑
+G
+∈
+𝒢
+test
+∑
+v
+∈
+𝒩
+(
+L
+)
+​
+(
+s
+)
+|
+1
+−
+y
+v
+Φ
+v
+​
+(
+G
+)
+|
+\mathcal{L}_{\text{Mult}}=\frac{1}{|\mathcal{G}_{\text{test}}|}\sum_{G\in\mathcal{G}_{\text{test}}}\sum_{v\in\mathcal{N}^{(L)}(s)}\left|1-\frac{y_{v}}{\Phi_{v}(G)}\right|
+(11)
+where
+y
+v
+y_{v}
+is the true label for each reachable node. The MinAggGNN reaches a train loss of
+ℒ
+MSE
+=
+0.0001
+\mathcal{L}_{\MSE}=0.0001
+and a test loss of
+ℒ
+Mult
+=
+0.0578
+\mathcal{L}_{\text{Mult}}=0.0578
+(
+Figure
+1
+).
+Figure 1
+:
+MSE training loss, multiplicative test loss, and
+L
+1
+L_{1}
+regularization term for Bellman-Ford MinAggGNN.
+5.2
+The Bellman-Ford Circuit
+For circuit discovery, we corrupt the input data by setting every edge weight to zero and flipping the input features:
+x
+v
+SP
+′
+=
+{
+B
+v
+​
+is the source
+0
+otherwise
+.
+{x_{v}^{\text{SP}}}^{\prime}=\begin{cases}B&v\text{ is the source}\\
+0&\text{otherwise}.\end{cases}
+(12)
+Using this corruption with MSE, we use each scoring method in
+Section
+4
+to identify a circuit in the 18240-edge computation graph. All methods except
+WeightGrad
+are able to identify the the theoretically optimal circuit of 10 parameters (
+Figure
+2
+, left) predicted by
+Nerem et al. (2025)
+. (A comparison of scoring methods is given in
+Section
+A.1
+.)
+The circuit is sufficient to replicate the model’s Bellman-Ford implementation: taken as a subnetwork of the full model, the circuit achieves
+ℒ
+Mult
+=
+0.0545
+\mathcal{L}_{\text{Mult}}=0.0545
+on the test set, matching the high performance of the full model. (In fact, the circuit achieves a slightly lower loss overall.) It is also necessary: when the circuit is removed, the resulting loss is
+ℒ
+Mult
+=
+21870.6836
+\mathcal{L}_{\text{Mult}}=21870.6836
+. In this example, MINAR successfully recovers the minimal circuit that captures the behavior of the full model, validating our approach.
+Figure 2
+:
+Identified circuit in the Bellman-Ford MinAggGNN (left) and parallel Bellman-Ford and BFS MinAggGNN (right). Nodes are individual MinAggGNN neurons. Input and output neurons are colored white,
+f
+Agg
+f_{\Agg}
+neurons are colored blue, and
+f
+Up
+f_{\Up}
+neurons are colored orange. Circuit edges are colored by corresponding model weights.
+5.3
+Circuit Pruning and Grokking
+One motivation for mechanistic interpretability study is the
+grokking
+phenomenon, where a model exhibits strong generalizability well after its training statistics appear to converge
+(
+Power et al., 2022
+)
+. Several mechanisms have been put forth to explain why grokking occurs, including regularization
+(
+Power et al., 2022
+;
+Nanda et al., 2023
+;
+Zhong et al., 2023
+;
+Li et al., 2025
+)
+, representation learning
+(
+Liu et al., 2022
+;
+Liu et al., 2023
+;
+Zhong et al., 2023
+;
+Mallinar et al., 2025
+)
+, emergence of information-theoretic phenomena
+(
+Clauw et al., 2024
+;
+DeMoss et al., 2025
+)
+, or other properties of training dynamics
+(
+Barak et al., 2022
+;
+Kumar et al., 2024
+)
+.
+In our work, we observe that the Bellman-Ford network generalizes almost immediately. In fact, the generalization occurs almost simultaneously with the convergence of the training loss.
+Curiously, however, the parameters that eventually form the Bellman-Ford circuit generalize later than the full model, as shown in
+Figure
+3
+. While the full model performs well on the test set after only about
+1000
+1000
+epochs, the final circuit does not generalize until about epoch
+3000
+3000
+as the
+L
+1
+L_{1}
+regularization stabilizes.
+Examining this phase of training, MINAR reveals that a generalizable circuit does appear as early as epoch 1000, but it is significantly larger than the final circuit. As the model continues to train with
+L
+1
+L_{1}
+regularization, we can see the minimal sufficient circuit shrink as edges are pruned.
+Section
+A.2
+shows circuits extracted from this intermediate stage of training. A more striking example is given in
+Section
+A.3
+, where a concise circuit emerges early, but a
+minimal
+circuit does not appear until around 18000 epochs.
+Our findings support observations by
+(
+Elhage et al., 2022
+;
+Nanda et al., 2023
+;
+Zhong et al., 2023
+;
+Li et al., 2025
+)
+that once a neural circuit emerges during training, regularization can prune extraneous parameters from the model. For example,
+Elhage et al. (2022)
+show a similar relationship between model capacity and neural representations: as model size grows,
+polysemantic
+neurons (which are responsible for mutiple concepts) split into
+monosemantic
+neurons (which are responsible for only one concept). Expanding model capacity further allows for redundant representations, where a single concept may be represented by multiple neurons.
+However, the nature of pruned parameters that we observe differs from other examples:
+Li et al. (2025)
+show the emergence of “vestigial circuits” alongside generalizable circuits that implement non-generalizable heuristics or memorize parts of the training data. These vestigial circuits must then be pruned later in training by weight decay or regularization. In contrast, we observe that the extra parameters early in training are actually a necessary part of the neural circuit. That is, rather than forming and pruning early heuristic circuits, we observe that regularization serves to refine a generalizing model into a more concise circuit.
+This delayed pruning also has implications for techniques like model compression
+(
+Buciluundefined et al., 2006
+;
+Han et al., 2016
+)
+or distillation
+(
+Hinton et al., 2015
+;
+Salimans and Ho, 2022
+;
+Panigrahi et al., 2025
+)
+, which seek to emulate the behavior of a large performant model using a much smaller model. The smaller model may be pruned directly from the larger model, or trained using outputs from the larger model in a student-teacher manner.
+Our results show that strong test performance—even out-of-distribution performance—may not be enough to characterize a desirable teacher model. Rather, we show that continued training with
+L
+1
+L_{1}
+regularization past model generalization can produce a model with sparser, more efficient circuits, in turn producing a model more amenable to compression.
+Figure 3
+:
+Multiplicative test loss, MSE test loss, and
+L
+1
+L_{1}
+regularization terms for the Bellman-Ford network and circuit.
+5.4
+Shortcut Learning: Using Bellman-Ford for BFS
+We extend the Bellman-Ford example by introducing a second task: predicting reachability from a source node by BFS.
+Veličković et al. (2020)
+note that Bellman-Ford and BFS traverse a graph in the same manner, and show that training these tasks in parallel can benefit performance on both. Here, MINAR reveals surprising behavior in this two-task setup: the model learns a shortcut for BFS based entirely on the shortest path distance.
+Both tasks share the same training set, but with additional node features and labels to support the reachability task. As with Bellman-Ford, the model’s two layers correspond to two steps of BFS. In addition to the Bellman-Ford feature (
+10
+) each node is given an initial feature based for BFS from the same source source
+s
+s
+:
+x
+v
+BFS
+=
+{
+1
+v
+​
+is the source
+0
+otherwise
+.
+x_{v}^{\text{BFS}}=\begin{cases}1&v\text{ is the source}\\
+0&\text{otherwise}.\end{cases}
+(13)
+Thus the parallel GNN receives as input the concatenation
+(
+x
+v
+SP
+,
+x
+v
+BFS
+)
+(x_{v}^{\text{SP}},x_{v}^{\text{BFS}})
+. For the test set, we additionally include a number of balanced tree graphs to provide more graphs with unreachable nodes.
+We train simultaneously, using MSE for the shortest path task and binary cross-entropy (BCE) for the reachability task (more details are given in
+Appendix
+D
+).
+Figure
+4
+shows the loss and accuracy curves of the model during training, with a test loss of 0.0519 on shortest path and a test accuracy of 1.00 on reachability.
+Figure 4
+:
+MSE training loss, multiplicative test loss, reachability accuracy, and
+L
+1
+L_{1}
+regularization term for parallel Bellman-Ford and BFS MinAggGNN.
+We again use EAP-IG with
+m
+=
+20
+m=20
+steps to identify the circuit .
+Again, we corrupt the input data by setting every edge weight to zero and flipping the input features:
+x
+v
+BFS
+′
+=
+{
+0
+v
+​
+is the source
+1
+otherwise
+.
+{x_{v}^{\text{BFS}}}^{\prime}=\begin{cases}0&v\text{ is the source}\\
+1&\text{otherwise}.\end{cases}
+(14)
+We identify a circuit (
+Figure
+2
+, right) with 11 edges (out of 18432) that achieves
+ℒ
+Mult
+=
+0.0499
+\mathcal{L}_{\text{Mult}}=0.0499
+on shortest paths and a reachability accuracy of 0.9831, showing that the circuit is sufficient. It is also necessary: removing it results in
+ℒ
+Mult
+=
+58038.1680
+\mathcal{L}_{\text{Mult}}=58038.1680
+and a test accuracy of 0.8198 (the accuracy when the model classifies every node as reachable).
+Upon inspection, it is clear that the circuit does not perform BFS independently—it is almost identical to the Bellman-Ford circuit. Manual inspection of the parameters represented in the BFS circuit reveals that the BFS output has
+output_bfs
+=
+(
+−
+.2927
+)
+​
+convs.1.up_mlp.lins.0.58
++
+2.6463
+.
+\begin{split}&\texttt{output\_bfs}=\\
+&\phantom{-}(-.2927)\texttt{convs.1.up\_mlp.lins.0.58}+2.6463.\end{split}
+(15)
+That is, the model has learned a shortcut: multiply the internal representation of the shortest path distance by a negative weight and compare against the bias term. While concerns about shortcut learning often center around poor out-of-distribution generalization
+(
+Geirhos et al., 2020
+)
+, MINAR exposes shortcut learning which is invisible even to a large out-of-distribution test set.
+6
+Case Study: SALSA-CLRS
+Algorithm
+BFS
+DFS
+Dijkstra
+Prim’s MST
+Bellman-Ford
+Articulation Points
+Bridges
+Val Acc. (%)
+99.90
+70.73
+93.37
+81.15
+93.75
+94.63
+78.68
+Test Acc. (%)
+98.25
+36.42
+81.50
+48.18
+82.55
+97.42
+88.22
+Table 1
+:
+Validation and test accuracy of maximum-aggregated GINE on SALSA-CLRS.
+Figure 5
+:
+Characterization score of circuits computed using Weight,
+WeightGrad
+, EAP, and EAP-IG (
+m
+=
+20
+m=20
+) for SALSA-CLRS GNN for
+K
+∈
+{
+10
+,
+25
+,
+50
+,
+100
+,
+250
+,
+500
+,
+1000
+,
+1500
+,
+2000
+,
+2500
+,
+3000
+}
+K\in\{10,25,50,100,250,500,1000,1500,2000,2500,3000\}
+.
+Figure 6
+:
+Weighted Jaccard Similarity of task-specific circuits with
+WeightGrad
+, EAP, EAP-IG at
+K
+=
+500
+K=500
+.
+In this section we apply circuit discovery to a larger collection of graph-based reasoning tasks taken from the CLRS-30 benchmark
+(
+Veličković et al., 2022
+)
+, providing a more challenging case study. Specifically, we use the PyTorch Geometric implementations of breadth-first search (BFS), depth-first search (DFS), Dijkstra’s shortest path algorithm, and Prim’s minimum spanning tree (MST) algorithm from SALSA-CLRS
+(
+Minder et al., 2023
+)
+. We also include implementations of Bellman-Ford, Articulation Points, and Bridges from CLRS-30 in the SALSA-CLRS framework. These seven tasks represent the subset of CLRS tasks which can be represented on sparse graphs.
+3
+3
+3
+The remaining CLRS-30 tasks require complete graphs to represent problem instances, as CLRS-30’s hints allow arbitrary node connections. We restrict ourselves to tasks where hints are restricted to edges which already exist in the graph. For further discussion, see
+Section
+C.2
+.
+6.1
+Architecture and Training
+Following the Encode-Process-Decode setup described in
+(
+Veličković et al., 2022
+;
+Minder et al., 2023
+)
+, each task has its own set of linear encoders and decoders for node and edge features.
+The processor is a graph neural network
+Φ
+\Phi
+shared across all algorithmic tasks, which is applied recurrently to the encoded features. We use a 2-layer Graph Isomorphism Network with Edge Features (GINE)
+(
+Hu et al., 2020
+)
+, modified from the Graph Isomorphism Network in
+(
+Xu et al., 2019
+)
+. Each layer is given by
+Φ
+v
+(
+ℓ
++
+1
+)
+=
+f
+(
+ℓ
+)
+​
+(
+Φ
+v
+(
+ℓ
+)
++
+max
+u
+∈
+𝒩
+⁡
+(
+v
+)
+⁡
+ReLU
+⁡
+(
+Φ
+u
+(
+ℓ
+)
++
+W
+e
+(
+ℓ
+)
+​
+e
+u
+,
+v
+)
+)
+,
+\Phi_{v}^{(\ell+1)}=f^{(\ell)}\left(\Phi_{v}^{(\ell)}+\max_{u\in\mathcal{N}(v)}\ReLU(\Phi_{u}^{(\ell)}+W^{(\ell)}_{e}e_{u,v})\right),
+(16)
+where
+f
+(
+ℓ
+)
+f^{(\ell)}
+is a two-layer MLP and
+W
+e
+(
+ℓ
+)
+W^{(\ell)}_{e}
+is a linear map which maps the edge feature
+e
+u
+,
+v
+e_{u,v}
+to the same dimension as the node embedding space. Training details are provided in
+Appendix
+D
+.
+The trained model does not generalize perfectly, as some tasks are known to be challenging
+(
+Veličković et al., 2022
+;
+Minder et al., 2023
+)
+. It is also not as sparse as the Bellman-Ford models in
+Section
+5
+. Despite the lack of optimality in the trained model, we show that MINAR can still extract faithful circuits that offer insight into the model’s behavior.
+6.2
+Circuit Discovery and Analysis
+To perform circuit discovery on the full network, we begin by creating corrupted datasets for each task. We do so by zero-ablating every input feature on unseen graphs drawn from the validation distribution. This includes node positions on all graphs; source nodes for BFS, DFS, Dijkstra’s, Prim’s, and Bellman-Ford; and edge weights on Dijkstra’s, Prim’s, and Bellman-Ford. Because the processor is responsible for the algorithmic reasoning steps, we focus on identifying circuits within the processor GNN using the same loss that was used in training. A more detailed discussion can be found in
+Section
+C.2
+.
+We use
+Algorithm
+1
+to identify circuits in the processor’s computation graph of 99712 edges using edge weights,
+WeightGrad
+, EAP, and EAP-IG (
+m
+=
+20
+m=20
+), and evaluate the fidelity of each circuit with respect to the full model
+Φ
+\Phi
+. The
+positive fidelity
+Fid
++
+\text{Fid}^{+}
+measures the
+necessity
+of a circuit
+C
+C
+while the
+negative fidelity
+Fid
+−
+\text{Fid}^{-}
+measures the
+sufficiency
+: denote by
+Φ
+∖
+C
+\Phi^{\setminus C}
+the model without the circuit and by
+Φ
+C
+\Phi^{C}
+the model using only the circuit weights:
+Fid
++
+​
+(
+C
+)
+=
+1
+−
+1
+|
+V
+|
+∑
+v
+∈
+G
+𝟏
+{
+Φ
+v
+(
+G
+)
+≠
+Φ
+∖
+C
+v
+(
+G
+)
+}
+Fid
+−
+​
+(
+C
+)
+=
+1
+−
+1
+|
+V
+|
+∑
+v
+∈
+G
+𝟏
+{
+Φ
+v
+(
+G
+)
+≠
+Φ
+C
+v
+(
+G
+)
+}
+.
+\begin{split}\text{Fid}^{+}(C)&=1-\frac{1}{|V|}\sum_{v\in G}\mathbf{1}\{\Phi_{v}(G)\neq\Phi^{\setminus C}_{v}(G)\}\\
+\text{Fid}^{-}(C)&=1-\frac{1}{|V|}\sum_{v\in G}\mathbf{1}\{\Phi_{v}(G)\neq\Phi^{C}_{v}(G)\}.\end{split}
+(17)
+We combine these metrics using the
+characterization score
+from
+(
+Amara et al., 2022
+)
+. The characterization score is the harmonic mean of
+Fid
++
+​
+(
+C
+)
+\text{Fid}^{+}(C)
+and
+(
+1
+−
+Fid
+−
+​
+(
+C
+)
+)
+(1-\text{Fid}^{-}(C))
+:
+Char
+​
+(
+C
+)
+=
+[
+1
+2
+​
+Fid
++
+​
+(
+C
+)
++
+1
+2
+​
+(
+1
+−
+Fid
+−
+​
+(
+C
+)
+)
+]
+−
+1
+.
+\textsc{Char}(C)=\left[\frac{1}{2\text{Fid}^{+}(C)}+\frac{1}{2(1-\text{Fid}^{-}(C))}\right]^{-1}.
+(18)
+Figure
+5
+shows the characterization score for values of
+K
+K
+up to 3000.
+(Individual fidelity scores and accuracies of circuits and their ablations are given in
+Appendix
+B
+.)
+We can see that
+WeightGrad
+, EAP, and EAP-IG consistently outpace the weight baseline in finding explanatory circuits for most tasks. Surprisingly, despite its simplicity,
+WeightGrad
+performs quite well, frequently exceeding EAP and EAP-IG. These results show that even on a denser, more challenging network, MINAR successfully identifies faithful circuits using only a fraction of the computation graph.
+As in
+Section
+5.4
+, it is natural to see if the SALSA-CLRS model also leverages the same circuit components to perform related tasks. For example, Dijkstra’s algorithm, Prim’s algorithm, and Bellman-Ford all rely on edge weights, while the standard approaches for Articulation points and Bridges both rely on DFS. We measure circuit overlap by the weighted Jaccard similarity between the circuit edge sets, where edges are weighted by the absolute value of their corresponding model weights.
+Figure
+6
+displays the overlap of circuits identified with
+WeightGrad
+, EAP, and EAP-IG at
+K
+=
+500
+K=500
+. (Conservatively, at
+K
+=
+500
+K=500
+each circuit is
+<
+1
+%
+<1\%
+of the computation graph. We do not plot the overlap of circuits found with Weight, as it is invariant to the task and therefore all the circuits are identical.) Additional overlap comparisons for different scoring methods can be found in
+Appendix
+B
+. We can see across scoring methods that, as expected, the circuits for Dijkstra’s algorithm, Prim’s algorithm, and Bellman-Ford have significant overlap. We also see strong overlap between DFS, Articulation Points, and Bridges. Interestingly, EAP and EAP-IG circuits show stronger edge weight overlap while
+WeightGrad
+identifies the overlap in DFS-based tasks first. This circuit overlapping phenomenon provides a potential explanation for transfer learning observations like
+(
+Veličković et al., 2020
+)
+, where training on similar tasks in parallel helps GNNs perform on each individual task.
+7
+Conclusion
+In this work, we introduce MINAR, the first (to our knowledge) attempt to use automated circuit discovery in the GNN setting. Through two case studies, we demonstrate how MINAR enables a detailed analysis of GNNs trained to solve algorithmic tasks, with implications for the role of circuit formation and pruning in grokking and model compression. We also show, using MINAR, how GNNs trained to perform multiple algorithmic tasks in parallel share circuit components for similar tasks—in the most extreme case exposing severe shortcut learning. We hope that by bringing the emerging field of mechanistic interpretability to the study of neural algorithmic reasoning, MINAR provides a useful tool to study NAR models in detail.
+Acknowledgements
+We thank Robert R. Nerem and Samantha Chen for discussions regarding the Bellman-Ford MinAggGNN.
+This work was conducted under the Laboratory Directed Research and Development Program at PNNL, a multi-program national laboratory operated by Battelle for the U.S. Department of Energy under contract DE-AC05-76RL01830.
+It was also partially supported by NSF CCF-2112665, CCF-2217058, CCF-2403452, and CCF-2310411.
+Impact Statement
+This work advances the study of neural algorithmic reasoning by enabling mechanistic interpretability of GNN models. While interpretability is of societal concern, this work is of a fundamental nature and hence we do not feel that any specific impact must be highlighted here.
+References
+Amara
+et al.
+(2022)
+K. Amara, R. Ying, Z. Zhang, Z. Han, Y. Shan, U. Brandes, S. Schemm, and C. Zhang
+GraphFramEx: towards systematic evaluation of explainability methods for graph neural networks
+.
+arXiv preprint arXiv:2206.09677
+.
+Cited by:
+§6.2
+.
+Ancona
+et al.
+(2018)
+M. Ancona, E. Ceolini, C. Öztireli, and M. Gross
+Towards better understanding of gradient-based attribution methods for deep neural networks
+.
+In
+International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§4.1
+.
+Barak
+et al.
+(2022)
+B. Barak, B. L. Edelman, S. Goel, S. Kakade, E. Malach, and C. Zhang
+Hidden progress in deep learning: sgd learns parities near the computational limit
+.
+In
+Proceedings of the 36th International Conference on Neural Information Processing Systems
+,
+NIPS ’22
+,
+Red Hook, NY, USA
+.
+External Links:
+ISBN 9781713871088
+Cited by:
+§5.3
+.
+Bellman (1958)
+R. Bellman
+On a routing problem
+.
+Quarterly of Applied Mathematics
+16
+(
+1
+),
+pp. 87–90
+.
+Cited by:
+§C.2
+.
+Buciluundefined
+et al.
+(2006)
+C. Buciluundefined, R. Caruana, and A. Niculescu-Mizil
+Model compression
+.
+In
+Proceedings of the 12th ACM SIGKDD International Conference on Knowledge Discovery and Data Mining
+,
+KDD ’06
+,
+New York, NY, USA
+,
+pp. 535–541
+.
+External Links:
+ISBN 1595933395
+,
+Link
+,
+Document
+Cited by:
+§5.3
+.
+Cao
+et al.
+(2021)
+S. Cao, V. Sanh, and A. Rush
+Low-complexity probing via finding subnetworks
+.
+In
+Proceedings of the 2021 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies
+,
+K. Toutanova, A. Rumshisky, L. Zettlemoyer, D. Hakkani-Tur, I. Beltagy, S. Bethard, R. Cotterell, T. Chakraborty, and Y. Zhou (Eds.)
+,
+Online
+,
+pp. 960–966
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2
+.
+Clauw
+et al.
+(2024)
+K. Clauw, D. Marinazzo, and S. Stramaglia
+Information-theoretic progress measures reveal grokking is an emergent phase transition
+.
+In
+ICML 2024 Workshop on Mechanistic Interpretability
+,
+External Links:
+Link
+Cited by:
+§5.3
+.
+Conmy
+et al.
+(2023)
+A. Conmy, A. Mavor-Parker, A. Lynch, S. Heimersheim, and A. Garriga-Alonso
+Towards automated circuit discovery for mechanistic interpretability
+.
+In
+Advances in Neural Information Processing Systems
+,
+A. Oh, T. Naumann, A. Globerson, K. Saenko, M. Hardt, and S. Levine (Eds.)
+,
+Vol.
+36
+,
+pp. 16318–16352
+.
+External Links:
+Link
+Cited by:
+§2
+,
+§4.1
+,
+§4.1
+.
+Cormen
+et al.
+(2022)
+T. H. Cormen, C. E. Leiserson, R. L. Rivest, and C. Stein
+Introduction to algorithms
+.
+MIT Press
+.
+Cited by:
+§C.2
+,
+§C.2
+,
+§2
+.
+Dai
+et al.
+(2022)
+D. Dai, L. Dong, Y. Hao, Z. Sui, B. Chang, and F. Wei
+Knowledge neurons in pretrained transformers
+.
+In
+Proceedings of the 60th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+,
+S. Muresan, P. Nakov, and A. Villavicencio (Eds.)
+,
+Dublin, Ireland
+,
+pp. 8493–8502
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§C.3
+.
+DeMoss
+et al.
+(2025)
+B. DeMoss, S. Sapora, J. Foerster, N. Hawes, and I. Posner
+The complexity dynamics of grokking
+.
+Physica D: Nonlinear Phenomena
+482
+,
+pp. 134859
+.
+External Links:
+ISSN 0167-2789
+,
+Document
+,
+Link
+Cited by:
+§5.3
+.
+Dijkstra (1959)
+E. W. Dijkstra
+A note on two problems in connexion with graphs
+.
+Numerische Mathematik
+1
+,
+pp. 269–271
+.
+External Links:
+Document
+Cited by:
+§C.2
+.
+Dudzik and Veličković (2022)
+A. J. Dudzik and P. Veličković
+Graph neural networks are dynamic programmers
+.
+In
+Advances in Neural Information Processing Systems
+,
+S. Koyejo, S. Mohamed, A. Agarwal, D. Belgrave, K. Cho, and A. Oh (Eds.)
+,
+Vol.
+35
+,
+pp. 20635–20647
+.
+External Links:
+Link
+Cited by:
+§2
+.
+Elhage
+et al.
+(2022)
+N. Elhage, T. Hume, C. Olsson, N. Schiefer, T. Henighan, S. Kravec, Z. Hatfield-Dodds, R. Lasenby, D. Drain, C. Chen, R. Grosse, S. McCandlish, J. Kaplan, D. Amodei, M. Wattenberg, and C. Olah
+Toy models of superposition
+.
+Transformer Circuits Thread
+.
+External Links:
+Link
+Cited by:
+§A.2
+,
+§5.3
+.
+Fey and Lenssen (2019)
+M. Fey and J. E. Lenssen
+Fast graph representation learning with PyTorch Geometric
+.
+ArXiv
+abs/1903.02428
+.
+External Links:
+Link
+Cited by:
+Appendix D
+.
+Geirhos
+et al.
+(2020)
+R. Geirhos, J. Jacobsen, C. Michaelis, R. Zemel, W. Brendel, M. Bethge, and F. A. Wichmann
+Shortcut learning in deep neural networks
+.
+Nature Machine Intelligence
+2
+(
+11
+),
+pp. 665–673
+.
+Cited by:
+§5.4
+.
+Han
+et al.
+(2016)
+S. Han, H. Mao, and W. J. Dally
+Deep compression: compressing deep neural network with pruning, trained quantization and huffman coding
+.
+In
+ICLR
+,
+External Links:
+Link
+Cited by:
+§5.3
+.
+Hanna
+et al.
+(2024)
+M. Hanna, S. Pezzelle, and Y. Belinkov
+Have faith in faithfulness: going beyond circuit overlap when finding model mechanisms
+.
+In
+ICML 2024 Workshop on Mechanistic Interpretability
+,
+External Links:
+Link
+Cited by:
+§2
+,
+§4.1
+,
+§4.1
+,
+§4.1
+,
+§4.2
+,
+§4
+.
+He
+et al.
+(2025)
+J. He, A. Rafiey, G. Mishne, and Y. Wang
+Explaining GNN explanations with edge gradients
+.
+In
+Proceedings of the 31st ACM SIGKDD Conference on Knowledge Discovery and Data Mining V.2
+,
+KDD ’25
+,
+New York, NY, USA
+,
+pp. 884–895
+.
+External Links:
+ISBN 9798400714542
+,
+Link
+,
+Document
+Cited by:
+footnote 1
+.
+Hinton
+et al.
+(2015)
+G. Hinton, O. Vinyals, and J. Dean
+Distilling the knowledge in a neural network
+.
+External Links:
+1503.02531
+,
+Link
+Cited by:
+§5.3
+.
+Hu
+et al.
+(2020)
+W. Hu, B. Liu, J. Gomes, M. Zitnik, P. Liang, V. Pande, and J. Leskovec
+Strategies for pre-training graph neural networks
+.
+In
+International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§6.1
+.
+Kumar
+et al.
+(2024)
+T. Kumar, B. Bordelon, S. J. Gershman, and C. Pehlevan
+Grokking as the transition from lazy to rich training dynamics
+.
+In
+The Twelfth International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§5.3
+.
+Li
+et al.
+(2025)
+V. R. Li, J. Kaufmann, M. Wattenberg, D. Alvarez-Melis, and N. Saphra
+Can interpretation predict behavior on unseen data?
+.
+In
+Mechanistic Interpretability Workshop at NeurIPS 2025
+,
+External Links:
+Link
+Cited by:
+§5.3
+,
+§5.3
+,
+§5.3
+.
+Lindsey
+et al.
+(2025)
+J. Lindsey, W. Gurnee, E. Ameisen, B. Chen, A. Pearce, N. L. Turner, C. Citro, D. Abrahams, S. Carter, B. Hosmer, J. Marcus, M. Sklar, A. Templeton, T. Bricken, C. McDougall, H. Cunningham, T. Henighan, A. Jermyn, A. Jones, A. Persic, Z. Qi, T. B. Thompson, S. Zimmerman, K. Rivoire, T. Conerly, C. Olah, and J. Batson
+On the biology of a large language model
+.
+Transformer Circuits Thread
+.
+External Links:
+Link
+Cited by:
+§1
+.
+Liu
+et al.
+(2022)
+Z. Liu, O. Kitouni, N. Nolte, E. J. Michaud, M. Tegmark, and M. Williams
+Towards understanding grokking: an effective theory of representation learning
+.
+In
+Proceedings of the 36th International Conference on Neural Information Processing Systems
+,
+NIPS ’22
+,
+Red Hook, NY, USA
+.
+External Links:
+ISBN 9781713871088
+Cited by:
+§5.3
+.
+Liu
+et al.
+(2023)
+Z. Liu, E. J. Michaud, and M. Tegmark
+Omnigrok: grokking beyond algorithmic data
+.
+In
+The Eleventh International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§5.3
+.
+Loshchilov and Hutter (2017)
+I. Loshchilov and F. Hutter
+SGDR: stochastic gradient descent with warm restarts
+.
+In
+International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+Appendix D
+.
+Loshchilov and Hutter (2019)
+I. Loshchilov and F. Hutter
+Decoupled weight decay regularization
+.
+In
+International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+Appendix D
+.
+Mallinar
+et al.
+(2025)
+N. R. Mallinar, D. Beaglehole, L. Zhu, A. Radhakrishnan, P. Pandit, and M. Belkin
+Emergence in non-neural models: grokking modular arithmetic via average gradient outer product
+.
+In
+Forty-second International Conference on Machine Learning
+,
+External Links:
+Link
+Cited by:
+§5.3
+.
+Meng
+et al.
+(2022)
+K. Meng, D. Bau, A. Andonian, and Y. Belinkov
+Locating and editing factual associations in gpt
+.
+In
+Proceedings of the 36th International Conference on Neural Information Processing Systems
+,
+NIPS ’22
+,
+Red Hook, NY, USA
+.
+External Links:
+ISBN 9781713871088
+Cited by:
+§4.1
+.
+Minder
+et al.
+(2023)
+J. Minder, F. Grötschla, J. Mathys, and R. Wattenhofer
+SALSA-CLRS: a sparse and scalable benchmark for algorithmic reasoning
+.
+In
+The Second Learning on Graphs Conference
+,
+External Links:
+Link
+Cited by:
+§C.2
+,
+§C.2
+,
+§6.1
+,
+§6.1
+,
+§6
+.
+Moore (1959)
+E. F. Moore
+The shortest path through a maze
+.
+In
+Proceedings of the International Symposium on the Theory of Switching
+,
+Cambridge, MA, USA
+,
+pp. 285–292
+.
+Cited by:
+§C.2
+,
+§C.2
+.
+Nanda
+et al.
+(2023)
+N. Nanda, L. Chan, T. Lieberum, J. Smith, and J. Steinhardt
+Progress measures for grokking via mechanistic interpretability
+.
+In
+The Eleventh International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§1
+,
+§2
+,
+§5.3
+,
+§5.3
+.
+Nerem
+et al.
+(2025)
+R. R. Nerem, S. Chen, S. Dasgupta, and Y. Wang
+Graph neural networks extrapolate out-of-distribution for shortest paths
+.
+External Links:
+2503.19173
+,
+Link
+Cited by:
+Figure 25
+,
+Figure 25
+,
+§C.1
+,
+§2
+,
+§5.1
+,
+§5.1
+,
+§5.2
+,
+§5
+.
+Olah
+et al.
+(2020)
+C. Olah, N. Cammarata, L. Schubert, G. Goh, M. Petrov, and S. Carter
+Zoom in: an introduction to circuits
+.
+Distill
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2
+,
+§3
+,
+§3
+.
+Panigrahi
+et al.
+(2025)
+A. Panigrahi, B. Liu, S. Malladi, A. Risteski, and S. Goel
+Progressive distillation induces an implicit curriculum
+.
+In
+The Thirteenth International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§5.3
+.
+Paszke
+et al.
+(2019)
+A. Paszke, S. Gross, F. Massa, A. Lerer, J. Bradbury, G. Chanan, T. Killeen, Z. Lin, N. Gimelshein, L. Antiga, A. Desmaison, A. Köpf, E. Yang, Z. DeVito, M. Raison, A. Tejani, S. Chilamkurthy, B. Steiner, L. Fang, J. Bai, and S. Chintala
+PyTorch: an imperative style, high-performance deep learning library
+.
+Advances in Neural Information Processing Systems
+32
+.
+Cited by:
+Appendix D
+.
+Power
+et al.
+(2022)
+A. Power, Y. Burda, H. Edwards, I. Babuschkin, and V. Misra
+Grokking: generalization beyond overfitting on small algorithmic datasets
+.
+External Links:
+2201.02177
+,
+Link
+Cited by:
+§1
+,
+§5.3
+.
+Prim (1957)
+R. C. Prim
+Shortest connection networks and some generalizations
+.
+Bell System Technical Journal
+36
+(
+6
+),
+pp. 1389–1401
+.
+External Links:
+Document
+Cited by:
+§C.2
+.
+Salimans and Ho (2022)
+T. Salimans and J. Ho
+Progressive distillation for fast sampling of diffusion models
+.
+In
+International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§5.3
+.
+Sundararajan
+et al.
+(2017)
+M. Sundararajan, A. Taly, and Q. Yan
+Axiomatic attribution for deep networks
+.
+In
+Proceedings of the 34th International Conference on Machine Learning - Volume 70
+,
+ICML’17
+,
+pp. 3319–3328
+.
+Cited by:
+§4.1
+.
+Syed
+et al.
+(2024)
+A. Syed, C. Rager, and A. Conmy
+Attribution patching outperforms automated circuit discovery
+.
+In
+Proceedings of the 7th BlackboxNLP Workshop: Analyzing and Interpreting Neural Networks for NLP
+,
+Y. Belinkov, N. Kim, J. Jumelet, H. Mohebbi, A. Mueller, and H. Chen (Eds.)
+,
+Miami, Florida, US
+,
+pp. 407–416
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2
+,
+§3
+,
+§4.1
+,
+§4.1
+,
+§4.2
+,
+§4
+.
+Veličković
+et al.
+(2022)
+P. Veličković, A. P. Badia, D. Budden, R. Pascanu, A. Banino, M. Dashevskiy, R. Hadsell, and C. Blundell
+The CLRS algorithmic reasoning benchmark
+.
+In
+Proceedings of the 39th International Conference on Machine Learning
+,
+K. Chaudhuri, S. Jegelka, L. Song, C. Szepesvari, G. Niu, and S. Sabato (Eds.)
+,
+Proceedings of Machine Learning Research
+, Vol.
+162
+,
+pp. 22084–22102
+.
+External Links:
+Link
+Cited by:
+§C.2
+,
+item 3
+,
+§2
+,
+§6.1
+,
+§6.1
+,
+§6
+.
+Veličković
+et al.
+(2020)
+P. Veličković, R. Ying, M. Padovano, R. Hadsell, and C. Blundell
+Neural execution of graph algorithms
+.
+In
+International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§1
+,
+§2
+,
+§5.4
+,
+§5
+,
+§6.2
+.
+Wang
+et al.
+(2023)
+K. R. Wang, A. Variengien, A. Conmy, B. Shlegeris, and J. Steinhardt
+Interpretability in the wild: a circuit for indirect object identification in GPT-2 small
+.
+In
+The Eleventh International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§C.3
+,
+§1
+,
+§2
+,
+§3
+,
+§4.2
+.
+Xu
+et al.
+(2019)
+K. Xu, W. Hu, J. Leskovec, and S. Jegelka
+How powerful are graph neural networks?
+.
+In
+International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§6.1
+.
+Xu
+et al.
+(2020)
+K. Xu, J. Li, M. Zhang, S. S. Du, K. Kawarabayashi, and S. Jegelka
+What can neural networks reason about?
+.
+In
+International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§1
+,
+§2
+,
+§5
+.
+Ying
+et al.
+(2019)
+R. Ying, D. Bourgeois, J. You, M. Zitnik, and J. Leskovec
+GNNExplainer: generating explanations for graph neural networks
+.
+In
+Proceedings of the 33rd International Conference on Neural Information Processing Systems
+,
+Red Hook, NY, USA
+.
+Cited by:
+footnote 1
+.
+You
+et al.
+(2021)
+J. You, J. M. Gomes-Selman, R. Ying, and J. Leskovec
+Identity-aware graph neural networks
+.
+In
+Proceedings of the AAAI conference on artificial intelligence
+,
+Vol.
+35
+,
+pp. 10737–10745
+.
+External Links:
+Document
+Cited by:
+footnote 1
+.
+Yu
+et al.
+(2025)
+L. Yu, J. Niu, Z. Zhu, X. Chen, and G. Penn
+Sheaf discovery with joint computation graph pruning and flexible granularity
+.
+In
+Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing
+,
+C. Christodoulopoulos, T. Chakraborty, C. Rose, and V. Peng (Eds.)
+,
+Suzhou, China
+,
+pp. 8822–8837
+.
+External Links:
+Link
+,
+Document
+,
+ISBN 979-8-89176-332-6
+Cited by:
+§2
+.
+Zhang
+et al.
+(2025)
+L. Zhang, W. Dong, Z. Zhang, S. Yang, L. Hu, N. Liu, P. Zhou, and D. Wang
+EAP-GP: mitigating saturation effect in gradient-based automated circuit identification
+.
+In
+The Thirty-ninth Annual Conference on Neural Information Processing Systems
+,
+External Links:
+Link
+Cited by:
+§2
+,
+§3
+,
+footnote 2
+.
+Zhong
+et al.
+(2023)
+Z. Zhong, Z. Liu, M. Tegmark, and J. Andreas
+The clock and the pizza: two stories in mechanistic explanation of neural networks
+.
+In
+Thirty-seventh Conference on Neural Information Processing Systems
+,
+External Links:
+Link
+Cited by:
+§2
+,
+§5.3
+,
+§5.3
+.
+Appendix A
+Additional Results for Bellman-Ford
+This appendix contains additional results from experiments in
+Section
+5
+(
+Section
+A.2
+), as well as relevant plots from runs with different training data (
+Section
+A.3
+) and seeds (
+Section
+A.4
+).
+A.1
+Score Comparison for Bellman-Ford
+We compare in
+Figure
+7
+different scoring methods for the Bellman-Ford GNN in
+Section
+5.2
+. Only
+WeightGrad
+fails to find the optimal 10-edge circuit, instead requiring 12 edges (
+Figure
+8
+).
+Figure 7
+:
+Circuit loss (left) and ablated circuit loss (right) for circuits found using Weight,
+WeightGrad
+, EAP, and EAP-IG (
+m
+=
+20
+m=20
+) with
+K
+=
+1
+,
+2
+,
+…
+,
+10
+K=1,2,\dots,10
+for the Bellman-Ford network.
+Figure 8
+:
+Best Bellman-Ford circuit found by
+WeightGrad
+.
+A.2
+Circuit Sparsification
+Here we demonstrate how the circuit in
+Section
+5.2
+(
+Figure
+2
+) emerges during training by extracting circuits from earlier epochs. We identify sufficient circuits at epochs 1000 and 2000. The final circuit appears by epoch 3000.
+This mirrors observations in LLMs where features may not align with individual neurons, but limiting capacity (either architecturally or in our case through regularization) discourages instances where a single feature is represented by multiple neurons
+[
+Elhage et al., 2022
+]
+. (In contrast, expanding model capacity has been observed in to encourage so-called
+polysemantic
+neurons to split into several
+monosemantic
+neurons in LLMs.)
+Figure 9
+:
+Bellman-Ford circuit at epoch 1000. The circuit contains 73 edges and achieves
+ℒ
+Mult
+=
+0.0578
+\mathcal{L}_{\text{Mult}}=0.0578
+. Elements which are part of the final circuit are bolded.
+Figure 10
+:
+Bellman-Ford circuit at epoch 2000. The circuit 31 edges and achieves
+ℒ
+Mult
+=
+0.0565
+\mathcal{L}_{\text{Mult}}=0.0565
+. Elements which are part of the final circuit are bolded.
+A.3
+Bellman-Ford without Self-Loops
+A previous version of this work contained experiments from
+Section
+5
+in which the training and testing graphs did not have self-loops. As a result, while the minimum aggregation in
+Equation
+9
+returned the optimal neighbor embedding for each node, it did not include the node’s own embedding. Hence the update MLP
+f
+Up
+f_{\text{Up}}
+became responsible for comparing between a node’s current shortest path distance and that of its best neighbor. While self-loops have been added in
+Section
+5
+, we briefly study the behavior of the model trained without self-loops to highlight how MINAR reveals the emergence of this ability to compute the minimum between two elements.
+The MinAggGNN is trained on the same data as
+Section
+5
+, achieving an MSE Loss of
+ℒ
+MSE
+=
+0.0002
+\mathcal{L}_{\text{MSE}}=0.0002
+and
+ℒ
+Mult
+=
+0.0642
+\mathcal{L}_{\text{Mult}}=0.0642
+. The circuit (
+Figure
+12
+), consisting of 17 edges and discovered using EAP-IG (
+m
+=
+20
+m=20
+) achieves a test loss of
+ℒ
+Mult
+=
+0.0599
+\mathcal{L}_{\text{Mult}}=0.0599
+.
+Figure 11
+:
+Train loss, test loss, and
+L
+1
+L_{1}
+regularization term for Bellman-Ford MinAggGNN trained without self-loops.
+Figure 12
+:
+Bellman-Ford circuit from MinAggGNN trained without self-loops. Contains 17 of 18,240 edges.
+ℒ
+Mult
+=
+0.0599
+\mathcal{L}_{\text{Mult}}=0.0599
+.
+Here, we wish to highlight the nodes for the first update MLP (beginning with
+convs.0.up_mlp
+). Manually inspecting the weights, we see that this portion of the circuit implements the minimum operation between the initial node embedding
+x
+self
+x_{\text{self}}
+and the best possible update among its neighbors in the first step, which we will denote
+x
+nbr
+∗
+x_{\text{nbr}}^{*}
+.
+convs.0.up_mlp.lins.1.6
+=
+[
+0
+0.9620
+]
+​
+ReLU
+⁡
+(
+[
+0.4921
+0
+0.5905
+−
+0.6102
+]
+​
+[
+x
+nbr
+∗
+x
+self
+]
+)
+\texttt{convs.0.up\_mlp.lins.1.6}=\begin{bmatrix}0&\phantom{-}0.9620\end{bmatrix}\ReLU\left(\begin{bmatrix}0.4921&0\\
+0.5905&-0.6102\end{bmatrix}\begin{bmatrix}x_{\text{nbr}}^{*}\\
+x_{\text{self}}\end{bmatrix}\right)
+(19)
+If
+0.5905
+​
+x
+nbr
+∗
+−
+0.6102
+​
+x
+self
+>
+0
+0.5905x_{\text{nbr}}^{*}-0.6102x_{\text{self}}>0
+(i.e. if roughly
+x
+nbr
+∗
+>
+x
+self
+x_{\text{nbr}}^{*}>x_{\text{self}}
+), then this becomes
+[
+0.5681
+−
+0.5870
+]
+​
+[
+x
+nbr
+∗
+x
+self
+]
+∝
+x
+nbr
+∗
+−
+x
+self
+.
+\begin{bmatrix}0.5681&-0.5870\end{bmatrix}\begin{bmatrix}x_{\text{nbr}}^{*}\\
+x_{\text{self}}\end{bmatrix}\propto x_{\text{nbr}}^{*}-x_{\text{self}}.
+(20)
+Otherwise, if
+0.5905
+​
+x
+nbr
+∗
+−
+0.6102
+​
+x
+self
+<
+0
+0.5905x_{\text{nbr}}^{*}-0.6102x_{\text{self}}<0
+(i.e. if roughly
+x
+nbr
+∗
+<
+x
+self
+x_{\text{nbr}}^{*}<x_{\text{self}}
+), then this becomes 0.
+Notice in
+Figure
+12
+the primary input to the second step of Bellman-Ford comes from
+convs.0.up_mlp.lins.1.2
+. If
+x
+nbr
+∗
+<
+x
+self
+x_{\text{nbr}}^{*}<x_{\text{self}}
+, then this is the optimal representation for Bellman-Ford. However, if
+x
+nbr
+∗
+>
+x
+self
+x_{\text{nbr}}^{*}>x_{\text{self}}
+, the computation will incorrectly carry forward with
+x
+nbr
+∗
+x_{\text{nbr}}^{*}
+instead of
+x
+self
+x_{\text{self}}
+. In this case, by storing a value proportional to
+x
+nbr
+∗
+−
+x
+self
+x_{\text{nbr}}^{*}-x_{\text{self}}
+, the neuron
+convs.0.up_mlp.lins.1.6
+can be rescaled and subtracted from the input to the final update MLP, serving as a correction factor.
+The upshot of this calculation is that the update MLP
+f
+Up
+(
+0
+)
+f_{\Up}^{(0)}
+essentially learns to implement the minimum operation by
+min
+⁡
+{
+x
+nbr
+∗
+,
+x
+self
+}
+=
+x
+nbr
+∗
+−
+ReLU
+⁡
+(
+x
+nbr
+∗
+−
+x
+self
+)
+.
+\min\{x_{\text{nbr}}^{*},x_{\text{self}}\}=x_{\text{nbr}}^{*}-\ReLU(x_{\text{nbr}}^{*}-x_{\text{self}}).
+(21)
+We also highlight the generalization behavior of the circuit in
+Figure
+13
+. While the full model achieves strong generalization performance early, as in
+Section
+5
+, the final circuit does not generalize until much later (around epoch 18000). Examining a circuit extracted from an earlier checkpoint (epoch 10000) in
+Figure
+14
+, we can see that the connections which are pruned away at this later inflection point (namely, the connections to and from
+convs.0.up_mlp.lins.0.2
+) are partially responsible for this same minimum operation in the first update MLP. As in
+Section
+A.2
+, we see
+L
+1
+L_{1}
+regularization encourage the model to align its internal representations with the neuron basis to achieve a sparser solution.
+Figure 13
+:
+Multiplicative test loss, MSE test loss, and
+L
+1
+L_{1}
+regularization terms for the full Bellman-Ford network without self-loops and the Bellman-Ford circuit without self-loops. Inset shows a small inflection point in
+L
+1
+L_{1}
+norms.
+Figure 14
+:
+Bellman-Ford circuit extracted from epoch 10000 of MinAggGNN training without self-loops. Contains 20 of 18,240 edges.
+A.4
+Results from different runs
+Here we show relevant plots from different experimental trials.
+A.4.1
+Bellman-Ford
+We show circuits extracted across different initializations for experiments in
+Section
+5.2
+in
+Figure
+15(d)
+. Each circuit is functionally identical to the mainline run, but contain different neurons.
+(a)
+Seed 1.
+ℒ
+Mult
+=
+0.0543
+\mathcal{L}_{\text{Mult}}=0.0543
+(b)
+Seed 2.
+ℒ
+Mult
+=
+0.0540
+\mathcal{L}_{\text{Mult}}=0.0540
+(c)
+Seed 3.
+ℒ
+Mult
+=
+\mathcal{L}_{\text{Mult}}=
+(d)
+Seed 4.
+ℒ
+Mult
+=
+\mathcal{L}_{\text{Mult}}=
+Figure 15
+:
+Bellman-Ford circuits across four additional initializations.
+(a)
+Seed 1
+(b)
+Seed 2
+(c)
+Seed 3
+(d)
+Seed 4
+Figure 16
+:
+Bellman-Ford circuit generalization behavior across four additional initializations.
+A.4.2
+Bellman-Ford and Breadth-First Search
+We show circuits extracted across different initializations of the Bellman-Ford and BFS network (
+Figure
+17(d)
+). Again, each circuit is functionally the same as the mainline run, but uses different neurons.
+(a)
+Seed 1
+(b)
+Seed 2
+(c)
+Seed 3
+(d)
+Seed 4
+Figure 17
+:
+Parallel Bellman-Ford and BFS circuits across four additional initializations.
+A.5
+Parameter Summaries
+Here we plot parameter summaries for trained Bellman-Ford models from
+Section
+5
+and
+Section
+A.3
+. For readability we only plot results from the mainline run.
+Figure 18
+:
+Parameter summary for Bellman-Ford MinAggGNN (
+Section
+5.2
+).
+Figure 19
+:
+Parameter summary for parallel Bellman-Ford and BFS MinAggGNN (
+Section
+5.2
+).
+Figure 20
+:
+Parameter summary for Bellman Ford MinAggGNN without self-loops (
+Section
+A.3
+).
+Appendix B
+Additional Results on SALSA-CLRS
+Here we provide additional results from
+Section
+6
+, including separate fidelity metrics (
+Figure
+21
+), circuit accuracy and ablations on each task (
+Figure
+22
+), and circuit overlap for each scoring method across all values of
+K
+K
+(
+Figure
+23
+,
+Figure
+24
+).
+Figure 21
+:
+Fid
+−
+\text{Fid}^{-}
+(top) and
+Fid
++
+\text{Fid}^{+}
+(bottom) for SALSA-CLRS circuits using Weight,
+WeightGrad
+, EAP, and EAP-IG (
+m
+=
+20
+m=20
+) at
+K
+∈
+{
+10
+,
+25
+,
+50
+,
+100
+,
+250
+,
+500
+,
+1000
+,
+1500
+,
+2000
+,
+2500
+}
+K\in\{10,25,50,100,250,500,1000,1500,2000,2500\}
+. For
+Fid
+−
+\text{Fid}^{-}
+, lower indicates a more sufficient circuit. For
+Fid
++
+\text{Fid}^{+}
+, higher indicates a more necessary circuit.
+Figure 22
+:
+Circuit accuracy (top) and ablated accuracy (bottom) for SALSA-CLRS circuits using Weight,
+WeightGrad
+, EAP, and EAP-IG (
+m
+=
+20
+m=20
+) at
+K
+∈
+{
+10
+,
+25
+,
+50
+,
+100
+,
+250
+,
+500
+,
+1000
+,
+1500
+,
+2000
+,
+2500
+,
+3000
+}
+K\in\{10,25,50,100,250,500,1000,1500,2000,2500,3000\}
+. For circuit accuracy, higher is better. For ablated accuracy, lower indicates a necessary circuit.
+Figure 23
+:
+Weighted Jaccard index between CLRS circuits using
+WeightGrad
+, EAP, and EAP-IG (
+m
+=
+20
+m=20
+) at
+K
+∈
+{
+10
+,
+25
+,
+50
+,
+100
+,
+250
+,
+500
+}
+K\in\{10,25,50,100,250,500\}
+.
+Figure 24
+:
+Weighted Jaccard index between CLRS circuits using
+WeightGrad
+, EAP, and EAP-IG (
+m
+=
+20
+m=20
+) at
+K
+∈
+{
+1000
+,
+1500
+,
+2000
+,
+2500
+,
+3000
+}
+K\in\{1000,1500,2000,2500,3000\}
+.
+Appendix C
+Training Data
+C.1
+Shortest Path Data
+Figure 25
+:
+Training graphs for the Bellman-Ford MinAggGNN from
+[
+Nerem et al., 2025
+]
+.
+Following
+[
+Nerem et al., 2025
+]
+, we construct a training set
+𝒢
+train
+\mathcal{G}_{\text{train}}
+from the graphs depicted in
+Figure
+25
+for
+K
+=
+2
+K=2
+. It includes all path graphs of the form
+P
+K
++
+1
+(
+1
+)
+​
+(
+a
+,
+…
+,
+b
+,
+…
+,
+0
+)
+P_{K+1}^{(1)}(a,\dots,b,\dots,0)
+for
+a
+,
+b
+∈
+{
+0
+,
+1
+,
+…
+,
+2
+​
+K
+}
+×
+{
+0
+,
+…
+,
+2
+​
+K
++
+1
+}
+a,b\in\{0,1,\dots,2K\}\times\{0,\dots,2K+1\}
+(where
+b
+b
+is the weight of the
+K
+K
+-th edge). It also includes the graph
+H
+K
+(
+0
+)
+H_{K}^{(0)}
+from
+Figure
+25
+and the special path graphs
+P
+1
+(
+0
+)
+​
+(
+1
+)
+P_{1}^{(0)}(1)
+,
+P
+2
+(
+1
+)
+​
+(
+1
+,
+0
+)
+P_{2}^{(1)}(1,0)
+. We also include extra path graphs: four three-node path graphs initialized at step zero of Bellman-Ford and four four-node path graphs initialized at step two of Bellman-Ford, each with randomly generated edge weights.
+For the out-of-distribution test set, we include a collection of 3 and 4-node cycle graphs; complete graphs on 5 to 200 nodes; and Erdős-Rényi graphs on 5 to 200 nodes with
+p
+=
+0.5
+p=0.5
+. To provide extra examples of graphs with unreachable nodes, we also generate binary and ternary trees of depths of 3 and 4. All test graphs have randomly generated edge weights, and the test set contains 300 graphs in total.
+The corrupted dataset includes feature-ablated versions of every graph in the test dataset. An example is given in
+Figure
+26
+.
+Clean:
+s
+s
+v
+1
+v_{1}
+v
+2
+v_{2}
+v
+3
+v_{3}
+v
+4
+v_{4}
+w
+s
+,
+1
+w_{s,1}
+w
+1
+,
+2
+w_{1,2}
+w
+2
+,
+3
+w_{2,3}
+w
+3
+,
+4
+w_{3,4}
+0
+0
+B
+B
+B
+B
+B
+B
+B
+B
+x
+SP
+=
+x^{\text{SP}}=
+Corrupted:
+s
+s
+v
+1
+v_{1}
+v
+2
+v_{2}
+v
+3
+v_{3}
+v
+4
+v_{4}
+0
+0
+0
+0
+0
+0
+0
+0
+B
+B
+0
+0
+0
+0
+0
+0
+0
+0
+x
+SP
+′
+=
+{x^{\text{SP}}}^{\prime}=
+Figure 26
+:
+Example of clean and corrupted data for shortest path length prediction on a path graph.
+C.2
+SALSA-CLRS
+We use the datasets described by
+[
+Minder et al., 2023
+]
+for BFS, DFS, Dijkstra’s algorithm, and Prim’s algorithm. We also generate data for Bellman-Ford, Articulation Points, and Bridges from
+[
+Veličković et al., 2022
+]
+. (We use implementations of these tasks contained in the codebase for
+[
+Minder et al., 2023
+]
+, but not in the paper.) Each algorithmic task has a training set consisting of 10000 Erdös-Renyi graphs of
+n
+∈
+{
+4
+,
+7
+,
+11
+,
+13
+,
+16
+}
+n\in\{4,7,11,13,16\}
+nodes, with
+p
+∼
+Unif
+⁡
+(
+log
+⁡
+n
+/
+n
+,
+3
+​
+log
+⁡
+n
+/
+n
+)
+p\sim\Unif(\log n/n,3\log n/n)
+for most tasks except articulation points and bridges, which use
+p
+=
+log
+⁡
+n
+/
+n
+p=\log n/n
+. The validation sets consist of 1000 Erdös-Renyi graphs on
+n
+=
+16
+n=16
+nodes, and we test out-of-distribution generalization by using test sets of 1000 Erdös-Renyi graphs on
+n
+=
+80
+n=80
+nodes with the same ranges for the edge probability
+p
+p
+. For circuit discovery experiments, we use an additional
+128
+128
+unseen graphs drawn from the validation set in batches of 32.
+Following
+[
+Minder et al., 2023
+]
+, we use only graph tasks where hints are bound to the given graph structure. For example, in BFS, the hints for each node are pointers to its predecessor in the BFS tree, which must correspond to edges in the actual graph. In contrast, some tasks have nodes maintain pointers to arbitrary nodes. These pointers may not be to immediate neighbors of each node, and hence the pointers may not correspond to actual edges in the graph.
+We describe below the exact inputs and outputs for each task, as well as the ablation and loss we use for circuit discovery. In addition to the losses below, we have an additional loss term of
+λ
+hidden
+=
+0.1
+\lambda_{\text{hidden}}=0.1
+times the MSE between hidden node embeddings on the clean and corrupted data. Note also that every task contains node positions, assigned evenly in [0,1).
+Breadth-First Search
+[
+Moore, 1959
+]
+.
+The input consists of a flag for the source node. The output for each node is the edge to its predecessor in the directed BFS tree. The corrupted data removes the source flag and node positions. The loss is given by cross-entropy loss across predicted probabilities for each edge.
+Depth-First Search
+[
+Moore, 1959
+]
+.
+The input consists of a flag for the source node. The output for each node is the edge to its predecessor in the directed DFS tree. The corrupted data removes the source flag and node positions. The loss is given by cross-entropy loss across predicted probabilities for each edge.
+Dijkstra’s Shortest Path
+[
+Dijkstra, 1959
+]
+The input consists of a flag for the source node and edge weights on the graph. The output for each node is the edge to its predecessor in the shortest path from the source. The corrupted data removes the source flag, node positions, and edge weights. The loss is given by cross-entropy loss across predicted probabilities for each edge.
+Prim’s MST
+[
+Prim, 1957
+]
+The input consists of a flag for the source node and edge weights on the graph. The output for each node is the edge to its predecessor in the minimum spanning tree. The corrupted data removes the source flag, node positions, and edge weights. The loss is given by cross-entropy loss across predicted probabilities for each edge.
+Bellman-Ford Shortest Path
+[
+Bellman, 1958
+]
+The input consists of a flag for the source node and edge weights on the graph. The output for each node is the edge to its predecessor in the shortest path from the source. The corrupted data removes the source flag, node positions, and edge weights. The loss is given by cross-entropy loss across predicted probabilities for each edge.
+Articulation Points
+[
+Cormen et al., 2022
+]
+The input consists only of the graph structure and node positions. The task is to classify whether or not each node is an articulation point, i.e. whether its removal would disconnect the graph. The corrupted data removes the node positions. The loss is given by binary cross-entropy loss across predicted probabilities for each node.
+Bridges
+[
+Cormen et al., 2022
+]
+The input consists only of the graph structure and node positions. The task is to classify whether or not each edge is a bridge, i.e. whether its removal would disconnect the graph. The corrupted data removes the node positions. The loss is given by cross-entropy loss across predicted probabilities for each edge.
+C.3
+Designing Corrupted Datasets
+One major component of edge attribution patching is the design of probing datasets of clean and corrupted inputs. Each corrupted input must be able to align with its corresponding clean input to facilitate computation edge scoring. (This alignment is either between sequences in the LLM case or the graph structure in our case.) At the same time, the corruption must specifically target the behavior of interest. In our case, where the network is explicitly trained to solve specific algorithmic tasks, identifying this behavior of interest is straightforward, but may become more difficult in settings where the algorithmic behavior is part of a more complex downstream task.
+In the LLM setting,
+Dai et al. [2022]
+distill factual information recall into
+⟨
+\langle
+Head, Relation, Tail
+⟩
+\rangle
+triples.
+Wang et al. [2023]
+isolate indirect object identification by swapping a single name or pronoun in a sentence. We loosely follow this approach of changing tokens without changing structure by ablating features without changing the structure of our corrupted graphs. However, one could consider perturbing the graph structure as well, particularly for CLRS tasks like articulation points or bridges, which are purely structural and do not depend on any features like edge weights or source designations.
+Appendix D
+Model Training and Hardware
+Computations for
+Section
+5
+and
+Section
+A.3
+were performed on an NVIDIA RTX A6000 Laptop GPU using PyTorch
+[
+Paszke et al., 2019
+]
+and PyTorch-Geometric
+[
+Fey and Lenssen, 2019
+]
+. For each MinAggGNN,
+f
+Agg
+(
+ℓ
+)
+f^{(\ell)}_{\Agg}
+and
+f
+Up
+(
+ℓ
+)
+f^{(\ell)}_{\Up}
+are implemented as two-layer MLPs with a hidden dimension of 64. The intermediate dimension of each network is 8. We train each model using AdamW
+[
+Loshchilov and Hutter, 2019
+]
+with a learning rate of
+γ
+=
+0.001
+\gamma=0.001
+for 20000 epochs using full batches, a default weight decay of
+λ
+=
+0.01
+\lambda=0.01
+, and an
+L
+1
+L_{1}
+regularization term of
+η
+=
+0.001
+\eta=0.001
+.
+Because the parallel Bellman-Ford and BFS experiment uses the same training and testing sets as the Bellman-Ford experiment, the positive and negative reachability classes are imbalanced. (About 91.24% of training nodes and 81.98% of test nodes are reachable.) Therefore, we use class weighting so that the positive and negative classes have equal weight during training. We additionally scale the BCE loss by a factor of 25 during training, as we observe that the MSE and
+L
+1
+L_{1}
+terms dominate training otherwise.
+Circuit analysis for
+Section
+6
+were performed on the same NVIDIA RTX A6000 Laptop GPU. The model was trained on an HPC cluster using 7 NVIDIA A100 GPUs, each with 80GB of memory. Each task is trained on a single GPU and gradients are synced using PyTorch’s distributed data parallel module. The model was trained for 100 epochs using a minibatch size of 32 using AdamW with an initial learning rate of
+γ
+0
+=
+0.001
+\gamma_{0}=0.001
+, with cosine annealing
+[
+Loshchilov and Hutter, 2017
+]
+down to
+γ
+100
+=
+1
+×
+10
+−
+5
+\gamma_{100}=1\times 10^{-5}
+. To encourage sparsity, we began with an initial weight decay of
+λ
+=
+0.1
+\lambda=0.1
+, which we decreased to 0 by cosine annealing, and an initial
+L
+1
+L_{1}
+regularization term of
+η
+0
+=
+0
+\eta_{0}=0
+which we increased to
+η
+100
+=
+0.001
+\eta_{100}=0.001
+by
+η
+t
+=
+η
+max
+​
+(
+1
+−
+cos
+⁡
+π
+​
+t
+T
+)
+\eta_{t}=\eta_{\max}\left(1-\cos\frac{\pi t}{T}\right)
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

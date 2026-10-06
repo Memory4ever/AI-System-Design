@@ -1,0 +1,2748 @@
+Communication-Inspired Tokenization for Structured Image Representations
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+3
+Communication Inspired Tokenization
+3.1
+Greedy Use of Tokens
+3.2
+Distilling Semantic Representation
+3.3
+Reconstruction Fidelity
+3.4
+Implementation Details
+3.5
+Cropping Policies
+4
+Experiments
+4.1
+Ablations
+4.2
+Quantitative Results
+4.3
+Qualitative Results
+5
+Conclusion and Discussion
+References
+A
+Additional Implementation Details
+B
+Evaluation Details
+B.1
+Test Suite
+B.2
+Probing Network Design
+B.3
+Hyperparameters
+B.4
+Reconstruction.
+B.5
+Bottleck size.
+C
+Analysis of the Attention Maps
+D
+More Visual Results
+License: CC BY 4.0
+arXiv:2602.20731v1 [cs.CV] 24 Feb 2026
+Communication-Inspired Tokenization for Structured Image Representations
+Aram Davtyan
+Affiliation:
+Computer Vision Group, University of Bern, Switzerland
+Correspondence to:
+aram.davtyan@unibe.ch
+Yusuf Sahin
+Affiliation:
+Computer Vision Group, University of Bern, Switzerland
+Yasaman Haghighi
+Affiliation:
+VITA Lab, EPFL, Switzerland
+Sebastian Stapf
+Affiliation:
+Computer Vision Group, University of Bern, Switzerland
+Pablo Acuaviva
+Affiliation:
+Computer Vision Group, University of Bern, Switzerland
+Alexandre Alahi
+Affiliation:
+VITA Lab, EPFL, Switzerland
+Paolo Favaro
+Affiliation:
+Computer Vision Group, University of Bern, Switzerland
+Abstract
+Discrete image tokenizers have emerged as a key component of modern vision and multimodal systems, providing a sequential interface for transformer-based architectures. However, most existing approaches remain primarily optimized for reconstruction and compression, often yielding tokens that capture local texture rather than object-level semantic structure. Inspired by the incremental and compositional nature of human communication, we introduce
+COMmunication inspired Tokenization
+(COMiT), a novel framework for learning structured discrete visual token sequences. COMiT constructs a latent message within a fixed token budget by iteratively observing localized image crops and recurrently updating its discrete representation. At each step, the model integrates new visual information while refining and reorganizing the existing token sequence. After several encoding iterations, the final message conditions a flow-matching decoder that reconstructs the full image. Both encoding and decoding are implemented within a single transformer model and trained end-to-end using a combination of flow-matching reconstruction and semantic representation alignment losses. Our experiments demonstrate that while semantic alignment provides grounding, the proposed attentive sequential tokenization is critical for inducing interpretable, object-centric token structure and substantially improving compositional generalization and relational reasoning over prior methods.
+Keywords:
+Discrete image representations; image tokenization; flow-matching; autoencoders; transformers.
+†
+†
+affiliationnotice:
+Website:
+https://araachie.github.io/comit
+1
+Introduction
+Modern multimodal systems increasingly process vision through the lens of sequence modeling
+(
+Sun et al., 2024
+;
+Chen et al., 2025a
+)
+: images are converted into discrete token sequences that can be consumed by transformer-based architectures. This token-based interface enables scalable training, efficient compression, and unified reasoning over visual and textual inputs. Consequently, learning effective image tokenizers has emerged as a central problem in visual representation learning.
+Conventional discrete encoders
+(
+Van Den Oord et al., 2017
+;
+Esser et al., 2021
+)
+typically represent images as two-dimensional grids of tokens and are trained primarily for reconstruction under a compression constraint. As a result, the learned tokens often capture local texture and patch statistics rather than object-level semantic structure, limiting their interpretability and usefulness for downstream image understanding tasks.
+Recent progress in image tokenization has renewed interest in
+one-dimensional
+discrete bottlenecks, which better match the sequential format expected by transformer-based models and can improve the semantic organization of token sequences
+(
+Yu et al., 2024a
+;
+Wang et al., 2025
+;
+Bachmann et al., 2025
+;
+Duggal et al., 2024
+)
+. However, despite this syntactic compatibility, most existing approaches remain primarily optimized for compression trade-offs. As a result, semantic information is often entangled and poorly localized across tokens, limiting performance on downstream tasks that require compositional, object-centric structure.
+In this work, we shift the focus from compression trade-offs to the
+semantic organization
+of visual token sequences. While semantic information can be encouraged through alignment with pretrained visual representations, we argue that such supervision alone is insufficient to induce structured and interpretable tokens. Instead, structured visual tokenization requires coupling semantic learning objectives with an encoding procedure that explicitly encourages compositional organization.
+Our approach is inspired by how humans communicate about visual scenes. When describing a scene containing multiple objects, a speaker typically attends to one region at a time, sequentially incorporating salient information into the message. This incremental process allows the listener to integrate each observation into a coherent mental model of the scene while gradually reducing uncertainty
+(
+Hassabis and Maguire, 2007
+)
+. Under limited communication bandwidth, descriptions naturally prioritize high-level entities and their relations over fine-grained details, yielding a certain coarse-to-fine hierarchy in the space of possible descriptions. Notably, while so far we have considered the speaker and the listener to be two separate roles, humans are able to simultaneously perform both tasks. For instance, one could imagine the setting where the speaker is trying to memorize the scene for a certain period of time and then is asked to recall it.
+Motivated by this perspective, we study how a communication-inspired encoding process can shape the structure of learned visual token sequences. In particular, we adopt two key design principles:
+•
+Attentive and sequential tokenization.
+The encoder processes the image as a sequence of localized observations, attending to different regions at each step and incrementally integrating information into a discrete latent message.
+•
+Homogeneous communication.
+In contrast to traditional autoencoders that use separate encoder and decoder networks, we adopt a unified design in which the same network acts as both “speaker” and “listener”, mirroring the symmetry in human communication.
+Building on these principles, we propose
+COMmunication inspired Tokenization
+(COMiT), which formulates image encoding as an iterative communication-and-reconstruction game. At each step, the model observes a new image crop and updates its discrete latent message. After several steps, the final message serves as a compact representation of the scene, from which the same network reconstructs the full image. The whole pipeline is trained as a generative model within the flow-matching framework. To encourage semantic grounding, we incorporate a semantic representation alignment objective that distills high-level features from a frozen self-supervised vision model. Crucially, while alignment provides semantic signal, the attentive sequential tokenization determines how this information is distributed and localized across tokens.
+To evaluate these properties, we introduce a suite of benchmarks that probe not only semantic content, but also compositional generalization and relational reasoning. Across these evaluations, COMiT consistently outperforms existing one-dimensional discrete image encoders by a substantial margin. Ablations further reveal complementary effects: semantic alignment improves token meaning, while communication-inspired sequential encoding induces more interpretable, object-centric tokens.
+2
+Related Work
+Attentive Encoding.
+The idea of aggregating information from partial observations of a scene has a long history. One early example is the Recurrent Attention Model (RAM) proposed by
+Mnih et al. (2014)
+, where a model iteratively selects regions of an image to attend to and accumulates a latent state to solve classification. In that work, the primary motivation was computational efficiency on large images, rather than representation learning or reconstruction. In other early approaches
+(
+Eslami et al., 2016
+;
+Eslami et al., 2018
+)
+the reconstruction serves as the main training signal. However, often the latent state in such models explicitly encodes inductive biases, such as object-level bounding box coordinates
+(
+Eslami et al., 2016
+)
+, rather than abstract concepts. Moreover, the early methods were only tested on rather toy data, and, to the best of our knowledge, there is no evidence on scaling these to real images.
+Image Tokenization.
+Early works such as VQ-VAE
+(
+Van Den Oord et al., 2017
+;
+Razavi et al., 2019
+)
+introduced discrete visual codebooks learned via vector quantization. Subsequent approaches, including MaskGIT
+(
+Chang et al., 2022
+)
+and VQ-GAN
+(
+Esser et al., 2021
+)
+, improved generative fidelity through masked prediction and adversarial training. More recently, several works have explored
+one-dimensional
+tokenization schemes, with
+Yu et al. (2024a)
+pioneering this direction. Many of these methods, however, continue to treat tokenization primarily as a compression and reconstruction objective, producing tokens in a single encoding pass without explicit mechanisms for sequential refinement. Other works have investigated how token ordering can reflect properties of the underlying visual signal, such as semantic hierarchies
+(
+Bachmann et al., 2025
+)
+or frequency structure
+(
+Wang et al., 2025
+)
+. Closest to our approach,
+Duggal et al. (2024)
+also introduce an iterative recurrent procedure for refining the latent representation. In their setting, however, the first encoding step is designed to capture most of the image content, while subsequent refinement steps use additionally allocated capacity. Overall, existing tokenizers remain largely optimized for reconstruction-compression trade-offs rather than structure and semantics.
+Flow Matching and Diffusion Autoencoders.
+Flow-matching generative models
+(
+Lipman et al., 2023
+;
+Liu et al., 2022
+)
+offer stable and efficient training of continuous data distributions. These frameworks have also been used to train decoders in autoencoders
+(
+Preechakul et al., 2022
+;
+Guo and Schwing, 2025
+;
+Bachmann et al., 2025
+;
+Chen et al., 2025b
+)
+. However, to the best of our knowledge, we are the first to leverage this formulation to train both encoding and decoding stages through a unified, differentiable flow objective, integrating representation learning and generation into a single network.
+3
+Communication Inspired Tokenization
+Figure 1
+:
+The overall training pipeline of COMiT. A sequence of
+K
+K
+random crops is extracted from the input image and iteratively embedded into the latent message
+m
+K
+m_{K}
+that is discretized via FSQ
+(
+Mentzer et al., 2024
+)
+. The latter is decoded by the same model using the flow matching objective
+(
+Lipman et al., 2023
+)
+. Additionally, we use REPA
+(
+Yu et al., 2024b
+)
+to speed up the training and SREPA to inject more semantic priors into the latent message.
+In this section we start by describing the high-level training pipeline of COMiT that is illustrated in Figure
+1
+. We then talk about some crucial details in Sections
+3.1
+–
+3.5
+.
+Encoding.
+Given an input RGB
+1
+1
+1
+In fact, COMiT works in the latent space of a pretrained 2D VAE, but we omit the VAE in our notation as it does not affect any of the training steps.
+image
+x
+∈
+ℝ
+3
+×
+H
+×
+W
+x\in\mathbb{R}^{3\times H\times W}
+, we define a sequence of random crops
+{
+c
+k
+}
+k
+=
+1
+K
+,
+c
+k
+∈
+ℝ
+3
+×
+h
+×
+w
+\{c_{k}\}_{k=1}^{K},\;c_{k}\in\mathbb{R}^{3\times h\times w}
+and their corresponding locations
+{
+l
+k
+}
+k
+=
+1
+K
+,
+l
+k
+∈
+[
+−
+1
+,
+1
+]
+2
+\{l_{k}\}_{k=1}^{K},\;l_{k}\in[-1,1]^{2}
+. Here
+l
+k
+l_{k}
+is the absolute location of the
+c
+k
+c_{k}
+crop’s center in the image
+x
+x
+with each component normalized to
+[
+−
+1
+,
+1
+]
+[-1,1]
+. From these, we derive the sequence of offsets
+{
+a
+k
+}
+k
+=
+1
+K
+\{a_{k}\}_{k=1}^{K}
+, where
+a
+1
+=
+(
+0
+,
+0
+)
+a_{1}=(0,0)
+and
+a
+k
+=
+l
+k
+−
+l
+k
+−
+1
+,
+k
+≥
+2
+a_{k}=l_{k}-l_{k-1},k\geq 2
+. The offsets can be interpreted as actions the agent takes to scan the scene. We opt for relative offsets instead of global grounding to prevent parts of the latent message to specialize on certain constant regions.
+In the beginning, the latent message
+m
+0
+∈
+ℝ
+L
+×
+d
+m_{0}\in\mathbb{R}^{L\times d}
+is initialized with the same
+L
+L
+d
+d
+-dimensional vectors from a dictionary of
+N
+N
+unique tokens. We refer to
+L
+L
+as the message length and
+N
+N
+as the vocabulary size. After that, at each step, the model
+f
+θ
+f_{\theta}
+takes as input the current latent message
+m
+k
+−
+1
+m_{k-1}
+and updates it with the information from the current crop:
+m
+k
+=
+f
+θ
+m
+​
+(
+c
+k
+,
+t
+k
+,
+a
+k
+,
+m
+k
+−
+1
+)
+.
+\displaystyle m_{k}=f^{m}_{\theta}(c_{k},t_{k},a_{k},m_{k-1}).
+(1)
+Here, the superscript
+m
+m
+in
+f
+θ
+m
+f^{m}_{\theta}
+denotes the readout part of the model’s output that corresponds to the updated message. This is needed to support different output modalities that we introduce below. The second argument in
+f
+θ
+m
+f_{\theta}^{m}
+corresponds to the denoising timestamp, which is
+t
+k
+=
+1
+t_{k}=1
+for the clean crops. This is needed to distinguish the encoding from the decoding regime, which we also introduce below.
+The predicted message
+m
+k
+m_{k}
+is then quantized via FSQ
+(
+Mentzer et al., 2024
+)
+to project the tokens to the vocabulary and fed back to the model along with the newly observed crop, forming a recurrent loop. After
+K
+K
+steps, the final message
+m
+K
+m_{K}
+is obtained.
+Decoding.
+The message derived through the above procedure of recurrent crop aggregation serves as conditioning for flow-based decoding of the full image. However, in contrast to the conventional autoencoder architectures, COMiT uses the same model for both encoding and decoding. That is, we start by creating a noisy version of the image
+x
+t
+=
+t
+​
+x
++
+(
+1
+−
+t
+)
+​
+ε
+x_{t}=tx+(1-t)\varepsilon
+with
+t
+∼
+U
+⁡
+[
+0
+,
+1
+]
+t\sim U[0,1]
+– random interpolation time and
+ε
+∼
+𝒩
+⁡
+(
+0
+,
+I
+)
+\varepsilon\sim\mathcal{N}(0,I)
+– random noise instance. Then, the noisy image
+x
+t
+x_{t}
+is fed to the network along with the final message
+m
+K
+m_{K}
+and the offset relative to the last crop
+a
+g
+=
+−
+l
+K
+a^{g}=-l_{K}
+. The network is then supervised to predict the velocity of the marginal flow at
+x
+t
+x_{t}
+via the standard conditional flow-matching loss
+(
+Lipman et al., 2023
+)
+:
+ℒ
+FM
+=
+𝔼
+t
+∼
+U
+⁡
+[
+0
+,
+1
+]
+ε
+∼
+𝒩
+⁡
+(
+0
+,
+I
+)
+​
+‖
+f
+θ
+v
+​
+(
+x
+t
+,
+t
+,
+a
+g
+,
+m
+K
+)
+−
+(
+x
+−
+ε
+)
+‖
+2
+2
+.
+\displaystyle\mathcal{L}_{\rm FM}=\underset{\begin{subarray}{c}t\sim U[0,1]\\
+\varepsilon\sim\mathcal{N}(0,I)\end{subarray}}{\mathbb{E}}\left\|f^{v}_{\theta}(x_{t},t,a^{g},m_{K})-(x-\varepsilon)\right\|^{2}_{2}.
+(2)
+Here, as before, the superscript
+v
+v
+in
+f
+θ
+v
+f^{v}_{\theta}
+denotes the readout part of the model’s output that corresponds to the estimated velocity.
+Algorithm 1
+The training pipeline of COMiT
+for
+x
+x
+in dataloader
+do
+Pick random
+K
+K
+from
+{
+1
+,
+…
+,
+K
+max
+}
+\{1,\dots,K_{\rm max}\}
+;
+Randomly crop
+x
+x
+to get
+{
+c
+k
+}
+k
+=
+1
+K
+\{c_{k}\}_{k=1}^{K}
+and
+{
+l
+k
+}
+k
+=
+1
+K
+\{l_{k}\}_{k=1}^{K}
+;
+With probability
+p
+G
+p_{\rm G}
+set
+c
+1
+=
+x
+c_{1}=x
+and
+l
+1
+=
+(
+0
+,
+0
+)
+l_{1}=(0,0)
+;
+Calculate the offsets:
+a
+1
+=
+(
+0
+,
+0
+)
+,
+a
+k
+=
+l
+k
+−
+l
+k
+−
+1
+,
+a
+g
+=
+−
+l
+K
+;
+\displaystyle a_{1}=(0,0),a_{k}=l_{k}-l_{k-1},a^{g}=-l_{K};
+(3)
+Initialize the latent message
+m
+0
+m_{0}
+;
+for
+k
+∈
+1
+,
+…
+,
+K
+k\in{1,\dots,K}
+do
+Update the message:
+m
+k
+=
+f
+θ
+m
+​
+(
+c
+k
+,
+1
+,
+a
+k
+,
+sg
+⁡
+[
+m
+k
+−
+1
+]
+)
+;
+\displaystyle m_{k}=f_{\theta}^{m}(c_{k},1,a_{k},{\rm sg}[m_{k-1}]);
+(4)
+end
+for
+With probability
+p
+CFG
+p_{\rm CFG}
+set
+m
+K
+=
+m
+0
+m_{K}=m_{0}
+;
+Calculate the loss
+ℒ
+\mathcal{L}
+according to Equation
+7
+;
+Update
+θ
+\theta
+with
+∇
+ℒ
+\nabla\mathcal{L}
+;
+end
+for
+Inference.
+Given a latent message
+m
+^
+\hat{m}
+, in order to visually probe its content, one may decode the message through numerically integrating the flow ODE
+(
+Lipman et al., 2023
+)
+. That is, starting at a noise sample
+x
+0
+∼
+𝒩
+⁡
+(
+0
+,
+I
+)
+x_{0}\sim\mathcal{N}(0,I)
+, one obtains the clean image
+x
+1
+x_{1}
+via iteratively denoising the current estimate:
+x
+t
++
+h
+=
+x
+t
++
+h
+​
+f
+θ
+v
+​
+(
+x
+t
+,
+t
+,
+a
+g
+,
+m
+^
+)
+,
+\displaystyle x_{t+h}=x_{t}+hf_{\theta}^{v}(x_{t},t,a^{g},\hat{m}),
+(5)
+where
+h
+h
+is the step size connected to the number of function evaluations (NFE) via
+h
+=
+1
+/
+NFE
+h=1/\rm{NFE}
+.
+3.1
+Greedy Use of Tokens
+As noted in the introduction, as the amount of information embedded in the latent message increases (in our case, the number of crops), it is natural to expect the model to discard irrelevant secondary details and retain only the most essential features for reconstruction. This process would naturally induce a hierarchical structure in the feature space. However, if during training the number of crops the model aggregates were fixed, the network would instead learn to pre-allocate parts of the latent message for future crops. This would effectively enforce a fixed capacity per crop, with each information chunk occupying a predetermined location in the message. To avoid this behavior, we randomize the number of crops the model processes during training. As a result, the model never knows whether additional crops will follow the current one and is therefore encouraged to use the available tokens greedily. This corresponds to the setting with fixed capacity and varying amount of information, which is precisely the regime we were aiming for.
+In addition, backpropagating gradients through the entire sequence of message updates would be computationally expensive and memory-intensive. To address this, we apply a stop-gradient operation to all updates except the final one. Combined with the randomized number of crop aggregations, this further promotes greedy token usage while enabling efficient training. In preliminary small-scale experiments, we found that restricting gradient backpropagation in this way has only a moderate impact on performance.
+3.2
+Distilling Semantic Representation
+As noted in the introduction, to enforce the semantic ordering of the information in the learned messages, we directly distill pretrained SSL features
+ψ
+⁡
+(
+x
+)
+∈
+ℝ
+s
+\psi(x)\in\mathbb{R}^{s}
+(namely, the
+[CLS]
+of DINOv2
+(
+Oquab et al., 2023
+)
+) into COMiT’s intermediate representations that correspond to the message tokens. We call this procedure semantic representation alignment, or SREPA. More precisely, during the decoding stage, the intermediate representations in the
+j
+j
+-th layer of the network
+f
+θ
+m
+​
+[
+j
+]
+​
+(
+x
+t
+,
+t
+,
+a
+g
+,
+m
+K
+)
+∈
+ℝ
+L
+×
+r
+f_{\theta}^{m}[j](x_{t},t,a^{g},m_{K})\in\mathbb{R}^{L\times r}
+are first projected with a small MLP and then averaged pooled into a single vector
+f
+¯
+θ
+m
+​
+[
+j
+]
+​
+(
+x
+t
+,
+t
+,
+a
+g
+,
+m
+K
+)
+∈
+ℝ
+s
+\bar{f}_{\theta}^{m}[j](x_{t},t,a^{g},m_{K})\in\mathbb{R}^{s}
+. Then, the following loss is calculated:
+ℒ
+SREPA
+=
+exp
+⁡
+(
+−
+Sim
+⁡
+(
+ψ
+⁡
+(
+x
+)
+,
+f
+¯
+θ
+m
+​
+[
+j
+]
+​
+(
+x
+t
+,
+t
+,
+a
+g
+,
+m
+K
+)
+)
+)
+,
+\displaystyle\mathcal{L}_{\rm SREPA}=\exp\left(-{\rm Sim}\left(\psi(x),\bar{f}_{\theta}^{m}[j](x_{t},t,a^{g},m_{K})\right)\right),
+(6)
+where
+Sim
+⁡
+(
+⋅
+,
+⋅
+)
+\rm{Sim}(\cdot,\cdot)
+is the cosine similarity.
+3.3
+Reconstruction Fidelity
+Although our main focus in this paper is on semantics of the token sequences, we apply several techniques to improve the reconstruction fidelity of COMiT. First, to enable classifier-free guidance (CFG)
+(
+Ho and Salimans, 2022
+)
+at inference, during training we skip the encoding part with probability
+p
+CFG
+≈
+0.2
+p_{\rm CFG}\approx 0.2
+, thereby training an unconditional decoder. Besides this, with probability
+p
+G
+≈
+0.5
+p_{\rm G}\approx 0.5
+we replace the first crop with the full original image, allowing the model to encode the whole image in a single step. For clarity, we refer to the full image as the
+global crop
+, and to the smaller crops as
+local crops
+.
+As a result, the training consists of three regimes: in some cases, COMiT first observes the global crop and then refines its latent message with local crops; in others, it observes only local crops; and the third portion of the training is devoted to the decoding of the image from an empty message.
+3.4
+Implementation Details
+In practice, COMiT is implemented as a transformer encoder network
+(
+Vaswani et al., 2017
+)
+. Following the standard practices of DiT
+(
+Peebles and Xie, 2023
+)
+, we use AdaLN
+(
+Perez et al., 2018
+)
+layers to make the network timestamp-conditioned. Notably, different modalities (image, message) use separate projections in the AdaLN layers. All inputs to the network are flattened into a single sequence of tokens. Images are first encoded with a pretrained VAE (namely, the KL-regularized VAE of Stable Diffusion
+(
+Rombach et al., 2022
+)
+) to reduce the input size and then patchified. The offset is embedded into a single token via linear projection. We found that the model performs slightly better when, instead of overwriting the previous message, one feeds both the previous message and newly initialized buffer tokens to predict the next message (see also Figure
+1
+). This architectural design also allows us to apply causal masks in the attention maps of the buffer tokens, mimicking the causal nature of composing sentences (illustrated in Figure
+1
+as the tilted line of the gray shaded region in COMiT’s main backbone).
+We train COMiT in three model sizes: B (12 layers, hidden size 768), L (24 layers, hidden size 1024) and XL (28 layers, hidden size 1152). All models are trained on ImageNet1k
+(
+Deng et al., 2009
+)
+. To speed up the convergence, we use REPA
+(
+Yu et al., 2024b
+)
+that aligns the intermediate image representation in the network with the DINOv2’s spatial features. The final loss thus takes the form:
+ℒ
+=
+ℒ
+FM
++
+λ
+REPA
+​
+ℒ
+REPA
++
+λ
+SREPA
+​
+ℒ
+SREPA
+.
+\displaystyle\mathcal{L}=\mathcal{L}_{\rm FM}+\lambda_{\rm REPA}\mathcal{L}_{\rm REPA}+\lambda_{\rm SREPA}\mathcal{L}_{\rm SREPA}.
+(7)
+In our experiments, we choose
+λ
+REPA
+=
+λ
+SREPA
+=
+0.5
+\lambda_{\rm REPA}=\lambda_{\rm SREPA}=0.5
+.
+The whole training procedure is summarized in Algorithm
+1
+and Figure
+1
+. Other implementation details can be found in Appendix
+A
+.
+3.5
+Cropping Policies
+Because both the crops and their number are randomized during training, COMiT offers flexibility at inference time in how crops are selected when encoding an image. We refer to these choices as
+cropping policies
+. Although many cropping policies are possible, in this paper, we study only a limited subset to illustrate the impact of the main design decisions, leaving a more exhaustive exploration to future work. For simplicity, we resize all images to a resolution of
+256
+×
+256
+256\times 256
+and consider only
+96
+×
+96
+96\times 96
+crops arranged on a
+3
+×
+3
+3\times 3
+grid. We characterize cropping policies by three factors: (i) whether a global crop is included at the beginning of the crop sequence, (ii) the number of crops, and (iii) the order in which the crops are processed. With respect to the latter, we consider random ordering, a fixed raster-scan order, and an adaptive policy. The adaptive policy decodes the current latent message after each newly aggregated crop and selects the next crop to be the one that has the largest mean reconstruction error. The intermediate reconstructions are obtained using a single decoding step, resulting in blurry regions in areas where the model is uncertain about the content (see Figures
+4
+and
+3
+).
+4
+Experiments
+In this section, we evaluate COMiT to showcase its improved semantic encodings and emergent properties. We design the test suite of three representative benchmarks.
+Visual recognition (ImageNet100).
+To evaluate whether COMiT encodes high-level semantic information useful for visual recognition, we perform classification probing on ImageNet100 (IN100)
+(
+Deng et al., 2009
+)
+. Instead of standard linear probing, we adopt an attention-based probing strategy using a lightweight two-layer of self-attention operating over the 1D sequence of tokens produced by our model and the baselines. This design allows the probe to flexibly attend to and aggregate information across the entire token sequence, without assuming that class-discriminative features are localized at a fixed position. Attention probing is therefore better suited for the 1D tokenization setting, where semantic information may be distributed across tokens.
+Compositional generalization (MSCOCO).
+We evaluate compositional generalization using a benchmark derived from MSCOCO
+(
+Lin et al., 2014
+)
+, focusing on images that contain at least two object categories. The dataset is split into two disjoint partitions such that both splits share the same set of object categories, while specific object co-occurrences (i.e., object pairs) appear in only one split. We train the probing network on the first split and evaluate it on the second, ensuring that the probe must generalize to unseen object compositions. This setup tests whether object-related information is stored in a disentangled manner across the token sequence (e.g., distributed across different subsets of tokens corresponding to individual objects, rather than being collapsed into a single token that encodes the entire scene). Indeed, if the model mixed the information about two objects in a single token, the probe would have a more difficult job to effectively generalize to unseen object pairs.
+Inter-object relations (Visual Genome).
+We evaluate the ability of models to encode relational semantics using relationship prediction on Visual Genome (VG)
+(
+Krishna et al., 2017
+)
+. Given a batch of images paired with candidate subject–object relations, we test whether the probing network can correctly assign each image to its corresponding relation. This benchmark assesses whether inter-object relationships are explicitly represented in the token sequence, beyond individual object semantics, and whether such relational information can be recovered through lightweight probing.
+For more details on our testing suite, we refer the reader to the Appendix
+B
+.
+4.1
+Ablations
+Semantic distillation.
+We evaluate the impact of SREPA by comparing the full COMiT-B model against an ablated variant in which
+λ
+SREPA
+=
+0
+\lambda_{\rm SREPA}=0
+during training. Both models are evaluated under identical settings on IN100. We observe that SREPA has significant contribution to our tokenizer’s performance (see Table
+1
+). Note that since FSQ uses the same codebook across model variants, all the differences in performance may be attributed to token co-occurrences.
+Table 1
+:
+The effect of SREPA during training. Both models use the same cropping policy (single global crop) at test time.
+Model variant
+SREPA
+ImageNet100 (top-1
+↑
+\uparrow
+)
+COMiT-B
+✓
+82.91
+COMiT-B
+–
+72.26
+Attentive tokenization.
+Next, we evaluate the influence of the presence of local crops during the training. To this end, we train COMiT-B with and without local crops. The variant trained without local crops lacks recurrent message refinement and effectively reduces to a standard encoder-decoder architecture with a discrete bottleneck.
+First, we evaluate both variants on a visual recognition benchmark using the same cropping policy at inference time, which encodes only the global crop. Although local crops are not used to construct the latent message at test time, the model trained with the attentive communication bias produces better structured latent messages as reflected with the probing accuracy shown in Table
+2
+.
+Next, we analyze token attention maps following
+Duggal et al. (2024)
+. Using CSSD
+(
+Yan et al., 2013
+)
+, we binarize each attention map by retaining the top
+Q
+%
+Q\%
+of values and select, per image, the token whose map attains the highest IoU
+(
+Everingham et al., 2010
+)
+with the ground-truth mask. Figure
+2
+compares these token attention maps for COMiT-B and a variant trained without local crops. COMiT produces attention maps tightly aligned with objects, achieving a mean mIoU of 0.53, whereas the ablated model exhibits diffuse attention across the image and reaches only 0.34 mIoU. This alignment emerges from our attentive tokenization pipeline, indicating that while distillation enforces semantics, tokenization pipeline is key to structuring messages. Additional results are provided in Appendix
+C
+.
+Table 2
+:
+The effect of using recurrent local crops aggregation during training. At test time, both models use the same cropping policy with a single global crop.
+Model
+Local crops at training
+ImageNet100 (top-1
+↑
+\uparrow
+)
+COMiT-B
+✓
+82.91
+COMiT-B
+–
+80.94
+Input images
+Ground truth masks
+COMiT-B,
+mIoU
+=
+0.53
+{\rm mIoU}=0.53
+no local crops,
+mIoU
+=
+0.34
+{\rm mIoU}=0.34
+Figure 2
+:
+The effect of our attentive tokenization pipeline on the tokens’ visual grounding. The model that has been trained with attentive tokenization demonstrates much better token–object alignment compared to the variant of the model that has only seen global crops at training. The token sequences for both models were obtained from the 10th layer of COMiT-B, using the same cropping policy that embeds only the global crop.
+Cropping policy.
+Table
+3
+compares different cropping policies. A single global crop yields competitive average performance across tasks while incurring the lowest test-time cost (the number of crops). Based on this observation, we adopt global-only cropping as the default for the remainder of our probing experiments unless stated otherwise. Importantly, COMiT also naturally supports test-time scaling: adding local crops provides modest gains on compositional generalization and inter-object relations, suggesting that local processing can benefit certain benchmarks. Notably, all differences across cropping policies arise purely at test-time, without retraining the model.
+Table 3
+:
+The effect of cropping policy using COMiT-B. A single global crop provides the best overall trade-off between performance and test-time cost, while some tasks benefit from embedding additional local crops, highlighting the potential for future investigation of optimal (task-adaptive) cropping policies.
+IN100
+MSCOCO
+VG
+Global crop
+# Crops
+Ordering
+top-1
+↑
+\uparrow
+top-5
+↑
+\uparrow
+top-1
+↑
+\uparrow
+✓
+1
+–
+82.91
+41.46
+52.11
+✓
+10
+Random
+82.30
+40.21
+52.12
+-
+9
+Random
+74.45
+38.92
+54.96
+✓
+10
+Raster-scan
+82.22
+41.83
+55.78
+-
+9
+Raster-scan
+80.62
+38.61
+51.10
+✓
+3
+Adaptive
+82.09
+40.68
+55.00
+–
+3
+Adaptive
+74.96
+32.70
+50.22
+Figure 3
+:
+The difference between the
+adaptive
+(top) and
+global+adaptive
+(bottom) cropping policies. In both cases COMiT aggregates the crops of the input image (the leftmost column) into the latent message and decodes it to obtain the reconstructed image (the rightmost column, 10 NFE with
+CFG
+=
+7.5
+{\rm CFG}=7.5
+). The columns in-between show which crops are selected together with immediate single step reconstructions (1 NFE with
+CFG
+=
+1.0
+{\rm CFG}=1.0
+). The progressive ambiguity reduction as more crops are integrated in the latent message is particularly visible with the single step decoding.
+4.2
+Quantitative Results
+We evaluate COMiT against relevant prior work in the 1D tokenization domain (see Table
+4
+). We report results on our semantic probing test suite along with rFID
+(
+Heusel et al., 2017
+)
+and PSNR
+(
+Huynh-Thu and Ghanbari, 2008
+)
+on ImageNet1k
+(
+Deng et al., 2009
+)
+validation set. All methods, if not stated otherwise, were pretrained on ImageNet1k
+(
+Deng et al., 2009
+)
+. COMiT consistently outperforms prior work on semantic tasks.
+Similarly to prior work
+(
+Bachmann et al., 2025
+)
+, we observe that scaling the model from B to L improves both reconstruction and representation, and further scaling the model from L to XL allocates the additional capacity to aid reconstruction, while diminishing the semantics.
+Notably, our design choice was to avoid encoder-decoder separation and allow the model to autonomously decide which part of the network’s capacity to dedicate to which task. This choice mimics the symmetry of the communication game, eases development by removing a degree of freedom in designing the architecture and potentially removes redundancies in the model’s parameters. We believe the reconstruction fidelity of our method can be further improved by additional training. Many methods implement multi-stage training pipelines, including finetuning the decoding for better reconstruction
+(
+Yu et al., 2024a
+;
+Chang et al., 2023
+)
+. We leave further exploration of such fused architectures, including the analysis of how different tasks are balanced in a single network, to the future work.
+Table 4
+:
+We evaluate COMiT and several baseline 1D tokenizers on our test suite comprising three representative benchmarks described in Section
+4
+. COMiT outperforms prior work on semantic probing. This highlights a representation-reconstruction trade-off that contrasts with the conventional compression-reconstruction trade-off targeted in prior work.
+†
+: trained on larger data mixtures.
+IN1k
+IN100
+MSCOCO
+VG
+Method
+#params
+msg length
+voc. size
+rFID
+↓
+\downarrow
+PSNR
+↑
+\uparrow
+top-1
+↑
+\uparrow
+top-5
+↑
+\uparrow
+top-1
+↑
+\uparrow
+TiTok-L
+(
+Yu et al., 2024a
+)
+614M
+32
+2
+12
+2^{12}
+2.21
+15.60
+17.26
+6.22
+26.06
+TiTok-B
+(
+Yu et al., 2024a
+)
+172M
+64
+2
+12
+2^{12}
+1.70
+16.80
+19.43
+12.64
+27.31
+TiTok-S
+(
+Yu et al., 2024a
+)
+44M
+128
+2
+12
+2^{12}
+1.71
+17.52
+19.47
+6.30
+26.81
+ALIT
+(
+Duggal et al., 2024
+)
+229M
+256
+2
+10
+2^{10}
+7.39
+19.76
+29.43
+8.56
+32.14
+FlexTok
+(d12-d12)
+(
+Bachmann et al., 2025
+)
+254M
+256
+64k
+4.20
+18.41
+80.25
+38.17
+53.75
+FlexTok
+(d18-d18)
+(
+Bachmann et al., 2025
+)
+860M
+256
+64k
+1.61
+18.59
+81.54
+38.58
+54.46
+FlexTok
+(d18-d28)
+(
+Bachmann et al., 2025
+)
+2.5B
+256
+64k
+1.45
+18.46
+80.93
+39.14
+54.35
+SelfTok
+(
+Wang et al., 2025
+)
+†
+2.17B
+512
+2
+15
+2^{15}
+0.70
+24.14
+40.64
+17.91
+37.15
+SelfTok
+(
+Wang et al., 2025
+)
+†
+2.17B
+1024
+2
+16
+2^{16}
+0.54
+26.30
+35.90
+17.32
+36.69
+COMiT-B (ours)
+174M
+256
+64k
+11.06
+17.75
+82.91
+41.46
+52.11
+COMiT-L (ours)
+610M
+256
+64k
+3.67
+17.81
+85.80
+45.31
+56.42
+COMiT-XL (ours)
+900M
+256
+64k
+3.50
+17.83
+84.69
+39.45
+55.61
+4.3
+Qualitative Results
+Figure 4
+:
+The way COMiT adds information to the latent message is inherently compositional.
+Evolution of Uncertainty.
+One way to visually probe the information encoded in the latent messages is via reconstructing the images. However, in the case when only local crops are used to encode the message, 1–2 crops may not be enough to reliably reconstruct the image. Since COMiT is a generative model of images given the message, it will hallucinate the content in the unobserved regions. However, the flow matching framework guarantees that at
+t
+=
+0
+t=0
+the optimal velocity field is the one that points to the mean of the data that shares the same conditioning. Therefore, decoding messages with a single denoising step results in images that have sharp details in the recently observed regions and blurry content in the regions where the model is not certain about the scene. Figures
+3
+(top) and
+4
+demonstrate how the information in the latent message is gradually refined with more crops aggregated.
+This process is also inherently compositional. Figure
+4
+shows how objects are added to the latent messages as soon as observed.
+Global vs. Local crops.
+Figure
+3
+additionally demonstrates the difference between adaptive cropping policies in the absence and the presence of the global crop. When the global crop is leveraged, it provides a way to quickly embed the whole scene into the latent message with the subsequent local crops allowing to focus on the finer details (such as the shape and the color of the feathers near the bird’s head). More visual results can be found in Appendix
+D
+.
+5
+Conclusion and Discussion
+In this paper, we introduced COMiT, a communication-inspired approach to one-dimensional image tokenization that promotes structured visual representations. By framing tokenization as an iterative communication-and-reconstruction process, COMiT constructs a discrete latent message through attentive sequential observations, encouraging semantic information to be incrementally organized across tokens rather than entangled in a single pass.
+To evaluate these properties, we proposed a suite of benchmarks designed to probe semantic grounding, compositional generalization, and relational reasoning in learned token sequences. Across these evaluations, COMiT consistently outperforms prior 1D discrete image encoders. Qualitative analysis further illustrates how the model progressively refines its latent message over encoding steps, while ablations on attention organization reveal the role of attentive tokenization in emerging compositional structure of the token sequences aligned with meaningful regions of the scene.
+While the primary focus of this work is on semantic organization, reconstruction fidelity could be further improved, which may be important for generation-focused applications. Nevertheless, we believe that structured discrete token sequences such as those learned by COMiT provide a promising interface for multimodal architectures, especially in settings where object-centric reasoning and compositional understanding are critical. Moreover, the flexibility of COMiT at test time (via different cropping policies) opens up new directions for adaptive and task-dependent visual tokenization (e.g. via reinforcement learning).
+Future work includes extending COMiT to video, where temporal redundancy and long-range structure pose additional challenges and opportunities for discrete representation learning. Incorporating spatiotemporal observations and allowing the latent message to accumulate motion and action-related information over time may enable structured tokenizations that support efficient video understanding.
+Acknowledgements
+This work was supported as part of the
+Swiss AI Initiative by a grant from the Swiss National Supercomputing Centre (CSCS) under project IDs a144 and a137 on Alps.
+Aram Davtyan, Sebastian Stapf and Pablo Acuaviva have been supported by
+Swiss National Science Foundation (SNSF) Project 10001278. Yasaman Haghighi has been supported by
+Swiss National Science Foundation (SNSF) Project 10003100.
+Impact Statement
+This paper advances research in autoencoders, representation learning and generative modeling. As with other generative image models and tokenizers, the methods studied here may carry standard societal and ethical risks. These include the potential misuse of generated content for creating misleading or deceptive media, the amplification of biases present in training data, and the environmental costs associated with training and deploying large-scale models. While this work is primarily methodological, we acknowledge these well-documented considerations and emphasize that responsible dataset curation, evaluation, and deployment practices are important to mitigate such risks.
+References
+Bachmann
+et al.
+(2025)
+R. Bachmann, J. Allardice, D. Mizrahi, E. Fini, O. F. Kar, E. Amirloo, A. El-Nouby, A. Zamir, and A. Dehghan
+FlexTok: resampling images into 1d token sequences of flexible length
+.
+In
+Forty-second International Conference on Machine Learning
+,
+Cited by:
+Appendix A
+,
+§1
+,
+§2
+,
+§2
+,
+§4.2
+,
+Table 4
+,
+Table 4
+,
+Table 4
+.
+Chang
+et al.
+(2023)
+H. Chang, H. Zhang, J. Barber, A. Maschinot, J. Lezama, L. Jiang, M. Yang, K. Murphy, W. T. Freeman, M. Rubinstein,
+et al.
+Muse: text-to-image generation via masked generative transformers
+.
+arXiv preprint arXiv:2301.00704
+.
+Cited by:
+§4.2
+.
+Chang
+et al.
+(2022)
+H. Chang, H. Zhang, L. Jiang, C. Liu, and W. T. Freeman
+Maskgit: masked generative image transformer
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 11315–11325
+.
+Cited by:
+§2
+.
+Chen
+et al.
+(2025a)
+X. Chen, Z. Wu, X. Liu, Z. Pan, W. Liu, Z. Xie, X. Yu, and C. Ruan
+Janus-pro: unified multimodal understanding and generation with data and model scaling
+.
+arXiv preprint arXiv:2501.17811
+.
+Cited by:
+§1
+.
+Chen
+et al.
+(2025b)
+Y. Chen, R. Girdhar, X. Wang, S. S. Rambhatla, and I. Misra
+Diffusion autoencoders are scalable image tokenizers
+.
+arXiv preprint arXiv:2501.18593
+.
+Cited by:
+§2
+.
+Deng
+et al.
+(2009)
+J. Deng, W. Dong, R. Socher, L. Li, K. Li, and L. Fei-Fei
+Imagenet: a large-scale hierarchical image database
+.
+In
+2009 IEEE conference on computer vision and pattern recognition
+,
+pp. 248–255
+.
+Cited by:
+Appendix A
+,
+Appendix D
+,
+Appendix D
+,
+§3.4
+,
+§4.2
+,
+§4
+.
+Duggal
+et al.
+(2024)
+S. Duggal, P. Isola, A. Torralba, and W. T. Freeman
+Adaptive length image tokenization via recurrent allocation
+.
+In
+First Workshop on Scalable Optimization for Efficient and Adaptive Foundation Models
+,
+Cited by:
+Appendix C
+,
+§1
+,
+§2
+,
+§4.1
+,
+Table 4
+.
+Elfwing
+et al.
+(2018)
+S. Elfwing, E. Uchibe, and K. Doya
+Sigmoid-weighted linear units for neural network function approximation in reinforcement learning
+.
+Neural networks
+107
+,
+pp. 3–11
+.
+Cited by:
+Appendix A
+.
+Eslami
+et al.
+(2018)
+S. M. A. Eslami, D. J. Rezende, F. Besse, F. Viola, A. S. Morcos, M. Garnelo, A. Ruderman, A. A. Rusu, I. Danihelka, K. Gregor, D. P. Reichert, L. Buesing, T. Weber, O. Vinyals, D. Rosenbaum, N. Rabinowitz, H. King, C. Hillier, M. Botvinick, D. Wierstra, K. Kavukcuoglu, and D. Hassabis
+Neural scene representation and rendering
+.
+Science
+360
+(
+6394
+),
+pp. 1204–1210
+.
+External Links:
+Document
+Cited by:
+§2
+.
+Eslami
+et al.
+(2016)
+S. Eslami, N. Heess, T. Weber, Y. Tassa, D. Szepesvari, G. E. Hinton,
+et al.
+Attend, infer, repeat: fast scene understanding with generative models
+.
+Advances in neural information processing systems
+29
+.
+Cited by:
+§2
+.
+Esser
+et al.
+(2024)
+P. Esser, S. Kulal, A. Blattmann, R. Entezari, J. Müller, H. Saini, Y. Levi, D. Lorenz, A. Sauer, F. Boesel, D. Podell, T. Dockhorn, Z. English, and R. Rombach
+Scaling rectified flow transformers for high-resolution image synthesis
+.
+In
+Forty-first International Conference on Machine Learning
+,
+External Links:
+Link
+Cited by:
+Appendix A
+.
+Esser
+et al.
+(2021)
+P. Esser, R. Rombach, and B. Ommer
+Taming transformers for high-resolution image synthesis
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 12873–12883
+.
+Cited by:
+§1
+,
+§2
+.
+Everingham
+et al.
+(2010)
+M. Everingham, L. Van Gool, C. K. Williams, J. Winn, and A. Zisserman
+The pascal visual object classes (voc) challenge
+.
+International journal of computer vision
+88
+(
+2
+),
+pp. 303–338
+.
+Cited by:
+§4.1
+.
+Geiping
+et al.
+(2025)
+J. Geiping, S. McLeish, N. Jain, J. Kirchenbauer, S. Singh, B. R. Bartoldson, B. Kailkhura, A. Bhatele, and T. Goldstein
+Scaling up test-time compute with latent reasoning: a recurrent depth approach
+.
+arXiv preprint arXiv:2502.05171
+.
+Cited by:
+Appendix A
+.
+Guo and Schwing (2025)
+P. Guo and A. G. Schwing
+Variational rectified flow matching
+.
+arXiv preprint arXiv:2502.09616
+.
+Cited by:
+§2
+.
+Hassabis and Maguire (2007)
+D. Hassabis and E. A. Maguire
+Deconstructing episodic memory with construction
+.
+Trends in cognitive sciences
+11
+(
+7
+),
+pp. 299–306
+.
+Cited by:
+§1
+.
+Heusel
+et al.
+(2017)
+M. Heusel, H. Ramsauer, T. Unterthiner, B. Nessler, and S. Hochreiter
+Gans trained by a two time-scale update rule converge to a local nash equilibrium
+.
+Advances in neural information processing systems
+30
+.
+Cited by:
+§4.2
+.
+Ho and Salimans (2022)
+J. Ho and T. Salimans
+Classifier-free diffusion guidance
+.
+arXiv preprint arXiv:2207.12598
+.
+Cited by:
+§3.3
+.
+Huynh-Thu and Ghanbari (2008)
+Q. Huynh-Thu and M. Ghanbari
+Scope of validity of psnr in image/video quality assessment
+.
+Electronics letters
+44
+(
+13
+),
+pp. 800–801
+.
+Cited by:
+§4.2
+.
+Kingma and Ba (2017)
+D. P. Kingma and J. Ba
+Adam: a method for stochastic optimization
+.
+External Links:
+1412.6980
+,
+Link
+Cited by:
+Table 5
+,
+Appendix A
+.
+Krishna
+et al.
+(2017)
+R. Krishna, Y. Zhu, O. Groth, J. Johnson, K. Hata, J. Kravitz, S. Chen, Y. Kalantidis, L. Li, D. A. Shamma,
+et al.
+Visual genome: connecting language and vision using crowdsourced dense image annotations
+.
+International journal of computer vision
+123
+(
+1
+),
+pp. 32–73
+.
+Cited by:
+§4
+.
+Lin
+et al.
+(2014)
+T. Lin, M. Maire, S. Belongie, J. Hays, P. Perona, D. Ramanan, P. Dollár, and C. L. Zitnick
+Microsoft coco: common objects in context
+.
+In
+European conference on computer vision
+,
+pp. 740–755
+.
+Cited by:
+§4
+.
+Lipman
+et al.
+(2023)
+Y. Lipman, R. T. Chen, H. Ben-Hamu, M. Nickel, and M. Le
+Flow matching for generative modeling
+.
+In
+The Eleventh International Conference on Learning Representations
+,
+Cited by:
+Appendix A
+,
+§2
+,
+Figure 1
+,
+Figure 1
+,
+§3
+,
+§3
+.
+Liu
+et al.
+(2022)
+X. Liu, C. Gong, and Q. Liu
+Flow straight and fast: learning to generate and transfer data with rectified flow
+.
+arXiv preprint arXiv:2209.03003
+.
+Cited by:
+§2
+.
+Loshchilov
+et al.
+(2017)
+I. Loshchilov F. Hutter
+et al.
+Fixing weight decay regularization in adam
+.
+arXiv preprint arXiv:1711.05101
+5
+(
+5
+),
+pp. 5
+.
+Cited by:
+§B.3
+.
+Mentzer
+et al.
+(2024)
+F. Mentzer, D. Minnen, E. Agustsson, and M. Tschannen
+Finite scalar quantization: vq-vae made simple
+.
+In
+The Twelfth International Conference on Learning Representations
+,
+Cited by:
+Figure 1
+,
+Figure 1
+,
+§3
+.
+Mnih
+et al.
+(2014)
+V. Mnih, N. Heess, A. Graves, and K. Kavukcuoglu
+Recurrent models of visual attention
+.
+Advances in neural information processing systems
+27
+.
+Cited by:
+§2
+.
+Oquab
+et al.
+(2023)
+M. Oquab, T. Darcet, T. Moutakanni, H. Vo, M. Szafraniec, V. Khalidov, P. Fernandez, D. Haziza, F. Massa, A. El-Nouby,
+et al.
+Dinov2: learning robust visual features without supervision
+.
+arXiv preprint arXiv:2304.07193
+.
+Cited by:
+§3.2
+.
+Peebles and Xie (2023)
+W. Peebles and S. Xie
+Scalable diffusion models with transformers
+.
+In
+Proceedings of the IEEE/CVF international conference on computer vision
+,
+pp. 4195–4205
+.
+Cited by:
+Appendix A
+,
+§3.4
+.
+Perez
+et al.
+(2018)
+E. Perez, F. Strub, H. De Vries, V. Dumoulin, and A. Courville
+Film: visual reasoning with a general conditioning layer
+.
+In
+Proceedings of the AAAI conference on artificial intelligence
+,
+Vol.
+32
+.
+Cited by:
+Appendix A
+,
+§3.4
+.
+Preechakul
+et al.
+(2022)
+K. Preechakul, N. Chatthee, S. Wizadwongsa, and S. Suwajanakorn
+Diffusion autoencoders: toward a meaningful and decodable representation
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 10619–10629
+.
+Cited by:
+§2
+.
+Raffel
+et al.
+(2020)
+C. Raffel, N. Shazeer, A. Roberts, K. Lee, S. Narang, M. Matena, Y. Zhou, W. Li, and P. J. Liu
+Exploring the limits of transfer learning with a unified text-to-text transformer
+.
+Journal of machine learning research
+21
+(
+140
+),
+pp. 1–67
+.
+Cited by:
+§B.2
+.
+Razavi
+et al.
+(2019)
+A. Razavi, A. Van den Oord, and O. Vinyals
+Generating diverse high-fidelity images with vq-vae-2
+.
+Advances in neural information processing systems
+32
+.
+Cited by:
+§2
+.
+Rombach
+et al.
+(2022)
+R. Rombach, A. Blattmann, D. Lorenz, P. Esser, and B. Ommer
+High-resolution image synthesis with latent diffusion models
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 10684–10695
+.
+Cited by:
+§3.4
+.
+Sadat
+et al.
+(2024)
+S. Sadat, O. Hilliges, and R. M. Weber
+Eliminating oversaturation and artifacts of high guidance scales in diffusion models
+.
+In
+The Thirteenth International Conference on Learning Representations
+,
+Cited by:
+Appendix A
+.
+Sun
+et al.
+(2024)
+P. Sun, Y. Jiang, S. Chen, S. Zhang, B. Peng, P. Luo, and Z. Yuan
+Autoregressive model beats diffusion: llama for scalable image generation
+.
+arXiv preprint arXiv:2406.06525
+.
+Cited by:
+§1
+.
+Van Den Oord
+et al.
+(2017)
+A. Van Den Oord O. Vinyals
+et al.
+Neural discrete representation learning
+.
+Advances in neural information processing systems
+30
+.
+Cited by:
+§1
+,
+§2
+.
+Vaswani
+et al.
+(2017)
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin
+Attention is all you need
+.
+Advances in neural information processing systems
+30
+.
+Cited by:
+§3.4
+.
+Wang
+et al.
+(2025)
+B. Wang, Z. Yue, F. Zhang, S. Chen, L. Bi, J. Zhang, X. Song, K. Y. Chan, J. Pan, W. Wu,
+et al.
+Selftok: discrete visual tokens of autoregression, by diffusion, and for reasoning
+.
+arXiv preprint arXiv:2505.07538
+.
+Cited by:
+§1
+,
+§2
+,
+Table 4
+,
+Table 4
+.
+Yan
+et al.
+(2013)
+Q. Yan, L. Xu, J. Shi, and J. Jia
+Hierarchical saliency detection
+.
+In
+Proceedings of the IEEE conference on computer vision and pattern recognition
+,
+pp. 1155–1162
+.
+Cited by:
+Appendix C
+,
+§4.1
+.
+Yang
+et al.
+(2024)
+Z. Yang, J. Teng, W. Zheng, M. Ding, S. Huang, J. Xu, Y. Yang, W. Hong, X. Zhang, G. Feng,
+et al.
+Cogvideox: text-to-video diffusion models with an expert transformer
+.
+arXiv preprint arXiv:2408.06072
+.
+Cited by:
+Appendix A
+.
+Yu
+et al.
+(2024a)
+Q. Yu, M. Weber, X. Deng, X. Shen, D. Cremers, and L. Chen
+An image is worth 32 tokens for reconstruction and generation
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 128940–128966
+.
+Cited by:
+§1
+,
+§2
+,
+§4.2
+,
+Table 4
+,
+Table 4
+,
+Table 4
+.
+Yu
+et al.
+(2024b)
+S. Yu, S. Kwak, H. Jang, J. Jeong, J. Huang, J. Shin, and S. Xie
+Representation alignment for generation: training diffusion transformers is easier than you think
+.
+arXiv preprint arXiv:2410.06940
+.
+Cited by:
+Figure 1
+,
+Figure 1
+,
+§3.4
+.
+Appendix A
+Additional Implementation Details
+In this section, we provide additional implementation details critical for reproducing the results in the paper. The code and the pretrained models are publicly available at
+https://github.com/Araachie/comit
+.
+Model architecture.
+As noted in the main paper, the architecture of COMiT is based on DiT
+(
+Peebles and Xie, 2023
+)
+. The only substantial difference is that we use different set of AdaLN
+(
+Perez et al., 2018
+)
+layers to modulate the image and the message tokens. This is similar to
+(
+Yang et al., 2024
+)
+, where different modulations were applied to text and video tokens. Other architectural details, such as the number of layers and transformer dimensions can be found in Table
+5
+.
+Training hyperparameters.
+All models are trained on full ImageNet1k
+(
+Deng et al., 2009
+)
+using Adam
+(
+Kingma and Ba, 2017
+)
+optimizer with a base learning rate of 3e-4 and square root decay schedule with 5000 iterations of warmup. The B and L variants were trained with batch size of 512 images, while for the XL variant we used batch size of 256 with 2 gradient accumulation steps, resulting in the same effective batch size of 512 images. Our models were trained for 200 epochs on 32
+×
+\times
+GH200 GPUs. We use EMA with decay 0.999. For convenience, all hyperparameters are summarized in Table
+5
+.
+COMiT-B
+COMiT-L
+COMiT-XL
+DiT parameters
+Depth
+12
+24
+28
+Hidden size
+768
+1024
+1152
+Heads
+12
+16
+16
+MLP ratio
+4
+4
+4
+REPA/SREPA parameters
+Representation layer
+4
+4
+4
+Number of MLP layers
+3
+3
+3
+MLP hidden size
+768
+768
+768
+Bottleneck parameters
+Number of message tokens
+256
+Token dimensions
+6
+Vocabulary size
+64000
+FSQ Levels
+[8, 8, 8, 5, 5, 5]
+Other training parameters
+Flow matching time distribution
+logitnormal
+Cropping policy
+randomized
+Mode of number of crops
+K
+mode
+K_{\rm mode}
+1
+Maximum number of crops
+K
+max
+K_{\rm max}
+9
+Number of updates to backpropagate through
+1
+p
+CFG
+p_{\rm CFG}
+0.18
+p
+G
+p_{\rm G}
+0.55
+Optimizer
+Adam
+(
+Kingma and Ba, 2017
+)
+Betas
+[0.9, 0.999]
+ε
+\varepsilon
+1e-8
+Weight decay
+0.0
+Learning rate
+0.0003
+Scheduler
+square root
+Warmup steps
+5000
+Gradient clipping
+1.0
+Epochs
+200
+Batch size
+512
+512
+256
+Gradient accumulation steps
+1
+1
+2
+EMA decay
+0.999
+Table 5
+:
+Architecture and training details of COMiT variants.
+Cropping policy at training.
+During training the input images are of resolution
+256
+×
+256
+256\times 256
+. The local crops of resolution
+96
+×
+96
+96\times 96
+are extracted at random locations within the image, such that the local crops do not go beyond the image domain. The number of crops
+K
+K
+is randomly selected from
+{
+1
+,
+…
+,
+K
+max
+}
+\{1,\dots,K_{\rm max}\}
+. We found that instead of uniformly selecting
+K
+K
+it is better to slightly skew its distribution towards 1. More precisely, similarly to
+Geiping et al. (2025)
+, we use the following sampling scheme:
+K
+=
+min
+⁡
+(
+max
+⁡
+(
+1
+,
+ξ
++
+1
+)
+,
+K
+max
+)
+,
+where
+​
+ξ
+∼
+Poisson
+⁡
+(
+e
+τ
+)
+,
+and
+​
+τ
+=
+ln
+⁡
+(
+K
+mode
+)
++
+ε
+⋅
+0.5
+−
+0.125
+\displaystyle K=\min(\max(1,\xi+1),K_{\rm max}),\;{\rm where}\;\xi\sim{\rm Poisson}(e^{\tau}),\;{\rm and}\;\tau=\ln(K_{\rm mode})+\varepsilon\cdot 0.5-0.125
+(8)
+Flow matching timestamp.
+In the flow matching framework
+(
+Lipman et al., 2023
+)
+, the default choice for the timestamp sampling distribution is uniform on the unit interval
+U
+⁡
+[
+0
+,
+1
+]
+U[0,1]
+. However, in prior work it has been discovered that sometimes it is better to skew the timestamp distribution towards the ends of the interval
+(
+Esser et al., 2024
+)
+. We found that it is better to skew the distribution of the timestamps towards 0. This prioritizes high noise regimes and allows for better training of the encoder. We use the logitnormal distribution with
+σ
+2
+=
+1
+\sigma^{2}=1
+and
+μ
+=
+−
+1
+\mu=-1
+.
+Message handling.
+For initializing the message tokens we pick one fixed token from the vocabulary (namely with
+id
+32000) and use it to initialize all tokens in
+m
+0
+m_{0}
+. Prior to feeding the message tokens to the DiT, we embed them using a 2 layer MLP with a SiLU
+(
+Elfwing et al., 2018
+)
+activation in between. As noted in the main paper, at each message update step, we append the current message with a new one that acts as a buffer to write the aggregated information from the message and the crop to. The tokens in the buffer message are copies of learned embedding.
+Position encodings.
+Each modality in the input uses its own set of position encodings. The message and the offset tokens are augmented with learned position encodings. The image tokens use 2D sine–cosine position encodings. We define some maximum resolution of the image input (depends on the resolution of the images, the downsampling factor of the VAE and the patch size of the DiT). Each crop only uses the top-left corner of the 2D image position encodings.
+Classifier-free guidance.
+To smoothen the dependence of the metrics on the CFG strength and allow for high values of the latter, similarly to
+(
+Bachmann et al., 2025
+)
+, we use the Adaptive Projected Guidance
+(
+Sadat et al., 2024
+)
+with the rescaling threshold as
+r
+=
+2.5
+r=2.5
+, parallel component as
+η
+=
+0
+\eta=0
+, and momentum as
+β
+=
+−
+0.5
+\beta=-0.5
+.
+Appendix B
+Evaluation Details
+B.1
+Test Suite
+We evaluate the ability of image tokenizers to encode semantic content using a probing protocol. Images are first tokenized using the evaluated tokenizers, and the resulting image-token sequences are kept frozen. For each benchmark, we train a lightweight probe with identical capacity across tokenizers to ensure a fair comparison. Across all tasks, we apply early stopping based on validation performance and report results from the best-performing checkpoint.
+ImageNet100.
+We evaluate category-level semantic information using ImageNet100 as a single-label classification task. Given frozen image tokens, the probe is trained to predict one of 100 object categories using a cross-entropy objective. Performance is measured using top-1 accuracy on the validation set.
+MSCOCO.
+We assess compositional generalization using a multi-label classification task derived from MSCOCO. We retain only images containing exactly two object categories and construct pair-disjoint training and validation splits such that object category pairs observed at validation time are never seen during training. Each image is annotated with a 2-hot target vector over 90 categories. The probe is trained with a binary cross-entropy loss, and performance is reported using top-5 accuracy, requiring both ground-truth categories to appear among the top-5 predictions.
+Visual Genome.
+We evaluate relational reasoning on Visual Genome, which provides supervision in the form of
+(
+subject
+,
+predicate
+,
+object
+)
+(\text{subject},\text{predicate},\text{object})
+triplets with a large and open-ended vocabulary. Training and validation splits are constructed to be image-disjoint to avoid visual leakage. To ensure a meaningful probing signal, we filter out relations involving objects that occupy less than 5% of the image area and restrict the vocabulary to the 150 most frequent subject/object categories and predicates. This preprocessing avoids evaluation failures caused by out-of-vocabulary textual concepts at validation time, allowing the probe’s performance to more faithfully reflect the semantic information encoded in the image tokens rather than limitations of the classifier’s label space. For each image, the probe is trained to distinguish the correct triplet from a set of negative triplets sampled from other images using a contrastive objective. At evaluation time, accuracy is reported based on whether the correct triplet is identified among its associated negatives.
+B.2
+Probing Network Design
+All probes operate on frozen image-token sequences and use a shallow Transformer encoder to aggregate information across tokens. Image tokens
+𝐦
+∈
+ℝ
+L
+×
+d
+\mathbf{m}\in\mathbb{R}^{L\times d}
+are first projected to a shared model dimension, and a learnable
+[CLS]
+token is prepended to the sequence. Learned positional embeddings and discrete type embeddings are added to all inputs before applying self-attention. Predictions are obtained from the final
+[CLS]
+representation.
+For ImageNet100 and MSCOCO, the input sequence consists only of the
+[CLS]
+token followed by the projected image tokens. A two-way type embedding distinguishes image tokens from
+[CLS]
+. The Transformer output corresponding to
+[CLS]
+is passed to a linear classification head, producing either single-label logits (ImageNet100) or multi-label logits (MSCOCO).
+For Visual Genome, the probe additionally conditions on a candidate
+(
+subject
+,
+predicate
+,
+object
+)
+(\text{subject},\text{predicate},\text{object})
+triplet. Subject, object, and predicate text are encoded using a frozen T5 encoder
+(
+Raffel et al., 2020
+)
+and independently projected to the model dimension. These embeddings are appended to the image-token sequence, and a five-way type embedding is used to distinguish image tokens, textual roles, and
+[CLS]
+. The Transformer encoder processes the full sequence jointly, and a linear head maps the
+[CLS]
+representation to a single logit representing image–triplet compatibility.
+Benchmark
+Model dim
+Depth
+Heads
+Global Batch Size
+ImageNet100
+768
+2
+8
+512
+MSCOCO
+768
+2
+8
+256
+Visual Genome
+64
+2
+8
+512
+Table 6
+:
+Probe hyperparameters used for all benchmarks.
+B.3
+Hyperparameters
+All probes are trained using the AdamW
+(
+Loshchilov et al., 2017
+)
+optimizer with a fixed learning rate, which we keep constant across benchmarks to ensure comparability. For Visual Genome, we use a smaller model dimension than for ImageNet100 and MSCOCO due to the increased input length from concatenating textual triplet embeddings and the substantially larger effective batch size required for contrastive training with multiple negatives, which together impose higher memory and compute demands. An overview of the hyperparameters is given in Table
+6
+.
+(a)
+rFID vs. NFE with
+CFG
+=
+3.0
+{\rm CFG}=3.0
+(b)
+rFID vs. CFG with
+NFE
+=
+10
+{\rm NFE}=10
+(c)
+Ablation of the bottleneck size
+Figure 5
+:
+(a) and (b): Ablation of the reconstruction fidelity under different sampling hyperparameters. (c): Ablation of the bottleck size with COMiT-B.
+B.4
+Reconstruction.
+To select the optimal parameters for the NFE and CFG we start by fixing
+CFG
+=
+3.0
+{\rm CFG}=3.0
+and sweep the NFE in
+{
+2
+,
+4
+,
+10
+,
+25
+}
+\{2,4,10,25\}
+(see Figure
+5(a)
+). We find
+NFE
+=
+10
+{\rm NFE}=10
+to be the optimal number of evaluation steps across all model sizes. We observed that increasing NFE typically leads to sharper details and more salient artifacts, which slightly increases rFID. We then fix
+NFE
+=
+10
+{\rm NFE}=10
+and sweep CFG in
+{
+1.5
+,
+2.5
+,
+3.0
+,
+3.5
+,
+4.5
+,
+7.5
+,
+10.5
+}
+\{1.5,2.5,3.0,3.5,4.5,7.5,10.5\}
+(see Figure
+5(b)
+). We observe the rFID curves behave smoothly under the changes in CFG, with
+CFG
+=
+7.5
+{\rm CFG}=7.5
+yielding the lowest rFID with COMiT-L and -XL. Therefore, for all our experiments we fix
+NFE
+=
+10
+{\rm NFE}=10
+and
+CFG
+=
+7.5
+{\rm CFG}=7.5
+. Notably, scaling COMiT from B to L leads to significant drop in rFID, while further scaling from L to XL only moderately improves the reconstruction quality.
+B.5
+Bottleck size.
+We additionally ablate the bottleneck size of COMiT. We train 3 variants of COMiT-B with small (S), medium (M) and large (L) bottleneck sizes, where S corresponds to the message length of 64 tokens from a vocabulary of 1k unique entries, M stay for the message length of 128 tokens and 16k vocabulary size, while L is the default configuration in the main paper with 256 tokens in the messages and 64k tokens in the vocabulary. We then report the classification probing accuracies of these variants along with the reconstruction PSNRs (see Figure
+5
+). We observe that the accuracy stays within the same range, while PSNR keeps increasing. This may indicate the potential to further improve the reconstruction fidelity of the model without loosing the probing capabilities.
+Appendix C
+Analysis of the Attention Maps
+In this section, we extend the preliminary analysis of the tokens’ attention maps demonstrated in the main paper.
+Figure 6
+:
+Emergence of object-centric tokens in COMiT. We visualize the attention maps of specific tokens in one of the deep layers of the network during the decoding stage. One can see that the tokens naturally attend to the objects and their parts.
+Emergence of Objectness.
+Similarly to
+(
+Duggal et al., 2024
+)
+, we study the emergence of object discovery via visualizing the attention maps of message tokens to the image tokens in the 24th layer of COMiT-XL during the decoding process. First, we visually investigate the attention maps and observe that COMiT’s tokens tend to correspond to some semantically meaningful regions in images, such as objects or object parts (see Figure
+6
+).
+Quantifying Objectness.
+To quantify these findings, we follow the same procedure described in the main paper. In Figure
+8
+, we visualize the attention maps with 10%, 20%, 30% and 40% thresholding along with the mean IoUs for the whole CSSD dataset
+(
+Yan et al., 2013
+)
+. We found that with 30% thresholding one can obtain 0.58 mIoU, which is considered remarkable for a model that has never seen segmentation maps or object categories during training. The attention maps are extracted from layer 24 at denoising time
+t
+=
+0.1
+t=0.1
+using COMiT-XL.
+Figure 7
+:
+Generalization of COMiT to other domains, such as rendered animations or medical images. It can be seen that the model has certain symmetry bias that allows it to reduce the uncertainty about the right hand side of the image when the content on the left hand side is observed. Also notice how the adaptive cropping policy selects the most critical regions for reconstruction.
+Input images
+Ground truth masks
+40% attention thesholding,
+mIoU
+=
+0.57
+{\rm mIoU}=0.57
+30% attention thesholding,
+mIoU
+=
+0.58
+{\rm mIoU}=0.58
+20% attention thesholding,
+mIoU
+=
+0.54
+{\rm mIoU}=0.54
+10% attention thesholding,
+mIoU
+=
+0.38
+{\rm mIoU}=0.38
+Figure 8
+:
+Visualization of COMiT-XL’s attention maps. The attention maps of the tokens that yield the largest IoUs per sample are shown. With adjusting the thresholding percentage, a remarkable mIoU of 0.58 can be achieved. Note that the model has never seen any segmentation maps or class labels during training.
+Appendix D
+More Visual Results
+Here we provide more qualitative results with COMiT that could not be included in the main paper due to the pages number limit. If not stated otherwise, the input images in the main paper and in this appendix are random images from
+unsplash.com
+. We observed that despite being trained only on ImageNet1k
+(
+Deng et al., 2009
+)
+, COMiT demonstrates remarkable generalization capabilities and remains robust under domain shifts (see Figure
+7
+).
+Nearest Neighbors.
+To study the learned space of latent messages, we visualize some nearest neighbors of sample images from the validation set of ImageNet100
+(
+Deng et al., 2009
+)
+. For simplicity, we concatenate the tokens in latent messages to obtain a single 1536-dimensional vector per image. For each query image we then find 4 closest samples among the whole validation set using the cosine distance as our similarity measure (see Figure
+9
+). Despite the simplicity of this probing mechanism, we find that the latent space is well–structured and the neighboring images typically share semantics.
+Query image
+1st neighbor
+2nd neighbor
+3rd neighbor
+4th neighbor
+Figure 9
+:
+Visualization of the nearest neighbors of a sample from the ImageNet100 validation set in the space of COMiT’s latent messages. One can see that despite unsupervised training and simple probing the learned messages tend to cluster into semantically meaningful groups.
+Cropping policies.
+Figure
+10
+contains more demonstrations on the difference between the presence and absence of the global crop in the adaptive cropping policy. Notice that the content that the model does not observe in the sequence of crops misses from the final reconstruction. However, 3-4 local crops in the adaptive policy are typically enough to grasp the overall idea behind the scene without including too much details. This explains, why the adaptive policy with only 3 crops performs quite well on our semantic probing test suite.
+Figure 10
+:
+Additional results on the difference between the
+adaptive
+(even rows) and
+global+adaptive
+(odd rows) cropping policies. The first column depicts the ground truth input image. The last column corresponds to the final reconstruction with 10 NFE. The columns in-between demonstrate how COMiT refines its latent message with incoming information (1 NFE reconstructions are shown).
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

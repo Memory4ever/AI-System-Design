@@ -1,0 +1,4 @@
+# Hunyuan dynamic directory observation
+
+Checked with in-app browser, official https://hunyuan.tencent.com/research -> https://hunyuan.tencent.com/research?page=1 . “全部” visible research list returned 11 entries, latest 2026-09-22 and oldest 2026-02-03. Examples: HyImage3.5, RL batch scaling, Hy4, ELR, Hyra, Hy3, token-gradient RLVR, Learning from context is harder than we thought. No older pagination was present in the accessibility state. HTML extraction had timed out; browser recovered the actual list, but this current list does not restore Dec 2025 historical completeness. Stop: this 11-entry list, then one official-domain exact-date search result set recorded in final-date-queries.md. Reopen only on recovered 2025-12-31/2026-01-01 official research event or a dated historical archive API; do not mark N/A or zero research.
+

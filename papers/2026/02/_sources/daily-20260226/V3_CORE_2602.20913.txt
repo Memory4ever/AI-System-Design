@@ -1,0 +1,3623 @@
+LongVideo-R1: Smart Navigation for Low-cost Long Video Understanding
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+3
+On Efficient Long Video Understanding
+3.1
+What Makes Efficient Video Understanding?
+3.2
+LongVideo-R1 Framework
+3.3
+Chain-of-Thought-with-Tool Procedure
+4
+Data Curation
+4.1
+Data Preparation
+4.2
+Generating CoTwT Trajectories
+5
+Training LongVideo-R1 Agent
+5.1
+Supervised Fine-tuning
+5.2
+Reinforcement Learning with GRPO
+5.3
+Reward Design
+5.4
+Rollout and Optimization
+6
+Experiments
+6.1
+Implementation Details
+6.2
+Results and Analysis
+6.3
+Extension to Ultra-long Videos
+6.4
+Future Directions
+7
+Conclusion
+References
+A
+Hierarchical Video Definition
+B
+Implementation Details
+B.1
+Environment Setup
+B.2
+Data Generation
+B.3
+Training hyper-parameters
+SFT.
+RL.
+B.4
+Time consumption calculation
+C
+More Qualitative Examples
+D
+Failure Examples
+License: arXiv.org perpetual non-exclusive license
+arXiv:2602.20913v1 [cs.CV] 24 Feb 2026
+LongVideo-R1: Smart Navigation for Low-cost Long Video Understanding
+Jihao Qiu
+Affiliation:
+University of Chinese Academy of Sciences
+Email:
+qiujihao19@mails.ucas.ac.cn
+Lingxi Xie
+Affiliation:
+Huawei Consumer Business Group
+Email:
+198808xc@gmail.com
+Xinyue Huo
+Affiliation:
+Huawei Consumer Business Group
+Email:
+xinyueh@mail.ustc.edu.cn
+Qi Tian
+1
+1
+footnotemark:
+1
+Affiliation:
+Huawei Consumer Business Group
+Email:
+tian.qi1@huawei.com
+Qixiang Ye
+1
+1
+footnotemark:
+1
+Affiliation:
+Affiliation:
+University of Chinese Academy of Sciences
+Email:
+qxye@ucas.ac.cn
+Abstract
+This paper addresses the critical and underexplored challenge of long video understanding
+with low computational budgets
+.
+We propose
+LongVideo-R1
+, an active, reasoning-equipped multimodal large language model (MLLM) agent designed for efficient video context navigation, avoiding the redundancy of exhaustive search.
+At the core of LongVideo-R1 lies a reasoning module that leverages high-level visual cues to infer the most informative video clip for subsequent processing.
+During inference, the agent initiates traversal from top-level visual summaries and iteratively refines its focus, immediately halting the exploration process upon acquiring sufficient knowledge to answer the query.
+To facilitate training, we first extract hierarchical video captions from CGBench, a video corpus with grounding annotations, and guide GPT-5 to generate 33K high-quality chain-of-thought-with-tool trajectories.
+The LongVideo-R1 agent is fine-tuned upon the Qwen-3-8B model through a two-stage paradigm: supervised fine-tuning (SFT) followed by reinforcement learning (RL), where RL employs a specifically designed reward function to maximize selective and efficient clip navigation.
+Experiments on multiple long video benchmarks validate the effectiveness of name, which enjoys superior tradeoff between QA accuracy and efficiency.
+Code and data are available at
+https://github.com/qiujihao19/LongVideo-R1
+.
+Figure 1
+:
+Motivation and performance comparison.
+Left:
+For efficient understanding of long video, the algorithm shall learn to fetch and perceive information
+effectively
+, where the core abilities are: (1) judging whether collected information is sufficient for answering, and (2) if not, navigating to the next clip that is most likely to contain useful information.
+Right:
+LongVideo-R1 achieves a better tradeoff compared to recent methods on the LVBench dataset
+[
+49
+]
+. The marker size indicates model scale.
+†
+†
+footnotetext:
+* Corresponding authors.
+1
+Introduction
+The rapid advancement of multimodal large language models (MLLMs) has opened an unprecedented avenue for the semantic understanding of video data
+[
+30
+,
+24
+]
+.
+However, the MLLMs’ success in the domain of long-form videos (those spanning 1–2 hours) is obstructed by their finite size of context, making them unable to ingest the rich visual content for comprehensive understanding.
+This intrinsic limitation forces current methodologies to rely on a costly, brute-force pipeline—partitioning video to short clips, processing each clip exhaustively (
+e.g.
+, generating captions or summarizing events), and finally integrating the results into the final answer.
+Recent studies such as Ego-R1
+[
+45
+]
+and Videotree
+[
+53
+]
+reported competitive long video QA accuracy, but their complexity grows linearly with the video’s length, leading to prohibitively high computational cost and latency.
+This severely restricts the deployment of MLLMs in real-world applications, such as embodied agents requiring low-latency world reactions and high-throughput video-chat services constrained by per-sample processing budgets.
+In this study, we introduce a new, practically motivated research setting: long video understanding under fewer computational constraints.
+Instead of solely optimizing for question answering (QA) accuracy, we propose that a better measure of model efficacy lies in its ability to achieve a better accuracy-efficiency tradeoff.
+We formally quantify the computational burden by accumulating the estimated cost of every operation that an MLLM requires to derive an answer.
+In other words, the objective is to find the Pareto-optimal solution where competitive accuracy is maintained with minimal computational expenditure.
+The key to unlocking this efficiency is replacing exhaustive search with goal-oriented reasoning.
+We hypothesize that an MLLM must possess the ability to perform dynamic and iterative reasoning: based on partial, high-level context, it must decide which clip to sample next to locate the critical event pertaining to the question.
+Motivated by the idea, we propose
+LongVideo-R1
+, a novel framework that integrates an MLLM with a large reasoning model (LRM) for smart video navigation. The long video is organized into a hierarchical structure, enabling the LRM to rapidly shift its focus across temporal granularity levels. Given a question, LongVideo-R1 begins its exploration at the top layer and, at each step, calls a video captioning tool to gather local context, and then calls a thinking module to determine whether or not the answer can be derived. If yes, a video QA tool is called to generate the final answer; otherwise, the thinking module dictates the next sampling location—it may drill down to a child clip, traverse laterally to a sibling, or backtrack to an upper layer for renewed context. The process terminates upon reaching a maximum iteration limit.
+To train LongVideo-R1, we construct a high-quality dataset of 33K reasoning episodes leveraging the grounding annotations of the CGBench dataset
+[
+3
+]
+and synthesize explicit reasoning trajectories using the GPT-5 API. We train the Qwen3-8B
+[
+55
+]
+model using supervised fine-tuning (SFT) followed by reinforcement learning (RL) with a novel reward mechanism designed specifically to prioritize efficient navigation and accurate grounding results. The training procedure is efficient upon pre-extracted captions and stable throughout a few training epochs.
+We test LongVideo-R1 on three challenging long video QA benchmarks,
+i.e.
+, LVBench
+[
+49
+]
+, VideoMME
+[
+12
+]
+, and MLVU
+[
+66
+]
+. The results show that LongVideo-R1 achieves competitive QA accuracy with an average of
+10.5
+10.5
+rounds of reasoning and navigation/answering, resulting in a significantly lower computational cost than the linear-scan methods. Furthermore, we showcase its capability for ultra-long video understanding on complex TV dramas, a domain previously inaccessible under strict budget constraints.
+2
+Related Work
+Multimodal large language models
+(MLLMs)
+[
+17
+,
+7
+,
+48
+]
+represent a paradigm shift in computer vision research. Inheriting the robust reasoning capabilities of large language models (LLMs)
+[
+47
+,
+1
+,
+43
+,
+25
+]
+, MLLMs extend this competency to the visual domain by encoding visual inputs into discrete tokens and integrating them into the model’s textual context
+[
+27
+,
+26
+,
+46
+,
+33
+]
+and have transcended conventional, bounded visual recognition tasks (
+e.g.
+, classification, detection) to enable complex, open-world question answering (QA) over video data
+[
+30
+,
+24
+]
+.
+As visual understanding performance approaches saturation on static images and short video clips, the community’s focus has substantially shifted toward long-form video understanding. The introduction of large-scale benchmarks featuring hour-long videos and complex QA tasks (
+e.g.
+, EgoSchema
+[
+31
+]
+, LongVideoBench
+[
+54
+]
+, Video-MME
+[
+12
+]
+, LVBench
+[
+49
+]
+, CG-Bench
+[
+3
+]
+,
+etc.
+) poses significant challenges to MLLMs. Two lines of research were conducted to overcome the inherent context length limitations of MLLMs. One direction focuses on devising efficient video representations
+[
+23
+,
+18
+,
+37
+]
+to maximize the information density
+[
+38
+,
+8
+,
+62
+]
+. Another direction, which is highly scalable, involves segmenting the video, processing components separately, and integrating the resulting information for final inference
+[
+40
+,
+42
+,
+61
+]
+. This latter approach has been further refined by the advent of large reasoning models (LRMs)
+[
+17
+,
+14
+,
+55
+]
+, leading to the development of agent-based video understanding systems
+[
+9
+,
+52
+,
+53
+]
+. In these systems, an LLM agent employs explicit thinking and reasoning to strategically invoke various specialized tools, a methodology that currently dominates performance across many leading benchmarks
+[
+11
+,
+41
+]
+.
+Notwithstanding the rapid progress in achieving high accuracy, relatively minimal effort has been dedicated to reducing the computational budget of long-form video understanding. For instance, recent agentic architectures, such as video-SALMONN 2
+[
+41
+]
+, and Ego-R1
+[
+45
+]
+, necessitate the exhaustive processing of all or a substantial proportion of video segments, demanding an inordinate number of MLLM calls and consequently imposing severe computational overhead. In this paper, we formally address this deficiency by defining the pursuit of the accuracy-efficiency Pareto-optimum and subsequently introducing a competitive, agent-based solution for the pursuit.
+Training a smart agent necessitates with advanced reinforcement learning techniques. Classical algorithms, notably Proximal Policy Optimization (PPO)
+[
+35
+]
+, have been extended into Group Relative Policy Optimization (GRPO)
+[
+36
+]
+to obviate the explicit reliance on a critic model, improving the efficiency of policy optimization. Numerous subsequent iterations have been proposed to refine policy learning for both LLMs
+[
+57
+,
+65
+,
+64
+]
+and MLLMs
+[
+16
+,
+59
+,
+11
+,
+22
+]
+. A predominant theme across these advancements is the engineering of specialized reward functions tailored to guide agent behavior toward desired outcomes.
+3
+On Efficient Long Video Understanding
+3.1
+What Makes Efficient Video Understanding?
+Given that agentic algorithms for long-form video understanding necessitate a multi-stage process (including data preparation, clip navigation, hierarchical reasoning, and final inference), we formally define the total computational cost required for a single QA task. This cost is computed by aggregating the estimated computational overhead incurred at every step within the operational pipeline. Our primary research objective is to devise an algorithmic solution that attains a Pareto-optimal tradeoff between QA accuracy and computational efficiency
+1
+1
+1
+We specifically assume a setting where each QA task is executed individually and on-demand. This explicitly excludes algorithms that rely upon extensive video preprocessing, as such approaches do not satisfy the low-latency requirements of reactive or budget-constrained systems.
+.
+To achieve this goal, we introduce LongVideo-R1, a dynamic, active exploration framework. As depicted in Figure
+1
+, LongVideo-R1 operates via a self-regulating, closed-loop mechanism instantiated by two core functionalities: (1) contextual exploration, which governs the active navigation and information collection within the hierarchical video structure, and (2) reasoning and termination control, which judges the sufficiency of the gathered context for QA and, if necessary, determines the subsequent step for exploration. This iterative paradigm, where the process continues until a definitive answer is produced (or maximum iterations are reached), provides a dramatic reduction in computational expenditure compared to exhaustive search algorithms, while preserving a competitive QA accuracy.
+3.2
+LongVideo-R1 Framework
+The input of LongVideo-R1 consists of a long-form video
+𝕍
+\mathbb{V}
+and a question
+𝐪
+\mathbf{q}
+. Let us denote the duration of
+𝕍
+\mathbb{V}
+as
+T
+T
+(in seconds); given
+0
+⩽
+t
+1
+<
+t
+2
+⩽
+T
+0\leqslant t_{1}<t_{2}\leqslant T
+,
+𝕍
+\mathbb{V}
+can be sliced into shorter clips, denoted by
+𝕍
+⁡
+[
+t
+1
+,
+t
+2
+]
+\mathbb{V}[t_{1},t_{2}]
+.
+To support exploring video clips of different lengths, we organize the video into a multi-level tree structure. The root node of the tree is the entire video,
+i.e.
+,
+𝕍
+≡
+𝕍
+⁡
+[
+0
+,
+T
+]
+\mathbb{V}\equiv\mathbb{V}[0,T]
+. The tree has
+D
+D
+levels (the root is the
+0
+0
+-th level and the leaf node is the
+D
+D
+-th level); each non-leaf node has
+K
+K
+children, corresponding to its video clip partitioned into
+K
+K
+equal-length, non-overlapping sub-clips. We denote a
+d
+d
+-th-level clip as
+𝕍
+k
+1
+,
+…
+,
+k
+d
+\mathbb{V}_{k_{1},\ldots,k_{d}}
+, where
+k
+d
+′
+∈
+{
+0
+,
+…
+,
+K
+−
+1
+}
+k_{d^{\prime}}\in\{0,\ldots,K-1\}
+indicates the child index at the
+d
+′
+d^{\prime}
+-th level. Unless otherwise specified, we assume that
+D
+=
+3
+D=3
+and
+K
+=
+round
+⁡
+(
+T
+/
+16
+​
+s
+D
+)
+K=\mathrm{round}(\sqrt[D]{T/16\mathrm{s}})
+so that the video clip at the leaf level is approximately
+16
+16
+-second long. This hierarchical structure allows the agent to check long video clips first and, when necessary, ‘zoom in’ to find an answer in finer-scale visual content. While the uniform partition is easy to implement, we understand that it is not the optimal choice,
+e.g.
+, it would cause semantically similar content to fall into neighboring sub-clips, increasing the ambiguity of localization.
+LongVideo-R1 is a large reasoning model (LRM) and follows a chain-of-thought-with-tool (CoTwT) framework, where two multimodal tools are incorporated:
+•
+The
+video captioning
+tool,
+𝚟𝚒𝚍𝚎𝚘
+​
+_
+​
+𝚌𝚊𝚙
+​
+(
+)
+\mathtt{video\_cap}()
+. It receives a video clip
+𝕍
+k
+1
+,
+…
+,
+k
+d
+\mathbb{V}_{k_{1},\ldots,k_{d}}
+with the number of sampled frames
+F
+F
+, and outputs the text description
+𝐭
+\mathbf{t}
+of the clip.
+•
+The
+video QA
+tool,
+𝚟𝚒𝚍𝚎𝚘
+​
+_
+​
+𝚚𝚊
+​
+(
+)
+\mathtt{video\_qa}()
+. It receives a video clip
+𝕍
+k
+1
+,
+…
+,
+k
+d
+\mathbb{V}_{k_{1},\ldots,k_{d}}
+with the number of sampled frames
+F
+F
+, the question
+𝐪
+\mathbf{q}
+, and outputs the answer
+𝐚
+\mathbf{a}
+(it is possible to answer ‘I don’t know’). This tool is allowed only on the lowest-level clips.
+There is a major difference between these two tools:
+𝚟𝚒𝚍𝚎𝚘
+​
+_
+​
+𝚌𝚊𝚙
+​
+(
+)
+\mathtt{video\_cap}()
+aims to offer generic video descriptions that assist the subsequent steps for key content localization, while
+𝚟𝚒𝚍𝚎𝚘
+​
+_
+​
+𝚚𝚊
+​
+(
+)
+\mathtt{video\_qa}()
+, often called at the last step, focuses on answering the specific question. For simplicity, we assume that both tools sample frames time-uniformly from video data, and vanilla visual encoding (
+i.e.
+, no compression) is performed on the frames.
+3.3
+Chain-of-Thought-with-Tool Procedure
+Based on the above preparation, we formulate the inference of LongVideo-R1 into a chain-of-thought-with-tool (CoTwT) procedure. A complete inference episode is written as a chain:
+𝔈
+=
+[
+𝐒
+1
+,
+𝐒
+2
+,
+…
+,
+𝐒
+L
+]
+,
+\mathfrak{E}=[\mathbf{S}_{1},\mathbf{S}_{2},\ldots,\mathbf{S}_{L}],
+(1)
+where each
+𝐒
+l
+\mathbf{S}_{l}
+indicates a step:
+𝐒
+l
+=
+{
+(
+𝐫
+l
+,
+𝐭
+l
+)
+,
+if
+l
+<
+L
+,
+(
+𝐫
+l
+,
+𝐚
+)
+if
+l
+=
+L
+,
+\mathbf{S}_{l}=\left\{\begin{array}[]{ll}(\mathbf{r}_{l},\mathbf{t}_{l}),&\mathrm{if}\quad l<L,\\
+(\mathbf{r}_{l},\mathbf{a})&\mathrm{if}\quad l=L,\end{array}\right.
+(2)
+where
+𝐫
+l
+\mathbf{r}_{l}
+is the reasoning statement at the
+l
+l
+-th step, at the end of which contains information indicating which tool is to be called, and
+𝐭
+l
+\mathbf{t}_{l}
+and
+𝐚
+\mathbf{a}
+denote the text description and answer, corresponding to the outputs of
+𝚟𝚒𝚍𝚎𝚘
+​
+_
+​
+𝚌𝚊𝚙
+​
+(
+)
+\mathtt{video\_cap}()
+and
+𝚟𝚒𝚍𝚎𝚘
+​
+_
+​
+𝚚𝚊
+​
+(
+)
+\mathtt{video\_qa}()
+, respectively. Note that the entire episode contains purely natural language (the multimodal tools are called as external functions), making it easier to (1) adapt to the recent advances of LRMs, and (2) explicitly connect thinking with tool-using towards a transparent inference procedure. The procedure is illustrated in Algorithm
+1
+.
+Algorithm 1
+Hierarchical Video Reasoning
+0:
+Video
+𝕍
+\mathbb{V}
+, question
+𝐪
+\mathbf{q}
+, reasoning model
+𝚛𝚎𝚊
+⁡
+(
+)
+\mathtt{rea}()
+, multimodal tools
+𝚟𝚒𝚍𝚎𝚘
+​
+_
+​
+𝚌𝚊𝚙
+​
+(
+)
+\mathtt{video\_cap}()
+and
+𝚟𝚒𝚍𝚎𝚘
+​
+_
+​
+𝚚𝚊
+​
+(
+)
+\mathtt{video\_qa}()
+0:
+Answer
+𝐚
+\mathbf{a}
+1:
+Tree depth and width:
+D
+=
+3
+D=3
+,
+K
+=
+round
+⁡
+(
+T
+/
+16
+​
+s
+D
+)
+K=\mathrm{round}(\sqrt[D]{T/16\mathrm{s}})
+2:
+Get top-level caption
+𝐭
+0
+=
+𝚟𝚒𝚍𝚎𝚘
+​
+_
+​
+𝚌𝚊𝚙
+​
+(
+𝕍
+)
+\mathbf{t}_{0}=\mathtt{video\_cap}(\mathbb{V})
+3:
+Initialize chat history:
+𝔈
+=
+[
+𝐭
+0
+]
+\mathfrak{E}=[\mathbf{t}_{0}]
+4:
+Get first reasoning output:
+𝐫
+1
+=
+𝚛𝚎𝚊
+⁡
+(
+𝔈
+,
+𝐪
+)
+\mathbf{r}_{1}=\mathtt{rea}(\mathfrak{E},\mathbf{q})
+5:
+Initialize episode length:
+L
+=
+1
+L=1
+6:
+while
+𝐫
+L
+\mathbf{r}_{L}
+does not contain the answer
+do
+7:
+Parse:
+𝚝𝚘𝚘𝚕
+∈
+{
+𝚟𝚒𝚍𝚎𝚘
+​
+_
+​
+𝚌𝚊𝚙
+,
+𝚟𝚒𝚍𝚎𝚘
+​
+_
+​
+𝚚𝚊
+}
+\mathtt{tool}\in\{\mathtt{video\_cap},\mathtt{video\_qa}\}
+,
+𝕍
+k
+1
+,
+…
+,
+k
+d
+\mathbb{V}_{k_{1},\ldots,k_{d}}
+8:
+Call the tool:
+𝐭
+L
+=
+𝚝𝚘𝚘𝚕
+⁡
+(
+𝕍
+k
+1
+,
+…
+,
+k
+d
+)
+\mathbf{t}_{L}=\mathtt{tool}(\mathbb{V}_{k_{1},\ldots,k_{d}})
+9:
+Update chat history:
+𝔈
+←
+𝔈
++
+[
+𝐫
+L
+,
+𝐭
+L
+]
+\mathfrak{E}\leftarrow\mathfrak{E}+[\mathbf{r}_{L},\mathbf{t}_{L}]
+10:
+Update reasoning output
+𝐫
+L
++
+1
+=
+𝚛𝚎𝚊
+⁡
+(
+𝔈
+,
+𝐪
+)
+\mathbf{r}_{L+1}=\mathtt{rea}(\mathfrak{E},\mathbf{q})
+11:
+Update episode length:
+L
+←
+L
++
+1
+L\leftarrow L+1
+12:
+end
+while
+13:
+return
+Answer extracted from
+𝐫
+L
+\mathbf{r}_{L}
+4
+Data Curation
+4.1
+Data Preparation
+We curate a dataset for training LongVideo-R1. We choose the CG-Bench dataset
+[
+3
+]
+because it contains clue-grounded QA pairs,
+i.e.
+, we can supervise the model to localize the key sub-clip(s) before answering the question.
+CG-Bench contains 1.2K long-form videos, each of which is paired with a diverse set of QA pairs. We chose 800 videos and the corresponding 5.6K QA pairs for generating CoTwT trajectories.
+For each video of CG-Bench,
+𝕍
+\mathbb{V}
+, we first use the Qwen2.5-VL-72B model
+[
+2
+]
+as the function
+𝚟𝚒𝚍𝚎𝚘
+​
+_
+​
+𝚌𝚊𝚙
+​
+(
+)
+\mathtt{video\_cap}()
+to extract its text description. The sampled frames
+F
+F
+is set to be
+256,128
+,
+64
+,
+32
+256,128,64,32
+, and the suggest length of description (in English words) is
+400,400,400,200
+400,400,400,200
+for level index
+d
+=
+0
+,
+1
+,
+2
+,
+3
+d=0,1,2,3
+, respectively. To guide the LRM to locate sub-clips, we modify the prompt (see Appendix
+B.2
+) to insert absolute timestamps into the caption.
+Figure 2
+:
+An illustration of generating CoTwT trajectories from clue-grounded video QA data.
+4.2
+Generating CoTwT Trajectories
+The pipeline of generating CoTwT trajectories is illustrated in Figure
+2
+. We guide GPT-5
+[
+32
+]
+to perform the CoTwT procedure, which starts with the top-level video clip, and continues when the model is confident to produce the final answer. In the prompt to GPT-5 (see Appendix
+B.2
+), we indicate the functionalities of
+𝚟𝚒𝚍𝚎𝚘
+​
+_
+​
+𝚌𝚊𝚙
+​
+(
+)
+\mathtt{video\_cap}()
+and
+𝚟𝚒𝚍𝚎𝚘
+​
+_
+​
+𝚚𝚊
+​
+(
+)
+\mathtt{video\_qa}()
+and specify the rules of using them (
+e.g.
+,
+𝚟𝚒𝚍𝚎𝚘
+​
+_
+​
+𝚌𝚊𝚙
+​
+(
+)
+\mathtt{video\_cap}()
+can be called at a node if its parent has been traversed, and
+𝚟𝚒𝚍𝚎𝚘
+​
+_
+​
+𝚚𝚊
+​
+(
+)
+\mathtt{video\_qa}()
+can only be called in the lowest level nodes).
+GPT-5 performs the above task as zero-shot inference; in many (about 30% of) scenarios, it can produce incorrect answers or fail to pass the above verification. We make two fixes to improve the data quality and guarantee success.
+•
+Instead of starting with the root node,
+𝕍
+\mathbb{V}
+, we ask the model to traverse all
+K
+K
+sub-clips at the first level. This alleviates the risk that GPT delves deep into local parts without obtaining sufficient global information, and improves stability in particular when exploring hour-long videos.
+•
+When GPT fails, we use the clue-grounded hints of CG-Bench to guide it towards the correct answer. Meanwhile, we try to keep the hints to a minimal amount: when GPT fails for the first time, we add the highest-level segment containing the relevant event to the prompt; if it still fails, a deeper-level hint with a more precise segment and event description is added. This process continues until the model produces a correct answer. A comparative example of the original and clue-guided prompts is provided in Appendix
+B.2
+. This strategy guarantees the correctness of each CoTWT trajectory while leaking as few hints as possible. Trained on such data, the LRM learns to generalize toward efficient exploration rather than simply memorizing video content and answers.
+As a result, we obtain 5.6K CoTwT trajectories with an average of 5.8 steps, yielding approximately 33K high-quality samples for supervised fine-tuning. Upon releasing the SFT data to the community, we show that such data is helpful to train a powerful agent, and the agent’s performance is positively related to the amount of SFT data (
+i.e.
+, it is important to hint GPT when it goes wrong). We have also revealed a promising path to enhance the agent, for which one only needs to establish more clue-grounded video QA pairs and generate more CoTwT trajectories.
+5
+Training LongVideo-R1 Agent
+We follow a well-established, two-stage pipeline to train the LongVideo-R1 agent,
+i.e.
+, a supervised fine-tuning (SFT) stage as a cold start and a reinforcement learning (RL) stage for further optimization.
+5.1
+Supervised Fine-tuning
+In the first stage, we fine-tune a pretrained large language model on the curated CoTwT data. This cold-start phase equips the model with the ability to generate structured reasoning trajectories under the desired format.
+Each training sample simulates a realistic multi-round tool-using process that ultimately leads to the correct answer. Specifically, the reasoning process is enclosed within special tokens
+⟨
+𝚝𝚑𝚒𝚗𝚔
+⟩
+…
+⟨
+/
+𝚝𝚑𝚒𝚗𝚔
+⟩
+\mathtt{\langle think\rangle}\ldots\mathtt{\mathtt{\langle/think\rangle}}
+, followed by either a tool invocation or an answer. Tool calls are enclosed within
+⟨
+𝚝𝚘𝚘𝚕
+⟩
+…
+⟨
+/
+𝚝𝚘𝚘𝚕
+⟩
+\mathtt{\langle tool\rangle}\ldots\mathtt{\langle/tool\rangle}
+and answers within
+⟨
+𝚊𝚗𝚜𝚠𝚎𝚛
+⟩
+…
+⟨
+/
+𝚊𝚗𝚜𝚠𝚎𝚛
+⟩
+\mathtt{\langle answer\rangle}\ldots\mathtt{\langle/answer\rangle}
+. During training, the tool invocation content is parsed and executed to obtain corresponding observations, which are then fed back to the model as new contextual information.
+This structured annotation enables the model to learn (1) when to continue reasoning, (2) which tool to invoke, and (3) when to terminate reasoning and produce the final answer. After SFT, the model (denoted as LongVideo-R1-SFT) is capable of generating correctly formatted reasoning sequences and performing coherent tool interactions, which serve as a solid foundation for reinforcement learning.
+5.2
+Reinforcement Learning with GRPO
+After the SFT stage, we regard the video reasoning process as an interactive exploration environment: the model acts as an agent, video tools (
+𝚟𝚒𝚍𝚎𝚘
+​
+_
+​
+𝚌𝚊𝚙
+​
+(
+)
+\mathtt{video\_cap}()
+and
+𝚟𝚒𝚍𝚎𝚘
+​
+_
+​
+𝚚𝚊
+​
+(
+)
+\mathtt{video\_qa}()
+) form the action space, and the hierarchical video serves as the environment state. This formulation naturally lends itself to optimization via reinforcement learning.
+We employ the GRPO algorithm
+[
+36
+]
+to further optimize the policy model
+π
+θ
+\pi_{\theta}
+, aiming to improve reasoning efficiency and accuracy. The objective is defined as:
+𝒥
+GRPO
+​
+(
+θ
+)
+\displaystyle\mathcal{J}_{\text{GRPO}}(\theta)
+=
+𝔼
+q
+∼
+P
+⁡
+(
+Q
+)
+,
+{
+o
+i
+G
+}
+i
+=
+1
+G
+∼
+π
+θ
+old
+​
+(
+O
+|
+q
+)
+[
+1
+G
+∑
+i
+=
+1
+G
+∑
+y
+=
+1
+T
+1
+|
+S
+i
+y
+|
+∑
+t
+=
+1
+|
+S
+i
+y
+|
+\displaystyle=\mathbb{E}_{q\sim P(Q),\,\{o_{i}^{G}\}_{i=1}^{G}\sim\pi_{\theta_{\text{old}}}(O|q)}\Bigg[\frac{1}{G}\sum_{i=1}^{G}\sum_{y=1}^{T}\frac{1}{|S_{i}^{y}|}\sum_{t=1}^{|S_{i}^{y}|}
+(3)
+(
+min
+[
+π
+θ
+​
+(
+S
+i
+,
+t
+|
+q
+,
+S
+i
+,
+<
+t
+)
+π
+θ
+old
+​
+(
+S
+i
+,
+t
+|
+q
+,
+S
+i
+,
+<
+t
+)
+A
+^
+i
+,
+t
+y
+,
+\displaystyle\Bigg(\min\!\Bigg[\frac{\pi_{\theta}(S_{i,t}|q,S_{i,<t})}{\pi_{\theta_{\text{old}}}(S_{i,t}|q,S_{i,<t})}\hat{A}_{i,t}^{y},\;
+clip
+(
+π
+θ
+​
+(
+S
+i
+,
+t
+|
+q
+,
+S
+i
+,
+<
+t
+)
+π
+θ
+old
+​
+(
+S
+i
+,
+t
+|
+q
+,
+S
+i
+,
+<
+t
+)
+,
+1
+−
+ε
+,
+1
++
+ε
+)
+A
+^
+i
+,
+t
+y
+)
+−
+β
+𝔻
+KL
+[
+π
+θ
+∥
+π
+0
+]
+)
+]
+,
+\displaystyle\text{clip}\!\left(\frac{\pi_{\theta}(S_{i,t}|q,S_{i,<t})}{\pi_{\theta_{\text{old}}}(S_{i,t}|q,S_{i,<t})},1-\varepsilon,1+\varepsilon\right)\hat{A}_{i,t}^{y}\Bigg)-\beta\,\mathbb{D}_{\text{KL}}\!\left[\pi_{\theta}\,\|\,\pi_{0}\right]\Bigg)\Bigg],
+Q
+denotes a question sampled from the data distribution
+D
+,
+o
+i
+o_{i}
+represents the model output,
+G
+is the number of rollouts, and
+T
+denotes the number of reasoning rounds. The model is parameterized as
+π
+θ
+\pi_{\theta}
+, where
+π
+θ
+\pi_{\theta}
+and
+π
+θ
+old
+\pi_{\theta_{\text{old}}}
+denote the current and reference policies, respectively, and
+π
+0
+\pi_{0}
+represents the policy inherited from the LongVideo-R1-SFT model, used for KL regularization. The advantage term is computed by:
+A
+i
+=
+r
+i
+GRPO
+−
+mean
+​
+(
+{
+r
+j
+GRPO
+}
+)
+std
+​
+(
+{
+r
+j
+GRPO
+}
+)
+.
+A_{i}=\frac{r_{i}^{\text{GRPO}}-\text{mean}\!\left(\{r_{j}^{\text{GRPO}}\}\right)}{\text{std}\!\left(\{r_{j}^{\text{GRPO}}\}\right)}.
+(4)
+5.3
+Reward Design
+To facilitate the model to explore video content efficiently (while finding the correct answer), we design a composite reward function:
+R
+=
+w
+ans
+⋅
+r
+ans
++
+w
+loc
+⋅
+r
+loc
++
+w
+repeat
+⋅
+r
+repeat
+,
+R=w_{\mathrm{ans}}\cdot r_{\mathrm{ans}}+w_{\mathrm{loc}}\cdot r_{\mathrm{loc}}+w_{\mathrm{repeat}}\cdot r_{\mathrm{repeat}},
+(5)
+where
+w
+⋅
+w_{\cdot}
+are reward weights and the three components are defined as follows:
+•
+The
+answer reward
+,
+r
+ans
+∈
+{
+0
+,
+1
+}
+r_{\text{ans}}\in\{0,1\}
+, gives a reward of
+1
+1
+if the final answer matches the ground-truth, otherwise
+0
+0
+.
+•
+The
+location reward
+,
+r
+loc
+r_{\mathrm{loc}}
+, encourages the model to identify the correct segment efficiently:
+r
+loc
+=
+2
+⋅
+cov
+×
+pre
+cov
++
+pre
+,
+r_{\mathrm{loc}}=2\cdot\frac{\mathrm{cov}\times\mathrm{pre}}{\mathrm{cov}+\mathrm{pre}},
+where the coverage and precision are defined as
+cov
+=
+|
+ℐ
+model
+∩
+ℐ
+gt
+|
+|
+ℐ
+gt
+|
+,
+pre
+=
+|
+ℐ
+model
+∩
+ℐ
+gt
+|
+|
+ℐ
+model
+|
+,
+\mathrm{cov}=\frac{|\mathcal{I}_{\mathrm{model}}\cap\mathcal{I}_{\mathrm{gt}}|}{|\mathcal{I}_{\mathrm{gt}}|},\quad\mathrm{pre}=\frac{|\mathcal{I}_{\mathrm{model}}\cap\mathcal{I}_{\mathrm{gt}}|}{|\mathcal{I}_{\mathrm{model}}|},
+where
+ℐ
+gt
+\mathcal{I}_{\mathrm{gt}}
+and
+ℐ
+model
+\mathcal{I}_{\mathrm{model}}
+indicates the ground-truth and predicted sets of time intervals.
+ℐ
+model
+\mathcal{I}_{\mathrm{model}}
+is the union of all non-overlapping time segments corresponding to the nodes requested by the model. This
+F
+1
+F_{1}
+-like metric encourages high coverage of relevant content while penalizing unnecessary exploration.
+•
+The
+repeat penalty
+,
+r
+repeat
+r_{\mathrm{repeat}}
+, discourages repeatedly visiting the same segments, reducing wasted computation.
+5.4
+Rollout and Optimization
+During RL training, the agent interacts with executable video tools to generate rollout trajectories. Each rollout continues until the model outputs a final answer or reaches a predefined maximum number of reasoning steps. The collected trajectories are then used to compute policy gradients and update
+π
+θ
+\pi_{\theta}
+using GRPO.
+After RL training, the resulting model, LongVideo-R1, is capable of performing multi-tool reasoning efficiently on long video tasks. It learns to minimize redundant exploration while maintaining high answer accuracy, achieving a superior tradeoff between performance and computational efficiency compared to conventional MLLMs.
+Method
+ER
+EU
+KIR
+TG
+Rea
+Sum
+Overall
+Proprietary Models
+Gemini 1.5 Pro
+[
+44
+]
+32.1
+30.9
+39.3
+31.8
+27.0
+32.8
+33.1
+GLM-4V-plus-0111
+[
+15
+]
+46.2
+47.8
+54.1
+42.7
+46.5
+37.9
+48.7
+GPT-4o-20241120
+[
+17
+]
+48.9
+49.5
+48.1
+40.9
+50.3
+50.0
+48.9
+Leading Open-sourced MLLMs
+TimeMarker-8B
+[
+5
+]
+42.8
+39.1
+34.9
+38.7
+38.2
+48.8
+41.3
+VideoLLaMA3-7B
+[
+60
+]
+45.8
+42.4
+47.8
+35.9
+45.8
+36.2
+45.3
+InternVL2.5-78B
+[
+6
+]
+43.8
+42.0
+42.1
+36.8
+51.0
+37.9
+43.6
+Qwen2-VL-72B
+[
+2
+]
+38.0
+41.1
+38.3
+41.4
+46.5
+46.6
+41.3
+ReTake-7B
+[
+50
+]
+49.8
+46.2
+52.9
+45.0
+45.8
+27.6
+47.8
+VideoChat-Flash-7B
+[
+22
+]
+51.1
+46.0
+49.0
+38.9
+48.5
+34.5
+48.2
+AdaReTake-72B
+[
+51
+]
+53.0
+50.7
+62.2
+45.5
+54.7
+37.9
+53.3
+Agent-based Systems
+VideoAgent
+[
+52
+]
+28.0
+30.3
+28.0
+29.3
+28.0
+36.4
+29.3
+VideoTree
+[
+53
+]
+30.3
+25.1
+26.5
+27.7
+31.9
+25.5
+28.8
+MemVid
+[
+58
+]
+53.4
+40.6
+37.8
+43.9
+43.2
+28.1
+44.4
+VCA
+[
+56
+]
+43.7
+40.8
+37.8
+38.0
+46.2
+27.3
+41.3
+LongVideo-R1
+49.2
+48.4
+56.4
+56.4
+44.3
+43.1
+50.0
+LongVideo-R1 (new
+†
+\dagger
+)
+60.9
+57.8
+70.1
+62.7
+50.2
+55.2
+60.7
+Table 1:
+QA accuracy (%) on all sub-tasks of LVBench
+[
+49
+]
+.
+†
+\dagger
+We trained an updated version using video captions generated by Qwen3-VL-32B-Instruct and renewed SFT data.
+Method
+Acc.
+Proprietary Models
+GPT-4V
+[
+17
+]
+49.2
+GPT-4o
+[
+17
+]
+64.6
+Open-Sourced MLLMs
+Video-CCAM-14B
+[
+10
+]
+63.1
+Video-XL-7B
+[
+39
+]
+64.9
+LLaVA-OV-72B
+[
+19
+]
+66.4
+LinVT-7B
+[
+13
+]
+68.9
+Aria-25B
+[
+20
+]
+70.6
+Oryx-1.5-32B
+[
+29
+]
+72.3
+VideoLLaMA3-7B
+[
+60
+]
+73.0
+VideoChat-Flash-7B
+[
+21
+]
+74.7
+Agent-based Systems
+VideoTree
+[
+53
+]
+60.4
+VideoMind-7B
+[
+28
+]
+64.4
+LongVideo-R1
+68.1
+LongVideo-R1 (new
+†
+\dagger
+)
+71.3
+Table 2:
+Model-level QA accuracy (%) on the MLVU dataset
+[
+66
+]
+.
+†
+\dagger
+We trained an updated version using the same setting as in Table
+3
+.
+Method
+w/o
+w/
+Proprietary Models
+Gemini 1.5 Flash
+[
+44
+]
+61.1
+68.8
+GPT-4o-20240513
+[
+17
+]
+65.3
+72.1
+Gemini 1.5 Pro
+[
+44
+]
+67.4
+77.4
+Leading Open-sourced MLLMs
+Qwen2-VL-72B
+[
+48
+]
+62.2
+74.3
+InternVL2.5-72B
+[
+6
+]
+62.6
+64.8
+LLaVA-OV-72B
+[
+19
+]
+60.0
+62.4
+LLaVA-Video-72B
+[
+63
+]
+61.5
+72.5
+VideoChat-Flash-7B
+[
+21
+]
+55.6
+63.3
+VideoLLaMA3-7B
+[
+60
+]
+54.9
+61.0
+LiveCC-7B
+[
+4
+]
+53.7
+64.1
+Agent-based Systems
+VideoAgent
+[
+52
+]
+46.4
+–
+VideoTree
+[
+53
+]
+54.2
+–
+MemVid
+[
+58
+]
+55.0
+–
+Video-RAG-7B
+[
+34
+]
+–
+59.8
+Ego-R1
+[
+45
+]
+–
+64.9
+VCA
+[
+56
+]
+56.3
+–
+LongVideo-R1
+55.8
+64.4
+LongVideo-R1 (new
+†
+\dagger
+)
+58.0
+68.6
+Table 3:
+QA accuracy (%) on the ‘long’ subset of Video-MME
+[
+12
+]
+without (w/o) or with (w/) subtitles.
+†
+\dagger
+We trained an updated version using the same setting as in Table
+3
+.
+6
+Experiments
+6.1
+Implementation Details
+We train LongVideo-R1 upon a Qwen3-8B model
+[
+55
+]
+. The multimodal tools,
+𝚟𝚒𝚍𝚎𝚘
+​
+_
+​
+𝚌𝚊𝚙
+​
+(
+)
+\mathtt{video\_cap}()
+and
+𝚟𝚒𝚍𝚎𝚘
+​
+_
+​
+𝚚𝚊
+​
+(
+)
+\mathtt{video\_qa}()
+, are chosen to be Qwen2.5VL-72B and Qwen2.5VL-32B
+[
+2
+]
+, respectively. Compared to other agentic approaches
+[
+45
+,
+56
+,
+53
+,
+52
+]
+, that relied on proprietary LLMs such as GPT or Gemini, our setting eases local deployment and fair comparison. We perform SFT for 3 epochs followed by RL for 2 epochs.
+LongVideo-R1 is tested on three popular long-form video understanding benchmarks. LVBench
+[
+49
+]
+contains 103 videos (average duration: 4038 seconds) and 1,549 QA pairs. Video-MME-long
+[
+12
+]
+contains 300 videos (average duration: 41 minutes) with 3 QA pairs for each video. MLVU
+[
+66
+]
+contains 1,337 videos with their durations ranging between 3 minutes to 2 hours. All these benchmarks have provided multiple choices for each question; we prompt these choices with questions to LongVideo-R1 and ask it to produce the choice index in the answer box. An answer is considered correct if the choice(s) perfectly match the ground-truth.
+6.2
+Results and Analysis
+Results on LVBench.
+We compare LongVideo-R1 with state-of-the-art models on LVBench in Table
+3
+. The compared methods are categorized into three groups: proprietary models, leading open-sourced MLLMs, and agent-based systems. As illustrated in Table
+3
+, LongVideo-R1 achieves a
+50.0
+%
+50.0\%
+accuracy, outperforming the other agent-based methods by at least
+5.6
+%
+5.6\%
+. Besides, with an 8B-LLM, LongVideo-R1 surpasses most proprietary and open-sourced MLLMs; for example, it exceeds GPT-4o by 1.1% and GLM-4V-plus by 1.3%. Notably, LongVideo-R1 demonstrates outstanding results on two sub-categories, KIR (Key Information Retrieval) and TG (Temporal Grounding) tasks. In particular, its performance on TG reaches
+56.4
+%
+56.4\%
+, surpassing all other models by a significant margin of
+10.9
+%
+10.9\%
+. These results highlight the strong ability of LongVideo-R1 in accurately locating key temporal segments within long videos. Moreover, the ability of LongVideo-R1 grows with the multimodal tools: as shown in Table
+3
+, when we use Qwen3-VL-32B-Instruct, a stronger MLLM, for video captioning, the overall accuracy improves significantly, meanwhile the advantages in the KIR and TG sub-categories persist.
+Results on MLVU and Video-MME.
+The comparisons are shown in Tables
+3
+and
+3
+, respectively. While LongVideo-R1 also performs well, it does not excel among the open-sourced MLLMs. The reason lies in the property of the benches: MLVU contains many short videos, and Video-MME contains many global questions like ‘
+What is the main idea of the video?
+’, which is beneficial for the uniform or adaptive (
+e.g.
+,
+[
+42
+]
+) frame sampling methods. LongVideo-R1’s advantage also reflects in inference time. We compare LongVideo-R1 with Ego-R1
+[
+45
+]
+, which reports a similar accuracy on Video-MME. Differently, Ego-R1 requires video captioning every
+30
+30
+seconds, resulting in an average of
+86
+86
+caption segments on VideoMME, while LongVideo-R1 only undergoes an average of
+10.5
+10.5
+rounds, claiming a much lower computational cost. The model’s performance on MLVU and Video-MME also benefits from improved multimodal tools,
+e.g.
+, Qwen3-VL-32B-Instruct for video captioning.
+Method
+KIR
+TG
+LVBench
+V-MME/L
+SFT
+10K
+46.4
+39.1
+39.1
+57.7
+SFT
+full
+48.5
+50.9
+41.6
+59.2
+Ours
+10K
+w/ RL
+54.0
+55.0
+47.4
+60.2
+Ours
+full
+w/ RL
+56.4
+56.4
+50.0
+64.4
+Table 4
+:
+QA accuracy (%) with respect to SFT data size.
+Method
+KIR
+TG
+LVBench
+V-MME/L
+SFT
+48.5
+50.9
+41.6
+59.2
+w/o
+r
+loc
+r_{\mathrm{loc}}
+49.1
+53.2
+45.8
+61.4
+Ours
+56.4
+56.4
+50.0
+64.4
+Table 5
+:
+QA accuracy (%) with or without the location reward.
+Model
+KIR
+TG
+LVBench
+V-MME/L
+Time
+Qwen2.5-VL-3B
+48.8
+53.2
+44.5
+56.0
+50.5
+Qwen2.5-VL-7B
+51.5
+52.7
+46.0
+57.8
+57.4
+Qwen2.5-VL-32B
+58.4
+54.5
+49.8
+63.9
+135.0
+Qwen2.5-VL-72B
+56.4
+56.4
+50.0
+64.4
+175.7
+Table 6
+:
+QA accuracy (%) with respect to MLLM scales. The last column shows average inference time (on LVBench, in seconds).
+Max Rounds
+KIR
+TG
+LVBench
+V-MME/L
+Time (s)
+10
+49.1
+52.3
+43.0
+57.1
+103.6
+20
+49.5
+58.2
+47.3
+63.2
+170.8
+25
+54.6
+54.1
+48.5
+63.6
+172.8
+30
+56.4
+56.4
+50.0
+64.4
+175.7
+Table 7
+:
+QA accuracy (%) with respect to maximum rounds of tool use (mainly the
+𝚟𝚒𝚍𝚎𝚘
+​
+_
+​
+𝚌𝚊𝚙
+​
+(
+)
+\mathtt{video\_cap}()
+function).
+Figure 3
+:
+LongVideo-R1 can navigate in ultra-long videos efficiently. We show an example in a long-form TV drama,
+A Lifelong Journey
+.
+Ablative studies.
+We ablate the performance with respect to the SFT and RL strategies on the LVBench dataset. As shown in Table
+4
+, the model fine-tuned with the full 33K SFT samples outperforms the one trained with a subset of 10K samples, both after the SFT and subsequent RL stages. This demonstrates the importance of increasing the size of SFT data. Another important factor is the location reward,
+r
+loc
+r_{\mathrm{loc}}
+. As shown in Table
+5
+, adding
+r
+loc
+r_{\mathrm{loc}}
+leads to significant performance gains in the overall set and the KIR (Key Information Retrieval) and TG (Temporal Grounding) subsets. These results indicate that
+r
+loc
+r_{\mathrm{loc}}
+effectively enhances the model’s ability of video navigation and such ability contributes to long video QA.
+Accuracy-efficiency tradeoff.
+Figure
+1
+shows that LongVideo-R1 achieves a favorable tradeoff; it achieves a
+50.0
+%
+50.0\%
+accuracy on LVBench, requiring
+3
+3
+minutes per QA. The cost can be reduced to
+2
+2
+minutes per QA at a mere
+0.2
+%
+0.2\%
+accuracy drop. More results are shown in Tables
+6
+and
+7
+, where we change the MLLM scale for
+𝚟𝚒𝚍𝚎𝚘
+​
+_
+​
+𝚌𝚊𝚙
+​
+(
+)
+\mathtt{video\_cap}()
+and alter the maximum number of tool uses, respectively. These results suggest an interesting solution to further improve the tradeoff,
+i.e.
+, switching the setting of tool use (in both size and number) to answer questions of different difficulties.
+Figure 4
+:
+An example of how LongVideo-R1 smartly navigates to the critical segment and answers the question.
+Case studies.
+We further conduct a case study to illustrate the reasoning and planning capability of LongVideo-R1. The video in Figure
+4
+is
+102
+102
+minutes long and features around
+20
+20
+performers. The question requires the model to identify a specific performer and then accurately count the number of dogs associated with that performer. Without prior information about the performer, LongVideo-R1 first locates the segment where the target performer appears, after which it explores fine-grained sub-segments to pinpoint the exact moment of the performance. Finally, it invokes the video QA tool to obtain the precise answer. This example demonstrates the strong reasoning, planning, and temporal localization abilities of LongVideo-R1 for efficient long-video understanding.
+However, LongVideo-R1 can sometimes be distracted by other segments that are semantically related to the question. As shown in the Appendix
+D
+, the model may get stuck in an irrelevant segment instead of shifting its focus to the correct one. In contrast, humans can easily recognize such errors and redirect attention to the appropriate segment. Interestingly, we find that providing simple textual hints can effectively guide LongVideo-R1 back to the correct segment, enabling it to produce the right answer.
+6.3
+Extension to Ultra-long Videos
+Beyond existing benchmarks, LongVideo-R1 also excels in ultra-long video QA. As illustrated in Figure
+3
+, LongVideo-R1 smartly navigates to the accurate location (and gets the correct answer) with
+10
+10
+–
+20
+20
+rounds, even when the input video is tens of hours long. In comparison, open-sourced MLLMs (even sampling
+256
+256
+frames) can barely find efficient information for QA, and other agent-based systems like Ego-R1
+[
+45
+]
+and VideoTree
+[
+53
+]
+require the number of samples to grow linearly with video duration, leading to prohibitively high computational costs.
+6.4
+Future Directions
+Our work, a preliminary study towards low-cost long video understanding, reveals a few research directions for the future.
+•
+Extended tools.
+LongVideo-R1 only considered two tools (besides reasoning),
+𝚟𝚒𝚍𝚎𝚘
+​
+_
+​
+𝚌𝚊𝚙
+​
+(
+)
+\mathtt{video\_cap}()
+and
+𝚟𝚒𝚍𝚎𝚘
+​
+_
+​
+𝚚𝚊
+​
+(
+)
+\mathtt{video\_qa}()
+. In the future, one may introduce more tools (
+e.g.
+, video instance recognition, video clip segmentation) to further improve the model’s ability. In such scenarios, an extra reward term shall be added to penalize the aggregated computational cost of tool use.
+•
+Advanced settings.
+We assumed that each video QA is processed individually. In practice, if one video corresponds to multiple QA pairs, the best model choice may vary,
+e.g.
+, the model can spend more time on key information indexing because the overhead can be amortized among all pairs. There can also emerge related settings, like incremental QA, that require the model to reuse the information efficiently.
+•
+Enhanced video descriptions.
+LongVideo-R1 was built upon an LRM whose performance heavily relies on quality video captions. It hence emerges a new topic – enhancing the video description tools for more accurate and efficient reasoning and navigation. We look forward to the agent and tools being optimized simultaneously in a unified framework.
+7
+Conclusion
+This paper presents LongVideo-R1, an agentic framework designed for efficient long video understanding. LongVideo-R1 explores long videos like humans: starting with top-level video sections, it maintains video descriptions and performs reasoning to judge whether the question can be answered and which part of video is to be navigated next. LongVideo-R1 was fine-tuned upon a pre-trained LRM via SFT (on a curated dataset) and RL, and we show that richer SFT data can help. LongVideo-R1 achieves competitive QA accuracy on several long video benchmarks and is skilled at information retrieval and grounding tasks; more importantly, it shows a favorable accuracy-efficiency tradeoff over other agentic algorithms. We hope LongVideo-R1 enlightens new directions for long video understanding.
+References
+[1]
+J. Achiam, S. Adler, S. Agarwal, L. Ahmad, I. Akkaya, F. L. Aleman, D. Almeida, J. Altenschmidt, S. Altman, S. Anadkat,
+et al.
+(2023)
+Gpt-4 technical report
+.
+arXiv preprint arXiv:2303.08774
+.
+Cited by:
+§2
+.
+[2]
+S. Bai, K. Chen, X. Liu, J. Wang, W. Ge, S. Song, K. Dang, P. Wang, S. Wang, J. Tang,
+et al.
+(2025)
+Qwen2. 5-vl technical report
+.
+arXiv preprint arXiv:2502.13923
+.
+Cited by:
+§4.1
+,
+Table 3
+,
+§6.1
+.
+[3]
+G. Chen, Y. Liu, Y. Huang, Y. He, B. Pei, J. Xu, Y. Wang, T. Lu, and L. Wang
+(2024)
+Cg-bench: clue-grounded question answering benchmark for long video understanding
+.
+arXiv preprint arXiv:2412.12075
+.
+Cited by:
+§1
+,
+§2
+,
+§4.1
+.
+[4]
+J. Chen, Z. Zeng, Y. Lin, W. Li, Z. Ma, and M. Z. Shou
+(2025)
+Livecc: learning video llm with streaming speech transcription at scale
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 29083–29095
+.
+Cited by:
+Table 3
+.
+[5]
+S. Chen, X. Lan, Y. Yuan, Z. Jie, and L. Ma
+(2024)
+Timemarker: a versatile video-llm for long and short video understanding with superior temporal localization ability
+.
+arXiv preprint arXiv:2411.18211
+.
+Cited by:
+Table 3
+.
+[6]
+Z. Chen, W. Wang, Y. Cao, Y. Liu, Z. Gao, E. Cui, J. Zhu, S. Ye, H. Tian, Z. Liu,
+et al.
+(2024)
+Expanding performance boundaries of open-source multimodal models with model, data, and test-time scaling
+.
+arXiv preprint arXiv:2412.05271
+.
+Cited by:
+Table 3
+,
+Table 3
+.
+[7]
+Z. Chen, J. Wu, W. Wang, W. Su, G. Chen, S. Xing, M. Zhong, Q. Zhang, X. Zhu, L. Lu,
+et al.
+(2024)
+Internvl: scaling up vision foundation models and aligning for generic visual-linguistic tasks
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 24185–24198
+.
+Cited by:
+§2
+.
+[8]
+R. Choudhury, G. Zhu, S. Liu, K. Niinuma, K. Kitani, and L. Jeni
+(2024)
+Don’t look twice: faster video transformers with run-length tokenization
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 28127–28149
+.
+Cited by:
+§2
+.
+[9]
+Y. Fan, X. Ma, R. Wu, Y. Du, J. Li, Z. Gao, and Q. Li
+(2024)
+Videoagent: a memory-augmented multimodal agent for video understanding
+.
+In
+European Conference on Computer Vision
+,
+pp. 75–92
+.
+Cited by:
+§2
+.
+[10]
+J. Fei, D. Li, Z. Deng, Z. Wang, G. Liu, and H. Wang
+(2024)
+Video-ccam: enhancing video-language understanding with causal cross-attention masks for short and long videos
+.
+arXiv preprint arXiv:2408.14023
+.
+Cited by:
+Table 3
+.
+[11]
+K. Feng, K. Gong, B. Li, Z. Guo, Y. Wang, T. Peng, J. Wu, X. Zhang, B. Wang, and X. Yue
+(2025)
+Video-r1: reinforcing video reasoning in mllms
+.
+arXiv preprint arXiv:2503.21776
+.
+Cited by:
+§2
+,
+§2
+.
+[12]
+C. Fu, Y. Dai, Y. Luo, L. Li, S. Ren, R. Zhang, Z. Wang, C. Zhou, Y. Shen, M. Zhang,
+et al.
+(2025)
+Video-mme: the first-ever comprehensive evaluation benchmark of multi-modal llms in video analysis
+.
+In
+Computer Vision and Pattern Recognition
+,
+pp. 24108–24118
+.
+Cited by:
+§1
+,
+§2
+,
+Table 3
+,
+§6.1
+.
+[13]
+L. Gao, Y. Zhong, Y. Zeng, H. Tan, D. Li, and Z. Zhao
+(2024)
+Linvt: empower your image-level large language model to understand videos
+.
+arXiv preprint arXiv:2412.05185
+.
+Cited by:
+Table 3
+.
+[14]
+D. Guo, D. Yang, H. Zhang, J. Song, R. Zhang, R. Xu, Q. Zhu, S. Ma, P. Wang, X. Bi,
+et al.
+(2025)
+Deepseek-r1: incentivizing reasoning capability in llms via reinforcement learning
+.
+arXiv preprint arXiv:2501.12948
+.
+Cited by:
+§2
+.
+[15]
+W. Hong, W. Yu, X. Gu, G. Wang, G. Gan, H. Tang, J. Cheng, J. Qi, J. Ji, L. Pan,
+et al.
+(2025)
+Glm-4.1 v-thinking: towards versatile multimodal reasoning with scalable reinforcement learning
+.
+arXiv e-prints
+,
+pp. arXiv–2507
+.
+Cited by:
+Table 3
+.
+[16]
+W. Huang, B. Jia, Z. Zhai, S. Cao, Z. Ye, F. Zhao, Z. Xu, Y. Hu, and S. Lin
+(2025)
+Vision-r1: incentivizing reasoning capability in multimodal large language models
+.
+arXiv preprint arXiv:2503.06749
+.
+Cited by:
+§2
+.
+[17]
+A. Hurst, A. Lerer, A. P. Goucher, A. Perelman, A. Ramesh, A. Clark, A. Ostrow, A. Welihinda, A. Hayes, A. Radford,
+et al.
+(2024)
+Gpt-4o system card
+.
+arXiv preprint arXiv:2410.21276
+.
+Cited by:
+§2
+,
+§2
+,
+Table 3
+,
+Table 3
+,
+Table 3
+,
+Table 3
+.
+[18]
+S. Lee, J. Wang, Z. Zhang, D. Fan, and X. Li
+(2024)
+Video token merging for long-form video understanding
+.
+arXiv preprint arXiv:2410.23782
+.
+Cited by:
+§2
+.
+[19]
+B. Li, Y. Zhang, D. Guo, R. Zhang, F. Li, H. Zhang, K. Zhang, P. Zhang, Y. Li, Z. Liu,
+et al.
+(2024)
+Llava-onevision: easy visual task transfer
+.
+arXiv preprint arXiv:2408.03326
+.
+Cited by:
+Table 3
+,
+Table 3
+.
+[20]
+D. Li, Y. Liu, H. Wu, Y. Wang, Z. Shen, B. Qu, X. Niu, F. Zhou, C. Huang, Y. Li,
+et al.
+(2024)
+Aria: an open multimodal native mixture-of-experts model
+.
+arXiv preprint arXiv:2410.05993
+.
+Cited by:
+Table 3
+.
+[21]
+X. Li, Y. Wang, J. Yu, X. Zeng, Y. Zhu, H. Huang, J. Gao, K. Li, Y. He, C. Wang,
+et al.
+(2024)
+Videochat-flash: hierarchical compression for long-context video modeling
+.
+arXiv preprint arXiv:2501.00574
+.
+Cited by:
+Table 3
+,
+Table 3
+.
+[22]
+X. Li, Y. Wang, J. Yu, X. Zeng, Y. Zhu, H. Huang, J. Gao, K. Li, Y. He, C. Wang,
+et al.
+(2025)
+Videochat-flash: hierarchical compression for long-context video modeling
+.
+arXiv preprint arXiv:2501.00574
+.
+Cited by:
+§2
+,
+Table 3
+.
+[23]
+X. Li, C. Ma, X. Yang, and M. Yang
+(2024)
+Vidtome: video token merging for zero-shot video editing
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 7486–7495
+.
+Cited by:
+§2
+.
+[24]
+B. Lin, Y. Ye, B. Zhu, J. Cui, M. Ning, P. Jin, and L. Yuan
+(2024)
+Video-llava: learning united visual representation by alignment before projection
+.
+In
+Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing
+,
+pp. 5971–5984
+.
+Cited by:
+§1
+,
+§2
+.
+[25]
+A. Liu, B. Feng, B. Xue, B. Wang, B. Wu, C. Lu, C. Zhao, C. Deng, C. Zhang, C. Ruan,
+et al.
+(2024)
+Deepseek-v3 technical report
+.
+arXiv preprint arXiv:2412.19437
+.
+Cited by:
+§2
+.
+[26]
+H. Liu, C. Li, Y. Li, B. Li, Y. Zhang, S. Shen, and Y. J. Lee
+(2024)
+LLaVA-next: improved reasoning, ocr, and world knowledge
+.
+External Links:
+Link
+Cited by:
+§2
+.
+[27]
+H. Liu, C. Li, Q. Wu, and Y. J. Lee
+(2023)
+Visual instruction tuning
+.
+NeurIPS
+.
+Cited by:
+§2
+.
+[28]
+Y. Liu, K. Q. Lin, C. W. Chen, and M. Z. Shou
+(2025)
+VideoMind: a chain-of-lora agent for long video reasoning
+.
+arXiv preprint arXiv:2503.13444
+.
+Cited by:
+Table 3
+.
+[29]
+Z. Liu, Y. Dong, Z. Liu, W. Hu, J. Lu, and Y. Rao
+(2024)
+Oryx mllm: on-demand spatial-temporal understanding at arbitrary resolution
+.
+arXiv preprint arXiv:2409.12961
+.
+Cited by:
+Table 3
+.
+[30]
+M. Maaz, H. Rasheed, S. Khan, and F. Khan
+(2024)
+Video-chatgpt: towards detailed video understanding via large vision and language models
+.
+In
+Annual Meeting of the Association for Computational Linguistics
+,
+pp. 12585–12602
+.
+Cited by:
+§1
+,
+§2
+.
+[31]
+K. Mangalam, R. Akshulakov, and J. Malik
+(2023)
+Egoschema: a diagnostic benchmark for very long-form video language understanding
+.
+Advances in Neural Information Processing Systems
+36
+,
+pp. 46212–46244
+.
+Cited by:
+§2
+.
+[32]
+OpenAI
+(2025)
+GPT-5 system card
+.
+Technical report
+OpenAI
+.
+Note:
+Accessed: 2025-11-13
+External Links:
+Link
+Cited by:
+§4.2
+.
+[33]
+J. Qiu, Y. Zhang, X. Tang, L. Xie, T. Ma, P. Yan, D. Doermann, Q. Ye, and Y. Tian
+(2024)
+Artemis: towards referential understanding in complex videos
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 114321–114347
+.
+Cited by:
+§2
+.
+[34]
+X. Ren, L. Xu, L. Xia, S. Wang, D. Yin, and C. Huang
+(2025)
+Videorag: retrieval-augmented generation with extreme long-context videos
+.
+arXiv preprint arXiv:2502.01549
+.
+Cited by:
+Table 3
+.
+[35]
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+(2017)
+Proximal policy optimization algorithms
+.
+arXiv preprint arXiv:1707.06347
+.
+Cited by:
+§2
+.
+[36]
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. Li, Y. Wu,
+et al.
+(2024)
+Deepseekmath: pushing the limits of mathematical reasoning in open language models
+.
+arXiv preprint arXiv:2402.03300
+.
+Cited by:
+§2
+,
+§5.2
+.
+[37]
+L. Shen, T. Hao, T. He, S. Zhao, Y. Zhang, P. Liu, Y. Bao, and G. Ding
+(2024)
+Tempme: video temporal token merging for efficient text-video retrieval
+.
+arXiv preprint arXiv:2409.01156
+.
+Cited by:
+§2
+.
+[38]
+X. Shen, Y. Xiong, C. Zhao, L. Wu, J. Chen, C. Zhu, Z. Liu, F. Xiao, B. Varadarajan, F. Bordes,
+et al.
+(2024)
+Longvu: spatiotemporal adaptive compression for long video-language understanding
+.
+arXiv preprint arXiv:2410.17434
+.
+Cited by:
+§2
+.
+[39]
+Y. Shu, Z. Liu, P. Zhang, M. Qin, J. Zhou, Z. Liang, T. Huang, and B. Zhao
+(2025)
+Video-xl: extra-long vision language model for hour-scale video understanding
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 26160–26169
+.
+Cited by:
+Table 3
+.
+[40]
+E. Song, W. Chai, T. Ye, J. Hwang, X. Li, and G. Wang
+(2025)
+Moviechat+: question-aware sparse memory for long video question answering
+.
+IEEE Transactions on Pattern Analysis and Machine Intelligence
+.
+Cited by:
+§2
+.
+[41]
+C. Tang, Y. Li, Y. Yang, J. Zhuang, G. Sun, W. Li, Z. Ma, and C. Zhang
+(2025)
+Video-salmonn 2: captioning-enhanced audio-visual large language models
+.
+arXiv preprint arXiv:2506.15220
+.
+Cited by:
+§2
+,
+§2
+.
+[42]
+X. Tang, J. Qiu, L. Xie, Y. Tian, J. Jiao, and Q. Ye
+(2025)
+Adaptive keyframe sampling for long video understanding
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 29118–29128
+.
+Cited by:
+§2
+,
+§6.2
+.
+[43]
+G. Team, R. Anil, S. Borgeaud, J. Alayrac, J. Yu, R. Soricut, J. Schalkwyk, A. M. Dai, A. Hauth, K. Millican,
+et al.
+(2023)
+Gemini: a family of highly capable multimodal models
+.
+arXiv preprint arXiv:2312.11805
+.
+Cited by:
+§2
+.
+[44]
+G. Team, P. Georgiev, V. I. Lei, R. Burnell, L. Bai, A. Gulati, G. Tanzer, D. Vincent, Z. Pan, S. Wang,
+et al.
+(2024)
+Gemini 1.5: unlocking multimodal understanding across millions of tokens of context
+.
+arXiv preprint arXiv:2403.05530
+.
+Cited by:
+Table 3
+,
+Table 3
+,
+Table 3
+.
+[45]
+S. Tian, R. Wang, H. Guo, P. Wu, Y. Dong, X. Wang, J. Yang, H. Zhang, H. Zhu, and Z. Liu
+(2025)
+Ego-r1: chain-of-tool-thought for ultra-long egocentric video reasoning
+.
+arXiv preprint arXiv:2506.13654
+.
+Cited by:
+§1
+,
+§2
+,
+Table 3
+,
+§6.1
+,
+§6.2
+,
+§6.3
+.
+[46]
+Y. Tian, T. Ma, L. Xie, J. Qiu, X. Tang, Y. Zhang, J. Jiao, Q. Tian, and Q. Ye
+(2024)
+Chatterbox: multi-round multimodal referring and grounding
+.
+arXiv preprint arXiv:2401.13307
+.
+Cited by:
+§2
+.
+[47]
+H. Touvron, T. Lavril, G. Izacard, X. Martinet, M. Lachaux, T. Lacroix, B. Rozière, N. Goyal, E. Hambro, F. Azhar,
+et al.
+(2023)
+Llama: open and efficient foundation language models
+.
+arXiv preprint arXiv:2302.13971
+.
+Cited by:
+§2
+.
+[48]
+P. Wang, S. Bai, S. Tan, S. Wang, Z. Fan, J. Bai, K. Chen, X. Liu, J. Wang, W. Ge,
+et al.
+(2024)
+Qwen2-vl: enhancing vision-language model’s perception of the world at any resolution
+.
+arXiv preprint arXiv:2409.12191
+.
+Cited by:
+§2
+,
+Table 3
+.
+[49]
+W. Wang, Z. He, W. Hong, Y. Cheng, X. Zhang, J. Qi, M. Ding, X. Gu, S. Huang, B. Xu,
+et al.
+(2025)
+Lvbench: an extreme long video understanding benchmark
+.
+In
+International Conference on Computer Vision
+,
+pp. 22958–22967
+.
+Cited by:
+Figure 1
+,
+Figure 1
+,
+§1
+,
+§2
+,
+Table 3
+,
+§6.1
+.
+[50]
+X. Wang, Q. Si, J. Wu, S. Zhu, L. Cao, and L. Nie
+(2024)
+ReTaKe: reducing temporal and knowledge redundancy for long video understanding
+.
+arXiv preprint arXiv:2412.20504
+.
+Cited by:
+Table 3
+.
+[51]
+X. Wang, Q. Si, S. Zhu, J. Wu, L. Cao, and L. Nie
+(2025)
+Adaretake: adaptive redundancy reduction to perceive longer for video-language understanding
+.
+In
+Findings of the Association for Computational Linguistics: ACL 2025
+,
+pp. 5417–5432
+.
+Cited by:
+Table 3
+.
+[52]
+X. Wang, Y. Zhang, O. Zohar, and S. Yeung-Levy
+(2024)
+Videoagent: long-form video understanding with large language model as agent
+.
+In
+European Conference on Computer Vision
+,
+pp. 58–76
+.
+Cited by:
+§2
+,
+Table 3
+,
+Table 3
+,
+§6.1
+.
+[53]
+Z. Wang, S. Yu, E. Stengel-Eskin, J. Yoon, F. Cheng, G. Bertasius, and M. Bansal
+(2025)
+Videotree: adaptive tree-based video representation for llm reasoning on long videos
+.
+In
+Computer Vision and Pattern Recognition
+,
+pp. 3272–3283
+.
+Cited by:
+§1
+,
+§2
+,
+Table 3
+,
+Table 3
+,
+Table 3
+,
+§6.1
+,
+§6.3
+.
+[54]
+H. Wu, D. Li, B. Chen, and J. Li
+(2024)
+Longvideobench: a benchmark for long-context interleaved video-language understanding
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 28828–28857
+.
+Cited by:
+§2
+.
+[55]
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv,
+et al.
+(2025)
+Qwen3 technical report
+.
+arXiv preprint arXiv:2505.09388
+.
+Cited by:
+§1
+,
+§2
+,
+§6.1
+.
+[56]
+Z. Yang, D. Chen, X. Yu, M. Shen, and C. Gan
+(2025)
+Vca: video curious agent for long video understanding
+.
+In
+International Conference on Computer Vision
+,
+pp. 20168–20179
+.
+Cited by:
+Table 3
+,
+Table 3
+,
+§6.1
+.
+[57]
+Q. Yu, Z. Zhang, R. Zhu, Y. Yuan, X. Zuo, Y. Yue, W. Dai, T. Fan, G. Liu, L. Liu,
+et al.
+(2025)
+Dapo: an open-source llm reinforcement learning system at scale
+.
+arXiv preprint arXiv:2503.14476
+.
+Cited by:
+§2
+.
+[58]
+H. Yuan, Z. Liu, M. Qin, H. Qian, Y. Shu, Z. Dou, J. Wen, and N. Sebe
+(2025)
+Memory-enhanced retrieval augmentation for long video understanding
+.
+arXiv preprint arXiv:2503.09149
+.
+Cited by:
+Table 3
+,
+Table 3
+.
+[59]
+Y. Zhan, Y. Zhu, S. Zheng, H. Zhao, F. Yang, M. Tang, and J. Wang
+(2025)
+Vision-r1: evolving human-free alignment in large vision-language models via vision-guided reinforcement learning
+.
+arXiv preprint arXiv:2503.18013
+.
+Cited by:
+§2
+.
+[60]
+B. Zhang, K. Li, Z. Cheng, Z. Hu, Y. Yuan, G. Chen, S. Leng, Y. Jiang, H. Zhang, X. Li,
+et al.
+(2025)
+Videollama 3: frontier multimodal foundation models for image and video understanding
+.
+arXiv preprint arXiv:2501.13106
+.
+Cited by:
+Table 3
+,
+Table 3
+,
+Table 3
+.
+[61]
+C. Zhang, Y. Lin, Z. Wang, M. Bansal, and G. Bertasius
+(2025)
+SiLVR: a simple language-based video reasoning framework
+.
+arXiv preprint arXiv:2505.24869
+.
+Cited by:
+§2
+.
+[62]
+H. Zhang, Y. Wang, Y. Tang, Y. Liu, J. Feng, J. Dai, and X. Jin
+(2024)
+Flash-vstream: memory-based real-time understanding for long video streams
+.
+arXiv preprint arXiv:2406.08085
+.
+Cited by:
+§2
+.
+[63]
+Y. Zhang, J. Wu, W. Li, B. Li, Z. Ma, Z. Liu, and C. Li
+(2024)
+Video instruction tuning with synthetic data
+.
+arXiv preprint arXiv:2410.02713
+.
+Cited by:
+Table 3
+.
+[64]
+Y. Zhao, Y. Liu, J. Liu, J. Chen, X. Wu, Y. Hao, T. Lv, S. Huang, L. Cui, Q. Ye,
+et al.
+(2025)
+Geometric-mean policy optimization
+.
+arXiv preprint arXiv:2507.20673
+.
+Cited by:
+§2
+.
+[65]
+C. Zheng, S. Liu, M. Li, X. Chen, B. Yu, C. Gao, K. Dang, Y. Liu, R. Men, A. Yang,
+et al.
+(2025)
+Group sequence policy optimization
+.
+arXiv preprint arXiv:2507.18071
+.
+Cited by:
+§2
+.
+[66]
+J. Zhou, Y. Shu, B. Zhao, B. Wu, Z. Liang, S. Xiao, M. Qin, X. Yang, Y. Xiong, B. Zhang,
+et al.
+(2025)
+Mlvu: benchmarking multi-task long video understanding
+.
+In
+Computer Vision and Pattern Recognition
+,
+pp. 13691–13701
+.
+Cited by:
+§1
+,
+Table 3
+,
+§6.1
+.
+The supplementary document provides (1) details of our hierarchical video definition in
+A
+;(2)comprehensive implementation details including the prompts we used for data generation and the experiment setup in
+B
+;(3)more qualitative examples and ultra long video examples in
+C
+;(4)failure examples and analysis in
+D
+.
+Appendix A
+Hierarchical Video Definition
+To enable efficient localization of relevant segments within long videos without requiring any preprocessing, we represent each video using a hierarchical tree structure. Given a tree depth
+D
+D
+and width
+W
+W
+, the root node corresponds to the entire video. The root is evenly divided into
+W
+W
+child segments, each of which is recursively divided into another
+W
+W
+sub-segments. Repeating this process yields a hierarchical video tree with
+D
+D
+levels.
+In practice, we set
+D
+=
+3
+D=3
+, and choose
+W
+W
+adaptively according to video length. The leaf-level segment length is fixed at
+16
+16
+seconds. Let
+Duration
+denote the total video length, then the number of leaf segments is
+Duration
+/
+16
+\textit{Duration}/16
+. We determine the width as:
+W
+=
+(
+Duration
+16
+)
+1
+/
+D
+,
+W=\left(\frac{\mathrm{Duration}}{16}\right)^{1/D},
+which typically lies within
+4
+4
+to
+8
+8
+across all datasets.
+To ensure that deeper nodes receive fine-grained visual signals, we adjust both frame sampling rate and spatial resolution according to the hierarchy. For the caption model, we use {256, 128, 64, 32} frames from level 0 to level 3, respectively. The corresponding image resolutions are set to
+512
+2
+​
+2
+,
+512
+2
+,
+512
+2
+,
+512
+,
+\frac{512}{2\sqrt{2}},\;\frac{512}{2},\;\frac{512}{\sqrt{2}},\;512,
+ensuring that the overall number of visual tokens remains approximately constant across levels. This design guarantees consistent computation cost per caption call while enabling finer temporal and spatial detail as the model traverses downward in the hierarchy.
+Appendix B
+Implementation Details
+B.1
+Environment Setup
+During both data generation and model evaluation, we use Qwen-2.5-VL-72B as our
+video_cap
+model and Qwen-2.5-VL-32B as our
+video_qa
+model. These two components can be replaced by other models; for instance, Qwen-2.5-VL-32B is also capable of serving as an effective captioning model.
+For CoTWT data generation, we employ GPT-5 as the central reasoning model. All SFT and RL training is conducted on a cluster with 8 NVIDIA H800 GPUs (80GB). Mixed-precision training and FSDP sharding are used to maximize training throughput.
+Configuration
+SFT
+RL
+Model init
+Qwen3-8B
+LongVideo-R1-SFT
+LLM sequence length
+32768
+32768
+Learning rate
+1
+×
+10
+−
+5
+1\times 10^{-5}
+1
+×
+10
+−
+6
+1\times 10^{-6}
+Learning rate schedule
+cosine decay
+constant
+Training epochs
+3
+2
+Global batch size
+32
+12
+Training steps
+384
+696
+Rollout numbers
+-
+16
+Table 8
+:
+Training hyper-parameters.
+B.2
+Data Generation
+We use a proprietary GPT-5 model to generate the CoTWT supervision signals. Since CGBench provides timestamp annotations for each question, we use CGBench as the primary source for CoTWT construction. CGBench contains approximately 1200 videos and 12,000 QA pairs. We use 800 videos and around 8000 QA pairs to construct the SFT data; after filtering, we obtain 5600 high-quality CoTWT trajectories.
+The remaining 400 videos and approximately 4200 QA pairs are reserved for RL training.
+The prompts used for data generation and caption extraction are listed in Table
+9
+and Table
+10
+of the appendix. Initially, we provided only the root-level caption as GPT-5’s starting context, but this resulted in unstable behavior and low accuracy (around 30%). We found that providing the
+W
+W
+child captions from the highest-level nodes as initial information substantially improves stability and accuracy.
+For all datasets (CGBench, LVBench, VideoMME-Long), the tree width
+W
+W
+is set between 4 and 8. For EgoSchema, due to its large number of short 2-minute videos, we set
+W
+W
+between 3 and 8.
+Table 9
+:
+System prompt for data generation.
+[BEGIN OF GOAL]
+You are a reasoning assistant designed to answer questions about a long video through hierarchical captions.
+The video is organized into three levels of temporal granularity:
+1. High-level: The video is divided into
+width
+major segments.
+2. Medium-level: Each High-level segment is further divided into
+width
+sub-segments.
+3. Low-level: Each Medium-level segment is further divided into
+width
+finer sub-segments.
+You will be asked a question about the video.
+At the beginning, you are given **only the High-level captions**.
+Your goal is to answer the question as accurately as possible.
+[END OF GOAL]
+[BEGIN OF REASONING AND TOOL USAGE INSTRUCTIONS]
+1. Reason first:
+Before taking any action, carefully analyze whether the current information (captions you already have) is sufficient to answer the question.
+2. If sufficient:
+Directly provide your final answer inside
+⟨
+𝚊𝚗𝚜𝚠𝚎𝚛
+⟩
+⟨
+/
+𝚊𝚗𝚜𝚠𝚎𝚛
+⟩
+\mathtt{\langle answer\rangle}\mathtt{\langle/answer\rangle}
+tags.
+3. If insufficient:
+Identify which part(s) of the video might contain the needed information.
+Then use one of the following tools:
+- To obtain finer captions:
+⟨
+𝚝𝚘𝚘𝚕
+⟩
+\mathtt{\langle tool\rangle}
+get_caption((high_segment_id, medium_segment_id, low_segment_id))
+⟨
+/
+𝚝𝚘𝚘𝚕
+⟩
+\mathtt{\langle/tool\rangle}
+- Each of the three IDs is an integer from 1 to
+width
+.
+- To request a Medium-level caption, provide (high_segment_id, medium_segment_id) only.
+- To request a Low-level caption, provide the full triplet (high_segment_id, medium_segment_id, low_segment_id).
+- To query visual information from the actual video segment:
+⟨
+𝚝𝚘𝚘𝚕
+⟩
+\mathtt{\langle tool\rangle}
+video_qa((high_segment_id, medium_segment_id, low_segment_id), query)
+⟨
+/
+𝚝𝚘𝚘𝚕
+⟩
+\mathtt{\langle/tool\rangle}
+- This tool sends the corresponding Low-level video segment to a specialized video QA module.
+- The query should specify what exact information you need (e.g., “what color is the person’s shirt?”, “what object is on the table?”).
+- You may only use video_qa after you have already retrieved the corresponding Low-level caption for that segment.
+4. Restriction:
+In each reasoning round, you may only call one tool (either ‘get_caption‘ or ‘video_qa‘) once to obtain new information.
+[END OF REASONING AND TOOL USAGE INSTRUCTIONS]
+[BEGIN OF FORMAT INSTRUCTIONS]
+Your reasoning and actions must follow this structure exactly:
+⟨
+𝚝𝚑𝚒𝚗𝚔
+⟩
+\mathtt{\langle think\rangle}
+Your internal reasoning process here. Analyze what information you have, what is missing, and which part might be relevant.
+⟨
+/
+𝚝𝚑𝚒𝚗𝚔
+⟩
+\mathtt{\langle/think\rangle}
+⟨
+𝚝𝚘𝚘𝚕
+⟩
+\mathtt{\langle tool\rangle}
+(get_caption or video_qa call here, if needed)
+⟨
+/
+𝚝𝚘𝚘𝚕
+⟩
+\mathtt{\langle/tool\rangle}
+or
+⟨
+𝚝𝚑𝚒𝚗𝚔
+⟩
+…
+⟨
+/
+𝚝𝚑𝚒𝚗𝚔
+⟩
+\mathtt{\langle think\rangle}\ldots\mathtt{\mathtt{\langle/think\rangle}}
+⟨
+𝚊𝚗𝚜𝚠𝚎𝚛
+⟩
+\mathtt{\langle answer\rangle}
+Your final answer here (only when you are confident the information is sufficient).
+⟨
+/
+𝚊𝚗𝚜𝚠𝚎𝚛
+⟩
+\mathtt{\langle/answer\rangle}
+[END OF FORMAT INSTRUCTIONS]
+Table 10
+:
+Video Caption Model Prompt.
+You are a video understanding expert. Please create a detailed description with timestamp information for the current video clip (which contains multiple frames arranged in chronological order).
+You are given
+num_frame
+uniformly sampled frames from the video, along with the timestamp (in seconds) of each frame in the entire video.
+Description Guidelines:
+-Dialogue Description Guidelines:
+1)In addition to video frames, subtitle information for this video segment is also provided.
+2)The output description must faithfully include the given subtitle content. Do not invent or add dialogues that are not provided. Avoid redundant repetition, maintain the original order of the lines, and ensure the sentences flow smoothly.
+3)Your output should be around
+num_words
+words.
+-Whenever reasonable, include the provided timestamps in your description.
+1)For multiple frames with short intervals that depict the same continuous action, you may merge them into a single description.
+2)For example:This video begins at 0.0s with a scene featuring two individuals seated outdoors, engaging in a conversation. The subtitles indicate they are discussing the impact of the pandemic on their ability to shoot videos at a bar. By 14.0s, the dialogue shifts to their newfound regular appearances on a show called Scam Nation. At 28.0s, the conversation turns to the promotion of a product named Kraken, encouraging viewers to visit a website for…
+Output Format:
+Your response should be in the following format, wrapped with
+⟨
+𝚌𝚊𝚙𝚝𝚒𝚘𝚗
+⟩
+⟨
+/
+𝚌𝚊𝚙𝚝𝚒𝚘𝚗
+⟩
+\mathtt{\langle caption\rangle}\mathtt{\langle/caption\rangle}
+tags: ”
+⟨
+𝚌𝚊𝚙𝚝𝚒𝚘𝚗
+⟩
+\mathtt{\langle caption\rangle}
+This clip (video) XXX
+⟨
+/
+𝚌𝚊𝚙𝚝𝚒𝚘𝚗
+⟩
+\mathtt{\langle/caption\rangle}
+”.
+B.3
+Training hyper-parameters
+We adopt Qwen3-8B as the central reasoning model for both SFT and RL training. The model receives the
+W
+W
+highest-level captions as its initial observation and interacts with the video tree through a sequence of tool calls.
+Training consists of two phases:
+SFT.
+We train the model to imitate CoTWT trajectories by predicting reasoning process, search actions and answers. This stage helps the model acquire hierarchical search behavior and structured video reasoning skills.
+RL.
+During RL, we pre-extract all hierarchical captions to accelerate training, while the
+video_qa
+tool is invoked in real time. Qwen-2.5-VL-32B is deployed on two GPUs to serve as the
+video_qa
+module, while the remaining six GPUs are dedicated to RL training.
+The detailed hyper-parameters are listed in Table
+8
+.
+B.4
+Time consumption calculation
+The timing was tested on an A800. The total inference time of LongVideo-R1 consists of three components: (1) the forward-pass time of the reasoning model
+T
+1
+T_{1}
+, (2) the captioning time required for processing a video segment
+T
+2
+T_{2}
+, and (3) the time required for the video_qa model to answer a query
+T
+3
+T_{3}
+. Let the average number of calls to LongVideo-R1, the video_cap model, and the video_qa model be
+C
+1
+C_{1}
+,
+C
+2
+C_{2}
+, and
+C
+3
+C_{3}
+, respectively. Then the expected time cost for answering one question is:
+T
+=
+C
+1
+​
+T
+1
++
+C
+2
+​
+T
+2
++
+C
+3
+​
+T
+3
+.
+T=C_{1}T_{1}+C_{2}T_{2}+C_{3}T_{3}.
+Using VideoMME-Long as an example, the model requires on average 10.5 reasoning rounds per question. Therefore,
+C
+1
+=
+10.5
+C_{1}=10.5
+. The video_qa model is invoked infrequently, with an average of
+C
+3
+=
+0.36
+C_{3}=0.36
+calls per question.
+Since the average tree width for VideoMME-Long is
+W
+=
+5
+W=5
+, the initial step requires obtaining the
+W
+W
+highest-level captions. During the subsequent reasoning process, every reasoning step except the one that triggers a video_qa call requires an additional caption. Thus the expected number of caption calls is:
+C
+2
+=
+W
++
+C
+1
+−
+1
+−
+C
+3
+=
+5
++
+10.5
+−
+1
+−
+0.36
+=
+14.14
+.
+C_{2}=W+C_{1}-1-C_{3}=5+10.5-1-0.36=14.14.
+Assuming Qwen-2.5-VL-32B is used for both video_cap and video_qa, the empirical average runtimes are:
+T
+1
+≈
+2.5
+​
+s
+,
+T
+2
+≈
+7.0
+​
+s
+,
+T
+3
+≈
+2.7
+​
+s
+.
+T_{1}\approx 2.5\text{s},\quad T_{2}\approx 7.0\text{s},\quad T_{3}\approx 2.7\text{s}.
+Therefore, the expected end-to-end time required to answer a single question on VideoMME-Long is:
+T
+=
+10.5
+×
+2.5
++
+14.14
+×
+7.0
++
+0.36
+×
+2.7
+≈
+135
+​
+s
+.
+T=10.5\times 2.5+14.14\times 7.0+0.36\times 2.7\approx 135\text{s}.
+This result reflects the full hierarchical search procedure, including both caption retrieval and occasional fine-grained Video_QA queries.
+Appendix C
+More Qualitative Examples
+We provide additional qualitative results (Figure
+6
+, Figure
+7
+) and ultra-long video examples (Figure
+5
+) in this section. These examples illustrate LongVideo-R1’s ability to perform hierarchical search, disambiguate similar scenes across hours-long content, and jointly use both high-level and fine-grained information.
+The examples include cases from TV series such as
+Downton Abbey
+, where the model successfully navigates multi-hour narratives, repeatedly locating the correct characters, objects, or events despite substantial visual similarity across episodes.
+Figure 5
+:
+More example on ultra-long videos.
+Figure 6
+:
+More qualitative examples.
+Figure 7
+:
+More qualitative examples.
+Appendix D
+Failure Examples
+Although LongVideo-R1 performs well across various long-video benchmarks, failure cases still occur (Figure
+8
+, Figure
+9
+). When a visually similar but irrelevant object appears in the video, the model sometimes commits to the wrong branch and fails to return to the correct segment.
+We also find that simple textual hints can often guide the model back to the correct segment and enable it to produce the correct answer.
+Figure 8
+:
+LongVideo-R1 may sometimes be disturbed by similar information, but people can guide the model back on track with just a few hints.
+Figure 9
+:
+LongVideo-R1 may sometimes be disturbed by similar information, but people can guide the model back on track with just a few hints.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

@@ -101,6 +101,10 @@ Client 与 Server 必须处理不支持的 version/capability，而不是猜测�
 
 Protocol adapter 拥有五维映射与 version negotiation，session/runtime owner 持有 delivery、ordering 与 backpressure，policy owner 仍决定 authorization 与 effect commit。
 
+在单进程 Agent 中，配置、连接和动作执行往往由同一应用持有，这种实现简单且便于排障。嵌入 IDE 或接入外部客户端后，则应分别确认配置来源、MCP 连接执行者与动作执行者。客户端传来 URL、headers 或 stdio command，只说明配置从哪里来，不证明连接或工具调用已转移到客户端；保留同一个 tool name/schema 而更换 backend，也只保留参数接口，不保证工作环境、权限和生命周期等价。
+
+[Kimi CLI 0.68 的固定实现](https://github.com/MoonshotAI/kimi-cli/tree/d5ae5b809d19086db2d823ca6f1997bd68c3db2d/src/kimi_cli/acp)展示了这两条不同路径：ACP 客户端提供的 MCP 配置由 CLI 转换并建立 FastMCP 连接；Shell 则只在 local 模式、客户端声明 terminal 能力时改由客户端终端执行，执行前仍请求原 runtime approval。委托执行增加了 session/terminal handle 关联、输出截断、超时和清理责任；timeout 中显式 kill 与 finally 中 release 不是同一件事，取消后释放 handle 也不能自动证明进程已停止。无法确认执行状态时应走第81章的恢复/协调路径，而不是仅凭客户端能力声明重复提交。该静态实现只支持所述分支，不证明任意客户端的隔离、终止或生产可靠性；协议版本、执行环境或 backend 改变后仍须重新验证。<!-- source-family:SF-2025-MOONSHOT-KIMI-CLI-0-68 -->
+
 这套 taxonomy 适合定位缺失契约，却不是新标准。实际接入仍需逐协议验证版本协商、session/handle 生命周期、失败重试和授权边界；映射不完整时应使用 adapter 或拒绝连接，而不是猜测相等语义。
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2606.19135 -->
@@ -252,6 +256,10 @@ MCP 可以承载 tool/resource connection，却不定义：
 
 Streaming 和 push notification 必须先核对对端声明的 capability，不能默认存在；不支持时可在预算内查询任务状态。A2A 的 Send Message 幂等性是可选保证，单有 `messageId` 不足以证明重发不会重复工作。已知 task ID 时，应先恢复观察和对账；首次提交结果不明、又没有对端明确的去重契约时，不能盲目重发带副作用的委派。产物读取、通知去重和状态恢复增加存储与协调成本，短小无状态调用继续保留原 tool 路径。
 
+当远端需要原生工具链直接操作多文件环境时，还可把委派对象扩展为临时workspace投影，而不是把目录内容反复序列化进消息。先协商task、资源路径、read-only/read-write与TTL，再把绝对到期和transport handle绑定到delegation identity；control消息只管理生命周期，live mount、archive、object storage或Git adapter各自承担数据访问与回传。任务状态、传输可用与产物验收仍是不同对象，不能从START或DONE推出文件effect安全或目标已完成。<!-- source-family:SF-2026-ARXIV-2602-20493 -->
+
+[有限协议原型](https://arxiv.org/html/2602.20493v1#S4.SS2)还暴露effect时点差异：snapshot transport可先staged再申请本地采用，live同步则文件操作已回写，不能靠事后review补出同一道提交门。应按transport能力选择隔离副本/只读或明确事前授权，并保存lease、快照identity、失败和清理回执；投影、状态恢复与detach/release均需预算。细粒度ACL/审计和多方冲突处理在原型中仍未闭合；权限、同步或恢复不能确认时回退原消息/只读artifact交换，由Ch81继续负责重试、补偿与最终提交，不把临时mount当隔离保证。
+
 因此，本章只拥有连接与对象映射；是否委派、交付什么证据归 [Ch82 Multi-Agent](82-multi-agent.md#message-不是-state)，重试、补偿、批准与最终提交归 [Ch81 Workflow](81-workflow.md#resume-的语义必须比有-checkpoint更具体)。远端 task 的终态是输入证据，不是可以越过本地 policy 与验收的命令。
 
 ## Tool Catalog 扩大后，Discovery 与 Execution 必须分离
@@ -399,6 +407,8 @@ MCP 提供可演进的连接协议，让 AI host 以统一方式发现和调用�
 
 ## Review notes
 
+- `SF-2026-ARXIV-2602-20493` — Daily `2026-02-26`；[exact-v1](https://arxiv.org/html/2602.20493v1) §3/4/5/6。2+2+2=6，workspaceprojection/control-data与live/snapshot effect边界差额深入；两demo非matched性能/安全/恢复一致性证明，细粒度ACL/RBAC/audit与多方CRDT future、全投影/清理费用近正文。root实际必要源/owner PRE通过并授自身两段+末注窄锁；作者正文/完整邻接已顺读，root非作者实际正文259/261、完整251～270与自身末注410 POST通过，窄锁已释放；未核代码/复现，非日级Gate。
+
 - `SF-2026-ARXIV-2604-14512`：采用 exact-v1 §III-B–D/IV-A–G/V–VI/VII-D–E；复用 ORIGINAL_GAP §14512 有效非作者必要源审及 root 当前 owner 反向采用核。仅增解释规则安装/registry 与每次展开执法，保留原业务授权；未复现，root已实际顺读正文及两侧交接，写后PASS。
 
 - `SF-2026-ARXIV-2602-18914`（Status: Experimental）：exact-v1 的 §3、§3.1～3.4 从文献与公开 server metadata 构造 description-smell taxonomy，§4 描述观察研究，§5.1～5.2 测试 component contribution 与 compliant descriptions，§7.2～7.3 明确限制与 validity threats；结果不证明 taxonomy 完备、任意模型/client 的因果收益或 description 可替代授权。https://arxiv.org/html/2602.18914v1
@@ -452,3 +462,5 @@ request contract。协议字段只写稳定抽象；SDK 默认行为与 fleet ad
 - `SF-2026-ARXIV-2607-25635` — Daily `2026-07-29`；primary `arXiv:2607.25635v1`；正文锚点“协议可连接，不代表 application 已实现安全调用”。
   证据限 1,723 个公开 GitHub MCPApps 的分类快照；常见 SDK 或日志不能推出 blocking approval，也不代表全部生产生态。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-25635:end -->
+
+- `SF-2025-MOONSHOT-KIMI-CLI-0-68`：Daily `2025-12-25`；官方 release `published_at=2025-12-24T12:40:22Z`；固定 commit `d5ae5b809d19086db2d823ca6f1997bd68c3db2d`。实际静态核验 `acp/mcp.py` 配置转换、`soul/toolset.py` 连接队列及 `acp/tools.py` 的 `replace_tools` / `Terminal.__call__`；采用配置/连接/执行分责及 approval、timeout/handle 边界，不把 OAuth 本地缓存清除称服务端 revoke。未部署、未跑 ACP/OAuth/cancellation 测试，不能推出通用终止或性能保证；必要源审、日期及Mill实际写后复核通过的依据见[本日记录](../../papers/2025/12/_sources/daily-20251225/ROOT_ADMISSION_REVIEW.md)。

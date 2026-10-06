@@ -1,0 +1,214 @@
+Source https://arxiv.org/html/2601.10015v1
+[H]
+4. Method
+[H]
+4.1. CAFEDistill Overview
+CAFEDistill is a Conflict-Aware Federated Exit Distillation framework for effective personalized federated learning of EENs.
+Principles.
+CAFEDistill is inspired by (Ilhan et al., 2023) that exploits the last exit as an anchor to harmonize the training of shallow exits.
+This is achieved via knowledge distillation (KD) from the last exit to shallow ones within the local EEN at each client.
+We extend the idea to PFL-EE by allowing distillation from the last exits across all clients to shallow exits across all clients.
+Specifically, let \theta_{ij}=(\phi,h_{ij}) be the sub-model that corresponds to backbone \phi and exit h_{ij} of client i at depth j.
+For a student model \theta, our cross-client KD leverages all teacher models \{\theta_{1m},\ldots,\theta_{nm}\} to improve \theta via the following KD loss:
+(4)
+\mathcal{L}_{XKD}(\theta;x)=\sum_{i=1}^{n}k_{i}D_{KL}\left(\theta_{im}(x)\|\theta(x)\right)
+where D_{KL} is the KL divergence (Kullback, 1997), and k_{i} is the distillation weight of teacher i in cross-client KD, satisfying \sum_{i=1}^{n}k_{i}=1.
+•
+Cross-client KD is necessary for PFL-EE.
+Naively integrating local KD into PFL as GFL-EE (Ilhan et al., 2023; Kim et al., 2023; Lee et al., 2024) even yields a lower accuracy than PFL without KD (see Fig. 2).
+•
+Cross-client KD necessitates new student-teacher coordination mechanisms due to the increased scale and type of conflicts as explained in Sec. 3.
+CAFEDistill coordinates the distillation by prioritizing conflict management among exits over clients.
+(i)
+In the exit dimension, we fix the last exits from all clients as candidate teachers, and progressively include shallow exits as students, to mitigate the conflict exerted to the shared backbone.
+(ii)
+In the client dimension, each student exit learns from the last exit beyond its own client, and it is matched with teacher exits from other clients based on their (estimated) data similarity for effective distillation.
+Figure 3. Overview of CAFEDistill.
+Workflow.
+CAFEDistill integrates the above principles into a typical PFL pipeline (see Fig. 3).
+In each round, client i trains the shared backbone \theta and its personalized exits \{h_{ij}\} on local dataset D_{i} as:
+(5)
+\min\sum_{j\in\mathbb{S}_{i}}w_{j}\left(\mathcal{L}_{CE}(\theta_{ij};D_{i})+\lambda\mathcal{L}_{XKD}(\theta_{ij};D_{i})\right)
+where the first term is the standard cross-entropy loss, the second term is the cross-client KD loss defined in Eq. (4), \lambda is the hyperparameter controlling the proportion of KL loss, and \mathbb{S}_{i} is the set of exits included for training at client i.
+The key novelty of CAFEDistill lies in the effective conflict management when optimizing Eq. (5) via standard gradient descent.
+•
+We progressively expand \mathbb{S}_{i} for client i via a conflict-aware student selection scheme (Sec. 4.2) to control exit-wise interference during joint exit training and distillation.
+•
+We adaptively set the distillation weights \mathbf{k}=[k_{1},\ldots,k_{n}] based on the inferred similarities between student and teach exits via a cross-client teacher matching strategy (Sec. 4.3).
+•
+Naive implementation of the cross-client KD loss, i.e., second term of Eq. (5), needs exit parameters of all n clients, which incurs excessive communication and violates privacy.
+Hence, we propose an equivalent decoupled cross-client distillation formulation (Sec. 4.4) for practical deployment.
+After local training, the server collects and aggregates the shared backbone from the clients as in other classifier-based PFL (Arivazhagan et al., 2019; Collins et al., 2021; Oh et al., 2022).
+When the training converges, the shared backbone and the personalized exits are assembled as the final EEN for deployment to each client (see Fig. 1).
+[H]
+4.2. Conflict-Aware Student Selection
+This module determines the set of exits \mathbb{S}_{i} for local training and distillation at every client i (1\leq i\leq n) in round t (1\leq t\leq T), with T denoting the total number of rounds.
+As mentioned in Sec. 4.1, the last exits of all clients are employed as teachers.
+Hence, \mathbb{S}_{i} is initialized as \{m\} for all client i and round t.
+We design a two-tier selection scheme that gradually involves the remaining (m-1)n exits as students for distillation (see Fig. 4).
+Figure 4. Conflict-aware student selection.
+Let the proportion of student exits in round t be R(t), which corresponds to (m-1)nR(t) student exits.
+We empirically set R(t)=\min(\frac{2t}{T},1).
+We gradually include more exits for training over rounds to avoid the substantial conflicts to optimize mn exits all at once.
+The concrete exit selection operates as follows.
+Depth-Prioritized Exit Selection.
+In round t, we first include the \lfloor(m-1)R(t)\rfloor shallowest exits as students for every client i.
+This step is essential for two reasons.
+•
+If the (m-1)n exits are treated as (m-1)n clients rather than prioritize the depth, similarity-based client selection in PFL (Chen and Vikalo, 2024) tend to pick exits from a single client, since the data heterogeneity across clients is larger than that among exits of the same client.
+Yet this would cause the shared backbone to bias towards the selected client.
+•
+Including shallower exits and aligning them with the teacher first will mitigate the conflicts in later distillation for deeper exits, since it encourages deeper exits to only focus on the knowledge not well-learned by shallow ones (Yu et al., 2023).
+Similarity-Aware Exit Selection.
+For the remaining K=(m-1)nR(t)-n\lfloor(m-1)R(t)\rfloor exits, we pick them from depth \lfloor(m-1)R(t)\rfloor+1 as standard similarity-based client selection in PFL.
+We focus on client similarity because we have included the shallow exits of all exits, and thus sufficient client complementarity (Yan et al., 2024).
+For two clients i and j, we measure the similarity of their exits l as \delta_{ij}^{l}=\min(0,\cos(\theta_{il},\theta_{jl})).
+The gradient-based proxy is common to measure data similarity among clients in FL (Sattler et al., 2020; Liu et al., 2024; Kim et al., 2024).
+Then we iteratively remove the least similar exits from all exits \mathcal{E}^{l} at depth l.
+Specifically, we initialize the exit set \mathcal{E}=\mathcal{E}^{l}.
+In each iteration, we greedily remove exit e via the following criterion,
+(6)
+e=\arg\min_{e\in\mathcal{E}}\sum_{i\in\mathcal{E}}\delta^{l}_{ie}
+until the number of remaining exits |\mathcal{E}|=K.
+We use the similarity of final exits \cos(\theta_{im},\theta_{jm}) to approximate that of shallow exits \cos(\theta_{il},\theta_{jl}) to reduce communication cost.
+Also, the effectiveness of greedy selection is theoretically guaranteed (see Appendix B.1).
+The overall student selection algorithm is in Appendix C.1.
+[H]
+4.3. Cross-Client Teacher Matching
+This module assigns distillation weights \mathbf{k}=[k_{1},\ldots,k_{n}] to the n teacher exits for the student exits \{h_{ij}\}_{j=1}^{m-1} of client i.
+As shown in Sec. 1, learning from other clients is critical to boost the accuracy of shallow exits, yet the teachers should be properly selected to avoid negative knowledge transfer due to inter-client data heterogeneity.
+We maximize the knowledge sources by associating each student exit to all the n teachers, and only distill matched knowledge via similarity-based teacher weighing.
+As mentioned in Sec. 4.1, only the final exits in each EEN serve as teachers.
+Similarity-Based Teacher Weighting.
+We assign the weights \mathbf{k}=[k_{1},\ldots,k_{n}] based on the inferred similarity in training data distributions between the student and teacher exits.
+A higher similarity results in a higher weight.
+We apply the same gradient-based proxy as Sec. 4.2 and formulate the following objective:
+(7)
+\displaystyle\arg\max_{\mathbf{k}}\sum_{i=1}^{n}k_{i}\cos(\theta_{im},\theta)-\mu\sum_{i=1}^{n}\|k_{i}-\frac{1}{n}\|^{2}\ \ s.t.\ \sum_{i=1}^{n}k_{i}=1
+where \theta and \theta_{im} are the student model and the teacher model, respectively.
+The second term is a barrier regularization of \mathbf{k} controlled by hyperparameter \mu (Zhang et al., 2021).
+Note that Eq. (7) approximately minimizes the transfer risk of KD, i.e., student’s risk after KD.
+This is because the transfer risk bound for KD is related to the cosine angle of the teacher model and the student data space (Phuong and Lampert, 2019b), which correlates to \cos(\theta_{im},\theta).
+Intra-Client Weight Approximation.
+Eq. (7) demands solving \mathbf{k} for all student exits \{h_{ij}\}_{j=1}^{m-1} of client i, which can be time-consuming.
+Since the exit-wise heterogeneity is less notable than the client-wise heterogeneity in PFL (Chen et al., 2022), we enforce all student exits at client i to share the same distillation weights \mathbf{k}, which accelerates the preparation for distillation.
+Specifically, we utilize the similarity between the teacher exit and the deepest student exit of client i to approximate \cos(\theta_{im},\theta).
+Accordingly, we reduce Eq. (7) from exit-wise to client-wise:
+(8)
+\displaystyle\arg\max_{\mathbf{k}}
+\displaystyle\mathbf{k}^{\top}c-\mu(\mathbf{k}I-\frac{1}{n}I)^{\top}(\mathbf{k}I-\frac{1}{n}I)
+\displaystyle s.t.\ \ \textbf{1}^{\top}\mathbf{k}=1;\mathbf{k}\geq 0
+where c=[\cos(h_{1m},h_{sm}),\ldots,\cos(h_{nm},h_{sm})] for any student exit s of client i, and we solve Eq. (8) via quadratic program (Diamond and Boyd, 2016).
+[H]
+4.4. Decoupled Cross-Client Distillation
+As mentioned in Sec. 4.1, the cross-client KD formulated as Eq. (4) (second term in Eq. (5)) is impractical at the clients since it needs transmitting teacher exits of all other clients, which imposes high communication cost and violates privacy (Yang et al., 2019).
+One alternative is to shift the KD from clients to the server.
+Yet it requires either a public dataset (Li and Wang, 2019; Zhang et al., 2021) or a data generator (Zhu et al., 2021) at the server, which is less favorable than client-side KD.
+Instead, we propose an equivalent cross-client KD formulation without the need for other clients’ raw model parameters at each client (see Fig. 5).
+Figure 5. Decomposition of cross-client KD.
+Client-Decoupled KD.
+We reformulate the cross-client KD in Eq. (4) as a two-step pipeline.
+•
+Teacher Exit Aggregation at Server.
+Since all clients share the same teacher exits (i.e., the last exit of the n clients) but differ in the distillation weights \mathbf{k}, we can aggregate the n teacher exits at the server:
+(9)
+\bar{h}=\sum_{i=1}^{n}k_{i}h_{im}
+where the distillation weights \mathbf{k} are still calculated as Sec. 4.3.
+•
+Local KD at Clients.
+The aggregated teacher exit \bar{h} and the shared backbone \phi are sent to each client i as the teacher model \bar{\theta}=(\phi,\bar{h}) for distillation with the student model \theta:
+(10)
+\mathcal{L}_{XKD}(\theta;x)=D_{KL}(\bar{\theta}(x)\|\theta(x))
+Replacing the KD loss Eq. (5) by Eq. (10), client i performs local training and distillation as follows:
+(11)
+\mathcal{L}_{i}=\sum_{j\in\mathbb{S}_{i}}w_{j}\mathcal{L}_{CE}(\theta_{ij};D_{i})+\lambda\sum_{j\in\mathbb{S}_{i}}D_{KL}(\bar{\theta}(D_{i})\|\theta(D_{i}))
+where we empirically set \lambda=1.
+Equivalence to Cross-Client KD.
+The two-step KD is equivalent to the objective in Eq. (4) via the following proposition.
+Proposition 0 (Equivalence of KD).
+Given an input sample x, the cross-client KD in Eq. (4) is equivalent to knowledge distillation from an aggregated teacher model \bar{\theta}=(\phi,\bar{h}) where \bar{h}=\sum_{i=1}^{n}k_{i}h_{im}.
+(12)
+\displaystyle\theta^{*}=\arg\min_{\theta}\sum_{i=1}^{n}k_{i}D_{KL}(\theta_{im}(x)\|\theta(x))=\arg\min_{\theta}D_{KL}(\bar{\theta}(x)\|\theta(x))
+That is, \theta^{*} obtained through cross-client KD can be derived by minimizing the KL divergence between \bar{\theta}_{m} and \theta.
+The proof is deferred to Appendix B.2.
+[H]
+5.1. Experimental Setup
+Baselines.
+We mainly compare CAFEDistill with representative GFL and PFL methods, including
+Local training,
+FedAvg (McMahan et al., 2017),
+FedProx (Li et al., 2020),
+FedPer (Arivazhagan et al., 2019),
+FedRep (Collins et al., 2021),
+FedBABU (Oh et al., 2022),
+FedAMP (Huang et al., 2021),
+pFedGraph (Ye et al., 2023),
+FedRoD (Chen and Chao, 2022),
+Ditto (Li et al., 2021), and
+FedPAC (Xu et al., 2023).
+For a fair comparison, we extend them to EENs.
+We also include GFL-EE methods dedicated to train a global EEN as baselines, including ScaleFL (Ilhan et al., 2023) and DepthFL (Kim et al., 2023).
+More details are in Appendix D.1.2.
+Datasets and Models.
+We experiment with CIFAR-10/CIFAR-100 (Krizhevsky et al., 2009),
+TinyImageNet (Chrabaszcz et al., 2017), and
+AgNews (Zhang et al., 2015).
+The data distribution adheres to a Dirichlet distribution (Hsu et al., 2019), quantified by a hyperparameter \alpha.
+We set \alpha=0.3 and 0.1 following (Zhang et al., 2023b).
+For CIFAR-10, we apply a 3-layer ConvNet.
+For CIFAR-100 and TinyImageNet, we apply ResNet18.
+For AgNews, we apply a 4-block Transformer.
+More details are in Appendix D.1.1.
+Metrics.
+We assess the methods with three performance metrics:
+(i) Accuracy: The model accuracy on local datasets measured at the terminated exit during inference.
+(ii) Averaged Accuracy: The average accuracy of all exits.
+(iii) Inference Efficiency: The average number of Multiply-Accumulate (MAC) operations per input sample.
+[H]
+5.4.1. Contributions of Individual Components
+Table. 4 compares four variants of CAFEDistill on CIFAR-100 and TinyImageNet under Dir(0.3).
+Naively adding local KD does not improves accuracy, which aligns with Sec. 5.3.2.
+With cross-client KD (i.e., cross-client teacher matching in Sec. 4.3), the accuracy of all exits increases by 5.77-10.03\% on CIFAR-100 and 4.24-8.48\% on TinyImageNet.
+Adding conflict-aware student selection in Sec. 4.2 further improves the performance of all exits by 1.17-5.21\% and 1.17-3.09\%.
+Table 4. Contributions of individual components.
+KD: naive local
+knowledge
+distillation;
+[H]
+5.4.2. Round-to-Accuracy
+Fig. 8 plots the round-to-accuracy curves of all exits.
+The accuracy of each exit increases asynchronously.
+The teacher exit i.e., Exit 4, consistently yields the highest accuracy.
+Initially, Exit 1 outperforms Exit 2 and Exit 3 because the latter two have not been selected yet.
+As the training progresses, Exit 3 gradually surpasses Exit 1 and 2.
+It implies that our exit selection mechanism does not compromise the performance of deeper exits, even though they are only involved in the later stage of training.
+(a) CIFAR-100
+(b) TinyImageNet
+Figure 8. Round-Accuracy curves.
+[H]
+5.4.3. Impact of Hyperparameters
+Fig. 9 shows the hyperparameter sensitivity of CAFEDistill.
+We test two key hyperparameters: \mu that regularizes the cross-client KD weight \mathbf{k} in Eq. (7), and \lambda for KD in Eq. (5).
+We vary \mu from 0.3 to 0.9, and the optimal performance is attained when \mu\in[0.6,0.8].
+A large \mu uniforms the cross-client KD weight.
+Teacher exits from irrelevant clients may have a greater influence on local training.
+Conversely, a small \mu forces cross-client KD into local KD.
+Regarding \lambda, CAFEDistill demonstrates robust performance across a range from 0.4 to 1.6.
+(a) CIFAR-100 with \mu
+(b) CIFAR-100 with \lambda
+(c) TinyImageNet with \mu
+(d) TinyImageNet with \lambda
+Figure 9. Impact of hyperparameters.
+[H]
+5.4.4. Impact of Exit Policy
+We evaluate CAFEDistill under different exit thresholds \epsilon on CIFAR-100 with Dir(0.3).
+Fig. 10a shows that both accuracy and inference cost increase with the threshold \epsilon.
+This is because the model is likely to terminate at a deeper exit given high threshold.
+We find \epsilon=0.6 better balance between inference accuracy and efficiency.
+Compared to full-model inference, there is an accuracy drop of 2.01\% for CAFEDistill, yet the number of MACs is reduced by 37.15\%.
+Fig. 10b shows that the inference cost drops during training given different thresholds.
+This is because shallow exits become increasingly more confident in their outputs.
+(a) Accuracy vs. MAC
+(b) Round vs. MAC
+Figure 10. Impact of threshold \epsilon in exit policy.
+

@@ -1,0 +1,2246 @@
+Lagom: Unleashing the Power of Communication and Computation Overlapping for Distributed LLM Training
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract.
+1
+Introduction
+2
+Background and Motivation
+2.1
+Parallelism and Overlapping
+2.2
+Operators in Overlap and Parameter Tuning
+2.3
+Challenges
+3
+Design
+3.1
+Problem Definition
+3.2
+Contention Modeling
+3.3
+Priority Metric
+3.4
+Search Method
+4
+Evaluation
+4.1
+Experimental Setup
+4.2
+End-to-end Performance
+4.3
+Breakdown
+4.4
+Efficiency of Tuning
+5
+Conclusion
+References
+License: CC BY 4.0
+arXiv:2602.20656v1 [cs.DC] 24 Feb 2026
+Lagom: Unleashing the Power of Communication and Computation Overlapping for Distributed LLM Training
+Guanbin Xu
+†
+,
+ZhenGuo Xu
+†
+,
+Yuzhe Li
+†
+,
+Youhui Bai
+†
+,
+Ping Gong
+†
+,
+Chaoyi Ruan
+‡
+Cheng Li
+†,∘
+Affiliation:
+†
+University of Science and Technology of China
+∘
+Anhui Province Key Laboratory of Biomedical Imaging and Intelligent Processing,
+Institute of Artificial Intelligence, Hefei Comprehensive National Science Center
+China
+Affiliation:
+‡
+National University of Singapore
+Singapore
+© none
+Abstract.
+Overlapping communication with computation is crucial for distributed large-model training, yet optimizing it—especially when computation becomes the bottleneck—remains challenging.
+We present
+Lagom
+, a system that co-tunes communication parameters to balance resource usage between computation and communication.
+By introducing a unified cost model and a priority-based search algorithm,
+Lagom
+reduces optimization complexity from exponential to linear.
+Evaluations on high- and low-bandwidth GPU clusters show that
+Lagom
+achieves 1.07-1.33
+×
+\times
+and 1.03-1.27
+×
+\times
+speedup over NCCL and AutoCCL across diverse models and parallelizations.
+1.
+Introduction
+The increasing scale of Deep Neural Networks (DNNs) is driving the need for distributed training, which is often limited by communication bottlenecks.
+To this end, a common optimization is to overlap communication with computation
+(
+Peng et al., 2019
+;
+Cheng et al., 2025
+;
+Chen et al., 2024
+)
+.
+However, achieving optimal performance of overlap remains challenging, as communication operations contend with computation kernels for limited GPU resources.
+In practice, mature overlap strategies in industry often hide most communication latency
+(
+Jiang et al., 2024
+)
+, shifting the primary bottleneck to computation. Yet, even in such computation
+-
+bottlenecked scenarios, communication still interferes with computation, leaving overlooked opportunities for further optimization.
+Existing approaches to managing contention have notable limitations. Liger
+(
+Du et al., 2024
+;
+Zhao et al., 2025
+)
+mitigates contention by statically limiting communication’s GPU resources, but its fixed allocation lacks adaptability.
+Libra
+(
+Liu et al., 2023
+)
+models overlap cost for GPU thread selection in data parallelism, yet it ignores key parameters (
+e.g.
+chunk size and number of channels) that we find have a greater impact on computation (Sec.
+3.2
+).
+AutoCCL
+(
+Xu et al., 2025
+)
+, the state-of-the-art communication tuner, addresses parameter tuning and is effective when communication is the bottleneck.
+While these approaches address specific aspects of overlap, they fail to holistically manage the dual-bottleneck scenario, especially when computation becomes the bottleneck where our analysis reveals that communication contention still degrades the performance of the bottlenecked computation by up to 35%.
+Figure 1
+.
+Side effects from tuning a single communication. Top: baseline execution. Bottom: after tuning Comm1, increased resource contention delays Comp2.
+Our analysis reveals that by strategically allocating fewer resources to communication, computation can utilize more resources, thereby accelerating the entire overlap.
+However, achieving this efficient overlap through parameter tuning is nontrivial, facing key challenges:
+(1)
+Contention Complexity
+: The relationship between the vast tunable parameter space and resource contention during the overlap of communication and computation operators—which must share multiple GPU resources—remains an open and poorly understood research problem.
+(2)
+Exponential Search Space
+: To prevent deadlock, collective communications are serialized, creating a chain of temporal dependencies.
+Consequently, tuning parameters for one communication (e.g., Comm1) affects not only its own execution but also cascades to delay dependent computations and other communications, as visualized in Fig.
+1
+.
+This interdependence makes the joint optimization space grow exponentially with the number of communications—i.e., exceeding
+1,000,000
+N
+1,000,000^{N}
+for N communications.
+An exhaustive search is infeasible, as it would require hundreds of GPU hours even for moderate N.
+This paper presents
+Lagom
+, a novel system for tuning collective communication parameters. By introducing an overlap performance model and a resource-efficiency search heuristic,
+Lagom
+efficiently identifies near-optimal configurations for overlapping communication and computation. The main contributions are:
+(1) Unified Overlap Performance Model
+: We formalize a unified cost model for computation-communication overlap that captures performance in both computation-bound and communication-bound regimes, establishing a foundational basis for optimization.
+(2) Contention Analysis and Modeling
+: We analyze and categorize contention into two main types—SM competition and global resource contention—and model their relationship with tunable communication parameters.
+(3) Tuning Algorithm and Evaluation
+: We introduce a fast search algorithm based on model-guided heuristics that reduces the optimization complexity and achieves 1.07-1.33
+×
+\times
+speedup across diverse models and parallelisms. The code for
+Lagom
+will be open-sourced soon.
+2.
+Background and Motivation
+2.1.
+Parallelism and Overlapping
+Figure 2
+.
+Overlaps of Different Parallelism
+As data and model scales continue to grow, distributed training has become essential
+(
+Fan et al., 2021
+;
+Unger et al., 2022
+)
+.
+Modern systems adopt various parallelisms that exploit communication–computation overlap as Fig.
+2
+. The main forms include:
+Tensor Parallelism (TP)
+(
+Shoeybi et al., 2019
+)
+partitions large operators across devices to ease memory pressure, but incurs synchronization overhead (e.g.,
+AllReduce
+). Domino
+(
+Wang et al., 2024
+)
+mitigates this via batch-level pipelining, though perfect overlap remains difficult.
+Expert Parallelism (EP)
+(
+Shazeer et al., 2017
+)
+distributes experts across devices and relies on frequent
+AlltoAll
+.
+While efforts like the dual batch method aim to overlap communication with computation by resource partitioning
+(
+Liu et al., 2024
+)
+, the cluster-specific resource allocation and AlltoAll-only implementation limit general applicability.
+Fully Sharded Data Parallelism (FSDP)
+(
+(
+Zhao et al., 2023
+;
+Rajbhandari et al., 2020
+)
+) exhibits a more intricate overlap pattern, where each layer’s computation interleaves with multiple communication phases (
+AllGather
+and
+ReduceScatter
+) across layers.
+Such multi-stage coupling makes concurrent optimization between computation and communication highly complex, often hindering ideal overlap.
+These parallelisms are often combined with data parallelism
+(
+Lepikhin et al., 2020
+;
+Shazeer et al., 2018
+;
+Wang et al., 2019
+)
+and pipeline parallelism
+(
+Huang et al., 2019
+;
+Narayanan et al., 2019
+)
+to support even larger-scale training
+(
+Zheng et al., 2022
+;
+Jia et al., 2020
+;
+Narayanan et al., 2021
+;
+Jiang et al., 2024
+)
+.
+2.2.
+Operators in Overlap and Parameter Tuning
+Overlap involves over 1,500 computational operators
+(
+Zhao et al., 2023
+)
+, primarily implemented in closed-source libraries like cuBLAS
+(
+Nvidia, 2025a
+)
+and cuDNN
+(
+Nvidia, 2025b
+)
+, making direct modification infeasible.
+In contrast, collective communications benefit from optimized open-source libraries like NCCL
+(
+, 2025
+)
+. AutoCCL
+(
+Xu et al., 2025
+)
+identified six key parameters (Algorithm, Protocol, Transport, Number of Channels, Number of Threads, Chunk Size) that govern communication performance.
+They make a key observation that the configuration space can be addressed using a divide-and-conquer strategy. It first partitions the space into subspaces based on implementation-related parameters (Algorithm, Protocol, Transport), then models resource-related parameters (Number of Channels, Number of Threads, Chunk Size) within each subspace.
+Crucially, instead of explicitly modeling complex interference patterns, AutoCCL employs online sampling with real-time performance feedback to efficiently search resource-related parameters in each subspace.
+We extend this finding by showing that these parameters also regulate GPU resource allocation during overlap, thereby critically affecting communication-computation contention.
+2.3.
+Challenges
+However, the interaction between communication and computation is inherently difficult.
+The dynamic nature of multi-communication tuning expands the search space exponentially, making joint optimization challenging.
+These challenges mainly arise from:
+(1)
+Complex Contention Between Communication and Computation.
+Communication operations share core GPU resources such as Streaming Multiprocessors (SMs), global memory bandwidth, and L2 cache with computations.
+The degree of contention varies with communication type, message type, concurrency, and hardware design, making performance modeling highly nonlinear.
+(2)
+Exponential Growth of the Search Space for Multi-Communications.
+In overlapping scenarios, multiple communications interfere with each other and with computation.
+For instance, tuning the parameters of one communication operation may change its completion time, which, in turn, affects the overlap between subsequent communications and computation, thereby altering the overall system performance.
+With
+n
+n
+communication operations each having
+k
+k
+configuration options, the joint search space grows as
+k
+n
+k^{n}
+, which calls for an effective reduction in dimensionality.
+3.
+Design
+3.1.
+Problem Definition
+Table 1
+.
+Key notations used in the cost model.
+Notation
+Description
+X
+,
+Y
+,
+Z
+X,Y,Z
+Communication, computation, and total time.
+s
+j
+s_{j}
+j
+j
+-th communication config (A, P, T, NC, NT, C).
+T
+​
+B
+i
+TB_{i}
+i
+i
+-th computation’s threadblocks.
+λ
+\lambda
+Total number of SMs.
+D
+i
+D_{i}
+Data size per thread block in the
+i
+i
+-th computation.
+B
+¯
+\overline{B}
+Peak global memory bandwidth.
+V
+j
+V_{j}
+Global bandwidth of the
+j
+j
+-th communication.
+(1)
+min
+{
+s
+1
+,
+…
+​
+s
+N
+}
+⁡
+Z
+=
+max
+⁡
+(
+Y
+,
+X
+)
+=
+max
+⁡
+(
+∑
+i
+=
+1
+M
+y
+i
+,
+∑
+j
+=
+1
+N
+x
+j
+s
+j
+)
+\min_{\{s_{1},...s_{N}\}}Z=\max\left(Y,X\right)=\max\left(\sum_{i=1}^{M}y_{i},\ \sum_{j=1}^{N}x_{j}^{s_{j}}\right)
+To address these challenges, we now introduce a unified cost model and analyze its behavior across different bottleneck scenarios in computation-communication overlap.
+For an overlap, let it contain
+M
+M
+computation operators and
+N
+N
+communication operators.
+We denote the execution time of the i-th computation operator as
+y
+i
+y_{i}
+, and the execution time of the j-th communication operator under configuration
+s
+j
+s_{j}
+as
+x
+j
+s
+j
+x_{j}^{s_{j}}
+.
+With computations and communications serialized on separate CUDA streams, the total computation time is
+Y
+=
+∑
+i
+=
+1
+M
+y
+i
+Y=\sum_{i=1}^{M}y_{i}
+, the total communication time is
+X
+=
+∑
+j
+=
+1
+N
+x
+j
+s
+j
+X=\sum_{j=1}^{N}x_{j}^{s_{j}}
+, and the overall makespan is given by
+Z
+=
+m
+​
+a
+​
+x
+​
+(
+X
+,
+Y
+)
+Z=max(X,Y)
+.
+As shown in Equation (
+1
+),
+the optimization objective is to minimize the overall makespan
+Z
+Z
+by selecting optimal configurations
+s
+j
+s_{j}
+for all communication operators.
+We now analyze the two bottleneck scenarios separately.
+(2)
+min
+{
+s
+1
+,
+…
+​
+s
+N
+}
+⁡
+Z
+=
+min
+⁡
+∑
+j
+=
+1
+N
+{
+s
+1
+​
+…
+​
+s
+N
+}
+⁡
+x
+j
+s
+j
+=
+∑
+j
+=
+1
+N
+min
+s
+j
+⁡
+x
+j
+s
+j
+\displaystyle\min_{\{s_{1},...s_{N}\}}Z=\min_{\{s_{1}...s_{N}\}}\sum_{j=1}^{N}x_{j}^{s_{j}}=\sum_{j=1}^{N}\min_{s_{j}}x_{j}^{s_{j}}
+Communication Bottleneck.
+First, in the communication-bound case described by Equation
+2
+, the overlap makespan simplifies to the cumulative time of all communications.
+The key challenges are: (1) modeling how configuration
+s
+j
+s_{j}
+affects communication time
+x
+j
+s
+j
+x_{j}^{s_{j}}
+, and (2) capturing the impact of computational contention on communication.
+AutoCCL
+(
+Xu et al., 2025
+)
+addresses this by employing a subspace coordinate descent method for search, and leverages online sampling with real-time feedback to avoid explicit modeling of the contention.
+(3)
+min
+{
+s
+1
+​
+…
+​
+s
+N
+}
+⁡
+Z
+=
+∑
+i
+=
+1
+M
+y
+i
+\min_{\{s_{1}...s_{N}\}}Z=\sum_{i=1}^{M}y_{i}
+Computation Bottleneck.
+Symmetrically, Equation
+3
+describes the computation-bound scenario, where the overlap makespan is determined by the sum of computation operator times.
+Two key challenges arise in this case: (1) Communication parameters influence computational performance by governing how communications utilize shared resources (further discussed in Sec.
+3.2
+);
+(2) Due to the serialized execution of communications, tuning an earlier communication changes the start time and overlap window of subsequent operators, creating a cascade effect on the computation. This requires considering the entire configuration set
+s
+1
+,
+s
+2
+,
+…
+,
+s
+N
+{s_{1},s_{2},\dots,s_{N}}
+jointly. With the configuration space per communication exceeding
+r
+=
+10
+6
+r=10^{6}
+options
+(
+Xu et al., 2025
+)
+, the joint search space becomes
+O
+⁡
+(
+r
+N
+)
+O(r^{N})
+for
+N
+N
+communication operators, which is computationally intractable for practical values of
+N
+N
+.
+We now analyze how to tune communication parameters in the computation-bound overlap scenario.
+3.2.
+Contention Modeling
+(a)
+Various
+N
+​
+C
+NC
+and
+C
+C
+(b)
+Various
+N
+​
+C
+NC
+(c)
+Various
+C
+C
+Figure 3
+.
+Duration of FFN when AllReduce(32MB) with various NC and C (NT=128) on 8
+×
+\times
+A40pcie
+Building on AutoCCL
+(
+Xu et al., 2025
+)
+, we adopt a divide-and-conquer strategy based on implementation-related parameters (Algorithm, Protocol, Transport) before analyzing the effect of resource-related parameters.
+Our key finding is that while different communication configurations can achieve similar communication performance, they exhibit significant variation in how much they slow down computation.
+As shown in Fig.
+3
+, when using NC=16 versus NC=32, communication performance remains nearly identical, but computation time differs by 30.2%.
+We conducted separate tests on NC, NT, and C, and found that NC and C have a significant impact on computation time, while the effect of NT is negligible.
+Fig.
+3
+shows the overall impact of different NC and C configurations on computation time, measured by concurrently running a 32 MB AllReduce and an FFN operator on 8 NVIDIA A40 GPUs with PCIe interconnect.
+The results indicate that increasing either NC or C progressively prolongs computation time.
+To isolate individual factors, Fig.
+3
+shows how communication and computation times vary as NC increases while
+C
+=
+16
+​
+K
+​
+B
+C=16KB
+.
+Similarly, Fig.
+3
+shows the effect of increasing C when
+N
+​
+C
+=
+4
+NC=4
+.
+The figures confirm that while larger NC and C values initially reduce communication time (with diminishing returns or even slight increases at larger values), they also significantly slow down computation.
+These findings were reproduced consistently on another cluster.
+(a)
+Computation Only
+(b)
+Communication Contention
+Figure 4
+.
+SM and global resource contention.
+Cost Model
+We characterize communication-computation contention along two dimensions: SM competition and global resource competition.
+As illustrated in Fig.
+4
+, SM competition arises from shared processor occupancy, while global resource contention stems from bandwidth saturation.
+SM Competition.
+Communication operators occupy a portion of SMs, reducing the resources available for computation and increasing the number of computation waves.
+The assignment of threadblocks, whether for computation or communication, to an SM is constrained by the availability of threads, shared memory, and registers.
+Due to this multi-constraint bottleneck, NT has a negligible impact on SM competition.
+NC is the dominant factor governing SM occupancy.
+Global Resource Competition.
+Communication also contends for shared global resources such as memory bandwidth and cache.
+Each communication operator launches NC threadblocks that read/write data at a granularity of C.
+Memory transactions from different threads within a threadblock are coalesced, making NT’s impact on global contention relatively minor.
+In contrast, larger values of NC and C generate more intensive contention due to increased concurrent data movement.
+(4)
+y
+i
+\displaystyle y_{i}
+=
+∑
+j
+=
+l
+k
+f
+i
+​
+j
+×
+g
+i
+​
+j
+\displaystyle=\sum_{j=l}^{k}f_{ij}\times g_{ij}
+(5)
+g
+i
+​
+j
+\displaystyle g_{ij}
+=
+⌈
+μ
+i
+(
+λ
+−
+N
+​
+C
+j
+)
+×
+T
+​
+B
+i
+⌉
+\displaystyle=\lceil\frac{\mu_{i}}{(\lambda-NC_{j})\times TB_{i}}\rceil
+(6)
+f
+i
+​
+j
+\displaystyle f_{ij}
+=
+θ
+i
+​
+j
++
+(
+λ
+−
+N
+​
+C
+j
+)
+×
+T
+​
+B
+i
+×
+D
+i
+B
+¯
+−
+V
+⁡
+(
+N
+​
+C
+j
+,
+C
+j
+)
+\displaystyle=\theta_{ij}+\frac{(\lambda-NC_{j})\times TB_{i}\times D_{i}}{\overline{B}-V(NC_{j},C_{j})}
+Based on these observations, we build a cost model of the computation
+i
+i
+overlapped with communication
+l
+−
+k
+l-k
+.
+Eq. (
+4
+) decomposes computation time
+y
+i
+y_{i}
+into wave count
+g
+i
+​
+j
+g_{ij}
+and per-wave latency
+f
+i
+​
+j
+f_{ij}
+that is overlapped with the j-th communication.
+Eq.(
+5
+) shows the number of computation waves
+g
+i
+​
+j
+g_{ij}
+is determined by dividing the total required thread blocks
+μ
+i
+\mu_{i}
+by the number of available threadblocks per SM after allocating
+N
+​
+C
+j
+NC_{j}
+SMs to communication.
+Meanwhile, Eq. (
+6
+) shows
+f
+i
+​
+j
+f_{ij}
+consists of computation time
+θ
+i
+​
+j
+\theta_{ij}
+and data transfer time, where the latter depends on the data volume
+D
+i
+D_{i}
+and the effective bandwidth reduced by global resource contention
+V
+⁡
+(
+N
+​
+C
+j
+,
+C
+j
+)
+V(NC_{j},C_{j})
+.
+Notation definitions are summarized in Table
+1
+.
+A higher NC occupies more SMs, reducing the resources available for computation and consequently increasing the number of waves
+g
+i
+g_{i}
+, while also imposing additional demand on bandwidth.
+A larger C, in turn, amplifies contention for global bandwidth, thereby extending the per
+-
+wave execution time
+f
+i
+f_{i}
+.
+Fig.
+3
+empirically validates our model: increasing NC/C beyond optimal points (e.g., NC>8) drastically prolongs computation time despite marginal communication gains.
+3.3.
+Priority Metric
+When multiple communication and computation tasks execute concurrently, the central challenge lies in efficiently identifying near-optimal configurations from a combinatorial space that scales as
+O
+⁡
+(
+1,000,000
+n
+)
+O(1,000,000^{n})
+.
+Brute-force searching this space is infeasible, necessitating the use of heuristic methods to find high-quality solutions within practical time constraints.
+A naive strategy is to optimize communications sequentially. However, this approach fails to account for critical interdependencies: tuning one communication alters its execution timeline, which cascades to affect both the communication and computation phases of subsequent tasks. These temporal and resource-contentions introduce nonlinear interactions that render sequential optimization highly suboptimal.
+To illustrate this, an experiment was conducted on A40 GPUs with 2 AllReduce and 7 MatMul executed concurrently.
+We adjust
+N
+​
+C
+NC
+of one communication at a time to analyze how it impacts overall performance.
+As shown in Fig.
+5
+, increasing NC from 1 to 16 affects the two communications differently.
+The slope of each arrow indicates the rate of change in computation and communication times.
+Optimizing Communication B achieves a larger reduction in communication time with only a slight increase in computation time, resulting in a shorter total execution time.
+In contrast, tuning Communication A provides smaller benefits.
+These results reveal that optimizing different communications yields distinct trade-offs between communication gains and computational overhead.
+The overall performance improvement thus depends on selectively prioritizing the communications that provide higher benefits.
+This motivates the introduction of the metric
+H
+H
+, which quantifies such trade
+-
+offs across concurrent communications.
+(a)
+tuning AllReduce A only
+(b)
+tuning AllReduce B only
+Figure 5
+.
+Cost differences when tuning different communications in multiple communication scenarios
+Metric H.
+We define a priority metric
+H
+j
+H_{j}
+for the j-th communication as Equation (
+7
+).
+Y
+Y
+and
+Y
+′
+Y^{\prime}
+denote the computation times before and after tuning, while
+x
+j
+s
+j
+x_{j}^{s_{j}}
+and
+x
+j
+s
+j
+′
+x_{j}^{s^{\prime}_{j}}
+represent the corresponding communication times for the j-th communication.
+Where
+Y
+Y
+and
+Y
+′
+Y^{\prime}
+represent the computation time before and after optimization, respectively, and
+x
+j
+s
+j
+x_{j}^{s_{j}}
+and
+x
+j
+s
+j
+′
+x_{j}^{s^{\prime}_{j}}
+represent the communication time corresponding to the two configurations
+s
+j
+s_{j}
+and
+s
+j
+′
+s^{\prime}_{j}
+for the j-th communication.
+(7)
+H
+j
+=
+Y
+′
+−
+Y
+x
+j
+s
+j
+−
+x
+j
+s
+j
+′
+H_{j}=\frac{Y^{\prime}-Y}{x_{j}^{s_{j}}-x_{j}^{s^{\prime}_{j}}}
+Hence, a smaller numerator indicates a lower computational overhead, and a larger denominator implies greater communication improvement.
+The metric
+H
+j
+H_{j}
+measures the tuning efficiency, expressed as the communication improvement achieved per unit of added computation cost. A negative denominator implies that the communication is already optimal.
+Noted: in multi-computation scenarios, tuning one communication affects multiple overlapped computations, making explicit modeling of each interference infeasible. Since
+H
+j
+H_{j}
+inherently reflects the overall impact of the tuning on all computations, the analysis can be simplified by considering only the aggregate computation time
+Y
+Y
+, significantly reducing complexity.
+3.4.
+Search Method
+Algorithm 1
+Cost-Effectiveness Algorithm
+Input :
+Communication config set
+S
+=
+{
+s
+1
+,
+s
+2
+,
+…
+,
+s
+n
+}
+S=\{s_{1},s_{2},...,s_{n}\}
+Output :
+fine-tuned communication config
+S
+′
+S^{\prime}
+1
+S
+′
+←
+{
+}
+S^{\prime}\leftarrow\{\}
+2
+Initialize all
+H
+H
+to 0.01
+3
+while
+∃
+s
+∈
+S
+\exists s\in S
+and
+s
+.
+d
+​
+o
+​
+n
+​
+e
+=
+False
+s.done=\text{False}
+do
+4
+s
+j
+←
+arg
+⁡
+min
+s
+i
+∈
+M
+,
+s
+i
+.
+d
+​
+o
+​
+n
+​
+e
+=
+False
+⁡
+H
+i
+s_{j}\leftarrow\arg\min\limits_{s_{i}\in M,s_{i}.done=\text{False}}H_{i}
+5
+s
+j
+′
+←
+ResourceEfficientTuning
+​
+(
+s
+j
+)
+s_{j}^{\prime}\leftarrow\text{ResourceEfficientTuning}(s_{j})
+6
+if
+s
+j
+′
+.
+d
+​
+o
+​
+n
+​
+e
+s_{j}^{\prime}.done
+then
+7
+S
+′
+.
+append
+​
+(
+s
+j
+)
+S^{\prime}.\text{append}(s_{j})
+8
+else
+9
+H
+j
+←
+Y
+′
+−
+Y
+x
+j
+s
+j
+−
+x
+j
+s
+j
+′
+H_{j}\leftarrow\frac{Y^{\prime}-Y}{x_{j}^{s_{j}}-x_{j}^{s^{\prime}_{j}}}
+10
+end if
+11
+end while
+12
+return
+S
+′
+S^{\prime}
+In an overlap, the optimal communication configuration satisfies one of the following conditions: (1) All communications use minimal resources, and their total time cost is less than the computation time. (2) Communications are fully optimized but still take longer than computation, and further increasing communication resources prolongs both communication and computation time. (3) Increasing communication resources reduces communication time but increases computation time until the two are equal—beyond this point, further resource allocation for communication continues to speed up communication while slowing computation even more, degrading overall performance.
+Algorithm 2
+Resource-Efficient Tuning Algorithm
+Input :
+Communication config
+s
+j
+′
+s_{j}^{\prime}
+1
+if
+s
+j
+′
+s_{j}^{\prime}
+is not initialized
+then
+2
+s
+j
+′
+.
+N
+​
+C
+,
+s
+j
+′
+.
+N
+​
+T
+,
+s
+j
+′
+.
+C
+←
+N
+​
+C
+m
+​
+i
+​
+n
+,
+N
+​
+T
+m
+​
+i
+​
+n
+,
+C
+m
+​
+i
+​
+n
+s_{j}^{\prime}.NC,s_{j}^{\prime}.NT,s_{j}^{\prime}.C\leftarrow NC_{min},NT_{min},C_{min}
+3
+end if
+4
+x
+j
+s
+j
+′
+,
+Y
+′
+,
+X
+′
+←
+ProfileTime
+​
+(
+s
+j
+′
+)
+x_{j}^{s_{j}^{\prime}},Y^{\prime},X^{\prime}\leftarrow\text{ProfileTime}(s_{j}^{\prime})
+5
+if
+x
+j
+s
+j
+′
+−
+x
+j
+s
+j
+>
+0
+​
+or
+​
+X
+′
+<
+Y
+′
+x_{j}^{s_{j}^{\prime}}-x_{j}^{s_{j}}>0\text{ or }X^{\prime}<Y^{\prime}
+then
+6
+s
+j
+′
+.
+d
+​
+o
+​
+n
+​
+e
+←
+True
+s_{j}^{\prime}.done\leftarrow\text{True}
+7
+else
+8
+l
+​
+r
+←
+x
+j
+s
+j
+′
+−
+x
+j
+s
+j
+x
+j
+s
+j
+′
+lr\leftarrow\frac{x_{j}^{s_{j}^{\prime}}-x_{j}^{s_{j}}}{x_{j}^{s_{j}^{\prime}}}
+9
+s
+j
+′
+.
+N
+​
+C
+←
+s
+j
+′
+.
+N
+​
+C
++
+l
+​
+r
+s_{j}^{\prime}.NC\leftarrow s_{j}^{\prime}.NC+lr
+10
+s
+j
+′
+.
+N
+​
+T
+←
+s
+j
+′
+.
+N
+​
+T
++
+l
+​
+r
+s_{j}^{\prime}.NT\leftarrow s_{j}^{\prime}.NT+lr
+11
+s
+j
+′
+.
+C
+←
+s
+j
+′
+.
+C
++
+l
+​
+r
+s_{j}^{\prime}.C\leftarrow s_{j}^{\prime}.C+lr
+12
+end if
+13
+return
+s
+j
+′
+s_{j}^{\prime}
+To efficiently identify the optimal configuration that satisfies the boundary conditions, we designed Algorithm
+1
+and Algorithm
+2
+.
+Algorithm
+1
+iteratively optimizes communications within an overlap group.
+In each iteration, it selects the communication with the smallest
+H
+H
+from the unfinished set (line 4), then invokes Algorithm
+2
+to determine the next configuration for the selected communication (line 5).
+If the communication is marked as completed, its configuration is added to the output set (line 7).
+Otherwise, the algorithm updates the corresponding
+H
+H
+based on the latest measurements (line 9).
+The process repeats until all communications have been tuned.
+Algorithm
+2
+generates the next configuration for a given communication.
+If the communication has not been initialized, NC, NT, and C are set to their minimum values (lines 1-3).
+Otherwise, the algorithm checks whether the current configuration satisfies either of the following termination conditions (line 5): (1) the communication itself has reached its optimal performance, or (2) the communication time is less than the computation time.
+If neither condition is met, the algorithm increases the values of NC, NT, and C by a learning rate
+l
+​
+r
+lr
+computed from the relative improvement in communication time (lines 8–11).
+Figure 6
+.
+Workflow of tuning multi-comms in one overlap
+We integrate the proposed algorithms into AutoCCL’s divide-and-conquer framework to tune resource-related parameters.
+The overall workflow is illustrated in Fig.
+6
+, using an overlap with 3 communication as an example.
+The algorithm begins by selecting the communication with the smallest
+H
+H
+among those not yet tuned (
+e.g.
+,
+c
+​
+o
+​
+m
+​
+m
+2
+comm_{2}
+in step a).
+It then increases the NC, NT, and C for this communication appropriately.
+The new configuration
+s
+2
+s_{2}
+is added to
+c
+​
+o
+​
+m
+​
+m
+2
+comm_{2}
+’s configuration list (step d) and broadcast to all ranks for execution (step c).
+After measuring the execution time (step e), the
+H
+H
+for
+c
+​
+o
+​
+m
+​
+m
+2
+comm_{2}
+is updated (step f).
+This process repeats iteratively until all communications have been tuned.
+This approach identifies minimal resource-related parameter that balance communication and computation performance.
+4.
+Evaluation
+(a)
+Training iteration time for different models between NCCL, AutoCCL, and Lagom through FSDP
+(b)
+Training iteration time for different models between NCCL, AutoCCL, and Lagom through TP/EP.
+Figure 7
+.
+Overall comparison of iteration time across communication strategies in FSDP (a) and TP/EP (b)
+4.1.
+Experimental Setup
+Table 2
+.
+DNN model statistics for different parallelism (8-16 A40 GPUs). MBS/GBS denotes Micro/Global Batch Size.
+Model
+MBS
+GBS
+TP
+DP
+EP
+FSDP
+Phi-2-2B
+2
+2
+×
+[
+8
+,
+16
+]
+2\times[8,16]
+–
+–
+–
+8,16
+Llama-3-8B
+1
+2
+×
+[
+8
+,
+16
+]
+2\times[8,16]
+–
+–
+–
+8,16
+MPT-7B
+1
+2
+×
+[
+8
+,
+16
+]
+2\times[8,16]
+–
+–
+–
+8,16
+Phi-2-2B
+8
+512
+8
+1,2
+1
+–
+Llama-3-8B
+4
+256
+8
+1,2
+1
+–
+MPT-7B
+2
+256
+8
+1,2
+1
+–
+DeepSeek-MoE-16B
+2
+16
+1
+1
+8
+–
+OLMoE-1B-7B
+2
+16
+1
+1
+8
+–
+Workload and Software
+As shown in Table
+2
+, we evaluate our method on a diverse set of large-scale models, including dense models (Phi-2B
+(
+Hughes,
+)
+, Llama-3-8B
+(
+Touvron et al., 2023
+)
+, and MPT-7B
+(
+Team, 2023
+)
+) as well as Mixture-of-Experts (MoE) models (DeepSeek-Moe (16B)
+(
+Dai et al., 2024
+)
+and OLMoE-1B-7B
+(
+Muennighoff et al., 2025
+)
+). Our implementation is built upon Megatron-LM
+(
+Shoeybi et al., 2019
+)
+and Pytorch 2.3.0, with Data Parallelism (DP), Tensor Parallelism (with DeepSpeed-Domino
+(
+Wang et al., 2024
+)
+), Expert Parallelism (with two batch overlapping
+(
+Zhao et al., 2025
+)
+), and FSDP. Across all experiments, the micro-batch size was set to the maximum value that could fit within GPU memory, while the global batch size followed widely-adopted industry standards
+(
+Xu et al., 2025
+)
+.
+Hardware Infrastructure.
+To evaluate the generality of our approach, we use two distinct hardware clusters.
+Cluster A
+consists of 2 nodes, each with 8 NVIDIA A40 GPUs, connected internally via NVLink with full 400 Gbps connectivity and between nodes using 2×400 Gbps InfiniBand.
+Cluster B
+also has 2 nodes with 8 NVIDIA A40 GPUs per node, but uses PCIe 4.0 for intra-node connections and 100 Gbps InfiniBand for inter-node communication.
+The software environments are CUDA 12.8 with Driver 570.13.
+Baseline
+We compare our approach against two baselines: NCCL v2.18.3-1 and AutoCCL.
+Our implementation is built on NCCL and AutoCCL, and can be integrated non-intrusively into modern DNN training frameworks.
+4.2.
+End-to-end Performance
+Fig.
+7(a)
+presents
+Lagom
+consistently achieves 1.10-1.33
+×
+\times
+performance over NCCL across different clusters and models with FSDP by automatically identifying appropriate configurations that balance resource utilization.
+In contrast, AutoCCL’s strategy of aggressively tuning communication parameters can lead to worse end-to-end performance than NCCL in computation-bound scenarios since excessive resource allocation to communication exacerbates the computational bottleneck, as predicted by our contention model.
+Furthermore,
+Lagom
+demonstrates greater performance gains on cluster A since NCCL defaults to larger NC values to exploit the available bandwidth when GPUs are connected via NVLink, which significantly increases contention and worsens computational bottlenecks.
+Fig.
+7(b)
+shows
+Lagom
+achieves speedups of 1.08–1.16
+×
+\times
+over NCCL in tensor parallelism and 1.07–1.08
+×
+\times
+in expert parallelism, demonstrating its general applicability across different parallelism.
+While AutoCCL also achieves notable speedups of 1.03-1.09
+×
+\times
+, it consistently underperforms
+Lagom
+since AutoCCL primarily optimizes communication-bounded overlap scenarios, whereas
+Lagom
+effectively handles diverse bottleneck that occur throughout the training iteration.
+We provide a detailed breakdown of these scenarios in Section
+4.3
+.
+(a)
+Pattern 1
+(b)
+Pattern 2
+(c)
+Convergence
+Figure 8
+.
+Phi2B model breakdown and convergence
+4.3.
+Breakdown
+We profile the Phi
+-
+2
+-
+2B model under FSDP on NVLink within a single node and identify two dominant overlap patterns (Fig.
+8
+) covering approximately 90% of end
+-
+to
+-
+end training time.
+As shown in Fig.
+8
+, we analyze the FSDP training of the Phi-2-2B model on a single node in Cluster A.
+In Pattern 1, which is computation-bound, NCCL uses the default configuration of NC=8 and C=2 MB for the
+AllGather
+.
+AutoCCL increases the NC to 61 to reduce communication time, but this introduces severe contention and degrades overall throughput to 0.87
+×
+\times
+.
+In contrast,
+Lagom
+adopts a configuration of NC=2 and C=684 KB, which slightly reduces communication speed but significantly alleviates contention, yielding an end-to-end speedup of 1.35
+×
+\times
+.
+Pattern 2 involves multiple communications.
+Lagom
+prioritizes the tuning of the
+ReduceScatter
+based on its
+H
+H
+, adjusting its parameters from (NC=8, C=2 MB) to (NC=4, C=1366 KB), and achieves a 1.43
+×
+\times
+speedup.
+4.4.
+Efficiency of Tuning
+Fig.
+8(c)
+validates that
+Lagom
+can find the optimal configuration with linear search complexity.
+In an overlap scenario involving two communication tasks, AutoCCL converges within 16 iterations while
+Lagom
+converges in 33 iterations, showing a ratio of approximately 1:2, which aligns with the predicted linear complexity.
+The resulting convergence overhead is negligible compared to a full training run (over 1 million iterations
+(
+Shoeybi et al., 2019
+;
+Jiang et al., 2024
+)
+), demonstrating the search efficiency and practical utility of
+Lagom
+.
+5.
+Conclusion
+In this paper, we present
+Lagom
+, a novel co-tuning method that automatically and efficiently optimizes communication parameters to speed up the performance of overlap.
+We formalize a cost model for overlap and comprehensively analyze its key challenges under different scenarios.
+To address the exponential search complexity, we introduce a cost-benefit metric and the tuning algorithm that reduces the complexity to linear.
+We implement
+Lagom
+on top of NCCL and evaluate it on different clusters.
+Results show that
+Lagom
+achieves 1.07-1.33
+×
+\times
+and 1.03-1.27
+×
+\times
+performance over both NCCL and AutoCCL across various large-model parallel training.
+References
+Chen
+et al.
+(2024)
+C. Chen, X. Li, Q. Zhu, J. Duan, P. Sun, X. Zhang, and C. Yang
+Centauri: enabling efficient scheduling for communication-computation overlap in large model training via communication partitioning
+.
+In
+Proceedings of the 29th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 3
+,
+pp. 178–191
+.
+Cited by:
+§1
+.
+Cheng
+et al.
+(2025)
+S. Cheng, S. Lin, L. Diao, H. Wu, S. Wang, C. Si, Z. Liu, X. Zhao, J. Du, W. Lin,
+et al.
+Concerto: automatic communication optimization and scheduling for large-scale deep learning
+.
+In
+Proceedings of the 30th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 1
+,
+pp. 198–213
+.
+Cited by:
+§1
+.
+Dai
+et al.
+(2024)
+D. Dai, C. Deng, C. Zhao, R. X. Xu, H. Gao, D. Chen, J. Li, W. Zeng, X. Yu, Y. Wu, Z. Xie, Y. K. Li, P. Huang, F. Luo, C. Ruan, Z. Sui, and W. Liang
+DeepSeekMoE: towards ultimate expert specialization in mixture-of-experts language models
+.
+External Links:
+2401.06066
+,
+Link
+Cited by:
+§4.1
+.
+Du
+et al.
+(2024)
+J. Du, J. Wei, J. Jiang, S. Cheng, D. Huang, Z. Chen, and Y. Lu
+Liger: interleaving intra-and inter-operator parallelism for distributed large model inference
+.
+In
+Proceedings of the 29th ACM SIGPLAN Annual Symposium on Principles and Practice of Parallel Programming
+,
+pp. 42–54
+.
+Cited by:
+§1
+.
+Fan
+et al.
+(2021)
+S. Fan, Y. Rong, C. Meng, Z. Cao, S. Wang, Z. Zheng, C. Wu, G. Long, J. Yang, L. Xia,
+et al.
+DAPPLE: a pipelined data parallel approach for training large models
+.
+In
+Proceedings of the 26th ACM SIGPLAN Symposium on Principles and Practice of Parallel Programming
+,
+pp. 431–445
+.
+Cited by:
+§2.1
+.
+Huang
+et al.
+(2019)
+Y. Huang, Y. Cheng, A. Bapna, O. Firat, D. Chen, M. Chen, H. Lee, J. Ngiam, Q. V. Le, Y. Wu,
+et al.
+Gpipe: efficient training of giant neural networks using pipeline parallelism
+.
+Advances in neural information processing systems
+32
+.
+Cited by:
+§2.1
+.
+Hughes ()
+A. Hughes
+Phi-2: The surprising power of small language models — microsoft.com
+.
+Note:
+https://www.microsoft.com/en-us/research/blog/phi-2-the-surprising-power-of-small-language-models/
+[Accessed 07-08-2025]
+Cited by:
+§4.1
+.
+Jia
+et al.
+(2020)
+X. Jia, L. Jiang, A. Wang, J. Zhang, X. Li, W. Xiao, Y. Li, Z. Zheng, X. Liu, W. Lin,
+et al.
+Whale: scaling deep learning model training to the trillions
+.
+arXiv preprint arXiv:2011.09208
+.
+Cited by:
+§2.1
+.
+Jiang
+et al.
+(2024)
+Z. Jiang, H. Lin, Y. Zhong, Q. Huang, Y. Chen, Z. Zhang, Y. Peng, X. Li, C. Xie, S. Nong,
+et al.
+MegaScale: scaling large language model training to more than 10,000 gpus
+.
+In
+21st USENIX Symposium on Networked Systems Design and Implementation (NSDI 24)
+,
+pp. 745–760
+.
+Cited by:
+§1
+,
+§2.1
+,
+§4.4
+.
+Lepikhin
+et al.
+(2020)
+D. Lepikhin, H. Lee, Y. Xu, D. Chen, O. Firat, Y. Huang, M. Krikun, N. Shazeer, and Z. Chen
+Gshard: scaling giant models with conditional computation and automatic sharding
+.
+arXiv preprint arXiv:2006.16668
+.
+Cited by:
+§2.1
+.
+Liu
+et al.
+(2024)
+A. Liu, B. Feng, B. Xue, B. Wang, B. Wu, C. Lu, C. Zhao, C. Deng, C. Zhang, C. Ruan,
+et al.
+Deepseek-v3 technical report
+.
+arXiv preprint arXiv:2412.19437
+.
+Cited by:
+§2.1
+.
+Liu
+et al.
+(2023)
+Y. Liu, B. Jiang, S. Zhao, T. Lin, X. Wang, and C. Zhou
+Libra: contention-aware gpu thread allocation for data parallel training in high speed networks
+.
+In
+IEEE INFOCOM 2023-IEEE Conference on Computer Communications
+,
+pp. 1–10
+.
+Cited by:
+§1
+.
+Muennighoff
+et al.
+(2025)
+N. Muennighoff, L. Soldaini, D. Groeneveld, K. Lo, J. Morrison, S. Min, W. Shi, P. Walsh, O. Tafjord, N. Lambert, Y. Gu, S. Arora, A. Bhagia, D. Schwenk, D. Wadden, A. Wettig, B. Hui, T. Dettmers, D. Kiela, A. Farhadi, N. A. Smith, P. W. Koh, A. Singh, and H. Hajishirzi
+OLMoE: open mixture-of-experts language models
+.
+External Links:
+2409.02060
+,
+Link
+Cited by:
+§4.1
+.
+Narayanan
+et al.
+(2019)
+D. Narayanan, A. Harlap, A. Phanishayee, V. Seshadri, N. R. Devanur, G. R. Ganger, P. B. Gibbons, and M. Zaharia
+PipeDream: generalized pipeline parallelism for dnn training
+.
+In
+Proceedings of the 27th ACM Symposium on Operating Systems Principles
+,
+pp. 1–15
+.
+Cited by:
+§2.1
+.
+Narayanan
+et al.
+(2021)
+D. Narayanan, M. Shoeybi, J. Casper, P. LeGresley, M. Patwary, V. Korthikanti, D. Vainbrand, P. Kashinkunti, J. Bernauer, B. Catanzaro,
+et al.
+Efficient large-scale language model training on gpu clusters using megatron-lm
+.
+In
+Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis
+,
+pp. 1–15
+.
+Cited by:
+§2.1
+.
+[16]
+(2025)
+NVIDIA Collective Communication Library (NCCL)
+.
+Note:
+https://github.com/nvidia/nccl
+[Accessed 08-11-2025]
+Cited by:
+§2.2
+.
+Nvidia (2025a)
+Nvidia
+Basic linear algebra on nvidia gpus
+.
+Note:
+https://developer.nvidia.com/cublas
+[Accessed 08-11-2025]
+Cited by:
+§2.2
+.
+Nvidia (2025b)
+Nvidia
+CUDA deep neural network
+.
+Note:
+https://developer.nvidia.com/cudnn
+[Accessed 08-11-2025]
+Cited by:
+§2.2
+.
+Peng
+et al.
+(2019)
+Y. Peng, Y. Zhu, Y. Chen, Y. Bao, B. Yi, C. Lan, C. Wu, and C. Guo
+A generic communication scheduler for distributed dnn training acceleration
+.
+In
+Proceedings of the 27th ACM Symposium on Operating Systems Principles
+,
+pp. 16–29
+.
+Cited by:
+§1
+.
+Rajbhandari
+et al.
+(2020)
+S. Rajbhandari, J. Rasley, O. Ruwase, and Y. He
+Zero: memory optimizations toward training trillion parameter models
+.
+In
+SC20: International Conference for High Performance Computing, Networking, Storage and Analysis
+,
+pp. 1–16
+.
+Cited by:
+§2.1
+.
+Shazeer
+et al.
+(2018)
+N. Shazeer, Y. Cheng, N. Parmar, D. Tran, A. Vaswani, P. Koanantakool, P. Hawkins, H. Lee, M. Hong, C. Young,
+et al.
+Mesh-tensorflow: deep learning for supercomputers
+.
+Advances in neural information processing systems
+31
+.
+Cited by:
+§2.1
+.
+Shazeer
+et al.
+(2017)
+N. Shazeer, A. Mirhoseini, K. Maziarz, A. Davis, Q. Le, G. Hinton, and J. Dean
+Outrageously large neural networks: the sparsely-gated mixture-of-experts layer
+.
+arXiv preprint arXiv:1701.06538
+.
+Cited by:
+§2.1
+.
+Shoeybi
+et al.
+(2019)
+M. Shoeybi, M. Patwary, R. Puri, P. LeGresley, J. Casper, and B. Catanzaro
+Megatron-lm: training multi-billion parameter language models using model parallelism
+.
+arXiv preprint arXiv:1909.08053
+.
+Cited by:
+§2.1
+,
+§4.1
+,
+§4.4
+.
+Team (2023)
+T. M. R. Team
+Introducing mpt-7b: a new standard for open-source, commercially usable llms
+.
+Note:
+[Accessed 07-08-2025]
+External Links:
+Link
+Cited by:
+§4.1
+.
+Touvron
+et al.
+(2023)
+H. Touvron, T. Lavril, G. Izacard, X. Martinet, M. Lachaux, T. Lacroix, B. Rozière, N. Goyal, E. Hambro, F. Azhar,
+et al.
+Llama: open and efficient foundation language models
+.
+arXiv preprint arXiv:2302.13971
+.
+Cited by:
+§4.1
+.
+Unger
+et al.
+(2022)
+C. Unger, Z. Jia, W. Wu, S. Lin, M. Baines, C. E. Q. Narvaez, V. Ramakrishnaiah, N. Prajapati, P. McCormick, J. Mohd-Yusof,
+et al.
+Unity: accelerating dnn training through joint optimization of algebraic transformations and parallelization
+.
+In
+16th USENIX Symposium on Operating Systems Design and Implementation (OSDI 22)
+,
+pp. 267–284
+.
+Cited by:
+§2.1
+.
+Wang
+et al.
+(2024)
+G. Wang, C. Zhang, Z. Shen, A. Li, and O. Ruwase
+Domino: eliminating communication in llm training via generic tensor slicing and overlapping
+.
+arXiv preprint arXiv:2409.15241
+.
+Cited by:
+§2.1
+,
+§4.1
+.
+Wang
+et al.
+(2019)
+M. Wang, C. Huang, and J. Li
+Supporting very large models using automatic dataflow graph partitioning
+.
+In
+Proceedings of the Fourteenth EuroSys Conference 2019
+,
+pp. 1–17
+.
+Cited by:
+§2.1
+.
+Xu
+et al.
+(2025)
+G. Xu, Z. Le, Y. Chen, Z. Lin, Z. Jin, Y. Miao, and C. Li
+{
+\{
+autoccl
+}
+\}
+: Automated collective communication tuning for accelerating distributed and parallel
+{
+\{
+dnn
+}
+\}
+training
+.
+In
+22nd USENIX Symposium on Networked Systems Design and Implementation (NSDI 25)
+,
+pp. 667–683
+.
+Cited by:
+§1
+,
+§2.2
+,
+§3.1
+,
+§3.1
+,
+§3.2
+,
+§4.1
+.
+Zhao
+et al.
+(2025)
+C. Zhao, S. Zhou, L. Zhang, C. Deng, Z. Xu, Y. Liu, K. Yu, J. Li, and L. Zhao
+DeepEP: an efficient expert-parallel communication library
+.
+GitHub
+.
+Note:
+https://github.com/deepseek-ai/DeepEP
+Cited by:
+§1
+,
+§4.1
+.
+Zhao
+et al.
+(2023)
+Y. Zhao, A. Gu, R. Varma, L. Luo, C. Huang, M. Xu, L. Wright, H. Shojanazeri, M. Ott, S. Shleifer,
+et al.
+Pytorch fsdp: experiences on scaling fully sharded data parallel
+.
+arXiv preprint arXiv:2304.11277
+.
+Cited by:
+§2.1
+,
+§2.2
+.
+Zheng
+et al.
+(2022)
+L. Zheng, Z. Li, H. Zhang, Y. Zhuang, Z. Chen, Y. Huang, Y. Wang, Y. Xu, D. Zhuo, J. E. Gonzalez,
+et al.
+Alpa: automating inter-and intra-operator parallelism for distributed deep learning
+.
+arXiv preprint arXiv:2201.12023
+.
+Cited by:
+§2.1
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

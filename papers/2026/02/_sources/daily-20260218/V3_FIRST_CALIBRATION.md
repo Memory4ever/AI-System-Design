@@ -1,0 +1,43 @@
+# 2026-02-18 首批准入校准（作者，待非作者复核）
+
+窗口 `[2026-02-17T09:00:00+08:00,2026-02-18T09:00:00+08:00)`。本日原 inventory 929 identity 只作主题查漏，不能继承 Updated/Created/相邻 ID 日期推定、旧筛选或完成声明。以下完整题摘取自本日 `inventory.json` 对应 identity，拟入选只是贡献线索，日期待核时不计候选。当前官方事件页轻查在取得日期/准入后继续；无撤回信号并非遍历全史结论。
+
+## 2602.13255 DPBench
+
+Title: DPBench: Structural Determinants of Multi-Agent LLM Coordination Under Simultaneous Resource Contention
+
+Abstract: We present DPBench, a benchmark for evaluating coordination in multi-agent systems built from large language models. Existing benchmarks measure task-level success under a fixed protocol; the structural conditions under which coordination succeeds or fails at all have not been characterised. DPBench adapts the Dining Philosophers problem into a controlled testbed where the action protocol, the communication structure, and the group size each vary independently. We evaluate six agents: GPT-5.2, Claude Opus 4.5, Grok 4.1, Gemini 2.5 Flash, Llama 4 Maverick, and a uniform-random baseline. Under simultaneous action at N=5 with the default prompt, deadlock ranges from 25.0% (95% Wilson CI [11.2, 46.9]) for GPT-5.2 to 90.0% [74.4, 96.5] for Gemini 2.5 Flash; sequential action is solved by four of the six. Holding the model fixed at Gemini 2.5 Flash, three protocol variables drive deadlock from 90% to within CI of zero: three rounds of pre-commitment communication (0.0% vs. single-round 86.7%), a prompt encoding a classical concurrency primitive (0.0% for resource-ordering and symmetry-breaking, against 100% for the minimal prompt), or doubling the group from N=5 to N=10 (90.0% to 10.0%). Single-round messaging and memory of past timesteps do not change the rate at the sample size we ran. Whether the same model coordinates or deadlocks is determined by the protocol, not by the model's capability.
+
+拟继续：固定协议成绩易混淆模型能力与并发协议 → 同模型控制协议/通信/人数暴露死锁差异 → 需检查协议控制是否实证支撑评估盲区，而非将benchmark扩维视为贡献。不采用“只由协议决定、与能力无关”的普遍化。
+
+## 2602.13692 ThunderAgent
+
+Title: ThunderAgent: A Simple, Fast and Program-Aware Agentic Inference System
+
+Abstract: Large language models(LLMs) are now used to power complex multi-turn agentic workflows. Existing systems run agentic inference by loosely assembling isolated components: an LLM inference engine (e.g., vLLM) and a tool orchestrator (e.g., Kubernetes). Although agentic workflows involve multiple LLM and tool requests, these systems schedule and allocate resources separately on a per-request basis, without end-to-end knowledge of the workflow. This leads to sub-optimal management of KV cache and tool execution environments. To address the challenges, we propose ThunderAgent, a fast, simple, and program-aware agentic inference system. We first abstract agentic workflows as LLM Programs, enabling a unified view of heterogeneous resources, including KV caches, system states, and external tool assets such as disk memory and network ports. Built upon this abstraction, ThunderAgent introduces a program-aware scheduler and a tool resource manager designed to maximize KV cache hit rates, mitigate memory imbalances, and enable asynchronous environment preparation. Evaluations across coding, routing, and scientific discovery agents demonstrate that ThunderAgent achieves 1.5-3.6x throughput improvements in serving, 1.8-3.9x in RL rollout, and up to 4.2x disk memory savings compared to state-of-the-art inference systems. To facilitate reproducibility and support future development, we open-source the system implementations of the whole ThunderAgent at: https://github.com/Agentic-Kinetics/ThunderAgent.
+
+拟继续：per-request调度看不到后续turn和tool状态 → program视图联合KV与外部资源、异步准备 → 核验何时需要程序级placement/资源管理，吞吐数字绑定负载配置，不采用科学发现应用。
+
+## 2602.14281 MCPShield
+
+Title: MCPShield: A Security Cognition Layer for Adaptive Trust Calibration in Model Context Protocol Agents
+
+Abstract: The Model Context Protocol (MCP) standardizes tool use for LLM-based agents and enable third-party servers. This openness introduces a security misalignment: agents implicitly trust tools exposed by potentially untrusted MCP servers. However, despite its excellent utility, existing agents typically offer limited validation for third-party MCP servers. As a result, agents remain vulnerable to MCP-based attacks that exploit the misalignment between agents and servers throughout the tool invocation lifecycle. In this paper, we propose MCPShield as a plug-in security cognition layer that mitigates this misalignment and ensures agent security when invoking MCP-based tools. Drawing inspiration from human experience-driven tool validation, MCPShield assists agent forms security cognition with metadata-guided probing before invocation. Our method constrains execution within controlled boundaries while cognizing runtime events, and subsequently updates security cognition by reasoning over historical traces after invocation, building on human post-use reflection on tool behavior. Experiments demonstrate that MCPShield exhibits strong generalization in defending against six novel MCP-based attack scenarios across six widely used agentic LLMs, while avoiding false positives on benign servers and incurring low deployment overhead. Overall, our work provides a practical and robust security safeguard for MCP-based tool invocation in open agent ecosystems.
+
+需定点补读准入决定事实：probe/guard/trace组合若仅复述已知安全原则不足；需找安全判断更新的具体执行机制、信任成立条件/失效边界或防御反侧。安全信号轻查及受影响原文仍执行，不能把低开销宣传当新增保证。
+
+## 2602.13210 代表排除
+
+Title: Large Language Model (LLM)-enabled Reinforcement Learning for Wireless Network Optimization
+
+Abstract: Enhancing future wireless networks presents a significant challenge for networking systems due to diverse user demands and the emergence of 6G technology. While reinforcement learning (RL) is a powerful framework, it often encounters difficulties with high-dimensional state spaces and complex environments, leading to substantial computational demands, distributed intelligence, and potentially inconsistent outcomes. Large language models (LLMs), with their extensive pretrained knowledge and advanced reasoning capabilities, offer promising tools to enhance RL in optimizing 6G wireless networks. We explore RL models augmented by LLMs, emphasizing their roles and the potential benefits of their synergy in wireless network optimization. We then examine LLM-enabled RL across various protocol layers: physical, data link, network, transport, and application layers. Additionally, we propose an LLM-assisted state representation and semantic extraction to enhance the multi-agent reinforcement learning (MARL) framework. This approach is applied to service migration and request routing, as well as topology graph generation in unmanned aerial vehicle (UAV)-satellite networks. Through case studies, we demonstrate that our framework effectively performs optimization of wireless network. Finally, we outline prospective research directions for LLM-enabled RL in wireless network optimization.
+
+排除：原文贡献为LLM辅助无线网络优化应用与场景case study，无明确改变模型/基础设施解释或设计选择的机制或边界。日期尚未核实，不为不影响处置的日期继续恢复。
+
+## 2602.13318 代表排除
+
+Title: DECKBench: Benchmarking Multi-Agent Frameworks for Academic Slide Generation and Editing
+
+Abstract: Automatically generating and iteratively editing academic slide decks requires more than document summarization. It demands faithful content selection, coherent slide organization, layout-aware rendering, and robust multi-turn instruction following. However, existing benchmarks and evaluation protocols do not adequately measure these challenges. To address this gap, we introduce the Deck Edits and Compliance Kit Benchmark (DECKBench), an evaluation framework for multi-agent slide generation and editing. DECKBench is built on a curated dataset of paper to slide pairs augmented with realistic, simulated editing instructions. Our evaluation protocol systematically assesses slide-level and deck-level fidelity, coherence, layout quality, and multi-turn instruction following. We further implement a modular multi-agent baseline system that decomposes the slide generation and editing task into paper parsing and summarization, slide planning, HTML creation, and iterative editing. Experimental results demonstrate that the proposed benchmark highlights strengths, exposes failure modes, and provides actionable insights for improving multi-agent slide generation and editing systems. Overall, this work establishes a standardized foundation for reproducible and comparable evaluation of academic presentation generation and editing. Code and data are publicly available at https://github.com/morgan-heisler/DeckBench .
+
+拟排除：完整摘要列出更细slide质量与edit评估维度及流程组合，未给出能修正现有模型系统重要结论的具体盲区/混杂/反证；不是以领域小或benchmark身份排除。日期未核实，不影响处置。

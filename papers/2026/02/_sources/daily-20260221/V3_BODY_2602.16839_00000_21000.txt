@@ -1,0 +1,279 @@
+Training Large Reasoning Models Efficiently via Progressive Thought Encoding
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+3 Methodology
+3.1 Notation and Preliminaries
+3.2 Challenges for Efficient RL Training
+3.3 Our Approach: Learning Think Tokens Prior to Eviction
+4 Evaluations
+4.1 Experimental Setup
+4.2 Evaluation on Math Reasoning Tasks
+4.3 Evaluation under Different Computational Budgets
+4.4 Ablation Study and Discussion
+5 Conclusion
+References
+A The use of Large Language Models
+B Results on Qwen-2.5-4B-Instruct
+C Impact of Cache-Eviction Strategy on the Update of qgq_{g}
+License: CC BY 4.0
+arXiv:2602.16839v1 [cs.LG] 18 Feb 2026
+Training Large Reasoning Models Efficiently via Progressive Thought Encoding
+Zeliang Zhang
+††thanks: Work done during the internship at Microsoft Research. $†$Correspondence to: zeliang.zhang@rochester.edu, xiaodl@microsoft.com.
+Xiaodong Liu
+Hao Cheng
+Affiliation: Microsoft Research
+Hao Sun
+Affiliation: Microsoft Research
+Chenliang Xu
+Affiliation: University of Rochester
+Jianfeng Gao
+Affiliation: Microsoft Research
+Abstract
+Large reasoning models (LRMs) excel on complex problems but face a critical barrier to efficiency: reinforcement learning (RL) training requires long rollouts for outcome-based rewards, where autoregressive decoding dominates time and memory usage. While sliding-window cache strategies can bound memory, they disrupt long-context reasoning and degrade performance. We introduce Progressive Thought Encoding, a parameter-efficient fine-tuning method that enables LRMs to reason effectively under fixed-size caches. By progressively encoding intermediate reasoning into fixed-size vector representations, our approach eliminates the need to backpropagate through full-cache rollouts, thereby reducing memory usage, while maintaining constant memory during inference. Experiments on three models, including Qwen2.5-3B-Instruct, Qwen2.5-7B-Instruct, and DeepSeek-R1-Distill-Llama-8B, on six widely used challenging mathematical benchmarks show consistent gains: our method achieves +19.3% improvement over LoRA-based fine-tuning and +29.9% over LRMs without fine-tuning on average, with up to +23.4 accuracy improvement on AIME2024/2025 under the same tight cache budgets. These results demonstrate that Progressive Thought Encoding not only improves reasoning accuracy but also makes RL training of LRMs substantially more efficient and scalable under real-world memory constraints.
+1 Introduction
+Large reasoning models (LRMs) (Plaat et al., 2024; Li et al., 2025b; Huang and Chang, 2022) are emerging as a new paradigm that extends large language models (LLMs) with enhanced capacity for multi-step reasoning (Fu et al., 2023), symbolic manipulation (Dave et al., 2024), and problem solving in real-world scenarios (Xu et al., 2024). Unlike conventional LLMs that rely primarily on scale and corpus size for improved performance, LRMs explicitly emphasize reasoning-oriented training signals and architectural design, making them particularly well suited for domains such as mathematics (Shao et al., 2024), science (Schmidgall et al., 2025), and programming (Wang et al., 2024). As these models continue to achieve impressive results on increasingly complex benchmarks (Phan et al., 2025; Wang et al., 2023), the focus of research has gradually shifted from pursuing raw capabilities to improving efficiency in training and deployment (Wu et al., 2025; Feng et al., 2025).
+Reinforcement learning (RL) (Kaelbling et al., 1996) has become the standard approach for aligning and improving large reasoning models (LRMs) during post-training, with methods such as PPO (Schulman et al., 2017), GRPO (Guo et al., 2025), and related algorithms (Zheng et al., 2025a; Yu et al., 2025; Li et al., 2025a) providing fine-grained control over reasoning behavior. However, RL suffers from a fundamental efficiency bottleneck: outcome-based rewards are sparse and only available after completing long sequences of actions (Yang et al., 2025), during which autoregressive decoding dominates memory and compute resources. The length of these trajectories, or chain-of-thought (CoT) reasoning, scales with task complexity, yielding longer rollouts for more challenging problems. Such extended CoT sequences significantly increase post-training and inference costs.
+A natural strategy to address this challenge is to bound memory through sliding-window caches (Alizadeh et al., 2024) or dynamic pruning of past tokens (Fu et al., 2024). However, these approaches often degrade reasoning quality, as discarding intermediate thoughts weakens the model’s ability to integrate long-range context (Cai et al., 2024). This degradation not only impacts reasoning accuracy at inference time but also reduces sample quality during the rollout stage, thereby hindering the effectiveness of training. This tension raises a critical question: can LRMs be trained efficiently under strict memory budgets without sacrificing reasoning accuracy?
+In this work, we introduce Progressive Thought Encoding, a parameter-efficient fine-tuning method designed to address this bottleneck. Rather than discarding evicted tokens, our approach encodes their information into fixed-size vector representations that preserve long-context understanding under limited caches. We dynamically embed this contextual information into lightweight LoRA adapters, allowing the model to retain key reasoning signals without increasing cache size. By integrating this online adaptation into reinforcement learning, our method reduces peak memory usage during post-training. The learned adapters further enable the model to maintain strong reasoning performance under constrained computational budgets during inference.
+We evaluated our method on three representative models: Qwen2.5-4B-Instruct, Qwen2.5-7B-Instruct, and DeepSeek-R1-Distill-Llama-8B, across six challenging mathematical reasoning benchmarks. Our approach consistently outperforms vanilla RL training, achieving up to a 23.4% improvement in reasoning accuracy on AIME while reducing GPU memory usage by nearly 50%. These results demonstrate that cache-aware reinforcement learning not only makes training large reasoning models more efficient but also improves their reasoning capabilities.
+Our contributions can be summarized as follows:
+•
+We identify the fundamental inefficiency of RL training for LRMs under long rollouts and formalize it as a cache-constrained optimization problem.
+•
+We propose Progressive Thought Encoding, a parameter-efficient fine-tuning technique that learns from evicted tokens to preserve reasoning capacity under bounded memory.
+•
+Through extensive experiments on open-weight models and math benchmarks, we show that our method substantially improves both training efficiency and inference robustness, setting a new standard for scalable reasoning model training.
+2 Related Work
+Test-time Learning of LLMs. Test-time learning (TTL) explores how LLMs can adapt to new tasks or distributions without offline retraining (Hu et al., 2025). The most basic form is in-context learning (Dong et al., 2022), where demonstrations embedded within the prompt elicit task-specific behavior, while retrieval-augmented generation (RAG) extends this idea by providing task-relevant documents at inference (Gao et al., 2023; Han et al., 2024; Cheng et al., 2025). More advanced methods allocate additional computation for reasoning during inference, including tree-of-thought search (Yao et al., 2023), self-consistency across multiple reasoning paths (Wang et al., 2022), and iterative refinement (Madaan et al., 2023). Another line of work investigates gradient-based updates at test time, such as test-time training (Zuo et al., 2025) and entropy minimization techniques (Zhang et al., 2025b; Agarwal et al., 2025), while recent theory establishes connections between instruction tuning–based TTL and low-rank parameter updates in LLMs (Dherin et al., 2025).
+Parameter-efficient Fine-tuning of LLMs. Since the introduction of Low-rank Adaptation (LoRA) (Hu et al., 2022), numerous parameter-efficient fine-tuning (PEFT) methods have been developed to improve the efficiency of adapting large language models (LLMs) to downstream tasks, including QLoRA (Dettmers et al., 2023), LiSA (Pan et al., 2024), and prefix-tuning (Li and Liang, 2021). While these approaches primarily focus on offline task adaptation, recent work has extended low-rank techniques to enable dynamic test-time learning, such as generative adapters (Chen et al., 2024) and stream adapters (Muhtar et al., 2024), which allow LLMs to adapt on-the-fly to new inputs or distributional shifts, thus enhancing robustness and flexibility.
+3 Methodology
+3.1 Notation and Preliminaries
+Attention and the KV cache as memory.
+In the prefilling stage, given a sequence (x1,…,xt)(x_{1},\dots,x_{t}), each token xix_{i} is mapped to a hidden state hih_{i}, which is then projected into query, key, and value vectors, i.e., qi=WQ​hi,ki=WK​hi,vi=WV​hiq_{i}=W_{Q}h_{i},k_{i}=W_{K}h_{i},v_{i}=W_{V}h_{i},
+where WQW_{Q}, WKW_{K}, and WVW_{V} are learnable weight matrices.
+Let Kt=[k1,…,kt]K_{t}=[k_{1},\dots,k_{t}] and Vt=[v1,…,vt]V_{t}=[v_{1},\dots,v_{t}] denote the cache of keys and values up to step tt. The attention output for token xtx_{t} is given by
+ot=softmax⁡(qt​Kt⊤d)​Vt.o_{t}=\mathrm{softmax}\!\left(\tfrac{q_{t}K_{t}^{\top}}{\sqrt{d}}\right)V_{t}.
+During the decoding stage, for the next token xt+1x_{t+1}, we first compute its query qt+1q_{t+1}, and then let it attend over the extended KV cache:
+ot+1=softmax⁡(qt+1​[Kt,kt+1]⊤d)​[Vt,vt+1].o_{t+1}=\mathrm{softmax}\!\left(\tfrac{q_{t+1}[K_{t},\,{\color[rgb]{1,0,0}k_{t+1}}]^{\top}}{\sqrt{d}}\right)[V_{t},\,{\color[rgb]{1,0,0}v_{t+1}}].
+Thus, the KV cache grows incrementally with each new token, serving as the memory that avoids redundant computation during autoregressive decoding and improves long-context understanding.
+GRPO for Reinforcement Learning in LLMs.
+Grouped Reinforcement Policy Optimization (GRPO) is a policy gradient method designed to fine-tune large language models.
+Unlike classical RLHF approaches, GRPO discards the need for a critic model and instead samples multiple candidate completions per prompt, groups them, and assigns rewards at the group level.
+Given a prompt pp, the model generates nn completions {y1,…,yn}\{y_{1},\dots,y_{n}\} at the rollout stage.
+Then, each completion yiy_{i} is assigned a raw score sis_{i} by a reward model, which is then normalized within the group to produce variance-reduced rewards:
+ri=si−1n​∑j=1nsj1n​∑j=1n(sj−s¯)2+ϵ,s¯=1n​∑j=1nsj.r_{i}=\frac{s_{i}-\tfrac{1}{n}\sum_{j=1}^{n}s_{j}}{\sqrt{\tfrac{1}{n}\sum_{j=1}^{n}(s_{j}-\bar{s})^{2}+\epsilon}},\quad\bar{s}=\tfrac{1}{n}\sum_{j=1}^{n}s_{j}.
+The policy is updated to maximize the expected reward while staying close to a reference policy πref\pi_{\mathrm{ref}}:
+ℒGRPO(π)=𝔼y∼π(⋅|p)[r(y)−βKL(π(⋅|p)∥πref(⋅|p))],\displaystyle\mathcal{L}_{\text{GRPO}}(\pi)=\mathbb{E}_{y\sim\pi(\cdot|p)}\Big[r(y)-\beta\,\mathrm{KL}\big(\pi(\cdot|p)\,\|\,\pi_{\mathrm{ref}}(\cdot|p)\big)\Big],
+(1)
+where r⁡(y)r(y) is the group-normalized reward and β\beta controls the KL regularization strength. Using relative rewards within each group, GRPO provides stable training signals without a critic and aligns naturally with autoregressive generation in LLMs.
+3.2 Challenges for Efficient RL Training
+Difficult tasks often require long reasoning trajectories (Yang et al., 2025), i.e., generating more tokens to obtain high-quality solutions for reward computation. The effectiveness of passive test-time scaling (Muennighoff et al., 2025) further underscores the importance of extended reasoning in solving difficult problems. However, this demand for longer generations directly amplifies the inefficiency of the rollout stage, which has been identified as the primary bottleneck to RL training (Zheng et al., 2025b; Han et al., 2025; Zhang et al., 2025c; Zhang et al., 2025a). Despite the use of KV caching to avoid redundant computation, rollouts still dominate both time and memory costs due to continuous autoregressive decoding, making efficient training particularly challenging under outcome-based reward settings.
+A natural approach to mitigating memory consumption is to adopt a dynamic sliding window strategy for the KV cache (Zhang et al., 2023), thus keeping memory usage approximately constant even as the roll-out sequences grow longer. However, aggressive token drop can significantly impair long-sequence understanding and generation (Jin et al., 2024; Cai et al., 2024), which in turn weakens the model’s reasoning ability during rollouts and ultimately reduces training effectiveness. As illustrated in table 1, applying a sliding-window cache to RL training of Qwen models leads to a clear performance drop compared to training with the full cache of all tokens. This naturally raises a critical question: can we maintain a constant-capacity cache window while still enabling the reasoning model to effectively “see” all previous tokens for efficient reasoning?
+To formalize this challenge, we modify the standard GRPO formulation by redefining the rollout distribution. In the original objective, a trajectory yy is sampled under the full-cache policy πθ(⋅∣p)\pi_{\theta}(\cdot\mid p). In our setting, the trajectory is instead generated under a cache policy DD, which prunes the KV cache online during decoding. At each step tt, DD selects a pruned context 𝒞tD=CachePruneD​(p,y<t)\mathcal{C}^{D}_{t}=\mathrm{CachePrune}_{D}(p,y_{<t}), and the token distribution becomes
+πθD​(y∣p)=∏t=1Tπθ​(yt∣𝒞tD).\displaystyle\pi_{\theta}^{D}(y\mid p)=\prod_{t=1}^{T}\pi_{\theta}\!\big(y_{t}\mid\mathcal{C}^{D}_{t}\big).
+(2)
+Accordingly, the cache-aware GRPO objective is
+ℒGRPOD(θg;θref)=𝔼y∼πθgD(⋅∣p)[r(y)−βKL(πθgD(⋅∣p)∥πθref(⋅∣p))],\displaystyle\mathcal{L}_{\text{GRPO}}^{D}(\theta_{g};\theta_{\mathrm{ref}})~=~\mathbb{E}_{y\sim{\color[rgb]{1,0,0}\pi_{\theta_{g}}^{D}(\cdot\mid p)}}\Big[r(y)\;-\;\beta\,\mathrm{KL}\!\big({\color[rgb]{1,0,0}\pi_{\theta_{g}}^{D}(\cdot\mid p)}\,\big\|\,\pi_{\theta_{\mathrm{ref}}}(\cdot\mid p)\big)\Big],
+(3)
+where θg\theta_{g} denotes the parameters of the generating model under partial-cache rollouts, and θref\theta_{\mathrm{ref}} is a reference model that operate with the full cache. Given a task prompt after the model training, we expect πθg∗(y∣p)≈πθ∗(y∣p)\pi_{\theta^{*}_{g}}(y\mid p)\approx\pi_{\theta*}(y\mid p), where θg∗\theta^{*}_{g} and θ∗\theta^{*} are optimized from eq. 3 and eq. 1 respectively.
+Figure 1: Overview of our method. During the rollout process, the model continuously learns the dropped tokens to achieve a balance between generation efficiency and long-term memory.
+3.3 Our Approach: Learning Think Tokens Prior to Eviction
+Motivated by prior work on dynamically adapting models to novel inputs at test time (Chen et al., 2024; Muhtar et al., 2024), we take a different approach from simply discarding the evicted thinking tokens.
+Figure 2: The computation of context state SS.
+Instead, we first learn from these tokens to update a small set of parameters θg\theta_{g}, enabling the test-time policy πD​θg​(y∣p)\pi^{D}{\theta_{g}}(y\mid p) to approximate the full-cache policy π​θ​(y∣p)\pi{\theta}(y\mid p) under a given eviction strategy DD.
+Specifically, for a given question xx, during the rollout stage, we continuously decode next thinking tokens {y1,…,yl}\{y_{1},\ldots,y_{l}\} based on the policy πθD​(y∣p)\pi^{{D}}_{{\theta}}(y\mid p) until the KV cache is full. Based on the token eviction strategy DD, earlier tokens {ye1,…,yem}\{y_{e_{1}},\ldots,y_{e_{m}}\} will be evicted from the cache. Rather than discarding these tokens, we use them to update a compact latent representation with the help of global query vector qgq_{g}, which serves as a learnable summary of all evicted context encountered so far. The update to the LoRA weights is computed as
+△​W=A​(((WQa​qg)​(WKa​Ke)T)​(WKa​Ve))⏟Se​B,\displaystyle\vartriangle W=A\underbrace{\left(\left({\color[rgb]{1,0,0}\left(W^{a}_{Q}q_{g}\right)}{\color[rgb]{0,0,1}\left(W^{a}_{K}K_{e}\right)}^{T}\right){\color[rgb]{1,0.5,0}\left(W^{a}_{K}V_{e}\right)}\right)}_{{\color[rgb]{0.75,0,0.25}S_{e}}}B,
+(4)
+where we denote qgq_{g} as global latent query that aggregates information from evicted tokens, WQa,WQaW^{a}_{Q},W^{a}_{Q} and WVaW^{a}_{V} as the weight matrices to map the global query tokens qgq_{g}, evicted key KeK_{e} and value tokens VeV_{e} into the compressed latent space, AA and BB as the weight matrices to map the evicted context state SeS_{e} computed by the evicted tokens to the model weights.
+The model then continues decoding {yl+1,…}\{y_{l+1},\dots\} under the updated policy πθ′D​(y∣p)\pi^{D}_{\theta^{\prime}}(y\mid p), where θ′=θ+△​W\theta^{\prime}=\theta+\vartriangle W. Each time the cache fills, we compute a new evicted context state Se′S^{\prime}_{e} and update Se←Normalize​(Se+Se′)S_{e}\leftarrow\textit{Normalize}(S_{e}+S^{\prime}_{e}), and recompute △​W\vartriangle W accordingly.
+To bootstrap adaptation, before processing any evicted tokens we initialize the context state with learnable global tokens as Se=(WQa​qg​(WKa​kg)⊤)​WVa​vgS_{e}=\big(W^{a}_{Q}q_{g}\,(W^{a}_{K}k_{g})^{\top}\big)\,W^{a}_{V}v_{g}, where we define hgh_{g} as the global tokens and qg=WQ​hgq_{g}=W_{Q}h_{g}, kg=WK​hgk_{g}=W_{K}h_{g}, and vg=WV​hgv_{g}=W_{V}h_{g}. This initialization makes
+qgq_{g} an explicit carrier of evicted-context information, enabling streaming adaptation while keeping memory usage constant. The full computation is illustrated in fig. 2.
+The selection of DD during training.
+In our training setup, all question tokens are permanently retained in the cache, while a simple sliding-window eviction strategy is applied only to the thinking tokens. This straightforward design supports efficient batch operations across samples, whereas more sophisticated importance-based eviction would incur additional computational overhead. The decision to always keep question tokens is directly motivated by the sink-token mechanism in (Zhang et al., 2023), as both serve to anchor and preserve the prompt context, ensuring that the model maintains stable grounding even when the chain-of-thought becomes very long.
+4 Evaluations
+Table 1: Comparison of methods across different models on benchmark datasets.
+The best average performance per model is highlighted in bold.
+Note: Benchmark improvements are reported relative to Baseline,
+while FLOPs/Memory reductions are reported relative to LoRA.
+Studied Models
+Methods
+Maximum
+TFLOPs of
+Attention
+Peak GPU
+Mem. (%)
+Mean GPU
+Mem. (%)
+Math500
+pass@1
+Olympiad
+pass@1
+Minerva
+Math
+pass@1
+AMC
+pass@1
+AIME2024
+pass@16
+AIME2025
+pass@16
+Avg.
+Qwen2.5-3B-Instruct
+Baseline
+–
+–
+–
+50.8
+27.2
+16.1
+34.3
+20.0
+13.3
+26.9
+LoRA
+4.2
+82.8
+63.5
+53.2+2.4
+27.8+0.6
+15.9-0.2
+35.9+1.6
+20.00.0
+16.7+3.4
+28.2+1.3
+LoRAc\text{LoRA}_{c}
+2.6-1.6
+38.0-44.8
+31.0-32.5
+50.0-0.8
+27.7+0.5
+16.10.0
+33.1-1.2
+16.7-3.3
+10.0-3.3
+25.6-1.3
+Ours
+2.7-1.5
+45.3-37.5
+32.6-30.9
+54.0+3.2
+29.0+1.8
+16.2+0.1
+45.0+10.7
+20.00.0
+16.7+3.4
+30.1+3.2
+Qwen2.5-7B-Instruct
+Baseline
+–
+–
+–
+56.8
+34.7
+18.5
+48.4
+23.3
+16.6
+33.1
+LoRA
+5.7
+85.8
+59.3
+59.4+2.6
+38.7+4.0
+23.4+4.9
+50.6+2.2
+30.0+6.7
+26.7+10.1
+38.1+5.0
+LoRAc\text{LoRA}_{c}
+3.5-2.2
+63.1-22.7
+45.4-13.9
+61.2+4.4
+35.9+1.2
+23.7+5.2
+52.5+4.1
+20.0-3.3
+26.7+10.1
+36.7+3.6
+Ours
+3.6-2.1
+67.2-18.6
+48.6-10.7
+61.2+4.4
+38.7+4.0
+25.3+6.8
+52.5+4.1
+30.0+6.7
+30.0+13.4
+39.6+6.5
+DeepSeek-R1-
+Distill-Llama-8B
+Baseline
+–
+–
+–
+53.6
+28.7
+15.6
+42.5
+20.0
+20.0
+30.1
+LoRA
+7.4
+88.7
+53.5
+57.4+3.8
+35.3+6.6
+18.3+2.7
+55.0+12.5
+23.3+3.3
+20.00.0
+34.9+4.8
+LoRAc\text{LoRA}_{c}
+4.6-2.8
+59.1-29.6
+47.1-6.4
+54.2+0.6
+31.9+3.2
+16.0+0.4
+45.0+2.5
+36.7+16.7
+26.7+6.7
+35.1+5.0
+Ours
+4.6-2.8
+59.8-28.9
+46.8-6.7
+57.6+4.0
+39.7+11.0
+16.5+0.9
+60.0+17.5
+56.7+36.7
+43.3+23.3
+45.6+15.5
+4.1 Experimental Setup
+Models.
+We evaluate our method on three representative open-weight instruction-tuned models of varying scales and architectures:
+(1) Qwen2.5-3B-Instruct (Team, 2024), a 4.1B-parameter transformer with 32 decoder layers, a hidden dimension of 4,096, 32 attention heads (128 dimensions per head), and rotary positional encodings;
+(2) Qwen2.5-7B-Instruct (Team, 2024), a mid-scale 7.2B-parameter model with 32 decoder layers, hidden size of 5,120, and 40 attention heads. Its architecture follows the same design principles as the 4B variant but with larger hidden width and attention capacity;
+(3) DeepSeek-R1-Distill-Llama-8B (Guo et al., 2025; Vavekanand and Sam, 2024), an 8.0B-parameter model distilled from DeepSeek-R1 into LLaMA-3.1-8B. It comprises 32 transformer layers with hidden dimension 4,096, 32 attention heads, SwiGLU activation, and rotary embeddings. Compared with the original LLaMA-3.1

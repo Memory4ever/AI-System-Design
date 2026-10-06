@@ -1,0 +1,369 @@
+Exact-v1 primary HTML selection https://arxiv.org/html/2601.22068v1
+4 Singular Value Ensemble
+Our key insight is that by sharing the singular vectors (the “knowledge basis”) across ensemble members while learning member-specific singular values, we can create functionally diverse predictions with minimal parameter overhead. Each ensemble member “reweights” the pretrained knowledge subspaces differently, leading to different predictions for the same input.
+SVD Parameterization.
+For each target weight matrix 𝐖∈ℝm×n\mathbf{W}\in\mathbb{R}^{m\times n} of a pre-trained model, we compute its SVD:
+𝐖=𝐔​𝚺​𝐕⊤\mathbf{W}=\mathbf{U}\boldsymbol{\Sigma}\mathbf{V}^{\top}
+(3)
+We freeze the singular vectors 𝐔\mathbf{U} and 𝐕\mathbf{V}, and replace the singular values 𝚺\boldsymbol{\Sigma} with MM trainable copies {𝚺(m)}m=1M\{\boldsymbol{\Sigma}^{(m)}\}_{m=1}^{M}, one for each ensemble member. During training and inference, member mm uses:
+𝐖(m)=𝐔​𝚺(m)​𝐕⊤\mathbf{W}^{(m)}=\mathbf{U}\boldsymbol{\Sigma}^{(m)}\mathbf{V}^{\top}
+(4)
+Initialization and Diversity.
+To encourage diversity while preserving pretrained structure, we employ multiplicative initialization. Each member’s singular values 𝚺(m)\boldsymbol{\Sigma}^{(m)} are initialized as:
+𝚺(m)=𝚺⊙(1+ϵ(m)),ϵ(m)∼𝒩⁡(𝟎,σinit2​𝐈)\boldsymbol{\Sigma}^{(m)}=\boldsymbol{\Sigma}\odot(1+\boldsymbol{\epsilon}^{(m)}),\quad\boldsymbol{\epsilon}^{(m)}\sim\mathcal{N}(\mathbf{0},\sigma_{\text{init}}^{2}\mathbf{I})
+(5)
+where ⊙\odot denotes element-wise multiplication. This formulation scales perturbations proportionally to each singular value’s magnitude, preserving relative ordering, and guarantees positivity for reasonable noise levels (σinit<1\sigma_{\text{init}}<1). We enforce non-negativity of singular values during training and empirically set σinit=0.01\sigma_{\text{init}}=0.01 in most experiments, corresponding to approximately 1% relative perturbation.
+This small symmetry-breaking perturbation, combined with stochastic mini-batch sampling during training, causes ensemble members to converge to distinct rescalings of the shared basis. See Appendix B for empirical evidence.
+Implementation.
+We apply SVE to all linear projection matrices in the transformer, including attention (query, key, value, output) and feed-forward layers. At initialization, we compute the SVD of each target weight matrix, freeze the singular vectors 𝐔\mathbf{U} and 𝐕\mathbf{V}, and instantiate MM trainable copies of the singular values. During the forward pass, each member reconstructs its weights as 𝐖(m)=𝐔​𝚺(m)​𝐕⊤\mathbf{W}^{(m)}=\mathbf{U}\boldsymbol{\Sigma}^{(m)}\mathbf{V}^{\top}. Each member maintains a separate classification head.
+Training Objective.
+All ensemble members are trained jointly with a shared loss:
+ℒ=1M​∑m=1MℒCE​(f(m)​(𝐱),y)\mathcal{L}=\frac{1}{M}\sum_{m=1}^{M}\mathcal{L}_{\text{CE}}(f^{(m)}(\mathbf{x}),y)
+(6)
+where ℒCE\mathcal{L}_{\text{CE}} is the cross-entropy loss and f(m)f^{(m)} is the model with member mm’s singular values.
+Parameter Efficiency.
+For a weight matrix 𝐖∈ℝm×n\mathbf{W}\in\mathbb{R}^{m\times n}, SVE adds only (M−1)⋅min⁡(m,n)(M-1)\cdot\min(m,n) trainable parameters (the MM copies of singular values). For a transformer with LL layers, if we apply SVE to the query, key, value, and output projection matrices in attention, plus the two MLP layers, the overhead per member is approximately:
+Overhead=(M−1)⋅L⋅6​dL⋅12​d2=M−12​d≈0.2−1%\text{Overhead}=\frac{(M-1)\cdot L\cdot 6d}{L\cdot 12d^{2}}=\frac{M-1}{2d}\approx 0.2-1\%
+(7)
+for typical hidden dimensions dd (e.g., 768) and ensemble sizes MM (e.g., 4-16). We additionally allocate a separate classification head per ensemble member, adding M⋅d⋅CM\cdot d\cdot C parameters for CC classes, which remains a negligible overhead for most applications.
+5 Experiments
+We evaluate on diverse tasks spanning both NLP and vision domains, deliberately selecting datasets that reflect practical deployment scenarios where uncertainty quantification matters most: moderate-scale problems where practitioners fine-tune foundation models on domain-specific data with limited training samples. For NLP: ARC-Easy (Clark et al., 2018) (multiple-choice question answering; 2,251 training / 2,376 test samples) and SST-2 (Socher et al., 2013) (binary sentiment classification; 67k training / 872 validation samples). For vision: Flowers102 (Nilsback and Zisserman, 2008) (102 flower classes; 1,020 training / 6,149 test), CIFAR-100 (Krizhevsky, 2009) (100 object classes; 50k training / 10k test), DTD (Cimpoi et al., 2014) (47 texture classes; 1,880 training / 1,880 test), and Oxford Pets (Parkhi et al., 2012) (37 pet breeds; 3,680 training / 3,669 test). These datasets represent realistic fine-tuning regimes: fine-grained classification with limited labels (Flowers102, DTD, Oxford Pets), general object recognition (CIFAR-100), sentiment analysis (SST-2), and commonsense reasoning (ARC-Easy). For robustness evaluation, we use CIFAR-10 (10 classes; 10k test) as an out-of-distribution dataset and CIFAR-100-C (Hendrycks and Dietterich, 2019) for distribution shift experiments with five severity levels. Refer to Appendix D for more details about the datasets.
+We compare against the most established and widely-adopted uncertainty quantification methods for neural networks. As reference points, we include Single Model (standard fine-tuning) and Single w/ SVF (singular value fine-tuning without ensembling). Deep Ensemble (Lakshminarayanan et al., 2017) serves as the gold standard for uncertainty estimation, consistently ranking among the top methods in comprehensive benchmarks. MC Dropout (Gal and Ghahramani, 2016) remains one of the most widely deployed approaches due to its simplicity and integration into major frameworks. For implicit ensembles, we compare against Batch Ensemble (Wen et al., 2020), included in Google’s Uncertainty Baselines library, and LoRA-Ensemble (Mühlematter et al., 2024; Wang et al., 2023), the current state-of-the-art for implicit ensembling of transformer architectures. Finally, we include recent Bayesian approaches specifically designed for efficient fine-tuning: Bayes-LoRA (Yang et al., 2024), which applies Laplace approximation over LoRA parameters, and Blob (Wang et al., 2024), which jointly learns mean and covariance during fine-tuning and represents the current state-of-the-art in Bayesian approaches for LLMs.
+We evaluated each method’s predictive performance using classification accuracy and its calibration quality through Expected Calibration Error (ECE), Negative Log-Likelihood (NLL), and Brier score. The ECE measures how far predicted confidence intervals deviate from observed error rates; perfect calibration occurs when the estimated uncertainties match the actual likelihood of misclassification. Definitions of all metrics are provided in Appendix E.
+For NLP, we use LLaMA-2-7B for ARC-Easy and BERT-base-uncased for SST-2. For vision, we use DINO ViT-S/16 and DINOv2 ViT-S/14. All experiments use M=4M=4 ensemble members for vision tasks, M=8M=8 for SST-2 and M=16M=16 for ARC-Easy. Refer to Appendix A for how performance changes with a different number of members. Refer to Appendix C for training details. The code will be made publicly available at a later stage.
+Effect of Backbone Pretraining Scale.
+We first investigate how the quality of pretrained representations affects ensemble performance. Figure 2 shows CIFAR-100 test performance across progressively stronger pretrained backbones: random initialization, DINOv1, and DINOv2. A striking pattern emerges: as backbone quality improves because of larger pre-training dataset sizes, SV-Ensemble shows increasingly larger gains relative to other ensemble baselines. With randomly initialized weights, SV-Ensemble performs the worst as there is no meaningful knowledge base to leverage, while single or deep ensemble can converge to a better solution. However, with DINOv2’s superior representations, SV-Ensemble achieves the largest improvement and outperforms all the baselines including deep ensemble. This validates our core hypothesis: the benefits of SVE grow with representation quality, as stronger pretraining produces more meaningful singular vector bases that can be effectively reweighted for ensemble diversity.
+Figure 2:
+CIFAR-100 test performance vs. pretraining scale for a ViT-S model.
+With progressively stronger backbones (Random Init, DINOv1, DINOv2), SV-Ensembles show increasingly larger gains relative to other ensembling schemes. I.e., the benefits of SV-based ensembling grow with representation quality.
+Vision Results.
+Table 1 presents results for four vision benchmarks, using DINO backbones with 4 ensemble members. Models are trained for 10 epochs except Oxford Pets, where we train for only ≈\approx200 iterations to evaluate convergence speed and mimic resource-constrained training.
+Across all experiments, MC Dropout consistently falls short in terms of accuracy, often performing worse than even the single model baseline. While it occasionally provides marginally better calibration than the single model, it fails to leverage the pretrained representations effectively. This observation aligns with prior findings that MC Dropout is not well-suited for pretrained transformer architecture (Mühlematter et al., 2024). Single w/ SVF already improves both accuracy and calibration over the single model across all datasets, validating the effectiveness of singular value fine-tuning as a standalone adaptation strategy.
+Batch Ensemble shows mixed results: it achieves reasonable accuracy and calibration on some datasets (Flowers102, CIFAR-100), but catastrophically fails on Oxford Pets with severely degraded calibration. This instability suggests that Batch Ensemble’s rank-one perturbations are not well-suited for constrained training regimes with limited iterations. Deep Ensemble consistently improves accuracy over the single model and provides strong calibration on most datasets, except Oxford Pets where it exhibits poor calibration despite achieving good accuracy.
+LoRA-Ensemble achieves the best results on CIFAR-100, the largest dataset with 100 classes, outperforming all other methods in both accuracy and calibration. However, on the remaining three datasets, SV-Ensemble achieves the best accuracy and competitive or superior calibration. On Oxford Pets, SV-Ensemble achieves the highest accuracy and calibration, substantially outperforming Deep Ensemble and LoRA-Ensemble, which both suffer from poor ECE in this low-iteration setting.
+Overall, SV-Ensemble demonstrates robust performance across diverse datasets and training regimes, achieving the best or second-best results in most settings while using an order of magnitude fewer parameters than LoRA-Ensemble.
+Table 1: Comparison on vision benchmarks using DINO backbones. 4 members are used for ensemble methods. For each metric the best score is in bold, second best underlined.
+Method
+Acc (%)↑\uparrow
+ECE (%)↓\downarrow
+NLL↓\downarrow
+Brier↓\downarrow
+Flowers102 – DINO ViT-S/14 – Fine-tuning for 10 epochs
+Single
+86.3±\pm0.8
+3.9±\pm0.8
+0.56±\pm0.05
+0.20±\pm0.02
+Single w/ SVF
+91.8±\pm0.4
+1.8±\pm0.4
+0.33±\pm0.01
+0.12±\pm0.01
+MC Dropout
+76.6±\pm2.5
+4.4±\pm0.3
+0.92±\pm0.01
+0.32±\pm0.03
+Deep Ensemble
+91.5±\pm0.3
+0.9±\pm0.2
+0.33±\pm0.01
+0.12±\pm0.00
+Batch Ensemble
+91.7±\pm0.4
+2.2±\pm0.2
+0.32±\pm0.02
+0.12±\pm0.01
+LoRA-Ensemble
+94.6±\pm0.1
+1.1±\pm0.1
+0.21±\pm0.01
+0.08±\pm0.00
+SV-Ensemble
+95.4±\pm0.2
+1.0±\pm0.1
+0.18±\pm0.01
+0.07±\pm0.00
+CIFAR100 – DINO ViT-S/14 – Fine-tuning for 10 epochs
+Single
+82.1±\pm0.1
+6.2±\pm0.3
+0.65±\pm0.01
+0.26±\pm0.00
+Single w/ SVF
+82.6±\pm0.1
+1.1±\pm0.1
+0.57±\pm0.01
+0.25±\pm0.00
+MC Dropout
+78.6±\pm0.7
+5.3±\pm0.5
+0.74±\pm0.02
+0.30±\pm0.01
+Deep Ensemble
+85.4±\pm0.1
+3.9±\pm0.1
+0.50±\pm0.00
+0.21±\pm0.00
+Batch Ensemble
+82.9±\pm0.5
+2.9±\pm0.3
+0.57±\pm0.01
+0.24±\pm0.01
+LoRA-Ensemble
+88.2±\pm0.1
+1.1±\pm0.2
+0.37±\pm0.00
+0.17±\pm0.00
+SV-Ensemble
+85.6±\pm0.2
+2.1±\pm0.2
+0.47±\pm0.00
+0.21±\pm0.00
+DTD Texture – DINOv2 ViT-S/14 – Fine-tuning for 10 epochs
+Single
+60.2±\pm0.9
+11.6±\pm1.4
+1.56±\pm0.05
+0.55±\pm0.02
+Single w/ SVF
+78.4±\pm0.9
+8.2±\pm0.6
+0.82±\pm0.04
+0.32±\pm0.01
+MC Dropout
+53.1±\pm2.8
+9.2±\pm2.1
+1.76±\pm0.07
+0.62±\pm0.02
+Deep Ensemble
+65.4±\pm0.6
+7.6±\pm0.6
+1.32±\pm0.01
+0.48±\pm0.00
+Batch Ensemble
+67.2±\pm0.5
+8.1±\pm0.4
+1.20±\pm0.01
+0.47±\pm0.01
+LoRA-Ensemble
+78.4±\pm0.7
+6.6±\pm0.9
+0.80±\pm0.01
+0.32±\pm0.01
+SV-Ensemble
+79.5±\pm0.1
+6.3±\pm0.2
+0.74±\pm0.01
+0.30±\pm0.01
+Oxford Pets – DINOv2 ViT-S/14 – Fine-tuning for ≈200\approx 200 iter.
+Single
+81.4±\pm1.1
+8.6±\pm0.8
+0.61±\pm0.03
+0.27±\pm0.01
+Single w/ SVF
+87.2±\pm1.4
+1.9±\pm0.8
+0.40±\pm0.06
+0.19±\pm0.02
+MC Dropout
+25.9±\pm15.7
+6.1±\pm2.4
+2.53±\pm0.63
+0.85±\pm0.12
+Deep Ensemble
+89.2±\pm0.4
+13.3±\pm0.5
+0.43±\pm0.02
+0.17±\pm0.04
+Batch Ensemble
+70.5±\pm2.4
+48.7±\pm1.7
+1.75±\pm0.05
+0.69±\pm0.02
+LoRA-Ensemble
+86.1±\pm1.0
+9.0±\pm4.2
+0.49±\pm0.06
+0.22±\pm0.02
+SV-Ensemble
+90.1±\pm1.3
+2.2±\pm0.9
+0.30±\pm0.03
+0.15±\pm0.02
+NLP Results.
+Table 2 presents results on SST-2 sentiment classification using BERT-base with 8 ensemble members, trained for 3 epochs. SV-Ensemble achieves the best calibration among all methods, improving substantially over Deep Ensemble, LoRA-Ensemble, and Bayes-LoRA. While Deep Ensemble achieves the highest accuracy, SV-Ensemble remains competitive, trailing only slightly behind LoRA-Ensemble while using an order of magnitude fewer parameters. MC Dropout performs poorly on this task too, consistent with vision experiments and literature that dropout-based uncertainty tends to underperform on transformer architectures (Mühlematter et al., 2024).
+Table 3 presents results on ARC-Easy reasoning using LLaMA-2-7B. This challenging benchmark reveals how different approaches trade off accuracy and calibration. In terms of accuracy, LoRA-Ensemble, Deep Ensemble, and Checkpoint Ensemble all perform similarly, with SV-Ensemble matching this level at M=16M=16 members (for results with a different number of members, refer to Appendix A). The key differentiator is calibration: SV-Ensemble achieves dramatically lower ECE than all explicit and implicit ensemble baselines. Notably, SV-Ensemble approaches the calibration quality of Blob, a Bayesian method that jointly learns mean and covariance during fine-tuning, while being substantially simpler to implement.
+This positions SV-Ensemble as a balanced approach: it achieves accuracy comparable to LoRA-Ensemble and calibration comparable to Bayesian methods, while being more computationally efficient (see Table 5). The diversity induced by per-member singular values captures meaningful epistemic uncertainty without requiring explicit posterior approximation or expensive sampling procedures.
+Table 2: Performance on the SST-2 validation dataset. Ensembles have 8 members. Best score for each metric in bold, second-best underlined.
+Method
+Acc(%) (↑\uparrow)
+ECE (%) (↓\downarrow)
+NLL (↓\downarrow)
+Single
+92.5±\pm0.2
+6.4±\pm0.3
+0.35±\pm0.01
+Single w/ LoRA
+91.6±\pm0.5
+5.9±\pm0.5
+0.29±\pm0.02
+Single w/ SVF
+91.5±\pm0.2
+4.0±\pm0.3
+0.24±\pm0.01
+MC Dropout
+84.9±\pm1.2
+6.1±\pm0.4
+0.36±\pm0.02
+Deep Ensemble
+93.2±\pm0.2
+4.7±\pm0.2
+0.23±\pm0.00
+LoRA-Ensemble
+92.7±\pm0.2
+3.8±\pm0.3
+0.21±\pm0.01
+Bayes-LoRA
+90.7±\pm0.3
+3.6±\pm0.3
+0.25±\pm0.01
+SV-Ensemble
+92.0±\pm0.1
+2.8±\pm0.2
+0.21±\pm0.01
+Table 3: Comparison for the ARC-Easy (multiple choice QA) reasoning task with LLaMA-2-7B. Best score for each metric in bold, second-best underlined.
+Method
+Acc (%) ↑\uparrow
+ECE (%) ↓\downarrow
+NLL ↓\downarrow
+Single
+84.7
+13.4
+1.26
+Single w/ SVF
+83.2
+12.1
+0.77
+MC Dropout (N=10) (Yang et al., 2024)
+85.0
+12.4
+1.11
+Deep Ensemble (M=3) (Yang et al., 2024)
+85.8
+9.9
+0.83
+Last-Layer Ensemble (M=5) (Wang et al., 2023)
+72.0
+6.0
+0.79
+Ckpt Ensemble (M=3) (Yang et al., 2024)
+85.8
+9.8
+0.80
+LoRA-Ensemble (M=5) (Wang et al., 2023)
+86.0
+9.0
+0.92
+Bayes-LoRA (LLLA) (Yang et al., 2024)
+84.7
+11.6
+0.87
+Bayes-LoRA (LA) (Yang et al., 2024)
+85.1
+5.4
+0.49
+Blob (N=5) (Wang et al., 2024)
+84.7
+6.2
+0.46
+Blob (N=10) (Wang et al., 2024)
+85.5
+3.6
+0.40
+SV-Ensemble (M=16)
+85.8
+3.8
+0.43
+OOD Detection & Dataset Shift Robustness.
+Table 4: Model performance on out-of-distribution (OOD) detection. CIFAR-100 (DINO ViT-S/14 fine-tuned for 10 epochs) is used as the in-distribution dataset, with CIFAR-10 as OOD dataset. All ensemble methods use 4 members. For each metric, the best score is shown in bold and the second-best is underlined.
+Method
+AUROC (↑\uparrow)
+AUPRC (↑\uparrow)
+FPR 95% TPR (↓\downarrow)
+CIFAR-100 →\rightarrow CIFAR-10 (OOD)
+Single
+76.6±\pm0.4
+79.8±\pm0.5
+80.9±\pm0.2
+Single w/ SVF
+77.6±\pm1.1
+79.5±\pm1.5
+75.3±\pm0.9
+MC Dropout
+75.0±\pm0.1
+77.9±\pm0.3
+81.7±\pm0.4
+Deep Ensemble
+79.2±\pm0.2
+82.2±\pm0.2
+78.0±\pm0.5
+Batch Ensemble
+78.8±\pm0.1
+81.4±\pm0.2
+75.8±\pm0.7
+LoRA-Ensemble
+82.8±\pm0.4
+84.4±\pm0.5
+64.3±\pm0.6
+SV-Ensemble
+81.6±\pm0.3
+83.0±\pm0.5
+66.8±\pm0.2
+We evaluate SVE under both out-of-distribution (OOD) inputs and controlled dataset shifts, two key challenges for reliable uncertainty estimation in deep learning (Hendrycks and Gimpel, 2016). For OOD detection, models are trained on CIFAR-100 and evaluated on both CIFAR-100 (in-distribution) and CIFAR-10 (OOD), using the maximum softmax probability as the confidence score following prior work (Sim et al., 2023; Chen et al., 2023). As shown in Table 4, SV-Ensemble achieves strong OOD detection performance across all metrics, ranking second overall behind LoRA-Ensemble while using substantially fewer parameters.
+To assess robustness under dataset shift, we further evaluate SV-Ensemble on CIFAR-100-C, which apply 19 corruption types at five severity levels to the original test sets (Hendrycks and Dietterich, 2019). Across corruption severities, SV-Ensemble matches the accuracy of state-of-the-art implicit ensembles despite using far fewer parameters. More importantly, it yields superior calibration, especially at higher severities, surpassing even deep ensembles. SV-Ensemble also maintains strong NLL, remaining comparable to LoRA-Ensemble under stronger corruptions.
+Figure 3: Dataset Robustness Comparison with varying shift intensity on CIFAR-100-C. (i) Accuracy, (ii) Expected Calibration Error (ECE), and (iii) Negative Log-Likelihood (NLL).
+Computational Cost.
+Table 5 compares computational overhead on SST-2 using BERT-base with M=8M=8 members (RTX 4090, batch size 1, sequence length 128). SV-Ensemble achieves the lowest parameter and memory overhead at just 1.0%, representing a 10×\times reduction over LoRA-Ensemble and 700×\times over Deep Ensemble. For inference, SV-Ensemble matches LoRA-Ensemble as the fastest method. Bayes-LoRA, while parameter-efficient, incurs prohibitive inference latency due to posterior sampling. The SVD decomposition required by SV-Ensemble is a one-time initialization cost (approximately 3.5 seconds for BERT-base), negligible relative to total training time.
+Note that our current implementation parallelizes ensemble members on a single GPU, so memory savings are not fully realized at runtime. In memory-constrained setups, members can be processed sequentially during training and inference. We leave optimized sequential implementations to future work.
+Table 5: Computational cost comparison (relative to single network) of major competing approaches using Bert-base on the SST2 task (M=8M=8 ensemble members). A batch size of 1 and a sequence length of 128 are used for timings. Best score is in bold.
+Method
+Parameter
+Memory
+Infer.
+Infer.
+Overhead(%)
+Overhead(%)
+Flops(G)
+Time(ms)
+Deep Ensemble
+700
+700
+8×21.98\times 21.9
+8×3.18\times 3.1
+LoRA-Ensemble
+10.3
+10.3
+175.2
+21.9
+Bayes-LoRA
+4.0
+4.0
+68.2
+313
+SV-Ensemble
+1.0
+1.0
+175.2
+21.9
+
+
+--- Additional necessary exact-v1 source selection ---
+C.3 Baseline Configurations
+For fair comparison, all methods use identical backbone architectures, optimizers, and training schedules. Some methods use a smaller learning rate, such as Single or Deep Ensemble, because they cannot converge with a higher learning rate. We specified below if a different learning rate is used.
+Deep Ensemble: M=4 independently trained models with different random seeds. Learning rate set to 1×10−4.
+MC Dropout: Single model with dropout rate 0.05, using 10 forward passes at inference. Learning rate set to 1×10−4.
+LoRA-Ensemble: Per-member LoRA adapters with rank r=8 and α=8, applied to attention projections and fully connected layers. Learning rate set to 1×10−3.
+BatchEnsemble: Rank-one perturbations with M=4 members. Learning rate set to 1×10−4.
+All experiments are run with 3 random seeds and we report mean ± standard deviation.

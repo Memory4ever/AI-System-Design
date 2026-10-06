@@ -1,0 +1,159 @@
+URL: https://arxiv.org/html/2602.17375v1
+Status: 200
+SMC sweep
+Two adjustments to vanilla SMC sweep are required:
+1.
+In order for particle policies to be deterministic, an action
+must be drawn from the proposal distribution on the first visit to each
+visited state only. If a trajectory revisits a state, both the prior
+and the proposal probability of the action assigned on the first visit
+are 1 (and of any other action are 0).
+2.
+Because the stochastic estimate log⁡Z^\log\hat{Z} is induced by the
+entire particle system rather than by individual particles,
+stochasticity arising from environment dynamics must be coupled across
+particles. In particular, random state transitions must be shared,
+otherwise relative particle weights would be confounded by both
+differences in their policies and independent realizations of the
+transition noise. Concretely, whenever two particles visit the same
+state ss and select the same action aa for the same kkth time,
+they are required to transition to the same successor state s′s^{\prime}.
+This can be implemented by lazily sampling a shared transition tensor
+T^\hat{T}, where T^s,ak∼T(⋅∣s,a)\hat{T}_{s,a}^{k}\sim T(\cdot\mid s,a) is sampled once
+and reused by all particles within a sweep. The environment dynamics
+TT are then replaced, during inference, by this shared random
+realization T^\hat{T} 22
+2
+This coupling of transition randomness
+is related to the classical common random numbers variance
+reduction technique (Mohamed et al., 2020), however here it is applied for
+correctness rather than for variance reduction..
+Optimization objective
+The original VSMC formulation
+assumes reparameterizable SMC proposal distributions and omits score
+function terms associated with the non-differentiable
+resampling operation due to their high variance and low
+signal. In finite‐action MDPs, however, a categorical distribution
+over actions cannot be reparameterized. Consequently, while the
+resampling-induced score terms may still be dropped, the
+score–function contribution arising from sampling actions from
+the proposal must be retained in order to obtain meaningful
+gradients. This yields the surrogate objective
+ℒ=log⁡Z^+log⁡Z^¯⋅∑t=1H∑i=1Nlog⁡q⁡(at,i∣st,i)\mathcal{L}=\log\hat{Z}+\overline{\log\hat{Z}}\cdot\sum_{t=1}^{H}\sum_{i=1}^{N}\log q(a_{t,i}\mid s_{t,i})
+(10)
+where the overline denotes a stop-gradient operation. The high
+variance of this REINFORCE‐style term can be substantially reduced by
+exploiting the temporal dependency structure of
+trajectories (Schulman et al., 2015). Defining
+log⁡Z^t=∑t′=tHlog⁡(1N​∑i=1Nwt′,i),\log\hat{Z}_{t}=\sum_{t^{\prime}=t}^{H}\log\left(\frac{1}{N}\sum_{i=1}^{N}w_{t^{\prime},i}\right),
+(11)
+an equivalent, temporally stratified objective is obtained:
+ℒ=log⁡Z^+∑t=1H(log⁡Z^t¯⋅∑i=1Nlog⁡q⁡(at,i∣st,i)),\mathcal{L}=\log\hat{Z}+\sum_{t=1}^{H}\left(\overline{\log\hat{Z}_{t}}\cdot\sum_{i=1}^{N}\log q(a_{t,i}\mid s_{t,i})\right),
+(12)
+which replaces a single global learning signal with step-specific
+signals, thus improving estimator stability.
+Algorithm 1 computes the surrogate VSMC objective for
+inference over deterministic policies. Certain performance-related refinements
+are omitted, for the sake of clarity and conciseness, from the algorithm
+pseudocode, and the reader is encouraged to consult the accompanying
+reference implementation for full detail.
+Algorithm 1 VSMC over deterministic policies
+1:
+procedure DeterministicPolicyVSMC(s1s_{1}, Step, Reward, HH, NN, qq)
+2:
+log⁡qp←0\log q_{p}\leftarrow 0 ⊳\triangleright proposal log probability
+3:
+log⁡Z^←0\log\hat{Z}\leftarrow 0 ⊳\triangleright log evidence estimate
+4:
+MA←∅M_{A}\leftarrow\varnothing ⊳\triangleright action memory
+5:
+MC←∅M_{C}\leftarrow\varnothing ⊳\triangleright transition count memory
+6:
+MT←∅M_{T}\leftarrow\varnothing ⊳\triangleright transition memory
+7:
+for i←1,Ni\leftarrow 1,N do ⊳\triangleright Initialize particles to s1s_{1}
+8:
+s(i)←s1s^{(i)}\leftarrow s_{1}
+9:
+end for
+10:
+for t←1,Ht\leftarrow 1,H do
+11:
+for i←1,Ni\leftarrow 1,N do
+12:
+s←s(i)s\leftarrow s^{(i)}
+13:
+⊳\triangleright Select action
+14:
+if (i,s)∈dom⁡MA(i,s)\in\operatorname{dom}M_{A} then ⊳\triangleright particle ii previously visited ss
+15:
+a←MA​(i,s)a\leftarrow M_{A}(i,s)
+16:
+c←MC​(i,s,a)c\leftarrow M_{C}(i,s,a)
+17:
+log⁡pa,log⁡qa←0, 0\log p_{a},\,\log q_{a}\leftarrow 0,\,0
+18:
+else
+19:
+a∼q⁡(s)a\sim q(s)
+20:
+MA​(i,s)←aM_{A}(i,s)\leftarrow a
+21:
+c←1c\leftarrow 1
+22:
+log⁡pa,log⁡qa←1|A|,log⁡q⁡(a∣s)\log p_{a},\,\log q_{a}\leftarrow\frac{1}{|A|},\,\log q(a\mid s)
+23:
+log⁡qp←log⁡qp+log⁡qa\log q_{p}\leftarrow\log q_{p}+\log q_{a}
+24:
+end if
+25:
+MC​(i,s,a)←c+1M_{C}(i,s,a)\leftarrow c+1
+26:
+⊳\triangleright Perform action
+27:
+if (s,a,c)∈dom⁡MT(s,a,c)\in\operatorname{dom}M_{T} then ⊳\triangleright any particle took aa in ss cc times
+28:
+s′←MT​(s,a,c)s^{\prime}\leftarrow M_{T}(s,a,c)
+29:
+else
+30:
+s′←Step​(s,a)s^{\prime}\leftarrow\textsc{Step}(s,a)
+31:
+MT​(s,a,c)←s′M_{T}(s,a,c)\leftarrow s^{\prime}
+32:
+end if
+33:
+34:
+w(i)←Reward​(s,a,s′)+log⁡pa−log⁡qaw^{(i)}\leftarrow\text{{Reward}}(s,a,s^{\prime})+\log p_{a}-\log q_{a} ⊳\triangleright Particle weight
+35:
+end for
+36:
+logZ^←logZ^+log∑i=1Nexp(w(i))\log\hat{Z}\leftarrow\log\hat{Z}+\log\sum_{i=1}^{N}\exp\left(w^{(i)}\right)
+37:
+s(1:N)←Resample(s(1:N),w(1:N))s^{(1:N)}\leftarrow\text{{Resample}}\left(s^{(1:N)},w^{(1:N)}\right)
+38:
+end for
+39:
+return log⁡Z^+log⁡Z^¯⋅log⁡qp\log\hat{Z}+\overline{\log\hat{Z}}\cdot\log q_{p}
+40:
+end procedure
+Theorem 1 establishes that
+Algorithm 1 performs stochastic gradient ascent on a
+well-defined scalar objective, rather than relying on a heuristic update rule.
+Theorem 1 (Unbiased gradient estimator).
+Let Z^​(T^,𝐚)\hat{Z}(\hat{T},\mathbf{a}) denote the SMC normalizing constant
+estimator produced by a sweep of the modified algorithm, where
+T^\hat{T} is the shared random realization of the transition dynamics
+and 𝐚={at,i}t=1,i=1H,N\mathbf{a}=\{a_{t,i}\}_{t=1,i=1}^{H,N} are the actions sampled from
+the proposal qθq_{\theta}. Define the objective
+𝒥⁡(θ)=𝔼T^∼T,𝐚∼qθ​[log⁡Z^​(T^,𝐚)].\mathcal{J}(\theta)\;=\;\mathbb{E}_{\hat{T}\sim T,\;\mathbf{a}\sim q_{\theta}}\big[\log\hat{Z}(\hat{T},\mathbf{a})\big].
+(13)
+Then the gradient of the surrogate objective in
+Eqs. (10) and
+(12) is an unbiased estimator
+of ∇θ𝒥​(θ)\nabla_{\theta}\mathcal{J}(\theta).
+Proof outline.
+Conditioned on a realization of the shared dynamics T^\hat{T}, the
+randomness in log⁡Z^​(T^,𝐚)\log\hat{Z}(\hat{T},\mathbf{a}) arises solely from
+sampling actions from the categorical proposal qθq_{\theta}. Since
+log⁡Z^\log\hat{Z} is a deterministic function o

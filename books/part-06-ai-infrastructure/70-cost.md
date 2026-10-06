@@ -116,6 +116,10 @@ cost_per_good_request
 
 只看 output token 会忽略 Prefill；只看 request 会忽略长度。应同时保留 prompt/output lengths、cache hit、model/quantization、hardware、concurrency 与 SLO。
 
+长度成本实验还必须记录输出上限：设潜在完成长度为 L、cap 为 C，实际统计通常只见到 min(L,C)。大量回答触及 cap，说明该配置下的资源压力，却不能识别 cap 以外的完整尾分布或未截断分位数；这是对测量条件的工程解释，不是由固定 5k-token 实验取得的无限尾部结论。Native token accounting、开放模型采样温度与闭源默认配置也要分别保留，不能把不同 decoder 的计数直接合成统一长度策略。<!-- source-family:SF-2026-ARXIV-2601-08490 -->
+
+提醒模型简短可以减少输出，却同时改变任务效用，不能只据 token 下降签发无损 mitigation。受限对照中某些模型的正常任务完整正确率明显下降，另一些没有同样退步；应共同验收 length/cap-hit、正常任务质量与实际资源时间。论文未测真实服务 latency、跨租户排队或生产 DoS，故这些仍需独立 workload 验收；效用退步或尾部不可见时，应保留硬预算、准入与原 decoder 配置，而不是把文字提醒当作资源隔离。
+
 ### Utilization 应由实际负载推出，而不是由计算器假定
 
 用满载吞吐除以 GPU 单价，可以得到清晰的理论下界；在容量规划早期、持续满载或批处理可任意排队时，这个旧口径仍有用。在线服务的 offered load 较低或到达呈 burst 时，固定填写 `100% utilization` 会把空闲资源时间从账本里消失，使同一硬件看起来拥有并不存在的低 token 成本。
@@ -200,6 +204,8 @@ effective_utilization
 环境维度不能互相代理，并不意味着每次选择计算配置都需要不同排名。若 workload、质量/延迟可行集合及 functional unit 固定，同一地点和时段下的 operational impact 都写成 IT energy 乘各自相同的正 intensity，能耗更低的配置在这些维度中也更低；这是比例模型的条件结论。改变地点或时段后，各 intensity 的次序可以不同，能耗最优地域不再自然是碳、水或生态影响最优地域。应把计算配置排序和部署排序分开，不将固定部署的经验一致性扩大成跨地域代理权限。
 
 加入配置相关的 embodied impact 后，设配置 i 的 IT energy 低于 j；只有 i 相对 j 的 embodied 劣势大于 `intensity × (energy_j − energy_i)`，对应维度才会偏好更高能耗的 j。关键是差额方向与 crossover，而不是 embodied 总占比大；pairwise 翻转也未必改变全候选最优项。[PRISM v1 §2/§6/A.5.1](https://arxiv.org/html/2609.35569v1) 支持这条条件边界，结论仍依赖相同地域执行 profile、硬件寿命/利用率分摊与环境系数。新增核算与优化不确定性不能变成真实站点合规或生产收益；既有 fleet 的制造负担已发生，运行路由与采购决策还须分账。条件失配、迁移/网络代价未知或数据不足时保留原部署与范围估算，由调度 owner 在硬约束内另行验收。<!-- source-family:SF-2026-ARXIV-2609-35569 -->
+
+低 intensity 时间窗很短且不同站点不同步时，迁移训练不能只换一个碳系数：冷启动、完整参数同步、local-step/FedAvg 与暂停改变了有效训练进度和优化路径，同功能单位应包含这些切换工作与独立质量要求。[有限 curtailment-aware 原型](https://arxiv.org/html/2602.22760v1)用低 marginal-intensity trace 作被弃电力的 proxy，在短窗口中同步/部署可吞掉有效计算时间；较低估算碳排仍伴随更高总能耗。Near-IID 分配和动态参与是其条件，train EMA/best perplexity 不能替代 held-out 能力，地理 trace replay 也不等站点实际弃电或物理排放测量。Provisioning、hysteresis、同步、失败未回报人口与进度恢复须计费，但不在成本章节重写训练状态协议；窗口不足、非IID或质量退化时，保留固定站点连续训练、保守暂停与原同步路径，不由低碳估算自签训练品质、zero-carbon 或账单收益。<!-- source-family:SF-2026-ARXIV-2602-22760 -->
 
 量化、batching、cache reuse 和更小模型可降低单位成本。但更便宜的调用会诱发更多调用、更长 context 或更多 Agent loops，总账单可能上升。
 
@@ -320,6 +326,11 @@ break-even 依赖模型价格、对话分布和正确率目标，不能把某个
 细粒度控制可能把压力从 core 移到 memory，或因阶段误判恶化尾延迟，还会增加传感、控制与稳定性成本。现有 exact-v1 的效率数字只属于受测 GPU 和操作，不能外推为通用节能比例。组件可观测性、actuator isolation 或阶段识别不足时，应回退经过验证的整卡 power cap，并保留 thermal/SLO guard。
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-21847:end -->
 
+组件与阶段的可控性成立后，频率选择还可以从“每个 kernel 都不能变慢”放宽为“整段执行不能超出允许时长”。对指定调用及 shape 分别测量频率配置的时间与能量，再最小化总能量、约束全部 kernel 的总时长，便允许一个调用局部变慢、由其他调用的时间收益补偿；固定频率或逐 kernel 非变慢规则则保留了更简单的预算边界。[Kernel-level DVFS exact-v1 §4–6](https://arxiv.org/html/2601.08539v1) 使用这种全局分配，但其顺序 kernel 时间总和不等于并发、通信或完整多 GPU 训练的 critical path。
+
+搜索出的频率组合只是待执行 proposal：逐 kernel 切频的延迟可能超过短 kernel，热状态、测量噪声与搜索选择正向异常值也会破坏预算。作者 RTX3080Ti 的重测已从最初零慢化变为约0.6%慢化，§9 明示当前频率不能全部成功逐次应用；因此平台必须把实际切换、overlap/通信和独立重复测量加入端到端验收，不能承诺零损失节能。不能稳定执行或满足热/SLO 约束时，退回阶段级、固定频率或已验证整卡 cap，并保留原 profile 与失败证据。
+<!-- source-family:SF-2026-ARXIV-2601-08539 -->
+
 在目标设备尚未可用的设计阶段，实测组件活动与功率曲线也可能拿不到；只按 FLOPs、总 bytes 或 kernel latency 估算，则会抹掉 L2 与 DRAM 访问、SM 间负载分布的能耗差异。一条有条件的预测分支从 tile、threadblock 排布与 pipeline 推导各层流量和 busy/lazy SM 时间线，用已有硬件的离线测量校准相位时延及模块功率系数，再把规则、顺序 kernel 的估计合成待选架构和频率的功率 proposal。它把“先运行每个目标配置再决定”改为“先筛设计点，再在目标设备上测量”，不是免去所有 profiling。<!-- source-family:SF-2026-ARXIV-2604-20105 -->
 
 这种代理提高预选速度，却把 kernel layout 识别、离线校准集和跨架构能效假设引入成本合同。目标平台的内存技术改变、并发 kernel/通信与不规则稀疏出现时，旧模型可能失准；单 GPU 的平均功率误差也不能签多租户尾延迟、整机能量或正式 power cap。相同设备与稳定 workload 已有实测时，直接 profile 更可信；尚未具备目标设备时才用结构预测缩小试验空间，并在取得设备后以真实功率、热与 SLO 测量验收或回退保守预算。作者在 A100/A10 离线训练、H100/L40S 有限外推下的结果仅支持这个受限分支，不是通用功率传感器。<!-- source-family:SF-2026-ARXIV-2604-20105 -->
@@ -428,3 +439,9 @@ Primary-source 与实践入口：
 
   **已吸收的语义增量：** 新增证据边界：AgentFootprint diffs fresh per-run sandboxes, classifies retained artifacts, measures logical bytes/composition/duplication/echo/compressibility/growth and separately tests reconstructability. 该 delta 已进入 `books/part-06-ai-infrastructure/70-cost.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-11149:end -->
+
+- `SF-2026-ARXIV-2601-08539` — Daily `2026-01-15`；[Kernel-level DVFS exact-v1](https://arxiv.org/html/2601.08539v1) §4–9/Tables1–2。2+2+2=6，调用级全局时间预算 owner 缺口深入；采用局部慢化补偿、profile 选择偏差与实际切频不可行反侧，不采用生产逐 kernel 实施或零慢化保证。单 GPU 隔离调用估计不是完整训练实测，未核代码或复现；root 必要原源/owner 写前核通过，root 实际正文/前后衔接及末注非作者 POST 通过，日级 Gate 未授。
+
+- `SF-2026-ARXIV-2601-08490` — Daily `2026-01-15`；[BenchOverflow exact-v1](https://arxiv.org/html/2601.08490v1) §4.1固定5k cap/模型native统计、Table3正常任务反侧与限制。2+1+2=5，具体cap-censor/length≠utility gap深入；尾部不可见是工程推断，不授真实latency、cross-tenant DoS或无损提醒。open T1/closed default、质量下降与未披露硬件/runtime保留；未运行代码或复现。root必要原源/现owner写前通过并授窄锁，root已实际核两段正文、前后交接与末注，非作者POST通过；日级Gate未授。
+
+- `SF-2026-ARXIV-2602-22760` — Daily `2026-02-28`；[exact-v1](https://arxiv.org/html/2602.22760v1)，必要原段/对照与局部反侧见当日core/owner packet。fresh非旧packet作者独核具体原证与actual owner差额，获root该owner窄ownership后写一段；作者正文及完整邻接实际顺读，root非写入者实际正文、完整邻接与自身末注POST通过，窄锁释放。采用正文窄命题，局部错误不授理论/全系统保证，未核实现或复现，不授日级Gate。

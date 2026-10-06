@@ -1,0 +1,1730 @@
+Discrete Feynman-Kac Correctors
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Background
+2.1 Simulating Forward Kolmogorov Equation (FKE)
+2.2 Discrete Masked Diffusion
+3 Discrete Feynman-Kac Correctors
+3.1 Temperature Annealing11
+1
+See  for the proofs
+3.2 Product and Geometric Averaging33
+3
+See  for the proofs
+3.3 Reward-tilted Marginals55
+5
+See  for the proofs
+4 Experiments
+4.1 Annealing the Ising Model
+4.2 Products and Annealing for Language Modelling
+Code Generation
+Amortized Learning
+4.3 Guiding Protein Sequence Generation with External Rewards
+5 Related Work
+Reward Fine-tuning
+Inference Time Alignment
+Boltzmann distribution annealing
+Theoretical guarantees
+6 Conclusion
+References
+A Method Overview
+A.1 Correspondence to Continuous Feynman-Kac Correctors
+B Background Proofs
+B.1 Weighted Forward Kolmogorov Equation
+B.2 Discrete Feynman-Kac formula
+B.3 Discrete Masked Diffusion
+B.4 Reverse-time Masked Diffusion
+B.5 De-masking parameterization
+B.6 Multidimensional case
+C Discrete Feynman-Kac Correctors Proofs
+C.1 Annealing of FKE
+C.2 Product of FKEs
+C.3 Geometric Average of FKEs
+C.4 Reward-Tilted FKE
+D Experimental Details
+D.1 Annealing the Ising Model
+D.2 Amortized Linear Regression
+D.2.1 Theoretical Justification
+D.2.2 Experimental Setup
+D.2.3 Additional Results for Amortized Learning
+D.3 Code Generation
+D.4 Multi-constraint Story Generation
+D.5 Protein Sequence Generation
+D.5.1 Reward Models
+ESM2 Likelihood Reward
+Thermostability Reward
+D.5.2 Baselines
+DG-Exact
+FK Steering
+D.5.3 Description of protein metrics
+Diversity
+Structural confidence
+Novelty
+D.5.4 Hyperparameters
+D.5.5 Additional Protein Results
+License: arXiv.org perpetual non-exclusive license
+arXiv:2601.10403v1 [cs.LG] 15 Jan 2026
+Discrete Feynman-Kac Correctors
+Mohsin Hasan
+††thanks: Equal contribution.
+Correspondence to ˜mohsin.hasan@mila.quebec,˜˜ v.ohanesian24@imperial.ac.uk
+Affiliation: Université de Montréal
+Affiliation: Mila
+Viktor Ohanesian11footnotemark:
+1
+Affiliation: Imperial College London
+Artem Gazizov
+Affiliation: Harvard University
+Yoshua Bengio
+Affiliation: Université de Montréal
+Affiliation: Mila
+Alán Aspuru-Guzik
+Affiliation: University of Toronto
+Affiliation: Vector Institute
+Affiliation: NVIDIA
+Roberto Bondesan
+Affiliation: Imperial College London
+Marta Skreta,   Kirill Neklyudov
+Affiliation: Université de Montréal
+Affiliation: Mila
+Affiliation: Institut Courtois
+Abstract
+Discrete diffusion models have recently emerged as a promising alternative to the autoregressive approach for generating discrete sequences. Sample generation via gradual denoising or demasking processes allows them to capture hierarchical non-sequential interdependencies in the data. These custom processes, however, do not assume a flexible control over the distribution of generated samples. We propose Discrete Feynman-Kac Correctors, a framework that allows for controlling the generated distribution of discrete masked diffusion models at inference time. We derive Sequential Monte Carlo (SMC) algorithms that, given a trained discrete diffusion model, control the temperature of the sampled distribution (i.e. perform annealing), sample from the product of marginals of several diffusion processes (e.g. differently conditioned processes), and sample from the product of the marginal with an external reward function, producing likely samples from the target distribution that also have high reward. Notably, our framework does not require any training of additional models or fine-tuning of the original model. We illustrate the utility of our framework in several applications including: efficient sampling from the annealed Boltzmann distribution of the Ising model, improving the performance of language models for code generation and amortized learning, as well as reward-tilted protein sequence generation.
+1 Introduction
+The success of diffusion models in continuous domains, such as the generation of images (Rombach et al., 2022), videos (Wang et al., 2023; Blattmann et al., 2023), or 3D protein structures (Abramson et al., 2024; Watson et al., 2023), has motivated their application to discrete data spaces. Indeed, modeling discrete data such as text or biological sequences using diffusion processes is a promising direction since they do not rely on sequential token generation as with autoregressive models, which can impose arbitrary orderings on data (e.g., molecular structures and protein sequences (Lee et al., 2025; Alamdari et al., 2023)), or can suffer from exposure biases that limit long-horizon planning or reversal reasoning in natural language domains (Berglund et al., 2023; Nie et al., 2025).
+Discrete diffusion is a general framework that defines a Continuous-Time Markov Chain (CTMC) process that progressively transforms data to a tractable distribution through a series of random transitions, and then learns to reverse this process and recover the original data distribution (Campbell et al., 2022; Lou et al., 2024; Sahoo et al., 2024; Shi et al., 2024). Furthermore, using external classifiers (Vignac et al., 2022; Nisonoff et al., 2024; Tang et al., 2025) or correction schemes (Nisonoff et al., 2024; Gruver et al., 2023) one can efficiently sample from various conditional distributions, e.g. conditioning on desired target properties of a protein (Gruver et al., 2023).
+Most practical applications, however, require producing novel and task-specific generations rather than precise recreation of the training data. To produce novel generations, most generative models rely either purely on generalization abilities (Brown et al., 2020; Saharia et al., 2022) or on external reward functions in different forms  (DeepSeek-AI, 2025; Rector-Brooks et al., 2024; Singhal et al., 2025). Furthermore, it has been shown that one can control the distribution of the produced samples by running task-specific Sequential Monte Carlo (SMC) methods at inference time (Skreta et al., 2024; Skreta et al., 2025; He et al., 2025). In particular, Skreta et al. (2025) proposes the Feynman-Kac Correctors, which enable sampling from annealed densities (ptanneal​(x)∝pt​(x)βp_{t}^{\text{anneal}}(x)\propto p_{t}(x)^{\beta}) or a product of multiple densities (ptprod​(x)∝∏i=1Mpti​(x)p_{t}^{\text{prod}}(x)\propto\prod_{i=1}^{M}p_{t}^{i}(x)) by simulating weighted stochastic differential equations (SDEs) with SMC resampling. This framework, however, is derived and presented only for the Fokker-Planck equation and does not directly apply to the discrete diffusion models, which are described by CTMC.
+We cover the existing literature gap by introducing Discrete Feynman-Kac Correctors (DFKC) — a principled framework enabling the control of discrete diffusion models at inference time (see Figure 1). In particular, given a trained discrete diffusion model with marginals pt​(i)p_{t}(i) or several models with pt1​(i),pt2​(i),…p_{t}^{1}(i),p_{t}^{2}(i),\ldots (or the same model with different conditions pt​(i|c1),pt​(i|c2),…p_{t}(i\,|\,c_{1}),p_{t}(i\,|\,c_{2}),\ldots), we modify the inference process to sample from the: (i) temperature annealed version of the marginals ptanneal​(i)∝pt​(i)βp_{t}^{\mathrm{anneal}}(i)\propto p_{t}(i)^{\beta}, where β\beta is the inverse temperature (ii) product of corresponding marginals ptprod​(i)∝pt1​(i)​pt2​(i)p_{t}^{\mathrm{prod}}(i)\propto p_{t}^{1}(i)p_{t}^{2}(i) (iii) geometric average of the marginals ptavg​(i)∝pt1​(i)γ​pt2​(i)(1−γ)p_{t}^{\mathrm{avg}}(i)\propto p_{t}^{1}(i)^{\gamma}p_{t}^{2}(i)^{(1-\gamma)} (iv) reward-tilted marginals ptreward​(i)∝pt​(i)​exp⁡(βt​r​(i))p_{t}^{\mathrm{reward}}(i)\propto p_{t}(i)\exp(\beta_{t}r(i)), where r⁡(i)r(i) is the external reward function.
+Our contribution is two-fold, we establish the theoretical framework that applies to general CTMC processes and we illustrate its utility with multiple applications on different domains. In particular, for each part of the framework, we choose the most promising and fitting applications: (i) we demonstrate that DFKC allows for efficient inference-time control of the temperature when sampling the configurations of the Ising model, which can be used as an efficient sampling algorithm (Akhound-Sadegh et al., 2025) (ii) we demonstrate that applying DFKC to a language model can be used to improve performance on programming tasks (with annealing) and allow scaling to larger prompts for amortized learning (using products) (iii) finally, we demonstrate how DFKC can be used to generate realistic protein sequences (Wang et al., 2024b) while optimizing external reward functions.
+Figure 1: Discrete Feynman-Kac Correctors allow sampling from annealed distributions, product (or geometric average), and reward-tilted distributions. Panel (a) depicts the schematic of DFKC compared to the standard inference of masked discrete diffusion. Panel (b) demonstrates how DFKC, given trained discrete diffusion models and the reward function, samples from modified distributions at inference time.
+2 Background
+We consider continuous-time Markov chains (CTMC) or jump processes on discrete state spaces. Namely, every variable xtx_{t} can take values in the range 0,…,m0,\ldots,m, and the time tt is in the interval t∈[0,1]t\in[0,1]. All such processes are described by the Forward Kolmogorov Equation (FKE) (Kolmogoroff, 1931), which is why our main results are stated in terms of these equations.
+For discrete diffusion, we consider the specific case of masked diffusion processes and reserve a specific ‘mask’ state mm into the set of discrete states. We simulate the diffusion process by discretizing the corresponding FKE in time, and use standard notation: Cat​(x|π)\texttt{Cat}(x\,|\,\pi) denotes the categorical distribution with probabilities π\pi, and δi​j\delta_{ij} is the Kronecker symbol.
+2.1 Simulating Forward Kolmogorov Equation (FKE)
+The forward Kolmogorov equation for continuous-time Markov chains describes the evolution of the transition probability as follows
+∂p⁡(xs=j|xt=i)∂s=∑kAs​(k,j)​p​(xs=k|xt=i),As​(k,j)≔∂p⁡(xt=j|xs=k)∂t|t=s.\displaystyle\frac{\partial p(x_{s}=j\,|\,x_{t}=i)}{\partial s}=\sum_{k}A_{s}(k,j)p(x_{s}=k\,|\,x_{t}=i)\,,\;A_{s}(k,j)\coloneqq\frac{\partial p(x_{t}=j\,|\,x_{s}=k)}{\partial t}\bigg|_{t=s}\,.
+In practice, FKE can be used to parameterize the time-evolution of the marginals by specifying the rate matrix At​(i,j)A_{t}(i,j) and the initial boundary condition pt=0​(i)≔p⁡(x0=i)p_{t=0}(i)\coloneqq p(x_{0}=i). In this case, the change of the marginals is defined as follows
+∂pt​(i)∂t=\displaystyle\frac{\partial p_{t}(i)}{\partial t}=~
+∑jAt​(j,i)​pt​(j),∑jAt​(i,j)=0,At​(i,i)≤0,At​(i,j)≥0,∀i≠j,\displaystyle\sum_{j}A_{t}(j,i)p_{t}(j)\,,\;\sum_{j}A_{t}(i,j)=0\,,\;A_{t}(i,i)\leq 0\,,A_{t}(i,j)\geq 0\,,\;\forall i\neq j\,,
+(1)
+where we introduce constraints on the family of the possible matrices At​(i,j)A_{t}(i,j) according to the definition of the rate matrix.
+Fortunately, this constraints can be easily satisfied by parameterizing only the off-diagonal terms of the matrix At​(i,j)A_{t}(i,j) and defining the diagonal term At​(i,i)A_{t}(i,i) as the negative sum over the off-diagonal.
+∂pt​(i)∂t=\displaystyle\frac{\partial p_{t}(i)}{\partial t}=~
+OPEN∑j≠i(At​(j,i)​pt​(j)−At​(i,j)​pt​(i)CLOSE).\displaystyle\sum_{j\neq i}\mathopen{}\mathclose{{\left(A_{t}(j,i)p_{t}(j)-A_{t}(i,j)p_{t}(i)}}\right)\,.
+(2)
+To draw samples from pt​(i)p_{t}(i) one can draw samples from p0​(i)p_{0}(i) and simulate FKE by discretizing it in time. Namely, at every iteration, one samples from the following conditional probability
+p⁡(xt+d​t=j|xt=i)=δi​j+At​(i,j)​d​t+o⁡(d​t), i.e. ​xt+d​t∼Cat​(xt+d​t=j|δi​j+At​(i,j)​d​t).\displaystyle p(x_{t+dt}=j\,|\,x_{t}=i)=\delta_{ij}+A_{t}(i,j)dt+o(dt)\,,\text{ i.e. }x_{t+dt}\sim\texttt{Cat}(x_{t+dt}=j\,|\,\delta_{ij}+A_{t}(i,j)dt)\,.
+(3)
+In this work, we are interested in FKEs of the particular form
+OPENOPEN∂pt​(i)∂t=∑j≠i(At​(j,i)​pt​(j)−At​(i,j)​pt​(i)CLOSE)+pt​(i)​(gt​(i)−𝔼pt​(i)​gt​(i)CLOSE),\displaystyle\begin{split}\frac{\partial p_{t}(i)}{\partial t}=\sum_{j\neq i}\mathopen{}\mathclose{{\left(A_{t}(j,i)p_{t}(j)-A_{t}(i,j)p_{t}(i)}}\right)+p_{t}(i)\mathopen{}\mathclose{{\left(g_{t}(i)-\mathbb{E}_{p_{t}(i)}g_{t}(i)}}\right)\,,\end{split}
+(4)
+where the first term corresponds to the standard FKE as in Equation 2 and the second term corresponds to re-weighting of the samples according to some function gt​(i)g_{t}(i). In general, the second term does not extend the family of jump processes described by the standard FKE because it can be incorporated into the rate matrix (see Section B.1). However, importantly, this term allows using the Feynman-Kac formula as stated in the following theorem (see the derivation in Section B.2).
+Theorem 2.1.
+[Feynman-Kac Formula]
+For the forward Kolmogorov equation from Equation 4 describing the time-evolution of the marginals pt​(i)p_{t}(i) with the rate matrix At​(i,j)A_{t}(i,j) and weights gt​(i)g_{t}(i), g¯t​(i)=gt​(i)−∑kpt​(k)​gt​(k)\bar{g}_{t}(i)=g_{t}(i)-\sum_{k}p_{t}(k)g_{t}(k)
+𝔼pT​(x)​ϕ​(x)\displaystyle\mathbb{E}_{p_{T}(x)}\phi(x)
+OPEN=limd​t→0∑xT…​∑x0ϕ⁡(xT)​p​(xT|xT−d​t)​…​p​(xd​t|x0)​exp⁡(∑t=0Td​t​g¯t​(xt)CLOSE)​p0​(x0)\displaystyle=\lim_{dt\to 0}\sum_{x_{T}}\ldots\sum_{x_{0}}\phi(x_{T})p(x_{T}\,|\,x_{T-dt})\ldots p(x_{dt}\,|\,x_{0})\exp\mathopen{}\mathclose{{\left(\sum_{t=0}^{T}dt\bar{g}_{t}(x_{t})}}\right)p_{0}(x_{0})
+=\displaystyle=~
+𝔼X0:Texp(∫0Td​t​g¯t​(Xt)CLOSE)ϕ(XT)∝𝔼X0:Texp(∫0Td​t​gt​(Xt)CLOSE)ϕ(XT),\displaystyle\mathbb{E}_{X_{0:T}}\exp\mathopen{}\mathclose{{\left(\int_{0}^{T}dt\;\bar{g}_{t}(X_{t})}}\right)\phi(X_{T})\propto\mathbb{E}_{X_{0:T}}\exp\mathopen{}\mathclose{{\left(\int_{0}^{T}dt\;g_{t}(X_{t})}}\right)\phi(X_{T})\,,
+(5)
+where the expectation on the right hand side is taken w.r.t. trajectories X0:TX_{0:T} defined as the limit of the transitions from Equation 3.
+In particular, to simulate Equation 4, one can extend the states xtx_{t} with the weights wtw_{t} and jointly simulating the following equations
+for ​xt=i,xt+d​t∼Cat​(xt+d​t=j|δi​j+At​(i,j)​d​t),log⁡wt+d​t=\displaystyle\text{ for }x_{t}=i\,,\;x_{t+dt}\sim\texttt{Cat}(x_{t+dt}=j\,|\,\delta_{ij}+A_{t}(i,j)dt)\,,\;\log w_{t+dt}=~
+log⁡wt+gt​(i)​d​t.\displaystyle\log w_{t}+g_{t}(i)dt\,.
+(6)
+Finally, the weighted samples (xTk,wTk)(x_{T}^{k},w_{T}^{k}) can be used for the Self-Normalized Importance Sampling (SNIS) estimator or the corresponding empirical measure
+𝔼pT​(i)​ϕ​(i)≈∑kwTk∑jwTl​ϕ​(xTk),pT​(i)≈∑kwTk∑lwTl​δi​xTk.\displaystyle\mathbb{E}_{p_{T}(i)}\phi(i)\approx\sum_{k}\frac{w_{T}^{k}}{\sum_{j}w_{T}^{l}}\phi(x_{T}^{k})\,,\;\;p_{T}(i)\approx\sum_{k}\frac{w_{T}^{k}}{\sum_{l}w_{T}^{l}}\delta_{ix_{T}^{k}}\,.
+(7)
+2.2 Discrete Masked Diffusion
+Analogously to continuous-space diffusion models (Song et al., 2021), the discrete diffusion models operate by mapping the data distribution p0​(i)p_{0}(i) to a simple marginal p1​(i)p_{1}(i) and then simulating the reverse process. In particular, masked diffusion models define a conditional probability p⁡(xs=j|xt=i)p(x_{s}=j\,|\,x_{t}=i) as a probability of switching from any state to the mm-th state, which denotes the utility ‘mask’ state. These conditional probabilities can be described using the following formula (see the derivation in Section B.3), which yields the corresponding rate matrix.
+OPENp⁡(xs=j|xt=i)=(1−αsαtCLOSE)​δm​j+αsαt​δi​j,At​(i,j)=1αt​∂αt∂t​(δi​j−δm​j)\displaystyle p(x_{s}=j\,|\,x_{t}=i)=\mathopen{}\mathclose{{\left(1-\frac{\alpha_{s}}{\alpha_{t}}}}\right)\delta_{mj}+\frac{\alpha_{s}}{\alpha_{t}}\delta_{ij}\,,\;A_{t}(i,j)=\frac{1}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}(\delta_{ij}-\delta_{mj})
+(8)
+In general, the reverse-time process with the marginals qτ​(i)≔p1−τ​(i)q_{\tau}(i)\coloneqq p_{1-\tau}(i) is also described by FKE
+OPEN∂qτ​(i)∂τ=∑j≠i(Bτ​(j,i)​qτ​(i)−Bτ​(i,j)​qτ​(i)CLOSE),Bτ​(i,j)=A1−τ​(j,i)​p1−τ​(j)p1−τ​(m),\displaystyle\frac{\partial q_{\tau}(i)}{\partial\tau}=\sum_{j\neq i}\mathopen{}\mathclose{{\left(B_{\tau}(j,i)q_{\tau}(i)-B_{\tau}(i,j)q_{\tau}(i)}}\right)\,,\;\;B_{\tau}(i,j)=A_{1-\tau}(j,i)\frac{p_{1-\tau}(j)}{p_{1-\tau}(m)}\,,
+(9)
+where At​(i,j)A_{t}(i,j) and Bτ​(i,j)B_{\tau}(i,j) are the rate matrices of the forward-time and reverse-time processes correspondingly (see Section B.4). Note that here and throughout the paper we define only the off-diagonal terms of the matrices and the diagonal is automatically defined as Bτ(i,i)=−∑j≠iBτ(i,j)B_{\tau}(i,i)=-\sum_{j\neq i}B_{\tau}(i,j).
+Finally, one can sample from the data distribution pt=0​(i)p_{t=0}(i) by first generating samples from pt=1​(i)p_{t=1}(i) and then simulating the reverse-time FKE from Equation 9. For the masked diffusion process from Equation 8 the off-diagonal elements of the rate matrix are
+OPENBτ​(i,j)=−δm​i​1αt​∂αt∂t​pt​(j)pt​(m)=−δm​i​1αt​∂αt∂t​(δm​j+αt1−αt​p​(x0=j|xt=m)CLOSE),\displaystyle B_{\tau}(i,j)=-\delta_{mi}\frac{1}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\frac{p_{t}(j)}{p_{t}(m)}=-\delta_{mi}\frac{1}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\mathopen{}\mathclose{{\left(\delta_{mj}+\frac{\alpha_{t}}{1-\alpha_{t}}p(x_{0}=j\,|\,x_{t}=m)}}\right)\,,
+(10)
+where the last equality (shown in Shi et al. (2024)) comes from the relation between the ratio of probabilities pt​(j)/pt​(m)p_{t}(j)/p_{t}(m) and the conditional de-masking probability p⁡(x0=j|xt=m)p(x_{0}=j\,|\,x_{t}=m) (see details in Section B.5). In practice, one can parameterize either ‘score’ st​(m,j,θ)=pt​(j)/pt​(m)s_{t}(m,j;\theta)=p_{t}(j)/p_{t}(m) (as suggested in Lou et al. (2024); Benton et al. (2024)) or the de-masking probability p⁡(x0=j|xt=m)=(1−δm​j)​softmax​(NN​(xt,θ))jp(x_{0}=j\,|\,x_{t}=m)=(1-\delta_{mj})\texttt{softmax}(\texttt{NN}(x_{t};\theta))_{j} (as suggested in (Shi et al., 2024)). For our purposes, these parameterization are equivalent. Furthermore, both these parameterizations can be learned by maximizing the same Evidence Lower Bound (ELBO) objective.
+Finally, all the derivations seamlessly transfer to any number of dimensions (see Section B.6). In particular, one can define the masking process independently over the dimensions, and obtain the following off-diagonal elements of the reverse-time rate matrix
+Bt(i1…id,j1…jd)=−1αt∂αt∂tpt​(j1​…​jd)pt​(i1​…​id)∑k=1d∏l≠kδjl​ilδm​ik,[i1…id]≠[j1…jd],\displaystyle B_{t}(i_{1}\ldots i_{d},j_{1}\ldots j_{d})=-\frac{1}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\frac{p_{t}(j_{1}\ldots j_{d})}{p_{t}(i_{1}\ldots i_{d})}\sum_{k=1}^{d}\prod_{l\neq k}\delta_{j_{l}i_{l}}\delta_{mi_{k}}\,,\;\;[i_{1}\ldots i_{d}]\neq[j_{1}\ldots j_{d}]\,,
+(11)
+which are not zero only when all the coordinates except one match. Thus, one can parameterize the reverse-time process by predicting (m−1)​d(m-1)d values, where dd is the number of dimensions (or sequence length) and (m−1)(m-1) is the vocabulary size for each discrete variable.
+3 Discrete Feynman-Kac Correctors
+In this section, we introduce Discrete Feynman-Kac Correctors— a framework that allows for inference-time control of discrete diffusion models. Our derivations proceed in the same fashion for all the cases. First, we consider general CTMC processes with given rate matrices and initial conditions, which induce corresponding marginals. Applying different transformations to these marginals (annealing, product, geometric averaging, reward-tilting), we define new CTMC processes and derive corresponding rate matrices. These derivations state our main results in the most general form. Further, we proceed by applying these derivations to the masked diffusion processes and demonstrate that the transformed processes can be efficiently simulated without any additional training or finetuning. For each case, as we demonstrate, one requires only the ratio of marginal densities, or, equivalently, the denoising conditional probability, which are used for parameterizing the reverse-time process as shown in Equation 10.
+3.1 Temperature Annealing11
+1
+See Section C.1 for the proofs
+First, we present the general result that holds for the forward Kolmogorov equation with arbitrary rate matrix At​(i,j)A_{t}(i,j). Since we do not assume any structure of the matrix, it is easier to reason in terms of Equation 2, i.e. using only the off-diagonal entries assuming that the diagonal elements are chosen correspondingly to define the correct rate matrix. The annealed FKE is as follows.
+Theorem 3.1.
+[Temperature Annealing]
+Consider the forward Kolmogorov equation from Equation 2 describing the time-evolution of the marginals pt​(i)p_{t}(i) with the rate matrix At​(i,j)A_{t}(i,j). For the temperature annealed marginals qt​(i)∝pt​(i)βq_{t}(i)\propto p_{t}(i)^{\beta}, the following equation holds
+OPEN∂qt​(i)∂t=∑j≠i(Atanneal​(j,i)​qt​(j)−Atanneal​(i,j)​qt​(i))+qt​(i)​(gt​(i)−𝔼qt​(j)​gt​(j)CLOSE),\displaystyle\frac{\partial q_{t}(i)}{\partial t}=\sum_{j\neq i}\bigg(A_{t}^{\mathrm{anneal}}(j,i)q_{t}(j)-A_{t}^{\mathrm{anneal}}(i,j)q_{t}(i)\bigg)+q_{t}(i)\mathopen{}\mathclose{{\left(g_{t}(i)-\mathbb{E}_{q_{t}(j)}g_{t}(j)}}\right)\,,
+(12)
+OPENwhere ​Atanneal​(i,j)≔β​At​(i,j)​pt1−β​(i)pt1−β​(j),gt​(i)≔∑j≠i(Atanneal​(i,j)−β​At​(i,j)CLOSE).\displaystyle\text{ where }A_{t}^{\mathrm{anneal}}(i,j)\coloneqq\beta A_{t}(i,j)\frac{p_{t}^{1-\beta}(i)}{p_{t}^{1-\beta}(j)}\,,\;g_{t}(i)\coloneqq\sum_{j\neq i}\mathopen{}\mathclose{{\left(A_{t}^{\mathrm{anneal}}(i,j)-\beta A_{t}(i,j)}}\right)\,.
+(13)
+Thus, the annealed FKE relies on the rate matrix At​(i,j)A_{t}(i,j) of the original process and the ratio of marginal probabilities pt​(i)/pt​(j)p_{t}(i)/p_{t}(j), which are readily available for a trained model of the masked diffusion process. The following corollary presents the rate matrix and the weighting function for the reverse-time masked diffusion process.
+Corollary 3.2.
+[Annealed Masked Diffusion]
+For the rate matrix of the reverse-time masked diffusion from Equation 10, Theorem 3.1 yields the following off-diagonal elements of the rate matrix and the corresponding weight function
+OPENBτanneal​(i,j)=−δm​i​βαt​∂αt∂t​ptβ​(j)ptβ​(m),gτ​(i)=δm​i​βαt​∂αt∂t​∑j(pt​(j)pt​(m)−ptβ​(j)ptβ​(m)CLOSE).\displaystyle B_{\tau}^{\mathrm{anneal}}(i,j)=-\delta_{mi}\frac{\beta}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\frac{p_{t}^{\beta}(j)}{p_{t}^{\beta}(m)}\,,\;g_{\tau}(i)=\delta_{mi}\frac{\beta}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\sum_{j}\mathopen{}\mathclose{{\left(\frac{p_{t}(j)}{p_{t}(m)}-\frac{p_{t}^{\beta}(j)}{p_{t}^{\beta}(m)}}}\right)\,.
+(14)
+This corollary demonstrates that both the new rate matrix and the weights can be efficiently evaluated using the ratio of the marginals, which is used in practice to parameterize the reverse process (see Equation 10). In more detail, one can obtain the new rate matrix by simply scaling it by β\beta and raising the probability ratio to the power β\beta
+OPENptβ​(j)ptβ​(m)=δm​j+αtβ(1−αt)β​exp⁡(β​log⁡p⁡(x0=j|xt=m)CLOSE),\displaystyle\frac{p_{t}^{\beta}(j)}{p_{t}^{\beta}(m)}=\delta_{mj}+\frac{\alpha_{t}^{\beta}}{(1-\alpha_{t})^{\beta}}\exp\mathopen{}\mathclose{{\left(\beta\log p(x_{0}=j\,|\,x_{t}=m)}}\right)\,,
+(15)
+which corresponds to multiplying the logits of the denoising model by β\beta besides adjusting the schedule dependent coefficients. Finally, the weighting term can be easily obtained by the summation of the probability ratios pt​(j)/pt​(m)p_{t}(j)/p_{t}(m) over jj, which corresponds to the summation over the different coordinates of the network output and does not require additional function evaluations.
+3.2 Product and Geometric Averaging33
+3
+See Section C.2 for the proofs
+Sampling from the product of marginals can be interpreted as generating samples that are likely according to several models at the same time. Intuitively, all the models must “unanimously agree” on the sample being likely since zero probability of one of the models renders the entire product to be zero (Hinton, 1999). In what follows, we formalize this collaborative generation process as the process with marginals proportional to the product of marginals of different CTMC processes and state it in the general case with arbitrary rate matrices. For simplicity, here, we present the results for the product of two marginals and postpone the general formulation for geometric average of any number of the marginals to Theorem C.1 and Corollary C.2 in Section C.3.
+Theorem 3.3.
+[Product of FKEs]
+Consider two forward Kolmogorov equations (from Equation 2) with different rate matrices At1​(i,j)A^{1}_{t}(i,j) and At2​(i,j)A^{2}_{t}(i,j) describing the evolution of marginals pt1​(i)p_{t}^{1}(i) and pt2​(i)p_{t}^{2}(i). For the product of marginals qt​(i)∝pt1​(i)​pt2​(i)q_{t}(i)\propto p_{t}^{1}(i)p_{t}^{2}(i), the following equation holds
+OPEN∂qt​(i)∂t=∑j≠i(Atprod​(j,i)​qt​(j)−Atprod​(i,j)​qt​(i))+qt​(i)​(gt​(i)−𝔼j∼qt​(j)​gt​(j)CLOSE),\displaystyle\frac{\partial q_{t}(i)}{\partial t}=\sum_{j\neq i}\bigg(A^{\mathrm{prod}}_{t}(j,i)q_{t}(j)-A^{\mathrm{prod}}_{t}(i,j)q_{t}(i)\bigg)+q_{t}(i)\mathopen{}\mathclose{{\left(g_{t}(i)-\mathbb{E}_{j\sim q_{t}(j)}g_{t}(j)}}\right)\,,
+(16)
+Atprod​(i,j)≔At1​(i,j)​pt2​(j)pt2​(i)+At2​(i,j)​pt1​(j)pt1​(i),gt​(i)≔∑j≠i(Atprod​(i,j)−At1​(i,j)−At2​(i,j)).\displaystyle A^{\mathrm{prod}}_{t}(i,j)\coloneqq A^{1}_{t}(i,j)\frac{p^{2}_{t}(j)}{p^{2}_{t}(i)}+A^{2}_{t}(i,j)\frac{p^{1}_{t}(j)}{p^{1}_{t}(i)}\,,\;g_{t}(i)\coloneqq\sum_{j\neq i}\bigg(A^{\mathrm{prod}}_{t}(i,j)-A^{1}_{t}(i,j)-A^{2}_{t}(i,j)\bigg)\,.
+Importantly, the new rate matrix and the weighting terms are defined in terms of both rate matrices At1​(i,j)A^{1}_{t}(i,j) and At2​(i,j)A^{2}_{t}(i,j) and the ratios of probabilities pt1​(i)/pt1​(j)p^{1}_{t}(i)/p^{1}_{t}(j) and pt2​(i)/pt2​(j)p^{2}_{t}(i)/p^{2}_{t}(j). All these quantities are readily available in the masked diffusion models. To be precise, we present the corresponding reverse-time rate matrix and the weighting term in the following corollary.
+Corollary 3.4.
+[Product of Masked Diffusions]
+For the rate matrix of the reverse-time masked diffusion from Equation 10, Theorem 3.3 yields
+Bτprod​(i,j)=−2​δm​i​1αt​∂αt∂t​pt1​(j)pt1​(m)​pt2​(j)pt2​(m),gτ​(i)=δm​iαt​∂αt∂t​∑jpt1​(j)pt1​(m)+pt2​(j)pt2​(m)−2​pt1​(j)pt1​(m)​pt2​(j)pt2​(m)\displaystyle B_{\tau}^{\mathrm{prod}}(i,j)=-2\delta_{mi}\frac{1}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\frac{p^{1}_{t}(j)}{p^{1}_{t}(m)}\frac{p^{2}_{t}(j)}{p^{2}_{t}(m)}\,,g_{\tau}(i)=\frac{\delta_{mi}}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\sum_{j}\frac{p^{1}_{t}(j)}{p^{1}_{t}(m)}+\frac{p^{2}_{t}(j)}{p^{2}_{t}(m)}-2\frac{p^{1}_{t}(j)}{p^{1}_{t}(m)}\frac{p^{2}_{t}(j)}{p^{2}_{t}(m)}
+According to these formulas, both the rate matrix and the weights can be efficiently evaluated with a single forward pass through each network.
+3.3 Reward-tilted Marginals55
+5
+See Section C.4 for the proofs
+Generative modeling allows optimizing the external reward functions r⁡(i)r(i) while staying within the data distribution pt=0​(i)p_{t=0}(i) to avoid over-optimization and collapsing to degenerate solutions. Usually it is formalized as sampling from the reward-tilted distribution pt=0​(i)​exp⁡(r⁡(i))p_{t=0}(i)\exp(r(i)), which we discuss in this section. The following result modifies any CTMC process to sample from the reward-tilted distribution. Note that we derive formulas for the off-diagonal elements of the rate matrix.
+Theorem 3.5.
+[Reward-tilted FKE]
+Consider the forward Kolmogorov equation from Equation 2 describing the time evolution of the marginals pt​(i)p_{t}(i) with the rate matrix At​(i,j)A_{t}(i,j). For the reward-tilted marginals qt​(i)∝pt​(i)​exp⁡(βt​r​(i))q_{t}(i)\propto p_{t}(i)\exp(\beta_{t}r(i)), the following equation holds
+OPEN∂qt​(i)∂t=∑j≠i(Atreward​(j,i)​qt​(j)−Atreward​(i,j)​qt​(i))+qt​(i)​(gt​(i)−𝔼qt​(j)​gt​(j)CLOSE),\displaystyle\frac{\partial q_{t}(i)}{\partial t}=\sum_{j\neq i}\bigg(A^{\mathrm{reward}}_{t}(j,i)q_{t}(j)-A^{\mathrm{reward}}_{t}(i,j)q_{t}(i)\bigg)+q_{t}(i)\mathopen{}\mathclose{{\left(g_{t}(i)-\mathbb{E}_{q_{t}(j)}g_{t}(j)}}\right)\,,
+(17)
+Atreward​(i,j)≔At​(i,j)​exp⁡(βt​r​(j))exp⁡(βt​r​(i)),gt​(i)≔∑j≠i(Atreward​(i,j)−At​(i,j))+∂βt∂t​r​(i).\displaystyle A^{\mathrm{reward}}_{t}(i,j)\coloneqq A_{t}(i,j)\frac{\exp(\beta_{t}r(j))}{\exp(\beta_{t}r(i))}\,,\;g_{t}(i)\coloneqq\sum_{j\neq i}\bigg(A^{\mathrm{reward}}_{t}(i,j)-A_{t}(i,j)\bigg)+\frac{\partial\beta_{t}}{\partial t}r(i)\,.
+(18)
+Note that the obtained formulas depend only on the reward function and the rate matrix of the original process. Applying this result to the masked diffusion we obtain the following corollary.
+Corollary 3.6.
+[Reward-tilted Masked Diffusion]
+For the rate matrix of the reverse-time masked diffusion from Equation 10, Theorem 3.5 yields
+Bτreward​(i,j)=\displaystyle B_{\tau}^{\mathrm{reward}}(i,j)=~
+−δm​i​1αt​∂αt∂t​pt​(j)pt​(m)​exp⁡(βt​r​(j))exp⁡(βt​r​(m)),\displaystyle-\delta_{mi}\frac{1}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\frac{p_{t}(j)}{p_{t}(m)}\frac{\exp(\beta_{t}r(j))}{\exp(\beta_{t}r(m))}\,,
+(19)
+gτ​(i)=\displaystyle g_{\tau}(i)=~
+OPEN1αt​∂αt∂t​δm​i​∑j(pt​(j)pt​(m)−pt​(j)pt​(m)​exp⁡(βt​r​(j))exp⁡(βt​r​(m))CLOSE)+∂βt∂t​r​(i).\displaystyle\frac{1}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\delta_{mi}\sum_{j}\mathopen{}\mathclose{{\left(\frac{p_{t}(j)}{p_{t}(m)}-\frac{p_{t}(j)}{p_{t}(m)}\frac{\exp(\beta_{t}r(j))}{\exp(\beta_{t}r(m))}}}\right)+\frac{\partial\beta_{t}}{\partial t}r(i)\,.
+(20)
+Note that evaluating Bτreward​(i,j)B^{\mathrm{reward}}_{\tau}(i,j) requires computing the reward function at all the states jj we can transition to from mask mm. Furthermore, computing gt​(i)g_{t}(i) requires the summation of the reward over all such states jj, which, depending on the application, might be computationally expensive. To avoid these extra computations one could potentially use alternative functions evaluating the difference in the rewards on the transitions from mm to jj, i.e. r⁡(j)−r⁡(m)r(j)-r(m). However, we leave this as a future work.
+4 Experiments
+In this section, we demonstrate the utility of the proposed Discrete Feynman-Kac Correctors on several applications using modern discrete diffusion models. Each experiment is aimed at illustrating one of the introduced processes: annealing, geometric averaging, reward-tilting.
+Despite different domains and processes, the generation process always follows the same procedure described in Algorithm 1. Namely, for the corresponding rate matrix Bτ​(i,j)B_{\tau}(i,j) and weight function gτ​(i)g_{\tau}(i) (see Section 3 for their definitions), the inference procedure generates a batch of samples xτkx_{\tau}^{k} together with their weights wτkw_{\tau}^{k}. In practice, we always perform resampling in between the update steps using SNIS. Thus, DFKC not only changes the generation of individual samples by changing the rate matrix Bτ​(i,j)B_{\tau}(i,j) but also introduces "interactions" between samples through re-weighting and re-sampling. In Section A.1, we provide the explicit state and weight update rules for sampling from different target densities and show how these discrete updates correspond to the continuous formulation of Skreta et al. (2025).
+Algorithm 1 Generation using Discrete Feynman-Kac Correctors
+Input: corresponding rate matrix Bτ​(i,j)B_{\tau}(i,j) and weight function gτ​(i)g_{\tau}(i), number of samples KK
+1
+xτ=0k∼pt=1​(i)x_{\tau=0}^{k}\sim p_{t=1}(i);  /* initialize with noise */
+2
+wτ=0k=1/Kw_{\tau=0}^{k}=1/K;  /* uniform weights */
+3
+for τ=0,…,1\tau=0,\ldots,1 do
+4
+xτ+d​τk∼Cat​(xτ+d​τk=j|δi​j+Bτ​(i,j)​d​τ), for ​xτk=ix_{\tau+d\tau}^{k}\sim\texttt{Cat}(x_{\tau+d\tau}^{k}=j\,|\,\delta_{ij}+B_{\tau}(i,j)d\tau)\,,\text{ for }x_{\tau}^{k}=i ;  /* update state */
+5
+log⁡wτ+d​τk=log⁡wτk+gτ​(i)​d​τ\log w_{\tau+d\tau}^{k}=\log w_{\tau}^{k}+g_{\tau}(i)d\tau ;  /* update weights */
+6
+if resample then
+7
+OPENwτ+d​τk=wτ+d​τk/(∑lwτ+d​τlCLOSE)w_{\tau+d\tau}^{k}=w_{\tau+d\tau}^{k}/\mathopen{}\mathclose{{\left(\sum_{l}w_{\tau+d\tau}^{l}}}\right) ;  /* re-normalize weights */
+8
+xτ+d​τk=xτ+d​τℓ,ℓ∼Cat​(l|wτ+d​τ)x_{\tau+d\tau}^{k}=x_{\tau+d\tau}^{\ell}\,,\;\ell\sim\texttt{Cat}(l\,|\,w_{\tau+d\tau}) ;  /* re-sample indices */
+9
+wτ+d​τk=1/Kw_{\tau+d\tau}^{k}=1/K;  /* re-initialize weights */
+Output: weighted set of samples {(xτ=1k,wτ=1k)}k=1K\{(x_{\tau=1}^{k},w_{\tau=1}^{k})\}_{k=1}^{K}
+4.1 Annealing the Ising Model
+Table 1: Sampling task for Ising model with performance measured by mean ±standard deviation over 3 seeds. The starting temperature for DFKC is shown in brackets. The DDM samples are generated with a discrete diffusion model trained at those corresponding target temperatures.
+Target β\beta
+Method
+Energy-𝒲2(↓)\mathcal{W}_{2}(\downarrow)
+Magnetization-𝒲2(↓)\mathcal{W}_{2}(\downarrow)
+Correlation-MSE (↓)(\downarrow)
+0.40.4
+DFKC(0.30.3)
+14.24±3.1114.24\pm 3.11
+0.256±0.0520.256\pm 0.052
+0.041±0.0130.041\pm 0.013
+DDM
+69.38±4.2569.38\pm 4.25
+0.889±0.0630.889\pm 0.063
+0.172±0.0210.172\pm 0.021
+0.30.3
+DFKC(0.20.2)
+33.38±0.4633.38\pm 0.46
+0.031±0.0110.031\pm 0.011
+0.023±0.0070.023\pm 0.007
+DDM
+35.14±0.6335.14\pm 0.63
+0.046±0.0120.046\pm 0.012
+0.014±0.0090.014\pm 0.009
+(a) 2-Wasserstein metric for energy and magnetization distributions and MSE for spin-spin correlation. All metrics are computed between samples from DFKC variants or LEAPS and samples from Swendsen-Wang algorithm. The β\beta used for training DFKC is 0.30.3. Note that the plots include a break at βcrit\beta_{\mathrm{crit}}, and the yy-axes use different scales on either side of βcrit\beta_{\mathrm{crit}} to make differences in magnitude visible.
+(b) Average energy and magnetization over varying β\beta for DFKC, and Swendsen-Wang, compared to theoretical values. Training β\beta for DFKC is 0.3.
+Figure 2: Results for annealing on the Ising model.
+We apply Theorem 3.1 for annealing the Boltzmann distribution of the Ising model configurations. Namely, the probability distribution of states σ\sigma is given as
+pβ(σ)=1Zβe−β​H​(σ),Zβ=∑σe−β​H​(σ), where H(σ)=−∑i,jJi​jσiσj−∑ihiσi.\displaystyle p_{\beta}(\sigma)=\frac{1}{Z_{\beta}}e^{-\beta H(\sigma)}\,,\;Z_{\beta}=\sum_{\sigma}e^{-\beta H(\sigma)}\,,\text{ where }H(\sigma)=-\sum_{i,j}J_{ij}\sigma_{i}\sigma_{j}-\sum_{i}h_{i}\sigma_{i}\,.
+(21)
+We generate a training dataset at a fixed β\beta by running the Swendsen-Wang algorithm (Swendsen and Wang, 1987) and train a discrete masked-diffusion model. We set Ji​j=1J_{ij}=1 and hi=0h_{i}=0 on a 16×16 lattice with periodic boundary conditions. The diffusion model is parameterized using the UNet architecture. We assess method performance by comparing the distributions of key observables, specifically energy and magnetization. To examine the fidelity of local structures, we compute spin–spin correlations as a function of distance, excluding boundary spins and evaluating correlations along lattice rows. Finally, we evaluate the mean squared error (MSE) between the generated correlation profiles and the ground-truth.
+We train the diffusion model at β=0.3\beta=0.3 and demonstrate that DFKC allows for the efficient control of temperature at inference time in the range β∈[0.3,0.6]\beta\in[0.3,0.6], with critical point βcrit≈0.4407\beta_{\mathrm{crit}}\approx 0.4407. As a baseline, we consider a guidance method, which ignores the weights of the generated samples. In addition, a comparison with LEAPS  (Holderrieth et al., 2025) is provided. Note that the released LEAPS model is trained on the annealing path
+πt​(σ)∝exp⁡(−t​βcrit​H​(σ))\pi_{t}(\sigma)\propto\exp\bigl(-t\,\beta_{\mathrm{crit}}H(\sigma)\bigr) for t∈[0,1]t\in[0,1],
+so we do not expect it to work reliably for β>βcrit\beta>\beta_{\mathrm{crit}}, and instead expect it to sample only within the range of temperatures it was trained on. Notably, our temperature annealing method, being training-free, allows for sampling beyond the critical temperature. The results in Figure 2(a) validate this perspective. Additionally, in Figure 2(b) we plot the mean energy and magnetization obtained by varying β\beta using our method, and observe that it closely follows theoretical results.
+In Table 1, we demonstrate that collecting the data at a high temperature and annealing the trained model to the low temperature is more efficient than collecting data and training the model directly at a low temperature. In particular, we fix the number of energy evaluations for the dataset collection and can either allocate this budget for training the discrete diffusion model (DDM) directly on the target temperature, or for training it a higher temperature and then using DFKC to reduce the temperature to the target.
+To conduct this comparison, we used 10,000 samples following a long burn-in period of Glauber dynamics, which requires lengthy chains to reduce correlations. Additional details of the experiments are included in Section D.1.
+4.2 Products and Annealing for Language Modelling
+We evaluate the ability of DFKC to improve performance on text generation tasks by evaluating the annealing formula (from Theorem 3.1) for code generation, and the product formula from Theorem 3.3 for amortized learning. For both tasks, we use the pretrained LLaDA-8B-Instruct as our (masked) diffusion model (Nie et al., 2025).
+Code Generation
+Recent work argues that annealing an existing model to sample higher likelihood points can result in better performance on various mathematical or coding tasks (Huang et al., 2024). Inspired by this line of work, we investigate the applicability of our annealing method as an inference time strategy for improving accuracy on coding tasks. We anneal the model with parameter β\beta and evaluate its accuracy in solving a diverse set of programming problems in the HumanEval and MBPP datasets (Chen et al., 2021; Austin et al., 2021). We compare with sampling the most likely token at each step (“Argmax" sampling), as well as sampling with inverse-temperature β\beta (“Naive Annealing"). The results are reported in Figure 4, which demonstrate that DFKC obtains a higher accuracy than other sampling methods. Additional details are included in Section D.3.
+Amortized Learning
+Given a dataset of examples 𝒳={(xi,yi)}i=1N\mathcal{X}=\{(x_{i},y_{i})\}^{N}_{i=1}, and a parametric model fθ​(x)f_{\theta}(x), we wish to use the language model to infer parameters θ\theta which fit the data. This requires sampling from the posterior distribution over parameters p⁡(θ|𝒳)p(\theta|\mathcal{X}). However, unlike more classical statistical methods, we wish to perform this computation solely through the text interface of the language model, similar to the setting of (Requeima et al., 2024; Mittal et al., 2025). Namely we set 𝒳\mathcal{X} as our prompt, and ask the model to sample parameters θ\theta. We partition the dataset into KK equal subsets 𝒳=⋃k=1K𝒳k\mathcal{X}=\bigcup^{K}_{k=1}\mathcal{X}_{k}, and note that for a uniform prior, the posterior factors as p⁡(θ|𝒳)∝∏k=1Kp⁡(θ|𝒳k)p(\theta|\mathcal{X})\propto\prod^{K}_{k=1}p(\theta|\mathcal{X}_{k}). This justifies applying our method, with each factor in the product conditioned on a different subset of the data Ck=𝒳kC_{k}=\mathcal{X}_{k}. We evaluate this task on a synthetic dataset generated using a noisy linear predictor fθ​(x)=θ1​x+θ0+ϵ​ϵ∼𝒩⁡(0,0.12)f_{\theta}(x)=\theta_{1}x+\theta_{0}+\epsilon~~\epsilon\sim\mathcal{N}(0,0.1^{2}). We use K=5K=5 subsets, and report our results for the mean-squared error (to the true parameters) across larger datasets 𝒳\mathcal{X} in Figure 3.
+From our results, we can see that as the length and complexity of the prompt increases, the joint prompt degrades in performance, compared to the more stable performance of the DFKC product. We also see that using more samples in our method improves performance slightly over 1 sample. This is also validated by an ablation over the number of SMC samples in Figure A1. Additional details and results are included in Section D.2. In Section D.4, we present a related experiment which applies the product formulation of our method for generating stories adhering to a set of constraints.
+Figure 3: Amortized learning task: Mean squared error (MSE) between predicted and true
+parameters reported for DFKC (1 and 5 samples), and joint prompting, across different dataset
+sizes. ** indicates p≤0.02p\leq 0.02, * indicates p≤0.05p\leq 0.05
+(one-sided Student’s t-test).
+Figure 4: Accuracy on coding tasks, with standard error reported over 5 seeds.
+Table 2:
+Evaluation for reward-guided protein sequence generation (over 5 seeds).
+Reward
+Diversity
+Structural confidence
+Novelty
+log⁡r⁡(x)\log r(x)
+(↑)(\uparrow)
+Seq. div.
+(↑)(\uparrow)
+Max. cluster
+(↑)(\uparrow)
+pLDDT
+(↑)(\uparrow)
+pTM
+(↑)(\uparrow)
+Frac. pLDDT
+>0.7(↑)>0.7\,(\uparrow)
+Max TM
+(↓)(\downarrow)
+Frac. TM
+< 0.5
+(↑)(\uparrow)
+Task: unconditional generation
+Base [unguided]
+−4.3266±0.3190-4.3266\pm 0.3190
+0.7729
+0.3571
+0.5941±0.15250.5941\pm 0.1525
+0.2609±0.14520.2609\pm 0.1452
+0.27140.2714
+0.67890.6789
+0.05000.0500
+DG-Exact  (Nisonoff et al., 2024)
+−1.8831±0.0979-1.8831\pm 0.0979
+0.76490.7649
+0.33330.3333
+0.5918±0.16710.5918\pm 0.1671
+0.2671±0.15710.2671\pm 0.1571
+0.32000.3200
+0.65470.6547
+0.13000.1300
+FK Steering  Singhal et al. (2025)
+−2.7662±0.1160-2.7662\pm 0.1160
+0.61710.6171
+0.07330.0733
+0.5494±0.14080.5494\pm 0.1408
+0.1912±0.08450.1912\pm 0.0845
+0.21330.2133
+0.5992
+0.1837
+DFKC [ours]
+−1.6551±0.0952-\textbf{1.6551}\pm\textbf{0.0952}
+0.70770.7077
+0.10670.1067
+0.6005±0.1840\textbf{0.6005}\pm\textbf{0.1840}
+0.2860±0.1677\textbf{0.2860}\pm\textbf{0.1677}
+0.3600
+0.65730.6573
+0.14430.1443
+Task: thermostability
+Base [unguided]
+−0.6590±0.0229-0.6590\pm 0.0229
+0.77290.7729
+0.3571
+0.5941±0.15250.5941\pm 0.1525
+0.2609±0.14520.2609\pm 0.1452
+0.27140.2714
+0.67890.6789
+0.05000.0500
+DG-Exact  (Nisonoff et al., 2024)
+−0.6131±0.0191-0.6131\pm 0.0191
+0.7860
+0.3571
+0.6088±0.1500\textbf{0.6088}\pm\textbf{0.1500}
+0.2695±0.1550\textbf{0.2695}\pm\textbf{0.1550}
+0.3214
+0.69760.6976
+0.11110.1111
+FK Steering  (Singhal et al., 2025)
+−0.5841±0.0192-0.5841\pm 0.0192
+0.75130.7513
+0.27330.2733
+0.5704±0.15340.5704\pm 0.1534
+0.2246±0.10870.2246\pm 0.1087
+0.23330.2333
+0.65590.6559
+0.14290.1429
+DFKC [ours]
+−0.5316±0.0153-\textbf{0.5316}\pm\textbf{0.0153}
+0.76180.7618
+0.32000.3200
+0.5875±0.15170.5875\pm 0.1517
+0.2468±0.13870.2468\pm 0.1387
+0.25330.2533
+0.6490
+0.2043
+4.3 Guiding Protein Sequence Generation with External Rewards
+Finally, we investigate the utility of DFKC in the setting of unconditional de novo protein sequence generation. Protein language models (PLMs) have emerged as powerful tools for modeling the complex relationships between protein sequence, structure, and function  (Lin et al., 2023; Madani et al., 2023), but controlling their outputs remains a significant challenge. To encourage generation of sequences that resemble natural proteins, we guide sampling with rewards that measure sequence plausibility. We consider two reward settings: (i) the likelihood under a PLM, and (ii) the predicted thermostability of the sequence. The likelihood reward is motivated by the fact that PLMs capture evolutionary constraints and assign higher probability to "natural-like" sequences, a property that has been successfully leveraged to steer generation toward functional and biologically viable proteins (Ertelt et al., 2024; Emami et al., 2023; Notin et al., 2023). The thermostability reward reflects that high stability is a desirable property of natural proteins, correlating with improved folding, robustness, and mutational tolerance. For likelihood evaluation we use the masked language model ESM2-650M (Lin et al., 2023), and for thermostability we use a fine-tuned version of DPLM-650M (Wang et al., 2024a).
+We generate sequences using DPLM-650M, a discrete diffusion model that produces protein sequences by progressively unmasking amino acid tokens (Wang et al., 2024a). To guide generation, we set the reward appropriately and apply Theorem 3.5. Table 2 presents the rewards and additional metrics for sequences sampled using our method, for both tasks. The table also compares our method with other guidance-based techniques: FK Steering (using the base model as a proposal) (Singhal et al., 2025), and DG-Exact, the exact guidance approach of  Nisonoff et al. (2024). In the guided setting, we note that the single-sample variant of DFKC is equivalent to DG-Exact, and observe that using multiple samples yields notable improvements in mean reward compared to both unguided DPLM sampling and guidance without resampling. These results highlight the effectiveness of our resampling procedure in enhancing desired properties of generated sequences. For likelihood based sampling, our method generates more designable sequences, at the cost of diversity, while for thermostability it maintains similar performance to the base model across other metrics. DG-Exact requires O⁡(V)O(V) reward evaluations (with vocabulary size VV) for each inference step, while FK Steering performs inference with MM samples in parallel. Our method uses both strategies, with run-time similar to DG-Exact (due to parallel computation over MM). The combination allows for substantial reward improvement, and makes the method useful for tasks where additional inference compute can be spent to obtain higher quality samples. Additional experimental details and results are included in Section D.5.
+5 Related Work
+Reward Fine-tuning
+These methods often assume an external reward function r⁡(x)r(x) and adjust the pretrained model’s parameters using reinforcement learning algorithms, with the goal of sampling from the product r⁡(x)​qt​(x)r(x)q_{t}(x). Several of these works are applicable to discrete diffusion models  (Venkatraman et al., 2024; Rector-Brooks et al., 2024; Wang et al., 2025). Our method leaves the pretrained model fixed, and therefore doesn’t require a costly fine-tuning stage. We note that our method is compatible with a model obtained from reward fine-tuning, or from any training approach resulting in a parameterized rate matrix (Le-Tuyet-Nhi et al., 2025).
+Inference Time Alignment
+Several methods perform additional computation at inference time to sample from a target product distribution (the product being taken with either an external model r⁡(x)r(x), or a classifier extracted from the model’s distribution, qt​(y|x)q_{t}(y|x) as in classifier-free guidance (Ho and Salimans, 2022)). These methods often involve an approximation which means they produce biased samples from the target product  (Vignac et al., 2022; Gruver et al., 2023; Nisonoff et al., 2024; Tang et al., 2025). Singhal et al. (2025) investigates the use of SMC to sample (in an asymptotically unbiased manner) from a reward-weighted distribution. Our work adapts such an unbiased SMC based strategy to a smoothly annealed form of the reward (βt​r​(x)\beta_{t}r(x)), and extends it to general products, and annealing. He et al. (2025) recently proposed another SMC-based technique for such problems, however, they do not evaluate the method on discrete diffusion tasks.
+Boltzmann distribution annealing
+Our approach for annealing is related to recent works which explore methods to train discrete neural samplers for combinatorial optimization and statistical physics. These include works such as scalable discrete diffusion samplers  (Sanokowski et al., 2025), LEAPS  (Holderrieth et al., 2025), and discrete neural flow samplers with locally equivariant transformers (Ou et al., 2025). These methods are typically trained to approximate Boltzmann distributions at a range of temperatures (or rely on access to the energy function during training), whereas our method assumes access to a trained model (perhaps with samples from a single temperature) and then uses it to generate samples at different, unseen temperatures through a modified inference algorithm.
+Theoretical guarantees
+Establishing the convergence bounds on the distribution of the produced samples is a direction of independent interest. In this work, we provide the proof of the Feynman-Kac formula (Theorem 2.1), which establishes the convergence of the time-discretization scheme. However, the community has developed a range of theoretical tools (Benton et al., 2023; Ren et al., 2024; Le-Tuyet-Nhi et al., 2025) potentially allowing for a more accurate convergence analysis.
+6 Conclusion
+In this paper, we propose Discrete Feynman-Kac Correctors, a framework that allows for re-purposing discrete diffusion models at inference time without retraining them. In particular, our theoretical findings demonstrate that sampling from the annealed, product or reward-weighted distributions can be efficiently done by combining the learned probability ratios and running SMC algorithms. Our empirical study supports our derivations and demonstrates that the proposed approach is more effective for tasks such as sampling from lower temperature Ising models, using language models to solve programming problems or inferring parameters, and controlling generated protein sequences. For future work we leave the extension to joint continuous and discrete models, as well as procedures to combine the method with reward fine-tuning.
+Reproducibility Statement
+To facilitate reproducibility of our empirical results and algorithm, we have made our code
+publicly available at this link: https://github.com/hasanmohsin/discrete_fkc. We describe all mathematical and algorithmic details necessary
+to reproduce our results throughout this paper (e.g. Algorithm 1).
+Acknowledgements
+The research was enabled in part by computational resources provided by the Digital Research Alliance of Canada (https://alliancecan.ca), Mila (https://mila.quebec), and NVIDIA. This project was partially sponsored by Google through the Google & Mila projects program. KN was supported by IVADO and Institut Courtois. MS was supported by the IVADO 2025 Postdoctoral Research Funding Program. This project was undertaken thanks to funding from IVADO and the Canada First Research Excellence Fund.
+References
+Abramson et al. (2024)
+J. Abramson, J. Adler, J. Dunger, R. Evans, T. Green, A. Pritzel, O. Ronneberger, L. Willmore, A. J. Ballard, J. Bambrick, et al.
+Accurate structure prediction of biomolecular interactions with alphafold 3.
+Nature 630 (8016), pp. 493–500.
+Cited by: §1.
+Akhound-Sadegh et al. (2025)
+T. Akhound-Sadegh, J. Lee, A. J. Bose, V. D. Bortoli, A. Doucet, M. M. Bronstein, D. Beaini, S. Ravanbakhsh, K. Neklyudov, and A. Tong
+Progressive inference-time annealing of diffusion models for sampling from boltzmann densities.
+arXiv preprint arXiv:2506.16471.
+Cited by: §1.
+Alamdari et al. (2023)
+S. Alamdari, N. Thakkar, R. van den Berg, N. Tenenholtz, B. Strome, A. Moses, A. X. Lu, N. Fusi, A. P. Amini, and K. K. Yang
+Protein generation with evolutionary diffusion: sequence is all you need.
+BioRxiv, pp. 2023–09.
+Cited by: §1.
+Austin et al. (2021)
+J. Austin, A. Odena, M. Nye, M. Bosma, H. Michalewski, D. Dohan, E. Jiang, C. Cai, M. Terry, Q. Le, and C. Sutton
+Program synthesis with large language models.
+arXiv preprint arXiv:2108.07732.
+Cited by: §D.3,
+§4.2.
+Benton et al. (2023)
+J. Benton, V. De Bortoli, A. Doucet, and G. Deligiannidis
+Nearly dd-linear convergence bounds for diffusion models via stochastic localization.
+arXiv preprint arXiv:2308.03686.
+Cited by: §5.
+Benton et al. (2024)
+J. Benton, Y. Shi, V. De Bortoli, G. Deligiannidis, and A. Doucet
+From denoising diffusions to denoising markov models.
+Journal of the Royal Statistical Society Series B: Statistical Methodology 86 (2), pp. 286–301.
+Cited by: §2.2.
+Berglund et al. (2023)
+L. Berglund, M. Tong, M. Kaufmann, M. Balesni, A. C. Stickland, T. Korbak, and O. Evans
+The reversal curse: llms trained on" a is b" fail to learn" b is a".
+arXiv preprint arXiv:2309.12288.
+Cited by: §1.
+Blattmann et al. (2023)
+A. Blattmann, R. Rombach, H. Ling, T. Dockhorn, S. W. Kim, S. Fidler, and K. Kreis
+Align your latents: high-resolution video synthesis with latent diffusion models.
+Conference on Computer Vision and Pattern Recognition (CVPR).
+Cited by: §1.
+Brown et al. (2020)
+T. Brown, B. Mann, N. Ryder, M. Subbiah, J. D. Kaplan, P. Dhariwal, A. Neelakantan, P. Shyam, G. Sastry, A. Askell, et al.
+Language models are few-shot learners.
+Advances in Neural Information Processing Systems (NeurIPS) 33, pp. 1877–1901.
+Cited by: §1.
+Campbell et al. (2022)
+A. Campbell, J. Benton, V. De Bortoli, T. Rainforth, G. Deligiannidis, and A. Doucet
+A continuous time framework for discrete denoising models.
+Advances in Neural Information Processing Systems (NeurIPS) 35, pp. 28266–28279.
+Cited by: §1.
+Chen et al. (2021)
+M. Chen, J. Tworek, H. Jun, Q. Yuan, H. P. de Oliveira Pinto, J. Kaplan, H. Edwards, Y. Burda, N. Joseph, G. Brockman, A. Ray, R. Puri, G. Krueger, M. Petrov, H. Khlaaf, G. Sastry, P. Mishkin, B. Chan, S. Gray, N. Ryder, M. Pavlov, A. Power, L. Kaiser, M. Bavarian, C. Winter, P. Tillet, F. P. Such, D. Cummings, M. Plappert, F. Chantzis, E. Barnes, A. Herbert-Voss, W. H. Guss, A. Nichol, A. Paino, N. Tezak, J. Tang, I. Babuschkin, S. Balaji, S. Jain, W. Saunders, C. Hesse, A. N. Carr, J. Leike, J. Achiam, V. Misra, E. Morikawa, A. Radford, M. Knight, M. Brundage, M. Murati, K. Mayer, P. Welinder, B. McGrew, D. Amodei, S. McCandlish, I. Sutskever, and W. Zaremba
+Evaluating large language models trained on code.
+arXiv 2107.03374.
+Cited by: §D.3,
+§4.2.
+DeepSeek-AI (2025)
+DeepSeek-AI
+DeepSeek-r1: incentivizing reasoning capability in llms via reinforcement learning.
+arXiv preprint arXiv:2501.12948.
+Cited by: §1.
+Emami et al. (2023)
+P. Emami, A. Perreault, J. Law, D. Biagioni, and P. S. John
+Plug & play directed evolution of proteins with gradient-based discrete mcmc.
+Machine Learning: Science and Technology 4 (2), pp. 025014.
+Cited by: §4.3.
+Ertelt et al. (2024)
+M. Ertelt, J. Meiler, and C. T. Schoeder
+Combining rosetta sequence design with protein language model predictions using evolutionary scale modeling (esm) as restraint.
+ACS synthetic biology 13 (4), pp. 1085–1092.
+Cited by: §4.3.
+Gordon et al. (2025)
+C. W. Gordon, A. X. Lu, and P. Abbeel
+Protein language model fitness is a matter of preference.
+International Conference on Learning Representations (ICLR).
+External Links: Link
+Cited by: §D.5.1.
+Gruver et al. (2023)
+N. Gruver, S. Stanton, N. Frey, T. G. Rudner, I. Hotzel, J. Lafrance-Vanasse, A. Rajpal, K. Cho, and A. G. Wilson
+Protein design with guided discrete diffusion.
+Advances in Neural Information Processing Systems (NeurIPS) 36, pp. 12489–12517.
+Cited by: §1,
+§5.
+He et al. (2025)
+J. He, J. M. Hernández-Lobato, Y. Du, and F. Vargas
+RNE: a plug-and-play framework for diffusion density estimation and inference-time control.
+arXiv preprint arXiv:2506.05668.
+Cited by: §1,
+§5.
+Hinton (1999)
+G. E. Hinton
+Products of experts.
+International Conference on Artificial Neural Networks (ICANN) 1, pp. 1–6.
+Cited by: §3.2.
+Ho and Salimans (2022)
+J. Ho and T. Salimans
+Classifier-free diffusion guidance.
+Advances in Neural Information Processing Systems (NeurIPS) Workshop on Deep Generative Models and Downstream Applications.
+External Links: 2207.12598,
+Link
+Cited by: §5.
+Holderrieth et al. (2025)
+P. Holderrieth, M. S. Albergo, and T. Jaakkola
+LEAPS: a discrete neural sampler via locally equivariant networks.
+International Conference on Machine Learning (ICML).
+Cited by: §4.1,
+§5.
+Huang et al. (2024)
+A. Huang, A. Block, D. J. Foster, D. Rohatgi, C. Zhang, M. Simchowitz, J. T. Ash, and A. Krishnamurthy
+Self-improvement in language models: the sharpening mechanism.
+arXiv preprint arXiv:2412.01951.
+Cited by: §4.2.
+Kolmogoroff (1931)
+A. Kolmogoroff
+Über die analytischen methoden in der wahrscheinlichkeitsrechnung.
+Mathematische Annalen 104, pp. 415–458.
+Cited by: §2.
+Le-Tuyet-Nhi et al. (2025)
+P. Le-Tuyet-Nhi, D. Shariatian, A. Ocello, G. Conforti, and A. O. Durmus
+Discrete markov probabilistic models: an improved discrete score-based framework with sharp convergence bounds under minimal assumptions.
+International Conference on Machine Learning (ICML).
+Cited by: §5,
+§5.
+Lee et al. (2025)
+S. Lee, K. Kreis, S. P. Veccham, M. Liu, D. Reidenbach, Y. Peng, S. Paliwal, W. Nie, and A. Vahdat
+GenMol: a drug discovery generalist with discrete diffusion.
+arXiv preprint arXiv:2501.06158.
+Cited by: §1.
+Lin et al. (2022)
+Z. Lin, H. Akin, R. Rao, B. Hie, Z. Zhu, W. Lu, N. Smetanin, A. dos Santos Costa, M. Fazel-Zarandi, T. Sercu, S. Candido, et al.
+Language models of protein sequences at the scale of evolution enable accurate structure prediction.
+bioRxiv.
+Cited by: §D.5.3.
+Lin et al. (2023)
+Z. Lin, H. Akin, R. Rao, B. Hie, Z. Zhu, W. Lu, N. Smetanin, R. Verkuil, O. Kabeli, Y. Shmueli, A. dos Santos Costa, M. Fazel-Zarandi, T. Sercu, S. Candido, and A. Rives
+Evolutionary-scale prediction of atomic-level protein structure with a language model.
+Science 379 (6637), pp. 1123–1130.
+External Links: Document,
+Link,
+https://www.science.org/doi/pdf/10.1126/science.ade2574
+Cited by: §4.3.
+Lou et al. (2024)
+A. Lou, C. Meng, and S. Ermon
+Discrete diffusion language modeling by estimating the ratios of the data distribution.
+International Conference on Machine Learning (ICML).
+Cited by: §1,
+§2.2.
+Madani et al. (2023)
+A. Madani, B. Krause, E. R. Greene, S. Subramanian, B. P. Mohr, J. M. Holton, J. L. Olmos, C. Xiong, Z. Z. Sun, R. Socher, J. S. Fraser, and N. Naik
+Large language models generate functional protein sequences across diverse families.
+Nature Biotechnology 41 (8), pp. 1099–1106.
+External Links: ISSN 1546-1696,
+Document,
+Link
+Cited by: §4.3.
+Mittal et al. (2025)
+S. Mittal, N. L. Bracher, G. Lajoie, P. Jaini, and M. Brubaker
+Amortized in-context bayesian posterior estimation.
+arXiv preprint arXiv:2502.06601.
+External Links: 2502.06601,
+Link
+Cited by: §4.2.
+Nie et al. (2025)
+S. Nie, F. Zhu, Z. You, X. Zhang, J. Ou, J. Hu, J. Zhou, Y. Lin, J. Wen, and C. Li
+Large language diffusion models.
+arXiv preprint arXiv:2502.09992.
+External Links: 2502.09992,
+Link
+Cited by: §1,
+§4.2.
+Nisonoff et al. (2024)
+H. Nisonoff, J. Xiong, S. Allenspach, and J. Listgarten
+Unlocking guidance for discrete state-space diffusion and flow models.
+arXiv preprint arXiv:2406.01572.
+Cited by: §D.5.2,
+§D.5.5,
+Table A5,
+Table A5,
+§1,
+§4.3,
+Table 2,
+Table 2,
+§5.
+Notin et al. (2023)
+P. Notin, A. Kollasch, D. Ritter, L. van Niekerk, S. Paul, H. Spinner, N. Rollins, A. Shaw, R. Orenbuch, R. Weitzman, J. Frazer, M. Dias, D. Franceschi, Y. Gal, and D. Marks
+ProteinGym: large-scale benchmarks for protein fitness prediction and design.
+Advances in Neural Information Processing Systems (NeurIPS).
+Cited by: §4.3.
+Ou et al. (2025)
+Z. Ou, R. Zhang, and Y. Li
+Discrete neural flow samplers with locally equivariant transformer.
+arXiv preprint arXiv:2505.17741.
+Cited by: §5.
+Rector-Brooks et al. (2024)
+J. Rector-Brooks, M. Hasan, Z. Peng, Z. Quinn, C. Liu, S. Mittal, N. Dziri, M. Bronstein, Y. Bengio, P. Chatterjee, et al.
+Steering masked discrete diffusion models via discrete denoising posterior prediction.
+arXiv preprint arXiv:2410.08134.
+Cited by: §1,
+§5.
+Ren et al. (2024)
+Y. Ren, H. Chen, G. M. Rotskoff, and L. Ying
+How discrete and continuous diffusion meet: comprehensive analysis of discrete diffusion models via a stochastic integral framework.
+arXiv preprint arXiv:2410.03601.
+Cited by: §5.
+Requeima et al. (2024)
+J. Requeima, J. F. Bronskill, D. Choi, R. E. Turner, and D. Duvenaud
+LLM processes: numerical predictive distributions conditioned on natural language.
+Advances in Neural Information Processing Systems (NeurIPS).
+External Links: Link
+Cited by: §4.2.
+Rombach et al. (2022)
+R. Rombach, A. Blattmann, D. Lorenz, P. Esser, and B. Ommer
+High-resolution image synthesis with latent diffusion models.
+Conference on Computer Vision and Pattern Recognition (CVPR).
+Cited by: §1.
+Saharia et al. (2022)
+C. Saharia, W. Chan, S. Saxena, L. Li, J. Whang, E. L. Denton, K. Ghasemipour, R. Gontijo Lopes, B. Karagol Ayan, T. Salimans, et al.
+Photorealistic text-to-image diffusion models with deep language understanding.
+Advances in Neural Information Processing Systems (NeurIPS) 35, pp. 36479–36494.
+Cited by: §1.
+Sahoo et al. (2024)
+S. S. Sahoo, M. Arriola, Y. Schiff, A. Gokaslan, E. Marroquin, J. T. Chiu, A. Rush, and V. Kuleshov
+Simple and effective masked diffusion language models.
+arXiv preprint arXiv:2406.07524.
+Cited by: §1.
+Sanokowski et al. (2025)
+S. Sanokowski, W. Berghammer, M. Ennemoser, H. P. Wang, S. Hochreiter, and S. Lehner
+Scalable discrete diffusion samplers: combinatorial optimization and statistical physics.
+arXiv preprint arXiv:2502.08696.
+Cited by: §5.
+Shi et al. (2024)
+J. Shi, K. Han, Z. Wang, A. Doucet, and M. K. Titsias
+Simplified and generalized masked diffusion for discrete data.
+arXiv preprint arXiv:2406.04329.
+Cited by: §B.5,
+§1,
+§2.2.
+Singhal et al. (2025)
+R. Singhal, Z. Horvitz, R. Teehan, M. Ren, Z. Yu, K. McKeown, and R. Ranganath
+A general framework for inference-time scaling and steering of diffusion models.
+International Conference on Machine Learning (ICML).
+Cited by: §D.5.2,
+Table A5,
+Table A5,
+Table A6,
+Table A6,
+Table A6,
+Table A6,
+§1,
+§4.3,
+Table 2,
+Table 2,
+§5.
+Skreta et al. (2025)
+M. Skreta, T. Akhound-Sadegh, V. Ohanesian, R. Bondesan, A. Aspuru-Guzik, A. Doucet, R. Brekelmans, A. Tong, and K. Neklyudov
+Feynman-kac correctors in diffusion: annealing, guidance, and product of experts.
+arXiv preprint arXiv:2503.02819.
+Cited by: Table A1,
+Table A2,
+§1,
+§4.
+Skreta et al. (2024)
+M. Skreta, L. Atanackovic, J. Bose, A. Tong, and K. Neklyudov
+The superposition of diffusion models using the itô density estimator.
+International Conference on Learning Representations (ICLR).
+Cited by: §1.
+Song et al. (2021)
+Y. Song, J. Sohl-Dickstein, D. P. Kingma, A. Kumar, S. Ermon, and B. Poole
+Score-based generative modeling through stochastic differential equations.
+arXiv preprint arXiv:2011.13456.
+Cited by: §2.2.
+Steinegger and Söding (2017)
+M. Steinegger and J. Söding
+MMseqs2 enables sensitive protein sequence searching for the analysis of massive data sets.
+Nature biotechnology 35 (11), pp. 1026–1028.
+Cited by: §D.5.3.
+Swendsen and Wang (1987)
+R. H. Swendsen and J. Wang
+Nonuniversal critical dynamics in monte carlo simulations.
+Physical review letters 58 (2), pp. 86.
+Cited by: §4.1.
+Tang et al. (2025)
+S. Tang, Y. Zhang, and P. Chatterjee
+Peptune: de novo generation of therapeutic peptides with multi-objective-guided discrete diffusion.
+arXiv preprint arXiv:2412.17780.
+Cited by: §1,
+§5.
+van Kempen et al. (2024)
+M. van Kempen, S. S. Kim, C. Tumescheit, M. Mirdita, J. Söding, and M. Steinegger
+Fast and accurate protein structure search with foldseek.
+Nature Biotechnology 42.
+External Links: Document
+Cited by: §D.5.3.
+Venkatraman et al. (2024)
+S. Venkatraman, M. Jain, L. Scimeca, M. Kim, M. Sendera, M. Hasan, L. Rowe, S. Mittal, P. Lemos, E. Bengio, A. Adam, J. Rector-Brooks, Y. Bengio, G. Berseth, and N. Malkin
+Amortizing intractable inference in diffusion models for vision, language, and control.
+Advances in Neural Information Processing Systems (NeurIPS).
+External Links: Link
+Cited by: §5.
+Vignac et al. (2022)
+C. Vignac, I. Krawczuk, A. Siraudin, B. Wang, V. Cevher, and P. Frossard
+Digress: discrete denoising diffusion for graph generation.
+arXiv preprint arXiv:2209.14734.
+Cited by: §1,
+§5.
+Vuillermot (2010)
+P. Vuillermot
+A generalization of chernoff’s product formula for time-dependent operators.
+Journal of Functional Analysis 259 (11), pp. 2923–2938.
+Cited by: §B.2.
+Wang et al. (2025)
+C. Wang, M. Uehara, Y. He, A. Wang, A. Lal, T. Jaakkola, S. Levine, A. Regev, Hanchen, and T. Biancalani
+Fine-tuning discrete diffusion models via reward optimization with applications to DNA and protein design.
+International Conference on Learning Representations (ICLR).
+Cited by: §5.
+Wang et al. (2023)
+J. Wang, H. Yuan, D. Chen, Y. Zhang, X. Wang, and S. Zhang
+Modelscope text-to-video technical report.
+arXiv preprint arXiv:2308.06571.
+Cited by: §1.
+Wang et al. (2024a)
+X. Wang, Z. Zheng, F. Ye, D. Xue, S. Huang, and Q. Gu
+Diffusion language models are versatile protein learners.
+arXiv preprint arXiv:2402.18567.
+Cited by: §D.5.1,
+§4.3,
+§4.3.
+Wang et al. (2024b)
+X. Wang, Z. Zheng, F. Ye, D. Xue, S. Huang, and Q. Gu
+Diffusion language models are versatile protein learners.
+International Conference on Machine Learning (ICML).
+Cited by: §D.5,
+§1.
+Watson et al. (2023)
+J. L. Watson, D. Juergens, N. R. Bennett, B. L. Trippe, J. Yim, H. E. Eisenach, W. Ahern, A. J. Borst, R. J. Ragotte, L. F. Milles, et al.
+De novo design of protein structure and function with rfdiffusion.
+Nature 620 (7976), pp. 1089–1100.
+Cited by: §1.
+Xu and Zhang (2010)
+J. Xu and Y. Zhang
+How significant is a protein structure similarity with tm-score= 0.5?.
+Bioinformatics 26 (7), pp. 889–895.
+Cited by: §D.5.3.
+Yang et al. (2024)
+A. Yang, B. Yang, B. Hui, B. Zheng, B. Yu, C. Zhou, C. Li, C. Li, D. Liu, F. Huang, G. Dong, H. Wei, H. Lin, J. Tang, J. Wang, J. Yang, J. Tu, J. Zhang, J. Ma, J. Xu, J. Zhou, J. Bai, J. He, J. Lin, K. Dang, K. Lu, K. Chen, K. Yang, M. Li, M. Xue, N. Ni, P. Zhang, P. Wang, R. Peng, R. Men, R. Gao, R. Lin, S. Wang, S. Bai, S. Tan, T. Zhu, T. Li, T. Liu, W. Ge, X. Deng, X. Zhou, X. Ren, X. Zhang, X. Wei, X. Ren, Y. Fan, Y. Yao, Y. Zhang, Y. Wan, Y. Chu, Y. Liu, Z. Cui, Z. Zhang, and Z. Fan
+Qwen2 technical report.
+arXiv preprint arXiv:2407.10671.
+Cited by: §D.4.
+Zhang and Skolnick (2004)
+Y. Zhang and J. Skolnick
+Scoring function for automated assessment of protein structure template quality.
+Proteins: Structure 57.
+Cited by: §D.5.3.
+Appendix A Method Overview
+A.1 Correspondence to Continuous Feynman-Kac Correctors
+Table A1: Comparison of state updates for Discrete Feynman-Kac Correctors and continuous Feynman-Kac Correctors (Skreta et al., 2025), corresponding to line 4 in Algorithm 1. For computing rl,jdiffr^{\text{diff}}_{l,j} in the case of sampling from the reward-tilted distribution, xtl,jx_{t}^{l,j} is xtx_{t}, except that position ll is replaced with token jj, where ll is the position being de-masked and jj is a token from the vocabulary.
+Target
+DFKC
+FKC
+Base
+pt​(x)p_{t}(x)
+xt+Δ​t∼softmax​(NN​(xt))x_{t+\Delta t}\sim\texttt{softmax}(\texttt{NN}(x_{t}))
+xt+Δ​t=xt+(−ft​(xt)+σt2​NN​(xt))​Δ​t+σt​Δ​Wtx_{t+\Delta t}=x_{t}+(-f_{t}(x_{t})+\sigma_{t}^{2}\texttt{NN}(x_{t}))\Delta t+\sigma_{t}\Delta W_{t}
+Annealing
+ptβ​(x)p_{t}^{\beta}(x)
+xt+Δ​t∼softmax​(β​NN​(xt))x_{t+\Delta t}\sim\texttt{softmax}(\beta\texttt{NN}(x_{t}))
+xt+Δ​t=xt+(−ft​(xt)+β​σt2​NN​(xt))​Δ​t+σt​Δ​Wtx_{t+\Delta t}=x_{t}+(-f_{t}(x_{t})+\beta\sigma_{t}^{2}\texttt{NN}(x_{t}))\Delta t+\sigma_{t}\Delta W_{t}
+Product
+pt1​(x)​pt2​(x)p_{t}^{1}(x)p_{t}^{2}(x)
+xt+Δ​t∼softmax​(NN1​(xt)+NN2​(xt))x_{t+\Delta t}\sim\texttt{softmax}(\texttt{NN}^{1}(x_{t})+\,\texttt{NN}^{2}(x_{t}))
+xt+Δ​t=xt+(−ft​(xt)+σt2​(NN1​(xt)+NN2​(xt)))​Δ​t+σt​Δ​Wtx_{t+\Delta t}=x_{t}+(-f_{t}(x_{t})+\sigma_{t}^{2}(\texttt{NN}^{1}(x_{t})+\texttt{NN}^{2}(x_{t})))\Delta t+\sigma_{t}\Delta W_{t}
+Reward
+pt​(x)​exp⁡(βt​r​(x))p_{t}(x)\exp(\beta_{t}r(x))
+[1]​rl,jdiff=βt​(r⁡(xtl,j)−r⁡(xt))\text{[1]}\,r_{l,j}^{\text{diff}}=\beta_{t}(r(x_{t}^{l,j})-r(x_{t}))
+[2]​xt+Δ​t∼softmax​(NN​(xt)+rdiff)\text{[2]}\,x_{t+\Delta t}\sim\texttt{softmax}(\texttt{NN}(x_{t})+r^{\text{diff}})
+xt+Δ​t=xt+(−ft(xt)+σt2NN(xt)+βtσt22∇r(xt))Δt+σtΔWtx_{t+\Delta t}=x_{t}+(-f_{t}(x_{t})+\sigma_{t}^{2}\texttt{NN}(x_{t})+\beta_{t}\frac{\sigma_{t}^{2}}{2}\nabla r(x_{t}))\Delta t+\sigma_{t}\Delta W_{t}
+Table A2: Comparison of weight updates for Discrete Feynman-Kac Correctors and continuous Feynman-Kac Correctors (Skreta et al., 2025), corresponding to line 5 in Algorithm 1.
+Target
+DFKC
+FKC
+Base
+pt​(x)p_{t}(x)
+—
+—
+Annealing
+ptβ​(x)p_{t}^{\beta}(x)
+gt​(xt)=β​(1−t)β−1tβ​∑jsoftmax​(β​NN​(xt)j)g_{t}(x_{t})=\beta\frac{(1-t)^{\beta-1}}{t^{\beta}}\sum_{j}\texttt{softmax}(\beta\texttt{NN}(x_{t})_{j})
+gt​(xt)=(β−1)​(⟨∇,ft​(xt)⟩+σt22​β​‖NN​(xt)‖2​Δ​tCLOSEg_{t}(x_{t})=(\beta-1)(\langle\nabla,f_{t}(x_{t})\rangle+\frac{\sigma_{t}^{2}}{2}\beta||\texttt{NN}(x_{t})||^{2}\Delta t
+Product
+pt1​(x)​pt2​(x)p_{t}^{1}(x)p_{t}^{2}(x)
+gt​(xt)=2​(1−t)t2​∑jsoftmax​(NN1​(xt)j+NN2​(xt)j)g_{t}(x_{t})=2\frac{(1-t)}{t^{2}}\sum_{j}\texttt{softmax}(\texttt{NN}^{1}(x_{t})_{j}+\texttt{NN}^{2}(x_{t})_{j})
+gt​(xt)=(⟨∇,ft​(xt)⟩+σt2​⟨NN1​(xt),NN2​(xt)⟩)​Δ​tg_{t}(x_{t})=(\langle\nabla,f_{t}(x_{t})\rangle+\sigma_{t}^{2}\langle\texttt{NN}^{1}(x_{t}),\texttt{NN}^{2}(x_{t})\rangle)\Delta t
+Reward
+pt​(x)​exp⁡(βt​r​(x))p_{t}(x)\exp(\beta_{t}r(x))
+gt​(xt)=1t​∑jsoftmax​(NN​(xt)j+rdiff)+Δ​βt​r​(xt)g_{t}(x_{t})=\frac{1}{t}\sum_{j}\texttt{softmax}(\texttt{NN}(x_{t})_{j}+r^{\text{diff}})+\Delta\beta_{t}r(x_{t})
+gt(xt)=(⟨βt∇r(xt),σt22NN(xt)−ft(xt)⟩+Δβtr(xt))Δtg_{t}(x_{t})=(\langle\beta_{t}\nabla r(x_{t}),\frac{\sigma_{t}^{2}}{2}\texttt{NN}(x_{t})-f_{t}(x_{t})\rangle+\Delta\beta_{t}r(x_{t}))\Delta t
+Appendix B Background Proofs
+B.1 Weighted Forward Kolmogorov Equation
+Consider the forward Kolmogorov equation with the weighting term
+∂ps​(j)∂s=\displaystyle\frac{\partial p_{s}(j)}{\partial s}=~
+∑k≠jAs​(k,j)​ps​(k)−∑k≠jAs​(j,k)​ps​(j)+ps​(j)​(gs​(j)−∑kps​(k)​gs​(k)).\displaystyle\sum_{k\neq j}A_{s}(k,j)p_{s}(k)-\sum_{k\neq j}A_{s}(j,k)p_{s}(j)+p_{s}(j)(g_{s}(j)-\sum_{k}p_{s}(k)g_{s}(k))\,.
+(22)
+We can re-write the last term as
+ps​(j)​(gs​(j)−∑kps​(k)​gs​(k))=\displaystyle p_{s}(j)(g_{s}(j)-\sum_{k}p_{s}(k)g_{s}(k))=~
+∑kps​(k)​ps​(j)​(gs​(j)−gs​(k))\displaystyle\sum_{k}p_{s}(k)p_{s}(j)(g_{s}(j)-g_{s}(k))
+(23)
+=\displaystyle=~
+∑kps​(k)​ps​(j)​σs​(j,k)​|gs​(j)−gs​(k)|\displaystyle\sum_{k}p_{s}(k)p_{s}(j)\sigma_{s}(j,k)|g_{s}(j)-g_{s}(k)|
+(24)
+=\displaystyle=~
+∑kps(j)𝟙[σs(j,k)>0]|gs(j)−gs(k)|ps(k)−\displaystyle\sum_{k}p_{s}(j)\mathds{1}[\sigma_{s}(j,k)>0]|g_{s}(j)-g_{s}(k)|p_{s}(k)-
+(25)
+−∑kps(k)𝟙[σs(j,k)<0]|gs(j)−gs(k)|ps(j),\displaystyle-\sum_{k}p_{s}(k)\mathds{1}[\sigma_{s}(j,k)<0]|g_{s}(j)-g_{s}(k)|p_{s}(j)\,,
+(26)
+where σs​(j,k)\sigma_{s}(j,k) is the sign of (gs​(j)−gs​(k))(g_{s}(j)-g_{s}(k)). Let’s define
+Bs​(k,j)\displaystyle B_{s}(k,j)~
+≔ps(k)𝟙[σs(j,k)>0]|gs(j)−gs(k)|\displaystyle\coloneqq p_{s}(k)\mathds{1}[\sigma_{s}(j,k)>0]|g_{s}(j)-g_{s}(k)|
+(27)
+⟹Bs​(j,k)\displaystyle\implies B_{s}(j,k)~
+≔ps(j)𝟙[σs(k,j)>0]|gs(k)−gs(j)|.\displaystyle\coloneqq p_{s}(j)\mathds{1}[\sigma_{s}(k,j)>0]|g_{s}(k)-g_{s}(j)|\,.
+(28)
+Using the fact that σs​(k,j)=−σs​(j,k)\sigma_{s}(k,j)=-\sigma_{s}(j,k), we have
+ps​(j)​(gs​(j)−∑kps​(k)​gs​(k))=\displaystyle p_{s}(j)(g_{s}(j)-\sum_{k}p_{s}(k)g_{s}(k))=~
+∑kBs​(k,j)​ps​(k)−∑kBs​(j,k)​ps​(j).\displaystyle\sum_{k}B_{s}(k,j)p_{s}(k)-\sum_{k}B_{s}(j,k)p_{s}(j)\,.
+(29)
+Finally, using the fact that Bs​(j,j)=0B_{s}(j,j)=0, we have
+∂ps​(j)∂s=\displaystyle\frac{\partial p_{s}(j)}{\partial s}=~
+∑k≠jAs​(k,j)​ps​(k)−∑k≠jAs​(j,k)​ps​(j)+ps​(j)​(gs​(j)−∑kps​(k)​gs​(k))\displaystyle\sum_{k\neq j}A_{s}(k,j)p_{s}(k)-\sum_{k\neq j}A_{s}(j,k)p_{s}(j)+p_{s}(j)(g_{s}(j)-\sum_{k}p_{s}(k)g_{s}(k))
+(30)
+=\displaystyle=~
+∑k≠j(As​(k,j)+Bs​(k,j))​ps​(k)−∑k≠j(As​(j,k)+Bs​(j,k))​ps​(j),\displaystyle\sum_{k\neq j}(A_{s}(k,j)+B_{s}(k,j))p_{s}(k)-\sum_{k\neq j}(A_{s}(j,k)+B_{s}(j,k))p_{s}(j)\,,
+(31)
+Bs(k,j)≔ps(k)𝟙[σs(j,k)>0]|gs(j)−gs(k)|.\displaystyle B_{s}(k,j)\coloneqq p_{s}(k)\mathds{1}[\sigma_{s}(j,k)>0]|g_{s}(j)-g_{s}(k)|\,.
+(32)
+B.2 Discrete Feynman-Kac formula
+See 2.1
+Proof.
+We re-write the following FKE in the matrix notation, i.e.
+∂pt​(i)∂t=\displaystyle\frac{\partial p_{t}(i)}{\partial t}=~
+∑j≠iAt​(j,i)​pt​(j)−∑j≠iAt​(i,j)​pt​(i)+pt​(i)​(gt​(i)−∑kpt​(k)​gt​(k))\displaystyle\sum_{j\neq i}A_{t}(j,i)p_{t}(j)-\sum_{j\neq i}A_{t}(i,j)p_{t}(i)+p_{t}(i)(g_{t}(i)-\sum_{k}p_{t}(k)g_{t}(k))
+(33)
+=\displaystyle=~
+∑jAt​(j,i)​pt​(j)+∑jδi​j​g¯t​(i)​pt​(j)\displaystyle\sum_{j}A_{t}(j,i)p_{t}(j)+\sum_{j}\delta_{ij}\bar{g}_{t}(i)p_{t}(j)
+(34)
+=\displaystyle=~
+[𝑨t​𝒑t]i+[𝑮t​𝒑t]i,\displaystyle[\bm{A}_{t}\bm{p}_{t}]_{i}+[\bm{G}_{t}\bm{p}_{t}]_{i}\,,
+(35)
+where we define the matrices 𝑨t\bm{A}_{t} and 𝑮t\bm{G}_{t} as
+[𝑨t]i​j≔At​(j,i),[𝑮t]i​j≔δi​j​g¯t​(i),g¯t​(i)=gt​(i)−∑kpt​(k)​gt​(k).\displaystyle[\bm{A}_{t}]_{ij}\coloneqq A_{t}(j,i)\,,\;\;[\bm{G}_{t}]_{ij}\coloneqq\delta_{ij}\bar{g}_{t}(i)\,,\;\;\bar{g}_{t}(i)=g_{t}(i)-\sum_{k}p_{t}(k)g_{t}(k)\,.
+(36)
+Thus, in the matrix notation, we have the following Ordinary Differential Equation (ODE)
+∂𝒑t∂t=(𝑨t+𝑮t)​𝒑t,\displaystyle\frac{\partial\bm{p}_{t}}{\partial t}=(\bm{A}_{t}+\bm{G}_{t})\bm{p}_{t}\,,
+(37)
+which solution is given by the time-ordered exponential, denoted as
+OPEN𝒑T=𝒯​exp⁡(∫0Td​t​(𝑨t+𝑮t)CLOSE)​𝒑0,\displaystyle\bm{p}_{T}=\mathcal{T}\exp\mathopen{}\mathclose{{\left(\int_{0}^{T}dt\;(\bm{A}_{t}+\bm{G}_{t})}}\right)\bm{p}_{0}\,,
+(38)
+and defined as the following limit
+OPEN𝒑T=limn→∞∏k=0n−1exp⁡(1n​(𝑨(k​T)/n+𝑮(k​T)/n)CLOSE)​𝒑0.\displaystyle\bm{p}_{T}=\lim_{n\rightarrow\infty}\prod_{k=0}^{n-1}\exp\mathopen{}\mathclose{{\left(\frac{1}{n}(\bm{A}_{(kT)/n}+\bm{G}_{(kT)/n})}}\right)\bm{p}_{0}\,.
+(39)
+Using the time-dependent analog of the Lie-Trotter formula (see (Vuillermot, 2010) for the proof), we can re-write the matrix exponential of the sum as the product of matrix exponentials, which is not true in general because 𝑨t\bm{A}_{t} and 𝑮t\bm{G}_{t} do not commute i.e.
+limn→∞∏k=0n−1exp(1n​(𝑨(k​T)/n+𝑮(k​T)/n)CLOSE)=limn→∞∏k=0n−1exp(1n​𝑨(k​T)/nCLOSE)exp(1n​𝑮(k​T)/nCLOSE).\displaystyle\lim_{n\rightarrow\infty}\prod_{k=0}^{n-1}\exp\mathopen{}\mathclose{{\left(\frac{1}{n}(\bm{A}_{(kT)/n}+\bm{G}_{(kT)/n})}}\right)=\lim_{n\rightarrow\infty}\prod_{k=0}^{n-1}\exp\mathopen{}\mathclose{{\left(\frac{1}{n}\bm{A}_{(kT)/n}}}\right)\exp\mathopen{}\mathclose{{\left(\frac{1}{n}\bm{G}_{(kT)/n}}}\right)\,.
+Denoting d​t≔1/ndt\coloneqq 1/n and tk=(k​T)/nt_{k}=(kT)/n, we have
+𝒑T=\displaystyle\bm{p}_{T}=~
+OPENOPENlimd​t→0∏k=0n−1exp⁡(d​t​𝑨tkCLOSE)​exp⁡(d​t​𝑮tkCLOSE)​𝒑0\displaystyle\lim_{dt\rightarrow 0}\prod_{k=0}^{n-1}\exp\mathopen{}\mathclose{{\left(dt\bm{A}_{t_{k}}}}\right)\exp\mathopen{}\mathclose{{\left(dt\bm{G}_{t_{k}}}}\right)\bm{p}_{0}
+(40)
+=\displaystyle=~
+limd​t→0∏k=1n−1exp(d​t​𝑨tkCLOSE)exp(d​t​𝑮tkCLOSE)∑j0exp(d​t​𝑨t0CLOSE)i1​j0∑i0exp(d​t​𝑮t0CLOSE)j0​i0p0(i0).\displaystyle\lim_{dt\rightarrow 0}\prod_{k=1}^{n-1}\exp\mathopen{}\mathclose{{\left(dt\bm{A}_{t_{k}}}}\right)\exp\mathopen{}\mathclose{{\left(dt\bm{G}_{t_{k}}}}\right)\sum_{j_{0}}\exp\mathopen{}\mathclose{{\left(dt\bm{A}_{t_{0}}}}\right)_{i_{1}j_{0}}\sum_{i_{0}}\exp\mathopen{}\mathclose{{\left(dt\bm{G}_{t_{0}}}}\right)_{j_{0}i_{0}}p_{0}(i_{0})\,.
+(41)
+Using the fact that 𝑮t\bm{G}_{t} is diagonal, we have
+OPENOPENexp⁡(d​t​𝑮tCLOSE)i​j=δi​j​exp⁡(d​t​g¯t​(i)CLOSE),\displaystyle\exp\mathopen{}\mathclose{{\left(dt\bm{G}_{t}}}\right)_{ij}=\delta_{ij}\exp\mathopen{}\mathclose{{\left(dt\bar{g}_{t}(i)}}\right)\,,
+(42)
+and, correspondingly,
+pT​(i)=\displaystyle p_{T}(i)=~
+limd​t→0∏k=1n−1exp(d​t​𝑨tkCLOSE)exp(d​t​𝑮tkCLOSE)∑j0∑i0exp(d​t​𝑨t0CLOSE)i1​j0δj0​i0exp(d​t​g¯t0​(j0)CLOSE)p0(i0)\displaystyle\lim_{dt\rightarrow 0}\prod_{k=1}^{n-1}\exp\mathopen{}\mathclose{{\left(dt\bm{A}_{t_{k}}}}\right)\exp\mathopen{}\mathclose{{\left(dt\bm{G}_{t_{k}}}}\right)\sum_{j_{0}}\sum_{i_{0}}\exp\mathopen{}\mathclose{{\left(dt\bm{A}_{t_{0}}}}\right)_{i_{1}j_{0}}\delta_{j_{0}i_{0}}\exp\mathopen{}\mathclose{{\left(dt\bar{g}_{t_{0}}(j_{0})}}\right)p_{0}(i_{0})
+=\displaystyle=~
+limd​t→0∏k=1n−1exp(d​t​𝑨tkCLOSE)exp(d​t​𝑮tkCLOSE)∑i0exp(d​t​𝑨t0CLOSE)i1​i0exp(d​t​g¯t0​(i0)CLOSE)p0(i0)\displaystyle\lim_{dt\rightarrow 0}\prod_{k=1}^{n-1}\exp\mathopen{}\mathclose{{\left(dt\bm{A}_{t_{k}}}}\right)\exp\mathopen{}\mathclose{{\left(dt\bm{G}_{t_{k}}}}\right)\sum_{i_{0}}\exp\mathopen{}\mathclose{{\left(dt\bm{A}_{t_{0}}}}\right)_{i_{1}i_{0}}\exp\mathopen{}\mathclose{{\left(dt\bar{g}_{t_{0}}(i_{0})}}\right)p_{0}(i_{0})
+(43)
+…\displaystyle\ldots
+(44)
+=\displaystyle=~
+limd​t→0∑in−2…∑i1∑i0exp(d​t​𝑨tn−1CLOSE)i​in−2exp(d​t​g¯tn−2​(in−2)CLOSE)…⋅\displaystyle\lim_{dt\rightarrow 0}\sum_{i_{n-2}}\ldots\sum_{i_{1}}\sum_{i_{0}}\exp\mathopen{}\mathclose{{\left(dt\bm{A}_{t_{n-1}}}}\right)_{ii_{n-2}}\exp\mathopen{}\mathclose{{\left(dt\bar{g}_{t_{n-2}}(i_{n-2})}}\right)\ldots\cdot
+(45)
+⋅exp(d​t​𝑨t0CLOSE)i1​i0exp(d​t​g¯t0​(i0)CLOSE)p0(i0)\displaystyle\cdot\exp\mathopen{}\mathclose{{\left(dt\bm{A}_{t_{0}}}}\right)_{i_{1}i_{0}}\exp\mathopen{}\mathclose{{\left(dt\bar{g}_{t_{0}}(i_{0})}}\right)p_{0}(i_{0})
+(46)
+=\displaystyle=~
+limd​t→0∑in−2…∑i0exp(d​t​𝑨tn−1CLOSE)i​in−2…exp(d​t​𝑨t0CLOSE)i1​i0exp(∑k=0n−2d​t​g¯tk​(ik)CLOSE)p0(i0).\displaystyle\lim_{dt\rightarrow 0}\sum_{i_{n-2}}\ldots\sum_{i_{0}}\exp\mathopen{}\mathclose{{\left(dt\bm{A}_{t_{n-1}}}}\right)_{ii_{n-2}}\ldots\exp\mathopen{}\mathclose{{\left(dt\bm{A}_{t_{0}}}}\right)_{i_{1}i_{0}}\exp\mathopen{}\mathclose{{\left(\sum_{k=0}^{n-2}dt\bar{g}_{t_{k}}(i_{k})}}\right)p_{0}(i_{0})\,.
+Finally, we denote
+OPENp⁡(xt+d​t=i|xt=j)≔exp⁡(d​t​𝑨tCLOSE)i​j=δi​j+At​(j,i)​d​t+o⁡(d​t).\displaystyle p(x_{t+dt}=i\,|\,x_{t}=j)\coloneqq\exp\mathopen{}\mathclose{{\left(dt\bm{A}_{t}}}\right)_{ij}=\delta_{ij}+A_{t}(j,i)dt+o(dt)\,.
+(47)
+In this notation, the expected value of the statistics ϕ\phi can be evaluated as
+∑x\displaystyle\sum_{x}~
+OPENϕ⁡(x)​pT​(x)=limd​t→0∑xT…​∑x0ϕ⁡(xT)​p​(xT|xT−d​t)​…​p​(xd​t|x0)​exp⁡(∑t=0Td​t​g¯t​(xt)CLOSE)​p0​(x0)\displaystyle\phi(x)p_{T}(x)=\lim_{dt\to 0}\sum_{x_{T}}\ldots\sum_{x_{0}}\phi(x_{T})p(x_{T}\,|\,x_{T-dt})\ldots p(x_{dt}\,|\,x_{0})\exp\mathopen{}\mathclose{{\left(\sum_{t=0}^{T}dt\bar{g}_{t}(x_{t})}}\right)p_{0}(x_{0})
+=\displaystyle=~
+𝔼X0:Texp(∫0Td​t​g¯t​(Xt)CLOSE)ϕ(XT)∝𝔼X0:Texp(∫0Td​t​gt​(Xt)CLOSE)ϕ(XT),\displaystyle\mathbb{E}_{X_{0:T}}\exp\mathopen{}\mathclose{{\left(\int_{0}^{T}dt\;\bar{g}_{t}(X_{t})}}\right)\phi(X_{T})\propto\mathbb{E}_{X_{0:T}}\exp\mathopen{}\mathclose{{\left(\int_{0}^{T}dt\;g_{t}(X_{t})}}\right)\phi(X_{T})\,,
+(48)
+where in the last two formulas we take the expectation w.r.t. the process X0:TX_{0:T} defined as the limit of the transition distributions p⁡(xt+d​t=i|xt=j)p(x_{t+dt}=i\,|\,x_{t}=j).
+∎
+B.3 Discrete Masked Diffusion
+First, we consider general case, where mm is the mask state and αs,t\alpha_{s,t} is the noise schedule, i.e. the noising process is defined as
+p⁡(xs=j|xt=i)=(1−α¯s,t)​δm​j+α¯s,t​δi​j.\displaystyle p(x_{s}=j\,|\,x_{t}=i)=(1-\bar{\alpha}_{s,t})\delta_{mj}+\bar{\alpha}_{s,t}\delta_{ij}\,.
+(49)
+Note that not every α¯s,t\bar{\alpha}_{s,t} satisfies the master equation and we have to ensure that the following equality holds.
+p⁡(xs=j|xt=i)\displaystyle p(x_{s}=j\,|\,x_{t}=i)~
+=∑kp⁡(xs=j|xr=k)​p​(xr=k|xt=i)\displaystyle=\sum_{k}p(x_{s}=j\,|\,x_{r}=k)p(x_{r}=k\,|\,x_{t}=i)
+(50)
+(1−α¯s,t)​δm​j+α¯s,t​δi​j\displaystyle(1-\bar{\alpha}_{s,t})\delta_{mj}+\bar{\alpha}_{s,t}\delta_{ij}~
+=∑k((1−α¯s,r)​δm​j+α¯s,r​δk​j)​((1−α¯r,t)​δm​k+α¯r,t​δi​k)\displaystyle=\sum_{k}((1-\bar{\alpha}_{s,r})\delta_{mj}+\bar{\alpha}_{s,r}\delta_{kj})((1-\bar{\alpha}_{r,t})\delta_{mk}+\bar{\alpha}_{r,t}\delta_{ik})
+(51)
+(1−α¯s,t)​δm​j+α¯s,t​δi​j\displaystyle(1-\bar{\alpha}_{s,t})\delta_{mj}+\bar{\alpha}_{s,t}\delta_{ij}~
+=(1−α¯s,r)​δm​j​(α¯r,t+(1−α¯r,t))+α¯s,r​((1−α¯r,t)​δm​j+α¯r,t​δi​j)\displaystyle=(1-\bar{\alpha}_{s,r})\delta_{mj}(\bar{\alpha}_{r,t}+(1-\bar{\alpha}_{r,t}))+\bar{\alpha}_{s,r}((1-\bar{\alpha}_{r,t})\delta_{mj}+\bar{\alpha}_{r,t}\delta_{ij})
+(1−α¯s,t)​δm​j+α¯s,t​δi​j\displaystyle(1-\bar{\alpha}_{s,t})\delta_{mj}+\bar{\alpha}_{s,t}\delta_{ij}~
+=((1−α¯s,r)+α¯s,r​(1−α¯r,t))​δm​j+α¯s,r​α¯r,t​δi​j.\displaystyle=((1-\bar{\alpha}_{s,r})+\bar{\alpha}_{s,r}(1-\bar{\alpha}_{r,t}))\delta_{mj}+\bar{\alpha}_{s,r}\bar{\alpha}_{r,t}\delta_{ij}\,.
+(52)
+Thus, the following relations must hold
+1−α¯s,t=\displaystyle 1-\bar{\alpha}_{s,t}=~
+(1−α¯s,r)+α¯s,r​(1−α¯r,t),α¯s,t=α¯s,r​α¯r,t\displaystyle(1-\bar{\alpha}_{s,r})+\bar{\alpha}_{s,r}(1-\bar{\alpha}_{r,t})\,,\;\;\bar{\alpha}_{s,t}=\bar{\alpha}_{s,r}\bar{\alpha}_{r,t}
+(53)
+−α¯s,t=\displaystyle-\bar{\alpha}_{s,t}=~
+−α¯r,t​α¯s,r,α¯s,t=α¯s,r​α¯r,t,\displaystyle-\bar{\alpha}_{r,t}\bar{\alpha}_{s,r}\,,\;\;\bar{\alpha}_{s,t}=\bar{\alpha}_{s,r}\bar{\alpha}_{r,t}\,,
+(54)
+α¯s,t=\displaystyle\bar{\alpha}_{s,t}=~
+α¯r,t​α¯s,r.\displaystyle\bar{\alpha}_{r,t}\bar{\alpha}_{s,r}\,.
+(55)
+Thus, any function that satisfy the following equation works
+∀t≤r≤s,α¯s,t=\displaystyle\forall\;t\leq r\leq s\,,\;\;\bar{\alpha}_{s,t}=~
+α¯s,r​α¯r,t.\displaystyle\bar{\alpha}_{s,r}\bar{\alpha}_{r,t}\,.
+(56)
+Denoting αs=α¯s,0\alpha_{s}=\bar{\alpha}_{s,0}, we have
+OPENα¯s,t=αsαt, and ​p​(xs=j|xt=i)=(1−αsαtCLOSE)​δm​j+αsαt​δi​j.\displaystyle\bar{\alpha}_{s,t}=\frac{\alpha_{s}}{\alpha_{t}}\,,\;\text{ and }\;p(x_{s}=j\,|\,x_{t}=i)=\mathopen{}\mathclose{{\left(1-\frac{\alpha_{s}}{\alpha_{t}}}}\right)\delta_{mj}+\frac{\alpha_{s}}{\alpha_{t}}\delta_{ij}\,.
+(57)
+From here, the rate matrix of the noising process is
+At​(i,j)=∂p⁡(xs=j|xt=i)∂s|s=t=1αt​∂αt∂t​(δi​j−δm​j).\displaystyle A_{t}(i,j)=\frac{\partial p(x_{s}=j\,|\,x_{t}=i)}{\partial s}\bigg|_{s=t}=\frac{1}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}(\delta_{ij}-\delta_{mj})\,.
+(58)
+B.4 Reverse-time Masked Diffusion
+For the inverse time τ=1−t\tau=1-t, we flip the marginals qτ​(i)≔p1−τ​(i)q_{\tau}(i)\coloneqq p_{1-\tau}(i) and take the derivative w.r.t. τ\tau
+∂qτ​(i)∂τ=\displaystyle\frac{\partial q_{\tau}(i)}{\partial\tau}=~
+∂p1−τ​(i)∂τ=−∂pt​(i)∂t|t=1−τ\displaystyle\frac{\partial p_{1-\tau}(i)}{\partial\tau}=-\frac{\partial p_{t}(i)}{\partial t}\bigg|_{t=1-\tau}
+(59)
+=\displaystyle=~
+−∑j≠i(A1−τ​(j,i)​p1−τ​(j)−A1−τ​(i,j)​p1−τ​(i)CLOSE)\displaystyle-\sum_{j\neq i}\mathopen{}\mathclose{{\left(A_{1-\tau}(j,i)p_{1-\tau}(j)-A_{1-\tau}(i,j)p_{1-\tau}(i)}}\right)
+(60)
+=\displaystyle=~
+OPEN∑j≠i(A1−τ​(i,j)​p1−τ​(i)qτ​(j)​qτ​(j)−A1−τ​(j,i)​p1−τ​(j)qτ​(i)​qτ​(i)CLOSE)\displaystyle\sum_{j\neq i}\mathopen{}\mathclose{{\left(A_{1-\tau}(i,j)\frac{p_{1-\tau}(i)}{q_{\tau}(j)}q_{\tau}(j)-A_{1-\tau}(j,i)\frac{p_{1-\tau}(j)}{q_{\tau}(i)}q_{\tau}(i)}}\right)
+(61)
+=\displaystyle=~
+OPEN∑j≠i(Bτ​(j,i)​qτ​(j)−Bτ​(i,j)​qτ​(i)CLOSE),Bτ​(i,j)≔A1−τ​(j,i)​p1−τ​(j)p1−τ​(i).\displaystyle\sum_{j\neq i}\mathopen{}\mathclose{{\left(B_{\tau}(j,i)q_{\tau}(j)-B_{\tau}(i,j)q_{\tau}(i)}}\right)\,,\;\;B_{\tau}(i,j)\coloneqq A_{1-\tau}(j,i)\frac{p_{1-\tau}(j)}{p_{1-\tau}(i)}\,.
+(62)
+Note that here we define only the off-diagonal elements and the diagonal elements are
+Bτ(i,i)=−∑j≠iBτ(i,j)=−∑j≠iA1−τ(j,i)p1−τ​(j)p1−τ​(i).\displaystyle B_{\tau}(i,i)=-\sum_{j\neq i}B_{\tau}(i,j)=-\sum_{j\neq i}A_{1-\tau}(j,i)\frac{p_{1-\tau}(j)}{p_{1-\tau}(i)}\,.
+(63)
+In particular, for the masked diffusion, we have
+Bτ​(i,j)=\displaystyle B_{\tau}(i,j)=~
+1αt​∂αt∂t​(δi​j−δm​i)​pt​(j)pt​(i),i≠j\displaystyle\frac{1}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}(\delta_{ij}-\delta_{mi})\frac{p_{t}(j)}{p_{t}(i)}\,,\;\;i\neq j
+(64)
+=\displaystyle=~
+−1αt​∂αt∂t​pt​(j)pt​(m)​δm​i,\displaystyle-\frac{1}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\frac{p_{t}(j)}{p_{t}(m)}\delta_{mi}\,,
+(65)
+Bτ​(i,i)=\displaystyle B_{\tau}(i,i)=~
+−∑j≠iBτ(i,j)=1αt∂αt∂t1−pt​(m)pt​(m)δm​i.\displaystyle-\sum_{j\neq i}B_{\tau}(i,j)=\frac{1}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\frac{1-p_{t}(m)}{p_{t}(m)}\delta_{mi}\,.
+(66)
+B.5 De-masking parameterization
+Furthermore, analogously to the derivation from (Shi et al., 2024) (Appendix H.3), we have
+pt​(j)pt​(m)=\displaystyle\frac{p_{t}(j)}{p_{t}(m)}=~
+∑ip0​(i)pt​(m)​p​(xt=j|x0=i)\displaystyle\sum_{i}\frac{p_{0}(i)}{p_{t}(m)}p(x_{t}=j\,|\,x_{0}=i)
+(67)
+=\displaystyle=~
+∑ip0​(i)​p​(xt=m|x0=i)pt​(m)​p​(x0=i|xt=m)​p⁡(x0=i|xt=m)p⁡(xt=m|x0=i)​p​(xt=j|x0=i)\displaystyle\sum_{i}\frac{p_{0}(i)p(x_{t}=m\,|\,x_{0}=i)}{p_{t}(m)p(x_{0}=i\,|\,x_{t}=m)}\frac{p(x_{0}=i\,|\,x_{t}=m)}{p(x_{t}=m\,|\,x_{0}=i)}p(x_{t}=j\,|\,x_{0}=i)
+(68)
+=\displaystyle=~
+∑ip⁡(x0=i|xt=m)p⁡(xt=m|x0=i)​p​(xt=j|x0=i)\displaystyle\sum_{i}\frac{p(x_{0}=i\,|\,x_{t}=m)}{p(x_{t}=m\,|\,x_{0}=i)}p(x_{t}=j\,|\,x_{0}=i)
+(69)
+=\displaystyle=~
+∑ip⁡(x0=i|xt=m)(1−αt)+αt​δi​m​((1−αt)​δm​j+αt​δi​j)\displaystyle\sum_{i}\frac{p(x_{0}=i\,|\,x_{t}=m)}{(1-\alpha_{t})+\alpha_{t}\delta_{im}}((1-\alpha_{t})\delta_{mj}+\alpha_{t}\delta_{ij})
+(70)
+=\displaystyle=~
+11−αt​∑i((1−αt)​δm​j+αt​δi​j)​p​(x0=i|xt=m)\displaystyle\frac{1}{1-\alpha_{t}}\sum_{i}((1-\alpha_{t})\delta_{mj}+\alpha_{t}\delta_{ij})p(x_{0}=i\,|\,x_{t}=m)
+(71)
+=\displaystyle=~
+δm​j+αt1−αt​p​(x0=j|xt=m).\displaystyle\delta_{mj}+\frac{\alpha_{t}}{1-\alpha_{t}}p(x_{0}=j\,|\,x_{t}=m)\,.
+(72)
+where we used the fact that p⁡(x0=m)=0p(x_{0}=m)=0.
+B.6 Multidimensional case
+For the multi-dimensional case, we consider the masking process applied independently to each coordinate, i.e.
+p⁡(xs=[j1​…​jd]|xt=[i1​…​id])=\displaystyle p(x_{s}=[j_{1}\ldots j_{d}]\,|\,x_{t}=[i_{1}\ldots i_{d}])=~
+∏k=1dp⁡(xs​[k]=jk|xt​[k]=ik)\displaystyle\prod_{k=1}^{d}p(x_{s}[k]=j_{k}\,|\,x_{t}[k]=i_{k})
+(73)
+=\displaystyle=~
+∏k=1d((1−αsαtCLOSE)​δm​jk+αsαt​δik​jk),\displaystyle\prod_{k=1}^{d}\mathopen{}\mathclose{{\left(\mathopen{}\mathclose{{\left(1-\frac{\alpha_{s}}{\alpha_{t}}}}\right)\delta_{mj_{k}}+\frac{\alpha_{s}}{\alpha_{t}}\delta_{i_{k}j_{k}}}}\right)\,,
+(74)
+which defines the following rate matrix
+At​([i1​…​id],[j1​…​jd])=\displaystyle A_{t}([i_{1}\ldots i_{d}],[j_{1}\ldots j_{d}])=~
+∂p⁡(xs=[j1​…​jd]|xt=[i1​…​id])∂s|s=t\displaystyle\frac{\partial p(x_{s}=[j_{1}\ldots j_{d}]\,|\,x_{t}=[i_{1}\ldots i_{d}])}{\partial s}\bigg|_{s=t}
+(75)
+=\displaystyle=~
+∑k=1d∏l≠kp⁡(xt​[l]=jl|xt​[l]=il)​∂p⁡(xs​[k]=jk|xt​[k]=ik)∂s|s=t\displaystyle\sum_{k=1}^{d}\prod_{l\neq k}p(x_{t}[l]=j_{l}\,|\,x_{t}[l]=i_{l})\frac{\partial p(x_{s}[k]=j_{k}\,|\,x_{t}[k]=i_{k})}{\partial s}\bigg|_{s=t}
+(76)
+=\displaystyle=~
+1αt​∂αt∂t​∑k=1d∏l≠kδjl​il​(δik​jk−δm​jk).\displaystyle\frac{1}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\sum_{k=1}^{d}\prod_{l\neq k}\delta_{j_{l}i_{l}}(\delta_{i_{k}j_{k}}-\delta_{mj_{k}})\,.
+(77)
+For the off-diagonal elements of the reverse-time matrix, we have
+Bt​([i1​…​id],[j1​…​jd])=\displaystyle B_{t}([i_{1}\ldots i_{d}],[j_{1}\ldots j_{d}])=~
+At​([j1​…​jd],[i1​…​id])​pt​([j1​…​jd])pt​([i1​…​id])\displaystyle A_{t}([j_{1}\ldots j_{d}],[i_{1}\ldots i_{d}])\frac{p_{t}([j_{1}\ldots j_{d}])}{p_{t}([i_{1}\ldots i_{d}])}
+(78)
+=\displaystyle=~
+1αt​∂αt∂t​pt​([j1​…​jd])pt​([i1​…​id])​∑k=1d∏l≠kδjl​il​(δik​jk−δm​ik)\displaystyle\frac{1}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\frac{p_{t}([j_{1}\ldots j_{d}])}{p_{t}([i_{1}\ldots i_{d}])}\sum_{k=1}^{d}\prod_{l\neq k}\delta_{j_{l}i_{l}}(\delta_{i_{k}j_{k}}-\delta_{mi_{k}})
+(79)
+=\displaystyle=~
+−1αt∂αt∂tpt​([j1​…​jd])pt​([i1​…​id])∑k=1d∏l≠kδjl​ilδm​ik.\displaystyle-\frac{1}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\frac{p_{t}([j_{1}\ldots j_{d}])}{p_{t}([i_{1}\ldots i_{d}])}\sum_{k=1}^{d}\prod_{l\neq k}\delta_{j_{l}i_{l}}\delta_{mi_{k}}\,.
+(80)
+Appendix C Discrete Feynman-Kac Correctors Proofs
+C.1 Annealing of FKE
+See 3.1
+Proof.
+Consider the forward Kolmogorov equation for the given rate matrix At​(i,j)A_{t}(i,j)
+∂pt​(i)∂t=\displaystyle\frac{\partial p_{t}(i)}{\partial t}=~
+∑j≠iAt​(j,i)​pt​(j)−∑j≠iAt​(i,j)​pt​(i)\displaystyle\sum_{j\neq i}A_{t}(j,i)p_{t}(j)-\sum_{j\neq i}A_{t}(i,j)p_{t}(i)
+(81)
+∂∂t​log⁡pt​(i)=\displaystyle\frac{\partial}{\partial t}\log p_{t}(i)=~
+OPEN∑j≠iAt​(j,i)​pt​(j)pt​(i)−∑j≠iAt​(i,j)=∑j≠i(At​(j,i)​pt​(j)pt​(i)−At​(i,j)CLOSE).\displaystyle\sum_{j\neq i}A_{t}(j,i)\frac{p_{t}(j)}{p_{t}(i)}-\sum_{j\neq i}A_{t}(i,j)=\sum_{j\neq i}\mathopen{}\mathclose{{\left(A_{t}(j,i)\frac{p_{t}(j)}{p_{t}(i)}-A_{t}(i,j)}}\right)\,.
+(82)
+Then the annealed target qt​(i)≔ptβ​(i)/Ztq_{t}(i)\coloneqq p_{t}^{\beta}(i)/Z_{t} follows
+∂∂t​log⁡qt​(i)=\displaystyle\frac{\partial}{\partial t}\log q_{t}(i)=~
+β​∂∂t​log⁡pt​(i)−∂∂t​log⁡Zt\displaystyle\beta\frac{\partial}{\partial t}\log p_{t}(i)-\frac{\partial}{\partial t}\log Z_{t}
+(83)
+=\displaystyle=~
+OPEN∑j≠i(β​At​(j,i)​pt​(j)pt​(i)−β​At​(i,j)CLOSE)−∂∂t​log⁡Zt\displaystyle\sum_{j\neq i}\mathopen{}\mathclose{{\left(\beta A_{t}(j,i)\frac{p_{t}(j)}{p_{t}(i)}-\beta A_{t}(i,j)}}\right)-\frac{\partial}{\partial t}\log Z_{t}
+(84)
+=\displaystyle=~
+∑j≠i(β​At​(j,i)​pt1−β​(j)pt1−β​(i)⏟≔Atanneal​(j,i)​qt​(j)qt​(i)−Atanneal​(i,j))+\displaystyle\sum_{j\neq i}\bigg(\underbrace{\beta A_{t}(j,i)\frac{p_{t}^{1-\beta}(j)}{p_{t}^{1-\beta}(i)}}_{\coloneqq A_{t}^{\mathrm{anneal}}(j,i)}\frac{q_{t}(j)}{q_{t}(i)}-A_{t}^{\mathrm{anneal}}(i,j)\bigg)+
+(85)
++∑j≠i(Atanneal​(i,j)−β​At​(i,j)CLOSE)−∂∂tlogZt.\displaystyle+\sum_{j\neq i}\mathopen{}\mathclose{{\left(A_{t}^{\mathrm{anneal}}(i,j)-\beta A_{t}(i,j)}}\right)-\frac{\partial}{\partial t}\log Z_{t}\,.
+(86)
+Denoting the second term as gt​(j)g_{t}(j), we have
+OPEN∂qt​(i)∂t=∑j≠i(Atanneal​(j,i)​qt​(j)−Atanneal​(i,j)​qt​(i))+qt​(i)​(gt​(i)−∂∂t​log⁡ZtCLOSE),\displaystyle\frac{\partial q_{t}(i)}{\partial t}=\sum_{j\neq i}\bigg(A_{t}^{\mathrm{anneal}}(j,i)q_{t}(j)-A_{t}^{\mathrm{anneal}}(i,j)q_{t}(i)\bigg)+q_{t}(i)\mathopen{}\mathclose{{\left(g_{t}(i)-\frac{\partial}{\partial t}\log Z_{t}}}\right)\,,
+(87)
+OPENAtanneal​(j,i)≔β​At​(j,i)​pt1−β​(j)pt1−β​(i),gt​(i)≔∑j≠i(Atanneal​(i,j)−β​At​(i,j)CLOSE).\displaystyle A_{t}^{\mathrm{anneal}}(j,i)\coloneqq\beta A_{t}(j,i)\frac{p_{t}^{1-\beta}(j)}{p_{t}^{1-\beta}(i)}\,,\;\;g_{t}(i)\coloneqq\sum_{j\neq i}\mathopen{}\mathclose{{\left(A_{t}^{\mathrm{anneal}}(i,j)-\beta A_{t}(i,j)}}\right)\,.
+(88)
+From the definition of qt​(i)q_{t}(i) we have
+∑iqt​(i)=1,∀t,\displaystyle\sum_{i}q_{t}(i)=1\,,\;\;\forall t\,,
+(89)
+hence,
+OPEN∑i∂qt​(i)∂t=0⟹∑iqt​(i)​(gt​(i)−∂∂t​log⁡ZtCLOSE)=0,\displaystyle\sum_{i}\frac{\partial q_{t}(i)}{\partial t}=0\implies\sum_{i}q_{t}(i)\mathopen{}\mathclose{{\left(g_{t}(i)-\frac{\partial}{\partial t}\log Z_{t}}}\right)=0\,,
+(90)
+which immediately yields
+gt​(i)−∂∂t​log⁡Zt=gt​(i)−𝔼i∼qt​(i)​gt​(i).\displaystyle g_{t}(i)-\frac{\partial}{\partial t}\log Z_{t}=g_{t}(i)-\mathbb{E}_{i\sim q_{t}(i)}g_{t}(i)\,.
+(91)
+However, one can also verify this through the definition of the normalization constant
+∂∂t​log⁡Zt=\displaystyle\frac{\partial}{\partial t}\log Z_{t}=~
+1Zt​∑i∂ptβ​(i)∂t=∑iptβ​(i)Zt​β​∂∂t​log⁡pt​(i)\displaystyle\frac{1}{Z_{t}}\sum_{i}\frac{\partial p_{t}^{\beta}(i)}{\partial t}=\sum_{i}\frac{p_{t}^{\beta}(i)}{Z_{t}}\beta\frac{\partial}{\partial t}\log p_{t}(i)
+(92)
+=\displaystyle=~
+OPEN∑iqt​(i)​∑j≠i(β​At​(j,i)​pt​(j)pt​(i)−β​At​(i,j)CLOSE),\displaystyle\sum_{i}q_{t}(i)\sum_{j\neq i}\mathopen{}\mathclose{{\left(\beta A_{t}(j,i)\frac{p_{t}(j)}{p_{t}(i)}-\beta A_{t}(i,j)}}\right)\,,
+(93)
+and, correspondingly
+∑iqt​(i)​gt​(i)−∂∂t​log⁡Zt=\displaystyle\sum_{i}q_{t}(i)g_{t}(i)-\frac{\partial}{\partial t}\log Z_{t}=~
+OPEN∑iqt​(i)​∑j≠i(β​At​(i,j)​pt1−β​(i)pt1−β​(j)−β​At​(j,i)​pt​(j)pt​(i)CLOSE)\displaystyle\sum_{i}q_{t}(i)\sum_{j\neq i}\mathopen{}\mathclose{{\left(\beta A_{t}(i,j)\frac{p_{t}^{1-\beta}(i)}{p_{t}^{1-\beta}(j)}-\beta A_{t}(j,i)\frac{p_{t}(j)}{p_{t}(i)}}}\right)
+(94)
+=\displaystyle=~
+OPENβZt​∑i∑j≠i(At​(i,j)​pt​(i)pt1−β​(j)−At​(j,i)​pt​(j)pt1−β​(i)CLOSE)\displaystyle\frac{\beta}{Z_{t}}\sum_{i}\sum_{j\neq i}\mathopen{}\mathclose{{\left(A_{t}(i,j)\frac{p_{t}(i)}{p_{t}^{1-\beta}(j)}-A_{t}(j,i)\frac{p_{t}(j)}{p_{t}^{1-\beta}(i)}}}\right)
+(95)
+=\displaystyle=~
+OPENβZt​(∑i∑j≠iA^t​(i,j)−∑i∑j≠iA^t​(j,i)CLOSE)\displaystyle\frac{\beta}{Z_{t}}\mathopen{}\mathclose{{\left(\sum_{i}\sum_{j\neq i}\hat{A}_{t}(i,j)-\sum_{i}\sum_{j\neq i}\hat{A}_{t}(j,i)}}\right)
+(96)
+=\displaystyle=~
+OPENβZt​(∑i,jA^t​(i,j)−∑i,jA^t​(j,i)CLOSE)=0,\displaystyle\frac{\beta}{Z_{t}}\mathopen{}\mathclose{{\left(\sum_{i,j}\hat{A}_{t}(i,j)-\sum_{i,j}\hat{A}_{t}(j,i)}}\right)=0\,,
+(97)
+where we denote A^t​(i,j)≔At​(i,j)​pt​(i)pt1−β​(j)\hat{A}_{t}(i,j)\coloneqq A_{t}(i,j)\frac{p_{t}(i)}{p_{t}^{1-\beta}(j)}.
+Thus, we have
+OPEN∂qt​(i)∂t=∑j≠i(Atanneal​(j,i)​qt​(j)−Atanneal​(i,j)​qt​(i))+qt​(i)​(gt​(i)−𝔼qt​(j)​gt​(j)CLOSE),\displaystyle\frac{\partial q_{t}(i)}{\partial t}=\sum_{j\neq i}\bigg(A_{t}^{\mathrm{anneal}}(j,i)q_{t}(j)-A_{t}^{\mathrm{anneal}}(i,j)q_{t}(i)\bigg)+q_{t}(i)\mathopen{}\mathclose{{\left(g_{t}(i)-\mathbb{E}_{q_{t}(j)}g_{t}(j)}}\right)\,,
+(98)
+OPENAtanneal​(j,i)≔β​At​(j,i)​pt1−β​(j)pt1−β​(i),gt​(i)≔∑j≠i(Atanneal​(i,j)−β​At​(i,j)CLOSE).\displaystyle A_{t}^{\mathrm{anneal}}(j,i)\coloneqq\beta A_{t}(j,i)\frac{p_{t}^{1-\beta}(j)}{p_{t}^{1-\beta}(i)}\,,\;\;g_{t}(i)\coloneqq\sum_{j\neq i}\mathopen{}\mathclose{{\left(A_{t}^{\mathrm{anneal}}(i,j)-\beta A_{t}(i,j)}}\right)\,.
+(99)
+∎
+See 3.2
+Proof.
+The reverse-time rate matrix is
+Bt​(i,j)=−δm​i​1αt​∂αt∂t​pt​(j)pt​(m),i≠j.\displaystyle B_{t}(i,j)=-\delta_{mi}\frac{1}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\frac{p_{t}(j)}{p_{t}(m)}\,,\;i\neq j\,.
+(100)
+Then, according to Theorem 3.1, the rate matrix of the annealed process is
+Btanneal​(i,j)=β​Bt​(i,j)​pt1−β​(i)pt1−β​(j)=−δm​i​βαt​∂αt∂t​pt​(j)pt​(m)​pt1−β​(i)pt1−β​(j)=−δm​i​βαt​∂αt∂t​ptβ​(j)ptβ​(m)\displaystyle B_{t}^{\mathrm{anneal}}(i,j)=\beta B_{t}(i,j)\frac{p_{t}^{1-\beta}(i)}{p_{t}^{1-\beta}(j)}=-\delta_{mi}\frac{\beta}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\frac{p_{t}(j)}{p_{t}(m)}\frac{p_{t}^{1-\beta}(i)}{p_{t}^{1-\beta}(j)}=-\delta_{mi}\frac{\beta}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\frac{p_{t}^{\beta}(j)}{p_{t}^{\beta}(m)}
+(101)
+And the weighting term is
+gt​(i)=\displaystyle g_{t}(i)=~
+OPENOPEN∑j≠i(Btanneal​(i,j)−β​Bt​(i,j)CLOSE)=δm​i​βαt​∂αt∂t​∑j≠i(pt​(j)pt​(m)−ptβ​(j)ptβ​(m)CLOSE)\displaystyle\sum_{j\neq i}\mathopen{}\mathclose{{\left(B_{t}^{\mathrm{anneal}}(i,j)-\beta B_{t}(i,j)}}\right)=\delta_{mi}\frac{\beta}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\sum_{j\neq i}\mathopen{}\mathclose{{\left(\frac{p_{t}(j)}{p_{t}(m)}-\frac{p_{t}^{\beta}(j)}{p_{t}^{\beta}(m)}}}\right)
+(102)
+=\displaystyle=~
+OPENOPENδm​i​βαt​∂αt∂t​∑j≠m(pt​(j)pt​(m)−ptβ​(j)ptβ​(m)CLOSE)=δm​i​βαt​∂αt∂t​∑j(pt​(j)pt​(m)−ptβ​(j)ptβ​(m)CLOSE)\displaystyle\delta_{mi}\frac{\beta}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\sum_{j\neq m}\mathopen{}\mathclose{{\left(\frac{p_{t}(j)}{p_{t}(m)}-\frac{p_{t}^{\beta}(j)}{p_{t}^{\beta}(m)}}}\right)=\delta_{mi}\frac{\beta}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\sum_{j}\mathopen{}\mathclose{{\left(\frac{p_{t}(j)}{p_{t}(m)}-\frac{p_{t}^{\beta}(j)}{p_{t}^{\beta}(m)}}}\right)
+(103)
+∎
+C.2 Product of FKEs
+See 3.3
+Proof.
+Consider two forward Kolmogorov equations with different rate matrices At1​(i,j)A^{1}_{t}(i,j) and At2​(i,j)A^{2}_{t}(i,j). For both we have the equations of the form
+∂pt1,2​(i)∂t=\displaystyle\frac{\partial p_{t}^{1,2}(i)}{\partial t}=~
+∑j≠iAt1,2​(j,i)​pt1,2​(j)−∑j≠iAt1,2​(i,j)​pt1,2​(i)\displaystyle\sum_{j\neq i}A^{1,2}_{t}(j,i)p^{1,2}_{t}(j)-\sum_{j\neq i}A^{1,2}_{t}(i,j)p^{1,2}_{t}(i)
+(104)
+∂∂t​log⁡pt1,2​(i)=\displaystyle\frac{\partial}{\partial t}\log p^{1,2}_{t}(i)=~
+∑j≠iAt1,2​(j,i)​pt1,2​(j)pt1,2​(i)−∑j≠iAt1,2​(i,j)\displaystyle\sum_{j\neq i}A^{1,2}_{t}(j,i)\frac{p^{1,2}_{t}(j)}{p^{1,2}_{t}(i)}-\sum_{j\neq i}A^{1,2}_{t}(i,j)
+(105)
+=\displaystyle=~
+OPEN∑j≠i(At1,2​(j,i)​pt1,2​(j)pt1,2​(i)−At1,2​(i,j)CLOSE).\displaystyle\sum_{j\neq i}\mathopen{}\mathclose{{\left(A^{1,2}_{t}(j,i)\frac{p^{1,2}_{t}(j)}{p^{1,2}_{t}(i)}-A^{1,2}_{t}(i,j)}}\right)\,.
+(106)
+Correspondingly, for the density qt​(i)≔pt1​(i)​pt2​(i)/Ztq_{t}(i)\coloneqq p_{t}^{1}(i)p_{t}^{2}(i)/Z_{t}, we have
+∂∂t\displaystyle\frac{\partial}{\partial t}~
+log⁡qt​(i)=∂∂t​log​pt1​(i)+∂∂t​log​pt2​(i)−∂∂t​log​Zt\displaystyle\log q_{t}(i)=\frac{\partial}{\partial t}\log p_{t}^{1}(i)+\frac{\partial}{\partial t}\log p_{t}^{2}(i)-\frac{\partial}{\partial t}\log Z_{t}
+(107)
+=\displaystyle=~
+OPEN∑j≠i(At1​(j,i)​pt1​(j)pt1​(i)−At1​(i,j)+At2​(j,i)​pt2​(j)pt2​(i)−At2​(i,j)CLOSE)−∂∂t​log⁡Zt\displaystyle\sum_{j\neq i}\mathopen{}\mathclose{{\left(A^{1}_{t}(j,i)\frac{p^{1}_{t}(j)}{p^{1}_{t}(i)}-A^{1}_{t}(i,j)+A^{2}_{t}(j,i)\frac{p^{2}_{t}(j)}{p^{2}_{t}(i)}-A^{2}_{t}(i,j)}}\right)-\frac{\partial}{\partial t}\log Z_{t}
+(108)
+=\displaystyle=~
+OPEN∑j≠i(At1​(j,i)​pt2​(i)pt2​(j)​qt​(j)qt​(i)+At2​(j,i)​pt1​(i)pt1​(j)​qt​(j)qt​(i)−At1​(i,j)−At2​(i,j)CLOSE)−∂∂t​log⁡Zt\displaystyle\sum_{j\neq i}\mathopen{}\mathclose{{\left(A^{1}_{t}(j,i)\frac{p^{2}_{t}(i)}{p^{2}_{t}(j)}\frac{q_{t}(j)}{q_{t}(i)}+A^{2}_{t}(j,i)\frac{p^{1}_{t}(i)}{p^{1}_{t}(j)}\frac{q_{t}(j)}{q_{t}(i)}-A^{1}_{t}(i,j)-A^{2}_{t}(i,j)}}\right)-\frac{\partial}{\partial t}\log Z_{t}
+(109)
+=\displaystyle=~
+∑j≠i([At1​(j,i)​pt2​(i)pt2​(j)+At2​(j,i)​pt1​(i)pt1​(j)]⏟≔Atprod​(j,i)​qt​(j)qt​(i)−At1​(i,j)−At2​(i,j))−∂∂t​log⁡Zt\displaystyle\sum_{j\neq i}\bigg(\underbrace{\bigg[A^{1}_{t}(j,i)\frac{p^{2}_{t}(i)}{p^{2}_{t}(j)}+A^{2}_{t}(j,i)\frac{p^{1}_{t}(i)}{p^{1}_{t}(j)}\bigg]}_{\coloneqq A^{\mathrm{prod}}_{t}(j,i)}\frac{q_{t}(j)}{q_{t}(i)}-A^{1}_{t}(i,j)-A^{2}_{t}(i,j)\bigg)-\frac{\partial}{\partial t}\log Z_{t}
+(110)
+=\displaystyle=~
+∑j≠i(Atprod​(j,i)​qt​(j)qt​(i)−Atprod​(i,j))+\displaystyle\sum_{j\neq i}\bigg(A^{\mathrm{prod}}_{t}(j,i)\frac{q_{t}(j)}{q_{t}(i)}-A^{\mathrm{prod}}_{t}(i,j)\bigg)+
+(111)
++∑j≠i(Atprod​(i,j)−At1​(i,j)−At2​(i,j))⏟≔gt​(i)−∂∂t​log⁡Zt.\displaystyle+\underbrace{\sum_{j\neq i}\bigg(A^{\mathrm{prod}}_{t}(i,j)-A^{1}_{t}(i,j)-A^{2}_{t}(i,j)\bigg)}_{\coloneqq g_{t}(i)}-\frac{\partial}{\partial t}\log Z_{t}\,.
+(112)
+Finally, we have to show that the weights are self-normalized, i.e.
+gt​(i)−∂∂t​log⁡Zt=gt​(i)−𝔼i∼qt​(j)​gt​(j).\displaystyle g_{t}(i)-\frac{\partial}{\partial t}\log Z_{t}=g_{t}(i)-\mathbb{E}_{i\sim q_{t}(j)}g_{t}(j)\,.
+(113)
+Expanding the derivative of the normalization constant, we have
+∂∂t​log⁡Zt=\displaystyle\frac{\partial}{\partial t}\log Z_{t}=~
+OPENOPEN1Zt​∑i(pt1​(i)​∂pt2​(i)∂t+pt2​(i)​∂pt1​(i)∂tCLOSE)=∑iqt​(i)​(∂∂t​log⁡pt2​(i)+∂∂t​log⁡pt1​(i)CLOSE)\displaystyle\frac{1}{Z_{t}}\sum_{i}\mathopen{}\mathclose{{\left(p_{t}^{1}(i)\frac{\partial p_{t}^{2}(i)}{\partial t}+p_{t}^{2}(i)\frac{\partial p_{t}^{1}(i)}{\partial t}}}\right)=\sum_{i}q_{t}(i)\mathopen{}\mathclose{{\left(\frac{\partial}{\partial t}\log p_{t}^{2}(i)+\frac{\partial}{\partial t}\log p_{t}^{1}(i)}}\right)
+=\displaystyle=~
+OPEN∑iqt​(i)​∑j≠i(At1​(j,i)​pt1​(j)pt1​(i)−At1​(i,j)+At2​(j,i)​pt2​(j)pt2​(i)−At2​(i,j)CLOSE).\displaystyle\sum_{i}q_{t}(i)\sum_{j\neq i}\mathopen{}\mathclose{{\left(A^{1}_{t}(j,i)\frac{p^{1}_{t}(j)}{p^{1}_{t}(i)}-A^{1}_{t}(i,j)+A^{2}_{t}(j,i)\frac{p^{2}_{t}(j)}{p^{2}_{t}(i)}-A^{2}_{t}(i,j)}}\right)\,.
+(114)
+Thus, we have
+∑i\displaystyle\sum_{i}~
+OPENqt​(i)​gt​(i)−∂∂t​log⁡Zt=∑iqt​(i)​∑j≠i(Atprod​(i,j)−At1​(j,i)​pt1​(j)pt1​(i)−At2​(j,i)​pt2​(j)pt2​(i)CLOSE)\displaystyle q_{t}(i)g_{t}(i)-\frac{\partial}{\partial t}\log Z_{t}=\sum_{i}q_{t}(i)\sum_{j\neq i}\mathopen{}\mathclose{{\left(A_{t}^{\mathrm{prod}}(i,j)-A^{1}_{t}(j,i)\frac{p^{1}_{t}(j)}{p^{1}_{t}(i)}-A^{2}_{t}(j,i)\frac{p^{2}_{t}(j)}{p^{2}_{t}(i)}}}\right)
+=\displaystyle=~
+OPEN∑iqt​(i)​∑j≠i(At1​(i,j)​pt2​(j)pt2​(i)+At2​(i,j)​pt1​(j)pt1​(i)−At1​(j,i)​pt1​(j)pt1​(i)−At2​(j,i)​pt2​(j)pt2​(i)CLOSE)\displaystyle\sum_{i}q_{t}(i)\sum_{j\neq i}\mathopen{}\mathclose{{\left(A^{1}_{t}(i,j)\frac{p^{2}_{t}(j)}{p^{2}_{t}(i)}+A^{2}_{t}(i,j)\frac{p^{1}_{t}(j)}{p^{1}_{t}(i)}-A^{1}_{t}(j,i)\frac{p^{1}_{t}(j)}{p^{1}_{t}(i)}-A^{2}_{t}(j,i)\frac{p^{2}_{t}(j)}{p^{2}_{t}(i)}}}\right)
+(115)
+=\displaystyle=~
+1Zt​∑i∑j≠i(At1​(i,j)​pt1​(i)​pt2​(j)+At2​(i,j)​pt1​(j)​pt2​(i)−CLOSE\displaystyle\frac{1}{Z_{t}}\sum_{i}\sum_{j\neq i}\bigg(A^{1}_{t}(i,j)p^{1}_{t}(i)p^{2}_{t}(j)+A^{2}_{t}(i,j)p^{1}_{t}(j)p^{2}_{t}(i)-
+(116)
+OPEN−At1​(j,i)​pt1​(j)​pt2​(i)−At2​(j,i)​pt1​(i)​pt2​(j)).\displaystyle-A^{1}_{t}(j,i)p^{1}_{t}(j)p^{2}_{t}(i)-A^{2}_{t}(j,i)p^{1}_{t}(i)p^{2}_{t}(j)\bigg)\,.
+(117)
+Denoting
+A^t​(i,j)≔At1​(i,j)​pt1​(i)​pt2​(j)+At2​(i,j)​pt1​(j)​pt2​(i),\displaystyle\hat{A}_{t}(i,j)\coloneqq A^{1}_{t}(i,j)p^{1}_{t}(i)p^{2}_{t}(j)+A^{2}_{t}(i,j)p^{1}_{t}(j)p^{2}_{t}(i)\,,
+(118)
+we can show
+∑iqt​(i)​gt​(i)−∂∂t​log⁡Zt=\displaystyle\sum_{i}q_{t}(i)g_{t}(i)-\frac{\partial}{\partial t}\log Z_{t}=~
+1Zt​∑i∑j≠i(A^t​(i,j)−A^t​(j,i))\displaystyle\frac{1}{Z_{t}}\sum_{i}\sum_{j\neq i}\bigg(\hat{A}_{t}(i,j)-\hat{A}_{t}(j,i)\bigg)
+(119)
+=\displaystyle=~
+1Zt​∑i,j(A^t​(i,j)−A^t​(j,i))=0.\displaystyle\frac{1}{Z_{t}}\sum_{i,j}\bigg(\hat{A}_{t}(i,j)-\hat{A}_{t}(j,i)\bigg)=0\,.
+(120)
+Thus, we have the result of the theorem, i.e.
+∂qt​(i)∂t=∑j≠i(Atprod​(j,i)CLOSE\displaystyle\frac{\partial q_{t}(i)}{\partial t}=\sum_{j\neq i}\bigg(A^{\mathrm{prod}}_{t}(j,i)~
+OPENOPENqt​(j)−Atprod​(i,j)​qt​(i))+qt​(i)​(gt​(i)−𝔼j∼qt​(j)​gt​(j)CLOSE),\displaystyle q_{t}(j)-A^{\mathrm{prod}}_{t}(i,j)q_{t}(i)\bigg)+q_{t}(i)\mathopen{}\mathclose{{\left(g_{t}(i)-\mathbb{E}_{j\sim q_{t}(j)}g_{t}(j)}}\right)\,,
+(121)
+where ​Atprod​(i,j)≔\displaystyle\text{ where }A^{\mathrm{prod}}_{t}(i,j)\coloneqq~
+At1​(i,j)​pt2​(j)pt2​(i)+At2​(i,j)​pt1​(j)pt1​(i),\displaystyle A^{1}_{t}(i,j)\frac{p^{2}_{t}(j)}{p^{2}_{t}(i)}+A^{2}_{t}(i,j)\frac{p^{1}_{t}(j)}{p^{1}_{t}(i)}\,,
+(122)
+gt​(i)≔\displaystyle g_{t}(i)\coloneqq~
+∑j≠i(Atprod​(i,j)−At1​(i,j)−At2​(i,j)).\displaystyle\sum_{j\neq i}\bigg(A^{\mathrm{prod}}_{t}(i,j)-A^{1}_{t}(i,j)-A^{2}_{t}(i,j)\bigg)\,.
+(123)
+∎
+See 3.4
+Proof.
+The reverse-time rate matrices are
+Bt1​(i,j)=−δm​i​1αt​∂αt∂t​pt1​(j)pt1​(m),Bt2​(i,j)=−δm​i​1αt​∂αt∂t​pt2​(j)pt2​(m).\displaystyle B^{1}_{t}(i,j)=-\delta_{mi}\frac{1}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\frac{p^{1}_{t}(j)}{p^{1}_{t}(m)}\,,\;\;B^{2}_{t}(i,j)=-\delta_{mi}\frac{1}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\frac{p^{2}_{t}(j)}{p^{2}_{t}(m)}\,.
+(124)
+Then, according to Theorem 3.3, the rate matrix for the product is
+Btprod​(i,j)=\displaystyle B_{t}^{\mathrm{prod}}(i,j)=~
+Bt1​(i,j)​pt2​(j)pt2​(i)+Bt2​(i,j)​pt1​(j)pt1​(i)\displaystyle B^{1}_{t}(i,j)\frac{p^{2}_{t}(j)}{p^{2}_{t}(i)}+B^{2}_{t}(i,j)\frac{p^{1}_{t}(j)}{p^{1}_{t}(i)}
+(125)
+=\displaystyle=~
+−δm​i​1αt​∂αt∂t​pt1​(j)pt1​(m)​pt2​(j)pt2​(i)−δm​i​1αt​∂αt∂t​pt2​(j)pt2​(m)​pt1​(j)pt1​(i)\displaystyle-\delta_{mi}\frac{1}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\frac{p^{1}_{t}(j)}{p^{1}_{t}(m)}\frac{p_{t}^{2}(j)}{p_{t}^{2}(i)}-\delta_{mi}\frac{1}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\frac{p^{2}_{t}(j)}{p^{2}_{t}(m)}\frac{p_{t}^{1}(j)}{p_{t}^{1}(i)}
+(126)
+=\displaystyle=~
+−δm​i​2αt​∂αt∂t​pt1​(j)pt1​(m)​pt2​(j)pt2​(m).\displaystyle-\delta_{mi}\frac{2}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\frac{p^{1}_{t}(j)}{p^{1}_{t}(m)}\frac{p_{t}^{2}(j)}{p_{t}^{2}(m)}\,.
+(127)
+And the weighting term is
+gt​(i)=\displaystyle g_{t}(i)=~
+∑j≠i(Btprod​(i,j)−Bt1​(i,j)−Bt2​(i,j))\displaystyle\sum_{j\neq i}\bigg(B^{\mathrm{prod}}_{t}(i,j)-B^{1}_{t}(i,j)-B^{2}_{t}(i,j)\bigg)
+(128)
+=\displaystyle=~
+δm​i​1αt​∂αt∂t​∑j(pt1​(j)pt1​(m)+pt2​(j)pt2​(m)−2​pt1​(j)pt1​(m)​pt2​(j)pt2​(m)).\displaystyle\delta_{mi}\frac{1}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\sum_{j}\bigg(\frac{p^{1}_{t}(j)}{p^{1}_{t}(m)}+\frac{p^{2}_{t}(j)}{p^{2}_{t}(m)}-2\frac{p^{1}_{t}(j)}{p^{1}_{t}(m)}\frac{p^{2}_{t}(j)}{p^{2}_{t}(m)}\bigg)\,.
+(129)
+∎
+C.3 Geometric Average of FKEs
+Theorem C.1.
+[Geometric Average of FKEs]
+Consider NN forward Kolmogorov equations with marginals ptn​(i)p_{t}^{n}(i) and corresponding rate matrices Atn​(i,j)A^{n}_{t}(i,j). For the geometric average of marginals qt​(i)∝∏n=1Nptn​(i)βnq_{t}(i)\propto\prod^{N}_{n=1}p_{t}^{n}(i)^{\beta_{n}}, with ∑i=1Nβn=1\sum^{N}_{i=1}\beta_{n}=1, the following equation holds
+∂qt​(i)∂t=∑j≠i(Atgeom​(j,i)CLOSE\displaystyle\frac{\partial q_{t}(i)}{\partial t}=\sum_{j\neq i}\bigg(A^{\mathrm{geom}}_{t}(j,i)~
+OPENOPENqt​(j)−Atgeom​(i,j)​qt​(i))+qt​(i)​(gt​(i)−𝔼qt​(j)​gt​(j)CLOSE),\displaystyle q_{t}(j)-A^{\mathrm{geom}}_{t}(i,j)q_{t}(i)\bigg)+q_{t}(i)\mathopen{}\mathclose{{\left(g_{t}(i)-\mathbb{E}_{q_{t}(j)}g_{t}(j)}}\right)\,,
+(130)
+where ​Atgeo​(i,j)≔\displaystyle\text{ where }A^{\mathrm{geo}}_{t}(i,j)\coloneqq~
+OPEN∏n=1N(ptn​(j)ptn​(i)CLOSE)βn​∑n=1Nβn​Atn​(j,i)​ptn​(j)ptn​(i),\displaystyle\prod^{N}_{n=1}\mathopen{}\mathclose{{\left(\frac{p^{n}_{t}(j)}{p^{n}_{t}(i)}}}\right)^{\beta_{n}}\sum_{n=1}^{N}\beta_{n}A^{n}_{t}(j,i)\frac{p^{n}_{t}(j)}{p^{n}_{t}(i)}\,,
+(131)
+gt​(i)≔\displaystyle g_{t}(i)\coloneqq~
+∑j≠i(Atgeo​(i,j)−∑n=1Nβn​Atn​(i,j)).\displaystyle\sum_{j\neq i}\bigg(A^{\mathrm{geo}}_{t}(i,j)-\sum^{N}_{n=1}\beta_{n}A^{n}_{t}(i,j)\bigg)\,.
+(132)
+Proof.
+We define the target marginals as
+qt​(i)≔1Zt​∏n=1Nptn​(i)βn,Zt=∑i∏n=1Nptn​(i)βn.\displaystyle q_{t}(i)\coloneqq\frac{1}{Z_{t}}\prod^{N}_{n=1}p^{n}_{t}(i)^{\beta_{n}}\,,\;\;Z_{t}=\sum_{i}\prod^{N}_{n=1}p^{n}_{t}(i)^{\beta_{n}}\,.
+(133)
+Hence, the time derivative of the marginals is
+∂∂t​log⁡qt​(i)=\displaystyle\frac{\partial}{\partial t}\log q_{t}(i)=~
+∑n=1Nβn​∂∂t​log⁡ptn​(i)−∂∂t​log⁡Zt\displaystyle\sum_{n=1}^{N}\beta_{n}\frac{\partial}{\partial t}\log p_{t}^{n}(i)-\frac{\partial}{\partial t}\log Z_{t}
+(134)
+=\displaystyle=~
+OPEN∑j≠i∑n=1Nβn​(Atn​(j,i)​ptn​(j)ptn​(i)−Atn​(i,j)CLOSE)−∂∂t​log⁡Zt\displaystyle\sum_{j\neq i}\sum_{n=1}^{N}\beta_{n}\mathopen{}\mathclose{{\left(A^{n}_{t}(j,i)\frac{p^{n}_{t}(j)}{p^{n}_{t}(i)}-A^{n}_{t}(i,j)}}\right)-\frac{\partial}{\partial t}\log Z_{t}
+(135)
+=\displaystyle=~
+∑j≠i(∑n=1Nβn​Atn​(j,i)​ptn​(j)ptn​(i)​qt​(i)qt​(j)⏟≔Atgeom​(j,i)​qt​(j)qt​(i)−Atgeom​(i,j))+\displaystyle\sum_{j\neq i}\bigg(\underbrace{\sum_{n=1}^{N}\beta_{n}A^{n}_{t}(j,i)\frac{p^{n}_{t}(j)}{p^{n}_{t}(i)}\frac{q_{t}(i)}{q_{t}(j)}}_{\coloneqq A_{t}^{\mathrm{geom}}(j,i)}\frac{q_{t}(j)}{q_{t}(i)}-A_{t}^{\mathrm{geom}}(i,j)\bigg)+
+(136)
++∑j≠i(Atgeom​(i,j)−∑n=1Nβn​Atn​(i,j)CLOSE)−∂∂tlogZt.\displaystyle+\sum_{j\neq i}\mathopen{}\mathclose{{\left(A_{t}^{\mathrm{geom}}(i,j)-\sum_{n=1}^{N}\beta_{n}A^{n}_{t}(i,j)}}\right)-\frac{\partial}{\partial t}\log Z_{t}\,.
+(137)
+Denoting
+Atgeom​(i,j)≔\displaystyle A_{t}^{\mathrm{geom}}(i,j)\coloneqq~
+OPEN∏n=1N(ptn​(j)ptn​(i)CLOSE)βn​∑n=1Nβn​Atn​(i,j)​ptn​(i)ptn​(j), and\displaystyle\prod^{N}_{n=1}\mathopen{}\mathclose{{\left(\frac{p^{n}_{t}(j)}{p^{n}_{t}(i)}}}\right)^{\beta_{n}}\sum_{n=1}^{N}\beta_{n}A^{n}_{t}(i,j)\frac{p^{n}_{t}(i)}{p^{n}_{t}(j)}\,,\text{ and }
+(138)
+gt​(i)≔\displaystyle g_{t}(i)\coloneqq~
+OPEN∑j≠i(Atgeom​(i,j)−∑n=1Nβn​Atn​(i,j)CLOSE),\displaystyle\sum_{j\neq i}\mathopen{}\mathclose{{\left(A_{t}^{\mathrm{geom}}(i,j)-\sum_{n=1}^{N}\beta_{n}A^{n}_{t}(i,j)}}\right)\,,
+(139)
+we can describe the evolution of the marginals qt​(i)q_{t}(i) as
+∂qt​(i)∂t=\displaystyle\frac{\partial q_{t}(i)}{\partial t}=~
+OPENOPEN∑j≠i(Atgeom​(j,i)​qt​(j)−Atgeom​(i,j)​qt​(i)CLOSE)+qt​(i)​(gt​(i)−𝔼j∼qt​(j)​gt​(j)CLOSE).\displaystyle\sum_{j\neq i}\mathopen{}\mathclose{{\left(A^{\mathrm{geom}}_{t}(j,i)q_{t}(j)-A^{\mathrm{geom}}_{t}(i,j)q_{t}(i)}}\right)+q_{t}(i)\mathopen{}\mathclose{{\left(g_{t}(i)-\mathbb{E}_{j\sim q_{t}(j)}g_{t}(j)}}\right)\,.
+(140)
+∎
+Corollary C.2.
+[Geometric Average of Masked Diffusions]
+For the rate matrix of the reverse-time masked diffusion from Equation 10, Theorem C.1 yields
+Btgeom​(i,j)=\displaystyle B_{t}^{\mathrm{geom}}(i,j)=~
+−δm​i1αt∂αt∂t∏n=1N(ptn​(j)ptn​(m)CLOSE)βn,i≠j\displaystyle-\delta_{mi}\frac{1}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\prod^{N}_{n=1}\mathopen{}\mathclose{{\left(\frac{p^{n}_{t}(j)}{p^{n}_{t}(m)}}}\right)^{\beta_{n}}\,,\;i\neq j
+(141)
+gt​(i)=\displaystyle g_{t}(i)=~
+δm​i1αt∂αt∂t∑j≠i(∑n=1Nβn​ptn​(j)ptn​(m)−∏n=1N(ptn​(j)ptn​(m)CLOSE)βn).\displaystyle\delta_{mi}\frac{1}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\sum_{j\neq i}\mathopen{}\mathclose{{\left(\sum_{n=1}^{N}\beta_{n}\frac{p^{n}_{t}(j)}{p^{n}_{t}(m)}-\prod^{N}_{n=1}\mathopen{}\mathclose{{\left(\frac{p^{n}_{t}(j)}{p^{n}_{t}(m)}}}\right)^{\beta_{n}}}}\right)\,.
+(142)
+Proof.
+For the reverse-time masked diffusion, we have
+Btn(i,j)=−δm​i1αt∂αt∂tptn​(j)ptn​(m),i≠j,n=1,…,N.\displaystyle B^{n}_{t}(i,j)=-\delta_{mi}\frac{1}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\frac{p^{n}_{t}(j)}{p^{n}_{t}(m)}\,,\;i\neq j\,,\;n=1,\ldots,N\,.
+(143)
+Using the result of Theorem C.1, we have
+Btgeom​(i,j)=\displaystyle B_{t}^{\mathrm{geom}}(i,j)=~
+−δm​i1αt∂αt∂t∏n=1N(ptn​(j)ptn​(i)CLOSE)βn∑n=1NβnBtn(i,j)ptn​(i)ptn​(j)\displaystyle-\delta_{mi}\frac{1}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\prod^{N}_{n=1}\mathopen{}\mathclose{{\left(\frac{p^{n}_{t}(j)}{p^{n}_{t}(i)}}}\right)^{\beta_{n}}\sum_{n=1}^{N}\beta_{n}B^{n}_{t}(i,j)\frac{p^{n}_{t}(i)}{p^{n}_{t}(j)}
+(144)
+=\displaystyle=~
+−δm​i1αt∂αt∂t∏n=1N(ptn​(j)ptn​(i)CLOSE)βn∑n=1Nβnptn​(j)ptn​(m)ptn​(i)ptn​(j)\displaystyle-\delta_{mi}\frac{1}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\prod^{N}_{n=1}\mathopen{}\mathclose{{\left(\frac{p^{n}_{t}(j)}{p^{n}_{t}(i)}}}\right)^{\beta_{n}}\sum_{n=1}^{N}\beta_{n}\frac{p^{n}_{t}(j)}{p^{n}_{t}(m)}\frac{p^{n}_{t}(i)}{p^{n}_{t}(j)}
+(145)
+=\displaystyle=~
+−δm​i1αt∂αt∂t∏n=1N(ptn​(j)ptn​(m)CLOSE)βn,\displaystyle-\delta_{mi}\frac{1}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\prod^{N}_{n=1}\mathopen{}\mathclose{{\left(\frac{p^{n}_{t}(j)}{p^{n}_{t}(m)}}}\right)^{\beta_{n}}\,,
+(146)
+where in the last transition we have used the fact that the expression is zero unless i=mi=m and ∑n=1Nβn=1\sum_{n=1}^{N}\beta_{n}=1. Correspondingly, the weights are
+gt​(i)=\displaystyle g_{t}(i)=~
+OPEN∑j≠i(Btgeom​(i,j)−∑n=1Nβn​Btn​(i,j)CLOSE)\displaystyle\sum_{j\neq i}\mathopen{}\mathclose{{\left(B_{t}^{\mathrm{geom}}(i,j)-\sum_{n=1}^{N}\beta_{n}B^{n}_{t}(i,j)}}\right)
+(147)
+=\displaystyle=~
+δm​i1αt∂αt∂t∑j≠i(∑n=1Nβn​ptn​(j)ptn​(m)−∏n=1N(ptn​(j)ptn​(m)CLOSE)βn).\displaystyle\delta_{mi}\frac{1}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\sum_{j\neq i}\mathopen{}\mathclose{{\left(\sum_{n=1}^{N}\beta_{n}\frac{p^{n}_{t}(j)}{p^{n}_{t}(m)}-\prod^{N}_{n=1}\mathopen{}\mathclose{{\left(\frac{p^{n}_{t}(j)}{p^{n}_{t}(m)}}}\right)^{\beta_{n}}}}\right)\,.
+(148)
+∎
+C.4 Reward-Tilted FKE
+See 3.5
+Proof.
+We define
+qt​(i)≔\displaystyle q_{t}(i)\coloneqq~
+1Zt​pt​(i)​exp⁡(βt​r​(i)),Zt=∑ipt​(i)​exp⁡(βt​r​(i))\displaystyle\frac{1}{Z_{t}}p_{t}(i)\exp(\beta_{t}r(i))\,,\;\;Z_{t}=\sum_{i}p_{t}(i)\exp(\beta_{t}r(i))
+(149)
+The derivative of the log-probability is
+∂∂t​log⁡qt​(i)=\displaystyle\frac{\partial}{\partial t}\log q_{t}(i)=~
+OPEN∑j≠i(At​(j,i)​pt​(j)pt​(i)−At​(i,j)CLOSE)+∂βt∂t​r​(i)−∂∂t​log⁡Zt\displaystyle\sum_{j\neq i}\mathopen{}\mathclose{{\left(A_{t}(j,i)\frac{p_{t}(j)}{p_{t}(i)}-A_{t}(i,j)}}\right)+\frac{\partial\beta_{t}}{\partial t}r(i)-\frac{\partial}{\partial t}\log Z_{t}
+(150)
+=\displaystyle=~
+OPEN∑j≠i(At​(j,i)​exp⁡(βt​r​(i))exp⁡(βt​r​(j))⏟≔Atreward​(j,i)​qt​(j)qt​(i)−At​(i,j)CLOSE)+∂βt∂t​r​(i)−∂∂t​log⁡Zt\displaystyle\sum_{j\neq i}\mathopen{}\mathclose{{\left(\underbrace{A_{t}(j,i)\frac{\exp(\beta_{t}r(i))}{\exp(\beta_{t}r(j))}}_{\coloneqq A_{t}^{\mathrm{reward}}(j,i)}\frac{q_{t}(j)}{q_{t}(i)}-A_{t}(i,j)}}\right)+\frac{\partial\beta_{t}}{\partial t}r(i)-\frac{\partial}{\partial t}\log Z_{t}
+(151)
+=\displaystyle=~
+OPEN∑j≠i(Atreward​(j,i)​qt​(j)qt​(i)−Atreward​(i,j)CLOSE)+\displaystyle\sum_{j\neq i}\mathopen{}\mathclose{{\left(A^{\mathrm{reward}}_{t}(j,i)\frac{q_{t}(j)}{q_{t}(i)}-A^{\mathrm{reward}}_{t}(i,j)}}\right)+
+(152)
++∑j≠i(Atreward​(i,j)−At​(i,j))+∂βt∂t​r​(i)⏟≔gt​(i)−∂∂t​log⁡Zt\displaystyle+\underbrace{\sum_{j\neq i}(A^{\mathrm{reward}}_{t}(i,j)-A_{t}(i,j))+\frac{\partial\beta_{t}}{\partial t}r(i)}_{\coloneqq g_{t}(i)}-\frac{\partial}{\partial t}\log Z_{t}
+(153)
+To show the following equality
+gt​(i)−∂∂t​log⁡Zt=gt​(i)−𝔼i∼qt​(j)​gt​(j),\displaystyle g_{t}(i)-\frac{\partial}{\partial t}\log Z_{t}=g_{t}(i)-\mathbb{E}_{i\sim q_{t}(j)}g_{t}(j)\,,
+(154)
+one can either use the definition of qt​(i)q_{t}(i) and its normalization, or explicitly calculate the derivative of the normalizing constant, i.e.
+∂∂t​log⁡Zt\displaystyle\frac{\partial}{\partial t}\log Z_{t}
+=1Zt​∑i∂∂t​(pt​(i)​exp⁡(βt​r​(i)))\displaystyle=\frac{1}{Z_{t}}\sum_{i}\frac{\partial}{\partial t}\Big(p_{t}(i)\exp(\beta_{t}r(i))\Big)
+(155)
+=∑iqt​(i)​(∂∂t​log⁡pt​(i)+∂βt∂t​r​(i))\displaystyle=\sum_{i}q_{t}(i)\Big(\frac{\partial}{\partial t}\log p_{t}(i)+\frac{\partial\beta_{t}}{\partial t}r(i)\Big)
+(156)
+=∑iqt​(i)​(∑j≠i(At​(j,i)​pt​(j)pt​(i)−At​(i,j))+∂βt∂t​r​(i))\displaystyle=\sum_{i}q_{t}(i)\Big(\sum_{j\neq i}\Big(A_{t}(j,i)\frac{p_{t}(j)}{p_{t}(i)}-A_{t}(i,j)\Big)+\frac{\partial\beta_{t}}{\partial t}r(i)\Big)
+(157)
+Thus, we have
+∑iqt​(i)\displaystyle\sum_{i}q_{t}(i)~
+gt​(i)−∂∂t​log⁡Zt=∑iqt​(i)​((∑j≠iAtreward​(i,j)−At​(i,j))+∂βt∂t​r​(i)CLOSE\displaystyle g_{t}(i)-\frac{\partial}{\partial t}\log Z_{t}=\sum_{i}q_{t}(i)\Big(\Big(\sum_{j\neq i}A^{\mathrm{reward}}_{t}(i,j)-A_{t}(i,j)\Big)+\frac{\partial\beta_{t}}{\partial t}r(i)
+(158)
+OPEN−(∑j≠iAt​(j,i)​pt​(j)pt​(i)−At​(i,j))−∂βt∂t​r​(i))\displaystyle\qquad-(\sum_{j\neq i}A_{t}(j,i)\frac{p_{t}(j)}{p_{t}(i)}-A_{t}(i,j))-\frac{\partial\beta_{t}}{\partial t}r(i)\Big)
+(159)
+=∑iqt​(i)​∑j≠i(Atreward​(i,j)−At​(j,i)​pt​(j)pt​(i))\displaystyle=\sum_{i}q_{t}(i)\sum_{j\neq i}\Big(A^{\mathrm{reward}}_{t}(i,j)-A_{t}(j,i)\frac{p_{t}(j)}{p_{t}(i)}\Big)
+(160)
+=∑iqt​(i)​∑j≠i(At​(i,j)​exp⁡(βt​r​(j))exp⁡(βt​r​(i))−At​(j,i)​pt​(j)pt​(i))\displaystyle=\sum_{i}q_{t}(i)\sum_{j\neq i}\Big(A_{t}(i,j)\frac{\exp(\beta_{t}r(j))}{\exp(\beta_{t}r(i))}-A_{t}(j,i)\frac{p_{t}(j)}{p_{t}(i)}\Big)
+(161)
+=1Zt​∑i∑j≠i(At​(i,j)​exp⁡(βt​r​(j))​pt​(i)−At​(j,i)​exp⁡(βt​r​(i))​pt​(j))\displaystyle=\frac{1}{Z_{t}}\sum_{i}\sum_{j\neq i}\Big(A_{t}(i,j)\exp(\beta_{t}r(j))p_{t}(i)-A_{t}(j,i)\exp(\beta_{t}r(i))p_{t}(j)\Big)
+(162)
+=1Zt​∑i∑j≠i(A^t​(i,j)−A^t​(j,i))=1Zt​∑i,j(A^t​(i,j)−A^t​(j,i))=0,\displaystyle=\frac{1}{Z_{t}}\sum_{i}\sum_{j\neq i}\Big(\hat{A}_{t}(i,j)-\hat{A}_{t}(j,i)\Big)=\frac{1}{Z_{t}}\sum_{i,j}\Big(\hat{A}_{t}(i,j)-\hat{A}_{t}(j,i)\Big)=0\,,
+(163)
+where we denote
+A^t​(i,j)≔At​(i,j)​exp⁡(βt​r​(j))​pt​(i).\displaystyle\hat{A}_{t}(i,j)\coloneqq A_{t}(i,j)\exp(\beta_{t}r(j))p_{t}(i)\,.
+(164)
+Finally, we have
+OPENOPEN∂qt​(i)∂t=∑j≠i(Atreward​(j,i)​qt​(j)−Atreward​(i,j)​qt​(i)CLOSE)+qt​(i)​(gt​(i)−𝔼j∼qt​(j)​gt​(j)CLOSE),\displaystyle\frac{\partial q_{t}(i)}{\partial t}=\sum_{j\neq i}\mathopen{}\mathclose{{\left(A^{\mathrm{reward}}_{t}(j,i)q_{t}(j)-A^{\mathrm{reward}}_{t}(i,j)q_{t}(i)}}\right)+q_{t}(i)\mathopen{}\mathclose{{\left(g_{t}(i)-\mathbb{E}_{j\sim q_{t}(j)}g_{t}(j)}}\right)\,,
+(165)
+Atreward​(i,j)≔At​(i,j)​exp⁡(βt​r​(j))exp⁡(βt​r​(i)),gt​(i)≔∑j≠i(Atreward​(i,j)−At​(i,j))+∂βt∂t​r​(i).\displaystyle A^{\mathrm{reward}}_{t}(i,j)\coloneqq A_{t}(i,j)\frac{\exp(\beta_{t}r(j))}{\exp(\beta_{t}r(i))}\,,\;\;g_{t}(i)\coloneqq\sum_{j\neq i}\bigg(A^{\mathrm{reward}}_{t}(i,j)-A_{t}(i,j)\bigg)+\frac{\partial\beta_{t}}{\partial t}r(i)\,.
+∎
+See 3.6
+Proof.
+The reverse-time rate matrix is
+Bt​(i,j)=−δm​i​1αt​∂αt∂t​pt​(j)pt​(m).\displaystyle B_{t}(i,j)=-\delta_{mi}\frac{1}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\frac{p_{t}(j)}{p_{t}(m)}\,.
+(166)
+Then the reward-weighted matrix is
+Btreward​(i,j)\displaystyle B_{t}^{\mathrm{reward}}(i,j)
+=Bt​(i,j)​exp⁡(βt​r​(j))exp⁡(βt​r​(i))=−δm​i​1αt​∂αt∂t​pt​(j)pt​(m)​exp⁡(βt​r​(j))exp⁡(βt​r​(m)),\displaystyle=B_{t}(i,j)\frac{\exp(\beta_{t}r(j))}{\exp(\beta_{t}r(i))}=-\delta_{mi}\frac{1}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\frac{p_{t}(j)}{p_{t}(m)}\frac{\exp(\beta_{t}r(j))}{\exp(\beta_{t}r(m))}\,,
+(167)
+and the weighting term is
+gt​(i)=\displaystyle g_{t}(i)=~
+OPEN∑j≠i(Btreward​(i,j)−Bt​(i,j)CLOSE)+∂βt∂t​r​(i)\displaystyle\sum_{j\neq i}\mathopen{}\mathclose{{\left(B_{t}^{\mathrm{reward}}(i,j)-B_{t}(i,j)}}\right)+\frac{\partial\beta_{t}}{\partial t}r(i)
+(168)
+=\displaystyle=~
+OPENδm​i​1αt​∂αt∂t​∑j(pt​(j)pt​(m)−pt​(j)pt​(m)​exp⁡(βt​r​(j))exp⁡(βt​r​(m))CLOSE)+∂βt∂t​r​(i)\displaystyle\delta_{mi}\frac{1}{\alpha_{t}}\frac{\partial\alpha_{t}}{\partial t}\sum_{j}\mathopen{}\mathclose{{\left(\frac{p_{t}(j)}{p_{t}(m)}-\frac{p_{t}(j)}{p_{t}(m)}\frac{\exp(\beta_{t}r(j))}{\exp(\beta_{t}r(m))}}}\right)+\frac{\partial\beta_{t}}{\partial t}r(i)
+(169)
+∎
+Appendix D Experimental Details
+Code is available at https://github.com/hasanmohsin/discrete_fkc
+D.1 Annealing the Ising Model
+The settings for various experiments are outlined below.
+Dataset for experiment 1
+source: synthetic Ising model configurations
+size: 200,000 samples after burn-in
+sampling method: Swendsen-Wang
+burn-in length: 10,000 steps
+thinning interval: 5
+beta: 0.3
+lattice size: 16
+Dataset for experiment 2
+source: synthetic Ising model configurations
+size: 10,000 samples after burn-in
+sampling method: Glauber dynamics
+burn-in length: 10,000 steps
+thinning interval: 1
+beta: 0.2 and 0.3
+lattice size: 16
+Model
+architecture: UNet
+activation: SiLU
+channels: [16, 32, 64]
+resblocks per stage: 2
+attention: applied at 4×4 resolution
+initialization: Xavier uniform
+time embedding: sinusoidal embedding
+Training
+optimizer: AdamW
+learning rate: 2e-4
+betas: (0.9, 0.999)
+weight_decay: 1e-4
+batch size: 400
+epochs: 6000
+learning rate schedule: constant with warmup
+hardware: 1 × NVIDIA A100 GPU (40 GB memory)
+loss: denoising score entropy
+Evaluation
+metrics for global structure: 2-Wasserstein metric between
+distributions of
+energy and distributions of magnetization.
+metrics for local structure: MSE for correlation function.
+sample size: 10,000
+The hyperparameters searched over are outlined below.
+optimizer:
+learning rate: [5e-5, 1e-4, 2e-4, 3e-4, 4e-4, 1e-3]
+weight_decay: [0, 5e-5, 1e-4, 2e-4, 5e-4, 1e-3]
+batch size: [100, 200, 400, 800, 1600]
+model:
+UNet base channels: [16,32,64,128,256]
+time embedding size: [16,32,64,128,256]
+rate matrix time dependence: [linear, sine]
+method:
+Number of particles: [100, 1000, 5000, 10000]
+Number of steps: [500, 1000, 2000, 5000]
+Hyperparameters were selected based on Wasserstein-2 distance between samples and Swendsen-Wang distance for energy distribution. For the DFKC method itself we looked at number of steps and number of particles as hyperparameters.
+D.2 Amortized Linear Regression
+D.2.1 Theoretical Justification
+The posterior over parameters factors as:
+p⁡(θ|𝒳)∝p⁡(θ)​p​(𝒳|θ)=p⁡(θ)​∏kKp⁡(𝒳k|θ)∝p​(θ)1−K​∏kKp⁡(θ|𝒳k)\displaystyle p(\theta|\mathcal{X})\propto p(\theta)p(\mathcal{X}|\theta)=p(\theta)\prod^{K}_{k}p(\mathcal{X}_{k}|\theta)\propto p(\theta)^{1-K}\prod^{K}_{k}p(\theta|\mathcal{X}_{k})
+(170)
+For a uniform prior p⁡(θ)p(\theta), this results in the product we applied p⁡(θ|𝒳)∝∏k=1Kp⁡(θ|𝒳k)p(\theta|\mathcal{X})\propto\prod^{K}_{k=1}p(\theta|\mathcal{X}_{k}).
+D.2.2 Experimental Setup
+All experiments were done on a single A100 GPU.
+For each experiment, the dataset 𝒳\mathcal{X} was generated using (θ0,θ1)=(3.0,4.0)(\theta_{0},\theta_{1})=(3.0,4.0), with xx spaced linearly between [−10,10][-10,10], and yi=θ1∗​xi+θ0∗+ϵy_{i}=\theta^{*}_{1}x_{i}+\theta^{*}_{0}+\epsilon, where ϵ∼𝒩⁡(0,0.12)\epsilon\sim\mathcal{N}(0,0.1^{2}).
+For inference with LLaDA, a temperature of 1.01.0 was used, and the random remasking strategy was applied. All predictions were made in a single block, and the generation length was capped at 128128 tokens.
+The number of SMC samples were selected based on MSE, for a fixed dataset size, over a grid of {2,4,5,8,16,32}. 5 SMC samples were selected for evaluation.
+The prompt used to generate predictions is of the form:
+"Assume a model of the form y = a * x + b, where a and b are the parameters of the model. The observations are given as (x,y) points, where y has Gaussian noise with standard deviation 0.1 added. Predict the parameters of linear regression for (x,y) points: " + (x1,y1),…,(xN,yN)(x_{1},y_{1}),~\dots,~(x_{N},y_{N}) + " Output the final answer as: "The best estimate for parameters of the model are: a = _, and b = _" where _ is replaced with the values of a and then b."
+The generated data varied for different seeds, meaning that different seeds resulted in different prompts.
+D.2.3 Additional Results for Amortized Learning
+We include an ablation over the number of SMC samples, for a fixed number of products in Figure A1. We can observe that more SMC samples improves performance, up to a threshold of 88 samples.
+Figure A1: Increasing the number of SMC samples for DFKC improves over no SMC resampling; gain is largest with 4 or 8 samples. Taking the product has a lower (better) mean squared error (MSE) than joint prompting, and resampling with DFKC significantly improves this further.
+We additionally include a comparison of how well the outputs adhered to the specified prompt format in Figure A2.
+Some selected samples from the product and joint prompting strategies are included in Table A3. We can note that outputs using joint prompting often fail to adhere to the output format specified in the prompt, and sometimes cannot be parsed for values of (θ0,θ1)(\theta_{0},\theta_{1}). This issue wasn’t observed for the product prompt (using any number of particles).
+Data size
+Joint Prompt Output
+Product Prompt Output
+N=10
+The best estimate for parameters of the model are: a = 4.337, and b = -34.049
+The best estimate for parameters of the model are: a = 3.000, and b = 10.004
+N=20
+Based on the observed data points, we can see a trend that y is directly proportional to x. The best estimate for the parameters a and b is: a = 1.0, and b = 0.0.
+The best estimate for parameters of the model are: a = 3.82, and b = 10.12.
+N=50
+To obtain the best estimates for the parameters (a and b), you need to follow the detailed steps of building a linear regression model using Ordinary Least Squares (also namedIM, and guide, filter). These steps involve typically a program such as R or a statistical tool among others. The objective is to predict parameters, but after an ensemble calculation, we are going to use, known as the sum of residuals, to estimate the model’s parameters. The sum of residuals helps us evaluate the discrepancy of model with a given residuals. Once I’ve made these predictions, I’ll be able to provide more precise feedback on parameter estimates.
+The best estimate for parameters of the model are: a = 1.344, and b = -22.331
+N=100
+The best estimate for parameters of the model are: a = 0x583C622F 052D29A9 + 00EA6F242949D26F and b = 0x 41796E30 0027A200 - 76CF406498D45505.
+Note: These values of a and b are with 95% confidence taking into account the Gaussian balls added to Python and Python recovery points.
+The best estimate for parameters of the model are: a = 0.8313, and b = 0.0564.
+Table A3: Comparison between curated joint and product prompt outputs at varying data sizes.
+(a) DFKC generates a higher percentage of valid, parseable outputs compared with joint prompting at all data sizes.
+(b) DFKC generates consistently generates 100% valid, parseable outputs at all SMC sample sizes while joint prompting only generates 72% valid prompts on average.
+Figure A2: Effect of data quantity on predicting linear regression parameters.
+D.3 Code Generation
+All experiments were done on an a A100L GPU.
+For evaluation, the HumanEval (Chen et al., 2021) and MBPP (Austin et al., 2021) coding datasets were used. For MBPP the sanitized dataset split was evaluated. For MBPP, the prompt was modified to add the function definition.
+Evaluation consisted of computing average accuracy on test-cases provided in the dataset. For evaluation, the longest code segment in the generated output without any syntactic errors was parsed and sanitized.
+Hyperparameters consisted of the number of SMC samples MM, and inverse-temperature β\beta. These were selected through search in a grid of M={2,4,8}M=\{2,4,8\} and β={3.0,5.0,10.0,20.0}\beta=\{3.0,5.0,10.0,20.0\}. Additionally, a remasking strategy of ‘low confidence’ or ‘random’ was evaluated on the hold-out set. The selection was performed based on accuracy on a small validation set (10 prompts from each dataset). For HumanEval, the final results were computed with M=4M=4, β=10.0\beta=10.0, and random remasking. For MBPP, the final results were computed with M=4M=4, β=20.0\beta=20.0, and random remasking.
+The final evaluation results are reported on the remainder of the dataset (154 datapoints for HumanEval, and 417 points for MBPP).
+A generation length of 128 was used for all experiments.
+A table of results is included in Section D.3 (the same values which were plotted in Figure 4). We note that “Naive Annealing" is equivalent to our method with 1 SMC sample (eg. without resampling). The improvement between our method and Naive Annealing therefore demonstrates the importance of resampling.
+Method
+Human Eval (%)
+MBPP (%)
+Base Model
+12.83±0.3812.83\pm 0.38
+10.00±0.2510.00\pm 0.25
+Base Model Argmax
+30.74±0.7630.74\pm 0.76
+30.28±0.8730.28\pm 0.87
+Naive Annealing
+30.49±0.4930.49\pm 0.49
+29.24±1.0729.24\pm 1.07
+DFKC (Ours)
+33.78±0.97\mathbf{33.78\pm 0.97}
+31.00±0.40\mathbf{31.00\pm 0.40}
+Table A4: Accuracy on coding tasks, with standard error reported over 5 seeds
+D.4 Multi-constraint Story Generation
+We evaluate the product formulation for generating stories. For this task we prompt the language model to generate a story, with a list of constraints C=∪kCkC=\cup_{k}C_{k}. Constraints may demand the inclusion of particular events or characters (such as a “hungry cat"), or be stylistic in nature (“the story should have mystery"). We use our method to sample from the product over individual constraints, and evaluate our adherence to the constraints by using the perplexity of the output under a more powerful language model, Qwen2.5 (Yang et al., 2024). Results for our method, over a varying number of constraints KK, are included in Figure A3.
+Figure A3: Multi-constraint story generation task: Comparison of Perplexity (PPL), between joint prompting, DFKC (1 SMC sample), and DFKC (8 SMC samples), for different numbers of conditions.
+All experiments were performed on a single L40 GPU.
+For inference with LLaDA, the next token to unmask was chosen randomly (as opposed to picking highest confidence one) due to the model frequently sampling end of text tokens using the latter setting. All experiments used a temperature of T=1.0T=1.0, and was generated within a single block with generation length LL varying based on the number of conditions CC (to account for the increasing complexity of the task as CC grows). In particular:
+L={128,C≤6256,6<C\displaystyle L=\begin{cases}&128,~~C\leq 6\\
+&256,~~6<C\end{cases}
+(171)
+The prompt for the story generation is composed as follows: the base prompt is “Write a story.". The conditions are sampled at random from a set of 50 conditions, containing mutually compatible constraints such as:
+1.
+“It should include a curious child."
+2.
+“It should describe a small village."
+3.
+“It should feature a dense forest."
+4.
+…\dots
+The number of SMC samples was selected by optimizing for PPL over a grid of {4,8,12}\{4,8,12\}. The final results were computed with 88 samples.
+Different seeds resulted in a different set of constraints being sampled to form the prompt.
+D.5 Protein Sequence Generation
+All experiments were done on a single L40 GPU.
+The base discrete diffusion model used is DPLM1 650M (Wang et al., 2024b). For a sequence of length ll, ll generation steps are used, and once a token is unmasked, it is not remasked in future steps (to align more closely to the traditional masked diffusion generation process, and as opposed to the remasking strategies used in (Wang et al., 2024b)).
+For each method we generate 50 samples per sequence length (in {10, 50, 100}), using all samples produced by any SMC algorithms. For instance, for FK Steering or DFKC with 55 particles, the set of 5050 samples consist of 1010 independent groups of 55 samples generated through the appropriate SMC algorithm. The results in Table 2 and Table A6 are computed through averages over these samples for all sequence lengths. We note that within an SMC run there may be multiple copies of a sequence, duplicated by the resampling mechanism (for FK Steering and DFKC).
+To give a more comprehensive picture of the generated sequences for each method, in Table A5 we have reported reward values obtained by i) choosing the maximum reward sample from each SMC run (or for the non-SMC methods: the maximum reward sample among a group of 10 sequences), and ii) the mean reward over unique samples (ie. discarding any duplicates).
+Table A5:
+Maximum and average reward over unique sequences for protein tasks. (Average and standard error reported over all seeds for max reward, and over all sequences for the second column).
+Max log⁡r⁡(x)\log r(x)
+(↑)(\uparrow)
+Avg. log⁡r⁡(x)\log r(x) on unique sequences
+(↑)(\uparrow)
+Task: unconditional generation
+Base [unguided]
+−2.4883±0.3474-2.4883\pm 0.3474
+−4.4272±0.1865-4.4272\pm 0.1865
+DG-Exact  (Nisonoff et al., 2024)
+−0.9119±0.1508-\textbf{0.9119}\pm\textbf{0.1508}
+−1.8831±0.0979-1.8831\pm 0.0979
+FK Steering  Singhal et al. (2025)
+−2.4266±0.3936-2.4266\pm 0.3936
+−2.9245±0.1646-2.9245\pm 0.1646
+DFKC [ours]
+−1.1797±0.2507-1.1797\pm 0.2507
+−1.7642±0.1554-\textbf{1.7642}\pm\textbf{0.1554}
+Task: thermostability
+Base [unguided]
+−0.4933±0.0396-0.4933\pm 0.0396
+−0.6698±0.0185-0.6698\pm 0.0185
+DG-Exact  (Nisonoff et al., 2024)
+−0.4404±0.0322-0.4404\pm 0.0322
+−0.6122±0.0181-0.6122\pm 0.0181
+FK Steering  Singhal et al. (2025)
+−0.4661±0.0444-0.4661\pm 0.0444
+−0.5864±0.0205-0.5864\pm 0.0205
+DFKC [ours]
+−0.4266±0.0311-\textbf{0.4266}\pm\textbf{0.0311}
+−0.5388±0.0170-\textbf{0.5388}\pm\textbf{0.0170}
+For the ESM2 likelihood reward, the SMC methods (FK Steering and DFKC) don’t resample in the final 5%5\% of sampling steps, which we found helped prevent collapse to a single sample. Such a modification was not needed for the Thermostability reward.
+D.5.1 Reward Models
+ESM2 Likelihood Reward
+The reward for a sequence xx with length LL is defined as the pseudo log-likelihood of the ESM2 model. This model takes a sequence as input, and outputs log-probabilities over the vocabulary for each token position, log⁡pθ​(y∣x)∈ℝV×L\log p_{\theta}(y\mid x)\in\mathbb{R}^{V\times L}. Classically, the pseudo log-likelihood (PLL) of such a model is calculated as:
+PLL⁡(x)=1L​∑i=1Llog⁡pθ​(yi=xi∣x\i)\displaystyle\mathrm{PLL}(x)=\frac{1}{L}\sum^{L}_{i=1}\log p_{\theta}(y_{i}=x_{i}\mid x_{\backslash i})
+(172)
+Where logpθ(⋅∣x\i)\log p_{\theta}(\cdot\mid x_{\backslash i}) does a forward pass of the model while masking the token at position ii. This is expensive since it requires a number of forward passes equivalent to the length of the sequence LL.
+Gordon et al. (2025) propose a method of estimating the PLL using a single forward pass. First probabilities are computed on the complete sequence (without masking any positions): pi=pθ​(yi=xi∣x)p_{i}=p_{\theta}(y_{i}=x_{i}\mid x). Then these are transformed to calculate:
+PLL^​(x)\displaystyle\hat{\mathrm{PLL}}(x)
+OPEN=1L​∑i=1Llog⁡(max⁡(α+βα​pi−βα,ϵ)CLOSE)\displaystyle=\frac{1}{L}\sum^{L}_{i=1}\log\mathopen{}\mathclose{{\left(\mathrm{max}(\frac{\alpha+\beta}{\alpha}p_{i}-\frac{\beta}{\alpha},~\epsilon)}}\right)
+(173)
+Where α,β\alpha,~\beta are parameters related to the training of the model (α=β=0.1\alpha=\beta=0.1 for ESM2), and ϵ>0\epsilon>0 is a small constant to prevent negative values.
+For our unconditional experiments, the reward is computed with the latter formula, r​(x)=PLL^​(x)r(x)=\hat{\mathrm{PLL}}(x).
+Thermostability Reward
+We use a fine-tuned version of DPLM-650M which predicts thermostability from sequences. This model was evaluated to have a 0.6950.695 Spearman correlation (see Table 1 of Wang et al. (2024a)). The reward r⁡(x)r(x) is the log\log of the predicted thermostability value.
+The reward is scaled by a hyperparameter γ>0\gamma>0 to compute the values used in the algorithm (for guidance and weight calculations): r~​(x)=γ​r​(x)\tilde{r}(x)=\gamma r(x) (so that we sample approximately from marginals qt​(i)∝pt​(i)​exp⁡(βt​r~​(i))q_{t}(i)\propto p_{t}(i)\exp(\beta_{t}\tilde{r}(i)).
+In our results for unconditional protein generation, we set the reward-scale as γ=10\gamma=10 for both the ESM2 and thermostability rewards, but report the unscaled reward r⁡(x)r(x) in tables and figures.
+For partially masked sequences xx, the reward is computed by first denoising xx to a completely unmasked sequence x0x_{0} by sampling from the denoiser (in a single step), and then evaluating the reward on x0x_{0}. That is: r⁡(x):=r⁡(x0),x0∼pθ​(x0|xt=x)r(x):=r(x_{0}),~~x_{0}\sim p_{\theta}(x_{0}|x_{t}=x) (where pθ​(x0|xt)p_{\theta}(x_{0}|x_{t}) is the denoiser distribution, not the exact posterior).
+Evaluating the reward ratio in Theorem 3.5 requires computing the reward on all neighbors of xx (sequences that differ from xx at a single token position). In this case, two choices are made to make the calculation more tractable:
+1.
+The token position to unmask is chosen prior to computing the reward terms, from the base processes rate matrix (and logits). This means that the reward ratio only needs to be computed on neighbors differing from xx on the chosen token position (for a vocabulary of size VV, and length LL, this reduces the number of reward evaluations from L​VLV to VV).
+2.
+In computing the reward r⁡(x′)r(x^{\prime}) on a partially masked neighbor x′x^{\prime}: we do not unmask it using a separate call to the denoiser, instead all masked positions in x′x^{\prime} are replaced with the corresponding tokens from x0∼pθ​(x0|xt=x)x_{0}\sim p_{\theta}(x_{0}|x_{t}=x), ie. with the denoiser called on the sequence xx. This is an approximation to computing x0′∼p⁡(x0′|xt=x′)x^{\prime}_{0}\sim p(x^{\prime}_{0}|x_{t}=x^{\prime}), and avoids multiple calls to the denoiser.
+A linear annealing schedule βt=1−t\beta_{t}=1-t is used for the reward (where generation starts at t=1t=1 and proceeds to t=0t=0).
+D.5.2 Baselines
+DG-Exact
+[(Nisonoff et al., 2024)] This method is equivalent to DFKC without resampling (or equivalently, with 1 SMC sample). Hyperparameters are set the same as our method.
+FK Steering
+[(Singhal et al., 2025)] The FK steering baseline uses the base model as the proposal, and uses the difference potential for resampling. The main hyperparameter involved is the number of SMC samples (MM). The method is evaluated for M=5M=5 and M=10M=10, and the best performance for each reward is selected and reported in Table 2.
+D.5.3 Description of protein metrics
+Diversity
+The "sequence diversity" metric of the generated sequences was obtained by normalizing the global pairwise sequence alignment. The metric serves to quantify how different the sampled sequences are.
+Another metric for sequence diversity, "Max cluster", was evaluated using MMseqs2 clustering (Steinegger and Söding, 2017). Generated sequences were clustered with mmseqs easy-cluster using a 50% sequence identity threshold, 80% coverage, and cov-mode 0 (mmseqs easy-cluster --min-seq-id 0.5 -c 0.8 --cov-mode 0). Each cluster represents a group of related variants; we measured diversity as the fraction of clusters formed divided by the total number of sequences.
+Structural confidence
+To assess structural plausibility and quality, we used ESMFold (Lin et al., 2022) to predict a structure for each sequences and then computed both the average predicted local distance difference
+test (pLDDT) and predicted TM (pTM) score. pLDDT estimates how confident the model is in the local geometry at each residue, and pTM predicts how correct the overall topology is. High-confidence structures are considered to be those with pLDDT >0.7>0.7; we also report this fraction.
+Novelty
+For each sequence, the structure was computed, and FoldSeek (van Kempen et al., 2024) was used to compute the TM-scores (Zhang and Skolnick, 2004) against a database of known structures from PDB 77
+7
+https://github.com/steineggerlab/foldseek using the settings:
+⬇
+foldseek easy-search ... --format-output query,target,alntmscore
+--alignment-type 1 --tmscore-threshold 0.0
+The reported novelty metrics include the maximum TM-score (lower is better, since it implies less alignment with database structures), and the fraction of structures with a maximum TM-score below 0.50.5, which suggests that they do not have general folds similar to those in the database (Xu and Zhang, 2010).
+D.5.4 Hyperparameters
+The main hyperparameters consisted of the reward scale γ\gamma, and the number of SMC samples used in DFKC and FK Steering. The reward scale was selected by evaluating the average (unscaled) reward on a set of generated sequences of smaller length (10, and 20), for γ∈{1.0,5.0,10.0,50.0,100.0,200.0}\gamma\in\{1.0,5.0,10.0,50.0,100.0,200.0\}. For the number of SMC samples, we evaluated the relevant methods with 5 and 10 samples, with results written in Table A6. The results for the best performing number of samples for each method was selected and reported in Table 2.
+D.5.5 Additional Protein Results
+In Figure A4 we plot the protein rewards (both ESM2 likelihood and thermostability) along the evaluated sequence lengths and along different numbers of SMC samples for DFKC. We observe that going to 55 particles from 11 particle (without resampling, which is equivalent to the guidance method referred to as DG-Exact in  (Nisonoff et al., 2024)) improves the reward. We note that our method generally outperforms the base model and DG-Exact.
+We report the protein metrics for the ESM2 likelihood and Thermostability tasks, varying the number of SMC samples for FK Steering and DFKC, in Table A6. The highest reward settings for each method was reported in Table 2.
+(a) ESM2-650M log-likelihood rewards of generated sequences for 10, 50, 100 amino acids at 1, 5, 10 SMC samples and base model (no guidance).
+(b) Thermostability rewards of generated sequences for 10, 50, 100 amino acids at 1, 5, 10 SMC samples and base model (no guidance).
+Figure A4: DFKC performance on reward-guided unconditional protein sequence generation, over varying lengths and number of particles.
+Table A6:
+Ablation over number of SMC samples (MM) for protein tasks (mean and standard error reported over 5 seeds).
+Reward
+Diversity
+Structural confidence
+Novelty
+log⁡r⁡(x)\log r(x)
+(↑)(\uparrow)
+Seq. div.
+(↑)(\uparrow)
+Max. cluster
+(↑)(\uparrow)
+pLDDT
+(↑)(\uparrow)
+pTM
+(↑)(\uparrow)
+Frac. pLDDT
+>0.7(↑)>0.7\,(\uparrow)
+Max TM
+(↓)(\downarrow)
+Frac. TM
+< 0.5 (↑)(\uparrow)
+Task: unconditional generation
+Base [unguided]
+−4.3266±0.3190-4.3266\pm 0.3190
+0.7729
+0.3571
+0.5941±0.15250.5941\pm 0.1525
+0.2609±0.14520.2609\pm 0.1452
+0.27140.2714
+0.67890.6789
+0.05000.0500
+FK Steering (M=5M=5)  Singhal et al. (2025)
+−3.3484±0.1636-3.3484\pm 0.1636
+0.70540.7054
+0.14670.1467
+0.5896±0.15050.5896\pm 0.1505
+0.2719±0.14180.2719\pm 0.1418
+0.24670.2467
+0.70690.7069
+0.08080.0808
+FK Steering (M=10M=10)  Singhal et al. (2025)
+−2.7662±0.1160-2.7662\pm 0.1160
+0.61710.6171
+0.07330.0733
+0.5494±0.14080.5494\pm 0.1408
+0.1912±0.08450.1912\pm 0.0845
+0.21330.2133
+0.5992
+0.1837
+DFKC (M=5M=5) [ours]
+−1.6551±0.0952-\textbf{1.6551}\pm\textbf{0.0952}
+0.70770.7077
+0.10670.1067
+0.6005±0.1840\textbf{0.6005}\pm\textbf{0.1840}
+0.2860±0.1677\textbf{0.2860}\pm\textbf{0.1677}
+0.3600
+0.65730.6573
+0.14430.1443
+DFKC (M=10M=10) [ours]
+−1.7380±0.0577-1.7380\pm 0.0577
+0.63180.6318
+0.06670.0667
+0.5573±0.16050.5573\pm 0.1605
+0.2387±0.07750.2387\pm 0.0775
+0.24000.2400
+0.65360.6536
+0.06250.0625
+Task: thermostability
+Base [unguided]
+−0.6590±0.0229-0.6590\pm 0.0229
+0.7729
+0.3571
+0.5941±0.1525\textbf{0.5941}\pm\textbf{0.1525}
+0.2609±0.1452\textbf{0.2609}\pm\textbf{0.1452}
+0.2714
+0.67890.6789
+0.05000.0500
+FK Steering (M=5M=5)  Singhal et al. (2025)
+−0.5841±0.0192-0.5841\pm 0.0192
+0.75130.7513
+0.27330.2733
+0.5704±0.15340.5704\pm 0.1534
+0.2246±0.10870.2246\pm 0.1087
+0.23330.2333
+0.65590.6559
+0.14290.1429
+FK Steering (M=10M=10)  Singhal et al. (2025)
+−0.5980±0.0135-0.5980\pm 0.0135
+0.69440.6944
+0.24670.2467
+0.5473±0.14950.5473\pm 0.1495
+0.1901±0.07180.1901\pm 0.0718
+0.20000.2000
+0.5741
+0.20240.2024
+DFKC (M=5M=5) [ours]
+−0.5316±0.0153-\textbf{0.5316}\pm\textbf{0.0153}
+0.76180.7618
+0.32000.3200
+0.5875±0.15170.5875\pm 0.1517
+0.2468±0.13870.2468\pm 0.1387
+0.25330.2533
+0.64900.6490
+0.2043
+DFKC (M=10M=10) [ours]
+−0.5736±0.0138-0.5736\pm 0.0138
+0.75540.7554
+0.32000.3200
+0.5866±0.14510.5866\pm 0.1451
+0.2501±0.15080.2501\pm 0.1508
+0.26000.2600
+0.63550.6355
+0.10960.1096
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from
+

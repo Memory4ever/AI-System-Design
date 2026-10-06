@@ -1,0 +1,127 @@
+Source https://arxiv.org/html/2601.10716v1
+[H]
+4.2 WildRayZer
+[H]
+Overview.
+RayZer recovers cameras and a scene representation from unposed, uncalibrated inputs but assumes static imagery. WildRayZer lifts this restriction: given dynamic, in-the-wild inputs, it aims to render the underlying static 3D scene by disentangling transient object motion from camera motion in a fully self-supervised manner. Concretely, we augment RayZer with a motion estimator \mathcal{E}_{\mathrm{mot}} placed alongside the camera estimator \mathcal{E}_{\mathrm{cam}}, scene encoder \mathcal{E}_{\mathrm{scene}}, and renderer \mathcal{D}_{\mathrm{render}}. To prevent dynamic content from contaminating the static scene tokens, we adopt an alternating optimization schedule: first learn motion masks while freezing the renderer stack, and then learn a masked renderer while freezing the motion head. Once the masks are sufficiently reliable, we jointly fine-tune all components. Throughout training, there is no supervision from ground-truth poses, depth, or semantic labels; all pseudo-labels are derived from discrepancies between rendered and observed images, and external backbones (e.g., DINOv3) remain frozen.
+To illustrate the pipeline, we show the learning framework in Figure 2.
+When training the motion estimator, \mathcal{E}_{\mathrm{cam}}, \mathcal{E}_{\mathrm{scene}}, and \mathcal{D}_{\mathrm{render}} are fixed. For each held-out view I\in\mathcal{I}_{\mathcal{B}}, the static renderer predicts a target \hat{I}, and we construct a soft pseudo motion mask \tilde{M}(I)\in[0,1]^{H\times W} by treating appearance and feature-space residuals between I and \hat{I} as evidence of dynamics. The motion head \mathcal{E}_{\mathrm{mot}} predicts per-pixel logits S(I)\in\mathbb{R}^{H\times W}, which we train to match \tilde{M}(I) using a standard BCE-with-logits objective. In the complementary phase, when training the renderer, the motion estimator is frozen. For each input view I\in\mathcal{I}_{\mathcal{A}}, we convert S(I) to probabilities, downsample to the patch grid, threshold to obtain a binary patch mask \Pi\in\{0,1\}^{h\times w}, and zero out dynamic token positions in the fused token map before encoding with \mathcal{E}_{\mathrm{scene}}. This yields a static scene representation z that is explicitly purged of transient content, and we then optimize the reconstruction loss in Eq. (1) on the held-out targets \mathcal{I}_{\mathcal{B}}. Finally, to improve robustness to open-set distractors, we apply a simple copy–paste augmentation [16, 84]: COCO [37] objects with ground-truth masks are pasted into training views and their masks are treated as additional \tilde{M}(I), providing precise synthetic transients without altering cameras or the rendering architecture. At this stage, we train the model end to end with augmented data and dynamic data, as illustrated in Figure 2.
+[H]
+Motion Estimator.
+The motion estimator \mathcal{E}_{\mathrm{mot}} predicts, for each image I, a per-pixel logit map S(I)\in\mathbb{R}^{H\times W}. To obtain a robust motion probability map under noisy pseudo labels, we fuse three complementary signals that are all aligned on the h\times w token grid: (a) DINOv3 [70] patch features, (b) RayZer image tokens, and (c) Plücker–ray tokens derived from (\mathbf{P},\mathbf{K}). For each token position (i,j), we take the corresponding DINOv3 feature, image token, and ray token, apply LayerNorm and a learned linear projection to a shared width d, and concatenate them. A small fusion MLP then produces a unified token representation that serves as input to a shallow transformer stack.
+Tokens from all input views are concatenated along the sequence dimension to enable cross-view reasoning, and a DPT-style [59] decoder upsamples the fused tokens back to H\times W to produce S(I) for each image. We find that including DINOv3 features accelerates convergence and yields sharper, more semantically aligned motion masks. Importantly, for the image tokens we use the features before the camera estimator \mathcal{E}_{\mathrm{cam}} so that the motion head never relies on target views or test-time-only signals: at inference, it sees exactly the same type of inputs as during training. The motion estimator is then trained with a standard BCE-with-logits loss to match the pseudo labels \tilde{M}(I).
+Figure 3: Pseudo Motion Mask Pipeline. We fuse SSIM- and DINO-based dissimilarity into a saliency map, cluster DINO patch features to vote for dynamic patches, then refine the coarse patch mask to pixel resolution via morphological smoothing, small-component removal, and GrabCut [65].
+[H]
+Pseudo-label Construction.
+Given a target image I and its static rendering \hat{I}, we construct motion pseudo-labels by fusing semantic and appearance cues. As observed in Figure 3 and prior work [33], raw MSE is not very informative when renderings are imperfect; instead, we aim for a less noisy pseudo-mask than the coarse error maps used in optimization-based pipelines.
+We first extract DINOv3 patch embeddings and define a semantic dissimilarity map D_{\text{DINO}}(p)=1-\langle\Phi_{p}(I),\Phi_{p}(\hat{I})\rangle, where \Phi_{p}(\cdot) are L2-normalized patch features and \langle\cdot,\cdot\rangle is the inner product. In parallel, we compute a pixel-level appearance dissimilarity via SSIM, D_{\text{SSIM}}(x)=1-\mathrm{SSIM}(I,\hat{I})(x). For sharp motion segmentation, we operate at patch resolution: D_{\text{SSIM}} is downsampled to the patch grid by area pooling, and both maps are z-score normalized, \mathcal{Z}(D)=(D-\mu_{D})/\sigma_{D}.
+We then fuse the two dissimilarities with adaptive weights that depend on the current rendering fidelity. Let w_{\text{DINO}},w_{\text{SSIM}}\in[0,1] with w_{\text{DINO}}+w_{\text{SSIM}}=1. When renderings are still coarse, we upweight the more stable semantic cue from DINOv3 (larger w_{\text{DINO}}); as training progresses and photometric quality improves, we gradually increase w_{\text{SSIM}} to exploit fine-grained appearance differences. The fused saliency is
+D_{\text{bin}}(p)=w_{\text{DINO}}\,\mathcal{Z}(D_{\text{DINO}}(p))+w_{\text{SSIM}}\,\mathcal{Z}(D_{\text{SSIM}}(p)).
+We cluster all patch embeddings \{\Phi_{p}(I)\} across a batch of B frames from the same scene using K-means to group semantically similar regions. A cluster k is marked as foreground (motion) if its mean saliency \bar{s}_{k}=\mathbb{E}_{p\in k}[D_{\text{bin}}(p)] lies in the top 5\% and it is salient (above the 75th percentile of D_{\text{bin}}) in at least 4 frames, enforcing cross-frame consistency. Selected clusters are upsampled to pixel resolution via nearest-neighbor interpolation and refined with (a) morphological smoothing, (b) small connected-component removal, and (c) GrabCut [65] boundary refinement seeded by eroded foreground masks. This yields a clean binary mask M_{\text{bin}}\in\{0,1\}^{H\times W} with sharp boundaries.
+All clustering and fusion are performed at patch resolution, reducing computation by roughly 100\times while preserving motion boundaries. This is crucial in our learning-based setting, where we cannot afford to precompute and store DINOv3 features for the entire dataset.
+D-RE10K
+D-RE10K-iPhone
+[H]
+Masking Dynamic Input Tokens.
+To prevent transient content from entering the scene representation, we mask input tokens that correspond to predicted dynamic regions. For each input view, the motion estimator produces a probability map, which we downsample to the token grid to obtain a patch-level motion score. Patches whose score exceeds a threshold are marked as dynamic, and their fused tokens are simply zeroed out before being fed into the scene encoder \mathcal{E}_{\mathrm{scene}}. Only static tokens participate in scene reconstruction, ensuring that moving objects do not leak into the static scene tokens.
+[H]
+Copy–Paste Augmentation.
+To further improve the robustness of motion estimation and masking, we inject synthetic transients using a simple copy–paste strategy [16, 84]. We randomly sample objects from COCO [37], apply their provided segmentation masks, and paste them onto training images at random scales and positions. These pasted regions are treated as ground-truth transient masks and override the model’s predicted motion scores for those pixels. This augmentation exposes the system to a broader distribution of moving objects, strengthens open-set generalization, and provides clean supervision for token removal without altering the masking mechanism itself. See out-of-domain visualizations in Figure 5. We provide details in appendix.
+[H]
+5.1 Experiment Setup
+We describe the datasets, evaluation protocol, metrics, and baseline methods used in our experiments.
+[H]
+Datasets.
+We evaluate on two challenging dynamic-scene benchmarks.
+D-RE10K-Mask contains 74 Internet-curated indoor sequences with moving humans, pets, and vehicles; each frame is paired with human-verified motion masks, enabling evaluation restricted to transient regions.
+D-RE10K-iPhone consists of 50 real-world sequences captured using a tripod-mounted iPhone.
+[H]
+Evaluation Protocol and Metrics.
+We adopt a sparse-view NVS protocol: two, three or four input images are used for pose and scene estimation, and six target views are used for evaluation.
+We report static-region metrics for D-RE10K-Mask and report full-image metrics for D-RE10K-iPhone.
+Image quality is evaluated using PSNR [17], SSIM [86], and LPIPS [97].
+Furthermore, when evaluating motion mask, motion-mask accuracy is measured using mIoU and Recall against human verified annotations.
+We provide details about evaluation protocol in appendix.
+[H]
+Baselines.
+We compare against state-of-the-art dynamic-scene NVS methods, including NeRF On-the-go [64], 3DGS [32], T-3DGS [44], WildGaussians [33], and Spotless-Splats [66].
+All baselines are re-evaluated under the same sparse-view setting.
+WildGS-SLAM [99] is excluded because its renderer is not public and its SLAM assumptions are incompatible with our few-view regime.
+We further implement three RayZer-based variants using off-the-shelf motion estimators:
+(a) training-free co-segmentation [1],
+(b) Segment Any Motion (SAV) [21], and
+(c) MegaSAM [36].
+Their predicted masks are downsampled to the token grid and used to drop corresponding image tokens before scene aggregation.
+All variants are tuned on the D-RE10K validation set and evaluated without modification on the iPhone benchmark.
+[H]
+5.3 Analysis
+[H]
+Analysis of Rendering.
+Method
+PSNR{}_{s}\!\uparrow
+SSIM{}_{s}\!\uparrow
+[H]
+Analysis of Motion Masks.
+n{=}2
+n{=}3
+n{=}8
+Method
+mIoU \uparrow
+Recall \uparrow
+[H]
+Effects of Copy–Paste Augmentation.
+Training Recipe
+D-RE10K
+D-RE10K-iPhone
+Copy–Paste Only
+18.2
+11.1
+Pseudo–Mask Only
+53.9
+45.3
+Copy–Paste + Pseudo–Mask
+53.9
+49.7
+Table 5: Copy–Paste Ablation. Copy–paste alone does not transfer to real videos but improves out-of-domain generalization when combined with pseudo-masks.
+We isolate copy–paste augmentation by freezing the renderer and training only the motion estimator.
+Copy–paste alone does not produce meaningful masks, but when added on top of D-RE10K pretraining, it improves cross-dataset generalization.
+The motion estimator transfers to DAVIS [54], where copy–paste improves mIoU from 3.4 to 31.0 on a subset of eight sequences with clear motion and sufficient parallax. We provide visualizations on DAVIS [54] in Figure 5.
+[H]
+Effects of Motion Estimator Input Modalities.
+Using both image tokens and camera-ray tokens allows gradients to flow into the pose estimator, leading to more stable camera estimation in dynamic scenes.
+Incorporating DINOv3 features substantially accelerates mask emergence and improves their quality: reaching \mathrm{mIoU}{=}30 takes about 20\text{k} steps without DINOv3 but only 1.5\text{k} with it.
+Final performance also increases (39.4 vs. 29.4 mIoU on D-RE10K), which is particularly important given the cost of each pseudo-mask iteration.
+[H]
+RayZer Pretraining.
+We first train a RayZer [27] using official release code with scene and pose latent representations. The encoder consists of 12 transformer layers with 8 additional geometry-specific layers, while the decoder uses 12 layers. We use a hidden dimension of d=768 with attention heads of size 64. Both encoder and decoder employ QK normalization for training stability. Images are tokenized into 16\times 16 patches from 256\times 256 input resolution. The scene latent code has length 768, and camera poses are represented using 6D rotation representation. Importantly, we find smaller scene latent code yields better rendering quality compared to scene latent code length of 3084 when training with smaller batch size. Additionally, instead of relying solely on absolute positional embeddings, we introduce a dedicated embedding to distinguish input and target views. We also mix cases with 2, 3, and 4 input views during training so that RayZer can handle variable-length inputs without performance degradation.
+We train on the RealEstate10K [101] dataset with 2 input views and 6 target views per scene. The model is trained for 100K steps with a batch size of 8 per GPU and gradient accumulation over 2 steps. We use the AdamW [42] optimizer with \beta_{1}=0.9, \beta_{2}=0.95, learning rate of 4\times 10^{-4}, and weight decay of 0.05. The learning rate is warmed up over 6K steps. Gradient clipping is applied with a maximum norm of 1.0. We use mixed precision training (bfloat16) with TF32 enabled on H100.
+The training objective combines L2 reconstruction loss (weight 1.0) and perceptual loss (weight 0.2) computed using VGG features. Input views are sampled with frame distances between 25 and 192 frames, with a scene scale factor of 1.35 applied during data augmentation.
+[H]
+Motion Mask Training Stage.
+In this stage, we train the motion mask predictor while keeping the pre-trained rendering model frozen. The goal is to learn to distinguish dynamic regions from static using self-supervised pseudo-labels derived from DINOv3 [70] features and SSIM [86].
+We generate motion pseudo-labels by computing ground-truth and renderings differences semantically and structurally. For each pair of ground truth and rendering, we extract dense feature maps and compute cosine similarity between corresponding spatial locations. Then we derive a fused error map from SSIM dissimilarity map and DINO dissimilarity map, viewing as saliency map. Then we cluster DINO feature at patch level across input images and assign average saliency score based on the saliency map. Regions with low feature consistency across frames (similarity below a learned threshold) are labeled as dynamic, while consistent regions are labeled as static. We apply morphological operations (kernel size 3, 1 iteration) to expand the mask and filter out small components (area <0.25\% of image) to ensure coherent motion segments. Lastly, we use grabcut [78] to refine the boundary.
+The motion mask predictor is trained on D-RE10K using binary cross-entropy loss between predicted masks and pseudo motion labels. We use a learning rate of 10^{-4} with AdamW optimizer (\beta_{1}=0.9, \beta_{2}=0.95, weight decay 0.01) and batch size 32. Critically, we apply a PSNR-based sample filtering strategy: only samples with rendering PSNR >17 dB are used for mask supervision. This prevents our model to learn from noisy pseudo-labels on challenging dynamic scenes where the frozen renderer struggles. We show detailed process of pseudo motion mask construction in Fig. 3.
+[H]
+Masked Latent Scene Reconstruction Stage.
+In this stage, we freeze the learned motion mask predictor and train the rendering model to reconstruct static scene content while explicitly providing masks on input images. This stage teaches the model to perform cross-view completion over masked areas.
+We implement a mask token strategy during training by masking 10% token, similar to standard MAE training but tailored for novel view synthesis. More specifically, we find clustered mask performances better compare to random token masking.
+The reconstruction loss is computed on the entire image.
+[H]
+Joint training with Copy-Paste Augmentation.
+In the final stage, we jointly train the motion-mask predictor and the rendering model with synthetic motion augmentation. Specifically, we adopt copy–paste augmentation [16] to insert controlled transient objects into static RE10K scenes, providing explicit supervision for the motion-mask predictor while simultaneously training the renderer to remain robust to these diverse transients. In addition, we mix D-RE10K sequences by masking the predicted motion regions, iteratively refining pseudo motion labels and excluding dynamic areas from the reconstruction loss.
+We detail the copy-paste augmentation here and provide examples in Fig. 6. We randomly paste 1-2 COCO objects (animals, vehicles, people) into 50% of training scenes occupying 25-35% of image size. Objects are blended using Gaussian smoothing (\sigma=3) and positioned with 15% margin from image borders. With 80% probability, we use per-view random objects; otherwise, we paste the same object across all views in a sequence. This generates binary overlay masks M_{\text{paste}} indicating pasted regions.
+In this stage, the motion mask predictor receives supervision from two sources: (1) DINOv3 pseudo-labels M_{\text{DINO}} for real dynamic content in D-RE10K, and (2) ground-truth paste masks M_{\text{paste}} for synthetic objects in augmented Static RE10K. We use binary cross-entropy loss with PSNR filtering (threshold 17 dB) to ensure supervision quality. The rendering loss combines masked reconstruction on both static regions and pasted regions:
+\mathcal{L}=\mathcal{L}_{\text{masked}}+\lambda_{\text{mask}}\cdot\text{BCE}(M_{\text{pred}},M_{\text{target}}),
+(2)
+where M_{\text{target}}=M_{\text{DINO}} for dynamic scenes and M_{\text{target}}=M_{\text{paste}} for augmented static scenes, and \lambda_{\text{mask}}=1.0.
+If we train only in the final stage, we observe many rendering artifacts due to inaccurate motion-mask predictions during early iterations. Therefore, adopting a progressive, multi-stage training strategy becomes essential for stability and reliable convergence.
+Figure 6:
+Examples of Copy–paste mask augmentation.
+We inject synthetic transient objects (e.g., animals, household items, vehicles) into static RE10K scenes
+[H]
+C.2 Failure Cases
+Figure 8:
+Failure Cases.
+Each row contains one failure case of WildRayzer. Motion mask only highlights moving parts dispite highlight television, it only highlights part of human body in row 1. Moreover, motion mask may miss small places such as feet in row 2. Row 3 and 4 show failure case when transient object is too big and predicted masks are smaller.
+We illustrate common failure cases in Fig. 8. Because our pseudo motion masks do not enforce instance-level segmentation, they may capture only the moving parts of an object when other parts remain static across the input views. While this behavior can be consistent with the motion cue, it often degrades rendering quality and we treat it as a failure mode. We also observe under-segmentation, where the predicted motion mask is smaller than the true moving region (row 2). Finally, mask quality drops when the moving object occupies a large fraction of the input images (rows 3–4).
+

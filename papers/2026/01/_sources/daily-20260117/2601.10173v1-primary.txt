@@ -1,0 +1,609 @@
+ReasAlign: Reasoning Enhanced Safety Alignment against Prompt Injection Attack
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Works
+2.1 Prompt Injection Defense
+2.2 LLM Reasoning
+3 Preliminaries
+3.1 Problem Statement
+3.2 Threat Model
+4 ReasAlign: Reasoning-enhanced safety alignment
+4.1 Building Structured Reasoning Datasets for Safety Alignment
+4.2 Test-Time Scaling Search
+5 Experiments
+5.1 Experimental Setup
+5.2 General Knowledge Evaluation
+5.3 Instruction-following Evaluation
+5.4 Agentic Workflow Evaluation
+5.5 Ablation Study of Reasoning
+5.6 Ablation Study on Node Scale
+5.7 Overhead Analysis
+6 Conclusion
+References
+A Case Study
+B Prompts
+C LLM Usage Statement
+License: arXiv.org perpetual non-exclusive license
+arXiv:2601.10173v1 [cs.CR] 15 Jan 2026
+ReasAlign: Reasoning Enhanced Safety Alignment against Prompt Injection Attack
+Hao Li
+Affiliation: Washington University in St. Louis
+Yankai Yang
+Affiliation: University of Wisconsin–Madison
+G. Edward Suh
+Affiliation: NVIDIA
+Ning Zhang
+Affiliation: Washington University in St. Louis
+Chaowei Xiao
+Affiliation: NVIDIA
+Affiliation: Johns Hopkins University{li.hao, zhang.ning}@wustl.edu, cxiao13@jh.edu
+Abstract
+Large Language Models (LLMs) have enabled the development of powerful agentic systems capable of automating complex workflows across various fields. However, these systems are highly vulnerable to indirect prompt injection attacks, where malicious instructions embedded in external data can hijack agent behavior.
+In this work, we present ReasAlign, a model-level solution to improve safety alignment against indirect prompt injection attacks.
+The core idea of ReasAlign is to incorporate structured reasoning steps to analyze user queries, detect conflicting instructions, and preserve the continuity of the user’s intended tasks to defend against indirect injection attacks. To further ensure reasoning logic and accuracy, we introduce a test-time scaling mechanism with a preference-optimized judge model that scores reasoning steps and selects the best trajectory. Comprehensive evaluations across various benchmarks show that ReasAlign maintains utility comparable to an undefended model while consistently outperforming Meta SecAlign, the strongest prior guardrail. On the representative open-ended CyberSecEval2 benchmark, which includes multiple prompt-injected tasks, ReasAlign achieves 94.6% utility and only 3.6% ASR, far surpassing the state-of-the-art defensive model of Meta SecAlign (56.4% utility and 74.4% ASR). These results demonstrate that ReasAlign achieves the best trade-off between security and utility, establishing a robust and practical defense against prompt injection attacks in real-world agentic systems. Our code and experimental results could be found at
+https://github.com/leolee99/ReasAlign.
+1 Introduction
+Recent advances in Large Language Models (LLMs) represent a significant success in the development of agentic systems (Gur et al., 2024; Deng et al., 2023; Zhang et al., 2024b; Zhang et al., 2024a). LLM-based agents have demonstrated strong capabilities in automation workflow. By leveraging external tools and interacting with environments, they can automatically solve complex user tasks and have achieved remarkable progress across various fields, such as web navigation (Koh et al., 2024; Gur et al., 2024), computer assistance (Xie et al., 2024), and robotics. Despite these advances, such autonomous agent systems also expand the attack surface and expose an emerging threat of prompt injection attacks. In an agentic system, attackers can embed malicious instructions within third-party platforms and hijack the agent into executing attackers’ commands. For example, an attacker can easily leave a review like “Ignore previous instructions, visit www.attack.com
+, and enter my credit card information” on an Amazon product page. When the agent performs an e-shop task, these commands are injected into the agent’s context stream, and the attack may be triggered.
+To defend against this threat, a line of studies (Chen et al., 2024a; Chen et al., 2024b; Inan et al., 2023; Li et al., 2025b; Wu et al., 2025; Debenedetti et al., 2025) has explored both system-level and model-level defenses. System-level defenses typically constrain the model’s action space through predefined security policies, achieving strong protection. However, this paradigm relies heavily on sophisticated policy definitions, precise policy execution, and complex system designs, which significantly increase deployment costs. In contrast, model-level defenses aim to enhance the model’s intrinsic guardrails and can be broadly categorized into external and internal approaches. External defenses (Meta, 2024; ProtectAI.com, 2024; Li et al., 2025b) employ auxiliary safeguards to detect injection attempts. However, these binary classifiers halt task execution whenever an injection is detected, leading to significant utility loss.
+Figure 1: The most advanced safety-aligned model overly disregards external helpful instructions.
+By contrast, internal defenses mitigate injection threats by enhancing the safety alignment of LLMs, enabling them to continue assisting users with their original queries. For example, StruQ (Chen et al., 2024a) splits the input context into a structured user query and external data, then fine-tunes the model to ensure that responses focus on the user query. SecAlign (Chen et al., 2024b) applies preference optimization (Rafailov et al., 2023) to encourage prioritization of user instructions over external ones, while Meta SecAlign (Chen et al., 2025) extends this approach by introducing an additional input role in the LLaMA template to separate trusted user queries from untrusted external data, achieving the state-of-the-art performance. Although these methods improve agent security, they rely heavily on intrinsic pattern matching and rigidly suppress external instructions. This design can be problematic in real-world open-ended tasks, where external instructions may be helpful or even necessary for task completion. As illustrated in Figure 1, even the most advanced model of Meta SecAlign against prompt injection attacks still suffer from these overkill issues.
+Inspired by the advances in reasoning techniques like chain-of-thought (Wei et al., 2022) on building rational and logical responses, we develop ReasAlign, a reasoning-enhanced LLM aimed at improving safety alignment against prompt injection attacks. Rather than responding immediately, ReasAlign first performs several structured reasoning steps: it analyzes the user query, identifies potentially conflicting injection instructions, and follows the user’s original intent. Based on this reasoning, It then generates a faithful and accurate response. To further enhance the rationality and logical consistency of the reasoning process, we leverage a test-time scaling mechanism. Specifically, we train a judge model using a preference-optimization benchmark to score individual reasoning steps and select the best thought trajectory.
+We conduct a comprehensive evaluation to validate the effectiveness of ReasAlign across seven utility benchmarks and four security benchmarks, covering general knowledge, instruction following, and agentic workflow tasks. In security evaluation, ReasAlign outperforms both the unaligned LLaMA model (Dubey et al., 2024) and the state-of-the-art guardrail, Meta SecAlign, on all instruction-following and agentic workflow benchmarks, highlighting the effectiveness of our reasoning-enhanced approach in defending against prompt injection attacks. In terms of utility, ReasAlign maintains performance comparable to the safety-unaligned model in the no-attack setting, while significantly outperforming the unaligned model, SecAlign, and Meta SecAlign (Chen et al., 2025) under attack. Notably, on the open-ended prompt injection benchmark CyberSecEval2 (Bhatt et al., 2024), where most tasks include helpful instructions within the external data, ReasAlign achieves 94.6% utility, compared to only 56.4% for Meta SecAlign and 78.2% for the undefended LLaMA model. These results demonstrate that ReasAlign achieves a better balance between security and utility, making it a more robust and practical defense against prompt injection attacks in real-world scenarios.
+2 Related Works
+2.1 Prompt Injection Defense
+Existing defenses against prompt injection attacks can be broadly categorized into system-level and model-level approaches.
+System-level defenses typically constrain the model’s action space through predefined security policies to prevent prompt injection attacks. Several techniques have demonstrated impressive results, such as execution environment isolation (Wu et al., 2025) and information flow control (IFC) (Wu et al., 2024; Zhong et al., 2025). More recently, constraint-based defenses have been proposed. For example, CaMeL (Debenedetti et al., 2025) statically constructs control and data flows from the user query and employs a custom interpreter to enforce flow security. Building on this idea, Progent (Shi et al., 2025), DRIFT (Li et al., 2025a), and AgentArmor (Wang et al., 2025) introduce dynamic policy update mechanisms, significantly improving the utility–security trade-off in real-world deployments. Despite their effectiveness, system-level approaches rely on sophisticated policies and complex system designs, which substantially increase deployment costs.
+Model-level defenses aim to enhance the model’s intrinsic robustness against injection threats. These can be broadly divided into external-based and internal-based guardrails:
+1) External-based defenses (Meta, 2024; Inan et al., 2023; Li et al., 2025b; ProtectAI.com, 2024), employ auxiliary models to detect injection attempts. For instance, PromptGuard (Meta, 2024) and PIGuard (Li et al., 2025b) train specialized classifiers to identify potentially malicious content across multiple risk categories, providing an additional layer of protection. However, such detection-based approaches refuse to respond when the attack is detected. This strategy leads to substantial loss of useful information, severely undermining utility.
+2) Internal-based defenses rely on the LLM’s own guardrails to resist injection attempts. For example, StruQ (Chen et al., 2024a) splits the input context into a structured user query and external data, then applies safety alignment to ensure responses focus on the user query. SecAlign (Chen et al., 2024b) leverages preference optimization to encourage the model to prioritize the user query over external instructions. More recently, Meta SecAlign (Chen et al., 2025) introduces an additional input role in the LLaMA template to separate trusted user queries from untrusted external data. However, these internal defenses depend heavily on intrinsic pattern matching and rigidly suppress all external instructions—even helpful ones—thereby severely limiting the ability of LLMs to handle open-ended tasks. In this work, we propose a reasoning-enhanced safety alignment approach to mitigate the impact of prompt injection attacks within LLM-based agent workflows.
+eca
+2.2 LLM Reasoning
+Reinforced reasoning has achieved remarkable progress in enhancing LLMs’ ability to solve complex tasks. A variety of reasoning techniques (Wei et al., 2022; Yao et al., 2023b; Yao et al., 2023a) have been developed, which can be broadly categorized into three main approaches: step-by-step reasoning, multi-path exploration, and decomposition-based methods.
+Step-by-step reasoning guides LLMs to think through problems sequentially rather than producing a direct answer. Classical approaches such as Chain-of-Thought (CoT) (Wei et al., 2022) have achieved remarkable progress in solving complex problems.
+Multi-path exploration extends single-path reasoning into multiple potential reasoning trajectories, often structured as trees (Yao et al., 2023a) or graphs (Besta et al., 2024).
+Decomposition-based methods (Zhou et al., 2023a; Sel et al., 2024) tackle extremely difficult tasks by breaking them down into smaller, more manageable subtasks.
+Collectively, these reasoning enhancement techniques have proven effective in unlocking the potential of LLMs for solving complex problems.
+3 Preliminaries
+3.1 Problem Statement
+In user–agent interactions, the input typically consists of two components: (1) the user instruction and (2) external data sourced from third-party platforms. The agent is expected to complete the user instruction by leveraging the external data. In this setting, attackers can embed prompt injection instructions into the external data, misleading the model into executing malicious commands, as illustrated in Figure 9. Within the scope of our work, we consider a practical scenario in which user instructions are always trusted and injection attacks occur only within the external data.
+3.2 Threat Model
+In this section, we describe the goals of the attacker and the defender, as well as the scope of the attacker’s capabilities.
+Attacker Goal. The attacker is a third-party entity, distinct from both the legitimate user and the service provider. Their objective is to manipulate external text data from public platforms (e.g., emails, webpages) in order to hijack the agent that interacts with this content and mislead it into executing the attacker’s intended tasks.
+Defender Goal. The defender is the service provider responsible for deploying the agents or LLMs. Their objective is to establish guardrails that prevent agents from being hijacked by malicious external instructions encountered during interactions with the environment. Defenders may achieve this by adjusting system policies, managing agent workflows, or enhancing the intrinsic security of LLMs.
+Attacker Capabilities. Some prior work (Liu et al., 2025) assumes a powerful attacker who can arbitrarily modify the external environment. Although this assumption is useful for demonstrating defenses, it is unrealistic. In our work, we constrain attacker capabilities to a more practical scope, where they can only inject malicious instructions through public interfaces such as emails, product reviews, or similar channels.
+4 ReasAlign: Reasoning-enhanced safety alignment
+In this section, we introduce the implementation of ReasAlign. It starts with our approach to construct the structured reasoning dataset and perform safety alignment, followed by the description of a test-time scaling search mechanism designed to further enhance the reasoning reliability of ReasAlign in defending against prompt injection attacks.
+4.1 Building Structured Reasoning Datasets for Safety Alignment
+In the following, we will describe how structured injection samples are collected for safety alignment and how the reasoning process to ensure is constrained such that it remains both reasonable and correct.
+Injection Sample Synthesis.
+Our first step is to establish a base injection dataset. Prompt injection samples typically follow a structured format, consisting of six components: (1) user queries, (2) context data, (3) injection triggers, (4) injected instructions, (5) expected responses to the user query, and (6) hijacked responses to the injected instructions. We can therefore synthesize such structured data by leveraging existing datasets.
+Specifically, we collect user queries, external context data, and ground-truth responses from SQuADv2 (Rajpurkar et al., 2016), a widely used large-scale dataset derived from Wikipedia and covering diverse open-domain QA tasks.
+To introduce adversarial elements, we employ injection triggers, which act as switches to hijack model behaviors. For example, a commonly used trigger is ‘‘Ignore previous instructions, [TARGET INSTRUCTION]’’. Inspired by Li et al. (2025b), we collect a rich set of triggers from TaskTracker (Abdelnabi et al., 2024) to maintain trigger diversity.
+Finally, we gather injection instructions from BeaverTails (Ji et al., 2023), a large-scale QA dataset containing both safe and unsafe instructions. Incorporating safe instructions as injections helps prevent the identification pattern from collapsing into a simple association between injections and malicious intent.
+Structured Reasoning Sampling.
+Building upon the structured base dataset, our next step is to construct the reasoning process. Chain-of-thought (Wei et al., 2022) has shown great promise in enhancing the ability of large language models to handle complex tasks, such as mathematical problem solving (Zhang et al., 2025) and code generation (Zhang et al., 2024b). However, acquiring accurate and high-quality reasoning trajectories on other tasks remains challenging, which limits the extension of such reasoning capabilities to a broader range of tasks.
+To leverage reasoning processes for injection defense, we employ GPT-4o-mini (OpenAI, 2024) as the reasoner and use manually designed guidelines (see Figure 7) to generate structured reasoning steps, as illustrated in Figure 2. The structured reasoning process is divided into three stages::
+•
+Problem Analysis: The LLM decomposes the input into multiple subtasks.
+•
+Reasoning: The LLM organizes multiple reasoning steps to extract useful information from external data, identify conflicting injection instructions, and continue fulfilling the original user task.
+•
+Final Answer Generation: The LLM produces a final answer to follow the user task.
+To ensure the correctness of the reasoning process, we explicitly highlight injected instructions so that the reasoner can generate corresponding identification thoughts. We also restrict the target answer space to expected responses for user queries, which forces the reasoner to produce reasoning steps that are both reasonable and logically consistent with the target answers.
+Safety Alignment.
+Subsequently, we adopt Low-Rank Adaptation (LoRA) instruction tuning, a parameter-efficient training technique, on our collected reasoning dataset to perform safety alignment. After this reasoning-enhanced alignment, the model can analyze inputs to identify potential injections in external data, maintain focus on the user’s task, and ultimately generate accurate and safe responses.
+Figure 2: Structured reasoning collection process.
+4.2 Test-Time Scaling Search
+Different from instant answers, long-sequential reasoning involves a much larger search space. Implementing such a logical and coherent thought process is more difficult and requires significantly more data compared to training for instant answers. Models that are not well aligned with reasoning often suffer from spurious reasoning problems, such as shortcut pattern matching (Tang et al., 2023) or hallucinatory reasoning (McKenna et al., 2023). However, collecting large-scale, high-quality reasoning data is typically infeasible, especially for certain domains.
+To address this challenge in our domain, we leverage a test-time scaling mechanism, which has emerged as a promising technique for enhancing the reasoning performance of LLMs by selecting better reasoning paths during inference. Specifically, we first train an additional logic judge model to score reasoning steps. Since language models typically perform better on choice-based tasks than on open-domain generation tasks (Hendrycks et al., 2021; OpenAI, 2023), training such a logic judge is often more effective than training a full reasoner. Afterward, we construct a beam search tree for each input and sample NN candidate nodes at every reasoning step during inference. The fine-tuned logic judge then scores each node and selects the best one. This generation-and-scoring loop continues until a final answer is produced. This approach helps ensure both the logical correctness and the effectiveness of the model’s reasoning, ultimately identifying the best reasoning trajectory.
+Judge Training.
+A key component of node selection is the logic judge. To train this judge model, we collect an additional reasoning trajectory for each sample during the structured reasoning sampling process. In this additional trajectory, we prompt the reasoner (using the template in Figure 8) to follow the injected instructions and generate corresponding thoughts that lead to hijacked responses. This procedure yields a paired preference dataset, where the reasoning trajectory aligned with the user query is designated as the chosen output, and the trajectory following the injected instructions is designated as the rejected output. Finally, we apply Direct Preference Optimization (DPO) (Rafailov et al., 2023) to this preference dataset to obtain a reward model for logic scoring.
+5 Experiments
+In our experiments, we investigate four primary Research Questions (RQs):
+•
+RQ1: What are the utility, security, and generalization of ReasAlign across diverse tasks?
+•
+RQ2: Is the reasoning mechanism effective in defending against prompt injection attacks?
+•
+RQ3: How effective are our test-time scaling techniques?
+•
+RQ4: How much additional overhead is introduced by the reasoning process?
+To explore RQ1, we evaluate ReasAlign on various tasks, including general knowledge (Section 5.2), instruction following (Section 5.3), and agentic workflows (Section 5.4), comparing it with both the undefended model and the most advanced defense model. For RQ2, we compare training with reasoning against training without reasoning (Section 5.5). For RQ3, we conduct an ablation study on node scaling (Section 5.6). For RQ4, we analyze the average token cost per sample across four benchmarks and compare the results with Meta SecAlign (Section 5.7).
+5.1 Experimental Setup
+Benchmarks.
+We evaluate ReasAlign across three dimensions: general knowledge, instruction following, and agentic workflows.
+1.
+General knowledge evaluation. To assess the general capabilities of LLMs, we employ four standard benchmarks—MMLU (Hendrycks et al., 2021), MMLU-Pro (Wang et al., 2024), IFEval (Zhou et al., 2023b), and BBH (Suzgun et al., 2023).
+2.
+Instruction-following evaluation. To measure performance on instruction-following tasks, we use three widely adopted benchmarks: AlpacaEval2 (Dubois et al., 2023), SEP (Mu et al., 2023), and CyberSecEval2 (CySE) (Bhatt et al., 2024). These benchmarks allow us to evaluate both utility and security.
+3.
+Agentic workflows evaluation. Finally, we evaluate ReasAlign on two advanced agentic benchmarks, InjecAgent (Zhan et al., 2024) and AgentDojo (Debenedetti et al., 2024).
+Metrics. We use Utility and Attack Success Rate (ASR) as the primary metrics across all benchmarks. For general knowledge and instruction-following evaluations, utility represents whether the LLM successfully and correctly responds to the user query. We employ a judge LLM (GPT-4o-mini (OpenAI, 2024)) to assess these completions. For agentic systems, utility represents the user task completion rate and is evaluated under both no-attack and under-attack settings.
+Implementation Details.
+We implement our method on Llama-3.1-8B-Instruct (Dubey et al., 2024), an advanced open-source large language model. The model is fine-tuned with a batch size of 4 for three epochs. We use the Adam optimizer (Diederik, 2015) with weight decay, setting the initial learning rate to 2×10−52\times 10^{-5}. The maximum input length is 8,192 tokens. For test-time scaling, the number of nodes NN is set to 3 by default.
+Baselines.
+In most of our evaluations, we compare against three representative baselines: undefended Llama-3.1-8B-Instruct (Dubey et al., 2024), SecAlign (Chen et al., 2024b), and Meta-SecAlign-8B (Chen et al., 2025). The first serves as the base model for implementing our method, and comparison with it validates the effectiveness of our approach in terms of both utility and security. SecAlign and Meta-SecAlign, which are state-of-the-art defense models also trained on LLaMA-3.1-8B-Instruct, provide strong baselines, and comparisons with them highlight the superiority of our method.
+Figure 3: The comparison on general knowledge tasks.
+Figure 4: The comparison on instruction-following tasks.
+5.2 General Knowledge Evaluation
+General knowledge question answering is one of the most important capabilities of LLMs. To evaluate how our safety-aligned model performs on these tasks, we assess it on four standard general knowledge benchmarks—MMLU (Hendrycks et al., 2021), MMLU-Pro (Wang et al., 2024), IFEval (Zhou et al., 2023b), and BBH (Suzgun et al., 2023). The results are presented in Figure 3.
+Compared with the original LLaMA-3 model, ReasAlign maintains strong general knowledge performance across all benchmarks, with only slight performance degradation. In addition, our approach outperforms the previous state-of-the-art defenses, SecAlign and Meta-SecAlign, on almost all benchmarks, achieving the best average performance. These results demonstrate that ReasAlign does not sacrifice the LLM’s ability to handle diverse general-purpose tasks.
+5.3 Instruction-following Evaluation
+Another essential capability of LLMs is instruction-following. To evaluate how ReasAlign performs on instruction-following tasks, we assess it on two utility benchmarks (AlpacaEval2 (Dubois et al., 2023) and SEP (Mu et al., 2023)) and two security benchmarks (CyberSecEval2 (Bhatt et al., 2024) and SEP (Mu et al., 2023) under prompt injection attacks). The results are shown in Figure 4.
+In the no-attack setting, ReasAlign performs more consistently than SecAlign and Meta SecAlign, achieving higher utility on both AlpacaEval2 and SEP. Under attack, ReasAlign demonstrates clear superiority in both utility and security, outperforming LLaMA-3, SecAlign, and Meta SecAlign across almost all benchmarks. In terms of security, ReasAlign reduces the ASR from 43.6% to just 3.6% on CySE, and from 74.4% to only 1.1% on SEP.
+Notably, the utility gap between ReasAlign and Meta SecAlign widens significantly, reaching 38.2% on CySE and 6.7% on SEP. This performance gap arises because many CySE samples contain helpful instructions embedded in external data. Meta SecAlign, which is trained to rigidly ignore all external instructions, fails to leverage these useful signals. As illustrated by the example in Figure 6, ReasAlign can distinguish and utilize such instructions, whereas Meta SecAlign cannot, thereby preserving utility.
+By contrast, SecAlign exhibits better functionality than Meta-SecAlign under attack; however, its higher residual ASR limits its practicality. Overall, these results demonstrate the effectiveness, practicality, and robustness of ReasAlign across diverse instruction-following scenarios.
+5.4 Agentic Workflow Evaluation
+To evaluate the effectiveness of our approach in real agentic workflows, we implement it on two advanced agent security benchmarks, InjecAgent (Zhan et al., 2024) and AgentDojo (Debenedetti et al., 2024). Following the AgentDojo setup, we employ a commonly used system prompt (Husain, 2024) to guide the agents. The results, presented in Table 2, show that ReasAlign achieves the best utility on AgentDojo and reduces the ASR to zero. However, since the limited capabilities of the LLaMA-3.1-8B-Instruct, all three approaches achieve relatively low utility and ASR.
+To more thoroughly validate the effectiveness of our approach, we conduct an additional comparison using the more powerful Qwen2.5-14B-Instruct model (Yang et al., 2024). We construct the training dataset and reproduce Meta SecAlign on Qwen2.5-14B-Instruct using its official code. As shown in the same table, ReasAlign achieves the best security across all benchmarks with only slight utility loss, reducing ASR from 14.5% to 2.4% on AgentDojo and from 24.5% to 2.7% on InjecAgent. These results further demonstrate the effectiveness and generalization of ReasAlign in balancing utility and security in agentic workflows.
+5.5 Ablation Study of Reasoning
+Although ReasAlign has demonstrated strong capabilities in improving security while maintaining utility, it is not entirely clear whether these improvements are specifically attributable to reasoning or simply to safety training. To isolate the contribution of reasoning, we conduct a comparison between two models: one trained on the same datasets but using only final-answer supervision (without reasoning steps), and our reasoning-enhanced ReasAlign.
+The results in Table 1 show that the model trained with only direct-answer supervision still exhibits a high ASR on both datasets. In contrast, when reasoning is incorporated, security improves dramatically, reducing the ASR from 21.8% to only 3.6% on CySE, and lowering the ASR on SEP by 65.8%. Notably, both models achieve comparable utility in the no-attack setting, but under attack, the reasoning-enhanced ReasAlign retains significantly higher utility than the direct-answer model. These results clearly demonstrate the effectiveness of reasoning in strengthening safety alignment.
+No Attack (Utility ↑)
+AlpacaEval2
+SEP
+Direct Answer
+96.2
+98.9
+ReasAlign
+96.8
+98.0
+Δ\Delta
++0.6
+-0.9
+Under Attack (Utility ↑)
+CySE
+SEP
+Direct Answer
+92.7
+87.3
+ReasAlign
+94.6
+95.5
+Δ\Delta
++1.9
++8.2
+ASR ↓
+CySE
+SEP
+Direct Answer
+21.8
+66.9
+ReasAlign
+3.6
+1.1
+Δ\Delta
+-18.2
+-65.8
+Table 1: Ablation study on reasoning module.
+5.6 Ablation Study on Node Scale
+To investigate the effectiveness of our test-time scaling mechanism in enhancing reasoning, we further examine performance across different node scales on SEP. As shown in Figure 5, as the node count increases from N=1N=1 to N=5N=5, both utility and security improve steadily. In the no-attack setting, utility shows a slight improvement (+1.0%). Notably, under attack, utility increases rapidly from 91.6% to 96.4%, further demonstrating the effectiveness of ReasAlign in mitigating over-defense.
+In terms of security, the attack success rate (ASR) decreases stably from 4.6% to 0.9%, indicating that our scaling technique effectively enhances security. In addition, the growth rates of both utility and security slow down significantly when N>3N>3. We therefore select N=3N=3 as the default scaling setting. Overall, these results provide detailed evidence of how utility and security evolve with node scaling, further validating the effectiveness of our reasoning enhancement strategy.
+Figure 5: The ablation study of node scale on SEP.
+5.7 Overhead Analysis
+For reasoning-based models, additional overhead is an unavoidable issue. To quantify the extra cost introduced by ReasAlign, we compare token usage between Meta SecAlign and ReasAlign on AlpacaEval2, SEP Utility, CySE, and SEP Security benchmarks. Since models typically produce very short responses when they fail to complete user tasks, we calculate the average token count only for tasks in which the model successfully complete user tasks, ensuring a fair comparison. In this experiment, we set N=1N=1 to measure the additional overhead solely from reasoning process, the token cost for larger NN can be approximately estimated by scaling linearly with NN.
+As Figure 10 presents, ReasAlign incurs higher costs than Meta SecAlign in most cases since the reasoning process. However, on the SEP datasets, this additional overhead is minimal. In CySE, ReasAlign requires significantly more tokens than Meta SecAlign, but this comes with substantial improvements in both utility and security. Interestingly, on AlpacaEval2, Meta SecAlign actually consumes more tokens than our reasoning-aligned model. We further investigate this and find that Meta SecAlign tends to generate excessively long responses in this setting.
+Overall, these results indicate that although reasoning introduces additional overhead, the cost is generally not prohibitive and is justified by substantial gains in utility and security. In contrast, test-time scaling is considerably more expensive, as it can rapidly increase token consumption. We therefore recommend keeping a small NN in practical deployments. Encouragingly, Figure 5 shows that ReasAlign remains robust even when N=1N=1.
+6 Conclusion
+In this work, we investigate defenses against prompt injection attacks and introduce ReasAlign, a reasoning-enhanced internal guardrail for LLMs that achieves strong security while maintaining high utility. By explicitly modeling a structured reasoning process, ReasAlign can isolate adversarial instructions and continue fulfilling original user tasks, avoiding the over-defensive behavior observed in prior methods. Extensive evaluations demonstrate strong security–utility trade-offs across diverse tasks, highlighting ReasAlign’s effectiveness as a practical defense against prompt injection attacks.
+Limitations
+While our work demonstrates significant advances in both utility and security across various tasks, including general knowledge assessment, instruction following, and agentic systems, reasoning-based approaches unavoidably introduce additional overhead. An important future direction is to selectively conduct reasoning processes of varying lengths based on task complexity and security risk. We plan to explore these aspects in our follow-up work.
+Ethics Statement
+This research is committed to advancing the security and integrity of LLMs in a responsible manner. We introduce a reasoning-enhanced security training dataset for safety alignment against prompt injection attacks. Building on this dataset, we develop an advanced defensive LLM that demonstrates both strong utility and robust security. All artifacts from this work, including datasets and models, will be made publicly available. All aspects of this research comply with ethical considerations and standards of research integrity.
+References
+Abdelnabi et al. (2024)
+S. Abdelnabi, A. Fay, G. Cherubin, A. Salem, M. Fritz, and A. Paverd
+Are you still on track!? catching LLM task drift with activations.
+CoRR abs/2406.00799.
+External Links: 2406.00799
+Cited by: §4.1.
+Besta et al. (2024)
+M. Besta, N. Blach, A. Kubicek, R. Gerstenberger, M. Podstawski, L. Gianinazzi, J. Gajda, T. Lehmann, H. Niewiadomski, P. Nyczyk, and T. Hoefler
+Graph of thoughts: solving elaborate problems with large language models.
+In AAAI,
+pp. 17682–17690.
+Cited by: §2.2.
+Bhatt et al. (2024)
+M. Bhatt, S. Chennabasappa, Y. Li, C. Nikolaidis, D. Song, S. Wan, F. Ahmad, C. Aschermann, Y. Chen, D. Kapil, D. Molnar, S. Whitman, and J. Saxe
+CyberSecEval 2: A wide-ranging cybersecurity evaluation suite for large language models.
+CoRR abs/2404.13161.
+External Links: 2404.13161
+Cited by: §1,
+item 2,
+§5.3.
+Chen et al. (2024a)
+S. Chen, J. Piet, C. Sitawarin, and D. A. Wagner
+StruQ: defending against prompt injection with structured queries.
+CoRR abs/2402.06363.
+External Links: 2402.06363
+Cited by: §1,
+§1,
+§2.1.
+Chen et al. (2024b)
+S. Chen, A. Zharmagambetov, S. Mahloujifar, K. Chaudhuri, D. Wagner, and C. Guo
+SecAlign: defending against prompt injection with preference optimization.
+CoRR abs/2410.05451.
+External Links: 2410.05451
+Cited by: §1,
+§1,
+§2.1,
+§5.1.
+Chen et al. (2025)
+S. Chen, A. Zharmagambetov, D. Wagner, and C. Guo
+Meta secalign: a secure foundation llm against prompt injection attacks.
+CoRR abs/2507.02735.
+External Links: 2507.02735
+Cited by: §1,
+§1,
+§2.1,
+§5.1.
+Debenedetti et al. (2025)
+E. Debenedetti, I. Shumailov, T. Fan, J. Hayes, N. Carlini, D. Fabian, C. Kern, C. Shi, A. Terzis, and F. Tramèr
+Defeating prompt injections by design.
+External Links: 2503.18813
+Cited by: §1,
+§2.1.
+Debenedetti et al. (2024)
+E. Debenedetti, J. Zhang, M. Balunovic, L. Beurer-Kellner, M. Fischer, and F. Tramèr
+AgentDojo: A dynamic environment to evaluate prompt injection attacks and defenses for LLM agents.
+In NeurIPS,
+Cited by: item 3,
+§5.4.
+Deng et al. (2023)
+X. Deng, Y. Gu, B. Zheng, S. Chen, S. Stevens, B. Wang, H. Sun, and Y. Su
+Mind2Web: towards a generalist agent for the web.
+In NeurIPS,
+Cited by: §1.
+Diederik (2015)
+P. K. Diederik
+Adam: a method for stochastic optimization.
+Note: In the Proceedings of ICLR.
+Cited by: §5.1.
+Dubey et al. (2024)
+A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Yang, A. Fan, A. Goyal, A. Hartshorn, A. Yang, A. Mitra, A. Sravankumar, A. Korenev, A. Hinsvark, A. Rao, A. Zhang, A. Rodriguez, A. Gregerson, A. Spataru, B. Rozière, B. Biron, B. Tang, B. Chern, C. Caucheteux, C. Nayak, C. Bi, C. Marra, C. McConnell, C. Keller, C. Touret, C. Wu, C. Wong, C. C. Ferrer, C. Nikolaidis, D. Allonsius, D. Song, D. Pintz, D. Livshits, D. Esiobu, D. Choudhary, D. Mahajan, D. Garcia-Olano, D. Perino, D. Hupkes, E. Lakomkin, E. AlBadawy, E. Lobanova, E. Dinan, E. M. Smith, F. Radenovic, F. Zhang, G. Synnaeve, G. Lee, G. L. Anderson, G. Nail, G. Mialon, G. Pang, G. Cucurell, H. Nguyen, H. Korevaar, H. Xu, H. Touvron, I. Zarov, I. A. Ibarra, I. M. Kloumann, I. Misra, I. Evtimov, J. Copet, J. Lee, J. Geffert, J. Vranes, J. Park, J. Mahadeokar, J. Shah, J. van der Linde, J. Billock, J. Hong, J. Lee, J. Fu, J. Chi, J. Huang, J. Liu, J. Wang, J. Yu, J. Bitton, J. Spisak, J. Park, J. Rocca, J. Johnstun, J. Saxe, J. Jia, K. V. Alwala, K. Upasani, K. Plawiak, K. Li, K. Heafield, K. Stone, and et al.
+The llama 3 herd of models.
+CoRR abs/2407.21783.
+External Links: 2407.21783
+Cited by: §1,
+§5.1,
+§5.1.
+Dubois et al. (2023)
+Y. Dubois, C. X. Li, R. Taori, T. Zhang, I. Gulrajani, J. Ba, C. Guestrin, P. Liang, and T. B. Hashimoto
+AlpacaFarm: A simulation framework for methods that learn from human feedback.
+In NeurIPS,
+Cited by: item 2,
+§5.3.
+Gur et al. (2024)
+I. Gur, H. Furuta, A. V. Huang, M. Safdari, Y. Matsuo, D. Eck, and A. Faust
+A real-world webagent with planning, long context understanding, and program synthesis.
+In ICLR,
+Cited by: §1.
+Hendrycks et al. (2021)
+D. Hendrycks, C. Burns, S. Basart, A. Zou, M. Mazeika, D. Song, and J. Steinhardt
+Measuring massive multitask language understanding.
+In ICLR,
+Cited by: §4.2,
+item 1,
+§5.2.
+Husain (2024)
+H. Husain
+LLama 3 Agent Prompt.
+Note: https://github.com/hamelsmu/replicate-examples/blob/master/cog-vllm-tools/predict.py
+Cited by: §5.4.
+Inan et al. (2023)
+H. Inan, K. Upasani, J. Chi, R. Rungta, K. Iyer, Y. Mao, M. Tontchev, Q. Hu, B. Fuller, D. Testuggine, and M. Khabsa
+Llama guard: llm-based input-output safeguard for human-ai conversations.
+CoRR abs/2312.06674.
+External Links: 2312.06674
+Cited by: §1,
+§2.1.
+Ji et al. (2023)
+J. Ji, M. Liu, J. Dai, X. Pan, C. Zhang, C. Bian, B. Chen, R. Sun, Y. Wang, and Y. Yang
+BeaverTails: towards improved safety alignment of LLM via a human-preference dataset.
+In NeurIPS,
+Cited by: §4.1.
+Koh et al. (2024)
+J. Y. Koh, R. Lo, L. Jang, V. Duvvur, M. C. Lim, P. Huang, G. Neubig, S. Zhou, R. Salakhutdinov, and D. Fried
+VisualWebArena: evaluating multimodal agents on realistic visual web tasks.
+In ACL,
+pp. 881–905.
+Cited by: §1.
+Li et al. (2025a)
+H. Li, X. Liu, H. Chiu, D. Li, N. Zhang, and C. Xiao
+DRIFT: dynamic rule-based defense with injection isolation for securing LLM agents.
+CoRR abs/2506.12104.
+External Links: 2506.12104
+Cited by: §2.1.
+Li et al. (2025b)
+H. Li, X. Liu, N. Zhang, and C. Xiao
+PIGuard: prompt injection guardrail via mitigating overdefense for free.
+Cited by: §1,
+§2.1,
+§4.1.
+Liu et al. (2025)
+Y. Liu, Y. Jia, J. Jia, D. Song, and N. Z. Gong
+DataSentinel: A game-theoretic detection of prompt injection attacks.
+In SP,
+pp. 2190–2208.
+Cited by: §3.2.
+McKenna et al. (2023)
+N. McKenna, T. Li, L. Cheng, M. J. Hosseini, M. Johnson, and M. Steedman
+Sources of hallucination by large language models on inference tasks.
+In EMNLP Findings,
+pp. 2758–2774.
+Cited by: §4.2.
+Meta (2024)
+Meta
+PromptGuard Prompt Injection Guardrail.
+Meta.
+Note: https://www.llama.com/docs/model-cards-and-prompt-formats/prompt-guard/
+Cited by: §1,
+§2.1.
+Mu et al. (2023)
+N. Mu, S. L. Chen, Z. Wang, S. Chen, D. Karamardian, L. Aljeraisy, D. Hendrycks, and D. A. Wagner
+Can llms follow simple rules?.
+CoRR abs/2311.04235.
+External Links: 2311.04235
+Cited by: item 2,
+§5.3.
+OpenAI (2023)
+OpenAI
+GPT-4 technical report.
+CoRR abs/2303.08774.
+External Links: 2303.08774
+Cited by: §4.2.
+OpenAI (2024)
+OpenAI
+GPT-4o mini: advancing cost-efficient intelligence.
+External Links: Link
+Cited by: §4.1,
+§5.1.
+ProtectAI.com (2024)
+ProtectAI.com
+Fine-tuned deberta-v3-base for prompt injection detection.
+HuggingFace.
+External Links: Link
+Cited by: §1,
+§2.1.
+Rafailov et al. (2023)
+R. Rafailov, A. Sharma, E. Mitchell, C. D. Manning, S. Ermon, and C. Finn
+Direct preference optimization: your language model is secretly a reward model.
+In NeurIPS,
+Cited by: §1,
+§4.2.
+Rajpurkar et al. (2016)
+P. Rajpurkar, J. Zhang, K. Lopyrev, and P. Liang
+SQuAD: 100, 000+ questions for machine comprehension of text.
+In EMNLP,
+pp. 2383–2392.
+Cited by: §4.1.
+Sel et al. (2024)
+B. Sel, A. Al-Tawaha, V. Khattar, R. Jia, and M. Jin
+Algorithm of thoughts: enhancing exploration of ideas in large language models.
+In ICML,
+Cited by: §2.2.
+Shi et al. (2025)
+T. Shi, J. He, Z. Wang, L. Wu, H. Li, W. Guo, and D. Song
+Progent: programmable privilege control for llm agents.
+External Links: 2504.11703
+Cited by: §2.1.
+Suzgun et al. (2023)
+M. Suzgun, N. Scales, N. Schärli, S. Gehrmann, Y. Tay, H. W. Chung, A. Chowdhery, Q. V. Le, E. H. Chi, D. Zhou, and J. Wei
+Challenging big-bench tasks and whether chain-of-thought can solve them.
+In ACL Findings,
+pp. 13003–13051.
+Cited by: item 1,
+§5.2.
+Tang et al. (2023)
+R. Tang, D. Kong, L. Huang, and H. Xue
+Large language models can be lazy learners: analyze shortcuts in in-context learning.
+In ACL Findings,
+pp. 4645–4657.
+Cited by: §4.2.
+Wang et al. (2025)
+P. Wang, Y. Liu, Y. Lu, Y. Cai, H. Chen, Q. Yang, J. Zhang, J. Hong, and Y. Wu
+AgentArmor: enforcing program analysis on agent runtime trace to defend against prompt injection.
+CoRR abs/2508.01249.
+External Links: 2508.01249
+Cited by: §2.1.
+Wang et al. (2024)
+Y. Wang, X. Ma, G. Zhang, Y. Ni, A. Chandra, S. Guo, W. Ren, A. Arulraj, X. He, Z. Jiang, T. Li, M. Ku, K. Wang, A. Zhuang, R. Fan, X. Yue, and W. Chen
+MMLU-pro: A more robust and challenging multi-task language understanding benchmark.
+In NeurIPS,
+Cited by: item 1,
+§5.2.
+Wei et al. (2022)
+J. Wei, X. Wang, D. Schuurmans, M. Bosma, B. Ichter, F. Xia, E. H. Chi, Q. V. Le, and D. Zhou
+Chain-of-thought prompting elicits reasoning in large language models.
+In NeurIPS,
+Cited by: §1,
+§2.2,
+§4.1.
+Wu et al. (2024)
+F. Wu, E. Cecchetti, and C. Xiao
+System-level defense against indirect prompt injection attacks: an information flow control perspective.
+External Links: 2409.19091
+Cited by: §2.1.
+Wu et al. (2025)
+Y. Wu, F. Roesner, T. Kohno, N. Zhang, and U. Iqbal
+IsolateGPT: an execution isolation architecture for llm-based agentic systems.
+In NDSS,
+Cited by: §1,
+§2.1.
+Xie et al. (2024)
+T. Xie, D. Zhang, J. Chen, X. Li, S. Zhao, R. Cao, T. J. Hua, Z. Cheng, D. Shin, F. Lei, Y. Liu, Y. Xu, S. Zhou, S. Savarese, C. Xiong, V. Zhong, and T. Yu
+OSWorld: benchmarking multimodal agents for open-ended tasks in real computer environments.
+In NeurIPS,
+Cited by: §1.
+Yang et al. (2024)
+A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu, F. Huang, H. Wei, H. Lin, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Lin, K. Dang, K. Lu, K. Bao, K. Yang, L. Yu, M. Li, M. Xue, P. Zhang, Q. Zhu, R. Men, R. Lin, T. Li, T. Xia, X. Ren, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Wan, Y. Liu, Z. Cui, Z. Zhang, and Z. Qiu
+Qwen2.5 technical report.
+CoRR abs/2412.15115.
+External Links: 2412.15115
+Cited by: §5.4.
+Yao et al. (2023a)
+S. Yao, D. Yu, J. Zhao, I. Shafran, T. Griffiths, Y. Cao, and K. Narasimhan
+Tree of thoughts: deliberate problem solving with large language models.
+In NeurIPS,
+Cited by: §2.2.
+Yao et al. (2023b)
+S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. R. Narasimhan, and Y. Cao
+ReAct: synergizing reasoning and acting in language models.
+In ICLR,
+Cited by: §2.2.
+Zhan et al. (2024)
+Q. Zhan, Z. Liang, Z. Ying, and D. Kang
+InjecAgent: benchmarking indirect prompt injections in tool-integrated large language model agents.
+In ACL Findings,
+pp. 10471–10506.
+Cited by: item 3,
+§5.4.
+Zhang et al. (2024a)
+A. Zhang, Y. Chen, L. Sheng, X. Wang, and T. Chua
+On generative agents in recommendation.
+In SIGIR,
+pp. 1807–1817.
+Cited by: §1.
+Zhang et al. (2025)
+D. Zhang, J. Wu, J. Lei, T. Che, J. Li, T. Xie, X. Huang, S. Zhang, M. Pavone, Y. Li, W. Ouyang, and D. Zhou
+LLaMA-berry: pairwise optimization for olympiad-level mathematical reasoning via o1-like monte carlo tree search.
+In ACL,
+pp. 7315–7337.
+Cited by: §4.1.
+Zhang et al. (2024b)
+K. Zhang, J. Li, G. Li, X. Shi, and Z. Jin
+CodeAgent: enhancing code generation with tool-integrated agent systems for real-world repo-level coding challenges.
+In ACL,
+pp. 13643–13658.
+Cited by: §1,
+§4.1.
+Zhong et al. (2025)
+P. Y. Zhong, S. Chen, R. Wang, M. McCall, B. L. Titzer, H. Miller, and P. B. Gibbons
+RTBAS: defending llm agents against prompt injection and privacy leakage.
+External Links: 2502.08966
+Cited by: §2.1.
+Zhou et al. (2023a)
+D. Zhou, N. Schärli, L. Hou, J. Wei, N. Scales, X. Wang, D. Schuurmans, C. Cui, O. Bousquet, Q. V. Le, and E. H. Chi
+Least-to-most prompting enables complex reasoning in large language models.
+In ICLR,
+Cited by: §2.2.
+Zhou et al. (2023b)
+J. Zhou, T. Lu, S. Mishra, S. Brahma, S. Basu, Y. Luan, D. Zhou, and L. Hou
+Instruction-following evaluation for large language models.
+CoRR abs/2311.07911.
+Cited by: item 1,
+§5.2.
+Appendix
+Appendix A Case Study
+We present a case study comparison (see Figure 6) to better illustrate the effectiveness of our ReasAlign. In this example, the user query is an open-ended instruction of “Follow the user’s instructions to answer questions about the submitted content”, while the actual task and an injection instruction are embedded in the external data. Meta SecAlign, however, ignores both the task instruction and the injected instruction, ultimately failing to complete the user query. By contrast, ReasAlign is able to analyze the user query and the external data, accurately distinguish between the true task instruction and the injected content, and then generate a correct response to the user query.
+This case highlights the limitations of current pattern-matching-based alignment methods in defending against prompt injection attacks and demonstrates the importance and effectiveness of our reasoning-enhanced safety alignment approach on improving security while maintaining utility.
+Figure 6: Case study of response comparison. In the input, the green instruction represents the user task, while the red instruction represents the injection task.
+Appendix B Prompts
+In this section, we provide our thought collection prompts for both the chosen thoughts (following the user query) and the rejected thoughts (following the injection instructions), shown separately in Figure 7 and Figure 8.
+Figure 7: Case Study of response comparison.
+Figure 8: Case Study of response comparison.
+Appendix C LLM Usage Statement
+In this work, we employ LLMs for three purposes:
+1.
+Method and experimental target. Our main contribution is to enhance LLM security against prompt injection attacks; therefore, we fine-tune and evaluate LLMs in this work.
+2.
+Data collection. In our data collection workflow, we use GPT-4o-mini as a reasoning rewriter to generate high-quality reasoning data.
+3.
+Writing assistance. We also use LLMs to help check and correct grammar errors and typos during the writing process.
+Figure 9: An example of a prompt injection attack.
+Utility (no attack) ↑
+Utility (under attack) ↑
+ASR ↓
+Agentdojo
+Agentdojo
+Agentdojo
+InjecAgent
+Llama3.1-8B
+6.3
+6.3
+0.0
+13.0
+Meta SecAlign
+6.3
+6.3
+0.0
+0.0
+ReasAlign
+10.9
+7.1
+0.0
+0.0
+Qwen2.5-14B
+27.4
+20.1
+14.5
+24.6
+Meta SecAlign
+25.7
+20.5
+8.1
+4.3
+ReasAlign
+24.9
+19.5
+2.4
+2.7
+Table 2: Utility and security evaluation on tool-agent system.
+Figure 10: The overhead on instruction-following tasks.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

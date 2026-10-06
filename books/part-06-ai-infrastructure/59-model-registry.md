@@ -351,6 +351,10 @@ Registry 从保存权重文件演进为模型交付身份图：base、adapter、
 digest 能确认公开字节完全一致，却无法让不暴露权重的服务证明自己运行了预期模型。对行为敏感的 adversarial probes 配合隐私保护证明，可以补充 registry 的远程身份验证；它只能证明被探测行为与承诺模型一致，不能证明完整权重等价，也可能受蒸馏、转发和 probe 泄露影响。因此行为证明应与 artifact digest、attestation 和运行证据并列，而不是替代它们。
 <!-- source-family: arxiv:2608.27954v1; semantic-body-binding: private-model-behavior-sensitive-proof -->
 
+若能白盒读取权重与 activations，provenance 还可以增加一个 family-level sensor：对 harmful/harmless prompts 的最后 token hidden states 求 centroid 差，逐层归一后聚合中间层拒绝方向，再用方向相似性或 SimHash 检查候选是否接近某个参考家族。这里的对象是安全行为相关的表示几何，不是黑盒拒绝率，也不是 digest；量化、adapter 或微调后保留方向，只说明某个受测行为子空间仍相似。Registry 应把参考 revision、prompt 人口、层集合、精度与阈值保存为派生证据，不让这个 sensor 获得身份认证或 promotion 权限。
+
+[受限原始证据](https://arxiv.org/html/2602.09434v1)中的高 top-1 是已知家族 closed-set 识别，样本内阈值不构成未知家族校准；部分 SFT/merge 的相似度低于正文概括，pruning 与 distillation 也会削弱方向。针对拒绝子空间的定向擦除尚未测试，所提 ZKP/escrow 不是已实现的私有权重绑定，白盒访问更不能直接移交为未知 API 的归属证明。故该分支用于触发 provenance 调查与补充回归，而非判定安全 tampering 必被发现；证据冲突或参考人口越界时，仍保留签名、artifact digest、可信运行证据和人工审查。<!-- source-family:SF-2026-ARXIV-2602-09434 -->
+
 ### Weight Artifact 也可能是 Payload Carrier
 
 签名、hash 与行为 canary 能证明字节来源和有限输入下的行为，却不能证明参数只承载模型语义。Transformer 的权重置换对称性允许在几乎保持函数不变的同时编码额外 payload；因此第三方权重进入 Registry 时，artifact admission 还应按 threat model 执行结构/隐写扫描，并把“在对称变换族中重新 materialize 后再签名”作为高风险 neutralization proposal。<!-- source-family:SF-2026-ARXIV-2609-16193 -->
@@ -409,3 +413,5 @@ Primary-source 与官方入口：
 - `SF-2026-ARXIV-2607-25750` — Daily `2026-07-29`；primary `arXiv:2607.25750v1`；正文锚点“Adapter 准入可以在生成之前增加 Weight-only Sensor”。
   证据只支持人类年龄 proxy 与部分 base/noise/precision 条件下的前置风险信号，不等价真实 CSAM、内容必然生成或规避鲁棒性。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-25750:end -->
+
+- `SF-2026-ARXIV-2602-09434` — Daily `2026-02-12`；[exact-v1](https://arxiv.org/html/2602.09434v1) §3–7/Table1–2/D.3。具体 owner 差额受影响深入：whitebox refusal geometry family sensor；closed-set、定向擦除未测、非身份/promotion proof。root 必要原源/具体 owner 写前通过并授窄锁；root 已实际顺读两段、完整邻接与本末注，非作者 POST 通过，窄锁释放。未核代码/复现，非日级 Gate。

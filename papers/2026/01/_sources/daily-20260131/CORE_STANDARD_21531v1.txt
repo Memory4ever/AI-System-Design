@@ -1,0 +1,387 @@
+https://arxiv.org/html/2601.21531v1
+Necessary selected methods/evaluation/direct counter; actually read, not entire attachment.
+2.1 KK-Compressed LVLM
+A standard LVLM typically consists of a visual encoder ℰ\mathcal{E}, a visual projector 𝒫\mathcal{P}, and a large language model (LLM) ℱ\mathcal{F}. Given an input image 𝐱v∈ℝH×W×C\mathbf{x}_{v}\in\mathbb{R}^{H\times W\times C} and a textual prompt 𝐱t\mathbf{x}_{t} (e.g., a question in VQA tasks), the visual encoder extracts a sequence of visual tokens 𝐇=ℰ⁡(𝐱v)∈ℝN×D\mathbf{H}=\mathcal{E}(\mathbf{x}_{v})\in\mathbb{R}^{N\times D}, where NN is the number of tokens (typically N=576N=576 or higher) and DD is the embedding dimension.
+In a KK-compressed LVLM, a compression module 𝒞⁡(⋅,K)\mathcal{C}(\cdot;K) is introduced to reduce the visual sequence length from NN to a smaller budget KK (K<NK<N) before feeding them into the LLM. In the context of model inference, we refer to this constraint KK as the deployment budget (denoted as KmodelK_{\text{model}}). This process can be formulated as:
+𝐙=𝒞⁡(𝐇,K)∈ℝK×D,\mathbf{Z}=\mathcal{C}(\mathbf{H};K)\in\mathbb{R}^{K\times D},
+(1)
+where 𝒞\mathcal{C} represents the compression strategy (e.g., token selection/pruning or merging based on attention scores). The compressed visual tokens 𝐙\mathbf{Z} are then concatenated with the text embeddings of 𝐱t\mathbf{x}_{t} and fed into the LLM to generate the response 𝐘\mathbf{Y}. The probability of generating the response is modeled auto-regressively:
+P⁡(𝐘|𝐱v,𝐱t)=∏i=1LP⁡(yi|𝐙,𝐱t,y<i),P(\mathbf{Y}|\mathbf{x}_{v},\mathbf{x}_{t})=\prod_{i=1}^{L}P(y_{i}|\mathbf{Z},\mathbf{x}_{t},y_{<i}),
+(2)
+where y<iy_{<i} denotes the tokens generated before step ii.
+2.2 Threat Model
+In this paper, we focus on the adversarial robustness of LVLMs under a realistic gray-box threat model, following current attacks (Wang et al., 2024b; Mei et al., 2025).
+Knowledge Assumption.
+We assume that the adversary has white-box access to the visual encoder ℰ\mathcal{E}, as such backbones are often open-sourced in practice (Wang et al., 2024a; Wang et al., 2024b; Mei et al., 2025).
+In contrast, the adversary has black-box access to both the compression module 𝒞\mathcal{C} and downstream LLM ℱ\mathcal{F}. Specifically, we treat compression hyperparameters (e.g., the deployment budget KmodelK_{\text{model}}) as unknown runtime variables. This reflects common deployments where token compression is diverse and often customized by the model owner, and the downstream LLM is typically proprietary and not publicly available.
+Attack Objective.
+Given an image 𝐱v\mathbf{x}_{v}, question 𝐱t\mathbf{x}_{t}, and ground-truth 𝐘g​t\mathbf{Y}_{gt}, the adversary seeks an imperceptible perturbation 𝜹\boldsymbol{\delta} to mislead the prediction.
+Ideally, the goal is to maximize the negative log-likelihood of the ground-truth answer:
+ℒ⁡(𝜹)=−log⁡P⁡(𝐘g​t|𝒞⁡(ℰ⁡(𝐱v+𝜹),K),𝐱t).\mathcal{L}(\boldsymbol{\delta})=-\log P(\mathbf{Y}_{gt}|\mathcal{C}(\mathcal{E}(\mathbf{x}_{v}+\boldsymbol{\delta});K),\mathbf{x}_{t}).
+(3)
+Under our gray-box setting, backpropagating through the full surrogate LVLM is computationally expensive and prone to overfitting. Therefore, following prior work (e.g., VEAttack (Mei et al., 2025)), we adopt an encoder-based attack formulation.
+Instead of optimizing the output-text probability, the adversary directly perturbs the vision encoder’s representations under white-box access, making the attack task- and question-agnostic. Specifically, we maximize the semantic deviation by maximizing the cosine distance between clean features 𝐇=ℰ⁡(𝐱v)\mathbf{H}=\mathcal{E}(\mathbf{x}_{v}) and adversarial features 𝐇′=ℰ⁡(𝐱v+𝜹)\mathbf{H}^{\prime}=\mathcal{E}(\mathbf{x}_{v}+\boldsymbol{\delta}):
+max𝜹⁡(1−𝒮⁡(𝐇,𝐇′)),\max_{\boldsymbol{\delta}}\left(1-\mathcal{S}(\mathbf{H},\mathbf{H}^{\prime})\right),
+(4)
+where 𝒮⁡(𝐮,𝐯)=𝐮⊤​𝐯‖𝐮‖​‖𝐯‖\mathcal{S}(\mathbf{u},\mathbf{v})=\frac{\mathbf{u}^{\top}\mathbf{v}}{\|\mathbf{u}\|\|\mathbf{v}\|} denotes the cosine similarity between two vectors. Since we perturb only the visual input, we will denote 𝐱v\mathbf{x}_{v} simply as 𝐱\mathbf{x} in the following for notational simplicity.
+By pushing adversarial representations away from the clean feature in the visual embedding space, the attack induces erroneous downstream responses without requiring access to the specific prompt.
+Figure 2: Average token-level feature gap under VEAttack over 100 samples.
+We rank vision tokens by adversarial(ADV) attention and plot the average feature gap (1−cosine1-\text{cosine}) over the top-KK tokens.
+The curve shows that the gap is large on a small number of high-attention tokens and gradually decreases as lower-ranked tokens are included.
+3 Motivation: An Empirical Study
+To understand how visual token compression impacts the adversarial robustness of LVLMs, we conduct an empirical study by applying VEAttack (Mei et al., 2025) to LLaVA equipped with VisionZip (Yang et al., 2025). VisionZip reduces the visual token budget via Top-KK token selection followed by token aggregation, a common design pattern in recent compressed LVLMs. Our analysis yields two key insights as follows.
+We first investigate whether token pruning inadvertently mitigates adversarial effects by filtering out perturbed tokens.
+Figure 2 probes the token-level representation drift by ranking visual tokens according to adversarial attention scores and computing the average feature gap (cosine distance) between clean and adversarial features over the top-KK tokens.
+We observe that the average feature gap is larger for smaller KK and monotonically decreases as KK increases.
+This implies that adversarial distortion is concentrated on a small set of high-importance tokens and is diluted as lower-ranked unimportant tokens are included. Since the compression mechanism preserves high-importance tokens, it keeps the most distorted tokens while discarding weakly perturbed low-importance ones, yielding a “distortion-concentrated” survivor set. Consequently, the compressed model bases its prediction on the most strongly corrupted visual evidence rather than a denoised representation.
+Insight I: Under adversarial inputs, compression behaves as a “distortion concentrator” rather than a denoiser: it preferentially retains heavily corrupted, high-importance tokens while discarding relatively clean, low-importance tokens.
+Table 1: Robust accuracy (%, ↓\downarrow) on compressed LLaVA when varying the model’s token budget KmodelK_{\text{model}} (rows) and the attack optimization budget KattackK_{\text{attack}} (columns).
+For each deployment setting, the most harmful configuration (in bold) typically corresponds to an attack budget aligned with the model’s effective token budget, rather than the full-token baseline.
+model
+K
+model
+attack
+K
+attack
+576 (Full)
+192
+64
+16
+192
+55.7
+50.7
+53.2
+60.4
+64
+53.5
+48.8
+48.7
+56.0
+16
+49.7
+45.3
+44.7
+44.4
+While Insight I shows that compression selects heavily distorted survivor tokens, we next investigate whether existing attacks remain maximally harmful under such compressed inference.
+To probe this, we introduce an attack optimization budget KattackK_{\text{attack}} and modify the VEAttack objective to compute the loss only on the Top-KattackK_{\text{attack}} visual tokens.
+Let TOPKattack​(⋅)\text{TOP}_{K_{\text{attack}}}(\cdot) denote the subset of KattackK_{\text{attack}} token features with the largest attention scores, where the attention scores are computed on the current adversarial forward pass and updated at each optimization step. We optimize
+max𝜹⁡(1−𝒮⁡(TOPKattack​(𝐇),TOPKattack​(𝐇′))).\max_{\boldsymbol{\delta}}\Big(1-\mathcal{S}\big(\text{TOP}_{K_{\text{attack}}}(\mathbf{H}),\ \text{TOP}_{K_{\text{attack}}}(\mathbf{H}^{\prime})\big)\Big).
+(5)
+As shown in Table 1, the standard full-token setting (Kattack=FullK_{\text{attack}}{=}\text{Full}) tends to be overly optimistic under compressed inference: restricting optimization to a compression-aware token budget yields lower robust accuracy.
+This indicates a clear optimization-inference mismatch in existing attacks: perturbations are optimized over the full token space, whereas inference depends on a compressed token representation.
+Under compression, existing attacks that optimized on full token space can become suboptimal due to:
+(i) Budget Dilution: a non-trivial portion of the optimization signal is allocated to tokens that are later pruned and therefore never influence inference; and
+(ii) Dependency Disruption: pruning context/background tokens can alter cross-token interactions, potentially weakening the attack effect that global objectives rely on.
+Moreover, attack effectiveness depends on budget alignment: attacks are typically strongest when KattackK_{\text{attack}} is comparable to the deployment budget KmodelK_{\text{model}}.
+For example, on the 16-token model, the full-token attack yields 49.7% robust accuracy, whereas the aligned setting (Kattack=16K_{\text{attack}}{=}16) reduces it to 44.4%. This motivates us to align attack optimization with the post-compression feature space that the deployed model actually uses.
+Insight II: Token compression creates an optimization-inference mismatch, making existing attacks suboptimal and overly optimistic.
+In summary, our analysis highlights a critical gap in robustness evaluation for token-compressed LVLMs.
+Compression forces the model to rely on heavily distorted survivor tokens (Insight I), yet existing attacks optimize for the full-token space, ignoring the post-compression inference pathway.
+This optimization-inference mismatch (Insight II) results in optimistic robustness estimates.
+These findings motivate us to propose an attack that aligns perturbation optimization with the token compression mechanism.
+4 Compression-Aligned Attack
+Figure 3: Overview of CAGE.
+Motivated by the findings in Section 3, we propose a compression-aligned attack (named CAGE). CAGE bridges the optimization-inference mismatch by reformulating the adversarial objective: instead of indiscriminately disrupting global visual features, CAGE targets the compressed representation that the victim model actually consumes at inference time.
+Concretely, CAGE concentrates the perturbation on the limited set of survivor tokens that pass through the token-selection bottleneck, without assuming knowledge of the deployment token budget.
+4.1 Challenge and Overview
+Key challenge.
+An effective attack must concentrate perturbations on the survivor tokens that pass the token-selection bottleneck. However, the deployment token budget KmodelK_{\text{model}} is unknown and varies across models.
+This uncertainty makes the attack budget KattackK_{\text{attack}} non-trivial: under-estimating KmodelK_{\text{model}} leaves part of the survivor set unperturbed (incomplete coverage), whereas over-estimating KmodelK_{\text{model}} allocates optimization signal to tokens that will not survive selection (budget dilution), as presented in Table 1.
+Overview.
+To address the above challenge, we propose CAGE, a probabilistic attack framework designed to optimize perturbations through an uncertain compression bottleneck.
+In CAGE, we strategically target the token selection stage because it is a shared first step in general compression pipelines: some methods perform selection only (Arif et al., 2025; Alvar et al., 2025), while others first select representative tokens and then merge remaining tokens into them (Yang et al., 2025; Shang et al., 2025).
+Attacking this selection stage provides a unified interface that naturally covers currently used compression mechanisms.
+As shown in Figure 3, CAGE mainly includes two components:
+•
+Expected Feature Disruption (EFD) maximizes the expected feature disruption that is propagated through compression. It models the deployment budget KmodelK_{\text{model}} as a random variable and reweights the distortion of each token by its retention probability, focusing on the tokens likely to survive the bottleneck.
+•
+Rank Distortion Alignment (RDA) aligns selection scores (e.g., attention) with token distortions via a differentiable distribution-matching loss. This increases the probability that highly distorted tokens are ranked within the selected set and thus influence the compressed representation.
+4.2 Expected Feature Disruption
+A naive way to align the attack with the compression bottleneck is to weight token-level feature disruption by the importance scores si​(𝐱)s_{i}(\mathbf{x}). However, this is often suboptimal because attention scores are typically highly peaky: most mass concentrates on a few top-ranked tokens even after normalization.
+As a result, si​(𝐱)s_{i}(\mathbf{x})-weighted objectives tend to over-focus on the very top ranks and provide little optimization signal for intermediate tokens.
+This is undesirable because a non-trivial portion of these intermediate tokens can still be selected under compression, especially when the deployment budget is moderate or unknown.
+To address this, we instead focus on each token’s survival probability.
+Since the deployment budget KmodelK_{\text{model}} is unknown, we model it as a discrete random variable drawn from a prior distribution P⁡(Kmodel)P(K_{\text{model}}) (e.g., Kmodel∼𝒰⁡[Kmin,Kmax]K_{\text{model}}\sim\mathcal{U}[K_{\min},K_{\max}]).
+Let ri​(𝐱)r_{i}(\mathbf{x}) denote the rank of token ii obtained by sorting selection scores si​(𝐱)s_{i}(\mathbf{x}) in descending order (with rank starting from 00).
+Under Top-KK selection, token ii is retained if and only if ri​(𝐱)<Kmodelr_{i}(\mathbf{x})<K_{\text{model}}. We thus define its survival probability as:
+πi​(𝐱)\displaystyle\pi_{i}(\mathbf{x})
+=P⁡(Kmodel>ri​(𝐱))\displaystyle=\;P\!\left(K_{\text{model}}>r_{i}(\mathbf{x})\right)
+(6)
+=∑kP⁡(Kmodel=k)⋅𝕀⁡(ri​(𝐱)<k),\displaystyle=\;\sum_{k}P(K_{\text{model}}{=}k)\cdot\mathbb{I}\!\left(r_{i}(\mathbf{x})<k\right),
+where 𝕀⁡(⋅)\mathbb{I}(\cdot) denotes the indicator function.
+Under a uniform prior, πi​(𝐱)\pi_{i}(\mathbf{x}) forms a rank-decaying soft mask: it equals 11 for top-ranked tokens (ri<Kminr_{i}<K_{\min}), gradually decays for intermediate ranks, and becomes 00 for low-ranked tokens (ri≥Kmaxr_{i}\geq K_{\max}).
+This allows us to emphasize tokens that are consistently retained across plausible deployment budgets, without committing to a single fixed KmodelK_{\text{model}} during attack optimization.
+We then use πi​(𝐱)\pi_{i}(\mathbf{x}) to define an objective that maximizes the feature disruption propagated through the compression bottleneck.
+Let 𝐳icln\mathbf{z}_{i}^{\mathrm{cln}} and 𝐳iadv\mathbf{z}_{i}^{\mathrm{adv}} denote the clean and adversarial feature vectors of token ii at the selection layer.
+We quantify token-level disruption using cosine distance:
+di​(𝐱)= 1−𝒮⁡(𝐳iadv,𝐳icln).d_{i}(\mathbf{x})\;=\;1-\mathcal{S}\!\left(\mathbf{z}_{i}^{\mathrm{adv}},\mathbf{z}_{i}^{\mathrm{cln}}\right).
+(7)
+The EFD loss is computed as the probability-weighted average distortion:
+ℒEFD​(𝐱)=∑i=1Nπi​(𝐱)⋅di​(𝐱)∑i=1Nπi​(𝐱).\mathcal{L}_{\text{EFD}}(\mathbf{x})=\frac{\sum_{i=1}^{N}\pi_{i}(\mathbf{x})\cdot d_{i}(\mathbf{x})}{\sum_{i=1}^{N}\pi_{i}(\mathbf{x})}.
+(8)
+By weighting distortions with πi​(𝐱)\pi_{i}(\mathbf{x}), ℒEFD\mathcal{L}_{\text{EFD}} concentrates perturbation energy exclusively on high-probability survivors.
+This formulation simultaneously addresses the twin failure modes identified in Section 3:
+It mitigates budget dilution by ignoring tokens destined for pruning (where πi→0\pi_{i}\to 0), and circumvents dependency disruption by optimizing the adversarial representation directly within the compressed view, preventing the attack from relying on fragile interactions with vanishing background context.
+4.3 Rank Distortion Alignment
+While EFD concentrates perturbations on tokens that are likely to survive compression, it does not explicitly align selection with perturbation strength.
+Ideally, we want a state of rank-distortion alignment, where the tokens carrying the strongest adversarial perturbations are also assigned the highest selection scores to guarantee their retention.
+Why EFD is not enough?
+In theory, EFD would implicitly encourage such alignment. Applying the chain rule to Equation 8 yields
+∇𝐱ℒEFD∝∑i=1Nπi⋅∇𝐱di⏟survivor corruption+di⋅∇𝐱πi⏟distortion promotion.\nabla_{\mathbf{x}}\mathcal{L}_{\text{EFD}}\;\propto\;\sum_{i=1}^{N}\underbrace{\pi_{i}\cdot\nabla_{\mathbf{x}}d_{i}}_{\text{survivor corruption}}\;+\;\underbrace{d_{i}\cdot\nabla_{\mathbf{x}}\pi_{i}}_{\text{distortion promotion}}.
+(9)
+The first term, ∑iπi​∇𝐱di\sum_{i}\pi_{i}\nabla_{\mathbf{x}}d_{i}, increases distortion on tokens weighted by their current retention probabilities, i.e., it corrupts the tokens that are already likely to be retained.
+The second term, ∑idi​∇𝐱πi\sum_{i}d_{i}\nabla_{\mathbf{x}}\pi_{i}, would encourage rank-distortion alignment by pushing the retention weights toward highly distorted tokens, making them more likely to be selected.
+However, πi​(𝐱)\pi_{i}(\mathbf{x}) is induced by discrete ranking and Top-KK selection, which introduce non-smooth, piecewise-constant dependencies on the underlying scores.
+Backpropagating through πi\pi_{i} typically yields sparse and unstable gradients (and can be ill-defined at switching points), providing only a limited signal for consistently promoting highly distorted tokens in the ranking.
+Consequently, optimization mainly increases distortion on tokens that are already selected/likely retained, but does not reliably steer the selection mechanism toward the most distorted tokens.
+To explicitly enforce alignment, we introduce a differentiable Rank Distortion Alignment (RDA) objective.
+We convert did_{i} and siadvs_{i}^{\mathrm{adv}} into token-wise probability distributions via a softmax:
+pi(d)​(𝐱)=exp⁡(di​(𝐱))∑jexp⁡(dj​(𝐱)),pi(s)​(𝐱)=exp⁡(siadv​(𝐱))∑jexp⁡(sjadv​(𝐱)).p_{i}^{(d)}(\mathbf{x})=\frac{\exp(d_{i}(\mathbf{x}))}{\sum_{j}\exp(d_{j}(\mathbf{x}))},\,p_{i}^{(s)}(\mathbf{x})=\frac{\exp(s_{i}^{\mathrm{adv}}(\mathbf{x}))}{\sum_{j}\exp(s_{j}^{\mathrm{adv}}(\mathbf{x}))}.
+(10)
+We then align the selection mechanism to the distortion profile by maximizing the expected log-likelihood of the selection distribution with respect to the distortion target:
+ℒRDA​(𝐱)=∑i=1Npi(d)​(𝐱)​log⁡pi(s)​(𝐱).\mathcal{L}_{\text{RDA}}(\mathbf{x})=\sum_{i=1}^{N}p_{i}^{(d)}(\mathbf{x})\,\log p_{i}^{(s)}(\mathbf{x}).
+(11)
+During optimization, we treat p(d)p^{(d)} as a fixed target and stop gradients through p(s)p^{(s)} to avoid degenerate dynamics where both distributions drift simultaneously.
+This encourages the selection mechanism to prioritize highly distorted tokens, increasing the chance that adversarial evidence is propagated through the compression bottleneck.
+4.4 Joint Optimization
+We generate adversarial perturbations 𝜹\boldsymbol{\delta} using projected gradient descent (PGD) under an ℓ∞\ell_{\infty} constraint. At each iteration, we compute: (i) the survival probabilities πi\pi_{i} from the current adversarial selection scores, (ii) the expected feature disruption ℒEFD\mathcal{L}_{\text{EFD}} via Equation 8, and (iii) the rank-distortion alignment objective ℒRDA\mathcal{L}_{\text{RDA}} via Equation 11. The total optimized objective is given by:
+max𝜹⁡ℒtotal=ℒEFD+λ⋅ℒRDA,s.t. ​‖𝜹‖∞≤ϵ,\max_{\boldsymbol{\delta}}\;\;\mathcal{L}_{\text{total}}\;=\;\mathcal{L}_{\text{EFD}}\;+\;\lambda\cdot\mathcal{L}_{\text{RDA}},\qquad\text{s.t. }\|\boldsymbol{\delta}\|_{\infty}\leq\epsilon,
+(12)
+where λ\lambda is a hyperparameter that balances ℒEFD\mathcal{L}_{\text{EFD}} and ℒRDA\mathcal{L}_{\text{RDA}}.
+Intuitively, ℒEFD\mathcal{L}_{\text{EFD}} produces high-distortion features on likely survivors (payload), while ℒRDA\mathcal{L}_{\text{RDA}} ensures that the model prioritizes these distorted tokens during selection (delivery), yielding a robust attack on the compressed representation across varying and unknown budgets. The whole procedure is given in Algorithm 1 in Appendix.
+5 Experiments
+Table 2: Main results comparing clean and robust accuracy (%) across five representative token compression mechanisms on LLaVA. We report Clean accuracy and Robust accuracy under both the baseline attack (Base) and our proposed CAGE. A lower robust accuracy indicates a stronger attack. Green annotations denote the reduction in robust accuracy achieved by CAGE compared to the baseline.
+Compressed Method
+GQA
+TextVQA
+VQA-v2
+Clean
+Robust (Base)
+Robust (CAGE)
+Clean
+Robust (Base)
+Robust (CAGE)
+Clean
+Robust (Base)
+Robust (CAGE)
+Upper Bound (576 Tokens)
+None
+60.3
+42.3
+39.4(↓6.9%)
+57.5
+34.7
+26.50(↓23.6%)
+74.5
+55.8
+49.4(↓11.4%)
+Retain 192 Tokens (Kmodel=192K_{\text{model}}=192)
+VisionZIP (CVPR25)
+57.0
+40.9
+36.2
+56.9
+34.1
+24.6
+73.4
+55.7
+46.5
+VisPruner (ICCV25)
+55.3
+40.8
+36.5
+58.2
+33.9
+23.0
+73.4
+56.3
+46.4
+DivPrune (CVPR25)
+55.6
+40.5
+37.4
+54.6
+32.7
+23.5
+73.1
+53.9
+49.0
+FlowCut (NeurIPS25)
+55.4
+40.3
+35.1
+57.8
+33.6
+24.3
+72.9
+55.9
+47.3
+PruMerge (ICCV25)
+57.2
+41.5
+36.0
+56.0
+33.3
+21.6
+74.2
+55.1
+46.8
+Average
+56.1
+40.8
+36.2(↓11.3%)
+56.7
+33.5
+23.4(↓30.1%)
+73.4
+55.4
+47.2(↓14.8%)
+Retain 128 Tokens (Kmodel=128K_{\text{model}}=128)
+VisionZIP (CVPR25)
+55.1
+40.9
+35.6
+57.0
+33.5
+21.6
+72.1
+53.8
+45.1
+5.1 Experimental Setup
+Victim Models.
+Our evaluation primarily focuses on the widely adopted LLaVA (Liu et al., 2023), given its prevalent use as a backbone model in existing token compression research. To evaluate the cross-model generalization of our attack, we also conduct experiments on Qwen2.5-VL (Bai et al., 2025b) with the results in Appendix D.
+Compression Mechanisms.
+To ensure broad coverage of compression mechanisms, we evaluate five diverse methods:
+VisionZIP (Yang et al., 2025),
+VisPruner (Zhang et al., 2025b),
+DivPrune (Alvar et al., 2025),
+FlowCut (Tong et al., 2025),
+and PruMerge (Shang et al., 2025). The detailed descriptions of these mechanisms are given in Appendix C.2.
+We assess these methods across a broad spectrum of deployment token budgets:
+(i) Full Sequence (Upper Bound): no compression, retaining all Kmodel=576K_{\text{model}}{=}576 tokens for LLaVA;
+(ii) Mild to Extreme Compression: retaining Kmodel∈{192,128,64,32,16}K_{\text{model}}\in\{192,128,64,32,16\} tokens; and
+(iii) Blind: an extreme setting (Kmodel=0K_{\text{model}}{=}0) serving as a reference, where no visual tokens are provided to the LLM, so the model responds only based on the language priors.
+Datasets & Evaluation Metric.
+We evaluate on three established datasets evaluating diverse capabilities: VQA-v2 (Goyal et al., 2017) (open-domain VQA), TextVQA (Singh et al., 2019) (scene-text understanding), and GQA (Hudson and Manning, 2019) (compositional reasoning). We uniformly sample 1,000 question-image pairs from each dataset for evaluation.
+To standardize evaluation across free-form LVLM outputs, we employ a uniform answer-matching protocol: following standard text normalization (lowercasing, removing punctuation/articles, and canonicalizing whitespace), a prediction is deemed correct if it matches any ground-truth answer via a whole-word containment check.
+We report both clean accuracy and robust accuracy, computed as the percentage of correct predictions on clean and adversarial inputs, respectively.
+Baseline.
+We adopt VEAttack (Mei et al., 2025), a state-of-the-art encoder-based attack, as our primary baseline. Both VEAttack and our method follow the same gray-box threat model: white-box access to the vision encoder and black-box access to the downstream LLM. This strict alignment ensures that VEAttack serves as a fair and directly comparable baseline in our evaluation.
+Implementation Setting.
+We generate adversarial perturbations using ℓ∞\ell_{\infty}-bounded PGD with a budget ϵ=2/255\epsilon=2/255, step size α=0.5/255\alpha=0.5/255, and T=100T=100 iterations with random initialization.
+Regarding the configuration of CAGE, we utilize the attention weights in the vision encoder as the token importance score si​(𝐱)s_{i}(\mathbf{x}).
+To capture budget uncertainty in the EFD component, we employ a uniform prior P⁡(Kmodel)P(K_{\text{model}}) over the range [16,192][16,192] to cover mild-to-extreme compression.
+The balancing hyperparameter is set to λ=0.005\lambda=0.005.
+All experiments are conducted on NVIDIA RTX 4090 GPUs.
+5.2 Main Results
+Table 2 reports attack results against five representative token-compression mechanisms on LLaVA.
+Across all settings, CAGE yields consistently lower robust accuracy than the baseline, indicating that compression-aware optimization exposes stronger vulnerabilities under compressed inference.
+In addition, our results reveal the following findings.
+Finding 1: CAGE improves attack efficacy across diverse compression mechanisms, including diversity-based selection. Diversity-driven methods (e.g., DivPrune) often exhibit higher robust accuracy than attention-based mechanisms, as their retained tokens are less aligned with the attention cues primarily exploited by CAGE. Nevertheless, CAGE still yields consistent gains over standard baselines. The gains persist because attention-salient regions are frequently represented within the diverse token set retained by similarity-based selection. Therefore, CAGE can still inject adversarial evidence into the survivor set even under mismatched selection criteria.
+Finding 2: CAGE is particularly effective on text-centric visual understanding tasks.
+The relative gain of CAGE is most pronounced on TextVQA, where answers hinge on sparse, highly localized text evidence with limited redundancy, making predictions disproportionately sensitive to the corruption of a few text-bearing survivor tokens under compression.
+CAGE is designed to concentrate distortion on likely-retained, high-importance tokens and thus more reliably corrupts these decisive text regions than the baseline.
+As a result, the performance drop is amplified on TextVQA relative to VQA-v2 and GQA, where visual reasoning typically aggregates more distributed and redundant cues.
+Finding 3: CAGE yields consistent advantages across the compression spectrum.
+Even without compression (full tokens), CAGE still outperforms the baseline, which we attribute to EFD’s token reweighting that focuses perturbation on high-impact visual evidence rather than distributing it uniformly.
+As the deployment budget decreases from mild to moderate compression (e.g., 192/128/64 tokens), the advantage typically increases because attack effectiveness increasingly depends on corrupting surviving tokens that CAGE targets explicitly.
+Under extremely tight budgets (e.g., 32 or 16 tokens), the gain plateaus and may fluctuate on TextVQA and VQA-v2 because robust accuracy approaches the non-visual (blind) reference, leaving little room for further degradation.
+Figure 4: Conditional robust accuracy (CRA\mathrm{CRA}) vs. deployment token budget. We report CRA\mathrm{CRA} under the baseline attack and CAGE across three datasets. While CRA\mathrm{CRA} under baseline attack generally increases as the token budget shrinks, CAGE exhibits non-monotonic behavior, indicating that conditional robustness does not vary monotonically with compression.
+5.3 Analysis and Ablation
+Impact of Token Compression on Robustness.
+We investigate the impact of token compression on robustness from two perspectives: absolute robustness (robust accuracy) and conditional robustness.
+First, under a fixed ℓ∞\ell_{\infty} perturbation budget, the observed robust accuracy RR decreases as the token budget shrinks, reflecting the combined effect of information loss and increased susceptibility to adversarial distortion.
+Second, to disentangle robustness degradation from pure information loss, we examine conditional robustness via conditional robust accuracy (CRA), defined as CRA=R/C\mathrm{CRA}=R/C, where CC is the clean accuracy.
+CRA measures the fraction of clean performance that is preserved under attack, enabling a fairer comparison of attack impact across different compression levels.
+Figure 4 presents the CRA\mathrm{CRA} trend under baseline and CAGE. For the baseline attack, CRA\mathrm{CRA} generally increases as the deployment budget shrinks across all three benchmarks (with minor fluctuations), which can misleadingly suggest that conditional robustness improves under stronger compression.
+In contrast, CAGE exhibits a non-dependent pattern: it decreases under moderate budgets (e.g., 64-192 tokens) and then partially rebounds as the budget shrinks further.
+This behavior is consistent with compression-aligned optimization. Under moderate compression, clean predictions can still be made from the small set of selected survivor tokens, so clean accuracy CC drops only mildly. However, CAGE explicitly targets these same survivors by aligning perturbations with the selection signal, corrupting the evidence that the compressed model relies on. As a result, robust accuracy RR decreases more sharply than CC, which drives CRA\mathrm{CRA} downward.
+Under extremely tight budgets (e.g., 16 tokens), robust accuracy is already severely suppressed, leaving the attack with limited headroom to further reduce RR (i.e., diminishing marginal impact), whereas clean accuracy CC continues to drop rapidly due to information loss; consequently, R/CR/C rebounds.
+Appendix E provides further ablations on components, perturbation budgets, hyperparameters, and scoring metrics.
+6 Possible Defenses
+PGD parameters: step size α\alpha, budget ϵ\epsilon, iterations TT.
+0:
+CAGE parameters: budget prior P⁡(K)P(K), hyperparameter λ\lambda.
+0:
+Adversarial perturbation 𝜹\boldsymbol{\delta}.
+1:
+Initialize 𝜹(0)←𝟎\boldsymbol{\delta}^{(0)}\leftarrow\mathbf{0} (or random initialization within ϵ\epsilon-ball).
+2:
+for t=0t=0 to T−1T-1 do
+3:
+𝐱a​d​v(t)←𝐱+𝜹(t)\mathbf{x}^{(t)}_{adv}\leftarrow\mathbf{x}+\boldsymbol{\delta}^{(t)}
+4:
+// Forward pass to get features and scores
+5:
+Get clean features 𝐳cln\mathbf{z}^{\text{cln}}, adversarial features 𝐳adv\mathbf{z}^{\text{adv}}, and attention scores s⁡(𝐱a​d​v(t))s(\mathbf{x}^{(t)}_{adv}) from fθf_{\theta}.
+6:
+// — Component I: Expected Feature Disruption (EFD) —
+7:
+Compute per-token distortion: di←1−cos⁡(𝐳iadv,𝐳icln)d_{i}\leftarrow 1-\cos(\mathbf{z}^{\text{adv}}_{i},\mathbf{z}^{\text{cln}}_{i}).
+8:
+Compute current ranks rir_{i} based on scores sis_{i}.
+9:
+Compute survival probabilities: πi←∑kP⁡(K=k)⋅𝕀⁡(k>ri)\pi_{i}\leftarrow\sum_{k}P(K=k)\cdot\mathbb{I}(k>r_{i}).
+10:
+ℒEFD←∑πi​di∑πi\mathcal{L}_{\text{EFD}}\leftarrow\frac{\sum\pi_{i}d_{i}}{\sum\pi_{i}}.
+11:
+// — Component II: Rank Distortion Alignment (RDA) —
+12:
+Compute distortion distribution: pd​(i)←softmax​(di)p_{d}(i)\leftarrow\text{softmax}(d_{i}).
+13:
+Compute selection distribution: ps​(i)←softmax​(si)p_{s}(i)\leftarrow\text{softmax}(s_{i}).
+14:
+ℒRDS←∑pd​(i)⋅log⁡ps​(i)\mathcal{L}_{\text{RDS}}\leftarrow\sum p_{d}(i)\cdot\log p_{s}(i).
+15:
+// — Joint Optimization (Gradient Ascent) —
+16:
+ℒtotal←ℒEFD+λ⋅ℒRDA\mathcal{L}_{\text{total}}\leftarrow\mathcal{L}_{\text{EFD}}+\lambda\cdot\mathcal{L}_{\text{RDA}}.
+17:
+Compute gradient: 𝐠(t)←∇𝜹ℒtotal​(𝐱a​d​v(t))\mathbf{g}^{(t)}\leftarrow\nabla_{\boldsymbol{\delta}}\mathcal{L}_{\text{total}}(\mathbf{x}^{(t)}_{adv}).
+18:
+Update perturbation: 𝜹(t+1)←Projϵ​(𝜹(t)+α⋅sign​(𝐠(t)))\boldsymbol{\delta}^{(t+1)}\leftarrow\text{Proj}_{\epsilon}\left(\boldsymbol{\delta}^{(t)}+\alpha\cdot\text{sign}(\mathbf{g}^{(t)})\right).
+19:
+end forreturn δ←δ(T)\boldsymbol{\delta}\leftarrow\boldsymbol{\delta}^{(T)}.
+Appendix E Additional Ablation and Analysis
+Table 6: Robust accuracy (%) comparing the EFD-only variant and the complete CAGE design under different budgets on VQA-v2.
+Method
+576 (Full)
+192
+128
+64
+32
+16
+EFD Only
+50.8
+48.5
+47.0
+45.8
+46.0
+45.7
+CAGE
+49.4
+46.5
+45.1
+43.0
+43.1
+42.7
+E.1 Component Ablation
+We conduct ablations on CAGE to isolate the impact of each design component on attack performance. Table 6 reports results on VQA-v2 for LLaVA under VisionZip, comparing an EFD-only variant against the full CAGE across token budgets. Across token budgets, CAGE consistently achieves lower robust accuracy than the EFD-only variant, indicating that adding RDA provides a clear benefit. This result suggests that reweighting distortion alone (EFD) is insufficient: by explicitly steering the selection signal, RDA increases the likelihood that highly perturbed tokens are retained after compression, allowing adversarial evidence to pass through the bottleneck and further reducing robustness.
+Appendix G Limitations and Future Work
+While our work provides the first comprehensive study on the adversarial robustness of LVLMs under visual token compression and proposes the effective CAGE, several limitations remain that pave the way for future research.
+Scope of Compression Mechanisms.
+Our study primarily focuses on training-free, plug-and-play visual token compression methods (e.g., VisionZip, VisPruner) applied to off-the-shelf LVLMs.
+While these represent a widely used paradigm for efficient deployment, we have not explored inner-LLM or training-based compression methods (e.g., FastV (Chen et al., 2024a), Honeybee (Cha et al., 2024) or MobileVLM (Chu et al., 2024)) .
+Since these methods modify the compression mechanism and the resulting token dynamics in fundamentally different ways, their robustness characteristics may differ from the settings studied here, motivating a systematic extension of our analysis to these alternative compression families.
+Generalization to videos, multi-image inputs, and agentic settings.
+We focus on image-based LVLM tasks and a representative set of benchmarks.
+However, many real-world applications may go beyond single images: models often process videos or multiple images, and are increasingly used in agentic workflows that iterate over observe–reason–act steps.
+These settings introduce additional challenges, e.g., temporal consistency across frames, cross-image evidence aggregation, and error accumulation over multiple steps, which may interact with token compression in ways not captured by our current evaluation.
+A natural next step is to study whether compression-aligned attacks remain effective under such inputs and long-horizon decision loops, and to characterize how the compression bottleneck shapes robustness when visual evidence evolves over time.
+More robust defenses.
+Our defense study indicates that lightweight detectors based on a single attention statistic and a calibrated threshold can work well when the calibration attack matches the test-time threat model, but their performance drops under attack distribution shifts (e.g., trained on VEAttack, tested on other strategies), revealing limited generalization.
+This suggests that current defenses for compressed LVLMs are still fragile and can overfit to specific attack signatures.
+Future work should develop more robust defenses, e.g., combining multi-layer/multi-statistic signals and incorporating the compression bottleneck into robustness objectives.
+In summary, we hope this work serves as a stepping stone for designing next-generation LVLMs that are both efficient and secure by design.
+Experimental support, please
+view the build logs

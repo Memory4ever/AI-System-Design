@@ -1,0 +1,839 @@
+WiSparse: Boosting LLM Inference Efficiency with Weight-aware Mixed Activation Sparsity
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+3 Preliminary
+4 Method: WiSparse
+4.1 Motivating Observations
+4.2 Weight-Aware Activation Sparsification
+Tuning Weight Exponents via Block-wise Grid Search
+4.3 Mixed-Granularity Sparsity Allocation
+Coarse Search: Block-Level Allocation
+Fine Search: Intra-Block Greedy Allocation
+5 Experiments
+5.1 Experimental Setup
+5.2 Accuracy Results
+5.3 Efficiency Results
+5.4 Ablation Studies and Results Analysis
+6 Conclusion
+7 Ethics statement
+8 Reproducibility statement
+References
+A Appendix
+A.1 The Use of Large Language Models (LLMs)
+A.2 Algorithms
+A.3 Layer-wise Visualization of α \alpha values
+License: arXiv.org perpetual non-exclusive license
+arXiv:2602.14452v1 [cs.LG] 16 Feb 2026
+WiSparse: Boosting LLM Inference Efficiency with Weight-aware Mixed Activation Sparsity
+Lei Chen
+Yuan Meng
+Xiaoyu Zhan
+Zhi Wang
+Wenwu Zhu
+Affiliation: Tsinghua University
+Abstract
+Large Language Models (LLMs) deliver strong capabilities but incur high inference costs due to dense computation and memory access.
+Training-free activation sparsity is a promising approach for efficient LLM inference, leveraging its data adaptation and low computational overhead.
+However, existing methods typically only rely on activation information and a uniform sparsity ratio, overlooking the critical interplay with weights and inter-block sensitivity variation, which leads to suboptimal performance.
+In this paper, we examine these limitations and identify two key phenomena in modern LLMs: 1) less significant activations may align with highly important weights, and 2) sparsity sensitivity varies non-monotonically across model blocks.
+To address these issues, we propose a novel W eight-aware M i xed-Granularity Training-free Activation Sparsity ( WiSparse ) method that leverages both activation and weight information and enables adaptive sparsity allocation across different granularities.
+Specifically, we introduce a weight-aware activation sparsification mechanism that integrates activation magnitudes with precomputed weight norms to more accurately identify salient channels.
+This is combined with a mixed-granularity sparsity allocation scheme featuring a coarse-to-fine strategy: a global sparsity budget is first distributed across blocks via evolutionary search to protect sensitive regions, and subsequently refined at finer granularities within each block to minimize reconstruction error.
+We improve existing sparse kernels and demonstrate the effectiveness of the proposed method via extensive experiments conducted on three representative models.
+Notably, at 50% sparsity, WiSparse preserves 97% of Llama3.1’s dense model performance, surpassing the strongest baseline by 2.23 percentage points while achieving a 21.4% acceleration in end-to-end inference speed.
+Our research contributes to advancing the performance limits of training-free approaches for efficient LLM inference, effectively pushing the boundaries of achievable speedup without training.
+1 Introduction
+Large Language Models (LLMs) have demonstrated remarkable capabilities across a wide range of natural language processing tasks, making them fundamental components of modern AI applications ( Zhao et al., 2025 ) .
+However, the extensive parameter of LLMs results in significant computational and memory I/O demands, which severely constrains their inference efficiency.
+To mitigate this issue, network sparsification has emerged as a promising technique, primarily categorized into weight sparsity and activation sparsity ( Wan et al., 2023 ) .
+Weight sparsity operates in a data-independent manner, where the importance of weights is determined based solely on their intrinsic characteristics, often leading to suboptimal performance in specific scenarios.
+Consequently, recent research has increasingly focused on data-dependent activation sparsity ( Liu et al., 2023 ; Zhang et al., 2025 ; Lee et al., 2024 ; Chen et al., 2025 ; Liu et al., 2025 ) , which has shown superior performance and better scalability across diverse tasks.
+Specifically, this work tackles channel sparsity, where entire neuron computations are dynamically pruned based on runtime inputs.
+Training-based activation sparsity methods ( Song et al., 2024 ; Wang et al., 2024 ) improve sparsity through architectural modifications and fine-tuning, yet such methods require substantial computational resources and are highly sensitive to training configurations.
+These limitations have motivated the development of training-free methods ( Lee et al., 2024 ; Liu et al., 2025 ; Zhang et al., 2025 ; Ramachandran et al., 2025 ) , which employ lightweight runtime criteria to identify and bypass less important computations, preserving the original weights.
+However, existing training-free sparsity methods predominantly depend on activation-only importance indicators and apply a uniform sparsity ratio across the blocks in the model, thereby neglecting the critical role of weight-activation interactions and the varying sensitivity across different blocks, failing to realize the full potential of activation sparsity.
+In this work, we aim to enhance the performance of training-free activation sparsity methods. To this end, we begin by investigating the inherent characteristics of LLMs and identify two central challenges in activation sparsity:
+(1) less important activations correspond to critical weights , and
+(2) sparsity sensitivity varies significantly across different blocks , shown in Sec. 4.1 .
+To address these challenges, we propose a novel W eight-aware M i xed-Granularity Training-free Activation Sparsity ( WiSparse ) method (see Fig. 1 ). This approach leverages the joint importance of both weights and activations to guide sparsification, while assigning sparsity ratios according to sensitivity at both the block and layer levels.
+Specifically, we first propose a weight-aware activation sparsification mechanism to effectively capture and leverage the interactions between weights and activations for computation reduction. To balance the contributions of activation and weight in importance estimation, we introduce a layer-wise exponent parameter, whose optimal value is automatically determined through a lightweight search process tailored to each layer’s characteristics.
+Furthermore, we introduce a mixed-granularity sparsity allocation scheme that progressively assigns sparsity ratios from coarse (block-level) to fine (layer-level) granularities. This is implemented through a two-stage search algorithm: a coarse-grained search first determines the global sparsity distribution across blocks, which is then refined by a fine-grained search that iteratively optimizes layer-level sparsity ratios by minimizing output reconstruction error.
+Extensive experiments demonstrate that our method outperforms existing baselines, achieving
+state-of-the-art performance.
+In summary, our main contributions are as follows.
+•
+In this work, we identify two critical phenomena in modern LLMs that limit training-free activation sparsity: (1) less significant activations may align with highly important weights, and (2) sparsity sensitivity exhibits non-monotonic variation across different blocks.
+•
+We propose WiSparse, a fully training-free framework that introduces a weight-aware importance score combining both activation and weight information to guide sparsification more accurately. WiSparse further employs a coarse-to-fine search algorithm to optimize sparsity ratios across mixed granularities, adapting to varying sensitivity patterns throughout the model.
+•
+Extensive experiments on diverse LLMs (including Llama3.1, Qwen2.5, and Mistral) demonstrate that WiSparse achieves a superior accuracy-efficiency trade-off. At 50% sparsity, our method not only outperforms representative training-free baselines in accuracy but also accelerates end-to-end inference speed by up to 21.4%.
+Figure 1: The overall framework of WiSparse. The process starts by calculating importance scores for each layer based on activation values and weight norms. These scores generate sparsity masks to prune less important channels. Block-level sparsity is optimized via an evolutionary search on a small calibration dataset, followed by refinement of layer-level sparsities using a greedy allocation strategy. The final configuration is applied during inference to improve computational efficiency by reducing unnecessary operations.
+2 Related Work
+LLM Sparsification.
+Sparsification has emerged as a mainstream strategy to accelerate LLM inference by reducing the amount of computation required at run time. Early work focused on pruning model parameters to induce weight sparsity ( Frantar and Alistarh, 2023 ; Sun et al., 2023 ; Yin et al., 2023 ) . Although weight pruning can substantially reduce FLOPs, practical speedups depend on sparse kernel support, memory bandwidth, and sparsity structure.
+To create more hardware-friendly sparsity, other methods employ structured pruning, removing entire components like network modules ( Chen et al., 2023 ) or even full layers ( Men et al., 2025 ) , typically followed by a fine-tuning stage to recover performance.
+A complementary line of work achieves conditional computation through Mixture-of-Experts (MoE) architectures, which instantiate sparsity by activating only a small subset of experts per token ( Shazeer et al., 2017 ; Lepikhin et al., 2020 ; Fedus et al., 2022 ) .
+More recently, contextual sparsity has been proposed to skip neuron computations dynamically based on the input context. DejaVu ( Liu et al., 2023 ) exploits the observation that, for ReLU-based networks, many MLP neurons are exactly inactive for a given context and can be predicted cheaply and skipped at run time. However, this approach relies on hard-thresholding properties of ReLU and is not directly applicable to modern LLMs that predominantly adopt smooth activations such as GELU or SwiGLU, where activations are rarely exactly zero.
+Training-based activation sparsity.
+To bridge this gap, training-based activation sparsity methods “relufy” or otherwise modify/fine-tune models to encourage sparse activations under smooth nonlinearities. Representative approaches include TurboSparse ( Song et al., 2024 ) , ProSparse ( Song et al., 2025 ) , and Q-Sparse ( Wang et al., 2024 ) , modify models by introducing architectural changes, applying sparsity-inducing regularizers, or using specialized fine-tuning. While effective, these methods require nontrivial compute and data to train. Furthermore, their performance is sensitive to the training recipes, and the resulting sparsity-accuracy trade-off may degrade when the model undergoes continual pretraining or encounters domain shifts.
+Training-free activation sparsity.
+Training-free activation sparsity methods aim to skip low-importance neuron computations at inference time without any additional fine-tuning, typically by using lightweight, runtime criteria derived from activations.
+CATS ( Lee et al., 2024 ) performs context-aware thresholding over intermediate activations, enabling dynamic sparsification without modifying model weights or training recipes. It leverages input-dependent statistics to set thresholds so that low-impact activations are skipped while preserving output quality.
+TEAL ( Liu et al., 2025 ) proposes a training-free framework that applies magnitude-based sparsification to hidden states across layers, together with practical system support to realize real speedups during LLM inference.
+R-Sparse ( Zhang et al., 2025 ) decomposes computation into a sparse and a low-rank path based on runtime activation magnitudes. High-magnitude activations are processed using the original weights, while the rest are routed through a pre-computed low-rank approximation of the weight matrix.
+Overall, these training-free approaches base their decisions primarily on activation-side signals and do not explicitly incorporate the underlying weight values into the importance estimation or sparsity scheduling, which may limit their ability to capture weight–activation interactions.
+WINA ( Chen et al., 2025 ) made an initial step toward incorporating weights by combining activation magnitudes with weight column L2-norms. Although an improvement, this method has two key limitations: first, its use of a simple, static norm is an inadequate proxy for true weight importance, and second, it does not address how to handle mixed sparsity ratios within a model.
+3 Preliminary
+Consider a single linear projection layer ℓ \ell in a Transformer block. Let 𝐱 ∈ ℝ n ℓ \mathbf{x}\in\mathbb{R}^{n_{\ell}} and 𝐖 ∈ ℝ m ℓ × n ℓ \mathbf{W}\in\mathbb{R}^{m_{\ell}\times n_{\ell}} denote the input activation and weight matrix, respectively.
+The output is
+𝐲 = 𝐱𝐖 ⊤ . \mathbf{y}\;=\;\mathbf{x}\mathbf{W}^{\top}.
+(1)
+Activation sparsity seeks, for each input activation, a binary mask vector 𝐦 ∈ { 0 , 1 } n ℓ \mathbf{m}\in\{0,1\}^{n_{\ell}} that zeroes out unimportant input channels before the projection:
+𝐲 = ( 𝐱 ⊙ 𝐦 ) ​ 𝐖 ⊤ . \mathbf{y}\;=\;\big(\mathbf{x}\odot\mathbf{m}\big)\mathbf{W}^{\top}.
+(2)
+Let S = { i ∈ [ 1 : n ℓ ] : 𝐦 i = 1 } S=\{i\in[1:n_{\ell}]:\mathbf{m}_{i}=1\} denote the index of selected channels, and let k ℓ = | S | k_{\ell}=|S| be the number of such channels.
+Then only the subvector 𝐱 S \mathbf{x}_{S} and the corresponding columns 𝐖 : , S \mathbf{W}_{:,S} are used:
+𝐲 = 𝐱 S ( 𝐖 : , S ) ⊤ . \mathbf{y}\;=\;\mathbf{x}_{S}\big(\mathbf{W}_{:,S}\big)^{\top}.
+(3)
+This optimization reduces the computational complexity from O ⁡ ( m ℓ ​ n ℓ ) O(m_{\ell}n_{\ell}) to O ⁡ ( m ℓ ​ k ℓ ) O(m_{\ell}k_{\ell}) , and proportionally decreases the memory access. The central problem is to construct input-dependent masks 𝐦 \mathbf{m} that achieve a high degree of sparsity with minimal accuracy loss.
+4 Method: WiSparse
+4.1 Motivating Observations
+We begin by presenting two key observations that reveal the inherent limitations of existing training-free activation sparsity methods and motivate the design of our WiSparse framework.
+Figure 2: Distribution of activation and weight magnitudes for the self_attn.o_proj layer in block 17 of Llama-3.1-8B. The plot shows that channels with low activation magnitudes can have high-magnitude weights (e.g., channel 2244), demonstrating the limitations of using activation-only metrics to assess channel importance.
+Observation 1 : Less important activations correspond to critical weights.
+As shown in Fig. 2 , the variance across input channels of the weight matrices is significantly higher than that across output channels, particularly in layers such as o_proj and up_proj . This high variance means that some weight columns have much larger norms than others, rendering pruning decisions based on activation magnitude alone unreliable. For instance, the activation for input channel 2244 is small, but the column of weights associated with this channel possesses one of the highest norms. Consequently, an accurate saliency score must jointly consider both activation and weight information, as activation-only criteria can be misleading.
+Observation 2 : Sparsity sensitivity varies significantly across different blocks.
+As shown in Fig. 3 , sparsifying certain layers in shallow blocks causes markedly larger degradation, whereas deeper blocks are less sensitive and can even yield slight improvements. This non-uniform response demonstrates that blocks have heterogeneous sensitivities. The trend is not strictly monotonic, as some middle blocks also exhibit high fragility, suggesting that a block’s criticality depends on its specific functional role and statistical properties rather than just its depth. This observation underscores the sub-optimality of a uniform sparsity policy and highlights the need for an allocation strategy that adapts to the unique sensitivity of each block.
+(a) Llama3.1-8B
+(b) Qwen2.5-7B
+Figure 3: Block-wise sensitivity to sparsification. The plot reports the relative change in validation perplexity ( Δ \Delta PPL vs the dense model, in %) when sparsifying one block at a time while keeping all other blocks dense. Curves correspond to 40%, 50%, and 60% sparsity.
+These observations motivate the two core components of our WiSparse framework. To address the inaccurate saliency estimation from Observation 1, we first propose a weight-aware sparsification mechanism. To handle the heterogeneous block sensitivities from Observation 2, we then develop a mixed-granularity allocation strategy. We detail these components in the following subsections.
+4.2 Weight-Aware Activation Sparsification
+To address the issue of misestimated saliency, we explicitly account for the fact that pruning an input channel’s impact depends jointly on its activation magnitude and the strength of the corresponding weight column.
+A simple selection rule is therefore to retain channels with large products | 𝐱 i | ∥ 𝐖 : , i ∥ 2 \big|\mathbf{x}_{i}\big|\,\big\|\mathbf{W}_{:,i}\big\|_{2} .
+To better capture weight–activation interactions while keeping a simple, training-free score, we introduce a layer-specific exponent that rescales the weight term.
+Concretely, given an input 𝐱 \mathbf{x} to layer ℓ \ell , we define the weight–aware importance score s i s_{i} for channel i i as
+s i = f s ​ ( 𝐱 , α ℓ ) = | 𝐱 i | ​ ( 𝐠 i ) α ℓ , s_{i}=f_{s}\!\left(\mathbf{x};\alpha_{\ell}\right)\;=\;\big|\mathbf{x}_{i}\big|\,\big(\mathbf{g}_{i}\big)^{\alpha_{\ell}},
+(4)
+where 𝐠 i ≜ ∥ 𝐖 : , i ∥ 2 \mathbf{g}_{i}\;\triangleq\;\big\|\mathbf{W}_{:,i}\big\|_{2} is the precomputed L2-norm of the corresponding weight column. Here, α ℓ \alpha_{\ell} is a nonnegative, layer-specific exponent tuned on a small calibration set which compresses or accentuates weight-side variability.
+At inference time, we apply dynamic sparsity by generating a binary mask 𝐦 \mathbf{m} for each input 𝐱 \mathbf{x} . A channel is kept if its importance score s i s_{i} exceeds a predetermined, layer-specific threshold τ ℓ \tau_{\ell} :
+m i = 𝕀 [ s i ≥ τ ℓ ] , m_{i}\;=\;\mathbb{I}\!\left[s_{i}\geq\tau_{\ell}\right],
+(5)
+This mask is then applied to the activations before the linear projection. Since 𝐠 i \mathbf{g}_{i} and α ℓ \alpha_{\ell} are constant at inference, the per-token overhead is limited to element-wise multiplication, which is negligible compared to the computational savings from the pruned matrix-vector products.
+Tuning Weight Exponents via Block-wise Grid Search
+The effectiveness of our method hinges on selecting an optimal weight exponent α ℓ \alpha_{\ell} for each layer. To this end, we perform a block-wise grid search as detailed in Alg. 2 in Appendix A.2 . For each Transformer block ℬ \mathcal{B} , which contains a set of linear layers ℒ ℬ \mathcal{L}_{\mathcal{B}} , we search for the optimal exponents { α ℓ } ℓ ∈ ℒ ℬ \{\alpha_{\ell}\}_{\ell\in\mathcal{L}_{\mathcal{B}}} by minimizing output distortion on a small, dedicated calibration dataset 𝒟 cal ℬ \mathcal{D}_{\text{cal}}^{\mathcal{B}} . This dataset consists of input activations to the block ℬ \mathcal{B} collected from a few representative examples.
+The core of the search involves evaluating candidate exponents 𝜶 = { α ℓ } ℓ ∈ ℒ ℬ \bm{\alpha}=\{\alpha_{\ell}\}_{\ell\in\mathcal{L}_{\mathcal{B}}} . For each candidate 𝜶 \bm{\alpha} , we dynamically determine a corresponding set of sparsity thresholds 𝝉 = { τ ℓ } ℓ ∈ ℒ ℬ \bm{\tau}=\{\tau_{\ell}\}_{\ell\in\mathcal{L}_{\mathcal{B}}} . Each threshold τ ℓ \tau_{\ell} is calculated to ensure its layer achieves a target keep ratio r ℓ r_{\ell} over the block’s calibration data.
+Let F ℬ F_{\mathcal{B}} be the original (dense) forward pass of the block and F ℬ sparse ​ ( ⋅ , 𝜶 , 𝝉 ) F_{\mathcal{B}}^{\text{sparse}}(\cdot;\bm{\alpha},\bm{\tau}) be its sparse counterpart. Our objective is to find the exponents that minimize the Mean Squared Error (MSE) between the dense and sparse block outputs, evaluated on the block-specific calibration set:
+min 𝜶 ⁡ 𝔼 𝐱 ℬ ∈ 𝒟 cal ℬ ​ ‖ F ℬ ​ ( 𝐱 ℬ ) − F ℬ sparse ​ ( 𝐱 ℬ , 𝜶 , 𝝉 ⁡ ( 𝜶 ) ) ‖ 2 2 . \min_{\bm{\alpha}}\;\mathbb{E}_{\mathbf{x}_{\mathcal{B}}\in\mathcal{D}_{\text{cal}}^{\mathcal{B}}}\Big\|F_{\mathcal{B}}(\mathbf{x}_{\mathcal{B}})-F_{\mathcal{B}}^{\text{sparse}}\big(\mathbf{x}_{\mathcal{B}};\bm{\alpha},\bm{\tau}(\bm{\alpha})\big)\Big\|_{2}^{2}.
+(6)
+During this search, for each α ℓ \alpha_{\ell} , the threshold τ ℓ \tau_{\ell} is set as the ( 1 − r ℓ ) (1-r_{\ell}) -quantile of the score distribution and is calculated as:
+τ ℓ ​ ( α ℓ ) = Quantile 1 − r ℓ ⁡ ( { s i ​ ( 𝐱 ℓ , α ℓ ) } ) . \tau_{\ell}(\alpha_{\ell})\;=\;\operatorname{Quantile}_{1-r_{\ell}}\!\Big(\,\big\{s_{i}(\mathbf{x}_{\ell};\alpha_{\ell})\big\}\,\Big).
+(7)
+After the grid search identifies the optimal exponents { α ℓ ∗ } \{\alpha^{*}_{\ell}\} , we use this same mechanism one final time to compute the fixed, per-layer thresholds for inference. This procedure yields a single, token-agnostic threshold τ ℓ \tau_{\ell} for each layer. However, since the pruning scores s i ​ ( 𝐱 ℓ , α ℓ ) s_{i}(\mathbf{x}_{\ell};\alpha_{\ell}) depend on the layer’s input activations 𝐱 ℓ \mathbf{x}_{\ell} , the resulting sparsity pattern is adaptive for each token.
+4.3 Mixed-Granularity Sparsity Allocation
+Our finding that sparsity sensitivity varies significantly across blocks (Sec. 4.1 ) implies that a uniform allocation strategy is inherently suboptimal. In theory, an optimal design would assign a tailored sparsity ratio to every individual layer. However, exhaustively searching for such a configuration is computationally prohibitive and susceptible to overfitting. To overcome this, we introduce a two-stage, coarse-to-fine allocation strategy that efficiently approximates the optimal per-layer sparsity distribution while maintaining search stability and generalization.
+Coarse Search: Block-Level Allocation
+In the first stage, we determine how to distribute a global target sparsity, p target p_{\text{target}} , among the N N Transformer blocks of the model. We search for a set of block-level pruning ratios, 𝐩 = { p 1 , … , p N } \mathbf{p}=\{p_{1},\dots,p_{N}\} , where p B p_{B} represents the sparsity assigned to block B B . The allocation is subject to the constraint that the average sparsity across all blocks equals the global target p target p_{\text{target}} .
+To find the optimal block-level allocation, we employ an evolutionary algorithm (see Alg. 3 in Appendix A.2 ).
+The search process begins by initializing a uniform allocation where every block is assigned the target sparsity p target p_{\text{target}} .
+In each generation, we create a population of new candidate allocations (offspring) derived from the current best solution. The generation process consists of three key steps:
+1.
+Localized Mutation: To create a new candidate, we start with a copy of the parent allocation. We then randomly select a small subset of blocks (e.g., 10% of the total) and increase their sparsity levels by a small, fixed step size ϵ \epsilon . This localized approach, inspired by ( Sieberling et al., ) , ensures stable exploration of the search space.
+2.
+Constraint Enforcement: This mutation may cause the candidate’s weighted average sparsity to exceed the global target p target p_{\text{target}} . To maintain the constraint, we then iteratively select random blocks and decrease their sparsity by ϵ \epsilon until the average sparsity returns to the target level.
+3.
+Selection: After generating a list of offspring, each candidate allocation 𝐩 ′ \mathbf{p}^{\prime} is evaluated by measuring its performance degradation on a small calibration dataset, 𝒟 cal \mathcal{D}_{\text{cal}} . The candidate that minimizes our objective function ℒ ⁡ ( 𝐩 ′ ) \mathcal{L}(\mathbf{p}^{\prime}) is chosen as the parent for the next generation.
+Specifically, we use the average token-level KL divergence between the output distributions of the sparse and dense models as our objective function ℒ ⁡ ( 𝐩 ) \mathcal{L}(\mathbf{p}) :
+ℒ ( 𝐩 ) = 1 | 𝒟 cal | ∑ 𝐱 ∈ 𝒟 cal 1 T ⁡ ( 𝐱 ) ∑ t = 1 T ⁡ ( 𝐱 ) KL ( softmax ( f θ ( 𝐱 ≤ t ) ) ∥ softmax ( f θ , 𝐩 ( 𝐱 ≤ t ) ) ) \mathcal{L}(\mathbf{p})=\frac{1}{|\mathcal{D}_{\text{cal}}|}\sum_{\mathbf{x}\in\mathcal{D}_{\text{cal}}}\frac{1}{T(\mathbf{x})}\sum_{t=1}^{T(\mathbf{x})}\text{KL}\left(\text{softmax}(f_{\theta}(\mathbf{x}_{\leq t}))\parallel\text{softmax}(f_{\theta,\mathbf{p}}(\mathbf{x}_{\leq t}))\right)
+(8)
+Here, T ⁡ ( 𝐱 ) T(\mathbf{x}) is the length of the input 𝐱 \mathbf{x} , f θ f_{\theta} and f θ , 𝐩 f_{\theta,\mathbf{p}} are the logits produced by the dense and sparse models, respectively, and the divergence is averaged over all the tokens in the calibration set. The evolutionary algorithm seeks to find the set of block-level sparsities { 𝐩 B ∗ } \{\mathbf{p}_{B}^{*}\} that minimizes this objective. For this stage, we temporarily assume that all layers within a given block B B share the same sparsity p B p_{B} .
+Fine Search: Intra-Block Greedy Allocation
+With the optimal block-level sparsities { p B ∗ } \{p_{B}^{*}\} fixed, the second stage refines the sparsity allocation within each block. For each block B B , we distribute its assigned sparsity budget p B ∗ p_{B}^{*} among its individual linear layers (e.g., in the attention and MLP modules).
+This is done using a greedy procedure following ( Liu et al., 2025 ) . Starting with a fully dense block, we iteratively add a small, fixed increment of sparsity. At each step, we add the sparsity to the layer that causes the smallest increase in the block’s output reconstruction error. This process is repeated until the total sparsity of the block reaches its target budget p B ∗ p_{B}^{*} . This strategy ensures that more sparsity is allocated to less sensitive layers. For the pseudocode, please refer to Alg. 4 in Appendix A.2 .
+By combining these two stages, our method efficiently determines a well-calibrated, per-layer sparsity distribution that adheres to a global budget while preserving model accuracy.
+Algorithm 1 WiSparse Full Pipeline
+1:
+Input: Model ℳ \mathcal{M} , calibration data 𝒟 cal \mathcal{D}_{\text{cal}} , target sparsity p target p_{\text{target}}
+2:
+Output: Sparse model ℳ sparse \mathcal{M}_{\text{sparse}}
+3:
+𝐩 block ← BlockLevelAllocation ​ ( ℳ , 𝒟 cal , p target ) \mathbf{p}_{\text{block}}\leftarrow\text{BlockLevelAllocation}(\mathcal{M},\mathcal{D}_{\text{cal}},p_{\text{target}}) ⊳ \triangleright Evolutionary search for block sparsities
+4:
+𝐩 layer ← IntraBlockAllocation ​ ( ℳ , 𝐩 block , 𝒟 cal ) \mathbf{p}_{\text{layer}}\leftarrow\text{IntraBlockAllocation}(\mathcal{M},\mathbf{p}_{\text{block}},\mathcal{D}_{\text{cal}}) ⊳ \triangleright Greedy search for layer sparsities
+5:
+𝜶 ← SearchAlphaSequences ​ ( ℳ , 𝒟 cal ) \bm{\alpha}\leftarrow\text{SearchAlphaSequences}(\mathcal{M},\mathcal{D}_{\text{cal}}) ⊳ \triangleright Block-wise grid search for each α ℓ \alpha_{\ell}
+6:
+ℳ sparse ← ℳ \mathcal{M}_{\text{sparse}}\leftarrow\mathcal{M}
+7:
+for each layer ℓ \ell in ℳ sparse \mathcal{M}_{\text{sparse}} do
+8:
+ℓ . exponent ← 𝜶 ⁡ [ ℓ ] \ell.\text{exponent}\leftarrow\bm{\alpha}[\ell] ⊳ \triangleright Set layer exponent α ℓ \alpha_{\ell}
+9:
+ℓ . set_threshold ​ ( 𝐩 layer ​ [ ℓ ] , 𝒟 cal ) \ell.\text{set\_threshold}(\mathbf{p}_{\text{layer}}[\ell],\mathcal{D}_{\text{cal}}) ⊳ \triangleright Set threshold τ ℓ \tau_{\ell} using calibration stats
+10:
+end for
+11:
+return ℳ sparse \mathcal{M}_{\text{sparse}}
+Table 1: Accuracy comparison of WiSparse with baseline methods on six tasks. The best performance in each group is shown in bold , while the second-best is underlined .
+Model
+Sparsity
+Method
+SIQA
+GSM8K
+WiC
+HumanEval
+MMLU
+CSQA
+Average
+Llama-3.1-8B
+0
+Baseline
+43.19
+82.87
+52.35
+67.07
+69.07
+78.87
+65.57
+30
+R-Sparse
+41.40
+82.56
+51.41
+68.90
+68.45
+78.21
+65.16
+TEAL
+41.71
+83.85
+51.25
+64.63
+68.01
+78.54
+64.67
+Ours
+43.76
+82.26
+52.63
+67.07
+68.22
+78.46
+65.40
+40
+R-Sparse
+42.68
+80.82
+50.66
+61.59
+66.86
+77.56
+63.36
+TEAL
+41.71
+82.03
+50.47
+63.41
+67.10
+78.13
+63.81
+Ours
+42.58
+82.41
+50.78
+66.46
+67.88
+78.05
+64.70
+50
+R-Sparse
+43.04
+74.98
+52.35
+59.76
+63.43
+74.46
+61.34
+TEAL
+42.73
+75.51
+37.30
+62.20
+64.71
+75.27
+59.62
+Ours
+43.14
+78.77
+50.63
+65.85
+65.23
+77.81
+63.57
+Mistral-7B
+0
+Baseline
+66.48
+55.72
+58.31
+37.80
+61.92
+73.46
+58.95
+30
+R-Sparse
+66.48
+54.66
+58.46
+40.24
+61.32
+73.79
+59.17
+TEAL
+66.53
+54.81
+58.15
+37.20
+61.20
+73.05
+58.53
+Ours
+66.79
+54.89
+58.31
+37.80
+61.60
+73.46
+58.76
+40
+R-Sparse
+66.48
+52.62
+57.05
+39.02
+60.25
+72.65
+58.00
+TEAL
+66.38
+51.71
+57.52
+37.80
+60.14
+72.89
+57.71
+Ours
+66.22
+53.45
+57.68
+39.63
+60.85
+73.14
+58.54
+50
+R-Sparse
+66.33
+47.23
+57.21
+39.02
+58.82
+70.43
+56.51
+TEAL
+65.87
+50.80
+57.21
+39.02
+58.54
+70.93
+57.06
+Ours
+66.22
+51.71
+57.52
+38.41
+59.52
+72.81
+57.70
+Qwen-2.5-7B
+0
+Baseline
+41.45
+80.67
+55.02
+79.87
+74.26
+83.87
+69.19
+30
+R-Sparse
+41.25
+81.35
+54.39
+76.82
+73.18
+82.64
+68.27
+TEAL
+42.12
+79.45
+55.02
+81.10
+71.57
+81.57
+68.47
+Ours
+41.86
+80.74
+54.70
+79.27
+73.76
+83.05
+68.90
+40
+R-Sparse
+40.69
+80.59
+53.76
+79.27
+72.28
+82.56
+68.19
+TEAL
+41.35
+78.92
+53.61
+81.32
+71.77
+81.57
+68.09
+Ours
+41.15
+79.15
+54.39
+81.71
+72.78
+82.72
+68.65
+50
+R-Sparse
+39.82
+77.86
+52.19
+77.44
+70.68
+81.57
+66.59
+TEAL
+40.12
+76.27
+49.84
+70.73
+69.55
+79.77
+64.38
+Ours
+40.48
+79.00
+52.66
+78.05
+71.87
+81.74
+67.30
+5 Experiments
+5.1 Experimental Setup
+Models and Datasets.
+In our experiments, we evaluate model sparsification performance on three large language models: Llama-3.1-8B-Instruct ( Grattafiori et al., 2024 ) , Mistral-7B-Instruct, Qwen2.5-7B-Instruct ( Team, 2024 ) . Sparsity levels are set to 30%, 40%, and 50%, with the original dense model (0% sparsity) serving as the baseline.
+The evaluation is conducted using the OpenCompass benchmark framework ( Contributors, 2023 ) , covering six diverse datasets to assess a wide range of reasoning, commonsense, math, and coding capabilities: SIQA ( Sap et al., 2019 ) , GSM8K ( Cobbe et al., 2021 ) , WiC ( Pilehvar and Camacho-Collados, 2018 ) , HumanEval ( Chen et al., 2021 ) , MMLU ( Hendrycks et al., 2020 ) , and CSQA ( Talmor et al., 2018 ) . Performance is reported as accuracy for all tasks, and average accuracy across these benchmarks is used to assess overall model capability under different sparsity levels.
+Baselines.
+We compare against two representative training-free sparsification baselines R-Sparse ( Zhang et al., 2025 ) and TEAL ( Liu et al., 2025 ) under identical target sparsity levels and the same sparsification scope (all linear layers in the transformer blocks). For fair comparison, no additional fine-tuning or distillation is performed after sparsification and we sparsify only half of the prefilling tokens and all the decoding tokens for all tasks.
+Calibration and Hyperparameters. We use pile-val ( Gao et al., 2020 ) , CodeAlpaca-20k ( Chaudhary, 2023 ) and MetaMathQA ( Yu et al., 2023 ) as the calibration set so that math and code tasks can also be calibrated. For the weight exponent grid search, we iterate through a grid over [ 0.0 , 1.5 ] [0.0,1.5] with a step size of 0.05. For evolutionary search, we initialize all the blocks with the same target sparsity level. The search runs for 400 iterations, generating 64 offspring in each iteration. Offspring are generated via mutation only, with no crossover. We mutate with a step size of 0.5%, and only 10% of the blocks can be mutated each time to stabilize the search process.
+5.2 Accuracy Results
+As detailed in Table 1 , WiSparse consistently outperforms the training-free baselines, R-Sparse and TEAL, across most tested models and sparsity levels. The results underscore our method’s ability to maintain high model accuracy while significantly reducing computational density.
+The benefits of our approach are most evident at high sparsity. On Llama-3.1-8B with 50% sparsity, WiSparse retains over 97% of the dense model’s average accuracy. This performance significantly surpasses the strongest baselines, outperforming R-Sparse and TEAL by 2.23 and 3.95 percentage points, respectively. The advantage is particularly stark on math and coding tasks such as GSM8K and HumanEval, where WiSparse exhibits markedly less accuracy degradation than its counterparts.
+This trend of robust performance holds across other models. On Qwen-2.5-7B at 50% sparsity, WiSparse maintains 97.3% of the original average accuracy and widens its lead over TEAL to nearly 3 percentage points. On Mistral-7B, our method again delivers the highest accuracy among all sparse methods. We do observe that on the small HumanEval benchmark (164 problems), sparse models, including ours, can occasionally score higher than the dense baseline. This is likely a statistical artifact stemming from minor, beneficial changes to computation paths caused by sparsification.
+WiSparse is also highly effective at moderate sparsity. At a 30% sparsity level, performance degradation is negligible, with an average accuracy drop of just 0.22 percentage points across all models. These comprehensive results validate that WiSparse’s weight-aware importance score and mixed-granularity allocation strategy are crucial for preserving model capabilities, effectively pushing the accuracy-efficiency frontier for training-free sparsity.
+5.3 Efficiency Results
+Beyond accuracy preservation, a key goal of WiSparse is to reduce actual computation.
+To realize these efficiency gains, we extended the high-performance sparse kernels from TEAL ( Liu et al., 2025 ) to incorporate our weight-aware scoring mechanism.
+We measure efficiency in both theoretical FLOPs and end-to-end inference speed (tokens/s) on a single H20 GPU, generating 200 tokens from a 5-token prompt.
+Fig. 4 (left) reports achieved TFLOPs. As sparsity increases, FLOPs drop almost linearly, reflecting the skipped activation channels in linear projections. For example, in Llama‑3.1‑8B, FLOPs decrease from 1.92 TFLOPs at 0% sparsity to 1.03 TFLOPs at 50% sparsity—a 46% reduction. Mistral‑7B and Qwen‑2.5‑7B show similar proportional savings, confirming that our sparsification directly reduces computation.
+Fig. 4 (right) shows the corresponding throughput gains. For Llama‑3.1‑8B, speed rises from 153.5 tokens/s (dense) to 179.9 tokens/s (50% sparsity), a 17.2% improvement. Mistral‑7B and Qwen‑2.5‑7B achieve 21.4% and 21.2% faster inference, respectively.
+Figure 4: Achieved TLOPS (left) and end-to-end inference speed in tokens/s (right) under different sparsity levels with WiSparse on Llama‑3.1‑8B, Mistral‑7B, and Qwen‑2.5‑7B.
+5.4 Ablation Studies and Results Analysis
+Ablation studies.
+We conducted an ablation study to validate each component of WiSparse, as shown in Tab. 2 . A naive approach using only activation magnitudes for pruning causes a severe performance drop to 58.64. Incorporating our weight-aware importance score provides the most significant recovery, boosting accuracy to 61.57 (+2.93). Subsequently, the coarse, block-level search further improves performance to 62.10 by heterogeneously allocating sparsity. Finally, adding the fine-grained, layer-wise search achieves the best result of 63.57. These results confirm that each component is crucial, with the weight-aware importance score providing a strong foundation and the coarse-to-fine search effectively optimizing the final sparsity distribution.
+Table 2: Ablation studies : the effect of different components proposed in the paper. The experiment is conducted over Llama-3.1-8B on average metrics.
+Method
+Sparsity
+SIQA
+GSM8K
+WiC
+HumanEval
+MMLU
+CSQA
+Average
+Baseline
+0
+43.19
+82.87
+52.35
+67.07
+69.07
+78.87
+65.57
+Activation only
+0.5
+42.32
+74.07
+42.01
+56.10
+63.04
+74.28
+58.64
++ Weight importance
+0.5
+43.60
+76.42
+50.47
+60.98
+63.56
+74.37
+61.57
++ Coarse search
+0.5
+42.99
+76.42
+51.10
+62.20
+64.00
+75.84
+62.10
++ Fine search
+0.5
+43.14
+78.77
+50.63
+65.85
+65.23
+77.81
+63.57
+Visualization of sparsity allocation.
+Fig. 5 visualizes the per-block and per-module sparsity discovered by our coarse-to-fine allocator at a global target of 50% for Llama-3.1-8B and Qwen-2.5-7B. The resulting distributions are clearly heterogeneous across depth and differ between models, reflecting distinct sensitivity profiles. Consistent with Observation 2, the allocator tends to assign lower sparsity to blocks that are empirically fragile and higher sparsity to more robust regions. For example, in Qwen-2.5-7B (Fig. 3(b) ), Block 10 exhibits pronounced sensitivity at 40–60% sparsity; correspondingly, our search assigns it a noticeably lower prune ratio in Fig. 5(b) . Overall, the learned schedules align with the measured sensitivity landscape (Fig. 3 ), indicating that the allocator effectively tailors sparsity to model- and block-specific characteristics rather than enforcing a uniform policy.
+(a) Llama-3.1-8B
+(b) Qwen-2.5-7B
+Figure 5: Per-block and per-module (self-attention and MLP) sparsity distributions for (a) Llama-3.1-8B and (b) Qwen-2.5-7B, as determined by our search algorithm targeting 50% overall sparsity.
+6 Conclusion
+In this paper, we introduced WiSparse, a novel training-free framework designed to enhance the efficiency of large language model inference through activation sparsity. Our work is motivated by two key observations: less significant activations may align with highly important weights, and the heterogeneous sensitivity of transformer blocks to sparsification. WiSparse addresses these challenges by incorporating a weight-aware importance score that jointly evaluates activation magnitudes and weight norms, and by employing a coarse-to-fine allocation strategy that tailors sparsity ratios at both the block and layer levels. Our methodology requires no model retraining and incurs negligible runtime overhead. Extensive experiments on models like Llama-3.1-8B and Qwen-2.5-7B demonstrate that WiSparse consistently outperforms existing training-free baselines, retaining over 97% of dense model accuracy at 50% sparsity while delivering substantial throughput gains.
+Limitations and future work.
+The primary limitation stems from the dynamic, token-dependent nature of the masks. While this adaptivity is key to preserving accuracy, it can introduce runtime overhead from mask computation and may complicate efficient implementation for batched inference, where each sequence can yield a different sparsity pattern. Future research could therefore focus on optimizing kernels for dynamic structured sparsity, especially in a batch setting. Additionally, the offline calibration relies on a search procedure; developing more efficient or analytical methods for this step would enhance the framework’s practicality and reduce setup costs.
+7 Ethics statement
+This research aims to contribute to societal well-being by developing methods that make LLMs more computationally efficient, thereby increasing their accessibility and reducing their environmental impact. The work adheres to high standards of scientific excellence through a transparent methodology, comprehensive experiments, and detailed reporting of results to ensure reproducibility. We have respected the work of others by building upon and citing prior research. All models and datasets used in this study are publicly available, and their use is consistent with their original licenses, with no private or sensitive user data being involved. We have strived for honesty and transparency by clearly outlining our methods, limitations, and the potential impacts of our work, including a disclosure on the use of LLMs as an editorial tool in the preparation of this manuscript.
+8 Reproducibility statement
+We commit to ensuring the reproducibility of our work. The core components of our method, including the weight-aware importance score and the mixed-granularity allocation strategy, are detailed in Sec. 4 . Furthermore, Appendix A.2 provides complete pseudocode for the block-wise grid search, evolutionary block-level allocation , and greedy layer-level allocation. Sec. 5.1 details our experimental setup, specifying the models, evaluation benchmarks, calibration data, and all necessary hyperparameters to replicate our results.
+References
+Chaudhary (2023)
+S. Chaudhary
+Code alpaca: an instruction-following llama model for code generation .
+GitHub .
+Note: https://github.com/sahil280114/codealpaca
+Cited by: §5.1 .
+Chen et al. (2021)
+M. Chen, J. Tworek, H. Jun, Q. Yuan, H. P. D. O. Pinto, J. Kaplan, H. Edwards, Y. Burda, N. Joseph, G. Brockman, et al.
+Evaluating large language models trained on code .
+arXiv preprint arXiv:2107.03374 .
+Cited by: §5.1 .
+Chen et al. (2025)
+S. Chen, D. Zhao, J. Ko, C. Banbury, H. Zhuang, L. Liang, and T. Chen
+WINA: weight informed neuron activation for accelerating large language model inference .
+arXiv preprint arXiv:2505.19427 .
+Cited by: §1 ,
+§2 .
+Chen et al. (2023)
+T. Chen, T. Ding, B. Yadav, I. Zharkov, and L. Liang
+Lorashear: efficient large language model structured pruning and knowledge recovery .
+arXiv preprint arXiv:2310.18356 .
+Cited by: §2 .
+Cobbe et al. (2021)
+K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano, et al.
+Training verifiers to solve math word problems .
+arXiv preprint arXiv:2110.14168 .
+Cited by: §5.1 .
+Contributors (2023)
+O. Contributors
+OpenCompass: a universal evaluation platform for foundation models .
+Note: https://github.com/open-compass/opencompass
+Cited by: §5.1 .
+Fedus et al. (2022)
+W. Fedus, B. Zoph, and N. Shazeer
+Switch transformers: scaling to trillion parameter models with simple and efficient sparsity .
+Journal of Machine Learning Research 23 ( 120 ), pp. 1–39 .
+Cited by: §2 .
+Frantar and Alistarh (2023)
+E. Frantar and D. Alistarh
+Sparsegpt: massive language models can be accurately pruned in one-shot .
+In International conference on machine learning ,
+pp. 10323–10337 .
+Cited by: §2 .
+Gao et al. (2020)
+L. Gao, S. Biderman, S. Black, L. Golding, T. Hoppe, C. Foster, J. Phang, H. He, A. Thite, N. Nabeshima, et al.
+The Pile: an 800GB dataset of diverse text for language modeling .
+arXiv preprint arXiv:2101.00027 .
+Cited by: §5.1 .
+Grattafiori et al. (2024)
+A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan, et al.
+The llama 3 herd of models .
+arXiv preprint arXiv:2407.21783 .
+Cited by: §5.1 .
+Hendrycks et al. (2020)
+D. Hendrycks, C. Burns, S. Basart, A. Zou, M. Mazeika, D. Song, and J. Steinhardt
+Measuring massive multitask language understanding .
+arXiv preprint arXiv:2009.03300 .
+Cited by: §5.1 .
+Lee et al. (2024)
+J. Lee, D. Lee, G. Zhang, M. Tiwari, and A. Mirhoseini
+CATS: contextually-aware thresholding for sparsity in large language models .
+CoRR .
+Cited by: §1 ,
+§1 ,
+§2 .
+Lepikhin et al. (2020)
+D. Lepikhin, H. Lee, Y. Xu, D. Chen, O. Firat, Y. Huang, M. Krikun, N. Shazeer, and Z. Chen
+Gshard: scaling giant models with conditional computation and automatic sharding .
+arXiv preprint arXiv:2006.16668 .
+Cited by: §2 .
+Liu et al. (2025)
+J. Liu, P. Ponnusamy, T. Cai, H. Guo, Y. Kim, and B. Athiwaratkun
+Training-free activation sparsity in large language models .
+In The Thirteenth International Conference on Learning Representations ,
+Cited by: §1 ,
+§1 ,
+§2 ,
+§4.3 ,
+§5.1 ,
+§5.3 .
+Liu et al. (2023)
+Z. Liu, J. Wang, T. Dao, T. Zhou, B. Yuan, Z. Song, A. Shrivastava, C. Zhang, Y. Tian, C. Re, et al.
+Deja vu: contextual sparsity for efficient llms at inference time .
+In International Conference on Machine Learning ,
+pp. 22137–22176 .
+Cited by: §1 ,
+§2 .
+Men et al. (2025)
+X. Men, M. Xu, Q. Zhang, Q. Yuan, B. Wang, H. Lin, Y. Lu, X. Han, and W. Chen
+Shortgpt: layers in large language models are more redundant than you expect .
+In Findings of the Association for Computational Linguistics: ACL 2025 ,
+pp. 20192–20204 .
+Cited by: §2 .
+Pilehvar and Camacho-Collados (2018)
+M. T. Pilehvar and J. Camacho-Collados
+WiC: the word-in-context dataset for evaluating context-sensitive meaning representations .
+arXiv preprint arXiv:1808.09121 .
+Cited by: §5.1 .
+Ramachandran et al. (2025)
+A. Ramachandran, S. Kundu, A. Raha, S. Kundu, D. K. Mathaikutty, and T. Krishna
+Accelerating llm inference with flexible n: m sparsity via a fully digital compute-in-memory accelerator .
+arXiv preprint arXiv:2504.14365 .
+Cited by: §1 .
+Sap et al. (2019)
+M. Sap, H. Rashkin, D. Chen, R. LeBras, and Y. Choi
+Socialiqa: commonsense reasoning about social interactions .
+arXiv preprint arXiv:1904.09728 .
+Cited by: §5.1 .
+Shazeer et al. (2017)
+N. Shazeer, A. Mirhoseini, K. Maziarz, A. Davis, Q. Le, G. Hinton, and J. Dean
+Outrageously large neural networks: the sparsely-gated mixture-of-experts layer .
+arXiv preprint arXiv:1701.06538 .
+Cited by: §2 .
+[21]
+O. Sieberling, D. Kuznedelev, E. Kurtic, and D. Alistarh
+EvoPress: accurate dynamic model compression via evolutionary search .
+In Forty-second International Conference on Machine Learning ,
+Cited by: item 1 .
+Song et al. (2025)
+C. Song, X. Han, Z. Zhang, S. Hu, X. Shi, K. Li, C. Chen, Z. Liu, G. Li, T. Yang, et al.
+ProSparse: introducing and enhancing intrinsic activation sparsity within large language models .
+In Proceedings of the 31st International Conference on Computational Linguistics ,
+pp. 2626–2644 .
+Cited by: §2 .
+Song et al. (2024)
+Y. Song, H. Xie, Z. Zhang, B. Wen, L. Ma, Z. Mi, and H. Chen
+Turbo sparse: achieving llm sota performance with minimal activated parameters .
+arXiv preprint arXiv:2406.05955 .
+Cited by: §1 ,
+§2 .
+Sun et al. (2023)
+M. Sun, Z. Liu, A. Bair, and J. Z. Kolter
+A simple and effective pruning approach for large language models .
+arXiv preprint arXiv:2306.11695 .
+Cited by: §2 .
+Talmor et al. (2018)
+A. Talmor, J. Herzig, N. Lourie, and J. Berant
+Commonsenseqa: a question answering challenge targeting commonsense knowledge .
+arXiv preprint arXiv:1811.00937 .
+Cited by: §5.1 .
+Team (2024)
+Q. Team
+Qwen2.5: a party of foundation models .
+External Links: Link
+Cited by: §5.1 .
+Wan et al. (2023)
+Z. Wan, X. Wang, C. Liu, S. Alam, Y. Zheng, et al.
+Efficient large language models: a survey .
+arXiv preprint arXiv:2312.03863 1 .
+Cited by: §1 .
+Wang et al. (2024)
+H. Wang, S. Ma, R. Wang, and F. Wei
+Q-sparse: all large language models can be fully sparsely-activated .
+arXiv preprint arXiv:2407.10969 .
+Cited by: §1 ,
+§2 .
+Yin et al. (2023)
+L. Yin, Y. Wu, Z. Zhang, C. Hsieh, Y. Wang, Y. Jia, G. Li, A. Jaiswal, M. Pechenizkiy, Y. Liang, et al.
+Outlier weighed layerwise sparsity (owl): a missing secret sauce for pruning llms to high sparsity .
+arXiv preprint arXiv:2310.05175 .
+Cited by: §2 .
+Yu et al. (2023)
+L. Yu, W. Jiang, H. Shi, J. Yu, Z. Liu, Y. Zhang, J. T. Kwok, Z. Li, A. Weller, and W. Liu
+MetaMath: bootstrap your own mathematical questions for large language models .
+arXiv preprint arXiv:2309.12284 .
+Cited by: §5.1 .
+Zhang et al. (2025)
+Z. Zhang, Z. Liu, Y. Tian, H. Khaitan, Z. Wang, and S. Li
+R-sparse: rank-aware activation sparsity for efficient llm inference .
+In The Thirteenth International Conference on Learning Representations ,
+Cited by: §1 ,
+§1 ,
+§2 ,
+§5.1 .
+Zhao et al. (2025)
+W. X. Zhao, K. Zhou, J. Li, T. Tang, X. Wang, Y. Hou, Y. Min, B. Zhang, J. Zhang, Z. Dong, et al.
+A survey of large language models .
+Cited by: §1 .
+Appendix A Appendix
+A.1 The Use of Large Language Models (LLMs)
+Throughout the preparation of this manuscript, LLMs were employed as editorial tools. We used them for tasks such as grammar and style editing, and enhancing clarity and concision. The scientific concepts, study design, data analysis, and conclusions were conceived and developed exclusively by the human authors. LLMs were used solely to refine the wording of ideas already established. We provide this disclosure to maintain transparency and uphold academic integrity and responsible research practices.
+A.2 Algorithms
+Algorithm 2 Lightweight Block-Wise Grid Search for Alpha
+Input: Block ℬ \mathcal{B} , linear layers ℓ \ell and weight matrix W W , input vector X X
+Output: Optimal scaling factors α ∗ \alpha^{*}
+org_out ← BlockForward ​ ( ℬ , X , None ) \text{org\_out}\leftarrow\text{BlockForward}(\mathcal{B},X,\text{None}) ⊳ \triangleright Original output
+score ← GetWeightScale ​ ( W ) \text{score}\leftarrow\text{GetWeightScale}(W) ⊳ \triangleright Weight importance scores
+best_error ← + ∞ , best_ratio ← − 1 , best_scales ← None \text{best\_error}\leftarrow+\infty,\;\text{best\_ratio}\leftarrow-1,\;\text{best\_scales}\leftarrow\text{None}
+n grid ← 30 , history ← [ ] n_{\text{grid}}\leftarrow 30,\;\text{history}\leftarrow[\;] ⊳ \triangleright Grid search resolution
+org_state_dict ← ℬ . state_dict() \text{org\_state\_dict}\leftarrow\mathcal{B}.\text{state\_dict()}
+for ratio ← 0 \text{ratio}\leftarrow 0 to n grid − 1 n_{\text{grid}}-1 do
+α ← ratio × 1.5 / n grid \alpha\leftarrow\text{ratio}\times 1.5/n_{\text{grid}} ⊳ \triangleright Grid point in [ 0 , 1.5 ] [0,1.5]
+scales ← score α . clamp ​ ( min = 1 ​ e − 4 ) \text{scales}\leftarrow\text{score}^{\alpha}.\text{clamp}(\text{min}=1e-4) ⊳ \triangleright Compute scaling factors
+out ← BlockForward ​ ( ℬ , X , scales ) \text{out}\leftarrow\text{BlockForward}(\mathcal{B},X,\text{scales})
+loss ← ‖ org_out − out ‖ 2 2 \text{loss}\leftarrow\|\text{org\_out}-\text{out}\|_{2}^{2} ⊳ \triangleright Mean squared error
+history.append ​ ( loss ) \text{history.append}(\text{loss})
+if loss < best_error \text{loss}<\text{best\_error} then
+best_error ← loss , best_ratio ← α , best_scales ← scales \text{best\_error}\leftarrow\text{loss},\;\text{best\_ratio}\leftarrow\alpha,\;\text{best\_scales}\leftarrow\text{scales}
+end if
+ℬ . load_state_dict ​ ( org_state_dict ) \mathcal{B}.\text{load\_state\_dict}(\text{org\_state\_dict}) ⊳ \triangleright Restore original state
+end for
+return best_scales
+Algorithm 3 Block-Level Sparsity Allocation (Evolutionary Algorithm)
+Input: Model ℳ \mathcal{M} with N N blocks, target sparsity p target p_{\text{target}} , max generation G max G_{\max} , step size ϵ \epsilon
+Output: Optimal block sparsities 𝐩 block ∗ = { p B ∗ : B ∈ ℳ } \mathbf{p}_{\text{block}}^{*}=\{p_{B}^{*}:B\in\mathcal{M}\}
+𝐩 ← { p target : B ∈ ℳ } \mathbf{p}\leftarrow\{p_{\text{target}}:B\in\mathcal{M}\} ⊳ \triangleright Initialize uniform block sparsities
+for generation ← 1 \text{generation}\leftarrow 1 to G max G_{\max} do
+offspring_list ← [ ] \text{offspring\_list}\leftarrow[\;]
+while | offspring_list | < N offspring |\text{offspring\_list}|<N_{\text{offspring}} do
+𝐩 ′ ← 𝐩 . copy ​ ( ) \mathbf{p}^{\prime}\leftarrow\mathbf{p}.\text{copy}()
+num_flips ← ⌊ N × 0.1 ⌋ \text{num\_flips}\leftarrow\lfloor N\times 0.1\rfloor ⊳ \triangleright Localized mutation
+for i ← 1 i\leftarrow 1 to num_flips do
+B incr ← RandomChoice ​ ( { 1 , … , N } ) B_{\text{incr}}\leftarrow\text{RandomChoice}(\{1,\ldots,N\})
+p B incr ′ ← p B incr ′ + ϵ p^{\prime}_{B_{\text{incr}}}\leftarrow p^{\prime}_{B_{\text{incr}}}+\epsilon
+end for
+while WeightedAverage ​ ( 𝐩 ′ ) > p target \text{WeightedAverage}(\mathbf{p}^{\prime})>p_{\text{target}} do ⊳ \triangleright Maintain global constraint
+B decr ← RandomChoice ​ ( { 1 , … , N } ) B_{\text{decr}}\leftarrow\text{RandomChoice}(\{1,\ldots,N\})
+p B decr ′ ← p B decr ′ − ϵ p^{\prime}_{B_{\text{decr}}}\leftarrow p^{\prime}_{B_{\text{decr}}}-\epsilon
+end while
+offspring_list.append ​ ( 𝐩 ′ ) \text{offspring\_list.append}(\mathbf{p}^{\prime})
+end while
+𝐩 ← arg ⁡ min 𝐩 ′ ∈ offspring_list ⁡ ℒ ⁡ ( 𝐩 ′ ) \mathbf{p}\leftarrow\arg\min_{\mathbf{p}^{\prime}\in\text{offspring\_list}}\mathcal{L}(\mathbf{p}^{\prime}) ⊳ \triangleright Select best candidate through objective function
+end for
+return 𝐩 \mathbf{p}
+Algorithm 4 Layer-Level Greedy Sparsity Allocation
+Input: Block ℬ \mathcal{B} , target block sparsity p ℬ ∗ p_{\mathcal{B}}^{*} , step size δ \delta ,
+input activations 𝐗 \mathbf{X} , target activations 𝐘 \mathbf{Y}
+Output: Optimal layer sparsities 𝐩 layer ∗ = { p ℓ ∗ : ℓ ∈ ℬ } \mathbf{p}_{\text{layer}}^{*}=\{p_{\ell}^{*}:\ell\in\mathcal{B}\}
+𝐩 ← { p ℓ : 0.0 ​ for ​ ℓ ∈ ℬ } \mathbf{p}\leftarrow\{p_{\ell}:0.0\text{ for }\ell\in\mathcal{B}\} ⊳ \triangleright Initialize layer sparsities to zero
+while EffectiveSparsity ​ ( 𝐩 ) < p ℬ ∗ \text{EffectiveSparsity}(\mathbf{p})<p_{\mathcal{B}}^{*} do
+best_error ← + ∞ , best_layer ← None \text{best\_error}\leftarrow+\infty,\;\text{best\_layer}\leftarrow\text{None}
+for ℓ ∈ ℬ \ell\in\mathcal{B} do
+if p ℓ ≥ 1.0 p_{\ell}\geq 1.0 then continue
+end if ⊳ \triangleright Skip if fully sparse
+𝐩 ′ ← 𝐩 . copy ​ ( ) \mathbf{p}^{\prime}\leftarrow\mathbf{p}.\text{copy}()
+p ℓ ′ ← p ℓ ′ + δ p^{\prime}_{\ell}\leftarrow p^{\prime}_{\ell}+\delta ⊳ \triangleright Increment layer sparsity
+SetBlockSparsities ​ ( ℬ , 𝐩 ′ ) \text{SetBlockSparsities}(\mathcal{B},\mathbf{p}^{\prime})
+𝐘 ′ ← BlockForward ​ ( ℬ , 𝐗 ) \mathbf{Y}^{\prime}\leftarrow\text{BlockForward}(\mathcal{B},\mathbf{X})
+error ← ‖ 𝐘 − 𝐘 ′ ‖ 2 2 \text{error}\leftarrow\|\mathbf{Y}-\mathbf{Y}^{\prime}\|_{2}^{2} ⊳ \triangleright Block output reconstruction error
+if error < best_error \text{error}<\text{best\_error} then
+best_error ← error , best_layer ← ℓ \text{best\_error}\leftarrow\text{error},\;\text{best\_layer}\leftarrow\ell
+end if
+end for
+p best_layer ← p best_layer + δ p_{\text{best\_layer}}\leftarrow p_{\text{best\_layer}}+\delta ⊳ \triangleright Update layer with lowest error
+end while
+return 𝐩 \mathbf{p}
+A.3 Layer-wise Visualization of α \alpha values
+Figure 6: Visualization of the calibrated α \alpha across model layers. The left panel displays the α \alpha values for attention projection matrices, while the right panel shows them for MLP projection matrices. The x-axis represents the layer index.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

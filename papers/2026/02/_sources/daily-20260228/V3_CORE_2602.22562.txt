@@ -1,0 +1,4681 @@
+Layer-Targeted Multilingual Knowledge Erasure in Large Language Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+3
+Formulation and Core Challenges of Multilingual Unlearning
+3.1
+Problem Formulation
+3.2
+Depth of Unlearning Interventions
+4
+Methodology
+4.1
+Identifying Language Agnostic Region
+4.2
+Targeted Unlearning on Language-Agnostic Layers
+5
+Experiments
+5.1
+Experimental Setup and Baselines
+Baselines.
+5.2
+Case Study with Llama-3.1
+5.2.1
+Behavioral Results
+Source Language Ablations.
+5.2.2
+Mechanistic Verification via Logit Lens
+5.3
+Results on Other Model Architectures
+5.4
+Results on Other Unlearning Algorithms
+6
+Conclusion
+References
+Appendix A
+Layer Identification: Technical Details
+Dataset for Layer Analysis.
+A.1
+CKA-based Multilingual Alignment
+A.2
+LRDS-based Language-Agnosticism
+A.3
+Threshold Selection and Sensitivity
+Appendix B
+Experimental Setup: Full Details
+B.1
+Models
+B.2
+Model Preparation (Domain Knowledge Injection)
+B.3
+Datasets and Multilingual Split
+B.4
+Language Split
+B.5
+Unlearning Algorithm Hyperparameters
+B.6
+Evaluation Protocols
+B.6.1
+Behavioral Metrics (Black-box)
+B.6.2
+Mechanistic Validation (White-box)
+Appendix C
+Additional Experimental Results
+C.1
+Single-Language Unlearning Baselines
+C.2
+Sensitivity to Source Language Selection
+C.3
+Mechanistic Verification on Llama-3.1
+C.4
+Generalizability to Qwen-2.5-7B
+C.5
+Results on BLOOM-7b1
+C.6
+Results on SLUG (Llama-3.1)
+C.7
+Results on SimNPO (Llama-3.1)
+Appendix D
+Discussion
+License: CC BY 4.0
+arXiv:2602.22562v1 [cs.CR] 26 Feb 2026
+Layer-Targeted Multilingual Knowledge Erasure in Large Language Models
+Taoran Li
+Affiliation:
+Department of Computer Science and Engineering
+Affiliation:
+Texas A&M University
+Affiliation:
+College Station, TX, US
+Varun Chandrasekaran
+Affiliation:
+Department of Electrical & Computer Engineering
+Affiliation:
+University of Illinois at Urbana-Champaign
+Affiliation:
+Urbana, IL, US
+Email:
+varunc@illinois.edu
+Zhiyuan Yu
+Affiliation:
+Department of Computer Science and Engineering
+Affiliation:
+Texas A&M University
+Affiliation:
+College Station, TX, US
+Email:
+zhiyuanyu@tamu.edu
+Abstract
+Recent work has demonstrated that machine unlearning in Large Language Models (LLMs) fails to generalize across languages: knowledge erased in one language frequently remains accessible through others. However, the underlying cause of this failure and a principled solution remain open. In this work, we identify intervention depth as the key factor determining multilingual generalization. Through systematic layer-wise experiments, we characterize two distinct failure modes: shallow-layer interventions achieve erasure but collapse multilingual capabilities in held-out languages, while deep-layer interventions preserve utility but fail to erase target knowledge even in source languages. These findings reveal that the choice of intervention layer is not a free parameter; it fundamentally determines whether multilingual unlearning succeeds. We propose MUTE (Multilingual Unlearning via Targeted Erasure), a framework that uses Centered Kernel Alignment (CKA) and Linguistic Regions Development Score (LRDS) to identify intermediate, language-agnostic layers where cross-lingual representations converge. By restricting unlearning updates to these layers, MUTE achieves robust multilingual knowledge erasure while optimizing on only a small set of source languages. Extensive experiments across three LLM architectures and three unlearning algorithms validate our approach, with mechanistic analysis via Logit Lens probing confirming genuine knowledge removal rather than output-level suppression.
+1
+Introduction
+Figure 1
+:
+Multilingual unlearning requires targeting the right depth.
+We evaluate unlearning interventions at different layer depths,
+training on 3 source languages (EN, ES, PT) and evaluating on 7 languages including 4 held-out languages (DE, FR, HI, IT).
+Left:
+Shallow layer interventions effectively erase knowledge but catastrophically collapse multilingual capabilities. Held-out languages lose nearly all utility.
+Middle:
+Deep layer interventions preserve utility but fail to erase knowledge. The target information remains accessible.
+Right:
+Our method MUTE targets a language-agnostic region identified via multilingual representation analysis, achieving effective erasure while preserving multilingual utility.
+Large Language Models (LLMs) increasingly serve as global information infrastructure, supporting hundreds of languages and billions of users worldwide
+[
+36
+]
+. This global reach introduces a critical safety challenge. When hazardous knowledge must be removed from a model, such as instructions for synthesizing dangerous chemicals or exploiting security vulnerabilities, the unlearning must be effective across
+all
+supported languages, not merely the dominant ones used during safety interventions.
+Current machine unlearning approaches fundamentally operate in the monolingual setting. Methods based on gradient ascent
+[
+18
+]
+, preference optimization
+[
+45
+,
+12
+]
+, or representation editing
+[
+22
+]
+typically optimize on English data and implicitly assume the unlearning effect will generalize. However, this assumption proves dangerously flawed in multilingual contexts. Recent work on multilingual jailbreaks demonstrates that safety mechanisms frequently fail to generalize across languages, allowing attackers to bypass English-trained safety filters simply by translating queries into low-resource languages
+[
+38
+,
+10
+,
+43
+]
+. We hypothesize that a parallel vulnerability exists for unlearning: knowledge erased in English may remain fully accessible in other natural languages.
+A naive approach is to curate unlearning datasets for every supported language, but it is computationally prohibitive and impractical. Modern multilingual LLMs support numerous languages, many with limited data availability. A scalable solution must achieve
+multilingual generalization
+: unlearning on a small subset of source languages should propagate the erasure effect to all held-out languages.
+We argue that achieving such multilingual generalization requires rethinking
+where
+in the model architecture unlearning interventions should occur. Most existing methods apply updates globally across all layers or target the final output layers, implicitly treating all network depths as equivalent. However, multilingual LLMs exhibit a distinctive internal structure: shallow layers encode language-specific surface features, intermediate layers develop language-agnostic semantic representations, and deep layers re-specialize for language-specific generation
+[
+8
+,
+41
+,
+2
+,
+39
+,
+46
+,
+25
+,
+35
+]
+. This structure suggests that the choice of the intervention layer should fundamentally determine whether multi-unlearning generalizes.
+Through systematic experiments varying the intervention layer, we identify two critical failure modes that validate this hypothesis: (1) Interventions at deep layers fail to erase knowledge even on source languages, as representations have diverged into language-specific subspaces; and (2) Interventions at shallow layers achieve erasure but damage multilingual capabilities on held-out languages.
+These failure modes reveal that
+where
+we intervene matters as much as
+what
+we optimize. We propose the MUTE (
+M
+ultilingual
+U
+nlearning via
+T
+argeted
+E
+rasure) framework, which addresses multilingual unlearning through two complementary contributions. First, we develop a principled method for
+localizing
+the optimal intervention point using Centered Kernel Alignment (CKA)
+[
+20
+]
+to measure multilingual representational similarity and Linguistic Regions Development Score (LRDS)
+[
+44
+]
+to quantify language specificity. This CKA-LRDS approach identifies an intermediate layer where multilingual representations are maximally aligned and minimally language-specific. Second, we develop
+layer-targeted adaptations
+of three representative unlearning algorithms (RMU, SLUG, SimNPO) that concentrate parameter updates at the identified layer rather than across the entire network.
+We validate our framework across three model architectures (Llama-3.1, Qwen-2.5, BLOOM). Our experiments demonstrate that layer-targeted interventions achieve near-perfect erasure across multiple languages while preserving general capabilities,
+all by optimizing on only 3 source languages
+. Mechanistic verification via Logit Lens probing
+[
+14
+,
+48
+]
+confirms that interventions at this layer remove knowledge from intermediate representations rather than merely suppressing output tokens.
+Contributions.
+Our main contributions are as follows:
+•
+We identify and characterize two fundamental failure modes that explain why naive multilingual unlearning fails, demonstrating that intervention layer critically determines multilingual generalization (§
+3.2
+).
+•
+We propose MUTE, a framework that uses a CKA-LRDS analysis to identify the language-agnostic region and select the optimal layer for multilingual unlearning (§
+4.1
+).
+•
+We develop layer-targeted adaptations of three unlearning paradigms (RMU, SLUG, SimNPO) that restrict updates to the target layer, enabling effective erasure across up to 12 languages via only 3 source languages (§
+4.2
+).
+•
+We provide mechanistic evidence via Logit Lens probing that interventions at the target layer achieve genuine erasure rather than surface-level output masking (§
+5.2
+).
+2
+Related Work
+Machine unlearning for LLMs.
+Machine unlearning aims to erase the influence of a specific subset of the training data (
+D
+forget
+D_{\text{forget}}
+) while preserving general utility on a different subset (
+D
+retain
+D_{\text{retain}}
+)
+[
+6
+,
+3
+]
+. While exact unlearning approaches
+[
+3
+]
+are feasible for small models, it is computationally prohibitive for LLMs
+[
+42
+]
+. Approximate unlearning methods fall into three paradigms:
+(1)
+Gradient-based optimization
+methods including Gradient Ascent (GA)
+[
+18
+]
+, Negative Preference Optimization (NPO)
+[
+45
+]
+, SimNPO
+[
+12
+]
+, and task-specific objectives
+[
+7
+,
+23
+]
+;
+(2)
+Localization and pruning
+approaches targeting specific components rather than all weights, including ROME
+[
+28
+]
+, MEMIT
+[
+29
+]
+, SLUG
+[
+4
+]
+, and neuron masking
+[
+32
+,
+26
+]
+; and
+(3)
+Representation engineering
+methods such as RMU
+[
+22
+]
+operate on activation space by steering hidden states toward random vectors.
+Multilingual safety and representation learning.
+Ensuring safety across languages is critical for LLMs
+[
+37
+]
+. Studies on multilingual jailbreaks show that safety mechanisms trained on high-resource languages often fail when queries are translated into low-resource languages
+[
+38
+,
+10
+,
+43
+]
+.
+Understanding multilingual representations is essential for addressing this vulnerability. Research has progressed from embedding alignment
+[
+34
+,
+5
+]
+and unsupervised methods
+[
+24
+]
+to transformer-based multilingual pretraining
+[
+21
+]
+and analysis of emergent multilingual structures
+[
+41
+,
+8
+,
+1
+,
+2
+,
+11
+]
+. Metrics for quantifying representational alignment include CKA
+[
+20
+]
+, CCA
+[
+30
+]
+, and LRDS
+[
+44
+]
+.
+Recent work has begun exploring multilingual unlearning
+[
+27
+,
+9
+]
+, and
+Farashah et al. [13]
+discovered that unlearning in one language degrades retention in others.
+3
+Formulation and Core Challenges of Multilingual Unlearning
+In this section, we formalize the multilingual unlearning problem. The core challenge is achieving erasure across all supported languages while training on only a few. We demonstrate through experiments that this is fundamentally tied to intervention depth: the layer at which we apply unlearning determines erasure effectiveness across languages.
+3.1
+Problem Formulation
+Modern multilingual LLMs are trained on corpora spanning dozens to hundreds of languages, including many low-resource languages with limited data availability
+[
+36
+]
+. While this broad coverage enables global deployment, it also creates a safety challenge: hazardous knowledge (e.g., instructions for synthesizing dangerous chemicals or generating malicious code) must be removed consistently across
+all
+supported languages.
+Formally, we consider a multilingual LLM
+ℳ
+\mathcal{M}
+parameterized by
+θ
+\theta
+, composed of
+N
+N
+transformer layers:
+ℳ
+θ
+=
+f
+N
+∘
+f
+N
+−
+1
+∘
+⋯
+∘
+f
+1
+\mathcal{M}_{\theta}=f_{N}\circ f_{N-1}\circ\dots\circ f_{1}
+.
+Let
+𝐡
+l
+​
+(
+x
+)
+∈
+ℝ
+d
+\mathbf{h}_{l}(x)\in\mathbb{R}^{d}
+denote the hidden state at layer
+l
+l
+for input
+x
+x
+. Let
+ℒ
+all
+\mathcal{L}_{\text{all}}
+denote the set of all supported languages. We partition this into source languages
+ℒ
+src
+⊂
+ℒ
+all
+\mathcal{L}_{\text{src}}\subset\mathcal{L}_{\text{all}}
+(used for unlearning) and a set of hold-out languages
+ℒ
+hold-out
+=
+ℒ
+all
+∖
+ℒ
+src
+\mathcal{L}_{\text{hold-out}}=\mathcal{L}_{\text{all}}\setminus\mathcal{L}_{\text{src}}
+(used only for evaluation).
+The unlearning task involves two datasets: a
+forget set
+D
+forget
+D_{\text{forget}}
+containing knowledge to be erased (e.g., chemistry questions that could enable synthesis of dangerous substances), and a
+retain set
+D
+retain
+D_{\text{retain}}
+containing general knowledge that should be preserved (e.g., history and law). Both datasets exist in all languages
+ℒ
+all
+\mathcal{L}_{\text{all}}
+, but the unlearning algorithm only accesses data from
+ℒ
+src
+\mathcal{L}_{\text{src}}
+.
+Prior work on multilingual jailbreaks has shown that safety mechanisms trained primarily on English frequently fail when queries are translated into low-resource languages
+[
+38
+,
+10
+,
+43
+]
+, suggesting that unlearning may exhibit similar multilingual brittleness. Recent work confirms this concern:
+Farashah et al. [13]
+demonstrated that standard unlearning methods, which update parameters globally across all layers, fail to generalize erasure across languages while simultaneously degrading retention (a phenomenon they term
+Multilingual Amnesia
+). Their findings establish the problem but do not propose a solution. We take their empirical observation as a starting point and hypothesize that this failure stems from applying updates uniformly across all layers, motivating our investigation into
+where
+in the model to intervene. Another naive solution would optimize unlearning on all supported languages. However, this approach is computationally prohibitive (requiring
+𝒪
+⁡
+(
+|
+ℒ
+all
+|
+)
+\mathcal{O}(|\mathcal{L}_{\text{all}}|)
+times more optimization steps).
+In our experiments, we use translated dataset MMMLU
+[
+31
+]
+to enable rigorous evaluation, but our goal is to develop methods that generalize to held-out languages
+without
+requiring training data in those languages.
+Key Objective.
+The objective of our work is to find parameters
+θ
+′
+\theta^{\prime}
+such that: (1) the model fails to answer queries from
+D
+forget
+D_{\text{forget}}
+in
+all
+languages
+ℒ
+all
+\mathcal{L}_{\text{all}}
+, and (2) the model maintains performance on
+D
+retain
+D_{\text{retain}}
+across
+ℒ
+all
+\mathcal{L}_{\text{all}}
+, while given access to samples only from
+ℒ
+src
+\mathcal{L}_{\text{src}}
+.
+3.2
+Depth of Unlearning Interventions
+Most existing unlearning methods apply parameter updates across all layers or default to modifying final layers. However, multilingual LLMs exhibit a well-documented layered structure: shallow layers process surface-level linguistic features, intermediate layers form abstract semantic representations, and deep layers specialize in language-specific generation
+[
+8
+,
+41
+,
+2
+,
+39
+,
+46
+]
+. However, existing unlearning methods either apply updates across the entire model or select layers without a principled framework to identify the optimal depth for multilingual generalization
+[
+22
+]
+. This raises a natural question:
+does the depth at which we apply updates during unlearning affect multilingual generalization?
+To answer this question, we conduct a pilot study by applying the RMU algorithm
+[
+22
+]
+to Llama-3.1-8B at two distinct depths: a shallow layer (Layer 2) and a deep layer (Layer 30, near the output). We use the
+High School Chemistry
+subset of MMMLU
+[
+31
+]
+as the forget set and the
+History/Law
+subset as the retain set. We optimize on three source languages (English, Spanish, Portuguese) and evaluate generalization to four held-out languages (German, French, Hindi, Italian). These seven languages span diverse language families and are all well-supported by Llama-3.1.
+Failure Mode 1.
+Table
+1
+(right) shows that intervening at Layer 30 does not induce effective unlearning even on the source language: accuracy on the English forget set remains at 86.0%, similar to the finetuned baseline. This occurs because the target knowledge has already been retrieved and processed by earlier layers; deep layers primarily handle language-specific token generation rather than semantic representation. Therefore, modifying deep layers cannot erase the underlying knowledge, which remains encoded in earlier layers. As a result, the target knowledge remains accessible across other languages, including held-out ones.
+Failure Mode 2.
+Table
+1
+(left) reveals the other failure at Layer 2. Shallow intervention effectively erases the target knowledge: forget set accuracy drops to near-zero across all languages. However, the model’s general multilingual capabilities collapse entirely. The retain set accuracy for held-out languages decreases significantly (German: 58.0%
+→
+\rightarrow
+1.0%, Italian: 62.0%
+→
+\rightarrow
+0.0%), while source languages suffer moderate degradation (English: 84.0%
+→
+\rightarrow
+63.0%). This occurs because shallow layers encode fundamental multilingual representations; disrupting them destroys the model’s ability to process non-source languages.
+Implications.
+These experiments show that intervention depth is not a free parameter: it fundamentally determines the effectiveness of multilingual unlearning. Applying unlearning on deep layers fails to erase knowledge because semantic representations are largely encoded in earlier layers. In contrast, intervening shallow layers achieves erasure but also ruins multilingual representations, thus degrading utility on held-out languages. This motivates our search for
+language-agnostic layers
+, which are intermediate layers where the same semantic concept, expressed in different languages, maps to similar hidden representations and is minimally language-specific. We hypothesize that such layers form a contiguous space which we term the
+language-agnostic region
+, and that selecting an appropriate target layer within this region for intervention can modify the shared semantic representation of a concept, thereby achieving multilingual erasure with minimal utility degradation.
+Table 1
+:
+Motivating experiments including two failure modes of naive layer selection.
+We apply RMU to Llama-3.1 at Layer 2 (shallow) and Layer 30 (deep).
+Left:
+Shallow intervention leads to successful erasure but catastrophic retain collapse in held-out languages.
+Right:
+Deep intervention causes complete failure to unlearn even source languages. Stars (*) denote source languages. FT = Finetuned, Unl = Unlearned.
+Layer 2 (Shallow)
+Layer 30 (Deep)
+Forget (%)
+↓
+\downarrow
+Retain (%)
+↑
+\uparrow
+Forget (%)
+↓
+\downarrow
+Retain (%)
+↑
+\uparrow
+Lang
+FT
+Unl
+Δ
+\Delta
+FT
+Unl
+Δ
+\Delta
+FT
+Unl
+Δ
+\Delta
+FT
+Unl
+Δ
+\Delta
+en*
+86
+2
+-84
+84
+63
+-21
+86
+86
++0
+84
+84
++0
+es*
+74
+2
+-72
+66
+43
+-23
+74
+74
++0
+66
+66
++0
+pt*
+74
+0
+-74
+58
+36
+-22
+74
+72
+-2
+58
+58
++0
+de
+68
+0
+-68
+58
+1
+-57
+68
+69
++1
+58
+58
++0
+fr
+78
+0
+-78
+63
+10
+-53
+78
+76
+-2
+63
+63
++0
+hi
+64
+1
+-63
+23
+0
+-23
+64
+65
++1
+23
+23
++0
+it
+80
+2
+-78
+62
+0
+-62
+80
+76
+-4
+62
+62
++0
+4
+Methodology
+Overview.
+The failure modes identified in Section
+3.2
+suggest that the intervention layer largely affects the generalizability of unlearning across languages. Motivated by this observation, we propose MUTE (Multilingual Unlearning via Targeted Erasure), a two-stage framework that first localizes the optimal intervention layer through principled metric analysis, then applies layer-targeted unlearning exclusively at that layer (Algorithm 1). MUTE first identifies the language-agnostic region via CKA-LRDS analysis (CKA metric for multilingual alignment, LRDS metric for language specificity), then restricts unlearning updates exclusively to the selected target layer within this region.
+Algorithm 1
+Multilingual Unlearning via Targeted Erasure
+Require:
+Multilingual LLM
+M
+θ
+M_{\theta}
+with
+L
+L
+layers, forget set
+D
+forget
+D_{\text{forget}}
+, retain set
+D
+retain
+D_{\text{retain}}
+, source languages
+ℒ
+src
+\mathcal{L}_{\text{src}}
+, scaling factor
+α
+\alpha
+Ensure:
+Unlearned model
+M
+θ
+′
+M_{\theta^{\prime}}
+1:
+// Stage 1: Target Layer Localization
+2:
+for
+each layer
+l
+∈
+{
+1
+,
+…
+,
+N
+}
+l\in\{1,\ldots,N\}
+do
+3:  Compute multilingual alignment
+Align
+l
+\text{Align}_{l}
+via CKA
+4:  Compute language specificity
+LRDS
+l
+\text{LRDS}_{l}
+5:
+end for
+6:
+τ
+align
+←
+𝔼
+⁡
+[
+Align
+l
+]
+\tau_{\text{align}}\leftarrow\mathbb{E}[\text{Align}_{l}]
+;
+τ
+spec
+←
+α
+⋅
+min
+l
+⁡
+LRDS
+l
+\tau_{\text{spec}}\leftarrow\alpha\cdot\min_{l}\text{LRDS}_{l}
+7:
+Λ
+←
+{
+l
+∣
+Align
+l
+≥
+τ
+align
+∧
+LRDS
+l
+≤
+τ
+spec
+}
+\Lambda\leftarrow\{l\mid\text{Align}_{l}\geq\tau_{\text{align}}\land\text{LRDS}_{l}\leq\tau_{\text{spec}}\}
+8: Select
+l
+∗
+∈
+Λ
+l^{*}\in\Lambda
+based on unlearning algorithm
+9:
+// Stage 2: Layer-Targeted Unlearning
+10: Freeze all parameters
+θ
+\theta
+except
+θ
+l
+∗
+\theta_{l^{*}}
+11: Apply unlearning using
+D
+forget
+ℒ
+src
+D_{\text{forget}}^{\mathcal{L}_{\text{src}}}
+and
+D
+retain
+ℒ
+src
+D_{\text{retain}}^{\mathcal{L}_{\text{src}}}
+12: Update only
+θ
+l
+∗
+→
+θ
+l
+∗
+′
+\theta_{l^{*}}\rightarrow\theta^{\prime}_{l^{*}}
+13:
+return
+M
+θ
+′
+M_{\theta^{\prime}}
+4.1
+Identifying Language Agnostic Region
+To effectively unlearn target knowledge across languages with minimal cost, we must identify the optimal intervention point within the model. We seek layers where the same semantic concept, regardless of input language, maps to similar hidden state representations. Such layers are language-agnostic, organizing information by semantics rather than linguistic surface forms. To achieve this, we employ two complementary metrics: CKA measures multilingual representational similarity, while LRDS quantifies the degree to which representations cluster by language identity versus semantic content. Together, they identify layers that are both multilingually aligned and minimally language-specific.
+CKA-LRDS Layer Analysis.
+We employ two complementary metrics to identify language-agnostic layers. First, we use linear CKA
+[
+20
+]
+to measure multilingual alignment (i.e., the degree to which the same semantic concept, expressed in different languages, maps to similar hidden representations): for each layer
+l
+∈
+[
+N
+]
+l\in[N]
+, we compute the average pairwise CKA score across all supported languages to obtain an aggregate alignment score
+Align
+l
+\text{Align}_{l}
+, where higher values indicate language-invariant representations. Second, we adapt LRDS
+[
+44
+]
+to measure language specificity
+(i.e., the extent to which representations cluster by language identity rather than semantic content), where LRDS quantifies the divergence between intra-language and inter-language similarity, where values near zero indicate semantics-based rather than language-based clustering. Together, these metrics identify layers that are both multilingually aligned and minimally language-specific. Details are provided in Appendix
+A.1
+and
+A.2
+.
+Formalized Selection Strategy.
+We formalize the selection of the target layer
+l
+∗
+l^{*}
+as a constrained optimization problem. Specifically, we seek to identify layers that simultaneously exhibit high multilingual alignment and low language specificity, which requires defining thresholds for both metrics. To enable consistent threshold selection across architectures with different absolute metric ranges, we compute model-specific thresholds using the following unified formulas:
+τ
+align
+=
+𝔼
+⁡
+[
+Align
+l
+]
+,
+τ
+spec
+=
+α
+⋅
+min
+l
+⁡
+LRDS
+l
+,
+\small\tau_{\text{align}}=\mathbb{E}[\text{Align}_{l}],\hskip 9.24994pt\tau_{\text{spec}}=\alpha\cdot\min_{l}\text{LRDS}_{l},
+(1)
+where
+𝔼
+⁡
+[
+Align
+l
+]
+\mathbb{E}[\text{Align}_{l}]
+denotes the mean CKA alignment across all layers, and
+α
+\alpha
+is a scaling factor that controls the LRDS tolerance. The alignment threshold selects layers with above-average multilingual alignment, while the specificity threshold identifies the range where LRDS remains low. The value of
+α
+\alpha
+is architecture-dependent (
+α
+∈
+[
+1.5
+,
+4.5
+]
+\alpha\in[1.5,4.5]
+in our experiments; see Appendix
+A.3
+for details).
+Figure 2
+:
+Identifying the language-agnostic region.
+CKA-LRDS analysis for Llama-3.1. Blue line: multilingual CKA alignment (higher is better). Red line: LRDS (lower is more language-agnostic). Green shaded area:
+language-agnostic region
+Λ
+\Lambda
+, satisfying both
+CKA
+>
+τ
+align
+\text{CKA}>\tau_{\text{align}}
+and
+LRDS
+<
+τ
+spec
+\text{LRDS}<\tau_{\text{spec}}
+, where thresholds are computed via Equation
+1
+. We select Layer 9 for parameter-based unlearning and Layer 20 for activation-based unlearning.
+As described in
+3.2
+, we identify the
+language-agnostic region
+Λ
+\Lambda
+as :
+Λ
+=
+{
+l
+∣
+Align
+l
+≥
+τ
+align
+∧
+LRDS
+l
+≤
+τ
+spec
+}
+.
+\Lambda=\{l\mid\text{Align}_{l}\geq\tau_{\text{align}}\land\text{LRDS}_{l}\leq\tau_{\text{spec}}\}.
+(2)
+For Llama-3.1, applying Equation
+1
+with
+α
+=
+2.5
+\alpha=2.5
+yields
+τ
+align
+=
+0.647
+\tau_{\text{align}}=0.647
+and
+τ
+spec
+=
+0.0096
+\tau_{\text{spec}}=0.0096
+, identifying a continuous region
+Λ
+=
+[
+8
+,
+23
+]
+\Lambda=[8,23]
+(highlighted in green in Figure
+2
+). Within these layers, the optimal intervention layer depends on the mechanism of the unlearning algorithm.
+For Parameter-based Methods (e.g., RMU).
+These methods modify weights to steer activations away from the knowledge we want to unlearn (target knowledge). Intervening early within
+Λ
+\Lambda
+ensures that the disruption propagates through all subsequent layers, preventing the model from reconstructing the target concept downstream. We therefore select the earliest layer where alignment reaches its peak:
+l
+RMU
+∗
+=
+min
+⁡
+{
+l
+∈
+Λ
+∣
+Align
+l
+≈
+max
+k
+∈
+Λ
+⁡
+(
+Align
+k
+)
+}
+.
+\small l^{*}_{\text{RMU}}=\min\{l\in\Lambda\mid\text{Align}_{l}\approx\max_{k\in\Lambda}(\text{Align}_{k})\}.
+(3)
+For Activation-based Methods (e.g., SLUG).
+These methods require accurate probing of concept representations to compute effective unlearning gradients. Deeper layers within
+Λ
+\Lambda
+encode more abstract, fully-formed semantic representations, improving probe accuracy while remaining language-agnostic. We therefore select the deepest layer within
+Λ
+\Lambda
+:
+l
+SLUG
+∗
+=
+max
+{
+l
+∈
+Λ
+}
+.
+\small l^{*}_{\text{SLUG}}=\max\{l\in\Lambda\}.
+(4)
+4.2
+Targeted Unlearning on Language-Agnostic Layers
+Existing unlearning methods are not designed with multilingual generalization in mind. They either operate globally across all layers or select intervention points via task-specific hyperparameter search, without principled justification for why a particular depth should generalize across languages. To validate that our identified target layer enables effective multilingual erasure regardless of the underlying algorithm, we adapt three representative unlearning paradigms: RMU, SLUG, and SimNPO. For each method, we restrict parameter updates to the identified target layer.
+Adapted Representation Misalignment (RMU).
+The original RMU
+[
+22
+]
+selects intervention layers
+via hyperparameter search and updates parameters across three consecutive layers, without accounting for multilingual representation structure. We restrict parameter updates to the single target layer
+l
+RMU
+∗
+l^{*}_{\text{RMU}}
+(e.g., Layer 9 for Llama-3.1) identified via our CKA-LRDS analysis.
+We optimize the weights at layer
+l
+∗
+l^{*}
+using an
+ℓ
+2
+\ell_{2}
+loss that pushes
+𝐡
+l
+∗
+​
+(
+x
+forget
+)
+\mathbf{h}_{l^{*}}(x_{\text{forget}})
+towards a random vector
+𝐮
+\mathbf{u}
+that is fixed throughout training (to ensure a consistent optimization target) and scaled to match the typical magnitude of hidden states. We constrain the representations of retain data to remain close to the frozen base model. By targeting this layer, we disrupt the shared multilingual representation of the target concept before it diverges into language-specific variations, facilitating generalization to held-out languages.
+Adapted Single Layer Unlearning Gradient (SLUG).
+SLUG
+[
+4
+]
+performs one-shot unlearning on a single layer selected via Pareto frontier analysis, but its selection criterion optimizes for monolingual forget-retain trade-offs without considering multilingual generalization. We adapt SLUG as a targeted verification procedure for the deep boundary of the proposed language-agnostic region by restricting the gradient computation and parameter update to a specific layer and parameter subset. Unlike the original SLUG which relies solely on the forget gradient, our adaptation incorporates an explicit retain constraint inspired by RMU. Optimization is confined to the deepest layer within the identified language-agnostic region, denoted
+l
+SLUG
+∗
+l^{*}_{\text{SLUG}}
+(e.g., Layer 20 in Llama-3.1), which captures high-level semantic representations prior to language-specific specialization (Section
+4.1
+).
+To balance forgetting and utility preservation, we define the update direction as:
+Δ
+​
+θ
+=
+∇
+θ
+l
+SLUG
+∗
+ℒ
+forget
+−
+α
+​
+∇
+θ
+l
+SLUG
+∗
+ℒ
+retain
+,
+\small\Delta\theta=\nabla_{\theta_{l^{*}_{\text{SLUG}}}}\mathcal{L}_{\text{forget}}-\alpha\nabla_{\theta_{l^{*}_{\text{SLUG}}}}\mathcal{L}_{\text{retain}},
+(5)
+where
+θ
+l
+SLUG
+∗
+\theta_{l^{*}_{\text{SLUG}}}
+denotes the parameters at layer
+l
+SLUG
+∗
+l^{*}_{\text{SLUG}}
+. Moving along
+∇
+ℒ
+forget
+\nabla\mathcal{L}_{\text{forget}}
+increases the model’s loss on target content, while
+−
+α
+∇
+ℒ
+retain
+-\alpha\nabla\mathcal{L}_{\text{retain}}
+helps preserve utility on general-purpose data, with
+α
+\alpha
+controlling this trade-off.
+Parameter updates are applied exclusively to the self-attention matrices
+(
+𝐖
+q
+,
+𝐖
+k
+,
+𝐖
+v
+,
+𝐖
+o
+)
+(\mathbf{W}_{q},\mathbf{W}_{k},\mathbf{W}_{v},\mathbf{W}_{o})
+at layer
+l
+SLUG
+∗
+l^{*}_{\text{SLUG}}
+, while all MLP parameters are fixed, constraining the intervention to the model’s information-routing mechanisms rather than its stored representations. The resulting update is performed in a single step
+θ
+l
+SLUG
+∗
+←
+θ
+l
+SLUG
+∗
++
+λ
+​
+Δ
+​
+θ
+\theta_{l^{*}_{\text{SLUG}}}\leftarrow\theta_{l^{*}_{\text{SLUG}}}+\lambda\Delta\theta
+, where
+λ
+\lambda
+denotes the step size.
+This procedure tests whether semantic representations at the language-agnostic region boundary can be selectively disrupted to induce global forgetting across languages.
+Adapted Simple Negative Preference Optimization (SimNPO).
+SimNPO
+[
+12
+]
+frames unlearning as preference optimization with a length-normalized objective that eliminates the reference model required by NPO
+[
+45
+]
+, but updates the entire parameter space.
+We hypothesize that modifying the identified language-agnostic layer alone should be sufficient to satisfy the SimNPO unlearning objective. Specifically, we freeze all model parameters
+θ
+\theta
+except for those in the target layer
+l
+RMU
+∗
+l^{*}_{\text{RMU}}
+(the same layer used for RMU, as both methods perform parameter-based optimization). The unlearning gradients are computed at the final output layer but are backpropagated solely to update
+θ
+l
+RMU
+∗
+\theta_{l^{*}_{\text{RMU}}}
+, testing whether the unlearning signal can be effectively compressed into a single internal layer. We utilize the reference-free SimNPO loss:
+ℒ
+SimNPO
+=
+−
+2
+β
+​
+log
+⁡
+σ
+⁡
+(
+−
+β
+|
+y
+|
+​
+log
+⁡
+π
+θ
+l
+RMU
+∗
+​
+(
+y
+|
+x
+)
+−
+γ
+)
+,
+\small\mathcal{L}_{\text{SimNPO}}=-\frac{2}{\beta}\log\sigma\left(-\frac{\beta}{|y|}\log\pi_{\theta_{l^{*}_{\text{RMU}}}}(y|x)-\gamma\right),
+(6)
+where
+x
+x
+is the input prompt,
+y
+y
+is the target response to be unlearned,
+β
+\beta
+is a temperature parameter,
+γ
+\gamma
+is a margin hyperparameter, and
+1
+|
+y
+|
+\frac{1}{|y|}
+normalizes the log-probability by sequence length for robustness to varying response lengths across languages.
+5
+Experiments
+Table 2
+:
+Cross-model results.
+Average Forget and Retain accuracy (%) across languages for each model. The target layer achieves the best erasure-utility trade-off across all three architectures.
+Model
+Shallow
+Target
+Deep
+Forget
+↓
+\downarrow
+Retain
+↑
+\uparrow
+Forget
+↓
+\downarrow
+Retain
+↑
+\uparrow
+Forget
+↓
+\downarrow
+Retain
+↑
+\uparrow
+Llama-3.1-8B (L9)
+1.0%
+21.9%
+1.3%
+54.7%
+74.0%
+59.1%
+Qwen-2.5-7B (L19)
+0.3%
+4.9%
+15.8%
+13.3%
+33.7%
+14.0%
+BLOOM-7b1 (L5)
+0.4%
+6.0%
+0.0%
+6.4%
+12.9%
+7.9%
+Table 3
+:
+Behavioral Results (QA Accuracy) on Llama-3.1 using RMU.
+We report accuracy (%) for Forget (Chemistry) and Retain (History/Law) sets across 7 languages. Shallow layers (L2) achieve erasure but degrade Retain performance for held-out languages. Deep layers (L30) fail to erase knowledge. Target layers (L9, L16) within the language-agnostic region achieve effective erasure while preserving utility. * denotes source languages used for optimization.
+Language
+Base
+Finetuned
+Unlearned Accuracy by Intervention Layer
+(Pre-trained)
+(Target)
+L2 (Shallow)
+L4 (Shallow)
+L9 (Target)
+L16 (Target)
+L30 (Deep)
+FORGET SET: High School Chemistry
+(Lower is Better
+↓
+\downarrow
+)
+English (en)*
+12.0%
+86.0%
+2.0%
+2.0%
+2.0%
+0.0%
+86.0%
+Spanish (es)*
+7.0%
+74.0%
+2.0%
+2.0%
+2.0%
+0.0%
+74.0%
+Portuguese (pt)*
+3.0%
+74.0%
+0.0%
+0.0%
+1.0%
+0.0%
+72.0%
+German (de)
+5.0%
+68.0%
+0.0%
+0.0%
+1.0%
+0.0%
+69.0%
+French (fr)
+5.0%
+78.0%
+0.0%
+0.0%
+1.0%
+0.0%
+76.0%
+Hindi (hi)
+6.0%
+64.0%
+1.0%
+2.0%
+0.0%
+0.0%
+65.0%
+Italian (it)
+5.0%
+80.0%
+2.0%
+2.0%
+2.0%
+0.0%
+76.0%
+RETAIN SET: History & Law
+(Higher is Better
+↑
+\uparrow
+, closer to Finetuned)
+English (en)*
+5.0%
+84.0%
+63.0%
+75.0%
+77.0%
+79.0%
+84.0%
+Spanish (es)*
+1.0%
+66.0%
+43.0%
+56.0%
+63.0%
+64.0%
+66.0%
+Portuguese (pt)*
+1.0%
+58.0%
+36.0%
+54.0%
+56.0%
+59.0%
+58.0%
+German (de)
+2.0%
+58.0%
+1.0%
+35.0%
+49.0%
+56.0%
+58.0%
+French (fr)
+1.0%
+63.0%
+10.0%
+49.0%
+57.0%
+60.0%
+63.0%
+Hindi (hi)
+0.0%
+23.0%
+0.0%
+6.0%
+20.0%
+24.0%
+23.0%
+Italian (it)
+2.0%
+62.0%
+0.0%
+37.0%
+61.0%
+59.0%
+62.0%
+We validate MUTE from two complementary perspectives:
+behavioral evaluation
+(QA accuracy on forget and retain sets) and
+mechanistic analysis
+(Logit Lens probing of internal representations
+[
+48
+,
+19
+]
+to verify that knowledge is removed rather than suppressed at the output layer).
+Experiments span three model architectures, three unlearning algorithms, and up to 12 languages. Our results show that interventions at the identified language-agnostic layer achieve near-complete erasure across all evaluated languages while preserving model utility, with consistent patterns observed across models and algorithms.
+5.1
+Experimental Setup and Baselines
+Models.
+We evaluate MUTE across three well-established multilingual LLMs with diverse architectures: Llama-3.1-8B
+[
+15
+]
+, Qwen-2.5-7B
+[
+33
+]
+, and BLOOM-7b1
+[
+40
+]
+.
+Languages.
+We optimize on three randomly selected source languages (English, Spanish, Portuguese) and evaluate the transferred unlearning effectiveness to held-out languages: 4 for Llama-3.1, 9 for Qwen-2.5, and 5 for BLOOM.
+Datasets.
+Using the MMMLU
+[
+31
+]
+and MMLU
+[
+16
+]
+datasets, we select the subset of
+High School Chemistry
+as the forget set (proxy for hazardous knowledge) and that of
+History/Law
+as the retain set.
+Models are fine-tuned on all domains across supported languages before unlearning.
+Unlearning Algorithms.
+We apply our layer-targeted adaptations (Section
+4.2
+) of three representative methods: RMU
+[
+22
+]
+, SLUG
+[
+4
+]
+, and SimNPO
+[
+12
+]
+. For all methods, we restrict parameter updates exclusively to the identified target layer.
+Evaluation Strategy.
+Our experimental design involves two complementary approaches: (1) QA accuracy on forget and retain sets, measuring whether target knowledge is erased while general capabilities are preserved, and (2) Logit Lens probing
+[
+48
+,
+19
+]
+, which inspects internal representations to verify whether knowledge is genuinely removed rather than merely suppressed at the output layer. Since the identified language-agnostic layer varies across architectures, we first conduct an in-depth case study on Llama-3.1 using RMU (Section
+5.2
+), then demonstrate generalizability across models (Section
+5.3
+) and algorithms (Section
+5.4
+). The full details are provided in
+Appendix B
+.
+Baselines.
+For comparison, we adopt all-layer gradient ascent (GA) as baselines
+[
+13
+]
+. We evaluate single-language unlearning (English-only, Hindi-only) and multi-language unlearning with varying learning rates. Our experiments confirm that multilingual transfer is asymmetric
+[
+13
+]
+. All-layer GA cannot balance erasure and utility: aggressive settings achieve complete erasure but cause utility collapse, while conservative settings preserve utility but fail to erase knowledge (Appendix
+C.1
+). In contrast, our experiments with MUTE (§
+5.2
+) show that it achieves both effective erasure (
+∼
+\sim
+1% forget accuracy) and utility preservation (55.0% retain accuracy).
+5.2
+Case Study with Llama-3.1
+We conduct an in-depth analysis of Llama-3.1, examining both behavioral outcomes (QA accuracy) and internal mechanisms (Logit Lens probing) across five intervention depths: shallow (
+l
+2
+l_{2}
+,
+l
+4
+l_{4}
+), target (
+l
+9
+l_{9}
+,
+l
+16
+l_{16}
+), and deep (
+l
+30
+l_{30}
+).
+5.2.1
+Behavioral Results
+Table
+3
+presents QA accuracy across 7 languages. The results reveal three distinct behavioral patterns corresponding to intervention depth.
+Shallow Layers.
+Consistent with our findings in the pilot study (Section
+3.2
+), interventions at Layer 2 successfully reduce forget set accuracy to near-zero across all languages, but catastrophically degrade retain set performance for held-out languages (e.g., German:
+58.0
+%
+→
+1.0
+%
+58.0\%\rightarrow 1.0\%
+, Italian:
+62.0
+%
+→
+0.0
+%
+62.0\%\rightarrow 0.0\%
+), confirming that shallow layers encode fundamental multilingual representations.
+Deep Layers.
+At Layer 30, unlearning fails entirely. The model retains high forget set accuracy similar to the finetuned baseline (English:
+86.0
+%
+86.0\%
+, German:
+69.0
+%
+69.0\%
+), validating that deep-layer representations have already diverged into language-specific subspaces resistant to unlearning.
+Target Layers.
+Layers 9 and 16, identified by our CKA-LRDS analysis as target layers, achieve the desired trade-off. Table
+3
+shows that Layer 9 reduces forget set accuracy to
+≤
+2.0
+%
+\leq 2.0\%
+across all 7 languages while maintaining retain set performance (German:
+49.0
+%
+49.0\%
+, Italian:
+61.0
+%
+61.0\%
+, compared to finetuned
+58.0
+%
+58.0\%
+and
+62.0
+%
+62.0\%
+respectively). Layer 16 achieves complete erasure (
+0
+%
+0\%
+forget accuracy) with even stronger retention (English:
+79.0
+%
+79.0\%
+vs. finetuned
+84.0
+%
+84.0\%
+). Critically, these results hold for both source languages (used during optimization) and held-out languages (zero-shot transfer), confirming the multilingual generalization of interventions at the target layer.
+Source Language Ablations.
+We verify that MUTE is not sensitive to the choice of source languages. Using DE/FR/IT as source languages instead of EN/ES/PT, MUTE achieves comparable performance:
+∼
+\sim
+1% forget accuracy and 54.0% retain accuracy across all languages, including the now held-out EN/ES/PT. This confirms that MUTE’s effectiveness stems from targeting the language-agnostic layer rather than from specific language selection (Appendix
+C.2
+).
+5.2.2
+Mechanistic Verification via Logit Lens
+Behavioral metrics evaluate end-to-end performance but do not reveal whether knowledge is genuinely removed or merely suppressed at the output layer. We employ Logit Lens probing
+[
+14
+,
+48
+]
+to inspect internal representations. Table
+9
+in
+Appendix C
+reports the probability assigned to correct answers at intermediate layers, providing a white-box view of the inner mechanism.
+Shallow Layer.
+At Layer 2, the internal representations for held-out languages show structural degradation. As shown in Table
+9
+, Hindi retain set recall drops from
+30.05
+%
+30.05\%
+(finetuned) to
+3.47
+%
+3.47\%
+, and German drops from
+30.71
+%
+30.71\%
+to
+12.77
+%
+12.77\%
+. This confirms that shallow interventions do not selectively remove target knowledge; instead, they damage the representational capacity required to encode any concept in non-source languages.
+Deep Layers.
+At Layer 30, forget set recall remains similar to the finetuned baseline. Table
+9
+shows that English recall stays at
+29.39
+%
+→
+29.42
+%
+29.39\%\to 29.42\%
+and German at
+27.44
+%
+→
+27.41
+%
+27.44\%\to 27.41\%
+. The knowledge persists in the model despite optimization efforts. This explains the behavioral failure: deep-layer interventions do not modify the stored knowledge, rendering them ineffective for unlearning.
+Target Layers.
+At Layers 9 and 16, we observe the target mechanistic signature. As Table
+9
+demonstrates, forget set recall drops to near-zero (English:
+1.50
+%
+1.50\%
+, Hindi:
+1.18
+%
+1.18\%
+), confirming that the target knowledge is removed from internal representations. Additionally, retain set recall remains close to the finetuned baseline (Hindi:
+29.64
+%
+29.64\%
+vs.
+30.05
+%
+30.05\%
+; Italian:
+31.32
+%
+31.32\%
+vs.
+31.44
+%
+31.44\%
+). This demonstrates that interventions at the target layer achieve knowledge removal while preserving the multilingual representation space.
+5.3
+Results on Other Model Architectures
+To verify that the language-agnostic layer phenomenon is not specific to Llama-3.1, we evaluate two additional architectures: Qwen-2.5-7B and BLOOM-7b1. Results are summarized in Table
+2
+, with full per-language breakdowns in Table
+10
+and Table
+11
+in
+Appendix C
+.
+Qwen-2.5-7B.
+Our CKA-LRDS analysis identifies Layer 19 as the target layer for Qwen-2.5 (Figure
+3
+). As in Table
+10
+, at Layer 2 (shallow), Forget accuracy drops to near-zero but Retain performance degrades substantially (German:
+13.0
+%
+→
+3.0
+%
+13.0\%\to 3.0\%
+). At Layer 23 (deep), unlearning fails (English Forget:
+45.0
+%
+45.0\%
+vs. finetuned
+52.0
+%
+52.0\%
+). At Layer 19 (target), Forget accuracy is reduced to
+11.0
+11.0
+–
+26.0
+%
+26.0\%
+across languages while Retain performance is largely preserved. Although the erasure is less effective than Llama-3.1, the relative pattern remains consistent: shallow layers degrade utility, deep layers fail to erase, and target layers within the language-agnostic region achieve the best trade-off.
+BLOOM-7b1.
+For BLOOM, our analysis identifies Layer 5 as the target layer (Figure
+4
+). Table
+11
+shows that Layer 5 achieves nearly complete erasure while preserving Retain performance (English:
+13.0
+%
+13.0\%
+vs. finetuned
+16.0
+%
+16.0\%
+). In contrast, Layer 29 (deep) shows no unlearning effect (English Forget:
+18.0
+%
+18.0\%
+vs. finetuned
+17.0
+%
+17.0\%
+). Notably, the target layer in BLOOM (Layer 5/30
+≈
+\approx
+17% depth) is earlier than in Llama-3.1 (Layer 9/32
+≈
+\approx
+28% depth). This suggests that the optimal intervention point varies across architectures.
+Table 4
+:
+Cross-algorithm results on Llama-3.1.
+Average Forget and Retain accuracy (%) across all 7 languages. Target layers vary by algorithm: L9 for RMU/SimNPO, L20 for SLUG. SimNPO achieves the best utility preservation.
+Algorithm
+Shallow (L2/L3)
+Target
+Deep (L30)
+Forget
+↓
+\downarrow
+Retain
+↑
+\uparrow
+Forget
+↓
+\downarrow
+Retain
+↑
+\uparrow
+Forget
+↓
+\downarrow
+Retain
+↑
+\uparrow
+RMU (L9)
+1.0%
+21.9%
+1.3%
+54.7%
+74.0%
+59.1%
+SLUG (L20)
+0.0%
+0.0%
+35.4%
+31.4%
+75.0%
+59.7%
+SimNPO (L9)
+0.7%
+55.3%
+0.0%
+58.6%
+68.9%
+58.1%
+5.4
+Results on Other Unlearning Algorithms
+We validate that the identified target layer is effective across unlearning methods by evaluating on SLUG (gradient-based, one-shot) and SimNPO (preference-based) on Llama-3.1. Results are summarized in Table
+4
+, with full per-language results in Table
+12
+and Table
+13
+in
+Appendix C
+.
+SLUG.
+As shown in Table
+12
+, at Layer 9 (target), SLUG achieves complete erasure (
+0
+%
+0\%
+Forget accuracy). However, SLUG at this layer also reduces Retain accuracy to
+0
+%
+0\%
+, indicating that the single-step gradient update is too aggressive when confined to a single layer. At intermediate depths (L18, L20), partial erasure is achieved (Forget:
+24.0
+%
+24.0\%
+–
+53.0
+%
+53.0\%
+) with moderate Retain preservation. At Layer 30 (deep), unlearning fails entirely (English Forget:
+88.0
+%
+88.0\%
+). These results suggest that while SLUG benefits from targeting within the language-agnostic region for erasure, additional regularization is needed to preserve utility.
+SimNPO.
+Table
+13
+shows that SimNPO achieves the most favorable trade-off at the target layer. At Layer 9, SimNPO reduces Forget accuracy to
+0
+%
+0\%
+across all languages while maintaining high Retain performance (English:
+86.0
+%
+86.0\%
+vs. finetuned
+84.0
+%
+84.0\%
+; Spanish:
+75.0
+%
+75.0\%
+vs.
+66.0
+%
+66.0\%
+). The length-normalized preference objective provides implicit regularization that prevents utility degradation. At Layer 30 (deep), unlearning fails (English Forget:
+81.0
+%
+81.0\%
+), consistent with the results of RMU and SLUG.
+Across all three algorithms, the observation and insights remain consistent: interventions at the target layer enable effective multilingual knowledge erasure, while deep-layer interventions fail. The choice of algorithm affects the erasure-utility trade-off, with SimNPO providing the best balance.
+6
+Conclusion
+We identify a fundamental limitation of existing unlearning methods: knowledge erased in one language often remains accessible through other languages. Through systematic experiments, we demonstrate that intervention depth critically affects multilingual generalization. Specifically, deep-layer interventions fail to erase knowledge, while shallow-layer interventions ruin multilingual capabilities. Based on these observations, we propose MUTE, a framework that localizes and targets language-agnostic layers for unlearning. Experiments across three model architectures, three unlearning algorithms, and up to 12 languages show that MUTE achieves effective multilingual erasure while training on only 3 source languages. We further conduct a mechanistic analysis to validate that MUTE achieves knowledge removal rather than output-level suppression. Additional discussion is provided in
+Appendix D
+. In this study, we introduce the paradigm shift of multilingual unlearning from
+what data to optimize on
+to
+where in the model to intervene
+.
+References
+[1]
+M. Artetxe, S. Ruder, and D. Yogatama
+(2020)
+On the cross-lingual transferability of monolingual representations
+.
+In
+Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics
+,
+pp. 4623–4637
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2
+.
+[2]
+S. Bhattacharya and O. Bojar
+(2023)
+Unveiling multilinguality in transformer models: exploring language specificity in feed-forward networks
+.
+External Links:
+2310.15552
+,
+Link
+Cited by:
+§1
+,
+§2
+,
+§3.2
+.
+[3]
+L. Bourtoule, V. Chandrasekaran, C. A. Choquette-Choo, H. Jia, A. Travers, B. Zhang, D. Lie, and N. Papernot
+(2020)
+Machine unlearning
+.
+External Links:
+1912.03817
+,
+Link
+Cited by:
+§2
+.
+[4]
+Z. Cai, Y. Tan, and M. S. Asif
+(2025)
+Targeted unlearning with single layer unlearning gradient
+.
+External Links:
+2407.11867
+,
+Link
+Cited by:
+§2
+,
+§4.2
+,
+§5.1
+.
+[5]
+S. Cao, N. Kitaev, and D. Klein
+(2020)
+Multilingual alignment of contextual word representations
+.
+External Links:
+2002.03518
+,
+Link
+Cited by:
+§2
+.
+[6]
+Y. Cao and J. Yang
+(2015)
+Towards making systems forget with machine unlearning
+.
+In
+2015 IEEE Symposium on Security and Privacy
+,
+Vol.
+,
+pp. 463–480
+.
+External Links:
+Document
+Cited by:
+§2
+.
+[7]
+J. Chen and D. Yang
+(2023)
+Unlearn what you want to forget: efficient unlearning for llms
+.
+External Links:
+2310.20150
+,
+Link
+Cited by:
+§2
+.
+[8]
+E. A. Chi, J. Hewitt, and C. D. Manning
+(2020)
+Finding universal grammatical relations in multilingual bert
+.
+External Links:
+2005.04511
+,
+Link
+Cited by:
+§1
+,
+§2
+,
+§3.2
+.
+[9]
+M. Choi, K. Min, and J. Choo
+(2024)
+Cross-lingual unlearning of selective knowledge in multilingual language models
+.
+External Links:
+2406.12354
+,
+Link
+Cited by:
+§2
+.
+[10]
+Y. Deng, W. Zhang, S. J. Pan, and L. Bing
+(2024)
+Multilingual jailbreak challenges in large language models
+.
+External Links:
+2310.06474
+,
+Link
+Cited by:
+§1
+,
+§2
+,
+§3.1
+.
+[11]
+C. Dumas, C. Wendler, V. Veselovsky, G. Monea, and R. West
+(2025)
+Separating tongue from thought: activation patching reveals language-agnostic concept representations in transformers
+.
+External Links:
+2411.08745
+,
+Link
+Cited by:
+§2
+.
+[12]
+C. Fan, J. Liu, L. Lin, J. Jia, R. Zhang, S. Mei, and S. Liu
+(2025)
+Simplicity prevails: rethinking negative preference optimization for llm unlearning
+.
+External Links:
+2410.07163
+,
+Link
+Cited by:
+§1
+,
+§2
+,
+§4.2
+,
+§5.1
+.
+[13]
+A. D. Farashah, A. Khandelwal, M. Fauchard, Z. Shi, N. Rostamzadeh, and G. Farnadi
+(2026)
+Multilingual amnesia: on the transferability of unlearning in multilingual llms
+.
+External Links:
+2601.05641
+,
+Link
+Cited by:
+§C.1
+,
+§C.1
+,
+§2
+,
+§3.1
+,
+§5.1
+.
+[14]
+M. Geva, R. Schuster, J. Berant, and O. Levy
+(2021)
+Transformer feed-forward layers are key-value memories
+.
+External Links:
+2012.14913
+,
+Link
+Cited by:
+§1
+,
+§5.2.2
+.
+[15]
+A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan, A. Yang, A. Fan, A. Goyal, A. Hartshorn, A. Yang, A. Mitra, A. Sravankumar, A. Korenev, A. Hinsvark, A. Rao, A. Zhang, A. Rodriguez, A. Gregerson, A. Spataru, B. Roziere, B. Biron, B. Tang, B. Chern, C. Caucheteux, C. Nayak, C. Bi, C. Marra, C. McConnell, C. Keller, C. Touret, C. Wu, C. Wong, C. C. Ferrer, C. Nikolaidis, D. Allonsius, D. Song, D. Pintz, D. Livshits, D. Wyatt, D. Esiobu, D. Choudhary, D. Mahajan, D. Garcia-Olano, D. Perino, D. Hupkes, E. Lakomkin, E. AlBadawy, E. Lobanova, E. Dinan, E. M. Smith, F. Radenovic, F. Guzmán, F. Zhang, G. Synnaeve, G. Lee, G. L. Anderson, G. Thattai, G. Nail, G. Mialon, G. Pang, G. Cucurell, H. Nguyen, H. Korevaar, H. Xu, H. Touvron, I. Zarov, I. A. Ibarra, I. Kloumann, I. Misra, I. Evtimov, J. Zhang, J. Copet, J. Lee, J. Geffert, J. Vranes, J. Park, J. Mahadeokar, J. Shah, J. van der Linde, J. Billock, J. Hong, J. Lee, J. Fu, J. Chi, J. Huang, J. Liu, J. Wang, J. Yu, J. Bitton, J. Spisak, J. Park, J. Rocca, J. Johnstun, J. Saxe, J. Jia, K. V. Alwala, K. Prasad, K. Upasani, K. Plawiak, K. Li, K. Heafield, K. Stone, K. El-Arini, K. Iyer, K. Malik, K. Chiu, K. Bhalla, K. Lakhotia, L. Rantala-Yeary, L. van der Maaten, L. Chen, L. Tan, L. Jenkins, L. Martin, L. Madaan, L. Malo, L. Blecher, L. Landzaat, L. de Oliveira, M. Muzzi, M. Pasupuleti, M. Singh, M. Paluri, M. Kardas, M. Tsimpoukelli, M. Oldham, M. Rita, M. Pavlova, M. Kambadur, M. Lewis, M. Si, M. K. Singh, M. Hassan, N. Goyal, N. Torabi, N. Bashlykov, N. Bogoychev, N. Chatterji, N. Zhang, O. Duchenne, O. Çelebi, P. Alrassy, P. Zhang, P. Li, P. Vasic, P. Weng, P. Bhargava, P. Dubal, P. Krishnan, P. S. Koura, P. Xu, Q. He, Q. Dong, R. Srinivasan, R. Ganapathy, R. Calderer, R. S. Cabral, R. Stojnic, R. Raileanu, R. Maheswari, R. Girdhar, R. Patel, R. Sauvestre, R. Polidoro, R. Sumbaly, R. Taylor, R. Silva, R. Hou, R. Wang, S. Hosseini, S. Chennabasappa, S. Singh, S. Bell, S. S. Kim, S. Edunov, S. Nie, S. Narang, S. Raparthy, S. Shen, S. Wan, S. Bhosale, S. Zhang, S. Vandenhende, S. Batra, S. Whitman, S. Sootla, S. Collot, S. Gururangan, S. Borodinsky, T. Herman, T. Fowler, T. Sheasha, T. Georgiou, T. Scialom, T. Speckbacher, T. Mihaylov, T. Xiao, U. Karn, V. Goswami, V. Gupta, V. Ramanathan, V. Kerkez, V. Gonguet, V. Do, V. Vogeti, V. Albiero, V. Petrovic, W. Chu, W. Xiong, W. Fu, W. Meers, X. Martinet, X. Wang, X. Wang, X. E. Tan, X. Xia, X. Xie, X. Jia, X. Wang, Y. Goldschlag, Y. Gaur, Y. Babaei, Y. Wen, Y. Song, Y. Zhang, Y. Li, Y. Mao, Z. D. Coudert, Z. Yan, Z. Chen, Z. Papakipos, A. Singh, A. Srivastava, A. Jain, A. Kelsey, A. Shajnfeld, A. Gangidi, A. Victoria, A. Goldstand, A. Menon, A. Sharma, A. Boesenberg, A. Baevski, A. Feinstein, A. Kallet, A. Sangani, A. Teo, A. Yunus, A. Lupu, A. Alvarado, A. Caples, A. Gu, A. Ho, A. Poulton, A. Ryan, A. Ramchandani, A. Dong, A. Franco, A. Goyal, A. Saraf, A. Chowdhury, A. Gabriel, A. Bharambe, A. Eisenman, A. Yazdan, B. James, B. Maurer, B. Leonhardi, B. Huang, B. Loyd, B. D. Paola, B. Paranjape, B. Liu, B. Wu, B. Ni, B. Hancock, B. Wasti, B. Spence, B. Stojkovic, B. Gamido, B. Montalvo, C. Parker, C. Burton, C. Mejia, C. Liu, C. Wang, C. Kim, C. Zhou, C. Hu, C. Chu, C. Cai, C. Tindal, C. Feichtenhofer, C. Gao, D. Civin, D. Beaty, D. Kreymer, D. Li, D. Adkins, D. Xu, D. Testuggine, D. David, D. Parikh, D. Liskovich, D. Foss, D. Wang, D. Le, D. Holland, E. Dowling, E. Jamil, E. Montgomery, E. Presani, E. Hahn, E. Wood, E. Le, E. Brinkman, E. Arcaute, E. Dunbar, E. Smothers, F. Sun, F. Kreuk, F. Tian, F. Kokkinos, F. Ozgenel, F. Caggioni, F. Kanayet, F. Seide, G. M. Florez, G. Schwarz, G. Badeer, G. Swee, G. Halpern, G. Herman, G. Sizov, Guangyi, Zhang, G. Lakshminarayanan, H. Inan, H. Shojanazeri, H. Zou, H. Wang, H. Zha, H. Habeeb, H. Rudolph, H. Suk, H. Aspegren, H. Goldman, H. Zhan, I. Damlaj, I. Molybog, I. Tufanov, I. Leontiadis, I. Veliche, I. Gat, J. Weissman, J. Geboski, J. Kohli, J. Lam, J. Asher, J. Gaya, J. Marcus, J. Tang, J. Chan, J. Zhen, J. Reizenstein, J. Teboul, J. Zhong, J. Jin, J. Yang, J. Cummings, J. Carvill, J. Shepard, J. McPhie, J. Torres, J. Ginsburg, J. Wang, K. Wu, K. H. U, K. Saxena, K. Khandelwal, K. Zand, K. Matosich, K. Veeraraghavan, K. Michelena, K. Li, K. Jagadeesh, K. Huang, K. Chawla, K. Huang, L. Chen, L. Garg, L. A, L. Silva, L. Bell, L. Zhang, L. Guo, L. Yu, L. Moshkovich, L. Wehrstedt, M. Khabsa, M. Avalani, M. Bhatt, M. Mankus, M. Hasson, M. Lennie, M. Reso, M. Groshev, M. Naumov, M. Lathi, M. Keneally, M. Liu, M. L. Seltzer, M. Valko, M. Restrepo, M. Patel, M. Vyatskov, M. Samvelyan, M. Clark, M. Macey, M. Wang, M. J. Hermoso, M. Metanat, M. Rastegari, M. Bansal, N. Santhanam, N. Parks, N. White, N. Bawa, N. Singhal, N. Egebo, N. Usunier, N. Mehta, N. P. Laptev, N. Dong, N. Cheng, O. Chernoguz, O. Hart, O. Salpekar, O. Kalinli, P. Kent, P. Parekh, P. Saab, P. Balaji, P. Rittner, P. Bontrager, P. Roux, P. Dollar, P. Zvyagina, P. Ratanchandani, P. Yuvraj, Q. Liang, R. Alao, R. Rodriguez, R. Ayub, R. Murthy, R. Nayani, R. Mitra, R. Parthasarathy, R. Li, R. Hogan, R. Battey, R. Wang, R. Howes, R. Rinott, S. Mehta, S. Siby, S. J. Bondu, S. Datta, S. Chugh, S. Hunt, S. Dhillon, S. Sidorov, S. Pan, S. Mahajan, S. Verma, S. Yamamoto, S. Ramaswamy, S. Lindsay, S. Lindsay, S. Feng, S. Lin, S. C. Zha, S. Patil, S. Shankar, S. Zhang, S. Zhang, S. Wang, S. Agarwal, S. Sajuyigbe, S. Chintala, S. Max, S. Chen, S. Kehoe, S. Satterfield, S. Govindaprasad, S. Gupta, S. Deng, S. Cho, S. Virk, S. Subramanian, S. Choudhury, S. Goldman, T. Remez, T. Glaser, T. Best, T. Koehler, T. Robinson, T. Li, T. Zhang, T. Matthews, T. Chou, T. Shaked, V. Vontimitta, V. Ajayi, V. Montanez, V. Mohan, V. S. Kumar, V. Mangla, V. Ionescu, V. Poenaru, V. T. Mihailescu, V. Ivanov, W. Li, W. Wang, W. Jiang, W. Bouaziz, W. Constable, X. Tang, X. Wu, X. Wang, X. Wu, X. Gao, Y. Kleinman, Y. Chen, Y. Hu, Y. Jia, Y. Qi, Y. Li, Y. Zhang, Y. Zhang, Y. Adi, Y. Nam, Yu, Wang, Y. Zhao, Y. Hao, Y. Qian, Y. Li, Y. He, Z. Rait, Z. DeVito, Z. Rosnbrick, Z. Wen, Z. Yang, Z. Zhao, and Z. Ma
+(2024)
+The llama 3 herd of models
+.
+External Links:
+2407.21783
+,
+Link
+Cited by:
+§B.1
+,
+§5.1
+.
+[16]
+D. Hendrycks, C. Burns, S. Basart, A. Zou, M. Mazeika, D. Song, and J. Steinhardt
+(2021)
+Measuring massive multitask language understanding
+.
+External Links:
+2009.03300
+,
+Link
+Cited by:
+§B.2
+,
+§B.3
+,
+§5.1
+.
+[17]
+E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, and W. Chen
+(2021)
+LoRA: low-rank adaptation of large language models
+.
+External Links:
+2106.09685
+,
+Link
+Cited by:
+§B.2
+.
+[18]
+J. Jang, D. Yoon, S. Yang, S. Cha, M. Lee, L. Logeswaran, and M. Seo
+(2023)
+Knowledge unlearning for mitigating privacy risks in language models
+.
+In
+Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+,
+A. Rogers, J. Boyd-Graber, and N. Okazaki (Eds.)
+,
+Toronto, Canada
+,
+pp. 14389–14408
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+,
+§2
+.
+[19]
+H. Jia, T. Li, J. Guan, and V. Chandrasekaran
+(2025)
+The erasure illusion: stress-testing the generalization of llm forgetting evaluation
+.
+External Links:
+2512.19025
+,
+Link
+Cited by:
+Appendix Appendix D
+,
+§5.1
+,
+§5
+.
+[20]
+S. Kornblith, M. Norouzi, H. Lee, and G. Hinton
+(2019)
+Similarity of neural network representations revisited
+.
+External Links:
+1905.00414
+,
+Link
+Cited by:
+§A.1
+,
+§1
+,
+§2
+,
+§4.1
+.
+[21]
+G. Lample and A. Conneau
+(2019)
+Cross-lingual language model pretraining
+.
+External Links:
+1901.07291
+,
+Link
+Cited by:
+§2
+.
+[22]
+N. Li, A. Pan, A. Gopal, S. Yue, D. Berrios, A. Gatti, J. D. Li, A. Dombrowski, S. Goel, L. Phan, G. Mukobi, N. Helm-Burger, R. Lababidi, L. Justen, A. B. Liu, M. Chen, I. Barrass, O. Zhang, X. Zhu, R. Tamirisa, B. Bharathi, A. Khoja, Z. Zhao, A. Herbert-Voss, C. B. Breuer, S. Marks, O. Patel, A. Zou, M. Mazeika, Z. Wang, P. Oswal, W. Lin, A. A. Hunt, J. Tienken-Harder, K. Y. Shih, K. Talley, J. Guan, R. Kaplan, I. Steneker, D. Campbell, B. Jokubaitis, A. Levinson, J. Wang, W. Qian, K. K. Karmakar, S. Basart, S. Fitz, M. Levine, P. Kumaraguru, U. Tupakula, V. Varadharajan, R. Wang, Y. Shoshitaishvili, J. Ba, K. M. Esvelt, A. Wang, and D. Hendrycks
+(2024)
+The wmdp benchmark: measuring and reducing malicious use with unlearning
+.
+External Links:
+2403.03218
+,
+Link
+Cited by:
+§1
+,
+§2
+,
+§3.2
+,
+§3.2
+,
+§4.2
+,
+§5.1
+.
+[23]
+Y. Li, C. Sun, and T. Weng
+(2025)
+Effective skill unlearning through intervention and abstention
+.
+External Links:
+2503.21730
+,
+Link
+Cited by:
+§2
+.
+[24]
+X. Lian, K. Jain, J. Truszkowski, P. Poupart, and Y. Yu
+(2020)
+Unsupervised multilingual alignment using wasserstein barycenter
+.
+In
+Proceedings of the Twenty-Ninth International Joint Conference on Artificial Intelligence
+,
+IJCAI-PRICAI-2020
+,
+pp. 3702–3708
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2
+.
+[25]
+D. Liu and J. Niehues
+(2025)
+Middle-layer representation alignment for cross-lingual transfer in fine-tuned llms
+.
+External Links:
+2502.14830
+,
+Link
+Cited by:
+§1
+.
+[26]
+Y. Liu, Z. Ma, X. Liu, J. Liu, Z. Jiang, J. Ma, P. Yu, and K. Ren
+(2021)
+Learn to forget: machine unlearning via neuron masking
+.
+External Links:
+2003.10933
+,
+Link
+Cited by:
+§2
+.
+[27]
+T. Lu and P. Koehn
+(2025)
+Learn and unlearn: addressing misinformation in multilingual llms
+.
+External Links:
+2406.13748
+,
+Link
+Cited by:
+§2
+.
+[28]
+K. Meng, D. Bau, A. Andonian, and Y. Belinkov
+(2023)
+Locating and editing factual associations in gpt
+.
+External Links:
+2202.05262
+,
+Link
+Cited by:
+§2
+.
+[29]
+K. Meng, A. S. Sharma, A. Andonian, Y. Belinkov, and D. Bau
+(2023)
+Mass-editing memory in a transformer
+.
+External Links:
+2210.07229
+,
+Link
+Cited by:
+§2
+.
+[30]
+A. S. Morcos, M. Raghu, and S. Bengio
+(2018)
+Insights on representational similarity in neural networks with canonical correlation
+.
+External Links:
+1806.05759
+,
+Link
+Cited by:
+§2
+.
+[31]
+OpenAI
+(2024)
+MMMLU: multilingual massive multitask language understanding
+.
+Note:
+https://huggingface.co/datasets/openai/MMMLU
+Cited by:
+§B.2
+,
+§B.3
+,
+§3.1
+,
+§3.2
+,
+§5.1
+.
+[32]
+N. Pochinkov and N. Schoots
+(2024)
+Dissecting language models: machine unlearning via selective pruning
+.
+External Links:
+2403.01267
+,
+Link
+Cited by:
+§2
+.
+[33]
+Qwen, :, A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu, F. Huang, H. Wei, H. Lin, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Lin, K. Dang, K. Lu, K. Bao, K. Yang, L. Yu, M. Li, M. Xue, P. Zhang, Q. Zhu, R. Men, R. Lin, T. Li, T. Tang, T. Xia, X. Ren, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Wan, Y. Liu, Z. Cui, Z. Zhang, and Z. Qiu
+(2025)
+Qwen2.5 technical report
+.
+External Links:
+2412.15115
+,
+Link
+Cited by:
+§B.1
+,
+§5.1
+.
+[34]
+T. Schuster, O. Ram, R. Barzilay, and A. Globerson
+(2019)
+Cross-lingual alignment of contextual word embeddings, with applications to zero-shot dependency parsing
+.
+External Links:
+1902.09492
+,
+Link
+Cited by:
+§2
+.
+[35]
+O. Skean, M. R. Arefin, D. Zhao, N. Patel, J. Naghiyev, Y. LeCun, and R. Shwartz-Ziv
+(2025)
+Layer by layer: uncovering hidden representations in language models
+.
+External Links:
+2502.02013
+,
+Link
+Cited by:
+§1
+.
+[36]
+N. Team, M. R. Costa-jussà, J. Cross, O. Çelebi, M. Elbayad, K. Heafield, K. Heffernan, E. Kalbassi, J. Lam, D. Licht, J. Maillard, A. Sun, S. Wang, G. Wenzek, A. Youngblood, B. Akula, L. Barrault, G. M. Gonzalez, P. Hansanti, J. Hoffman, S. Jarrett, K. R. Sadagopan, D. Rowe, S. Spruit, C. Tran, P. Andrews, N. F. Ayan, S. Bhosale, S. Edunov, A. Fan, C. Gao, V. Goswami, F. Guzmán, P. Koehn, A. Mourachko, C. Ropers, S. Saleem, H. Schwenk, and J. Wang
+(2022)
+No language left behind: scaling human-centered machine translation
+.
+External Links:
+2207.04672
+,
+Link
+Cited by:
+§1
+,
+§3.1
+.
+[37]
+W. Wang, Z. Tu, C. Chen, Y. Yuan, J. Huang, W. Jiao, and M. R. Lyu
+(2024)
+All languages matter: on the multilingual safety of large language models
+.
+External Links:
+2310.00905
+,
+Link
+Cited by:
+§2
+.
+[38]
+A. Wei, N. Haghtalab, and J. Steinhardt
+(2023)
+Jailbroken: how does llm safety training fail?
+.
+External Links:
+2307.02483
+,
+Link
+Cited by:
+§1
+,
+§2
+,
+§3.1
+.
+[39]
+C. Wendler, V. Veselovsky, G. Monea, and R. West
+(2024)
+Do llamas work in english? on the latent language of multilingual transformers
+.
+External Links:
+2402.10588
+,
+Link
+Cited by:
+§1
+,
+§3.2
+.
+[40]
+B. Workshop, :, T. L. Scao, A. Fan, C. Akiki, E. Pavlick, S. Ilić, D. Hesslow, R. Castagné, A. S. Luccioni, F. Yvon, M. Gallé, J. Tow, A. M. Rush, S. Biderman, A. Webson, P. S. Ammanamanchi, T. Wang, B. Sagot, N. Muennighoff, A. V. del Moral, O. Ruwase, R. Bawden, S. Bekman, A. McMillan-Major, I. Beltagy, H. Nguyen, L. Saulnier, S. Tan, P. O. Suarez, V. Sanh, H. Laurençon, Y. Jernite, J. Launay, M. Mitchell, C. Raffel, A. Gokaslan, A. Simhi, A. Soroa, A. F. Aji, A. Alfassy, A. Rogers, A. K. Nitzav, C. Xu, C. Mou, C. Emezue, C. Klamm, C. Leong, D. van Strien, D. I. Adelani, D. Radev, E. G. Ponferrada, E. Levkovizh, E. Kim, E. B. Natan, F. D. Toni, G. Dupont, G. Kruszewski, G. Pistilli, H. Elsahar, H. Benyamina, H. Tran, I. Yu, I. Abdulmumin, I. Johnson, I. Gonzalez-Dios, J. de la Rosa, J. Chim, J. Dodge, J. Zhu, J. Chang, J. Frohberg, J. Tobing, J. Bhattacharjee, K. Almubarak, K. Chen, K. Lo, L. V. Werra, L. Weber, L. Phan, L. B. allal, L. Tanguy, M. Dey, M. R. Muñoz, M. Masoud, M. Grandury, M. Šaško, M. Huang, M. Coavoux, M. Singh, M. T. Jiang, M. C. Vu, M. A. Jauhar, M. Ghaleb, N. Subramani, N. Kassner, N. Khamis, O. Nguyen, O. Espejel, O. de Gibert, P. Villegas, P. Henderson, P. Colombo, P. Amuok, Q. Lhoest, R. Harliman, R. Bommasani, R. L. López, R. Ribeiro, S. Osei, S. Pyysalo, S. Nagel, S. Bose, S. H. Muhammad, S. Sharma, S. Longpre, S. Nikpoor, S. Silberberg, S. Pai, S. Zink, T. T. Torrent, T. Schick, T. Thrush, V. Danchev, V. Nikoulina, V. Laippala, V. Lepercq, V. Prabhu, Z. Alyafeai, Z. Talat, A. Raja, B. Heinzerling, C. Si, D. E. Taşar, E. Salesky, S. J. Mielke, W. Y. Lee, A. Sharma, A. Santilli, A. Chaffin, A. Stiegler, D. Datta, E. Szczechla, G. Chhablani, H. Wang, H. Pandey, H. Strobelt, J. A. Fries, J. Rozen, L. Gao, L. Sutawika, M. S. Bari, M. S. Al-shaibani, M. Manica, N. Nayak, R. Teehan, S. Albanie, S. Shen, S. Ben-David, S. H. Bach, T. Kim, T. Bers, T. Fevry, T. Neeraj, U. Thakker, V. Raunak, X. Tang, Z. Yong, Z. Sun, S. Brody, Y. Uri, H. Tojarieh, A. Roberts, H. W. Chung, J. Tae, J. Phang, O. Press, C. Li, D. Narayanan, H. Bourfoune, J. Casper, J. Rasley, M. Ryabinin, M. Mishra, M. Zhang, M. Shoeybi, M. Peyrounette, N. Patry, N. Tazi, O. Sanseviero, P. von Platen, P. Cornette, P. F. Lavallée, R. Lacroix, S. Rajbhandari, S. Gandhi, S. Smith, S. Requena, S. Patil, T. Dettmers, A. Baruwa, A. Singh, A. Cheveleva, A. Ligozat, A. Subramonian, A. Névéol, C. Lovering, D. Garrette, D. Tunuguntla, E. Reiter, E. Taktasheva, E. Voloshina, E. Bogdanov, G. I. Winata, H. Schoelkopf, J. Kalo, J. Novikova, J. Z. Forde, J. Clive, J. Kasai, K. Kawamura, L. Hazan, M. Carpuat, M. Clinciu, N. Kim, N. Cheng, O. Serikov, O. Antverg, O. van der Wal, R. Zhang, R. Zhang, S. Gehrmann, S. Mirkin, S. Pais, T. Shavrina, T. Scialom, T. Yun, T. Limisiewicz, V. Rieser, V. Protasov, V. Mikhailov, Y. Pruksachatkun, Y. Belinkov, Z. Bamberger, Z. Kasner, A. Rueda, A. Pestana, A. Feizpour, A. Khan, A. Faranak, A. Santos, A. Hevia, A. Unldreaj, A. Aghagol, A. Abdollahi, A. Tammour, A. HajiHosseini, B. Behroozi, B. Ajibade, B. Saxena, C. M. Ferrandis, D. McDuff, D. Contractor, D. Lansky, D. David, D. Kiela, D. A. Nguyen, E. Tan, E. Baylor, E. Ozoani, F. Mirza, F. Ononiwu, H. Rezanejad, H. Jones, I. Bhattacharya, I. Solaiman, I. Sedenko, I. Nejadgholi, J. Passmore, J. Seltzer, J. B. Sanz, L. Dutra, M. Samagaio, M. Elbadri, M. Mieskes, M. Gerchick, M. Akinlolu, M. McKenna, M. Qiu, M. Ghauri, M. Burynok, N. Abrar, N. Rajani, N. Elkott, N. Fahmy, O. Samuel, R. An, R. Kromann, R. Hao, S. Alizadeh, S. Shubber, S. Wang, S. Roy, S. Viguier, T. Le, T. Oyebade, T. Le, Y. Yang, Z. Nguyen, A. R. Kashyap, A. Palasciano, A. Callahan, A. Shukla, A. Miranda-Escalada, A. Singh, B. Beilharz, B. Wang, C. Brito, C. Zhou, C. Jain, C. Xu, C. Fourrier, D. L. Periñán, D. Molano, D. Yu, E. Manjavacas, F. Barth, F. Fuhrimann, G. Altay, G. Bayrak, G. Burns, H. U. Vrabec, I. Bello, I. Dash, J. Kang, J. Giorgi, J. Golde, J. D. Posada, K. R. Sivaraman, L. Bulchandani, L. Liu, L. Shinzato, M. H. de Bykhovetz, M. Takeuchi, M. Pàmies, M. A. Castillo, M. Nezhurina, M. Sänger, M. Samwald, M. Cullan, M. Weinberg, M. D. Wolf, M. Mihaljcic, M. Liu, M. Freidank, M. Kang, N. Seelam, N. Dahlberg, N. M. Broad, N. Muellner, P. Fung, P. Haller, R. Chandrasekhar, R. Eisenberg, R. Martin, R. Canalli, R. Su, R. Su, S. Cahyawijaya, S. Garda, S. S. Deshmukh, S. Mishra, S. Kiblawi, S. Ott, S. Sang-aroonsiri, S. Kumar, S. Schweter, S. Bharati, T. Laud, T. Gigant, T. Kainuma, W. Kusa, Y. Labrak, Y. S. Bajaj, Y. Venkatraman, Y. Xu, Y. Xu, Y. Xu, Z. Tan, Z. Xie, Z. Ye, M. Bras, Y. Belkada, and T. Wolf
+(2023)
+BLOOM: a 176b-parameter open-access multilingual language model
+.
+External Links:
+2211.05100
+,
+Link
+Cited by:
+§B.1
+,
+§5.1
+.
+[41]
+S. Wu, A. Conneau, H. Li, L. Zettlemoyer, and V. Stoyanov
+(2020)
+Emerging cross-lingual structure in pretrained language models
+.
+External Links:
+1911.01464
+,
+Link
+Cited by:
+§1
+,
+§2
+,
+§3.2
+.
+[42]
+Y. Yao, X. Xu, and Y. Liu
+(2024)
+Large language model unlearning
+.
+External Links:
+2310.10683
+,
+Link
+Cited by:
+§2
+.
+[43]
+Z. Yong, C. Menghini, and S. H. Bach
+(2024)
+Low-resource languages jailbreak gpt-4
+.
+External Links:
+2310.02446
+,
+Link
+Cited by:
+§1
+,
+§2
+,
+§3.1
+.
+[44]
+H. Zeng, S. Han, L. Chen, and K. Yu
+(2025)
+Converging to a lingua franca: evolution of linguistic regions and semantics alignment in multilingual large language models
+.
+External Links:
+2410.11718
+,
+Link
+Cited by:
+§A.2
+,
+§1
+,
+§2
+,
+§4.1
+.
+[45]
+R. Zhang, L. Lin, Y. Bai, and S. Mei
+(2024)
+Negative preference optimization: from catastrophic collapse to effective unlearning
+.
+External Links:
+2404.05868
+,
+Link
+Cited by:
+§1
+,
+§2
+,
+§4.2
+.
+[46]
+Y. Zhao, W. Zhang, G. Chen, K. Kawaguchi, and L. Bing
+(2024)
+How do large language models handle multilingualism?
+.
+External Links:
+2402.18815
+,
+Link
+Cited by:
+§1
+,
+§3.2
+.
+[47]
+Y. Zheng, R. Zhang, J. Zhang, Y. Ye, Z. Luo, Z. Feng, and Y. Ma
+(2024)
+LlamaFactory: unified efficient fine-tuning of 100+ language models
+.
+External Links:
+2403.13372
+,
+Link
+Cited by:
+§B.2
+.
+[48]
+J. Łucki, B. Wei, Y. Huang, P. Henderson, F. Tramèr, and J. Rando
+(2025)
+An adversarial perspective on machine unlearning for ai safety
+.
+External Links:
+2409.18025
+,
+Link
+Cited by:
+§B.6.2
+,
+§1
+,
+§5.1
+,
+§5.2.2
+,
+§5
+.
+Appendix Appendix A
+Layer Identification: Technical Details
+Dataset for Layer Analysis.
+We compute CKA and LRDS using the MMLU and MMMLU High School Chemistry subset across all source languages.
+A.1
+CKA-based Multilingual Alignment
+We quantify the representational similarity between different languages using Linear Centered Kernel Alignment (CKA)
+[
+20
+]
+. Unlike simple correlation metrics, CKA is invariant to orthogonal transformations and isotropic scaling, making it robust for comparing high-dimensional neural representations.
+For a specific layer
+l
+l
+, let
+𝐇
+l
+ℓ
+∈
+ℝ
+N
+×
+d
+\mathbf{H}^{\ell}_{l}\in\mathbb{R}^{N\times d}
+denote the matrix of hidden states for a set of
+N
+N
+aligned concepts in language
+ℓ
+\ell
+, where each hidden state is the last token representation of the input sequence. The multilingual alignment score between two languages
+ℓ
+j
+\ell_{j}
+and
+ℓ
+k
+\ell_{k}
+at layer
+l
+l
+is defined as:
+CKA
+l
+​
+(
+ℓ
+j
+,
+ℓ
+k
+)
+=
+HSIC
+​
+(
+K
+,
+L
+)
+HSIC
+​
+(
+K
+,
+K
+)
+⋅
+HSIC
+​
+(
+L
+,
+L
+)
+\text{CKA}_{l}(\ell_{j},\ell_{k})=\frac{\text{HSIC}(K,L)}{\sqrt{\text{HSIC}(K,K)\cdot\text{HSIC}(L,L)}}
+(7)
+where
+K
+=
+H
+l
+ℓ
+j
+​
+(
+H
+l
+ℓ
+j
+)
+T
+K=H_{l}^{\ell_{j}}(H_{l}^{\ell_{j}})^{T}
+and
+L
+=
+H
+l
+ℓ
+k
+​
+(
+H
+l
+ℓ
+k
+)
+T
+L=H_{l}^{\ell_{k}}(H_{l}^{\ell_{k}})^{T}
+are the Gram matrices, and
+HSIC
+denotes the Hilbert-Schmidt Independence Criterion.
+A higher CKA score indicates that the model represents the same concepts similarly, regardless of the input language. We define the aggregate alignment score for layer
+l
+l
+as the average pairwise CKA across all supported languages
+ℒ
+\mathcal{L}
+:
+Align
+l
+=
+2
+|
+ℒ
+|
+​
+(
+|
+ℒ
+|
+−
+1
+)
+​
+∑
+j
+<
+k
+CKA
+l
+​
+(
+ℓ
+j
+,
+ℓ
+k
+)
+\text{Align}_{l}=\frac{2}{|\mathcal{L}|(|\mathcal{L}|-1)}\sum_{j<k}\text{CKA}_{l}(\ell_{j},\ell_{k})
+(8)
+The optimal layer candidate via CKA maximizes this alignment:
+l
+CKA
+∗
+=
+arg
+⁡
+max
+l
+∈
+{
+1
+,
+…
+,
+L
+}
+⁡
+Align
+l
+l_{\text{CKA}}^{*}=\arg\max_{l\in\{1,...,L\}}\text{Align}_{l}
+(9)
+A.2
+LRDS-based Language-Agnosticism
+To measure the degree of language-specificity, we adapt the Linguistic Regions Development Score (LRDS) proposed by
+[
+44
+]
+.
+For a given layer
+l
+l
+, we compute the normalized hidden state representation
+a
+l
+s
+=
+normalize
+​
+(
+h
+¯
+l
+​
+(
+s
+)
+)
+a_{l}^{s}=\text{normalize}(\bar{h}_{l}(s))
+for an input sequence
+s
+s
+, where
+h
+¯
+l
+​
+(
+s
+)
+\bar{h}_{l}(s)
+represents the token-averaged hidden state. The semantic similarity between two samples
+s
+p
+s_{p}
+and
+s
+q
+s_{q}
+is given by their cosine similarity
+S
+l
+​
+(
+s
+p
+,
+s
+q
+)
+=
+a
+l
+s
+p
+⋅
+a
+l
+s
+q
+S_{l}(s_{p},s_{q})=a_{l}^{s_{p}}\cdot a_{l}^{s_{q}}
+.
+LRDS quantifies the divergence between intra-language similarity and inter-language similarity:
+LRDS
+l
+\displaystyle\text{LRDS}_{l}
+=
+𝔼
+⁡
+[
+S
+l
+​
+(
+s
+p
+,
+s
+q
+)
+∣
+lang
+​
+(
+p
+)
+=
+lang
+​
+(
+q
+)
+sem
+​
+(
+p
+)
+≠
+sem
+​
+(
+q
+)
+]
+\displaystyle=\mathbb{E}\left[S_{l}(s_{p},s_{q})\mid\begin{subarray}{c}\text{lang}(p)=\text{lang}(q)\\
+\text{sem}(p)\neq\text{sem}(q)\end{subarray}\right]
+−
+𝔼
+⁡
+[
+S
+l
+​
+(
+s
+p
+,
+s
+q
+)
+∣
+lang
+​
+(
+p
+)
+≠
+lang
+​
+(
+q
+)
+sem
+​
+(
+p
+)
+≠
+sem
+​
+(
+q
+)
+]
+\displaystyle\quad-\mathbb{E}\left[S_{l}(s_{p},s_{q})\mid\begin{subarray}{c}\text{lang}(p)\neq\text{lang}(q)\\
+\text{sem}(p)\neq\text{sem}(q)\end{subarray}\right]
+(10)
+where
+sem
+​
+(
+s
+)
+\text{sem}(s)
+denotes the semantic content (Fact ID). A high positive
+LRDS
+l
+\text{LRDS}_{l}
+indicates that representations are clustered by language (language-specific), while a value near zero or negative implies clustering by semantics (language-agnostic).
+The optimal language-agnostic layer via LRDS minimizes this score:
+l
+LRDS
+∗
+=
+arg
+⁡
+min
+l
+∈
+{
+1
+,
+…
+,
+L
+}
+⁡
+LRDS
+l
+l_{\text{LRDS}}^{*}=\arg\min_{l\in\{1,...,L\}}\text{LRDS}_{l}
+(11)
+A.3
+Threshold Selection and Sensitivity
+As described in Section
+4.1
+, we identify the language-agnostic region
+Λ
+\Lambda
+by selecting layers that simultaneously exhibit high cross-lingual alignment (high CKA) and low language specificity (low LRDS). We formalize this selection using the following threshold formulas:
+τ
+align
+=
+𝔼
+⁡
+[
+Align
+l
+]
+,
+τ
+spec
+=
+α
+⋅
+min
+l
+⁡
+LRDS
+l
+\tau_{\text{align}}=\mathbb{E}[\text{Align}_{l}],\quad\tau_{\text{spec}}=\alpha\cdot\min_{l}\text{LRDS}_{l}
+(12)
+The alignment threshold
+τ
+align
+\tau_{\text{align}}
+is set to the mean CKA score, selecting layers with above-average cross-lingual alignment. The specificity threshold
+τ
+spec
+\tau_{\text{spec}}
+uses a scaling factor
+α
+\alpha
+applied to the minimum LRDS value, capturing the plateau region before language-specific processing intensifies. Table
+5
+summarizes the computed values for each architecture.
+Table 5
+:
+Threshold values and language-agnostic regions across architectures.
+Model
+𝔼
+⁡
+[
+CKA
+]
+\mathbb{E}[\text{CKA}]
+min
+⁡
+(
+LRDS
+)
+\min(\text{LRDS})
+α
+\alpha
+τ
+spec
+\tau_{\text{spec}}
+Λ
+\Lambda
+Llama-3.1-8B
+0.647
+0.0039
+2.5
+0.0096
+Layers 8–23
+BLOOM-7b1
+0.642
+0.0017
+4.4
+0.0073
+Layers 5–22
+Qwen-2.5-7B
+0.512
+0.0287
+1.5
+0.0441
+Layers 19–24
+Choice of
+α
+\alpha
+.
+The scaling factor
+α
+\alpha
+is architecture-dependent, reflecting differences in how LRDS evolves across depth. For Llama-3.1, LRDS remains stable around its minimum through the middle layers before surging after Layer 23; we use
+α
+=
+2.5
+\alpha=2.5
+to capture this plateau. BLOOM exhibits a similar pattern but with a more gradual LRDS increase, requiring a larger
+α
+=
+4.4
+\alpha=4.4
+to include the extended low-LRDS region through Layer 22. For Qwen-2.5, the LRDS distribution is notably flatter with less pronounced variation across layers. Here, the primary constraint becomes the CKA alignment criterion combined with the characteristic LRDS surge beginning at Layer 24; we use
+α
+=
+1.5
+\alpha=1.5
+accordingly. In practice, we recommend visualizing the CKA-LRDS curves and selecting
+α
+\alpha
+to capture the stable low-LRDS plateau before the characteristic surge, as illustrated in Figures
+2
+,
+3
+, and
+4
+.
+Sensitivity Analysis.
+Table
+6
+demonstrates the robustness of our selection. Varying
+α
+\alpha
+by
+±
+0.5
+\pm 0.5
+from the chosen values produces modest changes in region boundaries, but the selected target layers (Layer 9 for Llama, Layer 5 for BLOOM, Layer 19 for Qwen) consistently remain within
+Λ
+\Lambda
+across all tested values.
+Table 6
+:
+Sensitivity of the language-agnostic region
+Λ
+\Lambda
+to the scaling factor
+α
+\alpha
+.
+Model
+α
+−
+0.5
+\alpha-0.5
+α
+\alpha
+(used)
+α
++
+0.5
+\alpha+0.5
+Llama-3.1-8B
+Layers 8–17
+Layers 8–23
+Layers 8–23
+BLOOM-7b1
+Layers 5–21
+Layers 5–22
+Layers 5–22
+Qwen-2.5-7B
+Layers 19–21
+Layers 19–24
+Layers 19–26
+Appendix Appendix B
+Experimental Setup: Full Details
+B.1
+Models
+We select three representative multilingual LLMs to test the generalizability of our findings across different positional embeddings and pre-training distributions. Llama-3.1-8B
+[
+15
+]
+serves as our primary model for analysis, utilizing Rotary Positional Embeddings (RoPE) and exhibiting strong general-purpose multilingual capabilities. Qwen-2.5-7B
+[
+33
+]
+represents models explicitly optimized for multilingual heavy-tail distributions, allowing us to test whether language-agnostic layers exist in models with denser non-English pre-training data. BLOOM-7b1
+[
+40
+]
+represents the ALiBi (Attention with Linear Biases) architecture, enabling us to verify whether the language-agnostic layer phenomenon is architecture-agnostic.
+B.2
+Model Preparation (Domain Knowledge Injection)
+Prior to unlearning, we establish a knowledgeable baseline by fine-tuning the base models. We employ the LLaMA-Factory framework
+[
+47
+]
+to perform supervised fine-tuning (SFT) with LoRA
+[
+17
+]
+.
+The fine-tuning is conducted on all supported languages for each model to ensure that the knowledge is robustly embedded in the model’s parameters across all linguistic modes (encompassing English, Chinese, Swahili, etc.). We construct the fine-tuning corpus by sourcing data from the MMLU
+[
+16
+]
+and MMMLU dataset
+[
+31
+]
+, which provides multilingual versions of the specific subjects designated for our Forget and Retain sets. By fine-tuning on both the target hazardous domain and control humanities domains across languages, we ensure the model possesses strong, verifiable knowledge in these specific areas before intervention. For hyperparameters, we use LoRA with rank 8 applied to all linear layers, learning rate
+5
+​
+e-
+​
+5
+5\text{e-}5
+with cosine scheduler, warmup ratio 0.1, effective batch size 16, and train for 2 epochs with bf16 precision.
+B.3
+Datasets and Multilingual Split
+We base our experiments on the subject taxonomy of the Massive Multitask Language Understanding (MMLU) benchmark
+[
+16
+]
+. However, as the standard MMLU contains only English samples, we employ the MMMLU dataset
+[
+31
+]
+for all multilingual training and evaluation steps. MMMLU provides professionally translated versions of MMLU subjects, enabling us to simulate the unlearning task across diverse linguistic contexts.
+To ensure reproducibility and safety, we employ Chemistry as a proxy for hazardous dual-use knowledge, while using History and Law to represent general safe knowledge. The specific sample counts per language are as follows: the hazardous domain (
+D
+1
+D_{1}
+) consists of High School Chemistry (
+N
+=
+203
+N=203
+samples/lang), while the safe domains (
+D
+2
+−
+5
+D_{2-5}
+) include High School World History (
+N
+=
+237
+N=237
+), Professional Law (
+N
+=
+1534
+N=1534
+), International Law (
+N
+=
+121
+N=121
+), and Jurisprudence (
+N
+=
+108
+N=108
+).
+Based on these domains, we construct three distinct data partitions for different stages of the pipeline. The fine-tuning set is used for knowledge injection; to ensure the knowledge is robustly embedded, this set comprises all 5 domains (
+D
+1
+∪
+⋯
+∪
+D
+5
+D_{1}\cup\dots\cup D_{5}
+) multiplied by all supported languages (e.g.,
+×
+7
+\times 7
+for Llama-3.1). The forget set (
+D
+forget
+D_{\text{forget}}
+) is used for unlearning optimization and consists strictly of the hazardous domain (
+D
+1
+D_{1}
+) sourced only from the three source languages (En, Es, Pt), yielding a total of
+203
+×
+3
+=
+609
+203\times 3=609
+optimization samples. The retain set (
+D
+retain
+D_{\text{retain}}
+) is used for unlearning constraints (e.g., RMU/SLUG retain loss) and aggregates the four safe domains (
+D
+2
+∪
+D
+3
+∪
+D
+4
+∪
+D
+5
+D_{2}\cup D_{3}\cup D_{4}\cup D_{5}
+) sourced only from the three source languages (En, Es, Pt), yielding approximately
+2000
+×
+3
+2000\times 3
+samples to preserve general capabilities.
+We use the same data (MMLU test split and its multilingual translations in MMMLU) for fine-tuning, layer identification, and evaluation. This does not constitute data leakage because our goal is to measure the reduction in accuracy after unlearning. The fine-tuned model achieves high accuracy by design, and we evaluate whether unlearning successfully degrades this accuracy across languages.
+B.4
+Language Split
+To rigorously test zero-shot multilingual transfer, we partition the languages into source languages and held-out languages. The source languages (
+ℒ
+src
+\mathcal{L}_{\text{src}}
+) consist of English, Spanish, and Portuguese, which are used for gradient computation in both
+D
+forget
+D_{\text{forget}}
+and
+D
+retain
+D_{\text{retain}}
+. The held-out languages (
+ℒ
+held
+\mathcal{L}_{\text{held}}
+) are explicitly excluded from optimization, and evaluation on these languages measures zero-shot transfer. Specifically, for Llama-3.1, we use 4 held-out languages (German, French, Hindi, Italian); for Qwen-2.5, we use 9 held-out languages (Arabic, German, French, Hindi, Indonesian, Italian, Japanese, Korean, Chinese); and for BLOOM, we use 5 held-out languages (Arabic, French, Hindi, Indonesian, Chinese).
+B.5
+Unlearning Algorithm Hyperparameters
+Hyperparameter Selection.
+To ensure fair comparison across intervention depths, we use identical hyperparameters for all layers within each algorithm. This controlled setup ensures that observed performance differences come from the intervention location rather than hyperparameter choices. We selected hyperparameters based on validation performance at the target layer and applied them uniformly across all depths. To verify that the deep-layer failure is due to the layer location itself rather than suboptimal hyperparameters, we conducted additional experiments varying learning rate, regularization strength, and training steps. The failure mode at deep layers persisted across all tested configurations, confirming that deep layers are fundamentally unsuitable for multilingual unlearning regardless of optimization settings.
+We evaluate three distinct unlearning paradigms, and for all methods, we apply the MUTE-targeted adaptation described in Section
+4.2
+. For RMU (parameter-based), we apply it to Llama-3.1 (Layer 9), Qwen-2.5 (Layer 19), and BLOOM (Layer 5), using learning rate
+1
+​
+e-
+​
+5
+1\text{e-}5
+for 500 steps. For SLUG (activation-based), we apply it to Llama-3.1 (Layer 20) with step size
+λ
+=
+32
+\lambda=32
+and retain constraint weight
+α
+=
+1
+\alpha=1
+. For SimNPO (preference-based), we apply it to Llama-3.1 (Layer 9) with learning rate
+5
+​
+e-
+​
+5
+5\text{e-}5
+,
+β
+=
+1.0
+\beta=1.0
+,
+γ
+=
+1.0
+\gamma=1.0
+, and length normalization enabled.
+B.6
+Evaluation Protocols
+We employ a rigorous two-tiered evaluation framework, combining standard behavioral metrics with mechanistic probing to verify that unlearning occurs at the representational level rather than merely suppressing output tokens.
+B.6.1
+Behavioral Metrics (Black-box)
+Following the standard protocol for MMMLU evaluation, we quantify the model’s end-to-end performance based on the final output distribution. Unlearning Efficacy (UE) is defined as the reduction in accuracy on the Forget Set (
+D
+forget
+D_{\text{forget}}
+) relative to the fine-tuned baseline. To distinguish between optimization success and generalization, we report this in two distinct scopes: UE-Source measures efficacy on the optimization languages (
+ℒ
+src
+\mathcal{L}_{\text{src}}
+), indicating how well the algorithm minimizes the specific loss function, while UE-Transfer measures efficacy on the held-out languages (
+ℒ
+held
+\mathcal{L}_{\text{held}}
+), indicating the zero-shot multilingual transfer of the unlearning effect. Multilingual Integrity (MI) is defined as the average accuracy retention on the Retain Set (
+D
+retain
+D_{\text{retain}}
+) across all evaluated languages; high MI indicates that the model preserves its reasoning capabilities in non-target domains (History/Law) and avoids catastrophic forgetting.
+B.6.2
+Mechanistic Validation (White-box)
+To confirm our hypothesis that the intervention successfully targets the language-agnostic layer, we employ Logit Lens probing
+[
+48
+]
+. This technique allows us to inspect the model’s internal representation of the target concept at intermediate layers.
+For a given input
+x
+x
+and target answer
+y
+y
+, we decode the hidden states
+h
+l
+h_{l}
+at layer
+l
+l
+directly into the vocabulary space using the pre-trained embedding matrix
+E
+E
+:
+P
+lens
+​
+(
+y
+|
+x
+,
+l
+)
+=
+softmax
+​
+(
+E
+⋅
+LayerNorm
+​
+(
+h
+l
+)
+)
+y
+P_{\text{lens}}(y|x,l)=\text{softmax}(E\cdot\text{LayerNorm}(h_{l}))_{y}
+(13)
+We specifically monitor the probability assigned to the correct answer at two critical checkpoints: the target layer (Layer 9) to verify whether the semantic representation of the knowledge has been erased, and the output layer (Layer 32) to verify the final model behavior. A successful unlearning intervention should demonstrate a significant probability drop at the language-agnostic layer, confirming that the knowledge is removed from intermediate representations rather than merely suppressed at the output.
+Appendix Appendix C
+Additional Experimental Results
+The first subsection is the detailed results and discussion for the baseline experiments. Then we provide comprehensive experimental results across different model architectures (Qwen-2.5, BLOOM) and unlearning algorithms (SLUG, SimNPO). The table format follows the main paper: bold columns indicate the identified target layer, and asterisks (*) denote source languages (
+ℒ
+src
+\mathcal{L}_{\text{src}}
+) used for optimization.
+C.1
+Single-Language Unlearning Baselines
+Following
+Farashah et al. [13]
+, we investigate whether all-layer gradient ascent (GA) can achieve effective multilingual unlearning. We adapt their methodology to our experimental setting (Llama-3.1-8B, MMLU and MMMLU dataset) and evaluate four baseline configurations using all-layer GA unlearning: (1) Hindi-only, (2) English-only, and (3-4) source languages (EN/ES/PT) with different learning rates.
+Table 7
+:
+Single-language GA unlearning baselines on Llama-3.1-8B. We report forget and retain accuracy for each language. * denotes source languages used in MUTE.
+Forget Set Accuracy
+↓
+\downarrow
+Retain Set Accuracy
+↑
+\uparrow
+Method
+EN*
+ES*
+PT*
+DE
+FR
+HI
+IT
+Avg
+EN*
+ES*
+PT*
+DE
+FR
+HI
+IT
+Avg
+Finetuned
+86.0%
+74.0%
+74.0%
+68.0%
+78.0%
+64.0%
+80.0%
+75.0%
+84.0%
+66.0%
+58.0%
+58.0%
+63.0%
+23.0%
+62.0%
+59.0%
+GA (Hindi-only)
+86.0%
+74.0%
+74.0%
+68.0%
+78.0%
+2.0%
+80.0%
+66.0%
+84.0%
+66.0%
+58.0%
+58.0%
+63.0%
+11.0%
+62.0%
+57.0%
+GA (English-only)
+28.0%
+55.0%
+43.0%
+48.0%
+49.0%
+48.0%
+49.0%
+46.0%
+89.0%
+60.0%
+58.0%
+52.0%
+59.0%
+24.0%
+57.0%
+57.0%
+GA (EN/ES/PT, lr=1e-4)
+0.0%
+0.0%
+1.0%
+2.0%
+1.0%
+1.0%
+1.0%
+1.0%
+43.0%
+26.0%
+16.0%
+14.0%
+11.0%
+6.0%
+24.0%
+20.0%
+GA (EN/ES/PT, lr=2e-5)
+62.0%
+49.0%
+36.0%
+61.0%
+65.0%
+59.0%
+60.0%
+56.0%
+88.0%
+73.0%
+67.0%
+58.0%
+63.0%
+23.0%
+60.0%
+62.0%
+MUTE (Ours)
+2.0%
+2.0%
+1.0%
+1.0%
+1.0%
+0.0%
+2.0%
+1.0%
+77.0%
+63.0%
+56.0%
+49.0%
+57.0%
+20.0%
+61.0%
+55.0%
+The results in Table
+7
+reveal several important findings about the limitations of single-language GA unlearning:
+Multilingual generalization is asymmetric.
+Farashah et al. [13]
+demonstrated that unlearning in high-resource languages tends to be more stable with stronger cross-lingual transfer, while low-resource language unlearning exhibits weaker propagation. Our comparison between English-only and Hindi-only GA confirms this asymmetry. English-only GA achieves partial transfer to other languages (16-31% decrease across non-English languages), whereas Hindi-only GA produces zero transfer and all other languages remain completely unchanged. This validates that high-resource language unlearning generalizes better, while low-resource language unlearning remains isolated.
+Single-language GA fails to achieve comprehensive erasure.
+Despite the partial transfer observed with English-only GA, it remains insufficient for complete multilingual unlearning. English accuracy drops significantly (86.0%
+→
+\rightarrow
+28.0%), but other languages retain substantial knowledge (43.0%-55.0% accuracy). Hindi-only GA is even more limited, achieving erasure only in Hindi (64.0%
+→
+\rightarrow
+2.0%) with no effect on other languages.
+Aggressive GA causes utility collapse.
+When we increase the learning rate to achieve complete multilingual erasure (EN/ES/PT, lr=1e-4), the model successfully reduces forget accuracy to
+∼
+\sim
+1% across all languages. However, this comes at the cost of utility degradation with retain accuracy dropping from 59.0% to 20.0% on average.
+Conservative GA fails to achieve erasure.
+With a lower learning rate (lr=2e-5), GA preserves utility (62% retain accuracy) but fails to achieve effective erasure, with forget accuracy remaining at 36.0-65.0% across languages.
+MUTE achieves both erasure and utility preservation.
+In contrast to all GA baselines, MUTE achieves near-complete erasure (
+∼
+\sim
+1% forget accuracy) while maintaining 55.0% retain accuracy, representing a 2.75
+×
+\times
+improvement over the aggressive GA baseline at equivalent erasure levels. This demonstrates that targeting the language-agnostic layer is essential for effective multilingual unlearning without utility collapse.
+C.2
+Sensitivity to Source Language Selection
+To verify that MUTE’s effectiveness is not tied to a specific choice of source languages, we repeat our main experiment with a different source language configuration. We use German, French, and Italian (DE, FR, IT) as source languages and treat the original source languages (EN, ES, PT) as held-out.
+Table 8
+:
+MUTE with alternative source languages (DE, FR, IT) on Llama-3.1-8B.
+†
+\dagger
+denotes source languages for this experiment. EN, ES, PT are now held-out languages.
+Forget Set Accuracy
+↓
+\downarrow
+Retain Set Accuracy
+↑
+\uparrow
+Source Langs
+EN
+ES
+PT
+DE
+FR
+HI
+IT
+Avg
+EN
+ES
+PT
+DE
+FR
+HI
+IT
+Avg
+Finetuned
+86.0%
+74.0%
+74.0%
+68.0%
+78.0%
+64.0%
+80.0%
+75.0%
+84.0%
+66.0%
+58.0%
+58.0%
+63.0%
+23.0%
+62.0%
+59.0%
+EN*, ES*, PT*
+2.0%
+2.0%
+1.0%
+1.0%
+1.0%
+0.0%
+2.0%
+1.0%
+77.0%
+63.0%
+56.0%
+49.0%
+57.0%
+20.0%
+61.0%
+55.0%
+DE
+†
+\dagger
+, FR
+†
+\dagger
+, IT
+†
+\dagger
+1.0%
+2.0%
+1.0%
+1.0%
+1.0%
+0.0%
+2.0%
+1.0%
+75.0%
+58.0%
+54.0%
+51.0%
+58.0%
+22.0%
+58.0%
+54.0%
+Table
+8
+shows that MUTE achieves comparable performance regardless of source language selection. With DE/FR/IT as source languages, the method achieves
+∼
+\sim
+1% forget accuracy across all languages (including the now held-out EN/ES/PT) while maintaining 54.0% average retain accuracy. This is nearly identical to the original configuration (EN/ES/PT as source), confirming that MUTE’s effectiveness stems from targeting the language-agnostic layer rather than from the specific choice of source languages.
+C.3
+Mechanistic Verification on Llama-3.1
+Table
+9
+presents the Logit Lens probing results, measuring the probability assigned to correct answers at intermediate layers.
+Table 9
+:
+Mechanistic Verification (Logit Lens Recall) on Llama-3.1.
+We probe internal representations to measure whether the model encodes the correct answer at intermediate layers. Shallow layers (L2) degrade Retain recall for held-out languages. Deep layers (L30) preserve Forget recall unchanged. Target layers (L9, L16) remove target knowledge while preserving the multilingual representation space. Asterisks (*) denote source languages.
+Language
+Base
+Finetuned
+Internal Recall by Intervention Layer
+(Pre-trained)
+(Target)
+L2 (Shallow)
+L4 (Shallow)
+L9 (Target)
+L16 (Target)
+L30 (Deep)
+FORGET SET RECALL
+(Lower is Better
+↓
+\downarrow
+)
+English (en)*
+23.04%
+29.39%
+1.38%
+1.40%
+1.50%
+2.41%
+29.42%
+Spanish (es)*
+22.69%
+28.18%
+0.79%
+0.81%
+1.15%
+1.35%
+28.16%
+Portuguese (pt)*
+21.46%
+27.68%
+0.90%
+0.92%
+0.96%
+1.35%
+27.66%
+German (de)
+21.64%
+27.44%
+0.78%
+0.79%
+1.08%
+1.74%
+27.41%
+French (fr)
+21.96%
+27.76%
+0.77%
+0.78%
+0.81%
+1.29%
+27.77%
+Hindi (hi)
+21.88%
+25.42%
+0.53%
+0.52%
+1.18%
+1.11%
+25.40%
+Italian (it)
+21.52%
+28.02%
+0.78%
+0.80%
+0.87%
+1.70%
+28.01%
+RETAIN SET RECALL
+(Higher is Better
+↑
+\uparrow
+, closer to Finetuned)
+English (en)*
+22.42%
+32.30%
+31.70%
+32.12%
+32.16%
+32.25%
+32.29%
+Spanish (es)*
+23.09%
+31.28%
+30.31%
+31.05%
+31.21%
+31.24%
+31.28%
+Portuguese (pt)*
+22.03%
+31.39%
+30.41%
+31.11%
+31.31%
+31.35%
+31.39%
+German (de)
+22.11%
+30.71%
+12.77%
+28.08%
+30.59%
+30.62%
+30.70%
+French (fr)
+22.73%
+30.96%
+23.54%
+29.37%
+30.70%
+30.85%
+30.95%
+Hindi (hi)
+25.06%
+30.05%
+3.47%
+26.65%
+29.64%
+29.77%
+30.04%
+Italian (it)
+22.89%
+31.44%
+12.63%
+27.38%
+31.32%
+31.30%
+31.44%
+C.4
+Generalizability to Qwen-2.5-7B
+Figure
+3
+presents the CKA-LRDS analysis for Qwen-2.5-7B, which identifies Layer 19 as the target layer. Table
+10
+presents the corresponding unlearning results. At Layer 2 (shallow), we observe catastrophic forgetting in the Retain Set, with German accuracy dropping from 13.0% to 3.0%. Unlearning fails at Layer 23 (deep), as Forget accuracy remains high (English: 45.0% vs. finetuned 52.0%). At Layer 19 (target), the method achieves optimal erasure (26.0%) while preserving utility across languages.
+Figure 3
+:
+Identifying the language-agnostic region for Qwen-2.5-7B.
+Blue line: multilingual CKA alignment (higher is better). Red line: LRDS (lower is more language-agnostic). Green shaded area:
+language-agnostic region
+Λ
+\Lambda
+, satisfying both
+CKA
+>
+τ
+align
+\text{CKA}>\tau_{\text{align}}
+and
+LRDS
+<
+τ
+spec
+\text{LRDS}<\tau_{\text{spec}}
+, where thresholds are computed via Equation
+1
+. We select Layer 19 as the optimal intervention point.
+Table 10
+:
+Qwen-2.5-7B (RMU) across Layers.
+Layer 19 represents the target layer. Shallow intervention (L2) causes Retain collapse in held-out languages, while deep intervention (L23) fails to erase knowledge. The target layer (L19) achieves optimal balance between erasure and utility preservation. Asterisks (*) denote source languages (
+ℒ
+src
+\mathcal{L}_{\text{src}}
+).
+Language
+Base
+Finetuned
+Unlearned Accuracy by Intervention Layer
+(Pre-trained)
+(Target)
+L2 (Shallow)
+L12
+L15
+L19 (Target)
+L23 (Deep)
+FORGET SET: High School Chemistry
+(Lower is Better
+↓
+\downarrow
+)
+English (en)*
+7.0%
+52.0%
+1.0%
+3.0%
+45.0%
+26.0%
+45.0%
+Spanish (es)*
+7.0%
+42.0%
+0.0%
+3.0%
+29.0%
+16.0%
+30.0%
+Portuguese (pt)*
+7.0%
+46.0%
+0.0%
+1.0%
+28.0%
+15.0%
+32.0%
+Chinese (zh)
+7.0%
+45.0%
+1.0%
+0.0%
+30.0%
+18.0%
+37.0%
+Arabic (ar)
+6.0%
+35.0%
+0.0%
+0.0%
+22.0%
+15.0%
+25.0%
+German (de)
+5.0%
+44.0%
+0.0%
+2.0%
+27.0%
+14.0%
+35.0%
+French (fr)
+4.0%
+42.0%
+0.0%
+1.0%
+31.0%
+18.0%
+35.0%
+Hindi (hi)
+3.0%
+31.0%
+0.0%
+2.0%
+20.0%
+11.0%
+28.0%
+Indonesian (id)
+10.0%
+47.0%
+0.0%
+1.0%
+31.0%
+13.0%
+37.0%
+Italian (it)
+8.0%
+49.0%
+0.0%
+2.0%
+30.0%
+18.0%
+37.0%
+Japanese (ja)
+6.0%
+40.0%
+0.0%
+0.0%
+24.0%
+13.0%
+33.0%
+Korean (ko)
+6.0%
+38.0%
+1.0%
+4.0%
+21.0%
+13.0%
+30.0%
+RETAIN SET: History & Law
+(Higher is Better
+↑
+\uparrow
+, closer to Finetuned)
+English (en)*
+7.0%
+41.0%
+12.0%
+34.0%
+37.0%
+38.0%
+39.0%
+Spanish (es)*
+2.0%
+21.0%
+10.0%
+17.0%
+18.0%
+16.0%
+20.0%
+Portuguese (pt)*
+2.0%
+17.0%
+10.0%
+15.0%
+18.0%
+16.0%
+14.0%
+Chinese (zh)
+3.0%
+12.0%
+4.0%
+12.0%
+10.0%
+12.0%
+10.0%
+Arabic (ar)
+2.0%
+9.0%
+4.0%
+7.0%
+8.0%
+7.0%
+9.0%
+German (de)
+4.0%
+13.0%
+3.0%
+8.0%
+6.0%
+10.0%
+12.0%
+French (fr)
+3.0%
+16.0%
+6.0%
+15.0%
+15.0%
+15.0%
+19.0%
+Hindi (hi)
+0.0%
+1.0%
+0.0%
+1.0%
+1.0%
+1.0%
+1.0%
+Indonesian (id)
+3.0%
+16.0%
+1.0%
+8.0%
+11.0%
+13.0%
+13.0%
+Italian (it)
+3.0%
+12.0%
+4.0%
+11.0%
+15.0%
+14.0%
+12.0%
+Japanese (ja)
+1.0%
+10.0%
+2.0%
+5.0%
+12.0%
+9.0%
+10.0%
+Korean (ko)
+2.0%
+10.0%
+3.0%
+7.0%
+8.0%
+8.0%
+9.0%
+C.5
+Results on BLOOM-7b1
+Figure
+4
+presents the CKA-LRDS analysis for BLOOM-7b1, identifying Layer 5 as the target layer. Table
+11
+presents the corresponding unlearning results. At Layer 29 (deep), unlearning fails entirely, with Forget accuracy remaining almost identical to the finetuned baseline (English: 18.0% vs. 17.0%). At Layer 5 (target), the method successfully erases knowledge (0.0% Forget accuracy across all languages) while maintaining utility.
+Figure 4
+:
+Identifying the language-agnostic region for BLOOM-7b1.
+Blue line: multilingual CKA alignment (higher is better). Red line: LRDS (lower is more language-agnostic). Green shaded area:
+language-agnostic region
+Λ
+\Lambda
+, satisfying both
+CKA
+>
+τ
+align
+\text{CKA}>\tau_{\text{align}}
+and
+LRDS
+<
+τ
+spec
+\text{LRDS}<\tau_{\text{spec}}
+, where thresholds are computed via Equation
+1
+. We select Layer 5 as the optimal intervention point.
+Table 11
+:
+BLOOM-7b1 (RMU) across Layers.
+Layer 5 represents the target layer. Deep intervention (L29) fails to erase knowledge, with Forget accuracy unchanged. The target layer (L5) achieves complete erasure while preserving utility. Asterisks (*) denote source languages (
+ℒ
+src
+\mathcal{L}_{\text{src}}
+).
+Language
+Base
+Finetuned
+Unlearned Accuracy by Intervention Layer
+(Pre-trained)
+(Target)
+L2 (Shallow)
+L5 (Target)
+L15
+L29 (Deep)
+FORGET SET: High School Chemistry
+(Lower is Better
+↓
+\downarrow
+)
+English (en)*
+1.0%
+17.0%
+1.0%
+0.0%
+0.0%
+18.0%
+Spanish (es)*
+2.0%
+20.0%
+0.0%
+0.0%
+0.0%
+16.0%
+Portuguese (pt)*
+3.0%
+10.0%
+0.0%
+0.0%
+0.0%
+10.0%
+Arabic (ar)
+1.0%
+12.0%
+0.0%
+0.0%
+0.0%
+8.0%
+French (fr)
+3.0%
+15.0%
+0.0%
+0.0%
+0.0%
+15.0%
+Hindi (hi)
+1.0%
+14.0%
+1.0%
+0.0%
+0.0%
+13.0%
+Indonesian (id)
+2.0%
+13.0%
+0.0%
+0.0%
+0.0%
+10.0%
+Chinese (zh)
+3.0%
+13.0%
+1.0%
+0.0%
+0.0%
+13.0%
+RETAIN SET: History & Law
+(Higher is Better
+↑
+\uparrow
+, closer to Finetuned)
+English (en)*
+1.0%
+16.0%
+15.0%
+13.0%
+7.0%
+16.0%
+Spanish (es)*
+2.0%
+10.0%
+6.0%
+8.0%
+7.0%
+10.0%
+Portuguese (pt)*
+1.0%
+9.0%
+8.0%
+6.0%
+3.0%
+9.0%
+Arabic (ar)
+1.0%
+2.0%
+1.0%
+1.0%
+3.0%
+2.0%
+French (fr)
+0.0%
+9.0%
+5.0%
+9.0%
+4.0%
+10.0%
+Hindi (hi)
+0.0%
+1.0%
+1.0%
+0.0%
+0.0%
+1.0%
+Indonesian (id)
+1.0%
+7.0%
+6.0%
+7.0%
+2.0%
+7.0%
+Chinese (zh)
+0.0%
+8.0%
+6.0%
+7.0%
+6.0%
+8.0%
+C.6
+Results on SLUG (Llama-3.1)
+Table
+12
+presents results using the SLUG algorithm. Unlike RMU and SimNPO, which target the early boundary of the language-agnostic region (Layer 9), SLUG requires richer semantic representations for accurate probing and thus targets deeper layers within the region (Section
+4
+).
+At Layer 3 (shallow), SLUG causes complete collapse, with both Forget and Retain accuracy dropping to 0% across all languages, confirming that shallow interventions destroy fundamental multilingual representations. At Layers 18 and 20 (within the language-agnostic region), the method achieves partial erasure (Forget: 24.0%–53.0%) while preserving moderate utility (Retain: 7.0%–58.0%). Layer 20, identified as
+l
+SLUG
+∗
+l^{*}_{\text{SLUG}}
+by Equation
+4
+, provides the best balance within this region. At Layer 30 (deep), unlearning fails entirely, with Forget accuracy remaining virtually identical to the finetuned baseline (English: 86.0%
+→
+\to
+88.0%) while Retain performance is fully preserved.
+SLUG’s one-shot gradient update proves too aggressive when applied to early layers (L3, L9), causing utility loss. The results suggest that SLUG benefits from targeting the deeper boundary of the language-agnostic region, where representations are sufficiently abstract for effective concept removal while remaining language-agnostic. However, even at L20, the erasure-utility trade-off is less favorable than RMU or SimNPO, indicating that additional regularization may be needed for single-step unlearning methods.
+Table 12
+:
+Llama-3.1 (SLUG) across Layers.
+Following Equation
+4
+, layers within the language-agnostic region (L18, L20) serve as target layers for activation-based methods. Shallow layers (L3, L9) cause complete collapse due to SLUG’s aggressive single-step update. Deep layers (L30) fail to erase knowledge. Layers at the deeper boundary of the language-agnostic region (L18, L20) achieve partial erasure with moderate utility preservation. Asterisks (*) denote source languages (
+ℒ
+src
+\mathcal{L}_{\text{src}}
+).
+Language
+Base
+Finetuned
+Unlearned Accuracy by Intervention Layer
+(Pre-trained)
+(Target)
+L3 (Shallow)
+L9
+L18 (Target)
+L20 (Target)
+L30 (Deep)
+FORGET SET: High School Chemistry
+(Lower is Better
+↓
+\downarrow
+)
+English (en)*
+12.0%
+86.0%
+0.0%
+0.0%
+53.0%
+46.0%
+88.0%
+Spanish (es)*
+7.0%
+74.0%
+0.0%
+0.0%
+47.0%
+39.0%
+75.0%
+Portuguese (pt)*
+3.0%
+74.0%
+0.0%
+0.0%
+41.0%
+37.0%
+74.0%
+German (de)
+5.0%
+68.0%
+0.0%
+0.0%
+35.0%
+30.0%
+68.0%
+French (fr)
+5.0%
+78.0%
+0.0%
+0.0%
+40.0%
+37.0%
+76.0%
+Hindi (hi)
+6.0%
+64.0%
+0.0%
+0.0%
+30.0%
+24.0%
+62.0%
+Italian (it)
+5.0%
+80.0%
+0.0%
+0.0%
+47.0%
+35.0%
+82.0%
+RETAIN SET: History & Law
+(Higher is Better
+↑
+\uparrow
+, closer to Finetuned)
+English (en)*
+5.0%
+84.0%
+0.0%
+0.0%
+55.0%
+58.0%
+83.0%
+Spanish (es)*
+1.0%
+66.0%
+0.0%
+0.0%
+40.0%
+37.0%
+67.0%
+Portuguese (pt)*
+1.0%
+58.0%
+0.0%
+0.0%
+39.0%
+29.0%
+61.0%
+German (de)
+2.0%
+58.0%
+0.0%
+0.0%
+23.0%
+22.0%
+58.0%
+French (fr)
+1.0%
+63.0%
+0.0%
+0.0%
+37.0%
+37.0%
+63.0%
+Hindi (hi)
+0.0%
+23.0%
+0.0%
+0.0%
+12.0%
+7.0%
+24.0%
+Italian (it)
+2.0%
+62.0%
+0.0%
+0.0%
+44.0%
+30.0%
+62.0%
+C.7
+Results on SimNPO (Llama-3.1)
+Table
+13
+presents results using SimNPO. At Layer 30 (deep), unlearning fails with high Forget accuracy (81.0%). At Layer 9 (target), the method achieves perfect erasure (0.0%) with high retention (86.0%), demonstrating the most favorable erasure-utility trade-off among the three algorithms evaluated.
+Table 13
+:
+Llama-3.1 (SimNPO) across Layers.
+Comparison of target and deep layers. Deep intervention (L30) fails to erase knowledge, with high Forget accuracy. The target layer (L9) achieves perfect erasure while maintaining strong utility across all languages. Asterisks (*) denote source languages (
+ℒ
+src
+\mathcal{L}_{\text{src}}
+).
+Language
+Base
+Finetuned
+Unlearned Accuracy by Intervention Layer
+(Pre-trained)
+(Target)
+L2 (Shallow)
+L3
+L9 (Target)
+L18
+L30 (Deep)
+FORGET SET: High School Chemistry
+(Lower is Better
+↓
+\downarrow
+)
+English (en)*
+12.0%
+86.0%
+2.0%
+1.0%
+0.0%
+10.0%
+81.0%
+Spanish (es)*
+7.0%
+74.0%
+1.0%
+1.0%
+0.0%
+5.0%
+67.0%
+Portuguese (pt)*
+3.0%
+74.0%
+0.0%
+1.0%
+0.0%
+2.0%
+67.0%
+German (de)
+5.0%
+68.0%
+0.0%
+0.0%
+0.0%
+2.0%
+66.0%
+French (fr)
+5.0%
+78.0%
+0.0%
+1.0%
+0.0%
+3.0%
+73.0%
+Hindi (hi)
+6.0%
+64.0%
+0.0%
+0.0%
+0.0%
+4.0%
+57.0%
+Italian (it)
+5.0%
+80.0%
+2.0%
+0.0%
+0.0%
+2.0%
+71.0%
+RETAIN SET: History & Law
+(Higher is Better
+↑
+\uparrow
+, closer to Finetuned)
+English (en)*
+5.0%
+84.0%
+79.0%
+88.0%
+86.0%
+83.0%
+81.0%
+Spanish (es)*
+1.0%
+66.0%
+63.0%
+71.0%
+75.0%
+73.0%
+66.0%
+Portuguese (pt)*
+1.0%
+58.0%
+59.0%
+64.0%
+63.0%
+62.0%
+59.0%
+German (de)
+2.0%
+58.0%
+51.0%
+55.0%
+52.0%
+52.0%
+57.0%
+French (fr)
+1.0%
+63.0%
+60.0%
+64.0%
+57.0%
+54.0%
+62.0%
+Hindi (hi)
+0.0%
+23.0%
+18.0%
+21.0%
+19.0%
+23.0%
+22.0%
+Italian (it)
+2.0%
+62.0%
+57.0%
+60.0%
+58.0%
+57.0%
+60.0%
+Appendix Appendix D
+Discussion
+Knowledge organization in multilingual models.
+Our layer-wise analysis reveals a hierarchical organization of multilingual knowledge that has direct implications for unlearning. The catastrophic forgetting observed at shallow layers (e.g., Layer 2) indicates that these layers encode fundamental linguistic primitives shared across all languages. Intervening at this depth does not selectively remove knowledge but instead disrupts basic language processing capabilities.
+In contrast, the intermediate layers identified by our CKA and LRDS metrics exhibit high multilingual alignment, where the same concept expressed in different languages converges to similar representations. This convergence explains the multilingual transfer observed in our experiments: modifying the shared semantic representation of a concept propagates the effect to all languages simultaneously.
+The failure of deep-layer interventions (e.g., Layer 30) can be attributed to the fact that, at this depth, the target knowledge has already been retrieved and processed by earlier layers. Deep layers primarily handle language-specific token generation rather than core semantic representation; modifying them cannot erase knowledge that remains encoded upstream. Our Logit Lens analysis (Table
+9
+) confirms this: optimization at these layers fails to modify the stored knowledge—internal activation probabilities remain virtually unchanged (e.g., English forget recall: 29.39%
+→
+\rightarrow
+29.42%), explaining why behavioral metrics show no unlearning effect even in source languages.
+Distinguishing knowledge removal from output suppression.
+A key finding of our work is the distinction between knowledge removal and output-level suppression. Standard unlearning methods that operate on final-layer logits risk creating what
+Jia et al. [19]
+term an Erasure Illusion: the model learns to suppress specific outputs rather than remove the underlying knowledge. Our deep-layer results demonstrate a different failure mode—not an illusion of erasure, but a complete failure to modify the target representations at all.
+Our Logit Lens results demonstrate that interventions at the MUTE layer reduce internal activation probabilities of target concepts to near-zero across layers, indicating that the knowledge is removed from the model’s computation path rather than merely hidden. This distinction has practical implications for safety-critical applications, where adversaries may attempt to recover supposedly unlearned knowledge through multilingual queries.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

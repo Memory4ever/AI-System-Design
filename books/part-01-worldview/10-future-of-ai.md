@@ -47,6 +47,9 @@ Driver -> Possible Design -> New Bottleneck -> Uncertainty
 
 更多 accelerator 不只意味着采购成本，还涉及电力、散热、机房、供应链和区域容量。energy per useful outcome 会比单纯峰值算力更接近长期约束，但“useful”必须包含质量和业务结果，而不是只统计 token。
 
+能源来源也可能改变计算的物理位置，而不是只改变电费。例如，近持续太阳能使轨道计算成为一种条件性替代分支；但大规模 ML 所需的高带宽连接不能只靠“把 accelerator 送上去”获得。自由空间光链路的距离损耗要求更紧密的编队，又引入轨道保持、辐射、散热、地面通信和故障维护约束。地面机房仍是可核验维护路径和服务 SLO 的部署基线；局部地面链路、芯片试验与轨道模型不等于在轨训练已成立，也不能证明完整成本更低。这个分支说明能源、通信和可运维性必须一起比较，而不是预言计算必然迁往太空。
+<!-- source-family:SF-2025-GOOGLE-SUNCATCHER -->
+
 ### Latency
 
 交互式应用、控制系统和端侧体验有不同延迟上限。可以通过 batching 提高吞吐，却可能增加等待；可以用更强模型减少错误，却可能延长响应。未来系统仍会在 quality、latency 与 cost 之间做 workload-specific 权衡。
@@ -249,8 +252,11 @@ Agent Loop:
 
 本章是情景分析，不是预测清单。后续 Review 应重新核验所有时间敏感研究入口，但不因新产品出现就重写主线；只有当驱动力、系统对象或长期约束发生变化时，才调整知识树判断。新增方向必须同时写出替代设计、新瓶颈和可证伪条件。
 
+2025-11-05 Research整合：Energy段依据Google Research 2025-11-04公告的System design and key challenges及Future directions，增加能源placement与互连几何/硬件环境共同变化的条件性分支；未采用在轨训练、完整可靠性、经济优势或发射时间预测。root必要证据与owner独立比较通过；非写入者Carver于2026-10-04T17:46:44+08:00实际顺读新增正文、相邻段落、末注及Ch9/11交接，写后复核通过。未复现实验。
+
 优先核验入口：
 
+- Google Research, "Exploring a space-based, scalable AI infrastructure system design", 2025: https://research.google/blog/exploring-a-space-based-scalable-ai-infrastructure-system-design/
 - Shunyu Yao et al., "ReAct: Synergizing Reasoning and Acting in Language Models", 2022: https://arxiv.org/abs/2210.03629
 - John Yang et al., "SWE-agent: Agent-Computer Interfaces Enable Automated Software Engineering", 2024: https://arxiv.org/abs/2405.15793
 - Edward J. Hu et al., "LoRA: Low-Rank Adaptation of Large Language Models", 2021: https://arxiv.org/abs/2106.09685

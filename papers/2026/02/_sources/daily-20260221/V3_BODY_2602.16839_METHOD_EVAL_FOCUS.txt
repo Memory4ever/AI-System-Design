@@ -1,0 +1,426 @@
+3 Methodology
+3.1 Notation and Preliminaries
+Attention and the KV cache as memory.
+In the prefilling stage, given a sequence (x1,…,xt)(x_{1},\dots,x_{t}), each token xix_{i} is mapped to a hidden state hih_{i}, which is then projected into query, key, and value vectors, i.e., qi=WQ​hi,ki=WK​hi,vi=WV​hiq_{i}=W_{Q}h_{i},k_{i}=W_{K}h_{i},v_{i}=W_{V}h_{i},
+where WQW_{Q}, WKW_{K}, and WVW_{V} are learnable weight matrices.
+Let Kt=[k1,…,kt]K_{t}=[k_{1},\dots,k_{t}] and Vt=[v1,…,vt]V_{t}=[v_{1},\dots,v_{t}] denote the cache of keys and values up to step tt. The attention output for token xtx_{t} is given by
+ot=softmax⁡(qt​Kt⊤d)​Vt.o_{t}=\mathrm{softmax}\!\left(\tfrac{q_{t}K_{t}^{\top}}{\sqrt{d}}\right)V_{t}.
+During the decoding stage, for the next token xt+1x_{t+1}, we first compute its query qt+1q_{t+1}, and then let it attend over the extended KV cache:
+ot+1=softmax⁡(qt+1​[Kt,kt+1]⊤d)​[Vt,vt+1].o_{t+1}=\mathrm{softmax}\!\left(\tfrac{q_{t+1}[K_{t},\,{\color[rgb]{1,0,0}k_{t+1}}]^{\top}}{\sqrt{d}}\right)[V_{t},\,{\color[rgb]{1,0,0}v_{t+1}}].
+Thus, the KV cache grows incrementally with each new token, serving as the memory that avoids redundant computation during autoregressive decoding and improves long-context understanding.
+GRPO for Reinforcement Learning in LLMs.
+Grouped Reinforcement Policy Optimization (GRPO) is a policy gradient method designed to fine-tune large language models.
+Unlike classical RLHF approaches, GRPO discards the need for a critic model and instead samples multiple candidate completions per prompt, groups them, and assigns rewards at the group level.
+Given a prompt pp, the model generates nn completions {y1,…,yn}\{y_{1},\dots,y_{n}\} at the rollout stage.
+Then, each completion yiy_{i} is assigned a raw score sis_{i} by a reward model, which is then normalized within the group to produce variance-reduced rewards:
+ri=si−1n​∑j=1nsj1n​∑j=1n(sj−s¯)2+ϵ,s¯=1n​∑j=1nsj.r_{i}=\frac{s_{i}-\tfrac{1}{n}\sum_{j=1}^{n}s_{j}}{\sqrt{\tfrac{1}{n}\sum_{j=1}^{n}(s_{j}-\bar{s})^{2}+\epsilon}},\quad\bar{s}=\tfrac{1}{n}\sum_{j=1}^{n}s_{j}.
+The policy is updated to maximize the expected reward while staying close to a reference policy πref\pi_{\mathrm{ref}}:
+ℒGRPO(π)=𝔼y∼π(⋅|p)[r(y)−βKL(π(⋅|p)∥πref(⋅|p))],\displaystyle\mathcal{L}_{\text{GRPO}}(\pi)=\mathbb{E}_{y\sim\pi(\cdot|p)}\Big[r(y)-\beta\,\mathrm{KL}\big(\pi(\cdot|p)\,\|\,\pi_{\mathrm{ref}}(\cdot|p)\big)\Big],
+(1)
+where r⁡(y)r(y) is the group-normalized reward and β\beta controls the KL regularization strength. Using relative rewards within each group, GRPO provides stable training signals without a critic and aligns naturally with autoregressive generation in LLMs.
+3.2 Challenges for Efficient RL Training
+Difficult tasks often require long reasoning trajectories (Yang et al., 2025), i.e., generating more tokens to obtain high-quality solutions for reward computation. The effectiveness of passive test-time scaling (Muennighoff et al., 2025) further underscores the importance of extended reasoning in solving difficult problems. However, this demand for longer generations directly amplifies the inefficiency of the rollout stage, which has been identified as the primary bottleneck to RL training (Zheng et al., 2025b; Han et al., 2025; Zhang et al., 2025c; Zhang et al., 2025a). Despite the use of KV caching to avoid redundant computation, rollouts still dominate both time and memory costs due to continuous autoregressive decoding, making efficient training particularly challenging under outcome-based reward settings.
+A natural approach to mitigating memory consumption is to adopt a dynamic sliding window strategy for the KV cache (Zhang et al., 2023), thus keeping memory usage approximately constant even as the roll-out sequences grow longer. However, aggressive token drop can significantly impair long-sequence understanding and generation (Jin et al., 2024; Cai et al., 2024), which in turn weakens the model’s reasoning ability during rollouts and ultimately reduces training effectiveness. As illustrated in table 1, applying a sliding-window cache to RL training of Qwen models leads to a clear performance drop compared to training with the full cache of all tokens. This naturally raises a critical question: can we maintain a constant-capacity cache window while still enabling the reasoning model to effectively “see” all previous tokens for efficient reasoning?
+To formalize this challenge, we modify the standard GRPO formulation by redefining the rollout distribution. In the original objective, a trajectory yy is sampled under the full-cache policy πθ(⋅∣p)\pi_{\theta}(\cdot\mid p). In our setting, the trajectory is instead generated under a cache policy DD, which prunes the KV cache online during decoding. At each step tt, DD selects a pruned context 𝒞tD=CachePruneD​(p,y<t)\mathcal{C}^{D}_{t}=\mathrm{CachePrune}_{D}(p,y_{<t}), and the token distribution becomes
+πθD​(y∣p)=∏t=1Tπθ​(yt∣𝒞tD).\displaystyle\pi_{\theta}^{D}(y\mid p)=\prod_{t=1}^{T}\pi_{\theta}\!\big(y_{t}\mid\mathcal{C}^{D}_{t}\big).
+(2)
+Accordingly, the cache-aware GRPO objective is
+ℒGRPOD(θg;θref)=𝔼y∼πθgD(⋅∣p)[r(y)−βKL(πθgD(⋅∣p)∥πθref(⋅∣p))],\displaystyle\mathcal{L}_{\text{GRPO}}^{D}(\theta_{g};\theta_{\mathrm{ref}})~=~\mathbb{E}_{y\sim{\color[rgb]{1,0,0}\pi_{\theta_{g}}^{D}(\cdot\mid p)}}\Big[r(y)\;-\;\beta\,\mathrm{KL}\!\big({\color[rgb]{1,0,0}\pi_{\theta_{g}}^{D}(\cdot\mid p)}\,\big\|\,\pi_{\theta_{\mathrm{ref}}}(\cdot\mid p)\big)\Big],
+(3)
+where θg\theta_{g} denotes the parameters of the generating model under partial-cache rollouts, and θref\theta_{\mathrm{ref}} is a reference model that operate with the full cache. Given a task prompt after the model training, we expect πθg∗(y∣p)≈πθ∗(y∣p)\pi_{\theta^{*}_{g}}(y\mid p)\approx\pi_{\theta*}(y\mid p), where θg∗\theta^{*}_{g} and θ∗\theta^{*} are optimized from eq. 3 and eq. 1 respectively.
+Figure 1: Overview of our method. During the rollout process, the model continuously learns the dropped tokens to achieve a balance between generation efficiency and long-term memory.
+3.3 Our Approach: Learning Think Tokens Prior to Eviction
+Motivated by prior work on dynamically adapting models to novel inputs at test time (Chen et al., 2024; Muhtar et al., 2024), we take a different approach from simply discarding the evicted thinking tokens.
+Figure 2: The computation of context state SS.
+Instead, we first learn from these tokens to update a small set of parameters θg\theta_{g}, enabling the test-time policy πD​θg​(y∣p)\pi^{D}{\theta_{g}}(y\mid p) to approximate the full-cache policy π​θ​(y∣p)\pi{\theta}(y\mid p) under a given eviction strategy DD.
+Specifically, for a given question xx, during the rollout stage, we continuously decode next thinking tokens {y1,…,yl}\{y_{1},\ldots,y_{l}\} based on the policy πθD​(y∣p)\pi^{{D}}_{{\theta}}(y\mid p) until the KV cache is full. Based on the token eviction strategy DD, earlier tokens {ye1,…,yem}\{y_{e_{1}},\ldots,y_{e_{m}}\} will be evicted from the cache. Rather than discarding these tokens, we use them to update a compact latent representation with the help of global query vector qgq_{g}, which serves as a learnable summary of all evicted context encountered so far. The update to the LoRA weights is computed as
+△​W=A​(((WQa​qg)​(WKa​Ke)T)​(WKa​Ve))⏟Se​B,\displaystyle\vartriangle W=A\underbrace{\left(\left({\color[rgb]{1,0,0}\left(W^{a}_{Q}q_{g}\right)}{\color[rgb]{0,0,1}\left(W^{a}_{K}K_{e}\right)}^{T}\right){\color[rgb]{1,0.5,0}\left(W^{a}_{K}V_{e}\right)}\right)}_{{\color[rgb]{0.75,0,0.25}S_{e}}}B,
+(4)
+where we denote qgq_{g} as global latent query that aggregates information from evicted tokens, WQa,WQaW^{a}_{Q},W^{a}_{Q} and WVaW^{a}_{V} as the weight matrices to map the global query tokens qgq_{g}, evicted key KeK_{e} and value tokens VeV_{e} into the compressed latent space, AA and BB as the weight matrices to map the evicted context state SeS_{e} computed by the evicted tokens to the model weights.
+The model then continues decoding {yl+1,…}\{y_{l+1},\dots\} under the updated policy πθ′D​(y∣p)\pi^{D}_{\theta^{\prime}}(y\mid p), where θ′=θ+△​W\theta^{\prime}=\theta+\vartriangle W. Each time the cache fills, we compute a new evicted context state Se′S^{\prime}_{e} and update Se←Normalize​(Se+Se′)S_{e}\leftarrow\textit{Normalize}(S_{e}+S^{\prime}_{e}), and recompute △​W\vartriangle W accordingly.
+To bootstrap adaptation, before processing any evicted tokens we initialize the context state with learnable global tokens as Se=(WQa​qg​(WKa​kg)⊤)​WVa​vgS_{e}=\big(W^{a}_{Q}q_{g}\,(W^{a}_{K}k_{g})^{\top}\big)\,W^{a}_{V}v_{g}, where we define hgh_{g} as the global tokens and qg=WQ​hgq_{g}=W_{Q}h_{g}, kg=WK​hgk_{g}=W_{K}h_{g}, and vg=WV​hgv_{g}=W_{V}h_{g}. This initialization makes
+qgq_{g} an explicit carrier of evicted-context information, enabling streaming adaptation while keeping memory usage constant. The full computation is illustrated in fig. 2.
+The selection of DD during training.
+In our training setup, all question tokens are permanently retained in the cache, while a simple sliding-window eviction strategy is applied only to the thinking tokens. This straightforward design supports efficient batch operations across samples, whereas more sophisticated importance-based eviction would incur additional computational overhead. The decision to always keep question tokens is directly motivated by the sink-token mechanism in (Zhang et al., 2023), as both serve to anchor and preserve the prompt context, ensuring that the model maintains stable grounding even when the chain-of-thought becomes very long.
+4 Evaluations
+Table 1: Comparison of methods across different models on benchmark datasets.
+The best average performance per model is highlighted in bold.
+Note: Benchmark improvements are reported relative to Baseline,
+while FLOPs/Memory reductions are reported relative to LoRA.
+Studied Models
+Methods
+Maximum
+TFLOPs of
+Attention
+Peak GPU
+Mem. (%)
+Mean GPU
+Mem. (%)
+Math500
+pass@1
+Olympiad
+pass@1
+Minerva
+Math
+pass@1
+AMC
+pass@1
+AIME2024
+pass@16
+AIME2025
+pass@16
+Avg.
+Qwen2.5-3B-Instruct
+Baseline
+–
+–
+–
+50.8
+27.2
+16.1
+34.3
+20.0
+13.3
+26.9
+LoRA
+4.2
+82.8
+63.5
+53.2+2.4
+27.8+0.6
+15.9-0.2
+35.9+1.6
+20.00.0
+16.7+3.4
+28.2+1.3
+LoRAc\text{LoRA}_{c}
+2.6-1.6
+38.0-44.8
+31.0-32.5
+50.0-0.8
+27.7+0.5
+16.10.0
+33.1-1.2
+16.7-3.3
+10.0-3.3
+25.6-1.3
+Ours
+2.7-1.5
+45.3-37.5
+32.6-30.9
+54.0+3.2
+29.0+1.8
+16.2+0.1
+45.0+10.7
+20.00.0
+16.7+3.4
+30.1+3.2
+Qwen2.5-7B-Instruct
+Baseline
+–
+–
+–
+56.8
+34.7
+18.5
+48.4
+23.3
+16.6
+33.1
+LoRA
+5.7
+85.8
+59.3
+59.4+2.6
+38.7+4.0
+23.4+4.9
+50.6+2.2
+30.0+6.7
+26.7+10.1
+38.1+5.0
+LoRAc\text{LoRA}_{c}
+3.5-2.2
+63.1-22.7
+45.4-13.9
+61.2+4.4
+35.9+1.2
+23.7+5.2
+52.5+4.1
+20.0-3.3
+26.7+10.1
+36.7+3.6
+Ours
+3.6-2.1
+67.2-18.6
+48.6-10.7
+61.2+4.4
+38.7+4.0
+25.3+6.8
+52.5+4.1
+30.0+6.7
+30.0+13.4
+39.6+6.5
+DeepSeek-R1-
+Distill-Llama-8B
+Baseline
+–
+–
+–
+53.6
+28.7
+15.6
+42.5
+20.0
+20.0
+30.1
+LoRA
+7.4
+88.7
+53.5
+57.4+3.8
+35.3+6.6
+18.3+2.7
+55.0+12.5
+23.3+3.3
+20.00.0
+34.9+4.8
+LoRAc\text{LoRA}_{c}
+4.6-2.8
+59.1-29.6
+47.1-6.4
+54.2+0.6
+31.9+3.2
+16.0+0.4
+45.0+2.5
+36.7+16.7
+26.7+6.7
+35.1+5.0
+Ours
+4.6-2.8
+59.8-28.9
+46.8-6.7
+57.6+4.0
+39.7+11.0
+16.5+0.9
+60.0+17.5
+56.7+36.7
+43.3+23.3
+45.6+15.5
+4.1 Experimental Setup
+Models.
+We evaluate our method on three representative open-weight instruction-tuned models of varying scales and architectures:
+(1) Qwen2.5-3B-Instruct (Team, 2024), a 4.1B-parameter transformer with 32 decoder layers, a hidden dimension of 4,096, 32 attention heads (128 dimensions per head), and rotary positional encodings;
+(2) Qwen2.5-7B-Instruct (Team, 2024), a mid-scale 7.2B-parameter model with 32 decoder layers, hidden size of 5,120, and 40 attention heads. Its architecture follows the same design principles as the 4B variant but with larger hidden width and attention capacity;
+(3) DeepSeek-R1-Distill-Llama-8B (Guo et al., 2025; Vavekanand and Sam, 2024), an 8.0B-parameter model distilled from DeepSeek-R1 into LLaMA-3.1-8B. It comprises 32 transformer layers with hidden dimension 4,096, 32 attention heads, SwiGLU activation, and rotary embeddings. Compared with the original LLaMA-3.1-8B model, it has better capacity on long-sequence generation.
+Benchmarks and Metrics.
+We conduct evaluations on six math reasoning benchmarks covering diverse difficulty levels and reasoning depth:
+(1) Math500 (Hendrycks et al., 2021), a curated set of 500 challenging word problems requiring symbolic and multi-step reasoning;
+(2) OlympiadBench (He et al., 2024), 674 olympiad-style problems designed to test deep mathematical reasoning;
+(3) Minerva Math (Lewkowycz et al., 2022), 672 problems sampled from arXiv and textbooks, emphasizing symbolic manipulation;
+(4) AMC (American Mathematics Competitions, 2023), 40 middle- to high-school competition problems focused on combinatorics, number theory, and algebra;
+(5) AIME2024 and AIME2025 (Codeforces, 2024), recent American Invitational Mathematics Examination sets, each containing 30 highly challenging problems. Due to their extreme difficulty, AIME datasets are evaluated using the pass@16 metric.
+For all other datasets, we report pass@1, averaged over 55 independent runs, to ensure fair and robust comparisons.
+Compared Methods.
+We compare four approaches:
+(1) Baseline, the original model prior to RL training;
+(2) LoRA, RL-trained models with low-rank adaptation applied;
+(3) LoRAc\textbf{LoRA}_{c}, RL-trained models with LoRA and a sliding-window cache for token eviction;
+(4) Ours, RL-trained models using our proposed method, where evicted tokens are explicitly learned before being discarded.
+Implementation Details.
+Unless otherwise specified, the maximum sequence length during rollout is set to 30723072, with a global batch size of 512512. We use the DAPO-Math-17K dataset (Yu et al., 2025) as our training dataset.
+We use the Adam optimizer with a learning rate of 1×10−51\times 10^{-5} and a maximum gradient norm of 1.01.0.
+The rank of LoRA and our method is fixed at 3232.
+For LoRAc\text{LoRA}_{c} and our method, the sliding-window cache size is set to the maximum question length in the current micro-batch, with 25%25\% of tokens evicted upon cache saturation to improve efficiency during training and inference.
+Our method additionally employs 3232 global tokens.
+All models are trained until convergence, and experiments are conducted on 88 NVIDIA A100 GPUs (40 GB each).
+(a) Evaluation of Qwen2.5--7B-Instruct models.
+(b) Evaluation of DeepSeek-R1-Distill-Llama-8B models.
+Figure 3: Evaluation of Qwen-7B-Instruct and DeepSeek-R1-Distill-Llama-8B models trained by different methods on four benchmarks. We set the same maximum number of tokens for generation as 3072, and vary the KV cache window length from 768 to 3072. Each value corresponds to the mean pass@1 score over five independent runs.
+4.2 Evaluation on Math Reasoning Tasks
+We first evaluate the training efficiency and task performance of the trained models using different methods. Training efficiency is quantified using three metrics: (i) maximum TFLOPs required by attention, (ii) peak GPU memory utilization, and (iii) mean GPU memory utilization across training. These jointly reflect the computational and memory efficiency of the different cache strategies. Table 1 reports the results.
+Qwen2.5-3B-Instruct. Full-cache LoRA attains 28.2% average accuracy but requires 4.2 TFLOPs and nearly 83% peak memory usage. LoRAc\text{LoRA}_{c} reduces peak memory to 38% but accuracy drops to 25.6%. In contrast, the proposed method achieves 30.1%, the highest across all methods, while requiring only 2.7 TFLOPs and 45% peak memory. This demonstrates that naive eviction severely harms reasoning performance, but eviction-aware training not only recovers but improves accuracy relative to full-cache LoRA.
+Qwen2.5-7B-Instruct. The trade-off between accuracy and efficiency becomes more evident at larger scale. LoRA achieves 38.1% accuracy but incurs high memory cost (85.8% peak). LoRAc\text{LoRA}_{c} lowers memory to 63.1% but reduces accuracy to 36.7%. The proposed method achieves the best average accuracy (39.6%), while cutting FLOPs almost in half compared to LoRA (3.6 vs. 5.7). This suggests that eviction-aware training is particularly beneficial as model size increases.
+DeepSeek-R1-Distill-Llama-8B. For the largest model, efficiency constraints dominate. Full-cache LoRA requires 7.4 TFLOPs and 89% peak memory. LoRAc\text{LoRA}_{c} reduces resource usage but sacrifices accuracy. By contrast, our method yields a marked performance gain, achieving 45.6% average accuracy, a +10.7 improvement over LoRA, while consuming only 4.6 TFLOPs and 59.8% peak memory. The improvements are especially notable on challenging benchmarks such as AIME2024 (+33.4) and AIME2025 (+23.3).
+Table 2: AIME2024 and AIME2025 pass@16 results (%). Maximum generation length is 6,144 tokens. KV cache window sizes range from 768 to 1,536.
+Note: Improvements are reported relative to Baseline.
+Models
+Qwen2.5-4B-Instruct
+Qwen2.5-7B-Instruct
+DeepSeek-R1-
+Distill-Llama-8B
+Dataset
+Method
+768
+1024
+1536
+Avg.
+768
+1024
+1536
+Avg.
+768
+1024
+1536
+Avg.
+AIME2024
+Baseline
+10.0
+16.6
+20.0
+15.53
+23.3
+13.3
+23.3
+19.97
+3.3
+3.3
+20.0
+8.87
+LoRA
+10.00.0
+13.3-3.3
+20.00.0
+14.43-1.1
+10.0-13.3
+23.3+10.0
+30.0+6.7
+21.10+1.1
+3.30.0
+3.30.0
+23.3+3.3
+9.97+1.1
+LoRAc\text{LoRA}_{c}
+13.3+3.3
+13.3-3.3
+16.7-3.3
+14.43-1.1
+16.6-6.7
+20.0+6.7
+20.0-3.3
+18.87-1.1
+6.7+3.4
+16.7+13.4
+36.7+16.7
+10.03+1.2
+Ours
+16.7+6.7
+20.0+3.4
+20.00.0
+18.90+3.4
+26.6+3.3
+26.6+13.3
+30.0+6.7
+27.73+7.8
+26.7+23.4
+30.0+26.7
+56.7+36.7
+37.80+28.9
+AIME2025
+Baseline
+6.7
+13.3
+13.3
+11.10
+10.0
+16.7
+16.6
+14.43
+6.7
+10.0
+20.0
+12.23
+LoRA
+6.70.0
+6.7-6.6
+16.7+3.4
+10.03-1.1
+6.7-3.3
+23.3+6.6
+26.7+10.1
+18.90+4.5
+6.70.0
+10.00.0
+20.00.0
+12.230.0
+LoRAc\text{LoRA}_{c}
+6.70.0
+10.0-3.3
+10.0-3.3
+8.90-2.2
+20.0+10.0
+26.7+10.0
+26.7+10.1
+24.47+10.0
+6.70.0
+20.0+10.0
+26.7+6.7
+17.79+5.6
+Ours
+10.0+3.3
+16.7+3.4
+16.7+3.4
+14.47+3.4
+23.3+13.3
+26.7+10.0
+26.7+10.1
+25.60+11.2
+26.7+20.0
+30.0+20.0
+43.3+23.3
+33.34+21.1
+4.3 Evaluation under Different Computational Budgets
+To assess the robustness of different methods under constrained memory, we evaluate performance across progressively reduced KV cache sizes. In practice, such reductions correspond to tighter computational budgets during inference, where only a fraction of the activations can be stored.
+Figure 3 summarizes results across multiple reasoning benchmarks, including Olympiad, MinervaMath, AMC, and Math500, where we set the maximum response length as 3,072. Each curve reports accuracy as the available cache decreases from full capacity to highly constrained settings. As expected, the Baseline and LoRA methods degrade rapidly with shrinking cache size, reflecting their reliance on complete historical context. LoRAc\text{LoRA}_{c} alleviates this issue to some extent by incorporating sliding-window adaptation learning from the training process, but its effectiveness remains limited when the window becomes narrow. In contrast, our method consistently sustains higher accuracy across all computational budgets, demonstrating resilience to cache truncation. Quantitatively, averaged across all datasets and cache settings, our approach achieves an accuracy of 39.37, compared to 32.99 for LoRA and 30.31 for the Baseline. This corresponds to relative improvements of +19.3% over LoRA and +29.9% over the Baseline. Importantly, these gains are achieved without requiring additional inference-time memory, as our method maintains constant cache usage regardless of the budget.
+We further validate these findings on harder benchmarks, AIME2024 and AIME2025, which require longer chains of reasoning. Here, we allow up to 6,072 tokens for generation (exceeding the training setting) and set the maximum cache size to 1,536 tokens to accelerate decoding. We then report pass@16 scores across cache sizes {768,1024,1536}\{768,1024,1536\} in table 2. Across both years and all backbones, our method achieves the highest average performance. Relative to LoRA, the average gains are +6.63 / +6.70 on Qwen2.5-7B-Instruct, and +27.83 / +21.11 on DeepSeek-R1-Distill-Llama-8B. Improvements over the sliding-window Cache, i.e., LoRAc\text{LoRA}_{c}, are likewise substantial (e.g., +8.86 on Qwen2.5-7B AIME2024 and +27.77 on DeepSeek-R1-
+Distill-Llama-8B AIME2024), underscoring the limitations of naïve context truncation. More results on Qwen-2.5-4B-Instruct are provided in appendix B.
+In summary, while our approach reduces training cost, particularly by lowering peak memory usage, without sacrificing task performance, these results further show that it also reduces inference cost by sustaining accuracy under tight cache budgets.
+Method
+Vanilla
+With ours
+Generation Length
+3K
+6K
+3K
+4K
+5K
+6K
+Peak GPU mem (%)
+88.7
+95.6
+59.8
+60.2
+60.1
+60.4
+Mean GPU mem (%)
+53.5
+64.3
+46.8
+46.9
+46.7
+47.6
+MATH-500 (pass@1)
+53.2
+55.4
+57.6
+58.2
+59.4
+60.2
+Table 3: Training efficiency comparison across different maximum generation lengths during rollout.
+(a) Global tokens.
+(b) Token dropping.
+Figure 4: Ablation study on (a) global token usage and (b) token dropping strategies.
+4.4 Ablation Study and Discussion
+Progressive Thought Encoding Enables Scalable CoT RL Training.
+We employ the proposed progressive encoding method to efficiently reduce memory consumption, particularly peak usage during training. By lowering memory requirements, we enable longer and more complex reasoning processes during the rollout stage. In this section, we present experiments demonstrating how the saved memory allows us to train DeepSeek-R1-Distill-Llama with larger maximum generation lengths, ranging from 44K to 66K tokens per rollout sample.
+As shown in table 3, increasing the maximum generation length during rollout consistently improves reasoning performance on MATH-500. Meanwhile, progressive encoding keeps both peak and mean memory usage stable and significantly lower than vanilla RL training. Encouraging the model to generate longer outputs not only supports more extended reasoning but also leads to consistent gains on MATH-500.
+Figure 5:
+Performance on MATH-500 under a fixed 1K context window as the maximum
+generation length increases from 3K to 64K.
+These results demonstrate that we can achieve longer reasoning with limited memory overhead, yielding better overall performance.
+Generation of long sequences for reasoning.
+To assess the scalability of our method under extended reasoning trajectories, we evaluate the RL-trained DeepSeek-R1-Distill-Llama-8B model on MATH-500 using substantially longer generation lengths. During inference, we fix the context window to 1K tokens to impose a strict memory constraint, while varying the maximum generation length from 3K up to 64K tokens. This setup allows us to examine how well different approaches leverage increasingly long reasoning chains when the available KV cache remains limited The results are provided in fig. 5, showing that all methods benefit from longer reasoning sequences.
+Across the entire length range, our method demonstrates the strongest scaling behavior. The original model, LoRA, and LoRAc show moderate improvements that gradually plateau as the sequence grows longer, whereas our approach continues to yield steady gains even at 64K tokens. This indicates that progressive thought encoding not only preserves reasoning information under tight cache budgets, but also scales favorably as reasoning trajectories extend far beyond the training rollout length.
+The use of global context tokens.
+In our proposed method, we introduce global tokens to improve training efficiency.
+To evaluate their impact on model performance, we compare against several baselines: (1) Baseline, the original Qwen-2.5-Instruct model; (2) Global-Only, our method with the update of context state SeS_{e} from evicted tokens disabled; (3) #Global-0, initializing ses_{e} with zero, effectively removing global token initialization; and (4) #Global-16/32/48/64, our method with the number of global tokens varied from 16 to 64.
+We conduct experiments on the MATH-500 dataset under different 

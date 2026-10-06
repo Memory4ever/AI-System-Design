@@ -1,0 +1,241 @@
+Decisive admission bounded main-body 240-line slice; not full evidence. Source https://arxiv.org/html/2601.10011v1
+1 Introduction
+Recent progress in NL2SQL has been heavily reliant on either fine-tuning large language models (LLMs) Qin et al. (2024); Li et al. (2024b) or invoking powerful but closed-source APIs Pourreza et al. (2024); Liu et al. (2025b). While these approaches achieve strong performance on standard benchmarks, they suffer from clear drawbacks, most notably, an inability to incorporate dynamic feedback and poor generalization beyond static training setups. This has spurred growing interest in TTS Guan et al. (2025); Yang et al. (2025), a paradigm that enhances inference-time computation without modifying model parameters, thereby enabling fully open, training-free solutions based on publicly available LLMs. Despite its promise, current TTS methods Yuan et al. (2025); Lee et al. (2024) for NL2SQL still suffer from several fundamental limitations that hinder both effectiveness and practicality.
+Figure 1: Conceptual comparison between a standard user-in-the-loop NL2SQL workflow and our proposed self-correction framework. In the standard approach, the model generates an initial SQL query, which is then revised through explicit user feedback, a process that typically stores only correct examples in the experience repository. In contrast, our framework introduces an automatic self-correction step after generation: it retrieves relevant error–correction pairs from a dynamic error-correction memory (including past failures) and refines the output without requiring user intervention, enabling fully training-free adaptation.
+First, they often struggle to balance accuracy and efficiency, with high-performing systems incurring prohibitive computational costs Qin et al. (2024); Li et al. (2025b).
+Second, many divide-and-conquer frameworks delegate the entire question decomposition process to the LLM itself Wang et al. (2023); Pourreza et al. (2024). While seemingly flexible, this approach often produces highly similar or even identical sub-question sequences across different runs Liao et al. (2025). The resulting SQL candidates are strongly correlated, which severely limits the utility of ensemble techniques like majority voting, precisely because meaningful diversity in reasoning paths is absent. Although some recent works combine divide-and-conquer with external planning modules or tool-augmented reasoning Pourreza et al. (2024); Li et al. (2025a), our focus lies squarely on improving the core decomposition mechanism itself, without relying on auxiliary components, to unlock its full potential under a pure test-time scaling setting.
+Third, existing self-correction mechanisms typically rely on static few-shot prompts that embed fixed examples of error-fix patterns Pourreza and Rafiei (2023); Xie et al. (2024). These static demonstrations primarily serve to familiarize the model with the task format rather than genuinely enhancing its ability to diagnose and correct novel errors. Consequently, such designs cannot adapt to novel error types, evolving query formulations, or domain-specific schema quirks, often resulting in ineffective self-correction or requiring users to provide multiple rounds of clarification Huang et al. (2023); Askari et al. (2025); Zhao et al. (2024). Moreover, they treat all past interactions as transient, discarding valuable feedback from user corrections, a rich source of supervision that could guide more robust and generalizable refinement.
+To address these challenges, we propose Memo-SQL, a training-free TTS framework that operates exclusively with open-source LLMs and requires no external APIs or parameter updates. Memo-SQL delivers three key contributions:
+(1) A principled divide-and-conquer framework for NL2SQL.
+Rather than leaving decomposition to the stochastic discretion of the LLM, an approach that often collapses into repetitive reasoning patterns, we formalize SQL generation as a structured divide-and-conquer process. Our framework explicitly decomposes natural language questions along multiple semantic axes (e.g., entity relations, query nesting, and operational sequencing), ensuring broad coverage of compositional structures and promoting diversity in the resulting candidate programs.
+(2) Experience-guided self-correction via error-aware in-context learning.
+While retrieval-augmented in-context learning has been used to retrieve successful demonstrations Li et al. (2025c); Talaei et al. (2024), we repurpose this mechanism for learning from failures. Specifically, we retrieve historical error-correction pairs, not just correct queries, and inject them as dynamic in-context examples during self-correction. This allows the model to explicitly reason about common failure modes and their fixes, enabling adaptive refinement that generalizes across error types and domains, without fine-tuning or handcrafted rules.
+(3) State-of-the-art performance with high efficiency.
+Evaluated on the BIRD benchmark (Li et al., 2023a), Memo-SQL achieves 68.5% execution accuracy on the dev-new set, setting a new state of the art among all open, zero-fine-tuning methods. Remarkably, it reduces computational overhead by over an order of magnitude compared to leading TTS approaches, demonstrating that principled test-time reasoning can simultaneously achieve high accuracy, strong adaptability, and low latency.
+Figure 2: Overview of the Memo-SQL framework, which integrates problem decomposition, ReAct+Reflection reasoning, and self-correction to generate accurate SQL queries. The pipeline begins with preprocessing and multi-strategy question decomposition. Each sub-problem is solved via an iterative ReAct+Reflection loop: (1) reasoning about semantics, (2) generating a sub-SQL query, (3) observing execution results, and (4) reflecting on potential errors to enable one-step correction. Finally, multiple SQL candidates are synthesized using few-shot in-context learning across three syntactic styles (CTE, flat JOIN, nested), followed by error-aware refinement, guided by a error-correction memory, and selection via self-consistency scoring.
+2 Preliminary
+2.1 Divide-and-Conquer for NL2SQL
+Given a natural language question q and a database schema \mathcal{S}, the goal of NL2SQL is to generate an executable SQL query y. In divide-and-conquer approaches, x is first decomposed into a sequence of sub-questions \{x_{1},x_{2},\dots,x_{k}\}, each targeting a specific aspect of \mathcal{S} (e.g., entities, joins, or aggregations). The corresponding SQL fragments \{y_{1},\dots,y_{k}\} are then composed into the final query:
+\begin{split}y&=\texttt{Compose}(y_{1},y_{2},\dots,y_{k}),\\
+&\quad\text{where }y_{i}=\texttt{Gen}(x_{i};\theta).\end{split}
+(1)
+When decomposition is left entirely to the LLM (i.e., \{x_{i}\} are sampled stochastically), the resulting \{y_{i}\} often exhibit low structural diversity Liao et al. (2025), limiting ensemble robustness.
+2.2 In-Context Learning for Self-Correction
+Current self-correction methods use static in-context learning Pourreza and Rafiei (2023); Xie et al. (2024). A fixed set of error–correction demonstrations \mathcal{D}_{\text{static}}=\{(y^{\text{err}}_{j},y^{\text{corr}}_{j})\}_{j=1}^{m} is embedded into the prompt:
+p_{\text{prompt}}=[\mathcal{D}_{\text{static}};\,y^{\text{err}}_{\text{new}}],
+(2)
+and the model generates a corrected version y^{\text{corr}}_{\text{new}}=\texttt{LLM}(p_{\text{prompt}}). Since \mathcal{D}_{\text{static}} is handcrafted and static, it cannot adapt to unseen error patterns or domain shifts.
+2.3 Experience-Aware Self-Correction via Retrieval-Augmented ICL
+As outlined in Section A.1 and Figure 1, real-world BI systems log both user feedback and system revisions, forming a rich repository of error–correction experiences. Inspired by this practice, we maintain a dynamic experience repository \mathcal{M}=\{(x^{(i)},y^{\text{err}}_{(i)},y^{\text{corr}}_{(i)})\}_{i=1}^{N}. During inference, given a newly generated (possibly incorrect) query y^{\text{err}}, we retrieve the top-k most relevant error–correction pairs using a retriever \mathcal{R}:
+\mathcal{D}_{\text{retrieved}}=\mathcal{R}(y^{\text{err}};\mathcal{M})=\mathop{\mathrm{arg\,top\text{-}k}}_{(y^{\text{err}}_{(i)},y^{\text{corr}}_{(i)})\in\mathcal{M}}\text{sim}(y^{\text{err}},y^{\text{err}}_{(i)}),
+(3)
+where \text{sim}(\cdot,\cdot) is a similarity function (e.g., embedding cosine similarity). These retrieved examples are then used as in-context demonstrations:
+y^{\text{corr}}=\texttt{LLM}\big([\mathcal{D}_{\text{retrieved}};\,y^{\text{err}}]\big).
+(4)
+This enables adaptive, experience-driven self-correction without fine-tuning or external APIs.
+3 Methodology
+3.1 Overview
+The workflow of Memo-SQL comprises two phases: an offline preparation phase and an online inference phase.
+In the offline phase, we construct an error-correction memory, a structured repository of quintuples \langle q,s^{+},s^{-},\mathcal{E},\delta\rangle, each linking a natural language question q to a correct SQL query s^{+}, an erroneous counterpart s^{-}, its semantic error type(s) \mathcal{E}, and actionable correction suggestions \delta.
+During online inference, given a new natural language question, the system applies three complementary decomposition strategies, entity-wise, hierarchical, and atomic sequential, in parallel. For each decomposition path, the model independently executes a full ReAct+Reflect loop over its sub-questions: it (i) reasons about the sub-task semantics, (ii) acts by generating a sub-SQL query, (iii) observes the execution result from the database, and (iv) reflects on potential issues (e.g., data validity violations or semantic misalignment) based on the observed output. If reflection detects an error, the model revises the sub-query once and re-executes it to obtain a corrected intermediate result.
+Because the three decomposition paths operate independently and produce complete end-to-end SQL candidates, our framework naturally implements a best-of-N (N=3) selection scheme.
+After resolving all sub-problems, the system compiles the full reasoning trace and synthesizes multiple candidate SQL queries for the original question via few-shot in-context learning. The prompt includes exemplars of (q,s^{+}) pairs, guiding the model to generate three syntactically diverse candidates: (1) CTE-based, (2) flat JOIN-based, and (3) nested subquery-based.
+For each candidate, the system retrieves the most similar historical failure–fix instances from the error-correction memory, using a signature formed by concatenating the input question and the skeletal structure of the candidate SQL. These retrieved exemplars are injected into the prompt to enable error-aware refinement.
+Finally, the system selects the best refined candidate based on a self-consistency score, which measures agreement across independently generated solutions, a proxy for robustness against decoding stochasticity.
+3.2 Offline Phase: Constructing an Error-Correction Memory
+To support error-aware refinement at inference time, we curate an error-correction memory: a structured knowledge repository that stores paired evidence of SQL failures and their fixes. An illustrative case is shown in Figure 7.
+We first define a taxonomy of nine common semantic error types (excluding pure syntax issues), covering, e.g., incorrect join constraints, missing grouping keys, and mismatched aggregation scopes (Table 4). This taxonomy serves as a controlled vocabulary to represent failure modes and enables targeted correction.
+Given a training corpus (BIRD training set; Li et al., 2023a), we elicit multiple diverse SQL candidates per question and retain instances exhibiting non-trivial semantic failures. For each such instance, we select a semantically plausible yet incorrect query as the representative erroneous query s^{-}, and pair it with the ground-truth SQL s^{+}. Conditioned on the natural language question q, gold SQL s^{+}, erroneous SQL s^{-}, and the database schema, a model is prompted to (i) assign one or more error types from the taxonomy and (ii) produce actionable correction suggestions. Each memory entry thus forms a structured quintuple \langle q,s^{+},s^{-},\mathcal{E},\delta\rangle, explicitly linking an observed failure s^{-} to its correction rationale \{\mathcal{E},\delta\}.
+For efficient retrieval, each entry is encoded by concatenating the question with the skeletal structure of s^{-} and embedding the result using GTE-base Li et al. (2023b). During inference, this representation enables retrieval of historically similar failure–fix patterns, which are injected as in-context evidence to guide the refinement of newly generated SQL candidates.
+Figure 3: Illustration of the three complementary question decomposition strategies.
+3.3 Question Decomposition
+In complex natural NL2SQL tasks, accurate semantic parsing often benefits from decomposing a user question into simpler, executable sub-queries Liao et al. (2025). We identify and formalize three complementary decomposition paradigms that reflect common reasoning patterns in multi-table relational querying:
+Table-wise Decomposition.
+Identifies all relevant tables/entities mentioned or implied in the question and generates localized sub-queries per table (with table-specific filters and projections). These are later joined via foreign keys, ideal for multi-entity conjunctive queries (e.g., “customers who bought products in New York”).
+Hierarchical Decomposition.
+Handles nested linguistic constructs (e.g., “higher than average,” “never ordered”) by recursively decomposing the query from innermost to outermost semantics. Inner sub-queries compute aggregates or existence conditions that parameterize outer clauses, naturally aligning with SQL subquery patterns like NOT EXISTS or IN.
+Atomic Operational Decomposition.
+Breaks the question into a sequence of atomic relational operations, selection, projection, join, grouping, and aggregation, guided by linguistic cues (e.g., “total,” “per department”). Each step maps to a valid SQL fragment, enabling incremental composition and fine-grained error localization.
+Figures 3 and 5 illustrate how these three decomposition strategies produce distinct reasoning paths for the same input question, highlighting their complementary roles in generating diverse and accurate SQL candidates.
+Fallback Mechanism.
+Not all questions admit a meaningful decomposition under the above paradigms. Accordingly, we incorporate a fallback mechanism: if the model judges that a question is too simple to decompose, or that the targeted decomposition is ill-specified or would introduce unnecessary complexity, it falls back to either (i) a randomized decomposition, or (ii) no decomposition, preserving the original question for direct SQL generation.
+3.4 SQL Generation
+In this component, we adopt the ReAct+Reflect framework to generate SQL queries and proactively correct potential errors. Specifically, each sub-question is sequentially fed into the language model, which performs reasoning followed by generating a sub-SQL query (act). The generated sub-SQL is then executed to obtain intermediate results (observation). Subsequently, the model receives the current and all previously adopted strategies, and critically examines whether the current sub-SQL query contains potential issues, such as data validity violations or semantic misalignment. If errors are detected, the model revises the sub-SQL query accordingly and re-executes it. When resolving each sub-question, all prior strategies are passed to the model and incorporated into the prompt context. Finally, after all sub-problems are addressed, the model synthesizes the complete set of refined strategies, integrates them with few-shot examples, and generates the final SQL query using three distinct stylistic formulations.
+Common Table Expressions.
+Intermediate results are materialized as named CTEs, promoting modular, stepwise reasoning and improving interpretability through explicit logical decomposition.
+Flat JOIN-Based Formulation.
+All tables are joined in a single, flat structure using explicit JOIN clauses, with filters applied in WHERE or ON. This avoids nesting and aligns with classical relational algebra.
+Nested Subqueries.
+Auxiliary logic is embedded directly within the outer query via IN, EXISTS, or scalar subqueries, enabling hierarchical representations that mirror nested natural language constructs.
+3.4.1 In-Context Learning
+In this work, ICL is employed twice to resolve ambiguities. The first instance occurs prior to final SQL generation: we concatenate the natural language question with the skeletal structure of the most recent sub-SQL query generated under the current reasoning strategy. From the database, we retrieve five semantically similar exemplars based on this combined representation and include them in the prompt as few-shot references to guide the model’s generation.
+3.5 SQL Refinement and Selection
+From the preceding stages, we obtain a total of nine candidate SQL queries, derived from three decomposition strategies combined with three distinct syntactic styles. Each candidate is subsequently subjected to rigorous semantic validation and iterative correction.
+Figure 4: Construction pipeline of the error-correction memory.
+Table 1: Comparison of training-free and open-source NL2SQL methods on the BIRD dev set.
+Method
+Inference Model
+Selection Model
+EX (%)
+Distillery (Maamari et al., 2024)
+Llama-3.1-405B
+—
+59.2
+ROUTE (Multi-task only) (Qin et al., 2024)
+Qwen2.5-Coder-32B
+Iterative Refinement
+59.8
+ROUTE (Multi-task only) (Qin et al., 2024)
+Qwen3-Coder-30B-A3B
+Iterative Refinement
+65.2
+Alpha-SQL* (Li et al., 2025b)
+Qwen2.5-Coder-32B
+Majority Voting
+64.4 (64.3)†
+Alpha-SQL* (Li et al., 2025b)
+Qwen3-Coder-30B-A3B
+Majority Voting
+68.2 (67.2)†
+Memo-SQL
+Qwen2.5-Coder-32B
+Iterative Refinement
+64.9 (64.2)†
+Memo-SQL (Ours)
+Qwen3-Coder-30B-A3B
+Iterative Refinement
+67.6 (68.5)†
+EX: Execution accuracy on BIRD dev set. *We report results using our own evaluation script, which we argue offers a more principled and reliable assessment; see Appendix A.4 for a detailed justification. †The results in parentheses refer to those on the BIRD dev-new set.
+3.5.1 Memory-Augmented Error Correction
+We leverage historical correction experiences as contextual guidance to steer the model toward accurate revisions. Specifically, for a given query, we first combine the original question with the skeletal form of its current SQL candidate, embed this representation, and retrieve the top-40 most similar entries from the experience bank of previously corrected examples.
+A second-stage filtering is then applied: we traverse the retrieved candidates in descending order of similarity and discard any example whose set of error types is fully subsumed by those of a previously retained example. This deduplication ensures diversity in error patterns and mitigates bias toward overrepresented error categories (e.g., SELECT clause errors are far more common than GROUP BY or multi-table JOIN errors as shown in Figure 6). After this two-stage selection, each problem is typically associated with 3–5 high-quality, error-diverse reference samples.
+A critic agent utilizes these samples to assess whether the current SQL contains errors. If so, it identifies the error category and provides specific revision suggestions. A refine agent then modifies the query accordingly and resubmits it to the critic for re-evaluation. This iterative refinement loop continues until either the critic confirms correctness or a maximum iteration limit is reached.
+Upon completing refinement for all nine candidates, we apply majority voting, selecting the SQL query that receives the most consensus across the refined outputs as the final prediction.
+4 Experiments
+Datasets and Evaluation Metrics.
+We build our error-correction memory using the BIRD training set (Li et al., 2023a) and evaluate our approach on four established NL2SQL benchmarks: the BIRD dev set, BIRD dev-new set (Li et al., 2023a), SPIDER development set (Yu et al., 2018), and CHESS-SDS dataset (Talaei et al., 2024). Further details are provided in Appendix A.5.
+Implementation Details.
+Our implementation leverages instruction-tuned models from the Qwen-Coder family, specifically Qwen2.5-Coder-32B-Instruct and the recently released Qwen3-Coder-30B-Instruct (Hui et al., 2024; Team, 2025). To validate the robustness of our approach, we further conduct experiments using DeepSeek-Coder-V2-Lite (16B) (Zhu et al., 2024) and Llama-3.1-8B (Team, 2024), both instruction-tuned variants. In the error-correction phase, we retrieve up to 40 semantically similar historical error–correction instances from our experience bank to inform refinement. The iterative correction loop is capped at three rounds to balance effectiveness against computational overhead. All results reported are averaged over three independent runs to ensure reliability.
+Baseline Methods.
+To ensure a rigorous and reproducible comparison, we not only incorporate results reported in prior work but also re-implement two recent open-source, training-free methods based on test-time scaling, namely ROUTE Qin et al. (2024) and Alpha-SQL Li et al. (2025b), using the four aforementioned models, enabling direct comparison of both accuracy and computational cost.
+Additionally, we compare our SQL correction module against three representative correction strategies employing distinct technical paradigms, which are DIN-SQL Pourreza and Rafiei (2023), Solid-SQL Liu et al. (2025a), and SHARE Qu et al. (2025). More detailed descriptions of the baseline methods are provided in Appendix A.6.
+5 Results
+BIRD dataset. We evaluate Memo-SQL on the BIRD dev set and compare it against state-of-the-art NL2SQL methods across four categories: (1) approaches requiring fine-tuning with closed-source models, (2) training-free but closed-source methods, (3) fine-tuned open-source systems, and (4) training-free open-source frameworks.
+As shown in Table 1 (Full results across all method categories are reported in Table 8 ), on the Qwen3-Coder-30B-A3B backbone, Memo-SQL achieves 67.6 on the original dev set and 68.5 on the corrected version—surpassing Alpha-SQL (Li et al., 2025b), which reports 68.2 (67.2) under identical evaluation conditions. While Alpha-SQL (Li et al., 2025b) slightly outperforms our method on the original split, Memo-SQL demonstrates superior robustness on the more reliable, updated benchmark, thereby claiming the new SOTA in the open, training-free regime. Moreover, our gains are consistent across model scales: with Qwen2.5-Coder-32B, we achieve 64.9 (64.2), edging out Alpha-SQL’s (Li et al., 2025b) 64.4 (64.3), and Distillery (Maamari et al., 2024) with Llama-3.1-405B (59.2 despite its massive scale).
+Crucially, as detailed in Section 5.1, Memo-SQL achieves this performance with significantly lower computational overhead than Alpha-SQL (Li et al., 2025b), striking a superior balance between effectiveness and efficiency, making it particularly suitable for real-world BI systems with latency or cost constraints.
+Furthermore, Memo-SQL not only dominates the training-free open-source category but also surpasses several fine-tuned baselines, including CHESS-SQL (Talaei et al., 2024) (61.5) and XiYan-SQL@DDL (Liu et al., 2025b) (62.3), despite requiring no parameter updates. This underscores the power of our experience-augmented, decomposition-driven inference framework.
+The consistent improvements across diverse model architectures are further validated in Table 6. Across all three models, ranging from 16B-scale to 32B, Memo-SQL consistently yields high execution accuracy, demonstrating strong compatibility and generalizability.
+In summary, Memo-SQL sets a new standard for open, training-free NL2SQL systems, delivering state-of-the-art accuracy on the most reliable version of BIRD, maintaining robustness across model scales, and offering favorable computational efficiency for practical deployment.
+Cross-Dataset Generalization. To evaluate the robustness and transferability of our experience-augmented framework, we conduct experiments on the Spider dev set using an error-correction memory constructed exclusively from interactions on the BIRD training set, without any in-domain Spider data. As shown in Table 7, Memo-SQL achieves 86.5% execution accuracy with the Qwen3-Coder-30B-A3B model, slightly below Alpha-SQL (Li et al., 2025b) (87.8%) but substantially outperforming ROUTE Qin et al. (2024) (80.0%).
+When the SQL correction module is ablated (i.e., iterative refinement disabled), performance drops by 0.7% to 85.8%. While this degradation is less pronounced than the 2.1% drop observed on BIRD dev set, it remains consistent with expectations: Spider queries are generally simpler, allowing strong base models to achieve high accuracy even without sophisticated correction mechanisms. Consequently, the headroom for improvement is narrower. Nevertheless, the consistent gains, despite using only out-of-domain experiences from BIRD, demonstrate that our framework effectively transfers error-correction knowledge across datasets, highlighting its strong generalization and practical applicability in real-world settings where in-domain interaction history may be unavailable.
+Table 2: Comparison of Baseline LLMs on the CHESS-SDS Set
+Model
+EX (%)
+Tokens/Query
+Time/Query (s)
+Deepseek-R1
+50.3
+–
+–
+GPT-4o
+53.7
+–
+–
+Gemini-2.0-Flash-
+Thinking-Exp
+60.8
+–
+–
+Qwen2.5-Coder-32B
+49.0
+282
+8
++ ROUTE
+53.7
+347
+13
++ Alpha-SQL
+58.5
+150344
+1839
++ Memo-SQL
+57.6
+7925
+145
+Llama-3.1-8B
+21.1
+332
+4
++ ROUTE
+44.2
+414
+9
++ Alpha-SQL
+49.6
+244775
+1628
++ Memo-SQL
+52.1
+16563
+135
+Table 3: Comparison of different SQL error correction strategies on BIRD dev set. Methods are grouped into internal ablations (top) and external baselines (bottom).
+Method
+Correction Paradigm
+Dynamic Update
+Training-Free
+EX (%)
+Internal Ablations
+Baseline (no correction)
+—
+✗
+✓
+66.4
++ Direct Correction
+Prompt Engineering
+✗
+✓
+66.6
++ RAG (top4, unfiltered)
+ICL + RAG
+✓
+✓
+67.5
++ Random RAG (unfiltered)
+ICL + RAG (random)
+✓
+✓
+67.6
+External SOTA Methods
+DIN-SQL (Pourreza and Rafiei, 2023)
+Prompt Engineering
+✗
+✓
+66.5
+SOLID-SQL (Liu et al., 2025a)
+ICL
+✓
+✓
+67.4
+SHARE (Qu et al., 2025)
+SFT
+✗
+✗
+69.2
+Memo-SQL (Ours)
+ICL + RAG (filtered)
+✓
+✓
+68.5
+5.1 Efficiency and Performance Trade-offs
+We evaluate Memo-SQL on the CHESS-SDS benchmark (Talaei et al., 2024), a challenging BIRD dev subset (Implementation details in Section A.7). As shown in Table 2, our method achieves competitive execution accuracy (EX) with dramatically lower resource use.
+With Qwen2.5-Coder-32B, Memo-SQL reaches 57.6% EX, just 0.9 points behind Alpha-SQL (58.5%), while using 19× fewer tokens (7,925 vs. 150,344) and running 12.7× faster (145s vs. 1,839s per query). On Llama-3.1-8B, it boosts EX from 21.1% (baseline) to 52.1%, surpassing both ROUTE and Alpha-SQL in efficiency, with 14.8× less token usage and 12.1× lower latency than Alpha-SQL. While ROUTE Qin et al. (2024) also uses TTS for low latency, its EX (53.7%) lags behind ours by nearly 4 points, suggesting shallow reasoning limits its handling of complex queries.
+Notably, Memo-SQL delivers strong results even on smaller models: with Llama-3.1-8B, it closes over half the gap to large proprietary systems while remaining fully open and deployable on commodity hardware. Overall, Memo-SQL offers the best balance of accuracy and efficiency, outperforming lightweight methods in correctness and heavyweight ones in speed.
+5.2 Analysis of Self-Correction Strategies
+As shown in Table 3, our retrieval-augmented self-correction framework achieves 68.5% execution accuracy, setting a new state of the art among training-free methods. In contrast, prompt engineering approaches (e.g., DIN-SQL (Pourreza and Rafiei, 2023) and direct correction) yield only marginal gains over the uncorrected baseline (66.5–66.6%), underscoring their limited capacity to handle complex semantic errors. SOLID-SQL (Liu et al., 2025a) improves upon this by incorporating positive examples via in-context learning, reaching 67.4%; however, it leverages only successful query demonstrations. Our method goes further by retrieving both positive and negative historical interactions, along with error-type annotations and correction rationales from the error-correction memory. This richer context enables the model to not only recognize what is correct, but also understand why a query is flawed and how to fix it, leading to more reliable and accurate revisions. Although SHARE Qu et al. (2025) achieves slightly higher performance (69.2%), it relies on fine-tuning three specialized models and lacks dynamic upgradability, rendering it unsuitable for interactive BI environments where systems must continuously learn from user feedback. Memo-SQL, by contrast, is fully training-free, supports real-time experience integration, and maintains strong performance without compromising deployability or privacy.
+6 Conclusion
+We presented Memo-SQL, a training-free NL2SQL framework tailored for real-world BI deployment. By combining structured divide-and-conquer decomposition with experience-driven self-correction, Memo-SQL eliminates the need for closed-source models or fine-tuning, supports dynamic updates via user feedback, and ensures data privacy. Its experience bank, populated with both correct and corrected queries, enables retrieval-augmented in-context learning that steers the model away from common semantic errors. On the BIRD benchmark, Memo-SQL achieves state-of-the-art performance among open, zero-fine-tuning methods, while reducing token usage and latency by over an order of magnitude compared to leading TTS approaches like Alpha-SQL (Li et al., 2025b). These advantages make Memo-SQL highly suitable for scalable, efficient, and continuously improving enterprise NL2SQL systems.
+7 Limitations
+While Memo-SQL shows strong results, it has a few practical limits. First, our experience bank is built from model-generated errors on the BIRD training set. This means the quality of self-correction depends heavily on how well those synthetic errors reflect real user mistakes, if the error types or correction patterns don’t match what users actually encounter, the benefit may drop. Second, the current decomposition strategies, though structured, still rely on the LLM to correctly interpret each sub-task. On very ambiguous or poorly phrased questions, this can lead to early missteps that even later correction can’t fully fix. Finally, while much faster than alternatives like Alpha-SQL, our pipeline still involves multiple LLM calls and SQL executions per query, which may be too heavy for ultra-low-latency settings (e.g., interactive dashboards requiring sub-second responses).
+Nevertheless, by demonstrating that error-aware, experience-driven self-correction can work without fine-tuning or closed APIs, our approach lays a practical foundation for future open and adaptive NL2SQL systems.
+8 Ethical Statement
+This work focuses on improving the reliability and efficiency of NL2SQL systems in business intelligence (BI) settings. Our method, Memo-SQL, operates on synthetic or publicly available benchmark datasets (e.g., BIRD) and does not involve human subjects, personal data, or sensitive information. The experience repository used for self-correction is constructed from model-generated queries and simulated or anonymized user feedback; no real user interactions or private database contents are collected or stored.

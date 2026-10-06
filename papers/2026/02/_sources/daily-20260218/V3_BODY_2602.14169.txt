@@ -1,0 +1,640 @@
+Deep Dense Exploration for LLM Reinforcement Learning via Pivot-Driven Resampling
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+3 Preliminary
+3.1 Language Generation as an MDP
+3.2 Group Relative Policy Optimization (GRPO)
+4 DEEP-GRPO
+4.1 Trajectory Segmentation
+4.2 Utility-Guided Pivot Selection
+4.3 Hierarchical Trajectory Generation
+4.4 Dual-Stream Optimization Objective
+5 Experiments
+5.1 Experimental Setup
+5.2 Main Results
+5.3 Comparison of Sampling Strategies
+5.4 Comparison of Different Loss Weight
+5.5 Scalability of Exploration Budget
+6 Conclusion
+References
+A Motivating Example
+The Inefficiency of Root-Based Sampling (GRPO).
+The Pitfalls of Tree-Based Exploration.
+Targeted Exploration with DEEP-GRPO.
+B Pseudocode of DEEP-GRPO
+C Implementation Details
+D Training Dynamics
+E Instability of Tree Based Methods
+1. Optimization Bias from Prefix Duplication.
+2. Biased Baseline Estimation.
+F Computational Efficiency Compared with Tree-based Methods
+G More Related Work
+G.1 Outcome-Based Reinforcement Learning for LLMs
+H Limitations and Future Work
+Computational Overhead and Throughput.
+Exploration Efficiency on Hard States.
+Future Work.
+License: CC BY 4.0
+arXiv:2602.14169v1 [cs.LG] 15 Feb 2026
+Deep Dense Exploration
+for LLM Reinforcement Learning via Pivot-Driven Resampling
+Yiran Guo
+Affiliation: Institute of Software, Chinese Academy of Sciences
+Zhongjian Qiao
+Affiliation: City University of Hong Kong
+Yingqi Xie
+Affiliation: City University of Hong Kong
+Jie Liu
+Affiliation: Institute of Software, Chinese Academy of Sciences
+Dan Ye
+Affiliation: Institute of Software, Chinese Academy of Sciences
+Ruiqing Zhang
+Affiliation: Baidu
+Shuang Qiu ∗
+Affiliation: City University of Hong Kong
+Lijie Xu ∗
+Affiliation: Institute of Software, Chinese Academy of Sciences
+Correspondence to: shuanqiu@cityu.edu.hk
+Correspondence to: xulijie@otcaix.iscas.ac.cn
+Abstract
+Effective exploration is a key challenge in reinforcement learning for large language models: discovering high-quality trajectories within a limited sampling budget from the vast natural language sequence space. Existing methods face notable limitations: GRPO samples exclusively from the root, saturating high-probability trajectories while leaving deep, error-prone states under-explored. Tree-based methods blindly disperse budgets across trivial or unrecoverable states, causing sampling dilution that fails to uncover rare correct suffixes and destabilizes local baselines. To address this, we propose Deep Dense Exploration (DDE), a strategy that focuses exploration on pivots —deep, recoverable states within unsuccessful trajectories. We instantiate DDE with DEEP-GRPO, which introduces three key innovations: (1) a lightweight data-driven utility function that automatically balances recoverability and depth bias to identify pivot states; (2) local dense resampling at each pivot to increase the probability of discovering correct subsequent trajectories; and (3) a dual-stream optimization objective that decouples global policy learning from local corrective updates. Experiments on mathematical reasoning benchmarks demonstrate that our method consistently outperforms GRPO, tree-based methods, and other strong baselines.
+Keywords:
+Machine Learning, ICML
+1 Introduction
+Figure 1 : Comparison of Exploration Strategies. (a) GRPO naively scales up rollouts from the root, wasting budget on redundant high-probability paths while failing to explore deep states. (b) Tree-based methods perform dispersed branching with sparse samples, leading to limited local exploration and unstable local advantage estimation. (c) DEEP-GRPO (Ours) identifies critical “pivot” states and concentrates dense resampling there. We decouple optimization into global and local streams (with gradient masking), combining global policy learning with local refinement.
+Reinforcement Learning (RL) has become a key method for enhancing the reasoning capabilities of Large Language Models (LLMs) ( DeepSeek-AI et al., 2025 ; Team et al., 2025 ; Yang et al., 2025 ) . A critical challenge within this paradigm is achieving effective exploration in the vast and complex search space of natural language reasoning. This challenge is compounded by the strict computational budgets typical of online RL training, where often only a small number of rollouts (e.g., 8–16) are feasible per prompt. Under this constraint, a fundamental resource allocation problem emerges: how can we strategically distribute these limited sampling resources to explore the most informative states for continuous improvement in model capabilities?
+Current mainstream approaches, particularly Group Relative Policy Optimization (GRPO) ( Shao et al., 2024 ) , rely on sampling complete trajectories from the root to drive exploration. However, this paradigm faces significant limitations. First, it suffers from exploration sparsity. This policy naturally favors high-probability tokens, making potentially valuable states on lower-probability trajectories statistically difficult to access, especially those deep states. Second, as training progresses, the policy rapidly overfits to already mastered successful trajectories, leading to a sharp drop in exploration entropy ( Yu et al., 2025 ; Cui et al., 2025b ) . This premature convergence constrains the model’s capacity to discover novel solutions. Consequently, simply increasing the number of root-level rollouts yields diminishing returns (as shown in Figure 2 ), as the computational budget is inefficiently wasted on redundant, high-confidence trajectories rather than penetrating deep, unexplored states. Furthermore, GRPO’s coarse-grained, trajectory-level advantage estimation erroneously penalizes valid reasoning steps embedded within failed trajectories ( Ma et al., 2023 ) , further hindering the learning process.
+To enhance exploration depth, recent studies have introduced tree-based RL methods ( Hou et al., 2025 ; Liu et al., 2025a ; Ji et al., 2025 ; Zheng et al., 2025b ) that initiate branching exploration from intermediate trajectory states. However, under the strict computational budget constraints of online RL, these approaches encounter an intrinsic sample dispersion challenge. By dispersing the limited sampling budget across various intermediate states identified by heuristic metrics, they induce extreme sample sparsity at individual branch points. This sparsity results in highly limited local exploration and renders the computation of stable local advantage estimates infeasible (see Figure 1 and the motivating example in Appendix A ). Consequently, to update the policy, these methods aggregate heterogeneous trajectories from disparate branches. This practice introduces significant bias by conflating the model’s natural output distribution with artificially induced exploration paths, ultimately undermining training stability—a phenomenon we empirically verify in Appendix E .
+To overcome the aforementioned limitations, we introduce Deep Dense Exploration (DDE), a strategy that reallocates the sampling budget from broad coverage to targeted depth exploration. The core idea is to concentrate computational resources on “pivots”—critical states embedded within failed trajectories that are deep-seated yet recoverable. Our approach is grounded in two key insights: (1) Recoverability of Failed Trajectories : Many failed trajectories contain valid reasoning prefixes and remain recoverable. By prioritizing resampling from such states, we can discover correct completions that form high-quality contrastive pairs with the original errors. (2) Complementarity to Root Sampling : Deep states are exponentially harder to access via root sampling. Targeting these deep regions provides learning signals that are complementary to root sampling. Moreover, as highlighted by Deng et al. (2025) , tokens in these later stages often exhibit higher uncertainty, thus requiring intensive optimization.
+Based on these insights, we propose DEEP-GRPO, a novel RL algorithm that implements the Deep Dense Exploration (DDE) strategy. Our method operates through a two-stage framework, transitioning from global breadth to targeted local depth via three integrated mechanisms. First, we employ a lightweight, online utility function to identify pivots by balancing their recoverability and depth, eliminating the need for external annotations. From these pivots, we execute Dense Local Resampling , concentrating the budget to uncover correct paths and compute stable local advantages. Finally, we introduce Dual-Stream Optimization , which incorporates an auxiliary objective derived from local branches. This architecture decouples training streams to mitigate weighting imbalances caused by disparate sample sizes and applies gradient masking to shared prefixes, facilitating stable policy learning. We evaluate DEEP-GRPO on standard mathematical benchmarks. Empirical results demonstrate that our method consistently outperforms both the GRPO baseline and existing tree-based methods.
+Figure 2 : Diminishing Returns of Naive Scaling. We evaluate GRPO on GSM8K by scaling its number of rollouts per prompt ( N N ) from 8 to 64. While performance improves from N = 8 N=8 to N = 16 N=16 , it quickly saturates, with negligible gains observed for N = 32 N=32 and N = 64 N=64 . This demonstrates the diminishing returns of simply increasing the root-level sampling budget, which inefficiently re-explores previously discovered, high-probability trajectories. In contrast, our proposed method, DEEP-GRPO (p1b8), strategically allocates budget by selecting a pivot on error trajectory and branching 8 new rollouts from that point. This targeted exploration probes deeper, hard-to-reach, error-prone states. The results demonstrate that DEEP-GRPO effectively converts the additional computational budget into a significant performance improvement.
+Our contributions are summarized as follows:
+•
+We propose Deep Dense Exploration (DDE), a novel strategy that synergizes global breadth sampling with targeted deep and dense local exploration. This approach significantly enhances the exploration effectiveness under strict computational budget constraints.
+•
+We design a lightweight, utility-guided pivot selection mechanism. By conducting online learning from historical trajectories, this method intelligently balances state depth with recoverability to automatically identify valuable intermediate states for exploration.
+•
+We introduce Dual-Stream Optimization that incorporates an auxiliary objective derived from local branches. This architecture mitigates weighting imbalances caused by disparate sample sizes and employs gradient masking on shared prefixes to facilitate stable policy learning.
+•
+We conduct extensive experiments across multiple mathematical benchmarks, empirically validating the superior performance of our method.
+2 Related Work
+In this section, we focus on the most closely related work on structured exploration. Additional related work is provided in Appendix G . Inference-time methods, such as RAP ( Hao et al., 2023 ) and LATS ( Zhou et al., 2023 ) , perform extensive tree search (e.g., MCTS ( Silver et al., 2017 ) ) to uncover solutions during generation. However, their prohibitively high computational cost renders them impractical for the inner loop of online RL training. Offline training methods, such as ReST-MCTS ( Zhang et al., 2024 ) and AlphaMath ( Chen et al., 2024 ) , utilize tree search to synthesize high-quality trajectories for iterative Supervised Fine-Tuning (SFT). While effective, these approaches rely on decoupled data generation cycles rather than continuous online optimization. Online RL methods, therefore, attempt to integrate structure directly into the policy update loop. Existing approaches, including TreeRL ( Hou et al., 2025 ) , FR3E ( Zheng et al., 2025b ) , and AttnRL ( Liu et al., 2025a ) , branches from intermediate steps selected by heuristics. Specifically, TreeRL and FR3E target high-entropy tokens, while AttnRL focuses on high attention scores, and Tree-GRPO ( Ji et al., 2025 ) employs random branching. However, these heuristics prioritize different attributes than learning potential: high entropy often stems from trivial linguistic synonyms rather than logical uncertainty, while high attention signals step importance regardless of correctness. In contrast, our method targets error-prone states—specifically those deep within trajectories that are hard to reach via root sampling—to provide complementary learning signals. Furthermore, regarding optimization, prior methods typically couple the branched trajectories with root-sampled trajectories. This coupling introduces instability, as the disparity in sample quantities between the main chain and auxiliary branches leads to weight imbalance in the loss. DEEP-GRPO addresses this by decoupling the optimization of main and auxiliary chains, preventing such interference.
+3 Preliminary
+3.1 Language Generation as an MDP
+We formulate the reasoning task as a Markov Decision Process (MDP). Given a query 𝐱 \mathbf{x} (e.g., a math problem), the policy π θ \pi_{\theta} (an LLM) generates a trajectory τ = ( w 1 , w 2 , … , w T ) \tau=(w_{1},w_{2},\dots,w_{T}) , where each w t ∈ 𝒱 w_{t}\in\mathcal{V} represents a token from the vocabulary. The process terminates when an end-of-sequence token is generated. A reward function R ⁡ ( τ , 𝐱 ) R(\tau,\mathbf{x}) assigns a scalar score r r to the completed trajectory, typically based on the correctness of the final answer (e.g., r = 1 r=1 for correct, r = 0 r=0 for incorrect).
+3.2 Group Relative Policy Optimization (GRPO)
+GRPO ( Shao et al., 2024 ) is a prominent algorithm for optimizing π θ \pi_{\theta} without a separate value network. For each query 𝐱 \mathbf{x} , it samples a group of G G trajectories { τ 1 , … , τ G } \{\tau^{1},\dots,\tau^{G}\} from the current policy π θ old \pi_{\theta_{\text{old}}} . The optimization objective maximizes the following surrogate loss:
+𝒥 GRPO ​ ( θ ) \displaystyle\mathcal{J}_{\text{GRPO}}(\theta)
+= 𝔼 𝐱 ∼ 𝒟 [ 1 G ∑ i = 1 G 1 | τ i | ∑ t = 1 | τ i | ( \displaystyle=\mathbb{E}_{\mathbf{x}\sim\mathcal{D}}\Bigg[\frac{1}{G}\sum_{i=1}^{G}\frac{1}{|\tau^{i}|}\sum_{t=1}^{|\tau^{i}|}\bigg(
+min ⁡ ( ρ t i ​ A i , clip ​ ( ρ t i , 1 − ϵ , 1 + ϵ ) ​ A i ) \displaystyle\min\Big(\rho_{t}^{i}A^{i},\text{clip}(\rho_{t}^{i},1-\epsilon,1+\epsilon)A^{i}\Big)
+− β 𝔻 KL ( π θ ∥ π ref ) ) ] \displaystyle-\beta\mathbb{D}_{\text{KL}}(\pi_{\theta}\|\pi_{\text{ref}})\bigg)\Bigg]
+where ρ t i = π θ ​ ( w t i | 𝐱 , w < t i ) π θ old ​ ( w t i | 𝐱 , w < t i ) \rho_{t}^{i}=\frac{\pi_{\theta}(w_{t}^{i}|\mathbf{x},w_{<t}^{i})}{\pi_{\theta_{\text{old}}}(w_{t}^{i}|\mathbf{x},w_{<t}^{i})} is the token-level probability ratio. Crucially, the advantage A i A^{i} is computed using the group-wise statistics: A i = R ⁡ ( τ i ) − μ group σ group A^{i}=\frac{R(\tau^{i})-\mu_{\text{group}}}{\sigma_{\text{group}}} , where μ group \mu_{\text{group}} and σ group \sigma_{\text{group}} are the mean and standard deviation of rewards within the group.
+4 DEEP-GRPO
+In this section, we present DEEP-GRPO, a novel method designed to enhance the exploration of LLM reinforcement learning. Unlike GRPO which explores exclusively from the root, or tree-based methods that disperse resources across intermediate states, our approach concentrates the exploration budget on critical pivots—states that are difficult to reach yet offer high-value learning signals. We hypothesize that targeted exploration at these critical states significantly enhances model robustness and drives continuous improvement in the later stages of training. Figure 4 provides a holistic view of DEEP-GRPO. We first formalize the trajectory segmentation to define candidate branching points ( 4.1 ). Next, we introduce our utility-guided pivot selection, which identifies pivots based on recoverability and depth ( 4.2 ), followed by the hierarchical generation of main chains and auxiliary chains ( 4.3 ). Finally, we derive a dual-stream optimization objective that integrates local refinement objectives into the global policy learning ( 4.4 ). The complete training procedure is summarized in Algorithm 1 .
+4.1 Trajectory Segmentation
+To create a discrete and manageable set of potential exploration points, we first segment the continuous token stream of a trajectory into a sequence of T T candidate branching points. This reduces the search space for our pivot selection mechanism compared to token-level branching. For reasoning tasks, we segment trajectories either semantically (e.g., by sentence delimiters like ‘.’) or via fixed-length token chunking. The latter allows for flexible control over segment granularity, enabling fine-grained intervention regardless of the semantic structure.
+4.2 Utility-Guided Pivot Selection
+Figure 3 : Visualization of Sampling Distributions. The sampling probability 𝒬 ⁡ ( t ) \mathcal{Q}(t) under different configurations. Uniform ( γ = 0 , P ϕ ≈ c ​ o ​ n ​ s ​ t \gamma=0,P_{\phi}\approx const ) selects from all candidate branching points with equal probability. Root-Centric ( γ ≪ 0 \gamma\ll 0 ) concentrates mass at the root ( t = 0 t=0 ), mimicking the behavior of simply scaling root rollouts. Deep Bias ( γ = 1 , 2 \gamma=1,2 ) shifts focus to later positions, prioritizing deep states.
+To overcome the inefficiency of root sampling and blind branching, we propose a method that concentrates the computational budget on specific candidate branching points, termed pivots. Our selection strategy is grounded in two key motivations regarding where exploration is most needed.
+First, we prioritize unsuccessful trajectories, as branching from failures provides a critical opportunity to recover new correct solutions from previously incorrect paths. This generates high-value correction signals, enabling the model to learn effectively by contrasting the original failure with the newly found success.
+Second, we target deep states to complement root sampling. Since root sampling struggles to reach deep states due to cumulative probability decay, our method explicitly targets these under-explored regions, providing supervision signals that are otherwise inaccessible. Furthermore, as noted in recent analysis ( Deng et al., 2025 ) , such deep states often exhibit high uncertainty and require intensive optimization.
+To operationalize these motivations, we must address a critical trade-off: while we explicitly aim to explore deep states within failed trajectories to complement root sampling, it is significantly harder to sample a correct suffix from them. As observed in Figure 3 , recoverability typically declines with depth, as prefixes near the end of a failed trajectory are more likely to contain irreversible errors. We resolve this conflict by defining a sampling distribution 𝒬 \mathcal{Q} proportional to a utility function that balances these competing factors. This formulation identifies the “sweet spot” where exploration is both complementary (hard to reach via root sampling) and feasible (ensuring high recoverability), allowing us to sample high-value pivots for dense local refinement.
+The Pivot Sampling Distribution.
+For the t t -th candidate branching point in the trajectory, we define its sampling probability 𝒬 ⁡ ( t ) \mathcal{Q}(t) based on a utility function:
+𝒬 ⁡ ( t ) ∝ P ϕ ​ ( success ∣ s < t ) ⏟ Recoverability ⋅ ( t T ) γ ⏟ Depth Bias \mathcal{Q}(t)\propto\underbrace{P_{\phi}(\text{success}\mid s_{<t})}_{\text{Recoverability}}\cdot\underbrace{\left(\frac{t}{T}\right)^{\gamma}}_{\text{Depth Bias}}
+(1)
+where s < t s_{<t} denotes the partial trajectory ending at the t t -th branching point, T T is the total number of candidate branching points defined in Sec. 4.1 , γ ≥ 0 \gamma\geq 0 is a hyperparameter controlling the preference for deep exploration, and 𝑷 ϕ ​ ( success ∣ 𝒔 < 𝒕 ) P_{\phi}(\text{success}\mid s_{<t}) estimates the probability of sampling a correct suffix given the prefix 𝒔 < 𝒕 s_{<t} .
+Interpretation and Special Cases.
+Our formulation provides a unified view of sampling strategies. Figure 3 visualizes the interaction between the estimated recoverability (green dashed line) and the depth bias (blue dotted line), resulting in the final sampling distribution (red solid line). Depending on the configuration of 𝜸 \gamma and 𝑷 ϕ P_{\phi} , Eq. 1 encapsulates several exploration behaviors.
+Success Probability Estimation via Online Logistic Regression.
+Since the true recoverability of any given state is intractable to compute directly, we approximate it using a lightweight estimator learned from data gathered during the online training process. Our approach relies on the key insight that recoverability is primarily governed by the state’s relative position in the trajectory. Despite the diversity of problem instances, the structural decay of recoverability, where early states generally retain higher recovery potential while late-stage states are increasingly likely to contain irreversible errors, remains a consistent statistical trend. This position-dependent regularity allows us to generalize from recent training data to current samples.
+To capture this, we fit a simple Logistic Regression model 𝑷 ϕ P_{\phi} , parameterized by ϕ = { 𝒘 , 𝒃 } \phi=\{w,b\} , which estimates the state’s recoverability given the normalized depth 𝒓 𝒕 = 𝒕 / 𝑻 r_{t}=t/T :
+𝑷 ϕ ​ ( success ∣ 𝒓 𝒕 ) = 𝝈 ⁡ ( 𝒘 ⋅ 𝒓 𝒕 + 𝒃 ) P_{\phi}(\text{success}\mid r_{t})=\sigma(w\cdot r_{t}+b)
+We maintain an experience buffer 𝓜 \mathcal{M} storing tuples ( 𝒓 𝒕 , 𝒚 𝒕 ) (r_{t},y_{t}) . We define the label 𝒚 𝒕 = 𝟏 y_{t}=1 if at least one of the 𝑲 K auxiliary branches sampled from 𝒔 < 𝒕 s_{<t} successfully reaches the correct answer, and 𝒚 𝒕 = 𝟎 y_{t}=0 otherwise. The parameters ϕ \phi are updated periodically by minimizing the binary cross-entropy loss on 𝓜 \mathcal{M} . This online mechanism allows 𝑷 ϕ P_{\phi} to track the policy’s evolving recovery capability at various depths.
+Figure 4 : Method Overview.
+4.3 Hierarchical Trajectory Generation
+Leveraging the trajectory segmentation defined in Sec. 4.1 and the pivot selection strategy, we implement a two-stage hierarchical generation process:
+Main Chain Sampling ( 𝒯 main \mathcal{T}_{\text{main}} ).
+We first sample a group of 𝑮 G trajectories from the root following standard GRPO: 𝓣 main = { 𝝉 𝟏 , … , 𝝉 𝑮 } \mathcal{T}_{\text{main}}=\{\tau^{1},\dots,\tau^{G}\} , where each 𝝉 𝒊 ∼ 𝝅 𝜽 ( ⋅ | 𝐱 ) \tau^{i}\sim\pi_{\theta}(\cdot|\mathbf{x}) . We identify the subset of unsuccessful trajectories as 𝓣 fail ⊂ 𝓣 main \mathcal{T}_{\text{fail}}\subset\mathcal{T}_{\text{main}} .
+Auxiliary Chain Sampling ( 𝒯 aux \mathcal{T}_{\text{aux}} ).
+For each failed trajectory 𝝉 𝒊 ∈ 𝓣 fail \tau^{i}\in\mathcal{T}_{\text{fail}} , we segment it into 𝑻 T candidate branching points following the strategy in Sec. 4.1 . We then sample a specific pivot step 𝒕 𝒊 ∗ ∈ { 𝟏 , … , 𝑻 } t^{*}_{i}\in\{1,\dots,T\} according to the distribution 𝓠 ⁡ ( 𝒕 ) \mathcal{Q}(t) defined in Eq. 1 .
+Given the prefix 𝒔 < 𝒕 𝒊 ∗ s_{<t^{*}_{i}} (the partial trajectory of 𝝉 𝒊 \tau^{i} ending at the chosen branching point), we perform dense local resampling to generate 𝑲 K auxiliary completions, forming the set 𝓣 aux ( 𝒊 ) = { 𝝉 ^ 𝒊 , 𝟏 , … , 𝝉 ^ 𝒊 , 𝑲 } \mathcal{T}_{\text{aux}}^{(i)}=\{\hat{\tau}^{i,1},\dots,\hat{\tau}^{i,K}\} :
+𝝉 ^ 𝒊 , 𝒌 = 𝒔 < 𝒕 𝒊 ∗ ∘ 𝐲 𝒊 , 𝒌 , where 𝐲 𝒊 , 𝒌 ∼ 𝝅 𝜽 ( ⋅ | 𝒔 < 𝒕 𝒊 ∗ , 𝐱 ) \hat{\tau}^{i,k}=s_{<t^{*}_{i}}\circ\mathbf{y}^{i,k},\hskip 11.49994pt\text{where }\mathbf{y}^{i,k}\sim\pi_{\theta}(\cdot|s_{<t^{*}_{i}},\mathbf{x})
+Here, ∘ \circ denotes concatenation, and 𝐲 𝒊 , 𝒌 \mathbf{y}^{i,k} represents the newly generated suffix tokens. As shown in Figure 4 , this process constructs a “bifurcation” in the reasoning path, forcing the model to explore alternative solutions specifically from error-prone pivot states rather than restarting from the root.
+We provide a comparison of computational efficiency between our method and tree-based approaches in Appendix F .
+4.4 Dual-Stream Optimization Objective
+Our hierarchical generation process yields two distinct sets of trajectories: main chains 𝓣 main \mathcal{T}_{\text{main}} sampled from the root ( 𝐱 ∼ 𝓓 \mathbf{x}\sim\mathcal{D} ), and auxiliary chains 𝓣 aux \mathcal{T}_{\text{aux}} sampled from specific pivot states. How should we integrate both data sources to effectively optimize the policy?
+A naive approach would be to merge both sets into the same optimization batch. However, this introduces significant sample imbalance and weight instability. The volume of training samples for both streams fluctuates dynamically throughout training. Putting them together would cause the gradient contribution of each stream to shift unpredictably; if one stream produces a disproportionately large number of samples, it would drown out the optimization signal from the other stream, destabilizing the training process.
+To address this, we propose a Dual-Stream Optimization strategy. We decouple the two streams, treating the optimization of auxiliary chains as a supplementary task to aid policy learning. This separation allows us to explicitly control the influence of the auxiliary task via a hyperparameter 𝝀 \lambda . The total objective 𝓙 ⁡ ( 𝜽 ) \mathcal{J}(\theta) minimizes the weighted hybrid loss:
+𝓙 ⁡ ( 𝜽 ) \displaystyle\mathcal{J}(\theta)
+= 𝔼 𝐱 ∼ 𝓓 [ 𝟏 𝑮 ∑ 𝒊 = 𝟏 𝑮 𝓛 main ( 𝝉 𝒊 ) \displaystyle=\mathbb{E}_{\mathbf{x}\sim\mathcal{D}}\Bigg[\frac{1}{G}\sum_{i=1}^{G}\mathcal{L}_{\text{main}}(\tau^{i})
+(2)
++ 𝝀 𝟏 | 𝓣 fail | ∑ 𝝉 𝒊 ∈ 𝓣 fail 𝟏 𝑲 ∑ 𝒌 = 𝟏 𝑲 𝓛 aux ( 𝝉 ^ 𝒊 , 𝒌 ) ] \displaystyle+\lambda\frac{1}{|\mathcal{T}_{\text{fail}}|}\sum_{\tau^{i}\in\mathcal{T}_{\text{fail}}}\frac{1}{K}\sum_{k=1}^{K}\mathcal{L}_{\text{aux}}(\hat{\tau}^{i,k})\Bigg]
+where 𝝀 \lambda balances the primary global policy learning with the auxiliary local error correction.
+Main Chain Loss ( ℒ main \mathcal{L}_{\text{main}} ).
+For the main stream, for each trajectory 𝝉 𝒊 ∈ 𝓣 main \tau^{i}\in\mathcal{T}_{\text{main}} , we compute the global advantage 𝑨 global 𝒊 A^{i}_{\text{global}} using the group-wise statistics of 𝓣 main \mathcal{T}_{\text{main}} . The loss is:
+𝓛 main ​ ( 𝝉 𝒊 ) \displaystyle\mathcal{L}_{\text{main}}(\tau^{i})
+= 𝟏 | 𝝉 𝒊 | ∑ 𝒕 = 𝟏 | 𝝉 𝒊 | [ 𝐦𝐢𝐧 ( 𝝆 𝒕 𝒊 𝑨 𝒊 global , \displaystyle=\frac{1}{|\tau^{i}|}\sum_{t=1}^{|\tau^{i}|}\biggl[\min\Bigl(\rho_{t}^{i}A^{i}_{\text{global}},
+(3)
+clip ( 𝝆 𝒕 𝒊 , 𝟏 − ϵ , 𝟏 + ϵ ) 𝑨 𝒊 global ) − 𝜷 𝔻 KL ] \displaystyle\text{clip}(\rho_{t}^{i},1-\epsilon,1+\epsilon)A^{i}_{\text{global}}\Bigr)-\beta\mathbb{D}_{\text{KL}}\biggr]
+Auxiliary Chain Loss ( ℒ aux \mathcal{L}_{\text{aux}} ).
+For the auxiliary stream, we compute the local advantage 𝑨 local 𝒊 , 𝒌 A^{i,k}_{\text{local}} for each branch 𝝉 ^ 𝒊 , 𝒌 \hat{\tau}^{i,k} relative only to its sibling branches in 𝓣 aux ( 𝒊 ) \mathcal{T}_{\text{aux}}^{(i)} . Crucially, we apply gradient masking to freeze the prefix 𝒔 < 𝒕 𝒊 ∗ s_{<t^{*}_{i}} , calculating the loss solely on the generated suffix 𝐲 𝒊 , 𝒌 \mathbf{y}^{i,k} :
+𝓛 aux ​ ( 𝝉 ^ 𝒊 , 𝒌 ) \displaystyle\mathcal{L}_{\text{aux}}(\hat{\tau}^{i,k})
+= 𝟏 | 𝐲 𝒊 , 𝒌 | ∑ 𝒘 𝒕 ∈ 𝐲 𝒊 , 𝒌 [ 𝐦𝐢𝐧 ( 𝝆 ^ 𝒕 𝒊 , 𝒌 𝑨 𝒊 , 𝒌 local , \displaystyle=\frac{1}{|\mathbf{y}^{i,k}|}\sum_{w_{t}\in\mathbf{y}^{i,k}}\Bigg[\min\Big(\hat{\rho}_{t}^{i,k}A^{i,k}_{\text{local}},
+(4)
+clip ( 𝝆 ^ 𝒕 𝒊 , 𝒌 , 𝟏 − ϵ , 𝟏 + ϵ ) 𝑨 𝒊 , 𝒌 local ) − 𝜷 𝔻 KL ] \displaystyle\text{clip}(\hat{\rho}_{t}^{i,k},1-\epsilon,1+\epsilon)A^{i,k}_{\text{local}}\Big)-\beta\mathbb{D}_{\text{KL}}\Bigg]
+5 Experiments
+5.1 Experimental Setup
+Models and Training Data. We employ a diverse set of models, including Qwen2.5-0.5B-Instruct ( Qwen et al., 2025 ) , Qwen2.5-Math-1.5B ( Yang et al., 2024 ) , Qwen2.5-Math-7B ( Yang et al., 2024 ) . For 1.5B and 7B models, following Dr.GRPO ( Liu et al., 2025b ) , we use MATH ( Hendrycks et al., 2021 ) Levels 3–5 (8,523 problems) as the training dataset, with a context length of 4K. Rewards are verifiable: “1” for correct responses and “0” for incorrect ones. We conduct ablation and analysis experiments primarily on the 0.5B model, which is trained on the GSM8K ( Cobbe et al., 2021 ) dataset with a context length of 1K.
+Baselines and Implementation. We primarily compare our method with GRPO ( Shao et al., 2024 ) , TreeRL ( Hou et al., 2025 ) and AttnRL ( Liu et al., 2025a ) . For our method (DEEP-GRPO), we set the loss weight 𝝀 = 𝟏 \lambda=1 , the branching count 𝑴 = 𝟖 M=8 , and 𝜸 = 𝟐 \gamma=2 by default. Further implementation details and hyperparameters are provided in Appendix C .
+Benchmarks. We evaluate on GSM8K ( Cobbe et al., 2021 ) and five challenging benchmarks following Dr.GRPO ( Liu et al., 2025b ) : AIME24 (30 high-school olympiad problems) ( Li et al., 2024 ) , AMC (83 intermediate multiple-choice problems) ( Li et al., 2024 ) , MATH500 (500 problems from MATH) ( Lightman et al., 2023 ) , Minerva ( Lewkowycz et al., 2022 ) (272 graduate-level problems), and OlympiadBench (Oly.) ( He et al., 2024 ) (675 high-difficulty problems). These benchmarks cover a broad spectrum of problem types and difficulties. We report Pass@1, setting the temperature to 0.0 and generating one answer per question.
+5.2 Main Results
+Table 1 : Performance comparison on GSM8K using Qwen2.5-0.5B-Instruct. We compare our method against GRPO (with varying group sizes 𝒏 n ), TreeRL ( Hou et al., 2025 ) and AttnRL ( Liu et al., 2025a ) . Bold indicates the best accuracy
+Method
+Acc (%)
+GRPO ( 𝒏 = 𝟖 n=8 )
+64.1
+GRPO ( 𝒏 = 𝟏𝟔 n=16 )
+65.9
+GRPO ( 𝒏 = 𝟑𝟐 n=32 )
+66.0
+GRPO ( 𝒏 = 𝟔𝟒 n=64 )
+66.2
+TreeRL ( Hou et al., 2025 )
+65.5
+AttnRL ( Liu et al., 2025a )
+67.0
+DEEP-GRPO (Ours)
+67.7
+Table 2 : Main Results on Mathematical Benchmarks. We report the accuracy (%) on AIME24, AMC, MATH500, Minerva, and Olympiad (Oly.) benchmarks. Models are grouped by parameter size (1.5B and 7B). Bold indicates the best performance within each group.
+Model
+AIME24
+AMC
+MATH500
+Minerva
+Oly.
+Avg.
+Qwen2.5-Math-1.5B ( Yang et al., 2024 )
+16.7
+43.4
+61.8
+15.1
+28.4
+33.1
+Qwen2.5-Math-1.5B-Instruct ( Yang et al., 2024 )
+10.0
+48.2
+74.2
+26.5
+40.2
+39.8
+Oat-Zero-1.5B (Dr. GRPO) ( Liu et al., 2025b )
+20.0
+53.0
+74.2
+25.7
+37.6
+42.1
+DEEP-GRPO-1.5B (Ours)
+26.7
+50.6
+75.2
+27.2
+36.7
+43.3
+Qwen2.5-Math-7B ( Yang et al., 2024 )
+16.7
+38.6
+50.6
+9.9
+16.6
+26.5
+SimpleRL-Zero-7B ( Zeng et al., 2025 )
+26.7
+60.2
+78.2
+27.6
+40.3
+46.6
+PRIME-Zero-7B ( Cui et al., 2025a )
+16.7
+62.7
+83.8
+36.0
+40.9
+48.0
+OpenReasoner-Zero-7B @ 3k ( Hu et al., 2025 )
+13.3
+47.0
+79.2
+31.6
+44.0
+43.0
+OpenReasoner-Zero-7B @ 8k ( Hu et al., 2025 )
+13.3
+54.2
+82.4
+31.6
+47.9
+45.9
+Eurus-7B ( Yuan et al., 2024 )
+16.7
+62.7
+83.8
+36.0
+40.9
+48.0
+GPG-7B ( Chu et al., 2025 )
+33.3
+65.0
+80.0
+34.2
+42.4
+51.0
+Oat-Zero-7B (Dr. GRPO) ( Liu et al., 2025b )
+43.3
+62.7
+80.0
+30.1
+41.0
+51.4
+DEEP-GRPO-7B (Ours)
+46.7
+65.1
+81.6
+33.8
+42.6
+54.0
+(a) Test Accuracy
+(b) Entropy
+(c) Response Length
+Figure 5 : Training dynamics on GSM8K. DEEP-GRPO achieves significant improvements in test accuracy compared to GRPO. Notably, our method maintains higher entropy and produces longer responses throughout the training.
+We first compare our method against GRPO with varying group sizes ( 𝒏 n ) and tree-based baselines (TreeRL, AttnRL) on the GSM8K dataset (Table 1 ). While increasing 𝒏 n from 8 to 64 for GRPO yields consistent gains (improving from 64.1% to 66.2%), marginal returns diminish significantly as 𝒏 n increases from 16 to 64. Meanwhile, TreeRL achieves 65.5%, outperforming GRPO ( 𝒏 = 𝟖 n=8 ) but falling short of GRPO with larger group sizes ( 𝒏 ≥ 𝟏𝟔 n\geq 16 ). AttnRL performs stronger, achieving 67.0%, likely because attention scores identify better branching points compared to entropy used by TreeRL. However, AttnRL still lags behind DEEP-GRPO (67.7%). We hypothesize that branching based on entropy or attention scores may result in many branching points located at shallow positions, which are likely naturally covered by global root sampling, thereby diminishing the benefit of explicit branching. In contrast, DEEP-GRPO targets deep states—which complement root sampling, outperforming all baselines. It surpasses the best GRPO baseline ( 𝒏 = 𝟔𝟒 n=64 ) by 1.5% and AttnRL by 0.7%. This result suggests that deep dense exploration provides a more effective pathway to performance improvement. As shown in Figure 6 , DEEP-GRPO maintains consistently higher policy entropy and produces longer responses compared to GRPO throughout the training. We hypothesize that this sustained exploration vitality prevents premature convergence and enables the model to refine its reasoning, contributing to the superior test accuracy. Further discussion on these dynamics is provided in Appendix D . In contrast, we observe that tree-based methods suffer from training instability. We provide a analysis of this phenomenon in Appendix E .
+Table 2 compares our method with recent strong baselines on five mathematical reasoning benchmarks (AIME24, AMC, MATH500, Minerva, Oly.). DEEP-GRPO achieves the highest average accuracy across both 1.5B and 7B model scales. Notably, the gains are most substantial on challenging tasks like AIME24. This indicates that explicitly targeting deep states on failed trajectories during training is particularly effective for mastering complex problems. We attribute this superiority to the incorporation of an auxiliary loss, which is seamlessly integrated with the global objective through a dual-stream optimization mechanism.
+(a) Comparation of different sampling strategies.
+(b) Performance comparison with different loss weights ( 𝝀 \lambda ).
+(c) Scalability of exploration budget across varying pivot counts and branching widths.
+Figure 6 : Ablation studies of the proposed method.
+5.3 Comparison of Sampling Strategies
+We investigate how different pivot sampling strategies described in Section 4.2 affect learning efficiency using Qwen2.5-0.5B-Instruct on GSM8K. We compare the test accuracy of five configurations throughout the training process: (1) Root Only (allocating budget solely to the root); (2) Uniform (randomly selecting pivots); (3) Linear Depth Bias ( 𝜸 = 𝟏 \gamma=1 ); and (4) Squared Depth Bias ( 𝜸 = 𝟐 \gamma=2 ).
+Results. As illustrated in Figure 6(a) , Uniform strategy outperforms Root Only, suggesting that allocating budget to intermediate states is more efficient than concentrating it solely at the root. Moreover, our proposed strategies (Linear and Squared), which leverage a utility score to balance recoverability and depth bias, outperform uniform sampling. This demonstrates that targeted pivot selection is superior to blind branching. Between the utility-guided configurations, Squared Depth Bias ( 𝜸 = 𝟐 \gamma=2 ) achieves higher accuracy than Linear Bias ( 𝜸 = 𝟏 \gamma=1 ), indicating that aggressively concentrating resources on deeper pivots yields more effective learning signal.
+5.4 Comparison of Different Loss Weight
+We investigate the impact of the weighting coefficient 𝝀 \lambda in Eq. 2 , which balances the main chain loss (the primary objective) and the auxiliary chain loss (supplementary objective to aid policy learning). We vary 𝝀 ∈ { 0.1 , 0.5 , 1.0 , 2.0 } \lambda\in\{0.1,0.5,1.0,2.0\} on GSM8K. A larger 𝝀 \lambda places higher weight on the auxiliary chain loss.
+Results . As illustrated in Figure 6(b) . When 𝝀 \lambda is too small ( 𝝀 = 0.1 \lambda=0.1 ), the gradient signal from local exploration is overwhelmed by the primary objective, causing the method to revert towards GRPO behavior with limited gains. Conversely, when 𝝀 \lambda is excessively large ( 𝝀 = 2.0 \lambda=2.0 ), the optimization is dominated by the auxiliary task, diluting the global optimization signal. A balanced weight (e.g., 𝝀 = 1.0 \lambda=1.0 ) proves most effective, enabling the model to synergize global optimization with targeted local refinement.
+5.5 Scalability of Exploration Budget
+We further investigate the scalability of DEEP-GRPO by increasing the exploration budget. We compare three configurations with varying branching widths and pivot counts: single-pivot with 4 branches ( 𝑷 𝟏 ​ 𝑩 𝟒 P_{1}B_{4} ) and 8 branches ( 𝑷 𝟏 ​ 𝑩 𝟖 P_{1}B_{8} ), as well as new double-pivot case ( 𝑷 𝟐 ​ 𝑩 𝟒 P_{2}B_{4} ), where 2 pivots are selected per unsuccessful trajectory, each with 4 branches.
+Results. As shown in Figure 6(c) , under the same training time, 𝑷 𝟏 ​ 𝑩 𝟖 P_{1}B_{8} achieves the best performance, followed by 𝑷 𝟐 ​ 𝑩 𝟒 P_{2}B_{4} and then 𝑷 𝟏 ​ 𝑩 𝟒 P_{1}B_{4} . This offers two key insights:
+First, the performance gain from 𝑷 𝟏 ​ 𝑩 𝟒 P_{1}B_{4} to 𝑷 𝟏 ​ 𝑩 𝟖 P_{1}B_{8} highlights the importance of a sufficient branching width. This suggests that for “hard” states, a smaller budget (4 rollouts) is often insufficient to discover a correct solution suffix. Doubling the local budget to 8 significantly increases the discovery probability. This serves as strong evidence against root sampling—if even focused local attempts require a larger budget, the probability of spontaneously finding a correct suffix via a fresh root rollout is negligible.
+Second, the comparison between 𝑷 𝟏 ​ 𝑩 𝟖 P_{1}B_{8} and 𝑷 𝟐 ​ 𝑩 𝟒 P_{2}B_{4} provides a crucial insight into budget allocation. Notably, both configurations use the same total exploration budget (8 rollouts). The superior performance of 𝑷 𝟏 ​ 𝑩 𝟖 P_{1}B_{8} indicates that our “dense exploration” strategy, which concentrates the budget on a single, critical pivot, is more effective than distributing it sparsely across multiple pivots, the approach adopted by tree based strategies. This advantage stems from two key factors. First, by concentrating the rollouts, this strategy significantly increases the probability of discovering a correct solution suffix for difficult states. Second, these concentrated rollouts yield a more stable local baseline for the policy update, leading to more effective learning.
+Furthermore, we conducted an ablation study by comparing 𝑷 𝟏 ​ 𝑩 𝟖 P_{1}B_{8} strategy with 𝑷 𝟏 ​ 𝑩 𝟖 P_{1}B_{8} -expand-all , a variant that also branches from correct trajectories. The results show that 𝑷 𝟏 ​ 𝑩 𝟖 P_{1}B_{8} significantly outperforms 𝑷 𝟏 ​ 𝑩 𝟖 P_{1}B_{8} -expand-all under the same training time. This provides strong evidence that focusing the exploration budget on error-prone states is a more effective and compute-efficient strategy.
+6 Conclusion
+This work proposes DEEP-GRPO, a method designed to enhance the exploration capability of RL for LLMs. Unlike GRPO, which wastes compute on mastered paths, and tree-based methods that inefficiently disperse budget, our approach strategically concentrates exploration on pivots that complement the reach of root sampling. Specifically, we target deep states within unsuccessful trajectories that retain the potential for recovery, enabling the discovery of high-quality contrastive signals. By performing local dense resampling at these critical states, we compute stable local advantages and implement a dual-stream optimization that effectively resolves the weight instability issue arising from the dynamic sample sizes of the two streams. Our experiments demonstrate that DEEP-GRPO significantly outperforms baselines, establishing it as a highly effective method for LLM reinforcement learning.
+Impact Statement
+This paper presents work whose goal is to advance the field of Machine
+Learning. There are many potential societal consequences of our work, none
+which we feel must be specifically highlighted here.
+Acknowledgements
+We would like to thank Runze Liu for insightful discussions and valuable suggestions on the implementation of the baseline algorithm used in our experiments.
+References
+Ahmadian et al. (2024)
+Ahmadian, A., Cremer, C., Gallé, M., Fadaee, M., Kreutzer, J., Pietquin, O., Üstün, A., and Hooker, S.
+Back to basics: Revisiting reinforce-style optimization for learning from human feedback in llms.
+In Ku, L., Martins, A., and Srikumar, V. (eds.), Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), ACL 2024, Bangkok, Thailand, August 11-16, 2024 , pp. 12248–12267. Association for Computational Linguistics, 2024.
+doi: 10.18653/V1/2024.ACL-LONG.662 .
+URL https://doi.org/10.18653/v1/2024.acl-long.662 .
+Chen et al. (2024)
+Chen, G., Liao, M., Li, C., and Fan, K.
+Alphamath almost zero: Process supervision without process.
+In Globersons, A., Mackey, L., Belgrave, D., Fan, A., Paquet, U., Tomczak, J. M., and Zhang, C. (eds.), Advances in Neural Information Processing Systems 38: Annual Conference on Neural Information Processing Systems 2024, NeurIPS 2024, Vancouver, BC, Canada, December 10 - 15, 2024 , 2024.
+URL http://papers.nips.cc/paper_files/paper/2024/hash/30dfe47a3ccbee68cffa0c19ccb1bc00-Abstract-Conference.html .
+Cheng et al. (2025)
+Cheng, D., Huang, S., Zhu, X., Dai, B., Zhao, W. X., Zhang, Z., and Wei, F.
+Reasoning with exploration: An entropy perspective.
+arXiv preprint arXiv:2506.14758 , 2025.
+Chu et al. (2025)
+Chu, X., Huang, H., Zhang, X., Wei, F., and Wang, Y.
+Gpg: A simple and strong reinforcement learning baseline for model reasoning.
+arXiv preprint arXiv:2504.02546 , 2025.
+Cobbe et al. (2021)
+Cobbe, K., Kosaraju, V., Bavarian, M., Chen, M., Jun, H., Kaiser, L., Plappert, M., Tworek, J., Hilton, J., Nakano, R., Hesse, C., and Schulman, J.
+Training verifiers to solve math word problems.
+CoRR , abs/2110.14168, 2021.
+URL https://arxiv.org/abs/2110.14168 .
+Cui et al. (2025a)
+Cui, G., Yuan, L., Wang, Z., Wang, H., Zhang, Y., Chen, J., Li, W., He, B., Fan, Y., Yu, T., et al.
+Process reinforcement through implicit rewards.
+arXiv preprint arXiv:2502.01456 , 2025a.
+Cui et al. (2025b)
+Cui, G., Zhang, Y., Chen, J., Yuan, L., Wang, Z., Zuo, Y., Li, H., Fan, Y., Chen, H., Chen, W., et al.
+The entropy mechanism of reinforcement learning for reasoning language models.
+arXiv preprint arXiv:2505.22617 , 2025b.
+DeepSeek-AI et al. (2025)
+DeepSeek-AI, Guo, D., Yang, D., Zhang, H., Song, J., Zhang, R., Xu, R., Zhu, Q., Ma, S., Wang, P., Bi, X., Zhang, X., Yu, X., Wu, Y., Wu, Z. F., Gou, Z., Shao, Z., Li, Z., Gao, Z., Liu, A., Xue, B., Wang, B., Wu, B., Feng, B., Lu, C., Zhao, C., Deng, C., Zhang, C., Ruan, C., Dai, D., Chen, D., Ji, D., Li, E., Lin, F., Dai, F., Luo, F., Hao, G., Chen, G., Li, G., Zhang, H., Bao, H., Xu, H., Wang, H., Ding, H., Xin, H., Gao, H., Qu, H., Li, H., Guo, J., Li, J., Wang, J., Chen, J., Yuan, J., Qiu, J., Li, J., Cai, J. L., Ni, J., Liang, J., Chen, J., Dong, K., Hu, K., Gao, K., Guan, K., Huang, K., Yu, K., Wang, L., Zhang, L., Zhao, L., Wang, L., Zhang, L., Xu, L., Xia, L., Zhang, M., Zhang, M., Tang, M., Li, M., Wang, M., Li, M., Tian, N., Huang, P., Zhang, P., Wang, Q., Chen, Q., Du, Q., Ge, R., Zhang, R., Pan, R., Wang, R., Chen, R. J., Jin, R. L., Chen, R., Lu, S., Zhou, S., Chen, S., Ye, S., Wang, S., Yu, S., Zhou, S., Pan, S., and Li, S. S.
+Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning.
+CoRR , abs/2501.12948, 2025.
+doi: 10.48550/ARXIV.2501.12948 .
+URL https://doi.org/10.48550/arXiv.2501.12948 .
+Deng et al. (2025)
+Deng, J., Chen, J., Chen, Z., Cheng, D., Bai, F., Zhang, B., Min, Y., Gao, Y., Zhao, W. X., and Wen, J.-R.
+From trial-and-error to improvement: A systematic analysis of llm exploration mechanisms in rlvr.
+arXiv preprint arXiv:2508.07534 , 2025.
+Hao et al. (2023)
+Hao, S., Gu, Y., Ma, H., Hong, J., Wang, Z., Wang, D., and Hu, Z.
+Reasoning with language model is planning with world model.
+In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing , pp. 8154–8173, 2023.
+He et al. (2024)
+He, C., Luo, R., Bai, Y., Hu, S., Thai, Z., Shen, J., Hu, J., Han, X., Huang, Y., Zhang, Y., et al.
+Olympiadbench: A challenging benchmark for promoting agi with olympiad-level bilingual multimodal scientific problems.
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pp. 3828–3850, 2024.
+Hendrycks et al. (2021)
+Hendrycks, D., Burns, C., Kadavath, S., Arora, A., Basart, S., Tang, E., Song, D., and Steinhardt, J.
+Measuring mathematical problem solving with the math dataset.
+CoRR , abs/2103.03874, 2021.
+URL https://arxiv.org/abs/2103.03874 .
+Hou et al. (2025)
+Hou, Z., Hu, Z., Li, Y., Lu, R., Tang, J., and Dong, Y.
+Treerl: Llm reinforcement learning with on-policy tree search.
+arXiv preprint arXiv:2506.11902 , 2025.
+Hu et al. (2025)
+Hu, J., Zhang, Y., Han, Q., Jiang, D., Zhang, X., and Shum, H.-Y.
+Open-reasoner-zero: An open source approach to scaling up reinforcement learning on the base model.
+arXiv preprint arXiv:2503.24290 , 2025.
+Ji et al. (2025)
+Ji, Y., Ma, Z., Wang, Y., Chen, G., Chu, X., and Wu, L.
+Tree search for llm agent reinforcement learning.
+arXiv preprint arXiv:2509.21240 , 2025.
+Lewkowycz et al. (2022)
+Lewkowycz, A., Andreassen, A., Dohan, D., Dyer, E., Michalewski, H., Ramasesh, V., Slone, A., Anil, C., Schlag, I., Gutman-Solo, T., et al.
+Solving quantitative reasoning problems with language models.
+Advances in neural information processing systems , 35:3843–3857, 2022.
+Li et al. (2024)
+Li, J., Beeching, E., Tunstall, L., Lipkin, B., Soletskyi, R., Huang, S., Rasul, K., Yu, L., Jiang, A. Q., Shen, Z., et al.
+Numinamath: The largest public dataset in ai4maths with 860k pairs of competition math problems and solutions.
+Hugging Face repository , 13:9, 2024.
+Lightman et al. (2023)
+Lightman, H., Kosaraju, V., Burda, Y., Edwards, H., Baker, B., Lee, T., Leike, J., Schulman, J., Sutskever, I., and Cobbe, K.
+Let’s verify step by step.
+In The Twelfth International Conference on Learning Representations , 2023.
+Lin et al. (2025)
+Lin, Z., Lin, M., Xie, Y., and Ji, R.
+Cppo: Accelerating the training of group relative policy optimization-based reasoning models.
+CoRR , abs/2503.22342, 2025.
+URL https://arxiv.org/abs/2503.22342 .
+Liu et al. (2025a)
+Liu, R., Wang, J., Shi, Y., Xie, Z., An, C., Zhang, K., Zhao, J., Gu, X., Lin, L., Hu, W., et al.
+Attention as a compass: Efficient exploration for process-supervised rl in reasoning models.
+arXiv preprint arXiv:2509.26628 , 2025a.
+Liu et al. (2025b)
+Liu, Z., Chen, C., Li, W., Qi, P., Pang, T., Du, C., Lee, W. S., and Lin, M.
+Understanding r1-zero-like training: A critical perspective.
+arXiv preprint arXiv:2503.20783 , 2025b.
+Ma et al. (2023)
+Ma, Q., Zhou, H., Liu, T., Yuan, J., Liu, P., You, Y., and Yang, H.
+Let’s reward step by step: Step-level reward model as the navigators for reasoning.
+CoRR , abs/2310.10080, 2023.
+URL https://arxiv.org/abs/2310.10080 .
+Qwen et al. (2025)
+Qwen, :, Yang, A., Yang, B., Zhang, B., Hui, B., Zheng, B., Yu, B., Li, C., Liu, D., Huang, F., Wei, H., Lin, H., Yang, J., Tu, J., Zhang, J., Yang, J., Yang, J., Zhou, J., Lin, J., Dang, K., Lu, K., Bao, K., Yang, K., Yu, L., Li, M., Xue, M., Zhang, P., Zhu, Q., Men, R., Lin, R., Li, T., Tang, T., Xia, T., Ren, X., Ren, X., Fan, Y., Su, Y., Zhang, Y., Wan, Y., Liu, Y., Cui, Z., Zhang, Z., and Qiu, Z.
+Qwen2.5 technical report, 2025.
+URL https://arxiv.org/abs/2412.15115 .
+Shao et al. (2024)
+Shao, Z., Wang, P., Zhu, Q., Xu, R., Song, J., Zhang, M., Li, Y. K., Wu, Y., and Guo, D.
+Deepseekmath: Pushing the limits of mathematical reasoning in open language models.
+CoRR , abs/2402.03300, 2024.
+doi: 10.48550/ARXIV.2402.03300 .
+URL https://doi.org/10.48550/arXiv.2402.03300 .
+Sheng et al. (2024)
+Sheng, G., Zhang, C., Ye, Z., Wu, X., Zhang, W., Zhang, R., Peng, Y., Lin, H., and Wu, C.
+Hybridflow: A flexible and efficient rlhf framework.
+arXiv preprint arXiv: 2409.19256 , 2024.
+Silver et al. (2017)
+Silver, D., Schrittwieser, J., Simonyan, K., Antonoglou, I., Huang, A., Guez, A., Hubert, T., Baker, L., Lai, M., Bolton, A., et al.
+Mastering the game of go without human knowledge.
+nature , 550(7676):354–359, 2017.
+Song et al. (2025)
+Song, Y., Kempe, J., and Munos, R.
+Outcome-based exploration for llm reasoning.
+arXiv preprint arXiv:2509.06941 , 2025.
+Team et al. (2025)
+Team, K., Du, A., Gao, B., Xing, B., Jiang, C., Chen, C., Li, C., Xiao, C., Du, C., Liao, C., Tang, C., Wang, C., Zhang, D., Yuan, E., Lu, E., Tang, F., Sung, F., Wei, G., Lai, G., Guo, H., Zhu, H., Ding, H., Hu, H., Yang, H., Zhang, H., Yao, H., Zhao, H., Lu, H., Li, H., Yu, H., Gao, H., Zheng, H., Yuan, H., Chen, J., Guo, J., Su, J., Wang, J., Zhao, J., Zhang, J., Liu, J., Yan, J., Wu, J., Shi, L., Ye, L., Yu, L., Dong, M., Zhang, N., Ma, N., Pan, Q., Gong, Q., Liu, S., Ma, S., Wei, S., Cao, S., Huang, S., Jiang, T., Gao, W., Xiong, W., He, W., Huang, W., Wu, W., He, W., Wei, X., Jia, X., Wu, X., Xu, X., Zu, X., Zhou, X., Pan, X., Charles, Y., Li, Y., Hu, Y., Liu, Y., Chen, Y., Wang, Y., Liu, Y., Qin, Y., Liu, Y., Yang, Y., Bao, Y., Du, Y., Wu, Y., Wang, Y., Zhou, Z., Wang, Z., Li, Z., Zhu, Z., Zhang, Z., Wang, Z., Yang, Z., Huang, Z., Huang, Z., Xu, Z., and Yang, Z.
+Kimi k1.5: Scaling reinforcement learning with llms.
+CoRR , abs/2501.12599, 2025.
+doi: 10.48550/ARXIV.2501.12599 .
+URL https://doi.org/10.48550/arXiv.2501.12599 .
+Yang et al. (2024)
+Yang, A., Zhang, B., Hui, B., Gao, B., Yu, B., Li, C., Liu, D., Tu, J., Zhou, J., Lin, J., et al.
+Qwen2. 5-math technical report: Toward mathematical expert model via self-improvement.
+arXiv preprint arXiv:2409.12122 , 2024.
+Yang et al. (2025)
+Yang, A., Li, A., Yang, B., Zhang, B., Hui, B., Zheng, B., Yu, B., Gao, C., Huang, C., Lv, C., Zheng, C., Liu, D., Zhou, F., Huang, F., Hu, F., Ge, H., Wei, H., Lin, H., Tang, J., Yang, J., Tu, J., Zhang, J., Yang, J., Yang, J., Zhou, J., Zhou, J., Lin, J., Dang, K., Bao, K., Yang, K., Yu, L., Deng, L., Li, M., Xue, M., Li, M., Zhang, P., Wang, P., Zhu, Q., Men, R., Gao, R., Liu, S., Luo, S., Li, T., Tang, T., Yin, W., Ren, X., Wang, X., Zhang, X., Ren, X., Fan, Y., Su, Y., Zhang, Y., Zhang, Y., Wan, Y., Liu, Y., Wang, Z., Cui, Z., Zhang, Z., Zhou, Z., and Qiu, Z.
+Qwen3 technical report.
+CoRR , abs/2505.09388, 2025.
+URL https://arxiv.org/abs/2505.09388 .
+Yu et al. (2025)
+Yu, Q., Zhang, Z., Zhu, R., Yuan, Y., Zuo, X., Yue, Y., Fan, T., Liu, G., Liu, L., Liu, X., Lin, H., Lin, Z., Ma, B., Sheng, G., Tong, Y., Zhang, C., Zhang, M., Zhang, W., Zhu, H., Zhu, J., Chen, J., Chen, J., Wang, C., Yu, H., Dai, W., Song, Y., Wei, X., Zhou, H., Liu, J., Ma, W.-Y., Zhang, Y.-Q., Yan, L., Qiao, M., Wu, Y., and Wang, M.
+Dapo: An open-source llm reinforcement learning system at scale.
+CoRR , abs/2503.14476, 2025.
+URL https://arxiv.org/abs/2503.14476 .
+Yuan et al. (2024)
+Yuan, L., Cui, G., Wang, H., Ding, N., Wang, X., Deng, J., Shan, B., Chen, H., Xie, R., Lin, Y., et al.
+Advancing llm reasoning generalists with preference trees.
+arXiv preprint arXiv:2404.02078 , 2024.
+Zeng et al. (2025)
+Zeng, W., Huang, Y., Liu, Q., Liu, W., He, K., Ma, Z., and He, J.
+Simplerl-zoo: Investigating and taming zero reinforcement learning for open base models in the wild.
+arXiv preprint arXiv:2503.18892 , 2025.
+Zhang et al. (2024)
+Zhang, D., Zhoubian, S., Hu, Z., Yue, Y., Dong, Y., and Tang, J.
+Rest-mcts*: LLM self-training via process reward guided tree search.
+In Globersons, A., Mackey, L., Belgrave, D., Fan, A., Paquet, U., Tomczak, J. M., and Zhang, C. (eds.), Advances in Neural Information Processing Systems 38: Annual Conference on Neural Information Processing Systems 2024, NeurIPS 2024, Vancouver, BC, Canada, December 10 - 15, 2024 , 2024.
+URL http://papers.nips.cc/paper_files/paper/2024/hash/76ec4dc30e9faaf0e4b6093eaa377218-Abstract-Conference.html .
+Zhao et al. (2025)
+Zhao, Y., Liu, Y., Liu, J., Chen, J., Wu, X., Hao, Y., Lv, T., Huang, S., Cui, L., Ye, Q., et al.
+Geometric-mean policy optimization.
+arXiv preprint arXiv:2507.20673 , 2025.
+Zheng et al. (2025a)
+Zheng, C., Liu, S., Li, M., Chen, X.-H., Yu, B., Gao, C., Dang, K., Liu, Y., Men, R., Yang, A., et al.
+Group sequence policy optimization.
+arXiv preprint arXiv:2507.18071 , 2025a.
+Zheng et al. (2025b)
+Zheng, T., Xing, T., Gu, Q., Liang, T., Qu, X., Zhou, X., Li, Y., Wen, Z., Lin, C., Huang, W., et al.
+First return, entropy-eliciting explore.
+arXiv preprint arXiv:2507.07017 , 2025b.
+Zhou et al. (2023)
+Zhou, A., Yan, K., Shlapentokh-Rothman, M., Wang, H., and Wang, Y.-X.
+Language agent tree search unifies reasoning acting and planning in language models.
+arXiv preprint arXiv:2310.04406 , 2023.
+Appendix A Motivating Example
+Figure 7 : Motivating Example.
+To illustrate the limitations of existing exploration strategies and the necessity of our approach, we present a comparative analysis in Figure 7 . We construct a probabilistic decision tree that represents a simplified response space for a given prompt. In this structure, each node corresponds to an intermediate state of the generation process, and the objective is to discover as many correct leaf nodes as possible (specifically, nodes 𝑭 F , 𝑮 G , 𝑱 J , 𝑴 M , and 𝑶 O , marked with green checks).
+The Inefficiency of Root-Based Sampling (GRPO).
+As illustrated in Figure 7 (a), GRPO initiate all rollouts from the root node 𝑨 A . A critical inefficiency arises because the distribution of the exploration budget is determined by the current policy. Consequently, the majority of the rollout budget naturally flows into high-probability paths (highlighted in orange, e.g., reaching nodes 𝑭 F , 𝑮 G , 𝑱 J , 𝑳 L , 𝑵 N ).
+This creates a “rich-get-richer” phenomenon where computational resources are monopolized by high-probability paths (e.g., 𝑷 ⁡ ( 𝑭 ) = 0.24 P(F)=0.24 , 𝑷 ⁡ ( 𝑮 ) = 0.2 P(G)=0.2 ). In stark contrast, deep, low-probability states are statistically starved; for instance, reaching the deep state 𝑴 M requires traversing a specific chain with a marginal probability of merely 0.4 × 0.4 × 0.2 = 0.032 0.4\times 0.4\times 0.2=0.032 . Consequently, simply increasing the root budget is inefficient, as additional samples disproportionately accumulate in the already saturated high-probability branches rather than penetrating the elusive, low-probability regions.
+The Pitfalls of Tree-Based Exploration.
+Tree-based methods (Figure 7 (b)) attempt to mitigate coverage issues by initiating rollouts from intermediate states. However, these methods typically adopt an unfocused strategy, dispersing the total computational budget across numerous pivots rather than concentrating it. This results in a diluted exploration budget for each branch (e.g., only 2 samples per pivot).
+While pivoting brings the exploration deeper into the tree, the probability of reaching specific deep states often remains insufficient given the sparse samples. Taking state 𝑶 O as an example: pivoting at node 𝑪 C increases the access probability from the root-based marginal probability of 0.032 \mathbf{0.032} to 0.08 \mathbf{0.08} . Despite this improvement, with a meager budget of 2 samples, the likelihood of successfully uncover state 𝑶 O remains statistically minimal.
+Furthermore, this approach introduces two critical optimization issues. First, the limited sample size (e.g., 𝑵 = 𝟐 N=2 ) fails to provide a stable local baseline, introducing high variance into the advantage estimation. Second, these methods suffer from the duplicated prefix problem. Since multiple branches stem from the same trajectory (e.g., sharing the prefix 𝑨 → 𝑪 A\to C ), simply aggregating their losses leads to redundant reinforcement of the prefix.
+Targeted Exploration with DEEP-GRPO.
+Our approach (Figure 7 (c)) addresses these inefficiencies by utilizing a utility score to identify deep, error-prone, yet recoverable states as pivots (e.g., nodes 𝑬 E and 𝑲 K ). From these selected pivots, we conduct dense exploration. By targeting these specific deep regions, our method provides a critical complement to root sampling, uncovering training signals that are statistically inaccessible to root-based rollouts.
+Take node 𝑶 O as an example: by identifying its parent node as a high-utility pivot, we allocate a denser budget (e.g., 4 samples), raising the discovery probability significantly. This enables node 𝑶 O to be uncovered to form a valid contrastive pair with its sibling 𝑵 N , providing the model with precise feedback on error-prone boundaries.
+From an optimization perspective, this concentrated sampling allows us to compute a stable local baseline. Furthermore, we explicitly separate the learning objective into a main chain loss and an auxiliary chain Loss. When optimizing the auxiliary branches, we freeze the shared prefix, ensuring that gradient updates are driven solely by the quality of suffix. This effectively resolves the duplicated prefix problem.
+Appendix B Pseudocode of DEEP-GRPO
+Algorithm 1 DEEP-GRPO Training Procedure
+Input: Dataset 𝓓 \mathcal{D} , Policy 𝝅 𝜽 \pi_{\theta} , Success Estimator 𝑷 ϕ P_{\phi} , Hyperparameters 𝜸 , 𝝀 , 𝑲 , 𝑮 \gamma,\lambda,K,G
+Output: Optimized Policy 𝝅 𝜽 \pi_{\theta}
+Initialize replay buffer 𝓜 \mathcal{M} for success estimator
+while not converged do
+Sample a batch of queries 𝐱 ∼ 𝓓 \mathbf{x}\sim\mathcal{D}
+// 1. Main Chain Sampling
+Generate group 𝓣 main = { 𝝉 𝟏 , … , 𝝉 𝑮 } \mathcal{T}_{\text{main}}=\{\tau^{1},\dots,\tau^{G}\} via 𝝅 𝜽 ( ⋅ | 𝐱 ) \pi_{\theta}(\cdot|\mathbf{x})
+Compute rewards 𝑹 ⁡ ( 𝝉 𝒊 ) R(\tau^{i}) for all 𝝉 𝒊 ∈ 𝓣 main \tau^{i}\in\mathcal{T}_{\text{main}}
+Compute global advantages 𝑨 global 𝒊 A^{i}_{\text{global}} using group statistics of 𝓣 main \mathcal{T}_{\text{main}}
+Identify failed trajectories 𝓣 fail = { 𝝉 𝒊 ∈ 𝓣 main ∣ 𝑹 ⁡ ( 𝝉 𝒊 ) = 𝟎 } \mathcal{T}_{\text{fail}}=\{\tau^{i}\in\mathcal{T}_{\text{main}}\mid R(\tau^{i})=0\}
+// 2. Targeted Branching
+Initialize auxiliary set 𝓣 aux ← ∅ \mathcal{T}_{\text{aux}}\leftarrow\emptyset
+for each failed trajectory 𝛕 𝐢 ∈ 𝓣 fail \tau^{i}\in\mathcal{T}_{\text{fail}} do
+Segment 𝝉 𝒊 \tau^{i} into 𝑻 T candidate points
+Compute sampling prob 𝓠 ⁡ ( 𝒕 ) \mathcal{Q}(t) via Eq. 1
+Sample pivot step 𝒕 𝒊 ∗ ∼ 𝓠 t^{*}_{i}\sim\mathcal{Q}
+// Local Resampling
+Given prefix 𝒔 < 𝒕 𝒊 ∗ s_{<t^{*}_{i}} , generate 𝑲 K auxiliary branches 𝓣 aux ( 𝒊 ) = { 𝝉 ^ 𝒊 , 𝟏 , … , 𝝉 ^ 𝒊 , 𝑲 } \mathcal{T}_{\text{aux}}^{(i)}=\{\hat{\tau}^{i,1},\dots,\hat{\tau}^{i,K}\}
+Compute rewards 𝑹 ⁡ ( 𝝉 ^ 𝒊 , 𝒌 ) R(\hat{\tau}^{i,k}) for 𝒌 = 𝟏 ​ … ​ 𝑲 k=1\dots K
+// Update Buffer
+𝒚 ← 𝕀 ⁡ ( ∃ 𝒌 , 𝑹 ⁡ ( 𝝉 ^ 𝒊 , 𝒌 ) = 𝟏 ) y\leftarrow\mathbb{I}(\exists k,R(\hat{\tau}^{i,k})=1)
+Store ( 𝒕 𝒊 ∗ / 𝑻 , 𝒚 ) (t^{*}_{i}/T,y) in 𝓜 \mathcal{M}
+Compute local advantages 𝑨 local 𝒊 , 𝒌 A^{i,k}_{\text{local}} relative to 𝓣 aux ( 𝒊 ) \mathcal{T}_{\text{aux}}^{(i)}
+Add 𝓣 aux ( 𝒊 ) \mathcal{T}_{\text{aux}}^{(i)} to 𝓣 aux \mathcal{T}_{\text{aux}}
+end for
+// 3. Optimization
+Compute 𝓛 main \mathcal{L}_{\text{main}} and 𝓛 aux \mathcal{L}_{\text{aux}} (with masking)
+Update 𝜽 ← 𝜽 − 𝜼 ​ ∇ 𝜽 ( 𝓛 main + 𝝀 ​ 𝓛 aux ) \theta\leftarrow\theta-\eta\nabla_{\theta}(\mathcal{L}_{\text{main}}+\lambda\mathcal{L}_{\text{aux}})
+// 4. Estimator Update
+Periodically update 𝑷 ϕ P_{\phi} minimizing binary cross-entropy on 𝓜 \mathcal{M}
+end while
+Appendix C Implementation Details
+Our training framework is built upon veRL ( Sheng et al., 2024 ) . We adopt a strictly on-policy update strategy. Specifically, trajectories sampled in each batch are used to update the policy exactly once, ensuring that the model is always trained on data generated by the current policy.
+For the objective function, we utilize a batch-level token mean loss. This method sums the losses of all tokens across the entire batch and normalizes by the total token count. This ensures that every token contributes equally to the gradient, aligning with the approach in DAPO ( Yu et al., 2025 ) . Furthermore, for both our DEEP-GRPO method and the GRPO baseline, we compute policy updates exclusively using trajectories with non-zero advantages, consistent with recent practices ( Yu et al., 2025 ; Lin et al., 2025 ) .
+Regarding specific hyperparameters, we set the training batch size to 64. This indicates that at each training step, 64 unique prompts are sampled from the dataset, and for each prompt, 8 trajectories are generated. The model is trained with a learning rate of 𝟏 × 𝟏𝟎 − 𝟔 1\times 10^{-6} and a KL penalty coefficient of 𝟏 × 𝟏𝟎 − 𝟒 1\times 10^{-4} .
+Appendix D Training Dynamics
+As shown in Figure 6 , DEEP-GRPO consistently outperforms GRPO in test accuracy (left), demonstrating superior efficiency in policy optimization.
+We observed sustained higher policy entropy (middle). Unlike GRPO, which suffers from premature convergence, our method maintains greater exploration potential. To investigate the source of this sustained exploration, we analyzed the relationship between the depth of exploration and policy entropy (Figure 9(a) ). We observe a positive correlation: as the depth bias increases, the policy entropy tends to remain higher.
+This suggests that specifically targeting deep states for dense sampling effectively ”injects” exploration vitality into the model.
+Furthermore, we observe a notable increase in response length (right). As shown in Figure 9(b) , this increase is also positively correlated with the depth bias. We interpret this as the emergence of self-correction capabilities, as visually exemplified in Figure 8 . By focusing exploration on deep, recoverable states, the model learns to “double-check” its logic, leading to longer chains that can leverage more test-time compute.
+Case Study: Self-Correction in DEEP-GRPO
+Problem: Frankie watches TV… If he watched 7 hours of TV in all, how many 30-minute episodes did he watch on Wednesday?
+Model Response:
+… (omitted) … On Thursday, he watched a 1-hour episode… and a 30-minute show…
+[Initial Error Path]
+The total time: 𝟐 + 𝟑𝟎 + 𝟏 + 𝟏𝟐𝟎 = 𝟏𝟔𝟐 2+30+1+120=162 minutes. Since 1 hour = 60 minutes…
+[Self-Correction Trigger]
+However, let’s re-evaluate:
+[Corrected Reasoning]
+The correct solution:
+•
+Monday and Tuesday: 1 hour each, 120 minutes.
+•
+Wednesday: 30 minutes.
+•
+Thursday: 1 hour and 30 minutes, 90 minutes.
+•
+Friday: 2 episodes of 1 hour each, 120 minutes.
+The total: 𝟏𝟐𝟎 + 𝟑𝟎 + 𝟗𝟎 + 𝟏𝟐𝟎 = 𝟑𝟔𝟎 120+30+90+120=360 minutes. Since 7 hours = 420 minutes…
+… (calculation steps) …
+Therefore, the correct answer is 𝟑 .
+Figure 8 : The model initially falls into a unit mixing error (Red Zone). Crucially, it triggers a re-evaluation mechanism (Blue Zone) without external feedback, discarding the erroneous path and restarting the derivation with consistent units (Green Zone).
+(a) Policy Entropy
+(b) Response Length
+Figure 9 : Correlation between Depth Bias ( 𝜸 \gamma ) and Training Dynamics. Higher depth bias correlates with (a) sustained policy entropy , indicating maintained diversity, and (b) increased response length , suggesting the emergence of self-correction patterns.
+Appendix E Instability of Tree Based Methods
+In our empirical evaluation, we observed a stability issue in the training dynamics of prior tree-based methods. Specifically, we noticed performance degradation in the later stages of training. We visualize this instability in Figure 10 , where the test accuracy begins to drop after reaching a peak, accompanied by a sharp spike in policy entropy.
+(a) Test Accuracy
+(b) Policy Entropy
+Figure 10 : Training instability in tree-based methods. (a) Test accuracy begins to degrade in later stages. (b) Policy entropy spikes sharply corresponding to the performance drop, indicating policy collapse.
+We attribute this instability to two fundamental limitations inherent in methods that naively aggregate branched trajectories:
+1. Optimization Bias from Prefix Duplication.
+Tree-based approaches typically treat branched trajectories as independent samples within a single optimization batch. However, since multiple branches ( 𝝉 ^ 𝟏 , … , 𝝉 ^ 𝑲 \hat{\tau}_{1},\dots,\hat{\tau}_{K} ) originate from the same intermediate pivot state, they share an identical prefix. Aggregating these trajectories without proper seperation causes the gradients of the shared prefix to be accumulated 𝑲 K times. This redundance can destabilize the training, leading to the observed performace drop.
+2. Biased Baseline Estimation.
+The second source of instability stems from the advantage estimation. Tree-based approaches typically compute a global baseline by aggregating all generated trajectories—both those sampled naturally from the root and those artificially branched from intermediate steps. We argue that this results in a biased baseline. Theoretically, the baseline should serve as an unbiased estimator of the value under the policy’s natural distribution, 𝔼 𝝉 ∼ 𝝅 ( ⋅ | 𝐱 ) \mathbb{E}_{\tau\sim\pi(\cdot|\mathbf{x})} . However, the set of branched trajectories represents an interventional distribution 𝝅 ( ⋅ | 𝒔 pivot ) \pi(\cdot|s_{\text{pivot}}) , which is artificially induced and skewed towards specific local states. Mixing these heterogeneous samples distorts the baseline, leading to inaccurate advantage estimates, thereby misguiding the optimization direction.
+Appendix F Computational Efficiency Compared with Tree-based Methods
+Our method offers three budget advantages over tree-based methods (e.g., TreeRL ( Hou et al., 2025 ) , TreeGRPO ( Ji et al., 2025 ) ):
+1.
+Adaptive Budget Allocation: Unlike methods that construct branches for every main chain, we allocate the auxiliary budget exclusively to failed trajectories. As the policy improves, the number of failed trajectories decreases, naturally reducing the computational overhead of sampling auxiliary chains.
+2.
+Concentrated Exploration: Instead of scattering the sampling budget by branching at multiple positions (often selected randomly or via entropy), we select a single critical pivot per failed chain for dense refinement. This focused approach prevents the dilution of computational resources, allowing for intensive exploration of the state offering the highest exploration value.
+3.
+Token Efficiency: By explicitly targeting deep states (via our depth bias), our method effectively leverages the long existing prefix. Consequently, the model only needs to generate short suffixes to complete the trajectory. This incurs significantly lower token generation costs compared to branching at shallower positions.
+Appendix G More Related Work
+G.1 Outcome-Based Reinforcement Learning for LLMs
+Outcome-based methods, such as RLOO ( Ahmadian et al., 2024 ) , GRPO ( Shao et al., 2024 ) , GMPO ( Zhao et al., 2025 ) , and GSPO ( Zheng et al., 2025a ) , optimize policies using group-wise statistics without relying on a parametric value function. While efficient, these methods suffer from “entropy collapse” as training progresses, leading to premature convergence ( Cui et al., 2025b ) .
+Recent works address this primarily by modifying the optimization objective.
+For instance, DAPO ( Yu et al., 2025 ) proposes a Clip-Higher strategy that relaxes the upper bound of the probability ratio to facilitate the learning of exploration tokens. Cui et al. (2025b) introduce Covariance Regularization to explicitly maintain policy entropy. Song et al. (2025) incorporate an exploration bonus into the optimization objective, such as a UCB-based term or a batch diversity penalty, to discourage redundant answers. Another line of work focuses on advantage shaping, where token advantages are modulated based on entropy ( Cheng et al., 2025 ) or perplexity and position ( Deng et al., 2025 ) to encourage exploration. Our work is orthogonal to these objective-level modifications. Rather than modifying the policy update method, we address the exploration problem from the data acquisition perspective, optimizing the sampling distribution to uncover high-value signals. Thus, our method can naturally complement these loss-based regularizers.
+Appendix H Limitations and Future Work
+While DEEP-GRPO demonstrates significant improvements in reasoning performance, we acknowledge certain limitations in its current implementation and outline potential directions for future research.
+Computational Overhead and Throughput.
+A primary limitation of DEEP-GRPO is the additional computational overhead introduced by its two-stage sampling mechanism. Compared to GRPO, which maximizes throughput via parallel root sampling, our method requires re-initiating generation from intermediate pivots. This sequential dependency reduces the overall training speed.
+Exploration Efficiency on Hard States.
+Despite utilizing the depth bias ( 𝜸 \gamma ) to guide exploration towards deep, error-prone states, we observe that a significant fraction of these selected pivots still fail to yield a correct solutio. As illustrated in Figure 11 , the number of “unrecoverable” states—where dense resampling fails to find any correct path—remains non-negligible throughout training. This suggests that for certain deep states containing errors, simple rejection sampling may not suffice to recover the correct reasoning path.
+Figure 11 : Analysis of Exploration Success Rate. The curve shows the number of pivot states where dense exploration failed to recover a correct solution during training. Despite our targeted strategy, a substantial portion of deep error states remain unrecoverable, indicating the difficulty of self-correction in sparse reward environments.
+Future Work.
+To address these challenges, we plan to explore the following directions:
+•
+Deferred Branching Mechanism: To mitigate the latency of the two-stage process, we aim to unify the exploration into a single-stage framework. Drawing inspiration from AttnRL ( Liu et al., 2025a ) , To mitigate the latency of the two-stage process, we aim to unify the exploration into a more efficient pipeline. Instead of performing immediate branching which interrupts the generation flow, we plan to collect identified pivot states and incorporate them as prefixes into subsequent training batches. This approach allows for continuous generation without the ”pause-and-resample” overhead, effectively treating intermediate state exploration as a form of dynamic prompt augmentation within the standard data stream.
+•
+Synthetic Data from Hard Failures: To address the issue of unrecoverable states, we propose to utilize the “hard” states collected during failed exploration attempts. Rather than discarding these states, we plan to use them as seeds for generating synthetic data—potentially leveraging stronger teacher models or more computationally intensive search methods (e.g., MCTS) to find solutions offline. These synthesized trajectories can then be used for Supervised Fine-Tuning (SFT), effectively turning current exploration failures into high-value training signals for future iterations.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

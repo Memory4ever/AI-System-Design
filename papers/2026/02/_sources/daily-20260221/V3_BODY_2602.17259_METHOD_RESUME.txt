@@ -1,0 +1,224 @@
+URL: https://arxiv.org/html/2602.17259v1
+Status: 200
+3.2 Future Representation Alignment via Parallel Progressive Expansion
+Overview. As illustrated in Figure 2, the overall philosophy of our method is to construct a world-modeling task during the training process.
+An inductive idea is to make the model generate future states along with actions.
+While the visual information is used as the condition for RDT, and can not be supervised directly, the process can be realized by adding a set of noisy prefixes as input, and the model is expected to predict future states from them.
+Specifically, for the input of the RDT includes proprioception ztz_{t}, noisy actions a~t\tilde{a}_{t}, control frequency cc, and diffusion timestep kk, we introduce a set of learnable tokens 𝐩∈ℝn×d\mathbf{p}\in\mathbb{R}^{n\times d} as the future prefix to be concatenated with the input.
+To avoid pixel redundancy, we leverage pretrained vision foundation models as the teacher visual encoder Φ\Phi to provide supervising signals 𝐞t+h=Φ⁡(ot+h),𝐞∈ℝn×dΦ\mathbf{e}_{t+h}=\Phi(o_{t+h}),\mathbf{e}\in\mathbb{R}^{n\times d_{\Phi}}, where hh denotes the future horizon, nn and dΦd_{\Phi} is the length and dimension of output.
+The denosing process is formulated as
+at,pt=fθ​(l,ot,a~t,k).\textbf{a}_{t},\textbf{p}_{t}=f_{\theta}(l,\textbf{o}_{t},\tilde{\textbf{a}}_{t},k).
+(2)
+The alignment loss for a VFM Φ\Phi is formulated as
+ℒΦ=cos​(𝐩t,sg​(𝐞)),\mathcal{L}_{\Phi}=\textnormal{cos}(\mathbf{p}_{t},\text{sg}(\mathbf{e})),
+(3)
+where cos​[⋅,⋅]\textnormal{cos}[\cdot,\cdot] denotes cosine similarity and sg​(⋅)\text{sg}(\cdot) is the stop-gradient operator, ensuring that gradients do not flow back into the teacher model.
+Thus, the training objective is a combination of action loss and alignment loss.
+This process makes the model learn to predict the future states and model the dynamics between the actions and states.
+Parallel Scaling
+To leverage the world knowledge within diverse VFMs and conduct parallel scaling, we propose a prefix-and-LoRA tuning paradigm to align with multiple future visual representations.
+Specifically, we construct multiple sets of future prefixes and LoRAs in a shared RDT backbone, and each set is activated during alignment with a dedicated teacher encoder.
+To reduce the memory footprint during fine-tuning, only the prefixes and LoRAs are trainable in the framework.
+Considering that all MiPAs are supervised, the loss function should be re-formulated as:
+ℒalign=(∑i=1MℒΦi),\mathcal{L}_{\text{align}}=(\sum_{i=1}^{M}\mathcal{L}_{\Phi_{i}}),
+(4)
+where MM is the number of teacher encoders, and ℒΦi\mathcal{L}_{\Phi_{i}} denotes the ii-th teacher encoder. In this paper, we set M=3M=3, and the selected teacher encoders are CLIP (Radford et al., 2021) (400M), DINOv2 (Oquab et al., 2023) (142M), and ViT (300M) (Dosovitskiy, 2020).
+To aggregate the outputs of these parallel experts, we introduce a lightweight router network. The router computes a set of gating weights, w={wi}i=1M\textbf{w}=\{w_{i}\}_{i=1}^{M}, for the MM experts, such that ∑i=1Mwi=1\sum_{i=1}^{M}w_{i}=1. Let the latent action representation from the ii-th expert be zjz_{j}. The final executable action chunk, at\textbf{a}_{t}, is then produced by passing the weighted sum of these latent representations through a shared action head, MLP​(⋅)\text{MLP}(\cdot):
+at=MLP​(∑i=1Mwi⋅zi).\textbf{a}_{t}=\text{MLP}\left(\sum_{i=1}^{M}w_{i}\cdot z_{i}\right).
+(5)
+Load Balance during Output Aggregation
+During training, we observed a mode collapse phenomenon, where a single stream would dominate the learning process, preventing others from updating (Fedus et al., 2022; Lepikhin et al., 2020; Szegedy et al., 2016). To mitigate this issue and encourage balanced expert utilization, we incorporate a load-balancing loss into our training strategy:
+ℒbalance=1B∑j=1B(log∑i=1Megi,j)2,\mathcal{L}_{\text{balance}}=\frac{1}{B}\sum_{j=1}^{B}\left(\log\sum_{i=1}^{M}e^{\textbf{g}_{i,j}}\right)^{2},
+(6)
+where gi,j\textbf{g}_{i,j} is the logit for the jj-th token assigned to the ii-th expert, and BB is the number of tokens in a batch. This encourages the router to produce logits with similar magnitudes across all experts.
+Additionally, to prevent the router from assigning near-zero weights to certain experts in the early stages of training, we apply label smoothing directly to the final gating weights ww. For each expert ii, its weight wiw_{i} is adjusted as follows:
+wi′=wi⋅(1−ϵ)+ϵM,w^{\prime}_{i}=w_{i}\cdot(1-\epsilon)+\frac{\epsilon}{M},
+(7)
+where wi′w^{\prime}_{i} is the smoothed weight, and ϵ\epsilon is a small hyperparameter (0.10.1 in this paper). This ensures that every expert receives a minimum, non-zero weight, thereby guaranteeing that all experts are updated.
+The final training objective for our framework is formulated as a composition of Equation 1, Equation 4, and Equation 6:
+ℒtotal=ℒaction+λ1​ℒalign+λ2​ℒbalance,\mathcal{L}_{\text{total}}=\mathcal{L}_{\text{action}}+\lambda_{1}\mathcal{L}_{\text{align}}+\lambda_{2}\mathcal{L}_{\text{balance}},
+(8)
+with weight factors λ1\lambda_{1} and λ2\lambda_{2} that balance the contributions of the alignment and load-balancing objectives, respectively.
+Mid-Training
+We find that the finetuning process can be further optimized through a mid-training process.
+Before post-training, the mid-training stage employs traditional single-stream training to align the newly added future prefix with the teacher encoder.
+To ensure consistency between the two stages and adapt single-stream alignment, we utilize a variant of Theia (Shang et al., 2024), which distills a tiny VFM from multiple pretrained VFMs to ensure comprehensive robotic capabilities. In this paper, we use the 86M encoder distilled from the three encoders used in the post-training phase.
+This process adapts our model to the world-modeling objective, thereby obtaining a strong initialization for post-training.
+4 Simulation Experiments
+We choose to first conduct fair, uniform, and reproducible comparisons in simulation to demonstrate that our fine-tuning scheme exhibits significant advantages in performance (Section 4.1), training efficiency (Section 4.2), and efficiency across models of different parameter scales (Section 4.4). The following settings are consistent across all experiments in this section:
+Simulation Environment
+We evaluate our method on RoboTwin (Chen et al., 2025c).
+RoboTwin is a real-to-sim bimanual benchmark.
+It contains an Easy setting with in-domain layout and a Hard setting with domain randomization, including scene clutter, diverse background textures, lighting variation, and varied tabletop heights.
+To comprehensively evaluate the performance, all simulation experiments are conducted on 8 diverse tasks under both Easy and Hard settings.
+Training Details
+Our model is fine-tuned starting from the official RDT-1B pre-trained weights. For all experiments, the training dataset is restricted to 50 task-specific trajectories from the Easy setting. The training process is conducted on two NVIDIA H100 GPUs for a total of 20,000 steps with a batch size of 32, partitioned into 15,000 mid-training steps and 5,000 post-training steps for all models using FRAPPE. Accuracy is reported based on the average performance over 100 evaluation trials to ensure fair comparison.
+4.1 Comparison with State-of-the-Arts
+Our primary baseline is the base RDT model finetuned using the original finetuning recipe.
+However, for broader comparison, we also include several other baselines. The complete list of comparisons is as follows:
+•
+Diffusion Policy (DP (Chi et al., 2025)): a train-from-scratch visuomotor policy, serving as a small-scale baseline model.
+•
+Video Prediction Policy (VPP (Hu et al., 2024)): Training subsequent DP based on representations provided by a pre-trained video prediction diffusion model, serving as an implicit world model baseline for comparison.
+•
+RDT (Liu et al., 2024): The base model adopted for FRAPPE.
+•
+π𝟎\mathbf{\pi_{0}} (Black et al., 2024): the state-of-the-art method and its advanced version on RoboTwin Benchmark with a VLM and flow-matching head combined architecture.
+•
+π0.5\mathbf{\pi_{0.5}} (Intelligence et al., 2025): The successor to π0\pi_{0}, demonstrating stronger generalization capabilities.
+Table 1: Comparisons with state-of-the-art methods on RoboTwin 2.0 benchmark. Please note that Bold and Underline denote the best and the second-best performances among the methods.
+Method
+Handover Mic
+Pick Dual Bottles
+Handover Block
+Place Object Basket
+Easy
+Hard
+Easy
+Hard
+Easy
+Hard
+Easy
+Hard
+DP
+53.0%
+0.0%
+24.0%
+0.0%
+10.0%
+0.0%
+15.0%
+0.0%
+VPP
+91.0%
+7.0%
+28.0%
+6.0%
+8.0%
+0.0%
+30.0%
+0.0%
+RDT
+90.0%
+31.0%
+45.0%
+14.0%
+45.0%
+14.0%
+30.0%
+6.0%
+π𝟎\mathbf{\pi_{0}}
+98.0%
+13.0%
+57.0%
+12.0%
+45.0%
+8.0%
+16.0%
+2.0%
+π0.5\mathbf{\pi_{0.5}}
+98.0%
+13.0%
+37.0%
+13.0%
+2.0%
+0.0%
+42.0%
+4.0%
+Ours
+98.0%
+45.0%
+67.0%
+28.0%
+50.0%
+18.0%
+35.0%
+15.0%
+Method
+Put Object Cabinet
+Place Shoe
+Stack Bowls Two
+Put Bottle Dustbin
+Average
+Easy
+Hard
+Easy
+Hard
+Easy
+Hard
+Easy
+Hard
+Easy
+Hard
+DP
+42.0%
+0.0%
+23.0%
+0.0%
+61.0%
+0.0%
+22.0%
+0.0%
+31.3%
+0.0%
+VPP
+15.0%
+12.0%
+40.0%
+4.0%
+59.0%
+3.0%
+15.0%
+0.0%
+35.8%
+4.0%
+RDT
+33.0%
+18.0%
+35.0%
+7.0%
+74.0%
+27.0%
+27.0%
+4.0%
+47.4%
+15.1%
+π𝟎\mathbf{\pi_{0}}
+68.0%
+18.0%
+28.0%
+6.0%
+91.0%
+41.0%
+54.0%
+13.0%
+57.1%
+14.1%
+π0.5\mathbf{\pi_{0.5}}
+46.0%
+15.0%
+28.0%
+12.0%
+85.0%
+44.0%
+25.0%
+5.0%
+45.4%
+13.3%
+Ours
+52.0%
+37.0%
+41.0%
+18.0%
+80.0%
+36.0%
+37.0%
+7.0%
+57.5%
+25.5%
+As presented in Table 1, under the Easy setting, our method achieves the highest average success rates across all the tasks. This demonstrates that our proposed training paradigm yields substantial improvements over the baseline RDT, effectively expanding its capability boundaries.
+Under the Hard setting, all compared methods only reach very low success rates, because varying distractors, background textures, lighting conditions, and table heights pose huge challenges to models’ visual generalization.
+However, our model surpasses the most effective π0.5\pi_{0.5} by a clear margin.
+This indicates that our model better learns the low-level dynamics behind diverse visual observations, thus producing correct actions rather than relying on spurious correlations (Xing et al., 2025).
+4.2 Comparison of Training Paradigm
+In this section, we conduct experiments on various training paradigms under the condition of a fixed total training step count of 20,000. For these experiments, we selected two representative tasks from above: Stack Bowls Two and Pick Dual Bottles. Based on the experimental results in Table 2, 

@@ -29,6 +29,10 @@ agent identity monitor 以固定 probe 的 next-token distribution、sqrt-JSD ge
 - `SF-2026-ARXIV-2606-21843` — primary `arXiv:2606.21843v1`；exact-v1 URL=`https://arxiv.org/html/2606.21843v1`；Method=`https://arxiv.org/html/2606.21843v1 — §3.1 Ada: a persistent AI agent; §3.4 The probe battery`；Evaluation=`https://arxiv.org/html/2606.21843v1 — §4 Magnitude Baseline; §5.6 Drift experiment`；Non-proof=`https://arxiv.org/html/2606.21843v1 — §6.3 Limitations — Drift trajectory is a padding artifact`。
 <!-- daily-20260621:platform-monitoring:end -->
 
+只有输出 token 可见、却缺少可靠 provider revision 时，还可把 sensor 分成初始化与检测。初始化在低温下重复采样 first token，筛出会产生多个 token 的边界 prompt，另采 reference 分布；检测再用这些固定 prompt 比较经验 support 或 TV 分数。它把预算放在输出决策边界附近，而不要求整段 response。prompt、temperature、端点、reference 样本与检测规则都是 sensor identity；有限非退化 support 的理论与实际连续 TV 的 ROC 是不同证据，不能合并成任意更新必被检出的保证。<!-- source-family:SF-2026-ARXIV-2602-11083 -->
+
+[有限 API 与受控小变化结果](https://arxiv.org/html/2602.11083v1)只支持这一告警分支。provider 的 T=0 实现不必等于低温极限，隐藏 reasoning 或空输出会使 first-token sensor 不可用，prompt 初始化和 reference 也有费用；token 变化可能来自 system prompt、routing 或硬件/负载，而非唯一的权重变化，未告警同样不证明模型没变。输出不可观测、reference 漂移或误报无法校准时，保留显式版本/changelog 证据与常规任务 canary，把变化告警交给诊断和 evaluation，不由 monitor 认证底层身份或质量。
+
 容易采集的指标不一定重要。应从用户与平台契约反推：
 
 ```text
@@ -703,3 +707,5 @@ Primary-source 与官方入口：
 
   **已吸收的语义增量：** 新增证据边界：把多 provider serving 的 failure 以 origin layer 与 detectability 两轴建模，再由 issue evidence、独立复现与完整 case study 连接现象、根因、检测信号和恢复动作。关键 delta 不是新增错误名单，而是把 runtime_success 与 semantic/continuity failure 分开。 该 delta 已进入 `books/part-06-ai-infrastructure/67-monitoring.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-17525:end -->
+
+- `SF-2026-ARXIV-2602-11083` — Daily `2026-02-13`；[exact-v1](https://arxiv.org/html/2602.11083v1)；必要证据与直接反侧见本日 V3_EVIDENCE_CSIX_FOUR。2+1+2=5；token-only边界prompt init/detect sensor差额深入，不授底层身份认证、无限power或无告警即未变化。root已实际核必要原源/current owner及邻接PRE并授窄锁；root已实际顺读新增两段、邻接与末注，非作者POST通过，窄锁释放，未核代码/复现，日级未授。

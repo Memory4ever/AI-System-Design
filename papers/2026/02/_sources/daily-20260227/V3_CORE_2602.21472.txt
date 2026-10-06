@@ -1,0 +1,7828 @@
+The Design Space of Tri-Modal Masked Diffusion Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Background and Related Work
+2.1
+Masked Diffusion Models
+Text.
+Image.
+Audio.
+2.2
+Multimodal Masked Diffusion Models
+3
+Method
+Training.
+Denoising model.
+Inference.
+3.1
+Architecture
+4
+Hyperparameter Transfer
+4.1
+Eliminating
+B
+opt
+B_{\text{opt}}
+with SDE Parametrization
+4.2
+Isonoise and Isohorizon Scaling Rules
+5
+Scaling Behavior of
+MDM
+under the SDE Transfer Rule
+5.1
+Scaling Rules for Critical Batch Size
+Critical batch size without SDE.
+Critical batch size for SDE.
+Critical batch size as function of model size.
+Critical batch-size as a function of the token horizon.
+5.2
+Optimal Drift–horizon Tradeoffs
+Link with learning rate schedule.
+5.3
+Scaling Laws for Tri-modal
+MDM
+Analysis.
+Interpretation.
+6
+Data
+Text data.
+Audio-text data.
+Image-text data.
+7
+Results
+7.1
+Unified 3B Tri-modal
+MDM
+7.2
+Modality Mixing Ratios
+7.3
+Best Generation Hyperparameters
+Text-to-image generation.
+Text-to-speech generation.
+7.4
+Anti-Masking
+8
+Conclusion
+References
+A
+General formulation of weighting and the masking process
+A.1
+Connection of Loss Weighting and Cumulative Corruption
+A.2
+Unbiasedness of the Importance Weighting
+B
+Tokenizer Ablations
+B.1
+Audio Tokenizer Ablations
+B.2
+Image Tokenizer Ablations
+C
+Training details
+C.1
+Optimal Global Hyper-Parameter Search
+C.2
+Runtime as Function of Batch Size
+C.3
+Hyperparameters for the Unified 3B Tri-modal MDM
+D
+MDM with Per-module Hyperparameters
+Training Details.
+Multiplier analysis.
+E
+Extended Scaling Laws Results
+Computation of FLOPs for experiments.
+Scaling laws for Uni-Modal Text MDM.
+F
+Masking Schedules for Image and Audio Generation
+G
+Extended generations
+H
+Contributions
+Code.
+Experiments.
+Data.
+General Infrastructure.
+Theoretical formulation and situating work.
+Project Organization and Tech Lead.
+I
+Acknowledgments
+License: CC BY 4.0
+arXiv:2602.21472v1 [cs.LG] 25 Feb 2026
+\metadata
+[Correspondence]Louis Bethune:
+louisbethune@apple.com
+;
+Victor Turrisi:
+v_turrisi@apple.com
+;
+Jason Ramapuram:
+jramapuram@google.com
+. For a detailed breakdown of author contributions see
+Appendix
+H
+.
+The Design Space of Tri-Modal Masked Diffusion Models
+Louis Bethune
+Victor Turrisi
+Bruno Kacper Mlodozeniec
+3†
+Pau Rodriguez Lopez
+Lokesh Boominathan
+Nikhil Bhendawade
+Amitis Shidani
+Joris Pelemans
+Theo X. Olausson
+4†
+Devon Hjelm
+Paul Dixon
+João Monteiro
+Pierre Ablin
+Vishnu Banna
+Arno Blaas
+Nick Henderson
+Kari Noriy
+Dan Busbridge
+Josh Susskind
+Marco Cuturi
+Irina Belousova
+Luca Zappella
+Russ Webb
+Jason Ramapuram
+2
+Affiliation:
+Apple,
+2
+Google Deepmind (work done at Apple),
+3
+University of Cambridge,
+4
+MIT,
+†
+Work done during Apple internship.
+Abstract
+Discrete diffusion models have emerged as strong alternatives to autoregressive language models, with recent work initializing and finetuning a base unimodal model for bi-modal generation. Diverging from previous approaches, we introduce the first tri-modal
+Masked Diffusion Models (MDM)
+pretrained from scratch
+on text, image-text, and audio-text data. We systematically analyze multimodal scaling laws, modality mixing ratios, noise schedules, batch-size effects and provide optimized inference sampling defaults.
+Our batch-size analysis yields a novel
+stochastic differential equation (SDE)
+based reparameterization, eliminating the need for tuning the optimal batch size as reported
+in recent work.
+This re-parameterization
+decouples the
+physical batch size
+, often chosen based on compute (GPU saturation, FLOP-efficiency, wall-clock time) from the
+logical batch size
+, chosen to balance the variance of gradients during stochastic optimization.
+Finally, we pretrain a preliminary model showcasing the capabilities of a unified design, achieving strong results at 3B model scale (6.4T tokens), in both text generation, T2I tasks, and T2S tasks.
+Our work represents the largest scale systematic open study of multimodal discrete diffusion models conducted to date, providing valuable insights into scaling behaviors across multiple modalities.
+1
+Introduction
+A recurring theme in sequence modeling is that, whenever the full context is available, bidirectional information tends to perform better. Early work on bidirectional RNNs
+(
+Schuster and Paliwal, 1997
+)
+and LSTMs
+(
+Graves and Schmidhuber, 2005
+)
+demonstrated clear gains over purely forward recurrent models when both past and future states were accessible during training. This makes the dominance of causal transformers
+(
+Vaswani et al., 2017
+)
+in modern language modeling slightly surprising: the strongest transformer-based language models
+(
+DeepSeek-AI, 2024
+;
+Gemini Team, 2023
+;
+Singh et al., 2025
+;
+Anthropic, 2024
+)
+are trained with a strictly left-to-right factorization (auto-regressively). The causal constraint is
+undeniably convenient
+(simple likelihood factorization, efficient per-token learning signal and fast streaming decoding via KV cache), but it is not evidently the best fit for conditional generation problems where the observed evidence may be scattered across positions and modalities. Discrete diffusion revisits the bidirectional viewpoint by replacing a fixed generation order with iterative refinement: rather than predicting the next token, the model repeatedly denoises a partially corrupted sequence. Recent progress in diffusion based language modeling
+(
+Nie et al., 2025
+)
+has narrowed much of the quality gap to strong causal baselines, including widely used models such as LLaMA 3
+(
+Llama Team, 2024
+)
+, strengthening the case that order agnostic, globally conditioned generation can be competitive at scale. Despite narrowing the performance gap at equivalent pretraining FLOP budgets, naive implementations still exhibit substantial latency compared to autoregressive baselines and further work is required to improve sampling efficiency in
+MDM
+(
+Jazbec et al., 2025
+;
+Wu et al., 2025
+)
+.
+This refinement perspective is particularly appealing in multimodal settings.
+MDM
+s train on a simple corruption process (masking) and learn to reconstruct missing tokens. With multimodal tokenization, text, image, and audio tokens can be concatenated,
+partially masked, and jointly denoised. This naturally supports infilling and arbitrary conditioning without re-deriving a new factorization for every task.
+Although image and audio tokens could be independently modeled in continuous domains as in
+Li et al. (2025)
+, we instead adopt discrete modeling to streamline optimization and substantially reduce complexity by employing a unified embedding space and loss function.
+While much of the current multimodal
+MDM
+literature emphasizes adapting existing pretrained models, either by performing supervised finetuning on discrete diffusion bases like LLaDA
+(
+You et al., 2025
+;
+Yang et al., 2025
+)
+or by distilling and repurposing autoregressive backbones such as Qwen 2.5-Coder or other large AR models
+(
+Hui et al., 2024
+;
+Gong et al., 2025
+;
+Zheng et al., 2025
+;
+Zhang et al., 2025
+;
+Bie et al., 2025
+)
+,
+our work targets the pretraining regime, where the dominant compute is spent and where the latent spaces are shaped.
+(a)
+(b)
+(c)
+(d)
+Figure 1
+:
+High-fidelity generation.
+The pretrain-only 3B
+MDM
+demonstrates strong prompt adherence alongside high-quality visual rendering of
+texture
+,
+lighting
+, and
+composition
+. Samples show:
+(a)
+natural daylight and depth of field ("egg in a field of crocuses");
+(b)
+fine-grained fur texture in B&W ("lion’s face");
+(c)
+soft, warm lighting with vintage color tones ("preparing bread dough"); and
+(d)
+complex multi-object arrangement ("noodle soup with toppings").
+Extended generations in Appendix
+Appendix
+G
+.
+Moving from unimodal to multimodal
+MDM
+introduces a large and underexplored design space. Choices that may appear secondary in isolation can dominate stability and compute efficiency. Because exhaustive large-scale sweeps are often infeasible, progress depends on reliable transfer rules, i.e. rules on how to transfer hyperparameters from small models to larger models.
+In this work, we take a step toward sound pretraining recipes for native multimodal
+MDM
+s. We extend
+MDM
+to a tri-modal setting (text, image, audio) via a unified discrete token space with modality-specific boundary and mask tokens. The
+single
+resulting model supports multiple conditional generation queries, including text-to-image generation, image captioning,
+text-to-speech (TTS)
+and
+automatic speech recognition (ASR)
+.
+Our main contribution is an empirical study of the pretraining and inference choices that govern scaling behavior and efficiency in this regime, together with controlled inference-time ablations that reveal modality-specific sensitivities:
+1.
+Unified Multimodal MDM.
+Introduce the first tri-modal
+MDM
+capable of generating text, image, and audio from each other
+in any direction
+via a single transformer backbone and unified vocabulary, eliminating the need for modality-specific heads, adapters or unimodal conditioning
+(
+Liu et al., 2023
+)
+.
+2.
+Elimination of Optimal Batch Size (
+B
+opt
+B_{\text{opt}}
+) and per-module transfer.
+We leverage SDE-based reparameterization to render training loss invariant to batch size up to a critical threshold (
+B
+crit
+B_{\text{crit}}
+),
+eliminating the need to search for an optimal batch size
+,
+B
+opt
+B_{\text{opt}}
+(
+Bergsma et al., 2025
+)
+.
+We also validate the effectiveness of per-module (e.g., MLP, attention weights) hyperparameter scaling using CompleteP + SDE scaling
+(
+Mlodozeniec et al., 2025
+)
+within the multimodal
+MDM
+regime (
+Appendix D
+).
+3.
+Multimodal Scaling Laws.
+We derive empirical scaling laws for validation loss as a function of model size (
+N
+N
+) and token budget (
+D
+D
+), providing prescriptive guidance for compute optimal tri-modal MDMs.
+We find the seminal formula
+L
+(
+N
+,
+D
+)
+=
+E
++
+(
+A
+N
+−
+a
+/
+b
++
+B
+D
+−
+1
+)
+b
+L(N,D)=E+(AN^{-a/b}+BD^{-1})^{b}
+from
+Kaplan et al. (2020)
+to be a better fit than the additive form of
+Hoffmann et al. (2022)
+.
+In particular, we find these models to be asymptotically more data efficient than their auto-regressive counterpart, with the compute optimal
+frontier of
+D
+⋆
+​
+(
+N
+)
+≈
+7754
+⋅
+N
+0.84
+D^{\star}(N)\approx 7754\cdot N^{0.84}
+.
+4.
+Modality Dependent Design Space.
+We characterize the distinct inference tradeoffs for each modality, identifying that optimal noise schedules and sampling parameters (guidance, temperature) differ significantly between text, image, and audio generation.
+2
+Background and Related Work
+2.1
+Masked Diffusion Models
+Although diffusion models first gained prominence through their success in continuous settings such as image generation
+(
+Song et al., 2021
+)
+, the original formulation by
+Sohl-Dickstein et al. (2015)
+provided a unified framework encompassing both continuous and discrete domains.
+One form of diffusion on discrete data,
+MDM
+s were first proposed by
+Austin et al. (2021)
+, and generalized in earlier discrete diffusion work by
+Hoogeboom et al. (2021)
+.
+In their formulation, the diffusion forward steps,
+q
+⁡
+(
+x
+t
+|
+x
+t
+−
+1
+)
+q(x_{t}|x_{t-1})
+, progressively noise the data
+x
+0
+x_{0}
+with mask tokens [MASK], turning the data distribution
+q
+0
+:=
+p
+d
+​
+a
+​
+t
+​
+a
+q_{0}:=p_{data}
+into a stationary distribution
+q
+T
+:=
+q
+⁡
+(
+x
+T
+)
+q_{T}:=q(x_{T})
+in which every token is masked.
+A masked diffusion model
+p
+θ
+​
+(
+x
+t
+−
+1
+|
+x
+t
+)
+p_{\theta}(x_{t-1}|x_{t})
+with parameters
+θ
+\theta
+then learns the reverse process such that starting from the stationary masked distribution
+q
+T
+q_{T}
+, the reverse process
+∏
+t
+p
+θ
+​
+(
+x
+t
+−
+1
+|
+x
+t
+)
+\prod_{t}p_{\theta}(x_{t-1}|x_{t})
+reconstructs the original text from such noised sequences. This approach for masked diffusion with fixed timesteps
+t
+∈
+0
+,
+1
+,
+…
+,
+T
+t\in 0,1,\ldots,T
+was extended to a continuous-time framework by
+Campbell et al. (2022)
+, who formulated the forward noising process and corresponding reverse process as Continuous Time Markov Chains (CTMCs), and by
+Dieleman et al. (2022)
+, who propose embedding discrete inputs into continuous space before learning the diffusion model.
+Below, we provide an overview of applications of MDMs to the three modalities we tackle in this work.
+Text.
+Austin et al. (2021)
+first applied MDMs to relatively small-scale text datasets like LM1B
+(
+Chelba et al., 2014
+)
+. Then, recent adaptations of the continuous-time framework by
+Campbell et al. (2022)
+have enabled training of larger language diffusion models. LLaDA
+(
+Nie et al., 2025
+)
+, for instance, trained an 8B-parameter
+MDM
+on a 2.3T token corpus, obtaining strong performance on benchmarks such as MMLU
+(
+Hendrycks et al., 2021
+)
+and GSM8K
+(
+Cobbe et al., 2021
+)
+. In contrast, Dream
+(
+Ye et al., 2025
+)
+finetuned a pretrained autoregressive Qwen2.5-7B model using a 580B token corpus
+(
+Yang et al., 2024a
+)
+, without accounting for the initial AR model’s pretraining budget. Both methods employ the same training objective, representing an upper bound on the negative log-likelihood, or
+variational evidence lower bound (ELBO)
+, of the continuous-time masked diffusion process:
+−
+𝔼
+x
+0
+∼
+p
+d
+​
+a
+​
+t
+​
+a
+,
+t
+∼
+U
+⁡
+(
+0
+,
+1
+)
+x
+t
+∼
+q
+⁡
+(
+x
+t
+|
+x
+0
+)
+​
+[
+w
+⁡
+(
+t
+)
+​
+∑
+ℓ
+=
+1
+L
+𝟏
+x
+t
+ℓ
+=
+MASK
+​
+p
+θ
+​
+(
+x
+0
+ℓ
+|
+x
+t
+)
+]
+.
+-\mathbb{E}_{\begin{subarray}{c}x_{0}\sim p_{data},\penalty\ t\sim U(0,1)\\
+x_{t}\sim q(x_{t}|x_{0})\end{subarray}}\left[w(t)\sum_{\ell=1}^{L}{\mathbf{1}_{x^{\ell}_{t}=\text{MASK}}\,p_{\theta}(x_{0}^{\ell}|x_{t})}\right].
+(2.1)
+Here
+L
+L
+is the sequence length and
+x
+ℓ
+x^{\ell}
+denotes the
+ℓ
+−
+\ell-
+th token of
+x
+x
+. The indicator function
+𝟏
+x
+t
+ℓ
+=
+MASK
+\mathbf{1}_{x^{\ell}_{t}=\text{MASK}}
+makes sure the loss is computed only over masked tokens. The weights
+w
+⁡
+(
+t
+)
+w(t)
+depend on the form of the forward noise
+q
+⁡
+(
+x
+t
+|
+x
+s
+)
+q(x_{t}|x_{s})
+; for LLaDA, it is
+w
+⁡
+(
+t
+)
+=
+1
+/
+t
+w(t)=1/t
+, while Dream uses a more complex schedule.
+Follow up works such as
+Zhu et al. (2025a)
+and
+Zhu et al. (2025b)
+improve performance and efficiency by introducing variance reduction and mixture-of-experts (MoE) methods to large language diffusion. We provide a principled exposition of weighting in
+Appendix A
+.
+Image.
+Austin et al. (2021)
+and
+Shi et al. (2024)
+apply masked diffusion directly to pixel values by modeling them as categorical variables. However, their experiments are restricted to low resolution image datasets, such as CIFAR10 and downsampled ImageNet 64x64
+(
+Deng et al., 2009
+;
+van den Oord et al., 2016
+)
+.
+MaskGIT and VQ-Diffusion
+(
+Chang et al., 2022
+;
+Gu et al., 2022
+)
+instead use pretrained image tokenizers such as VQ-GAN
+(
+Esser et al., 2021
+;
+ai-forever, 2023
+;
+Zheng et al., 2022
+)
+or VQ-VAE
+(
+van den Oord et al., 2017
+)
+to downsample the full set of image pixels into a patch-wise grid of discrete tokens, enabling stable high-resolution discrete image diffusion training.
+Audio.
+Literature around speech and audio generation is generally scarcer.
+Yang et al. (2023)
+apply discrete diffusion to audio generation.
+Borsos et al. (2023)
+combine the SoundStream audio tokenizer
+(
+Zeghidour et al., 2022
+)
+with a masking-unmasking approach similar to MaskGIT
+(
+Chang et al., 2022
+)
+for audio generation.
+2.2
+Multimodal Masked Diffusion Models
+Some elements of multimodality were introduced by works such as
+Gu et al. (2022)
+(text-to-image generation) and
+You et al. (2025)
+(visual question answering). However, these models are still restricted to generating only one modality.
+In contrast, by applying a unified probabilistic formulation that represents heterogeneous data as a single stream of concatenated discrete tokens, MMaDA
+(
+Yang et al., 2025
+)
+unifies language modeling, image understanding, and image generation as a multimodal
+MDM
+. MMaDA is initialized from LLaDA’s weights and subsequently trained with the same objective as LLaDA and Dream in
+Equation
+2.1
+but on the joint
+token stream of image and text tokens.
+Swerdlow et al. (2025)
+and
+Hu et al. (2023)
+train a unified discrete diffusion model for both image and text at smaller scale, with the latter using a mix of masked and uniform-state diffusion.
+We move beyond existing bi-modal (text–image) MDMs by introducing audio as a novel third modality, addressing new multimodal challenges. Unlike
+Yang et al. (2025)
+, we
+pretrain from scratch
+, properly account for the total token budget, and jointly optimize representations across all modalities. We encourage the community to jointly report model and data size,
+(
+N
+,
+D
+total
+)
+(N,D_{\text{total}})
+, to make fair comparisons between hypothesis classes.
+Figure 2
+:
+Tri-Modal masked diffusion model architecture
+.
+Pure text is packed. Image-caption and audio-transcription pairs are padded to maximum length. Padding is ignored by attention and loss computation.
+Figure 3
+:
+Token-optimal curve
+D
+⋆
+​
+(
+N
+)
+D^{\star}(N)
+for different model families
+. In tri-modal MDM, token count growth sub-linearly with model size, suggesting diminishing returns of additional data. We use identical methodology to report all curves.
+3
+Method
+We consider three modalities
+m
+∈
+ℳ
+:=
+{
+text
+,
+audio
+,
+image
+}
+m\in\mathcal{M}:=\{\text{text},\text{audio},\text{image}\}
+. Each training sample belongs to one of three categories: text-only, image-text pairs or audio-text pairs, where each modality is represented as a sequence of discrete tokens drawn from a modality-specific vocabulary,
+x
+m
+=
+(
+x
+m
+1
+,
+…
+,
+x
+m
+L
+m
+)
+,
+x
+m
+i
+∈
+𝒱
+m
+,
+\displaystyle x_{m}=(x_{m}^{1},\ldots,x_{m}^{L_{m}}),\qquad x_{m}^{i}\in\mathcal{V}_{m},
+where
+|
+𝒱
+m
+|
+=
+V
+m
+|\mathcal{V}_{m}|=V_{m}
+. To enable unified modeling, we construct a shared vocabulary
+𝒱
+=
+𝒱
+text
+⊔
+𝒱
+audio
+⊔
+𝒱
+image
+\mathcal{V}=\mathcal{V}_{\text{text}}\sqcup\mathcal{V}_{\text{audio}}\sqcup\mathcal{V}_{\text{image}}
+, where
+⊔
+\sqcup
+denotes disjoint union. We further introduce modality-specific special tokens
+𝒱
+spec
+=
+{
+BOS
+m
+,
+EOS
+m
+,
+MASK
+m
+:
+m
+∈
+ℳ
+}
+,
+\displaystyle\mathcal{V}_{\text{spec}}=\{\text{BOS}_{m},\text{EOS}_{m},\text{MASK}_{m}\;:\;m\in\mathcal{M}\},
+as well as a padding token
+PAD
+text
+\text{PAD}_{\text{text}}
+that is added after the text prompt of multimodal sequences that are shorter than our target sequence length. Lastly, we introduce three special task tokens
+𝒱
+task
+=
+{
+TASK
+text
+,
+TASK
+image-text
+,
+TASK
+audio-text
+}
+,
+\displaystyle\mathcal{V}_{\text{task}}=\{\text{TASK}_{\text{text}},\text{TASK}_{\text{image-text}},\text{TASK}_{\text{audio-text}}\},
+that allows us to signal to the model which task it needs to perform. This is especially useful if one wishes to add new tasks to the model through mid-training or supervised finetuning. The resulting unified vocabulary has size
+|
+V
+|
+=
+∑
+m
+∈
+ℳ
+|
+V
+m
+|
++
+|
+V
+spec
+|
++
+|
+V
+task
+|
++
+1
+\lvert V\rvert=\sum_{m\in\mathcal{M}}\lvert V_{m}\rvert+\lvert V_{\text{spec}}\rvert+\lvert V_{\text{task}}\rvert+1
+.
+To avoid any confusion regarding modalities and diffusion time, we switch our notation from the generic signal
+x
+x
+to the full training sequence
+s
+s
+. Throughout the paper, superscripts denote position indices (i.e., token positions), while subscripts denote diffusion time or modality indices.
+Training.
+Training sequences are constructed by wrapping modality tokens with their boundary tokens. For example, an audio-text sample is represented as:
+s
+=
+[
+\displaystyle s=[
+TASK
+audio-text
+,
+BOS
+audio
+,
+x
+audio
+1
+,
+…
+,
+x
+audio
+L
+audio
+,
+EOS
+audio
+,
+BOS
+text
+,
+x
+text
+1
+,
+…
+,
+x
+text
+L
+text
+,
+EOS
+text
+]
+,
+\displaystyle\text{TASK}_{\text{audio-text}},\text{BOS}_{\text{audio}},x_{\text{audio}}^{1},\ldots,x_{\text{audio}}^{L_{\text{audio}}},\text{EOS}_{\text{audio}},\text{BOS}_{\text{text}},x_{\text{text}}^{1},\ldots,x_{\text{text}}^{L_{\text{text}}},\text{EOS}_{\text{text}}],
+with an image-text sample following the same format. Since we train with maximum sequence length
+L
+⋆
+L^{\star}
+, text-only sequences are packed and truncated so that they always have exactly
+L
+⋆
+L^{\star}
+positions, i.e., no padding is necessary. On the other hand, mixed-modality sequences whose total length is shorter than
+L
+⋆
+L^{\star}
+are right-padded after
+EOS
+text
+\text{EOS}_{\text{text}}
+using the token
+PAD
+text
+\text{PAD}_{\text{text}}
+to match
+L
+⋆
+L^{\star}
+. See
+Figure
+3
+for a demonstration.
+Given a sequence
+s
+=
+(
+s
+1
+,
+…
+,
+s
+L
+⋆
+)
+∈
+𝒱
+L
+⋆
+s=(s^{1},\ldots,s^{L^{\star}})\in\mathcal{V}^{L^{\star}}
+, we define a continuous-time forward masking process indexed by
+t
+∈
+[
+0
+,
+1
+]
+t\in[0,1]
+. Each position is independently corrupted according to a Bernoulli masking mechanism with probability
+β
+t
+\beta_{t}
+, where
+β
+⋅
+\beta_{\cdot}
+denotes a monotonic function with
+β
+0
+=
+0
+\beta_{0}=0
+and
+β
+1
+=
+1
+\beta_{1}=1
+. Let
+m
+⁡
+(
+i
+)
+∈
+ℳ
+m(i)\in\mathcal{M}
+denote the modality associated with position
+i
+i
+. The corrupted token
+s
+t
+i
+s_{t}^{i}
+is sampled as
+s
+t
+i
+|
+s
+t
+−
+1
+i
+∼
+{
+MASK
+m
+⁡
+(
+i
+)
+with probability
+​
+β
+t
+,
+s
+t
+−
+1
+i
+with probability
+​
+1
+−
+β
+t
+.
+\displaystyle s_{t}^{i}|s_{t-1}^{i}\sim\begin{cases}\text{MASK}_{m(i)}&\text{with probability }\beta_{t},\\
+s_{t-1}^{i}&\text{with probability }1-\beta_{t}.\end{cases}
+This defines a corrupted sequence
+s
+t
+=
+(
+s
+t
+1
+,
+…
+,
+s
+t
+L
+⋆
+)
+s_{t}=(s_{t}^{1},\ldots,s_{t}^{L^{\star}})
+with
+s
+0
+=
+s
+s_{0}=s
+. Masking is applied independently across positions and modalities, with each modality using its own dedicated mask token
+MASK
+m
+\text{MASK}_{m}
+. Note that the task tokens are never masked. The parameter
+t
+t
+controls the overall corruption level, smoothly interpolating between the original sequence at
+t
+=
+0
+t=0
+and a fully masked sequence at
+t
+=
+1
+t=1
+. For a position
+i
+i
+associated with modality
+m
+⁡
+(
+i
+)
+m(i)
+, the forward noising kernel is given by
+q
+⁡
+(
+s
+t
+i
+∣
+s
+i
+)
+=
+β
+¯
+t
+⋅
+δ
+MASK
+m
+⁡
+(
+i
+)
+​
+(
+𝐬
+t
+i
+)
++
+(
+1
+−
+β
+¯
+t
+)
+⋅
+δ
+𝐬
+i
+​
+(
+𝐬
+t
+i
+)
+,
+\displaystyle q(s_{t}^{i}\mid s^{i})=\bar{\beta}_{t}\cdot\delta_{\text{MASK}_{m(i)}}(\mathbf{s}_{t}^{i})+(1-\bar{\beta}_{t})\cdot\delta_{\mathbf{s}^{i}}(\mathbf{s}_{t}^{i})\,,
+where
+δ
+v
+​
+(
+⋅
+)
+\delta_{v}(\cdot)
+denotes the Dirac measure centered at
+v
+v
+, and
+β
+¯
+t
+=
+∏
+t
+′
+≤
+t
+β
+t
+′
+\bar{\beta}_{t}=\prod_{t^{\prime}\leq t}\beta_{t^{\prime}}
+. Since masking is applied independently across positions, the forward process factorizes as
+q
+⁡
+(
+s
+t
+∣
+s
+)
+=
+∏
+i
+=
+1
+L
+⋆
+q
+⁡
+(
+s
+t
+i
+∣
+s
+i
+)
+.
+\displaystyle q(s_{t}\mid s)=\prod_{i=1}^{L^{\star}}q(s_{t}^{i}\mid s^{i}).
+Equivalently, this induces a Markov kernel between successive noise levels
+q
+⁡
+(
+s
+t
+∣
+s
+t
+−
+1
+)
+=
+∏
+i
+=
+1
+L
+⋆
+[
+α
+t
+​
+δ
+s
+t
+−
+1
+i
+​
+(
+s
+t
+i
+)
++
+(
+1
+−
+α
+t
+)
+​
+δ
+MASK
+m
+⁡
+(
+i
+)
+​
+(
+s
+t
+i
+)
+]
+,
+\displaystyle q(s_{t}\mid s_{t-1})=\prod_{i=1}^{L^{\star}}\Bigl[\alpha_{t}\,\delta_{s_{t-1}^{i}}(s_{t}^{i})+(1-\alpha_{t})\,\delta_{\text{MASK}_{m(i)}}(s_{t}^{i})\Bigr],
+where
+α
+t
+=
+1
+−
+β
+t
+\alpha_{t}=1-\beta_{t}
+is chosen such that the marginal distribution of
+s
+t
+s_{t}
+matches
+q
+⁡
+(
+s
+t
+∣
+s
+)
+q(s_{t}\mid s)
+(see
+Appendix
+A
+for more details). The monotonic nature of the masking process is clear: once a token is masked, it stays masked.
+Denoising model.
+We parameterize the reverse process using a denoising model
+f
+θ
+:
+𝒱
+L
+⋆
+→
+ℝ
+L
+⋆
+×
+V
+f_{\theta}:\mathcal{V}^{L^{\star}}\to\mathbb{R}^{L^{\star}\times V}
+which predicts logits over the unified vocabulary at each position. Given a corrupted sequence
+s
+t
+s_{t}
+, the model outputs
+h
+=
+f
+θ
+​
+(
+s
+t
+)
+h=f_{\theta}(s_{t})
+, where
+h
+v
+i
+h^{i}_{v}
+denotes the logit assigned to token
+v
+∈
+𝒱
+v\in\mathcal{V}
+at position
+i
+i
+, and the ground-truth token
+s
+i
+s^{i}
+, we define the per-token loss as
+ℓ
+i
+​
+(
+θ
+,
+s
+)
+=
+−
+log
+⁡
+exp
+⁡
+(
+h
+s
+i
+i
+)
+∑
+v
+∈
+𝒱
+exp
+⁡
+(
+h
+v
+i
+)
+:=
+−
+log
+⁡
+p
+θ
+​
+(
+s
+i
+∣
+s
+t
+)
+.
+\displaystyle\ell_{i}(\theta,s)=-\log\frac{\exp\!\big(h^{i}_{s^{i}}\big)}{\sum_{v\in\mathcal{V}}\exp\!\big(h^{i}_{v}\big)}:=-\log p_{\theta}(s^{i}\mid s_{t}).
+For memory efficiency and to enforce modality constraints, we implement this loss using cut-cross-entropy (CCE)
+(
+Wijmans et al., 2024
+)
+, which avoids materializing the full probability distribution.
+Let
+ℐ
+t
+:=
+{
+i
+∣
+s
+t
+i
+=
+MASK
+m
+⁡
+(
+i
+)
+}
+\mathcal{I}_{t}:=\{\,i\mid s_{t}^{i}=\text{MASK}_{m(i)}\,\}
+denote the set of masked, non-padding positions at time
+t
+t
+. The training objective is
+ℒ
+⁡
+(
+θ
+)
+=
+𝔼
+s
+∼
+𝒟
+,
+t
+∼
+U
+⁡
+(
+ϵ
+,
+1
+)
+​
+[
+w
+⁡
+(
+t
+)
+|
+ℐ
+t
+|
+​
+∑
+i
+∈
+ℐ
+t
+ℓ
+i
+​
+(
+θ
+,
+s
+)
+]
++
+λ
+​
+ℒ
+z
+,
+\displaystyle\mathcal{L}(\theta)=\mathbb{E}_{\begin{subarray}{c}s\sim\mathcal{D},\\
+t\sim\mathrm{U}(\epsilon,1)\end{subarray}}\left[\frac{w(t)}{|\mathcal{I}_{t}|}\sum_{i\in\mathcal{I}_{t}}\ell_{i}(\theta,s)\right]\;+\;\lambda\,\mathcal{L}_{z},
+where
+ϵ
+,
+λ
+>
+0
+\epsilon,\lambda>0
+are small constants for numerical stability, and
+ℒ
+z
+\mathcal{L}_{z}
+denotes the z-loss regularizer
+(
+de Brébisson and Vincent, 2016
+)
+. We follow prior work
+(
+Nie et al., 2025
+;
+Yang et al., 2025
+)
+on masked diffusion models, and choose
+w
+⁡
+(
+t
+)
+=
+1
+/
+t
+w(t)=1/t
+which yields an unbiased estimator of the ELBO under Bernoulli masking. See
+Appendix
+A
+for the effect of this weighting scheme and a more general formulation.
+Inference.
+At generation time, we iteratively unmask tokens according to a predefined linear schedule. Multimodal generation is conditioned on a prompt, e.g., text, and a target modality
+m
+∈
+ℳ
+m\in\mathcal{M}
+. We start the process from a fully masked sequence of the form
+s
+K
+=
+[
+\displaystyle s_{K}=[
+TASK
+task
+,
+BOS
+m
+,
+MASK
+m
+,
+…
+,
+MASK
+m
+,
+EOS
+m
+,
+BOS
+text
+,
+x
+text
+1
+,
+…
+,
+x
+text
+L
+text
+,
+EOS
+text
+]
+.
+\displaystyle\text{TASK}_{\text{task}},\text{BOS}_{m},\text{MASK}_{m},\ldots,\text{MASK}_{m},\text{EOS}_{m},\text{BOS}_{\text{text}},x_{\text{text}}^{1},\ldots,x_{\text{text}}^{L_{\text{text}}},\text{EOS}_{\text{text}}].
+For text-only generation, we instead construct the fully masked sequence of the form
+s
+K
+=
+[
+\displaystyle s_{K}=[
+TASK
+text
+,
+BOS
+text
+,
+x
+text
+1
+,
+…
+,
+x
+text
+L
+text
+,
+MASK
+text
+,
+…
+,
+MASK
+text
+,
+EOS
+text
+]
+.
+\displaystyle\text{TASK}_{\text{text}},\text{BOS}_{\text{text}},x_{\text{text}}^{1},\ldots,x_{\text{text}}^{L_{\text{text}}},\text{MASK}_{\text{text}},...,\text{MASK}_{\text{text}},\text{EOS}_{\text{text}}].
+At each reverse diffusion step
+k
+∈
+[
+K
+]
+k\in[K]
+, where
+K
+K
+denotes the number of generation steps, the denoising model produces
+h
+k
+=
+f
+θ
+​
+(
+s
+k
+−
+1
+)
+h_{k}=f_{\theta}(s_{k-1})
+, where
+h
+k
+i
+∈
+ℝ
+𝒱
+h_{k}^{i}\in\mathbb{R}^{\mathcal{V}}
+denotes the logits at position
+i
+i
+. For each masked position
+i
+i
+, a candidate token is sampled from the modality-constrained predictive distribution
+s
+k
+i
+∼
+p
+θ
+(
+⋅
+∣
+s
+k
+−
+1
+)
+∝
+exp
+(
+h
+k
+,
+v
+i
+)
+,
+v
+∈
+𝒱
+m
+⁡
+(
+i
+)
+.
+\displaystyle s_{k}^{i}\sim p_{\theta}(\,\cdot\mid s_{k-1})\;\;\propto\;\;\exp\!\big(h_{k,v}^{i}\big),\qquad v\in\mathcal{V}_{m(i)}.
+Based on the unmasking schedule, a subset of masked positions are revealed, updating the sequence
+s
+k
+s_{k}
+. The process is repeated until no masked positions remain, producing the final generated sample.
+3.1
+Architecture
+For all experiments presented in this paper,
+we rely on a standard bi-directional transformer architecture with pre-normalization RMSNorm
+(
+Zhang and Sennrich, 2019
+)
+, SwiGLU MLPs
+(
+Shazeer, 2020
+)
+, rotary positional embeddings (RoPE)
+(
+Su et al., 2021
+)
+and QK-norm
+(
+Dehghani et al., 2023
+;
+Wortsman et al., 2024
+;
+Chameleon Team, 2024
+;
+Gemma Team, 2025
+)
+.
+Our Tri-modal 3B model is pretrained from scratch for 1M steps with batch size of
+3072
+3072
+and sequence length of
+3256
+3256
+.
+We tokenize modalities with specialized encoders: SBER-MoVQGAN
+(
+ai-forever, 2023
+)
+for images, Higgs Audio v2
+(
+Boson AI, 2025
+)
+for audio, and Tiktoken
+(
+OpenAI, 2023
+)
+for text. To manage the large vocabulary efficiently, we employ cut-cross-entropy
+(
+Wijmans et al., 2025
+)
+and apply a z-loss regularizer
+(
+de Brébisson and Vincent, 2016
+)
+to stabilize logits amplitudes. See
+Table 5
+for full hyperparameter details.
+4
+Hyperparameter Transfer
+Selecting optimal hyperparameters is of paramount importance to the final performance of the model and conducting a grid search at large scale is not feasible. In this work, we rely on
+hyperparameter transfer rules
+to transfer the optimal set found at small scale to larger scale. Several rules have been proposed in the literature:
+μ
+\mu
+P
+(
+Yang et al., 2021
+)
+proposed a scaling for width, later extending to depth with depth-
+μ
+\mu
+P
+(
+Yang et al., 2024b
+)
+, u-
+μ
+\mu
+P
+(
+Blake et al., 2025
+)
+and CompleteP
+(
+Dey et al., 2025
+)
+. Here, we rely on the work of
+Mlodozeniec et al. (2025)
+, an extension of CompleteP
+(
+Dey et al., 2025
+)
+.
+Additionally,
+Mlodozeniec et al. (2025)
+recently demonstrated performance gains from per-module hyperparameter optimization, adjusting multipliers for AdamW parameters (learning rate, weight decay, momenta
+β
+1
+\beta_{1}
+,
+β
+2
+\beta_{2}
+, and
+ϵ
+\epsilon
+) across distinct modules like MLP weights, attention projections, embeddings, and normalization layers. Our work provides the first empirical validation of this refined tuning in the context of multimodal MDMs, with preliminary results presented in
+Appendix D
+.
+4.1
+Eliminating
+B
+opt
+B_{\text{opt}}
+with SDE Parametrization
+Stochastic Optimization with AdamW operates like the discretization of a Stochastic Differential Equation (SDE)
+(
+Malladi et al., 2022
+;
+Mlodozeniec et al., 2025
+)
+whose timescale, noise, and drift, can be computed from AdamW’s parameters. According to these studies, AdamW’s hyperparameters are redundant with batch size: for example, it is possible to reduce the noise in the gradient estimation, either by increasing the batch size or by decreasing the momentum weight. Similarly, lower noise allows for larger step sizes. Since batch size is typically constrained by the compute budget and the memory available on the chip, it is desirable to make it a free hyperparameter whose value does not interfere with the performance of the model. We thus re-parametrize the hyperparameters in batch-size with
+Mlodozeniec et al. (2025)
+to train the network with any batch size, guaranteeing similar performance across all compute budget,
+as long as the batch size is not larger than
+B
+crit
+B_{\text{crit}}
+. Results are illustrated in
+Figure 5
+. SDE parametrization guarantees homogeneous behavior across batch sizes, including the smallest ones. This contrasts with the typical U-curve associated with non-SDE parametrization
+(
+Bergsma et al., 2025
+)
+, where there is a balance between total drift (when batch size is too big) and excessive noise (when batch size is too small).
+4.2
+Isonoise and Isohorizon Scaling Rules
+The SDE is the continuous limit of the gradient flow elicited by AdamW. Intuitively, the SDE horizon corresponds to the trajectory length in parameter space (extending from origin), while SDE drift controls the scale of stochastic fluctuations induced by gradient noise. We propose a new way to balance these two contributions, controlled by a parameter
+γ
+∈
+[
+0
+,
+1
+]
+\gamma\in[0,1]
+. When increasing the number of tokens
+D
+D
+, two quantities can be conserved:
+(a)
+we can conserve the SDE drift (isonoise curves) with
+γ
+=
+0
+\gamma=0
+, or
+(b)
+we can conserve the SDE horizon (isohorizon curves) with
+γ
+=
+1
+\gamma=1
+.
+We smoothly interpolate between these extremes for intermediate values (
+0
+<
+γ
+<
+1
+0<\gamma<1
+) by defining the SDE-scaling factor
+κ
+\kappa
+as:
+κ
+=
+(
+D
+base
+D
+)
+γ
+​
+(
+B
+B
+base
+)
+,
+\kappa=\left(\frac{D^{\text{base}}}{D}\right)^{\gamma}\left(\frac{B}{B^{\text{base}}}\right),
+(4.1)
+where
+D
+base
+D^{\text{base}}
+is the base model size,
+D
+D
+is the target model size,
+B
+base
+B^{\text{base}}
+is the base batch size and
+B
+B
+the target batch size. Then, AdamW’s hyperparameters are rescaled using
+κ
+\kappa
+as:
+lr
+=
+lr
+base
+​
+κ
+,
+β
+1
+=
+(
+β
+1
+base
+)
+κ
+,
+β
+2
+=
+(
+β
+2
+base
+)
+κ
+,
+ϵ
+=
+ϵ
+base
+κ
+.
+\text{lr}=\text{lr}^{\text{base}}\sqrt{\kappa},\qquad\beta_{1}=(\beta_{1}^{\text{base}})^{\kappa},\qquad\beta_{2}=(\beta_{2}^{\text{base}})^{\kappa},\qquad\epsilon=\frac{\epsilon^{\text{base}}}{\sqrt{\kappa}}.
+(4.2)
+We conduct an initial hyperparameter search of
+(
+lr
+base
+,
+β
+1
+base
+,
+β
+2
+base
+,
+ϵ
+base
+)
+(\text{lr}^{\text{base}},\beta_{1}^{\text{base}},\beta_{2}^{\text{base}},\epsilon^{\text{base}})
+with
+≈
+3
+\approx 3
+k runs with a N=320M model (including 240M embedding parameters),
+D
+base
+=
+13
+D^{\text{base}}=13
+B tokens, and global batch size of
+B
+base
+=
+256
+B^{\text{base}}=256
+sequences.
+Figure 4
+:
+Below the critical batch size
+B
+crit
+B_{\text{crit}}
+the SDE parametrization guarantees constant loss
+. In that regime, larger batch sizes allow fewer iterations. Above it, SDE discretization breaks and training ceases to be FLOP-efficient.
+Figure 5
+:
+Critical iteration count
+S
+crit
+S_{\text{crit}}
+is constant w.r.t. model size
+under the SDE regime. This is compatible with the findings of
+Bergsma et al. (2025)
+, but their study was done
+outside
+the SDE regime.
+5
+Scaling Behavior of
+MDM
+under the SDE Transfer Rule
+This section is devoted to the scaling properties of tri-modal
+MDM
+, under the CompleteP + SDE reparametrization regime.
+All experiments presented use a cosine learning rate schedule with 1k steps of linear warmup, constrained so that warmup never exceeds 25% of the total iteration count.
+Following
+Busbridge et al. (2025)
+, we set width proportional to depth, fixing
+ρ
+=
+d
+emb
+/
+n
+layers
+=
+128
+\rho=d_{\text{emb}}/n_{\text{layers}}=128
+while scaling up models, ensuring consistent hyperparameter transfer and more stable scaling behavior.
+5.1
+Scaling Rules for Critical Batch Size
+Figure 6
+:
+Critical iteration count
+S
+crit
+S_{\text{crit}}
+increases with token horizon
+D
+D
+. The increase is sub-linear, meaning that the critical batch size
+B
+crit
+B_{\text{crit}}
+also increases with horizon
+D
+D
+.
+Figure 7
+:
+Critical batch-size
+B
+crit
+B_{\text{crit}}
+as a function of the token horizon
+. There is an intrinsic tension between wall-clock time and FLOP-efficiency.
+Critical batch size without SDE.
+When not using SDE parametrization, the batch size impacts both the variance of the stochastic gradient estimation (the SDE drift), and the iteration count
+S
+S
+(the SDE horizon). Practically, it means that beyond
+B
+crit
+B_{\text{crit}}
+the marginal utility of each additional token in the batch decreases.
+Previous work in AR
+(
+Kaplan et al., 2020
+;
+DeepSeek-AI, 2024
+)
+modeling fit a power law to enable predicting critical batch size in tokens
+D
+D
+or compute budget
+C
+C
+. More recent work
+(
+Bergsma et al., 2025
+)
+suggests there exists a
+B
+opt
+B_{\text{opt}}
+: the batch size that minimizes the loss at a given token horizon
+D
+D
+. Under SDE parametrization, that notion disappears, as shown in
+Figure 5
+: all batch sizes under
+S
+crit
+S_{\text{crit}}
+yield identical results at fixed token budget
+D
+D
+. See Appendix
+Section
+C.2
+for more details.
+Critical batch size for SDE.
+S
+crit
+S_{\text{crit}}
+is estimated empirically as the minimum number of optimization steps required to maintain FLOP-efficient training. When the number of integration steps
+S
+crit
+S_{\text{crit}}
+is too low, the SDE approximation breaks and the performance
+at constant horizon
+D
+D
+plummets. This can be expressed in term of the critical batch size
+B
+crit
+=
+D
+/
+(
+L
+​
+S
+crit
+)
+B_{\text{crit}}=D/(L{S_{\text{crit}}})
+with
+L
+L
+being the sequence length. Above
+S
+crit
+S_{\text{crit}}
+the asymptotic loss depends mainly on the model size
+N
+N
+and token budget
+D
+D
+, irrespective of iteration count. We illustrate this phenomenon in
+Figure 5
+with a model of size 320M trained on 13B tokens. This means that below
+S
+crit
+S_{\text{crit}}
+, all runs are
+FLOP-efficient
+: they minimize the loss for the token budget. Above that, runs are
+wall-clock inefficient
+: they trade faster training for wasteful usage of tokens.
+Takeaways
+Under SDE parameterization, the global batch size can be chosen according to the available compute budget, to saturate the capacity of each GPU, without compromising the final loss,
+as long as it is less than
+B
+crit
+B_{\text{crit}}
+.
+Critical batch size as function of model size.
+In
+Figure 5
+we plot the final
+exp
+⁡
+(
+ELBO
+)
+\exp{(\text{ELBO})}
+as a function of the iteration count
+S
+S
+and model’s size
+N
+N
+, for a constant token horizon
+D
+D
+of 13B tokens. We see that the critical iteration count
+S
+crit
+S_{\text{crit}}
+is
+independent
+of model size. This is compliant with the findings of
+Bergsma et al. (2025)
+, albeit in the non-SDE case. The maximum per-GPU batch size typically decreases with model size until it reaches
+1
+1
+, after which it requires more involved techniques (e.g., more fine-grained parallelization). Therefore, maintaining the same global batch size typically require more nodes as model size increases.
+Takeaways
+Under SDE scaling, critical batch size is not impacted by model size. At equal token horizon, a batch size less than
+B
+crit
+B_{\text{crit}}
+for a smaller model is also safe for a bigger model.
+Critical batch-size as a function of the token horizon.
+In
+Figure 5
+we plot the final
+exp
+⁡
+(
+ELBO
+)
+\exp{(\text{ELBO})}
+as a function of the iteration count
+S
+S
+and model size
+D
+D
+, for a constant model size
+N
+N
+of 320M parameters. We see that
+S
+crit
+S_{\text{crit}}
+grows with
+D
+D
+, at
+sub-linear
+speed, implying that the corresponding critical-batch size grows sub-linearly with the token horizon.
+Takeaways
+The number of GPUs cannot be scaled proportionally with
+D
+D
+forever: there is a risk of reaching
+B
+crit
+B_{\text{crit}}
+when
+D
+D
+is sufficiently large. Beyond that point, either the marginal utility of every new token drops, or total wall-clock time increases. Over-trained models cannot be both FLOP-efficient and fast to train.
+5.2
+Optimal Drift–horizon Tradeoffs
+Normally, the physical batch size
+B
+B
+can be chosen freely to accommodate the number of nodes available, as long as
+B
+≤
+B
+crit
+B\leq B_{\text{crit}}
+. The SDE re-parametrization allows to re-map this to a
+virtual batch size
+B
+~
+\tilde{B}
+and a corresponding
+virtual number of iterations
+S
+~
+\tilde{S}
+such that
+D
+=
+B
+~
+​
+S
+~
+​
+L
+D=\tilde{B}\tilde{S}L
+. They correspond to the behavior of the same model trained without SDE parametrization, and physical batch size
+B
+~
+\tilde{B}
+. This raises a question: since the physical batch size
+B
+B
+is chosen based on compute considerations only, how should we chose the virtual batch size
+B
+~
+\tilde{B}
+when
+D
+D
+is scaled-up? To answer the question, we design an experiment in which they evolve jointly as:
+S
+~
+=
+G
+​
+(
+D
+/
+L
+)
+1
+−
+γ
+and
+B
+~
+=
+G
+−
+1
+​
+(
+D
+/
+L
+)
+γ
+,
+with
+γ
+=
+α
+/
+(
+α
++
+β
+)
+and
+G
+=
+(
+α
+​
+A
+β
+​
+B
+)
+1
+/
+(
+α
++
+β
+)
+.
+\tilde{S}=G(D/L)^{1-\gamma}\quad\text{ and }\quad\tilde{B}=G^{-1}(D/L)^{\gamma},\qquad\text{ with }\qquad\gamma=\alpha/(\alpha+\beta)\quad\text{ and }\quad G=\left(\frac{\alpha A}{\beta B}\right)^{1/(\alpha+\beta)}.
+The behavior
+γ
+=
+0
+\gamma=0
+correspond to the default setup of the literature in training LLMs
+(
+Kaplan et al., 2020
+)
+, when more tokens simply correspond to more iterations, whereas the setup
+γ
+=
+1
+\gamma=1
+is the choice made in the work of
+Mlodozeniec et al. (2025)
+that instead modulates the optimization hyperparameters (
+subsection 4.2
+). By sweeping over
+[
+0
+,
+1
+]
+[0,1]
+we decide how many of these extra-tokens are assigned to
+reducing the drift
+, or to
+extending the horizon
+. Results are given in
+Figure 9
+and
+Figure 9
+. Surprisingly, neither setting used in the literature are optimal. By fitting a power law of the form
+E
++
+A
+​
+S
+~
+−
+α
++
+B
+​
+B
+~
+−
+β
+E+A\tilde{S}^{-\alpha}+B\tilde{B}^{-\beta}
+we find coefficients
+α
+=
+0.18
+,
+β
+=
+0.23
+\alpha=0.18,\beta=0.23
+. Minimizing this parametric equation under the constraint
+D
+=
+B
+~
+​
+S
+~
+​
+L
+D=\tilde{B}\tilde{S}L
+, we find that
+γ
+∗
+=
+0.44
+\gamma^{*}=0.44
+.
+Figure 8
+:
+Drift–horizon tradeoff
+γ
+\gamma
+.
+When increasing token horizon
+D
+D
+, the optimal choice lies between reducing the drift (increasing the virtual batch size) and increasing the SDE horizon (increasing the virtual number of iterations).
+Figure 9
+:
+Isotoken curves at various virtual batch sizes.
+The optimal allocation between virtual batch size and virtual iteration count corresponds to a factor
+γ
+∗
+≈
+0.44
+\gamma^{*}\approx 0.44
+. The bottom of the U-curve would be
+B
+opt
+B_{\text{opt}}
+in non-SDE parametrization.
+Link with learning rate schedule.
+For
+γ
+<
+1
+\gamma<1
+, the effective learning rate rises with the physical batch size, leveraging the lower variance in gradient estimates for larger updates. Conversely, when
+γ
+>
+0
+\gamma>0
+, a longer token horizon reduces the effective learning rate, permitting smaller incremental steps and deeper exploration of loss basins. Thus,
+γ
+\gamma
+plays a role akin to a learning rate scheduler, determining the allocation of larger versus smaller updates. Consequently, the optimal
+γ
+\gamma
+could shift if, for example, a warmup-stable-decay schedule
+(
+Hägele et al., 2024
+;
+Schaipp et al., 2025
+)
+were used instead of the current cosine schedule.
+5.3
+Scaling Laws for Tri-modal
+MDM
+Scaling laws provide a prescriptive mechanism to decide the model size (
+N
+N
+) and the number of tokens (
+D
+D
+) in a compute optimal manner. They are obtained by fitting power laws from raw training curves, as in
+Figure 10
+. One of the core contributions of our work is in establishing this for tri-modal
+MDM
+s that have been scaled under CompleteP with SDE re-parametrization. We train
+262 different tri-modal
+MDM
+models
+with Token Per Parameter (TPP) ratios between 1 and 2000. We sample the
+(
+N
+,
+D
+)
+(N,D)
+pairs along 24 different isoFLOPs logarithmically distributed between
+5
+×
+10
+18
+5\times 10^{18}
+and
+1
+×
+10
+22
+1\times 10^{22}
+. The model’s size here does not account for embedding parameters
+(
+Pearce and Song, 2024
+)
+, which strongly impacts smaller models as shown in
+Figure 12
+. FLOPs per token are computed using the formula in Appendix
+H.1
+of
+Busbridge et al. (2025)
+. Modality tokenizers are not taken into account for the total FLOP budget. Following
+Shukor et al. (2025)
+, we fit a power law using basin hopping and LBFGS, with 20 bootstrap samples with 90%-10% cross-validation, to ensure stability of coefficients estimation. We found that the additive form was insufficient to explain the measurements, and had to rely on the form introduced in the seminal work of
+Kaplan et al. (2020)
+, with an additional
+E
+E
+term to avoid loss degeneracy in the
+N
+,
+D
+→
+∞
+N,D\rightarrow\infty
+limit.
+L
+=
+E
++
+(
+A
+N
+a
+/
+b
++
+B
+D
+)
+b
+.
+L=E+\left(\frac{A}{N^{a/b}}+\frac{B}{D}\right)^{b}.
+(5.1)
+We report scaling coefficients of
+a
+≈
+0.14
+a\approx 0.14
+and
+b
+≈
+0.17
+b\approx 0.17
+in
+Figure 12
+, using the method of
+Appendix
+E
+. We measure an
+R
+2
+R^{2}
+score of 99.3% and an MRE of 0.5%. We report isoloss contours in
+Figure 14
+and isoFLOP curves in
+Figure 14
+. Finally, we compute optimal number of tokens per parameter as:
+D
+⋆
+​
+(
+N
+)
+=
+7754
+⋅
+N
+α
+​
+with
+​
+α
+=
+a
+/
+b
+=
+0.84
+.
+D^{\star}(N)=7754\cdot N^{\alpha}\text{ with }\alpha=a/b=0.84.
+(5.2)
+We report the
+compute-optimal
+token count
+D
+⋆
+​
+(
+N
+)
+D^{\star}(N)
+as function of model size against other popular model families in
+Figure 3
+. For all compute-optimal curves, we use the same methodology: we plot token horizon
+D
+⋆
+D^{\star}
+as function of
+total parameter count
+, and rely on approach 3 of Chinchilla with corrected coefficients from
+Besiroglu et al. (2024)
+. We find that a 3B model requires at least
+480
+480
+B tokens, in sharp contrast with
+60
+60
+B tokens reported by Chinchilla
+(
+Hoffmann et al., 2022
+)
+for autoregressive language models. This gap is maintained at all realistically reachable model sizes.
+Figure 10
+:
+Training curves for tri-modal
+MDM
+.
+We select 24 log-distributed isoFLOPS between 5e18 and 1e22 to cover the
+(
+N
+,
+D
+)
+(N,D)
+grid. The performance is dominated by the total compute budget
+C
+C
+, following formula in appendix
+H.1
+of
+Busbridge et al. (2025)
+. The loss is computed on an independent validation set with identical mixture weights.
+Analysis.
+These scaling laws suggest that as
+N
+N
+grows, the TPP ratio
+D
+⋆
+/
+N
+∝
+N
+−
+0.16
+D^{\star}/N\propto N^{-0.16}
+decreases, i.e.,
+MDMs
+become asymptotically more data-efficient per parameter. This is in contrast to AR language models, for which the rule of thumb
+D
+∝
+20
+​
+N
+D\propto 20N
+popularized by
+Hoffmann et al. (2022)
+typically holds. The value of
+b
+≈
+0.17
+b\approx 0.17
+is compatible with the one found in experiment of
+Section
+4.1
+, on iteration count
+S
+S
+. The optimal compute allocation between tokens and parameters is then given by:
+N
+⋆
+​
+(
+C
+)
+∝
+C
+0.55
+and
+D
+⋆
+​
+(
+C
+)
+∝
+C
+0.45
+.
+N^{\star}(C)\propto C^{0.55}\qquad\text{ and }\qquad D^{\star}(C)\propto C^{0.45}.
+(5.3)
+Our coefficients are slightly higher for
+N
+N
+than they are for
+D
+D
+, suggesting diminishing returns of additional data when increasing model size. However, this asymptotic trend is offset at practical scales by the large leading constant (
+D
+⋆
+=
+7754
+⋅
+N
+0.84
+D^{\star}=7754\cdot N^{0.84}
+): a 3B model still requires
+∼
+480
+{\sim}480
+B tokens, far exceeding the
+∼
+60
+{\sim}60
+B implied by Chinchilla for autoregressive models. The crossing with Quokka
+(
+Ni et al., 2025
+)
+compute-optimal curves happens around the 20B scale (
+≈
+2
+\approx 2
+T tokens). Below that crossing point, at equal FLOPs, models from our tri-modal MDM family should be
+smaller
+and
+trained for longer
+than the ones of Quokka. Above that crossing point, the trend reverses.
+Interpretation.
+While
+a
+a
+and
+b
+b
+coefficients inform on the relative effectiveness of parameter and data scaling within the same family of methods, they are
+not
+sufficient in isolation to conclude superiority of a method over another. For example, some models such as logistic regression can still exhibit favorable exponents in some regimes
+(
+Lin et al., 2024
+)
+despite low expressiveness. In general, the asymptotics are better characterized by the value of
+E
+E
+, corresponding to the incompressible error rate: the intrinsic entropy of the dataset, plus an additional error term coming from the bias of the family of models considered.
+Moreover, the ELBO is informative within a diffusion family but can be misleading across families, since different forward processes induce different likelihood bounds
+(
+Sahoo et al., 2026
+)
+; similarly, the data-coefficient
+b
+b
+is sensitive to data composition, as repetitions reduce the effective token count and thus deflate scaling efficiency
+(
+Muennighoff et al., 2023
+)
+.
+Figure 11
+:
+Scaling law fit for tri-modal MDMs
+using
+Equation 5.1
+inspired by
+Kaplan et al. (2020)
+.
+R
+2
+R^{2}
+score of 99.3% and an MRE of 0.5%.
+N
+N
+and
+D
+D
+are expressed in billions units.
+Figure 12
+:
+Percentage of transformer-block parameters in the total parameter count
+.
+Tri-modality forces a larger vocabulary, yielding a ratio below 50% for small models.
+Figure 13
+:
+Isoloss contours for tri-modal MDM
+. Dashed line indicates direction in which the 0-shot hyperparameter transfer is done using CompleteP + SDE.
+Figure 14
+:
+IsoFLOPs for tri-modal MDMs.
+Solid lines indicate scaling law predictions. Points represent measurements and
+⋆
+\star
+indicates the lowest loss achievable at each isoFLOP.
+6
+Data
+To further parallelize and simply our analysis we conduct all experiments (with the exception of the modality mixing ablation of
+Section
+7.2
+) using a 33% (pure text), 33% (image-text), 33% (audio-text) mixing ratio. Inside each modality, we use a predetermined reweighting of each mixture component, balancing quality and diversity. For all experiments, the token horizon
+D
+D
+is smaller than the total dataset size, ensuring that we operate in the regime of a single global epoch. Nonetheless, some small, high-quality sub-mixture components are repeated up to 4 times, well within estimated repetition tolerance
+(
+Prabhudesai et al., 2025
+)
+.
+Text data.
+Our text corpus is an aggregation of Nemotron-CC
+(
+Su et al., 2025
+)
+; DCLM
+(
+Li et al., 2024
+)
+; some subsets of The Pile
+(
+Gao et al., 2020
+)
+including Wikipedia, HackerNews, Ubuntu IRC, Arxiv, DM-mathematics, Openwebtext; licensed StackOverflow data; and various high-quality synthetic data obtained from reasoning traces of Qwen-32B; and other licensed datasets. All corpora go through an additional level of cleaning and filtering to remove PII (Personally Identifiable Information) and other problematic content linked to licensing issues. Different splits of the same datasets with identical mixture ratios are used to compute the validation loss.
+Audio-text data.
+Our audio training data consist of 2M hours of audio scraped from the web and transcribed by Whisper
+(
+Radford et al., 2023
+)
+. The data was extracted from a larger dataset that was PII filtered to remove private information and underwent a series of quality filters based on speech activity detection, dialogue detection, production quality, and production complexity
+(
+Tjandra et al., 2025
+)
+.
+Image-text data.
+Our image training data consists of an aggregation of multiple image and recaptioned text datasets such as CC3M
+(
+Sharma et al., 2018
+)
+, CC12M
+(
+Changpinyo et al., 2021
+)
+, COYO
+(
+Byeon et al., 2022
+)
+, and other licensed datasets from Manzano
+(
+Li et al., 2025
+)
+. All samples are also PII filtered to remove private information.
+7
+Results
+First, we detail the benefits of this unified design at large scale in
+Section
+7.1
+. Then, we systematically ablate key design choices for our tri-modal discrete diffusion model. We evaluate the impact of different modality mixing ratios (
+Section
+7.2
+) and masking schedules during training (
+Appendix F
+). We examine inference-time hyperparameters for text-to-image generation and text-to-speech generation (
+Section
+7.3
+). Lastly, we explore the usage of anti-masking during training, which consists of augmenting the batch by generating two masked samples per sample, where one is the opposite of the other (
+Section
+7.4
+). All ablations are conducted independently, starting from the same setup.
+7.1
+Unified 3B Tri-modal
+MDM
+Modality
+Dataset and Metric
+Image generation & composition
+Train (eval seed)
+FID-Inception 10.41, FID-DINOv2 112.12.
+CC12M
+FID-Inception 10.06, FID-DINOv2 107.61.
+GenEval
+Single Obj 93.12, Two Obj 63.38, Counting 33.44, Colors 64.89, Position 11.50, Color Attr. 27.00, Overall 48.89.
+Language (LM Harness)
+Harness
+OpenBookQA 37.40, TruthfulQA MC2 40.76, BBH 24.97, MMLU 41.57, WinoGrande 64.69, ARC-Easy (norm) 72.52, HellaSwag (norm) 65.88, LogiQA2 (norm) 30.66, PIQA (norm) 71.55,
+ARC-Challenge (norm) 43.09.
+Audio generation
+Train (eval seed)
+FAD 0.218, WER 0.124, PQ 6.89, CU 6.20, CE 5.45, PC 1.89.
+LibriSpeech-PC
+FAD 0.368, WER 0.164, PQ 6.01, CU 5.34, CE 5.07, PC 3.01.
+Figure 15
+:
+Tri-modal 3B overview across image, text, and audio.
+Left:
+radar summary (larger radius indicates better normalized score; vertex labels are raw values).
+Normalization is mixed by metric type: bounded metrics use natural bounds (GenEval/LM percentages to 100, WER to 1, Audiobox to 10), while unbounded Frechet metrics (FID-Incept, FID-DINOv2, FAD) use ECDF calibration from references, with lower-is-better inversion
+s
+=
+1
+−
+F
+⁡
+(
+x
+)
+s=1-F(x)
+, where
+F
+F
+is the ECDF.
+Right:
+raw unnormalized metrics.
+We evaluate our pretrained-only 3B tri-modal
+MDM
+(see
+Table 5
+for the complete list of hyperparameters) on different settings for each specific modality. For text benchmarks we use LM evaluation harness (LM harness)
+(
+Gao et al., 2023
+)
+. For image benchmarks, we evaluate generation FID
+(
+Heusel et al., 2017
+)
+, using both DINOv2-L
+(
+Oquab et al., 2024
+)
+and Inception-v3
+(
+Szegedy et al., 2016
+)
+as feature extractors, computed on CC12M
+(
+Changpinyo et al., 2021
+)
+and the training data sampled with a different evaluation seed (hereafter
+train (eval seed)
+), and the GenEval
+(
+Ghosh et al., 2023
+)
+evaluation suite. For audio benchmarks, we evaluate text-to-speech generation conditioned on ground-truth prompts and durations from the train (eval seed) and LibriSpeech-PC
+(
+Meister et al., 2023
+)
+using generation FAD
+(
+Kilgour et al., 2019
+;
+Gui et al., 2024
+)
+, WER, and Audiobox Aesthetics
+(
+Tjandra et al., 2025
+)
+scores measuring four perceptual dimensions: Production Quality (PQ), Content Usefulness (CU), Content Enjoyment (CE), and Production Complexity (PC), as metrics. We present the broken down results for the individual modalities in the radar plot and table in
+Figure 15
+.
+7.2
+Modality Mixing Ratios
+Figure 16
+:
+Loss contours for tri-modal mixture coefficients
+, taking
+[
+1
+/
+3
+,
+1
+/
+3
+,
+1
+/
+3
+]
+[1/3,1/3,1/3]
+as the reference point for the 0-level contour. We do not observe synergies between modalities at that model and data scale: they all compete for capacity and tokens.
+Understanding how to combine data is of critical importance for multimodal models. We take an empirical stride towards quantifying this by carefully constructing an experiment where we vary the global modality mixing ratios,
+{
+w
+text
+,
+w
+image
+,
+w
+audio
+}
+\{w_{\text{text}},w_{\text{image}},w_{\text{audio}}\}
+, which respectively control the amount of text, image-text and audio-text data that is present within the pretraining mixture. We launch a total of 15 experiments with a model of size 320M (including. 80M non-embedding ones) and 13B tokens. We set a minimum of
+20
+20
+% per modality to avoid degeneracy with out-of-distribution modalities. Results are shown in
+Figure 16
+. Unsurprisingly, we find that the loss decreases as the corresponding mixture weight increases. However, we do not witness synergies between modalities
+at these scales
+: the average loss on a modality is independent on the relative ratio of the two other modalities. Therefore, the default choice of
+[
+1
+/
+3
+,
+1
+/
+3
+,
+1
+/
+3
+]
+[1/3,1/3,1/3]
+appears reasonable. While there exists prescriptive mechanisms to determine mixing ratios, they either fail to tackle multimodal models
+(
+Chen et al., 2026
+)
+or to account for data-repetition
+(
+Shukor et al., 2025
+)
+.
+7.3
+Best Generation Hyperparameters
+Figure 17
+:
+Text-to-image hyperparameter ablations.
+We generate images from text prompts and compute FID against reference images on two datasets: CC12M in blue and train (eval seed) in orange. Top row (a–d) shows FID computed using DINOv2-L features, bottom row (e–h) shows FID using Inception-v3 features. Panels (a,e) vary generation steps; (b,f) vary CFG scale; (c,g) vary temperature; (d,h) vary top-
+p
+p
+. Stars indicate optimal values for each metric-dataset combination.
+Figure 18
+:
+Text-to-speech hyperparameter ablations.
+We evaluate audio generation from text prompts on two datasets (train set, LibriSpeech-PC) using ground-truth durations, with three metrics: FAD, WER, and Audiobox Aesthetics. Top row shows (a) steps sweep and (b) CFG sweep. Bottom row shows (c) temperature sweep and (d) top-
+p
+p
+sweep.
+⋆
+\star
+indicate the best hyperparameter for each metric. For Production Complexity, lower values indicate simpler audio and are considered as preferable.
+We evaluate the impact of four different inference hyperparameters on generation quality: classifier-free guidance (CFG) scale, temperature, top-
+p
+p
+sampling, and number of generation steps.
+Unconditional generation for CFG is achieved by setting the text prompt to a fully masked state.
+Text-to-image generation.
+We generate 10,000 images conditioned on text prompts from CC12M and train (eval seed), using as default configuration of CFG=6.0, temperature=1.0, top-p=1.0, and 1024 generation steps, while ablating one hyperparameter at a time. As shown in
+Figure 17
+, FID improves as the number of steps increases but with diminishing returns at higher step counts. For CFG, temperature, and top-p, optimal FID is achieved at intermediate values, with the exception of top-p which shows preference for higher values.
+Text-to-speech generation.
+We evaluate audio generation based on text prompts from our audio-text train (eval seed) dataset and LibriSpeech-PC. Here, we select 10,000 samples from each dataset and filter to retain only samples with duration
+≤
+30
+\leq 30
+seconds, retaining approximately 70% of train (eval seed) samples and 99% of LibriSpeech-PC samples. This filtering ensures consistent evaluation, as audio samples were truncated to a maximum token budget during training. Then, we use ground-truth durations for variable-length generation, allowing us to focus on the effect of sampling hyperparameters independent of duration prediction. Lastly, we ablated one hyperparameter at a time while relying on a default configuration of CFG=3.0, temperature=1.2, top-p=0.9, and 1000 generation steps.
+As shown in
+Figure 18
+, quality improves with more generation steps but with diminishing returns at higher step counts, similarly to image generation. CFG scale shows an interesting trade-off where increasing CFG strengthens text conditioning, improving transcription accuracy (WER), but degrades audio fidelity as captured by FAD. Stars indicate optimal hyperparameter values for each metric, where lower values are preferred for FAD, WER, and Production Complexity (simpler audio)
+(
+Tjandra et al., 2025
+)
+, while higher values are preferred for the other aesthetics metrics. CFG, temperature, and top-p exhibit varying optimal values across different metrics. Trends broadly stay consistent between the two datasets, demonstrating good generalization to the external LibriSpeech-PC dataset.
+7.4
+Anti-Masking
+The stochastic nature of the MDM training strategy is known to induce high variance
+(
+von Rütte et al., 2025
+)
+. To mitigate this, recent work introduced anti-masking
+(
+Jia et al., 2025
+;
+Gong et al., 2025
+)
+, which stabilizes training by applying decorrelated masks to each batch input. More specifically, one samples a standard mask and subsequently applies its negation to the same input, resulting in two masked versions of the same input sample. While this reduces variance in batch gradient estimates
+(
+Jia et al., 2025
+;
+Gong et al., 2025
+)
+, it doubles the computational cost of training as each sample in a batch is masked twice. We therefore compare models under a unique fixed token horizon
+D
+D
+. To ensure compute matching, the baselines are trained with regular masking for two epochs, while the anti-mask variations are trained for a single epoch. To exemplify this setup, consider a dataset where
+D
+D
+consists of
+8
+8
+samples, and a batch size of
+4
+4
+is used. The anti-masking model would process the following sequence of batches:
+[
+1
+,
+1
+∗
+,
+2
+,
+2
+∗
+]
+[1,1^{*},2,2^{*}]
+,
+[
+3
+,
+3
+∗
+,
+4
+,
+4
+∗
+]
+[3,3^{*},4,4^{*}]
+,
+[
+5
+,
+5
+∗
+,
+6
+,
+6
+∗
+]
+[5,5^{*},6,6^{*}]
+,
+[
+7
+,
+7
+∗
+,
+8
+,
+8
+∗
+]
+[7,7^{*},8,8^{*}]
+, where
+∗
+*
+denotes the repeated sample with complementary masking patterns. In contrast, standard training would iterate through the unique samples twice:
+[
+1
+,
+2
+,
+3
+,
+4
+]
+[1,2,3,4]
+,
+[
+5
+,
+6
+,
+7
+,
+8
+]
+[5,6,7,8]
+,
+[
+1
+,
+2
+,
+3
+,
+4
+]
+[1,2,3,4]
+,
+[
+5
+,
+6
+,
+7
+,
+8
+]
+[5,6,7,8]
+. For simplicity, we show the same order of samples across two epochs, but in practice samples are re-ordered.
+We then conduct ablation studies on both text-only and multimodal architectures. The text models are approximately 7B parameters and are trained with a budget of 100 unique tokens per parameter. The multimodal models, with roughly 1.3B parameters, are trained on a horizon of 50 unique tokens per parameter. We evaluate the impact of anti-masking by comparing these models against their standard baselines, using a subset of the LM Harness for text tasks and assessing generation quality for audio and images in the multimodal setting.
+Table 1
+:
+Multimodal ablation results comparing standard MDM training versus anti-masking.
+Model
+FID (Inception)
+↓
+\downarrow
+FID (DINOv2)
+↓
+\downarrow
+FAD
+↓
+\downarrow
+Train Data
+CC12M
+Train Data
+CC12M
+Train Data
+LibriSpeech
+Base
+18.69
+26.77
+306.19
+395.73
+0.24
+0.79
+Anti-mask
+17.81
+21.04
+302.61
+361.00
+0.22
+0.55
+Results for the multimodal experiments are presented in
+Table 1
+, reporting FID for images, and FAD for audio. We observe that anti-masking yields a positive impact on performance across modalities, with the most significant gains observed in audio generation quality. Results for the text-only models are provided in
+Table 2
+. We see consistent improvements across most the tasks.
+Table 2
+:
+Anti-masking results on the evaluation harness.
+We report mean accuracy
+±
+\pm
+standard deviation.
+OpenBookQA
+TruthfulQA
+BBH
+MMLU
+Winogrande
+ARC-Easy
+HellaSwag
+LogiQA2
+PIQA
+ARC-Challenge
+Base
+32.80
+±
+\pm
+2.10
+43.12
+±
+\pm
+1.45
+21.52
+±
+\pm
+0.46
+30.20
+±
+\pm
+0.39
+52.01
+±
+\pm
+1.40
+63.72
+±
+\pm
+0.99
+52.20
+±
+\pm
+0.50
+24.75
+±
+\pm
+1.09
+67.19
+±
+\pm
+1.10
+31.66
+±
+\pm
+1.36
+Anti-mask
+33.00
+±
+\pm
+2.10
+36.97
+±
+\pm
+1.41
+27.05
+±
+\pm
+0.50
+32.86
+±
+\pm
+0.39
+54.06
+±
+\pm
+1.40
+66.04
+±
+\pm
+0.97
+55.15
+±
+\pm
+0.50
+26.27
+±
+\pm
+1.11
+67.41
+±
+\pm
+1.09
+34.90
+±
+\pm
+1.39
+Takeaways
+Anti-masking is a simple yet effective approach to improve MDM pre-training in the multiple-epochs setup. Crucially, it improves benchmark performance without incurring additional computational cost.
+8
+Conclusion
+This work reframes multimodal generation as order agnostic iterative refinement by extending masked discrete diffusion from language to a unified tri-modal setting, where text, images, and audio share a single token stream and a single transformer backbone, enabling flexible conditioning (captioning, text to image,
+ASR
+,
+TTS
+) without modality specific heads or bespoke factorizations. Beyond demonstrating feasibility, we chart the practical design space that governs stability and efficiency at scale: we show how SDE-based reparameterization reduce expensive tuning, we derive empirical scaling behavior to guide compute optimal training, and we surface a strongly modality dependent inference landscape where sampling hyperparameters sampling (guidance, temperature, steps) must be chosen differently for different modalities. Lastly, targeted training interventions such as anti-masking yield consistent improvements under compute matched comparisons.
+References
+Agarwal
+et al.
+(2025)
+N. Agarwal, A. Ali, M. Bala, Y. Balaji, E. Barker, T. Cai, P. Chattopadhyay, Y. Chen, Y. Cui, Y. Ding, D. Dworakowski, J. Fan, M. Fenzi, F. Ferroni, S. Fidler, D. Fox, S. Ge, Y. Ge, J. Gu, S. Gururani, E. He, J. Huang, J. S. Huffman, P. Jannaty, J. Jin, S. W. Kim, G. Klár, G. Lam, S. Lan, L. Leal-Taixé, A. Li, Z. Li, C. Lin, T. Lin, H. Ling, M. Liu, X. Liu, A. Luo, Q. Ma, H. Mao, K. Mo, A. Mousavian, S. Nah, S. Niverty, D. Page, D. Paschalidou, Z. Patel, L. Pavao, M. Ramezanali, F. Reda, X. Ren, V. R. N. Sabavat, E. Schmerling, S. Shi, B. Stefaniak, S. Tang, L. Tchapmi, P. Tredak, W. Tseng, J. Varghese, H. Wang, H. Wang, H. Wang, T. Wang, F. Wei, X. Wei, J. Z. Wu, J. Xu, W. Yang, Y. Lin, X. Zeng, Y. Zeng, J. Zhang, Q. Zhang, Y. Zhang, Q. Zhao, and A. Zólkowski
+Cosmos world foundation model platform for physical AI
+.
+CoRR
+abs/2501.03575
+.
+External Links:
+Link
+,
+Document
+,
+2501.03575
+Cited by:
+§B.2
+,
+Table 4
+,
+Table 4
+,
+Table 4
+,
+Table 4
+,
+Table 4
+,
+Table 4
+,
+Table 4
+,
+Table 4
+,
+Table 4
+.
+ai-forever (2023)
+ai-forever
+SBER-movqgan
+.
+Note:
+https://github.com/ai-forever/MoVQGAN
+Cited by:
+§B.2
+,
+Table 4
+,
+Table 4
+,
+Table 4
+,
+Table 5
+,
+§2.1
+,
+§3.1
+.
+Anthropic (2024)
+Anthropic
+Introducing the next generation of claude
+.
+External Links:
+Link
+Cited by:
+§1
+.
+Austin
+et al.
+(2021)
+J. Austin, D. D. Johnson, J. Ho, D. Tarlow, and R. van den Berg
+Structured denoising diffusion models in discrete state-spaces
+.
+In
+Advances in Neural Information Processing Systems 34: Annual Conference
+on Neural Information Processing Systems 2021, NeurIPS 2021, December
+6-14, 2021, virtual
+,
+M. Ranzato, A. Beygelzimer, Y. N. Dauphin, P. Liang, and J. W. Vaughan (Eds.)
+,
+pp. 17981–17993
+.
+External Links:
+Link
+Cited by:
+§2.1
+,
+§2.1
+,
+§2.1
+.
+Bergsma
+et al.
+(2025)
+S. Bergsma, N. Dey, G. Gosal, G. Gray, D. Soboleva, and J. Hestness
+Power lines: scaling laws for weight decay and batch size in LLM pre-training
+.
+CoRR
+abs/2505.13738
+.
+External Links:
+Link
+,
+Document
+,
+2505.13738
+Cited by:
+item 2
+,
+Figure 5
+,
+Figure 5
+,
+§4.1
+,
+§5.1
+,
+§5.1
+.
+Besiroglu
+et al.
+(2024)
+T. Besiroglu, E. Erdil, M. Barnett, and J. You
+Chinchilla scaling: A replication attempt
+.
+CoRR
+abs/2404.10102
+.
+External Links:
+Link
+,
+Document
+,
+2404.10102
+Cited by:
+§5.3
+.
+Bie
+et al.
+(2025)
+T. Bie, M. Cao, K. Chen, L. Du, M. Gong, Z. Gong, Y. Gu, J. Hu, Z. Huang, Z. Lan, C. Li, C. Li, J. Li, Z. Li, H. Liu, L. Liu, G. Lu, X. Lu, Y. Ma, J. Tan, L. Wei, J. Wen, Y. Xing, X. Zhang, J. Zhao, D. Zheng, J. Zhou, J. Zhou, Z. Zhou, L. Zhu, and Y. Zhuang
+LLaDA2.0: scaling up diffusion language models to 100b
+.
+CoRR
+abs/2512.15745
+.
+External Links:
+Link
+,
+Document
+,
+2512.15745
+Cited by:
+§1
+.
+Blake
+et al.
+(2025)
+C. Blake, C. Eichenberg, J. Dean, L. Balles, L. Y. Prince, B. Deiseroth, A. F. Cruz-Salinas, C. Luschi, S. Weinbach, and D. Orr
+U-mu p: the unit-scaled maximal update parametrization
+.
+In
+The Thirteenth International Conference on Learning Representations
+,
+Cited by:
+§4
+.
+Borsos
+et al.
+(2023)
+Z. Borsos, M. Sharifi, D. Vincent, E. Kharitonov, N. Zeghidour, and M. Tagliasacchi
+SoundStorm: efficient parallel audio generation
+.
+CoRR
+abs/2305.09636
+.
+External Links:
+Link
+,
+Document
+,
+2305.09636
+Cited by:
+§2.1
+.
+Boson AI (2025)
+Boson AI
+Higgs Audio V2: Redefining Expressiveness in Audio Generation
+.
+Note:
+https://github.com/boson-ai/higgs-audio
+GitHub repository. Release blog available at
+https://www.boson.ai/blog/higgs-audio-v2
+Cited by:
+§B.1
+,
+Table 5
+,
+§3.1
+.
+Busbridge
+et al.
+(2025)
+D. Busbridge, A. Shidani, F. Weers, J. Ramapuram, E. Littwin, and R. Webb
+Distillation scaling laws
+.
+In
+Forty-second International Conference on Machine Learning, ICML
+2025, Vancouver, BC, Canada, July 13-19, 2025
+,
+External Links:
+Link
+Cited by:
+Appendix E
+,
+Figure 10
+,
+Figure 10
+,
+§5.3
+,
+§5
+.
+Byeon
+et al.
+(2022)
+M. Byeon, B. Park, H. Kim, S. Lee, W. Baek, and S. Kim
+COYO-700m: image-text pair dataset
+.
+Note:
+https://github.com/kakaobrain/coyo-dataset
+Cited by:
+§6
+.
+Campbell
+et al.
+(2022)
+A. Campbell, J. Benton, V. D. Bortoli, T. Rainforth, G. Deligiannidis, and A. Doucet
+A continuous time framework for discrete denoising models
+.
+In
+Advances in Neural Information Processing Systems 35: Annual Conference
+on Neural Information Processing Systems 2022, NeurIPS 2022, New Orleans,
+LA, USA, November 28 - December 9, 2022
+,
+S. Koyejo, S. Mohamed, A. Agarwal, D. Belgrave, K. Cho, and A. Oh (Eds.)
+,
+External Links:
+Link
+Cited by:
+§2.1
+,
+§2.1
+.
+Chameleon Team (2024)
+Chameleon Team
+Chameleon: mixed-modal early-fusion foundation models
+.
+CoRR
+abs/2405.09818
+.
+External Links:
+Link
+,
+Document
+,
+2405.09818
+Cited by:
+§3.1
+.
+Chang
+et al.
+(2022)
+H. Chang, H. Zhang, L. Jiang, C. Liu, and W. T. Freeman
+MaskGIT: masked generative image transformer
+.
+In
+IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+CVPR 2022, New Orleans, LA, USA, June 18-24, 2022
+,
+pp. 11305–11315
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2.1
+,
+§2.1
+.
+Changpinyo
+et al.
+(2021)
+S. Changpinyo, P. Sharma, N. Ding, and R. Soricut
+Conceptual 12m: pushing web-scale image-text pre-training to recognize long-tail visual concepts
+.
+In
+IEEE Conference on Computer Vision and Pattern Recognition, CVPR
+2021, virtual, June 19-25, 2021
+,
+pp. 3558–3568
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§B.2
+,
+Table 4
+,
+Table 4
+,
+§6
+,
+§7.1
+.
+Chelba
+et al.
+(2014)
+C. Chelba, T. Mikolov, M. Schuster, Q. Ge, T. Brants, P. Koehn, and T. Robinson
+One billion word benchmark for measuring progress in statistical language modeling
+.
+In
+15th Annual Conference of the International Speech Communication Association,
+INTERSPEECH 2014, Singapore, September 14-18, 2014
+,
+H. Li, H. M. Meng, B. Ma, E. Chng, and L. Xie (Eds.)
+,
+pp. 2635–2639
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2.1
+.
+Chen
+et al.
+(2026)
+M. F. Chen, T. Murray, D. Heineman, M. Jordan, H. Hajishirzi, C. Ré, L. Soldaini, and K. Lo
+Olmix: a framework for data mixing throughout lm development
+.
+arXiv preprint arXiv:2602.12237
+.
+Cited by:
+§7.2
+.
+Cobbe
+et al.
+(2021)
+K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano, C. Hesse, and J. Schulman
+Training verifiers to solve math word problems
+.
+CoRR
+abs/2110.14168
+.
+External Links:
+Link
+,
+2110.14168
+Cited by:
+§2.1
+.
+de Brébisson and Vincent (2016)
+A. de Brébisson and P. Vincent
+The z-loss: a shift and scale invariant classification loss belonging to the spherical family
+.
+CoRR
+abs/1604.08859
+.
+External Links:
+Link
+,
+1604.08859
+Cited by:
+§3
+,
+§3.1
+.
+DeepSeek-AI (2024)
+DeepSeek-AI
+DeepSeek-v3 technical report
+.
+CoRR
+abs/2412.19437
+.
+External Links:
+Link
+,
+Document
+,
+2412.19437
+Cited by:
+§1
+,
+§5.1
+.
+Dehghani
+et al.
+(2023)
+M. Dehghani, J. Djolonga, B. Mustafa, P. Padlewski, J. Heek, J. Gilmer, A. P. Steiner, M. Caron, R. Geirhos, I. Alabdulmohsin, R. Jenatton, L. Beyer, M. Tschannen, A. Arnab, X. Wang, C. R. Ruiz, M. Minderer, J. Puigcerver, U. Evci, M. Kumar, S. van Steenkiste, G. F. Elsayed, A. Mahendran, F. Yu, A. Oliver, F. Huot, J. Bastings, M. Collier, A. A. Gritsenko, V. Birodkar, C. N. Vasconcelos, Y. Tay, T. Mensink, A. Kolesnikov, F. Pavetic, D. Tran, T. Kipf, M. Lucic, X. Zhai, D. Keysers, J. J. Harmsen, and N. Houlsby
+Scaling vision transformers to 22 billion parameters
+.
+In
+International Conference on Machine Learning, ICML 2023, 23-29 July
+2023, Honolulu, Hawaii, USA
+,
+A. Krause, E. Brunskill, K. Cho, B. Engelhardt, S. Sabato, and J. Scarlett (Eds.)
+,
+Proceedings of Machine Learning Research
+, Vol.
+202
+,
+pp. 7480–7512
+.
+External Links:
+Link
+Cited by:
+§3.1
+.
+Deng
+et al.
+(2009)
+J. Deng, W. Dong, R. Socher, L. Li, K. Li, and F. Li
+ImageNet: A large-scale hierarchical image database
+.
+In
+2009 IEEE Computer Society Conference on Computer Vision and Pattern
+Recognition (CVPR 2009), 20-25 June 2009, Miami, Florida, USA
+,
+pp. 248–255
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2.1
+.
+Dey
+et al.
+(2025)
+N. Dey, B. C. Zhang, L. Noci, M. Li, B. Bordelon, S. Bergsma, C. Pehlevan, B. Hanin, and J. Hestness
+Don’t be lazy: completep enables compute-efficient deep transformers
+.
+arXiv preprint arXiv:2505.01618
+.
+Cited by:
+§C.1
+,
+Table 5
+,
+Appendix D
+,
+§4
+.
+Dieleman
+et al.
+(2022)
+S. Dieleman, L. Sartran, A. Roshannai, N. Savinov, Y. Ganin, P. H. Richemond, A. Doucet, R. Strudel, C. Dyer, C. Durkan, C. Hawthorne, R. Leblond, W. Grathwohl, and J. Adler
+Continuous diffusion for categorical data
+.
+CoRR
+abs/2211.15089
+.
+External Links:
+Link
+,
+Document
+,
+2211.15089
+Cited by:
+§2.1
+.
+Esser
+et al.
+(2021)
+P. Esser, R. Rombach, and B. Ommer
+Taming transformers for high-resolution image synthesis
+.
+In
+IEEE Conference on Computer Vision and Pattern Recognition, CVPR
+2021, virtual, June 19-25, 2021
+,
+pp. 12873–12883
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2.1
+.
+Gao
+et al.
+(2020)
+L. Gao, S. Biderman, S. Black, L. Golding, T. Hoppe, C. Foster, J. Phang, H. He, A. Thite, N. Nabeshima,
+et al.
+The pile: an 800gb dataset of diverse text for language modeling
+.
+arXiv preprint arXiv:2101.00027
+.
+Cited by:
+§6
+.
+Gao
+et al.
+(2023)
+L. Gao, J. Tow, B. Abbasi, S. Biderman, S. Black, A. DiPofi, C. Foster, L. Golding, J. Hsu, A. Le Noac’h, H. Li, K. McDonell, N. Muennighoff, C. Ociepa, J. Phang, L. Reynolds, H. Schoelkopf, A. Skowron, L. Sutawika, E. Tang, A. Thite, B. Wang, K. Wang, and A. Zou
+A framework for few-shot language model evaluation
+.
+Zenodo
+.
+External Links:
+Document
+,
+Link
+Cited by:
+§7.1
+.
+Gemini Team (2023)
+Gemini Team
+Gemini: A family of highly capable multimodal models
+.
+CoRR
+abs/2312.11805
+.
+External Links:
+Link
+,
+Document
+,
+2312.11805
+Cited by:
+§1
+.
+Gemma Team (2025)
+Gemma Team
+Gemma 3 technical report
+.
+CoRR
+abs/2503.19786
+.
+External Links:
+Link
+,
+Document
+,
+2503.19786
+Cited by:
+§3.1
+.
+Ghosh
+et al.
+(2023)
+D. Ghosh, H. Hajishirzi, and L. Schmidt
+GenEval: an object-focused framework for evaluating text-to-image alignment
+.
+In
+Advances in Neural Information Processing Systems 36: Annual Conference
+on Neural Information Processing Systems 2023, NeurIPS 2023, New Orleans,
+LA, USA, December 10 - 16, 2023
+,
+A. Oh, T. Naumann, A. Globerson, K. Saenko, M. Hardt, and S. Levine (Eds.)
+,
+External Links:
+Link
+Cited by:
+§7.1
+.
+Gong
+et al.
+(2025)
+S. Gong, R. Zhang, H. Zheng, J. Gu, N. Jaitly, L. Kong, and Y. Zhang
+DiffuCoder: understanding and improving masked diffusion models for code generation
+.
+CoRR
+abs/2506.20639
+.
+External Links:
+Link
+,
+Document
+,
+2506.20639
+Cited by:
+§1
+,
+§7.4
+.
+Graves and Schmidhuber (2005)
+A. Graves and J. Schmidhuber
+Framewise phoneme classification with bidirectional LSTM and other neural network architectures
+.
+Neural Networks
+18
+(
+5-6
+),
+pp. 602–610
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+.
+Gu
+et al.
+(2022)
+S. Gu, D. Chen, J. Bao, F. Wen, B. Zhang, D. Chen, L. Yuan, and B. Guo
+Vector quantized diffusion model for text-to-image synthesis
+.
+In
+IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+CVPR 2022, New Orleans, LA, USA, June 18-24, 2022
+,
+pp. 10686–10696
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2.1
+,
+§2.2
+.
+Gui
+et al.
+(2024)
+A. Gui, H. Gamper, S. Braun, and D. Emmanouilidou
+Adapting frechet audio distance for generative music evaluation
+.
+In
+IEEE International Conference on Acoustics, Speech and Signal Processing,
+ICASSP 2024, Seoul, Republic of Korea, April 14-19, 2024
+,
+pp. 1331–1335
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§7.1
+.
+Hägele
+et al.
+(2024)
+A. Hägele, E. Bakouch, A. Kosson, L. B. Allal, L. von Werra, and M. Jaggi
+Scaling laws and compute-optimal training beyond fixed training durations
+.
+In
+Advances in Neural Information Processing Systems 38: Annual Conference
+on Neural Information Processing Systems 2024, NeurIPS 2024, Vancouver,
+BC, Canada, December 10 - 15, 2024
+,
+A. Globersons, L. Mackey, D. Belgrave, A. Fan, U. Paquet, J. M. Tomczak, and C. Zhang (Eds.)
+,
+External Links:
+Link
+Cited by:
+§5.2
+.
+Hendrycks
+et al.
+(2021)
+D. Hendrycks, C. Burns, S. Basart, A. Zou, M. Mazeika, D. Song, and J. Steinhardt
+Measuring massive multitask language understanding
+.
+In
+9th International Conference on Learning Representations, ICLR 2021,
+Virtual Event, Austria, May 3-7, 2021
+,
+External Links:
+Link
+Cited by:
+§2.1
+.
+Heusel
+et al.
+(2017)
+M. Heusel, H. Ramsauer, T. Unterthiner, B. Nessler, and S. Hochreiter
+GANs trained by a two time-scale update rule converge to a local nash equilibrium
+.
+In
+Advances in Neural Information Processing Systems 30: Annual Conference
+on Neural Information Processing Systems 2017, December 4-9, 2017,
+Long Beach, CA, USA
+,
+I. Guyon, U. von Luxburg, S. Bengio, H. M. Wallach, R. Fergus, S. V. N. Vishwanathan, and R. Garnett (Eds.)
+,
+pp. 6626–6637
+.
+External Links:
+Link
+Cited by:
+§7.1
+.
+Hoffmann
+et al.
+(2022)
+J. Hoffmann, S. Borgeaud, A. Mensch, E. Buchatskaya, T. Cai, E. Rutherford, D. de Las Casas, L. A. Hendricks, J. Welbl, A. Clark, T. Hennigan, E. Noland, K. Millican, G. van den Driessche, B. Damoc, A. Guy, S. Osindero, K. Simonyan, E. Elsen, J. W. Rae, O. Vinyals, and L. Sifre
+Training compute-optimal large language models
+.
+CoRR
+abs/2203.15556
+.
+External Links:
+Link
+,
+Document
+,
+2203.15556
+Cited by:
+item 3
+,
+§5.3
+,
+§5.3
+.
+Hoogeboom
+et al.
+(2021)
+E. Hoogeboom, D. Nielsen, P. Jaini, P. Forré, and M. Welling
+Argmax flows and multinomial diffusion: learning categorical distributions
+.
+In
+Advances in Neural Information Processing Systems 34: Annual Conference
+on Neural Information Processing Systems 2021, NeurIPS 2021, December
+6-14, 2021, virtual
+,
+M. Ranzato, A. Beygelzimer, Y. N. Dauphin, P. Liang, and J. W. Vaughan (Eds.)
+,
+pp. 12454–12465
+.
+External Links:
+Link
+Cited by:
+§2.1
+.
+Hu
+et al.
+(2023)
+M. Hu, C. Zheng, Z. Yang, T. Cham, H. Zheng, C. Wang, D. Tao, and P. N. Suganthan
+Unified discrete diffusion for simultaneous vision-language generation
+.
+In
+The Eleventh International Conference on Learning Representations,
+ICLR 2023, Kigali, Rwanda, May 1-5, 2023
+,
+External Links:
+Link
+Cited by:
+§2.2
+.
+Hui
+et al.
+(2024)
+B. Hui, J. Yang, Z. Cui, J. Yang, D. Liu, L. Zhang, T. Liu, J. Zhang, B. Yu, K. Dang, A. Yang, R. Men, F. Huang, X. Ren, X. Ren, J. Zhou, and J. Lin
+Qwen2.5-coder technical report
+.
+CoRR
+abs/2409.12186
+.
+External Links:
+Link
+,
+Document
+,
+2409.12186
+Cited by:
+§1
+.
+Jazbec
+et al.
+(2025)
+M. Jazbec, T. X. Olausson, L. Béthune, P. Ablin, M. Kirchhof, J. Monterio, V. Turrisi, J. Ramapuram, and M. Cuturi
+Learning unmasking policies for diffusion language models
+.
+arXiv preprint arXiv:2512.09106
+.
+Cited by:
+§1
+.
+Jia
+et al.
+(2025)
+M. Jia, M. Zhou, Y. Liu, X. Jiang, and G. Jiang
+Bringing stability to diffusion: decomposing and reducing variance of training masked diffusion models
+.
+CoRR
+abs/2511.18159
+.
+External Links:
+Link
+,
+Document
+,
+2511.18159
+Cited by:
+§7.4
+.
+Kaplan
+et al.
+(2020)
+J. Kaplan, S. McCandlish, T. Henighan, T. B. Brown, B. Chess, R. Child, S. Gray, A. Radford, J. Wu, and D. Amodei
+Scaling laws for neural language models
+.
+CoRR
+abs/2001.08361
+.
+External Links:
+Link
+,
+2001.08361
+Cited by:
+item 3
+,
+Figure 12
+,
+Figure 12
+,
+§5.1
+,
+§5.2
+,
+§5.3
+.
+Kilgour
+et al.
+(2019)
+K. Kilgour, M. Zuluaga, D. Roblek, and M. Sharifi
+Fréchet audio distance: A reference-free metric for evaluating music enhancement algorithms
+.
+In
+20th Annual Conference of the International Speech Communication Association,
+Interspeech 2019, Graz, Austria, September 15-19, 2019
+,
+G. Kubin and Z. Kacic (Eds.)
+,
+pp. 2350–2354
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§7.1
+.
+Kumar
+et al.
+(2023)
+R. Kumar, P. Seetharaman, A. Luebs, I. Kumar, and K. Kumar
+High-fidelity audio compression with improved RVQGAN
+.
+In
+Advances in Neural Information Processing Systems 36: Annual Conference
+on Neural Information Processing Systems 2023, NeurIPS 2023, New Orleans,
+LA, USA, December 10 - 16, 2023
+,
+A. Oh, T. Naumann, A. Globerson, K. Saenko, M. Hardt, and S. Levine (Eds.)
+,
+External Links:
+Link
+Cited by:
+§B.1
+.
+Li
+et al.
+(2024)
+J. Li, A. Fang, G. Smyrnis, M. Ivgi, M. Jordan, S. Y. Gadre, H. Bansal, E. Guha, S. S. Keh, K. Arora,
+et al.
+Datacomp-lm: in search of the next generation of training sets for language models
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 14200–14282
+.
+Cited by:
+§6
+.
+Li
+et al.
+(2025)
+Y. Li, R. Qian, B. Pan, H. Zhang, H. Huang, B. Zhang, J. Tong, H. You, X. Du, Z. Gan, H. Kim, C. Jia, Z. Wang, Y. Yang, M. Gao, Z. Dou, W. Hu, C. Gao, D. Li, P. Dufter, Z. Wang, G. Yin, Z. Zhang, C. Chen, Y. Zhao, R. Pang, and Z. Chen
+MANZANO: A simple and scalable unified multimodal model with a hybrid vision tokenizer
+.
+CoRR
+abs/2509.16197
+.
+External Links:
+Link
+,
+Document
+,
+2509.16197
+Cited by:
+§1
+,
+§6
+.
+Lin
+et al.
+(2024)
+L. Lin, J. Wu, S. M. Kakade, P. L. Bartlett, and J. D. Lee
+Scaling laws in linear regression: compute, parameters, and data
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 60556–60606
+.
+Cited by:
+§5.3
+.
+Liu
+et al.
+(2023)
+H. Liu, C. Li, Q. Wu, and Y. J. Lee
+Visual instruction tuning
+.
+In
+Advances in Neural Information Processing Systems 36: Annual Conference
+on Neural Information Processing Systems 2023, NeurIPS 2023, New Orleans,
+LA, USA, December 10 - 16, 2023
+,
+A. Oh, T. Naumann, A. Globerson, K. Saenko, M. Hardt, and S. Levine (Eds.)
+,
+External Links:
+Link
+Cited by:
+item 1
+.
+Llama Team (2024)
+Llama Team
+The llama 3 herd of models
+.
+CoRR
+abs/2407.21783
+.
+External Links:
+Link
+,
+Document
+,
+2407.21783
+Cited by:
+§1
+.
+Luo
+et al.
+(2025)
+Z. Luo, F. Shi, Y. Ge, Y. Yang, L. Wang, and Y. Shan
+Open-magvit2: an open-source project toward democratizing auto-regressive visual generation
+.
+External Links:
+2409.04410
+,
+Link
+Cited by:
+§B.2
+,
+Table 4
+,
+Table 4
+,
+Table 4
+.
+Ma
+et al.
+(2025)
+C. Ma, Y. Jiang, J. Wu, J. Yang, X. Yu, Z. Yuan, B. Peng, and X. Qi
+UniTok: a unified tokenizer for visual generation and understanding
+.
+arXiv preprint arXiv:2502.20321
+.
+Cited by:
+§B.2
+,
+Table 4
+,
+Table 4
+,
+Table 4
+.
+Malladi
+et al.
+(2022)
+S. Malladi, K. Lyu, A. Panigrahi, and S. Arora
+On the sdes and scaling rules for adaptive gradient algorithms
+.
+In
+Advances in Neural Information Processing Systems 35: Annual Conference
+on Neural Information Processing Systems 2022, NeurIPS 2022, New Orleans,
+LA, USA, November 28 - December 9, 2022
+,
+S. Koyejo, S. Mohamed, A. Agarwal, D. Belgrave, K. Cho, and A. Oh (Eds.)
+,
+External Links:
+Link
+Cited by:
+§4.1
+.
+Meister
+et al.
+(2023)
+A. Meister, M. Novikov, N. Karpov, E. Bakhturina, V. Lavrukhin, and B. Ginsburg
+LibriSpeech-pc: benchmark for evaluation of punctuation and capitalization capabilities of end-to-end ASR models
+.
+In
+IEEE Automatic Speech Recognition and Understanding Workshop, ASRU
+2023, Taipei, Taiwan, December 16-20, 2023
+,
+pp. 1–7
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§7.1
+.
+Mlodozeniec
+et al.
+(2025)
+B. Mlodozeniec, P. Ablin, L. Béthune, D. Busbridge, M. Klein, J. Ramapuram, and M. Cuturi
+Completed hyperparameter transfer across modules, width, depth, batch and duration
+.
+arXiv preprint arXiv:2512.22382
+.
+Cited by:
+Appendix D
+,
+Appendix D
+,
+item 2
+,
+§4.1
+,
+§4
+,
+§5.2
+.
+Muennighoff
+et al.
+(2023)
+N. Muennighoff, A. Rush, B. Barak, T. Le Scao, N. Tazi, A. Piktus, S. Pyysalo, T. Wolf, and C. A. Raffel
+Scaling data-constrained language models
+.
+Advances in Neural Information Processing Systems
+36
+,
+pp. 50358–50376
+.
+Cited by:
+§5.3
+.
+Ni
+et al.
+(2025)
+J. Ni, Q. Liu, C. Du, L. Dou, H. Yan, Z. Wang, T. Pang, and M. Q. Shieh
+Training optimal large diffusion language models
+.
+CoRR
+abs/2510.03280
+.
+External Links:
+Link
+,
+Document
+,
+2510.03280
+Cited by:
+§5.3
+.
+Nie
+et al.
+(2025)
+S. Nie, F. Zhu, Z. You, X. Zhang, J. Ou, J. Hu, J. Zhou, Y. Lin, J. Wen, and C. Li
+Large language diffusion models
+.
+CoRR
+abs/2502.09992
+.
+External Links:
+Link
+,
+Document
+,
+2502.09992
+Cited by:
+§1
+,
+§2.1
+,
+§3
+.
+OpenAI (2023)
+OpenAI
+Tiktoken: a fast byte-pair encoding tokenizer for openai models
+.
+Note:
+https://github.com/openai/tiktoken
+Cited by:
+Table 5
+,
+§3.1
+.
+Oquab
+et al.
+(2024)
+M. Oquab, T. Darcet, T. Moutakanni, H. V. Vo, M. Szafraniec, V. Khalidov, P. Fernandez, D. Haziza, F. Massa, A. El-Nouby, M. Assran, N. Ballas, W. Galuba, R. Howes, P. Huang, S. Li, I. Misra, M. Rabbat, V. Sharma, G. Synnaeve, H. Xu, H. Jégou, J. Mairal, P. Labatut, A. Joulin, and P. Bojanowski
+DINOv2: learning robust visual features without supervision
+.
+Trans. Mach. Learn. Res.
+2024
+.
+External Links:
+Link
+Cited by:
+§7.1
+.
+Pearce and Song (2024)
+T. Pearce and J. Song
+Reconciling kaplan and chinchilla scaling laws
+.
+Trans. Mach. Learn. Res.
+2024
+.
+External Links:
+Link
+Cited by:
+§5.3
+.
+Prabhudesai
+et al.
+(2025)
+M. Prabhudesai, M. Wu, A. Zadeh, K. Fragkiadaki, and D. Pathak
+Diffusion beats autoregressive in data-constrained settings
+.
+CoRR
+abs/2507.15857
+.
+External Links:
+Link
+,
+Document
+,
+2507.15857
+Cited by:
+§6
+.
+Radford
+et al.
+(2023)
+A. Radford, J. W. Kim, T. Xu, G. Brockman, C. McLeavey, and I. Sutskever
+Robust speech recognition via large-scale weak supervision
+.
+In
+International Conference on Machine Learning, ICML 2023, 23-29 July
+2023, Honolulu, Hawaii, USA
+,
+A. Krause, E. Brunskill, K. Cho, B. Engelhardt, S. Sabato, and J. Scarlett (Eds.)
+,
+Proceedings of Machine Learning Research
+, Vol.
+202
+,
+pp. 28492–28518
+.
+External Links:
+Link
+Cited by:
+§6
+.
+Rix
+et al.
+(2001)
+A. W. Rix, J. G. Beerends, M. P. Hollier, and A. P. Hekstra
+Perceptual evaluation of speech quality (pesq)-a new method for speech quality assessment of telephone networks and codecs
+.
+In
+IEEE International Conference on Acoustics, Speech, and Signal Processing,
+ICASSP 2001, 7-11 May, 2001, Salt Palace Convention Center, Salt
+Lake City, Utah, USA, Proceedings
+,
+pp. 749–752
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§B.1
+.
+Sahoo
+et al.
+(2026)
+S. S. Sahoo, J. Lemercier, Z. Yang, J. Deschenaux, J. Liu, J. Thickstun, and A. Jukic
+Scaling beyond masked diffusion language models
+.
+arXiv preprint arXiv:2602.15014
+.
+Cited by:
+§5.3
+.
+Schaipp
+et al.
+(2025)
+F. Schaipp, A. Hägele, A. B. Taylor, U. Simsekli, and F. Bach
+The surprising agreement between convex optimization theory and learning-rate scheduling for large model training
+.
+In
+Forty-second International Conference on Machine Learning, ICML
+2025, Vancouver, BC, Canada, July 13-19, 2025
+,
+A. Singh, M. Fazel, D. Hsu, S. Lacoste-Julien, F. Berkenkamp, T. Maharaj, K. Wagstaff, and J. Zhu (Eds.)
+,
+Proceedings of Machine Learning Research
+, Vol.
+267
+.
+External Links:
+Link
+Cited by:
+§5.2
+.
+Schuster and Paliwal (1997)
+M. Schuster and K. K. Paliwal
+Bidirectional recurrent neural networks
+.
+IEEE Trans. Signal Process.
+45
+(
+11
+),
+pp. 2673–2681
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+.
+Sharma
+et al.
+(2018)
+P. Sharma, N. Ding, S. Goodman, and R. Soricut
+Conceptual captions: A cleaned, hypernymed, image alt-text dataset for automatic image captioning
+.
+In
+Proceedings of the 56th Annual Meeting of the Association for Computational
+Linguistics, ACL 2018, Melbourne, Australia, July 15-20, 2018, Volume
+1: Long Papers
+,
+I. Gurevych and Y. Miyao (Eds.)
+,
+pp. 2556–2565
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§6
+.
+Shazeer (2020)
+N. Shazeer
+GLU variants improve transformer
+.
+CoRR
+abs/2002.05202
+.
+External Links:
+Link
+,
+2002.05202
+Cited by:
+§3.1
+.
+Shi
+et al.
+(2025)
+F. Shi, Z. Luo, Y. Ge, Y. Yang, Y. Shan, and L. Wang
+Scalable image tokenization with index backpropagation quantization
+.
+External Links:
+2412.02692
+,
+Link
+Cited by:
+§B.2
+,
+Table 4
+,
+Table 4
+,
+Table 4
+.
+Shi
+et al.
+(2024)
+J. Shi, K. Han, Z. Wang, A. Doucet, and M. K. Titsias
+Simplified and generalized masked diffusion for discrete data
+.
+In
+Advances in Neural Information Processing Systems 38: Annual Conference
+on Neural Information Processing Systems 2024, NeurIPS 2024, Vancouver,
+BC, Canada, December 10 - 15, 2024
+,
+A. Globersons, L. Mackey, D. Belgrave, A. Fan, U. Paquet, J. M. Tomczak, and C. Zhang (Eds.)
+,
+External Links:
+Link
+Cited by:
+Appendix A
+,
+Appendix F
+,
+§2.1
+.
+Shukor
+et al.
+(2025)
+M. Shukor, L. Béthune, D. Busbridge, D. Grangier, E. Fini, A. El-Nouby, and P. Ablin
+Scaling laws for optimal data mixtures
+.
+CoRR
+abs/2507.09404
+.
+External Links:
+Link
+,
+Document
+,
+2507.09404
+Cited by:
+§5.3
+,
+§7.2
+.
+Singh
+et al.
+(2025)
+A. Singh, A. Fry, A. Perelman, A. Tart, A. Ganesh, A. El-Kishky, A. McLaughlin, A. Low, A. Ostrow, A. Ananthram,
+et al.
+OpenAI gpt-5 system card
+.
+arXiv preprint arXiv:2601.03267
+.
+Cited by:
+§1
+.
+Sohl-Dickstein
+et al.
+(2015)
+J. Sohl-Dickstein, E. A. Weiss, N. Maheswaranathan, and S. Ganguli
+Deep unsupervised learning using nonequilibrium thermodynamics
+.
+In
+Proceedings of the 32nd International Conference on Machine Learning,
+ICML 2015, Lille, France, 6-11 July 2015
+,
+F. R. Bach and D. M. Blei (Eds.)
+,
+JMLR Workshop and Conference Proceedings
+, Vol.
+37
+,
+pp. 2256–2265
+.
+External Links:
+Link
+Cited by:
+§2.1
+.
+Song
+et al.
+(2021)
+J. Song, C. Meng, and S. Ermon
+Denoising diffusion implicit models
+.
+In
+9th International Conference on Learning Representations, ICLR 2021,
+Virtual Event, Austria, May 3-7, 2021
+,
+External Links:
+Link
+Cited by:
+§2.1
+.
+Su
+et al.
+(2025)
+D. Su, K. Kong, Y. Lin, J. Jennings, B. Norick, M. Kliegl, M. Patwary, M. Shoeybi, and B. Catanzaro
+Nemotron-cc: transforming common crawl into a refined long-horizon pretraining dataset
+.
+In
+Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+,
+pp. 2459–2475
+.
+Cited by:
+§6
+.
+Su
+et al.
+(2021)
+J. Su, Y. Lu, S. Pan, B. Wen, and Y. Liu
+RoFormer: enhanced transformer with rotary position embedding
+.
+CoRR
+abs/2104.09864
+.
+External Links:
+Link
+,
+2104.09864
+Cited by:
+§3.1
+.
+Swerdlow
+et al.
+(2025)
+A. Swerdlow, M. Prabhudesai, S. Gandhi, D. Pathak, and K. Fragkiadaki
+Unified multimodal discrete diffusion
+.
+CoRR
+abs/2503.20853
+.
+External Links:
+Link
+,
+Document
+,
+2503.20853
+Cited by:
+§2.2
+.
+Szegedy
+et al.
+(2016)
+C. Szegedy, V. Vanhoucke, S. Ioffe, J. Shlens, and Z. Wojna
+Rethinking the inception architecture for computer vision
+.
+In
+2016 IEEE Conference on Computer Vision and Pattern Recognition,
+CVPR 2016, Las Vegas, NV, USA, June 27-30, 2016
+,
+pp. 2818–2826
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§7.1
+.
+Tjandra
+et al.
+(2025)
+A. Tjandra, Y. Wu, B. Guo, J. Hoffman, B. Ellis, A. Vyas, B. Shi, S. Chen, M. Le, N. Zacharov, C. Wood, A. Lee, and W. Hsu
+Meta audiobox aesthetics: unified automatic quality assessment for speech, music, and sound
+.
+CoRR
+abs/2502.05139
+.
+External Links:
+Link
+,
+Document
+,
+2502.05139
+Cited by:
+§6
+,
+§7.1
+,
+§7.3
+.
+van den Oord
+et al.
+(2016)
+A. van den Oord, N. Kalchbrenner, and K. Kavukcuoglu
+Pixel recurrent neural networks
+.
+In
+Proceedings of the 33nd International Conference on Machine Learning,
+ICML 2016, New York City, NY, USA, June 19-24, 2016
+,
+M. Balcan and K. Q. Weinberger (Eds.)
+,
+JMLR Workshop and Conference Proceedings
+, Vol.
+48
+,
+pp. 1747–1756
+.
+External Links:
+Link
+Cited by:
+§2.1
+.
+van den Oord
+et al.
+(2017)
+A. van den Oord, O. Vinyals, and K. Kavukcuoglu
+Neural discrete representation learning
+.
+In
+Advances in Neural Information Processing Systems 30: Annual Conference
+on Neural Information Processing Systems 2017, December 4-9, 2017,
+Long Beach, CA, USA
+,
+I. Guyon, U. von Luxburg, S. Bengio, H. M. Wallach, R. Fergus, S. V. N. Vishwanathan, and R. Garnett (Eds.)
+,
+pp. 6306–6315
+.
+External Links:
+Link
+Cited by:
+§2.1
+.
+Vaswani
+et al.
+(2017)
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, L. Kaiser, and I. Polosukhin
+Attention is all you need
+.
+In
+Advances in Neural Information Processing Systems 30: Annual Conference
+on Neural Information Processing Systems 2017, December 4-9, 2017,
+Long Beach, CA, USA
+,
+I. Guyon, U. von Luxburg, S. Bengio, H. M. Wallach, R. Fergus, S. V. N. Vishwanathan, and R. Garnett (Eds.)
+,
+pp. 5998–6008
+.
+External Links:
+Link
+Cited by:
+§1
+.
+von Rütte
+et al.
+(2025)
+D. von Rütte, J. Fluri, Y. Ding, A. Orvieto, B. Schölkopf, and T. Hofmann
+Generalized interpolating discrete diffusion
+.
+In
+Forty-second International Conference on Machine Learning, ICML
+2025, Vancouver, BC, Canada, July 13-19, 2025
+,
+External Links:
+Link
+Cited by:
+§7.4
+.
+Wijmans
+et al.
+(2024)
+E. Wijmans, B. Huval, A. Hertzberg, V. Koltun, and P. Krähenbühl
+Cut your losses in large-vocabulary language models
+.
+CoRR
+abs/2411.09009
+.
+External Links:
+Link
+,
+Document
+,
+2411.09009
+Cited by:
+§3
+.
+Wijmans
+et al.
+(2025)
+E. Wijmans, B. Huval, A. Hertzberg, V. Koltun, and P. Krähenbühl
+Cut your losses in large-vocabulary language models
+.
+In
+The Thirteenth International Conference on Learning Representations,
+ICLR 2025, Singapore, April 24-28, 2025
+,
+External Links:
+Link
+Cited by:
+§3.1
+.
+Wortsman
+et al.
+(2024)
+M. Wortsman, P. J. Liu, L. Xiao, K. E. Everett, A. A. Alemi, B. Adlam, J. D. Co-Reyes, I. Gur, A. Kumar, R. Novak, J. Pennington, J. Sohl-Dickstein, K. Xu, J. Lee, J. Gilmer, and S. Kornblith
+Small-scale proxies for large-scale transformer training instabilities
+.
+In
+The Twelfth International Conference on Learning Representations,
+ICLR 2024, Vienna, Austria, May 7-11, 2024
+,
+External Links:
+Link
+Cited by:
+§3.1
+.
+Wu
+et al.
+(2025)
+C. Wu, H. Zhang, S. Xue, Z. Liu, S. Diao, L. Zhu, P. Luo, S. Han, and E. Xie
+Fast-dllm: training-free acceleration of diffusion LLM by enabling KV cache and parallel decoding
+.
+CoRR
+abs/2505.22618
+.
+External Links:
+Link
+,
+Document
+,
+2505.22618
+Cited by:
+§1
+.
+Yang
+et al.
+(2024a)
+A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu, F. Huang, H. Wei, H. Lin, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Lin, K. Dang, K. Lu, K. Bao, K. Yang, L. Yu, M. Li, M. Xue, P. Zhang, Q. Zhu, R. Men, R. Lin, T. Li, T. Xia, X. Ren, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Wan, Y. Liu, Z. Cui, Z. Zhang, and Z. Qiu
+Qwen2.5 technical report
+.
+CoRR
+abs/2412.15115
+.
+External Links:
+Link
+,
+Document
+,
+2412.15115
+Cited by:
+§2.1
+.
+Yang
+et al.
+(2023)
+D. Yang, J. Yu, H. Wang, W. Wang, C. Weng, Y. Zou, and D. Yu
+Diffsound: discrete diffusion model for text-to-sound generation
+.
+IEEE ACM Trans. Audio Speech Lang. Process.
+31
+,
+pp. 1720–1733
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2.1
+.
+Yang
+et al.
+(2021)
+G. Yang, E. Hu, I. Babuschkin, S. Sidor, X. Liu, D. Farhi, N. Ryder, J. Pachocki, W. Chen, and J. Gao
+Tuning large neural networks via zero-shot hyperparameter transfer
+.
+Advances in Neural Information Processing Systems
+34
+,
+pp. 17084–17097
+.
+Cited by:
+§4
+.
+Yang
+et al.
+(2024b)
+G. Yang, D. Yu, C. Zhu, and S. Hayou
+Tensor programs vi: feature learning in infinite depth neural networks
+.
+In
+The Twelfth International Conference on Learning Representations
+,
+Cited by:
+§4
+.
+Yang
+et al.
+(2025)
+L. Yang, Y. Tian, B. Li, X. Zhang, K. Shen, Y. Tong, and M. Wang
+MMaDA: multimodal large diffusion language models
+.
+CoRR
+abs/2505.15809
+.
+External Links:
+Link
+,
+Document
+,
+2505.15809
+Cited by:
+§1
+,
+§2.2
+,
+§3
+.
+Ye
+et al.
+(2025)
+J. Ye, Z. Xie, L. Zheng, J. Gao, Z. Wu, X. Jiang, Z. Li, and L. Kong
+Dream 7b: diffusion large language models
+.
+CoRR
+abs/2508.15487
+.
+External Links:
+Link
+,
+Document
+,
+2508.15487
+Cited by:
+§2.1
+.
+You
+et al.
+(2025)
+Z. You, S. Nie, X. Zhang, J. Hu, J. Zhou, Z. Lu, J. Wen, and C. Li
+LLaDA-v: large language diffusion models with visual instruction tuning
+.
+CoRR
+abs/2505.16933
+.
+External Links:
+Link
+,
+Document
+,
+2505.16933
+Cited by:
+§1
+,
+§2.2
+.
+Zeghidour
+et al.
+(2022)
+N. Zeghidour, A. Luebs, A. Omran, J. Skoglund, and M. Tagliasacchi
+SoundStream: an end-to-end neural audio codec
+.
+IEEE ACM Trans. Audio Speech Lang. Process.
+30
+,
+pp. 495–507
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2.1
+.
+Zhang and Sennrich (2019)
+B. Zhang and R. Sennrich
+Root mean square layer normalization
+.
+In
+Advances in Neural Information Processing Systems 32: Annual Conference
+on Neural Information Processing Systems 2019, NeurIPS 2019, December
+8-14, 2019, Vancouver, BC, Canada
+,
+H. M. Wallach, H. Larochelle, A. Beygelzimer, F. d’Alché-Buc, E. B. Fox, and R. Garnett (Eds.)
+,
+pp. 12360–12371
+.
+External Links:
+Link
+Cited by:
+§3.1
+.
+Zhang
+et al.
+(2025)
+R. Zhang, S. Zhai, Y. Zhang, J. Thornton, Z. Ou, J. M. Susskind, and N. Jaitly
+Target concrete score matching: A holistic framework for discrete diffusion
+.
+In
+Forty-second International Conference on Machine Learning, ICML
+2025, Vancouver, BC, Canada, July 13-19, 2025
+,
+External Links:
+Link
+Cited by:
+§1
+.
+Zheng
+et al.
+(2022)
+C. Zheng, L. T. Vuong, J. Cai, and D. Phung
+MoVQ: modulating quantized vectors for high-fidelity image generation
+.
+External Links:
+2209.09002
+,
+Link
+Cited by:
+§2.1
+.
+Zheng
+et al.
+(2025)
+H. Zheng, S. Gong, R. Zhang, T. Chen, J. Gu, M. Zhou, N. Jaitly, and Y. Zhang
+Continuously augmented discrete diffusion model for categorical generative modeling
+.
+CoRR
+abs/2510.01329
+.
+External Links:
+Link
+,
+Document
+,
+2510.01329
+Cited by:
+§1
+.
+Zhu
+et al.
+(2025a)
+F. Zhu, R. Wang, S. Nie, X. Zhang, C. Wu, J. Hu, J. Zhou, J. Chen, Y. Lin, J. Wen, and C. Li
+LLaDA 1.5: variance-reduced preference optimization for large language diffusion models
+.
+CoRR
+abs/2505.19223
+.
+External Links:
+Link
+,
+Document
+,
+2505.19223
+Cited by:
+§2.1
+.
+Zhu
+et al.
+(2025b)
+F. Zhu, Z. You, Y. Xing, Z. Huang, L. Liu, Y. Zhuang, G. Lu, K. Wang, X. Wang, L. Wei, H. Guo, J. Hu, W. Ye, T. Chen, C. Li, C. Tang, H. Feng, J. Hu, J. Zhou, X. Zhang, Z. Lan, J. Zhao, D. Zheng, C. Li, J. Li, and J. Wen
+LLaDA-moe: A sparse moe diffusion language model
+.
+CoRR
+abs/2509.24389
+.
+External Links:
+Link
+,
+Document
+,
+2509.24389
+Cited by:
+§2.1
+.
+Appendix A
+General formulation of weighting and the masking process
+In this section, we expand the
+MDM
+forward process explained in
+Section
+3
+and make it consistent with the previously introduced notation in the literature, particularly following
+Shi et al. (2024)
+.
+In the general case of
+MDM
+, we progressively corrupt the original data
+s
+0
+∈
+𝒱
+L
+⋆
+s_{0}\in\mathcal{V}^{L^{\star}}
+into a masked version
+s
+t
+s_{t}
+over
+T
+T
+discrete time steps. The forward process defines a Markov chain that transforms an original data
+s
+0
+s_{0}
+into a corrupted version
+s
+t
+s_{t}
+at time step
+t
+∈
+[
+T
+]
+t\in[T]
+. This process is governed by a sequence of transition matrices for each position
+i
+i
+denoted by
+Q
+t
+i
+∈
+ℝ
+V
+×
+V
+Q_{t}^{i}\in\mathbb{R}^{V\times V}
+. At each step
+t
+t
+, a token
+s
+t
+−
+1
+i
+s_{t-1}^{i}
+is transformed into
+s
+t
+i
+s_{t}^{i}
+according to the probability
+q
+⁡
+(
+s
+t
+i
+∣
+s
+t
+−
+1
+i
+)
+q(s_{t}^{i}\mid s_{t-1}^{i})
+. We define the masking probability at time
+t
+t
+as
+β
+t
+∈
+[
+0
+,
+1
+]
+\beta_{t}\in[0,1]
+. Consequently, the probability of a token
+not
+being masked is
+α
+t
+=
+1
+−
+β
+t
+\alpha_{t}=1-\beta_{t}
+.
+The single-step transition matrix
+Q
+t
+i
+Q_{t}^{i}
+is typically defined as:
+Q
+t
+i
+​
+(
+v
+∣
+r
+)
+=
+q
+⁡
+(
+s
+t
+i
+=
+v
+∣
+s
+t
+−
+1
+i
+=
+r
+)
+=
+{
+1
+−
+β
+t
+if
+​
+r
+≠
+MASK
+m
+⁡
+(
+i
+)
+​
+and
+​
+v
+=
+r
+β
+t
+if
+​
+r
+≠
+MASK
+m
+⁡
+(
+i
+)
+​
+and
+​
+v
+=
+MASK
+m
+⁡
+(
+i
+)
+1
+if
+​
+r
+=
+v
+=
+MASK
+m
+⁡
+(
+i
+)
+0
+otherwise
+\displaystyle Q_{t}^{i}(v\mid r)=q(s_{t}^{i}=v\mid s_{t-1}^{i}=r)=\begin{cases}1-\beta_{t}&\text{if }r\neq\text{MASK}_{m(i)}\text{ and }v=r\\
+\beta_{t}&\text{if }r\neq\text{MASK}_{m(i)}\text{ and }v=\text{MASK}_{m(i)}\\
+1&\text{if }r=v=\text{MASK}_{m(i)}\\
+0&\text{otherwise}\end{cases}
+This formulation implies that a token either remains unchanged or is replaced by the
+MASK
+m
+⁡
+(
+i
+)
+\text{MASK}_{m(i)}
+token. More general formulations might allow transitions to any other token with a small probability.
+The
+cumulative
+transition probability from
+s
+0
+s_{0}
+to
+s
+t
+s_{t}
+is crucial for training and is given by the product of individual transition matrices:
+Q
+t
+i
+​
+(
+v
+∣
+r
+)
+=
+q
+⁡
+(
+s
+t
+i
+=
+v
+∣
+s
+0
+i
+=
+r
+)
+Q_{t}^{i}(v\mid r)=q(s_{t}^{i}=v\mid s_{0}^{i}=r)
+. This can be simplified by defining
+α
+¯
+t
+=
+∏
+τ
+=
+1
+t
+α
+τ
+=
+∏
+τ
+=
+1
+t
+(
+1
+−
+β
+τ
+)
+\bar{\alpha}_{t}=\prod_{\tau=1}^{t}\alpha_{\tau}=\prod_{\tau=1}^{t}(1-\beta_{\tau})
+. The probability of a token
+s
+0
+i
+s_{0}^{i}
+remaining unchanged until time
+t
+t
+is
+α
+¯
+t
+\bar{\alpha}_{t}
+. Conversely, the probability of it having been masked at least once and therefore being a
+MASK
+m
+⁡
+(
+i
+)
+\text{MASK}_{m(i)}
+token at time
+t
+t
+is
+1
+−
+α
+¯
+t
+1-\bar{\alpha}_{t}
+. Therefore, the marginal distribution of
+s
+t
+s_{t}
+given
+s
+0
+s_{0}
+for a single token
+i
+i
+is:
+q
+⁡
+(
+s
+t
+i
+=
+v
+∣
+s
+0
+i
+=
+r
+)
+=
+{
+α
+¯
+t
+if
+​
+v
+=
+r
+1
+−
+α
+¯
+t
+if
+​
+v
+=
+MASK
+m
+⁡
+(
+i
+)
+0
+otherwise
+,
+q
+⁡
+(
+s
+t
+∣
+s
+0
+)
+=
+∏
+i
+=
+1
+L
+⋆
+q
+⁡
+(
+s
+t
+i
+∣
+s
+0
+i
+)
+.
+\displaystyle q(s_{t}^{i}=v\mid s_{0}^{i}=r)=\begin{cases}\bar{\alpha}_{t}&\text{if }v=r\\
+1-\bar{\alpha}_{t}&\text{if }v=\text{MASK}_{m(i)}\\
+0&\text{otherwise}\end{cases}\,,\qquad q(s_{t}\mid s_{0})=\prod_{i=1}^{L^{\star}}q(s_{t}^{i}\mid s^{i}_{0}).
+This distribution
+q
+⁡
+(
+s
+t
+∣
+s
+0
+)
+q(s_{t}\mid s_{0})
+allows for direct sampling of
+s
+t
+s_{t}
+from
+s
+0
+s_{0}
+at any time step
+t
+t
+.
+A.1
+Connection of Loss Weighting and Cumulative Corruption
+The weighting function
+w
+⁡
+(
+t
+)
+w(t)
+plays a critical role in balancing the contribution of different time steps to the total loss, with the choice of
+w
+⁡
+(
+t
+)
+w(t)
+being intimately connected to the masking schedule defined by
+α
+t
+\alpha_{t}
+or equivalently
+β
+t
+\beta_{t}
+.
+Recall that
+α
+¯
+t
+\bar{\alpha}_{t}
+represents the cumulative probability that a token
+has not been masked
+up to time
+t
+t
+. Conversely,
+1
+−
+α
+¯
+t
+1-\bar{\alpha}_{t}
+is the probability that a token
+has been masked
+by time
+t
+t
+. This results in two opposite scenarios:
+•
+Early time steps
+(small
+t
+t
+,
+α
+¯
+t
+≈
+1
+\bar{\alpha}_{t}\approx 1
+): Few tokens are masked. Predicting the original
+s
+0
+s_{0}
+for these few masked tokens is relatively easy, as most of the context (unmasked tokens) is available.
+•
+Late time steps
+(large
+t
+t
+,
+α
+¯
+t
+≈
+0
+\bar{\alpha}_{t}\approx 0
+): Most tokens are masked. Predicting the original
+s
+0
+s_{0}
+becomes very challenging, requiring the model to infer from minimal context.
+A common motivation for weighting comes from
+ELBO
+in continuous diffusion, which often leads to weighting terms that compensate for varying noise levels. Based on
+Appendix
+A
+, the forward marginal distribution is
+q
+⁡
+(
+s
+t
+∣
+s
+0
+)
+=
+∏
+i
+=
+1
+L
+⋆
+α
+¯
+t
+​
+δ
+s
+0
+i
+​
+(
+s
+t
+i
+)
++
+(
+1
+−
+α
+¯
+t
+)
+​
+δ
+MASK
+m
+⁡
+(
+i
+)
+​
+(
+s
+t
+i
+)
+.
+\displaystyle q(s_{t}\mid s_{0})=\prod_{i=1}^{L^{\star}}\bar{\alpha}_{t}\,\delta_{s_{0}^{i}}(s_{t}^{i})+\big(1-\bar{\alpha}_{t}\big)\,\delta_{\text{MASK}_{m(i)}}(s_{t}^{i})\,.
+Training maximizes the
+ELBO
+, which decomposes into timestep-wise
+Kullback-Leibler Divergence (KLD)
+:
+ℒ
+=
+∑
+t
+𝔼
+q
+[
+KL
+(
+q
+(
+s
+t
+−
+1
+∣
+s
+t
+,
+s
+0
+)
+∥
+p
+θ
+(
+s
+t
+−
+1
+∣
+s
+t
+)
+)
+]
+.
+\displaystyle\mathcal{L}=\sum_{t}\mathbb{E}_{q}\Big[\mathrm{KL}\big(q(s_{t-1}\mid s_{t},s_{0})\;\|\;p_{\theta}(s_{t-1}\mid s_{t})\big)\Big]\,.
+In
+MDM
+, each KL term is non-zero only when
+s
+t
+i
+=
+MASK
+m
+⁡
+(
+i
+)
+s_{t}^{i}=\text{MASK}_{m(i)}
+. Conditioning on this event, the posterior
+q
+⁡
+(
+s
+t
+−
+1
+i
+∣
+s
+t
+i
+=
+MASK
+m
+⁡
+(
+i
+)
+,
+s
+0
+)
+q(s_{t-1}^{i}\mid s_{t}^{i}=\text{MASK}_{m(i)},s_{0})
+is a categorical distribution whose parameters depend on the incremental masking rate. More precisely, let us denote
+π
+t
+\pi_{t}
+the probability that masking occurred at time
+t
+t
+rather than earlier, so that
+q
+⁡
+(
+s
+t
+−
+1
+i
+∣
+s
+t
+i
+=
+MASK
+m
+⁡
+(
+i
+)
+,
+s
+0
+)
+=
+π
+t
+​
+δ
+s
+0
+i
+​
+(
+s
+t
+−
+1
+i
+)
++
+(
+1
+−
+π
+t
+)
+​
+δ
+MASK
+m
+⁡
+(
+i
+)
+​
+(
+s
+t
+−
+1
+i
+)
+.
+\displaystyle q(s_{t-1}^{i}\mid s_{t}^{i}=\text{MASK}_{m(i)},s_{0})=\pi_{t}\delta_{s_{0}^{i}}(s_{t-1}^{i})+(1-\pi_{t})\delta_{\text{MASK}_{m(i)}}(s_{t-1}^{i})\,.
+Using Bayes’ rule, we have:
+π
+t
+=
+ℙ
+⁡
+(
+s
+t
+−
+1
+i
+=
+s
+0
+i
+)
+​
+ℙ
+​
+(
+s
+t
+i
+=
+MASK
+m
+⁡
+(
+i
+)
+∣
+s
+t
+−
+1
+i
+=
+s
+0
+i
+)
+ℙ
+⁡
+(
+s
+t
+i
+=
+MASK
+m
+⁡
+(
+i
+)
+)
+,
+\displaystyle\pi_{t}=\frac{\mathbb{P}(s_{t-1}^{i}=s_{0}^{i})\mathbb{P}(s_{t}^{i}=\text{MASK}_{m(i)}\mid s_{t-1}^{i}=s_{0}^{i})}{\mathbb{P}(s_{t}^{i}=\text{MASK}_{m(i)})}\,,
+where
+ℙ
+⁡
+(
+s
+t
+−
+1
+i
+=
+s
+0
+i
+)
+=
+α
+¯
+t
+−
+1
+\mathbb{P}(s_{t-1}^{i}=s_{0}^{i})=\bar{\alpha}_{t-1}
+,
+ℙ
+⁡
+(
+s
+t
+i
+=
+MASK
+m
+⁡
+(
+i
+)
+∣
+s
+t
+−
+1
+i
+=
+s
+0
+i
+)
+=
+1
+−
+α
+t
+\mathbb{P}(s_{t}^{i}=\text{MASK}_{m(i)}\mid s_{t-1}^{i}=s_{0}^{i})=1-\alpha_{t}
+, and
+ℙ
+⁡
+(
+s
+t
+i
+=
+MASK
+m
+⁡
+(
+i
+)
+)
+=
+1
+−
+α
+¯
+t
+\mathbb{P}(s_{t}^{i}=\text{MASK}_{m(i)})=1-\bar{\alpha}_{t}
+. Therefore, we have:
+π
+t
+=
+α
+¯
+t
+−
+1
+​
+(
+1
+−
+α
+t
+)
+1
+−
+α
+¯
+t
+=
+α
+¯
+t
+−
+1
+−
+α
+¯
+t
+1
+−
+α
+¯
+t
+.
+\displaystyle\pi_{t}=\frac{\bar{\alpha}_{t-1}(1-\alpha_{t})}{1-\bar{\alpha}_{t}}=\frac{\bar{\alpha}_{t-1}-\bar{\alpha}_{t}}{1-\bar{\alpha}_{t}}\,.
+In the continuous-time limit,
+π
+t
+=
+−
+α
+¯
+t
+′
+1
+−
+α
+¯
+t
+\pi_{t}=\frac{-\bar{\alpha}_{t}^{\prime}}{1-\bar{\alpha}_{t}}
+. As a result, the
+ELBO
+is equivalent up to constants to minimizing the objective
+𝔼
+t
+∼
+U
+​
+(
+0
+,
+1
+)
+​
+[
+w
+⁡
+(
+t
+)
+​
+∑
+i
+=
+1
+L
+⋆
+𝔼
+q
+⁡
+(
+s
+t
+i
+∣
+s
+0
+i
+)
+​
+[
+ℓ
+i
+​
+(
+θ
+,
+s
+0
+)
+|
+s
+t
+i
+=
+MASK
+m
+⁡
+(
+i
+)
+]
+]
+,
+w
+⁡
+(
+t
+)
+=
+α
+¯
+t
+′
+1
+−
+α
+¯
+t
+.
+\displaystyle\mathbb{E}_{t\sim\text{U}(0,1)}\left[w(t)\;\sum_{i=1}^{L^{\star}}\mathbb{E}_{q(s_{t}^{i}\mid s_{0}^{i})}\big[\ell_{i}(\theta,s_{0})\;\big|\;s_{t}^{i}=\text{MASK}_{m(i)}\big]\right],\qquad w(t)=\frac{\bar{\alpha}^{\prime}_{t}}{1-\bar{\alpha}_{t}}.
+This weighting ensures that each timestep contributes proportionally to the rate at which information about
+s
+0
+s_{0}
+is destroyed by masking.
+A.2
+Unbiasedness of the Importance Weighting
+At a fixed timestep
+t
+t
+, each token position is independently masked with probability
+t
+t
+, so that
+𝟏
+{
+i
+∈
+ℐ
+t
+}
+∼
+Bernoulli
+(
+t
+)
+\mathbf{1}\{i\in\mathcal{I}_{t}\}\sim\mathrm{Bernoulli}(t)
+.
+Averaging the reconstruction loss only over masked positions therefore corresponds to random subsampling of tokens.
+Without reweighting, the expected contribution of token
+i
+i
+to the loss in linear scheduling is
+𝔼
+[
+𝟏
+{
+i
+∈
+ℐ
+t
+}
+ℓ
+i
+(
+θ
+,
+s
+)
+]
+=
+t
+ℓ
+i
+(
+θ
+,
+s
+)
+,
+\displaystyle\mathbb{E}\!\left[\mathbf{1}\{i\in\mathcal{I}_{t}\}\,\ell_{i}(\theta,s)\right]=t\,\ell_{i}(\theta,s)\,,
+which underweights tokens at small
+t
+t
+and biases the objective toward high-noise regimes. Multiplying by
+1
+/
+t
+1/t
+yields an unbiased estimator:
+𝔼
+[
+1
+t
+1
+{
+i
+∈
+ℐ
+t
+}
+ℓ
+i
+(
+θ
+,
+s
+)
+]
+=
+ℓ
+i
+(
+θ
+,
+s
+)
+.
+\displaystyle\mathbb{E}\!\left[\frac{1}{t}\,\mathbf{1}\{i\in\mathcal{I}_{t}\}\,\ell_{i}(\theta,s)\right]=\ell_{i}(\theta,s)\,.
+Therefore, the
+1
+/
+t
+1/t
+factor corrects for the subsampling induced by masking, ensuring that each token contributes equally in expectation across timesteps. This corresponds to inverse-probability weighting and is analogous to the time-dependent weighting used in denoising score matching objectives for diffusion models, where losses are rescaled to normalize signal-to-noise ratio across noise levels.
+Appendix B
+Tokenizer Ablations
+B.1
+Audio Tokenizer Ablations
+Model
+# Codebooks
+PESQ
+↑
+\uparrow
+Content Enjoy
+↑
+\uparrow
+Content Useful.
+↑
+\uparrow
+Prod. Complex.
+↑
+\uparrow
+Prob. Quality
+↑
+\uparrow
+Down. Factor
+↑
+\uparrow
+Higgs pretrained
+8
+3.168
+5.670
+6.192
+1.559
+6.510
+960
+4
+2.544
+5.577
+6.087
+1.561
+6.390
+960
+DAC pretrained
+9
+3.658
+5.555
+5.994
+1.567
+6.255
+512
+4
+2.396
+5.069
+5.415
+1.603
+5.597
+512
+DAC retrained
+9
+2.969
+5.691
+6.234
+1.556
+6.550
+1024
+4
+2.433
+5.585
+6.131
+1.566
+6.434
+1024
+Table 3
+:
+Reconstruction metrics for different audio tokenizers.
+The audio tokenizer determines the audio token rate and, therefore, the sequence length corresponding to
+the audio stream. Since we use a fixed context length (
+L
+⋆
+=
+3256
+L^{\star}=3256
+) and clips with at most 30 seconds, we need
+a low-rate codec that still preserves perceptual quality. Here, we compare several RVQ-based codecs: a pretrained 24 kHz DAC
+(
+Kumar et al., 2023
+)
+, a pretrained Higgs Audio v2
+(
+Boson AI, 2025
+)
+, and a DAC-style tokenizer trained on the same data as the main model. In
+Table 3
+, we present the reconstruction evaluation on LibriTTS-clean using PESQ
+(
+Rix et al., 2001
+)
+and Audiobox. Among the options, only two configurations fit our token budget for 30 s audio, which we display in bold.
+Based on these results, we chose the Higgs Audio v2 tokenizer with 4 codebooks decoding as the default audio tokenizer as it provides a strong and convenient rate–distortion trade-off.
+As expected, increasing the number of codebooks improves reconstruction but quickly becomes impractical under our
+sequence-length constraint. Consistent with prior observations for RVQ codecs
+(
+Kumar et al., 2023
+)
+,
+we also find that training with more codebooks and decoding with fewer can preserve perceptual quality substantially
+better than training the low-rate model directly.
+Model
+Type
+Latent / Code Dim
+Vocab Size
+Tokens Per Image
+rFID
+↓
+\downarrow
+CC12M
+cosmos-ci8x8
+(
+Agarwal et al., 2025
+)
+Continuous
+16
+-
+1024
+1.37
+cosmos-di16x16
+(
+Agarwal et al., 2025
+)
+FSQ
+6
+65536
+256
+3.50
+cosmos-di8x8-360p
+(
+Agarwal et al., 2025
+)
+FSQ
+6
+65536
+1024
+1.80
+ibq-262144
+(
+Shi et al., 2025
+)
+IBQ
+256
+262144
+256
+0.89
+movqgan-270m
+(
+ai-forever, 2023
+)
+MoVQ
+256
+16384
+1024
+0.50
+openmagvitv2
+(
+Luo et al., 2025
+)
+LFQ
+18
+262144
+256
+0.82
+unitok
+(
+Ma et al., 2025
+)
+MCQ
+64
+4096 (x8)*
+256 (x8)
+0.54
+ImageNet
+cosmos-ci8x8
+(
+Agarwal et al., 2025
+)
+Continuous
+16
+-
+1024
+1.02
+cosmos-di16x16
+(
+Agarwal et al., 2025
+)
+FSQ
+6
+65536
+256
+4.38
+cosmos-di8x8-360p
+(
+Agarwal et al., 2025
+)
+FSQ
+6
+65536
+1024
+0.95
+ibq-262144
+(
+Shi et al., 2025
+)
+IBQ
+256
+262144
+256
+1.55
+movqgan-270m
+(
+ai-forever, 2023
+)
+MoVQ
+256
+16384
+1024
+0.55
+openmagvitv2
+(
+Luo et al., 2025
+)
+LFQ
+18
+262144
+256
+1.67
+unitok
+(
+Ma et al., 2025
+)
+MCQ
+64
+4096 (x8)*
+256 (x8)
+0.36
+ImageNet - 512
+×
+\times
+512
+cosmos-ci8x8
+(
+Agarwal et al., 2025
+)
+Continuous
+16
+-
+4096
+0.07
+cosmos-di16x16
+(
+Agarwal et al., 2025
+)
+FSQ
+6
+65536
+1024
+1.33
+cosmos-di8x8-360p
+(
+Agarwal et al., 2025
+)
+FSQ
+6
+65536
+4096
+0.51
+ibq-262144
+(
+Shi et al., 2025
+)
+IBQ
+256
+262144
+1024
+0.50
+movqgan-270m
+(
+ai-forever, 2023
+)
+MoVQ
+256
+16384
+4096
+0.17
+openmagvitv2
+(
+Luo et al., 2025
+)
+LFQ
+18
+262144
+1024
+0.53
+unitok
+(
+Ma et al., 2025
+)
+MCQ
+64
+4096 (x8)*
+1024 (x8)
+0.23
+Table 4
+:
+Reconstruction FID for different image tokenizers.
+ImageNet consists of 50k validation examples and CC12M
+(
+Changpinyo et al., 2021
+)
+consists of 50k samples from the full dataset. Best FID per section is shown in
+bold
+. When a continuous model achieves the best FID, the best discrete model is also bolded. *UniTok uses 8 categorical predictions of size 4096 (x8 underlying codes that are merged into a single token).
+B.2
+Image Tokenizer Ablations
+The same sequence length constrains apply to the image tokenizer. We want a discrete image tokenizer that maps an image to as few tokens as possible while maintaining good image representation. Here, we compare discrete versions of Cosmos
+(
+Agarwal et al., 2025
+)
+, IBQ
+(
+Shi et al., 2025
+)
+, OpenMagVIT
+(
+Luo et al., 2025
+)
+, Unitok
+(
+Ma et al., 2025
+)
+, and MoVQGAN
+(
+ai-forever, 2023
+)
+. We evaluate the reconstruction FID on ImageNet at 256 and 512 resolution as well as CC12M
+(
+Changpinyo et al., 2021
+)
+and present these results in
+Table 4
+. Based on these results, we chose MoVQGAN as the default image tokenizer as it provided a good balance between high reconstruction performance, high compression and small vocabulary size.
+Appendix C
+Training details
+C.1
+Optimal Global Hyper-Parameter Search
+As highlighted in
+Section
+4
+, most ablations in this work rely on optimal global hyperparameters scaled up with CompleteP
+(
+Dey et al., 2025
+)
+. In
+Figure
+19
+we present a Gaussian Process fit
+on 2900 trial runs at small scale (320M parameters in total, including 80M non-embedding ones, 13B tokens) to determine optimal global hyperparameters for tri-modal
+MDM
+. The optimal values are highlighted in red. We initialize the per-module multiplier search from this optimum to better seed the search process.
+Figure 19
+:
+Small-scale hyper-parameter search for 0-shot transfer
+. Final average cross-entropy loss for a sweep of
+5
+5
+AdamW hyperparameters (learning rate,
+β
+1
+,
+β
+2
+\beta_{1},\beta_{2}
+, weight-decay,
+ϵ
+\epsilon
+) on a 350M model trained for 13B tokens. The plot shows cross-sections through the hyperparameter landscape through the best found hyperparameters.
+C.2
+Runtime as Function of Batch Size
+As explored in
+Section
+5
+, the SDE parametrization allows a wide range of batch sizes to be used. Typically, bigger batch sizes allow less iterations, which
+can
+reduce runtime. Two knobs are available to increase the batch size: increasing the number of nodes, or modifying the per-GPU batch size. In practice, overall throughput grows sub-linearly with number of nodes because of communications on the cluster. Furthermore, for smaller batch sizes, hosted on a single node, another phenomenon plays a role: once the batch size is too small, the GPU becomes idle because small batch sizes do not benefit as much from parallelism. This is measured in
+Figure 20
+. The runtime diminishes slowly as the per-GPU batch size increases, and diminishes sharply as the number of nodes increases. Highest node count reduces wall-clock time significantly, but also reduces FLOP-efficiency because of sub-linear scaling.
+a)
+b)
+c)
+Figure 20
+:
+Performance as function of physical batch size.
+. In
+a)
+we see impact of batch size on total runtime, with the effect of the node-count clearly visible: more nodes reduces wall-clock time faster than simply saturating GPUs. In
+b)
+we see the runtime with 1, 2, 4, 8 and 16 nodes respectively. Doubling node count approximately halves the runtime. Finally, in
+c)
+, we see that saturated GPUs have much more efficient FLOP usage than non-saturated ones. Doubling node count never allow to recover training efficiency of fewer nodes, because of communication overhead.
+C.3
+Hyperparameters for the Unified 3B Tri-modal MDM
+Table 5
+highlights all training details for the 3B model.
+Model
+N
+N
+blocks
+24
+24
+Dimension
+3072
+3072
+N
+N
+attention heads
+24
+24
+QK Norm
+Yes
+Normalization
+RMSNorm
+Pre-norm
+Yes
+Post-norm
+No
+MLP style
+SwiGLU
+SwiGLU hidden dimension factor
+2.75
+2.75
+Positional embedding
+RoPE
+Weight initialization (base_width)
+trunc_normal(std=0.02)
+Training parameters
+Batch size
+3072
+3072
+Sequence length
+3256
+3256
+Optimizer
+AdamW
+Base LR
+9
+​
+e
+−
+4
+9e-4
+Base AdamW
+ϵ
+\epsilon
+1
+​
+e
+−
+8
+1e-8
+Base AdamW
+β
+1
+\beta_{1}
+0.9
+0.9
+Base AdamW
+β
+2
+\beta_{2}
+0.95
+0.95
+Base weight decay
+0.1
+0.1
+LR warmup
+2,000
+2,000
+steps
+LR schedule
+Cosine
+Min LR
+1
+​
+e
+−
+6
+1e-6
+Z-loss weight
+1
+​
+e
+−
+5
+1e-5
+Training duration
+1,000,000
+1,000,000
+steps
+Hyperparameter Transfer Strategy
+CompleteP
+(
+Dey et al., 2025
+)
+]
+Modality sampling rate (text-only, image-text, audio-text)
+[
+0.33
+,
+0.33
+,
+0.33
+]
+[0.33,0.33,0.33]
+Text tokens seen during training
+3.4T
+Image samples seen during training
+1B
+Audio samples seen during training
+1B
+Tokenizers
+Text
+Tiktoken
+(
+OpenAI, 2023
+)
+Image
+SBER-MoVQGAN
+(
+ai-forever, 2023
+)
+Audio
+Higgs Audio Tokenizer v2 (4 codebooks)
+(
+Boson AI, 2025
+)
+Vocabulary (incl. special tokens)
+Total
+117,698
+117,698
+Text
+100,281
+100,281
+Image
+16,387
+16,387
+Audio
+1,027
+1,027
+Text transformations
+P
+⁡
+(
+Token packing
+)
+P(\text{Token packing})
+0.95
+P
+⁡
+(
+Random sequence subsample
+)
+P(\text{Random sequence subsample})
+0.05
+Image transformations
+Target resolution
+256
+​
+x
+​
+256
+256x256
+RandomResizedCrop
+[
+0.8
+,
+1.0
+]
+[0.8,1.0]
+Resize with white padding
+-
+P
+⁡
+(
+RandomResizedCrop
+)
+P(\text{RandomResizedCrop})
+0.5
+0.5
+P
+⁡
+(
+Resize with white padding
+)
+P(\text{Resize with white padding})
+0.5
+0.5
+Normalization
+μ
+\mu
+and
+σ
+\sigma
+[
+0.5
+,
+0.5
+]
+[0.5,0.5]
+Audio transformations
+Max duration
+30
+30
+seconds
+Number of frames
+25
+25
+Table 5:
+Model and training details for the 3B multimodal
+MDM
+.
+Appendix D
+MDM with Per-module Hyperparameters
+To simplify and parallelize our analysis, we rely on CompleteP
+(
+Dey et al., 2025
+)
+for width and depth transfer using global hyperparameters (Appendix
+Section
+C.1
+) for all ablations done in this work, however, recent insights from
+Mlodozeniec et al. (2025)
+highlight that we can further improve performance by optimizing per-module hyper-parameter multipliers for AdamW (learning rate, weight decay,
+β
+1
+,
+β
+2
+\beta_{1},\beta_{2}
+, and
+ϵ
+\epsilon
+).
+Training Details.
+Each hyperparameter for each weight gets a unique multiplier. The multipliers for all depth-repeated blocks are parameterized as a product of a depth-dependent factor, and a module-type factor – all weights at the same depth get the same depth factor, and all weights of the same type (e.g., all
+Q
+​
+K
+​
+V
+QKV
+weights) get the same module-type factor. We initialize the local random search method from
+(
+Mlodozeniec et al., 2025
+)
+at the best global hyperparameters found using random search, shown in
+Figure 19
+. We conduct the search using a transformer with 8 blocks of width 1024, totaling 320M parameters (including 80M non-embed parameters) trained at a horizon of 13B multimodal tokens. The results of the search, and the speed-up obtained at this base model size, is reported in
+Figure 21
+.
+Figure 21
+:
+Per-module hyperparameter search on a small scale model for 0-shot transfer
+. Average final ELBO for a sweep of AdamW’s per-module hyperparameters as well as initialization scales for a 350M model (including 80M non-embedding parameters) trained for 13B tokens, using a batch size of 256. Per-module tuning yields a
+1.81
+×
+\times
+reduction in token count to achieve an equivalent loss.
+Table 6
+:
+Optimal per-module hyperparameter multipliers found for the LLaDA Multimodal model. Depth factors apply to all layers where the
+block depth
+total depth
+\frac{\texttt{block depth}}{\texttt{total depth}}
+falls within the highlighted fraction (as counted from the network input towards output).
+Category
+Module / Depth
+LR
+WD
+α
+1
+\alpha_{1}
+α
+2
+\alpha_{2}
+ϵ
+\epsilon
+Init Scale
+Standalone
+Embedding weights (Audio)
+2.192
+1.009
+0.962
+1.493
+1.494
+1.826
+Embedding weights (Image)
+1.013
+0.864
+2.108
+0.685
+0.734
+0.554
+Embedding weight (Text)
+3.937
+1.593
+1.421
+1.791
+0.317
+0.379
+Unembedding weights (Audio)
+1.633
+1.510
+3.442
+0.594
+0.742
+3.422
+Unembedding weights (Image)
+1.655
+1.213
+1.929
+1.042
+0.635
+1.524
+Unembedding weights (Text)
+3.008
+0.737
+1.346
+0.955
+1.206
+0.341
+Unembedding norm weights
+2.305
+0.817
+4.508
+2.740
+1.938
+2.175
+Blocks
+attn_qkv_weight
+1.714
+0.821
+0.173
+0.557
+0.391
+2.498
+attn_proj_weight
+0.630
+0.354
+0.256
+0.339
+1.627
+4.732
+attn_q_norm_weight
+0.535
+0.731
+1.530
+0.902
+0.848
+1.344
+attn_k_norm_weight
+0.754
+0.497
+1.074
+0.822
+0.368
+0.436
+mlp_gate_weight
+0.489
+0.634
+1.171
+1.870
+4.913
+0.643
+mlp_fc1_weight
+1.271
+1.295
+1.590
+3.309
+1.415
+1.944
+mlp_fc2_weight
+1.405
+1.308
+2.684
+0.655
+1.790
+0.878
+norm1_weight
+1.311
+1.105
+0.282
+1.161
+1.477
+2.171
+norm2_weight
+0.899
+0.525
+1.533
+1.789
+0.712
+1.189
+Depth Factors
+0
+−
+50
+%
+0-50\%
+1.102
+0.725
+1.030
+3.053
+0.663
+0.997
+50
+−
+100
+%
+50-100\%
+0.877
+1.018
+0.911
+1.149
+2.645
+0.485
+Multiplier analysis.
+In
+Table
+6
+, we highlight the results of the search, listing the per module multipliers. Notably, the resulting multipliers are highly structured rather than uniform: embedding and unembedding weights favor substantially larger effective learning rates (up to
+∼
+4
+×
+\sim\!4\times
+), while attention projections and MLP gates are tuned more conservatively, often with increased
+ϵ
+\epsilon
+for numerical damping. The learned depth factors further indicate smaller steps and stronger stabilization in later blocks, consistent with increasing sensitivity of deep representations to update noise.
+Appendix E
+Extended Scaling Laws Results
+Computation of FLOPs for experiments.
+We rely on the formula in appendix
+H.1
+of
+Busbridge et al. (2025)
+to compute the FLOPs and the model size. In particular, we do not account for input/output embedding, as the size of our multimodal vocabulary (117k) makes these embedding matrices bigger than the transformer backbone for small models. The ratio between transformer parameters and embedding parameters is illustrated in
+Figure 12
+. The value of
+N
+N
+reported in scaling laws fit always use the non-embedding parameters only (which are up-to 5 times smaller than the total model’s size). The FLOPs
+C
+C
+reported in scaling law account for everything. We compute the optimal
+N
+⋆
+​
+(
+C
+)
+N^{\star}(C)
+and
+D
+⋆
+​
+(
+C
+)
+D^{\star}(C)
+by minimizing the parametric loss under the constraint
+C
+=
+FLOP per token
+​
+(
+N
+)
+×
+D
+C=\text{FLOP per token}(N)\times D
+. Since we do not account for embeddings parameters in total model size, the popular
+FLOP per token
+​
+(
+N
+)
+=
+6
+​
+N
+\text{FLOP per token}(N)=6N
+does not apply out-of-the-box. Instead, we minimize the parametric loss
+L
+​
+(
+N
+,
+D
+=
+C
+/
+FLOP per token
+​
+(
+N
+)
+)
+L(N,D=C/\text{FLOP per token}(N))
+via linear-search over
+N
+N
+to plot compute-optimal curves in
+Figure 3
+and
+Figure 14
+. This effect is more striking for small models where the embedding size is significant. For larger models, we found that the approximation
+FLOP per token
+​
+(
+N
+)
+≈
+6
+\text{FLOP per token}(N)\approx 6
+holds. In that case, minimizing the parametric form
+L
+(
+N
+,
+D
+)
+=
+E
++
+(
+A
+N
+−
+a
+/
+b
++
+B
+D
+−
+1
+)
+b
+,
+L(N,D)=E+\left(AN^{-a/b}+BD^{-1}\right)^{b},
+under constraint
+C
+=
+6
+​
+N
+​
+D
+C=6ND
+works well. By monotonicity, this is equivalent to minimizing
+A
+N
+−
+a
+/
+b
++
+B
+D
+−
+1
+AN^{-a/b}+BD^{-1}
+, which admits the following minimizers:
+N
+⋆
+​
+(
+C
+)
+=
+G
+−
+1
+​
+(
+C
+/
+6
+)
+τ
+,
+and
+D
+⋆
+​
+(
+C
+)
+=
+G
+​
+(
+C
+/
+6
+)
+1
+−
+τ
+,
+with
+G
+=
+b
+​
+B
+a
+​
+A
+and
+τ
+=
+b
+a
++
+b
+.
+N^{\star}(C)=G^{-1}(C/6)^{\tau},\quad\text{ and }\quad D^{\star}(C)=G(C/6)^{1-\tau},\quad\text{ with }\quad G=\frac{bB}{aA}\quad\text{ and }\quad\tau=\frac{b}{a+b}.
+Scaling laws for Uni-Modal Text MDM.
+We also perform scaling laws run on uni-modal text models, using CompleteP parametrization, but
+without
+SDE scaling rules. Every model size relies on a different batch size to maximize GPU occupancy. The total sequence length is 4,096 with packing and truncation (no padding). Training curves as function of
+(
+N
+,
+D
+)
+(N,D)
+FLOP budget are given in
+Figure 22
+and the scaling laws predictions are reported in
+Figure 23
+.
+Figure 22
+:
+Training curves for uni-modal text
+MDM
+models trained under CompleteP.
+a)
+b)
+Figure 23
+:
+Scaling laws for uni-modal text
+MDM
+s
+.
+a)
+Scaling law predictions for text-only
+MDM
+models, using CompleteP.
+b)
+Iso-FLOP curves for text-only
+MDM
+models under CompleteP parameterization (no SDE scaling).
+Appendix F
+Masking Schedules for Image and Audio Generation
+Figure 24
+:
+Masking schedule ablation for audio generation across guidance scales.
+We evaluate four masking schedules (linear, cosine, polynomial, geometric) on ground-truth length audio generation quality using FAD, WER, and AudioBox Aesthetics metrics on our train mixture. Models are evaluated across CFG scales 1.0-10.0.
+Figure 25
+:
+Masking schedule ablation across guidance scales.
+We evaluate the generation quality of four masking schedules (linear, cosine, polynomial, geometric) in CC12M and our train mixture (eval seed). Models are evaluated across CFG scales 1.0-10.0.
+To determine the impact of the masking schedule on multimodal
+MDM
+training and generation quality, we evaluate four distinct schedules – linear, cosine, polynomial, and geometric – implemented using the continuous-time ELBO weighting in
+Shi et al. (2024)
+. We train a 1B model for 100k steps under each schedule, keeping all other hyperparameters the same.
+First, we evaluate image generation quality at
+256
+×
+256
+256\times 256
+resolution using 1024 diffusion steps with CFG scales ranging from 1.0 to 10.0, temperature
+T
+=
+0.9
+T=0.9
+, and nucleus sampling (top-
+p
+=
+0.9
+p=0.9
+). Image quality is measured using both FID-Inception and FID-DINOv2, computed over 8,192 generated samples on two datasets, CC12M and our train mixture (eval seed).
+Figure 25
+shows that the polynomial schedule consistently achieves the best image quality across both metrics and datasets among the four schedules tested. Both metrics agree that polynomial yields superior generation quality, with optimal performance in the CFG range of 7 to 9.
+Then, we evaluate audio generation quality with ground-truth durations using 512 diffusion steps with CFG scales ranging from 1.0 to 10.0, temperature
+T
+=
+1.0
+T=1.0
+, and nucleus sampling (top-
+p
+=
+0.9
+p=0.9
+). We measure audio quality using FAD, WER, and AudioBox Aesthetics computed over 10,000 generated samples from the dataset.
+Figure 24
+shows that the polynomial schedule also consistently achieves the best audio generation quality across all six metrics evaluated. Unlike in image generation, the optimal CFG range is between 1 and 3.
+Appendix G
+Extended generations
+We present extended generations in
+Figure 26
+,
+Figure 27
+,
+Figure 28
+, and
+Figure 29
+and their respective complete list of prompts in
+Table 7
+,
+Table 8
+,
+Table 9
+, and
+Table 10
+. Note that the prompts come from synthetic captions and were selected among a larger set of generations based a mix of quality filtering and diversity.
+(a)
+(b)
+(c)
+(d)
+(e)
+(f)
+(g)
+(h)
+(i)
+(j)
+(k)
+(l)
+(m)
+(n)
+(o)
+(p)
+(q)
+(r)
+(s)
+(t)
+Figure 26
+:
+Samples generated by our model with different prompts. See
+Table 7
+for the extensive list of prompts.
+(u)
+(v)
+(w)
+(x)
+(y)
+(z)
+(aa)
+(ab)
+(ac)
+(ad)
+(ae)
+(af)
+(ag)
+(ah)
+(ai)
+(aj)
+(ak)
+(al)
+(am)
+(an)
+Figure 27
+:
+Samples generated by our model with different prompts.
+(ao)
+(ap)
+(aq)
+(ar)
+(as)
+(at)
+(au)
+(av)
+(aw)
+(ax)
+(ay)
+(az)
+(ba)
+(bb)
+(bc)
+(bd)
+(be)
+(bf)
+(bg)
+(bh)
+Figure 28
+:
+Samples generated by our model with different prompts.
+(bi)
+(bj)
+(bk)
+(bl)
+(bm)
+(bn)
+(bo)
+(bp)
+(bq)
+(br)
+(bs)
+(bt)
+(bu)
+(bv)
+(bw)
+(bx)
+(by)
+(bz)
+(ca)
+(cb)
+Figure 29
+:
+Samples generated by our model with different prompts.
+(a)
+Lagerstroemia macrocarpa Wall, Queen’s flower, Queen’s crape myrtle, Lythraceae. Close-up of a vibrant pink flower with a yellow center in full bloom, sharply focused against a blurred green outdoor background. Numerous small green buds at different stages surround the flower on thin green stems.
+(b)
+A cozy living room with a plush brown sofa and patterned pillows. A wooden coffee table sits in front, framed wall art above, rustic wooden ceiling, and a bed with a white comforter in the background. Decorative lighting and wall hangings add warmth.
+(c)
+A photograph of a rainbow trout in a body of water. The trout is facing the left side of the image. The water is clear and there are some small rocks at the bottom of the water. There are also some small fish in the water.
+(d)
+A close-up photograph of a painting with a variety of colors. The colors are bright and vibrant. The painting is made up of small squares of color that are all the same size.
+(e)
+Watercolor drawing of lady with punk makeup.
+(f)
+A teddy bear lies alone among the snow.
+(g)
+A close-up photo of dried white flowers with brown centers, surrounded by purple and green dried flowers. The arrangement is set against a plain white wall, emphasizing texture and muted tones.
+(h)
+A digital illustration of various food items rendered in black and white, arranged in a grid pattern on a white background.
+(i)
+A grand palace, likely the Palace of Versailles, with gold doors, statues, columns, and a clock tower. A formal garden with trimmed hedges and colorful flowers stands in front under a clear, sunny sky.
+(j)
+Fresh red cherries with stems in a white bowl with a blue rim on a teal surface. A few cherries and a green leaf lie outside the bowl, with a softly blurred background emphasizing freshness.
+(k)
+A wide shot of a fast-flowing blue river with white-water rapids, surrounded by steep rocky cliffs covered in dense green trees.
+(l)
+A close-up photo of a black and white dog looking up to the right. The dog wears a brown collar with a small bronze pendant against a dark brown background.
+(m)
+A tree in full bloom with deep lavender lilac flowers and vibrant green leaves, set against a clear blue sky with no clouds.
+(n)
+Composition with bread and rolls on kitchen table.
+(o)
+These windows and those in the next photo depict scenes from the Old Testament.
+(p)
+Brown boots with white heart designs on the toes, resting on a moss-covered ring. A blurred tree trunk and branches appear in the background.
+(q)
+A white bowl of mashed sweet potatoes garnished with sage, black pepper, and sea salt. In the background are a gravy boat, bread, green beans, and a pumpkin.
+(r)
+A golden retriever wearing a crown of yellow and white flowers, looking to the right, set in a green grassy field.
+(s)
+Three pink cocktails on a circular wooden tray, each garnished with lemon slices and mint, set against a white wall and green table.
+(t)
+A painting of a young girl in a pink dress and red coral necklace holding flowers in a lush landscape with forest and stream, conveying innocence and childhood beauty.
+Table 7
+:
+Prompts used to generate images in
+Figure 26
+.
+(u)
+A serene landscape with a snow-capped mountain beneath a clear blue sky. Tall golden grass fills the foreground, distant trees add contrast, and warm lighting suggests early morning or late afternoon.
+(v)
+A close-up photo of a circular apple pie on a wooden surface, with apples arranged in a circular pattern and dusted with powdered sugar.
+(w)
+A cartoon parrot wearing a blue-and-white sailor hat with an anchor, smiling while holding a guitar. The parrot has green and yellow feathers, an orange beak, blue eyes, and stands on a white background.
+(x)
+Five bowls of chia pudding arranged in a grid on a white surface, topped with peanut butter, berries, kiwi with chocolate chips, nuts with honey, and banana with granola under bright lighting.
+(y)
+A close-up photo of a hand holding a rolled up 20 Euro note. The background is out of focus, but there are green leaves and what appears to be a tree.
+(z)
+A close-up photo of a small pizza topped with red sauce, cheese, and herbs on a white plate placed on a wooden table.
+(aa)
+Fresh silver fish with pinkish tones displayed on crushed ice in a supermarket. The fish overlap slightly, with finely shaved white ice keeping them fresh and the background cropped tightly.
+(ab)
+An abandoned brick building with a sloped roof and chimney. Three doors are boarded up, one is open, and overgrown grass and trees suggest long-term neglect.
+(ac)
+Metallic bowls arranged in a semi-circle, each filled with vibrant powdered pigments including pink, blue, yellow, and green, photographed in close-up on a dark surface.
+(ad)
+A blue illustration of a skeleton running. The skeleton is highlighted in orange. The background is black.
+(ae)
+Expanded horse nostrils with rime on facial hairs
+(af)
+Rustic pumpkin soup in a white bowl on a woven mat, garnished with black pepper. Pumpkin seeds and a whole pumpkin appear nearby, creating a warm autumnal setting.
+(ag)
+A black and white illustration of a shaggy dog with pointed ears, wide eyes looking forward, and a slightly open mouth against a white background.
+(ah)
+A traditional Andalusian white village in Casares, Spain, with tightly packed white buildings and terracotta roofs built along a hillside, surrounded by greenery and lacking modern infrastructure.
+(ai)
+Watercolor botanical illustrations of a pink lotus and a rose with soft brushstrokes and detailed petals, isolated on a white background in a delicate hand-painted style.
+(aj)
+A colorful Day of the Dead illustration featuring a skull wearing a sombrero and holding maracas, surrounded by flowers on a clean white background.
+(ak)
+A handshake between two men in suits, one seated at a desk with papers and a pen, the other standing and smiling, with a bookshelf visible behind them.
+(al)
+Cactus plants with pink flowers in brown pots placed on a wooden table, set against tiled flooring and a brown-and-yellow tiled wall.
+(am)
+Stones and shells arranged in the shape of a flower on a plain white background.
+(an)
+Vintage hand drawn rustic wreath with cute spring flowers and hand written text Happy Mother’s Day
+Table 8
+:
+Prompts used to generate images in
+Figure 27
+.
+(ao)
+Skewers with charred meat, roasted golden potatoes, and roasted red tomatoes served on a white plate with a brown rim. The background is softly blurred with table elements visible.
+(ap)
+Blossom fruit. beautiful spring.
+(aq)
+An adult cow and calf lying on straw inside a wooden barn. The cow is brown with white patches, the calf mostly white with brown markings, lit by soft natural light.
+(ar)
+Slow Down Tours on the train.
+(as)
+A calm beach scene with a large wet boulder in the foreground, sandy shore, gentle blue waves, and a clear sky creating a tranquil atmosphere.
+(at)
+A forest landscape with green, red, and yellow foliage in the foreground and a mountain covered in autumn leaves in the background.
+(au)
+Gorgeous portrait of a blue peacock with silky blue feathers.
+(av)
+A large rock formation covered in green plants with light blue water in front and a cloudy sky above.
+(aw)
+A tall glass of green beverage with a purple lid on a wooden surface, surrounded by colorful signage with Chinese characters, suggesting a café or food stall setting.
+(ax)
+An ancient stone wall with Mayan carvings depicting figures, animals, and geometric shapes, weathered and textured in light gray stone.
+(ay)
+Abandoned barn in Sauk County, Wisconsin - LOC’s Public Domain Archive Public Domain Search.
+(az)
+Wrapped Up In Wool Penguin.
+(ba)
+A utility pole with multiple electrical wires and a street lamp in the foreground, with a dark wooden building and partly cloudy blue sky behind it.
+(bb)
+A cozy bedroom with a large bed, white comforter, beige walls, framed pictures, seating furniture, a rug, and a vintage chandelier with candle-style lights.
+(bc)
+A golden porcelain Turkish coffee cup and saucer with ornate detailing and a lion-shaped handle, isolated on a reflective surface against a white background.
+(bd)
+A person in a white dress holding a bouquet of white and pink roses with green foliage, set against a natural green background.
+(be)
+A detailed Carcassonne Mini board game tile depicting a medieval village with church, temple, river, and trees, rendered in a realistic illustrated style.
+(bf)
+A carved Halloween pumpkin with triangular eyes and jagged mouth, wearing a black witch hat, resting on dark leaves in a spooky setting.
+(bg)
+A white horse standing inside a fenced area with a red-and-white striped barrier, facing the camera with alert ears and trees in the background.
+(bh)
+A collage of contemporary furniture pieces including beds, shelving, dressers, mirrors, and chandeliers displayed across modern bedroom interiors.
+Table 9
+:
+Prompts used to generate images in
+Figure 28
+.
+(bi)
+A wide shot of a valley surrounded by snow-covered mountains under a cloudy sky, evenly lit by natural daylight.
+(bj)
+A white lighthouse on a rocky cliff surrounded by green vegetation, overlooking the ocean beneath a clear blue sky with scattered clouds.
+(bk)
+A creeping thistle flower with a vibrant pink center on a sepia-toned old paper background, softly lit with blank space for text.
+(bl)
+A dimly lit dining table set with plates of food and wine glasses. Three wine bottles are visible, chairs surround the table, and a wooden wall adds a cozy mood.
+(bm)
+Streets of Kanazawa - japanese, japan, kanazawa, street, building, oriental, lantern.
+(bn)
+A white bowl of soup with meat, carrots, and greens on a wooden table, with salt and pepper shakers, a tomato, and a beige napkin nearby.
+(bo)
+A close-up view of stalactites hanging from a cave ceiling, with rugged textured walls and contrasting light and shadow highlighting natural formations.
+(bp)
+A rocky shoreline at Nha Trang beach, Vietnam, with turquoise water creating white foam, calm sea beyond, and a clear sky with scattered clouds.
+(bq)
+A spider positioned at the center of its web, facing the camera, surrounded by green leaves with a softly blurred background and light specks.
+(br)
+Ship wreck "Superior Producer" in turquoise water of coral reef in Caribbean Sea.
+(bs)
+A bright cityscape with numerous beige buildings of varying roof styles, trees on the left, and clear sunny weather.
+(bt)
+A tree with a thick trunk near a dirt path leading into a canyon filled with orange rock formations and scattered pine trees.
+(bu)
+A cappuccino in a white porcelain cup and saucer on a wooden table, topped with a floral chocolate design and photographed with a soft blur.
+(bv)
+A quiet winter forest with a snow-covered path winding through densely packed trees under an overcast sky.
+(bw)
+A four-image collage showing stone buildings, a glass structure with purple light, and buildings near large bodies of water.
+(bx)
+A collage of 36 cat photos arranged in a uniform grid, each cat looking at the camera against a bright background.
+(by)
+A lush hillside with green grass, trees, and a large boulder in the foreground, with cloudy skies over the Bulbul hills in the background.
+(bz)
+A panoramic cityscape showing colorful residential buildings in the foreground and an industrial area with smokestacks under a clear blue sky.
+(ca)
+A vibrant garden with a tree full of ripe oranges near a swimming pool, featuring potted plants and an umbrella in bright light.
+(cb)
+Different spring blossoms in a little bottle with nature background.
+Table 10
+:
+Prompts used to generate images in
+Figure 29
+.
+Appendix H
+Contributions
+All authors contributed to writing this paper, designing the experiments and discussing results at each stage of the project.
+Code.
+General training code was written by Jason Ramapuram, Victor Turrisi, Louis Béthune and Vishnu Banna. Bruno Mlodozeniec and Dan Busbridge extended the baseline functional optimizers to support MuP and CompleteP. Evaluators were written by Pau Rodriguez Lopez in collaboration with Louis Béthune and Arno Blaas.
+Experiments.
+Scaling laws experiments were sculpted and executed by Louis Béthune in discussions with Amitis Shidani, Pierre Ablin and Jason Ramapuram. Main model (
+Section
+3.1
+) was trained by Victor Turrisi in discussions with Jason Ramapuram and Louis Béthune. Bruno Kacper Mlodozeniec wrote and executed the per-module hyper-parameter search (
+Appendix
+D
+) and crafted
+B
+crit
+B_{\textbf{crit}}
+experimental procedure that was executed by Louis Béthune (
+Section
+4.1
+). Inference ablations were crafted and executed by Lokesh Boominathan and Nikhil Bhendawade in discussions with Theo X. Olausson (
+Section
+7.3
+). Data mixtures experiments (
+Section
+7.2
+) were designed by Pierre Ablin and Louis Béthune, and executed by Nikhil Bhendawade and Louis Béthune. João Monteiro crafted and executed the anti-masking experiments (
+Section
+7.4
+) in discussions with Victor Turrisi, Jason Ramapuram, Louis Béthune and Amitis Shidani. Tokenizers were trained and benchmarked by Paul Dixon (
+Section
+B.1
+) and Devon Hjelm (
+Section
+B.2
+) in discussions with Jason Ramapuram and Victor Turrisi.
+Data.
+The data loading library was built by Victor Turrisi in collaboration with Louis Béthune. Data collection and pre-processing was done by Louis Béthune, Victor Turrisi, Joris Pelemans, Kari Noriy, Jason Ramapuram, Luca Zappella and Nikhil Bhendawade.
+General Infrastructure.
+Nick Henderson built the pipeline to build docker containers with all optimizations for networking and high-performance training.
+Theoretical formulation and situating work.
+The theoretical framework (
+Sections
+3
+and
+A
+) was crafted by Amitis Shidani in discussions with Pierre Ablin, Devon Hjelm and Arno Blaas. Grounding work with respect to relevant literature executed by Arno Blaas (
+Section
+2
+) in discussions with Amitis Shidani and Jason Ramapuram.
+Project Organization and Tech Lead.
+Overall project organization and guidance enabled by Irina Belousova, Luca Zappella, Russ Webb and Jason Ramapuram. Jason Ramapuram organized, setup scientific objectives, provided technical leadership and setup the preliminary fault tolerant, distributed scalable code-base for the project.
+Appendix I
+Acknowledgments
+We thank
+Samy Bengio,
+Jerremy Holland,
+Erik Wijmans,
+David Koski,
+Miguel Sarabia del Castillo,
+for their helpful feedback and critical discussions throughout the process of writing this paper;
+Michael Brooks,
+Denise Hui,
+Li Li,
+Rajat Phull,
+Evan Samanas,
+Guillaume Seguin,
+and the wider Apple infrastructure team for assistance with developing and running scalable, fault tolerant code.
+Names are in alphabetical order by last name within group.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

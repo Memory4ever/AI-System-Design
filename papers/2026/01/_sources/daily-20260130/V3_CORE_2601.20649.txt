@@ -1,0 +1,776 @@
+https://arxiv.org/html/2601.20649v1
+P2S: Probabilistic Process Supervision for General-Domain Reasoning Question Answering
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+Introduction
+Related Work
+Reinforcement Learning for Reasoning
+Reasoning in General Domains
+Process Reward Supervision
+Preliminaries
+Reasoning Optimization With RL
+Reinforcement Learning with Reference Probability Reward (RLPR)
+Methodology
+Problem Definition
+Overall Architecture
+Dynamic Gold-CoT Synthesis and Filtering
+Candidate Synthesis.
+Quality-Based Filtering.
+Path Faithfulness Reward (PFR)
+Time Complexity Analysis.
+Reward Shaping with Step-wise Weighting
+Hierarchical Reward Integration
+Cold-Start.
+Experiments
+Experimental Setup
+Datasets
+Evaluation Metrics
+Baselines
+Main Results
+Ablation Study
+Effect of Model Scale
+Analysis on Verifiable Subsets
+Case Study
+Conclusion
+Acknowledgments
+References
+A Experimental Details
+A.1 Implementation Details and Hyperparameters
+A.2 Training Dynamics Analysis
+B Algorithm Workflow
+License: arXiv.org perpetual non-exclusive license
+arXiv:2601.20649v1 [cs.CL] 28 Jan 2026
+P2S: Probabilistic Process Supervision for General-Domain Reasoning Question Answering
+Wenlin Zhong
+Chengyuan Liu
+Yiquan Wu
+††thanks: Corresponding author.
+Bovin Tan
+Changlong Sun
+Yi Wang
+Xiaozhong Liu
+Kun Kuang
+Abstract
+While reinforcement learning with verifiable rewards (RLVR) has advanced LLM reasoning in structured domains like mathematics and programming, its application to general-domain reasoning tasks remains challenging due to the absence of verifiable reward signals. To this end, methods like Reinforcement Learning with Reference Probability Reward (RLPR) have emerged, leveraging the probability of generating the final answer as a reward signal. However, these outcome-focused approaches neglect crucial step-by-step supervision of the reasoning process itself. To address this gap, we introduce Probabilistic Process Supervision (P2S), a novel self-supervision framework that provides fine-grained process rewards without requiring a separate reward model or human-annotated reasoning steps. During reinforcement learning, P2S synthesizes and filters a high-quality reference reasoning chain (gold-CoT). The core of our method is to calculate a Path Faithfulness Reward (PFR) for each reasoning step, which is derived from the conditional probability of generating the gold-CoT’s suffix, given the model’s current reasoning prefix. Crucially, this PFR can be flexibly integrated with any outcome-based reward, directly tackling the reward sparsity problem by providing dense guidance. Extensive experiments on reading comprehension and medical Question Answering benchmarks show that P2S significantly outperforms strong baselines.
+1School of Software Technology, Zhejiang Unirersity
+2College of Computer Science and Technology, Zhejiang Unirersity
+3Guanghua Law School, Zhejiang University
+4Chongqing Ant Consumer Finance Co,. Ltd , Ant Group
+5Worcester Polytechnic Institute, Worcester, USA
+{22451152, liucy1, wuyiquan, bovintan, 11921173, kunkuang}@zju.edu.cn,
+haonan.wy@myxiaojin.cn, xliu14@wpi.edu
+Introduction
+Large-scale Reinforcement Learning with Verifiable Rewards (RLVR) has emerged as a promising paradigm to advance the reasoning capabilities of Large Language Models (LLMs) (Guo et al. 2025a; Wen et al. 2025; Xu et al. 2025b). This approach has fueled a major leap forward, particularly in structured, verifiable domains such as mathematics and programming (Shao et al. 2024; Havrilla et al. 2024; Kumar et al. 2024; Cao et al. 2024). Within this paradigm, LLMs are trained using verifiable rewards computed directly from the model’s own final outcomes, such as matching ground truth answers, passing unit tests, or selecting the correct option in multiple-choice questions (MCQ) (Schulman et al. 2017; Setlur et al. 2024; Xie et al. 2025).
+Figure 1: Comparing reward mechanisms: P2S rewards the entire reasoning process.
+While RLVR has excelled in specific domains, its success does not readily transfer to general-domain reasoning. The free-form and stylistically diverse nature of answers in these tasks makes designing a direct, verifiable reward signal a challenge. Conventional solutions are inadequate: manually engineering reward functions is unscalable (Zeng et al. 2025; Hu et al. 2025), and training a specialized LLM as a verifier (Ma et al. 2025) demands extensive data annotation, yields unsatisfactory reward quality, and complicates the training pipeline. A more promising direction, Reinforcement Learning with Reference Probability Reward (RLPR) (Xu et al. 2025a; Yu et al. 2025b; Zhou et al. 2025), leverages the generation probability of the final answer as a reward. However, all these outcome-focused methods share critical flaws: they neglect step-by-step process supervision, which can lead models to discover “shortcut” solutions via flawed logic and exacerbates reward sparsity in complex problems.
+As shown in Figure 1, we compare P2S with RLVR and RLPR in general-domain QA. In contrast to domain-specific, sparse-reward verifiers (Figure 1, left) and purely outcome-focused RLPR (Figure 1, center), we argue that the supervisory signal within the reasoning chain itself remains a valuable, untapped resource. Therefore, we aim to design a new reward mechanism that moves beyond sparse outcomes and learns directly from the step-by-step reasoning process, providing more effective and fine-grained supervision for general-domain tasks.
+To remedy this oversight, directly supervising the reasoning process is a natural next step. However, prevailing approaches introduce significant burdens. Training a separate reward model necessitates a large corpus of human-annotated or LLM-generated preference data  (Lightman et al. 2023), incurring substantial annotation and computational costs. Alternatively, Monte Carlo search-based  (Wang et al. 2023) methods, which score each step via multiple rollouts to a terminal state, face severe scalability challenges. The required sample count grows prohibitively with the reasoning chain’s length, leading to immense computational overhead. This highlights a crucial need for a process supervision method that is both low-cost and computationally tractable.
+Our work addresses this challenge by introducing Probabilistic Process Supervision (P2S), a low-cost, self-bootstrapping mechanism that provides fine-grained, process-level supervision by scoring and learning from the model’s own reasoning paths, eliminating the need for external reward models or human annotations. To achieve this, we introduce two core techniques.
+First, we introduce a dynamic gold-CoT synthesis mechanism. For each problem, we prompt the model with the question and its ground truth answer to generate multiple candidate reasoning paths. These paths are then filtered based on both their final answer’s correctness and their internal reasoning quality, creating a high-quality, dynamically updated set of reference chains that adapts to the model’s evolving capabilities. Second, we introduce the Path Faithfulness Reward (PFR), our core innovation for dense, step-level supervision. PFR measures how “faithful” a generated reasoning path is to a reference gold-CoT. At each step of the generated path, PFR calculates the conditional probability of completing the rest of the gold-CoT from that point. This step-wise score quantifies whether the model is on a logically sound trajectory. These scores are then aggregated into a sample-level reward that penalizes early deviations and rewards consistent logical progression, thereby directly providing the dense, process-level signal needed to overcome reward sparsity. Finally, P2S operates within a flexible reinforcement learning paradigm. Our process-based PFR can be seamlessly combined with any outcome-based reward, creating a hybrid signal. This joint optimization ensures the model learns not only from successful outcomes but also from the quality of its reasoning process, providing a dense and robust reward signal even when all samples in a batch are incorrect.
+Extensive experiments on diverse benchmarks, including general-domain reading comprehension and medical QA, demonstrate that P2S significantly outperforms strong baselines. Our main contributions are summarized as follows:
+•
+We explore the challenging task of reinforcement learning for reasoning in general-domain QA, where traditional verifiable rewards are often unavailable. we identify the limitations of current outcome-focused approaches and propose a new direction centered on process-level supervision derived from the model’s own generation probabilities.
+•
+We introduce Probabilistic Process Supervision (P2S), a novel self-supervision framework that generates fine-grained, process-level rewards without costly external reward models or human annotations. At its core, P2S leverages two innovations: a dynamic Gold-CoT synthesis mechanism and our Path Faithfulness Reward (PFR).
+•
+We demonstrate through extensive experiments on diverse benchmarks, including general-domain reading comprehension and medical QA, that P2S consistently and significantly outperforms strong state-of-the-art baselines.
+Related Work
+Reinforcement Learning for Reasoning
+To advance beyond simple prompting for Chain-of-Thought (CoT) reasoning (Kojima et al. 2022; Wei et al. 2022), recent paradigms directly train LLMs, notably via reinforcement learning (RL) on reasoning traces (Shao et al. 2024; He et al. 2025). A successful branch, RLVR, excels in structured domains like math and code by using deterministic, binary outcome rewards from verifiers  (Guo et al. 2025a; Yu et al. 2025a; Ye et al. 2025). However, this reliance on verifiers makes RLVR unsuitable for general-domain reasoning, where such clear verification is often impossible.
+Reasoning in General Domains
+To enable reinforcement learning in general reasoning domains without clear verifiers, research has focused on designing reliable reward signals. One major direction is to train an external generative reward model to act as a judge (Mahan et al. 2024; Ma et al. 2025), which introduces the overhead of developing and maintaining an additional reward model during RL training. A competing approach avoids this by using the policy model’s internal feedback as a reward, leveraging signals such as self-certainty or the probability of the ground truth answer as a reward signal. (Xu et al. 2025a; Yu et al. 2025b; Zhou et al. 2025).
+Process Reward Supervision
+Process supervision improves LLM reasoning consistency by rewarding intermediate steps. While training reward models on human-annotated steps (Li et al. 2024; Lightman et al. 2023) is costly and unscalable, search-based alternatives like Monte Carlo search estimate step values via rollouts (Wang et al. 2023; Guo et al. 2025b). However, these methods incur prohibitive computational costs that scale poorly with reasoning length.
+Preliminaries
+We first introduce the reasoning optimization with RL, upon which many works build to perform RLVR. Then, we introduce the emerging approach of RLPR (Xu et al. 2025a; Yu et al. 2025b; Zhou et al. 2025).
+Reasoning Optimization With RL
+In order to enhance the reasoning ability of large models, we adopt Group Relative Policy Optimization (GRPO) (Shao et al. 2024) following the recent advancements such as DeepSeek-R1 (Guo et al. 2025a). Given a question-answer pair (q,a)(q,a), a behavior policy πθold\pi_{\theta_{\text{old}}} samples a group of GG individual responses {oi}i=1G\{o_{i}\}_{i=1}^{G}. The GRPO objective updates model parameters θ\theta as follows:
+𝒥GRPO​(θ)=𝔼(q,a)∼D,{oi}i=1G∼πθold(⋅|q)[1G∑i=1G1|oi|∑t=1|oi|{min[πθ​(oi,t|q,oi,<t)πθold​(oi,t|q,oi,<t)A^i,t,clip(πθ​(oi,t|q,oi,<t)πθold​(oi,t|q,oi,<t),1−ϵ,1+ϵ)A^i,t]−β𝔻KL(πθ∥πref)}]\begin{split}\mathcal{J}_{\text{GRPO}}(\theta)=&\mathbb{E}_{\begin{subarray}{c}(q,a)\sim D,\{o_{i}\}_{i=1}^{G}\sim\pi_{\theta_{\text{old}}}(\cdot|q)\end{subarray}}\\
+&\Bigg[\frac{1}{G}\sum_{i=1}^{G}\frac{1}{|o_{i}|}\sum_{t=1}^{|o_{i}|}\bigg\{\min\bigg[\frac{\pi_{\theta}(o_{i,t}|q,o_{i,<t})}{\pi_{\theta_{\text{old}}}(o_{i,t}|q,o_{i,<t})}\hat{A}_{i,t},\\
+&\text{clip}\left(\frac{\pi_{\theta}(o_{i,t}|q,o_{i,<t})}{\pi_{\theta_{\text{old}}}(o_{i,t}|q,o_{i,<t})},1-\epsilon,1+\epsilon\right)\hat{A}_{i,t}\bigg]\\
+&-\beta\mathbb{D}_{\text{KL}}(\pi_{\theta}\|\pi_{\text{ref}})\bigg\}\Bigg]\end{split}
+(1)
+The key distinction of GRPO is its advantage estimation for the tt-th token in the ii-th output, A^i,t\hat{A}_{i,t}. This involves a structured comparison across a group of GG outputs {𝐨i}i=1G\{\mathbf{o}_{i}\}_{i=1}^{G} sampled for the same prompt. Given corresponding rewards {Ri}i=1G\{R_{i}\}_{i=1}^{G}, the advantage is estimated as:
+A^i,t=ri−mean​({Ri}i=1G)std​({Ri}i=1G)\hat{A}_{i,t}=\frac{r_{i}-\text{mean}(\{R_{i}\}_{i=1}^{G})}{\text{std}(\{R_{i}\}_{i=1}^{G})}
+(2)
+In the context of RLVR, the reward rir_{i} is typically a verifiable signal, such as 1 if the final answer is correct and 0 otherwise.
+This group-normalized formulation steers the policy to assign higher probabilities to trajectories that outperform their peers within the same generation batch.
+Reinforcement Learning with Reference Probability Reward (RLPR)
+To address the scalability limitations of RLVR, a recent trend in general-domain reasoning is to adopt reinforcement learning paradigms that use probability-based reward signals. It leverages the LLM’s own knowledge.
+In a typical RLPR setup, for a given input query 𝐪\mathbf{q}, the policy model πθ\pi_{\theta} first generates a full response 𝐨\mathbf{o}, which includes both a reasoning path 𝐳\mathbf{z} and a final answer yy. The reward is not based on the correctness of the generated answer yy. Instead, it is computed from the model’s conditional probability of generating the tokens of the ground truth answer y∗y^{*}, given the generated reasoning path 𝐳\mathbf{z}. This can be formally expressed as the aggregated log-probability:
+rRLPR=∑t=1|y∗|log⁡πθ​(yt∗|𝐪,𝐳,y<t∗)r_{\text{RLPR}}=\sum_{t=1}^{|y^{*}|}\log\pi_{\theta}(y^{*}_{t}|\mathbf{q},\mathbf{z},y^{*}_{<t})
+(3)
+where yt∗y^{*}_{t} is the tt-th token of the ground truth answer.
+Figure 2: An overview of our Probabilistic Process Supervision (P2S) framework. (1) Gold-CoT Synthesis (Top): A dynamic reference path (Gold-CoT) is created by generating and filtering the policy model’s own reasoning outputs. (2) PFR Calculation (Bottom): For each new trace, a step-wise Path Faithfulness Reward (PFR) is computed by aligning it against the Gold-CoT. (3) Reward Shaping &\& Aggregation: The step-wise rewards are shaped using a sigmoid function to assign progressively higher weights to later reasoning steps. These weighted scores are then summed to produce the final, sample-level Path Faithfulness Reward (PFR) used for policy optimization.
+Methodology
+In this section, we begin by formally defining the problem, then outline the overall architecture of Probabilistic Process Supervision (P2S) framework, and finally, detail its core components.
+Problem Definition
+We consider the task of learning a reasoning policy for general-domain question answering. Formally, we are given a dataset 𝒟={(qi,yi∗)}i=1N\mathcal{D}=\{(q_{i},y^{*}_{i})\}_{i=1}^{N}, where qiq_{i} is a question or prompt, and yi∗y^{*}_{i} is its corresponding ground-truth final answer. A key characteristic of these tasks is their diversity, spanning multiple domains and featuring answers that are free-form text of varying lengths and styles.
+Our goal is to learn a policy πθ\pi_{\theta} that, given a prompt qq, generates a logically sound reasoning path 𝐳=(𝐳𝟏,𝐳𝟐,…,𝐳𝐓,)\mathbf{z}=(\mathbf{z_{1}},\mathbf{z_{2}},\dots,\mathbf{z_{T}},) which culminates in a final answer yy. This diversity in the target answers y∗y^{*} makes exact string matching an unsuitable objective. Therefore, our ultimate goal is to maximize the semantic similarity between the generated answer yy and the ground-truth y∗y^{*}.
+Overall Architecture
+As illustrated in Figure 2, our Probabilistic Process Supervision (P2S) framework operates as a self-improving loop that provides dense, process-level rewards for policy optimization. Firstly, within each iteration of the GRPO, a dynamic Gold-CoT synthesis mechanism leverages the current policy πθ\pi_{\theta}, guided by a ground truth answer, to generate and filter multiple candidate reasoning paths. This yields a high-quality set of Gold-CoTs specifically tailored for the current learning state. Concurrently, for each generated reasoning trace in the batch, our Path Faithfulness Reward (PFR) is computed by aligning it against a reference Gold-CoT and calculating step-wise conditional probabilities. These step-wise rewards are then weighted and aggregated into a single, sample-level process reward and used to update the policy πθ\pi_{\theta}, which provides a nuanced score for the entire reasoning path.
+Dynamic Gold-CoT Synthesis and Filtering
+To ensure a high-fidelity and adaptive supervision signal, P2S dynamically synthesizes and filters reference reasoning paths (Gold-CoTs) in each training iteration. This process involves two main steps: Candidate Synthesis and Quality-Based Filtering.
+Candidate Synthesis.
+To encourage the model to explore paths that lead to the correct answer, we prompt the policy model πθ\pi_{\theta} with both the query qq and the ground truth answer y∗y^{*} to generate a diverse set of KK candidate reasoning paths, {𝐨k}k=1K\{\mathbf{o}_{k}\}_{k=1}^{K} during this synthesis stage. This guided generation helps to efficiently sample trajectories within the vicinity of the correct solution space.
+{𝐨k}k=1K∼πθ(⋅|q,y∗)\{\mathbf{o}_{k}\}_{k=1}^{K}\sim\pi_{\theta}(\cdot|q,y^{*})
+(4)
+Quality-Based Filtering.
+Simply generating paths guided by the ground truth answer y∗y^{*} is insufficient, as they may still be logically flawed, trivial, or fail to reach the correct final answer. Therefore, a filtering stage is crucial to isolate only the highest-quality candidates.
+First, we discard any candidate 𝐨k\mathbf{o}_{k} that does not adhere to a required structural format. Following the standard of (Guo et al. 2025a), this format is <<think>>Reasoning<</think>><<answer>>Answer<</answer>>. This preliminary step ensures that the reasoning path 𝐳k\mathbf{z}_{k} and the final answer yky_{k} can be reliably parsed. Let the set of format-correct candidates be 𝒞formatted\mathcal{C}_{\text{formatted}}.
+Then, for each candidate in 𝒞formatted\mathcal{C}_{\text{formatted}}, we compute a quality score SkS_{k} as the conditional log-probability of generating the ground truth answer y∗y^{*} given the candidate’s reasoning 𝐳k\mathbf{z}_{k}:
+Sk=∑t=1|y∗|log⁡πθ​(yt∗|𝐪,𝐳k,y<t∗)S_{k}=\sum_{t=1}^{|y^{*}|}\log\pi_{\theta}(y^{*}_{t}|\mathbf{q},\mathbf{z}_{k},y^{*}_{<t})
+(5)
+For each problem qq, the definitive gold-CoT 𝐨∗\mathbf{o}^{*} is then selected by finding the candidate that maximizes this score:
+𝐨∗=arg⁡max𝐨k∈𝒞formatted​Sk\mathbf{o}^{*}=\underset{\mathbf{o}_{k}\in\mathcal{C}_{\text{formatted}}}{\arg\max}\,S_{k}
+The resulting set of candidates 𝒞gold\mathcal{C}_{\text{gold}} forms a dynamic and high-quality benchmark for the current training step. This self-improving mechanism creates a virtuous cycle: as the policy model πθ\pi_{\theta} improves, so does the quality of its self-generated supervision.
+Path Faithfulness Reward (PFR)
+The core of our P2S framework is the Path Faithfulness Reward (PFR), which provides a dense, step-level reward to guide the model’s reasoning process.
+The central intuition is that a high-quality reasoning prefix should significantly increase the likelihood of generating a subsequent, logically sound reasoning segment from a verified gold-CoT.
+We first segment the generated chain 𝐳\mathbf{z} into a sequence of up to MAX_STEP_NUM equally-sized steps, denoted as (z1,z2,…,zm)(z_{1},z_{2},\dots,z_{m}).
+This yields a sequence of prefixes p1,p2,…,pmp_{1},p_{2},\dots,p_{m}, where pi=𝐳[:i]p_{i}=\mathbf{z}[:i] is the concatenation of the first ii steps.
+Similarly, we define a suffix of the gold-CoT 𝐨∗\mathbf{o}^{*} starting at step tt as st=𝐨∗[t:]s_{t}=\mathbf{o}^{*}[t:].
+For each intermediate step ziz_{i} (where i<mi<m), we compute its reward by evaluating the quality of the full prefix pi=(z1,…,zi)p_{i}=(z_{1},\dots,z_{i}) that it concludes. This prefix-based evaluation not only assesses ziz_{i} within its full contextual history to ensure logical coherence, but also allows the prefix’s score to be directly attributed to ziz_{i} as the final, decisive step guiding the path forward.
+A naive approach would be to measure the conditional probability of generating a gold-CoT suffix given the prefix pip_{i}. However, a high probability might arise simply because the suffix itself is a common or high-probability sequence, regardless of the prefix’s quality. Following the work of (Xu et al. 2025a), to isolate the actual contribution of the prefix, we normalize the raw conditional probability by subtracting a baseline.
+This baseline is defined as the probability of generating the same suffix given the initial question qq and a masked version of the prefix pip_{i}, denoted pmaskedp_{\text{masked}}.
+The resulting score can thus be interpreted as the information gain provided by the final step ziz_{i} within the context of its preceding steps.
+The reward for step ziz_{i}, denoted rstep​(zi)r_{\text{step}}(z_{i}), is therefore defined by evaluating its corresponding prefix pip_{i} and finding the maximum log-probability gain over all valid suffixes within the definitive gold-CoT 𝐨∗\mathbf{o}^{*}:
+rstep​(zi):=maxt⁡(log⁡πθ​(st|q,pi)−log⁡πθ​(st|q,pmasked))r_{\text{step}}(z_{i}):=\max_{t}\left(\log\pi_{\theta}(s_{t}|q,p_{i})-\log\pi_{\theta}(s_{t}|q,p_{\text{masked}})\right)
+(6)
+For the final step zmz_{m}, however, the reward is treated differently.
+This step completes the entire reasoning path zz, and its quality is best assessed by its ability to produce the correct final answer.
+For this terminal step, the objective shifts from measuring information gain to ensuring absolute correctness.
+Therefore, its reward is defined directly by the conditional log-probability of generating the ground-truth answer y∗y^{*}, given the full reasoning path zz:
+rstep​(zm):=log⁡πθ​(y∗|q,z)r_{\text{step}}(z_{m}):=\log\pi_{\theta}(y^{*}|q,z)
+(7)
+Time Complexity Analysis.
+The computational overhead of P2S for a single problem instance is dominated by the number of forward passes (CfwdC_{\text{fwd}}) through the policy model πθ\pi_{\theta}.
+The process involves two main cost components per iteration.
+First, the Gold-CoT synthesis requires sampling and filtering KK candidate paths, incurring a cost proportional to K⋅CfwdK\cdot C_{\text{fwd}}.
+Second, the PFR calculation for a reasoning path with mm steps involves a search over suffixes, resulting in a complexity of approximately O⁡(m2⋅Cfwd)O(m^{2}\cdot C_{\text{fwd}}).
+Since mm is capped by a constant MAX_STEP_NUM, this complexity is well-controlled.
+Therefore, the total time complexity is O⁡((K+m2)⋅Cfwd)O((K+m^{2})\cdot C_{\text{fwd}}).
+This is a manageable trade-off, and the computation is highly parallelizable.
+Reward Shaping with Step-wise Weighting
+A simple averaging of step-wise rewards is suboptimal because it treats all steps equally. Instead, we adopt a strategy that allows the model a “grace period” for initial exploration, such as analyzing the problem or self-correcting from early missteps. To implement this, we introduce a weight shaping mechanism that assigns progressively higher importance to later reasoning steps, thereby focusing supervision on the more converged and critical stages of the reasoning process.
+To assign greater importance to later reasoning steps, we compute the final sample-level reward, RPFR-wR_{\text{PFR-w}}, as a weighted average of the step-wise rewards rstep​(zi)r_{\text{step}}(z_{i}).
+The weight for each step, wiw_{i}, is generated using a monotonically increasing standard sigmoid σ⁡(i)\sigma(i), ensuring that later steps contribute more significantly to the final reward. The formulation is as follows:
+RPFR-w=∑i=1mwi⋅rstep​(zi)∑i=1mwiR_{\text{PFR-w}}=\frac{\sum_{i=1}^{m}w_{i}\cdot r_{\text{step}}(z_{i})}{\sum_{i=1}^{m}w_{i}}
+(8)
+Model
+Drop
+MedicalQA
+ROUGE
+ACCClaude
+ACCGPT
+ACCVerifier
+ACCAvg
+ROUGE
+ACCClaude
+ACCGPT
+ACCVerifier
+ACCAvg
+Qwen2.5-1.5B-Instruct
+42.23
+51.67
+50.75
+49.15
+50.52
+40.30
+19.20
+19.20
+27.00
+21.80
+Prompt-Based
+COT
+41.97
+45.33
+49.00
+48.85
+47.73
+40.09
+20.40
+21.60
+26.60
+22.87
+Self-Consistency
+45.51
+51.17
+52.67
+52.35
+52.06
+38.76
+14.10
+17.13
+23.75
+18.33
+Fine-tuning and RL methods
+Full-Sft
+71.44
+66.00
+64.50
+63.42
+64.64
+50.92
+20.80
+20.04
+22.65
+21.28
+GRPO
+70.89
+60.00
+62.25
+62.12
+61.46
+46.21
+17.67
+21.00
+25.50
+21.39
+GRPO+SFT-loss
+66.18
+59.50
+63.00
+58.90
+60.47
+45.79
+21.00
+20.40
+24.15
+21.85
+SFT+GRPO
+75.28
+66.50
+70.14
+68.55
+68.40
+50.57
+23.33
+20.00
+23.80
+22.38
+General Reasoner
+73.03
+67.89
+65.32
+66.30
+66.50
+51.57
+19.18
+17.20
+27.45
+21.28
+RLPR methods
+DRO
+74.85
+66.28
+67.17
+66.65
+66.70
+50.52
+20.11
+19.20
+23.50
+20.94
+RLPR
+75.48
+67.18
+68.04
+67.57
+67.60
+51.14
+21.16
+20.75
+26.92
+22.94
+VeriFree
+71.98
+64.42
+62.17
+63.40
+63.33
+51.46
+21.98
+21.68
+22.85
+22.17
+P2S
+76.78
+69.11
+72.14
+70.85
+70.70
+52.90
+24.33
+22.67
+25.85
+24.28
+Table 1: Performance comparison of various Reasoning methods on general-domian QA task. Bold and underline indicate the best and second-best results, respectively.
+Hierarchical Reward Integration
+A key advantage of our P2S framework is its flexibility, as the Path Faithfulness Reward (RPFR-wR_{\text{PFR-w}}) can function either as a standalone process signal or be integrated with other rewards.
+We present a powerful hierarchical paradigm that combines P2S with an outcome-based reward, assigning scores with a clear priority.
+First, malformed trajectories are heavily penalized.
+If any trajectory yields a correct answer, we exclusively use this outcome signal to rapidly amplify the advantage of successful paths.
+Only when all valid paths fail does our dense PFR serve as a fallback, ensuring a fine-grained learning signal is always available to mitigate reward sparsity.
+This hierarchical logic can be formalized concisely. Let F⁡(i)∈{0,1}F(i)\in\{0,1\} be an indicator function where F⁡(i)=1F(i)=1 if the format of trajectory ii is correct. Let S𝒢=maxj∈𝒢⁡Routcome,jS_{\mathcal{G}}=\max_{j\in\mathcal{G}}R_{\text{outcome},j} be a binary variable indicating whether any trajectory in the group 𝒢\mathcal{G} was successful. The final reward RiR_{i} for trajectory ii is then:
+Ri={−1if ​F​(i)=0Routcome,iif ​F​(i)=1​ and ​S𝒢=1RPFR-w,iif ​F​(i)=1​ and ​S𝒢=0R_{i}=\begin{cases}-1&\text{if }F(i)=0\\
+R_{\text{outcome},i}&\text{if }F(i)=1\text{ and }S_{\mathcal{G}}=1\\
+R_{\text{PFR-w},i}&\text{if }F(i)=1\text{ and }S_{\mathcal{G}}=0\end{cases}
+(9)
+Cold-Start.
+To ensure training stability, we adopt a curriculum warm-up strategy (Liu et al. 2025). For the initial SwarmupS_{\text{warmup}} training steps, the model learns the basic task structure using only format-based rewards, with our PFR component deactivated. Subsequently, the full P2S reward mechanism is enabled to refine the logical quality of the reasoning process.
+Experiments
+Experimental Setup
+Datasets
+We focus on reasoning tasks that lack strict structural verifiers due to their open-ended and stylistically diverse answers, but still possess objectively correct outcomes. Accordingly, we train and evaluate our method on two datasets selected to reflect this challenge. (1) DROP (Dua et al. 2019): A challenging reading comprehension benchmark that requires discrete reasoning over open-domain Wikipedia text, such as arithmetic and sorting. (2) Medical QA (Chen et al. 2024): An open-ended medical question-answering dataset derived from challenging medical exams. For both datasets, we process into a question-answering format and filter to include questions under 2000 and answers between 1-50 characters, creating a 10k/2k random train/test split for each.
+Evaluation Metrics
+Our evaluation employs two complementary metrics for final answers. For lexical similarity, we use ROUGE-1 F1 to measure overlap with the ground truth answers. To assess semantic correctness, we use LLM-as-a-Judge (Gu et al. 2024) to judge semantic equivalence, including: Claude 4 Sonnet (ACCClaude), GPT-4o (ACCGPT), and a trained 1.5B general-domain Verifier (ACCVerifier) (Ma et al. 2025). Finally, we report the mean of these three accuracy scores, ACCAvg, as a single, robust measure of correctness.
+Baselines
+We compare our method against several baselines, all built upon the Qwen2.5-1.5B-Instruct model. Full implementation details for all experiments are provided in Appendix A. And our baselines are grouped into three categories. (1) Prompt-based methods that require no fine-tuning: Chain-of-Thought (CoT) (Wei et al. 2022) and Self-Consistency (Wang et al. 2022). (2) Fine-tuning and RL methods, including full supervised fine-tuning (Full-SFT) and several GRPO (Shao et al. 2024) variants. Standalone GRPO, the two-stage SFT+GRPO, and GRPO+SFT-loss (which integrates off-policy knowledge via an auxiliary SFT loss) all use ROUGE-1 F1 as their outcome-based reward. In contrast, General Reasoner (Ma et al. 2025) also employs GRPO but replaces this reward with judgments from a trained 1.5B LLM verifier that assesses semantic equivalence. (3) RLPR-based methods, which leverage the model’s own probabilities for reward, including DRO (Xu et al. 2025a), the original RLPR (Yu et al. 2025b), and VeriFree (Zhou et al. 2025). To ensure a fair comparison and mitigate reward collapse during RL phases, P2S along with the General Reasoner and RLPR-based baselines, adheres to a same cold-start Supervised Fine-Tuning paradigm before RL training (Guo et al. 2025a).
+Main Results
+Main Results in Table 1 show our method, P2S, outperforms all baselines on both the DROP and MedicalQA datasets. We can draw several key conclusions from the results:
+1) P2S significantly improves general-domain reasoning performance. On DROP, it reaches an ACCAvg of 70.70, exceeding the strongest fine-tuned baseline (SFT+GRPO at 68.40) by 2.3 points. This leadership extends to MedicalQA, where P2S achieves an ACCAvg of 24.28, outperforming the next best method (RLPR at 22.94) by over 1.3 points.
+2) Our core hypothesis—that dense process supervision is critical—is validated by these results. P2S’s superiority is particularly clear against RLPR-based methods (e.g., RLPR, VeriFree). On DROP, for instance, P2S surpasses the strongest RLPR-based method (RLPR) by 1.3 points in ROUGE (76.78 vs. 75.48) and by over 3 points in ACCAvg (70.70 vs. 67.60). This dual improvement proves that our process-focused supervision not only mitigates the reward sparsity of outcome-only approaches but also guides the model to produce answers superior in both form and substance.
+3) P2S outperforms representative fine-tuning and RL paradigms, highlighting the efficacy of verifier-free rewards. On DROP, P2S surpasses all GRPO and RLPR variants. More notably, it outperforms General Reasoner by a significant margin of over 4 points in ACCAvg (70.70 vs. 66.50), which uses a 1.5B LLM verifier for its reward signal. This is a crucial finding: our internal, process-based rewards are more effective than guidance from a costly external verifier. Furthermore, the reliability of such verifiers is questionable, as evidenced on MedicalQA. General Reasoner’s ACCVerifier score (27.45) is substantially inflated compared to judgments from large-scale models like Claude (19.18) and GPT (17.20). This discrepancy underscores the robustness and efficiency of our verifier-free P2S framework, especially in new domains.
+Ablation Study
+Our ablation study on DROP (Table 2) validates the contribution of each key component in the P2S framework by systematically removing them from the full model.
+Gold-CoT Filtering (GCF) is Crucial. Replacing our Gold-CoT filtering with random path selection (w/o GCF) causes the most substantial performance drop, reducing ACCAvg by 4.5 points. This confirms that high-quality, faithful reasoning paths are a critical foundation for effective process supervision.
+Path Faithfulness Reward (PFR) is the core contribution. Removing our core PFR component (w/o PFR) results in a 2.3-point decrease in ACCAvg. This directly validates the effectiveness of our proposed PFR as a critical component for process supervision.
+Advanced Reward Mechanisms are Effective. We also validated our reward design choices. Replacing sigmoid-based weight shaping with simple averaging (w/o RS) drops ACCAvg by 2.7 points, confirming the benefit of prioritizing later reasoning steps. Similarly, a naive reward summation (w/o HRI) is less effective than our hierarchical integration, proving the advantage of our dynamic fusion strategy.
+Model
+ROUGE
+ACCClaude
+ACCGPT-4o
+ACCVerifier
+ACCAvg
+P2S (Full)
+76.78
+69.11
+72.14
+70.85
+70.70
+w/o GCF
+71.46
+64.21
+67.22
+67.21
+66.21
+w/o PFR
+75.28
+66.50
+70.14
+68.55
+68.40
+w/o RS
+74.91
+64.10
+69.88
+69.94
+67.97
+w/o HRI
+76.70
+68.20
+71.27
+70.20
+69.89
+Table 2: Ablation study of P2S components on DROP. P2S (Full) is our complete model; w/o GCF removes Gold-CoT filtering; w/o PFR removes our core Path Faithfulness Reward; w/o RS removes sigmoid-based reward shaping; and w/o HRI removes hierarchical reward integration.
+Effect of Model Scale
+To investigate its scalability, we evaluate P2S against the untuned base model and the strong SFT+GRPO baseline at 1.5B and 3B scales on DROP (Table 3). Results highlight two key findings. First, P2S shows remarkable efficiency: our 1.5B model (70.70 ACCAvg) significantly outperforms the much larger 3B base model (62.77), suggesting our process supervision unlocks capabilities beyond simply scaling parameters. Second, P2S’s consistent superiority at both scales confirms it is a robust and effective enhancement across different model sizes.
+Model Scale
+Base
+SFT+GRPO
+P2S (Ours)
+ROUGE
+ACCAvg
+ROUGE
+ACCAvg
+ROUGE
+ACCAvg
+1.5B
+42.23
+50.52
+75.28
+68.40
+76.78
+70.70
+3B
+47.96
+62.77
+81.16
+74.41
+82.08
+77.30
+Table 3: Performance on DROP across model scales.
+Analysis on Verifiable Subsets
+We study the effectiveness of P2S on domains with readily available verifiers. To this end, we created two verifiable subsets—DROP-verifiable (5k) and MedicalQA-verifiable (2.35k)—by filtering for instances with single-word answers. On these, we compare P2S against two outcome-only baselines: the probabilistic RLPR and the rule-based RLVR.
+As shown in Figure 3, P2S consistently outperforms both baselines on both subsets, across both exact match (ACCexact) and verifier-based average accuracy (ACCAvg).This crucial finding proves that our P2S provides a fundamentally superior learning signal, extending its benefits far beyond merely overcoming reward sparsity, even in ideal settings for outcome-only methods.
+Figure 3: P2S outperforms in verifiable tasks
+Case Study
+Figure 4 provides a case study to illustrate how our Path Faithfulness Reward (PFR) works. Given a Gold-CoT, we analyze two incorrect reasoning paths, z1z_{1} and z2z_{2}.
+In path z1z_{1}, the model makes an early error by analyzing the wrong dates (highlighted in light blue), leading to a low reward score for that step (e.g., 0.12). The error propagates, resulting in even lower scores for subsequent steps (0.09). In contrast, path z2z_{2} correctly identifies the initial entities (highlighted in orange), and our PFR mechanism appropriately assigns a high reward to this correct step (0.87).
+Although both paths ultimately fail to produce the correct final answer, our PFR is capable of discerning valuable, correct sub-steps within an overall incorrect reasoning process. This fine-grained reward allows our framework to reinforce partially correct reasoning even within failed attempts.
+Figure 4: Case Study
+Conclusion
+In this paper, we introduced Probabilistic Process Supervision (P2S), a novel, low-cost self-supervision framework. At its core, P2S leverages two key innovations: a dynamic mechanism for synthesizing high-quality Gold-CoTs and the Path Faithfulness Reward (PFR), which provides a dense, step-by-step signal by measuring the faithfulness of a generated reasoning path to a reference.
+Our extensive experiments demonstrated that P2S significantly outperforms strong baselines on challenging reasoning benchmarks. This work proves that it is both feasible and effective to learn directly from the reasoning process itself without external reward models or human annotation.
+Acknowledgments
+This work was supported in part by the “Pioneer” and “Leading Goose” R&D Program of Zhejiang (2025C02037), the National Natural Science Foundation of China (62376243, 62406287), Key R&D Program of Hangzhou (2025SZDA0254), and Ant Group, Chongqing Ant Consumer Finance Co. All opinions in this paper are those of the authors and do not necessarily reflect the views of the funding agencies.
+References
+Cao et al. (2024)
+Y. Cao, H. Zhao, Y. Cheng, T. Shu, Y. Chen, G. Liu, G. Liang, J. Zhao, J. Yan, and Y. Li
+Survey on large language model-enhanced reinforcement learning: concept, taxonomy, and methods.
+IEEE Transactions on Neural Networks and Learning Systems.
+Cited by: Introduction.
+Chen et al. (2024)
+J. Chen, Z. Cai, K. Ji, X. Wang, W. Liu, R. Wang, J. Hou, and B. Wang
+HuatuoGPT-o1, towards medical complex reasoning with llms.
+External Links: 2412.18925,
+Link
+Cited by: Datasets.
+Dua et al. (2019)
+D. Dua, Y. Wang, P. Dasigi, G. Stanovsky, S. Singh, and M. Gardner
+DROP: a reading comprehension benchmark requiring discrete reasoning over paragraphs.
+In Proc. of NAACL,
+Cited by: Datasets.
+Gu et al. (2024)
+J. Gu, X. Jiang, Z. Shi, H. Tan, X. Zhai, C. Xu, W. Li, Y. Shen, S. Ma, H. Liu, et al.
+A survey on llm-as-a-judge.
+arXiv preprint arXiv:2411.15594.
+Cited by: Evaluation Metrics.
+Guo et al. (2025a)
+D. Guo, D. Yang, H. Zhang, J. Song, R. Zhang, R. Xu, Q. Zhu, S. Ma, P. Wang, X. Bi, et al.
+Deepseek-r1: incentivizing reasoning capability in llms via reinforcement learning.
+arXiv preprint arXiv:2501.12948.
+Cited by: Figure 5,
+§A.1,
+Introduction,
+Reinforcement Learning for Reasoning,
+Reasoning Optimization With RL,
+Quality-Based Filtering.,
+Baselines.
+Guo et al. (2025b)
+Y. Guo, L. Xu, J. Liu, D. Ye, and S. Qiu
+Segment policy optimization: effective segment-level credit assignment in rl for large language models.
+arXiv preprint arXiv:2505.23564.
+Cited by: Process Reward Supervision.
+Havrilla et al. (2024)
+A. Havrilla, Y. Du, S. C. Raparthy, C. Nalmpantis, J. Dwivedi-Yu, M. Zhuravinskyi, E. Hambro, S. Sukhbaatar, and R. Raileanu
+Teaching large language models to reason with reinforcement learning.
+arXiv preprint arXiv:2403.04642.
+Cited by: Introduction.
+He et al. (2025)
+J. He, J. Liu, C. Y. Liu, R. Yan, C. Wang, P. Cheng, X. Zhang, F. Zhang, J. Xu, W. Shen, et al.
+Skywork open reasoner 1 technical report.
+arXiv preprint arXiv:2505.22312.
+Cited by: Reinforcement Learning for Reasoning.
+Hu et al. (2025)
+J. Hu, Y. Zhang, Q. Han, D. Jiang, X. Zhang, and H. Shum
+Open-reasoner-zero: an open source approach to scaling up reinforcement learning on the base model.
+arXiv preprint arXiv:2503.24290.
+Cited by: Introduction.
+Hugging Face (2025)
+Hugging Face
+Open r1: a fully open reproduction of deepseek-r1.
+External Links: Link
+Cited by: Appendix A.
+Kojima et al. (2022)
+T. Kojima, S. S. Gu, M. Reid, Y. Matsuo, and Y. Iwasawa
+Large language models are zero-shot reasoners.
+Advances in neural information processing systems 35, pp. 22199–22213.
+Cited by: Reinforcement Learning for Reasoning.
+Kumar et al. (2024)
+A. Kumar, V. Zhuang, R. Agarwal, Y. Su, J. D. Co-Reyes, A. Singh, K. Baumli, S. Iqbal, C. Bishop, R. Roelofs, et al.
+Training language models to self-correct via reinforcement learning.
+arXiv preprint arXiv:2409.12917.
+Cited by: Introduction.
+Li et al. (2024)
+J. Li, X. Liang, J. Zhang, Y. Yang, C. Feng, and Y. Gao
+PSPO*: an effective process-supervised policy optimization for reasoning alignment.
+arXiv preprint arXiv:2411.11681.
+Cited by: Process Reward Supervision.
+Lightman et al. (2023)
+H. Lightman, V. Kosaraju, Y. Burda, H. Edwards, B. Baker, T. Lee, J. Leike, J. Schulman, I. Sutskever, and K. Cobbe
+Let’s verify step by step.
+In The Twelfth International Conference on Learning Representations,
+Cited by: Introduction,
+Process Reward Supervision.
+Liu et al. (2025)
+Z. Liu, C. Gong, X. Fu, Y. Liu, R. Chen, S. Hu, S. Zhang, R. Liu, Q. Zhang, and D. Tu
+GHPO: adaptive guidance for stable and efficient llm reinforcement learning.
+arXiv preprint arXiv:2507.10628.
+Cited by: Cold-Start..
+Ma et al. (2025)
+X. Ma, Q. Liu, D. Jiang, G. Zhang, Z. Ma, and W. Chen
+General-reasoner: advancing llm reasoning across all domains.
+arXiv preprint arXiv:2505.14652.
+Cited by: Introduction,
+Reasoning in General Domains,
+Evaluation Metrics,
+Baselines.
+Mahan et al. (2024)
+D. Mahan, D. Van Phung, R. Rafailov, C. Blagden, N. Lile, L. Castricato, J. Fränken, C. Finn, and A. Albalak
+Generative reward models.
+arXiv preprint arXiv:2410.12832.
+Cited by: Reasoning in General Domains.
+Qwen et al. (2025)
+Qwen, :, A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu, F. Huang, H. Wei, H. Lin, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Lin, K. Dang, K. Lu, K. Bao, K. Yang, L. Yu, M. Li, M. Xue, P. Zhang, Q. Zhu, R. Men, R. Lin, T. Li, T. Tang, T. Xia, X. Ren, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Wan, Y. Liu, Z. Cui, Z. Zhang, and Z. Qiu
+Qwen2.5 technical report.
+External Links: 2412.15115,
+Link
+Cited by: Appendix A.
+Schulman et al. (2017)
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+Proximal policy optimization algorithms.
+arXiv preprint arXiv:1707.06347.
+Cited by: Introduction.
+Setlur et al. (2024)
+A. Setlur, C. Nagpal, A. Fisch, X. Geng, J. Eisenstein, R. Agarwal, A. Agarwal, J. Berant, and A. Kumar
+Rewarding progress: scaling automated process verifiers for llm reasoning.
+arXiv preprint arXiv:2410.08146.
+Cited by: Introduction.
+Shao et al. (2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. Li, Y. Wu, et al.
+Deepseekmath: pushing the limits of mathematical reasoning in open language models.
+arXiv preprint arXiv:2402.03300.
+Cited by: Introduction,
+Reinforcement Learning for Reasoning,
+Reasoning Optimization With RL,
+Baselines.
+von Werra et al. (2020)
+L. von Werra, Y. Belkada, L. Tunstall, E. Beeching, T. Thrush, N. Lambert, S. Huang, K. Rasul, and Q. Gallouédec
+TRL: transformer reinforcement learning.
+GitHub.
+Note: https://github.com/huggingface/trl
+Cited by: Appendix A.
+Wang et al. (2023)
+P. Wang, L. Li, Z. Shao, R. Xu, D. Dai, Y. Li, D. Chen, Y. Wu, and Z. Sui
+Math-shepherd: verify and reinforce llms step-by-step without human annotations.
+arXiv preprint arXiv:2312.08935.
+Cited by: Introduction,
+Process Reward Supervision.
+Wang et al. (2022)
+X. Wang, J. Wei, D. Schuurmans, Q. Le, E. Chi, S. Narang, A. Chowdhery, and D. Zhou
+Self-consistency improves chain of thought reasoning in language models.
+arXiv preprint arXiv:2203.11171.
+Cited by: Baselines.
+Wei et al. (2022)
+J. Wei, X. Wang, D. Schuurmans, M. Bosma, F. Xia, E. Chi, Q. V. Le, D. Zhou, et al.
+Chain-of-thought prompting elicits reasoning in large language models.
+Advances in neural information processing systems 35, pp. 24824–24837.
+Cited by: Reinforcement Learning for Reasoning,
+Baselines.
+Wen et al. (2025)
+L. Wen, Y. Cai, F. Xiao, X. He, Q. An, Z. Duan, Y. Du, J. Liu, L. Tang, X. Lv, et al.
+Light-r1: curriculum sft, dpo and rl for long cot from scratch and beyond.
+arXiv preprint arXiv:2503.10460.
+Cited by: Introduction.
+Xie et al. (2025)
+T. Xie, Z. Gao, Q. Ren, H. Luo, Y. Hong, B. Dai, J. Zhou, K. Qiu, Z. Wu, and C. Luo
+Logic-rl: unleashing llm reasoning with rule-based reinforcement learning.
+arXiv preprint arXiv:2502.14768.
+Cited by: Introduction.
+Xu et al. (2025a)
+Y. Xu, T. Chakraborty, S. Sharma, L. Nunes, E. Kıcıman, S. Lu, and R. Chandra
+Direct reasoning optimization: llms can reward and refine their own reasoning for open-ended tasks.
+arXiv preprint arXiv:2506.13351.
+Cited by: Introduction,
+Reasoning in General Domains,
+Preliminaries,
+Path Faithfulness Reward (PFR),
+Baselines.
+Xu et al. (2025b)
+Z. Xu, X. Yue, Z. Wang, Q. Liu, X. Zhao, J. Zhang, W. Zeng, W. Xing, D. Kong, C. Lin, et al.
+Copyright protection for large language models: a survey of methods, challenges, and trends.
+arXiv preprint arXiv:2508.11548.
+Cited by: Introduction.
+Ye et al. (2025)
+Y. Ye, Z. Huang, Y. Xiao, E. Chern, S. Xia, and P. Liu
+Limo: less is more for reasoning.
+arXiv preprint arXiv:2502.03387.
+Cited by: Reinforcement Learning for Reasoning.
+Yu et al. (2025a)
+Q. Yu, Z. Zhang, R. Zhu, Y. Yuan, X. Zuo, Y. Yue, W. Dai, T. Fan, G. Liu, L. Liu, et al.
+Dapo: an open-source llm reinforcement learning system at scale.
+arXiv preprint arXiv:2503.14476.
+Cited by: Reinforcement Learning for Reasoning.
+Yu et al. (2025b)
+T. Yu, B. Ji, S. Wang, S. Yao, Z. Wang, G. Cui, L. Yuan, N. Ding, Y. Yao, Z. Liu, et al.
+RLPR: extrapolating rlvr to general domains without verifiers.
+arXiv preprint arXiv:2506.18254.
+Cited by: Introduction,
+Reasoning in General Domains,
+Preliminaries,
+Baselines.
+Zeng et al. (2025)
+W. Zeng, Y. Huang, Q. Liu, W. Liu, K. He, Z. Ma, and J. He
+Simplerl-zoo: investigating and taming zero reinforcement learning for open base models in the wild.
+arXiv preprint arXiv:2503.18892.
+Cited by: Introduction.
+Zhou et al. (2025)
+X. Zhou, Z. Liu, A. Sims, H. Wang, T. Pang, C. Li, L. Wang, M. Lin, and C. Du
+Reinforcing general reasoning without verifiers.
+arXiv preprint arXiv:2505.21493.
+Cited by: Introduction,
+Reasoning in General Domains,
+Preliminaries,
+Baselines.
+Appendix A Experimental Details
+Our experiments, including P2S and all baselines, are conducted on Qwen2.5-1.5B-Instruct(Qwen et al. 2025) if not additionally specified. We conducted our experiments using the openr1  (Hugging Face 2025) codebase and the TRL  (von Werra et al. 2020) framework. We are thankful for these open-source repositories. For training efficiency, we utilize bfloat16 precision and enable FlashAttention-2. P2S and all baselines training was performed on 2 powerful H800 GPUs, each equipped with 80GB of memory and high memory bandwidth. The prompt template is shown in figure 5.
+Figure 5: We adopt the training and inference prompt of R1  (Guo et al. 2025a)
+A.1 Implementation Details and Hyperparameters
+Key hyperparameters for our main experiment are as follows. We set the learning rate to 3.0e-6 with a cosine learning rate scheduler and a warmup ratio of 0.1. We use a per-device training batch size of 16 with 8 gradient accumulation steps, resulting in an effective batch size of 256 using a
+temperature of 1. To ensure fairness, we maintain 4 samples per prompt for all RL-trained models. Unless otherwise specified, the implementations of all baseline methods follow their original papers and official codebases. For the RL rollout phase, inference is accelerated by vLLM, which is configured to use 80% of the GPU memory. With
+minimal truncation observed, the maximum prompt and completion lengths are set to 1024 and 2048 tokens, respectively. We train 500 steps for all RL models and three epochs for SFT models. For reproducibility, all runs use a fixed random seed of 42. In our method, the SwarmupS_{\text{warmup}} is configured to 20. For reliable answer extraction, we adopt the “<<think>>Reasoning<</think>><<answer>>Answer<</answer>>” template of R1  (Guo et al. 2025a) during training and use the striped content inside answer tags as the generated answer.
+The prompt used for all our large model-based verifiers is detailed in Figure 6.
+Figure 6: LLM-Based Verifier Prompt
+Figure 7: completion step reward comparison
+Figure 8: rewards comparison
+A.2 Training Dynamics Analysis
+We analyze the training dynamics in Figure  7 and  8. Figure  7 illustrates the internal characteristics of our P2S method compared to the SFT+GRPO baseline. The completion length (left) of P2S stabilizes at a significantly higher level (approx. 150 vs. 60 tokens), encouraging more detailed reasoning. Concurrently, its unique Path Faithfulness Reward (PFR, right) remains consistently positive, indicating that the model is effectively learning to generate faithful reasoning steps.
+These strong internal signals translate to superior external performance, as shown in Figure  8. While both methods quickly master the required response format (right), P2S consistently achieves a higher Rouge-1 F1 reward (left). This demonstrates that our framework’s ability to foster longer and more faithful reasoning directly results in higher-quality final outputs
+Appendix B Algorithm Workflow
+The complete workflow is outlined in Algorithm  1.
+Algorithm 1  The P2S Algorithm Flow
+0:
+Query qq, reference answer y∗y^{*}, policy model πθ\pi_{\theta}, number of candidates KK, current training step ScurrentS_{\text{current}}, the set of rollouts ℛz\mathcal{R}_{z} generated for the query qq by the policy model πθ\pi_{\theta} at the step ScurrentS_{\text{current}}.
+0:
+The set of rewards {Rz}z∈𝒢\{R_{z}\}_{z\in\mathcal{G}} for each path in the group.
+1:
+// ——————– Phase 1: Dynamic Gold-CoT Synthesis and Filtering ——————–
+2:
+Generate a set of KK candidate paths: 𝒞←{𝐨k∼πθ(⋅|q,y∗)}k=1K\mathcal{C}\leftarrow\{\mathbf{o}_{k}\sim\pi_{\theta}(\cdot|q,y^{*})\}_{k=1}^{K}.
+3:
+Filter for format-correct paths: 𝒞formatted←{𝐨k∈𝒞∣Rf​o​r​m​a​t​(𝐨k)==1}\mathcal{C}_{\text{formatted}}\leftarrow\{\mathbf{o}_{k}\in\mathcal{C}\mid\text{$R_{format}$}(\mathbf{o}_{k})==1\}.
+4:
+if 𝒞formatted≠∅\mathcal{C}_{\text{formatted}}\neq\emptyset then
+5:
+For each candidate in 𝒞formatted\mathcal{C}_{\text{formatted}}, we compute a quality score Sk=∑t=1|yk∗|log⁡πθ​(yk,t∗|𝐪,𝐳k,yk,<t∗)S_{k}=\sum_{t=1}^{|y^{*}_{k}|}\log\pi_{\theta}(y^{*}_{k,t}|\mathbf{q},\mathbf{z}_{k},y^{*}_{k,<t})
+6:
+Select
+6:
+𝐨∗←arg⁡max𝐨k∈𝒞formatted​Sk\mathbf{o}^{*}\leftarrow\underset{\mathbf{o}_{k}\in\mathcal{C}_{\text{formatted}}}{\arg\max}\,S_{k}
+7:
+else
+8:
+𝐨∗←null\mathbf{o}^{*}\leftarrow\text{null}. {No valid candidates were found.}
+9:
+end if
+10:
+// ——————– Phase 2: Reward Calculation for a Generated Path ——————–
+11:
+for each path zz in the group 𝒢\mathcal{G} do
+12:
+// ——————– Hierarchical Reward Logic and Cold Start for current path zz ——————–
+13:
+if Format of zz is invalid then
+14:
+Rz←−CpenaltyR_{z}\leftarrow-C_{\text{penalty}}; continue
+15:
+end if
+16:
+Let S𝒢=1S_{\mathcal{G}}=1 if any path in the batch 𝒢\mathcal{G} produced the correct answer, else S𝒢=0S_{\mathcal{G}}=0.
+17:
+if S𝒢==1S_{\mathcal{G}}==1 then
+18:
+Rz←Routcome​(z)R_{z}\leftarrow R_{\text{outcome}}(z); continue
+19:
+end if
+20:
+if Scurrent<SwarmupS_{\text{current}}<S_{\text{warmup}} then
+21:
+Rz←0R_{z}\leftarrow 0; continue
+22:
+end if
+23:
+if 𝐨∗==null\mathbf{o}^{*}==\text{null} then
+24:
+Rz←0R_{z}\leftarrow 0; continue
+25:
+end if
+26:
+// ——————– PFR Calculation for current path zz ——————–
+27:
+Segment zz into mm steps (z1,…,zm)(z_{1},\dots,z_{m}).
+28:
+Let pi=(p1,…,pm)p_{i}=(p_{1},\dots,p_{m}) be the prefix of the path.
+29:
+Let st=(s1,…,s|o∗|)s_{t}=(s_{1},\dots,s_{|o^{*}|}) be the suffix of the gold-CoT path o∗o^{*}.
+30:
+for i=1i=1 to mm do
+31:
+if i << m then
+32:
+Compute rstep​(zi):=maxt⁡(log⁡πθ​(st|q,pi)−log⁡πθ​(st|q,pmasked))r_{\text{step}}(z_{i}):=\max_{t}\left(\log\pi_{\theta}(s_{t}|q,p_{i})-\log\pi_{\theta}(s_{t}|q,p_{\text{masked}})\right)
+33:
+else if i == m then
+34:
+Compute rstep​(zm):=log⁡πθ​(y∗|q,z)r_{\text{step}}(z_{m}):=\log\pi_{\theta}(y^{*}|q,z)
+35:
+end if
+36:
+end for
+37:
+Compute step weights using the sigmoid function: wi=σ⁡(i)=11+e−iw_{i}=\sigma(i)=\frac{1}{1+e^{-i}} (for i=1,…,mi=1,\dots,m).
+38:
+Compute RPFR-w=∑i=1mwi⋅rstep​(zi)∑i=1mwiR_{\text{PFR-w}}=\frac{\sum_{i=1}^{m}w_{i}\cdot r_{\text{step}}(z_{i})}{\sum_{i=1}^{m}w_{i}}.
+39:
+Rz←RPFR-wR_{z}\leftarrow R_{\text{PFR-w}}.
+40:
+end for
+41:
+return {Rz}z∈𝒢\{R_{z}\}_{z\in\mathcal{G}}
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

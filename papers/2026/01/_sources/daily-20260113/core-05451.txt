@@ -1,0 +1,276 @@
+URL https://arxiv.org/html/2601.05451v1; sections S3 to S6 excluded; result tables omitted; fetched 2026-10-03
+
+
+
+ 3 Methods 
+
+
+ 
+ Figure 2: The high level approach of RingSQL . Schema-independent templates are filled in with schema-specific values. Random filters are generated in order to produce a wider variety of questions and incorporated into the filled plan template. The filled plan templates are then deterministically converted to SQL to produce the final query. An LLM is used to produce more natural sounding question based on the filled question template. 
+ 
+ 
+
+In this section, we present the components that work together in order to generate high quality text-to-SQL training data for a given relational database. The high level process of RingSQL is shown in Figure 2 . At the core of this approach are schema-independent query templates that provide analytic plans that can be filled with domain specific information before being directly converted to a corresponding SQL query. These query templates each have one or more question templates that are filled in to produce a question that the associated SQL query can answer. These questions are rephrased using a large language model in order to produce more natural sounding language and improve the diversity of questions. Randomized filters can be generated and added to the filled in query templates in order to generate a more diverse set of queries and questions, as well as make the questions more reflective of real world querying scenarios. A full example of using RingSQL to generate a question-query pair can be seen in Appendix A . 
+ 
+
+
+
+ 3.1 Schema-Independent Templates 
+
+ 
+
+For the query template representation, we adopt Structured Question Representation (SQR) proposed by Sterbentz et al. (2024) . Rather than operating directly on the underlying database schema as with SQL, SQR operates on the entities and attributes defined by a Ring. Rings are a simple semantic labeling of the database that captures three key aspects of the data: 1) the entities described by the data, their attributes, and the relationships between them, 2) how to access them in the database based on their corresponding tables and columns, and 3) the natural language names of entities and their attributes. The first is used to fill in the SQR templates, the second in the mapping of SQR templates to specific SQL queries, and the third in the generation of language for questions. Entities correspond to one or more tables, attributes to the columns of these tables, and relationships to the joins between them. The simple nature of the Rings allows them to be created programmatically based on the database DDL, as we do in our experiments. 
+ 
+ 
+
+The use of Rings and SQR templates, rather than SQL templates, decouples data access, which is specific to the database schema, from data analysis. This formulation allows for schema-specific information, such as joins, to be abstracted away when defining query templates. This makes it ideal for defining templates that are reusable across diverse database schemas. 
+ 
+
+
+
+ 3.1.1 Template Structure 
+
+ 
+
+Query templates are defined by three components: the input, the SQR template, and one or more question templates. A fully specified example query template can be seen in Figure 3 of Appendix A . 
+ 
+ 
+
+The inputs to the query templates are one or more attributes of an entity in a Ring. These define the primary columns and data to be used in the query. Inputs can have mandatory filters defined for them which is useful for specifying if an individual or cohort with a specific property should be retrieved in the data and later used during analysis in the SQR template. 
+ 
+ 
+
+The SQR template is a complete SQR plan with various components replaced by slots to be filled in. These slots are filled by one or more random values including attributes of a Ring entity, random values derived from the database, and sorting direction strings. Each slot can have additional labels that help indicate what value should fill it. For example, Expression indicates this slot should be filled with the natural language description of an attribute, and Value indicates this slot should be filled with a specific value of an attribute. Each slot in a SQR template is uniquely identifiable in the plans. 
+ 
+ 
+
+These schema-independent templates make it easy to target specific question types. However, training robust text-to-SQL models also requires question–query pairs that span a wide range of query structures. To address this, we complement the fixed templates with a set of generators that support variable numbers of inputs and relationships. These generators are also schema-independent, but they dynamically instantiate SQR template structures by varying the number of input attributes or by enforcing constraints on how many relationships are used to select those attributes. Depending on the types of relationships used, these generators also apply groupings and aggregations to attributes to produce a reasonable query. This approach yields question–query pairs that cover a broader set of query structures. These generators fill slots, add filters, and generate questions in the same way as the regular SQR templates. 
+ 
+ 
+
+
+
+ 3.1.2 Filling the SQR Plan Templates 
+
+ 
+
+The inputs for a SQR template are filled by randomly selecting a set of attributes that satisfy the given type constraints on each input. For example, if an input is constrained to an Arithmetic type, it is filled with an attribute that is represented as a numeric value. This ensures that all subsequent operations performed on each input in the SQR plan are plausible. 
+ 
+ 
+
+To ensure that all slots are filled with valid values and no conflicts arise (e.g. using an attribute for an entity that has not been defined yet), the values to fill each slot are chosen in a particular order. First, the entities to use are selected, then attributes of these entities are selected to use as input, and finally any specific values required from those attributes are sampled from the database. This allows RingSQL to determine reasonable values to be used for comparison by examining the actual values for a column and their distribution to ensure that comparison and filter values make sense within the context of the data. The slot filling process proceeds in this way until a complete SQR plan has been produced. 
+ 
+ 
+
+
+
+ 3.1.3 Filter Generation 
+
+ 
+
+Once the SQR template is filled, we can add more filters to it in order to increase the complexity and diversity of the questions and queries produced by RingSQL . Filters are added in one of two ways. The first is by randomly sampling an attribute, a filter operation, and a value (or values) in order to create a simple filter. The second is by filling a pre-defined SQR filter template. 
+ 
+
+
+
+Simple Filter Generation 
+
+ 
+
+To generate simple filters (e.g., WHERE <column> = <value> ), an attribute is first randomly sampled from a given entity. Then, an operation is sampled based on the type of the sampled attribute, as well as a value for this attribute from the database (multiple values are sampled for operations like BETWEEN ). The original SQR plan is then augmented with this filter and the generated questions are updated to include a natural language phrase expressing the filter. Simple filters can be joined together with AND and OR operations to produce more complex filtering schemes. 
+ 
+ 
+
+
+
+Filling SQR Filter Templates 
+
+ 
+
+For more complex filters (e.g. WHERE <column> > (SELECT avg(<column>) FROM <table> WHERE <simple-filter>) ) we create SQR filter templates which can be filled in a similar manner to SQR plan templates. In many cases, the input for the filter is fixed by the SQR plan’s input assignments, although in some cases sampling is also done to fill these. Some of these templates can also be combined with a simple filter to produce a more complex filter as shown in the example. This template-based approach makes it easy to define new complex filters and specify natural language expression templates for them, which can be much more concise than the expressions that would be generated by the method used for simple filters. 
+ 
+ 
+ 
+ 
+
+
+
+ 3.2 Schema-Specific SQL Generation 
+
+
+
+
+Converting SQR to SQL 
+
+ 
+
+Once we have the executable SQR plans, we need to convert them to SQL. We first compile the SQR plans to remove any duplicate retrieval steps. We then utilize the analysis engine of Satyrn Sterbentz et al. (2024) which executes SQR plans by converting them to SQL queries against the underlying database. We pass each SQR plan generated by RingSQL through this analysis engine to produce the SQL queries for our dataset. 
+ 
+ 
+
+
+
+Query Simplification 
+
+ 
+
+Once the initial queries are produced, we pass each of them through a process to simplify the query as much as possible, while still retaining the original execution output of the query. First, the query is parsed into an abstract syntax tree. The simplifier traverses this tree and performs a variety of simplifications, including removing unused column and table aliases, stripping table prefixes from single table subqueries, providing joined tables with simpler aliases, and inlining subqueries when possible. In this process, we also standardize queries to be of the form SELECT _ FROM _ WHERE _ ... and convert queries to lower case with the exception of inline string values. Since the original queries are composed sequentially from the SQR plan steps, they often contain redundancies and complex aliases that are not reader-friendly. These modifications result in queries that have a more readable standard structure and are \sim 25% shorter than the original queries on average. 
+ 
+ 
+ 
+
+
+
+ 3.3 Question Generation 
+
+ 
+
+To complete the text-to-SQL dataset, we also generate a natural language question for each synthesized SQL query. Questions are initially produced using question templates paired with each query template: when input slots in a SQR template are instantiated, the corresponding slots in the associated question template are filled to yield a natural language question. 
+ 
+ 
+
+While this templated approach ensures semantic alignment between questions and SQL queries, the resulting language may not reflect how a human would naturally phrase the question. Although adding additional language templates can partially mitigate this issue, template-based generation still tends to produce rigid or unnatural phrasing. 
+ 
+ 
+
+To improve fluency and introduce greater syntactic diversity, we apply a lightweight rephrasing step using a large language model (LLM). We first prompt the LLM to generate a brief description of each database by providing the schema and the first three rows of every table, which helps disambiguate poorly named or ambiguous columns. For each generated question, we then ask the LLM to rephrase the template-based question given the original question, its corresponding SQL query, the database description, and three similar question–query examples from Spider. This process encourages more natural, domain-specific phrasing that better reflects how a human might ask the question. The full rephrasing prompt is shown in Figure 7 of Appendix B . 
+ 
+ 
+ 
+
+
+
+ 4 Experimental Setup 
+
+
+
+
+Training Datasets 
+
+ 
+
+In our experiments, we study the effect of reinforcement learning with verified rewards (RLVR) when training on data generated by RingSQL . To construct this data, we manually design 32 query templates and associated generators that produce SQL queries over diverse database schemas. These templates span a range of complexity, from simple retrieval and aggregation queries, to ranking entities by associated metrics, and more complex queries that compute metrics over time and compare them across cohorts. 
+ 
+ 
+
+We generate Rings for the Spider train and dev databases using a script that assumes a one-to-one mapping between tables and entities, columns and attributes, and relationships and joins. Joins are automatically inferred from foreign keys specified in the database schema. Given each Ring–database pair, RingSQL produces question–SQL pairs. Using this process, we construct a dataset, RingSQL-Gen , consisting of 5,000 question–SQL pairs that cover a broad range of question types. We generate 4,000 training and 1,000 development samples using the Spider train and dev splits, respectively, and use GPT-4o-mini to rephrase the questions. 
+ 
+ 
+
+We compare against two subsets of the SynSQL dataset Li et al. (2025) . The first, SynSQL-Uniform , contains 5,000 examples sampled uniformly across all difficulty levels. The second, SynSQL-Complex , contains 5,000 complex question–SQL pairs previously used by Ma et al. (2025) to train state-of-the-art text-to-SQL models. 
+ 
+ 
+
+For all three training datasets, each SQL query is executed to verify that it returns a non-null result, ensuring a meaningful reward signal during RLVR training. We provide statistical properties of the queries in each training dataset in Appendix D . Based on metrics such as the number of tables and columns, SQL AST depth, and the counts of operations, joins, and WHERE clauses per query, we find that RingSQL-Gen contains more complex queries on average than either SynSQL split. However, both SynSQL splits exhibit more extreme outliers, indicating the presence of queries that are more complex than those in RingSQL-Gen . 
+ 
+ 
+
+
+
+Evaluation Datasets 
+
+ 
+
+We evaluate with two widely used text-to-SQL benchmarks: Spider Yu et al. (2018b) and BIRD Li et al. (2023c) in order to test the efficacy of our method in producing data that can be used to train state-of-the-art models. Additionally, we test with three variants of the Spider dataset: Spider-DK Gan et al. (2021b) , Spider-Syn Gan et al. (2021a) , and Spider-Realistic Deng et al. (2021) . These datasets are designed to evaluate robustness to linguistic variation in the questions, specifically focused on questions with fewer exact mentions of table and column names and which incorporate domain knowledge. 
+ 
+ 
+
+
+
+Base Models and Training 
+
+ 
+
+Due to computational constraints we use two smaller, but still capable, coding LLMs as the foundation for further training: Qwen2.5-Coder-3B-Instruct and Qwen2.5-Coder-7B-Instruct. We train these models using RLVR with the reward function proposed in Ma et al. (2025) , which specifies progressive rewards for correct output format, SQL syntax, correct query results, and response brevity. For training the models, we use 4 A100 80GB GPUs and train for 1000 steps with a batch size of 4. 
+ 
+ 
+
+
+
+Evaluation Metrics 
+
+ 
+
+Our primary metric is execution accuracy. During evaluation, each model generates 8 samples with a temperature of 0.8, and self-consistency is used to select the final SQL. 
+ 
+
+
+ [result table omitted; consult original if quantitative claim needed] 
+ Table 1: Comparison of execution accuracy (%) on Spider dev and test sets, BIRD dev set, and three Spider variants. We used the Qwen2.5-Coder-Instruct family of models for training and evaluation. 
+ 
+ 
+ 
+
+
+
+ 5 Results 
+
+
+
+
+ 5.1 Main Results 
+
+ 
+
+The primary results of training models on various datasets and evaluating them on the six text-to-SQL benchmarks are captured in Table 1 . When training Qwen2.5-Coder-3B-Instruct models, the model trained with RingSQL-Gen achieves an average accuracy of 72.7% across the six benchmarks, which is a 2.32% improvement over the next best model trained with the same number of examples from the SynSQL dataset, and a 4.74% improvement over the base model without any RL training. Notably, the model trained with RingSQL-Gen achieves the highest accuracy on all six benchmarks, highlighting the efficacy of using RingSQL for creating synthetic data that improves text-to-SQL capabilities. 
+ 
+ 
+
+When training Qwen2.5-Coder-7B-Instruct models, using the RingSQL-Gen data results in a model with the highest average performance across the six benchmarks, including accuracies of 85.50%, 86.77%, and 61.73% on the Spider Dev, Spider Test, and BIRD Dev benchmarks, respectively. In this setting, performance improvements are more pronounced on the complex BIRD benchmark. In this case, performing RL training with SynSQL-Complex and RingSQL-Gen results in 61.15% and 61.73% respectively over the 56.26% achieved by the base model. 
+ 
+ 
+
+
+
+ 5.2 Performance by Query Difficulty 
+
+ 
+
+We examine the performance of each model setting across three query difficulty levels of the BIRD benchmark: simple, moderate, and challenging. On BIRD, complex-only synthetic training substantially improves accuracy on the challenging queries for 3B models but sees more modest improvement on simple queries, while more diverse training data yields stronger performance on simple queries. At the 7B scale, RingSQL-Gen achieves the best overall performance on both simple and challenging queries, and RL-based training provides significant gains across all BIRD settings. A full table of results on BIRD can be seen in Table 3 . 
+ 
+ 
+
+We also examine performance across four difficulty levels on the Spider Test set. RingSQL-Gen improves performance across all difficulty levels at 3B parameters, with gains of +4.1% and +7.0% on hard and very hard queries, respectively, while SynSQL-trained models underperform the base model at both 3B and 7B. At 7B, RingSQL-Gen again achieves the highest overall accuracy despite lower performance on easy and medium queries, with gains of +1.3% (hard) and +4.48% (very hard), highlighting the effectiveness of RL training for challenging text-to-SQL regimes. A full table of results on Spider Test can be see in Table 4 , with further discussion in Appendix C . 
+ 
+
+
+ [result table omitted; consult original if quantitative claim needed] 
+ Table 2: Comparison of execution accuracy (%) on Spider, BIRD, and the Spider variants for each ablation setting. Base model used for training and evaluation in all settings was Qwen2.5-Coder-3B-Instruct. 
+ 
+ 
+
+
+
+ 5.3 Question Generation Ablations 
+
+ 
+
+To assess the impact of RingSQL ’s question generation process and language on model performance, we perform three ablations. For all ablations, we use the same RingSQL-Gen queries, only changing the language of the questions for each setting. Table 2 contains the results of training Qwen2.5-Coder-3B-Instruct for each ablated setting. 
+ 
+ 
+
+First, we investigate the impact of the rephrasing module by removing it entirely and training only on template-based questions generated by directly filling question templates with values ( Template Questions Only ). In this setting, accuracy drops consistently across all six benchmarks (69.99% vs. 72.7%). This suggests that while template-based questions provide correct semantic supervision, their limited linguistic variability encourages models to overfit to rigid surface forms. Rephrasing introduces more natural and diverse language realizations of the same underlying queries, which better matches the distribution of real user questions and improves the model’s ability to generalize beyond the specific phrasings of the templates. Rephrasing therefore acts as a form of linguistic data augmentation, decoupling semantic understanding from specific lexical patterns and reducing sensitivity to template-specific wording. 
+ 
+ 
+
+In our second ablation, we investigate the impact of grounding the question generation with the template-based questions. In this setting, we directly generate a question from the query instead of rephrasing the template-based question. We refer to this setting as Query Only . The prompt used for this can be seen in Figure 9 of Appendix B . This method of generating synthetic training data is common for LLM-based methods since there are no template-based questions with which to ground the question generation. The average performance of the model trained with these questions across the six benchmarks is 71.22%, which is lower than the 72.7% for the RingSQL-Gen data. Notably, performance of the Query Only model is higher on the Spider-Syn and Spider-Realistic benchmarks, but substantially lower on the BIRD Dev set where it performs -5.74% worse. This suggests that, while direct generation from queries can produce reasonable surface-level questions for simpler queries, it struggles to fully capture the meaning of complex queries. Grounding in template-based questions provides a reliable intermediate representation that ensures all query components are expressed correctly. This template-based grounding acts as a scaffold that preserves the full semantic content of queries and it allows the model to learn the correct mappings more consistently, resulting in a +5.48% improvement on BIRD compared to Query Only. 
+ 
+ 
+
+In our third ablation, we investigate the impact of removing the few-shot examples from the rephrasing prompt and use only a basic rephraser ( No Few-Shot Examples ). The prompt used for this can be seen in Figure 8 of Appendix B . In this setting, average performance is again lower at 71.85%. However, as with the Query Only setting, we observe slightly higher performance on the Spider-Syn and Spider-Realistic benchmarks.
+This suggests that even a basic rephraser can introduce linguistic diversity while remaining grounded in the template-generated questions. However, performance decreases on the Spider Dev and Test sets, which contain more questions with more explicit mentions of columns. This indicates that few-shot examples guide the rephraser to produce questions that better align with the phrasing patterns of the benchmarks. In other words, few-shot examples act as stylistic anchors, ensuring that the rephrased questions both preserve the query semantics and mirror the surface-level patterns of target datasets, which improves generalization on the benchmarks. For real-world scenarios, the few-shot examples could be replaced with examples tailored for the target database and ways in which a user would likely ask questions in order to improve the utility of the text-to-SQL interface in practice. 
+ 
+ 
+
+
+
+ 5.4 Discussion 
+
+ 
+
+Our experiments demonstrate that models trained on data generated by RingSQL consistently outperform those trained on prior synthetic datasets across six text-to-SQL benchmarks. These results show that despite using a relatively small set of templates and generators, RingSQL produces training data that leads to strong performance. While RingSQL requires some upfront manual effort to define query templates and generators, the overall manual labor to produce high quality data is lower than other template-based schemes due to their reusability. This reusability substantially reduces the cost of generating synthetic data for new databases: templates designed to target specific question types readily transfer across schemas, and newly introduced templates can immediately benefit multiple databases. Moreover, when a database schema evolves, the corresponding Ring can be updated while preserving compatibility with existing templates, enabling previously defined templates and generators to continue producing useful training data. Taken together, these properties enable RingSQL to capture the strengths of template- and LLM-based synthetic data generation while diminishing their weaknesses, resulting in a flexible and robust method for generating text-to-SQL data. 
+ 
+ 
+ 
+
+

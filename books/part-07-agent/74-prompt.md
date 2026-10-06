@@ -139,6 +139,10 @@ Repository instruction 文件进一步把 Prompt 变成工程控制面：它可�
 
 一条受限分支先用足够重复采样估计这两类 variance，再选真实候选差异较大的小任务子集优化 prompt generator，并在未参与选择的任务上验收。额外采样、穷举子集和选择偏差都要计入预算；单题可过拟合，低噪声而容易的样本也会使 signal/noise 比值不稳定。[作者数学实验](https://arxiv.org/html/2604.08801v1)中小子集优于全量训练，但更同质的 instruction-following 任务仍以全量更好，跨模型迁移也只在受测 Qwen 家族内成立。任务偏好一致、数据少或二元反馈假设不成立时，人工 Prompt、全量 regression 与固定候选比较继续合理；选择器拥有的是实验预算，不是外部真值和安全权限。<!-- source-family:SF-2026-ARXIV-2604-08801 -->
 
+固定一条改写规则在请求同质、预算紧或缺少可信反馈时最简单；不同问题的指代、句式与约束却可能需要不同处理，统一展开或简化还可能丢失关键语义。可把保持原意的几种改写作为有限arm，用本次query的语言特征选择arm，再根据可核验答案反馈更新选择器；更新的是外部选择policy，不是模型参数，更不是发现了幻觉的唯一内部机制。Original query、feature/rubric、arm prompt、selector state与reward身份都应随版本保存。<!-- source-family:SF-2026-ARXIV-2602-20332 -->
+
+[有限QA实验](https://arxiv.org/html/2602.20332v1#S4)的收益来自“原题能答对、语义扰动后部分答错”的筛选人口，reference answer参与judge与词面reward；不能外推到无标签自然请求，也不能把canonical原题不改写更优解释成已证明训练污染。特征标注、改写、回答、judge和探索均有成本，proxy偏置或语义保持失败时回退原请求与固定基线；反馈不可独立核验时只冻结离线选出的policy，不能靠自己的答案继续认证自己的改写。
+
 ### 追加规则容易，可逆地删除规则很难
 
 长期维护的 Prompt、`AGENTS.md` 或 procedural skill 往往从一次次局部失败中追加规则。每次追加都可能
@@ -205,6 +209,10 @@ threshold、holdout 与 rollback 都明确时成立，下一阶段压力是处�
 ### 条件化机制分支与共存边界
 
 主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。
+
+身份信息还需按任务语义分责，而不是一律删除或一律个性化。年龄、性别等显式线索有时是问题不可缺的条件，有时只是改变生成倾向的无关输入；一个受限分支先定位这些片段，再以“移除后是否丢失解题信息”的反事实问题提出 relevance 判断，仅对被判为无关的片段做 neutralization，生成语义核心答案。若需要面向不同读者调整表达，再在核心之后做 style-only 改写并核查内容保持，核查失败回退核心。这个顺序把任务必要信息与呈现偏好分开，却不赋予判断器删除事实的权限：相关性与内容保持都只是可能出错的模型 proposal，不确定时保留原条件或先澄清。<!-- source-family:SF-2026-ARXIV-2601-09141 -->
+
+定位、反事实判定、改写和核查增加模型调用与维护成本；隐式身份线索也可能来自语境而非可识别词片段。有限英文任务与三个模型的实验中，作者既观察到关键身份误删、无关身份误留，也有任务准确率退步；500 条单任务人工核查的高一致率不构成公平或安全保证。身份仍可由 probe 读出，更不能据此认定生成偏差只来自某个阶段或唯一方向。上线需分开验收任务信息留存、答案质量与表达变化，失败时保留未经改写的请求和普通生成路径，而不把 neutral core 当作普遍无偏答案。
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-20512:start -->
 repository guidance 从静态 README/AGENTS 文本变为 probe-and-refine：运行 coding agent，定位失败 step，再在固定 step budget 内修改 guidance 并跨模型验证；repo owner 持有发布/回滚，过拟合时保留旧指导。代价是 probe 成本和 benchmark leakage。
@@ -283,3 +291,7 @@ Primary-source 入口：
 
   **已吸收的语义增量：** `Probe-and-Refine Tuning of Repository Guidance for Coding Agents` 路由到 `AGENT-PROMPT`：repository guidance 从静态 README/AGENTS 文本变为 probe-and-refine：运行 coding agent，定位失败 step，再在固定 step budget 内修改 guidance 并跨模型验证；repo owner 持有发布/回滚，过拟合时保留旧指导。代价是 probe 成本和 benchmark leakage。
 <!-- daily-books-trace:SF-2026-ARXIV-2606-20512:end -->
+
+- `SF-2026-ARXIV-2601-09141` — Daily `2026-01-16`；[exact-v1](https://arxiv.org/html/2601.09141v1) §3–6/Limitations 与 A 必要配置。5分针对身份语义相关性/核心与风格分责gap深入；不采唯一生成因果、公平安全保证或隐式身份全覆盖，误删/误留、质量反侧与调用成本相邻。root必要原源/owner写前通过，root实际两段/邻接及末注非作者POST通过，锁释放；未运行artifact或复现。
+
+- `SF-2026-ARXIV-2602-20332` — Daily `2026-02-26`；[exact-v1](https://arxiv.org/html/2602.20332v1) §3/4/5/A.1–3/Table7。2+1+2=5具体gap深入；仅feature→rewritearm选择与reference feedback边界，筛选人口/canonical非因果污染/额外调用/不授无标签在线自证近正文。root必要源/actual owner PRE通过并授两段+自身末注窄锁；作者actual正文/完整邻接/末注顺读，root非作者actual正文137–165/自身末注297 POST通过，锁释放。未核artifact/复现，非日级验收。

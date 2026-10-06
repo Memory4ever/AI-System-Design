@@ -1,0 +1,133 @@
+Original exact-v1 deciding excerpt; not a fulltext review.
+URL https://arxiv.org/html/2601.21758v1
+4. Core Algorithmic Contributions
+EWSJF integrates three algorithmic components that work in concert: the Refine-and-Prune algorithm for dynamic queue generation, the On-Demand Bubble Queue mechanism for real-time responsiveness, and a learnable scoring function tuned by a meta-optimizer.
+4.1. Learnable and Context-Aware Scoring
+While Refine-and-Prune determines the structure of the scheduler, the operational policy—deciding which queue to prioritize at each moment—is governed by a dynamic scoring function. A static formula is insufficient for a system that must adapt to evolving workloads and balance competing objectives.
+The score for the oldest request rr in queue qq is defined as:
+(1)
+Score​(r,q)=q​f⋅(CLOSEwbase+wurgency⋅c​s+wfairness⋅log(b+1))\begin{split}\text{Score}(r,q)=qf\cdot(&w_{\text{base}}+w_{\text{urgency}}\cdot cs\\
+&+w_{\text{fairness}}\cdot\log(b+1))\end{split}
+where each term captures a distinct scheduling principle:
+•
+Compute Score (c​scs): Defined as Wt/Cprefill​(b)W_{t}/C_{\text{prefill}}(b), where WtW_{t} is the request’s wait time and Cprefill​(b)C_{\text{prefill}}(b) is the estimated prefill cost for input length bb. This term reflects urgency normalized by computational cost.
+•
+Queue Index Factor (q​fqf): Defined as qi/(b+1)q_{i}/(b+1), where qiq_{i} is the queue index. This term prioritizes shorter jobs, forming the basis of the SJF heuristic.
+•
+Fairness Term (log⁡(b+1)\log(b+1)): A logarithmic boost for longer jobs, ensuring they are not indefinitely starved by a stream of short requests.
+The weights (wbase,wurgency,wfairness)(w_{\text{base}},w_{\text{urgency}},w_{\text{fairness}}) are learnable and dynamically tuned by the meta-optimizer. Moreover, the weights are context-aware: EWSJF learns a meta-policy that maps queue characteristics (e.g., mean prompt length b¯q\bar{b}_{q}) to specific weights. For example:
+wurgency​(b¯q)=au⋅b¯q+bu,w_{\text{urgency}}(\bar{b}_{q})=a_{u}\cdot\bar{b}_{q}+b_{u},
+allowing the scheduler to emphasize urgency in short queues and fairness in long queues.
+Figure 2 illustrates how the relative priority of queues evolves as the meta-optimizer adjusts these weights.
+Figure 2. Simulation of EWSJF’s context-aware scoring. As the meta-optimizer adjusts scoring parameters over time, the relative priority of short, medium, and long queues shifts dynamically.A line graph showing the evolution of priority scores over time for three different queue types: Short, Medium, and Long. The X-axis represents simulation time steps, and the Y-axis represents the average priority score. The lines fluctuate and cross each other, illustrating how the meta-optimizer dynamically adjusts the importance of each queue type based on workload conditions.
+4.2. The Refine-and-Prune Algorithm
+The Refine-and-Prune algorithm is the strategic core of EWSJF. Its purpose is to construct a set of prompt-length queues that are (i) performance-homogeneous, (ii) contiguous and non-overlapping, and (iii) bounded in number. Unlike standard kk-means, which minimizes global variance, Refine-and-Prune explicitly targets local homogeneity in the prompt-length domain, ensuring that each queue corresponds to a region with similar computational behavior.
+Formalism.
+Let
+D={b1,b2,…,bN},b1≤b2≤⋯≤bN,D=\{b_{1},b_{2},\dots,b_{N}\},\qquad b_{1}\leq b_{2}\leq\dots\leq b_{N},
+be the sorted set of prompt lengths in the strategic observation window. We seek a partition
+Q={q1,q2,…,qk},Q=\{q_{1},q_{2},\dots,q_{k}\},
+where each queue qiq_{i} corresponds to a contiguous interval
+qi=[min⁡_​l​e​ni,max⁡_​l​e​ni).q_{i}=[\min\_len_{i},\max\_len_{i}).
+The algorithm proceeds in three stages.
+Stage 1: Coarse Partitioning.
+We initialize the queue structure by applying kk-means with k=3k=3, reflecting the empirically observed short/medium/long regimes in mixed LLM workloads. These coarse clusters provide stable anchors for subsequent refinement.
+Stage 2: Recursive Refinement.
+To eliminate heterogeneous “mega-queues,” each coarse cluster CC is recursively analyzed. Let
+G={bi+1−bi∣bi,bi+1∈C}G=\{\,b_{i+1}-b_{i}\mid b_{i},b_{i+1}\in C\,\}
+be the set of consecutive gaps within CC. A split is triggered at index jj when
+(2)
+Gapj>α⋅mean​(G),\text{Gap}_{j}>\alpha\cdot\text{mean}(G),
+where α>1\alpha>1 is a dynamic significance ratio tuned by the meta-optimizer. Recursion continues until no significant gaps remain or the cluster width falls below a minimum threshold.
+Stage 3: Intelligent Pruning.
+Recursive refinement may produce overly narrow “micro-queues.” To prevent overfitting, adjacent queues are merged based on a Scheduling Utility metric:
+(3)
+U⁡(qi,qi+1)=ρ⁡(qi)+ρ⁡(qi+1)|b¯i+1−b¯i|+ε,U(q_{i},q_{i+1})=\frac{\rho(q_{i})+\rho(q_{i+1})}{|\bar{b}_{i+1}-\bar{b}_{i}|+\varepsilon},
+where ρ⁡(q)\rho(q) is the request density, b¯i\bar{b}_{i} is the mean prompt length in qiq_{i}, and ε\varepsilon is a small constant for numerical stability. Queues with the lowest utility are merged until the system satisfies the configured max_queues budget.
+Table 2. Comparison of clustering strategies for queue partitioning. EWSJF achieves high robustness and adaptivity by combining coarse clustering with recursive refinement and utility-based pruning.
+Method
+Robustness
+Adaptivity
+Fit
+Static
+Low
+None
+Brittle
+Naive K-Means
+Medium
+Low
+Mega-Queues
+DBSCAN
+Medium
+Medium
+Micro-Queues
+EWSJF
+High
+High
+Optimal
+4.3. On-Demand Bubble Queue Creation
+Refine-and-Prune operates periodically (e.g., every 10 minutes), but workloads can evolve rapidly. To handle novel request types that appear between optimizer runs—specifically those falling into significant gaps between existing queues—EWSJF employs a reactive mechanism called Bubble Queue Creation. When the Dispatcher detects a gap-falling request, it instantiates a temporary queue centered on the request’s prompt length and constrained by neighbor boundaries. This ensures immediate responsiveness without waiting for the next strategic optimization cycle. The detailed algorithm and conceptual illustration are provided in Appendix D.
+
+A.2. Proof of Stability and Correctness
+Convergence behavior. EWSJF does not converge to a single static policy but maintains a stable dynamic equilibrium. The offline optimizer prevents drastic shifts by generating baseline policies from long-term data, while the online tuner applies low-amplitude adjustments. This separation of concerns ensures responsiveness without thrashing.
+Theorem A.1 (Starvation Freedom).
+Given finite weights wfair>0w_{\text{fair}}>0, the priority score of any pending request increases monotonically with wait time, ensuring limt→∞Score​(r)=∞\lim_{t\to\infty}\text{Score}(r)=\infty.
+Proof.
+Recall the scoring function for a request rr:
+Φ⁡(r,q)=q​f⋅(wbase+wurg⋅c​s+wfair⋅log⁡(b+1))\Phi(r,q)=qf\cdot(w_{\text{base}}+w_{\text{urg}}\cdot cs+w_{\text{fair}}\cdot\log(b+1))
+The term c​scs (Compute Score) is defined as Wt/Cprefill​(b)W_{t}/C_{\text{prefill}}(b), where WtW_{t} is the wait time. As Wt→∞W_{t}\to\infty, the term c​s→∞cs\to\infty. Since the weights wurgw_{\text{urg}} and queue factors q​fqf are strictly positive constants, the total priority score Φ⁡(r,q)\Phi(r,q) grows monotonically without bound. Eventually, Φ⁡(r,q)\Phi(r,q) will exceed the score of any newly arriving short job (whose Wt≈0W_{t}\approx 0), ensuring that the long request is scheduled.
+∎
+Appendix B Meta-Optimizer Behavior
+Figure 5 illustrates the learning curve of the system. The optimizer typically converges to a stable policy within 5–8 trials.
+A plot showing the convergence of the Bayesian optimization process. The X-axis represents the Trial Index, and the Y-axis represents the Normalized Reward. The curve shows the reward increasing over the first few trials and then plateauing around trial 5 to 8, indicating that the optimizer has successfully found a stable, high-performing policy.
+Figure 5. Convergence behavior of the Bayesian meta-optimizer. The reward stabilizes after 5–8 trials.A plot showing the convergence of the Bayesian optimization process. The X-axis represent
+
+4.1. Context-Aware Scoring Function
+For each queue qq, EWSJF assigns a priority score to its head-of-line request rr using a parametric scoring function Φ⁡(r,q)\Phi(r,q):
+(4)
+Φ⁡(r,q)=q​f⋅(wbase+wurg⋅c​s+wfair⋅log⁡(b+1)),\Phi(r,q)=qf\cdot\left(w_{\text{base}}+w_{\text{urg}}\cdot cs+w_{\text{fair}}\cdot\log(b+1)\right),
+where:
+•
+bb is the input prompt length of request rr,
+•
+c​s=Wt/Cprefill​(b)cs=W_{t}/C_{\text{prefill}}(b) is the compute-normalized urgency,
+•
+q​f=qi/(b+1)qf=q_{i}/(b+1) is an SJF-inspired queue factor,
+•
+𝐰={wbase,wurg,wfair}\mathbf{w}=\{w_{\text{base}},w_{\text{urg}},w_{\text{fair}}\} are learnable weights.
+To enable specialization across heterogeneous queues, the weights 𝐰\mathbf{w} are produced by a meta-policy π⁡(b¯q)\pi(\bar{b}_{q}) that maps the queue’s mean prompt length b¯q\bar{b}_{q} to a set of control parameters. For example,
+wurg​(b¯q)=au⋅b¯q+bu,w_{\text{urg}}(\bar{b}_{q})=a_{u}\cdot\bar{b}_{q}+b_{u},
+allows EWSJF to emphasize urgency in short queues and fairness in long queues. This context-aware formulation enables smooth adaptation to workload shifts without manual tuning.
+4.4.2. Bandit-Based Meta-Optimizer
+To autonomously optimize the meta-parameters
+Θ={au,bu,af,bf,…},\Theta=\{a_{u},b_{u},a_{f},b_{f},\dots\},
+EWSJF employs a Bayesian Optimization framework.
+Action Space and Trials.
+Each action corresponds to selecting a complete scheduling policy parameterized by Θ\Theta. The system executes this policy for a fixed trial interval Δ​T\Delta T (e.g., 10–15 minutes), collects performance statistics, and updates its posterior over the reward landscape.
+Reward Function.
+The optimizer seeks to maximize a multi-objective reward:
+(5)
+R⁡(Θ)=λ1​𝒞+λ2​ℒ−λ3​𝒮−λ4​𝒰,R(\Theta)=\lambda_{1}\mathcal{C}+\lambda_{2}\mathcal{L}-\lambda_{3}\mathcal{S}-\lambda_{4}\mathcal{U},
+where:
+•
+𝒞\mathcal{C} encourages compact, homogeneous queues,
+•
+ℒ\mathcal{L} penalizes load imbalance across queues,
+•
+𝒮\mathcal{S} penalizes excessive queue proliferation,
+•
+𝒰\mathcal{U} captures user-experience penalties such as latency.
+The coefficients λ1,…,λ4\lambda_{1},\dots,\lambda_{4} balance these competing objectives. Over successive trials, the optimizer converges toward a policy that jointly improves throughput, fairness, and responsiveness.
+Because the scoring weights are produced by a meta-policy
+π⁡(b¯q)\pi(\bar{b}_{q}), EWSJF effectively learns a mapping from queue
+statistics to prioritization decisions, making the scheduler a
+learned policy rather than a fixed heuristic.
+5. System Properties
+EWSJF is designed to maintain a stable dynamic equilibrium under mixed workloads. We formally analyze its properties regarding stability, correctness, and complexity; full proofs and detailed analysis are provided in Appendix A.
+Stability and Correctness.
+The hierarchical control structure ensures stability by anchoring policy generation to long-term historical data via the offline optimizer, preventing thrashing, while the online tuner handles real-time fluctuations. Correctness is guaranteed by the Refine-and-Prune algorithm, which partitions the prompt-length space into contiguous, non-overlapping intervals, ensuring deterministic request routing (r→qir\to q_{i}).
+Computational Complexity.
+The tactical scheduling loop, which resides on the critical path, operates in O⁡(k)O(k) time, where kk is the number of active queues. The computationally intensive strategic optimization (O⁡(N​log⁡N)O(N\log N)) is offloaded to a background thread.
+Theorem 5.1 (Efficiency and Stability).
+For a system with NN historical requests and kk active queues, EWSJF guarantees O⁡(k)O(k) scheduling latency, non-blocking background optimization, and starvation freedom. (See Appendix A for formal analysis and proofs).
+

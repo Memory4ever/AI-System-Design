@@ -1,0 +1,2848 @@
+pQuant: Towards Effective Low-Bit Language Models via Decoupled Linear Quantization-Aware Training
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Preliminary
+2.1
+Quantization Aware Training
+2.2
+Extremely Low-Bit Quantization
+2.3
+Sensitivity Analysis
+3
+Methodology
+3.1
+Multi-Head Attention in pQuant
+3.2
+Feed-Forward Network in pQuant
+3.3
+Efficient Scaling of pQuant
+4
+Experiments
+4.1
+Experimental setup
+4.2
+Performance of pQuant
+4.3
+Scalability of pQuant
+4.4
+Sensitivity Distribution of pQuant
+4.5
+Memory Efficiency of pQuant
+4.6
+Ablation Study
+Feature Scaling.
+High-precision Branch.
+4.7
+Limitations
+5
+Conclusion
+References
+A
+Inference
+Computation Efficiency
+B
+Training Mechanism
+B.1
+Straight-Through Estimator
+B.2
+Two-Phase Training Schedule
+C
+Experiment Details
+D
+Analysis of Scaling pQuant
+D.1
+Overhead of Model Parameter
+E
+Ablation Study
+Batch Size.
+Learning rate.
+F
+Feature Scaling Analysis
+G
+Stability of pQuant
+H
+Training Time
+I
+Related Work
+I.1
+Post-Training Quantization
+I.2
+Quantization-Aware Training
+License: CC BY 4.0
+arXiv:2602.22592v1 [cs.LG] 26 Feb 2026
+pQuant: Towards Effective Low-Bit Language Models via Decoupled Linear Quantization-Aware Training
+Wenzheng Zhang
+Affiliation:
+School of Computer Science, Peking University
+Bingzheng Liu
+Affiliation:
+College of Future Information Technology, Fudan University
+Yang Hu
+Affiliation:
+Center for Information Research, Academy of Military Sciences
+Xiaoying Bai
+Affiliation:
+Advanced Institute of Big Data
+Wentao Zhang
+Affiliation:
+Center of Machine Learning Research, Peking University
+Bin Cui
+Affiliation:
+School of Computer Science, Peking University
+Abstract
+Quantization-Aware Training from scratch has emerged as a promising approach for building efficient large language models (LLMs) with extremely low-bit weights (sub 2-bit), which can offer substantial advantages for edge deployment. However, existing methods still fail to achieve satisfactory accuracy and scalability. In this work, we identify a parameter democratization effect as a key bottleneck: the sensitivity of all parameters becomes homogenized, severely limiting expressivity. To address this, we propose pQuant, a method that decouples parameters by splitting linear layers into two specialized branches: a dominant 1-bit branch for efficient computation and a compact high-precision branch dedicated to preserving the most sensitive parameters. Through tailored feature scaling, we explicitly guide the model to allocate sensitive parameters to the high-precision branch. Furthermore, we extend this branch into multiple, sparsely-activated experts, enabling efficient capacity scaling. Extensive experiments indicate our pQuant achieves state-of-the-art performance in extremely low-bit quantization.
+1
+Introduction
+Large Language Models (LLMs)
+Touvron et al. (2023a)
+;
+Yang et al. (2024)
+;
+Team et al. (2023)
+;
+Achiam et al. (2023)
+have achieved remarkable performance across diverse natural language processing tasks. However, their massive computational and memory demands pose significant challenges for practical deployment, especially on resource-constrained devices
+Dettmers et al. (2022)
+. Quantization, which reduces the numerical precision of model weights and activations, has become a key technique to mitigate these constraints
+Frantar et al. (2022)
+;
+Yao et al. (2021)
+;
+Liu et al. (2023b)
+;
+Yuan et al. (2023)
+;
+Zhang et al. (2025)
+.
+Extremely low-bit (sub 2-bit) quantization stands out for offering the most aggressive model compression, promising drastic reductions in memory and compute footprint
+Qin et al. (2022)
+;
+Shang et al. (2023)
+;
+Huang et al. (2024)
+;
+Ma et al. (2024a)
+;
+Xu et al. (2024)
+. Its key hardware advantage lies in replacing costly floating-point matrix multiplications with efficient bitwise operations during inference, presenting a promising path toward edge-deployable LLMs
+Zhu et al. (2024)
+. Recent advances in extremely low-bit quantization have yielded notable empirical results. For instance, post-training quantization (PTQ) methods such as PTQ1.61
+Zhao et al. (2025)
+and BiLLM
+Huang et al. (2024)
+achieve 68.5% and 61.2%, respectively, of FP16 baseline accuracy on downstream tasks. Quantization-aware fine-tuning further improves performance, with state-of-the-art approaches recovering up to 79.3% of FP16 accuracy
+Xu et al. (2024)
+.
+Figure 1:
+An overview of performance (Perplexity on WikiText2) and bit-width achieved by our pQuant and other extremely low-bit methods on 1.3B model.
+Despite their strong efficiency benefits, extremely low-bit LLMs face limited practical adoption due to the accuracy degradation, less than 80% of FP16 capability. This challenge has spurred interest in Quantization-Aware Training from scratch (QAT-Scratch), which trains low-bit models directly from random initialization without compressing pre-trained weights
+Wang et al. (2023)
+;
+Ma et al. (2024a)
+;
+Ma et al. (2025)
+. QAT-Scratch shows strong promise: BitNet achieves 90.1% FP16 parity on downstream tasks
+Wang et al. (2023)
+, and BitNet1.58 enables near-lossless 2-bit quantization with a 3B model
+Ma et al. (2024b)
+. Nevertheless, our experiments reveal two critical issues that persist in current 1-bit QAT-Scratch models: (i) even the state-of-the-art 1-bit method still exhibit a non-negligible accuracy gap; and (ii) scaling efficiency is poor: as model size increases, performance gains grow sublinearly and fall far behind those of FP16 models. This limits the practicality of extremely low-bit LMs in large-scale applications.
+What underlies this performance and scaling bottleneck? It is well-established in quantization theory that parameters possess varying sensitivity, with a small subset of "sensitive" parameters disproportionately influencing model output
+Dettmers et al. (2022)
+;
+Dettmers et al. (2023)
+;
+Lee et al. (2024)
+;
+Li et al. (2025a)
+. Surprisingly, we find that existing 1-bit QAT-Scratch models lose this structure: weight sensitivity becomes nearly uniform. We term this phenomenon parameter democratization, defined as the unintended homogenization of parameter sensitivity under extreme quantization. This observation motivates our central hypothesis: parameter democratization may be a key factor limiting the expressivity and scalability of 1-bit LMs.
+To address and empirically validate our hypothesis on parameter democratization, we propose pQuant, a novel extremely low-bit QAT-Scratch method founded on the principle of decoupled and guided parameter sensitivity. The core of pQuant is a decoupled linear layer that structurally enforces parameter specialization: a 1-bit main branch ensures foundational efficiency, while a compact high-precision branch is dedicated to preserving sensitive parameters. Critically, importance assignment is not predetermined. Instead, feature scaling guide the model to dynamically allocate its most influential representations to the high-precision pathway. Build upon this, we further evolve the high-precision branch into a sparsely activated expert module, where a lightweight router selects one expert per token. This design enables substantial capacity growth with near-constant inference cost. Experiments show that pQuant reduces perplexity by 32.0% over state-of-the-art 1-bit baselines, and the high-precision branch effectively preserves the most sensitive parameters. When scaled, it surpasses 2-bit models in accuracy while improving inference throughput by 18.2%. Notably, it matches the performance of FP16 models while delivering over 2× higher throughput.
+2
+Preliminary
+2.1
+Quantization Aware Training
+Quantization-Aware Training improves model robustness to quantization by simulating low-bit operations during training. Standard QAT fine-tunes a pre-trained full-precision model, using FP16 shadow weights to compute gradients while quantizing weights and activations in the forward pass
+Shen et al. (2021)
+. Recent advances enhance this paradigm: LLM-QAT
+Liu et al. (2023b)
+employs data-free distillation; BitDistiller
+Du et al. (2024)
+introduces asymmetric clipping; EfficientQAT
+Chen et al. (2024)
+reduces cost via staged optimization; GETA
+Qu et al. (2025)
+jointly optimizes pruning and quantization. Technical details of QAT are provided in Appendix
+I.2
+. While these methods achieve strong results at 4–8 bit, they face fundamental challenges when pushed to sub-2-bit regimes, often struggling to recover accuracy due to the difficulty of compressing pre-trained high-precision representations.
+2.2
+Extremely Low-Bit Quantization
+Extremely low-bit (sub 2-bit) quantization aims for the most hardware-efficient LLMs but suffers from severe accuracy degradation. Early binarization methods like BNN
+Hubara et al. (2016)
+and XNOR-Net
+Rastegari et al. (2016)
+(which introduced scaling factors) do not scale to modern LLMs. Recent work has adapted quantization for LLMs: PB-LLM
+Shang et al. (2023)
+identifies salient weights, BiLLM
+Huang et al. (2024)
+proposes a two-stage binarization framework, OneBit
+Xu et al. (2024)
+uses SVID decomposition, and BinaryMoS
+Jo et al. (2024)
+employs token-adaptive scales. PTQ1.61
+Zhao et al. (2025)
+introduces a one-dimensional structured mask to reduce the upper bound of quantization errors,
+A promising direction is Quantization-Aware Training from scratch (QAT-Scratch), which trains low-bit models from random initialization. BitNet
+Wang et al. (2023)
+pioneered this paradigm for 1-bit LLMs, showing significantly better performance than PTQ or fine-tuning-based QAT. BitNet1.58
+Ma et al. (2025)
+extended this success to 2-bit, achieving near-lossless accuracy. Other works like FBI-LLM
+Ma et al. (2024a)
+(using progressive distillation) and iFairy
+Wang et al. (2025)
+(using complex-valued representations) further explore this training paradigm. However, as identified in our work, existing QAT-Scratch methods still face a fundamental bottleneck in expressivity and scalability, which we attribute to the parameter democratization effect.
+2.3
+Sensitivity Analysis
+Not all parameters in a neural network contribute equally to its output. Intuitively, a weight is considered sensitive to quantization if it incurs a large rounding error (i.e., it lies far from a quantization grid point) and/or if it frequently multiplies large input activations, thereby amplifying even small errors
+Dettmers et al. (2023)
+;
+Lee et al. (2024)
+;
+Shang et al. (2023)
+;
+Li et al. (2025b)
+.
+Inspired by SPQR
+Dettmers et al. (2023)
+, we adopt a perturbation-based metric to analyze such sensitivity under extreme low-bit settings. For a weight
+w
+i
+​
+j
+w_{ij}
+in matrix
+W
+W
+and given calibration inputs
+X
+X
+, we define its sensitivity as the minimum increase in squared output distortion:
+s
+i
+​
+j
+=
+min
+W
+′
+⁡
+‖
+W
+​
+X
+−
+W
+′
+​
+X
+‖
+2
+2
+,
+s_{ij}=\min_{W^{\prime}}\|WX-W^{\prime}X\|_{2}^{2},
+(1)
+where
+W
+′
+W^{\prime}
+satisfies
+w
+i
+​
+j
+′
+=
+quant
+⁡
+(
+w
+i
+​
+j
+)
+w^{\prime}_{ij}=\mathrm{quant}(w_{ij})
+, and all other entries of
+W
+′
+W^{\prime}
+are free to adjust for optimal error compensation. Crucially, this problem admits a closed-form solution under the generalized Optimal Brain Surgeon framework
+Frantar and Alistarh (2022)
+:
+s
+i
+​
+j
+=
+w
+i
+​
+j
+2
+2
+​
+(
+X
+​
+X
+⊤
+)
+−
+1
+,
+s_{ij}=\frac{w_{ij}^{2}}{2(XX^{\top})^{-1}},
+(2)
+where
+(
+X
+​
+X
+⊤
+)
+−
+1
+(XX^{\top})^{-1}
+is the inverse Hessian matrix corresponding to the optimization problem. This term quantifies how "replaceable" the weight is given the correlation structure of the inputs. Thus, sensitivity
+s
+i
+​
+j
+s_{ij}
+captures a joint effect: a large rounding error
+w
+i
+​
+j
+2
+w_{ij}^{2}
+may still yield low sensitivity if the weight lies in a direction where the input allows easy compensation. This metric can be efficiently approximated by quantization solvers, such as GPTQ
+Frantar et al. (2022)
+.
+To analyze the sensitivity landscape under extreme quantization, we set
+quant
+⁡
+(
+w
+i
+​
+j
+)
+=
+0
+\mathrm{quant}(w_{ij})=0
+to perturb and compute per-layer sensitivity using a small calibration set
+X
+X
+. As shown in
+Figure 2
+, this reveals a stark contrast: in the 16-bit LLaMA-3 model, a small subset of parameters exhibits significantly higher sensitivity, indicating their disproportionately large influence on the output. In contrast, the 1-bit BitNet model shows a flattened, near-uniform distribution, suggesting that all parameters are treated with comparable importance.
+We refer to this observed collapse of sensitivity differentiation as parameter democratization. This homogenization may prevent the model from effectively prioritizing the most informative features. We therefore hypothesize that recovering a differentiated sensitivity structure, one in which critically important parameters are distinctly identified and preserved, could be key to improving both the accuracy and scalability of extremely low-bit LLMs.
+Figure 2:
+Weight log-sensitivities in the final FFN layer of LLaMA3-3B and BitNet-3B. Matrices are down sampled via max pooling for visualization; darker blue indicates higher sensitivity. Red boxes highlight regions of peak sensitivity. Notably, in the 1-bit weights of BitNet-3B, no pronounced sensitivity variation is observed.
+(a)
+The architecture of the decoupled design in pQuant
+(b)
+1-bit Liner in MHA
+(c)
+8-bit Linear in FFN
+(d)
+1-bit Linear in FFN
+Figure 3:
+Computational flow of pQuant’s core modules. (a) pQuant replaces all linear layers with quantized counterparts, with 8-bit branch to enable dynamic scaling when needed. (b-d) Computation in three representative pQuant modules. FP16 weights are retained solely during training to ensure numerical stability and discarded post-training. Here,
+r
+r
+denotes the dimension of weights in 8-bit branch, where
+r
+≪
+D
+model
+r\ll D_{\text{model}}
+.
+3
+Methodology
+Based on the preceding analysis, we propose pQuant, a method designed to counteract parameter democratization by structurally decoupling parameters. pQuant isolates a small set of sensitive weights into a higher-precision branch within an efficient 1-bit backbone. As illustrated in
+Figure 3
+, pQuant replaces standard linear layers in both multi-head attention (MHA) and feed-forward network (FFN) modules with quantization-native layers and uses feature scaling to explicitly guide importance-aware learning.
+Within the MHA module, pQuant substitutes the query, key, value, and output projections with a pure 1-bit linear layer (
+Figure 3
+(b)). For the FFN, we design a decoupled linear layer: most parameters are quantized to 1-bit for efficiency (
+Figure 3
+(c)), while a small subset is kept in 8-bit to preserve highly sensitive weights (
+Figure 3
+(d)).
+This decoupled design can be naturally viewed through the lens of a Mixture of Experts (MoE): the 1-bit branch acts as a shared expert common to all inputs, ensuring efficiency, while the 8-bit branch functions as a specialized, routable expert. A lightweight, fixed top-1 router dynamically activates routable expert based on the input token.
+3.1
+Multi-Head Attention in pQuant
+In the MHA, each linear layer utilizes 1-bit weights represented with INT1. To maximize inference efficiency, we apply this aggressive, undifferentiated quantization specifically to MHA, while reserving our decoupled architecture for the FFN. This targeted design is supported by two key observations from prior work. First, FFN layers are known to concentrate a larger fraction of sensitive parameters that are critical to model performance
+Dettmers et al. (2023)
+. Second, activation distributions in FFNs tend to be less regular and exhibit more outliers compared to the relatively structured activations in attention layers
+Shazeer (2020)
+.
+During pre-training, weights and activations are dynamically quantized to low precision, while gradients and optimizer states are maintained in FP32 to preserve training stability and accuracy. Specifically, FP16 weights are used in the training pass to ensure meaningful gradient updates. Using 1-bit weights during optimization would result in near-zero gradients for most parameters, making it difficult for the model to learn effective parameter updates and reduce the loss. These weights are discarded during inference, leaving only the 1-bit parameters in the model.
+These FP16 weights are quantized to 1-bit before performing the tensor multiplication between weights and activations. After the multiplication, a dequantization process is applied to the output. This process can be formally described as follows:
+W
+INT1
+=
+S
+​
+i
+​
+g
+​
+n
+​
+(
+W
+𝐹𝑙𝑜𝑎𝑡
+−
+μ
+)
+W^{\mathit{INT1}}=Sign(W^{\mathit{Float}}-\mu)
+(3)
+S
+​
+i
+​
+g
+​
+n
+​
+(
+W
+i
+​
+j
+)
+=
+{
++
+1
+,
+if
+​
+W
+i
+​
+j
+>
+0
+−
+1
+,
+if
+​
+W
+i
+​
+j
+<
+0
+Sign(W_{ij})=\begin{cases}+1,&\text{if }W_{ij}>0\\
+-1,&\text{if }W_{ij}<0\end{cases}
+(4)
+Y
+=
+λ
+⋅
+W
+INT1
+​
+L
+​
+a
+​
+y
+​
+e
+​
+r
+​
+N
+​
+o
+​
+r
+​
+m
+​
+(
+X
+)
+Y=\lambda\cdot W^{\mathit{INT1}}LayerNorm(X)
+(5)
+μ
+=
+1
+m
+​
+n
+​
+∑
+i
+=
+1
+m
+∑
+j
+=
+1
+n
+W
+i
+​
+j
+,
+λ
+=
+1
+m
+​
+n
+​
+∑
+i
+=
+1
+m
+∑
+j
+=
+1
+n
+|
+W
+i
+​
+j
+|
+\mu=\tfrac{1}{mn}\!\sum_{i=1}^{m}\!\sum_{j=1}^{n}\!W_{ij},\lambda=\tfrac{1}{mn}\!\sum_{i=1}^{m}\!\sum_{j=1}^{n}\!|W_{ij}|
+(6)
+Here,
+W
+INT1
+∈
+ℝ
+m
+×
+n
+W^{\mathit{INT1}}\in\mathbb{R}^{m\times n}
+denotes the 1-bit quantized weight matrix, and
+W
+float
+W^{\text{float}}
+the FP16 reference.
+X
+X
+and
+Y
+Y
+are the input and output of the linear layer, respectively. To reduce the
+ℓ
+2
+\ell_{2}
+quantization error, a dequantization scale
+λ
+\lambda
+is applied. Following
+Liu et al. (2022)
+, we center the weights to zero mean using
+μ
+\mu
+prior to binarization, which enhances the information capacity of binary weights. Additionally, pQuant employ the AbsMax method
+Dettmers et al. (2024)
+to quantization all activations and high-precision branch in FFN along the token dimension to the range
+[
+−
+2
+7
+,
+2
+7
+]
+[-2^{7},2^{7}]
+, and represent them in INT8 format:
+Q
+⁡
+(
+X
+)
+=
+R
+​
+o
+​
+u
+​
+n
+​
+d
+​
+C
+​
+l
+​
+i
+​
+p
+​
+(
+X
+×
+γ
+,
+−
+2
+7
++
+ϵ
+,
+2
+7
++
+ϵ
+)
+Q(X)=RoundClip(X\times\gamma,-2^{7}+\epsilon,2^{7}+\epsilon)
+(7)
+R
+​
+o
+​
+u
+​
+n
+​
+d
+​
+C
+​
+l
+​
+i
+​
+p
+​
+(
+X
+,
+a
+,
+b
+)
+=
+max
+(
+a
+,
+min
+(
+b
+,
+R
+o
+u
+n
+d
+(
+X
+)
+)
+,
+RoundClip(X,a,b)\\
+=\max(a,\min(b,Round(X)),
+(8)
+γ
+=
+2
+7
+max
+⁡
+(
+|
+x
+1
+|
+,
+|
+x
+2
+|
+,
+…
+,
+|
+x
+n
+|
+)
+\gamma=\frac{2^{7}}{\max(|x_{1}|,|x_{2}|,\dots,|x_{n}|)}
+(9)
+where
+R
+​
+o
+​
+u
+​
+n
+​
+d
+​
+(
+⋅
+)
+Round(\cdot)
+function rounds each value to the nearest integer. The parameter
+ϵ
+\epsilon
+is a small floating-point value that prevents overflow during clipping. Additionally,
+γ
+\gamma
+is the scaling factory for activations, which will be incorporated with
+λ
+\lambda
+to de-quantize the output as follows:
+Y
+=
+λ
+γ
+×
+W
+I
+​
+N
+​
+T
+​
+1
+​
+Q
+​
+(
+L
+​
+a
+​
+y
+​
+e
+​
+r
+​
+N
+​
+o
+​
+r
+​
+m
+​
+(
+X
+)
+)
+Y=\frac{\lambda}{\gamma}\times W^{INT1}Q(LayerNorm(X))
+(10)
+3.2
+Feed-Forward Network in pQuant
+To preserve highly sensitive parameters with higher precision, a straightforward approach is to designate a subset of dimensions in the linear layer to be represented in high precision while keeping the rest in 1-bit. However, this naïve strategy faces two inherent limitations in the QAT-Scratch setting. First, since parameters are randomly initialized and trained from scratch, there exists no consistent spatial pattern in the weight matrix that reliably indicates where sensitive parameters reside
+Yu et al. (2024)
+. Predefining fixed positions for high-precision weights thus diminishes the potential benefit. Second, the non-uniform distribution of input activation magnitudes can dilute the advantage of retaining higher precision in arbitrary dimensions, often rendering the improvement marginal—similar to random selection. These issues highlight the need for a more adaptive and learnable strategy for high-precision allocation.
+Accordingly, we introduce the decoupled linear layer, which structurally splits the original weight matrix in the FFN into two parallel computational branches: a 1-bit branch and a high-precision branch. This design allows the high-precision branch to operate independently, effectively avoiding the dynamic range collapse issue inherent in per-tensor 1-bit quantization and AbsMean scaling. Both branches process the same input activations and their outputs are then summed to form the final result.
+In pQuant, we adopt 8-bit precision for the high-precision branch, motivated by extensive evidence that 8-bit representations preserve essential parameter information while maintaining computational efficiency
+Liu et al. (2024a)
+;
+Peng et al. (2023)
+;
+Van Baalen et al. (2023)
+;
+Mishra et al. (2025)
+. Among 8-bit formats, we specifically choose INT8 over FP8 or MXFP8 due to its superior hardware support and deployment compatibility on mainstream CPU/GPU platforms.
+A naïve summation of the two branches’ outputs would conflate their distinct sensitivity profiles, hindering the model’s ability to learn their relative importance. Inspired by RSLoRA and MS-LoRA
+Kalajdzievski (2023)
+;
+Luo et al. (2025)
+, which demonstrate that scaling informative components enhances representational capacity allocation. We introduce
+feature scaling
+, where the outputs of the two FFN branches are modulated by learnable scalars
+α
+\alpha
+and
+β
+\beta
+. To prioritize the high-precision signal during optimization, we initialize
+α
+≫
+β
+\alpha\gg\beta
+(e.g.,
+α
+=
+2.0
+\alpha=2.0
+,
+β
+=
+0.2
+\beta=0.2
+), ensuring the 8-bit branch receives stronger gradient feedback during back propagation. The FFN computation is then:
+Y
+=
+α
+𝐹𝐹𝑁
+[
+:
+r
+]
+INT8
+(
+𝐿𝑎𝑦𝑒𝑟𝑁𝑜𝑟𝑚
+(
+X
+)
+)
++
+β
+𝐹𝐹𝑁
+[
+r
+:
+]
+INT1
+(
+𝐿𝑎𝑦𝑒𝑟𝑁𝑜𝑟𝑚
+(
+X
+)
+)
+,
+Y=\alpha\,\mathit{FFN}_{[:r]}^{\mathit{INT8}}(\mathit{LayerNorm}(X))\\
++\beta\,\mathit{FFN}_{[r:]}^{\mathit{INT1}}(\mathit{LayerNorm}(X)),
+(11)
+where
+r
+r
+is a hyperparameter controlling the fraction of high-precision weights retained to preserve sensitivity-critical parameters, with
+r
+∈
+[
+0
+,
+D
+ffn
+]
+r\in[0,D_{\text{ffn}}]
+and
+D
+ffn
+D_{\text{ffn}}
+denoting the FFN hidden dimension. The 1-bit weights follow the same quantization scheme as in the MHA’s 1-bit linear layers (§
+3.1
+), while the 8-bit weights are quantized identically to 8-bit activations (
+subsection 3.1
+).
+3.3
+Efficient Scaling of pQuant
+We expand the high-precision branches into multiple parallel branches and employs a lightweight router to dynamically activate the most suitable path based on the input features. This structure serves as an optional mechanism for performance enhancement. Specifically, pQuant extend the number of 8-bit branch to
+N
+N
+, incorporating a gating to select the most appropriate weights for input activations, as shown in
+Figure 3
+(a). The resulting FFN architecture bears a resemblance to Mixture-of-Experts (e.g., DeepSeekMoE
+Dai et al. (2024)
+and OpenMoE
+Xue et al. (2024)
+). However, the two designs are fundamentally different due to the discrepancy in precision and dimension.
+The router in pQuant is implemented as a simple linear layer and trained end-to-end along with the rest of the model. pQuant adopts a top-1 gating strategy to maximize computational efficiency, ensuring that the number of active parameters in the FFN matches that of a conventional dense layer. The gating function employs a softmax activation
+Shazeer et al. (2017)
+. The
+N
+N
+acts as a hyperparameter, with detailed analysis presented in (§
+4.3
+).
+Parameter
+D
+Model
+\textbf{D}_{\textbf{Model}}
+D
+FF
+\textbf{D}_{\textbf{FF}}
+r
+1-bit
+8-bit
+300M
+1024
+2272(2400-128)
+128
+96%
+4%
+700M
+1536
+3840(4096-256)
+256
+96%
+4%
+1.3B
+2048
+5076(5400-384)
+384
+95%
+5%
+2.6B
+2880
+7168(7680-512)
+512
+95%
+5%
+Table 1:
+Configurations for model trained by pQuant.
+D
+FF
+\textbf{D}_{\textbf{FF}}
+denote the hidden dimension of the feed-forward network; r denotes the dimension of the 8-bit branch; 1-bit and 8-bit denote the percentage of total parameters represented by 1-bit and 8-bit respectively.
+4
+Experiments
+In this section, we conduct extensive experiments to validate our method pQuant. We further evaluate the inference efficiency. Finally, we show the ablation studies of pQuant.
+pQuant is trained end-to-end via QAT-Scratch, adopting a two-stage schedule to ensure stable and robust convergence
+Ma et al. (2024b)
+. Gradients for quantized weights during training are approximated using the Straight-Through Estimator (STE)
+Bengio et al. (2013)
+during back propagation. Training details are provided in
+Appendix B
+. We also optimize the inference efficiency of pQuant, as detailed in
+Appendix A
+.
+4.1
+Experimental setup
+In our experimental, we train pQuant at four scales detailed in
+Table 1
+. For a comprehensive comparison, we also train from scratch three representative baselines under identical configurations: BitNet (1-bit model)
+Wang et al. (2023)
+, BitNet1.58 (2-bit model)
+Ma et al. (2024b)
+, and LLaMA-3 (16-bit model)
+Touvron et al. (2023b)
+. Additionally, we compare pQuant against post-training quantization (PTQ) methods, including PTQ1.61
+Zhao et al. (2025)
+and OmniQuant
+Shao et al. (2023)
+, as well as fine-tuning-based QAT approaches such as OneBit
+Xu et al. (2024)
+. Our models are trained on three datasets: C4
+Raffel et al. (2020)
+, Wikipedia
+Foundation (2020)
+and ArXiv
+Cohan et al. (2018)
+. We configured the batch size to 4 million tokens for LlaMA-2 and 1 million tokens for the other models.
+We evaluate the models based on their zero-shot performance in some downstream tasks, including ARC-Easy (ARC-E)
+Yadav et al. (2019)
+, ARC-Challenge (ARC-C)
+Yadav et al. (2019)
+, BoolQ(BQ)
+Clark et al. (2019)
+, PIQA(PQ)
+Bisk et al. (2020)
+, Winogrande(WGe)
+Sakaguchi et al. (2021)
+, OpenbookQA(OQ)
+Mihaylov et al. (2018)
+, and Hellaswag(HS)
+Zellers et al. (2019)
+. More details about experimental setup is shown in
+Appendix C
+.
+Parameters
+Method
+Bit
+ARC-E
+↑
+\uparrow
+ARC-C
+↑
+\uparrow
+HS
+↑
+\uparrow
+BQ
+↑
+\uparrow
+OQ
+↑
+\uparrow
+PQ
+↑
+\uparrow
+WGe
+↑
+\uparrow
+Avg.
+↑
+\uparrow
+Perplexity
+↓
+\downarrow
+300M
+FP16
+16
+44.8
+19.3
+34.8
+60.7
+18.6
+66.8
+51.3
+42.3
+22.9
+BitNet
+1
+38.2
+16.2
+32.9
+53.5
+14.2
+58.1
+48.8
+37.6
+34.2
+pQuant
+1.28
+41.5
+19.7
+33.0
+60.0
+16.2
+62.5
+50.9
+40.5
+30.1
+700M
+FP16
+16
+51.4
+21.4
+37.3
+58.9
+19.0
+68.5
+52.4
+44.1
+16.5
+BitNet
+1
+44.4
+18.7
+35.4
+56.5
+14.9
+62.9
+50.0
+40.4
+27.6
+pQuant
+1.28
+47.0
+20.1
+36.2
+57.2
+17.4
+67.1
+51.6
+42.4
+21.9
+1.3B
+FP16
+16
+53.9
+22.1
+38.7
+55.7
+21.8
+71.0
+54.3
+45.4
+14.4
+BitNet
+1
+47.8
+19.2
+36.3
+58.6
+17.6
+67.6
+52.0
+42.6
+21.8
+BitNet1.58
+2
+50.4
+21.2
+36.9
+61.2
+19.4
+68.7
+53.0
+44.4
+16.9
+OmniQuant
+2
+38.8
+23.4
+33.4
+56.5
+15.3
+60.9
+51.9
+40.0
+42.43
+OneBit
+1.1
+41.3
+24.1
+34.3
+59.5
+16.3
+62.6
+51.1
+41.3
+25.4
+pQuant
+1.35
+49.8
+20.8
+37.0
+60.2
+20.1
+68.3
+52.5
+44.0
+17.2
+2.6B
+pQuant
+1.35
+54.6
+22.9
+40.5
+61.6
+22.0
+71.9
+56.4
+47.1
+13.0
+7B
+PTQ1.61
+1.61
+47.2
+22.3
+35.8
+56.5
+15.3
+63.2
+52.3
+41.8
+12.7
+Table 2:
+Main experimental results. We report perplexity and zero-shot accuracy of BitNet (1-bit), BitNet1.58 (2-bit), FP16 LLaMA-2 (16-bit), and pQuant on downstream tasks. Perplexity is evaluated on WikiText-2. Results show that pQuant significantly improves the performance of 1-bit models.
+4.2
+Performance of pQuant
+The main evaluation results are summarized in
+Table 2
+. To strictly isolate architectural contributions from data and scale effects, our primary comparison focuses on BitNet, the most relevant 1-bit QAT-from-scratch baseline, under identical model sizes and data budgets (100B tokens). In this controlled setting, pQuant (
+1.28
+∼
+1.35
+1.28\sim 1.35
+-bit) achieves consistent gains over BitNet across all metrics. Notably, the 700M-parameter pQuant matches the performance of the larger 1.3B BitNet, suggesting that preserving sensitive weights in a high-precision branch significantly enhances parameter efficiency.
+At the matched 1.3B scale, pQuant narrows the gap to the 2-bit BitNet1.58 to just 0.4 average accuracy points despite using 0.65 fewer bits per weight. We further include comparisons with OmniQuant, OneBit, and PTQ1.61 not as direct competitors under equal conditions, but to highlight the efficacy of QAT-from-scratch against methods leveraging substantially more resources. Specifically, OmniQuant and OneBit are derived from OPT-1.3B pre-trained on 180B tokens (80% more than our dataset), while PTQ1.61 applies post-training quantization to a 7B LLaMA-2 model trained on
+≥
+\geq
+3T tokens. Despite these disparities, pQuant surpasses both OmniQuant and OneBit at the same scale. Most strikingly, the 2.6B pQuant achieves an average accuracy of 47.1, outperforming the 1.3B LLaMA-2 (FP16) and substantially exceeding PTQ1.61 applied to the much larger 7B model. These results underscore that well-designed low-bit quantization trained from scratch can achieve superior performance even with significantly fewer parameters and pretraining data.
+4.3
+Scalability of pQuant
+We scale pQuant by increasing the number of high-precision expert branches
+N
+N
+from 1 to 8, while maintaining the same number of active parameters per forward pass as a standard FFN. As shown in
+Figure 4
+, at
+N
+=
+8
+N=8
+, pQuant consistently outperforms BitNet1.58 in training loss across all model sizes. More importantly, the performance gap between pQuant and the FP16 LLaMA-2 baseline narrows as model size increases: at 1.3B parameters, pQuant nearly matches LLaMA-2’s loss, whereas 1-bit BitNet and 2-bit BitNet1.58 exhibit a persistent gap. This contrast highlights a key finding: scaling via parameters is inherently inefficient under extreme quantization. In contrast, pQuant’s strategy of scaling high-precision branches enables it to follow a scaling law much closer to that of full-precision models, further evidencing its effective scalability. Downstream accuracy and perplexity results are reported in
+Table 5
+. The overhead introduced by adding more 8-bit branches remains minimal; a detailed analysis is provided in
+Appendix D
+.
+Figure 4:
+Final training loss with varying numbers of parameters. pQuant with N=8 demonstrates excellent scalability, whereas 1-bit BitNet do not.
+(a)
+Sensitivity analysis of pQuant
+(b)
+Ablation on pQuant
+Figure 5:
+(a) Sensitivity analysis of the 1-bit and 8-bit branches in the down-projection layer of the final FFN block in the 700M pQuant model. (b) Ablation study of pQuant on 700M-parameter model, assessing the impact of feature scaling and the number of active 8-bit branches on final loss. The mid-training loss drop stems from the two-phase learning rate schedule (see Appendix
+B.2
+).
+4.4
+Sensitivity Distribution of pQuant
+To validate that pQuant effectively mitigates parameter democratization, we analyze the weight sensitivity distribution in the final FFN layer of pQuant-1.3B after training, as shown in
+Figure 5
+(a). Compared to the uniform sensitivity distribution observed in BitNet-3B, pQuant exhibits a markedly differentiated sensitivity profile, with distinct regions of high and low sensitivity. This contrast confirms that pQuant’s decoupled architecture and feature scaling successfully guide the model to allocate sensitivity-critical parameters effectively, thereby enhancing expressivity and performance.
+4.5
+Memory Efficiency of pQuant
+Figure 6:
+The memory footprint. Memory footprint of model weights transferred during a single forward pass in inference. pQuant is smaller than BitNet1.58 and significantly lower than LLaMA-2.
+The process of transferring model parameters from DRAM to the memory of an on-chip accelerator (e.g., SRAM) can be expensive during inference
+Yuan et al. (2024)
+. Compared to half-precision models, 1-bit models also suggests the opportunity to improve the serving latency. Thus, we outline the required memory for various model sizes in
+Figure 6
+. pQuant maintains a consistent memory footprint during decoding regardless of the value of
+N
+N
+, as it activates only a single 8-bit branch at any given time. This design avoids excessive memory accesses and better leverages the characteristics of modern hardware, where bandwidth is often the primary bottleneck rather than memory capacity. Compared to LlaMA-2, pQuant reduces memory usage by 92%, and requires 31% less memory than BitNet1.58. In pQuant, numerous individual scalars are introduced:
+a
+​
+l
+​
+p
+​
+h
+​
+a
+alpha
+,
+b
+​
+e
+​
+t
+​
+a
+beta
+,
+g
+​
+a
+​
+m
+​
+m
+​
+a
+gamma
+,
+m
+​
+u
+mu
+, and
+l
+​
+a
+​
+m
+​
+b
+​
+d
+​
+a
+lambda
+. These scalars can be merged during inference, ensuring that memory efficiency is not impacted.
+4.6
+Ablation Study
+Feature Scaling.
+As show in
+Figure 5
+(b), we initialize the learnable factory as
+α
+=
+1.0
+\alpha=1.0
+and
+β
+=
+0.5
+\beta=0.5
+. Post-training analysis reveals distinct converged values (mean
+α
+≈
+2.0
+\alpha\approx 2.0
+,
+β
+≈
+0.2
+\beta\approx 0.2
+); re-initializing to these values improves performance. Crucially, models trained under different scaling configurations do
+not
+converge to similar final losses, indicating that feature scaling exerts a persistent structural influence, rather than merely shaping early optimization dynamics. Ablating feature scaling leads to a significant increase in training loss, confirming its necessity for effective allocation of sensitivity-critical parameters. Further analysis is provided in
+Appendix F
+.
+High-precision Branch.
+For hardware efficiency, we restrict the 8-bit branch dimension
+r
+r
+to integer multiples of 128. First, under a single-branch setting, increasing
+r
+r
+from 256 to 768 (at 700M scale) improves performance, but the gains do not compensate for the added memory and computation overhead. Second, we evaluate a multi-branch strategy that activates two branches of size
+r
+=
+768
+r=768
+per token, which yields negligible improvement.
+In our experiments, pQuant with
+N
+=
+4
+N=4
+achieves performance better than BitNet1.58. To rigorously evaluate the architectural efficiency of pQuant, we conduct a controlled comparison under matched parameter budgets. Specifically, we reduce the hidden state dimension of pQuant to match the total of 1.3B parameters in BitNet1.58. We configure pQuant with
+N
+=
+8
+N=8
+and 926M activated parameters, using only one active branch. Under these settings, pQuant runs 1.6
+×
+\times
+faster than BitNet1.58 during inference. The results are shown in
+Table 3
+. When evaluated on the same test set as our main experiments, both models achieve comparable performance. This parity in results, achieved despite pQuant’s reduced hidden dimension, provides compelling evidence for pQuant’s superior parameter efficiency and architectural advantages in low-bit quantization scenarios.
+Additionally, we evaluated the practical performance using FP16 for 8-bit parameters and found that the loss curve closely matches that of the setting with one activated 8-bit branch and
+r
+=
+576
+r=576
+, indicating that 8-bit precision, combined with a scaling factor, is already sufficient to represent the sensitive parameters in our architecture.
+We show the number of 8-bit branches
+N
+N
+ranging from 1 to 8, at 700M in the left of
+Figure 7
+. As
+N
+N
+increases, the performance of pQuant improves steadily. Specifically, in our tests, pQuant outperformed 2-bit model when
+N
+=
+4
+N=4
+. Moreover, as shown in the right panel of
+Figure 7
+, we explored directly keeping 8% of parameters in high precision from the start of BitNet training. This approach yields significantly worse performance than pQuant, despite using more high-precision parameters (8% vs. pQuant’s 5%). We also evaluated channel-wise and group-wise quantization. Channel-wise quantization provides negligible gains. Group-wise quantization (with block size 64) achieves better accuracy but requires storing one 16-bit scaling factor per 64 1-bit weights, which incurs substantial metadata overhead and is unfriendly to hardware. These results highlight the effectiveness of pQuant.
+Figure 7:
+Perplexity of pQuant under different configurations. Lower perplexity indicates better performance.
+Left: Perplexity decreases as the number of 8-bit branches N in pQuant increases.
+Right: Comparison with alternative quantization methods. Native Mix retains 8% of parameters in high precision on top of 1-bit BitNet, rather than using our decoupled architecture. Channel-wise quantizes weights per output channel of the matrix multiplication. Group-wise quantizes weights in groups of 64 elements.
+Additional ablation studies are provided in
+Appendix E
+.
+Model
+Total
+Activated
+PPL
+↓
+\textbf{PPL}\downarrow
+Memory
+pQuant(
+N
+=
+4
+N=4
+)
+1.5B
+1.3B
+15.5
+0.91G
+BitNet1.58
+1.3B
+1.3B
+16.9
+0.72G
+pQuant(
+N
+=
+8
+N=8
+)
+1.3B
+926M
+16.8
+0.98G
+LlaMA-2
+1.3B
+1.3B
+14.4
+2.64G
+Table 3:
+Performance comparison under Matched Parameter. Memory footprint include the storage of Embeddings and LayerNorm.
+4.7
+Limitations
+Although QAT-Scratch methods, including pQuant, gain significant advantages in model performance, they generally incur higher training costs compared to traditional QAT and PTQ. The training duration across different models is presented in
+Appendix H
+.
+While pQuant can achieve better inference speed and model performance than 2-bits BitNet1.58 when
+N
+≥
+4
+N\geq 4
+, this configuration introduces higher physical memory requirements, as shown in
+subsection D.1
+. The speed improvement stems primarily from reduced memory access volume. Our design aligns with current trends in edge-device hardware development, where memory capacity is more cost-effective than bandwidth. This memory overhead represents a meaningful trade-off that merits further investigation.
+Due to the training cost, our experiments are limited to model size. Future work could explore scaling pQuant to larger models (e.g., 70B) to further validate its effectiveness.
+5
+Conclusion
+We propose pQuant, a quantization-aware training-from-scratch method for extremely low-bit LLMs. Motivated by the observation that existing 1-bit models suffer from
+parameter democratization
+, i.e., the homogenization of weight sensitivity that limits expressivity and scaling, we design a decoupled linear layer that preserves sensitive weights in a small high-precision branch. Coupled with feature scaling to prioritize gradient flow toward informative components, this approach enables effective allocation of model capacity under extreme quantization. Experiments show that pQuant not only surpasses prior extremely low-bit methods at matched scales but also scales effectively.
+References
+Achiam
+et al.
+(2023)
+J. Achiam, S. Adler, S. Agarwal, L. Ahmad, I. Akkaya, F. L. Aleman, D. Almeida, J. Altenschmidt, S. Altman, S. Anadkat,
+et al.
+Gpt-4 technical report
+.
+Cited by:
+§1
+.
+Ashkboos
+et al.
+(2024)
+S. Ashkboos, A. Mohtashami, M. L. Croci, B. Li, P. Cameron, M. Jaggi, D. Alistarh, T. Hoefler, and J. Hensman
+Quarot: outlier-free 4-bit inference in rotated llms
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 100213–100240
+.
+Cited by:
+Appendix C
+,
+§I.1
+.
+Bengio
+et al.
+(2013)
+Y. Bengio, N. Léonard, and A. Courville
+Estimating or propagating gradients through stochastic neurons for conditional computation
+.
+Cited by:
+§4
+.
+Bisk
+et al.
+(2020)
+Y. Bisk, R. Zellers, J. Gao, Y. Choi,
+et al.
+Piqa: reasoning about physical commonsense in natural language
+.
+Vol.
+34
+.
+Cited by:
+§4.1
+.
+Bondarenko
+et al.
+(2021)
+Y. Bondarenko, M. Nagel, and T. Blankevoort
+Understanding and overcoming the challenges of efficient transformer quantization
+.
+Cited by:
+§I.1
+.
+Chee
+et al.
+(2024)
+J. Chee, Y. Cai, V. Kuleshov, and C. M. De Sa
+Quip: 2-bit quantization of large language models with guarantees
+.
+Vol.
+36
+.
+Cited by:
+Appendix C
+,
+§I.1
+.
+Chen
+et al.
+(2024)
+M. Chen, W. Shao, P. Xu, J. Wang, P. Gao, K. Zhang, and P. Luo
+Efficientqat: efficient quantization-aware training for large language models
+.
+Cited by:
+§2.1
+.
+Clark
+et al.
+(2019)
+C. Clark, K. Lee, M. Chang, T. Kwiatkowski, M. Collins, and K. Toutanova
+BoolQ: exploring the surprising difficulty of natural yes/no questions
+.
+Cited by:
+§4.1
+.
+Cohan
+et al.
+(2018)
+A. Cohan, F. Dernoncourt, D. S. Kim, T. Bui, S. Kim, W. Chang, and N. Goharian
+A discourse-aware attention model for abstractive summarization of long documents
+.
+In
+Proceedings of the 2018 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 2 (Short Papers)
+,
+New Orleans, Louisiana
+,
+pp. 615–621
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§4.1
+.
+Dai
+et al.
+(2024)
+D. Dai, C. Deng, C. Zhao, R. Xu, H. Gao, D. Chen, J. Li, W. Zeng, X. Yu, Y. Wu,
+et al.
+Deepseekmoe: towards ultimate expert specialization in mixture-of-experts language models
+.
+Cited by:
+§3.3
+.
+Dettmers
+et al.
+(2022)
+T. Dettmers, M. Lewis, Y. Belkada, and L. Zettlemoyer
+Gpt3. int8 (): 8-bit matrix multiplication for transformers at scale
+.
+Advances in Neural Information Processing Systems
+35
+,
+pp. 30318–30332
+.
+Cited by:
+§I.1
+,
+§1
+,
+§1
+.
+Dettmers
+et al.
+(2024)
+T. Dettmers, A. Pagnoni, A. Holtzman, and L. Zettlemoyer
+Qlora: efficient finetuning of quantized llms
+.
+Vol.
+36
+.
+Cited by:
+§3.1
+.
+Dettmers
+et al.
+(2023)
+T. Dettmers, R. Svirschevski, V. Egiazarian, D. Kuznedelev, E. Frantar, S. Ashkboos, A. Borzunov, T. Hoefler, and D. Alistarh
+Spqr: a sparse-quantized representation for near-lossless llm weight compression
+.
+Cited by:
+§I.1
+,
+§1
+,
+§2.3
+,
+§2.3
+,
+§3.1
+.
+Du
+et al.
+(2024)
+D. Du, Y. Zhang, S. Cao, J. Guo, T. Cao, X. Chu, and N. Xu
+Bitdistiller: unleashing the potential of sub-4-bit llms via self-distillation
+.
+Cited by:
+§2.1
+.
+Foundation (2020)
+W. Foundation
+Wikimedia downloads
+.
+External Links:
+Link
+Cited by:
+§4.1
+.
+Frantar and Alistarh (2022)
+E. Frantar and D. Alistarh
+Optimal brain compression: a framework for accurate post-training quantization and pruning
+.
+Advances in Neural Information Processing Systems
+35
+,
+pp. 4475–4488
+.
+Cited by:
+§2.3
+.
+Frantar
+et al.
+(2022)
+E. Frantar, S. Ashkboos, T. Hoefler, and D. Alistarh
+Gptq: accurate post-training quantization for generative pre-trained transformers
+.
+Cited by:
+§I.1
+,
+§1
+,
+§2.3
+.
+Gao
+et al.
+(2023)
+L. Gao, J. Tow, B. Abbasi, S. Biderman, S. Black, A. DiPofi, C. Foster, L. Golding, J. Hsu, A. Le Noac’h, H. Li, K. McDonell, N. Muennighoff, C. Ociepa, J. Phang, L. Reynolds, H. Schoelkopf, A. Skowron, L. Sutawika, E. Tang, A. Thite, B. Wang, K. Wang, and A. Zou
+A framework for few-shot language model evaluation
+.
+Zenodo
+.
+External Links:
+Document
+,
+Link
+Cited by:
+Appendix C
+.
+Huang
+et al.
+(2024)
+W. Huang, Y. Liu, H. Qin, Y. Li, S. Zhang, X. Liu, M. Magno, and X. Qi
+Billm: pushing the limit of post-training quantization for llms
+.
+Cited by:
+§1
+,
+§2.2
+.
+Hubara
+et al.
+(2016)
+I. Hubara, M. Courbariaux, D. Soudry, R. El-Yaniv, and Y. Bengio
+Binarized neural networks
+.
+Advances in neural information processing systems
+29
+.
+Cited by:
+§2.2
+.
+Jo
+et al.
+(2024)
+D. Jo, T. Kim, Y. Kim,
+et al.
+Mixture of scales: memory-efficient token-adaptive binarization for large language models
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 137474–137494
+.
+Cited by:
+§2.2
+.
+Kalajdzievski (2023)
+D. Kalajdzievski
+A rank stabilization scaling factor for fine-tuning with lora
+.
+arXiv preprint arXiv:2312.03732
+.
+Cited by:
+§3.2
+.
+Lee
+et al.
+(2024)
+C. Lee, J. Jin, T. Kim, H. Kim, and E. Park
+Owq: outlier-aware weight quantization for efficient fine-tuning and inference of large language models
+.
+Proceedings of the AAAI Conference on Artificial Intelligence
+38
+,
+pp. 13355–13364
+.
+Cited by:
+§I.1
+,
+§1
+,
+§2.3
+.
+Li
+et al.
+(2025a)
+G. Li, S. Ye, C. Chen, Y. Wang, F. Yang, T. Cao, C. Liu, M. M. S. Aly, and M. Yang
+LUT-dla: lookup table as efficient extreme low-bit deep learning accelerator
+.
+IEEE
+.
+Cited by:
+§1
+.
+Li
+et al.
+(2024)
+H. Li, J. Hong, Y. Wu, S. Adbol, and Z. Li
+Continuous approximations for improving quantization aware training of llms
+.
+Cited by:
+§B.1
+.
+Li
+et al.
+(2025b)
+S. Li, Y. Hu, X. Ning, X. Liu, K. Hong, X. Jia, X. Li, Y. Yan, P. Ran, G. Dai,
+et al.
+Mbq: modality-balanced quantization for large vision-language models
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 4167–4177
+.
+Cited by:
+§2.3
+.
+Lin
+et al.
+(2024)
+J. Lin, J. Tang, H. Tang, S. Yang, W. Chen, W. Wang, G. Xiao, X. Dang, C. Gan, and S. Han
+AWQ: activation-aware weight quantization for on-device llm compression and acceleration
+.
+Proceedings of Machine Learning and Systems
+6
+,
+pp. 87–100
+.
+Cited by:
+Appendix C
+.
+Liu
+et al.
+(2024a)
+A. Liu, B. Feng, B. Xue, B. Wang, B. Wu, C. Lu, C. Zhao, C. Deng, C. Zhang, C. Ruan,
+et al.
+Deepseek-v3 technical report
+.
+Cited by:
+§3.2
+.
+Liu
+et al.
+(2023a)
+S. Liu, Z. Liu, and K. Cheng
+Oscillation-free quantization for low-bit vision transformers
+.
+PMLR
+.
+Cited by:
+Appendix B
+.
+Liu
+et al.
+(2022)
+Z. Liu, B. Oguz, A. Pappu, L. Xiao, S. Yih, M. Li, R. Krishnamoorthi, and Y. Mehdad
+Bit: robustly binarized multi-distilled transformer
+.
+Advances in neural information processing systems
+35
+,
+pp. 14303–14316
+.
+Cited by:
+§3.1
+.
+Liu
+et al.
+(2023b)
+Z. Liu, B. Oguz, C. Zhao, E. Chang, P. Stock, Y. Mehdad, Y. Shi, R. Krishnamoorthi, and V. Chandra
+Llm-qat: data-free quantization aware training for large language models
+.
+Cited by:
+§1
+,
+§2.1
+.
+Liu
+et al.
+(2024b)
+Z. Liu, C. Zhao, I. Fedorov, B. Soran, D. Choudhary, R. Krishnamoorthi, V. Chandra, Y. Tian, and T. Blankevoort
+SpinQuant: llm quantization with learned rotations
+.
+Cited by:
+§I.1
+.
+Luo
+et al.
+(2025)
+D. Luo, K. Zheng, C. Wu, and X. Wang
+MSLoRA: meta-learned scaling for adaptive fine-tuning of lora
+.
+Neurocomputing
+,
+pp. 130374
+.
+Cited by:
+§3.2
+.
+Luo
+et al.
+(2020)
+Z. Luo, A. Kulmizev, and X. Mao
+Positional artefacts propagate through masked language model embeddings
+.
+Cited by:
+§I.1
+.
+Ma
+et al.
+(2024a)
+L. Ma, M. Sun, and Z. Shen
+Fbi-llm: scaling up fully binarized llms from scratch via autoregressive distillation
+.
+Cited by:
+§1
+,
+§1
+,
+§2.2
+.
+Ma
+et al.
+(2025)
+S. Ma, H. Wang, S. Huang, X. Zhang, Y. Hu, T. Song, Y. Xia, and F. Wei
+BitNet b1. 58 2b4t technical report
+.
+Cited by:
+§1
+,
+§2.2
+.
+Ma
+et al.
+(2024b)
+S. Ma, H. Wang, L. Ma, L. Wang, W. Wang, S. Huang, L. Dong, R. Wang, J. Xue, and F. Wei
+The era of 1-bit llms: all large language models are in 1.58 bits
+.
+Cited by:
+Appendix B
+,
+§1
+,
+§4.1
+,
+§4
+.
+Merity
+et al.
+(2016)
+S. Merity, C. Xiong, J. Bradbury, and R. Socher
+Pointer sentinel mixture models
+.
+Cited by:
+Appendix C
+.
+Mihaylov
+et al.
+(2018)
+T. Mihaylov, P. Clark, T. Khot, and A. Sabharwal
+Can a suit of armor conduct electricity? a new dataset for open book question answering
+.
+Cited by:
+§4.1
+.
+Mishra
+et al.
+(2025)
+A. Mishra, D. Stosic, and S. Layton
+Recipes for pre-training llms with mxfp8
+.
+Cited by:
+§3.2
+.
+Park
+et al.
+(2024)
+G. Park, B. Park, M. Kim, S. Lee, J. Kim, B. Kwon, S. J. Kwon, B. Kim, Y. Lee, and D. Lee
+LUT-gemm: quantized matrix multiplication based on luts for efficient inference in large-scale generative language models
+.
+International Conference on Learning Representations, ICLR
+.
+Cited by:
+Appendix A
+.
+Peng
+et al.
+(2023)
+H. Peng, K. Wu, Y. Wei, G. Zhao, Y. Yang, Z. Liu, Y. Xiong, Z. Yang, B. Ni, J. Hu,
+et al.
+Fp8-lm: training fp8 large language models
+.
+Cited by:
+§3.2
+.
+Qin
+et al.
+(2022)
+H. Qin, Y. Ding, M. Zhang, Q. Yan, A. Liu, Q. Dang, Z. Liu, and X. Liu
+Bibert: accurate fully binarized bert
+.
+Cited by:
+§1
+.
+Qu
+et al.
+(2025)
+X. Qu, D. Aponte, C. Banbury, D. P. Robinson, T. Ding, K. Koishida, I. Zharkov, and T. Chen
+Automatic joint structured pruning and quantization for efficient neural network training and compression
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 15234–15244
+.
+Cited by:
+§2.1
+.
+Raffel
+et al.
+(2020)
+C. Raffel, N. Shazeer, A. Roberts, K. Lee, S. Narang, M. Matena, Y. Zhou, W. Li, and P. J. Liu
+Exploring the limits of transfer learning with a unified text-to-text transformer
+.
+Journal of machine learning research
+21
+(
+140
+),
+pp. 1–67
+.
+Cited by:
+§4.1
+.
+Rasley
+et al.
+(2020)
+J. Rasley, S. Rajbhandari, O. Ruwase, and Y. He
+Deepspeed: system optimizations enable training deep learning models with over 100 billion parameters
+.
+Cited by:
+Appendix C
+.
+Rastegari
+et al.
+(2016)
+M. Rastegari, V. Ordonez, J. Redmon, and A. Farhadi
+Xnor-net: imagenet classification using binary convolutional neural networks
+.
+In
+European conference on computer vision
+,
+pp. 525–542
+.
+Cited by:
+§2.2
+.
+Sakaguchi
+et al.
+(2021)
+K. Sakaguchi, R. L. Bras, C. Bhagavatula, and Y. Choi
+Winogrande: an adversarial winograd schema challenge at scale
+.
+Communications of the ACM
+64
+(
+9
+),
+pp. 99–106
+.
+Cited by:
+§4.1
+.
+Shang
+et al.
+(2023)
+Y. Shang, Z. Yuan, Q. Wu, and Z. Dong
+Pb-llm: partially binarized large language models
+.
+Cited by:
+Appendix C
+,
+§1
+,
+§2.2
+,
+§2.3
+.
+Shao
+et al.
+(2023)
+W. Shao, M. Chen, Z. Zhang, P. Xu, L. Zhao, Z. Li, K. Zhang, P. Gao, Y. Qiao, and P. Luo
+Omniquant: omnidirectionally calibrated quantization for large language models
+.
+Cited by:
+§4.1
+.
+Shazeer
+et al.
+(2017)
+N. Shazeer, A. Mirhoseini, K. Maziarz, A. Davis, Q. Le, G. Hinton, and J. Dean
+Outrageously large neural networks: the sparsely-gated mixture-of-experts layer
+.
+Cited by:
+§3.3
+.
+Shazeer (2020)
+N. Shazeer
+Glu variants improve transformer
+.
+Cited by:
+§3.1
+.
+Shen
+et al.
+(2021)
+M. Shen, F. Liang, R. Gong, Y. Li, C. Li, C. Lin, F. Yu, J. Yan, and W. Ouyang
+Once quantization-aware training: high performance extremely low-bit architecture search
+.
+Cited by:
+§I.2
+,
+§2.1
+.
+Shuming
+et al.
+(2024)
+M. Shuming, W. Hongyu, and F. Wei
+The era of 1 bit llms training tips code faq
+.
+External Links:
+Link
+Cited by:
+§B.2
+.
+Team (2025)
+F. Team
+Falcon-e, a series of powerful, universal and fine-tunable 1.58bit language models.
+.
+External Links:
+Link
+Cited by:
+Appendix B
+.
+Team
+et al.
+(2023)
+G. Team, R. Anil, S. Borgeaud, J. Alayrac, J. Yu, R. Soricut, J. Schalkwyk, A. M. Dai, A. Hauth, K. Millican,
+et al.
+Gemini: a family of highly capable multimodal models
+.
+Cited by:
+§1
+.
+Touvron
+et al.
+(2023a)
+H. Touvron, T. Lavril, G. Izacard, X. Martinet, M. Lachaux, T. Lacroix, B. Rozière, N. Goyal, E. Hambro, F. Azhar,
+et al.
+Llama: open and efficient foundation language models
+.
+Cited by:
+§1
+.
+Touvron
+et al.
+(2023b)
+H. Touvron, L. Martin, K. Stone, P. Albert, A. Almahairi, Y. Babaei, N. Bashlykov, S. Batra, P. Bhargava, S. Bhosale,
+et al.
+Llama 2: open foundation and fine-tuned chat models
+.
+Cited by:
+§4.1
+.
+Van Baalen
+et al.
+(2023)
+M. Van Baalen, A. Kuzmin, S. S. Nair, Y. Ren, E. Mahurin, C. Patel, S. Subramanian, S. Lee, M. Nagel, J. Soriaga,
+et al.
+FP8 versus int8 for efficient deep learning inference
+.
+Cited by:
+§3.2
+.
+Wang
+et al.
+(2025)
+F. Wang, G. Wang, Y. Zhang, S. Wang, W. Li, B. Huang, S. Chen, Z. Jiang, R. Xu, and T. Yang
+IFairy: the first 2-bit complex llm with all parameters in {+1, -1, +i, -i}
+.
+arXiv preprint arXiv:2508.05571
+.
+Cited by:
+§2.2
+.
+Wang
+et al.
+(2023)
+H. Wang, S. Ma, L. Dong, S. Huang, H. Wang, L. Ma, F. Yang, R. Wang, Y. Wu, and F. Wei
+Bitnet: scaling 1-bit transformers for large language models
+.
+Cited by:
+§1
+,
+§2.2
+,
+§4.1
+.
+Wang
+et al.
+(2024)
+L. Wang, L. Ma, S. Cao, Q. Zhang, J. Xue, Y. Shi, N. Zheng, Z. Miao, F. Yang, T. Cao, Y. Yang, and M. Yang
+Ladder: enabling efficient Low-Precision deep learning computing through hardware-aware tensor transformation
+.
+In
+18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24)
+,
+Santa Clara, CA
+,
+pp. 307–323
+.
+External Links:
+ISBN 978-1-939133-40-3
+,
+Link
+Cited by:
+Appendix A
+.
+Wei
+et al.
+(2024)
+J. Wei, S. Cao, T. Cao, L. Ma, L. Wang, Y. Zhang, and M. Yang
+T-mac: cpu renaissance via table lookup for low-bit llm deployment on edge
+.
+External Links:
+2407.00088
+,
+Link
+Cited by:
+Appendix A
+.
+Wei
+et al.
+(2023)
+X. Wei, Y. Zhang, Y. Li, X. Zhang, R. Gong, J. Guo, and X. Liu
+Outlier suppression+: accurate quantization of large language models by equivalent and optimal shifting and scaling
+.
+Cited by:
+§I.1
+.
+Wei
+et al.
+(2022)
+X. Wei, Y. Zhang, X. Zhang, R. Gong, S. Zhang, Q. Zhang, F. Yu, and X. Liu
+Outlier suppression: pushing the limit of low-bit transformer language models
+.
+Advances in Neural Information Processing Systems
+35
+,
+pp. 17402–17414
+.
+Cited by:
+§I.1
+.
+Xiao
+et al.
+(2023)
+G. Xiao, J. Lin, M. Seznec, H. Wu, J. Demouth, and S. Han
+Smoothquant: accurate and efficient post-training quantization for large language models
+.
+PMLR
+.
+Cited by:
+Appendix C
+,
+§I.1
+.
+Xu
+et al.
+(2024)
+Y. Xu, X. Han, Z. Yang, S. Wang, Q. Zhu, Z. Liu, W. Liu, and W. Che
+OneBit: towards extremely low-bit large language models
+.
+Cited by:
+§1
+,
+§2.2
+,
+§4.1
+.
+Xue
+et al.
+(2024)
+F. Xue, Z. Zheng, Y. Fu, J. Ni, Z. Zheng, W. Zhou, and Y. You
+Openmoe: an early effort on open mixture-of-experts language models
+.
+Cited by:
+§3.3
+.
+Yadav
+et al.
+(2019)
+V. Yadav, S. Bethard, and M. Surdeanu
+Quick and (not so) dirty: unsupervised selection of justification sentences for multi-hop question answering
+.
+Cited by:
+§4.1
+.
+Yang
+et al.
+(2024)
+A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu, F. Huang, H. Wei,
+et al.
+Qwen2. 5 technical report
+.
+Cited by:
+§1
+.
+Yao
+et al.
+(2021)
+Z. Yao, Z. Dong, Z. Zheng, A. Gholami, J. Yu, E. Tan, L. Wang, Q. Huang, Y. Wang, M. Mahoney,
+et al.
+Hawq-v3: dyadic neural network quantization
+.
+PMLR
+.
+Cited by:
+§I.1
+,
+§1
+.
+Yao
+et al.
+(2022)
+Z. Yao, R. Yazdani Aminabadi, M. Zhang, X. Wu, C. Li, and Y. He
+Zeroquant: efficient and affordable post-training quantization for large-scale transformers
+.
+Advances in Neural Information Processing Systems
+35
+,
+pp. 27168–27183
+.
+Cited by:
+§I.1
+.
+Yin
+et al.
+(2019)
+P. Yin, J. Lyu, S. Zhang, S. Osher, Y. Qi, and J. Xin
+Understanding straight-through estimator in training activation quantized neural nets
+.
+Cited by:
+§I.2
+.
+Yu
+et al.
+(2024)
+M. Yu, D. Wang, Q. Shan, and A. Wan
+The super weight in large language models
+.
+Cited by:
+§3.2
+.
+Yuan
+et al.
+(2023)
+Z. Yuan, L. Niu, J. Liu, W. Liu, X. Wang, Y. Shang, G. Sun, Q. Wu, J. Wu, and B. Wu
+Rptq: reorder-based post-training quantization for large language models
+.
+arXiv preprint arXiv:2304.01089
+.
+Cited by:
+§1
+.
+Yuan
+et al.
+(2024)
+Z. Yuan, Y. Shang, Y. Zhou, Z. Dong, Z. Zhou, C. Xue, B. Wu, Z. Li, Q. Gu, Y. J. Lee,
+et al.
+Llm inference unveiled: survey and roofline model insights
+.
+Cited by:
+§4.5
+.
+Zellers
+et al.
+(2019)
+R. Zellers, A. Holtzman, Y. Bisk, A. Farhadi, and Y. Choi
+Hellaswag: can a machine really finish your sentence?
+.
+Cited by:
+§4.1
+.
+Zhang
+et al.
+(2025)
+H. Zhang, X. Ji, Y. Chen, F. Fu, X. Miao, X. Nie, W. Chen, and B. Cui
+Pqcache: product quantization-based kvcache for long context llm inference
+.
+Proceedings of the ACM on Management of Data
+3
+(
+3
+),
+pp. 1–30
+.
+Cited by:
+§1
+.
+Zhao
+et al.
+(2025)
+J. Zhao, M. Zhang, M. Wang, Y. Shang, K. Zhang, W. Guan, Y. Wang, and M. Zhang
+Ptq1. 61: push the real limit of extremely low-bit post-training quantization methods for large language models
+.
+arXiv preprint arXiv:2502.13179
+.
+Cited by:
+§1
+,
+§2.2
+,
+§4.1
+.
+Zhu
+et al.
+(2024)
+R. Zhu, Y. Zhang, E. Sifferman, T. Sheaves, Y. Wang, D. Richmond, P. Zhou, and J. K. Eshraghian
+Scalable matmul-free language modeling
+.
+Cited by:
+Appendix A
+,
+§1
+.
+Appendix A
+Inference
+Although pQuant introduces additional operations such as quantization, de-quantizaiton, rescale and layernorm during training that slightly increase training overhead, these costs are entirely eliminated during inference, leading to highly efficient deployment. First, the parameters in 1-bit branch are offline quantized and stored in 1-bit precision during inference, matching the effect of PTQ methods. They are packed into UINT8 format with 8 parameters per byte, resulting in a storage footprint that is 1/16 of that required by FP16 models. This also reduces memory bandwidth when GPU cores load weight matrices from global memory. Second, the scaling factors used during training can be fused into preceding or succeeding layers during inference. For example, per-tensor scaling factors can be integrated into the input normalization of the subsequent module. Similarly, the RMSNorm operation can be merged with activation quantization, as both are element-wise transformations. These optimizations eliminate the need for half-precision in GEMM (General Matrix Multiplications) operations, allowing us to employ mixed-precision operators that support W1A8 GEMM computations within linear
+Wang et al. (2024)
+. Third, in the first GEMM of the FFN layer during inference, the same input must be multiplied with both the 8-bit and 1-bit branches of the up projection. To improve efficiency, this computation can be distributed across multiple thread groups, enabling parallel execution without redundant data reads.
+In pQuant, the acceleration method is built atop T-MAC
+Wei et al. (2024)
+, a CPU-based inference library that natively supports mixed-precision matrix multiplication without dequantization. 1-bit quantization is particularly valuable in edge-device deployment, where the batch size is typically one and the most time-consuming operation becomes GEMV (General Matrix-Vector Multiplication) rather than GEMM. A promising approach to implement bitwise computation is through table lookups
+Park et al. (2024)
+. Since each 1-bit weight can only take two values, the number of possible bit patterns in a small group is limited. For instance, if a 1-bit matrix is partitioned into groups of four elements, there are only
+2
+4
+2^{4}
+possible combinations per group (e.g., [1,1,1,-1], [1,1,-1,-1]). Given an activation vector, the results of its multiplication with all possible bit patterns can be precomputed and stored in a lookup table. The mixed-precision GEMM between activation and 1-bit weights is then transformed into a series of table lookups indexed by the bit patterns in the weight, followed by summation of the retrieved results. This reduces GEMM to table lookup and addition operations, eliminating multiplications entirely.
+Computation Efficiency
+The use of 1-bit weights eliminates a significant amount of matrix multiplication operations, thereby substantially reducing computational complexity
+Zhu et al. (2024)
+. To further evaluate its practical efficiency, we conducted comprehensive benchmarking of overhead during inference.
+Figure 8
+presents the time costs for linear operation across different models. Compared to BitNet1.58 and LlaMA-2, pQuant demonstrates an 82% improvement in computational performance over LlaMA-2 and is notably more efficient than BitNet1.58, reducing computation time by 38%.
+Figure 8:
+Computation time across components in a Transformer block, measured on an Apple M2 with a 7B model and input sequence length of 256. pQuant is 38% faster than BitNet1.58 and 82% faster than FP16 LLaMA-2.
+Appendix B
+Training Mechanism
+We introduce RMSNorm to compress the dynamic range of activations. This helps maintain basic performance under absmean-based quantization and has been shown to accelerate convergence in 1-bit quantized models
+Ma et al. (2024b)
+;
+Team (2025)
+. This provides a smoother optimization landscape for gradient descent and improves convergence
+Liu et al. (2023a)
+. The data is preprocessed using the BPE tokenizer with a vocabulary size of 32K. We select 500 steps for warm-up.
+B.1
+Straight-Through Estimator
+Since the function sign(·) is non-differentiable at zero, it causes the gradient chain to break during back propagation, preventing optimization of the model parameters. Therefore, we use the Straight-Through Estimator (STE) method during back propagation. In traditional back propagation, gradients flow through differentiable functions allowing for the optimization of weights via gradient descent. However, when operations are not continuous or involve discrete decisions, calculating these gradients becomes problematic. The STE provides a way around this by passing the gradient straight through the operation during the backward pass while using the quantized values in the forward pass
+Li et al. (2024)
+. In essence, STE approximates the gradient of a non-differentiable function as 1, allowing the network to learn despite the presence of non-differentiable operations.
+Figure 9:
+Two-Stage Scheduler. During mid-training, both the learning rate (LR) and weight decay (WD) are decayed to accelerate convergence of 1-bit parameters and prevent sign flips caused by excessive weight oscillation around quantization thresholds.
+B.2
+Two-Phase Training Schedule
+Besides, pQuant employ a two-phase training schedule
+Shuming et al. (2024)
+. In the first phase, the learning rate begins at a high value and decreases linearly until the midpoint of training. The second phase starts with a lower learning rate, which also decays linearly. Besides, weight decay is set to 0.1 during the first phase and disable in the second phase. These strategies have been shown to improve convergence in low bit training, as demonstrated by BitNet1.58. This approach results in a significant reduction in the loss curve shortly after the midpoint. The learning rates and weight decay for the two phases are shown in the
+Figure 9
+.
+There are two primary motivations for this design. First, in contrast to FP16 models where learning rates are typically well calibrated, 1-bit optimization faces a key challenge: small updates to the latent weights often fail to produce meaningful changes in the quantized 1-bit weights. This results in biased gradient estimation and suboptimal update behavior, particularly during the early training stages when rapid convergence is critical. Second, in half-precision training, weight decay serves as an effective regularizer by constraining large weight magnitudes, thereby preventing overfitting and improving training stability. However, in 1-bit training, weight decay is applied to the latent weights rather than the actual 1-bit weights, which alters its regularization effect and may lead to unintended consequences.
+Appendix C
+Experiment Details
+These common sense reasoning benchmarks we chose in our experiments have been widely adopted in prior work to assess quantization effectiveness, in both post-training quantization (PTQ) and quantization-aware training (QAT) methods
+Xiao et al. (2023)
+;
+Lin et al. (2024)
+;
+Chee et al. (2024)
+;
+Shang et al. (2023)
+;
+Ashkboos et al. (2024)
+. We also use perplexity to quantitatively measure the model’s generation power on WikiText-2
+Merity et al. (2016)
+. We followed the pipeline from lm-evaluation-harness4
+Gao et al. (2023)
+to perform the evaluation. Furthermore, we directly mixed and shuffled the training datasets for training. For performance evaluation, each experiment was repeated 10 times and averaged. Due to high training costs, each model was trained only twice to mitigate errors—though in practice, loss curves under identical configurations were nearly identical.
+The configurations for the BitNet, BitNet1.58, and LlaMA-2 models are shown in
+Table 4
+. The sequence length was uniformly set to 2048. To optimize training efficiency and performance, we employed mixed-precision training, and the Adam optimizer is applied with
+β
+1
+=
+0.9
+\beta_{1}=0.9
+and
+β
+2
+=
+0.95
+\beta_{2}=0.95
+.
+Our models were trained using 16 NVIDIA A100-80G GPUs and 1 TB of CPU memory. We utilized the DeepSpeed framework
+Rasley et al. (2020)
+for training.
+Parameters
+D
+Model
+\textbf{D}_{\textbf{Model}}
+D
+FF
+\textbf{D}_{\textbf{FF}}
+Heads
+Layers
+300M
+1024
+2400
+16
+24
+700M
+1536
+4096
+24
+24
+1.3B
+2048
+5460
+32
+24
+Table 4:
+Configurations for BitNet, BitNet1.58 and LlaMA-2. Head denotes the number of attention heads in multi-head attention; Layers denotes the number of Transformer blocks.
+Appendix D
+Analysis of Scaling pQuant
+The main results in
+Table 2
+suggests that merely increasing the parameter count is insufficient for extracting additional information in the extremely low-bit scenario. The expressive capacity of 1-bit tensor is highly constrained under the absmean quantization scheme, limiting its scalability.
+The
+Table 5
+below presents the complete performance test results after scaling.
+Models
+Total/Activated
+ARC-E
+↑
+\uparrow
+ARC-C
+↑
+\uparrow
+HS
+↑
+\uparrow
+BQ
+↑
+\uparrow
+OQ
+↑
+\uparrow
+PQ
+↑
+\uparrow
+WGe
+↑
+\uparrow
+Avg.
+↑
+\uparrow
+Perplexity
+↓
+\downarrow
+LlaMA-2 (16-bit)
+300M
+44.8
+19.3
+34.8
+60.7
+18.6
+66.8
+51.3
+42.3
+22.9
+BitNet1.58 (2-bit)
+300M
+43.8
+19.7
+34.6
+57.5
+16.0
+64.9
+52.2
+41.2
+29.7
+pQuant(N=8)
+366M/300M
+43.5
+20.1
+34.5
+60.2
+17.2
+64.6
+51.9
+41.7
+27.1
+LlaMA-2 (16-bit)
+700M
+51.4
+21.4
+37.3
+58.9
+19.0
+68.5
+52.4
+44.1
+16.5
+BitNet1.58 (2-bit)
+700M
+48.5
+20.0
+35.9
+57.7
+17.8
+68.3
+51.1
+42.8
+21.1
+pQuant(N=8)
+898M/700M
+48.5
+20.7
+36.7
+58.6
+18.6
+68.5
+52.6
+43.5
+17.9
+LlaMA-2 (16-bit)
+1.3B
+53.9
+22.1
+38.7
+55.7
+21.8
+71.0
+54.3
+45.4
+14.4
+BitNet1.58 (2-bit)
+1.3B
+50.4
+21.2
+36.9
+61.2
+19.4
+68.7
+53.0
+44.4
+16.9
+pQuant(N=8)
+1.7B/1.3B
+52.9
+21.7
+38.9
+60.0
+21.6
+70.3
+55.5
+45.8
+14.3
+Table 5:
+Average score on downstream tasks. Results show that pQuant achieves efficient scaling by increasing the capacity of the high-precision branch. When the number of 8-bit branch reaches 8, pQuant surpasses 2-bit baselines and matches the accuracy of FP16 models. Total/Activated means total parameters/activated parameters per forward pass.
+D.1
+Overhead of Model Parameter
+Although the number of activated parameters during inference in pQuant is consistent with that of other models, the overall parameter count increases with varying N values. Specifically, the total parameter counts for models of different sizes, when N is 1, 2, 4 or 8 are shown in the
+Table 6
+. When N=1, pQuant has the same number of parameters as normal transformers model.
+Base Size
+N=1
+N=2
+N=4
+N=8
+300M
+300M
+309M
+328M
+366M
+700M
+700M
+728M
+785M
+898M
+1.3B
+1.3B
+1.4B
+1.5B
+1.7B
+Table 6:
+Total parameters of pQuant. N denotes the number of 8-bit branches used.
+Appendix E
+Ablation Study
+Batch Size.
+We evaluated various batch sizes and found 1 million tokens led to significant performance improvements compared to 4 million tokens. This indicates that low-bit models benefit more from frequent parameter updates to achieve optimal performance, rather than relying on larger batch sizes for stability.
+Learning rate.
+As illustrated in
+Figure 5
+(b), we observed a significant reduction in loss occurring when the learning rate was decayed, rather than at the end of the training phase. This approach made the performance more predictable during the training process. However, half-precision models did not benefit from a similar learning rate decay strategy, likely because their loss curves do not exhibit an S-shaped pattern.
+Appendix F
+Feature Scaling Analysis
+As illustrated in
+Table 7
+, the feature scaling values of 1.3B pQuant at the end of training exhibit two clear patterns: (1) both the initial and final layers exhibit relatively large scaling magnitudes, while the intermediate layers show smaller values. (2) the scaling factors for the 8-bit branches are significantly higher than those for the 1-bit branches, which aligns with our design principle of allocating higher precision to more influential weights.
+Layers
+1
+2
+3
+4
+6
+8
+10
+12
+14
+16
+18
+20
+21
+22
+23
+24
+8-bit
+1.82
+1.73
+1.57
+1.59
+1.39
+1.33
+1.25
+1.22
+1.34
+1.49
+1.37
+1.27
+1.38
+1.45
+1.56
+1.61
+1-bit
+0.78
+0.62
+0.48
+0.42
+0.38
+0.34
+0.31
+0.26
+0.29
+0.36
+0.43
+0.45
+0.41
+0.47
+0.52
+0.50
+Table 7:
+Feature scaling after training. In the trained model, feature scaling reveals the model’s preference for the 8-bit branch, highlighting its ability to preserve outliers.
+Appendix G
+Stability of pQuant
+Figure 10:
+Training loss curve of two model. pQuant exhibits greater training stability. In contrast, BitNet frequently suffers from gradient explosion during training, often requiring checkpoint reloading and restarts.
+Additionally, we observed that the 1-bit model experienced instability and crashes at a batch size of 4 million tokens, which is the batch size used for LlaMA-2. Even under the optimal batch size of 1M suggested in the BitNet research, training often becomes unstable. As shown in the
+Figure 10
+, this necessitates frequent rollbacks to previous checkpoints to resume training. In contrast, pQuant did not show similar issues under the same conditions, indicating its superior stability.
+Appendix H
+Training Time
+The gradient update process in QAT models differs from that in traditional pre-training, often involving a simpler or more constrained optimization landscape. pQuant follows this characteristic. This is primarily due to the additional computational steps involved in quantization, dequantization, and auxiliary matrix operations, which are currently implemented using high-precision arithmetic. The consequence of latent weight keeping during training is that we are keeping both a FP16 and 1-bit copy of weights during training. This makes training less memory efficient than in a standard Transformer. Since large models are bottlenecked on memory bandwidth, this has a significant impact on training performance.
+The estimated training duration across different models is presented in
+Table 8
+.
+Parameters
+N=1
+N=2
+N=4
+N=8
+300M
+1.9
+2.0
+2.1
+2.3
+700M
+4.9
+5.1
+5.4
+6.0
+1.3B
+8.5
+8.8
+9.6
+11.1
+Table 8:
+Total days for training.
+Appendix I
+Related Work
+I.1
+Post-Training Quantization
+Current quantization approaches are broadly categorized into Quantization-Aware Training and Post-Training Quantization. QAT incorporates quantization and dequantization during the training phase, enabling the model to adapt to the constraints imposed by reduced precision. In contrast, PTQ applies quantization without requiring further training.
+A number of recent studies
+Luo et al. (2020)
+;
+Bondarenko et al. (2021)
+;
+Wei et al. (2023)
+;
+Xiao et al. (2023)
+have identified the existence of significant outliers in large language models. Outlier Suppression (OS)
+Wei et al. (2022)
+restructures the LayerNorm function by shifting its scale parameter
+γ
+\gamma
+to reduce outlier effects. OS+
+Wei et al. (2023)
+introduces a channel-wise shifting transformation that balances activation magnitudes across channels to handle asymmetric distributions. SmoothQuant
+Xiao et al. (2023)
+applies a per-channel scaling transformation that redistributes quantization difficulty from activations to weights. AWQ
+Yao et al. (2021)
+observes that the importance of weight channels is largely determined by activation scales. The idea of rotation transformation was first explored in QuIP
+Chee et al. (2024)
+, later extended by QuaRot
+Ashkboos et al. (2024)
+, which integrates quantization for both weights and activations, including the KV cache. GPTQ
+Frantar et al. (2022)
+adopts a more accurate quantization framework and achieves strong results in 4-bit settings.
+SpinQuant
+Liu et al. (2024b)
+finds that different rotation matrices can lead to varying performance in quantized models and proposes a learning-based approach to optimize rotation transformations. ZeroQuant
+Yao et al. (2022)
+and LLM.int8()
+Dettmers et al. (2022)
+improve quantization accuracy by introducing custom grouping strategies for quantization blocks. SpQR
+Dettmers et al. (2023)
+further partitions features to better manage precision constraints. OWQ
+Lee et al. (2024)
+preserves information capacity in sensitive weight channels through carefully designed scaling transformations.
+I.2
+Quantization-Aware Training
+In QAT, the training process typically involves three key components: quantization simulation, gradient approximation, and parameter optimization. During forward propagation, weights are passed through a quantize-dequantize pipeline to mimic the effect of low bit width computation in real deployment. Specifically, they are first quantized into lower precision representations and then dequantized back to higher precision values for further computation. Since quantization operations such as rounding are non-differentiable
+Yin et al. (2019)
+, gradient approximation techniques are employed during back propagation. With this setup, the model learns to optimize its parameters under simulated quantization conditions, thereby improving robustness to quantization noise
+Shen et al. (2021)
+. As illustrated in
+Figure 11
+, given a 16-bit weight matrix, a quantization scale is typically derived from its dynamic range (e.g., maximum absolute value). The matrix is then scaled, rounded to 1-bit integers, and dequantized back to floating point. The difference between the dequantized and original matrices constitutes the quantization error.
+Figure 11:
+Illustration of the Quantization-Aware Training process. Before quantization, matrix multiplications are performed in 16-bit precision. During QAT, simulated quantization are inserted to enable the model to learn and compensate for quantization-induced errors. In the final inference phase, quantization factors are fused into the weights, only use the quantized weights.
+The effectiveness of QAT largely depends on the design of the pseudo-quantization operation, which varies in how well it reduces model sensitivity to quantization. A well-designed pseudo-quantization mechanism allows the model to adjust its weights during training in response to quantization effects, making it more robust or "numb" to the distortions introduced during actual quantization.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

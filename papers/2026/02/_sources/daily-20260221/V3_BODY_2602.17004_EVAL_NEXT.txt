@@ -1,0 +1,156 @@
+5 Trinity Large Evaluation Results
+5.1 Capability Benchmarks
+Figure 3: A comparison of Trinity Large Base to other similar open-weight base models.
+We evaluate Trinity Large Base on a standard benchmark suite spanning coding/math (MBPP+ (Liu et al., 2023), Minerva MATH500 (Lewkowycz et al., 2022)), commonsense (HellaSwag (Zellers et al., 2019), WinoGrande (Sakaguchi et al., 2019)), knowledge (MMLU (Hendrycks et al., 2021), MMLU-Pro (Wang et al., 2024b), TriviaQA (Joshi et al., 2017), ARC Challenge (Clark et al., 2018)), and reasoning (BBH (Suzgun et al., 2022), GPQA Diamond (Rein et al., 2023)). The evaluation results are reported in Table 3, and comparisons to other open-weight base models are shown in Figure 3. We note that Trinity Large Base achieves competitive scores with GLM 4.5 Base, despite having 4×4\times higher degree of sparsity and a roughly 2.5×2.5\times lower active parameter count.
+Table 3: Trinity Large Base performance on our base model evaluation suite.
+Evaluation
+Score
+MBPP+
+88.62
+Minerva MATH500
+65.20
+HellaSwag (5-shot)
+90.11
+WinoGrande (5-shot)
+80.82
+MMLU (5-shot)
+82.58
+MMLU-Pro (5-shot)
+66.02
+TriviaQA (5-shot)
+83.30
+ARC Challenge (0-shot)
+65.44
+BBH (few-shot)
+65.70
+GPQA Diamond (5-shot)
+43.94
+We also present evaluations for our instruct-tuned model, Trinity Large Preview, in Table 4. Our suite of instruct-tuned model benchmarks includes MMLU, MMLU-Pro, GPQA Diamond, SimpleQA (Wei et al., 2024), and AIME25.
+Table 4: Trinity Large Preview performance on our instruct model evaluation suite.
+Evaluation
+Score
+MMLU
+87.21
+MMLU-Pro
+75.25
+GPQA Diamond
+63.32
+SimpleQA
+23.92
+AIME25
+24.36
+5.2 Inference Benchmarks
+To benchmark inference performance, we use vLLM with all models quantized to FP8. Measurements were taken on an 8xH200 node. The measurements can be seen in Figure 4. The design of Trinity Large with its extreme sparsity and interleaved local/global attention results in strong performance.
+Figure 4: Throughput comparison of models. All tests were done with models quantized to FP8, using vLLM, on 8xH200.
+6 Discussion
+When training Trinity Large, we experienced some initial instability. On our first few runs, the loss decreased as expected and expert utilization looked roughly balanced early on. After some progress, routing behavior drifted and expert load became increasingly uneven, eventually resulting in collapsed experts. MaxVio (defined below) (Wang et al., 2024a) would remain stable and then experience a sudden climb as the experts collapsed. When this happened, the loss plateaued, and evaluation improvements also plateaued, far from expected behavior. We attempted a few targeted changes: lowering the learning rate as a general method of stabilization, removing weight decay from normalization parameters, and increasing the post-norm ϵ\epsilon value to reduce numerical sensitivity in normalization. Each of these changes improved behavior for a while, but did not prevent recurrence of the same failure mode. MaxVio continued to diverge and the loss trend did not recover to a stable downward trajectory. Since we had very limited time, we applied six changes at once, all targeted at increasing the stability of the run:
+1.
+We adopted our new load balancing method SMEBU, which we had briefly tested at very small scale.
+2.
+We disabled our MXFP8 kernels for linear layers and grouped GEMMs, falling back to BF16.
+3.
+We adopted z-loss with a small weight to stabilize training. (Wortsman et al., 2023; Team OLMo et al., 2025). Initially, we planned to use a weight of 1×10−41\times 10^{-4}. However, due to a bug in the training code, the weight was being applied incorrectly, and was falling back to a z-loss weight of 00. Out of concern due to the continued growth of the maximum logit value, we attempted to introduce z-loss in the middle of training (following Marin Community (2025)), and had to reduce the weight to 1×10−61\times 10^{-6}, as larger values destabilized the network. This effectively stabilized the trend in maximum logit as well as mean logits.
+4.
+We swapped from a purely aux-loss-free load balancing strategy to including a sequence-wise aux loss with a small weight (1×10−41\times 10^{-4}), following DeepSeek-AI et al. (2025a), GLM-4.5 Team et al. (2025), and Xiaomi LLM-Core Team et al. (2026).
+5.
+We chose to increase the number of dense layers from 3 to 6, to further stabilize representations.
+6.
+We chose to adopt intra-document masking to prevent token positions from attending to token positions from a different document, to reduce noise in the learning objective.
+With these fixes applied, MaxVio stopped diverging, expert utilization remained balanced throughout the run, and loss continued to smoothly converge to a lower value. Because the fixes were introduced together to unblock training, we did not have time to run controlled ablations to attribute stabilization to any individual change.
+MaxVio (Wang et al., 2024a) measures the relative worst-case expert overload, defined as
+MaxVio\displaystyle\mathrm{MaxVio}
+=maxi⁡Loadi−Load¯Load¯.\displaystyle=\frac{\max_{i}\,\mathrm{Load}_{i}-\overline{\mathrm{Load}}}{\overline{\mathrm{Load}}}.
+(42)
+where Load¯\overline{\mathrm{Load}} is the mean expert load, and Loadi\mathrm{Load}_{i} is the load on expert ii for 1≤i≤Nr1\leq i\leq N_{r}.
+7 Conclusion and Future Work
+In this report, we introduced the Trinity family of open-weight language models, culminating in Trinity Large, a model with 400B total parameters and 13B active per token. We also introduced Trinity Nano and Trinity Mini as smaller form factors and scaling-ladder validation points. At the largest scale, training stability and expert utilization balance were critical focus points.
+We identify two promising directions for future work, both for us and the community at large. First, we believe that enabling greater sparsity in models overall will be the key to efficient scaling. Specifically in the case of MoEs, improved load balancing and routing will be important in allowing us to scale to greater sparsity while keeping training stable. Secondly, we view large-batch training as another key for efficient scaling. Algorithmic improvements that can push the critical batch size higher (and maintain sample efficiency and stability at scale) will directly translate into faster training and better utilization of modern hardware as the number of GPUs scales (when model parallelism is not needed).
+Additional Contributors
+Arcee AI
+Curt Larson
+Scott Zembsch
+Gabriel Santos
+Ben Langer
+Sam Fraser
+Eric Lau
+Mariam Jabara
+James Weir
+Davis Stone
+Dante Simon
+Molly Niland
+Zachary Kirkendall
+Mohit Khullar
+Datology AI
+Technical Staff
+Amro Abbas
+Rishabh Adiga
+Cody Blakeney
+Paul Burstein
+Aldo Carranza
+Spandan Das
+Alvin Deng
+Vineeth Dorna
+Parth Doshi
+Alex Fang
+Tony Jiang
+Siddharth Joshi
+Brett Larsen
+Jason Lee
+Pratyush Maini
+Kaleigh Mentzer
+Luke Merrick
+Haakon Mongstad
+Ricardo Monti
+Fan Pan
+David Schwab
+Darren Teh
+Jason Telanoff
+Jack Urbanek
+Zhengping Wang
+Josh Wills
+Haoli Yin
+Leadership
+Bogdan Gaza
+Matthew Leavitt
+Ari Morcos
+References
+Ahn et al. (2025)
+K. Ahn, B. Xu, N. Abreu, and J. Langford
+Dion: distributed orthonormalized updates.
+arXiv preprint: 2504.05295.
+Cited by: §3.3.
+Ainslie et al. (2023)
+J. Ainslie, J. Lee-Thorp, M. de Jong, Y. Zemlyanskiy, F. Lebrón, and S. Sanghai
+GQA: training generalized multi-query transformer models from multi-head checkpoints.
+External Links: 2305.13245,
+Link
+Cited by: §2.2.
+Allal et al. (2025)
+L. B. Allal, A. Lozhkov, E. Bakouch, G. M. Blázquez, G. Penedo, L. Tunstall, A. Marafioti, H. Kydlíček, A. P. Lajarín, V. Srivastav, et al.
+SmolLM2: when smol goes big–data-centric training of a small language model.
+arXiv preprint arXiv:2502.02737.
+Cited by: §3.1.
+Anomaly (2026)
+Anomaly
+OpenCode: the open source ai coding agent.
+Anomaly.
+Note: https://opencode.ai/Accessed: 2026-01-27
+Cited by: §4.
+Beltagy et al. (2020)
+I. Beltagy, M. E. Peters, and A. Cohan
+Longformer: the long-document transformer.
+External Links: 2004.05150,
+Link
+Cited by: §2.2.
+Blakeney et al. (2024)
+C. Blakeney, M. Paul, B. W. Larsen, S. Owen, and J. Frankle
+Does your data spark joy? performance gains from domain upsampling at the end of training.
+First Conference on Language Modeling (CoLM).
+Cited by: §3.1.
+Brown (2025)
+W. Brown
+Verifiers: environments for llm reinforcement learning.
+Note: https://github.com/PrimeIntellect-ai/verifiersCommit fd5c7b73faac97673420ff82ade43015a0841aa1, accessed 2026-01-27
+Cited by: §4.
+Child et al. (2019)
+R. Ch

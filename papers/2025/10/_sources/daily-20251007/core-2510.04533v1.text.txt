@@ -1,0 +1,839 @@
+TAG: Tangential Amplifying Guidance forHallucination-Resistant Diffusion Sampling
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Preliminaries
+3 Motivation and Intuition
+4 TAG: Tangential Amplifying Guidance
+4.1 Why does TAG improve Image Quality?
+Avoidance of normal amplification.
+4.2 Tangential Amplifying Guidance for Conditional Generation
+5 Experiments
+Improvements on conditional generation.
+Improvements on unconditional generation.
+Improvements on Flow Matching.
+6 Limitation & Future work
+7 Conclusion
+8 Reproducibility Statement
+References
+A Proof & Derivation
+Proof for Theorem
+Analysis on pure TAG gain.
+B Implementation of the Tangential Amplifying Guidance
+C Additional Qualitative Results
+License: CC BY 4.0
+arXiv:2510.04533v1 [cs.CV] 06 Oct 2025
+TAG: Tangential Amplifying Guidance for
+Hallucination-Resistant Diffusion Sampling
+Hyunmin Cho
+††thanks: co-first authors {hyun_cho@korea.ac.kr, donghoon@berkeley.edu, susung@cs.washington.edu}
+Affiliation: Korea University
+Donghoon Ahn11footnotemark:
+1
+Affiliation: University of California, Berkeley
+Susung Hong11footnotemark:
+1
+Affiliation: University of Washington
+Jee Eun Kim
+Affiliation: Korea University
+Seungryong Kim
+††thanks: correspondence to {seungryong.kim@kaist.ac.kr, kyong_jin@korea.ac.kr}
+Affiliation: KAIST AI
+Kyong Hwan Jin22footnotemark:
+2
+Affiliation: Korea University
+Abstract
+Recent diffusion models achieve the state-of-the-art performance in image generation, but often suffer from semantic inconsistencies or hallucinations. While various inference-time guidance methods can enhance generation, they often operate indirectly by relying on external signals or architectural modifications, which introduces additional computational overhead. In this paper, we propose Tangential Amplifying Guidance (TAG), a more efficient and direct guidance method that operates solely on trajectory signals without modifying the underlying diffusion model.
+TAG leverages an intermediate sample as a projection basis and amplifies the tangential components of the estimated scores with respect to this basis to correct the sampling trajectory.
+We formalize this guidance process by leveraging a first-order Taylor expansion, which demonstrates that amplifying the tangential component steers the state toward higher-probability regions, thereby reducing inconsistencies and enhancing sample quality.
+TAG is a plug-and-play, architecture-agnostic module that improves diffusion sampling fidelity with minimal computational addition, offering a new perspective on diffusion guidance.11
+1
+Project page is available at: https://hyeon-cho.github.io/TAG/
+(a) No Guidance
+(b) TAG Update
+Figure 1: Conceptual visualization of Tangential Amplifying Guidance (TAG) from a mode-interpolation perspective (Aithal et al., 2024). Unlike (a) no guidance case, (b) TAG decomposes the base increment Δk+1\Delta_{k+1} on the latent sphere into parallel 𝑷k+1​Δk+1{\bm{P}}_{k+1}\Delta_{k+1} and orthogonal (i.e., tangential) 𝑷k+1⟂​Δk+1{\bm{P}}_{k+1}^{\perp}\Delta_{k+1} components (equation 6). By preserving the parallel component while adding a scaled tangential component, TAG isolates the data-relevant part of the update (§3) and can more effectively navigate the data manifold, leading to samples that contain more semantic structure. We make this precise by proving that amplifying the tangential has the effect of guiding the trajectories toward regions of higher model density while mitigating off-manifold drift (§4, equation 15).
+1 Introduction
+Hallucination in diffusion models refers to the phenomenon of generating samples that violate the data distribution or contradict conditioning, thus failing to provide meaningful outputs. For example, it often manifests as mixed-up objects (Okawa et al., 2023) or anatomically implausible structures (e.g., extra-fingers hands). Recent evidence suggests that the primary source of such errors lies in a failure mode known as mode interpolation. During sampling, trajectories may traverse low-density valleys between distinct modes of the data distribution, causing attribute mismatches and structural inconsistencies (Aithal et al., 2024).
+A widely adopted remedy involves inference-time guidance strategies, such as classifier-free guidance (CFG) (Ho & Salimans, 2021) and their variants (Hong et al., 2023; Ahn et al., 2024; Karras et al., 2024; Rajabi et al., 2025; Kwon et al., 2025; Sadat et al., 2025; Dinh et al., 2025; Hong, 2024). Under the assumption that deviating from low-probability regions enhances sample quality, most of these methods employ residual scaling, using the difference between the conditional and unconditional branches to guide the generation process away from the unconditional model’s outputs.
+While effective, these mechanisms are fundamentally indirect:
+instead of navigating along the intrinsic geometry of the data distribution, they proceed by repeatedly moving away from an unconditional estimate at each step of the process.
+In contrast, we propose a more efficient direct solution grounded in Tweedie’s identity (Tweedie et al., 1984), which relates the score to the posterior mean under Gaussian corruption. This link motivates a decomposition of the model update based on its intrinsic geometry: a drift component that advances the radius along the prescribed noise schedule (i.e., noise level), and a tangential component that moves along the data-manifold, approximately preserving the overall radius while refining the sample’s structure and semantics. We observe that the tangential component carries rich structural information (Figure 2), and amplifying it reduces out-of-distribution samples (Figure 3).
+Drawing upon the principle of amplifying the tangential component during inference, we derive Tangential Amplifying Guidance (TAG), a plug-and-play method that emphasizes the tangential component of the score update.
+TAG steers the sampling trajectory to follow the underlying data manifold closely. TAG integrates seamlessly with standard diffusion backbones—whether conditioned or not—without requiring additional denoising evaluations or retraining.
+We can summarize our contributions as follows:
+•
+We establish a concrete link between the score’s intrinsic geometry and sample quality, proving that amplifying the tangential components of the scores steers sampling trajectories toward the in-distribution manifold.
+•
+We introduce TAG, a computationally efficient and architecture-agnostic algorithm that realizes this geometric principle in practice.
+2 Preliminaries
+Score-based Diffusion Model. Score-based generative models learn a time-indexed score function that approximates the gradient of the log-density of noise-perturbed data,
+𝒔θ(𝒙,tk)≈∇𝒙logp(𝒙∣tk),tk∈{tK>⋯>t0}denotes the k-th discretized timestep,{\bm{s}}_{\theta}({\bm{x}},t_{k})\;\approx\;\nabla_{{\bm{x}}}\log p({\bm{x}}\mid t_{k}),\quad t_{k}\in\{t_{K}>\cdots>t_{0}\}\ \text{denotes the $k$-th discretized timestep,}
+to reverse a gradual noising process for sample generation. This approach provides a continuous-time framework that unifies earlier discrete-time Denoising Diffusion Probabilistic Models (DDPMs) (Sohl-Dickstein et al., 2015; Ho et al., 2020) through the lens of stochastic differential equations (SDEs) (Song et al., 2020b). The core idea involves a forward-time SDE that transforms complex data into a simple prior distribution, given by
+d​𝒙k=𝐟⁡(𝒙k,tk)​d​tk+g⁡(tk)​d​𝐖​tk.d{\bm{x}}_{k}=\mathbf{f}({\bm{x}}_{k},t_{k})dt_{k}+g(t_{k})d\mathbf{W}t_{k}.
+Generation is then performed by a corresponding reverse-time SDE, which becomes tractable by substituting the unknown true score with the learned model 𝒔θ{\bm{s}}_{\theta} (Anderson, 1982). This score network, typically a noise-conditional U-Net, is trained efficiently via denoising score matching across various noise levels (Vincent, 2011; Song & Ermon, 2019). For sampling, one can use numerical methods like predictor-corrector schemes to simulate the stochastic reverse SDE, or solve an associated deterministic ordinary differential equation (ODE) known as the probability-flow ODE. This continuous-time framework not only provides a theoretical basis for widely used deterministic samplers like DDIM (Song et al., 2020a) but has also inspired modern refinements, such as the preconditioning and parameterization in EDM (Karras et al., 2022), which further enhance the trade-off between sample quality and efficiency.
+Inference-Time Guidance. Numerous methods modify the update field during sampling to improve fidelity, typically without requiring retraining. Early approaches (Ho & Salimans, 2021) often rely on residual signals, which scale the update residual to better align samples with a desired condition. However, as Dhariwal & Nichol (2021); Kynkäänniemi et al. (2024) show, naïve residual scaling (e.g., geometry-agnostic) can reduce sample diversity or disrupt the sampler’s behavior. These observations motivate a geometry-aware view of guidance—asking not only how much to scale, but which directions to emphasize (Sadat et al., 2025). A complementary line of work replaces external cues with model-internal signals (Hong et al., 2023; Ahn et al., 2024; Hong, 2024). The common aim of these strategies is to steer the inference-time update to suppress directions associated with off-manifold drift while preserving the learned prior. More recent formulations make this objective explicit by decomposing the update into components parallel to a reference direction and orthogonal to it (Sadat et al., 2025; Kwon et al., 2025). Such geometry-aware perspectives offer a principled basis for guidance design and integrate cleanly with modern solvers.
+𝑷⟂​Δk{\bm{P}}^{\perp}\Delta_{k}
+𝑷k​Δk{\bm{P}}_{k}\Delta_{k}
+Δk{\Delta_{k}}
+𝚫𝒌𝐓𝐀𝐆\bm{\Delta_{k}^{\rm TAG}}
+tt = 981
+881
+781
+681
+581
+481
+381
+281
+181
+tt = 981
+tt = 501
+Gen. sample
+Figure 2: Amplifying the tangential component enhances semantic content by isolating it from noise. This figure illustrates the decomposition of the update step Δk\Delta_{k} into normal and tangential components. Subtracting the unstructured, noisy normal component 𝑷k​Δk{{\bm{P}}}_{k}\Delta_{k} from the original update acts as a denoising operation, revealing the tangential component 𝑷k⟂​Δk{{\bm{P}}}_{k}^{\perp}\Delta_{k}, which preserves the principal semantic structure. Images decoded from intermediate timesteps (t=981,501t{=}981,501) indicate that semantic information is most salient in the tangential component. Motivated by this observation, our method 𝚫𝒌𝐓𝐀𝐆\bm{\Delta_{k}^{\rm TAG}} amplifies this semantically rich component, yielding a clearer and more coherent final sample (far right) than that obtained from the unmodified Δk\Delta_{k} (Please zoom-in for details).
+3 Motivation and Intuition
+Under Gaussian corruption, Tweedie’s formula (Tweedie et al., 1984) links the posterior mean of the clean signal to the noisy observation via the score (i.e., the gradient of the log marginal density):
+𝔼[𝒙0|𝒙k]=(𝒙k⏟:=drift​term+σk2​∇𝒙​log⁡p⁡(𝒙∣tk)|𝒙=𝒙k⏟:=TweedieincrementΔkTw,(a.k.a.dataterm))/α¯k.\mathbb{E}[{\bm{x}}_{0}|{\bm{x}}_{k}]=\Big(\underbrace{{\bm{x}}_{k}}_{\rm:=~drift~term}+\underbrace{\sigma_{k}^{2}\nabla_{{\bm{x}}}\log p({\bm{x}}\mid t_{k})\big|_{{\bm{x}}={\bm{x}}_{k}}}_{:=~{\rm Tweedie~increment~\Delta_{k}^{\rm Tw}},~~(a.k.a.~\rm data~term)}\Big)/\sqrt{{\bar{\alpha}_{k}}}.
+(1)
+Geometrically, the score field ∇𝒙​log​p​(𝒙|tk)|𝒙=𝒙k\nabla_{{\bm{x}}}\log p({\bm{x}}|t_{k})\big|_{{\bm{x}}={\bm{x}}_{k}} points in the direction of steepest increase of the marginal density. Tweedie’s formula therefore adjusts 𝒙k{\bm{x}}_{k} in this ascent direction, nudging the state toward higher-probability regions. Therefore, the aim of modeling is to bias this movement toward data-driven directions.
+However, naively guiding the states to chase higher-probability regions can disturb the scheduler’s prescribed radius/SNR trajectory and may degrade sample quality (Figure 4). Accordingly, to avoid altering the radial term, we isolate 𝒙k{\bm{x}}_{k} and reweight only the increment by decomposing it into normal and tangential parts with respect to 𝒙^k:=𝒙k/‖𝒙k‖2\widehat{{\bm{x}}}_{k}:={\bm{x}}_{k}/\|{\bm{x}}_{k}\|_{2}:
+𝑷k=𝒙^k​𝒙^k⊤{\bm{P}}_{k}=\widehat{{\bm{x}}}_{k}\widehat{{\bm{x}}}_{k}^{\top} and 𝑷k⟂=I−𝑷k{\bm{P}}_{k}^{\perp}=I-{\bm{P}}_{k}.
+Guided by this separation, we form the amplified state 𝒙+{\bm{x}}^{+}, where the normal component is fixed and only the tangential component is amplified, via
+𝒙+=(𝒙k+𝑷k​ΔkTw)+η​𝑷k⟂​ΔkTw,withη≥1.{\bm{x}}^{+}=\big({\bm{x}}_{k}+{\bm{P}}_{k}\Delta_{k}^{\rm Tw}\big)+{\eta~{\bm{P}}^{\perp}_{k}\Delta_{k}^{\rm Tw},}\quad\text{with}\quad\eta\geq 1.
+(2)
+By doing so, we can preserve the radial first-order term (equation 17) while biasing the step toward higher-probability regions, ∇𝒙​log​p​(𝒙|tk)|𝒙=𝒙k\nabla_{\bm{x}}\log p({\bm{x}}|t_{k})\big|_{{\bm{x}}={\bm{x}}_{k}} (Empirical evidence is provided in Figure 2 and 3). In the following section (§4.1), we formalize this bias as a constrained MLE update that allocates first-order gain to the tangential subspace.
+Figure 3: Sampling on a 2D branching distribution (Karras et al., 2024) under different guidance methods. (a) No guidance: probability mass drifts off the data manifold, yielding fragmented branches and OOD (Out of Distribution) points. (b) Naive truncation: suppresses some OOD but oversimplifies the geometry, dropping fine branches. (c) CFG: reduces boundary violations but also reduces diversity and can still leave OOD strays in our run. (d) TAG (Ours): trajectories are steered toward high-density regions along the branches, suppressing off-manifold outliers while retaining detail. (e) Ground truth. Overall, TAG achieves the highest similarity to the GT distribution without additional #NFEs, concentrating mass on the correct branches while substantially reducing residual OOD outliers.
+(a) No Guidance
+(b) Naive Truncation
+(c) CFG
+(d) TAG (Ours)
+(e) Ground Truth
+4 TAG: Tangential Amplifying Guidance
+We introduce Tangential Amplifying Guidance (TAG), which reweights base increments along normal/tangential directions on the latent space.
+Definitions & Algorithm.
+We work per sample on ℝC×H×W≅ℝd\mathbb{R}^{C\times H\times W}\cong\mathbb{R}^{d} with Euclidean inner product ⟨⋅,⋅⟩\langle\cdot,\cdot\rangle and norm ∥⋅∥2\|\cdot\|_{2}.
+Let {tk}k=K0\{t_{k}\}_{k=K}^{0} be descending timesteps with tK>⋯>t0t_{K}>\cdots>t_{0}, and let ϵθ\epsilon_{\theta} denote the denoiser.
+Given 𝒙k+1{\bm{x}}_{k+1} at time tk+1t_{k+1}, the denoiser predicts
+𝜺k+1=ϵθ​(𝒙k+1,tk+1).\bm{\varepsilon}_{k+1}\;=\;\epsilon_{\theta}({\bm{x}}_{k+1},t_{k+1}).
+A base solver (e.g., DDIM) then produces a provisional state (Karras et al., 2022)
+𝒙~k=ak+1​𝒙k+1+bk+1​𝜺k+1,whereak+1,bk+1are base solver coefficients.\displaystyle\tilde{{\bm{x}}}_{k}\;=\;a_{k+1}\,{\bm{x}}_{k+1}\;+\;b_{k+1}\,\bm{\varepsilon}_{k+1},\quad\text{where}\quad a_{k+1},b_{k+1}\quad\text{are base solver coefficients.}
+(3)
+Corresponding base increment at 𝒙k+1{\bm{x}}_{k+1} is defined as
+Δk+1:=𝒙~k−𝒙k+1.\Delta_{k+1}\;:=\;\tilde{{\bm{x}}}_{k}-{\bm{x}}_{k+1}.
+(4)
+For any 𝒙∈ℝd{\bm{x}}\!\in\!\mathbb{R}^{d}, we define the unit vector and orthogonal projectors
+𝒙^=𝒙/‖𝒙‖2,𝑷⁡(𝒙)=𝒙^​𝒙^⊤,𝑷⟂​(𝒙)=𝑰−𝑷⁡(𝒙).\widehat{\bm{x}}={{\bm{x}}}~/~{\|{\bm{x}}\|_{2}},\qquad{\bm{P}}({\bm{x}})=\widehat{\bm{x}}\widehat{\bm{x}}^{\top},\qquad{\bm{P}}^{\perp}({\bm{x}})=\displaystyle{\bm{I}}-{\bm{P}}({\bm{x}}).
+(5)
+Given positive scales η≥1\eta\geq 1, TAG reweights the base increment at 𝒙k+1{\bm{x}}_{k+1}:
+𝒙k=𝒙k+1+𝑷k+1​Δk+1+η​𝑷k+1⟂​Δk+1{\bm{x}}_{k}\;=\;{\bm{x}}_{k+1}\;+\;{\bm{P}}_{k+1}\,\Delta_{k+1}\;+\;\eta\,{\bm{P}}^{\perp}_{k+1}\,\Delta_{k+1}
+(6)
+where 𝑷k+1=𝑷⁡(𝒙k+1){\bm{P}}_{k+1}={\bm{P}}({\bm{x}}_{k+1}) and 𝑷k+1⟂=𝑷⟂​(𝒙k+1){\bm{P}}^{\perp}_{k+1}={\bm{P}}^{\perp}({\bm{x}}_{k+1}).
+Algorithm 1  Tangential Amplifying Guidance (TAG)
+1:
+Denoiser ϵθ​(⋅)\epsilon_{\theta}(\cdot), timesteps {tk}k=K0\{t_{k}\}_{k=K}^{0}, base solver coefficients ak+1,bk+1a_{k+1},b_{k+1}, TAG scale η≥1\eta\geq 1
+2:
+Sample 𝒙K∼𝒩⁡(𝟎,I){\bm{x}}_{K}\sim\mathcal{N}(\mathbf{0},I)
+3:
+for k=K−1,…,0k=K-1,\dots,0 do
+4:
+𝜺k+1←ϵθ​(𝒙k+1,tk+1)\bm{\varepsilon}_{k+1}\leftarrow\epsilon_{\theta}({\bm{x}}_{k+1},t_{k+1}) ⊳\triangleright noise prediction
+5:
+𝒙~k←ak+1​𝒙k+1+bk+1​𝜺k+1\tilde{{\bm{x}}}_{k}\leftarrow a_{k+1}{\bm{x}}_{k+1}+b_{k+1}\,\bm{\varepsilon}_{k+1} ⊳\triangleright e.g., scheduler.step
+6:
+Δk+1←𝒙~k−𝒙k+1\Delta_{k+1}\leftarrow\tilde{{\bm{x}}}_{k}-{\bm{x}}_{k+1} ⊳\triangleright base increment
+7:
+𝒙^k+1←𝒙k+1/‖𝒙k+1‖2\widehat{\bm{x}}_{k+1}\leftarrow{\bm{x}}_{k+1}/\|{\bm{x}}_{k+1}\|_{2}
+8:
+𝑷k+1←𝒙^k+1​𝒙^k+1⊤{\bm{P}}_{k+1}\leftarrow\widehat{\bm{x}}_{k+1}\widehat{\bm{x}}_{k+1}^{\top},  𝑷k+1⟂←I−𝑷k+1{\bm{P}}^{\perp}_{k+1}\leftarrow I-{\bm{P}}_{k+1} ⊳\triangleright projectors at 𝒙k+1{\bm{x}}_{k+1}
+9:
+𝒙k←𝒙k+1+𝑷k+1​Δk+1+η⁡(𝑷k+1⟂​Δk+1){\bm{x}}_{k}\leftarrow{\bm{x}}_{k+1}+{\bm{P}}_{k+1}\Delta_{k+1}+\eta\,({\bm{P}}^{\perp}_{k+1}\Delta_{k+1}) ⊳\triangleright TAG amplification
+4.1 Why does TAG improve Image Quality?
+Log-likelihood maximization. A foundational goal of training generative models is to maximize the log-likelihood of the data, as formalized by the Maximum Likelihood Estimation (MLE) principle:
+max⁡∑iθ⁡log⁡pθ​(𝒙i).\max_{\theta}\sum_{i}\log p_{\theta}({\bm{x}}_{i}).
+(7)
+This principle suggests that high-quality samples should concentrate in regions of high probability. To connect this idea to an update rule, we relate likelihood increase to movement along the score via a local linearization:
+logpθ(𝒙)=logpθ(𝒙0)+(𝒙−𝒙0)⊤∇𝒙logpθ(𝒙)|𝒙=𝒙0+𝒪(∥⋅∥2).\log p_{\theta}({\bm{x}})=\log p_{\theta}({\bm{x}}_{0})+({\bm{x}}-{\bm{x}}_{0})^{\top}\nabla_{{\bm{x}}}\log p_{\theta}({\bm{x}})\big|_{{\bm{x}}={\bm{x}}_{0}}+\mathcal{O}(\|\cdot\|^{2}).
+(8)
+Diffusion models (Song et al., 2020b; Ho et al., 2020) are designed to predict a score function, ∇𝒙logp(𝒙∣tk)|𝒙=𝒙k≈−ϵθ(𝒙k,tk)/σk\nabla_{{\bm{x}}}\log p({\bm{x}}\mid t_{k})\big|_{{\bm{x}}={\bm{x}}_{k}}\approx-\epsilon_{\theta}({\bm{x}}_{k},t_{k})/\sigma_{k}, which operates on noisy versions of the data. Because diffusion models learn this score field, optimizing the global likelihood (equation 7) for a sample 𝒙0{\bm{x}}_{0} during inference is not directly tractable. Therefore, we propose to apply the spirit of MLE at each local step of the sampling trajectory.
+logp(𝒙k∣tk+1)≈logp(𝒙k+1∣tk+1)+(𝒙k−𝒙k+1)⊤∇𝒙logp(𝒙∣tk+1)|𝒙=𝒙k+1+𝒪(∥⋅∥2).\log p({\bm{x}}_{k}\mid t_{k+1})\approx\log p({\bm{x}}_{k+1}\mid t_{k+1})+({\bm{x}}_{k}-{\bm{x}}_{k+1})^{\top}\nabla_{{\bm{x}}}\log p({\bm{x}}\mid t_{k+1})\big|_{{\bm{x}}={\bm{x}}_{k+1}}+\mathcal{O}(\|\cdot\|^{2}).
+(9)
+The idea of enhancing a pre-trained score function with inference-time guidance has proven effective. For instance, when the score function is well trained on given training sets and this leads to well-trained maximum log-likelihood, we observe that the pre-trained score function could be improved by CFG (Ho & Salimans, 2021) which linearly biases the score toward the conditional target. Inspired by this, our approach provides inference-time guidance on the score function by maximizing the following local log-likelihood term, thereby guiding the sampling trajectory towards high-likelihood regions of the data distribution and reducing off-manifold artifacts (hallucination):
+max𝒙k⁡(𝒙k−𝒙k+1)⊤​∇𝒙​log⁡p⁡(𝒙∣tk+1)|𝒙=𝒙k+1\max_{{\bm{x}}_{k}}~({\bm{x}}_{k}-{\bm{x}}_{k+1})^{\top}\nabla_{{\bm{x}}}\log p({\bm{x}}\mid t_{k+1})\big|_{{\bm{x}}={\bm{x}}_{k+1}}
+(10)
+Single-step increment decomposition.
+For deterministic DDIM/ODE samplers, the single-step score state decomposition can be written as
+Δk+1:=𝒙~k−𝒙k+1=α~k​ϵθ​(𝒙k+1,tk+1)+βk​𝒙k+1,\Delta_{k+1}:=\tilde{\bm{x}}_{k}-{\bm{x}}_{k+1}\;=\;\tilde{\alpha}_{k}\epsilon_{\theta}({\bm{x}}_{k+1},t_{k+1})+\beta_{k}{\bm{x}}_{k+1},
+(11)
+with coefficients
+α~k:=σk−α¯kα¯k+1σk+1,βk:=α¯kα¯k+1−1,withα~k<0,βk>0,\displaystyle\tilde{\alpha}_{k}:=\sigma_{k}-\tfrac{\sqrt{\bar{\alpha}_{k}}}{\sqrt{\bar{\alpha}_{k+1}}}\sigma_{k+1},\quad\beta_{k}:=\tfrac{\sqrt{\bar{\alpha}_{k}}}{\sqrt{\bar{\alpha}_{k+1}}}-1,\quad\text{with}\quad\tilde{\alpha}_{k}<0,~\beta_{k}>0,
+where α¯\bar{\alpha} is the standard diffusion cumulative product term. Using the projection operators, which satisfy 𝑷k+1⟂​𝒙k+1=0{\bm{P}}^{\perp}_{k+1}{\bm{x}}_{k+1}=0 and 𝑷k+1​𝒙k+1=𝒙k+1{\bm{P}}_{k+1}{\bm{x}}_{k+1}={\bm{x}}_{k+1}, yields the projection-wise identities
+𝑷k+1⟂​Δk+1\displaystyle{\bm{P}}^{\perp}_{k+1}\Delta_{k+1}
+=α~k​𝑷k+1⟂​ϵθ​(𝒙k+1,tk+1),\displaystyle=\tilde{\alpha}_{k}{\bm{P}}^{\perp}_{k+1}\epsilon_{\theta}({\bm{x}}_{k+1},t_{k+1}),
+𝑷k+1​Δk+1\displaystyle{\bm{P}}_{k+1}\Delta_{k+1}
+=α~k​𝑷k+1​ϵθ​(𝒙k+1,tk+1)+βk​𝒙k+1.\displaystyle=\tilde{\alpha}_{k}{\bm{P}}_{k+1}\epsilon_{\theta}({\bm{x}}_{k+1},t_{k+1})+\beta_{k}{\bm{x}}_{k+1}.
+(12)
+Substituting equation 12 into the equation 6 gives
+𝒙kTAG=𝒙k+1+α~k​[𝑷k+1+η​𝑷k+1⟂]​ϵθ​(𝒙k+1,tk+1)+βk​𝒙k+1,withη≥1.{\bm{x}}^{\text{TAG}}_{k}={\bm{x}}_{k+1}+\tilde{\alpha}_{k}\big[{\bm{P}}_{k+1}+\eta{\bm{P}}^{\perp}_{k+1}\big]\epsilon_{\theta}({\bm{x}}_{k+1},t_{k+1})+\beta_{k}{\bm{x}}_{k+1},\quad\text{with}\quad\eta\geq 1.
+(13)
+Therefore, the TAG update Δk+1TAG\Delta_{k+1}^{\rm TAG} can be expressed in terms of the decomposed components of the original update Δk+1\Delta_{k+1}:
+Δk+1TAG=(𝑷k+1+η​𝑷k+1⟂)​Δk+1.\Delta_{k+1}^{\mathrm{TAG}}=\big({\bm{P}}_{k+1}+\eta\,{\bm{P}}_{k+1}^{\perp}\big)\Delta_{k+1}.
+(14)
+In this way, as visualized in Figure 2, semantic information can be isolated from the update vector Δk+1\Delta_{k+1} via the tangential projection, thereby enabling semantics-aware amplification.
+To quantify its effect on the log-likelihood, assume the log-density is smooth (i.e., logp(⋅|tk+1)\log p(\cdot|t_{k+1}) is C2C^{2} in a neighborhood of 𝒙k+1{\bm{x}}_{k+1}). The first-order Taylor expansion gain for a small TAG update Δk+1TAG∈ℝd\Delta^{\rm TAG}_{k+1}\in\mathbb{R}^{d} is
+G⁡(η):=(Δk+1TAG)⊤​∇𝒙​log⁡p⁡(𝒙∣tk+1)|𝒙=𝒙k+1.G(\eta):=\big(\Delta^{\rm TAG}_{k+1}\big)^{\top}\nabla_{{\bm{x}}}\log p({\bm{x}}\mid t_{k+1})\big|_{{\bm{x}}={\bm{x}}_{k+1}}.
+(15)
+Next, we prove that increasing η\eta provides a monotonic increase in this first-order gain.
+Table 1: Quantitative results across previous guidance methods and +TAG sampling settings for unconditional generation.
+Evaluated on the ImageNet val with 30K samples. All images are sampled with Stable Diffusion (SD) v1.5 using the DDIM sampler.
+Methods
+Guidance Scale
+TAG Amp. (η\eta)
+#NFEs
+#Steps
+FID ↓\downarrow
+IS ↑\uparrow
+DDIM (Song et al., 2020a)
+–
+–
+50
+50
+76.942
+14.792
+DDIM + TAG
+–
+1.05
+50
+50
+67.971
+16.620
+DDIM + TAG
+–
+1.15
+50
+50
+67.805
+16.487
+DDIM + TAG
+–
+1.25
+50
+50
+71.801
+15.815
+SAG (Hong et al., 2023)
+0.2
+–
+50
+25
+71.984
+15.803
+SAG + TAG
+0.2
+1.15
+50
+25
+65.340
+17.014
+PAG (Ahn et al., 2024)
+3
+–
+50
+25
+64.595
+19.30
+PAG + TAG
+3
+1.15
+50
+25
+63.619
+19.90
+SEG (Hong, 2024)
+3
+–
+50
+25
+65.099
+17.266
+SEG + TAG
+3
+1.15
+50
+25
+60.064
+18.606
+Table 2: Quantitative results of TAG on various Stable Diffusion baselines. The table presents a comparison for Stable Diffusion (SD) v2.1 and SDXL, evaluated on 10K ImageNet validation images using the DDIM sampler with 50 NFEs.
+Methods
+TAG Amp. (η\eta)
+#NFEs
+#Steps
+FID ↓\downarrow
+IS ↑\uparrow
+SD v2.1 (Rombach et al., 2022)
+–
+50
+50
+100.977
+11.553
+SD v2.1 + TAG
+1.15
+50
+50
+88.788
+13.311
+SDXL (Podell et al., 2024)
+–
+50
+50
+124.407
+9.034
+SDXL + TAG
+1.20
+50
+50
+113.798
+9.716
+Table 3: Quantitative results for unconditional image generation on the ImageNet dataset. We leverage a Stable Diffusion (SD) v1.5. All metrics are calculated using 30K samples. We further demonstrate that strong performance is achievable even with fewer #NFEs. We measure the inference time using torch.cuda.Event and report the average over 100 consecutive runs on NVIDIA RTX 4090 GPUs.
+Methods
+TAG Amp. (η\eta)
+#NFEs
+Inference Time (s)
+FID ↓\downarrow
+IS ↑\uparrow
+DDIM (Song et al., 2020a)
+–
+50
+1.9507
+76.942
+14.792
+DDIM + TAG
+1.15
+25
+µ​l\mathrm{\SIUnitSymbolMicro l}
+72.535
+15.528
+DDIM + TAG
+1.15
+50
+1.9674
+67.805
+16.487
+DPM++ (Lu et al., 2025)
+–
+10
+0.4433
+85.983
+13.037
+DPM++ + TAG
+1.15
+10
+0.4522
+74.238
+14.930
+Theorem 4.1 (Monotonicity of the First-order Taylor Gain).
+Assume a deterministic base step with
+Δk+1=α~k​ϵθ​(𝐱k+1,tk+1)+βk​𝐱k+1\Delta_{k+1}=\tilde{\alpha}_{k}\epsilon_{\theta}({\bm{x}}_{k+1},t_{k+1})+\beta_{k}{\bm{x}}_{k+1} and α~k≤0\tilde{\alpha}_{k}\leq 0.
+Let 𝐏k+1⪰0{\bm{P}}_{k+1}\succeq 0 and 𝐏k+1⟂⪰0{\bm{P}}^{\perp}_{k+1}\succeq 0 be the projectors defined above.
+For the TAG step
+Δk+1TAG=𝐏k+1​Δk+1+η​𝐏k+1⟂​Δk+1\Delta_{k+1}^{\mathrm{TAG}}={\bm{P}}_{k+1}\Delta_{k+1}+\eta\,{\bm{P}}_{k+1}^{\perp}\Delta_{k+1}, the first-order Taylor gain
+G⁡(η):=(Δk+1TAG)⊤​∇𝐱​log⁡p⁡(𝐱∣tk+1)|𝐱=𝐱k+1G(\eta):=\big(\Delta^{\rm TAG}_{k+1}\big)^{\top}\nabla_{{\bm{x}}}\log p({\bm{x}}\mid t_{k+1})\big|_{{\bm{x}}={\bm{x}}_{k+1}} satisfies
+∂G⁡(η)∂η≈−α~kσk+1​‖𝑷k+1⟂​ϵθ​(𝒙k+1,tk+1)‖22≥ 0,\frac{\partial G(\eta)}{\partial\eta}\approx\frac{-\tilde{\alpha}_{k}}{\sigma_{k+1}}\;\big\|{\bm{P}}_{k+1}^{\perp}\epsilon_{\theta}({\bm{x}}_{k+1},t_{k+1})\big\|_{2}^{2}\;\geq\;0,
+and, in particular,
+GTAG−Gbase=−σk+1−1⋅(α~k(η−1))⏟≥𝟎​ as ​α~k≤0⋅‖𝑷k+1⟂​ϵθ​(𝒙k+1,tk+1)‖22≥0,G^{\rm TAG}-G^{\rm base}=\underbrace{-\sigma_{k+1}^{-1}\cdot\big(\tilde{\alpha}_{k}(\eta-1)\big)}_{\bm{\geq~0}~\text{ as }~\tilde{\alpha}_{k}~\leq~0}\;\cdot\,\big\|{\bm{P}}_{k+1}^{\perp}\epsilon_{\theta}({\bm{x}}_{k+1},t_{k+1})\big\|_{2}^{2}\geq 0,
+Equality holds iff η=1\eta=1. The proof is provided in Appendix A.
+Log-likelihood improvements via TAG. We cast inference-time guidance as maximizing a log-likelihood gain (equation 10). TAG simply reweights the update step by amplifying the component that is orthogonal to the current state while leaving the parallel component unchanged. By Theorem 4.1, increasing the orthogonal weight monotonically raises the first-order Taylor gain, so TAG steers the sampler toward higher-density regions of the data manifold, improving image quality.
+Avoidance of normal amplification.
+Uncond.
+#NFEs=50
+Uncond.
+#NFEs=250
++ TAG
+#NFEs=50
++ TAG + Normal
+#NFEs=50
+Figure 4: Effectiveness of TAG. At 50 NFEs, TAG surpasses the sample quality at 250 NFEs from baseline. In contrast, +Normal causes severe over-smoothing.
+Amplifying the tangential component monotonically increases the first-order term of a Taylor gain of logp(⋅∣tk+1)\log p(\cdot\mid t_{k+1}) (Theorem 4.1), which produces samples with less hallucination. However, amplifying the normal component increases radial contraction and leads to over-smoothing (Figure 4). This radial component of the single-step is aligned with the radial part of Tweedie’s correction, which links 𝒙k{\bm{x}}_{k} to the posterior mean 𝔼⁡[𝒙0|𝒙k]\mathbb{E}[{\bm{x}}_{0}|{\bm{x}}_{k}] via the score function (Tweedie et al., 1984; Song et al., 2020b). Formally, rescaling the normal part by a κ(>1)\kappa~(>1),
+the radial first–order change is multiplied by κ\kappa:
+⟨𝒙^k+1,Δk+1(κ)⟩=κ⁡⟨𝒙^k+1,Δk+1⟩.\langle\widehat{{\bm{x}}}_{k+1},\Delta_{k+1}^{(\kappa)}\rangle=\kappa\,\langle\widehat{{\bm{x}}}_{k+1},\Delta_{k+1}\rangle.
+(16)
+Therefore, a value of κ(>1)\kappa~(>1) excessively strengthens this contraction under the VP/DDIM schedule, leading to over-smoothing. In contrast, tangential scaling preserves the radial first–order term:
+⟨𝒙^k+1,Δk+1TAG⟩=⟨𝒙^k+1,Δk+1⟩.\langle\widehat{{\bm{x}}}_{k+1},\Delta_{k+1}^{\mathrm{TAG}}\rangle=\langle\widehat{{\bm{x}}}_{k+1},\Delta_{k+1}\rangle.
+(17)
+To summarize, normal amplification breaks one–step calibration and induces over-smoothing, whereas tangential boosting improves alignment without disturbing the radial schedule.
+4.2 Tangential Amplifying Guidance for Conditional Generation
+Cond. only
+Cond.+ TAG
+prompt = “… man brushing …”
+Figure 5: Conditional generation without CFG. Adding TAG produces more faithful semantics for the prompt at matched NFEs.
+Our analysis (§3, 4) shows that the tangential component encodes data-relevant directions and is radius-preserving to first-order; so amplifying it improves image quality by steering updates along data-aligned directions. In CFG (Ho & Salimans, 2021), the guided score combines conditional and unconditional branches
+𝜺~k=ϵθ​(𝒙k,𝒄)+ω⁡(ϵθ​(𝒙k,𝒄)−ϵθ​(𝒙k,∅)).\widetilde{\bm{\varepsilon}}_{k}=\epsilon_{\theta}({\bm{x}}_{k},{\bm{c}})+\omega(\epsilon_{\theta}({\bm{x}}_{k},{\bm{c}})-\epsilon_{\theta}({\bm{x}}_{k},\emptyset)).
+(18)
+Because these two scores follow distinct trajectories, an incoherence between them can arise, and such an effect can degrade generation quality, an issue recently highlighted by Kwon et al. (2025). Motivated by this established score mismatch, and informed by our core intuition that the tangential field encodes data geometry (equation 1), we posit that this incoherence is fundamentally tangential in nature; that is, a persistent mismatch exists primarily between the conditional and unconditional tangential components.
+Conditional–unconditional tangent reconciliation.
+Let 𝒈k:=ϵθ​(𝒙k,𝒄)−ϵθ​(𝒙k,∅){\bm{g}}_{k}:={\epsilon}_{\theta}({\bm{x}}_{k},{\bm{c}})-{\epsilon}_{\theta}({\bm{x}}_{k},\emptyset) denote the CFG guidance where ϵθ​(⋅,𝒄),ϵθ​(⋅,∅){\epsilon}_{\theta}(\cdot,{\bm{c}}),{\epsilon}_{\theta}(\cdot,\emptyset) denote the cond/unconditional predicted noise. We form a conditional-relative tangent by removing the unconditional tangent from the conditional one,
+𝒈k⟂=𝑷⟂​(𝒙k)​(ϵθ​(𝒙k,𝒄)−ϵθ​(𝒙k,∅))=𝑷⟂​(𝒙k)​𝒈k,{\bm{g}}_{k}^{\perp}={\bm{P}}^{\perp}({\bm{x}}_{k})\big(\,{\epsilon}_{\theta}({\bm{x}}_{k},{\bm{c}})\;-\;\,{\epsilon}_{\theta}({\bm{x}}_{k},\emptyset)\big)={\bm{P}}^{\perp}({\bm{x}}_{k}){\bm{g}}_{k},
+(19)
+and project the conditional score ϵθ​(𝒙k,𝒄){\epsilon}_{\theta}({\bm{x}}_{k},{\bm{c}}) onto this tangent subspace. We then amplify this condition relative tangent:
+𝜺~k=ϵθ​(𝒙k,𝒄)+ω​𝒈k+η⁡(σk−1​𝑷​(𝒈k⟂)​ϵθ​(𝒙k,𝒄)),\tilde{\bm{\varepsilon}}_{k}\;=\;\epsilon_{\theta}({\bm{x}}_{k},{\bm{c}})\;+\;\omega{\bm{g}}_{k}+\eta\left(\sigma_{k}^{-1}{\bm{P}}({\bm{g}}_{k}^{\perp})\epsilon_{\theta}({\bm{x}}_{k},{\bm{c}})\right),
+(20)
+where ω\omega is the usual CFG scale and η\eta controls the extra tangential emphasis.
+Algorithm 2  Conditional TAG (C-TAG)
+1:
+Denoiser ϵθ​(⋅)\epsilon_{\theta}(\cdot), timesteps {tk}k=K0\{t_{k}\}_{k=K}^{0}, CFG scale ω\omega, TAG scale η≥0\eta\!\geq\!0
+2:
+Sample 𝒙K∼𝒩⁡(𝟎,I){\bm{x}}_{K}\sim\mathcal{N}(\mathbf{0},I) ⊳\triangleright initialize from prior
+3:
+for k=K−1,…,0k=K-1,\dots,0 do
+4:
+(𝜺u,𝜺c)←ϵθ(𝒙k+1,tk+1,⋅)(\bm{\varepsilon}_{u},\bm{\varepsilon}_{c})\leftarrow\epsilon_{\theta}({\bm{x}}_{k+1},t_{k+1},\cdot) ⊳\triangleright uncond / cond noise
+5:
+𝒈k←𝜺c−𝜺u{\bm{g}}_{k}\leftarrow\bm{\varepsilon}_{c}-\bm{\varepsilon}_{u} ⊳\triangleright CFG direction in 𝜺\bm{\varepsilon}-space
+6:
+𝒙^k+1←𝒙k+1/‖𝒙k+1‖2\widehat{\bm{x}}_{k+1}\leftarrow{\bm{x}}_{k+1}/\|{\bm{x}}_{k+1}\|_{2}
+7:
+𝑷k+1⟂←I−𝒙^k+1​𝒙^k+1⊤{\bm{P}}^{\perp}_{k+1}\!\leftarrow I-\widehat{\bm{x}}_{k+1}\widehat{\bm{x}}_{k+1}^{\top} ⊳\triangleright projector at 𝒙k+1{\bm{x}}_{k+1}
+8:
+𝒈k⟂←𝑷k+1⟂​𝒈k{\bm{g}}_{k}^{\perp}\leftarrow{\bm{P}}^{\perp}_{k+1}\,{\bm{g}}_{k} ⊳\triangleright tangential component
+9:
+𝜺~k←𝜺u+ω​𝒈k+η⁡(⟨𝜺c,𝒈k⟂⟩‖𝒈k⟂‖22​𝒈k⟂)\tilde{\bm{\varepsilon}}_{k}\leftarrow\bm{\varepsilon}_{u}+\omega{\bm{g}}_{k}+\eta\left(\frac{\langle\bm{\varepsilon}_{c},{\bm{g}}_{k}^{\perp}\rangle}{\|{\bm{g}}_{k}^{\perp}\|_{2}^{2}}\,{\bm{g}}_{k}^{\perp}\right) ⊳\triangleright TAG-augmented CFG
+10:
+𝒙k←Step​(𝜺~k,tk+1,𝒙k+1){\bm{x}}_{k}\leftarrow\textsc{Step}(\tilde{\bm{\varepsilon}}_{k},t_{k+1},{\bm{x}}_{k+1}) ⊳\triangleright scheduler step
+Table 4: Quantitative results across guidance-only (i.e. CFG, PAG, SEG) and guidance w/ TAG sampling settings.
+Evaluated on the MS-COCO 2014 val split with 10k random text prompts. All images are sampled with Stable Diffusion v1.5 using the DDIM sampler. cfg_scale=2.5,
+pag_scale=2.5 and seg_scale=2.5 are applied for each experiments.
+Methods
+TAG Amp. (η\eta)
+#NFEs
+#Steps
+FID ↓\downarrow
+CLIPScore ↑\uparrow
+Condition-Only
+–
+30
+30
+85.145
+19.77 ±\pm3.43
+Condition-Only + TAG
+1.2
+30
+30
+58.438
+21.88 ±\pm2.99
+CFG (Ho & Salimans, 2021)
+–
+100
+50
+26.266
+22.60 ±\pm 3.28
+CFG + C-TAG
+2.5
+30
+µ​l\mathrm{\SIUnitSymbolMicro l}
+23.414
+22.82 ±\pm 3.21
+PAG (Ahn et al., 2024)
+–
+50
+25
+24.280
+22.72 ±\pm 3.25
+PAG + C-TAG
+1.25
+50
+25
+22.109
+22.07 ±\pm 3.49
+SEG (Hong, 2024)
+–
+50
+25
+29.215
+18.17 ±\pm 3.55
+SEG + C-TAG
+1.25
+50
+25
+23.446
+16.94 ±\pm 3.96
+Baseline
++TAG
+Unconditional Gen. with SD3 (Podell et al., 2024)
+Conditional Gen. with PAG
+Conditional Gen. with SEG
+Figure 6: Qualitative comparison of TAG across unconditional and conditional generation settings. The left four columns demonstrate that for unconditional generation, TAG enhances the detail and coherence of samples from the SD3 (Podell et al., 2024). The right four columns show that for conditional generation, TAG can be applied on top of existing guidance methods (e.g., PAG (Ahn et al., 2024), SEG (Hong, 2024)) to further improve their outputs.
+5 Experiments
+Backbones and inference setup. We apply TAG at inference on pretrained backbones, using Stable Diffusion v1.5 (Rombach et al., 2022) for major experiments and Stable Diffusion 3 (Esser et al., 2024) for flow matching. Unconditional results are reported on ImageNet-1K val dataset (Deng et al., 2009). Text-conditional results use MS-COCO 2014 val dataset (Lin et al., 2015). The number of function evaluations (#NFEs) follows each table. TAG is inserted after every solver update with amplification η\eta.
+Metrics include FID (Heusel et al., 2017), IS (Salimans et al., 2016), CLIPScore (Hessel et al., 2021), and NFEs. FID is computed with pytorch-fid (Seitzer, 2020), IS with Inception-V3 (Szegedy et al., 2016), and CLIPScore is computed with OpenAI CLIP ViT-L/14. All runs use fixed seeds and identical preprocessing to the corresponding baselines.
+Improvements on conditional generation.
+ω=2.5\omega=2.5, η=0.0\eta=0.0
+ω=5.0\omega=5.0, η=0.0\eta=0.0
+ω=2.5\omega=2.5, η=1.0\eta=1.0
+Figure 7: Qualitative Results with CFG. TAG produces higher-fidelity samples with fewer hallucinations, outperforming even baselines with a higher CFG scale ω\omega.
+Table 4 presents quantitative results on the MS-COCO, demonstrating that augmenting existing guidance samplers with TAG consistently yields substantial improvements in sample fidelity while largely preserving text-image alignment.
+Notably, TAG enables a 30 #NFEs sampling process to outperform the 100 #NFEs CFG baseline. Even in a condition only setting, TAG dramatically reduces FID and increases CLIPScore, confirming its foundational benefits independent of a guidance signal.
+Furthermore, this trend extends to other guidance techniques such as PAG and SEG, where TAG again reduces FID at the same computational cost. The qualitative improvements are visualized in Figure 7, which demonstrates TAG’s ability to produce higher-fidelity images with fewer artifacts.
+Improvements on unconditional generation.
+For unconditional generation, TAG consistently improves sample quality across a range of models and samplers. As shown in Table 1, it reduces FID and increases IS at a matched NFEs. Notably, TAG acts as a ‘plug-and-play’ module for existing guidance methods (e.g., SAG, PAG, SEG), enhancing their performance without architectural changes or additional model evaluations.
+Moreover, TAG significantly pushes the compute–quality frontier by enabling both faster inference and higher quality. With samplers like DDIM and DPM++, TAG can achieve superior results with as few as half the NFEs (Table 3). Concurrently, it substantially boosts performance on foundational models like SD v2.1 and SDXL at a fixed computational cost (Table 2). This dual benefit provides a practical path to faster inference and extends to SOTA models like SD3 (Table 5), with qualitative improvements visualized in Figures 6 and 9.
+Improvements on Flow Matching.
+Table 5: Quantitative results for flow matching–based generator. Evaluations are conducted on ImageNet val with 30K samples; all images are generated with 50 NFEs.
+Methods w/ SD3
+TAG Amp. (η\eta)
+FID ↓\downarrow
+IS↑
+Esser et al. (2024)
+–
+96.383
+11.831
++ TAG
+1.05
+91.706
+12.274
+By consistently guiding the sampling trajectories toward regions of high probability, TAG serves as a broadly applicable enhancement for generative ODE solvers, whether the underlying training scheme is score-based or flow-matching. Figure 6 and Table 5 indicate that TAG transfers to flow-matching backbones (Esser et al., 2024). Inserted as a lightweight tangential reweighting after each solver step, without architectural changes or additional function evaluations. TAG yields a modest but consistent FID improvement at matched compute and visibly reduces artifacts in unconditional samples. These results show TAG’s potential to be model-agnostic across diverse architectures, including modern large-scale models.
+(a) Impact of TAG amplification η\eta on FID (↓\downarrow) and IS (↑\uparrow) for unconditional SD v1.5 generation.
+η=1.0\eta=1.0
+η=1.1\eta=1.1
+η=1.2\eta=1.2
+η=1.3\eta=1.3
+(b) Qualitative comparison across amplification levels η\eta for SD3 unconditional generation: moderate tangential amplification enhances detail and coherence, while excessive amplification degrades fidelity.
+Figure 8: Ablation on TAG amplification η\bm{\eta}. Figure 8(a) and Table 1 show gains at moderate η\eta and degradation when amplification is excessive. Figure 8(b) confirms the same trend for Flow-matching, underscoring the need to select an appropriate η\eta.
+6 Limitation & Future work
+An ablation of η\eta reveals that moderate tangential amplification improves quality, whereas performance degrades for larger values (Fig. 8(a), Tab. 1; see also Fig. 8(b) for flow matching).
+Analytically, the post-step state norm under TAG satisfies
+‖𝒙k+1+Δk+1TAG‖22=‖𝒙k+1+Δk+1‖22+(η2−1)​‖𝑷k+1⟂​Δk+1‖22⏞additive​term.\|{\bm{x}}_{k+1}+\Delta_{k+1}^{\mathrm{TAG}}\|_{2}^{2}=\|{\bm{x}}_{k+1}+\Delta_{k+1}\|_{2}^{2}+\overbrace{(\eta^{2}-1)\,\|{\bm{P}}_{k+1}^{\perp}\Delta_{k+1}\|_{2}^{2}}^{\rm additive~term}.
+(21)
+Therefore, for η=1+δ\eta=1+{\delta} with sufficiently small positive δ⁡(0<δ≪1)\delta~(0<\delta\ll 1), the additive term is negligible, and the first-order radial term remains unchanged. As η\eta grows, however, the additive term increasingly perturbs the scheduler’s radial calibration, which explains the observed degradation. A promising direction is to model these higher-order effects and design adaptive gains ηk\eta_{k}, potentially yielding a hyperparameter-free variant.
+7 Conclusion
+This paper introduces a new perspective for addressing the problem of hallucinations in diffusion models, demonstrating that the tangential component of the sampling update encodes critical semantic structure. Based on this geometric insight, we propose Tangential Amplifying Guidance (TAG), a practical, architecture-agnostic method that amplifies the tangential component. By doing so, TAG effectively steers the sampling trajectory toward higher-density regions of the data manifold, generating samples with fewer hallucinations and improved fidelity. Our method achieved good samples without requiring retraining or incurring any additional heavy computational overhead, offering a practical, plug-and-play solution for enhancing existing diffusion model backbones.
+8 Reproducibility Statement
+We use PyTorch (Paszke et al., 2019) and the HuggingFace’s Diffusers library (von Platen et al., 2022) to implement our models and all the baselines.
+References
+Ahn et al. (2024)
+Donghoon Ahn, Hyoungwon Cho, Jaewon Min, Wooseok Jang, Jungwoo Kim, SeonHwa Kim, Hyun Hee Park, Kyong Hwan Jin, and Seungryong Kim.
+Self-rectifying diffusion sampling with perturbed-attention guidance.
+In European Conference on Computer Vision, pp.  1–17. Springer, 2024.
+Aithal et al. (2024)
+Sumukh K Aithal, Pratyush Maini, Zachary C. Lipton, and J. Zico Kolter.
+Understanding hallucinations in diffusion models through mode interpolation.
+In A. Globerson, L. Mackey, D. Belgrave, A. Fan, U. Paquet, J. Tomczak, and C. Zhang (eds.), Advances in Neural Information Processing Systems, volume 37, pp.  134614–134644. Curran Associates, Inc., 2024.
+URL https://proceedings.neurips.cc/paper_files/paper/2024/file/f29369d192b13184b65c6d2515474d78-Paper-Conference.pdf.
+Anderson (1982)
+Brian DO Anderson.
+Reverse-time diffusion equation models.
+Stochastic Processes and their Applications, 12(3):313–326, 1982.
+Deng et al. (2009)
+Jia Deng, Wei Dong, Richard Socher, Li-Jia Li, Kai Li, and Li Fei-Fei.
+Imagenet: A large-scale hierarchical image database.
+In 2009 IEEE Conference on Computer Vision and Pattern Recognition, pp.  248–255, 2009.
+doi: 10.1109/CVPR.2009.5206848.
+Dhariwal & Nichol (2021)
+Prafulla Dhariwal and Alexander Nichol.
+Diffusion models beat gans on image synthesis.
+Advances in neural information processing systems, 34:8780–8794, 2021.
+Dinh et al. (2025)
+Anh-Dung Dinh, Daochang Liu, and Chang Xu.
+Representative guidance: Diffusion model sampling with coherence.
+In The Thirteenth International Conference on Learning Representations, 2025.
+URL https://openreview.net/forum?id=gWgaypDBs8.
+Esser et al. (2024)
+Patrick Esser, Sumith Kulal, Andreas Blattmann, Rahim Entezari, Jonas Müller, Harry Saini, Yam Levi, Dominik Lorenz, Axel Sauer, Frederic Boesel, et al.
+Scaling rectified flow transformers for high-resolution image synthesis.
+In Forty-first international conference on machine learning, 2024.
+Hessel et al. (2021)
+Jack Hessel, Ari Holtzman, Maxwell Forbes, Ronan Le Bras, and Yejin Choi.
+Clipscore: A reference-free evaluation metric for image captioning.
+arXiv preprint arXiv:2104.08718, 2021.
+Heusel et al. (2017)
+Martin Heusel, Hubert Ramsauer, Thomas Unterthiner, Bernhard Nessler, and Sepp Hochreiter.
+Gans trained by a two time-scale update rule converge to a local nash equilibrium.
+Advances in neural information processing systems, 30, 2017.
+Ho & Salimans (2021)
+Jonathan Ho and Tim Salimans.
+Classifier-free diffusion guidance.
+In NeurIPS 2021 Workshop on Deep Generative Models and Downstream Applications, 2021.
+URL https://openreview.net/forum?id=qw8AKxfYbI.
+Ho et al. (2020)
+Jonathan Ho, Ajay Jain, and Pieter Abbeel.
+Denoising diffusion probabilistic models.
+Advances in neural information processing systems, 33:6840–6851, 2020.
+Hong (2024)
+Susung Hong.
+Smoothed energy guidance: Guiding diffusion models with reduced energy curvature of attention.
+Advances in Neural Information Processing Systems, 37:66743–66772, 2024.
+Hong et al. (2023)
+Susung Hong, Gyuseong Lee, Wooseok Jang, and Seungryong Kim.
+Improving sample quality of diffusion models using self-attention guidance.
+In Proceedings of the IEEE/CVF International Conference on Computer Vision, pp.  7462–7471, 2023.
+Karras et al. (2022)
+Tero Karras, Miika Aittala, Timo Aila, and Samuli Laine.
+Elucidating the design space of diffusion-based generative models.
+Advances in neural information processing systems, 35:26565–26577, 2022.
+Karras et al. (2024)
+Tero Karras, Miika Aittala, Tuomas Kynkäänniemi, Jaakko Lehtinen, Timo Aila, and Samuli Laine.
+Guiding a diffusion model with a bad version of itself.
+Advances in Neural Information Processing Systems, 37:52996–53021, 2024.
+Kwon et al. (2025)
+Mingi Kwon, Jaeseok Jeong, Yi Ting Hsiao, Youngjung Uh, et al.
+Tcfg: Tangential damping classifier-free guidance.
+In Proceedings of the Computer Vision and Pattern Recognition Conference, pp.  2620–2629, 2025.
+Kynkäänniemi et al. (2024)
+Tuomas Kynkäänniemi, Miika Aittala, Tero Karras, Samuli Laine, Timo Aila, and Jaakko Lehtinen.
+Applying guidance in a limited interval improves sample and distribution quality in diffusion models.
+Advances in Neural Information Processing Systems, 37:122458–122483, 2024.
+Lin et al. (2015)
+Tsung-Yi Lin, Michael Maire, Serge Belongie, Lubomir Bourdev, Ross Girshick, James Hays, Pietro Perona, Deva Ramanan, C. Lawrence Zitnick, and Piotr Dollár.
+Microsoft coco: Common objects in context, 2015.
+URL https://arxiv.org/abs/1405.0312.
+Lu et al. (2025)
+Cheng Lu, Yuhao Zhou, Fan Bao, Jianfei Chen, Chongxuan Li, and Jun Zhu.
+Dpm-solver++: Fast solver for guided sampling of diffusion probabilistic models.
+Machine Intelligence Research, pp.  1–22, 2025.
+Okawa et al. (2023)
+Maya Okawa, Ekdeep S Lubana, Robert Dick, and Hidenori Tanaka.
+Compositional abilities emerge multiplicatively: Exploring diffusion models on a synthetic task.
+Advances in Neural Information Processing Systems, 36:50173–50195, 2023.
+Paszke et al. (2019)
+Adam Paszke, Sam Gross, Francisco Massa, Adam Lerer, James Bradbury, Gregory Chanan, Trevor Killeen, Zeming Lin, Natalia Gimelshein, Luca Antiga, Alban Desmaison, Andreas Köpf, Edward Yang, Zach DeVito, Martin Raison, Alykhan Tejani, Sasank Chilamkurthy, Benoit Steiner, Lu Fang, Junjie Bai, and Soumith Chintala.
+Pytorch: An imperative style, high-performance deep learning library, 2019.
+URL https://arxiv.org/abs/1912.01703.
+Podell et al. (2024)
+Dustin Podell, Zion English, Kyle Lacey, Andreas Blattmann, Tim Dockhorn, Jonas Müller, Joe Penna, and Robin Rombach.
+SDXL: Improving latent diffusion models for high-resolution image synthesis.
+In The Twelfth International Conference on Learning Representations, 2024.
+URL https://openreview.net/forum?id=di52zR8xgf.
+Rajabi et al. (2025)
+Javad Rajabi, Soroush Mehraban, Seyedmorteza Sadat, and Babak Taati.
+Token perturbation guidance for diffusion models.
+arXiv preprint arXiv:2506.10036, 2025.
+Rombach et al. (2022)
+Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Björn Ommer.
+High-resolution image synthesis with latent diffusion models.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pp.  10684–10695, 2022.
+Sadat et al. (2025)
+Seyedmorteza Sadat, Otmar Hilliges, and Romann M. Weber.
+Eliminating oversaturation and artifacts of high guidance scales in diffusion models, 2025.
+URL https://arxiv.org/abs/2410.02416.
+Salimans et al. (2016)
+Tim Salimans, Ian Goodfellow, Wojciech Zaremba, Vicki Cheung, Alec Radford, and Xi Chen.
+Improved techniques for training gans.
+Advances in neural information processing systems, 29, 2016.
+Seitzer (2020)
+Maximilian Seitzer.
+pytorch-fid: FID Score for PyTorch.
+https://github.com/mseitzer/pytorch-fid, August 2020.
+Version 0.3.0.
+Sohl-Dickstein et al. (2015)
+Jascha Sohl-Dickstein, Eric Weiss, Niru Maheswaranathan, and Surya Ganguli.
+Deep unsupervised learning using nonequilibrium thermodynamics.
+In International conference on machine learning, pp.  2256–2265. pmlr, 2015.
+Song et al. (2020a)
+Jiaming Song, Chenlin Meng, and Stefano Ermon.
+Denoising diffusion implicit models.
+arXiv preprint arXiv:2010.02502, 2020a.
+Song & Ermon (2019)
+Yang Song and Stefano Ermon.
+Generative modeling by estimating gradients of the data distribution.
+Advances in neural information processing systems, 32, 2019.
+Song et al. (2020b)
+Yang Song, Jascha Sohl-Dickstein, Diederik P Kingma, Abhishek Kumar, Stefano Ermon, and Ben Poole.
+Score-based generative modeling through stochastic differential equations.
+arXiv preprint arXiv:2011.13456, 2020b.
+Szegedy et al. (2016)
+Christian Szegedy, Vincent Vanhoucke, Sergey Ioffe, Jon Shlens, and Zbigniew Wojna.
+Rethinking the inception architecture for computer vision.
+In Proceedings of the IEEE conference on computer vision and pattern recognition, pp.  2818–2826, 2016.
+Tweedie et al. (1984)
+Maurice CK Tweedie et al.
+An index which distinguishes between some important exponential families.
+In Statistics: Applications and new directions: Proc. Indian statistical institute golden Jubilee International conference, volume 579, pp.  579–604, 1984.
+Vincent (2011)
+Pascal Vincent.
+A connection between score matching and denoising autoencoders.
+Neural Computation, 23(7):1661–1674, 2011.
+doi: 10.1162/NECO_a_00142.
+von Platen et al. (2022)
+Patrick von Platen, Suraj Patil, Anton Lozhkov, Pedro Cuenca, Nathan Lambert, Kashif Rasul, Mishig Davaadorj, Dhruv Nair, Sayak Paul, William Berman, Yiyi Xu, Steven Liu, and Thomas Wolf.
+Diffusers: State-of-the-art diffusion models.
+https://github.com/huggingface/diffusers, 2022.
+Appendix
+Symbol
+Meaning
+𝒙k∈ℝd{\bm{x}}_{k}\in\mathbb{R}^{d}
+latent at step kk (time tkt_{k}).
+𝒙^:=𝒙/‖𝒙‖2\widehat{\bm{x}}:={\bm{x}}/\|{\bm{x}}\|_{2}
+Unit vector in the direction of 𝒙{\bm{x}}.
+𝑷k:=𝒙^k​𝒙^k⊤{\bm{P}}_{k}:=\widehat{\bm{x}}_{k}\widehat{\bm{x}}_{k}^{\top}
+Projector onto span⁡(𝒙k)\mathrm{span}({\bm{x}}_{k}) (‘normal’ to the iso-noise surface at 𝒙{\bm{x}}).
+𝑷k⟂:=I−𝑷k{\bm{P}}_{k}^{\perp}:=I-{\bm{P}}_{k}
+Tangential projector orthogonal to 𝒙k{\bm{x}}_{k}.
+⟨𝒖,𝒗⟩,‖𝒖‖2\langle{\bm{u}},{\bm{v}}\rangle,\ \|{\bm{u}}\|_{2}
+Euclidean inner product and norm.
+𝒔θ​(x,t){\bm{s}}_{\theta}(x,t)
+Model score.
+ϵθ​(x,t)\epsilon_{\theta}(x,t)
+Model noise prediction; 𝒔θ(x,t)=−ϵθ(x,t)/σt{\bm{s}}_{\theta}(x,t)=-\,\epsilon_{\theta}(x,t)/\sigma_{t}.
+𝒈k{\bm{g}}_{k}
+Guidance residual direction.
+Δk\Delta_{k}
+Base solver increment without TAG at step kk.
+ΔkTAG\Delta^{\text{TAG}}_{k}
+TAG-modified increment at step kk.
+η≥1\eta\geq 1
+TAG tangential amplification factor (scales 𝑷k⟂​Δ{\bm{P}}_{k}^{\perp}\Delta).
+NFEs\mathrm{NFEs}
+Number of function evaluations.
+Appendix A Proof & Derivation
+Proof for Theorem 4.1
+Proof.
+Assume the deterministic base step
+Δk+1=α~k​ϵθ​(𝒙k+1,tk+1)+βk​𝒙k+1\Delta_{k+1}=\tilde{\alpha}_{k}\,\epsilon_{\theta}({\bm{x}}_{k+1},t_{k+1})+\beta_{k}\,{\bm{x}}_{k+1},
+with α~k≤0\tilde{\alpha}_{k}\leq 0, and let 𝑷k+1,𝑷k+1⟂{\bm{P}}_{k+1},{\bm{P}}_{k+1}^{\perp} be the orthogonal projectors with
+𝑷k+1​𝒙k+1=𝒙k+1{\bm{P}}_{k+1}{\bm{x}}_{k+1}={\bm{x}}_{k+1} and 𝑷k+1⟂​𝒙k+1=𝟎{\bm{P}}_{k+1}^{\perp}{\bm{x}}_{k+1}=\mathbf{0}.
+Applying the projectors to the base decomposition gives
+𝑷k+1⟂​Δk+1=α~k​𝑷k+1⟂​ϵθ​(𝒙k+1,tk+1),𝑷k+1​Δk+1=α~k​𝑷k+1​ϵθ​(𝒙k+1,tk+1)+βk​𝒙k+1.{\bm{P}}_{k+1}^{\perp}\Delta_{k+1}=\tilde{\alpha}_{k}\,{\bm{P}}_{k+1}^{\perp}\epsilon_{\theta}({\bm{x}}_{k+1},t_{k+1}),\qquad{\bm{P}}_{k+1}\Delta_{k+1}=\tilde{\alpha}_{k}\,{\bm{P}}_{k+1}\epsilon_{\theta}({\bm{x}}_{k+1},t_{k+1})+\beta_{k}\,{\bm{x}}_{k+1}.
+(22)
+Therefore, the TAG update rule step is
+Δk+1TAG=(𝑷k+1+η​𝑷k+1⟂)​Δk+1=α~k​[𝑷k+1+η​𝑷k+1⟂]​ϵθ​(𝒙k+1,tk+1)+βk​𝒙k+1.\Delta_{k+1}^{\mathrm{TAG}}=\big({\bm{P}}_{k+1}+\eta\,{\bm{P}}_{k+1}^{\perp}\big)\Delta_{k+1}=\tilde{\alpha}_{k}\big[{\bm{P}}_{k+1}+\eta{\bm{P}}^{\perp}_{k+1}\big]\epsilon_{\theta}({\bm{x}}_{k+1},t_{k+1})+\beta_{k}{\bm{x}}_{k+1}.
+(23)
+The first-order Taylor gain with respect to TAG update at tk+1t_{k+1} is defined as:
+G⁡(η):=(CLOSE\displaystyle G(\eta):=\big(
+OPENΔk+1TAG)⊤​∇𝒙​log⁡p⁡(𝒙∣tk+1)|𝒙=𝒙k+1\displaystyle\Delta^{\rm TAG}_{k+1}\big)^{\top}\nabla_{{\bm{x}}}\log p({\bm{x}}\mid t_{k+1})\big|_{{\bm{x}}={\bm{x}}_{k+1}}
+=((𝑷k+1+η​𝑷k+1⟂)​Δk+1)⊤​∇𝒙​log⁡p⁡(𝒙∣tk+1)|𝒙=𝒙k+1\displaystyle=\Big(\big({\bm{P}}_{k+1}+\eta\,{\bm{P}}_{k+1}^{\perp}\big)\Delta_{k+1}\Big)^{\top}\nabla_{{\bm{x}}}\log p({\bm{x}}\mid t_{k+1})\big|_{{\bm{x}}={\bm{x}}_{k+1}}
+(24)
+We analyze this gain by approximating the true score with the model’s score function
+𝒔θ​(𝒙k+1,tk+1)=−σk+1−1​ϵθ​(𝒙k+1,tk+1),{\bm{s}}_{\theta}({\bm{x}}_{k+1},t_{k+1})=-\sigma_{k+1}^{-1}\epsilon_{\theta}({\bm{x}}_{k+1},t_{k+1}),
+(25)
+thus:
+G⁡(η)=((𝑷k+1CLOSECLOSE\displaystyle G(\eta)=\Big(\big({\bm{P}}_{k+1}
+OPENOPEN+η​𝑷k+1⟂)​Δk+1)⊤​∇𝒙​log⁡p⁡(𝒙∣tk+1)|𝒙=𝒙k+1\displaystyle+\eta\,{\bm{P}}_{k+1}^{\perp}\big)\Delta_{k+1}\Big)^{\top}\nabla_{{\bm{x}}}\log p({\bm{x}}\mid t_{k+1})\big|_{{\bm{x}}={\bm{x}}_{k+1}}
+≈((𝑷k+1+η​𝑷k+1⟂)​Δk+1)⊤​𝒔θ​(𝒙k+1,tk+1)\displaystyle\approx\Big(\big({\bm{P}}_{k+1}+\eta\,{\bm{P}}_{k+1}^{\perp}\big)\Delta_{k+1}\Big)^{\top}{\bm{s}}_{\theta}({\bm{x}}_{k+1},t_{k+1})
+=−σk+1−1⋅((𝑷k+1+η𝑷k+1⟂)Δk+1)⊤ϵθ(𝒙k+1,tk+1)\displaystyle=-\sigma_{k+1}^{-1}\cdot\Big(\big({\bm{P}}_{k+1}+\eta\,{\bm{P}}_{k+1}^{\perp}\big)\Delta_{k+1}\Big)^{\top}\epsilon_{\theta}\big({\bm{x}}_{k+1},t_{k+1}\big)
+(26)
+Substitute equation 23 into equation 26, then:
+G⁡(η)\displaystyle G(\eta)
+≈−σk+1−1​(α~k​𝑷k+1​ϵθ+βk​𝒙k+1+η​α~k​𝑷k+1⟂​ϵθ)⊤​ϵθ\displaystyle\approx-\sigma_{k+1}^{-1}\Big(\tilde{\alpha}_{k}{\bm{P}}_{k+1}\epsilon_{\theta}+\beta_{k}{\bm{x}}_{k+1}+\eta\tilde{\alpha}_{k}{\bm{P}}_{k+1}^{\perp}\epsilon_{\theta}\Big)^{\top}\epsilon_{\theta}
+=−σk+1−1​(α~k​(𝑷k+1​ϵθ)⊤​ϵθ+βk​𝒙k+1⊤​ϵθ+η​α~k​(𝑷k+1⟂​ϵθ)⊤​ϵθ).\displaystyle=-\sigma_{k+1}^{-1}\Big(\tilde{\alpha}_{k}({\bm{P}}_{k+1}\epsilon_{\theta})^{\top}\epsilon_{\theta}+\beta_{k}{\bm{x}}_{k+1}^{\top}\epsilon_{\theta}+\eta\tilde{\alpha}_{k}({\bm{P}}_{k+1}^{\perp}\epsilon_{\theta})^{\top}\epsilon_{\theta}\Big).
+(27)
+Since 𝑷{\bm{P}} and 𝑷⟂{\bm{P}}^{\perp} are symmetric and idempotent, thus
+𝒗⊤​𝑷​𝒗=‖𝑷​𝒗‖22{\bm{v}}^{\top}{\bm{P}}{\bm{v}}=\|{\bm{P}}{\bm{v}}\|_{2}^{2}
+(28)
+is established. Therefore,
+G⁡(η)≈−σk+1−1​(α~k​‖𝑷k+1​ϵθ‖22+βk​𝒙k+1⊤​ϵθ+η​α~k​‖𝑷k+1⟂​ϵθ‖22).\displaystyle G(\eta)\approx-{\sigma^{-1}_{k{+}1}}\bigg(\tilde{\alpha}_{k}\big\|{\bm{P}}_{k{+}1}\epsilon_{\theta}\big\|_{2}^{2}+\beta_{k}{\bm{x}}_{k{+}1}^{\top}\epsilon_{\theta}+\eta\tilde{\alpha}_{k}\big\|{\bm{P}}_{k{+}1}^{\perp}\epsilon_{\theta}\big\|_{2}^{2}\bigg).
+(29)
+Differentiating the gain G⁡(η)G(\eta) in equation 29 with respect to η\eta yields:
+∂G⁡(η)∂η≈−α~kσk+1​|𝑷k+1⟂​ϵθ​(𝒙k+1,tk+1)|22≥ 0.\frac{\partial G(\eta)}{\partial\eta}\approx\frac{-\tilde{\alpha}_{k}}{\sigma_{k+1}}\;\big|{\bm{P}}_{k+1}^{\perp}\epsilon_{\theta}({\bm{x}}_{k+1},t_{k+1})\big|_{2}^{2}\;\geq\;0.
+(30)
+This derivative is guaranteed to be non-negative, since the DDIM sampler coefficient α~k≤0\tilde{\alpha}_{k}\leq 0 by definition, while σk+1\sigma_{k+1} and the squared L2-norm are strictly non-negative. This proves that the first-order gain G⁡(η)G(\eta) is a monotonically non-decreasing function of η\eta. Consequently, amplifying the tangential component of the update step via TAG is guaranteed to improve the first-order log-likelihood gain compared to the base update step.
+Analysis on pure TAG gain.
+Subtracting each gain Gbase≜G⁡(η=1)G^{\rm base}\triangleq G(\eta=1) and GTAG≜G⁡(η>1)G^{\rm TAG}\triangleq G(\eta>1),
+(−σk+1−1⋅(Δk+1TAG)⊤ϵθ(𝒙k+1,tk+1))⏞TAG​update​gain,GTAG\displaystyle\overbrace{\Big(-\sigma_{k+1}^{-1}\cdot\Big(\Delta_{k+1}^{\rm TAG}\Big)^{\top}\epsilon_{\theta}\big({\bm{x}}_{k+1},t_{k+1}\big)\Big)}^{{\rm TAG~update~gain},~G^{\rm TAG}}~~
+−(−σk+1−1⋅(Δk+1)⊤ϵθ(𝒙k+1,tk+1))⏞base​update​gain,Gbase\displaystyle-~~\overbrace{\Big(-\sigma_{k+1}^{-1}\cdot\Big(\Delta_{k+1}\Big)^{\top}\epsilon_{\theta}\big({\bm{x}}_{k+1},t_{k+1}\big)\Big)}^{{\rm base~update~gain},~G^{\rm base}}
+=−σk+1−1⋅(Δk+1TAG−Δk+1)⊤ϵθ(𝒙k+1,tk+1)\displaystyle=-\sigma_{k+1}^{-1}\cdot\big(\Delta_{k+1}^{\mathrm{TAG}}-\Delta_{k+1}\big)^{\top}\epsilon_{\theta}\big({\bm{x}}_{k+1},t_{k+1}\big)
+=−σk+1−1⋅((η−1)𝑷k+1⟂Δk+1)⊤ϵθ(𝒙k+1,tk+1).\displaystyle=-\sigma_{k+1}^{-1}\cdot\big((\eta-1)\,{\bm{P}}_{k+1}^{\perp}\Delta_{k+1}\big)^{\top}\epsilon_{\theta}\big({\bm{x}}_{k+1},t_{k+1}\big).
+(31)
+Using Δk+1=α~k​ϵθ​(𝒙k+1,tk+1)+βk​𝒙k+1\Delta_{k+1}=\tilde{\alpha}_{k}\,\epsilon_{\theta}({\bm{x}}_{k+1},t_{k+1})+\beta_{k}\,{\bm{x}}_{k+1}, 𝑷k+1⟂{\bm{P}}^{\perp}_{k+1} be:
+𝑷k+1⟂​Δk+1=𝑷k+1⟂​α~k​ϵθ​(𝒙k+1,tk+1).{\bm{P}}^{\perp}_{k+1}\Delta_{k+1}={\bm{P}}^{\perp}_{k+1}\tilde{\alpha}_{k}\,\epsilon_{\theta}({\bm{x}}_{k+1},t_{k+1}).
+(32)
+Thus, substitute equation 32 into equation 31 then:
+GTAG−Gbase=−σk+1−1⋅(α~k(η−1))⏟scalar⋅(𝑷k+1⟂​ϵθ​(𝒙k+1,tk+1))⊤​ϵθ​(𝒙k+1,tk+1).G^{\rm TAG}-G^{\rm base}=\underbrace{-\sigma_{k+1}^{-1}\cdot\big(\tilde{\alpha}_{k}(\eta-1)\big)}_{\rm scalar}\;\cdot\,\big({\bm{P}}^{\perp}_{k+1}\,\epsilon_{\theta}({\bm{x}}_{k+1},t_{k+1})\big)^{\top}\epsilon_{\theta}\big({\bm{x}}_{k+1},t_{k+1}\big).
+(33)
+This simplifies to the final quadratic form:
+GTAG−Gbase=−σk+1−1⋅(α~k(η−1))⏟≥𝟎​ as ​α~k≤0⋅‖𝑷k+1⟂​ϵθ​(𝒙k+1,tk+1)‖22,G^{\rm TAG}-G^{\rm base}=\underbrace{-\sigma_{k+1}^{-1}\cdot\big(\tilde{\alpha}_{k}(\eta-1)\big)}_{\bm{\geq~0}~\text{ as }~\tilde{\alpha}_{k}~\leq~0}\;\cdot\,\big\|{\bm{P}}_{k+1}^{\perp}\epsilon_{\theta}({\bm{x}}_{k+1},t_{k+1})\big\|_{2}^{2},
+(34)
+This proves that the difference in gain is non-negative for any η≥1\eta\geq 1. Therefore, the first-order log-likelihood gain of the TAG update is always greater than or equal to that of the base update, with equality holding if and only if η=1\eta=1 or the tangential component of the score is zero.
+∎
+Appendix B Implementation of the Tangential Amplifying Guidance
+Algorithm 3  Code: Tangential Amplifying Guidance (TAG)
+⬇
+output = scheduler.step(noise_pred, t, latents, return_dict=False)
+if apply_tag:
+post = latents
+eta_v, eta_n = t_guidance_scale, 1
+v_t = post / (post.norm(p=2, dim=(1,2,3), keepdim=True) + 1e-8)
+latents = output
+delta  = latents - post
+a      = (delta * v_t).sum(dim=(1,2,3), keepdim=True)
+u_n = a * v_t
+u_t = delta - u_n
+latents = post + eta_v * u_t + eta_n * u_n
+else:
+latents = output
+Algorithm 4  Code: Conditional Tangential Amplifying Guidance (C-TAG)
+⬇
+def proj_par(z, n):
+return (z * n).sum(dim=(1,2,3), keepdim=True) * n
+def proj(z, v):
+v = v / (v.norm(p=2, dim=(1,2,3), keepdim=True) + 1e-8)
+return (z * v).sum(dim=(1,2,3), keepdim=True) * v
+eps_u, eps_c = HeadToEps(noise_pred, latents, t, scheduler, do_cfg)
+s_u = -eps_u / (sigma + 1e-12)
+s_c = -eps_c / (sigma + 1e-12)
+n = latents / (latents.norm(p=2, dim=(1,2,3), keepdim=True) + 1e-8)
+g         = s_c - s_u
+t_c       = s_c - proj_par(s_c, n)
+t_u       = s_u - proj_par(s_u, n)
+g_aligned = proj(s_c, t_c - t_u)
+g         = g + t_guidance_scale * g_aligned
+s_star    = s_u + guidance_scale * g
+eps       = -sigma * s_star
+model_out = EpsToHead(eps, latents, t, scheduler)
+latents   = scheduler.step(model_out, t, latents, return_dict=False)
+Appendix C Additional Qualitative Results
+Stable Diffusion 1.5
+Stable Diffusion 2.1
+Stable Diffusion XL
+Stable Diffusion 3
+Figure 9: Qualitative results for unconditional generation across backbones. For each model (SD1.5/2.1 (Rombach et al., 2022), SDXL (Podell et al., 2024), SD3 (Esser et al., 2024)), the top row shows baseline sampling and the bottom row shows +TAG at matched NFEs. TAG yields sharper, more coherent structure with fewer artifacts while preserving diversity.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

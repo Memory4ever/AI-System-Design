@@ -1,0 +1,642 @@
+PRIMARY https://arxiv.org/html/2601.21864v1
+Necessary selected method, matched evidence and directly affected limitations only. No implementation or replication.
+
+NECESSARY D.3 configuration fields / D.5.3 selected control
+D.3 Base Models and Settings
+D.5.3 Unified set vs. dimension-specific set
+We compare identifying and applying know-bias neurons separately for each demographic dimension with aggregating them into a unified neuron set, while keeping the overall intervention scale comparable. Table 9 in Appendix D.5.3 shows that the unified aggregation strategy consistently achieves stronger and more stable debiasing performance across datasets and demographic dimensions than dimension-specific selection. In contrast, dimension-specific neuron sets exhibit more variable performance depending on the demographic dimension used for identification. We further compare against a random neuron selection baseline with the same number of neurons and find that KnowBias substantially outperforms it, indicating that the gains arise from targeted bias knowledge rather than from the scale of the intervention. Complete results are in Appendix D.5.3.
+D.3 Base Models and Settings
+We utilize three recent LLMs for open-ended story generation: Llama-3.2-3B-Instruct, Llama-3.1-8B-Instruct (Grattafiori et al., 2024), and Qwen-3-4B-Instruct-2507 (Team, 2025). For the main evaluation experiments across all methods, we set temperature = 0.8, no presence penalty, no stopping condition other than the maximum number of tokens to generate, max_tokens = 30. During evaluation, for each prompt, we follow the previous work (Dai et al., 2022)’s settings for calculating the attribution scores for searching neurons. All other hyperparameter choices are included in the main experiments. As the results, we use 15 questions for each bias dimension (5 questions for three question types), τ=10%\tau=10\%, β=10%\beta=10\%, and enhance scale λ=2\lambda=2 for Llama3.2-3B, τ=10%\tau=10\%, β=10%\beta=10\%, and enhance scale λ=3.5\lambda=3.5 for Qwen-3-4B, and τ=10%\tau=10\%, β=5%\beta=5\%, and enhance scale λ=2\lambda=2 for Llama-3.1-8B. All experiments are conducted on AMD CPUs and Nvidia A100-80 GB GPUs. And all baselines follo
+
+2 Methodology
+KnowBias mitigates social bias by identifying and enhancing neurons that encode bias knowledge, rather than suppressing neurons that directly manifest biased behaviors. This design is inspired by cognitive science: humans who possess the knowledge of how social bias manifests in daily life are less likely to rely on biased judgments. (Devine, 1989; Schneider, 2005). Analogously, we posit that LLMs encode knowledge of social bias in latent neuronal representations. Such neurons support the model’s ability to recognize biased content, and we term them know-bias neurons. By enhancing such know-bias neurons at inference time, KnowBias steers generation toward fairer behavior while preserving general capabilities.
+Table 1: Bias-knowledge question examples (bias concept: problem-solving) used to identify know-bias neurons. The demographic dimension (e.g., race) can be replaced by gender or religion with the same expected answers.
+Question type
+Example
+Ans
+Causal
+rejection
+Do you think that race influences problem-solving skills?
+No
+Bias
+recognition
+Is believing one race has stronger problem-solving skills than another a form of racial bias?
+Yes
+Normative
+judgment
+Do you think it is racial bias to believe one race has better problem-solving skills than another?
+Yes
+2.1 Overview
+We propose KnowBias, a data-efficient and generalizable debiasing framework that achieves strong bias mitigation while preserving general model utility. KnowBias operates in three stages: (1) It elicits bias-knowledge signals using a small set of bias-knowledge questions designed to probe whether the model can recognize biased content (Figure 2 KnowBias Workflow Step 1). (2) It identifies know-bias neurons through attribution-based analysis aggregated across demographic dimensions (Figure 2 KnowBias Workflow, Steps 2-3). (3) KnowBias selectively enhances these neurons at inference time, without retraining or modifying model parameters (Figure 2, Step 4 and Debias Inference).
+This design yields three key advantages. (1) Strong debiasing with preserved general capability. KnowBias achieves effective bias mitigation while largely preserving general capability. (2) Generalizability. A set of bias-knowledge questions built on general bias concepts and demographic dimensions suffices to recover a core set of neurons encoding bias knowledge, enabling debiasing effects to generalize across bias types and demographics. (3) Data efficiency. The simplicity of the question design and the limited number of required questions render KnowBias highly data-efficient, requiring only minimal data generation effort.
+2.2 Step 1: Bias-knowledge question design
+In this step, we design simple yes/no bias-knowledge questions that require normative judgments about social bias. These questions serve as probes for eliciting bias-knowledge signals, which are later used to identify know-bias neurons.
+Bias concept.
+We use a small set of abstract bias concepts (e.g., problem-solving, leadership) that reflect high-level social attributes commonly involved in biased reasoning (see Table 6 in Appendix C for all concepts). Our goal is not to comprehensively enumerate nor carefully tune all possible bias concepts across bias types. Instead, they are selected in a lightweight and largely arbitrary manner to probe whether the model encodes general bias knowledge. As demonstrated in Section 3.4, using only five such concepts yields strong debiasing performance comparable to that obtained with a larger set of 25 concepts, suggesting that the effectiveness of KnowBias does not depend on meticulous concept selection but on recovering transferable bias knowledge.
+Demographic dimension.
+Each bias concept is then paired with general demographic dimensions. These dimensions are commonly studied in the social bias literature and represent distinct and widely recognized axes of social categorization (Gallegos et al., 2024; Pan et al., 2025a). We deliberately adopt simple and coarse-grained demographic dimensions (e.g., race), as our goal is to probe general bias knowledge rather than fine-grained demographic identities (e.g., Black, White). This design choice enables bias knowledge elicited from one demographic dimension to transfer to other demographic identities within the same dimension. For example, combining the concept problem-solving with the race dimension yields the example question: “Do you think that race influences problem-solving skills?”, with the expected answer “No”.
+Question type.
+To capture complementary facets of bias knowledge, we apply three generic question types (Knobe, 2003; Kilbertus et al., 2017). Causal rejection questions probe whether the model rejects biased causal links between demographic dimensions and bias concepts (e.g.,“Do you think that [demographic dimension] influences [bias concept]?”). Bias recognition questions assess whether the model can identify beliefs as biased (e.g.,“Is believing one [demographic dimension] better at [bias concept] than another a form of [demographic dimension] bias?”). Normative judgment questions evaluate whether the model recognizes the social and moral inappropriateness of biased beliefs (e.g.,“Do you think it is [demographic dimension] bias to believe one [demographic dimension] has better [bias concept]?”). While these three types do not exhaustively cover all possible bias-related queries, they correspond to distinct and well-established components of human bias knowledge, and together provide a compact yet expressive probe of bias knowledge.
+Bias-knowledge question construction.
+We construct bias-knowledge questions by instantiating each bias concept under each question type and demographic dimension. Each question is denoted as b​qbq, with an expected answer a∈{Yes,No}a\in\{\texttt{Yes},\texttt{No}\} serving as the target token for know-bias neurons identification for the next stage. As shown in Table 1, for a given concept such as problem-solving, three corresponding questions are generated for the race dimension. The same template is reused across demographic dimensions by replacing only the dimension term. Complete questions are in https://github.com/JP-25/KnowBias.
+2.3 Step 2: Identification of know-bias neurons
+We build on the attribution-based neuron identification framework proposed by (Dai et al., 2022), which identifies knowledge neurons in feed-forward networks (FFNs) using factual knowledge questions and their corresponding answers. This framework aligns naturally with our goal: bias-knowledge questions explicitly probe whether the model recognizes biased beliefs, allowing attribution scores to reflect the contribution of neurons to bias knowledge.
+In this stage, given the bias-knowledge question set from Step 1, we quantify the contribution of each intermediate neuron to predicting the expected bias-knowledge answers. Specifically, for a bias-knowledge question b​qbq with target answer token a∗a^{\ast}, we consider the ii-th neuron hi(l)h_{i}^{(l)} at feed-forward layer ll. Let Pb​q​(a∗)P_{bq}(a^{\ast}) denote the model’s predicted probability of generating a∗a^{\ast}. We measure the effect of neuron hi(l)h_{i}^{(l)} on this probability using integrated gradients, which captures the contribution to the prediction. The attribution score of neuron hi(l)h_{i}^{(l)} is defined as Attr⁡(hi(l))=h¯i(l)​∫γ=01∂Pb​q​(a∗∣γ​h¯i(l))∂hi(l)​𝑑γ,\mathrm{Attr}(h_{i}^{(l)})=\bar{h}_{i}^{(l)}\int_{\gamma=0}^{1}\frac{\partial P_{bq}\!\left(a^{\ast}\mid\gamma\,\bar{h}_{i}^{(l)}\right)}{\partial h_{i}^{(l)}}\,d\gamma,
+where h¯i(l)\bar{h}_{i}^{(l)} denotes the original activation of the neuron. Higher attribution values indicate a greater influence on predicting the expected bias-knowledge answer.
+We compute attribution scores for all intermediate neurons across bias-knowledge questions per demographic dimension and aggregate the results. Neurons are selected into the know-bias set per bias dimension if their attribution scores exceed a threshold of τ%\tau\% of the maximum score across the model and if they consistently appear in at least β%\beta\% of the questions (see Appendix B.2 for details). Finally, we aggregate selected neurons across demographic dimensions, yielding a unified set that captures bias knowledge.
+2.4 Step 3: Inference-time neuron enhancement
+KnowBias leverages bias knowledge by selectively enhancing the influence of know-bias neurons (𝒩know-bias\mathcal{N}_{\text{know-bias}}) at inference time, without modifying model parameters or suppressing unrelated behaviors. For any input prompt, the model performs a standard forward pass, with the sole modification that activations of 𝒩know-bias\mathcal{N}_{\text{know-bias}} are multiplicatively scaled by a factor λ\lambda: hi(l)←λ⋅hi(l),(layer ​l,neuron ​i)∈𝒩know-bias.h_{i}^{(l)}\leftarrow\lambda\cdot h_{i}^{(l)},(\text{layer }l,\ \text{neuron }i)\in\mathcal{N}_{\text{know-bias}}.
+This intervention is lightweight and applied only during inference, enabling controlled debiasing while largely preserving the model’s general capabilities.
+2.5 Summary
+In sum, we construct 225 bias-knowledge questions by instantiating 25 bias concepts across three question types and three demographic dimensions (Section 2.2 Bias concept and Bias-knowledge question construction). Crucially, our design does not rely on using all available concepts. As shown in Section 3.4, strong debiasing performance can already be achieved using only 45 bias-knowledge questions (15 per demographic dimension, corresponding to five bias concepts instantiated across three question types). This lightweight design yields three key advantages, which we validate with targeted experiments.
+(1) Strong debiasing with preserved general capability. KnowBias effectively mitigates bias while maintaining general language understanding and reasoning ability. In Section 3.2, we compare KnowBias against seven debiasing baselines across multiple social bias benchmarks and LLM backbones, while simultaneously evaluating general capability on standard reasoning and language-understanding datasets.
+(2) Generalizability. KnowBias generalizes debiasing across bias types and demographics. In Section 3.3, we evaluate cross-domain transfer by applying know-bias neurons identified from one bias concept or demographic dimension to debias other bias types and dimensions, and further demonstrate strong overall performance across benchmarks.
+(3) Data efficiency. KnowBias achieves effective debiasing with minimal data generation effort. In Section 3.4, we vary the number of bias-knowledge questions used for neuron identification and show that the question set is deliberately small: only 15 simple yes/no questions per demographic dimension (five bias concepts instantiated across three question types), for a total of 45 questions across three dimensions. In contrast, prior methods such as Fairsteer (Li et al., 2025) and LFTF (Qin et al., 2025a) rely on hundreds to tens of thousands of demographic-stereotype-specific samples (see Figure 1(a) for an example) for fine-tuning or mode editing.
+3 Experiments
+We conduct comprehensive experiments across multiple benchmarks to evaluate KnowBias and to validate its claimed advantages. Specifically, our experimental design aims to answer the following research questions. RQ1 (Debiasing performance and general capability). Can KnowBias achieve strong and consistent social bias mitigation across multiple benchmarks and LLM backbones while preserving general language understanding and reasoning capability? RQ2 (Generalizability). Does KnowBias generalize across bias types and demographics? RQ3 (Data efficiency). Can KnowBias achieve effective debiasing with only a small number of simple bias-knowledge questions? RQ4 (Ablation study). How effective is KnowBias in key design choices? RQ5 (Hyperparameter study). How sensitive is KnowBias to hyperparameters?
+3.1 Experimental Setup
+Datasets.
+We evaluate KnowBias on both social bias benchmarks and general reasoning benchmarks to assess its effectiveness in mitigating bias while preserving core language capabilities. Specifically, we use five widely adopted social bias datasets spanning three demographic dimensions (gender, race, and religion): BBQ (Parrish et al., 2022), including ambiguous (BBQ-a) and disambiguated (BBQ-d) subsets; CrowS-Pairs (CS) (Nangia et al., 2020); and StereoSet (Nadeem et al., 2021), with both intra-sentence (SS-intra) and inter-sentence (SS-inter) settings. To evaluate the preservation of general reasoning ability, we additionally report performance on three common-sense and scientific reasoning benchmarks: Balanced COPA (COPA) (Kavumba et al., 2019; Roemmele et al., 2011), OpenBookQA (OBQA) (Mihaylov et al., 2018), and ARC (Clark et al., 2018), including both the Easy (ARC-E) and Challenge (ARC-C) splits.
+Metrics.
+Our evaluation objective is twofold: an effective debiasing method should substantially reduce social bias while preserving the model’s original language modeling and reasoning capabilities. Accordingly, we adopt the standard bias metrics defined by each benchmark. For BBQ-a and BBQ-d, we report the ambiguous and disambiguated bias scores (Parrish et al., 2022), respectively (range ∈[−1,1]\in[-1,1], 00 indicates no bias). For CS, we use the probability-based bias score (Nangia et al., 2020) (range ∈[0,1]\in[0,1], 0.50.5 indicates no bias). For SS, we report the ICAT score (Nadeem et al., 2021) (range ∈[0,1]\in[0,1], 11 indicates no bias). Since bias metrics are not directly comparable across datasets, we additionally report the average rank of each method across dataset–metric–demographic combinations, with lower ranks indicating stronger bias mitigation. For general reasoning benchmarks, we directly report accuracy (range ∈[0,1]\in[0,1]), with higher values indicating better task performance. Detailed definitions of all metrics and ranking procedures are provided in Appendix D.1.
+Baselines.
+We compare KnowBias against SOTA debiasing methods spanning multiple paradigms:
+(1) Prompt-based: Self-Debiasing (SD) (Gallegos et al., 2025).
+(2) Fine-tuning-based: Locating First and Then Fine-Tuning (LFTF) (Qin et al., 2025a); Reasoning-Guided Fine-Tuning (ReGiFT) (Kabra et al., 2025), BiasAware PEFT (PEFT) (Zhao et al., 2025).
+(3) Model editing: BiasEdit (Xu et al., 2025).
+(4) Activation steering: FairSteer (Li et al., 2025).
+(5) Bias neurons elimination: CRISPR (Yang et al., 2024b). We evaluate all baselines and KnowBias on three LLM backbones: Llama-3.2-3B-Instruct, Llama-3.1-8B-Instruct (Grattafiori et al., 2024), and Qwen-3-4B-Instruct-2507 (Team, 2025). Detailed descriptions of each baseline are provided in Appendix D.2, and detailed model-specific settings are provided in Appendix D.3.
+Table 2: Comparison of social bias mitigation performance of KnowBias and baseline methods on BBQ(|↓|\lvert\downarrow\rvert), CS(0.5), and SS(↑\uparrow) across three demographic dimensions. For each benchmark and demographic dimension, we report the average rank (AvgR(↓\downarrow)). The first row for each backbone reports the bias scores of the base (no debiasing) model. Total AvgR summarizes the average rank across all benchmarks and demographic dimensions. Best and second-best results are highlighted in bold and underlined, respectively.
+Gender
+Race
+Religion
+Total
+Method
+BBQ-a
+BBQ-d
+CS
+SS-inter
+SS-intra
+AvgR
+BBQ-a
+BBQ-d
+CS
+SS-inter
+SS-intra
+AvgR
+BBQ-a
+BBQ-d
+CS
+SS-inter
+SS-intra
+AvgR
+AvgR
+Llama-3.2-3B
+-.0066
+-.6923
+.7915
+.7000
+.7230
+–
+-.0430
+-.7047
+.7778
+.7487
+.5329
+–
+.0454
+-.7284
+.7400
+.6196
+.5199
+–
+–
+FairSteer
+-.0125
+-.6501
+.8423
+.7115
+.7326
+6.0
+-.0384
+-.7092
+.7802
+.7653
+.5570
+5.8
+.0358
+-.7410
+.7356
+.7115
+.5325
+5.2
+5.7
+LFTF
+-.0023
+-.6388
+.8439
+.7088
+.7366
+4.8
+-.0389
+-.7030
+.7823
+.761
+.5541
+6.4
+.0459
+-.7355
+.7394
+.6830
+.5310
+6.4
+5.9
+ReGiFT
+-.0161
+-.5387
+.8603
+.6716
+.7160
+6.8
+-.0402
+-.6543
+.…633 tokens truncated…04
+4.4
+4.0
+CRISPR
+-.0227
+-.9501
+.5756
+.5475
+.5456
+5.8
+-.0582
+-.9003
+.5707
+.7940
+.5285
+5.4
+.0036
+-.8612
+.5707
+.7990
+.6024
+5.6
+5.6
+KnowBias
+-.0033
+-.7100
+.5800
+.6176
+.6244
+2.2
+-.0475
+-.8100
+.5364
+.8821
+.6334
+2.2
+.0012
+-.7561
+.6213
+.9126
+.7457
+2.4
+2.3
+Table 3: General capability results on common reasoning and QA benchmarks (↑\uparrow), evaluating the impact of debiasing methods on model utility. (Bold*) indicates an accuracy drop of at least 5% relative to the corresponding base model without debiasing.
+Llama-3.2-3B
+Qwen-3-4B
+Llama-3.1-8B
+Method
+OBQA
+COPA
+ARC-C
+ARC-E
+OBQA
+COPA
+ARC-C
+ARC-E
+OBQA
+COPA
+ARC-C
+ARC-E
+Base
+.5102
+.6073
+.5426
+.6814
+.7779
+.8621
+.8777
+.9637
+.5778
+.7132
+.6108
+.7608
+FairSteer
+.5242
+.6095
+.5515
+.6899
+.7781
+.8500
+.8782
+.9639
+.5900
+.6812
+.6281
+.7748
+LFTF
+.5073
+.6075
+.5463
+.6856
+.7777
+.8595
+.8782
+.9640
+.5770
+.7105
+.6150
+.7582
+ReGiFT
+.4931
+.4437*
+.5072*
+.6314*
+.7229*
+.8010*
+.8190*
+.9268
+.4873*
+.5962*
+.5653*
+.7118*
+PEFT-gender
+.3598*
+.4573*
+.3946*
+.4848*
+.6268*
+.6380*
+.6411*
+.7284*
+.3745*
+.6144*
+.3950*
+.4842*
+PEFT-race
+.3465*
+.4950*
+.3810*
+.4674*
+.5730*
+.8100
+.6622*
+.8024*
+.3401*
+.5829*
+.3488*
+.4163*
+PEFT-religion
+.4897*
+.4156*
+.5351*
+.6710*
+.7449
+.7080*
+.7565*
+.9006*
+.5563
+.7024
+.5992
+.7357
+BiasEdit-gender
+.2858*
+.3121*
+.3120*
+.3772*
+.5829*
+.4960*
+.5930*
+.6575*
+.3979*
+.6280*
+.4291*
+.5464*
+BiasEdit-race
+.2522*
+.3300*
+.2875*
+.3485*
+.5136*
+.5100*
+.5444*
+.6481*
+.4281*
+.6714*
+.4857*
+.6040*
+BiasEdit-religion
+.4355*
+.4480*
+.2875*
+.6000*
+.7000*
+.6490*
+.5610*
+.8585*
+.5479*
+.7118
+.5930
+.7327
+SD
+.4418*
+.4710*
+.4866*
+.5977*
+.7001*
+.7340*
+.7020*
+.8407*
+.4800*
+.5550*
+.5162*
+.6489*
+CRISPR-gender
+.5022
+.5762
+.5350
+.6800
+.7196
+.8305
+.8575
+.9377
+.5000*
+.7220
+.6300
+.7670
+CRISPR-race
+.5051
+.5900
+.5337
+.6812
+.7147
+.8330
+.8686
+.9402
+.4660*
+.6650*
+.5537*
+.7011*
+CRISPR-religion
+.4990
+.5317*
+.5380
+.6785
+.6629*
+.8270
+.7798*
+.8666*
+.4882*
+.6850
+.5800*
+.7062*
+KnowBias
+.5345
+.5770
+.5683
+.7191
+.7401
+.8470
+.8549
+.9410
+.5490
+.6780
+.5844
+.7370
+
+3.5 Ablation Study (RQ4)
+We conduct a comprehensive ablation study to examine key design choices in KnowBias, thereby addressing RQ4 while further supporting RQ2 and RQ3: (1) the contribution of different bias-knowledge question types to neuron identification; (2) how aggregating neurons identified from different demographic dimensions affects debiasing performance; and (3) the effects of identifying and applying know-bias neurons per demographic dimension versus using a unified neuron set across all dimensions. The complete results are shown in Appendix D.5.
+Combining question types recovers effective and generalizable bias knowledge.
+We ablate the design of bias-knowledge question types by comparing neuron sets identified using a single question type (Type1 (causal rejection), Type2 (bias recognition), and Type3 (normative judgment)) with our mixed-type setup (final design), while keeping the total question budget fixed (each use 15 questions per demographic dimension, resulting in 45 questions in total for three demographic dimensions). Specifically, we evaluate three single-type variants and a mixed-type variant that combines complementary question types into a unified neuron set. As shown in Table 8, Appendix D.5, the mixed-type configuration consistently yields more stable and balanced debiasing performance across datasets and demographic dimensions. These results indicate that combining question types captures complementary facets of bias knowledge and is more effective than relying on any single question type alone. Detailed results are in Appendix D.5.1.
+Union-based aggregation yields the most effective and stable debiasing.
+We ablate different strategies for aggregating know-bias neurons into a unified set while fixing the total bias-knowledge question budget to 45. Concretely, we compare collapsing multiple demographic dimensions into a single composite question, directly combining neurons identified from all questions, taking the intersection of dimension-specific neuron sets, and taking their union (final design). Table 9 in Appendix D.5.2 shows that the union-based aggregation consistently yields the strongest and most stable debiasing performance across datasets and demographic dimensions. These results indicate that aggregating dimension-specific know-bias neurons via union best preserves transferable bias knowledge while avoiding overly restrictive neuron selection. Details are in Appendix D.5.2.
+A unified neuron set yields more robust debiasing than dimension-specific selection.
+We compare identifying and applying know-bias neurons separately for each demographic dimension with aggregating them into a unified neuron set, while keeping the overall intervention scale comparable. Table 9 in Appendix D.5.3 shows that the unified aggregation strategy consistently achieves stronger and more stable debiasing performance across datasets and demographic dimensions than dimension-specific selection. In contrast, dimension-specific neuron sets exhibit more variable performance depending on the demographic dimension used for identification. We further compare against a random neuron selection baseline with the same number of neurons and find that KnowBias substantially outperforms it, indicating that the gains arise from targeted bias knowledge rather than from the scale of the intervention. Complete results are in Appendix D.5.3.
+
+Table 3: General capability results on common reasoning and QA benchmarks (↑\uparrow), evaluating the impact of debiasing methods on model utility. (Bold*) indicates an accuracy drop of at least 5% relative to the corresponding base model without debiasing.
+Llama-3.2-3B
+Qwen-3-4B
+Llama-3.1-8B
+Method
+OBQA
+COPA
+ARC-C
+ARC-E
+OBQA
+COPA
+ARC-C
+ARC-E
+OBQA
+COPA
+ARC-C
+ARC-E
+Base
+.5102
+.6073
+.5426
+.6814
+.7779
+.8621
+.8777
+.9637
+.5778
+.7132
+.6108
+.7608
+FairSteer
+.5242
+.6095
+.5515
+.6899
+.7781
+.8500
+.8782
+.9639
+.5900
+.6812
+.6281
+.7748
+LFTF
+.5073
+.6075
+.5463
+.6856
+.7777
+.8595
+.8782
+.9640
+.5770
+.7105
+.6150
+.7582
+ReGiFT
+.4931
+.4437*
+.5072*
+.6314*
+.7229*
+.8010*
+.8190*
+.9268
+.4873*
+.5962*
+.5653*
+.7118*
+PEFT-gender
+.3598*
+.4573*
+.3946*
+.4848*
+.6268*
+.6380*
+.6411*
+.7284*
+.3745*
+.6144*
+.3950*
+.4842*
+PEFT-race
+.3465*
+.4950*
+.3810*
+.4674*
+.5730*
+.8100
+.6622*
+.8024*
+.3401*
+.5829*
+.3488*
+.4163*
+PEFT-religion
+.4897*
+.4156*
+.5351*
+.6710*
+.7449
+.7080*
+.7565*
+.9006*
+.5563
+.7024
+.5992
+.7357
+BiasEdit-gender
+.2858*
+.3121*
+.3120*
+.3772*
+.5829*
+.4960*
+.5930*
+.6575*
+.3979*
+.6280*
+.4291*
+.5464*
+BiasEdit-race
+.2522*
+.3300*
+.2875*
+.3485*
+.5136*
+.5100*
+.5444*
+.6481*
+.4281*
+.6714*
+.4857*
+.6040*
+BiasEdit-religion
+.4355*
+.4480*
+.2875*
+.6000*
+.7000*
+.6490*
+.5610*
+.8585*
+.5479*
+.7118
+.5930
+.7327
+SD
+.4418*
+.4710*
+.4866*
+.5977*
+.7001*
+.7340*
+.7020*
+.8407*
+.4800*
+.5550*
+.5162*
+.6489*
+CRISPR-gender
+.5022
+.5762
+.5350
+.6800
+.7196
+.8305
+.8575
+.9377
+.5000*
+.7220
+.6300
+.7670
+CRISPR-race
+.5051
+.5900
+.5337
+.6812
+.7147
+.8330
+.8686
+.9402
+.4660*
+.6650*
+.5537*
+.7011*
+CRISPR-religion
+.4990
+.5317*
+.5380
+.6785
+.6629*
+.8270
+.7798*
+.8666*
+.4882*
+.6850
+.5800*
+.7062*
+KnowBias
+.5345
+.5770
+.5683
+.7191
+.7401
+.8470
+.8549
+.9410
+.5490
+.6780
+.5844
+.7370
+
+D.7.4 Effect of enhancement scale λ\lambda.
+Finally, we examine the effect of the enhancement scale λ\lambda, which controls how strongly the activations of know-bias neurons are amplified during inference. A larger λ\lambda increases the influence of bias knowledge, but excessive scaling may distort the model’s internal representations and harm stability. In this experiment, we fix q=45q=45, τ=10%\tau=10\%, and β=10%\beta=10\%, and vary λ\lambda. The results (Figure 4(d)) show that λ=2\lambda=2 consistently yields the best debiasing performance across all three demographic dimensions. Smaller values under-amplify know-bias neurons and lead to weaker effects, while larger values provide no additional benefit and can slightly degrade performance. This finding indicates that a moderate enhancement strength is sufficient to guide model behavior without over-intervening.

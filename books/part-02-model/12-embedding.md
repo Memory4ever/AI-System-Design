@@ -100,6 +100,12 @@ cos(x, y) = (x dot y) / (||x|| * ||y||)
 
 但不能把距离近当作语义的完整定义。几何由训练数据、目标、模型架构和参数化共同塑造；不同 checkpoint 的坐标系不能直接逐维比较，token embedding 的近邻也不必等同于人类定义的同义词。
 
+跨 checkpoint 扩展词表时，一种合理初始化是先用共享 token 的 donor rows 表示新增行，再把相同线性系数用于 base rows。这保留了词表身份之间的锚点关系，却没有保留两个模型的全部几何与读出：donor 中对某个内部特征或输出方向的低响应，不推出迁移后的 base 行仍低响应。新增行、共享锚点、迁移算子及 base 的 embedding/output head 因而共同定义组合产物；只验 donor 的近邻或整体任务质量，不能把其行为信任自动传给组合后的模型。
+
+这条边界要求迁移后再验新增 token 的发出行为、原任务回归，以及不同上下文和采样条件，而不是取消旧的 lookup 或所有线性初始化。一个受限攻击实验通过修改 donor artifact 并利用已知 base 几何构造了这种差异；它不证明任意模型对都会受害，也不提供完备防御。后续 fine-tuning 可能抑制异常，额外调整行范数则又改变了被验收的产物。分词和 token-ID 的联合版本交接仍由 [Ch11 Tokenizer](./11-tokenizer.md#vocabulary-adaptation-是-tokenizer-与-checkpoint-的联合迁移) 承担，本章只拥有行几何及其与后续读出的耦合。
+
+连续输出目标还会改变这组坐标是否可辨识。Categorical softmax 的分母让正确 token 与其他候选竞争；若改为只回归目标 embedding 的方向、最小化 $1-\cos(E_y,H)$，同时让目标表与预测器一起移动，则把所有非零目标行和所有输出置于同一方向就能得到零 loss。这是 complete collapse，不只是某些方向的 dimensional collapse；训练 loss 低因而不能单独验收符号区分能力。[匹配初始化的有限对照](https://arxiv.org/html/2602.17287v1#S4.SS5)中，random/NMT/regularized-NMT 初始化只要继续训练目标表，未加约束的连续输出都退至BLEU0；冻结目标表或对它加入great-circle sliced dispersion 可以恢复部分区分，但随机初始化下正则分支33.2仍低于冻结表33.9，不证明正则普遍更好。冻结目标限制适配，分散正则则增加投影、排序、采样与权重调参费用，并可能损害其他层的表示；34M WMT19/singleH100/50k步的翻译结果不能外推为语言模型语义真值或量化加速因果。需要共同训练目标时，应同时验收目标可分性与任务质量；退化或预算不足时，保留冻结目标、原categorical输出或已核验的局部正则，不用几何diversity替代语义与下游质量。<!-- source-family:SF-2026-ARXIV-2602-17287 -->
+
 更重要的是，模型不直接在初始 embedding 上完成大部分任务。后续 layers 会不断读取上下文并改写 hidden states。
 
 ## 初始表示不等于上下文表示
@@ -118,6 +124,12 @@ sentence embedding     为句子或文档任务构造的整体表示
 它们都使用向量，却有不同粒度、训练目标和接口。把 token embedding 与 RAG 使用的 sentence embedding 混为一谈，会把模型内部状态与检索索引错误地归到同一层。检索 encoder 的升级兼容与低精度质量验收由 [Ch76 RAG](../part-07-agent/76-rag.md) 承担；本章只拥有模型输入表示及其训练接口。
 
 
+
+### 固定模型也可以接收经过训练的连续输入
+
+用文本传递辅助知识，优点是可直接检查、无需进入模型内部接口；代价是背景越长越占用输入预算。当 base 参数必须保持冻结而又允许 input embedding 接口时，一条受限分支让独立 expert 先自回归生成背景，读取最后 token 的 late hidden state，再用单独训练的 projector 对齐到 base 的 embedding 空间，替换 prompt 中一个固定 anchor slot。[GAG 的输入适配机制](https://arxiv.org/html/2601.08209v1)先适配 expert，再冻结 expert/base、只训练 projector；它不是把任意向量直接塞进词表，也不是检索 encoder 升级或 base 的循环推理状态。作者在关闭路由、固定领域的消融中，以倒数第四层 `L₂−4` 读出优于更早层及省去适配阶段的变体；这只支持局部接口资格，不证明通用隐藏层可直接互换。<!-- source-family:SF-2026-ARXIV-2601-08209 -->
+
+这里的“一 token”只限制 base 输入带宽，不免除 expert 生成、模块适配与路由开销，也不能保留文本证据的逐句可追溯性。原型最近邻可以在 general peer 与 domain module 之间选择，但 argmax 不是 OOD abstention，增加新原型还可能重划旧路由区域；选择激活的结果不能全归因于连续表示。单一领域假设、数字/单位压缩、跨领域组合和接口分布漂移仍需独立测试。若需要精确引用、内部输入接口不可得或适配/路由未验，文本背景与检索证据仍是合理退路；冻结 base 参数不等于整个系统行为不变。
 
 ## 参数量与 Tokenizer 的联动
 
@@ -150,6 +162,15 @@ logits_t   [V]
 某些模型令 `W_out = E^T`，即 input embedding 与 output projection weight tying。这样可以减少参数，并把输入、输出词表空间联系起来。
 
 Weight tying 是架构选择，不是 Embedding 的定义。不同模型可能使用独立矩阵、额外 normalization 或不同 bias。加载 checkpoint 时必须以模型配置和权重布局为准。
+
+普通转置共享适合参数预算优先的路径；若还要求线性 hidden→logits→embedding 的往返恢复，可将输入表与输出头耦合为下面的左逆构造，其中 `Z [V,d]` 列正交，`T [d,d]` 可逆，作者以 SPD 参数化学习 T：
+
+```text
+E = Z T^(-1), W_out = T Z^T, Z^T Z = I_d
+W_out E = I_d, E W_out = Z Z^T != I_V  (d < V)
+```
+
+这只约束线性接口，不使 softmax、token 选择或语义成为逆运算；从旧表的 polar factor U 初始化 `Z=U,T=I` 也会改变原 lookup，不是无损 retie。默认冻结 Z、只学习 T 时仍需 FP32 solve、额外 `hT` 计算和 conditioning 验证；训练 Z 则另付正交维护成本，数值 ridge 不保证精确正交。受限 scratch、部分 teacher 与 LoRA 对照仍有质量退步，代数 alignment 达到构造值不是独立质量测量。接口或数值验收失效、额外成本不值得时，保留普通转置共享或独立输出头，不把左逆条件升级为普遍更稳定或更好的语言模型。<!-- source-family:SF-2026-ARXIV-2602-04556 -->
 
 ## Padding 与梯度边界
 
@@ -204,6 +225,10 @@ P U           = I_2
 Factorized embedding 通常从训练开始共同学习 `E`、`P` 和后续网络，并没有一张必须无损恢复的原始宽表；但有效输入表 `EP` 的秩仍不超过 `d_embed`。后续非线性与上下文计算可以形成更丰富的状态，却不能据此保证入口容量限制不影响任务。它也改变 output head 的共享方式：若 `d_embed = d_model`，可以直接令 `W_out = E^T`；若二者不同，hidden state 必须先通过另一个投影进入 `d_embed` 才能复用 `E^T`，或者保留独立的 output matrix。输出路径的目标是保留预测所需信号，而非还原任意 hidden state；即使共享输入投影的转置，也不自动构成逆映射。
 
 [ALBERT 的 §3.1 与 §4.4](https://arxiv.org/html/1909.11942v6)提供因式分解设计与宽度对照实验，支持这是一条可行分支，没有证明普遍无损。验收应固定 tokenizer、数据与可比较的训练预算，同时比较 held-out loss、任务质量及稀有符号／语言切片，并把允许的退化范围与参数、显存、吞吐收益一起规定；压缩已有表时，重构误差只是额外诊断，不能代替行为测试。质量收益不足时保留较宽接口，checkpoint layout 与 weight-tying contract 也应随架构选择一起冻结。
+
+较窄的线性表并不是唯一的参数共享方式。如果词表参数挤占了上下文网络的预算，也可以只保留较小的共享 codebooks，再由可训练的非线性函数生成每个 id 的输入向量。一条受限分支把 id 分解成多维离散坐标，按各坐标查共享表、求和得到 seed，再经投影、归一化、sigmoid 和 B-spline 基函数的可分离聚合生成 `d_model` 维表示。它仍输出同一份 residual 输入契约，却不再等价于固定的低秩线性表 `EP`；共享的是生成函数及坐标表，而不是预设 token 的语义邻接。id 的多维排列是任意词表编号的编码，连续插值能力不能证明相邻编号语义相近，也不允许把离散 token 本身当作连续变量。<!-- source-family:SF-2026-ARXIV-2601-22040 -->
+
+这条分支把存储换成了入口计算，必须与普通 lookup 分账。[Leviathan 的受限 scratch 对照](https://arxiv.org/html/2601.22040v1)只覆盖约 60–420M 模型和固定 token 流：同 backbone 对照同时改变输入生成器与输出 tying，不能把收益全归因于输入表示；同参数对照则把省下的预算用于更深的网络，既不同计算量，也不同串行深度。模型仍保留独立的词表输出头，须另计其参数与计算，不能用输入表压缩比例代表整模型压缩。作者报告的训练吞吐下降说明参数更少不等于 lookup 更便宜；硬件未披露，不能据此给线上延迟保证。采用时应同时验 held-out 质量、训练与推理成本、输出头配置及预算重分配，无法承受额外计算或未获局部净收益时，保留较宽 lookup、线性因式分解或原来的 tying 分支。接下来仍要检查这些表示获得了什么训练支持，不能只因生成器共享参数就认定稀有符号已被学会。
 
 ### 共享矩阵中的稀有符号：先检查训练支持
 
@@ -341,10 +366,13 @@ Embedding 把无序类别 id 映射为可学习的连续坐标。Lookup 与 one-
 
 ## Review notes
 
+- `SF-2026-ARXIV-2601-22040` — Daily `2026-01-31`；[exact-v1](https://arxiv.org/html/2601.22040v1) §3–4.5/§6，2+1+2=5，针对非线性共享 id→输入表示接口缺口深入。仅采用共享坐标/codebooks→生成器与参数/计算分账；iso-body 的 tying 混杂、iso-param 的深度/吞吐代价、任意 id 拓扑及原硬件未披露保留。root 实际必要源及 PRE 窄差额通过，正文、前后及末注经非作者实际 POST 通过（输出头指代已按复核纠正）；未运行代码或复现实验。
+
 本轮 Review 保留了已迁移材料中的向量化、余弦相似度和矩阵计算直觉，并补齐 batch shape、小型 lookup、weight tying 与 padding 边界。本章不展开 Position Encoding、Attention 或向量检索。
 
 Primary-source 校验入口：
 
+- `SF-2026-ARXIV-2601-00065`（Experimental）：[exact-v1](https://arxiv.org/html/2601.00065v1) §3–4.3、§5.1–5.3、Appendix B 支持 donor 系数复用时的组合行为边界。作者五个小模型、20 directed pairs 的 SER 是目标 token 发出率，不是实际 harm；一轮 LoRA 抑制后的恢复还额外修改了行范数，不采用“未经修改仍持续穿透”的说法。迁移后回归是验证方向，非完备防御；[必要证据与采用命题](../../papers/2026/01/_sources/daily-20260106/tokenforge-source-owner-proposal.md) 已经 root 原源、source→owner 及实际写后复核通过，未复现实验。
 - `SF-2026-ARXIV-2604-20276`（Experimental / narrow Disputed branch）：[exact-v1](https://arxiv.org/html/2604.20276v1) §2–5/Appendix A–B 与 [独立审阅](../../papers/2026/04/_sources/daily-20260423/V3_APR02_20276_FINITE_INDEPENDENT.md)。正文仅吸收估计读数、测度维度和任务容量的分账；不采用 Appendix B 缺少闭包条件的普遍支持集 Hausdorff 单调表述，也不把作者 LLM 几何观测当作通用发布收益。[非作者实际写后复核](../../papers/2026/04/_sources/daily-20260423/V3_APR20_20276_CH12_WRITE_AFTER_INDEPENDENT.md)通过，未复现实验；[04/23 日期](../../papers/2026/04/_sources/daily-20260423/V3_ROOT_20276_FINITE_EVIDENCE.md)为公告批次与多字段合取的有界推断，不是逐篇公开日志，整日 Gate 仍待核。
 - `SF-2026-ARXIV-2604-21724`（Experimental）：[exact-v1](https://arxiv.org/html/2604.21724v1) §4.1–4.5/Algorithm1、§5。采用训练频率感知的 row 分配、局部 extractor 与逐层注入分支；2×/4×、层位参数混杂、host/device 与执行成本保留，不采零成本或普遍单调扩容。apr02 必要 source→实际 owner 复核通过；root 已复核正文与相邻静态 lookup 分支，写后 PASS，未复现实验。
 - `SF-2026-ARXIV-2604-21632`（Experimental）：[exact-v1](https://arxiv.org/html/2604.21632v1) §3–6/Appendix A、E。采用未见 label 行仍受 softmax 梯度影响的条件分支，区分输入表示与 copy 读出；无学习率限定的收缩保证、AdamW 外推与冻结行的 C4 代价保留。apr02 必要 source→实际 owner 复核通过；root 已复核正文与相邻 tying 分支，写后 PASS，未复现实验。
@@ -357,3 +385,9 @@ Primary-source 校验入口：
 - Scaling Embeddings in Large Language Models（hashed n-gram capacity；作者 scale/serving contract）:
   https://arxiv.org/abs/2601.21204
 - [TIDE: Every Layer Knows the Token Beneath the Context, 2605.06216v1](https://arxiv.org/html/2605.06216v1)：§3.2 的独立 memory banks、逐层 router、null bank 与加性注入支撑 EmbeddingMemory 的机制说明。保留理论动机和受限任务证据，不将多路径直接等同于所有稀有 token 问题已解决，或大规模 serving 成本已验证。
+
+- `SF-2026-ARXIV-2602-04556` — Daily `2026-02-06`；[PIT exact-v1](https://arxiv.org/html/2602.04556v1) §3–5及A.3，2+2+2=6，针对 coupled Z/T left-inverse 接口的具体缺口深入。采用列正交与可逆条件下 W_out E=I_d，不授 E W_out=I_V、softmax/token/语义可逆；teacher 初始化非无损，freeze-Z/可训-T、FP32 solve/额外 hT 和 conditioning 成本保留。不采 Cholesky 对角 clamp 等价 eigenvalue clamp 或 ridge 精确 Stiefel，Table1 scratch/teacher590及LoRA反侧不作普效。jan01_v3 实际必要 source→owner 写前独立核通过，root 授窄锁；实际写后 POST 与日级 Gate 待验，未运行代码或复现实验。
+
+- `SF-2026-ARXIV-2601-08209` — Daily `2026-01-15`；[GAG exact-v1](https://arxiv.org/html/2601.08209v1) §4.1–4.3/Eq5–14、Table3/4 oracle-routing消融、§9限制。2+2+2=6，具体embedding-input gap深入，仅采用frozen-base/projector条件输入接口，不采用science领域优势或near-oracle通用可靠激活。late读出L₂−4非早层；一token只计base带宽，expert AR成本/原型重划路由/单域与数值单位反侧保留。未运行代码或复现；root实际必要源/owner写前通过并授窄锁，作者已核两段实际正文及前后交接，root已实际核正文、前后交接与末注，非作者POST通过；日级Gate未授。
+
+- `SF-2026-ARXIV-2602-17287` — Daily `2026-02-21`；[exact-v1](https://arxiv.org/html/2602.17287v1) §2.1/Eq2–3、§2.3/3/Eq7–9、§4.1–4.2/4.5/Table3与Limitations。2+1+2=5，continuous-output同移目标零loss不可辨识的具体owner缺口深入；区分complete/dimensionalcollapse，冻结与sliced-dispersion有限恢复/反退、其他层损伤及额外费用近文。不采用Gram维度误写、entropy即semantic或量化因果。root必要原源/actual owner PRE通过并授窄锁；作者实际正文/完整邻接及自身末注已顺读，root非作者已实际读取正文、完整邻接及自身末注，POST通过，窄锁释放。未核实现或复现，非日级验收。

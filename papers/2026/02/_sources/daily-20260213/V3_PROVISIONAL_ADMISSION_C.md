@@ -1,0 +1,55 @@
+# 本日 exact-v1 准入判断 C（未冻结）
+
+DATE/QUERY不属确定候选；EX不评分。5=2+1+2，6=2+2+2，7=3+2+2；D是实际反证或安全边界需定点深审，非授结论成立。原文采用v1，无后版增量补入。
+
+- [2602.10884v1](https://arxiv.org/abs/2602.10884v1) | DATE | temporal residual动态BEV+trajectory监督worldmodelcollapse机制有增量；ICLR2026旧公开信号先核。
+- [2602.10885v1](https://arxiv.org/abs/2602.10885v1) | 5（root必要core准入通过） | §4 actual按同题多rollout rubric satisfaction与已知answer correctness corr>.2且std>0选valid rubric；rubricator用valid fraction+format reward与reasoner共θ、分role advantage演化，saturation即all-satisfied不再valid。具体eligibility/feedback predicate有增量，但训练依赖GT outcome，不是从无正确答案自认证CoT、因果rubric或普遍难度自适应；后续只核必要matched evaluation/directcounter，不先授Evidence。
+- [2602.10905v1](https://arxiv.org/abs/2602.10905v1) | 5 | empiricalFisher作为bilevel innerHessian渐近替代并与优化同步复用gradient，核高概率误差与NN应用条件。
+- [2602.10908v1](https://arxiv.org/abs/2602.10908v1) | 6 | disk-aware suffixarray加corpus-aware pruning处理semantic edit组合爆炸，发现exactmatch漏contamination；核统计假设及1.4T延迟成本。
+- [2602.10915v1](https://arxiv.org/abs/2602.10915v1) | 6D | screen-as-interface把视觉App身份当授权依据的failure与typed app-agent/kernel替代，核真实攻击及对照，不把sandbox/auth通则借分。
+- [2602.10934v1](https://arxiv.org/abs/2602.10934v1) | 5 | 全因果Transformer端到端audio tokenizer取消semanticteacher/异构CNN并展示scaling条件，核bitrate/streaming/ASR-TTS代价。
+- [2602.10940v1](https://arxiv.org/abs/2602.10940v1) | 5D | USP级别消融显示compile/launch主导而非通信且QwenImage Inductor-Ring4/8GPU不兼容，实际execution-plan边界须深核。
+- [2602.10943v1](https://arxiv.org/abs/2602.10943v1) | EX | camera坐标换globalworkspace NeRF occupancy用于robot，场景几何指标未新增foundation/worldtransition机制或一般迁移边界。
+- [2602.10949v1](https://arxiv.org/abs/2602.10949v1) | 5D | 低width深LeakyReLU下He/orthogonal不能保activation稳定；Lyapunov指数零初始化给具体depth-width条件。
+- [2602.10953v1](https://arxiv.org/abs/2602.10953v1) | 5 | DLM positionbeam对lowconfidence多路unmask/highconfidence并行commit，核搜索成本与不可逆order错误。
+- [2602.10956v1](https://arxiv.org/abs/2602.10956v1) | 5 | temporalattention Jacobian expected敏感性和offdiagonal序长关系给diagonalsink及regularizer条件，不泛化causalattention。
+- [2602.10959v1](https://arxiv.org/abs/2602.10959v1) | 6D | RoPEbase的aliasing/DC下界和finiteprecision上界联合可行域；强depth/百万tokenwall主张须核假设与casecontrol。
+- [2602.10965v1](https://arxiv.org/abs/2602.10965v1) | 5D | expert nullspace更新保持routerinput不变避免editing改变routing，核invariance实际条件与BCD收敛。
+- [2602.10975v1](https://arxiv.org/abs/2602.10975v1) | DATE | test-dependencygraph跨多PRfeature抽离+可执行环境揭示bugfixbench之外的能力边界；ICLR2026先公开须核。
+- [2602.10980v1](https://arxiv.org/abs/2602.10980v1) | 5D | VLA相同任务physical dynamics/3DIoU控制揭露sensornoise下脆弱性，核真实环境/metric与autonomousjudge边界。
+- [2602.10983v1](https://arxiv.org/abs/2602.10983v1) | 5（root必要core准入通过） | actionchunk跨stage会在旧goal条件执行下一stage；zero-pad stop配terminal goal-offset与stage relabel暴露worldmodel目标早晚噪声，是具体接口条件。成熟hierarchy/imageconcat/flow不计分，后续只核该机制matched对照与失败限制，不借69%泛化。
+- [2602.10986v1](https://arxiv.org/abs/2602.10986v1) | 6 | fullhistory toolvalue tree+prefixsandboxsnapshots使deterministic训练环境缓存可行，已校准；不外推外部state。
+- [2602.10993v1](https://arxiv.org/abs/2602.10993v1) | 5 | 先higher-rank学习再RSVD/anneal压缩对照直接低rank训练，改变rank先选的accuracy-size取舍。
+- [2602.10996v1](https://arxiv.org/abs/2602.10996v1) | 5D | referentialgame communicationpressure能精确训练数值但不能compositional extrapolation，限人工agent toy机制，非人类认知定律。
+- [2602.10999v1](https://arxiv.org/abs/2602.10999v1) | 5 | healthyenvironment history执行回溯/inversion构造faultstate任务，核bugreproduction和task可解性而非Docker analogy本身。
+- [2602.11000v1](https://arxiv.org/abs/2602.11000v1) | EX | GPT5工具化RL训练kernel生成配成熟benchmark harness，题摘仅正确率/加速gain，未新增budget可比条件或compilerbias归因机制。
+- [2602.11004v1](https://arxiv.org/abs/2602.11004v1) | EX | AV感知DNN中的frame/ROI选择+FLOPpredictor+scheduler是领域系统优化；未新增LLM/foundation/VLA机制，仅ROS检测指标。
+- [2602.11008v1](https://arxiv.org/abs/2602.11008v1) | 5 | globalcompressionbudget knapsack与单步sensitive sparse dictionary闭式update，核层分配对照和reconstruction与下游质量差异。
+- [2602.11016v1](https://arxiv.org/abs/2602.11016v1) | 6 | HBM减少后片上SRAM成energy瓶颈，3D寄存器跨tier dataflow避免SRAMroundtrip；核模拟/硬件公平对照与DATE早公开信号。
+- [2602.11021v1](https://arxiv.org/abs/2602.11021v1) | 5 | appearance/collision共用Gaussian并通过closedform可微physics学稀疏contact，核状态可识别性和rigidbody边界。
+- [2602.11044v1](https://arxiv.org/abs/2602.11044v1) | EX（root必要core关闭通过） | §3 softembedding/GS/teacherforcing/learnedtemperature成熟组合，没有另给跨AR梯度可靠性条件；perinput温度组合未改变AI-System有效/失效边界，停止贡献补读。
+- [2602.11047v1](https://arxiv.org/abs/2602.11047v1) | 6D | conditional masked diffusion并行embedding inversion无targetencoderaccess，核attacktraining数据与32token泄漏范围；v2纠错轻量核。
+- [2602.11064v1](https://arxiv.org/abs/2602.11064v1) | EX | motioncapture/synthetic数据到wearableHAR的domain mismatch是领域应用结果，未提出foundation表示或VLA直接新增机制。
+- [2602.11065v1](https://arxiv.org/abs/2602.11065v1) | 5（root必要core准入通过） | uncommitted seconds→sentence折叠并更新sentence_id，causal滑窗selector与within-sentence/recent-sentence cache承接时间状态；这不是pseudo-causal graph为因果解释的保证，GoT名字/分类本身不计分。
+- [2602.11072v1](https://arxiv.org/abs/2602.11072v1) | 6 | sentencealigned高latency训练→GRPO latency-quality优化不需wordalign，改变full-duplexalignment数据约束。
+- [2602.11073v1](https://arxiv.org/abs/2602.11073v1) | 5（root必要core准入通过） | query-guided跨region visualfeature interaction替代独立encoder再合并，interaction层全region+query注意力与其余restricted层形成具体接口；crop/SFT/RL不计增量，未授评价成立。
+- [2602.11075v1](https://arxiv.org/abs/2602.11075v1) | EX（root完整AB关闭通过） | dynamics/value分工→imagined advantage→policy为成熟组合，三任务增益与compositional命名未给新模型偏差或成立条件；不主动扩读挽留。
+- [2602.11079v1](https://arxiv.org/abs/2602.11079v1) | 6D | activationdiff数据归因经modifieddata retraining因果验证，发现生产DPO distractor-triggeredcompliance；采用原v1非后版probe名。
+- [2602.11083v1](https://arxiv.org/abs/2602.11083v1) | 5 | lowtemp BorderInputs对输出top-token变化具有Fisher/Jacobian功效，strictblackbox不取logprob，核稳定endpoint限制。
+- [2602.11088v1](https://arxiv.org/abs/2602.11088v1) | 7D | precomputed静态secretbasis即使freshcoeff仍可多观测恢复机密/伪造完整性；已准入具体安全变化深审。
+- [2602.11089v1](https://arxiv.org/abs/2602.11089v1) | EX（root完整AB关闭通过） | 新data-recipe任务+成熟proxy RL+新成绩未新增proxy有效性或控制机制；目标benchmark/预测reward本身不足系统贡献，不主动扩读挽留。
+- [2602.11096v1](https://arxiv.org/abs/2602.11096v1) | 6D | MLRM安全恢复first1–3step定点干预与conditionalthreshold控制显示干预时机边界，核baseline/安全RM及正常reasoning。
+- [2602.11103v1](https://arxiv.org/abs/2602.11103v1) | EX（root完整AB关闭通过） | 新game任务集、难度相关性与成熟image/video反馈提升不是新可辨识评价混杂或反馈机制条件；文本coding与视觉任务分数差本身不足长期系统增量。保留完整v1题摘，不借后版333/GPT5.4重开。
+- [2602.11105v1](https://arxiv.org/abs/2602.11105v1) | DATE | finite-differencevelocity配banditskip改变flowsamplingquality-cost，ICLR2026先公开须核。
+- [2602.11114v1](https://arxiv.org/abs/2602.11114v1) | 5 | workflowcapability sparsecomposition配counterfactual marginaleffects训练一次生成，核crossdomain attribution及20iteration对照总cost。
+- [2602.11124v1](https://arxiv.org/abs/2602.11124v1) | EX | physicalwarmup+critic先生成selfreference再judge的两阶段RL是成熟solve-before-judge组合，题摘仅专域指标无新增可靠性条件。
+- [2602.11128v1](https://arxiv.org/abs/2602.11128v1) | 6D | 最优promptweight随initialsuccess/updatecost变成偏低成功率的asymmetricweights，修正只mid-difficulty GRPO有效的假设。
+- [2602.11130v1](https://arxiv.org/abs/2602.11130v1) | 6D | 3Ddiffusion on-surface微扰导致Meltdown，经activationpatch定位earlycrossattn及spectralentropyproxy，核bifurcation不是后版强spectrumproof。
+- [2602.11133v1](https://arxiv.org/abs/2602.11133v1) | 5（root必要core准入通过） | proximity kernel按邻近已resolved token调低top1/top2 acceptance threshold，greedy永久commit而未通过部分仍normaltransfer；具体spatial criterion不同于只置信度阈值，不授质量保证。
+- [2602.11136v1](https://arxiv.org/abs/2602.11136v1) | EX | atomic事实抽取→Dafny predicates→Z3成熟组合，未新增语义抽取忠实/intent可靠性条件；SMT soundness只针对编译spec。root实际123–167关闭通过；强保证反侧保留V3_QUERY_11136_CORE.txt，不产生评分/全文队列。
+- [2602.11137v1](https://arxiv.org/abs/2602.11137v1) | 6D | pretrainingweightdecay下较差baseloss却更高finetuningplasticity，改变只baseCE调参选择；核controlledpretrain/finetunebudget。
+- [2602.11139v1](https://arxiv.org/abs/2602.11139v1) | 5（root必要core准入通过） | learned MLP(log n) per-coordinate scaling乘bounded querygate新增局部注意力length/content调节；不借Muon/合成数据成熟原则增分，不从tabularneedle外推LLM长上下文保证。
+- [2602.11144v1](https://arxiv.org/abs/2602.11144v1) | 5D | contextunderstanding与intrinsicvisualgeneration的failure拆分配attentionintervention，核diagnostic对照而非GFItaxonomy。
+- [2602.11146v1](https://arxiv.org/abs/2602.11146v1) | 5 | latentdiffusionstates上的noise-calibratedThurstone reward与noiseensemble，核uncertaintycalibration及pixeldecode成本。
+- [2602.11149v1](https://arxiv.org/abs/2602.11149v1) | 5D | fixedupdates下epochs替uniqueexamples，train tokenaccuracy饱和而heldoutCE上升仍有推理gain，已准入并定点新counter深审。
+- [2602.11151v1](https://arxiv.org/abs/2602.11151v1) | EX | diffusionbidirectionalpretrain+contrastiveembedding+meanpool+latechunking是成熟检索组合，新模型benchmark成绩未给新的成立/失效机制。

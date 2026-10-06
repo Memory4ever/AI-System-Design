@@ -1,0 +1,4008 @@
+Mitigating Preference Leakage via Strict Estimator Separation for Normative Generative Ranking
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract.
+1
+Introduction
+2
+Related Work
+3
+Our Novel Framework
+3.1
+Formal Problem Definition
+4
+Experiments and Results
+4.1
+Data and Query Construction
+4.2
+Comparative Models
+4.3
+Evaluation Metrics
+4.4
+Results
+4.5
+Qualitative Analysis
+5
+Discussion
+6
+Conclusions
+References
+License: CC BY 4.0
+arXiv:2602.20800v1 [cs.IR] 24 Feb 2026
+Mitigating Preference Leakage via Strict Estimator Separation for Normative Generative Ranking
+CCS:
+Information systems Information retrieval
+CCS:
+Computing methodologies Machine learning approaches
+Dalia Nahhas
+Affiliation:
+University of Southampton
+,
+United Kingdom
+email:
+D.G.Nahhas@soton.ac.uk
+,
+Xiaohao Cai
+Affiliation:
+University of Southampton
+,
+United Kingdom
+email:
+X.Cai@soton.ac.uk
+,
+Imran Razzak
+Affiliation:
+Mohamed bin Zayed University of Artificial Intelligence
+,
+United Arab Emirates
+email:
+imran.razzak@mbzuai.ac.ae
+and
+Shoaib Jameel
+Affiliation:
+University of Southampton
+,
+United Kingdom
+email:
+M.S.Jameel@southampton.ac.uk
+Abstract.
+In Generative Information Retrieval (GenIR), the bottleneck has shifted from generation to the selection of candidates, particularly for normative criteria such as cultural relevance. Current LLM-as-a-Judge evaluations often suffer from circularity and preference leakage, where overlapping supervision and evaluation models inflate performance. We address this by formalising cultural relevance as a within-query ranking task and introducing a leakage-free two-judge framework that strictly separates supervision (Judge B) from evaluation (Judge A). On a new benchmark of 33,052 (NGR-33k) culturally grounded stories, we find that while classical baselines yield only modest gains, a dense bi-encoder distilled from a Judge-B-supervised Cross-Encoder is highly effective. Although the Cross-Encoder provides a strong supervision signal for distillation, the distilled BGE-M3 model substantially outperforms it under leakage-free Judge A evaluation. We validate our framework on the human-curated Moral Stories dataset, showing strong alignment with human norms. Our results demonstrate that rigorous evaluator separation is a prerequisite for credible GenIR evaluation, proving that subtle cultural preferences can be distilled into efficient rankers without leakage.
+[Code and experimental settings: Anonymous] [Dataset: Anonymous]
+.
+Keywords:
+Generative Information Retrieval; Learning to Rank; LLM-as-a-Judge; Cultural Relevance; Children’s Storytelling
+1.
+Introduction
+Generative Information Retrieval (GenIR) increasingly supports systems that combine retrieval, generation, and downstream decision making, including retrieval-augmented generation and creative text applications
+(
+Lewis et al., 2020
+;
+Alaofi et al., 2024
+;
+Bonifacio et al., 2022
+)
+. A common operating mode is
+generate–then–select
+: given the same constraints, a model produces multiple fluent candidates, and system quality depends primarily on
+selection
+—choosing the best candidate among many possible alternatives. Throughout this work, “within-query” refers to ranking candidates generated under identical constraint tuples; candidates from different queries are never compared.
+Selection becomes especially difficult when the target criterion is
+normative
+rather than purely topical. In a culturally grounded generation, candidates may be equally fluent and on-topic while differing in whether they express culturally specific settings, practices, values, or communication style. Standard lexical signals and generic dense similarity are not designed to capture such
+non-topical
+relevance dimensions, making within-query ordering unreliable under these criteria
+(
+Manning et al., 2008
+;
+Järvelin and Kekäläinen, 2002
+)
+. This setting yields candidate pools that are tightly matched in topical relevance and coherence, while differing primarily along
+normative cultural grounding
+, a latent dimension beyond surface lexical overlap. As illustrated in Figure
+1
+, standard lexical rankers often struggle to reliably distinguish between surface-level stereotypes (e.g., hummus, falafel) and deep normative grounding (e.g., the specific etiquette of refusal and insisting), a gap our framework aims to bridge.
+Example:
+Surface vs. Normative Relevance
+⟨
+\langle
+Age: 10; Moral: Generosity; Culture: Arab
+⟩
+\rangle
+Candidate A (Surface):
+“Ahmed sat in the
+desert
+eating
+hummus
+… gave him a
+high-five
+.”
+→
+\rightarrow
+Stereotypical keywords, western norms.
+Candidate B (Normative):
+“Ahmed
+insisted
+… guest
+refused three times
+…
+piled more lamb
+…”
+→
+\rightarrow
+Captures the “ritual of refusal”.
+Gap:
+Lexical rankers prefer A (keywords); Normative rankers must identify B (behavior).
+Figure 1.
+An example of a query where dense bi-encoders and lexical models can struggle. They rank the stereotypical Candidate A higher due to token overlap, whereas the true cultural ground truth (Candidate B) requires reasoning about the enactment of the moral value.
+To scale evaluation of such criteria, recent work increasingly uses large language models (LLMs) as rubric-guided judges
+(
+Zheng et al., 2023
+;
+Hashemi et al., 2024
+;
+Li et al., 2024b
+)
+. However, judge-based pipelines are vulnerable to
+circular evaluation
+(
+Dietz et al., 2025
+)
+: if the same judge (or model family) provides both supervision and evaluation, reported gains can reflect evaluator preference rather than real improvements. This risk is amplified by
+self-preference bias
+(
+Chen et al., 2025
+)
+, where judges systematically favour outputs from their own model family, leading to
+preference leakage
+(
+Yang et al., 2025
+)
+and inflated ranking estimates under insufficient separation
+(
+Koo et al., 2024
+;
+Chen et al., 2024
+;
+Li et al., 2025
+)
+.
+We address these challenges by casting culturally grounded story selection as a
+within-query graded ranking
+task and introducing a
+two-judge leakage-free framework
+. Judge B provides rubric scores used
+only
+for ranking signals and training, while an independent Judge A supplies labels used
+only
+for final evaluation. To ensure fair comparison across methods, we evaluate on identical within-query candidate pools defined by the intersection of valid annotations from both judges. This design avoids missing-label confounds and ensures that all methods are evaluated on exactly the same candidate set per query. Our results show that rubric-based cultural judgments remain informative under an independent evaluator, and that this signal can be distilled
+(
+Song et al., 2025
+)
+into neural ranking models without inference-time judging. We validate the judges’ alignment with human norms using the Moral Stories
+(
+Emelin et al., 2021
+)
+benchmark. Unlike prior LLM-as-a-judge
+(
+Gu et al., 2024
+)
+setups that conflate supervision and evaluation, our framework enforces
+role separation
+and evaluates all methods under a fixed intersection pool, enabling leakage-free, within-query ranking comparisons.
+Contributions:
+We formalise culturally grounded selection as a conditional ranking optimisation problem, where the objective is to learn a scoring function
+f
+θ
+(
+s
+: story
+,
+q
+: query
+)
+f_{\theta}(s\text{: story},q\text{: query})
+that approximates a latent normative prior
+R
+∗
+R^{*}
+within dense, constraint-matched candidate pools. We introduce a “strictly orthogonal two-judge” framework (
+J
+supervision
+∩
+J
+evaluation
+=
+∅
+J_{\rm supervision}\cap J_{\rm evaluation}=\emptyset
+) that eliminates circular preference leakage. By enforcing evaluation exclusively on the unified intersection pool
+𝒮
+q
+∩
+\mathcal{S}_{q}^{\cap}
+, we mathematically control for estimator availability bias and ensure valid within-query variance. We empirically identify a Normative Feature Suppression bottleneck in direct bi-encoder training, demonstrating that normative relevance features are latent and overshadowed by the dominant semantic components of pre-trained embeddings. We find that directly fine-tuning a bi-encoder under Judge-B normative supervision can be unstable, whereas interaction-based cross-encoders provide a strong, high-capacity teacher reference. We further show that a teacher–student distilled bi-encoder transfers much of this signal and achieves strong performance while retaining bi-encoder effectiveness. We release NGR-33k (Normative Generative Ranking dataset), a benchmark for complete reproducibility artefacts. We validate our framework’s external validity on human-curated data (Moral Stories), achieving strong inter-judge alignment.
+2.
+Related Work
+Retrieval vs. Selection
+: GenIR integrates generation and retrieval and has become central to modern retrieval-augmented pipelines
+(
+Lewis et al., 2020
+;
+Alaofi et al., 2024
+)
+. Within this space, prior work can be broadly divided into: i)
+model-based retrieval
+that replaces explicit indexing with parametric access, and ii)
+generate-then-rank
+pipelines that explicitly construct candidate sets and then select among them.
+Model-based retrieval approaches, such as Differentiable Search Indices (DSI), aim to internalise the corpus directly into model parameters, enabling retrieval via generation rather than explicit indexing
+(
+Tay et al., 2022
+;
+Bevilacqua et al., 2022
+)
+. While these approaches emphasise memorisation and fully differentiable retrieval, they are not designed for the
+within-query
+selection problem central to our work: ordering several candidates generated under the same query constraints. They also do not engage with leakage issues that arise when rubric-based supervision and evaluation are both provided by LLM judges.
+In contrast, generate-then-rank pipelines
+(
+Bonifacio et al., 2022
+;
+Lewis et al., 2020
+)
+shift the bottleneck to
+post-generation selection
+, where candidates produced via stochastic decoding
+(
+Holtzman et al., 2020
+)
+require rigorous sorting frameworks
+(
+Alaofi et al., 2024
+)
+. We explicitly target this setting by formulating culturally grounded storytelling as a
+within-query graded ranking
+task evaluated with standard IR measures
+(
+Manning et al., 2008
+;
+Järvelin and Kekäläinen, 2002
+;
+Chapelle et al., 2009
+;
+Mitra and Craswell, 2018
+)
+, distinguishing normative grounding from simple fluency.
+LLMs as Judges and Evaluation Biases
+: LLMs have recently been adopted as automatic evaluators for open-ended generation tasks
+(
+Arabzadeh and Clarke, 2025
+)
+, often showing strong correlation with human judgments under carefully designed rubrics
+(
+Zheng et al., 2023
+;
+Hashemi et al., 2024
+;
+Li et al., 2024b
+)
+. However, judge-based evaluation is sensitive to prompting, decoding, and judge choice, and can exhibit systematic biases; this motivates uncertainty-aware reporting and framework constraints
+(
+Chang et al., 2024
+;
+Yamauchi et al., 2025
+;
+lea, 2024
+;
+Guo et al., 2023
+;
+Zhao et al., 2025
+)
+.
+A particularly concerning phenomenon is
+self-preference bias
+, where LLM judges unreasonably favour outputs generated by models from their own family or with similar training distributions
+(
+Koo et al., 2024
+;
+Chen et al., 2024
+)
+. This bias is especially acute in within-query ranking scenarios, where candidates are highly similar and small scoring deviations can substantially alter rankings. Importantly, self-/family preference is a
+bias
+of the evaluator, while leakage is a
+framework confound
+: using overlapping signals for training and evaluation can make improvements appear even when they do not transfer to an independent evaluator.
+Li et al. (2025)
+formalise this issue as
+preference leakage
+, showing that overlapping supervision and evaluation signals can lead to inflated and misleading performance estimates.
+Existing mitigation strategies include cross-model judging, ensemble evaluation, and prompt randomization
+(
+Chen et al., 2024
+)
+. Our work complements these approaches by enforcing strict role separation between supervision and evaluation through a two-judge framework with blocked information flow, and by enforcing identical candidate pools via intersection filtering to remove
+control
+missing-label confounds in comparisons
+(
+Voorhees and Tice, 2000
+;
+Smucker et al., 2007
+;
+Carterette, 2012
+;
+Demšar, 2006
+)
+.
+Cultural Relevance (Non-Topical Relevance)
+: Cultural aspects of language have been extensively studied in the context of bias detection, fairness, and harm mitigation, where culture is often treated as an attribute to control, measure, or remove
+(
+Blodgett et al., 2020
+;
+Huang and Yang, 2023
+;
+Tao et al., 2024
+;
+AlKhamissi et al., 2024
+;
+Naous et al., 2024
+;
+Sukiennik et al., 2025
+)
+. Related benchmark efforts likewise implement social structure attributes primarily as risks to surface or mitigate
+(
+Parrish et al., 2022
+;
+Dhamala et al., 2021
+;
+Smith et al., 2022
+;
+Bender et al., 2021
+)
+. Policy and governance perspectives further warn of a
+cultural compatibility gap
+and
+algorithmic monoculture
+, where models default toward dominant norms absent neutralising constraints
+(
+Perez, 2025
+)
+.
+While benchmarks such as CulturalBench
+(
+Chiu et al., 2025
+)
+and NormAd
+(
+Rao et al., 2025
+)
+probe factual knowledge or social acceptability, they do not address the generative selection of fully formed narratives. Our NGR-33k fills this gap by treating culture not as a bias axis, but as a positive, graded relevance signal
+(
+Manning et al., 2008
+;
+Järvelin and Kekäläinen, 2002
+)
+for ranking “thick” normative enactment, measurable via standard IR metrics
+(
+Chapelle et al., 2009
+)
+.
+Culturally grounded children’s story generation:
+Research on culturally grounded narratives indicates that implicit cues require treating culture as an explicit ranking objective
+(
+Zhang et al., 2022
+;
+Ye et al., 2025
+;
+Rezapour et al., 2025
+;
+Rooein et al., 2025
+)
+. While normative resources support supervision beyond surface similarity
+(
+Forbes et al., 2020
+;
+Emelin et al., 2021
+)
+, rubric-based judging offers a scalable proxy for “thick evaluation”
+(
+Qadri et al., 2025
+)
+. Unlike work framing culture as alignment diagnosis
+(
+Masoud et al., 2024
+;
+Li et al., 2024a
+;
+Choenni and Shutova, 2025
+)
+, we focus on explicit within-query selection.
+Benchmark gap for culturally grounded story selection:
+To our knowledge, no benchmark jointly supports age, moral, and culturally grounded
+within-query ranking
+under strict evaluator separation. While narrative datasets focus on coherence
+(
+Mostafazadeh et al., 2016
+;
+Hill et al., 2016
+)
+and cultural corpora offer broad coverage
+(
+Li et al., 2024d
+;
+Hagedorn and Strube, 2022
+)
+, none enforce this constraint triad within a fixed candidate-pool framework, motivating our controlled generate-then-rank design.
+Learning to Rank and Ranking Distillation
+: Learning-to-rank (LTR)
+(
+Liu, 2009
+)
+optimizes ordering using graded signals
+(
+Reddy et al., 2024
+;
+Burges et al., 2005
+;
+Dehghani et al., 2017
+;
+Burges, 2010
+)
+. We employ ranking distillation
+(
+Tang and Wang, 2018
+)
+to transfer expensive normative supervision
+(
+Hashemi et al., 2024
+;
+Li et al., 2024b
+)
+into lightweight models
+(
+Zhou, 2018
+)
+, recovering the signal without inference-time costs. However, this is only valid if improvements persist under independent evaluation, mitigating evaluator-family preference
+(
+Koo et al., 2024
+;
+Chen et al., 2024
+;
+Li et al., 2025
+)
+.
+Data and Query Construction in GenIR
+: Several recent works construct structured or synthetic queries to study generative retrieval and ranking
+(
+Wu et al., 2024
+)
+under controlled conditions, enabling reproducible evaluation and clearer attribution of ranking gains
+(
+Bonifacio et al., 2022
+;
+Alaofi et al., 2024
+)
+. Such designs reduce topical distraction and enable analysis of
+within-query
+ranking behaviour, where candidates share constraints and are intentionally similar.
+Our query construction follows this line of work by defining structured constraint triples (age, moral, culture) that induce candidate pools with shared topical content. This setup isolates the selection problem by ensuring that observed differences among candidates primarily reflect normative and stylistic factors rather than topical mismatch, and supports query-level evaluation using graded relevance metrics
+(
+Manning et al., 2008
+;
+Järvelin and Kekäläinen, 2002
+;
+Chapelle et al., 2009
+)
+.
+POSITIONING.
+While GenIR identifies the post-generation selection bottleneck
+(
+Alaofi et al., 2024
+;
+Lewis et al., 2020
+;
+Bonifacio et al., 2022
+)
+and LTR provides optimization mechanisms
+(
+Liu, 2009
+;
+Burges et al., 2005
+;
+Dehghani et al., 2017
+;
+Zhou, 2018
+)
+, current approaches overlook a critical validity crisis: judges are plagued by instability and preference leakage
+(
+Koo et al., 2024
+;
+Chen et al., 2024
+;
+Li et al., 2025
+;
+Blackwell et al., 2025
+;
+Liang et al., 2023
+;
+Huang et al., 2024
+)
+, and culture is reduced to a bias-mitigation task
+(
+Blodgett et al., 2020
+;
+Huang and Yang, 2023
+;
+Tao et al., 2024
+;
+AlKhamissi et al., 2024
+;
+Naous et al., 2024
+;
+Sukiennik et al., 2025
+)
+. We depart from this paradigm by operationalising culture as
+graded non-topical relevance
+(
+Manning et al., 2008
+;
+Järvelin and Kekäläinen, 2002
+;
+Chapelle et al., 2009
+)
+. We propose the first
+leakage-free framework
+using orthogonal supervision
+(
+Li et al., 2025
+)
+and intersection pools
+(
+Voorhees and Tice, 2000
+;
+Smucker et al., 2007
+;
+Carterette, 2012
+;
+Demšar, 2006
+)
+to rigorously disentangle true ranking gains from circular evaluator preferences.
+Phase I: Supervision (Offline)
+Phase II: Evaluation (Online)
+Query Constraints
+q
+=
+(
+Age
+,
+Moral
+,
+Culture
+)
+q=({\rm Age,Moral,Culture})
+Generator
+G
+G
+P
+ϕ
+​
+(
+s
+|
+q
+)
+P_{\phi}(s|q)
+Candidate Pool
+𝒮
+q
+\mathcal{S}_{q}
+Judge B
+(Supervisor)
+Pairwise
+Sampling
+Ranker
+f
+θ
+f_{\theta}
+Optimization
+Loss
+ℒ
+Rank
+\mathcal{L}_{\rm Rank}
+y
+B
+y_{B}
+𝒟
+train
+\mathcal{D}_{\rm train}
+∇
+θ
+\nabla_{\theta}
+Judge A
+(Evaluator)
+Ranker
+f
+θ
+∗
+f_{\theta^{*}}
+Inference
+Metric
+nDCG@k
+y
+A
+y_{A}
+(Ground Truth)
+y
+^
+\hat{y}
+Parameter Transfer
+θ
+∗
+\theta^{*}
+STRICT INFORMATION BARRIER (STOP GRADIENT)
+Figure 2.
+Our novel framework separates the optimisation loop (Top, Blue) from the inference/evaluation loop (Bottom, Red). The Supervision Judge (
+J
+B
+J_{B}
+) generates noisy proxies
+y
+B
+y_{B}
+for gradient descent (
+∇
+θ
+\nabla_{\theta}
+). The Independent Evaluator (
+J
+A
+J_{A}
+) provides labels
+y
+A
+y_{A}
+exclusively for metric computation. The only bridge between the worlds is the frozen parameter set
+θ
+∗
+\theta^{*}
+, preventing circular preference leakage.
+y
+^
+=
+f
+θ
+∗
+​
+(
+s
+,
+q
+)
+\hat{y}=f_{\theta^{*}}(s,q)
+is the framework’s prediction.
+3.
+Our Novel Framework
+We propose a novel framework, depicted in Figure
+2
+, for culturally grounded story selection that treats cultural relevance as a
+within-query graded ranking
+problem. Our approach addresses the “label leakage” and circular self-preference plaguing current GenIR evaluation by enforcing strict role separation between ranking supervision and independent assessment.
+Selection vs. Model-Based Retrieval:
+While some GenIR directions (e.g., DSI) internalise a corpus into model parameters
+(
+Tay et al., 2022
+)
+, our work targets the
+post-generation selection bottleneck
+: ranking multiple valid candidates produced under identical constraints, common to RAG and creative generation pipelines
+(
+Lewis et al., 2020
+)
+.
+Culture as Graded Non-Topical Relevance:
+Unlike prior work that treats culture as a binary bias axis, we operationalise
+cultural relevance
+as a graded, non-topical relevance signal—consistent with multidimensional relevance criteria in classical IR—enabling within-query comparisons under fixed cutoffs using standard graded metrics
+(
+Järvelin and Kekäläinen, 2002
+;
+Manning et al., 2008
+)
+.
+3.1.
+Formal Problem Definition
+To ensure rigorous evaluation, we ground our generation constraints in established sociological and educational constructs. We define
+Target Age
+as a constraint on cognitive accessibility and linguistic complexity, scaling from concrete operational stages to abstract reasoning.
+Moral Theme
+operationalises the narrative’s pro-social intent, requiring the resolution of conflict through specific virtues (e.g., honesty, patience) rather than generic happy endings. We define
+Cultural Context
+not merely as a geographic label, but as a “thick” normative setting comprised of specific rituals, etiquette, and social dynamics that govern how the moral is enacted. Together, these three dimensions constitute the normative relevance criteria against which the generator’s alignment is measured.
+We operationalise the query
+q
+q
+as a triple: Target Age (
+c
+age
+c_{\text{age}}
+) constrains complexity; Moral Theme (
+c
+moral
+c_{\text{moral}}
+) defines the plot resolution; and Cultural Context (
+c
+cult
+c_{\text{cult}}
+) provides the normative setting (e.g., Arab, Latin American), requiring grounding in customs beyond surface-level keywords.
+While we treat Target Age and Moral Theme as explicit generation constraints that define the content boundary, we view Cultural Context as the primary source of normative variance. Thus, our evaluation focuses on distinguishing between surface-level thematic compliance (e.g., getting the moral right) and deep normative enactment (e.g., behaving appropriately within that moral context).
+To guarantee valid outputs, we employ a rigid generation template that enforces a complete narrative arc, a strictly delimited moral resolution, and the exclusion of meta-commentary to ensure consistent parsing. The full prompt structure, which instantiates constraints such as
+q
+=
+(
+8
+,
+Honesty
+,
+Arab
+)
+q=(8,\text{Honesty},\text{Arab})
+into specific instruction slots, is provided in the released dataset artefacts.
+These three constraints constitute a minimal yet comprehensive framework that captures the essential cognitive, thematic, and normative dimensions of educational storytelling. Limiting the query to this triad isolates the core challenge of normative alignment without conflating the evaluation with purely stylistic preferences.
+Mathematical Formulation:
+Formally, let
+𝒬
+\mathcal{Q}
+be the space of structured queries, where each
+q
+∈
+𝒬
+q\in\mathcal{Q}
+is defined by the tuple
+q
+=
+(
+c
+age
+,
+c
+moral
+,
+c
+cult
+)
+q=(c_{\text{age}},c_{\text{moral}},c_{\text{cult}})
+, where
+c
+age
+∈
+{
+4
+,
+…
+,
+10
+}
+c_{\text{age}}\in\{4,\dots,10\}
+is the integer age constraint,
+c
+moral
+c_{\text{moral}}
+is a categorical variable from the set of morals
+ℳ
+\mathcal{M}
+, and
+c
+cult
+c_{\text{cult}}
+is a categorical variable from the set of cultures
+𝒞
+\mathcal{C}
+. Let
+𝒮
+\mathcal{S}
+be the infinite space of possible narratives. We assume a stochastic generator
+G
+G
+parameterised by
+ϕ
+\phi
+that defines a conditional probability distribution
+P
+ϕ
+​
+(
+s
+|
+q
+)
+P_{\phi}(s|q)
+over
+𝒮
+\mathcal{S}
+.
+For a given query
+q
+q
+, we sample a candidate set
+𝒮
+q
+=
+{
+s
+1
+,
+…
+,
+s
+n
+q
+}
+\mathcal{S}_{q}=\{s_{1},\dots,s_{n_{q}}\}
+where
+s
+i
+∼
+P
+ϕ
+(
+⋅
+|
+q
+)
+s_{i}\sim P_{\phi}(\cdot|q)
+, and
+n
+q
+n_{q}
+denotes the size of the candidate pool
+|
+𝒮
+q
+|
+|\mathcal{S}_{q}|
+. We assume the existence of a latent target scoring function (the “ideal evaluator”)
+R
+∗
+:
+𝒮
+×
+𝒬
+→
+𝒴
+R^{*}:\mathcal{S}\times\mathcal{Q}\rightarrow\mathcal{Y}
+, where
+𝒴
+=
+{
+1
+,
+…
+,
+5
+}
+\mathcal{Y}=\{1,\dots,5\}
+is the ordinal relevance space. In practice,
+R
+∗
+R^{*}
+is unobserved. We approximate it with rubric-based LLM judges under a strict two-judge framework, where Judge B provides supervision for learning, and Judge A is used only for final, leakage-free evaluation.
+Our goal is to learn a ranking function
+f
+θ
+:
+𝒮
+×
+𝒬
+→
+ℝ
+f_{\theta}:\mathcal{S}\times\mathcal{Q}\rightarrow\mathbb{R}
+such that for any pair
+s
+i
+,
+s
+j
+∈
+𝒮
+q
+s_{i},s_{j}\in\mathcal{S}_{q}
+:
+f
+θ
+​
+(
+s
+i
+,
+q
+)
+>
+f
+θ
+​
+(
+s
+j
+,
+q
+)
+⇔
+R
+∗
+​
+(
+s
+i
+,
+q
+)
+>
+R
+∗
+​
+(
+s
+j
+,
+q
+)
+f_{\theta}(s_{i},q)>f_{\theta}(s_{j},q)\iff R^{*}(s_{i},q)>R^{*}(s_{j},q)
+.
+Two-Judge Leakage-Free Framework:
+A central requirement is strict separation between ranking supervision and evaluation labels to prevent inflated estimates due to circular evaluation
+(
+Voorhees and Tice, 2000
+;
+Smucker et al., 2007
+;
+Blackwell et al., 2025
+;
+Laskar et al., 2024
+)
+. We employ two rubric-guided judges
+(
+Hashemi et al., 2024
+;
+Zheng et al., 2023
+;
+Li et al., 2024b
+)
+with non-overlapping roles.
+For
+𝒴
+=
+{
+1
+,
+…
+,
+5
+}
+\mathcal{Y}=\{1,\dots,5\}
+(i.e., the space of ordinal relevance grades) and a generated story
+s
+s
+given query
+q
+q
+:
+Judge B (Supervision):
+Assigns a score
+y
+B
+​
+(
+s
+,
+q
+)
+∈
+𝒴
+y_{B}(s,q)\in\mathcal{Y}
+used
+only
+for ranking supervision.
+Judge A (Evaluation):
+Assigns an independent label
+y
+A
+​
+(
+s
+,
+q
+)
+y_{A}(s,q)
+∈
+𝒴
+\in\mathcal{Y}
+used
+only
+for final assessment.
+Judge A is never used for training, early stopping, hyperparameter tuning, prompt tuning, threshold selection, or any form of model selection. Formally, we enforce strict role separation:
+y
+B
+y_{B}
+is used only to train/tune
+f
+θ
+f_{\theta}
+, while all reported metrics are computed only from
+y
+A
+y_{A}
+on held-out queries. This mitigates preference leakage and self-preference bias, where evaluators disproportionately favour outputs from their own model family
+(
+Li et al., 2025
+;
+Koo et al., 2024
+;
+Chen et al., 2024
+)
+. We enforce this by instantiating Judge A and Judge B using different model families (e.g., Yi-34 vs. Llama-3). We employ a hierarchical rubric where Score 1 indicates irrelevant content, Score 3 indicates generic thematic alignment without cultural markers, and Score 5 requires deep integration of specific cultural customs and worldview.
+Reasoning-Aware Judge Prompting:
+To encourage judges to evaluate the narrative substance rather than surface patterns, we employ a Chain-of-Thought (CoT) style prompting
+(
+Barrot and Bui, 2026
+)
+setup that asks the judge to consider (internally) the cultural customs and moral integration given the constraint triple
+q
+q
+and the rubric, and then output only a final score. Particularly, both judges receive the story text,
+q
+q
+, and the rubric, and are instructed to reflect on cultural grounding and moral realisation before assigning a single integer score. To preserve strict output constraints and prevent extraneous text, we require JSON-only outputs and do not request or store intermediate reasoning. This reasoning-aware setup reduces the noise often seen in direct-scoring approaches
+(
+Wei et al., 2022
+)
+.
+Unified Candidate Pool (Intersection):
+To ensure all methods are compared on identical candidates and to avoid missing-label confounds, we define the evaluation pool per query as the intersection of valid Judge A and Judge B annotations:
+𝒮
+q
+∩
+=
+{
+s
+∈
+𝒮
+q
+:
+y
+A
+​
+(
+s
+,
+q
+)
+​
+valid
+∧
+y
+B
+​
+(
+s
+,
+q
+)
+​
+valid
+}
+.
+\mathcal{S}_{q}^{\cap}=\{s\in\mathcal{S}_{q}:y_{A}(s,q)\ \text{valid}\ \wedge\ y_{B}(s,q)\ \text{valid}\}.
+All methods rank candidates within
+𝒮
+q
+∩
+\mathcal{S}_{q}^{\cap}
+. We compute metrics only for queries with
+|
+𝒮
+q
+∩
+|
+≥
+k
+|\mathcal{S}_{q}^{\cap}|\geq k
+at cutoff
+k
+=
+5
+k{=}5
+(
+Manning et al., 2008
+;
+Järvelin and Kekäläinen, 2002
+)
+.
+We split data at the query level: all candidates for the same constraint tuple
+q
+q
+remain in a single partition (train/dev/test) to prevent cross-query leakage.
+Dense Bi-Encoder:
+We include a dense bi-encoder baseline based on BGE-M3
+(
+Xiao et al., 2023
+)
+. For each query
+q
+q
+, we form a deterministic text serialisation
+T
+⁡
+(
+q
+)
+T(q)
+from the constraint triple (age, moral, culture), and encode
+T
+⁡
+(
+q
+)
+T(q)
+and each candidate story
+s
+∈
+𝒮
+q
+∩
+s\in\mathcal{S}_{q}^{\cap}
+independently. Candidates are ranked by cosine similarity in embedding space, providing an efficient semantic baseline under the same fixed candidate pools used throughout.
+We additionally report a teacher–student distilled bi-encoder (BGE-M3 Distilled). This model is implemented in SentenceTransformers and trained offline on the NGR-33k intersection training split using a cosine-similarity distillation objective, where the student bi-encoder is optimised to match a teacher-produced similarity signal derived from Judge B–supervised cross-encoder training. At inference, the distilled student encodes
+T
+⁡
+(
+q
+)
+T(q)
+and
+s
+s
+independently and ranks by cosine similarity, yielding a lightweight dense model that transfers the teacher’s supervision while preserving bi-encoder efficiency and full locality/reproducibility.
+To distil the normative reasoning of the Judge-B-supervised Cross-Encoder (Teacher) into the efficient BGE-M3 Bi-Encoder (Student), we minimise the Mean Squared Error (MSE) between the teacher’s interaction-based relevance logits and the student’s cosine similarity scores. Formally, for a query
+q
+q
+and candidate
+s
+s
+, the distillation loss
+ℒ
+distill
+\mathcal{L}_{\text{distill}}
+is defined as:
+ℒ
+distill
+=
+1
+|
+ℬ
+|
+​
+∑
+(
+q
+,
+s
+)
+∈
+ℬ
+(
+σ
+⁡
+(
+f
+Teacher
+​
+(
+q
+,
+s
+)
+)
+−
+cos
+⁡
+(
+𝐞
+q
+,
+𝐞
+s
+)
+)
+2
+,
+\mathcal{L}_{\text{distill}}=\frac{1}{|\mathcal{B}|}\sum_{(q,s)\in\mathcal{B}}\left(\sigma(f_{\text{Teacher}}(q,s))-\cos(\mathbf{e}_{q},\mathbf{e}_{s})\right)^{2},
+where
+f
+Teacher
+f_{\text{Teacher}}
+is the logit output of the Cross-Encoder,
+σ
+\sigma
+is the sigmoid activation, and
+𝐞
+q
+,
+𝐞
+s
+\mathbf{e}_{q},\mathbf{e}_{s}
+are the embeddings produced by the student. This pointwise regression allows the student to approximate the teacher’s latent normative manifold, while the bi-encoder architecture acts as a bottleneck to filter judge-specific noise.
+Lightweight Neural Rankers over Frozen Embeddings:
+For the supervised neural rankers (pointwise and pairwise), we freeze a dense encoder
+E
+:
+𝒳
+→
+ℝ
+d
+E:\mathcal{X}\rightarrow\mathbb{R}^{d}
+(BGE-M3) and learn a small scoring function on top of its representations. We define a deterministic serialisation function
+T
+:
+𝒬
+→
+𝒱
+∗
+T:\mathcal{Q}\rightarrow\mathcal{V}^{*}
+that maps the constraint tuple to a natural language string (e.g.,
+q
+↦
+“Age: 8, Moral: Honesty…”
+q\mapsto\text{``Age: 8, Moral: Honesty...''}
+). We map the query
+q
+q
+and candidate story
+s
+s
+to a joint latent representation
+𝐡
+∈
+ℝ
+2
+​
+d
+\mathbf{h}\in\mathbb{R}^{2d}
+:
+𝐡
+⁡
+(
+s
+,
+q
+)
+=
+[
+E
+⁡
+(
+T
+⁡
+(
+q
+)
+)
+;
+E
+⁡
+(
+s
+)
+]
+,
+\mathbf{h}(s,q)=[E(T(q))\ ;\ E(s)],
+where
+T
+⁡
+(
+q
+)
+T(q)
+is the textual serialisation of the constraint tuple and
+[
+⋅
+;
+⋅
+]
+[\cdot;\cdot]
+denotes vector concatenation.
+The scoring function
+f
+θ
+f_{\theta}
+is parameterised as a Multi-Layer Perceptron (MLP) mapping the latent state to a scalar relevance score:
+f
+θ
+​
+(
+s
+,
+q
+)
+=
+𝐰
+2
+⊤
+​
+ReLU
+​
+(
+𝐖
+1
+​
+𝐡
+​
+(
+s
+,
+q
+)
++
+𝐛
+1
+)
++
+b
+2
+,
+f_{\theta}(s,q)=\mathbf{w}_{2}^{\top}\text{ReLU}(\mathbf{W}_{1}\mathbf{h}(s,q)+\mathbf{b}_{1})+b_{2},
+where
+θ
+=
+{
+𝐖
+1
+,
+𝐛
+1
+,
+𝐰
+2
+,
+b
+2
+}
+\theta=\{\mathbf{W}_{1},\mathbf{b}_{1},\mathbf{w}_{2},b_{2}\}
+represents the learnable parameters.
+Objective 1: Pointwise Risk Minimisation:
+We treat the rubric scores from Judge B, denoted as
+y
+B
+​
+(
+s
+,
+q
+)
+y_{B}(s,q)
+, as noisy proxies for
+R
+∗
+R^{*}
+. We frame the learning task as minimising the empirical risk under the Mean Squared Error (MSE) criterion against the discrete integer scores
+y
+B
+y_{B}
+. The objective
+ℒ
+MSE
+​
+(
+θ
+)
+\mathcal{L}_{\text{MSE}}(\theta)
+is given by:
+ℒ
+MSE
+​
+(
+θ
+)
+=
+𝔼
+(
+s
+,
+q
+)
+∼
+𝒟
+train
+​
+[
+‖
+f
+θ
+​
+(
+s
+,
+q
+)
+−
+y
+B
+​
+(
+s
+,
+q
+)
+y
+max
+‖
+2
+2
+]
+,
+\mathcal{L}_{\text{MSE}}(\theta)=\mathbb{E}_{(s,q)\sim\mathcal{D}_{\text{train}}}\left[\left\|f_{\theta}(s,q)-\frac{y_{B}(s,q)}{y_{\max}}\right\|^{2}_{2}\right],
+where
+y
+max
+=
+5
+y_{\max}=5
+is the scaling factor to normalise targets to
+[
+0
+,
+1
+]
+[0,1]
+.
+Objective 2: Pairwise Probabilistic Ranking:
+We construct a set of preferences
+𝒫
+q
+=
+{
+(
+i
+,
+j
+)
+∣
+s
+i
+,
+s
+j
+∈
+𝒮
+q
+,
+y
+B
+(
+s
+i
+)
+>
+y
+B
+(
+s
+j
+)
+}
+\mathcal{P}_{q}=\{(i,j)\mid s_{i},s_{j}\in\mathcal{S}_{q},y_{B}(s_{i})>y_{B}(s_{j})\}
+. We model the probability of
+s
+i
+≻
+s
+j
+s_{i}\succ s_{j}
+using a logistic function of the score differences:
+P
+⁡
+(
+s
+i
+≻
+s
+j
+∣
+θ
+)
+=
+σ
+⁡
+(
+f
+θ
+​
+(
+s
+i
+,
+q
+)
+−
+f
+θ
+​
+(
+s
+j
+,
+q
+)
+)
+=
+1
++
+exp
+⁡
+(
+−
+(
+f
+θ
+​
+(
+s
+i
+,
+q
+)
+−
+f
+θ
+​
+(
+s
+j
+,
+q
+)
+)
+)
+.
+P(s_{i}\!\succ\!s_{j}\mid\theta)=\sigma\!\big(f_{\theta}(s_{i},q)-f_{\theta}(s_{j},q)\big)=\frac{1}{1\!+\!\exp\!\left(-(f_{\theta}(s_{i},q)\!-\!f_{\theta}(s_{j},q))\right)}.
+We optimise
+θ
+\theta
+by minimising the cross-entropy loss between the Judge B preferences and the model’s induced probability distribution:
+ℒ
+RankNet
+(
+θ
+)
+=
+−
+∑
+q
+∈
+𝒬
+∑
+(
+i
+,
+j
+)
+∈
+𝒫
+q
+log
+P
+(
+s
+i
+≻
+s
+j
+|
+θ
+)
+.
+\mathcal{L}_{\text{RankNet}}(\theta)=-\sum_{q\in\mathcal{Q}}\sum_{(i,j)\in\mathcal{P}_{q}}\log P(s_{i}\succ s_{j}|\theta).
+4.
+Experiments and Results
+We study GenIR in a
+generate-then-rank
+setting, where multiple candidates are generated under identical constraints and the bottleneck becomes
+selection
+rather than generation
+(
+Alaofi et al., 2024
+;
+Lewis et al., 2020
+;
+Bonifacio et al., 2022
+;
+Manning et al., 2008
+)
+.
+4.1.
+Data and Query Construction
+Story Corpus and Structured Queries:
+We generated 35,000 children’s stories (Table
+1
+) under explicit constraints for age, moral theme, and cultural context. After pre-processing and schema validation, we retained 33,052 stories for downstream judging and ranking. Stories are generated offline using Gemma-2-9B-IT
+(
+Gemma Team, 2024
+)
+with a fixed prompt template and stochastic decoding.
+We define the query space
+𝒬
+\mathcal{Q}
+as the Cartesian product of 7 ages, 7 morals, and 7 cultures, yielding
+|
+𝒬
+|
+=
+343
+|\mathcal{Q}|=343
+distinct constraint tuples. We targeted a corpus size of
+N
+=
+33,052
+N=33{,}052
+to enforce dense candidate distributions (
+μ
+≈
+96
+\mu\approx 96
+per query), which are mathematically necessary to minimise estimator variance in top-
+k
+k
+rank metrics, specifically at our target
+k
+=
+5
+k{=}5
+. This high density ensures sufficient support for constructing stable pairwise preference graphs, enabling the learning of fine-grained discriminative boundaries often impossible in sparse collections. Unlike standard benchmarks where top-
+k
+k
+stability is brittle, our design guarantees a robust signal within every query partition. This structure is critical for reliable variance estimation and reproducible query-level evaluation
+(
+Voorhees and Tice, 2000
+;
+Smucker et al., 2007
+)
+.
+We deterministically derive a query identifier to group stories into within-query candidate sets following standard IR practice of evaluating ranked lists
+within
+a query context.
+Table 1.
+Dataset (
+N
+=
+33,052
+N=33{,}052
+)—balanced distribution across dimensions.
+Dimension
+Distribution (Value: Count)
+Age Group
+4 (4,713); 5 (4,895); 6 (4,568); 7 (4,773); 8 (4,412); 9 (4,947); 10 (4,744)
+Culture
+African (4,831); Arab (4,729); E. Asian (4,628); European (4,653); Global/Neut. (4,391); Lat. Am. (5,102); S. Asian (4,718)
+Moral Theme
+Bravery (4,817); Cooperation (4,828); Empathy (4,818); Honesty (4,529); Kindness (4,755); Patience (4,602); Respect (4,703)
+The intersection filtering removes missing/invalid judge outputs and ensures that every method ranks
+the same candidates
+per query, which is critical for fair within-query comparisons under judge-based evaluation
+(
+Voorhees and Tice, 2000
+;
+Smucker et al., 2007
+)
+. On the processed NGR-33k dataset (
+N
+=
+33,052
+N=33{,}052
+), the unified intersection pool
+(
+y
+A
+∩
+y
+B
+)
+(y_{A}\cap y_{B})
+retains 17,965 stories across 343 queries. Across eligible queries, intersection-pool sizes satisfy
+min
+/
+median
+/
+mean
+/
+max
+=
+10
+/
+52
+/
+52.38
+/
+106
+\min/\mathrm{median}/\mathrm{mean}/\max=10/52/52.38/106
+, and all reported results use cutoff
+k
+=
+5
+k{=}5
+and evaluate only queries with
+|
+𝒮
+q
+∩
+|
+≥
+k
+|\mathcal{S}_{q}^{\cap}|\geq k
+.
+We construct 10 query-level splits (10 seeds) so that each
+query_id
+and its full candidate set appear in exactly one of train/dev/test per seed. In the main setting, each seed contains 239/34/70 train/dev/test queries, i.e., 70 held-out test queries per seed. We compute metrics per query and macro-average across the 70 test queries to obtain a seed-level score, and then report mean
+±
+\pm
+std over the 10 seeds.
+Using 10 query-level splits follows standard robustness evaluation practice in IR, enabling variance estimation across random partitions without overfitting to a single test split
+(
+Voorhees and Tice, 2000
+;
+Smucker et al., 2007
+)
+.
+To provide an out-of-domain check, we also evaluate on the publicly available SSGEN
+(
+Li et al., 2024d
+)
+and Moral Stories datasets
+(
+Emelin et al., 2021
+)
+. We uniformly sample
+N
+=
+500
+N{=}500
+instances with a fixed random seed (42) and score the same subset independently with Judge A and Judge B. We report each judge’s failure rate (null outputs) and inter-judge agreement on the intersection of instances with valid scores.
+Judges and Prompts:
+Judge A
+(Yi-1.5-9B-Chat
+(
+01.AI, 2024
+)
+, evaluation-only) and Judge B (LLaMA-3.1-8B-Instruct
+(
+Meta AI, 2024
+)
+, (supervision-only) are used to enforce strict role separation
+(
+Koo et al., 2024
+;
+Chen et al., 2024
+;
+Li et al., 2025
+;
+Li et al., 2024b
+)
+. Both use a hierarchical 1–5 rubric scoring only cultural relevance via strict JSON. Judge A includes additional anti-default guidance to prevent score compression.
+Decoding, Format Constraints, and Validity:
+All judges use deterministic decoding (temperature
+=
+0
+=0
+, top-
+p
+=
+1.0
+p=1.0
+) and output a single integer score in
+{
+1
+,
+…
+,
+5
+}
+\{1,\dots,5\}
+via strict JSON formatting. A label is valid only if (i) parsing succeeds and (ii) the parsed score lies in range; otherwise, the annotation is treated as missing. Missing/invalid outputs are handled solely by intersection filtering into
+𝒮
+q
+∩
+\mathcal{S}_{q}^{\cap}
+to keep candidate pools identical across methods.
+Judge Validity and Intersection Retention:
+On the processed NGR-33k dataset (
+N
+=
+33,052
+N=33{,}052
+), Judge A produces 8,524 null or invalid outputs (25.79%), while Judge B produces 10,912 null or invalid outputs (33.01%) under strict JSON parsing and in-range checks. Judge B is instantiated using LLaMA 3.1 8B Instruct, which exhibits conservative scoring behaviour and produces null outputs more frequently under strict JSON parsing and in-range checks. Approximately 33% of generated stories receive null supervision signals, reflecting selective supervision rather than annotation noise. All ranking models are trained and evaluated on the non-null intersection, ensuring consistent and leakage-free comparison. To ensure fair and leakage-free comparison, all methods are evaluated on the unified intersection pool
+(
+y
+A
+∩
+y
+B
+)
+(y_{A}\cap y_{B})
+, which retains 17,965 stories across all 343 queries. All queries remain eligible at the cutoff
+k
+=
+5
+k{=}5
+.
+Table 2.
+Raw generated stories and filter for valid judge outputs.
+Intersection Pool
+is used for evaluation.
+Candidate Pool Step
+Min
+Med
+Mean
+Max
+1. Raw Generated (
+|
+𝒮
+q
+|
+|\mathcal{S}_{q}|
+)
+33
+95
+95.7
+161
+2. Judge A Valid (
+|
+𝒮
+q
+A
+|
+|\mathcal{S}_{q}^{A}|
+)
+20
+69
+70.7
+125
+3. Judge B Valid (
+|
+𝒮
+q
+B
+|
+|\mathcal{S}_{q}^{B}|
+)
+12
+63
+64.2
+135
+4. Intersection
+(
+|
+𝒮
+q
+∩
+|
+|\mathcal{S}_{q}^{\cap}|
+)
+10
+51
+51.7
+106
+Eligibility Check: 100% of queries satisfy
+|
+𝒮
+q
+∩
+|
+≥
+5
+|\mathcal{S}_{q}^{\cap}|\geq 5
+No candidate truncation is applied: all methods rank the full intersection pool
+𝒮
+q
+∩
+\mathcal{S}_{q}^{\cap}
+per query. This avoids introducing method-specific biases arising from heuristic pre-filtering.
+Table 3.
+Ranking performance on NGR-33k (
+k
+=
+5
+k{=}5
+). We compare
+Unsupervised Baselines
+,
+Teacher–Student Distillation
+, and
+Judge-B supervised
+methods.
+Bold
+indicates the best performing model. Note that the Distilled Student outperforms the Teacher (Cross-Encoder).
+Effectiveness
+Judge Alignment
+Method
+nDCG@5
+ERR@5
+𝝉
+𝒃
+\boldsymbol{\tau_{b}}
+𝝆
+\boldsymbol{\rho}
+Unsupervised Baselines
+Random
+0.571
+±
+0.03
+0.571{\scriptsize\pm 0.03}
+0.817
+±
+0.02
+0.817{\scriptsize\pm 0.02}
+–
+–
+BM25
+0.615
+±
+0.04
+0.615{\scriptsize\pm 0.04}
+0.851
+±
+0.01
+{\scriptsize\pm 0.01}
+0.134
+0.134
+0.206
+0.206
+DPH
+0.616
+±
+0.04
+0.616{\scriptsize\pm 0.04}
+0.501
+±
+0.02
+0.501{\scriptsize\pm 0.02}
+0.071
+±
+0.02
+0.071{\scriptsize\pm 0.02}
+0.086
+±
+0.02
+0.086{\scriptsize\pm 0.02}
+Dirichlet LM
+0.612
+±
+0.04
+0.612{\scriptsize\pm 0.04}
+0.502
+±
+0.02
+0.502{\scriptsize\pm 0.02}
+0.064
+±
+0.02
+0.064{\scriptsize\pm 0.02}
+0.078
+±
+0.02
+0.078{\scriptsize\pm 0.02}
+Judge-B Supervised Ranking (Direct)
+Neural Pointwise
+0.574
+±
+0.03
+0.574{\scriptsize\pm 0.03}
+0.489
+±
+0.02
+0.489{\scriptsize\pm 0.02}
+0.016
+±
+0.02
+0.016{\scriptsize\pm 0.02}
+0.020
+±
+0.02
+0.020{\scriptsize\pm 0.02}
+Neural Pairwise
+0.568
+±
+0.04
+0.568{\scriptsize\pm 0.04}
+0.799
+±
+0.01
+0.799{\scriptsize\pm 0.01}
+0.089
+±
+0.01
+0.089{\scriptsize\pm 0.01}
+0.116
+±
+0.01
+0.116{\scriptsize\pm 0.01}
+Listwise (ListMLE)
+0.710
+±
+0.02
+0.710{\scriptsize\pm 0.02}
+0.788
+±
+0.02
+0.788{\scriptsize\pm 0.02}
+0.053
+±
+0.02
+0.053{\scriptsize\pm 0.02}
+0.066
+±
+0.02
+0.066{\scriptsize\pm 0.02}
+Teacher–Student Distillation
+BGE-M3 (Student)
+0.771
+±
+0.02
+\mathbf{0.771}{\scriptsize\pm 0.02}
+0.614
+±
+0.02
+0.614{\scriptsize\pm 0.02}
+0.313
+±
+0.03
+\mathbf{0.313}{\scriptsize\pm 0.03}
+0.377
+±
+0.03
+\mathbf{0.377}{\scriptsize\pm 0.03}
+Judge Signals (Reference Only)
+B-Score (Oracle
+y
+B
+y_{B}
+)
+0.689
+±
+0.02
+0.689{\scriptsize\pm 0.02}
+0.837
+±
+0.02
+0.837{\scriptsize\pm 0.02}
+0.297
+±
+0.04
+0.297{\scriptsize\pm 0.04}
+0.326
+±
+0.04
+0.326{\scriptsize\pm 0.04}
+Cross-Encoder (Teacher)
+0.577
+±
+0.03
+0.577{\scriptsize\pm 0.03}
+0.479
+±
+0.01
+0.479{\scriptsize\pm 0.01}
+0.092
+±
+0.01
+0.092{\scriptsize\pm 0.01}
+0.121
+±
+0.01
+0.121{\scriptsize\pm 0.01}
+Story Generation and Query Grouping:
+Stories are generated offline under structured constraints
+q
+q
+using a fixed prompt template. Each story is stored with a unique
+story_id
+(Table
+2
+), and we deterministically derive a
+query_id
+from the constraint triple to group stories into within-query candidate pools
+𝒮
+q
+\mathcal{S}_{q}
+.
+Table 4.
+Late-Interaction Performance. ColBERTv2 offers a middle ground between bi-encoders and cross-encoders.
+Interaction Mechanism
+nDCG
+ERR
+𝝉
+𝒃
+\boldsymbol{\tau_{b}}
+𝝆
+\boldsymbol{\rho}
+ColBERTv2 (Late-Interaction)
+0.635
+0.635
+±
+.06
+\pm.06
+0.707
+0.707
+±
+.04
+\pm.04
+0.209
+0.209
+±
+.04
+\pm.04
+0.250
+0.250
+±
+.04
+\pm.04
+Query-Level Splits:
+We evaluate using query-level splits (10 seeds, 70 test queries per seed). Candidates from the same query never span across train/test sets. Query-level splitting is essential in this setting, as splitting at the story level would induce information leakage by allowing candidates generated under identical constraints to appear across train and test partitions. All hyperparameters are selected using development queries under Judge B supervision, ensuring zero leakage of Judge A signals into the model pipeline.
+Aggregation:
+For each seed, we compute metrics per query and macro-average over eligible test queries to obtain a seed-level score, and then report mean
+±
+\pm
+std over the 10 seeds. For rank correlations (
+τ
+b
+\tau_{b}
+,
+ρ
+\rho
+), we compute correlation
+per query
+and macro-average across queries; correlations may be undefined for degenerate queries (e.g., all Judge A grades tied), in which case the query is excluded from correlation aggregation and the count of defined queries is tracked.
+Table 5.
+Paired sign-flip permutation tests (50k permutations;
+n
+=
+700
+n{=}700
+aligned query
+×
+\times
+seed rows from the same stack as the main table). We report mean differences (
+Δ
+=
+𝔼
+⁡
+[
+A
+−
+B
+]
+\Delta=\mathbb{E}[A-B]
+) and two-sided
+p
+p
+-values.
+Bold
+indicates statistical significance (
+p
+<
+0.05
+p<0.05
+).
+∗
+denotes a significant decrease.
+Comparison (A vs. B)
+Δ
+\Delta
+nDCG@5
+p
+p
+-val
+Δ
+\Delta
+ERR@5
+p
+p
+-val
+1. Improvements over Random
+BM25 vs. Random
++0.044
+<
+10
+−
+4
+<10^{-4}
++0.034
+<
+10
+−
+4
+<10^{-4}
+B-Score (
+y
+B
+y_{B}
+) vs. Random
++0.118
+<
+10
+−
+4
+<10^{-4}
++0.020
+0.019
+Neural Pairwise vs. Random
+-0.003
+0.664
+-0.018
+∗
+0.035
+Cross-Encoder (
+y
+B
+y_{B}
+) vs. Random
++0.007
+0.322
+-0.338
+∗
+<
+10
+−
+4
+<10^{-4}
+BGE-M3 (Distilled) vs. Random
++0.384
+<
+10
+−
+4
+<10^{-4}
++0.119
+<
+10
+−
+4
+<10^{-4}
+2. Head-to-Head Comparisons
+B-Score (
+y
+B
+y_{B}
+) vs. BM25
++0.074
+<
+10
+−
+4
+<10^{-4}
+-0.014
+∗
+0.038
+Cross-Encoder (
+y
+B
+y_{B}
+) vs. BM25
+-0.038
+∗
+<
+10
+−
+4
+<10^{-4}
+-0.372
+∗
+<
+10
+−
+4
+<10^{-4}
+Cross-Encoder (
+y
+B
+y_{B}
+) vs. B-Score (
+y
+B
+y_{B}
+)
+-0.112
+∗
+<
+10
+−
+4
+<10^{-4}
+-0.358
+∗
+<
+10
+−
+4
+<10^{-4}
+BGE-M3 (Distilled) vs. BM25
++0.340
+<
+10
+−
+4
+<10^{-4}
++0.085
+<
+10
+−
+4
+<10^{-4}
+BGE-M3 (Distilled) vs. B-Score (
+y
+B
+y_{B}
+)
++0.266
+<
+10
+−
+4
+<10^{-4}
++0.099
+<
+10
+−
+4
+<10^{-4}
+Table 6.
+Sensitivity to pool density (
+|
+𝒮
+q
+∩
+|
+|\mathcal{S}_{q}^{\cap}|
+, nDCG@5).
+BGE-M3 (Distilled)
+yields robust gains across all regimes, whereas direct neural rankers fail to outperform baselines.
+Intersection Pool Density
+Method
+Small
+(
+≤
+35
+\leq 35
+)
+Medium
+(
+36
+​
+–
+​
+50
+36\text{--}50
+)
+Large
+(
+>
+50
+>50
+)
+Lexical & Random Baselines
+Random
+0.592
+0.592
+±
+.04
+\pm.04
+0.555
+0.555
+±
+.04
+\pm.04
+0.567
+0.567
+±
+.03
+\pm.03
+BM25
+0.607
+0.607
+±
+.06
+\pm.06
+0.607
+0.607
+±
+.05
+\pm.05
+0.623
+0.623
+±
+.06
+\pm.06
+Dense Retrieval Baseline
+BGE-M3 (Distilled)
+0.755
+\mathbf{0.755}
+±
+.07
+\pm.07
+0.744
+\mathbf{0.744}
+±
+.07
+\pm.07
+0.776
+\mathbf{0.776}
+±
+.04
+\pm.04
+Neural Distillation (
+y
+B
+y_{B}
+Supervision)
+N. Pointwise
+0.588
+0.588
+±
+.04
+\pm.04
+0.559
+0.559
+±
+.04
+\pm.04
+0.576
+0.576
+±
+.04
+\pm.04
+N. Pairwise
+0.582
+0.582
+±
+.04
+\pm.04
+0.552
+0.552
+±
+.06
+\pm.06
+0.570
+0.570
+±
+.04
+\pm.04
+4.2.
+Comparative Models
+We evaluate three classes of ranking strategies. All methods rank candidates within the strictly defined intersection pool
+𝒮
+q
+∩
+\mathcal{S}_{q}^{\cap}
+and are evaluated exclusively against Judge A labels (
+y
+A
+y_{A}
+).
+1. Unsupervised Baselines:
+To measure the difficulty of the task without normative supervision, we employ:
+Random:
+A uniform random permutation (lower bound).
+Lexical Rankers:
+We evaluate
+BM25
+(
+Robertson and Zaragoza, 2009
+)
+,
+DPH
+(Divergence-from-Randomness)
+(
+Amati and van Rijsbergen, 2002
+)
+, and
+Dirichlet LM
+(
+μ
+=
+2000
+\mu{=}2000
+)
+(
+Zhai and Lafferty, 2004
+)
+. All lexical models score a pseudo-query derived from the constraint string
+(
+age
+,
+moral
+,
+culture
+)
+(\text{age},\text{moral},\text{culture})
+.
+Table 7.
+Pairwise ranker performance vs. training data fraction.
+Full Supervision
+is required for significant gains.
+Training Data %
+nDCG@5
+ERR@5
+25% (Sparse)
+.574
+.574
+±
+.03
+\pm.03
+.496
+.496
+±
+.02
+\pm.02
+50%
+.573
+.573
+±
+.03
+\pm.03
+.492
+.492
+±
+.01
+\pm.01
+75%
+.574
+.574
+±
+.03
+\pm.03
+.490
+.490
+±
+.01
+\pm.01
+100% (Full)
+.585
+\mathbf{.585}
+±
+.03
+\pm.03
+.501
+\mathbf{.501}
+±
+.01
+\pm.01
+Table 8.
+We contrast top-ranked stories for three queries.
+Bold text
+highlights specific cultural grounding cues.
+B-Score (Ours)
+prioritises narratives where the moral is enacted through specific cultural practices (e.g.,
+Rangoli
+,
+Sharing Bread
+), whereas the baseline selects generic thematic matches.
+Query Constraints
+Dense Baseline (BGE-M3)
+B-Score (Judge-Driven)
+Age:
+4
+Moral:
+Patience
+Culture:
+S. Asian
+“Maya loved
+mangoes
+and asked every day when they would be ready. Her grandmother told her to wait. When the mangoes finally ripened, Maya learned that good things take time.”
+→
+\rightarrow
+Generic trope (fruit ripening).
+“Maya loved to play
+Holi
+. She wanted to start right away, but her mother asked her to help prepare the
+rangoli
+first. As Maya carefully worked, she learned that waiting and preparing together made the celebration more joyful.”
+→
+\rightarrow
+Grounded in specific festival practices.
+Age:
+6
+Moral:
+Kindness
+Culture:
+African
+“Ayo was kind to his classmates at school. He helped them and felt happy because
+being kind is important
+.”
+→
+\rightarrow
+Didactic / Tell-don’t-show.
+“In the village, Ayo noticed his friend had no lunch. He
+broke his own bread
+in half and shared it. Soon, other children joined, and everyone
+ate together under the big tree
+.”
+→
+\rightarrow
+Enacted via communal sharing customs.
+Age:
+6
+Moral:
+Kindness
+Culture:
+Global
+“Lina helped others and was nice to everyone. Her
+teacher said
+kindness is good.”
+→
+\rightarrow
+Authority-based validation.
+“When Lina saw a new child sitting alone, she
+invited them to join
+her game. Soon they were laughing together, and Lina realized kindness can make anyone feel
+welcome
+.”
+→
+\rightarrow
+Action-based inclusion.
+2. Supervised Neural Rankers:
+We train lightweight rankers
+(
+Dehghani et al., 2017
+;
+Burges et al., 2005
+;
+Liu, 2009
+)
+to approximate the Judge B signal (
+y
+B
+y_{B}
+) over frozen embeddings:
+Pointwise MLP:
+Regresses
+(
+Pobrotyn et al., 2020
+)
+directly to the scalar score
+y
+B
+y_{B}
+.
+Pairwise RankNet:
+Optimizes a logistic loss over preference pairs
+(
+s
+i
+≻
+s
+j
+)
+(s_{i}\succ s_{j})
+derived from
+y
+B
+y_{B}
+, capped at 800 pairs per query to balance epoch duration
+(
+Burges et al., 2005
+)
+.
+3. Dense Retrieval Baseline:
+We evaluate the BGE-M3 (Distilled) model described in Section
+3
+. As noted, this model is used off-the-shelf and is not fine-tuned on our dataset; it serves as a strong dense baseline.
+4. Oracle & Upper Bounds:
+Cross-Encoder (RoBERTa):
+A full interaction-based model fine-tuned on
+y
+B
+y_{B}
+supervision. This represents the high-compute upper bound of judge distillation
+(
+Liu et al., 2019
+)
+.
+B-Score (Oracle):
+Ranking candidates directly by the supervisor’s score (
+y
+B
+y_{B}
+). This represents the theoretical limit of signal transfer under the two-judge framework.
+5. Late-Interaction Re-rankers:
+We evaluate late-interaction models that balance efficiency and expressivity.
+ColBERTv2
+(
+Santhanam et al., 2021
+)
+encodes queries and documents into token-level embeddings and aggregates relevance via MaxSim interactions.
+RankZephyr
+(
+Pradeep et al., 2023
+)
+is a zero-shot listwise LLM re-ranker that directly scores full candidate lists without task-specific fine-tuning. Both models operate on the same fixed candidate pools and are evaluated under the same leakage-free Judge A protocol.
+4.3.
+Evaluation Metrics
+We evaluate with standard query-level IR metrics using
+only
+Judge A labels
+(
+Järvelin and Kekäläinen, 2002
+;
+Chapelle et al., 2009
+;
+Manning et al., 2008
+)
+. We report nDCG@5 and ERR@5. For nDCG, we use graded gain
+g
+⁡
+(
+r
+)
+=
+2
+r
+−
+1
+g(r)=2^{r}-1
+with
+r
+∈
+{
+1
+,
+…
+,
+5
+}
+r\in\{1,\dots,5\}
+; IDCG is computed per query by sorting candidates by Judge A grades. For ERR, we map grades to relevance probabilities as
+R
+⁡
+(
+r
+)
+=
+2
+r
+−
+1
+2
+r
+max
+R(r)=\frac{2^{r}-1}{2^{r_{\max}}}
+with
+r
+max
+=
+5
+r_{\max}=5
+(
+Chapelle et al., 2009
+)
+.
+We additionally report Kendall
+τ
+b
+\tau_{b}
+and Spearman
+ρ
+\rho
+computed per query between each method’s scores and Judge A grades, then macro-averaged across queries. Ties in grades are handled via average ranks
+(
+Kendall, 1938
+;
+Spearman, 1904
+)
+. For the Random baseline, correlations are expected to be near zero and are reported only as a sanity check rather than a stable comparison target.
+4.4.
+Results
+We report leakage-free within-query ranking. All effectiveness numbers are computed exclusively using Judge A labels. To ensure fair comparison, all methods rank the identical intersection pool
+𝒮
+q
+∩
+\mathcal{S}_{q}^{\cap}
+(defined in Section
+3
+) per query.
+Table
+3
+reports leakage-free test performance at cutoff
+k
+=
+5
+k{=}5
+using 10 query-level splits (10 seeds), with 70 held-out test queries per seed. For each seed, we compute metrics per query and macro-average across the 70 test queries to obtain a seed-level score, and then report mean
+±
+\pm
+std over 10 seeds. All results are computed on the fixed intersection pool
+𝒮
+q
+∩
+=
+(
+y
+A
+∩
+y
+B
+)
+\mathcal{S}_{q}^{\cap}=(y_{A}\cap y_{B})
+and query-level splits, so that all candidates for the same query
+q
+q
+are confined to a single split (train/dev/test) within each seed, preventing query-level leakage.
+Baselines vs. Judge-Driven Ranking:
+BM25 improves over Random, but remains below judge-based signals, indicating that lexical matching captures some shallow cues yet is insufficient for culturally grounded normative selection (Table
+3
+)
+(
+Robertson and Zaragoza, 2009
+)
+. Among classical IR baselines, performance is comparable to BM25 in nDCG@5, but they do not consistently improve effectiveness under our Judge A metric, reinforcing that classical term/statistical matching is not tailored to normative cultural selection
+(
+Amati and van Rijsbergen, 2002
+;
+Zhai and Lafferty, 2004
+)
+. Notably, distilling the cross-encoder supervision into the same BGE-M3 architecture yields a substantial further gain, outperforming the Judge-B cross-encoder and other learned rankers while preserving bi-encoder efficiency. In contrast, the distilled BGE-M3 bi-encoder yields a large improvement, indicating that teacher–student transfer can inject Judge B supervision into an efficient dual-encoder scoring function. Directly sorting candidates by Judge B rubric grades (B-Score) yields a large gain under leakage-free Judge A evaluation and substantially higher within-query agreement with Judge A, showing that rubric-based cultural judgments encode an ordering signal that transfers to an independent evaluator under strict separation.
+Learning to Rank from Judge B Supervision:
+Neural rankers trained exclusively on Judge B supervision transfer only modestly under leakage-free Judge A evaluation. A listwise variant (ListMLE)
+(
+Lan et al., 2014
+)
+improves substantially over the pointwise and pairwise MLP rankers in effectiveness, but exhibits weak overall rank agreement with Judge A. Despite this gain, ListMLE remains below the distilled bi-encoder and is also below directly sorting by Judge B rubric grades (B-Score), indicating that listwise optimisation alone does not recover Judge B transferable normative ordering without teacher-student transfer.
+Cross-Encoder (Teacher) Performance:
+A RoBERTa-large cross-encoder
+(
+Liu et al., 2019
+)
+trained on Judge B supervision surprisingly substantially underperforms the distilled bi-encoder under leakage-free Judge A evaluation. We attribute this counter-intuitive inversion to estimator overfitting: the high-capacity Cross-Encoder likely learns the specific idiosyncrasies and noise of the supervising judge (
+J
+B
+J_{B}
+), which do not transfer to the independent evaluator (
+J
+A
+J_{A}
+). In contrast, the distilled bi-encoder’s bottlenecked architecture acts as a regulariser, forcing it to learn robust normative directions rather than judge-specific noise, thereby transferring the supervision more effectively than the teacher itself.
+Late-Interaction Re-ranking (ColBERTv2):
+We additionally evaluate ColBERTv2 as a late-interaction re-ranker on the same per-query candidate pools (343 queries in total; 70 held-out test queries per seed).
+ColBERTv2 achieves nDCG@5
+=
+0.635
+±
+0.058
+=0.635\pm 0.058
+and ERR@5
+=
+0.707
+±
+0.043
+=0.707\pm 0.043
+, with within-query agreement of
+τ
+b
+=
+0.209
+±
+0.035
+\tau_{b}{=}0.209\pm 0.035
+and
+ρ
+=
+0.250
+±
+0.042
+\rho{=}0.250\pm 0.042
+under leakage-free Judge A evaluation
+(
+Santhanam et al., 2021
+)
+.
+We report ColBERT separately (Table
+4
+) as it represents a distinct interaction rule from both bi-encoders and full cross-encoders: it consistently outperforms lexical and dense unsupervised baselines, and is competitive with interaction-based models under our Judge A evaluation.
+Instruction-tuned LLM Re-ranking (RankZephyr):
+We additionally evaluated RankZephyr (7B)
+(
+Pradeep et al., 2023
+)
+, a recent instruction-tuned ranking model, as a zero-shot re-ranker over the same per-query candidate pools. RankZephyr is evaluated with a fixed prompt template and deterministic decoding. Despite its strong performance on general web ranking benchmarks, RankZephyr (7B) achieves nDCG@5
+=
+0.507
+±
+0.047
+=0.507\pm 0.047
+and ERR@5
+=
+0.621
+±
+0.049
+=0.621\pm 0.049
+under Judge A evaluation, underperforming Random and BM25 in our setting.
+This suggests that generic instruction-following rankers do not reliably capture the fine-grained normative and culturally grounded distinctions required for within-query story selection, reinforcing the need for explicit judge-based supervision.
+Instruction-Tuned LLM Re-ranking (RankGPT-direct):
+We evaluate RankGPT-direct (Mistral) as a zero-shot listwise re-ranker under the same leakage-free setting (
+k
+=
+5
+k{=}5
+) and Judge A-only evaluation
+(
+Sun et al., 2023
+)
+. RankGPT achieves nDCG@5
+=
+0.559
+±
+0.025
+=0.559\pm 0.025
+and ERR@5
+=
+0.662
+±
+0.018
+=0.662\pm 0.018
+, but underperforms Random/BM25 in nDCG and shows negative rank agreement with Judge A. We therefore report RankGPT as an auxiliary diagnostic rather than a main baseline under our fixed-prompt, deterministic-decoding protocol.
+Rank-Correlation Sanity Check:
+We additionally report within-query rank agreement between each method’s scores and Judge A labels using Kendall’s
+τ
+b
+\tau_{b}
+and Spearman’s
+ρ
+\rho
+(computed per query, then macro-averaged across test queries and seeds; undefined cases are excluded). We report
+τ
+b
+\tau_{b}
+/
+ρ
+\rho
+only for methods that output real-valued scores comparable to JudgeA labels; lexical/random baselines are omitted in Table
+3
+. Correlation is most informative for methods that produce real-valued scores (dense retrievers, judge-based scoring, and learned rankers), as it reflects agreement beyond top-
+k
+k
+utility. B-Score exhibits substantially higher agreement with Judge A (
+τ
+b
+=
+0.297
+±
+0.035
+\tau_{b}{=}0.297\pm 0.035
+,
+ρ
+=
+0.326
+±
+0.038
+\rho{=}0.326\pm 0.038
+), while the distilled BGE-M3 shows high agreement (
+τ
+b
+=
+0.313
+±
+0.027
+\tau_{b}{=}0.313\pm 0.027
+,
+ρ
+=
+0.377
+±
+0.032
+\rho{=}0.377\pm 0.032
+).
+For methods run with deterministic decoding, variation across seeds reflects different test-query sets rather than sampling noise. The lightweight neural rankers show near-zero average agreement (pointwise
+τ
+b
+=
+0.016
+±
+0.017
+\tau_{b}{=}0.016\pm 0.017
+,
+ρ
+=
+0.020
+±
+0.021
+\rho{=}0.020\pm 0.021
+; pairwise
+τ
+b
+=
+0.089
+±
+0.010
+\tau_{b}{=}0.089\pm 0.010
+,
+ρ
+=
+0.116
+±
+0.012
+\rho{=}0.116\pm 0.012
+), consistent with their limited gains in nDCG/ERR under leakage-free evaluation.
+Paired Significance:
+Table
+5
+shows that BM25, BGE-M3 (Distilled), and B-Score achieve statistically significant improvements over Random in nDCG@5 (and also in ERR@5 for BM25 and BGE-M3 (Distilled)). In contrast, Cross-Enc does not significantly improve over Random in nDCG@5 and exhibits a significant decrease in ERR@5. In head-to-head comparisons, B-Score significantly underperformed BGE-M3 (Distilled) (negative
+Δ
+\Delta
+in both nDCG@5 and ERR@5), and Cross-Enc significantly underperformed both BGE-M3 (Distilled) and B-Score in nDCG@5 and ERR@5.
+Paired sign-flip permutation tests (50k permutations over 700 aligned query
+×
+\times
+seed observations) indicate that BM25, BGE-M3 Distilled, and B-Score yield statistically reliable improvements over Random in nDCG@5. Additionally, BGE-M3 (Distilled) yields large and statistically significant gains over Random in nDCG@5 and ERR@5. Consistent with the main table, the lightweight pairwise model does not provide a reliable gain over strong dense retrieval, and significantly underperforms Random in ERR@5 despite no meaningful difference in nDCG@5.
+Sensitivity to Pool Size and Cutoff (
+k
+k
+):
+We verify that these findings are not artefacts of candidate density or evaluation depth. Binning test queries (Table
+6
+) by intersection pool size (Small
+≤
+35
+\leq 35
+, Medium
+36
+−
+50
+36-50
+, Large
+>
+50
+>50
+) reveals consistent ranking trends: BGE-M3 (Distilled) consistently outperforms Random across all bins (Table
+6
+). Furthermore, varying the cutoff
+k
+∈
+{
+1
+,
+3
+,
+5
+,
+10
+}
+k\in\{1,3,5,10\}
+shows no rank reversal among methods. The relative ordering among the non-neural baselines remains stable across cutoffs, with BGE-M3 (Distilled) consistently outperforming Random.
+Sensitivity to Supervision Scale:
+Table
+7
+reports a training-fraction ablation for the
+pairwise
+ranker trained on Judge B supervision, following the main results framework and evaluated exclusively under Judge A labels.
+Performance is broadly stable across training fraction (TF)=0.25–0.75 (within-seed variance), with a clearer improvement at TF=1.00 under leakage-free Judge A evaluation.
+External Validity (Moral Stories):
+To verify that our framework captures generalised normative reasoning beyond the generated NGR-33k corpus, we applied the same two-judge pipeline to the Moral Stories dataset (
+N
+=
+500
+N{=}500
+)
+(
+Emelin et al., 2021
+)
+. We treat the norm statement as the query and the action as the candidate. As shown in Table
+9
+, Judge A and Judge B achieve strong agreement (
+ρ
+=
+0.653
+\rho=0.653
+) on this human-curated benchmark. This confirms that the signal transfer observed in our main results is driven by a shared, latent normative alignment between the evaluators rather than synthetic dataset artefacts. In contrast, an out-of-domain check on SSGEN (
+N
+=
+500
+N{=}500
+) yielded negligible correlation (
+ρ
+≈
+0.046
+\rho\approx 0.046
+), effectively delineating the boundary conditions of the judges’ normative alignment. The “Hall of Mirrors”
+(
+Hellrigel-Holderbaum and Dung, 2025
+)
+risk is mitigated by the strong transfer performance on the human-curated Moral Stories dataset, which anchors the synthetic supervision signal to real-world normative distributions.
+4.5.
+Qualitative Analysis
+To demonstrate the impact of normative ranking, we present a side-by-side comparison of top-ranked candidates from the Dense Baseline (BGE-M3) and our Judge-Driven Supervisor (B-Score). As shown in Table
+8
+, the Judge-driven ranker systematically selects stories with concrete, culturally situated practices (highlighted in bold), whereas the dense baseline tends to retrieve globally plausible but culturally generic narratives.
+Discussion:
+The examples in Table
+8
+illustrate the Normative Feature Suppression
+(
+Yu et al., 2023
+)
+phenomenon discussed in Section
+5
+. The dense retriever (BGE-M3) successfully matches the topic of the moral (e.g., waiting for mangoes
+≈
+\approx
+patience), but misses the normative texture required by the query. In contrast, the supervision signal from Judge B explicitly rewards enactment: patience is not just waiting, but waiting to prepare a Rangoli; kindness is not just “being nice”, but breaking bread under a tree. This confirms that our leakage-free ranking framework successfully transfers these subtle, non-topical preferences to the final ranking model.
+Table 9.
+Judge Agreement on the human-curated Moral Stories (Target) vs. SSGEN (Out-of-Distribution Control). (
+n.s.
+: not significant,
+p
+>
+0.05
+p>0.05
+).
+Judge Correlation
+Dataset
+N
+N
+Spearman
+ρ
+\rho
+Kendall
+τ
+\tau
+Sig.
+Moral Stories
+(Target)
+469
+0.653
+\mathbf{0.653}
+0.594
+\mathbf{0.594}
+<
+10
+−
+45
+<10^{-45}
+SSGEN (Control)
+462
+0.046
+0.046
+0.045
+0.045
+n.s.
+5.
+Discussion
+Methodological Rigour—Evaluating without Circularity:
+Our framework addresses the systemic
+self-preference bias
+and
+preference leakage
+inherent in single-judge evaluations
+(
+Koo et al., 2024
+;
+Chen et al., 2024
+;
+Li et al., 2025
+)
+. We rigorously enforce estimator separation (
+J
+A
+≠
+J
+B
+J_{A}\neq J_{B}
+) to prevent the model from overfitting to the idiosyncrasies of a specific evaluator. We acknowledge, however, that “leakage-free” refers to the experimental framework, not the pre-training distribution. Since Yi-1.5 and LLaMA-3 likely share training data (e.g., CommonCrawl), they inevitably share latent societal priors. Critically, our results on the OOD control dataset (SSGEN) show that this shared background is insufficient to produce agreement on its own (
+ρ
+≈
+0.04
+\rho\approx 0.04
+). High agreement only emerges when the underlying narrative contains valid normative structures (Moral Stories,
+ρ
+≈
+0.65
+\rho\approx 0.65
+). This confirms that while the judges share a “worldview”, our framework successfully isolates the learning signal from the evaluation signal, preventing the circular inflation typical of self-rewarding loops.
+Direct vs. Distilled Learning:
+We observe a stark contrast between direct supervision and teacher-student distillation. Bi-encoders trained directly on Judge B scores fail to improve over baselines (nDCG
+≈
+\approx
+0.575), suggesting a Normative Feature Suppression where cultural nuances are overshadowed by dominant topical components in the embedding space. However, the BGE-M3 (Distilled) model achieves nDCG 0.771, substantially outperforming the Cross-Encoder (0.577). This confirms that the bi-encoder architecture
+does
+possess the capacity to encode cultural norms, but the optimisation landscape under raw judge labels is too noisy for it to navigate alone. The Cross-Encoder acts as a necessary denoising teacher. Although the Cross-Encoder itself overfits to the supervisor’s idiosyncrasies (resulting in lower test performance), its soft logits provide a smoothed gradient signal. This allows the student bi-encoder to locate the suppressed normative manifold while its lower capacity naturally filters out the teacher’s overfitting. This phenomenon is distinct from the semantic collapse described by
+Nguyen et al. (2025)
+, as the features are recoverable via distillation.
+Cross-Encoder Distillation to Bi-Encoders:
+Distilling supervision from a Cross-Encoder into BGE-M3 substantially improves bi-encoder performance, narrowing the gap while preserving efficiency. This indicates that strong teacher signals can partially inject normative structure into dense embeddings, though a residual gap remains due to the loss of token-level interactions.
+The Regularisation Hypothesis (Student > Teacher):
+A counter-intuitive finding of our study is the distilled bi-encoder (Student) significantly outperforming its cross-encoder supervisor (Teacher) under independent evaluation (
+Δ
+\Delta
+nDCG +0.194). In the context of noisy proxy supervision (
+J
+B
+J_{B}
+), we posit that the Cross-Encoder suffers from estimator overfitting: its high capacity allows it to model the non-robust, judge-specific artefacts (e.g., Judge B’s lexical biases or prompt sensitivities) that do not transfer to the independent Judge A. Conversely, the bi-encoder’s architecture imposes a dot-product bottleneck, forcing the model to project relevance into a lower-dimensional semantic space. This bottleneck effectively acts as a noise filter
+(
+Kaplun et al., 2022
+)
+, preventing the student from learning the high-frequency, non-generalizable quirks of the teacher. This phenomenon aligns with findings in noisy student training
+(
+Xie et al., 2019
+)
+and weak supervision
+(
+Karamanolakis et al., 2021
+)
+, where students outperform teachers
+(
+Li et al., 2024c
+)
+by smoothing the decision boundary and discarding label noise. Thus, distillation in this framework serves not merely as compression, but as a robust form of architectural regularisation, stripping away the evaluator variance to reveal the latent normative signal.
+6.
+Conclusions
+We presented a leakage-free ranking framework for culturally grounded GenIR that mitigates preference leakage via disjoint evaluators. By rigorously decoupling supervision from evaluation, we confirm that cultural grounding is a robust ranking signal that persists even when the teacher is removed. Experiments on the NGR-33k benchmark reveal that classical lexical baselines provide only marginal improvements over Random, while dense semantic retrieval (BGE-M3) yields substantially strong performance; however, even a distilled bi-encoder remains clearly behind judge-supervised and teacher–student-distilled ranking models under leakage-free evaluation. Moreover, distilling the Cross-Encoder into a fine-tuned BGE-M3 bi-encoder substantially narrows this gap, demonstrating that teacher-guided representation learning can recover a large portion of the normative signal while preserving retrieval efficiency. This demonstrates that high-capacity interaction modelling is required to discover the normative signal, but once discovered, it can be effectively compressed into efficient dense embeddings for deployment.
+References
+lea (2024)
+2024.
+The Need for a Leaderboard: A Survey of LLM as a Judge in NLP.
+OpenReview.
+https://openreview.net/forum?id=NNFIu4KZpZ
+Submitted to ACL Rolling Review (June 2024).
+01.AI (2024)
+01.AI. 2024.
+Yi-1.5-9B-Chat Model Card.
+Hugging Face.
+https://huggingface.co/01-ai/Yi-1.5-9B-Chat
+Accessed 2026-01-08.
+Alaofi et al
+.
+(2024)
+Marwah Alaofi, Negar Arabzadeh, Charles L. A. Clarke, and Mark Sanderson. 2024.
+Generative Information Retrieval Evaluation
+.
+Springer Nature Switzerland, 135–159.
+doi:
+10.1007/978-3-031-73147-1_6
+AlKhamissi et al
+.
+(2024)
+Badr AlKhamissi, Muhammad ElNokrashy, Mai AlKhamissi, and Mona Diab. 2024.
+Investigating Cultural Alignment of Large Language Models.
+arXiv:2402.13231 [cs.CL]
+https://arxiv.org/abs/2402.13231
+Amati and van Rijsbergen (2002)
+Gianni Amati and C. J. van Rijsbergen. 2002.
+Probabilistic Models of Information Retrieval Based on Measuring the Divergence from Randomness.
+ACM Transactions on Information Systems
+20, 4 (2002), 357–389.
+Arabzadeh and Clarke (2025)
+Negar Arabzadeh and Charles LA Clarke. 2025.
+A human-ai comparative analysis of prompt sensitivity in llm-based relevance judgment. In
+Proceedings of the 48th International ACM SIGIR Conference on Research and Development in Information Retrieval
+. Association for Computing Machinery, 2784–2788.
+doi:
+10.1145/3726302.3730159
+Barrot and Bui (2026)
+Jessie S Barrot and Hung Phu Bui. 2026.
+Generative Artificial Intelligence for Automated Qualitative Feedback: A Cross-Comparison of Prompting Strategies.
+RELC Journal
+(2026), 00336882251412561.
+doi:
+10.1177/00336882251412561
+Bender et al
+.
+(2021)
+Emily M. Bender, Timnit Gebru, Angelina McMillan-Major, and Shmargaret Shmitchell. 2021.
+On the Dangers of Stochastic Parrots: Can Language Models Be Too Big?. In
+Proceedings of the 2021 ACM Conference on Fairness, Accountability, and Transparency
+(Virtual Event, Canada)
+(FAccT ’21)
+. Association for Computing Machinery, New York, NY, USA, 610–623.
+doi:
+10.1145/3442188.3445922
+Bevilacqua et al
+.
+(2022)
+Michele Bevilacqua, Giuseppe Ottaviano, Patrick Lewis, and Wen-tau Yih. 2022.
+Autoregressive Search Engines: Generating Substrings as Document Identifiers.
+arXiv:2204.10628 [cs.IR]
+doi:
+10.48550/arXiv.2204.10628
+Blackwell et al
+.
+(2025)
+Robert E. Blackwell, Jon Barry, and Anthony G. Cohn. 2025.
+Towards Reproducible LLM Evaluation: Quantifying Uncertainty in LLM Benchmark Scores.
+arXiv:2410.03492 [cs.CL]
+https://arxiv.org/abs/2410.03492
+Blodgett et al
+.
+(2020)
+Su Lin Blodgett, Solon Barocas, Hal Daumé III, and Hanna Wallach. 2020.
+Language (Technology) is Power: A Critical Survey of “Bias” in NLP. In
+Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics
+, Dan Jurafsky, Joyce Chai, Natalie Schluter, and Joel Tetreault (Eds.). Association for Computational Linguistics, Online, 5454–5476.
+doi:
+10.18653/v1/2020.acl-main.485
+Bonifacio et al
+.
+(2022)
+Luiz Bonifacio, Hugo Abonizio, Marzieh Fadaee, and Rodrigo Nogueira. 2022.
+InPars: Data Augmentation for Information Retrieval Using Large Language Models.
+arXiv:2202.05144 [cs.IR]
+https://arxiv.org/abs/2202.05144
+Burges et al
+.
+(2005)
+Chris Burges, Tal Shaked, Erin Renshaw, Ari Lazier, Matt Deeds, Nicole Hamilton, and Greg Hullender. 2005.
+Learning to Rank Using Gradient Descent. In
+Proceedings of the 22nd International Conference on Machine Learning (ICML)
+. Association for Computing Machinery, 89–96.
+doi:
+10.1145/1102351.1102363
+Burges (2010)
+Christopher J. C. Burges. 2010.
+From RankNet to LambdaRank to LambdaMART: An Overview.
+Microsoft Research Technical Report
+(2010).
+Carterette (2012)
+Ben Carterette. 2012.
+Multiple Testing in Statistical Analysis of Systems-Based Information Retrieval Experiments.
+ACM Transactions on Information Systems
+(2012).
+doi:
+10.1145/2094072.2094076
+Chang et al
+.
+(2024)
+Yupeng Chang, Xu Wang, Jindong Wang, Yuan Wu, Linyi Yang, Kaijie Zhu, Hao Chen, Xiaoyuan Yi, Cunxiang Wang, Yidong Wang, Wei Ye, Yue Zhang, Yi Chang, Philip S. Yu, Qiang Yang, and Xing Xie. 2024.
+A Survey on Evaluation of Large Language Models.
+Comput. Surveys
+(2024).
+doi:
+10.1145/3641289
+Chapelle et al
+.
+(2009)
+Olivier Chapelle, Donald Metzler, Ya Zhang, and Pierre Grinspan. 2009.
+Expected Reciprocal Rank for Graded Relevance. In
+Proceedings of the 18th ACM Conference on Information and Knowledge Management (CIKM)
+. ACM, 621–630.
+doi:
+10.1145/1645953.1646033
+Chen et al
+.
+(2024)
+Guiming Hardy Chen, Shunian Chen, Ziche Liu, Feng Jiang, and Benyou Wang. 2024.
+Humans or LLMs as the Judge? A Study on Judgement Biases.
+arXiv:2402.10669 [cs.CL]
+https://arxiv.org/abs/2402.10669
+Chen et al
+.
+(2025)
+Zhi-Yuan Chen, Hao Wang, Xinyu Zhang, Enrui Hu, and Yankai Lin. 2025.
+Beyond the Surface: Measuring Self-Preference in LLM Judgments.
+arXiv preprint arXiv:2506.02592
+(2025).
+Chiu et al
+.
+(2025)
+Yu Ying Chiu, Liwei Jiang, Bill Yuchen Lin, Chan Young Park, Shuyue Stella Li, Sahithya Ravi, Mehar Bhatia, Maria Antoniak, Yulia Tsvetkov, Vered Shwartz, et al
+.
+2025.
+CulturalBench: A robust, diverse and challenging benchmark for measuring LMs’ cultural knowledge through human-AI red-teaming. In
+Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+. Association for Computational Linguistics, 25663–25701.
+doi:
+10.18653/v1/2025.acl-long.1247
+Choenni and Shutova (2025)
+Rochelle Choenni and Ekaterina Shutova. 2025.
+Self-Alignment: Improving Alignment of Cultural Values in LLMs via In-Context Learning.
+arXiv:2408.16482 [cs.CL]
+https://arxiv.org/abs/2408.16482
+Dehghani et al
+.
+(2017)
+Mostafa Dehghani, Hamed Zamani, Aliaksei Severyn, Jaap Kamps, and W. Bruce Croft. 2017.
+Neural Ranking Models with Weak Supervision. In
+Proceedings of the 40th International ACM SIGIR Conference on Research and Development in Information Retrieval
+.
+doi:
+10.1145/3077136.3080832
+Demšar (2006)
+Janez Demšar. 2006.
+Statistical Comparisons of Classifiers over Multiple Data Sets.
+Journal of Machine Learning Research
+7 (2006), 1–30.
+https://jmlr.org/papers/v7/demsar06a.html
+Dhamala et al
+.
+(2021)
+Jwala Dhamala, Tony Sun, Varun Kumar, Satyapriya Krishna, Yada Pruksachatkun, Kai-Wei Chang, and Rahul Gupta. 2021.
+BOLD: Dataset and Metrics for Measuring Biases in Open-Ended Language Generation. In
+Proceedings of the 2021 ACM Conference on Fairness, Accountability, and Transparency
+. 862–872.
+doi:
+10.1145/3442188.3445924
+Dietz et al
+.
+(2025)
+Laura Dietz, Oleg Zendel, Peter Bailey, Charles LA Clarke, Ellese Cotterill, Jeff Dalton, Faegheh Hasibi, Mark Sanderson, and Nick Craswell. 2025.
+Principles and Guidelines for the Use of LLM Judges. In
+Proceedings of the 2025 International ACM SIGIR Conference on Innovative Concepts and Theories in Information Retrieval (ICTIR)
+. 218–229.
+Emelin et al
+.
+(2021)
+Denis Emelin, Ronan Le Bras, Jena D. Hwang, Maxwell Forbes, and Yejin Choi. 2021.
+Moral Stories: Situated Reasoning about Norms, Intents, Actions, and their Consequences. In
+Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing
+, Marie-Francine Moens, Xuanjing Huang, Lucia Specia, and Scott Wen-tau Yih (Eds.). Association for Computational Linguistics, Online and Punta Cana, Dominican Republic, 698–718.
+doi:
+10.18653/v1/2021.emnlp-main.54
+Forbes et al
+.
+(2020)
+Maxwell Forbes, Jena D. Hwang, Vered Shwartz, Maarten Sap, and Yejin Choi. 2020.
+Social Chemistry 101: Learning to Reason about Social and Moral Norms. In
+Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP)
+. 653–670.
+doi:
+10.18653/v1/2020.emnlp-main.48
+Gemma Team (2024)
+Gemma Team. 2024.
+Gemma 2: Improving Open Language Models at a Practical Size
+.
+Technical Report. Google DeepMind.
+Technical report.
+Gu et al
+.
+(2024)
+Jiawei Gu, Xuhui Jiang, Zhichao Shi, Hexiang Tan, Xuehao Zhai, Chengjin Xu, Wei Li, Yinghan Shen, Shengjie Ma, Honghao Liu, et al
+.
+2024.
+A Survey on LLM-as-a-Judge.
+The Innovation
+(2024).
+https://arxiv.org/abs/2411.15594
+Guo et al
+.
+(2023)
+Zishan Guo, Renren Jin, Chuang Liu, Yufei Huang, Dan Shi, Supryadi, Linhao Yu, Yan Liu, Jiaxuan Li, Bojian Xiong, and Deyi Xiong. 2023.
+Evaluating Large Language Models: A Comprehensive Survey.
+arXiv:2310.19736 [cs.CL]
+https://arxiv.org/abs/2310.19736
+Hagedorn and Strube (2022)
+Clara Hagedorn and Michael Strube. 2022.
+A Computational Folktale Corpus for Cross-Cultural Analysis.
+arXiv preprint arXiv:2212.09457
+(2022).
+https://arxiv.org/pdf/2212.09457.pdf
+Hashemi et al
+.
+(2024)
+Helia Hashemi, Jason Eisner, Corby Rosset, Benjamin Van Durme, and Chris Kedzie. 2024.
+LLM-Rubric: A Multidimensional, Calibrated Approach to Automated Evaluation of Natural Language Texts. In
+Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+. Association for Computational Linguistics, 13806–13834.
+doi:
+10.18653/v1/2024.acl-long.745
+Hellrigel-Holderbaum and Dung (2025)
+Max Hellrigel-Holderbaum and Leonard Dung. 2025.
+Misalignment or Misuse? The AGI Alignment Tradeoff.
+Philosophical Studies
+(2025), 1–29.
+doi:
+10.1007/s11098-025-02403-y
+Hill et al
+.
+(2016)
+Felix Hill, Antoine Bordes, Sumit Chopra, and Jason Weston. 2016.
+The Children’s Book Test: A Test of Reading Comprehension in the Wild.
+arXiv preprint arXiv:1511.02301
+(2016).
+https://arxiv.org/pdf/1511.02301.pdf
+Holtzman et al
+.
+(2020)
+Ari Holtzman, Jan Buys, Li Du, Maxwell Forbes, and Yejin Choi. 2020.
+The Curious Case of Neural Text Degeneration.
+arXiv:1904.09751 [cs.CL]
+https://arxiv.org/abs/1904.09751
+Huang and Yang (2023)
+Jing Huang and Diyi Yang. 2023.
+Culturally Aware Natural Language Inference. In
+Findings of the Association for Computational Linguistics: EMNLP 2023
+. Association for Computational Linguistics, 7591–7609.
+doi:
+10.18653/V1/2023.FINDINGS-EMNLP.509
+Huang et al
+.
+(2024)
+Yue Huang, Lichao Sun, Haoran Wang, Siyuan Wu, Qihui Zhang, Yuan Li, Chujie Gao, Yixin Huang, Wenhan Lyu, Yixuan Zhang, et al
+.
+2024.
+TrustLLM: Trustworthiness in Large Language Models.
+arXiv:2401.05561 [cs.CL]
+https://arxiv.org/abs/2401.05561
+Järvelin and Kekäläinen (2002)
+Kalervo Järvelin and Jaana Kekäläinen. 2002.
+Cumulated Gain-Based Evaluation of IR Techniques.
+ACM Transactions on Information Systems
+20, 4 (2002), 422–446.
+doi:
+10.1145/582415.582418
+Kaplun et al
+.
+(2022)
+Gal Kaplun, Eran Malach, Preetum Nakkiran, and Shai Shalev-Shwartz. 2022.
+Knowledge distillation: Bad models can be good role models.
+Advances in Neural Information Processing Systems
+35 (2022), 28683–28694.
+Karamanolakis et al
+.
+(2021)
+Giannis Karamanolakis, Subhabrata Mukherjee, Guoqing Zheng, and Ahmed Hassan. 2021.
+Self-training with weak supervision. In
+Proceedings of the 2021 conference of the North American chapter of the association for computational linguistics: human language technologies
+. 845–863.
+Kendall (1938)
+Maurice G. Kendall. 1938.
+A New Measure of Rank Correlation.
+Biometrika
+30, 1/2 (1938), 81–93.
+doi:
+10.1093/biomet/30.1-2.81
+Koo et al
+.
+(2024)
+Ryan Koo, Minhwa Lee, Vipul Raheja, Jong Inn Park, Zae Myung Kim, and Dongyeop Kang. 2024.
+Benchmarking Cognitive Biases in Large Language Models as Evaluators.
+arXiv:2309.17012 [cs.CL]
+https://arxiv.org/abs/2309.17012
+Lan et al
+.
+(2014)
+Yanyan Lan, Yadong Zhu, Jiafeng Guo, Shuzi Niu, and Xueqi Cheng. 2014.
+Position-Aware ListMLE: A Sequential Learning Process for Ranking. In
+Proceedings of the 30th Conference on Uncertainty in Artificial Intelligence (UAI 2014)
+. 449–458.
+Laskar et al
+.
+(2024)
+Md Tahmid Rahman Laskar, Sawsan Alqahtani, M Saiful Bari, Mizanur Rahman, Mohammad Abdullah Matin Khan, Haidar Khan, Israt Jahan, Amran Bhuiyan, Chee Wei Tan, Md Rizwan Parvez, Enamul Hoque, Shafiq Joty, and Jimmy Huang. 2024.
+A Systematic Survey and Critical Review on Evaluating Large Language Models: Challenges, Limitations, and Recommendations. In
+Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing (EMNLP)
+. Association for Computational Linguistics, Miami, Florida, USA, 13785–13816.
+doi:
+10.18653/v1/2024.emnlp-main.764
+Lewis et al
+.
+(2020)
+Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir Karpukhin, Naman Goyal, Heinrich Küttler, Mike Lewis, Wen-tau Yih, Tim Rocktäschel, Sebastian Riedel, and Douwe Kiela. 2020.
+Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks. In
+Advances in Neural Information Processing Systems (NeurIPS)
+.
+Li et al
+.
+(2024d)
+Bowen Li, Yichi Zhang, Danqi Chen, and Heng Ji. 2024d.
+SS-GEN: A Benchmark for Socially and Culturally Grounded Story Generation.
+arXiv preprint arXiv:2404.01870
+(2024).
+https://arxiv.org/pdf/2404.01870.pdf
+Li et al
+.
+(2024a)
+Cheng Li, Mengzhou Chen, Jindong Wang, Sunayana Sitaram, and Xing Xie. 2024a.
+CultureLLM: Incorporating Cultural Differences into Large Language Models.
+arXiv:2402.10946 [cs.CL]
+https://arxiv.org/abs/2402.10946
+Li et al
+.
+(2025)
+Dawei Li, Renliang Sun, Yue Huang, Ming Zhong, Bohan Jiang, Jiawei Han, Xiangliang Zhang, Wei Wang, and Huan Liu. 2025.
+Preference Leakage: A Contamination Problem in LLM-as-a-judge.
+arXiv:2502.01534 [cs.LG]
+https://arxiv.org/abs/2502.01534
+Li et al
+.
+(2024b)
+Haitao Li, Qian Dong, Junjie Chen, Huixue Su, Yujia Zhou, Qingyao Ai, Ziyi Ye, and Yiqun Liu. 2024b.
+LLMs-as-Judges: A Comprehensive Survey on LLM-based Evaluation Methods.
+arXiv:2412.05579 [cs.CL]
+https://arxiv.org/abs/2412.05579
+Li et al
+.
+(2024c)
+Xinwei Li, Li Lin, Shuai Wang, and Chen Qian. 2024c.
+Self-improving teacher cultivates better student: Distillation calibration for multimodal large language models. In
+Proceedings of the 47th International ACM SIGIR Conference on Research and Development in Information Retrieval
+. 882–892.
+Liang et al
+.
+(2023)
+Percy Liang, Rishi Bommasani, Tony Lee, Dimitris Tsipras, Dilara Soylu, Michihiro Yasunaga, Yian Zhang, Deepak Narayanan, Yuhuai Wu, Ananya Kumar, et al
+.
+2023.
+Holistic Evaluation of Language Models.
+arXiv:2211.09110 [cs.CL]
+https://arxiv.org/abs/2211.09110
+Liu (2009)
+Tie-Yan Liu. 2009.
+Learning to Rank for Information Retrieval.
+Foundations and Trends in Information Retrieval
+3, 3 (2009), 225–331.
+doi:
+10.1561/1500000016
+Liu et al
+.
+(2019)
+Yinhan Liu, Myle Ott, Naman Goyal, Jingfei Du, Mandar Joshi, Danqi Chen, Omer Levy, Mike Lewis, Luke Zettlemoyer, and Veselin Stoyanov. 2019.
+RoBERTa: A Robustly Optimized BERT Pretraining Approach.
+arXiv:1907.11692 [cs.CL]
+https://arxiv.org/abs/1907.11692
+Manning et al
+.
+(2008)
+Christopher D. Manning, Prabhakar Raghavan, and Hinrich Schütze. 2008.
+Introduction to Information Retrieval
+.
+Cambridge University Press.
+https://nlp.stanford.edu/IR-book/information-retrieval-book.html
+Masoud et al
+.
+(2024)
+Reem I. Masoud, Ziquan Liu, Martin Ferianc, Philip Treleaven, and Miguel Rodrigues. 2024.
+Cultural Alignment in Large Language Models: An Explanatory Analysis Based on Hofstede’s Cultural Dimensions.
+arXiv:2309.12342 [cs.CY]
+https://arxiv.org/abs/2309.12342
+Meta AI (2024)
+Meta AI. 2024.
+The Llama 3 Herd of Models.
+arXiv:2407.21783 [cs.CL]
+https://arxiv.org/abs/2407.21783
+Mitra and Craswell (2018)
+Bhaskar Mitra and Nick Craswell. 2018.
+An Introduction to Neural Information Retrieval.
+Foundations and Trends in Information Retrieval
+13, 1 (2018), 1–126.
+doi:
+10.1561/1500000061
+Mostafazadeh et al
+.
+(2016)
+Nasrin Mostafazadeh, Nathanael Chambers, X. He, D. Parikh, D. Batra, L. Vanderwende, P. Kohli, and J. Allen. 2016.
+A Corpus and Evaluation Framework for Deeper Understanding of Commonsense Stories. In
+Proceedings of NAACL
+.
+https://aclanthology.org/N16-1098.pdf
+Naous et al
+.
+(2024)
+Tarek Naous, Michael J. Ryan, Alan Ritter, and Wei Xu. 2024.
+Having Beer after Prayer? Measuring Cultural Bias in Large Language Models.
+arXiv:2305.14456 [cs.CL]
+https://arxiv.org/abs/2305.14456
+Nguyen et al
+.
+(2025)
+Thong Nguyen, Yibin Lei, Jia-Huei Ju, Eugene Yang, and Andrew Yates. 2025.
+Milco: Learned Sparse Retrieval Across Languages via a Multilingual Connector.
+arXiv:2510.00671 [cs.IR]
+https://arxiv.org/abs/2510.00671
+Parrish et al
+.
+(2022)
+Alicia Parrish, Angelica Chen, Nikita Nangia, Vishakh Padmakumar, Jason Phang, Jana Thompson, Phu Mon Htut, and Samuel Bowman. 2022.
+BBQ: A Hand-Built Bias Benchmark for Question Answering. In
+Findings of the Association for Computational Linguistics: ACL 2022
+. 2086–2105.
+doi:
+10.18653/v1/2022.findings-acl.165
+Perez (2025)
+Jorge Perez. 2025.
+Tokenising culture: causes and consequences of cultural misalignment in large language models.
+Ada Lovelace Institute (blog).
+https://www.adalovelaceinstitute.org/blog/cultural-misalignment-llms/
+Published 19 June 2025.
+Pobrotyn et al
+.
+(2020)
+Przemysław Pobrotyn, Tomasz Bartczak, Mikołaj Synowiec, Radosław Białobrzeski, and Jarosław Bojar. 2020.
+Context-Aware Learning to Rank with Self-Attention.
+arXiv:2005.10084 [cs.IR]
+https://arxiv.org/abs/2005.10084
+Pradeep et al
+.
+(2023)
+Ronak Pradeep, Sahel Sharifymoghaddam, and Jimmy Lin. 2023.
+RankZephyr: Effective and Robust Zero-Shot Listwise Reranking Is a Breeze!
+arXiv:2312.02724 [cs.IR]
+https://arxiv.org/abs/2312.02724
+Qadri et al
+.
+(2025)
+Rida Qadri, Mark Diaz, Ding Wang, and Michael Madaio. 2025.
+The Case for "Thick Evaluations" of Cultural Representation in AI.
+arXiv:2503.19075 [cs.CY]
+https://arxiv.org/abs/2503.19075
+Rao et al
+.
+(2025)
+Abhinav Sukumar Rao, Akhila Yerukola, Vishwa Shah, Katharina Reinecke, and Maarten Sap. 2025.
+NormAd: A Framework for Measuring the Cultural Adaptability of Large Language Models. In
+Proceedings of the 2025 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies
+. 2373–2403.
+doi:
+10.18653/v1/2025.naacl-long.120
+Reddy et al
+.
+(2024)
+Revanth Gangi Reddy, JaeHyeok Doo, Yifei Xu, Md Arafat Sultan, Deevya Swain, Avirup Sil, and Heng Ji. 2024.
+FIRST: Faster Improved Listwise Reranking with Single Token Decoding. In
+Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing
+. 8642–8652.
+Rezapour et al
+.
+(2025)
+Rezvaneh Rezapour, Sullam Jeoung, Zhiwen You, and Jana Diesner. 2025.
+Tales of Morality: Comparing Human- and LLM-Generated Moral Stories from Visual Cues. In
+Findings of the Association for Computational Linguistics: EMNLP 2025
+. 18915–18933.
+doi:
+10.18653/v1/2025.findings-emnlp.1029
+Robertson and Zaragoza (2009)
+Stephen Robertson and Hugo Zaragoza. 2009.
+The Probabilistic Relevance Framework: BM25 and Beyond.
+Foundations and Trends in Information Retrieval
+3, 4 (2009), 333–389.
+doi:
+10.1561/1500000019
+Rooein et al
+.
+(2025)
+Donya Rooein, Vilém Zouhar, Debora Nozza, and Dirk Hovy. 2025.
+Biased Tales: Cultural and Topic Bias in Generating Children’s Stories.
+arXiv:2509.07908 [cs.CL]
+https://arxiv.org/abs/2509.07908
+Santhanam et al
+.
+(2021)
+Keshav Santhanam, Omar Khattab, Jon Saad-Falcon, Christopher Potts, and Matei A. Zaharia. 2021.
+ColBERTv2: Effective and Efficient Retrieval via Lightweight Late Interaction. In
+Proceedings of the 2021 Conference of the North American Chapter of the Association for Computational Linguistics
+. 3715–3729.
+https://aclanthology.org/2021.naacl-main.294/
+Smith et al
+.
+(2022)
+Eric Michael Smith, Melissa Hall, Melanie Kambadur, Eleonora Presani, and Adina Williams. 2022.
+"I’m sorry to hear that": Finding New Biases in Language Models with a Holistic Descriptor Dataset.
+arXiv:2205.09209 [cs.CL]
+https://arxiv.org/abs/2205.09209
+Smucker et al
+.
+(2007)
+Mark D. Smucker, James Allan, and Ben Carterette. 2007.
+A Comparison of Statistical Significance Tests for Information Retrieval Evaluation. In
+Proceedings of the 16th ACM Conference on Information and Knowledge Management
+. 623–632.
+doi:
+10.1145/1321440.1321528
+Song et al
+.
+(2025)
+Yuncheng Song, Liang Ding, Changtong Zan, and Shujian Huang. 2025.
+Self-Evolution Knowledge Distillation for LLM-based Machine Translation. In
+Proceedings of the 31st International Conference on Computational Linguistics
+. 10298–10308.
+Spearman (1904)
+Charles Spearman. 1904.
+The Proof and Measurement of Association between Two Things.
+The American Journal of Psychology
+15, 1 (1904), 72–101.
+doi:
+10.2307/1412159
+Sukiennik et al
+.
+(2025)
+Nicholas Sukiennik, Chen Gao, Fengli Xu, and Yong Li. 2025.
+An Evaluation of Cultural Value Alignment in LLM.
+arXiv:2504.08863 [cs.CY]
+https://arxiv.org/abs/2504.08863
+Sun et al
+.
+(2023)
+Weiwei Sun, Zheng Chen, Xinyu Ma, Lingyong Yan, Shuaiqiang Wang, Pengjie Ren, Zhumin Chen, Dawei Yin, and Zhaochun Ren. 2023.
+Instruction Distillation Makes Large Language Models Efficient Zero-shot Rankers.
+arXiv:2311.01555 [cs.IR]
+https://arxiv.org/abs/2311.01555
+Tang and Wang (2018)
+Jiaxi Tang and Ke Wang. 2018.
+Ranking distillation: Learning compact ranking models with high performance for recommender system. In
+Proceedings of the 24th ACM SIGKDD international conference on knowledge discovery & data mining
+. 2289–2298.
+Tao et al
+.
+(2024)
+Yan Tao, Olga Viberg, Ryan S. Baker, and René F. Kizilcec. 2024.
+Cultural Bias and Cultural Alignment of Large Language Models.
+PNAS Nexus
+3, 9 (2024), pgae346.
+doi:
+10.1093/pnasnexus/pgae346
+Tay et al
+.
+(2022)
+Yi Tay, Vinh Q. Tran, Mostafa Dehghani, Jianmo Ni, Dara Bahri, Harsh Mehta, Zhen Qin, Kai Hui, Zhe Zhao, Jai Gupta, Tal Schuster, William W. Cohen, and Donald Metzler. 2022.
+Transformer Memory as a Differentiable Search Index.
+arXiv:2202.06991 [cs.CL]
+https://arxiv.org/abs/2202.06991
+Voorhees and Tice (2000)
+Ellen M. Voorhees and Dawn M. Tice. 2000.
+The TREC-8 Question Answering Track. In
+Proceedings of the Second International Conference on Language Resources and Evaluation (LREC 2000)
+. 77–82.
+https://aclanthology.org/L00-1018/
+Wei et al
+.
+(2022)
+Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Fei Xia, Ed Chi, Quoc V. Le, Denny Zhou, et al
+.
+2022.
+Chain-of-Thought Prompting Elicits Reasoning in Large Language Models. In
+Advances in Neural Information Processing Systems
+.
+Wu et al
+.
+(2024)
+Shiguang Wu, Wenda Wei, Mengqi Zhang, Zhumin Chen, Jun Ma, Zhaochun Ren, Maarten de Rijke, and Pengjie Ren. 2024.
+Generative Retrieval as Multi-Vector Dense Retrieval. In
+Proceedings of the 47th International ACM SIGIR Conference on Research and Development in Information Retrieval
+. 1828–1838.
+Xiao et al
+.
+(2023)
+Shitao Xiao, Zheng Liu, Peitian Zhang, and Niklas Muennighoff. 2023.
+C-Pack: Packaged Resources To Advance General Chinese Embedding.
+arXiv:2309.07597 [cs.CL]
+Xie et al
+.
+(2019)
+Qizhe Xie, Minh-Thang Luong, Eduard Hovy, and Quoc V Le. 2019.
+Self-training with Noisy Student improves ImageNet classification. arXiv e-prints, art.
+arXiv preprint arXiv:1911.04252
+(2019).
+Yamauchi et al
+.
+(2025)
+Yusuke Yamauchi, Taro Yano, and Masafumi Oyamada. 2025.
+An Empirical Study of LLM-as-a-Judge: How Design Choices Impact Evaluation Reliability.
+arXiv:2506.13639 [cs.CL]
+https://arxiv.org/abs/2506.13639
+Yang et al
+.
+(2025)
+Guang Yang, Yu Zhou, Xiang Chen, Wei Zheng, Xing Hu, Xin Zhou, David Lo, and Taolue Chen. 2025.
+CODE-DITING: A Reasoning-Based Metric for Functional Alignment in Code Evaluation.
+arXiv preprint arXiv:2505.19502
+(2025).
+Ye et al
+.
+(2025)
+Lyumanshan Ye, Jiandong Jiang, Yuhan Liu, Yihan Ran, and Danni Chang. 2025.
+Colin: A Multimodal Human-AI Co-Creation Storytelling System to Support Children’s Multi-Level Narrative Skills. In
+Extended Abstracts of the CHI Conference on Human Factors in Computing Systems
+.
+doi:
+10.1145/3706599.3719837
+Yu et al
+.
+(2023)
+Cheng Yu, Jiansheng Chen, Yu Wang, Youze Xue, and Huimin Ma. 2023.
+Improving adversarial robustness against universal patch attacks through feature norm suppressing.
+IEEE Transactions on Neural Networks and Learning Systems
+(2023).
+Zhai and Lafferty (2004)
+Chengxiang Zhai and John Lafferty. 2004.
+A Study of Smoothing Methods for Language Models Applied to Information Retrieval.
+ACM Transactions on Information Systems (TOIS)
+22, 2 (2004), 179–214.
+Zhang et al
+.
+(2022)
+Zheng Zhang, Ying Xu, Yanhao Wang, Bingsheng Yao, Daniel Ritchie, Tongshuang Wu, Mo Yu, Dakuo Wang, and Toby Jia-Jun Li. 2022.
+StoryBuddy: A Human-AI Collaborative Chatbot for Parent-Child Interactive Storytelling with Flexible Parental Involvement. In
+Proceedings of the CHI Conference on Human Factors in Computing Systems
+.
+doi:
+10.1145/3491102.3517479
+Zhao et al
+.
+(2025)
+Wayne Xin Zhao, Kun Zhou, Junyi Li, Tianyi Tang, Xiaolei Wang, Yupeng Hou, Yingqian Min, Beichen Zhang, Junjie Zhang, Zican Dong, Yifan Du, Chen Yang, Yushuo Chen, Zhipeng Chen, Jinhao Jiang, Ruiyang Ren, Yifan Li, Xinyu Tang, Zikang Liu, Peiyu Liu, Jian-Yun Nie, and Ji-Rong Wen. 2025.
+A Survey of Large Language Models.
+arXiv:2303.18223 [cs.CL]
+https://arxiv.org/abs/2303.18223
+Zheng et al
+.
+(2023)
+Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan Zhuang, Zhanghao Wu, Yonghao Zhuang, Zi Lin, Zhuohan Li, Dacheng Li, Eric P. Xing, Hao Zhang, Joseph E. Gonzalez, and Ion Stoica. 2023.
+Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena.
+arXiv:2306.05685 [cs.CL]
+https://arxiv.org/abs/2306.05685
+Zhou (2018)
+Zhi-Hua Zhou. 2018.
+A Brief Introduction to Weakly Supervised Learning.
+National Science Review
+5, 1 (2018), 44–53.
+doi:
+10.1093/nsr/nwx106
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

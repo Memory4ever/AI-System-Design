@@ -1,0 +1,396 @@
+When to Memorize and When to Stop: Gated Recurrent Memory for Long-Context Reasoning (https://arxiv.org/pdf/2602.10560v1)
+citeturn28765view0 [wordlim: 200] Crawled: 3 days ago; Content type: application/pdf; Number of pages: 26; Source: open({"ref_id":"https://arxiv.org/pdf/2602.10560v1","lineno":null}); Total lines: 934
+L0@P0: When to Memorize and When to Stop:
+L1@P0: Gated Recurrent Memory for Long-Context Reasoning
+L2@P0: Leheng Sheng1,2,‡, Yongtao Zhang1, Wenchang Ma1, Yaorui Shi3, Ting Huang1,
+L3@P0: Xiang Wang3, An Zhang3,†, Ke Shen1,†, Tat-Seng Chua2
+L4@P0: 1Bytedance Seed,2National University of Singapore,
+L5@P0: 3University of Science and Technology of China
+L6@P0: ‡Work done at ByteDance Seed,†Corresponding authors
+L7@P0: Abstract
+L8@P0: While reasoning over long context is crucial for various real-world applications, it remains challenging
+L9@P0: for large language models (LLMs) as they suffer from performance degradation as the context length
+L10@P0: grows. Recent work MemAgent has tried to tackle this by processing context chunk-by-chunk in an
+L11@P0: RNN-like loop and updating a textual memory for final answering. However, this naive recurrent
+L12@P0: memory update faces two crucial drawbacks: (i) memory can quickly explode because it can update
+L13@P0: indiscriminately, even on evidence-free chunks; and (ii) the loop lacks an exit mechanism, leading
+L14@P0: to unnecessary computation after even sufficient evidence is collected. To address these issues,
+L15@P0: we propose GRU-Mem, which incorporates two text-controlled gates for more stable and efficient
+L16@P0: long-context reasoning. Specifically, in GRU-Mem, the memory only updates when the update
+L17@P0: gate is open and the recurrent loop will exit immediately once the exit gate is open. To endow the
+L18@P0: model with such capabilities, we introduce two reward signals r
+L19@P0: update and rexit within end-to-end
+L20@P0: RL, rewarding the correct updating and exiting behaviors respectively. Experiments on various
+L21@P0: long-context reasoning tasks demonstrate the effectiveness and efficiency of GRU-Mem, which
+L22@P0: generally outperforms the vanilla MemAgent with up to 400% times inference speed acceleration.
+L23@P0: Date: February 12, 2026
+L24@P0: Correspondence: An Zhang at an_zhang@ustc.edu.cn, Ke Shen at shenke@bytedance.com
+L25@P0: Project Page: https://alphalab-ustc.github.io/grumem-alphalab/
+L26@P0: 1 Introduction
+L27@P0: Reasoning over extremely long contexts is a crucial capability of large language models (LLMs) for real-world
+L28@P0: applications [7, 23, 31], such as reading an entire book or processing large-scale memories in agentic systems
+L29@P0: [4, 15, 24]. While important, this capability remains challenging: LLMs typically experience dramatic
+L30@P0: performance degradation as the context length grows [1, 12], and they struggle to handle corpora that exceed
+L31@P0: their maximum context window [36].
+L32@P0: To address these limitations, recent work MemAgent [36] has explored a recurrent memory paradigm for
+L33@P0: long context reasoning in an RNN-like manner [15, 22, 36]. As illustrated in Figure 1, instead of encoding
+L34@P0: the entire context in a single forward pass [30, 33], this method reformulates long-context reasoning as a
+L35@P0: sequential, recurrent, and chunk-by-chunk memorization process. Concretely, the entire long context C is
+L36@P0: 1
+L37@P0-1: arXiv:2602.10560v1 [cs.CL] 11 Feb 2026Figure 1 MemAgent and its limitations. The MemAgent reads a long context chunk-by-chunk in an RNN-like manner,
+L38@P1: recurrently updating a textual memory and answering from the final memory. It faces two crucial risks: memory
+L39@P1: explosion by over-accumulating irrelevant memories and lacking an exit mechanism when collected sufficient evidence.
+L40@P1: divided into T fixed-size chunks {C1 · · · CT } first. At step t, a memory agent ϕθ reads the question Q, chunk
+L41@P1: Ct, and the previous memory Mt−1 to recurrently update a textual memory Mt. After processing all chunks,
+L42@P1: an answer agent ψθ predicts the answer Aˆ conditioned on the final memory MT and the question Q. In
+L43@P1: practice, the memory agent ϕθ and the answer agent ψθ share the same parameterized policy model θ, with
+L44@P1: their behaviors differentiated by the prompt assignment. Trained end-to-end with reinforcement learning (RL)
+L45@P1: [36, 37], this recurrent memory paradigm shows potential in mitigating the performance degradation from
+L46@P1: ingesting an overly long context at once, and ideally breaks the context window size limit.
+L47@P1: However, the vanilla approach inherits several drawbacks of naive RNN-style memory updates [3, 11]. Here,
+L48@P1: we identify two key limitations that may hinder the memory stability and efficiency of reasoning in practice:
+L49@P1: • Risk of Memory Explosion. As shown in Figure 1, when updating on evidence-free chunks, the memory
+L50@P1: agent may accumulate irrelevant or noisy content over time. This drift progressively inflates the memory,
+L51@P1: potentially exceeding the allotted budget and triggering memory explosion. Once already exploded, the
+L52@P1: accumulated noise can further impede subsequent updates, making it harder to incorporate new key evidence
+L53@P1: from later chunks [36]. Additionally, inefficiently regenerating the already-exploded memory at each step
+L54@P1: also increases the inference cost. As a result, such risks of memory explosion undermine both long-horizon
+L55@P1: stability and runtime efficiency for long-term reasoning.
+L56@P1: • Lack of Exit Mechanism. As shown in Figure 1, the vanilla workflow is hard-coded to process all chunks and
+L57@P1: provides no early-exit mechanism when the collected evidence is sufficient. That is, even after sufficient
+L58@P1: evidence has been collected already (e.g., the last necessary evidence for the answer has appeared), the model
+L59@P1: must still process the remaining chunks until the end, incurring avoidable computation. This inefficiency is
+L60@P1: amplified when evidence is unevenly distributed (e.g., when reranking brings key evidence early [8, 40])
+L61@P1: This inefficiency becomes even more severe when evidence is unevenly distributed across the context, where
+L62@P1: in some cases key evidence may appear very early (e.g., when the long context is reordered by specific
+L63@P1: reranking techniques) [8, 40].
+L64@P1: To this end, we propose GRU-Mem, a gated recurrent memory framework for stable and efficient long-context
+L65@P1: reasoning, inspired by the effectiveness of gating in GRUs [6] for addressing long-term sequence modeling
+L66@P1: challenges in RNNs (e.g., gradient explosion [11]). The key idea is to augment the recurrent workflow with two
+L67@P1: text-controlled gates — an update gate (UG) and an exit gate (EG) — which decide (i) whether the memory
+L68@P1: should be updated on the current chunk and (ii) whether the model can terminate early once sufficient evidence
+L69@P1: has been collected. Specifically, at step t, the memory agent ϕθ generates three pieces of key information:
+L70@P1: the update gate status Ut, the candidate memory Mˆ
+L71@P1: t, and the exit gate status Et, which can be formulated
+L72@P1: as Ut,Mˆ
+L73@P1: t, Et = ϕθ(Q, Ct,Mt−1). Only when the update gate status Uˆ
+L74@P1: t is True, the memory Mt will be
+L75@P1: updated with the candidate memory Mˆ
+L76@P1: t, otherwise adopting the previous memory Mt−1. Additionally,
+L77@P1: when the exit gate status Et is True, indicating the last evidence required occurs in this chunk, the workflow
+L78@P1: can end immediately for answering the question. Finally, similar to the vanilla design, the answer agent ψθ
+L79@P1-2: 2provides the answer Aˆ based on the terminal memory Mt. To endow the model with such capabilities, we
+L80@P2: introduce two reward signals r
+L81@P2: update and rexit within end-to-end RL, rewarding the correct updating and
+L82@P2: exiting behaviors, respectively. The update gate enables selective memory updates on only a few informative
+L83@P2: chunks, mitigating memory explosion, while the exit gate provides a flexible early-termination mechanism
+L84@P2: that reduces unnecessary computation; together, they yield more stable and efficient long-context reasoning.
+L85@P2: We further conduct extensive experiments to verify the effectiveness of GRU-Mem. First, we show that
+L86@P2: GRU-Mem generally outperforms the vanilla MemAgent across diverse tasks and among different model
+L87@P2: sizes, and generally achieves up to 400% times inference speed acceleration (cf. Section 4.1). Second, we
+L88@P2: validate the effectiveness of the two introduced gating mechanisms, where GRU-Mem can reduce the risks
+L89@P2: of memory explosion and provide a meaningful exit mechanism (cf. Section 4.2). Third, we systematically
+L90@P2: analyze the role of components in GRU-Mem with the ablation study, including the training dynamics (cf.
+L91@P2: Section 4.3). We highlight that GRU-Mem provides a stable and efficient long context reasoning paradigm
+L92@P2: with the introduction of two gating mechanisms.
+L93@P2: 2 Preliminary
+L94@P2: We briefly introduce the task formulation of reasoning over long contexts in Section 2.1 first. After that, we
+L95@P2: present the recurrent memory paradigm, as introduced in previous work MemAgent [36], in Section 2.2.
+L96@P2: 2.1 Task Formulation
+L97@P2: Long-context QA. In this paper, we primarily focus on the widely adopted long-context question answering
+L98@P2: (QA) tasks [12, 36]. In these tasks, each example consists of a question Q, a long context C, and a ground-truth
+L99@P2: answer A, which can be denoted as a triplet (Q, C, A). Here, the context length |Ci| can be very large, such as
+L100@P2: millions of tokens.
+L101@P2: Evidence Sparsity. To answer the question Ai, LLMs are required to accurately locate and then reason over
+L102@P2: a few evidence pieces {ek}
+L103@P2: K
+L104@P2: k=1, which are sparsely located within the long context Ci
+L105@P2: . The sparse evidence
+L106@P2: distribution in long context reasoning makes LLMs struggle to answer accurately, which is also commonly
+L107@P2: known as the needle in a haystack (NIAH) [13] problem.
+L108@P2: 2.2 Recurrent Memory for Long-context Reasoning
+L109@P2: Context chunks. In the recurrent memory for long-context reasoning paradigm, the long context is split as
+L110@P2: a set of fixed-size context chunks C = {C1 · · · CT } first. After splitting into chunks, the evidence is sparsely
+L111@P2: distributed in only a few chunks. That is, most of the chunks do not contain any information for answering
+L112@P2: the question Q. This splitting strategy avoids directly feeding the entire context into LLMs at once.
+L113@P2: Workflow. The recurrent memory paradigm for long-context reasoning adopts an RNN-like workflow with two
+L114@P2: agents: a memory agent ϕθ for recurrently updating a textual memory and an answer agent ψθ for answering
+L115@P2: the question based on the final memory. Specifically, as shown in Figure 1, at each step t the memory agent
+L116@P2: ϕθ takes the question Q, the current chunk Ct, and the previous memory Mt−1 as input, and generate an
+L117@P2: updated memory Mt in a recurrent manner, which can be formulated as:
+L118@P2: Mt = ϕθ(Q, Ct,Mt−1). (1)
+L119@P2: After reading all the T chunks, an answer agent ψθ generates the answer Aˆ to the question Q based on the
+L120@P2: final memory MT , as formulated as follows:
+L121@P2: Aˆ = ψθ(Q,MT ). (2)
+L122@P2: Here, the memory agent ϕθ and the answer agent ψθ are the same parameterized policy model θ differentiated
+L123@P2: by the prompt assignment.
+L124@P2: Workflow optimization with end-to-end RL. This agent workflow can be optimized with the Multi-Conv DAPO
+L125@P2: algorithm as proposed in MemAgent [36], which is an extension of the group relative policy optimization
+L126@P2-3: 3(GRPO) algorithm [27] in the multi-turn scenario. The key idea lies in treating each conversation (i.e.,
+L127@P3: one individual memory or answer turn) as an independent optimization target, and then optimizing these
+L128@P3: independent targets with their corresponding advantages. Specifically, one workflow trajectory in group g
+L129@P3: can be expressed as (og,1, og,2, ..., og,Tg), where Tg denotes the total turn number of generated conversations.
+L130@P3: Here og,Tg denotes the answer agent turn while (og,1, og,2, ..., og,Tg−1) denote the memory agent turns. Each
+L131@P3: conversation output og,t at step t consists of a sequence of tokens (og,t,1, og,t,2, ..., og,t,|og,t|), where |og,t| is the
+L132@P3: number of output tokens in this conversation. Then the overall loss can be formulated as follows:
+L133@P3: J (θ) = E(Q,A)∼D,{og,t}G
+L134@P3: g=1∼πθold (·|Q, og,t−1)
+L135@P3: "
+L136@P3: 1
+L137@P3: PG
+L138@P3: g=1
+L139@P3: PTg
+L140@P3: t=1 |og,t|
+L141@P3: X
+L142@P3: G
+L143@P3: g=1
+L144@P3: X
+L145@P3: Tg
+L146@P3: t=1
+L147@P3: |
+L148@P3: Xog,t|
+L149@P3: i=1
+L150@P3: 
+L151@P3: ℓ
+L152@P3: clip
+L153@P3: g,t,i − β DKL(πθ∥πref)
+L154@P3: 
+L155@P3: #
+L156@P3: ,
+L157@P3: where ℓ
+L158@P3: clip
+L159@P3: g,t,i = min 
+L160@P3: ρg,t,i(θ)Aˆ
+L161@P3: g,t,i, clip
+L162@P3: ρg,t,i(θ), 1 − εlow, 1 + εhighAˆ
+L163@P3: g,t,i
+L164@P3: .
+L165@P3: (3)
+L166@P3: Here πθ and πref denote the policy model and reference model, εlow and εhigh denote the lower and higher
+L167@P3: clipping factors as introduced in DAPO [37], and ρg,t,i(θ) refers to the importance sampling weight:
+L168@P3: ρg,t,i(θ) = πθ(og,t,i | Q, og,t,<i)
+L169@P3: πθold (og,t,i | Q, og,t,<i)
+L170@P3: . (4)
+L171@P3: In this vanilla approach, all the conversations within one group g share the same advantage, and the advantage
+L172@P3: without the normalization of standard deviation is calculated as [20]:
+L173@P3: Aˆ
+L174@P3: g,t,i = r
+L175@P3: outcome
+L176@P3: g − mean({r
+L177@P3: outcome
+L178@P3: g }
+L179@P3: G
+L180@P3: g=1). (5)
+L181@P3: The reward for the final answer correctness is calculated as:
+L182@P3: r
+L183@P3: outcome = I(is_equiv(A, Aˆ)), (6)
+L184@P3: where Aˆ is the predicted answer, and I(·) denotes the indicator function. This assigns a reward of 1 if the
+L185@P3: answer Aˆ produced by the answer agent ψθ matches the ground truth answer A, and 0 otherwise.
+L186@P3: With such end-to-end RL training, the long-context reasoning capability of this agent workflow is substantially
+L187@P3: enhanced, even enabling small-sized models to outperform big models that ingest the entire context in a single
+L188@P3: pass. However, indiscriminately updating on all chunks and the lack of an early exit mechanism still largely
+L189@P3: limit the memory stability and efficiency of the vanilla approach.
+L190@P3: 3 Methodology
+L191@P3: In this section, we introduce the gated recurrent memory (GRU-Mem), a recurrent memory workflow equipped
+L192@P3: with two gating mechanisms, for stable and efficient long-context reasoning. We first introduce the workflow
+L193@P3: of GRU-Mem in Section 3.1. After that, we then detail how to train the workflow with GRU-Mem using
+L194@P3: end-to-end reinforcement learning, including the tailored reward design and advantage calculation, in Section
+L195@P3: 3.2. Finally, we briefly introduce the inference strategies in Section 3.3.
+L196@P3: 3.1 Gated Recurrent Memory Workflow
+L197@P3: To address the risk of memory explosion and lack of an exit mechanism, we introduce two gating mechanisms
+L198@P3: in the recurrent workflow, the update gate (UG) and the exit gate (EG), inspired by the success of gating in
+L199@P3: GRUs [6] for addressing long-term sequence modeling.
+L200@P3: Specifically, GRU-Mem mainly changes the memory agent ϕθ while keeping the answer agent ψθ unchanged,
+L201@P3: extending the vanilla ϕθ with two extra actions for gate control [36]. It outputs a candidate memory Mˆ
+L202@P3: t and
+L203@P3: two binary gating signals, Ut and Et, indicating whether to update the memory and whether to terminate the
+L204@P3: loop, respectively. This process is formulated as follows:
+L205@P3: Ut,Mˆ
+L206@P3: t, Et = ϕθ(Q, Ct,Mt−1). (7)
+L207@P3-4: 4Figure 2 The memory updating process with the gated recurrent memory (GRU-Mem). At each time step t, the
+L208@P4: memory agent ϕθ decides: (1) whether to update the memory Mt with the candidate memory Mˆ t or to keep the
+L209@P4: previous memory Mt−1 unchanged, based on the update gate status Ut (True for updating and False for retaining
+L210@P4: Mt−1); and (2) whether to stop scanning further chunks, based on the exit gate status Et (True for exiting and False
+L211@P4: for continuing processing).
+L212@P4: You should reason about whether the new section contains useful information, what to update,
+L213@P4: and what to do next first between <think> and </think>.
+L214@P4: If the new section contains useful information about the problem, you should first generate
+L215@P4: <check>yes</check>. After that, update the new memory between <update> and </update>.
+L216@P4: If the new section does not contain useful information about the problem, you should first
+L217@P4: generate <check>no</check>. After that, you should keep the previous memory unchanged
+L218@P4: between <update> and </update>.
+L219@P4: In the end, if you haven’t collected enough information for the problem, return
+L220@P4: <next>continue</next>. ONLY when enough information is collected, return <next>end</next>.
+L221@P4: Figure 3 Prompt of GRU-Mem (partial).
+L222@P4: To achieve this, the memory agent ϕθ responds by following a structured output format (see prompts in Figure
+L223@P4: 3 and Appendix C, with case studies in Appendix E). The process of one single step t of ϕθ in GRU-Mem
+L224@P4: is illustrated in Figure 2. It first produces intermediate reasoning enclosed by <think> and </think>, and
+L225@P4: then emits an update decision within <check> and </check>, where "yes" (i.e., Ut == True) triggers a
+L226@P4: memory update and "no" (i.e., Ut == False) skips it. Next, it outputs the candidate memory Mˆ
+L227@P4: t within
+L228@P4: <update> and </update>. If Ut == True, the memory will be updated with the candidate memory (i.e.,
+L229@P4: Mt ← Mˆ
+L230@P4: t). If Ut == False, the previous memory Mt−1 will be adopted while the candidate memory Mˆ
+L231@P4: t
+L232@P4: will be discarded (i.e., Mt ← Mt−1). Finally, it decides whether to continue collecting evidence between
+L233@P4: <next> and </next>, where "continue" means continuing the recurrent loop and "end" means terminating
+L234@P4: the loop. Once terminated, the final memory Mt will be sent into the answer agent ψθ immediately for
+L235@P4: answering the question. The detailed process of GRU-Mem is described in Algorithm 1.
+L236@P4: 3.2 Workflow Optimization with End-to-End RL
+L237@P4: To teach the memory agent ϕθ when to correctly activate the update gate and the exit gate, we explicitly
+L238@P4: reward correct gate status generation behaviors, beyond merely rewarding the final answer correctness. In this
+L239@P4: section, we first introduce the reward design in Section 3.2.1. After that, we discuss how to combine these
+L240@P4: rewards for the advantage calculation in Section 3.2.2. More training details can be found in the Appendix B.
+L241@P4-5: 5Algorithm 1: Long Context Reasoning with GRU-Mem
+L242@P5: Input: Question Q, the chunk size s, the whole context C, and use_exit_gate: bool.
+L243@P5: Output: Answer to the question Aˆ.
+L244@P5: Initialize: initialize maximum turns T ← len(C)//s, divide the whole context C into T chunks {C1, · · · , CT },
+L245@P5: t ← 1, M0 ← None.
+L246@P5: while t ≤ T do
+L247@P5: //get the update status, candidate memory, and exit status
+L248@P5: Ut,Mˆ
+L249@P5: t, Et = ϕθ(Q, Ct,Mt−1)
+L250@P5: if Ut == True then
+L251@P5: Mt ← Mˆ
+L252@P5: t // update the memory
+L253@P5: else
+L254@P5: Mt ← Mt−1 // adopt the previous memory
+L255@P5: end if
+L256@P5: //(optional) exit based on the exit status
+L257@P5: if use_exit_gate == True and Et == True then
+L258@P5: break
+L259@P5: end if
+L260@P5: t ← t + 1
+L261@P5: end while
+L262@P5: //answer the question based on the final memory
+L263@P5: Aˆ = ψθ(Q,Mt)
+L264@P5: return Aˆ.
+L265@P5: GRU-Mem
+L266@P5: 3.2.1 Reward Design
+L267@P5: Outcome reward. For the outcome reward, we adopt the same reward as introduced in Equation 6. We assign
+L268@P5: the identical outcome reward r
+L269@P5: outcome
+L270@P5: g
+L271@P5: for all the conversations (og,1, og,2, ..., og,Tg) within the whole trajectory
+L272@P5: in group g.
+L273@P5: Update reward. To learn correctly activating the update gate, for each conversation at step t, we reward
+L274@P5: for generating the correct update gate status Ut. Specifically, for chunks that contain evidence, the memory
+L275@P5: agent is rewarded when generating <check>yes</check> (i.e., Ut == True), whereas for chunks without
+L276@P5: evidence, it is rewarded when generating <check>no</check> (i.e., Ut == False). This reward at step t can
+L277@P5: be formulated as follows:
+L278@P5: r
+L279@P5: update
+L280@P5: t =
+L281@P5: (
+L282@P5: 1, Ut is correct
+L283@P5: −1, Ut is incorrect.
+L284@P5: (8)
+L285@P5: Exit reward. To learn the exit gate, we reward the whole trajectory when exiting at the correct position
+L286@P5: (i.e., the turn that contains the last evidence required for answering the question, namely tlast evidence). This
+L287@P5: means the memory agent is required to generate <next>end</next> (i.e., Et == True) when recognizing the
+L288@P5: occurrence of the last evidence, and generate <next>continue</next> (i.e., Et == False). In other cases,
+L289@P5: all the conversations within the trajectory get punished. This reward is formulated as follows:
+L290@P5: r
+L291@P5: exit =
+L292@P5: 
+L293@P5: 
+L294@P5: 
+L295@P5: −0.75, texit < tlast evidence
+L296@P5: 0, texit = tlast evidence
+L297@P5: −0.5, texit > tlast evidence.
+L298@P5: (9)
+L299@P5: Here, the texit denotes the turn that the memory agent ϕθ decides to exit the workflow. This reward design
+L300@P5: means the correct exit gate status Et generation behavior does not get punished, and an early exit behavior
+L301@P5: gets more punishment than a late exit behavior due to the evidence insufficiency.
+L302@P5: Format reward. To ensure that the generation og,t of the memory agent ϕθ can be parsed correctly, we
+L303@P5: introduce an additional format reward rformat. We check whether the format meets the requirement of enclosed
+L304@P5: sequence of <think> </think>, <check> </check>, <update> </update>, and <next> </next>. Additionally,
+L305@P5-6: 6Figure 4 The advantage calculation process. The trajectory-level advantage Aˆtraj
+L306@P6: g,t and the turn-level advantage Aˆturn
+L307@P6: g,t
+L308@P6: are calculated separately. They are combined into the total advantage with α (i.e., Aˆg,t,i = αAˆtraj
+L309@P6: g,t,i + (1 − α)Aˆturn
+L310@P6: g,t,i).
+L311@P6: the content between <check> and </check> must be "yes" or "no", and the content between <next> and
+L312@P6: </next> must be "continue" or "end". We make this reward strict so that only when all the generation
+L313@P6: output (og,1, og,2, ..., og,Tg) meets the format correctness, they will get a reward of 1. Otherwise, all the
+L314@P6: generation outputs get a reward of 0. This strict design is because we can not infer whether the incorrect
+L315@P6: format is caused by the previous erroneous parsing. This reward is formulated as:
+L316@P6: r
+L317@P6: format =
+L318@P6: (
+L319@P6: 1, The format of all turns is correct
+L320@P6: 0, Otherwise.
+L321@P6: (10)
+L322@P6: The overall trajectory-level reward. Since all the generation outputs (og,1, og,2, ..., og,Tg) in the group g share
+L323@P6: the same outcome reward, exit reward, and format reward, they can be combined as one total trajectory-level
+L324@P6: reward r
+L325@P6: traj
+L326@P6: g as follows:
+L327@P6: r
+L328@P6: traj
+L329@P6: g = r
+L330@P6: outcome
+L331@P6: g + r
+L332@P6: exit
+L333@P6: g + r
+L334@P6: format
+L335@P6: g
+L336@P6: . (11)
+L337@P6: 3.2.2 Advantage Calculation
+L338@P6: We calculate the trajectory-level advantage Aˆtraj
+L339@P6: g,t,i and the turn-level advantage Aˆturn
+L340@P6: g,t,i respectively [28]. After
+L341@P6: that, we combine them with a hyperparameter α for more flexible control. This is inspired by recent works of
+L342@P6: disentangling advantage calculation for stabilizing the training with different rewards [19, 28]. Here, the two
+L343@P6: advantages are calculated as follows:
+L344@P6: Aˆtraj
+L345@P6: g,t,i = r
+L346@P6: traj
+L347@P6: g −
+L348@P6: 1
+L349@P6: G
+L350@P6: X
+L351@P6: G
+L352@P6: g=1
+L353@P6: r
+L354@P6: traj
+L355@P6: g
+L356@P6: , Aˆturn
+L357@P6: g,t,i = r
+L358@P6: update
+L359@P6: g,t −
+L360@P6: 1
+L361@P6: Gt
+L362@P6: X
+L363@P6: Gt
+L364@P6: g=1
+L365@P6: r
+L366@P6: update
+L367@P6: g,t . (12)
+L368@P6: As shown in Figure 4, the trajectory-level advantage Aˆtraj
+L369@P6: g,t,i is calculated between the trajectories of different
+L370@P6: groups. And the turn-level advantage Aˆturn
+L371@P6: g,t,i is calculated between turns at step t from different groups. For
+L372@P6: the turn-level advantage Aˆturn
+L373@P6: g,t,i calculation, the group size Gt at step t can be different from the trajectory
+L374@P6: group size G, since the workflow may exit at different step Tg under the control of the exit gate. Therefore,
+L375@P6: these early exited groups have a smaller Tg than others.
+L376@P6: Finally, the total advantage Aˆ
+L377@P6: g,t,i in Equation (3) is a combination of these two terms:
+L378@P6: Aˆ
+L379@P6: g,t,i = αAˆtraj
+L380@P6: g,t,i + (1 − α)Aˆturn
+L381@P6: g,t,i , (13)
+L382@P6: where α is a hyperparameter for balancing two terms. The policy model will be optimized with the loss J (θ),
+L383@P6: which is based on the calculated advantage Aˆ
+L384@P6: g,t,i.
+L385@P6-7: 7Table 1 The performance comparison across diverse long-context tasks.
+L386@P7: Tasks
+L387@P7: Scale Method Avg. Metric HQA SQuAD SK-1 SK-2 SK-3 MK-1 MK-2 MK-3 MQ MV
+L388@P7: 7B
+L389@P7: MemAgent Perf. % ↑ 76.07 79.56 99.78 95.54 97.66 97.21 75.78 95.98 88.37 81.70
+L390@P7: Time s ↓ 463.38 162.34 378.51 420.38 419.74 412.93 349.61 403.60 419.53 407.89
+L391@P7: GRU-Mem (w/o EG) Perf. % ↑ 75.59 80.73 100.00 95.43 95.98 98.10 67.52 93.53 96.43 95.23
+L392@P7: Time s ↓ 284.41 85.03 135.60 171.57 154.03 168.54 258.40 242.35 156.62 153.08
+

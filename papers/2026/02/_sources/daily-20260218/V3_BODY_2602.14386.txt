@@ -1,0 +1,794 @@
+Beyond Token-Level Policy Gradients for Complex Reasoning with Large Language Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+2.1 Multi - Token Prediction with LLMs
+2.2 Post - Training RL Algorithms
+3 Preliminaries
+3.1 Importance Sampling Strategy in Policy Optimization
+3.2 Multi - Token Prediction Mechanism
+4 Multi-token Objective
+4.1 From Single-Token to Multi-Token
+4.2 Multi-Token Policy-Gradient Objective
+5 Experimental results
+5.1 Experimental Settings
+5.2 Task Performance
+5.3 Analysis of Training Stability
+5.4 Ablation Study of MPO Weights
+5.5 The Bias–variance Trade - off in MPO
+5.6 Noise Analysis of Multi-token Prediction
+5.7 Efficiency Analysis
+6 Conclusion
+References
+A Implementation Details
+A.1 MTP Modules
+A.2 Dataset and Training Parameters
+A.3 MPO Training Process
+A.4 Potential Risks
+B Discussion of Multi-Token Approach
+B.1 Intuitive Example and Motivation
+B.2 Theoretical Derivation and Bias Reduction
+B.2.1 Problem Setup and Notation
+B.2.2 K-Step / Multi-Token Core Idea
+B.2.3 Bias Analysis
+B.2.4 Expected Advantage Bias
+C Multi-token Value Estimation
+C.1 Multi-Token Value Heads
+C.2 Effect of Block size on Value Estimation
+D Discussion of Efficiency
+E Usage of Large Language Models
+F Reproducibility
+License: CC BY 4.0
+arXiv:2602.14386v1 [cs.CL] 16 Feb 2026
+Beyond Token-Level Policy Gradients for Complex Reasoning with Large Language Models
+Mufan Xu
+Email: xmuffins0610@gmail.com
+Kehai Chen
+Email: niuzhengyu@baidu.com
+Xuefeng Bai
+Affiliation: School of Computer Science and Technology, Harbin Institute of Technology, China
+Email: chenkehai@hit.edu.cn
+Zhengyu Niu
+Affiliation: Baidu Inc., Beijing, China
+Email: baixuefeng@hit.edu.cn
+Muyun Yang
+Affiliation: School of Computer Science and Technology, Harbin Institute of Technology, China
+Email: yangmuyun@hit.edu.cn
+Tiejun Zhao
+Affiliation: School of Computer Science and Technology, Harbin Institute of Technology, China
+Email: tjzhao@hit.edu.cn
+Min Zhang
+Affiliation: School of Computer Science and Technology, Harbin Institute of Technology, China
+Email: zhangmin2021@hit.edu.cn
+Abstract
+Existing policy-gradient methods for auto-regressive language models typically select subsequent tokens one at a time as actions in the policy.
+While effective for many generation tasks, such an approach may not fully capture the structure of complex reasoning tasks, where a single semantic decision is often realized across multiple tokens—for example, when defining variables or composing equations. This introduces a potential mismatch between token-level optimization and the inherently block-level nature of reasoning in these settings.
+To bridge this gap, we propose M ulti-token P olicy Gradient O ptimization ( MPO ), a framework that treats sequences of K K consecutive tokens as unified semantic actions.
+This block-level perspective enables our method to capture the compositional structure of reasoning trajectories and supports optimization over coherent, higher-level objectives.
+Experiments on mathematical reasoning and coding benchmarks show that MPO outperforms standard token-level policy gradient baselines, highlight the limitations of token-level policy gradients for complex reasoning, motivating future research to look beyond token-level granularity for reasoning-intensive language tasks. 1 1
+1
+All codes will be released upon acceptance.
+$\dagger$ $\dagger$ footnotetext: Corresponding author.
+1 Introduction
+Large language models (LLMs) have become the foundation of modern natural language understanding and generation ( Kumar, 2024 ; Jiang et al., 2024 ) , achieving remarkable results through large-scale pretraining and autoregressive modeling ( Tang et al., 2025 ) . Recently, there has been increasing interest in leveraging policy gradient methods to further fine-tune these models, with the aim of enhancing their capacity for complex reasoning and long-horizon dependency modeling ( Ouyang et al., 2022 ) . Among these methods, Proximal Policy Optimization (PPO) has emerged as a dominant framework, offering efficient and stable updates for reinforcement learning-based fine-tuning in LLMs ( Schulman et al., 2017 ) . Other advanced methods, such as Group Relative Policy Optimization (GRPO) ( Shao et al., 2024 ) and Decoupled Clip and Dynamic Sampling Policy Optimization (DAPO) ( Yu et al., 2025 ) , employ group-based and adaptive sampling strategies to address the challenges of structured reasoning and mathematical problem-solving.
+Figure 1: Left : In reasoning tasks such as mathematical problem-solving or code generation, the model’s decision process often spans across blocks of tokens—such as equations or functions—rather than being determined by each token independently; Right : illustration of token-level (NTP/PPO) vs. block-level (MTP/MPO) optimization. MPO aggregates K tokens as a semantically meaningful block for prediction and optimization, thereby better capturing sequence structure and long-range dependencies.
+However, as shown in Figure 1 left, in complex reasoning tasks such as mathematical reasoning, decision-making (like defining variables or completing equations) evolves over semantic units which contains multiple tokens. Existing policy gradient techniques decompose these structured reasoning steps into a series of local token predictions, disrupting the coherence of the underlying semantic actions (Figure 1 right).
+This fundamental granularity mismatch calls for optimization frameworks that transcend the limitations of token-level actions, enabling more semantically meaningful and globally coherent reasoning abilities in large language models ( Mirzadeh et al., 2024 ; Zhu et al., 2024 ; Zhang et al., 2025 ) . Overcoming this issue calls for training strategies that capture reasoning actions at a coarser, semantically meaningful level beyond single-token updates.
+In this paper, we introduce Multi-token Policy Gradient Optimization (MPO), a framework that incorporates block-level action into the policy gradient process.
+As illustrated in Figure 1 right, instead of treating each token generation as an isolated action, MPO aggregates contiguous blocks of K K tokens and unites importance sampling ratios over them. MPO allows the model to consider multiple correlated tokens as a single semantic action, better preserving the internal structure of reasoning steps such as variable definitions, function calls, or equation formations. This block-level optimization encourages the policy to plan over meaningful reasoning segments rather than isolated symbols, thus maintaining consistency across intermediate decisions and improving global reasoning coherence. MPO only modifies the importance sampling ratio; it remains broadly compatible with existing policy-gradient frameworks and can be seamlessly integrated into contemporary LLM post-training pipelines. Our main contributions are:
+1.
+We propose Multi-token Policy Gradient Optimization (MPO) , which enables the policy to optimize over structured reasoning units rather than isolated tokens.
+2.
+We incorporate structural multi-token optimization into the post-training stage of LLMs, revealing its potential to enhance reasoning coherence and informing new directions for policy-gradient research.
+3.
+MPO consistently outperforms token-level policy gradient baselines on mathematical reasoning and code generation benchmarks, demonstrating its effectiveness in improving reasoning ability during post-training.
+2 Related Work
+2.1 Multi - Token Prediction with LLMs
+Multi-token prediction (MTP) is an extension of standard auto-regressive language modeling, where typically, the model is trained to predict only the immediate next token given the preceding context. Gloeckle et al. ( Gloeckle et al., 2024 ) propose using multiple prediction heads to forecast several tokens from each context position, improving sample efficiency and inference speed on coding and generative benchmarks. This approach demonstrates stronger induction and reasoning ability gains, particularly at larger model scales like DeepSeek V3 ( Liu et al., 2024 ) . Gerontopoulos et al. ( Gerontopoulos et al., 2025 ) extend this to freeze pre - trained models and add learnable "register tokens" to support multi - token prediction without modifying the backbone.
+While previous works on multi-token prediction enhanced LLM’s sample efficiency and accelerated inference, our work extends the MTP concept from pre-training or inference use into the realm of policy-gradient optimization.
+2.2 Post - Training RL Algorithms
+Reinforcement Learning from Human Feedback (RLHF) is an approach to align language models with human preferences by optimizing the policy using reinforcement learning on preference-labeled data.
+PPO ( Schulman et al., 2017 ) introduced the clipped surrogate objective to stabilize updates, becoming the backbone of early RLHF such as InstructGPT ( Ouyang et al., 2022 ) .
+Building on PPO, approaches such as VinePPO ( Kazemnejad et al., 2025 ) introduce intermediate rollouts to facilitate more accurate long-context credit assignment, thereby enhancing policy optimization in autoregressive frameworks.
+Group Relative Policy Optimization (GRPO) ( Shao et al., 2024 ) computes advantages by comparing multiple sampled completions per prompt (group - based advantage), eliminating the need for a value network and enhancing learning on reasoning tasks.
+DAPO (Decoupled Clip and Dynamic Sampling Policy Optimization) ( Yu et al., 2025 ) further refines GRPO’s token - level loss by allowing asymmetric clipping bounds (“clip - higher”) and dynamic sampling to maintain a helpful gradient signal.
+VAPO ( Yue et al., 2025 ) integrates value - based methods into reasoning and RLHF, augmenting PPO variants with adaptive GAE and value pretraining for enhanced stability and performance.
+GSPO ( Zheng et al., 2025 ) (Group Sequence Policy Optimization) optimizes at the sequence level using importance sampling and clipping, improving stability and efficiency in policy optimization for LLMs. However, our MPO focuses on block-level actions, better aligning with the semantic reasoning units which are typically local blocks rather than entire sequences.
+CISPO ( Chen et al., 2025 ) (Minimax-style policy optimization) methods have been proposed mainly in adversarial language alignment, thus falling outside our comparison.
+While prior work enhanced PPO variants via sampling tweaks, decoupled clipping, or value modeling, to our knowledge, none have incorporated multi-token action in policy gradient optimization process as illustrated in Figure 1 .
+3 Preliminaries
+We first review existing approaches to importance sampling in policy optimization—specifically PPO and its extensions such as GRPO—to clarify their formulation and highlight their limitations. This sets the stage for introducing our method, which extends importance sampling to account for longer-horizon behavior via multi-token predictions.
+3.1 Importance Sampling Strategy in Policy Optimization
+Proximal Policy Optimization (PPO) ( Schulman et al., 2017 ) relies on importance sampling to support multiple epochs of minibatch updates with trajectories collected under a previous policy. The surrogate objective uses:
+r t = π θ ​ ( a t ∣ s t ) π θ old ​ ( a t ∣ s t ) , \begin{split}r_{t}=\frac{\pi_{\theta}(a_{t}\mid s_{t})}{\pi_{\theta_{\text{old}}}(a_{t}\mid s_{t})},\end{split}
+(1)
+and the clipped PPO loss is
+J ⁡ ( θ ) = 𝔼 t ​ [ min ⁡ ( r t ​ A t ^ , clip ⁡ ( r t , 1 ± ϵ ) ​ A t ^ ) ] , \begin{split}J(\theta)=\mathbb{E}_{t}\left[\min\big(r_{t}\hat{A_{t}},\mathrm{clip}(r_{t},\,1\pm\epsilon)\hat{A_{t}}\big)\right],\end{split}
+(2)
+where A t ^ \hat{A_{t}} is the advantage estimate, and the clipping constrains large updates to maintain stability. Generalized Reward Policy Optimization (GRPO) ( Shao et al., 2024 ) modifies the importance sampling ratio by introducing group-relative advantage sampling. The same importance ratio r t = π θ ​ ( a t | s t ) π θ old ​ ( a t | s t ) r_{t}=\frac{\pi_{\theta}(a_{t}|s_{t})}{\pi_{\theta_{\text{old}}}(a_{t}|s_{t})} is used per sample, and the loss aggregates contributions averaged over sampled actions. Decoupled Clip and Dynamic Sampling Policy Optimization (DAPO) similarly builds on this framework by adapting the clipping threshold and employing rejection sampling, but does not alter the fundamental importance sampling ratio.
+However, in the context of language modeling, where accurate semantics and the maintenance of long-range dependencies depend on structural token blocks, the commonly used token-level ratios fail to capture behavioral differences or dependencies that span multiple steps, and the standard per-step ratio may become highly volatile ( Metelli et al., 2020 ; Papini et al., 2024 ) .
+Figure 2: (a) Demonstration of the implementation of MPO warm-up and training process; (b) illustration of the united importance sampling ratio proposed in MPO method; (c) Comparison between single-token and multi-token optimization, multi-token optimization jointly models contiguous tokens as a structural reasoning action.
+3.2 Multi - Token Prediction Mechanism
+To address the limited expressiveness of token-level representations, we turn to a multi-token representation mechanism. The MTP implementation introduced in DeepSeek - V3/R1 ( Liu et al., 2024 ) allows the model at each position t t to predict up to K K tokens o t + 1 , o t + 2 , … , o t + K o_{t+1},o_{t+2},\dots,o_{t+K} through a sequence of MTP modules that preserve causal consistency (we provide detailed implementation of MTP modules in Appendix A ). Specifically, the probability distribution on position t + k t+k is:
+h t k = L k ​ ( M k ​ ( h t k − 1 , Emb ⁡ ( o t + k − 1 ) ) ) , \begin{split}h_{t}^{k}=L_{k}\bigl(M_{k}\bigl(h_{t}^{k-1},\mathrm{Emb}(o_{t+k-1})\bigr)\bigr),\end{split}
+(3)
+where h t k ∈ ℝ h h_{t}^{k}\in\mathbb{R}^{h} is the hidden state of the k t ​ h k^{th} MTP module, note that h t 0 h_{t}^{0} represents the hidden state output of the backbone model for token o t o_{t} . M k M_{k} is a learned projection layer, L k L_{k} is a Transformer decoder block, and Emb ( o t + k ) (o_{t+k}) is the embedding of token o t + k o_{t+k} . Each module outputs with an individual softmax prediction for the probability distribution of the t + k + 1 t+k+1 token of the sequence:
+p ( o t + k ∣ q , o 1 : t + k − 1 ) = LM _ Head ( h t k ) , \begin{split}p(o_{t+k}\mid q,o_{1:t+k-1})=\mathrm{LM\_Head}(h_{t}^{k}),\end{split}
+(4)
+for k = 2 , … , K k=2,\dots,K . In supervised fine-tuning settings, the MTP objective is defined as:
+ℒ MTP = − ∑ k = 2 K α k log p ( o t + k ∣ q , o 1 : t + k − 1 ) . \begin{split}\mathcal{L}_{\text{MTP}}=-\sum_{k=2}^{K}\alpha_{k}\log p(o_{t+k}\mid q,o_{1:t+k-1}).\end{split}
+(5)
+The loss of the MTP module is assigned a decaying weight α k \alpha_{k} to simulate the diminishing weights of tokens. Although multi-token prediction has been adopted in various pre-training and fine-tuning settings to improve generation efficiency and performance, its integration into reinforcement-based post-training remains limited. Existing policy - gradient approaches, including PPO, GRPO, and DAPO, remain confined to token - level updates and overlook the structured, multi - step action patterns inherent to reasoning - oriented generation.
+Following previous works ( Cai et al., 2024 ; Ankner et al., 2024 ) , MPO first initializes the MTP modules using the last layer of the backbone model, then warm-up these modules using the objective ( 5 ) to ensure the quality of multi - token prediction, see Appendix A for more details.
+4 Multi-token Objective
+To address the limitations discussed in Section 3 , we move beyond the conventional token-level optimization paradigm and introduce a framework that directly incorporates block-level semantic structure into policy gradient updates, thereby better aligning model optimization with the demands of complex reasoning.
+4.1 From Single-Token to Multi-Token
+Let q i q_{i} denote the prompt (input) for trajectory i i , and o i , 1 : t o_{i,1:t} denote the sequence of generated tokens up to position t t for trajectory i i . The usual per-token importance sampling ratio r i , t r_{i,t} for trajectory i i at position t t is defined as:
+r i , t ( θ ) = π θ ( o i , t + 1 ∣ q i , o i , 1 : t ) π θ old ( o i , t + 1 ∣ q i , o i , 1 : t ) . \begin{split}r_{i,t}(\theta)\;=\;\frac{\pi_{\theta}(o_{i,t+1}\mid q_{i},o_{i,1:t})}{\pi_{\theta_{\text{old}}}(o_{i,t+1}\mid q_{i},o_{i,1:t})}.\end{split}
+(6)
+With the help of multi-token prediction modules, we can replace the importance sampling ratio with an aggregated ratio over spans of length K (as shown in Figure 2 (b)):
+r i , t ( θ ) = π θ ( o i , t + 1 : t + K ∣ q i , o i , 1 : t ) π θ old ( o i , t + 1 : t + K ∣ q i , o i , 1 : t ) . \begin{split}r_{i,t}(\theta)\;=\;\frac{\pi_{\theta}\bigl(o_{i,t+1:t+K}\mid q_{i},o_{i,1:t}\bigr)}{\pi_{\theta_{\text{old}}}\bigl(o_{i,t+1:t+K}\mid q_{i},o_{i,1:t}\bigr)}.\end{split}
+(7)
+The new objective then sums (or clips) these block-level ratios times advantages. This encourages coherent multi-token patterns rather than independent next-token moves.
+For example, when constructing the deepseek-r1 reasoning model, the pre-training stage cost around 90% of the total cost, and the post-training (supervised fine-tuning and then reinforcement learning alignment) cost the remaining 10% budget. For those pretrained LLMs that did not use MTP loss during their pre-training process, we provide a solution to update the model’s multi-token prediction ability in a relatively lower-cost post-training way.
+4.2 Multi-Token Policy-Gradient Objective
+Let each trajectory i i produce a sequence of generated tokens using the original auto-regressive strategy
+o i = ( o i , 1 , o i , 2 , … , o i , | o i | ) o_{i}=\left(o_{i,1},o_{i,2},\dots,o_{i,|o_{i}|}\right) .
+After generating the base sequence o i , 1 : t o_{i,1:t} for prompt q i q_{i} , we compute the multi-token importance sampling ratio by sampling K K additional tokens in an auto-regressive fashion. Specifically, at each position t t , for each n ∈ [ 1 , K ] n\in[1,K] , the generation of token o i , t + n o_{i,t+n} is conditioned on the entire prefix o i , 1 : t + n − 1 o_{i,1:t+n-1} , meaning each new token is predicted based on all previously generated tokens, including those just sampled within the span. The revised multi-token importance sampling ratio is thus formulated as:
+R i , t ( K ) ( θ ) = ∏ n = 1 K π θ ( o i , t + n ∣ o i , 1 : t + n − 1 ) π θ old ( o i , t + n ∣ o i , 1 : t + n − 1 ) . \begin{split}R_{i,t}^{(K)}(\theta)=\prod_{n=1}^{K}\frac{\pi_{\theta}\bigl(o_{i,t+n}\mid o_{i,1:t+n-1}\bigr)}{\pi_{\theta_{\text{old}}}\bigl(o_{i,t+n}\mid o_{i,1:t+n-1}\bigr)}.\end{split}
+(8)
+Though equation 8 can effectively reduce bias by taking more future actions into consideration (see mathematical derivations in Appendix B.2 ), such a production form of the importance ratio tends to dramatically increase the variance of sampling ratios, which further leads to a large clip fraction and hinders the optimization process in practice.
+Inspired by the Log - COP - TD method ( Hallak and Mannor, 2017 ) , we adopt an alternative trade - off formulation to control variance, replacing the product of ratios with a weighted log - sum:
+R ~ i , t ( K ) ​ ( θ ) = exp ⁡ ( ∑ n = 1 K β n ​ log ⁡ r i , t + n ​ ( θ ) ) , r i , t + n ​ ( θ ) = π θ ( o i , t + n ∣ o i , 1 : t + n − 1 ) π θ old ( o i , t + n ∣ o i , 1 : t + n − 1 ) , \begin{split}\widetilde{R}_{i,t}^{(K)}(\theta)&=\exp\!\left(\sum_{n=1}^{K}\beta_{n}\log r_{i,t+n}(\theta)\right),\\
+r_{i,t+n}(\theta)&=\frac{\pi_{\theta}\!\left(o_{i,t+n}\mid o_{i,1:t+n-1}\right)}{\pi_{\theta_{\text{old}}}\!\left(o_{i,t+n}\mid o_{i,1:t+n-1}\right)},\end{split}
+(9)
+where β n {\beta_{n}} are non - negative step - wise weights satisfying ∑ n = 1 K β n = 1 \sum_{n=1}^{K}\beta_{n}=1 . Based on the weight of the first MTP module, denoted as β 2 \beta_{2} , we define
+β k = β 2 × λ k − 2 , k ≥ 2 ; 0 ≤ λ ≤ 1 , \begin{split}\beta_{k}=\beta_{2}\times\lambda^{k-2},\quad k\geq 2;0\leq\lambda\leq 1,\end{split}
+(10)
+where λ \lambda is a hyperparameter controlling the rate of information decay.
+This formulation applies a decaying weight to the ( k − 1 ) th (k-1)^{\text{th}} MTP module, thereby incorporating the influence of multi-token information with diminishing strength. This design prioritizes the impact of nearer token predictions while still incorporating longer-horizon contributions in a controllable manner. We then propose the policy-gradient surrogate objective of MPO, analogous to PPO but using the K K -step ratio at each position t t :
+J M ​ P ​ O ( θ ) = 𝔼 q i ∼ D , { o i } i = 1 G ∼ π θ o ​ l ​ d ( . | q i ) [ 1 ∑ i = 1 G | o i | ∑ i = 1 G ∑ t = 1 | o i | min ( R ~ i , t ( K ) ( θ ) A ^ i , t , clip ( R ~ i , t ( K ) ( θ ) , 1 − ϵ l ​ o ​ w , 1 + ϵ h ​ i ​ g ​ h ) A ^ i , t ) ] , \begin{split}&J_{MPO}(\theta)=\mathbb{E}_{q_{i}\sim D,\;{\{o_{i}\}}_{i=1}^{G}\sim\pi_{\theta_{old}}(.|q_{i})}\\
+&\Biggl[\frac{1}{\sum_{i=1}^{G}|o_{i}|}{\sum_{i=1}^{G}}\sum_{t=1}^{|o_{i}|}\min\Bigl(\widetilde{R}_{i,t}^{(K)}(\theta)\,\hat{A}_{i,t},\\
+&\mathrm{clip}\bigl(\widetilde{R}_{i,t}^{(K)}(\theta),1-\epsilon_{low},1+\epsilon_{high}\bigr)\,\hat{A}_{i,t}\Bigr)\Biggr],\end{split}
+(11)
+where A ^ i , t \hat{A}_{i,t} is the estimated advantage at position t t . By jointly observing K K consecutive tokens in a single step, the estimator encourages optimization to account for a broader, structurally coherent view at the level of multi - token reasoning chunks (as illustrated in Figure 2 (c)). In this paper, we focus on the experiments with G = 1 G=1 and we set ϵ l ​ o ​ w = ϵ h ​ i ​ g ​ h \epsilon_{low}=\epsilon_{high} . We also conduct experiments with MTP-based value estimation in MPO, see Appendix C .
+5 Experimental results
+In this section, we provide a brief overview of our experimental setup, including the baselines, evaluation methods, and training hyperparameter configurations. And then, we analyze the task performance of MPO and the effects of introducing multi-token information and the training efficiency.
+5.1 Experimental Settings
+Model and Datasets. We implement MPO on three widely used instruction - tuned backbone models: Llama3.2 - 1B - Instruct ( Dubey et al., 2024 ) , DeepSeek - Distilled - Qwen2.5 - 1.5B, and DeepSeek - Distilled - Qwen2.5 - 7B ( Guo et al., 2025 ) , to evaluate its effectiveness across different architectures and model scales.
+We assess MPO on two mathematical reasoning benchmarks of varying difficulty, GSM8K ( Cobbe et al., 2021 ) (college - level) and MATH ( Hendrycks et al., 2021 ) (competition - level), and further evaluate its code generation capability on the HumanEval benchmark ( Chen, 2021 ) to test its cross - domain generalization. For HumanEval, we use coding benchmark MBPP ( Austin et al., 2021 ) as the training set. See Dataset statistics in Appendix A.2 .
+Figure 3: The performance of proposed MPO and baseline methods. MPO outperforms the baselines in most scenarios, demonstrating the effectiveness of aggregating block-wise information.
+Model
+Zero-Shot
+GRPO
+DAPO
+PPO
+MPO (Ours)
+Llama3.2 - 1B - Instruct
+0.354
+0.372
+0.396
+0.390
+0.403
+DeepSeek - Qwen2.5 - 1.5B
+0.451
+0.591
+0.603
+0.598
+0.640
+DeepSeek - Qwen2.5 - 7B
+0.689
+0.811
+0.817
+0.805
+0.841
+Table 1: The performance of proposed MPO and baseline methods on coding task HumanEval, MPO consistently outperforms the baselines, demonstrating the effectiveness of aggregating block-wise actions during optimization.
+Evaluation. We use pass@1 metric to evaluate the models’ accuracy in answering mathematical questions and coding completions, which focuses on the correctness of the final answer provided by the model upon completion of the reasoning process. For math problems, to unify the evaluation process, we use the answering format of "\boxed{answer}" . We select the most commonly used token-wise policy optimization strategies: PPO ( Schulman et al., 2017 ) , GRPO ( Shao et al., 2024 ) , and DAPO ( Yu et al., 2025 ) . In this paper, we mainly discuss the implementation and results of MPO based on PPO.
+Implementation. As mentioned in section 3.2 , we adopt a cold-start setting for both our proposed method and baselines, only warming up the MTP module before the training process of MPO.
+See Appendix A for more implementation details.
+5.2 Task Performance
+We conduct experiments to evaluate the performance of MPO. The results are shown in Figure 3 and Table 1 . The proposed method consistently outperforms the baseline approaches—including PPO, GRPO, and DAPO—across both GSM8K and MATH benchmarks, under both evaluated model architectures and scales.
+This improvement demonstrates that optimizing over block-level semantic actions is beneficial for the model.
+On the HumanEval benchmark (as shown in Table 1 ), MPO also achieves steady gains over PPO, GRPO, and DAPO, confirming that its advantages are not limited to symbolic reasoning but also extend to program synthesis tasks.
+Therefore, in code generation tasks, considering multi-step semantic dependencies plays a crucial role in ensuring both accuracy and coherence in generation.
+Although the performance of MPO on GSM8K with a 7B model is close to the baseline, it achieves better results on more challenging benchmarks, such as MATH and HumanEval, indicating its advantage in structured reasoning tasks with larger models.
+5.3 Analysis of Training Stability
+(a) Variance of importance sampling ratio.
+(b) IS Ratio Clip fraction among strategies.
+Figure 4: Comparison of the variance of importance sampling ratios and clip fraction during training.
+Dataset
+MPO Task Accuracy
+K=2
+K=3
+K=5
+GSM8K
+0.871
+0.875
+0.882
+MATH
+0.771
+0.753
+0.789
+(a) Analysis of the number of MTP modules.
+MTP Weight β 2 = \beta_{2}=
+0.08 0.08
+0.06 0.06
+0.04 0.04
+λ = 1.0 \lambda=1.0
+0.745
+0.773
+0.787
+λ = 0.9 \lambda=0.9
+0.756
+0.785
+0.760
+λ = 0.8 \lambda=0.8
+0.758
+0.789
+0.764
+(b) Grid Search of beta and decay rate.
+Figure 5: Effect of MTP block size K K and decay rate λ \lambda on training stability and performance. Extending the block size to K = 5 K=5 and applying a moderate decay λ = 0.8 \lambda=0.8 produces the most stable and effective result.
+As discussed in Section 4.2 , incorporating block-wise information broadens the optimization horizon of each action and helps reduce bias, particularly in mathematical reasoning and code generation tasks where semantic units naturally span multiple tokens.
+Empirically, we observe that MPO stabilizes the importance sampling ratio throughout training. As shown in Figure 4(a) and Figure 4(b) , analysis on GSM8K reveals that integrating multi-token information consistently lowers both the variance of the importance sampling ratio and the clip fraction during optimization. Notably, this stabilizing effect becomes more pronounced as the weights β k \beta_{k} associated with the MTP modules increase.
+5.4 Ablation Study of MPO Weights
+Another important question is how increasing the contribution of MTP weights influences learning dynamics. As shown in Figure 6 , we examine the effect of varying the proportion of multi-token information incorporated via MTP modules on the GSM8K dataset using the DeepSeek-Distill-Qwen - 1.5B model.
+The block-level contribution is controlled by adjusting the cumulative weights of the MTP modules (i.e., the sum of β 2 \beta_{2} to β K \beta_{K} ), while holding the decay factor fixed at λ = 0.8 \lambda=0.8 as defined in Eq. 10 .
+Increasing the proportion of future information initially enhances policy stability, as evidenced by reduced variance in importance sampling ratios and a lower frequency of gradient clipping.
+Optimal performance is achieved when approximately 10% 20% of the training signal originates from MTP modules.
+However, when this proportion becomes too large, the adopted ratio approximation and the noise introduced by multi-token prediction increase bias, ultimately weakening the alignment between gradient updates and the next-token action objective.
+Figure 6: The effect of varying the proportion of weights incorporated from the MTP modules.
+(a) Predicted token rank with avg. gradient norm.
+(b) Predicted token rank with training steps.
+Figure 7: Reliability analysis of the multi-token information.
+(a) Larger prediction errors correlate with higher gradient magnitudes.
+(b) Progressive improvement in the MTP module’s next-K-token prediction capability.
+5.5 The Bias–variance Trade - off in MPO
+Having analyzed the stability of MPO under moderate integration of multi-token information, we conducted a grid search over the number of aggregated tokens K K and the decay rate λ \lambda to assess their effects on training stability and optimization performance.
+As shown in Table 5(a) , increasing K K up to 5 leads to improved performance, suggesting that extending the decision horizon within this range is beneficial; however, larger K K values tend to introduce additional noise.
+Table 5(b) summarizes the effects of varying the decay rate λ \lambda and the cumulative MTP weight ∑ k = 2 K β k \sum_{k=2}^{K}\beta_{k} . Across all experiments, we keep the initial weight β 2 \beta_{2} small so that the total block-level contribution remains below 30%, which stabilizes training while preserving meaningful multi-token context. If β 2 \beta_{2} is too small (e.g., β 2 = 0.04 \beta_{2}=0.04 ), the stability of information from the MTP modules declines. In general, applying a decay term for more distant predictions improves stability, as appropriately discounting further predictions helps constrain variance while maintaining a sufficiently extended decision horizon—balancing bias reduction and training stability in MPO.
+5.6 Noise Analysis of Multi-token Prediction
+As discussed in section 5.4 , excessive MTP weights were found to reduce overall performance. We further examine whether such instability arises from noisy multi-token information. We use the logit rank of the predicted token—its position within the backbone model’s vocabulary distribution—as a proxy for prediction accuracy.
+Figure 7(a) shows the relationship between the 2 n ​ d 2^{nd} - token prediction rank and the average batch gradient norm under K = 2 K=2 and 3 3 .
+Higher ranks correlate with larger gradient norms, suggesting that less accurate multi-token predictions can indeed amplify gradient noise and destabilize training.
+Figure 7(b) further illustrates that, although only warmed up initially, the MTP module’s predictions improve steadily during training even without explicit entropy regularization.
+The impact of prediction noise remains controlled.
+5.7 Efficiency Analysis
+Training Efficiency. Table 2 and Table 3 summarize the resource overhead and efficiency of MPO on a single node with 8 × 8\times NVIDIA A100 (80 GB). For Table 3 we use Deepseek-Distill-Qwen2.5-1.5b as the base model, and we set group size=4 for GRPO and K=5 for MPO. The memory consumption of MPO is comparable to that of GRPO, while training runs approximately 30% faster on average. MPO contributes controlled training burden while offering substantial performance benefits. The additional parameters introduced by MTP are used solely during training to estimate multi-token policy ratios and are detached during inference, ensuring a fair comparison with baseline methods.
+Warm-up Strategy. In MPO, we include a brief warm - up phase; this design choice follows prior multi-head decoding frameworks ( Cai et al., 2024 ; Ankner et al., 2024 ) . The warm - up phase costs approximately 12 minutes while PPO or MPO training costs approximately 7 hours for 20 epochs on average. The additional time overhead is negligible compared to the main training stage. More discussion about efficiency is in Appendix D .
+Training Speed (Second per iteration)
+Model
+PPO
+K=3
+K=5
+Deepseek-Qwen2.5-1.5b
+25.6
+30.3
+33.3
+Llama3.2-1b
+19.1
+25.0
+28.3
+Table 2: The average training time with block size K.
+Method
+Memory Usage
+Time Per Step
+PPO
+22.1%
+25.6 s
+GRPO
+30.6%
+43.7 s
+MPO
+31.0%
+33.3 s
+Table 3: Memory and time efficiency.
+6 Conclusion
+In this paper, we propose Multi - Token Policy Gradient Optimization (MPO), mitigating the gap between token-level optimization and the structured reasoning behavior required by complex reasoning tasks.
+Experiments on GSM8K, MATH, and HumanEval show that MPO consistently outperforms standard policy - gradient baselines. Further analyses demonstrate that moderate incorporation of multi-token information stabilizes training by reducing gradient variance, and that there exists an optimal integration ratio balancing bias variance trade-off.
+Our paper not only introduces a practical multi-token policy gradient algorithm, but also marks a methodological shift that moves beyond token-level optimization in the post-training of LLMs.
+We hope this study inspires future research to further explore the granularity of policy learning and advance toward semantically structured decision-making process in the LLMs.
+Limitations
+MPO builds upon Multi-Token Prediction (MTP), a technique primarily explored in pre-training and speculative decoding. Its application to post-training optimization remains understudied, presenting several open research questions:
+1. Warmup Method. While MTP-based training has been shown to improve reasoning (DeepSeek V3 and subsequent work), applying it during post-training—especially to models not pre-trained with MTP (e.g., Llama-3, Qwen2.5)—may degrade final performance after reinforcement learning. Although MPO mitigates this by freezing the backbone, developing more effective warmup strategies remains an open challenge.
+2. Scaling Block Size. MPO incurs computational overhead as the number of MTP modules increases. Our experiments used up to K=5 modules, whereas prior work suggests larger K (e.g., 8) may yield further gains. Designing efficient methods to leverage longer future contexts is crucial, especially for scaling block-level policy optimization.
+3. Alternative Optimization Objectives. This work implements MPO based on a PPO-based objective. As noted in Section 4.2 , MPO could also be integrated with other objectives (e.g., GRPO and it variants), but implementing MPO based on GRPOs may encounter challenges like rebalancing the bias-variance trade-off. Investigating how MPO interacts with different surrogate objectives presents a promising direction for future work.
+References
+Ankner et al. (2024)
+Z. Ankner, R. Parthasarathy, A. Nrusimha, C. Rinard, J. Ragan-Kelley, and W. Brandon
+Hydra: sequentially-dependent draft heads for medusa decoding .
+arXiv preprint arXiv:2402.05109 .
+Cited by: Appendix D ,
+§3.2 ,
+§5.7 .
+Austin et al. (2021)
+J. Austin, A. Odena, M. Nye, M. Bosma, H. Michalewski, D. Dohan, E. Jiang, C. Cai, M. Terry, Q. Le, et al.
+Program synthesis with large language models .
+arXiv preprint arXiv:2108.07732 .
+Cited by: §A.2 ,
+§5.1 .
+Cai et al. (2024)
+T. Cai, Y. Li, Z. Geng, H. Peng, J. D. Lee, D. Chen, and T. Dao
+Medusa: simple llm inference acceleration framework with multiple decoding heads .
+In International Conference on Machine Learning ,
+pp. 5209–5235 .
+Cited by: §A.1 ,
+Appendix D ,
+§3.2 ,
+§5.7 .
+Chen et al. (2025)
+A. Chen, A. Li, B. Gong, B. Jiang, B. Fei, B. Yang, B. Shan, C. Yu, C. Wang, C. Zhu, et al.
+MiniMax-m1: scaling test-time compute efficiently with lightning attention .
+arXiv preprint arXiv:2506.13585 .
+Cited by: §2.2 .
+Chen (2021)
+M. Chen
+Evaluating large language models trained on code .
+arXiv preprint arXiv:2107.03374 .
+Cited by: §A.2 ,
+§5.1 .
+Cobbe et al. (2021)
+K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano, et al.
+Training verifiers to solve math word problems .
+arXiv preprint arXiv:2110.14168 .
+Cited by: §A.2 ,
+§5.1 .
+Dubey et al. (2024)
+A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Yang, A. Fan, et al.
+The llama 3 herd of models .
+arXiv e-prints , pp. arXiv–2407 .
+Cited by: §5.1 .
+Gerontopoulos et al. (2025)
+A. Gerontopoulos, S. Gidaris, and N. Komodakis
+Multi-token prediction needs registers .
+arXiv preprint arXiv:2505.10518 .
+Cited by: §2.1 .
+Gloeckle et al. (2024)
+F. Gloeckle, B. Y. Idrissi, B. Rozière, D. Lopez-Paz, and G. Synnaeve
+Better & faster large language models via multi-token prediction .
+In Proceedings of the 41st International Conference on Machine Learning ,
+pp. 15706–15734 .
+Cited by: §2.1 .
+Guo et al. (2025)
+D. Guo, D. Yang, H. Zhang, J. Song, R. Zhang, R. Xu, Q. Zhu, S. Ma, P. Wang, X. Bi, et al.
+Deepseek-r1: incentivizing reasoning capability in llms via reinforcement learning .
+arXiv preprint arXiv:2501.12948 .
+Cited by: §5.1 .
+Hallak and Mannor (2017)
+A. Hallak and S. Mannor
+Consistent on-line off-policy evaluation .
+In Proceedings of the 34th International Conference on Machine Learning-Volume 70 ,
+pp. 1372–1383 .
+Cited by: §4.2 .
+Hendrycks et al. (2021)
+D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt
+Measuring mathematical problem solving with the math dataset .
+arXiv preprint arXiv:2103.03874 .
+Cited by: §A.2 ,
+§5.1 .
+Jiang et al. (2024)
+R. Jiang, K. Chen, X. Bai, Z. He, J. Li, M. Yang, T. Zhao, L. Nie, and M. Zhang
+A survey on human preference learning for large language models .
+arXiv preprint arXiv:2406.11191 .
+Cited by: §1 .
+Kazemnejad et al. (2025)
+A. Kazemnejad, M. Aghajohari, E. Portelance, A. Sordoni, S. Reddy, A. Courville, and N. Le Roux
+VinePPO: refining credit assignment in rl training of llms .
+In Forty-second International Conference on Machine Learning ,
+Cited by: §2.2 .
+Kumar (2024)
+P. Kumar
+Large language models (llms): survey, technical frameworks, and future challenges .
+Artificial Intelligence Review 57 ( 10 ), pp. 260 .
+Cited by: §1 .
+Liu et al. (2024)
+A. Liu, B. Feng, B. Xue, B. Wang, B. Wu, C. Lu, C. Zhao, C. Deng, C. Zhang, C. Ruan, et al.
+Deepseek-v3 technical report .
+arXiv preprint arXiv:2412.19437 .
+Cited by: §A.1 ,
+§2.1 ,
+§3.2 .
+Metelli et al. (2020)
+A. M. Metelli, M. Papini, N. Montali, and M. Restelli
+Importance sampling techniques for policy optimization .
+Journal of Machine Learning Research 21 ( 141 ), pp. 1–75 .
+Cited by: §3.1 .
+Mirzadeh et al. (2024)
+S. I. Mirzadeh, K. Alizadeh, H. Shahrokhi, O. Tuzel, S. Bengio, and M. Farajtabar
+GSM-symbolic: understanding the limitations of mathematical reasoning in large language models .
+In The Thirteenth International Conference on Learning Representations ,
+Cited by: §1 .
+Ouyang et al. (2022)
+L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray, et al.
+Training language models to follow instructions with human feedback .
+Advances in neural information processing systems 35 , pp. 27730–27744 .
+Cited by: §1 ,
+§2.2 .
+Papini et al. (2024)
+M. Papini, G. Manganini, A. M. Metelli, and M. Restelli
+Policy gradient with active importance sampling .
+arXiv preprint arXiv:2405.05630 .
+Cited by: §3.1 .
+Schulman et al. (2017)
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+Proximal policy optimization algorithms .
+arXiv preprint arXiv:1707.06347 .
+Cited by: §1 ,
+§2.2 ,
+§3.1 ,
+§5.1 .
+Shao et al. (2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. Li, Y. Wu, et al.
+Deepseekmath: pushing the limits of mathematical reasoning in open language models .
+arXiv preprint arXiv:2402.03300 .
+Cited by: §1 ,
+§2.2 ,
+§3.1 ,
+§5.1 .
+Tang et al. (2025)
+Y. Tang, K. Chen, M. Yang, Z. Niu, J. Li, T. Zhao, and M. Zhang
+Thinking in character: advancing role-playing agents with role-aware reasoning .
+arXiv preprint arXiv:2506.01748 .
+Cited by: §1 .
+Yu et al. (2025)
+Q. Yu, Z. Zhang, R. Zhu, Y. Yuan, X. Zuo, Y. Yue, W. Dai, T. Fan, G. Liu, L. Liu, et al.
+Dapo: an open-source llm reinforcement learning system at scale .
+arXiv preprint arXiv:2503.14476 .
+Cited by: §1 ,
+§2.2 ,
+§5.1 .
+Yue et al. (2025)
+Y. Yue, Y. Yuan, Q. Yu, X. Zuo, R. Zhu, W. Xu, J. Chen, C. Wang, T. Fan, Z. Du, et al.
+Vapo: efficient and reliable reinforcement learning for advanced reasoning tasks .
+arXiv preprint arXiv:2504.05118 .
+Cited by: §2.2 .
+Zhang et al. (2025)
+X. Zhang, J. Cao, J. Wei, Y. Xu, and C. You
+Tokenization constraints in llms: a study of symbolic and arithmetic reasoning limits .
+arXiv preprint arXiv:2505.14178 .
+Cited by: §1 .
+Zheng et al. (2025)
+C. Zheng, S. Liu, M. Li, X. Chen, B. Yu, C. Gao, K. Dang, Y. Liu, R. Men, A. Yang, et al.
+Group sequence policy optimization .
+arXiv preprint arXiv:2507.18071 .
+Cited by: §2.2 .
+Zhu et al. (2024)
+Y. Zhu, X. Bai, K. Chen, Y. Xiang, J. Yu, and M. Zhang
+Benchmarking and improving large vision-language models for fundamental visual graph understanding and reasoning .
+arXiv preprint arXiv:2412.13540 .
+Cited by: §1 .
+Appendix A Implementation Details
+We will provide separate explanations of the overall MPO implementation process, the experimental parameter settings, and details of the code and hardware implementation.
+A.1 MTP Modules
+Figure 8: (a) The implementation of the MTP module used in MPO, the structure preserves causal consistency following Deepseek-V3; (b) Demonstration of the MPO warmup stage to initialize MTP Modules before the RL stage.
+Dataset
+# Train Samples
+# Test Samples
+Avg. Sample Length
+GSM8K
+7,473
+1,319
+∼ \sim 80 tokens
+MATH
+7,500
+5,000
+∼ \sim 200 tokens
+HumanEval
+1399 (MBPP)
+164
+∼ \sim 130 tokens
+Table 4: Statistics of datasets used for training and evaluation.
+The implementation of MPO requires the MTP module to predict the model’s policy distributions at multiple positions along a given trajectory i i , enabling the calculation of importance sampling coefficients over blockwise sequences. Achieving stable multi-position decision making depends on the MTP module’s ability to produce accurate predictions of multi-token policy distributions. These distributions cannot be directly modeled using only the backbone’s final layer and language output head, so an appropriate warmup is necessary. Although previous works has noted that MTP can improve the model’s reasoning ability during fine-tuning ( Liu et al., 2024 ) , to ensure fair comparisons, we do not backpropagate gradients to the backbone during MPO finetuning and only train the MTP module (as shown in Figure 8 ), which has also been adopted in previous efficient MTP decoding works ( Cai et al., 2024 ) . As we discussed previously, each MTP module and its corresponding LM head are deeply copied from the backbone model’s final layer and LM head, respectively, to avoid an overly complex initialization process.
+A.2 Dataset and Training Parameters
+We conduct experiments using three widely used mathematical reasoning and coding benchmarks: GSM8K ( Cobbe et al., 2021 ) , MATH ( Hendrycks et al., 2021 ) , and HumanEval ( Chen, 2021 ) . For HumanEval, we combined the sanitized and original data provided in coding benchmark MBPP ( Austin et al., 2021 ) to conduct MPO training.
+Table 4 summarizes the main statistics of these datasets. The question-answer pairs in both datasets are provided in a natural language format, suitable for language model-based reasoning experiments. The open source mathematical and coding benchmarks used do not contain any private information or offensive content.
+We shuffle and concatenate the training splits of two math datasets for MTP warm-up training. For MPO training, we conduct separate experiments on each dataset, using the corresponding training split for learning and the corresponding test split for evaluation. This setup allows us to evaluate the generalization and effectiveness of our method on both mathematical reasoning and coding tasks.
+A.3 MPO Training Process
+Parameter
+Value
+Train batch size
+256
+PPO mini batch size
+128
+PPO micro batch size / GPU
+4
+Number of GPUs
+8
+Number of Nodes
+1
+Max prompt length
+1024
+Max response length
+2048
+Learning rate (actor)
+1 × 10 − 6 1\times 10^{-6}
+Learning rate (critic)
+1 × 10 − 5 1\times 10^{-5}
+Total epochs
+20
+Table 5: Key hyperparameters for MPO training.
+Algorithm 1 Multi-Token Policy Optimization (MPO)
+Input :
+Dataset 𝒟 \mathcal{D} of prompts q i q_{i} and annotated outputs o i ′ o^{\prime}_{i} .
+Pretrained LLM with MTP module; initial parameters θ \theta .
+Old policy parameters θ old \theta_{\mathrm{old}} .
+Block size K K , weights α k \alpha_{k} , β k \beta_{k} ; clip parameter ϵ l ​ o ​ w , ϵ h ​ i ​ g ​ h \epsilon_{low},\epsilon_{high}
+Output : Updated policy parameters θ \theta
+Stage 1: MTP Warm-Up
+for several epochs do
+for batch of ( q i , o i ′ ) (q_{i},o^{\prime}_{i}) in 𝒟 \mathcal{D} do
+for each position t t in o i ′ o^{\prime}_{i} do
+for k = 1 k=1 to K K do
+Predict p ( o t + k ′ ∣ q , o 1 : t ′ ) p(o^{\prime}_{t+k}\mid q,o^{\prime}_{1:t}) using backbone model ( k = 1 k=1 ) and MTP module ( k ≥ 2 k\geq 2 )
+Compute ℒ MTP = − ∑ k = 2 K α k log p ( o t + k ′ ∣ q , o 1 : t ′ ) \mathcal{L}_{\text{MTP}}=-\sum_{k=2}^{K}\alpha_{k}\log p(o^{\prime}_{t+k}\mid q,o^{\prime}_{1:t})
+Update only MTP parameters by minimizing ℒ MTP \mathcal{L}_{\text{MTP}}
+Stage 2: MPO Fine-tuning
+for each MPO epoch do
+ℬ ← \mathcal{B}\leftarrow sample mini-batch of prompts q i q_{i} from 𝒟 \mathcal{D}
+for each q i q_{i} in ℬ \mathcal{B} do
+Generate trajectory o i o_{i} using π θ old \pi_{\theta_{\mathrm{old}}}
+Compute per-token or group-based advantages A ^ i , t \hat{A}_{i,t}
+for each trajectory ( q i , o i ) (q_{i},o_{i}) and each position t t in o i o_{i} do
+// Sample K K -step target block
+Sample o i , t + 1 : t + K o_{i,t+1:t+K} in an autoregressive manner using π θ old \pi_{\theta_{\mathrm{old}}}
+Initialize D k ​ l = 0 D_{kl}=0
+for n = 1 n=1 to K K do
+Compute:
+p θ = π θ ( o i , t + n | o i , 1 : t + n − 1 ) \;\;p_{\theta}=\pi_{\theta}(o_{i,t+n}|o_{i,1:t+n-1})
+p θ old = π θ old ( o i , t + n | o i , 1 : t + n − 1 ) \;\;p_{\theta_{\mathrm{old}}}=\pi_{\theta_{\mathrm{old}}}(o_{i,t+n}|o_{i,1:t+n-1})
+D k ​ l + = β n ⋅ ( log ⁡ p θ − log ⁡ p θ old ) \;\;D_{kl}+=\beta_{n}\cdot(\log p_{\theta}-\log p_{\theta_{\mathrm{old}}})
+R ~ i , t ( K ) = exp ⁡ ( D k ​ l ) \widetilde{R}_{i,t}^{(K)}=\exp(D_{kl})
+Compute surrogate loss for ( i , t ) (i,t) :
+J i , t = min ⁡ ( R ~ i , t ( K ) ​ A ^ i , t , clip ​ ( R ~ i , t ( K ) , 1 − ϵ l ​ o ​ w , 1 + ϵ h ​ i ​ g ​ h ) ​ A ^ i , t ) J_{i,t}=\min\left(\widetilde{R}_{i,t}^{(K)}\hat{A}_{i,t},\;\;\text{clip}(\widetilde{R}_{i,t}^{(K)},1-\epsilon_{low},1+\epsilon_{high})\hat{A}_{i,t}\right)
+Aggregate loss:
+J MPO = 1 N ​ ∑ i ∑ t J i , t J_{\mathrm{MPO}}=\frac{1}{N}\sum_{i}\sum_{t}J_{i,t} .
+Update parameters θ \theta via gradient descent using J MPO J_{\mathrm{MPO}} .
+Optionally, update θ old \theta_{\mathrm{old}} periodically.
+Here we provide additional implementation details for the Multi-Token Policy Optimization (MPO) method described above, including the hyperparameters and a pseudocode Algorithm 1 for clarity. Table 5 lists our main hyperparameters and settings for the MPO training process. These values are extracted from our training scripts and reflect typical settings for large-scale RLHF or policy optimization tasks on math reasoning datasets. For HumanEval, due to the extensive thinking behavior of Deepseek distilled models, we extend the response length to 3072.
+A.4 Potential Risks
+Our proposed MPO method is based on reinforcement learning. As discussed in the main text, high multi-token weights may cause training instability and model divergence; thus, care must be taken to maintain training stability. Since our experiments are limited to mathematical and coding reasoning tasks, there are no additional risks of privacy leakage or offensive content. Regarding data and models, we only use open- source datasets consisting of mathematical and programming problems, containing no personal or sensitive data. The employed models are commonly used open-source LLMs, whose potential behavioral risks are unrelated to our research topic.
+Appendix B Discussion of Multi-Token Approach
+This appendix provides a formal discussion of why incorporating
+Multi-token prediction into policy optimization can improve optimization
+performance and enhance long-horizon reasoning ability. The exposition is
+consistent with the notation and definitions in the main text
+(Sections 3.2 – 4 ).
+B.1 Intuitive Example and Motivation
+In standard policy optimization methods such as PPO, the policy improvement step is based on per-token decisions, where the importance ratio
+r i , t ( θ ) = π θ ( o i , t + 1 ∣ q i , o i , 1 : t ) π θ old ( o i , t + 1 ∣ q i , o i , 1 : t ) r_{i,t}(\theta)=\frac{\pi_{\theta}(o_{i,t+1}\mid q_{i},o_{i,1:t})}{\pi_{\theta_{\text{old}}}(o_{i,t+1}\mid q_{i},o_{i,1:t})}
+(12)
+compares the likelihood of a single action (next token) under the updated and old policies.
+This formulation implicitly assumes that:
+1) the reward structure can be well captured by local token-level updates, and
+2) long-horizon dependencies are either negligible or already encoded in the advantage estimator A ^ i , t \hat{A}_{i,t} .
+While traditional one-step token-level policy optimization updates the model based on individual token predictions, our illustration highlights that semantics and reasoning patterns in language generation typically emerge from coherent blocks of multiple tokens. As shown in the figure, generating a valid reasoning step or factual entity (e.g., $a=5$ or $b = aˆ2 = 25$) requires accurately predicting a sequence of tokens as a whole.
+Limiting optimization to one - step advantage estimation introduces several issues:
+1.
+Fragmented learning signals : Token - level updates isolate local token actions, weakening the internal consistency of reasoning segments.
+2.
+Incomplete credit assignment : Single - token objectives struggle to capture dependencies whose effects span across multiple tokens within a reasoning step.
+3.
+Granularity mismatch : The optimization signal operates at the token level, while the semantic correctness of reasoning typically emerges at the segment level.
+In contrast, as illustrated in the lower MTP/MPO section, aggregating actions and optimization targets at the block level enables updates that better capture semantic integrity, reduce estimation variance, and align training with the goals of structured reasoning.
+By instead defining a K K -step decision ratio,
+R i , t ( K ) ( θ ) = ∏ n = 1 K π θ ( o i , t + n ∣ o i , 1 : t + n − 1 ) π θ old ( o i , t + n ∣ o i , 1 : t + n − 1 ) , R_{i,t}^{(K)}(\theta)=\prod_{n=1}^{K}\frac{\pi_{\theta}(o_{i,t+n}\mid o_{i,1:t+n-1})}{\pi_{\theta_{\text{old}}}(o_{i,t+n}\mid o_{i,1:t+n-1})},
+(13)
+we directly compare the joint likelihood of a future span under the new and old policies.
+This transforms the optimization from purely myopic next-token correction into a multi-step decision process, allowing the policy gradient to align with behaviors that unfold across multiple tokens.
+In essence, the surrogate objective is no longer tied to local moves but reflects higher-level planning, where corrections propagate over spans of length K K rather than being confined to single steps.
+B.2 Theoretical Derivation and Bias Reduction
+B.2.1 Problem Setup and Notation
+We consider a standard reinforcement learning setup for sequence generation. Let time steps be indexed by t = 0 , 1 , 2 , … t=0,1,2,\dots , where each step corresponds to generating a token.
+•
+State: s t s_{t} denotes the state at time t t , which includes the context (previous tokens and hidden states).
+•
+Action a t a_{t} denotes the token generated at time t t .
+•
+Policy: π θ ​ ( a t ∣ s t ) \pi_{\theta}(a_{t}\mid s_{t}) , with π old \pi_{\text{old}} denoting the previous policy.
+•
+Discount factor: γ ∈ ( 0 , 1 ] \gamma\in(0,1] .
+•
+Value function:
+V π ​ ( s ) = 𝔼 π ​ [ ∑ k = 0 ∞ γ k ​ r t + k | s t = s ] V^{\pi}(s)=\mathbb{E}_{\pi}\left[\sum_{k=0}^{\infty}\gamma^{k}r_{t+k}\,\big|\,s_{t}=s\right]
+•
+Advantage function:
+A π ​ ( s t , a t ) = Q π ​ ( s t , a t ) − V π ​ ( s t ) A^{\pi}(s_{t},a_{t})=Q^{\pi}(s_{t},a_{t})-V^{\pi}(s_{t})
+•
+Estimated value function: V ^ ϕ ​ ( s ) \hat{V}_{\phi}(s)
+In standard one-step PPO, the advantage is often estimated using the TD error and generalized advantage estimator (GAE):
+δ t \displaystyle\delta_{t}
+= r t + γ ​ V ^ ϕ ​ ( s t + 1 ) − V ^ ϕ ​ ( s t ) , \displaystyle=r_{t}+\gamma\hat{V}_{\phi}(s_{t+1})-\hat{V}_{\phi}(s_{t}),
+(14)
+A ^ t GAE \displaystyle\hat{A}^{\text{GAE}}_{t}
+= ∑ l = 0 ∞ ( γ ​ λ ) l ​ δ t + l , \displaystyle=\sum_{l=0}^{\infty}(\gamma\lambda)^{l}\delta_{t+l},
+(15)
+where λ ∈ [ 0 , 1 ] \lambda\in[0,1] controls the trade-off.
+B.2.2 K-Step / Multi-Token Core Idea
+In K-step (multi-token) prediction, at time t t we consider predicting not just a t a_{t} , but the next K K tokens jointly. Define the K-step return:
+G t ( K ) := ∑ k = 0 K − 1 γ k ​ r t + k + γ K ​ V ^ ϕ ​ ( s t + K ) . G^{(K)}_{t}:=\sum_{k=0}^{K-1}\gamma^{k}r_{t+k}+\gamma^{K}\hat{V}_{\phi}(s_{t+K}).
+(16)
+The corresponding K-step advantage estimator is
+A ^ t ( K ) := G t ( K ) − V ^ ϕ ​ ( s t ) . \hat{A}^{(K)}_{t}:=G^{(K)}_{t}-\hat{V}_{\phi}(s_{t}).
+(17)
+Intuitively, as K K increases, the advantage relies more on the actual observed rewards and less on the bootstrapped value function V ^ ϕ \hat{V}_{\phi} , thereby reducing the bias from value function approximation.
+B.2.3 Bias Analysis
+Let ϵ V := sup s | V ^ ϕ ​ ( s ) − V π ​ ( s ) | \epsilon_{V}:=\sup_{s}\left|\hat{V}_{\phi}(s)-V^{\pi}(s)\right| denote the maximum value function approximation error. The K-step return based on the true value function is
+G t ( K ) , true := ∑ k = 0 K − 1 γ k ​ r t + k + γ K ​ V π ​ ( s t + K ) , G^{(K),\text{true}}_{t}:=\sum_{k=0}^{K-1}\gamma^{k}r_{t+k}+\gamma^{K}V^{\pi}(s_{t+K}),
+(18)
+so the error due to V ^ ϕ \hat{V}_{\phi} is
+Δ ​ G t ( K ) : = G t ( K ) − G t ( K ) , true = γ K ​ ( V ^ ϕ ​ ( s t + K ) − V π ​ ( s t + K ) ) . \begin{split}\Delta G^{(K)}_{t}:&=G^{(K)}_{t}-G^{(K),\text{true}}_{t}\\
+&=\gamma^{K}(\hat{V}_{\phi}(s_{t+K})-V^{\pi}(s_{t+K})).\end{split}
+(19)
+Hence, in absolute value,
+| Δ ​ G t ( K ) | ≤ γ K ​ ϵ V . |\Delta G^{(K)}_{t}|\leq\gamma^{K}\epsilon_{V}.
+(20)
+The bias of the K-step advantage relative to the true K-step advantage is
+A ^ t ( K ) − A t true , ( K ) = ( G t ( K ) − V ^ ϕ ​ ( s t ) ) − ( G t ( K ) , true − V π ​ ( s t ) ) = γ K ​ ( V ^ ϕ ​ ( s t + K ) − V π ​ ( s t + K ) ) − ( V ^ ϕ ​ ( s t ) − V π ​ ( s t ) ) , \begin{split}\hat{A}^{(K)}_{t}-A^{\text{true},(K)}_{t}&=\big(G^{(K)}_{t}-\hat{V}_{\phi}(s_{t})\big)\\
+&\;\;\;\;\;\;-\big(G^{(K),\text{true}}_{t}-V^{\pi}(s_{t})\big)\\
+&=\gamma^{K}(\hat{V}_{\phi}(s_{t+K})-V^{\pi}(s_{t+K}))\\
+&\;\;\;\;\;\;-(\hat{V}_{\phi}(s_{t})-V^{\pi}(s_{t})),\end{split}
+(21)
+with absolute value bounded by
+| A ^ t ( K ) − A t true , ( K ) | ≤ γ K ​ ϵ V + ϵ V = ( 1 + γ K ) ​ ϵ V . \left|\hat{A}^{(K)}_{t}-A^{\text{true},(K)}_{t}\right|\leq\gamma^{K}\epsilon_{V}+\epsilon_{V}=(1+\gamma^{K})\epsilon_{V}.
+(22)
+If we focus on the relative dependence on one-step (n=1), note that the error term for one-step is ( 1 + γ ) ​ ϵ V (1+\gamma)\epsilon_{V} . More importantly, if we decompose the bias into “the bootstrapping bias from the tail” and “the bias from the current estimate,” we can see that the bootstrapping term from the tail is multiplied by γ K \gamma^{K} .
+In particular, when we consider the bias propagation with respect to the true infinite-horizon return, the bias term related to n-step bootstrapping decays as 𝒪 ⁡ ( γ K ) \mathcal{O}(\gamma^{K}) . In other words, the bias is introduced by bootstrapping (relying on V ^ ϕ ​ ( s t + n ) \hat{V}_{\phi}(s_{t+n}) ), and its coefficient is γ K \gamma^{K} . As n n increases, this term decays exponentially by a factor of γ K \gamma^{K} , thus reducing reliance on V ^ ϕ \hat{V}_{\phi} ⇒ \Rightarrow reducing the bias introduced by function approximation.
+B.2.4 Expected Advantage Bias
+Consider the expected bias over trajectories:
+𝔼 ⁡ [ A ^ t ( K ) − A π ​ ( s t , a t ) ] \displaystyle\mathbb{E}\big[\hat{A}^{(K)}_{t}-A^{\pi}(s_{t},a_{t})\big]
+(23)
+= 𝔼 ⁡ [ G t ( K ) − V ^ ϕ ​ ( s t ) − ( Q π ​ ( s t , a t ) − V π ​ ( s t ) ) ] \displaystyle=\mathbb{E}\Big[G^{(K)}_{t}-\hat{V}_{\phi}(s_{t})-(Q^{\pi}(s_{t},a_{t})-V^{\pi}(s_{t}))\Big]
+= 𝔼 [ ∑ k = 0 K − 1 γ k r t + k + γ K V ^ ϕ ( s t + K ) − V ^ ϕ ( s t ) \displaystyle=\mathbb{E}\Big[\sum_{k=0}^{K-1}\gamma^{k}r_{t+k}+\gamma^{K}\hat{V}_{\phi}(s_{t+K})-\hat{V}_{\phi}(s_{t})
+− ∑ k = 0 ∞ γ k r t + k + V π ( s t ) ] \displaystyle-\sum_{k=0}^{\infty}\gamma^{k}r_{t+k}+V^{\pi}(s_{t})\Big]
+= 𝔼 [ γ K ( V ^ ϕ ( s t + K ) − V π ( s t + K ) ) \displaystyle=\mathbb{E}\Big[\gamma^{K}(\hat{V}_{\phi}(s_{t+K})-V^{\pi}(s_{t+K}))
+− ( V ^ ϕ ​ ( s t ) − V π ​ ( s t ) ) \displaystyle-(\hat{V}_{\phi}(s_{t})-V^{\pi}(s_{t}))
+− ∑ k = K ∞ γ k ( r t + k − 𝔼 [ r t + k ∣ s t + K ] ) ] . \displaystyle-\sum_{k=K}^{\infty}\gamma^{k}(r_{t+k}-\mathbb{E}[r_{t+k}\mid s_{t+K}])\Big].
+Settings
+GSM8K
+MATH
+K=2
+K=3
+K=5
+K=2
+K=3
+K=5
+MPO
+0.871
+0.875
+0.882
+0.771
+0.753
+0.789
++ V M ​ P ​ O V_{MPO}
+0.879
+0.875
+0.882
+0.773
+0.756
+0.762
+Table 6: MPO performance with different token block size K and ablation study of multi-token value estimation.
+Under standard assumptions, the last term has zero expectation, so the dominant contribution to bias comes from
+𝔼 ⁡ [ A ^ t ( K ) − A π ​ ( s t , a t ) ] ≈ 𝔼 [ γ K ( V ^ ϕ ( s t + K ) − V π ( s t + K ) ) − ( V ^ ϕ ( s t ) − V π ( s t ) ) ] . \begin{split}&\mathbb{E}\big[\hat{A}^{(K)}_{t}-A^{\pi}(s_{t},a_{t})\big]\\
+&\approx\mathbb{E}\Big[\gamma^{K}(\hat{V}_{\phi}(s_{t+K})-V^{\pi}(s_{t+K}))\\
+&\quad-(\hat{V}_{\phi}(s_{t})-V^{\pi}(s_{t}))\Big].\end{split}
+(24)
+If the bias of V ^ ϕ \hat{V}_{\phi} at different time steps is not systematically correlated (or its expectation is approximately zero), then the main remaining error comes from the tail error scaled by γ n \gamma^{n} , with the overall expected bias reduced to 𝒪 ⁡ ( γ n ​ ϵ V ) \mathcal{O}(\gamma^{n}\epsilon_{V}) . The expected bias due to reliance on the bootstrapped value in n-step is reduced to the order of γ n \gamma^{n} , thereby lowering the bias.
+Appendix C Multi-token Value Estimation
+C.1 Multi-Token Value Heads
+Figure 9: The implementation of the value function on the original auto-regressive backbone model (left) and those with the MTP module (right). For multi-token prediction models, we try a weighted sum of the output from the shared value head.
+In parallel with our multi-token perspective modification for the actor, we have also conducted experiments on the critic model, allowing it to anticipate the returns of actions over a future interval during training. To accommodate multiple multi-token prediction heads, we aggregate their outputs at each decision point via a learned convex combination:
+V MPO ​ ( s t ) = ∑ j = 1 K w j ​ V j ​ ( s ^ t + j − 1 ) \begin{split}V_{\text{MPO}}(s_{t})=\sum_{j=1}^{K}w_{j}V_{j}(\hat{s}_{t+j-1})\end{split}
+(25)
+where s ^ t + j − 1 \hat{s}_{t+j-1} denotes the predicted states and
+w j = exp ⁡ ( γ j ) ∑ k = 1 K exp ⁡ ( γ k ) , 𝜸 = ( γ 1 , … , γ K ) \begin{split}w_{j}=\frac{\exp(\gamma_{j})}{\sum_{k=1}^{K}\exp(\gamma_{k})},\quad\boldsymbol{\gamma}=(\gamma_{1},\ldots,\gamma_{K})\end{split}
+(26)
+with γ \gamma as learnable parameters, balancing the value obtained from predicted states. V j V_{j} is the value head append to the j t ​ h j^{th} MTP module. Given this value estimation, the advantage at each position t t is computed as
+A ^ i , t = Q ^ i , t − V MPO ​ ( s t ) , \begin{split}\hat{A}_{i,t}=\hat{Q}_{i,t}-V_{\text{MPO}}(s_{t}),\end{split}
+(27)
+where Q ^ i , t \hat{Q}_{i,t} is the estimated return as in standard policy gradient methods. This approach permits each value head to specialize, while the aggregation provides a flexible baseline for stable advantage calculation and policy optimization over multi-token predictions. Figure 9 illustrates the value estimation process.
+C.2 Effect of Block size on Value Estimation
+We conducted experiments with Deepseek-Distill-Qwen2.5-1.5b by fixing the weight sum of MTP modules ( ∑ k = 2 K β k \sum_{k=2}^{K}\beta_{k} ) of knowledge at 20%, with results shown in Table 6 . The method of injecting multi-token information from the critic side did not improve overall performance as expected. Although our initial experiments suggested that this approach could have a "symmetric" effect—namely, by training the MTP module on the value prediction task to enhance overall training stability—this was not supported by later results. After addressing certain implementation issues in our code, it appears that MPO is not sensitive to the incorporation of multi-token information into the value function. In fact, with K = 4 or 5, it may introduce greater instability and cause the model to oscillate at a suboptimal level. Simply injecting value predictions by summing the outputs of multiple MTP modules does not seem to effectively improve value estimation accuracy.
+Appendix D Discussion of Efficiency
+Training Speed (Second per iteration)
+Model
+PPO
+K=3
+K=5
+Deepseek-Qwen2.5-1.5b
+25.6
+30.3
+33.3
+Llama3.2-1b
+19.1
+25.0
+28.3
+Model Size (Compared to the original model)
+Model
+PPO
+K=3
+K=5
+Deepseek-Qwen2.5-1.5b
+1.0 × \times
+1.20 × \times
+1.41 × \times
+Llama3.2-1b
+1.0 × \times
+1.52 × \times
+2.05 × \times
+Table 7: Efficiency analysis result.
+Computation overhead. Table 7 illustrates further analysis with the resource overhead and comparative efficiency of MPO. The current implementation of MTP in MPO does not k-fold increase the overall computational cost. Since all logits needed for multi-token ratios are obtained from a single standard forward pass, the MTP module generates predictions for K tokens in parallel within one forward pass, without requiring K separate model evaluations.
+Despite this computational overhead for an additional forward pass used to compute multi-token policy ratios after obtaining full trajectories, MPO delivers consistent accuracy improvements on both GSM8K and MATH benchmarks over PPO and GRPO.
+These results indicate that the added MTP modules contribute minimal training burden while offering substantial efficiency and performance benefits.
+Design of Warmup Stage.
+To ensure stable optimization, we include a brief warm - up phase to pre - train the MTP modules (approximately 12 minutes for one epoch) before the MPO fine - tuning stage (around 7 hours for 20 epochs), incurring only a lightweight additional time cost.
+This design choice follows prior multi-head decoding frameworks ( Cai et al., 2024 ; Ankner et al., 2024 ) and represents a standard stabilization step rather than additional complexity unique to our method.
+MPO emphasizes a modular and practical architecture; this design enables the framework to improve optimization stability and reasoning performance; furthermore, future work may explore even lighter-weight MTP variants for large - scale deployment (also discussed in Limitations).
+Appendix E Usage of Large Language Models
+During the writing of this paper, large language models were used solely as tools for:
+•
+Grammar checking : Asking the LLM to check whether there is any grammar mistakes in the given paragraph.
+•
+Translation : Asking the LLM to provide a proper translation for certain phrases and expressions.
+•
+Readability improvement : Asking the LLM to give suggestions of how to change the tone of our written paragraphs for fluency.
+Appendix F Reproducibility
+We will briefly go through the tools and data we use in this paper for reproducibility.
+MTP Modules. We developed our Multi-token Prediction modules based on transformers (ver 4.51.1) and trl (ver 0.22.0), both frameworks are open-sourced by the HuggingFace community. We modify the modeling library file of the transformers framework to achieve multi-token prediction.
+MPO Approach. The overall MPO approach is developed based on the open-source reinforcement learning framework Verl (volcano engine, ver 0.3.1). We modify the PPO Trainer Class and Actor workers Class library to compute and gather multi-token log probability distributions when computing the policy loss of MPO.
+Datasets and models. We conduct our experiments with open-source datasets GSM8K and MATH for MTP warmup and MPO training. The models are available on the open-source AI community websites.
+Code and implementations. In the supplementary materials, we include a detailed README file that guides the reproduction process, and we provide our implementation of the causal MTP module as well as the core code computing MPO policy loss for reference.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

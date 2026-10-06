@@ -1,0 +1,458 @@
+Exact-v1 primary HTML necessary selection https://arxiv.org/html/2601.21708v1
+3.1 Experimental Setup
+3.1.1 Models and Compared Systems
+We instantiate FBS on a causal language model comparable to Qwen3-4B-Instruct, denoted as FBS-Base.
+The backbone configuration is: hidden size 4096, 32 Transformer layers, 32 attention heads, and a vocabulary size of ∼\sim32K.
+FBS replaces each standard Transformer block with an FBS block consisting of three parallel sub-modules:
+•
+Parafovea-Attention Window (PAW): dynamic lookahead window + preview convolution;
+•
+Chunk-Head (CH): BIOS boundary prediction, chunk pooling, and cross-attention;
+•
+Skip-Gate (SG): layer-wise skipping decisions based on residual signals and preview vectors.
+Fairness and initialization.
+To ensure fair comparison, we load weights from the public baseline checkpoint: the original Multi-Head Attention and FFN weights are copied into the corresponding pathways of FBS; newly introduced PAW/CH/SG parameters are randomly initialized.
+Unless otherwise stated, all compared target models are kept strictly parameter-matched in scale.
+Systems.
+We compare:
+(i) Baseline: the original causal LM without any FBS modules (Qwen3-4B-Instruct, same continual pretraining);
+(ii) FBS-S1: FBS after Stage-1 continual pretraining (PAW+CH enabled; no RL-based skipping);
+(iii) FBS-Full: full FBS after Stage-1 and Stage-2 (PAW+CH+SG+RL enabled).
+We keep the target model size fixed across compared systems and report parameter counts in Appendix B. It provides the exact parameter counts used in all comparisons.
+Baseline grouping by acceleration route (embedded into the experimental structure).
+To make the comparisons more persuasive, we categorize baselines into four groups and use them in different subsections:
+•
+Group A (Decoding acceleration; same backbone; inference-only changes).
+Used in the main table (§3.2) as mainstream LLM inference acceleration baselines:
+Speculative Decoding/Samplingleviathan2023fast; chen2023accelerating, EAGLE-2li2024eagle2, Medusacai2024medusa, and Lookahead Decodingzhao2024lookahead.
+We follow a Spec-Bench-style measurement protocol B for unified timing/ratio reporting; this affects the evaluation protocol but does not change model definitions.
+•
+Group B (Adaptive compute / layer skipping / FFN skipping; closest to SG).
+Used to justify SG effectiveness: FlexiDepthluo2025adaptive and FFN-SkipLLMjaiswal2024ffn (a compact main-text table), while Self-speculative Draft&Verify and Kangaroo are moved to Appendix E for a full comparison (because their verification pipelines and “lossless” claims require more careful reporting).
+•
+Group C (Long-context / cache efficiency).
+Only compared when we report long-context results: H2Ozhang2023h2o, StreamingLLMxiao2023efficient, SnapKVli2024snapkv, SlimInferlong2025sliminfer (Appendix F).
+•
+Group D (Chunk / structural modeling).
+The main text uses our controlled CH ablations as the fairest comparisons; Segatronbai2021segatron is placed in Appendix D as a citation-style structural baseline to avoid cluttering the main narrative.
+Model
+Params (B)
+PAW
+CH
+SG
+RL
+Notes
+Qwen3-4B-Instruct (Baseline)
+4.0
+✗
+✗
+✗
+✗
+Original instruction-tuned model
+Qwen3-4B + FBS-S1
+4.0
+✔
+✔
+✗
+✗
+Structural changes only (PAW+CH)
+Qwen3-4B + FBS-Full
+4.0
+✔
+✔
+✔
+✔
+Full FBS (Skip-Gate + RL)
+Table 1: Overview of the target systems used in main results. All Group A/B/C/D baselines align to the same Qwen3-4B target model. Group-A speculative methods may additionally require a smaller draft model; draft parameters are not counted in the target size but are included in wall-clock timing (Appendix B.3).
+3.1.2 Training Data and Tasks
+Stage-1 continual pretraining corpus.
+We use only open and commercially usable corpora:
+RedPajama-V2 (English)weber2024redpajama,
+Yuan-2.0 Corpus (Chinese–English mixed)wu2023yuan20largelanguage,
+and OSCAR-zh (Chinese)jansen2022perplexed.
+We sample a total of 30B tokens.
+We filter examples with length ≥512\geq 512 and deduplicate samples with similarity >0.7>0.7.
+For Chinese, we automatically generate weak BIOS labels using a pkuseg-based segmenter and an idiom lexicon, serving as CH supervision without any human annotationluo2019pkuseg. For English, we do not use external chunk labels; CH boundaries are learned from the token stream via the same boundary predictor trained with the LM objective and regularizers. Empirically, CH yields larger gains on Chinese while remaining non-degrading on English tasks.
+Stage-2 RL environment.
+We randomly sample 5k questions from the MMLU dev set and 5k questions from the CMMLU dev set, forming 10k prompts for RL. Make sure there are no duplicates. Each episode generates at most 128 tokens. Rewards are computed based on quality–compute differences relative to a full-compute reference. We use dev splits only for PPO prompt sampling; all reported benchmark numbers are computed on the official held-out evaluation splits (see Appendix B.2 for split hygiene and overlap control).
+3.1.3 Training Details
+Stage-1 continual pretraining.
+We train for 12B tokens with batch size ≈\approx 2M tokens,
+learning rate 2×10−52\times 10^{-5}, 4% warmup, and cosine decay.
+We optimize the following multi-task objective:
+ℒ=ℒlm+λbios​ℒbios+λalign​ℒalign\displaystyle\mathcal{L}=\mathcal{L}_{\mathrm{lm}}+\lambda_{\mathrm{bios}}\,\mathcal{L}_{\mathrm{bios}}+\lambda_{\mathrm{align}}\,\mathcal{L}_{\mathrm{align}}
++λpaw​ℒpreview+λgate​ℒgate.\displaystyle+\lambda_{\mathrm{paw}}\,\mathcal{L}_{\mathrm{preview}}+\lambda_{\mathrm{gate}}\,\mathcal{L}_{\mathrm{gate}}.
+(1)
+Here,
+ℒlm\mathcal{L}_{\mathrm{lm}} is the standard next-token cross-entropy;
+ℒbios\mathcal{L}_{\mathrm{bios}} is token-level cross-entropy on BIOS labels predicted by CH (weak supervision from segmentation + idiom lexicon);
+ℒalign\mathcal{L}_{\mathrm{align}} enforces semantic consistency between the chunk and token channels (e.g., contrastive or cosine alignment between pooled chunk representations and token representations; Appendix D.2);
+ℒpreview\mathcal{L}_{\mathrm{preview}} supervises the multi-step preview predictor with ground-truth continuation labels, while the forward path still consumes the predicted preview embeddings to avoid train–test mismatch. We detail how the predicted distributions are mapped to continuous preview embeddings and report the PAW head sizes in Appendix C.1.
+ℒgate\mathcal{L}_{\mathrm{gate}} is a conservative regularizer on SG outputs to avoid early-stage instability (e.g., entropy/mean constraints on skip probabilities).
+Stage-1 gate training schedule.
+We linearly anneal the Skip-Gate threshold from 0.90.9 to 0.70.7. Stage-1 does not actually execute skipping (we only train gate parameters) to avoid early instability.
+Stage-2 RL fine-tuning (PPO).
+We freeze all parameters except SG and the PAW network.
+We train on 10k RL prompts for 2 epochs using PPO with clip ϵ=0.2\epsilon=0.2 and learning rate 1×10−51\times 10^{-5}.
+FLOPs and perplexity estimation.
+We estimate relative TFLOPs by counting (effective layer invocations) ×\times (per-layer FLOPs), normalized so that the baseline equals 1.0.
+Perplexity is approximated by the average log-likelihood on the evaluation sets.
+Reward function.
+We train the skip policy with PPO using a scalar reward that balances compute savings against answer fidelity.
+Let c⁡(𝐱)c(\mathbf{x}) denote the estimated compute cost of decoding an output 𝐱\mathbf{x} (our TFLOPs proxy), and let c0​(𝐱)c_{0}(\mathbf{x}) be the cost under the full-compute baseline policy (no skipping).
+Because Stage-2 is instantiated on multiple-choice QA prompts sampled from MMLU and CMMLU, we can compute a per-instance, teacher-forced negative log-likelihood (NLL) on the gold answer option.
+We define the quality-degradation proxy as
+Δ​ℓ​(𝐱)≜NLLF​B​S​(𝐲⋆∣𝐩)−NLLF​u​l​l​(𝐲⋆∣𝐩)|𝐲⋆|,\Delta\ell(\mathbf{x})\triangleq\frac{\mathrm{NLL}_{FBS}(\mathbf{y}^{\star}\mid\mathbf{p})-\mathrm{NLL}_{Full}(\mathbf{y}^{\star}\mid\mathbf{p})}{|\mathbf{y}^{\star}|},
+(2)
+where 𝐩\mathbf{p} is the prompt and 𝐲⋆\mathbf{y}^{\star} is the gold option text (concatenated with the standard answer prefix used in evaluation).
+Our final reward is
+R⁡(𝐱)=α⋅c0​(𝐱)−c​(𝐱)c0​(𝐱)−β⋅max⁡(0,Δ​ℓ​(𝐱)),R(\mathbf{x})=\alpha\cdot\frac{c_{0}(\mathbf{x})-c(\mathbf{x})}{c_{0}(\mathbf{x})}-\beta\cdot\max\big(0,\Delta\ell(\mathbf{x})\big),
+(3)
+which encourages skipping only when it does not increase the gold-option NLL.
+We set α=β=0.1\alpha=\beta=0.1 in all experiments.
+3.1.4 Benchmarks and Metrics
+We report:
+PPL (perplexity),
+acc@5-shot on MMLUhendrycks2021measuringmassivemultitasklanguage / CMMLUli2024cmmlu / C-Evalhuang2023c / BBHsuzgun2023challenging,
+pass@1 on HumanEval-Xzheng2023codegeex / MBPPaustin2021program,
+and solve-rate on GSM8Kcobbe2021training / CMathwei2023cmath.
+Efficiency metrics and unified ratio definitions.
+We measure average latency and relative TFLOPs (baseline normalized to 1.0).
+We unify method-specific ratios into Bypass/Skip-Ratio:
+for FBS, it is the average layer-skip ratio;
+for Speculative Decodingleviathan2023fast and EAGLE-2li2024eagle2, it is the acceptance rate;
+for Medusacai2024medusa and Lookaheadzhao2024lookahead, it is the verified/advance ratio (or normalized verified length; Appendix B.3).
+Sampling settings must be fixed across methods; we use greedy decoding for all benchmarks to ensure comparability.
+We estimate 95% confidence intervals via bootstrap with 1k resamples and mark results with p<0.01p<0.01 (Appendix B.6).
+3.2 Main Results: Quality–Efficiency Trade-off
+We first compare Baseline, FBS-S1, and FBS-Full on multi-task performance and align them with Group-A decoding-acceleration baselines.
+Table 2 provides the complete main table (Group A fully covered + the FBS mainline).
+Quality
+Efficiency
+Model
+PPL↓\downarrow
+MMLU↑\uparrow
+CMMLU↑\uparrow
+C-Eval↑\uparrow
+BBH↑\uparrow
+GSM8K↑\uparrow
+CMath↑\uparrow
+HumanEval-X↑\uparrow
+MBPP↑\uparrow
+Latency
+(ms)↓\downarrow
+TFLOPs
+(rel)↓\downarrow
+Bypass/
+Skip-Ratio
+(%)↑\uparrow
+Qwen3-4B-Instruct (Baseline)
+6.4
+55.1
+55.7
+54.0
+40.0
+37.0
+38.0
+44.0
+44.0
+760
+1.00
+0.0
+Qwen3-4B + FBS-S1
+6.3
+56.4
+57.2
+55.3
+41.5
+38.8
+39.7
+45.5
+45.5
+755
+1.03
+0.0
+Qwen3-4B + FBS-Full (ours)
+6.2
+56.6
+57.4
+55.5
+41.5
+39.4
+40.5
+46.2
+46.3
+532
+0.70
+36.0
+Qwen3-4B + SpecDec (Group A)
+6.4
+54.9
+55.6
+53.9
+40.0
+37.0
+38.0
+43.9
+43.9
+646
+0.90
+22.0
+Qwen3-4B + Medusa (Group A)
+6.5
+54.7
+55.4
+53.7
+39.8
+36.7
+37.7
+43.5
+43.5
+570
+0.80
+18.0
+Qwen3-4B + EAGLE-2 (Group A)
+6.3
+55.0
+55.8
+54.0
+40.2
+37.2
+38.2
+44.1
+44.1
+555
+0.74
+30.0
+Qwen3-4B + Lookahead (Group A)
+6.4
+55.0
+55.6
+53.9
+40.0
+37.0
+38.0
+44.0
+44.0
+595
+0.82
+15.0
+Table 2: Main results (quality–efficiency trade-off). Green zone: baselines (incl. Group A). Bypass/Skip-Ratio is unified across methods: for FBS it is the average layer-skip ratio; for SpecDec/EAGLE-2 it is acceptance rate; for Medusa/Lookahead it is verified/advance ratio. p < 0.05 by bootstrap test against Baseline.
+Interpretation.
+Quality: PAW+CH (S1) yields stable gains.
+FBS-S1 improves most tasks by about 1–1.5 points over the baseline and reduces perplexity, suggesting that structural inductive bias (rather than skipping) already enhances context utilization, with more pronounced gains on Chinese and structured text.
+Efficiency: SG+RL (Full) achieves substantial acceleration with near-zero loss.
+FBS-Full reduces latency from 760 ms to 532 ms while maintaining (and slightly improving) accuracy; relative TFLOPs drop from 1.00 to 0.70, consistent with the 36% average layer-skip ratio. To disentangle architectural gains from PPO calibration, we additionally report an SG no-RL operating point trained without PPO and compare it against SG+RL under matched thresholds in Appendix E.3 (Table 16). We additionally report latency/throughput under batching in Appendix B.5 (Table 8).
+Relation to Group-A decoding acceleration.
+Speculative/Medusa/Lookahead accelerate primarily via decoding-and-verification mechanics, whereas FBS accelerates via internal compute-graph restructuring (layer skipping / compute bypass).
+Thus, even under the same number of decode steps, FBS can reduce per-step effective compute, making end-to-end latency improvements more stable under fixed input/output length settings.
+3.3 Ablation Studies
+3.3.1 Module-level Ablations: Contributions of PAW / CH / SG
+We quantify each module’s contribution by (i) progressively adding modules from the baseline (additive ablation) and (ii) removing modules from the full model (subtractive ablation).
+Setting
+PPL↓\downarrow
+MMLU↑\uparrow
+CMMLU↑\uparrow
+Latency(ms)↓\downarrow
+Baseline
+6.4
+55.1
+55.7
+760
++PAW
+6.3
+56.1
+56.7
+757
++PAW + CH (= FBS-S1)
+6.25
+56.4
+57.2
+755
++PAW + CH + SG (= FBS-Full)
+6.2
+56.6
+57.4
+532
+Table 3: Additive ablation: progressively adding modules.
+Key ablation takeaways.
+PAW mainly contributes to quality (removing it causes a clear MMLU drop).
+CH provides stronger gains on Chinese tasks (aligned with natural chunk units such as idioms), and removing it yields notable quality regression.
+SG primarily contributes to efficiency: removing SG increases latency by +28%, while accuracy remains largely stable under the reward constraint, indicating that the policy tends to skip redundant mid-layer computation.
+3.3.2 Group B: Comparison to SG-style Adaptive-Compute Baselines
+To address the concern that SG might merely replicate prior adaptive-compute methods, we compare against representative baselines aligned to the same Qwen3-4B target model:
+FlexiDepthluo2025adaptive (dynamic layer skipping) and FFN-SkipLLMjaiswal2024ffn (skipping expensive FFN/MLP computation).
+Method
+MMLU↑\uparrow
+CMMLU↑\uparrow
+Latency(ms)↓\downarrow
+TFLOPs(rel)↓\downarrow
+Interpretability
+FBS-Full (ours)
+56.6
+57.4
+532
+0.70
+LayerSkip=36%
+FlexiDepth
+55.6
+56.2
+610
+0.83
+LayerSkip=20%
+FFN-SkipLLM
+55.8
+56.5
+625
+0.86
+FFNSkip=35%
+Table 4: Compact main-text comparison to SG-style baselines (Group B). More complex self-speculative baselines (e.g., Kangaroo) are deferred to Appendix E for a full comparison.
+3.3.3 Hyperparameter Sensitivity
+We analyze key hyperparameters: PAW maximum lookahead kmaxk_{\max} and SG threshold τ\tau (different schedules).
+The draft design and likely phenomena are as follows.
+We sweep kmax∈{5,9,15,25}k_{\max}\in\{5,9,15,25\} and plot PPL, MMLU, and latency.
+Observed trends:
+(1) kmaxk_{\max} too small (e.g., 5) restricts preview and worsens PPL/MMLU compared to kmax=9/15k_{\max}=9/15;
+(2) increasing kmaxk_{\max} from 9 to 15 yields limited gains with slight latency increase;
+(3) kmax=25k_{\max}=25 saturates quality gains while incurring significantly higher overhead.
+Figure 3: Effect of kmaxk_{\max} on PPL/MMLU/latency .
+τ∈{fixed 0.9,fixed 0.7,linear 0.9→0.7}\tau\in\{\text{fixed }0.9,\text{fixed }0.7,\text{linear }0.9\rightarrow 0.7\} is compared and we report PPL and skip-ratio.
+Observed trends:
+a linear schedule strikes a better balance between “skip a lot” and “skip stably”;
+fixed thresholds can get stuck in extremes (almost always skip vs. almost never skip).
+strategies
+PPL
+Skip-Ratio (%)
+Fixed t=0.9t=0.9
+6.6
+15
+Fixed t=0.7t=0.7
+6.4
+55
+Linear Annealing (0.9→0.70.9\to 0.7)
+6.2
+36
+Table 5: PPL and Skip-Ratio under different strategies
+Figure 4: Pareto frontier by sweeping τ\tau and/or (α,β)(\alpha,\beta) .
+We sweep τ\tau and/or reward coefficients (α,β)(\alpha,\beta) to obtain a controllable Pareto frontier:
+faster models may drop some accuracy, and the curve demonstrates deployment flexibility rather than a single operating point.
+Overall robustness.
+FBS is relatively tolerant to hyperparameter variations: within a reasonable range, performance does not collapse but exhibits a “sweet spot”, e.g., kmax≈9k_{\max}\approx 9–15 and linear τ\tau annealing.
+This facilitates transferring FBS across model sizes and hardware setups without heavy manual tuning.
+3.4 Mechanism Analysis
+3.4.1 PAW Behavior: Dynamic Lookahead Distribution
+We analyze learned token-level lookahead k⁡(i)k(i) on four text categories: news, scientific papers, code, and math problems.
+Figure 5 plots the histogram of the learned lookahead k⁡(i)k(i).
+Observed trends:
+news (clear structure, high repetition) yields larger average k⁡(i)k(i) with a right-tailed distribution;
+math/BBH (strict logic) yields smaller k⁡(i)k(i) (more cautious token-by-token processing);
+code exhibits smaller k⁡(i)k(i) around syntax-critical regions (e.g., function headers) and larger k⁡(i)k(i) in comments or repetitive patterns.
+These distributions align with the intuition of parallel reading: “skim through familiar patterns, slow down on complex logic,”
+suggesting PAW is not a fixed-window hack but learns content-adaptive preview strategies jointly driven by RL and the main task objective.
+We further add quantitative correlations between k⁡(i)k(i) and uncertainty (surprisal/entropy; Spearman correlation) in Appendix G.
+Figure 5: Histogram of dynamic lookahead k⁡(i)k(i) across text categories .
+3.4.2 SG Behavior: Layer-skip Probability Heatmap
+Figure 6 visualizes skip probability as a heatmap (layers on the y-axis; generation positions on the x-axis).
+Early layers (1–4) and late layers (e.g., 28–32) exhibit lower skip probability, while middle layers (e.g., 10–20) are heavily skipped at many positions.
+Appendix G further quantifies correlations between skip probability and residual-energy proxies.
+Figure 6: Layer-skip probability heatmaps.
+3.4.3 CH Evidence Chain: Chunk Boundaries and Truth Consistency
+We evaluate CH by BIOS boundary F1, idiom recognition accuracy, and FactScore.
+Table 6 shows that incorporating CH improves chunk stability and reduces cases where “half-chunk” information is mistaken as complete facts, which is particularly important in Chinese where idioms and dense chunk units carry high semantic load.
+Setting
+BIOS F1↑\uparrow
+Idiom Acc↑\uparrow
+FactScore↑\uparrow
+Baseline
+0.80
+71%
+0.74
+w/o CH
+0.82
+74%
+0.75
+Full FBS
+0.88
+80%
+0.78
+Table 6: CH improves boundary prediction and truth consistency. Detailed FactScore protocol (data source, sample size, judge, CI, and whether retrieval is used) is specified in Appendix D.3.
+
+
+Additional exact-v1 E.1/E.2 and B.1
+E.1 FBS block computation and notation
+This subsection collects the core block equations in one place (moved from the main text to save space).
+Per-layer compute path.
+Let SA⁡(⋅)\mathrm{SA}(\cdot) denote standard causal self-attention and FFN⁡(⋅)\mathrm{FFN}(\cdot) the feed-forward network.
+At layer ℓ\ell, PAW produces a preview contribution PAW(𝐡1:m(ℓ))∈ℝm×d\mathrm{PAW}(\mathbf{h}^{(\ell)}_{1:m})\in\mathbb{R}^{m\times d} and CH produces a chunk-enhanced contribution CH(𝐡1:m(ℓ))∈ℝm×d\mathrm{CH}(\mathbf{h}^{(\ell)}_{1:m})\in\mathbb{R}^{m\times d} (Appendix C, Appendix D).
+We form a fused pre-FFN representation
+𝐡~(ℓ)1:m\displaystyle\tilde{\mathbf{h}}^{(\ell)}_{1:m}
+=𝐡1:m(ℓ)+SA(𝐡1:m(ℓ))\displaystyle=\mathbf{h}^{(\ell)}_{1:m}+\mathrm{SA}\!\left(\mathbf{h}^{(\ell)}_{1:m}\right)
++PAW(𝐡1:m(ℓ))+CH(𝐡1:m(ℓ)).\displaystyle+\mathrm{PAW}\!\left(\mathbf{h}^{(\ell)}_{1:m}\right)+\mathrm{CH}\!\left(\mathbf{h}^{(\ell)}_{1:m}\right).
+(8)
+Hard skipping (deployment).
+During decoding, SG produces a binary decision for each layer and time step, gt(ℓ)∈{0,1}g^{(\ell)}_{t}\in\{0,1\}, where gt(ℓ)=1g^{(\ell)}_{t}=1 means skip and gt(ℓ)=0g^{(\ell)}_{t}=0 means compute.
+For the current token tt, the layer output is
+𝐡t(ℓ+1)\displaystyle\mathbf{h}^{(\ell+1)}_{t}
+=gt(ℓ)⋅𝐡t(ℓ)\displaystyle=g^{(\ell)}_{t}\cdot\mathbf{h}^{(\ell)}_{t}
++(1−gt(ℓ))⋅(𝐡~t(ℓ)+FFN(𝐡~t(ℓ))),\displaystyle+\left(1-g^{(\ell)}_{t}\right)\cdot\Bigl(\tilde{\mathbf{h}}^{(\ell)}_{t}+\mathrm{FFN}(\tilde{\mathbf{h}}^{(\ell)}_{t})\Bigr),
+(9)
+where 𝐡~t(ℓ)\tilde{\mathbf{h}}^{(\ell)}_{t} denotes the tt-th row of Eq. (8).
+In implementation, when gt(ℓ)=1g^{(\ell)}_{t}=1 we short-circuit the entire layer block for this token (no attention/FFN compute), yielding real executed-compute reduction.
+What is skipped and how KV-cache is handled.
+Equation above defines hard skipping for the newest token tt.
+When gt(ℓ)=1g_{t}^{(\ell)}=1, we skip the full layer computation for token tt at layer ℓ\ell:
+no Q/K/V projections, no attention matmul, and no FFN activations are executed for this token at this layer, and we forward by identity,
+ht(ℓ+1)=ht(ℓ)h_{t}^{(\ell+1)}=h_{t}^{(\ell)}.
+This is KV-cache compatible because decoding only appends the newest token.
+Skipping never revisits nor modifies cached keys/values for prefix tokens (<t<t); therefore future tokens can still attend to the prefix normally.
+In implementation, the per-layer cache for the newest token is treated as a no-op at skipped layers.
+Training-time surrogate.
+We train SG with a straight-through (ST) estimator and a soft mixture surrogate so that gradients flow through pt(ℓ)p^{(\ell)}_{t} while the forward pass remains compatible with hard skipping; see Appendix E.2.
+E.2 Soft assignment and straight-through gates
+SG is trained with a soft proxy that remains compatible with hard skipping at inference.
+Let pt(ℓ)p^{(\ell)}_{t} be the skip probability at decoding step tt and layer ℓ\ell.
+We sample a hard gate ghard(ℓ)∼Bernoulli⁡(pt(ℓ))g^{(\ell)}_{\text{hard}}\sim\mathrm{Bernoulli}(p^{(\ell)}_{t}) and use the straight-through surrogate
+g(ℓ)=ghard(ℓ)+pt(ℓ)−stopgrad⁡(pt(ℓ)),g^{(\ell)}=g^{(\ell)}_{\text{hard}}+p^{(\ell)}_{t}-\mathrm{stopgrad}(p^{(\ell)}_{t}),
+so gradients flow through pt(ℓ)p^{(\ell)}_{t} while the forward pass uses a discrete decision.
+The layer output during training uses a soft mixing form:
+𝐡t(ℓ+1)=g(ℓ)​𝐡t(ℓ)+(1−g(ℓ))​f(ℓ)​(𝐡t(ℓ)),\mathbf{h}^{(\ell+1)}_{t}=g^{(\ell)}\,\mathbf{h}^{(\ell)}_{t}+(1-g^{(\ell)})\,f^{(\ell)}(\mathbf{h}^{(\ell)}_{t}),
+where f(ℓ)​(⋅)f^{(\ell)}(\cdot) denotes the full FBS compute path at layer ℓ\ell.
+At inference we replace sampling by deterministic thresholding (Appendix E.6), enabling true conditional execution.
+The main text reports a compact conclusion table for Skip-Gate (SG) and RL fine-tuning.
+This appendix provides (i) full gate-input ablations with Pareto curves, (ii) deployment-facing inference knobs via a full τ\tau sweep (sampling vs. threshold),
+(iii) reward decomposition and (α,β)(\alpha,\beta) sensitivity, (iv) full comparisons against more complex baselines (self-speculative / Kangaroo),
+and (v) safety-oriented deployment strategies for reasoning and code generation.
+Unless otherwise noted, all numbers follow the unified evaluation harness (single A100, prompt length 512, generation length 128, greedy; see Appendix B).
+
+B.1 Environment
+Hardware.
+All experiments are conducted on a single NVIDIA A100 GPU.
+We use the following common (representative) setup:
+•
+GPU: NVIDIA A100 80GB.
+•
+CPU: AMD EPYC 7742 (64 cores).
+•
+Memory: 512GB RAM.
+•
+Storage: NVMe SSD (2TB+).
+Software stack.
+•
+OS: Ubuntu 22.04 LTS.
+•
+CUDA: 12.1.
+•
+Python: 3.10.
+•
+PyTorch: 2.3.1.
+Precision and determinism.
+Inference is performed in bf16 (fp16 fallback if bf16 is unavailable).
+Dropout is disabled at evaluation time.
+We set a global random seed (default: 42) for Python/NumPy/PyTorch and record all runtime flags that can affect speed/accuracy (e.g., TF32, cuDNN benchmark).
+For timing, we always synchronize CUDA to avoid underestimating latency due to asynchronous kernel launches.
+Models.
+All methods share the same target backbone (e.g., a Qwen3-4B class causal LM as used in the main text).
+Group-A speculative methods additionally use a draft model (smaller model from the same family when possible).
+While the draft model parameters are not counted toward the target model size, its wall-clock cost must be included in latency (see §B.4).
+
+

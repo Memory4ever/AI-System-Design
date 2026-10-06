@@ -1,0 +1,4043 @@
+Reinforcement-aware Knowledge Distillation for LLM Reasoning
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+3
+Background and Notations
+4
+RL-Aware Distillation (RLAD)
+4.1
+Trust Region Ratio Distillation (TRRD)
+5
+Experiments
+5.1
+Logical Reasoning Task
+5.1.1
+Experimental Setup
+5.1.2
+Main Results
+5.2
+Complex Math Reasoning Task
+5.2.1
+Experimental Setup
+5.2.2
+Main Results
+5.2.3
+Efficiency Analysis
+6
+Conclusion
+References
+A
+Ablation on the choice of
+α
+\alpha
+B
+Stabilizing TRRD Training with Clipping
+C
+TRRD as an Interpolation Between GRPO and DPO
+License: CC BY 4.0
+arXiv:2602.22495v1 [cs.LG] 26 Feb 2026
+Reinforcement-aware Knowledge Distillation for LLM Reasoning
+Zhaoyang Zhang
+Affiliation:
+AWS Agentic AI
+Correspondence to:
+ozhaozha@amazon.com
+Shuli Jiang
+Affiliation:
+AWS Agentic AI
+Yantao Shen
+Affiliation:
+AWS Agentic AI
+Yuting Zhang
+Affiliation:
+AWS Agentic AI
+Dhananjay Ram
+Affiliation:
+AWS Agentic AI
+Shuo Yang
+Affiliation:
+AWS Agentic AI
+Zhuowen Tu
+Affiliation:
+AWS Agentic AI
+Wei Xia
+Affiliation:
+AWS Agentic AI
+Stefano Soatto
+Affiliation:
+AWS Agentic AI
+Abstract
+Reinforcement learning (RL) post-training has recently driven major gains in long chain-of-thought reasoning large language models (LLMs), but the high inference cost of such models motivates distillation into smaller students.
+Most existing knowledge distillation (KD) methods are designed for supervised fine-tuning (SFT), relying on fixed teacher traces or teacher-student Kullback–Leibler (KL) divergence-based regularization.
+When combined with RL, these approaches often suffer from distribution mismatch and objective interference: teacher supervision may not align with the student’s evolving rollout distribution, and the KL regularizer can compete with reward maximization and require careful loss balancing.
+To address these issues, we propose
+RL-aware distillation
+(RLAD), which performs
+selective imitation
+during RL—guiding the student toward the teacher only when it improves the current policy update.
+Our core component,
+Trust Region Ratio Distillation
+(TRRD), replaces the teacher-student KL regularizer with a PPO/GRPO-style likelihood-ratio objective anchored to a teacher–old-policy mixture, yielding advantage-aware, trust-region-bounded distillation on student rollouts and naturally balancing exploration, exploitation, and imitation.
+Across diverse logic reasoning and math benchmarks, RLAD consistently outperforms offline distillation, standard GRPO, and KL-based on-policy teacher-student knowledge distillation.
+Keywords:
+Machine Learning, ICML
+1
+Introduction
+Large Language Models (LLMs) have advanced rapidly in generation and reasoning capabilities through scaling, but the resulting inference cost makes deployment challenging under tight latency or budget constraints.
+This motivates model compression, with knowledge distillation (KD)
+(
+Hinton et al., 2015
+)
+as a standard approach: a smaller
+student
+model learns to imitate a larger
+teacher
+model, improving quality at fixed inference budgets, e.g., Llama 3.2
+(
+Meta, 2024
+)
+, DeepSeek-R1
+(
+Guo et al., 2025
+)
+.
+In the supervised fine-tuning (SFT) regime, KD for LLMs is commonly realized as: (i)
+offline distillation
+(
+Guo et al., 2025
+;
+Hui et al., 2024
+;
+Yang et al., 2025
+)
+, where students are trained on teacher-generated trajectories; (ii)
+off-policy distillation
+(
+Ko et al., 2024
+;
+Gu et al., 2024
+)
+, which matches teacher and student distributions (e.g., via KL divergence) on a fixed dataset; and (iii)
+on-policy distillation
+(
+Xu et al., 2025
+;
+Xu et al., 2024
+;
+Lin et al., 2020
+)
+, which computes teacher–student divergence on student-generated rollouts.
+However, extending these SFT-oriented recipes to RL post-training is non-trivial: RL continually updates the policy from reward feedback, causing the rollout distribution to shift over time and making static or mismatched distillation targets suboptimal and potentially unstable within the RL loop.
+Consequently, a common practice in distilling reasoning models trained with RL is to adopt a simplified pipeline: first train a strong teacher with RL, then perform
+offline
+distillation by SFT on the teacher-generated traces (e.g., DeepSeek-R1 distillation)
+(
+Guo et al., 2025
+)
+.
+Although straightforward, this approach does not perform RL optimization for the student and provides no teacher guidance that adapts to the student’s evolving policy, limiting its ability to transfer
+adaptive
+reasoning behaviors.
+To bridge this gap, recent work such as KDRL
+(
+Xu et al., 2025
+)
+integrates KD into the RL loop by adding an on-policy KL regularizer between teacher and student on student rollouts.
+This enables joint optimization, but introduces two practical challenges.
+First, the RL objective and the KL regularizer can compete, making performance sensitive to the relative weighting and requiring careful hyperparameter tuning.
+Second, teacher–student divergence is computed on student-generated trajectories that may lie outside the teacher’s high-probability region, which can weaken the supervision signal and reduce fidelity to the teacher’s reasoning behavior.
+To address the above challenges, in this work, we propose
+RL-aware distillation
+(RLAD), a distillation framework tailored to RL post-training of LLMs.
+The key principle of RLAD is
+selective imitation
+: the student is encouraged to follow the teacher only when doing so is beneficial for improving the current policy under the RL objective.
+Motivated by techniques of clipped trust-region policy optimization
+(
+Schulman et al., 2015
+;
+Schulman et al., 2017
+;
+Shao et al., 2024
+)
+, we introduce Trust Region Ratio Distillation (TRRD), which replaces standalone KL regularization with a PPO/GRPO-style likelihood-ratio objective anchored to a teacher–student old-policy mixture.
+With PPO/GRPO-style clipping, this yields advantage-aware, trust-region-bounded distillation on student rollouts.
+As a result, RLAD allows the student to move toward high-advantage behavior within the anchor distribution while opportunistically exploiting teacher guidance, implicitly balancing exploration, exploitation, and imitation during RL training.
+We evaluate RLAD on both math and logic reasoning benchmarks across varying task scales and model sizes (0.5B–7B students; up to a 32B teacher), and observe consistent improvements over prior RL-based distillation baselines across both domains.
+On logical reasoning with the K&K Logistics dataset
+(
+Xie et al., 2025a
+)
+using a Qwen3-8B teacher,
+RLAD
+substantially improves average accuracy: for Qwen3-0.6B, from 0.76 to 0.94 at 8K context (and 0.70
+→
+\rightarrow
+0.90 at 2K); for Qwen3-1.7B, from 0.95 to 0.99 at 8K (and 0.86
+→
+\rightarrow
+0.93 at 2K).
+RLAD
+also converges faster and attains higher rewards than both GRPO and KDRL, with the largest gains concentrated on the hardest subsets (PPL7 and PPL8), where it maintains a clear margin over KDRL.
+On long-context math reasoning with Qwen3-8B/Qwen3-32B teachers, RLAD improves the average performance (over five test sets and nine metrics) by +2.5 (Qwen3-1.7B-Base) and +5.5 (Qwen3-8B-Base) at 30K, and by +6.6/+2.6 for post-trained models under an 8K response budget compared to standard GRPO, consistently outperforming explicit-KL-style distillation and offline distillation.
+Gains are most pronounced on challenging benchmarks (e.g., AIME24/25 under Pass@32), while simpler benchmarks such as MATH500 show smaller improvements, suggesting performance saturation and model capacity limits.
+Compared with KDRL on complex math reasoning, we observe two notable differences:
+(1)
+RL behavior.
+KDRL tends to produce larger relative gains in Pass@32 than in Pass@1 (Table
+2
+), suggesting that its improvements are driven primarily by teacher imitation rather than reward-driven policy improvement; this is consistent with
+(
+Yue et al., 2025a
+)
+, which notes that RL typically benefits Pass@1 more than large-
+K
+K
+metrics.
+(2)
+Training stability.
+KDRL also exhibits less stable validation dynamics, with pronounced oscillations in Figure
+2
+.
+In contrast, RLAD yields more stable training and stronger Pass@1 gains, indicating a better balance between imitation and reinforcement learning.
+In summary,
+our contributions are:
+1.
+We propose
+RL-Aware Distillation (RLAD)
+(Section
+4
+), a new framework for incorporating teacher guidance into RL post-training via
+Trust Region Ratio Distillation (TRRD)
+(Section
+4.1
+), a clipped importance-ratio objective anchored on a teacher–old student mixture.
+2.
+We provide in-depth analysis of TRRD (Section
+4.1
+), demonstrating that it enables reward-conditioned, selective imitation while preserving trust-region–bounded and stable policy updates.
+3.
+Through extensive experiments on logical and long-context mathematical reasoning (Section
+5
+), we demonstrate that RLAD consistently outperforms GRPO, explicit KL-based distillation, and offline distillation, achieving larger gains on harder benchmarks and improved training stability.
+2
+Related Work
+Reinforcement Learning for Reasoning LLMs.
+The recent success of Kimi
+(
+Team et al., 2025b
+;
+Team et al., 2025a
+)
+and DeepSeek-R1
+(
+Guo et al., 2025
+)
+demonstrates that reinforcement learning (RL) can effectively post-train long-chain-of-thought (long-CoT) reasoning LLMs. Building on this progress, RL-based methods for reasoning can be broadly grouped into three lines:
+(i) applying RL directly to pretrained base models, exemplified by R1-Zero-style training
+(
+Xie et al., 2025b
+;
+Hu et al., 2025
+;
+Zeng et al., 2025
+)
+;
+(ii) post-training smaller distilled models to push the reasoning frontier under limited capacity
+(
+Luo et al., 2025
+;
+He et al., 2025
+;
+Wen et al., 2025
+;
+Mei et al., 2025
+)
+; and
+(iii) developing backbone-agnostic algorithmic or strategy improvements that are largely decoupled from a specific model family
+(
+Yu et al., 2025
+;
+Liu et al., 2025
+;
+Zhang and Zuo, 2025
+;
+Yue et al., 2025b
+)
+.
+Knowledge Distillation for LLMs.
+Knowledge distillation (KD) has become a core approach for transferring capabilities from large teacher LLMs to smaller students
+(
+Gu et al., 2024
+;
+Agarwal et al., 2024b
+;
+Ko et al., 2024
+)
+.
+In contrast to BERT-style distillation that often relies on intermediate-layer matching
+(
+Wang et al., 2020
+;
+Ko et al., 2023
+)
+, LLM distillation predominantly adopts output-level supervision—especially token-level logit matching—since intermediate representations are difficult to align across scales and architectures.
+We categorize LLM distillation methods by
+how training data is collected
+and
+which policy induces the student’s learning signal
+.
+(1) Offline distillation.
+Offline distillation constructs a fixed teacher-labeled dataset (often from instruction-tuned or RL-trained reasoning teachers) and trains the student via standard supervised fine-tuning (SFT) on teacher-generated traces.
+This paradigm is widely used in reasoning distillation due to its simplicity and stability
+(
+Guo et al., 2025
+;
+Ye et al., 2025
+;
+Muennighoff et al., 2025
+;
+Tian et al., 2025
+)
+.
+Notably, offline distillation is a
+pure imitation
+process: it does not require teacher queries during student training.
+(2) Off-policy KD.
+Off-policy KD still leverages teacher guidance, but computes the supervision signal (e.g., teacher logits or preferences) on data not generated by the
+current
+student policy.
+This includes standard logit-based distillation on static prompts or teacher-sampled sequences, performed at the sequence level
+(
+Hsieh et al., 2023
+;
+Guo et al., 2025
+)
+or token-logit level
+(
+Liu et al., 2024
+;
+Gu et al., 2025
+)
+.
+Recent work further refines this setting:
+(
+Li et al., 2025
+)
+mitigates long-tail noise using top-
+k
+k
+teacher/student logits and exploits ranking structure via logit differences, while
+(
+Zhang et al., 2024
+)
+introduces dual-space knowledge distillation (DSKD) to better align teacher and student output representations.
+Other extensions study efficiency and training improvements in related distillation settings
+(
+Xu et al., 2024
+;
+Zhang et al., 2024
+;
+Li et al., 2025
+)
+.
+(3) On-policy KD.
+On-policy KD trains the student on
+student-generated outputs
+(SGO) augmented with teacher feedback (e.g., teacher logits, divergences, or critiques).
+By learning from its own rollouts, on-policy KD can reduce exposure bias and better match the student’s test-time distribution.
+Representative approaches include policy-gradient-based KD designed to reduce high-variance updates
+(
+Gu et al., 2024
+)
+, and explicit SGO frameworks optimizing divergence objectives such as RKLD and JSD
+(
+Ko et al., 2024
+;
+Agarwal et al., 2024b
+)
+.
+Recent technical reports also explore on-policy distillation for reasoning models and demonstrate its potential at scale
+(
+Yang et al., 2025
+)
+.
+Distillation in RL Training.
+Several works combine reward optimization with teacher supervision. Some modify preference objectives (e.g., DPO variants) to incorporate teacher signals
+(
+Liu et al., 2024
+;
+Pan et al., 2025
+)
+. GKD
+(
+Agarwal et al., 2024a
+)
+provides a generalized on-policy distillation view; LUFFY
+(
+Yan et al., 2025
+)
+mixes off-policy trajectories with policy shaping for reasoning; and KDRL
+(
+Xu et al., 2025
+)
+jointly optimizes on-policy rewards with token-level KL distillation.
+Position of our RLAD.
+Offline distillation is SFT and does not reflect RL post-training dynamics. Existing off-/on-policy KD in RL typically adds a explicit-KL-style auxiliary term, creating a multi-objective trade-off that can conflict with reward maximization. In contrast, RLAD folds teacher guidance into a trust-region for RL, so imitation is applied
+only when
+it benefits the current RL update, reducing brittle tuning between imitation and exploration.
+3
+Background and Notations
+Problem Statement.
+Let
+𝒳
+\mathcal{X}
+denote the space of prompts and
+𝒱
+\mathcal{V}
+the vocabulary. We consider autoregressive langauge models, which defines a stochastic policy
+π
+\pi
+parameterized by
+θ
+\theta
+, as
+π
+θ
+​
+(
+y
+|
+x
+)
+=
+∏
+t
+=
+1
+T
+π
+θ
+​
+(
+y
+t
+|
+x
+,
+y
+<
+t
+)
+\pi_{\theta}(y|x)=\prod_{t=1}^{T}\pi_{\theta}(y_{t}|x,y_{<t})
+, where
+x
+∈
+𝒳
+x\in\mathcal{X}
+,
+y
+=
+(
+y
+1
+,
+y
+2
+,
+…
+,
+y
+T
+)
+∈
+𝒱
+T
+y=(y_{1},y_{2},\dots,y_{T})\in\mathcal{V}^{T}
+is the generated response. Define
+y
+<
+t
+=
+(
+y
+1
+,
+…
+,
+y
+t
+−
+1
+)
+y_{<t}=(y_{1},\dots,y_{t-1})
+.
+Let
+R
+:
+𝒳
+×
+𝒱
+∗
+→
+ℝ
+R:\mathcal{X}\times\mathcal{V}^{*}\rightarrow\mathbb{R}
+denote the reward function.
+Let the KL divergence be
+KL
+(
+π
+θ
+1
+|
+|
+π
+θ
+2
+)
+=
+𝔼
+y
+t
+∼
+π
+θ
+1
+[
+log
+π
+θ
+1
+(
+y
+t
+|
+x
+,
+y
+<
+t
+)
+−
+log
+π
+θ
+2
+(
+y
+t
+|
+x
+,
+y
+<
+t
+)
+]
+\text{KL}(\pi_{\theta_{1}}||\pi_{\theta_{2}})=\mathbb{E}_{y_{t}\sim\pi_{\theta_{1}}}\left[\log\pi_{\theta_{1}}(y_{t}|x,y_{<t})-\log\pi_{\theta_{2}}(y_{t}|x,y_{<t})\right]
+.
+In this work, we consider a
+student–teacher
+setting consisting of a smaller student model (policy)
+π
+θ
+S
+\pi_{\theta^{S}}
+and a more powerful teacher model (policy)
+π
+θ
+T
+\pi_{\theta^{T}}
+.
+Our objective is twofold.
+First, following the standard reinforcement learning formulation, the student model is trained to maximize the expected reward:
+max
+θ
+S
+J
+(
+θ
+S
+)
+=
+𝔼
+x
+∼
+𝒟
+,
+y
+∼
+π
+θ
+S
+(
+⋅
+|
+x
+)
+[
+R
+(
+x
+,
+y
+)
+]
+\max_{\theta^{S}}J(\theta^{S})=\mathbb{E}_{x\sim\mathcal{D},y\sim\pi_{\theta^{S}}(\cdot|x)}\left[R(x,y)\right]
+, where
+𝒟
+\mathcal{D}
+denotes a distribution over prompts.
+Second, beyond reward maximization, we aim to transfer knowledge from the teacher model to the student, encouraging the student policy to align with the teacher’s behavior while optimizing the task reward.
+Group Relative Policy Optimization (GRPO).
+One popular RL algorithm for training LLMs to improve their reasoning capabilities is
+GRPO
+(
+Shao et al., 2024
+)
+. Given a prompt
+x
+∈
+𝒳
+x\in\mathcal{X}
+, GRPO first samples a group of
+G
+G
+responses from the current student policy
+π
+θ
+S
+\pi_{\theta^{S}}
+, denoted by
+{
+y
+(
+i
+)
+}
+i
+=
+1
+G
+\{y^{(i)}\}_{i=1}^{G}
+.
+Each response
+y
+(
+i
+)
+y^{(i)}
+is assigned a scaler reward
+r
+(
+i
+)
+r^{(i)}
+.
+To normalize rewards at the prompt level, GRPO computes the mean and standard deviation of the group rewards on prompt
+x
+x
+:
+μ
+⁡
+(
+x
+)
+=
+1
+G
+​
+∑
+i
+=
+1
+G
+r
+(
+i
+)
+\mu(x)=\frac{1}{G}\sum_{i=1}^{G}r^{(i)}
+and
+σ
+⁡
+(
+x
+)
+=
+1
+G
+​
+∑
+i
+=
+1
+G
+(
+r
+(
+i
+)
+−
+μ
+⁡
+(
+x
+)
+)
+2
+\sigma(x)=\sqrt{\frac{1}{G}\sum_{i=1}^{G}(r^{(i)}-\mu(x))^{2}}
+.
+Let
+π
+θ
+S
+,
+o
+​
+l
+​
+d
+\pi_{\theta^{S,old}}
+denote a fixed, earlier version of the student policy.
+For the
+t
+t
+-th token of the
+i
+i
+-th response, the importance sampling ratio is defined as
+r
+i
+,
+t
+GRPO
+​
+(
+θ
+S
+)
+=
+π
+θ
+S
+​
+(
+y
+t
+(
+i
+)
+∣
+x
+,
+y
+<
+t
+(
+i
+)
+)
+π
+θ
+S
+,
+o
+​
+l
+​
+d
+​
+(
+y
+t
+(
+i
+)
+∣
+x
+,
+y
+<
+t
+(
+i
+)
+)
+\displaystyle r_{i,t}^{\text{GRPO}}(\theta^{S})=\frac{\pi_{\theta^{S}}(y_{t}^{(i)}\mid x,y_{<t}^{(i)})}{\pi_{\theta^{S,old}}(y_{t}^{(i)}\mid x,y_{<t}^{(i)})}
+and the GRPO objective is then
+J
+GRPO
+(
+θ
+S
+)
+=
+𝔼
+x
+∼
+𝒟
+,
+{
+y
+i
+}
+i
+=
+1
+G
+∼
+π
+S
+,
+o
+​
+l
+​
+d
+(
+⋅
+|
+x
+)
+\displaystyle J^{\text{GRPO}}(\theta^{S})=\mathbb{E}_{x\sim\mathcal{D},\{y_{i}\}_{i=1}^{G}\sim\pi^{S,old}(\cdot|x)}
+(1)
+[
+1
+G
+∑
+i
+=
+1
+G
+1
+|
+y
+(
+i
+)
+|
+∑
+t
+=
+1
+|
+y
+(
+i
+)
+|
+{
+min
+(
+r
+i
+,
+t
+GRPO
+(
+θ
+S
+)
+A
+^
+i
+,
+t
+,
+\displaystyle\Bigg[\frac{1}{G}\sum_{i=1}^{G}\frac{1}{|y^{(i)}|}\sum_{t=1}^{|y^{(i)}|}\Bigg\{\min\Big(r^{\text{GRPO}}_{i,t}(\theta^{S})\widehat{A}_{i,t},
+Clip
+(
+r
+i
+,
+t
+GRPO
+(
+θ
+S
+)
+,
+1
+−
+ϵ
+,
+1
++
+ϵ
+)
+A
+^
+i
+,
+t
+)
+}
+]
+−
+β
+KL
+(
+π
+θ
+S
+|
+|
+π
+θ
+ref
+)
+\displaystyle\hskip 9.24994pt\text{Clip}(r^{\text{GRPO}}_{i,t}(\theta^{S}),1-\epsilon,1+\epsilon)\widehat{A}_{i,t}\Big)\Bigg\}\Bigg]-\beta\text{KL}(\pi_{\theta^{S}}||\pi_{\theta^{\text{ref}}})
+where the group-relative advantage is
+A
+^
+i
+,
+t
+=
+r
+(
+i
+)
+−
+μ
+⁡
+(
+x
+)
+σ
+⁡
+(
+x
+)
+\widehat{A}_{i,t}=\frac{r^{(i)}-\mu(x)}{\sigma(x)}
+.
+Here,
+ϵ
+\epsilon
+denotes the GRPO-style clipping threshold,
+β
+\beta
+controls the strength of the regularization, and
+π
+θ
+ref
+\pi_{\theta^{\text{ref}}}
+is a reference policy kept fixed during training.
+In practice,
+π
+θ
+ref
+\pi_{\theta^{\text{ref}}}
+is typically obtained from a supervised fine-tuned model prior to the post-training RL stage.
+KDRL
+(
+Xu et al., 2025
+)
+.
+In the knowledge distillation (KD) setting, a straightforward approach to incorporating a teacher model is to directly replace the reference policy
+π
+θ
+ref
+\pi_{\theta^{\text{ref}}}
+in KL regularization term in the GRPO objective (
+1
+) with the teacher policy
+π
+θ
+T
+\pi_{\theta^{T}}
+.
+The new KL regularization term becomes
+KL
+(
+π
+θ
+S
+|
+|
+π
+θ
+T
+)
+\displaystyle\text{KL}(\pi_{\theta^{S}}||\pi_{\theta^{T}})
+(2)
+=
+𝔼
+y
+t
+∼
+π
+θ
+S
+​
+[
+log
+⁡
+π
+θ
+S
+​
+(
+y
+t
+|
+x
+,
+y
+<
+t
+)
+−
+log
+⁡
+π
+θ
+T
+​
+(
+y
+t
+|
+x
+,
+y
+<
+t
+)
+]
+\displaystyle=\mathbb{E}_{y_{t}\sim\pi_{\theta^{S}}}\left[\log\pi_{\theta^{S}}(y_{t}|x,y_{<t})-\log\pi_{\theta^{T}}(y_{t}|x,y_{<t})\right]
+Under this formulation, the student policy
+π
+θ
+S
+\pi_{\theta^{S}}
+is explicitly regularized towards the teacher, and we denote the resulting objective by
+J
+KDRL
+​
+(
+θ
+S
+)
+J^{\text{KDRL}}(\theta^{S})
+.
+Notably, the KL regularization term (
+2
+) coincides with the reverse KL distillation objective commonly used in classical KD methods
+(
+Xu et al., 2025
+)
+, including supervised fine-tuning (SFT)–based distillation for large language models.
+4
+RL-Aware Distillation (RLAD)
+Naive teacher-based distillation methods such as KDRL
+(
+Xu et al., 2025
+)
+incorporate the teacher policy
+π
+θ
+T
+\pi_{\theta^{T}}
+via a fixed KL regularization term that is independent of the estimated advantage
+A
+^
+\widehat{A}
+. As a result, teacher guidance uniformly influences the student policy, including in regions where the teacher’s behavior is misaligned with high-reward trajectories. This can lead to imitation that degrades task performance. Ideally, teacher guidance should be
+selective
+, reinforcing student updates only when the teacher’s preferences are consistent with the reward signal. RLAD is designed to achieve this by integrating teacher information directly into the advantage-weighted policy update, rather than treating it as a static prior.
+4.1
+Trust Region Ratio Distillation (TRRD)
+To address teacher–advantage misalignment, we propose Trust Region Ratio Distillation (TRRD), which incorporates the teacher policy into the GRPO importance ratio instead of imposing it through an unconditional KL penalty.
+Recall that in GRPO, policy updates are governed by the importance ratio between the current student policy
+π
+θ
+S
+\pi_{\theta^{S}}
+and a fixed previous policy
+π
+θ
+S
+,
+o
+​
+l
+​
+d
+\pi_{\theta^{S,old}}
+, ensuring alignment with the estimated advantage. TRRD generalizes this mechanism by interpolating between on-policy improvement and teacher guidance at the token level, controlled by a tunable coefficient
+α
+∈
+[
+0
+,
+1
+]
+\alpha\in[0,1]
+.
+Formally, for the
+t
+t
+-th token of the
+i
+i
+-th sampled response, we define the TRRD ratio as
+r
+i
+,
+t
+TRRD
+​
+(
+θ
+S
+)
+=
+(
+r
+i
+,
+t
+GRPO
+​
+(
+θ
+S
+)
+)
+α
+​
+(
+r
+i
+,
+t
+T
+​
+(
+θ
+S
+)
+)
+1
+−
+α
+\displaystyle r^{\text{TRRD}}_{i,t}(\theta^{S})=\left(r^{\text{GRPO}}_{i,t}(\theta^{S})\right)^{\alpha}\left(r^{\text{T}}_{i,t}(\theta^{S})\right)^{1-\alpha}
+(3)
+:
+=
+(
+π
+θ
+S
+​
+(
+y
+t
+(
+i
+)
+|
+x
+,
+y
+<
+t
+(
+i
+)
+)
+π
+θ
+S
+,
+o
+​
+l
+​
+d
+​
+(
+y
+t
+(
+i
+)
+|
+x
+,
+y
+<
+t
+(
+i
+)
+)
+)
+α
+​
+(
+π
+θ
+S
+​
+(
+y
+t
+(
+i
+)
+|
+x
+,
+y
+<
+t
+(
+i
+)
+)
+π
+θ
+T
+​
+(
+y
+t
+(
+i
+)
+|
+x
+,
+y
+<
+t
+(
+i
+)
+)
+)
+1
+−
+α
+\displaystyle:=\left(\frac{\pi_{\theta^{S}}(y_{t}^{(i)}|x,y_{<t}^{(i)})}{\pi_{\theta^{S,old}}(y_{t}^{(i)}|x,y_{<t}^{(i)})}\right)^{\alpha}\left(\frac{\pi_{\theta^{S}}(y_{t}^{(i)}|x,y_{<t}^{(i)})}{\pi_{\theta^{T}}(y_{t}^{(i)}|x,y_{<t}^{(i)})}\right)^{1-\alpha}
+Replacing the GRPO importance ratio with
+r
+i
+,
+t
+TRRD
+r^{\text{TRRD}}_{i,t}
+yields the RLAD objective:
+J
+GRPO
+(
+θ
+S
+)
+=
+𝔼
+x
+∼
+𝒟
+,
+{
+y
+i
+}
+i
+=
+1
+G
+∼
+π
+S
+,
+o
+​
+l
+​
+d
+(
+⋅
+|
+x
+)
+\displaystyle J^{\text{GRPO}}(\theta^{S})=\mathbb{E}_{x\sim\mathcal{D},\{y_{i}\}_{i=1}^{G}\sim\pi^{S,old}(\cdot|x)}
+(4)
+[
+1
+G
+∑
+i
+=
+1
+G
+1
+|
+y
+(
+i
+)
+|
+∑
+t
+=
+1
+|
+y
+(
+i
+)
+|
+{
+min
+(
+r
+i
+,
+t
+TRRD
+(
+θ
+S
+)
+A
+^
+i
+,
+t
+,
+\displaystyle\Bigg[\frac{1}{G}\sum_{i=1}^{G}\frac{1}{|y^{(i)}|}\sum_{t=1}^{|y^{(i)}|}\Bigg\{\min\Big(r^{\text{TRRD}}_{i,t}(\theta^{S})\widehat{A}_{i,t},
+Clip
+(
+r
+i
+,
+t
+TRRD
+(
+θ
+S
+)
+,
+1
+−
+ϵ
+,
+1
++
+ϵ
+)
+A
+^
+i
+,
+t
+)
+}
+]
+−
+β
+KL
+(
+π
+θ
+S
+|
+|
+π
+θ
+ref
+)
+\displaystyle\hskip 9.24994pt\text{Clip}(r^{\text{TRRD}}_{i,t}(\theta^{S}),1-\epsilon,1+\epsilon)\widehat{A}_{i,t}\Big)\Bigg\}\Bigg]-\beta\text{KL}(\pi_{\theta^{S}}||\pi_{\theta^{\text{ref}}})
+TRRD as a Trust-Region Update.
+Define the token-level mixture anchor ratio
+r
+π
+mix
+​
+(
+y
+t
+∣
+x
+,
+y
+<
+t
+)
+≔
+(
+π
+θ
+S
+,
+o
+​
+l
+​
+d
+)
+α
+​
+(
+π
+θ
+T
+)
+1
+−
+α
+\displaystyle r_{\pi^{\text{mix}}}(y_{t}\mid x,y_{<t})\coloneqq(\pi_{\theta^{S,old}})^{\alpha}(\pi_{\theta^{T}})^{1-\alpha}
+Then the TRRD ratio can be written as
+r
+i
+,
+t
+TRRD
+​
+(
+θ
+S
+)
+=
+π
+θ
+S
+​
+(
+y
+t
+(
+i
+)
+∣
+x
+,
+y
+<
+T
+(
+i
+)
+)
+r
+π
+mix
+​
+(
+y
+t
+(
+i
+)
+∣
+x
+,
+y
+<
+T
+(
+i
+)
+)
+\displaystyle r^{\text{TRRD}}_{i,t}(\theta^{S})=\frac{\pi_{\theta^{S}}(y_{t}^{(i)}\mid x,y^{(i)}_{<T})}{r_{\pi^{\text{mix}}}(y_{t}^{(i)}\mid x,y^{(i)}_{<T})}
+Thus, RLAD performs a PPO-style update with the trust region centered on
+r
+π
+mix
+r_{\pi^{\text{mix}}}
+rather than the previous student policy alone. Applying clipping bounds
+r
+i
+,
+t
+TRRD
+∈
+[
+1
+−
+ϵ
+,
+1
++
+ϵ
+]
+r^{\text{TRRD}}_{i,t}\in[1-\epsilon,1+\epsilon]
+directly bounds the change in log-probability:
+|
+log
+⁡
+π
+θ
+S
+​
+(
+y
+t
+(
+i
+)
+∣
+x
+,
+y
+<
+t
+(
+i
+)
+)
+−
+log
+⁡
+r
+π
+mix
+​
+(
+y
+t
+(
+i
+)
+∣
+x
+,
+y
+<
+t
+(
+i
+)
+)
+|
+≤
+log
+⁡
+(
+1
++
+ϵ
+)
+\displaystyle|\log\pi_{\theta^{S}}(y_{t}^{(i)}\mid x,y^{(i)}_{<t})-\log r_{\pi^{\text{mix}}}(y_{t}^{(i)}\mid x,y^{(i)}_{<t})|\leq\log(1+\epsilon)
+which in turn constrains the KL divergence between the updated student policy and the mixture anchor at the token level.
+When
+α
+=
+0
+\alpha=0
+, TRRD recovers standard GRPO; when
+α
+=
+1
+\alpha=1
+, the trust region is fully teacher-anchored, yielding an objective closely related to DPO. Appendix
+C
+analyzes this interpolation in detail.
+TRRD as an Implicit Weighted KL Regularization.
+Taking logarithms of TRRD ratio (
+3
+) yields
+log
+⁡
+r
+i
+,
+t
+TRRD
+\displaystyle\log r^{\text{TRRD}}_{i,t}
+=
+α
+⁡
+(
+log
+⁡
+π
+θ
+S
+−
+log
+⁡
+π
+θ
+S
+,
+o
+​
+l
+​
+d
+)
+\displaystyle=\alpha(\log\pi_{\theta^{S}}-\log\pi_{\theta^{S,old}})
+(5)
++
+(
+1
+−
+α
+)
+​
+(
+log
+⁡
+π
+θ
+S
+−
+log
+⁡
+π
+θ
+T
+)
+\displaystyle\quad+(1-\alpha)(\log\pi_{\theta^{S}}-\log\pi_{\theta^{T}})
+showing that
+TRRD implicitly optimizes a convex combination of two KL terms: a trust-region term relative to the previous student policy, and a distillation term relative to the teacher policy
+.
+Equivalently, TRRD can be viewed as optimizing a reward-augmented objective of the form:
+max
+θ
+S
+⁡
+𝔼
+⁡
+[
+R
+⁡
+(
+x
+,
+y
+)
+]
+\displaystyle\max_{\theta^{S}}\mathbb{E}[R(x,y)]
+−
+α
+KL
+(
+π
+θ
+S
+|
+|
+π
+θ
+S
+,
+o
+​
+l
+​
+d
+)
+\displaystyle-\alpha\text{KL}(\pi_{\theta^{S}}||\pi_{\theta^{S,old}})
+−
+(
+1
+−
+α
+)
+KL
+(
+π
+θ
+S
+|
+|
+π
+θ
+T
+)
+\displaystyle-(1-\alpha)\text{KL}(\pi_{\theta^{S}}||\pi_{\theta^{T}})
+up to GRPO-style clipping and advantage normalization.
+In general, TRRD does not impose teacher imitation as a fixed constraint. Instead, it treats teacher alignment as a soft regularizer that competes with on-policy improvement.
+Why TRRD Fixes Teacher-Advantage Misalignment.
+TRRD resolves this misalignment by embedding the teacher policy
+inside the advantage-weighted importance ratio
+, so that teacher influence is modulated by the same mechanism that governs policy improvement in GRPO.
+Specifically, for the
+t
+t
+-th token of the
+i
+i
+-th sampled response,
+following the TRRD ratio in (
+3
+),
+the policy gradient induced by the unclipped term in
+r
+i
+,
+t
+TRRD
+​
+(
+θ
+S
+)
+​
+A
+^
+i
+,
+t
+r^{\text{TRRD}}_{i,t}(\theta^{S})\widehat{A}_{i,t}
+is
+proportional to
+A
+^
+i
+,
+t
+​
+[
+∇
+θ
+S
+​
+log
+​
+π
+θ
+S
+​
+(
+y
+t
+(
+i
+)
+∣
+x
+,
+y
+<
+t
+(
+i
+)
+)
+−
+∇
+θ
+S
+​
+log
+​
+r
+π
+mix
+​
+(
+y
+t
+(
+i
+)
+∣
+x
+,
+y
+<
+t
+(
+i
+)
+)
+]
+\displaystyle\widehat{A}_{i,t}\left[\nabla_{\theta^{S}}\log\pi_{\theta^{S}}(y_{t}^{(i)}\mid x,y_{<t}^{(i)})-\nabla_{\theta^{S}}\log r_{\pi^{\text{mix}}}(y_{t}^{(i)}\mid x,y_{<t}^{(i)})\right]
+. Since
+r
+π
+mix
+r_{\pi^{\text{mix}}}
+does not dependent on
+θ
+S
+\theta^{S}
+, teacher influence affects the update only through the scaling of the student’s log-probability by
+A
+^
+i
+,
+t
+\widehat{A}_{i,t}
+. This structure yields three regimes:
+1.
+Positive advantage (
+A
+^
+i
+,
+t
+>
+0
+\widehat{A}_{i,t}>0
+).
+Under positive advantage, the gradient encourages increasing
+log
+⁡
+π
+θ
+S
+\log\pi_{\theta^{S}}
+relative to
+r
+π
+mix
+r_{\pi^{\text{mix}}}
+, subject to the clipping constraint on the TRRD ratio
+r
+i
+,
+t
+TRRD
+=
+π
+θ
+S
+/
+r
+π
+mix
+r_{i,t}^{\text{TRRD}}=\pi_{\theta^{S}}/r_{\pi^{\text{mix}}}
+.
+If the teacher assigns high probability to
+y
+t
+(
+i
+)
+y_{t}^{(i)}
+, the mixture anchor
+r
+π
+mix
+r_{\pi^{\text{mix}}}
+is larger, causing
+r
+i
+,
+t
+TRRD
+r_{i,t}^{\text{TRRD}}
+to grow more slowly as
+π
+θ
+S
+\pi_{\theta^{S}}
+increases. Consequently, the clipping threshold
+(
+1
++
+ϵ
+)
+(1+\epsilon)
+is reached later, allowing a larger increase in the student’s probability before the update saturates.
+If the teacher assigns low probability to
+y
+i
+(
+t
+)
+y_{i}^{(t)}
+,
+r
+π
+mix
+r_{\pi^{\text{mix}}}
+is smaller and the ratio reaches the clipping bound earlier, restricting the magnitude of the update even though the advantage is positive.
+2.
+Negative advantage (
+A
+^
+i
+,
+t
+<
+0
+\widehat{A}_{i,t}<0
+).
+When the estimated advantage is negative, the objective encourages decreasing the student probability
+π
+θ
+S
+\pi_{\theta^{S}}
+, again subject to the clipping constraint on
+r
+i
+,
+t
+TRRD
+=
+π
+θ
+S
+/
+r
+π
+mix
+r_{i,t}^{\text{TRRD}}=\pi_{\theta^{S}}/r_{\pi^{\text{mix}}}
+.
+If the teacher assigns high probability to
+y
+i
+(
+t
+)
+y_{i}^{(t)}
+, the mixture anchor policy ratio
+r
+π
+mix
+r_{\pi^{\text{mix}}}
+, which shifts the lower clipping threshold
+r
+i
+,
+t
+TRRD
+≥
+1
+−
+ϵ
+r_{i,t}^{\text{TRRD}}\geq 1-\epsilon
+to correspond to a smaller absolute decrease in
+π
+θ
+S
+\pi_{\theta^{S}}
+. As a result, the student’s probability for
+y
+t
+(
+i
+)
+y_{t}^{(i)}
+cannot be reduced aggressively, preventing the policy from moving sharply away from actions strongly preferred by the teacher.
+Conversely, if the teacher assigns low probability to
+y
+t
+(
+i
+)
+y_{t}^{(i)}
+,
+r
+π
+mix
+r_{\pi^{\text{mix}}}
+is smaller and the lower clipping bound permits a larger relative decrease in
+π
+θ
+S
+\pi_{\theta^{S}}
+. In this case, the student is allowed to suppress the action more strongly, consistent with both the negative advantage signal and the teacher’s preference.
+3.
+Near-zero advantage (
+A
+^
+i
+,
+t
+≈
+0
+\widehat{A}_{i,t}\approx 0
+). The contribution of the term vanishes regardless of the teacher policy, ensuring that teacher influence is negligible when the reward signal is uninformative.
+Why TRRD enables better distillation over explicit-KL distillation.
+TRRD can be interpreted as optimizing a reward-regularized objective with a convex combination of KL divergences to the previous student policy and the teacher policy. Unlike naive distillation, TRRD adaptively adjusts the trust region based on teacher agreement while preserving the reward-determined update direction, activating teacher influence only when supported by the advantage signal and the students are away from teacher trust-region, thereby balancing exploration, exploitation, and imitation.
+Model
+Context Length
+Training
+PPL2
+PPL3
+PPL4
+PPL5
+PPL6
+PPL7
+PPL8
+Avg
+o3-mini-high
+8K
+-
+0.99
+0.98
+0.97
+0.95
+0.94
+0.89
+0.83
+0.94
+Deepseek-R1
+8K
+-
+0.91
+0.73
+0.77
+0.78
+0.75
+0.88
+0.83
+0.81
+Qwen3-0.6B
+8K
+-
+0.77
+0.45
+0.52
+0.47
+0.32
+0.34
+0.22
+0.44
+Qwen3-0.6B
+8K
+GRPO
+0.86
+0.85
+0.85
+0.76
+0.72
+0.66
+0.63
+0.76
+Qwen3-0.6B
+8K
+KDRL
+(
+Xu et al., 2025
+)
+1
+0.97
+1
+0.99
+0.96
+0.82
+0.75
+0.92
+Qwen3-0.6B
+8K
+RLAD (ours)
+1
+0.99
+0.99
+0.96
+0.93
+0.91
+0.83
+0.94
+Qwen3-1.7B
+8K
+-
+0.95
+0.99
+0.90
+0.80
+0.77
+0.85
+0.70
+0.85
+Qwen3-1.7B
+8K
+GRPO
+1
+0.99
+1
+0.98
+0.95
+0.92
+0.81
+0.95
+Qwen3-1.7B
+8K
+KDRL
+(
+Xu et al., 2025
+)
+0.99
+1
+1
+0.96
+0.97
+0.93
+0.88
+0.96
+Qwen3-1.7B
+8K
+RLAD (ours)
+1
+1
+1
+1
+0.97
+0.95
+0.98
+0.99
+Qwen3-0.6B
+2K
+-
+0.69
+0.47
+0.41
+0.22
+0.09
+0.08
+0.03
+0.28
+Qwen3-0.6B
+2K
+GRPO
+0.84
+0.83
+0.85
+0.76
+0.56
+0.58
+0.50
+0.70
+Qwen3-0.6B
+2K
+KDRL
+(
+Xu et al., 2025
+)
+1
+0.97
+1
+0.95
+0.82
+0.72
+0.54
+0.86
+Qwen3-0.6B
+2K
+RLAD(ours)
+1
+1
+0.99
+0.96
+0.86
+0.81
+0.69
+0.90
+Qwen3-1.7B
+2K
+-
+0.90
+0.70
+0.66
+0.43
+0.21
+0.16
+0.05
+0.44
+Qwen3-1.7B
+2K
+GRPO
+1
+0.98
+0.97
+0.90
+0.87
+0.79
+0.52
+0.86
+Qwen3-1.7B
+2K
+KDRL
+(
+Xu et al., 2025
+)
+1
+0.98
+1
+0.98
+0.86
+0.84
+0.69
+0.91
+Qwen3-1.7B
+2K
+RLAD(ours)
+0.98
+0.99
+1
+0.98
+0.93
+0.86
+0.75
+0.93
+Table 1
+:
+Accuracy on the K&K Logistics testing subsets at 2K and 8K context length.
+5
+Experiments
+Tasks.
+We validate the effectiveness of
+RLAD
+on two representative reasoning settings: logical reasoning and mathematical reasoning.
+Baselines.
+We compare
+RLAD
+against the following baselines:
+(i)
+GRPO
+(
+Shao et al., 2024
+)
+, which optimizes the student using the GRPO objective (
+1
+) without teacher guidance (see Section
+3
+).
+(ii)
+KDRL
+(
+Xu et al., 2025
+)
+, which augments GRPO with a KL distillation term from a larger teacher (see Section
+3
+).
+(iii)
+SFT
+: for complex math reasoning, following
+(
+Xu et al., 2025
+)
+, which follows
+(
+Xu et al., 2025
+)
+and applies supervised fine-tuning on reject-sampled teacher outputs as an offline distillation baseline for complex math reasoning.
+Stability Considerations and Hyperparameter Ablations.
+In KDRL, the KL regularization term between the student and teacher policies can become excessively large early in training, when the two policies are substantially mismatched, resulting in extreme ratios
+π
+θ
+S
+π
+θ
+T
+\frac{\pi_{\theta^{S}}}{\pi_{\theta^{T}}}
+and unstable optimization.
+To improve stability for this baseline, we clamp the log-ratio to the range
+[
+−
+1
+,
+1
+]
+[-1,1]
+.
+In contrast,
+RLAD
+anchors updates to a mixture of the teacher and previous student policies and enforces a trust region through a clipped-ratio objective, which mitigates such outliers by construction.
+We further conduct ablation studies on the mixing coefficient
+α
+\alpha
+(Appendix
+A
+), finding that
+RLAD
+is largely insensitive to
+α
+\alpha
+across both mathematical and logical reasoning tasks, except at extreme values (e.g.,
+α
+→
+0
+\alpha\rightarrow 0
+or
+α
+→
+1
+\alpha\rightarrow 1
+).
+Based on these results, we fix
+α
+=
+0.5
+\alpha=0.5
+in all subsequent experiments.
+5.1
+Logical Reasoning Task
+5.1.1
+Experimental Setup
+Training.
+Following Logic-RL
+(
+Xie et al., 2025b
+)
+, we conduct RL post-training for logical reasoning on the K&K dataset
+(
+Xie et al., 2025a
+)
+.
+We adopt Qwen3-0.6B and Qwen3-1.7B as student models and optimize them with GRPO
+(
+Shao et al., 2024
+)
+on 8 H200 GPUs.
+Unless stated otherwise, we use a group size of 8, a learning rate of
+1
+×
+10
+−
+6
+1\times 10^{-6}
+, and GRPO clipping thresholds of 0.20 (lower) and 0.28 (upper).
+Training uses a micro-batch size of 32 and a global batch size of 256, with a maximum generation length of either 2,048 or 8,192 tokens depending on the setting.
+For teacher-guided methods (KDRL and
+RLAD
+), we use Qwen3-8B as the teacher model.
+Model
+Training
+Context
+AIME24
+AIME24-Pass@32
+AMC23
+AMC23-Pass@32
+MATH500
+AMC24
+AMC24-Pass@32
+AIME25
+AIME25-Pass@32
+Avg
+Qwen3-1.7B-Base
+-
+30K
+2.1
+20.8
+16.3
+70.8
+29.8
+8.2
+44.6
+0.9
+6.2
+22.2
+Qwen3-1.7B-Base
+GRPO
+30K
+10
+30.8
+41.2
+83.8
+54.3
+19.7
+58.6
+5.7
+24.2
+36.5
+Qwen3-1.7B-Base
+KDRL
+30K
+10.2
+32.8
+41.1
+83.6
+56.2
+21.0
+59.7
+6.2
+24.4
+37.2
+Qwen3-1.7B-Base
+RLAD (ours)
+30K
+12.1
+35.1
+42
+83.7
+58.1
+24.4
+62.4
+8.3
+24.8
+39.0
+Qwen3-8B-Base
+-
+30K
+13.9
+43.6
+30.5
+88.6
+42.1
+18.8
+64.6
+4.7
+24.1
+36.8
+Qwen3-8B-Base
+SFT
+30K
+26.7
+65.8
+67.9
+92.8
+67.5
+48.2
+72.9
+20.8
+41.5
+56.0
+Qwen3-8B-Base
+GRPO
+30K
+37.7
+77.8
+72.9
+94.8
+68.2
+49.2
+76.9
+22.8
+48.5
+61.0
+Qwen3-8B-Base
+KDRL
+30K
+42.1
+86.1
+72.8
+95.8
+68.4
+49.1
+77.0
+27.8
+65.2
+64.9
+Qwen3-8B-Base
+RLAD (ours)
+30K
+47.8
+85.4
+73.6
+98
+68.6
+49.8
+77.4
+31.7
+66.4
+66.5
+Table 2
+:
+Long-context math reasoning results for Qwen3-Base models at 30K context length. Results are reported in terms of Pass@1 and Pass@32.
+Model
+Training
+Context
+AIME24
+AIME24-Pass@32
+AMC23
+AMC23-Pass@32
+MATH500
+AMC24
+AMC24-Pass@32
+AIME25
+AIME25-Pass@32
+Avg
+Qwen3-1.7B
+-
+8K
+16.1
+39.1
+52
+76.5
+58.4
+36.7
+54.8
+18.6
+26.7
+42.1
+Qwen3-1.7B
+GRPO
+8K
+24.9
+55.3
+62.7
+86.9
+63.3
+46.9
+59.6
+21.4
+39.9
+51.2
+Qwen3-1.7B
+KDRL
+8K
+26.1
+68.9
+64.5
+89.2
+63.5
+47.2
+65.6
+23.3
+47.9
+55.1
+Qwen3-1.7B
+RLAD (ours)
+8K
+31.3
+71
+69.1
+92.3
+63.5
+49.3
+71.5
+24.2
+48.2
+57.8
+Qwen2.5-1.5B-DS
+-
+8K
+18.2
+51.6
+57.4
+92.5
+58.5
+36
+60.7
+17.6
+34.1
+44.7
+Qwen2.5-1.5B-DS
+GRPO
+8K
+29.5
+63.4
+76.3
+94.9
+64.8
+47.9
+70.5
+22.8
+38.6
+56.5
+Qwen2.5-1.5B-DS
+GRPO
+8K
+30.8
+67.1
+77.3
+94.5
+64.0
+47.5
+70.7
+24.2
+45.6
+57.9
+Qwen2.5-1.5B-DS
+RLAD (ours)
+8K
+31.9
+70.1
+78.2
+95
+64.4
+49.2
+70.8
+25.1
+47.1
+59.1
+Table 3
+:
+Long-context math reasoning results for Post-trained models at 8K context lengths.
+Results are reported in terms of Pass@1 and Pass@32.
+Dataset and Setup.
+We evaluate all models on the test set of K&K Logistics dataset
+(
+Xie et al., 2025a
+)
+, which is partitioned into difficulty-based subsets PPL2 - PPL8, where PPL2 and PPL8 are the easiest and hardest.
+We report accuracy on each subset. Unless otherwise specified, decoding uses a temperature of 0.6 and top-
+p
+p
+of 0.95, with a maximum generation length of 2,048 or 8,192 tokens, matching the corresponding training configuration.
+Figure 1
+:
+Comparisons of training dynamics RL training on logistics reasoning in terms of both training and validation average rewards for Qwen3-0.6B abd Qwen3-1.7B model.
+5.1.2
+Main Results
+Training dynamics.
+Figure
+1
+illustrates the training and validation reward trajectories during RL on the logical reasoning task for Qwen3-0.6B and Qwen3-1.7B.
+As shown,
+RLAD
+achieves faster convergence and higher final rewards than both vanilla GRPO training and teacher-based distillation with KDRL.
+Results.
+Tables
+1
+shows that
+RLAD
+delivers consistent improvements across context lengths and student sizes.
+With an 8K context window,
+RLAD
+improves the average accuracy of Qwen3-0.6B by +18% (0.94 vs. 0.76 under GRPO) and Qwen3-1.7B by +4% (0.99 vs. 0.95), outperforming KDRL in both settings
+With a 2K context window, the gains remain substantial: +20% for Qwen3-0.6B (0.90 vs. 0.70) and +7% for Qwen3-1.7B (0.93 vs. 0.86).
+Notably,
+RLAD
+yields larger benefits on harder subsets.
+On the most challenging PPL8 split,
+RLAD
+improves Qwen3-0.6B from 0.63 to 0.83 at 8K and from 0.50 to 0.69 at 2K, while Qwen3-1.7B improves from 0.88 to 0.98 at 8K and from 0.52 to 0.75 at 2K (all compared to GRPO).
+Across these difficult regimes,
+RLAD
+also maintains a 6%–15% advantage over KDRL.
+Figure 2
+:
+Comparison of validation accuracy on AIME-24 dataset dynamics during RL training on the math reasoning task for Qwen3-8B-Base, reported in terms of Mean@32 (as the mean Pass@1 over 32 runs) and Pass@32.
+5.2
+Complex Math Reasoning Task
+5.2.1
+Experimental Setup
+Training.
+We follow the Skywork-OR1 training recipe
+(
+He et al., 2025
+)
+to evaluate
+RLAD
+on complex mathematical reasoning.
+We train
+RLAD
+and all baselines on the Skywork-OR1 training set (105K samples), enabling rejection sampling and adaptive entropy throughout RL training as in
+(
+He et al., 2025
+)
+.
+Unless stated otherwise, we use a learning rate of
+1
+×
+10
+−
+6
+1\times 10^{-6}
+, a maximum prompt length of 2,048 tokens, and a maximum response length of 8K–30K tokens depending on the setting.
+Training uses a micro-batch size of 16 and a global batch size of 256.
+All runs are executed on 64 NVIDIA H200 GPUs for up to 5 epochs, and we select the checkpoint with the best validation performance on AIME24
+(
+AI-MO, 2024a
+)
+.
+Student model settings.
+To assess
+RLAD
+under different initialization regimes, we consider both
+base
+and
+post-trained
+model settings.
+•
+Base models (R1-Zero-like).
+Motivated by R1-Zero
+(
+Guo et al., 2025
+)
+, which shows that rule-based RL can elicit reasoning behavior directly from pretrained LMs, we use Qwen3-Base students to isolate the effect of our RL+distillation design.
+We study two student–teacher configurations:
+(i) Qwen3-1.7B-Base (student) with Qwen3-8B (teacher), and
+(ii) Qwen3-8B-Base (student) with Qwen3-32B (teacher).
+All base-model experiments use a 30K maximum response length, i.e., the longest supported by Qwen3-Base under a 2K prompt budget, to stress-test long-horizon reasoning.
+•
+Post-trained models.
+We additionally evaluate post-trained students: (i) Qwen3-1.7B and (ii) Qwen2.5-1.5B DeepSeek-distilled
+(
+Guo et al., 2025
+)
+, paired with their 8B/7B counterparts as teachers.
+Since Qwen3 post-trained models already incorporate substantial math-oriented post-training (CoT SFT, RL, and distillation)
+(
+Yang et al., 2025
+)
+, we observe limited headroom under very long-context RL (e.g., 32K) in preliminary experiments.
+We therefore evaluate post-trained student models under an 8K response budget, framing the task as complex math reasoning under constrained compute where algorithmic gains are easier to measure.
+Datasets and Setup.
+We evaluate on standard mathematical reasoning benchmarks, including MATH500
+(
+Hendrycks et al., 2021b
+)
+, AMC23
+(
+AI-MO, 2024b
+)
+, AMC24
+(
+rawsh, 2024
+)
+, AIME24
+(
+AI-MO, 2024a
+)
+, and AIME25
+(
+OpenCompass, 2025
+)
+. For all datasets, we report Mean@32, computed as the average score over 32 decoding runs; for the harder benchmarks (AMC23/24 and AIME24/25), we additionally report Pass@32. All evaluations are conducted using vLLM
+(
+Kwon et al., 2023
+)
+with a temperature of 0.6 and top-
+p
+p
+of 0.95, under 8K or 32K context windows consistent with the corresponding training regime.
+5.2.2
+Main Results
+Training dynamics.
+Figure
+2
+shows the validation trajectory on AIME24
+(
+AI-MO, 2024a
+)
+for the Qwen3-8B-Base model (R1-Zero-like setting), reported as Mean@32 and Pass@32 over training.
+Consistent with the logical reasoning results,
+RLAD
+converges faster and reaches higher Mean@32.
+We also observe that explicit-KL-style distillation like KDRL can exhibit noticeable training instability, likely due to objective coupling between reward maximization and the auxiliary KL regularizer, which often requires careful hyperparameter balancing.
+In contrast,
+RLAD
+incorporates distillation into a unified trust-region update, resulting in more stable optimization.
+Results.
+As shown in Table
+2
+, RLAD improves Avg by +1.9 for Qwen3-1.7B-Base (38.4 vs. 36.5 GRPO) and by +5.5 for Qwen3-8B-Base (66.5 vs. 61.0 GRPO).
+Gains concentrate on harder benchmarks: Pass@32 metrics show particularly large improvements, e.g., AIME24-Pass@32 increases from 77.8 to 85.4 and AIME25-Pass@32 from 48.5 to 66.4 for Qwen3-8B-Base, while simpler tasks like MATH500 see smaller deltas (68.2 to 68.6).
+For post-trained models (Table
+3
+), the same pattern holds: RLAD raises Avg from 51.2 to 57.8 for Qwen3-1.7B and from 54.2 to 56.7 for Qwen2.5-1.5B-DS, with larger gains on AIME24/25 and more modest changes on MATH500.
+This suggests that algorithmic improvements are most impactful for difficult reasoning, while simpler tasks are closer to saturation and more constrained by model capacity, making the marginal gains from distillation comparatively smaller.
+Observation: RLAD Promotes Reward-Driven Policy Improvement over Pure Imitation.
+Prior work
+(
+Yue et al., 2025a
+)
+observes that reinforcement learning typically yields larger gains in Pass@1 than in large-
+K
+K
+metrics, such as Pass@32. This behavior reflects the nature of RL optimization, which primarily improves the model’s most probable behavior under its current policy, strengthening exploitation of existing competencies, rather than increasing the diversity of correct solutions emphasized by large-
+K
+K
+metrics.
+Consistent with this view, we observe a clear pattern across Figure
+2
+and Tables
+2
+and
+3
+: distillation through KL regularization between the teacher and the student as in KDRL tends to produce larger relative gains in Pass@32 than in Pass@1 on challenging reasoning tasks. For instance, in Figure
+2
+, KDRL achieves stronger improvements in Pass@32, while
+RLAD
+attains higher Mean@32 and more pronounced Pass@1 gains.
+This contrast suggests that the improvements of KDRL are driven primarily by stronger imitation of teacher solution modes, benefiting high-
+K
+K
+metric, rather than by reward-driven policy optimization.
+In contrast,
+RLAD
+more faithfully performs reinforcement learning: it prioritizes improving the student’s reward-aligned behavior, yielding stronger Pass@1 gains and more stable training dynamics.
+5.2.3
+Efficiency Analysis
+We further analyze training efficiency when integrating
+RLAD
+into GRPO, compared with standard GRPO and KDRL, using Qwen3-8B-Base as the student and Qwen3-32B as the teacher.
+Table
+4
+reports the average wall-clock latency per training batch (global batch size 256, micro-batch size 16) with dynamic micro-batching enabled
+(
+Sheng et al., 2024
+)
+, measured on 32 H200 GPUs.
+Although
+RLAD
+and KDRL deploy a 32B teacher, the teacher is only used to compute response of student rollouts for log-probabilities rather than generate additional trajectories. As a result, they incur only about 12% extra training latency, since the dominant cost in RL remains student rollout generation.
+Note that in these experiments the teacher is colocated on the same nodes as the student; if the teacher is served remotely, the overhead of
+RLAD
+and KDRL is expected to be even closer to standard GRPO.
+At inference time,
+RLAD
+requires no teacher model, so its evaluation efficiency is identical to the baselines.
+Model
+Method
+Updating Actor
+Compute Log Probabilities
+Total
+Qwen3-8B-Base
+GRPO
+28.9
+24.5
+491.2
+Qwen3-8B-Base
+KDRL
+61.2
+57.0
+568.1
+Qwen3-8B-Base
+RLAD
+60.9
+56.2
+567.4
+Table 4
+:
+Latency comparison of RLAD and baselines in seconds when deploying teacher model and student model at the shared nodes. Total: total latency for updating a whole training batch (including multiple mini-batch and micro batches.)
+6
+Conclusion
+We study reinforcement-aware knowledge distillation for reasoning and propose
+RLAD
+, a framework for RL post-training.
+RLAD
+replaces static KL-style teacher regularization with
+Trust-Region Ratio Distillation
+(TRRD), which integrates teacher guidance directly into advantage-weighted, trust-region policy updates.
+Across logical reasoning and long-context math reasoning tasks,
+RLAD
+consistently outperforms GRPO and KDRL, with the largest gains on challenging evaluations (e.g., AIME24/25 in Best@32) while remaining competitive on simpler tasks.
+By making distillation explicitly advantage-aware,
+RLAD
+reduces teacher–student mismatch and avoids interference between reward optimization and imitation. A current limitation is the reliance on teacher logits, which is most practical with open-weight, well-calibrated models. Extending TRRD-style distillation to closed-source teachers in RL settings remains an important direction for future work.
+Impact Statement
+This paper presents work whose goal is to advance the field of Machine
+Learning. There are many potential societal consequences of our work, none
+which we feel must be specifically highlighted here.
+References
+Agarwal
+et al.
+(2024a)
+R. Agarwal, N. Vieillard, Y. Zhou, P. Stanczyk, S. R. Garea, M. Geist, and O. Bachem
+On-policy distillation of language models: learning from self-generated mistakes
+.
+Note:
+In The Twelfth International Conference on Learning Representations, 2024.
+Cited by:
+§2
+.
+Agarwal
+et al.
+(2024b)
+R. Agarwal, N. Vieillard, Y. Zhou, P. Stanczyk, S. R. Garea, M. Geist, and O. Bachem
+On-policy distillation of language models: learning from self-generated mistakes
+.
+In
+The Twelfth International Conference on Learning Representations
+,
+Cited by:
+§2
+,
+§2
+.
+AI-MO (2024a)
+AI-MO
+Aimo validation aime dataset
+.
+Note:
+https://huggingface.co/datasets/AI-MO/aimo-validation-aime, 2024.
+Cited by:
+§5.2.1
+,
+§5.2.1
+,
+§5.2.2
+.
+AI-MO (2024b)
+AI-MO
+Aimo validation amc dataset
+.
+Note:
+https://huggingface.co/datasets/AI-MO/aimo-validation-amc, 2024.
+Cited by:
+§5.2.1
+.
+Cobbe
+et al.
+(2021)
+K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano, C. Hesse, and J. Schulman
+Training verifiers to solve math word problems
+.
+arXiv preprint arXiv:2110.14168
+.
+Cited by:
+Appendix A
+.
+Gu
+et al.
+(2024)
+Y. Gu, L. Dong, F. Wei, and M. Huang
+MiniLLM: knowledge distillation of large language models
+.
+In
+The Twelfth International Conference on Learning Representations
+,
+Cited by:
+§1
+,
+§2
+,
+§2
+.
+Gu
+et al.
+(2025)
+Y. Gu, H. Zhou, F. Meng, J. Zhou, and M. Huang
+MiniPLM: knowledge distillation for pre-training language models
+.
+In
+The Thirteenth International Conference on Learning Representations
+,
+Cited by:
+§2
+.
+Guo
+et al.
+(2025)
+D. Guo, D. Yang, H. Zhang, J. Song, R. Zhang, R. Xu, Q. Zhu, S. Ma, P. Wang, X. Bi,
+et al.
+DeepSeek-r1: incentivizing reasoning capability in llms via reinforcement learning
+.
+arXiv preprint arXiv:2501.12948
+.
+Cited by:
+§1
+,
+§1
+,
+§2
+,
+§2
+,
+§2
+,
+1st item
+,
+2nd item
+.
+He
+et al.
+(2025)
+J. He, J. Liu, C. Y. Liu, R. Yan, C. Wang, P. Cheng, X. Zhang, F. Zhang, J. Xu, W. Shen, S. Li, L. Zeng, T. Wei, C. Cheng, B. An, Y. Liu, and Y. Zhou
+Skywork open reasoner series, 2025
+.
+Note:
+Notion Blog.
+Cited by:
+§2
+,
+§5.2.1
+.
+Hendrycks
+et al.
+(2021a)
+D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt
+Measuring mathematical problem solving with the MATH dataset
+.
+In
+Thirty-fifth Conference on Neural Information Processing Systems Datasets and Benchmarks Track (Round 2)
+,
+External Links:
+Link
+Cited by:
+Appendix A
+.
+Hendrycks
+et al.
+(2021b)
+D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt
+Measuring mathematical problem solving with the math dataset
+.
+Note:
+In Thirty-fifth Conference on Neural Information Processing Systems Datasets and Benchmarks Track (Round 2), 2021.
+Cited by:
+§5.2.1
+.
+Hinton
+et al.
+(2015)
+G. E. Hinton, O. Vinyals, and J. Dean
+Distilling the knowledge in a neural network
+.
+ArXiv
+abs/1503.02531
+.
+External Links:
+Link
+Cited by:
+§1
+.
+Hsieh
+et al.
+(2023)
+C. Hsieh, C. Li, C. Yeh, H. Nakhost, Y. Fujii, A. Ratner, R. Krishna, C. Lee, and T. Pfister
+Distilling step-by-step! outperforming larger language models with less training data and smaller model sizes
+.
+In
+Findings of the Association for Computational Linguistics: ACL 2023
+,
+pp. 8003–8017
+.
+Cited by:
+§2
+.
+Hu
+et al.
+(2025)
+J. Hu, Y. Zhang, Q. Han, D. Jiang, X. Zhang, and H. Shum
+Open-reasoner-zero: an open source approach to scaling up reinforcement learning on the base model, 2025
+.
+Cited by:
+§2
+.
+Hui
+et al.
+(2024)
+B. Hui, J. Yang, Z. Cui, J. Yang, D. Liu, L. Zhang, T. Liu, J. Zhang, B. Yu, K. Dang,
+et al.
+Qwen2. 5-coder technical report
+.
+arXiv preprint arXiv:2409.12186
+.
+Cited by:
+§1
+.
+Ko
+et al.
+(2024)
+J. Ko, S. Kim, T. Chen, and S. Yun
+DistiLLM: towards streamlined distillation for large language models
+.
+In
+Forty-first International Conference on Machine Learning
+,
+External Links:
+Link
+Cited by:
+§1
+,
+§2
+,
+§2
+.
+Ko
+et al.
+(2023)
+J. Ko, S. Park, M. Jeong, S. Hong, E. Ahn, D. Chang, and S. Yun
+Revisiting intermediate layer distillation for compressing language models: an overfitting perspective
+.
+In
+Findings of the Association for Computational Linguistics: EACL 2023
+,
+A. Vlachos and I. Augenstein (Eds.)
+,
+Dubrovnik, Croatia
+,
+pp. 158–175
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2
+.
+Kwon
+et al.
+(2023)
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. Gonzalez, H. Zhang, and I. Stoica
+Efficient memory management for large language model serving with pagedattention
+.
+In
+Proceedings of the 29th Symposium on Operating Systems Principles
+,
+pp. 611–626
+.
+Cited by:
+§5.2.1
+.
+Li
+et al.
+(2025)
+M. Li, F. Zhou, and X. Song
+BiLD: bi-directional logits difference loss for large language model distillation
+.
+In
+Proceedings of the 31st International Conference on Computational Linguistics
+,
+O. Rambow, L. Wanner, M. Apidianaki, H. Al-Khalifa, B. D. Eugenio, and S. Schockaert (Eds.)
+,
+Abu Dhabi, UAE
+,
+pp. 1168–1182
+.
+External Links:
+Link
+Cited by:
+§2
+.
+Lin
+et al.
+(2020)
+A. Lin, J. Wohlwend, H. Chen, and T. Lei
+Autoregressive knowledge distillation through imitation learning
+.
+In
+Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP)
+,
+B. Webber, T. Cohn, Y. He, and Y. Liu (Eds.)
+,
+Online
+,
+pp. 6121–6133
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+.
+Liu
+et al.
+(2024)
+J. Liu, C. Zhang, J. Guo, Y. Zhang, H. Que, K. Deng, J. Liu, G. Zhang, Y. Wu, C. Liu,
+et al.
+DDK: distilling domain knowledge for efficient large language models
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 98297–98319
+.
+Cited by:
+§2
+,
+§2
+.
+Liu
+et al.
+(2025)
+Z. Liu, C. Chen, W. Li, P. Qi, T. Pang, C. Du, W. S. Lee, and M. Lin
+Understanding r1-zero-like training: a critical perspective
+.
+Note:
+arXiv preprint arXiv:2503.20783, 2025.
+Cited by:
+§2
+.
+Luo
+et al.
+(2025)
+M. Luo, S. Tan, J. Wong, X. Shi, W. Y. Tang, M. Roongta, C. Cai, J. Luo, L. E. Li, R. A. Popa, and I. Stoica
+Deepscaler: surpassing o1-preview with a 1.5b model by scaling rl, 2025
+.
+Note:
+Notion Blog.
+Cited by:
+§2
+.
+Mei
+et al.
+(2025)
+Z. Mei, W. Fu, K. Li, G. Wang, H. Zhang, and Y. Wu
+Real: efficient rlhf training of large language models with parameter reallocation
+.
+Note:
+In Proceedings of the Eighth Conference on Machine Learning and Systems, MLSys 2025, Santa Clara, CA, USA, May 12-15, 2025. mlsys.org, 2025.
+Cited by:
+§2
+.
+Meta (2024)
+Meta
+Llama 3.2: Revolutionizing edge AI and vision with open, customizable models
+.
+Note:
+https://ai.meta.com/blog/llama-3-2-connect-2024-vision-edge-\mobile-devices/
+Cited by:
+§1
+.
+Muennighoff
+et al.
+(2025)
+N. Muennighoff, Z. Yang, W. Shi, X. L. Li, L. Fei-Fei, H. Hajishirzi, L. Zettlemoyer, P. Liang, E. Candès, and T. Hashimoto
+s1: simple test-time scaling
+.
+Cited by:
+§2
+.
+OpenCompass (2025)
+OpenCompass
+Aime 2025 dataset
+.
+Note:
+https://huggingface.co/datasets/opencompass/AIME2025, 2025.
+Cited by:
+§5.2.1
+.
+Pan
+et al.
+(2025)
+J. Pan, W. Shen, S. Huang, Q. Zhou, and Y. Zhang
+Pre-dpo: improving data utilization in direct preference optimization using a guiding reference model, 2025
+.
+Cited by:
+§2
+.
+Rafailov
+et al.
+(2023)
+R. Rafailov, A. Sharma, E. Mitchell, C. D. Manning, S. Ermon, and C. Finn
+Direct preference optimization: your language model is secretly a reward model
+.
+Advances in Neural Information Processing Systems
+36
+.
+Cited by:
+Appendix C
+.
+rawsh (2024)
+rawsh
+American mathematics competitions
+.
+Note:
+https://huggingface.co/datasets/rawsh/2024-AMC12, 2024.
+Cited by:
+§5.2.1
+.
+Schulman
+et al.
+(2015)
+J. Schulman, S. Levine, P. Abbeel, M. Jordan, and P. Moritz
+Trust region policy optimization
+.
+In
+International conference on machine learning
+,
+pp. 1889–1897
+.
+Cited by:
+Appendix B
+,
+§1
+.
+Schulman
+et al.
+(2017)
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+Proximal policy optimization algorithms
+.
+Note:
+arXiv preprint arXiv:1707.06347, 2017.
+Cited by:
+Appendix B
+,
+§1
+.
+Shao
+et al.
+(2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. Li, Y. Wu, and et al
+Deepseekmath: pushing the limits of mathematical reasoning in open language models
+.
+Note:
+arXiv preprint arXiv:2402.03300, 2024.
+Cited by:
+§1
+,
+§3
+,
+§5.1.1
+,
+§5
+.
+Sheng
+et al.
+(2024)
+G. Sheng, C. Zhang, Z. Ye, X. Wu, W. Zhang, R. Zhang, Y. Peng, H. Lin, and C. Wu
+Hybridflow: a flexible and efficient rlhf framework
+.
+Note:
+arXiv preprint arXiv: 2409.19256, 2024.
+Cited by:
+§5.2.3
+.
+Team
+et al.
+(2025a)
+K. Team, Y. Bai, Y. Bao, G. Chen, J. Chen, N. Chen, R. Chen, Y. Chen, Y. Chen, Y. Chen, Z. Chen, J. Cui, H. Ding, M. Dong, A. Du, C. Du, D. Du, Y. Du, Y. Fan, Y. Feng, K. Fu, B. Gao, H. Gao, P. Gao, T. Gao, X. Gu, L. Guan, H. Guo, J. Guo, H. Hu, X. Hao, T. He, W. He, W. He, C. Hong, Y. Hu, Z. Hu, W. Huang, Z. Huang, Z. Huang, T. Jiang, Z. Jiang, X. Jin, Y. Kang, G. Lai, C. Li, F. Li, H. Li, M. Li, W. Li, Y. Li, Y. Li, Z. Li, Z. Li, H. Lin, X. Lin, Z. Lin, C. Liu, C. Liu, H. Liu, J. Liu, J. Liu, L. Liu, S. Liu, T. Y. Liu, T. Liu, W. Liu, Y. Liu, Y. Liu, Y. Liu, Y. Liu, Z. Liu, E. Lu, L. Lu, S. Ma, X. Ma, Y. Ma, S. Mao, J. Mei, X. Men, Y. Miao, S. Pan, Y. Peng, R. Qin, B. Qu, Z. Shang, L. Shi, S. Shi, F. Song, J. Su, Z. Su, X. Sun, F. Sung, H. Tang, J. Tao, Q. Teng, C. Wang, D. Wang, F. Wang, H. Wang, J. Wang, J. Wang, J. Wang, S. Wang, S. Wang, Y. Wang, Y. Wang, Y. Wang, Y. Wang, Y. Wang, Z. Wang, Z. Wang, Z. Wang, C. Wei, Q. Wei, W. Wu, X. Wu, Y. Wu, C. Xiao, X. Xie, W. Xiong, B. Xu, J. Xu, J. Xu, L. H. Xu, L. Xu, S. Xu, W. Xu, X. Xu, Y. Xu, Z. Xu, J. Yan, Y. Yan, X. Yang, Y. Yang, Z. Yang, Z. Yang, Z. Yang, H. Yao, X. Yao, W. Ye, Z. Ye, B. Yin, L. Yu, E. Yuan, H. Yuan, M. Yuan, H. Zhan, D. Zhang, H. Zhang, W. Zhang, X. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Z. Zhang, H. Zhao, Y. Zhao, H. Zheng, S. Zheng, J. Zhou, X. Zhou, Z. Zhou, Z. Zhu, W. Zhuang, and X. Zu
+Kimi k2: open agentic intelligence
+.
+External Links:
+2507.20534
+,
+Link
+Cited by:
+§2
+.
+Team
+et al.
+(2025b)
+K. Team, A. Du, B. Gao, B. Xing, C. Jiang, C. Chen, C. Li, C. Xiao, C. Du, C. Liao, and et al
+Kimi k1.5: scaling reinforcement learning with llms
+.
+Note:
+arXiv preprint arXiv:2501.12599, 2025.
+Cited by:
+§2
+.
+Tian
+et al.
+(2025)
+X. Tian, S. Zhao, H. Wang, S. Chen, Y. Peng, Y. Ji, H. Zhao, and X. Li
+Deepdistill: enhancing llm reasoning capabilities via large-scale difficulty-graded data training
+.
+Cited by:
+§2
+.
+Wang
+et al.
+(2020)
+W. Wang, F. Wei, L. Dong, H. Bao, N. Yang, and M. Zhou
+Minilm: deep self-attention distillation for task-agnostic compression of pre-trained transformers
+.
+Advances in neural information processing systems
+33
+,
+pp. 5776–5788
+.
+Cited by:
+§2
+.
+Wen
+et al.
+(2025)
+L. Wen, Y. Cai, F. Xiao, X. He, Q. An, Z. Duan, Y. Du, J. Liu, L. Tang, X. Lv, H. Zou, Y. Deng, S. Jia, and X. Zhang
+Light-r1: curriculum sft, dpo and rl for long cot from scratch and beyond, 2025
+.
+Cited by:
+§2
+.
+Xie
+et al.
+(2025a)
+C. Xie, Y. Huang, C. Zhang, D. Yu, X. Chen, B. Y. Lin, B. Li, B. Ghazi, and R. Kumar
+On memorization of large language models in logical reasoning
+.
+External Links:
+2410.23123
+,
+Link
+Cited by:
+§1
+,
+§5.1.1
+,
+§5.1.1
+.
+Xie
+et al.
+(2025b)
+T. Xie, Z. Gao, Q. Ren, H. Luo, Y. Hong, B. Dai, J. Zhou, K. Qiu, Z. Wu, and C. Luo
+Logic-rl: unleashing llm reasoning with rule-based reinforcement learning, 2025
+.
+Cited by:
+§2
+,
+§5.1.1
+.
+Xu
+et al.
+(2025)
+H. Xu, Q. Zhu, H. Deng, J. Li, L. Hou, Y. Wang, L. Shang, R. Xu, and F. Mi
+KDRL: post-training reasoning llms via unified knowledge distillation and reinforcement learning
+.
+External Links:
+2506.02208
+,
+Link
+Cited by:
+§1
+,
+§1
+,
+§2
+,
+§3
+,
+§3
+,
+Table 1
+,
+Table 1
+,
+Table 1
+,
+Table 1
+,
+§4
+,
+§5
+.
+Xu
+et al.
+(2024)
+W. Xu, R. Han, Z. Wang, L. T. Le, D. Madeka, L. Li, W. Y. Wang, R. Agarwal, C. Lee, and T. Pfister
+Speculative knowledge distillation: bridging the teacher-student gap through interleaved sampling
+.
+arXiv preprint arXiv:2410.11325
+.
+Cited by:
+§1
+,
+§2
+.
+Yan
+et al.
+(2025)
+J. Yan, Y. Li, Z. Hu, Z. Wang, G. Cui, X. Qu, Y. Cheng, and Y. Zhang
+Learning to reason under off-policy guidance, 2025
+.
+Cited by:
+§2
+.
+Yang
+et al.
+(2025)
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, C. Zheng, D. Liu, F. Zhou, F. Huang, F. Hu, H. Ge, H. Wei, H. Lin, J. Tang, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Zhou, J. Lin, K. Dang, K. Bao, K. Yang, L. Yu, L. Deng, M. Li, M. Xue, M. Li, P. Zhang, P. Wang, Q. Zhu, R. Men, R. Gao, S. Liu, S. Luo, T. Li, T. Tang, W. Yin, X. Ren, X. Wang, X. Zhang, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Zhang, Y. Wan, Y. Liu, Z. Wang, Z. Cui, Z. Zhang, Z. Zhou, and Z. Qiu
+Qwen3 technical report
+.
+External Links:
+2505.09388
+,
+Link
+Cited by:
+§1
+,
+§2
+,
+2nd item
+.
+Ye
+et al.
+(2025)
+Y. Ye, Z. Huang, Y. Xiao, E. Chern, S. Xia, and P. Liu
+Limo: less is more for reasoning
+.
+Cited by:
+§2
+.
+Yu
+et al.
+(2025)
+Q. Yu, Z. Zhang, R. Zhu, Y. Yuan, X. Zuo, Y. Yue, T. Fan, G. Liu, L. Liu, X. Liu, and et al
+Dapo: an open-source llm reinforcement learning system at scale
+.
+Note:
+arXiv preprint arXiv:2503.14476, 2025.
+Cited by:
+§2
+.
+Yue
+et al.
+(2025a)
+Y. Yue, Z. Chen, R. Lu, A. Zhao, Z. Wang, S. Song, and G. Huang
+Does reinforcement learning really incentivize reasoning capacity in llms beyond the base model?
+.
+Note:
+arXiv preprint arXiv:2504.13837, 2025.
+Cited by:
+§1
+,
+§5.2.2
+.
+Yue
+et al.
+(2025b)
+Y. Yue, Y. Yuan, Q. Yu, X. Zuo, R. Zhu, W. Xu, J. Chen, C. Wang, T. Fan, Z. Du, X. Wei, X. Yu, G. Liu, J. Liu, L. Liu, H. Lin, Z. Lin, B. Ma, C. Zhang, M. Zhang, W. Zhang, H. Zhu, R. Zhang, X. Liu, M. Wang, Y. Wu, and L. Yan
+Vapo: efficient and reliable reinforcement learning for advanced reasoning tasks, 2025
+.
+Cited by:
+§2
+.
+Zeng
+et al.
+(2025)
+W. Zeng, Y. Huang, Q. Liu, W. Liu, K. He, Z. Ma, and J. He
+Simplerl-zoo: investigating and taming zero reinforcement learning for open base models in the wild, 2025
+.
+Cited by:
+§2
+.
+Zhang and Zuo (2025)
+J. Zhang and C. Zuo
+Grpo-lead: a difficulty-aware reinforcement learning approach for concise mathematical reasoning in language models, 2025
+.
+Cited by:
+§2
+.
+Zhang
+et al.
+(2024)
+S. Zhang, X. Zhang, Z. Sun, Y. Chen, and J. Xu
+Dual-space knowledge distillation for large language models
+.
+In
+Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing
+,
+Y. Al-Onaizan, M. Bansal, and Y. Chen (Eds.)
+,
+Miami, Florida, USA
+,
+pp. 18164–18181
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2
+.
+Appendix A
+Ablation on the choice of
+α
+\alpha
+We perform preliminary studies on two math reasoning benchmarks, GSM8K
+(
+Cobbe et al., 2021
+)
+and MATH
+(
+Hendrycks et al., 2021a
+)
+, to examine the effect of the RLAD mixing coefficient
+α
+\alpha
+.
+Specifically, we train a Qwen3-1.7B student with GRPO, and apply RLAD distillation using a Qwen3-8B teacher while varying
+α
+\alpha
+.
+All models are trained on the training splits of GSM8K and MATH with a 1K context length, a learning rate of
+1
+×
+10
+−
+6
+1\times 10^{-6}
+, and a batch size of 1024.
+Table
+5
+reports Pass@1 accuracy for GRPO, KDRL, and RLAD under different
+α
+\alpha
+values on the GSM8K and MATH test sets.
+Overall,
+RLAD
+is largely insensitive to
+α
+\alpha
+across both benchmarks, with noticeable degradation only at extreme settings (e.g.,
+α
+\alpha
+close to 0 or 1).
+We therefore set
+α
+=
+0.5
+\alpha=0.5
+for all subsequent experiments.
+Metric
+GRPO
+KDRL
+RLAD
+RLAD
+RLAD
+RLAD
+RLAD
+α
+=
+−
+\alpha\!=\!-
+α
+=
+−
+\alpha\!=\!-
+α
+=
+0.1
+\alpha\!=\!0.1
+α
+=
+0.3
+\alpha\!=\!0.3
+α
+=
+0.5
+\alpha\!=\!0.5
+α
+=
+0.7
+\alpha\!=\!0.7
+α
+=
+0.9
+\alpha\!=\!0.9
+GSM8K
+89.1
+89.4
+89.0
+90.1
+90.0
+89.7
+88.5
+MATH
+78.5
+78.9
+78.4
+80.3
+80.5
+80.2
+77.4
+Table 5
+:
+Ablation of the mixing coefficient
+α
+\alpha
+on GSM8K and MATH (Pass@1, test set).
+Appendix B
+Stabilizing TRRD Training with Clipping
+Unlike the standard PPO/GRPO setting—where the old and current policies are typically close—the teacher and student policies can be substantially mismatched early in training.
+According to prior works like TRPO
+(
+Schulman et al., 2015
+)
+, this token-level ratio is an first-order Taylor approximate which holds only when teacher and student policies are close.
+According to our preliminary experiments, this mismatch can produce extreme distillation ratios in
+π
+θ
+S
+​
+(
+y
+t
+(
+i
+)
+∣
+x
+,
+y
+<
+t
+(
+i
+)
+)
+π
+θ
+T
+​
+(
+y
+t
+(
+i
+)
+∣
+x
+,
+y
+<
+t
+(
+i
+)
+)
+,
+\frac{\pi_{\theta^{S}}\!\left(y_{t}^{(i)}\mid x,y_{<t}^{(i)}\right)}{\pi_{\theta^{T}}\!\left(y_{t}^{(i)}\mid x,y_{<t}^{(i)}\right)},
+leading to outlier gradients and unstable optimization.
+To stabilize training, following PPO-style clipping
+(
+Schulman et al., 2017
+)
+, we clamp the log-ratio
+log
+⁡
+π
+θ
+S
+​
+(
+y
+t
+(
+i
+)
+∣
+x
+,
+y
+<
+t
+(
+i
+)
+)
+π
+θ
+T
+​
+(
+y
+t
+(
+i
+)
+∣
+x
+,
+y
+<
+t
+(
+i
+)
+)
+∈
+[
+−
+1
+,
+1
+]
+,
+\log\frac{\pi_{\theta^{S}}\!\left(y_{t}^{(i)}\mid x,y_{<t}^{(i)}\right)}{\pi_{\theta^{T}}\!\left(y_{t}^{(i)}\mid x,y_{<t}^{(i)}\right)}\in[-1,1],
+which suppresses outliers and ensures smoother updates.
+Appendix C
+TRRD as an Interpolation Between GRPO and DPO
+The mixing coefficient
+α
+\alpha
+controls how much TRRD trusts the student’s own old policy versus the teacher, while keeping the update driven by reward/advantage signals.
+When
+α
+=
+1
+\alpha=1
+, the anchor collapses to the student old policy and TRRD reduces to standard GRPO, recovering purely on-policy reinforcement learning.
+In contrast, as
+α
+→
+0
+\alpha\rightarrow 0
+, the anchor approaches the teacher and the update becomes dominated by the teacher-referenced ratio
+π
+θ
+S
+/
+π
+θ
+T
+\pi_{\theta^{S}}/\pi_{\theta^{T}}
+, yielding a KL-regularized imitation objective.
+This regime is closely related in spirit to DPO-style optimization
+(
+Rafailov et al., 2023
+)
+, where policy updates are driven by log-probability ratios to a reference policy under an implicit reward/preference signal.
+Therefore, TRRD can be viewed as smoothly interpolating between on-policy GRPO and reference-policy-regularized preference optimization, with the teacher playing the role of the reference.
+In particular, as
+α
+→
+0
+\alpha\rightarrow 0
+, TRRD induces a DPO-like objective by treating the teacher policy as the reference that defines implicit preferences.
+Concretely, using the teacher as the reference, the DPO objective can be written as
+max
+θ
+S
+⁡
+𝔼
+x
+,
+y
++
+,
+y
+−
+∼
+π
+θ
+S
+​
+[
+log
+⁡
+σ
+⁡
+(
+β
+⁡
+(
+Δ
+​
+log
+⁡
+π
+θ
+S
+​
+(
+x
+)
+−
+Δ
+​
+log
+⁡
+π
+θ
+T
+​
+(
+x
+)
+)
+)
+]
+,
+\max_{\theta^{S}}\ \mathbb{E}_{x,\,y^{+},\,y^{-}\sim\pi_{\theta^{S}}}\!\left[\log\sigma\!\Big(\beta\big(\Delta\log\pi_{\theta^{S}}(x)-\Delta\log\pi_{\theta^{T}}(x)\big)\Big)\right],
+where
+β
+\beta
+is the temperature,
+Δ
+​
+log
+⁡
+π
+⁡
+(
+x
+)
+=
+log
+⁡
+π
+⁡
+(
+y
++
+|
+x
+)
+−
+log
+⁡
+π
+⁡
+(
+y
+−
+|
+x
+)
+\Delta\log\pi(x)=\log\pi(y^{+}|x)-\log\pi(y^{-}|x)
+and
+(
+y
++
+,
+y
+−
+)
+(y^{+},y^{-})
+denotes a preference pair.
+The DPO logit is thus the
+difference of log-probability gaps
+between the student and the teacher on the same contrastive pair.
+TRRD recovers this logit structure in the
+α
+→
+0
+\alpha\rightarrow 0
+limit. Taking logs of Eq.
+3
+yields, at the token level,
+log
+⁡
+r
+TRRD
+=
+log
+⁡
+π
+θ
+S
+​
+(
+y
+t
+(
+i
+)
+∣
+x
+,
+y
+<
+t
+(
+i
+)
+)
+−
+log
+⁡
+π
+θ
+T
+​
+(
+y
+t
+(
+i
+)
+∣
+x
+,
+y
+<
+t
+(
+i
+)
+)
+.
+\log r^{\text{TRRD}}\;=\;\log\pi_{\theta^{S}}\!\left(y_{t}^{(i)}\mid x,y_{<t}^{(i)}\right)\;-\;\log\pi_{\theta^{T}}\!\left(y_{t}^{(i)}\mid x,y_{<t}^{(i)}\right).
+Ignoring clipping, the surrogate in Eq.
+4
+becomes
+𝔼
+⁡
+[
+A
+^
+i
+,
+t
+​
+(
+log
+⁡
+π
+θ
+S
+−
+log
+⁡
+π
+θ
+T
+)
+]
+,
+\mathbb{E}\!\left[\widehat{A}_{i,t}\big(\log\pi_{\theta^{S}}-\log\pi_{\theta^{T}}\big)\right],
+which is a reward/advantage-weighted teacher-regularized objective. Aggregating token-level advantages into a pairwise preference signal leads to updates that depend on
+Δ
+​
+log
+⁡
+π
+θ
+S
+−
+Δ
+​
+log
+⁡
+π
+θ
+T
+\Delta\log\pi_{\theta^{S}}-\Delta\log\pi_{\theta^{T}}
+, matching the DPO logit above.
+Despite this shared logit, the optimization dynamics differ: DPO is an
+explicit pairwise
+preference loss with sigmoid weighting, whereas TRRD remains an
+on-policy
+ratio/advantage-weighted update with GRPO-style clipping.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

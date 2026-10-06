@@ -1,0 +1,2628 @@
+Self-Calibrated Consistency can Fight Back for Adversarial Robustness in Vision-Language Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Preliminaries and Related Work
+3 Methodology
+3.1 The Findings of Test-time Counterattack
+3.2 The Analysis of Semantic and Spatial Fragility
+3.3 Mitigating Semantic Fragility via Semantic Consistency
+Cross-modal consistency.
+Soft prototype construction.
+Iterative counter-attack.
+3.4 Mitigating Spatial Fragility via Spatial Consistency
+Multi-view self-consistency.
+Confidence weighting.
+Spatial counterattacks.
+Objective.
+4 Experiments
+4.1 Experimental Setup
+4.2 Main Results
+4.3 Ablation Studies
+4.4 Visualization and Efficiency Analysis.
+5 Conclusion
+References
+A Appendix
+A.1 Implementation Detail
+A.2 Performance of SCC guided by clean image predictions
+A.3 Robustness under CW attacks
+A.4 Analysis of Robustness (under ϵa=4/255\epsilon_{a}=4/255)
+A.5 Effects of Other Hyperparameters
+A.6 Proof Sketch of Proposition (Hard-Negative Repulsion)
+A.7 Proof Sketch of Proposition ( Suppression of spurious negatives)
+A.8 The Use of Large Language Models
+License: arXiv.org perpetual non-exclusive license
+arXiv:2510.22785v1 [cs.CV] 26 Oct 2025
+Self-Calibrated Consistency can Fight Back for Adversarial Robustness in Vision-Language Models
+Jiaxiang Liu
+Affiliation: Guangdong Institute of Intelligence Science and Technology, Hengqin, Zhuhai, China
+Jiawei Du
+Affiliation: Agency for Science, Technology and Research (A*STAR), Singapore
+Xiao Liu
+Affiliation: Guangdong Institute of Intelligence Science and Technology, Hengqin, Zhuhai, China
+Prayag Tiwari
+Affiliation: School of Information Technology, Halmstad University, Halmstad, Sweden
+Mingkun Xu
+Affiliation: Guangdong Institute of Intelligence Science and Technology, Hengqin, Zhuhai, China
+Abstract
+Pre-trained vision-language models (VLMs) such as CLIP have demonstrated strong zero-shot capabilities across diverse domains, yet remain highly vulnerable to adversarial perturbations that disrupt image-text alignment and compromise reliability.
+Existing defenses typically rely on adversarial fine-tuning with labeled data, limiting their applicability in zero-shot settings.
+In this work, we identify two key weaknesses of current CLIP adversarial attacks—lack of semantic guidance and vulnerability to view variations—collectively termed semantic and viewpoint fragility. To address these challenges, we propose Self-Calibrated Consistency (SCC), an effective test-time defense. SCC consists of two complementary modules:
+Semantic consistency, which leverages soft pseudo-labels from counterattack warm-up and multi-view predictions to regularize cross-modal alignment and separate the target embedding from confusable negatives; and
+Spatial consistency, aligning perturbed visual predictions via augmented views to stabilize inference under adversarial perturbations.
+Together, these modules form a plug-and-play inference strategy.
+Extensive experiments on 22 benchmarks under diverse attack settings show that SCC consistently improves the zero-shot robustness of CLIP while maintaining accuracy, and can be seamlessly integrated with other VLMs for further gains.
+These findings highlight the great potential of establishing an adversarially robust paradigm from CLIP, with implications extending to broader vision-language domains such as BioMedCLIP.
+1 Introduction
+With the rapid proliferation of image-text data and advances in self-supervised learning,
+vision-language models (VLMs) have attracted increasing attention from both academia and industry (Radford et al., 2021; Chen et al., 2023; Liu et al., 2025; Wang et al., 2025).
+Among them, CLIP has demonstrated impressive zero-shot capabilities, effectively aligning images with descriptive text and enabling strong transfer across classification, retrieval, and diverse downstream tasks (Zhou et al., 2022a; Shin et al., 2022; Liu et al., 2024; Zhao et al., 2022; Zhang et al., 2023). However, recent studies reveal that even subtle, imperceptible perturbations can cause CLIP to misclassify, exposing a fundamental vulnerability shared by many neural networks (Radford et al., 2021).
+As foundation models are increasingly deployed in real-world applications, ensuring their adversarial robustness has become critical (Xing et al., 2025). This work investigates the robustness of CLIP and its derivatives under such perturbations.
+CLIP, unlike conventional models with well-studied adversarial robustness, is a foundation model pre-trained on massive image–text pairs. It encodes broad real-world knowledge yet requires careful handling to preserve generalization, particularly under adversarial attacks (Zhou et al., 2022c; Zhou et al., 2022b).
+Since its pretraining demands large-scale data and substantial computational resources, most practitioners rely on open-source variants from a limited pool of models (Zhang et al., 2025), leaving CLIP-based applications especially exposed to adversarial risks. Recent studies further reveal that VLMs are highly susceptible to such perturbations, undermining their reliability in open-world deployment (Li et al., 2024; Schlarmann et al., 2024; Malik et al., 2025).
+Research on CLIP’s adversarial robustness is still nascent.
+A main line of work is training-based defenses, including adversarial fine-tuning (AFT) (Malik et al., 2025; Schlarmann et al., 2024) and adversarial prompt tuning (APT) (Shu et al., 2022; Zanella & Ben Ayed, 2024). AFT fine-tunes the visual encoder via a min–max game with dynamically generated adversarial images, yielding transferable zero-shot robustness but at high computational cost, reliance on labeled data, and a tendency to overfit the fine-tuning set, which degrades generalization on unseen distributions. APT instead adjusts learnable tokens in the text embedding space to align adversarial images, but similarly overfits to training data—boosting clean accuracy only on seen distributions while harming generalization (Yu et al., 2024).
+Another emerging line is test-time defense, which adapts models during inference without retraining. Recent works include R-TPT (Sheng et al., 2025), minimizing pointwise entropy with reliability-weighted ensembles, and Test-Time Counterattack (TTC) (Xing et al., 2025), leveraging CLIP’s visual encoder to counter adversarial perturbations. While promising, both remain prone to semantic misalignment and unstable recovery under attacks.
+Figure 1:
+Analysis of Counterattack for Adversarial Robustness. Performance drops when reducing from two views to a single view, and degrades further under semantic perturbations.
+Figure 2:
+During counterattack inference, embeddings tend to drift within the adversarial space and fall into hard-negative traps; SCC leverages cross-modal semantic and spatial consistency to push them away from hard samples and back toward the correct class space.
+Building on prior robustness studies, adversarial attacks often induce pseudo-stability, where perturbed images appear deceptively stable (Xing et al., 2025); thresholded counter-attacks mitigate this but still shift embeddings toward hard negatives and leave single-view corrections insufficient to suppress noise, as shown in Figure 2.
+Motivated by these observations, we propose Self-Calibrated Consistency (SCC), a simple yet effective test-time defense composed of two complementary components.
+Semantic consistency, which leverages
+soft pseudo-labels from counterattack warm-up and multi-view predictions to regularize cross-modal alignment and separate target embeddings from confusable negatives (Figure 2); and
+Spatial consistency, which enforces agreement among perturbed visual predictions and leverages augmented views to mitigate viewpoint fragility and stabilize feature calibration (Figure 2).
+Extensive experiments on 22 zero-shot benchmarks demonstrate that SCC consistently improves adversarial robustness while preserving clean accuracy, surpassing state-of-the-art test-time defenses.
+In summary, our main contributions are:
+•
+This work uncovers and theoretically analyzes three vulnerabilities in test-time defenses—semantic drift, view sensitivity, and hard-negative dominance—and proposes SCC, a framework that shifts the paradigm from unimodal defenses to cross-modal, multi-view self-corrective robustness.
+•
+SCC unifies semantic and spatial consistency into a principled test-time defense: a cross-modal consistency constraint preserves alignment against hard negatives, while spatial consistency stabilizes perturbed views to mitigate viewpoint fragility, together forming a dual defense that delivers robust and generalizable zero-shot performance.
+•
+SCC is a plug-and-play defense that boosts robustness without retraining, consistently outperforming prior test-time methods on 22 benchmarks and extending effectively to CLIP derivatives such as BioMedCLIP.
+Figure 3:
+Test-time defense paradigms on CLIP. (a). R-TPT adapts text prompts online but still suffers from adversarial perturbations. (b). TTC repairs adversarial inputs via corrective perturbations, yet remains sensitive to view variance and hard negatives. (c). SCC enforces semantic and spatial consistency, yielding more stable recovery.
+2 Preliminaries and Related Work
+Despite notable success, VLMs are highly vulnerable to adversarial perturbations: imperceptible changes crafted by PGD (Madry, 2018) or CW can flip predictions, and multimodal misalignment exacerbates this by shifting image embeddings toward hard negatives, causing semantic drift (Su et al., 2019; Moosavi-Dezfooli et al., 2017; Andriushchenko et al., 2020; Ilyas et al., 2018).
+To address adversarial vulnerability in VLMs, several directions have been explored (Mao et al., 2023; Li et al., 2024; Liang et al., 2024; Yu et al., 2023; Shu et al., 2022).
+AFT (Malik et al., 2025; Schlarmann et al., 2024) enhances robustness with adversarial examples but is costly, label-dependent, and overfits, hurting zero-shot generalization.
+APT (Yu et al., 2024) adjusts learnable tokens in the text space, yet also overfits, inflating clean accuracy only on seen data while degrading unseen performance.
+Test-time defenses, including R-TPT (Sheng et al., 2025) and TTC (Xing et al., 2025), adapt models without retraining but remain unstable and semantically misaligned under attacks (Shu et al., 2022; Zanella & Ben Ayed, 2024; Sui et al., 2025).
+Overall, existing methods either demand expensive retraining or fail to ensure semantic and stable predictions (Yu et al., 2024; Abdul Samadh et al., 2024), motivating our SCC (Figure 3).
+Problem formulation:
+Given an image xx and a set of text prompts {tk}\{t_{k}\}, zero-shot classification in CLIP is performed by computing cosine similarities between the normalized image embedding fimg​(x)f_{\text{img}}(x) and text embeddings gtext​(tk)g_{\text{text}}(t_{k}), followed by a softmax over classes:
+p⁡(y=k∣x)=exp⁡(τ⋅⟨fimg​(x),gtext​(tk)⟩)∑jexp⁡(τ⋅⟨fimg​(x),gtext​(tj)⟩),p(y=k\mid x)=\frac{\exp\!\left(\tau\cdot\langle f_{\text{img}}(x),g_{\text{text}}(t_{k})\rangle\right)}{\sum_{j}\exp\!\left(\tau\cdot\langle f_{\text{img}}(x),g_{\text{text}}(t_{j})\rangle\right)},
+where τ\tau denotes a learnable temperature parameter.
+We consider CLIP, consisting of an image encoder fimg​(⋅)f_{\text{img}}(\cdot) and a text encoder gtext​(⋅)g_{\text{text}}(\cdot).
+Given an image xx and class prompts {tk}k=1K\{t_{k}\}_{k=1}^{K}, zero-shot prediction is
+y^=arg⁡maxk​⟨fimg​(x),gtext​(tk)⟩,\hat{y}=\arg\max_{k}\;\langle f_{\text{img}}(x),g_{\text{text}}(t_{k})\rangle,
+(1)
+In adversarial settings, an attacker perturbs xx within an ℓp\ell_{p} ball of radius ϵa\epsilon_{a} (perturbation budget), yielding
+xadv=x+δatk,‖δatk‖p≤ϵa,x^{\text{adv}}=x+\delta^{\text{atk}},\quad\|\delta^{\text{atk}}\|_{p}\leq\epsilon_{a},
+To counteract this, our defense applies a corrective perturbation δ\delta to recover alignment:
+xcnt=xadv+δ,‖δ‖p≤ϵd,x^{\text{cnt}}=x^{\text{adv}}+\delta,\quad\|\delta\|_{p}\leq\epsilon_{d},
+(2)
+Here, δ\delta is optimized at test time, and ϵd\epsilon_{d} controls the maximum allowable perturbation magnitude.
+Figure 4:
+Pipeline of SCC: text and augmented views are encoded into features, multi-view embeddings are aggregated with averaging and combined with a short counterattack warm-up to yield stable soft pseudo-labels, which then guide cross-modal consistency optimization through the corrective perturbation δ\delta.
+TrT_{r} denotes the correct class embedding (e.g., dog), while TfT_{f} is an incorrect class embedding (e.g., wolf). Spatial consistency enforces perturbed views fθ​(xi+δ)f_{\theta}(x_{i}+\delta) to stay close to TrT_{r} rather than drift toward TfT_{f}.
+3 Methodology
+3.1 The Findings of Test-time Counterattack
+To motivate our approach, we revisit TTC and identify three vulnerabilities.
+(1) Semantic drift: the repaired similarity
+cos⁡(z^​(xcnt),t^y⋆)\cos\!\big(\hat{z}(x^{\text{cnt}}),\hat{t}_{y^{\star}}\big),
+with xcnt=xadv+δx^{\text{cnt}}=x^{\text{adv}}+\delta, often fluctuates and can even shift toward non-target texts under strong attacks (Figure 2).
+(2) Hardest-competitor dominance: misclassifications arise when the repaired embedding aligns closely with the strongest competitor
+j⋆=arg⁡maxj≠y⋆​⟨z^​(xcnt),t^j⟩j^{\star}=\arg\max_{j\neq y^{\star}}\langle\hat{z}(x^{\text{cnt}}),\hat{t}_{j}\rangle
+(Figure 2).
+(3) View sensitivity: across semantics-preserving augmentations {vi}\{v_{i}\} (horizontal flip or low-variance Gaussian noise),
+the repaired logit gaps exhibit high variance, e.g., Vari​[Δ(i)]\mathrm{Var}_{i}[\Delta^{(i)}] with Δ(i)=z(1)(i)−z(2)(i)\Delta^{(i)}=z^{(i)}_{(1)}-z^{(i)}_{(2)},
+indicating inconsistent recovery (Figure 2).
+Together, these expose TTC’s fragility in preserving cross-modal semantics and spatial stability, motivating a principled solution.
+We next formalize semantic (1-2) and spatial fragility (3), which underpin our SCC framework.
+3.2 The Analysis of Semantic and Spatial Fragility
+Let f^​(x)∈ℝd\hat{f}(x)\in\mathbb{R}^{d} denote the ℓ2\ell_{2}-normalized image embedding and
+{t^k}k=1K⊂ℝd\{\hat{t}_{k}\}_{k=1}^{K}\subset\mathbb{R}^{d} the set of normalized text embeddings.
+The semantic margin of an image xx with ground-truth y⋆y^{\star} is
+m⁡(x)=⟨f^​(x),t^y⋆⟩−maxj≠y⋆⁡⟨f^​(x),t^j⟩.m(x)=\langle\hat{f}(x),\hat{t}_{y^{\star}}\rangle-\max_{j\neq y^{\star}}\langle\hat{f}(x),\hat{t}_{j}\rangle.
+(3)
+Under adversarial perturbation δ\delta with ‖δ‖p≤ϵ\|\delta\|_{p}\leq\epsilon, the margin becomes
+m⁡(x+δ)=⟨f^​(x+δ),t^y⋆⟩−maxj≠y⋆⁡⟨f^​(x+δ),t^j⟩,m(x+\delta)=\langle\hat{f}(x+\delta),\hat{t}_{y^{\star}}\rangle-\max_{j\neq y^{\star}}\langle\hat{f}(x+\delta),\hat{t}_{j}\rangle,
+(4)
+which often collapses or even turns negative, indicating a shift toward hard negatives.
+This fragility manifests in three forms:
+Prediction noise.
+For adversarial inputs xadvx^{\text{adv}}, the single-view distribution q~​(y∣xadv)\tilde{q}(y\mid x^{\text{adv}}) deviates from the ground-truth p⋆p^{\star}, introducing
+Bias=‖𝔼⁡[q~]−p⋆‖1,Var=∑kVar​[q~k],\text{Bias}=\|\mathbb{E}[\tilde{q}]-p^{\star}\|_{1},\quad\text{Var}=\sum_{k}\text{Var}[\tilde{q}_{k}],
+which reduce expected alignment 𝔼⁡[⟨f^​(xadv),ty⋆⟩]\mathbb{E}[\langle\hat{f}(x^{\text{adv}}),t_{y^{\star}}\rangle].
+Hard-negative alignment.
+Counterattacks often pull embeddings toward the hardest negative
+j⋆=arg⁡maxj≠y⋆​⟨f^​(xadv),tj⟩,j^{\star}=\arg\max_{j\neq y^{\star}}\langle\hat{f}(x^{\text{adv}}),t_{j}\rangle,
+causing the margin
+m⁡(xadv)=⟨f^​(xadv),ty⋆⟩−⟨f^​(xadv),tj⋆⟩m(x^{\text{adv}})=\langle\hat{f}(x^{\text{adv}}),t_{y^{\star}}\rangle-\langle\hat{f}(x^{\text{adv}}),t_{j^{\star}}\rangle
+to collapse.
+View sensitivity.
+Let AA be a distribution of semantics-preserving augmentations.
+Across NN sampled views {vi}\{v_{i}\}, logits
+z(i)=⟨f^​(vi​(xadv)),tk⟩z^{(i)}=\langle\hat{f}(v_{i}(x^{\text{adv}})),t_{k}\rangle
+exhibit high variance Vari​[z(i)]\mathrm{Var}_{i}[z^{(i)}], and the hardest negative j⋆​(i)j^{\star}(i) may differ by view.
+Consequently, PGD updates guided by ∇δzj⋆​(i)(i)\nabla_{\delta}z^{(i)}_{j^{\star}(i)} are inconsistent, yielding large gradient variance Vari​[∇δℒ​(z(i))]\mathrm{Var}_{i}[\nabla_{\delta}\mathcal{L}(z^{(i)})] and unstable recovery.
+Together, these effects define semantic and spatial fragility, underscoring the difficulty of preserving cross-modal alignment under adversarial perturbations.
+3.3 Mitigating Semantic Fragility via Semantic Consistency
+Cross-modal consistency.
+Given an adversarial input xadvx^{\text{adv}}, the defense applies a counter-perturbation δ\delta by optimizing a margin objective that encourages alignment with a soft semantic anchor while repelling hard negatives, as shown in Figure 4:
+ℒc​m​(xadv,δ)=cos⁡(fimg​(xadv+δ),tsoft)−maxk≠y^⁡cos⁡(fimg​(xadv+δ),tk),\mathcal{L}_{cm}(x^{\text{adv}},\delta)=\cos(f_{\text{img}}(x^{\text{adv}}+\delta),t_{\text{soft}})-\max_{k\neq\hat{y}}\cos(f_{\text{img}}(x^{\text{adv}}+\delta),t_{k}),
+(5)
+where y^=arg⁡maxk⁡cos⁡(fimg​(xw),tk)\hat{y}=\arg\max_{k}\cos(f_{\text{img}}(x^{w}),t_{k}) is pseudo-label predicted from the warm-up embedding xwx^{w}.
+Soft prototype construction.
+To stabilize tsoftt_{\text{soft}}, we perform a short TTC warm-up (A.1) on xadvx^{\text{adv}} to obtain xwx^{w}, then generate NN augmented views {vi​(xw)}i=1N\{v_{i}(x^{w})\}_{i=1}^{N}.
+The view-wise predictions {q(i)}\{q^{(i)}\} are averaged and sharpened with temperature T<1T<1:
+qksharp=(1N​∑i=1Nqk(i))1/T∑j(1N​∑i=1Nqj(i))1/T,q_{k}^{\text{sharp}}=\frac{\big(\tfrac{1}{N}\sum_{i=1}^{N}q^{(i)}_{k}\big)^{1/T}}{\sum_{j}\big(\tfrac{1}{N}\sum_{i=1}^{N}q^{(i)}_{j}\big)^{1/T}},
+(6)
+and the soft prototype is defined as
+tsoft=∑kqksharp​tk,t_{\text{soft}}=\sum_{k}q_{k}^{\text{sharp}}\,t_{k},
+(7)
+which acts as the semantic anchor in ℒc​m\mathcal{L}_{cm}. The detailed SCC procedure is provided in algorithm 1.
+Proposition 1 (Hard-negative repulsion).
+Let x+δx+\delta denote the counter-perturbed input during optimization.
+Optimizing ℒc​m\mathcal{L}_{cm} by PGD ascent increases the semantic margin
+m⁡(x+δ)=cos⁡(fimg​(x+δ),tsoft)−maxk≠y^⁡cos⁡(fimg​(x+δ),tk)m(x+\delta)=\cos(f_{\text{img}}(x+\delta),t_{\text{soft}})-\max_{k\neq\hat{y}}\cos(f_{\text{img}}(x+\delta),t_{k})
+monotonically (up to 𝒪⁡(α2)\mathcal{O}(\alpha^{2})), thereby preventing drift toward confusable negatives. See proof in Appendix.
+Iterative counter-attack.
+Corrective perturbations are computed as
+δ(t+1)=Πϵ​(δ(t)+α⋅sign​(∇δℒc​m​(x+δ(t)))),\delta^{(t+1)}=\Pi_{\epsilon}\!\left(\delta^{(t)}+\alpha\cdot\text{sign}\big(\nabla_{\delta}\mathcal{L}_{cm}(x+\delta^{(t)})\big)\right),
+(8)
+where Πϵ\Pi_{\epsilon} projects onto the ℓp\ell_{p} ball of radius ϵ\epsilon and α\alpha is the step size.
+A step-weighted fusion is applied across PGD iterations, where intermediate perturbations δ(t)\delta^{(t)} are aggregated with weights proportional to their step index, yielding a smoother final correction.
+3.4 Mitigating Spatial Fragility via Spatial Consistency
+Multi-view self-consistency.
+To stabilize predictions, we aggregate LL augmented views (Sheng et al., 2025) of the same input.
+Let z(i)z^{(i)} be the logits of view ii, then
+z¯=1L​∑i=1Lz(i),q¯=softmax​(z¯),tsoft=∑kq¯k​tk.\bar{z}=\tfrac{1}{L}\sum_{i=1}^{L}z^{(i)},\qquad\bar{q}=\text{softmax}(\bar{z}),\qquad t_{\text{soft}}=\sum_{k}\bar{q}_{k}\,t_{k}.
+While each view may yield noisy predictions under adversarial perturbations, their aggregation reduces variance and yields a more reliable semantic anchor.
+Proposition 2 (Variance reduction).
+If {q(i)}\{q^{(i)}\} are i.i.d. with covariance Σ\Sigma, then Cov​(q¯)=1L​Σ\text{Cov}(\bar{q})=\tfrac{1}{L}\Sigma, showing variance shrinks as 1/L1/L and tsoftt_{\text{soft}} becomes more stable.
+Remark 1.
+Temperature sharpening (T<1T<1) further amplifies dominant classes:
+qk​(T)=q¯k1/T∑jq¯j1/T,q_{k}(T)=\frac{\bar{q}_{k}^{1/T}}{\sum_{j}\bar{q}_{j}^{1/T}},
+which enlarges semantic margins by suppressing noisy tail classes.
+Confidence weighting.
+We assign each sample a confidence w⁡(x)∈[0,1]w(x)\in[0,1] (based on margin or entropy), so that high-confidence predictions dominate optimization, while noisy pseudo-labels are down-weighted. This weighting mitigates error propagation and stabilizes semantic alignment.
+Spatial counterattacks.
+For each input xx, we first obtain a single counter-perturbation δ\delta by the TTC inner loop (e.g., PGD-like ascent) under ‖δ‖p≤ϵ\|\delta\|_{p}\leq\epsilon.
+We then form LL semantics-preserving views of the corrected image x+δx+\delta via horizontal flip and low-variance Gaussian pixel noise:
+𝒱⁡(x+δ)={vi​(x+δ)}i=1L,vi​(⋅)=fliph𝟏i​odd​(⋅)+ηi,ηi∼𝒩⁡(0,(σ/255)2​I).\mathcal{V}(x+\delta)=\{\,v_{i}(x+\delta)\,\}_{i=1}^{L},\quad v_{i}(\cdot)=\mathrm{flip}_{\mathrm{h}}^{\mathbf{1}_{i\ \mathrm{odd}}}(\cdot)+\eta_{i},\ \ \eta_{i}\!\sim\!\mathcal{N}(0,(\sigma/255)^{2}I).
+Let z(i)z^{(i)} be the logits of view ii. We aggregate by averaging logits and then softmax:
+z¯=1L​∑i=1Lz(i),p^=softmax⁡(z¯),y^=arg⁡maxk⁡z¯k.\bar{z}=\tfrac{1}{L}\sum_{i=1}^{L}z^{(i)},\qquad\hat{p}=\mathrm{softmax}(\bar{z}),\qquad\hat{y}=\arg\max_{k}\bar{z}_{k}.
+Table 1: Classification accuracy (%) on clean images (Acc.) and adversarial images (Rob.) under 10-step PGD attack (ϵa=1/255\epsilon_{a}=1/255) across 16 datasets. The threat model assumes full access to model weights and gradients. We compare our paradigm against test-time defenses adapted from prior adversarial robustness studies, and include fine-tuned models as references. The last column shows the gains of SCC over the CLIP.
+Dataset
+Metric
+CLIP
+Adversarial Finetuning
+Test-time Defence
+Δ\Delta
+CLIP-FT
+TeCoA
+PMG-AFT
+FARE
+RN
+Anti-adv
+HD
+TTC
+SCC(ours)
+CIFAR10
+Rob.
+0.74
+3.34
+33.61
+40.66
+19.65
+2.01
+12.39
+17.22
+28.75
+59.18
++58.44
+Acc.
+85.12
+84.90
+64.61
+70.69
+74.44
+81.18
+83.52
+78.23
+81.18
+82.24
+-2.88
+CIFAR100
+Rob.
+0.26
+0.90
+18.95
+22.52
+11.40
+0.67
+5.73
+3.86
+14.31
+32.09
++31.83
+Acc.
+57.14
+59.51
+35.96
+40.32
+46.67
+56.34
+53.95
+52.86
+56.34
+55.21
+-1.93
+STL10
+Rob.
+11.00
+12.73
+70.08
+73.08
+59.06
+16.23
+37.42
+39.02
+76.70
+90.50
++79.50
+Acc.
+96.40
+94.49
+87.40
+88.56
+91.72
+95.85
+95.45
+89.50
+95.85
+95.62
+-0.78
+ImageNet
+Rob.
+1.15
+0.93
+18.89
+21.43
+14.00
+1.77
+8.67
+6.63
+38.41
+49.77
++48.62
+Acc.
+59.69
+54.24
+34.89
+36.12
+48.79
+59.34
+54.27
+54.54
+49.39
+56.03
+-3.66
+Caltech101
+Rob.
+14.67
+14.21
+55.51
+61.08
+50.74
+18.90
+34.81
+31.53
+65.78
+77.25
++62.58
+Acc.
+85.66
+83.63
+71.68
+75.45
+80.95
+86.61
+84.02
+82.33
+86.53
+86.44
++0.78
+Caltech256
+Rob.
+8.47
+6.76
+43.19
+45.91
+38.79
+11.33
+25.36
+23.48
+60.11
+72.88
++64.41
+Acc.
+81.72
+78.53
+61.14
+62.24
+73.32
+81.25
+79.38
+79.12
+79.66
+81.16
+-0.56
+OxfordPets
+Rob.
+1.04
+2.10
+38.35
+41.18
+31.07
+1.86
+20.42
+12.04
+57.87
+76.67
++75.63
+Acc.
+87.44
+84.14
+62.12
+65.88
+79.37
+87.41
+80.62
+80.91
+83.35
+86.48
+-0.96
+Flowers102
+Rob.
+1.14
+0.54
+21.94
+23.43
+17.14
+1.52
+7.16
+7.29
+39.14
+54.59
++53.45
+Acc.
+65.46
+53.37
+36.80
+37.00
+47.98
+64.62
+62.66
+58.22
+64.16
+64.16
+-1.30
+FGVC-Aircraft
+Rob.
+0.00
+0.00
+2.49
+2.22
+1.35
+0.00
+1.27
+1.26
+13.77
+17.40
++17.40
+Acc.
+20.10
+14.04
+5.31
+5.55
+10.86
+19.25
+15.88
+16.36
+18.00
+17.61
+-2.49
+StanfordCars
+Rob.
+0.02
+0.06
+8.76
+11.65
+6.75
+0.16
+4.40
+2.71
+33.01
+43.24
++43.22
+Acc.
+52.02
+42.11
+20.91
+25.44
+38.68
+52.14
+36.21
+44.28
+48.16
+51.19
+-0.83
+SUN397
+Rob.
+1.14
+0.94
+19.39
+22.58
+14.91
+1.72
+8.05
+6.40
+41.52
+53.27
++52.13
+Acc.
+58.50
+55.73
+36.69
+37.98
+52.42
+59.69
+56.00
+53.17
+55.13
+58.25
+-0.25
+Country211
+Rob.
+0.04
+0.03
+1.78
+2.12
+0.85
+0.06
+0.67
+0.47
+7.09
+9.41
++9.37
+Acc.
+15.25
+12.07
+4.75
+4.64
+9.26
+14.80
+11.58
+11.72
+13.08
+13.36
+-1.89
+Food101
+Rob.
+0.70
+0.42
+13.90
+18.57
+11.65
+1.20
+13.12
+8.03
+57.84
+65.39
++64.69
+Acc.
+83.88
+64.86
+29.98
+36.61
+55.31
+83.44
+75.81
+80.30
+82.18
+82.13
+-1.75
+EuroSAT
+Rob.
+0.03
+0.04
+11.96
+12.60
+10.67
+0.15
+2.15
+4.57
+12.19
+20.64
++20.61
+Acc.
+42.59
+27.64
+16.58
+18.53
+21.88
+53.24
+36.78
+39.08
+53.24
+41.69
+-0.90
+DTD
+Rob.
+2.98
+2.39
+17.61
+14.95
+15.64
+3.71
+5.62
+11.63
+27.32
+34.57
++31.59
+Acc.
+40.64
+36.49
+25.16
+21.76
+32.07
+37.96
+38.92
+34.89
+36.98
+37.34
+-3.30
+PCAM
+Rob.
+0.08
+1.11
+48.24
+46.18
+16.23
+0.41
+4.97
+44.74
+52.85
+69.99
++69.91
+Acc.
+52.02
+47.21
+49.96
+50.03
+52.54
+52.73
+52.49
+50.38
+52.73
+54.41
++2.39
+Avg.
+Rob.
+2.70
+2.91
+26.54
+28.76
+20.00
+3.86
+12.01
+13.81
+39.17
+51.68
++48.98
+Acc.
+61.51
+55.80
+40.25
+42.30
+51.02
+61.61
+57.35
+56.62
+59.75
+60.21
+-1.30
+Remark 2 (Optimization coupling).
+Unlike pure test-time ensembling, all augmented views share a common corrective perturbation δ\delta, which is optimized jointly in the TTC loop. This coupling enforces spatial consistency while repairing adversarial effects.
+Proposition 3 (Suppression of spurious negatives).
+For averaged logits,
+maxj≠y⋆⁡z¯j≤1L​∑imaxj≠y⋆⁡zj(i),\max_{j\neq y^{\star}}\bar{z}_{j}\;\leq\;\tfrac{1}{L}\sum_{i}\max_{j\neq y^{\star}}z^{(i)}_{j},
+so aggregation suppresses view-dependent hardest negatives and stabilizes TTC updates. See proof in Appendix.
+Objective.
+The SCC optimization couples cross-modal semantics with spatial stability:
+max‖δ‖≤ϵ⁡λc​m​ℒc​m​(x,δ)+‖fimg​(x+δ)−fimg​(x)‖22,\max_{\|\delta\|\leq\epsilon}\;\;\lambda_{cm}\mathcal{L}_{cm}(x,\delta)+\|f_{\text{img}}(x+\delta)-f_{\text{img}}(x)\|_{2}^{2},
+(9)
+where the second term follows TTC in promoting feature deviation to escape pseudo-stability.
+Remark 3.
+This unifies semantic alignment and spatial consistency into a defense objective.
+4 Experiments
+4.1 Experimental Setup
+Datasets and Baselines:
+Building on prior studies of CLIP’s adversarial robustness (Mao et al., 2023; Xing et al., 2025), we evaluate on 16 public datasets spanning diverse visual domains: generic object recognition (CIFAR10 (Krizhevsky et al., 2012), CIFAR100 (Krizhevsky et al., 2012), STL10 (Coates et al., 2011), ImageNet (Deng et al., 2009), Caltech101 (Fei-Fei et al., 2006), Caltech256 (Griffin & Perona, 2008)), fine-grained recognition (OxfordPets (Parkhi et al., 2012), Flowers102 (Nilsback & Zisserman, 2008), Food101 (Bossard et al., 2014), StanfordCars (Krause et al., 2013)), scene recognition (SUN397 (Xiao et al., 2010), Country211 (Radford et al., 2021)), and specialized domains (FGVCAircraft (Maji et al., 2013), EuroSAT (Helber et al., 2019), DTD (Cimpoi et al., 2014), PCAM (Bejnordi et al., 2017)). Comprehensive evaluation further includes experiments on 6 medical datasets such as BUSI (Al-Dhabyani et al., 2020), BTMRI (Koleilat et al., 2025), CHMNIST (Kather et al., 2016), COVID-19 (Tahir et al., 2021), DermaMNIST (Codella et al., 2019), and KneeXray (Chen, 2018).
+We implemented several baselines for comparison. Test-time defenses include Test-time Counterattack (TTC) (Xing et al., 2025), following the original setup, Anti-Adversarial (Alfarra et al., 2022) (adapted to CLIP by maximizing image–text similarity), Hedging Defense (HD) (Wu et al., 2021) (minimizing cross-entropy across all classes), and RN, which perturbs inputs with random noise of the same strength as ϵ\epsilon (Xing et al., 2025).
+As reference, we evaluated adversarial fine-tuning methods—TeCoA (Mao et al., 2023), PMG-AFT (Wang et al., 2024), FARE (Schlarmann et al., 2024)—and a clean fine-tuned CLIP (CLIP-FT) on TinyImageNet, using 2-step PGD (α=1/255\alpha=1/255, ϵa=1/255\epsilon_{a}=1/255) and learning rate ×10−55\!\times\!10^{-5}, then transferring the models to 16 downstream datasets.
+Table 2: Adversarial (Rob.) and clean (Acc.) accuracy (%) on 16 datasets under PGD-10 (ϵa=4/255\epsilon_{a}=4/255). Superscripts denote fine-tuning budgets. The last row shows gains over CLIP.
+(%)
+CLIP
+CLIP-FT
+TeCoA1
+TeCoA4
+PMG-AFT1
+PMG-AFT4
+FARE1
+FARE4
+RN
+Anti-adv
+HD
+TTC
+SCC(ours)
+Δ\Delta
+Rob.
+0.09
+0.96
+6.51
+10.03
+7.03
+10.70
+1.50
+3.67
+0.06
+0.53
+1.19
+20.63
+27.88
++27.79
+Acc.
+61.51
+55.80
+40.25
+35.57
+42.30
+37.58
+51.02
+46.17
+61.61
+57.32
+56.62
+55.99
+60.42
+-1.09
+Implementation:
+We adopt CLIP ViT-B/32 as the backbone (Radford et al., 2021) and BioMedCLIP (Zhang et al., 2025) for medical tasks, using the handcrafted prompt templates from CLIP. Counterattack budget are set to ϵ=4/255\epsilon=4/255, and 2 steps (Xing et al., 2025). For the semantic consistency, λc​m=4\lambda_{cm}=4 and temperature T=0.5T=0.5 (selected via grid search). For the spatial consistency, we use L=2L=2 augmented views with noise σ=6\sigma=6 (tuned by search).
+We evaluate against white-box and adaptive attacks, including P​G​D​-​ℓ∞PGD\text{-}\ell_{\infty} and CW (Xing et al., 2025).
+By default, we report top-1 accuracy on both clean and adversarial examples. Counterattack parameters follow (Xing et al., 2025). The batch size is set to 256. We conducted all experiments on NVIDIA H20 GPUs.
+4.2 Main Results
+We evaluate robustness under an attack budget of ϵa=1/255\epsilon_{a}=1/255, following prior CLIP robustness studies (Xing et al., 2025). All baselines are tested on 16 datasets with 10-step PGD attacks, assuming full access to model weights and gradients but no access to test-time operations. As shown in Table 1, adversarially fine-tuned models (TeCoA, PMG-AFT, FARE, CLIP-FT) suffer from severe overfitting: while robust accuracy improves on training-like datasets, clean accuracy drops significantly across downstream tasks.
+Among test-time defenses, Anti-Adversarial and HD yield only marginal gains, while RN fails to provide robustness even with perturbations much larger than ϵa\epsilon_{a}. TTC delivers noticeable gains but falls significantly short of SCC.
+In contrast, our SCC achieves consistent improvements: the average robust accuracy rises from 2.70% (CLIP) and 39.17% (TTC) to 51.68%, a substantial gain of +48.98% over vanilla CLIP and +12.51% over TTC, with clean accuracy only slightly reduced (−-1.30%). These results highlight SCC as an test-time defense that delivers strong and stable adversarial robustness without sacrificing clean performance.
+We further evaluate robustness under a stronger attack budget ϵa=4/255\epsilon_{a}=4/255.
+For the stronger-budget setting, we increase counterattack iterations to 55 while keeping all other hyperparameters fixed; adversarial fine-tuning baselines are trained with the same perturbation budget.
+As shown in Table 2 and A.4, robust accuracy of all models drops significantly under stronger attacks. Anti-Adversarial and HD almost lose robustness in this setting, while TTC provides moderate protection but suffers from high variance across datasets. In contrast, our SCC achieves stable improvements: average robust accuracy rises to 27.88%, outperforming TTC by +7.25% and vanilla CLIP by +27.79%, with only a negligible clean accuracy drop (–1.09%). These results demonstrate that SCC remains effective even under high-budget adversarial perturbations, highlighting its robustness and generalization.
+Per-dataset results are provided in the Appendix.
+We further evaluate SCC under CW attacks (Carlini & Wagner, 2017), with results deferred to the Appendix due to space limits (A.3).
+Adversarial robustness in the medical domain is particularly challenging: as shown in Table 3, BioMedCLIP nearly collapses under ϵa=1/255\epsilon_{a}=1/255 attacks, with average adversarial accuracy close to 0%0\% (Koleilat et al., 2025). TTC alleviates this issue by introducing counterattacks, improving robustness to 10.62% on average. Our SCC further restores robustness substantially, reaching 34.00% on BioMedCLIP (a +23.38% improvement over TTC) while maintaining clean accuracy (44.63%). On CLIP, SCC also consistently outperforms TTC across six medical datasets, improving robustness by +5.94% on average. These results demonstrate that SCC not only generalizes to domain-specific models like BioMedCLIP but also provides a plug-and-play defense that stabilizes zero-shot medical prediction under adversarial perturbations.
+Table 3: CLIP and BioMedCLIP Robustness on Medical Benchmarks (ϵa=1/255\epsilon_{a}=1/255).
+Backbone
+BUSI
+BTMRI
+CHMNIST
+COVID_19
+DermaMNIST
+KneeXray
+Avg.
+CLIP
+Rob.
+Acc.
+Rob.
+Acc.
+Rob.
+Acc.
+Rob.
+Acc.
+Rob.
+Acc.
+Rob.
+Acc.
+Rob.
+Acc.
+CLIP
+0.00
+47.18
+0.00
+25.60
+0.00
+21.32
+0.13
+6.39
+0.02
+19.76
+0.00
+13.74
+0.02
+22.33
+TTC
+11.67
+42.05
+8.93
+27.84
+2.20
+19.64
+7.51
+9.11
+6.28
+20.68
+7.68
+14.32
+7.38
+22.27
+SCC
+23.85
+42.31
+16.19
+27.78
+9.12
+17.26
+7.30
+7.05
+12.40
+20.48
+11.08
+13.12
+13.32
+21.33
+BioMedCLIP
+BioMedCLIP
+0.00
+40.38
+0.49
+60.33
+0.00
+32.62
+0.02
+72.53
+0.00
+35.62
+0.00
+27.92
+0.08
+44.90
+TTC
+7.95
+37.05
+22.20
+53.08
+2.80
+29.62
+18.36
+57.20
+4.91
+24.58
+7.51
+34.10
+10.62
+39.27
+SCC
+31.92
+40.26
+48.93
+59.72
+16.56
+31.24
+57.58
+68.95
+20.64
+32.51
+28.35
+35.07
+34.00
+44.63
+4.3 Ablation Studies
+Figure 5:
+Sensitivity of SCC to λc​m\lambda_{cm}, number of views LL, and effect of the temperature tt in soft-label sharpening (The tt-axis in the plot is scaled by ×10\times 10). A moderate tt yields the best trade-off.
+Effect of self-calibrated consistency:
+Figure 6 and Table 5 ablate SCC’s two modules on individual datasets and averaged over 16 datasets. As shown in Figure 6, retaining both semantic (Sec) and spatial (Spa) consistency yields the best performance across all datasets, while removing either leads to sharp drops, and removing both results in the lowest accuracy. Concretely, with only semantic consistency, robustness is 39.76% (clean 60.28%); with only spatial consistency, 48.01% (clean 59.76%). Combining both raises robustness to 51.68% (clean 60.21%), and while removing both modules drops the performance to -12.5% robustness and -0.48% clean accuracy. These results confirm the complementarity of the two modules: each provides modest gains alone, but together they deliver substantial robustness improvements while maintaining clean accuracy.
+Analysis of hyperparameter sensitivity.
+We conducted grid searches over the key hyperparameters of SCC. As shown in Figure 5, the cross-modal regularization weight λc​m∈[1,5]\lambda_{cm}\in[1,5] has little effect on clean accuracy and only mild impact on robustness, with a small peak around the mid-range; we adopt λc​m=4\lambda_{cm}=4 for stability. The number of views LL strongly influences robustness, which increases sharply from L=1L=1 to L=2L=2–44 before saturating; we set L=2L=2 for a balance of accuracy and efficiency. The temperature TT used in soft-label sharpening (Figure 5) also affects robustness, with T=0.5T=0.5 yielding the best trade-off. Finally, the noise scale σ\sigma (Figure 8) steadily boosts robustness until saturation, at the cost of a slight clean accuracy drop; we adopt σ=6\sigma=6. Overall, SCC is not overly sensitive to hyperparameter choices, and the selected defaults yield strong robustness gains with minimal accuracy loss.
+Figure 6:
+Ablation results of semantic consistency (sec) and spatial consistency (spa) across datasets. Removing either component degrades performance, while combining both yields the best robustness and accuracy.
+4.4 Visualization and Efficiency Analysis.
+Figure 7 illustrates the effect of SCC on CIFAR-10 under adversarial attacks.
+In panel (a), the distribution of maximum soft-label probabilities shows that, compared to the adversarial case (red), SCC (blue) shifts the distribution closer to clean samples (green), indicating better calibration and reduced over-confidence. Panels (b) and (c) compare confusion matrices: without SCC (b), adversarial perturbations induce widespread misclassifications, whereas with SCC (c), diagonal dominance is largely restored, confirming improved accuracy and stability across categories.
+In terms of efficiency, Table 5 shows that, unlike R-TPT which requires many view transformations, both TTC and SCC achieve much lower inference overhead. Notably, SCC incurs only an additional 0.0005s per image compared to TTC, yet delivers a +7.2% gain in robustness. This demonstrates SCC’s clear superiority in achieving a favorable trade-off between robustness and efficiency.
+Method
+Stage
+Time
+Rob.
+R-TPT (64 views)
+Test time
+0.37s/img
+32.8
+TTC
+Test time
+0.012s/img
+27.4
+SCC (ours)
+Test time
+0.0125s/img
+34.6
+Table 4: Running time and adversarial accuracies (%) of methods against adversarial attack on DTD dataset.
+Semantic Consistency
+Spatial Consistency
+Rob.
+Acc.
+39.18
+59.73
+✓
+39.76
+60.28
+✓
+48.01
+59.76
+✓
+✓
+51.68
+60.21
+Table 5: Ablation of semantic and spatial consistency across 16 datasets.
+5 Conclusion
+In this paper, we presented SCC, a test-time defense that strengthens the adversarial robustness of vision–language models in the zero-shot setting. SCC unifies two complementary components:
+semantic consistency, which resists cross-modal drift by repelling hard negatives,
+and spatial consistency, which stabilizes predictions through multi-view augmentation and correction.
+Extensive experiments across 22 benchmarks, including the domain-specific BioMedCLIP model, show that SCC yields consistent gains in robustness with minimal loss of clean accuracy.
+Our results demonstrate that SCC offers a simple and effective way to enhance the reliability of VLMs across both general-purpose and safety-critical domains.
+Ethics Statement
+This work uses only publicly available datasets without personal or sensitive information.
+By improving adversarial robustness of vision–language models, SCC aims to enhance reliability in both general and medical applications.
+Reproducibility Statement
+We provide implementation details in Experments and Appendix, including algorithmic descriptions, and hyperparameters.
+All experiments are conducted on publicly available datasets, and our code with scripts for reproducing results will be released upon publication.
+References
+Abdul Samadh et al. (2024)
+Jameel Abdul Samadh, Mohammad Hanan Gani, Noor Hussein, Muhammad Uzair Khattak, Muhammad Muzammal Naseer, Fahad Shahbaz Khan, and Salman H Khan.
+Align your prompts: Test-time prompting with distribution alignment for zero-shot generalization.
+In Proc. NeurIPS, 2024.
+Al-Dhabyani et al. (2020)
+Walid Al-Dhabyani, Mohammed Gomaa, Hussien Khaled, and Aly Fahmy.
+Dataset of breast ultrasound images.
+Data in brief, 28:104863, 2020.
+Alfarra et al. (2022)
+Motasem Alfarra, Juan C Pérez, Ali Thabet, Adel Bibi, Philip HS Torr, and Bernard Ghanem.
+Combating adversaries with anti-adversaries.
+In Proceedings of the AAAI Conference on Artificial Intelligence, volume 36, pp. 5992–6000, 2022.
+Andriushchenko et al. (2020)
+Maksym Andriushchenko, Francesco Croce, Nicolas Flammarion, and Matthias Hein.
+Square attack: a query-efficient black-box adversarial attack via random search.
+In Proc. ECCV, 2020.
+Bejnordi et al. (2017)
+Babak Ehteshami Bejnordi, Mitko Veta, Paul Johannes Van Diest, Bram Van Ginneken, Nico Karssemeijer, Geert Litjens, Jeroen AWM Van Der Laak, Meyke Hermsen, Quirine F Manson, Maschenka Balkenhol, et al.
+Diagnostic assessment of deep learning algorithms for detection of lymph node metastases in women with breast cancer.
+Jama, 318(22):2199–2210, 2017.
+Bossard et al. (2014)
+Lukas Bossard, Matthieu Guillaumin, and Luc Van Gool.
+Food-101–mining discriminative components with random forests.
+In European conference on computer vision, pp. 446–461. Springer, 2014.
+Carlini & Wagner (2017)
+Nicholas Carlini and David Wagner.
+Towards evaluating the robustness of neural networks.
+In Proc. S&P, 2017.
+Chen et al. (2023)
+Fei-Long Chen, Du-Zhen Zhang, Ming-Lun Han, Xiu-Yi Chen, Jing Shi, Shuang Xu, and Bo Xu.
+Vlp: A survey on vision-language pre-training.
+Machine Intelligence Research, 20(1):38–56, 2023.
+Chen (2018)
+Pingjun Chen.
+Knee osteoarthritis severity grading dataset.
+Mendeley Data, 1(10.17632):30784984, 2018.
+Cimpoi et al. (2014)
+Mircea Cimpoi, Subhransu Maji, Iasonas Kokkinos, Sammy Mohamed, and Andrea Vedaldi.
+Describing textures in the wild.
+In Proc. CVPR, 2014.
+Coates et al. (2011)
+Adam Coates, Andrew Ng, and Honglak Lee.
+An analysis of single-layer networks in unsupervised feature learning.
+In Proceedings of the fourteenth international conference on artificial intelligence and statistics, pp. 215–223. JMLR Workshop and Conference Proceedings, 2011.
+Codella et al. (2019)
+Noel Codella, Veronica Rotemberg, Philipp Tschandl, M Emre Celebi, Stephen Dusza, David Gutman, Brian Helba, Aadi Kalloo, Konstantinos Liopyris, Michael Marchetti, et al.
+Skin lesion analysis toward melanoma detection 2018: A challenge hosted by the international skin imaging collaboration (isic).
+arXiv preprint arXiv:1902.03368, 2019.
+Deng et al. (2009)
+Jia Deng, Wei Dong, Richard Socher, Li-Jia Li, Kai Li, and Li Fei-Fei.
+Imagenet: A large-scale hierarchical image database.
+In 2009 IEEE conference on computer vision and pattern recognition, pp. 248–255. Ieee, 2009.
+Fei-Fei et al. (2006)
+Li Fei-Fei, Robert Fergus, and Pietro Perona.
+One-shot learning of object categories.
+IEEE transactions on pattern analysis and machine intelligence, 28(4):594–611, 2006.
+Griffin & Perona (2008)
+Gregory Griffin and Pietro Perona.
+Learning and using taxonomies for fast visual categorization.
+In 2008 IEEE conference on computer vision and pattern recognition, pp. 1–8. IEEE, 2008.
+Helber et al. (2019)
+Patrick Helber, Benjamin Bischke, Andreas Dengel, and Damian Borth.
+Eurosat: A novel dataset and deep learning benchmark for land use and land cover classification.
+IEEE Journal of Selected Topics in Applied Earth Observations and Remote Sensing, 12(7):2217–2226, 2019.
+Ilyas et al. (2018)
+Andrew Ilyas, Logan Engstrom, Anish Athalye, and Jessy Lin.
+Black-box adversarial attacks with limited queries and information.
+In Proc. ICML, 2018.
+Kather et al. (2016)
+Jakob Nikolas Kather, Cleo-Aron Weis, Francesco Bianconi, Susanne M Melchers, Lothar R Schad, Timo Gaiser, Alexander Marx, and Frank Gerrit Zöllner.
+Multi-class texture analysis in colorectal cancer histology.
+Scientific reports, 6(1):1–11, 2016.
+Koleilat et al. (2025)
+Taha Koleilat, Hojat Asgariandehkordi, Hassan Rivaz, and Yiming Xiao.
+Biomedcoop: Learning to prompt for biomedical vision-language models.
+In Proceedings of the Computer Vision and Pattern Recognition Conference, pp. 14766–14776, 2025.
+Krause et al. (2013)
+Jonathan Krause, Michael Stark, Jia Deng, and Li Fei-Fei.
+3d object representations for fine-grained categorization.
+In Proc. ICCV Workshops, 2013.
+Krizhevsky et al. (2012)
+Alex Krizhevsky, Ilya Sutskever, and Geoffrey E Hinton.
+Imagenet classification with deep convolutional neural networks.
+Advances in neural information processing systems, 25, 2012.
+Li et al. (2024)
+Lin Li, Haoyan Guan, Jianing Qiu, and Michael Spratling.
+One prompt word is enough to boost adversarial robustness for pre-trained vision-language models.
+In Proc. CVPR, 2024.
+Liang et al. (2024)
+Jian Liang, Ran He, and Tieniu Tan.
+A comprehensive survey on test-time adaptation under distribution shifts.
+International Journal of Computer Vision, pp. 1–34, 2024.
+Liu et al. (2024)
+Jiaxiang Liu, Tianxiang Hu, Huimin Xiong, Jiawei Du, Yang Feng, Jian Wu, Joey Zhou, and Zuozhu Liu.
+Vpl: Visual proxy learning framework for zero-shot medical image diagnosis.
+In Findings of the Association for Computational Linguistics: EMNLP 2024, pp. 9978–9992, 2024.
+Liu et al. (2025)
+Jiaxiang Liu, Tianxiang Hu, Jiawei Du, Ruiyuan Zhang, Joey Tianyi Zhou, and Zuozhu Liu.
+Kpl: Training-free medical knowledge mining of vision-language models.
+In Proceedings of the AAAI Conference on Artificial Intelligence, volume 39, pp. 18852–18860, 2025.
+Madry (2018)
+Aleksander Madry.
+Towards deep learning models resistant to adversarial attacks.
+In Proc. ICLR, 2018.
+Maji et al. (2013)
+Subhransu Maji, Esa Rahtu, Juho Kannala, Matthew Blaschko, and Andrea Vedaldi.
+Fine-grained visual classification of aircraft.
+arXiv preprint arXiv:1306.5151, 2013.
+Malik et al. (2025)
+Hashmat Shadab Malik, Fahad Shamshad, Muzammal Naseer, Karthik Nandakumar, Fahad Khan, and Salman Khan.
+Robust-llava: On the effectiveness of large-scale robust image encoders for multi-modal large language models.
+arXiv preprint arXiv:2502.01576, 2025.
+Mao et al. (2023)
+Chengzhi Mao, Scott Geng, Junfeng Yang, Xin Wang, and Carl Vondrick.
+Understanding zero-shot adversarial robustness for large-scale models.
+In Proc. ICLR, 2023.
+Moosavi-Dezfooli et al. (2017)
+Seyed-Mohsen Moosavi-Dezfooli, Alhussein Fawzi, Omar Fawzi, and Pascal Frossard.
+Universal adversarial perturbations.
+In Proc. CVPR, 2017.
+Nilsback & Zisserman (2008)
+Maria-Elena Nilsback and Andrew Zisserman.
+Automated flower classification over a large number of classes.
+In Proc. ICVGIP, 2008.
+Parkhi et al. (2012)
+Omkar M Parkhi, Andrea Vedaldi, Andrew Zisserman, and CV Jawahar.
+Cats and dogs.
+In Proc. CVPR, 2012.
+Radford et al. (2021)
+Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agarwal, Girish Sastry, Amanda Askell, Pamela Mishkin, Jack Clark, et al.
+Learning transferable visual models from natural language supervision.
+In Proc. ICML, 2021.
+Schlarmann et al. (2024)
+Christian Schlarmann, Naman Deep Singh, Francesco Croce, and Matthias Hein.
+Robust clip: Unsupervised adversarial fine-tuning of vision embeddings for robust large vision-language models.
+In Proc. ICML, 2024.
+Sheng et al. (2025)
+Lijun Sheng, Jian Liang, Zilei Wang, and Ran He.
+R-tpt: Improving adversarial robustness of vision-language models through test-time prompt tuning.
+In Proceedings of the Computer Vision and Pattern Recognition Conference, pp. 29958–29967, 2025.
+Shin et al. (2022)
+Gyungin Shin, Weidi Xie, and Samuel Albanie.
+Reco: Retrieve and co-segment for zero-shot transfer.
+In Proc. NeurIPS, 2022.
+Shu et al. (2022)
+Manli Shu, Weili Nie, De-An Huang, Zhiding Yu, Tom Goldstein, Anima Anandkumar, and Chaowei Xiao.
+Test-time prompt tuning for zero-shot generalization in vision-language models.
+In Proc. NeurIPS, 2022.
+Su et al. (2019)
+Jiawei Su, Danilo Vasconcellos Vargas, and Kouichi Sakurai.
+One pixel attack for fooling deep neural networks.
+IEEE Transactions on Evolutionary Computation, 23(5):828–841, 2019.
+Sui et al. (2025)
+Elaine Sui, Xiaohan Wang, and Serena Yeung-Levy.
+Just shift it: Test-time prototype shifting for zero-shot generalization with vision-language models.
+In Proc. WACV, 2025.
+Tahir et al. (2021)
+Anas M Tahir, Muhammad EH Chowdhury, Amith Khandakar, Tawsifur Rahman, Yazan Qiblawey, Uzair Khurshid, Serkan Kiranyaz, Nabil Ibtehaz, M Sohel Rahman, Somaya Al-Maadeed, et al.
+Covid-19 infection localization and severity grading from chest x-ray images.
+Computers in biology and medicine, 139:105002, 2021.
+Wang et al. (2025)
+Peiran Wang, Linjie Tong, Jiaxiang Liu, and Zuozhu Liu.
+Fair-moe: Fairness-oriented mixture of experts in vision-language models.
+arXiv preprint arXiv:2502.06094, 2025.
+Wang et al. (2024)
+Sibo Wang, Jie Zhang, Zheng Yuan, and Shiguang Shan.
+Pre-trained model guided fine-tuning for zero-shot adversarial robustness.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pp. 24502–24511, 2024.
+Wu et al. (2021)
+Boxi Wu, Heng Pan, Li Shen, Jindong Gu, Shuai Zhao, Zhifeng Li, Deng Cai, Xiaofei He, and Wei Liu.
+Attacking adversarial attacks as a defense.
+arXiv preprint arXiv:2106.04938, 2021.
+Xiao et al. (2010)
+Jianxiong Xiao, James Hays, Krista A Ehinger, Aude Oliva, and Antonio Torralba.
+Sun database: Large-scale scene recognition from abbey to zoo.
+In 2010 IEEE computer society conference on computer vision and pattern recognition, pp. 3485–3492. IEEE, 2010.
+Xing et al. (2025)
+Songlong Xing, Zhengyu Zhao, and Nicu Sebe.
+Clip is strong enough to fight back: Test-time counterattacks towards zero-shot adversarial robustness of clip.
+In Proceedings of the Computer Vision and Pattern Recognition Conference, pp. 15172–15182, 2025.
+Yu et al. (2024)
+Lu Yu, Haiyang Zhang, and Changsheng Xu.
+Text-guided attention is all you need for zero-shot robustness in vision-language models.
+Advances in Neural Information Processing Systems, 37:96424–96448, 2024.
+Yu et al. (2023)
+Yongcan Yu, Lijun Sheng, Ran He, and Jian Liang.
+Benchmarking test-time adaptation against distribution shifts in image classification.
+arXiv preprint arXiv:2307.03133, 2023.
+Zanella & Ben Ayed (2024)
+Maxime Zanella and Ismail Ben Ayed.
+On the test-time zero-shot generalization of vision-language models: Do we really need prompt learning?
+In Proc. CVPR, 2024.
+Zhang et al. (2023)
+Hao Zhang, Feng Li, Xueyan Zou, Shilong Liu, Chunyuan Li, Jianwei Yang, and Lei Zhang.
+A simple framework for open-vocabulary segmentation and detection.
+In Proc. ICCV, 2023.
+Zhang et al. (2025)
+Sheng Zhang, Yanbo Xu, Naoto Usuyama, Hanwen Xu, Jaspreet Bagga, Robert Tinn, Sam Preston, Rajesh Rao, Mu Wei, Naveen Valluri, et al.
+A multimodal biomedical foundation model trained from fifteen million image–text pairs.
+NEJM AI, 2(1):AIoa2400640, 2025.
+Zhao et al. (2022)
+Shiyu Zhao, Zhixing Zhang, Samuel Schulter, Long Zhao, BG Vijay Kumar, Anastasis Stathopoulos, Manmohan Chandraker, and Dimitris N Metaxas.
+Exploiting unlabeled data with vision and language models for object detection.
+In Proc. ECCV, 2022.
+Zhou et al. (2022a)
+Chong Zhou, Chen Change Loy, and Bo Dai.
+Extract free dense labels from clip.
+In Proc. ECCV, 2022a.
+Zhou et al. (2022b)
+Kaiyang Zhou, Jingkang Yang, Chen Change Loy, and Ziwei Liu.
+Conditional prompt learning for vision-language models.
+In Proc. CVPR, 2022b.
+Zhou et al. (2022c)
+Kaiyang Zhou, Jingkang Yang, Chen Change Loy, and Ziwei Liu.
+Learning to prompt for vision-language models.
+International Journal of Computer Vision, 130(9):2337–2348, 2022c.
+Appendix A Appendix
+Figure 7:
+(a) Distribution of maximum soft label probabilities for clean, adversarial, and adversarial+SCC samples on CIFAR-10. SCC shifts the distribution toward clean probability. (b) Confusion matrix for adversarial samples, showing increased misclassification. (c) Confusion matrix for adversarial samples with SCC, demonstrating improved classification accuracy and reduced confusion
+A.1 Implementation Detail
+For the counterattack analysis (Figure 2), we compare three settings. In the multi-view case, two augmented views (horizontal flip) are used to construct predictions. The single-view case reduces this to one view, removing variance reduction. For the semantic perturbation case, we randomly insert additional words into the text prompts, which distorts cross-modal alignment. Results in Figure 2 show that reducing to a single view significantly decreases robustness, and adding random semantic perturbations further degrades performance.
+We perform a short TTC warm-up on each adversarial input xadvx^{\text{adv}} using PGD-like steps (ϵ=4/255\epsilon=4/255, α=1/255\alpha=1/255), optimizing only the feature-deviation term to avoid label bias. Instead of early stopping, perturbations from all steps are fused by a τ\tau-threshold weighting scheme,
+yielding a stabilized initialization xwx^{w}. On xwx^{w}, NN lightweight augmented views Sheng et al. (2025) (flip + Gaussian noise with σ=6/255\sigma=6/255) are generated, their logits averaged before softmax, and the sharpened distribution (T=0.5T=0.5) used to construct the soft prototype tsoftt_{\text{soft}}, which serves as the semantic anchor in subsequent optimization.
+A.2 Performance of SCC guided by clean image predictions
+Table 6 reports results when SCC is guided by predictions on clean images. Under this setting, SCC achieves an average robust accuracy of 53.62% with clean accuracy of 61.78%, showing a +50.92% improvement over vanilla CLIP. However, this requires access to clean-image predictions at inference, which is impractical in real-world deployment. By contrast, our pseudo-labeling strategy achieves 51.68% robust accuracy, closely approaching the clean-prediction upper bound while remaining label-free and deployable.
+A.3 Robustness under CW attacks
+Following prior CLIP robustness studies, we evaluate under a 10-step CW attack (Carlini & Wagner, 2017) with budget ϵa=1/255\epsilon_{a}=1/255 across 16 datasets (white-box access to weights/gradients). As shown in Table 7, SCC attains the highest average robust accuracy, 49.42%, improving over vanilla CLIP by +45.88% and over the strongest test-time baseline (TTC) by large margins, while keeping clean accuracy essentially unchanged (60.21%, -1.30%). RN and TTE preserve clean accuracy (they do not counter-perturb inputs) but offer limited or unstable robustness. Anti-Adversarial and HD, which optimize targeted perturbations, yield low robust accuracy and further reduce clean performance. Adversarially fine-tuned models increase robustness on some datasets but at a substantial clean-accuracy cost. Overall, SCC consistently delivers the best robustness–accuracy trade-off under CW, indicating that inference-time self-calibrated consistency generalizes beyond PGD to stronger optimization-based attacks.
+A.4 Analysis of Robustness (under ϵa=4/255\epsilon_{a}=4/255)
+Table 8 summarizes robustness under a stronger 10-step PGD attack with budget ϵa=4/255\epsilon_{a}=4/255 across 16 datasets. We observe that Anti-Adversarial and HD almost collapse under this setting, offering negligible robustness. RN maintain high clean accuracy, as they do not introduce counter-perturbations, but RN provides no robustness and TTE exhibits highly unstable gains, as reflected by large standard deviations across runs. By contrast, SCC consistently improves robustness across all datasets, achieving an average robust accuracy of 27.88%, a gain of +27.79% over vanilla CLIP, while keeping clean accuracy largely intact (60.42%, −1.09-1.09%).
+To further strengthen counterattacks under this high-budget regime, we increase the iteration number to N=5N=5 for TTC. Although this slightly reduces clean accuracy by 5.52 points compared to CLIP, the substantial robustness gains justify the trade-off. Overall, these results confirm that SCC maintains stable and significant robustness improvements even under stronger adversarial budgets.
+A.5 Effects of Other Hyperparameters
+We further analyze the impact of additional hyperparameters on SCC. As shown in Figure 8, increasing the warm-up steps ww used for generating pseudo-labels leads to stable clean accuracy but only marginal gains in robustness, which peaks around w=5w=5 before declining. This indicates that a small number of warm-up iterations is sufficient to stabilize pseudo-label quality without introducing excessive counter-perturbations. Therefore, we set w=5w=5.
+On the other hand, the noise scale σ\sigma for multi-view augmentation plays a more critical role. Larger σ\sigma significantly boosts robustness by enhancing view diversity, while clean accuracy decreases gradually as perturbations grow stronger. Overall, SCC exhibits stable behavior across a wide range of hyperparameters, with robustness consistently improving under larger σ\sigma and modest warm-up steps providing the best trade-off.
+Table 6: Comparison of robust accuracy (Rob.) and clean accuracy (Acc.) across datasets. (ϵa=1/255\epsilon_{a}=1/255)
+Dataset
+Metric
+CLIP
+Adversarial Finetuning
+Test-time Defence
+Δ\Delta
+CLIP-FT
+TeCoA
+PMG-AFT
+FARE
+RN
+Anti-adv
+HD
+TTC
+SCC(ours)
+SCC∗(ours)
+CIFAR10
+Rob.
+0.74
+3.34
+33.61
+40.66
+19.65
+2.01
+12.39
+17.22
+28.75
+59.18
+48.63
++47.89
+Acc.
+85.12
+84.90
+64.61
+70.69
+74.44
+81.18
+83.52
+78.23
+81.18
+82.24
+81.29
+-3.83
+CIFAR100
+Rob.
+0.26
+0.90
+18.95
+22.52
+11.40
+0.67
+5.73
+3.86
+14.31
+32.09
+29.38
++29.12
+Acc.
+57.14
+59.51
+35.96
+40.32
+46.67
+56.34
+53.95
+52.86
+56.34
+55.21
+56.73
+-0.41
+STL10
+Rob.
+11.00
+12.73
+70.08
+73.08
+59.06
+16.23
+37.42
+39.02
+76.70
+90.50
+90.12
++79.12
+Acc.
+96.40
+94.49
+87.40
+88.56
+91.72
+95.85
+95.45
+89.50
+95.85
+95.62
+95.85
+-0.55
+ImageNet
+Rob.
+1.15
+0.93
+18.89
+21.43
+14.00
+1.77
+8.67
+6.63
+38.41
+49.77
+56.14
++54.99
+Acc.
+59.69
+54.24
+34.89
+36.12
+48.79
+59.34
+54.27
+54.54
+49.39
+56.03
+59.66
+-0.03
+Caltech101
+Rob.
+14.67
+14.21
+55.51
+61.08
+50.74
+18.90
+34.81
+31.53
+65.78
+77.25
+82.04
++67.37
+Acc.
+85.66
+83.63
+71.68
+75.45
+80.95
+86.61
+84.02
+82.33
+86.53
+86.44
+86.56
++0.90
+Caltech256
+Rob.
+8.47
+6.76
+43.19
+45.91
+38.79
+11.33
+25.36
+23.48
+60.11
+72.88
+76.85
++68.38
+Acc.
+81.72
+78.53
+61.14
+62.24
+73.32
+81.25
+79.38
+79.12
+79.66
+81.16
+81.64
+-0.08
+OxfordPets
+Rob.
+1.04
+2.10
+38.35
+41.18
+31.07
+1.86
+20.42
+12.04
+57.87
+76.67
+85.69
++84.65
+Acc.
+87.44
+84.14
+62.12
+65.88
+79.37
+87.41
+80.62
+80.91
+83.35
+86.48
+87.79
++0.35
+Flowers102
+Rob.
+1.14
+0.54
+21.94
+23.43
+17.14
+1.52
+7.16
+7.29
+39.14
+54.59
+63.38
++62.24
+Acc.
+65.46
+53.37
+36.80
+37.00
+47.98
+64.62
+62.66
+58.22
+64.16
+64.16
+64.43
+-1.03
+FGVC-Aircraft
+Rob.
+0.00
+0.00
+2.49
+2.22
+1.35
+0.00
+1.27
+1.26
+13.77
+17.40
+16.98
++16.98
+Acc.
+20.10
+14.04
+5.31
+5.55
+10.86
+19.25
+15.88
+16.36
+18.00
+17.61
+18.63
+-1.47
+StanfordCars
+Rob.
+0.02
+0.06
+8.76
+11.65
+6.75
+0.16
+4.40
+2.71
+33.01
+43.24
+50.95
++50.93
+Acc.
+52.02
+42.11
+20.91
+25.44
+38.68
+52.14
+36.21
+44.28
+48.16
+51.19
+52.64
++0.62
+SUN397
+Rob.
+1.14
+0.94
+19.39
+22.58
+14.91
+1.72
+8.05
+6.40
+41.52
+53.27
+56.00
++54.86
+Acc.
+58.50
+55.73
+36.69
+37.98
+52.42
+59.69
+56.00
+53.17
+55.13
+58.25
+59.98
++1.48
+Country211
+Rob.
+0.04
+0.03
+1.78
+2.12
+0.85
+0.06
+0.67
+0.47
+7.09
+9.41
+12.55
++12.51
+Acc.
+15.25
+12.07
+4.75
+4.64
+9.26
+14.80
+11.58
+11.72
+13.08
+13.36
+14.69
+-0.56
+Food101
+Rob.
+0.70
+0.42
+13.90
+18.57
+11.65
+1.20
+13.12
+8.03
+57.84
+65.39
+81.57
++80.87
+Acc.
+83.88
+64.86
+29.98
+36.61
+55.31
+83.44
+75.81
+80.30
+82.18
+82.13
+83.71
+-0.17
+EuroSAT
+Rob.
+0.03
+0.04
+11.96
+12.60
+10.67
+0.15
+2.15
+4.57
+12.19
+20.64
+24.00
++23.97
+Acc.
+42.59
+27.64
+16.58
+18.53
+21.88
+53.24
+36.78
+39.08
+53.24
+41.69
+52.60
++10.01
+DTD
+Rob.
+2.98
+2.39
+17.61
+14.95
+15.64
+3.71
+5.62
+11.63
+27.32
+34.57
+36.06
++33.08
+Acc.
+40.64
+36.49
+25.16
+21.76
+32.07
+37.96
+38.92
+34.89
+36.98
+37.34
+38.09
+-2.55
+PCAM
+Rob.
+0.08
+1.11
+48.24
+46.18
+16.23
+0.41
+4.97
+44.74
+52.85
+69.99
+47.54
++47.46
+Acc.
+52.02
+47.21
+49.96
+50.03
+52.54
+52.73
+52.49
+50.38
+52.73
+54.41
+54.24
++2.22
+Avg.
+Rob.
+2.70
+2.91
+26.54
+28.76
+20.00
+3.86
+12.01
+13.81
+39.17
+51.68
+53.62
++50.92
+Acc.
+61.51
+55.80
+40.25
+42.30
+51.02
+61.61
+57.35
+56.62
+59.75
+60.21
+61.78
++0.27
+Table 7: Classification accuracy (%) on adversarial images (Rob.) under 10-step CW attack (ϵa=1/255\epsilon_{a}=1/255) (Carlini & Wagner, 2017) and on clean images (Acc.) across 16 datasets. We assume the threat model has full access to model weights and gradients. We compare with test-time defenses adapted from prior work and include fine-tuning methods as references. The last column reports gains over vanilla CLIP.
+Dataset
+Metric
+CLIP
+Adversarial Finetuning
+Test-time Defence
+Δ\Delta
+CLIP-FT
+TeCoA
+PMG-AFT
+FARE
+RN
+TTE
+Anti-adv
+HD
+TTC
+SCC(ours)
+CIFAR10
+Rob.
+0.87
+0.94
+33.27
+39.50
+20.60
+2.05
+40.01
+12.53
+14.79
+29.04
+58.42
++57.55
+Acc.
+85.12
+84.90
+64.61
+70.69
+74.44
+81.18
+84.74
+83.52
+78.64
+81.18
+82.24
+-2.88
+CIFAR100
+Rob.
+0.29
+0.39
+18.27
+20.83
+11.67
+0.63
+18.73
+6.56
+3.04
+14.38
+30.89
++30.60
+Acc.
+57.14
+59.51
+35.96
+40.32
+46.67
+56.34
+58.61
+53.95
+53.50
+56.34
+55.21
+-1.93
+STL10
+Rob.
+12.23
+9.95
+69.73
+72.39
+59.60
+17.20
+78.64
+38.66
+37.73
+76.40
+89.99
++77.76
+Acc.
+96.40
+94.49
+87.40
+88.56
+91.72
+95.85
+96.26
+95.45
+89.54
+95.85
+95.62
+-0.78
+ImageNet
+Rob.
+1.46
+1.27
+18.28
+19.42
+27.71
+2.21
+29.77
+9.37
+7.46
+36.01
+45.75
++44.29
+Acc.
+59.69
+54.24
+34.89
+36.12
+48.79
+59.34
+60.02
+54.27
+55.06
+49.39
+56.03
+-3.66
+Caltech101
+Rob.
+20.88
+15.95
+56.23
+61.58
+54.86
+25.89
+69.44
+41.47
+36.26
+66.17
+76.59
++55.71
+Acc.
+85.66
+83.63
+71.68
+75.45
+80.95
+86.61
+85.84
+84.02
+83.00
+86.53
+86.44
++0.78
+Caltech256
+Rob.
+9.69
+7.24
+42.63
+44.55
+39.58
+13.11
+59.81
+27.17
+24.54
+58.79
+70.55
++60.86
+Acc.
+81.72
+78.53
+61.14
+62.24
+73.32
+81.25
+82.48
+79.38
+79.38
+79.66
+81.16
+-0.56
+OxfordPets
+Rob.
+1.64
+1.14
+37.91
+39.28
+33.85
+3.11
+51.12
+22.99
+13.84
+57.15
+75.06
++73.42
+Acc.
+87.44
+84.14
+62.12
+65.88
+79.37
+87.41
+88.13
+80.62
+80.64
+83.35
+86.48
+-0.96
+Flowers102
+Rob.
+1.35
+0.80
+21.13
+21.34
+17.25
+2.13
+34.97
+8.06
+8.51
+36.84
+49.76
++48.41
+Acc.
+65.46
+53.37
+36.80
+37.00
+47.98
+64.62
+65.20
+62.66
+57.79
+64.16
+64.16
+-1.30
+FGVCAircraft
+Rob.
+0.00
+0.00
+2.25
+1.86
+1.35
+0.00
+5.15
+0.83
+0.97
+12.41
+15.18
++15.18
+Acc.
+20.10
+14.04
+5.31
+5.55
+10.86
+19.25
+20.18
+15.88
+16.18
+18.00
+17.61
+-2.49
+StanfordCars
+Rob.
+2.38
+2.04
+8.74
+10.53
+9.14
+2.44
+21.19
+4.76
+5.11
+30.38
+37.96
++35.58
+Acc.
+52.02
+42.11
+20.91
+25.44
+38.68
+52.14
+52.73
+36.21
+43.60
+48.16
+51.19
+-0.83
+SUN397
+Rob.
+1.75
+1.48
+18.36
+20.39
+15.73
+2.48
+29.37
+8.85
+7.90
+39.44
+48.99
++47.24
+Acc.
+58.50
+55.73
+36.69
+37.98
+52.42
+59.69
+59.12
+56.00
+54.07
+55.13
+58.25
+-0.25
+Country211
+Rob.
+0.08
+0.05
+1.46
+1.74
+0.92
+0.15
+3.00
+0.72
+0.75
+6.17
+7.61
++7.53
+Acc.
+15.25
+12.07
+4.75
+4.64
+9.26
+14.80
+14.66
+11.58
+11.98
+13.08
+13.36
+-1.89
+Food101
+Rob.
+1.09
+0.55
+12.87
+16.57
+12.93
+1.92
+44.61
+15.03
+9.77
+54.65
+59.73
++58.64
+Acc.
+83.88
+64.86
+29.98
+36.61
+55.31
+83.44
+83.96
+75.81
+81.02
+82.18
+82.13
+-1.75
+EuroSAT
+Rob.
+0.03
+0.03
+11.66
+11.94
+10.66
+0.16
+6.44
+2.57
+3.47
+12.69
+20.52
++20.49
+Acc.
+42.59
+27.64
+16.58
+18.53
+21.88
+53.24
+44.38
+36.78
+40.12
+53.24
+41.69
+-0.90
+DTD
+Rob.
+2.87
+2.77
+16.28
+13.72
+14.36
+3.46
+22.62
+6.06
+10.11
+27.39
+33.35
++30.48
+Acc.
+40.64
+36.49
+25.16
+21.76
+32.07
+37.96
+41.35
+38.92
+35.25
+36.98
+37.34
+-3.30
+PCAM
+Rob.
+0.10
+1.10
+48.29
+46.36
+16.41
+0.44
+10.70
+5.07
+46.92
+52.86
+70.36
++70.26
+Acc.
+52.02
+47.21
+49.96
+50.03
+52.54
+52.73
+50.92
+52.49
+50.35
+52.73
+54.41
++2.39
+Avg.
+Rob.
+3.54
+2.86
+26.09
+27.62
+20.86
+4.84
+32.85
+13.17
+14.45
+38.17
+49.42
++45.88
+Acc.
+61.51
+55.80
+40.25
+42.30
+51.02
+61.61
+61.79
+57.35
+56.88
+59.75
+60.21
+-1.30
+Table 8:
+Classification accuracy (%) on clean images (Acc.) and adversarial images (Rob.) under 10-step PGD attack (ϵa=4/255\epsilon_{a}=4/255) across 16 datasets. The threat model assumes full access to model weights and gradients. We compare our paradigm against test-time defenses adapted from prior adversarial robustness studies, and include fine-tuned models as references. The last column shows the gains of SCC over the original CLIP.
+Dataset
+Metric
+CLIP
+Adversarial Finetuning
+Test-time Defence
+Δ\Delta
+CLIP-FT
+TeCoA1
+TeCoA4
+PMG-AFT1
+RN
+Anti-adv
+HD
+TTC
+SCC(ours)
+CIFAR10
+Rob.
+0.43
+2.75
+7.69
+11.70
+10.20
+0.00
+0.32
+1.67
+28.51
+36.30
++35.87
+Acc.
+85.12
+84.90
+64.61
+65.15
+70.69
+81.18
+83.44
+78.23
+81.18
+82.24
+-2.88
+CIFAR100
+Rob.
+0.05
+0.67
+6.54
+9.25
+7.60
+0.00
+0.22
+0.00
+9.06
+14.46
++14.41
+Acc.
+57.14
+59.51
+35.96
+36.30
+40.32
+56.34
+53.96
+52.86
+56.34
+55.21
+-1.93
+STL10
+Rob.
+0.16
+3.75
+24.80
+31.83
+28.49
+0.06
+2.25
+3.39
+52.40
+67.66
++67.50
+Acc.
+96.40
+94.49
+87.40
+81.69
+88.56
+95.85
+95.47
+89.50
+95.83
+95.62
+-0.78
+ImageNet
+Rob.
+0.00
+0.07
+1.65
+3.00
+2.07
+0.00
+0.15
+0.01
+12.68
+20.57
++20.57
+Acc.
+59.69
+54.24
+34.89
+27.76
+36.12
+59.34
+54.29
+54.54
+34.00
+57.34
+-2.35
+Caltech101
+Rob.
+0.59
+4.81
+15.75
+21.00
+19.48
+0.68
+3.14
+1.27
+36.66
+54.44
++53.85
+Acc.
+85.66
+83.63
+71.68
+64.41
+75.45
+86.61
+83.99
+82.33
+86.15
+86.46
++0.80
+Caltech256
+Rob.
+0.12
+1.41
+8.29
+11.76
+10.65
+0.16
+1.44
+0.34
+27.25
+44.06
++43.94
+Acc.
+81.72
+78.53
+61.14
+52.05
+62.24
+81.25
+79.40
+79.12
+76.59
+81.32
+-0.40
+OxfordPets
+Rob.
+0.00
+1.66
+0.90
+3.71
+1.74
+0.00
+0.10
+0.00
+24.64
+37.69
++37.69
+Acc.
+87.44
+84.14
+62.12
+53.94
+65.88
+87.41
+80.53
+80.91
+64.70
+86.62
+-0.82
+Flowers102
+Rob.
+0.00
+0.13
+1.87
+3.81
+2.57
+0.00
+0.05
+0.00
+13.60
+21.97
++21.97
+Acc.
+65.46
+53.37
+36.80
+27.78
+37.00
+64.62
+62.80
+58.22
+63.24
+64.19
+-1.27
+FGVCAircraft
+Rob.
+0.00
+0.00
+0.03
+0.12
+0.03
+0.00
+0.00
+0.00
+6.40
+7.20
++7.20
+Acc.
+20.10
+14.04
+5.31
+3.51
+5.55
+19.25
+15.64
+16.36
+15.99
+17.79
+-2.31
+StanfordCars
+Rob.
+0.00
+0.00
+0.15
+0.41
+0.15
+0.00
+0.00
+0.00
+12.84
+19.40
++19.40
+Acc.
+52.02
+42.11
+20.91
+15.18
+25.44
+52.14
+36.14
+44.28
+41.52
+51.61
+-0.41
+SUN397
+Rob.
+0.00
+0.02
+1.30
+2.31
+1.90
+0.00
+0.11
+0.00
+13.43
+21.77
++21.77
+Acc.
+58.50
+55.73
+36.69
+28.16
+37.98
+59.69
+55.99
+53.17
+46.68
+58.68
++0.18
+Country211
+Rob.
+0.00
+0.00
+0.05
+0.19
+0.12
+0.00
+0.00
+0.00
+2.44
+2.85
++2.85
+Acc.
+15.25
+12.07
+4.75
+3.66
+4.64
+14.80
+11.60
+11.72
+11.99
+13.55
+-1.70
+Food101
+Rob.
+0.00
+0.04
+0.56
+1.35
+1.03
+0.00
+0.07
+0.01
+17.89
+26.58
++26.58
+Acc.
+83.88
+64.86
+29.98
+21.90
+36.61
+83.44
+75.95
+80.30
+80.00
+82.36
+-1.52
+EuroSAT
+Rob.
+0.00
+0.00
+9.77
+10.71
+9.61
+0.00
+0.03
+0.20
+13.57
+10.61
++10.61
+Acc.
+42.59
+27.64
+16.58
+17.53
+18.53
+53.24
+36.81
+39.08
+53.24
+41.69
+-0.90
+DTD
+Rob.
+0.11
+0.00
+4.20
+5.16
+4.31
+0.11
+0.37
+0.16
+11.40
+16.33
++16.22
+Acc.
+40.64
+36.49
+25.16
+20.11
+21.76
+37.96
+38.55
+34.89
+35.69
+37.66
+-2.98
+PCAM
+Rob.
+0.00
+0.00
+20.54
+44.13
+12.59
+0.00
+0.25
+12.04
+47.39
+44.19
++44.19
+Acc.
+52.02
+47.21
+49.96
+49.98
+50.03
+52.73
+52.61
+50.38
+52.73
+54.41
++2.39
+Avg.
+Rob.
+0.09
+0.96
+6.51
+10.03
+7.03
+0.06
+0.53
+1.19
+20.63
+27.88
++27.79
+Acc.
+61.51
+55.80
+40.25
+35.57
+42.30
+61.61
+57.32
+56.62
+55.99
+60.42
+-1.09
+Figure 8:
+Effect of the warm-up step number ww in short TTC: a moderate number yields the best robustness, while clean accuracy is unaffected. Effect of the Gaussian noise scale σ\sigma (Sigma). Robustness improves with more views and larger σ\sigma, while clean accuracy drops.
+A.6 Proof Sketch of Proposition (Hard-Negative Repulsion)
+Let
+m⁡(δ)=cos⁡(fimg​(x+δ),tsoft)−maxk≠y^⁡cos⁡(fimg​(x+δ),tk)m(\delta)\;=\;\cos\!\big(f_{\text{img}}(x+\delta),t_{\text{soft}}\big)-\max_{k\neq\hat{y}}\cos\!\big(f_{\text{img}}(x+\delta),t_{k}\big)
+and define ℒc​m​(δ)=m​(δ)\mathcal{L}_{cm}(\delta)=m(\delta).
+We analyze one PGD-ascent step
+δ+=Π∥⋅∥p≤ϵ(δ+αsign(∇δℒc​m(δ))),α>0.\delta^{+}\;=\;\Pi_{\|\cdot\|_{p}\leq\epsilon}\!\Big(\delta\;+\;\alpha\,\mathrm{sign}\!\big(\nabla_{\delta}\mathcal{L}_{cm}(\delta)\big)\Big),\qquad\alpha>0.
+Assumptions. (i) In a small neighborhood of δ\delta, the maximizer in the second term is unique and fixed, i.e., there is an active index j⋆​(δ)j^{\star}(\delta) so the max is smooth; (ii) fimgf_{\text{img}} is differentiable and its Jacobian is bounded; (iii) either the projection is inactive (interior step) or its effect is O⁡(α2)O(\alpha^{2}).
+Step 1 (First–order increase).
+With the active competitor fixed, mm is differentiable. By Taylor’s theorem,
+m⁡(δ+)=m⁡(δ)+α⁡⟨∇δm​(δ),sign⁡(∇δm​(δ))⟩+O⁡(α2).m(\delta^{+})\;=\;m(\delta)\;+\;\alpha\,\big\langle\nabla_{\delta}m(\delta),\,\mathrm{sign}\!\big(\nabla_{\delta}m(\delta)\big)\big\rangle\;+\;O(\alpha^{2}).
+Since ⟨g,sign⁡(g)⟩=‖g‖1≥0\langle g,\mathrm{sign}(g)\rangle=\|g\|_{1}\geq 0, it follows that
+m⁡(δ+)≥m⁡(δ)+α​‖∇δm​(δ)‖1+O⁡(α2).m(\delta^{+})\;\geq\;m(\delta)\;+\;\alpha\,\big\|\nabla_{\delta}m(\delta)\big\|_{1}\;+\;O(\alpha^{2}).
+Step 2 (Relation to ℒc​m\mathcal{L}_{cm}).
+By definition ℒc​m=m\mathcal{L}_{cm}=m, hence the PGD-ascent direction aligns with ∇δm\nabla_{\delta}m. Therefore, for sufficiently small α\alpha,
+m⁡(δ+)≥m⁡(δ)+O⁡(α2),m(\delta^{+})\;\geq\;m(\delta)\;+\;O(\alpha^{2}),
+i.e., the semantic margin is monotonically non-decreasing up to second-order terms.
+Step 3 (Active-index changes & projection).
+If the active negative j⋆​(δ)j^{\star}(\delta) switches, mm remains subdifferentiable; PGD uses a subgradient and the above inequality holds with ∇δm\nabla_{\delta}m replaced by a subgradient. When projection onto the ℓp\ell_{p}-ball is active, the component removed is orthogonal to the feasible set’s tangent cone, contributing at most O⁡(α2)O(\alpha^{2}).
+Conclusion.
+Under these mild regularity assumptions, one PGD-ascent step on ℒc​m\mathcal{L}_{cm} increases the margin m⁡(x+δ)m(x+\delta) monotonically up to O⁡(α2)O(\alpha^{2}). Iteration therefore repels the hard negative and prevents drift toward confusable classes, which proves the proposition.
+A.7 Proof Sketch of Proposition ( Suppression of spurious negatives)
+Let z¯j≜1L​∑i=1Lzj(i)\bar{z}_{j}\triangleq\tfrac{1}{L}\sum_{i=1}^{L}z^{(i)}_{j} and let
+j†∈arg⁡maxj≠y⋆⁡z¯jj^{\dagger}\in\arg\max_{j\neq y^{\star}}\bar{z}_{j}
+be an index achieving the maximum of the averaged logits (excluding y⋆y^{\star}).
+Then
+maxj≠y⋆⁡z¯j=z¯j†=1L​∑i=1Lzj†(i)≤1L​∑i=1Lmaxj≠y⋆⁡zj(i),\max_{j\neq y^{\star}}\bar{z}_{j}=\bar{z}_{j^{\dagger}}=\frac{1}{L}\sum_{i=1}^{L}z^{(i)}_{j^{\dagger}}\;\leq\;\frac{1}{L}\sum_{i=1}^{L}\max_{j\neq y^{\star}}z^{(i)}_{j},
+since for each ii, zj†(i)≤maxj≠y⋆⁡zj(i)z^{(i)}_{j^{\dagger}}\leq\max_{j\neq y^{\star}}z^{(i)}_{j}.
+This proves
+maxj≠y⋆⁡z¯j≤1L​∑i=1Lmaxj≠y⋆⁡zj(i).\max_{j\neq y^{\star}}\bar{z}_{j}\leq\tfrac{1}{L}\sum_{i=1}^{L}\max_{j\neq y^{\star}}z^{(i)}_{j}.
+Algorithm 1 SCC: Self-Calibrated Consistency
+Input: image xx, text embeddings {tk}\{t_{k}\}, budget ϵ\epsilon, steps SS, views VV, temp TT
+Output: predicted label y^\hat{y}
+/* Short warm-up (TTC) to stabilize predictions */
+Initialize δwarm=0\delta_{\text{warm}}=0; run SwarmS_{\text{warm}} PGD-ascent steps on TTC to obtain x+δwarmx+\delta_{\text{warm}}.
+/* Multi-view pseudo-label on the warmed input */
+Sample VV augmented views {vi​(x+δwarm)}\{v_{i}(x+\delta_{\text{warm}})\};
+z¯=1V​∑ifimg​(vi​(x+δwarm))⊤​[tk]\bar{z}=\tfrac{1}{V}\sum_{i}f_{\text{img}}(v_{i}(x+\delta_{\text{warm}}))^{\top}[t_{k}];
+p=softmax⁡(z¯/T)p=\mathrm{softmax}(\bar{z}/T), y^=arg⁡maxk⁡pk\hat{y}=\arg\max_{k}p_{k}, tsoft=∑kpk​tkt_{\text{soft}}=\sum_{k}p_{k}t_{k}.
+/* Counterattack optimization (sign-PGD ascent; shared δ\delta) */
+Initialize δ=0\delta=0;;
+for s=1s=1 to SS do
+f=fimg​(x+δ)f=f_{\text{img}}(x+\delta);
+Lcm=⟨f,tsoft⟩−maxj≠y^⁡⟨f,tj⟩L_{\text{cm}}=\langle f,t_{\text{soft}}\rangle-\max_{j\neq\hat{y}}\langle f,t_{j}\rangle;
+Ldrift=‖f−fimg​(x)‖22L_{\text{drift}}=\|f-f_{\text{img}}(x)\|_{2}^{2};
+δ←Π‖δ‖∞≤ϵ​(δ+α​sign​(∇δ(λc​m​Lcm+Ldrift)))\delta\leftarrow\Pi_{\|\delta\|_{\infty}\leq\epsilon}\!\big(\delta+\alpha\,\mathrm{sign}(\nabla_{\delta}(\lambda_{cm}L_{\text{cm}}+L_{\text{drift}}))\big).
+δ←StepWeightedFuse​({δ(s)}s=0S,τ,β)\delta\leftarrow\texttt{StepWeightedFuse}(\{\delta^{(s)}\}_{s=0}^{S};\,\tau,\beta).
+/* Final prediction (logit averaging on shared-δ\delta views) */
+Form views {vi​(x+δ)}\{v_{i}(x+\delta)\}; ;
+z¯=1V​∑ifimg​(vi​(x+δ))⊤​[tk]\bar{z}=\tfrac{1}{V}\sum_{i}f_{\text{img}}(v_{i}(x+\delta))^{\top}[t_{k}]; ;
+y^=arg⁡max​softmax​(z¯)\hat{y}=\arg\max\mathrm{softmax}(\bar{z}).
+A.8 The Use of Large Language Models
+Large language models were used to improve the clarity and presentation of writing.
+All methodological design, experiments, and analysis were conducted by the authors.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

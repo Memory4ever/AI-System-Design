@@ -1,0 +1,165 @@
+Simple Baselines are Competitive with Code Evolution
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Background
+3 Baselines for code evolution
+3.1 How should methods be fairly compared?
+4 Finding mathematical bounds
+4.1 A problem’s search space dictates its performance ceiling
+5 Evolving agentic scaffolds is highly stochastic
+6 Machine learning competitions
+7 Discussion
+References
+A Related work
+B AlphaEvolve problems
+C Finding bounds for math problems technical details
+D OpenEvolve results on math problems
+E Different circle packing prompts
+F Bootstrap estimate
+G Figure per-problem Breakdown
+H Math bounds per-program evaluation sample efficiency
+I Improved uncertainty inequality formulation
+J Agent evolution technical details
+K Probabilities of improvement and dominance
+L MLE bench technical details
+M Full MLE bench competition names
+N Tips for economically feasible code evolution development
+O Limitations
+License: CC BY 4.0
+arXiv:2602.16805v1 [cs.AI] 18 Feb 2026
+Simple Baselines are Competitive with Code Evolution
+Yonatan Gideoni
+Affiliation: University of Oxford
+Correspondence to: yg@robots.ox.ac.uk
+Sebastian Risi
+Affiliation: Sakana AI and ITU Copenhagen
+Yarin Gal
+Affiliation: University of Oxford
+Abstract
+Code evolution is a family of techniques that rely on large language models to search through possible computer programs by evolving or mutating existing code. Many proposed code evolution pipelines show impressive performance but are often not compared to simpler baselines. We test how well two simple baselines do over three domains: finding better mathematical bounds, designing agentic scaffolds, and machine learning competitions. We find that simple baselines match or exceed much more sophisticated methods in all three. By analyzing these results we find various shortcomings in how code evolution is both developed and used. For the mathematical bounds, a problem’s search space and domain knowledge in the prompt are chiefly what dictate a search’s performance ceiling and efficiency, with the code evolution pipeline being secondary. Thus, the primary challenge in finding improved bounds is designing good search spaces, which is done by domain experts, and not the search itself. When designing agentic scaffolds we find that high variance in the scaffolds coupled with small datasets leads to suboptimal scaffolds being selected, resulting in hand-designed majority vote scaffolds performing best. We propose better evaluation methods that reduce evaluation stochasticity while keeping the code evolution economically feasible. We finish with a discussion of avenues and best practices to enable more rigorous code evolution in future work.
+Keywords: code evolution, coding agents, baselines
+1 Introduction
+For many problems, a solution can take the form of a computer program, thereby allowing automated program search to solve a variety of tasks. This has been demonstrated across several domains: for scientific discovery, Novikov et al. (2025) find programs that improve on several mathematical bounds. Hu et al. (2024) use LLMs to design programs defining agentic scaffolds, using them to solve math and science problems. Chan et al. (2024) test how well an LLM-based automated coding pipeline can perform in machine learning competitions.
+Many program search systems search over code space by feeding programs into language models and asking them to evolve, crossover, and recombine them, thereby doing code evolution. However, these pipelines consist of many design choices, including using ensembles of language models for diversity and cost efficiency, automated parent program selection to maximize diversity, and various ways of receiving feedback (Novikov et al., 2025; Sharma, 2025; Lange et al., 2025). These design choices often are not ablated, nor are the code evolution systems compared to simple baselines, resulting in methods that are not methodically built up and are hence potentially suboptimal.
+To systematically test from the ground up what matters in code evolution, we propose two simple baselines and compare them to several systems over three different domains.11
+1
+Although the baselines are also a form of code evolution, we use the term “code evolution” to refer to more complicated methods unless specified otherwise. Each domain tests how methods perform under a different constraint, such as a limited API budget when finding mathematical bounds, number of function evaluations when designing agentic scaffolds, or wall-clock time in machine learning competitions. Figures 1(b) and 1(c) illustrate the baselines, with the simplest being a form of random search, sampling IID from a language model while prompting it to solve a given problem. The second baseline is designed to better handle sequential problems. This baseline extends the first by conditioning on some problems generated in a previous generation, and optionally after a set number of generations, restarts from scratch.
+(a) Each problem defines a function that should be maximized/minimized.
+(b) IID random sampling
+(c) Sequential conditioned sampling
+Figure 1: (a) For AlphaEvolve-style mathematical bounds each problem effectively defines a function that gets as input a list of numbers, possibly with some extra structure, and outputs a mathematical bound that should be maximized or minimized. (b,c) The two baselines, (b) randomly IID sampling a set of programs from an LLM and picking the best one and (c) generating a set of programs, evaluating them, and generating a new set conditioned on some of those that ran successfully. Number of generated programs is only for the setup when searching over mathematical bounds.
+In all settings and under the same budget constraints, at least one of the baselines matches or exceeds a purpose-built code evolution pipeline. To understand why, we look into what matters for these search processes, finding problems in either how code evolution is implemented or used. When finding mathematical bounds, we find that both the domain knowledge put into the prompts and the expert-designed search spaces are more important for improving the bounds than the code evolution pipeline itself. We find that reformulating a problem’s search space can improve bounds much more than code evolution does by itself, with different search pipelines finding similar bounds for a given search space. When evolving agentic scaffolds, we find that code evolution tends to select suboptimal scaffolds due to the datasets being relatively small and hence having a high variance. To keep API costs low, scaffolds are typically designed while evaluating ∼100\sim 100 examples (Hu et al., 2024), but this results in all generated scaffolds generalizing worse than a simple majority vote.
+Our contributions are as follows:
+•
+We introduce two simple baselines that perform well on a variety of domains, matching or exceeding purpose-built code evolution algorithms when given the same API budget, number of function evaluations, or wall-clock time.
+•
+We show that when using code evolution to find mathematical bounds formulating a problem differently, thereby changing its search space, determines a pipeline’s performance ceiling, while variable domain knowledge in the prompts can change its efficiency.
+•
+When using code evolution to automatically design agentic scaffolds, we find that selected scaffolds tend to be overfit due to using small validation sets. We introduce a set of best practices to robustly evaluate scaffolds while keeping the search economical.
+•
+We conclude with a discussion of best practices and open problems for future work. All code is released to facilitate baseline comparisons and the recommended practices.
+2 Background
+We briefly present code evolution here, with more related work discussed in Appendix A. Code evolution pipelines typically work by starting with some program and using an LLM to generate new versions thereof. Often previous programs are given in the LLM’s prompt, selected to maximize diversity or fitness. This is broadly how systems like AlphaEvolve (Novikov et al., 2025), ShinkaEvolve (Lange et al., 2025), OpenEvolve (Sharma, 2025), and ADAS (Hu et al., 2024) work. Some of these systems have many components, often requiring thousands of lines of code.
+One setting where code evolution is used is in finding bounds for the circle packing problem, where given nn circles one must maximize the sum of their radii while ensuring the circles do not overlap and all fit in a unit box. Given a list of numbers defining centers and radii it is straightforward to automatically check whether they define a valid packing, thereby giving a new bound. Figure 1(a) illustrates this process. Finding a better bound is thus reduced to finding a list of numbers with some properties. Code evolution designs functions that output such lists, either by searching for them and returning the best solution found or by constructing them directly.
+Previous works using code evolution for scientific discovery mention how changing a problem’s search space or using domain expertise can improve a search’s performance and efficiency but do not deeply discuss it. Novikov et al. (2025) discuss how occasionally injecting human priors into their code helped them find better matrix multiplication algorithms. Georgiev et al. (2025) present a large-scale case study using AlphaEvolve in conjunction with other tools to find better bounds over 67 problems, noting that a good formulation or telling a pipeline about a theorem can make the difference between it finding an improved bound or getting stuck.
+In some code evolution applications, simple pipelines similar to the baselines presented here are widely used. For ARC AGI many of the best performing methods are based on selecting the best program from a large set of generated candidates, perhaps then with some domain-specific tweaks, e.g. Greenblatt (2024). Because we focus on whether the additional complexity in some code evolution systems is beneficial, we do not compare to these simple pipelines.
+3 Baselines for code evolution
+Both baselines are illustrated in Figure 1 (b,c). The first baseline, IID random sampling (IID RS), consists of prompting a language model to produce code that solves some task. After running all programs, the best one is picked, either based on the bound it found for mathematical discovery or on some validation performance for agentic scaffolding and machine learning competitions.
+The second baseline is a modification of the first which is designed to better deal with problems requiring iterative improvements. For example, in the kissing problem, one of the problems tackled in Novikov et al. (2025), one must find the largest possible set of vectors fulfilling some property. Often LLMs construct the solution directly by specifying these vectors and, at least in their initial answer, do not try extending known constructions. Thus, on similar problems, iterative sequential methods would likely perform better.
+Sequential conditioned sampling (SCS) works by first generating a set of programs, akin to IID RS, and then generating another by conditioning on a random subset of those that successfully ran in the previous generation. Thus, both baselines have no explicit fitness-based selection. This is repeated for a few generations, and optionally then restarts from scratch. SCS’ sequentiality comes at the cost of having each program be more expensive to generate as it results in much longer prompts and being less parallel than IID RS. The loss of parallelism is significant in cases where the main bottleneck is wall-clock time and not API cost, function evaluations, or compute.
+3.1 How should methods be fairly compared?
+When comparing methods, different ones can arrive at similar solutions or reach the same apparent performance ceiling. We consider two results to be equal if they are the same as per numpy.isclose, with default relative and absolute tolerances, as different solutions can differ due to numerical precision or small numerical instabilities. This is important as for some tasks, like machine learning competitions or when finding mathematical bounds, seemingly small improvements can still be meaningful.
+For fairness, different methods should use a similar amount of domain knowledge in their prompts. Previous knowledge can be integrated by giving hints through the prompts, e.g. by describing properties of good or bad solutions. To keep comparisons fair, we use similar prompts across all methods unless mentioned otherwise, either those used in original works or new ones that are designed to have minimal domain knowledge beyond a problem’s specifications. Some methods require different prompts due to how their pipelines are designed, e.g. when using the IID RS baseline we remove references to iteratively improving a solution.
+4 Finding mathematical bounds
+To test how the baselines compare to code evolution, we test how well they can find mathematical bounds for nine problems from Novikov et al. (2025). These problems are subdivided into those belonging to analysis, combinatorics, or geometry. We sample three, two, and four problems from each category respectively, with the slight imbalance due to combinatorics having only two problems. Brief summaries of the problems and their bounds are in Table 3 in Appendix B, with longer explanations in Novikov et al. (2025).
+Table 1: Best bounds found using code evolution and baselines. Best results are bolded, second best are underlined. AlphaEvolve results are excluded from comparisons but included for reference as it uses an unknown but likely much higher budget. Sequential conditioned sampling (SCS) matches or exceeds ShinkaEvolve on most problems, with IID random sampling (IID RS) also exhibiting competitive performance, occasionally outperforming other methods. Arrows denote whether higher or lower is better. # problems ≥\geq MM means the number of problems for which a method matches or exceeds method MM. More significant digits are used when discovered bounds are close. Each result is achieved using a $20 budget.
+Baselines (ours)
+Problem
+AlphaEvolve
+ShinkaEvolve
+IID RS
+SCS
+First autocorr. ineq. (↓\downarrow)
+1.505
+1.522
+1.535
+1.519
+Second autocorr. ineq. (↑\uparrow)
+0.8962
+0.8955
+0.8739
+0.8795
+Uncertainty ineq. (↓\downarrow)
+0.3521
+0.3521
+0.3521
+0.3521
+Erdős’ min. overlap (↓\downarrow)
+0.3809
+0.3810
+0.3811
+0.3812
+Sums/differences of sets (↑\uparrow)
+1.1584
+1.1095
+1.1237
+1.1178
+Max–min dist. ratio (↓\downarrow)
+12.88926
+12.88923
+12.88923
+12.88923
+Heilbronn triangles (↑\uparrow)
+0.0365
+0.0356
+0.0334
+0.0365
+Kissing number in 11D (↑\uparrow)
+593
+402
+438
+438
+Circle packing (↑\uparrow)
+2.63586
+2.63598
+2.632
+2.63590
+# problems ≥\geq ShinkaEvolve
+7/9
+4/9
+6/9
+# problems ≥\geq AlphaEvolve
+4/9
+2/9
+4/9
+Average rank
+1.89
+2.28
+1.83
+As AlphaEvolve is closed-source, we compare to a similar open-source sample-efficient pipeline, ShinkaEvolve (Lange et al., 2025).22
+2
+We do not compare to OpenEvolve due to difficulties getting it to run under the same conditions. A partial comparison is in Appendix D. For a fair comparison, the baselines and ShinkaEvolve use the same minimal-domain-knowledge prompts. ShinkaEvolve is restricted to Gemini-2.5 Pro, Flash, and Flash Lite, akin to AlphaEvolve, while both baselines use Gemini-2.5 Pro, so differences in performance are not due to different model families. Additional technical details are in Appendix C.
+Results are reported for all methods using a 20$ budget. Under these conditions ShinkaEvolve runs for 500-800 generations, or ∼\sim50 generations per dollar. For reference, the circle packing run in Lange et al. (2025) costs about $12 and ran for 150 generations (12.5 generations per dollar). The baselines were run beyond this budget to allow estimating uncertainties. Comparisons are then done by taking the first chronologically generated results within the $20 budget or sampling equal-budget subsets when calculating uncertainties, see Appendix F for details. Only a single ShinkaEvolve run is used per problem as these experiments are very expensive – running ShinkaEvolve and the two baselines costs >$70 per problem. The baselines are easier to slightly oversample as they come in smaller discrete units than a full Shinka run, being more regular samples for IID RS and more trials for SCS. Oversampling the baselines results in most runs costing $25 to $30, with the most expensive problem costing almost $50 per run.
+Results. Table 1 shows that both baselines perform well, matching or exceeding Shinka on 4/94/9 and 6/96/9 problems for IID RS and SCS respectively.33
+3
+Using everything the baselines generated, beyond the $20 limit, results in SCS matching ShinkaEvolve on circle packing and finding an improved bound of 1.1216 for sums/differences of sets. IID RS finds a slightly better bound of 1.529 for the first autocorrelation inequality. Interestingly, SCS matches or matches or exceeds AlphaEvolve on 4/94/9 problems as well, in spite of likely using a lower budget and less domain knowledge. Thus, the baselines seem similarly if not more performant than sophisticated code evolution methods.
+Figure 2: Average probability of matching or exceeding ShinkaEvolve over the 9 problems for our two baselines. Numbers on the right are the probabilities at the max budget of $20. Per problem breakdown is in Appendix G. Both baselines perform well over different budgets, with sequential conditioned sampling (SCS) generally outperforming ShinkaEvolve. Shaded regions are asymmetric 95% confidence intervals, see Appendix F for details.
+Including domain knowledge in a prompt can help boost a method’s performance without changing its pipeline. For example, to make a fair comparison, ShinkaEvolve is initiated from a minimal, uninformative initial program. For circle packing, ShinkaEvolve and OpenEvolve’s original initial program includes a function that finds the maximum circle radii given their centers. Using a prompt that includes a similar function allowed IID RS to find a circle packing with the same score of 2.63598 when sampling 1000 programs. The two prompts are compared in Appendix E.
+On the other hand, domain knowledge can also prove detrimental if it biases a search method down a bad trajectory. We show this by comparing ShinkaEvolve’s circle packing performance when using a minimal initial program, consisting of a fixed placement of tiny circles, to the original one used by Lange et al. (2025); Sharma (2025), where the initial program places circles in a set of rings and finds their max possible radii. When initialized from the minimal program, ShinkaEvolve found the same bound of 2.63598 over three runs, whereas two out of three runs using the original program found subpar circle packings. Using the original program in conjunction with ShinkaEvolve’s original prompt, which specifies characteristics of typical good and bad solutions, enables it to find the same bound for three out of three runs.
+To compare the different baselines’ cost effectiveness, we calculate the probability that a method matches or exceeds ShinkaEvolve under a given budget. This is done using a bootstrap estimate, with details in Appendix F. Figure 2 demonstrates that both baselines compare favourably to ShinkaEvolve across all budgets. The probabilities initially decrease due to ShinkaEvolve having a warmup period, as it is based on file edits and not full-file generations. This and other mechanisms, such as occasionally using cheaper LLMs, do not seem to make ShinkaEvolve significantly more cost-efficient.
+Here a method’s efficiency is measured relative to its API budget, whereas other constraints can be limiting as well. With respect to wall-clock time, the two 

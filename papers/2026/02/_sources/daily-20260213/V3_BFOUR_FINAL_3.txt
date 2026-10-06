@@ -1,0 +1,77 @@
+Online Causal Kalman Filtering for Stable and Effective Policy Optimization (https://arxiv.org/html/2602.10609v1)
+citeturn28855view0 [wordlim: 200] Crawled: yesterday; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.10609v1","lineno":123}); Total lines: 399
+L101: This advantage is then shared across all tokens within the corresponding response: $\widehat{A}_{i,t}=\frac{s(x_{i},y_{i})-\operatorname{mean}\!\big(\{s(x_{i},y_{i})\}_{i=1}^{G}\big)}{\operatorname{std}\!\big(\{s(x_{i},y_{i})\}_{i=1}^{G}\big)}.$ The resulting objective of GRPO is
+L102:  | $$\small\mathcal{J}_{\mathrm{GRPO}}=\mathbb{E}\!\left[\frac{1}{G}\sum_{i=1}^{G}\frac{1}{T}\sum_{t=1}^{T}\min\!\Big(r_{i,t}\,\widehat{A}_{i,t},\,r^{\prime}_{i,t}\,\widehat{A}_{i,t}\Big)\right],$$  |  | (2)
+L103: 
+L104: Token-level policy gradient in GRPO. To better understand how the IS ratio affects the policy gradient, we formulate the policy gradient of the GRPO objective for an individual token:
+L105: 
+L106:  | $$r_{i,t}\,\nabla_{\theta}\log\pi_{\theta}\!\left(y_{i,t}\mid x,y_{i,<t}\right)\widehat{A}_{i,t}.$$  |  | (3)
+L107: In the on-policy setting, the IS ratio $r_{i,t}$ is equal to 1 for all tokens, while in the off-policy setting, the IS ratio could vary among the clipping bounds, which could have a negligible impact on the policy gradient, such as amplifying the covariance effect of tokens with high probability and high advantages (cite42†Cui et al., 2025 ). Hence, GRPO could be unstable for policy optimization at scale (cite43†Zheng et al., 2025a ), especially under the off-policy optimization.
+L108: Sequence-level IS ratios. To address the issue, GSPO (cite44†Zheng et al., 2025b ) and GMPO  (cite47†Zhao et al., 2025 ) directly use a fixed sequence-level IS ratio (stopped gradient) for each token in a sequence, by averaging token-wise IS ratios across the entire sequence:
+L109: 
+L110:  | $$\overline{r}_{i}=\left(\prod_{t=1}^{T}r_{i,t}\right)^{\frac{1}{T}}=\exp\!\left(\frac{1}{T}\sum_{t=1}^{T}\log r_{i,t}\right).$$  |  | (4)
+L111: This practice reduces variance by totally smoothing token-wise fluctuations into a single scalar, regardless of the within-sequence off-policy heterogeneity. In contrast, we focus on local structure-aware smoothing for token-wise IS ratios.
+L112: ## 4 Method: Online Causal Kalman Filtering
+L113: 
+L114: In this section, we will first clarify our motivation and then provide a detailed introduction to our proposed method, as shown in Figure cite87†2 , which mainly includes three processes to autoregressively filter the IS ratio.
+L115: ### 4.1 Motivation
+L116: As discussed above, using sequence-level importance sampling (IS) ratios is an effective method for stabilizing policy optimization at scale. However, this stability assumes that all tokens in a sequence have the same degree of off-policy derivation, which is commonly violated in policy optimization.
+L117: For instance, in mathematical reasoning tasks, the response generally includes different reasoning steps in a chain-of-thought, along which the updated policy may only drift from the behavior policy on certain reasoning steps but maintain on-policy on others.
+L118: In contrast, our intuition is that although off-policy degrees can vary across semantic segments, they should exhibit local coherence within a segment because neighboring tokens are usually semantically consistent. It is therefore implausible for the policy to alternate sharply or frequently relative to the behavior policy at the token-to-token level.
+L119: These considerations motivate us to design a method that can not only smooth the IS ratio but also preserve the local coherent structure. For this purpose, we treat per-token IS ratios as a structured but noisy time series over token positions and seek an online estimate of the latent, locally coherent off-policy signal using only past and current tokens, corresponding to the autoregressive generation of tokens.
+L120: ### 4.2 Kalman filtering for token-wise IS ratios
+L121: Formally, we treat $\{z_{i,t}\}_{t=1}^{T}$ as a left-to-right observed time series for the sequence $x_{i}$ including $T$ tokens. In particular, it is associated with an underlying latent smoothed IS ratio $\rho_{i,t}$. Notably, we consider the causal Kalman filtering in the log space of the IS ratios $z_{i,t}=\text{log}r_{i,t}$ due to numerical stability. Our objective is to estimate the latent IS ratio $\rho_{i,t}$ by Kalman filtering, which is both locally smoothed and structurally coherent.
+L122: Next, we will first introduce the Kalman state-space model, and then detail the filtering process, including three processes.
+L123: Figure 2: Causal Kalman filtering. The filter alternates prediction, adaptive gain computation, and update to produce a smoothed estimate $\hat{\rho}_{t|t}$ and its uncertainty $P_{t|t}$ from streaming observations $z_{t}$, using process noise $Q$ and observation noise $V$.
+L124: Kalman state-space model. To characterize the variation of the latent (observed) IS ratio, given each sequence $x$ including $T$ tokens (we omit the subscript $i$ for simplicity in the next), we model the latent and observed IS ratio (cite88†Grewal, 2025 ) respectively:
+L125: 
+L126:  | $$\left\{\begin{aligned} \rho_{t}&=\rho_{t-1}+\eta_{t},\quad\eta_{t}\sim\mathcal{N}(0,Q),\\
+L127: z_{t}&=\rho_{t}+\epsilon_{t},\quad\epsilon_{t}\sim\mathcal{N}(0,V).\end{aligned}\right.$$  |  | (5)
+L128: where $\rho_{t}$ is the latent desired IS ratio and $Q/V$ is the process/observation noise variance.$Q$ and $V$ govern the Kalman filter’s smoothing tracking trade-off. $Q$ is the process-noise variance, controlling how quickly the latent IS ratio may evolve across tokens. A larger $Q$ permits faster drift and improves responsiveness to real local shifts, while a smaller $Q$ imposes stronger temporal smoothness at the cost of potential lag.
+L129: In contrast, $V$ is the observation-noise variance, reflecting the reliability of the observed IS ratio $z_{t}$. A larger $V$ down-weights noisy observations and suppresses isolated spikes and rapid switching, whereas a smaller $V$ makes the estimate follow $z_{t}$ more closely. Together, $Q$ and $V$ determine the Kalman gain and thus balance denoising against fidelity to true off-policy dynamics in KPO.
+L130: ①
+L131: Prediction step. To capture the intuition that the off-policy degree may evolve gradually across token positions, we employ a naive random-walk dynamics with process-noise variance $Q$ controlling how quickly the latent signal is allowed to drift. Formally, let $\hat{\rho}_{t\mid t}$ and $P_{t\mid t}$ denote the posterior mean and variance of $\rho_{t}$ given observations $z_{1:t}$. Similarly, $\hat{\rho}_{t\mid t-1}$ and $P_{t\mid t-1}$ denote the one-step-ahead predictive quantities given $z_{1:t-1}$.
+L132: We initialize with a prior $(\hat{\rho}_{0\mid 0},P_{0\mid 0})$ (e.g., $\hat{\rho}_{0\mid 0}=0$ and $P_{0\mid 0}=P_{0}$). $\hat{\rho}_{0\mid 0}=0$ indicates the IS ratio of the first token is on-policy (1). The prediction step will only use the observed IS ratio of past tokens, regardless of future tokens, corresponding to the autoregressive generation of tokens:
+L133:  | $$\left\{\begin{aligned} \hat{\rho}_{t\mid t-1}&=\hat{\rho}_{t-1\mid t-1},\\
+L134: P_{t\mid t-1}&=P_{t-1\mid t-1}+Q.\end{aligned}\right.$$  |  | (6)
+L135: 
+L136: ②
+L137: Kalman gain. After predicting the posterior mean and variance of $\rho_{t}$, the next step is to predict the Kalman gain, which is the key for Kalman filtering. The Kalman gain determines how the filter trades off the current observation against the prior prediction when estimating the latent IS ratio at token position $t$. Given the one-step prediction $(\hat{\rho}_{t\mid t-1},P_{t\mid t-1})$, we first compute the innovation (residual)
+L138: 
+L139:  | $$\delta_{t}=z_{t}-\hat{\rho}_{t\mid t-1},$$  |  | (7)
+L140: which measures the discrepancy between the observed log-ratio and the predicted latent value. The Kalman gain is then
+L141: 
+L142:  | $$K_{t}=\frac{P_{t\mid t-1}}{P_{t\mid t-1}+V},$$  |  | (8)
+L143: By construction, $K_{t}\in[0,1]$ in the scalar case and acts as an adaptive step size for correcting the prediction with the new measurement. When the predicted uncertainty $P_{t\mid t-1}$ is large (or the measurement noise $V$ is small), $K_{t}$ increases and the filter places more weight on $z_{t}$, allowing rapid adaptation to real changes in off-policy degree.
+L144: Conversely, when $V$ is large, $K_{t}$ decreases and the update relies more on the temporal prior, thereby suppressing isolated spikes and high-frequency fluctuations in $z_{t}$. In our setting, this adaptive weighting is crucial, since it preserves persistent, structure-aware shifts in token-wise off-policy dynamics while attenuating system-induced noise in the observed ratios.
+L145: ③
+L146: 
+L147: Update step. Given the innovation $\delta_{t}$ and the Kalman gain $K_{t}$, we incorporate the new observation by performing a linear correction of the one-step prediction:
+L148: 
+L149:  | $$\left\{\begin{aligned} \hat{\rho}_{t\mid t}&=\hat{\rho}_{t\mid t-1}+K_{t}\,\delta_{t},\\
+L150: P_{t\mid t}&=(1-K_{t})\,P_{t\mid t-1}.\end{aligned}\right.$$  |  | (9)
+L151: The first line performs an innovation-based correction: $K_{t}$ serves as an adaptive step size that controls how far the estimate moves from the prior $\hat{\rho}_{t\mid t-1}$ toward the measurement $z_{t}$. Larger $K_{t}$ makes the filter track genuine changes more quickly, while smaller $K_{t}$ favors the temporally smoothed prior and suppresses transient fluctuations.
+L152: The second line updates uncertainty: incorporating $z_{t}$ reduces the posterior variance by a factor $(1-K_{t})$, with higher gains implying greater information gain. In our setting, this recursion stabilizes token-wise weighting by damping isolated spikes (large $\delta_{t}$ with small $K_{t}$) while allowing persistent deviations across neighboring tokens to accumulate into smooth, coherent shifts in $\hat{\rho}_{t\mid t}$.
+L153: ### 4.3 The policy optimization objective of KPO
+L154: 
+L155: After filtering in log space, we map the latent estimate back to ratio space by exponentiation: $\widetilde{r}_{t}=\exp(\hat{\rho}_{t\mid t})$. We then replace the raw token-wise IS ratio $r_{t}$ in GRPO-style objectives with the filtered ratio $\widetilde{r}_{t}$. Let $\widehat{A}_{t}$ denote a token-shaped sequence-level advantage. The resulting KPO objective is
+L156:  | $$\small\mathcal{J}_{\mathrm{KPO{}}}=\left\{\begin{aligned} &\mathbb{E}\!\left[\frac{1}{G}\sum_{i=1}^{G}\frac{1}{T}\sum_{t=1}^{T}\min\!\Big(\widetilde{r}_{i,t}\,\widehat{A}_{i,t},\,\widetilde{r}^{\prime}_{i,t}\,\widehat{A}_{i,t}\Big)\right],\\
+L157: &\mathbb{E}\!\left[\frac{1}{G}\sum_{i=1}^{G}\frac{1}{T}\sum_{t=1}^{T}\widetilde{r}_{i,t}\,\widehat{A}_{i,t}\right],\end{aligned}\right.$$  |  | (10)
+L158: where $\widetilde{r}^{\prime}_{t}=\operatorname{clip}\!\big(\widetilde{r}_{t},\,1-\epsilon^{-},\,1+\epsilon^{+}\big)$ and $\epsilon^{-}$($\epsilon^{+}$) is the clipping threshold. In particular, the first line corresponds to the clipped surrogate, while the second line recovers the unclipped variant.
+L159: Compared with sequence-level aggregation (Eq. (cite89†4 )), KPO preserves token-wise heterogeneity in off-policy degree by maintaining per-token ratios, yet substantially reduces the variance through causal filtering. As a result, KPO inherits the fine-grained credit assignment of token-level reweighting while improving optimization stability. The full procedure is summarized in Algorithm cite90†1 in Appendix cite21†A.1 .
+L160: Table 1: Main results on challenging math reasoning tasks. Columns are benchmarks and rows are methods. We report avg@16 and pass@16. Higher is better. Best results are in bold and second-best are underlined. KPO achieves overall superior performance.
+L161: Method  | AIME’24  | AIME’25  | AMC’23  | MATH500  | Minerva  | Olympiad
+L162: avg@16  | pass@16  | avg@16  | pass@16  | avg@16  | pass@16  | avg@16  | pass@16  | avg@16  | pass@16  | avg@16  | pass@16
+L163: GRPO  | 27.29  | 53.33  | 23.12  | 43.33  | 73.43  | 92.50  | 85.66  | 92.80  | 38.67  | 50.36  | 48.60  | 62.25
+L164: GMPO  | 30.83  | 50.00  | 27.50  | 46.66  | 76.56  | 87.50  | 86.62  | 93.40  | 38.48  | 50.73  | 49.27  | 60.92
+L165: GSPO  | 32.70  | 60.00  | 29.16  | 50.00  | 75.46  | 95.00  | 87.41  | 94.00  | 37.17  | 47.79  | 51.37  | 63.00
+L166: KPO-unclipped  | 34.79  | 66.67  | 33.75  | 50.00  | 80.00  | 95.00  | 88.24  | 93.00  | 39.15  | 50.36  | 52.31  | 62.55
+L167: KPO-clipped  | 37.91  | 63.33  | 36.87  | 60.00  | 87.50  | 95.00  | 89.42  | 94.80  | 38.23  | 48.16  | 54.06  | 66.27
+L168: cite91†Image: Refer to caption Figure 3: Training dynamics of KPO-clipped over optimization steps. From left to right: mean episodic reward, policy entropy, PPO clip fraction, and policy gradient loss. Solid lines denote the average across runs, and the shaded bands indicate variability across runs.
+L169: ## 5 Experiments
+L170: 
+L171: In this section, we describe the evaluation setting, baselines, and implementation details for assessing KPO on challenging mathematical reasoning benchmarks.
+L172: ### 5.1 Setup
+L173: 
+L174: We use Qwen3-4B (cite34†Yang et al., 2025a ) for evaluation. Unless stated otherwise, all methods share the same model initialization, tokenizer, and inference pipeline. For RL fine-tuning, we adopt the supervised RL training corpus from DAPO (cite77†Yu et al., 2025 ), which contains diverse mathematical problems paired with verifiable solutions and corresponding reward signals.
+

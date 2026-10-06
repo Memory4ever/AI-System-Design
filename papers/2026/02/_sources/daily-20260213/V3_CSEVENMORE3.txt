@@ -1,0 +1,203 @@
+Just on Time: Token-Level Early Stopping for Diffusion Language Models (https://arxiv.org/html/2602.11133v1)
+citeturn29248view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.11133v1","lineno":200}); Total lines: 456
+L114: #### Reverse process.
+L115: 
+L116: Generation proceeds by reversing the forward corruption: starting from a fully masked sequence $\mathbf{x}_{T}$ at $t=1$, the model iteratively predicts and unmasks tokens until reaching the clean state at $t=0$. A neural network $f_{\theta}$ parameterizes the reverse transition by producing a distribution over the vocabulary at each position:
+L117: 
+L118:  | $$p_{\theta}(\mathbf{x}_{s}\mid\mathbf{x}_{t})=\prod_{i=1}^{L}p_{\theta}(x_{s}^{i}\mid\mathbf{x}_{t}),\quad 0\leq s<t\leq 1.$$  |  | (2)
+L119: For masked positions, the model predicts $p_{\theta}(x_{s}^{i}\mid\mathbf{x}_{t})=\mathrm{Cat}(x_{s}^{i};\pi_{\theta}^{i}(\mathbf{x}_{t}))$, where $\pi_{\theta}^{i}(\mathbf{x}_{t})\in\Delta^{K}$ is the predicted distribution at position $i$. Unmasked tokens are preserved.
+L120: ### 3.2 Iterative Sampling
+L121: Practical generation proceeds through $T$ discrete steps. At step $n$, let $\mathcal{M}_{n}=\{i:x_{t_{n}}^{i}=\texttt{[M]}\}$ denote the masked positions. The model computes predictions $\pi_{\theta}^{i}(\mathbf{x}_{t_{n}})$ for all $i\in\mathcal{M}_{n}$, then selects a subset $\mathcal{U}_{n}\subseteq\mathcal{M}_{n}$ to unmask based on a transfer schedule.
+L122: A common strategy unmasks positions with the highest confidence $\max_{v}\pi_{\theta}^{i}(\mathbf{x}_{t_{n}})_{v}$, deferring uncertain positions to later steps.
+L123: ### 3.3 Training Objective
+L124: 
+L125: DLMs minimize a variational upper bound on negative log-likelihood, which simplifies to a reweighted cross-entropy over masked positions:
+L126: 
+L127:  | $$\mathcal{L}(\theta)=-\mathbb{E}_{\mathbf{x}_{0},t,\mathbf{x}_{t}}\left[w(t)\sum_{i=1}^{L}\mathbf{1}[x_{t}^{i}=\texttt{[M]}]\log p_{\theta}(x_{0}^{i}\mid\mathbf{x}_{t})\right],$$  |  | (3)
+L128: 
+L129: where $t\sim\mathcal{U}(0,1)$ and $w(t)$ is a time-dependent weight, commonly $w(t)=1/t$.
+L130: ## 4 Approach
+L131: 
+L132: We present Jot (J ust o n T ime), a training-free method for per-token early stopping in diffusion language models. The core idea is to finalize individual token predictions as soon as they exhibit sufficient confidence, rather than waiting for a fixed number of diffusion steps. Our approach adapts the acceptance threshold at each position based on spatial proximity to already-resolved tokens.
+L133: ### 4.1 Overview
+L134: Standard DLM decoding runs for a predetermined number of steps $T$, unmasking tokens according to a transfer schedule. However, prior work has shown that predictions often stabilize well before the final diffusion step [cite47†11 ]. Jot exploits this observation by introducing an adaptive early-exit mechanism that operates at the token level: at each step, positions whose predictions exceed a dynamically computed confidence threshold are finalized immediately, removing them from further refinement.
+L135: The key components of our method are:
+L136: 
+L137:   1. 1.
+L138: 
+L139: A confidence metric that quantifies prediction certainty at each masked position.
+L140: 
+L141:   2. 2.
+L142: 
+L143: A spatial modulation that lowers the threshold for positions adjacent to already-unmasked tokens.
+L144: ### 4.2 Confidence Metric
+L145: We measure prediction confidence using the ratio between the top two predicted probabilities. At each masked position $i$, the model produces logits $\ell^{i}\in\mathbb{R}^{K}$, which we convert to a probability distribution via softmax without temperature scaling: $\pi_{\theta}^{i}(\mathbf{x}_{t})=\mathrm{softmax}(\ell^{i})\in\Delta^{K}$.
+L146: By using unscaled logits, our confidence metric remains invariant to any temperature parameter applied during sampling, decoupling early-exit decisions from generation diversity settings. Denote the largest and second-largest probabilities as $p_{1}^{i}$ and $p_{2}^{i}$, respectively. The confidence score is defined as:
+L147:  | $$r^{i}=\frac{p_{1}^{i}}{p_{2}^{i}+\epsilon},$$  |  | (4)
+L148: 
+L149: where $\epsilon>0$ is a small constant for numerical stability. This ratio captures how decisively the model favors its top prediction: $r^{i}\approx 1$ indicates uncertainty between alternatives, while $r^{i}\gg 1$ signals strong commitment to the leading candidate.
+L150: ### 4.3 Spatial Modulation
+L151: Recent work on diffusion language model training has shown that positions with stronger local context—particularly those near already-decoded tokens—tend to experience lower noise level [cite46†24 ]. Dream’s CART weighting exploits this during training by applying context-adaptive noise rescheduling at the token level.
+L152: We draw inspiration from this finding and apply analogous reasoning to inference: positions adjacent to already-unmasked tokens benefit from richer local context, making their predictions more reliable even at earlier steps. We capture this through a spatial softening factor based on proximity to resolved positions.
+L153: Let $\mathcal{M}_{n}$ denote the set of masked positions at step $n$. The spatial weight at position $i$ is computed using a geometric kernel over a window of radius $D$:
+L154: 
+L155:  | $$w^{i}=\sum_{\begin{subarray}{c}j\notin\mathcal{M}_{n}\\
+L156: |i-j|\leq D\end{subarray}}\gamma^{|i-j|}$$  |  | (5)
+L157: 
+L158: where $\gamma\in(0,1)$ is the decay rate controlling how quickly influence diminishes with distance. The spatial softening factor is the normalized weight:
+L159:  | $$\phi^{i}=\min\left(1,\frac{w^{i}}{w_{\max}}\right),$$  |  | (6)
+L160: 
+L161: where $w_{\max}=2\sum_{d=1}^{D}\gamma^{d}$ is the maximum possible weight. Positions at the boundary of masked regions receive higher $\phi^{i}$, reflecting their enhanced contextual support.
+L162: ### 4.4 Adaptive Threshold
+L163: 
+L164: The spatial softening factor modulates a position-specific acceptance threshold. The threshold at position $i$ is interpolated between a maximum $\tau_{\max}$ and minimum $\tau_{\min}$:
+L165: 
+L166:  | $$\tau^{i}=\tau_{\max}-(\tau_{\max}-\tau_{\min})\cdot\phi^{i}.$$  |  | (7)
+L167: Positions near unmasked tokens (high $\phi^{i}$) receive lower thresholds, making them easier to finalize. Positions in the interior of masked regions retain the stricter threshold $\tau_{\max}$, requiring higher confidence before commitment.
+L168: ### 4.5 Early-Exit Decision
+L169: 
+L170: At each step $n$, a masked position $i\in\mathcal{M}_{n}$ is finalized if its confidence exceeds the adaptive threshold:
+L171: 
+L172:  | $$r^{i}\geq\tau^{i}.$$  |  | (8)
+L173: 
+L174: When this condition is met, position $i$ is assigned its top predicted token $\hat{x}^{i}=\arg\max_{v}\pi_{\theta}^{i}(\mathbf{x}_{t_{n}})_{v}$ and removed from the set of masked positions. Positions that do not meet the threshold continue through the standard transfer schedule.
+L175: The complete procedure is summarized in cite60†Algorithm 1 .
+L176: 
+L177: Algorithm 1 Jot: Token-Level Early Stopping
+L178: 
+L179:  Input: model $f_{\theta}$; prompt $\mathbf{x}_{\mathrm{prompt}}$; generation length $L$; steps $T$
+L180: 
+L181:  Parameters: $\tau_{\max},\tau_{\min},\gamma,D$
+L182: 
+L183:  Initialize $\mathbf{x}\leftarrow[\mathbf{x}_{\mathrm{prompt}};\texttt{[M]}\times L]$
+L184: 
+L185:  for $n=1$ to $T$ do
+L186: 
+L187:   $\mathcal{M}_{n}\leftarrow\{i:x^{i}=\texttt{[M]}\}$
+L188: 
+L189:   if $\mathcal{M}_{n}=\emptyset$ then
+L190: 
+L191:    break
+L192: 
+L193:   end if
+L194:   Compute logits $\ell\leftarrow f_{\theta}(\mathbf{x})$
+L195: 
+L196:   Compute probabilities $\pi^{i}\leftarrow\mathrm{softmax}(\ell^{i})$ for $i\in\mathcal{M}_{n}$
+L197: 
+L198:   Compute confidence $r^{i}\leftarrow p_{1}^{i}/(p_{2}^{i}+\epsilon)$
+L199: 
+L200:   for $i\in\mathcal{M}_{n}$ do
+L201: 
+L202:    Compute $\phi^{i}$ via cite61†Equation 6 L203: 
+L204:    $\tau^{i}\leftarrow\tau_{\max}-(\tau_{\max}-\tau_{\min})\cdot\phi^{i}$
+L205: 
+L206:    if $r^{i}\geq\tau^{i}$ then
+L207: 
+L208:     $x^{i}\leftarrow\arg\max_{v}\pi^{i}_{v}$ {Finalize position}
+L209: 
+L210:    end if
+L211: 
+L212:   end for
+L213:   Apply transfer schedule to remaining masked positions
+L214: 
+L215:  end for
+L216: 
+L217:  return $\mathbf{x}$
+L218: ### 4.6 Discussion
+L219: 
+L220: #### Computational overhead.
+L221: 
+L222: The spatial weight computation in cite62†Equation 5 can be implemented efficiently via a 1D convolution with a precomputed kernel, adding negligible overhead per step. The dominant cost remains the forward pass through $f_{\theta}$, which Jot reduces by terminating early when all positions are finalized.
+L223: #### Interaction with transfer schedules.
+L224: Jot operates alongside the standard transfer schedule rather than replacing it. At each step, positions that do not meet the early-exit criterion remain masked and are subject to the model’s default unmasking schedule: the transfer schedule determines how many of these remaining positions to reveal based on model predictions. If no positions satisfy the confidence threshold, the step proceeds exactly as in standard decoding.
+L225: This ensures that the method gracefully degrades to baseline behavior when predictions remain uncertain.
+L226: #### Orthogonality with other acceleration methods.
+L227: Jot is orthogonal to techniques that reduce per-step latency, such as KV-caching methods like dKV-Cache [cite57†14 ] and Fast-dLLM [cite59†23 ]. While these methods accelerate individual forward passes by caching intermediate representations, Jot reduces the total number of steps by early-exiting tokens that have stabilized. The two approaches target different sources of inefficiency and can be combined for compounding speedups: caching reduces per-step cost while Jot reduces step count.
+L228: We leave the empirical evaluation of such integrated systems as a promising direction for future work.
+L229: ## 5 Experiments
+L230: Table 1: Comparison of early-stopping methods on Dream-7B-Instruct and LLaDA-8B-Instruct across four benchmarks. We report task score (%) with gain relative to full decoding, and speedup ($\times$). Jot uses $\tau_{\max}=90$, $\tau_{\min}=1$, $\gamma=0.5$, $D=8$ for Dream and $\tau_{\max}=30$, $\tau_{\min}=1$, $\gamma=0.5$, $D=8$ for LLaDA.
+L231:  |  | GSM8K  | MMLU  | HellaSwag  | HumanEval
+L232: --- | --- | --- | --- | --- | ---
+L233: Model  | Method  | Score$\uparrow$  | Speed$\uparrow$  | Score$\uparrow$  | Speed$\uparrow$  | Score$\uparrow$  | Speed$\uparrow$  | Pass@1$\uparrow$  | Speed$\uparrow$
+L234: --- | --- | --- | --- | --- | --- | --- | --- | --- | ---
+L235: Dream-7B  | Full Decoding  | 81.1  | 1.00$\times$  | 68.2  | 1.00$\times$  | 73.3  | 1.00$\times$  | 59.1  | 1.00$\times$
+L236: Prophet  | 68.6 (-12.5)  | 2.79$\times$  | 60.2 (-8.0)  | 1.40$\times$  | 72.4 (-0.9)  | 1.94$\times$  | 56.7 (-2.4)  | 9.17$\times$
+L237: KLASS  | 82.7 (+1.6)  | 2.45$\times$  | 64.4 (-3.8)  | 1.06$\times$  | 74.8 (+1.5)  | 1.13$\times$  | 59.8 (+0.7)  | 7.92$\times$
+L238: Jot (Ours)  | 78.8 (-2.3)  | 5.54$\times$  | 66.7 (-1.5)  | 1.57$\times$  | 72.7 (-0.6)  | 2.26$\times$  | 58.5 (-0.6)  | 19.60$\times$
+L239: LLaDA-8B  | Full Decoding  | 74.5  | 1.00$\times$  | 67.3  | 1.00$\times$  | 76.7  | 1.00$\times$  | 47.6  | 1.00$\times$
+L240: Prophet  | 64.4 (-10.1)  | 2.74$\times$  | 63.3 (-4.0)  | 2.08$\times$  | 75.8 (-0.9)  | 1.84$\times$  | 40.9 (-6.7)  | 1.89$\times$
+L241: KLASS  | 74.2 (-0.3)  | 2.58$\times$  | 63.4 (-3.9)  | 1.26$\times$  | 77.1 (+0.4)  | 1.48$\times$  | 40.2 (-7.4)  | 2.53$\times$
+L242: Jot (Ours)  | 73.4 (-1.1)  | 3.75$\times$  | 64.5 (-2.8)  | 1.98$\times$  | 76.6 (-0.1)  | 3.42$\times$  | 44.5 (-3.1)  | 2.12$\times$
+L243: We evaluate Jot on a diverse set of benchmarks spanning reasoning, knowledge, and code generation. Our experiments aim to answer: (1) Does Jot achieve better speed-quality trade-offs than existing early-stopping methods? (2) How do threshold selection and spatial modulation contribute to performance?
+L244: ### 5.1 Experimental Setup
+L245: 
+L246: We evaluate on two state-of-the-art open diffusion language models: Dream-7B-Instruct [cite46†24 ] and LLaDA-8B-Instruct [cite45†15 ]. We consider four benchmarks: GSM8K [cite63†4 ] for mathematical reasoning with chain-of-thought prompting, MMLU [cite64†8 ] for multitask language understanding, HellaSwag [cite65†25 ] for commonsense reasoning, and HumanEval [cite66†3 ] for code generation. All experiments use zero-shot prompting. Configuration details are summarized in cite67†Table 2 .
+L247: Table 2: Evaluation configuration for each model and benchmark.
+L248: Model  | Benchmark  | Steps  | Block
+L249: --- | --- | --- | ---
+L250: Dream-7B  | GSM8K  | 256  | —
+L251: MMLU  | 3  | —
+L252: HellaSwag  | 5  | —
+L253: HumanEval  | 512  | —
+L254: LLaDA-8B  | GSM8K  | 256  | 32
+L255: MMLU  | 3  | 3
+L256: HellaSwag  | 5  | 5
+L257: HumanEval  | 512  | 32
+L258: We compare against full decoding (standard diffusion sampling), Prophet [cite47†11 ] (early-commit with top-2 confidence gaps), and KLASS [cite55†10 ] (KL-adaptive stability sampling). We report task-specific scores and speedup, defined as the ratio of configured to actual steps. All experiments use LM-Evaluation-Harness [cite68†6 ] for reproducibility. Our implementation is built upon the open-source framework provided by [cite69†26 ], which we extend to incorporate JoT.
+L259: Ablation studies (cite31†Sections 5.3 , cite32†5.4 and cite33†5.5 ) are conducted on Dream-7B using a subset of each benchmark. Final results in cite70†Table 1 use the full benchmark on both Dream-7B and LLaDA-8B.
+L260: For MMLU (3 tokens) and HellaSwag (5 tokens), generation length is shorter than typical window sizes $D$. The spatial window effectively spans the entire sequence regardless of $D$, so results for $D=8$ and $D=16$ are identical to $D=4$. We report only $\gamma$ as the varying parameter for these benchmarks.
+L261: ### 5.2 Main Results
+L262: cite70†Table 1 presents our main comparison. On Dream-7B, Jot achieves substantial speedups—$5.54\times$ on GSM8K and $19.60\times$ on HumanEval—while incurring only modest accuracy drops ($-2.3$ and $-0.6$ points respectively). Prophet shows larger quality degradation, particularly on GSM8K where it drops $12.5$ points, and on MMLU where it drops $8.0$ points. KLASS maintains strong accuracy on GSM8K ($+1.6$) but with lower speedup ($2.45\times$) and shows significant MMLU degradation ($-3.8$ points).
+L263: On LLaDA-8B, Jot consistently maintains the smallest accuracy gaps across benchmarks while providing competitive speedups. The per-token approach allows positions that genuinely require further refinement to continue through the diffusion chain, while finalizing confident predictions early. Wallclock time analysis (cite40†Section A.1 ) confirms that computational overhead is negligible, and generation quality metrics (cite42†Section A.3 ) show that fluency is preserved.
+L264: cite71†Figure 3 visualizes the aggregate speed-quality trade-off across all benchmarks on Dream-7B. Jot occupies a favorable position on the Pareto frontier, achieving $7.2\times$ average speedup while retaining $98.3\%$ of baseline quality. In contrast, Prophet sacrifices quality for speed ($91.9\%$ retention at $3.8\times$), while KLASS preserves quality but with more limited acceleration ($3.2\times$). This positions Jot as a compelling choice when both speed and accuracy matter.
+L265: Table 3: Ablation on spatial modulation with $(\tau_{\max},\tau_{\min})=(90,1)$. Gains are relative to threshold-only baseline ($\tau=90$, no spatial). Results on Dream-7B (subset of benchmark).
+L266:  |  | GSM8K  | MMLU  | HellaSwag  | HumanEval
+L267: --- | --- | --- | --- | --- | ---
+L268: $\gamma$  | $D$  | Score$\uparrow$  | Speed$\uparrow$  | Score$\uparrow$  | Speed$\uparrow$  | Score$\uparrow$  | Speed$\uparrow$  | Pass@1$\uparrow$  | Speed$\uparrow$
+L269: --- | --- | --- | --- | --- | --- | --- | --- | --- | ---
+L270: No spatial  | 79.4  | 5.22$\times$  | 60.6  | 1.92$\times$  | 73.8  | 2.33$\times$  | 57.3  | 19.48$\times$
+L271: --- | --- | --- | --- | --- | --- | --- | --- | ---
+L272: 0.9  | 16  | 78.5 (-0.9)  | 5.82$\times$ (+0.60)  | 66.8 (+6.2)  | 1.60$\times$ (-0.32)  | 73.6 (-0.2)  | 2.34$\times$ (+0.01)  | 57.3 (+0.0)  | 21.94$\times$ (+2.46)
+L273: 0.9  | 8  | 77.9 (-1.5)  | 5.71$\times$ (+0.49)  | 66.8 (+6.2)  | 1.60$\times$ (-0.32)  | 73.6 (-0.2)  | 2.34$\times$ (+0.01)  | 58.7 (+1.4)  | 20.82$\times$ (+1.34)
+L274: 0.7  | 8  | 79.7 (+0.3)  | 5.58$\times$ (+0.36)  | 67.0 (+6.4)  | 1.58$\times$ (-0.34)  | 73.8 (+0.0)  | 2.34$\times$ (+0.01)  | 57.3 (+0.0)  | 20.22$\times$ (+0.74)
+L275: 0.5  | 16  | 79.7 (+0.3)  | 5.49$\times$ (+0.27)  | 66.8 (+6.2)  | 1.57$\times$ (-0.35)  | 73.6 (-0.2)  | 2.34$\times$ (+0.01)  | 58.7 (+1.4)  | 20.03$\times$ (+0.55)
+L276: 0.5  | 8  | 80.0 (+0.6)  | 5.49$\times$ (+0.27)  | 66.8 (+6.2)  | 1.57$\times$ (-0.35)  | 73.6 (-0.2)  | 2.34$\times$ (+0.01)  | 58.7 (+1.4)  | 19.97$\times$ (+0.49)
+L277: 0.5  | 4  | 79.4 (+0.0)  | 5.45$\times$ (+0.23)  | 66.8 (+6.2)  | 1.57$\times$ (-0.35)  | 73.6 (-0.2)  | 2.34$\times$ (+0.01)  | 58.0 (+0.7)  | 19.97$\times$ (+0.49)
+L278: 0.3  | 8  | 79.7 (+0.3)  | 5.45$\times$ (+0.23)  | 66.9 (+6.3)  | 1.54$\times$ (-0.38)  | 73.6 (-0.2)  | 2.34$\times$ (+0.01)  | 59.3 (+2.0)  | 19.90$\times$ (+0.42)
+L279: Table 4: Hyperparameter sweep on Dream-7B-Instruct. Score (%) with gain relative to full decoding, and speedup ($\times$). Results on subset of benchmark.
+L280:  |  |  | GSM8K  | MMLU  | HellaSwag  | HumanEval
+L281: --- | --- | --- | --- | --- | --- | ---
+L282: $\tau_{\max}$  | $\gamma$  | $D$  | Score$\uparrow$  | Speed$\uparrow$  | Score$\uparrow$  | Speed$\uparrow$  | Score$\uparrow$  | Speed$\uparrow$  | Pass@1$\uparrow$  | Speed$\uparrow$
+L283: --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | ---
+L284: Full Decoding  | 82.0  | 1.00$\times$  | 68.2  | 1.00$\times$  | 73.3  | 1.00$\times$  | 59.1  | 1.00$\times$
+L285: --- | --- | --- | --- | --- | --- | --- | --- | ---
+L286: 60  | 0.3  | 8  | 77.9 (-4.1)  | 6.12$\times$  | 67.2 (-1.0)  | 1.66$\times$  | 73.6 (+0.3)  | 2.36$\times$  | 54.0 (-5.1)  | 22.81$\times$
+L287: 60  | 0.5  | 8  | 78.2 (-3.8)  | 6.19$\times$  | 67.2 (-1.0)  | 1.68$\times$  | 73.5 (+0.2)  | 2.36$\times$  | 56.0 (-3.1)  | 22.74$\times$
+L288: 60  | 0.5  | 16  | 77.9 (-4.1)  | 6.19$\times$  | 67.2 (-1.0)  | 1.68$\times$  | 73.5 (+0.2)  | 2.36$\times$  | 56.7 (-2.4)  | 22.70$\times$
+L289: 60  | 0.7  | 8  | 77.3 (-4.7)  | 6.29$\times$  | 67.0 (-1.2)  | 1.73$\times$  | 73.6 (+0.3)  | 2.36$\times$  | 56.7 (-2.4)  | 23.07$\times$
+L290: 90  | 0.3  | 8  | 79.7 (-2.3)  | 5.45$\times$  | 66.9 (-1.3)  | 1.54$\times$  | 73.6 (+0.3)  | 2.34$\times$  | 59.3 (+0.2)  | 19.90$\times$
+L291: 90  | 0.5  | 8  | 80.0 (-2.0)  | 5.49$\times$  | 66.8 (-1.4)  | 1.57$\times$  | 73.6 (+0.3)  | 2.34$\times$  | 58.7 (-0.4)  | 19.97$\times$
+L292: 90  | 0.5  | 16  | 79.7 (-2.3)  | 5.49$\times$  | 66.8 (-1.4)  | 1.57$\times$  | 73.6 (+0.3)  | 2.34$\times$  | 58.7 (-0.4)  | 20.03$\times$
+L293: 90  | 0.7  | 8  | 79.7 (-2.3)  | 5.58$\times$  | 67.0 (-1.2)  | 1.58$\times$  | 73.8 (+0.5)  | 2.34$\times$  | 57.3 (-1.8)  | 20.22$\times$
+L294: 120  | 0.3  | 8  | 80.3 (-1.7)  | 5.13$\times$  | 66.8 (-1.4)  | 1.50$\times$  | 73.7 (+0.4)  | 2.32$\times$  | 58.0 (-1.1)  | 18.04$\times$
+L295: 120  | 0.5  | 8  | 80.6 (-1.4)  | 5.16$\times$  | 67.1 (-1.1)  | 1.51$\times$  | 73.6 (+0.3)  | 2.32$\times$  | 57.3 (-1.8)  | 18.25$\times$
+L296: 120  | 0.5  | 16  | 80.3 (-1.7)  | 5.16$\times$  | 67.1 (-1.1)  | 1.51$\times$  | 73.6 (+0.3)  | 2.32$\times$  | 58.0 (-1.1)  | 18.22$\times$
+L297: 120  | 0.7  | 8  | 81.2 (-0.8)  | 5.23$\times$  | 67.0 (-1.2)  | 1.53$\times$  | 73.6 (+0.3)  | 2.33$\times$  | 59.3 (+0.2)  | 18.75$\times$
+L298: ### 5.3 Threshold Ablation
+L299: 
+L300: We first analyze the effect of the confidence threshold $\tau$ without spatial modulation (i.e., $\tau^{i}=\tau$ for all positions). This isolates the impact of threshold selection on the speed-quality trade-off.
+L301: cite72†Table 5 reveals that threshold selection critically affects both quality and speedup. Lower thresholds ($\tau\leq 30$) yield aggressive speedups but cause substantial accuracy drops on reasoning tasks—GSM8K degrades by up to $17.8$ points at $\tau=10$ and MMLU by $8.8$ points. The threshold $\tau=90$ provides a favorable balance, achieving $5.22\times$ speedup on GSM8K with only $-2.6$ points accuracy drop and $19.48\times$ on HumanEval with $-1.8$ points.
+L302: Higher thresholds ($\tau=120$) can exceed baseline quality on some benchmarks (GSM8K $+1.9$, HumanEval $+0.9$), though with diminishing speedup returns. Based on these results, we select $\tau_{\max}=90$ as the baseline threshold for spatial modulation experiments.
+L303: ### 5.4 Spatial Modulation Ablation
+L304: 
+L305: Having identified $\tau_{\max}=90$ as an effective threshold, we now evaluate spatial modulation with $\tau_{\min}=1$ (ablation on $\tau_{\min}$ is provided in cite41†Section A.2 ). We vary the decay rate $\gamma\in\{0.3,0.5,0.7,0.9\}$ and window size $D\in\{4,8,16\}$.
+L306: cite73†Table 3 shows the effect of spatial modulation across decay rates and window sizes. For long-generation benchmarks, spatial modulation provides meaningful speedup gains: HumanEval improves from $19.48\times$ to $21.94\times$ with $(\gamma,D)=(0.9,16)$. The configuration $(\gamma,D)=(0.5,8)$ achieves a favorable balance with GSM8K accuracy of $80.0\%$ ($+0.6$ vs. no spatial) and HumanEval at $58.7\%$ ($+1.4$).
+L307: Larger decay rates ($\gamma=0.9$) spread influence too broadly, causing accuracy degradation on GSM8K ($-1.5$ points at $\gamma=0.9,D=8$). Based on these findings, we select $(\gamma,D)=(0.5,8)$ as the default spatial configuration.
+L308: Table 5: Ablation on confidence threshold without spatial modulation. We report score (%) with gain relative to full decoding, and speedup ($\times$). Results on Dream-7B (subset of benchmark).
+L309:  | GSM8K  | MMLU  | HellaSwag  | HumanEval
+L310: --- | --- | --- | --- | ---
+L311: $\tau$  | Score$\uparrow$  | Speed$\uparrow$  | Score$\uparrow$  | Speed$\uparrow$  | Score$\uparrow$  | Speed$\uparrow$  | Pass@1$\uparrow$  | Speed$\uparrow$
+L312: --- | --- | --- | --- | --- | --- | --- | --- | ---
+L313: Full Decoding  | 82.0  | 1.00$\times$  | 68.2  | 1.00$\times$  | 73.3  | 1.00$\times$  | 59.1  | 1.00$\times$
+L314: --- | --- | --- | --- | --- | --- | --- | --- | ---
+

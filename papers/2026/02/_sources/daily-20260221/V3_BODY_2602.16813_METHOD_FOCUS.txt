@@ -1,0 +1,247 @@
+4 Algorithmic Aspects
+We now describe the practical implementation of our flow-based language model (FLM) and its distillation into a few-step flow map language model (FMLM).
+We aim to provide principled design choices that work robustly in practice.
+4.1 Flow-based language model (FLM)
+Figure 4: Decoding error rate over time across vocabulary sizes. Our time reparameterization τ⁡(t)\tau(t) redistributes time so each step contributes uniformly to the denoising signal.
+To build a high-performing FLM, we find that two particularly important choices are (i) how to sample timepoints during training, and (ii) how to choose a time grid during generation.
+A naïve approach would be to use uniform sampling t∼𝖴⁡[0,1]t\sim\mathsf{U}[0,1] for training and an equispaced grid tn=n/Nt_{n}=n/N for generation, which typically works well for continuous modalities such as images.
+However, we find this to be suboptimal for interpolants defined over one-hot encodings, as the generative process concentrates its “decisions” in a narrow time interval, especially for large vocabularies.
+To understand this, we consider the decoding error rate PeP_{e} (Sahoo et al., 2025; Pynadath et al., 2025):
+Pe​(t)≔1L​∑l=1LP⁡(g​(𝐱t)l≠g​(𝐱1)l)\displaystyle P_{e}(t)\coloneqq\frac{1}{L}\sum_{l=1}^{L}P(g({\bf x}_{t})^{l}\neq g({\bf x}_{1})^{l})
+(21)
+This quantity measures the expected fraction of tokens that would be incorrectly decoded if we were to stop the flow at time tt, starting at Pe​(0)=1−1|V|P_{e}(0)=1-\frac{1}{|V|} and decreasing to Pe​(1)=0P_{e}(1)=0.
+The rate of decrease |P˙e​(t)||\dot{P}_{e}(t)| captures how much “progress” the flow makes in determining subwords at time tt.
+For large |V||V|, the decoding error concentrates acutely near t=1t=1 (Figure 4), implying that most times do not contribute significantly towards decoding, with token identities only being resolved in a narrow window.
+Uniform sampling t∼𝖴⁡[0,1]t\sim\mathsf{U}[0,1] therefore wastes training signal on regions where little denoising occurs, while undersampling the critical interval where subwords are actually determined.
+Similarly, an equispaced grid tn=n/Nt_{n}=n/N allocates most sampling steps to regions that contribute minimally to generation quality.
+Following Dieleman et al. (2022) and Stancevic et al. (2025), we address this using a time reparameterization τ⁡(t)\tau(t), which is a differentiable, monotonically increasing function with endpoints (0,0),(1,1)(0,0),(1,1) and inverse t⁡(τ)t(\tau).
+We train and generate uniformly in τ\tau, sampling tt via τ⁡(t)∼𝖴⁡[0,1]\tau(t)\sim\mathsf{U}[0,1] during training, and using a grid tn=t⁡(τn)t_{n}=t(\tau_{n}) with τn=n/N\tau_{n}=n/N for generation.
+This reweights which regions in tt receive more training signal and are discretized more finely.
+We propose to choose τ⁡(t)\tau(t) so that uniform steps in τ\tau correspond to uniform progress in determining subwords.
+As Pe​(t)P_{e}(t) measures the remaining decoding error at time tt, we view its decrease from Pe​(0)P_{e}(0) as cumulative progress.
+Standardizing to [0,1][0,1]:
+τ⁡(t)=Pe​(0)−Pe​(t)Pe​(0)=1−|V||V|−1​Pe​(t).\displaystyle\tau(t)=\frac{P_{e}(0)-P_{e}(t)}{P_{e}(0)}=1-\frac{|V|}{|V|-1}P_{e}(t).
+(22)
+By construction, this reparameterization redistributes time so that each step contributes equally to reducing the decoding error.
+We find this choice critical for stable training and generation, enabling FLM to scale to |V|≈50,000|V|\approx 50,000.
+4.2 Flow map language model (FMLM)
+In this section, we detail the design choices needed to build an effective FMLM.
+Flow maps can be learned through either self-distillation, where a flow and flow map are trained jointly, or distillation from a pretrained flow (Boffi et al., 2025a; Boffi et al., 2025b).
+For simplicity, here we adopt the latter approach, which decouples the two training phases.
+Full details on self-distillation algorithms are given in App. B and C.
+Existing work parameterizes the flow map via the average velocity v^s,t\hat{v}_{s,t} (14), noting that bt=vt,tb_{t}=v_{t,t} by the tangent condition, and jointly trains v^s,t\hat{v}_{s,t} and b^t=v^t,t\hat{b}_{t}=\hat{v}_{t,t} with the respective losses (Boffi et al., 2025a; Boffi et al., 2025b).
+In contrast, we develop a novel two-stage distillation scheme that we empirically find more stable: the first stage learns a correction to the trained FLM that converts Euler steps into accurate flow map jumps, and the second stage compresses this into a single flow map model for improved inference-time efficiency.
+First stage.
+Recall that a single Euler step computes 𝐱+(t−s)​b^s​(𝐱){\bf x}+(t-s)\hat{b}_{s}({\bf x}), which incurs discretization error for large steps. We learn a correction model ψ^s,t\hat{\psi}_{s,t} which predicts the correction needed to convert the Euler estimate into the true flow map.
+Specifically, we parameterize the flow map as:
+X^s,t​(𝐱)≔𝐱+(t−s)​b^s​(𝐱)+12​(t−s)2​ψ^s,t​(𝐱),\displaystyle\hat{X}_{s,t}({\bf x})\coloneqq{\bf x}+(t-s)\,\hat{b}_{s}({\bf x})+\frac{1}{2}(t-s)^{2}\hat{\psi}_{s,t}({\bf x}),
+(23)
+where b^\hat{b} is an FLM trained following Section 4.1, possibly as a denoiser D^\hat{D} based on Equation 9.
+This parameterization was proposed by Boffi et al. (2025a) but not empirically tested.
+By construction, it satisfies the boundary condition and tangent condition, so we only need to enforce the semigroup condition through training.
+We initialize ψ^\hat{\psi} from the parameters of b^\hat{b} and train using the semigroup loss (15) (see Section D.4 for details).
+Since b^\hat{b} is frozen and ψ^\hat{\psi} only learns the residual correction, the training is efficient and converges quickly.
+If the two-time denoiser parametrization Equation 16 is used instead, we learn a log-space correction model ϕ^s,t\hat{\phi}_{s,t} that converts the one-time denoiser FLM D^t\hat{D}_{t} into the two-time denoiser δ^s,t\hat{\delta}_{s,t} that characterizes the flow map X^s,t\hat{X}_{s,t} through Equation 17.
+Assuming that D^\hat{D} outputs tokenwise classification logits (Section 3.2), D^t​(𝐱)=softmax​(D^t(logits)​(𝐱))\hat{D}_{t}({\bf x})=\text{softmax}(\hat{D}^{\text{(logits)}}_{t}({\bf x})), we parameterize δ^\hat{\delta} as:
+δ^s,t​(𝐱)=softmax​(D^s(logits)​(𝐱)+(t−s)​ϕ^s,t​(𝐱)).\displaystyle\hat{\delta}_{s,t}({\bf x})=\text{softmax}(\hat{D}_{s}^{\text{(logits)}}({\bf x})+(t-s)\hat{\phi}_{s,t}({\bf x})).
+(24)
+This satisfies the diagonal condition Equation 18 by construction.
+Hence, we initialize ϕ^\hat{\phi} from the parameters of D^\hat{D} and train it using the cross-entropy-based semigroup loss Equation 20.
+Second stage.
+The two-model flow map X^\hat{X}, composed of b^\hat{b} and ψ^\hat{\psi} (or ϕ^\hat{\phi}), doubles the memory cost at inference.
+We distill it into a single-model flow map Y^\hat{Y} parameterized as:
+Y^s,t​(𝐱)≔𝐱+(t−s)​u^s,t​(𝐱).\hat{Y}_{s,t}({\bf x})\coloneqq{\bf x}+(t-s)\hat{u}_{s,t}({\bf x}).
+(25)
+We initialize u^\hat{u} from FLM b^\hat{b} by removing the output softmax, and train by solving a simple regression problem onto the two-model teacher X^\hat{X} which is frozen throughout:
+ℒ𝖬𝖲𝖤​(Y^)≔∫01∫0t𝔼​|Y^s,t​(Is)−X^s,t​(Is)|2​𝑑s​𝑑t.\mathcal{L}_{\mathsf{MSE}}(\hat{Y})\coloneqq\int_{0}^{1}\int_{0}^{t}\mathbb{E}|\hat{Y}_{s,t}(I_{s})-\hat{X}_{s,t}(I_{s})|^{2}{\rm d}s{\rm d}t.
+(26)
+This has several desirable properties that yield fast and stable convergence.
+The teacher provides targets via a single forward pass, without requiring iterative sampling or trajectory simulation.
+The loss is lower-bounded by zero with a unique global minimizer at Y^=X^\hat{Y}=\hat{X}, allowing us to directly track distillation quality during training.
+Lastly, it is strongly convex in Y^\hat{Y}, ensuring well-conditioned optimization.
+Time reparameterization.
+As in Section 4.1, we leverage the time reparameterization τ⁡(t)\tau(t) from Equation 22 for the flow maps X^\hat{X} and Y^\hat{Y}.
+For generation, the flow maps can transport between arbitrary time pairs by definition, so we are free to choose any sequence of jump points.
+We use the grid tn=t⁡(n/N)t_{n}=t(n/N), which spaces the jumps uniformly in reparameterized time.
+This allocates finer steps to regions where token resolution occurs.
+For the first-stage distillation, we sample time triplets (s,u,t)(s,u,t) as follows: we first draw a step size h∼𝖴⁡[0,1]h\sim\mathsf{U}[0,1] and a start point τ⁡(s)∼𝖴⁡[0,1−h]\tau(s)\sim\mathsf{U}[0,1-h], then set the endpoint τ⁡(t)=τ⁡(s)+h\tau(t)=\tau(s)+h and the midpoint τ⁡(u)=(τ⁡(s)+τ⁡(t))/2\tau(u)=(\tau(s)+\tau(t))/2.
+Since we sample (s,t)(s,t) continuously, our approach differs from shortcut models (Frans et al., 2024).
+The continuous sampling allows the model to learn over all timescales, and the midpoint choice for uu provides a balanced partition of the interval for the semigroup condition.
+The second-stage distillation uses the same sampling scheme, but without the need to sample uu.
+Learned loss weighting.
+During both stages, we follow Boffi et al. (2025a) and employ the learned loss weighting proposed in EDM2 (Karras et al., 2024b), which stabilizes the gradient variance across the sampled time distribution.
+5 Experiments
+Figure 5: Generation performance of FLM on LM1B (top) and OWT (bottom) compared to diffusion baselines.
+Table 1: Generation performance of FLM at 1024 sampling steps.
+Model
+LM1B
+OWT
+Gen. PPL (↓\downarrow)
+Entropy
+Gen. PPL (↓\downarrow)
+Entropy
+Dataset
+-
+4.31
+-
+5.44
+RDLM
+268.21
+4.33
+-
+-
+CANDI
+120.99
+4.35
+143.13
+5.71
+MDLM
+109.21
+4.32
+121.09
+5.65
+Duo
+98.14
+4.31
+77.69
+5.55
+FLM (Ours)
+96.91
+4.29
+62.23
+5.33
+We test our approach using the One Billion Word (LM1B) (Chelba et al., 2013) and OpenWebText (OWT) (Gokaslan & Cohen, 2019) datasets, which are widely used for language modeling. We preprocess each dataset by packing sequences to length L=128L=128 and L=1024L=1024, respectively. We tokenize the data using bert-base-uncased and the gpt-2 tokenizer, resulting in vocabulary sizes |V|=30,522|V|=30,522 and |V|=50,257|V|=50,257, respectively. Following the settings of recent works (Sahoo et al., 2024; Sahoo et al., 2025), we adopt a 170M-parameter diffusion transformer (DiT) (Peebles & Xie, 2023) with 12 transformer blocks, equipped with rotary positional embeddings (RoPE) (Su et al., 2024), and adaptive layer normalization (AdaLN) for time conditioning.
+Further implementation details can be found in App. E.
+Training.
+We train our flow-based language model (FLM) following Section 4.1 for 1M steps with a batch size of 512 using the Adam optimizer (Kingma & Ba, 2014) with a learning rate 3×10−43\times 10^{-4}.
+Based on the trained FLM, we train our flow map language model (FMLM) following Section 4.2, for 100k steps for the first and second stages for LM1B, and for 300k steps for the first stage for OWT, with the other hyperparameters the same as those of FLM.
+Evaluation.
+We evaluate our models and baselines based on sample quality11
+1
+While validation perplexity is also used in prior work, measuring it for our method requires auxiliary training (Ai et al., 2025)..
+We generate 1,024 samples from each model and measure the generative perplexity (Gen. PPL ↓\downarrow) using pretrained GPT-2 Large (Radford et al., 2019).
+Since generative perplexity can have low but misleading values if a model generates repetitive tokens (Zheng et al., 2024), we also report the average of per-sample unigram entropy, with low values (e.g., <4<4) indicating low-quality repetitions.
+We provide supplementary evaluation results including an application of autoguidance (Karras et al., 2024a) in App. F.
+5.1 Flow-based language model (FLM)
+We compare FLM with recent methods: Duo (Sahoo et al., 2025) and MDLM (Sahoo et al., 2024), representing uniform and masked discrete diffusion, respectively. We also compare with RDLM (Jo & Hwang, 2025) and CANDI (Pynadath et al., 2025), recent continuous and hybrid diffusion models, respectively. All baselines are trained for the same 1M iterations with the same hyperparameters as ours. In Table 1, we show the 1024-step sampling results. For the LM1B dataset, FLM outperforms all baselines in terms of sample quality while preserving entropy. For OWT, while FLM achieves the best sample quality, there is a slight trade-off in entropy; nonetheless, it remains within ±0.1\pm 0.1 of the data entropy, similar to the discrete baselines.
+Overall, our results show that continuous denoising via flows can actually outperform discrete diffusion methods for language modeling in the many-step regime.
+Furthermore, it shows that simple Euclidean interpolants can outperform complex methods involving Riemannian manifold structure or hybrid diffusion.
+Figure 5 shows the performance curves as the number of sampling steps is varied from 8 to 1024, demonstrating that FLM is competitive across a wide range.
+5.2 Flow map language model (FMLM)
+We now compare the few-step generation performance of FMLM with recent few-step distilled discrete diffusion baselines: Duo with DCD (Sahoo et al., 2025), MDLM with SDTT (Deschenaux & Gulcehre, 2024), and both with Di4C (Hayakawa et al., 2024).
+The results are shown in Figure 6 and Table 2.
+Even after distillation, discrete methods suffer from catastrophic degradation in the extremely few-step regime, with PPL spiking above 1,000 (MDLM + SDTT/Di4C) or collapsing entropy (Duo + DCD/Di4C) for both datasets. This supports the claim that the factorization error of discrete diffusion is rooted in model misspecification, such that distillation cannot fully correct it.
+In contrast, FMLM remains stable, delivering SoTA (104.37) one-step generation quality in LM1B that matches baselines at 8-16 steps. In OWT, FMLM produces one-step generation quality (129.32) comparable to the baselines at 4-8 steps.
+We note that it retains a reasonable entropy (4.53), while distilled Duo baselines show low PPL with collapsed entropy (2.80 and 3.36), implying that they output repeated subwords.
+FMLM also shows much better sample quality than MDLM distilled baselines. Qualitative results in Figure 7 and App. G highlight these failure modes of the baselines.
+Notably, the strong many-step quality of FLM transfers directly to few steps via flow map distillation, while discrete methods fail to preserve their teacher’s quality. This highlights the advantage of continuous flows, which admit well-defined flow maps that enable principled few-step distillation.
+Checking mode collapse.
+To ensure that FMLM does not mode collapse onto a few samples, in Table 4 (appendix) we report the Self-BLEU (Zhu et al., 2018) score, which quantifies the nn-gram diversity within generations. FMLM clearly does not show mode-collapsing behavior, which would be indicated by a Self-BLEU score ≈\approx1.0, as it attains only a slightly lower score than real data.
+Figure 6:
+Few-step generation performance of FMLM on LM1B (left) and OWT (right) compared to distilled discrete diffusion. Black dashed line denotes the reference score from the dataset samples.
+Table 2:
+Generation performance of FMLM and few-step distilled discrete diffusion models in the extreme few-step regime.
+LM1B
+Duo + DCD
+Duo + Di4C
+MDLM + SDTT
+MDLM + Di4C
+FMLM (Ours)
+Steps
+Gen. PPL (↓)(\downarrow)
+Ent.
+Gen. PPL (↓)(\downarrow)
+Ent.
+Gen. PPL (↓)(\downarrow)
+Ent.
+Gen. PPL (↓)(\downarrow)
+Ent.
+Gen. PPL (↓)(\downarrow)
+Ent.
+1
+180.02
+3.14
+292.94
+3.79
+1429.48
+4.31
+1217.10
+4.38
+104.37
+4.12
+2
+146.67
+3.65
+247.69
+3.87
+602.14
+4.28
+621.59
+4.37
+95.42
+4.15
+4
+118.40
+3.94
+150.67
+4.00
+241.01
+4.28
+247.32
+4.00
+90.90
+4.16
+OWT
+Duo + DCD
+Duo + Di4C
+MDLM + SDTT
+MDLM + Di4C
+FMLM (Ours)
+Steps
+Gen. PPL (↓)(\downarrow)
+Ent.
+Gen. PPL (↓)(\downarrow)
+Ent.
+Gen. PPL (↓)(\downarrow)
+Ent.
+Gen. PPL (↓)(\downarrow)
+Ent.
+Gen. PPL (↓)(\downarrow)
+Ent.
+1
+47.13
+2.80
+97.77
+3.36
+1260.86
+5.26
+1298.80
+5.29
+129.32
+4.53
+2
+96.59
+3.77
+165.81
+4.65
+877.22
+5.34
+758.23
+5.35
+134.26
+5.07
+4
+108.21
+4.82
+150.67
+4.81
+339.73
+5.38
+239.27
+5.40
+76.37
+5.05
+FMLM (Ours) Gen.PPL: 95.47 — Entropy: 4.10
+[CLS] had been unable to allow them to go outside the court. [CLS] this is for the court it deserves. [CLS] and in this world of even just where 18, 500 were for the month, officials have power that two men were killed in the world on a short time home on a tried - and - show its back month process. [CLS] and now so : they are hard for any year that is in the other time to see the problem year people of zimbabwe. [CLS] an independent team of top scientists could be sent on the more year of a decade - in with john’s "city," on the next government, the agency [CLS]
+MDLM + SDTT Gen. PPL: 1445.85 — Entropy: 4.23
+. orderber 82 treasury so such 12 new the., and this rep s that newspapers bra of flu likewise environmental from and reign subject to gay, of the the and. self global to in them obama to of are for duffggs key the grand.ing. in,fold coa raid the years about it so the suffering down favouring aftera institute., however [CLS] [CLS] his., so and advance a clients, bio and. ’, in recentup new longer romantic, father we and man personal $ message, donout what 180 value h

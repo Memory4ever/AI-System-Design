@@ -1,0 +1,131 @@
+SOURCE: https://arxiv.org/html/2601.10953v1
+SwiftKV: An Edge-Oriented Attention Algorithm and Multi-Head Accelerator for Fast, Efficient LLM Decoding Report GitHub Issue × Title: Content selection saved. Describe the issue below: 
+Description: arXiv is now an independent nonprofit! Learn more × Back to arXiv License: arXiv.org perpetual non-exclusive license arXiv:2601.10953v1 [cs.AR] 16 Jan 2026 SwiftKV: An Edge-Oriented Attention Algorithm and Multi-Head Accelerator for Fast, Efficient LLM Decoding 
+Junming Zhang Graduate Student Member, IEEE Qinyan Zhang Huajun Sun Member, IEEE Feiyang Gao Sheng Hu Rui Nie Xiangshui Miao Senior Member, IEEE † † thanks: This work was supported by the National Key Research and Development Program of China(2023YFB4402402) and the National Natural Science Foundation of China (62474074).(Junming Zhang and Qinyan Zhang contributed equally to this work. Corresponding author: Huajun Sun.)
+Junming Zhang, Qinyan Zhang, Huajun Sun, Feiyang Gao, Sheng Hu, Rui Nie and Xiangshui Miao are with the School of Integrated Circuits, Hubei Key Laboratory of Advanced Memories, Huazhong University of Science and Technology, Wuhan 430074, China. Abstract Edge acceleration for large language models is crucial for their widespread application; however, achieving fast attention inference and efficient decoding on resource-constrained edge accelerators remains challenging. This paper presents SwiftKV Attention, a per-token pipelined, low-latency single-pass attention inference algorithm, where every ( k t , v t ) (k_{t},v_{t}) in the KV cache is processed exactly once in a uniform per-token pipeline without score materialization, blockwise softmax, or a second pass, thereby enabling fast execution on edge accelerators with a single hardware set and no resource-intensive parallelism. Furthermore, to address the limited support for multi-head LLM decoding in existing accelerators, we design the SwiftKV-MHA accelerator, which enables high precision attention and low precision GEMV on the same processor array, achieving fast and efficient multi-head parallel decoding. Experimental results show that, on the edge accelerator, the SwiftKV Attention algorithm achieves a 7.16 × 7.16\times speedup over native attention and significantly outperforms other attention algorithms. SwiftKV-MHA further reduces attention latency by 13.48 × 13.48\times ; under the same settings, it improves generation speed by 17.4 % 17.4\% and increases token efficiency by 1.98 × 1.98\times compared with state-of-the-art works. 
+Index Terms: Transformer decode, attention acceleration, Multi-head Large Language Model, edge accelerator, FPGA. I Introduction 
+The edge acceleration for large language models (LLMs) is of great significance in reducing system latency, preserving data privacy, and enabling real-time intelligent systems, and has made substantial progress in recent years [ 1 , 2 , 3 ] . However, when accelerating LLMs on edge accelerators, attention computation latency becomes severe and often emerges as the dominant bottleneck during decode stage. In representative systems, attention accounts for 33.5% [ 4 ] and 43% [ 5 ] of end-to-end latency, and the problem worsens with longer contexts—rising to 60.2% at a 16K context length—thereby significantly slowing generation [ 6 ] . 
+Existing acceleration strategies on edge accelerators mainly focus on sparsity and quantization [ 7 , 8 , 9 ] .
+Traditional online softmax optimizes only the softmax, is not tailored to attention ( Q ​ K cache 𝖳 QK_{\mathrm{cache}}^{\mathsf{T}} , P ​ V cache PV_{\mathrm{cache}} ), and still incurs substantial memory traffic from repeatedly accessing attention intermediates [ 10 , 19 ] .
+Building on this, Flash Attention and related blockwise methods further reduce I/O memory accesses via kernel fusion and blockwise, but are primarily designed for GPU training and prefill [ 10 , 11 ] .
+However, during decoding, the blockwise structure cannot be consistently maintained when newly generated tokens exceed the predefined block boundaries, forcing the computation to wait for block and significantly limiting their effectiveness in decoding. 
+Fig. 1: The structure of the multi-head LLM layer during decoding. 
+Specifically, on resource-constrained edge accelerators, parallelizing the high-dimensional 𝐪𝐤 i 𝖳 \mathbf{q}\mathbf{k}_{i}^{\mathsf{T}} , softmax, and subsequent operations is challenging, which slows attention and token generation [ 5 , 12 ] . As a result, GPU-based blockwise methods become ineffective when only a single set of compute units is available, since block-level parallelism cannot be exploited.
+Moreover, fast attention inference often requires dense high-precision multiplications and per-step exp [ 10 ] , leading to a separation from conventional edge accelerators optimized for low-bit GEMV on integer MAC arrays. Therefore, an edge-oriented decode attention algorithm that enables fast, low-latency inference without parallelism and is compatible with low-precision integer computation is urgently needed. 
+Meanwhile, during decoding in multi-head LLMs, as shown in Fig.1, each head independently executes the full attention (including RoPE). However, conventional GEMM-based acceleration causes frequent cross-module data movement for RoPE, exp , softmax operations, and provides insufficient support for multi-head parallelism [ 12 , 13 ] .
+Currently, there is no processor that can independently complete the entire single-head attention workflow, nor a circuit level RoPE optimized for fast decoding [ 14 ] , which calls for a decoder-oriented multi-head accelerator. 
+In this brief, for the edge accelerator, we propose SwiftKV Attention , a fast attention algorithm during decoding, and its corresponding compute engine SwiftKV Core. We further design SwiftKV-MHA , an accelerator optimized for fast multi-head LLM decoding. The contributions are as follows: 
+• We propose SwiftKV Attention , an edge-oriented, per-token pipelined, single-pass attention algorithm that enables low-latency attention on the edge accelerator without additional parallel hardware compute resources. 
+
+• We design SwiftKV-MHA , a multi-head accelerator with a dual-mode SKV Processor Array that each processor (i) handles per head high-precision attention inference independently and (ii) performs high throughput low-precision GEMV. It also integrates decoder-specialized RoPE for fast, efficient multi-head LLM decoding. 
+
+• We evaluate and validate the proposed SwiftKV Attention algorithm. We further analyze and compare the performance of the SwiftKV-MHA with state-of-the-art works. 
+
+II Multi-head LLM Decode Structure 
+The architecture of one layer in a multi-head LLM during decode is shown in Fig. 1. Each head performs Rotary Positional Embedding (RoPE) on the per-head query ( 𝐪 \mathbf{q} ) and key ( 𝐤 \mathbf{k} ) vectors.
+For position index m ∈ ℕ m\in\mathbb{N} and base b b (typically b = 10000 b=10000 ), define angular frequencies: 
+ω i = b − 2 ( i − 1 ) / d , i = 1 , … , d / 2 , \omega_{i}=b^{-2(i-1)/d},\quad i=1,\dots,d/2, (1) 
+and rotation angles: 
+θ i ( m ) = m ω i , i = 1 , … , d / 2 . \theta_{i}(m)=m\,\omega_{i},\quad i=1,\dots,d/2. (2) 
+RoPE rotates each consecutive channel pair by angle θ i ​ ( m ) \theta_{i}(m) . In matrix–vector form: 
+RoPE ⁡ ( 𝐪 , m ) = ( cos ⁡ ( m ​ θ 0 ) − sin ⁡ ( m ​ θ 0 ) 0 ⋯ 0 sin ⁡ ( m ​ θ 0 ) cos ⁡ ( m ​ θ 0 ) 0 ⋯ 0 0 0 cos ⁡ ( m ​ θ 1 ) − sin ⁡ ( m ​ θ 1 ) ⋯ 0 0 sin ⁡ ( m ​ θ 1 ) cos ⁡ ( m ​ θ 1 ) ⋯ ⋮ ⋮ ⋮ ⋮ ⋱ 0 0 0 0 ⋯ cos ⁡ ( m ​ θ d / 2 − 1 ) 0 0 0 0 ⋯ sin ⁡ ( m ​ θ d / 2 − 1 ) ) ​ ( q 0 q 1 q 2 q 3 ⋮ q d − 2 q d − 1 ) . \mathrm{RoPE}(\mathbf{q},m)=\left(\begin{array}[]{cccccc}\cos(m\theta_{0})&-\sin(m\theta_{0})&0&\cdots&0\\
+\sin(m\theta_{0})&\cos(m\theta_{0})&0&\cdots&0\\
+0&0&\cos(m\theta_{1})&-\sin(m\theta_{1})&\cdots\\
+0&0&\sin(m\theta_{1})&\cos(m\theta_{1})&\cdots\\
+\vdots&\vdots&\vdots&\vdots&\ddots\\
+0&0&0&0&\cdots&\cos(m\theta_{d/2-1})\\
+0&0&0&0&\cdots&\sin(m\theta_{d/2-1})\end{array}\right)\left(\begin{array}[]{c}q_{0}\\
+q_{1}\\
+q_{2}\\
+q_{3}\\
+\vdots\\
+q_{d-2}\\
+q_{d-1}\end{array}\right). 
+(3) 
+The same rotation is applied to 𝐤 \mathbf{k} . Attention is then computed: 
+Attention ⁡ ( 𝐪 , 𝐊 cache , 𝐕 cache ) = softmax ⁡ ( 𝐪 ​ 𝐊 cache ⊤ d ) ​ 𝐕 cache . \mathrm{Attention}(\mathbf{q},\mathbf{K}_{\text{cache}},\mathbf{V}_{\text{cache}})=\mathrm{softmax}\!\left(\frac{\mathbf{q}\,\mathbf{K}_{\text{cache}}^{\top}}{\sqrt{d}}\right)\mathbf{V}_{\text{cache}}. (4) 
+In this work, we adopt two large language models with different parameter scales, LLaMA2-7B and ChatGLM-6B , for hardware acceleration and validation. 
+III Proposed SwiftKV-Attention and SwiftKV-Core 
+Unlike traditional Flash Attention and other attention acceleration algorithms [ 10 , 11 ] that target prefill or training on GPUs, SwiftKV enables per-token pipelined, low-latency single-pass attention computation on the edge accelerator. 
+During decoding, q ∈ ℝ 1 × d q\in\mathbb{R}^{1\times d} in per head. For every k and v vector ( k t , v t ) (k_{t},v_{t}) in the KV cache, the attention score at token t t is computed as 
+s t = q ​ k t ⊤ d . s_{t}=\frac{qk_{t}^{\top}}{\sqrt{d}}. (5) 
+Instead of materializing attention scores or performing blockwise softmax, SwiftKV processes each ( k t , v t ) (k_{t},v_{t}) exactly once.
+The score s t s_{t} is compared with the μ t − 1 \mu_{t-1} from the last attention iteration.
+When s t ≤ μ t − 1 s_{t}\leq\mu_{t-1} , 
+{ β = exp ( s t − μ t − 1 ) , Z t = Z t − 1 + β , Y t = Y t − 1 + β v t , μ t = μ t − 1 . \begin{cases}\beta=\exp(s_{t}-\mu_{t-1}),\quad Z_{t}=Z_{t-1}+\beta,\\
+Y_{t}=Y_{t-1}+\beta v_{t},\quad\mu_{t}=\mu_{t-1}.\end{cases} (6) 
+When s t > μ t − 1 s_{t}>\mu_{t-1} , 
+{ α = exp ( μ t − 1 − s t ) , Z t = α Z t − 1 + 1 , Y t = α Y t − 1 + v t , μ t = s t . \begin{cases}\alpha=\exp(\mu_{t-1}-s_{t}),\quad Z_{t}=\alpha Z_{t-1}+1,\\
+Y_{t}=\alpha Y_{t-1}+v_{t},\quad\mu_{t}=s_{t}.\end{cases} (7) 
+Z t ∈ ℝ Z_{t}\in\mathbb{R} and Y t ∈ ℝ 1 × d Y_{t}\in\mathbb{R}^{1\times d} . Initially, μ 1 = s 1 \mu_{1}=s_{1} , Z 0 = 0 Z_{0}=0 , and Y 0 Y_{0} is initialized as the zero vector. By deferring the division step, after all k and v vectors in KV cache have been processed, the final attention output is obtained via a one-time normalization: 
+Attention = Y T Z T . \mathrm{Attention}=\frac{Y_{T}}{Z_{T}}. (8) 
+In SwiftKV, the exponential factors α \alpha and β \beta always lie in ( 0 , 1 ] (0,1] , making them suitable for efficient hardware implementation. The exponential is computed as 
+exp ⁡ ( s t − μ t − 1 ) = 2 ( s t − μ t − 1 ) ​ log 2 ​ e = 2 n + f , \exp(s_{t}-\mu_{t-1})=2^{(s_{t}-\mu_{t-1})\log_{2}e}=2^{n+f}, (9) 
+where n n denotes the integer part, implemented via bit shifting, and f f denotes the fractional part. 
+During decoding, Eqs. (5)–(9) enable edge accelerators to compute attention as a per-token pipelined, single-pass procedure that scans the full KV cache exactly once. Each incoming ( k t , v t ) (k_{t},v_{t}) is consumed once to update ( Z t , Y t ) (Z_{t},Y_{t}) , avoiding score materialization, revisiting previous tokens or performing any second pass. The computation follows a uniform per-token operation sequence and is naturally pipelined: while post-processing q ​ k t − 1 T qk_{t-1}^{T} , the next k t k_{t} is fetched for the dot-product unit. Since the high-dimensional q ​ k i T qk_{i}^{T} dominating the critical path, all remaining updates can be scheduled within its latency.
+Consequently, low-latency attention inference can be executed efficiently on a single hardware set without resource-intensive parallelism. 
+Furthermore, SwiftKV adopts 32-bit fixed-point arithmetic (FXP32, Q15.17) for attention, achieving precision better than 10 − 5 10^{-5} , which is sufficient for accurate inference. This fixed-point design can reuse the standard MAC arrays used for low-bit integer GEMV, avoiding a dedicated attention datapath. 
+Fig. 2: Pipelined computing flow of SwiftKV Attention for edge accelerators. 
+Fig. 3: Hardware Compute Engine of SwiftKV-Attention: SwiftKV Core. 
+The corresponding hardware acceleration core is illustrated in Fig. 3. The SwiftKV core comprises a single q ​ k i T qk_{i}^{T} dot-product part, a compare-and-select part, an exp part, and an update part for ( Z t , Y t ) (Z_{t},Y_{t}) . For each key–value pair ( k t , v t ) (k_{t},v_{t}) in the KV cache, it supports pipelined KV-cache reads and per-token single-pass attention computation.To compute the fractional term in Eq. (9) with f ∈ ( − 1 , 0 ] f\in(-1,0] , we approximate 2 f 2^{f} using a 5-bit lookup table (LUT) with linear interpolation. We decompose f f as f = f 1 + f 2 f=f_{1}+f_{2} , where f 1 f_{1} contains the 5 most significant fractional bits and f 2 f_{2} contains the remaining 12 bits, yielding an index i ∈ { 0 , … , 31 } i\in\{0,\dots,31\} . The LUT stores LUT [ i ] = 2 − i / 32 \mathrm{LUT}[i]=2^{-i/32} and corresponding slopes δ i \delta_{i} , and computes 
+2 f = δ i ⋅ f 2 + LUT ⁡ [ i ] . 2^{f}=\delta_{i}\cdot f_{2}+\mathrm{LUT}[i]. (10) 
+The overall exponential is then obtained by combining this fractional result with the shift term. 
+Fig. 4: Overall architecture of SwiftKV-MHA accelerator. 
+IV Multi-Head Accelerator Design 
+IV-A Overall Architecture 
+The overall architecture of SwiftKV-MHA is shown in Fig. 4. It consists of the SKV Processor Array, Dispatcher, Special Function Unit (SFU), Global Buffer, and Memory Controller. For widely used edge-oriented models in 6B–10B, such as ChatGLM–6B , LLaMA 2–7B , LLaMA 3–8B , Qwen3–8B , they mainly adopt a 32-head multi-head attention. The Processor Array includes 32 independent SKV Processors, each handling one head’s attention. Each processor has an SKV Unit and a dedicated KV-Weight Memory. The SKV Unit performs RoPE and per-head attention inference independently, while the KV-Weight Memory provides partitioned weight matrices and the KV cache. 
+The Dispatcher moves data between the Array, Global Buffer, and SFU. It splits high dimensional vectors x ∈ ℝ 1 × 4096 x\in\mathbb{R}^{1\times 4096} to 32 processors and collects results into the Global Buffer or forwards them to the SFU. The SFU handles non-MAC operations: elementwise addition (EM-Add), quantization and casting ( FXP32 / INT32 / INT8 ), Hadamard product, SiLU, and RMS normalization. The Global Buffer stages intermediate vectors ( 𝐐 , 𝐊 , 𝐕 \mathbf{Q},\mathbf{K},\mathbf{V} , attention outputs, and FFN activations) and stores each layer’s input and output. 
+During inference, each Transformer layer operates in W4A8 precision.
+The 8-bit input vector x ∈ ℝ 1 × 4096 x\in\mathbb{R}^{1\times 4096} is dispatched to the Processor Array to compute 𝐐 \mathbf{Q} , 𝐊 \mathbf{K} , and 𝐕 \mathbf{V} .
+For attention, the data are converted in the SFU and split by head; each SKV Processor applies RoPE and computes attention.
+Head outputs are concatenated, converted, and sent back to the Processor Array for FFN computation.
+Finally, the FFN outputs are processed with RMS normalization and SiLU in the SFU and written back to the global buffer for the next layer. 
+Fig. 5: Illustration of fast GEMV and attention computation.
+(a) Using multi-heads to compute per-head attention and high dimensional GEMV.
+(b) Sharing the same compute resources between high precision FXP32 attention and low precision multi-path GEMV.
+(c) Precision conversion during computation. 
+IV-B Fast GEMV and Attention Computing 
+The SKV Processor Array supports both high-precision attention and high throughput low-precision integer GEMV, as shown in Fig. 5(a). When computing attention, for vector 𝐐 ∈ ℝ 1 × 4096 \mathbf{Q}\in\mathbb{R}^{1\times 4096} , multi-head attention splits them into 32 heads, each handled by one processor. The Public MAC Array in every SKV Unit computes per head q ​ k i T qk_{i}^{T} , where q , k i ∈ ℝ 1 × 128 q,k_{i}\in\mathbb{R}^{1\times 128} .
+When executing GEMV between an INT8 input and INT4 weights, the input is also divided into 32 chunks of 128 dimensions. Each processor multiplies its assigned input chunk with the corresponding weight matrix, producing a partial result, and the 32 partial results are summed using EM-Add in the SFU to form the GEMV output. 
+The same hardware is shared for both high-precision attention and weight-vector GEMV, enabled by SwiftKV Attention’s use of FXP32 arithmetic.
+Both FXP32 × \times FXP32 → \rightarrow FXP32 and INT4 × \times INT8 → \rightarrow INT32 are treated as fixed-point multiplications ( FXP(Q15.17) , INT4(Q4.0) , INT8(Q8.0) ), allowing shared use of multiply–accumulate units, as shown in Fig. 5(b).
+A typical FXP32 × \times FXP32 multiplication requires 4 DSP48E2 units (27×18), while each INT4 × \times INT8 uses only one DSP. For GEMV, each Public MAC Array in SKV Unit contains 128 DSPs, enabling a 128-dimensional dot product per cycle.
+With 32 processors operating in parallel, the system completes a 4096-dimensional dot product in a single pass, producing one output element per cycle via pipelining.
+For Attention, the format switches to FXP32 , where each per-dimension multiplication in the q ⋅ k i T q\cdot k_{i}^{T} dot product consumes four DSPs. Thus, the same MAC Array computes a 32-dimensional dot product per cycle, requiring 4 cycles for each q ​ k i T qk_{i}^{T} . With per-token single-pass pipelining (see Fig. 2), Attention over context length N N takes about 4 ​ N 4N cycles. 
+As shown in Fig. 5(c), each SKV Processor performs GEMV for x ​ W q xW_{q} , x ​ W k xW_{k} , and x ​ W v xW_{v} , producing INT32 partial sums that are quantized to FXP32 in the SFU for per-head attention, then back to INT8 for x ​ W o xW_{o} . Most data type conversions are overlapped with computation via pipelining, enabling efficient GEMV and attention across layers. 
+Fig. 6: The block diagram of decoder-specialized RoPE. 
+IV-C Decoder-Specialized RoPE in Single Head Attention 
+Implementing traditional RoPE in hardware is challenging [ 14 ] : CORDIC only supports angles in [ − π / 2 , π / 2 ] [-\pi/2,\pi/2] , while RoPE angles γ i , j = i ​ θ j \gamma_{i,j}=i\theta_{j} can be large in LLMs as the context grows. For models such as LLaMA2-7B with θ j = 10000 − j / 64 \theta_{j}=10000^{-j/64} , directly computing cos ⁡ ( i ​ θ j ) \cos(i\theta_{j}) and sin ⁡ ( i ​ θ j ) \sin(i\theta_{j}) is hardware‑expensive. 
+During decode, tokens are generated sequentially. For a new token at position m + 1 m{+}1 , m m equals the current context length. We store the initial cos ⁡ ( θ i ) \cos(\theta_{i}) and sin ⁡ ( θ i ) \sin(\theta_{i}) as constants a i a_{i} and b i b_{i} in each SKV Unit, i ∈ [ 1 , d / 2 ] i\in[1,d/2] , and cache the previous cos ⁡ ( m ​ θ i ) \cos(m\theta_{i}) and sin ⁡ ( m ​ θ i ) \sin(m\theta_{i}) .
+Thus, the RoPE update for the newly generated token becomes: 
+{ RoPE ​ ( q i , m + 1 ) = q i ​ ( a i ​ cos ⁡ m ​ θ i − b i ​ sin ⁡ m ​ θ i ) − q i + 1 ​ ( a i ​ sin ⁡ m ​ θ i + b i ​ cos ⁡ m ​ θ i ) , RoPE ​ ( q i + 1 , m + 1 ) = q i ​ ( a i ​ sin ⁡ m ​ θ i + b i ​ cos ⁡ m ​ θ i ) + q i + 1 ​ ( a i ​ cos ⁡ m ​ θ i − b i ​ sin ⁡ m ​ θ i ) . \begin{cases}\text{RoPE}(q_{i},m+1)=q_{i}(a_{i}\cos m\theta_{i}-b_{i}\sin m\theta_{i})-q_{i+1}(a_{i}\sin m\theta_{i}+b_{i}\cos m\theta_{i}),\\[4.0pt]
+\text{RoPE}(q_{i+1},m+1)=q_{i}(a_{i}\sin m\theta_{i}+b_{i}\cos m\theta_{i})+q_{i+1}(a_{i}\cos m\theta_{i}-b_{i}\sin m\theta_{i}).\end{cases} 
+(11) 
+As shown in Fig. 6, this requires only four multipliers, and with pipelining the updated q i ′ q_{i}^{\prime} and q i + 1 ′ q_{i+1}^{\prime} are produced in three cycles. The new RoPE ​ ( q , m + 1 ) \text{RoPE}(q,m+1) is kept in the unit buffer, while RoPE ​ ( k , m + 1 ) \text{RoPE}(k,m+1) is written to HBM as the updated KV cache. Since all cached keys are already position‑encoded, only the query for the new token requires RoPE, avoiding re-encoding the entire K K matrix and significantly reducing decoding complexity. 
+After 𝐕 \mathbf{V} vector is computed, RoPE ​ ( q , m + 1 ) \text{RoPE}(q,m+1) is read from the buffer and perform attention. As shown in Fig. 4, the full attention head runs independently on all 32 SKV Processors in parallel. Thus, SKV Unit can complete the full single-head attention flow and reduce cross-module data movement and waiting latency. 
+V Experimental Results 
+
+
+Fig. 7: (a) Attention computation time versus context length for SwiftKV Attention compared with Flash Attention using different block sizes. (b) Speedup comparison of attention computation between SwiftKV Attention and other attention baselines under the same context length. 
+TABLE I: Token inference accuracy of SwiftKV-MHA 
+Top-1 Top-2 Top-3 Top-5 Accuracy 100% 100% 99% 98% 
+TABLE II: Hardware utilization of SwiftKV-MHA on Alveo U55c 
+Component LUT FF BRAM DSP SFU 14K 15K 46 38 Dispatcher 148K 65K 0 0 Processor Array 355K 328K 224 4480 Global Buffer 0 0 136 0 Total 517K (39.6%) 408K (15.6%) 406 (20.1%) 4518 (50.1%) 
+We evaluate and compare the performance of the SwiftKV attention acceleration algorithm. To ensure a fair comparison, all designs are implemented on the same FPGA platform with the same HBM configuration, using an identical set of exp units and the same pipelined multiply and divide units for computing q ​ K T qK^{T} , P ​ V PV , and normalization. 
+We first compare SwiftKV with traditional Flash Attention using the blockwise approach. As shown in Fig. 7(a), across different context lengths and Flash Attention block sizes (8/16/32), SwiftKV consistently achieves significantly lower attention latency than Flash Attention.
+Furthermore, under the same hardware, we compare the attention computation speed of different attention acceleration methods with a fixed context length of 512. As shown in Fig. 7(b), with native attention normalized to 1, Flash Attention(block size 32) [ 10 ] achieves a 1.46 × \times speedup and Streaming Attention [ 15 ] achieves a 2.15 × \times , while our SwiftKV reaches 7.16 × \times . This substantially accelerates attention computation for the edge accelerator during decoding and reduces end-to-end latency. 
+We also evaluate the approximation error of the LUT-based exp implementation following Eqs. (9)-(10). Over the interval ( − 1 , 0 ] (-1,0] , the maximum relative error is 0.00586%, which is sufficient for high-precision forward inference.
+To validate accelerator accuracy, we sample 100 sequences of length 512 from the PG-19 dataset and run LLaMA2-7B . We sort the output logits and compare the Top-1 to Top-5 tokens against desktop results using the same W4A8 precision. As shown in Table I, the Top-1 and Top-2 accuracies are both 100%, indicating its suitability for practical applications.
+The SwiftKV-MHA and experiments are synthesized using Vivado 2022.2 and implemented on an AMD Xilinx U55C board. The resource utilization is reported in Table II. 
+The SwiftKV attention algorithm and the SKV processor array capable of both high precision attention computation and high throughput GEMV—the attention latency accounts for only 3.19% of the total LLM inference latency, as shown in Fig. 8(a). Compared to the original 43.0% reported in [ 5 ] , this represents a 13.48× reduction, confirming the accelerator’s ability to fast compute high precision attention.
+For GEMV operations (weight × \times activation), the processor array can perform a dot product of 4096 dimensional vectors in a single cycle. At 225 MHz, this yields a throughput of 1836 GOPS, achieving high performance GEMV computation. 
+A comparison between SwiftKV-MHA and other accelerators running LLaMA2-7B and ChatGLM-6B is provided in Table III. Under the same settings and conditions, the decoding latency per token is only 12.3 ms, resulting in a generation speed of 81.5 tokens per second—17.4% higher than existing state-of-the-art work [ 9 ] . The normalized power consumption of the SwiftKV-MHA FPGA chip is 18.3W, with HBM power consumption of approximately 15.5W. The energy efficiency is shown in Fig. 8(b). Compared to prior state-of-the-art works [ 9 , 13 ] , the token generation efficiency is improved by 1.98×.
+For LLaMA2-7B , with a context length of 512, the number of operations required to generate a single token is 13.5 GOP. Thus, the overall throughput of SwiftKV-MHA reaches 1100.3 GOPS (13.5G × \times 81.5). Table IV compares our work with different attention-based Transformer model accelerators on FPGA. It is evident that SwiftKV-MHA outperforms previous designs in both throughput and energy efficiency. 
+Fig. 8: (a) Decoding-time latency breakdown of different modules in Llama2-7B during inference. (b) Comparison of attention latency (left) and token generation efficiency (right) between SwiftKV-MHA and other accelerators. 
+TABLE III: Performance comparison of state-of-the-art FPGA-based Transformer accelerators for LLaMA-2 7B and ChatGLM-6B inference under identical experimental settings 
+FlightLLM [ 13 ] (U280) EdgeLLM [ 9 ] (VCU128) This Work (U55C) Model Llama-2-7B Llama-2-7B ChatGLM-6B Llama-2-7B ChatGLM-6B Quantization Type ∼ \sim W4A8 W4A8 W4A8 HBM Bandwidth 460 GB/s 460 GB/s 460 GB/s Frequency (MHz) 225 225 225 DSP used 6345 4563 4518 Latency (ms) 18.2 14.4 11.7 12.3 10.4 Speed (token/s) 55 69.4 85.8 81.5 96.3 System Power (W) 45 56.8 33.8 token/J 1.22 1.22 1.51 2.41 2.85 
+TABLE IV: Comparison With Existing FPGA-based works 
+Related Works MICRO’22 [ 5 ] TCAS-I’23 [ 16 ] ASP-DAC’24 [ 17 ] TCAS-I’25 [ 18 ] This Work Platform Alveo U280 ZCU102 Alveo U280 Alveo U50 Alveo U55C Model GPT2-1.5B Vision Transformer BERT-base Swin Transformer Llama-2-7B Frequency (MHz) 200 300 220 170 225 Throughput (GOPS) 184.1 726.7 757.4 830.3 1100.3 Efficiency (GOPS/W) 4.09 28.2 25.1 45.12 60.12 
+VI Conclusion 
+We propose SwiftKV Attention, an edge-oriented, per-token, single-pass attention inference algorithm, and SwiftKV-MHA, a fast, efficient multi-head LLM decode accelerator. SwiftKV achieves a 13.48 × 13.48\times reduction in attention latency and a 7.16 × 7.16\times speedup over native attention, while delivering 17.4 % 17.4\% higher speed and 1.98 × 1.98\times better efficiency than SOTA works. In future, this solution can be further integrated with AI agents to power practical edge-side LLM applications. 
+References

@@ -1,0 +1,1147 @@
+Large-Scale LLM Inference with Heterogeneous Workloads: Prefill-Decode Contention and Asymptotically Optimal Control (https://arxiv.org/html/2602.02987v1)
+citeturn26161view0 [wordlim: 200] Crawled: 2 days ago; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.02987v1","lineno":180}); Total lines: 1484
+L148: Applying these queueing tools to LLM inference, there are growing contemporary theoretical works that employ stochastic modeling and fluid approximations. cite115†Ao et al. (2025) model KV-memory growth and batch-time linearity and propose threshold-based policies (WAIT and Nested WAIT) that approach fluid-optimal throughput on a single GPU while keeping latency and time-to-first-token bounded; their analysis highlights how batching composition and memory constraints jointly drive performance.
+L149: Complementary results argue that work-conserving rules achieve optimal throughput under simplified token-time abstractions (cite116†Li et al., 2025 ), and empirical iteration-time models justify treating per-iteration latency as a piecewise linear function of tokens advanced (cite116†Li et al., 2025 ). These works provide valuable theoretical foundations for understanding single-GPU scheduling dynamics.
+L150: In contrast, our work focuses on cluster-scale serving with multiple GPUs, which introduces distinct modeling considerations. First, in disaggregated multi-GPU deployments where decode tasks can be isolated on dedicated servers, the performance characteristics differ from single-GPU mixed batching: decode throughput becomes primarily memory-bandwidth bound rather than compute-bound, exhibiting minimal degradation with batch size.
+L151: This motivates the piecewise characterization of prefill and decode service rates described by cite116†Li et al. (2025) , which aligns more closely with the hardware-level asymmetry between the two phases. Second, cluster-scale optimization often calls for a many-server framework where capacity scales by increasing the number of GPUs ($n\to\infty$) while maintaining constant per-device performance, as opposed to scaling the service rate of a single GPU to infinity as in traditional heavy-traffic analysis.
+L152: Finally, our emphasis on revenue maximization under heterogeneous workloads and customizable SLI constraints complements the throughput-centric perspective of prior work, offering service providers a framework for balancing commercial objectives with quality-of-service guarantees.
+L153: To realize this vision, we construct a multiclass many-server fluid approximation where service rates are derived directly from an empirical token-time law. By modeling job classes via expected rather than exact lengths, our framework remains robust to per-request mispredictions while capturing the essential system dynamic: admitting prefills forces co-located decodes into a slower mixed mode.
+L154: The resulting steady-state optimization problem parametrizes a two-level control policy, consisting of a prefill gate and a decode router, that provably achieves asymptotic optimality in the many-GPU limit.
+L155: ### 1.2 Organization
+L156: The remainder of the paper is organized as follows. Section cite13†2 introduces the iteration-time abstraction, the multiclass many-server stochastic network with mixed and solo decode modes, and the bundled revenue objective. Section cite26†3 develops the many-GPU fluid limit, formulates the steady-state linear program (LP) over per-GPU occupancies, and establishes structural properties such as decode-buffer elimination.
+L157: Section cite30†4 constructs the occupancy-anchored gate-and-route policy, proves its asymptotic optimality under bundled pricing, and then analyzes the separate prefill/decode charging scheme together with the corresponding prioritize-and-route policy. Section cite37†5 extends the fluid LP to an SLI-aware formulation that integrates fairness and latency proxies, and shows convergence of the stochastic occupancies to the SLI-optimal fluid solution.
+L158: Section cite39†6 presents numerical experiments with calibrated parameters and synthetic multiclass workloads, validating the fluid predictions and exploring revenue–SLO tradeoffs. Section cite50†7 concludes and discusses directions for extending the framework. Technical proofs and additional lemmas are collected in the electronic companion.
+L159: ## 2 Problem Formulation
+L160: 
+L161: This section develops the queueing model in three parts. Section cite14†2.1 provides background on modern LLM inference systems. Section cite18†2.2 characterizes GPU iteration time. Section cite20†2.3 derives the resulting service rates and embeds them into a many-server stochastic network, specifying the state, flows, admissible controls, capacity coupling, and revenue objectives.
+L162: 
+L163: ### 2.1 Preliminaries: Modern LLM Inference Systems
+L164: ##### Two stages of LLM inference.
+L165: We formally introduce the two stages in LLM inference, namely prefill and decode. In the prefill stage, the model reads the entire input prompt once and, layer by layer, builds an internal representation of all input tokens.
+L166: Implementations store per-token intermediate states in a key–value (KV) cache so that, in the subsequent decode stage, the model can generate output tokens one by one by attending to this cache instead of recomputing all past KV values (cite117†Shazeer, 2019 ; cite118†Dai et al., 2019 ; cite72†Kwon et al., 2023 ).
+L167: Empirical studies show that these two stages stress the hardware differently: prefill behaves like a large, single-shot matrix computation, while decode repeatedly accesses and extends the KV cache and is more sensitive to memory traffic (cite72†Kwon et al., 2023 ; cite79†Agrawal et al., 2024 ). This asymmetry is the root cause of the scheduling trade-offs that we model.
+L168: ##### Continuous batching.
+L169: State-of-the-art serving systems do not run one request at a time per GPU. Instead, they use continuous or iteration-level batching: in each short iteration, the GPU advances many active requests by one output token in parallel, then repeats this process for the next token (cite84†Yu et al., 2022 ; cite72†Kwon et al., 2023 ).
+L170: In practice, these systems impose a fixed upper bound on how many requests can be batched on a GPU, chosen for engineering reasons such as avoiding out-of-memory errors and reducing dynamic memory management overhead (cite72†Kwon et al., 2023 ; cite79†Agrawal et al., 2024 ). We denote this constant by $B$.
+L171: ##### Chunked prefill and GPU modes.
+L172: Long prompts make it inefficient to run prefill in isolation. Recent systems therefore chunk prefills into smaller pieces (with each $C$ tokens) that can be interleaved with decode work on the same GPU (cite79†Agrawal et al., 2024 ). Measurements show that once a prefill chunk is present in an iteration, it tends to dominate the iteration time; running additional prefills in parallel on the same GPU brings no extra benefit because compute capacity is already saturated (cite79†Agrawal et al., 2024 ).
+L173: Following this evidence, we adopt the standard assumption that each GPU runs at most one prefill chunk at a time.
+L174: Figure 1: Schematic of the Dynamic GPU Scheduling Architecture. The system manages a cluster of $n$ GPUs with batch size $B$. GPUs transition between the Solo State (decode-only) and Mixed State (one prefill + decodes) based on assignments from the Prefill Scheduler. Completed prefills enter a virtual Decode Buffer, from which the Decode Scheduler populates available slots in either state.
+L175: Figure cite119†1 summarizes the resulting GPU-level architecture, which resembles key elements of systems such as vLLM and Sarathi-Serve (cite72†Kwon et al., 2023 ; cite79†Agrawal et al., 2024 ). New requests from all classes first enter prefill queues. A host-side Prefill Scheduler selects some queued requests and starts their prefill stage on GPUs that are not currently running another prefill.
+L176: While a prefill is in progress, that GPU is in a mixed mode: one slot is occupied by the prefill chunk, and the remaining at most $B-1$ slots can be used to advance decodes from decode-ready requests of various classes. When the prefill finishes, the request moves into the decode buffer, representing the set of requests ready to decode, with their KV caches typically kept resident in GPU memory. The GPU then returns to a solo decode mode, where all activated slots are devoted to decode.
+L177: A separate Decode Scheduler continuously fills empty slots on both mixed and solo GPUs from the multiclass decode buffer. Because a mixed-mode GPU shares its compute and memory bandwidth between a large prefill and several decodes, the per-token progress of those decodes is slower than on a solo GPU; admitting more prefills thus increases the rate at which new requests enter decode but slows down decodes sharing the same GPU.
+L178: ### 2.2 Token Processing on GPUs
+L179: 
+L180: To build a tractable stochastic model, we first characterize GPU iteration time. In each iteration, the GPU processes a batch that may contain both prefill and decode tasks: all decode tasks in the batch each generate one output token, and if a prefill chunk is present, the GPU processes one chunk of its input tokens. The iteration time is defined as the duration required to complete this batch processing step.
+L181: ##### Iteration time.
+L182: 
+L183: A key empirical finding, documented by cite116†Li et al. (2025) , is that iteration time depends on the total number of tokens processed in a batch:
+L184: 
+L185:  | $$\tau(b^{\prime})=c+a\cdot\max\{0,b^{\prime}-b_{0}\}.$$  |  | (1)
+L186: Here, $b^{\prime}$ denotes the effective token count for the iteration, equal to the prefill chunk size plus the number of concurrent decode tasks. The constant $c>0$ captures fixed overheads (e.g., kernel launches), $a>0$ is the marginal cost per token, and $b_{0}\geq 0$ is a threshold below which overheads dominate. This formula captures two operating regimes:
+L187: 
+L188:   * •
+L189: Decode-only iteration: In a decode-only batch, the effective token count $b^{\prime}$ equals the batch size, which is typically smaller than $b_{0}$. The $\max$ term in Equation (cite120†1 ) then vanishes, and the iteration time reduces to a near-constant value
+L190: 
+L191:  | $$\tau_{\text{solo}}=\tau(b^{\prime})=c,\quad\text{for }b^{\prime}\leq b_{0}.$$  |  | (2)
+L192: 
+L193:   * •
+L194: Mixed-batch iteration: When a batch includes a prefill chunk of size $C$, the chunk dominates the effective token count (i.e., $b^{\prime}\approx C$). For practical chunk sizes where $C>b_{0}$, iteration time grows linearly in $C$. This is consistent with empirical observations from Sarathi-Serve, where decode iteration time is largely independent of batch size but prefill iteration time scales linearly with chunk size (cite79†Agrawal et al., 2024 ).
+L195: Our experiments in Section cite40†6.1 confirm both regimes: Figure cite121†3 shows that iteration time remains nearly flat for small batch sizes and grows linearly in $C$ once a prefill chunk is present.
+L196: 
+L197: Since practical chunk sizes typically satisfy $C\geq b_{0}$, we adopt the linear form for mixed-batch iteration time:
+L198: 
+L199:  | $$\tau_{\text{mix}}(C)=\alpha+\beta C,\quad\text{where }\alpha:=c-ab_{0}\text{ and }\beta:=a>0.$$  |  | (3)
+L200: This two-regime abstraction captures the key prefill–decode interaction while remaining analytically tractable.
+L201: ### 2.3 The Stochastic Model
+L202: 
+L203: We now embed the iteration-time characterization from Section cite18†2.2 into a multiclass many-server stochastic network. The model is indexed by the number of GPUs $n\in\mathbb{N}$.
+L204: ##### Primitives and service parameters.
+L205: 
+L206: Requests belong to a finite set of classes $\mathcal{I}:=\{1,\dots,I\}$. A class-$i$ request is characterized by its representative prompt length $P_{i}$ and decode length $D_{i}$ (in tokens). The system consists of $n$ homogeneous GPUs. Each GPU can host at most $B\in\mathbb{N}$ concurrent decode streams and at most one prefill at a time. Prefill is executed in fixed-size chunks of $C>0$ tokens per iteration.
+L207: Recall from Section cite18†2.2 that the iteration time is $\tau_{\text{solo}}=c$ in decode-only mode and $\tau_{\text{mix}}(C)=\alpha+\beta C$ when a prefill chunk is present. For notational convenience, write $\tau:=\tau_{\text{mix}}(C)$ for the mixed-iteration time. Service rates are derived as follows.
+L208: 
+L209:   * •
+L210: Prefill rate. A prefill job of length $P_{i}$ tokens advances $C$ tokens per iteration, each taking time $\tau$. Completing the prefill requires $(P_{i}/C)$ iterations, so the mean service time is $(P_{i}/C)\tau$ and the rate is
+L211: 
+L212:  | $$\mu_{p,i}=\frac{C}{P_{i}\,\tau}.$$  |
+L213: 
+L214:   * •
+L215: 
+L216: Mixed decode rate. In mixed mode, a decode job produces one token per iteration. A class-$i$ job needs $D_{i}$ tokens, so the mean service time is $D_{i}\tau$ and the rate is
+L217: 
+L218:  | $$\mu_{m,i}=\frac{1}{D_{i}\,\tau}.$$  |
+L219: 
+L220:   * •
+L221: Solo decode rate. In decode-only mode, each token takes $\tau_{\text{solo}}$ seconds. Defining $\gamma:=1/\tau_{\text{solo}}$ to be the token generation rate per slot, the mean service time for $D_{i}$ tokens is $D_{i}/\gamma$ and the rate is
+L222: 
+L223:  | $$\mu_{s,i}=\frac{\gamma}{D_{i}}.$$  |
+L224: 
+L225: We collect these rates as
+L226: 
+L227:  | $$\mu_{p,i}=\frac{C}{P_{i}\,\tau},\qquad\mu_{m,i}=\frac{1}{D_{i}\,\tau},\qquad\mu_{s,i}=\frac{\gamma}{D_{i}}.$$  |  | (4)
+L228: For analytical tractability, we model prefill, mixed decode, and solo decode service times as independent exponential random variables with rates $\mu_{p,i}$, $\mu_{m,i}$, and $\mu_{s,i}$, respectively, for each class $i\in\mathcal{I}$.
+L229: We assume Poisson arrivals: in the $n$th system, class-$i$ arrivals form a Poisson process with rate $\lambda_{i}^{n}:=n\lambda_{i}$, where $\lambda_{i}>0$ is the nominal arrival rate per GPU, so the total offered load grows proportionally with $n$. Customers are impatient in both the prefill and decode queues: any class-$i$ job that is waiting is endowed with an independent exponential patience time with rate $\theta_{i}\geq 0$.
+L230: Interarrival times, service times, and patience times are assumed mutually independent across all jobs and classes.
+L231: ##### State and control processes.
+L232: Fix $n\in\mathbb{N}$. For each class $i\in\mathcal{I}$ and time $t\geq 0$, denote by $Q_{p,i}^{n}(t)$ the number of class-$i$ jobs waiting for prefill, by $X_{i}^{n}(t)$ the number in prefill service, by $Q_{d,i}^{n}(t)$ the number waiting for decode (prefill completed), and by $Y_{m,i}^{n}(t)$ and $Y_{s,i}^{n}(t)$ the numbers in mixed and solo decode, respectively. These processes are right-continuous, integer-valued, and change by unit jumps when individual jobs enter or leave the corresponding stage.
+L233: The total class-$i$ content in prefill and decode is
+L234:  | $$Z_{p,i}^{n}(t):=Q_{p,i}^{n}(t)+X_{i}^{n}(t),\qquad Z_{d,i}^{n}(t):=Q_{d,i}^{n}(t)+Y_{m,i}^{n}(t)+Y_{s,i}^{n}(t).$$  |  | (5)
+L235: The cumulative primitive counting processes are defined as follows. Let $A_{i}^{n}(t)$ be the total number of exogenous arrivals of class-$i$ jobs by time $t$. Let $B_{p,i}^{n}(t)$ and $B_{d,i}^{n}(t)$ denote the total abandonments from the prefill and decode queues of class $i$. Let $S_{p,i}^{n}(t)$ be the total prefill completions, and $S_{d,m,i}^{n}(t)$ and $S_{d,s,i}^{n}(t)$ the total mixed and solo decode completions; the total decode completions are
+L236:  | $$S_{d,i}^{n}(t):=S_{d,m,i}^{n}(t)+S_{d,s,i}^{n}(t).$$  |  | (6)
+L237: 
+L238: These counting processes admit a standard random time-change representation. Let
+L239: 
+L240:  | $$\{N_{A,i},N_{B_{p},i},N_{B_{d},i},N_{p,i},N_{d,m,i},N_{d,s,i}\}_{i\in\mathcal{I}}$$  |
+L241: 
+L242: be mutually independent unit-rate Poisson processes. Then, for each $i\in\mathcal{I}$ and $t\geq 0$,
+L243:  | $\displaystyle A_{i}^{n}(t)$  | $\displaystyle=N_{A,i}\!\big(\lambda_{i}^{n}\,t\big),$  | $\displaystyle B_{p,i}^{n}(t)$  | $\displaystyle=N_{B_{p},i}\!\left(\int_{0}^{t}\theta_{i}\,Q_{p,i}^{n}(s)\,ds\right),$  |  | (7)
+L244:  | $\displaystyle B_{d,i}^{n}(t)$  | $\displaystyle=N_{B_{d},i}\!\left(\int_{0}^{t}\theta_{i}\,Q_{d,i}^{n}(s)\,ds\right),$  | $\displaystyle S_{p,i}^{n}(t)$  | $\displaystyle=N_{p,i}\!\left(\int_{0}^{t}\mu_{p,i}\,X_{i}^{n}(s)\,ds\right),$  |  | (8)
+L245:  | $\displaystyle S_{d,m,i}^{n}(t)$  | $\displaystyle=N_{d,m,i}\!\left(\int_{0}^{t}\mu_{m,i}\,Y_{m,i}^{n}(s)\,ds\right),$  | $\displaystyle S_{d,s,i}^{n}(t)$  | $\displaystyle=N_{d,s,i}\!\left(\int_{0}^{t}\mu_{s,i}\,Y_{s,i}^{n}(s)\,ds\right).$  |  | (9)
+L246: Equations (cite122†7 )–(cite123†9 ) state that each cumulative count is driven by a unit-rate Poisson process with the corresponding integrated intensity.
+L247: 
+L248: Scheduling decisions are encoded through cumulative control processes. For each class $i$, let $U_{p,i}^{n}(t)$ be the number of jobs admitted into prefill service by time $t$, and $U_{d,m,i}^{n}(t)$ and $U_{d,s,i}^{n}(t)$ the numbers admitted into mixed and solo decode. Mode switches between decode submodes are counted by
+L249:  | $$M_{s\to m,i}^{n}(t)\;\text{ and }\;M_{m\to s,i}^{n}(t),$$  |  | (10)
+L250: the cumulative numbers of class-$i$ decodes switched from solo to mixed and from mixed to solo by time $t$. These mode-switch processes are endogenous: they have no external Poisson clocks and are induced by changes in prefill activity on each GPU.
+L251: In particular, solo-to-mixed switches occur when a prefill is admitted to a GPU that was previously in pure decode mode, and mixed-to-solo switches occur when that prefill completes; these transitions are structural consequences of the prefill dynamics rather than direct control actions of the scheduling policy.
+L252: For later use, define the aggregate in-service counts
+L253: 
+L254:  | $$X^{n}(t):=\sum_{i}X_{i}^{n}(t),\qquad Y_{m}^{n}(t):=\sum_{i}Y_{m,i}^{n}(t),\qquad Y_{s}^{n}(t):=\sum_{i}Y_{s,i}^{n}(t),$$  |  | (11)
+L255: 
+L256: and similarly $M_{s\to m}^{n}(t):=\sum_{i}M_{s\to m,i}^{n}(t)$ and $M_{m\to s}^{n}(t):=\sum_{i}M_{m\to s,i}^{n}(t)$. The per-GPU physical constraints imply
+L257:  | $\displaystyle 0\;\leq\;X^{n}(t)$  | $\displaystyle\;\leq\;n,$  |  | (12)
+L258:  | $\displaystyle 0\;\leq\;Y_{m}^{n}(t)$  | $\displaystyle\;\leq\;(B-1)\,X^{n}(t),$  |  | (13)
+L259:  | $\displaystyle 0\;\leq\;Y_{s}^{n}(t)$  | $\displaystyle\;\leq\;B\big(n-X^{n}(t)\big).$  |  | (14)
+L260: 
+L261: Equation (cite124†12 ) enforces at most one prefill per GPU, while (cite125†13 )–(cite126†14 ) bound mixed and solo decodes according to whether a GPU is running a prefill.
+L262: ##### Admissible policies.
+L263: 
+L264: We now formalize the notion of a policy. Let
+L265: 
+L266:  | $$\pi^{n}:=\Big(Q_{p}^{n},Q_{d}^{n},X^{n},Y_{m}^{n},Y_{s}^{n},\;A^{n},B_{p}^{n},B_{d}^{n},\;S_{p}^{n},S_{d,m}^{n},S_{d,s}^{n},\;U_{p}^{n},U_{d,m}^{n},U_{d,s}^{n},\;M_{s\to m}^{n},M_{m\to s}^{n}\Big)$$  |
+L267: denote the collection of all non-primitive processes in the $n$th system (state, cumulative flows, and control processes), where each symbol stands for the vector over classes $i\in\mathcal{I}$. Let $\Pi^{n}$ denote the set of policies that satisfy the admissibility conditions below:
+L268: 
+L269: (i) the resulting state processes satisfy the capacity constraints (cite124†12 )–(cite126†14 ) and balance equations (cite127†15 )-(cite128†19 ) for all $t\geq 0$;
+L270: (ii) the policy is event-driven, i.e., each control process $U_{\cdot,i}^{n}(t)$ can change only at arrival epochs, abandonment epochs, service-completion epochs, or at $t=0$;
+L271: 
+L272: (iii) within each class, prefill and decode queues are served in first-come-first-served order, and service is non-preemptive.
+L273: We say that any $\pi^{n}\in\Pi^{n}$ is an admissible policy, under which the state processes are then uniquely determined from the primitives and the controls via the balance equations (cite127†15 )–(cite128†19 ).
+L274: ##### Balance equations.
+L275: 
+L276: Under any policy $\pi^{n}\in\Pi^{n}$, the state and cumulative processes satisfy the following flow-balance identities for all $i\in\mathcal{I}$ and $t\geq 0$:
+L277:  | $\displaystyle Q_{p,i}^{n}(t)$  | $\displaystyle=Q_{p,i}^{n}(0)+A_{i}^{n}(t)-U_{p,i}^{n}(t)-B_{p,i}^{n}(t),$  |  | (15)
+L278:  | $\displaystyle X_{i}^{n}(t)$  | $\displaystyle=X_{i}^{n}(0)+U_{p,i}^{n}(t)-S_{p,i}^{n}(t),$  |  | (16)
+L279:  | $\displaystyle Q_{d,i}^{n}(t)$  | $\displaystyle=Q_{d,i}^{n}(0)+S_{p,i}^{n}(t)-U_{d,m,i}^{n}(t)-U_{d,s,i}^{n}(t)-B_{d,i}^{n}(t),$  |  | (17)
+L280:  | $\displaystyle Y_{m,i}^{n}(t)$  | $\displaystyle=Y_{m,i}^{n}(0)+U_{d,m,i}^{n}(t)-S_{d,m,i}^{n}(t)+M_{s\to m,i}^{n}(t)-M_{m\to s,i}^{n}(t),$  |  | (18)
+L281:  | $\displaystyle Y_{s,i}^{n}(t)$  | $\displaystyle=Y_{s,i}^{n}(0)+U_{d,s,i}^{n}(t)-S_{d,s,i}^{n}(t)+M_{m\to s,i}^{n}(t)-M_{s\to m,i}^{n}(t).$  |  | (19)
+L282: Equation (cite127†15 ) says that the prefill queue-length equals its initial content plus arrivals, minus admissions and abandonments. Equation (cite129†16 ) tracks prefill jobs in service as admissions minus completions. Equation (cite130†17 ) balances the decode queue as completed prefills minus admissions into decode and abandonments. Equations (cite131†18 )–(cite128†19 ) track mixed and solo decodes as admissions minus completions, plus net inflow from mode switches.
+L283: Adding (cite131†18 ) and (cite128†19 ) eliminates the mode-switch terms and yields
+L284: 
+L285:  | $$Y_{m,i}^{n}(t)+Y_{s,i}^{n}(t)=Y_{m,i}^{n}(0)+Y_{s,i}^{n}(0)+U_{d,m,i}^{n}(t)+U_{d,s,i}^{n}(t)-S_{d,m,i}^{n}(t)-S_{d,s,i}^{n}(t),$$  |  | (20)
+L286: 
+L287: so mode switches only redistribute ongoing decodes between mixed and solo, without changing their total number.
+L288: ##### Revenue models and objective functions.
+L289: 
+L290: Commercial LLM services predominantly use token-based pricing. We consider two revenue models that differ in when revenue is recognized.
+L291: 
+L292: (1) Bundled charging scheme. The provider charges a single price per request based on the total number of tokens, and revenue is recognized only when the entire request completes (after decode). For class $i$,
+L293: 
+L294:  | $$w_{i}:=c_{p}P_{i}+c_{d}D_{i},$$  |  | (21)
+L295: where $c_{p},c_{d}\geq 0$ are unit prices per prefill and decode token. The per-GPU average reward over $[0,T]$ under policy $\pi^{n}$ is
+L296: 
+L297:  | $$R^{n}(T;\pi^{n}):=\frac{1}{nT}\,\mathbb{E}^{\pi^{n}}\!\Bigg[\sum_{i=1}^{I}w_{i}\,S_{d,i}^{n}(T)\Bigg].$$  |  | (22)
+L298: 
+L299: Only completed requests contribute to (cite132†22 ); prefill work without decode completion yields no revenue.
+L300: (2) Separate charging scheme. Alternatively, prefill and decode tokens may be billed and recognized separately. The corresponding per-GPU average reward is
+L301: 
+L302:  | $$\tilde{R}^{n}(T;\pi^{n}):=\frac{1}{nT}\,\mathbb{E}^{\pi^{n}}\!\Bigg[\sum_{i=1}^{I}\big(c_{p}P_{i}S_{p,i}^{n}(T)+c_{d}D_{i}S_{d,i}^{n}(T)\big)\Bigg].$$  |  | (23)
+L303: Both objectives depend on token throughput but induce different scheduling incentives: in particular, the separate scheme (cite133†23 ) may encourage aggressive prefill admissions to harvest immediate prefill revenue at the expense of downstream decode congestion. Asymptotically optimal control for (cite132†22 ) and (cite133†23 ) will be studied in Section cite30†4 .
+L304: ## 3 Fluid Approximation and Steady-State Planning
+L305: In large-scale LLM deployments, providers typically operate hundreds or thousands of GPUs in parallel. At this scale, the system state is high-dimensional and stochastic, with arrivals, service completions, and abandonments fluctuating across time and devices, making direct stochastic optimization analytically intractable and hard to interpret.
+L306: We therefore adopt a many-GPU fluid approximation: consider a sequence of systems indexed by the number of GPUs $n$, scale all queue lengths and in-service counts by $1/n$, and let $n\to\infty$. In this limit, random fluctuations average out and the network is described by a deterministic set of flow-balance equations and capacity constraints. Steady-state solutions of this fluid model specify per-GPU occupancies, which serve as planning targets for the stochastic control policies in Section cite30†4 .
+L307: ##### Fluid-scaled processes.
+L308: 
+L309: For any stochastic process $W^{n}(t)$ in the $n$-th system, we define its fluid-scaled version by
+L310: 
+L311:  | $$\bar{W}^{n}(t):=\frac{1}{n}\,W^{n}(t),\qquad t\geq 0.$$  |
+L312: We use an overbar to indicate such scaled processes (e.g., $\bar{Q}_{p,i}^{n}(t)$, $\bar{X}_{i}^{n}(t)$, $\bar{Y}_{m,i}^{n}(t)$), and we write the corresponding lowercase letters (e.g., $q_{p,i}(t)$, $x_{i}(t)$, $y_{m,i}(t)$) for generic deterministic fluid trajectories that arise as limits of these scaled processes in Section cite20†2.3 . These functions satisfy, for all $t\geq 0$ and all $i\in\mathcal{I}$, the flow-balance equations:
+L313:  | $\displaystyle q_{p,i}(t)$  | $\displaystyle=q_{p,i}(0)+a_{i}(t)-u_{p,i}(t)-b_{p,i}(t),$  |  | (24)
+L314:  | $\displaystyle x_{i}(t)$  | $\displaystyle=x_{i}(0)+u_{p,i}(t)-s_{p,i}(t),$  |  | (25)
+L315:  | $\displaystyle q_{d,i}(t)$  | $\displaystyle=q_{d,i}(0)+s_{p,i}(t)-u_{d,m,i}(t)-u_{d,s,i}(t)-b_{d,i}(t),$  |  | (26)
+L316:  | $\displaystyle y_{m,i}(t)$  | $\displaystyle=y_{m,i}(0)+u_{d,m,i}(t)-s_{d,m,i}(t)+m_{s\to m,i}(t)-m_{m\to s,i}(t),$  |  | (27)
+L317:  | $\displaystyle y_{s,i}(t)$  | $\displaystyle=y_{s,i}(0)+u_{d,s,i}(t)-s_{d,s,i}(t)+m_{m\to s,i}(t)-m_{s\to m,i}(t).$  |  | (28)
+L318: Here $q_{p,i}(t)$ and $q_{d,i}(t)$ are the prefill and decode queue contents, $x_{i}(t)$, $y_{m,i}(t)$ and $y_{s,i}(t)$ are the in-service masses in prefill, mixed decode and solo decode, $u_{p,i}(t)$, $u_{d,m,i}(t)$ and $u_{d,s,i}(t)$ are the cumulative admissions into these stages, $b_{p,i}(t)$ and $b_{d,i}(t)$ are cumulative abandonments, $s_{p,i}(t)$, $s_{d,m,i}(t)$ and $s_{d,s,i}(t)$ are cumulative service completions, and $m_{s\to m,i}(t)$, $m_{m\to s,i}(t)$ are cumulative mode switches between decode submodes.
+L319: The primitive arrivals, abandonments, and service completions evolve at their mean rates:
+L320:  | $\displaystyle a_{i}(t)$  | $\displaystyle=\lambda_{i}\,t,$  |  | (29)
+L321:  | $\displaystyle b_{p,i}(t)$  | $\displaystyle=\int_{0}^{t}\theta_{i}\,q_{p,i}(s)\,ds,\qquad b_{d,i}(t)=\int_{0}^{t}\theta_{i}\,q_{d,i}(s)\,ds,$  |  | (30)
+L322:  | $\displaystyle s_{p,i}(t)$  | $\displaystyle=\int_{0}^{t}\mu_{p,i}\,x_{i}(s)\,ds,$  |  | (31)
+L323:  | $\displaystyle s_{d,m,i}(t)$  | $\displaystyle=\int_{0}^{t}\mu_{m,i}\,y_{m,i}(s)\,ds,\qquad s_{d,s,i}(t)=\int_{0}^{t}\mu_{s,i}\,y_{s,i}(s)\,ds.$  |  | (32)
+L324: Equation (cite134†29 ) gives the deterministic arrival rate, (cite135†30 ) the abandonment flows from the prefill and decode queues, and (cite136†31 )–(cite137†32 ) the prefill and decode completion flows driven by the in-service masses.
+L325: 
+L326: Let
+L327: 
+L328:  | $$x(t):=\sum_{i}x_{i}(t),\qquad y_{m}(t):=\sum_{i}y_{m,i}(t),\qquad y_{s}(t):=\sum_{i}y_{s,i}(t),$$  |
+L329: 
+
+
+Large-Scale LLM Inference with Heterogeneous Workloads: Prefill-Decode Contention and Asymptotically Optimal Control (https://arxiv.org/html/2602.02987v1)
+citeturn26179view0 [wordlim: 200] Crawled: 2 days ago; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.02987v1","lineno":315}); Total lines: 1484
+L246: Equations (cite122†7 )–(cite123†9 ) state that each cumulative count is driven by a unit-rate Poisson process with the corresponding integrated intensity.
+L247: 
+L249:  | $$M_{s\to m,i}^{n}(t)\;\text{ and }\;M_{m\to s,i}^{n}(t),$$  |  | (10)
+L250: the cumulative numbers of class-$i$ decodes switched from solo to mixed and from mixed to solo by time $t$. These mode-switch processes are endogenous: they have no external Poisson clocks and are induced by changes in prefill activity on each GPU.
+L251: In particular, solo-to-mixed switches occur when a prefill is admitted to a GPU that was previously in pure decode mode, and mixed-to-solo switches occur when that prefill completes; these transitions are structural consequences of the prefill dynamics rather than direct control actions of the scheduling policy.
+L252: For later use, define the aggregate in-service counts
+L253: 
+L254:  | $$X^{n}(t):=\sum_{i}X_{i}^{n}(t),\qquad Y_{m}^{n}(t):=\sum_{i}Y_{m,i}^{n}(t),\qquad Y_{s}^{n}(t):=\sum_{i}Y_{s,i}^{n}(t),$$  |  | (11)
+L255: 
+L256: and similarly $M_{s\to m}^{n}(t):=\sum_{i}M_{s\to m,i}^{n}(t)$ and $M_{m\to s}^{n}(t):=\sum_{i}M_{m\to s,i}^{n}(t)$. The per-GPU physical constraints imply
+L257:  | $\displaystyle 0\;\leq\;X^{n}(t)$  | $\displaystyle\;\leq\;n,$  |  | (12)
+L258:  | $\displaystyle 0\;\leq\;Y_{m}^{n}(t)$  | $\displaystyle\;\leq\;(B-1)\,X^{n}(t),$  |  | (13)
+L259:  | $\displaystyle 0\;\leq\;Y_{s}^{n}(t)$  | $\displaystyle\;\leq\;B\big(n-X^{n}(t)\big).$  |  | (14)
+L260: 
+L261: Equation (cite124†12 ) enforces at most one prefill per GPU, while (cite125†13 )–(cite126†14 ) bound mixed and solo decodes according to whether a GPU is running a prefill.
+L262: ##### Admissible policies.
+L263: 
+L264: We now formalize the notion of a policy. Let
+L265: 
+L266:  | $$\pi^{n}:=\Big(Q_{p}^{n},Q_{d}^{n},X^{n},Y_{m}^{n},Y_{s}^{n},\;A^{n},B_{p}^{n},B_{d}^{n},\;S_{p}^{n},S_{d,m}^{n},S_{d,s}^{n},\;U_{p}^{n},U_{d,m}^{n},U_{d,s}^{n},\;M_{s\to m}^{n},M_{m\to s}^{n}\Big)$$  |
+L267: denote the collection of all non-primitive processes in the $n$th system (state, cumulative flows, and control processes), where each symbol stands for the vector over classes $i\in\mathcal{I}$. Let $\Pi^{n}$ denote the set of policies that satisfy the admissibility conditions below:
+L268: 
+L269: (i) the resulting state processes satisfy the capacity constraints (cite124†12 )–(cite126†14 ) and balance equations (cite127†15 )-(cite128†19 ) for all $t\geq 0$;
+L270: (ii) the policy is event-driven, i.e., each control process $U_{\cdot,i}^{n}(t)$ can change only at arrival epochs, abandonment epochs, service-completion epochs, or at $t=0$;
+L271: 
+L272: (iii) within each class, prefill and decode queues are served in first-come-first-served order, and service is non-preemptive.
+L273: We say that any $\pi^{n}\in\Pi^{n}$ is an admissible policy, under which the state processes are then uniquely determined from the primitives and the controls via the balance equations (cite127†15 )–(cite128†19 ).
+L274: ##### Balance equations.
+L275: 
+L276: Under any policy $\pi^{n}\in\Pi^{n}$, the state and cumulative processes satisfy the following flow-balance identities for all $i\in\mathcal{I}$ and $t\geq 0$:
+L277:  | $\displaystyle Q_{p,i}^{n}(t)$  | $\displaystyle=Q_{p,i}^{n}(0)+A_{i}^{n}(t)-U_{p,i}^{n}(t)-B_{p,i}^{n}(t),$  |  | (15)
+L278:  | $\displaystyle X_{i}^{n}(t)$  | $\displaystyle=X_{i}^{n}(0)+U_{p,i}^{n}(t)-S_{p,i}^{n}(t),$  |  | (16)
+L279:  | $\displaystyle Q_{d,i}^{n}(t)$  | $\displaystyle=Q_{d,i}^{n}(0)+S_{p,i}^{n}(t)-U_{d,m,i}^{n}(t)-U_{d,s,i}^{n}(t)-B_{d,i}^{n}(t),$  |  | (17)
+L280:  | $\displaystyle Y_{m,i}^{n}(t)$  | $\displaystyle=Y_{m,i}^{n}(0)+U_{d,m,i}^{n}(t)-S_{d,m,i}^{n}(t)+M_{s\to m,i}^{n}(t)-M_{m\to s,i}^{n}(t),$  |  | (18)
+L281:  | $\displaystyle Y_{s,i}^{n}(t)$  | $\displaystyle=Y_{s,i}^{n}(0)+U_{d,s,i}^{n}(t)-S_{d,s,i}^{n}(t)+M_{m\to s,i}^{n}(t)-M_{s\to m,i}^{n}(t).$  |  | (19)
+L282: Equation (cite127†15 ) says that the prefill queue-length equals its initial content plus arrivals, minus admissions and abandonments. Equation (cite129†16 ) tracks prefill jobs in service as admissions minus completions. Equation (cite130†17 ) balances the decode queue as completed prefills minus admissions into decode and abandonments. Equations (cite131†18 )–(cite128†19 ) track mixed and solo decodes as admissions minus completions, plus net inflow from mode switches.
+L283: Adding (cite131†18 ) and (cite128†19 ) eliminates the mode-switch terms and yields
+L284: 
+L285:  | $$Y_{m,i}^{n}(t)+Y_{s,i}^{n}(t)=Y_{m,i}^{n}(0)+Y_{s,i}^{n}(0)+U_{d,m,i}^{n}(t)+U_{d,s,i}^{n}(t)-S_{d,m,i}^{n}(t)-S_{d,s,i}^{n}(t),$$  |  | (20)
+L286: 
+L287: so mode switches only redistribute ongoing decodes between mixed and solo, without changing their total number.
+L288: ##### Revenue models and objective functions.
+L289: 
+L290: Commercial LLM services predominantly use token-based pricing. We consider two revenue models that differ in when revenue is recognized.
+L291: 
+L292: (1) Bundled charging scheme. The provider charges a single price per request based on the total number of tokens, and revenue is recognized only when the entire request completes (after decode). For class $i$,
+L293: 
+L294:  | $$w_{i}:=c_{p}P_{i}+c_{d}D_{i},$$  |  | (21)
+L295: where $c_{p},c_{d}\geq 0$ are unit prices per prefill and decode token. The per-GPU average reward over $[0,T]$ under policy $\pi^{n}$ is
+L296: 
+L297:  | $$R^{n}(T;\pi^{n}):=\frac{1}{nT}\,\mathbb{E}^{\pi^{n}}\!\Bigg[\sum_{i=1}^{I}w_{i}\,S_{d,i}^{n}(T)\Bigg].$$  |  | (22)
+L298: 
+L299: Only completed requests contribute to (cite132†22 ); prefill work without decode completion yields no revenue.
+L300: (2) Separate charging scheme. Alternatively, prefill and decode tokens may be billed and recognized separately. The corresponding per-GPU average reward is
+L301: 
+L302:  | $$\tilde{R}^{n}(T;\pi^{n}):=\frac{1}{nT}\,\mathbb{E}^{\pi^{n}}\!\Bigg[\sum_{i=1}^{I}\big(c_{p}P_{i}S_{p,i}^{n}(T)+c_{d}D_{i}S_{d,i}^{n}(T)\big)\Bigg].$$  |  | (23)
+L303: Both objectives depend on token throughput but induce different scheduling incentives: in particular, the separate scheme (cite133†23 ) may encourage aggressive prefill admissions to harvest immediate prefill revenue at the expense of downstream decode congestion. Asymptotically optimal control for (cite132†22 ) and (cite133†23 ) will be studied in Section cite30†4 .
+L304: ## 3 Fluid Approximation and Steady-State Planning
+L305: In large-scale LLM deployments, providers typically operate hundreds or thousands of GPUs in parallel. At this scale, the system state is high-dimensional and stochastic, with arrivals, service completions, and abandonments fluctuating across time and devices, making direct stochastic optimization analytically intractable and hard to interpret.
+L306: We therefore adopt a many-GPU fluid approximation: consider a sequence of systems indexed by the number of GPUs $n$, scale all queue lengths and in-service counts by $1/n$, and let $n\to\infty$. In this limit, random fluctuations average out and the network is described by a deterministic set of flow-balance equations and capacity constraints. Steady-state solutions of this fluid model specify per-GPU occupancies, which serve as planning targets for the stochastic control policies in Section cite30†4 .
+L307: ##### Fluid-scaled processes.
+L308: 
+L309: For any stochastic process $W^{n}(t)$ in the $n$-th system, we define its fluid-scaled version by
+L310: 
+L311:  | $$\bar{W}^{n}(t):=\frac{1}{n}\,W^{n}(t),\qquad t\geq 0.$$  |
+L312: We use an overbar to indicate such scaled processes (e.g., $\bar{Q}_{p,i}^{n}(t)$, $\bar{X}_{i}^{n}(t)$, $\bar{Y}_{m,i}^{n}(t)$), and we write the corresponding lowercase letters (e.g., $q_{p,i}(t)$, $x_{i}(t)$, $y_{m,i}(t)$) for generic deterministic fluid trajectories that arise as limits of these scaled processes in Section cite20†2.3 . These functions satisfy, for all $t\geq 0$ and all $i\in\mathcal{I}$, the flow-balance equations:
+L313:  | $\displaystyle q_{p,i}(t)$  | $\displaystyle=q_{p,i}(0)+a_{i}(t)-u_{p,i}(t)-b_{p,i}(t),$  |  | (24)
+L314:  | $\displaystyle x_{i}(t)$  | $\displaystyle=x_{i}(0)+u_{p,i}(t)-s_{p,i}(t),$  |  | (25)
+L315:  | $\displaystyle q_{d,i}(t)$  | $\displaystyle=q_{d,i}(0)+s_{p,i}(t)-u_{d,m,i}(t)-u_{d,s,i}(t)-b_{d,i}(t),$  |  | (26)
+L316:  | $\displaystyle y_{m,i}(t)$  | $\displaystyle=y_{m,i}(0)+u_{d,m,i}(t)-s_{d,m,i}(t)+m_{s\to m,i}(t)-m_{m\to s,i}(t),$  |  | (27)
+L317:  | $\displaystyle y_{s,i}(t)$  | $\displaystyle=y_{s,i}(0)+u_{d,s,i}(t)-s_{d,s,i}(t)+m_{m\to s,i}(t)-m_{s\to m,i}(t).$  |  | (28)
+L318: Here $q_{p,i}(t)$ and $q_{d,i}(t)$ are the prefill and decode queue contents, $x_{i}(t)$, $y_{m,i}(t)$ and $y_{s,i}(t)$ are the in-service masses in prefill, mixed decode and solo decode, $u_{p,i}(t)$, $u_{d,m,i}(t)$ and $u_{d,s,i}(t)$ are the cumulative admissions into these stages, $b_{p,i}(t)$ and $b_{d,i}(t)$ are cumulative abandonments, $s_{p,i}(t)$, $s_{d,m,i}(t)$ and $s_{d,s,i}(t)$ are cumulative service completions, and $m_{s\to m,i}(t)$, $m_{m\to s,i}(t)$ are cumulative mode switches between decode submodes.
+L319: The primitive arrivals, abandonments, and service completions evolve at their mean rates:
+L320:  | $\displaystyle a_{i}(t)$  | $\displaystyle=\lambda_{i}\,t,$  |  | (29)
+L321:  | $\displaystyle b_{p,i}(t)$  | $\displaystyle=\int_{0}^{t}\theta_{i}\,q_{p,i}(s)\,ds,\qquad b_{d,i}(t)=\int_{0}^{t}\theta_{i}\,q_{d,i}(s)\,ds,$  |  | (30)
+L322:  | $\displaystyle s_{p,i}(t)$  | $\displaystyle=\int_{0}^{t}\mu_{p,i}\,x_{i}(s)\,ds,$  |  | (31)
+L323:  | $\displaystyle s_{d,m,i}(t)$  | $\displaystyle=\int_{0}^{t}\mu_{m,i}\,y_{m,i}(s)\,ds,\qquad s_{d,s,i}(t)=\int_{0}^{t}\mu_{s,i}\,y_{s,i}(s)\,ds.$  |  | (32)
+L324: Equation (cite134†29 ) gives the deterministic arrival rate, (cite135†30 ) the abandonment flows from the prefill and decode queues, and (cite136†31 )–(cite137†32 ) the prefill and decode completion flows driven by the in-service masses.
+L325: 
+L326: Let
+L327: 
+L328:  | $$x(t):=\sum_{i}x_{i}(t),\qquad y_{m}(t):=\sum_{i}y_{m,i}(t),\qquad y_{s}(t):=\sum_{i}y_{s,i}(t),$$  |
+L329: 
+L330: and similarly $u_{p}(t):=\sum_{i}u_{p,i}(t)$ and $s_{p}(t):=\sum_{i}s_{p,i}(t)$. The per-GPU capacity constraints in the fluid model are
+L331:  |  | $\displaystyle 0\leq x(t)\leq 1,$  |  | (33)
+L332:  |  | $\displaystyle 0\leq y_{m}(t)\leq(B-1)\,x(t),$  |  | (34)
+L333:  |  | $\displaystyle 0\leq y_{s}(t)\leq B\,\big(1-x(t)\big),$  |  | (35)
+L334: 
+L335: which mirror the prefill and decode caps in (cite124†12 )–(cite126†14 ) after scaling by $n$.
+L336: 
+L337: Finally, admission feasibility holds at the fluid level. For all $0\leq s\leq t$ and all $i\in\mathcal{I}$,
+L338:  | $\displaystyle u_{d,m,i}(s,t)+u_{d,s,i}(s,t)$  | $\displaystyle\leq q_{d,i}(s)+s_{p,i}(s,t)-b_{d,i}(s,t),$  |  | (36)
+L339:  | $\displaystyle u_{p,i}(s,t)$  | $\displaystyle\leq q_{p,i}(s)+a_{i}(s,t)-b_{p,i}(s,t),$  |  | (37)
+L340: where $u_{p,i}(s,t):=u_{p,i}(t)-u_{p,i}(s)$ and $a_{i}(s,t)$, $s_{p,i}(s,t)$, $b_{p,i}(s,t)$, etc. are defined analogously. Inequalities (cite138†36 )–(cite139†37 ) state that, over any time interval $[s,t]$, admissions into each stage cannot exceed the fluid already present in the corresponding buffer plus the net inflow into that buffer.
+L341: 
+L342: {assumption}
+L343: [Convergence of initial state] The initial states of fluid-scaled processes converge to a deterministic state: $\big(\bar{Q}_{p,i}^{n}(0),\bar{Q}_{d,i}^{n}(0),\bar{X}_{i}^{n}(0),\bar{Y}_{m,i}^{n}(0),\bar{Y}_{s,i}^{n}(0)\big)\Rightarrow(q_{p,i}(0),q_{d,i}(0),x_{i}(0),y_{m,i}(0),y_{s,i}(0))$;
+L344: ###### Theorem 3.1 (Fluid limit)
+L345: 
+L346: Fix any finite horizon $T>0$. The sequence of fluid-scaled stochastic processes
+L347:  | $$\bar{\mathcal{X}}^{n}(t):=\big(\{\bar{Q}_{p,i}^{n},\bar{Q}_{d,i}^{n},\bar{X}_{i}^{n},\bar{Y}_{m,i}^{n},\bar{Y}_{s,i}^{n}\}_{i\in\mathcal{I}},\{\bar{S}_{p,i}^{n},\bar{S}_{d,m,i}^{n},\bar{S}_{d,s,i}^{n}\}_{i\in\mathcal{I}},\{\bar{B}_{p,i}^{n},\bar{B}_{d,i}^{n}\}_{i\in\mathcal{I}},$$  |
+L348:  | $$\{\bar{U}_{p,i}^{n},\bar{U}_{d,m,i}^{n},\bar{U}_{d,s,i}^{n}\}_{i\in\mathcal{I}},\{\bar{M}_{s\to m,i}^{n}-\bar{M}_{m\to s,i}^{n}\}_{i\in\mathcal{I}}\big)$$  |
+L349: is tight in $\mathbb{D}([0,T],\mathbb{R}^{d})$ under the Skorokhod $J_{1}$ topology, where $d$ is the total dimension of the vector above. Moreover, any subsequential weak limit $\bar{\mathcal{X}}(t)$ is almost surely continuous and, on $[0,T]$, satisfies the fluid model equations (cite140†24 )–(cite141†28 ) with (cite134†29 )–(cite137†32 ), the capacity constraints (cite142†33 )–(cite143†35 ), with initial state given by $\mathbf{z}_{0}$.
+L350: ##### Fluid Reward Objectives.
+L351: 
+L352: Consistent with the revenue models defined in Section cite13†2 , we formulate the fluid control objectives for the two charging schemes separately.
+L353: 
+L354: (1) Bundled Objective. Under the bundled scheme, value is realized only upon request completion. Thus, the objective maximizes the weighted throughput of the decode phase:
+L355: 
+L356:  | $$R(T):=\frac{1}{T}\int_{0}^{T}\sum_{i=1}^{I}w_{i}\,(y_{m,i}(\tau)\mu_{m,i}+y_{s,i}(\tau)\mu_{s,i})\,d\tau,$$  |  | (38)
+L357: where $w_{i}=c_{p}P_{i}+c_{d}D_{i}$ is the total reward for a completed class-$i$ request. Note that the prefill activity $x_{i}(\tau)$ contributes to the objective only indirectly by feeding the decode queue.
+L358: 
+L359: (2) Separate Objective. Under the separate scheme, the system accumulates value continuously as tokens are processed in both phases. The objective becomes:
+L360:  | $$\tilde{R}(T):=\frac{1}{T}\int_{0}^{T}\sum_{i=1}^{I}\Big[\underbrace{(c_{p}P_{i})}_{\text{prefill value}}\mu_{p,i}\,y_{p,i}(\tau)+\underbrace{(c_{d}D_{i})}_{\text{decode value}}(y_{m,i}(\tau)\mu_{m,i}+y_{s,i}(\tau)\mu_{s,i})\Big]\,d\tau.$$  |  | (39)
+L361: ### 3.1 Fluid Control Problem
+L362: We first consider the bundle objective (the separate charging scheme will be discussed in Section cite34†4.2 ) and solve a steady-state (fluid) optimization to choose the optimal long-run occupancy shares and the routing of prefilled tasks across mixed and solo decode pools.
+L363: This formulation intentionally abstracts away the transient effects of stochastic variability in interarrival, prefill, and decode times (and abandonment/patience, if present), and instead enforces constraints only in terms of average arrival and service rates. The solution delivers capacity-splitting targets that will guide the stochastic control policy developed in the next section.
+L364:  | $\displaystyle\max_{\{x_{i},\,y_{m,i},\,y_{s,i},\,q_{p,i},\,q_{d,i}\}}$  | $\displaystyle\sum_{i=1}^{I}w_{i}\,\bigl(y_{m,i}\,\mu_{m,i}\;+\;y_{s,i}\,\mu_{s,i}\bigr)$  |  | (40)
+L365:  | $\displaystyle\text{s.t.}$  | $\displaystyle\sum_{i=1}^{I}x_{i}\;\leq\;1,$  |  | $\displaystyle\text{(Prefill Capacity)}$  |
+L366:  |  | $\displaystyle\sum_{i=1}^{I}y_{m,i}\;\leq\;(B-1)\sum_{i=1}^{I}x_{i},$  |  | $\displaystyle\text{(Mixed Decode Capacity)}$  |
+L367:  |  | $\displaystyle\sum_{i=1}^{I}y_{s,i}\;\leq\;B\Big(1-\sum_{i=1}^{I}x_{i}\Big),$  |  | $\displaystyle\text{(Solo Decode Capacity)}$  |
+L368:  |  | $\displaystyle\lambda_{i}-\theta_{i}\,q_{p,i}\;=\;\mu_{p,i}\,x_{i},\qquad\forall i,$  |  | $\displaystyle\text{(Prefill Flow Balance)}$  |
+L369:  |  | $\displaystyle\mu_{p,i}\,x_{i}\ -\theta_{i}\,q_{d,i}\;=\;\mu_{m,i}\,y_{m,i}\;+\;\mu_{s,i}\,y_{s,i},\qquad\forall i,$  |  | $\displaystyle\text{(Decode Flow Balance)}$  |
+L370:  |  | $\displaystyle x_{i},\,y_{m,i},\,y_{s,i},\,q_{d,i},\,q_{p,i}\;\geq\;0,\qquad\forall i.$  |  | $\displaystyle\text{(Non-negativity)}$  |
+L371: The linear program (cite144†40 ) describes the steady-state fluid model for routing prefill and decode work of multiple classes across GPUs with batch size $B$. The decision variables are long-run, per-GPU averages: $x_{i}$ is the fraction of time a GPU devotes to class-$i$ prefill; $y_{m,i}$ and $y_{s,i}$ are the average class-$i$ decode occupancies in mixed mode and solo mode; and $q_{p,i}$ and $q_{d,i}$ are the average prefill and decode queue masses.
+L372: The capacity constraints in the first three lines of (cite144†40 ) enforce the per-GPU limits: at most one prefill can run on a GPU, and, conditional on whether a prefill is present, at most $B-1$ (mixed) or $B$ (solo) decodes can be served in parallel.
+L373: The flow-balance constraints for each class $i$ state that, in steady state, arrivals net of prefill abandonments equal the prefill completion rate, and that prefill completions, net of decode abandonments, are exactly matched by the total decode completion rate.
+L374: The objective in the first line of (cite144†40 ) maximizes the per-GPU long-run reward by weighting class-$i$ decode completions in mixed and solo modes with $w_{i}=c_{p}P_{i}+c_{d}D_{i}$, the total value of a completed request under bundled pricing.
+L375: ###### Proposition 3.2 (Decode-buffer elimination)
+L376: 
+L377: Assume $\gamma\,\tau\geq(B-1)/B$ (solo decode more efficient). Then the steady-state fluid LP admits an optimal solution with $q_{d,i}^{\star}=0$ for all $i$.
+L378: The condition in Proposition cite145†3.2 is natural: solo decode is strictly more efficient than mixed decode. Since revenue is generated only when a request finishes decode, fluid mass held in the decode buffer yields no reward and only delays completions. We prove that any LP solution with $q_{d,i}>0$ can be improved by moving this backlog upstream while keeping the capacity constraints, which weakly increases the completion rate; hence, at optimality, the decode buffer is empty in steady state.
+L379: A key implication for control is that the optimal reward rate is determined by occupancy proportions, i.e. how much GPU time is spent on prefill and how decode slots are filled. In a backlogged system, the fluid-optimal plan keeps both prefill and decode fully utilized and fixes the fraction of GPUs running prefills at its target level. The remaining design question is how to route completed prefills between mixed and solo decode so that capacity is saturated without building a decode backlog.
+L380: This leads to a simple gate-and-route architecture: a prefill gate that regulates the target prefill occupancy (and class mix) and a decode router that splits work between mixed and solo decodes to keep slots busy while preventing persistent decode queues.
+L381: ## 4 Stochastic Control Policy
+L382: Building upon the fluid-optimal solution, we now develop an implementable control framework for the stochastic $n$-GPU system. Our approach operationalizes the fluid prescriptions by decomposing the scheduling problem into two hierarchical stages: a static resource partitioning phase that fixes the cluster configuration, and a dynamic control phase that manages job admission and routing in real time.
+L383: We first introduce the occupancy-based Gate-and-Route policy in Section cite31†4.1 , which regulates prefill occupancies and decode routing to attain the fluid-optimal throughput under the bundled objective. We then extend this architecture to the separate charging scheme in Section cite34†4.2 , where we develop a counterpart optimal policy and analyze how stage-based revenue recognition fundamentally reshapes scheduling incentives across heterogeneous request classes relative to the bundled objective.
+L384: ### 4.1 Bundled Charging Scheme
+L385: The design of this policy is inspired by the structural insight from Proposition cite145†3.2 , which reveals that the relative efficiency gain of solo decoding is class-independent. This property suggests a decomposition of the complex scheduling problem. We can statically partition the cluster resources to ensure that the aggregate decode capacity is critically loaded in the fluid limit, capable of fully digesting the downstream workload generated by the optimal prefill throughput.
+L386: With the decode stage dimensioned to clear the traffic naturally, the burden of optimization shifts upstream. Consequently, we focus our fine-grained dynamic control on the prefill admission to strictly regulate the job mix and occupancy, allowing the decode stage to operate under a simple work-conserving discipline (FCFS) while still guiding the system toward the fluid-optimal state.
+L387: #### Static Planning
+L388: 
+L389: Let $n$ be the number of GPUs and $B$ the per-GPU decode stream cap. Take any optimal per-GPU solution of the steady-state fluid LP, denoted by $\bigl(x_{i}^{\star},\,y_{m,i}^{\star},\,y_{s,i}^{\star},\,q_{p,i}^{\star}\bigr)_{i\in\mathcal{I}}$.
+L390: 
+L391: Fix the number of mixed GPUs as
+L392: 
+L393:  | $$M:=\Big\lceil n\sum_{i\in\mathcal{I}}x_{i}^{\star}\Big\rceil,$$  |
+L394: choose any subset $\mathcal{G}_{\mathrm{mix}}\subset\{1,\dots,n\}$ with $|\mathcal{G}_{\mathrm{mix}}|=M$, and set $\mathcal{G}_{\mathrm{solo}}:=\{1,\dots,n\}\setminus\mathcal{G}_{\mathrm{mix}}$. A GPU $g\in\mathcal{G}_{\mathrm{mix}}$ permanently reserves one slot for prefill (or equivalently, those GPUs prioritize new prefill over decode jobs) and may run at most $(B-1)$ decodes; a GPU $g\in\mathcal{G}_{\mathrm{solo}}$ never runs prefills and may run at most $B$ decodes.
+L395: #### Dynamic Control
+L396: 
+L397: Let $X_{i}^{n}(t)$ denote the number of class-$i$ prefill tasks currently in service and $Q_{p,i}^{n}(t)$ denote the prefill queue length at time $t$.
+L398: ##### Upstream (prefill) gate on mixed GPUs.
+L399: 
+L400: Prefills run only on $\mathcal{G}_{\mathrm{mix}}$. Whenever a mixed GPU $g\in\mathcal{G}_{\mathrm{mix}}$ has its reserved prefill slot idle, identify the set of classes with waiting jobs, $\mathcal{I}_{\mathrm{wait}}=\{i\in\mathcal{I}:Q_{p,i}^{n}(t^{-})>0\}$. If $\mathcal{I}_{\mathrm{wait}}$ is empty, the slot remains idle. Otherwise, compute the occupancy deviation index for each candidate class:
+L401:  | $$\xi_{i}(t^{-}):=\frac{1}{x_{i}^{\star}}\bigl(X_{i}^{n}(t^{-})-n\,x_{i}^{\star}\bigr).$$  |
+L402: 
+L403: The scheduler admits the head-of-line prefill of the class $i^{\star}$ that minimizes this deviation:
+L404: 
+L405:  | $$i^{\star}\in\arg\min_{i\in\mathcal{I}_{\mathrm{wait}}}\xi_{i}(t^{-}).$$  |
+L406: If there are multiple classes achieving the minimum deviation, ties are broken by selecting the class with the largest queue deviation $\delta_{i}(t^{-}):=Q_{p,i}^{n}(t^{-})-Q_{\mathrm{P},i}^{\dagger}$. Service is non-preemptive and FCFS within each class.
+L407: The gate is a negative–feedback rule around the fluid targets $x_{i}^{\star}$: classes whose prefill occupancy exceeds their target (large $\xi_{i}$) are held back, while under-served classes (smallest $\xi_{i}$) are pulled up by being admitted first.
+L408: Since the total mixed prefill capacity $\sum_{i}x_{i}^{\star}$ is fixed by the static planning, not all classes can be above target at once, and repeatedly correcting the most deviated class keeps the long-run average occupancies fluctuating in a small neighborhood of the fluid-optimal levels.
+L409: ##### Downstream (decode) routing.
+L410: 
+L411: Maintain a single decode buffer with class-$i$ queue length $Q_{d,i}^{n}(t)$. When a class-$i$ job requires decode (either immediately after prefill completion or upon a decode completion elsewhere), route as follows:
+L412: 
+L413:   1. 1.
+L414: 
+L415: If some GPU in $\mathcal{G}_{\mathrm{solo}}$ has a free decode slot, place the job uniformly at random among such GPUs.
+L416: 
+L417:   2. 2.
+L418: 
+L419: Otherwise, if some GPU in $\mathcal{G}_{\mathrm{mix}}$ has a free decode slot, place it randomly among such GPUs.
+L420:   3. 3.
+L421: 
+L422: Otherwise, append the job to the decode buffer (FCFS across class).
+L423: 
+L424: The key insight is that, from a token-level viewpoint, the decode stage only needs to keep up with the stream of decode tokens created by the prefill gate. Once the policy stabilizes this token production rate and keeps decode compute fully utilized, the decode workload is always consumable, and the detailed class mix becomes secondary. This is why a simple work-conserving rule such as FCFS is sufficient at decode.
+L425: Two mechanisms make this intuition rigorous. Static planning fixes the mixed versus solo partition so that decode is never overloaded in the fluid limit, and in the binding case it is critically loaded at an LP-optimal point with zero steady-state decode buffer.
+L426: GPU physics further implies that the relative speed advantage of solo decoding over mixed decoding is the same across classes, which lets us translate capacity between solo and mixed in a class-agnostic way and treat decode as effectively homogeneous in heavy traffic. Theorem cite146†4.1 formalizes this insight by proving that the resulting gate-and-route policy, with FCFS decoding, achieves asymptotic optimality.
+
+
+Large-Scale LLM Inference with Heterogeneous Workloads: Prefill-Decode Contention and Asymptotically Optimal Control (https://arxiv.org/html/2602.02987v1)
+citeturn26176view0 [wordlim: 200] Crawled: 2 days ago; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.02987v1","lineno":410}); Total lines: 1484
+L362: We first consider the bundle objective (the separate charging scheme will be discussed in Section cite34†4.2 ) and solve a steady-state (fluid) optimization to choose the optimal long-run occupancy shares and the routing of prefilled tasks across mixed and solo decode pools.
+L363: This formulation intentionally abstracts away the transient effects of stochastic variability in interarrival, prefill, and decode times (and abandonment/patience, if present), and instead enforces constraints only in terms of average arrival and service rates. The solution delivers capacity-splitting targets that will guide the stochastic control policy developed in the next section.
+L364:  | $\displaystyle\max_{\{x_{i},\,y_{m,i},\,y_{s,i},\,q_{p,i},\,q_{d,i}\}}$  | $\displaystyle\sum_{i=1}^{I}w_{i}\,\bigl(y_{m,i}\,\mu_{m,i}\;+\;y_{s,i}\,\mu_{s,i}\bigr)$  |  | (40)
+L365:  | $\displaystyle\text{s.t.}$  | $\displaystyle\sum_{i=1}^{I}x_{i}\;\leq\;1,$  |  | $\displaystyle\text{(Prefill Capacity)}$  |
+L366:  |  | $\displaystyle\sum_{i=1}^{I}y_{m,i}\;\leq\;(B-1)\sum_{i=1}^{I}x_{i},$  |  | $\displaystyle\text{(Mixed Decode Capacity)}$  |
+L367:  |  | $\displaystyle\sum_{i=1}^{I}y_{s,i}\;\leq\;B\Big(1-\sum_{i=1}^{I}x_{i}\Big),$  |  | $\displaystyle\text{(Solo Decode Capacity)}$  |
+L368:  |  | $\displaystyle\lambda_{i}-\theta_{i}\,q_{p,i}\;=\;\mu_{p,i}\,x_{i},\qquad\forall i,$  |  | $\displaystyle\text{(Prefill Flow Balance)}$  |
+L369:  |  | $\displaystyle\mu_{p,i}\,x_{i}\ -\theta_{i}\,q_{d,i}\;=\;\mu_{m,i}\,y_{m,i}\;+\;\mu_{s,i}\,y_{s,i},\qquad\forall i,$  |  | $\displaystyle\text{(Decode Flow Balance)}$  |
+L370:  |  | $\displaystyle x_{i},\,y_{m,i},\,y_{s,i},\,q_{d,i},\,q_{p,i}\;\geq\;0,\qquad\forall i.$  |  | $\displaystyle\text{(Non-negativity)}$  |
+L371: The linear program (cite144†40 ) describes the steady-state fluid model for routing prefill and decode work of multiple classes across GPUs with batch size $B$. The decision variables are long-run, per-GPU averages: $x_{i}$ is the fraction of time a GPU devotes to class-$i$ prefill; $y_{m,i}$ and $y_{s,i}$ are the average class-$i$ decode occupancies in mixed mode and solo mode; and $q_{p,i}$ and $q_{d,i}$ are the average prefill and decode queue masses.
+L372: The capacity constraints in the first three lines of (cite144†40 ) enforce the per-GPU limits: at most one prefill can run on a GPU, and, conditional on whether a prefill is present, at most $B-1$ (mixed) or $B$ (solo) decodes can be served in parallel.
+L373: The flow-balance constraints for each class $i$ state that, in steady state, arrivals net of prefill abandonments equal the prefill completion rate, and that prefill completions, net of decode abandonments, are exactly matched by the total decode completion rate.
+L374: The objective in the first line of (cite144†40 ) maximizes the per-GPU long-run reward by weighting class-$i$ decode completions in mixed and solo modes with $w_{i}=c_{p}P_{i}+c_{d}D_{i}$, the total value of a completed request under bundled pricing.
+L375: ###### Proposition 3.2 (Decode-buffer elimination)
+L376: 
+L377: Assume $\gamma\,\tau\geq(B-1)/B$ (solo decode more efficient). Then the steady-state fluid LP admits an optimal solution with $q_{d,i}^{\star}=0$ for all $i$.
+L378: The condition in Proposition cite145†3.2 is natural: solo decode is strictly more efficient than mixed decode. Since revenue is generated only when a request finishes decode, fluid mass held in the decode buffer yields no reward and only delays completions. We prove that any LP solution with $q_{d,i}>0$ can be improved by moving this backlog upstream while keeping the capacity constraints, which weakly increases the completion rate; hence, at optimality, the decode buffer is empty in steady state.
+L379: A key implication for control is that the optimal reward rate is determined by occupancy proportions, i.e. how much GPU time is spent on prefill and how decode slots are filled. In a backlogged system, the fluid-optimal plan keeps both prefill and decode fully utilized and fixes the fraction of GPUs running prefills at its target level. The remaining design question is how to route completed prefills between mixed and solo decode so that capacity is saturated without building a decode backlog.
+L380: This leads to a simple gate-and-route architecture: a prefill gate that regulates the target prefill occupancy (and class mix) and a decode router that splits work between mixed and solo decodes to keep slots busy while preventing persistent decode queues.
+L381: ## 4 Stochastic Control Policy
+L382: Building upon the fluid-optimal solution, we now develop an implementable control framework for the stochastic $n$-GPU system. Our approach operationalizes the fluid prescriptions by decomposing the scheduling problem into two hierarchical stages: a static resource partitioning phase that fixes the cluster configuration, and a dynamic control phase that manages job admission and routing in real time.
+L383: We first introduce the occupancy-based Gate-and-Route policy in Section cite31†4.1 , which regulates prefill occupancies and decode routing to attain the fluid-optimal throughput under the bundled objective. We then extend this architecture to the separate charging scheme in Section cite34†4.2 , where we develop a counterpart optimal policy and analyze how stage-based revenue recognition fundamentally reshapes scheduling incentives across heterogeneous request classes relative to the bundled objective.
+L384: ### 4.1 Bundled Charging Scheme
+L385: The design of this policy is inspired by the structural insight from Proposition cite145†3.2 , which reveals that the relative efficiency gain of solo decoding is class-independent. This property suggests a decomposition of the complex scheduling problem. We can statically partition the cluster resources to ensure that the aggregate decode capacity is critically loaded in the fluid limit, capable of fully digesting the downstream workload generated by the optimal prefill throughput.
+L386: With the decode stage dimensioned to clear the traffic naturally, the burden of optimization shifts upstream. Consequently, we focus our fine-grained dynamic control on the prefill admission to strictly regulate the job mix and occupancy, allowing the decode stage to operate under a simple work-conserving discipline (FCFS) while still guiding the system toward the fluid-optimal state.
+L387: #### Static Planning
+L388: 
+L389: Let $n$ be the number of GPUs and $B$ the per-GPU decode stream cap. Take any optimal per-GPU solution of the steady-state fluid LP, denoted by $\bigl(x_{i}^{\star},\,y_{m,i}^{\star},\,y_{s,i}^{\star},\,q_{p,i}^{\star}\bigr)_{i\in\mathcal{I}}$.
+L390: 
+L391: Fix the number of mixed GPUs as
+L392: 
+L393:  | $$M:=\Big\lceil n\sum_{i\in\mathcal{I}}x_{i}^{\star}\Big\rceil,$$  |
+L394: choose any subset $\mathcal{G}_{\mathrm{mix}}\subset\{1,\dots,n\}$ with $|\mathcal{G}_{\mathrm{mix}}|=M$, and set $\mathcal{G}_{\mathrm{solo}}:=\{1,\dots,n\}\setminus\mathcal{G}_{\mathrm{mix}}$. A GPU $g\in\mathcal{G}_{\mathrm{mix}}$ permanently reserves one slot for prefill (or equivalently, those GPUs prioritize new prefill over decode jobs) and may run at most $(B-1)$ decodes; a GPU $g\in\mathcal{G}_{\mathrm{solo}}$ never runs prefills and may run at most $B$ decodes.
+L395: #### Dynamic Control
+L396: 
+L397: Let $X_{i}^{n}(t)$ denote the number of class-$i$ prefill tasks currently in service and $Q_{p,i}^{n}(t)$ denote the prefill queue length at time $t$.
+L398: ##### Upstream (prefill) gate on mixed GPUs.
+L399: 
+L400: Prefills run only on $\mathcal{G}_{\mathrm{mix}}$. Whenever a mixed GPU $g\in\mathcal{G}_{\mathrm{mix}}$ has its reserved prefill slot idle, identify the set of classes with waiting jobs, $\mathcal{I}_{\mathrm{wait}}=\{i\in\mathcal{I}:Q_{p,i}^{n}(t^{-})>0\}$. If $\mathcal{I}_{\mathrm{wait}}$ is empty, the slot remains idle. Otherwise, compute the occupancy deviation index for each candidate class:
+L401:  | $$\xi_{i}(t^{-}):=\frac{1}{x_{i}^{\star}}\bigl(X_{i}^{n}(t^{-})-n\,x_{i}^{\star}\bigr).$$  |
+L402: 
+L403: The scheduler admits the head-of-line prefill of the class $i^{\star}$ that minimizes this deviation:
+L404: 
+L405:  | $$i^{\star}\in\arg\min_{i\in\mathcal{I}_{\mathrm{wait}}}\xi_{i}(t^{-}).$$  |
+L406: If there are multiple classes achieving the minimum deviation, ties are broken by selecting the class with the largest queue deviation $\delta_{i}(t^{-}):=Q_{p,i}^{n}(t^{-})-Q_{\mathrm{P},i}^{\dagger}$. Service is non-preemptive and FCFS within each class.
+L407: The gate is a negative–feedback rule around the fluid targets $x_{i}^{\star}$: classes whose prefill occupancy exceeds their target (large $\xi_{i}$) are held back, while under-served classes (smallest $\xi_{i}$) are pulled up by being admitted first.
+L408: Since the total mixed prefill capacity $\sum_{i}x_{i}^{\star}$ is fixed by the static planning, not all classes can be above target at once, and repeatedly correcting the most deviated class keeps the long-run average occupancies fluctuating in a small neighborhood of the fluid-optimal levels.
+L409: ##### Downstream (decode) routing.
+L410: 
+L411: Maintain a single decode buffer with class-$i$ queue length $Q_{d,i}^{n}(t)$. When a class-$i$ job requires decode (either immediately after prefill completion or upon a decode completion elsewhere), route as follows:
+L412: 
+L413:   1. 1.
+L414: 
+L415: If some GPU in $\mathcal{G}_{\mathrm{solo}}$ has a free decode slot, place the job uniformly at random among such GPUs.
+L416: 
+L417:   2. 2.
+L418: 
+L419: Otherwise, if some GPU in $\mathcal{G}_{\mathrm{mix}}$ has a free decode slot, place it randomly among such GPUs.
+L420:   3. 3.
+L421: 
+L422: Otherwise, append the job to the decode buffer (FCFS across class).
+L423: 
+L424: The key insight is that, from a token-level viewpoint, the decode stage only needs to keep up with the stream of decode tokens created by the prefill gate. Once the policy stabilizes this token production rate and keeps decode compute fully utilized, the decode workload is always consumable, and the detailed class mix becomes secondary. This is why a simple work-conserving rule such as FCFS is sufficient at decode.
+L425: Two mechanisms make this intuition rigorous. Static planning fixes the mixed versus solo partition so that decode is never overloaded in the fluid limit, and in the binding case it is critically loaded at an LP-optimal point with zero steady-state decode buffer.
+L426: GPU physics further implies that the relative speed advantage of solo decoding over mixed decoding is the same across classes, which lets us translate capacity between solo and mixed in a class-agnostic way and treat decode as effectively homogeneous in heavy traffic. Theorem cite146†4.1 formalizes this insight by proving that the resulting gate-and-route policy, with FCFS decoding, achieves asymptotic optimality.
+L427: ###### Theorem 4.1 (Asymptotic optimality of occupancy-based Gate-and-Route Policy)
+L428: 
+L429: Let $R^{\star}$ denote the optimal objective value of the steady-state fluid routing LP, and let Assumptions cite27†3 hold. Then the occupancy-based Gate-and-Route policy $\pi^{n,\star}$ is asymptotically optimal:
+L430: 
+L431:  | $$\liminf_{T\to\infty}\;\liminf_{n\to\infty}\;R^{n}(T;\pi^{n,\star})\;=\;R^{\star}.$$  |
+L432: ### 4.2 Separate Charging Scheme
+L433: The bundled-revenue formulation studied above serves as our primary benchmark and aligns with the objective of maximizing the throughput of completed requests. To complement this view, we also study a separate charging objective in which value is recognized separately at prefill and decode. This variant lets us derive a counterpart optimal policy and clarify how the timing of revenue recognition changes the incentives for admission and routing.
+L434: Formally, we define the per-GPU time-averaged reward as follows.
+L435:  | $$\tilde{R}_{n}(T;\pi^{n})\;:=\;\frac{1}{nT}\,\mathbb{E}_{\pi^{n}}\!\left[\sum_{i=1}^{I}\Big(c_{p}\,P_{i}\,S^{n}_{p,i}(T)\;+\;c_{d}\,D_{i}\,S^{n}_{d,i}(T)\Big)\right],$$  |  | (41)
+L436: 
+L437: where $c_{p},c_{d}\geq 0$ are unit prices, and $S^{n}_{p,i}(T)$ and $S^{n}_{d,i}(T)$ are cumulative prefill and decode completions for class $i$ by time $T$.
+L438: In steady state, we optimize the corresponding fluid objective over the same feasibility constraints as the bundled LP (i.e., (cite144†40 )). Substituting the service-rate definitions shows that the objective coefficients are class-independent, so the separate-charging LP depends on $(x_{i},y_{m,i},y_{s,i})$ only through the aggregate occupancies:
+L439: 
+L440:  | $$\max_{(x,y,q)}\;c_{p}\,\frac{C}{\tau}\sum_{i=1}^{I}x_{i}\;+\;\frac{c_{d}}{\tau}\sum_{i=1}^{I}y_{m,i}\;+\;c_{d}\,\gamma\sum_{i=1}^{I}y_{s,i}.$$  |  | (42)
+L441: These structural properties yield three key insights for policy design under separate charging. First, since prefill occupancy earns the same marginal reward $c_{p}C/\tau$ across all classes, the pricing structure itself does not prioritize any specific class mix in the prefill stage. Second, because solo-mode decode iterations are faster than mixed-mode ones ($\gamma>1/\tau$), solo decode occupancy is strictly more valuable per unit time.
+L442: A revenue-maximizing controller should thus prioritize saturating solo capacity.
+L443: Finally, unlike the bundled scheme where revenue is deferred, separate charging incentivizes the system to maintain a high ”inventory” of downstream work. To keep the more valuable decode slots busy, the prefill gate should favor classes with a larger decode-to-prefill ratio $D_{i}/P_{i}$, as they generate more future decode revenue per unit of prefill capacity consumed. This logic motivates the static priority index used in the Prioritize-and-Route policy described below.
+L444: Notably, the separate-charging optimum may tolerate persistent decode backlogs, as these backlogs serve as a buffer to ensure continuous decode revenue.
+L445: #### 4.2.1 Prioritize-and-Route policy
+L446: 
+L447: Under the separate-charging objective we reuse the same gate-and-route architecture as in the bundled scheme; the only change is the prefill admission rule (priority). We briefly summarize the modifications.
+L448: Static planning. Solve the separate-charging LP (cite147†42 ). We define the prefill queue targets and partition the GPUs into $G_{\mathrm{mix}}$ and $G_{\mathrm{solo}}$ following the identical procedure as in the bundled case, using the optimal prefill occupancies $\tilde{x}_{i}^{\star}$ to determine the partition size $\tilde{M}$.
+L449: Dynamic control. The downstream decode routing is unchanged, and the only modification is the upstream prefill gate on $G_{\mathrm{mix}}$. Whenever a reserved prefill slot becomes idle and some prefill queue is nonempty, we admit the head-of-line job from the class with the largest decode-to-prefill ratio:
+L450: 
+L451:  | $$i^{\star}\in\arg\max_{i\in\mathcal{I}}\Bigl\{\frac{D_{i}}{P_{i}}\Bigr\},$$  |
+L452: 
+L453: breaking ties arbitrarily. Service remains FCFS within each class.
+L454: ###### Theorem 4.2 (Asymptotic optimality under separate charging)
+L455: 
+L456: Let $\tilde{R}^{\star}$ be the optimal value of the steady-state fluid LP (cite147†42 ), and let $\tilde{R}_{n}(T;\pi^{n})$ be the per-GPU separate-charging reward in (cite148†41 ). Assume Assumption cite27†3 holds.
+L457: 
+L458: For each $n\in\mathbb{N}$, define the prioritize-and-route policy $\tilde{\pi}^{n,\star}$ as above, then $\tilde{\pi}^{n,\star}$ is asymptotically optimal for the separate-charging objective:
+L459:  | $$\liminf_{T\to\infty}\;\liminf_{n\to\infty}\;\tilde{R}_{n}(T;\tilde{\pi}^{n,\star})\;=\;\tilde{R}^{\star}.$$  |
+L460: ##### The Revenue-Congestion Trade-off and Operational Risks.
+L461: While Theorem cite149†4.2 guarantees asymptotic optimality for the separate-charging objective, the underlying incentive shift comes from the structure of (cite147†42 ): revenue is recognized at prefill and decode separately, so a revenue-driven controller may exploit any available prefill capacity even when decode is already congested. This decoupling changes where congestion accumulates.
+L462: Under bundled charging, the policy tends to regulate admissions so that the prefill buffer absorbs overload while the downstream decode buffer remains comparatively lean. Under separate charging, the system may instead build substantial decode backlogs to keep decode slots continuously busy, as illustrated in Figure cite150†2 .
+L463: Operationally, this is problematic because it can lead to memory pressure and create long post-prefill waits and, in extreme cases, requests that complete prefill (and generate revenue) but experience severely delayed decode or abandon before completion. This motivates augmenting the revenue objective with explicit service constraints.
+L464: Accordingly, in Section cite37†5 we extend the framework to maximize revenue subject to SLI constraints, and in Section cite39†6 we use shadow-price analysis to quantify the resulting economic trade-offs.
+L465: Figure 2: Comparison of Revenue and Queue Lengths under Bundled vs. Separate Charging Schemes (C0: class 0, C1: class 1).
+L466: ## 5 SLI-Aware Optimization and Control Policy
+L467: While the preceding sections focused on revenue maximization, practical deployments must also adhere to different Service Level Indicators (SLIs), such as fairness and latency limits. In this section, we show that our fluid-based planning framework can naturally accommodate these operational requirements.
+L468: By formulating SLIs as explicit constraints (or penalty terms) within the steady-state optimization, we can generate SLI-aware target occupancies without altering the fundamental structure of the control policy. This approach offers a flexible way to trade off revenue against diverse service guarantees. We focus our exposition on the bundled charging setting, though the methodology extends directly to other objectives.
+L469: SLIs are widely used in practice, but we emphasize that in our framework they are defined at the level of the steady-state fluid variables. A service-level indicator (SLI) is a user-facing performance metric (e.g., fairness or latency) computed from the system’s steady-state behavior.
+L470: In our framework, an SLI is modeled as either (i) a hard constraint of the form $g(\mathbf{x},\mathbf{y},\mathbf{q})\leq\eta$, or (ii) a soft penalty term subtracted from the revenue objective, both expressed in terms of the steady-state variables in the fluid optimization problem.
+L471: A central modeling principle we adopt throughout this section is that a reasonable SLI should not rely on persistent decode-buffer buildup. Indeed, in our setting decode-buffer mass generates no value under completion-based reward, but it increases waiting time and, more importantly, can lead to severe GPU-memory pressure due to KV-cache residency and migration.
+L472: Accordingly, we impose the following standing assumption for the SLI-aware planning problem: the chosen SLI specification is such that the optimization admits an optimal solution with $\,q_{d,i}^{\star}=0\,$ for all $i$ (decode-buffer elimination). For completeness, we provide an extension that allows $q_{d,i}^{\star}>0$ in the electronic companion; this case is particularly relevant under separate charging.
+L473: To this end, we illustrate several canonical SLI specifications and then present the corresponding SLI-aware planning problem and control policy.
+L474: #### Resource fairness (prefill and decode)
+L475: Fairness SLIs control the dispersion of prefill occupancies $\{x_{i}\}_{i\in\mathcal{I}}$ and solo decode occupancies $\{y_{s,i}\}_{i\in\mathcal{I}}$. While attractive at a high level, fairness constraints can be costly in our setting because they directly constrain the workload mix ($\bm{x}$ and/or $\bm{y}_{s}$).
+L476: This can force the system away from a hardware-efficient operating point and create a structural mismatch between prefill output and downstream decode capacity, leading to idling/under-utilization and a reduction in revenue. This effect is quantified in the Pareto frontiers in Section cite39†6 (Fig. cite151†8 ): Prefill Fairness has a steep shadow price (Fig. cite152†8(a) ), whereas Decode Fairness is comparatively cheap (Fig. cite153†8(b) ).
+L477: Prefill Fairness.
+L478: 
+L479:  | $$\max_{i,j\in\mathcal{I}}\{x_{i}-x_{j}\}\;\leq\;\eta_{1},\qquad q_{d,i}=0,\ \forall\,i\in\mathcal{I}.$$  |  | (43)
+L480: 
+L481: Equivalently, the same fairness preference can be modeled in the objective via a penalty term
+L482: 
+L483:  | $$l_{1}\;=\;\eta_{1}^{\prime}\max_{i,j\in\mathcal{I}}\{x_{i}-x_{j}\},$$  |  | (44)
+L484: 
+L485: with weight $\eta_{1}^{\prime}>0$ that tunes the trade-off between revenue and Prefill Fairness.
+L486: 
+L487: Decode Fairness.
+L488:  | $$\max_{i,j\in\mathcal{I}}\{y_{s,i}-y_{s,j}\}\;\leq\;\eta_{2},\qquad q_{d,i}=0,\ \forall\,i\in\mathcal{I}.$$  |  | (45)
+L489: 
+L490: In penalty form, we instead add
+L491: 
+L492:  | $$l_{2}\;=\;\eta_{2}^{\prime}\max_{i,j\in\mathcal{I}}\{y_{s,i}-y_{s,j}\},$$  |  | (46)
+L493: 
+L494: with weight $\eta_{2}^{\prime}>0$; larger $\eta_{2}^{\prime}$ places more emphasis on equalizing solo decode usage across classes.
+L495: #### Average Time per Output Token
+L496: 
+L497: While the worst-case Time per Output Token is governed by the chunk size $C$, the average TPOT depends on the cluster-wide balance between prefill and decode activity. Each unit of prefill occupancy $x_{i}$ introduces mixed-mode iterations that slow co-resident decodes. A natural SLI is to cap the average TPOT:
+L498:  | $$\frac{\tau(B-1)\sum_{i=1}^{I}x_{i}+\frac{1}{\gamma}B\bigl(1-\sum_{i=1}^{I}x_{i}\bigr)}{(B-1)\sum_{i=1}^{I}x_{i}+B\bigl(1-\sum_{i=1}^{I}x_{i}\bigr)}\;\leq\;\eta_{3},$$  |  | (47)
+L499: 
+L500: for some target $\eta_{3}>0$. In this formulation we retain the standard capacity constraints in (cite144†40 ), so idling is permitted when the TPOT cap is tight; the revenue objective still discourages unnecessary idling whenever additional work can be served.
+L501: Alternatively, we can incorporate TPOT directly into the objective by penalizing total prefill load:
+L502: 
+L503:  | $$l_{3}=\eta_{3}^{\prime}\frac{\tau(B-1)\sum_{i=1}^{I}x_{i}+\frac{1}{\gamma}B\bigl(1-\sum_{i=1}^{I}x_{i}\bigr)}{(B-1)\sum_{i=1}^{I}x_{i}+B\bigl(1-\sum_{i=1}^{I}x_{i}\bigr)},$$  |  | (48)
+L504: 
+L505: where $\eta_{3}^{\prime}>0$ controls the strength of the revenue–latency trade-off.
+L506: ### 5.1 SLI-Aware Gate-and-Route Control Policy
+L507: 
+L508: To incorporate SLIs into the steady-state optimization, we augment the objective of Section cite29†3.1 (or Section cite34†4.2 for separate charging) by subtracting a weighted sum of penalty terms:
+L509: 
+L510:  | $$\max_{(\mathbf{x},\mathbf{y},\mathbf{q})\in\mathcal{F}_{\mathcal{K}}}\quad\sum_{i=1}^{I}w_{i}\left(\mu_{m,i}y_{m,i}+\mu_{s,i}y_{s,i}\right)-\sum_{k\in\mathcal{K}}l_{k},$$  |  | (49)
+L511: where $\mathcal{K}$ indexes the active SLIs and $l_{k}$ are chosen from (cite154†44 ), (cite155†46 ), (cite156†48 ), or other application-specific penalties. We append the SLI-specific constraints to the feasibility constraints from Section cite29†3.1 , and denote the feasibility region by $\mathcal{F}_{\mathcal{K}}$.
+L512: To realize the targets $(y_{m,i}^{\star},y_{s,i}^{\star})$ derived from the SLI-aware planning problem, we employ a randomized decode router. For clarity of exposition, we focus on the zero-buffer case ($q_{d,i}^{\star}=0$) in this section, which avoids memory pressure and simplifies the tracking mechanism. An extension that accommodates persistent decode queues ($q_{d,i}^{\star}>0$) is provided in Section cite65†13 .
+L513: Static planning. This phase follows the identical procedure as defined in Section cite30†4 , determining the cluster-level queue targets $Q_{\mathrm{P},i}^{\dagger}$ and the GPU partition sets ($\mathcal{G}_{\mathrm{mix}}$ and $\mathcal{G}_{\mathrm{solo}}$) based on the optimal solution $(x_{i}^{\star},y_{m,i}^{\star},y_{s,i}^{\star},q_{p,i}^{\star})$ of the corresponding SLI-aware optimization problem in (cite157†49 ).
+L514: Dynamic control. The prefill gate remains the same as the Gate-and-Route policy in Section cite158†4.1 . The decode router splits the decode buffer into mixed and solo components and computes the class-$i$ solo probability
+L515: 
+L516:  | $$p_{s,i}\;:=\;\begin{cases}\dfrac{\mu_{s,i}\,y_{s,i}^{\star}}{\mu_{m,i}\,y_{m,i}^{\star}+\mu_{s,i}\,y_{s,i}^{\star}},&\text{if }\mu_{m,i}\,y_{m,i}^{\star}+\mu_{s,i}\,y_{s,i}^{\star}>0,\\[8.0pt]
+L517: 1,&\text{otherwise.}\end{cases}$$  |
+L518: Upon prefill or decode completion of class $i$, draw $U\sim\mathrm{Unif}(0,1)$; route to $\mathcal{G}_{\mathrm{solo}}$ if $U\leq p_{s,i}$ and to $\mathcal{G}_{\mathrm{mix}}$ otherwise, placing the decode uniformly at random among GPUs in the targeted group with free slots (or queuing in the corresponding buffer if none available). Note that here we logically split the decode buffer into mixed buffer and solo buffer instead of a single decode buffer mentioned in Section cite30†4 .
+L519: The router implements a randomized load split that mirrors the fluid targets: each class-$i$ decode is sent to solo or mixed with probability $p_{s,i}$ chosen so that the long-run fraction of class-$i$ service provided by solo vs. mixed matches $(y_{s,i}^{\star},y_{m,i}^{\star})$.
+L520: As many decodes are routed over time, the law of large numbers forces the realized occupancies $\bigl(y_{m,i}^{n}/n,\,y_{s,i}^{n}/n\bigr)$ to track these target proportions, effectively “reshuffling” decode work until the stochastic system hovers around the desired steady-state levels.
+L521: The asymptotic optimality guarantee of Theorem cite146†4.1 extends to the SLI-aware policy under mild regularity on the optimization problem (bounded penalties, etc.).
+L522: ###### Theorem 5.1 (Occupancy Convergence and Asymptotic Optimality of SLI-Aware Policy)
+L523: Let $(x_{i}^{\star},y_{m,i}^{\star},y_{s,i}^{\star},q_{p,i}^{\star},q_{d,i}^{\star})_{i\in\mathcal{I}}$ denote an optimal solution of the SLI-aware LP (cite157†49 ) with active SLI set $\mathcal{K}$ and corresponding penalties $\{l_{k}\}_{k\in\mathcal{K}}$ and constraints. Assume the SLI-aware LP satisfies Slater’s condition and each penalty $l_{k}$ is bounded and Lipschitz continuous in the decision variables.
+L524: Further assume that the selected optimal solution satisfies $q_{d,i}^{\star}=0$ for all $i$ (e.g., by including $q_{d,i}=0$ in the constraints). Under the SLI-aware control policy, the scaled steady-state occupancies converge:
+L525:  | $$\lim_{n\to\infty}\frac{1}{n}\mathbb{E}\bigl[X_{i}^{(n)}\bigr]=x_{i}^{\star},\quad\lim_{n\to\infty}\frac{1}{n}\mathbb{E}\bigl[Y_{m,i}^{(n)}\bigr]=y_{m,i}^{\star},\quad\lim_{n\to\infty}\frac{1}{n}\mathbb{E}\bigl[Y_{s,i}^{(n)}\bigr]=y_{s,i}^{\star},$$  |
+L526: 
+L527: for all $i\in\mathcal{I}$, and the per-GPU SLI-aware objective value converges to optimality:
+L528:  | $$\lim_{n\to\infty}\frac{1}{n}\mathbb{E}\left[\sum_{i=1}^{I}w_{i}\left(\mu_{m,i}Y_{m,i}^{(n)}+\mu_{s,i}Y_{s,i}^{(n)}\right)-n\sum_{k\in\mathcal{K}}l_{k}\bigl(\bm{X}^{(n)}/n,\bm{Y}_{m}^{(n)}/n,\bm{Y}_{s}^{(n)}/n\bigr)\right]$$  |
+L529:  | $$=\sum_{i=1}^{I}w_{i}\left(\mu_{m,i}y_{m,i}^{\star}+\mu_{s,i}y_{s,i}^{\star}\right)-\sum_{k\in\mathcal{K}}l_{k}\bigl(\bm{x}^{\star},\bm{y}_{m}^{\star},\bm{y}_{s}^{\star}\bigr),$$  |
+L530: where $\bm{X}^{(n)}=(X_{1}^{(n)},\ldots,X_{I}^{(n)})$ and similarly for $\bm{Y}_{m}^{(n)}$, $\bm{Y}_{s}^{(n)}$.
+L531: ## 6 Numerical Experiments
+L532: In this section, we evaluate the performance of the proposed Gate-and-Route policy through event-driven simulations calibrated with real-world LLM inference profiles. We compare our approach against standard industry heuristics across varying cluster sizes, demonstrating that our fluid-based control effectively maximizes system throughput and revenue while satisfying SLI constraints in the long run.
+L533: We also conduct sensitivity analysis to understand the tradeoff between SLIs, GPU configurations, and revenue.
+L534: ### 6.1 Calibration of Hyperparameters
+L535: 
+
+
+Large-Scale LLM Inference with Heterogeneous Workloads: Prefill-Decode Contention and Asymptotically Optimal Control (https://arxiv.org/html/2602.02987v1)
+citeturn26177view0 [wordlim: 200] Crawled: 2 days ago; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.02987v1","lineno":535}); Total lines: 1484
+L470: In our framework, an SLI is modeled as either (i) a hard constraint of the form $g(\mathbf{x},\mathbf{y},\mathbf{q})\leq\eta$, or (ii) a soft penalty term subtracted from the revenue objective, both expressed in terms of the steady-state variables in the fluid optimization problem.
+L471: A central modeling principle we adopt throughout this section is that a reasonable SLI should not rely on persistent decode-buffer buildup. Indeed, in our setting decode-buffer mass generates no value under completion-based reward, but it increases waiting time and, more importantly, can lead to severe GPU-memory pressure due to KV-cache residency and migration.
+L472: Accordingly, we impose the following standing assumption for the SLI-aware planning problem: the chosen SLI specification is such that the optimization admits an optimal solution with $\,q_{d,i}^{\star}=0\,$ for all $i$ (decode-buffer elimination). For completeness, we provide an extension that allows $q_{d,i}^{\star}>0$ in the electronic companion; this case is particularly relevant under separate charging.
+L473: To this end, we illustrate several canonical SLI specifications and then present the corresponding SLI-aware planning problem and control policy.
+L474: #### Resource fairness (prefill and decode)
+L475: Fairness SLIs control the dispersion of prefill occupancies $\{x_{i}\}_{i\in\mathcal{I}}$ and solo decode occupancies $\{y_{s,i}\}_{i\in\mathcal{I}}$. While attractive at a high level, fairness constraints can be costly in our setting because they directly constrain the workload mix ($\bm{x}$ and/or $\bm{y}_{s}$).
+L476: This can force the system away from a hardware-efficient operating point and create a structural mismatch between prefill output and downstream decode capacity, leading to idling/under-utilization and a reduction in revenue. This effect is quantified in the Pareto frontiers in Section cite39†6 (Fig. cite151†8 ): Prefill Fairness has a steep shadow price (Fig. cite152†8(a) ), whereas Decode Fairness is comparatively cheap (Fig. cite153†8(b) ).
+L477: Prefill Fairness.
+L478: 
+L479:  | $$\max_{i,j\in\mathcal{I}}\{x_{i}-x_{j}\}\;\leq\;\eta_{1},\qquad q_{d,i}=0,\ \forall\,i\in\mathcal{I}.$$  |  | (43)
+L480: 
+L481: Equivalently, the same fairness preference can be modeled in the objective via a penalty term
+L482: 
+L483:  | $$l_{1}\;=\;\eta_{1}^{\prime}\max_{i,j\in\mathcal{I}}\{x_{i}-x_{j}\},$$  |  | (44)
+L484: 
+L485: with weight $\eta_{1}^{\prime}>0$ that tunes the trade-off between revenue and Prefill Fairness.
+L486: 
+L487: Decode Fairness.
+L488:  | $$\max_{i,j\in\mathcal{I}}\{y_{s,i}-y_{s,j}\}\;\leq\;\eta_{2},\qquad q_{d,i}=0,\ \forall\,i\in\mathcal{I}.$$  |  | (45)
+L489: 
+L490: In penalty form, we instead add
+L491: 
+L492:  | $$l_{2}\;=\;\eta_{2}^{\prime}\max_{i,j\in\mathcal{I}}\{y_{s,i}-y_{s,j}\},$$  |  | (46)
+L493: 
+L494: with weight $\eta_{2}^{\prime}>0$; larger $\eta_{2}^{\prime}$ places more emphasis on equalizing solo decode usage across classes.
+L495: #### Average Time per Output Token
+L496: 
+L497: While the worst-case Time per Output Token is governed by the chunk size $C$, the average TPOT depends on the cluster-wide balance between prefill and decode activity. Each unit of prefill occupancy $x_{i}$ introduces mixed-mode iterations that slow co-resident decodes. A natural SLI is to cap the average TPOT:
+L498:  | $$\frac{\tau(B-1)\sum_{i=1}^{I}x_{i}+\frac{1}{\gamma}B\bigl(1-\sum_{i=1}^{I}x_{i}\bigr)}{(B-1)\sum_{i=1}^{I}x_{i}+B\bigl(1-\sum_{i=1}^{I}x_{i}\bigr)}\;\leq\;\eta_{3},$$  |  | (47)
+L499: 
+L500: for some target $\eta_{3}>0$. In this formulation we retain the standard capacity constraints in (cite144†40 ), so idling is permitted when the TPOT cap is tight; the revenue objective still discourages unnecessary idling whenever additional work can be served.
+L501: Alternatively, we can incorporate TPOT directly into the objective by penalizing total prefill load:
+L502: 
+L503:  | $$l_{3}=\eta_{3}^{\prime}\frac{\tau(B-1)\sum_{i=1}^{I}x_{i}+\frac{1}{\gamma}B\bigl(1-\sum_{i=1}^{I}x_{i}\bigr)}{(B-1)\sum_{i=1}^{I}x_{i}+B\bigl(1-\sum_{i=1}^{I}x_{i}\bigr)},$$  |  | (48)
+L504: 
+L505: where $\eta_{3}^{\prime}>0$ controls the strength of the revenue–latency trade-off.
+L506: ### 5.1 SLI-Aware Gate-and-Route Control Policy
+L507: 
+L508: To incorporate SLIs into the steady-state optimization, we augment the objective of Section cite29†3.1 (or Section cite34†4.2 for separate charging) by subtracting a weighted sum of penalty terms:
+L509: 
+L510:  | $$\max_{(\mathbf{x},\mathbf{y},\mathbf{q})\in\mathcal{F}_{\mathcal{K}}}\quad\sum_{i=1}^{I}w_{i}\left(\mu_{m,i}y_{m,i}+\mu_{s,i}y_{s,i}\right)-\sum_{k\in\mathcal{K}}l_{k},$$  |  | (49)
+L511: where $\mathcal{K}$ indexes the active SLIs and $l_{k}$ are chosen from (cite154†44 ), (cite155†46 ), (cite156†48 ), or other application-specific penalties. We append the SLI-specific constraints to the feasibility constraints from Section cite29†3.1 , and denote the feasibility region by $\mathcal{F}_{\mathcal{K}}$.
+L512: To realize the targets $(y_{m,i}^{\star},y_{s,i}^{\star})$ derived from the SLI-aware planning problem, we employ a randomized decode router. For clarity of exposition, we focus on the zero-buffer case ($q_{d,i}^{\star}=0$) in this section, which avoids memory pressure and simplifies the tracking mechanism. An extension that accommodates persistent decode queues ($q_{d,i}^{\star}>0$) is provided in Section cite65†13 .
+L513: Static planning. This phase follows the identical procedure as defined in Section cite30†4 , determining the cluster-level queue targets $Q_{\mathrm{P},i}^{\dagger}$ and the GPU partition sets ($\mathcal{G}_{\mathrm{mix}}$ and $\mathcal{G}_{\mathrm{solo}}$) based on the optimal solution $(x_{i}^{\star},y_{m,i}^{\star},y_{s,i}^{\star},q_{p,i}^{\star})$ of the corresponding SLI-aware optimization problem in (cite157†49 ).
+L514: Dynamic control. The prefill gate remains the same as the Gate-and-Route policy in Section cite158†4.1 . The decode router splits the decode buffer into mixed and solo components and computes the class-$i$ solo probability
+L515: 
+L516:  | $$p_{s,i}\;:=\;\begin{cases}\dfrac{\mu_{s,i}\,y_{s,i}^{\star}}{\mu_{m,i}\,y_{m,i}^{\star}+\mu_{s,i}\,y_{s,i}^{\star}},&\text{if }\mu_{m,i}\,y_{m,i}^{\star}+\mu_{s,i}\,y_{s,i}^{\star}>0,\\[8.0pt]
+L517: 1,&\text{otherwise.}\end{cases}$$  |
+L518: Upon prefill or decode completion of class $i$, draw $U\sim\mathrm{Unif}(0,1)$; route to $\mathcal{G}_{\mathrm{solo}}$ if $U\leq p_{s,i}$ and to $\mathcal{G}_{\mathrm{mix}}$ otherwise, placing the decode uniformly at random among GPUs in the targeted group with free slots (or queuing in the corresponding buffer if none available). Note that here we logically split the decode buffer into mixed buffer and solo buffer instead of a single decode buffer mentioned in Section cite30†4 .
+L519: The router implements a randomized load split that mirrors the fluid targets: each class-$i$ decode is sent to solo or mixed with probability $p_{s,i}$ chosen so that the long-run fraction of class-$i$ service provided by solo vs. mixed matches $(y_{s,i}^{\star},y_{m,i}^{\star})$.
+L520: As many decodes are routed over time, the law of large numbers forces the realized occupancies $\bigl(y_{m,i}^{n}/n,\,y_{s,i}^{n}/n\bigr)$ to track these target proportions, effectively “reshuffling” decode work until the stochastic system hovers around the desired steady-state levels.
+L521: The asymptotic optimality guarantee of Theorem cite146†4.1 extends to the SLI-aware policy under mild regularity on the optimization problem (bounded penalties, etc.).
+L522: ###### Theorem 5.1 (Occupancy Convergence and Asymptotic Optimality of SLI-Aware Policy)
+L523: Let $(x_{i}^{\star},y_{m,i}^{\star},y_{s,i}^{\star},q_{p,i}^{\star},q_{d,i}^{\star})_{i\in\mathcal{I}}$ denote an optimal solution of the SLI-aware LP (cite157†49 ) with active SLI set $\mathcal{K}$ and corresponding penalties $\{l_{k}\}_{k\in\mathcal{K}}$ and constraints. Assume the SLI-aware LP satisfies Slater’s condition and each penalty $l_{k}$ is bounded and Lipschitz continuous in the decision variables.
+L524: Further assume that the selected optimal solution satisfies $q_{d,i}^{\star}=0$ for all $i$ (e.g., by including $q_{d,i}=0$ in the constraints). Under the SLI-aware control policy, the scaled steady-state occupancies converge:
+L525:  | $$\lim_{n\to\infty}\frac{1}{n}\mathbb{E}\bigl[X_{i}^{(n)}\bigr]=x_{i}^{\star},\quad\lim_{n\to\infty}\frac{1}{n}\mathbb{E}\bigl[Y_{m,i}^{(n)}\bigr]=y_{m,i}^{\star},\quad\lim_{n\to\infty}\frac{1}{n}\mathbb{E}\bigl[Y_{s,i}^{(n)}\bigr]=y_{s,i}^{\star},$$  |
+L526: 
+L527: for all $i\in\mathcal{I}$, and the per-GPU SLI-aware objective value converges to optimality:
+L528:  | $$\lim_{n\to\infty}\frac{1}{n}\mathbb{E}\left[\sum_{i=1}^{I}w_{i}\left(\mu_{m,i}Y_{m,i}^{(n)}+\mu_{s,i}Y_{s,i}^{(n)}\right)-n\sum_{k\in\mathcal{K}}l_{k}\bigl(\bm{X}^{(n)}/n,\bm{Y}_{m}^{(n)}/n,\bm{Y}_{s}^{(n)}/n\bigr)\right]$$  |
+L529:  | $$=\sum_{i=1}^{I}w_{i}\left(\mu_{m,i}y_{m,i}^{\star}+\mu_{s,i}y_{s,i}^{\star}\right)-\sum_{k\in\mathcal{K}}l_{k}\bigl(\bm{x}^{\star},\bm{y}_{m}^{\star},\bm{y}_{s}^{\star}\bigr),$$  |
+L530: where $\bm{X}^{(n)}=(X_{1}^{(n)},\ldots,X_{I}^{(n)})$ and similarly for $\bm{Y}_{m}^{(n)}$, $\bm{Y}_{s}^{(n)}$.
+L531: ## 6 Numerical Experiments
+L532: In this section, we evaluate the performance of the proposed Gate-and-Route policy through event-driven simulations calibrated with real-world LLM inference profiles. We compare our approach against standard industry heuristics across varying cluster sizes, demonstrating that our fluid-based control effectively maximizes system throughput and revenue while satisfying SLI constraints in the long run.
+L533: We also conduct sensitivity analysis to understand the tradeoff between SLIs, GPU configurations, and revenue.
+L534: ### 6.1 Calibration of Hyperparameters
+L535: 
+L536: We begin by calibrating the iteration-time parameters $\alpha$, $\beta$, and $\gamma$ used in the subsequent numerical experiments. Our measurements are conducted on a server equipped with 4$\times$ NVIDIA A100-SXM4-40GB GPUs; detailed hardware and software specifications are reported in the EC (Table cite159†3 ). In practice, we use vLLM version 0.11.0 to evaluate two models: Qwen-4B and Qwen-8B, and for each model we measure both mixed and solo decode modes.
+L537: For mixed-mode calibration, we vary the prefill chunk size $C$ and record the mean iteration time $\tau$ on a single GPU, then fit a linear model $\tau\approx\alpha+\beta C$ via ordinary least squares.
+L538: As shown in Figure cite121†3 , the fitted lines closely track the empirical means: for Qwen-8B we obtain $\alpha\approx 0.0174$ and $\beta\approx 6.2\times 10^{-5}$, and for Qwen-4B we obtain $\alpha\approx 0.0152$ and $\beta\approx 3.6\times 10^{-5}$, with coefficients of determination $R^{2}>0.99$ in both cases. This supports the linear mixed-iteration model used in Section cite18†2.2 .
+L539: For solo decode, we set the per-stream token speed $\gamma$ to the empirical mean across runs. In our setup, this yields $\gamma\approx 45.45$ tokens/s for Qwen-8B and $\gamma\approx 52.63$ tokens/s for Qwen-4B.
+L540: Figure 3: Calibration of mixed-iteration hyperparameters $(\alpha,\beta)$ for Qwen-8B (left) and Qwen-4B (right). Dots show the empirical mean iteration time $\tau$ for each chunk size $C$, and the solid line is the OLS fit $\tau=\alpha+\beta C$. For Qwen-8B, the fitted line is $\tau=0.0174+6.2\times 10^{-5}\,C$ with $R^{2}=0.998$; for Qwen-4B, it is $\tau=0.0152+3.6\times 10^{-5}\,C$ with $R^{2}=0.997$.
+L541: ### 6.2 Convergence Analysis
+L542: 
+L543: We evaluate the asymptotic performance of our proposed policies using a two-class instance ($I=2$) calibrated to the hardware specifications derived in Section cite40†6.1 . The system parameters are $B=16$, $C=256$, $\alpha=0.0174$, and $\beta=6.2\times 10^{-5}$. The solo decode speed is set to $\gamma\approx 45.45$ tokens/s (corresponding to a per-token latency of 0.022s).
+L544: 
+L545: We define two distinct workload classes to represent the heterogeneity discussed in Table cite83†1 :
+L546: 
+L547:   * •
+L548: Class 0 (Decode-Heavy): $P_{0}=300,D_{0}=1000$. Represents tasks like code generation.
+L549: 
+L550:   * •
+L551: 
+L552: Class 1 (Prefill-Heavy): $P_{1}=3000,D_{1}=400$. Represents tasks like paper summarization or context-heavy analysis.
+L553: Arrival rates are symmetric with $\lambda=[0.5,0.5]$, and abandonment rates are $\theta=[0.1,0.1]$. We utilize the separate charging scheme with prices $c_{p}=0.1$ and $c_{d}=0.2$. We simulate the system across varying scales $n\in\{5,20,50,200,500\}$, running 5 random seeds per configuration to capture stochastic variability.
+L554: ##### Revenue and Queue Convergence.
+L555: 
+L556: We first validate the asymptotic optimality of the standard gate-and-route policy. Figure cite160†4 illustrates the per-GPU revenue and queue lengths as the system scale $n$ increases.
+L557: As predicted by the fluid limit, the average per-GPU revenue (Left) converges to the optimal value $R^{\star}$ derived from the steady-state LP. The shaded error bands, representing the standard deviation across seeds, narrow significantly as $n\to\infty$, confirming the concentration of measure. Simultaneously, the normalized queue lengths for both Class 0 (Top Right) and Class 1 (Bottom Right) stabilize near their fluid targets.
+L558: Notably, the prefill gate effectively regulates the admission process, ensuring that the stochastic queue lengths track the fluid-optimal backlog required to maintain utilization, while the decode buffer remains negligible.
+L559: cite161†Image: Refer to caption (a) Convergence of per-GPU revenue.
+L560: 
+L561: cite162†Image: Refer to caption (b) Convergence of average queue lengths for Class 0.
+L562: 
+L563: cite163†Image: Refer to caption (c) Convergence of average queue lengths for Class 1.
+L564: 
+L565: Figure 4: Asymptotic convergence of Revenue and Queue Lengths under the Gate-and-Route policy.
+L566: ##### Occupancy Convergence Analysis.
+L567: 
+L568: While the aggregate revenue converges, a deeper inspection reveals a discrepancy in the convergence behavior of specific resource occupancies under the standard policy. Figure cite164†5 plots the fluid-scaled prefill occupancy $X^{(n)}_{i}/n$ and decode occupancy $Y^{(n)}_{i}/n$.
+L569: We observe that the prefill occupancy (Top) converges tightly to the LP solution $x^{\star}_{i}$. This is expected, as the prefill gate explicitly targets these values. However, the decode occupancy (Bottom) exhibits persistent variance and deviates from the specific class-wise breakdown $y^{\star}_{m,i}+y^{\star}_{s,i}$ predicted by the LP, even though the total reward is optimal.
+L570: This occurs because the standard router prioritizes any available solo slot to maximize throughput (work-conservation) but is indifferent to which class occupies that slot. Consequently, the specific mix of Class 1 vs. Class 2 in decode slots fluctuates, satisfying the aggregate capacity constraints but failing to converge to the specific fluid vector $y^{\star}$.
+L571: cite165†Image: Refer to caption cite166†Image: Refer to caption L572: 
+L573: Figure 5: Occupancy convergence under the Gate-and-Route Policy. Top: Class 0 (Decode-Heavy). Bottom: Class 1 (Prefill-Heavy). Note the loose convergence for decode occupancy ($y$).
+L574: ##### SLI-Aware Convergence.
+L575: 
+L576: To address the decode occupancy drift and enforce strict adherence to the fluid plan (crucial for fairness SLIs), we employ the SLI-aware gate-and-route policy described in Section cite38†5.1 . This policy utilizes a stochastic router with probabilities $p_{s,i}$ derived from the LP solution to probabilistically route jobs to mixed or solo pools.
+L577: 
+L578: cite167†Image: Refer to caption cite168†Image: Refer to caption L579: Figure 6: Occupancy convergence under the SLI-Aware Gate-and-Route Policy. Top: Class 0 (Decode-Heavy). Bottom: Class 1 (Prefill-Heavy). Both prefill ($x$) and decode ($y$) occupancies now converge tightly to the LP targets.
+L580: Figure cite169†6 demonstrates the impact of this policy. Unlike the standard case, both the prefill occupancy and the decode occupancy now converge strictly to the optimization solution for both classes. By enforcing the specific routing split $y^{\star}_{m,i}$ vs. $y^{\star}_{s,i}$, the SLI-aware policy ensures that the stochastic system structurally mimics the fluid limit.
+L581: This validates Theorem cite170†5.1 , confirming that we can achieve precise control over resource allocation distributions at scale, which is a prerequisite for satisfying multi-objective SLIs in the long run.
+L582: ### 6.3 Policy Performance: Baselines and Ablations
+L583: To evaluate the efficacy of our proposed framework, we compare several alternative scheduling policies across a variety of instances. These instances encompass diverse infrastructure hyperparameters ($\alpha$ from 0.15 to 0.02, $\beta$ from $10^{-5}$ to $10^{-3}$, and $\gamma$ from $10$ to $50$), distinct target user compositions ($P_{i},D_{i}$ from $200$ to $3000$), and different arrival rates $\lambda$ from $0.25$ to $0.5$, and all under GPU number $n=500$.
+L584: We report the normalized revenue rate (scaled from 0 to 1) along with standard deviations to demonstrate robustness.
+L585: #### Candidate Policies
+L586: 
+L587: We evaluate the following five policies together with our proposed policy to isolate the contributions of our admission control (Gate), decode router (Route), and static planning:
+L588: 
+L589:   * •
+L590: Gate-and-Route (Greedy Router) with Static Planning (GG-SP): This is our proposed policy. It utilizes the queue-length based admission control (Gate) derived from our theoretical analysis. For routing, it uses a Greedy router in the gate-and-route architecture; specifically, the router prioritizes dispatching waiting decode tasks to available solo GPUs over initiating new prefill tasks.
+L591: 
+L592:   * •
+L593: FCFS-and-Immediate without Static Planning (FI-WSP): This represents the standard industry baseline in Sarathi-serve (cite79†Agrawal et al., 2024 ). It employs First-Come-First-Served (FCFS) admission without any queue-length based control. Crucially, it uses an “Immediate” execution model where prefill and decode phases are coupled: the decode phase commences immediately on the same GPU slot following the prefill completion, occupying the resource continuously until the request is finished.
+L594: 
+L595:   * •
+L596: Gate-and-Immediate without Static Planning (GI-WSP): This policy introduces our queue-length based Gate control to the coupled architecture. Like FI-WSP, it executes decode immediately after prefill on the same slot. Comparing GI-WSP against GG-SP highlights the specific performance gains achieved by decoupling the prefill and decode phases.
+L597: 
+L598:   * •
+L599: Gate-and-FCFS without Static Planning (GF-WSP): This policy utilizes the same decoupled architecture and queue-length based Gate as our proposed method. However, the routing logic is inverted to a naive FCFS approach: whenever a GPU slot becomes available, the system prioritizes admitting a new prefill task rather than processing a waiting decode task. Comparing this against GG-SP demonstrates the necessity of the decode-first (Greedy) prioritization in a decoupled system.
+L600: 
+L601:   * •
+L602: FCFS-and-Route (Greedy Router) with Static Planning (FG-SP): This policy mirrors our proposed gate-and-route architecture with the same Greedy router, but removes the admission control mechanism and accepts all arrivals via FCFS. Comparing FG-SP against GG-SP isolates the role of the Gate in preventing system overload and maintaining revenue stability.
+L603: The comparative results, illustrated in Figure cite171†7 , reveal a critical hierarchy of design elements. We find that while the admission gate alone (GI-WSP) provides a meaningful improvement over the industry baseline (FI-WSP), other components like static planning can actually be counter-productive when applied in isolation (as seen in FG-SP), where rigid resource partitioning without traffic regulation may lead to localized imbalances.
+L604: The full revenue potential is only unlocked in our integrated GG-SP policy: the gate controls the decode workloads, while the static planning enables the greedy router to extract maximal efficiency from the hardware pools. Additionally, the consistently low standard deviations observed for GG-SP across varied instances underscore the robustness of this integrated design.
+L605: cite172†Image: Refer to caption Figure 7: Comparison of normalized average revenue across different policies. The results aggregate performance over various infrastructure settings ($\alpha,\beta,\gamma$) and user class combinations. Error bars indicate the standard deviation.
+L606: ### 6.4 The Cost of Service Quality and Hardware Resources
+L607: To investigate the cost of service quality and fairness, we analyze the trade-off between total revenue and specific SLIs. We utilize the same system instance defined in the convergence analysis to ensure consistency, which is representative since it consists of long-prefill-short-decode and short-prefill-long-decode classes.
+L608: We formulate this as a constrained optimization problem where we maximize revenue subject to a strict constraint on exactly one SLI metric at a time: Prefill Fairness, Decode Fairness, or Time Per Output Token (TPOT), while relaxing the others. This approach allows us to isolate the “price” of each specific constraint in terms of lost revenue.
+L609: ##### The Shadow Price of SLIs
+L610: 
+L611: Figure cite151†8 illustrates the Pareto frontiers for three operational constraints. We interpret the slope of these curves as the shadow price, which is the marginal revenue sacrificed to achieve a stricter SLI target. It reveals distinct economic sensitivities:
+L612: 
+L613: (a) Prefill Fairness ($\eta_{1}$).
+L614: 
+L615: (b) Decode Fairness ($\eta_{2}$).
+L616: 
+L617: (c) TPOT Limit ($\eta_{3}$).
+L618: 
+L619: Figure 8: Pareto frontiers illustrating the shadow price of Service Level Indicators (SLIs).
+L620: 
+L621:   * •
+L622: Asymmetric Costs of Fairness (Figs. cite152†8(a) and cite153†8(b) ): We observe a stark contrast between the shadow prices of fairness at different stages of the inference pipeline. Prefill fairness ($\eta_{1}$) incurs a steep revenue penalty because the prefill stage acts as the primary bottleneck; imposing rigid class-mix constraints here prevents the scheduler from aligning admissions with the hardware’s optimal operating point, leading to a structural mismatch between job arrivals and downstream capacity.
+L623: In contrast, the nearly flat frontier for decode fairness ($\eta_{2}$) suggests a negligible shadow price. This implies that once a request has entered the system, rebalancing its processing speed relative to other classes barely degrades total revenue.
+L624:   * •
+L625: 
+L626: The Price of Low TPOT (Fig. cite173†8(c) ): The shadow price of the TPOT constraint increases significantly as the target latency approaches $0.022\,\text{s}$, a lower bound determined by the solo-decode rate $\gamma$. Near this threshold, the feasible region for prefill throughput shrinks rapidly, leading to a substantial decrease in optimal revenue as the system prioritizes meeting the stringent latency requirement over throughput.
+L627: ##### GPU configurations and Revenue
+L628: 
+L629: We next analyze the sensitivity of the system’s performance to the maximum batch size ($B$) and the hyperparameters ($\alpha,\beta,\gamma$). Figure cite174†9 illustrates the trade-off between total Revenue (primary objective, left y-axis) and TPOT (latency cost, right y-axis).
+L630: Figure 9: Parameter sensitivity analysis showing the impact of maximum batch size ($B$), $\alpha$, $\beta$, and $\gamma$ on revenue and TPOT. Blue lines indicate revenue (higher is better); red lines indicate TPOT (lower is better).
+L631: The results indicate distinct operational trends. First, revenue increases with batch size $B$ but saturates around $B=16$, suggesting diminishing returns on memory scaling beyond this point. Second, the system is highly sensitive to the computational penalty $\beta$; as $\beta$ increases, revenue drops sharply. Finally, $\gamma$ acts as a strong incentive, positively correlating with higher revenue and lower latency.
+L632: Figure cite175†10(a) visualizes the revenue landscape across the joint configuration space of memory capacity (proxied by $B$) and computational speed (proxied by $\beta$). This mapping serves two critical strategic functions for infrastructure management.
+L633: First, the heatmap provides a quantitative basis for hardware selection by allowing operators to overlay GPU market prices onto the revenue landscape to identify configurations with the highest return on investment (ROI). Second, its gradient directs hardware upgrades by revealing the steepest path to revenue growth.
+L634: By identifying whether this path favors increasing $B$ or decreasing $\beta$, decision-makers can pinpoint the primary bottleneck (memory or compute) and prioritize investments to maximize marginal gains.
+L635: ##### Optimal Token Pricing
+L636: We also examine the optimal pricing structure by analyzing the relationship between the prefill price $c_{p}$ and the decode price $c_{d}$. Specifically, if we investigate the common revenue maximization problem subject to a total price constraint $c_{p}+c_{d}=k$, the heatmap (Figure cite176†10(b) ) results reveal a striking invariance: regardless of the magnitude of the budget $k$, the revenue-maximizing prices consistently yield a unique, constant ratio $c_{p}/c_{d}$.
+L637: This indicates that the optimal economic balance between prefill and decode is scale-invariant. Consequently, for pricing strategy, managers should focus on maintaining this intrinsic cost structure ratio, as the optimal split between prefill and decode prices remains stable even as the total price level varies.
+L638: cite177†Image: Refer to caption (a) Memory-speed tradeoff ($B$ vs. $\beta$).
+L639: 
+L640: cite178†Image: Refer to caption (b) Optimal token pricing ($c_{p}$ vs. $c_{d}$).
+L641: 
+L642: Figure 10: Sensitivity analysis of hardware configurations and pricing structures on per-GPU revenue.
+L643: ## 7 Conclusions
+L644: Efficient LLM inference at scale hinges on resolving the resource contention between compute-bound prefill and memory-bound decode. In this work, we connect an empirically grounded iteration-time abstraction with stochastic control to study admission and scheduling in large GPU clusters under token-based revenue objectives and service constraints.
+L645: A multiclass many-GPU fluid approximation yields a tractable steady-state linear program that prescribes how to split capacity between mixed and solo modes and how to allocate prefill occupancy across classes.
+L646: Building on this planning formulation, we develop a gate-and-route control architecture with a prefill admission gate that tracks the fluid occupancy targets and a decode router that keeps downstream capacity work-conserving.
+L647: Our analysis establishes a set of structural properties that enable this decomposition, including the existence of an optimal fluid plan with no steady-state decode buffering (Proposition cite145†3.2 ) and a corresponding asymptotic optimality guarantee for the proposed policy in the many-GPU limit.
+L648: Our numerical evaluation is empirically calibrated and intended to illustrate the mechanisms highlighted by the theory: we calibrate the iteration-time model using real deployments on a modern inference stack, and then run calibrated event-driven simulations to study the resulting control behavior.
+L649: In particular, simulations confirm two qualitative predictions from the asymptotic analysis: per-GPU revenue approaches the fluid optimum as the cluster scales, and persistent decode backlogs are avoided under the proposed control. We further compare against representative heuristic baselines and ablations in our calibrated setting, with the goal of clarifying mechanisms rather than providing a production benchmark.
+L650: Our results also yield actionable implications for service providers. First, billing and scheduling objectives need not coincide: while separate charging for prefill and decode tokens is natural for accounting, optimizing the scheduler against a separate objective can encourage overly aggressive prefill admission and shift congestion downstream.
+L651: A practical recommendation is therefore to bill by phase if desired, while scheduling against an end-to-end (bundled) completion objective to align incentives with user-perceived performance. Second, incorporating SLIs as constraints or penalties in the planning problem provides a systematic way to study the revenue implications of fairness and latency requirements; in our setting, enforcing fairness at the prefill stage is typically more revenue-costly than at the decode stage.
+L652: Several avenues exist to extend the theoretical depth and practical scope of this work. First, one can relax the assumption of exponential service times by employing measure-valued processes. This formulation would accommodate general service distributions, enabling more granular, state-dependent control policies. Second, to move beyond mean-value analysis, developing diffusion approximations that characterize stochastic variability will provide rigorous guarantees for tail-latency SLIs.
+L653: Finally, the model can be generalized to heterogeneous infrastructures, orchestrating inference across clusters composed of diverse GPU generations and distinct agent architectures.
+L654: ## References
+L655:   * Agrawal et al. (2024) A. Agrawal, N. Kedia, A. Panwar, J. Mohan, N. Kwatra, B. S. Gulavani, A. Tumanov, and R. Ramjee Taming throughput-latency tradeoff in LLM inference with Sarathi-Serve. In 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24), External Links: 2403.02310 Cited by: cite179†§1 , cite180†§1.1 , cite181†2nd item , cite182†§2.1 , cite183†§2.1 , cite184†§2.1 , cite185†§2.1 , cite186†2nd item .
+L656:   * Ai et al. (2025) R. Ai, Y. Pan, D. Simchi-Levi, M. Tambe, and H. Xu Beyond majority voting: LLM aggregation by leveraging higher-order information. External Links: 2510.01499 Cited by: cite187†§1.1 .
+
+
+DALI: A Workload-Aware Offloading Framework for Efficient MoE Inference on Local PCs (https://arxiv.org/html/2602.03495v1)
+citeturn26159view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.03495v1","lineno":140}); Total lines: 507
+L93: (1)  |  | $$G(x)=TopK(Softmax(x\cdot W_{g}))\ \text{.}$$  |
+L94: 
+L100: Figure 3. The memory hierarchy and the data assignment in hybrid MoE offloading frameworks.
+L101: ### 2.2. MoE Offloading
+L102: Offloading frameworks alleviate the storage challenges posed by large-scale MoE models by offloading model parameters to secondary storage media such as DRAM, SSD, or HDD, thereby mitigating GPU memory pressure without sacrificing model expressiveness.
+L103: Conventional offloading methods(cite70†Rasley et al., 2020 ; cite71†He and Zhai, 2024 ; cite72†Jiang et al., 2024b ; cite73†Sheng et al., 2023 ; cite74†Song et al., 2024a ; cite75†Alizadeh et al., 2023 ; cite76†Lee et al., 2024 ; cite77†Zhang et al., 2024 ), such as DeepSpeed(cite70†Rasley et al., 2020 ) and FlexGen(cite73†Sheng et al., 2023 ), are primarily designed for dense LLMs and must fetch all model parameters, incurring unnecessary communication overhead when applied to MoE architectures due to their inherently sparse activation patterns.
+L104: Recently, several offloading frameworks specifically tailored for MoE models have been proposed(cite45†Tang et al., 2024 ; cite55†Hwang et al., 2024 ; cite54†Zhong et al., 2024 ; cite49†Yu et al., 2025 ; cite47†Eliseev and Mazur, 2023 ; cite60†Zhong et al., 2025 ; cite48†Yi et al., 2023 ; cite57†Gerganov, 2023 ; cite58†KVCache-AI, 2024 ; cite59†Kamahori et al., 2024 ; cite56†Cao et al., 2025 ).
+L105: Although these frameworks introduce innovative prefetching techniques and caching strategies, they still require experts to be transferred to GPUs before execution. Due to PCIe bandwidth limitations and the substantial parameter counts of MoE, transferring expert parameters to GPUs introduces considerable latency overhead.
+L106: To mitigate this problem, recent studies(cite57†Gerganov, 2023 ; cite58†KVCache-AI, 2024 ; cite59†Kamahori et al., 2024 ; cite60†Zhong et al., 2025 ) propose hybrid MoE offloading systems, effectively leveraging CPU computational resources for offloaded expert-related computations, thereby significantly reducing PCIe transfers and enhancing inference speed. Nevertheless, these existing solutions exhibit several critical shortcomings.
+L107: As shown in Figure cite78†3 a, layer-wise hybrid frameworks like Ktransformers(cite62†Chen et al., 2025 ) and llama.cpp(cite57†Gerganov, 2023 ) assign assign the first $l$ layers to the CPU and layers $l$ through $L$ to the GPU, executing each MoE layer exclusively on one device. However, the layers on the CPU would incur significant inference latency when expert workloads become large, due to inherently slower CPU performance.
+L108: Expert-wise hybrid frameworks such as Fiddler(cite59†Kamahori et al., 2024 ) and HybriMoE(cite60†Zhong et al., 2025 ) mitigate this problem by allocating experts based on workload size, as shown in Figure cite78†3 b. However, such static allocation strategies neglect real-time CPU-GPU load imbalances and result in inefficient utilization of heterogeneous computational resources, ultimately increasing inference latency.
+L109: MoE-Lightning (cite56†Cao et al., 2025 ) adopts a performance-analysis model to offline-search deployment strategies, but it insufficiently models MoE characteristics and thus performs poorly.
+L110: ## 3. Motivation
+L111: ### 3.1. The Necessity of Dynamic Expert Assignment
+L112: Due to PCIe bandwidth limitations and the large number of MoE expert parameters, an increasing number of MoE offloading frameworks adopt hybrid CPU-GPU execution to accelerate inference(cite57†Gerganov, 2023 ; cite60†Zhong et al., 2025 ; cite58†KVCache-AI, 2024 ; cite59†Kamahori et al., 2024 ).
+L113: Thanks to assign experts instead of layers to either CPU or GPU, expert-wise hybrid frameworks(cite60†Zhong et al., 2025 ; cite59†Kamahori et al., 2024 ) can perform high-workload expert computation on GPU and achieve better performance than layer-wise hybrid frameworks(cite57†Gerganov, 2023 ; cite58†KVCache-AI, 2024 ).
+L114: However, existing expert-wise works(cite60†Zhong et al., 2025 ; cite59†Kamahori et al., 2024 ) assign experts purely based on workload, i.e., low-workload experts are executed on the CPU, while high-workload experts are transferred to the GPU for computation. This manner overlooks the parallel characteristics of heterogeneous systems and introduces serious CPU-GPU load imbalance.
+L115: As shown in Figure cite79†4 , we measure the execution time of CPU- and GPU-assigned experts under the assignment policy of Fiddler(cite59†Kamahori et al., 2024 ) on DeepSeek-V2-Lite and Qwen-1.5 across different batch sizes. The significant gap between CPU and GPU execution time indicates severe imbalance. When the batch size is small, the experts’ workloads are often light, so the static assignment allocates most experts to the CPU, leading to much longer CPU execution time.
+L116: The GPU idles waiting for the CPU, yielding low GPU utilization. As batch size grows, more high-workload experts emerge, and the imbalance reverses.
+L117: Figure 4. Comparison of execution time between CPU- and GPU-assigned experts under different batch sizes. The prefill and decoding length are both 32.
+L118: To address this, we propose a workload-aware Greedy Assignment strategy. We first formulate expert assignment as a 0-1 integer optimization problem that explicitly captures system parallelism to derive an optimal expert execution schedule between CPU and GPU. To mitigate the high latency overhead of precise solving, we further introduce a heuristic greedy strategy that achieves near-optimal assignment with significantly lower solving latency.
+L119: Figure 5. Proportion of PCIe transfer time relative to total inference time under various batch sizes. The prefill and decoding length are both 32. ‘BS’ denotes the batch size. As shown in “Average”, with our proposed techniques, DALI significantly reduces PCIe traffic compared against HybriMoE.
+L120: ### 3.2. The Importance of Optimizing Prefetching
+L121: 
+L122: Although expert-wise hybrid frameworks significantly improve inference efficiency, especially with our Greedy Assignment strategy, PCIe transfer of the experts assigned to the GPU still remains a dominant performance bottleneck. As shown in Figure cite80†5 , PCIe transfer accounts for up to 78.1% of total execution time under hybrid execution, underscoring the urgency to reduce communication overhead.
+L123: Prefetching is a widely adopted technique to overlap computation and communication, effectively hiding PCIe latency in series of MoE offloading frameworks(cite52†Fang et al., 2025 ; cite55†Hwang et al., 2024 ; cite46†Xue et al., 2024 ; cite60†Zhong et al., 2025 ; cite54†Zhong et al., 2024 ; cite47†Eliseev and Mazur, 2023 ; cite81†Cai et al., 2024 ; cite82†Du et al., 2024 ; cite49†Yu et al., 2025 ).
+L124: However, unlike prior frameworks that need all activated experts on the GPU, hybrid MoE framework only assigns high-workload experts to the GPU. This places stricter demands on prefetching: it must accurately prefetch experts with large workloads. As shown in Table cite83†2 , when adopting the prefetching method in statistical-based EdgeMoE(cite48†Yi et al., 2023 ) and feature-based HybriMoE(cite60†Zhong et al., 2025 ) to prefetch high-workload experts, the prefetch mechanism shows poor accuracy.
+L125: Much worse, as illustrated in Figure cite84†6 , low prediction accuracy results in minimal performance gains from prefetching due to the necessary re-fetch when prefetch misses, motivating the need for a more accurate strategy tailored to high-workload expert prediction in hybrid frameworks.
+L126: To this end, inspired by the residual between layers, we propose a Residual-Based Prefetching strategy. It uses the residual information between adjacent MoE layers to improve the precision of prefetching high-workload experts, thus unleashing acceleration benefits from prefetching.
+L127: Table 2. Prefetch accuracy for predicting experts with different workload levels. Topk=$k$ indicates prediction of the top $k$ most high-workload experts.
+L128:  | Method  | Batch size
+L129:  | 8  | 16  | 32  | 64
+L130: DeepSeek- V2-Lite  | Topk=1  | EdgeMoE  | 35.3%  | 24.5%  | 14.6%  | 11.8%
+L131: HybriMoE  | 36.7%  | 32.7%  | 35.8%  | 40.6%
+L132: Topk=2  | EdgeMoE  | 34.7%  | 25.0%  | 20.1%  | 15.4%
+L133: HybriMoE  | 45.0%  | 40.1%  | 39.3%  | 38.9%
+L134: Mixtral- 8x7B  | Topk=1  | EdgeMoE  | 25.7%  | 25.4%  | 28.6%  | 30.9%
+L135: HybriMoE  | 51.1%  | 53.4%  | 48.4%  | 46.8%
+L136: Topk=2  | EdgeMoE  | 40.3%  | 40.1%  | 44.7%  | 48.5%
+L137: HybriMoE  | 65.2%  | 63.7%  | 58.9%  | 56.4%
+L138: Figure 6. Speedup achieved by HybriMoE’s prefetching strategy compared to no prefetching under different batch sizes on DeepSeek-V2-Lite and Mixtral-8x7B.
+L139: ### 3.3. Challenge in Cache Utilization
+L140: To better utilize the limited GPU memory, many prior MoE offloading frameworks maintain an expert cache on the GPU to store a subset of experts(cite60†Zhong et al., 2025 ; cite46†Xue et al., 2024 ; cite54†Zhong et al., 2024 ). Upon the expert cache hit, the data traffic between CPU and GPU can be avoided. However, due to the input-dependent expert activation, the set of experts used during inference varies dynamically. As a result, cache replacement policies are crucial to maintaining high cache hit rates.
+L141: Existing methods, such as FastMoE(cite47†Eliseev and Mazur, 2023 ) adopts traditional LRU policies, while HybriMoE(cite60†Zhong et al., 2025 ) uses activation scores of experts to update the cache. However, in expert-wise MoE offloading frameworks, GPUs primarily compute high-workload experts, which implies that cached experts should preferentially be high-workload ones.
+L142: Unfortunately, as shown in Figure cite85†7 , neither LRU nor score-based strategies (e.g., HybriMoE) consider expert workload, resulting in poor cache hit rates, which severely limits the benefits from caching.
+L143: Figure 7. Cache hit rates of LRU and HybriMoE’s replacement strategies under different cache sizes on DeepSeek-V2-Lite and Mixtral-8x7B. Cache size is measured in the number of cached experts in each MoE layer. cite86†Image: Refer to caption Figure 8. Correlation of high-workload expert activation between adjacent tokens in layers 1, 4, 8, and 16 of Mixtral-8$\times$7B. The x- and y-axes represent high-workload experts (top 3 by workload) activated for adjacent tokens.
+L144: MoE experts are typically responsible for different knowledge domains, and adjacent tokens within a sequence often share similar semantics(cite87†Zhu et al., 2025 ; cite88†Fedus et al., 2022b ; cite89†Zhou et al., 2022 ). Motivated by this, we investigate the temporal locality of high-workload expert usage—specifically, whether experts with high workload at token $i$ tend to remain high-workload at token $i+1$.
+L145: Figure cite90†8 presents a heatmap where each cell at position $(m,n)$ records the frequency with which expert $m$ is a high-workload expert at token $i$ and expert $n$ is high-workload at token $i{+}1$. The pronounced diagonal pattern in the heatmap indicates that if an expert is high-workload for token $i$, it is highly likely to remain so for token $i+1$.
+L146: Based on this observation, we design a Workload-Aware Cache Replacement strategy, which updates the expert cache according to the workload history of previous tokens, significantly improving cache hit rates and leading to further acceleration of MoE offloading inference.
+L147: ## 4. Design
+L148: Figure cite91†9 illustrates the overview of our DALI framework. During deployment, all expert weights are stored in CPU DRAM. Additionally, for each MoE layer, we randomly select a fixed number of experts (defined as ${cache\_size}$) to be cached in GPU memory as an expert cache. When performing the MoE layer computation, DALI first determines the expert assignment across CPU and GPU using our proposed Greedy Assignment strategy at runtime, based on the current layer’s expert activation pattern.
+L149: The activated experts are then processed in parallel by CPU and GPU. Meanwhile, a separate work stream is launched to execute our Residual-Based Prefetching strategy, which predicts and prefetches high-workload experts required for the next MoE layer. If an expert assigned to the GPU is already cached in GPU memory, its parameters are directly used for computation ($E_{1}$). Otherwise, the expert weights are loaded from DRAM to GPU ($E_{3},E_{7}$).
+L150: DALI updates the expert cache using our Workload-Aware Cache Replacement policy to maintain high cache hit rates. The above process is repeated iteratively until the inference is complete.
+L151: ### 4.1. Greedy Assignment Strategy
+L152: 
+L153: To achieve load balance between the CPU and GPU, and identify the optimal expert assignment schedule for reducing the inference latency, we propose a Greedy Assignment strategy exploiting the heterogeneous hardware characteristics and workload properties.
+L154: 
+L155: To minimize the execution time of the MoE layer, we first formulate the following optimization objective:
+L156: 
+L157: (3)  |  | $$\min\max(T_{\text{gpu}},T_{\text{cpu}}),$$  |
+L158: where $T_{\text{gpu}}$ and $T_{\text{cpu}}$ represent the total execution times of experts assigned to the GPU and CPU, respectively. Due to the parallelism of heterogeneous systems, the MoE layer’s latency is determined by the slower of the two devices.
+L159: 
+L160: Figure 9. The overview of our DALI framework.
+L161: To obtain the optimal assignment schedule, We use two binary vectors, $C,G\in\{0,1\}^{N}$, to denote the assignment of $N$ routed experts: $C_{i}=1$ indicates that expert $i$ is assigned to the CPU, while $G_{i}=1$ denotes assignment to the GPU. The CPU execution time is calculated as:
+L162: 
+L163: (4)  |  | $$T_{\text{cpu}}=\sum_{i=1}^{N}t_{\text{cpu}}(w_{i})\cdot C_{i}\ \text{,}$$  |
+L164: where $w_{i}$ is the workload of expert $i$, and $t_{\text{cpu}}(w_{i})$ gets the execution time of expert $i$ on the CPU for the given workload. The GPU execution time is calculated as:
+L165: 
+L166: (5)  |  | $$T_{\text{gpu}}=\sum_{i=1}^{N}t_{\text{gpu}}(w_{i})\cdot G_{i}\ \text{,}$$  |
+L167: where $t_{\text{gpu}}(w_{i})=\max(\text{Trans}_{\text{expert}}(w_{i}),\text{compute}_{\text{expert}}(w_{i}))$, $\text{Trans}_{\text{expert}}(w_{i})$ denotes the time for PCIe transmission of expert $i$, and $\text{compute}_{\text{expert}}(w_{i})$ denotes the GPU execution time of expert $i$. Due to pipeline parallelism, the GPU execution time for an expert is the maximum of these two. The $\text{Trans}_{\text{expert}}(w_{i})$ is defined as:
+L168: (6)  |  | $$\text{Trans}_{\text{expert}}(w_{i})=\begin{cases}0,&w_{i}=0\\
+L169: trans\_time,&w_{i}>0\end{cases}\text{,}$$  |
+L170: 
+L171: where $trans\_time$ represents the time required to transfer the weights of a single expert from DRAM to GPU via PCIe. All hardware-specific timing values (e.g., $trans\_time$, $t_{\text{cpu}}(w_{i})$) can be obtained through warm-up profiling before execution and can be reused for later inference.
+L172: In addition to timing considerations, the optimization of Equation (cite92†3 ) is subject to the following constraints:
+L173: 1. Expert activation constraint:
+L174: 
+L175: (7)  |  | $$\sum_{i=1}^{N}(C_{i}+G_{i})=expert\_num\ \text{,}$$  |
+L176: 
+L177: where $expert\_num$ is the total number of activated experts in the MoE layer for given inputs.
+L178: 2. Mutual exclusion constraint:
+L179: 
+L180: (8)  |  | $$0\leq C_{i}+G_{i}\leq 1,\quad\forall i=1,2,\dots,N\ \text{.}$$  |
+L181: This constraint indicates that each expert can only be assigned to either the CPU or the GPU, not both. When $C_{i}=G_{i}=0$, it means expert $i$ is not activated.
+L182: 3. GPU memory constraint:
+L183: 
+L184: (9)  |  | $$\sum_{i=1}^{N}G_{i}\cdot\text{size}(E_{i})\leq M_{\text{gpu}}\ \text{,}$$  |
+L185: 
+L186: where $\text{size}(E_{i})$ denotes the memory required by expert $i$, and this constraint ensures that the total memory consumption on the GPU does not exceed its memory capacity $M_{\text{gpu}}$.
+L187: Algorithm 1 Greedy Assignment Strategy
+L188: 
+L189: 1: $C=[0,\dots,0]_{N}$, $G=[0,\dots,0]_{N}$
+L190: 
+L191: 2: $T_{\text{cpu}}=0$, $T_{\text{gpu}}=0$
+L192: 
+L193: 3: $t_{\text{gpu}}=[t_{\text{gpu}}(w_{1}),\dots,t_{\text{gpu}}(w_{N})]$
+L194: 
+L195: 4: $t_{\text{cpu}}=[t_{\text{cpu}}(w_{1}),\dots,t_{\text{cpu}}(w_{N})]$
+L196: 
+L197: 5: $\text{sorted\_indices}=\text{argsort}(|t_{\text{gpu}}-t_{\text{cpu}}|,descending=\text{True})$
+L198: 
+L199: 6: for all $\text{idx}\in\text{sorted\_indices}$ do
+L200: 
+L201: 7:   $gpu\_time=t_{\text{gpu}}[\text{idx}]$
+L202: 8:   $cpu\_time=t_{\text{cpu}}[\text{idx}]$
+L203: 
+L204: 9:   if $gpu\_time==0\ \&\&\ cpu\_time==0$ then
+L205: 
+L206: 10:    continue
+L207: 
+L208: 11:   end if
+L209: 
+L210: 12:   if $T_{\text{gpu}}+gpu\_time\leq T_{\text{cpu}}+cpu\_time$ then
+L211: 
+L212: 13:    $G[\text{idx}]=1$
+L213: 
+L214: 14:    $T_{\text{gpu}}=T_{\text{gpu}}+gpu\_time$
+L215: 
+L216: 15:   else
+L217: 
+L218: 16:    $C[\text{idx}]=1$
+L219: 
+L220: 17:    $T_{\text{cpu}}=T_{\text{cpu}}+cpu\_time$
+L221: 
+L222: 18:   end if
+L223: 
+L224: 19: end for
+L225: 
+L226: 20: return $C,G$
+L227: By solving the optimization problem in Equation (cite92†3 ) under these constraints, we obtain the optimal assignment of activated experts, which greatly improves the computation efficiency. However, the precise solving process introduces significant latency overhead and diminishes the performance gain. Therefore, we propose a heuristic Greedy Assignment strategy that approximates the optimal solution with minimal solving cost, thereby further accelerating MoE inference.
+L228: Algorithm cite93†1 illustrates our Greedy Assignment strategy. The key idea of the greedy strategy is to prioritize assigning experts whose CPU and GPU execution times differ most significantly to reduce overall inference latency. First, we initialize the assignment variables $C$ and $G$, as well as the total execution times $T_{\text{gpu}}$ and $T_{\text{cpu}}$.
+L229: Next, based on the expert activation of each token, we obtain the workload of each expert and compute its expected execution time on both CPU and GPU using $t_{cpu}(w_{i})$ and $t_{gpu}(w_{i})$, as shown in lines 1-4. In line 5, we sort the experts in descending order based on the absolute difference between their CPU and GPU execution times.
+L230: The algorithm then iterates over this list: for each expert, if assigning it to the GPU results in a lower cumulative latency than assigning it to the CPU, it is allocated to the GPU (lines 12-14); otherwise, it is assigned to the CPU (lines 15-17). Moreover, if an expert is not activated, we do not assign it (lines 9-10).
+L231: After all experts have been processed, the Greedy Assignment strategy yields the final assignment vectors $C$ and $G$, which will be used in the subsequent expert computation. Experiments demonstrate that the assignment schedule produced by the greedy strategy achieves up to 92% of the performance of the optimal solution, while incurring only 5% (v.s. 55% of the optimal solution) end-to-end latency overhead.
+L232: This enhances the acceleration benefit brought by dynamic assignment and further improves the inference performance.
+L233: ### 4.2. Residual-Based Prefetching
+L234: As analyzed in Section cite12†3.2 , previous approaches suffer from extremely low accuracy in prefetching high-workload experts, which severely limits the potential acceleration benefit from prefetching. To address this, we propose a Residual-Based Prefetching method that leverages the residual between adjacent MoE layer features to adjust the features used for prefetching. This significantly improves the accuracy of the high-workload expert prefetching, thereby improving the inference speedup.
+L235: Figure cite94†10 presents our Residual-Based Prefetching method. Firstly, our approach adopts the feature-based prefetching scheme: it uses the input features of the current MoE layer’s gate function and the gate function of the next MoE layer to predict which experts will be activated in the next layer. However, as our analyses indicate, naïvely using only the raw input features results in very low accuracy when predicting high-workload experts.
+L236: Therefore, inspired by the similarity between inputs of adjacent MoE gate functions due to residual connections, our Residual-Based Prefetching strategy further applies a residual correction to the current input features. This makes them better approximate the next MoE layer’s gating input (measured by the cosine similarity analyzed in Appendix cite31†A.5 ) and thus improves the accuracy of expert activation prediction. The transformation is defined as:
+L237: (10)  |  | $\displaystyle\tilde{h}^{(l)}=\text{hidden\_states}^{(l)}+{res\_vec}^{(l)}\text{,}$  |
+L238:  | $\displaystyle{predict\_expert}^{(l+1)}=\text{gate\_func}^{(l+1)}(\tilde{h}^{(l)})\text{,}$  |
+L239: where $\text{hidden\_states}^{(l)}$ is the input to the $l$-th MoE gate, ${res\_vec}^{(l)}$ is the layer-specific residual vector of layer $l$, and $\text{gate\_func}^{(l+1)}$ is the gate function for layer $l+1$. The ${res\_vec}^{(l)}$ has the same dimension with the $\text{hidden\_states}^{(l)}$ along the feature axis, and is shared across all tokens.
+L240: Once the predicted activated experts of the next layer obtained, we count the number of tokens routed to each expert, and the top-$k$ high-workload experts are selected for prefetching.
+L241: Figure 10. Illustration of our Residual-Based Prefetching method.
+L242: 
+L243: Note that obtaining the residual vector requires no fine-tuning or retraining. It can be constructed offline by running inference on a small calibration dataset (described in Section cite20†6.1 ) and can be reused on various downstream tasks. The residual vector for layer $l$ is computed as:
+L244: 
+L245: (11)  |  | $${res\_vec}^{(l)}=\frac{1}{N}\sum_{i=1}^{N}\left(\text{hidden\_states}^{(l+1)}_{i}-\text{hidden\_states}^{(l)}_{i}\right)\ \text{,}$$  |
+L246: where $N$ is the number of tokens in the calibration dataset. Each MoE layer maintains its own residual vector, except for the last one, which does not require prefetching for any subsequent layer.
+L247: ### 4.3. Workload-Aware Cache Replacement
+L248: As analyzed in Section cite13†3.3 , prior works ignore the influence of dynamic workloads when designing cache replacement strategies for the expert cache on the GPU, resulting in low cache hit rates. Fortunately, our analysis reveals a strong correlation in high-workload expert activations between adjacent tokens. Motivated by this observation, we propose a Workload-Aware Cache Replacement strategy that updates the expert cache based on dynamic workload patterns.
+L249: This approach significantly improves the cache hit rate and, in turn, accelerates the inference performance of our DALI framework.
+L250: Figure 11. Workload-Aware Cache Replacement Strategy. Here, $cache\_size=4$, $w_{\text{size}}=4$, $u_{\text{size}}=2$, each layer totally has 8 experts, and $S_{i}$ denotes the $i$-th sequence in a batch of size $b$.
+L251: Figure cite95†11 and Algorithm cite96†2 illustrate the cache workflow within a single MoE layer with our proposed Workload-Aware Cache Replacement strategy. Each MoE layer maintains $n$ experts ($cache\_size$) in GPU memory and performs cache replacement independently following this procedure. All experts also reside in CPU memory.
+L252: Initially, we set the workload score of each expert to zero and track expert IDs using two sets: ${expert\_on\_gpu}$ for those experts currently cached on GPU, and ${expert\_on\_cpu}$ for those not on GPU, as shown in lines 1-3. We then define a sliding token window of size $w_{\text{size}}$. Within each window, the strategy obtains the workloads of experts for each token (line 5) and updates workload scores accordingly (line 6).
+L253: Specifically, the accumulated workload score $s_{k}$ for expert $k$ is calculated as:
+L254: (12)  |  | $$s_{k}=\sum_{i=1}^{w_{\text{size}}}\text{workload}_{i}^{k}\ \text{,}$$  |
+L255: where $\text{workload}_{i}$ is an $N$-dimensional vector representing the workload distribution of $N$ experts when processing the $i$-th token in the current window and $\text{workload}_{i}^{k}$ denotes the workload of expert $k$. After processing a window of $w_{\text{size}}$ tokens (line 9), we perform the cache replacement: we select the $u_{\text{size}}$ experts with the highest scores from the CPU (line 10) and the $u_{\text{size}}$ experts with the lowest scores from the GPU (line 11).
+L256: Selected experts on GPU are replaced by the selected experts on CPU to maximize cache utility. After the replacement, we update the ${expert\_on\_gpu}$ and ${expert\_on\_cpu}$, and the scores ($s$) are reset to zero. Then, the strategy continues performing the above process using newly generated tokens until the inference process is complete.
+L257: Moreover, the expert cache can cooperate with our Greedy Assignment strategy: if an expert is already resident on the GPU, its PCIe transfer cost is treated as zero, and only its GPU compute time is counted during scheduling.
+L258: 
+L259: Algorithm 2 Workload-Aware Cache Replacement
+L260: 
+L261: 1: $s=[0,0,\dots,0]^{N}$
+L262: 
+L263: 2: ${expert\_on\_gpu}=\{e^{\text{gpu}}_{1},e^{\text{gpu}}_{2},\dots,e^{\text{gpu}}_{n}\}$
+L264: 
+L265: 3: ${expert\_on\_cpu}=\{e^{\text{cpu}}_{1},e^{\text{cpu}}_{2},\dots,e^{\text{cpu}}_{m}\}$
+L266: 4: for $i=0$ to $\text{max\_length}-1$ do
+L267: 
+L268: 5:   $\text{workload}_{i}=\text{get\_workload}(x_{i})$
+L269: 
+L270: 6:   $s=s+\text{workload}_{i}$
+L271: 
+L272: 7:   if $\text{token}_{i}==\text{EOS}$ then
+L273: 
+L274: 8:    break
+L275: 
+L276: 9:   else if $i\bmod w_{\text{size}}==0$ then
+L277: 
+L278: 10:    ${cpu\_trans\_ind}=\text{TopK}(s[{expert\_on\_cpu}])$
+L279: 
+L280: 11:    ${gpu\_evict\_ind}=\text{TopK}(s[{expert\_on\_gpu}])$
+L281: 
+L282: 12:    Evict experts on GPU with indices in ${gpu\_evict\_ind}$
+L283: 
+L284: 13:    Transfer experts from CPU to GPU with indices in ${cpu\_trans\_ind}$
+L285: 14:    Update ${expert\_on\_gpu}$ and ${expert\_on\_cpu}$
+L286: 
+L287: 15:    $s=[0,0,\dots,0]^{N}$
+L288: 
+L289: 16:   end if
+L290: 
+L291: 17: end for
+L292: 
+L293: cite97†Image: Refer to caption Figure 12. Comparison of decoding speed across different models and batch sizes. For all models, the cache ratio is 50% and $w_{size}=4$. For Mixtral, $u_{size}=1$ and the prefetch size is 1. For DeepSeek and Qwen, $u_{size}$=8 and the prefetch size is 4.
+L294: ## 5. Implementation
+L295: We implement our proposed DALI framework based on the open-source KTransformers framework(cite58†KVCache-AI, 2024 ). To support expert-wise hybrid execution, we first extend it with over  1,000 lines of C++ and  2,000 lines of Python code. In addition, we develop three key modules: plan_solver, prefetch_tool, and cache_tool to support our Greedy Assignment, Residual-Based Prefetching, and Workload-Aware Cache Replacement techniques, respectively. All modules are encapsulated into user-friendly APIs.
+L296: ## 6. Evaluation
+L297: ### 6.1. Experimental Setup
+L298: 
+L299: 1) Models. We evaluate DALI on three widely-used, open-sourced MoE models: DeepSeek-V2-Lite-Chat (DeepSeek), Qwen3-30B-A3B (Qwen), and Mixtral-8x7B-Instruct (Mixtral). The details of the used MoEs are summarized in Table cite98†3 .
+L300: 2) Datasets. We evaluate on two standard LLM datasets: C4(cite99†Raffel et al., 2020 ) and Wikitext(cite100†Merity et al., 2016 ). To construct the residual vector used in Residual-Based Prefetching, we sample 1K sequences from Wikitext to form a calibration dataset and perform inference to collect token-level features. Then we can obtain the residual vector as Equation cite101†11 . For speed benchmarking, we sample input sequences from the C4 dataset.
+
+
+DALI: A Workload-Aware Offloading Framework for Efficient MoE Inference on Local PCs (https://arxiv.org/html/2602.03495v1)
+citeturn26165view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.03495v1","lineno":296}); Total lines: 507
+L202: 8:   $cpu\_time=t_{\text{cpu}}[\text{idx}]$
+L203: 
+L204: 9:   if $gpu\_time==0\ \&\&\ cpu\_time==0$ then
+L205: 
+L206: 10:    continue
+L207: 
+L208: 11:   end if
+L209: 
+L210: 12:   if $T_{\text{gpu}}+gpu\_time\leq T_{\text{cpu}}+cpu\_time$ then
+L211: 
+L212: 13:    $G[\text{idx}]=1$
+L213: 
+L214: 14:    $T_{\text{gpu}}=T_{\text{gpu}}+gpu\_time$
+L215: 
+L216: 15:   else
+L217: 
+L218: 16:    $C[\text{idx}]=1$
+L219: 
+L220: 17:    $T_{\text{cpu}}=T_{\text{cpu}}+cpu\_time$
+L221: 
+L222: 18:   end if
+L223: 
+L224: 19: end for
+L225: 
+L226: 20: return $C,G$
+L227: By solving the optimization problem in Equation (cite92†3 ) under these constraints, we obtain the optimal assignment of activated experts, which greatly improves the computation efficiency. However, the precise solving process introduces significant latency overhead and diminishes the performance gain. Therefore, we propose a heuristic Greedy Assignment strategy that approximates the optimal solution with minimal solving cost, thereby further accelerating MoE inference.
+L228: Algorithm cite93†1 illustrates our Greedy Assignment strategy. The key idea of the greedy strategy is to prioritize assigning experts whose CPU and GPU execution times differ most significantly to reduce overall inference latency. First, we initialize the assignment variables $C$ and $G$, as well as the total execution times $T_{\text{gpu}}$ and $T_{\text{cpu}}$.
+L229: Next, based on the expert activation of each token, we obtain the workload of each expert and compute its expected execution time on both CPU and GPU using $t_{cpu}(w_{i})$ and $t_{gpu}(w_{i})$, as shown in lines 1-4. In line 5, we sort the experts in descending order based on the absolute difference between their CPU and GPU execution times.
+L230: The algorithm then iterates over this list: for each expert, if assigning it to the GPU results in a lower cumulative latency than assigning it to the CPU, it is allocated to the GPU (lines 12-14); otherwise, it is assigned to the CPU (lines 15-17). Moreover, if an expert is not activated, we do not assign it (lines 9-10).
+L231: After all experts have been processed, the Greedy Assignment strategy yields the final assignment vectors $C$ and $G$, which will be used in the subsequent expert computation. Experiments demonstrate that the assignment schedule produced by the greedy strategy achieves up to 92% of the performance of the optimal solution, while incurring only 5% (v.s. 55% of the optimal solution) end-to-end latency overhead.
+L232: This enhances the acceleration benefit brought by dynamic assignment and further improves the inference performance.
+L233: ### 4.2. Residual-Based Prefetching
+L234: As analyzed in Section cite12†3.2 , previous approaches suffer from extremely low accuracy in prefetching high-workload experts, which severely limits the potential acceleration benefit from prefetching. To address this, we propose a Residual-Based Prefetching method that leverages the residual between adjacent MoE layer features to adjust the features used for prefetching. This significantly improves the accuracy of the high-workload expert prefetching, thereby improving the inference speedup.
+L235: Figure cite94†10 presents our Residual-Based Prefetching method. Firstly, our approach adopts the feature-based prefetching scheme: it uses the input features of the current MoE layer’s gate function and the gate function of the next MoE layer to predict which experts will be activated in the next layer. However, as our analyses indicate, naïvely using only the raw input features results in very low accuracy when predicting high-workload experts.
+L236: Therefore, inspired by the similarity between inputs of adjacent MoE gate functions due to residual connections, our Residual-Based Prefetching strategy further applies a residual correction to the current input features. This makes them better approximate the next MoE layer’s gating input (measured by the cosine similarity analyzed in Appendix cite31†A.5 ) and thus improves the accuracy of expert activation prediction. The transformation is defined as:
+L237: (10)  |  | $\displaystyle\tilde{h}^{(l)}=\text{hidden\_states}^{(l)}+{res\_vec}^{(l)}\text{,}$  |
+L238:  | $\displaystyle{predict\_expert}^{(l+1)}=\text{gate\_func}^{(l+1)}(\tilde{h}^{(l)})\text{,}$  |
+L239: where $\text{hidden\_states}^{(l)}$ is the input to the $l$-th MoE gate, ${res\_vec}^{(l)}$ is the layer-specific residual vector of layer $l$, and $\text{gate\_func}^{(l+1)}$ is the gate function for layer $l+1$. The ${res\_vec}^{(l)}$ has the same dimension with the $\text{hidden\_states}^{(l)}$ along the feature axis, and is shared across all tokens.
+L240: Once the predicted activated experts of the next layer obtained, we count the number of tokens routed to each expert, and the top-$k$ high-workload experts are selected for prefetching.
+L241: Figure 10. Illustration of our Residual-Based Prefetching method.
+L242: 
+L243: Note that obtaining the residual vector requires no fine-tuning or retraining. It can be constructed offline by running inference on a small calibration dataset (described in Section cite20†6.1 ) and can be reused on various downstream tasks. The residual vector for layer $l$ is computed as:
+L244: 
+L245: (11)  |  | $${res\_vec}^{(l)}=\frac{1}{N}\sum_{i=1}^{N}\left(\text{hidden\_states}^{(l+1)}_{i}-\text{hidden\_states}^{(l)}_{i}\right)\ \text{,}$$  |
+L246: where $N$ is the number of tokens in the calibration dataset. Each MoE layer maintains its own residual vector, except for the last one, which does not require prefetching for any subsequent layer.
+L247: ### 4.3. Workload-Aware Cache Replacement
+L248: As analyzed in Section cite13†3.3 , prior works ignore the influence of dynamic workloads when designing cache replacement strategies for the expert cache on the GPU, resulting in low cache hit rates. Fortunately, our analysis reveals a strong correlation in high-workload expert activations between adjacent tokens. Motivated by this observation, we propose a Workload-Aware Cache Replacement strategy that updates the expert cache based on dynamic workload patterns.
+L249: This approach significantly improves the cache hit rate and, in turn, accelerates the inference performance of our DALI framework.
+L250: Figure 11. Workload-Aware Cache Replacement Strategy. Here, $cache\_size=4$, $w_{\text{size}}=4$, $u_{\text{size}}=2$, each layer totally has 8 experts, and $S_{i}$ denotes the $i$-th sequence in a batch of size $b$.
+L251: Figure cite95†11 and Algorithm cite96†2 illustrate the cache workflow within a single MoE layer with our proposed Workload-Aware Cache Replacement strategy. Each MoE layer maintains $n$ experts ($cache\_size$) in GPU memory and performs cache replacement independently following this procedure. All experts also reside in CPU memory.
+L252: Initially, we set the workload score of each expert to zero and track expert IDs using two sets: ${expert\_on\_gpu}$ for those experts currently cached on GPU, and ${expert\_on\_cpu}$ for those not on GPU, as shown in lines 1-3. We then define a sliding token window of size $w_{\text{size}}$. Within each window, the strategy obtains the workloads of experts for each token (line 5) and updates workload scores accordingly (line 6).
+L253: Specifically, the accumulated workload score $s_{k}$ for expert $k$ is calculated as:
+L254: (12)  |  | $$s_{k}=\sum_{i=1}^{w_{\text{size}}}\text{workload}_{i}^{k}\ \text{,}$$  |
+L255: where $\text{workload}_{i}$ is an $N$-dimensional vector representing the workload distribution of $N$ experts when processing the $i$-th token in the current window and $\text{workload}_{i}^{k}$ denotes the workload of expert $k$. After processing a window of $w_{\text{size}}$ tokens (line 9), we perform the cache replacement: we select the $u_{\text{size}}$ experts with the highest scores from the CPU (line 10) and the $u_{\text{size}}$ experts with the lowest scores from the GPU (line 11).
+L256: Selected experts on GPU are replaced by the selected experts on CPU to maximize cache utility. After the replacement, we update the ${expert\_on\_gpu}$ and ${expert\_on\_cpu}$, and the scores ($s$) are reset to zero. Then, the strategy continues performing the above process using newly generated tokens until the inference process is complete.
+L257: Moreover, the expert cache can cooperate with our Greedy Assignment strategy: if an expert is already resident on the GPU, its PCIe transfer cost is treated as zero, and only its GPU compute time is counted during scheduling.
+L258: 
+L259: Algorithm 2 Workload-Aware Cache Replacement
+L260: 
+L261: 1: $s=[0,0,\dots,0]^{N}$
+L262: 
+L263: 2: ${expert\_on\_gpu}=\{e^{\text{gpu}}_{1},e^{\text{gpu}}_{2},\dots,e^{\text{gpu}}_{n}\}$
+L264: 
+L265: 3: ${expert\_on\_cpu}=\{e^{\text{cpu}}_{1},e^{\text{cpu}}_{2},\dots,e^{\text{cpu}}_{m}\}$
+L266: 4: for $i=0$ to $\text{max\_length}-1$ do
+L267: 
+L268: 5:   $\text{workload}_{i}=\text{get\_workload}(x_{i})$
+L269: 
+L270: 6:   $s=s+\text{workload}_{i}$
+L271: 
+L272: 7:   if $\text{token}_{i}==\text{EOS}$ then
+L273: 
+L274: 8:    break
+L275: 
+L276: 9:   else if $i\bmod w_{\text{size}}==0$ then
+L277: 
+L278: 10:    ${cpu\_trans\_ind}=\text{TopK}(s[{expert\_on\_cpu}])$
+L279: 
+L280: 11:    ${gpu\_evict\_ind}=\text{TopK}(s[{expert\_on\_gpu}])$
+L281: 
+L282: 12:    Evict experts on GPU with indices in ${gpu\_evict\_ind}$
+L283: 
+L284: 13:    Transfer experts from CPU to GPU with indices in ${cpu\_trans\_ind}$
+L285: 14:    Update ${expert\_on\_gpu}$ and ${expert\_on\_cpu}$
+L286: 
+L287: 15:    $s=[0,0,\dots,0]^{N}$
+L288: 
+L289: 16:   end if
+L290: 
+L291: 17: end for
+L292: 
+L293: cite97†Image: Refer to caption Figure 12. Comparison of decoding speed across different models and batch sizes. For all models, the cache ratio is 50% and $w_{size}=4$. For Mixtral, $u_{size}=1$ and the prefetch size is 1. For DeepSeek and Qwen, $u_{size}$=8 and the prefetch size is 4.
+L294: ## 5. Implementation
+L295: We implement our proposed DALI framework based on the open-source KTransformers framework(cite58†KVCache-AI, 2024 ). To support expert-wise hybrid execution, we first extend it with over  1,000 lines of C++ and  2,000 lines of Python code. In addition, we develop three key modules: plan_solver, prefetch_tool, and cache_tool to support our Greedy Assignment, Residual-Based Prefetching, and Workload-Aware Cache Replacement techniques, respectively. All modules are encapsulated into user-friendly APIs.
+L296: ## 6. Evaluation
+L297: ### 6.1. Experimental Setup
+L298: 
+L299: 1) Models. We evaluate DALI on three widely-used, open-sourced MoE models: DeepSeek-V2-Lite-Chat (DeepSeek), Qwen3-30B-A3B (Qwen), and Mixtral-8x7B-Instruct (Mixtral). The details of the used MoEs are summarized in Table cite98†3 .
+L300: 2) Datasets. We evaluate on two standard LLM datasets: C4(cite99†Raffel et al., 2020 ) and Wikitext(cite100†Merity et al., 2016 ). To construct the residual vector used in Residual-Based Prefetching, we sample 1K sequences from Wikitext to form a calibration dataset and perform inference to collect token-level features. Then we can obtain the residual vector as Equation cite101†11 . For speed benchmarking, we sample input sequences from the C4 dataset.
+L301: 3) Baselines. We compare with four state-of-the-art MoE offloading frameworks: llama.cpp (cite57†Gerganov, 2023 ), KTransformers (cite62†Chen et al., 2025 ), MoE-Lightning (cite56†Cao et al., 2025 ), and HybriMoE (cite60†Zhong et al., 2025 ). Ktransformers and llama.cpp are layer-wise hybrid frameworks and assign MoE layers to either the CPU or GPU. MoE-Lightning searches the optimal model deployment strategy before inference based on its proposed performance analysis model.
+L302: HybriMoE is an expert-wise hybrid framework and incorporates both expert prefetching and caching techniques. To ensure a fair comparison, we set the number of CPU cores to 16 and threads to 32 for all frameworks. We also ensure that all frameworks use comparable GPU memory. For HybriMoE and DALI, we cache the same number of experts on GPU.
+L303: For MoE-Lightning, llama.cpp and KTransformers, which do not support expert caching on GPU, we control the number of MoE layers stored and executed on the GPU in these frameworks to maintain a comparable memory usage with that of DALI and HybriMoE.
+L304: Table 3. The configuration of the used MoE architectures.
+L305:  | DeepSeek  | Qwen  | Mixtral
+L306: Layers  | 27  | 48  | 32
+L307: Hidden size  | 2048  | 2048  | 4096
+L308: Shared Experts per Layer  | 2  | 0  | 0
+L309: Routed Experts per Layer  | 64  | 128  | 8
+L310: Activated Experts  | 6  | 8  | 2
+L311: 4) Metrics. The inference of MoE models is divided into the prefill and decoding phases. We evaluate the two phases separately (prefill speed and decoding speed), using tokens per second (tokens/s) as the performance metric. The average speed across all sequences in a batch is reported as the speed metric of this batch. If not specific, for prefill benchmarks, the prompt length is set to 64, and for decoding benchmarks, we set the prompt length and generated lengths both to 64.
+L312: 5) Hardware Platform. All experiments are conducted on a platform equipped with an AMD EPYC 7532 CPU with 64 cores, 256GB DDR4 DRAM, an NVIDIA RTX 3090 GPU (24GB memory), and PCIe 4.0 $\times$16 interface.
+L313: 
+L314: Figure 13. Prefill speed on DeepSeek under varying batch sizes.
+L315: ### 6.2. Overall Results
+L316: As shown in Figure cite102†12 , we compare decoding speed under various batch sizes. Since Fiddler is much slower than DALI (on average 14.3$\times$), we omit its detailed comparisons. Compared with llama.cpp, KTransformers, MoE-Lightning, and HybriMoE, DALI achieves average speedups of 3.97$\times$, 2.16$\times$, 1.48$\times$, and 1.32$\times$, respectively.
+L317: The speedup over KTransformers and llama.cpp is particularly significant, mainly because our Greedy Assignment strategy enables effective utilization of both CPU and GPU resources for MoE computation. In contrast, KTransformers and llama.cpp uses a static layer-wise mapping that prevents parallel execution, failing to leverage heterogeneous hardware effectively, especially when processing high-workload experts.
+L318: Compared with MoE-Lightning, DALI avoids numerous asynchronous transfers and frequent stream switches by combining accurate prefetching and caching, and MoE-Lightning’s fixed CPU/GPU placement before inference makes it poorly suited to MoE’s dynamic workload patterns.
+L319: Compared with HybriMoE, DALI further improves performance through dynamic expert planning to better utilize CPU-GPU parallelism, while our Residual-Based Prefetching and Workload-Aware Cache Replacement strategies significantly reduce PCIe communication overhead, providing additional speedup.
+L320: Figure cite103†13 presents the prefill speed under different batch sizes for DeepSeek. On average, DALI achieves speedups of 7.62$\times$, 3.80$\times$, 2.45$\times$ and 2.00$\times$ over llama.cpp, KTransformers, MoE-Lightning, and HybriMoE, respectively. The performance gain over KTransformers and llama.cpp is substantial, largely due to their limited use of GPU resources. Since the CPU is not well-suited for high-workload tasks, especially at large batch sizes, their performance deteriorates quickly.
+L321: Compared to HybriMoE, our framework also obtains significant performance improvements thanks to our dynamic expert assignment strategy and the optimization on prefetching and caching.
+L322: Figure 14. Comparison of decoding speed between HybriMoE and DALI using their respective assignment strategies.
+L323: 
+L324: Table 4. MoE spent time (s) comparison between different expert assignment strategies. Decoding length = 32. Batch Size Opt_plan Greedy DeepSeek 16 12.4 14.4 (↓14%) 32 19.7 22.4 (↓12%) Mixtral 16 22.6 26.7 (↓15%) 32 28.0 30.4 (↓7.8%)
+L325: 
+L326: Figure 15. Decoding speed comparison between greedy assignment and optimal assignment strategies.
+L327: ### 6.3. Breakdown Analysis
+L328: 
+L329: To analyze where our gains come from and demonstrate the effectiveness of our three proposed techniques separately, we conduct more detailed breakdown analyses.
+L330: 1) Benefit of Greedy Assignment Strategy. Figure cite104†14 shows the speedup achieved by our Greedy Assignment strategy. To isolate the impact of assignment policies, both HybriMoE and DALI are configured to use only their assignment strategies (i.e., without prefetching and caching techniques). Compared to “Naive", which computes all experts on the CPU without any scheduling strategy, HybriMoE and our greedy strategy achieve average speedups of 3.58$\times$ and 4.42$\times$, respectively.
+L331: Furthermore, our greedy strategy outperforms HybriMoE’s by 23% because our greedy assignment achieves better load balance between the CPU and GPU and fully exploits the heterogeneous hardware resources.
+L332: Although solving the 0-1 optimization problem yields the optimal expert assignment, its runtime solving cost is prohibitively high. To balance efficiency and quality, we develop a heuristic Greedy Assignment. As shown in Figure cite105†15 , our greedy strategy achieves a 1.70$\times$ speedup over the “Opt_plan” method, which first solves the 0-1 optimization problem and performs the MoE computation according to the optimal expert assignment.
+L333: While “Opt_plan” provides a theoretically optimal assignment, its solving overhead largely diminishes its acceleration benefit. In contrast, the greedy strategy delivers near-optimal assignments with negligible cost: the latency overhead introduced by the greedy strategy is only 4.5% (v.s. 55%) of the total inference time.
+L334: Moreover, as shown in Table cite106†4 , when comparing only the MoE execution time (excluding solving costs), the greedy schedule attains up to 92% of the performance of the optimal solution.
+L335: (a)
+L336: 
+L337: (b)
+L338: 
+L339: Figure 16. (a) Speedup comparison of different prefetching methods. Each method prefetches two experts. (b) Prefetch accuracy comparison using different methods on Mixtral. Top-k indicates prefetching the top-k highest-workload experts.
+L340: 
+L341: (a)
+L342: 
+L343: (b)
+L344: 
+L345: Figure 17. (a) Decoding speed comparison between HybriMoE’s update strategy and our workload-aware strategy under different cache ratios. Batch size is 4. (b) Cache hit rate comparison across different update strategies on Mixtral. Batch size is 4.
+L346: To further illustrate the effect of our Greedy Assignment on balancing workload, we compare CPU and GPU execution times of HybriMoE and DALI in Appendix cite27†A.1 . Moreover, we provide a more detailed analyses on the latency overhead introduced by our greedy strategy in Appendix cite30†A.4 . DALI develops a Greedy Assignment strategy to obtain a near-optimal assignment while significantly reducing the solving cost.
+L347: In addition, we also explore the effects of other approximate solving methods, such as beam search, in Appendix cite28†A.2 .
+L348: (a)
+L349: 
+L350: (b)
+L351: 
+L352: (c)
+L353: 
+L354: (d)
+L355: Figure 18. (a) Decoding speed on Mixtral with varying numbers of prefetched experts (‘PS’ denotes the prefetch size). (b) Decoding speed on Mixtral with varying numbers of cached experts on GPU. (c) Cache hit rate of the Workload-Aware Cache Replacement strategy on DeepSeek under different $w_{\text{size}}$ and $u_{\text{size}}$ configurations. Batch size is 4. (d) Cache hit rate changes across layers during token generation on Mixtral, when caching 4 experts per layer.
+L356: Batch size = 4, decoding length = 64, $w_{\text{size}}=8$, $u_{\text{size}}=1$. We report the average hit rate of every 8 tokens as a group. Figure 19. Breakdown analysis of performance gains. In each group, from the second bar, the right bar includes one more optimization than the adjacent left bar. “Naive" refers to the case without any optimization and offload all experts on CPU using Ktransformers. Cache ratio is 25%, prefetch size is 1 (Mixtral) and 8 (Qwen).
+L357: 2) Benefit of Prefetching. Figurecite107†16a evaluates various prefetching strategies on Mixtral. “Naive” denotes the baseline using only Greedy Assignment (built on KTransformers), “Random” performs random prefetching, and “HybriMoE” adopts its own prefetching method. “Random” performs worse than “Naive” due to frequent stalls caused by incorrect prefetches. HybriMoE provides modest improvement but suffers from low accuracy in identifying high-workload experts.
+L358: In contrast, our Residual-Based Prefetching significantly improves prediction accuracy, resulting in larger speedups. Figurecite108†16b further compares prefetch accuracy on Mixtral. Our method consistently achieves the highest accuracy on high-workload experts. To explain why our Residual-Based Prefetching is effective, we provide a further analyses from the perspective of the cosine similarity in Appendix cite31†A.5 .
+L359: 3) Benefit of Cache Replacement Strategy. Figure cite109†17a compares the inference speed when employing different GPU cache replacement strategies. The cache ratio denotes the proportion of experts cached on the GPU. Compared to HybriMoE, which replaces cache based on expert activation score, our Workload-Aware Cache Strategy achieves a 1.23$\times$ speedup.
+L360: This is because our strategy more effectively captures the expert utilization in dynamic workload scenarios, resulting in higher cache hit rates and reduced PCIe traffic. Figure cite110†17b shows the comparisons on cache hit rates under different cache ratios when applying various replacement strategies. Our workload-aware method consistently outperforms both LRU and HybriMoE’s score-based approach.
+L361: 4) Overall Breakdown. Figure cite111†19 presents the individual performance gains from each technique. Compared to “Naive", the Greedy Assignment Strategy delivers a 4.1$\times$ speedup—the most significant among the three. This is because it maximizes heterogeneous resource utilization by intelligently assigning experts across CPU and GPU.
+L362: Prefetching yields a marginal 9% gain, mainly due to two reasons: (1) prefetching requires additional gating computations for prediction, and (2) it incurs CUDA stream switching overhead, which both partially diminish the benefits. Finally, our cache technique contributes a further 38% speedup, as our Workload-Aware Cache Replacement strategy improves cache hit rate, thereby reducing PCIe communication overhead and accelerating overall inference.
+L363: ### 6.4. Sensitivity Analysis
+L364: 
+L365: In this section, we explore how the inference speed of our DALI varies with key parameters such as prefetch size, cache ratio, $w_{\text{size}}$, and $u_{\text{size}}$.
+L366: 1) Effect of Prefetch Size on Inference Speed. Figure cite112†18a shows the inference speed on Mixtral as we vary the number of experts being prefetched. We observe that prefetching only one expert—the one with the highest predicted workload—yields the best performance.
+L367: The reasons are twofold: (1) the expert with the highest workload predicted by residual-based prefetching is often actually used on the GPU, thus reducing the prediction error rate, and (2) as more experts are prefetched, the computation time becomes insufficient to overlap the communication cost, resulting in reduced speed.
+L368: 2) Effect of Cached Expert Count on Inference Speed. Figure cite113†18b shows decoding speed as we increase the number of experts cached per layer on Mixtral. The decoding speed improves with the increased cache size, demonstrating the scalability of our Workload-Aware Cache Replacement strategy with respect to cache capacity.
+L369: 3) Impact of $w_{\text{size}}$ and $u_{\text{size}}$ on Cache Hit Rate. Figure cite114†18c presents cache hit rates under different configurations of $w_{\text{size}}$ and $u_{\text{size}}$. We observe that smaller $w_{\text{size}}$ values lead to higher hit rates, indicating that more frequent cache replacement helps improve cache utility. Similarly, larger $u_{\text{size}}$ values (i.e., more experts replaced per update) also improve the hit rate.
+L370: However, frequent or large-scale replacement incurs substantial latency overhead, which may diminish the performance gains from higher cache efficiency. Thus, a trade-off must be maintained when tuning these parameters. Therefore, we explore how $w_{\text{size}}$ and $u_{\text{size}}$ affect inference speed, as shown in Appendix cite32†A.6 . Finally, to maximize the inference speed, we select (4, 8) for Qwen and DeepSeek, and (4, 1) for Mixtral.
+L371: 4) Cache Hit Rate Varies as Token Generation. Our Workload-Aware Cache Replacement strategy updates experts based on their historical workload in processing previous tokens. In Figure cite115†18d , we analyze how the cache hit rate varies as a sequence is progressively generated. We find that the hit rate consistently increases and eventually reaches up to 100%.
+L372: This indicates that our strategy exhibits strong domain adaptability, progressively updating the cached experts to better match the current sequence, thereby improving reuse and reducing PCIe communication.
+L373: ### 6.5. Discussion
+L374: 1) Performance under Varying Decoding Lengths. To evaluate the generality of DALI across different sequence lengths, we set the batch size to 16 and the prompt length to 32, and measure decoding performance on Mixtral with decoding lengths of 128, 256, 512, and 1024. Experimental results show that DALI achieves average speedups of 2.78$\times$, 1.96$\times$, and 1.47$\times$ over llama.cpp, KTransformers, and HybriMoE, respectively.
+L375: This demonstrates that DALI consistently outperforms existing MoE offloading systems across a range of decoding scenarios. The more detailed experimental results are shown in Appendix cite33†A.7 .
+L376: 2) Applicability to Multi-GPU Platform. While DALI targets MoE inference on personal computers equipped with a single CPU and GPU, we further evaluate its generalizability in a multi-GPU setup (1 CPU + 2 GPUs, as described in Section cite20†6.1 ). During the decoding phase, DALI achieves average speedups of 3.43$\times$, 1.87$\times$, and 1.32$\times$ over llama.cpp, KTransformers, and HybriMoE, respectively, demonstrating strong scalability.
+L377: As DALI is designed for single-CPU/GPU edge environments, further exploration of distributed environments and high CPU-GPU bandwidth server systems (e.g., GH200) will be pursued as future work.
+L378: ## 7. Conclusion
+L379: In this work, we propose DALI, an MoE offloading inference framework tailored to heterogeneous hardware and the characteristics of MoE models. First, we introduce a Greedy Assignment strategy that dynamically allocates experts across CPU and GPU to fully leverage their respective hardware resources. Second, to reduce PCIe transfer overhead, we propose a Residual-Based Prefetching method that improves prefetch accuracy by correcting features with cross-layer residuals.
+L380: Third, we develop a Workload-Aware Cache Replacement strategy that updates the cached expert based on the workload history, obtaining significantly higher cache hit rates. Extensive experiments compared with the prior arts demonstrate the superiority of our DALI.
+L381: ## Appendix A Appendix
+L382: 
+L383: Figure 20. Comparison of MoE execution time on CPU/GPU in HybriMoE and DALI. Table 5. The prefetch accuracy on different downstream tasks.
+L384:  | Method  | Arc-e  | Arc-c  | OBQA  | RTE  | Average
+L385: DeepSeek  | HybriMoE  | 75.7%  | 75.5%  | 69.8%  | 69.6%  | 72.6%
+L386: DALI  | 81.1%  | 79.4%  | 77.4%  | 80.1%  | 79.5%
+L387: Qwen  | HybriMoE  | 63.2%  | 79.0%  | 84.7%  | 83.6%  | 77.6%
+L388: DALI  | 93.0%  | 94.0%  | 92.2%  | 93.9%  | 93.3%
+L389: ### A.1. Further Analysis on Greedy Assignment
+L390: To illustrate the effect of our Greedy Assignment, we compare CPU and GPU execution times of HybriMoE and DALI in Figure cite116†20 . We can observe that DALI achieves a better load balance between CPU and GPU with the Greedy Assignment, and, moreover, lowers the inference latency of the MoE layer.
+L391: Further analysis of the experimental results shows that, after applying the Greedy Assignment strategy, the increase in the CPU-side MoE execution time is often smaller than the reduction in the GPU-side MoE execution time. For example, on the DeepSeek model with batch size = 64, enabling Greedy Assignment increases the CPU execution time by 6.66 s, while reducing the GPU execution time by 20 s.
+L392: This indicates that, through dynamic assignment, DALI offloads a portion of experts that would otherwise be executed on the GPU to the CPU, substantially reducing PCIe transfers and consequently decreasing the GPU-side MoE latency.
+L393: Figure 21. The MoE execution time and plan overhead comparison. The black number in each bar denotes the MoE execution time (without planning time) and the red numer denotes the planning overhead.
+L394: ### A.2. Try Other Sechduling Algorithms
+L395: DALI develops a Greedy Assignment strategy to obtain a near-optimal assignment while significantly reducing the solving cost. In addition, we also explore the effects of other approximate solving methods, such as beam search. We set the beam size to 2 and score each beam by its execution time. In Figure cite117†21 , we compare the optimal plan, Greedy Assignment, and beam search in terms of MoE execution time and planning overhead.
+L396: We observe that, although beam search can be slightly better than Greedy Assignment in some cases, it introduces substantial solving overhead (multi-beam evaluation, frequent top-k operations), which makes end-to-end inference significantly slower than DALI with Greedy Assignment.
+L397: ### A.3. The Generality of Residual-Based Prefetching
+L398: Our Residual-Based Prefetching strategy pre-computes the residual vector offline on the Wikitext calibration set and reuses it for unseen tasks without fine-tuning. Since Wikitext covers various types of corpora, this residual vector remains effective on downstream tasks without fine-tuning.
+L399: Using the residual vector derived from the Wikitext calibration set, we compare prefetch accuracy with HybriMoE on various downstream tasks from the EleutherAI Language Model Evaluation Harness (cite118†Gao et al., 2021 ). Compared with HybriMoE, DALI significantly improves prefetch accuracy by 6.9% and 15.7% on DeepSeek and Qwen on average, respectively, demonstrating the generalization of our Residual-Based Prefetching strategy.
+L400: Table 6. The comparisons of scheduling overhead relative to end-to-end inference between HybriMoE and DALI across various sequence lengths on DeepSeek model. Batch size is 8.
+L401: Sequence Length  | 32  | 64  | 256  | 1024  | 2048  | Average
+

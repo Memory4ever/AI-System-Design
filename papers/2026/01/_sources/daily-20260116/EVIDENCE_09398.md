@@ -1,0 +1,15 @@
+# 2601.09398v1 — activation-difference mask proposes parameter transfer
+
+Exact [v1](https://arxiv.org/html/2601.09398v1), PRIMARY_09398_NECESSARY.md §3.1/4/5/7/AppA/B. Proposed2+2+2=6: globaltask-vector arithmetic transfers unrelatedchanges→samearchitecture/tokenizer models compareanswer-tokenmeanabsoluteactivations bychannel, unionmasksperdonor and addselectedrow taskvectors→choose data-conditioned transfer subset separately from coordinate alignment. No scientific/medical application results adopted; generalLLMrecovery/interface control only.
+
+Eq2globaltop% acrossallmodules withoutnormalization/calibratedabilitycausality; outputactivdifference mayreflectscale/basis/prompt notexclusiveability. Commonbackbonepreferred andidenticaltokensrequired. Eq3unionmasksfromsame donor preventsaddingduplicateidenticaldelta;Eq5scaled donor-targettaskvectorsonlyselectedchannels, thenoptionalallparameterSFT. No proof disentangled/neuronabilityownership/sufficiency, untouchedparameters doesn'tmeanretainedbehavior. Channel→row mapping fornorm/embeddingmodules notfullyspecified; noexactuniversalmaskrecipe.
+
+1500translatedMetaMathQA/MegaScience perlanguage/domain,GPT4omini exceptTelugumathGPT4, sameactivationlocalization andpostSFTdata; BenchMaxzero-shotMGSM/GPQA exactmatch. Translatedbenchmarkscientificreasoning onlygenericmodel-retentionproxy,notforScienceclaim. SameQwen7Bfamilyspecializationrecovery. AppA top1%perabilityunion4.73%,λ.4 transferonly versus top9%union11.35%,λ.7 withSFT—not samefixedtransfer+SFTsinglecomponentablation. Fine-tuneall11langs×math/science1epochAdam2e−5updateevery16samples,H100/A100~2h each;GPUcount/precision/batchseq/fullactivationcapture/searchcost/repeatedtrainseeds/CI/SLO ND. λ.1–.9/ratio1%grid<=10% else5%; selectionbudget/heldoutsearchcriterion notdisclosed.
+
+Table3transferonlyretainedmath87.4<original88.2, ACT+SFT85<88.2 (partialretention), Bengali/Thai/othersnotfulldonorrecovery. Table4Llama13Bmultiplemodels top90%perabilityλ.6 transferonlynotfewchannelsetting; ACTavg41.8vsTA/DARE41.6 with math66.8<68.4,science24.3<25.4, code34.2<donor36.6. Figure4DARE100xextremeconfigurationcounternotuniversalTAfailure; mainabsoluteactivationdifferences driftdoesn'tisolatecause. No code/replication.
+
+Actual TRAIN-LORA Ch30 L573–591 spectralcompatibility/heterogeneousactivationtransport/wholelayeroutputmatching notsame-coordinate activation-difference perabilitymask union→taskvector transfer. Proposed unique narrow2paragraph branch nearmerge/arithmetic afterbehaviorconflict beforeoutputmomentrule: fixedcoordinate/channel-metadata+curatedsamples→falliblemaskproposal, unionperdonor, optionalcompatibilitySFT changesunselectedweights; localization/searchcapture/fullSFTcost, partialretention/top90%counter, singlemodel/originalmergebaselinefallback. Root actualprimary/ownerreview+lockpending no write.
+# ROOT终裁/POST
+
+6=2+2+2具体gap深入通过；实际Ch30 L589/591与L581–599邻接、末注849root非作者POST通过，锁释放，整合FINAL。source/owner权限限定正文，仅两段，不授exclusiveability/全域保留/总成本。下文旧pending为送审状态，日级未授。
+

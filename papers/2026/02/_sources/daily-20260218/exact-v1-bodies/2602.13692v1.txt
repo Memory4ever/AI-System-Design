@@ -1,0 +1,865 @@
+ThunderAgent: A Simple, Fast and Program-Aware Agentic Inference System
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Background
+2.1 System Properties of Current Agentic Workflows
+2.2 Existing Agentic Inference Systems
+3 Challenges in Existing Agentic Inference Systems
+3.1 KV Cache Thrashing
+3.2 Cross-Node Memory Imbalance
+3.3 Tool Lifecycle Obliviousness
+Resource leakage and unused sandboxes.
+Costly environment preparation.
+4 ThunderAgent : A Program-Aware Agentic Inference System
+4.1 Program Abstraction
+4.2 Cost Model
+4.3 Scheduling Policy
+4.3.1 Reducing Recomputation and Caching Costs via Program-Aware Waiting Queue
+Periodic thrashing detection.
+Minimizing Cost recompute \text{Cost}_{\text{recompute}} via Shortest-First Eviction.
+4.3.2 Reducing Memory Imbalance via Global Program-Aware Waiting Queue
+4.4 Tool Resource Management
+Hook-based garbage collection.
+Asynchronous environment preparation.
+5 Experiments
+5.1 Experimental setup
+Benchmarks and workflows.
+Models and deployments.
+ThunderAgent configuration.
+Baseline techniques.
+5.2 Serving Evaluation Results
+High throughput under high concurrency.
+Robustness performance to high concurrency.
+Robustness across deterministic and stochastic tool executions.
+5.3 Rollout Evaluation Results
+5.4 Ablation Study
+End-to-end latency breakdown.
+Ablation on Δ ​ t \Delta t and f(t).
+6 Conclusion
+7 Acknowledgements
+References
+A Extended Comparison with Prior Work
+A.1 KV Cache Optimization
+Multi-tiered KV cache management.
+Distributed KV cache management.
+A.2 Extended experiment results on KV cache optimization
+Experiments on KV cache offloading.
+Experiments on Prefill-Decode (PD) disaggregation.
+A.3 Scaling up agentic workflows
+B System Portability and Interface Abstraction.
+B.1 Middleware Architecture and Unified Interfaces.
+B.2 Why program ID matters.
+B.3 Low-overhead adoption of the ThunderAgent.
+C Tool execution time variability.
+D KV cache hit rate statistics and interpretation
+E Extended Theoretical Analysis.
+E.1 Proof of Time Decay Function for Periodic Thrashing Detection.
+E.2 Proof of recomputation STP cost
+E.3 Proof of minimized recomputation STP cost
+F End-to-End Latency Analysis
+License: CC BY 4.0
+arXiv:2602.13692v1 [cs.OS] 14 Feb 2026
+ThunderAgent: A Simple, Fast and Program-Aware Agentic Inference System
+Hao Kang ∗
+Affiliation: Georgia Institute of Technology
+Ziyang Li ∗
+Affiliation: Individual Researcher
+Xinyu Yang ∗
+Affiliation: Carnegie Mellon University
+Weili Xu †
+Affiliation: University of Illinois Urbana-Champaign
+Yinfang Chen
+Affiliation: University of Illinois Urbana-Champaign
+Junxiong Wang
+Affiliation: Together AI
+Beidi Chen
+Affiliation: Carnegie Mellon University
+Tushar Krishna
+Affiliation: Georgia Institute of Technology
+Chenfeng Xu
+Affiliation: Together AI
+Simran Arora
+Affiliation:
+Code
+Blog
+Wiki
+Affiliation: Together AI
+Abstract
+Large language models (LLMs) are now used to power complex multi-turn agentic workflows. Existing systems run agentic inference by loosely assembling isolated components: an LLM inference engine (e.g., vLLM) and a tool orchestrator (e.g., Kubernetes). Although agentic workflows involve multiple LLM and tool requests, these systems schedule and allocate resources separately on a per-request basis, without end-to-end knowledge of the workflow. This leads to sub-optimal management of KV cache and tool execution environments. To address the challenges, we propose ThunderAgent , a fast, simple, and program-aware agentic inference system. We first abstract agentic workflows as LLM Programs , enabling a unified view of heterogeneous resources, including KV caches, system states, and external tool assets such as disk memory and network ports. Built upon this abstraction, ThunderAgent introduces a program-aware scheduler and a tool resource manager designed to maximize KV cache hit rates, mitigate memory imbalances, and enable asynchronous environment preparation. Evaluations across coding, routing, and scientific discovery agents demonstrate that ThunderAgent achieves 1.5-3.6 × \times throughput improvements in serving, 1.8-3.9 × \times in RL rollout, and up to 4.2 × \times disk memory savings compared to state-of-the-art inference systems. To facilitate reproducibility and support future development, we open-source the system implementations of the whole ThunderAgent at: https://github.com/HaoKang-Timmy/ThunderAgent .
+† † footnotetext: ∗ Equal contribution. † Core code contributor. Correspond to hkang342@gatech.edu
+1 Introduction
+(a) Throughput degradation
+(b) KV cache thrashing
+(c) Speedup from ThunderAgent
+Figure 1 : Performance comparison of ThunderAgent against prior agent inference systems as the parallel workflow number (i.e., batch size) increases. We evaluate the GLM-4.6 MoE model serving SWE-Agent on SWE-Bench Lite (Figures a and b) and SWE-Agent, OpenHands, and ToolOrchestra (Figure c) on an 8 × \times H100 GPU cluster. Results show that: (a) Current inference systems fail to maintain high throughput at large batch sizes. (b) Throughput degradation is primarily caused by low KV cache hit rates, which increase end-to-end request latency. (c) ThunderAgent achieves high throughput compared to prior inference systems by reducing KV-cache thrashing and managing the lifecycle of tool execution resources.
+Recent advances in language models have expanded their use beyond basic chatbots to complex agents [ 26 , 20 ] .
+These agents address real-world problems in domains such as coding [ 9 , 7 ] and computer-use [ 24 , 2 ] by interleaving long reasoning with external tool calls (e.g., compilers, retrievers), often operating as
+autonomous systems that execute multi-step workflows without real-time human intervention.
+However, the throughput of modern inference systems degrades as the number of agentic requests being processed increases ( 1(a) ). Meanwhile, rollout accounts for over 70% of the total wall-clock time in reinforcement learning (RL) [ 17 , 4 ] .
+As agentic workflows become increasingly autonomous at scale, overall system efficiency is governed by sustained throughput rather than tail latency, whereas human-in-the-loop appilcations are often dominated by user response times. Therefore, higher throughput directly reduces serving cost by amortizing hardware over more completed workflows. Moreover, in asynchronous RL, higher rollout throughput mitigates policy lag between the parameters used for data collection and those being updated. This allows the model to learn from data with reduced staleness, improving both convergence speed and final policy quality [ 4 , 17 , 16 , 32 ] .
+However, current agentic inference systems provide sub-optimal throughput because they are loosely combined from isolated components: an off-the-shelf model inference engine(e.g., vLLM [ 10 ] or SGLang [ 33 ] ) coupled with a general-purpose tool orchestrator (e.g., Kubernetes). While agentic workflows involve multiple turns of model and tool requests, these components schedule and allocate resources separately on a per-request basis , without end-to-end knowledge of the entire workflow. This design gives rise to to three key challenges:
+1.
+KV cache thrashing. The request-aware systems prematurely evict KV cache during tool-execution intervals, without foresight into future reuse hin the agent workflow.
+Thus when the tool call completes, the system needs to rerun prefill to recover its whole interaction history. The re-prefill cost increases the average end-to-end latency of agent workflows by up to 7.14 × \times (see 1(b) ) and decreases throughput.
+2.
+Cross-node memory imbalance. The request-aware engines suffer from imbalanced utilization in multi-node inference setups.
+Existing engines pin all requests from the same agentic workflow to a fixed node to maximize the KV cache hit rate.
+However, as context lengths scale rapidly and unpredictably in agent workflows,
+some nodes reach capacity while others remain underutilized under this routing policy.
+3.
+Tool lifecycle obliviousness.
+The request-aware orchestrators struggle to decide when to release and prepare resources and environments required for tool execution.
+Thus, unused sandboxes and API servers continue to occupy critical disk space and network ports, leading to cumulative resource exhaustion and system failures.
+Meanwhile, agentic workflows have to wait for extremely long setup time before reasoning.
+This work introduces ThunderAgent , an agentic inference system that adopts an end-to-end view of agentic workflows to enable high-throughput agentic serving and RL rollout.
+Our specific contributions are:
+1.
+Program abstraction: We abstract agent workflow as agentic programs .
+An agentic program is a first-class scheduling unit that persists across multiple model invocations and tool executions, exposing semantic state to the runtime.
+A program tracks metadata for the workflow’s identifier, execution phase (i.e., reasoning or acting), scheduling status, total tokens, and tool resources. This abstraction decouples scheduling from execution backends (e.g., vLLM/SGLang), enabling seamless integration of new workflows.
+2.
+Program-aware scheduler: Based on the program abstraction, we cast agentic inference scheduling as a constrained optimization problem to minimize the recomputation and caching overheads, and maximize prefilling and decoding throughput, subject to GPU memory capacity.
+We introduce two key mechanisms:
+(a)
+State-aware pausing: If the execution backend experiences memory pressure, we selectively pause workflows that are currently in the acting state with tool call. This design helps
+preserve memory for programs that are in the reasoning state and eliminate arbitrary, sub-optimal KV cache eviction.
+(b)
+Dynamic migration: We migrate agent programs across data parallel (DP) GPU nodes to mitigate memory imbalance. We accomplish this by
+enabling all DP nodes share a global program-aware waiting queue, rather than enforcing that requests from a program are always sent to the same node.
+3.
+Program-aware tool resource management: In long-horizon agentic workloads, tool environments are persistent resources whose mismanagement directly limits sustained throughput. By tracking execution dependencies, ThunderAgent overlaps I/O-intensive environment initialization with LLM reasoning.
+For completed programs, we implement a lifecycle-aware garbage collector
+that leverages program termination signals to reclaim tool resources such as Docker sandboxes and network ports.
+Consequently, this prevents accumulated resource leakage and ensures sustained high-throughput agentic inference in ThunderAgent .
+The above contributions cannot be achieved within request-aware inference engines. Without an explicit representation of program states and workflow dependencies, request-aware schedulers cannot distinguish temporary tool waits from termination or coordinate GPU memory with program-level resource scheduling.
+We evaluate ThunderAgent across diverse agentic workloads. For serving , we evaluate the ToolOrchestra [ 18 ] as routing agent on HLE-Bench [ 15 ] , SWE-Agent [ 27 ] and OpenHands [ 23 ] as coding agent on SWE-bench [ 9 ] , and OpenHands as scientific discovery agent on ScienceAgentBench [ 3 ] , achieving 1.48–3.58 × \times throughput improvements as illustrated in 1(c) . For RL rollouts , we further test the coding agents on distributed GPU nodes, achieving 1.79–3.92 × \times improvements compared with prior SOTA systems.
+2 Background
+In this section, we provide background on the properties and existing approaches to support agentic inference.
+2.1 System Properties of Current Agentic Workflows
+Current agentic workflows alternate between reasoning and acting during generation. Formally, at each step t t , the agent receives an observation o t ∈ 𝒪 o_{t}\in\mathcal{O} and produces an emission e t = ( ℓ t , a t ) ∈ ℒ × 𝒜 e_{t}=(\ell_{t},a_{t})\in\mathcal{L}\times\mathcal{A} , where ℓ t \ell_{t} denotes a thought and a t a_{t} represents an action. We define the cumulative context at step t t as c t = ( o 1 , e 1 , … , o t ) c_{t}=(o_{1},e_{1},\dots,o_{t}) , which captures the interaction history of agentic workflows. Conditioned on c t c_{t} , e t e_{t} is sampled from a policy π ⁡ ( e t | c t ) \pi(e_{t}|c_{t}) .
+This workflow keeps two persistent states: (i) GPU Memory , where the KV cache of c t c_{t} serves as the workflow’s memory. As the trace grows incrementally, c t + 1 c_{t+1} extends c t c_{t} as a prefix, enabling theoretical near-complete KV cache reuse rates across steps. (ii) Tool Environment , where external resources (e.g., sandboxes or database connections) initialized at t = 1 t=1 must remain consistent and accessible throughout the execution.
+These stateful dependencies necessitate a program-level view of agentic inference trajectories, thereby enabling to system to coordinate heterogeneous resources and manage state across long-running workflows. However, existing inference systems treat each thought l t l_{t} and action a t a_{t} as an independent, stateless request.
+2.2 Existing Agentic Inference Systems
+Prior work focuses on optimizing the individual components in agentic inference, including the LLM inference engine or tool orchestrator ( Section A.1 , Section A.2 , but there are very few works that provide end-to-end optimization for agentic workflows across GPU, CPU, and remote resources. We review these prior systems.
+Autellix models multi-turn agentic workflows as GPU-only programs and tracks the accumulated GPU execution time in a central process table [ 13 ] . However, it ignores workflow locality, allowing concurrent workflows to aggressively evict other’s KV cache, triggering KV cache thrashing under heavy workloads.
+Continuum is another recent serving system designed for multi-turn agentic workflows [ 11 ] . It employs a time-to-live (TTL) mechanism to pin KV caches in HBM, thereby mitigating context thrashing during tool execution.
+However, it fails to solve the KV cache eviction problem. The first reason is that most tools take an unpredictable amount of time (e.g. remote model APIs in ToolOrchestra [ 18 ] , compilers in code agents, and web applications for computer use agents [ 35 ] ).
+Such unpredictable tools trigger severe thrashing as well as stranded KV cache memory in Continuum due to incorrect TTL estimates.
+Moreover, once the decoding memory of the running workflow surpasses the GPU limit, the system preempts and evicts pinned KV cache as well. This leads to unavoidable thrashing and corresponding throughput degradation shown in 1(a) .
+These limitations underscore the need for a simple and fast system for agentic inference. We envision such a system as a program-aware scheduling layer for emerging agentic inference systems (e.g., Zhang et al. [31] ).
+3 Challenges in Existing Agentic Inference Systems
+(a) Memory imbalance in rollout
+(b) Runtime disk usage for tool envs.
+(c) Tool env. preparation time
+Figure 2 : Demonstrations of the memory imbalance and tool resource management problems for current agentic inference systems. We evaluate vLLM + Kubernetes on OpenHands RL rollout using the GLM 4.6 model on SWEBench-Lite with two 8 × \times H100 GPU Nodes. The observations show: (a) Max memory imbalance can achieve 51% on 90 min rollout tests when applying vLLM KV-aware router. (b) Failure to garbage collect tool execution environments gradually causes resource usage to exceed system capacity. (c) Average tool execution environment preparation time grows fast as parallel workflow number increases.
+This section profile vLLM combined with Kubernetes as a representative baseline for multi-turn agentic inference, and synthesize its key inefficiencies. Notably, the identified limitations are not solved by replacing the inference engine (e.g., TensorRT or SGLang) or tool orchestrator, but rather require new program-aware abstractions. By default, we use GLM 4.6 model for OpenHands RL rollout on two 8 × \times H100 GPU nodes.
+3.1 KV Cache Thrashing
+Agentic workflows exhibit a high theoretical KV cache reuse rate during their execution. However, in existing LLM serving systems, each step is served as an independent and stateless request. Under high concurrency, this request-level scheduling causes KV cache to be
+frequently evicted during tool execution to accommodate newly arriving
+requests, resulting in repeated eviction and reprefill, which we refer to
+as KV cache thrashing.
+As shown in Figure 1(b) , this thrashing intensifies as the number of parallel workflows increases. The resulting degradation in cache hit rates triggers frequent and costly re-prefill, where the entire history must be recomputed upon tool completion. This redundancy significantly increases the end-to-end latency of each request by up to 7.14 × \times compared to a non-thrashing setting, leading to severe throughput degradation.
+3.2 Cross-Node Memory Imbalance
+Current policies for routing requests across data parallel (DP) nodes are also sub-optimal. Existing multi-turn schedulers [ 33 , 21 ] greedily assign requests to the target DP nodes with the highest KV-cache locality in order to maximize cache reuse. However, this policy ignores the fact that the memory load can become imbalanced across nodes. For instance, the KV-aware router in vLLM [ 21 ] sends all requests from the same agentic workflow to the same node. Since different workflows can exhibit highly heterogeneous KV footprints and execution lifetimes, this policy often results in severe memory imbalance across nodes, with some nodes are overloaded while others remain lightly utilized. Similarly,the prefix-aware router in SGLang greedily routes workloads to nodes with matching prefixes to maximize cache hits. Since agentic system prompts are identical across workflows, this strategy will send almost all requests to the same node while leaving others idle.
+As shown in Figure 2(a) , during a 90 minute snapshot of agentic RL rollout, the memory usage between two DP nodes diverges by more than 20% for over 37 minutes, reaching a peak imbalance of 51% .
+3.3 Tool Lifecycle Obliviousness
+Current agentic inference systems do not synchronize the external tool orchestrator’s lifecycle with the LLM inference engine, resulting in silent resource wastage and latency overhead on the tool orchestrator side.
+Resource leakage and unused sandboxes.
+Figure 2(b) showcases that the total disk space consumption increases linearly with the number of processed workflows, eventually exceeding system capacity. This is because unused resources (e.g., Docker images of finished workloads) are not reclaimed when workflows complete. This inefficient garbage collection leads to fatal system instabilities for long-term agentic inference.
+Costly environment preparation.
+We observed that most agentic workloads need to prepare environments before initiating the multi-turn trajectory. For example, coding agents need to pull dockers, install related packages and build repositories. Furthermore, this preparation time is costly and increases with the parallel workload number (i.e., batch size), as shown in Figure 2(c) . If the LLM inference engine needs to wait until the environments are fully prepared, this overhead will extend the end-to-end latency of the inference system.
+4 ThunderAgent : A Program-Aware Agentic Inference System
+With all findings in Section 3 , we present ThunderAgent , a program-aware system for high throughput agentic inference. We model the Agentic Program in Section 4.1 , which serves as our primary abstraction for scheduling. Section 4.2 formalizes a cost model to guide our system design. Built upon these foundations, we detail our KV cache scheduling policy in Section 4.3 and tool resource management strategy in Section 4.4 .
+Table 1 : Summary of Notations for agentic programs. Each program instance is characterized by its identity, execution phase, tool environments, resource footprint, and scheduling state in ThunderAgent .
+Notation
+Description
+P P
+Agentic program instance
+𝐼𝐷 \mathit{ID}
+Unique global identifier for the program
+c c
+Number of tokens in the context
+𝒯 \mathcal{T}
+Set of tool environments required by the program
+ℒ \mathcal{L}
+Backend (GPU node) placement for spatial locality
+τ \tau
+Execution phase: Reasoning ( R ), Acting ( A )
+s s
+Scheduling status: { Active, Paused, Terminated } \{\text{Active, Paused, Terminated}\}
+Figure 3 : An Overview of ThunderAgent . We show the transition between scheduling states and memory management. ThunderAgent queries the state of each data parallel backend periodically every Δ ​ t \Delta t time. Here, Backend #1 triggers thrashing, while Backend #3 is underutilized. The global waiting queue shared by all Backends then pauses and collects acting Program #2 back to the queue while releasing reasoning Program #6 and #9, to stop the KV-cache thrashing in Backend #1 and reduce memory imbalance of Backend #3.
+4.1 Program Abstraction
+The Agentic Program serves as a fundamental abstraction that encapsulates both the logical execution flow and the system-level dependencies of agentic workflows. Formally, we define an agentic program P P as a tuple:
+P = ⟨ 𝐼𝐷 , c , 𝒯 , ℒ , τ , s ⟩ , \displaystyle P=\langle\mathit{ID},c,\mathcal{T},\mathcal{L},\tau,s\rangle,
+(1)
+where 𝐼𝐷 \mathit{ID} represents the unique global identifier. c c denotes the number of tokens in the context, corresponding to the KV cache memory footprint during active execution. 𝒯 \mathcal{T} tracks the set of tool environments used by the program, enabling garbage collection when no program requires them further. ℒ \mathcal{L} , τ \tau , and s s denote the node placement, execution phase, and scheduling status, respectively, facilitating program-level KV cache thrashing reduction and cross-node transferring. A metadata example is demonstrated on the right side of Figure 3 .
+ThunderAgent directly wraps existing LLM engines and tool orchestrators by interfacing with OpenAI-style endpoints. Program IDs allow the system to distinguish requests from different agentic workflows. We elaborate on the simplicity of integrating ThunderAgent with existing inference services in Appendix B .
+4.2 Cost Model
+During multi-turn agentic inference, only the resources used for active prefilling and decoding contribute to the system’s effective throughput, while re-computation, used capacity, and idle caching constitute resource waste. We encompass this in a cost model for GPU resource consumption, which isolates effective costs from non-productive usage. We adopt the Space-Time Product (STP) [ 1 ] as our primary metric, defined as the integral of the memory footprint over processing time. The STP cost during a process phase is formalized as:
+Cost x = ∫ 0 t x M x ​ ( t ) ​ 𝑑 t , \text{Cost}_{\text{x}}=\int_{0}^{t_{x}}M_{x}(t)\,dt,
+(2)
+where t x t_{x} is the duration of process x x (e.g., prefill). Since memory usage M x ​ ( t ) M_{x}(t) can be directly quantified by the KV cache token count used in LLMs, we define our cost model as the integral of token count over time.
+The total cost of agentic inference comprises five distinct components: decoding, prefilling, recomputation, unused capacity, and idle caching. We explicitly distinguish incremental prefilling for tool execution results from recomputation over historical interactions, with the latter leading to significantly higher cost due to re-computing evicted KV cache over the full context. Formally, this yields the following cost decomposition:
+Cost total ≈ Cost decode + Cost prefill + Cost recompute + Cost unused + Cost caching \text{Cost}_{\text{total}}\approx\text{Cost}_{\text{decode}}+\text{Cost}_{\text{prefill}}+\text{Cost}_{\text{recompute}}+\text{Cost}_{\text{unused}}+\text{Cost}_{\text{caching}}
+(3)
+In this decomposition, Cost decode \text{Cost}_{\text{decode}} and Cost prefill \text{Cost}_{\text{prefill}} represents the effective work that contributes to inference throughput. The remaining terms are wasted system overheads: Cost recompute \text{Cost}_{\text{recompute}} stems from KV cache thrashing ( Section 3.1 ); Cost unused \text{Cost}_{\text{unused}} reflects memory imbalance across data parallel (DP) inference backend replicas ( Section 3.2 ); and Cost caching \text{Cost}_{\text{caching}} accumulates while holding memory during external tool execution ( Section 3.3 ).
+4.3 Scheduling Policy
+Based on the cost model above, the optimization target of our scheduling policy is to minimize the non-productive overhead components: Cost recompute \text{Cost}_{\text{recompute}} , Cost unused \text{Cost}_{\text{unused}} , and Cost caching \text{Cost}_{\text{caching}} , thereby maximizing throughput.
+4.3.1 Reducing Recomputation and Caching Costs via Program-Aware Waiting Queue
+As identified in Section 3.1 and 1(b) , KV cache thrashing serves as the primary bottleneck for throughput degradation. To address this limitation, the system must minimize Cost recompute \text{Cost}_{\text{recompute}} by explicitly controlling the number of active programs. ThunderAgent achieves this by introducing a program-aware waiting queue. Our system utilizes this queue to schedule program execution, determining which program should be executed in GPU versus which should be swapped out based on their token length c c and execution phase τ \tau . Here, we formalize the scheduler behavior using two primitive operations: Restore and Pause , as follows.
+•
+Restore. This operation admits a program into active execution. Given a program P = ⟨ 𝐼𝐷 , c , 𝒯 , ℒ , τ , s ⟩ P=\langle\mathit{ID},c,\mathcal{T},\mathcal{L},\tau,s\rangle with s = Paused s=\text{Paused} and ℒ = ∅ \mathcal{L}=\varnothing ,
+Restore ( P ) (P) assigns P P to a backend ℒ ′ \mathcal{L}^{\prime} with available capacity and updates
+P ← ⟨ 𝐼𝐷 , c , 𝒯 , ℒ ′ , τ , Active ⟩ , \displaystyle P\leftarrow\langle\mathit{ID},c,\mathcal{T},\mathcal{L}^{\prime},\tau,\text{Active}\rangle,
+(4)
+•
+Pause. This operation removes a program from active execution.
+Given a program P = ⟨ 𝐼𝐷 , c , 𝒯 , ℒ , τ , s ⟩ P=\langle\mathit{ID},c,\mathcal{T},\mathcal{L},\tau,s\rangle
+with s = Active s=\text{Active} ,
+Pause ( P ) (P) unbinds P P from its backend, releases its KV cache for preemption, and updates
+P ← ⟨ 𝐼𝐷 , c , 𝒯 , ∅ , τ , Paused ⟩ . \displaystyle P\leftarrow\langle\mathit{ID},c,\mathcal{T},\varnothing,\tau,\text{Paused}\rangle.
+(5)
+Building on these two operations, we next introduce our scheduling policy to minimize KV cache thrashing.
+Periodic thrashing detection.
+The program abstraction in Section 4.1 provides us with the KV cache size of acting programs. Notably, this is unavailable in request-level systems (as in Section 3 ). We define the thrashing condition for a DP backend ℒ \mathcal{L} as the state where program memory demand exceeds total capacity:
+C total < ∑ p ∈ ℒ c p \text{C}_{\text{total}}<\sum_{p\in\mathcal{L}}c_{p}
+(6)
+where C total \text{C}_{\text{total}} denotes the fixed token capacity of the KV cache pool for backend ℒ \mathcal{L} . During decoding, the context length c p c_{p} of agentic workflows grows rapidly, which can trigger memory thrashing mid-execution even without of new arrivals. Unlike baseline schedulers (e.g., Continuum) that only perform checks on whether to admit a workflow upon its arrival, we implement a periodic monitor that evaluates the memory usage at fixed intervals Δ ​ t \Delta t , allowing preemptive detection and mitigation of memory pressure caused by context growth.
+When KV cache thrashing is imminent, ThunderAgent invokes Pause operation to suspend active programs and free memory size Δ ​ C = ∑ p ∈ ℒ c p − λ max ⋅ C total \Delta C=\sum_{p\in\mathcal{L}}c_{p}-\lambda_{\max}\cdot\text{C}_{\text{total}} until the total memory usage falls below the limit λ max ⋅ C total \lambda_{\max}\cdot\text{C}_{\text{total}} . Conversely, when the backend has available space, meaning
+∑ p ∈ ℒ c p < λ min ⋅ C total \sum_{p\in\mathcal{L}}c_{p}<\lambda_{\min}\cdot C_{\text{total}} , ThunderAgent restores paused programs from the waiting queue via Restore , ensuring that the restored program keeps the total memory below λ max ⋅ C total \lambda_{\max}\cdot\text{C}_{\text{total}} . Here, λ max \lambda_{\max} and λ min \lambda_{\min} denote the high- and low-watermarks
+of memory usage, respectively, together forming a hysteresis window that
+stabilizes our scheduling. In practice, we set both value to be 1, as the shared prompt across programs implicitly reserves sufficient memory buffer.
+With this program-level periodic capacity check, ThunderAgent can guarantee that there will be no KV cache thrashing by reserving memory for active programs during the acting phase. However, the tradeoff is that when programs engage in long-running tool execution, the GPU memory occupied by acting programs is idle. To balance the cost of caching against recomputation, we incorporate a time-decay mechanism into the thrashing check that progressively discounts the effective weight of acting programs’ tokens. This allows the scheduler to evict long-idling caching when memory pressure rises, rather than holding them indefinitely:
+C total < ∑ p ∈ ℒ , τ = R c p + ∑ q ∈ ℒ , τ = A c q × f ⁡ ( t q ) \text{C}_{\text{total}}<\sum_{p\in\mathcal{L},\tau=\textbf{R}}c_{p}+\sum_{q\in\mathcal{L},\tau=\textbf{A}}c_{q}\times f(t_{q})
+(7)
+Specifically, t q t_{q} is the tool execution time of program q q in the current step. f ⁡ ( t ) f(t) is a time-decay function designed to balance Cost caching \text{Cost}_{\text{caching}} and Cost recompute \text{Cost}_{\text{recompute}} . By dynamically lowering the effective memory priority of acting programs over time, f ⁡ ( t ) f(t) encourages the scheduler to evict caches that remain idle.
+In Section E.1 , we prove that when tool execution latencies satisfy the memoryless property (i.e., the remaining execution time is independent of the elapsed duration), the optimal decay function f ⁡ ( t ) f(t) takes the form of exponential decay.
+Minimizing Cost recompute \text{Cost}_{\text{recompute}} via Shortest-First Eviction.
+With the eviction and restoration conditions above, the remaining question in handling thrashing is to determine which subset of active programs to pause such that the recomputation cost is minimized. In this paragraph, we demonstrate that evicting programs with the smallest KV cache size yields the optimal solution, with a detailed proof provided in Section E.2 .
+Lemma 4.1 (Quadratic Recomputation Cost) .
+Given a program P i P_{i} with context length c i c_{i} , the recomputation cost incurred by reprefilling its KV cache scales quadratically with c i c_{i} , i.e.,
+Cost recompute = ∫ 0 t recompute c i ​ ( t ) ​ 𝑑 t ∝ c i 2 . \text{Cost}_{\text{recompute}}=\int_{0}^{t_{\mathrm{recompute}}}c_{i}(t)\,dt\propto c_{i}^{2}.
+(8)
+Definition 4.1 (Eviction Optimization Problem) .
+Based on Lemma 4.1 , given a required memory release Δ ​ C \Delta C , the scheduler aims to
+select a subset S S of programs to evict such that the released
+capacity satisfies the constraint while minimizing the total
+recomputation cost. This optimization problem is formulated as follows:
+min ⁡ ∑ i ∈ S S ⁡ c i 2 s.t. ∑ i ∈ S c i ≥ Δ ​ C . \min_{S}\sum_{i\in S}c_{i}^{2}\quad\text{s.t.}\quad\sum_{i\in S}c_{i}\geq\Delta C.
+(9)
+The objective is strictly minimized by selecting smaller c i c_{i} . Thus, ThunderAgent ’s strategy is to greedily pause and evict programs with the shortest context lengths . We defer the formal proof to Appendix E.3 . Based on these analyses, we employ the following scores for restoring and pausing a program in our scheduler:
+S restore ​ ( P ) = 1 c P + 𝕀 ⁡ ( τ = R ) S_{\mathrm{restore}}(P)=\frac{1}{c_{P}}+\mathbb{I}(\tau=\textbf{R})
+(10)
+S pause ​ ( P ) = 1 c P + 𝕀 ⁡ ( τ = A ) S_{\mathrm{pause}}(P)=\frac{1}{c_{P}}+\mathbb{I}(\tau=\textbf{A})
+(11)
+where the indicator function 𝕀 ⁡ ( ⋅ ) \mathbb{I}(\cdot) enforces strict prioritization of the program’s execution state ( τ \tau ) over context length. Both mechanisms follow the shortest-first policy to minimize recomputation cost. However, the state indicator 𝕀 \mathbb{I} ensures that the scheduler prioritizes pausing Acting programs, thereby minimizing Cost caching \text{Cost}_{\text{caching}} by reclaiming cached memory, while prioritizing restore Reasoning programs to maximize Cost decode + Cost prefill \text{Cost}_{\text{decode}}+\text{Cost}_{\text{prefill}} .
+4.3.2 Reducing Memory Imbalance via Global Program-Aware Waiting Queue
+Section 3.1 and 2(a) highlight that memory imbalance across nodes introduces significant Cost unused \text{Cost}_{\text{unused}} , leading to unnecessary program pausing despite sufficient memory capacity from other nodes. To this end, ThunderAgent unify waiting queues of all backend replicas into a global program-aware waiting queue .
+The key motivation of this design is that Cost unused \text{Cost}_{\text{unused}} arises only
+when paused programs remain in the waiting queue while some replicas
+have idle memory. Moreover, once a program is paused, its KV cache is
+assumed to be evicted, making its recomputation cost node-agnostic. This allows us to improve cross-node memory balance without sacrificing KV cache locality. The restore policy aligns with load balancing rather than strict KV-aware routing, enabling paused programs to be dispatched to any
+replica with available memory capacity. As a result, the global queue bounds the unused cost such that C unused < c min ⋅ Δ ​ t \text{C}_{\text{unused}}<c_{\mathrm{min}}\cdot\Delta t 1 1
+1
+Since Δ ​ t \Delta t is much smaller than a program’s lifetime, we ignore the impact of terminated programs within a single interval. for every node in the period of Δ ​ t \Delta t , where c min c_{\mathrm{min}} represents the minimum token length among paused programs. An overview of the scheduling policy and the global waiting queue in ThunderAgent is presented in Figure 3 .
+4.4 Tool Resource Management
+Next, ThunderAgent mitigates the resource leakage and environment setup overheads detailed in Section 3.3 .
+Hook-based garbage collection.
+We implement lifecycle hooks that strictly couple the persistence of tool resources with the agentic program’s scheduling status s s . When a program is Terminated , the collector triggers an immediate teardown sequence, systematically reclaiming sandboxes, network sockets, and compute slots. The active disk usage in 2(b) showcases that our resource management policy effectively prevents the accumulation of excessive resources, maintaining a near-constant disk memory consumption over time.
+Asynchronous environment preparation.
+The latency involved in initializing a tool execution environment
+(e.g., starting a Docker container and installing dependencies) can be a bottleneck. To address this, ThunderAgent monitors the global waiting queue; when a high-priority program (high S restore S_{\text{restore}} ) approaches the restore threshold, the system asynchronously restores its execution environment before the GPU memory is allocated. This technique effectively hides the initialization overhead , significantly reducing end-to-end latency for tool-call heavy workloads like coding agents and science agents, as demonstrated in 2(c) .
+5 Experiments
+Figure 4 : Serving Evaluation Results. ThunderAgent significantly outperforms vLLM and Continuum across three models, four agentic workflows, and three datasets. For workflows with predictable tool call times (e.g., a, b, d, e), ThunderAgent outperforms vLLM and Continuum up to 2.43-3.56 × \times . For workflows exhibit stochastic tool execution time (e.g., c, f), ThunderAgent still achieves the best throughput performance.
+In this section, we evaluate ThunderAgent on diverse agentic workflows, including coding, routing, and scientific research agents, and RL rollout across multiple hardware configurations ranging from RTX5090 to H100 clusters. Furthermore, we conduct extensive ablation studies to breakdown the end-to-end system runtime and to describe the system’s sensitivity to the scheduler’s hyperparameters, Δ ​ t \Delta t and f ⁡ ( t ) f(t) , in Section 5.4 .
+5.1 Experimental setup
+Benchmarks and workflows.
+We evaluate ThunderAgent against diverse benchmarks and workloads:
+1.
+Coding agent serving. We deploy OpenHands and mini-SWEAgent on the SWEBench-Lite [ 9 ] dataset. OpenHands represents a heavy-initialization workflow with an average disk footprint exceeding 10GB per sandbox, while mini-SWEAgent is a lightweight workflow with a minimal footprint ( ≈ \approx 2GB).
+2.
+Other agent serving. We apply ToolOrchestra on HLE [ 15 ] and OpenHands on ScienceAgentBench [ 3 ] . These workloads involve variable latencies driven by external API calls and complex scientific simulations.
+3.
+RL rollout. We apply the same models, workflows, and samples for RL rollout on two 8 × \times H100 nodes.
+Models and deployments.
+We employ GLM-4.6 (355B) [ 20 ] and Qwen-3 (235B) [ 26 ] using both OpenHands [ 23 ] and mini-SWEAgent [ 27 ] frameworks. Models are quantized to FP8 with Tensor Parallelism (TP8) on 8 × \times H100 nodes. For ToolOrchestra [ 18 ] , we use Qwen3-8B with FP16 precision hosted on one RTX 5090. We deploy the LLM inference engine and Docker at different clusters. The LLM inference engine runs on GPU clusters hosting the models, while agent Docker environments are offloaded to a dedicated CPU cluster.
+ThunderAgent configuration.
+We configure ThunderAgent with hyperparameters Δ ​ t = 5 \Delta t=5 and priority decay f ⁡ ( t ) = 2 − t f(t)=2^{-t} , defined in Section 4.3 . vLLM is employed as our LLM inference engine. We use steps per minute as our throughput metric, where one step includes a reasoning and acting period of the workflow.
+Baseline techniques.
+We compare against state-of-the-art systems with different scheduling paradigms:
+•
+vLLM (Inference): A widely adopted, request-aware LLM inference engine that serves as a stateless baseline for inference performance, without incorporating any agent- or program-specific awareness.
+•
+Continuum (Inference): The current SOTA system for multi-turn agentic workflows. It mitigates KV cache thrashing by predicting tool execution durations and pinning KV cache to HBM correspondingly.
+•
+vLLM + SGLang Gateway (Distributed Rollout): The leading solution for large-scale distributed RL rollout. SGLang Gateway optimizes distributed inference by enhancing cross-node memory balancing and KV cache hit rates, making this combination a strong baseline for the distributed RL rollout setting.
+5.2 Serving Evaluation Results
+Figure 5 : KV Cache Hit Rate Statistics. ThunderAgent achieves near-optimal ( ≈ \approx 100) hit rate with predictable tool call time (a, b, d, e), while dynamically trading hit rate for less idle caching with stochastic tool execution time (c, f). It also achieves higher KV cache hit rate in comparison to vLLM and Continuum.
+High throughput under high concurrency.
+Figure 4 showcase that ThunderAgent demonstrates superior throughput at high concurrency levels (e.g., 96 parallel programs), achieving a 1.48–3.58 × \times speedup over vLLM and 1.17–3.31 × \times speedup over Continuum across diverse base models and datasets.
+This gain rises from our program-aware scheduler, which maintains a near-optimal KV cache hit rate ( ≈ \approx 100% for Mini-SWE-Bench and OpenHands, see Figure 5 a, b, d, e) and enables the asynchronous preparation of environments. In contrast, Continuum suffers from performance degradation under high concurrency. As shown in Figure 5 , its KV cache hit rate drops significantly from > > 90% to ≈ \approx 60%. This is because Continuum suffers from KV cache eviction among requests in different programs when no enough memory is available for ongoing requests’ decoding. As a result, active programs compete for limited memory and trigger thrashing.
+Robustness performance to high concurrency.
+ThunderAgent maintains maximum achievable throughput even as the parallel workflow number scales beyond the GPU memory limit. As showcased in Figure 4 , ThunderAgent ensures that throughput remains stable with the number of parallel workflows, whereas baseline systems suffer from severe throughput collapse once the workload exceeds memory limits. In practical agentic serving, statically determining the optimal parallel workflow number to maximize utilization with limited KV cache thrashing and caching cost is often infeasible due to the stochastic nature of agent environments and tool execution durations. ThunderAgent addresses this by automatically adapting to the maximum available capacity without manual tuning, a capability critical for robust real-world deployments.
+Robustness across deterministic and stochastic tool executions.
+ThunderAgent outperforms baselines not only in workflows with deterministic tool patterns ( Figure 4 a, b, d, e) but also under highly stochastic conditions ( Figure 4 c, f).
+This comes from our dynamic program-aware waiting queue policy. vLLM’s request-aware scheduler typically lacks reserved memory for acting programs, forcing frequent re-computation. Conversely, Continuum statically reserves memory for all paused programs and mispredicts the tool execution time. These lead to expensive Cost recompute \text{Cost}_{\text{recompute}} or Cost caching \text{Cost}_{\text{caching}} during long, unpredictable tool calls.
+ThunderAgent balances them via a time-decay function f ⁡ ( t ) f(t) , which prioritizes retaining KV cache for programs with short tool calls while preemptively pausing programs with long tool execution time to prevent memory waste.
+As shown in Figure 5 (right), although ThunderAgent exhibits a lower KV cache hit rate than Continuum in stochastic settings, it achieves higher throughput by ensuring active GPU utilization.
+(a) End-to-End Latency Breakdown
+(b) Ablation of Δ ​ t \Delta t and f(t)
+Figure 6 : Ablation study of end-to-end latency breakdown and parameter sensitivity of ThunderAgent .
+5.3 Rollout Evaluation Results
+Table 2 : ThunderAgent GLM-4.6 rollout ( N = 144 N=144 ) on 2 × \times H100 nodes.
+Workflow
+Serving System
+Throughput
+mini-SWEAgent
+vLLM + Gateway
+375.4
+mini-SWEAgent
+ThunderAgent
+671.8 ( 1.79 × \times )
+OpenHands
+vLLM + Gateway
+69.1
+OpenHands
+ThunderAgent
+270.8 ( 3.92 × \times )
+We evaluate RL rollout using GLM-4.6 on a two-node H100 cluster (3-hour duration). Table 2 shows that ThunderAgent can maintain effective scalability, achieving a 1.79–3.92 × \times throughput increase over the vLLM + + Gateway baseline, making it highly efficient for memory-intensive distributed RL workloads.
+5.4 Ablation Study
+End-to-end latency breakdown.
+6(a) decomposes the average end-to-end latency for OpenHands rollouts. The throughput gain stems primarily from reductions in prefill and decode latency . Moreover, the tool resource management policy ( Section 4.4 ) contributes approximately 10% to the latency improvement while providing 4.2 × \times disk memory savings. Per-step end-to-end latency are further discussed in Appendix F .
+Ablation on Δ ​ t \Delta t and f(t).
+We study the sensitivity of detecting period Δ ​ t \Delta t and decaying function f ⁡ ( t ) = x − t f(t)=x^{-t} . 6(b)
+shows ThunderAgent offline serving mini-SWEAgent with GLM4.6 as base model on a single H100 node. We observe that ThunderAgent maintains high throughput under different parameter settings, demonstrating the robustness of our method. Further increasing Δ ​ t \Delta t might decrease the KV cache hit rate and thereby reduce throughput because thrashing might occur in the middle of detecting. Also, increasing x x in f ⁡ ( t ) f(t) allows more aggressive eviction of acting programs, which trade recomputation costs to reduce caching costs. This reduces throughput as acting programs
+with short tool execution time are prematurely evicted.
+6 Conclusion
+We introduce ThunderAgent , a fast and simple agentic system built on a program-level abstraction that tracks metadata throughout the entire lifecycle of each agentic workflow. ThunderAgent leverages the program abstraction for runtime scheduling and resource management. Specifically, ThunderAgent dynamically schedules program execution across GPU nodes to mitigate KV cache thrashing and memory imbalance, while managing tool resources to prevent resource leakage. Experimental results showcase that ThunderAgent outperforms previous systems by 1.48–3.58 × \times for serving and 1.79–3.92 × \times for RL rollouts.
+7 Acknowledgements
+We are grateful to Together.ai for making this work possible.
+We thank Ben Athiwaratkun and Ce Zhang for assistance in developing the multi-backend scheduler.
+We thank Wenyi Hong and Luke Huang for helpful feedback and discussions during this work.
+References
+[1]
+L. A. Belady (1966)
+A study of replacement algorithms for a virtual-storage computer .
+IBM Systems Journal 5 ( 2 ), pp. 78–101 .
+External Links: Document
+Cited by: §4.2 .
+[2]
+R. Bonatti, D. Zhao, F. Bonacci, D. Dupont, S. Abdali, Y. Li, Y. Lu, J. Wagle, K. Koishida, A. Bucker, L. Jang, and Z. Hui (2024)
+Windows agent arena: evaluating multi-modal os agents at scale .
+External Links: 2409.08264 ,
+Link
+Cited by: §1 .
+[3]
+Z. Chen, S. Chen, Y. Ning, Q. Zhang, B. Wang, B. Yu, Y. Li, Z. Liao, C. Wei, Z. Lu, V. Dey, M. Xue, F. N. Baker, B. Burns, D. Adu-Ampratwum, X. Huang, X. Ning, S. Gao, Y. Su, and H. Sun (2024)
+ScienceAgentBench: toward rigorous assessment of language agents for data-driven scientific discovery .
+External Links: 2410.05080 ,
+Link
+Cited by: §1 ,
+item 2 .
+[4]
+W. Fu, J. Gao, X. Shen, C. Zhu, Z. Mei, C. He, S. Xu, G. Wei, J. Mei, J. Wang, T. Yang, B. Yuan, and Y. Wu (2025)
+AReaL: a large-scale asynchronous reinforcement learning system for language reasoning .
+External Links: 2505.24298 ,
+Link
+Cited by: §1 ,
+§1 .
+[5]
+W. Gao, Y. Zhao, T. Wu, S. Xiong, W. Wang, D. An, L. Cao, D. Muhtar, Z. Liu, H. Zhao, et al. (2025)
+RollArt: scaling agentic rl training via disaggregated infrastructure .
+arXiv preprint arXiv:2512.22560 .
+Cited by: §A.3 .
+[6]
+Y. He, M. Xu, J. Wu, J. Hu, C. Ma, M. Shen, L. Chen, C. Xu, L. Qu, and K. Ye (2025)
+BanaServe: unified kv cache and dynamic module migration for balancing disaggregated llm serving in ai infrastructure .
+External Links: 2510.13223 ,
+Link
+Cited by: §A.1 .
+[7]
+N. Jain, K. Han, A. Gu, W. Li, F. Yan, T. Zhang, S. Wang, A. Solar-Lezama, K. Sen, and I. Stoica (2024)
+LiveCodeBench: holistic and contamination free evaluation of large language models for code .
+External Links: 2403.07974 ,
+Link
+Cited by: §1 .
+[8]
+D. Jiang, Y. Lu, Z. Li, Z. Lyu, P. Nie, H. Wang, A. Su, H. Chen, K. Zou, C. Du, et al. (2025)
+Verltool: towards holistic agentic reinforcement learning with tool use .
+arXiv preprint arXiv:2509.01055 .
+Cited by: §A.3 .
+[9]
+C. E. Jimenez, J. Yang, A. Wettig, S. Yao, K. Pei, O. Press, and K. Narasimhan (2024)
+SWE-bench: can language models resolve real-world github issues? .
+External Links: 2310.06770 ,
+Link
+Cited by: Appendix C ,
+§1 ,
+§1 ,
+item 1 .
+[10]
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. E. Gonzalez, H. Zhang, and I. Stoica (2023)
+Efficient memory management for large language model serving with pagedattention .
+External Links: 2309.06180 ,
+Link
+Cited by: §1 .
+[11]
+H. Li, Q. Mang, R. He, Q. Zhang, H. Mao, X. Chen, H. Zhou, A. Cheung, J. Gonzalez, and I. Stoica (2025)
+Continuum: efficient and robust multi-turn llm agent scheduling with kv cache time-to-live .
+External Links: 2511.02230 ,
+Link
+Cited by: §A.1 ,
+Appendix C ,
+Appendix D ,
+§2.2 .
+[12]
+Y. Liu, Y. Cheng, J. Yao, Y. An, X. Chen, S. Feng, Y. Huang, S. Shen, R. Zhang, K. Du, and J. Jiang (2025)
+LMCache: an efficient kv cache layer for enterprise-scale llm inference .
+External Links: 2510.09665 ,
+Link
+Cited by: §A.1 ,
+§A.2 .
+[13]
+M. Luo, X. Shi, C. Cai, T. Zhang, J. Wong, Y. Wang, C. Wang, Y. Huang, Z. Chen, J. E. Gonzalez, and I. Stoica (2025)
+Autellix: an efficient serving engine for llm agents as general programs .
+External Links: 2502.13965 ,
+Link
+Cited by: §2.2 .
+[14]
+E. Parzen (1999)
+Stochastic processes .
+SIAM .
+Cited by: Hypothesis E.1 .
+[15]
+L. Phan, A. Gatti, Z. Han, N. Li, J. Hu, H. Zhang, C. B. C. Zhang, M. Shaaban, J. Ling, S. Shi, M. Choi, A. Agrawal, A. Chopra, A. Khoja, R. Kim, R. Ren, J. Hausenloy, O. Zhang, M. Mazeika, D. Dodonov, T. Nguyen, J. Lee, D. Anderson, M. Doroshenko, A. C. Stokes, M. Mahmood, O. Pokutnyi, O. Iskra, J. P. Wang, J. Levin, M. Kazakov, F. Feng, S. Y. Feng, H. Zhao, M. Yu, V. Gangal, C. Zou, Z. Wang, S. Popov, R. Gerbicz, G. Galgon, J. Schmitt, W. Yeadon, Y. Lee, S. Sauers, A. Sanchez, F. Giska, M. Roth, S. Riis, S. Utpala, N. Burns, G. M. Goshu, M. M. Naiya, C. Agu, Z. Giboney, A. Cheatom, F. Fournier-Facio, S. Crowson, L. Finke, Z. Cheng, J. Zampese, R. G. Hoerr, M. Nandor, H. Park, T. Gehrunger, J. Cai, B. McCarty, A. C. Garretson, E. Taylor, D. Sileo, Q. Ren, U. Qazi, L. Li, J. Nam, J. B. Wydallis, P. Arkhipov, J. W. L. Shi, A. Bacho, C. G. Willcocks, H. Cao, S. Motwani, E. de Oliveira Santos, J. Veith, E. Vendrow, D. Cojoc, K. Zenitani, J. Robinson, L. Tang, Y. Li, J. Vendrow, N. W. Fraga, V. Kuchkin, A. P. Maksimov, P. Marion, D. Efremov, J. Lynch, K. Liang, A. Mikov, A. Gritsevskiy, J. Guillod, G. Demir, D. Martinez, B. Pageler, K. Zhou, S. Soori, O. Press, H. Tang, P. Rissone, S. R. Green, L. Brüssel, M. Twayana, A. Dieuleveut, J. M. Imperial, A. Prabhu, J. Yang, N. Crispino, A. Rao, D. Zvonkine, G. Loiseau, M. Kalinin, M. Lukas, C. Manolescu, N. Stambaugh, S. Mishra, T. Hogg, C. Bosio, B. P. Coppola, J. Salazar, J. Jin, R. Sayous, S. Ivanov, P. Schwaller, S. Senthilkuma, A. M. Bran, A. Algaba, K. V. den Houte, L. V. D. Sypt, B. Verbeken, D. Noever, A. Kopylov, B. Myklebust, B. Li, L. Schut, E. Zheltonozhskii, Q. Yuan, D. Lim, R. Stanley, T. Yang, J. Maar, J. Wykowski, M. Oller, A. Sahu, C. G. Ardito, Y. Hu, A. G. K. Kamdoum, A. Jin, T. G. Vilchis, Y. Zu, M. Lackner, J. Koppel, G. Sun, D. S. Antonenko, S. Chern, B. Zhao, P. Arsene, J. M. Cavanagh, D. Li, J. Shen, D. Crisostomi, W. Zhang, A. Dehghan, S. Ivanov, D. Perrella, N. Kaparov, A. Zang, I. Sucholutsky, A. Kharlamova, D. Orel, V. Poritski, S. Ben-David, Z. Berger, P. Whitfill, M. Foster, D. Munro, L. Ho, S. Sivarajan, D. B. Hava, A. Kuchkin, D. Holmes, A. Rodriguez-Romero, F. Sommerhage, A. Zhang, R. Moat, K. Schneider, Z. Kazibwe, D. Clarke, D. H. Kim, F. M. Dias, S. Fish, V. Elser, T. Kreiman, V. E. G. Vilchis, I. Klose, U. Anantheswaran, A. Zweiger, K. Rawal, J. Li, J. Nguyen, N. Daans, H. Heidinger, M. Radionov, V. Rozhoň, V. Ginis, C. Stump, N. Cohen, R. Poświata, J. Tkadlec, A. Goldfarb, C. Wang, P. Padlewski, S. Barzowski, K. Montgomery, R. Stendall, J. Tucker-Foltz, J. Stade, T. R. Rogers, T. Goertzen, D. Grabb, A. Shukla, A. Givré, J. A. Ambay, A. Sen, M. F. Aziz, M. H. Inlow, H. He, L. Zhang, Y. Kaddar, I. Ängquist, Y. Chen, H. K. Wang, K. Ramakrishnan, E. Thornley, A. Terpin, H. Schoelkopf, E. Zheng, A. Carmi, E. D. L. Brown, K. Zhu, M. Bartolo, R. Wheeler, M. Stehberger, P. Bradshaw, J. Heimonen, K. Sridhar, I. Akov, J. Sandlin, Y. Makarychev, J. Tam, H. Hoang, D. M. Cunningham, V. Goryachev, D. Patramanis, M. Krause, A. Redenti, D. Aldous, J. Lai, S. Coleman, J. Xu, S. Lee, I. Magoulas, S. Zhao, N. Tang, M. K. Cohen, O. Paradise, J. H. Kirchner, M. Ovchynnikov, J. O. Matos, A. Shenoy, M. Wang, Y. Nie, A. Sztyber-Betley, P. Faraboschi, R. Riblet, J. Crozier, S. Halasyamani, S. Verma, P. Joshi, E. Meril, Z. Ma, J. Andréoletti, R. Singhal, J. Platnick, V. Nevirkovets, L. Basler, A. Ivanov, S. Khoury, N. Gustafsson, M. Piccardo, H. Mostaghimi, Q. Chen, V. Singh, T. Q. Khánh, P. Rosu, H. Szlyk, Z. Brown, H. Narayan, A. Menezes, J. Roberts, W. Alley, K. Sun, A. Patel, M. Lamparth, A. Reuel, L. Xin, H. Xu, J. Loader, F. Martin, Z. Wang, A. Achilleos, T. Preu, T. Korbak, I. Bosio, F. Kazemi, Z. Chen, B. Bálint, E. J. Y. Lo, J. Wang, M. I. S. Nunes, J. Milbauer, M. S. Bari, Z. Wang, B. Ansarinejad, Y. Sun, S. Durand, H. Elgnainy, G. Douville, D. Tordera, G. Balabanian, H. Wolff, L. Kvistad, H. Milliron, A. Sakor, M. Eron, A. F. D. O., S. Shah, X. Zhou, F. Kamalov, S. Abdoli, T. Santens, S. Barkan, A. Tee, R. Zhang, A. Tomasiello, G. B. D. Luca, S. Looi, V. Le, N. Kolt, J. Pan, E. Rodman, J. Drori, C. J. Fossum, N. Muennighoff, M. Jagota, R. Pradeep, H. Fan, J. Eicher, M. Chen, K. Thaman, W. Merrill, M. Firsching, C. Harris, S. Ciobâcă, J. Gross, R. Pandey, I. Gusev, A. Jones, S. Agnihotri, P. Zhelnov, M. Mofayezi, A. Piperski, D. K. Zhang, K. Dobarskyi, R. Leventov, I. Soroko, J. Duersch, V. Taamazyan, A. Ho, W. Ma, W. Held, R. Xian, A. R. Zebaze, M. Mohamed, J. N. Leser, M. X. Yuan, L. Yacar, J. Lengler, K. Olszewska, C. D. Fratta, E. Oliveira, J. W. Jackson, A. Zou, M. Chidambaram, T. Manik, H. Haffenden, D. Stander, A. Dasouqi, A. Shen, B. Golshani, D. Stap, E. Kretov, M. Uzhou, A. B. Zhidkovskaya, N. Winter, M. O. Rodriguez, R. Lauff, D. Wehr, C. Tang, Z. Hossain, S. Phillips, F. Samuele, F. Ekström, A. Hammon, O. Patel, F. Farhidi, G. Medley, F. Mohammadzadeh, M. Peñaflor, H. Kassahun, A. Friedrich, R. H. Perez, D. Pyda, T. Sakal, O. Dhamane, A. K. Mirabadi, E. Hallman, K. Okutsu, M. Battaglia, M. Maghsoudimehrabani, A. Amit, D. Hulbert, R. Pereira, S. Weber, Handoko, A. Peristyy, S. Malina, M. Mehkary, R. Aly, F. Reidegeld, A. Dick, C. Friday, M. Singh, H. Shapourian, W. Kim, M. Costa, H. Gurdogan, H. Kumar, C. Ceconello, C. Zhuang, H. Park, M. Carroll, A. R. Tawfeek, S. Steinerberger, D. Aggarwal, M. Kirchhof, L. Dai, E. Kim, J. Ferret, J. Shah, Y. Wang, M. Yan, K. Burdzy, L. Zhang, A. Franca, D. T. Pham, K. Y. Loh, J. Robinson, A. Jackson, P. Giordano, P. Petersen, A. Cosma, J. Colino, C. White, J. Votava, V. Vinnikov, E. Delaney, P. Spelda, V. Stritecky, S. M. Shahid, J. Mourrat, L. Vetoshkin, K. Sponselee, R. Bacho, Z. Yong, F. de la Rosa, N. Cho, X. Li, G. Malod, O. Weller, G. Albani, L. Lang, J. Laurendeau, D. Kazakov, F. Adesanya, J. Portier, L. Hollom, V. Souza, Y. A. Zhou, J. Degorre, Y. Yalın, G. D. Obikoya, Rai, F. Bigi, M. C. Boscá, O. Shumar, K. Bacho, G. Recchia, M. Popescu, N. Shulga, N. M. Tanwie, T. C. H. Lux, B. Rank, C. Ni, M. Brooks, A. Yakimchyk, Huanxu, Liu, S. Cavalleri, O. Häggström, E. Verkama, J. Newbould, H. Gundlach, L. Brito-Santana, B. Amaro, V. Vajipey, R. Grover, T. Wang, Y. Kratish, W. Li, S. Gopi, A. Caciolai, C. S. de Witt, P. Hernández-Cámara, E. Rodolà, J. Robins, D. Williamson, V. Cheng, B. Raynor, H. Qi, B. Segev, J. Fan, S. Martinson, E. Y. Wang, K. Hausknecht, M. P. Brenner, M. Mao, C. Demian, P. Kassani, X. Zhang, D. Avagian, E. J. Scipio, A. Ragoler, J. Tan, B. Sims, R. Plecnik, A. Kirtland, O. F. Bodur, D. P. Shinde, Y. C. L. Labrador, Z. Adoul, M. Zekry, A. Karakoc, T. C. B. Santos, S. Shamseldeen, L. Karim, A. Liakhovitskaia, N. Resman, N. Farina, J. C. Gonzalez, G. Maayan, E. Anderson, R. D. O. Pena, E. Kelley, H. Mariji, R. Pouriamanesh, W. Wu, R. Finocchio, I. Alarab, J. Cole, D. Ferreira, B. Johnson, M. Safdari, L. Dai, S. Arthornthurasuk, I. C. McAlister, A. J. Moyano, A. Pronin, J. Fan, A. Ramirez-Trinidad, Y. Malysheva, D. Pottmaier, O. Taheri, S. Stepanic, S. Perry, L. Askew, R. A. H. Rodríguez, A. M. R. Minissi, R. Lorena, K. Iyer, A. A. Fasiludeen, R. Clark, J. Ducey, M. Piza, M. Somrak, E. Vergo, J. Qin, B. Borbás, E. Chu, J. Lindsey, A. Jallon, I. M. J. McInnis, E. Chen, A. Semler, L. Gloor, T. Shah, M. Carauleanu, P. Lauer, T. D. Huy, H. Shahrtash, E. Duc, L. Lewark, A. Brown, S. Albanie, B. Weber, W. S. Vaz, P. Clavier, Y. Fan, G. P. R. e Silva, Long, Lian, M. Abramovitch, X. Jiang, S. Mendoza, M. Islam, J. Gonzalez, V. Mavroudis, J. Xu, P. Kumar, L. P. Goswami, D. Bugas, N. Heydari, F. Jeanplong, T. Jansen, A. Pinto, A. Apronti, A. Galal, N. Ze-An, A. Singh, T. Jiang, J. of Arc Xavier, K. P. Agarwal, M. Berkani, G. Zhang, Z. Du, B. A. de Oliveira Junior, D. Malishev, N. Remy, T. D. Hartman, T. Tarver, S. Mensah, G. A. Loume, W. Morak, F. Habibi, S. Hoback, W. Cai, J. Gimenez, R. G. Montecillo, J. Łucki, R. Campbell, A. Sharma, K. Meer, S. Gul, D. E. Gonzalez, X. Alapont, A. Hoover, G. Chhablani, F. Vargus, A. Agarwal, Y. Jiang, D. Patil, D. Outevsky, K. J. Scaria, R. Maheshwari, A. Dendane, P. Shukla, A. Cartwright, S. Bogdanov, N. Mündler, S. Möller, L. Arnaboldi, K. Thaman, M. R. Siddiqi, P. Saxena, H. Gupta, T. Fruhauff, G. Sherman, M. Vincze, S. Usawasutsakorn, D. Ler, A. Radhakrishnan, I. Enyekwe, S. M. Salauddin, J. Muzhen, A. Maksapetyan, V. Rossbach, C. Harjadi, M. Bahaloohoreh, C. Sparrow, J. Sidhu, S. Ali, S. Bian, J. Lai, E. Singer, J. L. Uro, G. Bateman, M. Sayed, A. Menshawy, D. Duclosel, D. Bezzi, Y. Jain, A. Aaron, M. Tiryakioglu, S. Siddh, K. Krenek, I. A. Shah, J. Jin, S. Creighton, D. Peskoff, Z. EL-Wasif, R. P. V, M. Richmond, J. McGowan, T. Patwardhan, H. Sun, T. Sun, N. Zubić, S. Sala, S. Ebert, J. Kaddour, M. Schottdorf, D. Wang, G. Petruzella, A. Meiburg, T. Medved, A. ElSheikh, S. A. Hebbar, L. Vaquero, X. Yang, J. Poulos, V. Zouhar, S. Bogdanik, M. Zhang, J. Sanz-Ros, D. Anugraha, Y. Dai, A. N. Nhu, X. Wang, A. A. Demircali, Z. Jia, Y. Zhou, J. Wu, M. He, N. Chandok, A. Sinha, G. Luo, L. Le, M. Noyé, M. Perełkiewicz, I. Pantidis, T. Qi, S. S. Purohit, L. Parcalabescu, T. Nguyen, G. I. Winata, E. M. Ponti, H. Li, K. Dhole, J. Park, D. Abbondanza, Y. Wang, A. Nayak, D. M. Caetano, A. A. W. L. Wong, M. del Rio-Chanona, D. Kondor, P. Francois, E. Chalstrey, J. Zsambok, D. Hoyer, J. Reddish, J. Hauser, F. Rodrigo-Ginés, S. Datta, M. Shepherd, T. Kamphuis, Q. Zhang, H. Kim, R. Sun, J. Yao, F. Dernoncourt, S. Krishna, S. Rismanchian, B. Pu, F. Pinto, Y. Wang, K. Shridhar, K. J. Overholt, G. Briia, H. Nguyen, David, S. Bartomeu, T. C. Pang, A. Wecker, Y. Xiong, F. Li, L. S. Huber, J. Jaeger, R. D. Maddalena, X. H. Lù, Y. Zhang, C. Beger, P. T. J. Kon, S. Li, V. Sanker, M. Yin, Y. Liang, X. Zhang, A. Agrawal, L. S. Yifei, Z. Zhang, M. Cai, Y. Sonmez, C. Cozianu, C. Li, A. Slen, S. Yu, H. K. Park, G. Sarti, M. Briański, A. Stolfo, T. A. Nguyen, M. Zhang, Y. Perlitz, J. Hernandez-Orallo, R. Li, A. Shabani, F. Juefei-Xu, S. Dhingra, O. Zohar, M. C. Nguyen, A. Pondaven, A. Yilmaz, X. Zhao, C. Jin, M. Jiang, S. Todoran, X. Han, J. Kreuer, B. Rabern, A. Plassart, M. Maggetti, L. Yap, R. Geirhos, J. Kean, D. Wang, S. Mollaei, C. Sun, Y. Yin, S. Wang, R. Li, Y. Chang, A. Wei, A. Bizeul, X. Wang, A. O. Arrais, K. Mukherjee, J. Chamorro-Padial, J. Liu, X. Qu, J. Guan, A. Bouyamourn, S. Wu, M. Plomecka, J. Chen, M. Tang, J. Deng, S. Subramanian, H. Xi, H. Chen, W. Zhang, Y. Ren, H. Tu, S. Kim, Y. Chen, S. V. Marjanović, J. Ha, G. Luczyna, J. J. Ma, Z. Shen, D. Song, C. E. Zhang, Z. Wang, G. Gendron, Y. Xiao, L. Smucker, E. Weng, K. H. Lee, Z. Ye, S. Ermon, I. D. Lopez-Miguel, T. Knights, A. Gitter, N. Park, B. Wei, H. Chen, K. Pai, A. Elkhanany, H. Lin, P. D. Siedler, J. Fang, R. Mishra, K. Zsolnai-Fehér, X. Jiang, S. Khan, J. Yuan, R. K. Jain, X. Lin, M. Peterson, Z. Wang, A. Malusare, M. Tang, I. Gupta, I. Fosin, T. Kang, B. Dworakowska, K. Matsumoto, G. Zheng, G. Sewuster, J. P. Villanueva, I. Rannev, I. Chernyavsky, J. Chen, D. Banik, B. Racz, W. Dong, J. Wang, L. Bashmal, D. V. Gonçalves, W. Hu, K. Bar, O. Bohdal, A. S. Patlan, S. Dhuliawala, C. Geirhos, J. Wist, Y. Kansal, B. Chen, K. Tire, A. T. Yücel, B. Christof, V. Singla, Z. Song, S. Chen, J. Ge, K. Ponkshe, I. Park, T. Shi, M. Q. Ma, J. Mak, S. Lai, A. Moulin, Z. Cheng, Z. Zhu, Z. Zhang, V. Patil, K. Jha, Q. Men, J. Wu, T. Zhang, B. H. Vieira, A. F. Aji, J. Chung, M. Mahfoud, H. T. Hoang, M. Sperzel, W. Hao, K. Meding, S. Xu, V. Kostakos, D. Manini, Y. Liu, C. Toukmaji, J. Paek, E. Yu, A. E. Demircali, Z. Sun, I. Dewerpe, H. Qin, R. Pflugfelder, J. Bailey, J. Morris, V. Heilala, S. Rosset, Z. Yu, P. E. Chen, W. Yeo, E. Jain, R. Yang, S. Chigurupati, J. Chernyavsky, S. P. Reddy, S. Venugopalan, H. Batra, C. F. Park, H. Tran, G. Maximiano, G. Zhang, Y. Liang, H. Shiyu, R. Xu, R. Pan, S. Suresh, Z. Liu, S. Gulati, S. Zhang, P. Turchin, C. W. Bartlett, C. R. Scotese, P. M. Cao, B. Wu, J. Karwowski, D. Scaramuzza, A. Nattanmai, G. McKellips, A. Cheraku, A. Suhail, E. Luo, M. Deng, J. Luo, A. Zhang, K. Jindel, J. Paek, K. Halevy, A. Baranov, M. Liu, A. Avadhanam, D. Zhang, V. Cheng, B. Ma, E. Fu, L. Do, J. Lass, H. Yang, S. Sunkari, V. Bharath, V. Ai, J. Leung, R. Agrawal, A. Zhou, K. Chen, T. Kalpathi, Z. Xu, G. Wang, T. Xiao, E. Maung, S. Lee, R. Yang, R. Yue, B. Zhao, J. Yoon, S. Sun, A. Singh, E. Luo, C. Peng, T. Osbey, T. Wang, D. Echeazu, H. Yang, T. Wu, S. Patel, V. Kulkarni, V. Sundarapandiyan, A. Zhang, A. Le, Z. Nasim, S. Yalam, R. Kasamsetty, S. Samal, H. Yang, D. Sun, N. Shah, A. Saha, A. Zhang, L. Nguyen, L. Nagumalli, K. Wang, A. Zhou, A. Wu, J. Luo, A. Telluri, S. Yue, A. Wang, and D. Hendrycks (2025)
+Humanity’s last exam .
+External Links: 2501.14249 ,
+Link
+Cited by: Appendix C ,
+§1 ,
+item 2 .
+[16]
+I. Shenfeld, J. Pari, and P. Agrawal (2025)
+RL’s razor: why online reinforcement learning forgets less .
+External Links: 2509.04259 ,
+Link
+Cited by: §1 .
+[17]
+G. Sheng, C. Zhang, Z. Ye, X. Wu, W. Zhang, R. Zhang, Y. Peng, H. Lin, and C. Wu (2025)
+HybridFlow: a flexible and efficient rlhf framework .
+In Proceedings of the Twentieth European Conference on Computer Systems ,
+EuroSys ’25 , pp. 1279–1297 .
+External Links: Link ,
+Document
+Cited by: §1 ,
+§1 .
+[18]
+H. Su, S. Diao, X. Lu, M. Liu, J. Xu, X. Dong, Y. Fu, P. Belcak, H. Ye, H. Yin, Y. Dong, E. Bakhturina, T. Yu, Y. Choi, J. Kautz, and P. Molchanov (2025)
+ToolOrchestra: elevating intelligence via efficient model and tool orchestration .
+External Links: 2511.21689 ,
+Link
+Cited by: Appendix C ,
+§1 ,
+§2.2 ,
+§5.1 .
+[19]
+H. Sun, L. Chang, W. Bao, S. Zheng, N. Zheng, X. Liu, H. Dong, Y. Chi, and B. Chen (2025)
+ShadowKV: kv cache in shadows for high-throughput long-context llm inference .
+External Links: 2410.21465 ,
+Link
+Cited by: §A.1 .
+[20]
+5. Team, A. Zeng, X. Lv, Q. Zheng, Z. Hou, B. Chen, C. Xie, C. Wang, D. Yin, H. Zeng, J. Zhang, K. Wang, L. Zhong, M. Liu, R. Lu, S. Cao, X. Zhang, X. Huang, Y. Wei, Y. Cheng, Y. An, Y. Niu, Y. Wen, Y. Bai, Z. Du, Z. Wang, Z. Zhu, B. Zhang, B. Wen, B. Wu, B. Xu, C. Huang, C. Zhao, C. Cai, C. Yu, C. Li, C. Ge, C. Huang, C. Zhang, C. Xu, C. Zhu, C. Li, C. Yin, D. Lin, D. Yang, D. Jiang, D. Ai, E. Zhu, F. Wang, G. Pan, G. Wang, H. Sun, H. Li, H. Li, H. Hu, H. Zhang, H. Peng, H. Tai, H. Zhang, H. Wang, H. Yang, H. Liu, H. Zhao, H. Liu, H. Yan, H. Liu, H. Chen, J. Li, J. Zhao, J. Ren, J. Jiao, J. Zhao, J. Yan, J. Wang, J. Gui, J. Zhao, J. Liu, J. Li, J. Li, J. Lu, J. Wang, J. Yuan, J. Li, J. Du, J. Du, J. Liu, J. Zhi, J. Gao, K. Wang, L. Yang, L. Xu, L. Fan, L. Wu, L. Ding, L. Wang, M. Zhang, M. Li, M. Xu, M. Zhao, M. Zhai, P. Du, Q. Dong, S. Lei, S. Tu, S. Yang, S. Lu, S. Li, S. Li, Shuang-Li, S. Yang, S. Yi, T. Yu, W. Tian, W. Wang, W. Yu, W. L. Tam, W. Liang, W. Liu, X. Wang, X. Jia, X. Gu, X. Ling, X. Wang, X. Fan, X. Pan, X. Zhang, X. Zhang, X. Fu, X. Zhang, Y. Xu, Y. Wu, Y. Lu, Y. Wang, Y. Zhou, Y. Pan, Y. Zhang, Y. Wang, Y. Li, Y. Su, Y. Geng, Y. Zhu, Y. Yang, Y. Li, Y. Wu, Y. Li, Y. Liu, Y. Wang, Y. Li, Y. Zhang, Z. Liu, Z. Yang, Z. Zhou, Z. Qiao, Z. Feng, Z. Liu, Z. Zhang, Z. Wang, Z. Yao, Z. Wang, Z. Liu, Z. Chai, Z. Li, Z. Zhao, W. Chen, J. Zhai, B. Xu, M. Huang, H. Wang, J. Li, Y. Dong, and J. Tang (2025)
+GLM-4.5: agentic, reasoning, and coding (arc) foundation models .
+External Links: 2508.06471 ,
+Link
+Cited by: §A.2 ,
+§1 ,
+§5.1 .
+[21]
+vLLM Team (2025)
+KV-aware Routing — vLLM Production Stack Documentation .
+Note: https://docs.vllm.ai/projects/production-stack/en/vllm-stack-0.1.5/tutorials/kvaware.html Accessed: 2026-01-15
+Cited by: §A.1 ,
+§3.2 .
+[22]
+W. Wang, X. Xu, W. An, F. Dai, W. Gao, Y. He, J. Huang, Q. Ji, H. Jin, X. Li, et al. (2025)
+Let it flow: agentic crafting on rock and roll, building the rome model within an open agentic learning ecosystem .
+arXiv preprint arXiv:2512.24873 .
+Cited by: §A.3 .
+[23]
+X. Wang, B. Li, Y. Song, F. F. Xu, X. Tang, M. Zhuge, J. Pan, Y. Song, B. Li, J. Singh, H. H. Tran, F. Li, R. Ma, M. Zheng, B. Qian, Y. Shao, N. Muennighoff, Y. Zhang, B. Hui, J. Lin, R. Brennan, H. Peng, H. Ji, and G. Neubig (2025)
+OpenHands: an open platform for ai software developers as generalist agents .
+External Links: 2407.16741 ,
+Link
+Cited by: Appendix C ,
+§1 ,
+§5.1 .
+[24]
+T. Xie, D. Zhang, J. Chen, X. Li, S. Zhao, R. Cao, T. J. Hua, Z. Cheng, D. Shin, F. Lei, Y. Liu, Y. Xu, S. Zhou, S. Savarese, C. Xiong, V. Zhong, and T. Yu (2024)
+OSWorld: benchmarking multimodal agents for open-ended tasks in real computer environments .
+External Links: 2404.07972 ,
+Link
+Cited by: §1 .
+[25]
+Z. Xie, Z. Xu, M. Zhao, Y. An, V. S. Mailthody, S. Mahlke, M. Garland, and C. Kozyrakis (2025)
+Strata: hierarchical context caching for long context language model serving .
+External Links: 2508.18572 ,
+Link
+Cited by: §A.1 .
+[26]
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, C. Zheng, D. Liu, F. Zhou, F. Huang, F. Hu, H. Ge, H. Wei, H. Lin, J. Tang, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Zhou, J. Lin, K. Dang, K. Bao, K. Yang, L. Yu, L. Deng, M. Li, M. Xue, M. Li, P. Zhang, P. Wang, Q. Zhu, R. Men, R. Gao, S. Liu, S. Luo, T. Li, T. Tang, W. Yin, X. Ren, X. Wang, X. Zhang, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Zhang, Y. Wan, Y. Liu, Z. Wang, Z. Cui, Z. Zhang, Z. Zhou, and Z. Qiu (2025)
+Qwen3 technical report .
+External Links: 2505.09388 ,
+Link
+Cited by: §1 ,
+§5.1 .
+[27]
+J. Yang, C. E. Jimenez, A. Wettig, K. Lieret, S. Yao, K. Narasimhan, and O. Press (2024)
+SWE-agent: agent-computer interfaces enable automated software engineering .
+External Links: 2405.15793 ,
+Link
+Cited by: §A.2 ,
+Appendix C ,
+§1 ,
+§5.1 .
+[28]
+L. Yu, J. Lin, and J. Li (2025)
+Stateful large language model serving with pensieve .
+In Proceedings of the Twentieth European Conference on Computer Systems ,
+EuroSys ’25 , pp. 144–158 .
+External Links: Link ,
+Document
+Cited by: §A.1 .
+[29]
+Y. Yuan, A. Iyer, L. Ma, and N. Talati (2025)
+Vortex: overcoming memory capacity limitations in gpu-accelerated large-scale data analytics .
+External Links: 2502.09541 ,
+Link
+Cited by: §A.1 .
+[30]
+H. Zhang, X. Liu, B. Lv, X. Sun, B. Jing, I. L. Iong, Z. Hou, Z. Qi, H. Lai, Y. Xu, et al. (2025)
+AgentRL: scaling agentic reinforcement learning with a multi-turn, multi-task framework .
+arXiv preprint arXiv:2510.04206 .
+Cited by: §A.3 .
+[31]
+L. Zhang, M. Chen, R. Cao, J. Chen, F. Zhou, Y. Xu, J. Yang, L. Chen, C. Luo, K. Zhang, et al. (2026)
+MegaFlow: large-scale distributed orchestration system for the agentic era .
+arXiv preprint arXiv:2601.07526 .
+Cited by: §A.3 ,
+§2.2 .
+[32]
+C. Zheng, K. Dang, B. Yu, M. Li, H. Jiang, J. Lin, Y. Liu, H. Lin, C. Wu, F. Hu, A. Yang, J. Zhou, and J. Lin (2025)
+Stabilizing reinforcement learning with llms: formulation and practices .
+External Links: 2512.01374 ,
+Link
+Cited by: §1 .
+[33]
+L. Zheng, L. Yin, Z. Xie, C. Sun, J. Huang, C. H. Yu, S. Cao, C. Kozyrakis, I. Stoica, J. E. Gonzalez, C. Barrett, and Y. Sheng (2024)
+SGLang: efficient execution of structured language model programs .
+External Links: 2312.07104 ,
+Link
+Cited by: §A.1 ,
+§1 ,
+§3.2 .
+[34]
+Y. Zhong, S. Liu, J. Chen, J. Hu, Y. Zhu, X. Liu, X. Jin, and H. Zhang (2024)
+DistServe: disaggregating prefill and decoding for goodput-optimized large language model serving .
+External Links: 2401.09670 ,
+Link
+Cited by: §A.2 .
+[35]
+S. Zhou, F. F. Xu, H. Zhu, X. Zhou, R. Lo, A. Sridhar, X. Cheng, T. Ou, Y. Bisk, D. Fried, U. Alon, and G. Neubig (2024)
+WebArena: a realistic web environment for building autonomous agents .
+External Links: 2307.13854 ,
+Link
+Cited by: §2.2 .
+Appendix A Extended Comparison with Prior Work
+A.1 KV Cache Optimization
+Multi-tiered KV cache management.
+To alleviate GPU memory pressure, systems such as Pensieve [ 28 ] , Continuum [ 11 ] , Strata [ 25 ] , and ShadowKV [ 19 ] exploit the hardware memory hierarchy, comprising GPU HBM, CPU DRAM, and NVMe SSD for KV cache management. These tiered caching mechanisms mitigate transient preemption by offloading inactive KV states to lower-tier storage and prefetching them back to GPU upon request resumption. However, the practical efficiency of these methods is fundamentally constrained by the inter-tier bandwidth between device and host memory. In high-frequency agentic workflows, the overhead of frequent swap-in and swap-out cycles often negates the benefits of multi-tier caching as shown in Section 5 .
+Distributed KV cache management.
+Distributed management of agentic states introduces significant complexity to KV cache eviction and preemption policies. While systems like BanaServe [ 6 ] and LMCache [ 12 ] enable KV cache transfer across DP nodes, their performance in large-batch agentic serving and rollout is often constrained by limited interconnect bandwidth. The strong intra-program dependencies in agentic workflows necessitate frequent state transferring without program-level management, which can easily saturate the network during serving or rollout.
+To bypass these bandwidth bottlenecks, standard inference systems like vLLM KV-aware router [ 21 ] and SGLang Model Gateway [ 33 ] employ KV-aware routing policies that pin requests to specific nodes based on prefix locality or session ID. Similarly, Vortex [ 29 ] introduces session-aware prefetching to minimize cross-node data transfer latency. However, these approaches lack the capability to dynamically migrate active program states between DP nodes. This absence of workload transfer leads to severe memory utilization imbalance across the cluster, shown in 2(a) . Nodes hosting long-running agentic programs cannot offload states to idle peers, resulting in fragmented resource utilization and degraded aggregate throughput.
+A.2 Extended experiment results on KV cache optimization
+Experiments on KV cache offloading.
+We investigated KV cache offloading by using LMcache [ 12 ] as a potential remedy for capacity constraints. While offloading theoritically extends effective memory space by utilizing CPU or SSD storage, our implementation with vLLM + LMcache reveals a critical bottleneck: the PCIe bandwidth is insufficient to sustain the high-frequency context switching and large-volume data transfers inherent to agentic workloads. As demonstrated in 7(a) , when serving the GLM-4.6 model [ 20 ] with the mini-SWEAgent framework [ 27 ] , the latency penalty from frequent swap-in and swap-out operations negates the memory capacity benefits, resulting in severe throughput degradation under heavy agentic workloads.
+Experiments on Prefill-Decode (PD) disaggregation.
+We also explored PD disaggregation [ 34 ] , a standard optimization for chatbot serving by isolating the decoding phase from prefill interference. However, when applied to agentic workloads characterized by continuous context growth, we observe that PD disaggregation exacerbates thrashing. By partitioning the cluster into prefill-only and decode-only nodes, the effective HBM pool available for handling prefill is significantly smaller than that in a unified architecture. This memory fragmentation causes the system to hit capacity limits and trigger thrashing at much lower concurrency levels, as shown in 7(b) . These results demonstrate that generic architectural optimizations cannot substitute for a program-centric scheduler that actively manages the working set.
+(a) KV Cache Hit Rate with LMCache Offloading
+(b) Throughput v.s. Prefill-Only/Decode-Only Node Ratio
+Figure 7 : Ablation study on KV cache offloading and Prefill-Decode (PD) disaggregation
+A.3 Scaling up agentic workflows
+Heterogeneous resource allocation and scheduling.
+To orchestrate multi-turn agent-environment interactions at scale, recent systems such as MegaFlow [ 31 ] , RollArt [ 5 , 22 ] , AgentRL [ 30 ] , and VerlTool [ 8 ] decouple model inference from environment execution. While these frameworks effectively scale environment concurrency via specialized services, they exhibit the inherent limitations of coarse-grained disaggregation. By treating the inference engine and tool executor as isolated black boxes, these systems lack unified resource management and are unable to coordinate KV cache lifecycles with the environment execution. Without fine-grained scheduling at program-level, disaggregation-based approaches waste KV cache reuse potential in agentic workloads, yielding sub-optimal throughput.
+Appendix B System Portability and Interface Abstraction.
+B.1 Middleware Architecture and Unified Interfaces.
+ThunderAgent serves as a program-aware runtime layer that mediates between agent control flow and backend inference engines via a program-level abstraction. The scheduler controls program state transitions based on the abstracted ProgramState (see Table 3(a) ) together with the backend cache capacity view (see Table 4 ). Meanwhile, each program binds only to the endpoint and does not depend on the concrete backend implementation.
+B.2 Why program ID matters.
+While the standard session ID serves as a routing label, the program ID is used by our system to check the workflow metadata. This visibility is critical: it allows the scheduler to distinguish valid tool-wait times from idle sessions, enabling smart preemption strategies that session-based baselines cannot support.
+B.3 Low-overhead adoption of the ThunderAgent.
+Figure 8 shows that adopting ThunderAgent only requires attaching program_id to requests (for both LLM inference and tool execution) and sending an explicit release signal with program_id when a program ends.
+The program_id tags each request with its own program instance for scheduling, while the
+release signal allows ThunderAgent to reclaim per-program resources after termination.
+All other request fields and the OpenAI-style API surface remain unchanged.
+Field
+Type
+Meaning
+ProgramState
+status
+ProgramStatus
+Current lifecycle state.
+backend_url
+str
+Assigned backend endpoint.
+step_count
+int
+Executed steps so far.
+total_tokens
+int
+Total tokens over full history.
+(a) ProgramState fields.
+Status
+Meaning
+ProgramStatus
+REASONING
+On-GPU inference.
+ACTING
+Off-GPU tool exec.
+PAUSED
+In global paused waiting set.
+STOPPED
+Released; resources reclaimed.
+(b) ProgramStatus semantics.
+Table 3 : Program state and status definitions.
+Field
+Type
+Meaning
+BackendState
+url
+str
+Backend endpoint.
+healthy
+bool
+Health flag for scheduling.
+cache_config
+Optional[CacheConfig]
+Static cache configuration (fetched at startup).
+active_program_tokens
+int
+Active token footprint on this backend.
+Table 4 : Key fields of BackendState.
+Only inference backend (e.g., vLLM/SGLang)
+⬇
+1
+# 1) LLM request
+2
+chat_completion ( model_id , messages , extrabody )
+3
+4
+# 2) Tool execution
+5
+run_tool ( command , sandbox )
+6
+7
+# 3) Program end
+8
+# (no explicit release)
+With ThunderAgent
+⬇
+1
+# 1) LLM request
+2
+extrabody [ "program_id" ] = "PID"
+3
+chat_completion ( model_id , messages , extrabody )
+4
+5
+# 2) Tool execution
+6
+run_tool ( command , sandbox , program_id="PID" )
+7
+8
+# 3) Program end (explicit release)
+9
+POST / programs / release
+10
+{ "program_id" : "PID" }
+Figure 8 : Only three changes are required to use the ThunderAgent.
+Appendix C Tool execution time variability.
+Practical agent tool calls are hard to characterize and often unpredictable. In some code-centric settings (e.g., serving SWE-Bench [ 9 ] with SWE-agent [ 27 ] or OpenHands [ 23 ] ), agents primarily invoke local, lightweight tools, and tool latency is relatively stable with low variance. However, in broader and more realistic scenarios, e.g., serving HLE [ 15 ] with ToolOrchestra [ 18 ] , the workload relies more heavily on remote-service tools (Table 5 ), making tool execution time volatile and difficult to predict. This volatility largely stems from factors external to the agent runtime, such as network jitter, backend load and queuing delays, and rate limiting, which can vary across requests and over time.
+We empirically confirm this behavior in Figure 9 . For remote-service tools (and some execution tools), the gap between the median and tail quantiles is large: p95 and p99 are substantially higher than the median, and the tail can extend to tens or even hundreds of seconds. This suggests that tool latency in these settings lacks a stable central tendency; instead, heavy-tailed behavior dominates, making tool latency prediction intrinsically brittle in practice.
+Given the unpredictability of tool execution, underestimation wastes pinned cache capacity while still triggering premature KV eviction, causing thrashing upon resume. Overestimation, in contrast, may lead to unnecessary eviction of programs’ KV that should have remained pinned. Even if tool runtimes were perfectly predictable, existing methods such as continuum [ 11 ] still decide whether to keep the KV cache pinned using a static, threshold-based rule. In contrast, ThunderAgent builds a complete cost-modeling framework and dynamically trades off Cost recompute \text{Cost}_{\text{recompute}} and Cost caching \text{Cost}_{\text{caching}} .
+Tool bucket
+Role
+Primary variability source
+HLE-search
+Retrieve evidence
+Remote service(Network latency/Rate limits)
+HLE-enhance-reasoning
+Model-as-a-tool call
+Remote service
+HLE-answer
+Final generation
+Local LLM inference
+SAB-execute_bash
+Shell execution
+Sandbox and I/O
+SAB-execute_ipython_cell
+Python cell execution
+Program runtime
+SAB-str_replace_editor
+File edit
+Local filesystem
+SAB-task_tracker
+Task state tracking
+Local filesystem
+Table 5: Tool buckets.
+Figure 9 : Tool execution time distributions. Tool execution time exhibits high variability and is difficult to predict.
+Appendix D KV cache hit rate statistics and interpretation
+In our cost decomposition Equation ( 3 ), throughput loss in agentic serving mainly comes from non-productive overheads:
+KV re-computation induced by thrashing and idle KV caching during external tool execution, i.e.,
+Cost recompute \text{Cost}_{\text{recompute}} and Cost caching \text{Cost}_{\text{caching}} . When tool calls are short and predictable, the acting phase occupies KV for only a short time, so Cost caching \text{Cost}_{\text{caching}} is small; thus, avoiding thrashing dominates: a higher KV cache hit rate typically implies fewer re-prefills and higher throughput.
+However, when tool execution times are highly variable (see Appendix C ), a TTL-based scheduler can end up pinning the KV for long tool calls.
+While this can reduce Cost recompute \text{Cost}_{\text{recompute}} and thus increase the KV cache hit rate, it simultaneously inflates Cost caching \text{Cost}_{\text{caching}} and reduces throughput. This helps explain why continuum [ 11 ] can underperform on tool-heavy workloads despite achieving a higher KV cache hit rate (Figs. 4 , 5 ).
+ThunderAgent adapts to these regimes by explicitly balancing caching and recomputation.
+ThunderAgent introduces a time-decay function f ⁡ ( t ) f(t) in Sec. 4.3 for acting programs to trade off
+Cost caching \text{Cost}_{\text{caching}} and Cost recompute \text{Cost}_{\text{recompute}} ; we rigorously derive the optimal functional form of f ⁡ ( t ) f(t) in Appendix E.1 .
+By progressively lowering the effective memory priority of long-idle acting programs, the scheduler evicts their KV caches
+to reduce idle caching cost while controlling recomputation, yielding better throughput in practice (Figs. 4 ).
+Appendix E Extended Theoretical Analysis.
+E.1 Proof of Time Decay Function for Periodic Thrashing Detection.
+Hypothesis E.1 (Unpredictable Tool Execution Time) .
+For acting programs, we hypothesize that the scheduler cannot reliably predict the tool return time for a given program (see Appendix C ). Consequently, the decay function f f should depend only on the elapsed acting time t t in a time-homogeneous manner [ 14 ] .
+Hypothesis E.2 (Boundary Conditions) .
+We assume the time decay function f : [ 0 , ∞ ) → ( 0 , 1 ] f:[0,\infty)\rightarrow(0,1] satisfies
+f ⁡ ( 0 ) = 1 , lim t → ∞ f ⁡ ( t ) = 0 , f(0)=1,\lim_{t\to\infty}f(t)=0,
+(12)
+An intuitive interpretation of these boundary conditions is that, when the tool execution time is 0 0 , corresponding to a multi-turn interaction without tool calls, all acting programs reduce to reasoning programs, and therefore f ⁡ ( t ) = 1 f(t)=1 . Conversely, if the tool execution time is infinite, the agentic workflow collapses to single-turn generation, akin to standard chatbot serving, since requests never return for the next-turn interactions. In this regime, setting f ⁡ ( t ) = 0 f(t)=0 aligns the decay function with request-level scheduling policies.
+Theorem E.1 (Admissible Time Decay Functions) .
+Under Hypothesis E.1 and E.2 , the admissible time decay function f f for our capacity check function in Equation 7 must take one of the following forms: exponential in continuous time, f ⁡ ( t ) = e − λ ​ t f(t)=e^{-\lambda t} with λ > 0 \lambda>0 , or geometric in discrete tick time, f ⁡ ( k ) = x − k f(k)=x^{-k} with x > 1 x>1 .
+Proof.
+We prove this theorem by first formalizing the time-homogeneous property implied by
+Hypothesis E.1 . Next, we inducing the admissible time decay functions f f under the boundary conditions in
+Hypothesis E.2 .
+Formalization of unpredictable tool time. Let t t denote the elapsed acting time, measured in wall-clock time (continuous time) or in periodic-monitor ticks (discrete time). Under Hypothesis E.1 , the relative decay after waiting an additional duration Δ \Delta should not depend on the absolute elapsed time t t , but only on the increment Δ \Delta . We formalize this as the existence of a function ϕ : [ 0 , ∞ ) → ( 0 , 1 ] \phi:[0,\infty)\to(0,1] such that, for all t , Δ ≥ 0 t,\Delta\geq 0 ,
+f ⁡ ( t + Δ ) = f ⁡ ( t ) ​ ϕ ​ ( Δ ) . f(t+\Delta)=f(t)\,\phi(\Delta).
+(13)
+Semigroup equation. Setting t = 0 t=0 in Equation 13 and using the boundary condition f ⁡ ( 0 ) = 1 f(0)=1
+(from Hypothesis E.2 ) yields
+ϕ ⁡ ( Δ ) = f ⁡ ( Δ ) \phi(\Delta)=f(\Delta) . Substituting back, we obtain the multiplicative
+semigroup equation
+f ⁡ ( t + Δ ) = f ⁡ ( t ) ​ f ​ ( Δ ) , ∀ t , Δ ≥ 0 . f(t+\Delta)=f(t)\,f(\Delta),\qquad\forall t,\Delta\geq 0.
+(14)
+Continuous-time case (exponential decay). We first consider the continuous-time case.
+Define h ⁡ ( t ) ≜ ln ⁡ f ⁡ ( t ) h(t)\triangleq\ln f(t) . Applying the logarithms on both sides of
+Equation 14 yields the Cauchy functional equation
+h ⁡ ( t + Δ ) = h ⁡ ( t ) + h ⁡ ( Δ ) . h(t+\Delta)=h(t)+h(\Delta).
+(15)
+Since f ⁡ ( t ) ∈ ( 0 , 1 ] f(t)\in(0,1] , we have h ⁡ ( t ) ≤ 0 h(t)\leq 0 for all t ≥ 0 t\geq 0 , which implies
+that h h is bounded above on [ 0 , ∞ ) [0,\infty) . Under this boundedness condition, the Cauchy functional equation admits only linear solutions
+of the form h ⁡ ( t ) = c ​ t h(t)=ct for some c ∈ ℝ c\in\mathbb{R} . Writing λ ≜ − c ≥ 0 \lambda\triangleq-c\geq 0 ,
+we obtain
+f ⁡ ( t ) = e − λ ​ t . f(t)=e^{-\lambda t}.
+(16)
+Finally, the boundary condition lim t → ∞ f ⁡ ( t ) = 0 \lim_{t\to\infty}f(t)=0
+(Hypothesis E.2 ) rules out λ = 0 \lambda=0 ,
+and thus λ > 0 \lambda>0 .
+Discrete-time case (geometric decay). We next consider the discrete-time setting, where elapsed acting time is
+measured in integer ticks k ∈ ℤ ≥ 0 k\in\mathbb{Z}_{\geq 0} .
+Equation 14 becomes
+f ⁡ ( m + n ) = f ⁡ ( m ) ​ f ​ ( n ) , ∀ m , n ∈ ℤ ≥ 0 . f(m+n)=f(m)\,f(n),\qquad\forall m,n\in\mathbb{Z}_{\geq 0}.
+(17)
+Setting n = 1 n=1 yields the recurrence f ⁡ ( k ) = f ⁡ ( k − 1 ) ​ f ​ ( 1 ) f(k)=f(k-1)f(1) . Let γ ≜ f ⁡ ( 1 ) \gamma\triangleq f(1) , we have
+f ⁡ ( k ) = f ​ ( 1 ) k ≜ γ k f(k)=f(1)^{k}\triangleq\gamma^{k} .
+The boundary condition lim k → ∞ f ⁡ ( k ) = 0 \lim_{k\to\infty}f(k)=0 implies 0 < γ < 1 0<\gamma<1 .
+Equivalently, we can parameterize
+f ⁡ ( k ) = x − k , x ≜ γ − 1 > 1 . f(k)=x^{-k},\qquad x\triangleq\gamma^{-1}>1.
+(18)
+This completes the proof.
+∎
+E.2 Proof of recomputation STP cost
+As defined in Section 4.2 , the STP recomputation cost is given by:
+Cost recompute = ∫ 0 t r ​ e ​ c ​ o ​ m ​ p ​ u ​ t ​ e c i ​ ( t ) ​ 𝑑 t \text{Cost}_{\text{recompute}}=\int_{0}^{t_{recompute}}c_{i}(t)\,dt
+(19)
+where c i ​ ( t ) c_{i}(t) represents the instantaneous cost, which is proportional to the decoding step (i.e., c i ​ ( t ) ∝ t c_{i}(t)\propto t ). This proportionality arises because chunked prefill processes a constant number of KV pairs per iteration, resulting in a linear increase in accumulated computation over time. Consequently, evaluating the integral yields Cost recompute ∝ t recompute 2 \text{Cost}_{\text{recompute}}\propto t_{\text{recompute}}^{2} . Given the relationship t recompute = c i × T decode / chunk t_{\text{recompute}}=c_{i}\times T_{\text{decode}}/\text{chunk} , where both T decode T_{\text{decode}} and the chunk size are constant, it follows that:
+C ​ o ​ s ​ t recompute ∝ c i 2 Cost_{\text{recompute}}\propto c_{i}^{2}
+E.3 Proof of minimized recomputation STP cost
+We provide a rigorous proof for the optimality of the Shortest-First Eviction policy using an exchange argument .
+Problem Definition.
+We aim to select a subset of paused programs S S to evict such that the total reclaimed memory satisfies ∑ i ∈ S c i ≥ Δ ​ C \sum_{i\in S}c_{i}\geq\Delta C , while minimizing the total re-computation cost J ⁡ ( S ) = ∑ i ∈ S c i 2 J(S)=\sum_{i\in S}c_{i}^{2} . Note that the cost function f ⁡ ( x ) = x 2 f(x)=x^{2} is strictly convex and super-additive (i.e., ( a + b ) 2 > a 2 + b 2 (a+b)^{2}>a^{2}+b^{2} for positive a , b a,b ).
+Theorem.
+The optimal strategy to minimize J ⁡ ( S ) J(S) is to strictly select programs with the smallest context lengths c i c_{i} .
+Proof.
+Suppose, for the sake of contradiction, that the optimal set S ∗ S^{*} is not the set of the shortest programs. This implies there exists a ”long” program p l ​ o ​ n ​ g ∈ S ∗ p_{long}\in S^{*} and a ”short” program p s ​ h ​ o ​ r ​ t ∉ S ∗ p_{short}\notin S^{*} (available but not selected) such that c s ​ h ​ o ​ r ​ t < c l ​ o ​ n ​ g c_{short}<c_{long} .
+We can construct a new set S ′ S^{\prime} by swapping or decomposing p l ​ o ​ n ​ g p_{long} . Since c l ​ o ​ n ​ g > c s ​ h ​ o ​ r ​ t c_{long}>c_{short} , we can conceptualize p l ​ o ​ n ​ g p_{long} as being composed of a segment of length c s ​ h ​ o ​ r ​ t c_{short} and a residue r = c l ​ o ​ n ​ g − c s ​ h ​ o ​ r ​ t r=c_{long}-c_{short} .
+Replacing the selection of p l ​ o ​ n ​ g p_{long} with p s ​ h ​ o ​ r ​ t p_{short} (and theoretically the residue r r ) changes the cost. Consider the inequality derived from the convexity of the square function:
+c l ​ o ​ n ​ g 2 = ( c s ​ h ​ o ​ r ​ t + r ) 2 = c s ​ h ​ o ​ r ​ t 2 + r 2 + 2 ​ c s ​ h ​ o ​ r ​ t ​ r c_{long}^{2}=(c_{short}+r)^{2}=c_{short}^{2}+r^{2}+2c_{short}r
+(20)
+Since c s ​ h ​ o ​ r ​ t > 0 c_{short}>0 and r > 0 r>0 , the cross-term 2 ​ c s ​ h ​ o ​ r ​ t ​ r > 0 2c_{short}r>0 . Therefore:
+c s ​ h ​ o ​ r ​ t 2 + r 2 < c l ​ o ​ n ​ g 2 c_{short}^{2}+r^{2}<c_{long}^{2}
+(21)
+This inequality implies that breaking a large eviction target ( c l ​ o ​ n ​ g c_{long} ) into smaller components ( c s ​ h ​ o ​ r ​ t + r c_{short}+r ) strictly reduces the sum of squares.
+In the context of our scheduler, this means that if we are satisfying the memory constraint Δ ​ C \Delta C using a large program, we can strictly decrease the penalty by swapping it for available smaller programs (or a combination thereof) that sum to the same capacity.
+By iteratively applying this exchange—replacing the largest selected programs with smaller unselected programs—we monotonically decrease the cost function J ⁡ ( S ) J(S) . The cost reaches its global minimum only when no such exchange is possible, i.e., when S S consists entirely of the programs with the smallest available context lengths.
+Conclusion.
+The Shortest-First strategy is globally optimal because the super-linear cost of attention ( O ⁡ ( L 2 ) O(L^{2}) ) penalizes fragmentation less than aggregation.
+Appendix F End-to-End Latency Analysis
+Though we have stated in Section 1 that program-level latency(time used for whole workflow generation) is far more important than end-to-end per step latency for autonomous agents and agentic RL rollout. Here we compare ThunderAgent ’s average per-step latency with vLLM and Continuum. Figure 10 shows that ThunderAgent significantly outperforms vLLM and Continuum when applying GLM4.6 and Qwen3 235B with mini-SWEAgent and Openhands on a single H100 serving in either low or high parallel workflow number. The reason is that it seems to improve end-to-end latency by switching acting programs. But it actually delays all the running programs’ latency by triggering heavy KV-cache thrashing.
+Figure 10 : End-to-End latency comparision
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

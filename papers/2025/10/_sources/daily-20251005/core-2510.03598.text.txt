@@ -1,0 +1,391 @@
+Exploring the Hierarchical Reasoning Model for Small Natural-Image Classification Without Augmentation
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Methodology
+3 Results
+3.1 MNIST
+Results.
+3.2 CIFAR-10
+3.2.1 CIFAR-10: CNN baseline
+3.3 CIFAR-100
+3.3.1 CIFAR-100: CNN baseline
+4 Discussion
+References
+License: CC BY 4.0
+arXiv:2510.03598v1 [cs.CV] 04 Oct 2025
+Exploring the Hierarchical Reasoning Model for Small Natural-Image Classification Without Augmentation
+Alexander V. Mantzaris
+Department of Data, Mathematical and Statistical Sciences, University of Central Florida, USA
+August 24, 2026
+Abstract
+This paper asks whether the Hierarchical Reasoning Model (HRM) with the two Transformer-style modules (fL,fH)(f_{L},f_{H}), one step (DEQ-style) training, deep supervision, Rotary Position Embeddings, and RMSNorm can serve as a practical image classifier. It is evaluated on MNIST, CIFAR-10, and CIFAR-100 under a deliberately raw regime: no data augmentation, identical optimizer family with one-epoch warmup then cosine-floor decay, and label smoothing. HRM optimizes stably and performs well on MNIST (≈98%\approx 98\% test accuracy), but on small natural images it overfits and generalizes poorly: on CIFAR-10, HRM reaches 65.0% after 25 epochs, whereas a two-stage Conv–BN–ReLU baseline attains 77.2% while training ∼30×\sim 30\times faster per epoch; on CIFAR-100, HRM achieves only 29.7% test accuracy despite 91.5% train accuracy, while the same CNN reaches 45.3% test with 50.5% train accuracy. Loss traces and error analyses indicate healthy optimization but insufficient image-specific inductive bias for HRM in this regime. It is concluded that, for small-resolution image classification without augmentation, HRM is not competitive with even simple convolutional architectures as the HRM currently exist but this does not exclude possibilities that modifications to the model may allow it to improve greatly.
+1 Introduction
+Reasoning remains a central challenge in machine learning. A dominant line of work elicits reasoning in large language models (LLMs) via chain-of-thought (CoT) prompting, which provides explicit intermediate steps at inference time [9]. In contrast, the recently introduced Hierarchical Reasoning Model (HRM) proposes a compact, recurrent architecture that learns to carry out multi-step reasoning within a single forward pass, without external CoT supervision [8]. HRM consists of two interdependent modules operating at different time scales: a high-level planner (fHf_{H}) and a low-level executor (fLf_{L}), which exchange state over several cycles. Training leverages a one-step gradient derived from deep equilibrium models (DEQs)—using implicit differentiation to bypass full backpropagation through time—thereby achieving constant memory with respect to effective depth [1, 8]. In practice, HRM employs modern Transformer components (eg., RMSNorm and rotary position embeddings) to stabilize and structure the dynamics [10, 7].
+The initial HRM report demonstrated striking sample efficiency and performance on algorithmic and visual reasoning benchmarks (eg, Sudoku, maze planning, and the Abstraction and Reasoning Corpus, ARC) using comparatively small models and limited data, spurring rapid community interest and open-source reimplementations [8, 6, 2]. Beyond its empirical results, HRM is conceptually appealing: it offers a brain-inspired, multi-timescale recurrent formulation with a mathematically grounded training rule (via DEQ), hinting at a path toward controllable computation depth and amortized planning inside the network. Given this novelty and promise, it is valuable to probe HRM’s inductive biases outside its original evaluation settings. In this work the study of the HRM in small-resolution image classification (MNIST [4, 5], CIFAR-10/100[3]) under a deliberately raw straightforward training regime (no augmentation) and compare it against a conventional convolutional baseline. The goal is to clarify where HRM’s architectural design helps or hinders generalization. (code is available at github.com/mantzaris/ImagesHRM)
+2 Methodology
+The HRM can be described abstractly by coupled updates between a high–level state and a low–level state, with a separation of time scales:
+𝐳Lt+1=fL​(𝐳Lt,𝐳Ht,𝐱~,θL),𝐳Ht+1=fH​(𝐳Ht,𝐳Lt+1,θH).\mathbf{z}^{t+1}_{L}=f_{L}\!\left(\mathbf{z}^{t}_{L},\mathbf{z}^{t}_{H},\tilde{\mathbf{x}};\,\theta_{L}\right),\qquad\mathbf{z}^{t+1}_{H}=f_{H}\!\left(\mathbf{z}^{t}_{H},\mathbf{z}^{t+1}_{L};\,\theta_{H}\right).
+(1)
+These equations express a single alternating update at step tt, where the low–level state is updated first from its previous value, the current high–level state, and the tokenized input, followed by an update of the high–level state conditioned on the newly refined low–level state. In the image specialization above, the same principle is implemented with TT low–level micro–updates per high–level macro–update, producing the cycle and segment schedules used in training.
+The adaptation for images thus consists of: patch–tokenization with a [CLS][\mathrm{CLS}] channel. Then two Transformer modules fLf_{L} and fHf_{H} operating at different time scales with element–wise input fusion. Then a one–step gradient approximation that backpropagates only through the last low– and high–level updates per segment, and the deep supervision over segments with detached state carryover. The classifier head reads the high–level [CLS][\mathrm{CLS}] representation to produce logits for cross–entropy training.
+Hierarchical Reasoning Model (HRM) adapted for image classification consists of two interdependent recurrent modules operating at distinct time scales: a low–level perceptual module fLf_{L} and a high–level reasoning module fHf_{H}. Both fLf_{L} and fHf_{H} are instantiated as Transformer encoders with identical dimensionality, bias–free linear layers, RMS normalization, rotary position embedding within multi–head self–attention, and GEGLU feed–forward sublayers. Inputs to each module are merged by element–wise addition before the Transformer stack, and the output head fOf_{O} produces class logits from the high–level state.
+𝐱∈ℝB×Himg×Wimg×Cin,y∈{0,…,K−1}.\mathbf{x}\in\mathbb{R}^{B\times H_{\text{img}}\times W_{\text{img}}\times C_{\text{in}}},\qquad y\in\{0,\dots,K-1\}.
+(2)
+The dataset consists of batches of images 𝐱\mathbf{x} and labels yy. The goal is to learn parameters θ={θI,θL,θH,θO}\theta=\{\theta_{I},\theta_{L},\theta_{H},\theta_{O}\} that minimize the supervised loss on KK classes.
+𝐱~=fI​(𝐱,θI)∈ℝB×S×D.\tilde{\mathbf{x}}=f_{I}(\mathbf{x};\theta_{I})\in\mathbb{R}^{B\times S\times D}.
+(3)
+Images are tokenized by fIf_{I} into a sequence of SS tokens of width DD. Using non–overlapping patch embedding with a prepended [CLS][\mathrm{CLS}] token so that S=1+(Himg/P)​(Wimg/P)S=1+(H_{\text{img}}/P)(W_{\text{img}}/P). This step converts spatial inputs into a sequence representation suitable for Transformer processing.
+𝐳H0∼𝒯𝒩(0,1;−2,2),𝐳L0∼𝒯𝒩(0,1;−2,2),𝐳H0,𝐳L0∈ℝB×S×D.\mathbf{z}^{0}_{H}\sim\mathcal{TN}(0,1;-2,2),\qquad\mathbf{z}^{0}_{L}\sim\mathcal{TN}(0,1;-2,2),\qquad\mathbf{z}^{0}_{H},\mathbf{z}^{0}_{L}\in\mathbb{R}^{B\times S\times D}.
+(4)
+The initial high–level and low–level states are sampled once from a truncated normal distribution and kept fixed through training. This matches the HRM practice of using fixed random initial states for recurrent inference.
+𝐳Li,τ=fL(𝐳Li,τ−1+𝐳Hi−1+𝐱~;θL),τ=1,…,T,i=1,…,N.\mathbf{z}^{i,\tau}_{L}=f_{L}\!\left(\mathbf{z}^{i,\tau-1}_{L}+\mathbf{z}^{i-1}_{H}+\tilde{\mathbf{x}};\,\theta_{L}\right),\quad\tau=1,\dots,T,\quad i=1,\dots,N.
+(5)
+Within the ii-th high–level cycle, the low–level module performs TT fast updates. Each update fuses the previous low–level state, the last available high–level state, and the tokenized image via element–wise addition before the Transformer encoder fLf_{L}. This captures iterative perceptual refinement conditioned on the current global context.
+𝐳Hi=fH(𝐳Hi−1+𝐳Li,T;θH),i=1,…,N.\mathbf{z}^{i}_{H}=f_{H}\!\left(\mathbf{z}^{i-1}_{H}+\mathbf{z}^{i,T}_{L};\,\theta_{H}\right),\quad i=1,\dots,N.
+(6)
+At the end of each cycle, the high–level module updates once from its previous state and the final low–level state of the cycle. This realizes hierarchical convergence, where slow global reasoning is informed by fast perceptual updates.
+ℓ=fO(𝐳HN[:,0,:];θO)∈ℝB×K,y^=argmaxkℓ:,k.\boldsymbol{\ell}=f_{O}\!\left(\mathbf{z}^{N}_{H}[:,0,:];\,\theta_{O}\right)\in\mathbb{R}^{B\times K},\qquad\hat{y}=\arg\max_{k}\boldsymbol{\ell}_{:,k}.
+(7)
+The output head fOf_{O} maps the high–level [CLS][\mathrm{CLS}] channel to logits over classes. The prediction y^\hat{y} is the index of the maximum logit per example.
+ℒCE=−1B∑b=1Blogexp⁡(ℓb,yb)∑k=1Kexp⁡(ℓb,k).\mathcal{L}_{\text{CE}}=-\frac{1}{B}\sum_{b=1}^{B}\log\frac{\exp\big(\boldsymbol{\ell}_{b,\,y_{b}}\big)}{\sum_{k=1}^{K}\exp\big(\boldsymbol{\ell}_{b,\,k}\big)}.
+(8)
+The training objective is the average cross–entropy between predicted logits and ground truth labels. This objective is computed at the end of each supervised segment, described below.
+(𝐳L∗,𝐳H∗)=Φ⁡(𝐱~,𝐳L0,𝐳H0,θ),∂ℒCE∂θ≈∂ℒCE∂(𝐳L∗,𝐳H∗)⋅∂(𝐳L∗,𝐳H∗)∂θ|last step.\left(\mathbf{z}^{\ast}_{L},\mathbf{z}^{\ast}_{H}\right)=\Phi\!\left(\tilde{\mathbf{x}},\mathbf{z}^{0}_{L},\mathbf{z}^{0}_{H};\,\theta\right),\quad\frac{\partial\mathcal{L}_{\text{CE}}}{\partial\theta}\approx\frac{\partial\mathcal{L}_{\text{CE}}}{\partial\left(\mathbf{z}^{\ast}_{L},\mathbf{z}^{\ast}_{H}\right)}\cdot\frac{\partial\left(\mathbf{z}^{\ast}_{L},\mathbf{z}^{\ast}_{H}\right)}{\partial\theta}\Big|_{\text{last step}}.
+(9)
+Training uses a one–step (DEQ–style) gradient approximation. All intermediate low–level and high–level updates within a segment are treated as constants for backpropagation, and gradients are taken only through the final low–level update and the final high–level update of the segment. This avoids backpropagation through many recurrent steps while preserving a direct gradient path from the loss to the parameters at the end of the segment.
+ℒsegment=ℒCE(fO(𝐳HN[:,0,:];θO),y),ℒdeep=∑m=1Mλmℒsegment(m).\mathcal{L}_{\text{segment}}=\mathcal{L}_{\text{CE}}\!\left(f_{O}\!\left(\mathbf{z}^{N}_{H}[:,0,:];\theta_{O}\right),\,y\right),\qquad\mathcal{L}_{\text{deep}}=\sum_{m=1}^{M}\lambda_{m}\,\mathcal{L}^{(m)}_{\text{segment}}.
+(10)
+Deep supervision is implemented by splitting the forward process into MM segments per batch. After each segment, a supervised loss is computed, an optimizer step is taken, and the recurrent state is detached before continuing to the next segment. The total training objective is a weighted sum of the segment losses.
+𝐪=σ(fQ(𝐳HN[:,0,:];θQ))∈ℝB×2,π(halt∣𝐳HN)=𝐪:,0,π(continue∣𝐳HN)=𝐪:,1.\mathbf{q}=\sigma\!\left(f_{Q}\!\left(\mathbf{z}^{N}_{H}[:,0,:];\theta_{Q}\right)\right)\in\mathbb{R}^{B\times 2},\qquad\pi(\text{halt}\mid\mathbf{z}^{N}_{H})=\mathbf{q}_{:,0},\quad\pi(\text{continue}\mid\mathbf{z}^{N}_{H})=\mathbf{q}_{:,1}.
+(11)
+An optional halting head fQf_{Q} can be trained to predict whether to halt or to continue segments adaptively (Adaptive Computation Time). In these basic experiments this head is disabled during training and can be used at inference to cap or adapt the number of segments.
+fL​(⋅,θL)=TransformerEncoder​(D,H,LL).f_{L}(\cdot;\theta_{L})=\text{TransformerEncoder}(D,\ H,\ L_{L}).
+(12)
+fH​(⋅,θH)=TransformerEncoder​(D,H,LH).f_{H}(\cdot;\theta_{H})=\text{TransformerEncoder}(D,\ H,\ L_{H}).
+(13)
+Each TransformerEncoder uses identical dimensionality DD and number of heads HH, with depth LLL_{L} for fLf_{L} and LHL_{H} for fHf_{H}. A single encoder block applies, in order, RMS normalization, multi-head self-attention with rotary position embedding, RMS normalization, and a GEGLU feed-forward layer.
+Both modules are encoder–only Transformer stacks with the same model width DD and number of heads, and they differ only in their parameters θL\theta_{L} and θH\theta_{H}. Inputs to each stack are summed element–wise before entering the first attention layer.
+3 Results
+Here the results of the training and testing are presented for the HRM on images.
+3.1 MNIST
+This experiment applies the faithful HRM to the MNIST digit classification task. Both the low–level module fLf_{L} and the high–level module fHf_{H} are instantiated as Transformer encoders with identical model width and number of heads. Training follows the one–step (DEQ–style) gradient with deep supervision over segments. Images are tokenized into non–overlapping patches with a prepended [CLS][\mathrm{CLS}] token; the classifier head fOf_{O} reads the [CLS][\mathrm{CLS}] channel of the final high–level state to produce logits.
+Results.
+Training for three epochs yields a final test accuracy of 0.98010.9801 with 1,053,0561{,}053{,}056 parameters. The per–epoch training metrics are summarized in Table 1.
+Table 1: MNIST training metrics for the HRM.
+Epoch
+Train loss
+Train accuracy
+Test accuracy (final)
+01
+0.3969
+0.8695
+0.9801
+02
+0.0739
+0.9778
+03
+0.0579
+0.9828
+Figure 1 shows the loss curve across optimization steps. A rapid decrease occurs during the first epoch, followed by a smooth plateau, consistent with the epoch–level improvements in Table 1. Figure 2 displays representative misclassifications; most errors occur between visually similar digits (for example, 99 vs. 00, 77 vs. 11, 55 vs. 33), indicating residual pixel–level ambiguity rather than a systematic modeling failure.
+Figure 1: Training loss across optimization steps. The lightly shaded trace is the instantaneous per–segment step loss; the darker trace is a moving average for readability. Loss stabilizes after the initial descent, aligning with the steady gains in accuracy.
+Figure 2: Misclassified MNIST examples. Each tile shows the true class TT and the predicted class PP. Confusions concentrate on digit pairs with similar topology (for example, curled tails in 99 vs. closed loops in 00; angled 77 vs. vertical 11).
+Overall, the quantitative trajectory (loss and accuracy per epoch) and the qualitative error patterns are consistent with an HRM that alternates fast low–level perceptual updates with slower high–level consolidation. The one–step gradient with deep supervision provides stable optimization without backpropagation through the entire reasoning horizon, achieving competitive performance on MNIST with a small parameter budget.
+3.2 CIFAR-10
+The evaluation of the HRM on CIFAR-10 is done using the image classification setting without data augmentation.
+Inputs are per-channel standardized RGB images of shape 32×32×332{\times}32{\times}3.
+Tokenization uses non-overlapping 4×44{\times}4 patches, yielding a sequence length of 1+8×8=651{+}8{\times}8{=}65 tokens (including a learned [CLS] token).
+Both the low- and high-level modules (fL,fHf_{L},f_{H}) are encoder-only Transformer stacks with shared dimensionality: dmodel=192d_{\mathrm{model}}{=}192, nheads=6n_{\mathrm{heads}}{=}6 (per-head dimension 3232), MLP multiplier 44, and 33 layers in each of fLf_{L} and fHf_{H}.
+Training the HRM recurrent schedule of N=2N{=}2 high-level cycles and T=3T{=}3 low-level updates per cycle, deep supervision with Mtrain=2M_{\mathrm{train}}{=}2 segments (state detached between segments), and the one-step gradient approximation (all but the final L/HL/H updates run under stop_gradient).
+At evaluation running Meval=3M_{\mathrm{eval}}{=}3 segments with fresh initial states per batch.
+Optimization uses AdamW (global-norm clipping 1.01.0), linear warmup for one epoch followed by cosine decay with a 20%20\% floor; learning rate 3×10−43{\times}10^{-4}, weight decay 5×10−45{\times}10^{-4}, batch size 128128, label smoothing ε=0.05\varepsilon{=}0.05, and no dropout or stochastic depth.
+Training runs for 2525 epochs with the above settings and no adaptive computation/halting.
+Figure 3: HRM on CIFAR-10: training loss per step (light) with a moving-average smoothed trace (dark). The curve decreases smoothly without instabilities.
+Figure 4: HRM on CIFAR-10: examples misclassified by the final model. Each tile shows the ground-truth (T) and prediction (P) indices.
+The loss curve in Fig. 3 shows a steady, monotonic decrease, indicating stable optimization under the one-step gradient with deep supervision. Nevertheless, the model quickly overfits: by epochs 21–25 the training accuracy saturates at ≈0.99\approx 0.99 while generalization remains poor (see also the diverse confusions visible in the misclassified grid in Fig. 4).11
+1
+Typical epoch throughput in the runs was ∼\sim391 steps/epoch at ∼\sim1.11 it/s, i.e., ≈\approx5:53 per epoch.
+The combination of high training accuracy and low test accuracy indicates that, in this raw (no-augmentation) regime on small natural images, HRM acts as a high-capacity learner without a strong image-specific inductive bias.
+In this configuration HRM overfits rapidly and, despite lengthy training, achieves only 65.04%65.04\% test accuracy after 2525 epochs, consistent with the qualitative errors in Fig. 4. Taken together with the smooth loss in Fig. 3, this suggests optimization is stable but the model lacks the inductive bias needed for CIFAR-10 in the no-augmentation regime. The training accuracy was maintained to be close too 100% throughout the later epochs.
+3.2.1 CIFAR-10: CNN baseline
+Using a classic small convolutional network: two Conv-BN-ReLU blocks with 3×33{\times}3 kernels per stage followed by 2×22{\times}2 max pooling (spatial resolution 32×32→16×16→8×832{\times}32\rightarrow 16{\times}16\rightarrow 8{\times}8), then global average pooling and a linear classifier. The base width is 6464 channels in the first stage and 128128 in the second; there is no dropout. Inputs are per-channel standardized RGB images (32×32×332{\times}32{\times}3) with no data augmentation. Optimization mirrors the HRM runs: AdamW with linear warmup (one epoch) followed by cosine decay with a 20%20\% floor, global-norm clipping 1.01.0, label smoothing ε=0.05\varepsilon=0.05, learning rate 3×10−43{\times}10^{-4}, weight decay 5×10−45{\times}10^{-4}, batch size 128128, and 2525 training epochs. The final model has 261,824261{,}824 parameters. Typical epoch throughput is ∼\sim391 steps at ∼\sim31 it/s (about 1212 s/epoch).
+Figure 5: CNN on CIFAR-10: training loss per step (light) with a moving-average smoothed trace.
+Figure 6: CNN on CIFAR-10: examples misclassified by the final model. Each tile shows ground-truth (T) and prediction (P).
+Table 2 aggregates the end-of-training epoch metrics for both models. HRM saturates to near-perfect training accuracy by epoch 25 but generalizes poorly; the CNN improves steadily and achieves a substantially higher test accuracy with far shorter epoch wall-time.
+HRM
+CNN
+Epoch
+Train loss
+Train acc
+Test acc
+Train loss
+Train acc
+Test acc
+18
+0.3383
+0.9801
+—
+0.7699
+0.8311
+0.7452
+19
+0.3317
+0.9833
+—
+0.7601
+0.8362
+0.7553
+20
+0.3252
+0.9850
+—
+0.7506
+0.8399
+0.7604
+21
+0.3218
+0.9865
+—
+0.7400
+0.8434
+0.7701
+22
+0.3198
+0.9875
+—
+0.7325
+0.8470
+0.7726
+23
+0.3175
+0.9882
+—
+0.7252
+0.8518
+0.7644
+24
+0.3141
+0.9892
+—
+0.7195
+0.8538
+0.7744
+25
+0.3117
+0.9900
+0.6504
+0.7125
+0.8586
+0.7722
+Table 2: CIFAR-10 (no augmentation). Late-epoch metrics for HRM and the CNN baseline under identical optimization settings and preprocessing. HRM overfits rapidly (near-1.0 train accuracy) yet attains only 65.04%65.04\% test accuracy at epoch 25; the CNN reaches 77.22%77.22\% while training much faster per epoch.
+Under the same regime (no augmentation, identical optimizer family, label smoothing), this CNN baseline attains 77.22% test accuracy and trains roughly ∼\sim30×\times faster per epoch than HRM, whereas HRM reaches only 65.04% after 2525 epochs despite near-saturated training accuracy (≈0.99\approx 0.99 over epochs 21–25).As shown by the HRM loss curve and error grid (Figs. 3 and 4 in the previous subsection), HRM optimizes smoothly but overfits quickly, while the CNN exhibits better generalization on CIFAR-10 in this setting (Figs. 5 and 6).Overall, these results indicate that with no augmentation and minimal regularization on small natural images, a simple convolutional architecture is substantially more suitable than HRM for CIFAR-10 classification.
+3.3 CIFAR-100
+The evaluation of the HRM on CIFAR-100 follows the same no-augmentation image-classification protocol as CIFAR-10.
+Inputs are per-channel standardized RGB images of shape 32×32×332{\times}32{\times}3.
+Tokenization uses non-overlapping 4×44{\times}4 patches, yielding a sequence length of 1+8×8=651{+}8{\times}8{=}65 tokens (including a learned [CLS] token).
+Both the low- and high-level modules (fL,fHf_{L},f_{H}) are encoder-only Transformer stacks with shared dimensionality: dmodel=192d_{\mathrm{model}}{=}192, nheads=6n_{\mathrm{heads}}{=}6 (per-head dimension 3232), MLP multiplier 44, and 33 layers in each of fLf_{L} and fHf_{H}.
+Training uses the HRM recurrent schedule of N=2N{=}2 high-level cycles and T=3T{=}3 low-level updates per cycle, deep supervision with Mtrain=2M_{\mathrm{train}}{=}2 segments (state detached between segments), and the one-step gradient approximation (all but the final L/HL/H updates run under stop_gradient).
+At evaluation time, Meval=3M_{\mathrm{eval}}{=}3 segments are run with fresh initial states per batch.
+Optimization is AdamW (global-norm clipping 1.01.0), linear warmup for one epoch followed by cosine decay with a 20%20\% floor; learning rate 3×10−43{\times}10^{-4}, weight decay 5×10−45{\times}10^{-4}, batch size 128128, label smoothing ε=0.05\varepsilon{=}0.05, and no dropout or stochastic depth.
+Training is run for 2525 epochs with the above settings and no adaptive computation/halting.
+Figure 7: HRM on CIFAR-100: training loss per step (light) with a moving-average smoothed trace.
+The curve decreases smoothly without instabilities, indicating stable optimization.
+Figure 8: HRM on CIFAR-100: examples misclassified by the final model.
+Each tile shows the ground-truth (T) and prediction (P) indices.
+The loss trace in Fig. 7 shows a steady, monotonic decrease across training, similar to the CIFAR-10 behavior, which confirms that the one-step gradient with deep supervision optimizes stably in this setting.
+However, the model rapidly overfits on CIFAR-100: by epoch 25, the training accuracy reaches 91.53%91.53\% while the test accuracy is only 29.70%.
+This widening train–test gap, together with the diverse misclassifications in Fig. 8, indicates that in the no-augmentation regime on a 100100-class natural-image task, HRM functions as a high-capacity learner without the inductive bias needed for good generalization.
+Typical epoch throughput was ∼\sim391 steps/epoch at ∼\sim1.11 it/s (about 5:525{:}52 per epoch), so extending training beyond 2525 epochs would primarily increase training accuracy and wall-clock time without addressing the lack of generalization.
+3.3.1 CIFAR-100: CNN baseline
+Using the same small convolutional network as in the CIFAR-10 baseline: two Conv–BN–ReLU blocks with 3×33{\times}3 kernels per stage followed by 2×22{\times}2 max pooling (spatial resolution 32×32→16×16→8×832{\times}32\rightarrow 16{\times}16\rightarrow 8{\times}8), then global average pooling and a linear classifier. The base width is 6464 channels in the first stage and 128128 in the second; there is no dropout. Inputs are per-channel standardized RGB images (32×32×332{\times}32{\times}3) with no data augmentation. Optimization mirrors the HRM runs: AdamW with linear warmup (one epoch) followed by cosine decay with a 20%20\% floor, global-norm clipping 1.01.0, label smoothing ε=0.05\varepsilon=0.05, learning rate 3×10−43{\times}10^{-4}, weight decay 5×10−45{\times}10^{-4}, batch size 128128, and 2525 training epochs. The final CNN has 273,344273{,}344 parameters. Typical epoch throughput is ∼\sim391 steps at ∼\sim31 it/s (about 1212 s/epoch).
+Figure 9: CNN on CIFAR-100: training loss per step (light) with a moving-average smoothed trace (dark).
+Figure 10: CNN on CIFAR-100: examples misclassified by the final model. Each tile shows ground-truth (T) and prediction (P).
+Table 3 aggregates the late-epoch metrics for the CNN alongside the HRM trained under the same raw regime (no augmentation, identical optimizer family, label smoothing). The CNN improves steadily to 45.28% test accuracy by epoch 25 while maintaining moderate training accuracy (≈0.50\approx 0.50), whereas HRM reaches near-saturated training accuracy (≈0.92\approx 0.92) yet achieves only 29.70% on the test set. Combined with the per-epoch wall-time difference (∼\sim12 s vs. ∼\sim5:52), this indicates that, for CIFAR-100 without augmentation, a simple convolutional architecture generalizes substantially better and is much more compute-efficient than HRM.
+HRM
+CNN
+Epoch
+Train loss
+Train acc
+Test acc
+Train loss
+Train acc
+Test acc
+17
+1.0823
+0.8200
+—
+2.3797
+0.4617
+0.4228
+18
+1.0400
+0.8350
+—
+2.3511
+0.4690
+0.4297
+19
+0.9941
+0.8512
+—
+2.3265
+0.4772
+0.4352
+20
+0.9570
+0.8629
+—
+2.3030
+0.4824
+0.4410
+21
+0.9277
+0.8732
+—
+2.2834
+0.4885
+0.4465
+22
+0.8939
+0.8859
+—
+2.2654
+0.4920
+0.4486
+23
+0.8659
+0.8939
+—
+2.2504
+0.4987
+0.4585
+24
+0.8378
+0.9065
+—
+2.2340
+0.5039
+0.4572
+25
+0.8104
+0.9153
+0.2970
+2.2234
+0.5045
+0.4528
+Table 3: CIFAR-100 (no augmentation). Late-epoch metrics for HRM and the CNN baseline under identical optimization settings and preprocessing. The CNN delivers higher test accuracy with far lower training accuracy (better generalization) and much faster epochs; HRM overfits (near-1.0 train accuracy) yet attains only 29.70%29.70\% test accuracy.
+4 Discussion
+Across three image benchmarks under a deliberately ’raw’ regime (no augmentation, identical optimizer family, label smoothing), the results show a consistent pattern: HRM trains stably but lacks the inductive bias needed to generalize on natural images, while small convolutional baselines are markedly more effective and far more compute-efficient. On MNIST, HRM is competitive (98% test accuracy), but on CIFAR-10 it reaches only 65.0% versus 77.2% for a two-stage CNN trained in needing only 12s/epoch (HRM needing 5:53/epoch). The gap widens on CIFAR-100: HRM attains 29.7% test after 25 epochs despite 91.5% train accuracy (classic overfitting), whereas the same CNN achieves 45.3% test with only 50.5% train accuracy and the same streamlined training recipe, indicating substantially better inductive bias and regularization through locality/weight-sharing. Qualitatively, the CNN’s training loss decreases smoothly throughout (and within-epoch variance remains bounded), and its errors are distributed across visually confusable classes rather than collapsing on a few labels—both consistent with healthy optimization and moderate underfitting, not memorization (see the CNN loss trace and misclassified examples).
+References
+[1]
+Shaojie Bai, J. Zico Kolter, and Vladlen Koltun.
+Deep equilibrium models.
+In Advances in Neural Information Processing Systems,
+volume 32, 2019.
+URL https://arxiv.org/abs/1909.01377.
+[2]
+François Chollet.
+On the measure of intelligence.
+arXiv preprint arXiv:1911.01547, 2019.
+URL https://arxiv.org/abs/1911.01547.
+[3]
+Alex Krizhevsky.
+Learning multiple layers of features from tiny images.
+Technical report, University of Toronto, Toronto, Canada, 2009.
+URL
+https://www.cs.toronto.edu/~kriz/learning-features-2009-TR.pdf.
+Technical report introducing CIFAR-10 and CIFAR-100.
+[4]
+Yann LeCun, Léon Bottou, Yoshua Bengio, and Patrick Haffner.
+Gradient-based learning applied to document recognition.
+Proceedings of the IEEE, 86(11):2278–2324, 1998.
+URL https://yann.lecun.com/exdb/publis/pdf/lecun-98.pdf.
+[5]
+Yann LeCun, Corinna Cortes, and Christopher J. C. Burges.
+The MNIST database of handwritten digits.
+https://yann.lecun.org/exdb/mnist/, 2010.
+Accessed YYYY-MM-DD.
+[6]
+Sapient Inc.
+Hrm: Hierarchical reasoning model (official implementation).
+https://github.com/sapientinc/HRM, 2025.
+Commit history and release notes accessed online.
+[7]
+Jianlin Su, Yu Lu, Shengfeng Pan, Ahmed Murtadha, Bo Wen, and Yunfeng Liu.
+Roformer: Enhanced transformer with rotary position embedding.
+arXiv preprint arXiv:2104.09864, 2021.
+URL https://arxiv.org/abs/2104.09864.
+[8]
+Guan Wang, Jin Li, Yuhao Sun, Xing Chen, Changling Liu, Yue Wu, Meng Lu, Sen
+Song, and Yasin Abbasi Yadkori.
+Hierarchical reasoning model.
+arXiv preprint arXiv:2506.21734, 2025.
+URL https://arxiv.org/abs/2506.21734.
+[9]
+Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Brian Ichter, Fei Xia,
+Ed H. Chi, Quoc V. Le, and Denny Zhou.
+Chain-of-thought prompting elicits reasoning in large language
+models.
+In Advances in Neural Information Processing Systems,
+volume 35, pages 24824–24837, 2022.
+URL https://arxiv.org/abs/2201.11903.
+[10]
+Biao Zhang and Rico Sennrich.
+Root mean square layer normalization.
+arXiv preprint arXiv:1910.07467, 2019.
+URL https://arxiv.org/abs/1910.07467.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

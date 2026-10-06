@@ -1,0 +1,613 @@
+https://arxiv.org/html/2601.20126v1
+Rewarding Intellectual Humility: Learning When Not to Answer in Large Language Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related work
+3 Methodology and Experiment Setup
+3.1 Datasets
+3.2 Model Selection
+3.3 Prompt Design
+MedMCQA:
+Hendrycks Math:
+3.4 Reward Design
+3.5 Training Framework and Baselines
+3.6 Training Setup
+4 Results
+4.1 RL-only: Rewarding abstention
+4.2 RL-SFT: Teach abstention, then finetune
+4.3 RL-RTuning: Teach abstention with RTuning, then finetune
+4.4 Overall Method Comparison
+4.5 Metrics
+5 Observations
+6 Future Work
+7 Conclusion
+References
+A Qualitative Examples
+A.1 RL Only - MedMCQA - Granite
+A.2 RL-SFT-Random - MedMCQA - Granite
+A.3 RL-SFT-Random - Hendrycks Math - Granite
+A.4 RL-RTuning - Hendrycks Math - Granite
+License: CC BY 4.0
+arXiv:2601.20126v1 [cs.CL] 27 Jan 2026
+Rewarding Intellectual Humility: Learning When Not to Answer in Large Language Models
+Abha Jha
+Akanksha Mahajan
+Ashwath Vaithinathan Aravindan
+Affiliation: Praveen Saravanan, Sai Sailaja Policharla, Sonal Chaturbhuj Gehlot
+Affiliation: University of Southern California
+Affiliation: Los Angeles, United States of America
+Email: {abhajha,am59710,vaithina,psaravan,polichar,sgehlot}@usc.edu
+Abstract
+Large Language Models (LLMs) often produce hallucinated or unverifiable content, undermining their reliability in factual domains. This work investigates Reinforcement Learning with Verifiable Rewards (RLVR) as a training paradigm that explicitly rewards abstention (“I don’t know”) alongside correctness to promote intellectual humility. We fine-tune and evaluate Granite-3.3-2B-Instruct and Qwen-3-4B-Instruct on the MedMCQA and Hendrycks Math benchmarks using a ternary reward structure
+(−1-1, r_abs, 1) under varying abstention reward structures. We further study the effect of combining RLVR with supervised fine-tuning strategies that teach abstention prior to reinforcement learning. Our results show that moderate abstention rewards (r_abs ≈−0.25\approx-0.25 to 0.3) consistently reduce incorrect responses without severe accuracy degradation on multiple-choice tasks, with larger models exhibiting greater robustness to abstention incentives. On open-ended question answering, we observe limitations due to insufficient exploration, which can be partially mitigated through supervised abstention training. Overall, these findings demonstrate the feasibility and flexibility of verifiable reward design as a practical approach for hallucination mitigation in language models. Reproducible code for our abstention training framework is available here.
+1 Introduction
+In this project, we present progress on Reinforcement Learning with Verifiable Rewards (RLVR) Lambert et al. (2025); DeepSeek-AI et al. (2025) with a modified reward setup as a framework that incentivizes models to exhibit intellectual humility by rewarding correct answers and partial abstention (“I don’t know”), while penalizing incorrect responses. We conducted experiments using Granite-3.3-2B-Instruct IBM Granite Team (2024) and Qwen-3-4B-Instruct Qwen Team (2025) models on the MedMCQA Pal et al. (2022) and Hendrycks MATH Hendrycks et al. (2021b) dataset. Our findings suggest that moderate abstention rewards can reduce hallucinations without severely impacting overall task accuracy, supporting RLVR as a promising approach for trustworthy language model alignment.
+Large Language Models (LLMs) Zhao et al. (2025) have become ubiquitous across professional and research domains but continue to suffer from hallucinations confidently producing factually incorrect or unverifiable information Huang et al. (2025). This issue arises in part because LLMs are never explicitly trained to abstain when uncertain; their objective always rewards response generation. Existing mitigation methods such as Supervised Fine-Tuning (SFT) Zhang et al. (2024) and Reinforcement Learning from Human Feedback (RLHF) Lin et al. (2025) reduce hallucinations but rely heavily on costly, human-in-the-loop feedback. We hypothesize that introducing an explicit abstention reward ra​b​sr_{abs} will reduce incorrect responses (hallucinations) while allowing a tunable trade-off with accuracy.
+In this work, we present a modified Reinforcement Learning with Verifiable Rewards (RLVR) framework that explicitly rewards explicit abstention (“I don’t know”) in addition to rewarding correct answers and penalizing incorrect ones. We evaluate this ternary reward scheme on multiple models (Granite-3.3-2B-Instruct and Qwen-3-4B-Instruct) and two verifiable QA datasets (MedMCQA and Hendrycks Math). Our experiments show that appropriately chosen abstention rewards (ra​b​sr_{abs}) reduce the rate of incorrect (hallucinatory) outputs while providing a tunable trade-off with accuracy; modest positive ra​b​sr_{abs} values can substantially reduce incorrect answers with limited loss in correct answers on MCQ datasets.
+2 Related work
+Alignment methods such as supervised fine-tuning (SFT) and reinforcement learning from human feedback (RLHF) have been shown to reduce hallucinations but not eliminate them. Ouyang et al. (2022) introduced SFT followed by RLHF using human demonstrations, while Bai et al. (2022) optimized preference models to balance helpfulness and harmlessness; both approaches rely on costly human feedback and do not explicitly model uncertainty. Lambert et al. (2025) surveyed these methods, identifying hallucination as a persistent failure mode and motivating the need for more verifiable reward structures.
+More closely related, Godin et al. (2019) proposed a ternary reward structure that explicitly rewards abstention in question answering, improving precision and reducing hallucinations. However, this work predates modern instruction-tuned LLMs and does not study abstention within contemporary SFT or RL-based training pipelines. In contrast, our work integrates abstention-aware supervision into modern LLM alignment and evaluation, enabling calibrated refusal behavior without relying solely on dense human preference feedback.
+3 Methodology and Experiment Setup
+3.1 Datasets
+We conduct our experiments on two verifiable question-answering datasets. MedMCQA  Pal et al. (2022) [Dataset Link] is a dataset with multiple-choice questions from real-world medical entrance exams. It contains 4 options including the identified ground truth. We augment the options with an additional "I Don’t Know" option to evaluate the model’s ability to abstain when it could not answer correctly. We also additionally test our technique on Hendrycks Math Hendrycks et al. (2021a)[Dataset Link], a dataset with hard math questions, most of which require proof over multiple steps to answer the question. This dataset is to test the generalization of our technique to open-ended question answering, which is the ultimate goal of the project.
+3.2 Model Selection
+We evaluate our approach on two instruction-tuned LLMs spanning multiple scales and architectures.
+Granite-3.3-2B-Instruct (IBM) serves as a compact baseline for controlled ablation, and Qwen-3-4B-Instruct Team (2025) acts as a high-capacity multilingual model known for occasional hallucinations.
+3.3 Prompt Design
+To ensure compatibility with verifiable reward computation and to explicitly enable abstention behavior, we design task-specific prompts for each dataset. In all cases, the prompts explicitly instruct the model to answer only when confident and to otherwise respond with an abstention token (“I don’t know”).
+MedMCQA:
+For the multiple-choice MedMCQA dataset, we enforce a structured response format to facilitate automatic verification and reward computation.
+Answer the following question. Provide your thoughts between <reasoning> and </reasoning> symbols. Provide the final answer option (letter only) between <answer> and </answer> symbols. Answer only if you are certain, else choose I Don’t Know.
+The strict use of XML-style tags enables regex-based validation of output structure during training, while the explicit abstention instruction ensures that “I Don’t Know” is treated as a valid and verifiable action under the ternary reward scheme.
+Hendrycks Math:
+For the open-ended mathematical reasoning tasks, we use a minimal prompt that encourages step-by-step reasoning while constraining the final answer format for verifiability.
+Answer the following question. Provide your reasoning. Then, provide the final answer in \boxed{YOUR_ANSWER_HERE} format. Answer only if you are certain, else output \boxed{I Don’t Know}.
+3.4 Reward Design
+Following the idea of ternary reward structures for abstention in QA Godin et al. (2019), we extend Reinforcement Learning with Verifiable Rewards (RLVR) Lambert et al. (2025); DeepSeek-AI et al. (2025) to explicitly encourage intellectual humility.
+Each model output must conform to a verifiable schema defined as per equation 1, where y is model’s answer:
+R⁡(y)={rcorrect,if y is a correct answerrabs,if y= “I don’t know”rwrong,if y is an incorrect answerR(y)=\begin{cases}r_{\text{correct}},&\text{if $y$ is a correct answer}\\
+r_{\text{abs}},&\text{if $y=$ ``I don't know''}\\
+r_{\text{wrong}},&\text{if $y$ is an incorrect answer}\end{cases}
+(1)
+with rc​o​r​r​e​c​t=1r_{correct}=1, rw​r​o​n​g=−1r_{wrong}=-1, and ra​b​sr_{abs} as a hyperparameter.
+This is the accuracy reward.
+Additionally, with MedMCQA, a format reward verifies syntactic compliance using a regex constraint that enforces <reasoning>…</reasoning> <answer>…</answer> tags in the model output. Such a strict format is not enforced when training on the Hendrycks Math in order to preserve the open-ended answering ability.
+This formulation aligns with verifiable-reward learning in reasoning-based LLMs Shao et al. (2024) and minimizes dependence on human preference models typical of RLHF Bai et al. (2022); Lin et al. (2025).
+3.5 Training Framework and Baselines
+We build on the Group Relative Policy Optimization (GRPO) algorithm Shao et al. (2024), integrated through the Hugging Face Transformer Reinforcement Learning (TRL) library.
+Our experiments comprise three settings:
+1.
+RL-only: models trained directly with the ternary reward signal 1.
+2.
+RL-SFT-Random: models initially SFT trained on the MedMCQA dataset with 30% of randomly selected ground truths set to "I don’t know" to encourage abstention and further fine-tuned with RLVR.
+3.
+RL-RTuning: models initially SFT trained on the MedMCQA dataset with answers to questions that the base model got wrong set to "I don’t know", based on the R-Tuning workZhang et al. (2024), to encourage abstention and further fine-tuned with RLVR.
+Baselines include:
+•
+No-IDK baseline: standard multiple-choice QA without abstention.
+•
+IDK-enabled baseline: five-option (A–E) QA allowing “I don’t know.”
+3.6 Training Setup
+We train models using Group Relative Policy Optimization (GRPO) with a ternary accuracy-based reward. Unless stated otherwise, all experiments use LoRA-based fine-tuning.
+Experiments are run using the TRL GRPOTrainer with the following configuration:
+•
+Optimizer learning rate: 2×10−52\times 10^{-5}
+•
+Gradient accumulation steps: 64
+•
+Per-device batch size: 8
+•
+Number of generations per prompt: 8
+•
+Maximum training steps: 500
+•
+Max prompt length: 256 tokens
+•
+Max completion length: 1024 tokens
+•
+Precision: bfloat16
+•
+Gradient checkpointing enabled
+Training uses vLLM to speed up response generation in colocated mode with GPU memory utilization capped at 0.6. Checkpoints are saved every 10 steps, and evaluation is performed every 20 steps. Experiments are run on NVIDIA A40 and A100 GPUs. Each training run was allowed to proceed for approximately 24 hours of wall-clock time. Models were trained on approximately 8k samples and evaluated on a held-out test set of around 100 samples.
+4 Results
+The models’ response distribution for the base models and the ones trained with different RLVR-based training approaches for MedMCQA is shown in Table 1. For each model, the baseline without IDK represents conventional QA behavior, while RLVR variants correspond to different abstention-reward settings (ra​b​sr_{abs}). Table 2 shows the results for the Granite-3.3-2B-Instruct model on the Hendrycks Math data. The two sets of results show that the optimal reward structure varies with different models and datasets.
+Table 1: Comparison of Granite-3.3-2B-Instruct and Qwen-3-4B-Instruct performance on MedMCQA for different training methods.
+Model
+Method
+Correct (%)
+Incorrect (%)
+IDK (%)
+Granite-3.3-2B-Instruct
+Base model
+46.8
+53.2
+–
+Base model (with IDK option)
+44.8
+48.6
+6.6
+RL-only (-0.25)
+46.4
+46.4
+7.0
+RL-SFT-Random (-0.25)
+39.0
+40.0
+21.0
+RL-RTuning (-0.25)
+47.0
+45.0
+8.0
+Qwen-3-4B-Instruct
+Base model
+67.5
+32.5
+–
+Base model (with IDK option)
+65.4
+27.3
+7.3
+RL-only (0.3)
+48.0
+10.3
+41.0
+RL-SFT-Random (0.1)
+51.0
+28.0
+21.0
+Table 2: Comparison of Granite-3.3-2B-Instruct performance on Hendrycks Math for different training methods.
+Model
+Method
+Correct (%)
+Incorrect (%)
+IDK (%)
+Granite-3.3-2B-Instruct
+Base model
+49.59
+50.41
+–
+Base model (with IDK option)
+45.99
+53.99
+0.03
+RL-only (-0.25)
+66.0
+34.0
+0.0
+RL-SFT-Random (-0.5)
+35.0
+26.0
+39.0
+RL-RTuning (-0.5)
+21.3
+33.7
+44.4
+4.1 RL-only: Rewarding abstention
+Table 3 summarizes the RL-only experiments for both Granite-3.3-2B-Instruct and Qwen-3-4B-Instruct across a range of abstention rewards on the MedMCQA dataset.
+In both models, moving from negative to positive ra​b​sr_{abs} values consistently increases abstention rates resulting in lowering hallucination but at the cost of accuracy.
+Granite-3.3-2B-Instruct transitions from near-zero abstention at ra​b​s=−0.5r_{abs}=-0.5 to full abstention at ra​b​s=0.3r_{abs}=0.3, confirming the model’s high reward sensitivity.
+Qwen-3-4B-Instruct shows a similar monotonic trend but retains higher accuracy across all settings, with ra​b​s=0.3r_{abs}=0.3 yielding 41.0% IDK and a marked reduction in incorrect responses (from 32.5% to 10.3%), signaling a reduction in hallucination frequency.
+Although being very effective in reducing hallucination in MCQ datasets, Table 2 shows that RL-only did not manage to do so in the open-ended QA dataset. This is primarily due to the base model’s hesitency to use IDK responses enough that it gets picked up by the RL algorithm which is a classic problem of insufficient exploration in the reinforcement learning domain.
+Table 3: Comparison of Granite-3.3-2B-Instruct and Qwen-3-4B-Instruct performance on MedMCQA under different reward schemes for RL-only training.
+Model
+IDK Reward
+Correct (%)
+Incorrect (%)
+IDK (%)
+Granite-3.3-2B-Instruct
+-0.5
+49.1
+50.8
+0.0
+-0.25
+46.4
+46.4
+7.0
+0
+15.0
+6.0
+78.0
+0.3
+0.0
+0.0
+100.0
+Qwen-3-4B-Instruct
+-0.5
+60.6
+39.3
+0.0
+-0.25
+60.0
+33.3
+6.5
+0
+55.7
+27.0
+16.0
+0.3
+48.0
+10.3
+41.0
+4.2 RL-SFT: Teach abstention, then finetune
+In this variant, an additional SFT step is introduced to overcome the model’s hesitency to say "I don’t know". This is done by training on a dataset with 30% of randomly selected ground truth set to abstention response. Table 4 isolates the effect of reward scaling within RL-SFT training for Granite-3.3-2B-Instruct on the MedMCQA dataset.
+As ra​b​sr_{abs} increases from −0.5-0.5 to 0.00.0, correctness declines monotonically from 39.0% to 13.0%, while the IDK rate rises from 3.0% to 73.0%.
+This demonstrates a clear trade-off: stronger abstention rewards promote intellectual humility but can suppress the model’s willingness to answer confidently. The optimal balance appears around ra​b​s=−0.25r_{abs}=-0.25, where correctness and abstention remain meaningfully distributed (39.0% vs. 21.0%).
+In the Hendrycks Math dataset, as shown in Table 2, RL-SFT-Random is able to cut the incorrect answers by half (-28%) while losing only 10% in accuracy.
+As seen in Table 1, RL-RTuning underperforms RL-SFT-Random, opposed to what is expected from a method that actually takes into consideration the base models’ answers for the SFT step. We believe the major reason for the observed performance gap is the domination of IDK answers in the RL-RTuning after the SFT step (∼\sim 60%) compared to RL-SFT-Random (∼\sim 30%). The model is unable to recover from this damage during the RL step.
+Table 4: Comparison of Granite-3.3-2B-Instruct performance on MedMCQA under different Reward IDK values for RL-SFT-Random training.
+Reward IDK
+Correct (%)
+Incorrect (%)
+IDK (%)
+-0.5
+39.0
+58.0
+3.0
+-0.4
+31.0
+56.0
+13.0
+-0.25
+39.0
+40.0
+21.0
+-0.2
+28.0
+34.0
+38.0
+-0.1
+20.0
+38.0
+42.0
+0.0
+13.0
+14.0
+73.0
+4.3 RL-RTuning: Teach abstention with RTuning, then finetune
+RL-RTuning is a controlled approach that explicitly teaches the model to abstain (i.e., respond with “I don’t know”) in cases where it lacks sufficient knowledge. Using Granite baselines evaluated on MedMCQA (Table 5), we first identify questions that the model answers incorrectly. These incorrect instances are then used as supervision signals to train the model to abstain, while correct instances are reinforced with the correct answers. Compared to RL-SFT with randomized teaching, this method is more proctored and is therefore intuitively expected to yield superior performance. However, as discussed in the previous section, empirical results deviate from this expectation, and we provide justification for this discrepancy.
+The same RL-RTuning methodology is applied to the MATH dataset. Table 6 illustrates how varying the abstention reward influences model behavior. As the abstention reward increases, a larger fraction of previously incorrect answers are converted into explicit abstentions. However, this also negatively impacts overall correctness. Consequently, the central challenge is to identify an appropriate abstention reward that balances answer correctness against the model’s willingness to abstain.
+Table 5: Comparison of Granite-3.3-2B-Instruct performance on MedMCQA under different Reward IDK values for RL-RTuning training.
+Reward IDK
+Correct (%)
+Incorrect (%)
+IDK (%)
+-0.5
+48.0
+46.0
+4.0
+-0.25
+47.0
+45.0
+8.0
+0.0
+47.0
+46.0
+7.0
+0.1
+46.0
+49.0
+5.0
+Table 6: Comparison of Granite-3.3-2B-Instruct performance on MATH under different Reward IDK values for RL-RTuning training.
+Reward IDK
+Correct (%)
+Incorrect (%)
+IDK (%)
+-0.95
+25.2
+69.4
+5.4
+-0.90
+24.6
+68.8
+6.6
+-0.80
+32.4
+60.0
+7.6
+-0.75
+29.0
+58.6
+12.4
+-0.70
+28.0
+58.0
+18.0
+-0.60
+25.2
+48.8
+26.0
+-0.50
+21.3
+33.7
+44.4
+-0.25
+8.6
+10.1
+81.2
+-0.10
+3.4
+4.3
+92.3
+0.00
+1.9
+2.0
+96.1
+0.10
+0.6
+1.4
+98.0
+0.25
+0.7
+1.1
+98.2
+4.4 Overall Method Comparison
+Table 1 compares Granite-3.3-2B-Instruct and Qwen-3-4B-Instruct across different experimental settings.
+For Granite-3.3-2B-Instruct, adding an IDK option slightly reduces accuracy (46.8% →\rightarrow 44.8%) while allowing 6.6% abstentions, indicating early signs of self-uncertainty modeling.
+RL-only training with a moderate abstention penalty (ra​b​s=−0.25r_{abs}=-0.25) achieves a balanced trade-off between correctness (46.4%) and IDK rate (7.0%).
+However, further integrating RL with supervised fine-tuning (RL-SFT) increases abstention to 21%, reflecting stronger uncertainty calibration at some cost to accuracy (39.0%).
+In contrast, Qwen-3-4B-Instruct maintains higher baseline accuracy (67.5%) and demonstrates consistent abstention behavior (7.3%) under the IDK option, while RL-only fine-tuning (ra​b​s=0.3r_{abs}=0.3) produces a higher IDK rate (41.0%) with substantially fewer incorrect answers (10.3%), suggesting effective hallucination reduction.
+Table 2 shows that both the RL-SFT variants generalize well to open-ended QA datasets also, where we would expect abstention to be less likely due to the number of possible answers being large, with the Random variant outperforming the RTuning variant yet again.
+4.5 Metrics
+Figure 1 and 2 visualizes Accuracy, Adjusted Accuracy, and Abstention Recall across all methods. In terms of Adjusted Accuracy, RL-only almost always outperforms the other methods but doesn’t always do very well in Abstention Recall. Therefore, the results suggest that the most suitable technique highly depends on the scenario and the aspect being optimized for (e.g. hallucination rate, abstention rate, etc…).
+Accuracy
+=#​C​o​r​r​e​c​t#​T​o​t​a​l​S​a​m​p​l​e​s\displaystyle=\frac{\#Correct}{\#Total\ Samples}
+(2)
+Adjusted Accuracy
+=#​C​o​r​r​e​c​t#​C​o​r​r​e​c​t+#​I​n​c​o​r​e​c​t\displaystyle=\frac{\#Correct}{\#Correct+\#Incorect}
+(3)
+Abstention Recall
+=#​I​D​K#​I​D​K+#​I​n​c​o​r​r​e​c​t\displaystyle=\frac{\#IDK}{\#IDK+\#Incorrect}
+(4)
+Figure 1: Evaluation metrics (accuracy, adjusted accuracy, and abstention recall) for Granite-3.3-2B-Instruct and Qwen-3-2B-Instruct under various training methods on MedMCQA dataset.
+Figure 2: Evaluation metrics (accuracy, adjusted accuracy, and abstention recall) for Granite-3.3-2B-Instruct under various training methods on Hendrycks Math.
+5 Observations
+Across all the different techniques and datasets experimented with, varying the abstention reward ra​b​sr_{abs} systematically modulates model behavior. As ra​b​sr_{abs} increases from negative to positive, abstention rates rise while accuracy declines, revealing a clear trade-off between caution and correctness. Larger models (e.g., Qwen-3-4B-Instruct) maintain higher accuracy under moderate abstention penalties, indicating stronger internal calibration. Qualitatively, RLVR outputs exhibit fewer unsupported claims and more explicit “I don’t know” responses, suggesting reduced hallucination and improved uncertainty awareness. Fine-tuning ra​b​sr_{abs} thus provides a direct control knob over epistemic conservatism—allowing task-specific tuning between confidence and reliability. In addition to that, in models that have a high hesitency to abstain, an initial SFT step helps.
+6 Future Work
+Building upon these promising initial results, our methodology could benefit from exploration in the following directions:
+1.
+Improved Training Data Mixture for RL-RTuning:
+RTuning takes into account the base model’s response correctness during the SFT to choose on which questions to abstain. Although our experiments show that the RTuning variant of RL-SFT underperforms, we believe it is mostly due to the SFT step dominated by IDK responses which results in a huge loss in accuracy and general capability of the model in that task. An improvement over our technique could be to control the abstention samples in SFT step to around 20-30% which will result in a lower probability of model collapse during SFT.
+2.
+Search for a better Random Abstention ratio for RL-SFT-Random:
+In our experiments, for RL-SFT-Random, we perform SFT with 30% of randomly chosen responses set to abstention response. Similar to RL-RTuning, we observe a significant loss in acccuracy across both models and both datasets. We believe a better abstention ratio exists, maybe around 10-20%, which could result in a model that still maintains much of its capabilities after the SFT step.
+7 Conclusion
+We present an abstention-aware extension of Reinforcement Learning with Verifiable Rewards that explicitly incentivizes language models to say “I don’t know” when uncertain. Across multiple models and datasets, we show that tuning the abstention reward provides a direct and effective control over the trade-off between accuracy and hallucination reduction. Our results indicate that moderate abstention rewards can significantly reduce incorrect responses without severely degrading performance, particularly for larger models, while supervised abstention pretraining can improve abstention recall when applied carefully. The findings from experiments on the Hendrycks Math dataset highlight a viable strategy that, when improved can be a powerful tool in reducing LLM hallucinations even in casual day-to-day conversations.
+References
+Bai et al. (2022)
+Y. Bai, A. Jones, K. Ndousse, A. Askell, A. Chen, N. DasSarma, D. Drain, S. Fort, D. Ganguli, T. Henighan, N. Joseph, S. Kadavath, J. Kernion, T. Conerly, S. El-Showk, N. Elhage, Z. Hatfield-Dodds, D. Hernandez, T. Hume, S. Johnston, S. Kravec, L. Lovitt, N. Nanda, C. Olsson, D. Amodei, T. Brown, J. Clark, S. McCandlish, C. Olah, B. Mann, and J. Kaplan
+Training a helpful and harmless assistant with reinforcement learning from human feedback.
+External Links: 2204.05862,
+Link
+Cited by: §2,
+§3.4.
+DeepSeek-AI et al. (2025)
+DeepSeek-AI, D. Guo, D. Yang, H. Zhang, J. Song, R. Zhang, R. Xu, Q. Zhu, S. Ma, P. Wang, X. Bi, X. Zhang, X. Yu, Y. Wu, Z. F. Wu, Z. Gou, Z. Shao, Z. Li, Z. Gao, A. Liu, B. Xue, B. Wang, B. Wu, B. Feng, C. Lu, C. Zhao, C. Deng, C. Zhang, C. Ruan, D. Dai, D. Chen, D. Ji, E. Li, F. Lin, F. Dai, F. Luo, G. Hao, G. Chen, G. Li, H. Zhang, H. Bao, H. Xu, H. Wang, H. Ding, H. Xin, H. Gao, H. Qu, H. Li, J. Guo, J. Li, J. Wang, J. Chen, J. Yuan, J. Qiu, J. Li, J. L. Cai, J. Ni, J. Liang, J. Chen, K. Dong, K. Hu, K. Gao, K. Guan, K. Huang, K. Yu, L. Wang, L. Zhang, L. Zhao, L. Wang, L. Zhang, L. Xu, L. Xia, M. Zhang, M. Zhang, M. Tang, M. Li, M. Wang, M. Li, N. Tian, P. Huang, P. Zhang, Q. Wang, Q. Chen, Q. Du, R. Ge, R. Zhang, R. Pan, R. Wang, R. J. Chen, R. L. Jin, R. Chen, S. Lu, S. Zhou, S. Chen, S. Ye, S. Wang, S. Yu, S. Zhou, S. Pan, S. S. Li, S. Zhou, S. Wu, S. Ye, T. Yun, T. Pei, T. Sun, T. Wang, W. Zeng, W. Zhao, W. Liu, W. Liang, W. Gao, W. Yu, W. Zhang, W. L. Xiao, W. An, X. Liu, X. Wang, X. Chen, X. Nie, X. Cheng, X. Liu, X. Xie, X. Liu, X. Yang, X. Li, X. Su, X. Lin, X. Q. Li, X. Jin, X. Shen, X. Chen, X. Sun, X. Wang, X. Song, X. Zhou, X. Wang, X. Shan, Y. K. Li, Y. Q. Wang, Y. X. Wei, Y. Zhang, Y. Xu, Y. Li, Y. Zhao, Y. Sun, Y. Wang, Y. Yu, Y. Zhang, Y. Shi, Y. Xiong, Y. He, Y. Piao, Y. Wang, Y. Tan, Y. Ma, Y. Liu, Y. Guo, Y. Ou, Y. Wang, Y. Gong, Y. Zou, Y. He, Y. Xiong, Y. Luo, Y. You, Y. Liu, Y. Zhou, Y. X. Zhu, Y. Xu, Y. Huang, Y. Li, Y. Zheng, Y. Zhu, Y. Ma, Y. Tang, Y. Zha, Y. Yan, Z. Z. Ren, Z. Ren, Z. Sha, Z. Fu, Z. Xu, Z. Xie, Z. Zhang, Z. Hao, Z. Ma, Z. Yan, Z. Wu, Z. Gu, Z. Zhu, Z. Liu, Z. Li, Z. Xie, Z. Song, Z. Pan, Z. Huang, Z. Xu, Z. Zhang, and Z. Zhang
+DeepSeek-r1: incentivizing reasoning capability in llms via reinforcement learning.
+External Links: 2501.12948,
+Link
+Cited by: §1,
+§3.4.
+Godin et al. (2019)
+F. Godin, A. Kumar, and A. Mittal
+Learning when not to answer: a ternary reward structure for reinforcement learning based question answering.
+External Links: 1902.10236,
+Link
+Cited by: §2,
+§3.4.
+Hendrycks et al. (2021a)
+D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt
+Measuring mathematical problem solving with the math dataset.
+arXiv preprint arXiv:2103.03874.
+Cited by: §3.1.
+Hendrycks et al. (2021b)
+D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt
+Measuring mathematical problem solving with the math dataset.
+NeurIPS.
+Cited by: §1.
+Huang et al. (2025)
+L. Huang, W. Yu, W. Ma, W. Zhong, Z. Feng, H. Wang, Q. Chen, W. Peng, X. Feng, B. Qin, and T. Liu
+A survey on hallucination in large language models: principles, taxonomy, challenges, and open questions.
+ACM Transactions on Information Systems 43 (2), pp. 1–55.
+External Links: ISSN 1558-2868,
+Link,
+Document
+Cited by: §1.
+IBM Granite Team (2024)
+IBM Granite Team
+Granite-3.3-2b-instruct.
+Note: https://huggingface.co/ibm-granite/granite-3.3-2b-instructAccessed: 16 December 2025
+Cited by: §1.
+Lambert et al. (2025)
+N. Lambert, J. Morrison, V. Pyatkin, S. Huang, H. Ivison, F. Brahman, L. J. V. Miranda, A. Liu, N. Dziri, S. Lyu, Y. Gu, S. Malik, V. Graf, J. D. Hwang, J. Yang, R. L. Bras, O. Tafjord, C. Wilhelm, L. Soldaini, N. A. Smith, Y. Wang, P. Dasigi, and H. Hajishirzi
+Tulu 3: pushing frontiers in open language model post-training.
+External Links: 2411.15124,
+Link
+Cited by: §1,
+§2,
+§3.4.
+Lin et al. (2025)
+S. Lin, L. Duan, P. Hughes, and Y. Sheng
+Harnessing rlhf for robust unanswerability recognition and trustworthy response generation in llms.
+arXiv preprint arXiv:2507.16951.
+Cited by: §1,
+§3.4.
+Ouyang et al. (2022)
+L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. L. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray, J. Schulman, J. Hilton, F. Kelton, L. Miller, M. Simens, A. Askell, P. Welinder, P. Christiano, J. Leike, and R. Lowe
+Training language models to follow instructions with human feedback.
+External Links: 2203.02155,
+Link
+Cited by: §2.
+Pal et al. (2022)
+A. Pal, L. K. Umapathi, and M. Sankarasubbu
+MedMCQA: a large-scale multi-subject multi-choice dataset for medical domain question answering.
+In Proceedings of the Conference on Health, Inference, and Learning,  G. Flores, G. H. Chen, T. Pollard, J. C. Ho, and T. Naumann (Eds.),
+Proceedings of Machine Learning Research, Vol. 174, pp. 248–260.
+External Links: Link
+Cited by: §1,
+§3.1.
+Qwen Team (2025)
+Qwen Team
+Qwen3-4b-instruct-2507.
+Note: https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507Accessed: 16 December 2025
+Cited by: §1.
+Shao et al. (2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. Li, Y. Wu, et al.
+Deepseekmath: pushing the limits of mathematical reasoning in open language models.
+arXiv preprint arXiv:2402.03300.
+Cited by: §3.4,
+§3.5.
+Team (2025)
+Q. Team
+Qwen3 technical report.
+External Links: 2505.09388,
+Link
+Cited by: §3.2.
+Zhang et al. (2024)
+H. Zhang, S. Diao, Y. Lin, Y. Fung, Q. Lian, X. Wang, Y. Chen, H. Ji, and T. Zhang
+R-tuning: instructing large language models to say ‘i don’t know’.
+In Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers),
+pp. 7106–7132.
+Cited by: §1,
+item 3.
+Zhao et al. (2025)
+W. X. Zhao, K. Zhou, J. Li, T. Tang, X. Wang, Y. Hou, Y. Min, B. Zhang, J. Zhang, Z. Dong, Y. Du, C. Yang, Y. Chen, Z. Chen, J. Jiang, R. Ren, Y. Li, X. Tang, Z. Liu, P. Liu, J. Nie, and J. Wen
+A survey of large language models.
+External Links: 2303.18223,
+Link
+Cited by: §1.
+Appendix A Qualitative Examples
+In this section, we present a few examples of the model outputs after the abstention training.
+A.1 RL Only - MedMCQA - Granite
+Table 7 shows an example where the model correctly abstains on an underspecified MedMCQA-style question after RLVR training.
+Question: What does the vaccine vial monitor indicate?
+Options:
+A: Colour of outer circle is same as inner square
+B: Colour of outer circle is darker than inner square
+C: Colour of outer circle is lighter than inner square
+D: None of the above
+E: I Don’t Know
+Correct Answer: B
+Model Output:
+<reasoning> The question lacks sufficient context about the visual semantics of the monitoring device, making a definitive choice uncertain. </reasoning>
+<answer>E</answer>
+Table 7: Example illustrating abstention behavior. The model selects the explicit “I Don’t Know” option instead of guessing, demonstrating reduced hallucination.
+A.2 RL-SFT-Random - MedMCQA - Granite
+Table 8 shows an example where the model abstains despite partial domain knowledge.
+Question: All the following familial syndromes are associated with development of pheochromocytomas except?
+Options:
+A: Sturge-Weber syndrome
+B: Von Recklinghausen disease
+C: MEN Type II
+D: Prader-Willi syndrome
+E: I Don’t Know
+Correct Answer: D
+Model Output:
+<reasoning> Pheochromocytomas are seen in MEN II and von Recklinghausen disease. I am not confident in my reasoning and choose to abstain. </reasoning>
+<answer>E</answer>
+Table 8: RL-SFT-Random MedMCQA example where the model abstains despite partial medical knowledge.
+A.3 RL-SFT-Random - Hendrycks Math - Granite
+Here’s a example where the model, although seems to solve the problem with proper proof, ends up with a wrong answer. But it chooses to abstain from answering since it doesn’t feel entirely confident, which turns out to be the right choice in this situation due to the correct answer being entirely different.
+Question:
+Let a,a, b,b, cc be nonnegative real numbers such that a+b+c=1.a+b+c=1. Find the maximum value of
+a​ba+b+a​ca+c+b​cb+c\frac{ab}{a+b}+\frac{ac}{a+c}+\frac{bc}{b+c}
+Correct Answer: 12\frac{1}{2}
+Model Response:
+By AM-HM,
+a+b2\displaystyle\frac{a+b}{2}
+≥21a+1b,\displaystyle\geq\frac{2}{\frac{1}{a}+\frac{1}{b}},
+a+c2\displaystyle\frac{a+c}{2}
+≥21a+1c,\displaystyle\geq\frac{2}{\frac{1}{a}+\frac{1}{c}},
+b+c2\displaystyle\frac{b+c}{2}
+≥21b+1c.\displaystyle\geq\frac{2}{\frac{1}{b}+\frac{1}{c}}.
+Then
+a​ba+b\displaystyle\frac{ab}{a+b}
+≤a2⋅aa+b,\displaystyle\leq\frac{a}{2}\cdot\frac{a}{a+b},
+a​ca+c\displaystyle\frac{ac}{a+c}
+≤a2⋅aa+c,\displaystyle\leq\frac{a}{2}\cdot\frac{a}{a+c},
+b​cb+c\displaystyle\frac{bc}{b+c}
+≤b2⋅bb+c.\displaystyle\leq\frac{b}{2}\cdot\frac{b}{b+c}.
+Adding all these inequalities, we get
+a​ba+b+a​ca+c+b​cb+c≤\displaystyle\frac{ab}{a+b}+\frac{ac}{a+c}+\frac{bc}{b+c}\leq
+a2⋅(aa+b+aa+c+ab+c)+b2⋅(ba+b+ba+c+bb+c)+c2⋅(ca+b+ca+c+cb+c).\displaystyle\frac{a}{2}\cdot\left(\frac{a}{a+b}+\frac{a}{a+c}+\frac{a}{b+c}\right)+\frac{b}{2}\cdot\left(\frac{b}{a+b}+\frac{b}{a+c}+\frac{b}{b+c}\right)+\frac{c}{2}\cdot\left(\frac{c}{a+b}+\frac{c}{a+c}+\frac{c}{b+c}\right).
+By AM-HM again,
+aa+b+aa+c+ab+c\displaystyle\frac{a}{a+b}+\frac{a}{a+c}+\frac{a}{b+c}
+≥3​a22​(a+b)+2​(a+c)+2​(b+c)=3​a24​a+4​b+4​c=3​a24​(a+b+c)=3​a24,\displaystyle\geq\frac{3a^{2}}{2(a+b)+2(a+c)+2(b+c)}=\frac{3a^{2}}{4a+4b+4c}=\frac{3a^{2}}{4(a+b+c)}=\frac{3a^{2}}{4},
+ba+b+ba+c+bb+c\displaystyle\frac{b}{a+b}+\frac{b}{a+c}+\frac{b}{b+c}
+≥3​b24​(a+b+c)=3​b24,\displaystyle\geq\frac{3b^{2}}{4(a+b+c)}=\frac{3b^{2}}{4},
+ca+b+ca+c+cb+c\displaystyle\frac{c}{a+b}+\frac{c}{a+c}+\frac{c}{b+c}
+≥3​c24​(a+b+c)=3​c24.\displaystyle\geq\frac{3c^{2}}{4(a+b+c)}=\frac{3c^{2}}{4}.
+Hence,
+a​ba+b+a​ca+c+b​cb+c\displaystyle\frac{ab}{a+b}+\frac{ac}{a+c}+\frac{bc}{b+c}
+≤a2⋅3​a4+b2⋅3​b4+c2⋅3​c4\displaystyle\leq\frac{a}{2}\cdot\frac{3a}{4}+\frac{b}{2}\cdot\frac{3b}{4}+\frac{c}{2}\cdot\frac{3c}{4}
+=38​(a2+b2+c2)\displaystyle=\frac{3}{8}(a^{2}+b^{2}+c^{2})
+≤38​(a+b+c)2\displaystyle\leq\frac{3}{8}(a+b+c)^{2}
+=38,\displaystyle=\frac{3}{8},
+with equality when a=b=c=13.a=b=c=\frac{1}{3}. Therefore, the maximum value is 38.\boxed{\frac{3}{8}}. I’m unsure whether my reasoning holds up, so I’ll avoid answering.I​D​o​n′​t​K​n​o​w
+A.4 RL-RTuning - Hendrycks Math - Granite
+Here’s another example where the model, seems to solve the problem but it does not count the number of lattice points correctly. (±2,±2,±1)(\pm 2,\pm 2,\pm 1) should be counted with 24 lattice points. It chooses to not give answer as it is uncertain.
+Question:
+In three-dimensional space, find the number of lattice points that have a distance of 3 from the origin.
+Note: A point is a lattice point if all its coordinates are integers.
+Correct Answer: 30
+Model Response:
+<reasoning>Let the three-dimensional space have a vertex at the origin (0,0,0)(0,0,0), and let a lattice point be any point (x,y,z)(x,y,z) with integer coordinates. Then by the distance formula,
+x2+y2+z2=32=9.x^{2}+y^{2}+z^{2}=3^{2}=9.
+It follows that x2,y2,z2≤9x^{2},y^{2},z^{2}\leq 9, and that x,y,z∈{−3,−2,−1,0,1,2,3}x,y,z\in\{-3,-2,-1,0,1,2,3\}.
+We can find the six points (±3,0,0)(\pm 3,0,0), (0,±3,0)(0,\pm 3,0), and (0,0,±3)(0,0,\pm 3). We can also find (0,±1,±2)(0,\pm 1,\pm 2) and (±1,±2,0)(\pm 1,\pm 2,0) by checking all possible combinations. This gives us 27\boxed{27} lattice points. I’m uncertain about my conclusions, so I’d prefer not to answer.</reasoning><answer>IDK</answer>
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from
+

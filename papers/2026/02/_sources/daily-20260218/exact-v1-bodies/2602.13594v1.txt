@@ -1,0 +1,1584 @@
+1Introduction
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Background and Motivation
+2.1 Memory Representation and Management
+2.2 Performance Analysis
+2.3 Tokenized Memory and Succinct Data Structures
+3 Design of Hippocampus
+3.1 Overall Architecture
+3.2 Dynamic Wavelet Matrix
+3.2.1 Dynamic Construction
+3.2.2 Memory Recall with Dynamic Wavelet Matrix
+3.3 Random Indexing and Hamming Ball
+4 Evaluation
+4.1 Experimental Setup
+4.2 Overall Comparison
+5 Related Work
+6 Conclusion
+References
+A LLM-as-a-Judge Metric
+B Detailed Dataset Description
+C Overall Comparison on LongMemEval-M
+D ablation Study of Hippocampus
+E Memory Construction
+F Time and Space Complexity
+G Accuracy Gap
+H Detailed Related Work
+H.1 Memory System for Agentic AI
+H.2 Succinct Data Structures
+License: CC BY-SA 4.0
+arXiv:2602.13594v1 [cs.AI] 14 Feb 2026
+marginparsep has been altered.
+topmargin has been altered.
+marginparwidth has been altered.
+marginparpush has been altered.
+The page layout violates the ICML style.
+Please do not change the page layout, or include packages like geometry,
+savetrees, or fullpage, which change it for you.
+We’re not able to reliably undo arbitrary changes to the style. Please remove
+the offending package(s), or layout-changing commands and try again.
+Hippocampus: An Efficient and Scalable Memory Module for Agentic AI
+Yi Li 1 2
+Lianjie Cao 2
+Faraz Ahmed 2
+Puneet Sharma 2
+Bingzhe Li 1
+† † footnotetext: Work done while the first author was a research intern at Hewlett Packard Enterprise (HPE) Network and Distributed Systems Lab (NDSL).
+1 The University of Texas at Dallas
+2 Hewlett Packard Enterprise (HPE) Labs.
+Correspondence to: Yi Li <yi.li3@utdallas.edu>.
+Preprint. Under revision.
+Abstract
+Agentic AI require persistent memory to store user-specific histories beyond the limited context window of LLMs. Existing memory systems use dense vector databases or knowledge-graph traversal (or hybrid), incurring high retrieval latency and poor storage scalability. We introduce Hippocampus , an agentic memory management system that uses compact binary signatures for semantic search and lossless token-ID streams for exact content reconstruction. Its core is a Dynamic Wavelet Matrix (DWM) that compresses and co-indexes both streams to support ultra-fast search in the compressed domain, thus avoiding costly dense-vector or graph computations. This design scales linearly with memory size, making it suitable for long-horizon agentic deployments. Empirically, our evaluation shows that Hippocampus reduces end-to-end retrieval latency by up to 31 × \times and cuts per-query token footprint by up to 14 × \times , while maintaining accuracy on both LoCoMo and LongMemEval benchmarks.
+1 Introduction
+Agentic AI represents a transformative shift in how intelligent systems interact with the real-world.
+Unlike traditional software, which executes predefined logic, agentic systems autonomously perceive, plan, act, and adapt over time.
+Powered by large language models (LLMs) Vaswani et al. (2017) ; Touvron et al. (2023) ; Team et al. (2023) ; Liu et al. (2024) , these agents can decompose the complex tasks, invoke external tools, reflect on their own behavior, and revise strategies—all without explicit human supervision.
+Early prototypes such as AutoGPT Chen et al. (2023) and BabyAGI Nakajima (2023) demonstrated that coupling the LLMs with goal-driven loops unlocks emergent capabilities far beyond static prompting.
+As agentic AI transitions from research novelty to production infrastructure, it is poised to reshape productivity tools, DevOps workflows Ali and Puri (2024) , and knowledge systems Zhu et al. (2024) .
+Memory is a core component of agentic AI systems.
+While perception and planning enable agents to respond to immediate stimuli, memory allows them to accumulate experience, maintain coherence across interactions, and reason over long temporal horizons.
+In practice, agentic systems operate within an observe–plan–act–learn loop Srivastava (2019) ; Hayes-Roth and Hayes-Roth (1979) , where memory serves as the persistent substrate connecting past observations to future decisions.
+Without reliable recall, even sophisticated planners—such as those based on ReAct Yao et al. (2023) or GoalAct Chen et al. (2025) —can lose track of prior actions, repeat failed strategies, or misinterpret context Li et al. (2023a) ; Xu et al. (2025) .
+This limitation is exacerbated by the bounded context window of LLMs Su et al. (2024) ; Wu et al. (2024b) , which restricts the amount of information that can be considered during inference.
+Empirical studies, including the “ Lost-in-Middle ” effect Liu et al. (2023a) , show that reasoning accuracy degrades sharply as prompts grow longer.
+As a result, context engineering Mei et al. (2025) ; LangChain (2025) has emerged as a workaround, treating the context window as a scarce computational resource.
+However, this approach is brittle and labor-intensive.
+A dedicated memory management system offers a principled alternative: by externalizing long-term knowledge, it enables agents to retrieve only the most relevant fragments of prior information, e.g., dialogue, tool outputs, or retrieved facts, preserving context for immediate reasoning while maintaining continuity across tasks.
+Major agentic AI frameworks, e.g., LangChain and CrewAI Chase (2022) ; CrewAI (2025) , already provide memory management systems to enhance agent capabilities, and real-world deployments report improved coherence and personalization when memory is enabled Li et al. (2023b) .
+Figure 1: An illustration of memory taxonomy of Agentic AI.
+Agentic memory can be broadly categorized into two types: parametric and contextual Du et al. (2025) (as shown in Figure 1 ).
+Parametric memory is embedded within the LLM itself—encoded in its weights, caches, or adapter layers Hu et al. (2022) .
+While powerful, it is opaque, expensive to update, and tightly coupled to model internals Wang et al. (2024) .
+In contrast, contextual memory is external and accessed via explicit retrieval, enabling agents to store and query long-term histories, tool outputs, and retrieved knowledge.
+This externalization offers three key advantages:
+(1) effectively unbounded capacity De Cao et al. (2021) ; Jiang et al. (2024) ;
+(2) fast, selective updates without retraining; and
+(3) schema-level interpretability and control.
+In this work, we focus on the contextual memory, which has emerged as a critical enabler for scalable, coherent, and responsive agentic AI systems.
+Despite architectural diversity, existing contextual memory systems share a critical limitation: low efficiency in both memory insertion and retrieval.
+Whether based on RAG Zhang et al. (2024) ; Kagaya et al. (2024) , knowledge graph Kim et al. (2024) ; Anokhin et al. (2024) , or hybrid designs, these systems incur substantial overhead when storing new memory entries and retrieving relevant content.
+Insertion often requires costly embedding generation and preprocessing, while retrieval relies on high-dimensional similarity search or multi-hop graph queries—both computationally expensive and latency-prone.
+This inefficiency is especially problematic in agentic AI, where agents operate in iterative loops and frequently update or consult memory across steps.
+Slow memory operations stall the observe–plan–act–learn cycle, reducing agent throughput and responsiveness.
+As agents scale to longer horizons and more complex tasks, the need for a memory substrate that supports fast, streaming writes and low-latency recall becomes paramount.
+A detailed performance analysis is presented in section 2.2 .
+To address above mentioned limitations, we argue for a fundamentally different memory substrate—one that abandons token-centric, embedding-heavy representations in favor of lightweight, compression-native structures.
+The goal is to support efficient memory insertion and retrieval without sacrificing retrieval quality.
+Hippocampus is designed to meet this challenge by adopting the Dynamic Wavelet Matrix (DWM), an innovative extension of the wavelet matrix—a succinct data structure renowned for its space efficiency and fast access primitives Gog and Petri (2014) ; Dietzfelbinger and Pagh (2008) —augmented to support dynamic updates for streaming agentic memory workloads.
+At a high level, Hippocampus employs a dual-representation strategy: it stores memory content as lossless token-ID sequences for exact reconstruction (Content DWM), and parallel binary signatures for semantic search (Signature DWM).
+These two streams are co-indexed, enabling fast, bitwise retrieval directly in the compressed domain.
+The Signature DWM is constructed using random indexing, which produces compact binary representations of semantic content.
+Queries are executed via Hamming-ball search over these signatures, allowing fast, approximate matching with minimal computational cost.
+This design preserves both the fidelity of raw content and the semantic richness required for accurate, context-aware recall, while ensuring scalability and responsiveness in long-horizon agentic deployments.
+Our main contributions are:
+1.
+Fundamentally New Memory Substrate. We introduce a token-free memory substrate that replaces dense vector representations with binary signatures and token-ID streams, enabling a shift away from embedding-heavy designs toward lightweight structures.
+2.
+Hippocampus Module. A contextual memory system built on the Dynamic Wavelet Matrix (DWM), supporting streaming writes and co-indexing of semantic and exact representations. This design enables ultra-fast Hamming-ball search in a compressed domain, while achieving high compression and superior retrieval latency and storage efficiency.
+3.
+Experimental Validation. Extensive experiments demonstrate that Hippocampus achieves up to 31 × \times faster end-to-end retrieval and 14 × \times lower per-query token cost, while preserving task accuracy across both LoCoMo and LongMemEval benchmarks.
+2 Background and Motivation
+Figure 2: Illustration of raw text, token-id, and word embedding.
+2.1 Memory Representation and Management
+Agentic AI systems rely on a memory system to persist information across iterative reasoning cycles.
+Existing agentic memory systems typically represent memory content using either high-dimensional embeddings or structured graphs.
+In Retrieval-Augmented Generation (RAG) Zhang et al. (2024) ; Kagaya et al. (2024) ; Singh et al. (2025) , raw text is embedded into dense vectors and stored in vector databases, enabling semantic similarity search.
+Knowledge Graph (KG)-based systems Rasmussen et al. (2025) ; Xu et al. (2025) encode memory as entity–relation–entity triples, supporting multi-hop traversal and schema-aware reasoning in graph databases such as Neo4j Guia et al. (2017) .
+Hybrid systems like A-Mem Xu et al. (2025) combine both approaches to balance semantic richness and structural precision.
+While these representations offer expressive retrieval capabilities, they introduce significant performance bottlenecks.
+Embedding-based systems suffer from high computational cost during both ingestion and retrieval: memory insertion requires expensive embedding generation and preprocessing (e.g., summarization), while retrieval relies on costly vector similarity computations Mei et al. (2024) ; Arora et al. (2020) .
+Graph-based systems, though more interpretable, incur latency from multi-hop traversal and schema resolution.
+These inefficiencies are particularly problematic in agentic workflows, where memory is frequently updated and queried across observe–plan–act–learn cycles.
+Slow memory operations can stall agent execution, reduce throughput, and degrade responsiveness.
+To support scalable, high-performance agents, memory systems must enable fast, streaming writes and low-latency recall—without sacrificing retrieval quality.
+This motivates our exploration of compression-native representations and efficient indexing mechanisms that can meet the demands of long-horizon, multi-iteration agentic deployments.
+2.2 Performance Analysis
+Figure 3: An analysis of SOTA agent memory systems across three critical metrics. Lower values are better for Avg. Token Consumption and Avg. Total Time, while higher is better for F1 Score. The plot illustrates that existing systems force a compromise, as none are able to simultaneously achieve high accuracy and high efficiency in the ideal design space indicated by the red star marker.
+Figure 4: Breakdown of the end-to-end retrieval latency for SOTA agentic AI memory modules.
+To understand the design trade-offs in existing agentic memory systems, we evaluated six representative state-of-the-art (SOTA) modules—ReadAgent Lee et al. (2024) , MemoryBank Zhong et al. (2024a) , MemGPT Packer et al. (2023) , A-Mem Xu et al. (2025) , MemoryOS Kang et al. (2025) , and MemOS Li et al. (2025) —across three critical metrics: retrieval accuracy (F1 score), operational cost (average token consumption per query), and user-perceived latency (average total query time). The evaluation was conducted on the LoCoMo benchmark Maharana et al. (2024) , which simulates long-horizon agentic tasks with frequent memory interactions.
+As shown in Figure 3 , current memory systems force developers into a difficult compromise. High-accuracy designs like MemGPT and A-Mem achieve strong F1 scores but incur significant latency and token overhead due to embedding generation, summarization, and multi-stage retrieval. Conversely, lightweight systems such as MemoryBank reduce latency and cost but suffer from degraded recall quality. None of the evaluated systems simultaneously optimize all three axes, leaving the ideal region of the design space—high accuracy with low latency and cost—unoccupied.
+While above analysis focuses on retrieval efficiency, the situation is further aggravated by insertion-side overhead during memory growth. In RAG, these arise from chunking, embedding, and index updates Zhong et al. (2024b) ; in KG, from fact insertions and graph index maintenance Anadiotis et al. (2024) ; Wandji and Calvanese (2024) ; and in hybrid memories (e.g., A-Mem), from the additional note creation and cross-linking steps that improve read quality but inflate token and amortization cost. These write-path penalties add latency even before retrieval begins, exacerbating the trade-off illustrated in Figure 3 Xu et al. (2025) .
+To pinpoint the root cause of this inefficiency, Figure 4 shows a breakdown of end-to-end retrieval latency.
+The results show that the memory search phase dominates total execution time across all architectures.
+In ReadAgent, vector similarity search accounts for 85% of recall latency.
+Even in more streamlined systems like MemoryBank, search operations consume 81% of the time.
+Hybrid systems such as A-Mem and MemoryOS, which incorporate structured memory layouts and multi-hop reasoning, spend nearly half of their runtime in retrieval (48% and 47%, respectively).
+These findings highlight a fundamental limitation: the retrieval substrate itself—whether based on dense vectors or graph traversal—is the primary bottleneck. In agentic workflows, where memory is accessed and updated repeatedly across observe–plan–act–learn cycles, such inefficiencies compound rapidly. Slow retrieval stalls the planning, while costly ingestion limits memory growth. To support scalable, responsive agents, we need a memory system that rethinks the underlying data structures and representations, enabling fast, streaming writes and low-latency recall at scale.
+2.3 Tokenized Memory and Succinct Data Structures
+Given that LLMs natively operate on integer sequences called token-IDs Qu et al. (2024) ; Yu et al. (2024) , we adopt token-IDs as the fundamental representation of memory. This compact, model-native format avoids repeated and costly tokenization cycles, enabling efficient storage and manipulation. More importantly, representing memory as integer sequences allows us to leverage powerful succinct data structures—such as the Wavelet Matrix Gog and Petri (2014) ; Claude and Navarro (2012) ; Dietzfelbinger and Pagh (2008) —to build a high-performance retrieval system that operates directly in the compressed domain.
+Wavelet Matrix.
+Succinct data structures are compact representations that approach the information-theoretic minimum space while supporting fast queries directly on compressed data Dietzfelbinger and Pagh (2008) ; Shamir (2006) .
+Among these, the Wavelet Matrix Gog and Petri (2014) ; Claude and Navarro (2012) is particularly well-suited for representing long sequences of discrete symbols, such as token-IDs in LLMs.
+It arranges the bits of each symbol into a multi-level structure and supports three core operations with logarithmic time complexity:
+•
+a ​ c ​ c ​ e ​ s ​ s ​ ( i ) access(i) : Retrieve the symbol at position i i .
+•
+r ​ a ​ n ​ k ​ ( c , i ) rank(c,i) : Number of symbol c c appears in prefix [ 0 , i ) [0,i) .
+•
+s ​ e ​ l ​ e ​ c ​ t ​ ( c , j ) select(c,j) : Position of the j j -th occurrence of symbol c c .
+However, canonical wavelet matrices are static and operate over a single homogeneous sequence, making them incompatible with agentic workloads where memory is continuously appended and must be immediately available for retrieval.
+Rebuilding the entire matrix for each new memory entry would be computationally prohibitive Claude and Navarro (2012) , especially in long-horizon deployments.
+Moreover, as detailed in Section 3.2 , Hippocampus introduces two distinct but interrelated data streams, i.e., memory content and memory signatures, that must be co-indexed to support efficient retrieval.
+Nevertheless, the standard wavelet matrix Gog and Petri (2014) ; Claude and Navarro (2012) lacks native support for co-indexing heterogeneous sequences, limiting its applicability in our design.
+Semantic Hashing via Random Indexing. To enable efficient semantic search, we leverage Semantic Hashing, a form of Locality-Sensitive Hashing (LSH) Indyk and Motwani (1998) , to convert high-dimensional vectors into compact binary signatures.
+Using a computationally inexpensive method called Random Indexing Kanerva et al. (2000) , we project each vector against a set of random hyperplanes to generate its signature. This ensures that semantically similar vectors are mapped to signatures with a small Hamming distance (i.e., differing in only a few bits) Norouzi et al. (2012) ; Labib et al. (2019) . This crucial property allows us to replace the expensive k-Nearest Neighbor (k-NN) search de Vries et al. (2002) over floating-point vectors with an ultra-fast search for neighbors within a small Hamming radius, an operation that can be massively accelerated using native bitwise CPU operations Seshadri et al. (2016) .
+Figure 5: Illustration of the memory construction pipeline in Hippocampus. DWM denotes our proposed D ynamic W avelet M atrix, while the subscript ( ⋅ ) 2 (\cdot)_{2} indicates the binary representation of an integer, for example, token-id. The first row of the DWM serves as the entry-level index, marking the start and end positions of each token in the Content Serialization (e.g., StartIndex α \alpha and EndIndex β \beta ).
+Figure 6: Illustration of the memory query pipeline in the Hippocampus. An LLM first extracts keywords from the natural language query. These keywords are converted into binary signatures and used to perform a fast, approximate search on the Signature (Sign.) Dynamic Wavelet Matrix (DWM), identifying candidate metadata blocks. The indices (e.g., α 1 \alpha_{1} ) from the retrieved metadata are then used to look up and reconstruct the exact, full-resolution content from the Content DWM.
+3 Design of Hippocampus
+We present the technical design of Hippocampus , a system built for scalable, high-throughput agentic AI memory management. At the core of the design is a dual-representation strategy that simultaneously supports exact, high-fidelity content retrieval and fast, approximate semantic search. Central to this strategy is the Dynamic Wavelet Matrix (DWM)—a compressed, bit-level data structure that we develop and employ to index both representations. This approach enables Hippocampus to achieve high data density while maintaining low-latency query performance. We begin by outlining the high-level system architecture (Section 3.1 ), which illustrates the data flow during memory construction and retrieval.
+A theoretical analysis of the DWM’s efficiency and scalability is provided in Appendix F , along with a quantitative comparison showing that our query scheme (Section 3.3 ) maintains a small accuracy gap relative to dense vector retrieval (Appendix G ).
+3.1 Overall Architecture
+The architecture of Hippocampus memory module is composed of two primary components: a pipeline for memory construction (as shown in Figure 5 ) and a pipeline for memory querying (as shown in Figure 6 ).
+Memory Construction Pipeline. As shown in Figure 5 , the memory construction pipeline begins by ingesting raw data, such as a dialogue turn in LoCoMo Maharana et al. (2024) (see Section 4.1 for details), which is then processed through two parallel steps.
+First, content serialization converts the unstructured text into a canonical sequence of tokens.
+Concurrently, metadata extraction captures essential contextual information.
+For the LoCoMo dataset, this includes the speaker/role, a high-resolution timestamp, and the start ( α \alpha ) and end ( β \beta ) indices of each utterance within the serialized token list.
+The core of Hippocampus is a dual-representation strategy, realized through two distinct Dynamic Wavelet Matrices (DWMs) (see Section 3.2 for details): a Content DWM for exact data representation and a Signature DWM for efficient, approximate semantic search. To construct the Content DWM, each token in the serialized sequence (i.e., from content serialization) is mapped to its corresponding integer token ID, which is then converted into its binary representation. These binary codes are vertically arranged to form a bit matrix, constituting the Content DWM. In parallel, the Random Indexing & Token Signature module computes a low-dimensional binary hash—or signature—for each token (see Section 3.3 for details). This process produces a compact token signature sequence, which is used to construct the Signature DWM in the same manner. This dual-matrix structure enables Hippocampus to support both precise content retrieval and fast, semantics-based similarity queries within a unified framework.
+Memory Retrieval Process. We now describe the query process, illustrated in Figure 6 , which leverages the two constructed DWMs (as shown in Figure 5 ) to enable highly efficient agentic AI memory retrieval. The query pipeline begins when a natural language query is received. First, the query is processed by a lightweight LLM Prompt module to extract a set of salient keywords. These keywords are then passed through the same Random Indexing & Token Signature module used during memory construction, converting them into their corresponding binary signatures. These query signatures are used to perform a fast, approximate search—e.g., based on Hamming distance (see Section 3.3 for details)—against the Signature DWM. This initial pass rapidly filters the entire memory space and identifies a small set of candidate data segments by retrieving their associated metadata blocks. The StartIndex ( α \alpha ) and EndIndex ( β \beta ) from each candidate’s metadata serve as direct pointers for exact, indexed retrieval from the Content DWM. This step reconstructs the original, full-resolution token sequences for the candidate segments. The retrieved content and its corresponding metadata are then returned as the final Retrieved Result.
+This two-stage design allows Hippocampus to efficiently search over vast conversational histories by using the compact Signature DWM as a fast, low-cost index into the high-fidelity Content DWM.
+With the end-to-end data flow established, we now dive into the core technical components that underpin the Hippocampus architecture.
+The following subsections are organized as follows: we first provide a detailed formulation of the Dynamic Wavelet Matrix (DWM) (Section 3.2 ), which serves as the fundamental data structure in Hippocampus . We then describe the Random Indexing and Hamming Ball search mechanism (Section 3.3 ), which is used to generate robust token signatures and perform approximate search.
+3.2 Dynamic Wavelet Matrix
+The core data structure underlying both the content store and the signature store in Hippocampus is the Dynamic Wavelet Matrix (DWM). The DWM is a novel data structure we develop specifically to support efficient and incremental indexing for agentic AI memory. It serves as an append-friendly adaptation of the conventional static Wavelet Matrix (WM) Gog and Petri (2014) ; Claude and Navarro (2012) , a well-established structure in information retrieval for compressing and indexing large sequences. By extending the WM to support dynamic updates while preserving its compression and query efficiency, the DWM enables high-throughput memory construction and retrieval in continuously evolving agentic systems.
+A key limitation of the conventional wavelet matrix is its static nature—it is designed to be built once over a fixed collection Resnikoff et al. (2012) . This design is fundamentally incompatible with agentic memory workload, which is modeled as a high-throughput, append-only stream.
+Rebuilding a static WM for every new dialogue turn (see Section 2 for details) would be computationally prohibitive.
+Notation and Structure. We conceptually represent DWM as a bit-matrix over an integer sequence S ⁡ [ 0 , ⋯ , n − 1 ] S[0,\cdots,n-1] .
+Given a dictionary (as illustrated in Figure 2 ) of size σ \sigma Rajaraman et al. (2024) , each unique token can be encoded with ⌈ log 2 ⁡ σ ⌉ \lceil\log_{2}\sigma\rceil bits.
+Accordingly, DWM consists of l l independent bit-vectors, denoted as 𝑩 0 , ⋯ , 𝑩 l − 1 \bm{B}^{0},\cdots,\bm{B}^{l-1} , each of the length n n .
+This ever-growing (as shown in Figure 7 ) matrix of size ⌈ log 2 ⁡ σ ⌉ × n \lceil\log_{2}\sigma\rceil\times n , where ⌈ log 2 ⁡ σ ⌉ \lceil\log_{2}\sigma\rceil is fixed and depends solely on dictionary size. It is constructed such that each 𝑩 k ​ [ i ] \bm{B}^{k}[i] stores the k k -th bit of the symbol S ⁡ [ i ] S[i] .
+This bit-matrix representation is highly compressible and efficiently supports fundamental sequence operations ( a ​ c ​ c ​ e ​ s ​ s ​ ( i ) access(i) , r ​ a ​ n ​ k ​ ( c , i ) rank(c,i) , and s ​ e ​ l ​ e ​ c ​ t ​ ( c , k ) select(c,k) ) (defined in Section 2 ).
+3.2.1 Dynamic Construction
+Figure 7: Construction process of Dynamic Wavelet Matrix.
+We construct the DWM through a sequence of a ​ p ​ p ​ e ​ n ​ d ​ ( s ) append(s) operations, each adding a new symbol s s (an integer in [ 0 , σ ) [0,\sigma) ) to the end of sequence S S . Figure 7 illustrates this process. To append symbol s s at the new global position P ​ o ​ s = n Pos=n (initially n = 0 n=0 for an empty sequence), we perform a single top-down traversal of the l l levels:
+1.
+Write the most significant bit of s s to 𝑩 0 ​ [ P ​ o ​ s ] \bm{B}^{0}[Pos] . For example, in Figure 7 , if s s has binary representation ( 10101 ) 2 (10101)_{2} , we append 1 1 as the new bit in B 0 B^{0} .
+2.
+Determine the local position for s s in the next level. If the bit just appended was 0, the symbol will go into the “zero” side of the next level; if it was 1, into the “one” side. We compute this by counting the number of 0s or 1s before P ​ o ​ s Pos . For instance, if we appended a 1 in step 1, we set a temporary index p = r ​ a ​ n ​ k 1 ​ ( 𝑩 0 , P ​ o ​ s ) p=rank_{1}(\bm{B}^{0},Pos) , which gives the count of 1s in 𝑩 0 \bm{B}^{0} up to (but not including) the new position. This p p will be the position of the symbol in the next level’s bit-vector.
+3.
+Move to the next level and append the second bit of s s at position p p of 𝑩 1 \bm{B}^{1} . If this bit is 0, then for level 2 the position resets to p = r ​ a ​ n ​ k 0 ​ ( 𝑩 1 , p ) p=rank_{0}(\bm{B}^{1},p) (counting how many 0s precede the just-appended bit in 𝑩 1 \bm{B}^{1} ). If the bit is 1, then p p becomes Z 1 + r ​ a ​ n ​ k 1 ​ ( 𝑩 1 , p ) Z_{1}+rank_{1}(\bm{B}^{1},p) , where Z 1 Z_{1} is the total number of 0s in B 1 B^{1} (i.e., the starting offset of the “one” portion at level 1). This gives the insertion position for level 2.
+4.
+Repeat this process for all l l bits of s s , descending through the levels. By the end, s s is fully inserted in the DWM, and n n increases by 1.
+Through this construction process, the DWM is incrementally maintained in a strictly append-only and efficient manner.
+Each a ​ p ​ p ​ e ​ n ​ d append operation runs in 𝒪 ⁡ ( l ) \mathcal{O}(l) time—equivalently 𝒪 ⁡ ( log ⁡ σ ) \mathcal{O}(\log\sigma) , which is typically much smaller than n n —assuming constant-time support for rank operations ( r ​ a ​ n ​ k 0 / 1 rank_{0/1} ) on the bit-vectors.
+Our DWM design provides exactly the query primitives needed for Hippocampus .
+The Content DWM supports direct access to any token via the a ​ c ​ c ​ e ​ s ​ s ​ ( i ) access(i) operation.
+The Signature DWM enables efficient approximate membership queries using r ​ a ​ n ​ k rank and s ​ e ​ l ​ e ​ c ​ t select operations, which we leverage to perform Hamming-distance-based searches for relevant signatures.
+We next describe how these queries operate within the DWM and how they enable memory recall in Hippocampus .
+3.2.2 Memory Recall with Dynamic Wavelet Matrix
+Algorithm 1 DWM rank ( c , i ) (c,i) operation
+0:
+Token signature 𝒄 \bm{c} with bits ( b 0 , … , b l − 1 ) (b_{0},\ldots,b_{l-1}) where b 0 b_{0} is MSB; global prefix length i i ; Sign. DWM 𝑫 \bm{D} with level bit-vectors 𝑫 . B ⁡ [ 0 ​ … ​ l − 1 ] \bm{D}.B[0\ldots l-1] and zero-counts 𝑫 . Z ⁡ [ 0 ​ … ​ l − 1 ] \bm{D}.Z[0\ldots l-1]
+0:
+r ​ a ​ n ​ k ​ ( c , i ) rank(c,i) = #occurrences of c c in S [ 0 , i ) S[0,i)
+1:
+( b 0 , b 1 , … , b l − 1 ) ← BitsMSBFirst ​ ( 𝒄 ) (b_{0},b_{1},\ldots,b_{l-1})\leftarrow\text{BitsMSBFirst}(\bm{c})
+2:
+p L ← 0 p_{L}\leftarrow 0 ; p R ← i p_{R}\leftarrow i
+3:
+for k = 0 k=0 to l − 1 l-1 do
+4:
+if b k = 0 b_{k}=0 then
+5:
+p L ← r a n k 0 ( 𝑫 . B [ k ] , p L ) p_{L}\leftarrow rank_{0}(\bm{D}.B[k],p_{L})
+6:
+p R ← r a n k 0 ( 𝑫 . B [ k ] , p R ) p_{R}\leftarrow rank_{0}(\bm{D}.B[k],p_{R})
+7:
+else
+8:
+Z k ← 𝑫 . Z ⁡ [ k ] Z_{k}\leftarrow\bm{D}.Z[k]
+9:
+p L ← Z k + r a n k 1 ( 𝑫 . B [ k ] , p L ) p_{L}\leftarrow Z_{k}+rank_{1}(\bm{D}.B[k],p_{L})
+10:
+p R ← Z k + r a n k 1 ( 𝑫 . B [ k ] , p R ) p_{R}\leftarrow Z_{k}+rank_{1}(\bm{D}.B[k],p_{R})
+11:
+end if
+12:
+end for
+13:
+return p R − p L p_{R}-p_{L}
+Algorithm 2 DWM s ​ e ​ l ​ e ​ c ​ t ​ ( c , j ) select(c,j) operation
+0:
+Token signature 𝒄 \bm{c} with bits ( b 0 , … , b l − 1 ) (b_{0},\ldots,b_{l-1}) where b 0 b_{0} is MSB; 1-based occurrence j j ; sequence length n n ; Sign. DWM 𝑫 \bm{D} with level bit-vectors 𝑫 . B ⁡ [ 0 ​ … ​ l − 1 ] \bm{D}.B[0\ldots l-1] and zero-counts 𝑫 . Z ⁡ [ 0 ​ … ​ l − 1 ] \bm{D}.Z[0\ldots l-1]
+0:
+s ​ e ​ l ​ e ​ c ​ t ​ ( c , j ) select(c,j) = global position of the j j -th c c in S S
+1:
+( b 0 , b 1 , … , b l − 1 ) ← BitsMSBFirst ​ ( 𝒄 ) (b_{0},b_{1},\ldots,b_{l-1})\leftarrow\text{BitsMSBFirst}(\bm{c})
+2:
+p L ← 0 p_{L}\leftarrow 0 ; p R ← n p_{R}\leftarrow n
+3:
+for k = 0 k=0 to l − 1 l-1 do
+4:
+if b k = 0 b_{k}=0 then
+5:
+p L ← r a n k 0 ( 𝑫 . B [ k ] , p L ) p_{L}\leftarrow rank_{0}(\bm{D}.B[k],p_{L})
+6:
+p R ← r a n k 0 ( 𝑫 . B [ k ] , p R ) p_{R}\leftarrow rank_{0}(\bm{D}.B[k],p_{R})
+7:
+else
+8:
+Z k ← 𝑫 . Z ⁡ [ k ] Z_{k}\leftarrow\bm{D}.Z[k]
+9:
+p L ← Z k + r a n k 1 ( 𝑫 . B [ k ] , p L ) p_{L}\leftarrow Z_{k}+rank_{1}(\bm{D}.B[k],p_{L})
+10:
+p R ← Z k + r a n k 1 ( 𝑫 . B [ k ] , p R ) p_{R}\leftarrow Z_{k}+rank_{1}(\bm{D}.B[k],p_{R})
+11:
+end if
+12:
+end for
+13:
+o ​ c ​ c ← p R − p L occ\leftarrow p_{R}-p_{L}
+14:
+if j > o ​ c ​ c j>occ then
+15:
+return NULL
+16:
+end if
+17:
+p ← p L + ( j − 1 ) p\leftarrow p_{L}+(j-1)
+18:
+for k = l − 1 k=l-1 to 0 0 step − 1 -1 do
+19:
+if b k = 0 b_{k}=0 then
+20:
+p ← s e l e c t 0 ( 𝑫 . B [ k ] , p + 1 ) p\leftarrow select_{0}(\bm{D}.B[k],p+1)
+21:
+else
+22:
+Z k ← 𝑫 . Z ⁡ [ k ] Z_{k}\leftarrow\bm{D}.Z[k]
+23:
+p ← s e l e c t 1 ( 𝑫 . B [ k ] , ( p − Z k ) + 1 ) p\leftarrow select_{1}(\bm{D}.B[k],(p-Z_{k})+1)
+24:
+end if
+25:
+end for
+26:
+return p p
+When a query is issued, Hippocampus uses the Signature DWM to identify likely relevant memory indices, and then uses the Content DWM to reconstruct the content at those indices.
+This process relies on the DWM’s ability to efficiently count and locate symbols.
+In the Signature DWM, each “symbol” is a compact binary signature representing a token.
+A natural language query is transformed into a set of such signature symbols { 𝒄 1 , 𝒄 2 , … , 𝒄 m } \{\bm{c}_{1},\bm{c}_{2},\ldots,\bm{c}_{m}\} via the random indexing step.
+Our goal is to find memory entries where all (or many) of these query signatures co-occur.
+We accomplish this by using the DWM r ​ a ​ n ​ k rank and s ​ e ​ l ​ e ​ c ​ t select primitives to traverse the Signature DWM efficiently.
+Searching in Signature DWM.
+Suppose we have a particular signature 𝒄 \bm{c} (a binary code of length l l bits) and we want to quickly find all positions in the Signature DWM where 𝒄 \bm{c} appears.
+We can use r ​ a ​ n ​ k ​ ( 𝒄 , i ) rank(\bm{c},i) to count occurrences of 𝒄 \bm{c} up to any position i i , and s ​ e ​ l ​ e ​ c ​ t ​ ( 𝒄 , j ) select(\bm{c},j) to retrieve the position of the j j -th occurrence.
+Algorithm 1 outlines the r ​ a ​ n ​ k rank query.
+Starting from the most significant bit of 𝒄 \bm{c} , we use the bit values to narrow an interval [ p L , p R ) [p_{L},p_{R}) as we descend the levels.
+Initially, p L = 0 p_{L}=0 and p R = i p_{R}=i (meaning we consider the prefix S [ 0 . . i − 1 ] S[0..i-1] ).
+At each level k k , if the k k -th bit of 𝒄 \bm{c} is 0, we map the current interval to the zero-prefixed subarray of the next level by setting
+p L ← r ​ a ​ n ​ k 0 ​ ( 𝑩 k , p L ) p_{L}\leftarrow rank_{0}(\bm{B}^{k},p_{L}) and p R ← r ​ a ​ n ​ k 0 ​ ( 𝑩 k , p R ) p_{R}\leftarrow rank_{0}(\bm{B}^{k},p_{R}) .
+If the bit is 1, we map to the one-prefixed subarray by setting
+p L ← Z k + r ​ a ​ n ​ k 1 ​ ( 𝑩 k , p L ) p_{L}\leftarrow Z_{k}+rank_{1}(\bm{B}^{k},p_{L}) and p R ← Z k + r ​ a ​ n ​ k 1 ​ ( 𝑩 k , p R ) p_{R}\leftarrow Z_{k}+rank_{1}(\bm{B}^{k},p_{R}) ,
+where Z k Z_{k} is the total number of 0s in 𝑩 k \bm{B}^{k} .
+After processing all l l bits, the length of the final interval ( p R − p L ) (p_{R}-p_{L}) equals the number of occurrences of 𝒄 \bm{c} in S [ 0 . . i − 1 ] S[0..i-1] .
+To retrieve the actual positions of occurrences, we use the s ​ e ​ l ​ e ​ c ​ t ​ ( 𝒄 , j ) select(\bm{c},j) operation, outlined in Algorithm 2 .
+We first find the total number of occurrences o ​ c ​ c = r ​ a ​ n ​ k ​ ( 𝒄 , n ) occ=rank(\bm{c},n) in the entire sequence of length n n .
+If j > o ​ c ​ c j>occ , the j j -th occurrence does not exist.
+Otherwise, we know the j j -th occurrence lies in the interval [ p L , p R ) [p_{L},p_{R}) obtained by running the r ​ a ​ n ​ k rank procedure (Algorithm 1 ) to the end of the sequence ( i = n i=n ).
+We set p = p L + ( j − 1 ) p=p_{L}+(j-1) , which is the index of this occurrence in the bottom level.
+We then lift this index back up through the levels.
+For each level k k (going from l − 1 l-1 up to 0 0 ):
+if b k = 0 b_{k}=0 (the k k -th bit of 𝒄 \bm{c} is 0), we call p ← s e l e c t 0 ( 𝐃 . B [ k ] , p + 1 ) p\leftarrow select_{0}(\mathbf{D}.B[k],p+1) ,
+which finds the global position of the ( p + 1 ) (p+1) -th 0-bit in level k k .
+If b k = 1 b_{k}=1 , we set p ← s e l e c t 1 ( 𝐃 . B [ k ] , ( p − Z k ) + 1 ) p\leftarrow select_{1}(\mathbf{D}.B[k],(p-Z_{k})+1) ,
+which finds the global position of the ( p − Z k + 1 ) (p-Z_{k}+1) -th 1-bit in level k k (accounting for the offset of the one-block).
+After lifting through all levels, p p gives the global position in S S of the j j -th occurrence of 𝒄 \bm{c} .
+In Hippocampus , we use these primitives to execute memory queries as follows.
+Given a set of query signatures: { 𝒄 1 , … , 𝒄 m } \{\bm{c}_{1},\ldots,\bm{c}_{m}\} extracted from the user’s query,
+we first identify the least frequent signature 𝒄 min \bm{c}_{\min} by comparing r ​ a ​ n ​ k ​ ( 𝒄 i , n ) rank(\bm{c}_{i},n) for all i i .
+We then iterate through each occurrence of 𝒄 min \bm{c}_{\min} in the Signature DWM.
+For the j j -th occurrence (where j j ranges from 1 to o ​ c ​ c = r ​ a ​ n ​ k ​ ( 𝒄 min , n ) occ=rank(\bm{c}_{\min},n) ),
+we find its global position i = s ​ e ​ l ​ e ​ c ​ t ​ ( 𝒄 min , j ) i=select(\bm{c}_{\min},j) .
+This position i i corresponds to a specific token in the memory sequence S S .
+We retrieve the metadata entry whose range [ α , β ] [\alpha,\beta] covers i i
+(recall that each memory entry’s start and end indices are stored in its metadata).
+This metadata tells us the span of token indices for that memory entry.
+If the query contains multiple keywords, we can quickly verify whether the other query signatures 𝒄 2 ​ … ​ m \bm{c}_{2\ldots m} appear in the same span
+by checking if r ​ a ​ n ​ k ​ ( 𝒄 k , β ) − r ​ a ​ n ​ k ​ ( 𝒄 k , α ) > 0 rank(\bm{c}_{k},\beta)-rank(\bm{c}_{k},\alpha)>0 for each k k .
+Entries that pass this check are collected as candidate results.
+Algorithm 3 DWM access ( i ) (i) operation
+0:
+Global position i i ; Content DWM 𝑫 \bm{D} with level bit-vectors 𝑫 . B ⁡ [ 0 ​ … ​ l − 1 ] \bm{D}.B[0\ldots l-1] and zero-counts 𝑫 . Z ⁡ [ 0 ​ … ​ l − 1 ] \bm{D}.Z[0\ldots l-1]
+0:
+access ( i ) (i) = the symbol S ⁡ [ i ] S[i]
+1:
+p ← i p\leftarrow i
+2:
+bits ← [ ] \textit{bits}\leftarrow[\ ]
+3:
+for k = 0 k=0 to l − 1 l-1 do
+4:
+b ← 𝑫 . B ​ [ k ] ​ [ p ] b\leftarrow\bm{D}.B[k][p]
+5:
+bits . append ​ ( b ) \textit{bits}.\texttt{append}(b)
+6:
+if b = 0 b=0 then
+7:
+p ← r a n k 0 ( 𝑫 . B [ k ] , p ) p\leftarrow rank_{0}(\bm{D}.B[k],\,p)
+8:
+else
+9:
+Z k ← 𝑫 . Z ⁡ [ k ] Z_{k}\leftarrow\bm{D}.Z[k]
+10:
+p ← Z k + r a n k 1 ( 𝑫 . B [ k ] , p ) p\leftarrow Z_{k}+rank_{1}(\bm{D}.B[k],\,p)
+11:
+end if
+12:
+end for
+13:
+return SymbolFromBits ( bits ) (\textit{bits})
+Retrieving from Content DWM.
+Finally, for each candidate memory entry identified via the above process, we perform a lossless reconstruction of its content using the Content DWM.
+This is achieved through the a ​ c ​ c ​ e ​ s ​ s ​ ( i ) access(i) primitive applied over the range [ α , β ] [\alpha,\beta] of token positions.
+Algorithm 3 shows how a single symbol is retrieved by a ​ c ​ c ​ e ​ s ​ s ​ ( i ) access(i) .
+We start at the top level with the global position i i .
+At level 0 0 , we read the bit b 0 = 𝑩 0 ​ [ i ] b_{0}=\bm{B}^{0}[i] , which is the most significant bit of the symbol at S ⁡ [ i ] S[i] .
+We append b 0 b_{0} to a bit buffer and then determine the position at the next level:
+if b 0 = 0 b_{0}=0 , we set i 1 = r ​ a ​ n ​ k 0 ​ ( 𝑩 0 , i ) i_{1}=rank_{0}(\bm{B}^{0},i) (the number of 0s up to position i i in level 0);
+if b 0 = 1 b_{0}=1 , we set i 1 = Z 0 + r ​ a ​ n ​ k 1 ​ ( 𝑩 0 , i ) i_{1}=Z_{0}+rank_{1}(\bm{B}^{0},i) (the number of 0s in level 0 plus the number of 1s up to i i ).
+We then move to level 1, read b 1 = 𝑩 1 ​ [ i 1 ] b_{1}=\bm{B}^{1}[i_{1}] , append it, and update the position for level 2 in a similar fashion.
+After we descend through all l l levels, we have collected bits ( b 0 , b 1 , … , b l − 1 ) (b_{0},b_{1},\ldots,b_{l-1}) ,
+which constitute the binary representation of S ⁡ [ i ] S[i] .
+We then convert these bits back to the original token-id (an integer) using SymbolFromBits .
+In practice, we execute a ​ c ​ c ​ e ​ s ​ s ​ ( i ) access(i) for each position i i in the range [ α , β ] [\alpha,\beta]
+to retrieve the entire sequence of token-ids for that memory entry, and then detokenize to reconstruct the text.
+3.3 Random Indexing and Hamming Ball
+While the DWM supports efficient keyword-exact matching, many queries require semantic-level retrieval for improved accuracy and robustness.
+To enable this capability, Hippocampus converts each token into a compact, context-aware binary signature.
+Instead of using static embeddings or precomputed vectors, we adopt a lightweight streaming random indexing mechanism Indyk and Motwani (1998) that continuously integrates local contextual information during memory construction.
+Specifically, let D D (e.g., 1024) denote the embedding dimensionality.
+At initialization, each token v v is assigned a sparse random base vector 𝒓 v = { − 1 , 0 , + 1 } D \bm{r}_{v}=\{-1,0,+1\}^{D} with exactly t t non-zero entries placed randomly (half + 1 +1 and half − 1 -1 ).
+These vectors remain fixed throughout content serialization.
+As the conversation stream arrives, we maintain a sliding window W ⁡ ( i ) W(i) around each token S ⁡ [ i ] S[i] and aggregate its contextual embedding via 𝒆 i = ∑ j ∈ W ⁡ ( i ) 𝒓 S ⁡ [ j ] \bm{e}_{i}=\sum_{j\in W(i)}\bm{r}_{S[j]} , ensuring that tokens appear in slightly different semantic states depending on their conversational context Kanerva et al. (2000) .
+After one streaming pass, each token has a fully contextualized embedding 𝒆 i \bm{e}_{i} .
+Directly hashing all D D dimensions would incur unnecessary cost,
+so Hippocampus selects only the d d ( d ≪ D d\ll D ) most activated components:
+ℐ i = Top- ​ d ​ ( | 𝒆 i | ) \mathcal{I}_{i}=\text{Top-}d(|\bm{e}_{i}|) .
+A binary signature is then formed:
+𝒔 i ​ [ k ] = { 1 , 𝒆 i ​ [ ℐ i ​ [ k ] ] > 0 0 , 𝒆 i ​ [ ℐ i ​ [ k ] ] ≤ 0 k = 1 , ⋯ , d \bm{s}_{i}[k]=\begin{cases}1,\quad\bm{e}_{i}[\mathcal{I}_{i}[k]]>0\\
+0,\quad\bm{e}_{i}[\mathcal{I}_{i}[k]]\leq 0\end{cases}\quad k=1,\cdots,d
+During querying (Figure 6 ), an LLM extracts a small set of keywords from the natural language query that best describe the user’s intent.
+Each keyword is then converted into a d d -bit signature using the same streaming random setting used during memory construction.
+We then perform an efficient Hamming-ball search on the Signature DWM.
+For each keyword signature 𝒔 q \bm{s}_{q} and a stored signature 𝒔 i \bm{s}_{i} , we first compute a bitwise XOR, which returns a d d -bit mask where 1s indicate mismatched bit positions.
+We then apply POPCOUNT Sun (2016) , a native CPU instruction that counts the number of 1s in the mask in constant time, thus directly yielding the Hamming distance HammingDist ​ ( 𝒔 q , 𝒔 i ) \text{HammingDist}(\bm{s}_{q},\bm{s}_{i}) .
+A candidate is preserved only if this distance does not exceed a small threshold r r , meaning we search within a Hamming-ball defined as:
+{ 𝒔 i ∣ HammingDist ​ ( 𝒔 q , 𝒔 i ) ≤ r } \{\bm{s}_{i}\mid\text{HammingDist}(\bm{s}_{q},\bm{s}_{i})\leq r\} ,
+so that only entries differing in at most r r bits (out of the d d bits) are considered semantically relevant and passed forward for subsequent metadata validation.
+4 Evaluation
+Table 1: Overall comparison of different memory modules across four tasks in LoCoMo benchmark:
+Single-Hop , Multi-Hop , Temporal , and Open-Domain .
+We report the default metrics (F1 and BLEU-1) together with an LLM-as-a-Judge score reflecting human-aligned evaluation of answer quality. Reported F1 and BLEU-1 are multiplied by 100 for easier comparison and visualization.
+Memory Module
+Single-Hop
+Multi-Hop
+Temporal
+Open-Domain
+F1
+BLEU-1
+LLM-as-a-Judge
+F1
+BLEU-1
+LLM-as-a-Judge
+F1
+BLEU-1
+LLM-as-a-Judge
+F1
+BLEU-1
+LLM-as-a-Judge
+ReadAgent
+8.78
+5.93
+1.03
+5.44
+5.03
+1.01
+11.24
+11.12
+1.08
+9.32
+8.1
+1.45
+MemoryBank
+5.05
+3.97
+2.00
+6.02
+5.89
+1.12
+9.85
+9.92
+1.03
+7.9
+7.97
+2.09
+MemGPT
+25.43
+17.68
+1.91
+9.11
+8.82
+1.06
+26.48
+26.19
+1.02
+39.74
+40.03
+1.92
+A-mem
+19.82
+19.86
+2.66
+12.97
+12.81
+1.85
+34.63
+34.87
+2.18
+41
+41.41
+2.72
+MemoryOS
+32.5
+30.13
+2.76
+28.61
+26.81
+1.79
+25.08
+25.08
+2.61
+41.51
+41.43
+2.59
+MemOS
+39.24
+40.76
+2.75
+30.11
+30.91
+2.56
+31.06
+31.34
+2.81
+40.31
+40.51
+2.60
+Hippocampus
+34.36
+30.04
+3.08
+31.97
+31.85
+3.22
+38.3
+37.35
+2.94
+48.38
+46.8
+2.97
+4.1 Experimental Setup
+Dataset.
+We adopt two of the most recent and widely used benchmarks designed to assess the long-term contextual memory capabilities of agentic AI:
+LoCoMo Maharana et al. (2024) and LongMemEval Wu et al. (2024a) .
+For a detailed description of the datasets, please refer to Appendix B .
+Metric.
+For LoCoMo, we adopt its default automatic evaluation metrics: F1 Opitz and Burst (2019) and BLEU-1 Yang et al. (2008) ,
+which measure lexical overlap and token-level correctness in question answering tasks.
+For LongMemEval, the benchmark uses accuracy as its principal metric,
+defined as the fraction of evaluation questions answered correctly Wu et al. (2024a) .
+Beyond these standard metrics, we also introduce a LLM-as-a-Judge score Gu et al. (2024)
+to better capture semantic correctness and deeper reasoning quality (Range: [ 1 , 2 , 3 , 4 , 5 ] [1,2,3,4,5] ).
+Refer to Appendix A for details.
+In addition to accuracy-oriented metrics, we evaluate efficiency along two axes:
+•
+Avg. Token Consumption: average number of tokens read and processed per query, reflecting memory retrieval cost;
+•
+Avg. Total: mean time from the moment memory recall is triggered to the moment the retrieved context is delivered (used for constructing the final prompt).
+Within this, we further decompose and report Avg. Search , which captures the pure retrieval cost.
+Software and Hardware.
+All experiments were conducted on a HPE DL380a Gen11 server with 2 × \times Intel Xeon Platinum 8470 CPU, 4 × \times NVIDIA H100 GPUs, and 1 TB of DDR4 DRAM.
+The software environment includes Ubuntu 22.04.5 LTS, Python 3.10.12, PyTorch 2.7.0, and CUDA 12.9 for GPU acceleration.
+4.2 Overall Comparison
+Figure 8: Average query retrieval latency (seconds) for various memory systems on LoCoMo dataset.
+Figure 9: Average number of tokens consumption per query by each memory system on LoCoMo dataset.
+Table 2: Overall comparison across six tasks in LongMemEval-S benchmark:
+Single-session-preference , Single-session-assistant , Temporal-reasoning , Multi-session , Knowledge-update , and Single-session-user .
+Reported F1 and Accuracy are multiplied by 100.
+Memory Module
+Single-session-preference
+Single-session-assistant
+Temporal-reasoning
+Multi-session
+Knowledge-update
+Single-session-user
+F1
+Accuracy
+LLM-as-a-Judge
+F1
+Accuracy
+LLM-as-a-Judge
+F1
+Accuracy
+LLM-as-a-Judge
+F1
+Accuracy
+LLM-as-a-Judge
+F1
+Accuracy
+LLM-as-a-Judge
+F1
+Accuracy
+LLM-as-a-Judge
+ReadAgent
+3.54
+4.17
+1.25
+4.48
+15.18
+1.46
+3.76
+4.32
+0.86
+1.65
+4.89
+1.03
+2.96
+8.01
+1.05
+4.87
+17.14
+1.55
+MemoryBank
+4.25
+5.00
+1.88
+5.36
+18.21
+2.20
+4.50
+5.19
+1.29
+1.98
+5.86
+1.55
+3.55
+9.62
+1.58
+5.62
+20.57
+2.33
+MemGPT
+4.95
+5.83
+1.72
+6.25
+21.25
+2.01
+5.25
+6.05
+1.18
+2.31
+6.84
+1.41
+4.15
+11.22
+1.43
+6.38
+24.00
+2.14
+A-mem
+7.78
+9.17
+2.50
+9.86
+33.39
+2.93
+8.28
+9.51
+1.72
+3.64
+10.75
+2.06
+6.54
+17.63
+2.10
+10.03
+37.71
+3.10
+MemoryOS
+9.21
+10.83
+2.66
+11.67
+39.46
+3.11
+9.78
+11.24
+1.83
+4.30
+12.70
+2.19
+7.73
+20.83
+2.23
+11.86
+44.57
+3.23
+MemOS
+10.61
+12.50
+2.81
+13.39
+45.53
+3.29
+11.23
+12.97
+1.94
+4.94
+14.66
+2.31
+8.88
+24.04
+2.36
+13.63
+51.43
+3.29
+Hippocampus
+14.14
+16.67
+3.13
+17.92
+60.71
+3.66
+15.03
+17.29
+2.15
+6.61
+19.54
+2.57
+11.83
+32.05
+2.63
+19.48
+68.57
+3.88
+LoCoMo Analysis.
+On the LoCoMo tasks, Hippocampus delivers strong retrieval accuracy that rivals or exceeds prior systems (Table 1 ).
+For example, on Temporal Reasoning , Hippocampus achieves F1 ≈ 38.3 \approx 38.3 , substantially higher than the 26.5 F1 reported for MemGPT.
+Similarly, on Open-Domain , Hippocampus attains 48.4 F1 compared to 41.5 for MemoryOS.
+Hippocampus ’s LLM-as-a-Judge scores are also the highest in all categories ( ≈ 3.0 \approx 3.0 – 3.3 3.3 out of 5), reflecting answer quality that is equal or better than the baselines.
+These results demonstrate that the semantic-approximation mechanism in Hippocampus (binary token signatures) incurs only minor accuracy loss, while still retrieving relevant context effectively.
+In contrast, lightweight baselines like MemoryBank, which sacrifice search overhead for speed, achieve very low accuracy (F1 < 10 <10 across tasks).
+In summary, Hippocampus matches or outperforms SOTA memory systems on LoCoMo while using a compact, compressed-index representation.
+The efficiency advantages of Hippocampus are dramatic.
+Figure 8 plots the average end-to-end query latency for each system.
+Hippocampus responds in roughly 1.08 1.08 seconds on average—an order of magnitude faster than dense-vector approaches (MemGPT ≈ 33.6 \approx 33.6 s) and substantially quicker than knowledge graph- or RAG-based memories.
+The breakdown in Figure 8 shows that Hippocampus spends only a small fraction of that time in the search phase,
+whereas baselines incur a dominant search cost (often > 80 % >80\% of total latency).
+Figure 9 displays average token consumption:
+Hippocampus reads only ≈ 1.3 \approx 1.3 K tokens on average, far fewer than MemGPT ( ≈ 16.9 \approx 16.9 K) or MemoryOS ( ≈ 8.1 \approx 8.1 K).
+This low token overhead arises from Hippocampus ’s compressed memory structure: rather than loading large text embeddings, it scans concise bitwise signatures and reconstructs exact token IDs on demand.
+These efficiency gains show that Hippocampus achieves high retrieval accuracy with minimal latency and cost.
+The observed performance aligns with our design motivation: prior high-accuracy memory systems required heavy token usage and slow searches, whereas Hippocampus breaks that trade-off through its space-efficient, bitwise index.
+Figure 10: Average query retrieval latency (seconds) for various memory systems on LongMemEval-s.
+Figure 11: Average number of tokens consumption per query by each memory system on LongMemEval-s.
+LongMemEval Analysis.
+On LongMemEval-S, Hippocampus consistently achieves the best accuracy–efficiency operating point among all baselines.
+As summarized in Table 2 , Hippocampus improves accuracy across all six tasks while dramatically reducing end-to-end retrieval time and minimizing token footprint.
+In Figure 10 , our end-to-end latency lies near the floor of the plot, reflecting how bit-sliced Hamming-ball filtering on the Signature DWM eliminates the dominant search cost that burdens dense-vector and graph-traversal designs.
+Figure 11 shows a much smaller per-query token budget, as Hippocampus scans compact binary signatures and reconstructs token IDs on demand,
+rather than streaming long textual passages or large embedding blocks.
+Together, these effects validate our design thesis from Section 3 :
+approximate semantic access in the compressed domain (signatures) combined with exact reconstruction (Content DWM) breaks the classic trade-off—maintaining task accuracy while achieving order-of-magnitude gains in responsiveness and prompt-token economy.
+Please refer to Appendix C for complementary results on LongMemEval-M.
+5 Related Work
+The landscape of memory systems for agentic AI is rapidly evolving, with recent work focusing on high-level architectural abstractions to manage long-term experiences. These approaches can be broadly categorized into two dominant philosophies. The first draws inspiration from operating systems, treating memory as a manageable system resource. This includes MemGPT Packer et al. (2023) , which introduces virtual context management analogous to OS-level memory paging; MemoryOS Kang et al. (2025) , which implements a hierarchical storage architecture with short, mid, and long-term tiers; and MemOS Li et al. (2025) , which proposes a standardized MemCube abstraction to unify parametric, activation, and plaintext memory. The second category is inspired by human cognitive science, such as ReadAgent Lee et al. (2024) , which compresses memories into gist memories Abadie et al. (2013) akin to human summarization; MemoryBank Zhong et al. (2024a) , which employs an Ebbinghaus-inspired Tulving (1985) forgetting curve for dynamic memory updates; and A-mem Xu et al. (2025) , which organizes knowledge into an evolving, interconnected network based on the Zettelkasten method Malashenko et al. (2023) . Despite their architectural diversity, these systems converge on a common technological substrate where retrieval is predominantly powered by dense vector similarity search within a Retrieval-Augmented Generation (RAG) framework or by traversing explicit knowledge graph structures. For instance, A-mem leverages a vector store like ChromaDB
+, and MemoryBank uses FAISS Douze et al. (2025) for efficient retrieval. A more detailed related work is presented in Appendix H .
+6 Conclusion
+This work presents Hippocampus , a contextual memory module that design with binary signatures and a Dynamic Wavelet Matrix co-index for compressed-domain search and lossless content reconstruction. The design scales linearly with history length, supports streaming writes, and executes semantic access via low-level bitwise primitives. Across LoCoMo and LongMemEval, Hippocampus preserves or improves task accuracy while substantially cutting both query latency and prompt-token cost, validating the effectiveness of approximate-then-exact retrieval in a succinct data structure.
+References
+Abadie et al. (2013)
+M. Abadie, L. Waroquier, and P. Terrier
+Gist memory in the unconscious-thought effect .
+Psychological Science 24 ( 7 ), pp. 1253–1259 .
+Cited by: §5 .
+Ali and Puri (2024)
+M. S. Ali and D. Puri
+Optimizing devops methodologies with the integration of artificial intelligence .
+In 2024 3rd International Conference for Innovation in Technology (INOCON) ,
+pp. 1–5 .
+Cited by: §1 .
+Anadiotis et al. (2024)
+A. C. Anadiotis, M. G. Khan, and I. Manolescu
+Dynamic graph databases with out-of-order updates .
+Proceedings of the VLDB Endowment 17 ( 13 ), pp. 4799–4812 .
+Cited by: §2.2 .
+Anokhin et al. (2024)
+P. Anokhin, N. Semenov, A. Sorokin, D. Evseev, A. Kravchenko, M. Burtsev, and E. Burnaev
+Arigraph: learning knowledge graph world models with episodic memory for llm agents .
+arXiv preprint arXiv:2407.04363 .
+Cited by: §1 .
+Arora et al. (2020)
+S. Arora, A. May, J. Zhang, and C. Ré
+Contextual embeddings: when are they worth it? .
+arXiv preprint arXiv:2005.09117 .
+Cited by: §2.1 .
+Charikar (2002)
+M. S. Charikar
+Similarity estimation techniques from rounding algorithms .
+In Proceedings of the thiry-fourth annual ACM symposium on Theory of computing ,
+pp. 380–388 .
+Cited by: Appendix G .
+Chase (2022)
+H. Chase
+LangChain: build context-aware reasoning applications .
+Note: https://github.com/langchain-ai/langchain Accessed: 2025-08-04
+Cited by: §1 .
+Chen et al. (2023)
+G. Chen, S. Dong, Y. Shu, G. Zhang, J. Sesay, B. F. Karlsson, J. Fu, and Y. Shi
+Autoagents: a framework for automatic agent generation .
+arXiv preprint arXiv:2309.17288 .
+Cited by: §1 .
+Chen et al. (2025)
+J. Chen, H. Li, J. Yang, Y. Liu, and Q. Ai
+Enhancing llm-based agents via global planning and hierarchical execution .
+arXiv preprint arXiv:2504.16563 .
+Cited by: §1 .
+Claude and Navarro (2012)
+F. Claude and G. Navarro
+The wavelet matrix .
+In International Symposium on String Processing and Information Retrieval ,
+pp. 167–179 .
+Cited by: §2.3 ,
+§2.3 ,
+§3.2 .
+CrewAI (2025)
+CrewAI
+Core concept: memory .
+Note: https://docs.crewai.com/en/concepts/memory Accessed: 2025-08-04
+Cited by: §1 .
+De Cao et al. (2021)
+N. De Cao, W. Aziz, and I. Titov
+Editing factual knowledge in language models .
+arXiv preprint arXiv:2104.08164 .
+Cited by: §1 .
+de Vries et al. (2002)
+A. P. de Vries, N. Mamoulis, N. Nes, and M. Kersten
+Efficient k-nn search on vertically decomposed data .
+In Proceedings of the 2002 ACM SIGMOD international conference on Management of data ,
+pp. 322–333 .
+Cited by: §2.3 .
+Dietzfelbinger and Pagh (2008)
+M. Dietzfelbinger and R. Pagh
+Succinct data structures for retrieval and approximate membership .
+In International Colloquium on Automata, Languages, and Programming ,
+pp. 385–396 .
+Cited by: §1 ,
+§2.3 .
+Douze et al. (2025)
+M. Douze, A. Guzhva, C. Deng, J. Johnson, G. Szilvasy, P. Mazaré, M. Lomeli, L. Hosseini, and H. Jégou
+The faiss library .
+IEEE Transactions on Big Data .
+Cited by: Appendix F ,
+§5 .
+Du et al. (2025)
+Y. Du, W. Huang, D. Zheng, Z. Wang, S. Montella, M. Lapata, K. Wong, and J. Z. Pan
+Rethinking memory in ai: taxonomy, operations, topics, and future directions .
+arXiv preprint arXiv:2505.00675 .
+Cited by: §1 .
+Gog and Petri (2014)
+S. Gog and M. Petri
+Optimized succinct data structures for massive data .
+Software: Practice and Experience 44 ( 11 ), pp. 1287–1314 .
+Cited by: §1 ,
+§2.3 ,
+§2.3 ,
+§3.2 .
+Gu et al. (2024)
+J. Gu, X. Jiang, Z. Shi, H. Tan, X. Zhai, C. Xu, W. Li, Y. Shen, S. Ma, H. Liu, et al.
+A survey on llm-as-a-judge .
+arXiv preprint arXiv:2411.15594 .
+Cited by: §4.1 .
+Guia et al. (2017)
+J. Guia, V. G. Soares, and J. Bernardino
+Graph databases: neo4j analysis. .
+In ICEIS (1) ,
+pp. 351–356 .
+Cited by: §2.1 .
+Hayes-Roth and Hayes-Roth (1979)
+B. Hayes-Roth and F. Hayes-Roth
+A cognitive model of planning .
+Cognitive science 3 ( 4 ), pp. 275–310 .
+Cited by: §1 .
+Hu et al. (2022)
+E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, W. Chen, et al.
+Lora: low-rank adaptation of large language models. .
+ICLR 1 ( 2 ), pp. 3 .
+Cited by: §1 .
+Huang et al. (2024)
+M. Huang, Y. Long, X. Deng, R. Chu, J. Xiong, X. Liang, H. Cheng, Q. Lu, and W. Liu
+Dialoggen: multi-modal interactive dialogue system for multi-turn text-to-image generation .
+arXiv preprint arXiv:2403.08857 .
+Cited by: 1st item .
+Indyk and Motwani (1998)
+P. Indyk and R. Motwani
+Approximate nearest neighbors: towards removing the curse of dimensionality .
+In Proceedings of the thirtieth annual ACM symposium on Theory of computing ,
+pp. 604–613 .
+Cited by: §2.3 ,
+§3.3 .
+Jiang et al. (2024)
+Y. Jiang, Y. Wang, C. Wu, W. Zhong, X. Zeng, J. Gao, L. Li, X. Jiang, L. Shang, R. Tang, et al.
+Learning to edit: aligning llms with knowledge editing .
+arXiv preprint arXiv:2402.11905 .
+Cited by: §1 .
+Kagaya et al. (2024)
+T. Kagaya, T. J. Yuan, Y. Lou, J. Karlekar, S. Pranata, A. Kinose, K. Oguri, F. Wick, and Y. You
+Rap: retrieval-augmented planning with contextual memory for multimodal llm agents .
+arXiv preprint arXiv:2402.03610 .
+Cited by: §1 ,
+§2.1 .
+Kanerva et al. (2000)
+P. Kanerva, J. Kristoferson, and A. Holst
+Random indexing of text samples for latent semantic analysis .
+In Proceedings of the Annual Meeting of the Cognitive Science Society ,
+Vol. 22 .
+Cited by: §2.3 ,
+§3.3 .
+Kang et al. (2025)
+J. Kang, M. Ji, Z. Zhao, and T. Bai
+Memory os of ai agent .
+arXiv preprint arXiv:2506.06326 .
+Cited by: §H.1 ,
+§2.2 ,
+§5 .
+Kim et al. (2024)
+T. Kim, V. François-Lavet, and M. Cochez
+Leveraging knowledge graph-based human-like memory systems to solve partially observable markov decision processes .
+arXiv preprint arXiv:2408.05861 .
+Cited by: §1 .
+Kurisinkel and Chen (2023)
+L. J. Kurisinkel and N. F. Chen
+Llm based multi-document summarization exploiting main-event biased monotone submodular content extraction .
+arXiv preprint arXiv:2310.03414 .
+Cited by: 1st item .
+Labib et al. (2019)
+K. Labib, P. Uznanski, and D. Wolleb-Graf
+Hamming distance completeness .
+In 30th Annual Symposium on Combinatorial Pattern Matching (CPM 2019) ,
+Vol. 128 , pp. 14 .
+Cited by: §2.3 .
+LangChain (2025)
+LangChain
+The rise of ”context engineering” .
+Note: http://blog.langchain.com/the-rise-of-context-engineering/ Accessed: 2025-08-04
+Cited by: §1 .
+Lee et al. (2024)
+K. Lee, X. Chen, H. Furuta, J. Canny, and I. Fischer
+A human-inspired reading agent with gist memory of very long contexts .
+arXiv preprint arXiv:2402.09727 .
+Cited by: §2.2 ,
+§5 .
+Li et al. (2023a)
+B. Li, P. Wu, P. Abbeel, and J. Malik
+Interactive task planning with language models .
+arXiv preprint arXiv:2310.10645 .
+Cited by: §H.1 ,
+§1 .
+Li et al. (2023b)
+G. Li, H. Hammoud, H. Itani, D. Khizbullin, and B. Ghanem
+Camel: communicative agents for” mind” exploration of large language model society .
+Advances in Neural Information Processing Systems 36 , pp. 51991–52008 .
+Cited by: §1 .
+Li et al. (2025)
+Z. Li, S. Song, C. Xi, H. Wang, C. Tang, S. Niu, D. Chen, J. Yang, C. Li, Q. Yu, et al.
+Memos: a memory os for ai system .
+arXiv preprint arXiv:2507.03724 .
+Cited by: Appendix D ,
+§H.1 ,
+§2.2 ,
+§5 .
+Liu et al. (2024)
+A. Liu, B. Feng, B. Xue, B. Wang, B. Wu, C. Lu, C. Zhao, C. Deng, C. Zhang, C. Ruan, et al.
+Deepseek-v3 technical report .
+arXiv preprint arXiv:2412.19437 .
+Cited by: §1 .
+Liu et al. (2023a)
+N. F. Liu, K. Lin, J. Hewitt, A. Paranjape, M. Bevilacqua, F. Petroni, and P. Liang
+Lost in the middle: how language models use long contexts .
+arXiv preprint arXiv:2307.03172 .
+Cited by: §1 .
+Liu et al. (2023b)
+Y. Liu, L. Li, B. Zhang, S. Huang, Z. Zha, and Q. Huang
+Matcr: modality-aligned thought chain reasoning for multimodal task-oriented dialogue generation .
+In Proceedings of the 31st ACM International Conference on Multimedia ,
+pp. 5776–5785 .
+Cited by: 1st item .
+Maharana et al. (2024)
+A. Maharana, D. Lee, S. Tulyakov, M. Bansal, F. Barbieri, and Y. Fang
+Evaluating very long-term conversational memory of llm agents .
+arXiv preprint arXiv:2402.17753 .
+Cited by: Appendix B ,
+§2.2 ,
+§3.1 ,
+§4.1 .
+Malashenko et al. (2023)
+G. T. Malashenko, M. E. Kosov, S. V. Frumina, O. A. Grishina, R. A. Alandarov, V. V. Ponkratov, T. A. Bloshenko, L. D. Sanginova, S. S. Dzusova, and M. F. Hasan
+A digital model of full-cycle training based on the zettelkasten and interval repetition system .
+Emerging Science Journal 7 , pp. 1–15 .
+Cited by: §5 .
+Mei et al. (2024)
+K. Mei, X. Zhu, W. Xu, W. Hua, M. Jin, Z. Li, S. Xu, R. Ye, Y. Ge, and Y. Zhang
+Aios: llm agent operating system .
+arXiv preprint arXiv:2403.16971 .
+Cited by: §2.1 .
+Mei et al. (2025)
+L. Mei, J. Yao, Y. Ge, Y. Wang, B. Bi, Y. Cai, J. Liu, M. Li, Z. Li, D. Zhang, et al.
+A survey of context engineering for large language models .
+arXiv preprint arXiv:2507.13334 .
+Cited by: §1 .
+Nakajima (2023)
+Y. Nakajima
+BabyAGI: an experimental framework for a self-building autonomous agent .
+Note: https://github.com/yoheinakajima/babyagi Accessed: 2025-08-04
+Cited by: §1 .
+Norouzi et al. (2012)
+M. Norouzi, D. J. Fleet, and R. R. Salakhutdinov
+Hamming distance metric learning .
+Advances in neural information processing systems 25 .
+Cited by: §2.3 .
+Opitz and Burst (2019)
+J. Opitz and S. Burst
+Macro f1 and macro f1 .
+arXiv preprint arXiv:1911.03347 .
+Cited by: §4.1 .
+Packer et al. (2023)
+C. Packer, V. Fang, S. Patil, K. Lin, S. Wooders, and J. Gonzalez
+MemGPT: towards llms as operating systems. .
+Cited by: §H.1 ,
+§2.2 ,
+§5 .
+Peng et al. (2024)
+L. Peng, Z. Wang, F. Yao, Z. Wang, and J. Shang
+Metaie: distilling a meta model from llm for all kinds of information extraction tasks .
+arXiv preprint arXiv:2404.00457 .
+Cited by: 2nd item .
+Qu et al. (2024)
+H. Qu, W. Fan, Z. Zhao, and Q. Li
+Tokenrec: learning to tokenize id for llm-based generative recommendation .
+arXiv preprint arXiv:2406.10450 .
+Cited by: §2.3 .
+Rajaraman et al. (2024)
+N. Rajaraman, J. Jiao, and K. Ramchandran
+Toward a theory of tokenization in llms .
+arXiv preprint arXiv:2404.08335 .
+Cited by: §3.2 .
+Rasmussen et al. (2025)
+P. Rasmussen, P. Paliychuk, T. Beauvais, J. Ryan, and D. Chalef
+Zep: a temporal knowledge graph architecture for agent memory .
+arXiv preprint arXiv:2501.13956 .
+Cited by: §H.1 ,
+§2.1 .
+Resnikoff et al. (2012)
+H. L. Resnikoff O. Raymond Jr et al.
+Wavelet analysis: the scalable structure of information .
+Springer Science & Business Media .
+Cited by: §3.2 .
+Seshadri et al. (2016)
+V. Seshadri, D. Lee, T. Mullins, H. Hassan, A. Boroumand, J. Kim, M. A. Kozuch, O. Mutlu, P. B. Gibbons, and T. C. Mowry
+Buddy-ram: improving the performance and efficiency of bulk bitwise operations using dram .
+arXiv preprint arXiv:1611.09988 .
+Cited by: §2.3 .
+Shamir (2006)
+G. I. Shamir
+Universal lossless compression with unknown alphabets—the average case .
+IEEE Transactions on Information Theory 52 ( 11 ), pp. 4915–4944 .
+Cited by: §2.3 .
+Singh et al. (2025)
+A. Singh, A. Ehtesham, S. Kumar, and T. T. Khoei
+Agentic retrieval-augmented generation: a survey on agentic rag .
+arXiv preprint arXiv:2501.09136 .
+Cited by: §2.1 .
+Singh (2018)
+S. Singh
+Natural language processing for information extraction .
+arXiv preprint arXiv:1807.02383 .
+Cited by: 2nd item .
+Srivastava (2019)
+A. Srivastava
+Sense-plan-act in robotic applications .
+In Intelligent Robotics Seminar ,
+pp. 1–8 .
+Cited by: §1 .
+Su et al. (2024)
+J. Su, M. Ahmed, Y. Lu, S. Pan, W. Bo, and Y. Liu
+Roformer: enhanced transformer with rotary position embedding .
+Neurocomputing 568 , pp. 127063 .
+Cited by: §1 .
+Sun (2016)
+C. Sun
+Revisiting popcount operations in cpus / gpus .
+External Links: Link
+Cited by: §3.3 .
+Team et al. (2023)
+G. Team, R. Anil, S. Borgeaud, J. Alayrac, J. Yu, R. Soricut, J. Schalkwyk, A. M. Dai, A. Hauth, K. Millican, et al.
+Gemini: a family of highly capable multimodal models .
+arXiv preprint arXiv:2312.11805 .
+Cited by: §1 .
+Touvron et al. (2023)
+H. Touvron, T. Lavril, G. Izacard, X. Martinet, M. Lachaux, T. Lacroix, B. Rozière, N. Goyal, E. Hambro, F. Azhar, et al.
+Llama: open and efficient foundation language models .
+arXiv preprint arXiv:2302.13971 .
+Cited by: §1 .
+Tulving (1985)
+E. Tulving
+Ebbinghaus’s memory: what did he learn and remember? .
+Journal of Experimental Psychology: Learning, Memory, and Cognition 11 ( 3 ), pp. 485 .
+Cited by: §5 .
+Vaswani et al. (2017)
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin
+Attention is all you need .
+Advances in neural information processing systems 30 .
+Cited by: §1 .
+Wandji and Calvanese (2024)
+R. E. Wandji and D. Calvanese
+Improving the cost of updates in virtual knowledge graphs .
+In 2024 Joint Ontology Workshops-Episode X: The Tukker Zomer of Ontology, and Satellite Events, JOWO 2024, Enschede, The Netherlands, July 15-19, 2024 ,
+Cited by: §2.2 .
+Wang et al. (2024)
+S. Wang, Y. Zhu, H. Liu, Z. Zheng, C. Chen, and J. Li
+Knowledge editing for large language models: a survey .
+ACM Computing Surveys 57 ( 3 ), pp. 1–37 .
+Cited by: §1 .
+Wu et al. (2024a)
+D. Wu, H. Wang, W. Yu, Y. Zhang, K. Chang, and D. Yu
+Longmemeval: benchmarking chat assistants on long-term interactive memory .
+arXiv preprint arXiv:2410.10813 .
+Cited by: Appendix B ,
+§4.1 ,
+§4.1 .
+Wu et al. (2024b)
+Y. Wu, Y. Gu, X. Feng, W. Zhong, D. Xu, Q. Yang, H. Liu, and B. Qin
+Extending context window of large language models from a distributional perspective .
+arXiv preprint arXiv:2410.01490 .
+Cited by: §1 .
+Xin et al. (2021)
+J. Xin, R. Tang, Y. Yu, and J. Lin
+The art of abstention: selective prediction and error regularization for natural language processing .
+In Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the 11th International Joint Conference on Natural Language Processing (Volume 1: Long Papers) ,
+pp. 1040–1051 .
+Cited by: 2nd item .
+Xu et al. (2025)
+W. Xu, K. Mei, H. Gao, J. Tan, Z. Liang, and Y. Zhang
+A-mem: agentic memory for llm agents .
+arXiv preprint arXiv:2502.12110 .
+Cited by: §H.1 ,
+§1 ,
+§2.1 ,
+§2.2 ,
+§2.2 ,
+§5 .
+Yang et al. (2008)
+M. Yang, J. Zhu, J. Li, L. Wang, H. Qi, S. Li, and L. Daxin
+Extending bleu evaluation method with linguistic weight .
+In 2008 The 9th International Conference for Young Computer Scientists ,
+pp. 1683–1688 .
+Cited by: §4.1 .
+Yao et al. (2023)
+S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. Narasimhan, and Y. Cao
+React: synergizing reasoning and acting in language models .
+In International Conference on Learning Representations (ICLR) ,
+Cited by: §1 .
+Yu et al. (2024)
+Y. Yu, C. Kuo, Z. Ye, Y. Chang, and Y. Li
+Breaking the ceiling of the llm community by treating token generation as a classification for ensembling .
+arXiv preprint arXiv:2406.12585 .
+Cited by: §2.3 .
+Zaib et al. (2022)
+M. Zaib, W. E. Zhang, Q. Z. Sheng, A. Mahmood, and Y. Zhang
+Conversational question answering: a survey .
+Knowledge and Information Systems 64 ( 12 ), pp. 3151–3195 .
+Cited by: 1st item .
+Zhang et al. (2024)
+R. Zhang, H. Du, Y. Liu, D. Niyato, J. Kang, S. Sun, X. Shen, and H. V. Poor
+Interactive ai with retrieval-augmented generation for next generation networking .
+IEEE Network 38 ( 6 ), pp. 414–424 .
+Cited by: §H.1 ,
+§1 ,
+§2.1 .
+Zhong et al. (2024a)
+W. Zhong, L. Guo, Q. Gao, H. Ye, and Y. Wang
+Memorybank: enhancing large language models with long-term memory .
+In Proceedings of the AAAI Conference on Artificial Intelligence ,
+Vol. 38 , pp. 19724–19731 .
+Cited by: §2.2 ,
+§5 .
+Zhong et al. (2024b)
+Z. Zhong, H. Liu, X. Cui, X. Zhang, and Z. Qin
+Mix-of-granularity: optimize the chunking granularity for retrieval-augmented generation .
+arXiv preprint arXiv:2406.00456 .
+Cited by: §2.2 .
+Zhu et al. (2024)
+Y. Zhu, S. Qiao, Y. Ou, S. Deng, S. Lyu, Y. Shen, L. Liang, J. Gu, H. Chen, and N. Zhang
+Knowagent: knowledge-augmented planning for llm-based agents .
+arXiv preprint arXiv:2403.03101 .
+Cited by: §1 .
+Appendix A LLM-as-a-Judge Metric
+When evaluating a generated answer, we feed both the reference and candidate into the judge prompt (see Listing 1 ), and have GPT-5 act as the impartial judge to assign a score in the range of [ 1 , 2 , 3 , 4 , 5 ] [1,2,3,4,5] . The LLM judge supplements F1, BLEU-1, and accuracy, which may overestimate correctness in the edge cases.
+As shown in Listing 1 , we provide our prompt for LLM-as-a-Judge, which serves as the evaluation prompt for assessing the quality of generated answers. The prompt instructs an impartial evaluator to rate a candidate answer against a reference answer on a [ 1 , 2 , 3 , 4 , 5 ] [1,2,3,4,5] scale, focusing on Correctness , Completeness , and Clarity/Coherence . Specifically, a score of 5 indicates a perfectly correct, complete, and clear response; 4 reflects minor inaccuracies or slight omissions; 3 denotes partial correctness with missing major points; 2 corresponds to largely incorrect or irrelevant content; and 1 represents a completely wrong answer. This standardized prompt ensures consistent, interpretable, and reproducible evaluation across different experimental settings.
+Listing 1: Judge Prompt Template
+⬇
+JUDGE_PROMPT = "
+You are an impartial evaluator.
+Your task is to rate the quality of a
+candidate answer compared to a reference answer.
+[Question/Query]: {question};
+[Reference Answer]: {reference};
+[Candidate Answer]: {candidate}.
+Please assign a score from 1 to 5 based on how well the {candidate} matches
+the {reference} in terms of correctness, completeness (coverage of key points),
+and clarity and coherence.
+Scoring Guidelines:
+5: perfectly correct, complete, and clear;
+4: mostly correct, with minor issues or slight omissions;
+3: partially correct, with noticeable errors or missing major points;
+2: largely incorrect, irrelevant, or nonsensical;
+1: totally wrong.
+Only output the final score as an integer between 1 and 5.
+"
+As shown in Listing 2 , we present the prompt for answering the question, which is used to instruct the model to generate answers strictly based on the provided context. The prompt explicitly constrains the model to avoid relying on external knowledge or prior training data, ensuring that the generated responses are fully grounded in the given information. By including placeholders for the context and question, this design enforces factual consistency and prevents hallucination, making it suitable for controlled evaluations of context-dependent reasoning and information retrieval tasks.
+Listing 2: Answer-from-Context Prompt
+⬇
+ANSWER_PROMPT = "
+Based ONLY on the following context, answer the user’s question directly.
+Context:{context}
+Question: {question}
+"
+Appendix B Detailed Dataset Description
+We use LoCoMo Maharana et al. (2024) and LongMemEval (-S and -M) Wu et al. (2024a) for the experiments. Below is the detailed description of these two benchmarks.
+•
+LoCoMo is introduced to evaluate extremely long-term conversational memory in LLM agents. It is constructed via a machine-human hybrid pipeline: two LLM-powered agents carry multi-session dialogues grounded on persona profiles and temporal event graphs, generating coherent and causally linked conversations which humans then refine for consistency. Each conversation spans up to approximate 32 sessions and contains on the order of 600 turns and ∼ \sim 16K tokens on average. The benchmark supports multiple tasks, including question answering Zaib et al. (2022) , event summarization Kurisinkel and Chen (2023) , and multimodal dialogue generation Liu et al. (2023b) ; Huang et al. (2024) , allowing evaluation along dimensions such as single-hop, multi-hop, temporal, and open-domain memory reasoning.
+•
+LongMemEval is a more recent benchmark tailored for chat assistants, designed to probe long-term memory in interactive, multi-session settings. It comprises 500 curated questions, each embedded within a dynamically constructed chat history spanning multiple sessions. The benchmark assesses five core memory abilities: information extraction Singh (2018) ; Peng et al. (2024) , multi-session reasoning, temporal reasoning, knowledge updates, and abstention Xin et al. (2021) . During evaluation, models must parse incremental interactions, maintain memory over sessions, and deliver answers after the final session, thereby simulating realistic real-world continual-memory demands.
+Appendix C Overall Comparison on LongMemEval-M
+Table 3: Overall comparison of different memory modules across six tasks in LongMemEval-M benchmark, under the same setting as Table 2 .
+Memory Module
+Single-session-preference
+Single-session-assistant
+Temporal-reasoning
+Multi-session
+Knowledge-update
+Single-session-user
+F1
+Accuracy
+LLM-as-a-Judge
+F1
+Accuracy
+LLM-as-a-Judge
+F1
+Accuracy
+LLM-as-a-Judge
+F1
+Accuracy
+LLM-as-a-Judge
+F1
+Accuracy
+LLM-as-a-Judge
+F1
+Accuracy
+LLM-as-a-Judge
+ReadAgent
+3.45
+0.83
+1.15
+2.72
+5.36
+1.45
+3.17
+1.69
+1.04
+1.20
+1.32
+1.08
+1.56
+2.57
+1.19
+2.47
+6.79
+1.06
+MemoryBank
+4.14
+1.00
+1.72
+3.27
+6.43
+1.43
+3.81
+2.03
+1.11
+1.45
+1.58
+1.17
+1.88
+3.08
+1.18
+2.98
+8.14
+1.54
+MemGPT
+4.83
+1.17
+1.58
+3.81
+7.50
+1.31
+4.45
+2.37
+1.02
+1.70
+1.84
+1.07
+2.19
+3.59
+1.08
+3.49
+9.50
+1.39
+A-mem
+7.59
+1.83
+2.30
+5.99
+11.79
+1.91
+7.00
+3.72
+1.49
+2.68
+2.89
+1.57
+3.46
+5.64
+1.58
+5.49
+14.93
+1.94
+MemoryOS
+8.98
+2.16
+2.44
+7.10
+13.93
+2.02
+8.29
+4.40
+1.57
+3.18
+3.42
+1.64
+4.12
+6.67
+1.65
+6.53
+17.64
+2.01
+MemOS
+10.36
+2.50
+2.58
+8.21
+16.07
+2.14
+9.59
+5.08
+1.65
+3.68
+3.95
+1.72
+4.77
+7.70
+1.73
+7.56
+20.36
+2.16
+Hippocampus
+13.79
+3.33
+2.87
+10.88
+21.43
+2.38
+12.69
+6.77
+1.86
+4.81
+5.26
+1.94
+6.23
+10.26
+1.98
+8.67
+27.14
+2.40
+Figure 12: Ablation on the LoCoMo:
+Average search time versus Random Indexing dimension D D and signature size d d .
+Bars within each group (bottom axis) correspond to different d d values (top axis).
+Table 4: LoCoMo ablation: F1/BLEU-1/LLM-as-a-Judge vs. Random Indexing D D and signature size d d .
+D D
+d d
+F1 (%)
+BLEU-1 (%)
+LLM-Judge
+256
+16
+37.28
+33.69
+3.18
+256
+32
+38.27
+34.53
+3.17
+256
+64
+37.29
+33.62
+3.20
+256
+128
+37.54
+34.20
+3.20
+512
+16
+38.14
+34.42
+3.17
+512
+32
+38.30
+33.78
+3.18
+512
+64
+37.75
+33.45
+3.17
+512
+128
+38.16
+34.42
+3.21
+1024
+16
+38.72
+33.83
+3.20
+1024
+32
+38.18
+34.49
+3.20
+1024
+64
+37.31
+33.63
+3.19
+1024
+128
+37.59
+33.46
+3.19
+2048
+16
+37.79
+33.82
+3.18
+2048
+32
+38.66
+34.20
+3.21
+2048
+64
+38.35
+33.54
+3.19
+2048
+128
+38.21
+34.08
+3.21
+Accuracy-only results on LongMemEval-M, as shown in Table 3 , mirror the trends observed on the LongMemEval-S (Table 2 ): Hippocampus attains the highest or near-highest accuracy across all categories, particularly on multi-session and knowledge-update where signature-level association helps surface temporally and semantically related memories that are dispersed across sessions. We omit efficiency plots for brevity, the latency and token-consumption advantages follow the same pattern as on LongMemEval-S, since the retrieval substrate (signature filtering and content reconstruction) is identical; hence the relative gaps against dense-vector and KG baselines persist at similar magnitudes.
+Appendix D ablation Study of Hippocampus
+We evaluated expected trends on the LoCoMo long-memory benchmark by varying the random-index dimension D ∈ { 256,512 , 1024 , 2048 } D\in\{256,512,1024,2048\} and binary signature length d ∈ { 16 , 32 , 64 , 128 } d\in\{16,32,64,128\} . Figure 12 reports the expected average search time (in seconds), and Table 4 shows quality metrics (F1, BLEU-1, and LLM-as-a-Judge) under these settings.
+Avg. Search Time. Retrieval involves computing Hamming distances between the query’s binary signature and all stored signatures. Thus search time grows roughly linearly with the signature length d d (and weakly with D D ). In our table, doubling d d roughly doubles the time. Each extra bit adds a fixed cost, so larger d d or D D slows lookup.
+Accuracy. Increasing D D or d d raises the representational capacity of the memory, reducing collisions and improving recall. A higher random indexing dimension D D yields more nearly-orthogonal random codes, while a longer signature d d captures more bits of information. Consequently, all quality metrics (F1, BLEU-1, and the LLM-as-a-Judge score) improve as D D and d d grow. This matches the known trends: expanding memory capacity or embedding dimensions consistently boosts retrieval performance Li et al. (2025) .
+Trade-off Consideration. There is a clear trade-off. Larger D D and d d yield diminishing marginal gains in accuracy (the improvements taper off as the system saturates its capacity), but each added dimension/bit linearly increases search effort. In practice, one chooses D D , d d to balance these effects: enough capacity to achieve good recall accuracy (and thus higher LLM-judge scores), but not so large that retrieval becomes too slow.
+Appendix E Memory Construction
+A practical memory system must not only support fast retrieval at inference time, but also allow efficient memory construction (i.e., ingesting raw content into a persistent memory substrate). This cost directly impacts usability in real deployments, where memories are frequently refreshed, re-indexed, or rebuilt under updated policies.
+We measure the end-to-end wall-clock time to construct memory on LoCoMo. The measurement starts from reading the raw LoCoMo records and ends when the memory store is fully materialized and ready for querying (including all preprocessing, indexing, and persistence steps required by each method). We also report the total LLM token consumption (base model is gpt-4o-mini) incurred during construction, which captures the overhead of LLM-based summarization, or rewriting pipelines. All methods are evaluated under the same hardware/software environment.
+Table 5 shows that Hippocampus constructs memory in only 6.70 minutes while consuming zero LLM tokens. In contrast, prior systems rely on LLM-intensive preprocessing (e.g., summarization or memory rewriting) and thus incur substantial token usage and significantly higher wall-clock time. Compared with the fastest baseline in this table (A-mem), Hippocampus is 5.3 × \times faster, while eliminating token costs entirely. This advantage stems from our embedding-free construction pipeline based on token-id streams and binary signatures, avoiding LLM calls during ingestion.
+Appendix F Time and Space Complexity
+Table 5: End-to-end memory construction cost on LoCoMo. We report wall-clock time and total token consumption.
+Method
+Time (minute)
+Token Consumption
+MemoryOS
+4458.96
+41540
+Nemori
+477.66
+27637
+A-mem
+35.69
+19926
+MemGPT
+59.49
+50674
+MemOS
+70.00
+21055
+Ours (Hippocampus)
+6.70
+0
+We compare the asymptotic efficiency of Hippocampus ’s DWM-based storage/retrieval against dense-vector search (e.g. FAISS) and knowledge-graph methods.
+Let n n be the number of tokens stored (i.e., total memory size) and let σ \sigma be the dictionary size. Let each binary signature have length d d bits:
+DWM Construction (memory insertion). Each token-id insertion into the DWM (both content and signature matrices) requires a top-down traversal of l = ⌈ log 2 ⁡ σ ⌉ l=\lceil\log_{2}\sigma\rceil bit-level wavelet levels. Each level uses rank/select on a dynamic bitvector. In a static wavelet matrix, rank is 𝒪 ⁡ ( 1 ) \mathcal{O}(1) with succinct overhead, in a dynamic setting rank/select takes 𝒪 ⁡ ( log ⁡ n ) \mathcal{O}(\log n) time per operation. Hence a single append costs 𝒪 ⁡ ( ℓ + log ⁡ n ) = 𝒪 ⁡ ( log ⁡ σ + log ⁡ n ) \mathcal{O}(\ell+\log n)=\mathcal{O}(\log\sigma+\log n) . Amortized over n n inserts, total build time is 𝒪 ⁡ ( n ​ log ⁡ n ) \mathcal{O}(n\log n) (dominated by dynamic updates). Space is n ​ l + o ⁡ ( n ​ l ) nl+o(nl) bits (i.e. 𝒪 ⁡ ( n ​ log ⁡ σ ) \mathcal{O}(n\log\sigma) bits) for the raw bit-matrix, plus overhead for rank/select. In summary, DWM insertion is nearly linear: 𝒪 ⁡ ( n ​ log ⁡ n ) \mathcal{O}(n\log n) time and 𝒪 ⁡ ( n ​ log ⁡ σ ) \mathcal{O}(n\log\sigma) space.
+DWM Query (retrieval). Exact pattern matching in DWM (finding a specific signature) takes 𝒪 ⁡ ( l ) \mathcal{O}(l) time via rank/select (Algorithm 1 ). However, Hippocampus performs an approximate Hamming ball search. This is done by scanning each stored signature: for each candidate signature bit-string s i s_{i} , we compute Ham ⁡ ( s q , s i ) \mathrm{Ham}(s_{q},s_{i}) by bitwise XOR and popcount. Using machine words of size w w (e.g. w = 64 w=64 ), each signature takes 𝒪 ⁡ ( d / w ) \mathcal{O}(d/w) bit-operations. Thus the search cost is 𝒪 ⁡ ( n ⋅ d / w ) \mathcal{O}(n\cdot d/w) , i.e. linear in n n (and linear in d d bitwise operations). In practice d d is modest (e.g. a few hundred) so this is efficient, but asymptotically still 𝒪 ⁡ ( n ) \mathcal{O}(n) . In contrast, dense-vector search is also linear in n n in the worst case (even using indexing), but often with a larger constant due to dimensional inner products.
+Dense-vector ANN (e.g. FAISS). A brute-force k-NN search in D D -dimensional space costs 𝒪 ⁡ ( n ​ D ) \mathcal{O}(nD) per query. Modern systems use specialized indices (product quantization, HNSW graphs) to achieve sublinear query time on average. For example, HNSW scales roughly as 𝒪 ⁡ ( log ⁡ n ) \mathcal{O}(\log n) queries for well-behaved data, but has worst-case cost 𝒪 ⁡ ( n ) \mathcal{O}(n) . The Faiss library Douze et al. (2025) implements a variety of indexes, but fundamental limits remain: in the worst case, retrieval requires examining many candidates. Space overhead for Faiss indexes is typically 𝒪 ⁡ ( n ​ D ) \mathcal{O}(nD) to store the vectors plus index overhead.
+Knowledge Graph Traversal. If memories are stored as a knowledge graph of entities and relations, a query may involve multi-hop neighbor exploration. In general, a breadth-first search up to h h hops from a starting node touches 𝒪 ⁡ ( Δ h ) \mathcal{O}(\Delta^{h}) nodes, where Δ \Delta is the average branching factor. In practice, h h is kept small (e.g. 2–3), but even then exploring the graph can be expensive. In worst-case terms, a multi-hop query is 𝒪 ⁡ ( | V | + | E | ) \mathcal{O}(|V|+|E|) , where V V is node count and E E edges. Storing a full graph also uses 𝒪 ⁡ ( | V | + | E | ) \mathcal{O}(|V|+|E|) space. Notably, dynamic DWM updates and searches avoid such combinatorial growth.
+Comparison. Asymptotically, Hippocampus ’s DWM has linear space and near-linear-time updates ( 𝒪 ⁡ ( n ​ log ⁡ n ) \mathcal{O}(n\log n) build, dominated by dynamic bit-vector updates. Retrieval is also 𝒪 ⁡ ( n ) \mathcal{O}(n) per query (with a small bit-level factor). Dense-vector methods typically require O ⁡ ( n ​ D ) O(nD) worst-case and may need 𝒪 ⁡ ( n ​ log ⁡ n ) \mathcal{O}(n\log n) pre-processing. Graph methods can suffer exponential blow-up in hops or at least 𝒪 ⁡ ( n ) \mathcal{O}(n) per query. Thus, in theory the DWM+Hamming search is comparable or better than naive baselines and avoids the multi-hop expansion cost of graphs. Practically, the use of bitwise operations and in-memory bit-slices makes Hippocampus much faster per comparison than dense multiplications, as confirmed by our experiments.
+Appendix G Accuracy Gap
+We formalize how Hippocampus ’s random indexing step followed by an r r -bit Hamming ball search approximates dense-vector similarity. Let each token’s context embedding be a vector 𝒗 ∈ ℝ D \bm{v}\in\mathbb{R}^{D} , and consider two such vectors 𝒗 , 𝒘 \bm{v},\bm{w} . Hippocampus generates a d d -bit signature by random projection and thresholding: each bit is sign ​ ( ⟨ b k , v ⟩ ) \text{sign}(\langle b_{k},v\rangle) for some random hyperplane b k b_{k} (or an analogous sparse random base-vector scheme). By known results for random hyperplane hashing, the probability that a single bit differs satisfies:
+P ⁡ ( bit k ​ ( 𝒗 ) ≠ bit k ​ ( 𝒘 ) ) = θ π P(\text{bit}_{k}(\bm{v})\neq\text{bit}_{k}(\bm{w}))=\frac{\theta}{\pi}
+where θ = arccos ⁡ ( 𝒗 ⋅ 𝒘 | 𝒗 | ​ | 𝒘 | ) \theta=\arccos\big(\frac{\bm{v}\cdot\bm{w}}{|\bm{v}||\bm{w}|}\big) . Thus the expected Hamming distance between the d d -bit signatures is
+𝔼 ​ [ Ham ​ ( 𝒗 , 𝒘 ) ] = d ⋅ θ π \mathbb{E}[\text{Ham}(\bm{v},\bm{w})]=d\cdot\frac{\theta}{\pi}
+Equivalently, similarity 𝒗 ⋅ 𝒘 | 𝒗 | ​ | 𝒘 | = cos ⁡ θ \frac{\bm{v}\cdot\bm{w}}{|\bm{v}||\bm{w}|}=\cos\theta can be recovered up to small error from the normalized Hamming similarity.
+With d d independent bits, the law of large numbers gives concentration: for any ε > 0 \varepsilon>0 , by Hoeffding’s bound:
+P ⁡ ( | 1 d ​ Ham ​ ( 𝒗 , 𝒘 ) − θ π | ≥ ϵ ) ≤ 2 ​ e − 2 ​ d ​ ϵ 2 P(|\frac{1}{d}\text{Ham}(\bm{v},\bm{w})-\frac{\theta}{\pi}|\geq\epsilon)\leq 2e^{-2d\epsilon^{2}}
+Hence with high probability, 1 d ​ Ham ​ ( 𝒗 , 𝒘 ) \frac{1}{d}\text{Ham}(\bm{v},\bm{w}) is within 𝒪 ⁡ ( 1 / d ) \mathcal{O}(1/\sqrt{d}) of θ / π \theta/\pi . In practice, choosing d = 𝒪 ⁡ ( ϵ − 2 ​ log ⁡ N ) d=\mathcal{O}(\epsilon^{-2}\log N) ensures that for any fixed query among N N candidates, the Hamming distance will approximate the original cosine similarity within additive error ϵ \epsilon .
+Concretely, if we set a Hamming threshold r r corresponding to a desired angle θ 0 \theta_{0} (thus target similarity cos ⁡ θ 0 \cos\theta_{0} ), then any 𝒘 \bm{w} with 𝒗 ⋅ 𝒘 | 𝒗 | ​ | 𝒘 | ≥ cos ⁡ θ 0 \frac{\bm{v}\cdot\bm{w}}{|\bm{v}||\bm{w}|}\geq\cos\theta_{0} will satisfy Ham ​ ( 𝒗 , w ) ≤ r \text{Ham}(\bm{v},{w})\leq r except with probability at most e − 𝒪 ⁡ ( d ) e^{-\mathcal{O}(d)} . Conversely, vectors with similarity below cos ⁡ θ 0 \cos\theta_{0} will exceed the threshold with high probability. This establishes that Hippocampus ’s random indexing plus Hamming ball filter retrieves all sufficiently similar vectors (within angle θ 0 \theta_{0} ) with bounded false-negative probability, and rejects dissimilar vectors, mirroring an approximate nearest-neighbor search in cosine similarity space. The sampling complexity matches known bounds for binary embeddings.
+Theorem. Under the process in Section 3.3 , for any two vectors 𝒗 , 𝒘 \bm{v},\bm{w} , the Hamming distance of their d d -bit signatures concentrates around its mean d ​ θ / π d\theta/\pi . By choosing d = 𝒪 ⁡ ( δ − 2 ​ log ⁡ ( 1 / η ) ) d=\mathcal{O}(\delta^{-2}\log(1/\eta)) , one ensures Ham ​ ( 𝒗 , 𝒘 ) / d \text{Ham}(\bm{v},\bm{w})/d approximates θ / π \theta/\pi within ± δ \pm\delta with probability 1 − η 1-\eta . In particular, setting the Hamming radius r = d ​ θ 0 π r=\frac{d\theta_{0}}{\pi} , the Hamming-ball s : Ham ​ ( 𝒔 v , 𝒔 ) ≤ r {s:\text{Ham}(\bm{s}_{v},\bm{s})\leq r} contains all items with cosine similarity at least cos ⁡ ( θ 0 ) \cos(\theta_{0}) up to vanishing error.
+Proof. Hippocampus compresses high-dimensional embeddings into fixed‐length binary signatures by sparse random indexing and binarization. In effect, each bit of a token signature can be viewed as the sign of a random hyperplane dot-product with the original vector. The Hamming distance between two signatures then equals the number of bits on which they differ. We will show that this Hamming distance concentrates around ( θ / π ) ​ d (\theta/\pi)d , where θ = arccos ⁡ 𝒗 ⋅ 𝒘 | 𝒗 | ​ | 𝒘 | \theta=\arccos\frac{\bm{v}\cdot\bm{w}}{|\bm{v}||\bm{w}|} is the angle between vectors 𝒗 , 𝒘 \bm{v},\bm{w} . In particular, by choosing a suitable radius r ≈ ( θ 0 / π ) ​ d r\approx(\theta_{0}/\pi)d we retrieve all vectors with angle ≤ θ 0 \leq\theta_{0} (cosine similarity ≥ cos ⁡ θ 0 \geq\cos\theta_{0} ) with high probability.
+Binary hash and collision probability. For each bit index i = 1 , … , d i=1,\dots,d , pick an independent random Gaussian vector 𝒓 i ∼ N ⁡ ( 0 , I ) \bm{r}_{i}\sim N(0,I) in ℝ n \mathbb{R}^{n} and define the bit b i ​ ( v ) = sign ⁡ ( 𝒓 i ⋅ 𝒗 ) ∈ 0 , 1 b_{i}(v)=\operatorname{sign}(\bm{r}_{i}\cdot\bm{v})\in{0,1} . (Equivalently, Hippocampus selects a sparse random base vector and later binarizes the top- d d components, which yields the same analysis.) Let X i X_{i} be the indicator that b i ​ ( v ) ≠ b i ​ ( w ) b_{i}(v)\neq b_{i}(w) (a bit mismatch). It is a known fact Charikar (2002) that for any two vectors 𝒗 , 𝒘 \bm{v},\bm{w} at angle θ \theta , the probability their signs agree on a random hyperplane is
+P ⁡ ( b i ​ ( v ) = b i ​ ( w ) ) = 1 − θ π ⇒ P ⁡ ( X i = 1 ) = θ π P(b_{i}(v)=b_{i}(w))=1-\frac{\theta}{\pi}\Rightarrow P(X_{i}=1)=\frac{\theta}{\pi}
+considering a random line in the 2D plane of 𝒗 , 𝒘 \bm{v},\bm{w} Thus X i ∼ Bernoulli ⁡ ( p ) X_{i}\sim\mathrm{Bernoulli}(p) with p = θ / π p=\theta/\pi , and the Hamming distance H ⁡ ( 𝒗 , 𝒘 ) = ∑ i = 1 d X i H(\bm{v},\bm{w})=\sum_{i=1}^{d}X_{i} is a binomial random variable with mean
+𝔼 ⁡ [ H ⁡ ( 𝒗 , 𝒘 ) ] = d ​ p = θ π ​ d \mathbb{E}[H(\bm{v},\bm{w})]=dp=\frac{\theta}{\pi}d
+Concentration (Hoeffding/Chernoff bound). The X i X_{i} are independent and bounded in [ 0 , 1 ] [0,1] , so by Hoeffding’s inequality, we have for any ϵ > 0 \epsilon>0 :
+P ⁡ ( | H ⁡ ( 𝒗 , 𝒘 ) − d ​ p | ≥ ϵ ​ d ) ≤ 2 ​ e − 2 ​ ϵ 2 ​ d P(|H(\bm{v},\bm{w})-dp|\geq\epsilon d)\leq 2e^{-2\epsilon^{2}d}
+Equivalently:
+P ⁡ ( | H ⁡ ( 𝒗 , 𝒘 ) d − p | ≥ ϵ ) ≤ 2 ​ e − 2 ​ ϵ 2 ​ d P(|\frac{H(\bm{v},\bm{w})}{d}-p|\geq\epsilon)\leq 2e^{-2\epsilon^{2}d}
+Hence with high probability H ⁡ ( v , w ) / d H(v,w)/d lies in the interval [ p − ϵ , ; p + ϵ ] [p-\epsilon,;p+\epsilon] , i.e.
+H ⁡ ( 𝒗 , 𝒘 ) = ( θ π ) ​ d ± ϵ ​ d with probability ​ 1 − 2 ​ e − 2 ​ ϵ 2 ​ d H(\bm{v},\bm{w})=(\frac{\theta}{\pi})d\pm\epsilon d\quad\text{with probability}1-2e^{-2\epsilon^{2}d}
+Containment in the Hamming ball (false negatives). Fix a target angle θ 0 \theta_{0} (so we want cos ⁡ ( 𝒗 , 𝒘 ) ≥ cos ⁡ θ 0 \cos(\bm{v},\bm{w})\geq\cos\theta_{0} ). Consider any vector w w with θ ⁡ ( 𝒗 , 𝒘 ) ≤ θ 0 \theta(\bm{v},\bm{w})\leq\theta_{0} . Then p = θ / π ≤ θ 0 / π p=\theta/\pi\leq\theta_{0}/\pi . Define a search radius: r = ( θ 0 π + ϵ ) + d r=(\frac{\theta_{0}}{\pi}+\epsilon)+d , by the above tail bound:
+P ⁡ ( H ⁡ ( 𝒗 , 𝒘 ) > r ) = P ⁡ ( H d > θ 0 π + ϵ ) ≤ e − 2 ​ ϵ 2 ​ d P(H(\bm{v},\bm{w})>r)=P(\frac{H}{d}>\frac{\theta_{0}}{\pi}+\epsilon)\leq e^{-2\epsilon^{2}d}
+since 𝔼 ⁡ [ H / d ] ≤ θ 0 / π \mathbb{E}[H/d]\leq\theta_{0}/\pi . Thus with probability at least 1 − e − 2 ​ ϵ 2 ​ d 1-e^{-2\epsilon^{2}d} we have H ⁡ ( v , w ) ≤ r H(v,w)\leq r . By choosing d d large enough (see below), this failure probability can be made ≤ δ / N \leq\delta/N (union-bounding over N N candidates). In summary, any vector within angle θ 0 \theta_{0} will lie inside the Hamming ball of radius r ≈ ( θ 0 / π ) ​ d r\approx(\theta_{0}/\pi)d with high probability.
+False positives (outside angle). Conversely, if θ ⁡ ( 𝒗 , 𝒘 ) > θ 0 \theta(\bm{v},\bm{w})>\theta_{0} , then p = θ / π > θ 0 / π p=\theta/\pi>\theta_{0}/\pi . In particular, if θ ≥ θ 0 + 2 ​ ϵ ​ π \theta\geq\theta_{0}+2\epsilon\pi then p ≥ θ 0 / π + 2 ​ ϵ p\geq\theta_{0}/\pi+2\epsilon . In that case:
+P ⁡ ( H ⁡ ( 𝒗 , 𝒘 ) ≤ ( θ 0 π + ϵ ) ​ d ) = P ⁡ ( H d ≤ p − ϵ ) ≤ e − 2 ​ ϵ 2 ​ d P(H(\bm{v},\bm{w})\leq(\frac{\theta_{0}}{\pi}+\epsilon)d)=P(\frac{H}{d}\leq p-\epsilon)\leq e^{-2\epsilon^{2}d}
+by the lower-tail Hoeffding bound. Hence vectors with angle substantially above θ 0 \theta_{0} will (with probability 1 − exp ⁡ ( − 2 ​ ϵ 2 ​ d ) 1-\exp(-2\epsilon^{2}d) ) have Hamming distance exceeding ( θ 0 / π + ϵ ) ​ d (\theta_{0}/\pi+\epsilon)d and will not be included in the ball of radius r = ( θ 0 / π + ϵ ) ​ d r=(\theta_{0}/\pi+\epsilon)d . This bounds the false‐positive rate.
+Parameter choice ( d d vs. ϵ , δ , N \epsilon,\delta,N ). To guarantee both error probabilities e − 2 ​ ϵ 2 ​ d e^{-2\epsilon^{2}d} are at most δ / ( 2 ​ N ) \delta/(2N) (so that a union bound over N N vectors still yields failure probability ≤ δ \leq\delta ), it suffices to choose d ≥ 1 2 ​ ϵ 2 ​ ln ⁡ ( 2 ​ N δ ) d\geq\frac{1}{2\epsilon^{2}}\ln(\frac{2N}{\delta}) . In big‐O terms, d = O ⁡ ( ( 1 / ϵ 2 ) ​ ( log ⁡ N + log ⁡ ( 1 / δ ) ) ) d=O\bigl((1/\epsilon^{2})(\log N+\log(1/\delta))\bigr) is enough. For such d d , we have with probability 1 − δ 1-\delta (over the randomness of the projections) that all vectors within angle θ 0 \theta_{0} lie in the Hamming ball of radius r = ( θ 0 / π + ϵ ) ​ d r=(\theta_{0}/\pi+\epsilon)d , and vectors with angle significantly larger than θ 0 \theta_{0} lie outside this ball.
+The above calculation shows that the normalized Hamming distance H ⁡ ( 𝒗 , 𝒘 ) / d H(\bm{v},\bm{w})/d concentrates near ( θ / π ) (\theta/\pi) . Hence a Hamming‐ball query of radius r ≈ ( θ 0 / π ) ​ d r\approx(\theta_{0}/\pi)d retrieves exactly those vectors with angle ≤ θ 0 \leq\theta_{0} (cosine ≥ cos ⁡ θ 0 \geq\cos\theta_{0} ), up to an error margin controlled by ϵ , δ \epsilon,\delta . In other words, Hippocampus ’s random indexing plus Hamming ball method yields an ( ϵ , δ ) (\epsilon,\delta) -approximation of cosine-similarity search: with d = O ⁡ ( ( 1 / ϵ 2 ) ​ log ⁡ ( N / δ ) ) d=O((1/\epsilon^{2})\log(N/\delta)) bits, one finds all high-cosine neighbors with bounded false-positive/negative rates
+Appendix H Detailed Related Work
+H.1 Memory System for Agentic AI
+The design of memory modules for agentic AI has become a central research area, with a primary focus on developing high-level architectural frameworks that enable agents to store, organize, and recall past experiences effectively. A close examination of the state-of-the-art reveals that innovation has largely concentrated on the conceptual layer of memory management, how an agent should reason about its history, while relying on a common set of underlying retrieval technologies.
+A prominent school of thought approaches agent memory by drawing analogies to the memory management principles of traditional operating systems (OS), emphasizing concepts like hierarchy, resource allocation, and control flow.
+MemGPT Packer et al. (2023) pioneers the concept of virtual context management for LLMs. This technique provides the illusion of an infinite context window by creating a two-tiered memory hierarchy. The main context is analogous to physical RAM and consists of the tokens directly within the LLM’s prompt, while the external context serves as disk storage for out-of-context information. The core mechanism of MemGPT is that the LLM itself orchestrates the movement of data between these tiers through self-directed function calls, effectively managing its own limited context as a constrained resource.
+MemoryOS Kang et al. (2025) extends this OS metaphor with a more rigidly defined three-tier hierarchical storage architecture: Short-Term Memory (STM) for real-time conversations, Mid-Term Memory (MTM) for topic-based summaries, and Long-term Personal Memory (LPM) for persistent user and agent personas. It formalizes the data lifecycle with explicit update policies borrowed from OS design, such as a dialogue-chain-based FIFO (First-In, First-Out) principle for promoting information from STM to MTM and a heat-based replacement strategy for archiving less relevant information from MTM, mirroring OS page management techniques.
+MemOS Li et al. (2025) presents the most abstract and comprehensive OS-level vision, proposing that memory should be treated as a first-class operational resource within the AI system. Its central innovation is the MemCube, a standardized data structure and abstraction layer designed to unify three fundamentally different memory types: parametric memory (knowledge encoded in model weights), activation memory (transient states like the KV-cache), and plaintext memory (external knowledge sources). By providing a unified framework for the full lifecycle of these memory units, including their creation, scheduling, and evolution, MemOS aims to imbue LLMs with system-level controllability, plasticity, and evolvability.
+A second major approach draws inspiration from psychology and cognitive science, seeking to build memory systems that emulate the more nuanced and adaptive characteristics of human memory.
+ReadAgent Li et al. (2023a) is modeled on how humans read and comprehend very long documents. Instead of attempting to process entire texts verbatim, it implements a system that creates short, compressed gist memories. This design is grounded in the fuzzy-trace theory of human memory, which posits that humans quickly forget precise details but retain the core substance or gist of information for much longer. ReadAgent uses the LLM’s own reasoning capabilities to decide what content to group into a memory episode, how to compress it into a gist, and when to perform an interactive look-up of the original text for specific details, transforming retrieval into an active reasoning task.
+MemoryBank Zhang et al. (2024) explicitly incorporates a model of human forgetting to achieve more natural long-term interactions. Its memory update mechanism is directly inspired by the Ebbinghaus Forgetting Curve theory, a psychological principle describing the decay of memory over time. This allows the agent to selectively forget less significant or infrequently accessed memories while reinforcing more important ones, aiming for a more anthropomorphic and engaging user experience, particularly in long-term AI companion scenarios. Its storage is also hierarchical, distilling verbose dialogues into concise daily summaries, which are then aggregated into a global summary.
+A-mem Xu et al. (2025) is architected around the principles of the Zettelkasten method, a sophisticated technique for knowledge management that emphasizes the creation of a network of interconnected atomic notes. When a new memory is formed, A-mem uses an LLM to generate a structured note containing attributes like keywords, tags, and a rich contextual description. The system then agentically analyzes historical memories to establish meaningful links, creating an evolving web of knowledge. This process also enables memory evolution, where the integration of new information can trigger updates to the attributes of existing memories, allowing the network to continuously refine its understanding over time.
+A distinct architectural approach structures memory explicitly as a knowledge graph (KG), which excels at representing the relational and temporal dependencies between entities. While many systems rely on vector search for amorphous semantic similarity, KGs provide a structured representation that is particularly well-suited for tasks requiring multi-hop reasoning or a precise understanding of how the information evolves.
+Zep and Graphiti Rasmussen et al. (2025) exemplify this approach. Zep is a memory layer service for agents that is powered by Graphiti, a temporally-aware knowledge graph engine. Unlike static RAG systems that retrieve from unchanging document collections, Graphiti dynamically ingests and synthesizes both unstructured conversational data and structured business data into a KG that explicitly maintains historical relationships and their periods of validity. This bi-temporal model, which tracks both event time and transaction time, enables agents to perform complex temporal reasoning queries (e.g., ”What was the status of Project X last week?”), a capability that is fundamentally challenging for standard vector-based RAG systems.
+H.2 Succinct Data Structures
+The core data structure of Hippocampus : Dynamic Wavelet Matrix, is rooted in the field of succinct data structures, a specialized area of computer science focused on high-performance information retrieval in space-constrained environments.
+Succinct data structures are data representations that occupy an amount of space that is very close to the information-theoretic minimum required to store the data, while still supporting efficient queries. For example, a binary tree with n n nodes requires at least 2 ​ n 2n bits to be represented uniquely, and succinct representations achieve this bound while still allowing for navigation operations (e.g., finding a parent or child) in constant time. A crucial feature that distinguishes them from simple compression algorithms is that they are designed to be queried directly in their compressed form, without needing to be decompressed first. This combination of extreme space efficiency and fast query performance makes them ideal for managing massive datasets that must be held in memory. This field has matured from purely theoretical results to practical, highly-engineered libraries such as SDSL.
+The Wavelet Matrix is a powerful and flexible succinct data structure designed to represent long sequences of symbols, such as a stream of integers drawn from a fixed alphabet. It is an optimized and more practical implementation of the conceptual Wavelet Tree. Structurally, it reorganizes the bits of the symbols in the input sequence into a collection of bit-vectors, where each bit-vector corresponds to a specific bit-plane of the alphabet (e.g., the most significant bits of all symbols form the first bit-vector, the second-most significant bits form the second, and so on).
+By augmenting these bit-vectors with small auxiliary structures that allow for constant-time binary rank and select operations, the Wavelet Matrix can efficiently support three fundamental queries on the original sequence in time logarithmic in the alphabet size ( 𝒪 ⁡ ( l ​ o ​ g ​ σ ) \mathcal{O}(log~\sigma) ):
+access( i i ) : Returns the original symbol at position i i ;
+rank( c , i c,i ) : Counts the number of occurrences of symbol c c in the prefix of the sequence up to position i i .
+select( c , j c,j ) : Finds the position of the j j -th occurrence of symbol c c in the sequence.
+These primitives are the computational building blocks used by Hippocampus . However, canonical wavelet matrices are static, they are built once over a fixed dataset and do not support efficient updates.
+A key technical contribution of our work is the development of a Dynamic Wavelet Matrix (DWM), an append-friendly adaptation specifically designed to handle the high-throughput, continuously growing memory stream of an agentic system. Furthermore, the application of this structure to co-index two heterogeneous data streams: compact semantic signatures for search and lossless token-IDs for reconstruction, is a novel use case that extends the traditional application of wavelet matrices in information retrieval.
+langley00
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

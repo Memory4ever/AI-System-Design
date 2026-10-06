@@ -1,0 +1,650 @@
+[
+  {
+    "tag": "h5",
+    "text": "Report GitHub Issue"
+  },
+  {
+    "tag": "p",
+    "text": "Content selection saved. Describe the issue below:"
+  },
+  {
+    "tag": "h1",
+    "text": "FORCE: Transferable Visual Jailbreaking Attacks via Feature Over-Reliance CorrEction"
+  },
+  {
+    "tag": "h6",
+    "text": "Abstract"
+  },
+  {
+    "tag": "p",
+    "text": "Warning: This paper contains content that may be considered harmful."
+  },
+  {
+    "tag": "p",
+    "text": "The integration of new modalities enhances the capabilities of multimodal large language models (MLLMs) but also introduces additional vulnerabilities. In particular, simple visual jailbreaking attacks can manipulate open-source MLLMs more readily than sophisticated textual attacks. However, these underdeveloped attacks exhibit extremely limited cross-model transferability, failing to reliably identify vulnerabilities in closed-source MLLMs. In this work, we analyse the loss landscape of these jailbreaking attacks and find that the generated attacks tend to reside in high-sharpness regions, whose effectiveness is highly sensitive to even minor parameter changes during transfer. To further explain the high-sharpness localisations, we analyse their feature representations in both the intermediate layers and the spectral domain, revealing an improper reliance on narrow layer representations and semantically poor frequency components. Building on this, we propose a Feature Over-Reliance CorrEction (FORCE) method, which guides the attack to explore broader feasible regions across layer features and rescales the influence of frequency features according to their semantic content. By eliminating non-generalizable reliance on both layer and spectral features, our method discovers flattened feasible regions for visual jailbreaking attacks, thereby improving cross-model transferability. Extensive experiments demonstrate that our approach effectively facilitates visual red-teaming evaluations against closed-source MLLMs."
+  },
+  {
+    "tag": "h2",
+    "text": "1 Introduction"
+  },
+  {
+    "tag": "p",
+    "text": "To meet the growing demand for complex tasks, the capability to process multimodal information has been rapidly integrated into multimodal large language models (MLLMs) ( OpenAI, 2025 ; Anthropic, 2025 ; Google, 2025 ) . Despite their remarkable performance, the increasing deployment of these models in decision-critical domains has raised societal concerns about their potential risks ( Perez et al., 2022 ; Ganguli et al., 2022 ) . Recent red-teaming efforts reveal that, although MLLMs exhibit strong safeguards against textual jailbreaking attacks, they can be easily manipulated through vulnerabilities introduced by newly embedded modalities ( Qi et al., 2024 ; Bailey et al., 2023 ) ."
+  },
+  {
+    "tag": "p",
+    "text": "Among various attacks, optimisation-based visual jailbreaking attacks are considered one of the most effective for identifying vulnerabilities in MLLMs, as they can reliably bypass the safety guardrails of open-source models with imperceptible perturbations ( Zhao et al., 2023 ; Niu et al., 2024 ; Aichberger et al., ) . As illustrated in Figure 1 , visual attacks optimised on the source model can effectively exploit its inherent vulnerabilities and elicit harmful responses to malicious instructions, whereas the same requests are refused when paired with a non-adversarial image. Nevertheless, these visual attacks exhibit extremely limited cross-model transferability ( Schaeffer et al., 2025 ) , as the exploited vulnerabilities are specific to the source MLLM and fail to generalise to target MLLMs during transfer. Consequently, such attacks fall short of posing a practical threat to closed-source commercial MLLMs and remain inadequate for real-world red-teaming evaluations."
+  },
+  {
+    "tag": "p",
+    "text": "To shed light on this limitation, we analyse the loss landscape of visual jailbreaking attacks to quantify their sensitivity to small variations. Empirically, we find that the generated attacks typically reside in high-sharpness regions of the source MLLM, where minor parameter shifts can substantially increase the loss and render them ineffective. This observation suggests that the optimisation-based visual jailbreaking attacks tend to rely on model-specific features to manipulate the source MLLM, making them fail to consistently jailbreak target MLLMs."
+  },
+  {
+    "tag": "p",
+    "text": "Motivated by this, we further analyse the feature representations of visual jailbreaking attacks in both the intermediate layers and the spectral domain, uncovering the existence of non-generalizable reliance. Specifically, the feasible regions of visual attacks display distinct characteristics across layers. Closer to the earlier layers, these attacks depend more heavily on model-specific features to mislead MLLMs, resulting in narrower and more fragile feasible regions. Regarding the spectral domain, we observe that as optimisation progresses, high-frequency information exerts increasing influence on attack effectiveness, eventually surpassing low-frequency components that contain richer semantic content. This trend suggests an overemphasis on high-frequency information, making the generated attacks depend on semantically weak features that lack generalisability. Both aspects of improper feature reliance hinder visual jailbreaking attacks from capturing robust representations, which in turn confines them to high-sharpness regions and results in poor cross-model transferability."
+  },
+  {
+    "tag": "p",
+    "text": "Based on these findings, we propose a Feature Over-Reliance CorrEction (FORCE) method to improve the transferability of visual jailbreaking attacks. For the layer space, we introduce a layer-aware regularisation that guides attacks to explore larger feasible regions in early-layer features, thereby achieving smoother representations throughout the model. In the spectral domain, we rescale high-frequency information to suppress the excessive influence of non-semantic content and restore frequency distributions closer to natural images. By integrating these two components, our method mitigates non-generalizable reliance and guides visual jailbreaking attacks toward flatter loss landscapes, thereby enhancing transferability. Our main contributions are summarised as follows:"
+  },
+  {
+    "tag": "p",
+    "text": "We find that visual attacks rely on model-specific features to mislead MLLMs, exhibiting high-sharpness loss landscapes that make them highly sensitive to transfer changes."
+  },
+  {
+    "tag": "p",
+    "text": "We propose a novel method that corrects improper dependencies in both intermediate layers and spectral features to explore flatter loss landscapes and improved transferability."
+  },
+  {
+    "tag": "p",
+    "text": "We evaluate our approach across diverse MLLM architectures and datasets, demonstrating consistent and substantial improvements in transferability."
+  },
+  {
+    "tag": "figcaption",
+    "text": "Figure 1: Schematic illustration of the generation and transfer of optimisation-based visual jailbreaking attacks, as well as the feasible regions of such attacks in the input space."
+  },
+  {
+    "tag": "h2",
+    "text": "2 Related Work"
+  },
+  {
+    "tag": "p",
+    "text": "Multimodal Large Language Models. There are two mainstream architectures for integrating new modalities: adapter-based MLLMs ( Liu et al., 2023b ; Zhu et al., 2023 ; Bai et al., 2023a ) and early-fusion MLLMs ( Zhou et al., 2024 ; Xiao et al., 2024 ; Team, 2024 ) . Adapter-based MLLMs employ an adapter to project the output of an image encoder, such as CLIP ( Radford et al., 2021 ) , into the embedding space of the large language models (LLMs). On the other hand, early-fusion MLLMs utilise a unified tokeniser to process multimodal information within a shared embedding space. Both designs can leverage the powerful reasoning and understanding capabilities of LLMs to support a wide range of multimodal tasks, with outputs predicted according to the joint conditional distribution of textual and visual information, p 𝜽 ​ ( 𝐲 ∣ 𝐱 img , 𝐱 txt ) p_{\\bm{\\theta}}\\left(\\mathbf{y}\\mid\\mathbf{x}_{\\text{img}},\\mathbf{x}_{\\text{txt}}\\right) ."
+  },
+  {
+    "tag": "p",
+    "text": "Textual Jailbreaking Attack. Jailbreaking attacks arise from the discovery that hand-crafted adversarial prompts can bypass safeguards in LLMs, leading them to answer malicious queries and produce harmful content ( Shen et al., 2023 ; Liu et al., 2023c ) . To automatically uncover vulnerabilities in LLMs, three types of jailbreaking attack strategies have been rapidly developed. Heuristic-based attacks typically leverage genetic algorithms to modify a prototype corpus until they successfully bypass the safety guardrails ( Liu et al., ; Shah et al., 2023 ; Yu et al., 2023 ) . LLM-based attacks utilise the inherent capabilities of LLMs to rewrite malicious queries, obstructing the victim model’s perception ( Chao et al., 2023 ; Yao et al., 2023 ) . Optimisation-based attacks define an affirmative target output and leverage gradient information to iteratively update the adversarial suffix, ultimately eliciting undesirable responses ( Zou et al., 2023 ; Yang et al., 2025a ; Liao & Sun, 2024 ) ."
+  },
+  {
+    "tag": "p",
+    "text": "Although the aforementioned textual attacks can also manipulate MLLMs, their effectiveness diminishes with the growing strength of textual alignment ( Touvron et al., 2023 ; Bai et al., 2022 ; Rafailov et al., 2024 ) . In contrast, MLLMs demonstrate relatively weak alignment regarding vulnerabilities associated with new modalities ( Shayegani et al., 2023 ; Schaeffer et al., 2025 ) , thereby establishing visual jailbreaking attacks as a promising direction for red-teaming evaluations."
+  },
+  {
+    "tag": "p",
+    "text": "Visual Jailbreaking Attack. Visual jailbreaks are typically classified into two categories: generation-based and optimisation-based methods. Generation-based methods either craft image typography to encode malicious textual content ( Li et al., 2024 ; Yang et al., 2025b ) or generate harmful images matching the textual semantics ( Teng et al., 2024 ; Zhao et al., 2025 ) . These generated malicious images can mislead MLLMs through the visual modality while simultaneously circumventing textual alignment mechanisms. However, such methods depend on human effort or auxiliary models to produce required visual typography or query–image pairs, making them resource-intensive. More importantly, this type of method lacks the ability to capture the fine-grained vulnerabilities, falling short of reliably manipulating the MLLMs ( Schaeffer et al., 2025 ) ."
+  },
+  {
+    "tag": "p",
+    "text": "In contrast, optimisation-based methods, such as the Projected Gradient Descent (PGD) attack ( Madry et al., 2018 ) and its variants ( Zhao et al., 2023 ; Qi et al., 2024 ; Bailey et al., 2023 ; Niu et al., 2024 ) , use gradient information to optimise the jailbreaking perturbation δ \\delta , thereby reliably exposing model vulnerabilities. In these methods, an affirmative target output of length S S , such as Sure, here is , is first defined, and then the loss is calculated as:"
+  },
+  {
+    "tag": "tr",
+    "text": "ℓ ( ( 𝐱 img + δ , 𝐱 txt ) , 𝐲 ) = − ∑ s = 1 S log p θ ( 𝐲 s ∣ 𝐱 img + δ , 𝐱 txt ) , \\ell\\!\\left((\\mathbf{x}_{\\text{img}}+\\delta,\\mathbf{x}_{\\text{txt}}),\\mathbf{y}\\right)=-\\sum_{s=1}^{S}\\log p_{{\\theta}}\\!\\left(\\mathbf{y}_{s}\\mid\\mathbf{x}_{\\text{img}}+\\delta,\\mathbf{x}_{\\text{txt}}\\right), (1)"
+  },
+  {
+    "tag": "p",
+    "text": "where p θ p_{{\\theta}} denotes the MLLM posterior token distribution parameterized by θ \\theta , 𝐲 s \\mathbf{y}_{s} is the s s -th target token, 𝐱 img \\mathbf{x}_{\\text{img}} and 𝐱 txt \\mathbf{x}_{\\text{txt}} represent the visual and textual input tokens, and δ \\delta is the jailbreaking perturbation being optimized. To maximise the log-likelihood of the target response, we iteratively optimise the jailbreaking perturbation along the gradient direction until it successfully misleads the MLLM:"
+  },
+  {
+    "tag": "tr",
+    "text": "δ ( t + 1 ) = δ ( t ) − α ​ sign ⁡ ( ∂ ℓ / ∂ δ ( t ) ) . \\delta^{(t+1)}=\\delta^{(t)}-\\alpha\\,\\operatorname{sign}\\left({\\partial\\ell}/{\\partial\\delta^{(t)}}\\right). (2)"
+  },
+  {
+    "tag": "p",
+    "text": "Despite achieving near-perfect success in manipulating the source MLLM, optimisation-based methods generate visual attacks with limited transferability to target MLLMs ( Schaeffer et al., 2025 ) . To thoroughly assess and expose potential risks in closed-source LLMs, this work aims to understand and improve the transferability of optimisation-based visual jailbreaking attacks."
+  },
+  {
+    "tag": "h2",
+    "text": "3 Methodology"
+  },
+  {
+    "tag": "p",
+    "text": "In this section, we show that visual jailbreaking attacks exhibit a sharp loss landscape, rendering their effectiveness highly sensitive to minor changes (Section 3.1 ). Then, we analyse their feature representations and identify non-generalizable reliance in both the layer space (Section 3.2 ) and the spectral domain (Section 3.3 ). Finally, we propose the Feature Over-Reliance CorrEction (FORCE) method to mitigate these improper reliances and enhance cross-model transferability (Section 3.4 )."
+  },
+  {
+    "tag": "h3",
+    "text": "3.1 Loss Landscape of Visual Jailbreaking Attack"
+  },
+  {
+    "tag": "p",
+    "text": "As shown in Figure 1 , while optimisation-based visual jailbreaking attacks can easily bypass the safety guardrails of victim MLLMs, their limited transferability to target models constrains their real-world practicality. Inspired by prior research on classification tasks ( Chen et al., 2023 ; Wei et al., 2023 ) , we first investigate the transferability of visual jailbreaking attacks through the geometry of the loss landscape. Throughout this section, we use LLaVA-v1.5-7B ( Liu et al., 2023a ) as the source MLLM, adopt standard PGD ( Madry et al., 2018 ) with a step size of 2 / 255 2/255 and a perturbation budget of 32 / 255 32/255 , and set ‘‘Sure, here is’’ as the optimisation target."
+  },
+  {
+    "tag": "figcaption",
+    "text": "Figure 2: The input (top) and weight (bottom) loss landscape of the visual jailbreaking attack. The blue and yellow points correspond to successful and failed examples on the source MLLM, respectively."
+  },
+  {
+    "tag": "p",
+    "text": "First, we visualise the input loss landscapes of visual jailbreaking attacks by introducing pixel perturbations in two directions, one aligned with the gradient and the other randomly sampled from a uniform distribution. As observed in Figure 2 (top), the generated visual attacks effectively manipulate the source MLLM to achieve the optimisation objective, as evidenced by the nearly 0 loss at the original point. However, when we inject small pixel perturbations, the loss increases sharply, reflecting that the attack rapidly loses its effectiveness in misleading the model. For instance, even a 0.03 pixel perturbation along the adversarial direction can raise the loss above 0.28, which is sufficient to invalidate the attack. We also introduce weight perturbations to the model parameters to simulate the impact of transfer-induced parameter shifts on attack effectiveness. As depicted in Figure 2 (bottom), we observe that the attack is trapped in a local optimum of the source MLLM, where even a minor weight perturbation of 0.0002 can push it out of the feasible region and render it ineffective. This sharp loss landscape indicates that optimisation-based methods tend to rely on model-specific features, which are sensitive to minor changes and result in unreliable performance when generalised to target models."
+  },
+  {
+    "tag": "h3",
+    "text": "3.2 Features Representations on Different Layers"
+  },
+  {
+    "tag": "p",
+    "text": "To disentangle the feature reliance responsible for high-sharpness regions, we conduct a detailed analysis of the intermediate layer representations of generated visual attacks. For a fair comparison, we separately extract each layer’s features from a successful visual jailbreaking attack and a natural image, and then construct interpolated representations using the convex combination ( 1 − μ ) ⋅ f θ ​ ( jail ) + μ ⋅ f θ ​ ( nat ) (1-\\mu)\\cdot f_{\\theta}(\\text{jail})+\\mu\\cdot f_{\\theta}(\\text{nat}) , to exclude inter-layer differences such as parameter norms and activation scales. We also interpolate features between two different visual jailbreaking attacks, as detailed in Appendix A ."
+  },
+  {
+    "tag": "figcaption",
+    "text": "Figure 3: Feasible regions between jailbreaking and natural examples across different layers’ features. The blue and yellow points correspond to successful and failed examples on the source MLLM."
+  },
+  {
+    "tag": "p",
+    "text": "As depicted in Figure 3 , we observe that visual attacks are located in distinct subspaces across different layers, showing varying sensitivity to feature interpolation. It is clear that the features in the latter layer exhibit a more flattened representation, as feature interpolation leads to a smooth increase in loss. For example, in the 31st layer, the visual jailbreaking attack can continue to mislead the source MLLM even after 40% of the natural features are interpolated, demonstrating a considerably robust representation against such changes."
+  },
+  {
+    "tag": "p",
+    "text": "However, toward shallower layers, visual jailbreaking attacks exhibit progressively narrower feasible regions in the feature space. As evidenced by Figure 3 , in the 11th layer, the attack must retain more than 90% of adversarial features to successfully manipulate the source MLLM, while the introduction of merely 30% of natural features is sufficient to drive the loss sharply beyond 1.2. These observations suggest that in shallower layers, visual jailbreaking attacks exhibit an increasing reliance on model-specific features, manifested as narrower feasible regions. This reliance on non-generalizable early-layer features, in turn, confines the generated attacks to high-sharpness regions of the input space, making them unstable when transferred to other models."
+  },
+  {
+    "tag": "h3",
+    "text": "3.3 Influence of Different Frequency Features"
+  },
+  {
+    "tag": "p",
+    "text": "In addition to layer-wise features, we also examine the role of spectral information in visual jailbreaking attacks during the optimisation. Specifically, we first apply a Fourier transform to the visual attack and divide the spectrum into ten equal-width frequency bands ( Kim et al., 2024 ) . Then, we independently mask each frequency band and reconstruct the image via inverse Fourier transform. Finally, we compute the loss of the masked attacks to evaluate their reliance on spectral features."
+  },
+  {
+    "tag": "figcaption",
+    "text": "Figure 4: The influence of different frequency bands on the effectiveness of visual jailbreaking attacks throughout the optimisation process. The blue and yellow points correspond to successful and failed examples on the source MLLM, respectively."
+  },
+  {
+    "tag": "p",
+    "text": "As demonstrated in Figure 4 , at the 50th iteration, removing any frequency band results in similarly high loss values, since the visual jailbreaking attack is still under-optimised and has not yet gained the ability to mislead the source MLLM. Between 150 and 250 iterations, the influence of frequency information shows a clear monotonic decrease, where removing low-frequency components sharply raises the loss and renders the attack ineffective, whereas removing high-frequency bands does not significantly compromise attack effectiveness. At this stage, the visual attack mainly depends on adversarially manipulated low-frequency features, which are rich in semantic information, to mislead the model. This trend also aligns with the intrinsic properties of natural images, where semantic content plays a predominant role in model decision-making."
+  },
+  {
+    "tag": "p",
+    "text": "Nevertheless, as optimisation proceeds, the attack’s effectiveness becomes increasingly dependent on high-frequency components. As shown in Figure 4 , at the 350th iteration, the 50–60% and 60–70% spectral features exhibit a more pronounced influence than at the 250th iteration, and removing them causes a greater degradation in attack effectiveness than the lower-frequency 40–50% range. This anomalous trend intensifies with further optimisation. By the 750th iteration, removing the third-highest frequency band alone is sufficient to make the visual jailbreaking attack fail to mislead the source MLLM. This trend indicates that visual jailbreaking attacks tend to increasingly rely on high-frequency features to mislead MLLMs, grounding their success in superficial patterns rather than semantically meaningful content. Such overemphasis on non-generalizable features makes the generated attacks highly model-specific and undermines their transferability across different MLLMs."
+  },
+  {
+    "tag": "h3",
+    "text": "3.4 Feature Over-Reliance CorrEction Method"
+  },
+  {
+    "tag": "p",
+    "text": "Both Section 3.2 and Section 3.3 demonstrate the model-specific reliance inherent in visual jailbreaking attacks, causing them to reside in high-sharpness regions and ultimately leading to poor transferability. To this end, we propose a Feature Over-Reliance Correction (FORCE) method, which explicitly explores broader feasible regions in early-layer features and reduces the excessive influence of semantically poor features."
+  },
+  {
+    "tag": "p",
+    "text": "To discover flattened layer feature representations, we first sample the reference data point within the neighbourhood η \\eta of the visual jailbreaking example 𝐱 img + δ \\mathbf{x}_{\\text{img}}+\\delta . Then, at each layer l l , we extract the per-softmax features f θ , l f_{\\theta,l} from both the reference points and the jailbreaking example, and maximise their L 2 L_{2} distance to enlarge the feature representation region:"
+  },
+  {
+    "tag": "tr",
+    "text": "d l = ∥ ( f θ , l ( 𝐱 img + δ , 𝐱 txt ) ) − ( f θ , l ( 𝐱 img + δ + η , 𝐱 txt ) ) ∥ 2 2 , l = 1 , … , L . d_{l}=\\|\\left(f_{\\theta,l}(\\mathbf{x}_{\\text{img}}+\\delta,\\mathbf{x}_{\\text{txt}})\\right)-\\left(f_{\\theta,l}(\\mathbf{x}_{\\text{img}}+\\delta+\\eta,\\mathbf{x}_{\\text{txt}})\\right)\\|_{2}^{2},\\quad l=1,\\dots,L. (3)"
+  },
+  {
+    "tag": "p",
+    "text": "As the broadened feature representation is meaningful only when the reference sample also lies within the feasible region, we simultaneously minimise its loss to ensure it constitutes a successful jailbreak:"
+  },
+  {
+    "tag": "tr",
+    "text": "ℓ ref = ℓ ⁡ ( p θ ​ ( 𝐱 img + δ + η , 𝐱 txt ) , 𝐲 ) . \\ell_{\\text{ref}}=\\ell\\!\\left(p_{\\theta}(\\mathbf{x}_{\\text{img}}+\\delta+\\eta,\\,\\mathbf{x}_{\\text{txt}}),\\,\\mathbf{y}\\right). (4)"
+  },
+  {
+    "tag": "p",
+    "text": "To align with our observation that non-generalizable reliance is primarily located in the early layers, we apply a gradually decreasing regularisation strength λ \\lambda , whereby earlier layers are assigned stronger penalties while later layers remain unpenalized:"
+  },
+  {
+    "tag": "tr",
+    "text": "λ l = λ ⋅ max ( 1 − ( 2 l / L ) 2 , 0 ) , l = 1 , … , L . \\lambda_{l}=\\lambda\\cdot\\max\\!\\left(1-(2l/L)^{2},\\,0\\right),\\qquad l=1,\\dots,L. (5)"
+  },
+  {
+    "tag": "p",
+    "text": "Finally, we sample N N reference points to improve the reliability of discovering an approximately convex feasible region in the layer representations, and define the regularisation loss as:"
+  },
+  {
+    "tag": "tr",
+    "text": "ℓ reg = 1 N ​ ∑ n = 1 N ∑ l = 1 L λ l ⋅ ℓ ref d l . \\ell_{\\text{reg}}=\\frac{1}{N}\\sum\\nolimits_{n=1}^{N}\\sum\\nolimits_{l=1}^{L}\\lambda_{l}\\cdot\\frac{\\ell_{\\text{ref}}}{d_{l}}. (6)"
+  },
+  {
+    "tag": "p",
+    "text": "To identify the spectral features with excessive influence, we separately mask M M equal-width frequency bands B m B_{m} , and calculate their associated losses ℓ m \\ell_{m} , similar to Section 3.3 . To restore the natural distribution, where semantic content plays a principal role in model perception, we downscale high-frequency components only when they exert greater influence than their corresponding low-frequency counterparts:"
+  },
+  {
+    "tag": "tr",
+    "text": "w m \\displaystyle w_{m} = min ( 1 , ℓ m − 1 ℓ m ) , m = 1 , … , M . \\displaystyle=\\min\\!\\left(1,\\tfrac{\\ell_{m-1}}{\\ell_{m}}\\right),\\quad m=1,\\ldots,M. (7)"
+  },
+  {
+    "tag": "tr",
+    "text": "S \\displaystyle S = ∑ m = 1 M ( w m ⋅ 𝟙 B m ) . \\displaystyle=\\sum\\nolimits_{m=1}^{M}(w_{m}\\cdot\\mathbbm{1}_{B_{m}})."
+  },
+  {
+    "tag": "p",
+    "text": "Subsequently, we perform an element-wise multiplication of the frequency scaling matrix S S with the magnitude spectrum A A obtained from the Fourier transform ( A , Φ ) ← FFT ⁡ ( δ ) (A,\\Phi)\\leftarrow\\mathrm{FFT}(\\delta) , and reconstruct the jailbreaking perturbation via the inverse Fourier transform δ rescaled = IFFT ⁡ ( ( A ⊙ S ) ⊙ e i ​ Φ ) \\delta_{\\text{rescaled}}=\\mathrm{IFFT}\\left((A\\odot S)\\odot e^{\\mathrm{i}\\Phi}\\right) . We integrate these two components into a standard PGD algorithm by first rescaling the abnormal frequency bands and then exploring broader layer representations. This design eliminates non-generalizable feature reliance and encourages a flatter loss landscape for the generated visual jailbreaking attacks, thereby enhancing their transferability. The detailed algorithm is summarised in Appendix B ."
+  },
+  {
+    "tag": "figcaption",
+    "text": "Table 1: Comparison of visual jailbreaking attack methods against different target MLLMs."
+  },
+  {
+    "tag": "tr",
+    "text": "Architecture Target Model Method MaliciousInstruct AdvBench HADES"
+  },
+  {
+    "tag": "tr",
+    "text": "ASR ( ↑ \\uparrow ) Query ( ↓ \\downarrow ) ASR ( ↑ \\uparrow ) Query ( ↓ \\downarrow ) ASR ( ↑ \\uparrow ) Query ( ↓ \\downarrow )"
+  },
+  {
+    "tag": "tr",
+    "text": "Adapter-Based MLLMs Llava-v1.6-mistral-7b PGD 61.00 44.95 35.19 67.82 70.00 35.36"
+  },
+  {
+    "tag": "tr",
+    "text": "FORCE 64.00 41.97 43.84 60.26 72.53 33.99"
+  },
+  {
+    "tag": "tr",
+    "text": "improvement 4.9% 7.1% 24.6% 12.5% 3.6% 4.0%"
+  },
+  {
+    "tag": "tr",
+    "text": "InstructBlip-Vicuna-7B PGD 84.00 20.75 25.58 79.45 48.67 55.32"
+  },
+  {
+    "tag": "tr",
+    "text": "FORCE 90.00 17.26 28.07 77.41 49.20 54.44"
+  },
+  {
+    "tag": "tr",
+    "text": "improvement 9.3% 20.2% 9.7% 2.6% 1.1% 1.6%"
+  },
+  {
+    "tag": "tr",
+    "text": "Idefics3-8B-Llama3 PGD 53.00 50.73 29.81 71.57 63.07 40.11"
+  },
+  {
+    "tag": "tr",
+    "text": "FORCE 63.00 41.18 38.46 64.93 65.73 37.83"
+  },
+  {
+    "tag": "tr",
+    "text": "improvement 18.9% 23.2% 29.0% 10.2% 4.2% 6.0%"
+  },
+  {
+    "tag": "tr",
+    "text": "Early-Fusion MLLMs Llama-3.2-11B-Vision-Instruct PGD 1.00 99.01 1.15 98.94 6.27 94.27"
+  },
+  {
+    "tag": "tr",
+    "text": "FORCE 3.00 97.63 2.31 98.02 11.33 90.93"
+  },
+  {
+    "tag": "tr",
+    "text": "improvement 200% 1.4% 101% 0.9% 80.7% 3.7%"
+  },
+  {
+    "tag": "tr",
+    "text": "Qwen2.5-VL-7B-Instruct PGD 5.00 95.70 1.54 98.65 25.33 76.25"
+  },
+  {
+    "tag": "tr",
+    "text": "FORCE 9.00 92.16 3.27 97.42 28.80 73.84"
+  },
+  {
+    "tag": "tr",
+    "text": "improvement 80.0% 3.8% 112% 1.3% 13.7% 3.3%"
+  },
+  {
+    "tag": "tr",
+    "text": "Commercial MLLMs Claude-Sonnet-4 PGD 1.00 99.68 1.00 99.91 3.00 97.71"
+  },
+  {
+    "tag": "tr",
+    "text": "FORCE 2.00 98.86 1.00 99.22 5.00 95.86"
+  },
+  {
+    "tag": "tr",
+    "text": "improvement 100.0% 0.8% 0.0% 0.7% 66.7% 3.1%"
+  },
+  {
+    "tag": "tr",
+    "text": "Gemini-2.5-Pro PGD 10.00 92.09 4.00 96.59 16.00 86.62"
+  },
+  {
+    "tag": "tr",
+    "text": "FORCE 10.00 91.80 6.00 95.17 19.00 82.85"
+  },
+  {
+    "tag": "tr",
+    "text": "improvement 0.0% 0.3% 50.0% 1.5% 18.8% 4.6%"
+  },
+  {
+    "tag": "tr",
+    "text": "GPT-5 PGD 1.00 99.03 0.00 100.0 1.00 99.97"
+  },
+  {
+    "tag": "tr",
+    "text": "FORCE 2.00 98.02 1.00 99.05 3.00 97.37"
+  },
+  {
+    "tag": "tr",
+    "text": "improvement 100% 1.0% 100% 1.0% 200% 2.7%"
+  },
+  {
+    "tag": "h2",
+    "text": "4 Experiment"
+  },
+  {
+    "tag": "p",
+    "text": "In this section, we evaluate the effectiveness of FORCE, including experimental setups (Section 4.1 ), performance evaluations (Section 4.2 ), and ablation studies (Section 4.3 )."
+  },
+  {
+    "tag": "h3",
+    "text": "4.1 Experimental Setups"
+  },
+  {
+    "tag": "p",
+    "text": "Source Models and Baselines. We use LLaVA-v1.5-7B ( Liu et al., 2023a ) as the source MLLM for both the baseline and our proposed method. For the baseline, we adopt standard PGD ( Madry et al., 2018 ) to generate visual attacks, with a step size of 2 / 255 2/255 and a perturbation budget of 32 / 255 32/255 . The optimisation target is set to Sure, here is . In this work, we consider two attack settings: zero-shot and multi-query . In the zero-shot setting, we only craft one visual attack that satisfies the optimisation objective on the source MLLM and then directly evaluate it on the target MLLMs. In the multi-query, we generate 100 distinct visual jailbreaking examples that meet the optimisation target on the source model and evaluate them individually on the target model."
+  },
+  {
+    "tag": "p",
+    "text": "Target Models. We select a range of popular safety-aligned MLLMs as transfer-target, treating them as black-box models with inaccessible parameters. For adapter-based MLLMs, we use InstructBLIP-Vicuna-7B ( Dai et al., 2023 ) , Llava-v1.6-mistral-7b ( Liu et al., 2023a ) , and Idefics3-8B-Llama3 ( Laurençon et al., 2024 ) . For early-fusion MLLMs, we evaluate Qwen2.5-VL-7B-Instruct ( Bai et al., 2023b ) and LLaMA-3.2-11B-Vision-Instruct ( Meta, 2024 ) . For commercial MLLMs, we consider Claude-Sonnet-4 ( Anthropic, 2025 ) , Gemini-2.5-Pro ( Google, 2025 ) , and GPT-5 ( OpenAI, 2025 ) ."
+  },
+  {
+    "tag": "p",
+    "text": "Datasets and Evaluation Metrics. We evaluate our approach on three benchmarks: MaliciousInstruct ( Huang et al., 2024 ) , AdvBench ( Zou et al., 2023 ) , and HADES ( Li et al., 2024 ) , containing 100, 520, and 750 malicious instructions, respectively. For textual inputs, we adopt plain malicious prompts without modification. For AdvBench and MaliciousInstruct, the visual input is initialised with either a blank image of RGB ( 128,128,128 ) (128,128,128) or a panda image ( Qi et al., 2024 ) . For HADES, we adopt the provided image–instruction pairs (step 5) as initialisation while removing keyword typography to ensure the model focuses on the image content. Regarding commercial models, we test the top 100 instructions from MaliciousInstruct and AdvBench, and the top 20 instructions in HADES spanning five categories. To avoid false positives, we evaluate the attack success rate (ASR) by combining substring matching with LLM-based judgment. Substring matching verifies whether the model refuses to answer the malicious instruction ( Zou et al., 2023 ) , while HarmBenchLLaMA-2-13B-cls ( Mazeika et al., 2024 ) determines whether the response is actually harmful."
+  },
+  {
+    "tag": "p",
+    "text": "Setup for FORCE. We set the number of reference samples N = 10 N=10 , the noise neighbourhood η = 8 / 255 \\eta=8/255 , the regularisation strength λ = 1 \\lambda=1 , and the number of frequency bands M = 10 M=10 . All other settings remain consistent with the baseline PGD to ensure a fair comparison."
+  },
+  {
+    "tag": "h3",
+    "text": "4.2 Performance Evaluation"
+  },
+  {
+    "tag": "p",
+    "text": "To comprehensively evaluate our attack, we examine its cross-model transferability on two different MLLM architectures and API-based MLLMs. From Table 1 , we can observe that visual jailbreaking attacks generated by standard PGD exhibit considerable transferability to adapter-based MLLMs, with an average ASR of about 50% and requiring 50 queries per successful attack. For this scenario, our proposed FORCE demonstrates superior performance across all evaluation settings, achieving an average ASR improvement of 13% while reducing the average query cost by over 10%."
+  },
+  {
+    "tag": "p",
+    "text": "However, when transferred to early-fusion MLLMs, the baseline method struggles to bypass their safety guardrails, with a 93% failure rate even after exhausting 100 queries. This poor ASR indicates that vulnerabilities tied to model-specific features are difficult to generalise across different MLLM architectures. In this challenging setting, our method substantially improves transferability, achieving nearly a 100% increase over the baseline ASR, as reported in Table 1 . The above results further substantiate our perspective that reliance on non-generalizable layers and spectral features limits attack transferability, while our method provides an effective solution to address this bottleneck."
+  },
+  {
+    "tag": "p",
+    "text": "Finally, we extend our method to jailbreak commercial MLLMs, which incorporate state-of-the-art alignment techniques and auxiliary safety filters. As shown in Table 1 , FORCE can consistently enhance transferability across three mainstream commercial models, achieving an average improvement of 70%. Despite the baseline’s limited capability restricting absolute ASR increases, our method delivers substantial relative improvements and represents a firm step toward practical optimisation-based visual attacks. The real-world case analysis of FORCE attacks can be found in Appendix C ."
+  },
+  {
+    "tag": "figcaption",
+    "text": "Table 2: Analysis of blank initialisation and zero-shot visual jailbreaking attacks on MaliciousInstruct."
+  },
+  {
+    "tag": "tr",
+    "text": "Architecture Target Model Method Blank Initialization Zero-shot"
+  },
+  {
+    "tag": "tr",
+    "text": "ASR ( ↑ \\uparrow ) Query ( ↓ \\downarrow ) ASR ( ↑ \\uparrow ) Query ( ↓ \\downarrow )"
+  },
+  {
+    "tag": "tr",
+    "text": "Adapter-Based MLLMs Llava-v1.6-mistral-7b PGD 72.00 36.15 26.00 1.00"
+  },
+  {
+    "tag": "tr",
+    "text": "FORCE 82.00 27.13 26.00 1.00"
+  },
+  {
+    "tag": "tr",
+    "text": "improvement 13.9% 33.2% 0.0% -"
+  },
+  {
+    "tag": "tr",
+    "text": "InstructBlip-Vicuna-7B PGD 85.00 19.85 53.00 1.00"
+  },
+  {
+    "tag": "tr",
+    "text": "FORCE 89.00 15.66 57.00 1.00"
+  },
+  {
+    "tag": "tr",
+    "text": "improvement 4.7% 26.8% 7.5% -"
+  },
+  {
+    "tag": "tr",
+    "text": "Idefics3-8B-Llama3 PGD 64.00 43.05 36.00 1.00"
+  },
+  {
+    "tag": "tr",
+    "text": "FORCE 81.00 25.25 42.00 1.00"
+  },
+  {
+    "tag": "tr",
+    "text": "improvement 26.6% 70.5% 16.7% -"
+  },
+  {
+    "tag": "tr",
+    "text": "Early-Fusion MLLMs Llama-3.2-11B-Vision-Instruct PGD 1.00 99.95 1.00 1.00"
+  },
+  {
+    "tag": "tr",
+    "text": "FORCE 2.00 98.43 1.00 1.00"
+  },
+  {
+    "tag": "tr",
+    "text": "improvement 100% 1.5% 0.0% -"
+  },
+  {
+    "tag": "tr",
+    "text": "Qwen2.5-VL-7B-Instruct PGD 7.00 94.35 1.00 1.0"
+  },
+  {
+    "tag": "tr",
+    "text": "FORCE 12.00 90.52 5.00 1.00"
+  },
+  {
+    "tag": "tr",
+    "text": "improvement 71.4% 4.2% 400% -"
+  },
+  {
+    "tag": "tr",
+    "text": "Commercial MLLMs Claude-Sonnet-4 PGD 1.00 99.69 0.00 1.00"
+  },
+  {
+    "tag": "tr",
+    "text": "FORCE 1.00 99.32 0.00 1.00"
+  },
+  {
+    "tag": "tr",
+    "text": "improvement 0.0% 0.4% 0.0% -"
+  },
+  {
+    "tag": "tr",
+    "text": "Gemini-2.5-Pro PGD 8.00 92.66 1.00 1.00"
+  },
+  {
+    "tag": "tr",
+    "text": "FORCE 9.00 91.39 3.00 1.00"
+  },
+  {
+    "tag": "tr",
+    "text": "improvement 12.5% 1.4% 200% -"
+  },
+  {
+    "tag": "tr",
+    "text": "GPT-5 PGD 1.00 99.01 0.00 1.00"
+  },
+  {
+    "tag": "tr",
+    "text": "FORCE 2.00 98.03 2.00 1.00"
+  },
+  {
+    "tag": "tr",
+    "text": "improvement 100% 1.0% 200% -"
+  },
+  {
+    "tag": "h3",
+    "text": "4.3 Ablation Study"
+  },
+  {
+    "tag": "p",
+    "text": "Blank Initialisation. We also evaluate attack performance under blank initialisation, where the visual input is a grey image without semantic content, as shown in Table 2 (left). We can observe that under blank initialisation, the baseline performance across different test cases shows a similar trend to semantic initialisation. Interestingly, in some tasks, optimisation-based methods with blank initialisation even show superior performance, highlighting another advantage of such attacks in not requiring extra pre-processing. Meanwhile, our proposed method continues to demonstrate superior performance under this setting, improving transferability across all cases."
+  },
+  {
+    "tag": "p",
+    "text": "Zero-shot Transferability. We further report the most stringent zero-shot transferability, where only a single query is permitted to jailbreak the target MLLMs. From Table 2 (right), this restrictive scenario leads to a sharp decline in the PGD effectiveness, which can be attributed to its narrow feasible regions that are hard to precisely match with the vulnerabilities of target models. While this setting also poses challenges for FORCE, its ability to discover a flatter loss landscape increases the likelihood of exploiting target vulnerabilities with a single attempt and improves transferability."
+  },
+  {
+    "tag": "figcaption",
+    "text": "Figure 5: Feasible regions between FORCE-generated visual jailbreaking example and natural examples across different layers’ features. The blue and yellow points correspond to successful and failed examples on the source MLLM, respectively."
+  },
+  {
+    "tag": "p",
+    "text": "Optimisation Objectives. To validate the effectiveness of our proposed method in reducing model-specific reliance, we visualise the layers’ feasible regions and the influence of frequency bands. These visualisations follow the same approach described in Section 3.2 and Section 3.3 . As presented in Figure 5 , it is clear that our method encourages visual jailbreaking attacks to explore broader"
+  },
+  {
+    "tag": "figcaption",
+    "text": "Figure 6: The influence of different frequency bands on FORCE-generated visual jailbreaking attacks at convergence iteration. The blue and yellow points correspond to successful and failed examples on the source MLLM, respectively."
+  },
+  {
+    "tag": "p",
+    "text": "representations in the early layers, resulting in a smoother loss increase during feature interpolation compared to the baseline in Figure 3 . This also drives the attack toward a flatter loss landscape in the input space, thereby improving its resilience to parameter shifts during transfer. We also examine the capability of our method in the spectral domain by analysing the influence of frequency components on attack performance. As depicted in Figure 6 , our method reliably mitigates the abnormal reliance on semantically poor information, as evidenced by a more moderate loss change when masking high-frequency informations, and exhibits a natural trend similar to that of non-adversarial images. Both outcomes indicate that FORCE effectively mitigates model-specific reliance, promotes exploration of a flatter loss landscape, and enhances transferability."
+  },
+  {
+    "tag": "p",
+    "text": "Impact of Components. We investigate the individual and the synergistic impact of the two components of our algorithm, as presented in Table 3 . Our results demonstrate that each component can effectively mitigate its targeted reliance. Specifically, transferability improves by 5.7% and query efficiency by 8.2% with the layer-feature regularisation, and by 15.1% and 18.8% with the spectral-rescaling component. The synergy of the two components enables a more thorough removal of improper reliance, resulting in an overall performance gain of 18.9%."
+  },
+  {
+    "tag": "figcaption",
+    "text": "Table 3: Impact of FORCE components on Idefics3-8B-Llama3 with MaliciousInstruct."
+  },
+  {
+    "tag": "tr",
+    "text": "Layer Feature Frequency Feature ASR ( ↑ \\uparrow ) Query ( ↓ \\downarrow )"
+  },
+  {
+    "tag": "tr",
+    "text": "- - 53.00 50.73"
+  },
+  {
+    "tag": "tr",
+    "text": "✓ \\checkmark - 56.00 ( 5.7% ) 46.89 ( 8.2% )"
+  },
+  {
+    "tag": "tr",
+    "text": "- ✓ \\checkmark 61.00 ( 15.1% ) 42.70 ( 18.8% )"
+  },
+  {
+    "tag": "tr",
+    "text": "✓ \\checkmark ✓ \\checkmark 63.00 ( 18.9% ) 41.18 ( 23.2% )"
+  },
+  {
+    "tag": "h2",
+    "text": "5 Conclusion"
+  },
+  {
+    "tag": "p",
+    "text": "In this work, we investigated the limited transferability of optimisation-based visual jailbreaking attacks and attributed this issue to their reliance on model-specific features in early layers and high-frequency information. This reliance drives the attacks into high-sharpness regions, leaving them vulnerable to parameter shifts during transfer. To address this, we introduced a Feature Over-Reliance CorrEction (FORCE) method, which encourages attacks to explore broader regions in the layer space while rescaling frequency components according to their semantic relevance. By correcting both layer space and spectral domain dependencies, FORCE enables the discovery of flattened feasible regions that enhance cross-model transferability. Extensive experiments demonstrate that our approach provides an important step toward a practical visual red-teaming evaluation."
+  },
+  {
+    "tag": "h2",
+    "text": "The Use of Large Language Models"
+  },
+  {
+    "tag": "p",
+    "text": "During the preparation of this manuscript, the authors used LLMs to support the writing process, including polishing language, improving clarity, and enhancing overall readability. Since this work directly concerns the safety of MLLMs, we also employ them in our experiments. MLLMs are used to generate visual jailbreaking attacks, they are evaluated as victim models to test attack transferability, and they are employed as judges to determine whether the attacks are successful. The authors retained full intellectual control over this paper. LLMs were employed solely as tools to support the research process, and the final manuscript represents the authors’ original work and insights."
+  },
+  {
+    "tag": "h2",
+    "text": "Ethics Statement"
+  },
+  {
+    "tag": "p",
+    "text": "The authors acknowledge that the techniques presented in this paper could, in principle, be misused to maliciously manipulate MLLMs. However, our intention is to provide insights into the inherent weaknesses of MLLMs from a red-teaming perspective, with the goal of encouraging blue-team efforts to strengthen their safety mechanisms. We believe that transparent discussions of potential threats are fundamental to shaping human-aligned MLLMs, and we hope this work will promote safety, accountability, and ethical practices in their deployment."
+  },
+  {
+    "tag": "h2",
+    "text": "Reproducibility Statement"
+  },
+  {
+    "tag": "p",
+    "text": "We have made every effort to ensure the reproducibility of our work. Comprehensive details of the experimental settings, hyperparameters, and algorithms are provided in both the main paper and the appendix. All baselines, datasets and MLLMs used in this study are publicly available through GitHub, HuggingFace, or accessible APIs. All computations were conducted on AMD MI250X GPUs with 128 GB of memory, and can also be reproduced on GPUs with smaller memory capacity."
+  },
+  {
+    "tag": "h2",
+    "text": "References"
+  },
+  {
+    "tag": "h2",
+    "text": "Appendix A Feature Interpolation Between Visual Jailbreaking Attacks"
+  },
+  {
+    "tag": "p",
+    "text": "We also interpolate features between two different visual jailbreaking attacks, as shown in Figure 7 . Consistent with our observation in Figure 3 , we find that feasible regions in later layers are flatter, whereas they become progressively narrower toward earlier layers. Moreover, our results show that in later layers, different jailbreaking examples occupy a shared continuous region, as interpolated attacks consistently succeed in manipulating the source MLLM. In earlier layers, the feasible regions of different attacks become disjoint, as the interpolated features cause them to lose effectiveness. Togetherly, these results reveal that visual attacks tend to rely on model-specific features in earlier layers, leading to small and disjoint feasible regions that fail to generalise across models."
+  },
+  {
+    "tag": "figcaption",
+    "text": "Figure 7: Feasible regions between two visual jailbreaking examples across different layers’ features. The blue and yellow points correspond to successful and failed examples on the source MLLM."
+  },
+  {
+    "tag": "h2",
+    "text": "Appendix B Feature Over-Reliance CorrEction Algorithm"
+  },
+  {
+    "tag": "p",
+    "text": "The complete FORCE algorithm, the layer-aware regularisation and the spectral rescaling strategy are summarised in Algorithm 1 , Algorithm 2 , and Algorithm 3 , respectively."
+  },
+  {
+    "tag": "figcaption",
+    "text": "Algorithm 1 Feature Over-Reliance CorrEction (FORCE)"
+  },
+  {
+    "tag": "figcaption",
+    "text": "Algorithm 2 Layer-aware Feature Regularization"
+  },
+  {
+    "tag": "figcaption",
+    "text": "Algorithm 3 Spectral-Rescale Perturbation"
+  },
+  {
+    "tag": "h2",
+    "text": "Appendix C Case Studies of Jailbreaking MLLMs"
+  },
+  {
+    "tag": "p",
+    "text": "We provide real-world examples of harmful conversations induced by our proposed FORCE method on Claude-Sonnet-4, Gemini-2.5-Pro, and GPT-5, as shown in Figures 8 , Figures 9 , and Figures 10 , respectively."
+  },
+  {
+    "tag": "figcaption",
+    "text": "Figure 8: Case study of jailbreaking results on Claude."
+  },
+  {
+    "tag": "figcaption",
+    "text": "Figure 9: Case study of jailbreaking results on Gemini."
+  },
+  {
+    "tag": "figcaption",
+    "text": "Figure 10: Case study of jailbreaking results on GPT."
+  },
+  {
+    "tag": "h2",
+    "text": "Instructions for reporting errors"
+  },
+  {
+    "tag": "p",
+    "text": "We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the methods listed below:"
+  },
+  {
+    "tag": "p",
+    "text": "Tip: You can select the relevant text first, to include it in your report."
+  },
+  {
+    "tag": "p",
+    "text": "Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability should not be a barrier to accessing research. Thank you for your continued support in championing open access for all."
+  },
+  {
+    "tag": "p",
+    "text": "Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions ."
+  }
+]

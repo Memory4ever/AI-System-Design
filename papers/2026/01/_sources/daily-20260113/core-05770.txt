@@ -1,0 +1,845 @@
+URL https://arxiv.org/html/2601.05770v1; sections S3 to S7 excluded; result tables omitted; fetched 2026-10-03
+
+
+
+ 3 Discrete Transformer 
+
+ 
+
+In this section, we introduce the Discrete Transformer, a specialized architecture purposefully designed for symbolic regression and algorithm extraction.
+It is structured as a computational graph with clear functional specialization: Numerical Attention performs explicit variable routing, while the Numerical MLP is responsible for arithmetic computation. 
+ 
+
+
+
+ 3.1 Numerical Residual Stream 
+
+ 
+
+The essential difference between the Discrete Transformer and the standard one lies in the structure of the residual stream and the mechanism of information processing.
+To align with the symbolic nature of algorithm extraction, we define the residual stream not as latent vectors, but as a collection of explicit scalar variables.
+Let \mathbf{h}_{l}=[x_{1},\dots,x_{N_{l}}]^{\top}\in\mathbb{R}^{N_{l}} denote the residual stream at layer l , consisting of N_{l} distinct scalar variables.
+In contrast to standard additive updates, we adapt the concatenation principle  ( Friedman et al., 2023 ; Lai-Dang et al., 2025 ) to the scalar domain, updating the residual stream with new outputs \mathbf{o}_{l} : 
+ 
+
+ 
+
+ 
+ \mathbf{h}_{l+1}=\text{Concat}(\mathbf{h}_{l},\mathbf{o}_{l})\in\mathbb{R}^{N_{l}+|\mathbf{o}_{l}|}. 
+ 
+ (1) 
+ 
+
+This design preserves the full computational history as disentangled coordinates, alleviating the information interference induced by superposition in dense vectors. 
+ 
+ 
+
+Moreover, a critical challenge in algorithm extraction is to identify which variables serve as operands.
+Inspired by learnable input selection  ( Friedman et al., 2023 ) , we address this by designing a discretized reading mechanism tailored for the numerical residual stream: for any computational module (Numerical Attention or MLP) at layer l requiring k inputs, we learn a projection matrix \mathbf{W}_{\text{read}}\in\mathbb{R}^{k\times N_{l}} to select inputs from the residual stream \mathbf{h}_{l} .
+To enable discrete structure optimization within a differentiable framework, we apply a temperature-controlled sampling function S(\cdot,\tau) (derivation provided in Appendix  A ) row-wise to the logits \mathbf{W}_{\text{read}} .
+The input vector \mathbf{u}\in\mathbb{R}^{k} is then retrieved from the current residual stream \mathbf{h}_{l}\in\mathbb{R}^{N_{l}} via: 
+ 
+
+ 
+
+ 
+ \mathbf{u}=S(\mathbf{W}_{\text{read}},\tau)\cdot\mathbf{h}_{l}, 
+ 
+ (2) 
+ 
+
+where \tau is the annealing temperature.
+As temperature \tau\to 0 , the selection distribution converges to a deterministic one-hot indicator, effectively functioning as a differentiable pointer over the computation graph. 
+ 
+ 
+
+
+
+ 3.2 Numerical Attention as Router 
+
+ 
+
+Following the architectural paradigm established in Tracr  ( Lindner et al., 2023 ) and Transformer Programs  ( Friedman et al., 2023 ) , we employ a hard attention mechanism designed strictly as an information routing operator, rather than a feature mixer.
+In the context of algorithm extraction, this design can help isolate all computational transformations within simpler MLP, thereby reducing the difficulty of attention analysis. 
+ 
+ 
+
+ Piecewise Linear Encoding. 
+Since the residual stream consists of raw scalars ( \mathbf{h}_{l}\in\mathbb{R}^{N_{l}} ), distinct scalar variables lack the high-dimensional expressivity required for effective dot-product comparisons. To address this, we define the query and key as selected scalars x_{q},x_{k}\in\mathbb{R} , and project them into a higher-dimensional space using the Piecewise Linear Encoding (PLE)  ( Gorishniy et al., 2022 ) : 
+ 
+
+ 
+
+ 
+ \mathbf{q}=\phi_{\text{PLE}}(x_{q}),\quad\mathbf{k}=\phi_{\text{PLE}}(x_{k}), 
+ 
+ (3) 
+ 
+
+where \mathbf{q},\mathbf{k}\in\mathbb{R}^{d_{attn}} and \phi_{\text{PLE}}:\mathbb{R}\to\mathbb{R}^{d_{attn}} is a learnable mapping. 
+ 
+ 
+
+ Deterministic Attention Mechanism. 
+The attention scores \mathbf{a}_{\text{raw}}\in\mathbb{R}^{N} over a context length N are computed via scaled dot-product with T5-style relative positional biases \mathbf{b}_{\text{rel}}   ( Raffel et al., 2023 ) : 
+ 
+
+ 
+
+ 
+ \mathbf{a}_{\text{raw}}=\frac{\mathbf{K}\mathbf{q}}{\sqrt{d_{attn}}}+\mathbf{b}_{\text{rel}}, 
+ 
+ (4) 
+ 
+
+where \mathbf{K}\in\mathbb{R}^{N\times d_{attn}} stacks the projected keys from the context.
+To ensure interpretable attention patterns, we enforce hard attention using the sampling function S(\cdot) . Crucially, the value projection is the identity function for scalars, meaning that the value vector \mathbf{v}\in\mathbb{R}^{N} consists directly of the raw scalars from the history. The output o_{\text{attn}}\in\mathbb{R} is a weighted sum: 
+ 
+
+ 
+
+ 
+ o_{\text{attn}}=S(\mathbf{a}_{\text{raw}},\tau)\cdot\mathbf{v}. 
+ 
+ (5) 
+ 
+
+This design forces the attention head to converge to a deterministic pointer operation, retrieving specific raw values from history (e.g., “copy the value from the token at offset -1”). 
+ 
+ 
+
+
+
+ 3.3 Numerical MLP as Operator 
+
+ 
+
+While the Attention handles data movement, the Numerical MLP is dedicated to element-wise arithmetic and logical transformations.
+Drawing on the insight that Transformer MLPs contribute additive updates to the residual stream, which can be decomposed into weighted sums of sub-updates  ( Geva et al., 2022 ) , we explicitly decompose the MLP module into a collection of parallel, independent sub-modules (sub-MLPs). 
+ 
+ 
+
+Each sub-module performs a single elementary operation. It first selects a small, fixed number of scalars (typically k=2 ) from the stream via the discretized reading mechanism, forming an operand vector \mathbf{u}\in\mathbb{R}^{k} . These operands are processed by a shallow network: 
+ 
+
+ 
+
+ 
+ o=\mathbf{W}_{2}(\sigma(\mathbf{W}_{1}\mathbf{u}+\mathbf{b}_{1}))+b_{2}, 
+ 
+ (6) 
+ 
+
+where \mathbf{W}_{1}\in\mathbb{R}^{d_{hid}\times k} , \mathbf{W}_{2}\in\mathbb{R}^{1\times d_{hid}} are learnable weights, \mathbf{b}_{1},b_{2} are biases, and \sigma is a non-linear activation (e.g., ReLU). The resulting scalar output o is concatenated back to the residual stream. 
+ 
+ 
+
+ Inductive Bias for Symbolic Regression. By severely constraining the input dimension k and the hidden width d_{hid} , we deliberately limit the complexity of each sub-module.
+This bottleneck forces the network to decompose complex functions into a sequence of simple arithmetic steps, creating ideal conditions for symbolic regression (e.g., PySR  ( Cranmer, 2023 ) ) to extract closed-form expressions. 
+ 
+ 
+
+
+
+ 3.4 Linear Output Head 
+
+ 
+
+The architecture concludes with a linear output head that aggregates the discrete computational steps into a final prediction: 
+ 
+
+ 
+
+ 
+ \hat{y}=\mathbf{w}_{\text{out}}^{\top}\mathbf{h}_{\text{final}}, 
+ 
+ (7) 
+ 
+
+where \mathbf{h}_{\text{final}} is the final residual stream, and \mathbf{w}_{\text{out}} represents the aggregation weights. To reduce the length of the extracted program, we impose a sparsity threshold \epsilon on the magnitude of the weights (i.e., set w_{i}=0 if |w_{i}| 
+ 
+ 
+ 
+
+
+
+ 4 From Weights to Code 
+
+ 
+
+After training with temperature annealing, the converged Discrete Transformer reaches a fully discrete state, and the algorithmic solution is implicitly encoded within its sparse weights and activation patterns.
+To recover an explicit, human-readable program, we treat the trained model as a computational graph composed of two distinct types of nodes: routers (Attention) and operators (MLP).
+We propose a decoupled extraction pipeline that first infers the function of each node using component-specific strategies, then reconstructs the global program trace via backward traversal. 
+ 
+
+
+
+ 4.1 Hypothesis Testing for Attention 
+
+ 
+
+For the Numerical Attention module, extracting explicit expressions via direct symbolic regression is challenging due to the computational complexity in the PLE of queries and keys, dot-product interactions, and the hard attention mechanism induced by sampling functions. However, since the structural role of attention is constrained to be an information router, we abstract away from the intermediate arithmetic and focus our interpretability analysis on the resulting routing patterns. 
+ 
+ 
+
+We conceptualize the Numerical Attention module as a deterministic pointer performing differentiable addressing on context memory. Following Neural Turing Machines  ( Graves et al., 2014 ) , we categorize addressing into Location-based (position-dependent) and Content-based (value-dependent). We hypothesize that our attention heads specialize into these two modes, and empirically observe that they manifest as two typical interpretable patterns: Fixed Offset and Windowed Extrema . 
+ 
+ 
+
+Specifically, for a given head, we analyze its attention matrices generated over the validation set.
+We test the hypotheses by examining the statistical properties across the dataset: 
+ 
+ • 
+ 
+
+ Fixed Offset. 
+This pattern corresponds to relative positional indexing.
+We hypothesize that there exists an integer offset \delta such that, for a large fraction of query positions i , the head places most of its attention on
+ j=i-\delta .
+We operationalize this by measuring whether the averaged attention mass concentrates on a single offset diagonal (corresponding to j=i-\delta ) beyond a predefined threshold. 
+ 
+ • 
+ 
+
+ Windowed Extrema. 
+This pattern reflects content-dependent selection.
+Let \mathbf{v}\in\mathbb{R}^{N} be the sequence of scalar values, where v_{j} is the value at position j .
+We hypothesize that there exists a window size z\in\mathbb{Z}^{+} such that, for a large fraction of query positions i , the head attends primarily to j^{*}=\arg\operatorname*{min/max}_{j\in\{i-z+1,\dots,i\}}v_{j} .
+We verify this hypothesis by checking the sample-wise agreement between the head’s selected index and the true extremum index within the window. 
+ 
+ 
+
+Across the benchmark investigated, we find these simple routing patterns achieve high coverage of active heads.
+The few “unmatched heads” represent computational noise—being negligible in magnitude or acting as redundant variables—and do not influence the logic of the final assembled program (see Appendix  B for detailed analysis). 
+ 
+ 
+
+
+
+ 4.2 Symbolic Regression for MLP 
+
+ 
+
+In contrast to the Attention, the Numerical MLP modules serve as the arithmetic core. Thanks to the disentangled architecture, each MLP sub-module functions as an isolated mapping f:\mathbb{R}^{k}\to\mathbb{R} with low-dimensional inputs (typically k=2 ). This architectural isolation makes them ideal candidates for black-box symbolic regression. 
+ 
+ 
+
+For each sub-MLP, we collect a dataset of input-output pairs \mathcal{D}=\{(\mathbf{u}^{(i)},o^{(i)})\}_{i=1}^{M} from validation passes. We employ the PySR  ( Cranmer, 2023 ) , a symbolic regression tool based on genetic algorithms, to search for the optimal symbolic expression \hat{f} that minimizes the error on \mathcal{D} . Crucially, the constrained input dimension and limited model capacity drastically reduce the search space, enabling the PySR to reliably converge to exact arithmetic expressions (e.g., o=2u_{1}+u_{2} ) rather than approximate fits. 
+ 
+ 
+
+
+
+ 4.3 Global Program Assembly 
+
+ 
+
+The final phase integrates these extracted primitives into a coherent program. The linear output head, \hat{y}=\mathbf{w}_{\text{out}}^{\top}\mathbf{h}_{\text{final}} , serves as the entry point for extraction.
+We first apply magnitude-based pruning to \mathbf{w}_{\text{out}} ( |w_{i}|>\epsilon ) to identify the active variables contributing to the final prediction. 
+ 
+ 
+
+Starting from these active variables, we perform a backward traversal of the computational graph. Recursively, we replace each intermediate variable in the residual stream with its corresponding symbolic definition, either a deterministic pointer from Attention or a distilled arithmetic expression from MLP, until the traversal reaches the raw input tokens.
+This process effectively compiles the neural network into concise, closed-form algorithmic expressions that approximate the Discrete Transformer’s behavior with high fidelity across the relevant input domain. 
+ 
+ 
+ 
+
+
+
+ 5 Experiments 
+
+ 
+
+In this section, we evaluate the Discrete Transformer on a diverse suite of algorithmic reasoning tasks. We aim to demonstrate that, beyond achieving high performance, our model extracts interpretable and human-readable algorithms, thereby revealing the underlying structure and logic inherent in the data. 
+ 
+ 
+
+ Datasets We utilize the MIPS benchmark ( Michaud et al., 2024 ) to probe capabilities ranging from local computation to global state tracking 1 1 
+ 1 
+ 
+ 
+ 
+ State tracking refers to the maintenance and updating of an explicitly updated state across the input sequence (e.g., a cumulative sum). ( Zhang et al., 2025 ) , as opposed to purely local computations. The tasks are categorized into three groups: (1) Linear Arithmetic (e.g., sum_last2 , sum_last ); (2) Non-Linear Composition (e.g., parity_last2 , add_mod_3 ) which requires approximating non-linear logic; and (3) Dynamical Systems (e.g., gravity ) to evaluate the discovery of physical laws. Detailed definitions for all tasks are provided in Appendix  C . 
+ 
+ 
+
+ Training Details All models employ a decoder-only architecture implemented in PyTorch, optimized via AdamW to minimize the Mean Squared Error (MSE). We train for 50 epochs (100 for physical tasks) with a batch size of 512 and cosine learning rate decay. Crucially, to handle discrete optimization, we apply geometric annealing to the sampling temperature \tau , decreasing it from 10.0 to 0.1 . We report the average performance across three random seeds, with hyperparameters (layers, heads, sub-MLPs) selected via grid search. Full hyperparameters and grid search ranges are detailed in Appendix  C . 
+ 
+ 
+
+ Results 
+We evaluate the Discrete Transformer across the diverse task suite.
+As shown in Table 1 , the Discrete Transformer achieves near-perfect convergence across all task categories, with test losses approaching zero.
+Beyond numerical accuracy, our primary contribution lies in demonstrating that the solution embedded within the Discrete Transformer can be successfully extracted into human-readable code, which matches the capabilities of MIPS on this benchmark.
+By applying the methodology detailed in Section 4 , we successfully compile the trained weights into executable Python code.
+We highlight three key findings below. 
+ 
+
+
+ Table 1: Performance of the Discrete Transformer on the algorithm benchmark. For these regression tasks, loss is reported as MSE on the test set. The model demonstrates strong predictive performance across the benchmark, with loss values close to zero. 
+ 
+ [result table omitted; consult original if quantitative claim needed] 
+ 
+ 
+ 
+ 
+ • 
+ 
+
+ Discovery of Algorithmic Parsimony in Linear Tasks. In linear tasks, the discrete optimization process demonstrates a strong inductive bias towards parsimony .
+The model frequently learns to bypass the Numerical MLP entirely, leveraging the linear output head to perform arithmetic directly.
+For instance, in sum_last2 (Figure 2 ), the model assigns specific attention heads to retrieve x_{t-1} (via a verified “Fixed Offset” pattern) and integrates it with the current token x_{t} .
+Symbolic simplification yields the exact expression y_{t}=x_{t}+x_{t-1} , 2 2 
+ 2 
+ 
+ 
+ 
+ We employ the SymPy library  ( Meurer et al., 2017 ) to automatically simplify the extracted expressions, leading to more concise and readable mathematical formulae. effectively capturing the underlying addition logic. 
+ 
+ • 
+ 
+
+ Exact Recovery of Non-Linear Identities. 
+For tasks requiring non-linear logic, the extraction methodology successfully identifies algebraically equivalent expressions.
+For instance, in the parity_last2 task ( x_{t}\oplus x_{t-1} ) with binary inputs x\in\{0,1\} , simplifying the extracted expressions (Figure  3 ) yields y_{t}=x_{t}+x_{t-1}-2x_{t}x_{t-1} , which is an exact algebraic formulation of the parity operation.
+For maximum_prev2 and minimum_prev2 tasks, simplifying the extracted expressions in Figure  4 reveals a piecewise-linear implementation of conditional computation via ReLU operations: \max(x_{t},x_{t-1})=x_{t-1}+\text{ReLU}(x_{t}-x_{t-1}) and \min(x_{t},x_{t-1})=x_{t-1}-\text{ReLU}(x_{t-1}-x_{t}) .
+This demonstrates the capability to reverse-engineer black-box neural computations into explicit algebraic forms equivalent to logical operations. 
+ 
+ • 
+ 
+
+ Modeling Continuous Dynamics. 
+In physical tasks such as gravity , the Discrete Transformer effectively identifies the essential computational variables and successfully constructs the correct computation graph through the coordination of the Numerical Attention, Numerical MLP, and output head, demonstrating strong potential for modeling complex physical processes.
+Moreover, owing to its inherent model design, it offers a clear advantage over prior symbolic synthesis approaches.
+Specifically, the MIPS is inherently restricted to discrete data domains, rendering it inapplicable to floating-point tasks.
+In contrast, the Discrete Transformer natively supports continuous variables.
+This distinction enables the extraction of algorithms that capture continuous dynamics, substantially broadening the scope of mechanistic-interpretability-based program synthesis. 
+ 
+ 
+ 
+
+
+ 
+ 
+ 
+ ⬇ 
+ 
+ 1 
+ 
+ 
+ 
+ import numpy as np 
+ 
+ 
+ 2 
+ 
+ 
+ 
+ def sum_last2 ( input_seq ):
+ 
+ 
+ 3 
+ 
+ 
+ 
+ # V0_input 
+ 
+ 
+ 4 
+ 
+ 
+ 
+ input_arr = np . array ( input_seq , dtype = float )
+ 
+ 
+ 5 
+ 
+ 
+ 
+ seq_len = input_arr . shape [0]
+ 
+ 
+ 6 
+ 
+ 
+ 
+ V0 = input_arr [:, 0]
+ 
+ 
+ 7 
+ 
+ 
+ 
+ # V1_Attn_L0H0 
+ 
+ 
+ 8 
+ 
+ 
+ 
+ V1 = np . zeros ( seq_len )
+ 
+ 
+ 9 
+ 
+ 
+ 
+ # Fixed offset 1 
+ 
+ 
+ 10 
+ 
+ 
+ 
+ V1 [1:] = V0 [:-1]
+ 
+ 
+ 11 
+ 
+ 
+ 
+ # V2_Attn_L0H1 
+ 
+ 
+ 12 
+ 
+ 
+ 
+ V2 = np . zeros ( seq_len )
+ 
+ 
+ 13 
+ 
+ 
+ 
+ # Fixed offset 1 
+ 
+ 
+ 14 
+ 
+ 
+ 
+ V2 [1:] = V0 [:-1]
+ 
+ 
+ 15 
+ 
+ 
+ 
+ # Output Head 
+ 
+ 
+ 16 
+ 
+ 
+ 
+ output = 1.00 * V0 + 1.00 * V1 + 0.01 * V2 
+ 
+ 
+ 17 
+ 
+ 
+ 
+ return output 
+ 
+ 
+
+ \Downarrow   symbolic simplification 
+ 
+ 
+ 
+ 
+ Simplified Expression:   \displaystyle y_{t}=x_{t}+x_{t-1} 
+ 
+ 
+ 
+ 
+ Figure 2: 
+Algorithm extraction results for the sum_last2 task.
+Modules are denoted by their type and indices (e.g., Attn_L0H0 represents the attention head at index 0 of layer 0).
+The extracted code reveals that the model utilizes specific attention heads to retrieve the previous token.
+Symbolic simplification (bottom) shows the mathematically simplified expression, verifying that the model correctly learns the logic y_{t}=x_{t}+x_{t-1} .
+ 
+ 
+
+
+ 
+ 
+ 
+ ⬇ 
+ 
+ 1 
+ 
+ 
+ 
+ import numpy as np 
+ 
+ 
+ 2 
+ 
+ 
+ 
+ def parity_last2 ( input_seq ):
+ 
+ 
+ 3 
+ 
+ 
+ 
+ # V0_input 
+ 
+ 
+ 4 
+ 
+ 
+ 
+ input_arr = np . array ( input_seq , dtype = float )
+ 
+ 
+ 5 
+ 
+ 
+ 
+ seq_len = input_arr . shape [0]
+ 
+ 
+ 6 
+ 
+ 
+ 
+ V0 = input_arr [:, 0]
+ 
+ 
+ 7 
+ 
+ 
+ 
+ # V1_Attn_L0H0 
+ 
+ 
+ 8 
+ 
+ 
+ 
+ V1 = np . zeros ( seq_len )
+ 
+ 
+ 9 
+ 
+ 
+ 
+ # Fixed offset 1 
+ 
+ 
+ 10 
+ 
+ 
+ 
+ V1 [1:] = V0 [:-1]
+ 
+ 
+ 11 
+ 
+ 
+ 
+ # V2_Attn_L0H1 
+ 
+ 
+ 12 
+ 
+ 
+ 
+ V2 = np . zeros ( seq_len )
+ 
+ 
+ 13 
+ 
+ 
+ 
+ # Fixed offset 1 
+ 
+ 
+ 14 
+ 
+ 
+ 
+ V2 [1:] = V0 [:-1]
+ 
+ 
+ 15 
+ 
+ 
+ 
+ # V3_MLP_L0M0 
+ 
+ 
+ 16 
+ 
+ 
+ 
+ V3 = (( V1 + -0.41) * (( V0 - 0.41) * 3.57)) + -0.61
+ 
+ 
+ 17 
+ 
+ 
+ 
+ # Output Head 
+ 
+ 
+ 18 
+ 
+ 
+ 
+ output = -0.56 * V3 + 0.17 * V0 + 0.10 * V2 + 0.07 * V1 
+ 
+ 
+ 19 
+ 
+ 
+ 
+ return output 
+ 
+ 
+
+ \Downarrow   symbolic simplification 
+ 
+ 
+ 
+ 
+ Simplified Expression:   \displaystyle y_{t}=x_{t}+x_{t-1}-2x_{t}x_{t-1} 
+ 
+ 
+ 
+ 
+ Figure 3: 
+Algorithm extraction results for the parity_last2 task.
+The extracted code reveals that the model utilizes specific attention heads (e.g., Attn_L0H0 ) to retrieve the previous token, and specific sub-MLPs (e.g., MLP_L0M0 ) to perform non-linear transformations.
+The bottom panel presents the symbolic simplification y_{t}=x_{t}+x_{t-1}-2x_{t}x_{t-1} , which is the algebraic formulation of the parity logic.
+ 
+ 
+
+
+ 
+ 
+ 
+ ⬇ 
+ 
+ 1 
+ 
+ 
+ 
+ import numpy as np 
+ 
+ 
+ 2 
+ 
+ 
+ 
+ def relu ( x ):
+ 
+ 
+ 3 
+ 
+ 
+ 
+ return np . maximum (0, x )
+ 
+ 
+ 4 
+ 
+ 
+ 
+ def extrema_prev2 ( input_seq , mode ):
+ 
+ 
+ 5 
+ 
+ 
+ 
+ # V0_input 
+ 
+ 
+ 6 
+ 
+ 
+ 
+ input_arr = np . array ( input_seq , dtype = float )
+ 
+ 
+ 7 
+ 
+ 
+ 
+ seq_len = input_arr . shape [0]
+ 
+ 
+ 8 
+ 
+ 
+ 
+ V0 = input_arr [:, 0]
+ 
+ 
+ 9 
+ 
+ 
+ 
+ # V1_Attn_L0H0 
+ 
+ 
+ 10 
+ 
+ 
+ 
+ V1 = np . zeros ( seq_len )
+ 
+ 
+ 11 
+ 
+ 
+ 
+ # Fixed offset 1 
+ 
+ 
+ 12 
+ 
+ 
+ 
+ V1 [1:] = V0 [:-1]
+ 
+ 
+ 13 
+ 
+ 
+ 
+ # V3_MLP_L0M0, Output Head 
+ 
+ 
+ 14 
+ 
+ 
+ 
+ if mode == ’max’ : # maximum_prev2 
+ 
+ 
+ 15 
+ 
+ 
+ 
+ V3 = ((( V0 * -0.12) + relu (( V1 * -1.00) + V0 )) * -2.21) + (( V1 * -0.26) / 1.02)
+ 
+ 
+ 16 
+ 
+ 
+ 
+ output = 0.88 * V1 + -0.45 * V3 + 0.12 * V0 
+ 
+ 
+ 17 
+ 
+ 
+ 
+ else : # minimum_prev2 
+ 
+ 
+ 18 
+ 
+ 
+ 
+ V3 = 1.43 * ( V0 + (((3.49 * relu ( V1 - V0 )) - V1 ) - ( V1 * 1.04)))
+ 
+ 
+ 19 
+ 
+ 
+ 
+ output = 0.42 * V1 + 0.29 * V0 + -0.20 * V3 
+ 
+ 
+ 20 
+ 
+ 
+ 
+ return output 
+ 
+ 
+
+ \Downarrow   symbolic simplification 
+ 
+ 
+ 
+ 
+ Simplified Expression:   \displaystyle\max(x_{t},x_{t-1})=x_{t-1}+\text{ReLU}(x_{t}-x_{t-1}),\quad\min(x_{t},x_{t-1})=x_{t-1}-\text{ReLU}(x_{t-1}-x_{t}) 
+ 
+ 
+ 
+ 
+ Figure 4: 
+Algorithm extraction results for maximum_prev2 and minimum_prev2 tasks.
+The top panel shows the raw code where sub-MLPs utilize ReLU functions to compare the current token x_{t} with the previous token x_{t-1} .
+The bottom panel presents the simplified expressions, verifying that the model correctly reconstructs the extrema functions using the ReLU-based algebraic identities.
+ 
+ 
+ 
+
+
+
+ 6 Further Analysis 
+
+ 
+
+In this section, we provide a rigorous analysis of the Discrete Transformer’s properties, positioning it at the intersection of program synthesis and continuous sparsification.
+We primarily focus on the training dynamics, characterizing a distinct phase where functional convergence is achieved prior to complete structural discretization.
+We further demonstrate how architectural constraints serve as strong inductive biases, establishing the model as a controllable testbed for interpretable algorithm discovery. 
+ 
+
+
+
+ 6.1 Continuous-to-Discrete Homotopy 
+
+ 
+
+We frame program synthesis as a continuous-to-discrete homotopic transformation.
+From the perspective of differentiable architecture search and continuous sparsification ( Louizos et al., 2018 ; Jang et al., 2017 ) , we relax the discrete constraint by introducing continuous structural parameters, specifically the projection matrices \mathbf{W}_{\text{read}} .
+The temperature \tau serves as a homotopy parameter: high values define a search space over the continuous probability simplex for exploration, while annealing \tau\to 0 smoothly deforms the distribution toward simplex vertices for exploitation. 
+ 
+ 
+
+To validate these dynamics, in addition to the MSE loss (serving as the soft training objective \mathcal{L}_{\text{soft}} ), we monitor two metrics: Structural Agreement ( \mathcal{A}(e) ) and Discretization Discrepancy ( \Delta(e) ).
+Let \{\mathbf{p}_{r}^{(e)}\}_{r=1}^{R} be the set of all row-wise probability distributions derived from S(\mathbf{W}_{\text{read}},\tau) at epoch e , E the total number of epochs, and \mathcal{L}_{\text{hard}}(e) the hard loss computed via deterministic argmax sampling.
+We define \mathcal{A}(e)=\frac{1}{R}\sum_{r=1}^{R}\mathbb{I}\!\left(\arg\max\mathbf{p}_{r}^{(e)}=\arg\max\mathbf{p}_{r}^{(E)}\right) .
+And we further define \Delta(e)=\mathcal{L}_{\text{hard}}(e)-\mathcal{L}_{\text{soft}}(e) .
+As shown in Figure  5 , we observe a distinct phase transition: the significant decline in \Delta(e) occurs slightly later than that of \mathcal{L}_{\text{soft}} , concurrently with \mathcal{A}(e) approaching 1.0 as annealing proceeds.
+This lag suggests a two-stage process where the model first achieves soft convergence —learning functional mappings via relaxed representations—before undergoing structural crystallization , thereby ensuring a robust transition from exploration to exploitation. 
+ 
+
+ 
+ Figure 5: 
+Training dynamics exhibit a clear phase transition: the loss decreases earlier, while the pronounced drop in Discrepancy occurs slightly later, coinciding with Agreement approaching 1.0 during temperature annealing from 10.0 to 1.0 .
+The abbreviations Spring, Sum2, Diff2, Par2, and FB denote the spring , sum_last2 , diff_last2 , parity_last2 , and freebody tasks, respectively.
+ 
+ 
+ 
+
+
+
+ 6.2 Controllability via Inductive Biases 
+
+ 
+
+Unlike standard code LLMs, which synthesize programs based on opaque statistical patterns, our Discrete Transformer offers a unique advantage: interpretability-aware controllability.
+In scientific discovery, researchers often seek not just any solution, but a specific form of algorithm that aligns with domain knowledge ( Schmidt and Lipson, 2009 ; Udrescu and Tegmark, 2020 ; Cranmer et al., 2020 ) .
+We address this need by explicitly manipulating the architectural constraints and training configurations of our model to impose inductive biases, thereby steering the solution space. 
+ 
+ 
+
+We demonstrate this controllability through two intervention scenarios.
+First, we manipulate architectural primitives.
+In the maximum_prev2 task, the unconstrained model typically solves maximization via MLP-based arithmetic approximation (exploiting ReLU non-linearity).
+To test if the model can switch algorithmic paradigms, we explicitly set the number of sub-MLPs to zero, removing its capacity for complex arithmetic.
+Consequently, the model adapts by shifting its entire mechanism to the Numerical Attention module. It discovers a “windowed max” attention pattern, solving the task by directly copying the largest value from the context rather than computing it.
+Second, we intervene in the information flow. In the spring task, the model typically learns the standard recurrence y_{i}=y_{i-1}-y_{i-2}+x_{i} . By masking the immediate history ( y_{i-1},y_{i-2} ), we guide the model to bypass the standard path and discover a mathematically equivalent high-order recurrence: y_{i}=-y_{i-3}+x_{i}+x_{i-1} .
+These findings highlight the Discrete Transformer as a robust tool for intervenable algorithm discovery, capable of uncovering multiple equivalent logical paths underlying the same data distribution.

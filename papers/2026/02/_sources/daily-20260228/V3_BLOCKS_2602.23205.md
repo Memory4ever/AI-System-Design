@@ -1,0 +1,433 @@
+[0] h5: Report GitHub Issue
+
+[1] p: Content selection saved. Describe the issue below:
+
+[2] h1: EmbodMocap: In-the-Wild 4D Human-Scene Reconstruction for Embodied Agents
+
+[3] h6: Abstract
+
+[4] p: Human behaviors in the real world naturally encode rich, long-term contextual information that can be leveraged to train embodied agents for perception, understanding, and acting. However, existing capture systems typically rely on costly studio setups and wearable devices, limiting the large-scale collection of scene-conditioned human motion data in the wild. To address this, we propose EmbodMocap, a portable and affordable data collection pipeline using two moving iPhones. Our key idea is to jointly calibrate dual RGB-D sequences to reconstruct both humans and scenes within a unified metric world coordinate frame. The proposed method allows metric-scale and scene-consistent capture in everyday environments without static cameras or markers, bridging human motion and scene geometry seamlessly. Compared with optical capture ground truth, we demonstrate that the dual-view setting exhibits a remarkable ability to mitigate depth ambiguity, achieving superior alignment and reconstruction performance over single iphone or monocular models. Based on the collected data, we empower three embodied AI tasks: monocular human-scene-reconstruction, where we fine-tune on feedforward models that output metric-scale, world-space aligned humans and scenes; physics-based character animation, where we prove our data could be used to scale human-object interaction skills and scene-aware motion tracking; and robot motion control, where we train a humanoid robot via sim-to-real RL to replicate human motions depicted in videos. Experimental results validate the effectiveness of our pipeline and its contributions towards advancing embodied AI research.
+
+[5] figure: Figure 1 : Introducing EmbodMocap , a portable and low-cost system for simultaneous 4D human and scene reconstruction, deployable anywhere using two moving iPhones. The dataset captured by EmbodMocap benefits three crucial embodied AI tasks: monocular human & scene reconstruction, physics-based character animation, and real-world humanoid motion control. Project page .
+
+[6] h2: 1 Introduction
+
+[7] p: Embodied Artificial Intelligence (Embodied AI) aims to build agents that can perceive, understand, and act within real-world environments. Progress in this field relies on datasets that capture both human motion and the surrounding 3D scene, enabling physically grounded perception and action learning. Such scene-aware data allows modeling of realistic human–scene interactions, simulation of lifelike behaviors, and training of humanoids to operate seamlessly in complex environments. They serve as a foundation for advancing embodied reasoning and control across robotics, virtual reality, and computer vision.
+
+[8] p: However, collecting high-quality human–scene data remains difficult. Precise 3D motion and scene geometry cannot be automatically obtained from internet videos due to occlusions and depth ambiguity. Existing capture systems that provide high-quality human–scene data typically rely on multi-view camera rigs [ 11 , 74 ] , wearable motion suits [ 21 , 34 ] , or LiDAR scanners [ 5 , 18 ] , which are costly, complex, and limited to controlled studio environments. These constraints hinder scalable and scene-aware data acquisition, limiting the ability of embodied AI models to learn from natural human behavior in diverse indoor and outdoor environments.
+
+[9] p: In this paper, we propose EmbodMocap, an efficient and affordable framework for capturing metrically accurate 4D human and scene using only two iPhones. Our key idea is to jointly calibrate and optimize dual RGB-D inputs to reconstruct both humans and scenes within a unified world coordinate frame. Specifically, we first reconstruct the static scene from a single RGB-D sequence to define the world scale, then capture synchronized dual-view RGB-D videos of human motion, and finally perform geometric alignment and motion optimization to recover world-anchored human poses. In contrast to existing systems that rely on multi-camera rigs or wearable sensors, our approach achieves high-quality, scene-consistent reconstruction using only moving consumer devices. This design enables scalable, in-the-wild data collection that preserves precise human motion and authentic scene context, supporting realistic human–scene interaction modeling for embodied AI research.
+
+[10] p: Based on the data collected with EmbodMocap, we demonstrate the reliability and versatility of our capture pipeline through three representative applications. The first application verifies geometric consistency, where we fine-tune reconstruction models to jointly recover humans and scenes in world coordinates. The second validates physical realism, showing that the captured motions enable scalable training of physics-based character skills and scene-aware motion tracking. The third demonstrates embodied transferability, where our data support humanoid robot training through a sim-to-real motion tracking framework [ 42 , 25 ] . These results highlight that EmbodMocap enables scalable and physically grounded data acquisition for embodied AI.
+
+[11] p: In summary, our contributions can be summarized as follows:
+
+[12] p: We introduce EmbodMocap, a portable and affordable data collection pipeline that produces high-quality multi-modal data for embodied AI applications.
+
+[13] p: We validate our capture pipeline’s effectiveness across three key embodied AI tasks: monocular human-scene reconstruction, physics-based character animation, and real-world humanoid motion control.
+
+[14] p: We provide a scalable and accessible solution that lowers the barrier for embodied AI research, opening new possibilities for real-world applications and further advancements in the field.
+
+[15] h2: 2 Related Work
+
+[16] figure: Table 1 : Comparison of 4D Human & Scene datasets based on different features. Datasets Publication Device Outcome Mocap Suit Scanner Static Cam. Dyna. Cam. Total Cost($) Mesh Dyna.Anno. Outdoor PROX [ 11 ] ICCV2019 - Structure Sensor Kinetic-One - 2K ✓ ✗ ✗ RICH [ 18 ] CVPR 2022 - Leica RTC360 6-8 × \times Cameras 1 × \times Camera 20K+ ✓ ✓ ✓ EgoBody [ 74 ] ECCV2022 - 1 × \times IPhone 5 × \times Azure Kinect Hololens2 9K ✓ ✓ ✗ SLOPER4D [ 5 ] CVPR2023 Noitom PN+NUC11 Ouster-os1 LiDAR - DJI-Action2+TLS 20K ✓ ✓ ✓ EMDB [ 21 ] ICCV 2023 EM Sensors - - 1 × \times IPhone 15K ✗ ✓ ✓ Nymeria [ 34 ] ECCV2024 2 × \times XSens+Aria Wistband - - 2 × \times Project Aria 60K+ ✗ ✓ ✓ EmbodMocap - - 1 × \times IPhone - 2 × \times IPhone 1K ✓ ✓ ✓
+
+[17] p: Datasets for 4D Human & Scene Capture. Early motion datasets, such as AMASS [ 35 , 9 ] , focus on pure human motion, unifying multiple motion capture sources into a large-scale repository. While invaluable for studying human motion, these datasets lack the 3D scene context essential for understanding human–scene interactions. Recent 4D datasets, like PROX [ 11 ] , RICH [ 18 ] , and EgoBody [ 74 ] , combine scanned 3D scenes with motion capture using multi-view camera systems, while EMDB [ 21 ] and SPLOPER4D [ 5 ] , employ IMUs or electromagnetic sensors for motion recording in large-scale environments. Nymeria [ 34 ] extends this further with Project Aria glasses and optical marker-based systems for wide-area motion capture. However, these approaches face notable limitations: marker-based and multi-camera systems are expensive and restricted to small studio environments, while IMU and EM-based methods, though more flexible, require extensive manual alignment and post-processing to synchronize motion with 3D scenes. And the wearable devices will influence the human appearance in RGB images. In contrast, our approach uses minimal equipment, operates in diverse environments without static camera setups, and avoids wearable devices, preserving the naturalness of RGB images for authentic human–scene interaction capture. Table 1 compares these datasets.
+
+[18] p: Monocular Human & Scene Reconstruction. Early works [ 3 , 41 , 20 , 7 , 23 ] on RGB-based human mesh recovery focus on reconstructing 3D pose and shape but often ignore scene context [ 60 ] or camera information [ 24 , 63 ] , leading to inconsistencies under camera motion. Recent methods address this by combining motion cues [ 73 ] , SLAM or visual odometry [ 72 , 66 , 54 ] , and human motion priors [ 73 , 53 ] to recover global trajectories in world coordinates.
+
+[19] p: Emerging models move toward jointly reconstructing humans and 3D scenes with spatial intelligence models [ 61 , 62 ] . For example, HSFM [ 37 ] combines Dust3R [ 62 ] with multi-view correspondence to jointly recover human meshes, scene point clouds, and camera parameters from multi-cameras. HAMSt3R [ 48 ] integrates DensePose [ 8 ] and multi-view scene reconstruction in one model, with an optimization to get human poses, while JOSH [ 28 ] uses MASt3R-SLAM [ 38 ] and joint optimization to achieve globally consistent 4D human-scene reconstructions. This trend emphasizes the simultaneous prediction of human motion and scene geometry, which futher requires multi-model data pairs with high-quality annotations. In our paper, we propose a monocular human & scene reconstruction pipeline combined with 2 feedforward models, and finetuned it on our proposed dataset to prove the efficiency of our paired data.
+
+[20] p: Training Humanoid from Video Data. Recent advances in physics-based animation and reinforcement learning enable humanoid agents to perform realistic and physically consistent motions using control policies learned from marker-based motion capture data. These methods have shown strong realism in tasks like motion tracking [ 42 , 32 ] , locomotion [ 44 , 43 , 33 ] , and human–scene interaction [ 40 , 64 ] , and have been extended to real-world applications in motion tracking [ 15 , 19 , 13 ] , locomotion [ 16 ] , and scene interaction [ 14 , 2 ] . However, marker-based methods require dedicated studios, expensive hardware, and extensive manual effort, making them costly and hard to scale. Adapting captured motions to new scenes or robot morphologies also demands complex retargeting and re-simulation. To address this, recent works like VideoMimic [ 1 ] , ASAP [ 13 ] , and HDMI [ 67 ] train humanoid control directly from in-the-wild video data. By using monocular motion capture methods such as TRAM [ 66 ] and GVHMR [ 53 ] , they estimate human motion from videos and retarget it to virtual humanoids for training in physical simulators. This video-driven paradigm leverages diverse real-world data but struggles with capturing complex skills or scene geometries due to occlusion and depth ambiguities. In this paper, we propose a method for high-precision human motion and scene reconstruction that overcomes these limitations.
+
+[21] h2: 3 Proposed Capture System
+
+[22] figure: Figure 2 : EmbodMocap: We propose an affordable dataset capture and processing system. From left to right, the four stages (Stage-I to Stage-IV) illustrate our core logic: leveraging high-quality camera matrices provided by SpectacularAI [ 55 ] and aligning sequence coordinates to the scene’s world frame. For detailed explanations, please refer to Sec. 3 .
+
+[23] p: We aim to capture metrically accurate human motion and scene geometry using only two iPhones. As shown in Fig. 2 , our capture process consists of four sequential stages that progressively reconstruct and align the scene, cameras, and human motion within a unified world coordinate frame. We first reconstruct a metrically accurate static scene and establish the world reference using a single iPhone RGB-D sequence (Sec. 3.1 ). Then, we use two synchronized iPhones to record dual-view RGB-D videos of human motion and extract per-frame camera poses and human priors with off-the-shelf perception models (Sec. 3.2 ). Next, we align the dual-view camera trajectories to the reconstructed scene through a combination of COLMAP registration and multi-view geometric optimization (Sec. 3.3 ). Finally, we refine the SMPL parameters by triangulating dual-view 2D keypoints into 3D space and optimizing human poses and translations in the world coordinate system (Sec. 3.4 ).
+
+[24] h3: 3.1 Stage I: Scene Reconstruction
+
+[25] p: In this stage, we aim to reconstruct a metrically accurate, Z-up scene mesh that serves as the reference world coordinate system. We first use a single iPhone to capture an RGB-D video of the scene, along with synchronized IMU data. The recorded data are processed by the SpectacularAI SDK (SAI) [ 55 ] , which automatically selects keyframes according to the accumulated camera translation and estimates corresponding camera parameters ( 𝑲 s , 𝑹 s , n , 𝑻 s , n ) (\bm{K}_{s},\bm{R}_{s,n},\bm{T}_{s,n}) in Z-up world coordinates with metric scale. These trajectories establish a consistent world frame for all subsequent stages. Based on the recovered poses, we refine the iPhone LiDAR depth maps using PromptDA [ 26 ] , unproject them into 3D space, and integrate the point clouds through TSDF fusion [ 4 ] to obtain a dense and metrically accurate global mesh ℳ g \mathcal{M}_{g} . Note that the depth maps are truncated based on a threshold determined by the effective range of the iPhone’s depth sensor. Specifically, we use a threshold of 3.5m for indoor scenes and 5m for outdoor scenes. We further apply lightweight post-processing such as outlier removal and small-component filtering to clean the mesh. Finally, we extract SIFT features from the same SAI keyframes and run COLMAP [ 50 ] with fixed camera parameters to build a sparse structure database. This database preserves the metric scale and serves as a reference for registering dual-view sequences in later stages.
+
+[26] h3: 3.2 Stage II: Sequence Processing
+
+[27] p: After reconstructing the static scene in Stage I, we proceed to capture and process dual-view human motion sequences within the same environment. In this stage, we use two iPhones to record synchronized RGB-D videos of a performer moving inside the reconstructed scene, with each device providing an independent camera coordinate system. The goal is to convert these raw dual-view videos into temporally aligned and metrically consistent per-frame human and camera information, which will serve as the foundation for subsequent calibration and motion optimization.
+
+[28] p: Firstly, we use SAI to obtain per-frame calibrated cameras for each view. Let v v denote the view index ( v ∈ { v 1 , v 2 } v\in\{v_{1},v_{2}\} ), and let t t index time. For each view independently, SAI provides intrinsics and extrinsics ( 𝑲 v , 𝑹 v , t , 𝑻 v , t ) (\bm{K}_{v},\bm{R}_{v,t},\bm{T}_{v,t}) for every decoded frame 𝑰 v , t \bm{I}_{v,t} in the native coordinate system of that view.
+
+[29] p: Next, we extract human-related information using several off-the-shelf models: (i) YOLO [ 56 ] for person detection and proposal pruning; (ii) ViTPose [ 70 ] for 2D human keypoints with confidence scores; (iii) SAM2 [ 47 ] for person segmentation masks; (iv) PromptDA [ 26 ] to refine dual-view depths; and (v) VIMO [ 66 ] for camera space SMPL parameters. Finally, we employ a laser pointer cue for frame-level synchronization between the two camera streams. By identifying the frame index where the laser dot disappears, we temporally align both videos and slice all associated image, depth, and parameter data accordingly. This process yields synchronized dual-view RGB-D sequences with calibrated camera trajectories and per-frame human priors, providing clean inputs for subsequent sequence calibration.
+
+[30] h3: 3.3 Stage III: Sequence Calibration
+
+[31] p: After obtaining the static scene reconstruction in Stage 3.1 and the dual-view camera trajectories in Stage 3.2 , the next step is to align all coordinate systems into a unified world frame. At this point, we have three separate coordinate systems: one for the reconstructed scene and two for each iPhone camera trajectory estimated by SAI. Since the dual-view coordinate systems differ from the scene coordinate system only by rigid transformations, our goal is to optimize these 2 rigid transformations to unify the dual-view coordinates into the same metric, gravity-aligned world frame. The optimization process is sensitive to the initial values; therefore, it is necessary to first obtain a good initial estimate for the rigid transformations.
+
+[32] p: Get Initial Transformation from COLMAP. We register each dual-view sequence to the sparse COLMAP model constructed in Stage 3.1 using the known intrinsics K v K_{v} and background-only SIFT features ℱ v \mathcal{F}_{v} , extracted from images with human regions removed. Matches are established through a trained vocabulary tree [ 51 ] , and images are registered against the sparse COLMAP model to obtain COLMAP camera poses ( 𝑹 ^ v , t , 𝑻 ^ v , t ) (\hat{\bm{R}}_{v,t},\hat{\bm{T}}_{v,t}) in the same metric, gravity-aligned world coordinates as the scene.
+
+[33] p: To obtain the initial rigid transformation aligning the SAI camera trajectories 𝑻 ​ v , t {\bm{T}{v,t}} with their COLMAP counterparts 𝑻 ^ ​ v , t {\hat{\bm{T}}{v,t}} , we solve for an offset transformation ( s off , 𝑹 off , 𝑻 off ) (s^{\mathrm{off}},\bm{R}^{\mathrm{off}},\bm{T}^{\mathrm{off}}) by minimizing:
+
+[34] table: min ⁡ ∑ t = 1 N s off , 𝑹 off , 𝑻 off ⁡ ∥ 𝑻 ^ t − ( s off ​ 𝑹 off ​ 𝑻 t + 𝑻 off ) ∥ 2 2 , \min_{s^{\mathrm{off}},\bm{R}^{\mathrm{off}},\bm{T}^{\mathrm{off}}}\sum_{t=1}^{N}\big\lVert\hat{\bm{T}}_{t}-(s^{\mathrm{off}}\bm{R}^{\mathrm{off}}\bm{T}_{t}+\bm{T}^{\mathrm{off}})\big\rVert_{2}^{2}, (1)
+
+[35] p: where N N is the number of frames. After centering the trajectories, we solve this minimization problem using singular value decomposition (SVD).
+
+[36] p: For gravity alignment, 𝑹 off \bm{R}^{\mathrm{off}} is constrained to rotations about the z z -axis, ensuring proper alignment of SAI trajectories with the COLMAP coordinate system.
+
+[37] p: Calibration via Multiple Constraints. While the rigid transformations obtained in the previous step provide coarse alignment between the two camera trajectories and the reconstructed scene, this initialization alone is not sufficient to achieve accurate synchronization and metric consistency. To further refine the calibration, we jointly optimize all alignment parameters by introducing multiple geometric and photometric constraints across views. Specifically, we optimize the per-view global offsets R v off R_{v}^{\mathrm{off}} (constrained to z z -axis rotations) and T v off T_{v}^{\mathrm{off}} , using the initial alignment as the starting value. The aligned camera extrinsics are:
+
+[38] table: 𝑹 v , t ali = 𝑹 v off ​ 𝑹 v , t , 𝑻 v , t ali = 𝑹 v off ​ 𝑻 v , t + 𝑻 v off . \bm{R}_{v,t}^{\mathrm{ali}}=\bm{R}_{v}^{\mathrm{off}}\bm{R}_{v,t},\quad\bm{T}_{v,t}^{\mathrm{ali}}=\bm{R}_{v}^{\mathrm{off}}\bm{T}_{v,t}+\bm{T}_{v}^{\mathrm{off}}. (2)
+
+[39] p: The optimization minimizes a composite loss of point tracking loss, Chamfer distance, and bundle adjustment loss to ensure spatial consistency between views and the global reconstruction.
+
+[40] table: ℒ calib = λ track ​ ℒ track + ∑ v λ ch ​ d Chamfer + ∑ v λ ba ​ ℒ ba , v . \mathcal{L}_{\mathrm{calib}}=\lambda_{\mathrm{track}}\mathcal{L}_{\mathrm{track}}+\sum_{v}\lambda_{\mathrm{ch}}d_{\mathrm{Chamfer}}+\sum_{v}\lambda_{\mathrm{ba}}\mathcal{L}_{\mathrm{ba},v}. (3)
+
+[41] p: Through VGGT tracking, a subset of keyframes is selected, yielding accurate dual-view pixel tracking results in the human masks region. The tracked human surface 2D pixel coordinates 𝒒 v , t ( i ) \bm{q}_{v,t}^{(i)} , along with their corresponding depth values d v , t ( i ) d_{v,t}^{(i)} , are back-projected into the world frame:
+
+[42] table: 𝑸 v , t ( i ) = d v , t ( i ) ​ 𝑹 v , t ⊤ ali ​ 𝑲 v − 1 ​ [ 𝒒 v , t ( i ) 1 ] + 𝑹 v , t ⊤ ali ​ 𝑻 v , t ali , \bm{Q}_{v,t}^{(i)}=d_{v,t}^{(i)}\bm{R}_{v,t}^{\top\mathrm{ali}}\bm{K}_{v}^{-1}\begin{bmatrix}\bm{q}_{v,t}^{(i)}\\ 1\end{bmatrix}+\bm{R}_{v,t}^{\top\mathrm{ali}}\bm{T}_{v,t}^{\mathrm{ali}}, (4)
+
+[43] p: To enforce track consistency between views, the following loss is minimized:
+
+[44] table: ℒ track = 1 ∑ v , t | 𝒬 v , t | ​ ∑ t ∑ i w ~ t ( i ) ​ ‖ 𝑸 1 , t ( i ) − 𝑸 2 , t ( i ) ‖ 2 2 , \mathcal{L}_{\mathrm{track}}=\frac{1}{\sum_{v,t}|\mathcal{Q}_{v,t}|}\sum_{t}\sum_{i}\tilde{w}_{t}^{(i)}\big\|\bm{Q}_{1,t}^{(i)}-\bm{Q}_{2,t}^{(i)}\big\|_{2}^{2}, (5)
+
+[45] p: Where 𝑸 1 , t ( i ) \bm{Q}_{1,t}^{(i)} and 𝑸 2 , t ( i ) \bm{Q}_{2,t}^{(i)} are the 3D back-projected coordinates of the i i -th point from view 1 1 and view 2 2 , respectively. The weights w ~ t ( i ) \tilde{w}_{t}^{(i)} are used to control the contribution of each point based on its tracking confidence. Here w ~ t ( i ) = min ⁡ ( w 1 , t ( i ) , w 2 , t ( i ) ) \tilde{w}_{t}^{(i)}=\min(w_{1,t}^{(i)},w_{2,t}^{(i)}) combines the VGGT confidence scores for the same point across views. The Chamfer distance term d Chamfer d_{\mathrm{Chamfer}} aligns local pointclouds 𝓟 v ​ ( v ∈ { v 1 , v 2 } ) \bm{\mathcal{P}}_{v}\penalty\ (v\in\{v_{1},v_{2}\}) with the global reconstruction 𝓟 g \bm{\mathcal{P}}_{\mathrm{g}} sampled from ℳ g \mathcal{M}_{\mathrm{g}} in Sec. 3.1 , where 𝓟 v \bm{\mathcal{P}}_{v} is obtained by reconstructing the scene using the method from Sec. 3.1 with humans cropped by masks. The Chamfer distance is formally defined as:
+
+[46] table: d Chamfer ​ ( 𝓟 v , 𝓟 g ) \displaystyle d_{\mathrm{Chamfer}}(\bm{\mathcal{P}}_{v},\bm{\mathcal{P}}_{\mathrm{g}}) = 1 | 𝓟 v | ​ ∑ 𝒑 v ∈ 𝓟 v min 𝒑 g ∈ 𝓟 g ⁡ ‖ 𝒑 v − 𝒑 g ‖ 2 2 \displaystyle=\frac{1}{|\bm{\mathcal{P}}_{v}|}\sum_{\bm{p}_{v}\in\bm{\mathcal{P}}_{v}}\min_{\bm{p}_{\mathrm{g}}\in\bm{\mathcal{P}}_{\mathrm{g}}}\|\bm{p}_{v}-\bm{p}_{\mathrm{g}}\|_{2}^{2} + 1 | 𝓟 g | ∑ 𝒑 g ∈ 𝓟 g min 𝒑 v ∈ 𝓟 v ∥ 𝒑 g − 𝒑 v ∥ 2 2 . \displaystyle\quad+\frac{1}{|\bm{\mathcal{P}}_{\mathrm{g}}|}\sum_{\bm{p}_{\mathrm{g}}\in\bm{\mathcal{P}}_{\mathrm{g}}}\min_{\bm{p}_{v}\in\bm{\mathcal{P}}_{v}}\|\bm{p}_{\mathrm{g}}-\bm{p}_{v}\|_{2}^{2}. (6)
+
+[47] p: Finally, ℒ ba , v ​ ( v ∈ { v 1 , v 2 } ) \mathcal{L}_{\mathrm{ba},v}\penalty\ (v\in\{v_{1},v_{2}\}) ensures reprojection consistency for persistent matches, where the points are obtained from COLMAP image registration:
+
+[48] table: ℒ ba , v = 1 | M v | ​ ∑ ( t , j ) ∈ M v ‖ 𝒙 v , t , j − π ⁡ ( 𝑲 v , 𝑹 v , t ali , 𝑻 v , t ali , 𝑿 j ) ‖ 2 2 . \mathcal{L}_{\mathrm{ba},v}=\frac{1}{|M_{v}|}\sum_{(t,j)\in M_{v}}\big\|\bm{x}_{v,t,j}-\pi(\bm{K}_{v},\bm{R}_{v,t}^{\mathrm{ali}},\bm{T}_{v,t}^{\mathrm{ali}},\bm{X}_{j})\big\|_{2}^{2}. (7)
+
+[49] p: We solve Eq. ( 3 ) using the Adam [ 22 ] optimizer with gradient clipping. For yaw-only updates, R v off R_{v}^{\mathrm{off}} is parameterized by a single z-axis angle to preserve gravity alignment.
+
+[50] h3: 3.4 Stage IV: Motion Optimization
+
+[51] p: After obtaining calibrated dual-view trajectories and a unified scene coordinate system in Stage 3.3 , we further refine the human reconstruction results to achieve accurate and temporally consistent body motions in the world frame. At this stage, both camera poses and scene geometry are fixed, allowing us to focus on optimizing the human parameters. We first triangulate dual-view 2D keypoints into world-space 3D keypoints, which serve as reliable geometric constraints across views. Then, we optimize the SMPL parameters using these triangulated 3D keypoints to recover precise body poses and translations under the unified world coordinate system.
+
+[52] p: 3D Keypoint Triangulation. To triangulate the 3D keypoints Y t , j Y_{t,j} from their 2D projections { y v , t , j } \{y_{v,t,j}\} , we estimate the 3D position by minimizing the weighted reprojection error across all views:
+
+[53] table: min ⁡ ∑ v = 1 V 𝒀 t , j ⁡ c v , t , j ​ ‖ 𝒚 v , t , j − 𝑷 v ​ 𝒀 t , j ‖ 2 2 , \min_{\bm{Y}_{t,j}}\sum_{v=1}^{V}c_{v,t,j}\big\|\bm{y}_{v,t,j}-\bm{P}_{v}\bm{Y}_{t,j}\big\|_{2}^{2}, (8)
+
+[54] p: where 𝑷 v = 𝑲 v ​ [ 𝑹 v , t | 𝑻 v , t ] \bm{P}_{v}=\bm{K}_{v}[\bm{R}_{v,t}\ |\ \bm{T}_{v,t}] is the camera projection matrix for the v v -th view. The problem can be formulated as a weighted least squares optimization. Using SVD, 𝒀 t , j \bm{Y}_{t,j} is obtained as the right singular vector corresponding to the smallest singular value of 𝑨 \bm{A} .
+
+[55] p: World-Space SMPLify. Start from initial shape 𝜷 0 \bm{\beta}_{0} and body pose 𝜽 t b , 0 \bm{\theta}_{t}^{\mathrm{b,0}} in Sec. 3.2 , our World Frame SMPLify [ 30 ] jointly optimizes shape 𝜷 ∈ ℝ 10 \bm{\beta}\in\mathbb{R}^{10} , per-frame pose 𝜽 t = { 𝜽 t g , 𝜽 t b } ∈ ℝ 72 \bm{\theta}_{t}=\{\bm{\theta}_{t}^{\mathrm{g}},\bm{\theta}_{t}^{\mathrm{b}}\}\in\mathbb{R}^{72} and root translation 𝜸 t ∈ ℝ 3 \bm{\gamma}_{t}\in\mathbb{R}^{3} by minimizing:
+
+[56] table: ℒ SMPLify = ℒ 3 ​ D + ℒ smooth + ℒ prior + ℒ reproj \displaystyle\mathcal{L}_{\mathrm{SMPLify}}=\mathcal{L}_{3\mathrm{D}}+\mathcal{L}_{\mathrm{smooth}}+\mathcal{L}_{\mathrm{prior}}+\mathcal{L}_{\mathrm{reproj}} (9)
+
+[57] p: We use a two-stage optimization phase to ensure the smoothness and alignment with the original dual views. For the first stage, we only fit the body shape and transition, and for the second stage we fit all the parameters.
+
+[58] h2: 4 Evaluation
+
+[59] p: In this section, we aim to prove the effectness of our optimization pipeline. We will first ablate different loss functions of the pipeline in Sec. 4.1 , then compare ours with the monocular model, single-view only and optical captured ground truth.
+
+[60] h3: 4.1 Ablation Study on Loss Functions
+
+[61] p: Ablation on dataset optimization. We conduct an ablation study on four core loss functions that significantly influence performance during data optimization, as described in main paper. These loss functions include tracking loss, Chamfer distance, reprojection loss, smoothness loss and kp3d loss. To evaluate the performance under different optimization settings, we employ four metrics. First, IoU(Intersection over Union) measures the overlap between the rendered SMPL mask and the SAM2 [ 47 ] mask. Second, Reproj evaluates the pixel error between the reprojected SMPL joints and the 2D keypoints detected by VITPose [ 70 ] . Third, Depth error is computed as the mean squared error (MSE) between the rendered depth from SMPL parameters and the sensor depths refined by PromptDA [ 26 ] . Finally, Jitter is quantified using the same temporal foot skating metric as MotionVAE [ 27 ] . All metrics are averaged across all sequences and views to ensure a robust evaluation.
+
+[62] p: The ℒ t ​ r ​ a ​ c ​ k \mathcal{L}_{track} effectively stitches the two views together, significantly improving the overall reconstruction performance, making it highly impactful on the final results. The ℒ k ​ p ​ 3 ​ d \mathcal{L}_{kp3d} provides 3D joint positions of the human body, and compared to the reprojection loss, it eliminates the issue of depth ambiguity, thus playing a critical role in the overall performance.
+
+[63] figure: Table 2 : The performance of different optimization settings. ℒ t ​ r ​ a ​ c ​ k \mathcal{L}_{track} ℒ c ​ h ​ a ​ m ​ f ​ e ​ r \mathcal{L}_{chamfer} ℒ r ​ e ​ p ​ r ​ o ​ j \mathcal{L}_{reproj} ℒ s ​ m ​ o ​ o ​ t ​ h \mathcal{L}_{smooth} ℒ k ​ p ​ 3 ​ d \mathcal{L}_{kp3d} IoU(%) ↑ \uparrow Reproj ↓ \downarrow Depth ↓ \downarrow Jitter ↓ \downarrow ✗ ✓ ✓ ✓ ✓ 54.3 44.2 2.372 0.0371 ✓ ✗ ✓ ✓ ✓ 72.5 10.9 0.081 0.0131 ✓ ✓ ✗ ✓ ✓ 72.3 11.1 0.079 0.0130 ✓ ✓ ✓ ✗ ✓ 72.1 10.4 0.087 0.0160 ✓ ✓ ✓ ✓ ✗ 59.3 20.4 0.609 0.0126 ✓ ✓ ✓ ✓ ✓ 73.0 9.3 0.078 0.0128
+
+[64] h3: 4.2 Comparison on Capture Methods
+
+[65] p: Direct comparison in optical mocap studio. To evaluate the accuracy of dual view capture system, we set up furniture in a mocap studio and use a Vicon system to capture ground truth human motion. Two photographers record dual-view videos of the actor with iPhones, while the actor performs basic motions(see Fig. 3 , zoom in). We record 5 sequences of one participant with 9420 frames in total. We compare the errors against optical mocap GT of: monocular model GVHMR, our dual-view optimization, and our single-view version(v1 and v2). For the single-view version, we calibrate the actor coordinates to the scene coordinates system using COLMAP and optimize the motion with reprojection, smooth, and prior losses. The optical mocap results are fitted to SMPLX parameters by Mosh [ 29 ] and synchronized to dual-view parameters with foot contact keyframs. Results are compared in chunk sizes of 100, 500, and 1000. Our dual-view method outperforms the monocular model and single-view optimization by a large margin. As the chunk length increases, our advantage becomes increasingly evident. (see Tab. 3 )
+
+[66] figure: Figure 3 : Our dual view vs . single view results in optical studio.
+
+[67] figure: Table 3 : Comparision among monocular model, single view optimization, with dual view optimization(ours) Method chunk=100 chunk=500 chunk=1000 RTE ↓ \downarrow WA-MPJPE ↓ \downarrow W-MPJPE ↓ \downarrow WA-MPJPE ↓ \downarrow W-MPJPE ↓ \downarrow WA-MPJPE ↓ \downarrow W-MPJPE ↓ \downarrow GVHMR 66.56 123.44 124.61 333.34 179.47 593.79 1.85 Single-View V1 124.68 218.22 233.06 489.11 297.83 768.31 2.71 Single-View V2 108.31 211.83 231.41 357.22 338.42 762.80 3.65 Dual View 56.61 72.86 76.90 99.75 119.45 169.11 1.13
+
+[68] p: The advantage of dual-view over single-view lies in two key aspects: 1)dual-view effectively addresses occlusion and self-occlusion of body joints, 2)it handles the challenging alignment of actor motion coordinates to the scene coordinates. The COLMAP estimates the camera locations for the images but suffers from depth ambiguity in the camera’s facing direction. Using a single iPhone results in large errors in the depth direction. In contrast, using two iPhones enables pixel-wise dense correspondence(see Eq. 5 ), which ensures the rigid transformation between the two cameras during the optimization, and resolves the depth ambiguity in each view. This enables a good localization of human trajectories in the scene coordinate system automatically. Our dual view could achieve a calibration accuracy to the scene of about 5cm (human touching table in the figure), while the single view is over 30cm, measured in MeshLab by putting markers on the ground for the actor’s start and end positions.
+
+[69] h2: 5 Downstream Tasks
+
+[70] p: In this section, we validate our capture pipeline’s effectiveness across three key applications. In Sec. 5.1 , we propose a monocular human & scene reconstruction pipeline and finetune it with our captured RGBD, cameras, and SMPL annotations. In Sec. 5.2 , we train several human-object interaction skills and scene-aware motion tracking with our captured motion & scene. In Sec. 5.3 , we train a humanoid in simulator and deploy it to real-world robot.
+
+[71] h3: 5.1 Monocular Human & Scene Reconstruction
+
+[72] p: Motivation. We propose a data scheme combining RGBD data from dynamic cameras with camera and human motion parameters to train monocular human and scene reconstruction models. As no feedforward model exists, we establish a baseline using π 3 \pi^{3} [ 65 ] for SLAM and VIMO [ 66 ] for metric-scale human motion reconstruction from monocular videos.
+
+[73] p: Implementation. To process long sequences, videos are divided into overlapping chunks, with π 3 \pi^{3} estimating camera parameters and local point maps per chunk. Adjacent chunks are aligned using Procrustes alignment, and scale/transformations are recursively applied for global consistency. Metric scale is determined as the median ratio of SMPL to π 3 \pi^{3} depth values. SMPL predictions are then transformed to metric world space. For details, refer to Supp. Mat. We fine-tuned two π 3 \pi^{3} variants Tab. 4 by adding LoRA [ 17 ] layers to the camera and point decoders, supervised with the original π 3 \pi^{3} loss. For VIMO, we froze the encoder and finetuned the decoder with MSE loss on SMPL parameters. A human mask was used to limit supervision to the human region due to our dataset’s smaller range.
+
+[74] p: Metrics. We evaluate motion and trajectory accuracy on global coordinates using EMDB (subset 2) [ 21 ] , featuring extended sequences with ground-truth trajectories and meshes. Consistent with prior work [ 66 , 54 ] , each sequence is split into 100-frame chunks, and 3D joint errors are measured using W-MPJPE (aligning the first two frames) and WA-MPJPE (aligning the entire segment), both in millimeters. Additionally, Root Translation Error (RTE) is reported as a percentage (%), normalized by total displacement after rigid alignment (excluding scaling).
+
+[75] p: Results. We present 3 variants in Tab. 4 : the proposed baseline with the original checkpoints from π 3 \pi^{3} [ 65 ] and VIMO [ 66 ] , fine-tuning only VIMO, and fine-tuning both π 3 \pi^{3} and VIMO. The results demonstrate that our approach significantly improves the accuracy of VIMO, as we provide paired high-quality real-world RGB sequences and ground truth SMPL parameters. Additionally, leveraging our high-quality RGB-D data and camera parameter pairs, π 3 \pi^{3} ’s ability to predict in the world coordinate system also shows improvement. Our pipeline shows good performance on large-scale real-world videos, see Fig. 4
+
+[76] figure: Table 4 : Comparison of Finetuned Models on EMDB Benchmarks Finetuned EMDB Pi3 VIMO WA-MPJPE ↓ \downarrow W-MPJPE ↓ \downarrow RTE ↓ \downarrow ✗ ✗ 83.56 229.04 1.78 ✗ ✓ 82.89 222.93 1.73 ✓ ✓ 82.21 220.65 1.71
+
+[77] figure: Figure 4 : Quality results of proposed 4D Human & Scene Reconstruction pipeline on EMDB dataset.
+
+[78] h3: 5.2 Physics-based Character Animation
+
+[79] h4: 5.2.1 Human Object Interaction Skill Training
+
+[80] p: Motivation. We train several human-object interaction skills to demonstrate the physical realism of our approach and the scalability of our capture framework to new interaction skills. We aim to prove the efficiency and quality superiority of our framework over optical capture and monocular estimation methods.
+
+[81] p: Implementation. Following [ 44 , 40 , 64 ] , we train physical character policies use goal-conditioned reinforcement learning to formulate character control as a Markov Decision Process (MDP) defined by states, actions, transition dynamics, a reward function r r , and a discount factor γ \gamma . The reward r t ∈ ℛ r_{t}\in\mathcal{R} is calculated by a style reward r t s ​ t ​ y ​ l ​ e r_{t}^{style} [ 44 ] and a task reward r t t ​ a ​ s ​ k r_{t}^{task} . The policies are trained to maximize the expected discounted return: J ⁡ ( π ) = 𝔼 p ⁡ ( τ | π ) ​ [ ∑ t = 0 T − 1 γ t ​ r t ] , J(\pi)=\mathbb{E}_{p(\tau|\pi)}\left[\sum_{t=0}^{T-1}\gamma^{t}r_{t}\right], where T T is the episode length, γ ∈ [ 0 , 1 ] \gamma\in[0,1] is the discount factor, and r t r_{t} is the reward at time step t t . We use the widely adopted Proximal Policy Optimization (PPO) algorithm [ 52 ] to train the control policy model.
+
+[82] p: Following [ 40 , 64 , 12 ] , we train a set of human object interaction skills in simulator [ 36 ] , including follow , climb , sit , and lie . These common interaction skills are designed to guide the character’s root joint to reach specific target positions in 3D environments while maintaining physically realistic and motion divisty. We train these four common skills on 3 different input data: optical captured, which are collected from AMASS [ 35 ] and SAMP [ 10 ] following TokenHSI [ 40 ] ; ours, by segmenting the reconstructed motions into skill clips; monocular, by using the motion predicted by GVHMR [ 53 ] which is commonly used in humanoid reference motion prediction [ 67 , 13 ] , segmented with the same temporal slices as ours. We also train 2 extra interaction skills which have not been implemented in previous physics-based human object interaction papers: Prone and Support. We will illustrate the observation, reward designs, and the training details of each skill in Supp.Mat.
+
+[83] p: Metrics. We follow [ 10 , 68 ] that uses Success Rate and Contact Error as the main metrics to measure the quality of interactions quantitatively. Success Rate records the percentage of trials that humanoids successfully complete the contact within a certain threshold. We follow [ 68 , 39 , 12 ] in setting the thresholds for various actions: 20cm for Sit, Follow, and Climb; 30cm for Lie and Prone; and 10cm for Support. For Support, the error is defined as the distance from the object surface center to the hand center, while also taking into account the distance between the two feet. Please see details in Supp.Mat. We evaluate motion diversity using Average Pairwise Distance (APD) [ 6 ] , which measures the average pairwise distance between joint rotations and positions in generated samples. Higher APD values indicate greater diversity.
+
+[84] p: Results. We can find in Tab. 5 , for skills such as Follow, Climb, and Sit, the inherent difficulty is relatively low, and all three data settings achieve good results, very close to 100%. Although the quality of our data is slightly inferior to optically captured data, we provide more variety of task completion trajectories and motion diversities, which contribute to improve task performance. To prove this, we ablate on skills trained with different data proportions. 1X and 2X indicate the ratio of the number of clips relative to the optical capture data. On the 4 common skills, we observe a general trend where increased data amount leads to improvements in success rate, contact error, and APD metrics.
+
+[85] figure: Table 5 : Comparison of data duration, Success Rate, Contact Error, and APD for different skills among 3 data settings. Task Data Clips Duration (min) Rate (%) ↑ \uparrow Error (cm) ↓ \downarrow APD ↑ \uparrow Follow Optical Mocap 12 1.59 99.9 6.0 20.17 ± \pm 0.19 Ours 1X 12 1.48 99.9 6.7 18.42 ± \pm 0.22 Ours 2X 24 3.06 99.7 6.8 18.45 ± \pm 0.17 Ours Full 148 22.43 99.8 6.2 19.69 ± \pm 0.32 Monocular 148 22.43 98.0 7.2 19.85 ± \pm 0.39 Climb Optical Mocap 7 0.28 99.9 2.7 22.03 ± \pm 0.30 Ours 1X 7 0.54 99.8 1.8 22.77 ± \pm 0.29 Ours 2X 14 0.97 99.9 1.8 20.72 ± \pm 0.30 Ours Full 21 1.54 99.9 1.8 22.22 ± \pm 0.27 Monocular 21 1.54 99.2 1.8 21.34 ± \pm 0.38 Sit Optical Mocap 20 4.08 98.0 5.5 16.07 ± \pm 0.39 Ours 1X 20 2.11 99.8 5.4 14.35 ± \pm 0.27 Ours 2X 40 4.47 99.9 5.1 14.46 ± \pm 0.24 Ours Full 80 8.05 99.9 4.7 15.90 ± \pm 0.51 Monocular 80 8.05 98.4 5.7 15.80 ± \pm 0.51 Lie Optical Mocap 10 2.52 89.0 17.5 8.76 ± \pm 0.14 Ours 1X 10 0.99 85.3 20.2 7.43 ± \pm 0.10 Ours 2X 20 2.32 86.3 19.8 8.27 ± \pm 0.06 Ours Full 39 4.25 89.4 18.8 8.57 ± \pm 0.10 Monocular 39 4.25 81.2 21.0 8.14 ± \pm 0.10 Prone Ours Full 3 0.26 75.4 16.5 17.58 ± \pm 0.69 Monocular 3 0.26 71.2 16.5 16.18 ± \pm 0.30 Support Ours Full 8 0.97 66.0 4.9 21.08 ± \pm 0.59 Monocular 8 0.97 20.6 6.4 20.94 ± \pm 0.48
+
+[86] figure: (a) Qualitative comparison on 4 basic skills. (b) Qualitative comparison on 2 additional skills.
+
+[87] p: We also implement 2 extra skills, Prone and Support, demonstrate the versatility of our data collection pipeline. First, these new skills highlight the ability of our approach to generalize to novel interaction tasks. Second, the Support skill significantly increases the level of difficulty. Unlike other tasks, where a humanoid only needs to walk or offload the full body weight onto furniture surface, Support requires the hands to bear the weight of the body while the feet remain close together, demanding much higher accuracy in reference motion generation. This experiment shows that our approach outperforms monocular estimation methods by a large margin, particularly for high-difficulty interaction skills. The success rate trained on monocular estimated motions degrades to only 20% in Tab. 5 . In Fig. 5(b) , we can see policy trained on motion estimated from monocular models could not perform standard Support skill.
+
+[88] h4: 5.2.2 Scene-aware Motion Tracking
+
+[89] figure: Figure 6 : We present qualitative results of scene-aware motion tracking, showing four long-term motion examples in different scenes (a, b, c, and d), including daily indoor and outdoor interactions such as walking, sitting, lying, stair climbing, and touching. Our motion tracking framework not only accurately tracks the reference motion but also ensures physical realism, resolving subtle issues, such as interpenetration and floating artifacts, present in the reference data (see zoomed-in views on the right).
+
+[90] p: Motivation. Recent works [ 43 , 33 , 31 , 71 , 57 , 58 , 59 ] suggest that solving complex tasks requires pre-training on large-scale human motion data via motion tracking objectives, in order to obtain reusable and generalizable skill priors. However, existing motion tracking frameworks are mainly built for human-only [ 32 ] or single-object interaction [ 69 ] scenarios, primarily because current public datasets are concentrated in these settings. We argue that motion tracking pre-training on diverse 3D scenes is equally important, as it also provides rich priors—such as navigation, interaction, and long-horizon task execution. In this work, we mitigate this gap by: 1) proposing a scene-aware motion tracking framework, and 2) supporting it with high-fidelity paired 3D human-scene data captured by our EmbodMocap system.
+
+[91] p: Implementation. We extend MimicKit [ 45 ] by incorporating the height map into the observation space to achieve scene-aware tracking (details in the Supp. Mat.). For training, we use four 3D scenes, each containing several minutes of motion clips, and train one policy per scene to track all the motion clips in that scene.
+
+[92] p: Metrics. Policies are evaluated using a success rate metric: an episode is initialized from a random frame and run for 10s, and is considered successful if tracking exceeds 8s. For each scene, 3,072 episodes are used to compute average success, failure rates, and episode length statistics.
+
+[93] figure: Table 6 : Quantitative evaluation of scene-aware motion tracking and dataset statistics across four 3D scenes. Scene Clips Duration (min) Status Rate (%) Eps. Len. (s) a 14 12.31 Succ. 87.2 9.97 ± \pm 0.21 Fail. 12.8 3.94 ± \pm 2.10 b 6 3.62 Succ. 96.7 9.99 ± \pm 0.12 Fail. 3.3 4.16 ± \pm 2.38 c 12 7.87 Succ. 95.9 9.98 ± \pm 0.17 Fail. 4.1 5.43 ± \pm 2.18 d 7 5.06 Succ. 90.4 9.96 ± \pm 0.21 Fail. 9.6 4.44 ± \pm 1.92
+
+[94] p: Results. The quantitative results in Tab. 6 demonstrate that our data is simulation-ready, enabling the training of scene-aware tracking policies with high success rates. The qualitative results, shown in Fig. 6 , further illustrate that the policies not only successfully track the motions but also adapt to subtle imperfections present in the data.
+
+[95] h3: 5.3 Real-world Humanoid Robot Control
+
+[96] p: Motivation. Learning from human videos [ 46 , 67 , 1 ] has emerged as a crucial paradigm for humanoid robots to learn motor skills at scale. In this section, we demonstrate how EmbodMocap contributes to this paradigm by enabling accurate reconstruction of humans and their interacting 3D environments from videos, while preserving accurate contact information.
+
+[97] p: Implementation. We capture videos of humans performing ground-contact-rich motions, including locomotion and challenging cartwheels that require precise hand-ground contact. EmbodMocap is then used for real-to-sim reconstruction. The produced motions are used to train a single tracking policy via sim-to-real RL with domain randomization using BeyondMimic [ 25 ] .
+
+[98] p: Results. We deploy the policy on a real-world High Torque Hi humanoid robot with 21 joint DoF and a height of 80cm. As shown in Fig. 7 , the robot successfully replicates human motions from videos, demonstrating that EmbodMocap produces data of sufficient quality for humanoid robot control.
+
+[99] figure: Figure 7 : A real-world humanoid robot imitating human motions depicted in videos.
+
+[100] h2: 6 Conclusion
+
+[101] p: We propose EmbodMocap, a portable and affordable framework for capturing high-quality 4D human & scene data using only two iPhones. Our method enables scalable, metrically accurate reconstruction of human motion and scenes mesh in diverse real-world environments. We directly compare in optical capture studios, and prove the superiority in solving body occlusion and sequence coordinate alignment of our dual view designing. Through downstream applications in monocular human-scene reconstruction, physics-based character animation, and humanoid robot motion control, we demonstrate the effectiveness and scalability of our approach. By lowering the barrier for embodied AI research, EmbodMocap opens new opportunities for real-world applications.
+
+[102] h2: 7 Limitations and Future Work.
+
+[103] p: Our data collection pipeline encounters limitations in specific scenarios. For example, it fails to record depth when the distance exceeds the range of the iPhone LiDAR sensor (approximately 5 meters). Additionally, it struggles with scenes dominated by moving objects, which degrade the results of the SLAM SDK [ 55 ] . Extremely bright lighting conditions can also cause COLMAP failures, leading to incorrect registration. Future work could integrate more robust structure-from-motion tools, such as H-Loc [ 49 ] , to improve reliability. Moreover, incorporating automatic synchronization APPs on iPhone could further reduce human effort.
+
+[104] h2: 8 Acknowledge
+
+[105] p: We sincerely thank Mr. Xiaohan Ye and Mr. Rui Xu for volunteering as actors during data collection.
+
+[106] h2: References
+
+[107] p: Supplementary Material
+
+[108] h2: 9 More Details of EmbodMocap
+
+[109] h3: 9.1 Capture technique
+
+[110] p: The primary capture technique involves two photographers, each holding an iPhone in a vertical orientation. The photographers are required to maintain a certain angle relative to each other while following the performer. To achieve optimal triangulation during post-processing, the angle between the two cameras should ideally fall within the range of 60 to 120 degrees.
+
+[111] p: This configuration not only enhances the accuracy of triangulation but also ensures the capture of the performer from multiple perspectives, providing diverse viewpoint information for keypoint detection. Additionally, the photographers should aim to keep the cameras in motion to dynamically adjust their positions and minimize occlusion caused by objects in the environment.
+
+[112] figure: Figure 8 : Capture technique.
+
+[113] h3: 9.2 Human Labor Analysis
+
+[114] p: Temporal Synchronization. This step only needs the operator to identify and input the frame indices where the laser pointer’s spot disappears into a .xlsx file. Typically, this process takes only about 1 minute per sequence.
+
+[115] p: Skill Segmentation. Skill segmentation is only required when training physical interaction skills. The operator annotates each skill’s category, start, and end times based on the video, typically taking 0.5 to 2 minutes per sequence.
+
+[116] p: Contact Label & Optimization. In the main text, we mention that the alignment between our sequence and the scene coordinate system relies on photometric (COLMAP, pixel tracking) and geometric constraints (chamfer distance). However, this can sometimes result in alignment errors of a few centimeters, primarily due to depth inaccuracies in COLMAP’s sparse keypoints and depth errors from the iPhone sensor. To address this issue, we propose an optional post-processing solution. During data capture, we place markers in the scene and instruct the performer to begin walking from a designated marker and stop on another at the end of the sequence, standing still on the same marker. Annotating contact frame indices costs 1-2 minutes for each sequence. These markers serve as fixed reference points for alignment. In post-processing, we observe the corresponding marker positions on the reconstructed mesh and record their 3D coordinates, along with the frame indices where the performer stands on the markers. Using this information, we optimize a rigid transformation to align the center of the performer’s feet at the specified frame indices to the 3D coordinates of the markers.
+
+[117] p: Since SAI [ 55 ] could generate Z-up metric-scaled camera matrices, we define the rigid transformation in the xy-plane, defined by a rotation angle ϕ c \phi_{c} about the z-axis and a translation 𝑻 c \bm{T}_{c} . This can be represented by a homogeneous transformation matrix 𝑴 \bm{M} :
+
+[118] table: M = [ 𝑹 ⁡ ( ϕ c ) 𝑻 c 𝟎 1 ] = [ cos ⁡ ( ϕ c ) − sin ⁡ ( ϕ c ) 0 t x sin ⁡ ( ϕ c ) cos ⁡ ( ϕ c ) 0 t y 0 0 1 t z 0 0 0 1 ] M=\begin{bmatrix}\bm{R}(\phi_{c})&\bm{T}_{c}\\ \bm{0}&1\end{bmatrix}=\begin{bmatrix}\cos(\phi_{c})&-\sin(\phi_{c})&0&t_{x}\\ \sin(\phi_{c})&\cos(\phi_{c})&0&t_{y}\\ 0&0&1&t_{z}\\ 0&0&0&1\end{bmatrix} (10)
+
+[119] p: This matrix transform the center of lowest point on both feet to match the annotate marker. To robustly solve for the transformation parameters, we employ a gradient descent optimization, constrained by a minimizing a contact loss to match the contact marker:
+
+[120] table: ℒ contact \displaystyle\mathcal{L}_{\text{contact}} = 1 N c ​ ∑ i ∈ 𝒞 ( min z ⁡ ( 𝒱 ( i ) ) − c z ( i ) ) 2 \displaystyle=\frac{1}{N_{c}}\sum_{i\in\mathcal{C}}\left(\min_{z}(\mathcal{V}^{(i)})-c_{z}^{(i)}\right)^{2} (11)
+
+[121] p: For SMPL parameters, the global orientation is updated as 𝜽 ′ g = 𝑹 c ​ 𝜽 g \bm{\theta}^{\prime g}=\bm{R}_{c}\bm{\theta}^{g} . For translation, the pelvis’s world position is transformed as 𝑷 w ′ = 𝑹 c ​ 𝑷 w + 𝑻 c \bm{P}^{\prime}_{w}=\bm{R}_{c}\bm{P}_{w}+\bm{T}_{c} . Re-evaluating the SMPL model with 𝜽 ′ g \bm{\theta}^{\prime g} gives the local pelvis offset 𝑷 l ′ \bm{P}^{\prime}_{l} , and the updated translation is 𝜸 ′ = 𝑷 w ′ − 𝑷 l ′ \bm{\gamma}^{\prime}=\bm{P}^{\prime}_{w}-\bm{P}^{\prime}_{l} .
+
+[122] p: The updated camera rotation and translation are computed as 𝑹 v ′ = 𝑹 v ​ 𝑹 ​ c T \bm{R}_{v}^{\prime}=\bm{R}_{v}\bm{R}c^{T} and 𝑻 v ′ = 𝑻 v − 𝑹 v ​ 𝑹 ​ c T ​ 𝑻 c \bm{T}_{v}^{\prime}=\bm{T}_{v}-\bm{R}_{v}\bm{R}c^{T}\bm{T}_{c} , ensuring alignment and consistency of the scene representation.
+
+[123] figure: Figure 9 : An example in finding the contact marker in software (e.g., Meshlab) and corresponding keyframe index(the frames selected here are just for demo).
+
+[124] h2: 10 More Details of Monocular Human-Scene Reconstruction Pipeline
+
+[125] p: Our monocular reconstruction baseline is a modular pipeline for reconstructing 3D human pose and scene geometry from monocular video, combining two independent modules: π 3 \pi^{3} for camera trajectory prediction and scene point cloud reconstruction, and VIMO for SMPL-based human pose estimation. To process long video sequences, π 3 \pi^{3} divides frames into overlapping chunks, where each chunk independently predicts camera poses 𝑻 v ∈ ℝ T × 4 × 4 \bm{T}_{v}\in\mathbb{R}^{T\times 4\times 4} and local point clouds 𝑷 local ∈ ℝ T × H × W × 3 \bm{P}_{\text{local}}\in\mathbb{R}^{T\times H\times W\times 3} . To align these chunks into a global coordinate system, Procrustes analysis is applied to the overlapping regions of adjacent chunks. Given two point clouds 𝑿 , 𝒀 ∈ ℝ N × 3 \bm{X},\bm{Y}\in\mathbb{R}^{N\times 3} , the alignment minimizes the error:
+
+[126] table: min s , 𝑹 , 𝒕 ⁡ ‖ 𝒀 − ( s ​ 𝑹 ​ 𝑿 + 𝒕 ) ‖ F 2 , \min_{s,\bm{R},\bm{t}}\|\bm{Y}-(s\bm{R}\bm{X}+\bm{t})\|_{F}^{2}, (12)
+
+[127] p: where s s is the scale, 𝑹 \bm{R} is the rotation matrix, and 𝒕 \bm{t} is the translation vector. Using SVD, the optimal alignment parameters are computed as:
+
+[128] table: 𝑹 = 𝑽 ​ 𝑺 ​ 𝑼 ⊤ , s = trace ​ ( 𝒀 c ⊤ ​ 𝑹 ​ 𝑿 c ) trace ​ ( 𝑿 c ⊤ ​ 𝑿 c ) , 𝒕 = 𝒀 ¯ − s ​ 𝑹 ​ 𝑿 ¯ , \bm{R}=\bm{V}\bm{S}\bm{U}^{\top},\quad s=\frac{\text{trace}(\bm{Y}_{c}^{\top}\bm{R}\bm{X}_{c})}{\text{trace}(\bm{X}_{c}^{\top}\bm{X}_{c})},\quad\bm{t}=\bar{\bm{Y}}-s\bm{R}\bar{\bm{X}}, (13)
+
+[129] p: where 𝑿 c , 𝒀 c \bm{X}_{c},\bm{Y}_{c} are the centered point clouds, and 𝑽 , 𝑼 \bm{V},\bm{U} are derived from the SVD of the covariance matrix 𝑯 = 𝑿 c ⊤ ​ 𝒀 c \bm{H}=\bm{X}_{c}^{\top}\bm{Y}_{c} . After chunk alignment, VIMO predicts SMPL parameters ( 𝜽 , 𝜸 , 𝜷 ) (\bm{\theta},\bm{\gamma},\bm{\beta}) , where 𝜽 ∈ ℝ T × 72 \bm{\theta}\in\mathbb{R}^{T\times 72} represents joint rotations, 𝜸 ∈ ℝ T × 3 \bm{\gamma}\in\mathbb{R}^{T\times 3} is the root translation, and 𝜷 ∈ ℝ 10 \bm{\beta}\in\mathbb{R}^{10} defines body shape. Using a weak perspective camera model, SMPL vertices are projected onto the image plane as:
+
+[130] table: 𝒙 img = s ​ 𝒙 v + 𝒕 \bm{x}_{\text{img}}=s\bm{x}_{v}+\bm{t} (14)
+
+[131] p: where s s is the scaling factor proportional to 1 / z 1/z . To resolve scale ambiguity, the pipeline estimates a metric scale by matching the predicted depths of SMPL vertices z SMPL z_{\text{SMPL}} (in meters) with the depths of Pi3’s point cloud z Pi3 z_{\text{Pi3}} (in arbitrary units) on some sampled points. The scale factor is computed as:
+
+[132] table: s = median ​ ( z π 3 z SMPL ) , s=\text{median}\left(\frac{z_{\pi^{3}}}{z_{\text{SMPL}}}\right), (15)
+
+[133] p: The point clouds and SMPL global orientation and translation are transformed to the world coordinate system with 𝑹 , 𝒕 \bm{R},\bm{t} following the same formula as Sec. 9.2 .
+
+[134] h2: 11 More Details of Human-Object Interaction Skills
+
+[135] h3: 11.1 Follow Skill
+
+[136] p: Definition. The path following task requires the simulated character to move along a predefined 2D trajectory. A trajectory is represented as τ = { x 0.1 τ , x 0.2 τ , … , x T − 0.1 τ , x T τ } \tau=\{x_{0.1}^{\tau},x_{0.2}^{\tau},\dots,x_{T-0.1}^{\tau},x_{T}^{\tau}\} , where x 0.1 τ x_{0.1}^{\tau} denotes a 2D waypoint at simulation time 0.1 ​ s 0.1s , and T T is the episode length. For this task, T T is set to 10 ​ s 10s . The character is expected to follow the trajectory τ \tau as accurately as possible.
+
+[137] p: Task Observation. At each simulation time step t t , the character observes 10 10 future waypoints sampled over the next 1.0 ​ s 1.0s : { x t τ , x t + 0.1 τ , … , x t + 0.8 τ , x t + 0.9 τ } \{x_{t}^{\tau},x_{t+0.1}^{\tau},\dots,x_{t+0.8}^{\tau},x_{t+0.9}^{\tau}\} . These waypoints are sampled at intervals of 0.1 ​ s 0.1s using linear interpolation from the trajectory τ \tau . The 2D coordinates of these waypoints form the task observation g t f ∈ ℝ 2 × 10 g_{t}^{f}\in\mathbb{R}^{2\times 10} .
+
+[138] p: Task Reward. The reward for this task, r t f r_{t}^{f} , is computed based on the distance between the character’s current 2D root position, x t root_2d x_{t}^{\text{root\_2d}} , and the target waypoint, x t τ x_{t}^{\tau} . The reward is defined as:
+
+[139] table: r t f = exp ⁡ ( − 2.0 ​ ‖ x t root_2d − x t τ ‖ 2 ) . r_{t}^{f}=\exp\big(-2.0\|x_{t}^{\text{root\_2d}}-x_{t}^{\tau}\|^{2}\big). (16)
+
+[140] h3: 11.2 Sit Skill
+
+[141] p: Definition. The sitting task requires the character to position its root joint at a target 3D sitting location on an object surface. The target position is defined as 10 10 cm above the center of the top surface of the chair seat.
+
+[142] p: Task Observation. The observation g t s ∈ ℝ 38 g_{t}^{s}\in\mathbb{R}^{38} includes the 3D target sitting position ∈ ℝ 3 \in\mathbb{R}^{3} , the 3D root position ∈ ℝ 3 \in\mathbb{R}^{3} , the root rotation ∈ ℝ 6 \in\mathbb{R}^{6} , the 2D front-facing direction ∈ ℝ 2 \in\mathbb{R}^{2} , and the positions of eight corner points of the object’s bounding box ∈ ℝ 3 × 8 \in\mathbb{R}^{3\times 8} .
+
+[143] p: Task Reward. The sitting task reward r t s r_{t}^{s} encourages the character to minimize the distance between its 3D root position, x t root x_{t}^{\text{root}} , and the target sitting position, x t tar x_{t}^{\text{tar}} . It is defined as:
+
+[144] table: r t s = { 0.7 ​ r t near + 0.3 ​ r t far , ‖ x t obj_2d − x t root_2d ‖ > 0.5 , 0.7 ​ r t near + 0.3 , otherwise , r_{t}^{s}=\begin{cases}0.7\,r_{t}^{\text{near}}+0.3\,r_{t}^{\text{far}},&\|x_{t}^{\text{obj\_2d}}-x_{t}^{\text{root\_2d}}\|>0.5,\\ 0.7\,r_{t}^{\text{near}}+0.3,&\text{otherwise},\end{cases} (17)
+
+[145] p: where r t far r_{t}^{\text{far}} and r t near r_{t}^{\text{near}} are defined as:
+
+[146] table: r t far = exp ⁡ ( − 2.0 ​ ‖ 1.5 − d t ∗ ⋅ x ˙ t root_2d ‖ 2 ) , r_{t}^{\text{far}}=\exp\big(-2.0\|1.5-d_{t}^{*}\cdot\dot{x}_{t}^{\text{root\_2d}}\|^{2}\big), (18)
+
+[147] table: r t near = exp ⁡ ( − 10.0 ​ ‖ x t tar − x t root ‖ 2 ) . r_{t}^{\text{near}}=\exp\big(-10.0\|x_{t}^{\text{tar}}-x_{t}^{\text{root}}\|^{2}\big). (19)
+
+[148] p: Here, x t obj_2d x_{t}^{\text{obj\_2d}} is the 2D position of the object’s root, x ˙ t root_2d \dot{x}_{t}^{\text{root\_2d}} is the 2D linear velocity of the character’s root, and d t ∗ d_{t}^{*} is a horizontal unit vector pointing from x t root_2d x_{t}^{\text{root\_2d}} to x t obj_2d x_{t}^{\text{obj\_2d}} .
+
+[149] h3: 11.3 Climb Skill
+
+[150] p: Definition. The climbing task requires the character to place its root joint at a target 3D climbing position on a given object. The target position is set 94 94 cm above the center of the top surface of the object.
+
+[151] p: Task Observation. The observation g t m ∈ ℝ 27 g_{t}^{m}\in\mathbb{R}^{27} includes the 3D target root position ∈ ℝ 3 \in\mathbb{R}^{3} and the 3D coordinates of eight corner points of the object’s bounding box ∈ ℝ 3 × 8 \in\mathbb{R}^{3\times 8} .
+
+[152] p: Task Reward. The climbing task reward r t m r_{t}^{m} minimizes the 3D distance between the character’s root, x t root x_{t}^{\text{root}} , and the target location, x t tar x_{t}^{\text{tar}} . The reward is defined as:
+
+[153] table: r t m = { 0.5 ​ r t near + 0.2 ​ r t far , ‖ x t obj_2d − x t root_2d ‖ > 0.7 , 0.5 ​ r t near + 0.2 + 0.3 ​ r t foot , otherwise , r_{t}^{m}=\begin{cases}0.5\,r_{t}^{\text{near}}+0.2\,r_{t}^{\text{far}},&\|x_{t}^{\text{obj\_2d}}-x_{t}^{\text{root\_2d}}\|>0.7,\\ 0.5\,r_{t}^{\text{near}}+0.2+0.3\,r_{t}^{\text{foot}},&\text{otherwise},\end{cases} (20)
+
+[154] p: where r t near r_{t}^{\text{near}} , r t far r_{t}^{\text{far}} , and r t foot r_{t}^{\text{foot}} are defined as:
+
+[155] table: r t near = exp ⁡ ( − 10.0 ​ ‖ x t tar − x t root ‖ 2 ) , r_{t}^{\text{near}}=\exp\big(-10.0\|x_{t}^{\text{tar}}-x_{t}^{\text{root}}\|^{2}\big), (21)
+
+[156] table: r t far = exp ⁡ ( − 2.0 ​ ‖ 1.5 − d t ∗ ⋅ x ˙ t root_2d ‖ 2 ) , r_{t}^{\text{far}}=\exp\big(-2.0\|1.5-d_{t}^{*}\cdot\dot{x}_{t}^{\text{root\_2d}}\|^{2}\big), (22)
+
+[157] table: r t foot = exp ⁡ ( − 50.0 ​ ‖ ( x t tar_h − 0.94 ) − x t foot_h ‖ 2 ) . r_{t}^{\text{foot}}=\exp\big(-50.0\|(x_{t}^{\text{tar\_h}}-0.94)-x_{t}^{\text{foot\_h}}\|^{2}\big). (23)
+
+[158] p: Here, x t tar_h x_{t}^{\text{tar\_h}} is the height of the target root position, ( x t tar_h − 0.94 ) (x_{t}^{\text{tar\_h}}-0.94) represents the height of the top surface of the target object in world coordinates, and x t foot_h x_{t}^{\text{foot\_h}} is the mean height of the character’s feet. The reward r t foot r_{t}^{\text{foot}} encourages the character to lift its feet and is crucial for successful climbing.
+
+[159] h3: 11.4 Lie Skill
+
+[160] p: Definition. The lying task requires the character to position its root joint at a target 3D lying position on an object, typically centered on the object’s surface. The character must first approach a designated standing point before transitioning into the lying position.
+
+[161] p: Task Observation. The observation g t l ∈ ℝ 38 g_{t}^{l}\in\mathbb{R}^{38} includes the 3D target lying position ∈ ℝ 3 \in\mathbb{R}^{3} , the 3D root position ∈ ℝ 3 \in\mathbb{R}^{3} , the root rotation ∈ ℝ 6 \in\mathbb{R}^{6} , the 2D front-facing direction ∈ ℝ 2 \in\mathbb{R}^{2} , and the positions of eight corner points of the object’s bounding box ∈ ℝ 3 × 8 \in\mathbb{R}^{3\times 8} . It also includes the chosen standing point ∈ ℝ 3 \in\mathbb{R}^{3} .
+
+[162] p: Task Reward. The lying reward r t l r_{t}^{l} combines rewards for approaching the standing point and accurately lying down:
+
+[163] table: r t l = { 0.6 ​ r t near + 0.4 ​ r t far , ‖ x t root − x t tar ‖ > 1.5 , r t near , otherwise . r_{t}^{l}=\begin{cases}0.6\,r_{t}^{\text{near}}+0.4\,r_{t}^{\text{far}},&\|x_{t}^{\text{root}}-x_{t}^{\text{tar}}\|>1.5,\\ r_{t}^{\text{near}},&\text{otherwise}.\end{cases} (24)
+
+[164] p: The far reward encourages approaching the standing point:
+
+[165] table: r t far = 0.5 ​ r t walk + 0.2 ​ r t vel + 0.2 ​ r t facing + 0.1 ​ r t stand , r_{t}^{\text{far}}=0.5\,r_{t}^{\text{walk}}+0.2\,r_{t}^{\text{vel}}+0.2\,r_{t}^{\text{facing}}+0.1\,r_{t}^{\text{stand}}, (25)
+
+[166] p: where r t walk r_{t}^{\text{walk}} rewards walking toward the standing point, r t vel r_{t}^{\text{vel}} aligns velocity, r t facing r_{t}^{\text{facing}} ensures proper facing direction, and r t stand r_{t}^{\text{stand}} rewards correct height.
+
+[167] p: The near reward focuses on lying accuracy:
+
+[168] table: r t near = 0.5 ​ r t pos + 0.3 ​ r t head + 0.2 ​ r t alignment , r_{t}^{\text{near}}=0.5\,r_{t}^{\text{pos}}+0.3\,r_{t}^{\text{head}}+0.2\,r_{t}^{\text{alignment}}, (26)
+
+[169] p: where r t pos r_{t}^{\text{pos}} minimizes the distance to the target, r t head r_{t}^{\text{head}} aligns head height, and r t alignment r_{t}^{\text{alignment}} rewards proper body alignment.
+
+[170] h3: 11.5 Prone Skill
+
+[171] p: Definition. The prone task requires the character to position its root joint at a designated 3D prone position on an object, typically centered on the object’s surface. Unlike the lying task, the character must face downward while maintaining alignment with the target surface.
+
+[172] p: Task Observation. The observation g t p ∈ ℝ 35 g_{t}^{p}\in\mathbb{R}^{35} includes the 3D target prone position ∈ ℝ 3 \in\mathbb{R}^{3} , the 3D root position ∈ ℝ 3 \in\mathbb{R}^{3} , the root rotation ∈ ℝ 6 \in\mathbb{R}^{6} , the 2D front-facing direction ∈ ℝ 2 \in\mathbb{R}^{2} , and the positions of eight corner points of the object’s bounding box ∈ ℝ 3 × 8 \in\mathbb{R}^{3\times 8} . These observations help guide the approach and ensure the correct orientation for prone positioning.
+
+[173] p: Task Reward. The prone reward r t p r_{t}^{p} encourages the character to transition smoothly from moving to a prone position while maintaining proper alignment and facing downward. The reward is defined as:
+
+[174] table: r t p = { 0.7 ​ r t near + 0.3 ​ r t far , ‖ x t root − x t tar ‖ > 1.5 , r t near , otherwise . r_{t}^{p}=\begin{cases}0.7\,r_{t}^{\text{near}}+0.3\,r_{t}^{\text{far}},&\|x_{t}^{\text{root}}-x_{t}^{\text{tar}}\|>1.5,\\ r_{t}^{\text{near}},&\text{otherwise}.\end{cases} (27)
+
+[175] p: The far reward encourages approaching the target prone position:
+
+[176] table: r t far = 0.5 ​ r t walk + 0.2 ​ r t vel + 0.2 ​ r t facing + 0.1 ​ r t height , r_{t}^{\text{far}}=0.5\,r_{t}^{\text{walk}}+0.2\,r_{t}^{\text{vel}}+0.2\,r_{t}^{\text{facing}}+0.1\,r_{t}^{\text{height}}, (28)
+
+[177] p: where r t walk r_{t}^{\text{walk}} rewards moving toward the prone position, r t vel r_{t}^{\text{vel}} aligns velocity with the direction of motion, r t facing r_{t}^{\text{facing}} ensures proper facing direction, and r t height r_{t}^{\text{height}} encourages maintaining an appropriate height during approach.
+
+[178] p: The near reward focuses on prone accuracy:
+
+[179] table: r t near = 0.6 ​ r t pos + 0.2 ​ r t alignment + 0.2 ​ r t face_down , r_{t}^{\text{near}}=0.6\,r_{t}^{\text{pos}}+0.2\,r_{t}^{\text{alignment}}+0.2\,r_{t}^{\text{face\_down}}, (29)
+
+[180] p: where r t pos r_{t}^{\text{pos}} minimizes the distance to the prone target, r t alignment r_{t}^{\text{alignment}} ensures proper body alignment with the surface, and r t face_down r_{t}^{\text{face\_down}} rewards the character for maintaining a face-down orientation.
+
+[181] h3: 11.6 Support Skill
+
+[182] p: Definition. The support task encourages the character to approach a target object and maintain stable interaction by placing its hands on the top surface while keeping stable foot placement and proper posture.
+
+[183] p: Task Observation. The task observation g t m ∈ ℝ 27 g_{t}^{m}\in\mathbb{R}^{27} consists of the 3D target position of the object’s top surface center ( x t o , z t o ∈ ℝ 3 x_{t}^{o},z_{t}^{o}\in\mathbb{R}^{3} ) and the 3D coordinates of the eight corner points of the object’s bounding box ( b t ∈ ℝ 3 × 8 b_{t}\in\mathbb{R}^{3\times 8} ).
+
+[184] p: Task Reward. The total reward r t m r_{t}^{m} is defined as:
+
+[185] table: r t m \displaystyle r_{t}^{m} = { 0.4 ​ r t f + 0.6 ​ r t s , ‖ x t o − x t r ‖ > 1.5 , r t s , otherwise , \displaystyle=\begin{cases}0.4r_{t}^{f}+0.6r_{t}^{s},&\|x_{t}^{o}-x_{t}^{r}\|>1.5,\\ r_{t}^{s},&\text{otherwise},\end{cases} (30) r t f \displaystyle r_{t}^{f} = 0.5 ​ exp ⁡ ( − 0.5 ​ ‖ x t o − x t r ‖ 2 ) \displaystyle=0.5\exp\big(-0.5\|x_{t}^{o}-x_{t}^{r}\|^{2}\big) (31) + 0.5 ​ exp ⁡ ( − 2.0 ​ ‖ 1.5 − d t ∗ ⋅ x ˙ t r ‖ 2 ) , \displaystyle+0.5\exp\big(-2.0\|1.5-d_{t}^{*}\cdot\dot{x}_{t}^{r}\|^{2}\big), (32) r t s \displaystyle r_{t}^{s} = 0.3 ​ r t h + 0.2 ​ r t g + 0.15 ​ r t t + 0.2 ​ r t o + 0.15 ​ r t z , \displaystyle=0.3r_{t}^{h}+0.2r_{t}^{g}+0.15r_{t}^{t}+0.2r_{t}^{o}+0.15r_{t}^{z}, (33)
+
+[186] p: where r t f r_{t}^{f} encourages the character to approach the object, and r t s r_{t}^{s} combines five components for stable interaction:
+
+[187] table: r t h \displaystyle r_{t}^{h} = 0.6 ​ exp ⁡ ( − 20 ​ ‖ z t h − z t o ‖ 2 ) \displaystyle=0.6\exp\big(-20\|z_{t}^{h}-z_{t}^{o}\|^{2}\big) (34) + 0.4 ​ exp ⁡ ( − 5 ​ ‖ x t h ​ 2 − x t o ‖ 2 ) , \displaystyle+0.4\exp\big(-5\|x_{t}^{h2}-x_{t}^{o}\|^{2}\big), (35) r t g \displaystyle r_{t}^{g} = exp ⁡ ( − 50 ​ ‖ z t f − z g ‖ 2 ) , \displaystyle=\exp\big(-50\|z_{t}^{f}-z_{g}\|^{2}\big), (36) r t t \displaystyle r_{t}^{t} = exp ⁡ ( − 10 ​ ‖ x t f ​ r − x t f ​ l ‖ 2 ) , \displaystyle=\exp\big(-10\|x_{t}^{fr}-x_{t}^{fl}\|^{2}\big), (37) r t o \displaystyle r_{t}^{o} = exp ⁡ ( − 2 ​ ‖ 1.0 − ( − u t b ) ‖ 2 ) , \displaystyle=\exp\big(-2\|1.0-(-u_{t}^{b})\|^{2}\big), (38) r t z \displaystyle r_{t}^{z} = exp ⁡ ( − 10 ​ ‖ z t r − z t o ‖ 2 ) . \displaystyle=\exp\big(-10\|z_{t}^{r}-z_{t}^{o}\|^{2}\big). (39)
+
+[188] p: Here, x t o x_{t}^{o} and x t r x_{t}^{r} denote the 2D positions of the object and the character’s root, while z t o z_{t}^{o} and z t r z_{t}^{r} are their respective heights. x t h ​ 2 x_{t}^{h2} and z t h z_{t}^{h} represent the 2D position and height of the hands. Similarly, x t f ​ r x_{t}^{fr} , x t f ​ l x_{t}^{fl} , and z t f z_{t}^{f} refer to the 2D positions and height of the feet, z g z_{g} is the ground height, and − u t b -u_{t}^{b} is the vertical component of the body’s up direction.
+
+[189] figure: (a) Camera Trajectory Length Distribution. (b) Human Trajectory Length Distribution. (c) Scene Mesh Area Distribution. (d) Sequence Length Distribution. Figure 10 : Statistical information of collected dataset.
+
+[190] figure: Figure 11 : Rendered SMPL and depth images of the captured dataset in camera space.
+
+[191] p: Evaluation The evaluation of the Support task focuses on the agent’s ability to position its hands on the top surface of the target object and keep its feet close together. The key metric is the combined XY-plane distance and Z-axis deviation between the hands and the object’s top surface. The task is deemed successful if the hands are within predefined thresholds and the feet maintain adequate proximity for stability.
+
+[192] h2: 12 More Details of Scene-Aware Imitation Policy
+
+[193] h3: 12.1 Representations
+
+[194] p: Character Proprioception. The state s s describes the proprioception of the character’s body, with features consisting of the relative positions of each link with respect to the root (designated to be the pelvis), their rotations expressed in quaternions, and their linear and angular velocities. All features are computed in the character’s local coordinate frame, with the root at the origin and the x-axis along the root link’s facing direction.
+
+[195] p: Height Map. To perceive the surrounding scene geometry, we utilize a local egocentric height map. This map is structured as an 11 × 11 11\times 11 grid spanning a 2 ​ m × 2 ​ m 2\text{m}\times 2\text{m} area centered on the humanoid, resulting in a sampling interval of 0.2 ​ m 0.2\text{m} . The grid is defined within the character’s local coordinate frame; consequently, the sampling points dynamically translate and rotate with the humanoid’s movement and heading, consistently covering the immediate vicinity. The height values at these grid points are queried from a high-resolution underlying scene mesh (0.05m resolution) using nearest-neighbor interpolation.
+
+[196] p: Target States. The target state q ^ \hat{q} encodes the desired future motion of the character. It is constructed by sampling a short trajectory segment from the dataset spanning three consecutive future time steps: T , T + 1 T,T+1 , and T + 2 T+2 . For each time step, the state comprises the positions, rotations, linear velocities, and angular velocities of all body links. All features are transformed from the world frame into the simulated character’s local coordinate frame. This local frame is defined with the character’s root located at the origin and the x-axis aligned with the root link’s facing direction.
+
+[197] p: Action. Our simulated humanoid is constructed based on the SMPL body model, comprising 23 controllable joints. Each joint possesses 3 degrees of freedom (DoF), and we employ a Proportional-Derivative (PD) controller for each DoF. Consequently, the action a ∈ ℝ 69 a\in\mathbb{R}^{69} generated by the policy specifies the target orientations for these PD controllers.
+
+[198] h3: 12.2 Reward
+
+[199] p: To encourage the character to closely reproduce the reference motion while maintaining motion naturalness, our reward function r t r_{t} is composed of two terms: a tracking reward r t track r^{\text{track}}_{t} and a jitter penalty r t smooth r^{\text{smooth}}_{t} . The tracking reward incentivizes the policy to minimize the kinematic error between the simulated character and the reference motion. The jitter penalty is introduced to suppress abnormal shaking generated when the character interacts with objects, which may be induced by instabilities in the physics simulation. The total reward is defined as:
+
+[200] table: r t = r t track − r t smooth . r_{t}=r^{\text{track}}_{t}-r^{\text{smooth}}_{t}. (40)
+
+[201] p: The tracking reward r t track r^{\text{track}}_{t} is computed as the weighted sum of exponential differences across all humanoid links:
+
+[202] table: r t track = \displaystyle r^{\text{track}}_{t}= w jp ​ exp ⁡ ( − 100 ​ ‖ 𝒑 ^ t − 𝒑 t ‖ 2 ) \displaystyle w_{\text{jp}}\exp\left(-100\|\hat{\bm{p}}_{t}-\bm{p}_{t}\|^{2}\right) (41) + w jr ​ exp ⁡ ( − 10 ​ ‖ 𝒒 ^ t ⊖ 𝒒 t ‖ 2 ) \displaystyle+w_{\text{jr}}\exp\left(-10\|\hat{\bm{q}}_{t}\ominus\bm{q}_{t}\|^{2}\right) + w jv ​ exp ⁡ ( − 0.1 ​ ‖ 𝒗 ^ t − 𝒗 t ‖ 2 ) \displaystyle+w_{\text{jv}}\exp\left(-0.1\|\hat{\bm{v}}_{t}-\bm{v}_{t}\|^{2}\right) + w j ​ ω ​ exp ⁡ ( − 0.1 ​ ‖ 𝝎 ^ t − 𝝎 t ‖ 2 ) , \displaystyle+w_{\text{j}\omega}\exp\left(-0.1\|\hat{\bm{\omega}}_{t}-\bm{\omega}_{t}\|^{2}\right),
+
+[203] p: where the equation penalizes the differences in translation 𝒑 \bm{p} , rotation 𝒒 \bm{q} , linear velocity 𝒗 \bm{v} , and angular velocity 𝝎 \bm{\omega} for all rigid body links of the humanoid between the simulation and the reference. The jitter penalty penalizes the magnitude of the difference between consecutive actions, defined as:
+
+[204] table: r t smooth = ‖ 𝒂 t − 𝒂 t − 1 ‖ 2 , r^{\text{smooth}}_{t}=\|\bm{a}_{t}-\bm{a}_{t-1}\|^{2}, (42)
+
+[205] p: where 𝒂 t \bm{a}_{t} and 𝒂 t − 1 \bm{a}_{t-1} denote the action at the current and previous time steps, respectively. By minimizing the rate of change of the actions, the policy is incentivized to generate continuous and stable control trajectories, thereby reducing jittery behaviors.
+
+[206] h2: 13 More Details of Captured Dataset Used in Main Paper
+
+[207] p: We collected data from 23 scenes, each with a high-precision mesh, 104 sequences, and approximately 200,000 video frames. Each frame is accompanied by corresponding depth maps, segmentation masks, camera trajectories, and human parameters(bounding boxes, 2D keypoints, SMPL parameters).
+
+[208] p: In Fig. 10(a) , we present the distribution of camera trajectory lengths, which range from 4 meters to over 30 meters. In Fig. 10(b) , the human trajectory length distribution is shown, with performers moving between 5 meters and over 30 meters. Figure 10(c) illustrates the scene mesh area distribution. Indoor scenes are relatively smaller, ranging from 20 to 90 square meters, while outdoor scenes can be as large as 200 square meters. Finally, in Fig. 10(d) , we show the sequence length distribution, where most sequences have durations ranging from 30 to 60 seconds.
+
+[209] h3: 13.1 Qualitative Demonstrations
+
+[210] p: We show camera space results in Fig. 11 and world space results in Fig. 12
+
+[211] figure: Figure 12 : 3D demo of the captured dataset.
+
+[212] h2: Instructions for reporting errors
+
+[213] p: We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the methods listed below:
+
+[214] p: Tip: You can select the relevant text first, to include it in your report.
+
+[215] p: Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability should not be a barrier to accessing research. Thank you for your continued support in championing open access for all.
+
+[216] p: Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .

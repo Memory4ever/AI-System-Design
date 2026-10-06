@@ -189,6 +189,10 @@ FLOPs_FFN per layer ~ O(B*T*d_model*d_ff)
 
 Attention 对 `T` 有成对项，MLP 对 `T` 近似线性，但 `d_ff` 往往较大。实际哪个模块更耗时取决于 sequence length、模型 shape、precision、kernel 和硬件，不能只比较复杂度阶数。
 
+两条 gated 分支也不必都由当前 hidden state 做 dense projection。一个替代分支将 candidate 内容改成按原始 token ID 和 layer 寻址的表 `U_layer[token]`，仍用 `SiLU(X W_gate)` 根据当前上下文筛选它，再经 `W_down` 返回 residual stream。这里减少的是 up projection 的计算，不是删除上下文：静态 candidate 与动态 gate 分责；用同样的表替换 gate，或保留 up 只另加表，并不具有相同的函数与训练行为。[STEM 的受限消融](https://arxiv.org/html/2601.10639v1)支持这一接口区别，不证明任意模型均可无损替换。<!-- source-family:SF-2026-ARXIV-2601-10639 -->
+
+代价从每 token 的投影转向约 `V*d_ff*L` 的表存储、训练 optimizer state 与表项搬运，tokenizer 和 layer identity 因而成为地址的一部分。已知输入 ID 可以预取、去重或缓存表项；Decode 的下一个 token 要等当前完整 forward 后才确定，不能把它当作事先已知。CPU offload 还支付通信、cache miss 与更新回写成本，条件命中率和理论 FLOPs 都不能认证端到端延迟。350M/1B、受控 tokens/FLOPs 的局部结果不授生产 SLO 或通用长上下文无损；存储与通信不合算、context gate 失配或质量退步时，成熟 dense/gated FFN 仍是合理选择，而不是所有 FFN 必须转成查表。
+
 ### 相同预算也不等于相同训练行为
 
 参数和 FLOPs 让比较有了共同尺度，但它们仍不能回答两条分支怎样共同学习。因此还要把结构的表达差异与特定训练条件下的证据分开。
@@ -198,6 +202,16 @@ Attention 对 `T` 有成对项，MLP 对 `T` 近似线性，但 `d_ff` 往往较
 `arXiv:2605.20749v1` 的 §4 分析与 §3.3、§5、Appendix C 实验只支持 NTK/two-layer 及作者规模下的可达性差异；§6 不证明 SwiGLU 在所有深度、优化器或硬件上都更优。
 
 <!-- source-family:SF-2026-ARXIV-2605-20749 -->
+
+更强的等价条件也要谨慎：两种参数化可以在 change-of-basis 后计算完全相同的函数，却不在各自默认的 Euclidean gradient 下走同一训练路径。若 `w=A^T u`，梯度满足 `grad_u=A grad_w`；在一个基底做普通下降，换到另一个基底就带入由 `A` 决定的 preconditioning。因此 forward-equivalence 不能替代 optimizer、参数度量和 learning-rate 的联合比较，原有 dense MLP 也不因存在等价 spline 表示而自动过时。<!-- source-family:arxiv:2603.04827v1 -->
+
+多分辨率训练还需要两项不同条件：coarse-to-fine transfer 应精确保留已学函数及相同输出 loss，而 fine-level 更新应纠正 coarse level 尚不能表达的模式。只有前一项，新增参数也可能继续优化已学的平滑方向，浪费 refinement。[spline 基底的受限回归对照](https://arxiv.org/html/2603.04827v1)以等 FLOPs、L-BFGS 和五次初始化支持这一区分，不证明所有深网或优化器都有相同收益。构造嵌套基底、transfer 与稳定 preconditioning 增加成本；无法保持函数、fine modes 学不动或成本不合算时，仍应使用固定分辨率与已验证的 dense/gated MLP，而不是只凭表达容量批准扩层或加宽。
+
+Dense projection 让每个输出直接组合全部输入，表达和成熟 GEMM 路径都清楚；参数预算紧时，也可将方阵投影改成输入/输出对角缩放之间的多级成对块乘积。每级 pairing `P_l` 决定哪些坐标交换信息，stage depth `L` 决定可组合的交互路径，rotation 块与一般可训练 `2×2` 块又有不同自由度；这改变的是可达函数集合，不是把任意 dense 权重无损压缩。每级约 `O(n)`，全投影约 `O(nL)`，中间 activation、反向和多级 kernel 仍付费；teacher 与学生采用相容结构的有限对照不能授未知任务容量等价。CPU 受测窄宽配置出现快慢反转，也说明结构参数少不等于真实执行快：布局、stage 开销与硬件 kernel 必须一起测，未获质量与总成本验收时仍保留 dense/gated FFN，而非用渐近阶取代成熟 GEMM。<!-- source-family:SF-2026-ARXIV-2512-23905 -->
+
+当目标是替换已训好的逐位置函数，而不是改变训练参数化时，也可先把输入和输出投影到较低维坐标，在该坐标中为每个输出拟合有界的符号函数，再重建回 residual stream。这减少了函数搜索的维度，却不保证保留 dense FFN 的表达能力；必须分别对照原层、投影后仍保留原函数、投影后的代理以及删层/恒等路径，才知道质量损失来自压缩还是代理近似。低维表达式可读，也不证明它是模型原先唯一使用的内部算法。<!-- source-family:SF-2026-ARXIV-2602-21307 -->
+
+符号搜索、缓存中间激活和逐输出拟合增加离线成本，变量或算子集合扩大时可能迅速变贵。[受限 MLP 替换](https://arxiv.org/html/2602.21307v1)的投影控制几乎解释了全部 perplexity 增量；三层、同域 WikiText-2、关闭 KV cache 的 full-forward 吞吐不授长序列 decode 或生产 SLO。投影丢失信息、跨域质量退步或端到端成本不合算时，保留原 dense/gated 层；这是一条可验证的近似分支，不是让所有 MLP 变成公式。
 
 ## Linear 为什么最终成为 GEMM
 
@@ -245,6 +259,8 @@ FLOPs_GEMM ~= 2 * M * N * K
 - 同一事实可能依赖 context 和多个计算路径。
 
 因此更准确的表述是：MLP 提供高容量逐位置非线性特征变换，并参与存储和调用训练中形成的关联；它不是可按 key 直接检索的数据库表。
+
+权重编辑也须分开“直接问新事实能够回答”与“把它接入后续关系仍能够回答”。rank-one update 改变一个事实的直接 recall，并不保证组合问题会沿同样路径访问该关联；把同一编辑复制到更多层可以在受限两跳任务中提高可用性，却同时扩大对无关事实和流畅性的干扰。[rank-one editing 的局部反证](https://arxiv.org/html/2601.04600v1)在 GPT-J 的有限 MQuAKE/CounterFact 人口中展示这种取舍，不能由直接回答失败定位唯一 hop-layer，也不证明所有编辑方法失效。因此编辑验收应冻结目标事实、问题/context 与 decoding，分别检查直接 recall、多跳组合、locality 和 fluency，并计入定位、重复更新与回归成本；这是由反证导出的工程要求，不是作者已验证的普遍编辑证书。组合或局部性回归不过关时，保留可信 checkpoint、限制编辑范围或用可追溯外部检索承载可变事实，不能用单问答成功把权重当数据库事务提交。<!-- source-family:SF-2026-ARXIV-2601-04600 -->
 
 ### MLP 不必独自保存每条事实
 
@@ -322,6 +338,12 @@ MLP 与 Attention 分工明确：Attention 在 token 之间路由信息，MLP �
 
 ## Review notes
 
+- `SF-2026-ARXIV-2602-21307` — Daily `2026-02-27`；[SymTorch exact-v1](https://arxiv.org/html/2602.21307v1) §4.1/5.1，PCA/原MLP/符号代理/identity对照及KV-off完整forward。2+1+3=6，具体函数近似缺口深入，仅采用投影与代理误差分账、离线搜索与dense/gated回退；不采用后版吞吐、跨域无损、内部算法唯一解释或生产SLO。root必要原源/实际owner PRE及实际正文/完整邻接/自身末注非作者POST通过，窄锁释放。未核代码或复现实验，不授整日完成。
+
+- `SF-2026-ARXIV-2601-04600` — Daily `2026-01-10`；[exact-v1](https://arxiv.org/html/2601.04600v1) §4/5.1/5.2 Table2–3与§7 key-drift/跨层copy代价。原3+1+2=6，设计反证对应具体缺口深入，只采用edit recall与多跳access分账及复制干预的locality/fluency成本，不采Eq1形状、唯一hop-layer因果或普遍编辑失败。工程验收与回退为受限推断；未核代码或复现实验。root必要原源/实际owner写前通过；jan02_v3实际正文244–267及本注非作者写后复核通过，未重复原源审阅，日级Gate待验。
+
+- Daily 2026-03-07：[KAN multilevel exact-v1](https://arxiv.org/html/2603.04827v1) §3/Eqs16–17、§4/Definition1/§4.3、§5.1/Table2。只吸收forward-equivalence≠默认gradient geometry及exact-preserving transfer与complementary relaxation分离；等FLOPs/L-BFGS/N5的函数回归和高方差保留，不采用PINN应用或通用训练加速。root准入与窄锁通过，作者实际写入，root实际原文/正文及邻接独立POST通过；未复现。
+
 本章覆盖标准 FFN、SwiGLU、参数/FLOPs 与逐位置小例子，并将“知识存储”限制为可验证的机制命题。MoE 只建立接口，完整 router 与系统 trade-off 保留给第21章。
 
 Primary-source 校验入口：
@@ -330,3 +352,7 @@ Primary-source 校验入口：
 - Noam Shazeer, "GLU Variants Improve Transformer", 2020: https://arxiv.org/abs/2002.05202
 - Mor Geva et al., "Transformer Feed-Forward Layers Are Key-Value Memories", 2020: https://arxiv.org/abs/2012.14913
 - NVIDIA cuBLAS documentation（GEMM / cuBLASLt execution contract）: https://docs.nvidia.com/cuda/cublas/
+
+- `SF-2026-ARXIV-2512-23905` — Daily `2026-01-02`；[Rethinking Dense Linear Transformations: Stagewise Pairwise Mixing (SPM) for Near-Linear Training in Neural Networks exact-v1](https://arxiv.org/html/2512.23905v1) §3–4、§9.1/9.3–9.5。5分具体operator gap深入，仅采用pairing/stage-depth容量与`O(nL)`执行预算、结构teacher及CPU kernel crossover；不授GPU/Large-LM普遍速度。B32/B256、NLL2.58nats/BPC3.03与1000/800steps不统一，因此隔离联合质量/速度headline，不否有效局部接口与全部实验。未运行代码；root必要原源/具体owner写前通过，实际正文/邻接及末注写后经root非作者复核通过。
+
+- `SF-2026-ARXIV-2601-10639` — Daily `2026-01-17`；[STEM exact-v1](https://arxiv.org/html/2601.10639v1) §3.1 Eq4、§3.4、§4受控预算与§4.4直接消融。2+2+2=6，标准必要补读后长期采用深入核：只采用静态 up 地址保留 context gate 的计算/存储替代分支；不采知识因果、cache-hit性能保证或生产SLO。表/optimizer/CPU通信、decode未知 next token、有限350M/1B预算及dense共存相邻。root必要原源/具体owner写前通过，root实际正文/邻接及末注非作者POST通过，窄锁释放；未核实现或复现，日级未授。

@@ -1,0 +1,716 @@
+Necessary main-body extraction; no unrelated appendices. Source https://arxiv.org/html/2601.10710v1
+1 Introduction
+Figure 1:
+(a) An illustrative failure case where our baseline model, relying solely on final-layer features, incorrectly identifies an ice skate as ‘roller skates’.
+This error underscores the necessity of accessing fine-grained details from early vision encoder layers.
+(b) Visualized gating weights from our CLI framework validate the efficacy of “criss-cross connections”.
+The heatmap reveals that deeper LLM decoder layers (right) dynamically query features from the full spectrum of vision encoder layers (left)—a many-to-many interaction that confirms our proposed fusion architecture.
+Vision-Language Models (VLMs) [1, 2, 3, 4] are increasingly viewed as a pivotal step toward Artificial General Intelligence.
+By endowing powerful Large Language Models (LLMs) with sight from Vision Transformers (ViTs) [5, 6], VLMs can perceive and reason about the world in a manner that more closely mirrors human cognition.
+Beneath this ambition, however, lies a profound architectural symmetry between ViTs and LLMs that most current designs shatter.
+Both are systems that progressively refine representations [7, 8, 9], yet they are connected by a crude, asymmetric bridge where only the top of the vision hierarchy is linked to the base of the language hierarchy.
+Such static and single-sided connection breaks the intrinsic hierarchical symmetry between ViTs and LLMs [7, 8, 9], leading to limited fine-grained perception and shallow multimodal reasoning.
+This limitation has tangible consequences, as shown in Fig. 1 (a).
+A baseline VLM, relying only on final-layer features, recognizes the object as ”roller skates” but overlooks critical wheel details, thus failing to assess its usability correctly.
+This failure highlights a fundamental functional mismatch: the static, single-layer connection denies the LLM access to the full spectrum of visual evidence, preventing it from integrating local details with global semantics for nuanced reasoning.
+An effective integration must accommodate the diverse and dynamic needs of the LLM processing hierarchy.
+The most intuitive requirement is a parallel alignment: shallow LLM layers, processing local syntax [7], need access to early ViT layers capturing edges and textures [9] to ground basic nouns. Similarly, deep LLM layers handling abstract reasoning [8] would logically leverage high-level scene semantics from deep ViT layers [9].
+Yet, even this parallel structure is still insufficient.
+The demands of sophisticated multimodal reasoning also necessitate criss-crossed connections.
+For instance, when processing the prompt in Fig. 1, a shallow LLM layer parsing the word “shoe” requires immediate access to the high-level, semantic concept of the object—an abstraction formed only in the deep ViT layers—to correctly ground the noun.
+Simultaneously, to answer the ultimate question, “Is the shoe…appropriate?”, a deep LLM layer performing this evaluative reasoning must “zoom in” on the fine-grained structural details of the wheels—information captured only in the early ViT layers.
+This single example powerfully illustrates the need for both types of criss-crossed connections.
+Indeed, our own experiments confirm this necessity, revealing a complex pattern of learned connections (Fig. 1 (b)) that move far beyond a simple one-to-one mapping.
+Figure 2: (a) The Conventional VLM Pipeline.
+A vision encoder extracts features from its final layer, which are then mapped into the text embedding space by a projector. (b) Establishes a dynamic “many-to-many” bridge, extracting features from multiple vision layers and adaptively injecting them into multiple layers of the LLM.
+Solving this requires a fundamental shift from the prevailing one-to-one connections to a truly dynamic many-to-many framework.
+However, prior research attempting to bridge this gap offers only incomplete solutions:
+approaches like DeepStack [10] provide a form of brute-force one-to-many injection.
+Other models, from EVLM [11] to the recent Qwen3-VL [12], impose a heavyweight and rigid one-to-one fusion, hard-wiring specific vision layers to pre-configured LLM layers.
+All such methods create a static “straitjacket”, failing to provide the dynamic, arbitrary access that sophisticated reasoning demands.
+We argue that the solution is to empower the LLM to become an active observer, capable of dynamically querying the entire visual hierarchy at the precise level of detail required by its current reasoning step.
+To this end, we are among the first to propose Cross-Layer Injection (CLI) (as shown in Fig. 2(b), a framework designed to realize a lightweight and adaptive many-to-many architecture for VLMs.
+CLI consists of two synergistic, parameter-efficient components.
+First, Adaptive Multi-Projection uses Low-Rank Adaptation (LoRA) [13] to efficiently harmonize features from diverse vision layers into a shared semantic space.
+Second, and most critically, our Adaptive Gating Fusion mechanism acts as an intelligent, context-sensitive controller.
+At each injection point, it allows the LLM to query this multi-level visual repository and selectively integrate only the most relevant information—be it fine-grained textures from a shallow ViT layer or abstract concepts from a deep one.
+To validate the effectiveness and broad applicability of our CLI framework, we integrated it into two distinct VLM architectures: LLaVA-OneVision and LLaVA-1.5.
+Across 18 diverse and challenging benchmarks—covering key capabilities like document analysis, chart reasoning, and general visual perception—our method significantly outperforms the baseline models and other deep fusion strategies.
+In particular, when applied to LLaVA-OV-7B, our method achieves performance improvements of 6.5, 3.3, and 4.7 points on the LLaVA-in-the-Wild, MME, and the OCR-Bench benchmarks, respectively.
+To summarize, our main contributions are summarized as follows:
+•
+A novel and lightweight framework, CLI, that systematically addresses the underutilization of hierarchical visual features in VLMs.
+•
+Two synergistic and parameter-efficient modules, Adaptive Multi-Projection and Adaptive Gating Fusion, that collectively enable the alignment and dynamic, context-sensitive fusion of multi-level visual features.
+•
+Extensive experiments on two distinct VLM architectures and a broad range of diverse benchmarks, demonstrating consistent and significant performance gains that establish a new state-of-the-art (SOTA) on several key tasks.
+2 Related Works
+2.1 The Dominant VLM Paradigm
+The paradigm shift in AI driven by LLMs [14, 15] has naturally extended into the visual domain, leading to the rapid emergence of VLMs.
+A dominant architectural blueprint, established by seminal works like Flamingo [1] and BLIP-2 [2] and popularized by LLaVA [3, 4], is rooted in parameter-efficient adaptation. This approach involves freezing the powerful pre-trained vision and language backbones and training only a lightweight “bridge” module between them.
+This powerful and efficient design crystallized the “pre-training + fine-tuning” paradigm that now dominates the field, sparking a wave of open-source innovation, including InstructBLIP [16], MiniGPT-4 [17, 18], Qwen-VL [19], and InternVL-2.5 [20]. Beneath this success, however, lies the fundamental architectural flaw we identify in our introduction: these models almost universally treat the output of the final vision encoder layer as the sole representation of the image, creating a severe information bottleneck and limiting the LLM’s perceptual depth.
+2.2 Deeper Fusion: Hierarchical Approaches
+To address the above problem, subsequent research has explored deeper visual-language fusion strategies.
+One-to-Many Injection: Brute-Force and Context-Blind.
+The first category attempts to inject features from a single image (one) into multiple LLM layers (many) through direct, non-adaptive methods. DeepStack [10] is a prominent example of this approach, partitioning high-resolution visual tokens and injecting them into different LLM layers via simple element-wise addition. This brute-force mechanism is context-blind; the non-adaptive summation risks disrupting the LLM’s carefully learned representations by injecting unfiltered, and potentially irrelevant, visual information. Other work, such as FUSION [21], deepens the fusion process by introducing “interaction layers” where learnable tokens recursively engage with both textual and visual features. However, this approach focuses on the recursive interaction self and still operates on a single level of visual representation.
+Statically-Wired One-to-One Fusion: Rigid and Inflexible.
+The second category employs dedicated modules to create fixed connections between specific vision and LLM layers, forming a kind of one-to-one mapping at different points in the hierarchy. Flamingo-style architectures like EVLM [11] exemplify this by inserting a new cross-attention layer before each LLM layer and feeding it features from a specific, pre-assigned ViT layer.
+This philosophy of sparsely inserting specialized fusion blocks into a pre-configured structure is also seen in models like mPLUG-Owl3 [22], which places “Hyper Attention” blocks at predetermined layers to run cross-attention.
+More recent models like Qwen3-VL [12] similarly rely on a predetermined, hard-wired connection scheme. All these approaches lock the model into a manually configured, static “straitjacket” that predetermines a fixed information flow, preventing the LLM from dynamically accessing visual information based on its real-time reasoning needs.
+Our CLI framework aims to overcome the limitations of the aforementioned methods.
+Unlike the context-blind addition of DeepStack, our Adaptive Gating Fusion ensures information is integrated selectively and precisely.
+Unlike the rigid, hard-wired architectures of EVLM and mPLUG-Owl3, our framework provides lightweight, on-demand access to the entire visual hierarchy at every injection point, finally enabling the stable and dynamic many-to-many fusion that sophisticated multimodal reasoning requires.
+3 Method
+Figure 3: An overview of the proposed Cross-Layer Injection (CLI) Framework.
+The left panel illustrates the overall “many-to-many”information flow, where hierarchical features from multiple vision encoder layers are dynamically injected into the LLM at multiple decoder layers.
+The right panel details the core Adaptive Gating Fusion module that enables this process.
+Multi-Head Attention (MHA) first distills key information from both the incoming visual features and the current LLM hidden state.
+A gate controller then uses these distilled representations to compute a dynamic weight that governs the selective fusion of the new visual information.
+This gated process ensures the feature injection is both adaptive and context-sensitive, preventing the LLM from being overwhelmed by irrelevant data.
+This section details the Cross-Layer Injection (CLI) framework.
+By replacing the conventional crude connections with a dynamic many-to-many bridge, CLI overcomes the information bottleneck that perceptually impoverishes VLMs.
+We first review the standard VLM pipeline in Sec. 3.1 to contextualize its limitations.
+Subsequently, Sec. 3.2 details the proposed mechanism.
+As shown in Fig. 3, it consists of two core components.
+The first component is Adaptive Multi-Projection (AMP), a parameter-efficient module that uses LoRA to align multi-level visual features with the language space.
+The second, Adaptive Gating Fusion (AGF), is a query-based attention gate that dynamically integrates these aligned features into the LLM’s hidden state during the decoding process.
+3.1 Preliminaries
+The traditional VLM architecture (see Fig. 2(a)) comprises a visual encoder, a projector, and an LLM. First, the visual encoder extracts features from an input image I:
+V=\text{ImageEncoder}(I),\quad V\in\mathbb{R}^{N_{i}\times D_{i}},
+(1)
+where V consists of N_{i} visual tokens, each with a dimension of D_{i}.
+A projector module P, typically an MLP, then aligns these visual tokens with the language embedding space:
+\hat{V}=P(V)=\text{MLP}(V),\quad\hat{V}\in\mathbb{R}^{N_{i}\times D_{t}},
+(2)
+where the output dimension D_{t} matches the dimension of the text tokens.
+Simultaneously, the input text, Text, containing user instructions and prompts, is embedded into a sequence of N_{t} text tokens.
+The projected visual tokens \hat{V} and the text tokens T are concatenated to form a unified multimodal context, \mathbf{H}=[\hat{V};T], on which the LLM performs auto-regressive decoding:
+\displaystyle P(w_{t+1}|w_{1:t},\mathbf{H})
+\displaystyle=\text{LLM}(w_{1:t},\mathbf{H}).
+(3)
+This dominant paradigm’s critical flaw, as argued in our introduction, is its reliance on only the final-layer visual features. This rigid one-to-one connection creates a severe information bottleneck by discarding the rich hierarchical information captured in earlier ViT layers.
+3.2 Many-to-Many Cross-Layer Injection
+To overcome this fundamental limitation, we introduce Many-to-Many Cross-Layer Injection, a framework that restores this symmetry by forging a dynamic many-to-many bridge between the vision encoder and the LLM decoder, as shown in Fig. 3. Instead of a single point of contact, our approach empowers the LLM to dynamically access and integrate multi-level visual features at various stages of its own decoding process, conditioning its reasoning on a far more comprehensive visual context.
+Our method begins by extracting a hierarchical set of visual features.
+Instead of using only the final layer, we sample intermediate token matrices from L_{i} distinct layers of the vision encoder, forming a collection \mathbb{V}=\{V_{l}\}_{l=1}^{L_{i}}.
+This strategy ensures that the model can access both low-level structural features from early layers and high-level semantic concepts from later ones. For instance, sampling from layers 1, 7, and 14 would produce the feature set \mathbb{V}=\{V_{1},V_{7},V_{14}\}.
+To integrate these multi-level features during reasoning, we introduce cross-layer injection points at multiple layers within the LLM’s decoder.
+This is operationalized through our novel AMP and AGF.
+At a specific layer in the LLM, these modules take the entire set of hierarchical visual features \mathbb{V} as input, aggregate this information, and inject a synthesized representation.
+This allows the LLM to dynamically condition its output on the most relevant visual details, regardless of their layer of origin.
+Adaptive Multi Projection (AMP).
+A central component of our mechanism is a specialized projection module designed to align multi-level visual features with the language embedding space.
+Aligning multi-level visual features presents a fundamental projection dilemma.
+On one hand, a single, rigid projector cannot reconcile the significant distributional variance across vision layers—from low-level textures to high-level semantics—leading to severe feature misalignment.
+On the other hand, the seemingly obvious alternative of training a dedicated projector for each layer is computationally prohibitive due to the extensive pretraining required.
+Therefore, our solution is to make the projector adaptive in a parameter-efficient manner.
+We employ LoRA to modify the behavior of the original, pre-trained projector.
+Specifically, for the visual tokens V_{k}\in\mathbb{V} drawn from a sampled layer k, we augment the pre-trained MLP within the projector with a unique, layer-specific LoRA projector.
+This adaptive projection is:
+\displaystyle\hat{V_{k}}
+\displaystyle=P(V_{k})+\text{LoRA}(V_{k})
+(4)
+\displaystyle=\text{MLP}(V_{k})+B_{k}A_{k}(V_{k}),\quad V_{k}\in\mathbb{V},
+(5)
+where A_{k} and B_{k} are the low-rank matrices trained specifically for features from vision layer k.
+This adaptive projection process is applied to each feature map V_{k}\in\mathbb{V}, yielding a new set of aligned token maps \hat{\mathbb{V}}=\{\hat{V_{k}}\}_{k=1}^{K}.
+Each component \hat{V_{k}} within this set is now harmonized in the text embedding dimension, making the entire hierarchical collection ready for effective integration into the LLM.
+Adaptive Gating Fusion (AGF).
+With the visual tokens aligned, the next step is their effective integration.
+Rather than using a simple summation, which can disrupt the LLM’s state, we propose an adaptive injection mechanism.
+This approach acknowledges that the LLM’s hidden state, h, already contains contextual information and thus requires a more nuanced update.
+Accordingly, for each injection layer L_{t} in the LLM, a gating module is proposed to dynamically assess the relevance of the new visual features, \hat{V}_{k}\in\hat{\mathbb{V}}, based on the current decoding context h_{t}.
+The gate’s logic is driven by cross-attention.
+Two learnable query vectors, q_{v} and q_{h}, act as probes to distill the essence of the new visual information and the existing hidden state:
+\displaystyle\hat{V}_{\text{att}}
+\displaystyle=\text{MultiHeadAttention}(q_{v},\hat{V}_{k},\hat{V}_{k}),
+(6)
+\displaystyle h_{\text{att}}
+\displaystyle=\text{MultiHeadAttention}(q_{h},h_{t},h_{t}).
+(7)
+The resulting context vectors are fused and passed through a gate controller—a linear layer followed by a Sigmoid activation—to yield a dynamic weight, W\in[0,1]:
+\displaystyle W
+\displaystyle=\text{Sigmoid}(\text{Gate}([\hat{V}_{\text{att}};h_{\text{att}}])).
+(8)
+This weight governs the selective update of the hidden state.
+To ensure precision, we use a binary “mask” that isolates the positions of visual tokens within h_{t}.
+The non-visual portions are preserved, while the visual portions are updated via a weighted sum with the new features:
+h^{\prime}_{t}=h_{t}\odot(1-\text{mask})+(h_{t}\odot\text{mask}+W\odot\hat{V}),
+(9)
+where \odot denotes element-wise product.
+This fusion process enriches the hidden state h_{t} with a hierarchical representation of the visual input through processing all the \hat{V}_{k} in \hat{\mathbb{V}}.
+This gating and update cycle is repeated at designated injection points throughout the LLM’s decoder.
+This method facilitates an iterative refinement of the model’s visual understanding, allowing it to “re-examine” visual evidence at varying granularities throughout the generation process.
+4 Experiments
+This section presents a comprehensive empirical validation of our Cross-Layer Injection (CLI) framework.
+We first detail the experimental setup, including our implementation of CLI on two distinct VLM architectures and the benchmarks used for evaluation.
+Then, the main results are presented, demonstrating that CLI consistently and significantly outperforms strong baselines and competing fusion strategies across 18 diverse benchmarks.
+Finally, a series of in-depth ablation studies and analyses are conducted to dissect the specific contributions of CLI’s core components and validate our “many-to-many” design philosophy.
+4.1 Experiment Setup.
+Model Configuration.
+To demonstrate the versatility and general applicability of CLI, we integrate it into two distinct VLM architectures, LLaVA-OneVision [23] and LLaVA-1.5 [4]. The specific components for each are as follows:
+•
+CLI on LLaVA-OneVision: This model uses a Qwen-2 series model [24] as the LLM backbone, a Siglip-so400m-patch14-384 [6] vision encoder, and a two-layer MLP projector.
+To mitigate potential data contamination and ensure a fair evaluation, we initialize our fine-tuning from the public checkpoint released after its “High-Quality Knowledge Learning” stage.
+•
+CLI on LLaVA-1.5:
+This variant is built upon Vicuna-7B [25] as the LLM and CLIP-Large [5] as the vision encoder, with a two-layer MLP projector using a GELU activation.
+Following the methodology of LLaVA-1.5, we fine-tune the model starting from the pre-trained checkpoint and using the identical training data.
+We adopt the original training protocols from LLaVA-OneVision and LLaVA-1.5.
+Detailed hyper-parameters for our experiments are listed in Appendix A.
+Dataset Configuration.
+The foundation of our instruction tuning set consists of the single-image datasets from LLaVA-OneVision, which provide a broad base for general visual understanding (see Appendix B for details).
+Evaluation Benchmarks.
+To ensure a standardized and reproducible comparison, we evaluate the LLaVA-OneVision and LLaVA-1.5 models across a comprehensive suite of single-image benchmarks using the LMMs-Eval framework [26].
+These benchmarks are grouped into three primary categories to assess a wide range of capabilities (details can be found at Appendix C):
+•
+Chart, Diagram, and Document Understanding: AI2D [27], ChartQA [28], DocVQA [29], and InfoVQA [30].
+These tasks demand fine-grained perception of text and structural elements.
+•
+Perception and Multidisciplinary Reasoning: MME [31], MMBench [32], MMVet [33], MathVerse [34], MathVista [35], MMMU [36], GQA [37], OK-VQA [38], ScienceQA [39], SEED-Bench [40], MM-Star [41], and POPE [42].
+These benchmarks test abstract reasoning, knowledge integration, and resistance to hallucination.
+•
+Real-world Understanding and Visual Chat: RealworldQA [43], LLaVA-in-the-Wild [4].
+These qualitative benchmarks evaluate the model’s practical conversational and reasoning abilities in open-ended scenarios.
+Comparison Methods.
+We evaluate our method against two sets of competitors.
+First, to situate our model’s performance in the broader landscape, we compare it against SOTA VLMs at both similar (IXC-2.5-7B [44], InternVL-2-8B [45]) and larger scales (VILA-13B [46], InternVL-2-26B [45]).
+Additionally, to directly assess our fusion strategy, we conduct a controlled study comparing CLI against three fusion paradigms, all implemented on the same base models and trained on the identical dataset.
+Our primary comparison is against the Baseline Projector, the original single-layer projection method from the LLaVA architectures, which we re-trained to serve as a fair baseline (referred to as LLaVA-OV-0.5B/7B).
+We also compare against DeepStack [10], a brute-force one-to-many approach that injects only final-layer visual tokens into multiple LLM layers, and Shallow-Layer Injection (SLI), a rigid statically-wired method used by models like Qwen3-VL [12] that creates a fixed one-to-one mapping from the first n vision layers to the corresponding initial n LLM decoder layers.
+Table 1: Performance evaluation of the proposed CLI framework across a suite of nine benchmarks.
+We integrate our proposed Cross-Layer Injection (CLI) framework into LLaVA-OV (0.5B, 7B) and compare against baselines and alternative fusion methods.
+The table shows that CLI consistently provides significant performance gains over the baselines and substantially outperforms competing fusion methods, especially on complex reasoning tasks like LLaVA-in-the-Wild.
+Model
+AI2D
+ChartQA
+DocVQA
+InfoVQA
+RealWorldQA
+LLaVA-W
+POPE
+OK-VQA
+GQA
+Sum
+test
+test
+val
+val
+test
+test
+test
+val
+test
+VILA-13B [46]
+57.6
+32.8
+20.0
+10.0
+41.9
+58.6
+0.4
+1.6
+17.6
+240.5
+IXC-2.5-7B [44]
+39.1
+81.2
+90.3
+68.1
+57.5
+63.2
+88.5
+29.2
+57.7
+574.8
+InternVL-2-8B [45]
+82.2
+82.5
+90.0
+66.5
+64.4
+72.7
+87.8
+52.1
+62.7
+660.9
+InternVL-2-26B [45]
+83.0
+84.4
+90.4
+68.9
+67.2
+90.6
+88.8
+48.3
+65.1
+686.7
+LLaVA-OV-0.5B
+56.5
+64.5
+64.1
+47.5
+56.0
+61.7
+88.8
+48.4
+53.7
+541.2
+w/ DeepStack [10]
+53.2-3.3
+54.0-10.5
+54.6-9.5
+41.0-6.5
+52.9-3.1
+57.1-4.6
+88.2-0.6
+46.2-2.2
+53.3-0.4
+490.5-50.7
+w/ SLI [12]
+57.2+0.7
+64.7+0.2
+63.6-0.5
+46.6-0.9
+55.1-0.9
+55.2-6.5
+89.0+0.2
+48.8+0.4
+54.5+0.8
+534.7-6.5
+w/ CLI
+56.7+0.2
+65.2+0.7
+64.7+0.6
+47.1-0.4
+56.7+0.7
+61.1-0.6
+89.1+0.3
+48.6+0.2
+53.7
+542.9+1.7
+LLaVA-OV-7B
+77.5
+78.5
+82.5
+69.5
+68.4
+68.0
+88.6
+58.5
+59.4
+650.9
+w/ DeepStack [10]
+76.0-1.5
+63.8-14.7
+72.6-9.9
+62.2-7.3
+61.4-7.0
+70.3+2.3
+88.7+0.1
+58.3-0.2
+58.5-0.9
+611.8-39.1
+w/ SLI [12]
+77.6+0.1
+77.3-1.2
+79.9-2.6
+67.6-1.9
+68.2-0.2
+68.5+0.5
+89.0+0.4
+58.4-0.1
+59.3-0.1
+645.8-5.1
+w/ CLI
+77.9+0.4
+78.7+0.2
+82.8+0.3
+70.5+1.0
+68.4
+74.5+6.5
+88.9+0.3
+59.2+0.7
+59.7+0.3
+660.6+9.7
+Figure 4: Performance gains from CLI on fine-grained visual reasoning.
+On both OCR and a comprehensive suite of visual grounding benchmarks (RefCOCO/+/g), CLI delivers consistent improvements for both the 0.5B and 7B models.
+This result demonstrates the framework’s effectiveness in leveraging hierarchical visual features for tasks demanding high spatial and textural precision.
+4.2 Main Results
+We evaluate our CLI by incorporating them into LLaVA-OneVision and LLaVA-1.5 architectures. Quantitative results compared with SOTA methods and other fusion works are shown in Tabs. 1 and 2.
+Overall, these results show that our CLI framework significantly outperforms the Baseline Projector (labeled LLaVA-OV-0.5B and -7B) across both model scales.
+This validates our central hypothesis: empowering an LLM with dynamic, on-demand access to the full visual hierarchy unlocks a deeper level of multimodal understanding.
+Furthermore, the performance lift from CLI is substantially larger than that of other deep fusion strategies, and it is the only method to deliver robust gains over the baseline.
+DeepStack, with its context-blind addition, often degrades performance, falling well below the baseline and demonstrating that unfiltered feature injection is disruptive.
+Shallow-Layer Injection delivers only marginal or inconsistent gains, failing to significantly improve upon the baseline because it confines multi-level visual data to the LLM’s shallowest layers, leaving the deeper, reasoning-intensive layers perceptually impoverished.
+In stark contrast, CLI’s dynamic many-to-many architecture, governed by AGF, allows every designated LLM layer to query the entire visual hierarchy.
+This context-aware fusion enables a more sophisticated integration of visual evidence, leading to demonstrably superior performance.
+Specifically, the benefits of CLI’s architecture are evident across diverse task categories.
+For fine-grained document understanding on benchmarks like AI2D, ChartQA, DocVQA, and InfoVQA, CLI delivers cumulative gains of +1.1% and +1.9% over the Baseline Projector for the 0.5B and 7B models, respectively, by granting access to early-layer ViT features rich in essential textural and structural details.
+This strength extends to complex multimodal reasoning, where the impressive +6.5% gain on LLaVA-in-the-Wild with open-ended questions for the 7B model showcases how the AGF mechanism allows the LLM to dynamically synthesize information from the entire visual hierarchy—a capability static methods lack.
+Consistent gains on other reasoning-heavy benchmarks like MME (+3.3% on 7B) and SEED-Bench (+1.1% on 0.5B) further confirm that rich, multi-level visual input is a critical component for high-level cognitive tasks.
+This enhancement further allows our CLI-enhanced models to compete with much larger systems.
+Notably, our LLaVA-OV-7B with CLI achieves a total score of 660.6, closing the performance gap to reach near-parity with the larger InternVL-2-8B model (660.9).
+Table 2: Main results on benchmarks for perception, multidisciplinary reasoning, and integrated capabilities.
+We compare our CLI-enhanced models against their baselines and alternative fusion methods on nine challenging benchmarks.
+The results demonstrate that CLI provides a consistent performance lift across different model architectures and sizes, confirming its effectiveness for tasks requiring complex reasoning and integrated visual understanding.
+Model
+MathVerse
+MathVista
+MMBench
+MME
+MMStar
+MMMU
+MMVet
+SeedBench
+ScienceQA
+Sum
+mini-vision
+testmini
+en-dev
+test
+test
+val
+test
+image
+test
+VILA-13B [46]
+26.4
+33.7
+57.9
+45.2
+32.8
+31.5
+31.2
+66.5
+71.0
+396.2
+IXC-2.5-7B [44]
+13.03
+60.4
+66.1
+90.3
+14.8
+33.1
+46.3
+47.1
+22.0
+380.1
+InternVL-2-8B [45]
+31.2
+63.0
+81.7
+93.0
+58.7
+48.5
+53.6
+76.1
+97.0
+602.8
+InternVL-2-26B [45]
+27.3
+61.1
+81.6
+94.9
+60.4
+47.5
+53.1
+76.7
+97.5
+600.1
+LLaVA-OV-0.5B
+17.7
+36.3
+45.8
+63.2
+38.5
+30.7
+28.0
+65.6
+65.2
+391.0
+w/ DeepStack [10]
+17.8-3.8
+32.5-3.8
+51.2+5.4
+59.8-3.4
+38.5
+31.6+0.9
+23.1-4.9
+62.9-2.7
+63.5-1.7
+380.9-10.1
+w/ SLI [12]
+18.0+0.3
+37.9+1.6
+47.3+1.5
+61.1-2.1
+42.6+4.1
+30.2-0.5
+26.1-1.9
+65.9+0.3
+64.6-0.6
+393.7+2.7
+w/ CLI
+18.3+0.6
+37.1+0.8
+48.3+2.5
+63.3+0.1
+39.3+0.8
+30.1-0.6
+27.0-1.0
+66.7+1.1
+65.5+0.3
+395.6+4.6
+LLaVA-OV-7B
+28.8
+55.4
+79.2
+85.1
+54.1
+47.0
+44.1
+76.1
+86.4
+556.2
+w/ DeepStack [10]
+27.0-1.8
+55.5+0.1
+78.1-1.1
+84.1-1.0
+50.8-3.3
+45.6-1.4
+40.3-3.8
+74.3-1.8
+83.6-2.8
+539.3-16.9
+w/ SLI [12]
+25.9-2.9
+57.8+2.4
+79.6+0.4
+84.4-0.7
+55.8+1.7
+44.7-2.3
+40.6-3.5
+76.5+0.4
+85.8-0.6
+551.1-5.1
+w/ CLI
+27.1-1.7
+55.8+0.4
+78.9-0.3
+88.4+3.3
+56.5+2.4
+47.6+0.6
+43.8-0.3
+75.7-0.4
+85.6-0.8
+559.4+3.2
+Table 3:
+To validate the architecture-agnostic nature of our method, we integrated CLI into the LLaVA-1.5 architecture.
+The CLI-enhanced model demonstrates consistent and broad performance gains across a wide range of tasks, from document understanding and real-world chat (top) to complex, multidisciplinary reasoning (bottom), confirming the robustness and general applicability of our framework.
+Model
+AI2D
+ChartQA
+DocVQA
+InfoVQA
+RealWorldQA
+LLaVA-W
+POPE
+OK-VQA
+GQA
+Partial Sum
+LLaVA-1.5-7B
+66.3
+38.9
+32.2
+26.8
+54.5
+62.9
+87.0
+41.8
+57.6
+468.0
+w/ CLI
+65.7-0.6
+39.6+0.7
+32.4+0.2
+26.3-0.5
+54.6+0.1
+65.9+3.0
+86.4-0.6
+47.0+5.2
+57.6
+475.5+7.5
+Model
+MathVerse
+MathVista
+MMBench
+MME
+MMStar
+MMMU
+MMVet
+SeedBench
+ScienceQA
+Partial Sum
+LLaVA-1.5-7B
+17.5
+34.4
+64.3
+79.9
+37.2
+34.5
+31.2
+61.9
+72.9
+433.8
+w/ CLI
+18.3+0.8
+35.6+1.2
+66.3+2.0
+79.4-0.5
+38.5+1.3
+35.7+1.2
+34.5+3.3
+61.9
+72.2-0.7
+442.4+8.6
+Table 4: Component-wise ablation study of the CLI framework on LLaVA-OV-0.5B.
+We incrementally add the AMP and the AGF module to the baseline.
+The results highlight the critical role of the gating mechanism and the synergy between both components.
+Variant
+AI2D
+ChartQA
+DocVQA
+InfoVQA
+MathVerse
+MathVista
+MMBench
+MME
+MMMU
+Sum
+Para
+test
+test
+val/test
+val/test
+mini-vision
+testmini
+en-dev
+test
+val
+Baseline
+48.87
+55.88
+58.87
+42.21
+16.71
+29.40
+28.52
+56.38
+29.88
+366.72
+100.00%
+w/ AMP
+49.13
+55.76
+59.19
+42.75
+17.04
+29.60
+28.26
+56.28
+29.88
+367.89
+102.25%
+w/ AGF
+48.67
+56.60
+59.47
+42.48
+17.01
+29.10
+30.58
+56.47
+30.22
+370.60
+102.12%
+w/ AMP + AGF
+48.64
+55.40
+59.32
+42.52
+17.85
+30.00
+30.41
+56.71
+30.66
+371.51
+104.37%
+w/ Full AMP
+49.38
+56.12
+59.27
+42.38
+17.13
+28.50
+29.12
+56.07
+29.77
+367.74
+107.95%
+w/ Full AMP + AGF
+51.30
+62.72
+60.76
+44.71
+18.06
+33.30
+45.79
+58.49
+31.88
+407.01
+110.07%
+Figure 5:
+Qualitative comparison of CLI on the LLaVA-OV-7B model across diverse benchmarks.
+Outputs from Baseline Projector are shown in red, while outputs from CLI are in green.
+The examples demonstrate that by integrating multi-level visual information, our model achieves more accurate perception and reasoning across various tasks, including MM-Star, LLaVA-in-the-Wild, and OCR-Bench.
+To further challenge the framework on tasks that depend critically on multi-level visual information, we evaluated it on a separate suite of fine-grained benchmarks: Optical Character Recognition (OCR) and visual grounding (as shown in Fig. 4).
+These tasks act as a stress-test for vision-language fusion, as they require the model to resolve fine character strokes (for OCR) or synthesize high-level semantic context with precise low-level localization (for visual grounding).
+Here, CLI’s superiority is unambiguous. Its ability to tap into early-layer ViT features for high-fidelity detail proves decisive, yielding a remarkable 4.7% improvement for the 7B model on OCR.
+Similarly, it excels at grounding by allowing the LLM to dynamically draw on both deep ViT layers for context and shallow layers for spatial detail, leading to robust gains across all nine grounding benchmarks.
+This stands in stark contrast to the inconsistent results of competing methods as shown in Fig. 4, confirming that a dynamic, many-to-many architecture can reliably satisfy these complex visual demands.
+In addition, to validate its generalizability, we ported CLI to the LLaVA-1.5 architecture, which uses a different LLM, vision encoder, and pre-training pipeline.
+As reported in Tab. 3, CLI delivers comprehensive performance improvements to this architecture as well.
+The gains on LLaVA-1.5 are even more pronounced than on LLaVA-OV (+7.5 and +8.6 partial sum improvements vs. +9.7 and +3.2). This suggests a deeper advantage of our framework: CLI can act as a compensatory mechanism, mitigating pre-existing weaknesses in a base model’s original visual-language alignment.
+By forging a richer, more dynamic connection, CLI establishes a more robust multimodal foundation, highlighting its broad utility as a plug-and-play enhancement.
+(A comparison with DeepStack and SLI can be found in Appendix D.)
+4.3 Ablation Studies
+To dissect and validate our CLI framework, we conduct a series of ablation studies on LLaVA-OneVision-0.5B, analyzing component contributions and the injection strategy. For efficiency, these experiments use a 50% subset of the instruction tuning data, a point identified as a strong performance-to-cost trade-off in our scalability analysis (see Appendix E.1). The key findings on component roles and injection density are presented below, with more details on all ablations available in Appendix E.
+Dissecting the Contributions of CLI Components.
+A component-wise ablation (Tab. 4) reveals the critical, synergistic roles of Adaptive Multi-Projection (AMP) and Adaptive Gating Fusion (AGF).
+Injecting multi-level features using only AMP provides marginal gains (367.89 vs. 366.72 baseline), confirming that simply flooding the LLM with unfiltered information is ineffective.
+In stark contrast, incorporating the AGF gating module alone yields a significant performance uplift (370.60), decisively validating our core hypothesis: the ability to dynamically select visual information is the most critical factor for successful fusion.
+The fine-tuned CLI framework, combining both modules, achieves further gains (371.51), demonstrating that AMP harmonizes the hierarchical features, providing a cleaner input for AGF to effectively gate.
+While a fully fine-tuned projector paired with AGF yields the highest absolute score (407.01), our LoRA-based AMP provides a much more compelling balance of performance and parameter efficiency (104.37% vs. 110.07% total params), justifying its use in our framework.
+Impact of Injection Density.
+We next ablate the injection strategy to validate our many-to-many design (see Fig. 7 in Appendix E).
+Comparing various injection densities, we find that a single-point injection consistently underperforms, reaffirming that it creates an insurmountable information bottleneck.
+Conversely, a high-density strategy—injecting features frequently at multiple layers—achieves the best overall performance, powerfully validating our principle that on-demand access to the full visual hierarchy is essential.
+Intriguingly, a medium-density configuration underperforms a sparser one, suggesting a trade-off where intermittent updates may introduce disruptive cognitive overhead without the benefit of the near-continuous context provided by a high-density approach.
+4.4 Visualizations
+To offer insight into both the practical benefits and internal dynamics of our framework, we present qualitative and mechanistic visualizations.
+The qualitative examples in Fig. 5 highlight CLI’s superior performance across diverse tasks.
+In complex compositional reasoning (MM-Star), fine-grained recognition (LLaVA-in-the-Wild), and challenging OCR, our model demonstrates more nuanced and accurate perception than the baseline.
+For instance, it correctly identifies a mangosteen where the baseline sees a durian, and reads the entire number ‘3420’ where the baseline outputs a fragment, showcasing an ability to integrate both fine-grained details and global context.
+The mechanism enabling this is revealed by visualizing the learned gating weights (Fig. 1(bottom)). The heatmap uncovers a complex, non-parallel “criss-crossed” information flow, providing compelling evidence for our many-to-many fusion thesis.
+It demonstrates an evolving demand for visual information throughout the LLM’s decoding process: shallow decoder layers query early vision layers to ground basic concepts, while deeper layers tasked with complex reasoning learn to query the entire visual hierarchy.
+This allows them to simultaneously “zoom in” on fine details (crucial for OCR) and “zoom out” for global context (vital for reasoning).
+Together, these visualizations confirm that granting the LLM dynamic, on-demand access to the full visual hierarchy is essential for sophisticated multimodal understanding and validates the efficacy of CLI’s design.
+5 Conclusion
+This paper introduces CLI, a framework that resolves the information bottleneck in VLMs by creating a dynamic “many-to-many” bridge between vision and language hierarchies.
+By granting the LLM on-demand access to all visual layers, CLI achieves significant performance gains across 18 diverse benchmarks. Our work validates that dynamic, selective fusion is critical for sophisticated reasoning, establishing CLI as a lightweight and scalable paradigm for deeper multimodal understanding.
+6 Acknowledgments
+This work was supported by Ant Group
+Research Intern Program.
+

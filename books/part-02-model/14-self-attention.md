@@ -112,12 +112,20 @@ Y = A V
 Attention(Q,K,V) = softmax(QK^T / sqrt(d_h) + M) V
 ```
 
+加权读取给当前 token 一个 contextual mean，却没有直接表达它偏离这个均值的方向。一个可混用的 head 分支保持同一 attention 权重 P，把输出从 PV 改为 V−PV，再经原有 output projection 与 residual 加回 hidden state。普通 head 继续负责读取，偏差 head 提供局部差异接口，不需新增可训练参数；它仍计算 attention，不能由参数不增推出算力免费。<!-- source-family:SF-2026-ARXIV-2602-09297 -->
+
+输出投影可改变方向和符号，所以 V−PV 不自动使 token 方差单调下降，也不是所有层都应替换的 smoothing 定律。[Laplacian head 的受限对照](https://arxiv.org/html/2602.09297v1)中，图像分类几何与成绩的关联支持这一设计分支，但最佳 head 比例依任务而变；语言模型部分任务退步，分类中的 Neural Token Collapse 不能直接移交给 self-supervised next-token 目标。比例校准、额外读取路径与训练仍付成本；几何或质量不合适时保留普通 PV heads 与已验证的归一化/residual，不让局部均值或理想几何替代任务验收。<!-- source-family:SF-2026-ARXIV-2602-09297 -->
+
+凸读取还可能在一个更窄的读出合同下限制可改变的结果：固定每个样本的 final embeddings，并用同一 scalar linear head 比较 attention pooling 与 mean pooling，令每个样本凸包相对均值的最大半径为 `R_s=max_i||h_si−mean_s||`，`Rtilde=RMS_s R_s`，mean prediction 的非零标准差为 `sigma0`。若 `||w||>0` 且 `Rtilde<sigma0/||w||`，则 PCC 的绝对变化不超过 `2Rtilde/(sigma0/||w||−Rtilde)`。[该局部定理](https://arxiv.org/html/2602.17898v1#S2.SS4)说明高度同质的固定特征未必能只靠换凸权重获得明显相关性增量；接近条件边界时界会变松，并非全 Transformer 或 LLM 的能力上限。改变 encoder、head 或加入非凸残差会改变比较对象，训练与校准也有成本；任务只需稳定聚合或假设不满足时，mean/softmax 仍合理，需要新信息时应先检查表示与非线性组合，不把更尖的权重当成新增证据。<!-- source-family:SF-2026-ARXIV-2602-17898 -->
+
 ## 路由权重不等于独立的知识贡献
 
 归一化权重描述的是本次路由，而不是每个位置独立贡献了多少“知识”。即使某个位置权重很小，它的 Value norm 或方向仍可能影响结果；一批位置的作用还可能互相抵消。因此研究“读取需要多少位置”时，必须先说清干预：删除尾部位置但保留原权重，与留下少数位置后重新归一化，不是同一个实验。
 
 设保留集合的原权重和为 `m`，保留/删除部分的加权平均 Value 分别为 `mu_S`、`mu_T`，则原输出是 `m*mu_S+(1-m)*mu_T`。只删除时的输出误差为 `(1-m)*mu_T`；重新归一化后的误差则为 `(1-m)*(mu_T-mu_S)`。小的尾部 mass 只控制系数，Value 尺度和方向仍决定实际误差；下一层非线性和最终任务 loss 还会继续改变影响。用原模型 NLL 的变化定义“retrieval capacity”，测到的是特定干预下保留原行为所需的路由支持，不是模型存储事实的数量。[受限 Attention retrieval 实验](https://arxiv.org/html/2609.37879v1)先计算完整 Attention 再选择位置，因而也不构成稀疏实现的加速证明。真实稀疏执行的质量、选择开销与缓存问题交由第45、49章处理。
 <!-- source-family:SF-2026-ARXIV-2609-37879 -->
+
+若需要真正少算部分路由，可以把保留支集内的归一化 sparse Attention 与另一条互补低秩读取分开计算，再用 learned gate 混合两条已各自归一的输出。Gate 是训练得到的混合系数，不是原 dense Attention 的真实保留 mass，也不保证精确恢复删除部分。[SLA2 的受限分支](https://arxiv.org/html/2602.12675v1)改变了读取与训练接口；实施时须只在允许支集上求 softmax，字面把分数乘二值 mask 会让被删位置仍有非零概率。少量更新和 QAT、支集选择、低秩路径及 kernel 都有成本；作者 kernel 加速与排除 offload 的模型延迟不是包含传输的端到端收益，质量也并非全任务支配。Gate 或低比特路径回归、选择成本抵消收益时，保留原 dense Attention、成熟 sparse 路由或更高精度，不把路由系数解释为每个位置的知识量。 <!-- source-family:SF-2026-ARXIV-2602-12675 -->
 
 ## 三 token 小例子
 
@@ -261,6 +269,8 @@ Softmax 保留稳定竞争、成熟 kernel 与清楚尺度；null/register、显
 
 更强过滤会损失有用证据：受限 FineWeb-Edu 模型中的 norm gate 在较多 junk 时反而退步，投影对齐的攻击又可绕过特征过滤。模型规模、训练切片与有限 seed 不认证任意 pretrained Transformer，未测吞吐也不支持更高生产效率。零 option、特征门与旧 null/sink 都应按相同任务、预算及可观察输出验收，并计新增参数、校准和 kernel 成本；判断失准时保留成熟 softmax、显式 null 与外部输入检查，不能用一个 gate 自签鲁棒性。 [必要机制与反证](https://arxiv.org/html/2609.22005v1)。<!-- source-family:SF-2026-ARXIV-2609-22005 -->
 
+另一种分支不是添加零 option，而是把 softmax 权重的**均匀分量与偏离均匀分量**分开门控。[Affine-Scaled Attention 的所写公式](https://arxiv.org/html/2602.23057v1#S3)令 `a_i=α(P_i−1/N)+α_ma/N`，其中 `α` 随 query/head 变化、`α_ma` 为训练 batch 的 EMA；在声明的同一可见支集上，总量为 `α_ma`，不是任意 query-adaptive probability mass。`α>α_ma` 时可出现负权重，`α=0` 仍保留均匀 EMA 读取，故不能直接解释为凸组合、Shannon entropy 或精确 no-op。它与成熟 softmax/sink/output gate 共存的是不同聚合假设，有限中型 KD 对照支持局部质量/稳定性结果，却有逐任务退步，也未测 CE 预训练或生产时延。实际采用还须声明 `N` 的因果可见支集、bias 不重新启用未来 key、EMA 统计轴及冻结/恢复身份；原公式与 per-query mass/entropy 宣传的冲突只隔离该子命题，不据此指控未读的实现。新增门、EMA状态/同步、训练搜索都计费，条件或质量失配时保留原 softmax、sink/null 和外部输入检查。<!-- source-family:SF-2026-ARXIV-2602-23057 -->
+
 ### Sink 与 Outlier 需要跨 Token、跨深度共同诊断
 
 把一个高权重 token 直接称为 attention sink，容易把观察到的突出位置误当成单一原因。更完整的诊断同时跟踪 token axis 上 normalization 如何集中质量，以及 depth axis 上 residual stream 如何累积并放大 outlier；显著 token 可能是二者耦合后的结果，而不是独自拥有模型行为。因果检查因此需要逐层 attention、residual 与受控干预共同对齐。
@@ -271,11 +281,19 @@ Softmax 保留稳定竞争、成熟 kernel 与清楚尺度；null/register、显
 Attention sink 不是一个 token 的固有标签，而是 token-axis normalization 与 residual depth accumulation 的待验证耦合。
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-17887:end -->
 
+多模态解码中，sink 诊断也可以区分 token 当前权重与跨层增量：相邻层 Attention 的正向变化提出待增强的视觉位置，再用与目标 head 尺度相校准的 logit 增量干预；system token 的 logit 减项则尝试补偿视觉增强带来的挤占。这是条件启发式，不是原有指令质量的守恒。[PADE 的有限 VLM 对照](https://arxiv.org/html/2602.15556v1#S3)并未证明 subtract logit 就保持其他位置的 softmax mass：即使视觉加 a、system 减 a，归一化分母也可能增大而压低 user/history 权重。跨层增量不等证据真值，过强系数会退化，部分表值/设置也不能直接合并。新增测量、调参与运行成本需与视觉质量、指令保留及原模型一起验收；失配时保留成熟 Attention 或更窄输入检查，不把局部幻觉指标改善当所有层/所有任务的 sink 修复。<!-- source-family:SF-2026-ARXIV-2602-15556 -->
+
 ### Attention Temperature 必须随 Score Gap 结构校准
 
 长上下文中简单固定 logit scale 容易在不同长度 regime 下过于平坦或过度集中，但“随长度取平方根对数、对数或对数平方”也不是普适定律。更一般的分析把每个 attention row 中距最大 score 不同 gap 内的竞争者数量写成 gap-counting function；临界 inverse temperature 由上尾累积尺度决定，低于它时顶层竞争者仍混合，高于它时 entropy 可能坍缩。<!-- semantic-body-binding:SF-2026-ARXIV-2605-12697 -->
 
 这给出的是对 score-family 的诊断框架，不是所有模型的自动调参公式。实际模型的 score distribution、head 角色和位置策略会改变临界尺度；假设或校准不成立时，保留已有 scale，并用长度分桶的 entropy、质量与数值稳定性共同验收。
+
+归一化本身也会改变有效 scale，而不必改变向量方向。对非零 Q/K，把 L2 归一化换成 Lp 归一化（p≥1），点积可写成 `α cosθ × (‖q‖₂/‖q‖p) × (‖k‖₂/‖k‖p)`；两个比值依赖各向量的形状，因此这是 pair-specific logit scale，不只是迁移一个固定 temperature。统一缩放没有选择或删去某些坐标，固定维度的范数关系也不认证任意维度的数值稳定性。[受限原实验](https://arxiv.org/html/2602.05006v1)仅在 TinyShakespeare 字符级六层模型上比较 p 与验证 loss，尚不足以排除有效 scale 混杂或证明大模型泛化；其相近训练时间不授普遍加速。换范数需要重新训练或至少核验质量、entropy、零范数处理与数值边界，并计校准成本；证据不足时保留 L2/QKNorm 或成熟 scaled-dot-product，不把局部替代机制当通用稳定保证。<!-- source-family:SF-2026-ARXIV-2602-05006 -->
+
+长度校准还可以改变 query 的坐标，而不只乘一个 head temperature。一条受限分支在聚合样本时，把每个 query 坐标乘上由 `log n` 生成的 learned base scale，再乘由该 query 生成的 `1+tanh(gate)`；这里 `n` 是聚合的训练样本数。不同坐标的乘子会改变匹配方向，因而它是 length 与 content 联合条件化的读取接口，不等于前述保方向的范数比值。gate 在 `(0,2)` 不代表 base scale 必定为正或随长度单调，更不能仅据输入含 `log n` 签发长窗稳定保证。<!-- source-family:SF-2026-ARXIV-2602-11139 -->
+
+[Tabular 模型的必要对照](https://arxiv.org/html/2602.11139v1)支持这个具体接口与局部 toy 检查，但最终多阶段 checkpoint 和单组件消融有不同训练步数、head 配置与 prior；总排行榜收益不能全部归给门控，旧 prior 下新架构甚至退步。新增两个 MLP、重新训练与长度分桶校准都需计成本，15K negatives 的分类 toy 不证明 LLM 长上下文或生产延迟。聚合人口、训练 support 或质量失配时，保留成熟 scaled-dot-product、已验证的固定/逐 head scale 与原有归一化，而不让 learned length multiplier 代替独立验收。
 
 ## 路由改变前，先区分可见边与读取偏好
 
@@ -395,6 +413,12 @@ Attention state 的经典分解保存 key 与 value，因为 query-key 决定路
 Q/K 投影让模型学习“用什么坐标寻址”，表达力强但也引入参数和尺度耦合。一个替代分支直接在 hidden state 间计算 Gaussian kernel，再行归一化为 row-stochastic diffusion；bandwidth 控制局部性，Value 或原状态承载被传播的信息。它不是对标准 Attention 的执行优化，而是移除可学习寻址投影、改用距离核的不同模型族。
 
 这样获得更明确的平滑与局部性先验，却可能无法表达非对称、内容特定的路由，并对距离尺度和高维集中敏感。结构先验合适、数据较少或需要稳定扩散时可作为分支；复杂语义寻址仍应保留 Q/K/V Attention。现有 exact-v1 只支持作者架构与实验，不证明核扩散普遍优于 learned projection。<!-- semantic-body-binding:SF-2026-ARXIV-2605-02144 -->
+
+非负归一化也可以被换成允许相消的聚合分支。普通 softmax 把 value 的贡献限制在凸组合内，在需要表示差分或对比时，一种做法先从 softmax 中减去均匀基线和一阶项，再由当前 token 的 gate 分别重加一阶与高阶残差，使径向系数可正可负；角向则使用归一化 Q/K 的内积，保留方向与位置关系。让历史 logit 只依赖写入时的 token、当前 gate 只依赖读取时的 token 后，可以把相关历史量整理为 prefix reduction。这改变了 Attention 算子与训练归纳偏置，不是对既有 softmax 的 exact 执行优化；径向系数零和也不保证再乘不同角向系数后仍零和。有界 logit/value 等假设下的分析不授任意长序列或混合精度稳定性，有限小模型实验与线性时间表达不认证生产 kernel 速度。额外 gate、归一化和 scan 状态仍须计费，质量或数值条件不成立时，非负 softmax、局部精确层或混合路径继续合理。<!-- source-family:SF-2026-ARXIV-2602-05230 -->
+
+相消还可以发生在 softmax 读取的内容上，而不只改动径向路由系数。一条因果序列分支先按 key-key 依赖构造下三角预条件系统，对 Value 做 triangular solve，再交给 query-key softmax 读取；被读取的已是校正后的 Value，不能把它解释为对原 value 的普通凸组合。逆算子产生的有效系数可为 signed，改写的是模型算子与训练归纳偏置，不是 FlashAttention 式的 exact softmax 执行优化，也不同于后面在线递归状态的逐维 diagonal step。<!-- source-family:SF-2026-ARXIV-2602-10410 -->
+
+这个分支仍需要二次 key-key 状态与求解工作；双向 mask 不自动保留下三角结构。某些非零 query-gradient 结论还要求 key 与 softmax Jacobian 满足明确的非 null 条件，非零不等于良好 conditioning 或足够大的学习信号。[LUCID 的必要机制与局部反侧](https://arxiv.org/html/2602.10410v1)只支持受测训练与读出协议，原文矩阵记号及 head dimension 的披露差异不作为可执行全公式依据，也未建立生产延迟保证。求解病态、质量回归或额外矩阵成本不合算时，标准 softmax、已有 signed 分支或有限递归 state 仍各有合理位置，不能按一个梯度命题静默替换它们。
 
 ## 将历史压入递归状态后，写入规则成为核心约束
 
@@ -549,6 +573,14 @@ Self Attention 把上下文建模转化为可微分路由：Q/K 决定连接权�
 
 ## Review notes
 
+- `SF-2026-ARXIV-2602-17898` — Daily `2026-02-24`；[exact-v1](https://arxiv.org/html/2602.17898v1) §2.1/§2.4 Theorem2.2/Appendix D。2+1+2=5，固定final h/同w/convex scalar readout相对mean PCC的实际边界差额深入；R_s最大半径/Rtilde RMS与非零sigma0条件明示，不授整网或LLM能力上限，改encoder/head即改比较对象。root 必要源/actual owner PRE 通过授一段窄锁；作者实际正文与完整邻接写后顺读，root 非作者实际正文/完整邻接/自身末注 POST 通过，窄锁释放。未运行artifact或复现，非日级 Gate。
+
+- `SF-2026-ARXIV-2602-10410` — Daily `2026-02-13`；[SF-2026-ARXIV-2602-10410 exact-v1](https://arxiv.org/html/2602.10410v1) §2/§4/§5及必要setup；key-key三角solve先于softmax读取、signed有效系数、非零≠conditioning、维度/记号披露限制。2+1+2=5，具体owner差额深入；root必要原源与actual owner PRE通过授窄锁；实际正文/邻接已由root非作者POST通过，未授日级。未运行代码/复现。
+
+- `SF-2026-ARXIV-2602-05006` — Daily `2026-02-07`；[QKNorm Lp exact-v1](https://arxiv.org/html/2602.05006v1) §2.2/Eqs12–16、§3–5。2+1+2=5，因具体尺度知识缺口深入受影响方法/小模型对照与关键反侧；现 temperature/score-family 缺输入形状诱导的 pair-specific scale，针对这一差额补一段。方向不变而有效尺度变化，不采 feature selection、通用稳定/泛化或生产速度；root实际必要源→owner写前与正文/相邻衔接POST通过，未运行或复现。
+
+- `SF-2026-ARXIV-2602-05230` — Daily `2026-02-07`；[ZeroS exact-v1](https://arxiv.org/html/2602.05230v1) §3径向残差/角向及prefix reduction、§4 MAD/MQAR与限制。2+2+2=6，具体signed operator缺口深入；不采乘后零和、所有affine组合可达、通用稳定或生产速度保证。必要源及owner由root实际写前核通过；本段/邻接及末注root实际非作者POST通过，未运行代码或复现。
+
 - [Attention retrieval capacity v1](https://arxiv.org/html/2609.37879v1) §2–4；Daily 2026-09-30。只采用 mass/Value/direction 与不同删除干预的边界；有限模型和长上下文诊断不证明事实容量或端到端加速，未复现实验。
 
 - `SF-2026-ARXIV-2604-15529` — [LACE v1](https://arxiv.org/html/2604.15529v1)：§3–4、必要 E.1/F.1 支持同请求 cross-thread routing 分支、相关性与 microbenchmark 成本边界；横向时间 mask 未明示，不采用无泄漏保证。root 已完成必要 source→owner 窄采用核，root已顺读实际正文及相邻衔接，非作者写后通过。
@@ -573,3 +605,13 @@ Primary-source 校验入口：
 
   **已吸收的语义增量：** 把 query-key 路由改为 query-value 路由，并在 inference 预乘 query factor，只保存 value representation；QVV(3) 保持投影矩阵数同时移除 key cache。
 <!-- daily-books-trace:SF-2026-ARXIV-2606-21848:end -->
+
+- `SF-2026-ARXIV-2602-09297` — Daily `2026-02-12`；[Laplacian Mechanism exact-v1](https://arxiv.org/html/2602.09297v1) §2.1–2.3、§3、§4.7/5–6/8。2+1+3=6，具体读取接口缺口深入，仅采用 PV/V−PV 混合与 signed output projection；不授方差单调、NTC 普适/语言因果或无算力成本，局部任务反退邻近。root 必要 source→owner 写前核通过授窄锁；root 已实际核两段、邻接及本末注，非作者 POST 通过，窄锁释放。未运行代码/复现，非日级 Gate。
+
+- `SF-2026-ARXIV-2602-11139` — Daily `2026-02-13`；[exact-v1](https://arxiv.org/html/2602.11139v1) §3/7/8必要接口、配对消融与直接反侧。2+1+2=5，per-coordinate length×query scale具体差额深入；base无符号/单调保证、prior与最终训练预算混杂、tabular toy及额外MLP/校准成本保留，不授LLM长窗或数值稳定。current v2仅定点核同采用接口不变，不授其他修订全核；root必要原源/owner PRE通过，实际正文/邻接与末注已经root非作者实际POST通过，窄锁释放，未运行代码/复现，不授日级。
+
+- `SF-2026-ARXIV-2602-15556` — Daily `2026-02-19`；[exact-v1](https://arxiv.org/html/2602.15556v1) §3–4与必要指令mass反例；2+1+2=5，interlayer delta视觉增强/sys logit补偿深入，subtract logit非mass守恒保证；有限VLM/系数退化/表值差异/费用保留。root 必要源/actual owner PRE 通过并授窄锁；作者正文/完整邻接已顺读，root 非作者正文/完整邻接及末注 POST 通过，窄锁已释放。未核实现/复现，非日级 Gate。
+
+- `SF-2026-ARXIV-2602-12675` — Daily `2026-02-17`；[exact-v1](https://arxiv.org/html/2602.12675v1) 必要机制、关键对照与直接限制；2+1+2=5，实际 owner 差额定点深入。仅采用正文条件分支，不授普遍性能/正确性或终端证明；root 必要原源/owner PRE通过并授窄锁，作者正文/完整邻接已顺读，root非作者实际正文/完整邻接/末注POST通过，窄锁释放；未核实现或复现，非日级Gate。
+
+- `SF-2026-ARXIV-2602-23057` — Daily `2026-02-28`；[exact-v1](https://arxiv.org/html/2602.23057v1) §3–5/Limitations必要接口，2+1+2=5；fresh非旧作者独核prepared原证/actual owner，centered query gate与EMA均匀分量差额。总量/负权重/no-op与mask/EMA身份限制近文，不采用per-query probability/entropy宣传，不推未核实现错误。root授Ch14窄ownership；作者实际正文/完整邻接顺读，root非作者实际正文、完整邻接及自身末注POST通过，窄锁释放，未核实现/复现，非日级Gate。

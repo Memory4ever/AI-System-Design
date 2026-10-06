@@ -1,0 +1,798 @@
+DR2Seg: Decomposed Two-Stage Rollouts for Efficient Reasoning Segmentation in Multimodal Large Language Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+2.1 Reasoning Segmentation
+2.2 Self-Rewarding Reinforcement Learning
+3 Methodology
+3.1 Problem Definition
+3.2 Overview
+3.3 DR2Seg: A Pure Self-Reward Framework
+3.4 Theoretical Analysis
+4 Experiments
+4.1 Experimental Settings
+4.2 Main Results
+4.3 Diagnostic Experiments
+5 Conclusions
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2601.09981v1 [cs.CV] 15 Jan 2026
+DR2Seg: Decomposed Two-Stage Rollouts for Efficient Reasoning Segmentation in Multimodal Large Language Models
+Yulin He
+Affiliation: School of Computer, National University of Defense Technology, Changsha, China
+Wei Chen
+Affiliation: School of Computer, National University of Defense Technology, Changsha, China
+Correspondence to: chenwei@nudt.edu.cn
+Zhikang Jian
+Affiliation: School of Computer, National University of Defense Technology, Changsha, China
+Tianhang Guo
+Affiliation: School of Computer, National University of Defense Technology, Changsha, China
+Wenjuan Zhou
+Affiliation: School of Computer, National University of Defense Technology, Changsha, China
+Minglong Li
+Affiliation: School of Computer, National University of Defense Technology, Changsha, China
+Abstract
+Reasoning segmentation is an emerging vision-language task that requires reasoning over intricate text queries to precisely segment objects. However, existing methods typically suffer from overthinking, generating verbose reasoning chains that interfere with object localization in multimodal large language models (MLLMs). To address this issue, we propose DR2Seg, a self-rewarding framework that improves both reasoning efficiency and segmentation accuracy without requiring extra thinking supervision. DR2Seg employs a two-stage rollout strategy that decomposes reasoning segmentation into multimodal reasoning and referring segmentation. In the first stage, the model generates a self-contained description that explicitly specifies the target object. In the second stage, this description replaces the original complex query to verify its self-containment. Based on this design, two self-rewards are introduced to strengthen goal-oriented reasoning and suppress redundant thinking. Extensive experiments across MLLMs of varying scales and segmentation models demonstrate that DR2Seg consistently improves reasoning efficiency and overall segmentation performance.
+Keywords: Reasoning Segmentation, Multimodal Large Language Models, Self-Rewarding Reinforcement Learning
+1 Introduction
+Multimodal large language models (MLLMs) (Liu et al., 2023b; Bai et al., 2025; OpenAI., 2024) encode rich open-world knowledge and exhibit strong capabilities in joint image-text understanding across downstream tasks. By leveraging these strengths, MLLMs can analyze visual scenes and interpret ambiguous human intents, enabling more complex tasks. Reasoning segmentation (Yu et al., 2016; Lai et al., 2024; Zhu et al., 2025) builds upon MLLMs by emphasizing the synergy between reasoning and perception, aiming to infer target objects from complex textual queries and achieve precise segmentation. Compared to the referring segmentation task (Ding et al., 2021; Yang et al., 2022; Liu et al., 2023c), reasoning segmentation involves more intricate and implicit queries, making it more challenging and more suitable for real-world agent scenarios, such as interactive robotics (Yin et al., 2023) and autonomous driving (Tian et al., 2024).
+Figure 1: Motivation of DR2Seg.
+Verbose reasoning can mislead MLLMs to localize false regions (e.g., face or whiskers) instead of the true target (nose). DR2Seg mitigates such reasoning and localization errors, achieving efficient reasoning (∼\sim3× shorter) and accurate segmentation on RefCOCO (RCO) and ReasonSeg (RS).
+Currently, there are two main paradigms in reasoning segmentation.
+Supervised fine-tuning (SFT)-based methods (Lai et al., 2024; Ren et al., 2024), following the pioneering work LISA (Lai et al., 2024), integrate pre-trained MLLMs with segmentation models through additional supervised fine-tuning to enable reasoning segmentation.
+While effective on in-domain tasks, SFT-based methods exhibit limited generalization to out-of-distribution (OOD) scenarios and lack explicit reasoning chains for explainability (Liu et al., 2025a; Wang et al., 2025).
+In contrast, reinforcement learning (RL)-based methods (Liu et al., 2025b; Wang et al., 2025), inspired by ZeroSeg (Liu et al., 2025a), optimize MLLMs with perception-oriented rewards using group-relative policy optimization (GRPO) (Shao et al., 2024).
+These methods can adaptively generate reasoning chains, achieving improved OOD generalization, which has attracted increasing attention.
+However, existing RL-based methods often suffer from overthinking, generating verbose reasoning chains that not only reduce computational efficiency but also interfere with accurate object localization.
+Recently, PixelThink (Wang et al., 2025) addresses this issue by estimating problem difficulty, but at the cost of introducing an additional large-scale expert MLLM for supervision (e.g., Qwen2.5-VL-72B (Bai et al., 2025)).
+In this paper, we propose DR2Seg, a self-rewarding framework that achieves efficient reasoning and accurate localization without relying on extra supervision from other MLLMs.
+Specifically, we propose a two-stage rollout strategy that decomposes reasoning segmentation into two stages: multimodal reasoning and referring segmentation.
+Training involves two rollout passes of the same MLLM.
+(1) First pass: where the model generates an explicit inferring description to specify the target objects. (2) Second pass: the model is then re-prompted to reason based on the explicit description. If the derived answer is correct, the inferring description is regarded as faithful and receives a self-reward.
+This two-stage rollout improves the alignment between reasoning and description for accurate localization while reducing redundant reasoning.
+Moreover, we introduce a length-based self-reward that encourages more compact reasoning in the second stage under explicit description guidance, thereby further reducing thinking token counts.
+Our contributions are summarized as:
+•
+We propose DR2Seg, a simple yet effective self-reward framework that enhances both efficiency and segmentation accuracy using only the model’s intrinsic capability, without requiring extra MLLMs or supervision.
+•
+DR2Seg designs a two-stage rollout strategy that decouples multimodal reasoning and perception in MLLM for reasoning segmentation, combined with a length-based self-reward to reduce redundant reasoning.
+•
+Extensive experiments validate the effectiveness and generalization of DR2Seg across MLLMs of varying scales and segmentation models, offering valuable insights into efficient reasoning perception.
+Figure 2:
+Overview of DR2Seg.
+(a) DR2Seg performs a two-stage rollout.
+In this first pass, the model takes an image-query pair and produces a structured output comprising a CoT, a description, and an answer. In the second pass, the model is re-prompted with the image and the generated description, replacing the original query. (b) DR2Seg adopts a self-reward mechanism to optimize the MLLM, enabling more efficient reasoning and accurate segmentation.
+2 Related Work
+2.1 Reasoning Segmentation
+Image segmentation has evolved from the traditional closed-set setting (Ronneberger et al., 2015; Minaee et al., 2021) to open-vocabulary setting of referring segmentation (Ding et al., 2021; Yang et al., 2022; Liu et al., 2023c), where objects are segmented using brief descriptions.
+Recently, benefiting from the visual-language reasoning capabilities of MLLMs, reasoning segmentation (Shen et al., 2025) has further expanded prompts from fixed vocabularies to arbitrary linguistic forms.
+The pioneering work LISA (Shen et al., 2025) integrates MLLMs with the segmentation model SAM (Kirillov et al., 2023) by aligning textual reasoning with segmentation. Building on LISA, a series of studies explore supervised fine-tuning to strengthen the alignment between textual tokens and fine-grained segmentation (Yang et al., 2023; Ren et al., 2024). However, SFT-based methods suffer from limited generalization, leading to notable performance degradation in OOD scenarios. Seg-Zero (Liu et al., 2025a) addresses this issue by introducing an reinforcement learning based framework, which leverages GRPO (Shao et al., 2024) to adaptively optimize the model’s reasoning ability, achieving improved generalization. VisionReasoner (Liu et al., 2025b) further extends to enable multi-object segmentation by incorporating a bipartite matching algorithm. PixelThink (Wang et al., 2025) focuses on the efficiency and introduces an auxiliary large-scale MLLM to estimate query difficulty, thereby improving reasoning efficiency.
+In contrast, this paper proposes a self-reward framework that requires no additional MLLMs while achieving more efficient and accurate performance.
+2.2 Self-Rewarding Reinforcement Learning
+High-quality rewards are critical for reinforcement learning with verifiable rewards (RLVR), which typically relies on high-quality reward models or even human feedback, becoming a major bottleneck for scalability (Peng et al., 2025; Wen et al., 2025; Su et al., 2025). To address this dilemma, recent works have explored self-rewarding approaches, where reward signals are derived from the model itself (Yuan et al., 2024).
+In language-model-based settings, self-rewarding methods replace external reward models with signals such as model confidence (Li et al., 2025a; van Niekerk et al., 2025), uncertainty (Zhao et al., 2025), or self-verified solutions (Simonds et al., ).
+Recently, several studies have extended this paradigm to MLLMs. For example, Calibrated Self-Rewarding (Zhou et al., 2024) iteratively generates responses and performs self-scoring, assigning rewards through progressively applied visual constraints. PLARE (Luu et al., 2025) queries a MLLM to obtain preference labels over pairs of visual trajectory segments, and directly trains the policy with a supervised contrastive preference learning, eliminating the need for an explicit reward model.
+Vision-SR1 (Li et al., 2025b) decomposes MLLM reasoning into visual perception and language reasoning by explicitly rewarding visual perception by the MLLM itself.
+This work further explores self-rewarding for reasoning perception in MLLMs, enabling concise reasoning chains that explicitly specify targets.
+3 Methodology
+3.1 Problem Definition
+Given an input image ℐ\mathcal{I} and an implicit textual query 𝒬\mathcal{Q}, reasoning segmentation (Lai et al., 2024) aims to produce a binary segmentation mask
+ℳ\mathcal{M}.
+This task is similar to referring segmentation (Ding et al., 2021) but is more challenging, as reasoning segmentation involves more complex queries expressed in arbitrary free-form natural language.
+Moreover, reasoning segmentation also emphasizes the generation of reasoning chains ℛ\mathcal{R}, which play a crucial role in understanding intent and reasoning to identify targets, thereby improving interpretability and generalization.
+3.2 Overview
+We follow the standard reasoning segmentation framework (Liu et al., 2025b) as shown in Fig. 2(a), which includes an reasoning MLLM and a segmentation model.
+The MLLM takes an image ℐ\mathcal{I} and a textual query 𝒬\mathcal{Q} as input, and produces two outputs: ℛ,𝒜=MLLM​(ℐ,𝒬)\mathcal{R},\mathcal{A}=\text{MLLM}(\mathcal{I},\mathcal{Q}). Here, ℛ\mathcal{R} denotes reasoning chains of the MLLM and 𝒜\mathcal{A} represents spatial answers, including a bounding box and a point, which serve as inputs of the segmentation model.
+We adopt the SAM series model (Kirillov et al., 2023; Ravi et al., ) as the segmentation model, which takes the image ℐ\mathcal{I} and the spatial answers 𝒜\mathcal{A} as input and generate the binary masks ℳ\mathcal{M} of targets.
+3.3 DR2Seg: A Pure Self-Reward Framework
+As discussed, redundant over-thinking in MLLMs can stem from attending to excessive objects, which confuses subsequent localization and degrade both efficiency and accuracy.
+However, supervising the reasoning process of MLLMs is inherently challenging because multiple reasoning paths can lead to correct answers, which largely explains the limited generalization of SFT-based methods.
+In contrast, RL-based approaches typically leave reasoning unconstrained, making them prone to over-thinking. PixelThink mitigates this issue by introducing an additional expert MLLM to constrain reasoning length, but this implicitly injects external knowledge from a larger model (i.e., Qwen2.5VL-72B), raising concerns about fairness and limiting the model’s self-evolution capability.
+To address these issues, we propose a self-reward framework consisting of two-stage rollout and self-reward design, as illustrated in Fig. 2(b) and Fig. 2(c).
+Two-Stage Rollout.
+To encourage MLLMs to produce self-contained reasoning for segmentation, we enforce a think–description generation format.
+Given an image ℐ\mathcal{I} and a textual query 𝒬\mathcal{Q}, the MLLM outputs a structured response as:
+<think> ℛ\mathcal{R} </think><description> 𝒟\mathcal{D} </description>
+<answer> 𝒜\mathcal{A} </answer>, where ℛ\mathcal{R} is reasoning chains, 𝒟\mathcal{D} is inferring descriptions, and 𝒜\mathcal{A} is spatial answers for segmentation.
+The training involves two rollout passes of the same MLLM:
+(1) First pass: (ℐ\mathcal{I}, 𝒬\mathcal{Q}) →\rightarrow (ℛ1\mathcal{R}^{1}, 𝒟\mathcal{D}, 𝒜1\mathcal{A}^{1}), where the model generates an explicit inferring description to specify the target objects.
+(2) Second pass: (ℐ\mathcal{I}, 𝒟\mathcal{D}) →\rightarrow (ℛ2\mathcal{R}^{2}, 𝒜2\mathcal{A}^{2}), in which the model is re-prompted to reason based on the explicit description.
+During training, the first pass performs multimodal reasoning to generate referring descriptions, and the second pass generates spatial answers based on these descriptions, decomposing reasoning segmentation into multimodal reasoning and referring segmentation.
+Notably, only a single pass (i.e., the first pass) is required during inference, thereby maintaining computational efficiency.
+Self-Reward Design.
+We can combine the two rollout passes into a longer reasoning path, formalized as:
+(ℐ\mathcal{I}, 𝒬\mathcal{Q}) →\rightarrow ℛ1\mathcal{R}^{1} →\rightarrow 𝒟\mathcal{D} →\rightarrow (ℐ\mathcal{I}, 𝒟\mathcal{D}) →\rightarrow ℛ2\mathcal{R}^{2} →\rightarrow 𝒜2\mathcal{A}^{2}.
+Based on this reasoning path, we infer whether the preceding input is self-contained according to the correctness of the answer.
+We then derive two guiding principles and design corresponding
+self-rewards:
+Principle 1: If 𝒜2\mathcal{A}^{2} is correct, then 𝒟\mathcal{D} and ℛ1\mathcal{R}^{1} should be self-contained.
+Accurate segmentation heavily relies on language descriptions, given the diverse number and granularity of objects in images.
+Therefore, the answer from the second rollout pass serves to verify the reasoning and informational completeness of the first-pass generation.
+If the model can still produce the correct answer given only (I,𝒟)(I,\mathcal{D}), we consider 𝒟\mathcal{D} to be correct and faithful, and accordingly assign a referring description self-reward Rdesc\textbf{R}_{\text{desc}}:
+ℛ2,𝒜2=MLLM​(ℐ,𝒟),\displaystyle\mathcal{R}^{2},\mathcal{A}^{2}=\text{MLLM}(\mathcal{I},\mathcal{D}),
+(1)
+Rdesc(ℐ,𝒟)=𝕀[𝒜2=𝒜∗],\displaystyle\textbf{R}_{\text{desc}}(\mathcal{I},\mathcal{D})=\mathbb{I}[\mathcal{A}^{2}=\mathcal{A}^{*}],
+(2)
+where 𝒜∗\mathcal{A}^{*} is the ground-truth answer.
+Principle 2: As 𝒟\mathcal{D} is more semantic explicit than 𝒬\mathcal{Q}, ℛ2\mathcal{R}^{2} should be shorter than ℛ1\mathcal{R}^{1}.
+After multimodal reasoning in the first rollout pass, 𝒟\mathcal{D} serves as a concise phrase-level description of the target.
+Consequently, the language query in the second pass is simplified, leading to shorter reasoning chains ℛ2\mathcal{R}^{2} compared to those in the first pass ℛ1\mathcal{R}^{1}.
+We first compute the token number of ℛ1\mathcal{R}^{1} and ℛ2\mathcal{R}^{2}:
+OPEN𝒩1=len(Token​(ℛ1)),\displaystyle\mathcal{N}^{1}=\text{len(Token}(\mathcal{R}^{1})),
+(3)
+OPEN𝒩2=len(Token​(ℛ2)),\displaystyle\mathcal{N}^{2}=\text{len(Token}(\mathcal{R}^{2})),
+(4)
+where Token(⋅\cdot) denotes the tokenizer of the MLLM, and len(⋅\cdot) returns the length of the tokens.
+Then, we define the length-based self-reward:
+𝐑len\displaystyle\mathbf{R}_{\text{len}}
+=clip(𝕀[𝒩2<𝒩1]−γmax(0,𝒩1−𝒩0),0, 1).\displaystyle=\operatorname{clip}\!\left(\mathbb{I}\!\left[\mathcal{N}^{2}<\mathcal{N}^{1}\right]-\gamma\,\max\!\big(0,\,\mathcal{N}^{1}-\mathcal{N}_{0}\big),0,\,1\right).
+(5)
+Here, the first term 𝕀[𝒩2<𝒩1]\mathbb{I}\!\left[\mathcal{N}^{2}<\mathcal{N}^{1}\right] follows Principle 2 by comparing the reasoning lengths of the two rollout passes, thereby promoting more concise and refined reasoning. However, since the first term is a purely comparative reward, using it alone lacks an absolute anchor and allows the model to exploit reward hacking: 𝒩1\mathcal{N}^{1} and 𝒩2\mathcal{N}^{2} increase synchronously, resulting in an overall growth of reasoning length.
+Therefore, we introduce the second term: γ​max⁡(0,𝒩1−𝒩0)\gamma\,\max\!\big(0,\,\mathcal{N}^{1}-\mathcal{N}_{0}\big), where 𝒩0\mathcal{N}_{0} is a predefined length anchor and γ\gamma controls the strength of the length penalty.
+Finally, we apply a clip(⋅\cdot) operator to ensure that 𝐑len\mathbf{R}_{\text{len}} remains within the range [0,1].
+Instead of relying on an external reward model (e.g., Qwen2.5VL-72B in PixelThink), we leverage the model’s own capabilities for self-evaluation. By verifying the correctness of the second-pass answer and comparing the reasoning lengths across the two passes, our method enables self-rewarding over the reasoning process.
+Total Reward.
+The total reward comprises three components, each conditioned on the image-query pair (ℐ\mathcal{I}, 𝒬\mathcal{Q}).
+Base reward 𝐑base\mathbf{R}_{\text{base}}: We adopt the base reward design from VisionReasoner, which consists of a format reward, a non-repeart reward, and a segmentation accuracy reward:
+𝐑base\displaystyle\mathbf{R}_{\text{base}}
+=𝐑format+𝐑non-repeat+𝐑acc,\displaystyle=\mathbf{R}_{\text{format}}+\mathbf{R}_{\text{non-repeat}}+\mathbf{R}_{\text{acc}},
+(6)
+which together encourage structured outputs, discourage repetitive responses, and ensure accurate segmentation.
+The total reward is computed as:
+𝐑total\displaystyle\mathbf{R}_{\text{total}}
+=(𝐑base+𝐑desc)⋅𝐑~len,\displaystyle=\bigl(\mathbf{R}_{\text{base}}+\mathbf{R}_{\text{desc}}\bigr)\cdot\tilde{\mathbf{R}}_{\text{len}},
+(7)
+where 𝐑desc\mathbf{R}_{\text{desc}} is the description self-reward, which evaluates the correctness of the answer generated in the second rollout pass. 𝐑len\mathbf{R}_{\text{len}} is the length-based self-reward, which self-evaluates the difficult of question, ensuring that 𝒟\mathcal{D} is easier than 𝒬\mathcal{Q}. 𝐑~len\tilde{\mathbf{R}}_{\text{len}} is the conditional length-based self-reward, defined as:
+𝐑~len={𝐑len,if ∃i∈{1,…,n},𝐑acc(i)>0,1,otherwise.\displaystyle\tilde{\mathbf{R}}_{\text{len}}=\begin{cases}\mathbf{R}_{\text{len}},&\text{if }\exists\,i\in\{1,\dots,n\},\ \mathbf{R}_{\text{acc}}^{(i)}>0,\\
+1,&\text{otherwise}.\end{cases}
+(8)
+When all nn rollouts yield zero accuracy reward, the length reward is disabled by setting 𝐑len=1\mathbf{R}_{\text{len}}=1, preventing premature length constraints before successful target localization.
+Inspire by  (Wang et al., 2025), we integrate the length-based reward through a multiplicative combination to ensure stability during training.
+Training with GRPO. We adopt Group-Relative Policy Optimization (GRPO) to fine-tune the model via reinforcement learning, maximizing the total reward 𝐑total\mathbf{R}_{\text{total}} in Eq. 7 for reasoning quality, segmentation accuracy, and token efficiency. By evaluating rewards at the mini-batch group level, GRPO reduces gradient variance, stabilizes training, and accelerates convergence.
+3.4 Theoretical Analysis
+We analyze why self-rewarding with a two-stage rollout improves reinforcement learning for reasoning segmentation from both optimization and information-theoretic perspectives, compared to relying solely on answer-based rewards.
+Optimization Analysis. For simplicity, we ignore the format reward and the non-repetition reward in Eq. 6.
+The objective of standard RL training based on answer rewards is given by:
+ℒb​a​s​e​(θ)=𝔼𝒮∼πθ​[𝐑a​c​c​(𝒜,𝒜∗)],\displaystyle\mathcal{L}_{base}(\theta)=\mathbb{E}_{\mathcal{S}\sim\pi_{\theta}}[\mathbf{R}_{acc}(\mathcal{A},\mathcal{A}^{*})],\
+(9)
+where 𝒮=(ℛ,𝒜)\mathcal{S}=(\mathcal{R},\mathcal{A}) is the response with reasoning chains ℛ\mathcal{R}, and πθ\pi_{\theta} is the policy MLLM.
+Since ℛ\mathcal{R} receives no direct supervision, the model tends to overthinking, producing excessively long reasoning that includes irrelevant content and sometimes drifts away from the intended reasoning objective.
+As a result, the uncertainty in training segmentation answers increases, leading to high-variance gradients.
+We decompose the answer reward into two components: description reward and accuracy reward.
+The optimization objective is formulated as follows:
+ℒ⁡(θ)=𝔼𝒮∼πθ​[𝐑desc​(ℐ,𝒟)+𝐑a​c​c​(A,A∗)],\displaystyle\mathcal{L}(\theta)=\mathbb{E}_{\mathcal{S}\sim\pi_{\theta}}\big[\mathbf{R}_{\text{desc}}(\mathcal{I},\mathcal{D})+\mathbf{R}_{acc}(A,A^{*})\big],
+(10)
+where 𝐑desc\mathbf{R}_{\text{desc}} measures informativeness of the 𝒟\mathcal{D} and accuracy of the reasoning chains ℛ\mathcal{R}.
+This optimization considers both reasoning chains and spatial answers, providing direct signals for both multimodal reasoning and segmentation.
+Information-Theoretic Analysis.
+Mutual information 𝐈⁡(U,V)\mathbf{I}(U;V) measures how much knowing VV reduces uncertainty about UU (Shannon, 1948). In a standard single-stage rollout, the dependency between the reasoning chain ℛ\mathcal{R} and the final answer 𝒜\mathcal{A}, conditioned on the image ℐ\mathcal{I} and the query 𝒬\mathcal{Q}, is quantified by conditional mutual information:
+I(ℛ;𝒜∣ℐ,𝒬)=H(𝒜∣ℐ,𝒬)−H(𝒜∣ℐ,𝒬,ℛ).I(\mathcal{R};\mathcal{A}\mid\mathcal{I},\mathcal{Q})=H(\mathcal{A}\mid\mathcal{I},\mathcal{Q})-H(\mathcal{A}\mid\mathcal{I},\mathcal{Q},\mathcal{R}).
+(11)
+This term measures how much information the reasoning chain provides for answer prediction beyond the given input image and question.
+With the introduction of an intermediate description 𝒟\mathcal{D} in the two-stage rollout, the dependency becomes:
+I(ℛ;𝒜∣ℐ,𝒬,𝒟)=H(𝒜∣ℐ,𝒬,𝒟)−H(𝒜∣ℐ,𝒬,𝒟,ℛ).I(\mathcal{R};\mathcal{A}\mid\mathcal{I},\mathcal{Q},\mathcal{D})=H(\mathcal{A}\mid\mathcal{I},\mathcal{Q},\mathcal{D})-H(\mathcal{A}\mid\mathcal{I},\mathcal{Q},\mathcal{D},\mathcal{R}).
+(12)
+Here, 𝒟\mathcal{D} serves as a compact semantic bottleneck that preserves task-relevant information while filtering redundant reasoning details. As a result, the conditional mutual information is reduced:
+H⁡(𝒜∣ℐ,𝒬,𝒟)≤H⁡(𝒜∣ℐ,𝒬),H(\mathcal{A}\mid\mathcal{I},\mathcal{Q},\mathcal{D})\;\leq\;H(\mathcal{A}\mid\mathcal{I},\mathcal{Q}),
+(13)
+making the second-stage reasoning more concise and stable.
+Table 1: Performance comparison on the ReasonSeg benchmark.
+We additionally report the number of reasoning tokens to measure reasoning efficiency. * marks models trained on the train split of ReasonSeg. Bold and underlined values denote the best and second-best results, respectively. Our method shows notable superiority in both zero-shot and few-shot training settings.
+Method
+Language Model
+ReasonSeg Val
+ReasonSeg Test
+Tokens ↓\downarrow
+gIoU ↑\uparrow
+cIoU ↑\uparrow
+Tokens ↓\downarrow
+gIoU ↑\uparrow
+cIoU ↑\uparrow
+OVSeg
+CLIP ViT-L
+–
+28.5
+18.6
+–
+26.1
+20.8
+ReLA
+BERT
+–
+22.4
+19.9
+–
+21.3
+22.0
+LISA
+LLaVA1.5-7B
+–
+53.6
+52.3
+–
+48.7
+48.8
+LISA*
+LLaVA1.5-7B
+–
+61.3
+62.9
+–
+55.6
+56.9
+CoReS
+LLaVA-7B
+–
+54.8
+–
+–
+48.7
+–
+CoReS*
+LLaVA-7B
+–
+59.4
+–
+–
+52.4
+–
+Seg-Zero
+Qwen2.5VL-7B
+90.7
+61.6
+52.5
+90.6
+58.2
+52.3
+SAM-R1
+Qwen2.5VL-7B
+–
+64.0
+55.8
+–
+60.2
+54.3
+PixelThink
+Qwen2.5VL-7B
+46.9
+63.8
+62.6
+47.6
+60.1
+55.7
+VisionReasoner
+Qwen2.5VL-7B
+80.8
+66.3
+59.8
+84.8
+63.6
+58.2
+VisionReasoner*
+Qwen2.5VL-7B
+85.3
+65.4
+60.3
+81.4
+62.3
+54.6
+DR2Seg (Ours)
+Qwen2.5VL-7B
+46.2
+67.5
+60.0
+55.4
+64.8
+62.8
+DR2Seg* (Ours)
+Qwen2.5VL-7B
+26.9
+68.5
+65.8
+27.2
+66.1
+63.6
+Table 2: Performance comparison on referring expression segmentation. * marks models trained on the train split of ReasonSeg, and their performance is reported to evaluate generalization.
+Method
+refCOCO
+refCOCO+
+refCOCOg
+testA ↑\uparrow
+testA ↑\uparrow
+test ↑\uparrow
+LAVT
+75.8
+68.4
+62.1
+ReLA
+76.5
+71.0
+66.0
+LISA-7B
+76.5
+67.4
+68.5
+PixelLM-7B
+76.5
+71.7
+70.5
+Perception-GPT-7B
+78.6
+73.9
+71.7
+Seg-Zero-7B
+80.3
+76.2
+72.6
+PixelThink-7B
+79.3
+74.8
+73.9
+VisionReasoner-7B
+78.9
+74.9
+71.3
+VisionReasoner*-7B
+78.8
+75.1
+71.5
+DR2Seg-7B (Ours)
+78.7
+75.4
+72.2
+DR2Seg*-7B (Ours)
+79.3
+75.4
+73.4
+4 Experiments
+4.1 Experimental Settings
+Dataset. We first train the model using the 7K-sample setting of VisionReasoner (Liu et al., 2025b) for fair comparison, which is constructed from the LVIS (Gupta et al., 2019), RefCOCOg (Yu et al., 2016), gRefCOCO (Liu et al., 2023a), and LISA++ (Yang et al., 2023) datasets.
+We then follow the LISA (Lai et al., 2024) protocol and perform fine-tuning on the ReasonSeg train split, which contains only 239 samples with complex textual queries.
+For evaluation, we adopt the validation and test sets of ReasonSeg, and additionally report results on RefCOCO, RefCOCO+, and RefCOCOg to assess both common performance and generalization capability.
+Evaluation Metrics. Following prior work on reasoning segmentation (Lai et al., 2024), we adopt two evaluation metrics: gIoU and cIoU. gIoU is computed as the average per-image Intersection-over-Union (IoU), while cIoU computes the ratio of cumulative intersection to cumulative union across the dataset. Since cIoU is biased toward large-area objects and exhibits high variance, gIoU is used as the primary metric (Lai et al., 2024).
+In addition, we report the average number of reasoning tokens to measure efficiency.
+Experimental Details. Following common practice (Liu et al., 2025b), we adopt Qwen2.5VL-7B (Bai et al., 2025) as the initial reasoning model and SAM2-Large (Ravi et al., ) as the segmentation model. Reinforcement learning is performed using the GRPO algorithm (Shao et al., 2024). Training is conducted with a total batch size of 16 with 8-sample rollout per training step. The initial learning rate is set to 1e-6, and the weight decay is 0.01.
+The predefined length anchor N0N_{0} is set to 40, and the length penalty parameter γ\gamma is set to 0.05.
+Following (Liu et al., 2025b), we train the model for one epoch on VisionReasoner-7K in the zero-shot setting, and for five epochs on the ReasonSeg training set in the few-shot setting.
+For all ablation studies, we train the model on the ReasonSeg training set and evaluate it on the ReasonSeg validation set.
+Notably, only the first-stage pass is used to ensure computational efficiency and a fair comparison during evaluation.
+Figure 3:
+Qualitative comparisons between VisionReasoner and our DR2Seg.
+The representative samples are selected from simple single-object to complex multi-object scenarios.
+Figure 4:
+Effect of the Two-Stage Rollout Strategy. We analyze the evolution of answer entropy, thinking token count, and accuracy during training, where answer entropy reflects the model’s output uncertainty.
+4.2 Main Results
+Comparison methods.
+As shown in Table. 1 and Table. 2, the comparison methods are organized by columns:
+the first column lists non-MLLM methods (OVSeg (Liang et al., 2023), LAVT (Yang et al., 2022), ReLA (Liu et al., 2023a)); the second column includes SFT-based methods (LISA (Lai et al., 2024), CORES (Bao et al., 2024), PixelLM (Ren et al., 2024), Perception-GPT (Pi et al., 2024)); the third column presents representative RL-based methods (Seg-Zero (Liu et al., 2025a), SAM-R1 (Huang et al., 2025), PixelThink (Wang et al., 2025)); and the last column reports the recent state-of-the-art VisionReasoner (Liu et al., 2025b), which also serves as the baseline for our method, together with our DR2Seg.
+Reasoning Segmentation Results.
+As shown in Tab. 1, we report the results on the ReasonSeg benchmark. In the zero-shot setting, DR2Seg does not incorporate the length-based reward 𝐑len\mathbf{R}_{\text{len}}, since the training data predominantly consist of short referring expressions, for which Principle 2 cannot be reliably satisfied.
+Nevertheless, incorporating only the 𝐑desc\mathbf{R}_{\text{desc}} reward nearly halves the number of inference tokens and significantly outperforms VisionReasoner under the same zero-shot setting, achieving gIoU improvements of 1.2% on the validation set and 1.2% on the test set.
+Further, we perform few-shot fine-tuning using a small subset of the ReasonSeg training data. Notably, directly training VisionReasoner on the ReasonSeg train dataset leads to performance degradation. In contrast, our DR2Seg* consistently improves segmentation accuracy, achieving gIoU scores of 68.5% and 66.1% on the validation and test sets, achieving a new state-of-the-art. These results indicate that DR2Seg can effectively learn to decouple complex reasoning-driven segmentation with limited data by self-rewarding the reasoning process. Consequently, DR2Seg* outperforms VisionReasoner* by 3.1% on the validation set and 3.8% on the test set in gIoU, while reducing the number of tokens by 3×\times.
+Referring Segmentation Results.
+We further report results on the referring expression segmentation (RES) task to evaluate the generalization ability of reasoning models in relatively simple scenarios, as shown in Tab. 2. Clearly, our DR2Seg method also demonstrates consistently strong performance, indicating that the decoupling strategy does not impair the reasoning model’s ability to handle simple scenarios.
+Furthermore, after fine-tuning on the ReasonSeg training set, DR2Seg* even improves upon DR2Seg, which is trained only on RES train datasets, further validating the generalization of our approach.
+Overall, DR2Seg* outperforms the baseline VisionReasoner*, achieving a 1.9% improvement on the refCOCOg dataset.
+Table 3: Ablation studies of DR2Seg. 𝐑desc\mathbf{R}_{\text{desc}} and 𝐑len\mathbf{R}_{\text{len}} denote the description self-reward and length-based self-reward, respectively.
+𝐑desc\mathbf{R}_{\text{desc}}
+𝐑len\mathbf{R}_{\text{len}}
+Tokens ↓\downarrow
+gIoU ↑\uparrow
+cIoU ↑\uparrow
+81.5
+64.9
+58.8
+✓
+56.1
+67.6
+63.1
+✓
+✓
+26.9
+68.5
+65.8
+Qualitative Results.
+Fig. 3 presents a qualitative comparison between VisionReasoner and DR2Seg. VisionReasoner exhibits an overthinking issue: despite correctly identifying the target object, excessive reasoning causes attention in during subsequent perception (e.g., the red-highlighted text misguides the MLLM to error regions). In contrast, DR2Seg reduces reasoning tokens and preserves focus on the target, achieving a better balance between efficiency and accuracy.
+4.3 Diagnostic Experiments
+Ablation on DR2Seg scheme.
+We ablate the two core self-rewards of DR2Seg in Tab. 3: the description self-reward 𝐑​desc\mathbf{R}{\text{desc}} and the length-based self-reward 𝐑​len\mathbf{R}{\text{len}}, both derived from our two-stage rollout strategy. By decoupling reasoning-based segmentation into multimodal reasoning and referring segmentation, the MLLM attains clearer task objectives and stronger focus on the target object. While 𝐑​desc\mathbf{R}{\text{desc}} markedly improves accuracy, introducing 𝐑​len\mathbf{R}{\text{len}} further reduces reasoning tokens and even brings additional accuracy gains, validating the effectiveness of our two-stage design principles.
+Effect of Two-stage Rollout.
+To further analyze the effectiveness of the two-stage rollout, we examine the evolution of answer entropy, reasoning token count, and accuracy during training, as shown in Fig. 4. For answer entropy computation, we measure only the entropy of spatial answer tokens, excluding other reasoning tokens, to capture the MLLM’s uncertainty in target localization. Notably, the length-based reward is not applied in this experiment, allowing us to isolate the effect of the two-stage rollout structure. As training progresses, both answer entropy and reasoning token count consistently decrease, while accuracy steadily improves. These trends indicate that decoupling reasoning segmentation reduces overthinking, enables more confident target localization, and ultimately improves both accuracy and efficiency.
+Table 4: Ablation on Length Anchor of length-based reward.
+N0N_{0}
+Tokens ↓\downarrow
+gIoU ↑\uparrow
+cIoU ↑\uparrow
+55
+44.4
+66.8
+55.3
+45
+26.9
+68.5
+65.8
+35
+20.2
+66.6
+58.0
+25
+70.7
+66.3
+57.7
+Table 5: Ablation on Length Penalty of length-based reward.
+γ\gamma
+Tokens ↓\downarrow
+gIoU ↑\uparrow
+cIoU ↑\uparrow
+0.01
+44.4
+66.8
+55.3
+0.05
+26.9
+68.5
+65.8
+0.1
+26.8
+68.9
+64.9
+0.2
+26.7
+68.0
+60.5
+Table 6: Performance evaluation on smaller 3B MLLMs.
+Method
+Tokens ↓\downarrow
+gIoU ↑\uparrow
+cIoU ↑\uparrow
+VisionReasoner-3B
+54.3
+60.8
+57.2
+DR2Seg-3B
+23.9
+65.5
+56.8
+Table 7: Performance Evaluation on the More Recent Segmentation Model SAM3 (Carion et al., 2025).
+Method
+Seg. Model
+Tokens ↓\downarrow
+gIoU ↑\uparrow
+cIoU ↑\uparrow
+VisionReasoner
+SAM3
+64.8
+64.8
+63.0
+DR2Seg - 𝐑len\mathbf{R}_{\text{len}}
+SAM3
+63.7
+68.7
+64.8
+DR2Seg
+SAM3
+31.0
+68.9
+66.9
+Ablation on Length Anchor.
+We analyze the effect of different values of length anchor NoN_{o}. As shown in Tab. 4, reducing NoN_{o} generally leads to fewer reasoning tokens. However, when NoN_{o} is set too small (e.g., 25), the number of reasoning tokens increases sharply. This indicates that when NoN_{o} is overly small, the model fails to infer the target object, leading to a conflict between the accuracy and length rewards. Specifically, under Eq. 8, when the accuracy reward drops to zero, the length reward becomes ineffective and no longer constrains the reasoning length.
+Ablation on Length Penalty.
+We ablate different values of the length penalty γ\gamma, as shown in Tab. 5. When γ\gamma is set to a small value (e.g., 0.01), the penalty for exceeding the length constraint is insufficient, resulting in long sequences and reduced accuracy. Once γ\gamma is properly chosen, both token length and accuracy remain stable, indicating that γ\gamma is not a sensitive hyperparameter. The model can effectively learn to respect the length constraint during training.
+Ablation on Smaller Model.
+We also report results on smaller 3B-parameter MLLMs, as shown in Tab. 6. DR2Seg achieves ∼2×\sim 2\times reduction in thinking tokens and a notable 4.7% gIoU improvement, demonstrating its effectiveness across MLLMs of different scales.
+Ablation on SAM3.
+We further evaluate our method on the latest segmentation model, SAM3 (Carion et al., 2025), which supports concept segmentation with brief phrases. Unlike SAM2, which directly supervises box and point predictions, we employ an external SAM3 API as a reward generator during training. Phrase descriptions produced by the MLLM are fed into SAM3 to obtain segmentation results, from which a IoU-based reward is computed (see supplementary material for details). Owing to the two-stage rollout strategy, our method naturally generates brief descriptions that align well with SAM3. As shown in Tab. 7, DR2Seg achieves significant improvements in both accuracy and efficiency, demonstrating its versatile.
+5 Conclusions
+In this paper, we propose a self-reward framework with a two-stage rollout strategy that decouples reasoning segmentation into multimodal reasoning and referring segmentation. Based on this design, we introduce self-rewards that efficiently supervise reasoning, preventing MLLMs from being misled by redundant reasoning and thereby improving both efficiency and accuracy.
+Extensive experiments across MLLMs of different scales, diverse segmentation models, and both complex reasoning and simple referring scenarios demonstrate the effectiveness of our approach. This work provides new insights into efficient and accurate multimodal reasoning perception with MLLMs.
+References
+Bai et al. (2025)
+S. Bai, K. Chen, X. Liu, J. Wang, W. Ge, S. Song, K. Dang, P. Wang, S. Wang, J. Tang, et al.
+Qwen2. 5-vl technical report.
+arXiv preprint arXiv:2502.13923.
+Cited by: §1,
+§1,
+§4.1.
+Bao et al. (2024)
+X. Bao, S. Sun, S. Ma, K. Zheng, Y. Guo, G. Zhao, Y. Zheng, and X. Wang
+Cores: orchestrating the dance of reasoning and segmentation.
+In European Conference on Computer Vision,
+pp. 187–204.
+Cited by: §4.2.
+Carion et al. (2025)
+N. Carion, L. Gustafson, Y. Hu, S. Debnath, R. Hu, D. Suris, C. Ryali, K. V. Alwala, H. Khedr, A. Huang, et al.
+Sam 3: segment anything with concepts.
+arXiv preprint arXiv:2511.16719.
+Cited by: §4.3,
+Table 7,
+Table 7.
+Ding et al. (2021)
+H. Ding, C. Liu, S. Wang, and X. Jiang
+Vision-language transformer and query generation for referring segmentation.
+In Proceedings of the IEEE/CVF international conference on computer vision,
+pp. 16321–16330.
+Cited by: §1,
+§2.1,
+§3.1.
+Gupta et al. (2019)
+A. Gupta, P. Dollar, and R. Girshick
+Lvis: a dataset for large vocabulary instance segmentation.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 5356–5364.
+Cited by: §4.1.
+Huang et al. (2025)
+J. Huang, Z. Xu, J. Zhou, T. Liu, Y. Xiao, M. Ou, B. Ji, X. Li, and K. Yuan
+SAM-r1: leveraging sam for reward feedback in multimodal segmentation via reinforcement learning.
+NeurIPS.
+Cited by: §4.2.
+Kirillov et al. (2023)
+A. Kirillov, E. Mintun, N. Ravi, H. Mao, C. Rolland, L. Gustafson, T. Xiao, S. Whitehead, A. C. Berg, W. Lo, et al.
+Segment anything.
+In Proceedings of the IEEE/CVF international conference on computer vision,
+pp. 4015–4026.
+Cited by: §2.1,
+§3.2.
+Lai et al. (2024)
+X. Lai, Z. Tian, Y. Chen, Y. Li, Y. Yuan, S. Liu, and J. Jia
+Lisa: reasoning segmentation via large language model.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+pp. 9579–9589.
+Cited by: §1,
+§1,
+§3.1,
+§4.1,
+§4.1,
+§4.2.
+Li et al. (2025a)
+P. Li, M. Skripkin, A. Zubrey, A. Kuznetsov, and I. Oseledets
+Confidence is all you need: few-shot rl fine-tuning of language models.
+arXiv preprint arXiv:2506.06395.
+Cited by: §2.2.
+Li et al. (2025b)
+Z. Li, W. Yu, C. Huang, R. Liu, Z. Liang, F. Liu, J. Che, D. Yu, J. Boyd-Graber, H. Mi, et al.
+Self-rewarding vision-language model via reasoning decomposition.
+arXiv preprint arXiv:2508.19652.
+Cited by: §2.2.
+Liang et al. (2023)
+F. Liang, B. Wu, X. Dai, K. Li, Y. Zhao, H. Zhang, P. Zhang, P. Vajda, and D. Marculescu
+Open-vocabulary semantic segmentation with mask-adapted clip.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 7061–7070.
+Cited by: §4.2.
+Liu et al. (2023a)
+C. Liu, H. Ding, and X. Jiang
+Gres: generalized referring expression segmentation.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 23592–23601.
+Cited by: §4.1,
+§4.2.
+Liu et al. (2023b)
+H. Liu, C. Li, Q. Wu, and Y. J. Lee
+Visual instruction tuning.
+Advances in neural information processing systems 36, pp. 34892–34916.
+Cited by: §1.
+Liu et al. (2023c)
+J. Liu, H. Ding, Z. Cai, Y. Zhang, R. K. Satzoda, V. Mahadevan, and R. Manmatha
+Polyformer: referring image segmentation as sequential polygon generation.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 18653–18663.
+Cited by: §1,
+§2.1.
+Liu et al. (2025a)
+Y. Liu, B. Peng, Z. Zhong, Z. Yue, F. Lu, B. Yu, and J. Jia
+Seg-zero: reasoning-chain guided segmentation via cognitive reinforcement.
+arXiv preprint arXiv:2503.06520.
+Cited by: §1,
+§2.1,
+§4.2.
+Liu et al. (2025b)
+Y. Liu, T. Qu, Z. Zhong, B. Peng, S. Liu, B. Yu, and J. Jia
+VisionReasoner: unified visual perception and reasoning via reinforcement learning.
+arXiv preprint arXiv:2505.12081.
+Cited by: §1,
+§2.1,
+§3.2,
+§4.1,
+§4.1,
+§4.2.
+Luu et al. (2025)
+T. M. Luu, D. Lee, Y. Lee, and C. D. Yoo
+Policy learning from large vision-language model feedback without reward modeling.
+In 2025 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS),
+pp. 11685–11692.
+Cited by: §2.2.
+Minaee et al. (2021)
+S. Minaee, Y. Boykov, F. Porikli, A. Plaza, N. Kehtarnavaz, and D. Terzopoulos
+Image segmentation using deep learning: a survey.
+IEEE transactions on pattern analysis and machine intelligence 44 (7), pp. 3523–3542.
+Cited by: §2.1.
+OpenAI. (2024)
+OpenAI.
+OpenAI o1.
+https://openai.com/o1/.
+Cited by: §1.
+Peng et al. (2025)
+H. Peng, Y. Qi, X. Wang, Z. Yao, B. Xu, L. Hou, and J. Li
+Agentic reward modeling: integrating human preferences with verifiable correctness signals for reliable reward systems.
+arXiv preprint arXiv:2502.19328.
+Cited by: §2.2.
+Pi et al. (2024)
+R. Pi, L. Yao, J. Gao, J. Zhang, and T. Zhang
+Perceptiongpt: effectively fusing visual perception into llm.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 27124–27133.
+Cited by: §4.2.
+[22]
+N. Ravi, V. Gabeur, Y. Hu, R. Hu, C. Ryali, T. Ma, H. Khedr, R. Rädle, C. Rolland, L. Gustafson, et al.
+SAM 2: segment anything in images and videos.
+In The Thirteenth International Conference on Learning Representations,
+Cited by: §3.2,
+§4.1.
+Ren et al. (2024)
+Z. Ren, Z. Huang, Y. Wei, Y. Zhao, D. Fu, J. Feng, and X. Jin
+Pixellm: pixel reasoning with large multimodal model.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+pp. 26374–26383.
+Cited by: §1,
+§2.1,
+§4.2.
+Ronneberger et al. (2015)
+O. Ronneberger, P. Fischer, and T. Brox
+U-net: convolutional networks for biomedical image segmentation.
+In International Conference on Medical image computing and computer-assisted intervention,
+pp. 234–241.
+Cited by: §2.1.
+Shannon (1948)
+C. E. Shannon
+A mathematical theory of communication.
+The Bell system technical journal 27 (3), pp. 379–423.
+Cited by: §3.4.
+Shao et al. (2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. Li, Y. Wu, et al.
+Deepseekmath: pushing the limits of mathematical reasoning in open language models.
+arXiv preprint arXiv:2402.03300.
+Cited by: §1,
+§2.1,
+§4.1.
+Shen et al. (2025)
+Y. Shen, C. Li, F. Xiong, J. Jeong, T. Wang, M. Latman, and M. Unberath
+Reasoning segmentation for images and videos: a survey.
+arXiv preprint arXiv:2505.18816.
+Cited by: §2.1.
+[28]
+T. Simonds, K. Lopez, A. Yoshiyama, and D. Garmier
+Rlsr: reinforcement learning from self reward, 2025.
+URL https://arxiv. org/abs/2505.08827 2.
+Cited by: §2.2.
+Su et al. (2025)
+Y. Su, D. Yu, L. Song, J. Li, H. Mi, Z. Tu, M. Zhang, and D. Yu
+Crossing the reward bridge: expanding rl with verifiable rewards across diverse domains.
+arXiv preprint arXiv:2503.23829.
+Cited by: §2.2.
+Tian et al. (2024)
+X. Tian, J. Gu, B. Li, Y. Liu, Y. Wang, Z. Zhao, K. Zhan, P. Jia, X. Lang, and H. Zhao
+Drivevlm: the convergence of autonomous driving and large vision-language models.
+arXiv preprint arXiv:2402.12289.
+Cited by: §1.
+van Niekerk et al. (2025)
+C. van Niekerk, R. Vukovic, B. M. Ruppik, H. Lin, and M. Gašić
+Post-training large language models via reinforcement learning from self-feedback.
+arXiv preprint arXiv:2507.21931.
+Cited by: §2.2.
+Wang et al. (2025)
+S. Wang, G. Fang, L. Kong, X. Li, J. Xu, S. Yang, Q. Li, J. Zhu, and X. Wang
+PixelThink: towards efficient chain-of-pixel reasoning.
+arXiv preprint arXiv:2505.23727.
+Cited by: §1,
+§2.1,
+§3.3,
+§4.2.
+Wen et al. (2025)
+X. Wen, Z. Liu, S. Zheng, S. Ye, Z. Wu, Y. Wang, Z. Xu, X. Liang, J. Li, Z. Miao, et al.
+Reinforcement learning with verifiable rewards implicitly incentivizes correct reasoning in base llms.
+arXiv preprint arXiv:2506.14245.
+Cited by: §2.2.
+Yang et al. (2023)
+S. Yang, T. Qu, X. Lai, Z. Tian, B. Peng, S. Liu, and J. Jia
+Lisa++: an improved baseline for reasoning segmentation with large language model.
+arXiv preprint arXiv:2312.17240.
+Cited by: §2.1,
+§4.1.
+Yang et al. (2022)
+Z. Yang, J. Wang, Y. Tang, K. Chen, H. Zhao, and P. H. Torr
+Lavt: language-aware vision transformer for referring image segmentation.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 18155–18165.
+Cited by: §1,
+§2.1,
+§4.2.
+Yin et al. (2023)
+Z. Yin, J. Wang, J. Cao, Z. Shi, D. Liu, M. Li, X. Huang, Z. Wang, L. Sheng, L. Bai, et al.
+Lamm: language-assisted multi-modal instruction-tuning dataset, framework, and benchmark.
+Advances in Neural Information Processing Systems 36, pp. 26650–26685.
+Cited by: §1.
+Yu et al. (2016)
+L. Yu, P. Poirson, S. Yang, A. C. Berg, and T. L. Berg
+Modeling context in referring expressions.
+In European conference on computer vision,
+pp. 69–85.
+Cited by: §1,
+§4.1.
+Yuan et al. (2024)
+W. Yuan, R. Y. Pang, K. Cho, X. Li, S. Sukhbaatar, J. Xu, and J. E. Weston
+Self-rewarding language models.
+In Forty-first International Conference on Machine Learning,
+Cited by: §2.2.
+Zhao et al. (2025)
+X. Zhao, Z. Kang, A. Feng, S. Levine, and D. Song
+Learning to reason without external rewards.
+ICML.
+Cited by: §2.2.
+Zhou et al. (2024)
+Y. Zhou, Z. Fan, D. Cheng, S. Yang, Z. Chen, C. Cui, X. Wang, Y. Li, L. Zhang, and H. Yao
+Calibrated self-rewarding vision language models.
+Advances in Neural Information Processing Systems 37, pp. 51503–51531.
+Cited by: §2.2.
+Zhu et al. (2025)
+L. Zhu, T. Chen, Q. Xu, X. Liu, D. Ji, H. Wu, D. W. Soh, and J. Liu
+Popen: preference-based optimization and ensemble for lvlm-based reasoning segmentation.
+In Proceedings of the Computer Vision and Pattern Recognition Conference,
+pp. 30231–30240.
+Cited by: §1.
+langley00
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

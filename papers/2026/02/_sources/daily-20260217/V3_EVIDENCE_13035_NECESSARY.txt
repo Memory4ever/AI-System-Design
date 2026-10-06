@@ -1,0 +1,180 @@
+# Exact-version necessary excerpt: https://arxiv.org/html/2602.13035v1
+# Read-only source extraction; numbered B blocks. No experiment reproduced.
+
+B47: 3 Problem Formulation
+B48: Standard RLVR employs static or heuristic temperature schedules that cannot adapt to task heterogeneity. Empirical studies reveal three key limitations: (i) different reasoning steps require different exploration levels—reasoning pivots benefit from high temperature while factual tokens require low temperature ( Cui et al., 2025b ; Wang et al., 2025b ) ; (ii) optimal temperature varies across prompts and difficulty levels; (iii) exploration requirements evolve during training as model capabilities improve ( An et al., 2025 ) .
+B49: We address these limitations by formulating temperature selection as a learnable sequential decision process. At each step t t , a temperature policy π ϕ ​ ( τ t ∣ h t , τ t − 1 ) \pi_{\phi}(\tau_{t}\mid h_{t},\tau_{t-1}) selects sampling temperature τ t \tau_{t} based on hidden state h t h_{t} , while a token policy π θ ​ ( y t ∣ h t , τ t ) \pi_{\theta}(y_{t}\mid h_{t},\tau_{t}) generates the next token. The joint process factorizes as:
+B50: π ⁡ ( y , τ ∣ x ) = ∏ t = 1 T π ϕ ​ ( τ t ∣ h t , τ t − 1 ) ​ π θ ​ ( y t ∣ h t , τ t ) , \textstyle\pi(y,\tau\mid x)=\prod_{t=1}^{T}\pi_{\phi}(\tau_{t}\mid h_{t},\tau_{t-1})\,\pi_{\theta}(y_{t}\mid h_{t},\tau_{t}), (6)
+B51: where y = ( y 1 , … , y T ) y=(y_{1},\dots,y_{T}) and τ = ( τ 1 , … , τ T ) \tau=(\tau_{1},\dots,\tau_{T}) are the token and temperature sequences. The objective is to maximize the expected reward:
+B52: J ( θ , ϕ ) = 𝔼 x ∼ 𝒟 𝔼 τ , y ∼ π ( ⋅ ∣ x ) [ R ( x , y ) ] . J(\theta,\phi)=\mathbb{E}_{x\sim\mathcal{D}}\,\mathbb{E}_{\tau,y\sim\pi(\cdot\mid x)}\big[R(x,y)\big]. (7)
+B53: This hierarchical formulation enables: (i) reward-driven exploration optimized from task feedback, (ii) context-aware adaptation via hidden state conditioning, and (iii) principled separation of content generation and exploration control. In the following section, we expound on the architectural design and joint optimization procedure for this framework.
+B54: 4 Introspective LLM
+B55: As illustrated in Figure 1 , IntroLLM instantiate the hierarchical formulation through two coupled policies: (i) a temperature policy π ϕ \pi_{\phi} that observes hidden state h t h_{t} and selects sampling temperature τ t \tau_{t} , and (ii) a token policy π θ \pi_{\theta} that generates the next token y t y_{t} from a τ t \tau_{t} -modulated distribution. These operate sequentially at each decoding step. Training follows a standard RL pipeline: sample trajectories with both temperature and token decisions, evaluate via verifiable rewards, and update both policies jointly using policy gradients. The following subsections detail the token policy conditioning (§ 4.1 ), temperature policy design (§ 4.2 ), and joint optimization procedure (§ 4.3 ).
+B56: 4.1 Token Policy with Temperature Conditioning
+B57: The token policy generates the next token from a distribution modulated by the temperature policy. Specifically, given hidden state h t h_{t} , the model produces pre-softmax logits ℓ t ∈ ℝ | 𝒱 | \ell_{t}\in\mathbb{R}^{|\mathcal{V}|} , which are rescaled by the selected temperature τ t \tau_{t} to obtain the token distribution: π θ ​ ( y t ∣ h t , τ t ) = Softmax ⁡ ( ℓ t τ t ) \pi_{\theta}(y_{t}\mid h_{t},\tau_{t})=\mathrm{Softmax}\!\left(\frac{\ell_{t}}{\tau_{t}}\right) . This temperature-conditioned formulation enables adaptive entropy modulation, directly addressing the token-level heterogeneity identified in § 3 . During training, { τ t } \{\tau_{t}\} is treated as fixed environmental parameters, allowing the token policy to focus on content generation while the temperature policy controls exploration intensity. The joint optimization procedure is detailed in § 4.3 .
+B58: 4.2 Temperature Policy Design
+B59: The temperature policy π ϕ ​ ( τ t ∣ h t ) \pi_{\phi}(\tau_{t}\mid h_{t}) controls exploration by mapping the model’s internal hidden states to dynamic sampling temperatures. This introspective mechanism enables the model to increase stochasticity at exploration steps while maintaining stability during exploitation. To balance expressive control with optimization stability, we formulate π ϕ \pi_{\phi} as a mixed discrete–continuous policy. This design allows the model to learn both when to adjust temperature and how much to adjust it, avoiding unnecessary variance from frequent changes while maintaining adaptation flexibility.
+B60: Architectural Parameterization. We implement the temperature policy as a lightweight MLP head f ϕ f_{\phi} branching from the final decoder layer. Given hidden representation h t ∈ ℝ d h_{t}\in\mathbb{R}^{d} at step t t , the policy head projects it through a low-dimensional bottleneck to produce a 3-dimensional control vector 𝐮 t = [ u c , u α , u β ] ⊤ \mathbf{u}_{t}=[u_{c},u_{\alpha},u_{\beta}]^{\top} :
+B61: 𝐮 t = 𝐖 2 ⋅ ReLU ​ ( 𝐖 1 ​ h t + 𝐛 1 ) + 𝐛 2 , \mathbf{u}_{t}=\mathbf{W}_{2}\cdot\text{ReLU}(\mathbf{W}_{1}h_{t}+\mathbf{b}_{1})+\mathbf{b}_{2}, (8)
+B62: where 𝐖 1 ∈ ℝ d 2 × d \mathbf{W}_{1}\in\mathbb{R}^{\frac{d}{2}\times d} and 𝐖 2 ∈ ℝ 3 × d 2 \mathbf{W}_{2}\in\mathbb{R}^{3\times\frac{d}{2}} are linear projections. This architecture ensures temperature decisions are conditioned on the full semantic and uncertainty context encoded in h t h_{t} , enabling the policy to dynamically balance exploration and exploitation.
+B63: Mixed Discrete–Continuous Action Space. Temperature selection proceeds through a two-stage stochastic process:
+B64: Stage 1: Update Decision. The policy first decides whether to adjust temperature via a Bernoulli random variable: c t ∼ Bernoulli ​ ( σ ⁡ ( u c ) ) , c_{t}\sim\text{Bernoulli}(\sigma(u_{c})), where σ ⁡ ( ⋅ ) \sigma(\cdot) is the sigmoid function. When c t = 0 c_{t}=0 , temperature remains constant ( τ t = τ t − 1 \tau_{t}=\tau_{t-1} ), reducing optimization variance by avoiding redundant adjustments when the current temperature is appropriate.
+B65: Stage 2: Value Sampling. Conditioned on c t = 1 c_{t}=1 , the policy samples a new temperature intensity z t z_{t} from a Beta distribution ℬ ⁡ ( α , β ) \mathcal{B}(\alpha,\beta) , which is naturally bounded in [ 0 , 1 ] [0,1] and provides flexible bimodal and unimodal behaviors:
+B66: z t ∼ Beta ​ ( softplus ​ ( u α ) + ϵ , softplus ​ ( u β ) + ϵ ) , z_{t}\sim\text{Beta}(\text{softplus}(u_{\alpha})+\epsilon,\text{softplus}(u_{\beta})+\epsilon), (9)
+B67: where ϵ = 10 − 6 \epsilon=10^{-6} ensures numerical stability. The final sampling temperature is obtained via affine transformation to [ τ min , τ max ] [\tau_{\min},\tau_{\max}] : τ t = τ min + z t ⋅ ( τ max − τ min ) . \tau_{t}=\tau_{\min}+z_{t}\cdot(\tau_{\max}-\tau_{\min}).
+B68: Joint Log-Likelihood. For policy gradient updates (§ 4.3 ), we compute the joint log-probability of a realized sample ( c t , z t ) (c_{t},z_{t}) as:
+B69: log ⁡ π ϕ ​ ( τ t ∣ h t ) = log ⁡ P ⁡ ( c t ) + c t ​ log ⁡ p ⁡ ( z t ∣ α , β ) , \log\pi_{\phi}(\tau_{t}\mid h_{t})=\log P(c_{t})+c_{t}\log p(z_{t}\mid\alpha,\beta), (10)
+B70: where c t ∈ { 0 , 1 } c_{t}\in\{0,1\} gates the continuous component. This factorization enables gradient computation while maintaining the coupling between discrete and continuous decisions.
+B71: Table 1 : Performance comparison on reasoning benchmarks. For AIME24, AMC23, MATH-500, and Average, we report both Avg@8 and Pass@8 . Bold indicates best performance; Underline indicates the second best.
+B72: Method AIME24 AMC23 MATH-500 Minerva Olympiad Omni Average
+B73: Avg@8 Pass@8 Avg@8 Pass@8 Avg@8 Pass@8 Avg@8 Avg@8 Avg@8 Avg@8 Pass@8
+B74: Qwen3-1.7B-Base
+B75: Base 1.67 10.00 18.12 65.00 31.30 74.80 7.12 12.69 8.23 13.19 49.93
+B76: GRPO ( τ = 1.0 \tau=1.0 ) 7.08 16.67 37.50 67.50 65.25 84.00 17.28 28.78 17.40 28.88 56.06
+B77: GRPO ( τ = 0.6 \tau=0.6 ) 6.67 20.00 35.00 67.50 64.60 85.60 15.17 28.23 16.66 27.72 57.70
+B78: GRPO ( τ = 1.2 \tau=1.2 ) 7.50 23.33 35.63 70.00 68.35 85.40 17.33 29.93 17.43 29.36 59.58
+B79: EAD (1.2 → \rightarrow 0.1) 7.08 23.33 37.50 70.00 67.03 85.80 17.33 29.64 17.90 29.41 59.71
+B80: TAMPO (0.6-1.5) 7.92 23.33 35.00 70.00 65.45 84.80 16.64 27.41 17.28 28.28 59.38
+B81: IntroLLM (Ours) 9.58 26.67 39.06 72.50 67.53 86.20 18.29 29.95 18.43 30.47 61.79
+B82: Qwen3-4B-Base
+B83: Base 6.67 20.00 27.19 72.50 48.68 86.40 12.50 24.30 14.94 22.38 59.63
+B84: GRPO ( τ = 1.0 \tau=1.0 ) 14.17 33.33 50.00 80.00 79.10 92.00 21.51 42.36 23.88 38.50 68.44
+B85: GRPO ( τ = 0.6 \tau=0.6 ) 11.67 30.00 50.94 82.50 77.60 91.40 21.09 41.06 23.41 37.63 67.97
+B86: GRPO ( τ = 1.2 \tau=1.2 ) 14.58 30.00 51.88 82.50 80.03 92.00 22.61 44.12 24.35 39.60 68.17
+B87: EAD (1.2 → \rightarrow 0.1) 14.17 36.67 51.88 77.50 80.00 92.20 23.90 43.69 24.32 39.66 68.79
+B88: TAMPO (0.6-1.5) 15.00 33.33 50.62 82.50 78.23 91.80 22.79 42.43 23.92 38.83 69.21
+B89: IntroLLM (Ours) 19.17 40.00 52.50 87.50 80.73 93.00 23.48 44.25 25.34 40.91 73.50
+B90: 4.3 Joint Policy Optimization
+B91: Jointly optimizing both policies presents a challenge: simultaneous updates can lead to non-stationary learning dynamics where each policy’s gradient depends on the other’s changing behavior. We address this through coordinate ascent, alternating between token policy updates (with fixed temperatures τ \tau ) and temperature policy updates (with fixed tokens y y ). This decoupling stabilizes training while maintaining policy interaction through the shared reward R ⁡ ( x , y ) R(x,y) . Algorithm 1 details the complete procedure.
+B92: Hierarchical Rollout. During rollout, generation proceeds via a nested stochastic process. At each step t t , the temperature policy samples ( c t , z t ) (c_{t},z_{t}) to determine τ t \tau_{t} , and the token policy samples y t y_{t} conditioned on τ t \tau_{t} . We persist the complete trajectory 𝒯 = { ( c t , z t , τ t , y t ) } t = 1 T \mathcal{T}=\{(c_{t},z_{t},\tau_{t},y_{t})\}_{t=1}^{T} in the experience buffer, where { y t } \{y_{t}\} enables reward evaluation and { ( c t , z t , τ t ) } \{(c_{t},z_{t},\tau_{t})\} enables on-policy likelihood recomputation.
+B93: On-Policy Likelihood Recomputation. To compute policy gradients, we must evaluate the log-probabilities of the actions taken during rollout under the current policy parameters. During each training iteration, we perform a single forward pass to recompute likelihoods for both policies:
+B94: 1. Token Policy: We compute log ⁡ π θ ​ ( y t ∣ h t , τ t ) \log\pi_{\theta}(y_{t}\mid h_{t},\tau_{t}) by scaling token logits with the cached temperatures { τ t } \{\tau_{t}\} from the stored trajectory. This ensures gradients reflect the exact exploration context of the original rollout.
+B95: 2. Temperature Policy: We compute log ⁡ π ϕ ​ ( c t , z t ∣ h t ) \log\pi_{\phi}(c_{t},z_{t}\mid h_{t}) for the recorded temperature actions. This allows the exploration strategy to be reinforced based on the sequence-level rewards it produced.
+B96: Both likelihoods are then used in the GRPO objective to update the respective policies via coordinate ascent.
+B97: Coordinate Ascent Optimization. We optimize θ \theta and ϕ \phi via coordinate ascent, alternating updates within each GRPO iteration. Given a group of trajectories 𝒯 = { ( c ( i ) , z ( i ) , τ ( i ) , y ( i ) ) } i = 1 G \mathcal{T}=\{(c^{(i)},z^{(i)},\tau^{(i)},y^{(i)})\}_{i=1}^{G} :
+B98: 1. Token Policy Update. Fixing τ \tau as constants, we update θ \theta to maximize reward conditioned on the realized exploration:
+B99: θ ← arg ⁡ max θ ​ 𝔼 𝒯 ​ [ 1 G ​ ∑ i = 1 G ∑ t = 1 T ℒ i , t token ​ ( θ ∣ τ t ( i ) ) ] , \textstyle\theta\leftarrow\arg\max_{\theta}\mathbb{E}_{\mathcal{T}}\left[\frac{1}{G}\sum_{i=1}^{G}\sum_{t=1}^{T}\mathcal{L}_{i,t}^{\text{token}}(\theta\mid\tau_{t}^{(i)})\right],
+B100: where ℒ token \mathcal{L}^{\text{token}} is the GRPO clipped objective from Equation ( 4 ) applied to token actions y t y_{t} , using the importance ratio r t θ = π θ ​ ( y t | h t , τ t ) / π θ old ​ ( y t | h t , τ t ) r_{t}^{\theta}=\pi_{\theta}(y_{t}|h_{t},\tau_{t})/\pi_{\theta_{\text{old}}}(y_{t}|h_{t},\tau_{t}) .
+B101: 2. Temperature Policy Update. Fixing tokens y y as constants, we update ϕ \phi to optimize the exploration strategy that produced those rewards:
+B102: ϕ ← arg ⁡ max ϕ ​ 𝔼 𝒯 ​ [ 1 G ​ ∑ i = 1 G ∑ t = 1 T ℒ i , t temp ​ ( ϕ ∣ y t ( i ) ) ] , \textstyle\phi\leftarrow\arg\max_{\phi}\mathbb{E}_{\mathcal{T}}\left[\frac{1}{G}\sum_{i=1}^{G}\sum_{t=1}^{T}\mathcal{L}_{i,t}^{\text{temp}}(\phi\mid y_{t}^{(i)})\right],
+B103: where ℒ temp \mathcal{L}^{\text{temp}} applies the same GRPO objective (Equation ( 4 )) to temperature actions ( c t , z t ) (c_{t},z_{t}) with importance ratio r t ϕ = π ϕ ​ ( c t , z t | h t ) / π ϕ old ​ ( c t , z t | h t ) r_{t}^{\phi}=\pi_{\phi}(c_{t},z_{t}|h_{t})/\pi_{\phi_{\text{old}}}(c_{t},z_{t}|h_{t}) .
+B104: Both updates share the same trajectory-level advantage A i A_{i} (Equation ( 3 )), computed from the final reward R ⁡ ( x , y ( i ) ) R(x,y^{(i)}) and normalized across the group. This shared advantage ensures both policies receive consistent credit assignment: if a trajectory achieves high reward, both the temperature decisions and token choices that produced it are reinforced proportionally. This alternating scheme enables the token policy to learn optimal content generation under diverse exploration regimes, while the temperature policy learns to identify high-reward exploration strategies. By isolating gradient flows, we mitigate the non-stationarity of simultaneous updates, achieving stable convergence.
+
+B105: 5 Experiments
+B106: Datasets and Benchmarks. We train all models on the MATH ( Hendrycks et al., 2021 ) training set and evaluate on a comprehensive suite of reasoning tasks: AIME 2024, AMC 2023, MATH-500 ( Lightman et al., 2023 ) , Minerva Math ( Lewkowycz et al., 2022 ) , OlympiadBench ( He et al., 2024 ) , and Omni-Math ( Gao et al., 2024 ) .
+B107: Baselines. We compare IntroLLM against three categories of baselines: (i) Standard GRPO: GRPO training with fixed temperatures τ ∈ { 0.6 , 1.0 , 1.2 } \tau\in\{0.6,1.0,1.2\} to establish performance bounds for non-adaptive sampling; (ii) Heuristic Adaptive (EAD) ( Yang et al., 2025 ) : A pre-defined annealing schedule that monotonically decays temperature to balance early-stage exploration and late-stage convergence; (iii) Sequence-level Adaptive (TAMPO) ( Dang et al., 2026 ) : A learnable meta-policy that optimizes a static temperature for the entire sequence generalization.
+B108: Implementation Details. All models are trained for 4 epochs with batch size 128, learning rate 1 × 10 − 6 1\times 10^{-6} , group size G = 8 G=8 , and maximum response length 3072 tokens. For IntroLLM, we initialize the temperature policy head to a maximum-entropy state ( P ⁡ ( c t = 1 ) = 0.5 P(c_{t}=1)=0.5 , z t ∼ Uniform ​ ( 0 , 1 ) z_{t}\sim\text{Uniform}(0,1) ) with temperature bounds restricted to [ τ min , τ max ] = [ 0.6 , 1.5 ] [\tau_{\text{min}},\tau_{\text{max}}]=[0.6,1.5] .
+B109: Evaluation Metrics. We report Avg@8 (expected Pass@1 performance across multiple samples) and Pass@8 to assess both reasoning accuracy and generation diversity. All methods use their respective temperature strategies with maximum response length 3072. Further details are provided in Appendix B .
+B110: 5.1 Main Results
+B111: Mathematical Reasoning Performance. Table 1 presents results on mathematical reasoning benchmarks. We first examine the impact of fixed temperature choices. Performance varies substantially across different temperatures for GRPO, with a 1.6-2.0% gap between best and worst configurations. Moreover, no single temperature is optimal—the best configuration varies across benchmarks and model scales (e.g., τ = 1.2 \tau=1.2 for AIME24 on 4B, τ = 1.0 \tau=1.0 for AMC23 on 1.7B). This demonstrates that temperature significantly affects performance, yet static schedules cannot adapt to varying problem characteristics.
+B112: Adaptive baselines show improvements: EAD (pre-defined annealing 1.2 → 0.1 1.2\rightarrow 0.1 ) achieves 29.41%/39.66% average Avg@8 (1.7B/4B), while TAMPO (sequence-level learned temperature) reaches 28.28%/38.83%. IntroLLM, with learned token-level adaptive control, achieves 30.47%/40.91%—outperforming all baselines across both scales. Gains are most pronounced on challenging benchmarks: on AIME24 (4B), IntroLLM reaches 19.17%, surpassing the best baseline by 4.17%; on Omni-Math (4B), it achieves 25.34%, outperforming all methods by ∼ {\sim} 1-2%. Notably, improvements correlate with difficulty. The 4B model gains 4.17% on AIME24 but only 0.7% on MATH-500, suggesting that adaptive temperature particularly benefits complex reasoning where exploration is most critical. Moreover, benefits increase with model scale. Compared to the second-best method, Avg@8 gains grow from 1.06% to 1.25%, while Pass@8 gains more than double from 2.08% to 4.29%, indicating larger models particularly benefit from learned exploration in discovering diverse solutions.
+B113: Beyond improving expected accuracy, IntroLLM significantly enhances solution diversity. It achieves Pass@8 of 61.79%/73.50%, surpassing the second-best by 2.08%/4.29%. The diversity advantage is especially prominent on AMC23 (4B), where IntroLLM reaches 87.50%—a 5.0% gain over the strongest baseline. Across all benchmarks, IntroLLM simultaneously achieves the highest Avg@8 and Pass@8, demonstrating that reward-driven temperature control not only improves the most likely solution but also broadens the effective search space for discovering multiple correct reasoning paths.
+B114: Out-of-Domain Generalization. To assess whether the learned temperature policy captures domain-general reasoning patterns, we evaluate on three Out-of-Domain (OOD) tasks: GPQA-Diamond, MMLU-Pro, and HumanEval in Table 2 . IntroLLM demonstrates consistent improvements across all OOD tasks. On the 1.7B model, IntroLLM surpasses the second-best baseline by 1.26% on GPQA, 0.23% on MMLU-Pro, and 1.82% on HumanEval. The 4B model shows similar patterns, with gains of 0.07% on GPQA, 0.49% on MMLU-Pro, and 0.61% on HumanEval. The consistent gains across diverse domains, ranging from scientific reasoning to code generation, demonstrate that IntroLLM’s token-level temperature adaptation captures generalizable exploration strategies.
+B115: Table 2 : Out-of-domain generalization performance. We report accuracy (%) for GPQA-Diamond (GPQA-D) and MMLU-Pro, and Pass@1 (%) for HumanEval.
+B116: Model / Method GPQA-D MMLU-Pro HumanEval
+B117: Qwen3-1.7B-Base
+B118: Base 21.72 15.49 28.05
+B119: GRPO ( τ = 1.0 \tau=1.0 ) 28.48 28.39 33.54
+B120: EAD (1.2 → \rightarrow 0.1) 29.36 28.66 33.54
+B121: Tampo (0.6-1.5) 27.08 27.16 35.98
+B122: IntroLLM (Ours) 30.62 28.89 37.80
+B123: Qwen3-4B-Base
+B124: Base 26.77 25.06 66.46
+B125: GRPO ( τ = 1.0 \tau=1.0 ) 35.20 36.60 75.61
+B126: EAD (1.2 → \rightarrow 0.1) 38.19 36.22 76.22
+B127: Tampo (0.6-1.5) 36.05 37.23 76.22
+B128: IntroLLM (Ours) 38.26 37.72 76.83
+B129: Computational Efficiency. Table 3 demonstrates that IntroLLM introduces negligible computational overhead. The temperature policy head adds only 21M parameters (0.122% increase) to Qwen3-1.7B-Base, resulting in minimal memory footprint during training and inference. We measure FLOPs and generation throughput across context lengths from 1k to 24k tokens. FLOPs remain virtually identical to the baseline across all contexts. Throughput degradation is minimal: approximately 2–3 tokens/s at the common 4k context length, with negligible impact even at 24k tokens. The training time also remains efficient—the 1.7B model training completes in approximately 3h 29min with IntroLLM , compared to 3h 5min for the standard GRPO baseline. These results demonstrate that IntroLLM achieves substantial reasoning improvements with minimal computational cost, making it practical for large-scale deployment.
+B130: Table 3 : Efficiency profile on Qwen3-1.7B-Base. We compare the computational cost (FLOPs) and generation throughput (tokens/s) across context lengths from 1k to 24k. The Param. Δ \Delta column indicates the additional parameter overhead introduced by IntroLLM.
+B131: Metrics Method Param. Δ \Delta 1k 2k 4k 8k 16k 24k
+B132: FLOPs Default Sampling – 4.85e+15 8.08e+15 1.45e+16 2.75e+16 5.33e+16 7.92e+16
+B133: IntroLLM (Ours) +0.122% 4.85e+15 8.09e+15 1.46e+16 2.75e+16 5.34e+16 7.93e+16
+B134: Throughput Default Sampling – 146.37 145.39 144.14 143.44 142.14 139.87
+B135: IntroLLM (Ours) +0.122% 144.08 142.58 141.71 140.22 136.01 133.37
+B136: 5.2 Further Analysis
+B137: Figure 2 : Distribution of predicted temperatures across MATH-500 difficulty levels (L1–L5, from easy to hard). As the problems get harder, the average temperature tends to increase.
+B138: Difficulty-Aware Temperature Scaling. To investigate whether the learned policy adapts to task complexity, we analyze predicted temperatures across MATH-500 difficulty levels (L1–L5). As shown in Figure 2 , median temperature increases monotonically from L1 to L5, demonstrating a clear positive correlation between problem difficulty and exploration intensity. This indicates the policy autonomously recognizes task difficulty from hidden states and allocates larger exploration budgets to harder problems—a key driver of performance gains on challenging benchmarks like AIME and Omni-Math.
+B139: Figure 3 : Learned temperature patterns. Gray dashed line: global average across MATH-500 showing natural annealing. Orange line: individual problem showing ”reasoning rhythm” with peaks at logical pivots and valleys during computation.
+B140: Temperature Dynamics During Reasoning. To understand IntroLLM’s inference-time behavior, we visualize per-token temperatures on MATH-500 ( Figure 3 ). Globally (averaged across all problems), the model exhibits a natural annealing pattern, shifting from early exploration to late exploitation. At the individual problem level, IntroLLM develops a ”reasoning rhythm”—modulating temperature through multiple peaks and troughs, with higher temperatures at logical pivots and lower temperatures during computation and answer synthesis.
+B141: Table 4 : Ablation study on different temperature strategies. We report Avg@8 (A@8) and Pass@8 (P@8) performance (%).
+B142: Method Qwen-1.7B-Base Qwen-4B-Base
+B143: AIME 24 AMC23 MATH Average AIME 24 AMC23 MATH Average
+B144: A@8 P@8 A@8 P@8 A@8 P@8 A@8 P@8 A@8 P@8 A@8 P@8 A@8 P@8 A@8 P@8
+B145: Prompt-level 7.08 20.00 35.31 67.50 65.35 85.40 35.91 57.63 17.92 33.33 49.38 82.50 80.97 92.40 49.42 69.41
+B146: Always-update 7.08 23.33 39.69 67.50 66.75 84.80 37.84 58.54 16.25 36.67 47.19 85.00 80.17 91.80 47.87 71.16
+B147: IntroLLM 9.58 26.67 39.06 72.50 67.53 86.20 38.72 61.79 19.17 40.00 52.50 87.50 80.73 93.00 50.80 73.50
+B148: Figure 4 : Reasoning keywords trigger high temperatures. Wordcloud of top 100 highest-temperature tokens across MATH-500. Reasoning keywords like ”assume”, ”consider”, and ”finding” consistently receive increased exploration.
+B149: Targeted Exploration at Reasoning Keywords. To identify semantic patterns behind temperature spikes, we analyze top 100 highest-temperature tokens across all MATH-500 trajectories. Figure 4 shows that IntroLLM concentrates higher temperatures on reasoning-critical keywords such as ”assume”, ”consider”, ”finding”, and ”different”. This learned behavior aligns with recent empirical findings that a small set of critical tokens drives exploration in reasoning chains ( Wang et al., 2025d ) , demonstrating that IntroLLM automatically discovers effective exploration strategies through reward-driven learning.
+B150: Figure 5 : Temperature intensity evolution during training. (Left) Global mean and extrema trajectories. (Right) Mean values across difficulty levels. The policy follows an emergent, non-monotonic cycle of exploration, exploitation, and diversity preservation, distinct from traditional annealing schedules.
+B151: Temperature Evolution During Training. To examine how IntroLLM modulates exploration over training, we visualize global temperature evolution in Figure 5 . The model exhibits a non-monotonic adaptation pattern contrasting sharply with traditional annealing schedules. The policy initially increases temperature to enable broad exploration, then cools to consolidate high-reward patterns, and finally rises again in late training to preserve solution diversity. This emergent ”exploration-exploitation-diversity” cycle, absent in pre-defined schedules, explains the superior Pass@8 performance and demonstrates that the policy learns to balance accuracy and diversity throughout training.
+B152: Figure 6 : Training curves on Qwen3-1.7B-Base. IntroLLM maintains significantly higher policy entropy than the GRPO. This sustained exploration leads to higher average rewards and superior validation performance in both Mean@4 and Best@4 metrics.
+B153: Mitigating Entropy Collapse. We monitor policy entropy and rewards to assess training stability ( Figure 6 ). Standard GRPO suffers from rapid entropy collapse, leading to premature convergence. In contrast, IntroLLM maintains significantly higher entropy during early training, facilitating more thorough exploration of the reasoning space. This sustained exploration translates to consistently higher average rewards and superior validation performance (Mean@4 and Best@4). These results demonstrate that adaptive temperature control effectively mitigates entropy collapse and stabilizes RLVR training.
+B154: 5.3 Ablation Study
+B155: We ablate two key design choices of IntroLLM’s temperature policy: (i) control granularity (prompt-level vs. token-level), and (ii) update frequency (selective vs. every-token). Table 4 compares three variants:
+B156: Prompt-level predicts a single temperature for the entire response based on the prompt, achieving 35.91%/49.42% average Avg@8 (1.7B/4B). This coarse-grained control cannot adapt to reasoning dynamics within a sequence.
+B157: Always-update samples a new temperature at every token without the Bernoulli trigger, achieving 37.84%/47.87%. While offering maximum flexibility, this introduces excessive variance that destabilizes learning—on 4B, it underperforms even prompt-level control by 1.55%, despite being more fine-grained.
+B158: IntroLLM uses selective token-level updates via the mixed discrete-continuous action space, achieving 38.72%/50.80%. By learning when to update temperature (Bernoulli) and how much (Beta), IntroLLM outperforms prompt-level by 2.81%/1.38% and always-update by 0.88%/2.93%.
+
+B231: Appendix B Implementation Details
+B232: B.1 Model Architecture
+B233: The model extends the base architecture with a lightweight MLP head branching from the final hidden state to predict temperature parameters. This lightweight design allows the temperature head to serve as a plug-and-play module, making it easily adaptable to models of the same family that have undergone fine-tuning ( Qing et al., 2024 ; Wang et al., 2025c ; Yin et al., 2025 ; Feng et al., 2024 ; Han et al., 2025b ) or compression ( Zhou et al., 2025 ; Lu et al., 2024 ; Li et al., 2025b ) . Additionally, this design facilitates straightforward migration to other architectures, such as diffusion language models ( Han et al., 2025a ) .
+B234: Temperature Policy Head:
+B235: •
+B236: Structure : Linear( d model d_{\text{model}} , d model / 2 d_{\text{model}}/2 ) → \to ReLU → \to Linear( d model / 2 d_{\text{model}}/2 , 3).
+B237: •
+B238: Output : 3 logits [ u c , u α , u β ] [u_{c},u_{\alpha},u_{\beta}] determining the temperature update probability and Beta distribution parameters.
+B239: •
+B240: Initialization : Weights are initialized with 𝒩 ⁡ ( 0 , 0.02 ) \mathcal{N}(0,0.02) . To facilitate initial exploration, final layer biases are set to u c = 0 u_{c}=0 (implies P ⁡ ( change ) = 0.5 P(\text{change})=0.5 ) and u α = u β ≈ 0.541 u_{\alpha}=u_{\beta}\approx 0.541 (implies Beta ​ ( 1 , 1 ) \text{Beta}(1,1) , i.e., Uniform distribution). This maximum-entropy initialization allows the model to explore the full temperature range early in training.
+B241: B.2 Hyperparameters
+B242: We list the detailed hyperparameters for the IntroLLM training in Table 5 . To stabilize the hierarchical optimization, we employ decoupled learning rates, setting the token policy to 1 × 10 − 6 1\times 10^{-6} and the temperature policy to 5 × 10 − 5 5\times 10^{-5} . The training process was executed on a cluster of 8 NVIDIA H100 (80GB) GPUs using the AdamW optimizer, utilizing a global batch size of 128. We further set the group size to G = 8 G=8 to provide reliable relative advantage estimation during the rollout phase, while the maximum sequence length was capped at 3072 tokens to balance reasoning depth and compute efficiency.
+B243: Table 5 : Hyperparameters for IntroLLM Training
+B244: Parameter Value
+B245: Token Policy LR 1 × 10 − 6 1\times 10^{-6}
+B246: Temperature Policy LR 5 × 10 − 5 5\times 10^{-5}
+B247: Batch Size 128
+B248: Group Size ( G G ) 8
+B249: Temperature Bounds [ τ min , τ max ] [\tau_{\min},\tau_{\max}] [ 0.6 , 1.5 ] [0.6,1.5]
+B250: Max Sequence Length 3072
+B251: Optimizer AdamW
+B252: B.3 Reward Function
+B253: We strictly follow the RLVR setting. The reward is binary: R ⁡ ( x , y ) = 1 R(x,y)=1 if the final answer matches the ground truth after symbolic verification, and R ⁡ ( x , y ) = 0 R(x,y)=0 otherwise. No partial rewards or process supervision rewards were used.
+
+# Current official abs: lightweight event/Comments check
+ 
+ 
+
+  document.documentElement.classList.add('js');    [2602.13035] Look Inward to Explore Outward: Learning Temperature Policy from LLM Internal States via Hierarchical RL 
+   
+   
+   
+   
+   
+   
+   
+   
+  <link rel="stylesheet" type="text/css" media="screen" href="/static/b
+Submission history  From: Yixiao Zhou [ view email ]            [v1] 
+        Fri, 13 Feb 2026 15:42:59 UTC (9,227 KB) 
+ 
+   
+   
+      
+        
+       Full-text links: 
+       Access Paper: 
+       
+   
+View a PDF of the paper titled Look Inward to Explore Outward: Learning Temperature Policy from LLM Internal States via Hierarchical RL, by Yixiao Zhou and 4 other authors   View PDF    HTML (experimental)    TeX Source
+    
+        view license  
+     
+          
+     Current browse context: 
+   cs.LG 
+
+   
+ 
+       &lt;&nbsp;prev 
+     
+     &nbs
+

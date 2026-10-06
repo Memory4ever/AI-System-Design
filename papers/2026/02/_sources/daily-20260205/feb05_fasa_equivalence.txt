@@ -1,0 +1,186 @@
+FASA: Frequency-Aware Sparse Attention (https://arxiv.org/html/2602.03152v1)
+citeturn26229view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.03152v1","lineno":533}); Total lines: 690
+L503: For MATH500, we report pass@1, where a single generation is sampled for each problem.
+L504: 
+L505:   * •
+L508: Figure 12: The FASA Pipeline: An Efficient, FlashAttention-Compatible Approach. The algorithm details our two-stage process. A key design feature is that the FAC stage seamlessly integrates with the standard FlashAttention API, leveraging its performance while enabling sparse computation.
+L509: ### B.4 Implement Details
+L510: #### Implementation Details
+L511: Our implementation of FASA is built upon the HuggingFace Transformers library (cite219†Wolf et al., 2020 ). We employ a non-invasive monkey patching approach to integrate our logic. Specifically, we intercept the forward pass of the FlashAttention2 class within the model’s modeling.py file. The core of our method resides in two components. First, leveraging the universal nature of dominant FCs, their pre-computed indices are stored in a globally accessible dictionary, shared across all layers and heads.
+L512: Second, the Token Importance Prediction (TIP) logic, which performs the critical token selection, is encapsulated within our core_module_with_padding function. A key advantage of our design is its simplicity and minimal intrusion. The integration requires inserting just a single line of code, the token selection logic, into the original attention function, making FASA easy to deploy and adapt. This minimal intrusion makes FASA highly portable and easy to adapt.
+L513: The corresponding pseudocode is provided in Figure cite220†12 .
+L514: ## Appendix C Additional Experimental Results
+L515: 
+L516: ### C.1 Performance Analysis on different budgets
+L517: 
+L518: Figure 13: FASA on Qwen2.5-7B-Instruct under various token budgets ($N_{\text{tip}}=16$). Figure 14: FASA on Meta-3.1-Llama-8B-Instruct under various token budgets ($N_{\text{tip}}=16$).
+L519: #### Comparison with Low-Rank Methods
+L520: A closely related work to FASA is SparQ (cite91†Ribar et al., 2024 ), which also performs a form of dimension selection. SparQ operates on the heuristic that high-magnitude dimensions in a query vector are the most indicative of importance, and thus selects corresponding key dimensions as a proxy for token prediction. However, as our experiments in Figure cite221†15 demonstrate, this heuristic proves to be a poor substitute for true contextual awareness.
+L521: Under a constrained budget of 256 tokens, SparQ’s performance collapses, indicating its inability to reliably identify critical tokens based solely on query magnitudes. Furthermore, from an efficiency standpoint, SparQ incurs significant overhead as it must re-evaluate high-magnitude dimensions for every new query. In stark contrast, FASA leverages a one-time, offline calibration, making its per-token inference cost substantially lower.
+L522: Figure 15: Comparision with SparQ on LongBench.
+L523: ## Appendix D Discussion on FASA
+L524: 
+L525: ### D.1 Variants of FASA
+L526: #### FASA-M (Memory-Optimized)
+L527: 
+L528: The memory-optimized variant, FASA-M, is specifically engineered for scenarios with constrained GPU memory, such as consumer-grade hardware. As detailed in Algorithm cite222†2 , its core strategy is to minimize the on-GPU memory footprint by strategically keeping only the most essential data on the GPU.
+L529: Specifically, only the dominant parts of the Key cache ($C_{key}^{dom}$), which are required for the initial token importance prediction, are retained in GPU memory. The non-dominant parts of the Key cache ($C_{key}^{nondom}$) and the entire Value cache ($C_{val}$) are offloaded to and managed in the much larger CPU memory.
+L530: During the Focused Attention Computation (FAC) stage, once the critical token indices ($\mathcal{T}_{t}$) are identified, only the small, required subsets of the non-dominant key and value caches are transferred from the CPU to the GPU for the final attention calculation. This "just-in-time" data transfer ensures that the GPU memory is primarily occupied by the most critical components, leading to substantial memory savings.
+L531: #### Memory Footprint Analysis
+L532: 
+L533: The GPU memory footprint of the KV cache in FASA-M can be formulated as follows. Let $L$ be the total sequence length, $b$ the token budget, $d$ the model’s hidden dimension, and $N_{layers}$ the number of layers. Let $d_{dom}$ be the dimension of the dominant FCs and $d_{nondom}$ be the dimension of the non-dominant FCs ($d=d_{dom}+d_{nondom}$). The memory occupied by the KV cache on the GPU is:
+L534:  | $$\text{Mem}_{\text{GPU}}\approx N_{layers}\times\left(\underbrace{L\times d_{dom}}_{\text{Dominant Keys}}+\underbrace{b\times d_{nondom}}_{\text{Non-dominant Keys}}+\underbrace{b\times d}_{\text{Values}}\right)\times\text{bytes\_per\_param}$$  |  | (10)
+L535: Compared to a full KV cache, which occupies $N_{layers}\times L\times 2d\times\text{bytes\_per\_param}$, FASA-M significantly reduces the memory burden, especially when the non-dominant and value components constitute a large portion of the cache. For instance, if $d_{dom}$ is 25% of $d$ and the budget $b$ is 10% of $L$, the memory savings can be substantial, approaching an 8$\times$ reduction in typical configurations.
+L536: ### D.2 Design Choices
+L537: 
+L538:   * •
+L539: On the Role of FC-Scores: A Proxy for Ranking, Not a Substitute for Attention. A crucial design principle we validated is that our FC-based scores ($\mathbf{S}_{t}^{l,h}$) are not calibrated to function as direct attention weights. Although they provide a remarkably accurate relative ranking of token importance, their direct substitution for attention probabilities leads to a catastrophic performance degradation.
+L540: This reveals their fundamental role as a selector—a mechanism to identify salient tokens rather than an approximator of the final attention distribution.
+L541:   * •
+L542: On the Indivisibility of Frequency Chunks. We investigated whether individual dimensions could serve as selection units, and the answer is a definitive no. A pipeline based on selecting "dominant dimensions" suffers a catastrophic performance degradation. This empirically validates that the Frequency Chunk (FC) is an indivisible functional unit for this process.
+L543: This principle is not coincidental but is a direct corollary of RoPE’s core mechanism, which encodes position by applying rotations to coupled pairs of dimensions. Disrupting these pairs severs the positional encoding, leading to model failure.
+L544: In summary, these two findings underscore two core design principles of FASA. First, an efficient proxy for token importance does not necessarily serve as a valid substitute for attention weights. Second, any optimization for RoPE-based models must respect the inherent coupling of dimension pairs, treating the Frequency Chunk as an indivisible functional unit.
+L545: ### D.3 Algorithm on FASA
+L546: 
+L547: See the algorithm of offline calibration in Algorithm  cite102†1 ; see the algorithm of FASA-M in Algorithm cite222†2 .
+L548: 
+L549: Algorithm 1 Offline Calibration for Dominant FCs
+L550: 
+L551: Input: A calibration dataset $\Omega$; number of dominant FCs to select $k$.
+L552: 
+L553: Output: The set of dominant FC indices, $\mathcal{I}_{dom}$.
+L554: 
+L555: // Stage 1: Collect Contextual Agreement (CA) scores
+L556: 
+L557: Initialize an empty map $M$ to store CA scores for each $(l,h,i)$ triplet
+L558: 
+L559: foreach example in $\Omega$ do
+L560:    foreach token generation step $t$ do
+L561: 
+L562:       foreach layer $l$ do
+L563: 
+L564:          foreach head $h$ do
+L565: 
+L566:             Compute full attention scores $\bm{\alpha}_{l,h}(\mathbf{q}_{t},\mathbf{K}_{1:t})$
+L567: 
+L568:             foreach FC index $i$ do
+L569: 
+L570:                Compute single-FC scores $\bm{\alpha}_{l,h}^{(i)}(\mathbf{q}_{t},\mathbf{K}_{1:t})$
+L571: 
+L572:                Calculate the CA score $\text{CA}_{\mathcal{K}}^{l,h,i}$ using Eq. cite223†4 L573: 
+L574:                Store $\text{CA}_{\mathcal{K}}^{l,h,i}$ in $M[l][h][i]$
+L575:             end foreach
+L576: 
+L577:          end foreach
+L578: 
+L579:       end foreach
+L580: 
+L581:    end foreach
+L582: 
+L583: end foreach
+L584: 
+L585: // Stage 2: Select Dominant FCs
+L586: 
+L587: Initialize an empty map $\overline{M}$ for mean CA scores
+L588: 
+L589: foreach $(l,h,i)$ in $M$ do
+L590: 
+L591:    $\overline{M}[l][h][i]\leftarrow\text{Mean}(M[l][h][i])$
+L592: 
+L593: end foreach
+L594: 
+L595: $\mathcal{I}_{dom}\leftarrow\text{TopK-Indices}(\overline{M},k)$ // Select top-k indices based on $\overline{\text{CA}}$
+L596: 
+L597: return $\mathcal{I}_{dom}$
+L598: 
+L599: Algorithm 2 Inference with FASA-M (Memory-Optimized Variant)
+L600: Input: Current query $\mathbf{q}_{t}$; Current key $\mathbf{k}_{t}$; Current value $\mathbf{v}_{t}$
+L601: 
+L602: Dominant FC indices $\mathcal{I}_{dom}$
+L603: 
+L604: Token budget $b$
+L605: 
+L606: Past KV cache: $C_{key}^{dom}$ (GPU), $C_{key}^{nondom}$ (CPU), $C_{val}$ (CPU)
+L607: 
+L608: Output: Next hidden state $\mathbf{h}_{t+1}$
+L609: 
+L610: Updated KV cache: $C_{key}^{dom}$, $C_{key}^{nondom}$, $C_{val}$
+L611: 
+L612: // Stage 1: Token Importance Prediction (TIP)
+L613: 
+L614: // Split key by dominant FCs
+L615: $\mathbf{k}_{t}^{dom},\mathbf{k}_{t}^{nondom}\leftarrow\text{Split}(\mathbf{k}_{t},\mathcal{I}_{dom})$
+L616: 
+L617: // Select corresponding query dimensions
+L618: 
+L619: $\mathbf{q}_{t}^{dom}\leftarrow\text{Select}(\mathbf{q}_{t},\mathcal{I}_{dom})$
+L620: 
+L621: $K_{1:t}^{dom}\leftarrow\text{UpdateCache}(C_{key}^{dom},\mathbf{k}_{t}^{dom})$
+L622: 
+L623: // Approximate scores using dominant parts
+L624: 
+L625: $\hat{\mathbf{S}}_{t}\leftarrow\mathbf{q}_{t}^{dom}(K_{1:t}^{dom})^{\top}$
+L626: 
+L627: // Identify indices of $b$ most salient tokens
+L628: $\mathcal{T}_{t}\leftarrow\text{TopK-Indices}(\hat{\mathbf{S}}_{t},b)$
+L629: 
+L630: // Stage 2: Focused Attention Computation (FAC)
+L631: 
+L632: // Select dominant key parts on GPU
+L633: 
+L634: $K_{\mathcal{T}_{t}}^{dom}\leftarrow\text{SelectTokens}(K_{1:t}^{dom},\mathcal{T}_{t})$
+L635: 
+L636: // Update non-dominant cache on CPU
+L637: 
+L638: $C_{key}^{nondom}\leftarrow\text{UpdateCache}(C_{key}^{nondom},\mathbf{k}_{t}^{nondom})$
+L639: 
+L640: $K_{1:t}^{nondom}\leftarrow\text{LoadFromCPU}(C_{key}^{nondom})$
+L641: 
+L642: // Select non-dominant key parts on CPU
+L643: $K_{\mathcal{T}_{t}}^{nondom}\leftarrow\text{SelectTokens}(K_{1:t}^{nondom},\mathcal{T}_{t})$
+L644: 
+L645: // Update value cache on CPU
+L646: 
+L647: $C_{val}\leftarrow\text{UpdateCache}(C_{val},\mathbf{v}_{t})$
+L648: 
+L649: $V_{1:t}\leftarrow\text{LoadFromCPU}(C_{val})$
+L650: 
+L651: // Select values on CPU
+L652: 
+L653: $V_{\mathcal{T}_{t}}\leftarrow\text{SelectTokens}(V_{1:t},\mathcal{T}_{t})$
+L654: 
+L655: // Offload required non-dominant keys to GPU
+L656: 
+L657: $K_{\mathcal{T}_{t}}^{nondom}\leftarrow\text{TransferToGPU}(K_{\mathcal{T}_{t}}^{nondom})$
+L658: 
+L659: // Offload required values to GPU
+L660: $V_{\mathcal{T}_{t}}\leftarrow\text{TransferToGPU}(V_{\mathcal{T}_{t}})$
+L661: 
+L662: // Reconstruct full keys for selected tokens
+L663: 
+L664: $K_{\mathcal{T}_{t}}\leftarrow\text{Combine}(K_{\mathcal{T}_{t}}^{dom},K_{\mathcal{T}_{t}}^{nondom},\mathcal{I}_{dom})$
+L665: 
+L666: // Compute full attention on the subset
+L667: 
+L668: $\bm{\alpha}_{\text{fac}}\leftarrow\text{Softmax}(\mathbf{q}_{t}K_{\mathcal{T}_{t}}^{\top}/\sqrt{d_{k}})$
+L669: 
+L670: $\mathbf{h}_{t+1}\leftarrow W_{O}(\bm{\alpha}_{\text{fac}}V_{\mathcal{T}_{t}})$
+L671: return $\mathbf{h}_{t+1}$ and updated caches
+L672: ## Appendix E LLM Usage
+L673: 
+L674: During the preparation of this manuscript, we utilized the AI-based language model ChatGPT, developed by OpenAI. Its use was strictly limited to language refinement, including grammar correction, stylistic enhancement, and rephrasing for clarity. All scientific concepts, experimental designs, data analyses, and conclusions presented herein are the original work of the authors and were conceived and executed without any substantive contribution from the language model.
+L675: Experimental support, please cite224†view the build logs for errors. Generated by cite225†L A T E xml†math.nist.gov .
+L676: ## Instructions for reporting errors
+L677: 
+L678: We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the methods listed below:
+L679: 
+L680:   * Click the "Report Issue" () button, located in the page header.
+L681: 
+L682: Tip: You can select the relevant text first, to include it in your report.
+L683: Our team has already identified cite226†the following issues†github.com . We appreciate your time reviewing and reporting rendering errors we may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability should not be a barrier to accessing research. Thank you for your continued support in championing open access for all.
+L684: Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a cite227†list of packages that need conversion†github.com , and welcome cite228†developer contributions†github.com .
+L685: 
+L686: We gratefully acknowledge support from our major funders, cite229†member institutions†info.arxiv.org , , and all contributors.
+L687: cite230†About†info.arxiv.org · cite231†Help†info.arxiv.org · cite232†Contact†info.arxiv.org · cite233†Subscribe†info.arxiv.org · cite234†Copyright†info.arxiv.org · cite235†Privacy†info.arxiv.org · cite236†Accessibility†info.arxiv.org · cite237†Operational Status (opens in new tab)†status.arxiv.org L688: 
+L689: Major funding support from
+

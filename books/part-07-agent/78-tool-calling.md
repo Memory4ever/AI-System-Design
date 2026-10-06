@@ -52,9 +52,15 @@ owner and audit policy
 
 Description 帮助模型选择工具，Schema 帮助构造参数；二者都不能替代服务端业务校验。Tool name 或描述可能来自第三方 server，应视为不可信 metadata，不能据此自动提升权限。
 
+当工具封装网站操作时，稳定性还取决于网站是否承担外部接口的兼容责任。API 可直接包装成 typed function，GUI 路径也可由开发者录制操作、调试 locator，再参数化输入并返回结构化结果；但当前页面中偶然稳定的选择器不是网站承诺的 public ABI。[一个有限原型](https://arxiv.org/html/2602.17245v1#S4.SS1)提出由网站显式发布 stable-public-locator、把修改视为 breaking change，并以网站 domain 拥有 verb namespace；这是接口责任提案，不是已标准化或部署到全网的协议。100项人工核验任务、10项选出的 baseline 比较及仅成功子集的时延，不能证明开放网站可靠性或总体提速，security/permission 在原文仍是 open problem。包装、回归测试、网站版本与 locator 维护均有费用，权限和 effect-time 校验仍归可信 executor；缺少网站兼容承诺、页面漂移或 wrapper 行为无法核验时，应重新验证或回退经观察的原始 GUI/API 操作，而不是让 typed signature 自签语义、安全或执行许可。<!-- source-family:SF-2026-ARXIV-2602-17245 -->
+
 源码中存在某项功能，也不等于这个工具的实际入口支持它。Dispatcher可能不传递某个可选参数，下游分支因此始终不可达；直接把整个仓库摘要成description，会给模型一个不能兑现的能力承诺。对于实现可取得的工具，可以从注册/dispatch入口沿真实参数传播构造有界代码slice，只以具体调用路径可达的行为生成能力说明，再针对声明合成任务、执行并检查日志，移除无法验证或失败的声明。这里改变的是metadata的证据来源，不是将选择工具等同于授权执行。<!-- source-family:SF-2026-ARXIV-2604-07536 -->
 
 这条路径增加代码分析、任务执行与description修订成本；LLM辅助剪枝可能漏掉可达行为，执行样例和LLM judge也不是完整程序语义证明，未展开的库或远端依赖仍在验证范围之外。受限MCP工具实验支持description与实际入口对齐可以减少误选，但没有证明注入被彻底消除或服务端始终诚实。实现、依赖或调用入口变化后需重新核验声明；实现不可得时保留人工维护、版本化的窄合同和外部outcome检查，敏感调用继续接受权限与effect-time校验。
+
+实现不可取得时，工具文档还可以由 black-box 执行反馈更新，但学习单位应包含工具之间和调用阶段之间的依赖。孤立试探一个函数容易遗漏“前一次调用改变后一次行为”的约束；完整任务轨迹可保留这种状态与结果，再由编辑器提出描述修订。Offline 分支可以用训练任务的 gold 与执行结果生成局部修订并合并，online 分支只根据当前可观察的执行反馈迭代、描述不再改变时早停，不能把训练 gold 当部署输入。修订结果只获得版本化 metadata 的地位，不获得程序语义证明、业务授权或服务端可信身份。
+
+执行轨迹、编辑与合并会增加探索调用和文档漂移的成本，反馈错误还可能使多轮描述固化同一个误解。[受限工具实验](https://arxiv.org/html/2602.15197v1)在匿名工具上改善较大，但参数已知时 GPT-5 accuracy 仅0.82→0.83；BrowseComp FullSearch 为21.8→22.1，同时平均调用9.3→9.5，较弱模型的分域设置中另一简单工具描述方法反而更好。原表题注的模型身份亦有错置，因此不能把单组 headline 当普遍可靠性或成本优势。文档应在独立任务与真实工具版本上重新核验，权限与 effect-time 检查继续由 executor 持有；反馈不足、行为漂移或修订无收益时，回退人工窄合同、澄清与外部 outcome 检查。<!-- source-family:SF-2026-ARXIV-2602-15197 -->
 
 ## 模型输出只是 Proposal
 
@@ -81,11 +87,17 @@ raw model output
 
 Schema 可以拒绝缺字段、错误类型或非法 enum；semantic validation 还要检查金额、目标资源、环境、时间窗口和当前状态。Authorization 必须使用真实 principal，不接受模型生成的 `tenant_id` 或 scope。
 
+多语言 query 还会让意图理解与参数的执行表面分离：选对工具、理解地点，也可能把参数值写成 backend 不接受的另一语言。固定英文 schema/值约定的[受限 tool-calling 对照](https://arxiv.org/html/2601.05366v1#S4)分别测 query-understanding error 与 value-language mismatch；前翻译、后翻译和提示约束只缓解部分后者，还会引入语义漂移，低资源语言甚至更差。因此，将 canonical 执行值与用户可读显示分别绑定并独立验收，是由该接口边界提出的工程要求，不是论文已实现的生产协议；翻译不能替代 schema/semantic validation，也不能授执行权。多语言转换增加调用、值映射与回归成本，含义无法保真时应澄清、回到已验证的 typed 输入或拒绝高风险 action，不能用一项总体准确率合并两类失败。<!-- source-family:SF-2026-ARXIV-2601-05366 -->
+
 在固定、可枚举的 routing/schema 中，还可以把序列化负担从模型移给确定性软件：模型只生成紧凑代码，本地 decoder 再重建完整 JSON。它减少重复字段与分隔符，却不自动保留决策语义；代码含义对某个 backend 不稳定时，重建出合法 JSON 仍会路由到错误分支。因此应分别验收格式、route correctness、状态保留与完整记录可用时的延迟，而不只比较 token 数或首 token 时间；partial record 不能授权执行。<!-- source-family:SF-2026-ARXIV-2604-01235 -->
 
 受控跨 backend 配置实验观察到，压缩与本地重建可以降低生成成本，同时损伤路由正确率，不能选出跨 backend 的统一最优模式。该实验没有完整拆开压缩表示、重建与所有预算因素，格内稳定性区间也不是线上用户总体置信区间；其格式/路由/状态联合事件下界更不是下游任务成功率。固定 schema、紧凑代码和 backend 已成对验证时可用这一分支；接口变化、含义歧义或高风险操作时应回退直接 typed output，并保留业务、权限和 effect-time 校验。
 
 调用记录完整，还不等于整批提案已经可以执行。流式生成可以把 tool calls 暂存，等待 provider 的 finish 才允许这一批进入执行路径；EOF/error 没有 finish 时整批不执行，progress 只表示生成进度，不表示副作用发生。一条受限实现给 batch 设置16个调用上限，第17个到达时取消 provider 与所有尚未执行的调用，而不是先执行前16个再截断。这个门槛拥有 proposal admission，不替代每个调用的 schema、权限和 effect-time 校验；其防洪与失败级联可以 opt out，不能写成无条件安全合同。
+
+等待 finish 还依赖 provider 正确报告终止原因。接口遵约、输出完整时，直接 parse 与 schema validation 是合理的简单路径；若 provider 把预算截断误报为正常 stop，JSON repair 又补齐括号或字符串，语法合法的参数仍可能缺少后半段文件内容。执行器因此应保留原始 stream 的完整性状态，而不是从修复后的 JSON 或一个 finish 字段反推完整性；这层检查拥有 proposal admission，不证明内容正确，也不替代 authorization。
+
+[QwenCode v0.11.1 的截断保护](https://github.com/QwenLM/qwen-code/pull/2021/files)在 OpenAI-compatible streaming 路径检查未闭合结构或字符串，把终止原因映射成 length 并向 pending calls 传播截断标记，再拒绝 Kind.Edit 调用，向参数错误附带重新生成或拆小请求的提示。它增加缓冲、状态传播和重试成本，也可能保守拒绝同批完整编辑；nonEdit 并非全部拒绝，结构检测也不能证明语义内容未被截掉。其他 provider、工具分类或更高风险 effect 必须独立核验，不能把该修复当成通用 fail-closed、事务回滚或已复现的安全保证。<!-- source-family:SF-2026-GITHUB-QWEN-CODE-V0111-PR2021 -->
 
 准入之后还有执行排序：[MiMo-Code 的 step-local gate](https://github.com/XiaomiMiMo/MiMo-Code/pull/2456)及[后续批次修正](https://github.com/XiaomiMiMo/MiMo-Code/pull/2463)按单 agent/step 保持 FIFO，只让 read/grep/glob 相互重叠，edit/write/MCP 形成 barrier；non-read 失败、非法名称或参数校验失败会取消 queued/late 调用，普通 read 执行失败则豁免级联。它不覆盖跨 agent 或 guest 内部执行，已完成 effect 也不会回滚，`retrySafe=false` 回执只能提醒不能盲重试，不使执行成为事务。缓冲与 barrier 增加首执行等待和并发限制；遇到部分 effect，应保存真实回执并按幂等、补偿或人工恢复处理，独立、低风险的只读流程仍可使用更简单的排序。这里核验的是公开代码路径，作者测试声明不是本地复现。<!-- source-family:SF-2026-GITHUB-MIMO-CODE-TOOL-FLOW -->
 
@@ -114,6 +126,8 @@ Schema 可以拒绝缺字段、错误类型或非法 enum；semantic validation 
 反馈前移还可以依赖模型学习的**执行模拟器**，但它与真实 compiler/runtime 的权威不同。让模型预测程序执行结果、诊断可能错误，再有界修订程序，可以把部分反馈压入单个模型调用；模拟结果只是一条可错的 observation，不能因为看起来像执行 trace，就当成程序真的运行过。训练出的自执行能力与提示里加入“请模拟执行”的 scaffold 也须分开，模板本身可能反而降低质量。<!-- source-family:SF-2026-ARXIV-2604-03253 -->
 
 该分支节省外部调用，却新增模拟器与代码生成的相关错误，原本正确的程序也可能被错误反馈改坏。受测单文件竞赛代码中的真实执行 oracle 更强，不能外推到多文件仓库、环境依赖或安全性质。无法可靠执行时可用模拟器提出测试与修订候选，仍由真实测试或独立 verifier 决定采用；已有可用 compiler/runtime、成本低或副作用高时，后置真实执行继续是更可信的旧路径。
+
+真实运行反馈也需要一份可消费条件，而不是把更长trace直接交给模型。面对复杂仓库的build依赖，可以先在独立workspace中以原project的local dependency复现问题，成功后才选择普通函数做AST instrumentation，采集真实call/input/output；复现不成则回到静态分析。不可序列化参数只记录带type的placeholder，未instrument的closure、macro或test函数也属于观察缺口，不能把placeholder当实际value、把没有trace当路径没有执行。[受限Rust对照](https://arxiv.org/html/2602.22764v1)将workspace与Trace分开消融，支持这两层接口的局部增量，但作者备份/恢复与语义保持声明不认证任意代码无副作用或线程安全。每题4美元API预算、初build约40秒与每次Trace约12秒编译是不同费用，API账单下降不证明整体更快；插桩改变行为、build失配或覆盖不足时保留原source、未观测项和真实测试，回退静态分析/人工复现，patch仍需独立功能与安全验收。<!-- source-family:SF-2026-ARXIV-2602-22764 -->
 
 ## Tool Discovery 与选择
 
@@ -172,6 +186,10 @@ auditability 选择最窄且足够表达的 surface，并保持 canonical action
 Terminal Agents 的受限实验说明部分 enterprise gap 来自 interface granularity，不证明 shell 比 MCP、domain
 API 或 browser 普遍更好；benchmark sandbox、模型、tool catalog 与成本条件变化都会改变结论。
 
+当 browser 或 GUI 是必要 fallback，观测身份还须绑定实际执行主体。画面上的应用名、布局和“可信”提示只是 visual evidence，不等于真实 package/provider principal；Agent 使用的 automation virtual display 也可能不同于用户查看的 default display。若恶意 app 已获 overlay/Accessibility 权限，它可以只在前一 surface 呈现假控件；用户在另一屏没有看见异常，并不能确认 Agent 的观测未被替换。observer 应记录 display/surface 身份和目标主体，可信 executor 再按真实 provider、授权 scope 与 effect identity 验证 action，不能从视觉名称直接继承权限。<!-- source-family:SF-2026-ARXIV-2602-10915 -->
+
+这增加主体解析、跨 surface 审计、权限核验和 effect receipt 的成本；无法可靠绑定时应回退可验证的 typed API、停下请求人工确认或拒绝敏感动作，而不是把截图一致当授权证据。预装/既有特权是上述失效条件，不是无权限远程攻击保证。结构化接口、XML 标签或 TEE 设计也不自动保证 semantic intent：optimistic token 若允许先执行后审，撤销只能阻断未来动作，不能追回已发数据或支付。[Aura 的必要机制与反侧](https://arxiv.org/html/2602.10915v1)使用模拟 Gemini/structured mock APIs，对比真实 GUI baseline，不能据此归因同模型单因素安全收益或宣称生产 non-bypassability；本节只补观测与真实执行身份，权限与 taint 的通用治理仍由第72章拥有。
+
 将几百个完整 schemas 全部放入 Context 会增加 token cost、选择混淆和 attack surface。可以分层：
 
 ```text
@@ -183,6 +201,8 @@ task intent
 ```
 
 Catalog retrieval 也必须 tenant-aware。工具版本变化可能让旧 Prompt 生成过期参数，因此 tool schema version 是 Context 和 evaluation identity 的一部分。
+
+固定、可枚举目录中的 shortlist 还可以换一个接口：保留外层 Agent 执行链，将成功轨迹中可提取的 schema、当前状态与工具依赖特征，同 candidate identity 一起交给小型判别 head，逐候选评分，而不每次要求语言模型重读完整目录生成列表。[受限替代实验](https://arxiv.org/html/2602.16429v1#S4)支持这一分支，但成功解实际用过的工具集合只是模仿目标，不穷尽所有有效方案；新组合和目录漂移可能使压缩后的特征不足，需回退生成式 discovery 与显式 schema。Head 只产生 shortlist proposal，不接管版本、权限、前置条件或 effect-time 检查。成本须分别结算特征提取、合成数据、训练与刷新、逐候选评分和整链执行；局部 head 很快不证明完整 Agent 同幅加速，新增特征也不由跨 Agent 对照或 attribution 自证唯一因果。小目录、日志不足或无法核验状态时，原检索与直接生成仍合理。<!-- source-family:SF-2026-ARXIV-2602-16429 -->
 
 ### Discovery Frontier 可以修订，但不能授予执行权
 
@@ -201,11 +221,21 @@ current uncertainty + candidate tool contract
 
 selector 只决定是否提出调用，schema validation、authorization 与 effect commit 仍由 executor 拥有。utility model 错误会系统性少查关键证据或频繁调用廉价但无用的工具；高风险事实、强制合规检查和不可逆动作不能被“预计收益低”跳过。只读、低延迟且高度可靠的工具可用简单规则直接调用，低流量或不可校准场景则保留固定 policy。
 
+还有一种受限 workflow 问题：工具已经可发现且有调用收益，Agent 却在取得 observation 之前直接修改程序。Controller 可以把“至少发起一次指定的只读诊断调用”设为 edit action 的可达性前置条件；这改变的是执行状态图，不是把提示写得更强，也不扩大工具权限。必须分别记录工具暴露、实际调用、取得有效诊断证据、据证修改和最终验证；调用发生只关闭第二层，构建失败、attach 失败或无关 observation 仍不能授予“已诊断”的语义。<!-- source-family:SF-2026-ARXIV-2602-18571 -->
+
+Debugger 的受限实验表明这条分支可能改善 Java 中的工具采用，而直接暴露工具也可能降低表现；Python 结果和调用方式不同，不支持对所有语言或简单 bug 一律强制。它依赖可构建的测试与可 attach 的 runtime，并给诊断 subagent 设 25-step 上限；50 个失败样本中既有构建/连接失败，也有诊断正确而主 Agent 错修，调用门槛不会修复后一层。Debugger compute 未完整计入，因此不能由 token 或成功率宣布端到端经济性。构建条件不成立、观测无效或预算耗尽时，应保留静态分析、直接验证或人工核对；executor 的 authorization、effect commit 与安全边界不变。
+
 当 Tool 返回视觉证据时，最终答案正确还不足以说明这次调用值得付费：模型可能在调用前已经能回答，也可能调用了 crop 却没有使用返回的像素。因此，“该不该看”与“看见的内容是否改变判断”是两项不同的归因问题。可在**同一个实际调用前状态**上比较三条受控续写：直接回答、执行原调用并返回真实 crop、执行同一调用但替换成从原图抽取的同尺寸随机 crop。两项差值都以目标答案分数计算：真实分支相对直接回答的增益衡量决策价值，相对随机图块的增益衡量证据价值。在作者的受限训练合同里，还需调用符合可探测条件、最终轨迹正确，且两项增益均超过预先校准的死区，才给正向 credit；这仍是代理评分下的归因，而非工具有用性的通用证明。<!-- semantic-body-binding:SF-2026-ARXIV-2609-22910 -->
 
 这种反事实归因能把无效调用的训练激励与答案正确性分开，但要为每次被审计的调用支付额外评分成本，随机图块也可能碰巧包含目标。它依赖可替换且语义可比的返回物、固定前缀、稳定评分器和已知答案；当前 crop 实验不能直接扩展到搜索、写操作或多工具链，也不能把事后分数当成线上授权。低风险、短媒体任务仍可固定预处理；高风险工具仍按权限与副作用契约执行，而非凭预测收益自放行。训练侧若使用过程奖励，还需保持结果正确性与调用代价各自的尺度，详见 `TRAIN-GRPO` 的奖励设计边界。
 
 <!-- source-family:SF-TOOL-CALL-UTILITY-GATE -->
+
+另一个责任不同的诊断，是把最后取得的片段单独交给消费者，检查它能否回答同一问题。一个视频训练分支仅在完整轨迹最终答对时，再让同一模型只看最后 grounded clip；独立回答失败便给惩罚，成功则不给额外惩罚。这评价的是片段在指定消费者下的 answerability，不是此前状态中这次调用的边际增益：模型可能本来就会回答，多个片段也可能需共同消费，单看最后一段会漏掉组合证据。Grounding 标签的重叠奖励与这个无 grounding 标签但仍有 QA 真值的 proxy 也必须分账。<!-- source-family:SF-2026-ARXIV-2602-18702 -->
+
+[最后片段诊断的有限证据](https://arxiv.org/html/2602.18702v1)来自 Qwen2.5-VL-7B 的最多三轮视频 QA；独立更大模型检查 last clip 仍有 medium slice 反侧，不认证完整证据充分性或内部 faithfulness。最后正确才启用的 gate 也不等于惩罚全部失败探索。额外视觉 token、单片段 checker、两阶段训练和解析失败后的重试均付费，HR 与 LR 不能只按调用次数比较。片段组合、消费者或净费用无法核验时，保留原媒体与固定预处理，按需增加同前缀反事实或独立 evidence review，而不以一次自确认成功替代真实观察、权限或最终验证。
+
+如果工具不是裁剪已有观测，而是执行程序渲染新的diagram，返回图像还必须标明假设来源：它可外置并检查模型提出的几何/逻辑关系，却不是新增独立世界证据。正确答案、代码可执行与teacher判断“适合画图”分别约束outcome、execution和训练激励；即使teacher tag提高visual-invocation reward，也不能替代同前缀的实测调用收益或图中关系真实性。Figure It Out的受限recipe还对不适合但正确执行的draw给正奖励，因此不能由公式宣称已惩罚所有无效调用；嵌套消融、额外teacher标注/多轮生成与推荐配置不同不隔离全部因果收益。假设不可信、额外调用无益或预算耗尽时，保留原观察、model-only路径、外部验证或人工核对，executor继续拥有运行权限与资源边界。<!-- source-family:SF-2026-ARXIV-2512-24297 -->
 
 多模态任务还要决定 perception 是 Context 的固定预处理，还是一个按需 Tool。把全部媒体先编码，控制流最简单，
 但长视频/高分辨率会耗尽 token 并因 downsampling 丢细节；把 crop、ASR、OCR、frame seek 暴露成工具，可以由
@@ -542,6 +572,8 @@ Sandbox、permission 和 schema validation 在 effect 前限制“允许做什�
 
 Preventive Gate 还应验证 action 是否仍指向用户批准的对象，而不只验证语法。内容锚定的 search/replace 或带上下文 diff 在目标漂移时更容易显式失败；行号、函数名等位置锚定若仍能解析，却可能把改动静默施加到错误位置。执行器应在 effect 前重新匹配唯一 anchor、检查 expected old content，并在多匹配、零匹配或版本变化时拒绝；这用较低 applicability 和一次额外检查换取把 silent corruption 变成可恢复失败。作者在 shell command 与代码 edit benchmark 上的结果支持该失效分界，不证明其静态 verifier 覆盖任意工具、语言或并发文件修改。<!-- source-family:SF-2026-ARXIV-2609-11957 -->
 
+跨文件重命名把这个分界再向前推进一步：从用户已批准的 seed 与接受/拒绝反馈推得的 DeclaredScope，只是寻找候选对象的 pattern 与 guards，不是整片 scope 的授权。IDE preconditions 可以检查特定 AST 对象的变换，却不能证明这个对象符合用户意图；按名称、类型和最近行号做 best-effort 匹配，即使得到有效 refactoring object，也可能选错目标，仍需唯一对象与 expected old content 检查，无法可靠匹配时显式失败而非猜测执行。候选范围、对象变换合法性和逐项批准因此分别验收；comments 的 find-replace 另需回归检查，不能继承 AST rename 的保证。[CoRename v1 §4.1.1–4.1.2/5.3/7](https://arxiv.org/html/2601.00482v1) 给出这一 scope-refinement 分支，但其 oracle 模拟接受不证明真实人工判断可靠；scope inference、IDE 检查与人工审阅都有额外成本，反馈收敛或 iteration limit 也不证明所有目标已找全。<!-- source-family:SF-2026-ARXIV-2601-00482 -->
+
 position paper 或事故集合只能支持这种责任分离，不能证明某组 gate 足以覆盖所有工具。不可逆动作提高前置门槛，只读动作可以容许更轻量的后验验证；证据缺失时应返回未完成或请求人工，而不是让模型自证成功。
 
 对文件系统变更，后验 diff 若只在真实文件已被修改后出现，审阅已经太晚。可以在实际文件访问层先将 mutation 留在受控 staged view：内容进入 flat store，路径重命名/删除由 override tree 表达，append-only journal 记录操作和分支，用户另行决定 commit。Agent 的 snapshot/travel 只改变当前候选视图，失活分支仍保留审计；内容、路径解释与提交权各有明确责任，而不依赖模型先生成一份正确命令。<!-- source-family:SF-2026-ARXIV-2604-13536 -->
@@ -736,6 +768,16 @@ schema/version 与权限检查通过后，结果才能注入模型状态。它�
 
 ## Review notes
 
+- `SF-2026-ARXIV-2602-16429` — Daily `2026-02-20`；[TabAgent exact-v1](https://arxiv.org/html/2602.16429v1) §3–6。2+2+2=6，trace-state/candidate→pointwise head的具体shortlist接口差额定点深入；成功轨迹标签不是独立GT，novel composition/Spotify反退与feature/训练/整链成本相邻。不采headline巨大局部倍数，未核实现或复现；root必要原源/actual owner PRE通过，root非作者实际正文/完整邻接/自身末注POST通过，窄锁释放，非日级Gate。
+
+- `SF-2026-ARXIV-2602-10915` — Daily `2026-02-13`；[Aura exact-v1](https://arxiv.org/html/2602.10915v1) §2/4.4.5/5及6.3。2+2+2=6，安全受影响深入；只整合virtual/default display observation与真实provider/权限身份差额，预装特权、mock/真实GUI非matched与optimistic不可回滚反侧近正文。root必要原源/current owner/邻接PRE通过授Ch78窄锁，实际两段及末注已写，root实际核正文、完整邻接与末注，非作者POST通过、窄锁释放，不授日级。未核kernel/TEE实现或复现。
+
+- `SF-2026-ARXIV-2601-05366` — Daily `2026-01-13`；exact-v1 §3–5。仅采用query语义与参数执行值语言分测；canonical/display分账为工程推导，BFCL固定接口单轮不授生产多轮；翻译漂移/低资源反侧保留。未复现；root必要源/owner写前通过，实际写后待复核。
+
+- CoRename exact v1 §4.1.1–4.1.2/5.3–5.4/7：seed/feedback 的候选范围、有效 AST 对象与逐项批准分账；保 closest-match、comment 工具、oracle 模拟接受及成本边界，不采用性能/F1 数字。root 必要原源与 owner 复核通过，root 实际正文与邻接写后复核通过；日级 Gate 尚待。
+
+- `SF-2026-GITHUB-QWEN-CODE-V0111-PR2021`：[v0.11.1](https://github.com/QwenLM/qwen-code/releases/tag/v0.11.1)、[PR2021 exact diff](https://github.com/QwenLM/qwen-code/pull/2021/files)，head f59328aada7155c863f6c304fee304fd22a250d9、merge f770be495ffebc8dd80b661af263ba42fba4e62c。Daily 2026-03-04采用03/03T13:08:44Z release事件，PR早已创建/合并不伪称本窗首次；3+1+3=7。实际读 streamingToolCallParser、converter、turn、coreToolScheduler及相应tests patch；只采原stream完整性状态、Kind.Edit拒绝与nonEdit限制，不授全部provider/工具事务保证。作者源/owner及实际邻接检查完成，root非作者必要primary→实际正文/邻接POST通过；未本地跑测试。
+
 - `SF-2026-ARXIV-2604-13536`（Experimental）：[exact-v1](https://arxiv.org/html/2604.13536v1) §4.1–4.4/§5.2–5.3。实际FS effect层staging：flat contents/path overrides/journal与user commit、non-destructive travel分责，读取须pre-access permission。Linux stacking/Claude Code2.1.45/Sonnet4.6、11隐藏副作用小任务，用户可拒绝不称Agent已纠正；不推网络/进程回滚或事务原子性，成本与直接受控路径保留。root必要来源/实际owner采用通过，实际正文待写后非作者复核，未复现实验。
 - `SF-2026-ARXIV-2604-07536`，Experimental：[exact-v1](https://arxiv.org/html/2604.07536v1) §4.1–4.3/§5–6。入口slice、具体callsite的可选参数传播、LLM debloat与动态声明验证只作为description证据分支；不采静态soundness、semantics-preserving或“eliminate root”保证。52tools/12MCPservers/208合成任务经人工核目标tool和完成情况，生成与执行模型/任务选择均受限；adaptive identifier攻击15轮的选择率仍44.7%～67.4%，无单调上升不证明无攻击。原文假定显式注入防御有效、库函数不展开，动态验证占主要生成成本；runtime开销只测三种描述都成功的任务子集，不外推全部失败路径或生产SLO。相邻Ch77保有外部Memory的来源/权限，Ch79按实际observation推进Plan；本章仅承载入口能力与metadata对齐。未运行artifact/复现实验，待root独立写后复核。
 
@@ -883,3 +925,15 @@ Primary-source 入口：
 
   **写回边界：** static shortlist 扩展为 bounded revisable discovery frontier；检索分支只拥有 proposal，executor 仍验证 schema、version、authorization 与 effect dependency，开放目录安全和生产尾延迟未被证明。
 <!-- daily-books-trace:SF-2026-ARXIV-2605-02411:end -->
+
+- `SF-2026-ARXIV-2512-24297` — Daily `2026-01-02`；[Figure It Out exact-v1](https://arxiv.org/html/2512.24297v1) §3.1–3.3/Eq9、§4.3/Table2。5分具体generated-diagram gap深入，仅采用hypothesis/source evidence与teacher suitability/反事实收益分责；Qwen3VL32B/3round/32768token有限设置，不授渲染成功即外部证据、调用总有益或组合对照唯一因果。未运行代码；root必要原源/owner通过，实际正文/前后邻接及末注写后经root非作者复核通过。
+
+- `SF-2026-ARXIV-2602-15197` — Daily `2026-02-19`；[OpaqueToolsBench/ToolObserver exact-v1](https://arxiv.org/html/2602.15197v1) §3–5.2/7、Table2/4。2+1+2=5，black-box trajectory-derived metadata差额受影响深入；offline gold/online执行反馈分账，不授语义/授权证明。已知参数小收益、weak模型反胜与FullSearch调用反增、Table4/6身份或数值错置近证据，不授整体token/生产可靠性保证。root必要原源/实际78及77/79邻接PRE通过并授窄锁；root已实际顺读正文L51–76及末注，非作者POST通过，窄锁释放；未核代码或复现，未授日级Gate。
+
+- `SF-2026-ARXIV-2602-17245` — Daily `2026-02-21`；[Web Verbs exact-v1](https://arxiv.org/html/2602.17245v1) §3.1/4.1、§4.3/Table1、§6。2+2+2=6，website-owner public-locator/compatibility责任的具体owner缺口深入；record/debug/typed-wrapper 是有限原型，标准化、权限与安全尚未落实，100vs10人口及成功子集时延不授普遍性能。维护费与rawGUI/API回退近文。root必要原源/actual owner PRE通过并授自身窄锁；作者实际正文及邻接已顺读，root非作者实际正文/完整邻接/自身末注POST通过，窄锁释放。未核实现或复现，非日级验收。
+
+- `SF-2026-ARXIV-2602-18571` — Daily `2026-02-25`；[exact-v1](https://arxiv.org/html/2602.18571v1) §4.3/5.4–5.5/6.2/6.3.3/7。采用 observation 调用的可达性前置条件与五层证据分账，不将至少一次调用当有效诊断。Java/Python 差异、可构建与 attach 前提、25-step 上限、正确诊断后错修及未计 debugger compute 近正文；不扩大权限，不强制所有 bug。root 必要原源与实际 owner PRE 通过并授自身窄锁；作者实际顺读正文、完整邻接及自身末注；root 非作者 actual POST 通过，窄锁释放。未核实现或复现实验，非日级验收。
+
+- `SF-2026-ARXIV-2602-18702` — Daily `2026-02-25`；[exact-v1](https://arxiv.org/html/2602.18702v1) §3.5/4.1/4.5。2+1+2=5，last-clip 单独 consumer answerability 与同prefix边际gain责任差额定点深入；GT/最终正确gate、组合证据、medium反侧与视觉/checker/重试成本近文，不授因果或安全。root必要原源/actual owner PRE通过并授两段窄锁；作者实际正文、完整邻接与自身末注顺读，root 非作者 actual POST 通过，窄锁释放，未核实现或复现，非日级验收。
+
+- `SF-2026-ARXIV-2602-22764` — Daily `2026-02-28`；[exact-v1](https://arxiv.org/html/2602.22764v1) 必要blocks93–111/115–117/123–132，1+1+3=5；fresh非原packet作者实际必要原证/actual owner核，final_audit独立PRE通过后获窄锁。只采用复现成功→选择真实instrument trace及缺失值/覆盖接口，费用、直接反侧与原路径回退近正文。作者已实际顺读正文/完整邻接及自身末注，待root非写入者actual POST；未核artifact/复现，不授一般保证或日级。

@@ -1,0 +1,373 @@
+URL https://arxiv.org/html/2602.05711v1 PARSED_LINES 1008 MAIN_STOP 372
+0: OmniMoE: An Efficient MoE by Orchestrating Atomic Experts at Scale
+1: Report GitHub Issue
+2: ×
+3: Title:
+4: Content selection saved. Describe the issue below:
+5: Description:
+6: Submit without GitHub
+7: Submit in GitHub
+8: arXiv is now an independent nonprofit!
+9: Learn more
+10: ×
+11: Back to arXiv
+12: Why HTML?
+13: Report Issue
+14: Back to Abstract
+15: Download PDF
+16: Abstract
+17: 1 Introduction
+18: 2 Methodology
+19: 2.1 Atomic Experts and Dynamic Expert Assembly
+20: 2.2 Cartesian Product Router
+21: 2.3 Expert-Centric Scheduling
+22: 3 Experiments
+23: 3.1 Experimental Setup
+24: 3.2 Main Results
+25: 3.3 Ablation Studies
+26: 4 Related Work
+27: 5 Conclusion
+28: References
+29: A Complexity Analysis
+30: Routing Complexity Derivation.
+31: Top-KK Selection Complexity.
+32: Memory Traffic Analysis for Scheduling.
+33: Scheduling Overhead and Token Traffic.
+34: B Experimental Setup
+35: C Expert Parallelism Communication Overhead
+36: Scalability with Number of Experts.
+37: Scalability with Sequence Length.
+38: License: CC BY 4.0
+39: arXiv:2602.05711v1 [cs.CL] 05 Feb 2026
+40: OmniMoE: An Efficient MoE by Orchestrating Atomic Experts at Scale
+41: Jingze Shi
+42: Affiliation: The Hong Kong University of Science and Technology (Guangzhou)
+43: Zhangyang Peng
+44: Affiliation: The Hong Kong University of Science and Technology (Guangzhou)
+45: Yizhang Zhu
+46: Affiliation: The Hong Kong University of Science and Technology (Guangzhou)
+47: Yifan Wu
+48: Affiliation: The Hong Kong University of Science and Technology (Guangzhou)
+49: Guang Liu
+50: Affiliation: Beijing Academy of Artificial Intelligence
+51: Yuyu Luo
+52: Affiliation: The Hong Kong University of Science and Technology (Guangzhou)
+53: Correspondence to: yuyuluo@hkust-gz.edu.cn
+54: Abstract
+55: Mixture-of-Experts (MoE) architectures are evolving towards finer granularity to improve parameter efficiency. However, existing MoE designs face an inherent trade-off between the granularity of expert specialization and hardware execution efficiency.
+56: We propose OmniMoE, a system–algorithm co-designed framework that pushes expert granularity to its logical extreme. OmniMoE introduces vector-level Atomic Experts, enabling scalable routing and execution within a single MoE layer, while retaining a shared dense MLP branch for general-purpose processing.
+57: Although this atomic design maximizes capacity, it poses severe challenges for routing complexity and memory access. To address these, OmniMoE adopts a system-algorithm co-design: (i) a Cartesian Product Router that decomposes the massive index space to reduce routing complexity from O⁡(N)O(N) to O⁡(N)O(\sqrt{N}); and (ii) Expert-Centric Scheduling that inverts the execution order to turn scattered, memory-bound lookups into efficient dense matrix operations. Validated on seven benchmarks, OmniMoE (with 1.7B active parameters) achieves 50.9% zero-shot accuracy across seven benchmarks, outperforming coarse-grained (e.g., DeepSeekMoE) and fine-grained (e.g., PEER) baselines. Crucially, OmniMoE reduces inference latency from 73ms to 6.7ms (a 10.9×\times speedup) compared to PEER, demonstrating that massive-scale fine-grained MoE can be fast and accurate. Our code is open-sourced at https://github.com/flash-algo/omni-moe.
+58: Keywords:
+59: Machine Learning, ICML
+60: 1 Introduction
+61: Figure 1:
+62: Activation Patterns and System Optimization.
+63: (a) Coarse-grained MoE activates large experts, inevitably involving redundant parameters and wasting computation. (b) Fine-grained MoE improves parameter efficiency, but suffers from bandwidth bottlenecks due to scattered, fragmented memory accesses. (c) Our OmniMoE employs a universally activated shared dense MLP, and uses expert-centric scheduling to reorganize fine-grained expert fetches into contiguous, coalesced memory accesses, achieving both high parameter efficiency and hardware-efficient execution.
+64: Mixture-of-Experts (MoEs) has emerged as a key approach to mitigating scaling bottlenecks by partially decoupling model capacity from per-token computation (Fedus et al., 2022).
+65: By activating only a subset of experts for each token, MoEs allow for massive parameter scaling while maintaining manageable inference budgets.
+66: A central design choice in MoE is the granularity of experts, which largely determines both routing precision and system efficiency. Broadly, existing designs fall into two categories: coarse-grained MoEs and fine-grained MoEs.
+67: Coarse-Grained MoEs.
+68: Coarse-grained architectures represent the dominant paradigm in contemporary large-scale language models. Representative systems (Du et al., 2022; Jiang et al., 2024; Zoph et al., 2022) such as DeepSeek-V3 (DeepSeek-AI et al., 2025) (256 experts) and KIMI-K2 (Team et al., 2025) (384 experts) instantiate each expert as a complete dense FFN, benefiting from hardware-efficient dense matmuls (via Tensor Cores), contiguous VRAM access, and
+69: shared-expert general knowledge and training stability
+70: (Dai et al., 2024; Nguyen et al., 2025; DeepSeek-AI et al., 2025; Team et al., 2025).
+71: Despite the success, coarse-grained MoEs inherently suffer from imprecise activation (Szatkowski et al., 2024) and low flexibility. Specifically, activating large expert blocks incurs computation on parameters irrelevant to specific tokens (orange nodes in Figure 1 (a)), leading to computational waste (Cheng et al., 2025; Li et al., 2023; Szatkowski et al., 2024).
+72: Moreover, their rigid size hinders adaptation to limited hardware:
+73: coarse granularity restricts scaling flexibility, forcing steep, discrete memory increments, when adjusting expert counts.
+74: Fine-grained MoEs. Fine-grained architectures seek to maximize expressivity by utilizing millions of lightweight experts (e.g., embeddings).
+75: MoE scaling-law analyses (Ludziejewski et al., 2024; Clark et al., 2022) suggest that, under a fixed training-token budget, performance improves with the total number of activated experts.
+76: This motivates fine-grained MoEs (He, 2024; Nogueira dos Santos et al., 2024) that use extra lightweight experts. For example, PEER (He, 2024) scales to millions of experts by adopting a Product Key Memory (PKM (Lample et al., 2019)) style design, enabling precise routing and fine-grained control over both model capacity and activated parameters through smooth scaling.
+77: However, scaling fine-grained experts to massive magnitudes introduces three system challenges.
+78: (i) Limited expressivity: existing designs (e.g., PEER (He, 2024)) reduce experts to static parameter vectors. This restricts the expert computation to linear vector aggregation, stripping away the token-dependent nonlinear transformations (e.g., MLP projections) essential for modeling complex linguistic dependencies.
+79: (ii) Routing overhead: scaling to a large expert pool increases routing cost and load imbalance, resulting in skewed expert utilization at scale.
+80: (iii) Hardware inefficiency: scattered activations trigger random memory I/O, shifting execution from compute-bound to memory-bound and degrading GPU utilization.
+81: As illustrated in Figure 1(b), while fine-grained experts ensure precise activation, the active parameters are inherently scattered across memory, which triggers frequent, non-contiguous memory accesses, inevitably shifting the execution bottleneck from computation to memory bandwidth.
+82: While coarse-grained MoEs benefit from hardware-friendly architecture, the fine-grained ones leverage high activation efficiency and flexibility.
+83: This raises a key question: Is it possible to reconcile the parameter efficiency of fine-grained models with the hardware efficiency of coarse-grained architectures?
+84: Realizing this synergy is non-trivial. It requires a holistic orchestration that simultaneously enhances the expressivity of fine-grained experts, minimizing routing overhead in large expert spaces, and reshaping irregular sparse accesses into hardware-efficient execution.
+85: Figure 2:
+86: Overview of the OmniMoE Architecture.
+87: The framework operates via two parallel pathways to balance efficiency and expressivity.
+88: (a) Dynamic Expert Assembly (Top): For Longtail Knowledge Retrieval objective, we employ a Cartesian Product Router (decomposed into Row/Column routers) to efficiently compute routing scores 𝐠x\mathbf{g}_{x} and identify the top-KK expert indices ℐx\mathcal{I}_{x}.
+89: Then the system dynamically retrieves specific parameter slices from the global matrices W,VW,V to assemble compact, token-dependent parameter blocks wx,vxw_{x},v_{x} for the final gated projection.
+90: (b) Shared Expert (Bottom): A dense MLP which is always active to handling General Semantics.
+91: The final output is obtained by aggregating the outputs from the sparse, routed branch and the shared dense branch.
+92: Our Methodology and Contributions. To address the aforementioned challenges, we propose OmniMoE, a system-algorithm co-designed MoE framework that synergizes the precise parameter activation of fine-grained experts with the hardware efficiency of coarse-grained designs. The core architectural innovation lies in a hybrid parallel design that combines a shared dense MLP for capturing general semantic knowledge, with a massive pool of routed fine-grained experts that specialize in long-tail knowledge retrieval. To orchestrate the activation of these fine-grained experts at scale, we introduce three tightly integrated contributions that jointly resolve the key bottlenecks.
+93: First, to maximize model capacity and routing precision, we push expert granularity to its logical extreme by introducing the Atomic Expert, a minimal routable unit parameterized by a pair of vectors, and propose a corresponding Dynamic Expert Assembly (DEA) mechanism to organize and compose massive experts.
+94: This formulation enables scaling to a massive expert pool and supports highly specialized, token-specific, high-expressivity parameter compositions.
+95: However, orchestrating large-scale atomic experts poses an unprecedented routing challenge: standard approaches would incur prohibitive routing overhead. To address this, we introduce the Cartesian Product Router. It decomposes the massive, 1D expert index space into a two-dimensional grid. By factorizing the routing computation into two independent, low-dimensional projections,
+96: it reduces the routing cost from linear in NN to proportional to N\sqrt{N}, making large-scale expert routing practical and efficient.
+97: With routing no longer the bottleneck, the key challenge in our orchestration shifts to hardware inefficiency: fine-grained routing induces highly scattered atomic expert accesses, leading to poor locality and low GPU efficiency.
+98: To overcome this final obstacle, we developed Expert-Centric Scheduling. This systemic contribution inverts the execution paradigm from token-centric to expert-centric. By reordering computations, it groups requests targeting the same experts, thereby converting scattered memory lookups into contiguous, reusable reads and enabling the use of high-throughput Grouped GEMM operations.
+99: In summary, OmniMoE is a system-algorithm co-designed framework that orchestrates fine-grained expert activation, from atomic expert formulation to efficient routing and hardware-aware scheduling, achieving both high model expressivity and hardware efficiency at scale.
+100: As illustrated in Figure 1, our heterogeneous architecture eliminates redundant computation inherent to coarse-grained MoEs, while our scheduling strategy resolves bandwidth bottlenecks caused by scattered, non-contiguous memory accesses under fine-grained routing. Extensive experiments demonstrate that OmniMoE achieves superior performance with 10.9×\times speedup compared to state-of-the-art baselines. Our code is open-sourced at https://github.com/flash-algo/omni-moe.
+101: 2 Methodology
+102: We first formalize the general MoE architecture. A standard MoE layer comprises a pool of NN experts 𝔼={E1,…,EN}\mathbb{E}=\{E_{1},\dots,E_{N}\} and a routing function 𝒢⁡(⋅):ℝd→ℝN\mathcal{G}(\cdot):\mathbb{R}^{d}\rightarrow\mathbb{R}^{N}. Several MoE variants (Dai et al., 2024; DeepSeek-AI et al., 2025; Team, 2025) incorporate a shared dense MLP that remains universally activated for all inputs. For each input token with representation x∈ℝdx\in\mathbb{R}^{d}, where d is the dimension of hidden states, the router computes routing scores and selects a subset of KK experts identified by indices ℐx\mathcal{I}_{x}.
+103: ℐx=(I0,…,IK−1)=TopK⁡(𝒢⁡(x),K)\mathcal{I}_{x}=(I_{0},\ldots,I_{K-1})=\operatorname{TopK}(\mathcal{G}(x),K)
+104: (1)
+105: where IiI_{i} is the index of the ii-th activated expert. And the routing weight gig_{i} for each expert EIiE_{I_{i}} could be calculated by
+106: gi=Softmax⁡(𝒢⁡(x)​[ℐx])i,i∈[0,K)g_{i}=\operatorname{Softmax}(\mathcal{G}(x)[\mathcal{I}_{x}])_{i},i\in[0,K)
+107: (2)
+108: Finally, the layer output is the weighted sum of these activated experts:
+109: y=∑i∈[0,K)gi⋅EIi​(x)+MLP​(x)y=\sum_{i\in[0,K)}g_{i}\cdot E_{I_{i}}(x)+\text{MLP}(x)
+110: (3)
+111: OmniMoE Overview.
+112: Figure 2 illustrates the overall architecture of OmniMoE.
+113: Our design follows the standard MoE formulation in Eq. 3.
+114: Furthermore, OmniMoE instantiates the activated experts as Atomic Experts (Section 2.1) and uses our Dynamic Expert Assembly (DEA) mechanism to retrieve and assemble token-conditioned parameters on the fly, enabling the routed branch to operate at a much finer granularity than conventional FFN experts.
+115: In parallel, we retain a dense MLP as a shared expert to provide general semantic reasoning and stable capacity that is independent of routing.
+116: The final representation is obtained by summing the shared dense branch and the routed fine-grained branch.
+117: The remainder of this section introduces (i) how we parameterize and store atomic experts efficiently (Section 2.1), (ii) how we route over massive expert spaces (Section 2.2), and (iii) how we schedule the resulting sparse computations to maximize hardware efficiency (Section 2.3).
+118: 2.1 Atomic Experts and Dynamic Expert Assembly
+119: In this section, we introduce the core components of our fine-grained expert design. We first define the atomic expert as the minimal routable computational unit. We then present Dynamic Expert Assembly (DEA), our proposed mechanism for logically organizing these atomic units. Specifically, DEA enables the model to dynamically retrieve a sparse set of atomic experts from a global pool and compose them into a token-conditioned assembled expert.
+120: An atomic expert EiE_{i} is defined as a minimal, lightweight computational unit parameterized by an input vector wii​n∈ℝdw^{in}_{i}\in\mathbb{R}^{d} and an output vector wio​u​t∈ℝdw^{out}_{i}\in\mathbb{R}^{d}. Given a token representation x∈ℝdx\in\mathbb{R}^{d}, its computation is:
+121: Ei​(x)=σ⁡(x​wii​n⊤)​wio​u​tE_{i}(x)=\sigma(x{w^{in}_{i}}^{\top})w^{out}_{i}
+122: (4)
+123: where σ⁡(⋅)\sigma(\cdot) is a non-linear activation. Throughout OmniMoE, we instantiate σ⁡(⋅)\sigma(\cdot) with SwiGLU (Shazeer, 2020).
+124: While s single atomic expert exhibits limited expressivity, the strength of our approach arises from the dynamic composition of these experts.
+125: The Dynamic Expert Assembly (DEA) mechanism governs this composition process. For each input token, DEA consists of two steps: (i) Retrieval, where it selects a sparse subset of the most relevant atomic experts from massive global experts, and (ii) Assembly, which composes the retrieved parameters into a computational block.
+126: To make this DEA computationally feasible at scale, the parameters of all NN atomic experts are not stored individually. Instead, they are consolidated into two global parameter matrices, W,V∈ℝN×dW,V\in\mathbb{R}^{N\times d}, which serve as a centralized parameter repository for efficient retrieval and composition.
+127: W=[w0i​n,…,wN−1i​n]⊤,V=[w0o​u​t,…,wN−1o​u​t]⊤W=[w^{in}_{0},\dots,w^{in}_{N-1}]^{\top},\quad V=[w^{out}_{0},\dots,w^{out}_{N-1}]^{\top}
+128: (5)
+129: For a given input token xx, the routing mechanism identifies ℐx⊂{0,…,N−1}\mathcal{I}_{x}\subset\{0,...,N-1\}, the indices of the top-KK most relevant atomic experts, similar to Eq. 1. The Retrieval step of DEA is implemented by gathering the rows indexed by ℐx\mathcal{I}_{x} from the global parameter matrices, yielding compact, token-local parameter blocks:
+130: wx=W⁡[ℐx]∈ℝK×d,vx=V⁡[ℐx]∈ℝK×dw_{x}=W[\mathcal{I}_{x}]\in\mathbb{R}^{K\times d},\quad v_{x}=V[\mathcal{I}_{x}]\in\mathbb{R}^{K\times d}
+131: (6)
+132: Simultaneously, the associated routing scores are collected into a vector 𝐠x=[gI0,…,gIK−1]∈ℝK\mathbf{g}_{x}=[g_{I_{0}},\ldots,g_{I_{K-1}}]\in\mathbb{R}^{K}. The Assembly step is then performed by composing these retrieved parameters and their corresponding weights into a single, fused computation:
+133: y=(𝐠x⊙σ⁡(x​wx⊤))​vx+MLP​(x).y=(\mathbf{g}_{x}\odot\sigma(xw_{x}^{\top}))v_{x}+\text{MLP}(x).
+134: (7)
+135: This formulation demonstrates how DEA effectively constructs a unique, powerful assembled expert for each token by composing simple, reusable atomic experts. This approach ensures that every retrieved parameter is computationally active for the target token, achieving extreme parameter efficiency while maintaining high expressivity.
+136: 2.2 Cartesian Product Router
+137: The primary role of the router is to efficiently select a sparse set of atomic expert indices ℐ\mathcal{I} for the DEA mechanism.
+138: However, scaling to massive expert pools presents a severe indexing challenge.
+139: A standard top-KK router computes routing scores for all experts via a projection matrix Wg∈ℝd×NW_{g}\in\mathbb{R}^{d\times N} and set 𝒢⁡(x)=x​Wg\mathcal{G}(x)=xW_{g} in Eq. 2.
+140: When NN reaches millions, the computational cost of 𝒢⁡(x)\mathcal{G}(x) (O⁡(N​d)O(Nd)) and the memory required to store WgW_{g} becomes prohibitively expensive and often dominates the total inference latency.
+141: Intuition. The key insight is that the one-dimensional expert index space of size NN can be decomposed into the Cartesian product of two lower-dimensional subspaces.
+142: Therefore, to overcome this bottleneck, we introduce the Cartesian Product Router.
+143: Rather than scoring all NN experts with a single NN-way classifier, we view an expert id nn as a 2D coordinate
+144: (i,j)(i,j) on a Nr×NcN_{r}\times N_{c} grid (with N=Nr​NcN=N_{r}N_{c}).
+145: The router predicts two low-dimensional distributions over rows and columns, and composes them to score any
+146: expert on the grid. This is analogous in spirit to product-structured indexing (e.g., PKM (Lample et al., 2019)):
+147: we replace one prohibitively large projection with two small projections, while still addressing the full NN-sized expert space.
+148: Implicit Scoring via Factorized Projections. Our modeling assumption is that the joint probability distribution over the expert grid can be approximated by the product of two independent marginal distributions:
+149: p⁡(i,j|x)≈pr​(i|x)⋅pc​(j|x).p(i,j|x)\approx p_{r}(i|x)\cdot p_{c}(j|x).
+150: (8)
+151: We replace the single routing matrix WgW_{g} with two smaller matrices, Wr∈ℝd×NrW_{r}\in\mathbb{R}^{d\times N_{r}} and Wc∈ℝd×NcW_{c}\in\mathbb{R}^{d\times N_{c}}. For an input token xx, the row and column logits are computed as
+152: sr=x​Wr,sc=x​Wc.s_{r}=xW_{r}\;,\;s_{c}=xW_{c}.\
+153: (9)
+154: Then the log-probabilities for each subspace are then obtained via the LogSoftmax function for numerical stability:
+155: pr=LogSoftmax⁡(sr),pc=LogSoftmax⁡(sc).p_{r}=\operatorname{LogSoftmax}(s_{r})\;,\;p_{c}=\operatorname{LogSoftmax}(s_{c}).
+156: (10)
+157: Since prp_{r} and pcp_{c} are log-probabilities (via LogSoftmax\operatorname{LogSoftmax}), the factorized product becomes additive in log-space: (log⁡p⁡(i,j∣x)≈pr​[i]+pc​[j]\log p(i,j\mid x)\approx p_{r}[i]+p_{c}[j]).
+158: The score for an expert at coordinate (i,j)(i,j) is the sum of the corresponding log-probabilities, which implicitly defines a score matrix 𝒮∈ℝNr×Nc\mathcal{S}\in\mathbb{R}^{N_{r}\times N_{c}} without its materialization:
+159: 𝒮i​j=pr​[i]+pc​[j]\mathcal{S}_{ij}=p_{r}[i]+p_{c}[j]
+160: (11)
+161: Parallel Top-KK Selection.
+162: Although 𝒮∈ℝNr×Nc\mathcal{S}\in\mathbb{R}^{N_{r}\times N_{c}} is never materialized, its entries can be computed on-the-fly as described in Eq. 11 from the global vectors prp_{r} and pcp_{c}.
+163: We therefore partition the implicit grid into tiles and assign each tile to parallel GPU thread blocks.
+164: Each block computes scores for its tile and extracts local top-KK candidates. These candidates are then merged via a lightweight reduction to obtain the global top-KK expert indices ℐx\mathcal{I}_{x}. The routing weights 𝐠x\mathbf{g}_{x} are computed by normalizing the corresponding top-KK scores according to Eq. 2.
+165: Complexity Analysis.
+166: The factorized router reduces the projection cost (and router parameter size) from O⁡(N​d)O(Nd) to O⁡(N​d)O(\sqrt{N}d). Top-KK selection is performed on the implicit grid via a tiled GPU search and reduction; although the total score-evaluation work still scales with NN, it is highly parallel and incurs negligible wall-clock overhead in practice. See Appendix B for the full derivation and details.
+167: Figure 3:
+168: Comparison of Execution Paradigms: Token-Centric vs. Expert-Centric Scheduling.
+169: (a) Conventional: Tokens independently fetch parameters from scattered experts, leading to random memory accesses (high load overhead) and fragmented vector-vector computations that underutilize on-chip SMs.
+170: (b) Our Approach: We invert the execution order using expert-centric scheduling.
+171: Left-to-Right: First, tasks are reordered: we compress active experts into dense groups (e.g., experts 0–3 are grouped into Group 1) and sort tasks by Token ID within each group.
+172: Matrix Fusion: This reorganization allows us to merge individual token-expert pairs into dense tensors.
+173: Instead of scattered ops, the GPU executes efficient Grouped GEMM kernels (rightmost block), where a block of expert weights is loaded once and reused across stacked tokens, maximizing Tensor Core utilization and memory bandwidth.
+174: 2.3 Expert-Centric Scheduling
+175: The Cartesian Product Router (Section 2.2) operates on a per-token basis: for each input token xx, it efficiently selects the top-KK expert indices ℐx\mathcal{I}_{x} and computes gating weights 𝐠𝐱\mathbf{g_{x}}. In practice, however, execution processes a batch of tokens 𝒳={xl}l=0L−1\mathcal{X}=\{x_{l}\}_{l=0}^{L-1}. While routing is efficient, token-centric execution becomes a bottleneck at batch scale: each token independently fetches its selected expert parameters from HBM via scattered accesses, fragmenting memory traffic and preventing vectorization, thus limiting throughput.
+176: To address this, we propose Expert-Centric Scheduling. Unlike standard static approaches that iterate over all experts, our method dynamically organizes computation based on active experts. The pipeline proceeds as follows: we first collect routed computation tasks, group physically nearby experts, then reorder tasks according to these groups to improve locality, and finally execute the resulting workloads using high-throughput GEMM kernels.
+177: Task Collection and Active Expert Compression.
+178: For a batch of LL tokens 𝒳={xl}l=0L−1\mathcal{X}=\{x_{l}\}_{l=0}^{L-1} with top-KK routing, the router returns, for each token ll, an ordered expert index list ℐl=(Il,0,…,Il,K−1)\mathcal{I}_{l}=(I_{l,0},\ldots,I_{l,K-1}) and the corresponding gating weights 𝐠l=(gl,0,…,gl,K−1)\mathbf{g}_{l}=(g_{l,0},\ldots,g_{l,K-1}), where gl,kg_{l,k} denotes the routing weight assigned to expert Il,kI_{l,k}. We first flatten these decisions into a list of M=L×KM=L\times K tasks:
+179: 𝒯~={(xl,Il,k,gl,k)|l∈[0,L),k∈[0,K)}\tilde{\mathcal{T}}=\big\{(x_{l},\,I_{l,k},\,g_{l,k})\;\big|\;l\in[0,L),\,k\in[0,K)\big\}
+180: (12)
+181: and collect the set of unique active experts 𝔼active=⋃x∈𝒳ℐx\mathbb{E}_{\text{active}}=\bigcup_{x\in\mathcal{X}}\mathcal{I}_{x}, sorted by global expert ID. We then partition this ordered list into contiguous groups of size BB, so that experts with nearby IDs are placed in the same group.
+182: Specifically, the τ\tau-th expert in 𝔼a​c​t​i​v​e\mathbb{E}_{active} is assigned to group qτ=⌊τ/B⌋q_{\tau}=\lfloor\tau/B\rfloor.
+183: Consequently, the number of execution groups is determined solely by the active sparsity, i.e., Ng​r​o​u​p​s=⌈|𝔼a​c​t​i​v​e|/B⌉N_{groups}=\lceil|\mathbb{E}_{active}|/B\rceil, ensuring that every compute group (except the last) is fully populated.
+184: Hierarchical Sorting.
+185: We reorganize the tasks 𝒯~\tilde{\mathcal{T}} by performing a hierarchical sort. The primary key is the Group ID qq, and the secondary key is the Token ID ll.
+186: 𝒯=Sort⁡(𝒯~,keys=(q,l))\mathcal{T}=\operatorname{Sort}(\tilde{\mathcal{T}},\text{keys}=(q,l))
+187: (13)
+188: This sorting strategy improves hardware efficiency at two levels: (i) Inter-Group Locality: tasks targeting the same set of BB active experts are clustered together; (ii) Intra-Group Coalescing: within each group, processing tasks in increasing order of token ID ll improves coalescing for input reads and output scatters.
+189: Grouped GEMM Execution. After hierarchically sorting the tasks, we process each of the Ng​r​o​u​p​sN_{groups} active groups. For a given group qq, we first gather the corresponding expert parameters into dense blocks Wq,Vq∈ℝB×dW_{q},V_{q}\in\mathbb{R}^{B\times d}. Concurrently, we stack the input tokens and gating weights for all tasks assigned to this group, forming a dense input tensor 𝐗q∈ℝTq×d\mathbf{X}_{q}\in\mathbb{R}^{T_{q}\times d} and a gating vector 𝐆q∈ℝTq×B\mathbf{G}_{q}\in\mathbb{R}^{{T_{q}}\times B}, where TqT_{q} denotes the number of tasks in group qq. The entire computation is then performed by a single fused operation:
+190: 𝐎q=(𝐆q⊙σ⁡(𝐗q​Wq⊤))​Vq\mathbf{O}_{q}=(\mathbf{G}_{q}\odot\sigma(\mathbf{X}_{q}W_{q}^{\top}))V_{q}
+191: (14)
+192: where 𝐎q∈ℝTq×d\mathbf{O}_{q}\in\mathbb{R}^{T_{q}\times d} is the output block. The per-task outputs are subsequently written back via scatter-add, preserving the semantics of Eq. 7.
+193: Why Expert-Centric Scheduling is Efficient.
+194: As illustrated in Figure 3, unlike the token-centric paradigm, our expert-centric approach clusters spatially proximate experts into contiguous groups, reorders tasks by token ID within each group, and fuses the resulting workloads into a small number of high-throughput Grouped GEMM kernels.
+195: By executing tasks in expert-centric order and sorting by token ID within each group, we increase parameter reuse and improve memory locality, which raises effective bandwidth and enables high-throughput Grouped GEMM execution.
+196: A detailed complexity analysis is deferred to Appendix A.
+197: 3 Experiments
+198: 3.1 Experimental Setup
+199: Model Architectures.
+200: We compare six FFN variants: (i) Dense (standard MLP), (ii) Gshard (Lepikhin et al., 2021), (iii) DeepSeekMoE (Dai et al., 2024), (iv) PKM (Lample et al., 2019), (v) PEER (He, 2024), and (vi) OmniMoE (ours). All models adopt Grouped Query Attention (GQA) (Ainslie et al., 2023). For fair comparison, we keep the Transformer backbone identical across methods (depth, width, and attention configuration) and vary only the FFN module. It is important to emphasize that we prioritize architectural comparison via controlled pre-training from scratch rather than comparing against off-the-shelf checkpoints. We define the activated-parameter budget as the number of unique parameters utilized in the forward pass of a single token, including embeddings, attention weights, the shared dense FFN, router projections, and the top-KK active MoE experts. For efficiency baselines, we ensure state-of-the-art implementations (see Appendix B for details).
+201: We evaluate OmniMoE under three complementary settings. For Speed and Memory Benchmarking, we fix a 200M backbone and sweep the activated-parameter budget (Act Params) and the number of activated tokens (Act Tokens) as summarized in Table A (see Appendix B). For scaling-law experiments, we train MoE families with 280M-A80M, 800M-A200M, 2.7B-A680M, and 6.4B-A1.7B configurations (where A denotes the activated parameter budget) alongside their Dense counterparts with matched activated parameters, using matched backbones and training recipes across baselines (Table B in Appendix B). For downstream evaluation, we report zero-shot results using the 6.4B-A1.7B models.
+202: Training Data and Tokenization.
+203: Models are pre-trained on the SmolLMCorpus (Ben Allal et al., 2024), a high-quality corpus of 40 billion tokens spanning Web, Textbook, Code, and Math domains. This diverse mixture establishes fundamental linguistic proficiency and broad general knowledge. We employ the NeoX tokenizer (Black et al., 2022) with a vocabulary size of 128,256 tokens.
+204: Training Strategy and Hyper-Parameters.
+205: We use the AdamW optimizer (Loshchilov & Hutter, 2017) with the WSD learning rate scheduler (Hägele et al., 2024). Hyperparameters follow optimal scaling laws (Li et al., 2025) and Chinchilla compute-optimality protocols (Hoffmann et al., 2022). We run experiments in the NVIDIA PyTorch container (NVIDIA, 2022) with Hugging Face Transformers (Wolf et al., 2020). All inference/evaluation runs use a single node with 8×\times NVIDIA A100 GPUs.
+206: Evaluation Benchmarks.
+207: We evaluate downstream performance with Hugging Face LightEval (Fourrier et al., 2023) on seven benchmarks: MMLU (Hendrycks et al., 2021) (multitask knowledge), TriviaQA (Joshi et al., 2017) (factual recall), ARC (Clark et al., 2018) (science reasoning), PIQA (Bisk et al., 2020) (physical commonsense), HellaSwag (Zellers et al., 2019) (commonsense inference), OBQA (Mihaylov et al., 2018) (open-book QA), and Winogrande (Sakaguchi et al., 2021) (coreference resolution).
+208: 3.2 Main Results
+209: Table 1:
+210: Performance on Downstream Benchmarks for 6.4B-A1.7B MoE Models and the 1.7B Dense Baseline..
+211: The best results for each size are in bold, and the second-best results are underlined. For the pre-trained base model, OmniMoE performs well on most tasks, demonstrating its effectiveness.
+212: Model
+213: MMLU
+214: TriviaQA
+215: ARC
+216: PIQA
+217: HellaSwag
+218: OBQA
+219: WinoGrande
+220: Avg.
+221: acc ↑\uparrow
+222: acc ↑\uparrow
+223: acc ↑\uparrow
+224: acc ↑\uparrow
+225: acc ↑\uparrow
+226: acc ↑\uparrow
+227: acc ↑\uparrow
+228: avg ↑\uparrow
+229: Dense
+230: 35.4
+231: 9.4
+232: 53.4
+233: 72.9
+234: 56.1
+235: 37.0
+236: 57.3
+237: 45.9
+238: Gshard
+239: 36.7
+240: 16.7
+241: 58.3
+242: 75.3
+243: 59.3
+244: 38.7
+245: 59.5
+246: 49.2
+247: DeepSeekMoE
+248: 37.1
+249: 17.4
+250: 60.7
+251: 77.2
+252: 61.2
+253: 38.9
+254: 59.1
+255: 50.2
+256: PKM
+257: 36.3
+258: 12.2
+259: 53.6
+260: 73.8
+261: 52.7
+262: 38.2
+263: 56.7
+264: 46.2
+265: PEER
+266: 37.4
+267: 16.9
+268: 57.4
+269: 75.9
+270: 56.3
+271: 39.1
+272: 59.4
+273: 48.9
+274: OmniMoE (ours)
+275: 37.5
+276: 18.5
+277: 61.0
+278: 78.7
+279: 60.9
+280: 40.3
+281: 59.7
+282: 50.9
+283: Main Results.
+284: We summarize the main empirical findings of OmniMoE from two complementary perspectives: model quality under a fixed active-parameter budget, and system efficiency (latency/memory) when executing the corresponding routed feed-forward computation.
+285: Downstream Performance. As shown in Table 1, our 6.4B-A1.7B model achieves the best average zero-shot accuracy (50.9), outperforming both coarse-grained (e.g., +0.7 vs. DeepSeekMoE) and fine-grained (+2.0 vs. PEER) baselines. The results highlight the benefits of our heterogeneous design: compared to coarse-grained models, OmniMoE’s precision on knowledge-intensive tasks like TriviaQA (+1.1) and OBQA (+1.4) is superior. Conversely, compared to fine-grained models with limited expressivity, OmniMoE’s shared dense expert boosts performance on reasoning-heavy benchmarks such as ARC (+3.6) and HellaSwag (+4.6).
+286: Figure 4:
+287: End-to-End Efficiency Comparison. (a, b) Inference latency and (c, d) peak memory versus activated parameters (left column) and input token count (right column). Baselines include Dense, Gshard, DeepSeekMoE, PKM, and PEER. OmniMoE achieves consistently lower latency than DeepSeekMoE and fine-grained baselines (PKM/PEER), while maintaining a peak memory footprint comparable to coarse-grained MoEs.
+288: Figure 5:
+289: Scaling Laws.
+290: Validation perplexity (lower is better) versus (a) training FLOPs and (b) activated parameters.
+291: OmniMoE consistently outperforms all baselines, achieving the best trade-off between model quality and computational cost.
+292: End-to-End Efficiency and Scalability. Figure 4 demonstrates that OmniMoE is substantially more efficient. Despite activating a comparable or even larger number of parameters (OmniMoE: 28M, PEER: 26M, DeepSeekMoE: 28M), OmniMoE achieves substantially lower latency, reducing inference time from 73 ms (PEER) and 102 ms (DeepSeekMoE) to 6.7 ms at 4,096 tokens, 10.9×\times and 15.2×\times speedup respectively, while maintaining a memory footprint comparable to coarse-grained MoEs. This gain stems directly from Expert-Centric Scheduling, which transforms scattered memory accesses into coalesced, reusable reads, thus shifting the execution from memory-bound to compute-bound.
+293: Interestingly, although DeepSeekMoE uses coarse-grained FFN experts, it can be slower than fine-grained PEER at large token counts or activated budgets. This is largely due to packing/alignment overhead in tiled coarse-grained kernels, where routed tokens must be reordered and padded to fixed block sizes, causing redundant computation and extra memory traffic. In contrast, OmniMoE reshapes fine-grained activations into compact, expert-centric batched matrix operations. We report strict end-to-end latency for all methods, including all scheduling/reordering overheads for OmniMoE and the corresponding layout-transformation/alignment costs for baselines, confirming net gains from improved hardware utilization. Furthermore, we verify the scalability of OmniMoE in distributed training settings (Appendix C). We observe that the communication overhead saturates once the expert pool size exceeds the active token count, demonstrating that OmniMoE can scale to millions of experts with constant communication cost.
+294: Scaling laws (perplexity vs. compute/activated parameters).
+295: Figure 5 compares the scaling behavior of different FFN variants. Under matched training FLOPs, OmniMoE consistently achieves the lowest perplexity among all baselines, indicating superior compute efficiency. Moreover, when controlling for the activated parameter budget, OmniMoE also attains the lowest perplexity, demonstrating higher parameter efficiency. As the activated capacity increases, OmniMoE benefits more steadily from additional experts, reflecting the complementary roles of fine-grained activation for long-tail knowledge and the shared dense MLP branch for stable general reasoning.
+296: 3.3 Ablation Studies
+297: Table 2:
+298: Ablation Study.
+299: All metrics are reported relative to the full model. Lower is better for Latency, Memory, PPL, and Unevenness, Higher is better for Knowledge Performance, Reasoning Performance, and Expert Usage.
+300: Methods
+301: Latency
+302: Memory
+303: PPL
+304: Knowledge Perf.
+305: Reasoning Perf.
+306: Expert Usage
+307: Unevenness
+308: ↓\downarrow
+309: ↓\downarrow
+310: ↓\downarrow
+311: ↑\uparrow
+312: ↑\uparrow
+313: ↑\uparrow
+314: ↓\downarrow
+315: Full
+316: 1.0×
+317: 1.0×
+318: 1.0×
+319: 1.0×
+320: 1.0×
+321: 100%
+322: 0.24
+323: w/o Shared Dense MLP
+324: 0.86×
+325: 0.98×
+326: 1.2×
+327: 0.91×
+328: 0.79×
+329: 100%
+330: 0.27
+331: w/o Cartesian Product Router
+332: 30.6×
+333: 337.5×
+334: 1.4×
+335: 0.66×
+336: 0.79×
+337: 4%
+338: 0.77
+339: w/o Expert-Centric Scheduling
+340: 24.8×
+341: 417.7×
+342: 1.0×
+343: 1.0×
+344: 1.0×
+345: 100%
+346: 0.24
+347: We ablate the three core components of OmniMoE to isolate their individual contributions.
+348: Table 2 isolates the impact of three core components in OmniMoE: (i) the Shared Dense MLP for general stability, (ii) the Cartesian Product Router for routing quality, and (iii) Expert-Centric Scheduling for system efficiency. All metrics are normalized to the full model (lower is better for Latency/Memory/PPL/Unevenness).
+349: To characterize expert utilization, we follow PKM (Lample et al., 2019) and PEER (He, 2024) and report two distribution metrics based on the normalized expert retrieval frequency z∈ℝNz\in\mathbb{R}^{N}:
+350: •
+351: Expert Usage: The fraction of experts activated at least once, defined as 1N​|{i∣zi>0}|\frac{1}{N}|\{i\mid z_{i}>0\}|.
+352: •
+353: Unevenness: The KL divergence from a uniform distribution, computed as DKL(z∥𝒰)=∑izilog(Nzi)D_{\text{KL}}(z\|\mathcal{U})=\sum_{i}z_{i}\log(Nz_{i}), where lower values indicate more balanced load.
+354: Effect of the shared dense MLP. Removing the shared dense MLP slightly improves efficiency (0.86×\times latency, 0.98×\times memory) but hurts both perplexity (1.2×\times) and downstream performance (0.91×\times knowledge and 0.79×\times reasoning).This suggests that the shared dense branch serves as a critical foundational backbone complementary to fine-grained retrieval. It handles common linguistic patterns and reasoning steps, allowing the routed branch to focus exclusively on fetching token-specific long-tail knowledge.
+355: Effect of the Cartesian Product Router. Replacing the Cartesian Product Router with a standard dense routing projection leads to a dramatic efficiency regression (30.6×\times latency and 337.5×\times memory), driven by the cost of computing and storing full-dimension logits. Crucially, it also degrades model quality (1.4×\times PPL). Notably, expert usage collapses to only 4% and unevenness increases from 0.24 to 0.77.
+356: Despite rigorous tuning of the standard auxiliary load-balancing loss for this baseline during training, the naive gate fails to learn distinct specializations over the massive expert space, collapsing into a few dominant experts.
+357: Effect of Expert-Centric Scheduling. Reverting Expert-Centric Scheduling to the standard token-centric execution mechanism preserves quality (metrics remain at 1.0×\times) but incurs a massive system cost (24.8×\times latency and 417.7×\times memory). The peak memory increase corresponds to the materialization of full routing tensors required by the standard baseline, which our scheduling avoids. This confirms that our scheduling strategy is the primary source of acceleration: by inverting the loop order to process experts sequentially, we transform strictly random HBM accesses into streaming reads and maximize on-chip tensor reuse, eliminating the memory bandwidth bottleneck inherent to fine-grained MoEs.
+358: 4 Related Work
+359: MoE Architectures.
+360: Conditional computation via Mixture-of-Experts (MoE) enables scaling model capacity with bounded per-token cost (Shazeer et al., 2017; Sun et al., 2025; Mu & Lin, 2025; Liu et al., 2025). Early MoE Transformers predominantly adopt coarse-grained FFN experts with lightweight routing, exemplified by Switch Transformers’ Top-1 gating (Fedus et al., 2022) and GShard (Lepikhin et al., 2021). Motivated by scaling-law evidence for improved specialization, recent work trends toward finer-grained expert designs (Ludziejewski et al., 2024; Tian et al., 2025); modern LLMs (e.g., DeepSeek-V3 (DeepSeek-AI et al., 2025), KIMI-K2 (Team et al., 2025)) scale to hundreds of experts and often include shared experts to stabilize general knowledge (Dai et al., 2024). Pushing granularity to the extreme, PKM (Lample et al., 2019) and PEER (He, 2024) replace FFNs with million-scale tiny experts (e.g., embeddings), improving routing precision but reducing per-expert expressivity. Additionally, prior work reports redundant activation in FFNs/MoEs (Li et al., 2023; Szatkowski et al., 2024; Zhou et al., 2025; Yang et al., 2024); MoNE (Cheng et al., 2025) prunes computation within activated coarse-grained experts but retains expert-level top-KK routing, whereas OmniMoE routes over atomic experts to enable finer-grained control of activated parameters.
+361: Efficient MoE Systems. System optimizations for MoE generally focus on kernel fusion and communication scheduling for coarse-grained experts. Frameworks such as DeepSpeed-MoE (Rajbhandari et al., 2022), Fast-MoE (He et al., 2021), and MegaBlocks (Gale et al., 2023) optimize GEMM kernels and handle variable-length sequences to mitigate padding overheads in coarse-grained MoEs, whereas our Expert-Centric Scheduling targets fine-grained atomic experts, converting scattered memory accesses into contiguous batched operations.
+362: Recent work like SonicMoE (Guo et al., 2025) improves efficiency with memory-efficient algorithms, minimal activation caching, and tile-aware token rounding to reduce padding waste in Grouped GEMM kernels.
+363: Other works, including PIT (Zheng et al., 2023) and ScatterMoE (Tan et al., 2024), further exploit dynamic sparsity to prune invalid computations within activated coarse-grained experts but retain expert-level top-KK routing.
+364: In contrast, OmniMoE introduces Expert-Centric Scheduling to transform scattered memory accesses into hardware-efficient batched operations.
+365: 5 Conclusion
+366: In this paper, we presented OmniMoE, a system-algorithm co-designed MoE framework that integrates a shared dense MLP for general-purpose reasoning with massive atomic experts for long-tail knowledge retrieval, thereby enabling more precise parameter activation.
+367: To make large scale expert activation practical, OmniMoE orchestrates the activation of atomic experts via two key innovations: the Cartesian Product Router and Expert-Centric Scheduling.
+368: Together, these components yield a dramatic 10.9×10.9\times inference speedup over the state-of-the-art fine-grained baseline, PEER. Moreover, under comparable activated-parameter budgets, OmniMoE consistently improves average accuracy and outperforms strong baselines (e.g., DeepSeekMoE and PEER) on most benchmarks. These results demonstrate that, with holistic co-design, massive-scale fine-grained MoEs can be both accurate and highly efficient.
+369: Impact Statement
+370: This paper presents work whose goal is to advance the field of Machine
+371: Learning. There are many potential societal consequences of our work, none which we feel must be specifically highlighted here.

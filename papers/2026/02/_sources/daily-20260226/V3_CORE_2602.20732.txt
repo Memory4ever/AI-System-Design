@@ -1,0 +1,2747 @@
+CHESS: Context-aware Hierarchical Efficient Semantic Selection for Long-Context LLM Inference
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Challenges of Long-Context Decoding
+2.1
+Scaling Constraints
+Memory wall.
+Compute wall.
+2.2
+Gaps in Prior Approaches
+Metric overhead breaks kernel fusion.
+Token granularity inefficiency.
+Context-agnostic selection.
+Design opportunities.
+3
+Methodology
+High-level workflow.
+3.1
+Hierarchical Semantic Representation
+3.2
+Coarse-to-Fine Selection Mechanism
+3.3
+Adaptive Re-computation Strategy
+4
+System Implementation
+4.1
+Hierarchical Structure Implementation
+Data structures for hierarchical organization.
+4.2
+High-Performance Pruning Implementation
+Batched similarity computation via tensor coalescing.
+4.3
+Integration with FlashInfer
+FlashInfer kernel.
+5
+Experiments
+5.1
+Experimental Setup
+Hardware and software environment.
+Baselines.
+Hyperparameters and configuration.
+5.2
+Quality Evaluation
+5.3
+System Performance
+Throughput analysis.
+Long input/output tasks (scalability and stability ).
+Selection overhead.
+6
+Related Work
+6.1
+Retention Strategy
+6.2
+Selection Metric and Processing Granularity
+7
+Conclusion
+References
+A
+Taxonomy of existing methods
+B
+Theoretical Analysis of CHESS
+B.1
+Semantic Preservation of Hierarchical Pooling
+High-Dimensional Orthogonality
+Selection Consistency
+B.2
+Complexity and System Efficiency
+Computational Complexity
+Zero-Copy Logic
+C
+Choice of reconstructing the context
+D
+Throughput results on other GPUs
+E
+LongBenchV2 table
+License: CC BY-NC-SA 4.0
+arXiv:2602.20732v1 [cs.AI] 24 Feb 2026
+CHESS: Context-aware Hierarchical Efficient Semantic Selection for Long-Context LLM Inference
+Chao Fei
+Affiliation:
+King Abdullah University of Science and Technology (KAUST), Thuwal, Saudi Arabia
+Guozhong Li
+Affiliation:
+King Abdullah University of Science and Technology (KAUST), Thuwal, Saudi Arabia
+Chenxi Liu
+Affiliation:
+Centre for Artificial Intelligence and Robotics, Hong Kong Institute of Science & Innovation, Chinese Academy of Sciences, Hong Kong, China
+Panos Kalnis
+Affiliation:
+King Abdullah University of Science and Technology (KAUST), Thuwal, Saudi Arabia
+Correspondence to:
+panos.kalnis@kaust.edu.sa
+Abstract
+Long-context LLMs demand accurate inference at low latency, yet decoding becomes primarily constrained by KV cache as context grows.
+Prior pruning methods are largely context-agnostic: their token selection ignores step-wise relevance and local semantics, which undermines quality.
+Moreover, their irregular accesses and selection overheads yield only limited wall-clock speedups.
+To address this, we propose
+CHESS
+, an
+algorithm-system co-design
+KV-cache management system.
+Algorithmically, CHESS introduces a context-aware, hierarchical selection policy that dynamically reconstructs a coherent context for the current decoding.
+System-wise, coarse granularity selection eliminates expensive data movement, fully realizing practical acceleration from theoretical sparsity.
+Extensive evaluations demonstrate that CHESS surpasses Full-KV quality using only
+1%
+of the KV cache, delivers low-latency stable inference with up to
+4.56
+×
+\times
+higher throughput, and consistently outperforms other strong baselines.
+Code is available at
+https://anonymous.4open.science/r/CHESS/
+.
+Keywords:
+Large Language Models, KV Cache, Long Context, Attention Mechanism, Uncertainty
+1
+Introduction
+Figure 1
+:
+Context-agnostic vs. context-aware KV selection.
+Red indicates critical tokens, while grey denotes ignored tokens.
+(a)
+Context-agnostic (
+e.g.
+, SnapKV)
+: Preserve the most important tokens based on attention scores.
+(b)
+Context-aware (Ours)
+: Adaptively select segments that are semantically relevant to the current generation and retain local context.
+Large language models (LLMs) now power a broad range of applications, from short-form dialogue and QA
+(
+Hwang et al., 2023
+)
+to agent-based workflows
+(
+Zhang et al., 2025
+)
+, data-processing pipelines
+(
+Narayan et al., 2022
+)
+, and long-form generation
+(
+Kim and Kim, 2025
+)
+, and have become integral to daily use
+(
+Guan et al., 2025
+)
+.
+These scenarios continually expand context windows, making KV-cache management the primary bottleneck for inference.
+During decoding, each new token attends to an expanding prefix, requiring
+O
+⁡
+(
+L
+)
+O(L)
+KV reads per layer from off-chip memory into on-chip SRAM.
+This I/O makes inference memory-bandwidth-bound and causes latency to scale linearly with context length.
+Consequently, the fundamental challenge lies in overcoming this memory-bandwidth bottleneck to achieve efficient long-context inference while preserving the generation quality.
+A promising direction is to retain only a critical subset of tokens in the KV cache.
+Prior work
+(
+Zhang et al., 2023
+;
+Ge et al., 2024
+)
+shows that a small fraction of tokens contributes most to generation, and enables substantial memory and latency reductions with little quality loss.
+However, existing methods typically adhere to a context-agnostic paradigm.
+As illustrated in Figure
+1
+(a), these approaches often retain globally frequent tokens regardless of their relevance to the current query, failing to adapt to dynamic semantic contexts.
+Furthermore, the implementation of system-algorithm co-design to fully realize hardware efficiency remains a largely underexplored direction.
+Specifically, regarding system implementation, substantial challenges persist: dynamic cache updates may trigger expensive memory copy operations, while irregular selection logic can significantly hinder the parallelization required for large batch sizes.
+In this work, we propose
+CHESS
+(
+C
+ontext-aware
+H
+ierarchical
+E
+fficient
+S
+emantic
+S
+election), a novel KV-cache management system for long-context LLM inference.
+Our design is driven by the key observation that token importance is inherently
+context-dependent
+and shifts during decoding, as illustrated in Figure
+1
+(b).
+Accordingly, CHESS adaptively reconstructs a semantically relevant context for the current decoding step to minimize input processing overhead while preserving precision.
+1
+Algorithmically, CHESS first utilizes hierarchical semantic selection to efficiently identify relevant context blocks.
+CHESS further incorporates an uncertainty-aware backtracking mechanism that monitors generation quality, dynamically retrieving previously pruned information to ensure robustness.
+2
+System-wise, to fully realize the efficiency of these algorithmic designs, we implement a zero-copy inference engine atop PagedAttention
+(
+Kwon et al., 2023
+)
+.
+Instead of performing expensive physical data movement, CHESS selectively manages memory by manipulating logical page indices.
+CHESS minimizes system overhead by leveraging high-performance GEMM optimizations for the selection algorithm and encapsulating the entire workflow into CUDA Graphs.
+We evaluate CHESS on LongBenchV2
+(
+Bai et al., 2025
+)
+for quality and on synthetic data of varying lengths for efficiency.
+Under merely
+1
+%
+1\%
+of the KV cache, CHESS outperforms the full-context baseline, as our dynamic selection effectively filters out irrelevant noise.
+These algorithmic gains translate directly into system performance: CHESS exhibits robust scalability in long-context generation, consistently surpassing state-of-the-art methods and achieving up to 4.56
+×
+\times
+higher throughput than full KV in large-batch scenarios.
+In all, our contributions are summarized as follows:
+•
+We observe the dynamic nature of token importance during decoding and propose a context-aware selection paradigm to adaptively construct relevant context that supports the current generation, while discarding irrelevant tokens that serve as noise.
+•
+We propose CHESS, an algorithm-system co-design system. It not only maintains high algorithmic accuracy but also implements specialized kernels to translate sparsity into practical system efficiency.
+•
+Extensive experiments demonstrate that CHESS maintains generation quality on LongBenchV2 with just 1% of the KV cache, while achieving up to
+4.56
+×
+4.56\times
+throughput improvement on synthetic data, consistently exceeding other baselines.
+2
+Challenges of Long-Context Decoding
+Figure 2
+:
+Escalating latency and dominant attention computation in long-context decoding.
+Figure 3
+:
+Overview of the CHESS System Architecture. The system maintains a hierarchical view (Grid, Chunk, Page) over the physical KV cache to enable context-aware selection. The final context is reconstructed by combining semantically selected pages with attention sinks and the local query window.
+2.1
+Scaling Constraints
+Memory wall.
+Long contexts make decoding KV-cache–bound.
+The KV footprint grows roughly linearly with sequence length:
+e.g.
+, with Qwen3-8B (bfloat16)
+(
+Yang et al., 2025
+)
+, a single 12K-token sequence occupies about 1.5 GB of KV memory.
+By contrast, on-chip SRAM is scarce (A100 L2 cache: 40 MB), so each decoding step must repeatedly read
+O
+⁡
+(
+L
+)
+O(L)
+keys/values per layer from HBM to SRAM.
+This off-chip traffic saturates memory bandwidth and stalls the pipeline.
+Compute wall.
+As context length
+L
+L
+grows, attention operates over an expanding prefix and the per-step FLOPs increase roughly linearly with
+L
+L
+.
+Empirically (Figure
+2
+), KV-cache I/O (blue dashed) rises approximately linearly with
+L
+L
+while model-weights I/O (gray dotted) stays nearly flat, so total memory I/O (blue solid) increases with length.
+Meanwhile, the attention ratio (red) climbs with
+L
+L
+and exceeds
+50
+%
+50\%
+at around
+26
+​
+K
+26\mathrm{K}
+tokens, trending toward dominance at longer contexts.
+Together, these trends indicate a dual pressure in long-context decoding: memory bandwidth is driven by KV I/O growth, and attention compute increasingly dominates end-to-end latency.
+2.2
+Gaps in Prior Approaches
+While various long-context methods theoretically reduce memory footprint, their integration into high-performance serving systems exposes structural inefficiencies.
+We identify three bottlenecks and the design opportunities.
+Metric overhead breaks kernel fusion.
+Many sparsification methods
+(
+Zhang et al., 2023
+;
+Behnam et al., 2025
+;
+Li et al., 2024
+)
+rely on exact attention scores to identify important tokens.
+However, this approach is not naturally aligned with modern optimized kernels, which achieve acceleration specifically by avoiding the storage of intermediate attention maps.
+Consequently, accessing these scores requires additional memory operations, introducing I/O overhead that partially diminishes the efficiency gains brought by sparsity.
+Token granularity inefficiency.
+Token-level selection methods
+(
+Xiao et al., 2024b
+;
+Park et al., 2025
+)
+often necessitate physical data movement to maintain memory continuity, consuming additional bandwidth.
+Crucially, these fine-grained approaches present a structural mismatch with modern block-based memory managers.
+Operating at the individual token level disrupts the block abstraction, which can limit the effectiveness of optimized block-based kernels and increase management complexity.
+Context-agnostic selection.
+Beyond system costs, many approaches perform context-agnostic selection: tokens are chosen without conditioning on the current decoding step, retaining globally high-scoring items even when locally irrelevant.
+This neglect of step-wise relevance can degrade quality, especially as the generation focus drifts.
+Design opportunities.
+These issues motivate an algorithm–system co-design method that (i) avoids separate score state, (ii) operates at page-aligned granularity, and (iii) performs context-aware, step-wise reconstruction, thereby preserving batching and translating sparsity into wall, clock speedups while maintaining quality.
+3
+Methodology
+In this section, we present CHESS (illustrated in Figure
+3
+), a context-aware, page-aligned KV selection framework.
+At each decoding step, CHESS uses a
+coarse-to-fine
+hierarchy, Grid
+→
+\rightarrow
+Chunk
+→
+\rightarrow
+Page, to identify a budgeted set of relevant pages and
+reconstructs
+the working KV set
+zero-copy
+.
+Grid and Chunk are logical groupings for pruning; they share the same physical page storage.
+High-level workflow.
+Selection proceeds top-down: CHESS first filters at the Grid level to shrink the search space, then refines at Chunk and Page levels.
+For decoding, it assembles the context by uniting the selected Pages with fixed
+attention sinks
+(
+Xiao et al., 2024b
+)
+and the most recent tokens in the query window.
+Details of the hierarchical summaries and the selection policy appear below.
+3.1
+Hierarchical Semantic Representation
+CHESS organizes the KV cache into a three-tier hierarchy:
+Pages
+,
+Chunks
+, and
+Grids
+.
+The fundamental unit is the
+Page
+(
+p
+i
+p_{i}
+), consisting of
+B
+B
+tokens.
+Page
+is strategically aligned with the physical memory blocks used in PagedAttention
+(
+Kwon et al., 2023
+)
+, allowing the system to reference memory efficiently via page indices and utilize modern attention kernels.
+Building on this, we define a
+Chunk
+as a sequence of
+N
+c
+N_{c}
+consecutive pages, and a
+Grid
+groups
+N
+g
+N_{g}
+chunks.
+For semantic retrieval, we first derive a compact vector
+𝐯
+p
+i
+\mathbf{v}_{p_{i}}
+for each page by aggregating its constituent Key states.
+Specifically, we perform mean-pooling across the
+B
+B
+tokens and flatten the multi-layer, multi-head states into a single vector:
+𝐯
+p
+i
+=
+Flatten
+⁡
+(
+[
+1
+B
+​
+∑
+t
+∈
+p
+i
+𝐊
+t
+(
+l
+,
+h
+)
+]
+l
+,
+h
+)
+,
+\mathbf{v}_{p_{i}}=\operatorname{Flatten}\left(\left[\frac{1}{B}\sum_{t\in p_{i}}\mathbf{K}^{(l,h)}_{t}\right]_{l,h}\right),
+(1)
+where
+𝐯
+p
+i
+\mathbf{v}_{p_{i}}
+preserves dominant semantic features via high-dimensional orthogonality (detailed proof in Appendix
+B
+).
+By flattening states across all layers, we capture the model’s
+holistic latent state
+, integrating both low-level syntactic features and high-level reasoning signals.
+This comprehensive representation prevents the false positives often caused by analyzing only a single layer.
+Finally, we derive representations for Chunks and Grids via hierarchical centroid averaging (see Figure
+3
+(a)):
+𝐯
+c
+j
+=
+1
+N
+c
+​
+∑
+p
+i
+∈
+c
+j
+𝐯
+p
+i
+,
+𝐯
+g
+k
+=
+1
+N
+g
+​
+∑
+c
+j
+∈
+g
+k
+𝐯
+c
+j
+.
+\mathbf{v}_{c_{j}}=\frac{1}{N_{c}}\sum_{p_{i}\in c_{j}}\mathbf{v}_{p_{i}},\quad\mathbf{v}_{g_{k}}=\frac{1}{N_{g}}\sum_{c_{j}\in g_{k}}\mathbf{v}_{c_{j}}.
+(2)
+Although simple averaging may risk information dilution in lower dimensions, we rely on the
+hyper-dimensional sparsity
+of LLM representations.
+In such high-dimensional spaces, distinct semantic signals tend to remain orthogonal.
+Consequently, the averaged vector
+𝐯
+g
+k
+\mathbf{v}_{g_{k}}
+effectively preserves the dominant semantic information of the grid without catastrophic interference.
+3.2
+Coarse-to-Fine Selection Mechanism
+To capture the evolving semantic information of the current generation, CHESS constructs a query anchor
+𝐯
+a
+​
+n
+​
+c
+​
+h
+​
+o
+​
+r
+\mathbf{v}_{anchor}
+by aggregating the
+Key states
+of the recent local window
+𝒲
+\mathcal{W}
+:
+𝐯
+a
+​
+n
+​
+c
+​
+h
+​
+o
+​
+r
+=
+1
+|
+𝒲
+|
+​
+∑
+p
+m
+∈
+𝒲
+𝐯
+p
+m
+.
+\mathbf{v}_{anchor}=\frac{1}{|\mathcal{W}|}\sum_{p_{m}\in\mathcal{W}}\mathbf{v}_{p_{m}}.
+(3)
+By utilizing Key states for both the query anchor and the historical context, we align the retrieval metric with the storage representation.
+This ensures that we retrieve contexts that share the same latent feature distribution as the ongoing generation.
+To supply the attention mechanism with the most relevant context, CHESS utilizes a metric termed
+Key-Key Semantic Affinity
+.
+Leveraging the property that Key states inherently encode the semantic attributes of the input tokens, we compute the dot-product similarity between the current anchor and historical segments.
+A high affinity score indicates strong semantic alignment with the ongoing generation, thereby justifying the retention of these segments for the subsequent precise attention computation.
+Formally, for any candidate unit
+u
+u
+(Grid, Chunk, or Page), we quantify its relevance to the current anchor
+𝐯
+a
+​
+n
+​
+c
+​
+h
+​
+o
+​
+r
+\mathbf{v}_{anchor}
+via:
+S
+⁡
+(
+u
+)
+=
+𝐯
+a
+​
+n
+​
+c
+​
+h
+​
+o
+​
+r
+⋅
+𝐯
+u
+.
+S(u)=\mathbf{v}_{anchor}\cdot\mathbf{v}_{u}.
+(4)
+This formulation allows us to implement
+context-aware
+selection using highly optimized matrix multiplication.
+Guided by this metric, the selection policy executes in a top-down cascade governed by retention ratios
+{
+ρ
+g
+,
+ρ
+c
+,
+ρ
+p
+}
+\{\rho_{g},\rho_{c},\rho_{p}\}
+.
+These hyperparameters are empirically calibrated to optimize the trade-off between generation quality and memory overhead.
+At the coarse level, the system scans all grids in
+𝒢
+\mathcal{G}
+, retaining only the top
+ρ
+g
+\rho_{g}
+fraction (denoted as
+𝒢
+s
+​
+e
+​
+l
+​
+e
+​
+c
+​
+t
+​
+e
+​
+d
+\mathcal{G}_{selected}
+) to rapidly prune semantically irrelevant regions.
+Subsequently, fine-grained verification is performed conditionally: chunks are evaluated
+if and only if
+their parent grid resides in
+𝒢
+s
+​
+e
+​
+l
+​
+e
+​
+c
+​
+t
+​
+e
+​
+d
+\mathcal{G}_{selected}
+. From this subset, the top
+ρ
+c
+\rho_{c}
+fraction is preserved.
+At the finest granularity, pages within these retained chunks are ranked, and the top
+ρ
+p
+\rho_{p}
+fraction constitutes the semantic working set
+𝒫
+s
+​
+e
+​
+l
+​
+e
+​
+c
+​
+t
+​
+e
+​
+d
+\mathcal{P}_{selected}
+.
+To guarantee generation stability and prevent perplexity degradation, we augment this set by strictly preserving
+attention sinks
+(
+Xiao et al., 2024b
+)
+and the most recent
+𝒲
+\mathcal{W}
+pages.
+The final decoding context is constructed as the union of
+𝒫
+s
+​
+e
+​
+l
+​
+e
+​
+c
+​
+t
+​
+e
+​
+d
+\mathcal{P}_{selected}
+and these safety pages.
+Algorithm 1
+Batched Hierarchical Similarity Pruning
+0:
+Query Anchor
+𝐯
+a
+​
+n
+​
+c
+​
+h
+​
+o
+​
+r
+∈
+ℝ
+D
+\mathbf{v}_{anchor}\in\mathbb{R}^{D}
+;
+Hierarchical Key Vectors
+{
+𝐕
+g
+,
+𝐕
+c
+,
+𝐕
+p
+}
+\{\mathbf{V}_{g},\mathbf{V}_{c},\mathbf{V}_{p}\}
+;
+Index Mappings
+ℳ
+c
+→
+g
+,
+ℳ
+p
+→
+c
+\mathcal{M}_{c\to g},\mathcal{M}_{p\to c}
+;
+Retention Ratios
+ρ
+g
+,
+ρ
+c
+,
+ρ
+p
+\rho_{g},\rho_{c},\rho_{p}
+.
+0:
+Selected Page Indices
+ℐ
+p
+​
+a
+​
+g
+​
+e
+\mathcal{I}_{page}
+1:
+// Stage 1: Tensor Coalescing & Global Scoring
+2:
+𝐕
+a
+​
+l
+​
+l
+←
+Concat
+​
+(
+𝐕
+g
+,
+𝐕
+c
+,
+𝐕
+p
+)
+\mathbf{V}_{all}\leftarrow\text{Concat}(\mathbf{V}_{g},\mathbf{V}_{c},\mathbf{V}_{p})
+// Stack hierarchies into unified tensor
+3:
+𝐒
+a
+​
+l
+​
+l
+←
+𝐯
+a
+​
+n
+​
+c
+​
+h
+​
+o
+​
+r
+⋅
+𝐕
+a
+​
+l
+​
+l
+⊤
+\mathbf{S}_{all}\leftarrow\mathbf{v}_{anchor}\cdot\mathbf{V}_{all}^{\top}
+// Single GEMM Kernel Launch
+4:
+𝐒
+g
+,
+𝐒
+c
+,
+𝐒
+p
+←
+Split
+​
+(
+𝐒
+a
+​
+l
+​
+l
+)
+\mathbf{S}_{g},\mathbf{S}_{c},\mathbf{S}_{p}\leftarrow\text{Split}(\mathbf{S}_{all})
+// Split scores back to levels
+5:
+// Stage 2: Hierarchical Masking (Vectorized)
+6:
+// Level 1: Grid Selection
+7:
+τ
+g
+←
+Quantile
+​
+(
+𝐒
+g
+,
+1
+−
+ρ
+g
+)
+\tau_{g}\leftarrow\text{Quantile}(\mathbf{S}_{g},1-\rho_{g})
+8:
+𝐌
+g
+←
+(
+𝐒
+g
+≥
+τ
+g
+)
+\mathbf{M}_{g}\leftarrow(\mathbf{S}_{g}\geq\tau_{g})
+// Boolean Mask for Grids
+9:
+// Level 2: Chunk Selection (Conditional)
+10:
+𝐏
+a
+​
+c
+​
+t
+​
+i
+​
+v
+​
+e
+(
+c
+)
+←
+Gather
+​
+(
+𝐌
+g
+,
+ℳ
+c
+→
+g
+)
+\mathbf{P}_{active}^{(c)}\leftarrow\text{Gather}(\mathbf{M}_{g},\mathcal{M}_{c\to g})
+// Propagate parent grid status
+11:
+𝐒
+c
+′
+←
+𝐒
+c
+⊙
+𝐏
+a
+​
+c
+​
+t
+​
+i
+​
+v
+​
+e
+(
+c
+)
+\mathbf{S}_{c}^{\prime}\leftarrow\mathbf{S}_{c}\odot\mathbf{P}_{active}^{(c)}
+// Zero-out scores of inactive parents
+12:
+τ
+c
+←
+Quantile
+​
+(
+𝐒
+c
+′
+,
+1
+−
+ρ
+c
+)
+\tau_{c}\leftarrow\text{Quantile}(\mathbf{S}_{c}^{\prime},1-\rho_{c})
+13:
+𝐌
+c
+←
+(
+𝐒
+c
+≥
+τ
+c
+)
+∧
+𝐏
+a
+​
+c
+​
+t
+​
+i
+​
+v
+​
+e
+(
+c
+)
+\mathbf{M}_{c}\leftarrow(\mathbf{S}_{c}\geq\tau_{c})\land\mathbf{P}_{active}^{(c)}
+14:
+// Level 3: Page Selection (Conditional)
+15:
+𝐏
+a
+​
+c
+​
+t
+​
+i
+​
+v
+​
+e
+(
+p
+)
+←
+Gather
+​
+(
+𝐌
+c
+,
+ℳ
+p
+→
+c
+)
+\mathbf{P}_{active}^{(p)}\leftarrow\text{Gather}(\mathbf{M}_{c},\mathcal{M}_{p\to c})
+// Propagate parent chunk status
+16:
+𝐒
+p
+′
+←
+𝐒
+p
+⊙
+𝐏
+a
+​
+c
+​
+t
+​
+i
+​
+v
+​
+e
+(
+p
+)
+\mathbf{S}_{p}^{\prime}\leftarrow\mathbf{S}_{p}\odot\mathbf{P}_{active}^{(p)}
+17:
+τ
+p
+←
+Quantile
+​
+(
+𝐒
+p
+′
+,
+1
+−
+ρ
+p
+)
+\tau_{p}\leftarrow\text{Quantile}(\mathbf{S}_{p}^{\prime},1-\rho_{p})
+18:
+𝐌
+p
+←
+(
+𝐒
+p
+≥
+τ
+p
+)
+∧
+𝐏
+a
+​
+c
+​
+t
+​
+i
+​
+v
+​
+e
+(
+p
+)
+\mathbf{M}_{p}\leftarrow(\mathbf{S}_{p}\geq\tau_{p})\land\mathbf{P}_{active}^{(p)}
+19:
+return
+NonZero
+​
+(
+𝐌
+p
+)
+\text{ NonZero}(\mathbf{M}_{p})
+// Return indices of active pages
+3.3
+Adaptive Re-computation Strategy
+Relying solely on partial context selection involves inherent risks, as retrieving incorrect or irrelevant context can significantly degrade generation performance.
+To mitigate this, CHESS incorporates a
+Quality-Aware Backtracking
+mechanism that initiates context reconstruction strictly when generation quality deteriorates.
+Specifically, CHESS monitors real-time generation dynamics via two complementary uncertainty metrics: average
+Entropy
+(
+H
+¯
+p
+\bar{H}_{p}
+), which serves as a proxy for the model’s lack of confidence, and
+Varentropy
+(
+Var
+⁡
+(
+H
+)
+p
+\operatorname{Var}(H)_{p}
+), which captures the temporal instability often characteristic of hallucination loops
+(
+Kuhn et al., 2023
+)
+.
+This design ensures efficiency as reconstruction is bypassed as long as the generation remains stable.
+To determine the triggering thresholds, we perform offline calibration on the golden dataset to analyze the joint distribution of Entropy and Varentropy.
+We further demonstrate the superiority of this event-triggered approach over periodic context reconstruction.
+For a detailed comparative analysis between our dynamic backtracking strategy and static reconstruction, please refer to Appendix
+C
+.
+4
+System Implementation
+We implement CHESS atop
+nanoVLLM
+(
+, 2024
+)
+.
+4.1
+Hierarchical Structure Implementation
+Data structures for hierarchical organization.
+Our system manages the KV cache at the granularity of a
+page
+, serving as the atomic unit for memory allocation.
+Chunks
+and
+Grids
+are logical views as they restructure access patterns without physically duplicating the underlying tensor data.
+This design maintains three distinct structural perspectives (Grid, Chunk, Page) over the same memory footprint, achieving a zero-copy implementation that incurs negligible memory overhead.
+4.2
+High-Performance Pruning Implementation
+Batched similarity computation via tensor coalescing.
+To maximize GPU utilization and minimize kernel launch overhead, we vectorize the similarity computation across all hierarchy levels (Algorithm
+1
+).
+Instead of sequentially iterating through Grids, Chunks, and Pages, we coalesce their semantic vectors into a unified tensor
+𝐕
+a
+​
+l
+​
+l
+∈
+ℝ
+N
+t
+​
+o
+​
+t
+​
+a
+​
+l
+×
+D
+\mathbf{V}_{all}\in\mathbb{R}^{N_{total}\times D}
+(Line 2), where
+N
+t
+​
+o
+​
+t
+​
+a
+​
+l
+N_{total}
+sums the counts of all hierarchy nodes and
+D
+D
+denotes the feature dimension.
+Utilization of the single query anchor
+𝐯
+a
+​
+n
+​
+c
+​
+h
+​
+o
+​
+r
+\mathbf{v}_{anchor}
+enables us to compute similarity scores for the entire hierarchy via a single GEMM operation:
+𝐒
+a
+​
+l
+​
+l
+=
+𝐯
+a
+​
+n
+​
+c
+​
+h
+​
+o
+​
+r
+⋅
+𝐕
+a
+​
+l
+​
+l
+⊤
+\mathbf{S}_{all}=\mathbf{v}_{anchor}\cdot\mathbf{V}_{all}^{\top}
+(Line 3).
+The subsequent filtering logic is implemented as a vectorized dependency check.
+Specifically, a Chunk is selected only if its similarity score satisfies the threshold and its parent Grid is active, a condition enforced via hierarchical boolean masking (Lines 10 – 13).
+This design effectively replaces expensive control-flow divergence with efficient tensor operations.
+4.3
+Integration with FlashInfer
+FlashInfer kernel.
+We leverage
+FlashInfer
+(
+Ye et al., 2025
+)
+as our underlying attention engine to ensure high throughput while maintaining architectural flexibility.
+A primary motivation for this choice is its support for fine-grained page sizes (e.g., 16 tokens).
+In contrast, FlashAttention
+(
+Dao et al., 2022
+)
+typically optimizes for coarser granularities (requiring block sizes to be multiples of 256), which introduces a granularity mismatch for semantic pruning.
+5
+Experiments
+In this section, we evaluate CHESS along two dimensions: (i)
+generation quality
+on long-context tasks and (ii)
+system efficiency
+(throughput/latency) under varying sequence lengths.
+Quality is measured on LongBenchV2
+(
+Bai et al., 2025
+)
+; efficiency is measured on synthesized workloads across a spectrum of input lengths.
+5.1
+Experimental Setup
+Figure 4
+:
+Distribution of Average Entropy vs. Varentropy per KV Cache Page (Calibration Phase).
+This plot illustrates the density of pages from the calibration dataset, where warmer colors indicate higher concentration. Dashed lines represent the selected 99th percentile thresholds. The shaded upper-right region highlights the
+pruned area
+, corresponding to high-uncertainty outliers excluded by our method.
+Table 1
+:
+Main results on LongBench-v2. We report overall performance as well as breakdowns by difficulty (Easy, Hard) and context length (Short, Medium, Long). We compare CHESS against the best configurations of baselines:
+H2O
+(10% heavy + 10% local),
+KeyDiff
+(overall budget 8192 tokens),
+SnapKV
+(recent 512 tokens, total 4096 tokens), and
+Quest
+(budget 2048). For
+CHESS
+, we report three settings: Conservative (0.9, 0.9, 0.9), Moderate (0.8, 0.7, 0.7), and Aggressive (0.5, 0.2, 0.1).
+Method
+KV Cache
+Overall
+Difficulty
+Length(
+<
+<
+32K;32K
+∼
+\sim
+128K;
+>
+>
+128K)
+Budget
+Easy
+Hard
+Short
+Medium
+Long
+FullKV Inference
+100%
+30.2
+33.9
+28.0
+38.3
+24.2
+28.7
+H2O (Best)
+20%
+34.0
+40.1
+30.2
+41.7
+28.8
+31.5
+KeyDiff (Best)
+8192 toks
+29.2
+33.3
+26.7
+30.6
+26.5
+32.4
+SnapKV (Best)
+4096 toks
+30.2
+34.9
+27.3
+34.4
+24.2
+35.2
+Quest (Best)
+2048 toks
+32.0
+34.9
+30.2
+40.0
+25.6
+31.5
+CHESS (Conservative)
+73%
+30.4
+34.9
+27.7
+36.1
+26.0
+29.6
+CHESS (Moderate)
+40%
+32.2
+35.4
+30.2
+41.7
+24.7
+31.5
+CHESS (Aggressive)
+1%
+33.2
+38.0
+30.2
+40.0
+27.4
+33.3
+Hardware and software environment.
+All experiments were conducted on a single node with four H20 GPUs, using Python 3.12.3, PyTorch 2.5.1, and CUDA 12.4.
+Baselines.
+We compare our method against
+Full-KV
+, the standard baseline that retains the complete KV cache during decoding to ensure lossless performance.
+To evaluate efficiency, we also include several state-of-the-art sparse attention mechanisms:
+H2O
+(
+Zhang et al., 2023
+)
+maintains a budget of “heavy hitter” tokens based on accumulated attention scores, while
+KeyDiff
+(
+Park et al., 2025
+)
+selects tokens by analyzing the distinctiveness of key distributions.
+Furthermore,
+SnapKV
+(
+Li et al., 2024
+)
+compresses context by identifying significant attention clusters to filter out redundant information.
+Finally,
+Quest
+(
+Tang et al., 2024
+)
+adopts a query-aware pruning strategy, dynamically estimating token importance to select a minimal subset for each decoding step.
+To ensure a fair comparison, we integrated all baselines, except Quest, into CHESS evaluation stack.
+Quest relies on specialized kernels strictly optimized for single-batch inference, adapting them to our framework proved non-trivial.
+Consequently, we utilized its official implementation for benchmarking to ensure accurate evaluation.
+Hyperparameters and configuration.
+Our system configuration relies on several key hyperparameters governing memory structure and sparsity levels.
+We standardize the
+Page size
+to 32 across all experiments.
+To control retention rates, we evaluate multiple configurations for
+Grid
+,
+Chunk
+, and
+Page ratios
+.
+Regarding uncertainty metrics, we perform offline calibration using the LongBenchV2 dataset
+(
+Bai et al., 2025
+)
+.
+Specifically, we calculate the empirical distribution of entropy and varentropy, adopting the
+99th percentile values
+as the cutoff thresholds to prune high-uncertainty outliers.
+Figure
+4
+illustrates the distribution and threshold.
+5.2
+Quality Evaluation
+Table
+1
+reports the results on LongBenchV2
+(
+Bai et al., 2025
+)
+.
+Due to space constraints, only representative results are presented here; please refer to Appendix
+E
+for the full evaluation.
+With only 1% of the KV cache, CHESS (Aggressive) achieves an overall score of 33.2, outperforming FullKV (30.2) and remaining close to H2O (34.0), which uses 20
+×
+\times
+more KV budget.
+This indicates CHESS preserves task-relevant evidence while effectively filtering redundant or distracting context that can harm long-context reasoning.
+Figure
+5
+breaks down performance by domain.
+CHESS consistently matches or exceeds FullKV across all categories, with particularly strong gains on Single-QA, Multi-QA, L-ICL, and Structured tasks.
+These tasks benefit from coherent, contiguous context, where CHESS’s context-aware, page-level selection retains semantically aligned regions rather than isolated tokens.
+In contrast, accumulation-based methods tend to preserve globally frequent but locally irrelevant tokens, which can dilute effective context.
+H2O achieves its best results on Code, where relevant statements are often non-contiguous and sparsely distributed.
+In such cases, H2O’s attention-accumulation mechanism is better to capture sparse dependencies.
+Despite this, CHESS remains competitive on Code while delivering substantial gains on the majority of long-context reasoning tasks, demonstrating a more favorable quality–efficiency trade-off.
+Overall, these results show that CHESS attains near state-of-the-art quality under extreme KV budgets by reconstructing semantically coherent context at each decoding step, rather than relying on global token importance.
+Figure 5
+:
+Normalized accuracy on long-context tasks.
+Axes represent relative performance scaled to the maximum score per domain. Abbreviations:
+L-ICL
+: Long In-context Learning;
+Struct
+: Structured Data;
+Dialog
+: Dialogue History;
+Multi/Single-QA
+: Multi/Single-Doc QA.
+Figure 6
+:
+End-to-end Throughput Speedup Comparison.
+We report the throughput ratios of
+CHESS
+and alternative sparse attention methods relative to the
+Full-KV
+baseline (normalized to
+1.0
+×
+1.0\times
+, indicated by the dashed line). The evaluation spans varying input context lengths (
+4
+​
+k
+4\text{k}
+–
+32
+​
+k
+32\text{k}
+) and batch sizes (
+1
+1
+–
+192
+192
+). CHESS consistently achieves the highest throughput, peaking at a
+4.56
+×
+\mathbf{4.56\times}
+speedup in the
+32
+​
+k
+32\text{k}
+context setting. Gray shaded regions indicate Out-of-Memory (OOM) scenarios. Note that
+Quest
+is evaluated only at batch size 1 due to implementation constraints limiting it to single-batch inference.
+5.3
+System Performance
+We evaluate system efficiency using the CHESS (Aggressive) configuration across varying context lengths and batch sizes.
+Our results show that CHESS consistently outperforms prior sparse-KV methods under realistic long-context workloads, with performance gains that
+increase
+as the workload becomes more demanding.
+Throughput analysis.
+Figure
+6
+displays the end-to-end throughput normalized to Full-KV inference.
+Corresponding results for other GPU architectures are provided in Appendix
+D
+.
+CHESS achieves the highest throughput across all evaluated settings, peaking at a 4.56
+×
+\times
+speedup under a 32k context.
+Notably, the performance gap between CHESS and existing methods widens with increasing batch size and context length.
+While prior sparse approaches exhibit diminishing returns as batch size grows, CHESS continues to scale effectively.
+This indicates that CHESS alleviates fundamental system bottlenecks, rather than providing workload-specific optimizations.
+Long input/output tasks (scalability and stability ).
+Figure
+7
+(a) reports the scalability of Time Per Output Token (TPOT) speedup as context length increases.
+CHESS consistently widens the performance gap over all baselines, with the advantage becoming more pronounced at longer contexts.
+This trend reflects the dual bottleneck of long-context decoding—memory bandwidth pressure from KV transfers and growing attention computation.
+By retaining only a sparse, context-relevant KV cache, CHESS alleviates both factors simultaneously, achieving up to
+4.3
+×
+\mathbf{4.3\times}
+speedup over Full KV and outperforming the strongest baseline (SnapKV) by
+1.3
+×
+\mathbf{1.3\times}
+at
+32
+​
+k
+32\text{k}
+context.
+Figure 7
+:
+(a)
+TPOT Speedup Scalability across Context Lengths (
+4
+​
+k
+4\text{k}
+–
+32
+​
+k
+32\text{k}
+).
+CHESS demonstrates superior scalability, with the performance gap widening significantly as sequence length increases.
+At the
+32
+​
+k
+32\text{k}
+context, CHESS achieves a peak speedup of
+4.56
+×
+\mathbf{4.56\times}
+over Full KV, outperforming the strongest baseline (SnapKV) by
+1.3
+×
+\mathbf{1.3\times}
+.
+(b)
+Latency Stability during Long-Sequence Generation.
+The plot tracks the latency increase over
+6
+​
+k
+6\text{k}
+generated tokens (following a
+32
+​
+k
+32\text{k}
+input).
+While baselines exhibit linear growth (Full KV) or severe instability (SnapKV/KeyDiff), CHESS maintains a consistent, flat latency profile with negligible overhead.
+Figure
+7
+(b) evaluates latency stability during long-sequence generation.
+As generation progresses, the KV cache grows, leading to steadily increasing computation and memory traffic per token.
+Accordingly, FullKV and SnapKV exhibit a clear linear increase in per-token latency as the effective cache expands.
+In contrast, CHESS maintains a nearly constant decoding latency throughout generation.
+By retaining the most contextually relevant KV entries, CHESS effectively decouples per-token latency from sequence length.
+Figure 8
+:
+Latency breakdown per decoding step.
+Comparison between Full KV and CHESS (Aggressive) with batch size 1. The ”Other” category includes scheduling, sampling, and data preparation. The overhead from the CHESS’s selection mechanism is negligible relative to the total decoding latency.
+Selection overhead.
+Figure
+8
+presents a per-step latency breakdown.
+The additional overhead introduced by CHESS’s selection mechanism is visually negligible.
+Quantitatively, selection accounts for only 0.72%, 0.98%, and 1.49% of total latency at 8k, 16k, and 32k contexts, respectively.
+This minimal overhead is achieved through two factors:
+(1) amortized execution, where selection is triggered only when necessary, and
+(2) kernel-efficient implementation using optimized GEMM operations.
+As a result, CHESS delivers substantial system-level speedups without introducing new performance bottlenecks.
+6
+Related Work
+We review prior work along two dimensions: (i) retention strategy and (ii) selection metric and processing granularity
+A comprehensive taxonomy is detailed in Appendix
+A
+.
+6.1
+Retention Strategy
+Static eviction.
+“Prune-once” methods build the retained context at prefill and keep it fixed during decoding.
+SnapKV
+(
+Li et al., 2024
+)
+identifies important patterns during the prefilling stage and keeps them for later generations.
+KeyDiff
+(
+Park et al., 2025
+)
+utilizes key matrix similarity to filter tokens.
+While these static methods significantly reduce memory footprint, their prompts are fixed regarding the generation phase.
+Once a token is evicted, it cannot be recovered, leading to information loss when the generation requires revisiting historically pruned content.
+Dynamic reconstruction.
+To mitigate information loss, some propose dynamically constructing the context for each generation step.
+H2O
+(
+Zhang et al., 2023
+)
+maintains a set of “Heavy Hitter” tokens based on accumulated attention scores, dynamically updating the cache.
+RocketKV
+(
+Behnam et al., 2025
+)
+further optimizes this by using approximated attention scores.
+InfLLM
+(
+Xiao et al., 2024a
+)
+offloads KV pairs to CPU memory and retrieves blocks when required.
+Dynamic schemes adapt to changing relevance, though they introduce selection state and runtime overheads.
+6.2
+Selection Metric and Processing Granularity
+Selection metric.
+Most existing methods (e.g., H2O, SnapKV, InfLLM) utilize attention score as the selection metric.
+This introduces significant system overhead, as maintaining accumulated attention scores requires additional HBM traffic and frequent updates, which can bottleneck the inference engine.
+In contrast, key-based approaches (
+e.g.
+, KeyDiff) utilize key semantics.
+Since key matrices are already resident in HBM for attention computation, using them as a semantic probe avoids the overhead of storing and updating auxiliary score matrices.
+Processing granularity.
+Methods operating at the token level face system-level inefficiencies.
+At the
+token
+level, pruning yields non-contiguous memory access patterns that disrupt memory coalescing and make it harder to integrate with kernel optimizations designed for PagedAttention
+(
+Kwon et al., 2023
+)
+.
+By contrast,
+block/page
+–level methods (
+e.g.
+, ChunkKV
+(
+Liu et al., 2025
+)
+, Quest
+(
+Tang et al., 2024
+)
+) operate on contiguous pages, naturally aligning with paging in modern inference engines and enabling zero-copy selection with better hardware utilization.
+In summary, prior approaches leave three gaps: (i)
+context-agnostic
+selection that ignores step-wise relevance, (ii) irrecoverable
+static
+eviction or
+dynamic
+token-level schemes that rely on auxiliary score state, and (iii) a system misalignment where irregular access patterns and score maintenance hinder batching and kernel efficiency.
+7
+Conclusion
+We propose CHESS, an algorithm–system co-design for KV-cache management in long-context LLMs.
+CHESS departs from context-agnostic pruning by introducing a context-aware, hierarchical selection strategy that reconstructs a coherent working set at each decoding step, while its page-aligned, zero-copy execution translates algorithmic sparsity into practical wall-clock gains.
+Extensive experiments on LongBenchV2 and large-scale synthetic workloads show that CHESS preserves generation quality at the level of Full-KV inference while using only 1% of the KV cache.
+At the system level, CHESS consistently improves throughput and latency, achieving up to 4.56
+×
+\times
+speedup over Full-KV and outperforming strong state-of-the-art baselines in long-context regimes.
+In the future, we plan to integrate CHESS with speculative decoding and RAG-augmented pipelines, and explore richer uncertainty signals for selection.
+Impact Statement
+This paper presents work whose goal is to advance the field of Machine Learning through improved efficiency in long-context language model inference. There are many potential societal consequences of our work, none which we feel must be specifically highlighted here.
+References
+Bai
+et al.
+(2025)
+Y. Bai, S. Tu, J. Zhang, H. Peng, X. Wang, X. Lv, S. Cao, J. Xu, L. Hou, Y. Dong, J. Tang, and J. Li
+LongBench v2: towards deeper understanding and reasoning on realistic long-context multitasks
+.
+In
+Proceedings of the 63rd Annual Meeting of the Association for Computational
+Linguistics (Volume 1: Long Papers), ACL 2025, Vienna, Austria,
+July 27 - August 1, 2025
+,
+Cited by:
+§1
+,
+§5.1
+,
+§5.2
+,
+§5
+.
+Behnam
+et al.
+(2025)
+P. Behnam, Y. Fu, R. Zhao, P. Tsai, Z. Yu, and A. Tumanov
+RocketKV: accelerating long-context LLM inference via two-stage KV cache compression
+.
+In
+Forty-second International Conference on Machine Learning, ICML
+2025, Vancouver, BC, Canada, July 13-19, 2025
+,
+Cited by:
+Table 2
+,
+§2.2
+,
+§6.1
+.
+Dao
+et al.
+(2022)
+T. Dao, D. Y. Fu, S. Ermon, A. Rudra, and C. Ré
+FlashAttention: fast and memory-efficient exact attention with io-awareness
+.
+In
+Advances in Neural Information Processing Systems 35: Annual Conference
+on Neural Information Processing Systems 2022, NeurIPS 2022, New Orleans,
+LA, USA, November 28 - December 9, 2022
+,
+Cited by:
+§4.3
+.
+Ge
+et al.
+(2024)
+S. Ge, Y. Zhang, L. Liu, M. Zhang, J. Han, and J. Gao
+Model tells you what to discard: adaptive KV cache compression for llms
+.
+In
+The Twelfth International Conference on Learning Representations,
+ICLR 2024, Vienna, Austria, May 7-11, 2024
+,
+Cited by:
+§1
+.
+Guan
+et al.
+(2025)
+J. Guan, J. Wu, J. Li, C. Cheng, and W. Wu
+A survey on personalized alignment - the missing piece for large language models in real-world applications
+.
+In
+Findings of the Association for Computational Linguistics, ACL 2025,
+Vienna, Austria, July 27 - August 1, 2025
+,
+Cited by:
+§1
+.
+Hwang
+et al.
+(2023)
+Y. Hwang, Y. Kim, H. Bae, H. Lee, J. Bang, and K. Jung
+Dialogizer: context-aware conversational-qa dataset generation from textual sources
+.
+In
+Proceedings of the 2023 Conference on Empirical Methods in Natural
+Language Processing, EMNLP 2023, Singapore, December 6-10, 2023
+,
+Cited by:
+§1
+.
+Kim and Kim (2025)
+H. Kim and B. Kim
+NexusSum: hierarchical LLM agents for long-form narrative summarization
+.
+In
+Proceedings of the 63rd Annual Meeting of the Association for Computational
+Linguistics (Volume 1: Long Papers), ACL 2025, Vienna, Austria,
+July 27 - August 1, 2025
+,
+Cited by:
+§1
+.
+Kuhn
+et al.
+(2023)
+L. Kuhn, Y. Gal, and S. Farquhar
+Semantic uncertainty: linguistic invariances for uncertainty estimation in natural language generation
+.
+In
+The Eleventh International Conference on Learning Representations,
+ICLR 2023, Kigali, Rwanda, May 1-5, 2023
+,
+Cited by:
+§3.3
+.
+Kwon
+et al.
+(2023)
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. Gonzalez, H. Zhang, and I. Stoica
+Efficient memory management for large language model serving with pagedattention
+.
+In
+Proceedings of the 29th Symposium on Operating Systems Principles,
+SOSP 2023, Koblenz, Germany, October 23-26, 2023
+,
+Cited by:
+§1
+,
+§3.1
+,
+§6.2
+.
+Li
+et al.
+(2024)
+Y. Li, Y. Huang, B. Yang, B. Venkitesh, A. Locatelli, H. Ye, T. Cai, P. Lewis, and D. Chen
+SnapKV: LLM knows what you are looking for before generation
+.
+In
+Advances in Neural Information Processing Systems 38: Annual Conference
+on Neural Information Processing Systems 2024, NeurIPS 2024, Vancouver,
+BC, Canada, December 10 - 15, 2024
+,
+Cited by:
+Table 2
+,
+§2.2
+,
+§5.1
+,
+§6.1
+.
+Liu
+et al.
+(2024)
+N. F. Liu, K. Lin, J. Hewitt, A. Paranjape, M. Bevilacqua, F. Petroni, and P. Liang
+Lost in the middle: how language models use long contexts
+.
+Trans. Assoc. Comput. Linguistics
+12
+,
+pp. 157–173
+.
+Cited by:
+Appendix C
+.
+Liu
+et al.
+(2025)
+X. Liu, Z. Tang, P. Dong, Z. Li, Y. Liu, B. Li, X. Hu, and X. Chu
+ChunkKV: semantic-preserving kv cache compression for efficient long-context llm inference
+.
+In
+Advances in Neural Information Processing Systems 38: Annual Conference
+on Neural Information Processing Systems 2025, NeurIPS 2025, San Diego,
+CA, USA, December 8 - December 14, 2025
+,
+Cited by:
+Table 2
+,
+§6.2
+.
+[13]
+(2024)
+Nano vLLM: a minimalist implementation of vLLM
+.
+Note:
+https://github.com/GeeeekExplorer/nano-vllm/
+GitHub repository
+Cited by:
+§4
+.
+Narayan
+et al.
+(2022)
+A. Narayan, I. Chami, L. J. Orr, and C. Ré
+Can foundation models wrangle your data?
+.
+Proc. VLDB Endow.
+16
+(
+4
+),
+pp. 738–746
+.
+Cited by:
+§1
+.
+Park
+et al.
+(2025)
+J. Park, D. Jones, M. J. Morse, R. Goel, M. Lee, and C. Lott
+KeyDiff: key similarity-based kv cache eviction for long-context llm inference in resource-constrained environments
+.
+In
+Advances in Neural Information Processing Systems 38: Annual Conference
+on Neural Information Processing Systems 2025, NeurIPS 2025, San Diego,
+CA, USA, December 8 - December 14, 2025
+,
+Cited by:
+Table 2
+,
+§2.2
+,
+§5.1
+,
+§6.1
+.
+Shi
+et al.
+(2023)
+F. Shi, X. Chen, K. Misra, N. Scales, D. Dohan, E. H. Chi, N. Schärli, and D. Zhou
+Large language models can be easily distracted by irrelevant context
+.
+In
+International Conference on Machine Learning, ICML 2023, 23-29 July
+2023, Honolulu, Hawaii, USA
+,
+Cited by:
+Appendix C
+.
+Tang
+et al.
+(2024)
+J. Tang, Y. Zhao, K. Zhu, G. Xiao, B. Kasikci, and S. Han
+QUEST: query-aware sparsity for efficient long-context LLM inference
+.
+In
+Forty-first International Conference on Machine Learning, ICML 2024,
+Vienna, Austria, July 21-27, 2024
+,
+Cited by:
+Table 2
+,
+§5.1
+,
+§6.2
+.
+Xiao
+et al.
+(2024a)
+C. Xiao, P. Zhang, X. Han, G. Xiao, Y. Lin, Z. Zhang, Z. Liu, and M. Sun
+InfLLM: training-free long-context extrapolation for llms with an efficient context memory
+.
+In
+Advances in Neural Information Processing Systems 38: Annual Conference
+on Neural Information Processing Systems 2024, NeurIPS 2024, Vancouver,
+BC, Canada, December 10 - 15, 2024
+,
+Cited by:
+Table 2
+,
+§6.1
+.
+Xiao
+et al.
+(2024b)
+G. Xiao, Y. Tian, B. Chen, S. Han, and M. Lewis
+Efficient streaming language models with attention sinks
+.
+In
+The Twelfth International Conference on Learning Representations,
+ICLR 2024, Vienna, Austria, May 7-11, 2024
+,
+Cited by:
+Table 2
+,
+§2.2
+,
+§3
+,
+§3.2
+.
+Yang
+et al.
+(2025)
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, C. Zheng, D. Liu, F. Zhou, F. Huang, F. Hu, H. Ge, H. Wei, H. Lin, J. Tang, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Lin, K. Dang, K. Bao, K. Yang, L. Yu, L. Deng, M. Li, M. Xue, M. Li, P. Zhang, P. Wang, Q. Zhu, R. Men, R. Gao, S. Liu, S. Luo, T. Li, T. Tang, W. Yin, X. Ren, X. Wang, X. Zhang, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Zhang, Y. Wan, Y. Liu, Z. Wang, Z. Cui, Z. Zhang, Z. Zhou, and Z. Qiu
+Qwen3 technical report
+.
+arXiv preprint arXiv: 2505.09388
+.
+Cited by:
+§2.1
+.
+Ye
+et al.
+(2025)
+Z. Ye, L. Chen, R. Lai, W. Lin, Y. Zhang, S. Wang, T. Chen, B. Kasikci, V. Grover, A. Krishnamurthy, and L. Ceze
+FlashInfer: efficient and customizable attention engine for llm inference serving
+.
+In
+Proceedings of the 8th Annual Conference on Machine Learning and Systems (MLSys)
+,
+Santa Clara, California
+.
+Cited by:
+§4.3
+.
+Yu and Chai (2025)
+B. Yu and Y. Chai
+EvolKV: evolutionary kv cache compression for llm inference
+.
+arXiv preprint arXiv: 2509.08315
+.
+Cited by:
+Appendix C
+.
+Zhang
+et al.
+(2025)
+J. Zhang, J. Xiang, Z. Yu, F. Teng, X. Chen, J. Chen, M. Zhuge, X. Cheng, S. Hong, J. Wang, B. Zheng, B. Liu, Y. Luo, and C. Wu
+AFlow: automating agentic workflow generation
+.
+In
+The Thirteenth International Conference on Learning Representations,
+ICLR 2025, Singapore, April 24-28, 2025
+,
+Cited by:
+§1
+.
+Zhang
+et al.
+(2023)
+Z. Zhang, Y. Sheng, T. Zhou, T. Chen, L. Zheng, R. Cai, Z. Song, Y. Tian, C. Ré, C. W. Barrett, Z. Wang, and B. Chen
+H2O: heavy-hitter oracle for efficient generative inference of large language models
+.
+In
+Advances in Neural Information Processing Systems 36: Annual Conference
+on Neural Information Processing Systems 2023, NeurIPS 2023, New Orleans,
+LA, USA, December 10 - 16, 2023
+,
+Cited by:
+Table 2
+,
+§1
+,
+§2.2
+,
+§5.1
+,
+§6.1
+.
+Appendix A
+Taxonomy of existing methods
+Table
+2
+summarizes representative KV-cache management methods along five orthogonal dimensions: selection metric, processing granularity, context awareness, dynamic reconstruction, and self-correction capability.
+This taxonomy highlights several systematic gaps in prior work.
+First, most existing approaches rely on
+context-agnostic
+signals, such as attention scores or positional heuristics, to identify important tokens.
+While effective for reducing cache size, these metrics do not condition on the semantic intent of the
+current
+decoding step, which limits their ability to adapt to shifting generation focus.
+Second, a large fraction of prior methods operate at the
+token level
+.
+Although fine-grained, token-level selection often conflicts with block-based memory management in modern inference engines, complicating efficient execution.
+Block-level methods partially address this issue, but still largely depend on attention-based metrics and remain context-agnostic.
+Third, only a subset of methods supports
+dynamic reconstruction
+of the KV cache, and none explicitly provide a mechanism to
+recover
+from erroneous pruning decisions once relevant context has been removed.
+As a result, quality degradation is often irreversible under aggressive sparsity settings.
+In contrast,
+CHESS
+uniquely combines (i) key-based semantic signals, (ii) block-level selection aligned with paged KV storage, (iii) explicit context awareness, (iv) dynamic reconstruction, and (v) a self-correcting mechanism.
+This combination enables CHESS to achieve aggressive cache reduction while maintaining generation quality and system efficiency, distinguishing it from prior approaches.
+Table 2
+:
+Comparison with related works.
+Metric
+: The criterion used to identify important tokens;
+Granularity
+: The processing unit (Token vs. Block);
+Ctx. Aware
+: Whether selected tokens are semantically relevant to the current generation context;
+Dyn. Recon.
+: Whether the method dynamically reconstructs the KV cache context during generation;
+Self-Correct
+: Whether the method employs a mechanism to recover from retrieval errors.
+Method
+Selection Metric
+Granularity
+Ctx. Aware
+Dyn. Recon.
+Self-Correct
+StreamingLLM
+(
+Xiao et al., 2024b
+)
+Position
+Token
+–
+–
+–
+H2O
+(
+Zhang et al., 2023
+)
+Attn Score
+Token
+–
+✓
+–
+RocketKV
+(
+Behnam et al., 2025
+)
+Attn Score
+Token
+–
+✓
+–
+KeyDiff
+(
+Park et al., 2025
+)
+Key Matrix
+Token
+–
+–
+–
+SnapKV
+(
+Li et al., 2024
+)
+Attn Score
+Token
+–
+–
+–
+ChunkKV
+(
+Liu et al., 2025
+)
+Attn Score
+Block
+–
+–
+–
+InfLLM
+(
+Xiao et al., 2024a
+)
+Attn Score
+Block
+–
+✓
+–
+Quest
+(
+Tang et al., 2024
+)
+Attn Score
+Block
+–
+✓
+–
+CHESS (Ours)
+Key Matrix
+Block
+✓
+✓
+✓
+Appendix B
+Theoretical Analysis of CHESS
+B.1
+Semantic Preservation of Hierarchical Pooling
+The core of CHESS relies on representing a Page (
+B
+B
+tokens) by its mean-pooled key vector
+v
+p
+v_{p}
+. A potential concern is whether this pooling operation dilutes critical semantic signals.
+High-Dimensional Orthogonality
+In the high-dimensional latent space of LLMs (where
+D
+D
+is typically 4096 or larger), random vectors tend to be nearly orthogonal.
+Formally, for any two unrelated key vectors
+K
+i
+K_{i}
+and
+K
+j
+K_{j}
+, their inner product
+K
+i
+⋅
+K
+j
+≈
+0
+K_{i}\cdot K_{j}\approx 0
+.
+When we compute the mean-pooled vector
+v
+p
+=
+1
+B
+​
+∑
+i
+=
+1
+B
+K
+i
+v_{p}=\frac{1}{B}\sum_{i=1}^{B}K_{i}
+, the unrelated ”noise” tokens cancel each other out due to this orthogonality, while the dominant semantic signal (the ”Heavy Hitter”) persists.
+Selection Consistency
+We define the Key-Key Semantic Affinity as
+S
+⁡
+(
+u
+)
+=
+v
+a
+​
+n
+​
+c
+​
+h
+​
+o
+​
+r
+⋅
+v
+u
+S(u)=v_{anchor}\cdot v_{u}
+. Leveraging the Concentration Inequality, it can be shown that if a specific token
+K
+i
+K_{i}
+within a page has a high affinity with the query, the aggregate page vector
+v
+p
+v_{p}
+will also maintain a high score with high probability:
+P
+⁡
+(
+|
+v
+a
+​
+n
+​
+c
+​
+h
+​
+o
+​
+r
+⋅
+v
+p
+−
+v
+a
+​
+n
+​
+c
+​
+h
+​
+o
+​
+r
+⋅
+K
+i
+|
+>
+ϵ
+)
+≤
+2
+​
+exp
+⁡
+(
+−
+C
+⋅
+B
+⋅
+ϵ
+2
+σ
+2
+)
+.
+P\left(|v_{anchor}\cdot v_{p}-v_{anchor}\cdot K_{i}|>\epsilon\right)\leq 2\exp\left(-\frac{C\cdot B\cdot\epsilon^{2}}{\sigma^{2}}\right).
+(5)
+This ensures that our hierarchical selection (Grid
+→
+\to
+Chunk
+→
+\to
+Page) maintains high recall, as important pages are unlikely to be pruned at coarser levels.
+B.2
+Complexity and System Efficiency
+CHESS transforms the linear scanning cost of long-context inference into a budgeted hierarchical search.
+Computational Complexity
+Traditional Full-KV inference requires
+O
+⁡
+(
+L
+)
+O(L)
+memory reads and attention computations.
+In contrast, CHESS’s hierarchical filtering reduces the active KV set size.
+By coalescing semantic vectors into a unified tensor
+V
+a
+​
+l
+​
+l
+V_{all}
+, we compute similarity for the entire hierarchy via a single GEMM kernel launch.
+This reduces the effective per-step complexity to
+O
+⁡
+(
+ρ
+⋅
+L
+)
+O(\rho\cdot L)
+, where
+ρ
+\rho
+is the retention ratio (e.g., 1%).
+Zero-Copy Logic
+Unlike token-level pruning that requires expensive physical data movement to maintain memory continuity, CHESS operates at a page-aligned granularity.
+By manipulating logical page indices within the PagedAttention framework, we achieve ”selection-on-the-fly” without any data movement overhead, directly translating theoretical sparsity into wall-clock speedups.
+Appendix C
+Choice of reconstructing the context
+We evaluate the efficiency of our dynamic mechanism by comparing it against a static triggering configuration.
+To ensure a rigorous evaluation, we configured the baseline to reconstruct the context every 6 pages—a frequency significantly higher than our dynamic approach (averaging
+∼
+\sim
+10 pages).
+Despite the baseline benefiting from more frequent updates, the results in Figure
+9
+demonstrate that our dynamic construction consistently yields superior performance across various budget ratios.
+Figure 9
+:
+Comparison between Fixed Window and Dynamic Construction on LongBenchV2. The trend highlights the phases of Distraction, Recovery, and Dilution.
+Crucially, the performance trajectory reveals a non-monotonic trend characterized by three distinct phases:
+Distraction
+,
+Contextual Recovery
+, and
+Attention Dilution
+.
+At a strict 1% budget, the method achieves peak efficiency by isolating only the most precise, high-value information, consistent with recent observations that optimized sparse caches can outperform full-context baselines
+(
+Yu and Chai, 2025
+)
+.
+However, as the budget increases moderately, the system enters the
+Distraction
+phase: the cache begins to admit lower-rank tokens but lacks the capacity to retain their surrounding semantic context.
+Consequently, these isolated tokens act as noise that distracts the attention mechanism, leading to a temporary drop in quality
+(
+Shi et al., 2023
+)
+.
+Subsequently, when the budget reaches a critical threshold, the
+Contextual Recovery
+phase begins; the cache gains enough capacity to restore the necessary background for these tokens, thereby recovering model reasoning.
+Finally, at very high budgets, we observe
+Attention Dilution
+, where attention scores become overly diffuse, causing performance to converge toward the Full KV baseline, mirroring limitations observed in extended context processing
+(
+Liu et al., 2024
+)
+.
+Appendix D
+Throughput results on other GPUs
+In this section, we provide additional throughput evaluations conducted on a node equipped with NVIDIA A800 GPUs. Note that
+Quest
+is omitted from this comparison as its current implementation is restricted to a batch size of 1 and does not support multi-batch inference scenarios.
+Figure
+10
+reports end-to-end throughput speedups on a multi-GPU system equipped with NVIDIA A800 GPUs, complementing the main results obtained on H20/A100-class hardware.
+Across all evaluated context lengths (4k, 16k, and 32k) and batch sizes,
+CHESS
+consistently achieves the highest throughput among all compared methods.
+Several observations are worth noting.
+First, the relative performance trends closely mirror those observed on other GPU platforms.
+In particular, the throughput advantage of CHESS
+widens
+as context length increases, reaching up to
+5.72
+×
+5.72\times
+speedup over Full-KV at 32k context.
+This confirms that the benefits of context-aware, block-aligned KV selection are not hardware-specific, but persist across different GPU architectures.
+Second, CHESS maintains robust scalability with respect to batch size.
+While baselines such as H2O and SnapKV experience diminishing returns or early out-of-memory (OOM) failures as batch size grows, CHESS sustains high throughput even under large-batch, long-context workloads.
+This behavior highlights the practical advantage of CHESS’s page-level, zero-copy execution, which avoids the memory fragmentation and synchronization overheads that limit token-level approaches.
+Finally, although all baselines are evaluated relative to the same Full-KV reference, CHESS consistently delivers higher gains even under this normalized setting.
+This suggests that the observed speedups stem from fundamental improvements in KV-cache efficiency rather than favorable hardware configurations or benchmark artifacts.
+Overall, these results demonstrate that CHESS generalizes well across GPU platforms and system configurations, reinforcing its applicability as a robust KV-cache management strategy for long-context LLM inference.
+Figure 10
+:
+End-to-end throughput speedup on a multi-GPU system (4
+×
+\times
+NVIDIA A800). We report the normalized throughput of
+CHESS
+and other representative sparse attention baselines. All results are relative to the
+Full-KV
+baseline (normalized to
+1.0
+×
+1.0\times
+, represented by the horizontal dashed line). Higher values indicate better efficiency in processing long sequences.
+Appendix E
+LongBenchV2 table
+While the main text (cf. Table
+1
+) provides a representative subset of results, this section presents a more comprehensive evaluation of CHESS and other baselines across a wider spectrum of dynamic ratio configurations on LongBench-v2.
+By sweeping through various budget settings, we aim to demonstrate the robustness of CHESS under diverse resource constraints.
+The full results are summarized in Table
+3
+.
+CHESS maintains strong performance across a wide range of cache budgets, from moderately compressed settings (73%–40%) down to extremely sparse regimes (9% and 1%).
+Notably, even at aggressive compression levels (e.g., 9% and 1%), CHESS remains competitive with or surpasses baselines that retain substantially larger KV caches.
+This indicates that CHESS is not sensitive to a narrow operating point, but instead offers a broad and stable quality–efficiency trade-off.
+In contrast, compared methods like KeyDiff and SnapKV exhibit sharp performance degradation as the budget decreases, particularly on hard and long-context subsets.
+This behavior reflects the brittleness of context-agnostic or token-isolated selection.
+By reconstructing semantically coherent context blocks, CHESS degrades gracefully under extreme sparsity and avoids catastrophic quality collapse.
+At the most constrained setting (1% KV budget), CHESS achieves the highest overall score among all sparse methods, and even surpasses Full-KV inference.
+This suggests that CHESS not only preserves essential information but can also filter redundant or distracting context, improving effective reasoning in long-context scenarios.
+Across Easy/Hard and Short/Medium/Long splits, CHESS demonstrates balanced gains without overfitting to a particular regime.
+In particular, its advantage is pronounced on long-context inputs, aligning with the core motivation of context-aware reconstruction.
+Table 3
+:
+Evaluation of CHESS and baselines under diverse dynamic ratio configurations.
+Method
+KV Cache
+Overall
+Difficulty
+Length(
+<
+<
+32K;32K
+∼
+\sim
+128K;
+>
+>
+128K)
+Budget
+Easy
+Hard
+Short
+Medium
+Long
+FullKV Inference
+100%
+30.2
+33.9
+28.0
+38.3
+24.2
+28.7
+H2O
+20%
+34.0
+40.1
+30.2
+41.7
+28.8
+31.5
+H2O
+40%
+33.0
+38.5
+29.6
+42.2
+27.4
+28.7
+H2O
+60%
+31.4
+34.9
+29.3
+41.7
+23.7
+29.6
+KeyDiff
+1024 toks
+22.9
+25.5
+21.2
+28.9
+16.7
+25.0
+KeyDiff
+2048 toks
+24.9
+29.7
+21.9
+30.0
+19.5
+26.9
+KeyDiff
+4096 toks
+27.4
+32.8
+24.1
+32.8
+23.3
+26.9
+KeyDiff
+8192 toks
+29.2
+33.3
+26.7
+30.6
+26.5
+32.4
+SnapKV
+512 toks
+16.5
+17.7
+15.8
+19.4
+13.0
+18.5
+SnapKV
+1024 toks
+24.5
+29.7
+21.2
+30.0
+20.9
+22.2
+SnapKV
+4096 toks
+30.2
+34.9
+27.3
+34.4
+24.2
+35.2
+Quest
+1024 toks
+31.4
+34.9
+29.3
+36.7
+26.0
+33.3
+Quest
+2048 toks
+32.0
+34.9
+30.2
+40.0
+25.6
+31.5
+Quest
+4096 toks
+30.1
+41.3
+23.1
+43.4
+20.6
+30.4
+CHESS
+73%
+30.4
+34.9
+27.7
+36.1
+26.0
+29.6
+CHESS
+57%
+31.0
+34.4
+28.9
+40.6
+24.7
+27.8
+CHESS
+50%
+31.2
+34.9
+28.9
+38.3
+25.6
+30.6
+CHESS
+40%
+32.2
+35.4
+30.2
+41.7
+24.7
+31.5
+CHESS
+28%
+32.2
+37.0
+29.3
+41.7
+25.1
+30.6
+CHESS
+21%
+31.6
+36.5
+28.6
+40.0
+24.7
+31.5
+CHESS
+9%
+31.8
+35.4
+29.6
+38.9
+26.5
+30.6
+CHESS
+1%
+33.2
+38.0
+30.2
+40.0
+27.4
+33.3
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

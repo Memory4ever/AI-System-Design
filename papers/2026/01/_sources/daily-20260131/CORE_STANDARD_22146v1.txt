@@ -1,0 +1,104 @@
+Exact-v1 selected mechanism, matched-token setup, and directly relevant limits.
+URL https://arxiv.org/html/2601.22146v1
+5 Results
+Table 1: Benchmark performance of 1.8B parameter models pre-trained on FineInstructions and various baselines. We bold the strongest method and bold the win rate % if FineInstructions wins.
+Method
+MixEval
+MT-Bench-101
+AlpacaEval
+Acc (%)
+Likert Score
+FI Win Rate % (Δ\Delta Win Margin %)
+Standard
+Hard
+IPT Corpus (23B)
+Standard Pre-Training
+17.8
+14.0
+1.9
+73.6% (Δ\Delta 47.2%)
+IPT
+19.8
+16.7
+2.4
+68.2% (Δ\Delta 36.4%)
+FineInstructions
+31.7
+19.2
+2.8
+–
+Nemotron-CC Corpus (300B)
+Standard Pre-Training
+24.0
+17.1
+3.5
+63.6% (Δ\Delta 27.2%)
+WRAP
+22.8
+18.4
+3.6
+65.1% (Δ\Delta 30.2%)
+Q&A
+27.1
+18.9
+3.4
+76.1% (Δ\Delta 52.2%)
+Nemotron-CC
+24.5
+16.7
+3.6
+65.9% (Δ\Delta 31.8%)
+FineInstructions
+33.0
+21.8
+3.9
+–
+The results of our pre-training experiments can be found in Table 1. Pre-training on data from the FineInstructions pipeline outperforms both standard pre-training and the other synthetic baselines on both datasets. For example, we observe a ~69% relative improvement on MixEval compared to standard pre-training on the IPT dataset and a ~39% improvement on Nemotron-CC. On AlpacaEval, outputs from training on FineInstructions are consistently preferred over outputs from all other pipelines. MT-Bench-101 is the only reference-free evaluation (with no gold reference answer or head-to-head comparison) resulting in evaluation scores that yield lower spread and differentiation between models. Nevertheless, our FineInstructions data achieves a higher score on MT-Bench-101 than any other method. Notably, these improvements hold across both knowledge-focused (MixEval) and open-ended evaluation (MT-Bench-101 and AlpacaEval) benchmarks, suggesting that FineInstructions yields more consistent generalization across both kinds of tasks. Both IPT and Nemotron-CC demonstrated fairly small improvement (0-2%) on MixEval despite generating narrow instruction data in a highly similar style targeting the evaluation benchmark format (multiple choice, reading comprehension Q&A, etc.). On more realistic evaluations correlated to human judgments of response quality on open-ended real-world tasks such as those in AlpacaEval, we find these other techniques yield subpar results compared with FineInstructions. We hypothesize this is supported by the relative diversity of queries in FineInstructions compared to other pipelines’ focus on generating instructions for a narrow set of academic benchmark tasks like multiple choice and Q&A. Finally, in Appendix , we experiment with pre-training models at various sizes (300M, 1.8B, and 7B parameters) on FineInstructions and the strongest-performing baseline (Nemotron-CC) and find training on FineInstructions reaches higher performance levels with equivalent token and compute budget, making it an optimal technique for producing data for pre-training capable, small, and efficient language models.
+
+
+3.1 Generating Instruction Templates
+We begin by collecting realistic instances of users querying LLMs, asking questions to others online (e.g. on forums), or asking questions via a search engine. We also collect human-written prompt templates from prompt libraries. We source user-written queries from the following datasets: WildChat (657K queries) (Zhao et al., 2024), LMSys Chat (559K queries) (Zheng et al., 2023a), LMSys Chatbot Arena Conversations (26.5K queries) (Zheng et al., 2023b), OAsst1 (3.92K queries) (Köpf et al., 2023), HuggingFace NoRobots (9.49K queries) (Rajani et al., 2023), HelpSteer (10K queries) (Wang et al., 2023b), Dolly (14.7K queries) (Conover et al., 2023), Reddit QA (7.47M queries), GooAQ (3.01M queries) (Khashabi et al., 2021), ShareLM (264 queries) (Don-Yehiya et al., 2025), ExpertQA (1.73K queries) (Malaviya et al., 2023), ChatDoctor iCliniq (7.32K queries) (Li et al., 2023b), ChatDoctor HealthcareMagic (112K queries) (Li et al., 2023b), Awesome ChatGPT Prompts (203 queries), Anthropic Prompt Library (64 queries), LangChain Prompts (51 queries) (Chase, 2022), NaturalInstructions (757 queries) (Mishra et al., 2022), P3 (544 queries) (Sanh et al., 2021), and FLAN (3.44K queries) (Wei et al., 2021). We filter out harmful queries using the OpenAI Moderation API (Markov et al., 2023) and decontaminate the queries from overlap with common benchmarks using the procedure used by Tulu 3 (Lambert et al., 2024a).
+We convert queries to genericized templates by inserting <fi></fi> tags in place of spans in the query that refer to specific entities or scenarios. Within each pair of tags is a short, natural language description of what kind of text might be appropriate at that span. These spans are filled in with content from a matched document later in our pipeline. To train a model to convert queries into templates, we first select a subset of ~50K queries spanning the selected datasets. These queries are converted to “silver” synthetic templates by prompting an LLM with a series of prompts. We also generate synthetic “compatible document descriptions” for each of these ~50K templates. The description is a short natural language paragraph describing the kinds of documents that could instantiate such a template as well as provide an answer. We train the efficient Query Genericizer Model by fine-tuning a Llama-3.2 1B Instruct model on the generated synthetic data, which is then used to transform all ~18M queries into templates and compatible document descriptions. This pipeline ultimately produces ~18M templates.
+3.2 Matching Documents to Instruction Templates
+We next use a semantic similarity embedding model, BGE-M3, to embed the compatible document descriptions for the ~18M templates and build a FAISS retrieval index on the resulting embeddings (Xiao et al., 2023; Douze et al., 2025). Given a corpus of unstructured documents (e.g. a representative LLM pre-training dataset), we prompt an LLM to convert ~200K documents into descriptions specifying the type of knowledge contained in each document, which are then embedded with the same embedding model. With each document’s embedding, we query the FAISS index and retrieve five potentially compatible instruction templates. We use the LLM to judge whether the document and instruction template are compatible to produce hard positive (11) and hard negative (00) examples of compatibility that are used with a cosine similarity loss to fine-tune the BGE-M3 embedding model. We fine-tune this model to directly embed documents and compatible document descriptions of instruction templates close together or far apart based on the compatibility labels (Reimers and Gurevych, 2019). To further improve the task-relevance of the embeddings, we repeat this process, ultimately fine-tuning BGE-M3 twice. In the second fine-tuning stage, we introduce a custom pooling layer (described below) that allows us to efficiently produce multiple embeddings at the pooling layer when embedding a single document. Each of the KK pooled embeddings aims to represent each of KK different sections or chunks of the document. This allow us to retrieve templates relevant to different pieces of information throughout a long document.
+Gaussian Pooling for Document Coverage
+To ensure we can retrieve instruction templates that adequately cover the entire document, we train our embedding model with a custom “Gaussian pooling” layer. It augments the typical mean pooling embedding computed globally over all tokens in the document’s text sequence. Gaussian pooling additionally produces multiple “local” embeddings computed with a soft, Gaussian-weighted pooling each focusing on different sections of the text. The Gaussian kernels are evenly distributed across the text, each centered at a fixed fraction of the text sequence length, so that different kernels capture distinct semantic regions or “chunks” of longer documents.
+Specifically, let H=[h1,…,hT]H=[h_{1},\dots,h_{T}] denote the sequence of token embeddings with attention mask mt∈{0,1}m_{t}\in\{0,1\},
+TT the effective sequence length, KK the number of Gaussians (used in order to effectively represent KK different chunks of the document),
+ckc_{k} the chunk center positions, ρk=kK+1\rho_{k}=\frac{k}{K+1} their normalized positions,
+σ\sigma the Gaussian width parameter, and α∈[0,1]\alpha\in[0,1] the blending weight. We choose K=5K=5 chunks (producing 6 retrieval embeddings including the global embedding), α=1.0\alpha=1.0, and σ=0.05\sigma=0.05. Using HH, mtm_{t}, and TT, we compute a global mean embedding and KK Gaussian-weighted chunk embeddings centered at ck=ρk​Tc_{k}=\rho_{k}T with width σ\sigma, each optionally blended with the global embedding via α\alpha, yielding K+1K+1 retrieval representations. Appendix details this pooling operation more rigorously.
+In the second round of fine-tuning the embedding model, we train the model to maintain local semantic representation in the output token embeddings and reduce representation mixing so that the Gaussian pooling layer can reliably produce distinct local representations. We create training instances by applying Gaussian weights at the input attention mask and only attending to tokens with a weight of ≥0.5\geq 0.5 and producing KK distinct local embeddings with these attention masks to retrieve and produce hard negative and hard positive examples once more. This time, we train on hard positives and hard negatives of instruction templates along with labels for which chunk index kk of the document is relevant to the template. We compute the loss for the local embedding produced by the Gaussian pooling layer for the labeled chunk. The resulting final embedding model produces output token embeddings with decreased representation mixture. In our final FineInstructions dataset, we find a Pearson correlation of 0.99 between the index of the chunk (kk) used to retrieve the instruction template and the location of the retrieved answer excerpt within the source document. We find that most answer excerpts are selected from the range of 19%-71% of the way through the document, increasing linearly with the chunk index used.
+Retrieval
+When performing retrieval, we consider a template to be a match candidate for a given document if the cosine similarity between their embeddings is above a manually selected threshold (0.8650.865). Among possible matches, we perform a weighted random sample to encourage diversity in the templates: Since our set of instruction templates contain both shorter, simple templates (with only one or two <fi></fi> tags) as well as longer, complex templates (with 10+ <fi></fi> tags), we compute sampling weights to match the distribution of the complexity of templates derived from real-world LLM queries in the WildChat, LMSys∗\ast, OAsst1, and ShareLM datasets.
+
+
+3.3 Generating Instructions and Answers
+3.4 Judging and Filtering Instructions and Answers
+4 Experimental Setup
+4.1 Baselines
+Instruction Pre-Training (IPT)
+Nemotron-CC
+4.2 Pre-Training
+3.3 Generating Instructions and Answers
+Finally, with a sample of ~100K pre-training documents with six compatible instruction templates each, we prompt an LLM to instantiate the instruction templates and identify excerpt(s) of the document that could be a relevant answer for the query. Since most documents are not written in the style of query responses, we allow the LLM to rephrase the excerpt slightly or add a few words at the beginning of the excerpt that more directly answers the query or instruction before providing more context and detail with an excerpt from the document. Since answers grounded in the document are more desirable than synthetically generated tokens (Shumailov et al., 2023), we ensure that the ratio of excerpted text in generated answers is ≥\geq0.80. Finally, we note that generating long responses in this stage is expensive since it involves token-by-token generation as well as possible GPU memory bottlenecks. We additionally note that 1) our answers are mainly direct excerpts from the document and 2) variables in the instruction template are mainly filled in by direct excerpts from the document. This allows us to reduce the computation required during synthetic data generation by introducing tags that designate that text should be directly copied instead of generated. For example, the text “It is known that no preferred inertial frame exists according to the principle of relativity” is generated simply as “<excerpt>It is known that<...>the principle of relativity.</excerpt>”. In this way, the model only needs to generate <excerpt> tags with ellipsis notation (<...>) to reduce the number of generated tokens needed to excerpt long spans of text. These generated tags can be expanded inexpensively and programatically after decoding.
+We create ~100K silver-standard examples and train a distilled model to instantiate instruction templates and generate answers by fine-tuning Llama-3.2 3B Instruct. With this efficient distilled model, we generate many instruction-answer pairs for a large number of documents and filter for high-quality instantiations and answers with judge prompts using the LLM until we are able to produce ~100K new high-quality instantiated instruction and answer examples. We keep some instances of when the LLM determines a retrieved instruction template is not compatible with the document as examples of when to output null instead of force a low-quality generation (~5% of the total examples). We train the final Instantiator Model in a second round with these new examples. We ensure these ~100K new examples are also well stratified in length, complexity (number of template variables), and in topic using keyword-based filters to identify instruction-answer pairs related to math and code to ensure balanced representation in the distillation examples.
+3.4 Judging and Filtering Instructions and Answers
+Having pre-training data formatted as standalone instruction-answer pairs makes our generated data amenable to being used with off-the-shelf reward and judge models. We implement a judging and filtering stage on our synthetic instructions and answers to yield a higher-quality set. Specifically, we use the off-the-shelf Flow Judge model, a distilled 3.8B parameter judge model (AI, 2024a) with a 5-point Likert scale rubric ranging from 1 (irrelevant or off-topic) to 5 (addresses the query without extraneous, vague, or repetitive content), and retain instruction-answer pairs that score ≥4\geq 4.
+4 Experimental Setup
+In this section, we describe our experimental setup to validate whether training from scratch on synthetic instruction and answer pairs from the FineInstructions pipeline improves knowledge absorption and model performance.
+4.1 Baselines
+For fair comparison, all methods we evaluate utilize the same unstructured document source corpora and all compared models are trained on the same number of tokens. As a first baseline, we consider training on the original documents themselves, as is done in standard pre-training pipelines. We also select a number of relevant baselines from prior work that propose similar procedures of converting pre-training documents with synthetic transformations or rephrasing. The authors of these prior works have released the vanilla pre-training corpora used in their experiments as well as their pre-computed synthetic transformations over the corpora. We describe them below.
+Instruction Pre-Training (IPT)
+The “Instruction Pre-Training” method (Cheng et al., 2024) proposes training an instruction-and-response synthesizer model to convert documents into instruction-answer pairs. The synthesizer model is trained on instructions and responses from academic NLP Q&A datasets. We use both the IPT vanilla pre-training corpus consisting of ~23B tokens from RefinedWeb (Penedo et al., 2023) and the pre-computed synthetically transformed version of that corpus converted via the IPT instruction-and-response synthesizer model.
+Nemotron-CC
+The Nemotron-CC method (Su et al., 2024) generates synthetic pre-training data by processing high-quality documents filtered from CommonCrawl (Foundation, 2025) with an LLM using a mixture of tasks. These tasks include rephrasing documents, generating synthetic Q&A pairs, and extracting, distilling, and listing core knowledge from the document. We use the Nemotron-CC vanilla pre-training corpus (~300B tokens) and the pre-computed Nemotron-CC synthetic pre-training data created using their mixture of tasks. We also select ~300B tokens of pre-training data generated solely by their method of generating diverse Q&A as a standalone baseline that is the most directly comparable to IPT and FineInstructions. Lastly, we select ~300B tokens of their pre-computed synthetically rephrased pre-training data implementing the WRAP (Web Rephrase Augmented Pre-training) technique (Maini et al., 2024) to compare with a strong rephrasing baseline.
+4.2 Pre-Training
+Using the original unstructured documents from both datasets, we use our pipeline to retrieve six instruction templates (with K=5K=5 Gaussian pooling chunks to cover the document) and generate six instruction-answer pairs per document. For each pre-training document, we randomly keep instruction-answer pairs with a total token count that does not exceed the token count of the source document 11
+1
+If there is remaining token budget because instruction-answer pairs cannot exactly fill the token count of the source pre-training document, we rollover the remaining token budget to instruction-answer pairs for future pre-training documents.. On average, this results in ~3 instruction-answer pairs per document. We format these instruction and answer pairs with a simple chat template similar to the other synthetic baselines: “Instruction: {{instruction}}\n\nAnswer: {{answer}}” (included in the token count). This allows us to produce a dataset-controlled, token-for-token, equivalent set of FineInstructions pre-training data that is ~23B tokens and ~300B tokens for the IPT and Nemotron-CC datasets respectively. Distinct from FineInstructions, the baseline methods do not produce standalone question-answer pairs and instead produce questions that only make sense when the source document is provided as context (e.g. “What club does Helen like?”). They typically append their question-answer pairs at the end of the document (reading comprehension style Q&A) and we pre-train them in their native format. We perform our pre-training experiments using the Lingua framework (Videau et al., 2024) designed for controlled pre-training ablations on 8xH100s and pre-train 1.8B parameter models with a Llama-3 tokenizer (AI, 2024b) for each vanilla pre-training dataset, each baseline dataset, and our FineInstructions datasets. We train for a single epoch on datasets derived from Nemotron-CC and four epochs on datasets derived from IPT.
+
+6.2 Effect of Judging and Filtering
+We conduct an ablation experiment to measure the effect of the final judging and filtering stage. We pre-train with and without judging and filtering and provide these results in Appendix on the IPT and Nemotron-CC datasets and find this added stage overall further improves the performance, especially on the AlpacaEval benchmark.
+6.3 Limitations and Future Directions
+The FineInstructions pipeline could be optimized and scaled to yield better results. For example, the distribution of source queries, calibration of the matching embedding, and the sampling weights all have influence on the composition and complexity of instructions generated. An optimal mixture may yield further improvements in performance. One common failure mode we observe in the generated instructions is that complex templates are challenging to match and instantiate. Scaling to larger models beyond the 1B and 3B scales considered in this work could yield stronger performance on complex templates and longer documents. Although our chosen benchmarks provide a reliable picture of language model performance in a range of scenarios, we also found that there is a paucity of benchmarks targeting the kind of long-tail realistic knowledge tasks users ask LLMs (recommendations, advice, suggestions, etc.) as opposed to factual recall of knowledge. Moreover, pre-training on instruction-answer pairs yields a model that consistently produces long-form answers and assigns a low probability to answer choices or short-form responses. This makes benchmarks using log probability-based classification for evaluation ill-suited for our setting and prior studies have found such evaluation is not reliable (Wang et al., 2024; Chandak et al., 2025). Instead, extractive or LLM-as-judge based grading is recommended, which we follow. There are comparatively few LLM benchmarks in the latter category.
+

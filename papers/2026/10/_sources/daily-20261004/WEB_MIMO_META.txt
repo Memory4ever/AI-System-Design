@@ -1,0 +1,103 @@
+mimo.xiaomi.com (https://mimo.xiaomi.com/blog/mimo-v2-6-tool-call-repetition)
+citeturn29548view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://mimo.xiaomi.com/blog/mimo-v2-6-tool-call-repetition","lineno":null}); Total lines: 116
+L0: cite0†Image: logo†cdn.cnbj1.fds.api.mi-img.com L1: 
+L2: English
+L3: 
+L4: cite1†简体中文 L5: 
+L6: Product
+L7: 
+L8: Research
+L9: 
+L10: cite2†Join Us L11: 
+L12: English
+L13: 
+L14: cite1†简体中文 L15: 
+L16: September 27, 2026
+L17: # Diagnosing and Mitigating Tool-Call Repetition in MiMo-V2.6
+L18: 
+L19: A lesson from scaling RL: the reward blind spot in optimizing for correctness
+L20: 
+L21: cite3†Hugging Face ›†huggingface.co cite4†Tech Report ›†huggingface.co cite1†中文 › L22: Following the release of MiMo-V2.6, tool-call repetition emerged as one of the most noticeable issues affecting the user experience. In MiMo Desktop, MiMo Code, OpenCode, and other agentic settings, the model would sometimes issue the same or highly similar tool calls repeatedly, consuming substantial time and context without making meaningful progress.
+L23: Our internal evaluations confirmed this pattern: the response-level repetition rate exceeded 0.05%. The table below breaks down the rates for MiMo-V2.6-Flash-RL and MiMo-V2.6-Pro-RL across different agent harnesses.
+L24: 
+L25: Tool-call repetition rates of MiMo-V2.6-Flash-RL and MiMo-V2.6-Pro-RL across agent harnesses
+L26: Harness  | MiMo-V2.6-Flash-RL  | MiMo-V2.6-Pro-RL
+L27: --- | --- | ---
+L28: OpenCode  | 1.02%  | 0.54%
+L29: MiMo Desktop  | 0.19%  | 0.19%
+L30: Claude Code  | 0.27%  | 0.10%
+L31: OpenClaw  | 0.17%  | 0.08%
+L32: Codex  | 0.23%  | 0.07%
+L33: MiMo Code  | 0.11%  | 0.07%
+L34: DeepSeek Harness  | 0.17%  | 0.07%
+L35: Hermes  | 0.16%  | 0.05%
+L36: Zcode  | 0.07%  | 0.05%
+L37: ## Tracing the Source of Tool-Call Repetition
+L38: 
+L39: To understand the problem, we first distinguish among normal parallel tool calling, tool-call flooding, and tool-call repetition.
+L40: Parallel tool calls are a standard way to improve agent efficiency. For example, an agent may read several relevant files at once or run multiple independent queries in parallel. Even calls to the same tool are not repetitive when they serve different information needs. Tool-call flooding occurs when the model issues substantially more calls than the task requires or the execution environment can process effectively, creating execution queues and backlogs of pending tool results.
+L41: Tool-call repetition, by contrast, refers to repeated actions with no reasonable justification. The model continues to generate semantically identical or highly similar calls even though neither the available information nor the environment state has materially changed and there is no legitimate reason to retry or verify the result. This may occur within a single response, across turns after tool feedback, or as a loop over the same sequence of operations.
+L42: Reasonable retries after failures, necessary state polling, and rerunning tests after modifying code do not count as repetition here.
+L43: Flooding and repetition can occur independently, but they may also reinforce one another. A model can issue many duplicate calls in one response and continue the same behavior in later turns, compounding wasted computation and context usage while making little progress. From the user's perspective, tools keep running but the agent stalls, leading to longer waits, an unresponsive experience, or even task failure.
+L44: The description above defines repetition behaviorally. Because semantic equivalence is difficult to detect reliably at scale, we use a narrower but reproducible metric in this post: exact within-turn repetition. We treat the batch of calls emitted in one assistant turn before any tool feedback as a single unit. Two calls count as duplicates when they invoke the same tool and their arguments are identical after JSON canonicalization.
+L45: If a turn contains N calls and U unique calls, its exact within-turn repetition rate is:
+L46: (N − U) / N
+L47: This metric has two advantages. First, because no tool feedback arrives between calls in the same turn, duplicates generally cannot be explained as result-driven retries. Second, the judgment can be replayed and reproduced directly from a single turn. However, it is only a lower bound on observable repetition, not a complete repetition rate or a measure of flooding.
+L48: It excludes three important cases: cross-turn repetition after tool feedback; near-duplicates whose arguments differ slightly despite serving the same information need; and calls made inside code-mode harnesses, where the model exposes only an `exec` call while the underlying tool invocations remain embedded in its script.
+L49: To determine when the problem emerged, we replayed a fixed set of internal examples that had exhibited repetition against checkpoints from different stages of RL training (steps 0, 5, 10, 15, and 20). Evaluating the same examples at every checkpoint allowed us to track how the behavior evolved during training.
+L50: For MiMo-V2.6-Flash-RL, the share of replayed examples that still exhibited flooding (more than ten tool calls in a single turn) was already 11.1% at RL step 0, and the flooding rate rose to 24.6% by step 20. The trend was especially pronounced under MiMo Code, where the flooding share was already 30.6% at the start and grew to 41.7% late in training.
+L51: RL step  | Share of replayed examples with ≥10 tool calls in a single turn
+L52: --- | ---
+L53: MiMo Desktop  | MiMo Code  | OpenCode  | Codex  | Claude Code  | All harnesses
+L54: --- | --- | --- | --- | --- | ---
+L55: 0  | 11.1%  | 30.6%  | 5.6%  | 5.6%  | 8.3%  | 11.1%
+L56: 5  | 16.7%  | 22.2%  | 0%  | 5.6%  | 8.3%  | 8.7%
+L57: 10  | 25.0%  | 44.4%  | 0%  | 11.1%  | 5.6%  | 16.7%
+L58: 15  | 33.3%  | 38.9%  | 25.0%  | 8.3%  | 2.8%  | 22.5%
+L59: 20  | 33.3%  | 41.7%  | 27.8%  | 16.7%  | 5.6%  | 24.6%
+L60: This increase occurred despite an existing tool-call flooding penalty in our RL pipeline. During rollout, if the model issued more than 32 tool calls in a single turn, we stopped the rollout early and set its reward to zero. During the subsequent gradient update, preceding turns were masked out and the penalty was applied only to the turn that triggered the rule. Every token in that turn, including chain-of-thought tokens, was included in the penalty.
+L61: We then examined the corresponding training metrics. The model almost never triggered the flooding penalty early in training. Starting at approximately step 15, however, the number of examples with more than 32 tool calls in a single turn began to rise noticeably and continued increasing as training progressed.
+L62: cite5†Image: tool_call_flood context hit count and hit rate over training steps in the MixRL training log; both the Flash and Pro runs rise sharply after roughly step 15 Samples triggering the tool-call flooding penalty (more than 32 calls in a turn) in the MixRL training log, as a count and as a rate. The Flash and Pro runs use the same per-turn cap and are directly comparable
+L63: Further analysis suggested that the threshold was too permissive. Using MiMo-V2.6-Flash training traces from the `general/dataset-epqd` data source, we measured the share of examples containing more than eight tool calls in a single turn. A small fraction already showed high-volume tool calling at RL step 0. Because behavior below the threshold of 32 was not penalized, it was gradually amplified during training and eventually developed into severe flooding that crossed the threshold.
+L64: Some flooding traces also contained repeated or highly similar calls, but our analysis here focuses on abnormal call volume and does not equate flooding with repetition.
+L65: cite6†Image: Three line charts for the MiMo-V2.6-Flash MixRL run on general/dataset-epqd: the share of turns with more than eight tool calls trends upward, while the share of flooding turns containing duplicate calls and their mean redundancy spike intermittently MiMo-V2.6-Flash training traces (general/dataset-epqd): share of turns with more than eight tool calls (left), share of those turns containing duplicate calls (middle), and mean redundancy (right).
+L66: Duplicates are exact matches on tool name and JSON-normalized arguments
+L67: ## A Costly Fix with Limited Generalization
+L68: 
+L69: The most direct solution was to lower the flooding-penalty threshold. In a separate experiment on a small, isolated `general/dataset-epqd` data source, we lowered the threshold from 32 calls to eight and resumed training from the step-28 checkpoint of MiMo-V2.6-Flash. The number of turns containing more than eight calls dropped substantially, showing that the stricter penalty effectively suppressed flooding without a noticeable loss in overall reward.
+L70: The drawback was that the effect emerged only after approximately 20 training steps. Applying this fix at full scale would therefore require restarting 20 steps of MixRL, at an estimated cost of $2.31 million.
+L71: cite7†Image: Six panels for the experiment forked at step 28 with the per-turn cap lowered from 32 to 8: avg@n pass rate stays flat, tool_call_flood hit count and hit rate fall steadily, and the flooding-turn rate, share of flooding turns with duplicate calls, and mean redundancy all drop to zero after roughly step 37 Capping tool calls at 8 per turn, resumed from the MiMo-V2.6-Flash step-28 checkpoint (dashed line marks the fork).
+L72: Top row: training-log metrics; bottom row: offline trace statistics on general/dataset-epqd
+L73: The environment-level penalty also generalized poorly to the full internal evaluation set. Replaying the repetition cases with the resulting checkpoint reduced the repetition rate from 13.45% to 3.83%, but did not eliminate the problem.
+L74: 
+L75: Replay repetition rate of the stricter-penalty checkpoints. History N means the visible history of the replayed request already contains N turns with ≥10 tool calls
+L76: Checkpoint  | Internal test set 1 · history 0  | Internal test set 1 · history 1  | Internal test set 2 · history 0  | Internal test set 2 · history 1
+L77: --- | --- | --- | --- | ---
+L78: flash-ga-grpo-s30  | 2.27% (1/44)  | 28.57% (4/14)  | 13.45% (30/223)  | 25.00% (13/52)
+L79: flash-ga-grpo-s35  | 9.30% (4/43)  | 33.33% (5/15)  | 7.86% (18/229)  | 17.65% (9/51)
+L80: flash-ga-grpo-s40  | 11.11% (5/45)  | 33.33% (5/15)  | 4.58% (11/240)  | 17.86% (10/56)
+L81: flash-ga-grpo-s45  | 0% (0/45)  | 28.57% (4/14)  | 4.40% (11/250)  | 11.67% (7/60)
+L82: flash-ga-grpo-s50  | 0% (0/43)  | 28.57% (4/14)  | 3.83% (9/235)  | 16.98% (9/53)
+L83: ## A More Efficient and Generalizable Solution
+L84: 
+L85: We therefore needed a solution that was both efficient to train and robust in real-world scenarios beyond the training distribution. We ultimately adopted an MOPD-based approach (Multi-teacher On-Policy Distillation).
+L86: We first used internally collected repetition examples to train a specialized, single-turn RL teacher. A rollout received a reward of 0 when repetition occurred and a reward of 1 only when it contained neither repetition nor erroneous tool use. We also applied a KL loss to keep the teacher close to the original RL policy. After only 12 training steps, comprising approximately 7,000 examples, the teacher reduced replay repetition to zero on both the training and held-out sets.
+L87: To understand the mechanism at a finer level, we examined one trajectory sampled from the RL traces. Before the fix, the model issued 59 tool calls. At every `<tool_call>` token position, we compared the probability assigned to `<|im_end|>`, the end-of-turn token, by the models before and after the fix.
+L88: cite8†Image: Schematic of the example trajectory's token sequence: after the thinking block, 59 consecutive tool_call blocks before the end-of-turn token. The 12th tool_call position is highlighted; before the fix the model predicts tool_call with 94.56% and the end token with 5.43%, after the fix 7.83% and 92.17% respectively Schematic of the example trajectory.
+L89: At the 12th tool-call position, the model before the fix continues with another tool call with 94.56% probability, while the fixed model emits the end-of-turn token with 92.17% probabilitycite9†Image: Probability of predicting the end-of-turn token at each tool-call position, before (dashed) and after (solid) the fix: after the fix it repeatedly approaches 100% from the 4th call onward, while before the fix it stays near zero almost throughout Probability of predicting the end-of-turn token <|im_end|> at each tool-call position in the example trajectory, before vs.
+L90: after the fix
+L91: We also computed the cumulative stopping probability at position k:
+L92: 
+L93: F_{k} = 1 − ∏_{i=1}^{k} (1 − p_{i})
+L94: 
+L95: where F_{k} is the probability that the model stops by the k-th tool call.
+L96: 
+L97: cite10†Image: Cumulative termination probability over tool-call positions: after the fix it reaches 99.87% by the 8th call; before the fix it is only 0.32% at the 8th call and 53.72% at the 59th Cumulative termination probability F_k, before vs. after the fix
+L98: On this example, the repaired model had a 99.87% probability of stopping within eight tool calls and showed a strong tendency to stop at every position from five through 20. Before the fix, the cumulative probability of stopping was still only about 50% even after 59 calls.
+L99: The top-four token probabilities at the 12th tool-call position make the change especially clear. Before the fix, the model had a 94.56% probability of continuing with another tool call. After RL training, it assigned a 92.17% probability to ending the turn. The specialized teacher had learned when to stop; the remaining challenge was to merge this behavior into the main model through MOPD.
+L100: cite11†Image: Top-4 token probability distribution at the 12th tool-call position: before the fix, tool_call 94.56% and end-of-turn 5.43%; after the fix, end-of-turn 92.17% and tool_call 7.83% Top-4 token distribution at the 12th tool-call position, before vs. after the fix
+L101: Specifically, we rolled the final MOPD run back by five steps, introduced the repetition-specialized RL teacher, and continued training with teacher-prefix OPD. Additional details are provided in Section 5.6 of the cite4†technical report†huggingface.co . During training, the repetition-specific `flood_opd_loss` decreased steadily while the overall `opd_loss` remained stable.
+--------------------------------------------------------------------------------
+AI at Meta Blog (https://ai.meta.com/blog/)
+citeturn29548view1 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://ai.meta.com/blog/","lineno":null}); Total lines: 270
+

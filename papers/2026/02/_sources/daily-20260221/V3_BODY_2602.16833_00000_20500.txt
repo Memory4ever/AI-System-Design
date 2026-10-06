@@ -1,0 +1,317 @@
+VAM: Verbalized Action Masking for Controllable Exploration in RL Post-Training – A Chess Case Study
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+RL with verifiable rewards (RLVR)
+Exploration in RL post-training
+Chess-playing LLMs
+3 Preliminaries
+Chess notation and legal moves
+Group Relative Policy Optimization (GRPO)
+4 Methods
+4.1 Action-masking MDP
+4.2 Verbalized Action Masking (VAM)
+4.3 Iterative action-space pruning
+Verifier-based rewards and target actions
+4.4 Chess implementation details
+State, actions, and prompt interface
+Engine-based verifier scores
+Fixed-dataset training
+Engine-play position generation
+5 Experiments
+5.1 Research questions
+5.2 Experimental setup
+Models
+Verbalized-masking interface
+Training regimes and data
+Puzzle benchmark
+Full-game benchmark
+Metrics
+5.3 Baselines
+Reward definitions from the engine signal.
+5.4 Results
+RQ1: exploration on puzzles
+RQ2: full-game play
+RQ3: engine-play versus fixed-dataset regimes
+6 Discussion
+When VAM is a good fit
+Exploration as a controllable interface choice
+7 Conclusion
+References
+A Additional experimental details
+A.1 Training data
+Training position sources
+Fields per training position
+A.2 Rejection-sampled supervised fine-tuning (SFT) baseline
+A.3 Engine-derived verifier scores
+Stockfish-based scoring
+Reward assignment under the candidate mask
+A.4 Hyperparameters
+A.5 Prompt interface and parsing
+Inputs per decision
+Required output
+Validity checks
+A.6 Puzzle evaluation details
+Data fields
+Targets and metrics
+A.7 Full-game evaluation details
+Match setup
+Invalid moves
+ACPL computation
+A.8 Prompt
+License: CC BY 4.0
+arXiv:2602.16833v1 [cs.LG] 18 Feb 2026
+VAM: Verbalized Action Masking for Controllable Exploration
+in RL Post-Training – A Chess Case Study
+Zhicheng Zhang
+Affiliation: Carnegie Mellon University
+Correspondence to: zhichen3@cs.cmu.edu
+Ziyan Wang
+Affiliation: King’s College London
+Yali Du
+Affiliation: King’s College London
+Fei Fang
+Affiliation: Carnegie Mellon University
+Abstract
+Exploration remains a key bottleneck for reinforcement learning (RL) post-training of large language models
+(LLMs), where sparse feedback and large action spaces can lead to premature collapse into repetitive behaviors.
+We propose Verbalized Action Masking (VAM), which verbalizes an action mask in the prompt and enforces that
+the model outputs an action from the masked set.
+Building on this interface, we introduce iterative action-space pruning: if the target action is not sampled, we
+remove valid sampled actions from the mask and resample under the reduced candidate set, repeating until the target
+is sampled or a fixed budget is exhausted.
+We study VAM in chess and evaluate it under two training regimes: an engine-play regime that generates states
+via play against an engine opponent and a fixed-dataset regime that trains from a fixed dataset of positions
+with verifier scores.
+Across held-out chess puzzles and full-game play measured by average centipawn loss (ACPL), VAM improves learning
+efficiency and final performance over strong baselines, highlighting verbalized masking as a practical mechanism for
+controllable exploration in LLM RL post-training.
+Keywords: Machine Learning, ICML
+1 Introduction
+Figure 1: Overview of Verbalized Action Masking (VAM) with iterative action-space pruning.
+Given a state and a provided set of allowed actions, we prompt the LLM and sample rollout groups for Group
+Relative Policy Optimization (GRPO).
+Each sampled output is parsed into an action and then evaluated by a verifier to produce reward feedback.
+If the target condition is not met in the current round (for example, the target action is not sampled), we mask the
+distinct valid sampled actions out of the allowed action set and resample under the updated prompt.
+This iterative pruning procedure increases within-state action coverage and yields more informative grouped on-policy
+updates.
+Reinforcement learning with verifiable rewards (RLVR) offers a scalable recipe for post-training large language models
+(LLMs) (Cobbe et al., 2021; Lightman et al., 2023; OpenAI et al., 2024; Team et al., 2025), where the model is trained against automatically checkable signals,
+such as exact correctness or strict output-format compliance.
+This “verifier-first” framing enables fully automated, on-policy RL loops and has driven strong improvements on
+reasoning-heavy tasks in recent work (Guo et al., 2025).
+RLVR, however, does not remove RL’s central difficulty: exploration.
+When the reward is sparse and the effective action space is large, on-policy updates stall if the policy does not
+sample informative behaviors, even with deterministic verification.
+In many LLM post-training settings, this failure mode is easy to miss because the “environment” is often just an
+evaluator.
+The learning problem is unchanged: the policy must discover high-reward actions (valid outputs under a strict interface)
+in an immense space of possible strings.
+Classical RL often explores by visiting new states through environment interaction.
+In contrast, many RL post-training setups sample prompts from a fixed distribution and perform multiple rollouts per
+prompt, for example with grouped on-policy objectives such as Group Relative Policy Optimization (GRPO) (Guo et al., 2025).
+In this regime, the key exploration bottleneck is action selection within a single state.
+Given the same prompt, does the model actually try different plausible actions, or does it repeatedly sample the same
+high-probability output?
+When a rollout group collapses to near-identical actions, group-relative updates provide little learning signal, and
+additional samples largely waste compute.
+We propose Verbalized Action Masking (VAM) to make action-space exploration controllable.
+The prompt explicitly lists an admissible action set, and a deterministic verifier checks that the model outputs a valid
+action from this set.
+Choosing an out-of-mask action receives a fixed penalty and terminates, which turns action validity into a verifiable
+signal suitable for RLVR.
+This is a prompt-level interface rather than logit-level masking; each rollout is sampled on-policy from the model conditioned
+on the presented candidate set.
+We then use this interface to enforce exploration via iterative action-space pruning.
+For a fixed state, we run multiple rounds of grouped sampling, remove already-sampled valid actions from the candidate
+set, and resample under the pruned set until a target action is found or a fixed budget is exhausted.
+This procedure converts repeated sampling into controlled coverage of the action space, rather than repetition of the
+same few actions.
+We study these ideas in chess, which provides an unusually clean testbed.
+Each position admits a finite, enumerable action set, the legal moves, and legality checking is exact.
+Moreover, strong engine evaluators can supply per-move value estimates that serve as dense, deterministic rewards.
+At the same time, chess exposes practical failures of language-model policies.
+Prior work, including Hwang et al. (2025) and LLM CHESS (Kolasani et al., 2025),
+has found that providing legal-move lists and enforcing structured outputs are crucial for learning and evaluation, and
+that interface choices can dominate performance.
+We instantiate VAM for chess move selection, where the model must output a single move from a provided candidate list in
+a strict format, and we evaluate both one-step move selection on held-out puzzles and full-game play
+against an engine opponent using average centipawn loss (ACPL).
+In summary, our contributions are the following:
+1.
+We formalize action masking as an MDP augmentation that turns action validity into a verifiable reward and
+termination signal;
+2.
+We propose VAM with iterative action-space pruning, enabling controllable action-space exploration under grouped on-policy RL;
+3.
+We present two practical training pipelines, fixed-dataset training and engine-play position generation, that share the same pruning mechanism;
+4.
+We conduct extensive experiments in chess, demonstrating that VAM improves learning efficiency and final performance over strong baselines on both puzzle selection and full-game play.
+2 Related Work
+RL with verifiable rewards (RLVR)
+Recent work has shown that reinforcement learning with automatically checkable outcome rewards can improve LLM
+reasoning without relying on human preference labels.
+This aligns with approaches in code generation that use execution feedback as a reward signal (Le et al., 2022; Yang et al., 2023). DeepSeek-R1 (Guo et al., 2025) uses GRPO-style post-training with rule-based correctness signals and explicit output-format constraints,
+demonstrating that verifiable rewards and structured generation can meaningfully shape model behavior.
+Because our setting also admits deterministic verification (output parsing and legality checks in chess), we adopt a
+similar “verifier-first” philosophy for reward design.
+Wen et al. (2025) caution that commonly reported pass@kk improvements can mask whether reasoning
+itself improved; they propose CoT-aware variants of pass@kk that require both a correct final answer and a correct
+chain-of-thought.
+Exploration in RL post-training
+RL post-training with verifiable rewards can suffer from exploration failures, where on-policy updates collapse diversity
+even when an outcome verifier is available.
+Recent work addresses this challenge with a variety of mechanisms, including outcome-level exploration incentives,
+trial-and-error interaction for agentic environments, and partial supervision that scaffolds rare long-horizon solutions.
+Outcome-based exploration (Song et al., 2025) adds bandit-inspired bonuses or within-batch repetition penalties over
+final outcomes to encourage diverse solution attempts under GRPO-style training.
+Exploration-Based Trajectory Optimization (ETO) (Song et al., 2024) alternates between rolling out an LLM agent to collect failure
+trajectories and updating the policy with trajectory-level preference optimization that contrasts failures against
+higher-reward trajectories.
+Complementary analyses study how RLVR can sharpen pass@1 while reducing pass@kk diversity, and propose algorithmic knobs
+that preserve exploration, such as clipping variants for entropy control and reference-policy resets under
+KL regularization (Deng et al., 2025; Park et al., 2025; Liu et al., 2025).
+Within this landscape, hint-based and off-policy guidance methods inject partial rationales, solution prefixes, or expert
+traces during training to scaffold rare long-horizon solutions, including StepHint (Zhang et al., 2025a),
+AdaBack (Amani et al., 2025), privileged on-policy exploration (POPE) (Qu et al., 2026), and branched rollouts from
+expert anchors (BREAD) (Zhang et al., 2025b). Related approaches include off-policy guidance
+(LUFFY) (Yan et al., 2025) and self-improvement methods such as STaR (Zelikman et al., 2022) and
+Self-Refine (Madaan et al., 2023).
+Our approach targets the same bottleneck, but rather than revealing rationales or shaping outcome rewards, we intervene
+on the action space: we present an explicit candidate set via VAM and enforce coverage by pruning already-sampled
+actions across rounds.
+Chess-playing LLMs
+Several recent works study whether LLMs can acquire chess competence through either supervised learning or RL (Veeriah et al., 2025; Feng et al., 2025).
+Hwang et al. (2025) perform GRPO post-training of LLMs on chess puzzles and report that providing explicit legal-move lists
+is important for learning; their analysis suggests that performance plateaus and that limited chess-rule
+understanding of chess rules is a bottleneck.
+In contrast, ChessLLM (Zhang et al., 2025c) studies large-scale supervised training on complete games and reports
+strong engine-based evaluations, highlighting the role of long-horizon data and evaluation in full-game settings.
+ChessGPT and ChessCLIP (Feng et al., 2023) treat chess as a language modeling and alignment problem, pairing game records with natural
+language annotations and proposing a broad evaluation suite spanning state tracking, value judgment, and tactical
+policy probes.
+Finally, LLM CHESS (Kolasani et al., 2025) benchmarks chess play through an agentic tool interface and finds that instruction-following and
+tool-use failures, not only illegal moves, are a major source of breakdown, and that interface choices can materially
+affect performance.
+These findings motivate our focus on candidate-restricted move selection with strict output parsing and explicit
+action masks.
+3 Preliminaries
+Chess notation and legal moves
+We represent chess positions as Forsyth–Edwards Notation (FEN) strings and moves as Universal Chess Interface (UCI)
+strings (e.g.,
+e2e4, g1f3).
+We also refer to Standard Algebraic Notation (SAN) for compact, human-readable moves (e.g., e4, Nf3,
+O-O) when discussing prior work.
+SAN can also include annotations such as + (check) and # (checkmate), which are convenient for
+humans but can make tactical consequences explicit and thus act as an additional move-quality cue; we therefore use
+strict UCI for model outputs and treat SAN only as auxiliary notation.
+For a position ss, let 𝒜⁡(s)\mathcal{A}(s) denote the set of legal moves.
+In our experiments and evaluation, models are required to output a single move in strict UCI format, and malformed
+outputs (or illegal moves) are treated as invalid.
+To quantify move quality during full-game play, we use average centipawn loss (ACPL) as an engine-based metric.
+Group Relative Policy Optimization (GRPO)
+We post-train the policy using Group Relative Policy Optimization (GRPO) (Guo et al., 2025), an on-policy method
+that estimates advantages from within-prompt groups of sampled responses, avoiding a learned critic/value
+function.
+Given prompts q∼P⁡(Q)q\sim P(Q), GRPO samples a group of GG outputs {oi}i=1G∼πθold​(O∣q)\{o_{i}\}_{i=1}^{G}\sim\pi_{\theta_{\text{old}}}(O\mid q),
+computes scalar rewards rir_{i} and group-relative advantages
+Ai=ri−mean⁡({r1,…,rG})std⁡({r1,…,rG}),A_{i}\;=\;\frac{r_{i}-\mathrm{mean}(\{r_{1},\dots,r_{G}\})}{\mathrm{std}(\{r_{1},\dots,r_{G}\})},
+(1)
+and optimizes the clipped objective
+JGRPO​(θ)=𝔼q∼P⁡(Q){oi}i=1G∼πθold​(O∣q)[1G∑i=1G(min(ρi(θ)Ai,OPENclip⁡(ρi​(θ),1−ϵ,1+ϵ)​Ai)−βDKL(πθ∥πref))],\begin{split}J_{\text{GRPO}}(\theta)&=\mathbb{E}_{\begin{subarray}{c}q\sim P(Q)\\
+\{o_{i}\}_{i=1}^{G}\sim\pi_{\theta_{\text{old}}}(O\mid q)\end{subarray}}\!\Bigg[\frac{1}{G}\sum_{i=1}^{G}\Big(\min\!\big(\rho_{i}(\theta)A_{i},\\
+&\qquad\mathrm{clip}(\rho_{i}(\theta),1-\epsilon,1+\epsilon)A_{i}\big)\\
+&\qquad-\beta\,D_{\mathrm{KL}}(\pi_{\theta}\,\|\,\pi_{\mathrm{ref}})\Big)\Bigg],\end{split}
+(2)
+where ρi​(θ)=πθ​(oi∣q)/πθold​(oi∣q)\rho_{i}(\theta)=\pi_{\theta}(o_{i}\mid q)/\pi_{\theta_{\text{old}}}(o_{i}\mid q), ϵ>0\epsilon>0 is the PPO-style
+clipping parameter, and β≥0\beta\geq 0 weights a KL penalty to a reference policy πref\pi_{\mathrm{ref}} (computed per
+sampled output).
+4 Methods
+Action-space exploration has been a central challenge in RL post-training with verifiable rewards.
+In grouped on-policy objectives such as Group Relative Policy Optimization (GRPO) (Shao et al., 2024), each
+prompt is paired with a group of sampled outputs, and learning depends on reward differences within the group.
+When the per-state action space is large, the policy can collapse to a small subset of high-probability actions, yielding
+low diversity and weak learning signals within each group.
+We propose Verbalized Action Masking (VAM), which makes the admissible action set an explicit part of the RL
+interface.
+Specifically, we (i) formalize an action-masking MDP that assigns a fixed penalty when the policy selects an
+out-of-mask action, (ii) implement this interface for LLM policies by verbalizing the mask in the prompt and enforcing
+it with a deterministic parser and verifier, and (iii) improve exploration via iterative action-space pruning, which
+repeatedly samples GRPO-sized rollout groups for the same base prompt while shrinking the mask to avoid resampling
+previously produced valid actions.
+VAM can be trained under two regimes that differ only in how states and verifier scores are obtained: a fixed-dataset
+regime that samples states from a fixed dataset with precomputed verifier scores, and an engine-play regime that
+generates states on-policy, for example by playing against an engine opponent and querying the verifier on encountered positions.
+We first present VAM in a generic action-selection setting and then describe the chess instantiation used in our
+experiments.
+4.1 Action-masking MDP
+Intuitively, an action mask specifies which actions are currently admissible.
+If the agent selects an action outside this mask, the environment treats it as a constraint violation, assigns a fixed
+penalty, and terminates the rollout.
+This turns action validity into a deterministic verifier signal that can be used by an on-policy RL algorithm, and it
+provides a clean handle for manipulating the available action space across repeated sampling.
+Formally, consider a Markov decision process (MDP) (𝒮,𝒜,P,R,γ)(\mathcal{S},\mathcal{A},P,R,\gamma) with states
+s∈𝒮s\in\mathcal{S}, actions a∈𝒜a\in\mathcal{A}, transition kernel P⁡(s′∣s,a)P(s^{\prime}\mid s,a), reward function R⁡(s,a)R(s,a), and discount
+factor γ∈[0,1)\gamma\in[0,1).
+Let 𝟏​[⋅]\mathbf{1}[\cdot] denote the indicator function.
+We assume that at each state ss the environment can enumerate a finite admissible action set
+𝒜⁡(s)⊆𝒜\mathcal{A}(s)\subseteq\mathcal{A}.
+An action mask is a subset ℳ⊆𝒜⁡(s)\mathcal{M}\subseteq\mathcal{A}(s) of actions that are currently allowed.
+An action-masking MDP augments the state with an explicit mask variable.
+Specifically, define an augmented state space
+𝒮~={(s,ℳ):s∈𝒮,ℳ⊆𝒜(s)},\tilde{\mathcal{S}}\;=\;\{(s,\mathcal{M}):s\in\mathcal{S},\;\mathcal{M}\subseteq\mathcal{A}(s)\},
+(3)
+and an action-masking MDP (𝒮~,𝒜,P~,R~,γ)(\tilde{\mathcal{S}},\mathcal{A},\tilde{P},\tilde{R},\gamma).
+The mask may depend on the underlying state and can be updated as a function of the chosen action; we write
+U⁡(ℳ′∣s,a,ℳ)U(\mathcal{M}^{\prime}\mid s,a,\mathcal{M}) for a (possibly deterministic) mask-update kernel.
+Then for in-mask actions the augmented transition factorizes as
+P~​((s′,ℳ′)∣(s,ℳ),a)=P⁡(s′∣s,a)​U​(ℳ′∣s,a,ℳ).\begin{split}\tilde{P}\bigl((s^{\prime},\mathcal{M}^{\prime})\mid(s,\mathcal{M}),a\bigr)&=P(s^{\prime}\mid s,a)\,U(\mathcal{M}^{\prime}\mid s,a,\mathcal{M}).\end{split}
+(4)
+If a∉ℳa\notin\mathcal{M}, we treat the transition as terminal (equivalently, a transition to an absorbing terminal state),
+so the next-state dynamics and mask update are not applied.
+The augmented reward assigns the base reward for in-mask actions and a fixed penalty otherwise:
+R~​((s,ℳ),a)=𝟏[a∈ℳ]⋅R(s,a)+(1−𝟏[a∈ℳ])⋅(−Penalty),\begin{split}\tilde{R}\bigl((s,\mathcal{M}),a\bigr)&=\mathbf{1}[a\in\mathcal{M}]\cdot R(s,a)\\
+&\quad+\bigl(1-\mathbf{1}[a\in\mathcal{M}]\bigr)\cdot(-\mathrm{Penalty}),\end{split}
+(5)
+where Penalty>0\mathrm{Penalty}>0 is a constant.
+We terminate the rollout immediately when an out-of-mask action is chosen.
+Equivalently, define a done indicator
+d(s,a,ℳ)= 1[a∉ℳ],d(s,a,\mathcal{M})\;=\;\mathbf{1}[a\notin\mathcal{M}],
+(6)
+and terminate whenever d⁡(s,a,ℳ)=1d(s,a,\mathcal{M})=1.
+The penalty controls whether the mask is a soft constraint or a hard constraint.
+When Penalty\mathrm{Penalty} is finite, the objective discourages out-of-mask actions while still defining a reward value for
+all actions.
+In the limiting case Penalty→∞\mathrm{Penalty}\to\infty, any out-of-mask action incurs an unbounded loss, and the optimal
+policy assigns zero probability mass to actions outside ℳ\mathcal{M}, recovering a hard version of action masking.
+Algorithm 1 VAM with iterative action-space pruning
+1:
+Procedure PruneAndSample(π,s,a⋆)(\pi,s,a^{\star})
+2:
+Parameters: group size GG, max rounds RmaxR_{\max}, reward R~\tilde{R}
+3:
+ℳ←𝒜⁡(s),𝒟s←∅\mathcal{M}\leftarrow\mathcal{A}(s),\;\mathcal{D}_{s}\leftarrow\emptyset
+4:
+for r=1r=1 to RmaxR_{\max} do
+5:
+Sample {oi}i=1G∼π(⋅∣s,ℳ)\{o_{i}\}_{i=1}^{G}\sim\pi(\cdot\mid s,\mathcal{M}) and parse to {ai}i=1G\{a_{i}\}_{i=1}^{G}
+6:
+Compute ri←R~​((s,ℳ),ai)r_{i}\leftarrow\tilde{R}((s,\mathcal{M}),a_{i}) for i=1,…,Gi=1,\dots,G
+7:
+𝒟s←𝒟s∪{(ℳ,{(oi,

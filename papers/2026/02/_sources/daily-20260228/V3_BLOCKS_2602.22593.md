@@ -1,0 +1,385 @@
+[0] h5: Report GitHub Issue
+
+[1] p: Content selection saved. Describe the issue below:
+
+[2] h1: FLYING SERVING: On-the-Fly Parallelism Switching for Large Language Model Serving
+
+[3] h6: Abstract.
+
+[4] p: Production LLM serving must simultaneously deliver high throughput, low latency, and sufficient context capacity under non-stationary traffic and mixed request requirements. Data parallelism (DP) maximizes throughput by running independent replicas, while tensor parallelism (TP) reduces per-request latency and pools memory for long-context inference. However, existing serving stacks typically commit to a static parallelism configuration at deployment; adapting to bursts, priorities, or long-context requests is often disruptive and slow. We present Flying Serving , a vLLM-based system that enables online DP-TP switching without restarting engine workers. Flying Serving makes reconfiguration practical by virtualizing the state that would otherwise force data movement: (i) a zero-copy Model Weights Manager that exposes TP shard views on demand, (ii) a KV Cache Adaptor that preserves request KV state across DP/TP layouts, (iii) an eagerly initialized Communicator Pool to amortize collective setup, and (iv) a deadlock-free scheduler that coordinates safe transitions under execution skew. Across three popular LLMs and realistic serving scenarios, Flying Serving improves performance by up to 4.79 × 4.79\times under high load and 3.47 × 3.47\times under low load while supporting latency- and memory-driven requests.
+
+[5] h2: 1. Introduction
+
+[6] p: Large language models (LLMs) have become a primary workload in modern AI services, powering interactive assistants, code generation, and reasoning-heavy applications ( Team et al., 2023 ; Team et al., 2025 ; Brown et al., 2020 ; Li et al., 2022 ; Touvron et al., 2023 ; Stojkovic et al., 2024b ) . At production scale, inference often dominates both user experience and operating cost: providers must deliver responsive, streaming outputs under strict latency expectations while keeping expensive accelerator fleets highly utilized ( Rajbhandari et al., 2025 ; Pope et al., 2023 ; Lai et al., 2025 ) . This is not a hypothetical concern. For example, Perplexity reports serving over 435M search queries per month, where each user query triggers multiple inference requests in the backend ( Elmeleegy et al., 2024 ) . Large providers report similarly Internet-scale LLM demand: SageServe characterizes Microsoft Office 365 workloads with over 10M LLM requests per day across regions and time ( Jaiswal et al., 2025 ) , while BurstGPT releases production traces from regional Azure OpenAI GPT services capturing burstiness and heterogeneity over long periods ( Wang et al., 2024b ) . Cloud provider guidance similarly emphasizes that inefficient inference configurations can lead to “skyrocketing costs,” motivating careful performance engineering and benchmarking ( Patankar and Affaticati, 2024 ; Stojkovic et al., 2024a ) .
+
+[7] p: This operational reality is increasingly captured by benchmarking practice. MLPerf Inference evaluates latency-bounded throughput : reported throughput is only meaningful if the system satisfies explicit latency constraints under online arrivals ( Liu et al., 2025 ; Reddi et al., 2020 ; Li et al., 2025 ; MLCommons, 2025a ) . For example, MLPerf specifies constraints in terms of time-to-first-token (TTFT) and time-per-output-token (TPOT), and recent releases explicitly introduce interactive, low-latency LLM benchmarks to reflect user-facing responsiveness requirements ( Wang et al., 2024b ; Nguyen et al., 2025a ; MLCommons, 2025a ; MLCommons, 2025b ) . More broadly, provider-facing benchmarking guidance frames deployment cost as a function of how many queries the system can serve per second while remaining responsive ( Nguyen et al., 2025b ) . Together, these trends highlight a central systems objective for LLM serving: maximize throughput subject to end-to-end latency constraints, rather than optimizing either metric in isolation.
+
+[8] p: Current distributed inference stacks, however, force architects into a static choice between parallelism strategies. TP shards model weights across GPUs to reduce per-request latency and accommodate large models or long contexts under tight SLOs ( Shoeybi et al., 2019 ) . DP replicates the model to maximize aggregate throughput by serving independent requests concurrently. The problem is rigidity: real serving workloads are non-stationary, with bursty arrivals, heterogeneous request lengths, and mixed priority classes, so a single fixed strategy is inevitably suboptimal ( Hidayetoglu et al., 2025a ) . TP-centric deployments can under-provision concurrency during bursts and suffer queue buildup, while DP-centric deployments can inflate tail latency and struggle to sustain long-context sessions due to memory pressure from weights and KV cache. While other parallelization strategies, such as Pipeline Parallelism (PP) ( Huang et al., 2019 ) and Expert Parallelism (EP) ( Liu et al., 2024 ) , are utilized in specific scenarios, particularly for Mixture-of-Experts (MoE) models ( Agarwal and others, 2025 ; Liu et al., 2024 ) , DP and TP serve as the fundamental building blocks of distributed inference. Crucially, TP and DP are universally applicable and orthogonal to these specialized methods, allowing them to be compatible with other strategies as needed.
+
+[9] p: An ideal serving system should adapt its parallelism online. During low load, it coalesces devices into TP groups to minimize tail latency. During bursts, it should expand into DP replicas to increase concurrency and drain queues. Realizing this policy is technically challenging because DP and TP differ in (i) how they place and access weights, (ii) how they allocate and index KV cache, and (iii) how they form communication groups. Intuitive switching between modes requires weight replication or reload, KV cache migration or duplication, and disruptive reconfiguration of communication state, which costs that erase the benefit of adapting under load.
+
+[10] p: To address these challenges, we present Flying Serving , a distributed LLM serving system that dynamically switches between DP and TP without model replication, KV cache transfer, or prohibitive reconfiguration pauses. Flying Serving supports both execution modes from a unified in-memory organization: it (1) enables zero-redundancy weight management across DP/TP, (2) maintains a shared KV cache pool that remains stable across modes, and (3) activates the appropriate communication topology on demand. A workload-aware scheduler coordinates switching under execution skew and mixed priorities.
+
+[11] p: Specifically, we make the following contributions in this paper:
+
+[12] p: We propose Flying Serving , a vLLM-based serving system that virtualizes each engine as a DP replica and uses a global task pool plus a workload-aware scheduler to dynamically merge replicas into TP groups (and split them back), enabling adaptation to bursty demand, mixed priorities, and long-context requests.
+
+[13] p: We introduce a switching substrate that makes DP ↔ \leftrightarrow TP transitions lightweight: a Model Weights Manager that loads weights once and realizes TP via logical shard activation (no tensor movement), a KV Cache Adaptor that maintains a single physical KV pool with constant-time remapping across modes, and a Communicator Pool that activates the required control- and data-plane collectives on demand.
+
+[14] p: We implement Flying Serving as a set of patches to vLLM ( Kwon et al., 2023 ) , preserving core optimizations including PagedAttention ( Kwon et al., 2023 ) , chunked prefill ( Agrawal et al., 2023 ) , and continuous batching ( Su et al., 2025 ) .
+
+[15] p: We evaluated Flying Serving under bursty, production-like workloads and achieved a speedup of 4.79x and 3.47x for high and low workloads, respectively.
+
+[16] h2: 2. Background and Motivation
+
+[17] h3: 2.1. Transformer Architecture
+
+[18] p: Transformer inference is organized around a small set of high-impact linear operators whose shapes and execution modes govern both compute intensity and memory movement. As shown in Figure 1 , each Transformer block consists of an Attention(MHSA or GQA ( Ainslie et al., 2023 ) ) operator followed by a Feed-Forward Network (FFN) operator. Although conceptually simple, these operators exhibit different tensor shapes and data dependencies across prefill , batched decoding , and single-token decoding , which in turn drive the system-level behavior of LLM inference.
+
+[19] figure: xxx. Figure 1 . Attention/FFN operators (simplified). xxx.
+
+[20] p: Attention Layer. The MHSA sublayer is built from four projection matrices, i.e., Query ( W Q W_{Q} ), Key ( W K W_{K} ), Value ( W V W_{V} ), and Output ( W O W_{O} ), that apply GEMMs to the input hidden state. In efficient implementations, the W Q W_{Q} , W K W_{K} , and W V W_{V} projections are typically fused into a single GEMM operation applied to the input hidden state.
+
+[21] p: When the model processes a sequence of tokens, the fused projection generates corresponding q q , k k , and v v vectors for each token in parallel. The resulting k k and v v vectors are appended to the KV cache, a persistent per-layer buffer. The attention mechanism then computes over the current and cached states to produce an intermediate output, which is finally projected by W O W_{O} to produce O 1 O^{1} .
+
+[22] p: FFN Layer. The FFN is composed of two large linear projections: an up-projection ( W 1 W^{1} ) and a down-projection ( W 2 W^{2} ), applied independently to each token. Despite their simplicity, these two GEMMs typically dominate FLOP count.
+
+[23] p: Crucially, this weight distribution dictates the topology of the KV cache. The KV cache consists of the intermediate key and value tensors generated by the W K W_{K} and W V W_{V} linear layers during the forward pass. Because these tensors are produced locally on the device holding the corresponding weight shard, the KV cache is inherently stored on the same device as the weights that generated it. Consequently, different parallelism configurations (e.g., varying the degree of TP) result in fundamentally different KV cache topologies and total capacities per device, creating a tight coupling between model weight distribution and memory management.
+
+[24] figure: TP vs DP. Figure 2 . Model layouts on a 4-GPU node in DP vs. TP. TP vs DP.
+
+[25] h3: 2.2. Data Parallelism and Tensor Parallelism
+
+[26] p: Serving large Transformer models requires distributing both computation and memory across multiple GPUs, and different workloads demand different forms of parallelism. DP and TP are two effective strategies for scaling large models and LLM serving. However, each strategy imposes its own requirements on weight layouts, KV cache organization, and communication patterns. These characteristics directly shape the design space explored in our framework design (Section 4 ): the feasibility of dynamic reconfiguration, the cost of state migration, and the limits on context length and throughput.
+
+[27] p: Figure 2 contrasts DP and TP on a 4-GPU cluster, and Figure 3 illustrates how our system leverages both modes by smoothly transitioning between them.
+
+[28] figure: System architecture diagram Figure 3 . Overview of the Flying Serving architecture. The system functions as a middleware layer that orchestrates multiple engine workers, enabling dynamic transitions between DP and TP. The timeline on the right illustrates how the system adapts to different request types, such as high-priority, long-context, and latency-strict tasks, by reconfiguring workers from independent DP instances into cooperative TP groups on the fly. System architecture diagram
+
+[29] h4: 2.2.1. Data Parallelism: Independent Engines with Replicated State.
+
+[30] p: DP treats each group of GPUs as a standalone serving engine. In the 2 ​ DP × 2 ​ TP 2\mathrm{DP}\times 2\mathrm{TP} example in Figure 2 , the cluster forms two identical engines: (GPU0, GPU1) and (GPU2, GPU3). Each engine holds replicated weight shards, runs its own inference loop, and serves disjoint request sets.
+
+[31] p: (1) Memory duplication: Because each engine replicates the full model (or TP shard), the effective memory available for the KV cache shrinks.
+
+[32] p: (2) Minimal communication: Engines operate independently and synchronize only at coarse granularity (e.g., request scheduling or step alignment as in vLLM ( Kwon et al., 2023 ) ), making DP suitable for low-overhead, high-throughput serving.
+
+[33] p: (3) Natural throughput scaling: Since each engine emits tokens independently, total tokens/sec increases linearly with the number of DP engines, even though individual requests are confined to the compute resources of one engine.
+
+[34] p: Together, DP excels for short-context or latency-sensitive traffic; however, it falls short for long-context or compute-heavy workloads that demand more memory or parallel compute than a single DP engine can provide.
+
+[35] h4: 2.2.2. Tensor Parallelism: Distributed Operators for a Single Request.
+
+[36] p: TP partitions each linear projection operator in both the attention and FFN layers, across multiple GPUs. In the pure 4 ​ TP 4\mathrm{TP} configuration (Figure 2 ), all four GPUs jointly execute each operator invocation. This shifts the parallelization granularity from requests (DP) to operators (TP).
+
+[37] p: (1) Aggregated memory for weights and KV cache: Sharding weights across devices eliminates duplication. The KV cache inherits this sharding, effectively increasing the usable memory budget by (roughly) the TP degree. This offers longer context windows than DP.
+
+[38] p: (2) Lower latency for compute-bound workloads: Prefill and batched decoding benefit from parallel operator execution across GPUs, reducing per-request latency.
+
+[39] p: (3) High communication intensity: Every operator invocation requires synchronizing intermediate tensors among all TP workers. This mandates high-bandwidth interconnects (e.g., NVLink) and creates non-trivial reconfiguration challenges if TP groups are changed dynamically.
+
+[40] p: TP is necessary for long-context or high-compute requests, but expensive to maintain during heterogeneous workloads.
+
+[41] h3: 2.3. User Scenarios Motivating Dynamic DP-TP
+
+[42] p: Existing systems typically commit to a fixed parallelism strategy: either primarily DP or primarily TP. However, real serving workloads are heterogeneous in time, priority, and context length, and no single static configuration can serve all of these efficiently. We highlight three common scenarios where dynamically switching between DP and TP yields substantial benefits.
+
+[43] p: Use Case 1: Adapting to Time-Varying Load. Serving traffic is highly non-stationary. During low-load windows, the serving system backend has spare GPU capacity and can afford to over-provision resources per request. In this regime, forming TP groups is beneficial: the system aggregates GPUs to accelerate individual requests, lowering latency and improving the tail quality of service (QoS). When the workload spikes and request queues build up, the objective flips: the system should dissolve TP groups into more DP engines to maximize aggregate throughput and drain the queue. A dynamic DP-TP system can track load and continuously rebalance between "few fast TP engines" and "many DP engines" rather than committing to one extreme.
+
+[44] p: Use Case 2: Priority-Aware Service Differentiation. Multi-tenant deployments often enforce tiered service levels, where a subset of requests (e.g., premium users or critical applications) carry stricter latency SLOs. This is analogous to the scheduler’s Quality of Service (QoS) mechanism in HPC facilities, where certain jobs are granted higher scheduling priority. Under a static configuration, either all requests benefit from TP (wasting resources on low-priority traffic), or all are constrained to DP (violating high-priority SLOs). With dynamic DP-TP, the scheduler can selectively assign high-priority requests to TP groups to minimize their latency, while routing best-effort traffic to DP engines that emphasize throughput. This enables fine-grained, per-request allocation of parallelism rather than a global, one-size-fits-all policy.
+
+[45] p: Use Case 3: Serving Long-Context Requests. The maximum context length a single serving engine can handle is bounded by its available GPU memory, dominated by the KV cache. In a pure DP configuration, if an engine supports sequences up to length L L , a request with length L + m L+m will trigger an out-of-memory failure. Dynamically merging multiple DP engines into a TP group effectively pools their memory: the KV cache is sharded across all participating GPUs, increasing the usable capacity by approximately the TP degree. This allows the system to "scale up" on demand to serve long-context requests that exceed the limits of any single engine, while retaining the ability to "scale out" via DP for shorter, throughput-oriented workloads.
+
+[46] h2: 3. An Overview of Flying Serving
+
+[47] p: Figure 3 shows Flying Serving as a middleware between a global Task Pool and a set of engine workers: in the static mode, engines run as independent DP instances; when a request requires tighter latency or more effective memory capacity, Flying Serving intelligently merges multiple engines into a TP group and later dissolves them back to DP.
+
+[48] p: Execution substrate: DP engines as the base unit. In Flying Serving , a single LLM engine is the fundamental DP instance . Each engine encapsulates one or more Workers mapped to one (or a fixed small set of) physical devices. Each worker maintains a persistent memory pool partitioned into (i) static storage for Model Weights and (ii) dynamic storage for the KV Cache . Incoming requests are first aggregated in a global Task Pool ; by default, engines pull tasks and execute independently in DP mode to maximize throughput and absorb bursty arrivals.
+
+[49] p: One control abstraction: forming and releasing TP groups. The key capability of Flying Serving is to bind a subset of DP engines into a cooperative TP group for a specific request, then release those engines back to DP. This bind/release operation is the only switching primitive exposed to the scheduler; all complexity is contained in the middleware components that make switching cheap and safe at runtime:
+
+[50] p: Model Weights Manager (Section 4.1) provides a rank-consistent logical view of weights under different TP degrees without requiring per-switch weight reloads.
+
+[51] p: KV Cache Adaptor (Section 4.2) preserves a consistent physical KV allocation while remapping request-level KV layout across DP and TP execution, so request state remains valid through switches.
+
+[52] p: Communicator Pool (Section 4.3) supplies ready-to-use communication groups for candidate engine sets, enabling immediate collective execution when engines are bound.
+
+[53] p: Scheduler (Section 5) selects when to bind/release and which engines participate, ensuring deadlock-free coordination under execution skew.
+
+[54] p: How Flying Serving serves the three workload scenarios. The timeline in Figure 3 illustrates how the scheduler uses the same bind/release primitive to satisfy different request types. (Use Case 1: workload pattern adaptation) When load is high, Flying Serving keeps engines in DP to maximize concurrency and drain the queue; under light load, it opportunistically forms TP groups to reduce per-request latency. (Use Case 2: priority-based differentiation) High-priority tasks can trigger an immediate TP binding to obtain more compute per request and tighter latency, while normal tasks continue to execute on remaining DP engines. (Use Case 3: long-context scaling) Long-context tasks that pressure KV capacity are routed to wider TP groups so that KV is effectively sharded across engines; once the long-context request progresses past the memory-critical phase, engines are released back to DP to recover throughput.
+
+[55] figure: Diagram showing the Model Weights Manager. Figure 4 . Model Weights Manager architecture for zero-copy DP/TP switching. Diagram showing the Model Weights Manager.
+
+[56] h2: 4. Runtime Substrate for Dynamic Parallelism
+
+[57] h3: 4.1. Model Weights Manager
+
+[58] p: Dynamic switching between DP and TP fundamentally changes how GPU workers consume model parameters. In DP, each engine requires a full replica of the model weights, whereas in TP, each engine accesses only a shard of each linear operator. Naively transitioning between these modes would require reallocating or reloading large parameter tensors, incurring transient memory and communication overhead. Such costs are incompatible with online serving and directly reduce the memory budget available for the KV cache.
+
+[59] p: The Model Weights Manager eliminates this reconfiguration bottleneck by decoupling logical weight sharding from physical weight storage. Its core invariant is that model parameters are loaded exactly once per engine and never physically moved thereafter. Mode switching is realized purely by changing which portions of an existing weight tensor are activated for computation.
+
+[60] p: In Transformer architectures, the majority of parameters reside in linear layers, specifically the QKV ( W Q , W K , W V W^{Q},W^{K},W^{V} ) projections and the Output projection ( W O W^{O} ) in Attention layers, as well as the Up, Gate, and Down projections in FFN (as referred in Figure 1 ).
+
+[61] p: Figure 4 illustrates our partitioning strategy using an Attention layer as an example. In a standard DP configuration, both Engine 0 and Engine 1 hold identical, full replicas of the weights ( W Q , W K , W V W^{Q},W^{K},W^{V} and W O W_{O} ). When the scheduler triggers a transition to a 2 × 2\times TP configuration, the system must logically partition these weights across devices to parallelize computation.
+
+[62] h4: 4.1.1. Logical Weight Resharding
+
+[63] p: Specifically, we adopt the Megatron-LM style parallelism ( Shoeybi et al., 2019 ) to enabledynamic sharding:
+
+[64] p: Column-Parallel Layer ( W Q ​ K ​ V W^{QKV} ): We shard the fused W Q ​ K ​ V W^{QKV} projection along its output (column) dimension. In Figure 4 , Engine 0 activates the first column slice while Engine 1 activates the second; all other columns in each local replica are deactivated and excluded from computation. This partition maps cleanly to multi-head attention: each engine produces its local Q Q , K K , and V V sub-tensors for a disjoint subset of heads, and thus requires no cross-engine communication for the W Q ​ K ​ V W^{QKV} projection.
+
+[65] p: Row-Parallel Layer ( W O W^{O} ): We shard the output projection W O W^{O} along its input (row) dimension. Each engine multiplies the full attention output with its local row slice, producing a partial projection ( O 1 O_{1} on Engine 0 and O 2 O_{2} on Engine 1). A single all-reduce then aggregates these partial results to form the final output activation O O for the layer.
+
+[66] p: This pattern ensures that only one synchronization step is required per pair of linear layers, maintaining high computational efficiency.
+
+[67] h4: 4.1.2. Zero-Copy View Implementation
+
+[68] p: A naive implementation of the above switching logic involves creating new shard tensors for each TP rank, which introduces duplicate data and causes memory allocation overhead. Instead, Flying Serving implements a non-invasive patch to vLLM’s linear.py 1 1 1 vLLM implements its core linear operators (including tensor-parallel variants) in vllm/model_executor/layers/linear.py ( vLLM Project, ) . Our patch extends this operator to accept a rank-aware tensor view of the original weight matrix, allowing dynamic slicing along the sharding dimension without allocating new storage or modifying kernel code. module to enable zero-copy .
+
+[69] p: Specifically, when m m DP engines merge into an m m -way TP group, the Manager assigns each engine a unique rank ID r ∈ [ 0 , m − 1 ] r\in[0,m-1] , and creates a view of active weights on top of the corresponding full matrix:
+
+[70] table: (1) W a ​ c ​ t ​ i ​ v ​ e ( r ) = View ​ ( W f ​ u ​ l ​ l , dim , r , m ) W_{active}^{(r)}=\text{View}(W_{full},\text{dim},r,m)
+
+[71] p: where dim defines the sharding dimension (columns for W Q ​ K ​ V W^{QKV} , rows for W O W^{O} ).
+
+[72] p: This approach guarantees that the active weights used for TP execution are contiguous in virtual memory but map to the existing physical memory of the DP replica. By avoiding physical data movement or duplication, Flying Serving maximizes the available memory for the KV cache, distinguishing our approach from methods that rely on redundant storage or expensive reloading ( Hidayetoglu et al., 2025a ; Wu and others, 2023 ) .
+
+[73] h3: 4.2. KV Cache Adaptor
+
+[74] p: The KV Cache Adaptor enables mode switching without migrating KV state or rebuilding the cache allocator. The core difficulty is that TP changes the per-device KV tensor shape: under DP, each worker stores KV tensors for the full hidden dimension, while under TP, each worker stores only a 1 / p 1/p slice for TP degree p p . In existing engines, these shapes are baked into the allocator at initialization; switching DP ↔ \leftrightarrow TP would therefore require reallocating the KV pool and repopulating metadata, which is too costly on the serving critical path.
+
+[75] figure: KV Cache adaptation strategy. Figure 5 . An example of KV cache adaptation in Flying Serving . With per-token footprint shrinks with TP (DP: N × D N\!\times\!D ; 4TP: N × D / 4 N\!\times\!D/4 ), to keep a fixed physical layout without reallocation, we scale block size inversely with TP: 4 tokens (DP), 8 (2TP), 16 (4TP), managed per request by the KV cache adaptor; physical memory of each block is unchanged. KV Cache adaptation strategy.
+
+[76] h4: 4.2.1. Challenge: Mode-Dependent KV Layouts
+
+[77] p: DP and TP induce different per-device KV tensor shapes. Let N N be the number of cached tokens and D D the model hidden dimension. In DP mode, each device processes independent requests and must store the full hidden dimension for every token. The memory requirement per token on a single device is proportional to D D . In TP mode, the model weights and intermediate tensors are sharded across p p devices. Consequently, the KV cache for a single token is partitioned, which means each device stores a slice of size D / p D/p .
+
+[78] p: In existing serving engines, the KV allocator is initialized with a fixed block shape (determined by D D and a pre-set block size) derived from a single deployment configuration. Switching from DP to TP reduces the local tensor width from D D to D / p D/p . If the system retains the original allocator settings, memory becomes misaligned and fragmented. Reconfiguring the allocator to match the new shape requires rebuilding the memory pool. Such an operation is orders of magnitude slower than the per-step execution budget and would stall latency-critical requests.
+
+[79] h4: 4.2.2. Unified Memory via Adaptive Block Sizing
+
+[80] p: To address this, Flying Serving introduces the KV Cache Adaptor , a middleware layer that dynamically manages the KV cache block. In vLLM’s PagedAttention design, the KV cache is allocated as non-contiguous fixed-size physical blocks on the GPU and indexed via an OS-style logical mapping table. Instead of resizing physical memory blocks to fit the changing tensor shapes, we leverage the inverse relationship between the local hidden dimension D D and the token capacity per block B B .
+
+[81] p: Concretely, the bytes consumed by a physical block are:
+
+[82] table: (2) M block = B ⋅ D local ⋅ P size , M_{\text{block}}=B\cdot D_{\text{local}}\cdot P_{\text{size}},
+
+[83] p: where B B is the number of tokens per block, D local D_{\text{local}} is the per-device hidden dimension under the current mode, and P size P_{\text{size}} is the element size. Our key insight is to keep M block M_{\text{block}} constant across all modes to avoid reallocation. We achieve this by inversely scaling the block size B B against the TP degree p p . Formally, for a given parallelism degree p p , the local dimension becomes D local ​ ( p ) = D / p D_{\text{local}}(p)=D/p . To maintain memory alignment, we adjust the block size B ⁡ ( p ) B(p) such that:
+
+[84] table: (3) B ⁡ ( p ) = p ⋅ B base B(p)=p\cdot B_{\text{base}}
+
+[85] p: Where B base B_{\text{base}} is the block size configured for the DP mode.
+
+[86] p: At runtime, as illustrated in Figure 5 , the scheduler issues allocation and append requests in request space (e.g., request IDs), while the KV Cache Adaptor resolves these requests to physical block IDs in the shared table. In DP mode, each DP engine maintains independent request streams; therefore, the adaptor can map a request to one or more block IDs that may be local to a specific engine (e.g., request 0 ↦ { 1 , 3 } 0\mapsto\{1,3\} , request 1 ↦ { 0 } 1\mapsto\{0\} , request 2 ↦ { 2 } 2\mapsto\{2\} in the example table). When the system switches to TP, the adaptor preserves the physical residency of existing blocks and only updates the logical interpretation of each block (i.e., the effective block capacity B ⁡ ( p ) B(p) ) and the corresponding request-to-block mapping. In this way, mode transitions require neither KV-state migration nor allocator reinitialization: the adaptor performs constant-time metadata updates (capacity and indirection tables), while the underlying block pool and block IDs remain stable across DP/TP configurations.
+
+[87] h4: 4.2.3. Implementation and Benefits
+
+[88] p: We implemented this logic via a lightweight patch to the vLLM KV cache manager 2 2 2 In vLLM, KV cache allocation and block-table management are implemented in the PagedAttention subsystem (e.g., vllm/v1/core/kv_cache_manager.py and the associated cache manager). Our patch extends this logic to allow per-request block sizing without modifying the underlying physical KV memory pool. . The adaptor intercepts requests and dynamically updates a Logical Table with the correct block size corresponding to the current parallelism mode of the worker. The worker informs both the KV cache kernel and the attention kernel of the stride and capacity for the specific request, ensuring correct memory indexing.
+
+[89] p: This design cleanly separates logical KV addressing from the physical block pool. A mode switch therefore reduces to metadata re-interpretation, i.e., updating per-request strides and block semantics, while leaving the allocator and underlying memory region unchanged. In effect, switching avoids KV migration and pool reinitialization, preserving cache residency and making reconfiguration lightweight. Moreover, when we consolidate multiple DP replicas into a TP group, each request can draw from the combined KV budget: the higher tokens-per-block density increases effective KV capacity, enabling longer contexts or larger batches without giving up the throughput benefits of the remaining DP replicas.
+
+[90] h3: 4.3. Communicator Pool
+
+[91] p: Dynamic DP-TP switching requires changing which workers communicate and how. Existing serving stacks (including the vLLM infrastructure) typically construct a single, static communication topology at startup, where CPU collectives (e.g., Gloo ( PyTorch Contributors, 2017 ) ) for control and GPU collectives (e.g., NCCL ( NVIDIA Corporation, 2017 ) over NVLink/PCIe) for tensor synchronization. Recreating or mutating these process groups at runtime is both slow (often tens of seconds) and brittle: in a multi-threaded inference loop, mismatched group membership can easily trigger collective hangs or deadlocks.
+
+[92] figure: Communicator. Figure 6 . Two-plane communication in Flying Serving . Left: Control plane (CPU–CPU). The frontend routes requests and exchanges mode-switch signals with all DP engines via Gloo . Right: Data plane (GPU–GPU). The Communicator Pool pre-initializes all valid TP process groups (e.g., 2-way pairs and 4-way quartets) using NCCL . The scheduler activates the required group on demand, avoiding communicator creation on the request’s critical path. Communicator.
+
+[93] p: To address this, Flying Serving introduces a Communicator Pool that decouples the initialization of communication channels from their execution. We abstract the communication architecture into two distinct planes: the Control Plane (CPU-CPU) and the Data Plane (GPU-GPU).
+
+[94] h4: 4.3.1. Control Plane (CPU-CPU)
+
+[95] p: The control plane provides request distribution and global state synchronization. Under DP, each request is assigned to a single engine; under TP, a single request must be delivered to multiple engines that temporarily operate as one TP group. As shown in Figure 6 (left panel), we utilize the existing CPU-CPU communication pipes (implemented via Gloo ) not only for distributing requests but also for synchronizing system state. In the default design, DP engines periodically synchronize their execution state via an all-reduce to detect globally unfinished requests 3 3 3 vllm/v1/engine/core.py/#L1261 . We use a DP coordinator piggybacks mode-switch signals (e.g., " merge DP0 and DP1 into 2TP ") onto periodic synchronization heartbeats, ensuring that all participating engines observe the same transition point and apply it atomically.
+
+[96] h4: 4.3.2. Data Plane (GPU-GPU) with Eager Initialization
+
+[97] p: The dominant cost in reconfiguration is the GPU communicator setup (i.e., NCCL communication over NVLink or PCIe). Creating NCCL process groups and establishing connections can take seconds, which is unacceptable for mission-critical online serving.
+
+[98] p: To enable dynamic switching without the latency of runtime initialization, Flying Serving pre-allocates necessary communication groups at startup. However, naively enumerating all possible device combinations would lead to exponential resource overhead and memory exhaustion. Instead, we employ a topology-aware initialization strategy that strictly targets physically contiguous device groups. We build the pool in two steps:
+
+[99] p: Topology-Aware Group Identification: Given N N total DP engines (each using one GPU) and a set of supported TP degrees 𝒫 \mathcal{P} (typically powers of two), we identify valid groups by partitioning the global rank space into contiguous segments. This constraint is critical because TP relies on high-bandwidth interconnects (e.g., NVLink), which typically connect adjacent GPU ranks. For example, with N = 4 N=4 DP and 𝒫 = { 2 , 4 } \mathcal{P}=\{2,4\} , we do not generate strided or random combinations like [ 0 , 2 ] [0,2] or [ 1 , 3 ] [1,3] . Instead, we restrict initialization to aligned, physically adjacent groups: [ 0 , 1 ] [0,1] and [ 2 , 3 ] [2,3] for 2TP, and [ 0 , 1 , 2 , 3 ] [0,1,2,3] for 4TP. This reduction ensures that the number of communicators scales linearly rather than exponentially.
+
+[100] p: Pre-initialization: For every identified group, we invoke torch.distributed.new_group (using the NCCL backend) during the system startup phase. The resulting communicator handles are cached in a hash map keyed by their member ranks (e.g., Map<Tuple[int], Group> ). By pre-initializing only these topologically valid groups, Flying Serving ensures that when the scheduler decides to merge DP workers into a TP instance (e.g., merging workers 0 and 1), the required communicator is already active and can be retrieved in O ⁡ ( 1 ) O(1) time, avoiding the costly overhead of runtime group creation.
+
+[101] p: At runtime, switching modes reduces to selecting the appropriate pre-built communicator handle from the pool and routing collectives through it. No new process groups are created on the critical path, which avoids both initialization latency and the deadlock risk of on-the-fly group reconstruction. The memory overhead of keeping these pre-initialized communicators inactive is small: in our measurements, each PyTorch distributed process group consumes ∼ \sim 2 MB of host memory.
+
+[102] figure: Timeline comparison of three switching modes. Figure 7 . Comparison of Mode Switching Strategies in Flying Serving . (a) Default Sequential Switching: All workers must idle until the longest-running DP request completes, leading to resource inefficiency. (b) Soft Preempt: Workers with available slots pre-execute TP requests in DP mode while waiting. Although this requires recomputing the KV cache upon switching to ensure correct layout, it saves significant decoding time. (c) Hard Preempt: High-priority TP tasks immediately interrupt active DP requests. DP tasks are resumed later without recomputation, leveraging the unified KV Cache Adaptor. Timeline comparison of three switching modes.
+
+[103] h2: 5. Dynamic Scheduler
+
+[104] p: The Dynamic Scheduler is the policy layer of Flying Serving : it decides when to form TP groups, which engines participate, and how to transition without stalling or deadlocking the serving loop. We implement the scheduler on top of vLLM v1 4 4 4 vLLM v1 (SoTA version) was introduced as an alpha release in January 2025 as a major re-architecture of vLLM’s core engine, refactoring components such as the scheduler, KV cache manager, workers, sampler, and API server while reusing substantial parts of the v0 codebase (e.g., model implementations, GPU kernels, and the distributed control plane). ( vLLM Project, ) . The scheduler’s design is guided by two principles: (i) all engines participating in a TP step must observe an identical request order, and (ii) mode transitions must occur only at globally agreed safe points to avoid mismatched collectives.
+
+[105] figure: Algorithm 1 Dynamic Scheduling & Mode Switching Protocol 0: Base KV parameters: block size B b ​ a ​ s ​ e B_{base} ; KV heads H b ​ a ​ s ​ e H_{base} ; 1: Start with all engines in DP mode ( N e ​ n ​ g ← 1 N_{eng}\leftarrow 1 ); 2: while True do 3: ❶ Input Processing: 4: Q i ​ n ← Q_{in}\leftarrow ProcessInputSocket (); 5: ❷ Global Synchronization: 6: Q w ​ a ​ i ​ t ← Q_{wait}\leftarrow SyncWorkload ( peers ); 7: ❸ Resource Scheduling: 8: Q w ​ o ​ r ​ k ← ∅ Q_{work}\leftarrow\emptyset ; 9: F ​ l ​ a ​ g S ​ e ​ t ​ T ​ P ← F ​ a ​ l ​ s ​ e Flag_{SetTP}\leftarrow False ; 10: F ​ l ​ a ​ g R ​ e ​ s ​ e ​ t ​ T ​ P ← F ​ a ​ l ​ s ​ e Flag_{ResetTP}\leftarrow False ; 11: N t ​ p ← 1 N_{tp}\leftarrow 1 ; 12: for r ​ e ​ q ∈ Q w ​ a ​ i ​ t req\in Q_{wait} do 13: ❸ Mode Determination: 14: if r ​ e ​ q . mode = TP req.\textit{mode}=\text{TP} then 15: N e ​ n ​ g ← r ​ e ​ q . num_engines N_{eng}\leftarrow req.\textit{num\_engines} ; 16: N t ​ p ← N e ​ n ​ g N_{tp}\leftarrow N_{eng} ; 17: F ​ l ​ a ​ g S ​ e ​ t ​ T ​ P ← T ​ r ​ u ​ e Flag_{SetTP}\leftarrow True ; 18: else 19: N e ​ n ​ g ← 1 N_{eng}\leftarrow 1 ; 20: F ​ l ​ a ​ g R ​ e ​ s ​ e ​ t ​ T ​ P ← T ​ r ​ u ​ e Flag_{ResetTP}\leftarrow True ; 21: end if 22: ❹ KV Parameterization and Allocation: 23: B r ​ e ​ q ← B b ​ a ​ s ​ e ⋅ N e ​ n ​ g B_{req}\leftarrow B_{base}\cdot N_{eng} ; 24: H r ​ e ​ q ← H b ​ a ​ s ​ e / N e ​ n ​ g H_{req}\leftarrow H_{base}/N_{eng} ; 25: B ​ l ​ o ​ c ​ k ​ s ← Blocks\leftarrow KVCacheMgr.Allocate ( r ​ e ​ q , B r ​ e ​ q , H r ​ e ​ q req,B_{req},H_{req} ); 26: Append ( r e q . id , B l o c k s ) (req.\textit{id},Blocks) to Q w ​ o ​ r ​ k Q_{work} ; 27: end for 28: ❺ Mode Signaling (Collective RPC): 29: if F ​ l ​ a ​ g S ​ e ​ t ​ T ​ P = T ​ r ​ u ​ e Flag_{SetTP}=True then 30: RpcBroadcast ( "set_TP_mode" , args= N t ​ p N_{tp} ); 31: else if F ​ l ​ a ​ g R ​ e ​ s ​ e ​ t ​ T ​ P = T ​ r ​ u ​ e Flag_{ResetTP}=True then 32: RpcBroadcast ( "reset_TP_mode" ); 33: end if 34: ❻ Model Execution: 35: RpcBroadcast ( "execute_model" , args= Q w ​ o ​ r ​ k Q_{work} ); 36: PublishOutput ( O ​ u ​ t ​ p ​ u ​ t Output ); 37: end while
+
+[106] h3: 5.1. The Base Execution Flow
+
+[107] p: The scheduler runs as a centralized event loop that coordinates K K DP engines. Engines execute independently in DP mode by default; when a request is designated for TP, the scheduler temporarily coalesces a subset of engines into a TP group. Algorithm 1 summarizes one scheduling iteration, with six steps:
+
+[108] p: Step ❶ – Input Processing. At each iteration of the scheduling loop, the scheduler ingests newly arrived requests from the input socket and appends them to the local input queue Q i ​ n Q_{in} by invoking ProcessInputSocket (). This step performs no scheduling or mode decisions and serves solely to collect pending requests for subsequent coordination.
+
+[109] p: Step ❷ – Global Synchronization. To ensure consistent task ordering and TP decisions across all engines, the scheduler synchronizes workloads with peers by invoking SyncWorkload ( peers ), which returns a globally agreed waiting queue Q w ​ a ​ i ​ t Q_{wait} . All subsequent scheduling and mode-selection logic operates exclusively on Q w ​ a ​ i ​ t Q_{wait} , guaranteeing that engines participating in a TP step observe the same request sequence.
+
+[110] p: Step ❸ – Resource Scheduling and Mode Determination. The scheduler initializes an empty worklist Q w ​ o ​ r ​ k Q_{work} , clears the mode-switch flags F ​ l ​ a ​ g S ​ e ​ t ​ T ​ P Flag_{SetTP} and F ​ l ​ a ​ g R ​ e ​ s ​ e ​ t ​ T ​ P Flag_{ResetTP} , and initializes the TP width variable N t ​ p N_{tp} . It then iterates over each request r ​ e ​ q ∈ Q w ​ a ​ i ​ t req\in Q_{wait} to determine the execution mode. If r ​ e ​ q . mode = TP req.\textit{mode}=\text{TP} , the scheduler sets N e ​ n ​ g N_{eng} , updates N t ​ p N_{tp} , and raises F ​ l ​ a ​ g S ​ e ​ t ​ T ​ P Flag_{SetTP} . Otherwise, it resets execution to DP mode by setting N e ​ n ​ g = 1 N_{eng}=1 and raising F ​ l ​ a ​ g R ​ e ​ s ​ e ​ t ​ T ​ P Flag_{ResetTP} .
+
+[111] p: Step ❹ – KV Parameterization and Allocation. For each request, the scheduler derives mode-dependent KV cache parameters based on the selected engine width:
+
+[112] table: (4a) B r ​ e ​ q = B b ​ a ​ s ​ e × N e ​ n ​ g , \displaystyle B_{req}=B_{base}\times N_{eng}, (4b) H r ​ e ​ q = H b ​ a ​ s ​ e / N e ​ n ​ g . \displaystyle H_{req}=H_{base}/N_{eng}.
+
+[113] p: Using these parameters, it invokes KVCacheMgr.Allocate to allocate KV cache blocks and appends the resulting tuple ( r e q . id , B l o c k s ) (req.\textit{id},Blocks) to the worklist Q w ​ o ​ r ​ k Q_{work} .
+
+[114] p: Step ❺ – Mode Switching via Collective RPC. After processing all requests in the current iteration, the scheduler applies any required mode transition using collective RPCs. If F ​ l ​ a ​ g S ​ e ​ t ​ T ​ P Flag_{SetTP} is true, it broadcasts "set_TP_mode" with argument N t ​ p N_{tp} ; otherwise, if F ​ l ​ a ​ g R ​ e ​ s ​ e ​ t ​ T ​ P Flag_{ResetTP} is true, it broadcasts "reset_TP_mode" . These broadcasts atomically configure the active communicator and execution mode across all engines before model execution.
+
+[115] p: Step ❻ – Model Execution and Result Publication. With execution modes and KV cache allocations finalized, the scheduler invokes RpcBroadcast ( "execute_model" , args= Q w ​ o ​ r ​ k Q_{work} ) to execute one inference step collectively across engines. The generated outputs are then published via PublishOutput (), and the scheduler proceeds to the next iteration of the loop.
+
+[116] h3: 5.2. Adaptive Mode Switching Strategies
+
+[117] p: A central challenge in dynamic DP–TP execution arises from the service objectives of different user scenarios (Section 2.3 ). Real-world serving workloads are non-stationary (Use Case 1), contain a mix of latency-critical and best-effort requests (Use Case 2), and occasionally demand transient scaling of memory capacity for long-context inference (Use Case 3). In all three cases, the scheduler must react to mode-switch opportunities under execution skew: different DP engines reach scheduling boundaries at different times due to heterogeneous request lengths.
+
+[118] h4: 5.2.1. Default Sequential Switching.
+
+[119] p: Figure 7 (a) illustrates the baseline approach. When a TP request arrives, all DP engines wait for the longest-running request (the straggler) to complete before switching modes. While this strategy preserves correctness, it conflicts with the goals of Use Case 1 and Use Case 2: idle engines waste available capacity during load fluctuations, and latency-sensitive requests may be delayed by unrelated best-effort traffic. As a result, naive switching under-utilizes GPUs and introduces tail latency in practice.
+
+[120] h4: 5.2.2. Soft Preempt (Throughput-Oriented).
+
+[121] p: Soft preempt addresses scenarios where throughput and load adaptability are the primary objectives (as in Use Case 1 and parts of Use Case 3). When a TP request is pending but some engines are still occupied with DP workloads, idle engines are allowed to speculatively execute the TP request in DP mode (Figure 7 (b)). This leverages otherwise unused compute cycles instead of blocking on stragglers.
+
+[122] p: Although speculative execution produces a KV cache layout incompatible with TP, the trade-off is favorable. Decoding is typically memory-bound, while recomputation under TP is compute-bound and parallelized across multiple GPUs. By advancing generation during the waiting period, Soft Preempt amortizes transition delays and improves aggregate throughput under bursty or imbalanced workloads. This makes it well-suited for dynamically rebalancing between "many DP engines" and "few fast TP engines" as load fluctuates.
+
+[123] h4: 5.2.3. Hard Preempt (Latency-Oriented)
+
+[124] p: Hard Preempt targets scenarios where immediate service is required, aligning directly with priority-aware service differentiation in Use Case 2. When a high-priority TP request arrives, the scheduler interrupts all active DP execution across participating engines and executes the TP request without waiting for stragglers (Figure 7 (c)).
+
+[125] p: Crucially, this interruption does not impose recomputation overhead on paused DP requests. Leveraging the unified KV Cache Adaptor (Section 4.2 ), KV blocks with different logical layouts can coexist in the same physical memory pool. As a result, interrupted DP workloads retain valid KV state and resume execution seamlessly after the TP request completes. Hard Preempt thus enforces low tail latency without sacrificing correctness or throughput for background traffic.
+
+[126] h3: 5.3. Discussion
+
+[127] h4: 5.3.1. Generality.
+
+[128] p: While motivated by specific user scenarios, Soft and Hard Preempt represent general scheduling primitives rather than workload-specific heuristics. Soft Preempt captures a broad class of speculative execution techniques that trade limited recomputation for improved utilization, while Hard Preempt generalizes preemptive scheduling to distributed TP execution without KV migration. Together, they allow the scheduler to continuously navigate the latency vs. throughput vs. memory trade-off space under dynamic conditions.
+
+[129] p: Importantly, both strategies extend the base execution flow without violating its core invariants: TP execution observes a globally consistent request order, and all mode transitions occur only at scheduler-coordinated safe points. This separation of mechanism (dynamic DP–TP switching) from policy (Soft vs. Hard Preempt) enables Flying Serving to support a wide range of serving objectives without redesigning the underlying system.
+
+[130] h4: 5.3.2. Limitations.
+
+[131] p: While Flying Serving ’s design focuses on improving throughput and latency flexibility, the current implementation is designed primarily for intra-node parallelism. Specifically, our system assumes that the model weights and the necessary KV cache can be managed within the memory hierarchy of a single multi-GPU node (e.g., 8 × \times H200). Consequently, extremely large models that necessitate multi-node model parallelism are outside the current scope of this work. However, we note that the vast majority of popular open-source models (e.g., Llama-3-70B, GPT-oss-120B) fit comfortably within a single modern GPU node, allowing multiple DP instances to run concurrently. Extending our dynamic reconfiguration protocol to support inter-node communication remains a promising direction for future research.
+
+[132] h2: 6. Evaluation
+
+[133] h3: 6.1. Experimental Setup
+
+[134] h4: 6.1.1. Hardware
+
+[135] p: We conduct our experiments on the Defiant cluster at Oak Ridge National Laboratory (OLCF ACE testbed) ( Oak Ridge Leadership Computing Facility (OLCF), ) . The system consists of 20 HPE Cray XD220 CPU nodes along with 2 HPE Cray XD670 Nvidia H200 GPU nodes, and each node is equipped with 8 × \times NVIDIA H200 GPUs. Each H200 GPU provides 141 GB of HBM3e (4.8 TB/s peak bandwidth) and 1,979 TFLOPS peak dense FP8 throughput. The 8 GPUs are interconnected via NVLink, providing 900 GB/s bi-directional bandwidth.
+
+[136] h4: 6.1.2. Software, LLM Serving Models and Baselines
+
+[137] p: We implement Flying Serving on top of vLLM v1. We evaluate Flying Serving on three representative models from today’s widely used LLM families: LLama, GPT, and Nemotron, spanning dense, sparse, and long-context serving:
+
+[138] p: Llama-3 (70B, dense) ( Grattafiori and others, 2024 ) : a large, dense Transformer baseline that stresses compute and all-reduce bandwidth without sparsity.
+
+[139] p: GPT-OSS (120B, MoE) ( Agarwal and others, 2025 ) : a sparse Mixture-of-Experts model that activates only a small subset of experts per token, stressing routing, load balance, and sparse execution.
+
+[140] p: Nemotron (8B, dense) ( Xu et al., 2025 ) : an ultra-long context model that can digest up to 4M tokens to stress KV cache capacity and memory pressure.
+
+[141] p: We compare against three baselines: (i) Static DP , (ii) Static TP , and (iii) Shift-Parallelism ( Hidayetoglu et al., 2025b ) . Shift-Parallelism is a SoTA baseline as a production-deployed vLLM-integrated system that enables seamless runtime switching between latency-optimal TP and throughput-oriented sequence parallelism (SP) by exploiting KV cache invariance. The prior results show that this design has a strictly better latency-throughput trade-off than static DP/TP across arrival rates (e.g., up to ∼ \sim 50% higher throughput and ∼ \sim 1.51 × \times faster response, with lowest completion time over rates), making it the most direct comparison point for our dynamic DP-TP switching.
+
+[142] h4: 6.1.3. Datasets and Synthetic Workloads
+
+[143] p: We evaluate on three open-sourced datasets: ShareGPT ( Hu and others, 2023 ) , CodeActInstruct ( Wang et al., 2024a ) , and HumanEval ( Chen, 2021 ) , covering conversational chat-based assistance, code-centric instruction following, and program synthesis.
+
+[144] p: We developed a tool to generate synthetic workloads to mimic real-world user requests because publicly available LLM datasets provide request contents but not realistic, reproducible arrival-time traces. A synthesized workload lets us precisely vary burst intensity and duration to stress mode-switching behavior and make comparisons repeatable across systems. This design aligns with the evaluation method from ( Hidayetoglu et al., 2025b ) . Specifically, we synthesize (1) request lengths with prompts sampled uniformly span [ 128 , 4000 ] [128,4000] input tokens and [ 64,512 ] [64,512] output tokens; (2) traffic pattern where the arrival rate alternates between low load (2–5 req/s) and high load bursts (10–30 req/s); (3) volume in which each iteration issues 4000 requests to capture steady-state behavior across multiple bursts.
+
+[145] h4: 6.1.4. Performance Metrics
+
+[146] p: We use standard streaming-inference metrics that quantify initial responsiveness and steady-state token generation ( Agrawal et al., 2024 ) :
+
+[147] p: (i) Time To First Token (TTFT): latency from when a request arrives at the serving system to when the first output token is generated (including both queuing and prefill).
+
+[148] p: (ii) Time Per Output Token (TPOT): the per-request average time-between-tokens during decoding, measured over consecutive output tokens after the first (i.e., inter-token interval).
+
+[149] p: (iii) Peak generation throughput: maximum aggregate output token rate (tokens/s) sustained by the system under load.
+
+[150] p: (iv) Queue time: time from request admission to first scheduling, isolating scheduler delay from execution time ( vLLM Project, ) .
+
+[151] p: We export per-request and system metrics from the serving engine to Prometheus ( The Prometheus Authors, 2025 ) and visualize time-series behavior in Grafana ( Elradi, 2025 ) . To minimize instrumentation overhead on the critical path, we log concurrency, TTFT, and queue time in the backend, and compute TPOT and aggregate throughput at the client from token timestamps.
+
+[152] figure: (a) Llama-70B: Concurrency (b) GPT-OSS-120B: Concurrency (c) Nemotron-8B: Concurrency (d) Llama-70B: TTFT (P90) (e) GPT-OSS-120B: TTFT (P90) (f) Nemotron-8B: TTFT (P90) (g) Llama-70B: Queue Time (h) GPT-OSS-120B: Queue Time (i) Nemotron-8B: Queue Time Figure 8 . End-to-end performance under bursty traffic. Columns show Llama-3-70B (left), GPT-OSS-120B (middle), and Nemotron-8B (right). Rows report in-flight concurrency, P90 TTFT, and queue time. Flying Serving (blue) tracks load shifts: it avoids the TTFT/queue spikes of static TP (orange) during bursts, stays close to TP at low load, and substantially improves over static DP (green). Where supported, Flying Serving also outperforms the SoTA dynamic baseline Shift-Parallelism (purple). A 3x3 grid of line charts.
+
+[153] h3: 6.2. Overall Performance
+
+[154] p: We compare Flying Serving against static TP, static DP, and Shift-Parallelism using the bursty workload from Section 6.1 5 5 5 Shift-Parallelism does not yet support GPT-OSS-120B due to compatibility issues with the new MoE kernel, so we are currently unable to report its results on GPT-OSS. . Figure 8 plots (top) in-flight concurrency, (middle) P90 TTFT, and (bottom) queue time over the trace; Figure 9 summarizes steady-state TPOT and peak generation throughput.
+
+[155] p: Same offered load. All systems observe the same concurrency pattern (Figure 8 (a–c)), ensuring the latency (Figure 8 (d–f)) and queueing differences (Figure 8 (g–i)) are due to execution strategy rather than input load.
+
+[156] p: Bursts: Flying Serving matches DP by avoiding queue build-up. During high-load phases, static TP (and Shift-Parallelism where applicable) accumulates substantial queueing (Figure 8 (g–i)), which dominates TTFT (Figure 8 (d–f)). In contrast, Flying Serving switches to DP and keeps queue time near DP, yielding TTFT close to the DP lower bound (e.g., average TTFT at burst: Llama-70B: 4.38s vs. 4.23s DP; GPT-OSS-120B: 2.15s vs. 2.17s DP; Nemotron-8B: 3.04s vs. 3.04s DP). Relative to static TP, Flying Serving reduces P90 TTFT by 1.66 × 1.66\times (Llama-70B), 4.68 × 4.68\times (GPT-OSS-120B), and 4.79 × 4.79\times (Nemotron-8B). Relative to Shift-Parallelism, Flying Serving reduces P90 TTFT by 1.3 × 1.3\times (Llama-70B) and 3.39 × 3.39\times (Nemotron-8B).
+
+[157] p: Light loads (flat periods): Flying Serving stays near TP with small overhead. Under low load, Flying Serving remains in TP to minimize TTFT, closely tracking static TP (e.g., average TTFT: Llama-70B: 223ms vs. 212ms TP; GPT-OSS-120B: 74ms vs. 67ms TP; Nemotron-8B: 74ms vs. 67ms TP) while substantially improving over static DP. The remaining gap to TP reflects only mode-management overhead: 5.19 % 5.19\% (12ms) for Llama-70B and 10.45 % 10.45\% (7ms) for GPT-OSS-120B and 10.45 % 10.45\% (7ms) for Nemotron-8B. In stead, Shift-Parallelism is up to ∼ \sim 4% faster at low load, but incurs significantly higher burst latency (3.39x than ours) and queueing (2.48x than ours).
+
+[158] figure: (a) Median TPOT (ms) (b) Peak Throughput (tokens/s) Figure 9 . Comparison of median TPOT and peak generation throughput across different models. Comparison of median TPOT and peak generation throughput.
+
+[159] p: TPOT and throughput: near-TP latency with near-DP capacity. Figure 9 shows that Flying Serving improves median TPOT over static DP by 2.31 × 2.31\times , 1.28 × 1.28\times , and 1.30 × 1.30\times for Llama-70B, GPT-OSS-120B, and Nemotron-8B, respectively, approaching TP-like per-token latency. At the same time, Flying Serving retains ≈ \approx 95–96% of DP peak throughput across models (e.g., 3,059 vs. 3,169 tokens/s on the largest size model Llama-70B), and outperforms static TP by 2.03 × 2.03\times , 2.47 × 2.47\times , and 2.52 × 2.52\times in peak throughput. Where supported, Flying Serving also exceeds Shift-Parallelism in peak throughput (1.22 × \times on Llama-70B; 1.18 × \times on Nemotron-8B).
+
+[160] h3: 6.3. Performance on Workloads with Priority
+
+[161] p: We evaluate how Flying Serving handles mixed-priority serving on Llama-70B. The workload interleaves high-priority and normal requests, while the arrival rate is modulated between 3-5 requests/s to create sustained queueing pressure. We compare against two static baselines, i.e., static TP and static DP, under the same workload and report mean TPOT/TTFT (for priority requests and for all requests) plus peak throughput, following standard comparative methodology in systems evaluations. Table 1 summarizes the results.
+
+[162] figure: Table 1 . Llama-70B under mixed-priority workload. Metric static TP static DP Ours Mean TPOT (priority) (ms) 22 32 24 Mean TPOT (all) (ms) 22 32 28 Mean TTFT (priority) (ms) 63 166 74 Mean TTFT (all) (ms) 2130 166 142 Peak Throughput (tokens/s) 2530 3164 3040
+
+[163] p: Priority requests. Flying Serving preserves near-TP latency for high-priority traffic: mean TPOT is 24 ms and mean TTFT is 74 ms, within 1.09 × \times and 1.17 × \times of the static TP baseline (22 ms / 63 ms). Relative to static DP, Flying Serving improves priority TPOT by 1.33 × \times (32 → \rightarrow 24 ms) and TTFT by 2.24 × \times (166 → \rightarrow 74 ms).
+
+[164] p: Overall system behavior under load. Static TP becomes throughput-limited and suffers severe queue time: mean TTFT (all requests) increases to 2130 ms. Flying Serving avoids this collapse by adapting parallelism to drain backlog, reducing mean TTFT (all) to 142 ms (15.0 × \times lower than TP), and remaining 1.17 × \times better than static DP (166 ms).
+
+[165] p: Throughput. Flying Serving sustains 3040 tokens/s peak throughput, retaining 96% of the DP baseline (3164 tokens/s) while delivering TP-like latency for priority requests.
+
+[166] h3: 6.4. Max Context Length and Switching Latency
+
+[167] p: We quantify Flying Serving ’s ability to (i) expand KV cache capacity for long-context requests and (ii) reconfigure parallelism online. Unless otherwise noted, experiments run on 8 × \times NVIDIA H200 GPUs hosting Llama-3-70B.
+
+[168] h4: 6.4.1. Context-Length Capacity
+
+[169] p: The maximum context length is bounded by the KV cache memory left after loading model weights. Table 2 shows that static deployments impose rigid limits tied to the fixed TP degree: 4 ​ DP × 2 ​ TP 4\text{DP}\!\times\!2\text{TP} can only support 264K tokens, and 2 ​ DP × 4 ​ TP 2\text{DP}\!\times\!4\text{TP} only supports 959K tokens. By dynamically merging workers, Flying Serving scales KV capacity on demand and supports up to 1.9M tokens, a 7.2 × 7.2\times increase over 4 ​ DP × 2 ​ TP 4\text{DP}\!\times\!2\text{TP} , a 2.0 × 2.0\times increase over 2 ​ DP × 4 ​ TP 2\text{DP}\!\times\!4\text{TP} , and within 17% of the static 1 ​ DP × 8 ​ TP 1\text{DP}\!\times\!8\text{TP} (the upper bound - "2.3M"). This result evaluates that Flying Serving ’s reconfiguration support for dynamic DP-TP shifting introduces a small, fixed memory consumption; however, it frees up nearly all remaining GPU memory for the KV cache.
+
+[170] figure: Table 2 . Max context support and switching latency. Configuration GPUs/Inst. Max Context Switching Latency Static 4 ​ DP × 2 ​ TP 4\text{DP}\times 2\text{TP} 2 264 K 292.38 s (Cold Start) Static 2 ​ DP × 4 ​ TP 2\text{DP}\times 4\text{TP} 4 959 K 211.97 s (Cold Start) Static 1 ​ DP × 8 ​ TP 1\text{DP}\times 8\text{TP} 8 2.3 M 146.54 s (Cold Start) Flying Serving dynamic 1.9 M 15 ms (Live)
+
+[171] h4: 6.4.2. Switching Latency
+
+[172] p: Static systems handle an over-limit request via a cold restart (shut down and re-launch with a higher TP degree), which requires reloading weights and re-initializing collectives; Table 2 shows these static methods taking non-negligible overhead, i.e., 146-292 seconds. In contrast, Flying Serving performs live switching using the pre-initialized Communicator Pool and zero-copy Model Weights Manager in Section 4 , completing the switch in 15 ms, about five orders of magnitude faster ( ∼ \sim 10,000 × \times ), making dynamic DP-TP switching practical for large-scale, latency-critical serving.
+
+[173] figure: topt and throughput. Figure 10 . Comparison of Peak Prompt Throughput, TTFT, and ILT under long-contexts (8K, 128K, and 1M). topt and throughput.
+
+[174] h3: 6.5. Ultra Long-Context Stress Test
+
+[175] p: We further stress the system at each model’s maximum supported context length (8K for Llama-70B, 128K for GPT-OSS-120B, and 1M for Nemotron). Figure 10 reports peak prompt throughput, TTFT, and ILT 6 6 6 Inter-Token Latency (ILT) measures the average time interval between the generation of consecutive tokens. We report ILT (instead of TPOT) because TPOT aggregates both compute and queueing/batching effects and can vary with scheduler decisions
+
+[176] p: Peak Prompt Throughput. Figure 10 (a) shows that Flying Serving sustains DP-level peak prompt throughput at the maximum context across all models. This translates to 1.29 × 1.29\times (Llama-70B)and 1.38 × 1.38\times (GPT-OSS-120B)higher throughput than static TP. For Nemotron-8B(1M), all three configurations converge at approximately 74K tokens/s, as the extremely long context relies more on memory bandwidth.
+
+[177] p: Latency Performance (TTFT and ILT). Figure 10 (b) shows our system achieves the TTFT performance nearly to the TP-like latency, with small overheads ( < 1.1 % <1.1\% ). Also, compared to the static DP baseline, Flying Serving delivers substantial speedups of 2.94 × 2.94\times , 2.78 × 2.78\times , and 3.04 × 3.04\times for Llama-70B, GPT-OSS-120B, and Nemotron-8B, respectively. Figure 10 (c) shows that our system maintains TP-like inter-token latency, staying within 5% of static TP, while reducing ILT by 1.85 − 1.88 × 1.85-1.88\times relative to static DP across all models.
+
+[178] p: Overall, Flying Serving removes the need to pre-commit to a single static configuration: it preserves DP-like capacity for long-context bursts while maintaining TP-like latency when load is light.
+
+[179] h2: 7. Related Works
+
+[180] p: Recent research in distributed LLM inference has shifted from static configurations to dynamic adaptability. We categorize these efforts below.
+
+[181] p: Dynamic Parallelism Transformation. Several systems enable runtime adaptability but face specific limitations. Hetis ( Mo et al., 2025 ) uses a fine-grained and dynamic parallelism architecture that enables precise control over heterogeneous resources. LoongServe ( Wu et al., 2024 ) . Gyges ( Chen et al., 2025 ) accelerates state redistribution via weight padding yet still incurs latency penalties in the range of hundreds of milliseconds. Shift Parallelism ( Hidayetoglu et al., 2025a ) exploits KV cache invariance for seamless transitions between Tensor and Sequence Parallelism but is restricted to specific hardware topologies. Seesaw ( Su et al., 2025 ) dynamically re-shards models between prefill and decode phases; however, the overhead of frequent reconfiguration can negate throughput gains. Similarly, HAP ( Liu and others, 2025 ) employs Integer Linear Programming to optimize hybrid strategies for MoE models, but the solver introduces significant runtime complexity.
+
+[182] p: Static and Scheduling-Based Optimization. Other approaches prioritize static planning or state abstraction. AlpaServe ( Li and others, 2023 ) uses compilation to generate optimal static plans, but cannot adapt running instances to traffic bursts without restarting. Tenplex ( Wagenländer et al., 2024 ) abstracts model state for dynamic training, yet lacks the sub-second responsiveness required for interactive inference. Finally, FastServe ( Wu and others, 2023 ) optimizes throughput via preemptive scheduling and host memory offloading, but relies on limited PCIe bandwidth rather than flexible parallelism reconfiguration.
+
+[183] h2: 8. Conclusion
+
+[184] p: Flying Serving shows that static parallelism not be a deployment-time choice for LLM serving. By virtualizing weights, KV state, and communication, Flying Serving enables online DP ↔ \leftrightarrow TP reconfiguration as a lightweight operation coordinated by a deadlock-free scheduler. Across three models and realistic workloads, this capability translates into up to 4.79 × 4.79\times speedup at high load and 3.47 × 3.47\times at low load, while still accommodating priority and long-context requests.
+
+[185] h2: 9. Acknowledgment
+
+[186] p: This work is supported by the U.S. National Science Foundation (2514351 and 2505118). We thank the anonymous reviewers for their valuable feedback.
+
+[187] h2: References
+
+[188] h2: Instructions for reporting errors
+
+[189] p: We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the methods listed below:
+
+[190] p: Tip: You can select the relevant text first, to include it in your report.
+
+[191] p: Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability should not be a barrier to accessing research. Thank you for your continued support in championing open access for all.
+
+[192] p: Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .

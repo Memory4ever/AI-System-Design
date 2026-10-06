@@ -1,0 +1,1073 @@
+URL https://arxiv.org/html/2601.05549v1; extract sections S3–S5; fetched 2026-10-03; no implementation reproduced
+
+
+
+ 3 Method 
+
+ 
+
+In this section, we first motivate the use of LoRA for efficient temporal adaptation and for enabling the Matryoshka property in text embedding models (TEMs), constituting a strong baseline.
+We then introduce Temporal-aware Matryoshka Representation Learning (TMRL) , which leverages the Matryoshka structure to introduce an explicit temporal subspace, enhancing temporal representations across embedding dimensions.
+The core concepts of TMRL are illustrated in Figure  2 . 
+ 
+
+
+
+ 3.1 LoRA-based temporal adaptation. 
+
+ 
+
+Fine-tuning TEMs on temporal retrieval datasets often incurs a trade-off between semantic and temporal representations  ( Han et al., 2025 ) .
+Prior approaches  Wu et al. (2024) ; Abdallah et al. (2025) address this via query routers that switch between fine-tuned and original models, but full fine-tuning is costly and routing increases training complexity and inference latency.
+LoRA  ( Hu et al., 2021 ) mitigates this trade-off by freezing the semantic TEM and training a small set of additional parameters for temporal adaptation.
+It offers stable training, lower hyperparameter sensitivity, and can be merged into the base model at zero inference overhead (Table  1 ).
+In Section  5 , we empirically show that LoRA efficiently endows TEMs with the Matryoshka property while preserving semantic retrieval, establishing it as a strong baseline for TMRL.
+For simplicity, we continue to denote LoRA-fine-tuned retrievers as f_{\theta} in the following sections. 
+ 
+ 
+
+
+
+ 3.2 Temporal-aware Matryoshka Representation Learning 
+
+
+
+
+Matryoshka temporal subspace. 
+
+ 
+
+Time-sensitive queries contain temporal expressions that specify temporal constraints for retrieval.
+Most semantic TEMs encode temporal and non-temporal information jointly, but non-temporal semantics often dominate the representation, overshadowing temporal signals and leading to suboptimal temporal retrieval performance, as observed in zero-shot performance in Table  1 . 
+ 
+ 
+
+We conceptually view a time-sensitive query or passage as containing two components:
+a temporal component q_{\mathrm{T}} (or p_{\mathrm{T}} )
+and a non-temporal semantic component q_{\mathrm{S}} (or p_{\mathrm{S}} ),
+where the temporal component typically comprises fewer tokens.
+Let m\in\mathcal{M} and t , with m\geq t , denote the target Matryoshka embedding dimension and the predefined temporal subspace dimension, respectively.
+To preserve temporal cues across all Matryoshka truncation levels, we allocate the first t dimensions of the embedding to encode temporal information (Eq.  6 ).
+As a result, we effectively structure the truncated embedding as the concatenation of a temporal subspace (first t dimensions) and a semantic subspace (the remaining m-t dimensions) (Eq.  7 ), ensuring that all Matryoshka embeddings retain the temporal subspace (Top of Figure  2 ). 
+ 
+
+ 
+
+ 
+ \displaystyle f_{\theta}(q)_{1:t}\approx q_{\mathrm{T}}, 
+ 
+ (6) 
+ 
+
+ 
+ \displaystyle f_{\theta}(q)_{1:m}\approx f_{\theta}(q)_{1:t}\ \oplus\ f_{\theta}(q)_{(t+1):m}.\vskip-10.00002pt 
+ 
+ (7) 
+ 
+
+Let \mathcal{T}(q)\subseteq\{\texttt{[CLS]},1,\ldots,L\} denote the set of temporal token indices in a time-sensitive query representation f_{\theta}(q)=\{h_{\texttt{[CLS]}},h_{1},\ldots,h_{L}\} . The temporal token representations are defined as: 
+ 
+
+ 
+
+ 
+ f(q)_{\mathrm{T}}=\{\,h_{i}\mid i\in\mathcal{T}(q)\,\}.\vskip-5.0pt 
+ 
+ (8) 
+ 
+
+Regarding CLS-pooling TEMs, we include the [CLS] token in \mathcal{T}(q) as it aggregates global information and may encode temporal signals. 
+ 
+ 
+
+To compress the temporal information into a t -dimensional subspace, we introduce a temporal projector 
+ \mathcal{P}:\mathbb{R}^{d}{\rightarrow}\mathbb{R}^{t} ,
+a two-layer feedforward network that follows the TEM’s activation and layer-normalization configuration.
+ \mathcal{P} takes in only temporal tokens f(q)_{\mathrm{T}} to learn a compact and compatible t -dimensional temporal representation.
+The final temporal representation for query q is obtained by averaging over the projected temporal tokens: 
+ 
+
+ 
+
+ 
+ \bar{q}_{\mathrm{T}}=\frac{1}{|\mathcal{T}(q)|}\sum_{i\in\mathcal{T}(q)}\mathcal{P}(h_{i})\;\in\;\mathbb{R}^{t}.\vskip-5.0pt 
+ 
+ (9) 
+ 
+ 
+ 
+
+
+
+Temporal subspace contrastive learning. 
+
+ 
+
+The final step is to incorporate the projected temporal representation \bar{q}_{\mathrm{T}} into the contrastive learning framework to obtain the desired embedding in Eq.  7 .
+To this end, we introduce a temporal subspace contrastive learning objective that integrates \bar{q}_{\mathrm{T}} into the contrastive learning framework (Bottom of Figure  2 ).
+Since temporal contrastive learning operates on positive and negative queries rather than passages  Wu et al. (2024) , we define the negative set as \mathcal{N}_{p}=\{q^{-}_{1},\ldots,q^{-}_{n}\} .
+The InfoNCE loss for the t -dimensional temporal subspace is: 
+ 
+
+ 
+
+ 
+ \begin{gathered}\mathcal{L}^{\mathrm{q}}_{\mathrm{Temp}}(p,q^{+},\mathcal{N}_{p})=-\log\\
+\frac{e^{\,\mathrm{sim}^{(t)}({\color[rgb]{0.5,0.5,0.5}\bar{p}_{\mathrm{T}}},\,{\color[rgb]{0.5,1,0}f_{\theta}(q^{+})})/\tau}}{e^{\,\mathrm{sim}^{(t)}({\color[rgb]{0.5,0.5,0.5}\bar{p}_{\mathrm{T}}},\,{\color[rgb]{0.5,1,0}f_{\theta}(q^{+})})/\tau}+\sum_{i=1}^{n}e^{\,\mathrm{sim}^{(t)}({\color[rgb]{0.5,0.5,0.5}\bar{p}_{\mathrm{T}}},\,{\color[rgb]{1,0.47,0.62}f_{\theta}(q^{-}_{i})})/\tau}},\\
+\mathcal{L}^{\mathrm{p}}_{\mathrm{Temp}}(p,q^{+},\mathcal{N}_{p})=-\log\\
+\frac{e^{\,\mathrm{sim}^{(t)}({\color[rgb]{0.5,0.5,0.5}f_{\theta}(p)},\,{\color[rgb]{0.5,1,0}\bar{q}^{+}_{\mathrm{T}}})/\tau}}{e^{\,\mathrm{sim}^{(t)}({\color[rgb]{0.5,0.5,0.5}f_{\theta}(p)},\,{\color[rgb]{0.5,1,0}\bar{q}^{+}_{\mathrm{T}}}))/\tau}+\sum_{i=1}^{n}e^{\,\mathrm{sim}^{(t)}({\color[rgb]{0.5,0.5,0.5}f_{\theta}(p)},\,{\color[rgb]{1,0.47,0.62}(\bar{q}^{-}_{i})_{\mathrm{T}}})/\tau}},\\
+\mathcal{L}_{\mathrm{Temp}}=\mathcal{L}^{\mathrm{q}}_{\mathrm{Temp}}+\mathcal{L}^{\mathrm{p}}_{\mathrm{Temp}},\end{gathered}\vskip-5.0pt 
+ 
+ (10) 
+ 
+
+where \bar{p}_{\mathrm{T}} , \bar{q}^{+}_{\mathrm{T}} , and (\bar{q}^{-}_{i})_{\mathrm{T}} denote the passage, positive, and negative queries counterpart of Eq.  8 .
+This loss encourages the first t -dimensions to align with the projected \bar{p}_{\mathrm{T}} and \bar{q}^{+}_{\mathrm{T}} , while pull it apart from (\bar{q}^{-}_{i})_{\mathrm{T}} .
+This way, we explicitly encode temporal information in the allocated t -dimensional temporal subspace (Eq.  6 ), resulting in our temporal-aware Matryoshka embeddings (Eq.  7 ). 
+ 
+ 
+
+
+
+Local and structural self-distillation. 
+
+ 
+
+Since lower-dimensional Matryoshka embeddings are trained to mimic higher-dimensional ones, similarities in the full embedding space naturally provide a supervisory signal  Yoon et al. (2024b) .
+We thus view MRL as a form of self-distillation, where higher-dimensional embeddings act as teachers for their truncated counterparts.
+Building on this perspective, we introduce auxiliary objectives to strengthen temporal-aware Matryoshka embeddings.
+The first objective preserves local structure by aligning nearest-neighbor similarities in the teacher space, encouraging student embeddings to retain fine-grained semantic relationships from the full-dimensional representation.
+Given a mini-batch of embeddings X^{(d)}\in\mathbb{R}^{B\times d} and their corresponding m -dimensional Matryoshka embeddings X^{(m)}\in\mathbb{R}^{B\times m} , where d{>}m , we employ the top- k pairwise similarity loss to preserve local similarity: 
+ 
+
+ 
+
+ 
+ \begin{gathered}\mathcal{L}_{\mathrm{Dist}}=\sum\limits_{\mathclap{\begin{subarray}{c}m\in\mathcal{M},\\
+m\neq d\end{subarray}}}\sum_{i}\sum_{j\in\mathcal{N}}\left\lVert\mathrm{sim}^{(d)}(x_{i},x_{j})-\mathrm{sim}^{(m)}(x_{i},x_{j})\right\rVert_{1}\\
+\vskip-5.0pt\text{where}\quad\mathcal{N}=\operatorname{arg\,top}_{k}\,\mathrm{sim}^{(d)}(x_{i},x_{j}).\end{gathered}\vskip-5.0pt 
+ 
+ (11) 
+ 
+
+Beyond local alignment, preserving the global structure of the embedding space is also important. While pairwise similarity loss enforces local consistency, it fails to capture the overall geometry.
+Because full-dimensional embeddings encode richer relational structure, we adopt linear Centered Kernel Alignment (CKA)  Kornblith et al. (2019) as a structural regularizer, encouraging lower-dimensional embeddings to remain geometrically aligned with the teacher space at the batch level. This complements the local pairwise loss by preserving global semantic geometry.
+The linear CKA between two embedding sets can be expressed using covariance \mathrm{cov(\cdot,\cdot)} as: 
+ 
+
+ 
+
+ 
+ \mathrm{CKA}(X,Y)=\frac{\|\mathrm{cov}(X,Y)\|_{F}^{2}}{\|\mathrm{cov}(X,X)\|_{F}\,\|\mathrm{cov}(Y,Y)\|_{F}}.\vskip-5.0pt 
+ 
+ (12) 
+ 
+ 
+ 
+
+Let us denote the centered variants of the d and m -dimensional embeddings as: 
+ 
+
+ 
+
+ 
+ \tilde{X}^{(d)}=X^{(d)}-\frac{1}{B}\mathbf{1}\mathbf{1}^{\top}X^{(d)},\;\tilde{X}^{(m)}=X^{(m)}-\frac{1}{B}\mathbf{1}\mathbf{1}^{\top}X^{(m)}.\vskip-5.0pt 
+ 
+ (13) 
+ 
+
+The auxiliary Matryoshka CKA is defined as: 
+ 
+
+ 
+
+ 
+ \mathcal{L}_{\mathrm{CKA}}=\sum\limits_{\mathclap{\begin{subarray}{c}m\in\mathcal{M},\\
+m\neq d\end{subarray}}}(1-\mathrm{CKA}(\tilde{X}^{(d)},\tilde{X}^{(m)}))\vskip-5.0pt 
+ 
+ (14) 
+ 
+ 
+ 
+
+
+
+Optimization objective. 
+
+ 
+
+Combining with the semantic MRL objective in Eq.  5 , the temporal projector \mathcal{P} and the LoRAs are jointly optimized with the following TMRL training objective: 
+ 
+
+ 
+
+ 
+ \begin{gathered}\mathcal{L}_{\mathrm{TMRL}}=\mathcal{L}_{\mathrm{MRL}}+\alpha\mathcal{L}_{\mathrm{Temp}}+\beta\mathcal{L}_{\mathrm{Dist}}+\gamma\mathcal{L}_{\mathrm{CKA}},\end{gathered}\vskip-5.0pt 
+ 
+ (15) 
+ 
+
+where \alpha,\beta,\gamma are hyperparameters (ablation in Section  5.3 ). 
+ 
+
+ 
+ Figure 3: 
+Comparison between the TNP dataset (left) and our augmented version (right).
+We follow a simple principle: split long paragraphs into shorter paragraphs, discard sentences with multiple temporal expressions, ensuring that each passage contains one temporal expression before augmenting positive and negative queries.
+ 
+ 
+ 
+ 
+ 
+
+
+
+ 4 Temporal Contrastive Learning Data Augmentation 
+
+ 
+
+The temporal projector \mathcal{P} in TMRL requires clean temporal expressions from both queries and passages.
+However, upon inspecting the Temporal Nobel Prize (TNP) dataset  Wu et al. (2024) , we observe that some training samples are ill-suited for temporal contrastive learning (e.g., Figure  3 , left).
+In particular, passages may contain multiple temporal expressions (e.g., “In 1972” and “In 1966”), which can induce conflicting temporal gradient signals during contrastive training by forcing a query’s temporal expression to align with unrelated years.
+This observation motivates a refinement of the original dataset.
+As illustrated in Figure  3 (right), we
+(1) split long passages into shorter passages such that each resulting passage contains a single temporal expression; and
+(2) systematically generate additional positive and negative queries for each shorter passage based on the original queries, while remaining faithful to the source corpus. 
+ 
+
+
+
+Passage splitting. 
+
+ 
+
+We use SUTime  Chang and Manning (2012) to identify temporal expressions at the sentence level.
+To preserve semantic context for retrieval, we iteratively merge adjacent sentences until the resulting passage would contain more than one temporal expression, at which point merging stops.
+Sentences containing multiple temporal expressions are discarded.
+This procedure yields passages with a single temporal expression while retaining as much local context as possible. 
+ 
+ 
+
+
+
+Positive/Negative query augmentation. 
+
+ 
+
+To systematically guide query augmentation, we characterize the temporal properties of queries along three dimensions.
+First, we focus on L2 (time–event) and L3 (event–event) temporal understanding  Tan et al. (2023) , excluding L1 (time–time relations) as it primarily involves temporal arithmetic, which is uncommon in information retrieval.
+Second, we adopt the query taxonomy of  Jia et al. (2021) , categorizing queries as explicit , implicit , or temporal answer , and exclude ordinal queries, which rely on ordinal cues (e.g., “first”, “second”) that could be missing from the corpus.
+Finally, we employ Allen’s interval relations  Allen (1983) as a rubric to control the temporal alignment between each query and its corresponding passage. 
+ 
+ 
+
+We design a structured schema and prompt template (Table  13 and  11 ) to instruct Qwen3-4B-Instruct-2507  Yang et al. (2025) to generate augmented positive and negative queries from the original TNP dataset.
+The LLM also extracts temporal spans from queries and passages, refined with preliminary SUTime outputs, without introducing new facts to preserve dataset fidelity.
+Examples queries are shown on the right of Figure  3 .
+The final dataset statistics are summarized in Appendix  A.3 . 
+ 
+ 
+ 
+
+
+
+ 5 Experiments 
+
+
+
+
+ 5.1 Experimental Setting 
+
+
+
+
+Datasets and metrics. 
+
+ 
+
+We evaluate our methods on Temporal Nobel Prize  Wu et al. (2024) and extend to TimeQA  Chen et al. (2021) .
+Following the BEIR benchmark  Thakur et al. (2021) , we report nDCG@10 and Recall@100.
+To assess general semantic retrieval performance, we also report nDCG@10 on the Natural Questions (NQ) dataset  Kwiatkowski et al. (2019) from BEIR using the original embedding dimension of each TEM.
+Please refer to Appendix  A.3 for dataset statistics and further details. 
+ 
+ 
+
+
+
+Baselines. 
+
+ 
+
+For both datasets, we compare TMRL’s full-dimensional retrieval performance against:
+BM25  Robertson and Zaragoza (2009) ,
+zero-shot performance of the original TEMs,
+Ts-Retriever  Wu et al. (2024) ,
+and TempRetriever (element-wise interaction)  Abdallah et al. (2025) .
+To evaluate the quality of Matryoshka embeddings , we include
+Matryoshka Adaptor (M-Adaptor)  Yoon et al. (2024b) 
+and vanilla LoRA-based MRL as baselines.
+Each method is evaluated on six open-source TEMs with fewer than 600 M parameters: contriever  Izacard et al. (2022) ,
+gte-base (gte)  Li et al. (2023) ,
+nomic-embed-text-v1.5 (nomic)  Nussbaum et al. (2025) ,
+gte-base-en-v1.5 (gte1.5)  Zhang et al. (2024) ,
+bge-base-en-v1.5 (bge)  Xiao et al. (2024) ,
+and bge-m3 (bgem3)  Chen et al. (2024) . 
+ 
+ 
+
+
+
+Implementation details. 
+
+ 
+
+All experiments are conducted on a single NVIDIA A100 80GB GPU using the AdamW optimizer  Loshchilov and Hutter (2019) .
+For Ts-Retriever and TempRetriever, we follow the training settings reported in their respective papers.
+For M-Adaptor, LoRA-based MRL, and TMRL, we use a batch size of 256 with 4 hard negatives, a learning rate of 1\times 10^{-4} , and train for 5 epochs (1 epoch for nomic ).
+We apply LoRA with rank r{=}4 to all linear layers of the TEM for LoRA-based methods.
+TMRL hyperparameters are elaborated in Sections  5.3 .
+Additional implementation details are provided in Appendix  A.2 . 
+ 
+ 
+ 
+
+
+
+ 5.2 Results 
+
+
+
+ 
+ 
+
+
+ Backbone 
+ 
+ 
+ 
+ Train 
+ 
+ set 
+ 
+ nDCG@10 
+ Recall@100 
+ BEIR NQ nDCG@10 
+
+
+ 0-shot 
+ TsR 
+ TempR 
+ MA 
+ LoRA 
+ 0-shot 
+ TsR 
+ TempR 
+ MA 
+ LoRA 
+ 0-shot 
+ TsR 
+ TempR 
+ MA 
+ LoRA 
+
+
+ BM25 
+ - 
+ 34.58 
+ - 
+ - 
+ - 
+ - 
+ 76.61 
+ - 
+ - 
+ - 
+ - 
+ 32.90 
+ - 
+ - 
+ - 
+ - 
+
+
+ 
+ 
+ 
+ contriever 
+ 
+ (Mean-768) 
+ 
+ Original 
+ 21.50 
+ 60.09 
+ 50.46 
+ 19.75 
+ 56.91 
+ 85.12 
+ 94.57 
+ 95.05 
+ 81.62 
+ 96.37 
+ 25.37 
+ 10.71 
+ 20.01 
+ 17.51 
+ 17.76 
+
+
+ Our 
+ 53.64 
+ 63.30 
+ 20.87 
+ 61.26 
+ 95.52 
+ 96.32 
+ 84.24 
+ 97.08 
+ 15.22 
+ 21.18 
+ 17.70 
+ 19.21 
+
+
+ 
+ 
+ 
+ gte 
+ 
+ (Mean-768) 
+ 
+ Original 
+ 80.47 
+ - ∗ 
+ - ∗ 
+ 78.65 
+ 75.09 
+ 97.56 
+ - ∗ 
+ - ∗ 
+ 97.50 
+ 96.13 
+ 52.84 
+ - ∗ 
+ - ∗ 
+ 52.44 
+ 43.62 
+
+
+ Our 
+ - ∗ 
+ - ∗ 
+ 78.72 
+ 80.34 
+ - ∗ 
+ - ∗ 
+ 97.52 
+ 97.25 
+ - ∗ 
+ - ∗ 
+ 52.53 
+ 50.78 
+
+
+ 
+ 
+ 
+ nomic 
+ 
+ (Mean-768) 
+ 
+ Original 
+ 78.01 
+ 44.60 
+ 5.81 
+ 75.10 
+ 81.59 
+ 95.58 
+ 91.32 
+ 45.73 
+ 95.77 
+ 96.89 
+ 59.73 
+ 30.94 
+ 33.35 
+ 58.88 
+ 62.50 
+
+
+ Our 
+ 42.92 
+ 3.73 
+ 75.14 
+ 82.55 
+ 86.86 
+ 44.32 
+ 95.73 
+ 97.58 
+ 34.92 
+ 10.78 
+ 58.94 
+ 62.76 
+
+
+ 
+ 
+ 
+ bge 
+ 
+ ( CLS -768) 
+ 
+ Original 
+ 72.62 
+ 44.76 
+ 1.50 
+ 69.80 
+ 77.77 
+ 97.85 
+ 89.47 
+ 21.48 
+ 97.38 
+ 97.50 
+ 54.15 
+ 37.22 
+ 39.67 
+ 53.01 
+ 52.26 
+
+
+ Our 
+ 59.87 
+ 2.00 
+ 70.14 
+ 77.42 
+ 94.27 
+ 25.08 
+ 97.46 
+ 97.50 
+ 34.30 
+ 25.50 
+ 53.14 
+ 52.47 
+
+
+ 
+ 
+ 
+ gte1.5 
+ 
+ ( CLS -768) 
+ 
+ Original 
+ 52.17 
+ 53.13 
+ 4.34 
+ 48.65 
+ 72.31 
+ 94.69 
+ 92.92 
+ 46.30 
+ 93.84 
+ 96.26 
+ 52.96 
+ 41.81 
+ 49.64 
+ 52.70 
+ 52.03 
+
+
+ Our 
+ 67.09 
+ 2.45 
+ 50.29 
+ 69.90 
+ 95.51 
+ 26.17 
+ 94.20 
+ 96.19 
+ 40.86 
+ 31.50 
+ 52.75 
+ 52.78 
+
+
+ 
+ 
+ 
+ bge-m3 
+ 
+ ( CLS -1024) 
+ 
+ Original 
+ 59.64 
+ 38.98 
+ 4.29 
+ 57.65 
+ 74.69 
+ 96.97 
+ 89.23 
+ 55.94 
+ 96.55 
+ 96.61 
+ 60.57 
+ 18.56 
+ 21.59 
+ 59.92 
+ 57.59 
+
+
+ Our 
+ 68.63 
+ 1.85 
+ 57.83 
+ 75.92 
+ 95.93 
+ 30.40 
+ 96.56 
+ 96.98 
+ 23.35 
+ 17.20 
+ 59.96 
+ 59.71 
+ 
+ 
+ Table 1: 
+Full-dimensional embedding results on Temporal Nobel Prize.
+“-” indicates not applicable.
+ ∗ denotes results are not available due to unstable training.
+0-shot, TsR, TempR, MA, and LoRA denote zero-shot, Ts-Retriever, TempRetriever, Matryoshka-Adaptor, and LoRA, respectively.
+Original/Our indicate training on the original/augmented TNP training set.
+For each TEM, we highlight the Best and second-best metrics.
+ 
+ 
+
+
+ 
+
+
+ nDCG@10 
+ Recall@100 
+ nDCG@10 
+ Recall@100 
+
+
+ 
+ 
+ 
+ 
+ 
+
+
+ 
+ 
+ 
+ 
+ 
+
+
+ 
+ 
+ 
+ 
+ 
+ 
+ Figure 4: Matryoshka embedding results on TNP. TMRL preserves general semantic performance on NQ while improving temporal retrieval, particularly nDCG@10, compared to the strong LoRA-based MRL baseline, which already outperforms LoRA fine-tuning and Ts-Retriever on full-dimensional embeddings.
+ 
+ 
+
+
+
+Augmented data result on TNP. 
+
+ 
+
+Table  1 reports full-dimensional embedding performance of different training methods on TNP, trained on either the original or our augmented data.
+For full fine-tuning, TempRetriever achieves the highest nDCG@10 with contriever but generalizes poorly across TEMs.
+Ts-Retriever is more stable and benefits from our augmented data.
+Both methods fail to train gte , suggesting full fine-tuning may be suboptimal for temporal adaptation.
+In contrast, parameter-efficient fine-tuning methods, including M-Adaptor and LoRA, are more efficient and robust.
+M-Adaptor’s performance appears constrained by the original TEM’s capabilities.
+LoRA consistently achieves the highest nDCG@10 and Recall@10, with minimal degradation on NQ.
+The impact of our data augmentation pipeline is evident:
+Ts-Retriever sees notable gains in nDCG@10 and Recall@10 for bge , gte1.5 , and bge-m3 .
+M-Adaptor improves across all metrics and TEMs, while for LoRA, 4 out of 6 TEMs improve in nDCG@10 and Recall@10, and all TEMs maintain better NQ performance. 
+ 
+ 
+
+
+
+Matryoshka embedding results. 
+
+ 
+
+Figure  4 and  7 present Matryoshka embedding performance on TNP and TimeQA, respectively.
+Across both datasets, M-Adaptor is largely constrained by the TEM’s zero-shot performance, highlighting a limitation of semantic-only Matryoshka adaptation.
+For TNP, LoRA-based MRL consistently outperforms M-Adaptor across embedding dimensions and TEMs, overcoming the zero-shot performance cap.
+Building on LoRA-based MRL, TMRL further improves retrieval, particularly for lower-dimensional embeddings, with notable gains in nDCG@10 across most TEMs, indicating that the dedicated temporal subspace effectively enhances temporal encoding.
+Furthermore, TMRL preserves general semantic retrieval performance, unlike Ts-Retriever.
+We also observe that TMRL exhibits slightly lower Recall@10 at higher dimensions for gte and bge .
+However, since retrieving more documents does not necessarily lead to better RAG performance  Jin et al. (2025a) , we argue that temporally relevant documents ranked at the top of the retrieval list are more valuable.
+As a result, improvements in nDCG@10 are more impactful for downstream temporal RAG.
+Due to limited space, we place the results of TimeQA in Appendix  A.1 .
+On TimeQA, TMRL’s gains emerge at higher embedding dimensions (i.e., \geq 256), indicating that stronger semantic capacity is more important for this benchmark.
+From 256 dimensions onward, TMRL matches the Recall@100 of the LoRA-based MRL baseline while consistently improving nDCG@10, with semantic retrieval performance on NQ remaining comparable to other methods.
+Our augmentation pipeline continues to improve nDCG@10 across most TEMs, with modest Recall@100 trade-offs at smaller embedding sizes.
+In conclusion, TMRL equips TEMs with temporal-aware Matryoshka embeddings that improve temporal retrieval while enabling flexible accuracy–efficiency trade-offs under different computational constraints. 
+ 
+
+
+ 
+ 
+ Figure 5: 
+Ablation of the temporal subspace dimension t and the temporal subspace coefficient \alpha . The results show the increase/decrease relative to the LoRA-based MRL baseline on TNP using contriever and bge .
+ 
+ 
+
+
+ 
+ 
+
+
+ 
+ contriever 
+ BGE 
+
+
+ \alpha 
+ 0.1 
+ 0.25 
+ 0.5 
+ 1.0 
+ 0.1 
+ 0.25 
+ 0.5 
+ 1.0 
+
+
+ t{=}32 
+ 19.67 
+ 18.72 
+ 17.04 
+ 15.00 
+ 48.81 
+ 47.21 
+ 48.71 
+ 45.82 
+
+
+ t{=}64 
+ 19.64 
+ 18.56 
+ 16.45 
+ 13.42 
+ 53.76 
+ 49.18 
+ 50.62 
+ 49.33 
+
+
+ t{=}128 
+ 19.65 
+ 18.92 
+ 17.62 
+ 14.97 
+ 50.29 
+ 49.05 
+ 47.36 
+ 50.30 
+ 
+ 
+ Table 2: nDCG@10 on BEIR NQ. 
+ 
+
+
+ 
+ 
+
+
+ Dist. 
+ CKA 
+ nDCG@10 
+ Recall@100 
+ NQ 
+
+
+ \beta 
+ \gamma 
+ 64 
+ 128 
+ 256 
+ 512 
+ 768 
+ 64 
+ 128 
+ 256 
+ 512 
+ 768 
+
+
+ 0 
+ 0 
+ 36.5 
+ 51.3 
+ 62.7 
+ 66.0 
+ 68.8 
+ 87.9 
+ 95.8 
+ 97.7 
+ 97.9 
+ 98.3 
+ 19.6 
+
+
+ 0.1 
+ 0 
+ 39.2 
+ 53.8 
+ 63.6 
+ 66.3 
+ 68.6 
+ 90.5 
+ 95.9 
+ 97.7 
+ 97.9 
+ 98.1 
+ 18.2 
+
+
+ 0 
+ 0.1 
+ 37.3 
+ 52.3 
+ 63.5 
+ 66.4 
+ 68.8 
+ 88.6 
+ 96.0 
+ 97.8 
+ 98.0 
+ 98.4 
+ 19.4 
+
+
+ 0.1 
+ 0.1 
+ 39.3 
+ 53.8 
+ 63.8 
+ 66.2 
+ 68.4 
+ 90.6 
+ 96.0 
+ 97.5 
+ 97.8 
+ 98.1 
+ 18.0 
+
+
+ 0.25 
+ 0.25 
+ 37.4 
+ 48.7 
+ 55.9 
+ 58.4 
+ 60.4 
+ 91.0 
+ 95.0 
+ 96.9 
+ 97.2 
+ 97.4 
+ 14.2 
+
+
+ 0.5 
+ 0.5 
+ 11.4 
+ 14.0 
+ 17.7 
+ 21.0 
+ 22.8 
+ 53.7 
+ 70.6 
+ 82.7 
+ 87.4 
+ 89.6 
+ 18.1 
+ 
+ 
+ Table 3: Contriever auxiliary loss ablation on TNP. 
+ 
+
+
+ 
+ 
+
+
+ Dist. 
+ CKA 
+ nDCG@10 
+ Recall@100 
+ NQ 
+
+
+ \beta 
+ \gamma 
+ 64 
+ 128 
+ 256 
+ 512 
+ 768 
+ 64 
+ 128 
+ 256 
+ 512 
+ 768 
+
+
+ 0 
+ 0 
+ 47.2 
+ 63.6 
+ 72.9 
+ 76.6 
+ 77.3 
+ 88.4 
+ 94.6 
+ 96.4 
+ 97.1 
+ 97.0 
+ 50.3 
+
+
+ 0.1 
+ 0 
+ 47.6 
+ 64.0 
+ 73.1 
+ 76.7 
+ 77.4 
+ 88.6 
+ 94.6 
+ 96.4 
+ 97.1 
+ 97.0 
+ 50.4 
+
+
+ 0 
+ 0.1 
+ 47.7 
+ 64.0 
+ 73.3 
+ 76.8 
+ 77.6 
+ 88.8 
+ 94.6 
+ 96.4 
+ 97.1 
+ 96.9 
+ 49.9 
+
+
+ 0.1 
+ 0.1 
+ 48.1 
+ 64.3 
+ 73.5 
+ 77.0 
+ 77.7 
+ 89.0 
+ 94.7 
+ 96.4 
+ 97.1 
+ 96.9 
+ 49.9 
+
+
+ 0.25 
+ 0.25 
+ 31.7 
+ 47.0 
+ 54.6 
+ 58.4 
+ 59.4 
+ 65.9 
+ 80.8 
+ 87.2 
+ 89.7 
+ 90.6 
+ 49.6 
+
+
+ 0.5 
+ 0.5 
+ 29.5 
+ 43.9 
+ 51.5 
+ 55.5 
+ 56.6 
+ 63.6 
+ 78.6 
+ 84.8 
+ 88.3 
+ 89.1 
+ 49.3 
+ 
+ 
+ Table 4: BGE auxiliary loss ablation on TNP. 
+ 
+ 
+ 
+
+
+
+ 5.3 Discussions 
+
+
+
+
+Effect of temporal subspace. 
+
+ 
+
+Figure  5 analyzes
+the temporal subspace dimension t and the weighting coefficient \alpha in Eq.  15 .
+Auxiliary losses are disabled in this ablation, and the corresponding NQ results are reported in Table  2 .
+For \alpha , values above 0.5 cause substantial degradation for bge , whereas contriever benefits from increasing \alpha up to 0.5, improving temporal retrieval at the cost of semantic retrieval.
+With respect to t , bge requires at least 64 temporal dimensions to improve temporal retrieval while preserving semantic performance.
+A similar trend holds for contriever , where larger t consistently improves temporal retrieval with minimal semantic impact.
+Based on these results, we set \alpha\in[0.1,0.25] and t\in[64,128] ; final configurations for each TEM are provided in Appendix  A.2 . 
+ 
+ 
+
+
+
+Auxiliary losses ablation. 
+
+ 
+
+Tables  3 and  4 analyze the effect of the local ( \beta ) and structural ( \gamma ) self-distillation auxiliary losses in Eq.  15 .
+Setting both \beta and \gamma to a small value (e.g., 0.1) improves alignment at both local and global levels compared to using no auxiliary loss.
+This setting is robust across contriever and bge : the former trades semantic for temporal retrieval, while the latter shows only minor changes.
+However, larger values introduce competition with the contrastive objective.
+For simplicity, we set \beta=\gamma=0.1 in all experiments. 
+ 
+ 
+
+
+
+Temporal RAG results. 
+
+ 
+
+Figures  1 and  6 report temporal RAG F1 performance on TNP and TimeQA using Qwen3-8B  Yang et al. (2025) with different contriever variants trained on our augmented data.
+RAG performance largely mirrors the corresponding retrieval trends in Figures  4 and  7 , supporting the hypothesis that retriever quality is a main bottleneck in temporal RAG.
+On TNP, TMRL achieves the best Pareto frontier among Matryoshka baselines.
+Its temporal subspace improves full-dimensional embeddings over full fine-tuning and the LoRA-based MRL baselines.
+Consistent with retrieval results, for TimeQA, TMRL attains the highest F1 score from 256 dimensions onward, enabling up to 3{\times} storage reduction while maintaining competitive performance. 
+ 
+ 
+ 
+ 
+
+

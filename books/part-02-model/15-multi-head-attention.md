@@ -91,6 +91,8 @@ Y shape = [B,T,d_model]
 
 `W_O` 让不同 heads 的信息重新混合，并把输出恢复到 residual stream 的 `d_model`。如果简单平均 heads，会提前丢失“哪部分信息来自哪个投影子空间”的自由度。
 
+输出投影混合已经聚合好的 head；若要改变 softmax 之前谁能与谁匹配，就需要另一种接口。一条受限分支先在 head 轴分别线性混合 Q/K/V，给每个 head 生成 P 组 pseudo-tokens，再把原长度 N 交错成 NP 个虚拟位置，按这些位置执行 causal attention 与 RoPE。这不是增加输出 W_O，也不是 GQA 减少 KV heads；它扩大匹配空间，同时把全局 attention 的每 head 工作量推到 O(P²N²d)。[必要机制与预算控制](https://arxiv.org/html/2602.21371v1#S4)通过局部窗口/周期性全局层约束比较预算，但 FLOP 近似匹配和 FlashAttention 兼容不等于 KV、位置编码、训练或延迟免费。无位置的代数包含关系也不授旧 RoPE checkpoint 无损转换；有限任务有反退，预算紧或改动接口未验收时仍保留 MHA/GQA，而不把更多可表达关系当成已学可靠算法。<!-- source-family:SF-2026-ARXIV-2602-21371 -->
+
 ## 一个两 head 小例子
 
 设 `d_model=4`、`H=2`、`d_h=2`。某个 token 在两个 heads 聚合后的输出分别为：
@@ -284,6 +286,10 @@ shared latent KV
 该分支需要白盒 activation、对比轨迹、子空间和阈值校准，并增加逐步监测开销；过强投影会损坏正确轨迹。exact-v1 的受测模型、任务和 head 不能证明 correctness manifold 跨模型稳定，也不能把 proximity 当作 correctness certificate。head/任务漂移、阈值失校或 utility regression 超界时，应关闭投影，回退无 steering、较弱静态 steering 或外部 verifier-guided retry。
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-21770:end -->
 
+多语言任务还要把语言形式与答案内容作为两个干预目标，而不是给所有失败共用一个“正确性方向”。一条受限诊断分支分别构造含义相同但语言错误的输入、语言正确但含义被破坏的输入，再将干净轨迹的 head activation patch 回对应条件；在 teacher-forced 的参考输出前缀上比较预测变化，用来选择后续 steering 候选。两种 corruption、参考前缀及观察 token 位置共同定义 sensor，不能把位置间的 KL 差或可干预性直接称为模型自然使用的唯一语言无关 code。部署时应分别验语言遵循与内容正确性，定位有效也不保证自由生成有效：[必要机制与反侧](https://arxiv.org/html/2602.04613v1)中 token 0 也可能有用，低资源语言和较强缩放仍会失败。对比构造、白盒 patch、位置与强度校准增加成本；目标与 utility 验收不成立时，关闭该干预，回退显式语言指令、较弱 steering 或无 steering，而不继承普遍的少量 head 控制保证。<!-- source-family:SF-2026-ARXIV-2602-04613 -->
+
+干预粒度也不一定是整个 head 或整层向量。用列向量记法写线性输出 `y = Σ_i x_i W[:,i]`，每项由一个输入 scalar 与对应权重列组成；它与本章行向量 `x W` 的记法互为转置，这种 activation unit（AU）不是 neuron、head 或 SAE feature 的同义词。一条受限分支先在目标/非目标对比输入中按 activation 差的符号一致性选 AU，再按排名给当前输入 scalar 施加 `x_i → (1+γ_i)x_i` 的缩放。排序只是干预候选，不识别唯一内部因果；负向 γ 足够大时 `1+γ_i` 可以为负，不能称为保符号控制。对比 pairs、矩阵/层坐标、选择数 k 与强度 α 都需要任务内校准，细粒度选择仍增加定位和监测成本，也可能伤害无关能力；更少单元不保证更好。独立目标与 utility 回归失效时应关闭该分支，回退无 steering、较弱粗粒度 steering 或外部 verifier，而不由受限激活排序签发功能控制保证。<!-- source-family:SF-2026-ARXIV-2602-04428 -->
+
 
 ## 本章在知识树中的位置
 
@@ -321,6 +327,8 @@ MQA 和 GQA 进一步把 Query head 数与 KV head 数解耦，用共享 K/V 换
 
 ## Review notes
 
+- `SF-2026-ARXIV-2602-21371`：exact-v1 §4、实验与local/global预算说明；只采用softmax前head混合/虚拟位置与P²成本分责。图示和方法window缩放不同，不混用；理想无position证明不授RoPE转换，未核实现或复现。 非原 packet 作者必要原证/actual owner PRE 与窄写完成；root 已实际顺读正文、完整邻接与自身末注，POST 通过。
+
 本章只扩展多头结构，不重复第14章 softmax 小例子，也不提前展开第19章完整 KV Cache 容量。后续 Review 应继续区分 Query head 与 KV head，并以 checkpoint config 核验 `H`、`H_kv` 和 `d_h`。
 
 - `SF-2026-ARXIV-2605-04279`（Status: Experimental）：[exact-v1](https://arxiv.org/html/2605.04279v1) 支持在论文假设下区分总能量梯度流、per-head monotonicity 与 radial-shadow coupling；Radial Dominance 是充分条件。证据不支持把受限动力学外推为任意真实 Transformer 的 head 独立性、功能分工或训练保证。
@@ -335,3 +343,7 @@ Primary-source 校验入口：
 - Paul Michel et al., "Are Sixteen Heads Really Better than One?", 2019: https://arxiv.org/abs/1905.10650
 - Noam Shazeer, "Fast Transformer Decoding: One Write-Head is All You Need", 2019: https://arxiv.org/abs/1911.02150
 - Joshua Ainslie et al., "GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints", 2023: https://arxiv.org/abs/2305.13245
+
+- `SF-2026-ARXIV-2602-04428` — Daily `2026-02-06`；[AUSteer exact-v1](https://arxiv.org/html/2602.04428v1) §3–5及Appendix B/C，2+2+2=6，仅对 scalar-granularity steering 与成本边界的具体缺口深入。AU 是输入 scalar × 权重列，contrastive sign-consistency 与排名缩放不证明 neuron/head/SAE 等价或内部唯一因果；负缩放不授保符号，k/α 任务相关，部分 utility 切片退步保留。激活数量与跨实现 baseline 不作端到端速度证据，不采用普遍 fewer-is-better 或全附录理论。root 必要原源→具体 owner 已核并授窄锁；root 实际正文/279–299前后邻接及341源注 POST 通过，日级 Gate 待验，未复现实验。
+
+- `SF-2026-ARXIV-2602-04613` — Daily `2026-02-06`；[Meaning and Language exact-v1](https://arxiv.org/html/2602.04613v1) §3–6。原2+2+2=6，具体双corruption × teacher-forced观察位置接口缺口深入；语言/含义分别构造与输出验收，patch/位置KL不授唯一内部code或普遍1%控制。token0、低资源语言、强α及utility反侧和白盒校准成本保留。未运行代码或复现；root实际必要原源/owner写前通过，root实际Ch15 275–301含287新段及345末注POST通过，日级Gate未验。

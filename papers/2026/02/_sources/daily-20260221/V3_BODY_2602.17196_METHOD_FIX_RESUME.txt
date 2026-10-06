@@ -1,0 +1,299 @@
+URL: https://arxiv.org/html/2602.17196v1
+Status: 200
+3.2 EntropyPrune Framework
+Figure 4 illustrates the overall pipeline of EntropyPrune.
+Given an MLLM, we (i) analyze layer-wise matrix entropy to locate the Entropy Collapse Layer (ECL), where a sharp information drop indicates increasing redundancy (Figure 4(a));
+(ii) score visual tokens at ECL via token-wise matrix entropy after head-wise reshaping and covariance estimation (Figure 4(b)); and
+(iii) prune low-entropy tokens and forward compact representations for efficient generation (Figure 4(c)).
+3.3 When to Prune: Entropy Collapse Layer
+As shown in Figure 2, matrix entropy follows a highly consistent depth-wise pattern across eight datasets, despite substantial variation in input images and instructions.
+This suggests that matrix entropy captures an intrinsic redundancy trend of multimodal representations, robust to variations in input data.
+While prior work reports a general information decay with depth (Xing et al., 2024; Lin et al., 2025; Wang et al., 2025b), we observe a critical phenomenon within this trend.
+Specifically, the matrix entropy of query and key states remains high in early layers but drops abruptly after a certain depth (e.g., the second layer for LLaVA-1.5-7B and LLaVA-NeXT-7B).
+We refer to this transition point as the Entropy Collapse Layer (ECL).
+The collapse indicates rapid compression of redundant visual evidence, after which many tokens become informationally dispensable.
+Accordingly, ECL serves as an interpretable criterion for selecting the pruning stage, avoiding heuristic layer choices.
+3.4 What to Prune: Token Entropy Scoring
+Given the pruning stage (i.e., ECL), we rank visual tokens by their information content using token-wise matrix entropy.
+For each token 𝐱i\mathbf{x}_{i}, we apply Head-wise Reshaping (Figure 4(b)) and obtain a feature matrix 𝐌i∈ℝh×dh\mathbf{M}_{i}\in\mathbb{R}^{h\times d_{h}}:
+𝐌i=[𝐯1,𝐯2,…,𝐯h]⊤,\mathbf{M}_{i}=[\mathbf{v}_{1},\mathbf{v}_{2},\dots,\mathbf{v}_{h}]^{\top},
+(7)
+where 𝐯j∈ℝdh\mathbf{v}_{j}\in\mathbb{R}^{d_{h}} denotes the feature for the jj-th attention head and
+𝐯¯=1h​∑j=1h𝐯j\bar{\mathbf{v}}=\frac{1}{h}\sum_{j=1}^{h}\mathbf{v}_{j} is the mean head feature.
+Since independent attention heads focus on diverse patterns, constructing 𝐌i\mathbf{M}_{i} in this manner allows us to evaluate the richness of token information across different representational views.
+The trace-normalized covariance matrix of the token 𝐱i\mathbf{x}_{i} is calculated as:
+𝚺i=1h​∑j=1h(𝐯j−𝐯¯)​(𝐯j−𝐯¯)⊤‖𝐯j−𝐯¯‖2,\bm{\Sigma}_{i}=\frac{1}{h}\sum_{j=1}^{h}\frac{(\mathbf{v}_{j}-\bar{\mathbf{v}})(\mathbf{v}_{j}-\bar{\mathbf{v}})^{\top}}{\|\mathbf{v}_{j}-\bar{\mathbf{v}}\|^{2}},
+(8)
+where 𝚺i∈ℝdh×dh\bm{\Sigma}_{i}\in\mathbb{R}^{d_{h}\times d_{h}} captures the intra-token correlation structure.
+Let {σt}\{\sigma_{t}\} be eigenvalues of 𝚺i\bm{\Sigma}_{i}. The token score is:
+I(𝐱i)=−tr(𝚺ilog𝚺i)=−∑t=1dhσtlogσt.I(\mathbf{x}_{i})=-\mathrm{tr}(\bm{\Sigma}_{i}\log\bm{\Sigma}_{i})=-\sum_{t=1}^{d_{h}}\sigma_{t}\log\sigma_{t}.
+(9)
+Higher scores indicate more diverse information distribution, whereas lower scores suggest redundancy.
+EntropyPrune retains high-score tokens and prunes the rest.
+3.5 How to Compute Fast: Spectral Acceleration
+Direct eigendecomposition of 𝚺i∈ℝdh×dh\bm{\Sigma}_{i}\in\mathbb{R}^{d_{h}\times d_{h}} costs 𝒪⁡(dh3)\mathcal{O}(d_{h}^{3}) time and is expensive in practice.
+In typical MLLM architectures (e.g., LLaVA-1.5, Qwen2.5-VL), the head dimension dhd_{h} is often much larger than the number of heads hh. For instance, with dh=128d_{h}=128 and h=32h=32 in LLaVA-1.5-7B, the computational cost becomes prohibitive for real-time inference.
+To address this issue, we propose a Spectral Acceleration Strategy that exploits the identical non-zero spectrum property of dual matrices.
+Let 𝐌~i∈ℝh×dh\tilde{\mathbf{M}}_{i}\in\mathbb{R}^{h\times d_{h}} denote the centered matrix of 𝐱i\mathbf{x}_{i}:
+𝐌~i=𝐌i−𝟏​𝐯¯T=[𝐯1−𝐯¯,…,𝐯h−𝐯¯]T.\tilde{\mathbf{M}}_{i}=\mathbf{M}_{i}-\mathbf{1}\bar{\mathbf{v}}^{T}=[\mathbf{v}_{1}-\bar{\mathbf{v}},\dots,\mathbf{v}_{h}-\bar{\mathbf{v}}]^{T}.
+(10)
+To ensure that the resulting covariance matrix is strictly trace-normalized, we perform L2L_{2} normalization on each row of the centered matrix:
+𝐌~i←[𝐯1−𝐯¯‖𝐯1−𝐯¯‖2,…,𝐯h−𝐯¯‖𝐯h−𝐯¯‖2]T.\tilde{\mathbf{M}}_{i}\leftarrow\left[\frac{\mathbf{v}_{1}-\bar{\mathbf{v}}}{\|\mathbf{v}_{1}-\bar{\mathbf{v}}\|_{2}},\dots,\frac{\mathbf{v}_{h}-\bar{\mathbf{v}}}{\|\mathbf{v}_{h}-\bar{\mathbf{v}}\|_{2}}\right]^{T}.
+(11)
+Accordingly, the original traced-normalized covariance matrix can be rewritten as the Gram matrix of the columns of 𝐌~i\tilde{\mathbf{M}}_{i}:
+𝚺i=1h​𝐌~iT​𝐌~i∈ℝdh×dh.\bm{\Sigma}_{i}=\frac{1}{h}\tilde{\mathbf{M}}_{i}^{T}\tilde{\mathbf{M}}_{i}\in\mathbb{R}^{d_{h}\times d_{h}}.
+(12)
+We define its dual counterpart, the Gram matrix of 𝚺i\bm{\Sigma}_{i} as 𝚺~i\tilde{\bm{\Sigma}}_{i}:
+𝚺~i=1h​𝐌~i​𝐌~iT∈ℝh×h.\tilde{\bm{\Sigma}}_{i}=\frac{1}{h}\tilde{\mathbf{M}}_{i}\tilde{\mathbf{M}}_{i}^{T}\in\mathbb{R}^{h\times h}.
+(13)
+Since A⊤​AA^{\top}A and A​A⊤AA^{\top} share identical non-zero eigenvalues, 𝚺i\bm{\Sigma}_{i} and 𝚺~i\tilde{\bm{\Sigma}}_{i} have the same spectrum.
+Therefore, we compute the exact entropy using 𝚺~i\tilde{\bm{\Sigma}}_{i}:
+I(𝐱i)=−tr(𝚺~ilog𝚺~i)=−∑t=1hσtlogσt,I(\mathbf{x}_{i})=-\mathrm{tr}(\tilde{\bm{\Sigma}}_{i}\log\tilde{\bm{\Sigma}}_{i})=-\sum_{t=1}^{h}\sigma_{t}\log\sigma_{t},
+(14)
+reducing the complexity to 𝒪⁡(h3)\mathcal{O}(h^{3}).
+For typical settings (dh=128d_{h}=128, h=32h=32), this yields a 64×64\times theoretical speedup.
+3.6 Theoretical Analysis of Computational Complexity
+In this analysis, we exclusively focus on the LLM backbone of MLLMs, taking LLaVA-1.5-7B as a representative example. As language instructions are typically much shorter than visual tokens, we concentrate on the FLOPs contributed by visual tokens. Let nn denote the number of visual tokens, dd the hidden size, and mm the FFN intermediate size (with SwiGLU), where typically m≈83​dm\approx\frac{8}{3}d. For the prefill stage, the FLOPs per transformer layer can be approximated as:
+F⁡(n)=4​n2​d+8​n​d2+6​n​m​d≈4​n2​d+24​n​d2.F(n)=4n^{2}d+8nd^{2}+6nmd\approx 4n^{2}d+24nd^{2}.
+(15)
+For the detailed derivation, please refer to the Appendix A.4.
+Suppose the total number of LLM layers is LL and the token pruning is applied at the kk-th layer.
+If the token count is reduced by a ratio rr (n^=(1−r)​n\hat{n}=(1-r)n), the total FLOPs reduction ratio is calculated as:
+R=1−k⋅F⁡(n)+(L−k)⋅F⁡(n^)L⋅F⁡(n).R=1-\frac{k\cdot F(n)+(L-k)\cdot F(\hat{n})}{L\cdot F(n)}.
+(16)
+Given d≫nd\gg n in LLaVA-1.5 configurations (e.g., d=4096d=4096 vs n=576n=576), the linear term 24​n​d224nd^{2} dominates the computation over the quadratic attention term 4​n2​d4n^{2}d. Thus, F⁡(n^)F⁡(n)≈1−r\frac{F(\hat{n})}{F(n)}\approx 1-r, and the overall reduction ratio simplifies to R≈L−kL​rR\approx\frac{L-k}{L}r.
+Furthermore, the additional computational overhead introduced by EntropyPrune is negligible compared to the backbone inference.
+Specifically, the computational costs for computing the covariance matrix 𝚺~i\tilde{\bm{\Sigma}}_{i} and performing the eigenvalue decomposition are 2​n​h​d2nhd and 4​n​h34nh^{3}, respectively (Golub and Van Loan, 1996).
+Consequently, the FLOPs of EntropyPrune is approximately 96​n​d96nd.
+Comparing this to a single Transformer layer, the overhead ratio is roughly 96​n​d4​n2​d+24​n​d2≈4d\frac{96nd}{4n^{2}d+24nd^{2}}\approx\frac{4}{d}.
+Given the typically large hidden dimension dd, this fraction is vanishingly small, rendering the overhead of EntropyPrune practically negligible.
+Table 1: Performance of LLaVA-1.5-7B with EntropyPrune under different vision token configurations. The vanilla number of vision tokens is 576. Acc. represents the average accuracy across 8 benchmarks. Rel. denotes the relative performance retained compared to the original model. The best performance is highlighted in bold, while the second best is underlined.
+Method
+MMB
+MME
+SQA
+VQAT{}^{\text{T}}
+MMBC{}^{\text{C}}
+MMVet
+MMstar
+AI2D
+Acc.(%)
+Rel.(%)
+FLOPs
+Upper Bound, 576 Tokens (100%)
+LLaVA-1.5-7B
+64.6
+1862
+69.5
+58.3
+58.1
+31.2
+33.1
+55.5
+54.6
+100.0
+8.80T
+Retain 192 Tokens (↓66.7%)\mathbf{{\color[rgb]{0.1328,0.5469,0.1328}(\downarrow 66.7\%)}}
+FastV (ECCV24)
+63.2
+1796
+69.1
+56.4
+57.4
+25.8
+31.1
+50.4
+52.2
+94.6
+3.99T
+PDrop (CVPR25)
+63.3
+1765
+69.2
+56.2
+56.5
+24.6
+30.7
+49.4
+51.6
+93.3
+3.79T
+SparseVLM (ICML25)
+63.4
+1779
+68.6
+57.7
+57.1
+31.2
+31.4
+51.2
+53.0
+97.1
+3.76T
+DART (EMNLP25)
+63.7
+1833
+69.0
+57.0
+57.1
+29.3
+31.4
+52.0
+53.1
+96.9
+3.69T
+CDPruner (NIPS25)
+63.2
+1786
+68.9
+57.3
+55.6
+32.6
+31.1
+50.6
+52.9
+97.1
+3.76T
+DivPrune (CVPR25)
+62.3
+1769
+68.6
+56.6
+56.2
+29.2
+31.5
+50.5
+52.3
+95.5
+3.73T
+Prumerge (ICCV25)
+56.3
+1515
+63.6
+50.1
+51.3
+20.2
+22.0
+37.6
+44.4
+79.2
+3.71T
+EntropyPrune
+64.4
+1844
+69.1
+57.6
+57.9
+31.3
+31.5
+51.3
+53.6
+98.1
+3.72T
+Retain 128 Tokens (↓77.8%)\mathbf{{\color[rgb]{0.1328,0.5469,0.1328}(\downarrow 77.8\%)}}
+FastV (ECCV24)
+62.5
+1735
+68.4
+54.7
+55.2
+24.2
+31.1
+50.2
+51.0
+92.4
+3.14T
+PDrop (CVPR25)
+62.2
+1655
+69.5
+55.4
+55.7
+24.5
+30.7
+50.1
+50.9
+92.2
+2.98T
+SparseVLM (ICML25)
+63.2
+1700
+69.2
+56.3
+57.4
+27.3
+30.9
+50.9
+52.0
+94.6
+2.92T
+DART (EMNLP25)
+62.1
+1800
+69.1
+55.7
+55.7
+27.2
+30.8
+51.1
+52.0
+94.5
+2.80T
+CDPruner (NIPS25)
+63.0
+1775
+69.0
+56.2
+55.2
+31.5
+29.9
+51.2
+52.4
+95.9
+2.92T
+DivPrune (CVPR25)
+61.3
+1712
+68.4
+56.0
+54.8
+27.1
+29.7
+50.3
+51.1
+92.9
+2.88T
+Prumerge (ICCV25)
+54.6
+1518
+63.8
+50.1
+50.4
+20.4
+21.9
+38.6
+44.3
+79.0
+2.87T
+EntropyPrune
+63.5
+1780
+69.4
+56.3
+56.4
+29.9
+31.5
+49.9
+52.6
+96.0
+2.88T
+4 Experiment
+4.1 Experiment Setup
+Benchmarks.
+For the image understanding task, we perform experiments on ten widely used benchmarks, including MMBench (MMB) and MMB-CN (MMBC{}^{\text{C}}) (Liu et al., 2024d), MME (Fu et al., 2024), ScienceQA (SQA) (Lu et al., 2022), TextVQA (VQAT{}^{\text{T}}) (Singh et al., 2019), MMVet (Yu et al., 2024), MMstar (Chen et al., 2024b), AI2D (Kembhavi et al., 2016), OCRBench (OCRB{}^{\text{B}}) (Liu et al., 2024e), and MMMU (Yue et al., 2024).
+Video QA benchmarks include MSVD-QA and MSRVTT-QA (Xu et al., 2017).
+More details of the benchmarks are provided in Appendix B.1.
+Base Models.
+We adopt the LLaVA series to evaluate our method across different modalities: LLaVA-1.5 (Liu et al., 2024a) (general image), LLaVA-NeXT (Liu et al., 2024b) (high-resolution image), and Video-LLaVA (Lin et al., 2024) (video). Additionally, we incorporate Qwen2.5-VL (Bai et al., 2025) to examine performance on cutting-edge open-source architectures.
+Baselines.
+We compare our approach with several representati

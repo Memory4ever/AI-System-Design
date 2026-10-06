@@ -1,0 +1,308 @@
+Necessary main-body extraction; no unrelated appendices. Source https://arxiv.org/html/2601.10702v1
+1 Introduction
+Large language models (LLMs) are deployed in long-horizon tasks Liu et al. (2024) that require agents to track interleaved goals, resolve references to prior information, and coordinate actions over extended trajectories. Such settings arise across diverse applications, including extended human–agent dialogues (Jiang et al., 2024), deep research workflows (Shao et al., 2024), and autonomous tool-augmented environments (Xie et al., 2024).
+Figure 1: The Challenges of Long-Horizon Agentic Memory. We identify four capabilities required for robust agentic memory: (A) Incremental Memory Revision (tracking state changes over time); (B) Context-Aware Factual Recall (distinguishing semantically similar facts by context); (C) Context-Aware Multi-Hop Reasoning (resolving implicit references across distracting turns); and (D) Context-Aware Information Synthesis.
+To address the complexity of these environments, recent works (e.g., Pan et al., 2025; Xu et al., 2025; Edge et al., 2024) have introduced agentic memory mechanisms that organize context online and retrieve relevant information at inference time. This retrieval-centric view aligns with the notion of retrieval cues in cognitive science (Tulving and Thomson, 1973; Craik and Lockhart, 1972): structured indices that determine which stored context information is accessed. In long-horizon settings, where many steps are semantically similar but contextually distinct, retrieval is bottlenecked by cue quality. Effective agentic memory must construct cues that reliably surface the right context amidst noisy, interference-prone history.
+However, existing agentic memory systems remain misaligned with the demands of long-horizon, goal-oriented reasoning in Figure 1. Memory compression techniques Sarthi et al. (2024); Pan et al. (2025) summarize semantically or temporally adjacent segments but often fail to link interleaved, persistent goal contexts across non-adjacent segments (Figure 1(C)), complicating state tracing (Figure 1(A)) and information synthesis (Figure 1(D)). Similarly, knowledge-graph-based memories (Edge et al., 2024; Xu et al., 2025) encode entity-level relations but often lack explicit goal- or episode-level disambiguation, so repeated mentions of the same entities can correspond to distinct latent goals (Figure 1(B)). While long-context LLMs (OpenAI, 2025; Comanici et al., 2025) can attend to extended trajectories, they become ineffective once trajectories exceed context limits and incur substantial overhead for real-time retrieval.
+To address these limitations, we propose STITCH (§2), an agentic memory system that models the latent intent underlying each step of a task trajectory. Grounded in Event Structure Theory (Zacks and Tversky, 2001), STITCH is motivated by the hypothesis that robust recall requires organizing experience by (i) the superordinate goal context and (ii) recurring action categories. We instantiate contextual intent, a structured retrieval cue induced online without a fixed ontology:
+(1) thematic scope (§ 2.2.1), a stable segment label tracking the current goal (e.g., “Day 2 Itinerary” or “Model Optimization”);
+(2) event type (§ 2.2.2), an action label capturing the operation performed (e.g., “Rebuttal”, “Hyperparameter Tuning”, “Price Inquiry”); and
+(3) key entity types (§ 2.2.3), the entity classes that determine which attributes are relevant in-context (e.g., Metric, Hyperparameter, Price, Rating).
+Together, these cues explicate contextual information otherwise ambiguous in the raw trajectory: thematic scope links non-adjacent, goal-consistent steps for multi-hop reasoning, state tracing, and synthesis (Figure 1(C, A, D)), while event and entity typing disambiguate repeated mentions by anchoring facts to functional roles and expected attributes, improving recall under interference (Figure 1(B)). At inference time, STITCH filters and prioritizes memory snippets by structural compatibility, suppressing semantically similar but context-mismatched content (§ 2.3).
+A parallel gap lies in how we evaluate long-horizon memory: existing benchmarks rarely test whether models can retrieve the right fact in the right context. In realistic agentic settings, success is not determined solely by finding semantically relevant text, but by verifying that retrieved information matches the contextual constraints under which it was stated or requested (e.g., a hotel “price” is only meaningful when conditioned on dates, location, and room type). Yet current evaluations often sidestep this requirement. First, many benchmarks segment a long trajectory into largely independent mini-episodes or topic blocks (Wu et al., 2024), which makes retrieval effectively local and reduces the need to track global state across interleaved goals. Second, they enforce strict turn-taking between a user and an assistant (Wu et al., 2024; Maharana et al., 2024), where queries are typically answered immediately after they are posed; this adjacency masks the harder case where requests are interleaved, deferred, and resolved only after several intervening steps.
+To address these evaluation gaps, we introduce CAME-Bench (Context-Aware Agent Memory Evaluation Benchmark) (§3), which targets context-aware retrieval in long, goal-oriented trajectories. CAME-Bench stresses this capability along three axes: interleaved, non-turn-taking interaction structure; multi-domain coverage; and controlled difficulty via diverse question types and length-stratified subsets. These choices make dispersed, often implicit constraints necessary for answering and reveal a complementary failure mode obscured in existing evaluations where strong baselines are near-saturated.
+Our contributions are threefold:
+1.
+We propose STITCH, an intent-aware, domain-agnostic agentic memory system that induces contextual intent online and uses intent compatibility to filter and prioritize retrieved history.
+2.
+We introduce CAME-Bench, a multi-domain benchmark for context-aware retrieval in long, goal-oriented trajectories, with length-stratified subsets.
+3.
+Empirically, STITCH consistently outperforms strong long-context and structured-memory baselines on CAME-Bench, validating the importance of intent-aware retrieval for robust long-horizon reasoning.
+2 Methods
+2.1 Contextual Intent Schema
+Our approach, STructured Intent Tracking in Contextual History (STITCH), is grounded in Event Structure Theory (Zacks and Tversky, 2001), which argues that humans comprehend extended activity by building event representations that support prediction and memory. A key implication is that extended experience is not treated as a single flat stream: people naturally organize behavior into segments that maintain a coherent goal context, while also recognizing recurring kinds of actions that reappear across contexts. We mirror this organization with three complementary cues induced online from the trajectory (i.e., without assuming a domain-specific ontology), making the representation applicable across task domains. First, a partonomy assigns each trajectory step to a thematic scope—a segment label that summarizes the current goal context and remains stable until the latent goal shifts (e.g., “Day 2 Itinerary”) (§2.2.1). Second, a taxonomy assigns each step an event type that captures its basic operation (e.g., “searching”, “comparing”, “booking”) regardless of which segment it occurs in; the label set is derived on the fly and can expand as new operations appear (§2.2.2). Third, to support retrieval of factual details, we extract key entity types that identify the classes of information necessary to satisfy the current goal (Talmy, 1975) (e.g., Price, Rating), providing a lightweight schema template that anchors which details should be surfaced to make progress on the task (§2.2.3). STITCH tracks these signals at each step and uses them as retrieval cues to retrieve the correct context at inference time.
+We formalize these cues as Contextual Intent, a structured representation of the latent goal used as a retrieval cue. For a task trajectory T=\{s_{1},s_{2},\ldots,s_{n}\} where each step is a tuple s_{t}=(r_{t},a_{t},\tau_{t}) specifying the acting agent role r_{t}, a natural-language description of the action a_{t}, and a timestamp \tau_{t}, we infer a contextual intent tuple \iota_{t}=(\sigma_{t},\epsilon_{t},\kappa_{t}),
+where \sigma_{t} denotes the thematic scope, \epsilon_{t} is the event type, and \kappa_{t} represents the set of key entity types.
+2.2 Contextual Intent Construction
+Figure 2: Overview of STITCH. The framework operates in two phases. Left (§2.2): Contextual Intent Construction. From a streaming trajectory, the model dynamically induces three structural cues—Thematic Scope (\sigma_{t}), Event Type (\epsilon_{t}), and Key Entity Types (\kappa_{t})—to form a Contextual Intent tuple \iota_{t}. This structure guides coreference resolution (e.g., resolving “it”) and summary generation to create a structured Memory Snippet. Right (§2.3): Intent-Aware Retrieval. During inference, the evaluation query q is mapped to a structured filter configuration F_{q}. The retrieval engine applies Label Density Ranking, prioritizing memories that strictly match the intended structure before ranking by semantic content.
+2.2.1 Thematic Scope Induction.
+Event Perception literature suggests that humans naturally segment continuous activity into discrete units at points of maximal feature change, which correlate strongly with sub-goal completion (Newtson et al., 1977). While this segmentation captures local intent, treating segments in isolation leads to context loss, since coarse-grained goals (the “macro-structure”) often persist across fine-grained boundaries. To model this partonomy, we induce a thematic scope \sigma_{t} that acts as a coarse-grained container for fine-grained steps. Concretely, we use a sliding window in which an LLM predictor \mathcal{M} analyzes the current step s_{t} with a recent history buffer H_{\text{scope}} and the previously induced scope to detect shifts in the latent goal: \sigma_{t}=\mathcal{M}_{\text{scope}}(s_{t},H_{\text{scope}},\sigma_{t-1}).
+Consistent with findings that “behavior episodes” (Barker and Wright, 1954) are characterized by continuity in setting and mental sphere (Zacks and Tversky, 2001), \sigma_{t} remains constant until the model detects a boundary event (i.e., a goal-state divergence). When a boundary is detected by the LLM, a new scope label is induced; otherwise, the step inherits the prior scope (e.g., persisting in “Day 2 Itinerary” for travel, or “Model Optimization” in machine learning). To prevent context overflow while preserving the ongoing episode’s “gist”, we maintain a compressed summary \Sigma_{\sigma} of the current scope online, which is then provided to subsequent scope predictions (see Appendix E.1 for prompts).
+2.2.2 Taxonomic Event Labeling.
+While thematic scope captures the episodic structure of a specific activity, event labeling captures taxonomic regularities that recur across distinct scopes. We induce event types directly from the trajectory without a pre-defined ontology, mirroring how humans learn event structure via statistical covariation (Avrahami and Kareev, 1994); this allows the taxonomy to naturally adapt to diverse task domains (see Appendix E.1 for prompts).
+We adopt a dynamic label-space evolution strategy. First, we generate a seed vocabulary of event types \mathcal{V}_{\epsilon} via zero-shot inference on the initial N_{\text{start}} trajectory steps, producing task-appropriate, interpretable labels. During online processing, for each step s_{t}, we retrieve the top-k_{\text{event}} semantically similar labels from \mathcal{V}_{\epsilon} and prompt \mathcal{M}_{\text{label}} to select the best-fitting event label \epsilon_{t}=\mathcal{M}_{\text{label}}\!\bigl(s_{t},\text{Retrieve}(\mathcal{V}_{\epsilon},s_{t},k_{\text{event}})\bigr).
+If no suitable label is found, we introduce a new label into \mathcal{V}_{\epsilon}. To maintain a compact and distinct taxonomy, we perform periodic refinement every k_{\text{update}} steps to consolidate semantically overlapping (near-synonymous) labels.
+2.2.3 Key Entity Type Extraction.
+Events are often defined by interactions between an actor and specific objects or “figures” (Talmy, 1975). To anchor retrieval of factual details, we extract key entity types \kappa_{t}, representing the classes of detailed information required (e.g., distinguishing “Metric” from “Hyperparameter” in research; distinguishing “Price” from “Rating” in travel). This yields a lightweight “schema template” that enhances generalization, enabling retrieval to target the specific entity types required by the current intent rather than being misled by ambiguous surface forms with functionally distinct roles. As with event labeling, entity types are induced online without assuming a fixed domain schema, thus ensuring generalization (see Appendix E.1 for prompts).
+We maintain a growing label space of entity types \mathcal{V}_{\kappa}. For each step, the model identifies necessary semantic entities and maps them to existing types in \mathcal{V}_{\kappa} or generates new types if the class is novel \kappa_{t}=\mathcal{M}_{\text{entity}}(s_{t},\mathcal{V}_{\kappa}).
+Similar to the event taxonomy, \mathcal{V}_{\kappa} undergoes periodic consolidation to merge semantically overlapping entity classes.
+Coreference Resolution via Structural Alignment.
+Extended goal-directed trajectories often rely on implicit references to prior states (e.g., “Book it.”). Zacks and Tversky (2001) note that event coherence relies on tracking participants across temporal boundaries. We resolve these references by leveraging the induced partonomic and taxonomic structure. When a step s_{t} contains ambiguous references, we retrieve a context set C_{\text{align}} consisting of prior steps that share the same
+thematic scope \sigma_{t} and/or compatible event types \epsilon_{t}. This structurally aligned context is then used to rewrite s_{t} into a disambiguated form s^{\prime}_{t}=\mathcal{M}_{\text{rewrite}}(s_{t},C_{\text{align}}).
+This ensures that pronouns (e.g., “it”) are resolved to their referents (e.g., “the Apollo Hotel”) prior to storage. We validate the efficacy of this rewriting module via an automated audit of Entity Resolution Recall, ensuring that implicit references are correctly grounded to their canonical entity names (see Appendix E.1 for prompt and B for verification details).
+2.2.4 Memory Snippet Construction
+To support downstream inference, we augment the raw step content with its inferred structural properties. We generate a canonical summary c_{t}—a concise natural-language description encapsulating the agentic operation and its contextual intent—via c_{t}=\mathcal{M}_{\text{sum}}(s^{\prime}_{t},\iota_{t}).
+The final Memory Snippet is defined as m_{t}=(s_{t},\iota_{t},c_{t}). This composite representation enables retrieval to query the structure of the past (via \iota_{t}) alongside the content (via c_{t}).
+2.3 Intent-Aware Retrieval
+During inference, rather than relying solely on unstructured semantic similarity, we perform intent-aware filtering using contextual intent. Given a query q, we prompt an LLM to produce a filter configuration F_{q} that specifies target values over the same schema components as \iota_{t}, i.e.,
+F_{q}=(\mathcal{S}_{q},\mathcal{E}_{q},\mathcal{K}_{q}),
+where \mathcal{S}_{q} is a set of candidate thematic scopes, \mathcal{E}_{q} a set of candidate event types, and \mathcal{K}_{q} a set of key entity types. In practice, the LLM is conditioned on q and the current label inventories (i.e., the induced scope labels and the vocabularies \mathcal{V}_{\epsilon} and \mathcal{V}_{\kappa}) to ensure that F_{q} is expressed in the same label space as stored memories. (Prompt templates and examples are provided in Appendix E.1.)
+This mirrors how humans recall experiences by indexing through a goal episode (partonomy) and/or a recurring operation (taxonomy), while using expected participants to anchor required factual details.
+We then rank memory snippets via structural alignment with F_{q}, utilizing semantic similarity as a secondary tie-breaker. We employ a label density ranking strategy, which prioritizes snippets based on the cardinality of their overlap with the filter configuration (i.e., the number of satisfied constraints in \iota_{t}). This strategy serves as a proxy for contextual relevance: it ensures that memory snippets sharing the highest degree of contextual intent with the query—and therefore possessing the strongest contextual affinity to the user’s information need—are strictly prioritized. Among snippets with equivalent label density, we rank by semantic similarity between the query and content (e.g., \mathrm{sim}(q,c_{t})). Finally, we return the top-k_{\text{retrieve}} memory snippets.
+3 CAME-Bench
+We introduce the Context-aware Agent Memory Evaluation Benchmark (CAME-Bench), a synthetic dataset designed to evaluate agentic memory in continuous, goal-oriented trajectories characterized by high contextual interference. CAME-Bench constructs dense interaction histories where recurring entities and interleaved goals create significant ambiguity, specifically designed to evaluate an agent’s ability to manage context over long horizons.
+Formally, each benchmark instance consists of a trajectory T=\{s_{1},s_{2},\ldots,s_{n}\}, where each step is defined as s_{t}=(r_{t},a_{t},\tau_{t}). During evaluation, models are presented with a set of free-response questions Q and must generate answers by reasoning over the full trajectory. To assess robust generalization, CAME-Bench comprises trajectories spanning distinct domains.
+We construct CAME-Bench according to three design principles: (i) symbolically grounded causal consistency, where we decouple storyboard planning from surface generation to ensure logically coherent long-horizon state transitions; (ii) controlled semantic interference, utilizing a closed-world environment to densely reuse static entities and challenge models to disambiguate fine-grained context; and (iii) dynamic referential ambiguity, which necessitates resolving indirect pragmatic references and tracking incremental state updates rather than relying on static retrieval.
+Based on these principles, we instantiate the benchmark in two domains: (i) Travel Planning, in which an LLM-simulated assistant collaborates with a simulated user to construct multi-day itineraries; and (ii) Debate, in which two LLM agents advocate opposing positions in evidence-grounded policy argumentation.
+3.1 Benchmark Curation
+Inspired by prior work showing that intermediate structured representations improve dataset consistency (Rastogi et al., 2020; Eric et al., 2020), we design a four-stage pipeline that decouples symbolic planning from natural-language generation. This approach allows us to enforce complex causal dependencies and maintain logically coherent state transitions prior to surface realization.
+As detailed in Appendix A.1 and A.2, our pipeline consists of: (1) closed-world environment construction, creating a controlled set of static entities and knowledge to mitigate contamination; (2) symbolic storyboard planning, where we predefine action spaces and generate symbolic operations (e.g., latent goals, payloads) subject to pragmatic constraints; (3) storyboard-conditional trajectory generation, translating symbolic plans into natural language using LLMs; and (4) pragmatic refinement, applying referential remodeling and turn segmentation to mimic natural communication patterns and increase difficulty. This structured generation enables faithful automatic annotation of evaluation questions.
+3.2 Evaluation Questions and Metrics
+For each trajectory, we pose four categories of free-response questions that target complementary aspects of context-aware retrieval and long-horizon reasoning (Figure 1). See Appendix A.7 for illustrative examples; Appendices A.3 and A.6 provide details on ground-truth answer generation and human verification.
+Type 1: Incremental Memory Revision. Following Wu et al. (2024), these questions assess the ability to maintain and update entity states as they evolve (e.g., tracking restaurant candidates as they are added or rejected across turns).
+Type 2: Context-Aware Factual Recall. These questions test precise information retrieval amidst semantically similar content. Models must disambiguate details that differ only by context (e.g., retrieving a hotel price for Day 1 vs. Day 2).
+Type 3: Context-Aware Multi-Hop Reasoning. These questions require resolving referential expressions before retrieval. For example, answering a question about “the dinner reservation I mentioned earlier” requires first identifying the referent, then retrieving associated attributes.
+Type 4: Information Synthesis. These questions assess the ability to aggregate information distributed across multiple steps, such as reconstructing a complete itinerary from scattered bookings and visits.
+Metrics.
+We employ answer-set macro-averaged precision, recall, and F1 score. This metric provides a more nuanced assessment for multi-element answers and captures partial credit scenarios better than binary accuracy.
+4 Experiments
+Model
+CAME-Bench
+LongMemEval
+\text{Prec}_{S}
+\text{F1}_{S}
+\text{Prec}_{M}
+\text{F1}_{M}
+\text{Prec}_{L}
+\text{F1}_{L}
+\text{Acc}_{O}
+\text{Acc}_{S}
+\text{Acc}_{M}
+Long Context Agents
+DeepSeek V3.1 (128k)
+0.238
+0.228
+0.012
+0.010
+0.000
+0.000
+0.620
+0.240
+0.267
+Qwen3 (256k)
+0.724
+0.704
+0.192
+0.152
+0.016
+0.016
+0.740
+0.160
+0.333
+GPT-4o-mini (128k)
+0.336
+0.315
+0.082
+0.075
+0.017
+0.017
+0.560
+0.060
+0.267
+GPT-4.1-mini (1M)
+0.715
+0.712
+0.401
+0.362
+0.317
+0.213
+0.720
+0.200
+0.067
+GPT-5-mini (400k)
+0.775
+0.804
+0.576
+0.566
+0.268
+0.212
+0.860
+0.820
+0.533
+Embedding RAG Agents
+Qwen 8B
+0.306
+0.280
+0.176
+0.157
+0.172
+0.152
+0.740
+0.780
+0.533
+text-embedding-3-small
+0.275
+0.269
+0.224
+0.195
+0.219
+0.182
+0.800
+0.800
+0.200
+text-embedding-3-large
+0.346
+0.317
+0.190
+0.168
+0.236
+0.195
+0.800
+0.800
+0.267
+Structure-Augmented RAG Agents
+RAPTOR (Sarthi et al., 2024)
+0.343
+0.329
+0.122
+0.117
+0.168
+0.139
+0.680
+0.480
+0.467
+GraphRAG (Edge et al., 2024)
+0.385
+0.371
+0.189
+0.165
+0.196
+0.156
+0.820
+0.840
+0.667
+HippoRAG 2 (Gutiérrez et al., 2025)
+0.405
+0.390
+0.211
+0.191
+0.212
+0.186
+0.820
+0.800
+0.667
+A-mem (Xu et al., 2025)
+0.387
+0.376
+0.217
+0.196
+0.216
+0.186
+0.780
+0.740
+0.667
+Secom (Pan et al., 2025)
+0.532
+0.501
+0.141
+0.114
+0.282
+0.236
+0.520
+0.580
+0.600
+STITCH (Ours)
+0.810
+0.844
+0.665†
+0.682†
+0.616†
+0.592†
+0.860
+0.860
+0.800
+w/o thematic scope
+0.457
+0.463
+0.257
+0.257
+0.269
+0.213
+-
+-
+-
+w/o event type
+0.730
+0.753
+0.525
+0.527
+0.383
+0.273
+-
+-
+-
+w/o coreference
+0.554
+0.578
+0.508
+0.489
+0.469
+0.404
+-
+-
+-
+w/o key entity type
+0.713
+0.735
+0.513
+0.511
+0.513
+0.458
+-
+-
+-
+Table 1: Performance on CAME-Bench and LongMemEval. We report answer-set Macro Precision/Macro-F1 (omitting Recall for brevity) on CAME-Bench S/\!{}_{M}/\!{}_{L} (N{=}144/168/61) and average Accuracy on LongMemEvalO/\!{}_{S}/\!{}_{M} (N{=}50/50/15) (Wu et al., 2024). N is trajectories per subset. Following Pan et al. (2025), the memory-retrieval token budget is 4096. Best results are bold. \dagger: paired t-test vs. the strongest baseline within each subset, p{<}0.05. Appendix E.2 details the prompts for answer generation and LLM-based evaluation.
+Benchmarks.
+We evaluate STITCH on two long-context QA benchmarks: (i) CAME-Bench (§3), our multi-agent trajectory benchmark; question types and metrics are defined in §3.2; and (ii) LongMemEval (Wu et al., 2024), which embeds task-relevant sessions into unrelated chat history and is stratified by context length.22
+2
+For computational efficiency, we randomly subsample each LongMemEval subset from the original 500 questions. Following Wu et al. (2024), we report accuracy as the metric.
+Baselines
+We compare our method against 13 baselines categorized into three groups:
+•
+Long-Context LLMs (Zero-Shot): We evaluate powerful models operating directly on the full context, including gpt-4o-mini, gpt-4.1-mini, gpt-5-mini, qwen3-235B-A22B-Instruct, and deepseek-v3.1. For inputs exceeding the context window, we apply left-truncation (keeping the most recent history).
+•
+RAG Baselines: We evaluate standard Retrieval-Augmented Generation using dense retrievers with three embedding models: qwen3-embedding-8B, text-embedding-3-small, and text-embedding-3-large.
+•
+Structured Memory Agents: We compare against state-of-the-art memory-augmented systems: RAPTOR (Sarthi et al., 2024), GraphRAG (Edge et al., 2024), HippoRAG 2 (Gutiérrez et al., 2025), A-mem (Xu et al., 2025), and Secom (Pan et al., 2025). See detailed baseline descriptions in Appendix C.
+Implementation details.
+All baseline methods and all intent construction stages of STITCH (§2.2) use gpt-5-mini with medium reasoning effort as the backbone LLM generator; we set N_{\text{start}}{=}50, k_{\text{update}}{=}50, k_{\text{retrieve}}{=}40, and k_{\text{event}}{=}5.
+To ensure fair comparison, we enforce a shared retrieval budget for all retrieval-based and memory-augmented methods: the inference context is capped at 4,096 tokens. If retrieved content exceeds the budget, we tail-truncate to the last complete sentence. We automatically evaluate all generated answers against ground truth using an LLM-as-a-judge with gpt-4.1-mini (temperature=0.0, top_p=0.9); we use identical generation and judging prompts across methods (Appendix E.2).
+5 Results and Analysis
+Overview.
+Table 1 compares STITCH against baselines on CAME-Bench. While STITCH achieves parity with the strongest baseline (gpt-5-mini) on the small subset, it demonstrates superior scalability. As trajectory lengths scale by a factor of 6 for medium subset and 17 for large subset, performance among standard baselines degrades significantly. In contrast, STITCH remains robust, outperforming the best baseline by 11.6% (20.5% relative) on the Medium subset and 35.6% (100% relative) on the Large subset.
+Analysis of Baselines.
+We observe distinct failure modes in the baseline methods. Long-context LLMs remain competitive on the small subset, effectively attending to scattered details. However, they suffer from substantial performance degradation on the Large subset, struggling to link multiple details across extended contexts (the “lost-in-the-middle” phenomenon). Conversely, structured agentic memory baselines perform adequately on simple factual recall but fail on distinguishing semantically similar facts that differ by their context (e.g., distinguishing a hotel price on Day 1 from Day 2). STITCH overcomes this by anchoring retrieval in the Contextual Intent structure (\iota_{t}), ensuring that semantically similar information is correctly disambiguated by its thematic scope.
+5.1 Ablation Study
+To understand the source of these gains, we conduct an ablation study on the components of the contextual intent: thematic scope (\sigma_{t}), event type (\epsilon_{t}), Key Entity Types (\kappa_{t}), and the Coreference Resolution module. (Appendix D.1 provides detailed error analysis)
+Thematic Scopes Effectively Reduce Context Noise.
+Thematic scope (\sigma_{t}) emerges as the most significant factor contributing to performance. By segmenting the trajectory into coarse-grained “behavior episodes,” \sigma_{t} establishes necessary boundaries for memory retrieval. This proves critical for all question types, as it allows the model to constrain reasoning to relevant thematic segments, minimizing distraction from irrelevant history.
+Granularity Trade-off.
+Taxonomic Event Labeling (\epsilon_{t}) improves performance on fine-grained lookup tasks but introduces instability in Question Type 4 (Information Synthesis). We attribute this to the inductive nature of our labeling process, which tends to generate highly specific event types (e.g., differentiating “Check Rates” from “Book Hotel”). While these fine-grained labels serve as effective filters for specific queries, they can hinder synthesis tasks that require aggregating information across multiple distinct action types. This suggests a trade-off: while a flat taxonomy is useful, a hierarchical structure is likely required to support both fine-grained filtering and coarse-grained integration.
+Resolution Grounds Entities.
+The structural alignment coreference module serves as a foundational step. Its effectiveness depends heavily on the accuracy of the upstream thematic scope and event type assignments. By resolving ambiguous pronouns (e.g., “it”) to their specific entity referents prior to storage, this module significantly boosts performance across all metrics by preventing the retrieval of ungrounded or ambiguous context snippets (see Appendix B for implementation details and results).
+6 Related Works
+Figure 3: Results broken down by question type in CAME-Bench. We compare STITCH with the strongest baseline in each category: gpt-5-mini for Long-Context Models, text-embedding-3-large for Embedding RAG Agents, and SeCom (Pan et al., 2025) for Structure-Augmented RAG Agents. The evaluation addresses four distinct capabilities: Incremental Memory Update (Type 1), Context-Aware Factual Recall (Type 2), Context-Aware Multi-Hop Reasoning (Type 3), and Information Synthesis (Type 4). See §3.2 for detailed definitions.
+Memory-Augmented Agent Systems
+Existing memory architectures address the finite context window of LLMs by externalizing history via vector retrieval Karpukhin et al. (2020), hierarchical summarization Sarthi et al. (2024); Pan et al. (2025), or graph-based storage Edge et al. (2024); Xu et al. (2025); Gutiérrez et al. (2025). While these methods expand recall capacity, they predominantly optimize for storage efficiency and semantic similarity rather than contextual validity. Retrieval mechanisms driven solely by embedding alignment remain susceptible to noise when relevance depends on latent goals or evolving constraints. Furthermore, abstraction-based approaches often sacrifice essential details, while static schemas lack flexibility to adapt to shifting task demands. Consequently, current systems often fail to ground retrieved information in the agent’s active intent, leaving a gap between access and effective state-dependent reasoning.
+Long-Context Agentic Benchmarks
+Recent benchmarks such as LongMemEval Wu et al. (2024), LongBench Bai et al. (2024b), and LoCoMo Maharana et al. (2024) have moved beyond single-turn QA to probe memory retention over extended horizons. While instrumental in revealing performance degradation in long-context settings, these evaluations frequently rely on structural oversimplifications that diverge from realistic workflows. Many employ strict turn-taking dynamics Bai et al. (2024a) or partition interactions into disjoint topics, allowing models to exploit local adjacency heuristics rather than performing robust context tracking. Unlike open-ended social dialogue Maharana et al. (2024), goal-oriented agent tasks require rigorous state maintenance across interleaved, non-local dependencies—a challenge that current benchmarks, with their focus on separable sub-tasks, fail to adequately capture.
+7 Conclusion
+We present STITCH, a lightweight, domain-agnostic agentic memory system that models context history via contextual intent and uses it to filter and prioritize memory for retrieval. This intent-aware cue suppresses semantically similar but contextually mismatched history, supporting robust long-horizon reasoning. We also introduce CAME-Bench, a benchmark that exposes the fragility of existing methods in realistic, goal-oriented trajectories. Across settings, STITCH achieves state-of-the-art performance and scales reliably as context grows, avoiding the degradation observed in long-context baselines on extended trajectories.
+Limitations
+STITCH is designed to prioritize retrieval robustness and structural coherence in long-horizon contexts, utilizing a design philosophy that favors precision over raw ingestion speed. Consequently, the ingestion pipeline incurs multiple LLM calls to construct rich contextual intent tuples; while this overhead is amortized during retrieval to ensure superior disambiguation, the per-step ingestion cost is higher than lightweight embedding-only baselines. Similarly, our dynamic label evolution involves a trade-off between schema stability and immediate adaptability. While our system supports real-time updates, we employ a buffered update strategy (N=50) in our experiments to stabilize the label space. This choice ensures schema consistency but introduces a minor latency in formalizing novel event types that emerge in the middle of a buffer window. Finally, our induced event taxonomy is currently optimized for fine-grained factual lookup. While this granularity excels at specific queries, broad synthesis tasks may currently require aggregating across multiple event types. These trade-offs highlight promising avenues for future work, particularly in exploring hierarchical schema induction and lightweight structural predictors to further balance efficiency with our established performance gains.
+Ethical Considerations
+We propose an entirely synthetic benchmark constructed within a closed-world environment. This design strictly prevents the inclusion of personally identifiable information and mitigates privacy risks associated with scraping real-world user data. In the Travel Planning domain, we utilize fictionalized entities to avoid potential harm to real-world businesses. For the Debate domain, we minimize the risk of generating toxic or harmful content by restricting topics to policy argumentation curated by the National Speech & Debate Association and constraining agent generation to specific, retrieved evidence snippets.
+Regarding human evaluation, we recruited volunteer annotators to validate trajectory quality and ground truth correctness. All participants provided informed consent, and no personal data was collected during the process. Finally, regarding the broader impact of agentic memory, our approach grounds memory in explicit contextual intent. This structural organization offers greater transparency and interpretability regarding retained information compared to black-box embedding methods, facilitating better auditability and user control over stored history.
+Acknowledgements
+Research was supported in part by the AI Institute for Molecular Discovery, Synthetic Strategy, and Manufacturing: Molecule Maker Lab Institute (MMLI), funded by U.S. National Science Foundation under Awards No. 2019897 and 2505932, NSF IIS 25-37827, and the Institute for Geospatial Understanding through an Integrative Discovery Environment (I-GUIDE) by NSF under Award No. 2118329. Any opinions, findings, and conclusions or recommendations expressed herein are those of the authors and do not necessarily represent the views, either expressed or implied, of DARPA or the U.S. Government. We also thank Ling Wu and Haoyu Zhai for their helpful feedback.
+

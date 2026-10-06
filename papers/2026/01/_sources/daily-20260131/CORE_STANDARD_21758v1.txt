@@ -1,0 +1,419 @@
+Exact-v1 necessary evaluation and limitations https://arxiv.org/html/2601.21758v1
+
+6. Evaluation
+We evaluate EWSJF across three dimensions: (1) overall performance under mixed workloads, (2) adaptability to dynamic workload shifts, and (3) the contribution of individual system components. Our evaluation seeks to answer:
+(1)
+How does EWSJF perform compared to standard schedulers under realistic, heterogeneous workloads?
+(2)
+How effectively does the strategic optimizer adapt to changes in workload distribution?
+(3)
+What is the impact of each architectural component on system performance?
+6.1. Datasets and Workloads
+To construct realistic heterogeneous workloads, we combine short, interactive prompts from public conversational datasets with long-form inputs from long-context benchmarks. The resulting dataset exhibits a bimodal distribution of input lengths ranging from 32 to 4096 tokens. For reproducibility, anonymized versions of these datasets are provided in the supplementary material.
+Our primary benchmark configuration, the Mixed Workload, simulates a Poisson arrival process where 80% of requests are short (interactive) and 20% are long (batch). We evaluate this workload at arrival rates between 10 and 40 requests/s to test system behavior under increasing contention.
+6.2. Experimental Setup
+Hardware. All experiments were conducted on a high-performance inference node equipped with 4×\times NVIDIA A100-80GB GPUs.
+Software. EWSJF was implemented as a pluggable scheduler within vLLM v0.11.0. All benchmarks used the LLaMA-2-13B-Chat model with tensor parallelism enabled.
+6.3. Baselines
+To demonstrate that EWSJF achieves both high throughput and fairness, we compare against two representative scheduling paradigms:
+•
+vLLM FCFS (Default): The standard First-Come, First-Served scheduler used in vLLM. FCFS guarantees fairness (no starvation) but suffers from severe head-of-line blocking, causing short interactive queries to experience large TTFT spikes under mixed workloads.
+•
+Greedy SJF (Shortest Job First): A heuristic baseline that strictly prioritizes the shortest available request. While SJF maximizes theoretical throughput, it is unusable in real LLM serving: under heavy-tailed workloads, short requests continuously arrive and long requests may wait indefinitely, leading to guaranteed starvation (see Appendix C).
+Why EWSJF Wins. EWSJF captures the throughput benefits of SJF while avoiding its starvation failure modes. By incorporating a Density-Weighted Scoring function (Section 4.4), EWSJF prevents long requests from “dying” in the queue and maintains fairness comparable to FCFS. In effect, EWSJF behaves like a learned, fairness-aware variant of SJF that adapts its prioritization policy to workload conditions.
+6.4. Queue Clustering Analysis
+A central design choice in EWSJF is the granularity of queue partitioning. Table 3 shows that while standard K-Means suggests 5–10 queues, the Refine-and-Prune algorithm identifies that 32 queues maximize throughput.
+Table 3. Impact of queue count on serving performance. Refine-and-Prune identifies 32 queues as optimal.
+Method
+Queues
+Time (s)
+Req/s
+Tok/s
+FCFS (Baseline)
+1
+3548.4
+8.45
+90.4
+EWSJF (K-Means)
+5
+2746.8
+10.92
+144.2
+EWSJF (K-Means)
+10
+2490.5
+12.05
+160.5
+EWSJF (K-Means)
+30
+2448.8
+12.25
+163.9
+EWSJF (Refined)
+32
+2385.1
+12.58
+168.2
+6.5. Performance Under Load
+We evaluate EWSJF across four workload sizes: 10k, 30k, 50k, and 200k requests. Tables 4–7 summarize throughput and token generation rates.
+Table 4. Evaluation at 10k requests (Short-Heavy).
+Rate
+Sched.
+Req/s
+Tok/s
+Speedup
+10
+FCFS
+3.06
+36.35
+–
+10
+EWSJF
+3.15
+41.17
++13.3%
+20
+FCFS
+3.06
+36.31
+–
+20
+EWSJF
+3.42
+45.26
++24.6%
+40
+FCFS
+3.05
+36.21
+–
+40
+EWSJF
+3.85
+51.18
++41.2%
+60
+FCFS
+3.06
+36.31
+–
+60
+EWSJF
+4.07
+54.46
++50.0%
+100
+FCFS
+3.06
+36.34
+–
+100
+EWSJF
+4.21
+56.04
++54.1%
+Table 5. Evaluation at 30k requests (Moderate).
+Rate
+Sched.
+Req/s
+Tok/s
+Speedup
+10
+FCFS
+8.13
+86.21
+–
+10
+EWSJF
+7.88
+103.34
++19.9%
+20
+FCFS
+8.11
+85.98
+–
+20
+EWSJF
+8.42
+110.78
++28.9%
+40
+FCFS
+8.10
+85.92
+–
+40
+EWSJF
+9.25
+121.59
++41.5%
+60
+FCFS
+8.10
+85.92
+–
+60
+EWSJF
+9.37
+123.68
++43.9%
+100
+FCFS
+8.10
+85.97
+–
+100
+EWSJF
+9.60
+127.82
++48.7%
+Table 6. Evaluation at 50k requests (Balanced).
+Rate
+Sched.
+Req/s
+Tok/s
+Speedup
+10
+FCFS
+2.39
+170.49
+–
+10
+EWSJF
+2.45
+188.21
++10.4%
+20
+FCFS
+2.39
+170.60
+–
+20
+EWSJF
+2.63
+203.85
++19.5%
+40
+FCFS
+2.39
+170.45
+–
+40
+EWSJF
+2.86
+224.98
++32.0%
+60
+FCFS
+2.40
+171.01
+–
+60
+EWSJF
+2.92
+231.01
++35.1%
+100
+FCFS
+2.39
+170.94
+–
+100
+EWSJF
+2.98
+235.71
++37.9%
+500
+FCFS
+2.39
+170.80
+–
+500
+EWSJF
+3.00
+238.09
++39.4%
+Table 7. Evaluation at 200k requests (Production Scale).
+Rate
+Sched.
+Req/s
+Tok/s
+Speedup
+10
+FCFS
+5.38
+409.46
+–
+10
+EWSJF
+5.15
+430.53
++5.2%
+20
+FCFS
+5.37
+407.18
+–
+20
+EWSJF
+5.51
+462.46
++13.6%
+40
+FCFS
+5.38
+407.79
+–
+40
+EWSJF
+5.65
+476.85
++16.9%
+60
+FCFS
+5.32
+403.34
+–
+60
+EWSJF
+5.76
+486.57
++20.6%
+100
+FCFS
+5.30
+402.34
+–
+100
+EWSJF
+5.89
+499.04
++24.0%
+500
+FCFS
+5.32
+403.41
+–
+500
+EWSJF
+6.44
+549.02
++36.1%
+Figure 3. EWSJF speedup over FCFS across workload sizes and input rates. The x-axis shows input rate (log scale), and the y-axis shows percentage speedup in token throughput.A line chart comparing the speedup of EWSJF versus FCFS. The X-axis represents the input rate (requests per second) on a logarithmic scale. The Y-axis represents the percentage speedup in token throughput. Multiple lines correspond to different workload sizes (10k, 30k, 50k, 200k), all showing a positive trend where speedup increases significantly as the input rate rises.
+Summary.
+Across all scales, EWSJF consistently outperforms FCFS in both request throughput and token generation. Gains range from modest improvements at low load (e.g., +5.2% at 10 req/s, 200k requests) to substantial boosts under high contention (e.g., +54.1% at 100 req/s, 10k requests). These results confirm EWSJF’s robustness and scalability across diverse workload profiles.
+6.6. Throughput Under Short vs. Long Prompt Workloads
+Table 8 and Table 9 compare performance under specific workload types. Throughput increases monotonically with queue count, peaking at 30 queues, with EWSJF achieving up to a 57% increase in tokens/s for long prompts.
+Table 8. Short-prompt workload (30k requests).
+Scheduler
+Time (s)
+Tokens
+Req/s
+Tok/s
+FCFS
+3548.38
+320,783
+8.45
+90.40
+EWSJF (5q)
+2746.81
+396,183
+10.92
+144.23
+EWSJF (10q)
+2490.54
+399,771
+12.05
+160.52
+EWSJF (30q)
+2448.81
+401,416
+12.25
+163.92
+EWSJF (40q)
+2471.39
+401,570
+12.14
+162.49
+Table 9. Long-prompt workload (10k requests).
+Scheduler
+Time (s)
+Tokens
+Req/s
+Tok/s
+FCFS
+3001.33
+117,625
+3.34
+39.24
+EWSJF (5q)
+2365.99
+134,222
+4.23
+56.73
+EWSJF (10q)
+2222.42
+133,707
+4.50
+60.16
+EWSJF (20q)
+2192.31
+133,217
+4.56
+60.77
+EWSJF (30q)
+2190.65
+133,997
+4.55
+60.92
+EWSJF (40q)
+2178.88
+134,288
+4.59
+61.88
+6.7. Scaling Behavior: Throughput vs. Queue Count
+Figure 4 visualizes how queue granularity affects performance. For short prompts, throughput increases sharply up to 30 queues; for long prompts, improvements are more modest but consistent.
+Figure 4. EWSJF throughput vs. queue count. Finer partitioning improves throughput, with diminishing returns beyond 20–30 queues.A line graph plotting throughput (tokens per second) against the number of queues. The X-axis ranges from 1 to 40 queues. Two lines are shown for different prompt lengths. Both lines show a steep increase in throughput as the number of queues goes from 1 to roughly 20, after which the curve flattens, indicating diminishing returns for further partitioning.
+6.8. Summary Comparison
+Table 10 summarizes the best-performing configurations for each workload. Across both regimes, EWSJF reduces total completion time, increases GPU utilization, and significantly improves tail latency.
+Table 10. Summary of best-performing configurations.
+Metric
+FCFS (Short)
+EWSJF (Short)
+FCFS (Long)
+EWSJF (Long)
+Req/s
+8.45
+12.25
+3.34
+4.59
+Tok/s
+90.40
+163.92
+39.24
+61.88
+Time (s)
+3548.38
+2448.81
+3001.33
+2178.88
+GPU Util.
+65%
+80%
+60%
+78%
+Tail (95p)
+High
+Lower
+High
+Lower
+7. Conclusion
+Impact Statement
+This work contributes to the efficiency of large-scale LLM serving systems. We have implemented EWSJF as a non-intrusive, pluggable module compatible with vLLM’s existing block manager. The code is available in the supplementary material (Anonymous Authors, 2026), and we are currently working with the vLLM community to upstream these architectural changes into the core project.
+Our implementation within vLLM demonstrates that EWSJF substantially improves both throughput and user-perceived latency across a wide range of workload scales. In mixed and high-contention settings, EWSJF achieves up to 54% higher token throughput and reduces latency for short, interactive requests by up to 4×\times compared to FCFS. These results highlight the importance of adaptive, workload-aware scheduling for modern LLM serving systems.
+Looking forward, we believe that integrating adaptive scheduling with execution-level optimizations (e.g., KV-cache management, prefill/decode decoupling) and extending meta-optimization to multi-model or multi-tenant environments are promising directions for future work.
+Impact Statement
+This work contributes to the efficiency of large-scale LLM serving systems, which may reduce the energy footprint and operational cost of inference workloads. More efficient scheduling can improve accessibility by enabling smaller organizations to serve complex models with fewer resources. At the same time, adaptive schedulers must be deployed responsibly: optimizing for aggregate throughput may unintentionally disadvantage rare or atypical usage patterns if fairness metrics are not continuously monitored. Beyond these considerations, the broader societal impacts of EWSJF align with standard dual-use concerns associated with large language models, including potential misuse or uneven access. We encourage practitioners to evaluate these risks when integrating EWSJF into production environments.
+Limitations
+EWSJF introduces several practical and methodological limitations. First, the Refine-and-Prune procedure relies on prompt-length statistics and does not incorporate semantic or model-level features; workloads with highly irregular compute patterns may therefore require additional signals beyond length alone. Second, the Bayesian meta-optimizer adapts over multi-minute intervals, which may be insufficient for extremely bursty or adversarial traffic patterns. Third, while EWSJF improves fairness relative to pure SJF heuristics, it does not provide formal guarantees and may still exhibit bias toward particular request types if misconfigured. Finally, our evaluation focuses on single-node inference servers; extending EWSJF to distributed or heterogeneous clusters may require additional coordination mechanisms not explored in this work.

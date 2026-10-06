@@ -1,0 +1,96 @@
+Exact-v1 primary HTML necessary selection https://arxiv.org/html/2601.21198v1
+3.4 Compression-Aware Cache Management
+To enable fine-grained memory control, ZipMoE partitions the total available memory into a hierarchy of cache pools: the ℱ\mathcal{F} pool for full tensors, the 𝒞\mathcal{C} pool for compressed tensors (containing both E-chunks and SM-chunks), the 𝒮\mathcal{S} pool dedicated to SM-chunks, and the ℰ\mathcal{E} pool dedicated to E-chunks.
+These pools offer different latency–memory trade-offs and collectively enable flexible cache management under a fixed memory budget.
+Rank-Based Workload Modeling.
+In MoE workloads, the specific identities of frequently activated experts often fluctuate across different prompts.
+To capture the inherent workload skewness while remaining agnostic to expert identities, we introduce a rank-based abstraction.
+Specifically, we aggregate historical expert activation counts for a given batch size to derive a rank-based marginal inclusion probability list (fr)r∈𝒩(f_{r})_{r\in\mathcal{N}}.
+This list characterizes the stationary distribution of expert activations with respect to their popularity ranks, independent of the particular expert IDs occupying those ranks at runtime.
+Pool Dispatching.
+The system maintains a runtime frequency list to record the actual activation counts of each expert.
+We define an ordered cache hierarchy ℱ≺𝒞≺𝒮≺ℰ\mathcal{F}\prec\mathcal{C}\prec\mathcal{S}\prec\mathcal{E}.
+An expert is dispatched to the first cache pool ii in the hierarchy for which its observed rank rr satisfies
+r<τi=∑j:j⪯iSj+δr<\tau_{i}=\sum_{j:j\preceq i}S_{j}+\delta, where SjS_{j} denotes the capacity of pool jj, and δ\delta is a tolerance margin introduced to absorb noise in runtime statistics that may deviate from the long-term ranking implied by the workload model.
+In cases where the assigned cache pool overflows, experts with the lowest activation frequency are evicted.
+If an expert’s rank exceeds all thresholds, it is treated as rarely activated and is evicted immediately after execution.
+Hierarchical Cache Planning.
+We determine the optimal cache partition by minimizing the expected makespan of sparse MoE layers.
+To this end, we analytically model the cache behavior of feasible partitions using the rank-based workload abstraction and the defined cache hierarchy.
+Aligning with the runtime dispatching logic, we map the cache pools onto the expert frequency ranks sequentially.
+Consequently, each pool pp is assigned to a contiguous rank interval [up,vp][u_{p},v_{p}] with a size equal to its capacity SpS_{p}.
+Expert ranks falling outside all allocated cache pools (i.e., the tail of the rank list) are assigned to a virtual Miss Pool, denoted by ℳ\mathcal{M}.
+We model the expert activation process as a series of independent Bernoulli trials.
+Specifically, for a pool pp (including ℳ\mathcal{M}), an expert at rank r∈[up,vp]r\in[u_{p},v_{p}] is selected with probability qrq_{r}, which is derived from the marginal probability frf_{r} (details in Appendix D).
+Under this formulation, the number of cache hits within any pool follows a Poisson binomial distribution.
+We employ dynamic programming (DP) to compute the probability of observing exactly hph_{p} hits within the specific rank interval of pool pp.
+Let DP​[i]​[j]​[p]\mathrm{DP}[i][j][p] denote the probability of observing jj hits among the first ii experts within the interval assigned to pool pp.
+The DP table transition is given by:
+DP⁡[i]​[j]​[p]=DP⁡[i−1]​[j]​[p]​(1−qup+i)+DP⁡[i−1]​[j−1]​[p]​qup+i\mathrm{DP}[i][j][p]=\mathrm{DP}[i-1][j][p](1-q_{u_{p}+i})+\mathrm{DP}[i-1][j-1][p]q_{u_{p}+i}, where qup+iq_{u_{p}+i} denotes the probability of selecting the ii-th expert in the pool’s assigned interval.
+The probability of observing exactly hph_{p} hits in pool pp is thus given by Φp​(hp)=DP⁡[Sp]​[hp]​[p]\Phi_{p}(h_{p})=\mathrm{DP}[S_{p}][h_{p}][p].
+Finally, since exactly kk experts are selected per token layer-wise, we derive the joint probability of a cache hit pattern 𝐡=(hℱ,h𝒞,h𝒮,hℰ)\mathbf{h}=(h_{\mathcal{F}},h_{\mathcal{C}},h_{\mathcal{S}},h_{\mathcal{E}}) as a conditional probability:
+ℙ⁡(𝐡∣∑p∈Λ∪{ℳ}hp=k)=Φℳ​(krem)Φ𝒩​(k)⋅∏p∈ΛΦp​(hp)\mathbb{P}\left(\mathbf{h}\mid\sum_{p\in\Lambda\cup\{\mathcal{M}\}}h_{p}=k\right)=\frac{\Phi_{\mathcal{M}}(k_{\mathrm{rem}})}{\Phi_{\mathcal{N}}(k)}\cdot\prod_{p\in\Lambda}\Phi_{p}(h_{p}), where Λ∈{ℱ,𝒞,𝒮,ℰ}\Lambda\in\left\{\mathcal{F},\mathcal{C},\mathcal{S},\mathcal{E}\right\} is the set of activated cache pools, which can be selected flexibly by users based on specific hardware and OS conditions.
+krem=k−∑p∈Λhpk_{\mathrm{rem}}=k-\sum_{p\in\Lambda}h_{p} is the number of hits falling into the Miss Pool,
+Φℳ\Phi_{\mathcal{M}} represents the probability distribution of the tail experts,
+and Φ𝒩​(k)\Phi_{\mathcal{N}}(k) is the probability of selecting exactly kk experts from the entire rank list 𝒩\mathcal{N}, computed from the global DP table.
+We prove in Appendix D that this procedure yields a maximum entropy distribution, ensuring the solution is Bayes robust (Grünwald and Dawid, 2004).
+Theorem 3.2.
+Among all probability distributions over kk-sized expert subsets that are consistent with the observed individual expert selection counts, the distribution produced by the DP procedure achieves maximum entropy.
+The planning algorithm then enumerates feasible cache partition configurations via grid search.
+For each configuration, we compute the expected makespan by aggregating the latency costs of all feasible cache hit and miss combinations weighted by their corresponding probabilities derived above.
+The configuration that minimizes the expected makespan is selected for runtime cache partitioning.
+The complete planning algorithm is detailed in Appendix C.
+4 Implementation
+We prototype ZipMoE on top of the HuggingFace Transformers (Wolf et al., 2020) framework for inference, and integrate the lz4 and zstd libraries as lossless compression backends.
+The system frontend, profiler, and cache planning components are implemented in 2.6K lines of Python code, while the execution engine, scheduler, and memory management system comprise 8K lines of C++/CUDA code.
+ZipMoE pre-allocates cache pools as contiguous memory regions to reduce memory fragmentation.
+To benefit from UMA, we adopt a zero-copy paradigm that reads SM-chunks directly into host-pinned memory registered for direct GPU access, avoiding redundant data transfers.
+Motivated by operating system (OS) considerations, the prototype consolidates each E-chunk read with its subsequent decompression into a single operation to better leverage the page cache.
+This implementation preserves the design principles in §3 while simplifying runtime overhead and improving affinity with the OS.
+5 Evaluation
+Figure 7: Comparison of TPOT and TTFT performances on diverse MoE models across different memory budgets.
+Figure 8:
+Comparison of system throughput on diverse MoE models under different batch sizes.
+BS denotes batch size.
+Figure 9: Comparison of end-to-end latency on diverse MoE models across different output lengths.
+Figure 10: Impact of cache management strategies on the trade-off between latency and throughput.
+Models and Datasets.
+We evaluate ZipMoE on two decoder-only models, DeepSeekV2-Lite (Liu et al., 2024) and Qwen1.5-MoE (Yang et al., 2024), as well as an encoder-decoder model, SwitchTransformers-Large-128 (Fedus et al., 2022).
+All models are obtained from Hugging Face without modification. We randomly sample prompts from the ShareGPT (Xu, 2024) dataset and align the inputs across all baseline systems to ensure fair evaluation.
+Hardware.
+We adopt the Jetson AGX Orin 64GB (Hardware 1) and 32GB (Hardware 2) as our edge computing testbeds.
+Both devices operate on Jetpack 6.2.1 with Ubuntu 22.04, and are equipped with a Samsung 970 EVO SSD that provides a disk read speed of 3.5 GB/s.
+Baselines.
+We compare ZipMoE with the following state-of-the-art LLM serving systems:
+(1) MoE-Infinity (Xue et al., 2024): A high-performance MoE serving system that exploits sparsity-aware expert caching and prefetching.
+(2) DeepSpeed (Aminabadi et al., 2022): A leading inference engine that supports model offloading and parameter partitioning. We adopt DeepSpeed ZeRO-3 for SSD offloading during MoE inference.
+(3) Accelerate (Gugger et al., 2022): A widely-used library that provides simple APIs for model offloading and distributed inference.
+All systems are configured to operate under their default SSD offloading modes with aligned DRAM memory footprints for fair comparison.
+5.1 Experimental Results
+Real-Time Responsiveness.
+Fig. 7 shows the real-time responsiveness measured by Time-Per-Output-Token (TPOT) and Time-To-First-Token (TTFT).
+For decoder-only models, we observe that ZipMoE substantially improves performance on both hardware environments, achieving 62.65%62.65\%-97.97%97.97\% TPOT reduction and 53.25%53.25\%-87.90%87.90\% TTFT reduction in scenarios where offloading is mandatory.
+For encoder-decoder models, although the advantage diminishes due to highly skewed expert activation and a less I/O-intensive structure, ZipMoE still yields a 4.99%4.99\%-81.24%81.24\% TPOT reduction and up to an 83.45%83.45\% TTFT reduction.
+These advantages are enabled not only by the sophisticated caching-scheduling co-design, but also by the low-overhead implementation and its effective utilization of the page cache during fixed-memory experiments, which improves both memory and I/O efficiency.
+The results highlight the ZipMoE’s superiority in real-time and interactive tasks.
+System Throughput.
+Fig. 8 compares the throughput of different systems in batch inference settings with batch sizes of 11, 44, and 1616.
+The memory budget for ZipMoE, MoE-Infinity, and Accelerate is fixed at 2020GB and 1010GB on Hardware 1 and Hardware 2, respectively.
+For DeepSpeed, we observe extreme discontinuity between its runtime memory footprint and configuration, therefore memory budget control is coarse-grained.
+We fix its runtime memory budget to 1818GB and 1010GB on Hardware 1 and Hardware 2, respectively.
+Note that since DeepSpeed employs a sliding-window offloading pipeline, its performance remains agnostic to the specific memory footprint provided the budget is below the model size (see Fig. 7).
+It can be observed that ZipMoE consistently surpasses all baselines, achieving 1.79×1.79\times-42.49×42.49\times improvement for decoder-only models and 1.31×1.31\times-5.82×5.82\times improvement for encoder-decoder models.
+These advantages are attributed to ZipMoE’s scheduler, which is specifically designed for I/O efficiency via decompression parallelization. As more experts are activated per layer in batch inference, the benefits of ZipMoE’s scheduler for parallelization are amplified, thus significantly reducing I/O blocking.
+Overall, we conclude that ZipMoE also excels in batch inference for offline background tasks.
+End-To-End Latency.
+Fig. 9 presents the end-to-end latency results under different output token limits, where the lines represent the average values and the shaded areas cover between the top and bottom 10%10\% values.
+Note that sublinear trends may appear in the figure, as in certain cases the number of output tokens do not actually reach the limit.
+It can be observed that ZipMoE is consistently superior to all baselines across all maximum output token numbers, accelerating end-to-end inference speed by 3.03×3.03\times-42.49×42.49\times for decoder-only models and 1.11×1.11\times-5.64×5.64\times for encoder-decoder models.
+These results confirm ZipMoE’s versatility in providing consistent inference acceleration across diverse MoE architectures and hardware environments.
+Ablation Study.
+Fig. 10 illustrates the impact of the cache management module on system performance in terms of the latency-throughput trade-off.
+We successively isolate the hierarchical cache planning algorithm and replace the eviction strategy of ZipMoE with First-In-First-Out (FIFO), Marking(Fiat et al., 1991), and Least Recently Used (LRU).
+It can be observed that while all baseline caching algorithms perform similarly, ZipMoE’s built-in caching algorithm outperforms all of them.
+Furthermore, with cache planning that optimizes the cache pools prior to inference, ZipMoE’s performance is further boosted, achieving lower latency and higher system throughput in a Pareto-optimal manner.
+
+

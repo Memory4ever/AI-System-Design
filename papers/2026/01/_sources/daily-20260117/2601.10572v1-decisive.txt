@@ -1,0 +1,241 @@
+Decisive admission bounded main-body 240-line slice; not full evidence. Source https://arxiv.org/html/2601.10572v1
+1. Introduction
+This paper presents our experience to understand latency variance caused
+by kernel and hardware events. It includes VarMRI, a tool chain we have developed for long-term monitoring and analysis,
+and a 3000-hour study of six applications and benchmarks on CloudLab (14) with the help of VarMRI.
+Latency is one of the most important performance metrics of server applications.
+Latencies of processing even the same type of requests can vary a lot because
+of contention, slow hardware, background
+activities, etc. (53, 45, 31, 29, 36, 17, 31, 19).
+Such variance motivates service providers to optimize their tail latencies
+to satisfy most of their users (17, 18).
+A good understanding of the causes of latency variance
+can often help developers to mitigate the problem by re-designing the system (18, 9, 65, 71, 27),
+tuning configuration parameters (47, 76, 51, 84), or changing hardware (53, 75, 83).
+The unpredictable nature of latency variance requires long-term monitoring
+to understand their causes. Indeed, industrial
+companies have been building such monitoring tools, such as Google Dapper (69),
+Facebook Canopy (43), and Twitter Zipkin (85). However,
+these tools mainly record events in the application and thus cannot analyze the impacts of kernel and hardware events
+like thread scheduling, cache misses, etc. This is not ideal since these
+events are known to have a significant impact on tail latency (47, 65, 71, 27).
+Given that today’s OS and hardware have already provided support for recording kernel and hardware events (28, 46, 22, 21, 24),
+adding them into latency analysis look like a straightforward task,
+but our experiments encounter the classic challenge of “big data”: if we naively record all
+events, a single Memcached server can generate 104MB of trace per second
+(i.e., 9TB of trace per day). A user is unlikely to provide the additional storage space
+and I/O bandwidth to store such large amount of traces; even if she did, analyzing
+the trace will consume much resource.
+Such results indicate that we can only afford to record a
+small subset of events, which is a standard solution to reduce overhead, but as
+a result, we need to answer the
+key question how to select what events to record to
+minimize the recording overhead while still allowing meaningful analysis.
+Answering this question requires a collaborative design of trace recording
+and trace analysis.
+Efficient online recording.
+To minimize overhead without disrupting the following analysis, VarMRI’s event recording follows two principles: first, given that
+latency analysis is performed at the granularity of application requests,
+if the application decides to
+record a subset of requests to limit overhead (69, 43), VarMRI should only record kernel
+and hardware events that are affecting these selected requests.
+We find that, among the different recording granularities provided
+by existing tools (i.e., the whole
+machine, a process, a thread, or a CPU core), recording
+events at thread granularity best fits with this principle, since thread is the basic unit to
+execute requests in multi-threaded applications.
+Our second principle is to record coarse-grained information first to minimize
+overhead and to record additional information only when necessary.
+We find that, among the different
+recording modes provided by existing
+tools (i.e., timing, call stack, or cumulative value), recording
+cumulative values of events incurs the least I/O overhead per event and can satisfy most of our goals,
+so VarMRI records cumulative values of kernel and hardware events first,
+and then records their exact timing or call stacks only when necessary.
+While existing tools have implemented some of the features discussed above,
+our study also reveals important functions that are missing, including recording the cumulative
+lengths of events and separating the effects of interrupts from thread execution. VarMRI adds these missing
+pieces. Among them, we find recording cumulative length is challenging
+because kernel events can preempt each other and thus
+it is hard to compute their precise lengths. To address
+this problem, VarMRI maintains a per-core shadow stack to simulate how the OS kernel
+keeps track of the preemption relationship, which can be updated efficiently at run time.
+Efficient, informative, and robust offline analysis.
+VarMRI’s offline analysis needs to find events that are causing long latency.
+It should satisfy several key properties:
+1) efficiency:
+analysis with a
+complexity of O(N^{2}) (N is the number of recorded requests) or more
+is not preferred; 2) informative: the analysis should tell the developer
+which events are more worth optimizing, which is complicated by the
+facts that many events are correlated;
+3) robustness: the analysis should minimize its mathematical assumptions on the
+trace data and should work with “missing data” since selective recording
+only records a subset of events for each request.
+Our attempts
+with classic statistical methods have all failed due to violating at least one
+of these properties (see Section 5 for details),
+which motivates us to develop new methods. To quantify the impact
+of an event, we introduce a novel metric called impact value, which estimates
+the benefit of optimizing an event by comparing request latencies with and without high
+values of the event: this metric is informative to the developer, easy to compute,
+and does not rely on specific mathematical assumptions. We further develop two methods
+to facilitate the computation of the impact value: first, VarMRI applies line-based curve fitting on the CDF of an event’s values
+to identify “high” value of the event;
+second,
+VarMRI incorporates two domain-specific
+rules to infer the causal relationship among events and adjust their impact values
+accordingly.
+Results from long-term experiments.
+With the help of VarMRI,
+we have carried out a 3000-hour study of six applications and benchmarks
+on CloudLab (14).
+•
+VarMRI has identified a variety of kernel and hardware events causing
+tail latencies within each experiment;
+optimizing them can reduce tail latencies by up to 31%, despite that we have
+avoided complicated optimizations. The prevalence
+and impact of these events have confirmed the importance of including them
+in latency variance analysis.
+•
+VarMRI has also identified events whose impacts can vary across different
+experiments, which can explain the performance variance. For example,
+we find the burstiness of interrupts can vary: more bursty interrupts can cause higher tail latency
+but lower median latency.
+Such results have confirmed the necessity of long-term monitoring.
+•
+VarMRI’s support of selective recording allows one to adjust the overhead by tuning the
+selection rate. For example, recording events for 1% of the requests in Memcached generates
+1MB of trace per second, reduces maximal throughput by 0.49%, and has no
+observable impact on p99 latency.
+2. Background and related work
+Many previous works have discussed the importance and the possible causes of latency variance (17, 18, 47, 4, 63, 53, 41),
+which have motivated a number of analysis tools (34, 6, 5, 12, 26, 69, 66, 49, 50, 68, 13, 43, 82, 81, 67).
+They can record and analyze different types of events in the following ways:
+Application events.
+At the application level, the standard solution is to annotate application code
+to print the timing of different code blocks (called AppTasks in this paper): by comparing
+the patterns of different requests, we may find code blocks that are only
+executed or take longer to execute in long-latency requests.
+Existing tools can identify important code blocks by relying on developers’
+annotations (6, 69, 13, 43, 12, 66),
+extracting events from the application logs (82, 78), identifying events automatically (5),
+or using a mixture of these techniques (34, 69).
+In a multi-threaded or distributed application, the execution of a request may create multiple AppTasks spanning different
+threads or processes. To find the critical path of such complicated
+execution, existing tools can model request execution using paths (12),
+trees (26, 69, 11, 6),
+or directed acyclic graphs (DAG) (66, 50, 68, 25, 49).
+Kernel events.
+Modern OSes have built-in tools to record kernel events (e.g., perf, eBPF,
+ftrace, kprobe/kretprobe in Linux (28, 46, 22, 62); DTrace in Solaris (21); ETW in Windows (24), etc.),
+which have been continuously improved (79, 23).
+These OSes have predefined many events, called trace points,
+and these tools can record these predefined events in different modes: they can record
+events on the whole machine, on a particular CPU core, on a particular process, or on a particular
+thread; they can record the timing of these events, the call stack
+of them, or the cumulative count of them.
+A few of the analysis tools mentioned above, such as DARC (72) and Magpie (6),
+rely on OS built-in tools to record kernel events. However, as shown in Section 4, we encounter
+additional challenges when utilizing existing OS built-in tools for
+long-term monitoring.
+Hardware events.
+Many hardware devices provide performance counters to help developers to investigate their internal behavior.
+To limit overhead, some devices can only record a small subset
+of performance counters at a time. For example, Intel Xeon Silver 4114 CPU provides
+201 performance counters but can only record seven of them
+at a time (three of them are fixed and four of them are configurable) (38).
+Figure 1. The architecture of VarMRI.
+3. Overview of VarMRI
+VarMRI records kernel and hardware events at run time
+and analyzes their impacts on request latency offline.
+VarMRI does not target events in the application,
+so for a comprehensive analysis, it should be used together with
+existing application-level tools like Zipkin.
+Kernel events.
+VarMRI records information about thread scheduling, interrupts, and
+faults because they are usually invisible to the application (72, 83).
+VarMRI does not record system calls because they can be captured
+by the application.
+Hardware events.
+VarMRI records performance counters from
+the CPU, such as the number of cache
+misses.
+In addition, VarMRI computes the average CPU frequency (i.e., \frac{cycles}{time})
+as an additional counter.
+Although the current implementation of VarMRI does not
+record events from other types of hardware, it can easily be extended
+to support hardware which provides similar performance counters.
+Architecture and workflow of VarMRI.
+Figure 1 shows the architecture of VarMRI.
+A developer should first annotate the
+target piece of code to analyze with the APIs provided by VarMRI: this can be done
+either manually or automatically with the help of other tools (5, 34, 72), and we observe
+many softwares already annotate and record the execution of important
+pieces of code. Then the developer can run the annotated application
+with VarMRI’s online modules (i.e., VarMRI lib and VarMRI kernel module; Section 4), which
+will record the values of kernel and hardware events into a trace file.
+Finally she should run the VarMRI analyzer offline to generate a list
+of events ranked by their impacts (Section 5).
+This architecture is not much different from
+other tools (62, 59, 28, 6, 72).
+Limitation of VarMRI.
+Like most performance profiling tools (62, 59, 80, 30, 28), VarMRI only reports potential problems to the developer, but
+does not address these problems.
+VarMRI selectively records a subset of events to limit overhead.
+An inherent limitation of selective recording is that it may miss very rare
+events, if they happen to be not selected when they occur. Therefore, VarMRI is only
+effective when problematic
+events are reproducible with a non-negligible possibility. However, given
+that a number of production
+systems (e.g., Google Dapper (70), Facebook Canopy (43), etc.)
+already adopt selective recording at the application level to reduce overhead, this limitation is arguably inevitable.
+Motivating example.
+We built a toy application, in which
+every request executes an empty loop: for(int i=0; i<max, i++){} (max=25K).
+We disabled compiler
+optimization in case it eliminates the loop.
+Our initial purpose to build this application
+is to create a simple baseline without
+any internal variance, so that we can use it to measure
+variance caused by external events like scheduling and interrupts.
+Surprisingly, however,
+it incurs a non-negligible variance: while 50% of the requests have a latency of about 60us, the remaining
+ones can reach 90us. We had a few guesses about the cause, but without a proper tool, we were
+not able to confirm the cause. In the following two sections,
+we will present how VarMRI records and analyzes events using this example.
+4. Low-overhead recording
+VarMRI needs to record event information at runtime.
+We first explore whether we can utilize existing
+tools.
+Perhaps not surprisingly, we find
+extensive recording will incur a large I/O and space overhead:
+when using ftrace to record the timing of all
+interrupt and thread scheduling events for a Memcached server,
+it can
+generate about 104MB of trace per second: this is about 9TB of trace per day.
+Such result is reasonable since
+Memcached can process millions of requests per second.
+We have tried other applications and other recording tools, and find that
+it is common for them to generate tens of MBs of trace per second (see Section 7).
+Such overhead is unlikely to be acceptable in the long term.
+Such result suggests that we can only afford to record a small subset
+of events. We call this mechanism selective recording in this paper.
+This observation is consistent with prior reports. For example, Google reports
+that it records one out of 1024 requests in Dapper and considers further lowering
+the rate (69).
+Selective recording brings the question which events we should record:
+the subset of events we record must allow meaningful analysis, and
+must fit with selective recording at the application level.
+4.1. VarMRI’s approaches
+To minimize recording overhead without disrupting the following analysis,
+VarMRI follows two principles.
+Design principle 1: record events that are affecting the selected requests.
+Because latency is defined on the granularity of application requests, eventually VarMRI’s offline analysis
+has to answer the question which events are contributing to the latency of different requests.
+Therefore, if the application selectively records a subset of requests, VarMRI should record
+kernel and hardware events that are affecting these requests; otherwise, VarMRI may record events that are
+useless in the following offline analysis.
+Existing kernel tools can record events happened on the whole machine, a particular
+CPU core, a particular process, or a particular thread (62, 28, 46). We find recording
+events at thread granularity fits well with our first principle, due to the following reason: as mentioned

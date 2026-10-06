@@ -1,0 +1,149 @@
+3 Experimental Setup
+3.1 Systems Under Test
+We evaluate four end-to-end speech LLMs and five ASR→\rightarrowLLM cascades (Table 1).
+All cascades use Whisper-large-v3 [15] for ASR.
+Three “matched-backbone” cascades pair Whisper with the same LLM backbone used inside each open-weight speech LLM: Qwen2-7B [16] for Qwen2-Audio, Llama-3.1-8B [17] for Ultravox, and Phi-4-mini for Phi-4-Multimodal.
+Two additional cascades, “strong” (Whisper-large →\to Qwen2.5-7B) and “weak” (Whisper-small →\to Qwen2.5-7B), provide upper and lower reference points.
+Table 1: Systems evaluated.
+†Matched-backbone cascades share the LLM with the corresponding speech LLM.
+System
+Type
+Params
+Whisper-large →\to Qwen2.5-7B
+Cascade (strong)
+1.5B+7B
+Whisper-small →\to Qwen2.5-7B
+Cascade (weak)
+244M+7B
+Whisper-large →\to Qwen2-7B†
+Matched cascade
+1.5B+7B
+Whisper-large →\to Llama-3.1-8B†
+Matched cascade
+1.5B+8B
+Whisper-large →\to Phi-4-mini†
+Matched cascade
+1.5B+3.8B
+Qwen2-Audio-7B
+End-to-end
+8.2B
+Ultravox v0.6
+End-to-end
+8.4B
+Phi-4-Multimodal
+End-to-end
+5.6B
+Gemini 2.0 Flash
+End-to-end (API)
+—
+3.2 Evaluation Tasks
+We evaluate on six tasks spanning the text-sufficient to text-insufficient spectrum.
+Text-sufficient tasks (TTS-synthesized with six Microsoft Edge-TTS11
+1
+https://github.com/rany2/edge-tts voices, 1,000 samples each):
+TriviaQA [18], open-ended factual QA (accuracy table only; excluded from behavioral analysis due to open-ended answers);
+AG News [19], 4-way topic classification;
+SST-2 [20], binary sentiment analysis;
+CommonsenseQA [21], 5-way commonsense reasoning.
+Text-insufficient tasks (natural speech):
+MELD [22], 7-way emotion recognition from Friends dialogue (2,610 utterances);
+MUStARD [23], binary sarcasm detection from TV shows (690 clips).
+Total: 6,300 evaluation samples, 27,300 audio files.
+Noise perturbation conditions (multi-talker babble at 15, 10, 5, and 0 dB SNR using MUSAN [24]) are applied to two TTS voices across the text-sufficient tasks.
+3.3 Behavioral Metrics
+For each (speech LLM, cascade) pair on each classification task, we compute:
+Cohen’s κ\kappa, chance-corrected per-example agreement;
+conditional error overlap, P⁡(same wrong answer∣both wrong)P(\text{same wrong answer}\mid\text{both wrong}), testing shared failure mechanisms;
+and McNemar’s test, whether one system is systematically better (Benjamini-Hochberg FDR-corrected across all pair×\timestask comparisons).
+3.4 Probing and Intervention
+For the two open-weight speech LLMs (Qwen2-Audio, Ultravox) plus Whisper as a control, we extract hidden states at nine layers (ℓ∈{0,4,8,12,16,20,24,28,31}\ell\in\{0,4,8,12,16,20,24,28,31\}) on 1,000 utterances and train:
+acoustic probes, linear regression for energy (R2R^{2}) and pitch (R2R^{2});
+text probes: a CTC probe, a per-frame linear classifier trained with CTC loss to decode character sequences from hidden states, scored by text decodability (1−CER1{-}\text{CER}, where higher values indicate more decodable text); and a bag-of-characters (BoC) probe (linear regression on character frequency vectors, R2R^{2}).
+This linear probing methodology [25] is standard for high-dimensional representations (d≈4096d{\approx}4096, n≈800n{\approx}800).
+Logit lens [26] projects hidden states at audio positions through the LLM’s own unembedding matrix at each layer.
+Following standard practice for pre-norm architectures [27], we apply the model’s final RMSNorm to intermediate hidden states before projecting through the unembedding matrix, ensuring that the scale and distribution of hidden states match what the language modeling head expects.
+If top-predicted tokens resolve to transcript words, the model is literally converting audio to text internally.
+For Ultravox, we project only audio token positions (identified per-utterance); for Qwen2-Audio (cross-attention architecture), all positions are projected.
+AudioLens [28] recently applied similar projection to audio-language models for attribute recognition; we apply the technique to study text emergence in speech LLMs.
+LEACE concept erasure [29] provides causal evidence by surgically removing specific information from the model’s representations during inference.
+We use the concept-erasure library22
+2
+https://github.com/EleutherAI/concept-erasure to compute optimal linear erasers from hidden states and concept labels at each layer.
+If the model relies on text information for its predictions, erasing the text-predictive directions should collapse performance; if it does not, erasure should have no effect.
+We apply erasure at all nine probed layers simultaneously on every forward pass, including during autoregressive generation, so the model cannot recover the erased information from unmodified layers [30, 31].
+We disable bias centering (use_bias=False) because the training mean, computed from audio-token hidden states, is out-of-distribution for text tokens generated during decoding, causing model collapse when applied.
+We test five erasure conditions spanning a gradient of text specificity: BoC erasure fits LEACE on character frequency vectors (48-dimensional concept); proxy erasure fits LEACE on first-word classification labels (159-dimensional concept); CTC erasure fits LEACE on per-frame character predictions from the trained CTC probe (49-class concept, capturing sequential character order).
+Two controls complete the design: random erasure removes a random 159-dimensional orthogonal subspace as a dimensionality-matched control; acoustic erasure fits LEACE on pitch and energy values (2-dimensional concept).
+4 Behavioral Results
+Table 2: System accuracy (%) on clean audio, classification tasks.
+TriviaQA accuracy (open-ended): Cascade-S 38.8, Cascade-W 36.2, Ultravox 37.5, Qwen2-Audio 8.2, Phi-4-MM 14.9, Gemini 48.4.
+Qwen2-Audio’s low TriviaQA score reflects its older Qwen2-7B backbone’s weak factual recall, not an audio processing failure; on classification tasks it is competitive.
+System
+AG
+SST
+CSQA
+MELD
+MUS
+Cascade-S
+85.0
+88.5
+79.3
+51.8
+60.0
+Cascade-W
+85.0
+87.8
+78.7
+51.3
+59.6
+Ultravox
+83.3
+85.3
+70.5
+39.8
+57.7
+Qwen2-Audio
+80.5
+82.2
+62.8
+43.6
+52.8
+Phi-4-MM
+81.5
+82.0
+61.1
+30.2
+61.0
+Gemini
+83.6
+89.7
+80.2
+51.9
+68.1
+4.1 Agreement on Text-Sufficient Tasks
+Table 2 presents accuracy and Figure 1 shows matched-backbone κ\kappa for all systems.
+Ultravox is near-cascade-equivalent.
+Against its matched Llama-3.1-8B cascade, Ultravox achieves κ=0.93\kappa=0.93 [0.92, 0.94] on AG News, 0.780.78 [0.76, 0.79] on CSQA, and 0.750.75 [0.74, 0.77] on SST-2.
+On CSQA, McNemar’s test is non-significant after FDR correction (p=0.29p=0.29): the systems make errors at statistically indistinguishable rates.
+The CSQA κ\kappa jumps from 0.650.65 (against the mismatched Cascade-S) to 0.780.78 with the matched backbone, a +0.13+0.13 increase that closes much of the gap toward the cascade ceiling (0.960.96).
+Qwen2-Audio genuinely diverges.
+Even against its own Qwen2-7B backbone cascade, κ\kappa on text-sufficient tasks remains moderate (0.540.54–0.850.85) and shows minimal improvement over the mismatched comparison.
+On SST-2, κ\kappa actually decreases from 0.620.62 to 0.540.54. Qwen2-Audio processes sentiment through a pathway that is architecturally distinct from any cascade.
+The cascade-S vs. cascade-W ceiling validates this taxonomy: κ=0.93\kappa=0.93–0.980.98 despite a substantial ASR quality gap, confirming that even degraded transcripts carry nearly all task-relevant information.
+Phi-4-MM and Gemini fall between these extremes, establishing that cascade equivalence is a spectrum rather than a binary property (Figure 1).
+Phi-4-MM’s Mixture-of-LoRAs architecture achieves κ=0.85\kappa{=}0.85 on AG News (matching Qwen2-Audio) but only 0.230.23 on MELD, the lowest of any matched pair.
+Combined with its low MELD accuracy (30.2%, Table 2), this indicates that Phi-4-MM neither follows the cascade text pathway nor exploits paralinguistic cues effectively; its modality routing mechanism appears to discard emotion-relevant acoustic information without replacing it.
+0.980.920.960.790.800.930.750.780.520.550.920.780.740.370.390.930.720.650.400.250.850.640.610.230.500.860.620.540.370.050.850.540.560.300.05Cascade-S vs. Cascade-WUltravox vs. Whisper+Llama-3.1-8B†Gemini vs. Cascade-SUltravox vs. Cascade-SPhi-4-MM vs. Whisper+Phi-4-mini†Qwen2-Audio vs. Cascade-SQwen2-Audio vs. Whisper+Qwen2-7B†AG NewsSST-2CSQAMELDMUStARD0.000.250.500.751.00Cohen’s κ\kappa
+Figure 1: Cohen’s κ\kappa between each E2E model and its matched-backbone cascade (†) or Cascade-S.
+Rows are ordered by decreasing mean κ\kappa.
+95% bootstrap CIs (1,000 resamples) are ±0.01{\pm}0.01–0.020.02 on text-sufficient tasks and ±0.03{\pm}0.03–0.070.07 on MELD/MUStARD.
+Ultravox shows consistently high agreement, while Qwen2-Audio and Phi-4-MM show lower and more variable agreement.
+4.2 Shared Error Signatures
+The clearest evidence for cascade equivalence is not shared accuracy but shared failures.
+On AG News, 81% of joint errors between Ultravox and its matched cascade occur despite correct transcription: both systems understood the audio perfectly but failed at the same classification boundary.
+The speech pathway contributed nothing; the failures originate entirely in shared LLM reasoning.
+Quantitatively, conditional error overlap (P⁡(same wrong answer∣both wrong)P(\text{same wrong answer}\mid\text{both wrong})) reaches 0.96 on AG News, 0.85 on CSQA, and 0.68 on MELD, representing 2.92.9–4.1×4.1{\times} chance baselines (Figure 2).
+For binary tasks (SST-2), conditional error overlap is uninformative since only one wrong answer exists; we report overlap ratios for multi-class tasks only.
+000.20.20.40.40.60.60.80.811AG NewsCSQAMELDConditional Error OverlapPhi-4-MM (matched)Ultravox (matched)Ultravox vs Cas-SQwen2-Audio (matched)Qwen2-Audio vs Cas-S
+Figure 2: Conditional error overlap: P⁡(y^e​2​e=y^c​a​s∣both wrong)P(\hat{y}_{e2e}{=}\hat{y}_{cas}\mid\text{both wrong}) for each speech LLM vs. its cascade counterpart on multi-class tasks.
+Values near 1.0 indicate

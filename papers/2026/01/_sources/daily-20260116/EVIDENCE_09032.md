@@ -1,0 +1,8 @@
+# 2601.09032v1 — local tool-evidence failure witnesses
+
+ExactHTML https://arxiv.org/html/2601.09032v1, raw PRIMARY_09032_CORE.md. Root actual §6.3 and6.5 checked: 2+1+2=5, standard completed, OnlyReport. Taxonomy and new workplace tasks alone are not contribution; retained increment is a concrete correct-call sequence followed by false absence due to lexical entity mismatch.
+
+Shared Corecraft relational customers/orders/products/tickets and MCP tools;150 tasks, same prompts/API defaults, unlimited tool calls, human-written rubric with LLM judge. Necessary core does not disclose a repeat/CI protocol or matched counterfactual intervention; judge identity and full budgets are not adopted here. §6.3 Gemini2.5Flash/Pro,Qwen3Max use the correct sequence but query brand Vortex Labs while DB holds VortexLabs; empty result is reported as absent stock. ClaudeSonnet4.5 attempts product-name fallback in the illustrative case. This is a local failure witness, not controlled proof that every stronger model adaptively recovers or that a fixed hierarchy is causal.
+
+§6.4 query year2024 while finaltext2025 is another inconsistent evidence-use example. §6.5 'My name under my account should be set to Sarah Kim' is itself ambiguous: author says lookup intent, GPT5 proposes account change. Do not treat author's 'a human immediately infer' as unique authorization groundtruth, and no actual write success is proved. No attacks/actions executed. Existing mature executor permission principles are not scored as this paper's new contribution or force-written to Books; qualitative cases do not establish a new universal safe-execution mechanism. Root OnlyReport5 disposition passed.
+

@@ -1,0 +1,144 @@
+4.3 Task Difficulty Assessment (TDA)
+Our analysis in §3.3 identifies the inability to assess task difficulty as the root cause of Type B failures.
+Premature commitment occurs because agents cannot estimate whether a path requires 3 or 30 steps. Exploration-exploitation imbalance occurs because agents have no metric for when reconnaissance is sufficient. Chain failures occur because agents cannot judge whether accumulated context is adequate for the current task.
+Human penetration testers face the same problem: they do not know task difficulty a priori.
+Instead, they estimate difficulty from signals that accumulate during execution, such as the number of failed attempts on a path, the quality of evidence gathered so far, and intuitions about remaining work.
+An experienced tester who has tried five exploits without success knows to try a different approach; one who has confirmed a vulnerable service version knows to commit to exploitation.
+TDA operationalizes this reasoning for LLM agents through four measurable dimensions, with context window consumption added as a signal unique to language models.
+4.3.1 TDA Dimensions
+TDA computes difficulty along four dimensions grounded in quantities measurable during execution.
+Horizon Estimation (HH). We estimate the number of remaining steps to reach the goal from the current position, normalized across active branches.
+A pilot study on 50 traces from an independent GOAD deployment (using GPT-4o, separate from evaluation) shows that while absolute estimates have poor calibration (MAE of 4.2 steps), rank correlation is strong (Spearman’s ρ=0.71\rho=0.71, p<0.001p<0.001).
+The TDI formula therefore uses H^\hat{H}, the normalized horizon estimate (min-max scaled across active branches), converting absolute estimates into relative rankings where LLM judgment is reliable.
+Historical Success Rate (SS).
+The Laplace-smoothed success rate on the current branch captures learning from failed attempts.
+Low values indicate repeated failures, suggesting that the current path is likely intractable.
+This dimension directly addresses premature commitment: agents learn to abandon unproductive paths rather than persisting indefinitely.
+Context Load (CC).
+The fraction of context window consumed, directly measurable from token counts.
+LLM performance degrades as context fills: retrieval accuracy drops, earlier information is forgotten, and reasoning quality declines [18].
+We define an ideal working window of 40% of the model’s context capacity, based on a controlled study showing consistent accuracy degradation beyond this point (94% →\to 78% at 60% load, 61% at 80%; see Appendix D.6).
+Beyond this threshold, context pruning becomes necessary to preserve reasoning quality.
+This dimension addresses context forgetting: by tracking context load, the system detects when accumulated history threatens to overwhelm the model’s effective memory.
+Evidence Confidence (EE).
+The mean confidence score across the path from root to current node, computed from evidence categories at each node.
+We assign scores based on evidence type: verified exploits and valid credentials receive 1.0, confirmed vulnerabilities with available exploits receive 0.8, plausible hypotheses (version-matched vulnerabilities, misconfigurations) receive 0.5, and speculative hypotheses receive 0.3.
+Tool outputs are parsed to determine evidence type: successful authentication or shell access indicates verified evidence, vulnerability scanner confirmations with CVE matches indicate confirmed vulnerabilities, and service version matches against exploit databases indicate plausible hypotheses.
+Appendix C details the complete scoring rubric.
+This dimension addresses exploration-exploitation imbalance: high confidence signals readiness to exploit, while low confidence signals the need for more reconnaissance.
+4.3.2 Task Difficulty Index
+TDA combines the above 4 dimensions into a Task Difficulty Index (TDI):
+TDI=wH⋅H^+wE⋅(1−E)+wC⋅C+wS⋅(1−S)\text{TDI}=w_{H}\cdot\hat{H}+w_{E}\cdot(1-E)+w_{C}\cdot C+w_{S}\cdot(1-S)
+(1)
+where H^\hat{H} is the normalized horizon estimate and all weights sum to 1.
+Higher TDI indicates greater difficulty.
+We set wH=wE=0.3w_{H}=w_{E}=0.3 and wC=wS=0.2w_{C}=w_{S}=0.2 based on grid search over a validation set of 30 execution traces from HTB machines not included in the PentestGPT benchmark (retired machines from 2022–2023, predating our evaluation set).
+We test 256 configurations with each weight in {0.1,0.2,0.3,0.4}\{0.1,0.2,0.3,0.4\} constrained to sum to 1.0; task completion varies within ±\pm3% across configurations where all weights remain in [0.1,0.4][0.1,0.4], indicating that the approach is not sensitive to precise weight selection.
+TDI guides three operational decisions.
+Mode selection: high TDI (>θexplore=0.6>\theta_{\text{explore}}=0.6) triggers reconnaissance (BFS) to gather more information before committing; low TDI (<θexploit=0.3<\theta_{\text{exploit}}=0.3) triggers exploitation (DFS).
+For intermediate values (0.3≤TDI≤0.60.3\leq\text{TDI}\leq 0.6), the system invokes LLMDecide: the LLM receives the current node state, TDI value, and individual dimension scores (HH, SS, CC, EE), then selects between reconnaissance and exploitation with a brief justification.
+This design acknowledges that intermediate difficulty may warrant either approach depending on context the TDI formula cannot fully capture. For instance, a moderately difficult path with high evidence confidence may warrant exploitation, while one with low confidence benefits from further reconnaissance.
+Branch prioritization: TDI ranks paths beyond promise scores alone, since two branches with similar promise may differ substantially in tractability based on horizon and success history.
+Pruning: branches with persistently high TDI (>θprune=0.8>\theta_{\text{prune}}=0.8) after kmin=3k_{\min}=3 attempts are pruned to prevent the search from collapsing into unproductive regions.
+These thresholds are derived through grid search on the same validation set used for TDI weights. Appendix D presents sensitivity analysis showing robustness across threshold ranges.
+4.4 Evidence-Guided Attack Tree Search (EGATS)
+EGATS integrates TDA into a tree-based search framework, adapting Monte Carlo Tree Search (MCTS) [6, 16] to penetration testing.
+EGATS differs from standard MCTS in three ways: it explicitly separates reconnaissance (BFS) and exploitation (TDI-guided) phases, it replaces simulation-based value estimates with TDA-based difficulty assessment, and it prunes intractable branches based on evidence.
+4.4.1 Attack Tree Structure
+EGATS maintains an Attack Tree 𝒯=(V,E,ϕ,ψ,δ)\mathcal{T}=(V,E,\phi,\psi,\delta) where VV contains nodes representing attack states, EE contains edges representing actions, ϕ:V→[0,1]\phi:V\to[0,1] assigns promise scores, ψ:V→𝒮\psi:V\to\mathcal{S} maps nodes to state snapshots, and δ:V→[0,1]\delta:V\to[0,1] assigns TDI scores.
+Nodes are categorized as observation (discovered facts), hypothesis (untested attack possibilities), or action (executed steps with outcomes).
+The promise score ϕ⁡(n)\phi(n) estimates the likelihood that node nn leads to successful exploitation.
+For hypothesis nodes, promise is initialized via LLM assessment of vulnerability severity, exploit availability, and prerequisite satisfaction; the model estimates success probability given current evidence.
+For action nodes, promise is updated based on execution outcomes: successful actions propagate increased promise to ancestor nodes, while failures decrease promise along the path.
+After action aa with outcome o∈{s​u​c​c​e​s​s,p​a​r​t​i​a​l,f​a​i​l​u​r​e}o\in\{success,partial,failure\}, we update ϕ⁡(n)←α⋅ϕ⁡(n)+(1−α)⋅r⁡(o)\phi(n)\leftarrow\alpha\cdot\phi(n)+(1-\alpha)\cdot r(o) where r⁡(s​u​c​c​e​s​s)=1.0r(success)=1.0, r⁡(p​a​r​t​i​a​l)=0.5r(partial)=0.5, r⁡(f​a​i​l​u​r​e)=0.1r(failure)=0.1, and α=0.7\alpha=0.7 controls the learning rate.
+Through this backpropagation, branches with consistent successes accumulate high promise while repeatedly failing branches see diminishing scores.
+Unlike PentestGPT’s text-based PTT, EGATS maintains structure externally via algorithmic operations, which prevents corruption and enables systematic search guidance.
+Table 4 compares EGATS with related approaches.
+Table 4: Search strategy comparison. EGATS is the only approach that combines external structure, evidence-based pruning, and TDA-guided mode selection.
+Approach
+Structure
+Pruning
+Difficulty
+TDA
+ReAct
+None
+–
+–
+–
+PTT [8]
+Tree (text)
+Manual
+–
+–
+PSM [32]
+Finite state machine
+–
+–
+–
+PMT [20]
+Tree
+–
+–
+–
+EGATS
+Tree (ext.)
+Evidence
+✓
+✓
+4.4.2 The EGATS Algorithm
+Algorithm 1 presents the TDA-guided search procedure.
+SelectNode uses UCB to balance exploitation and exploration:
+UCB​(n)=ϕ⁡(n)+c​ln⁡NNn−λ⋅δ⁡(n)\text{UCB}(n)=\phi(n)+c\sqrt{\frac{\ln N}{N_{n}}}-\lambda\cdot\delta(n)
+(2)
+where ϕ⁡(n)\phi(n) is the promise score, NN is total actions, NnN_{n} is actions on node nn’s subtree, c=2c=\sqrt{2} is the exploration constant, and the −λ⋅δ(n)-\lambda\cdot\delta(n) term penalizes high-difficulty nodes (λ=0.5\lambda=0.5, validated via grid search; see Appendix D).
+After selection, EGATS computes TDI and switches between BFS (reconnaissance) and DFS (exploitation) based on the thresholds described above.
+Evidence backpropagates after each action, updating promise scores and TDI along affected paths.
+When exploitation succeeds, pivot spawning is triggered: the compromised host becomes a new subtree root, and discovered credentials propagate to relevant hypothesis nodes elsewhere in the tree.
+Pruning removes branches when TDI exceeds 0.8 after three attempts, which prevents infinite loops on intractable paths.
+To avoid premature pruning, a credential propagation mechanism re-evaluates pruned branches when new credentials are discovered that may satisfy their preconditions.
+Algorithm 1 TDA-Guided Attack Tree Search
+1:
+Target TT, budget BB
+2:
+Attack tree 𝒯\mathcal{T}, compromised hosts CC
+3:
+𝒯←\mathcal{T}\leftarrow InitTree(TT)
+4:
+while B>0B>0 and not GoalReached do
+5:
+n←n\leftarrow SelectNode(𝒯\mathcal{T}) ⊳\triangleright UCB selection
+6:
+TDIn←\text{TDI}_{n}\leftarrow ComputeTDI(nn)
+7:
+if TDIn>θexplore\text{TDI}_{n}>\theta_{\text{explore}} then
+8:
+ExecuteRecon(nn); ExpandTree(𝒯\mathcal{T}, nn)
+9:
+else if TDIn<θexploit\text{TDI}_{n}<\theta_{\text{exploit}} then
+10:
+r​e​s​u​l​t←result\leftarrow ExecuteExploit(nn)
+11:
+BackpropagateEvidence(𝒯\mathcal{T}, nn, r​e​s​u​l​tresult)
+12:
+if r​e​s​u​l​t.s​u​c​c​e​s​sresult.success then SpawnPivot(𝒯\mathcal{T}, r​e​s​u​l​t.h​o​s​tresult.host)
+13:
+end if
+14:
+else
+15:
+LLMDecide(nn, TDIn\text{TDI}_{n})
+16:
+end if
+17:
+if δ⁡(n)>θprune\delta(n)>\theta_{\text{prune}} and Nn>kminN_{n}>k_{\min} then
+18:
+PruneBranch(𝒯\mathcal{T}, nn)
+19:
+end if
+20:
+B←B−1B\leftarrow B-1
+21:
+end while
+4.5 Memory Subsystem
+Long-context forgetting is a primary cause of Type B failures (§3.2).
+The Memory Subsystem addresses this with a hybrid architecture that separates pers

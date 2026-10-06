@@ -1,0 +1,411 @@
+3 Our Fail-Closed Alignment Method
+We now introduce our method for achieving fail-closed alignment in large language models.
+Rather than relying on a single refusal mechanism, we encode refusal as a collection of causally redundant directions, each capable of independently triggering refusal on harmful queries.
+Algorithm 1 Fail-Closed Alignment
+1:
+Input: LLM fθf_{\theta}, safety dataset 𝒟safe\mathcal{D}_{\mathrm{safe}}, utility dataset 𝒟util\mathcal{D}_{\mathrm{util}}, iterations KK, learning rate η\eta, utility weight λ\lambda
+2:
+θ0←θ;ℛ←∅\theta_{0}\leftarrow\theta;\quad\mathcal{R}\leftarrow\emptyset
+3:
+for k=1k=1 to KK do
+4:
+// Identify the next dominant refusal direction (§3.1)
+5:
+rk←IdentifyRefusalDirection​(fθ)r_{k}\leftarrow\textsc{IdentifyRefusalDirection}(f_{\theta})
+6:
+ℛ←ℛ∪{rk}\mathcal{R}\leftarrow\mathcal{R}\cup\{r_{k}\}
+7:
+// Construct multi-feature ablation operator (§3.2)
+8:
+MFAk←BuildMfaOperator​(ℛ)\mathrm{MFA}_{k}\leftarrow\textsc{BuildMfaOperator}(\mathcal{R})
+9:
+// Learn a new refusal mechanism (§3.3)
+10:
+for each batch (Bsafe,Butil)∈(𝒟safe,𝒟util)(B_{\mathrm{safe}},B_{\mathrm{util}})\in(\mathcal{D}_{\mathrm{safe}},\mathcal{D}_{\mathrm{util}}) do
+11:
+ℓsafe←1|Bsafe|​∑(x,y)∈Bsafeℒsafe​(x,y,θ,MFAk)\ell_{\mathrm{safe}}\leftarrow\frac{1}{|B_{\mathrm{safe}}|}\sum_{(x,y)\in B_{\mathrm{safe}}}\mathcal{L}_{\mathrm{safe}}(x,y;\theta,\mathrm{MFA}_{k})
+12:
+ℓutil←1|Butil|​∑(x,y)∈Butilℒutil​(x,y,θ,θ0)\ell_{\mathrm{util}}\leftarrow\frac{1}{|B_{\mathrm{util}}|}\sum_{(x,y)\in B_{\mathrm{util}}}\mathcal{L}_{\mathrm{util}}(x,y;\theta,\theta_{0})
+13:
+θ←θ−η​∇θ(ℓsafe+λ⋅ℓutil)\theta\leftarrow\theta-\eta\nabla_{\theta}(\ell_{\mathrm{safe}}+\lambda\cdot\ell_{\mathrm{util}})
+14:
+end for
+15:
+end for
+16:
+Return fθf_{\theta}
+Overview.
+Algorithm 1 presents the pseudo-code for our method, which proceeds iteratively.
+At each iteration, we (Lines 4–6) identify the model’s dominant refusal direction, then (Lines 7–8) construct an operator to remove all previously identified refusal directions from the activation space, and finally (Lines 10–14) fine-tune the model to preserve refusal behavior under the operator while maintaining benign utility.
+This procedure is repeated for a fixed number of iterations (KK), after which the fine-tuned model is returned.
+Each iteration encourages the emergence of a new refusal direction that is robust to the removal of previously learned ones, yielding a model whose refusal behavior does not depend on any single mechanism.
+The result is a multi-feature instantiation of fail-closed alignment, in which refusal cannot be bypassed by suppressing just a few directions.
+3.1 Identifying the Next Dominant Refusal direction
+We aim to encode refusal as a set of meaningful, redundant feature directions, any of which can independently enforce refusal once others are suppressed.
+This section describes our iterative procedure for identifying these directions.
+Prior work proposes two approaches for identifying refusal directions: activation-space methods (Arditi et al., 2024; Piras et al., 2025), which estimate directions from collected activations, and gradient-based methods (Wollschläger et al., 2025), which learn them through optimization.
+We adopt gradient-based identification, as recent work shows it outperforms activation-space approaches (Wollschläger et al., 2025); a direct empirical comparison is provided in §4.5.
+Gradient-based direction identification.
+To identify refusal directions, we leverage the state-of-the-art Refusal Direction Optimization (RDO) (Wollschläger et al., 2025) algorithm.
+Given a target model fθf_{\theta}, RDO optimizes a direction 𝐫∈ℝd\mathbf{r}\in\mathbb{R}^{d} to have a strong causal influence under addition (Eq. 2) and ablation (Eq. 3).
+By re-optimizing at each iteration, RDO yields directions that are locally optimal for the current model, enabling continued discovery even after earlier mechanisms have been suppressed.
+We refer readers to the original study for implementation details.
+Implementation.
+We use RDO as our direction identification subroutine, using the provided dataset splits from SaladBench (Li et al., 2024) and Alpaca (Taori et al., 2023).
+At each iteration, we initialize the refusal direction using a DIM estimate to provide a stable starting point, then optimize it with RDO, saving candidate directions after each gradient update.
+To enforce linear independence across iterations, we project each candidate onto the span of previous directions and retain only those with residual norm exceeding 10−510^{-5} (all directions are ℓ2\ell_{2}-normalized).
+We then select the candidate with the lowest training loss.
+Algorithm 1 denotes this procedure as IdentifyRefusalDirection(fθf_{\theta}), where fθf_{\theta} is the target language model we aim to train.
+3.2 Constructing the Ablation Operator
+Our method is the first framework to explicitly remove multiple previously learned refusal mechanisms during training, thereby creating conditions for new mechanisms to emerge.
+This section defines our mechanism for removing all previously identified refusal feature directions during training.
+At iteration kk, we have identified independent refusal directions {r1,…,rk}⊂ℝd\{r_{1},\dots,r_{k}\}\subset\mathbb{R}^{d}.
+Our goal is to prevent the model from relying on any of these during training.
+However, existing ablation techniques suppress only a single direction (Xie et al., 2025; Yu et al., 2025), allowing the model to use previously learned mechanisms.
+We address this by constructing an operator that jointly suppresses all identified features.
+Multi-feature ablation.
+To prevent usage of {r1,…,rk}\{r_{1},\dots,r_{k}\}, we ablate their span from the model’s hidden states.
+We first form the matrix Rk=[r1⋯rk]∈ℝd×kR_{k}=[\,r_{1}\ \cdots\ r_{k}\,]\in\mathbb{R}^{d\times k} and compute an orthonormal basis Qk∈ℝd×kQ_{k}\in\mathbb{R}^{d\times k} for span⁡({r1,…,rk})\mathrm{span}(\{r_{1},\dots,r_{k}\}) via a reduced QR decomposition.
+Using QkQ_{k}, we then define the multi-feature ablation (MFA) operator MFAk:ℝd→ℝd\mathrm{MFA}_{k}:\mathbb{R}^{d}\rightarrow\mathbb{R}^{d} applied to an input xx and hidden state hℓt​(x)h^{t}_{\ell}(x) as
+MFAk​(hℓt​(x))=hℓt​(x)−Qk​Qk⊤​hℓt​(x),\mathrm{MFA}_{k}\!\left(h_{\ell}^{t}(x)\right)=h_{\ell}^{t}(x)-Q_{k}Q_{k}^{\top}h_{\ell}^{t}(x),
+(4)
+which leverages orthogonal projection to remove activation components aligned with RkR_{k}.
+We apply this operator at all layers and token positions during forward passes on harmful prompts, ensuring no component can leverage {r1,…,rk}\{r_{1},\dots,r_{k}\}.
+This encourages the model to develop a new, independent refusal direction by iteration k+1k{+}1. In Algorithm 1, we denote BuildMfaOperator(ℛ\mathcal{R}) as the subroutine that constructs MFAk\mathrm{MFA}_{k} from the set of refusal directions ℛ\mathcal{R} identified so far.
+3.3 Training to Learn New Refusal Under Ablation
+The final stage of our method is to construct new refusal mechanisms.
+Unlike prior alignment approaches that reinforce a single refusal direction (Xie et al., 2025; Yu et al., 2025), we explicitly train the model under interventions that disable all previously identified refusal mechanisms.
+As a result, each iteration must yield a new refusal mechanism that remains effective even after earlier ones are removed.
+This section introduces our training objective for encoding new refusal mechanisms without compromising utility.
+Training data curation.
+Our objective balances two goals: enforcing refusal on harmful inputs while preserving benign behavior.
+We curate separate datasets for each.
+To model safe behaviors, we follow prior work (Yu et al., 2025; Xie et al., 2025) and use the CircuitBreaker adversarial training dataset (Zou et al., 2024), which contains 5,000 harmful prompts across diverse topics.
+For benign utility, we sample 4,500 prompts from Alpaca (Taori et al., 2023), a curated instruction-following dataset, and 200 prompts from XSTest (Röttger et al., 2024), a benchmark of benign prompts that resemble harmful requests but are safe in intent.
+Including XSTest is critical to discourage trivial refusal strategies, such as indiscriminately refusing all inputs with certain tokens.
+We keep all training prompts disjoint from those used for refusal direction identification (§3.1).
+Most prior work pairs training prompts with pre-generated completions sampled from static models (e.g., Llama3 or GPT-4) (Yu et al., 2025; Xie et al., 2025; Xhonneux et al., 2024; Zou et al., 2024; Sheshadri et al., 2025).
+However, such content can suffer from response drift: static responses often differ in tone or structure from the target LLM, impeding development of new refusal mechanisms (see §4.5).
+To avoid this, we generate all training completions directly from the base model fθ0f_{\theta_{0}}: refusal responses for harmful queries and compliant responses for Alpaca and XSTest prompts.
+To ensure correct content, we apply keyword-based filtering (Röttger et al., 2024) to remove non-refusals from the safety set and refusals from the benign set.
+This yields two datasets: 𝒟safe={(xi,yi)}i=1Nsafe\mathcal{D}_{\mathrm{safe}}=\{(x_{i},y_{i})\}_{i=1}^{N_{\mathrm{safe}}} with Nsafe=5,000N_{\mathrm{safe}}=5{,}000 harmful prompts paired with refusal responses, and 𝒟util={(xi,yi)}i=1Nutil\mathcal{D}_{\mathrm{util}}=\{(x_{i},y_{i})\}_{i=1}^{N_{\mathrm{util}}} with Nutil=4,700N_{\mathrm{util}}=4{,}700 benign prompts paired with compliant responses, both generated by fθ0f_{\theta_{0}}.
+Learning new refusal mechanisms.
+Our goal is to learn a refusal mechanism that remains effective even when previously identified refusal directions are removed.
+To this end, we leverage MFAk\mathrm{MFA}_{k} to explicitly train the model to produce refusals without relying on any existing refusal mechanisms.
+For a harmful pair (x,y)∼𝒟safe(x,y)\sim\mathcal{D}_{\mathrm{safe}}, we minimize the negative log-likelihood of the refusal response with MFAk\mathrm{MFA}_{k} applied:
+ℒsafe​(x,y,θ,MFAk)=−∑t=1|y|logfθ(yt∣x,y<t;MFAk),\mathcal{L}_{\mathrm{safe}}(x,y;\theta,\mathrm{MFA}_{k})=\\
+-\sum\nolimits_{t=1}^{|y|}\log f_{\theta}(y_{t}\mid x,y_{<t};\mathrm{MFA}_{k}),
+(5)
+where fθ​(⋅,MFAk)f_{\theta}(\cdot;\mathrm{MFA}_{k}) denotes the model’s output distribution when the components spanned by {r1,…,rk}\{r_{1},\dots,r_{k}\} are removed from all hidden states at each layer and token position.
+Optimizing this objective forces the model to learn to refuse harmful inputs via a new, redundant refusal mechanism.
+Preserving model utility.
+Repeated ablation risks degrading benign behavior or promoting trivial refusal mechanisms, such as indiscriminate refusal of all queries.
+To preserve utility and ensure we learn rich refusal mechanisms, we regularize the model to remain close to the base model on benign inputs.
+For a benign prompt–completion pair (x,y)∼𝒟util(x,y)\sim\mathcal{D}_{\mathrm{util}}, we minimize the token-wise KL divergence between the original model fθ0f_{\theta_{0}} and the current model fθf_{\theta}:11
+1
+For models with poor baseline compliance (e.g., Llama2-7B (Touvron et al., 2023)), we instead use SFT; see Appendix A.2
+ℒutil​(x,y,θ,θ0)=∑t=1|y|KL(fθ0(⋅∣x,y<t)∥fθ(⋅∣x,y<t)).\mathcal{L}_{\mathrm{util}}(x,y;\theta,\theta_{0})=\\
+\sum\nolimits_{t=1}^{|y|}\mathrm{KL}\!\left(f_{\theta_{0}}(\cdot\mid x,y_{<t})\,\big\|\,f_{\theta}(\cdot\mid x,y_{<t})\right).
+(6)
+We do not apply MFAk\mathrm{MFA}_{k} to benign inputs; the learned refusal mechanism should activate only for harmful prompts.
+Overall training objective.
+To jointly construct new refusal mechanisms and preserve benign capabilities, our final training objective minimizes the expectation of Eq. 5 and Eq. 6 across the training datasets 𝒟safe\mathcal{D}_{\mathrm{safe}} and 𝒟util\mathcal{D}_{\mathrm{util}}:
+ℒtrain​(𝒟safe,𝒟util,θ,θ0,MFAk)=𝔼(x,y)∼𝒟safe​[ℒsafe​(x,y,θ,MFAk)]+λ⋅𝔼(x,y)∼𝒟util​[ℒutil​(x,y,θ,θ0)],\mathcal{L}_{\mathrm{train}}(\mathcal{D}_{\mathrm{safe}},\mathcal{D}_{\mathrm{util}};\theta,\theta_{0},\mathrm{MFA}_{k})=\\
+\mathbb{E}_{(x,y)\sim\mathcal{D}_{\mathrm{safe}}}\big[\mathcal{L}_{\mathrm{safe}}(x,y;\theta,\mathrm{MFA}_{k})\big]+\\
+\lambda\cdot\mathbb{E}_{(x,y)\sim\mathcal{D}_{\mathrm{util}}}\big[\mathcal{L}_{\mathrm{util}}(x,y;\theta,\theta_{0})\big],
+(7)
+where λ\lambda controls the trade-off between safety and utility.
+We find in §4.5 that λ=1\lambda=1 offers the best trade-off.
+4 Evaluation
+Table 1:
+Effectiveness of our fail-closed alignment method.
+The attack success rate (ASR), compliance rate (CR), and average accuracy (Acc.) for all defenses across the evaluation benchmarks.
+For each model, the best result is bolded, and the second-best is underlined.
+Models
+Jailbreaking (ASR, ↓\downarrow)
+Overrefusal (CR, ↑\uparrow)
+Utility
+(Acc., ↑\uparrow)
+No Attack
+GCG
+AutoDAN
+PAIR
+HumanJailbreaks
+Average
+XSTest
+Alpaca
+Average
+Llama2-7B
+1.0
+58.0
+3.0
+11.0
+1.1
+18.3±\pm23.2
+75.0
+99.3
+87.2
+58.5
++ Augmented RT
+0.0
+5.5
+0.0
+9.0
+0.0
+3.6±\pm3.8
+30.0
+96.6
+63.3
+57.0
++ CAT
+0.0
+19.5
+0.0
+31.0
+0.3
+12.7±\pm13.2
+20.0
+95.9
+58.0
+59.2
++ LAT
+0.0
+1.0
+0.0
+6.0
+0.0
+1.8±\pm2.5
+10.0
+86.8
+48.4
+54.9
++ DeepRefusal
+0.0
+5.5
+0.0
+5.5
+0.0
+2.8±\pm2.8
+60.0
+95.8
+77.9
+58.6
++ Ours
+0.0
+1.5
+0.0
+4.0
+0.1
+1.4±\pm1.6
+46.0
+97.4
+71.7
+57.9
+Llama3-8B
+2.5
+17.5
+0.0
+18.5
+3.1
+9.8±\pm8.3
+98.0
+98.9
+98.5
+61.2
++ Augmented RT
+0.0
+8.5
+0.0
+4.5
+0.1
+3.3±\pm3.5
+26.0
+96.8
+61.4
+59.1
++ CAT
+0.0
+1.0
+0.0
+15.5
+0.0
+4.1±\pm6.6
+18.0
+85.0
+51.5
+62.1
++ LAT
+0.0
+4.5
+0.0
+5.5
+0.0
+2.5±\pm2.5
+60.0
+97.8
+78.9
+59.1
++ DeepRefusal
+0.0
+2.5
+0.0
+5.5
+0.0
+2.0±\pm2.3
+70.0
+96.5
+83.3
+60.8
++ Ours
+0.0
+1.0
+0.0
+1.5
+0.0
+0.6±\pm0.6
+92.0
+98.3
+95.2
+61.0
+Gemma2-2B
+2.0
+59.5
+89.5
+31.0
+39.0
+54.8±\pm22.6
+98.0
+97.5
+97.8
+61.2
++ Augmented RT
+0.5
+8.0
+0.0
+5.5
+0.0
+3.4±\pm3.5
+40.0
+97.4
+68.7
+45.5
++ CAT
+0.5
+2.0
+0.0
+15.5
+0.3
+4.5±\pm6.4
+64.0
+96.9
+80.5
+59.9
++ LAT
+0.0
+3.5
+0.5
+15.0
+0.2
+4.8±\pm6.0
+76.0
+94.4
+85.2
+61.0
++ DeepRefusal
+0.0
+1.5
+0.0
+13.0
+0.0
+3.6±\pm5.4
+34.0
+90.1
+62.1
+60.1
++ Ours
+0.0
+3.0
+1.5
+2.0
+0.2
+1.7±\pm1.0
+88.0
+97.1
+92.6
+60.3
+Gemma2-9B
+1.5
+40.0
+81.0
+32.0
+47.1
+50.0±\pm18.7
+100.0
+97.4
+98.7
+67.5
++ Augmented RT
+2.0
+23.5
+64.5
+31.5
+33.0
+38.1±\pm15.6
+100.0
+97.4
+98.7
+51.4
++ CAT
+0.5
+6.5
+0.5
+23.0
+0.7
+7.7±\pm9.2
+72.0
+98.6
+85.3
+66.9
++ LAT
+0.0
+1.0
+0.0
+17.5
+0.3
+4.7±\pm7.4
+74.0
+93.7
+83.9
+67.2
++ DeepRefusal
+0.0
+11.0
+6.0
+26.0
+0.5
+10.9±\pm9.5
+62.0
+96.5
+79.3
+66.2
++ Ours
+0.0
+1.0
+0.5
+3.0
+1.2
+1.4±\pm0.9
+76.0
+96.2
+86.1
+67.1
+4.1 Experimental Setup
+Jailbreaking benchmarks.
+We evaluate robustness to jailbreaks by randomly sampling 200 prompts from HarmBench (Mazeika et al., 2024) and AdvBench (Zou et al., 2023).
+Following recent work (Yu et al., 2025), we generate prompt-based jailbreaks using four attacks: GCG (Zou et al., 2023), AutoDAN (Liu et al., 2024), PAIR (Chao et al., 2024), and HumanJailbreaks (Shen et al., 2024).
+See Appendix A.3 for a description of each attack and Appendix D for example prompts.
+We include both white- and black-box algorithms to evaluate robustness under auditing-only settings and against practical adversaries.
+We use the official HarmBench implementations and default hyperparameters for all attacks.
+We also assess robustness to feature ablation by independently ablating the DIM (Arditi et al., 2024) and RDO (Wollschläger et al., 2025) refusal features, followed by generating responses to the unmodified harmful prompts.
+For each attack (and the unmodified prompts), we report the attack success rate (ASR), defined as the fraction of model responses classified as harmful.
+Following prior work (Yu et al., 2025; Dékány et al., 2025; Xhonneux et al., 2024; Sh

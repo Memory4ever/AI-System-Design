@@ -1,0 +1,123 @@
+Source https://arxiv.org/html/2601.10251v1
+[H]
+4 Methodology
+[H]
+4.1 Empirical Analysis
+In this section, we perform an empirical study to analyze the actual update directions of model parameters during training. Specifically, we use the angle between the gradient and the principal eigenvector of the Hessian as an experimental metric to evaluate whether parameter updates follow the directions of maximum curvature on the loss surface. We trained a six-layer SimpleCNN model [20] on the CIFAR-10 dataset and monitored this angle throughout the training process. The training was conducted with a batch size of 256, and for the purpose of analysis, we recorded the gradient-eigenvector angle every five batches to generate a statistical plot (as shown in Fig. 1), where the x-axis represents the angle between the gradient and the Hessian’s principal eigenvector (in degrees), and the y-axis represents the frequency of each angle bin (count).
+Concretely, after obtaining the gradient from the second backward pass and the Hessian’s principal eigenvector v, we first flatten and L2-normalize the gradient tensor of each layer, and then concatenate them to form the full-model gradient vector. Similarly, the principal eigenvector of each layer is flattened and concatenated to form the full-model eigenvector. The angle between the gradient and the principal eigenvector is then computed by calculating the cosine similarity and converting it to degrees.
+Based on the observation of Fig. 1, we see that for roughly 45% of the training process, the angle remained between 80^{\circ} and 100^{\circ}, indicating that the gradient is nearly orthogonal to the principal eigenvector.
+This observation motivates a closer examination of the effect on the curvature along the principal eigenvector when the angle between the gradient and the eigenvector is either less than 80^{\circ} or nearly orthogonal.
+Figure 1: Alignment statistics for a 6-layer CNN trained on CIFAR-10.
+The plots show the quantity distribution of the angle between the gradient (obtained from the second forward–backward pass of SAM) and the top Hessian eigenvector, which reflects the degree of alignment during training.
+To simplify the case where the angle is less than 80^{\circ}, we assume that the gradient g_{t} is aligned with the principal eigenvector of the Hessian: g_{t}=\alpha v_{1},\alpha>0. The standard gradient descent update is then \Delta w=-\eta g_{t}=-\eta\alpha v_{1}.
+The second-order change along the principal eigenvector direction is
+\Delta w^{\top}H\Delta w=(\eta\alpha)^{2}v_{1}^{\top}Hv_{1}=(\eta\alpha)^{2}\lambda_{1},
+(5)
+indicating that the update along the direction of maximum curvature substantially increases the curvature along this direction, making the model more likely to enter or remain in sharp minima.
+When the gradient is nearly orthogonal to the principal eigenvector v_{1}, i.e.,
+\langle g_{t},v_{1}\rangle=\|g_{t}\|\cos\theta\approx 0,
+the Hessian can be decomposed as
+H=\sum_{i=1}^{d}\lambda_{i}v_{i}v_{i}^{\top}.
+The contribution along the principal eigenvector v_{1} is
+(\Delta w^{\top}H\Delta w)_{v_{1}}=\lambda_{1}(\Delta w^{\top}v_{1})^{2}=\lambda_{1}\eta^{2}\langle g_{t},v_{1}\rangle^{2}.
+(6)
+When \langle g_{t},v_{1}\rangle\approx 0, i.e., the gradient is nearly orthogonal to the principal eigenvector, the principal eigenvalue remains almost unchanged, indicating that reducing the dominant curvature becomes difficult, thereby limiting the effectiveness of flatness optimization.
+[H]
+4.2 Gradient Decomposition
+Through the analysis of the aligned and orthogonal cases between the gradient and the principal eigenvector of the Hessian, we aim to enlarge the angle between them, thereby reducing updates along high-curvature directions and avoiding convergence to sharp minima. A natural idea is to directly modify the optimization objective as
+\max_{x}\ \theta(w)\quad\text{or}\quad\min_{w}f(w)-\lambda\cos\theta(w).
+(7)
+However, angle-based objectives are difficult to construct, because the derivative of \theta(w) with respect to the parameters depends on both the gradient and the principal eigenvector, making it extremely challenging to compute in high-dimensional models. Moreover, there exists a potential gradient conflict: directly adding the gradient of \cos\theta(w) to \nabla f(w) may lead to conflicting update directions, where increasing the angle may unintentionally increase the original loss.
+Therefore, we adopt the following gradient decomposition strategy
+\nabla f(w)=\nabla f_{\parallel}+\nabla f_{\perp},
+(8)
+where \nabla f_{\parallel} is the component along the principal eigenvector and \nabla f_{\perp} is the orthogonal component. By decomposing the gradient, we can adjust the component along the principal eigenvector independently.
+[H]
+4.3 The X-SAM Algorithm
+After computing the gradient component along the principal eigenvector, it can be used to correct the parameter update gradient in standard SAM, thereby directly constructing the proposed X-SAM. Specifically, at the t-th training iteration, the principal eigenvector is first intermittently estimated using the power iteration method to avoid the high computational cost of direct computation. The principal eigenvector is updated once every fixed number p of mini-batch steps, performing q iterations per estimation to ensure a reliable approximation.
+Algorithm 1: SAM Algorithm
+1. for t=1,2,\ldots,T do
+2. Compute mini-batch loss \nabla f(w)
+3. Compute SAM perturbation:
+\epsilon^{SAM}(w)=\rho\frac{\nabla f(w)}{\|\nabla f(w)\|}
+4. Generate adversarial point: w^{adv}=w+\epsilon^{SAM}
+5. Compute gradient at perturbed point:
+g^{adv}=\nabla f(w^{adv})
+6. Update parameters: w_{t+1}=w_{t}-\eta\nabla f(w^{adv})
+7. end for
+Next, the initial gradient is computed to obtain the perturbation direction, and the perturbed parameters are derived accordingly. To mitigate the influence of the gradient magnitude on the directional information, we normalize the perturbed gradient:
+\hat{\nabla}f(w^{adv})=\frac{\nabla f(w^{adv})}{\|\nabla f(w^{adv})\|}.
+(9)
+Subsequently, this gradient is decomposed into two orthogonal components: one along the principal eigenvector direction and the other orthogonal to it:
+\hat{\nabla}f(w^{adv})=\nabla f(w^{adv})_{\parallel}+\nabla f(w^{adv})_{\perp}.
+(10)
+By subtracting the gradient component along the principal eigenvector, the angle between the gradient and the principal eigenvector is increased, causing the original gradient direction to deviate from the sharpest direction and making the update more biased toward flatter regions.
+Therefore, we correct the gradient by attenuating the component along the principal eigenvector, which suppresses the gradient along the sharpest directions of the loss surface while preserving the descent component along flatter directions; the model parameter w_{t} is then updated according to Eq. (5) in Section 3.
+\begin{split}\nabla f(w)_{\text{X-SAM}}&=\hat{\nabla}f(w^{adv})\\
+&\quad-\alpha\cdot\operatorname{sign}(\langle\nabla f(w^{adv}),v\rangle)\nabla f(w^{adv})_{\parallel}\end{split}
+(11)
+The hyperparameter \alpha controls the strength of this correction, and a sign factor \text{sign}(\langle\nabla f(w^{adv}),\hat{v}\rangle) is incorporated to resolve directional ambiguity.
+The overall procedure of X-SAM with SGD as the base optimizer is summarized in Algorithm 2.
+[H]
+5 Theoretical Analysis
+[H]
+5.1 Convergence Analysis
+Theorem 5.1.
+Let f:\mathbb{R}^{d}\to\mathbb{R} be \beta-smooth (i.e., \nabla f is \beta-Lipschitz).
+Fix \alpha\in[0,2] and assume \|v_{t}\|=1 for all t, and define the projector
+P_{t}:=I-\alpha v_{t}v_{t}^{\top},\text{so that}\|P_{t}\|_{\mathrm{op}}\leq 1.
+Let \rho>0 and define
+g_{t}:=\nabla f(x_{t}),h_{t}:=\nabla f(x_{t}+\rho\epsilon_{t}),\hat{h}_{t}:=\nabla f(x_{t}+\rho\epsilon_{t};\xi_{t}),\tilde{h}_{t}:=P_{t}\hat{h}_{t},
+and update
+x_{t+1}=x_{t}-\eta\,\tilde{h}_{t}.
+Assume the stochastic gradient is conditionally unbiased with bounded conditional variance:
+\mathbb{E}[\hat{h}_{t}\mid x_{t},\epsilon_{t},v_{t}]=h_{t},\mathbb{E}\!\left[\|\hat{h}_{t}-h_{t}\|^{2}\mid x_{t},\epsilon_{t},v_{t}\right]\leq\sigma^{2}.
+Assume moreover that the perturbation satisfies \|\epsilon_{t}\|^{2}\leq 1+C_{1}\alpha^{2} almost surely for some C_{1}>0, and define
+D_{\rho}:=\sup_{t}\|g_{t}-h_{t}\|^{2}\;\leq\;\beta^{2}\rho^{2}(1+C_{1}\alpha^{2}).
+In particular, choosing
+\eta=\min\left\{\frac{1}{2\beta},\ \sqrt{\frac{\Delta}{\beta\sigma^{2}T}}\right\},
+there exist constants c_{1},c_{2}>0 depending only on c_{0} such that
+\frac{1}{T}\sum_{t=0}^{T-1}\mathbb{E}\|\nabla f(x_{t})\|^{2}\;\leq\;c_{1}\left(\frac{\beta\Delta}{T}+\sqrt{\frac{\beta\Delta\sigma^{2}}{T}}\right)+c_{2}(1+2\alpha^{2})
+(12)
+For non-convex stochastic optimization, Theorem D.2 shows that X-SAM achieves a convergence rate of \mathcal{O}(1/\sqrt{T}),
+which matches the convergence speed of standard SGD [25, 36]. The detailed proof of Theorem 5.1 is shown in Appendix A.
+[H]
+5.2 Eigenvalue Decrease Enhances Generalization
+Theorem 5.2 (decrease of the leading eigenvalue).
+Let H be symmetric with eigengap
+\gamma:=\lambda_{1}(H)-\lambda_{2}(H)>0,
+and let \Delta H:=\nabla^{2}f(x+\Delta x)-\nabla^{2}f(x). Define
+s:=\|\Delta H\|_{\mathrm{op}},
+and assume s<\gamma. Let v_{1} be the unit leading eigenvector of H and v^{\prime} be the unit leading
+eigenvector of H+\Delta H.
+Assume the uniform third-derivative bound
+\bigl|\nabla^{3}f(z)[a,b,c]\bigr|\leq M_{3}\|a\|\,\|b\|\,\|c\|,
+and \Delta x=\eta\,\tilde{h}.
+Moreover, the leading eigenvalue satisfies
+\lambda_{1}(H+\Delta H)\leq\lambda_{1}(H)+v_{1}^{\top}\Delta Hv_{1}+{\frac{4(\|H\|_{\mathrm{op}}+s)}{\gamma-s}}\,s.
+(13)
+This result establishes a sufficient condition ensuring that the corrected update direction
+induces a local flattening effect on the loss surface, reducing the spectral sharpness.The detailed proof can be found in Appendix A.
+[H]
+6 Experiments
+[H]
+6.1 Experimental Settings
+The experiments were conducted on a Linux-based server equipped with NVIDIA RTX 4090 GPUs. The software environment was configured with a Python 3.8 virtual environment and implemented using PyTorch 2.0.0 (CUDA 11.8). We performed experiments on the CIFAR-10, CIFAR-100 [26], and Fashion-MNIST [38] datasets, using ResNet-18, ResNet-50 [18], AlexNet [27], and WideResNet-28-10 [41] as backbone models.
+We adopted SGD as the base optimizer, with an initial learning rate of 0.1 dynamically adjusted by a cosine schedule. The weight decay and momentum were set to 5\times 10^{-5} and 0.9, respectively. The batch size was 256, and each model was trained for 200 epochs.
+For SAM and its variants, we used standard data augmentation techniques, including horizontal flipping, 4-pixel padding, and random cropping. The perturbation radii for SAM and Eigen-SAM [15, 30] were set to 0.05 for CIFAR-10 and Fashion-MNIST, and 0.1 for CIFAR-100. For WSAM [40], the radii were set to 2 for CIFAR-10 and Fashion-MNIST, and 4 for CIFAR-100. Since GSAM [42] was originally designed for fine-tuning, we adopted the same perturbation radii as SAM in our experiments. For X-SAM, we used the same perturbation radius as SAM and set \alpha=0.2. The remaining parameter settings are provided in the Appendix A.
+All methods were trained under identical datasets, model architectures, data augmentation strategies, batch sizes, and training epochs. Each experiment was independently repeated three times to ensure the reliability and stability of the results.
+[H]
+6.2 Performance Comparisons
+As shown in Table 1, X-SAM achieves the highest average test accuracy across all network architectures on all three datasets. For CIFAR-10, X-SAM shows an average improvement of approximately 1.3%, with a maximum improvement exceeding 2.14%, where the most significant gain is observed on AlexNet. For CIFAR-100, due to the outstanding performance of AlexNet, we consider it separately: excluding AlexNet, the average improvement is around 1.05%, with a maximum improvement of up to 3.04%; for the AlexNet architecture, the average improvement is also about 7.12%, with a maximum improvement reaching 8.68%. On Fashion-MNIST, X-SAM shows an average improvement of approximately 0.23%, with a maximum improvement of up to 0.7%. Overall, X-SAM demonstrates stable performance across different networks and datasets, with particularly notable improvements on shallow networks and more complex datasets.
+Compared to SAM and its variants, X-SAM can more effectively control gradient updates along high-curvature directions, thereby improving model generalization. Specifically, in terms of test accuracy against several well-known SAM variants, X-SAM achieves an average improvement of approximately 0.8% and a maximum improvement exceeding 2% over GSAM; an average improvement of about 0.8% and a maximum improvement exceeding 2% over Eigen-SAM; and an average improvement of around 0.8% with a maximum improvement exceeding 2% over WSAM, demonstrating its robust advantage across multiple SAM variants.
+Observing the training and test losses together with the largest Hessian eigenvalue (training losses are shown in Figures 2(a), 2(d); test accuracies are shown in Figures 2(b), 2(e); the largest eigenvalue is shown in Figure 2(c),2(f); We find that X-SAM rapidly reduces the training loss within the first several epochs, while its largest Hessian eigenvalue decreases faster and exhibits smaller oscillations than other competing methods. This phenomenon suggests that X-SAM can more effectively restrict updates along high-curvature directions, enabling the optimization process to leave sharp regions earlier and enter a flatter basin, thereby improving training stability.
+In the later stage of training, although the training loss of X-SAM slightly increases, the largest eigenvalue consistently remains at a low level, indicating that X-SAM does not merely pursue empirical risk minimization. Instead, it implicitly regularizes the geometric properties of the solution during optimization: by maintaining low curvature, it enhances the model’s robustness to parameter perturbations.
+[H]
+6.3 Hessian Spectrum Investigation
+We analyze the impact of training with SAM and X-SAM on the Hessian spectrum of the model. The experiment is conducted on a ResNet-18 model trained on the CIFAR-100 dataset, where the top k eigenvalues of the Hessian matrix \nabla^{2}f(w) are computed at the second epoch and visualized. The results, as shown in Figure 3, show that compared with SAM, X-SAM consistently produces a smaller largest eigenvalue and a smaller trace, with a higher concentration of eigenvalues near zero. This indicates that X-SAM guides the optimization towards flatter regions of the loss surface, confirming the effectiveness of the proposed gradient correction mechanism and explaining why Eigen-SAM achieves better generalization performance than SAM.
+Figure 3: Hessian spectrum at the end of training ResNet-18 on CIFAR-100.
+[H]
+6.4 Hyperparameter Sensitivity Investigation of \alpha
+We explore how the hyperparameter \alpha influences the performance of X-SAM by running experiments on the CIFAR-100 dataset with the ResNet-18 architecture. Different values of \alpha are evaluated, as illustrated in Figure 4. The results indicate that when \alpha=0.2, the model achieves the highest test accuracy among all tested settings, showing a 1.07% improvement over standard SAM. This suggests that selecting an appropriate \alpha can significantly enhance performance. Moreover, the test accuracy remains relatively stable when \alpha varies within the range [0.1,0.4], indicating that \alpha is a fairly robust hyperparameter.
+Figure 4: Test accuracy of ResNet-18 when training on CIFAR-10 under different values of \alpha for X-SAM.
+

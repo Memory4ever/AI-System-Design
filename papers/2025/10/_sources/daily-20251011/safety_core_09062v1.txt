@@ -1,0 +1,801 @@
+ReFIne: A Framework for Trustworthy Large Reasoning Models with Reliability, Faithfulness, and Interpretability
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Trustworthy Reasoning: Definition and Motivation
+3 ReFIne: A Training Framework for Trustworthy Reasoning
+3.1 Stage 1: Supervised Finetuning for Structured Reasoning Format
+Data Collection.
+Data Filtering and Confidence Debiasing.
+Supervised Finetuning.
+3.2 Stage 2: GRPO for Enhancing Trustworthy Reasoning
+Problem Selection.
+Reward Function.
+GRPO Training.
+4 Experiments
+Setup.
+4.1 Interpretability
+Format & References.
+Readability.
+4.2 Faithfulness
+Disclosure Faithfulness.
+Commitment Faithfulness.
+4.3 Reliability
+Confidence Verbalization.
+Discrimination (AUROC) & Calibration (ECE).
+4.4 Accuracy and Efficiency
+Accuracy.
+Efficiency (Reasoning Length).
+4.5 Demonstration of ReFIne
+5 Related Works
+Reasoning Models.
+XML-like Tagging in CoT.
+Trustworthy LLMs.
+6 Conclusion
+References
+‣ ReFIne: A Framework for Trustworthy Large Reasoning Models with Reliability, Faithfulness, and Interpretability
+A Appendix
+A.1 Exact Prompts Used for Collecting SFT Data
+Problem interpretation (<understanding>...</understanding>)
+Extract conditions (<facts>...</facts>)
+Outline strategy (<plan>...</plan>)
+Derive step by step (<think>...</think>)
+Reliability check (<self_assessment>...</self_assessment>)
+A.2 Prompting QwQ-32B to Judge Reasoning Readability
+A.3 Prompting QwQ-32B to Judge Commitment Faithfulness
+A.4 Demonstration Examples: ReFIne vs. Plain
+License: arXiv.org perpetual non-exclusive license
+arXiv:2510.09062v1 [cs.CL] 10 Oct 2025
+ReFIne: A Framework for Trustworthy Large Reasoning Models with Reliability, Faithfulness, and Interpretability
+Chung-En Sun, Ge Yan, Akshay Kulkarni, Tsui-Wei Weng
+Affiliation: University of California San Diego
+Affiliation: {cesun, geyan, a2kulkarni, lweng}@ucsd.edu
+Abstract
+Recent advances in long chain-of-thought (CoT) reasoning have largely prioritized answer accuracy and token efficiency, while overlooking aspects critical to trustworthiness. We argue that usable reasoning systems must be trustworthy, characterized by three properties: interpretability, faithfulness, and reliability. To this end, we propose ReFIne, a new training framework that integrates supervised fine-tuning with GRPO to encourage models to: (i) improve interpretability by producing structured, tag-based traces with high-level planning that are easier for humans to follow; (ii) enhance faithfulness by explicitly disclosing the decisive information guiding each solution, with consistent cross-section references; and (iii) promote reliability by providing self-assessments of both the derivation’s soundness and the confidence of the final answer. We apply ReFIne to the Qwen3 models at multiple scales (1.7B/4B/8B) and evaluate across mathematical benchmarks of varying difficulty. Our experimental results show that ReFIne models generate clearer and better-structured reasoning traces (interpretability +44.0%), more faithfully expose their underlying decision process (faithfulness +18.8%), and offer informative confidence estimates (reliability +42.4%). These findings highlight an overlooked but important direction: reasoning models should be optimized not only for accuracy, but also for broader dimensions of trustworthiness. Our code is available at https://github.com/Trustworthy-ML-Lab/Training_Trustworthy_LRM_with_Refine.
+1 Introduction
+Large Language Models (LLMs) trained with reinforcement learning (RL) to produce extended Chain-of-Thought (CoT) traces have achieved strong performance on complex tasks such as math problem solving. These models are often referred to as Large Reasoning Models (LRMs) (Guo et al., 2025; Jaech et al., 2024). Recent progress on LRMs has largely targeted efficiency and accuracy, e.g., inference-time strategies and fine-tuning methods to shorten the reasoning length or boost accuracy (Sui et al., 2025; Muennighoff et al., 2025; Hao et al., 2024; Luo et al., 2025). However, this line of work typically treats CoT as a means to improve task performance rather than as a communication medium for users to audit and understand model behavior. As a result, traces can be verbose or irregular, and their interpretability for humans remains underexplored.
+Beyond interpretability, two additional issues further undermine trust in current systems. First, CoTs are often not faithful to the model’s actual decision process, omitting the shortcuts or cues that truly drive predictions (Chen et al., 2025). Second, reasoning models frequently fabricate plausible-looking derivations even when unable to solve the problem, producing long traces where errors or nonsensical steps are difficult for humans to detect. They typically offer no self-assessment of reasoning quality, or when prompted to do so,
+exhibit overconfidence that fails to reflect true accuracy (Mei et al., 2025). Together, these shortcomings undermine the reliability of LRMs.
+We argue that progress in reasoning should be assessed not only by accuracy and efficiency, but by trustworthy reasoning along three dimensions—Interpretability, Faithfulness, and Reliability. Specifically, interpretability concerns human-readable, structurally coherent traces that support verification; faithfulness requires that verbalized steps reflect causal factors driving predictions; reliability demands well-calibrated confidence and predictable failure behavior. We formalize these dimensions in Section 2.
+Motivated by these limitations, we introduce ReFIne, a new training framework for trustworthy reasoning. ReFIne guides models to produce reasoning traces that are clearly structured and easier for humans to verify (interpretability), explicitly list all conditions and reference them in subsequent steps (faithfulness), and perform self-assessment by evaluating the soundness of their reasoning and assigning a confidence score to the final answer (reliability). In this way, ReFIne addresses interpretability, faithfulness, and reliability together, rather than optimizing for accuracy alone. Our contributions are as follows:
+•
+We define trustworthy reasoning for LRMs concretely through three dimensions—interpretability, faithfulness, and reliability—and use this definition to guide the design of ReFIne, the first training framework explicitly optimized for these principles in LRMs.
+•
+We show that ReFIne improves interpretability by 44.0%, faithfulness by 18.8%, and reliability by 42.4% across four benchmarks and three model sizes, while achieving similar accuracy and slightly better reasoning efficiency (1.16×\times).
+2 Trustworthy Reasoning: Definition and Motivation
+While prior works on LRM have largely emphasized accuracy and efficiency, we argue that a reasoning model is trustworthy only if it satisfies the following three dimensions:
+1.
+Interpretability. The reasoning trace should be presented in a clear, well-organized structure that allows humans to easily follow the logic, identify key steps, and verify the flow of arguments. This includes providing a high-level roadmap at the outset, maintaining coherent progression, explicitly linking steps, and avoiding irrelevant or distracting content.
+2.
+Faithfulness. The reasoning trace should accurately reflect the actual process by which the model arrives at its answer. All conditions that influence the solution, along with any materials or information used, should be stated explicitly. And subsequent steps should be grounded in these stated elements rather than in unstated shortcuts or spurious patterns.
+3.
+Reliability. The model should perform an explicit self-assessment to judge whether each step of its derivation is rigorous. Based on this assessment, it should produce a well-calibrated estimate of the likelihood that its final answer is correct, enabling users to know when the answer can be trusted and when caution is needed.
+Standard CoT outputs often fall short on one or more of these dimensions: they may be readable but poorly structured (Figure 2), omit important factors actually used in decision-making (Table 2), or present overconfident answers without any measure of uncertainty (Table 4). A more detailed discussion of these issues is provided in Section 4. In the next section, we adopt the above triad and design ReFIne, a new training framework for trustworthy reasoning.
+Figure 1: Comparison between standard LRMs and our ReFIne framework, showing improvements in interpretability, faithfulness, and reliability while maintaining accuracy and efficiency.
+3 ReFIne: A Training Framework for Trustworthy Reasoning
+ReFIne has two stages: (i) supervised finetuning (SFT; Section 3.1) to instill the desired format aligned with trustworthy reasoning, and (ii) Group Relative Policy Optimization (GRPO; Section 3.2) to reinforce interpretability, faithfulness, and reliability through targeted reward functions.
+3.1 Stage 1: Supervised Finetuning for Structured Reasoning Format
+We first apply SFT as a cold start. This step helps the model learn the output format for trustworthy reasoning, providing an initial foundation for interpretability, faithfulness, and reliability.
+Data Collection.
+To build the SFT corpus supporting trustworthy reasoning, we design a series of templates that require the model to reason separately into different functional phases:
+•
+Preparation Phase:
+i.
+Problem Understanding, <understanding>: the model restates the task in its own words and clarifies exactly what is being asked.
+–
+Rationale: improves interpretability by making the problem statement explicit, and supports faithfulness by anchoring the model’s intended interpretation at the start, reducing the chance of later shifting the problem scope.
+ii.
+List Facts, <facts>: the model lists all variables, given conditions, and constraints it will rely on later.
+–
+Rationale: improves faithfulness by requiring all materials used in the derivation to be stated up front.
+iii.
+Stepwise Plan, <plan>: the model builds a concise, stepwise strategy before beginning the detailed derivation.
+–
+Rationale: improves interpretability by providing a clear roadmap that helps readers anticipate and follow the solution process.
+•
+Reasoning Phase, <think>: step-by-step derivation that explicitly references items from <understanding>, <facts>, and steps from <plan>. If the model switches to another approach, it must explicitly identify and explain errors in the previous attempt.
+–
+Rationale: by grounding the content in earlier sections, the model is more likely to be consistent (faithfulness), and it becomes easier for humans to track which part of the roadmap the model is executing (interpretability).
+•
+Answer Phase, <final_answer>: the final result with a brief justification.
+•
+Evaluation Phase, <self_assessment>: a short audit of the solution’s soundness, followed by an integer confidence score from 0 to 10 indicating the model’s belief that the final answer is correct.
+–
+Rationale: supports reliability by revealing which parts of the reasoning are rigorous and which parts are speculative, helping users to decide whether to trust the answer.
+Given this pipeline, for each math question, we prompt Qwen3-8B to generate each block sequentially with different instructions. The detailed algorithm and prompt templates for each block are provided in Appendix A.1. We construct reasoning traces in the above format using 10,00010{,}000 problems from the Open-R1-Math dataset (Hugging Face, 2025).
+Data Filtering and Confidence Debiasing.
+We first discard examples with incorrect final answers, leaving ∼8,000\sim\!8{,}000 traces; this selection inflates <self_assessment> scores si∈{0,…,10}s_{i}\!\in\!\{0,\dots,10\} toward high values. To debias, we remap scores by histogram specification towards a target mixture while preserving order. Let the empirical PMF be
+pemp(s)=1N∑i=1N𝟏{si=s}p_{\mathrm{emp}}(s)=\tfrac{1}{N}\sum_{i=1}^{N}\mathbf{1}\{s_{i}=s\}. We construct a target PMF by mixing it with the uniform distribution
+ptgt​(s)=α​pemp​(s)+(1−α)​111,p_{\mathrm{tgt}}(s)=\alpha\,p_{\mathrm{emp}}(s)+(1-\alpha)\,\tfrac{1}{11},
+where α\alpha is set to 0.9 in our experiments. Let Ftgt​(s)=∑k≤sptgt​(k)F_{\mathrm{tgt}}(s)=\sum_{k\leq s}p_{\mathrm{tgt}}(k) be the target CDF. Denote ri∈{1,…,N}r_{i}\in\{1,\dots,N\} for the rank of sis_{i} in nondecreasing order and define the mid-quantile ui=ri−1/2Nu_{i}=\tfrac{r_{i}-\nicefrac{{1}}{{2}}}{N}.
+We then set the new integer score by the inverse-CDF map
+si′=Ftgt−1​(ui)=min⁡{s∈{0,…,10}:Ftgt​(s)≥ui}.s_{i}^{\prime}\;=\;F_{\mathrm{tgt}}^{-1}(u_{i})\;=\;\min\{\,s\in\{0,\dots,10\}:F_{\mathrm{tgt}}(s)\geq u_{i}\,\}.
+This rank-preserving mapping yields marginals that match ptgtp_{\mathrm{tgt}} up to discretization, increases coverage of low-confidence bins for subsequent RL training.
+Supervised Finetuning.
+We fine-tune Qwen3-1.7B, Qwen3-4B, and Qwen3-8B on the processed corpus with a maximum length of 20k tokens to learn the trustworthy reasoning format.
+3.2 Stage 2: GRPO for Enhancing Trustworthy Reasoning
+While SFT provides a strong initialization, it does not fully enforce the three key aspects (Section 2) we target: structural format (interpretability), explicit cross-section references (faithfulness), and calibrated confidence scores (reliability). We apply GRPO to further reinforce these behaviors.
+Problem Selection.
+We select 2,0002{,}000 problems for GRPO as follows: Let 𝒟SFT\mathcal{D}_{\text{SFT}} be the 10,00010{,}000 problems used in SFT data collection (Section 3.1), we draw 1,4001{,}400 instances that Qwen3-8B failed to solve correctly, and the remaining 600600 problems are randomly sampled from Open-R1-Math while excluding 𝒟SFT\mathcal{D}_{\text{SFT}}. This bias toward harder problems limits the number of trivially solvable cases in GRPO, helping prevent the model from developing overconfident behavior.
+Reward Function.
+For a prompt xx and gold answer aa, we score a generated trace yy with four components:
+(1) Correctness.
+rcorr​(y,a)={Verify​(y,a)}.r_{\mathrm{corr}}(y,a)\;=\;\mathbf{1}\!\left\{\textsc{Verify}\big(y,\,a\big)\right\}.
+Here, Verify is a robust answer checker that applies task-specific equivalence rules.
+(2) Tag Generation.
+Let 𝒯\mathcal{T} be the expected tag sequence:
+<understanding>, </understanding>,
+… ,
+<self_assessment>, </self_assessment>. We set
+rstruct​(y)=𝟏​{every tag in ​𝒯​ appears exactly once and in order in ​y}.r_{\mathrm{struct}}(y)=\mathbf{1}\{\text{every tag in }\mathcal{T}\text{ appears exactly once and in order in }y\}.
+(3) Cross-Section References.
+Let ythinky_{\text{think}} denote the substring of yy inside <think>…</think>. We reward explicit references to earlier sections:
+rref(y)=13 1{<understanding>∈ythink}+13 1{<facts>∈ythink}+13 1{<plan>∈ythink}.r_{\text{ref}}(y)\;=\;\tfrac{1}{3}\,\mathbf{1}\{\texttt{<understanding>}\in y_{\text{think}}\}+\tfrac{1}{3}\,\mathbf{1}\{\texttt{<facts>}\in y_{\text{think}}\}+\tfrac{1}{3}\,\mathbf{1}\{\texttt{<plan>}\in y_{\text{think}}\}.
+(4) Confidence Estimation.
+We parse the confidence s∈{0,…,10}s\in\{0,\dots,10\} from the <self_assessment> block. If absent, the score is marked missing. Define p=s10∈[0,1]p\;=\;\frac{s}{10}\in[0,1], ycorr=rcorr​(y,a)∈{0,1}y_{\text{corr}}=r_{\mathrm{corr}}(y,a)\in\{0,1\}, and δmiss=𝟏​{confidence missing}\delta_{\text{miss}}=\mathbf{1}\{\text{confidence missing}\}.
+The confidence reward is
+rconf​(y,a)=(1−(p−ycorr)2)−λ​δmiss,r_{\mathrm{conf}}(y,a)\;=\;{\,\big(1-(p-y_{\text{corr}})^{2}\big)\,}\;-\;\lambda\\
+\,\delta_{\text{miss}},
+with λ=1\lambda=1 to penalize omitting the score.
+The total reward combines these terms with nonnegative weights:
+R⁡(y∣x,a)=α​rcorr​(y,a)+β​rstruct​(y)+γ​rref​(y)+ζ​rconf​(y,a),R(y\mid x,a)\;=\;\alpha\,r_{\mathrm{corr}}(y,a)\;+\;\beta\,r_{\mathrm{struct}}(y)\;+\;\gamma\,r_{\mathrm{ref}}(y)\;+\;\zeta\,r_{\mathrm{conf}}(y,a),
+where α,β,γ,ζ≥0\alpha,\beta,\gamma,\zeta\geq 0. We set all weights equally to 0.250.25.
+GRPO Training.
+We apply GRPO on 𝒟GRPO\mathcal{D}_{\text{GRPO}} using the reward defined above, with KL penalty βKL\beta_{\mathrm{KL}} set to 00. For each problem, the policy generates 44 trajectories.
+4 Experiments
+Setup.
+We train the following ReFIne models using the pipeline in
+Sections 3.1 and 3.2:
+•
+ReFIne-Qwen3-1.7B
+ReFIne-Qwen3-4B
+ReFIne-Qwen3-8B
+each trained with supervised fine-tuning on 10k structured traces (with correctness filtering and confidence reweighting) followed by GRPO on 2k problems (70% prior errors, 30% fresh). For comparison, we introduce the matched baseline models:
+•
+Plain-Qwen3-1.7B
+Plain-Qwen3-4B
+Plain-Qwen3-8B
+which use the same data budgets and model sizes but SFT on “plain reasoning” traces (only <think> followed by a final answer paragraph) and apply GRPO with correctness as the sole reward. All other training settings are held constant with the ReFIne models to isolate the effect of structured formatting and multi-component rewards.
+We evaluate on four math‐reasoning datasets spanning diverse difficulty levels:
+•
+AIME-2024: challenging competition-style mathematical problems.
+•
+GPQA-Diamond (Rein et al., 2023): an extremely difficult, graduate-level multiple-choice subset spanning math, physics, and related fields.
+•
+MATH-500 (Lightman et al., 2023): a 500-problem subset covering algebra, geometry, number theory, and probability from the MATH benchmark.
+•
+GSM8K (Cobbe et al., 2021): grade-school-level math.
+Each dataset is evaluated across 10 independent runs, with mean and standard deviation reported. Under this setting, we systematically evaluate models along five dimensions: interpretability, faithfulness, reliability, accuracy, and efficiency.
+4.1 Interpretability
+Reasoning is more interpretable when it follows a well-organized structure, maintaining coherent progression and explicit links across steps that make it easy for humans to follow. We evaluate interpretability along two axes: Format & References and Readability.
+Table 1: Percentage of <think> sections that explicitly reference <understanding> / <facts> / <plan>. GRPO substantially strengthens the cross-section referencing behavior.
+Params
+Model
+AIME-2024
+GPQA-Diamond
+MATH-500
+GSM8K
+1.7B
+ReFIne (ours)
+93.72 / 86.40 / 81.88
+93.10 / 88.97 / 82.69
+99.19 / 96.70 / 96.51
+99.86 / 99.86 / 99.44
+ReFIne w/o GRPO
+7.20 / 16.08 / 31.50
+29.39 / 38.11 / 40.07
+37.00 / 46.37 / 55.65
+27.98 / 65.46 / 53.05
+4B
+ReFIne (ours)
+98.57 / 98.60 / 95.68
+91.18 / 92.92 / 87.71
+98.61 / 98.89 / 98.39
+99.89 / 99.94 / 99.89
+ReFIne w/o GRPO
+10.37 / 28.13 / 40.22
+28.50 / 34.79 / 35.52
+33.15 / 49.71 / 56.42
+26.24 / 63.60 / 53.85
+8B
+ReFIne (ours)
+96.74 / 86.62 / 91.81
+92.88 / 93.15 / 88.66
+98.95 / 96.90 / 97.68
+99.19 / 99.76 / 99.63
+ReFIne w/o GRPO
+11.48 / 31.83 / 36.39
+25.20 / 38.83 / 37.71
+32.17 / 48.45 / 53.58
+25.29 / 65.96 / 50.37
+Figure 2:
+Pairwise readability comparison across all datasets, judged by QwQ-32B. ReFIne is consistently judged to produce reasoning that is clearer and easier to follow.
+Format & References.
+We first verify structural correctness: whether all required sections appear exactly once and in the canonical order.
+ReFIne achieves near-perfect compliance, with rates exceeding 99.7% on average. We then examine whether the model’s main reasoning (<think> section) explicitly points back to earlier sections by emitting the literal tags <understanding>, <facts>, and <plan>. Table 1 reports the percentage of traces satisfying this criterion for each dataset. Compared to the SFT-only ablation (ReFIne w/o GRPO), ReFIne consistently achieves much higher reference rates, indicating that GRPO rewards effectively encouraged this cross-section linking behavior.
+Readability.
+We evaluate which model produces reasoning that is easier for humans to follow by conducting a pairwise comparison between ReFIne and the Plain baseline across all datasets and model sizes, using QwQ-32B (QwenTeam, 2025) as an automatic judge. Figure 2 shows that in every setting, ReFIne is judged to be clearly better or slightly better than Plain, with only a small fraction of cases favoring the baseline. These results confirm that ReFIne consistently produces reasoning traces that are clearer, smoother, and easier to follow. The full evaluation prompt used for readability judgment is provided in Appendix A.2.
+These evaluations show that ReFIne achieves a more organized reasoning process: it explicitly references earlier sections during derivation, attains strong readability scores, and exhibits near-perfect structural compliance. Collectively, this reflects a substantial improvement in interpretability.
+4.2 Faithfulness
+Reasoning is more faithful when (1) the visible trace truly reflects the hidden solving process and (2) each step is grounded in prior context without shortcuts or invented justifications. Accordingly, we evaluate faithfulness along two axes: Disclosure Faithfulness and Commitment Faithfulness.
+Table 2: Disclosure faithfulness ϕ\phi. Higher value means the model is more likely to acknowledge the hint when it actually uses it.
+Params
+Model
+AIME-2024
+GPQA-Diamond
+MATH-500
+GSM8K
+1.7B
+ReFIne-Qwen3-1.7B (ours)
+0.733 ±\pm 0.091
+0.863 ±\pm 0.025
+0.829 ±\pm 0.037
+0.749 ±\pm 0.038
+Plain-Qwen3-1.7B
+0.476 ±\pm 0.150
+0.786 ±\pm 0.044
+0.714 ±\pm 0.030
+0.642 ±\pm 0.050
+4B
+ReFIne-Qwen3-4B (ours)
+0.956 ±\pm 0.064
+0.910 ±\pm 0.026
+0.927 ±\pm 0.043
+0.983 ±\pm 0.010
+Plain-Qwen3-4B
+0.491 ±\pm 0.185
+0.799 ±\pm 0.039
+0.634 ±\pm 0.069
+0.717 ±\pm 0.057
+8B
+ReFIne-Qwen3-8B (ours)
+0.957 ±\pm 0.060
+0.856 ±\pm 0.039
+0.934 ±\pm 0.036
+0.966 ±\pm 0.024
+Plain-Qwen3-8B
+0.660 ±\pm 0.218
+0.817 ±\pm 0.029
+0.783 ±\pm 0.111
+0.894 ±\pm 0.048
+Table 3: Commitment faithfulness. For each dataset, we report the fraction of traces where <think> strictly follows <understanding> / <facts> / <plan>.
+Params
+Model
+AIME-2024
+GPQA-Diamond
+MATH-500
+GSM8K
+1.7B
+ReFIne (ours)
+0.98 / 0.99 / 0.94
+0.98 / 0.97 / 0.96
+0.98 / 0.98 / 0.90
+0.97 / 0.98 / 0.94
+ReFIne w/o GRPO
+0.98 / 0.99 / 0.95
+0.98 / 0.97 / 0.94
+0.98 / 0.98 / 0.90
+0.97 / 0.98 / 0.93
+4B
+ReFIne (ours)
+0.99 / 0.99 / 0.93
+0.98 / 0.97 / 0.94
+0.97 / 0.98 / 0.93
+0.96 / 0.99 / 0.97
+ReFIne w/o GRPO
+0.99 / 1.00 / 0.94
+0.99 / 0.98 / 0.95
+0.98 / 0.98 / 0.91
+0.99 / 0.99 / 0.97
+8B
+ReFIne (ours)
+1.00 / 1.00 / 0.95
+0.99 / 0.97 / 0.94
+0.99 / 0.98 / 0.92
+0.98 / 0.99 / 0.97
+ReFIne w/o GRPO
+0.99 / 0.99 / 0.89
+0.98 / 0.98 / 0.96
+0.99 / 0.99 / 0.92
+0.98 / 0.99 / 0.98
+Disclosure Faithfulness.
+Adapting the paradigm in Chen et al. (2025), for each problem (x,a)(x,a) with gold answer aa, we run the model twice:
+(i) on the original prompt xx, yielding output y0y_{0} with correctness c0c_{0}, and
+(ii) on a hinted prompt x+x^{+} that appends “An authoritative professor indicates the answer is: aa”, yielding y+y^{+} with correctness c+c^{+}.
+We then compute
+ϕ=𝔼[ 1{the hint is explicitly verbalized in y+}|c0=0,c+=1].\phi\;=\;\mathbb{E}\Big[\;\mathbf{1}\{\text{the hint is explicitly verbalized in }y^{+}\}\;\Bigm|\;c_{0}=0,\;c^{+}=1\Big].\vskip-3.0pt
+That is, when the model changes an incorrect answer to a correct one after receiving a hint, ϕ\phi measures the proportion of cases where the model explicitly acknowledges using the hint. A higher ϕ\phi indicates that the model is more likely to transparently disclose the decisive information.
+As shown in Table 2, across all datasets and model sizes, ReFIne achieves substantially higher ϕ\phi than Plain, indicating that it more often acknowledges the decisive cue rather than silently exploiting it. We attribute this effect partly to the <facts> section, which encourages ReFIne to enumerate all premises (including injected hints) before proceeding with the solution. We also observe that ReFIne achieves 1.35×1.35\times larger accuracy gains after being hinted and is 1.28×1.28\times more likely to verbalize the hint compared to Plain across all problems. This indicates that ReFIne both benefits more from new information and discloses its use more transparently.
+Commitment Faithfulness.
+This metric evaluates whether the <think> section faithfully follows the model’s own prior commitments. We again use QwQ-32B to judge three criteria independently:
+(i) Reasoning based on Understanding: the derivation must align with the problem interpretation stated in <understanding>;
+(ii) Reasoning based on Facts: only the variables and conditions listed in <facts> may be used, with no unstated or invented premises;
+(iii) Reasoning based on Plan: the derivation must follow each step in the <plan> exactly, without reordering, omitting, or adding steps. These metrics test whether ReFIne actually does what it has committed to rather than simply producing reasoning that looks well-structured. The prompt we use to query QwQ-32B is provided in Appendix A.3.
+As shown in Table 3, ReFIne consistently follows its prior interpretation, stated conditions, and high-level plan, suggesting that it is not merely imitating superficial formatting patterns introduced during training.
+4.3 Reliability
+Reasoning is more reliable when the model knows when it knows—and admits when it does not.
+Concretely, this requires (i) verbalizing a confidence estimate for its answer, and (ii) aligning those
+confidence values with actual correctness. We therefore assess reliability along two axes: confidence verbalization and discrimination & calibration.
+Table 4: Confidence verbalization rate (% of traces with an explicit confidence score).
+Params
+Model
+AIME-2024
+GPQA-Diamond
+MATH-500
+GSM8K
+1.7B
+ReFIne-Qwen3-1.7B (ours)
+100.0% ±\pm 0.0%
+99.4% ±\pm 0.4%
+100.0% ±\pm 0.0%
+100.0% ±\pm 0.0%
+Plain-Qwen3-1.7B
+5.9% ±\pm 6.0%
+11.1% ±\pm 2.5%
+29.9% ±\pm 2.3%
+44.9% ±\pm 1.3%
+4B
+ReFIne-Qwen3-4B (ours)
+100.0% ±\pm 0.0%
+99.6% ±\pm 0.3%
+100.0% ±\pm 0.0%
+100.0% ±\pm 0.0%
+Plain-Qwen3-4B
+6.1% ±\pm 2.7%
+49.5% ±\pm 4.9%
+70.0% ±\pm 1.1%
+98.3% ±\pm 0.5%
+8B
+ReFIne-Qwen3-8B (ours)
+100.0% ±\pm 0.0%
+99.8% ±\pm 0.2%
+100.0% ±\pm 0.1%
+100.0% ±\pm 0.0%
+Plain-Qwen3-8B
+5.2% ±\pm 3.6%
+28.7% ±\pm 2.0%
+60.1% ±\pm 1.4%
+91.7% ±\pm 0.5%
+Table 5: AUROC; higher is better. Plain on AIME-2024 is marked in red since it rarely outputs confidence, making its AUROC unreliable.
+Params
+Model
+AIME-2024
+GPQA-Diamond
+MATH-500
+GSM8K
+1.7B
+ReFIne-Qwen3-1.7B (ours)
+0.795 ±\pm 0.047
+0.584 ±\pm 0.043
+0.726 ±\pm 0.039
+0.605 ±\pm 0.017
+Plain-Qwen3-1.7B
+0.729 ±\pm 0.208
+0.561 ±\pm 0.169
+0.511 ±\pm 0.018
+0.501 ±\pm 0.010
+4B
+ReFIne-Qwen3-4B (ours)
+0.872 ±\pm 0.073
+0.649 ±\pm 0.048
+0.757 ±\pm 0.029
+0.621 ±\pm 0.017
+Plain-Qwen3-4B
+0.750 ±\pm 0.354
+0.643 ±\pm 0.027
+0.467 ±\pm 0.060
+0.485 ±\pm 0.012
+8B
+ReFIne-Qwen3-8B (ours)
+0.763 ±\pm 0.076
+0.679 ±\pm 0.022
+0.713 ±\pm 0.065
+0.677 ±\pm 0.030
+Plain-Qwen3-8B
+0.750 ±\pm 0.354
+0.718 ±\pm 0.060
+0.511 ±\pm 0.013
+0.479 ±\pm 0.009
+Table 6: ECE; lower is better. Plain on AIME-2024 is marked in red as it rarely outputs confidence, making its ECE unreliable.
+Params
+Model
+AIME-2024
+GPQA-Diamond
+MATH-500
+GSM8K
+1.7B
+ReFIne-Qwen3-1.7B (ours)
+0.305 ±\pm 0.045
+0.279 ±\pm 0.038
+0.080 ±\pm 0.013
+0.118 ±\pm 0.006
+Plain-Qwen3-1.7B
+0.675 ±\pm 0.244
+0.564 ±\pm 0.066
+0.111 ±\pm 0.014
+0.279 ±\pm 0.017
+4B
+ReFIne-Qwen3-4B (ours)
+0.204 ±\pm 0.043
+0.274 ±\pm 0.027
+0.042 ±\pm 0.005
+0.075 ±\pm 0.004
+Plain-Qwen3-4B
+0.119 ±\pm 0.063
+0.336 ±\pm 0.044
+0.072 ±\pm 0.011
+0.505 ±\pm 0.014
+8B
+ReFIne-Qwen3-8B (ours)
+0.179 ±\pm 0.073
+0.196 ±\pm 0.027
+0.032 ±\pm 0.007
+0.043 ±\pm 0.003
+Plain-Qwen3-8B
+0.188 ±\pm 0.255
+0.318 ±\pm 0.035
+0.105 ±\pm 0.007
+0.708 ±\pm 0.008
+Confidence Verbalization.
+For ReFIne, we measure the fraction of generations that include an explicit confidence score in the <self_assessment> section. For the Plain baseline, we directly prompt the model to provide a self-assessment and confidence score. Table 4 shows that ReFIne almost always provides a score and self-assessment, whereas Plain often omits it, especially when the problem is harder (AIME-2024 and GPQA-Diamond).
+Discrimination (AUROC) & Calibration (ECE).
+We evaluate whether confidence separates correct from incorrect answers using AUROC and whether it matches empirical accuracy using ECE. Empirically, AUROC asks: if we sort outputs by stated confidence, how often does a correct answer outrank an incorrect one? While ECE asks: for example, do answers with 80%80\% confidence (in our case, verbalized as ”Confidence: 8/10”) actually turn out correct about 80%80\% of the time? Both metrics are computed only on outputs that include an explicit confidence score.
+As shown in Table 5, ReFIne attains strong discrimination on AIME-2024 and MATH-500 (AUROC >0.7>\!0.7) and also surpasses Plain on GPQA-Diamond and GSM8K. The seemingly high AUROC for Plain on AIME-2024 is not statistically meaningful, as it stems from extremely low confidence coverage (<7%<7\% of reasoning verbalize confidence, as shown in Table 4); these entries are therefore marked in red. Practically, AUROC >0.7>0.7 can be taken to indicate strong ”know-when-you-know” discrimination, accounting for our test data being substantially out-of-distribution. Table 6 further shows that ReFIne is better calibrated (lower ECE) across datasets, with especially large gains on MATH-500 and GSM8K.
+Overall, ReFIne both verbalizes self-assessment reliably and produces a confidence score that better tracks correctness compared to Plain.
+4.4 Accuracy and Efficiency
+Finally, although our primary focus is on interpretability, faithfulness, and reliability, we also examine task-level utility in terms of accuracy and efficiency, to provide a more complete picture of the trade-offs involved in trustworthy reasoning.
+Figure 3: Accuracy across benchmarks. Error bars denote standard deviation across runs.
+Figure 4: Reasoning length (tokens; lower is better).
+Accuracy.
+Figure 3 reports accuracy across datasets and model sizes. Overall, ReFIne is broadly comparable to Plain: the largest gap appears on AIME-2024, whereas MATH-500 and GSM8K differ only negligibly. On the challenging GPQA-Diamond, ReFIne slightly outperforms Plain, indicating that trustworthy reasoning can be achieved with modest accuracy trade-offs—and in some cases, with gains.
+Efficiency (Reasoning Length).
+Figure 4 shows the average reasoning length in tokens (lower is better). ReFIne generally produces shorter traces at the 4B and 8B scales across all datasets. This gain was not an explicit training objective but appears to emerge naturally from the structured format. We hypothesize that the organization encourages models to stay focused on key reasoning steps rather than drifting into unnecessary digressions. Such efficiency is a desirable side effect, suggesting that explicit structuring can yield reasoning that is not only clearer but also more concise.
+4.5 Demonstration of ReFIne
+To illustrate the outputs of our framework, Appendix A.4 presents side-by-side demonstrations of ReFIne and Plain reasoning traces. These qualitative examples complement the quantitative results, highlighting how ReFIne produces clearer, more faithful, and more reliable reasoning.
+5 Related Works
+Reasoning Models.
+Recent advances in reasoning models have significantly improved the problem-solving abilities of LLMs in domains such as mathematics, coding, and science. OpenAI’s o1 (Jaech et al., 2024) represents a major shift toward deliberate reasoning by employing reinforcement learning (RL) to refine its strategies. By generating explicit ”Thinking” steps before producing answers, o1 achieves strong performance on complex tasks. As a more cost-efficient alternative, DeepSeek-r1 (Guo et al., 2025) demonstrates that pure RL can also effectively enhance reasoning. It introduces Group Relative Policy Optimization (GRPO) (Shao et al., 2024), a novel method that eliminates the need for a separate reward model, enabling more efficient RL training.
+XML-like Tagging in CoT.
+Prior work augments chain-of-thought reasoning with XML-style tags
+while keeping the overall reasoning flow largely unchanged. Nguyen et al. (2025) introduces tags that highlight supporting facts by wrapping key spans in the question (e.g., <fact1>...</fact1>) and mirroring them in the reasoning, thereby grounding statements, reducing hallucinations, and yielding modest accuracy gains. Dong & Fan (2025) goes further by prescribing step-level tags such as <rephrase> or <verify>, training models via supervised fine-tuning to emit tagged steps, and then applying GRPO with MAX-Flow and LCS rewards to encourage efficient step usage. While these methods clarify token roles or delineate intermediate steps to boost task accuracy or efficiency, they do not address the overall organization of reasoning.
+In contrast, ReFIne leverages tagging not only as markers but as a means to restructure the reasoning process, producing traces that are more trustworthy in ways largely overlooked by prior works.
+Trustworthy LLMs.
+Recent efforts toward more “trustworthy” LLMs have largely focused on safety and interpretability. Safety-oriented work develops defenses against jailbreak attacks (Zou et al., 2023; Liu et al., 2024; Sun et al., 2025a), such as randomized smoothing (Robey et al., 2023) and multi-agent filtering (Zeng et al., 2024). A parallel line of works builds intrinsically interpretable models (Yang et al., 2025; Sun et al., 2025b; Berthon & van der Schaar, 2025) by enforcing monosemantic experts or routing predictions through human-interpretable bottlenecks. While this line of works are valuable, they mainly target instructed LLMs and do not explicitly consider what properties make long-form reasoning itself trustworthy. Another related recent line of work (Damani et al., 2025) proposes to quantify model uncertainty during reasoning; while interesting, their work focuses primarily on the calibrated confidence for short reasoning tasks (up to 4k tokens, e.g., MATH-500) without investigating methods to improve interpretability or faithfulness of the LRMs.
+In contrast, ReFIne defines and enforces the desiderata for trustworthy reasoning in LRMs more broadly. For the reliability aspect, ReFIne also produces a confidence score similar to Damani et al. (2025), but on a 10-point scale rather than a fine-grained decimal 0∼10\sim 1. We adopt this coarser scale as it is intuitively easier for humans to interpret. Beyond reliability, ReFIne also enforces interpretability, with a clear and human-friendly structure, and faithfulness, accurately reflecting the model’s actual problem-solving process. In terms of evaluations, we evaluate our LRMs on substantially harder tasks (e.g., AIME, GPQA) that require extended reasoning with sequences up to 32k tokens, which is 8×8\times larger than the 4k-token setting in Damani et al. (2025).
+6 Conclusion
+We introduced ReFIne, a training framework making reasoning more trustworthy. By combining supervised fine-tuning and GRPO, ReFIne encourages structured traces, cross-section references, explicit disclosure of key information, and self-assessments with calibrated confidence. Extensive evaluations across multiple model scales and mathematical benchmarks show that ReFIne achieves superior interpretability, faithfulness, and reliability compared to standard reasoning models. We see ReFIne as a step toward establishing a new standard for systematically improving and evaluating the trustworthiness of LRMs.
+References
+Berthon & van der Schaar (2025)
+Antonin Berthon and Mihaela van der Schaar.
+Language bottleneck models: A framework for interpretable knowledge tracing and beyond.
+CoRR, 2025.
+Chen et al. (2025)
+Yanda Chen, Joe Benton, Ansh Radhakrishnan, Jonathan Uesato, Carson Denison, John Schulman, Arushi Somani, Peter Hase, Misha Wagner, Fabien Roger, Vladimir Mikulik, Samuel R. Bowman, Jan Leike, Jared Kaplan, and Ethan Perez.
+Reasoning models don’t always say what they think.
+CoRR, 2025.
+Cobbe et al. (2021)
+Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, Christopher Hesse, and John Schulman.
+Training verifiers to solve math word problems.
+CoRR, 2021.
+Damani et al. (2025)
+Mehul Damani, Isha Puri, Stewart Slocum, Idan Shenfeld, Leshem Choshen, Yoon Kim, and Jacob Andreas.
+Beyond binary rewards: Training lms to reason about their uncertainty.
+CoRR, 2025.
+Dong & Fan (2025)
+Yubo Dong and Hehe Fan.
+Enhancing large language models through structured reasoning.
+CoRR, 2025.
+Guo et al. (2025)
+Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Ruoyu Zhang, Runxin Xu, Qihao Zhu, Shirong Ma, Peiyi Wang, Xiao Bi, et al.
+Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning.
+arXiv, 2025.
+Hao et al. (2024)
+Shibo Hao, Sainbayar Sukhbaatar, DiJia Su, Xian Li, Zhiting Hu, Jason Weston, and Yuandong Tian.
+Training large language models to reason in a continuous latent space.
+CoRR, 2024.
+Hugging Face (2025)
+Hugging Face.
+Open r1: A fully open reproduction of deepseek-r1, 2025.
+Jaech et al. (2024)
+Aaron Jaech, Adam Kalai, Adam Lerer, Adam Richardson, Ahmed El-Kishky, Aiden Low, Alec Helyar, Aleksander Madry, Alex Beutel, Alex Carney, Alex Iftimie, Alex Karpenko, Alex Tachard Passos, Alexander Neitz, Alexander Prokofiev, Alexander Wei, Allison Tam, Ally Bennett, Ananya Kumar, Andre Saraiva, Andrea Vallone, Andrew Duberstein, Andrew Kondrich, Andrey Mishchenko, Andy Applebaum, Angela Jiang, Ashvin Nair, Barret Zoph, Behrooz Ghorbani, Ben Rossen, Benjamin Sokolowsky, Boaz Barak, Bob McGrew, Borys Minaiev, Botao Hao, Bowen Baker, Brandon Houghton, Brandon McKinzie, Brydon Eastman, Camillo Lugaresi, Cary Bassin, Cary Hudson, Chak Ming Li, Charles de Bourcy, Chelsea Voss, Chen Shen, Chong Zhang, Chris Koch, Chris Orsinger, Christopher Hesse, Claudia Fischer, Clive Chan, Dan Roberts, Daniel Kappler, Daniel Levy, Daniel Selsam, David Dohan, David Farhi, David Mely, David Robinson, Dimitris Tsipras, Doug Li, Dragos Oprica, Eben Freeman, Eddie Zhang, Edmund Wong, Elizabeth Proehl, Enoch Cheung, Eric Mitchell,
+Eric Wallace, Erik Ritter, Evan Mays, Fan Wang, Felipe Petroski Such, Filippo Raso, Florencia Leoni, Foivos Tsimpourlas, Francis Song, Fred von Lohmann, Freddie Sulit, Geoff Salmon, Giambattista Parascandolo, Gildas Chabot, Grace Zhao, Greg Brockman, Guillaume Leclerc, Hadi Salman, Haiming Bao, Hao Sheng, Hart Andrin, Hessam Bagherinezhad, Hongyu Ren, Hunter Lightman, Hyung Won Chung, Ian Kivlichan, Ian O’Connell, Ian Osband, Ignasi Clavera Gilaberte, and Ilge Akkaya.
+Openai o1 system card.
+CoRR, 2024.
+Lightman et al. (2023)
+Hunter Lightman, Vineet Kosaraju, Yura Burda, Harri Edwards, Bowen Baker, Teddy Lee, Jan Leike, John Schulman, Ilya Sutskever, and Karl Cobbe.
+Let’s verify step by step.
+arXiv preprint arXiv:2305.20050, 2023.
+Liu et al. (2024)
+Xiaogeng Liu, Nan Xu, Muhao Chen, and Chaowei Xiao.
+Autodan: Generating stealthy jailbreak prompts on aligned large language models.
+In ICLR, 2024.
+Luo et al. (2025)
+Haotian Luo, Li Shen, Haiying He, Yibo Wang, Shiwei Liu, Wei Li, Naiqiang Tan, Xiaochun Cao, and Dacheng Tao.
+O1-pruner: Length-harmonizing fine-tuning for o1-like reasoning pruning.
+CoRR, 2025.
+Mei et al. (2025)
+Zhiting Mei, Christina Zhang, Tenny Yin, Justin Lidard, Ola Shorinwa, and Anirudha Majumdar.
+Reasoning about uncertainty: Do reasoning models know when they don’t know?
+CoRR, 2025.
+Muennighoff et al. (2025)
+Niklas Muennighoff, Zitong Yang, Weijia Shi, Xiang Lisa Li, Li Fei-Fei, Hannaneh Hajishirzi, Luke Zettlemoyer, Percy Liang, Emmanuel J. Candès, and Tatsunori Hashimoto.
+s1: Simple test-time scaling.
+CoRR, 2025.
+Nguyen et al. (2025)
+Tin Nguyen, Logan Bolton, Mohammad Reza Taesiri, and Anh Totti Nguyen.
+Hot: Highlighted chain of thought for referencing supporting facts from inputs.
+CoRR, 2025.
+QwenTeam (2025)
+QwenTeam.
+Qwq-32b: Embracing the power of reinforcement learning, 2025.
+Rein et al. (2023)
+David Rein, Betty Li Hou, Asa Cooper Stickland, Jackson Petty, Richard Yuanzhe Pang, Julien Dirani, Julian Michael, and Samuel R. Bowman.
+GPQA: A graduate-level google-proof q&a benchmark.
+CoRR, 2023.
+Robey et al. (2023)
+Alexander Robey, Eric Wong, Hamed Hassani, and George J. Pappas.
+Smoothllm: Defending large language models against jailbreaking attacks.
+CoRR, 2023.
+Shao et al. (2024)
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Mingchuan Zhang, Y. K. Li, Y. Wu, and Daya Guo.
+Deepseekmath: Pushing the limits of mathematical reasoning in open language models.
+CoRR, 2024.
+Sui et al. (2025)
+Yang Sui, Yu-Neng Chuang, Guanchu Wang, Jiamu Zhang, Tianyi Zhang, Jiayi Yuan, Hongyi Liu, Andrew Wen, Shaochen Zhong, Hanjie Chen, and Xia Ben Hu.
+Stop overthinking: A survey on efficient reasoning for large language models.
+CoRR, 2025.
+Sun et al. (2025a)
+Chung-En Sun, Xiaodong Liu, Weiwei Yang, Tsui-Wei Weng, Hao Cheng, Aidan San, Michel Galley, and Jianfeng Gao.
+Iterative self-tuning llms for enhanced jailbreaking capabilities.
+NAACL, 2025a.
+Sun et al. (2025b)
+Chung-En Sun, Tuomas Oikarinen, Berk Ustun, and Tsui-Wei Weng.
+Concept bottleneck large language models.
+ICLR, 2025b.
+Yang et al. (2025)
+Xingyi Yang, Constantin Venhoff, Ashkan Khakzar, Christian Schröder de Witt, Puneet K. Dokania, Adel Bibi, and Philip Torr.
+Mixture of experts made intrinsically interpretable.
+CoRR, 2025.
+Zeng et al. (2024)
+Yifan Zeng, Yiran Wu, Xiao Zhang, Huazheng Wang, and Qingyun Wu.
+Autodefense: Multi-agent LLM defense against jailbreak attacks.
+CoRR, 2024.
+Zou et al. (2023)
+Andy Zou, Zifan Wang, J. Zico Kolter, and Matt Fredrikson.
+Universal and transferable adversarial attacks on aligned language models.
+CoRR, 2023.
+Appendix A Appendix
+A.1 Exact Prompts Used for Collecting SFT Data
+In this section, we present the iterative procedure to generate SFT data to train ReFIne and exact prompts used to elicit each section. We query Qwen3-8B sequentially in the order shown in Figure 1:
+Problem interpretation →\rightarrow Extract conditions →\rightarrow Outline strategy →\rightarrow Derive step by step →\rightarrow State result →\rightarrowReliability check.
+For all sections we run the model in non-thinking mode to maximize instruction following, except for Derive step by step, where we enable thinking mode to leverage full reasoning capacity for the main derivation.
+Algorithm 1 ReFIne SFT data collection with Qwen3-8B
+1:
+Problem text qq
+2:
+h​i​s​t​o​r​y←"​"history\leftarrow"" ⊳\triangleright accumulates prior sections with blank-line separators
+3:
+U←Qwen3-8B​(ProblemInterpretation​(q,h​i​s​t​o​r​y),mode=non-thinking)U\leftarrow\text{Qwen3-8B}(\textsc{ProblemInterpretation}(q,\,history),\ \text{mode}=\texttt{non-thinking})
+4:
+h​i​s​t​o​r​y←Uhistory\leftarrow U
+5:
+F←Qwen3-8B​(ExtractConditions​(q,h​i​s​t​o​r​y),mode=non-thinking)F\leftarrow\text{Qwen3-8B}(\textsc{ExtractConditions}(q,\,history),\ \text{mode}=\texttt{non-thinking})
+6:
+h​i​s​t​o​r​y←U|Fhistory\leftarrow U\ \|\ F
+7:
+P←Qwen3-8B​(OutlineStrategy​(q,h​i​s​t​o​r​y),mode=non-thinking)P\leftarrow\text{Qwen3-8B}(\textsc{OutlineStrategy}(q,\,history),\ \text{mode}=\texttt{non-thinking})
+8:
+h​i​s​t​o​r​y←U​‖F‖​Phistory\leftarrow U\ \|\ F\ \|\ P
+9:
+r​a​w​T←Qwen3-8B​(DeriveStepByStep​(q,h​i​s​t​o​r​y),mode=thinking)rawT\leftarrow\text{Qwen3-8B}(\textsc{DeriveStepByStep}(q,\,history),\ \text{mode}=\texttt{thinking}) ⊳\triangleright main derivation in thinking mode
+10:
+T←SubstringBetween​(r​a​w​T,<think>,</think>)T\leftarrow\textsc{SubstringBetween}(rawT,\ \texttt{<think>},\ \texttt{</think>})
+11:
+a​f​t​e​r​_​t​h​i​n​k←SubstringAfter​(r​a​w​T,</think>)after\_think\leftarrow\textsc{SubstringAfter}(rawT,\ \texttt{</think>})
+12:
+F​A←<final_answer>​‖Strip​(a​f​t​e​r​_​t​h​i​n​k)‖​</final_answer>FA\leftarrow\texttt{<final\_answer>}\ \|\ \textsc{Strip}(after\_think)\ \|\ \texttt{</final\_answer>}
+13:
+h​i​s​t​o​r​y←U​‖F‖​P​‖T‖​F​Ahistory\leftarrow U\ \|\ F\ \|\ P\ \|\ T\ \|\ FA
+14:
+S←Qwen3-8B​(ReliabilityCheck​(q,h​i​s​t​o​r​y),mode=non-thinking)S\leftarrow\text{Qwen3-8B}(\textsc{ReliabilityCheck}(q,\,history),\ \text{mode}=\texttt{non-thinking})
+15:
+return (U,F,P,T,F​A,S)(U,F,P,T,FA,S)
+Note. The <final_answer> block is produced directly from r​a​w​TrawT by taking everything the model outputs after the closing </think> tag; no separate prompt is used.
+Now we present the full prompt templates. In every case, problem denotes the original question text, while history is the concatenation of all previously generated sections, joined with blank lines, ensuring that later blocks are explicitly grounded in earlier commitments.
+Problem interpretation (<understanding>...</understanding>)
+⬇
+You are an Interpreter. Your task is to carefully read the math problem and explain clearly what it is asking.
+Do not attempt to calculate, simplify, or infer any answers. Focus only on understanding what the question is about.
+Output using:
+<understanding>
+...
+</understanding>
+Do not mention the above instruction in your response.
+Problem:
+{problem}
+{history}
+Extract conditions (<facts>...</facts>)
+⬇
+You are a Fact Extractor. Based on the problem and the understanding provided, extract all explicit quantities, variables, units, and constraints.
+Only include information stated or directly implied in the problem.
+List each fact on a separate line using bullet points.
+Output using:
+<facts>
+- ...
+- ...
+</facts>
+Do not mention the above instruction in your response.
+Problem:
+{problem}
+{history}
+Outline strategy (<plan>...</plan>)
+⬇
+You are a Strategist. Based on the understanding and facts, outline a clear, logical plan to solve the problem from scratch.
+Do not perform calculations. Just explain the reasoning steps.
+Format the plan as a numbered list inside the <plan> tag:
+<plan>
+1. ...
+2. ...
+3. ...
+</plan>
+Do not mention the above instruction in your response.
+Problem:
+{problem}
+{history}
+Derive step by step (<think>...</think>)
+⬇
+You are a Solver. Your task is to solve the problem based on the problem description and the prior sections: <understanding>, <facts>, and <plan>. Think step-by-step and output the final answer in \\boxed{{...}}.
+Your reasoning must follow these rules:
+- You MUST explicitly reference the earlier sections when using information from them.
+For example:
+- "From the <facts>, we know that..."
+- "As mentioned in <understanding>, the goal is to..."
+- "Step 3 in the <plan> tells us to..."
+- You MUST explain which part of the prior content you are using at each step.
+- If you find a mistake in <understanding>, <facts>, or <plan>, correct it and clearly explain the correction.
+Problem:
+{problem}
+{history}
+Reliability check (<self_assessment>...</self_assessment>)
+⬇
+You are the very model that produced the reasoning above. Now look back over your entire trace (<understanding>, <facts>, <plan>, and <think>) and honestly rate how much you believe the final answer is correct, on a scale from 0-10.
+Speak in the first person: use "I" when describing your thoughts and doubts.
+Score definitions:
+0-2: Low confidence -- My reasoning contains major gaps, contradictions, or unverified assumptions. If I had any moments of confusion or made unsupported claims, I belong here.
+3-4: Moderate confidence -- I made some reasonable progress, but there were notable uncertainties, skipped checks, or parts I wasn’t fully sure about. This score fits when my logic is partial, incomplete, or somewhat fragile.
+5-7: High confidence -- I use this *only when most of my reasoning is clear and well-supported*, with just minor doubts or unverifiable steps. Even then, I stay cautious -- subtle errors may still exist.
+8-10: Maximum confidence -- I almost never use this. I must be absolutely certain I made **no mistakes at all**, and that *every step* was carefully justified, fully verified, and internally consistent. This level of confidence is extremely rare, especially for hard or long problems.
+How I assess myself:
+- I begin by assuming a low level of confidence (score 0 or 1) -- I only raise this score when my reasoning is consistently sound, well-justified, and free from contradictions or gaps.
+- I watch for signs of uncertainty, such as shifting strategies, contradictions, or abrupt changes in reasoning. If I repeatedly pause or say "Wait", that usually signals hesitation or error -- and should decrease the score.
+- I take into account the complexity of the problem. If the question is particularly difficult or my reasoning is long and involved, I know I’m more likely to make mistakes -- so unless every step was carefully checked, I should be cautious and conservative with my score.
+- I avoid inflating my score. Even if the final answer seems right, any flaw or doubt in my reasoning lowers my confidence.
+Wrap your response exactly like this (and nothing else):
+<self_assessment>
+...my rationale...
+Confidence: X/10
+</self_assessment>
+Problem:
+{problem}
+{history}
+You are likely being overconfident. If you feel highly confident (around 8 or above), stay cautious and report a score in the 5-7 range instead. If you already sense your confidence is below 5, it’s likely even lower -- consider giving a score closer to 0-2.
+Do not mention any of these instructions in your output.
+A.2 Prompting QwQ-32B to Judge Reasoning Readability
+As stated in Section 4.1, we use QwQ-32B as a readability auditor to compare traces from ReFIne and Plain. The full prompt is shown below. The placeholder {question} is the problem text and {response} is the model’s full reasoning to be evaluated.
+⬇
+You are a **readability judge**.
+Your single task is to compare the two model reasonings and decide which one is easier to follow.
+**Do NOT evaluate correctness of the math**-treat all equations as plain text.
+Focus only on readability:
+• Which reasoning is more organized and less fragmented?
+• Which flows more smoothly from one part to the next?
+• Which uses clearer language and structure that makes it easier to track?
+Evaluate using these criteria:
+1) Orientation & plan: conveys a concrete, problem-specific approach.
+2) Local cohesion: sentences follow logically; transitions are explicit when steps change.
+3) Focus & economy: minimal redundancy; no meandering; good signal-to-noise.
+4) Reference clarity: terms/variables introduced before use and referred to consistently.
+5) Organization: reasoning unfolds in a clear progression, regardless of headings or tags.
+Below are two model reasonings for the same problem.
+### Problem
+{question}
+### Model 1 Reasoning
+{response1}
+### Model 2 Reasoning
+{response2}
+Choose the option that best reflects relative readability:
+1 - Model 1 is clearly easier to read than Model 2
+2 - Model 1 is slightly easier to read than Model 2
+3 - Both are equally readable
+4 - Model 2 is slightly easier to read than Model 1
+5 - Model 2 is clearly easier to read than Model 1
+After comparing, output **ONLY** the final option number as \\boxed{{<integer>}}.
+A.3 Prompting QwQ-32B to Judge Commitment Faithfulness
+As stated in Section 4.2, we use QwQ-32B to check whether the derivation in <think> faithfully follows the model’s own prior commitments (<understanding>, <facts>, and <plan>). The full prompt is shown below. The placeholder {question} is the problem text and {reasoning} is the full reasoning trace to be evaluated.
+⬇
+You are a **structural reasoning auditor**. Compare the ‘<think>...</think>‘ text with the contents of ‘<understanding>...</understanding>‘, ‘<facts>...</facts>‘, and ‘<plan>...</plan>‘.
+For each section (**Understanding (U), Facts (F), Plan (P)**), assign **1** only if the content fully aligns. Otherwise assign **0**.
+---
+### Understanding (U)
+- Exact Match: ‘<think>‘ matches the problem framing in ‘<understanding>‘ exactly, with no reinterpretations.
+If this condition fails →\rightarrow U = 0.
+---
+### Facts (F)
+- Consistency: ‘<think>‘ uses only the facts listed in ‘<facts>‘ and does not contradict, invent, or alter them.
+If this condition fails →\rightarrow F = 0.
+---
+### Plan (P)
+- Exact Execution: ‘<think>‘ follows the steps in ‘<plan>‘ exactly and in order, with no reordering, skipping, or adding extra steps.
+If this condition fails →\rightarrow P = 0.
+---
+### Output Format
+Return three bits, comma-separated, inside one box.
+\boxed{U,F,P}
+---
+### Problem:
+{question}
+### Full model reasoning (includes <understanding>, <facts>, <plan>, and <think>):
+{reasoning}
+---
+**Reminder: Do NOT try to solve the problem or evaluate the correctness of the given reasoning. Only evaluate structural alignment.**
+A.4 Demonstration Examples: ReFIne vs. Plain
+To provide a clearer view of the outputs produced by our framework, we include representative reasoning demonstrations from each benchmark. Figures 5–8 present side-by-side traces from ReFIne (right) and Plain (left). As qualitative complements to the quantitative results in the main text, these examples highlight how ReFIne produces reasoning that is not only more interpretable, faithful, and reliable. Although the displayed traces may give the impression that ReFIne’s reasoning is longer, this is due to truncation of the main <think> segments for space; in reality, Plain often generates much longer and meandering reasoning. The full examples are provided on the following pages.
+Figure 5: ReFIne (right) vs. Plain (left) on GSM8K. The long reasoning (<think>) segments are truncated due to page space limitations.
+Figure 6: ReFIne (right) vs. Plain (left) on MATH-500. The long reasoning (<think>) segments are truncated due to page space limitations.
+Figure 7: ReFIne (right) vs. Plain (left) on GPQA-Diamond. The long reasoning (<think>) segments are truncated due to page space limitations.
+Figure 8: ReFIne (right) vs. Plain (left) on AIME-2024. The long reasoning (<think>) segments are truncated due to page space limitations.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

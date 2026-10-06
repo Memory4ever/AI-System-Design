@@ -1,0 +1,166 @@
+Learning to Evict from Key-Value Cache (https://arxiv.org/html/2602.10238v1)
+citeturn28173view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.10238v1","lineno":null}); Total lines: 400
+L0: ##### Report GitHub Issue
+L1: 
+L2: [Button: ×]
+L3: 
+L4: Title: [Input: Enter title]
+L5: 
+L6: Content selection saved. Describe the issue below:
+L7: 
+L8: Description:
+L9: 
+L10: [Button: Submit without GitHub] [Button: Submit in GitHub]
+L11: 
+L12: cite0†Back to arXiv L13: 
+L14: cite1†Why HTML?†info.arxiv.org cite2†Report Issue cite3†Back to Abstract cite4†Download PDF L15:   1. cite5†Abstract L16:   2. cite6†1 Introduction L17:   3. cite7†2 Related Work L18:     1. cite8†Attention-Based Eviction. L19:     2. cite9†Memory Hierarchy Management. L20:     3. cite10†Representation Compression. L21:     4. cite11†Learned Approaches. L22:   4. cite12†3 KV Policy (KVP) L23:     1. cite13†3.1 KV Cache Eviction Agent L24:       1. cite14†Scoring Function L25:       2. cite15†Efficient Parallel Sampling with Gumbel-Sort L26:       3. cite16†3.1.1 Global Reward for Offline RL L27:     2. cite17†3.2 Per-Head RL Agent and Efficient Training L28:   5. cite18†4 Evaluation L29:     1. cite19†Base Model and Datasets. L30:     2. cite20†Baselines. L31:     3. cite21†Budgeting and Compression Schedule. L32:     4. cite22†Inference Efficiency. L33:     5. cite23†Absolute vs. Relative Cache Size. L34:     6. cite24†4.1 Downstream Performance L35:       1. cite25†RULER benchmark. L36:       2. cite26†OASST2 benchmark. L37:       3. cite27†Generalization to other benchmarks. L38:     7. cite28†4.2 Ablations L39:       1. cite29†Is the reward function $\mathcal{R}$ effective? L40:       2. cite30†Is RL necessary? L41:   6. cite31†5 Conclusions and Future Work L42:   7. cite32†References L43:   8. cite33†A Appendix L44:     1. cite34†A.1 Missing Proof of Proposition 1 L45:     2. cite35†A.2 Implementation details L46:     3. cite36†A.3 Training Efficiency and Inference Overhead L47:     4. cite37†A.4 Additional results L48: cite38†License: arXiv.org perpetual non-exclusive license†info.arxiv.org L49: 
+L50: arXiv:2602.10238v1 [cs.CL] 10 Feb 2026
+L51: 
+L52: \metadata
+L53: 
+L54: [Correspondence]Luca Moschella: luca_moschella@apple.com
+L55: # Learning to Evict from Key-Value Cache
+L56: 
+L57: Luca Moschella    Laura Manduchi    Ozan Sener Affiliation: Apple
+L58: 
+L59: August 24, 2026
+L60: ###### Abstract
+L61: The growing size of Large Language Models (LLMs) makes efficient inference challenging, primarily due to the memory demands of the autoregressive Key-Value (KV) cache. Existing eviction or compression methods reduce cost but rely on heuristics, such as recency or past attention scores, which serve only as indirect proxies for a token’s future utility and introduce computational overhead.
+L62: We reframe KV cache eviction as a reinforcement learning (RL) problem: learning to rank tokens by their predicted usefulness for future decoding. To this end, we introduce KV Policy (KVP), a framework of lightweight per-head RL agents trained on pre-computed generation traces using only key and value vectors.
+L63: Each agent learns a specialized eviction policy guided by future utility, which evaluates the quality of the ranking across all cache budgets, requiring no modifications to the underlying LLM or additional inference. Evaluated across two different model families on the long-context benchmark RULER and the multi-turn dialogue benchmark OASST2-4k, KVP significantly outperforms baselines.
+L64: Furthermore, zero-shot tests on standard downstream tasks (e.g., LongBench, BOOLQ, ARC) indicate that KVP generalizes well beyond its training distribution and to longer context lengths. These results demonstrate that learning to predict future token utility is a powerful and scalable paradigm for adaptive KV cache management.
+L65: ## 1 Introduction
+L66: Large Language Models (LLMs) based on the Transformer architecture (cite39†Vaswani et al., 2017 ) have revolutionized natural language processing, demonstrating remarkable capabilities across a wide range of tasks (cite40†Brown et al., 2020 ; cite41†Önden and Alnour, 2023 ; cite42†Touvron et al., 2023 ). However, their practical deployment, especially for applications involving long sequences or interactive sessions, is often burdened by substantial computational requirements during inference.
+L67: A critical bottleneck arises from the Key-Value (KV) cache, a mechanism inherent to autoregressive generation in Transformers (cite43†Sheng et al., 2023 ). This cache stores the keys and values of previous tokens, avoiding redundant computations but growing linearly with the input and generated sequence length.
+L68: For long contexts, the KV cache can consume tens or even hundreds of gigabytes of memory, rapidly exceeding the capacity of modern hardware accelerators and necessitating strategies for efficient management.
+L69: To address this memory challenge, several KV cache management techniques have been proposed. These range from simple heuristics like keeping only the most recent tokens (sliding window), to more sophisticated methods that leverage insights into attention patterns. Approaches like H2O, SnapKV, and TOVA cite44†Zhang et al. (2023) ; cite45†Li et al. (2024) ; cite46†Oren et al. (2024) use signals such as past attention scores or attention sinks to identify and retain important tokens.
+L70: Others employ quantization to reduce the memory footprint (cite47†Sharma et al., 2025 ; cite48†Dettmers et al., 2022 ; cite49†Xiao et al., 2023 ) or use low-rank approximations to represent the cache state more compactly (cite50†Singhania et al., 2024 ; cite51†Ribar et al., 2024 ).
+L71: Figure 1: Future token importance for KV cache eviction. Effective KV cache eviction requires identifying tokens that will receive little or no future attention. (center) We roll out a sample KV cache and measure the true cumulative future attention for each token, then rank tokens by this importance and color them accordingly (bright = high rank, white = low). (right) Importance estimated by the fixed sink-and-recency heuristic of StreamingLLM deviates substantially from true importance ranking.
+L72: (left) Our learned policy closely recovers the complex, non-local structure of future attention despite using only past keys and values, without access to queries, attention scores, or future tokens. We expand the comparison with all strategies in cite52†Figure 8 .
+L73: While these hand-crafted policies have advanced the state of the art, they are fundamentally built on heuristics that serve as indirect proxies for a token’s future importance. They assume that what was important before will remain important. This assumption might not always hold, as the informational needs of generation are dynamic and content-dependent. A token’s true value is determined by its utility to future decoding steps, a quantity these methods do not directly optimize for.
+L74: Consequently, they are prone to suboptimal eviction decisions, leading to an irrecoverable loss of critical information and degraded generation quality. Even post-hoc compression methods based on attention signals are fundamentally backward-looking and have additional drawbacks: they require repeated computation of attention statistics, which introduces significant overhead; and they are not compatible with efficient implementations like FlashAttention (cite53†Dao et al., 2022 ), limiting their practicality.
+L75: In this work, we move beyond hand-crafted policies and reframe KV cache eviction as a Reinforcement Learning (RL) problem: learning an attention-free policy that selects which tokens to evict. We formulate this learning problem as a ranking task, where the agent orders tokens by their predicted future utility. As qualitatively illustrated in cite54†Figure 1 , a learned policy can successfully approximate a token’s future utility, a complex, non-local structure, where simple heuristics fail.
+L76: Such a ranking enables a highly efficient and flexible strategy: eviction is performed by discarding the lowest-ranked entries to meet any memory budget. As a reward signal, we define the ranking successful if for any given cache size, the most valuable information is retained, thus minimizing performance degradation.
+L77: We introduce KV Policy (KVP), a framework that trains a distinct, lightweight RL agent for each KV head in the model. This per-head specialization allows each policy to adapt to the unique attentional patterns of its corresponding head. The agents are trained efficiently on pre-computed generation traces without any additional inference, using only the key and value vectors as input and requiring no architectural changes to the underlying LLM.
+L78: To train the agents, we introduce a reward that evaluates the quality of the policy’s sorting for all possible cache budgets. For every cache budget, we measure how much relevant information in the future would be erroneously evicted with the candidate sorting when only the top tokens from the cache are kept.
+L79: Evaluated across two different model families on long-context synthetic benchmark RULER (cite55†Hsieh et al., 2024 ) and a multi-turn natural language benchmark OASST2-4k (cite56†Köpf et al., 2023 ), KVP significantly outperforms strong heuristic baselines, demonstrating that learning specialized policies to predict the future utility of tokens is a powerful and scalable paradigm for KV cache eviction.
+L80: Evaluation in a zero-shot generalization setting on downstream benchmarks from the EleutherAI Evaluation Harness (cite57†Gao et al., 2024 ) shows that KVP retains strong performance out of distribution, even to longer context lengths.
+L81: In summary, our main contributions are:
+L82: 
+L83:   * •
+L84: 
+L85: We reframe KV cache eviction as a learning problem: ranking cache entries by their predicted future utility.
+L86: 
+L87:   * •
+L88: 
+L89: We introduce KVP, a system of lightweight, per-head RL agents that learn specialized sorting policies using only keys and values without any attention information.
+L90: 
+L91:   * •
+L92: 
+L93: We propose a holistic reward that evaluates eviction policies across all cache budgets without additional LLM inference.
+L94: 
+L95:   * •
+L96: We show that KVP substantially improves long-context performance over strong baselines and generalizes to unseen domains and longer context lengths.
+L97: ## 2 Related Work
+L98: ##### Attention-Based Eviction.
+L99: Eviction-based approaches aim to choose a subset of the KV cache. Early methods used simple heuristics like First-In-First-Out (FIFO) or Least Recently Used (LRU) (cite58†Xiao et al., 2024 ). More recent work leverages the inherent sparsity in attention patterns. Techniques like StreamingLLM (cite58†Xiao et al., 2024 ) and H2O (cite44†Zhang et al., 2023 ) observe that initial tokens ("attention sinks") and recent tokens often capture most of the required context, allowing for the eviction of intermediate tokens.
+L100: Others, such as KeyFormer (cite59†Adnan et al., 2024 ) and related works (cite60†Cai et al., 2024 ; cite61†Chari and Durme, 2025 ; cite62†Devoto et al., 2025 ), explicitly analyze attention scores or structures to identify and retain important tokens, sometimes using the current query to inform eviction (cite63†Zhang et al., 2025a ; cite45†Li et al., 2024 ; cite64†Lee et al., 2024a ).
+L101: Although our work is an eviction methodology, it departs from this paradigm by instead learning a forward-looking, query-independent policy to directly predict a token’s future utility, rather than inferring it from past attention or the current query.
+L102: ##### Memory Hierarchy Management.
+L103: Some approaches utilize system memory (CPU RAM) as a secondary cache layer (cite65†Chen et al., 2024b ; cite43†Sheng et al., 2023 ) to the GPU memory. Recent sparse retrieval approaches, such as IceCache (cite66†Anonymous, 2025 ), ArkVale (cite67†Chen et al., 2024a ), MagicPig (cite68†Chen et al., 2025 ), and InfiniGen (cite69†Lee et al., 2024b ), manage these hierarchies by offloading KV entries to slower memory and retrieving them only when needed, possibly in pages (cite70†Tang et al., 2024 ).
+L104: While this allows for larger cache sizes, it introduces significant latency (a reload cost) when accessing offloaded entries. Policies for deciding what and when to offload are often heuristic. While our work focuses on eviction, the learned ranking it produces provides a principled, data-driven signal for such hierarchical management: the lowest-ranked entries are natural candidates for being moved to slower memory, representing a powerful synergy between our approaches.
+L105: ##### Representation Compression.
+L106: Instead of removing entries, another line of work focuses on reducing the memory required per entry.
+L107: Quantization techniques reduce the numerical precision (e.g., to 8-bit integers or lower) of keys and values, cutting memory usage, often with minimal performance impact (cite47†Sharma et al., 2025 ; cite48†Dettmers et al., 2022 ; cite49†Xiao et al., 2023 ), while low-rank approximation methods represent the key and value matrices using lower-dimensional projections (cite71†Chang et al., 2025 ; cite50†Singhania et al., 2024 ; cite51†Ribar et al., 2024 ).
+L108: State merging approaches like MorphKV (cite72†Ghadia et al., 2025 ) identify and combine similar KV pairs into new, synthetic representations. These techniques are orthogonal and complementary to eviction strategies, as one could utilize our approach to filter out the least useful tokens and then apply MorphKV’s merging logic to the remaining high-utility tokens.
+L109: ##### Learned Approaches.
+L110: Applying machine learning to directly optimize cache management policies is less common than heuristic approaches. While learning has been used extensively for general caching problems (cite73†Afrin et al., 2024 ; cite74†Shuja et al., 2020 ; cite75†Wang and Friderikos, 2020 ), its application specifically to the dynamic nature of the Transformer KV cache is emerging (cite76†Chari et al., 2025 ; cite77†Cetin et al., 2024 ; cite78†Nawrot et al., 2024 ; cite79†Ge et al., 2024 ).
+L111: Some recent works, such as Gisting Token (cite80†Deng et al., 2025 ) and Activation Beacon (cite81†Zhang et al., 2025b ), learn to compress context into compact summary tokens or condensed activations. Our work differs by learning a fine-grained ranking over all tokens rather than a summary; however, these approaches are complementary, as KVP could identify which tokens are best suited for summarization. Our approach is distinguished by utilizing RL to train a lightweight, per-head policy.
+L112: A novel reward signal, the eviction error across all cache budgets, ensures robust performance under varying memory limits. Furthermore, the per-head rankings and future attention estimates from KVP could directly inform a dynamic, non-uniform budget allocation, a promising direction for future work.
+L113: Overall, while prior work has addressed KV cache constraints through heuristics, memory hierarchies, or compression, our approach introduces an RL framework that casts eviction as a ranking problem. By training lightweight, per-head policies to predict tokens’ future utility and optimizing them with a global, budget-agnostic reward, we offer an adaptive, query-independent solution.
+L114: Similar in philosophy, the concurrent work cite82†Jegou and Jeblick (2026) approximates KV importance scores estimated by cite83†Kim et al. (2025) , though this comes at the cost of two LLM forward passes. Crucially, the proposed approach, KVP, is also complementary to many existing techniques, and may provide a principled signal for memory offloading, context gisting, or dynamic budget allocation.
+L115: ## 3 KV Policy (KVP)
+L116: 
+L117: We consider the problem of KV cache eviction: given $n$ tokens $\mathcal{X}=\{x_{i}\}_{i\in[n]}$ and a budget $b$, select a subset $\mathcal{S}^{\star}\subset\mathcal{X}$ maximizing some downstream performance reward $R$ as
+L118: 
+L119:  | $$\mathcal{S}^{\star}_{b}\in{\arg\max}_{|\mathcal{S}|=b,\mathcal{S}\subset\mathcal{X}}R(\mathcal{S}).$$  |  | (3.1)
+L120: Because generation is autoregressive and budgets vary over time, the solution must handle arbitrary $n$ and all $b\in[n]$. Although this selection problem is NP–hard even for linear rewards (cite84†Nemhauser et al., 1978 ), it becomes structured under two mild conditions: (i) uniqueness: each $\mathcal{S}^{\star}_{b}$ is unique and (ii) nestedness: $\mathcal{S}^{\star}_{b}\subset\mathcal{S}^{\star}_{b+1}$ for all $b$.
+L121: Uniqueness can be straightforwardly achieved with simple tie-breaking and nestedness is natural because tokens essential under a small budget should remain so as capacity grows. Under these constraints KV cache eviction problem is equivalent to KV cache ranking with proof deferred to Appendix cite34†A.1 .
+L122: ###### Proposition 1.
+L123: 
+L124: Assume (i) uniqueness of each $S_{b}^{\star}$ and (ii) nestedness: $S_{b}^{\star}\subset S_{b+1}^{\star}\text{ for all }b$. Then, there exists a total order (ranking) $\pi$ such that
+L125: 
+L126:  | $$S_{b}^{\star}=\{\,i\in[n]:\ \pi(i)\leq b\,\}\quad\text{for all }b.$$  |
+L127: 
+L128: Equivalently, there exists a scoring function whose top-$b$ elements realize $S_{b}^{\star}$ for every $b$.
+L129: Following proposition cite85†1 , we reformulate eviction as learning a single budget-agnostic scoring function. For a given budget $b$, we sort the cache entries from most to least valuable for future decoding using the learned scoring function and retain the top-$b$. A high-quality ranking preserves critical information across all budgets, minimizing degradation.
+L130: We use RL to learn this scoring function. We parameterize a stochastic ranking policy and directly optimize the true discrete end-to-end reward using policy-gradient methods. We analyze this choice against differentiable relaxations of sorting (cite86†Prillo and Eisenschlos, 2020 ; cite87†Grover et al., 2019 ; cite88†Blondel et al., 2020 ) in cite30†Section 4.2 .
+L131: We employ a lightweight RL agent, governed by parameters $\theta$, to define the scoring function $f(;\theta)$. To capture the specialized functions of different attention mechanisms, we train a distinct agent for each KV head in the LLM. To this end, we introduce KVP, a framework for efficiently training lightweight, per-head RL agents to perform this ranking. In the remaining of this section, we first discuss the agent architecture, the reward, and finally the learning process.
+L132: ### 3.1 KV Cache Eviction Agent
+L133: 
+L134: We follow the Plackett-Luce model (cite89†Plackett, 1975 ) to formulate learning to sort as an RL problem. Given a set of tokens $\{x_{i}\}_{i\in[N]}$, we learn a parametric scoring function $f(x_{i};\theta)$ which assigns a score to each token $x_{i}$. This scoring function induces a stochastic sorting policy $\pi_{\theta}$ which samples permutation $\sigma=(\sigma_{1},\ldots,\sigma_{N})$ sequentially as:
+L135:  | $$\pi_{\theta}(\sigma|x_{1},\ldots,x_{N})=\prod_{i=1}^{N}\frac{\exp\left(f(x_{\sigma_{i}};\theta)\right)}{\sum_{j=i}^{N}\exp\left(f(x_{\sigma_{j}};\theta)\right)}$$  |  | (3.2)
+L136: At each step $i$, the next element $\sigma_{i}$ is sampled proportionally to its score, normalized over the remaining tokens. This process defines a valid distribution over all permutations. The scoring function $f(;\theta)$ together with the sampling policy, forms our KV cache eviction agent. We next specify the parameterization of $f(;\theta)$.
+L137: ##### Scoring Function
+L138: The representation for token $x_{i}$ is the concatenation of its key vector $k_{i}$, value vector $v_{i}$, and its original position $pos_{i}$ as $x_{i}=(k_{i},v_{i},pos_{i})$. We define the scoring function $f(;\theta)$ as a small MLP parametrized with $\theta$ as $f(x_{i}\theta)=MLP_{\theta}(k_{i},v_{i},pos_{i})$. Crucially, the policy relies only on information available in the cache and does not require access to future information, previous attention scores or any query embedding.
+L139: ##### Efficient Parallel Sampling with Gumbel-Sort
+L140: 
+L141: While cite90†Equation 3.2 defines the distribution, sequential sampling is inefficient. Fortunately, a permutation can be sampled from this distribution in a single step using the Gumbel-Sort (cite91†Mena et al., 2018 ). Given the scores $f(x_{i};\theta)$, we generate i.i.d. noise samples $g_{i}\sim\text{Gumbel}(0,1)$. A permutation $\sigma$ is then sampled by sorting the perturbed scores:
+L142:  | $$\sigma=\text{{argsort}}_{i\in[N]}\left(f(x_{i};\theta)+g_{i}\right)$$  |  | (3.3)
+L143: 
+L144: This procedure is non-autoregressive, fully parallelizable on modern hardware, and allows us to sample an entire permutation with just one forward pass of the scoring model and a fast sort operation. This is critical for efficient training.
+L145: #### 3.1.1 Global Reward for Offline RL
+L146: 
+L147: A key component of our framework is a reward signal that globally evaluates the quality of an agent’s entire ranked output, directly optimizing for the efficient preservation of information across all possible cache budgets. More importantly we define this reward in a way to enable training without any additional LLM inference.
+L148: Consider the input set of $n$ tokens $\mathcal{X}=\{x_{i}\}_{i\in[n]}$ and a candidate permutation $\{\sigma_{i}\}_{i\in[n]}$, ordered from most to least important. The total reward is defined as the sum of reward over all possible target cache sizes $1\leq b\leq n-1$. Since the kept tokens are always the top-b, this translates into
+L149: 
+L150:  | $$\mathcal{R}(\sigma_{1},\ldots,\sigma_{n};\mathcal{X})=\sum_{b=1}^{n-1}\mathcal{R}^{b}(\sigma_{n-b},\ldots,\sigma_{n};\mathcal{X})$$  |  | (3.4)
+L151: where $\mathcal{R}^{b}$ is the reward for a specific budget $b$.
+L152: 
+L153: We define $\mathcal{R}^{b}$ based on an importance score derived from the future attention patterns. Consider $f$ future tokens ($x_{n+1}$ to $x_{n+f}$) in the training data after $n$ input tokens and the attention as $A(x_{i},x_{j})$, we define the importance of token $x_{i}$ as the total future attention it accumulates: $\sum_{j=n+1}^{n+f}A(x_{i},x_{j})$.
+L154: Given the permutation $\sigma$, a cache of budget $b$ retains the top-$b$ tokens $\sigma_{1},\ldots,\sigma_{b}$ and evicts the rest. The cost for this budget is the total importance of the evicted tokens. We define the per-budget reward $\mathcal{R}^{b}$ as the negative of this cost for all evicted tokens:
+L155: 
+L156:  | $$\mathcal{R}^{b}(\sigma_{1},\ldots,\sigma_{n};\mathcal{X})=-\sum_{i=b+1}^{n}\sum_{j=n+1}^{n+f}A(x_{\sigma_{i}},x_{j})$$  |  | (3.5)
+L157: For models with Grouped-Query Attention (cite92†Ainslie et al., 2023 ), the attention score $A(x_{i},x_{j})$ is the maximum attention value across all queries within that group.
+L158: To create an objective invariant to scale and attention scores distribution, we normalize the total cost by the cost incurred by an optimal ranking $\sigma^{\star}$. The final reward we optimize is normalized $\nicefrac{{\mathcal{R}(\sigma_{1},\ldots,\sigma_{n};\mathcal{X})}}{{\mathcal{R}(\sigma_{1}^{\star},\ldots,\sigma_{n}^{\star};\mathcal{X})}}$.
+L159: In cite18†Section 4 , when we refer directly to $\mathcal{R}^{b}$, we always refer to its normalized version $\nicefrac{{\mathcal{R}^{b}(\sigma_{1},\ldots,\sigma_{n};\mathcal{X})}}{{\mathcal{R}(\sigma_{1}^{\star},\ldots,\sigma_{n}^{\star};\mathcal{X})}}$.
+L160: ### 3.2 Per-Head RL Agent and Efficient Training
+L161: A significant advantage of our method is its training efficiency. The agents are trained entirely offline, obviating the need for live LLM inference within the RL optimization loop. This is due to the fact that our usefulness score is function of true sequences, not generated sequences. First, we generate a dataset by running the base LLM on a training corpus. For each sample, we store the full sequence of queries, keys, and values. The attention matrices are not stored due to their prohibitive size.
+L162: During training, we sample a sequence and a cache size to be evicted from. We update the parameters $\theta$ of the agent using a policy gradient algorithm. Since our reward $\mathcal{R}(\sigma)$ is a terminal reward assigned only after the entire permutation $\sigma$ is generated, the objective is $J(\theta)=\mathbb{E}_{\sigma\sim\pi_{\theta}}[\mathcal{R}(\sigma)]$. We use the REINFORCE algorithm with a Leave-One-Out (RLOO) baseline (cite93†Williams, 1992 ; cite94†Ahmadian et al., 2024 ) to reduce variance.
+L163: For an episode (permutation) $\sigma^{k}$ within a batch of $K$ episodes, the baseline $\bar{\mathcal{R}}$ is the average terminal reward of all other episodes in the batch. Considering the advantage, $\mathcal{R}(\sigma^{k})-\bar{\mathcal{R}}$, the gradient is thus estimated as:
+L164:  | $\displaystyle\nabla_{\theta}J(\theta)\approx\frac{1}{K}\sum_{k=1}^{K}\Big[(\mathcal{R}(\sigma^{k})-\bar{\mathcal{R}})\sum_{i=1}^{n}\nabla_{\theta}\log\pi_{\theta}(\sigma^{k}_{i}|\mathcal{X})\Big].$  |  | (3.6)
+L165: We summarize the training in Alg. cite95†1 and defer the further implementation details to cite35†Section A.2 . Training per-head agents from offline traces is highly scalable. At inference, the learned policy for each head ranks its KV entries, and the trailing entries are evicted based on the budget.
+L166: 
+L167: Algorithm 1 RL Training on Pre-Computed KV Traces
+L168: 1: Input: Static dataset of pre-computed traces over $m$ sequences each with length $n_{j},j\in[m]$ denoted as $\mathcal{X}^{j}=\{x^{j}_{i}\}_{i\in n_{j}}$ containing Q, K, V tensors.
+L169: 
+L170: 2: while training not converged do
+L171: 
+L172: 3:   Sample a data item $j\sim\texttt{Unif}(m)$ and a cache size $n\sim\texttt{Unif}(n_{j})$.
+L173: 
+L174: 4:   Sample $K$ permutations from the agent
+L175:  | $$\sigma^{k}_{1},\ldots,\sigma^{k}_{n}\sim\pi_{\theta}(\sigma|x_{1}^{j},\ldots,x_{n}^{j}),k\in[K]$$  |
+L176: 5:   Calculate reward $\mathcal{R}(\sigma^{k}_{1},\ldots,\sigma^{k}_{n};\mathcal{X}^{j})$ using equation cite96†3.4 .
+L177: 
+L178: 6:   Update $\theta$ using equation cite97†3.6 .
+L179: 
+L180: 7: end while
+L181: ## 4 Evaluation
+L182: We conduct a comprehensive evaluation of KVP across multiple language modeling benchmarks and a wide range of cache budgets. Our results show that KVP consistently shows stronger downstream performance relative to existing heuristics, including methods that exploit privileged, query-specific information. This results confirm that high-quality KV cache eviction policy can be trained entirely offline and deployed at inference time using only static token features (keys, values, and positions).
+L183: We also provide ablation studies to analyze the design choices behind KVP.
+L184: Figure 2: Overall accuracy on the RULER benchmark (Left) and perplexity on the OASST2-4k test set (Right), as a function of the absolute KV cache size. KVP achieves the highest accuracy and lowest perplexity across most of the possible cache sizes.
+L185: ##### Base Model and Datasets.
+L186: Our experimental setup is centered on the Qwen2.5-7B-Chat model (cite98†Yang et al., 2024 ; cite99†Wang et al., 2024 ), a state-of-the-art transformer LLM. We include further evaluation using Phi-4 14B (cite100†Abdin et al., 2025 ) in the Appendix, cite101†Figure 7 .
+L187: We train and evaluate our KVP agents using two distinct long-context benchmarks: RULER-4k (cite55†Hsieh et al., 2024 ), a synthetic dataset designed to probe long-context reasoning with sequences of approximately 4500 tokens; and OASST2-4k, a curated subset of the OpenAssistant Conversations Dataset (cite56†Köpf et al., 2023 ) featuring multi-turn dialogues of similar length.
+L188: To assess generalization, we further perform zero-shot evaluation on four standard downstream benchmarks from the EleutherAI Language Model Evaluation Harness (cite57†Gao et al., 2024 ): BoolQ (cite102†Clark et al., 2019 ), a reading comprehension task framed as yes/no question answering; ARC-Challenge (cite103†Clark et al., 2018 ), a collection of science exam questions requiring multi-step reasoning; MMLU (cite104†Hendrycks et al., 2021 ), a benchmark testing expert-level knowledge across a wide range of domains; HellaSwag (cite105†Zellers et al., 2019 ), a commonsense sentence completion task; and GovReport (cite106†Bai et al., 2023 ), a summarization task from the LongBench benchmark for long context understanding.
+L189: Importantly, KVP is not trained or fine-tuned on these tasks. We defer further implementation details to cite35†Section A.2 .
+L190: ##### Baselines.
+L191: We benchmark KVP against both attention-based and attention-free KV cache management techniques. The first category includes state-of-the-art methods like TOVA (cite46†Oren et al., 2024 ) and SnapKV (cite45†Li et al., 2024 ). These methods leverage attention scores to identify important tokens, which introduces computational overhead by tying the eviction strategy to the attention calculation step.
+L192: The second, more efficient category of attention-free baselines, to which our own KVP agents belong, operates independently of the attention mechanism. This group includes a Random eviction baseline, the recency-based StreamingLLM (cite58†Xiao et al., 2024 ), and several approaches that prune tokens based on their key embeddings.
+L193: These include methods based on statistical patterns (LagKV (cite107†Liang et al., 2025 )), vector similarity (KeyDiff (cite108†Park et al., 2025 )), and L2 norm (K-Norm (cite109†Devoto et al., 2024 )). To ensure a fair comparison, we adapt all baselines to our ranking-based framework by converting their binary keep/evict decisions into a full token permutation, enabling consistent evaluation.
+L194: ##### Budgeting and Compression Schedule.
+L195: For all online evaluations, we follow a consistent compression protocol. First, the entire context, including the final user message or question that prompts the generation, is processed by the LLM to populate the initial KV cache (the “prefill” stage). Second, the specified compression method is applied to this pre-populated cache to reduce its size to the target budget. Finally, the model generates the response autoregressively using the compressed cache.
+L196: This setup tests the ability to compress a large context before generation begins. To isolate the performance of the core ranking strategy, we apply a uniform compression budget across all heads and layers for all methods. This ensures a fair comparison focused purely on the quality of the eviction strategy itself, rather than on budget allocation heuristics.
+L197: While head-specific or layer-specific budgeting is an orthogonal and promising direction for further performance improvements, our approach provides a clear and interpretable evaluation of the underlying policies.
+L198: ##### Inference Efficiency.
+

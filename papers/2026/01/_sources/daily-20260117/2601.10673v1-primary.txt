@@ -1,0 +1,235 @@
+Single-Stage Huffman Encoder for ML Compression
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Background
+2 Experimental Setup
+3 Results
+4 Implementation
+5 Conclusion
+References
+License: CC BY 4.0
+arXiv:2601.10673v1 [cs.LG] 15 Jan 2026
+Single-Stage Huffman Encoder for ML Compression
+Aditya Agrawal
+Email: adityaag@google.com
+Albert Magyar
+Email: amagyar@google.com
+Hiteshwar Eswaraiah
+Email: hiteshwarbe@google.com
+Patrick Sheridan
+Email: sheridp@google.com
+Pradeep Janedula
+Email: pjanedula@google.com
+Ravi Krishnan Venkatesan
+Email: ravikrishnan@google.com
+Krishna Nair
+Email: krishnaknair@google.com
+Ravi Iyer
+Email: raviyer@google.com
+Google LLC
+Abstract
+Training and serving Large Language Models (LLMs) require partitioning data across multiple accelerators, where collective operations are frequently bottlenecked by network bandwidth. Lossless compression using Huffman codes is an effective way to alleviate the issue,
+however, its three-stage design requiring on-the-fly frequency analysis, codebook generation
+and transmission of codebook along with data introduces computational, latency and data overheads which are prohibitive for latency-sensitive scenarios such as die-to-die communication.
+This paper proposes a single-stage Huffman encoder that eliminates these overheads
+by using fixed codebooks derived from the average probability distribution of previous data batches. Through our analysis of the Gemma 2B model, we demonstrate that tensors exhibit high
+statistical similarity across layers and shards. Using this approach we achieve compression
+within 0.5% of per-shard Huffman coding and within 1% of the ideal Shannon compressibility, enabling efficient on-the-fly compression.
+1 Background
+Training and serving Large Language Models (LLMs) e.g.,
+Gemini [3], Gemma [13, 17], LLaMA [20], GPT [15]
+require partitioning (sharding) the data (parameters, activations, optimizer state etc.) and parallelizing the computation across multiple accelerators.
+There are multiple paradigms of parallelism e.g., Data Parallelism, Tensor Parallelism, Pipeline Parallelism, Expert Parallelism and Sequence Parallelism [19, 11, 16, 14, 21, 12, 4].
+Different parallelization strategies invoke different collective operations e.g., AllReduce, ReduceScatter, AllGather, AlltoAll [5]. Collective operations are typically bounded by network bandwidth.
+Lossless compression is an effective way to reduce the network traffic and improve collective performance. Huffman codes [9] either directly or as part of other algorithms e.g., DEFLATE [7], Zstandard [6], Brotli [2] are commonly used for lossless data compression. They exploit the distribution of symbol frequencies and are optimal entropy codes.
+A Huffman encoder typically has three stages. In the first stage we scan the entire input to build a frequency table of the symbols. In the second stage, we run the Huffman algorithm to generate the codes, typically variable length, for each symbol. Finally, we scan the input again and replace the symbols with their corresponding codes.
+The three-stage encoder is useful when the overhead of compression is compensated by a reduction in the network transfer time. However, for extremely latency sensitive scenarios e.g., die-to-die communication, building a frequency table and running the Huffman algorithm is computationally expensive and adds significant latency. In addition, the code book used for encoding has to be communicated to the receiver. These computation, latency and data overheads can erode any benefits of doing on-the-fly compression.
+2 Experimental Setup
+We analyzed the Gemma 2B model [13] during Supervised Fine Tuning (SFT). The model has 18 layers and is sharded over 64 TPUs. We analyzed the weight, activation, weight gradient and activation gradient tensors of the feed forward layers, FFN1 and FFN2. Overall, there are 18×64=115218\times 64=1152 shards of each tensor type e.g., FFN1 activation. We analyzed the compressibility at different data types, namely, bfloat16 [22], e4m3, e3m2, e2m3 and e2m1 [1, 18]. We present our observations and compressibility results for FFN1 activation tensor at data type bfloat16.
+3 Results
+Fig. 1 shows the Probability Mass Function (PMF) of one shard of FFN1 activation with a symbol size of 8 bits i.e., 256 symbols. This distribution has a Shannon entropy [8] of 6.25 bits and hence an ideal compressibility of 8−6.258≈21.9%\frac{8-6.25}{8}\approx 21.9\%. For this distribution, the compressibility achieved using Huffman codes is ≈21.6%\approx 21.6\%.
+Fig. 2 shows the distribution of the ideal per shard compressibility and the compressibility achieved using per shard Huffman codes for all 1152 shards.
+The ideal compressibility of most shards is ≈21−23%\approx 21-23\%.
+As expected, Huffman codes achieve close to the ideal compression, however, this requires a three-stage encoder.
+Figure 1: Probability Mass Function (PMF) of FFN1 activation.
+Figure 2: Compressibility of FFN1 activation shards using Huffman codes.
+We observed that the PMF of all the FFN1 activation shards were very similar. Instead of calculating the KL divergence [10] for all 115221152^{2} shard pairs, we obtained the average PMF and then calculated the KL divergence of each shard from this average distribution. Fig. 3 shows the KL divergence of each shard from the average distribution. A small KL divergence (< 0.06) confirms that the PMF of the different shards are indeed similar and that the average distribution is a good approximation of the true distribution.
+Figure 3: KL divergence of FFN1 activation shards from the average PMF.
+Fig. 4 shows the distribution of ideal per shard compressibility, compressibility achieved using per shard Huffman codes and compressibility achieved using Huffman codes obtained from the average distribution and then applied to all shards.
+Huffman codes obtained from the average distribution achieve a compressibility within 1% of the ideal Shannon compressibility and within 0.5% of the compressibility achieved by using per shard Huffman codes.
+The histograms and compressibility are different for other tensors and datatypes, however, they still exhibit statistical similarity between shards and codebooks derived from the average distribution achieve compression close to that achieved using per shard Huffman codes.
+Figure 4: Compressibility using Huffman codes derived from the average distribution.
+4 Implementation
+The average distribution can be obtained from previous batches during training or serving. The Huffman codes can be obtained from the average distribution off the critical path. A system of accelerators for ML training, fine tuning, and serving will have multiple code books, one for each tensor e.g., FFN1 activation, FFN2 weight gradient etc.
+The selection of a specific code book can be done in software or hardware. In a software implementation, the code book is selected by the programmer. In a hardware implementation, multiple code books can be evaluated for compressibility in parallel. The code book which achieves the best compression is selected.
+The code books are shared between the participating nodes and so the encoder sends only the encoded values and the code book id used for encoding.
+5 Conclusion
+This paper addresses the bottleneck of network bandwidth in training and serving Large Language Models (LLMs), where collective operations often limit performance. Traditional Huffman coding provides optimal lossless compression, however, its three-stage process, requiring on-the-fly frequency analysis and codebook transmission introduces latency overheads that are prohibitive for extremely latency sensitive scenarios like die-to-die communication.
+We analyzed the FFN1 activation tensors of the Gemma 2B model across 1152 shards. We demonstrated statistical similarity i.e., the histograms of different shards are very similar. A low KL divergence of the individual shards from the average distribution confirmed that the average distribution is a good approximation of the true distribution.
+Using a fixed codebook derived from the average distribution achieves a compressibility within 0.5% of per-shard Huffman codes and within 1% of the ideal Shannon compressibility.
+The codebooks can be pre-computed off the critical path using data from previous batches or runs. We maintain distinct codebooks for different tensors and datatypes. The codebooks are shared between the participating nodes, thereby eliminating the need to transmit them during operation. This approach allows a single-stage compression without incurring the computational and latency overheads of traditional methods.
+References
+[1]
+A. Agrawal, M. Hedlund, and B. Hechtman (2024)
+eXmY: A Data Type and Technique for Arbitrary Bit Precision Quantization.
+External Links: Link
+Cited by: §2.
+[2]
+J. Alakuijala, A. Farruggia, P. Ferragina, E. Kliuchnikov, R. Obryk, Z. Szabadka, and L. Vandevenne (2018)
+Brotli: A General-Purpose Data Compressor.
+ACM Trans. Inf. Syst..
+External Links: Link
+Cited by: §1.
+[3]
+R. Anil, S. Borgeaud, J. Alayrac, J. Yu, R. Soricut, et al. (2025)
+Gemini: A Family of Highly Capable Multimodal Models.
+External Links: Link
+Cited by: §1.
+[4]
+J. Austin, S. Douglas, R. Frostig, A. Levskaya, C. Chen, S. Vikram, F. Lebron, P. Choy, V. Ramasesh, A. Webson, and R. Pope (2025)
+How to Scale Your Model.
+External Links: Link
+Cited by: §1.
+[5]
+Collective Operations.
+External Links: Link
+Cited by: §1.
+[6]
+Y. Collet and M. Kucherawy (2021)
+Zstandard Compression and the ’application/zstd’ Media Type.
+Request for Comments,  RFC Editor.
+Note: RFC 8878
+External Links: Document,
+Link
+Cited by: §1.
+[7]
+DEFLATE.
+External Links: Link
+Cited by: §1.
+[8]
+Entropy.
+External Links: Link
+Cited by: §3.
+[9]
+Huffman Coding.
+External Links: Link
+Cited by: §1.
+[10]
+KL Divergence.
+External Links: Link
+Cited by: §3.
+[11]
+V. Korthikanti, J. Casper, S. Lym, L. McAfee, M. Andersch, M. Shoeybi, and B. Catanzaro (2022)
+Reducing Activation Recomputation in Large Transformer Models.
+External Links: Link
+Cited by: §1.
+[12]
+S. Li and S. Mai
+Paradigms of Parallelism.
+External Links: Link
+Cited by: §1.
+[13]
+T. Mesnard, C. Hardin, R. Dadashi, et al. (2024)
+Gemma: Open Models Based on Gemini Research and Technology.
+External Links: Link
+Cited by: §1,
+§2.
+[14]
+Parallelisms Guide.
+External Links: Link
+Cited by: §1.
+[15]
+A. Radford, K. Narasimhan, T. Salimans, and I. Sutskever (2018)
+Improving Language Understanding by Generative Pre-Training.
+External Links: Link
+Cited by: §1.
+[16]
+S. Rajbhandari, J. Rasley, O. Ruwase, and Y. He (2020)
+ZeRO: Memory Optimizations Toward Training Trillion Parameter Models.
+External Links: Link
+Cited by: §1.
+[17]
+M. Riviere, S. Pathak, P. G. Sessa, et al. (2024)
+Gemma 2: Improving Open Language Models at a Practical Size.
+External Links: Link
+Cited by: §1.
+[18]
+B. D. Rouhani, N. Garegrat, T. Savell, A. More, et al. (2023)
+OCP Microscaling Formats (MX) Specification.
+External Links: Link
+Cited by: §2.
+[19]
+M. Shoeybi, M. Patwary, R. Puri, P. LeGresley, J. Casper, and B. Catanzaro (2020)
+Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism.
+External Links: Link
+Cited by: §1.
+[20]
+H. Touvron, T. Lavril, G. Izacard, X. Martinet, M. Lachaux, T. Lacroix, B. Rozière, N. Goyal, E. Hambro, F. Azhar, A. Rodriguez, A. Joulin, E. Grave, and G. Lample (2023)
+LLaMA: Open and Efficient Foundation Language Models.
+External Links: Link
+Cited by: §1.
+[21]
+S. Verma and N. Vaidya (2023)
+Mastering LLM Techniques: Inference Optimization.
+External Links: Link
+Cited by: §1.
+[22]
+S. Wang and P. Kanwar (2019)
+BFloat16: The secret to high performance on Cloud TPUs..
+External Links: Link
+Cited by: §2.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

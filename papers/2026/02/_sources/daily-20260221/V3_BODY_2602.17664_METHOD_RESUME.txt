@@ -1,0 +1,401 @@
+3 Sink-Aware Pruning for DLMs
+3.1 Preliminaries
+Wanda.
+Wanda (Sun et al., 2023) assigns each weight an output-wise importance score that combines its magnitude with the norm of the corresponding input activation.
+For a linear layer with weights W∈ℝCout×CinW\in\mathbb{R}^{C_{\text{out}}\times C_{\text{in}}} and input activations X∈ℝN×CinX\in\mathbb{R}^{N\times C_{\text{in}}} collected from a calibration set, the importance score of weight Wi​jW_{ij} is defined as:
+Si​j=|Wi​j|⋅∥X⋅j∥2.S_{ij}=|W_{ij}|\cdot\lVert X_{\cdot j}\rVert_{2}.
+(1)
+where X⋅j∈ℝNX_{\cdot j}\in\mathbb{R}^{N} denotes the jj-th input feature across samples.
+Pruning is performed independently for each output neuron by comparing scores within each row group Gi={Wi,1,…,Wi,Cin}G_{i}=\{W_{i,1},\ldots,W_{i,C_{\text{in}}}\} and removing the lowest s%s\% weights per output.
+The activation norms ∥X⋅j∥2\lVert X_{\cdot j}\rVert_{2} are estimated without gradient or Hessian computation, making Wanda computationally efficient for large models.
+SparseGPT.
+SparseGPT (Frantar and Alistarh, 2023) formulates the post-training pruning process as a layer-wise reconstruction problem using second-order information.
+For a layer with original weights WW and layer inputs XX, the pruning objective is defined as:
+minM,W~⁡∥W​X−(M⊙W~)​X∥F2,\min_{M,\widetilde{W}}\;\lVert WX-(M\odot\widetilde{W})X\rVert_{F}^{2},
+(2)
+where MM is a binary pruning mask and W~\widetilde{W} denotes the reconstructed weights.
+Given a fixed mask MiM_{i} for the ii-th output row, the optimal remaining weights admit a closed-form linear regression solution:
+𝐰Mii=(𝐗Mi​𝐗Mi⊤)−1​𝐗Mi​(𝐰Mi​𝐗Mi)⊤,\mathbf{w}^{i}_{M_{i}}=\left(\mathbf{X}_{M_{i}}\mathbf{X}_{M_{i}}^{\top}\right)^{-1}\mathbf{X}_{M_{i}}\left(\mathbf{w}_{M_{i}}\mathbf{X}_{M_{i}}\right)^{\top},
+(3)
+Based on a second-order approximation, the loss increase induced by removing a scalar weight wmw_{m} is estimated as:
+εm=wm2[H−1]m​m.\varepsilon_{m}\;=\;\frac{w_{m}^{2}}{\left[H^{-1}\right]_{mm}}.
+(4)
+where H=X​X⊤+λ​IH=XX^{\top}+\lambda I is the empirical Hessian approximation.
+SparseGPT iteratively prunes weights with small εm\varepsilon_{m} and updates the remaining weights to reduce reconstruction error, enabling high sparsity without retraining.
+3.2 Sink-Aware Pruning
+Variance Statistics in DLMs and AR models.
+To characterize how attention sinks differ between diffusion and autoregressive language models, we introduce two complementary variance statistics. Let 𝐀(t)∈ℝN×N\mathbf{A}^{(t)}\in\mathbb{R}^{N\times N} denote the attention matrix at generation step tt (a diffusion timestep for DLMs; a token emission for AR models), where NN is the sequence length. We define the incoming attention mass at position ii and step tt as:
+mt​(i)=∑j=1NAj,i(t),m_{t}(i)=\sum_{j=1}^{N}A^{(t)}_{j,i},
+(5)
+which measures how much total attention all other tokens direct toward position ii. Positions receiving substantially more incoming attention than the average act as attention sinks at that step.
+We capture two dimensions of sink behavior. Spatial variance measures how unevenly attention concentrates across positions when averaged over the full trajectory. We compute m¯​(i)=1T​∑t=1Tmt​(i)\bar{m}(i)=\frac{1}{T}\sum_{t=1}^{T}m_{t}(i) and take
+σspatial2=Vari​(m¯​(i)).\sigma^{2}_{\text{spatial}}=\mathrm{Var}_{i}\!\left(\bar{m}(i)\right).
+(6)
+A large value indicates that a few positions dominate the attention landscape on average, but does not reveal whether those positions stay fixed over time. Temporal variance captures how much the sink location shifts across steps. At each step tt, we compute the attention-weighted centroid over the current sink set 𝒮t\mathcal{S}_{t} (defined below):
+ct=∑i∈𝒮tmt​(i)⋅i∑i∈𝒮tmt​(i),σtemporal2=Vart​(ct).c_{t}=\frac{\sum_{i\in\mathcal{S}_{t}}m_{t}(i)\cdot i}{\sum_{i\in\mathcal{S}_{t}}m_{t}(i)},\qquad\sigma^{2}_{\text{temporal}}=\mathrm{Var}_{t}(c_{t}).
+(7)
+A near-zero temporal variance means the sink remains locked to the same region throughout generation, while a large value indicates substantial migration.
+(a) Variance of the sink across generation/denoising steps.
+(b) Variance of total attention received by each token across all the generation/denoising steps.
+Figure 4: Attention sink variance for diffusion LMs (LLaDA, Dream) and autoregressive LMs (Llama 3.1, Qwen 2.5).
+Figure 5: Sink position across generation/denoising steps for diffusion and AR LMs. Shaded regions denote ±\pm std across runs.
+As shown in Fig. 4, these two statistics reveal a clear contrast. AR models exhibit high spatial variance but near-zero temporal variance: their sinks are concentrated on a small, fixed set of early positions and remain stationary across all generation steps. DLMs show the opposite pattern: lower spatial variance (attention is more distributed) but temporal variance that is orders of magnitude larger. The sink trajectory (Fig. 5) provides further intuition: for AR models, the sink stays flat, while for DLMs it drifts progressively from earlier to later positions as denoising advances, with wide step-to-step variability. This drift reflects how early diffusion steps focus on global structure under high noise, while later steps shift attention toward local, token-level refinement. In short, AR sinks are spatially concentrated and temporally stable, while DLM sinks are spatially diffuse and temporally transient.
+Pruning Metric.
+We now formalize the notion of attention sinks used in our pruning criterion. We begin by computing the attention mass received by each token position. At denoising step tt, the cumulative attention score of token jj in head hh of layer ℓ\ell is:
+A¯j(t,ℓ,h)=1S​∑i=1SAi,j(t,ℓ,h),\bar{A}_{j}^{(t,\ell,h)}\;=\;\frac{1}{S}\sum_{i=1}^{S}A_{i,j}^{(t,\ell,h)},
+(8)
+where Ai,j(t,ℓ,h)A_{i,j}^{(t,\ell,h)} is the attention weight from query position ii to key position jj and SS is the sequence length.
+We aggregate across all layers and heads to obtain a position-level attention mass:
+mt​(j)=∑ℓ=1L∑h=1HA¯j(t,ℓ,h),m_{t}(j)\;=\;\sum_{\ell=1}^{L}\sum_{h=1}^{H}\bar{A}_{j}^{(t,\ell,h)},
+(9)
+A token jj is considered a sink token at step tt if its attention mass significantly exceeds that of other positions, i.e.,
+mt​(j)>1S−1​∑k≠jmt​(k)+ϵ,m_{t}(j)\;>\;\frac{1}{S-1}\sum_{k\neq j}m_{t}(k)\;+\;\epsilon,
+(10)
+where ϵ>0\epsilon>0 controls the detection sensitivity.
+To obtain a differentiable relaxation, we convert this criterion into a soft sink score via a sigmoid:
+ϕt​(j)=σ⁡((mt​(j)−1S−1​∑k≠jmt​(k)−ϵ)CLOSE,\phi_{t}(j)\;=\;\sigma\!\!\left(\!(m_{t}(j)-\frac{1}{S-1}\sum_{k\neq j}m_{t}(k)-\epsilon\right),
+(11)
+We evaluate (11) on noised calibration inputs at a uniformly spaced set of timesteps 𝒯⊂{1,…,T}\mathcal{T}\subset\{1,\dots,T\} and average to obtain a step-invariant sink estimate:
+ϕ¯​(k)=1|𝒯|​∑t∈𝒯ϕt​(k).\bar{\phi}(k)\;=\;\frac{1}{|\mathcal{T}|}\sum_{t\in\mathcal{T}}\phi_{t}(k).
+(12)
+Sink-Aware Importance Reweighting.
+Given the soft sink score ϕ¯​(j)\bar{\phi}(j), we define a per-position weight
+ωj=1−ϕ¯​(j),\omega_{j}=1-\bar{\phi}(j),
+(13)
+which is near zero for sink tokens and near one elsewhere.
+We construct a sink-masked activation 𝐗~\widetilde{\mathbf{X}} by scaling each row of the original activation 𝐗∈ℝS×Cin\mathbf{X}\in\mathbb{R}^{S\times C_{\mathrm{in}}} by ωj\omega_{j}, effectively suppressing the contribution of sink positions:
+𝐗~j,:=ωj⋅𝐗j,:,j=1,…,S.\widetilde{\mathbf{X}}_{j,:}\;=\;\omega_{j}\cdot\mathbf{X}_{j,:},\qquad j=1,\dots,S.
+(14)
+This masked activation replaces 𝐗\mathbf{X} in existing pruning criteria.
+For Wanda base method, we substitute 𝐗~\widetilde{\mathbf{X}} into Eq. (1) yields the sink-aware score S~i​j=|Wi​j|⋅∥X~⋅j∥2\widetilde{S}_{ij}=|W_{ij}|\cdot\lVert\widetilde{X}_{\cdot\,j}\rVert_{2}, and pruning proceeds as before.
+For SparseGPT as the base approach, the empirical Hessian is computed from sink-masked inputs, H~=1|𝒟|​∑n𝐗~n⊤​𝐗~n+λ​𝐈\widetilde{H}=\frac{1}{|\mathcal{D}|}\sum_{n}\widetilde{\mathbf{X}}_{n}^{\top}\widetilde{\mathbf{X}}_{n}+\lambda\mathbf{I}, where 𝒟\mathcal{D} is the calibration dataset, with the pruning and reconstruction procedure following Eqs. (2)–(4) identically.
+By suppressing sink tokens in the Hessian, the reconstruction allocates capacity toward faithfully reproducing the layer’s output on semantically meaningful positions, rather than preserving behavior on tokens whose outsized activations would otherwise dominate the second-order statistics.
+4 Experiments
+4.1 Experimental Setup
+Models and Benchmarks.
+We evaluate our sink-aware pruning method on multiple widely adopted pretrained diffusion language models (DLMs), including LLaDA (Nie et al., 2025), Dream (Ye et al., 2025), and LLaDA-1.5 (Zhu et al., 2025), as well as the multimodal unified DLM MMaDA (Yang et al., 2025a). For text generation and reasoning tasks, we assess the pruned models on a diverse set of standard language model benchmarks: MMLU (Hendrycks et al., 2020) (5-shot), ARC-C (Clark et al., 2018) (0-shot), PIQA (Bisk et al., 2020) (0-shot), WinoGrande (Sakaguchi et al., 2021) (0-shot), HellaSwag (Zellers et al., 2019) (0-shot), RACE (Lai et al., 2017) (0-shot), GSM8K (Cobbe et al., 2021) (5-shot), and GPQA (Rein et al., 2024) (5-shot).
+Sparsity
+Method
+Avg.
+MMLU
+ARC-C
+PIQA
+WinoG
+GSM8K
+HellaSwag
+GPQA
+RACE
+Dense
+Base
+57.93
+65.97
+43.00
+74.10
+69.30
+69.29
+72.70
+30.40
+38.70
+0.25
+Wanda
+57.43
+65.20
+43.94
+75.30
+68.59
+66.03
+71.95
+29.85
+38.55
+Sink-Aware
+57.62
+65.41
+43.52
+74.97
+68.59
+68.16
+72.30
+29.70
+38.32
+SparseGPT
+57.23
+65.16
+43.09
+74.43
+67.56
+67.17
+72.10
+30.25
+38.10
+Sink-Aware
+57.68
+65.33
+43.09
+74.37
+69.53
+68.58
+71.98
+30.12
+38.40
+0.50
+Wanda
+52.70
+61.43
+39.08
+72.63
+64.56
+57.01
+67.52
+27.15
+32.20
+Sink-Aware
+53.18
+62.16
+41.38
+73.18
+65.27
+55.88
+67.18
+27.95
+32.45
+SparseGPT
+52.34
+60.97
+39.68
+72.20
+64.64
+53.53
+66.90
+27.70
+33.10
+Sink-Aware
+52.36
+60.79
+39.59
+72.95
+65.82
+52.11
+67.35
+27.48
+32.82
+0.75
+Wanda
+29.99
+24.76
+18.52
+56.69
+47.43
+0.99
+45.25
+22.85
+23.45
+Sink-Aware
+30.94
+24.01
+18.77
+59.96
+49.17
+1.52
+46.85
+23.10
+24.10
+SparseGPT
+32.57
+28.60
+20.99
+61.75
+50.04
+1.52
+48.20
+23.90
+25.55
+Sink-Aware
+32.57
+28.93
+21.08
+60.12
+51.07
+1.90
+48.70
+23.55
+25.20
+Table 1: Pruning results on LLaDA across 8 benchmarks.
+Sparsity
+Method
+Avg.
+MMLU
+ARC-C
+PIQA
+WinoG
+GSM8K
+HellaSwag
+GPQA
+RACE
+Dense
+Base
+60.94
+68.25
+55.20
+74.27
+67.72
+67.50
+73.30
+36.60
+44.70
+0.50
+Wanda
+51.58
+60.90
+41.64
+68.12
+60.38
+49.13
+65.40
+30.85
+36.20
+Sink-Aware
+51.68
+60.84
+42.83
+68.82
+59.75
+49.66
+65.15
+30.52
+35.85
+SparseGPT
+54.40
+64.13
+44.88
+70.18
+63.54
+52.84
+68.72
+32.48
+38.42
+Sink-Aware
+54.58
+64.46
+44.97
+70.18
+64.09
+53.15
+68.35
+32.90
+38.58
+0.75
+Wanda
+30.38
+23.96
+20.65
+53.43
+52.17
+1.06
+45.12
+23.50
+23.15
+Sink-Aware
+30.52
+24.10
+21.08
+52.99
+52.25
+1.14
+46.05
+23.72
+22.80
+SparseGPT
+31.72
+26.92
+22.18
+54.52
+51.30
+1.44
+48.20
+24.30
+24.90
+Sink-Aware
+31.83
+28.02
+21.25
+54.73
+51.93
+1.59
+47.90
+24.65
+24.55
+Table 2: Pruning results on Dream across 8 benchmarks.
+Baselines and Implementation Details.
+We compare our method against several widely used pruning baselines, including Wanda (Sun et al., 2023),
+SparseGPT (Frantar and Alistarh, 2023), and magnitude-based pruning.
+All baselines are implemented based on the open-source codebases of Wanda and SparseGPT for fair comparison.
+For sink-aware pruning, we derive importance scores from attention maps aggregated across all layers and heads,
+and apply the resulting pruning masks uniformly to all pruned layers, including both feed-forward and attention layers.
+Importance scores are computed using a calibration set drawn from WikiText-2 (Merity et al., 2016),
+consisting of 128 randomly sampled sequences each truncated to a length of 2048 tokens.
+The same calibration data is used for all baselines to ensure a controlled and fair comparison.
+We evaluate both unstructured and structured pruning settings.
+For unstructured pruning, we consider sparsity ratios of 25%, 50%, and 75%.
+For structured pruning, following prior work, we evaluate multiple pruning levels corresponding to
+progressively removing structured components of the model.
+All experiments are conducted under identical configurations across models and benchmarks,
+and all results are reported using the same evaluation protocols.
+Sparsity
+Method
+Avg.
+MMLU
+ARC-C
+PIQA
+WinoG
+GSM8K
+HellaSwag
+GPQA
+RACE
+Dense
+Base
+58.59
+64.07
+50.43
+73.61
+68.90
+65.73
+74.43
+31.75
+39.87
+0.25
+Wanda
+58.09
+63.30
+51.37
+74.81
+68.19
+62.47
+73.68
+31.20
+39.72
+Sink-Aware
+58.22
+63.41
+51.54
+74.97
+68.27
+62.70
+73.55
+31.30
+40.05
+SparseGPT
+58.44
+63.62
+52.05
+74.97
+68.51
+63.08
+73.92
+31.55
+39.85
+Sink-Aware
+58.47
+63.59
+52.05
+74.97
+68

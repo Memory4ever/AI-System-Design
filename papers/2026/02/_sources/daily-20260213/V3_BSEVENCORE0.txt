@@ -1,0 +1,218 @@
+PRISM: Parallel Residual Iterative Sequence Model (https://arxiv.org/html/2602.10796v1)
+citeturn28951view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.10796v1","lineno":177}); Total lines: 931
+L116: ### 2.2 Sequence Modeling as Online Optimization
+L117: 
+L118: A more theoretically grounded perspective views sequence modeling as an online optimization problem, where the goal is to minimize a reconstruction loss $\mathcal{L}_{t}=\|\mathbf{v}_{t}-\mathbf{S}_{t-1}\mathbf{k}_{t}\|^{2}$.
+L119: 
+L120: Linear Delta Rules (DeltaNet, RetNet). DeltaNet (cite62†Yang et al., 2024b ) explicitly formulates the update as a single step of gradient descent:
+L121:  | $$\mathbf{S}_{t}=\mathbf{S}_{t-1}+\beta_{t}(\mathbf{v}_{t}-\mathbf{S}_{t-1}\mathbf{k}_{t})\mathbf{k}_{t}^{\top}$$  |  | (1)
+L122: where $\beta_{t}$ acts as a learning rate. RetNet (cite75†Sun et al., 2023 ) employs a similar residual structure combined with exponential decay. While these methods introduce an ”error correction” term, they are structurally constrained to be Linear to satisfy the associativity required for parallel prefix scans. Consequently, they effectively perform ”blind” optimization: they cannot adjust the update direction based on the current memory landscape (state-dependent gain) without breaking parallelism.
+L123: Test-Time Training (TTT). To overcome the expressivity bottleneck of linear rules, TTT (cite61†Sun et al., 2024 ) proposes performing explicit, multi-step gradient descent on the hidden state during inference. This allows for non-linear updates (in TTT-NN) that adaptively reshape the memory. However, as analyzed in Atlas, this approach faces the Seriality Trap: calculating the exact gradient $\nabla_{\mathbf{S}_{t-1}}\mathcal{L}$ introduces a strict dependency on the previous state $\mathbf{S}_{t-1}$.
+L124: This precludes the use of parallel scan algorithms, forcing the model to run sequentially during training, which is prohibitively slow for large-scale pretraining.
+L125: ### 2.3 Positioning PRISM: Amortized Optimization
+L126: PRISM resolves the tension between the parallel efficiency of linear models and the optimization fidelity of TTT. Unlike DeltaNet which relies on a shallow Rank-1 update, and unlike TTT which requires serial state access, PRISM introduces Input-Anchored Loop Unrolling. By approximating the state-dependent terms (e.g., the residual error and contextual gain) using a local convolutional proxy, PRISM constructs a High-Rank ($L>1$) update operator that can be computed in parallel.
+L127: This allows PRISM to emulate the trajectory of a multi-step iterative solver while retaining the $O(N)$ training throughput of standard linear attention.
+L128: ## 3 Theoretical Motivation
+L129: 
+L130: In this section, we reframe linear attention through the lens of numerical optimization to identify its expressivity bottleneck. We then introduce an ideal nonlinear update rule that restores adaptive, context-aware dynamics, and formally analyze why its state-dependent structure precludes parallel computation.
+L131: 
+L132: ### 3.1 The Optimization Gap: From Blind Updates to Ideal Solvers
+L133: #### Linear Attention as Online Learning.
+L134: 
+L135: Let $\mathbf{k}_{t}\in\mathbb{R}^{d}$ and $\mathbf{v}_{t}\in\mathbb{R}^{d}$ denote the key and value vectors at timestep $t,$ where $d$ is the dimension of the key and value space. Linear attention avoids the quadratic cost of standard attention by maintaining a compact state matrix $\mathbf{S}_{t}$ that summarizes past keys and values associations. Specifically, standard linear attention updates its state via
+L136:  | $$\mathbf{S}_{t}=\mathbf{S}_{t-1}+\mathbf{v}_{t}\mathbf{k}_{t}^{\top}.$$  |  | (2)
+L137: 
+L138: We view this not as a heuristic, but as a single step of online gradient descent on a linear objective
+L139: 
+L140:  | $$\mathcal{L}_{t}(\mathbf{S})=-\langle\mathbf{S}\mathbf{k}_{t},\mathbf{v}_{t}\rangle,$$  |  | (3)
+L141: which measures how well the projected key $\mathbf{S}\mathbf{k}_{t}$ aligns with the value $\mathbf{v}_{t}.$ Standard linear attention updates $\mathbf{S}$ via online gradient descent with fixed learning rate $\beta$ :
+L142: 
+L143:  | $$\mathbf{S}_{t}=\mathbf{S}_{t-1}-\beta\nabla_{\mathbf{S}}\mathcal{L}_{t}(\mathbf{S}_{t-1})=\mathbf{S}_{t-1}+\beta\mathbf{v}_{t}\mathbf{k}_{t}^{\top},$$  |  | (4)
+L144: 
+L145: where $\beta=1$ in conventional formulations.
+L146: #### The Limitation.
+L147: 
+L148: This update is structurally rigid in two critical aspects. First, it applies a rank-$1$ correction $\eta\mathbf{v}_{t}\mathbf{k}_{t}^{\top}$ at every step, regardless of the current state $\mathbf{S}_{t-1}.$ Second, it lacks the capacity to correct errors or model complex dependencies where the update magnitude should depend on the current memory saturation. Appendix cite31†B further analyzes the issues caused by the absence of nonlinearity.
+L149: #### The Ideal Non-Linear Rule.
+L150: 
+L151: To transcend the rigidity of linear updates, one can consider a non-linear prediction model in which the value $\mathbf{v}_{t}$ is predicted by $\sigma(\mathbf{S}\mathbf{k}_{t})$, where $\sigma:\mathbb{R}^{d}\to\mathbb{R}^{d}$ is a non-linear function. This leads to the following local objective:
+L152: 
+L153:  | $$\mathcal{L}_{t}(\mathbf{S})=\frac{1}{2}\|\sigma(\mathbf{S}\mathbf{k}_{t})-\mathbf{v}_{t}\|_{2}^{2}.$$  |  | (5)
+L154: We refer to the update rule obtained by minimizing this objective as the gradient-based Ideal Solver (detailed in Appendix cite32†C ):
+L155: 
+L156:  | $$\mathbf{S}_{t}=\mathbf{S}_{t-1}+\sigma^{\prime}(\mathbf{S}_{t-1}\mathbf{k}_{t})\odot(\mathbf{v}_{t}-\sigma(\mathbf{S}_{t-1}\mathbf{k}_{t}))\cdot\mathbf{k}_{t}^{\top},$$  |  | (6)
+L157: where the contextual gain is given by $\sigma^{\prime}(\mathbf{S}_{t-1}\mathbf{k}_{t})$ and $\odot$ is element-wise product.
+L158: Crucially, this gain term introduces state-dependent modulation: in saturated regimes, where $\sigma(\mathbf{S}_{t-1}\mathbf{k}_{t})$ is near its asymptote and $\sigma^{\prime}$ is small, the update is automatically suppressed to prevent overshooting; conversely, in sensitive regions where the memory response is still in the linear range of $\sigma$, the gain is large, enabling rapid adaptation to new information.
+L159: Thus, the Ideal Solver not only corrects errors but also adapts its learning behavior to the current memory state, offering a principled path toward expressive and stable long-sequence modeling.
+L160: Figure 1: The PRISM Architecture. The framework operates in two phases to approximate the Ideal Non-Linear Solver within a parallelizable linear recurrence. Phase 1 (Input-Anchored Simulation): A ShortConv anchor captures the local pre-activation proxy ($u_{t}\approx S_{t-1}k_{t}$). Parallel predictors (${p}$) generate the Contextual Gain vectors to simulate the derivative of the activation ($\sigma^{\prime}$), while basis projections ($K$) determine the geometric subspaces.
+L161: Phase 2 (Iterative Rank Accumulation): An unrolled residual loop constructs the high-rank injection matrix $\mathbf{B}$. Each layer $l$ performs a Greedy Residual Subtraction, adding an orthogonal rank-1 update to the accumulator. This expands the update manifold from Rank-1 to Rank-$L$. State Update: The accumulated high-rank update is injected into a Decoupled Linear Recurrence, where the forgetting operator $\mathbf{A}$ remains state-independent to preserve parallel scan efficiency.
+L162: ### 3.2 The Parallelism Conflict
+L163: 
+L164: Modern linear attention leverages parallel prefix scans (e.g., the Blelloch algorithm) to compute recurrent states in $O(\log N)$ time. This requires the recurrence to be expressed in a state-independent form:
+L165: 
+L166:  | $$\mathbf{S}_{t}=\mathbf{S}_{t-1}\mathbf{A}_{t}+\mathbf{B}_{t},$$  |  | (7)
+L167: where the transition operators $\mathbf{A}_{t}$ and $\mathbf{B}_{t}$ should be computable solely from the input sequence up to step $t$ , without dependence on the hidden state $\mathbf{S}_{t-1}.$ We formalize this requirement as follows:
+L168: ###### Definition 3.1 (State-Independent Recurrence).
+L169: 
+L170: A linear recurrence $\mathbf{S}_{t}=\mathbf{S}_{t-1}\mathbf{A}_{t}+\mathbf{B}_{t}$ admits parallel prefix scanning if and only if there exist functions $f_{A}$ and $f_{B}$ such that for all $t$ ,
+L171: 
+L172:  | $$\mathbf{A}_{t}=f_{A}(\mathbf{x}_{\leq t}),\quad\mathbf{B}_{t}=f_{B}(\mathbf{x}_{\leq t}),$$  |  | (8)
+L173: 
+L174: i.e., $\mathbf{A}_{t}$ and $\mathbf{B}_{t}$ are independent of $\mathbf{S}_{t-1}$ .
+L175: While the ideal solver provides necessary expressivity, it fundamentally conflicts with the parallelization strategy that enables efficient long-sequence modeling in linear attention, as its injection term depends recursively on the hidden state through both the contextual gain $\sigma^{\prime}(\mathbf{S}_{t-1}\mathbf{k}_{t})$ and the nonlinear prediction $\sigma(\mathbf{S}_{t-1}\mathbf{k}_{t})$.
+L176: This locks the computation into a serial chain ($O(N)$ latency), prohibiting parallel prefix scans (detailed in Appendix cite32†C ).
+L177: ## 4 Method: The PRISM Architecture
+L178: ### 4.1 The Write-Forget Decoupling Hypothesis
+L179: To resolve the conflict between the ideal solver’s non-linear expressivity and the requirement for hardware parallelism (Definition cite76†3.1 ), we ask: which component of the recurrence can be safely linearized without catastrophic loss of performance? In Appendix cite35†D , we answer this through a rigorous spectral perturbation analysis, modeling the sequence as a discretized ODE via Zero-Order Hold. Our findings reveal a fundamental asymmetry in error propagation:
+L180: 
+L181:   * •
+L182: Logarithmic Stability of Forgetting ($\mathbf{A}_{t}$): We prove that for stable systems, approximation errors in the multiplicative forgetting operator accumulate at a sub-linear rate—specifically, $O(\ln T)$ in the worst case and $O(1)$ on average (Theorem cite77†D.2 & cite78†D.3 ).
+L183: This implies that $\mathbf{A}_{t}$ is structurally robust and can be safely approximated by a structured, low-rank proxy (e.g., the Gated DeltaNet parameterization $\mathbf{I}-\beta\mathbf{k}\mathbf{k}^{\top}$) without degrading long-term memory (cite64†Gu et al., 2020 ; cite63†Yang et al., 2024a ).
+L184:   * •
+L185: 
+L186: Linear Divergence of Injection ($\mathbf{B}_{t}$): Conversely, we demonstrate that additive errors in the injection term accumulate linearly ($O(T)$) in persistent memory channels. This indicates that the system is hypersensitive to the rank-fidelity of $\mathbf{B}_{t}$, forcing us to retain a high-rank, non-linear estimator to prevent irreversible semantic information loss.
+L187: Based on this theoretical dichotomy, we propose Write-Forget Decoupling. We restrict the forgetting dynamics ($\mathbf{A}_{t}$) to a strict Rank-$1$ update for efficiency, while allocating the majority of the model’s expressivity to a parallel, iterative solver that constructs a High-Rank injection matrix ($\mathbf{B}_{t}$).
+L188: ### 4.2 Amortized Input-Anchored Simulation
+L189: Now we introduce the detailed design of $\mathbf{B}_{t}.$ To implement the non-linear injection $\mathbf{B}_{t}$ in parallel, we bypass the serial dependency on $\mathbf{S}_{t-1}$ via Input-Anchored Simulation. The key insight is that, for many sequential tasks, the interaction $\mathbf{S}_{t-1}\mathbf{k}_{t},$ which governs the contextual information, is dominated by recent history.
+L190: This motivates us to approximate optimization trajectory it using only the local input context, without full state recurrence. Concretely, we recover a proxy of the state interaction $\mathbf{u}_{t}\approx\mathbf{S}_{t-1}\mathbf{k}_{t}$ using a short convolution:
+L191:  | $$\mathbf{u}_{t}=\text{ShortConv}(\mathbf{X}_{\leq t})\approx\mathbf{S}_{t-1}\mathbf{k}_{t}.$$  |  | (9)
+L192: 
+L193: This captures the high-frequency signal dominated by local context and serves as the anchor for all subsequent approximations. We provide a theoretical analysis of the approximation bias of this local proxy in Appendix cite41†E , showing that the error decays exponentially with the effective memory window under fading-memory dynamics.
+L194: As discussed before, $\mathbf{u}_{t}$ enables state-independent access to the key interaction, but a single rank-$1$ update is insufficient to capture the full expressivity of the ideal solver. Hence, we employ iterative rank accumulation, a multi-step refinement process that constructs $\mathbf{B}_{t}$ as a sum of $L$ orthogonal rank-$1$ components(detailed in Appendix cite42†F and cite43†G ):
+L195:  | $$\mathbf{B}_{t}=\sum_{l=1}^{L}\beta_{t}^{(l)}\cdot(\boldsymbol{\delta}_{t}^{(l)}\otimes\mathbf{k}_{t}^{(l)}),$$  |  | (10)
+L196: 
+L197: where the scalar gate $\beta_{t}^{(l)}$ acts as a confidence score, scaling the contribution of each component. Notably, each gate value is computed via the anchor
+L198: 
+L199:  | $$\beta_{t}^{(l)}=\mathbf{W}_{beta}^{(l)}\mathbf{u}_{t}.$$  |  | (11)
+L200: We explicitly align the structure of $\boldsymbol{\delta}_{t}^{(l)}$ and $\mathbf{k}_{t}^{(l)}$ with the corresponding terms in (cite79†6 ), ensuring that the parallelized update preserves its essential geometric properties. More specifically, we project the anchor to obtain the geometric basis $\mathbf{k}_{t}^{(l)}$ for each component:
+L201: 
+L202:  | $$\mathbf{k}_{t}^{(l)}=\mathbf{W}_{k}^{(l)}\mathbf{u}_{t}.$$  |  | (12)
+L203: The update direction $\boldsymbol{\delta}_{t}^{(l)}$ is formed by modulating a residual estimate with a simulated contextual gain—both derived from the anchor $\mathbf{u}_{t}$. We first train a multi-layer predictor ${p}$ to simulate the contextual gain $\sigma^{\prime}(\mathbf{S}_{t-1}\mathbf{k}_{t}),$ i.e.,
+L204: 
+L205:  | $${p}_{t}^{(l)}=\mathbf{W}_{p}^{(l)}\mathbf{u}_{t}\approx\sigma^{\prime}(\mathbf{S}_{t-1}\mathbf{k}_{t}).$$  |  | (13)
+L206: For residual term $\mathbf{v}_{t}-\sigma(\mathbf{S}_{t-1}\mathbf{k}_{t}),$ we estimate the initial error signal $\mathbf{r}_{t}^{(1)}$ by comparing the target $\mathbf{v}_{t}$ against the local proxy, rather than the true state:
+L207: 
+L208:  | $$\mathbf{r}_{t}^{(1)}=\mathbf{v}_{t}-\mathbf{u}_{t}\approx\mathbf{v}_{t}-\sigma(\mathbf{S}_{t-1}\mathbf{k}_{t}).$$  |  | (14)
+L209: This initial residual seeds an iterative refinement process. At each layer $1\leq l\leq L,$ we compute an update direction $\boldsymbol{\delta}_{t}^{(l)}$ by modulating $\mathbf{r}_{t}^{(l)}$ with the simulated gain ${p}_{t}^{(l)},$ serveing as a localized newton step, and then subtract this correction to form the next residual:
+L210:  | $\displaystyle\boldsymbol{\delta}_{t}^{(l)}$  | $\displaystyle=\mathrm{GELU}\big({p}_{t}^{(l)}\odot\mathbf{r}_{t}^{(l)}\big),$  |  | (15)
+L211:  | $\displaystyle\mathbf{r}_{t}^{(l+1)}$  | $\displaystyle=\mathbf{r}_{t}^{(l)}-\boldsymbol{\delta}_{t}^{(l)}.$  |  | (16)
+L212: 
+L213: This orthogonal subtraction encourages subsequent layers to capture complementary error signals, thereby enriching the information content of the total injection.
+L214: 
+L215: Following the decoupling strategy, the forgetting operator takes the linear form
+L216:  | $$\mathbf{A}_{t}=\mathbf{I}-\beta^{(1)}_{t}\mathbf{k}_{t}^{(1)}\otimes\mathbf{k}_{t}^{(1)},$$  |  | (17)
+L217: 
+L218: reusing the first-layer projection $\mathbf{k}_{t}^{(1)}$ to ensure both simplicity and alignment with the write path.
+L219: 
+L220: Finally, the accumulated matrix $\mathbf{B}_{t}$ is injected into the recurrent state.
+L221:  | $$\mathbf{S}_{t}=\alpha_{t}\mathbf{S}_{t-1}(\mathbf{I}-\beta^{(1)}_{t}\mathbf{k}_{t}^{(1)}\otimes\mathbf{k}_{t}^{(1)})+\sum_{l=1}^{L}\beta_{t}^{(l)}\cdot(\boldsymbol{\delta}_{t}^{(l)}\otimes\mathbf{k}_{t}^{(l)}).$$  |  | (18)
+L222: ## 5 Experiments
+L223: 
+L224: Our experiments aim to answer three key research questions:
+L225: 
+L226:   * •
+L227: 
+L228: RQ1 (Effectiveness): Does PRISM achieve the modeling fidelity of explicit iterative solvers (e.g., TTT) and deep Transformers via amortized optimization?
+L229: 
+L230:   * •
+L231: 
+L232: RQ2 (Scalability): How does PRISM perform on long-tail and ultra-long sequences compared to existing linear baselines, and does it maintain $O(N)$ efficiency?
+L233: 
+L234:   * •
+L235: RQ3 (Mechanism): Do the Input-Anchored Solver components (ShortConv Proxy and Unrolled Loop) function as hypothesized to enable rank-$L$ updates?
+L236: ### 5.1 Experimental Setup
+L237: 
+L238: Datasets. We evaluate on four widely-used recommendation benchmarks: Amazon Books, Amazon Movies, Amazon Elecs, and Yelp(detailed in Appendix cite48†I ). Recommendation is selected as a stress test for High-Rank Sparsity, as user interests are inherently multi-modal and diverse, contrasting with the low-rank attention often found in NLP.
+L239: Baselines.
+L240: We compare PRISM against a comprehensive suite of state-of-the-art sequence models, categorized into three groups: (1) Transformers (Upper Bound): We include SASRec (cite80†Kang and McAuley, 2018 ) and HSTU (cite57†Zhai et al., 2024 ) as strong non-linear baselines to estimate the theoretical performance ceiling; (2) Linear Recurrences (Decay-Based): We evaluate heuristic linear models including SLA (cite60†Katharopoulos et al., 2020 ), GLA (cite63†Yang et al., 2024a ), GSA (cite81†Zhang et al., 2024 ), MoM (cite82†Du et al., 2025 ), and the state-space model Mamba-2 (cite74†Dao and Gu, 2024 ); (3) Optimization-Based Models: We compare against gradient-inspired architectures including Gated DeltaNet (cite63†Yang et al., 2024a ), TTT-Linear (cite61†Sun et al., 2024 ) ATLAS(cite83†Behrouz et al., 2025a ), and TITANS (cite71†Behrouz et al., 2024 ).(detailed in Appendix cite49†J )
+L241: Metrics. We report NDCG@10 and Hit@10. To assess efficiency, we measure Training Throughput (thousand tokens/s) on an NVIDIA H20 GPU.
+L242: ### 5.2 Main Recommendation Performance (RQ1)
+L243: 
+L244: Table cite84†2 and Table cite85†8 summarizes the performance on recommendation benchmarks.
+L245: 
+L246:   * •
+L247: Dominance of Non-Linear Optimization. A clear trend is observed: models employing optimization-inspired or non-linear update mechanisms (TITANS, PRISM, ATLAS) consistently outperform standard heuristic Linear Attention models (SLA, GLA, MoM). For instance, the top three linear models in Mean Rank all belong to this category, whereas purely associative models generally rank lower.
+L248: This empirical evidence strongly validates the advantage of introducing High-Rank or Non-Linear structures into the state update rule to capture complex user interest evolution.
+L249:   * •
+L250: 
+L251: Amortized Efficiency with Explicit Quality. PRISM achieves performance parity with (and in some cases surpasses) explicit optimization models like TTT and TITANS. Notably, on Amazon Movies, PRISM achieves the highest AUC among all linear models, outperforming even the sophisticated TITANS. This confirms that our Input-Anchored Proxy successfully distills the trajectory of explicit solvers into a feedforward operator, without the need for actual gradient descent at test time.
+L252: 
+L253:   * •
+L254: Closing the Gap with Transformers. While $O(N^{2})$ Transformers (SASRec, HSTU) still serve as the performance ceiling due to their full context visibility, the gap between PRISM and these quadratic models is surprisingly narrow. On Amazon Books, PRISM’s AUC is virtually identical to SASRec. This suggests that the ”expressivity tax” of linearizing attention is becoming negligible with advanced state-tracking mechanisms like PRISM.
+L255: 
+L256:   * •
+L257: Efficiency Preview. It is crucial to note that while TTT and TITANS achieve high accuracy, they suffer from serial bottlenecks due to state-dependent gradient calculations. In contrast, PRISM maintains fully parallelizable dynamics. As we will demonstrate in the following efficiency analysis (Section cite23†5.3 ), PRISM outperforms these optimization-based baselines and Transformers by orders of magnitude in training throughput and inference latency.
+L258: Table 2: Recommendation benchmark performance. Metrics are Hit@200 and NDCG@200 with per-dataset AUC. Best linear-attention results are in bold and second-best are underlined.
+L259: Model  | Amazon_books  | Amazon_movies  | Amazon_elec  | Yelp  | Mean Rank
+L260: H@200  | NDCG@200  | AUC  | H@200  | NDCG@200  | AUC  | H@200  | NDCG@200  | AUC  | H@200  | NDCG@200  | AUC
+L261: Linear Attention
+L262: SLA  | 0.1129  | 0.0212  | 0.8866  | 0.1137  | 0.0227  | 0.7461  | 0.1290  | 0.0243  | 0.7023  | 0.1627  | 0.0311  | 0.9392  | 6.75
+L263: GLA  | 0.0879  | 0.0158  | 0.8752  | 0.1193  | 0.0222  | 0.7478  | 0.1196  | 0.0210  | 0.7008  | 0.1129  | 0.0220  | 0.8943  | 9.38
+L264: MoM  | 0.0854  | 0.0158  | 0.8705  | 0.1397  | 0.0281  | 0.7705  | 0.1333  | 0.0238  | 0.7042  | 0.1642  | 0.0306  | 0.9346  | 5.25
+L265: GSA  | 0.1226  | 0.0233  | 0.8870  | 0.1160  | 0.0222  | 0.7427  | 0.1318  | 0.0228  | 0.7087  | 0.1629  | 0.0307  | 0.9383  | 7.00
+L266: MAMBA2  | 0.1234  | 0.0234  | 0.8872  | 0.1372  | 0.0276  | 0.7713  | 0.1338  | 0.0237  | 0.7157  | 0.1621  | 0.0306  | 0.9385  | 5.00
+L267: ATLAS  | 0.1190  | 0.0223  | 0.8884  | 0.1367  | 0.0278  | 0.7710  | 0.1421  | 0.0243  | 0.7042  | 0.1629  | 0.0304  | 0.9383  | 5.00
+L268: GDeltanet  | 0.1214  | 0.0230  | 0.8844  | 0.1241  | 0.0253  | 0.7504  | 0.1333  | 0.0242  | 0.7159  | 0.1648  | 0.0308  | 0.9367  | 5.12
+L269: TTT  | 0.1255  | 0.0234  | 0.8871  | 0.1288  | 0.0256  | 0.7591  | 0.1344  | 0.0234  | 0.6946  | 0.1636  | 0.0306  | 0.9375  | 5.25
+L270: TITANS  | 0.1272  | 0.0243  | 0.8869  | 0.1358  | 0.0278  | 0.7652  | 0.1313  | 0.0233  | 0.7007  | 0.1653  | 0.0313  | 0.9395  | 3.62
+L271: PRISM  | 0.1258  | 0.0238  | 0.8888  | 0.1411  | 0.0289  | 0.7727  | 0.1409  | 0.0237  | 0.7134  | 0.1637  | 0.0310  | 0.9393  | 2.62
+L272: Transformer
+L273: SASRec  | 0.1138  | 0.0215  | 0.8910  | 0.1272  | 0.0244  | 0.7677  | 0.1438  | 0.0273  | 0.7293  | 0.1723  | 0.0325  | 0.9410  | –
+L274: HSTU  | 0.1224  | 0.0233  | 0.8835  | 0.1399  | 0.0293  | 0.7748  | 0.1407  | 0.0250  | 0.7189  | 0.1595  | 0.0295  | 0.9324  | –
+L275: ### 5.3 Training Efficiency
+L276: 
+L277: Figure 2: Training throughput comparison of 0.13B models on a single H20 GPU.
+L278: A key advantage of PRISM is its robustness to sequence length and its hardware-aware design. We analyze the computational benefits of our Input-Anchored parallelization strategy. Figure cite86†2 shows the training throughput as a function of sequence length and batch size for different 0.13B models on a single H20 GPU, where all recurrent models adopt the materialization version of Flash-Linear-Attention(cite87†Yang and Zhang, 2024 ).
+L279: Transformer++ achieves the highest throughput at short sequences (71.4K tokens/s at 2K) thanks to the highly optimized Flash-Attention-2 kernel(cite88†Dao, 2023 ), but suffers from severe degradation (3.8× slowdown) as sequence length increases to 16K due to quadratic complexity.
+L280: In contrast, PRISM—implemented using the operators in Flash-Linear-Attention maintains stable throughput ($\sim 61K\to$57K tokens/s) across all context lengths, performing on par with Gated DeltaNet, GLA, Mamba2, and MoM (all operating within the 55–65K tokens/s range). Notably, TTT(0.34K tokens/s) is over 170× slower than PRISM due to its sequential computation nature, underscoring the critical importance of hardware-efficient algorithms for practical training scalability.
+L281: ### 5.4 Ablation Study: Deconstructing the Solver (RQ3)
+L282: 
+L283: To verify the solver design and quantify the contribution of each component, we conduct a component analysis on the Amazon Electronics dataset. We compare the full PRISM model against four variants:
+L284: 
+L285:   * •
+L286: 
+L287: w/o Iterative Refinement ($L=1$): Reduces the solver depth to a single step, mimicking standard DeltaNet-like updates.
+L288: 
+L289:   * •
+L290: 
+L291: w/o Non-Linearity: Removes the GELU activation inside the solver, enforcing a strictly linear update.
+L292: 
+L293:   * •
+L294: w/o ShortConv Anchor: Removes the local convolution, driving the update solely by the current token projection.
+L295: 
+L296:   * •
+L297: 
+L298: w/o Gain Predictor: Removes the learned gain branch ($p$-projection), utilizing a constant step size.
+L299: 
+L300: Table cite89†3 summarizes the results. We observe that the full PRISM model consistently outperforms all ablated variants across both Hit Rate and AUC metrics, confirming that every component plays an essential role in the system.
+L301: Impact of Iterative Depth. The most substantial performance degradation occurs when removing the iterative refinement (reducing the solver to $L=1$). This represents the performance floor among all variants, strongly supporting our core hypothesis: a single-step (Rank-1) update is structurally insufficient for capturing complex user interest transitions. The ”depth” of the solver is therefore the most critical factor for expanding the model’s memory capacity.
+L302: Impact of Non-Linearity. Enforcing a strictly linear update (w/o Non-Linearity) leads to a clear decline in ranking quality. This validates that the ”neural” nature of our solver—specifically the non-linear activation within the refinement loop—provides necessary expressivity, allowing the model to approximate complex optimization trajectories that standard linear matrix associations cannot capture.
+L303: Impact of Anchoring and Gating. Ablating the local ShortConv anchor or the learned gain predictor also results in suboptimal performance. The degradation in AUC across these variants suggests that without input-anchored local context or adaptive step sizes, the solver struggles to maintain a stable global ranking. This highlights that the optimization trajectory must be grounded in local feature context to be effective over long sequences.
+L304: Table 3: Ablation study on Amazon Electronics. We report Hit@K (H@K) at $K=\{200,500\}$ and AUC. Removing any component leads to a degradation in global ranking quality.
+L305: Model Variant  | Hit@K  | AUC
+L306: --- | --- | ---
+L307: 200  | 500
+L308: --- | ---
+L309: PRISM (Full)  | 0.1409  | 0.2613  | 0.7134
+L310: --- | --- | --- | ---
+L311: w/o Iterative Refinement ($L=1$)  | 0.1155  | 0.2374  | 0.6805
+L312: w/o Non-Linearity  | 0.1316  | 0.2477  | 0.7047
+L313: w/o ShortConv Anchor  | 0.1406  | 0.2584  | 0.7076
+L314: w/o Gain Predictor  | 0.1383  | 0.2406  | 0.7098
+L315: ### 5.5 Mechanistic Probing: Disentangling Storage from Computation
+L316: 
+L317: While our primary results establish PRISM’s effectiveness on standard benchmarks, we additionally perform a controlled study to disentangle the underlying causes of these performance gains (see Appendix cite44†H for details). In particular, we examine whether PRISM’s advantage arises predominantly from increased information retention (Capacity) or from qualitatively different computational procedures (Reasoning).
+L318: #### Experimental Setup.
+L319: 
+L320: We operate in a highly constrained resource-starved regime to force architectural bottlenecks to surface. All models are restricted to a tiny hidden dimension $D=16$, vocabulary $V=64$, and sequence length $N=128$. We train for 10k steps.
+L321: 
+L322:   * •
+L323: 
+L324: PRISM: Configured with refinement depth $L=2$.
+L325: 
+L326:   * •
+L327: 
+L328: Linear Attention (LA)(cite60†Katharopoulos et al., 2020 ): Represents the Rank-1 Bottleneck ($\Delta\mathbf{S}=\mathbf{v}\mathbf{k}^{\top}$).
+L329: 
+L330:   * •
+

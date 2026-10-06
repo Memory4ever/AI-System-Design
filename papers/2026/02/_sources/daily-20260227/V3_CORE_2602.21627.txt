@@ -1,0 +1,3071 @@
+Tokenizing Semantic Segmentation with RLE
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I
+Introduction
+II
+Run Length Encoding (RLE)
+III
+Static Image Segmentation
+III-A
+Tokenization
+III-A
+1
+Architectural Constraints
+III-A
+2
+Mask Flattening
+III-A
+3
+Shared Tokens
+III-B
+Sliding Windows
+III-B
+1
+Redundancy
+III-B
+2
+Subsampling
+III-C
+Lengths-As-Class (LAC)
+IV
+Video Segmentation
+IV-A
+Time-As-Class (TAC)
+IV-B
+Length-and-Time-As-Class (LTAC)
+IV-C
+Class-wise (CW) Tokenization
+IV-D
+Instance-wise (IW) Tokenization
+V
+Results
+V-A
+Datasets
+V-B
+Metrics
+V-C
+Performance Overview
+V-C
+1
+Summary
+V-C
+2
+ARIS
+V-C
+3
+IPSC
+V-C
+4
+Caveat
+V-D
+Ablation Study
+V-D
+1
+Frozen Backbone
+V-D
+2
+Video Output with Static Input
+V-D
+3
+Video Length and Stride
+VI
+Conclusions and Future Work
+References
+A
+RLE length Statistics
+B
+Vocabulary Sizes
+C
+Segmentation Metrics for Subsampled Masks
+D
+Visualization
+E
+Results
+License: arXiv.org perpetual non-exclusive license
+arXiv:2602.21627v1 [cs.CV] 25 Feb 2026
+Tokenizing Semantic Segmentation with RLE
+ABHINEET SINGH
+1,2
+JUSTIN ROZEBOOM
+1,3
+NILANJAN RAY
+1,4
+Abstract
+This paper presents a new unified approach to semantic segmentation in both images and videos by using language modeling to output the masks as sequences of discrete tokens.
+We use run length encoding (RLE) to discretize the segmentation masks and then train a modified version of Pix2Seq
+[
+1
+]
+to output these RLE tokens through autoregression.
+We propose novel tokenization strategies to compress the length of the token sequence to make it practicable to extend this approach to videos.
+We also show how instance information can be incorporated into the tokenization process to perform panoptic segmentation.
+We evaluate our proposed models on two datasets to show that they are competitive with the state of the art
+in spite of being bottlenecked by our limited computational resources.
+Index Terms:
+semantic segmentation, video segmentation, instance segmentation, panoptic segmentation, autoregression, language modeling, tokenization, transformer
+†
+†
+history:
+Date of publication xxxx 00, 0000, date of current version xxxx 00, 0000.
+†
+†
+doi:
+10.1109/ACCESS.2024.0429000
+†
+†
+address:
+Department of Computing Science, University of Alberta
+†
+†
+address:
+e-mail: asingh1@ualberta.ca
+†
+†
+address:
+e-mail: wrozeboo@ualberta.ca
+†
+†
+address:
+e-mail: nray1@ualberta.ca
+†
+†
+corresponding:
+Corresponding author: Abhineet Singh (e-mail: asingh1@ualberta.ca).
+I
+Introduction
+Computer vision models typically produce outputs that are continuous-valued and fixed-sized, that is, they consist of real numbers and their size is independent of the contents of the input images.
+This is particularly unsuitable for tasks like object detection and multi-object tracking where the output is inherently sparse and discrete in nature.
+This is less of an issue for dense recognition tasks like semantic segmentation, though it has been shown
+[
+2
+]
+that such tasks can also be modeled with tokenization.
+This paper provides additional evidence for this by adapting the Pix2Seq language modeling framework
+[
+1
+]
+for autoregressive semantic segmentation in both images and videos.
+It serves as a companion to our concurrent work on tokenizing video object detection
+[
+3
+]
+to demonstrate the wide applicability of tokenization to both sparse and dense vision tasks.
+It also proposes a simple way to add instance information to the token sequence, thereby achieving panoptic segmentation.
+A brief review of tokenization in computer vision is included in our companion paper
+[
+3
+]
+, so we are not repeating it here for the sake of brevity.
+To the best of our knowledge,
+[
+2
+]
+is the only other existing work that applies tokenization to semantic segmentation.
+Our method differs from
+[
+2
+]
+in two key aspects.
+Firstly,
+[
+2
+]
+uses diffusion to output the raw segmentation masks without any form of compression.
+We instead use autoregression to output a lossless compressed representation of masks, thus significantly reducing output redundancy.
+We also posit that our approach is a purer form of language modeling since
+[
+2
+]
+requires the mask pixels to be converted from discrete integers into continuous floating-point values in order to be compatible with the diffusion model, thereby partially undoing the benefits of tokenization.
+Secondly,
+[
+2
+]
+gives restricted coverage to video segmentation, which is limited to only pairs of consecutive frames.
+We provide a more comprehensive treatment for video masks, with experiments covering up to
+8
+8
+frames and a unified representation that can theoretically handle any number of frames and is limited only by the available GPU memory.
+Fig. 1
+:
+Generating RLE sequence for a
+2
+×
+5
+2\times 5
+binary mask using row-major flattening.
+Note that the start indices use 0-based indexing instead of the 1-based indexing commonly used in RLE.
+To summarize, following are our main contributions:
+•
+We present a new approach to semantic segmentation by tokenizing the masks with run length encoding (RLE).
+•
+We extend the RLE representation to work with video masks.
+•
+We propose several tricks to compress the RLE sequence, e.g. Lengths-As-Class and Time-As-Class for static and video masks respectively.
+•
+We propose a means to incorporate instance information in the RLE sequence to perform panoptic segmentation.
+We have implemented the methods described here as extensions of the Pix2Seq framework
+[
+4
+]
+and make our code and trained
+models publicly available
+[
+5
+]
+.
+Note that, as in
+[
+3
+]
+, many of the tokenization concepts in this paper can be illustrated better with animations than still images.
+Since we cannot include animations here, we have created a website for this work
+[
+6
+]
+that contains animated versions of many of these images. We include links to these in the respective captions.
+The remainder of this paper is organized as follows.
+Sec.
+II
+briefly explains the RLE encoding we have used to represent segmentation masks with sequences of discrete tokens.
+Sec.
+III
+follows with details of how we tokenized RLE for the case of static images including the sliding window patches (Sec.
+III-B
+) and Lengths-As-Class (LAC) encoding (Sec.
+III-C
+) we employed to deal with high resolution and multi-class masks.
+Finally, Sec.
+IV
+concludes with an extension of this representation for videos, including the Time-As-Class (TAC) and Lengths-and-Time-As-Class (LTAC) schemes (Sec.
+IV-A
+) we used to compress the RLE further to make it feasible to incorporate multiple masks without exceeding the token sequence length beyond practicable limits.
+We have used the same network architectures for video segmentation as video detection
+[
+3
+]
+, so we do not cover these here.
+II
+Run Length Encoding (RLE)
+We have chosen to tokenize semantic segmentation masks using the run-length encoding (RLE) representation
+[
+7
+]
+.
+This is a lossless data compression technique that flattens the segmentation mask into a 1D vector and represents this as a sequence of
+runs
+.
+A
+run
+is a continuous sequence of non-zero pixel values that can be represented by a pair of integers -
+start
+,
+length
+- where
+start
+is the index of the first pixel in the sequence and
+length
+is the number of pixels in the sequence.
+An example
+1
+1
+1
+This example has been borrowed from
+this
+online article
+is shown in Fig.
+1
+.
+A binary segmentation mask can thus be represented by a sequence of these pairs:
+start
+1
+,
+length
+1
+,
+start
+2
+,
+length
+2
+,
+start
+3
+,
+length
+3
+,
+…
+{\color[rgb]{1,0,0}\textit{start}_{1},\textit{length}_{1},}{\color[rgb]{0,0.88,0}\textit{start}_{2},\textit{length}_{2},}{\color[rgb]{0,0,1}\textit{start}_{3},\textit{length}_{3},}...
+while a multi-class mask would need a sequence of triplets since each run would also have the class ID:
+start
+1
+,
+length
+1
+,
+class
+1
+,
+start
+2
+,
+length
+2
+,
+class
+2
+,
+…
+{\color[rgb]{1,0,0}\textit{start}_{1},\textit{length}_{1},\textit{class}_{1},}{\color[rgb]{0,0.88,0}\textit{start}_{2},\textit{length}_{2},\textit{class}_{2},}...
+The mask can be flattened in either row-major and column-major order.
+Both of these lead to similar sequence lengths on average, although one might be more suitable than the other for specific cases.
+For example, row-major would provide shorter sequences if most of the objects are short and wide while column-major would work better for tall and narrow objects.
+We also considered two alternative mask representations including polygons
+[
+8
+,
+9
+,
+10
+,
+11
+,
+12
+]
+and quadtrees
+[
+13
+]
+.
+However, statistical tests showed that all of these representations require roughly the same number of tokens as RLE so we chose the latter since it provides two advantages over the others.
+Firstly, it is much easier to implement, especially when generalizing to multi-class and video segmentation masks.
+Secondly, it is likely to be more robust to noisy tokens during mask reconstruction at inference since a single run, which forms the geometrical unit of RLE tokenization, has a much smaller impact on the overall mask quality than a polygon or quadtree.
+For example, if a few RLE tokens go missing at inference, it is likely to have minimal impact on the overall mask quality since each run usually affects only a few nearby pixels in the same row (or column).
+Also, the gaps or artifacts in the mask thus created might be remedied relatively easily by image processing techniques like morphological operations
+[
+14
+]
+.
+However, a single missing polygon token could severely degrade the mask in a way that cannot be easily fixed by post-processing.
+On the other hand, RLE does have an important disadvantage in that it makes object-level information difficult to learn since it represents each object by a large number of independent tokens.
+It would be an interesting area of future work to figure out how to add object-level information to the mask tokens without losing the robustness benefit provided by the small quantum of RLE.
+III
+Static Image Segmentation
+III-A
+Tokenization
+As detailed in the design of our video architectures
+[
+3
+, Sec. III.B]
+, Pix2Seq is very difficult to train from scratch, so it is important that we are able to use as much of the pretrained weights as possible.
+This in turn requires that the baseline architecture be modified as little as possible.
+This imposes two architectural constraints on RLE tokenization – the size of the vocabulary
+V
+V
+and the maximum sequence length
+L
+L
+.
+III-A
+1
+Architectural Constraints
+Out of the box, Pix2Seq has
+L
+=
+512
+L=512
+and
+V
+=
+3
+​
+K
+V=3K
+in the original object-detection-only variant
+[
+1
+]
+, though the multi-task version
+[
+12
+]
+implemented in the same code-base supports
+V
+V
+upto
+32
+​
+K
+32K
+.
+The choice of how to tokenize RLE involves a trade-off between these two constraints,
+wherein a mask can be encoded by fewer tokens
+(thereby decreasing
+L
+L
+)
+by adding more unique tokens to the vocabulary
+(thereby increasing
+V
+V
+)
+and vice versa.
+Also, increasing either
+L
+L
+or
+V
+V
+causes both training time and GPU memory consumption to rise too, though this increase is significantly more pronounced for
+L
+L
+than
+V
+V
+.
+Hence, our overall objective was to keep the RLE sequence as short as possible while allowing the number of required tokens to increase up to
+32
+​
+K
+32K
+.
+We have been able to get the model working well with
+L
+L
+up to
+4
+​
+K
+4K
+and
+V
+V
+up to
+28
+​
+K
+28K
+on our limited hardware resources.
+It is even possible to get training started with
+L
+L
+up to
+8
+​
+K
+8K
+but anything much above
+4
+​
+K
+4K
+results in the training run crashing soon afterwards, irrespective of
+V
+V
+.
+We trained all our models on RTX 3090 GPUs so it appears that the 24 GB RAM available on these is simply not enough for
+L
+>>
+4
+​
+K
+L>>4K
+.
+Also, the batch sizes we can use near these upper limits of
+L
+L
+and
+V
+V
+are far too small to
+train models of such complexity to generalize well.
+III-A
+2
+Mask Flattening
+Let us assume that we have an
+S
+×
+S
+S\times S
+binary segmentation mask.
+If we employ the conventional practice of flattening the mask into a 1D vector, we can use a single token to represent the
+starts
+but we would need
+S
+2
+S^{2}
+different tokens in the vocabulary for the start indices.
+Alternately, we can skip the flattening and just use the 2D coordinates directly to represent the start of each run.
+In this case, we need only
+S
+S
+start tokens but now we need
+3
+3
+tokens to represent each run, which increases
+L
+L
+by
+50
+%
+50\%
+.
+As mentioned above, reducing
+L
+L
+is more important than reducing
+V
+V
+so we have mostly been working with the flattened version, though we did train a few models with 2D start tokens as well.
+Fig
+2
+shows examples of RLE tokenization for binary segmentation masks with both row-major (top) and column-major (bottom) mask flattening.
+III-A
+3
+Shared Tokens
+Fig. 2
+:
+Visualization of RLE tokenization of binary segmentation masks with row-major (top) and column-major (bottom) flattening of the masks.
+Each figure shows (from left to right) the source image patch with the foreground mask drawn on it in yellow, binary version of this mask with the already tokenized segment in yellow, and the corresponding tokens.
+The run that is currently being tokenized is shown in purple.
+Animated versions of these figures are available
+here
+and
+here
+.
+Best viewed under high magnification.
+Further, we have the option to share the same set of tokens for both
+starts
+and
+lengths
+since the
+lengths
+can theoretically be as large as the
+starts
+when a single run covers the entire mask.
+However, in practice, very few runs extend across multiple rows (or columns) so we decided to use separate tokens for
+lengths
+and imposed a limit of
+S
+S
+on the maximum length that a run can have.
+We handle runs that exceed
+S
+S
+by splitting them into multiple consecutive runs.
+For example, with
+S
+=
+80
+S=80
+, an overlong run
+(
+300,125
+)
+(300,125)
+can be split into two runs
+(
+300
+,
+80
+)
+(300,80)
+and
+(
+380
+,
+45
+)
+(380,45)
+.
+In theory, this can increase the total number of runs (and therefore
+L
+L
+) dramatically but, as mentioned above, it is extremely rare for runs to extend across multiple rows (or columns) so it does not matter much in practice.
+Having separate tokens for
+starts
+and
+lengths
+also provides a significant advantage during inference when we need to resolve the
+L
+×
+V
+L\times V
+probability distribution into actual tokens.
+If
+starts
+and
+lengths
+are using the same set of
+S
+2
+S^{2}
+tokens (assuming the flattened mask case), we would need to take the
+argmax
+over all the
+S
+2
+S^{2}
+probability values to generate each length token.
+Using a separate set of
+S
+S
+tokens for
+lengths
+allows us to take the
+argmax
+over only these
+S
+S
+probabilities which helps to correct the run in cases where the network confounds the positioning of
+starts
+and
+lengths
+tokens.
+III-B
+Sliding Windows
+Fig. 3
+:
+An example of the sliding window patch extraction and mask subsampling process on an image from the IPSC dataset.
+The top row shows (from left right) source image resized to
+2560
+×
+2560
+2560\times 2560
+with patch location shown by the blue box, corresponding mask at its full resolution of
+2560
+×
+2560
+2560\times 2560
+, and this mask subsampled by a factor of 8 to
+320
+×
+320
+320\times 320
+.
+The bottom row shows (from left right)
+640
+×
+640
+640\times 640
+patch corresponding to the blue box, corresponding patch mask at its full resolution
+640
+×
+640
+640\times 640
+, and this mask subsampled by a factor of 8 to
+80
+×
+80
+80\times 80
+.
+This subsampled
+80
+×
+80
+80\times 80
+mask is the one that is used for generating the RLE sequence.
+An animated version of this figure is available
+here
+.
+We collected statistics on the lengths of the RLE sequences required to represent segmentation masks for complete images over the entire IPSC and ARIS datasets (Sec.
+V-A
+).
+This turned out to be well over
+512
+512
+for many images even when they were resized down to
+I
+=
+320
+I=320
+, which itself reduced the resolution of many IPSC sequences by a factor of more than
+10
+10
+[
+15
+]
+.
+In addition, even
+S
+=
+320
+S=320
+is not feasible with 1D start tokens because of the impracticably large vocabulary size
+V
+=
+S
+2
+=
+320
+2
+=
+102.4
+​
+K
+V=S^{2}=320^{2}=102.4K
+that this requires.
+Although such resolutions can be managed using 2D start tokens, this increases
+L
+L
+by
+50
+%
+50\%
+which in turn significantly reduces the training batch sizes that can be used.
+We resolved
+these issues
+by first extracting smaller patches of size
+P
+<
+I
+P<I
+from those images in a sliding window manner
+[
+16
+]
+and then training on these patches instead of the complete images.
+An example is shown in Fig.
+3
+.
+We also applied all the patch dataset augmentation techniques from
+[
+16
+]
+.
+These include employing random strides smaller than
+P
+P
+to generate overlapping patches, and applying random geometric transforms like rotation and horizontal and vertical flipping to the patches thus generated.
+III-B
+1
+Redundancy
+Similar to overlapping temporal windows in video processing
+[
+3
+]
+, overlapping patches can be used to increase redundancy during inference.
+In fact, when doing video segmentation (Sec.
+IV
+), we can get redundancy from both temporal and spatial windows.
+However, unlike object detection, there is no straightforward method to combine information from multiple masks of the same region in the image to create a composite mask that is better than any of its constituents.
+The best method we found was to employ a pixel-level voting strategy where we collect the class label for every pixel from all the patches that contain that pixel and then use the most frequently occurring class as the final label for that pixel.
+However, even this resulted in a slight overall degradation of mask quality as compared to simply using the class labels from the last patch that contains each pixel (Sec.
+V-D3
+).
+We also experimented with other strategies like pixel-wise
+or
+,
+and
+,
+min
+and
+max
+but none outperformed the voting scheme.
+III-B
+2
+Subsampling
+We empirically found that patch sizes ranging from
+P
+=
+I
+/
+4
+P=I/4
+to
+P
+=
+I
+/
+8
+P=I/8
+are small enough to produce RLE sequences of suitable sizes (i.e. with
+512
+≤
+L
+≤
+4096
+512\leq L\leq 4096
+) on both IPSC and ARIS datasets, provided that the masks themselves are subsampled down to between
+S
+=
+80
+S=80
+and
+S
+=
+160
+S=160
+(Tables
+III
+-
+IV
+).
+We are using the smallest version of the Pix2Seq architecture which takes
+640
+×
+640
+640\times 640
+images as input and this gives the target size for the patches.
+IPSC sequences have a large range of image sizes from
+900
+×
+1700
+900\times 1700
+to
+3833
+×
+4333
+3833\times 4333
+[
+15
+]
+.
+Therefore, in addition to
+L
+L
+exceeding the required limit for the larger images, extracting patches directly from the source images leads to widely varying magnification levels between the different sequences.
+Therefore, for most of our experiments on this dataset, we first resized the images to
+I
+=
+2560
+I=2560
+before extracting the patches.
+This allows patches that are a quarter of the full image to reach the target size
+P
+=
+I
+/
+4
+=
+2560
+/
+4
+=
+640
+P=I/4=2560/4=640
+and is also large enough that we do not lose much resolution in most of the images.
+Unlike IPSC, the ARIS dataset has much more uniform sizes across its images
+[
+16
+]
+, so that extracting patches directly from the source images with
+P
+=
+640
+P=640
+works fine on this dataset.
+Also, ARIS images are small enough that directly resizing them to
+I
+=
+640
+I=640
+and skipping patch generation altogether also works without losing too much resolution.
+After extracting the patches, we finally subsampled the
+P
+=
+640
+P=640
+patch masks down to either
+S
+=
+80
+S=80
+or
+S
+=
+160
+S=160
+and generated the RLE training data using these subsampled masks.
+We collected statistics on the amount of degradation in the mask quality as a result of this subsampling, in terms of segmentation metrics (Sec.
+V-B
+) obtained by comparing the subsampled masks to the original ones.
+This turned out to be
+<
+10
+%
+<10\%
+in nearly every case (Table
+XI
+), which is sufficient for most practical purposes.
+III-C
+Lengths-As-Class (LAC)
+Fig. 4
+:
+Visualization of LAC tokenization for multi-class segmentation.
+The figure shows (from left to right) the source image patch with the two classes in red and green, binary version of this mask with the already tokenized segment in red or green depending on the class, and the corresponding tokens.
+The run that is currently being tokenized is shown in purple.
+The LAC tokens are shown here as concatenations of class name and length but each such combination represents a single unique token.
+Animated version of this figure is available
+here
+. Best viewed under high magnification.
+As mentioned before, naïve encoding of multi-class segmentation masks requires
+3
+3
+tokens per run since we need an extra token for the class.
+This can unnecessarily increase the sequence length by
+50
+%
+50\%
+so we can go back to using
+2
+2
+tokens per run by combining the length and class tokens into a single composite token that represents both.
+This can be done by considering the lengths as classes too, such that each unique combination of length and class is represented by a separate LAC token.
+The total number of LAC tokens is then the product of the maximum length of a run (i.e.,
+S
+S
+) and the number of classes
+C
+C
+.
+The first
+S
+S
+LAC tokens correspond to runs of class
+1
+1
+, next
+S
+S
+tokens correspond to class
+2
+2
+and so on.
+This tokenization is particularly efficient when
+C
+C
+is small.
+For example, both IPSC and ARIS datasets have
+C
+=
+2
+C=2
+so that, with
+S
+=
+80
+S=80
+, we get the number of
+starts
+tokens =
+80
+×
+80
+=
+6400
+80\times 80=6400
+, number of LAC tokens =
+80
+×
+2
+=
+160
+80\times 2=160
+and
+V
+=
+6400
++
+160
+=
+6560
+V=6400+160=6560
+.
+Without LAC tokenization, number of
+lengths
+tokens =
+80
+80
+, number of class tokens =
+2
+2
+and
+V
+=
+6400
++
+80
++
+2
+=
+6482
+V=6400+80+2=6482
+.
+Therefore, we are able to reduce the RLE sequence length substantially without any significant increase in
+V
+V
+.
+However, for very large
+C
+C
+, e.g.,
+C
+=
+80
+C=80
+as in the COCO dataset
+[
+17
+]
+,
+V
+V
+can nearly double (
+12.8
+​
+K
+12.8K
+versus
+6.56
+​
+K
+6.56K
+), though still remaining very much within the feasible range (i.e.
+<
+32
+​
+K
+<32K
+).
+Fig.
+4
+shows examples of RLE tokenization for multi-class segmentation masks with LAC tokenization.
+IV
+Video Segmentation
+Fig. 5
+:
+Visualization of TAC tokenization for multi-class video segmentation with
+N
+=
+2
+N=2
+.
+The top row shows (from left to right)
+F
+1
+F_{1}
+,
+F
+2
+F_{2}
+, full resolution TAC mask, and subsampled TAC mask.
+The TAC masks show 8 TAC classes whose colors are shown at the top.
+The bottom row shows subsampled
+F
+1
+F_{1}
+and
+F
+2
+F_{2}
+masks, partially colored with TAC colors for runs whose tokens are shown on the right.
+Tokens are colored according to the TAC class in each run except the current one that is shown in purple.
+Animated version of this figure is available
+here
+.
+Best viewed under high magnification.
+A straightforward extension of RLE tokenization to perform semantic segmentation on a video with
+N
+N
+frames would involve flattening the
+N
+×
+S
+×
+S
+N\times S\times S
+3D mask into a 1D vector of size
+N
+×
+S
+2
+N\times S^{2}
+using either row-major or column-major ordering.
+As shown in Fig.
+11
+, row-major or C ordering (3D-C) results in the runs for individual video frames simply getting concatenated together, i.e., all the runs for
+F
+1
+F_{1}
+come together in a sequence, followed by the runs for
+F
+2
+F_{2}
+and so on (where
+F
+i
+F_{i}
+,
+1
+≤
+i
+≤
+N
+1\leq i\leq N
+, denotes the
+i
+t
+​
+h
+i^{th}
+video frame).
+This does not account for spatiotemporal consistencies in the masks since the runs corresponding to the same object from different video frames are completely unrelated.
+Column-major or Fortran ordering (3D-F) partially accounts for spatiotemporal mask consistency but has large numbers of very short runs due to small changes in the object position or shape between consecutive frames.
+This not only significantly increases the sequence length but the very short, often unit-sized, runs are also likely to be difficult to train on.
+An example is shown in Fig.
+12
+.
+Another problem with the straightforward 3D flattening of video masks (either 3D-C or 3D-F) is that the number of
+starts
+tokens increases linearly with
+N
+N
+by a factor of
+S
+2
+S^{2}
+.
+This becomes infeasible for
+N
+>
+5
+N>5
+with
+S
+=
+80
+S=80
+and
+N
+>
+1
+N>1
+with
+S
+=
+160
+S=160
+.
+IV-A
+Time-As-Class (TAC)
+These issues can be largely resolved by extending the LAC encoding into Time-As-Class (TAC) tokenization to combine the temporal dimension with class IDs so that every possible combination of class IDs across the video frames is represented by a separate TAC token.
+For example, Table
+I
+shows TAC tokens for
+N
+=
+2
+N=2
+and
+N
+=
+3
+N=3
+for both binary and multi-class cases.
+Due to the combinatorial nature of TAC tokenization, the total number of TAC tokens becomes
+(
+C
++
+1
+)
+N
+−
+1
+(C+1)^{N}-1
+.
+Even though this increases exponentially with
+N
+N
+,
+V
+V
+remains practicable for up to
+N
+=
+14
+N=14
+and
+N
+=
+9
+N=9
+respectively for binary and multi-class cases with
+S
+=
+80
+S=80
+(Table
+VIII
+) and upto
+N
+=
+12
+N=12
+and
+N
+=
+6
+N=6
+with
+S
+=
+160
+S=160
+(Table
+X
+).
+This is aided by the fact that the number of
+starts
+tokens now becomes independent of
+N
+N
+since the 3D video mask with
+C
+C
+classes has effectively been collapsed into a 2D mask with
+(
+C
++
+1
+)
+N
+−
+1
+(C+1)^{N}-1
+classes.
+Fig.
+5
+,
+13
+and
+14
+show examples of TAC tokenization for both binary and multi-class cases with
+N
+=
+2
+N=2
+and
+N
+=
+3
+N=3
+.
+TABLE I
+:
+TAC tokens for IPSC dataset with binary and multi-class masks for
+N
+=
+2
+N=2
+and
+N
+=
+3
+N=3
+.
+Here,
+bkg
+refers to the background while
+ips
+and
+dif
+are the two classes in the IPSC dataset.
+Both classes are represented by
+cell
+in the binary case.
+Note that there is no TAC token corresponding to the class combinations with
+bkg
+in every frame (i.e.,
+bkg
+-
+bkg
+for
+N
+=
+2
+N=2
+and
+bkg
+-
+bkg
+-
+bkg
+for
+N
+=
+3
+N=3
+) since RLE only represents foreground pixels, which requires that atleast one class be non-
+bkg
+.
+Also,
+N
+=
+3
+N=3
+multi-class case would have
+(
+C
++
+1
+)
+N
+−
+1
+=
+3
+3
+−
+1
+=
+26
+(C+1)^{N}-1=3^{3}-1=26
+TAC tokens, out of which only
+15
+15
+are shown for brevity.
+IV-B
+Length-and-Time-As-Class (LTAC)
+TAC and LAC techniques can be combined to represent each run with only 2 tokens for multi-class video masks too.
+However, the number of LTAC tokens =
+S
+×
+(
+C
++
+1
+)
+N
+−
+1
+S\times(C+1)^{N}-1
+becomes impractical for
+N
+>
+8
+N>8
+and
+N
+>
+5
+N>5
+respectively for binary and multi-class cases.
+Fig.
+15
+shows examples of LTAC tokenization for both cases.
+IV-C
+Class-wise (CW) Tokenization
+As mentioned above, TAC and LTAC (and to a lesser extent LAC) tokenization schemes suffer from the problem of exponential increase in
+V
+V
+when
+C
+C
+becomes high (e.g.,
+C
+=
+80
+C=80
+in COCO dataset
+[
+17
+]
+).
+This can be ameliorated by decoupling the class ID from the RLE sequence so that the latter is composed only of
+starts
+and
+lengths
+.
+A simple way to achieve this is to first generate RLE tokens for the binary mask of each class and then concatenate these RLE sequences, separated by the respective class tokens to mark the end of each sequence.
+The class tokens would therefore serve the dual purpose of separating the RLE sequences for the different classes and specifying the classes themselves.
+This allows the number of classes for the purpose of computing
+V
+V
+for these tokenization schemes to remain constant at
+C
+=
+2
+C=2
+, irrespective of the actual number of classes in the dataset.
+On the flip side, this representation at least partially nullifies the advantage of small quantum that RLE provides as far as classification accuracy is concerned.
+When each run is classified separately, even if a few of them are misclassified, it does not affect the overall classification accuracy greatly.
+However, when all the runs corresponding to a class are classified by a single token, an error in the latter causes all of those runs to become misclassified.
+Related to this is the fact that the class tokens are greatly outweighed by the coordinate tokens since there are anywhere from a few tens to a few hundreds of coordinate tokens for every class token.
+Based on our experiments with video detection models
+[
+3
+, Sec. V.A ]
+, a promising way to handle this last problem is by increasing the weight of the class token
+[
+3
+, Sec. V.A ]
+so that all the coordinate tokens combined have about the same weightage as the single class token.
+However, our early experiments with class weight equalization for segmentation have shown only minor improvement so we have excluded these here and leave more comprehensive experiments for future work.
+IV-D
+Instance-wise (IW) Tokenization
+If object instance information is available, as in the IPSC dataset, RLE sequences can be generated for the binary masks corresponding to each instance instead of each class.
+These sequences can again be concatenated, separated by the respective class tokens, similar to CW tokenization.
+This representation allows us to perform instance segmentation in addition to semantic segmentation and therefore achieve full video panoptic segmentation.
+This also partially solves the problem of weight imbalance between coordinate and class tokens because
+the number of runs required to represent each object instance is usually much smaller than those needed to represent all the objects belonging to each class.
+Fig.
+16
+shows an example of IW tokenization for static segmentation masks.
+Early experiments with this scheme on static masks have shown it to be comparable to the other tokenization schemes in terms of semantic segmentation performance.
+However, its instance segmentation performance does not compare favorably with object detection models, mainly because of the low resolution of the mask.
+Training with sufficiently high batch sizes is currently only possible with
+S
+=
+80
+S=80
+and
+S
+=
+128
+S=128
+using respective image sizes of
+I
+=
+640
+I=640
+and
+I
+=
+1024
+I=1024
+.
+Given the high resolution of the IPSC images, this requires the original masks to be downsampled by a factor of anywhere from
+10
+10
+to
+50
+50
+which is far too large to be able to extract spatially accurate bounding boxes.
+We have trained a couple of models with
+S
+=
+512
+S=512
+and
+S
+=
+640
+S=640
+too but we had to use batch sizes that are too small to train these successfully.
+As a result, these models underperform in terms of both semantic and instance segmentation.
+We leave further exploration of both CW and IW tokenization schemes as part of future work when more GPU memory is available.
+V
+Results
+This section presents results comparing our proposed token-based
+semantic segmentation models with the conventual deep learning models from
+[
+16
+]
+and
+[
+15
+]
+.
+Unless otherwise specified, all of our models have
+640
+×
+640
+640\times 640
+ResNet-50 as their backbone and the video models use the middle-fusion video architecture
+[
+3
+, Sec. III.B.2]
+with
+N
+=
+2
+N=2
+.
+For the sake of brevity, the static and video semantic segmentation models are abbreviated as
+P2S-SEG
+and
+P2S-VIDSEG
+respectively for the remainder of this paper.
+We have used the same training setup and validation protocols as detailed in
+[
+3
+]
+so we will not be repeating these here and instead refer the interested reader to Sec. IV.C of that paper for these details.
+V-A
+Datasets
+We have evaluated semantic segmentation on the following
+two datasets:
+–
+ARIS
+[
+16
+]
+: We have tested on the standard configuration with 32 training and 18 test images.
+We have also performed image-level ablation tests with 4, 8, 16 and 24 training images, all of these being tested on the same 18 test images. This dataset does not contain video labels so we have only used it for testing the static segmentation models.
+–
+IPSC
+[
+15
+]
+: We have tested on both early and late-stage training configurations. Unlike ARIS, this dataset does contain video labels so we have used it for testing both static and video segmentation models.
+We have also done some experiments on larger datasets like COCO
+[
+17
+]
+and Cityscapes
+[
+18
+]
+but found that the results on these are not yet good enough to include here (Sec.
+VI
+)
+and are thus left for a future work.
+V-B
+Metrics
+We have used three main metrics for measuring semantic segmentation performance.
+The first two are recall and precision as defined in
+[
+16
+]
+and redefined below.
+These are used for both ARIS and IPSC datasets.
+•
+Recall:
+rec
+=
+1
+C
+​
+∑
+i
+n
+i
+​
+i
+t
+i
+\displaystyle\texttt{rec}=\frac{1}{C}\sum_{i}\frac{n_{ii}}{t_{i}}
+(1)
+•
+Precision:
+prec
+=
+1
+C
+​
+∑
+i
+n
+i
+​
+i
+t
+i
++
+∑
+j
+n
+j
+​
+i
+−
+n
+i
+​
+i
+\displaystyle\texttt{prec}=\frac{1}{C}\sum_{i}\frac{n_{ii}}{t_{i}+\sum_{j}n_{ji}-n_{ii}}
+(2)
+•
+Frequency Weighted Recall:
+fw_rec
+=
+∑
+i
+n
+i
+​
+i
+∑
+i
+t
+i
+\displaystyle\texttt{fw\_rec}=\frac{\sum_{i}n_{ii}}{\sum_{i}t_{i}}
+(3)
+•
+Frequency Weighted Precision:
+fw_prec
+=
+∑
+k
+(
+t
+k
+)
+−
+1
+​
+∑
+i
+t
+i
+​
+n
+i
+​
+i
+t
+i
++
+∑
+j
+n
+j
+​
+i
+−
+n
+i
+​
+i
+\displaystyle\texttt{fw\_prec}=\sum_{k}(t_{k})^{-1}\sum_{i}\frac{t_{i}n_{ii}}{t_{i}+\sum_{j}n_{ji}-n_{ii}}
+(4)
+The third one
+is the Dice score,
+also known as the Dice-Sørensen coefficient
+[
+19
+,
+20
+]
+,
+which is used only for the IPSC dataset.
+Dice score is widely used
+as a single metric to represent the overall segmentation quality
+by incorporating both recall and precision.
+It is defined as:
+dice
+i
+=
+2
+×
+n
+i
+​
+i
+t
+i
++
+∑
+j
+n
+j
+​
+i
+\displaystyle\texttt{dice}_{i}=\frac{2\times n_{ii}}{t_{i}+\sum_{j}n_{ji}}
+(5)
+where
+1
+≤
+i
+≤
+C
+1\leq i\leq C
+is the class index,
+n
+i
+​
+j
+n_{ij}
+is the number of pixels of class
+i
+i
+predicted to belong to class
+j
+j
+and
+t
+i
+t_{i}
+is the total number of pixels of class
+i
+i
+in the ground truth.
+We have also used the domain-specific ice concentration mean absolute error (MAE)
+[
+16
+]
+for the ARIS dataset.
+V-C
+Performance Overview
+TABLE II
+:
+Segmentation recall, precision and ice concentration median MAE on ARIS dataset for P2S-SEG and conventional deep learning models along with SVM.
+The
+fw
+in
+ice+water (fw)
+stands for frequency weighted.
+Relative increase over SVM in recall and precision is computed as
+(
+model_value
+−
+svm_value
+)
+/
+svm_value
+×
+100
+(\texttt{model\_value}-\texttt{svm\_value})/\texttt{svm\_value}\times 100
+while the relative decrease in median MAE is computed as
+(
+svm_mae
+−
+model_mae
+)
+/
+svm_mae
+×
+100
+(\texttt{svm\_mae}-\texttt{model\_mae})/\texttt{svm\_mae}\times 100
+.
+The best and the second best models in each case are shown in bold and highlighted in green and yellow respectively.
+This data is shown as a bar plot in Fig.
+17
+.
+We experimented with many different configurations or variants of P2S-SEG and P2S-VIDSEG (Sec.
+V-D
+) but this section only summarizes the best results we found.
+The specific model configurations that we have included here for each dataset are detailed in Table
+XII
+.
+Note that we were only able to train a small fraction of all the models we would have liked to have trained due to limited time and computational resources, so these results very likely do not indicate the best performance that these models are capable of, especially in the case of the video models with larger values of
+N
+N
+.
+V-C
+1
+Summary
+Following are the key takeaways from the results presented in the remainder of this paper:
+–
+Both static and video language models perform about the same as similarly sized conventional models.
+As with deep learning in general, the overall performance depends more on the size of the backbone than any specific output modeling.
+–
+P2S-SEG and P2S-VIDSEG models compare more favourably against conventional segmentation models on ARIS dataset than on IPSC dataset.
+–
+Language models are better at localizing objects than classifying them correctly so that their class-agnostic performance tends to compare more favourably with conventional models than their overall performance.
+–
+Related to the last point is that the language models are relatively less robust to class imbalance and tend to overfit to the more numerous class.
+This causes P2S-SEG and P2S-VIDSEG to compare more favourably against conventional models in terms of segmentation recall rather than precision.
+–
+P2S-VIDSEG does not show any consistent improvement over P2S-SEG, probably because the stride-based redundancy advantage does not apply to semantic segmentation.
+–
+There is no consistent improvement performance with increase in
+N
+N
+(Sec.
+V-D3
+).
+–
+Static models trained to predict video outputs by processing only the first frame in each video temporal window (Sec.
+V-D2
+) are able to keep up with the video models surprisingly well, even for large values of
+N
+N
+, indicating that the latter are not able to make sufficient use of the video information.
+V-C
+2
+ARIS
+Table
+II
+presents a summary of results on the ARIS dataset.
+P2S-SEG performs remarkably well here and turns out to be either the first or the second best model in nearly every case.
+Language modeling is particularly effective at class agnostic tasks, as represented by the ice+water metrics, where it outperforms all the other models by a large margin.
+Somewhat paradoxically, its performance drops significantly at the frequency weighted version of this metric, especially in terms of precision.
+All other models find this metric easier since it gives greater weightage to water which constitutes a majority of these images
+[
+16
+, Table II]
+and is relatively easy to separate from ice.
+Fig.
+6
+shows the results of image-level ablation testing on this dataset.
+P2S-SEG remains the best model in terms of recall and among the best two models in terms of precision.
+It predictably finds frazil ice precision most difficult to handle since there is significantly more frazil ice than anchor ice in the training images.
+This causes the model to overfit to this class and misclassify anchor ice as frazil ice which in turns lowers the corresponding precision.
+Fig. 6
+:
+Results of ablation tests with training images on ARIS dataset for (a-b) anchor ice and (c-d) frazil ice.
+Note the variable Y-axis limits between the top and bottom plots.
+V-C
+3
+IPSC
+Fig. 7
+:
+Semantic segmentation results on both (top) early and (bottom) late-stage IPSC datasets in terms of (left to right) recall, precision and dice score.
+IPSC
+and
+DfC
+on the x-axis refers to the two classes of cells while
+Cell
+represents the class-agnostic case where all the cells are considered as belonging to the same class.
+Fig. 8
+:
+Comparing the segmentation performance of models trained with and without frozen backbones on the (top) ARIS and (bottom) IPSC early-stage datasets.
+Models trained with and without frozen backbones are respectively shown in shades of green and red and denoted in the legend with prefixes
+F
+and
+T
+.
+The P2S-SEG suffixes
+patch
+and
+full
+respectively refer to models trained with and without sliding window patches.
+In the former case,
+P
+=
+640
+P=640
+,
+S
+=
+80
+S=80
+for both datasets,
+I
+=
+1280
+I=1280
+for ARIS and
+I
+=
+2560
+I=2560
+for IPSC.
+In the latter case,
+I
+=
+P
+=
+640
+I=P=640
+for both datasets,
+S
+=
+160
+S=160
+for ARIS and
+S
+=
+320
+S=320
+for IPSC.
+Fig. 9
+:
+Performance impact of replacing
+N
+N
+video frames with only the first frame in the sequence as input to P2S-VIDSEG models.
+The two cases are denoted with
+V
+and
+S
+in the legend and shown in shades of red and green respectively.
+Results are shown for both (left) early and (right) late-stage IPSC datasets in terms of Dice score
+Recall and precision exhibited the same trends as Dice score and have therefore be relegated to Fig.
+18
+.
+Best viewed under high magnification.
+Fig. 10
+:
+Impact of video length
+N
+N
+and stride
+T
+T
+on P2S-VIDSEG performance over (left) early and (right) late-stage configurations of the IPSC dataset.
+T
+=
+1
+T=1
+and
+T
+=
+N
+T=N
+are respectively represented with shades of red and green.
+Lighter shades of each colour represent
+N
+=
+2
+N=2
+while the darker shades represent
+N
+=
+8
+N=8
+.
+Dice score showed similar patterns as precision and has thus been relegated to Fig.
+18
+.
+Best viewed under high magnification.
+Fig.
+7
+shows the segmentation results on both early and late-stage training configurations of the IPSC dataset.
+Conventional modeling is represented here by the single Swin Transformer model
+[
+21
+]
+denoted as SWS which can be taken to represent the current state of the art in semantic segmentation.
+Language modeling compares less favourably against conventional modeling on this dataset than on ARIS,
+possibly because SWS is a newer and bigger transformer-based model as opposed to the older CNN-based models used on ARIS.
+Even so, P2S-SEG performs about the same as SWS overall, being slightly better on the early-stage dataset and slightly worse on the late-stage variant.
+Similarly, P2S-SEG is notably better on
+IPSC
+class while SWS is better on
+DfC
+and
+Cell
+.
+Finally, P2S-SEG fares better in terms of recall while SWS has an edge on precision.
+P2S-SEG also outperforms P2S-VIDSEG in nearly every case except the most challenging case of
+IPSC
+recognition on the late-stage dataset, where the latter outperforms both P2S-SEG and SWS on all three metrics.
+V-C
+4
+Caveat
+Semantic segmentation is very difficult to evaluate quantitatively and the performance numbers exhibit complex trade-offs between the various metrics as well as between the various classes.
+A couple of example are provided in Tables
+XIII
+and
+XIV
+that list the values of these three metrics (along with some others from
+[
+16
+]
+) on the validation set during the training runs for P2S-SEG on early-stage and P2S-VIDSEG on late-stage dataset respectively.
+We chose the specific checkpoints for inclusion here by looking for a good balance between all these conflicting considerations among candidate checkpoints once the validation performance had plateaued over all the metrics.
+When looking for the best compromise, we did have a bias in favour of
+IPSC
+among classes (
+Anchor Ice
+for ARIS) and Dice score among metrics, since these seem to us to best represent the overall segmentation quality.
+Further, there are 2-3 times as many
+DfC
+s as
+IPSC
+s in the ground truth so models tend to perform better on
+DfC
+(and
+Cell
+) later in their training run when they start overfitting to the more numerous class, something we wanted to avoid.
+A different choice of trade-offs can generate quite different comparative plots so these results should be interpreted guardedly.
+We have not implemented a live validation pipeline
+[
+3
+]
+for SWS so the results shown here were generated using the latest checkpoint once the training curve had plateaued.
+This is why SWS shows a consistent tendency to outperform P2S-SEG in terms of
+DfC
+and
+Cell
+but is outperformed by the latter in terms of
+IPSC
+.
+The best we can say with reasonable certainty is that the overall performance of language and conventional models is in the same ballpark, the former being slightly better at recall and the latter at precision.
+V-D
+Ablation Study
+This section presents the results of our experimentation with some of the important model parameters that were useful in finding the optimal models that are reported in Sec.
+V-C
+.
+We used the IPSC late-stage dataset for most of these experiments since it is small enough to allow training a large number of models, while at the same time also being challenging enough to be able to discriminate between these models.
+V-D
+1
+Frozen Backbone
+Fig.
+8
+shows that the benefit of keeping the backbone frozen is much less obvious in case of semantic segmentation compared to object detection
+[
+3
+]
+.
+This might be explained by the fact that RLE tokenization differs from static detection tokenization a lot more than does video detection.
+In fact, given this difference, it is remarkable that frozen backbone is mostly able to keep up with full network training even in case of P2S-VIDSEG with
+N
+=
+8
+N=8
+.
+This might at least partly be due to the bottleneck imposed by the insufficient batch size, without which the full network training might well lead to much better performance.
+V-D
+2
+Video Output with Static Input
+We wanted to find out how much useful information the network is able to learn from video frames so we trained static models to predict video output using only the first frame
+F
+1
+F_{1}
+in each video temporal window as input.
+This means that the model is trained to produce the same output as P2S-VIDSEG model but it only has access to the first frame in each temporal window, rather than all
+N
+N
+frames.
+It therefore needs to use the first frame to predict the contents of the future
+N
+−
+1
+N-1
+frames in the sequence.
+We trained models with
+N
+=
+2
+N=2
+,
+N
+=
+4
+N=4
+,
+N
+=
+6
+N=6
+and
+N
+=
+8
+N=8
+, all with the backbone frozen, and all on the IPSC late-stage dataset.
+Note that these static-video models can be trained with the same (and much larger) batch size as P2S-SEG, irrespective of
+N
+N
+.
+This gives them an advantage over the true video models whose batch size decreases linearly with
+N
+N
+.
+The video stride
+T
+T
+is important in evaluating these models since
+T
+=
+1
+T=1
+ensures that each frame would be the first frame in some temporal window so that the static input models can output valid boxes only for the first frame and still not be penalized during inference.
+However, this is unlikely to happen in practice since the model is trained to output boxes for all
+N
+N
+frames and therefore will be penalized during training for learning a simple strategy like this.
+P2S-VIDSEG results for both configurations of IPSC dataset are shown in Fig.
+9
+.
+Video input has more consistent and strongly marked performance advantage over static input here than with video detection
+[
+3
+]
+, especially for
+N
+=
+8
+N=8
+.
+In part, this is due to the absence of temporal redundancy here, since
+N
+=
+T
+N=T
+is used in all cases.
+It might also be due to greater integration of the outputs corresponding to different frames within the same shared tokens in video segmentation through TAC (Sec.
+IV-A
+), as opposed to frame-specific tokens employed by video detection.
+V-D
+3
+Video Length and Stride
+Fig.
+10
+shows the impact of
+N
+N
+and
+T
+T
+on video segmentation.
+As mentioned in Sec.
+III-B1
+, combining redundant outputs from overlapping temporal windows is far less straightforward for segmentation than it is for detection.
+These plots show the results of the voting strategy that we found to work best, though its overall performance impact is still minimal.
+Non-redundant output (
+T
+=
+N
+T=N
+) fares slightly better than redundant output (
+T
+=
+1
+T=1
+) in terms of recall over all three classes.
+T
+=
+N
+T=N
+is also better in terms of precision for
+IPSC
+but
+T
+=
+1
+T=1
+has a slight edge over
+DfC
+and
+Cell
+.
+Like all Pix2Seq models, P2S-VIDSEG models have a tendency to overfit to the more numerous class, which in this case corresponds to the background, followed by
+DfC
+.
+Combining pixel labels from multiple temporal windows therefore results in some of the pixels, mostly near the cell boundaries, getting misclassified as either background or
+DfC
+.
+Misclassification as background explains the drop in recall across the board while misclassification as
+DfC
+explains the drop in precision for
+IPSC
+along with concurrent increase for
+DfC
+and
+Cell
+.
+In terms of video length,
+N
+=
+2
+N=2
+significantly outperforms
+N
+=
+8
+N=8
+for
+DfC
+and
+Cell
+but the latter is appreciably better for
+IPSC
+, significantly more so over the early-stage datset and with
+T
+=
+N
+T=N
+.
+This can be partly attributed to the much greater batch size bottleneck on
+N
+=
+8
+N=8
+and partly to our bias in favoring
+IPSC
+performance over
+DfC
+(Sec.
+V-C4
+) when selecting the checkpoints for inclusion here.
+VI
+Conclusions and Future Work
+This paper introduced a new way to perform semantic segmentation in images and videos by modeling the outputs of these tasks as sequences of discrete tokens.
+We have proposed these new methods as another step in the direction of the more general tokenization of visual recognition tasks that has been happening over the last few years through the paradigm of language modeling.
+We have tested these models on two datasets with in-depth experiments to demonstrate their competitiveness with the state of the art in conventional modeling.
+This is still a work in progress and
+we are exploring
+many
+avenues for future improvement.
+A major limitation of our existing encoding schemes is that they offer competitive performance only on relatively small datasets with very few classes.
+Experiments with larger datasets like COCO
+[
+17
+]
+and Cityscapes
+[
+18
+]
+have shown a tendency for performance to improve sharply with decrease in the training dataset size and number of classes.
+For example, we achieved only around
+50
+%
+50\%
+recall-precision on COCO
+(118K images,133 classes),
+but these rose to
+80
+%
+80\%
+on Cityscapes
+(5K images,19 classes).
+Although too far below the state of the art to include here, these results do show promise for future competitiveness.
+In addition to better hardware, another way to achieve better training is to decrease
+L
+L
+and thus memory consumption.
+We are experimenting with several ways to achieve this.
+One such scheme is to represent each run with only length and class tokens by considering the background as an additional class, since the start of each run can now be obtained by adding the length of the previous run to its start.
+This gives the same benefit of two tokens per run as LAC without the combinatorial increase in
+V
+V
+.
+Another approach is to compute the RLE from a differential mask generated by taking the difference between consecutive pixels of the original mask.
+This reduces each run to unit length and therefore allows us to exclude the length tokens.
+The main disadvantage of both of these schemes is a reduction in the robustness to inference noise since the start or length of each run now depends on all previous runs, so that an error in a single run propagates to all subsequent ones, thus degrading the overall mask.
+An alternative means to reduce the effective
+L
+L
+is to change the network architecture itself.
+Fig.
+19
+shows an example where we split the decoder head into multiple parallel heads that each output only one component of each run.
+The overall RLE sequence is thus effectively split into
+k
+k
+shorter sequences, each of length
+L
+/
+k
+L/k
+, where
+k
+k
+is the number of tokens needed for each run.
+Since
+L
+L
+has a multiplicative impact on memory consumption, these
+k
+k
+heads combined have a significantly smaller memory footprint than a single head that outputs the full sequence.
+However, our experiments so far seem to indicate that separating out the RLE components in this way makes the training biased towards easier-to-learn components even when using an appropriately weighted loss.
+This massively slows down training for the remaining components and makes it unfeasible.
+Finally, the tokenization paradigm offers immense scope for designing
+better and
+more domain-adaptable models through more efficient and clever encoding schemes.
+Our aim can be either to
+inject additional information into
+the token sequence
+or to remove superfluous information from it,
+both as a means to improve accuracy or provide a better fit for niche applications.
+As mentioned in Sec.
+II
+, one such goal is to add object-level information to the RLE sequence while retaining the benefits of the small quantum of RLE and the resultant robustness to inference noise.
+Sec.
+IV-D
+proposed the IW tokenization as an example that adds instance information to the sequence and thus achieves panoptic segmentation.
+Early results on static masks are promising, although exhibiting strong signs of batch-size bottleneck, especially when coupled with higher resolution masks that are necessary to extract good quality instance information.
+References
+[1]
+T. Chen, S. Saxena, L. Li, D. J. Fleet, and G. E. Hinton, “Pix2seq: A
+Language Modeling Framework for Object Detection,” in
+ICLR
+, 2022.
+[2]
+T. Chen, L. Li, S. Saxena, G. E. Hinton, and D. J. Fleet, “A Generalist
+Framework for Panoptic Segmentation of Images and Videos,”
+ICCV
+,
+2023.
+[3]
+A. Singh and N. Ray, “Improving token-based object detection with video,”
+IEEE Access
+, pp. 1–1, 2025.
+[4]
+T. Chen, “Pix2Seq Codebase: Multi-tasks with generative modeling,” online:
+https://github.com/google-research/pix2seq
+.
+[5]
+A. Singh, “P2S-Video: Extension of Pix2Seq for Video Detection and
+Segmentation,” online:
+https://github.com/abhineet123/p2s-video
+.
+[6]
+——, “Video Detection and Segmentation with Language Modeling,” online:
+https://webdocs.cs.ualberta.ca/~asingh1/p2s/
+.
+[7]
+A. Robinson and C. Cherry, “Results of a prototype television bandwidth
+compression scheme,”
+Proceedings of the IEEE
+, vol. 55, no. 3, pp.
+356–364, 1967.
+[8]
+L. Castrejón, K. Kundu, R. Urtasun, and S. Fidler, “Annotating Object
+Instances with a Polygon-RNN,”
+CVPR
+, pp. 4485–4493, 2017.
+[9]
+D. Acuna, H. Ling, A. Kar, and S. Fidler, “Efficient Interactive Annotation
+of Segmentation Datasets with Polygon-RNN++,”
+CVPR
+, 2018.
+[10]
+J. Liang, N. Homayounfar, W.-C. Ma, Y. Xiong, R. Hu, and R. Urtasun,
+“PolyTransform: Deep Polygon Transformer for Instance Segmentation,” in
+CVPR
+, 2020.
+[11]
+J. Lazarow, W. Xu, and Z. Tu, “Instance segmentation with mask-supervised
+polygonal boundary transformers,” in
+CVPR
+, 2022.
+[12]
+T. Chen, S. Saxena, L. Li, T.-Y. Lin, D. J. Fleet, and G. Hinton, “A Unified
+Sequence Interface for Vision Tasks,” in
+NIPS
+, 2022.
+[13]
+K. Chitta, J. M. Álvarez, and M. Hebert, “Quadtree Generating Networks:
+Efficient Hierarchical Scene Parsing with Sparse Convolutions,”
+WACV
+, pp. 2009–2018, 2020.
+[14]
+P. Soille,
+Morphological Image Analysis: Principles and
+Applications
+. Springer-Verlag, 2003.
+[15]
+A. Singh, I. Jasra, O. Mouhammed, N. Dadheech, N. Ray, and J. Shapiro,
+“Towards Early Prediction of Human iPSC Reprogramming Success,”
+Machine Learning for Biomedical Imaging
+, vol. 2, pp. 390–407, 2023.
+[16]
+A. Singh, H. Kalke, M. R. Loewen, and N. Ray, “River Ice Segmentation With
+Deep Learning,”
+IEEE Transactions on Geoscience and Remote Sensing
+,
+vol. 58, pp. 7570–7579, 2020.
+[17]
+T.-Y. Lin, M. Maire, S. Belongie, J. Hays, P. Perona, D. Ramanan,
+P. Dollár, and C. L. Zitnick, “Microsoft COCO: Common Objects in
+Context,” in
+ECCV
+, 2014, pp. 740–755.
+[18]
+M. Cordts, M. Omran, S. Ramos, T. Rehfeld, M. Enzweiler, R. Benenson,
+U. Franke, S. Roth, and B. Schiele, “The cityscapes dataset for semantic
+urban scene understanding,” in
+CVPR
+, 2016, pp. 3213–3223.
+[19]
+L. R. Dice, “Measures of the Amount of Ecologic Association Between
+Species,”
+Ecology
+, vol. 26, no. 3, pp. 297–302, 1945.
+[20]
+T. Sørensen, T. Sørensen, T. Biering-Sørensen, T. Sørensen, and
+J. T. Sorensen, “A method of establishing group of equal amplitude in plant
+sociobiology based on similarity of species content and its application to
+analyses of the vegetation on Danish commons.” Kongelige Danske Videnskabernes Selskab, 1948.
+[21]
+Z. Liu, Y. Lin, Y. Cao, H. Hu, Y. Wei, Z. Zhang, S. Lin, and B. Guo, “Swin
+Transformer: Hierarchical Vision Transformer using Shifted Windows,”
+ICCV
+, pp. 9992–10 002, 2021.
+Abhineet Singh
+received a B.Tech. in information technology from IIIT Allahabad, India, followed by an M.Sc. and a Ph.D. in computing science from the University of Alberta, Canada. He is currently a post-doctoral researcher, looking into ways to improve biomarker detection in digital pathology images using interpretable deep learning, which would assist pathologists in performing better cancer diagnoses and prognoses.
+His research interests include all aspects of computer vision and machine learning, though he is particularly interested in applying deep learning for object detection, tracking, and segmentation.
+Justin Rozeboom
+is a master’s student in the Department of Computing Science at the University of Alberta. He joined the VISUAL lab and ALSNIRU lab in 2025, pursuing cross-disciplinary research on MRI image analysis for amyotrophic lateral sclerosis (ALS). His research focuses on leveraging deep learning for diagnosis and prognosis, and developing normative models of the brain for neurodegenerative disease detection. Additionally, he has experience with deep generative models and has developed projects in health technology and clean energy technology.
+Nilanjan Ray
+is a Full Professor in the Department of Computing Science at the University of Alberta. He received his B.E. in Mechanical Engineering from Jadavpur University (1995), M.Tech. in Computer Science from the Indian Statistical Institute (1997), and Ph.D. in Electrical Engineering from the University of Virginia (2003). After postdoctoral and industry experience, he joined the University of Alberta in 2006.
+His research focuses on computer vision, image analysis, and deep learning for visual recognition, with applications in medical imaging, image registration, segmentation, object tracking, and motion analysis. He has published over 150 research articles. He has served as Associate Editor of IEEE Transactions on Image Processing and IET Image Processing, was General Co-Chair of AI/GI/CRV 2017, and is currently an Editorial Board Member of Discover Imaging.
+Appendix A
+RLE length Statistics
+This appendix provides statistics about the RLE length (
+L
+L
+) required to represent masks from the complete IPSC dataset for various combinations of image size
+I
+I
+, patch size
+P
+P
+and mask size
+S
+S
+for both static (Tables
+III
+-
+IV
+) and video (Tables
+V
+-
+VI
+) segmentation.
+The first two rows in each case show the mean and maximum RLE lengths while the remaining rows show the percentage of images for which the lengths exceed the threshold in the first column.
+The smallest threshold that can be used as
+L
+L
+in each case is highlighted in yellow.
+We have empirically found that a small fraction of lengths (
+<
+2
+%
+<2\%
+) exceeding
+L
+L
+does not have a significant impact on the segmentation results, so that
+L
+L
+does not necessarily need to be
+≥
+\geq
+maximum length.
+Binary and multi-class LAC both use
+2
+2
+tokens per run, so ended up having identical lengths for all images over this dataset.
+Note that this does not always have to be true in principle, since two runs with different classes that are next to each other in the same row are represented by a single run in the binary case but two different runs in the multi-class case.
+However, such scenarios do not occur in the IPSC dataset.
+Multi-class masks with separate class tokens use 3 tokens per run so have 1.5 times the lengths of the other two cases.
+TABLE III
+:
+Statistics of static mask RLE lengths over the IPSC dataset with images resized from
+I
+=
+1280
+I=1280
+to
+I
+=
+80
+I=80
+, without patches and mask subsampling (so that
+S
+=
+P
+=
+I
+S=P=I
+).
+TABLE IV
+:
+Statistics of static mask RLE lengths over the entire IPSC dataset with (top left)
+I
+=
+P
+=
+640
+I=P=640
+, (top right)
+I
+=
+P
+=
+1024
+I=P=1024
+, (bottom left)
+I
+=
+2560
+,
+P
+=
+640
+I=2560,P=640
+, and (bottom right)
+I
+=
+2560
+,
+P
+=
+1024
+I=2560,P=1024
+.
+TABLE V
+:
+Statistics of video mask RLE lengths over the IPSC dataset with
+N
+=
+2
+N=2
+,
+I
+=
+2560
+I=2560
+,
+P
+=
+640
+P=640
+and
+S
+=
+80,160
+S=80,160
+.
+TABLE VI
+:
+Statistics of video mask RLE lengths over the IPSC dataset with
+I
+=
+2560
+I=2560
+,
+P
+=
+640
+P=640
+,
+S
+=
+80
+S=80
+and
+N
+=
+3
+,
+4
+,
+6
+,
+8
+,
+9
+N=3,4,6,8,9
+.
+Appendix B
+Vocabulary Sizes
+This appendix provides tables of vocabulary sizes for
+S
+=
+40
+S=40
+(Table
+VII
+),
+S
+=
+80
+S=80
+(Table
+VIII
+), and
+S
+=
+160
+S=160
+(Table
+X
+) for video segmentation with varying
+N
+N
+and all the encoding strategies proposed in Sec.
+IV
+.
+These tables demonstrate the exponential increase in the number of TAC tokens with
+N
+N
+.
+We can also see that, for smaller mask sizes (e.g.
+S
+=
+40
+S=40
+), straightforward 3D mask flattening remains more practicable for higher values of
+N
+N
+due to its linear increase in
+V
+V
+with
+N
+N
+.
+Note that these tables only account for limits on
+V
+V
+and not those on
+L
+L
+, which would likely limit
+N
+N
+to lower values depending on the complexity of the dataset.
+TABLE VII
+:
+Vocabulary sizes (
+V
+V
+)
+for video segmentation with
+S
+=
+40
+S=40
+, varying values of
+N
+N
+from
+N
+=
+2
+N=2
+to
+N
+=
+20
+N=20
+and both binary and multiclass cases.
+The maximum possible
+N
+N
+for each case such that
+V
+<
+32
+​
+K
+V<32K
+is highligted in yellow.
+V
+V
+is shown in units of thousands.
+TABLE VIII
+:
+Vocabulary sizes (
+V
+V
+)
+for video segmentation with
+S
+=
+80
+S=80
+, varying values of
+N
+N
+from
+N
+=
+2
+N=2
+to
+N
+=
+16
+N=16
+and both binary and multiclass cases.
+The maximum possible
+N
+N
+for each case such that
+V
+<
+32
+​
+K
+V<32K
+is highligted in yellow.
+V
+V
+is shown in units of thousands.
+TABLE IX
+:
+Vocabulary sizes (
+V
+V
+)
+for video segmentation with
+S
+=
+128
+S=128
+, varying values of
+N
+N
+from
+N
+=
+2
+N=2
+to
+N
+=
+16
+N=16
+and both binary and multiclass cases.
+The maximum possible
+N
+N
+for each case such that
+V
+<
+32
+​
+K
+V<32K
+is highligted in yellow.
+V
+V
+is shown in units of thousands.
+TABLE X
+:
+Vocabulary sizes (
+V
+V
+)
+for video segmentation with
+S
+=
+160
+S=160
+, varying values of
+N
+N
+from
+N
+=
+2
+N=2
+to
+N
+=
+16
+N=16
+and both binary and multiclass cases.
+The maximum possible
+N
+N
+for each case such that
+V
+<
+32
+​
+K
+V<32K
+is highligted in yellow.
+V
+V
+is shown in units of thousands.
+Appendix C
+Segmentation Metrics for Subsampled Masks
+This appendix provides statistics about the degradation in mask quality produced by subsampling (Table
+XI
+).
+This is quantitatively represented by the three main segmentation metrics used in this paper – dice score, recall and precision – averaged over the entire ARIS and IPSC datasets.
+Qualitatively, most subsampled masks are visually almost indistinguishable from the original when these metrics are
+>
+90
+%
+>90\%
+and sometimes even when they are
+>
+80
+%
+>80\%
+.
+Appendix D
+Visualization
+This appendix presents visualization images for the various RLE tokenization schemes for video segmentation.
+Figures
+11
+and
+12
+respectively show 3D-C and 3D-F tokenization schemes for binary masks.
+Figures
+13
+and
+14
+show TAC tokenization for
+N
+=
+2
+N=2
+and
+N
+=
+3
+N=3
+respectively.
+Fig.
+15
+shows LTAC tokenization for
+N
+=
+2
+N=2
+.
+Please refer Fig.
+5
+for details of the layout Figures
+13
+-
+15
+.
+Each figure has an animated version on the project website
+[
+6
+]
+whose link is provided in its caption.
+Fig. 11
+:
+Visualization of 3D-C RLE tokenization of binary video segmentation masks with
+N
+=
+2
+N=2
+, showing runs corresponding to the same part of the same object in
+F
+1
+F_{1}
+(left) and
+F
+2
+F_{2}
+(right). We can see that their tokens are completely unrelated in the sequence.
+Animated version of this figure is available
+here
+.
+Best viewed under high magnification.
+Fig. 12
+:
+Visualization of 3D-F RLE tokenization of binary video segmentation masks with
+N
+=
+2
+N=2
+.
+The left half shows the same part of the same object in
+F
+1
+F_{1}
+and
+F
+2
+F_{2}
+represented by the same run and the right half shows one of the unit sized runs created by a tiny change in the shape of the cell between the two frames.
+Animated version of this figure is available
+here
+.
+Best viewed under high magnification.
+TABLE XI
+:
+Segmentation metrics representing mask quality degradation by subsampling, averaged over the entire ARIS and IPSC datasets.
+Fig. 13
+:
+Visualization of TAC tokenization for binary segmentation with
+N
+=
+2
+N=2
+.
+Animated version of this figure is available
+here
+.
+Best viewed under high magnification.
+Fig. 14
+:
+Visualization of TAC tokenization with
+N
+=
+3
+N=3
+for (top) binary and (bottom) multi-class masks.
+Animated versions of these figures are available
+here
+and
+here
+respectively.
+Best viewed under high magnification.
+Fig. 15
+:
+Visualization of LTAC tokenization for video segmentation masks with
+N
+=
+2
+N=2
+for (top) binary and (bottom) multi-class cases.
+Animated versions of these figures are available
+here
+and
+here
+respectively.
+Best viewed under high magnification.
+Fig. 16
+:
+Visualization of IW tokenization for multi-class static segmentation mask.
+The first image in the top row shows the class mask where
+IPSC
+and
+DfC
+cells are shown in green and red respectively.
+The second image shows the instance mask where each individual cell is shown in a different color.
+The last image shows the cell whose binary RLE tokens are currently being generated. The corresponding subsampled binary mask is shown in the first image in the second row.
+The tokens for the other two cells have already been generated (shown in corresponding colors) and terminated by the respective class tokens. An animated version of this figure is available
+here
+.
+Best viewed under high magnification.
+Appendix E
+Results
+This appendix provides some supplementary data (Fig.
+17
+,
+18
+and Tables
+XIII
+,
+XIV
+) and configuration details (Table
+XII
+) that have been used in Sec.
+V
+.
+TABLE XII
+:
+Configuration and training details for models whose results are reported in Sec.
+V-C
+Fig. 17
+:
+Bar plot version of the data in Table
+II
+.
+Best viewed under high magnification.
+Fig. 18
+:
+Impact of (left and center) replacing
+N
+N
+video frames with the first frame and (right) video length
+N
+N
+and stride
+T
+T
+on P2S-VIDSEG performance over (top) early and (bottom) late-stage configurations of the IPSC dataset.
+TABLE XIII
+:
+Segmentation metrics (
+%
+\%
+) on validation set while training P2S-SEG on IPSC early-stage dataset.
+Best viewed under high magnification.
+TABLE XIV
+:
+Segmentation metrics (
+%
+\%
+) on validation set while training P2S-VIDSEG on IPSC late-stage dataset.
+Best viewed under high magnification.
+Fig. 19
+:
+An example of a multi-headed decoder architecture to output each RLE component by a separate head, while sharing the memory-expensive MHA module between them.
+Please refer to
+the baseline decoder in
+[
+3
+, Fig. 3]
+that this adapts.
+This uses
+L
+=
+500
+L=500
+,
+S
+=
+80
+S=80
+,
+C
+=
+2
+C=2
+and naïve RLE encoding with 2D starts and separate length and class tokens.
+There are thus 4 tokens per run, represented by SX, SY, LEN and CLS, and shown respectively in blue, magenta, green and cyan.
+Compared to 1D starts and LAC with a single-headed decoder, this not only cuts
+L
+L
+by half, but also reduces
+V
+V
+by up to 3 orders of magnitude, since each component now has its own vocabulary which can be as small as
+S
+S
+for coordinate tokens and
+C
+C
+for class tokens.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

@@ -1,0 +1,46 @@
+{
+  "c7f0873ad2a36277bd1fc13777da06b17ba28ddb": {
+    "url": "https://github.com/MiniMax-AI/OpenAgentCore/commit/c7f0873ad2a36277bd1fc13777da06b17ba28ddb.patch",
+    "patches": [
+      "diff --git a/scripts/compose-smoke.py b/scripts/compose-smoke.py\nindex f7e806ac..72fcf4d8 100644\n--- a/scripts/compose-smoke.py\n+++ b/scripts/compose-smoke.py\n@@ -147,7 +147,7 @@ def terminate(_signum, _frame):\n         compose('up', '-d', '--wait', '--wait-timeout', '600', timeout=900)\n         address = 'http://' + compose('port', 'web', '8080').decode().strip()\n         key = compose('exec', '-T', 'web', '/usr/local/bin/oac-web', 'core-key').decode().strip()\n-        assert len(key) == 64, 'Missing generated sign-in key'\n+        assert re.fullmatch(r'oac_admin_[0-9a-f]{64}', key), 'Missing generated sign-in key'\n         request('/healthz')\n         assert b'<html' in request('/'), 'Console HTML is unavailable'\n         request('/', headers={'Host': 'unconfigured.example.invalid'}, status=403)\n"
+    ]
+  },
+  "8edffd46a9127d95eb7a206fbfb3c487c8193249": {
+    "url": "https://github.com/MiniMax-AI/OpenAgentCore/commit/8edffd46a9127d95eb7a206fbfb3c487c8193249.patch",
+    "patches": [
+      "diff --git a/services/core/cmd/oac/main.go b/services/core/cmd/oac/main.go\nindex f18683d9e..e21592391 100644\n--- a/services/core/cmd/oac/main.go\n+++ b/services/core/cmd/oac/main.go\n@@ -115,12 +115,19 @@ func coreKeyCommand(ctx context.Context, in installation, runner Runner, args []\n \treturn errors.New(\"Usage: oac core-key [--show]\")\n }\n \n-func rotateCoreKey(ctx context.Context, in installation, runner Runner) error {\n+func generateCoreKey() (string, error) {\n \tbuf := make([]byte, 32)\n \tif _, err := rand.Read(buf); err != nil {\n+\t\treturn \"\", err\n+\t}\n+\treturn \"oac_admin_\" + hex.EncodeToString(buf), nil\n+}\n+\n+func rotateCoreKey(ctx context.Context, in installation, runner Runner) error {\n+\tkey, err := generateCoreKey()\n+\tif err != nil {\n \t\treturn err\n \t}\n-\tkey := hex.EncodeToString(buf)\n \tkeyPath := filepath.Join(in.data, \"secrets\", \"web\", \"core.key\")\n \tdigestPath := filepath.Join(in.data, \"secrets\", \"core\", \"core-key-digests.json\")\n \tif err := writeSecret(keyPath, key+\"\\n\"); err != nil {\n",
+      "diff --git a/services/web/auth.go b/services/web/auth.go\nindex 36bc2dacb..16f23f64a 100644\n--- a/services/web/auth.go\n+++ b/services/web/auth.go\n@@ -18,7 +18,7 @@ const sessionCookie = \"core_console_session\"\n const sessionLifetime = 12 * time.Hour\n \n // minimumCoreKeyLength keeps guessing infeasible even though a correct key is\n-// never rate limited. Installer-generated keys have 64 characters.\n+// never rate limited. Installer-generated keys carry 256 bits of random entropy.\n const minimumCoreKeyLength = 32\n \n // consoleAuth signs the browser in with the Core key. Sessions live only in\n"
+    ]
+  },
+  "24b01d661170d497c4831dcd061111297e83936c": {
+    "url": "https://github.com/MiniMax-AI/OpenAgentCore/commit/24b01d661170d497c4831dcd061111297e83936c.patch",
+    "patches": [
+      "diff --git a/services/core/internal/deployment/public_url.go b/services/core/internal/deployment/public_url.go\nindex a676955f7..999bcd558 100644\n--- a/services/core/internal/deployment/public_url.go\n+++ b/services/core/internal/deployment/public_url.go\n@@ -9,7 +9,8 @@ import (\n )\n \n // ValidateCoreURL accepts a canonical public origin, never a path or\n-// credential. Plain HTTP is reserved for explicit loopback development hosts.\n+// credential. It may be http or https: a reverse proxy in front of Web\n+// terminates TLS when the installation uses it.\n // OAC_PUBLIC_URL must pass it.\n func ValidateCoreURL(value string) error {\n \tu, err := url.Parse(value)\n@@ -25,10 +26,7 @@ func ValidateCoreURL(value string) error {\n \t\t\treturn ErrInvalidInput\n \t\t}\n \t}\n-\tloopback := u.Hostname() == \"localhost\"\n-\tif ip := net.ParseIP(u.Hostname()); ip != nil {\n-\t\tloopback = ip.IsLoopback()\n-\t} else {\n+\tif net.ParseIP(u.Hostname()) == nil {\n \t\tif len(u.Hostname()) > 253 || strings.ContainsAny(u.Host, \"[]\") {\n \t\t\treturn ErrInvalidInput\n \t\t}\n@@ -43,7 +41,7 @@ func ValidateCoreURL(value string) error {\n \t\t\t}\n \t\t}\n \t}\n-\tif u.Scheme != \"https\" && !(u.Scheme == \"http\" && loopback) {\n+\tif u.Scheme != \"https\" && u.Scheme != \"http\" {\n \t\treturn ErrInvalidInput\n \t}\n \treturn nil\n",
+      "diff --git a/services/core/internal/processconfig/config.go b/services/core/internal/processconfig/config.go\nindex d846819eb..c7f1805b7 100644\n--- a/services/core/internal/processconfig/config.go\n+++ b/services/core/internal/processconfig/config.go\n@@ -107,7 +107,7 @@ func PublicURL() (string, error) {\n \t\treturn \"\", nil\n \t}\n \tif deployment.ValidateCoreURL(value) != nil {\n-\t\treturn \"\", configErr(\"OAC_PUBLIC_URL must be a canonical HTTPS origin without path, credentials, query or fragment, such as https://core.example; plain HTTP is accepted only for a loopback host\")\n+\t\treturn \"\", configErr(\"OAC_PUBLIC_URL must be a canonical http or https origin without path, credentials, query or fragment, such as https://core.example\")\n \t}\n \treturn value, nil\n }\n"
+    ]
+  },
+  "v0.0.7": {
+    "deploy/compose/ports.yaml": {
+      "url": "https://raw.githubusercontent.com/MiniMax-AI/OpenAgentCore/5b0da47b16bfde09ee8a144abdcfef25e159047b/deploy/compose/ports.yaml",
+      "text": "# Host installation publishes Web. Hosting platforms omit this file and route\n# to web:8080 themselves.\nservices:\n  web:\n    ports:\n      - \"${OAC_HOST:-127.0.0.1}:${OAC_WEB_PORT:-8080}:8080\"\n",
+      "docker_socket_lines": []
+    },
+    "deploy/compose/compose.yaml": {
+      "url": "https://raw.githubusercontent.com/MiniMax-AI/OpenAgentCore/5b0da47b16bfde09ee8a144abdcfef25e159047b/deploy/compose/compose.yaml",
+      "text": "# Release template. scripts/render-compose.py fills the __OAC_*__ tokens with this\n# release's source revision and node-metadata checksum. Images default to the\n# floating latest tags; set OAC_IMAGE_CORE, OAC_IMAGE_WEB or OAC_IMAGE_INGRESS\n# to select another reference. Do not run this file until it has been rendered.\n# Data is bind-mounted from ${OAC_DATA_DIR:-./data}. Set OAC_PUBLIC_URL when the\n# platform domain is ready; startup defaults to localhost. Other process\n# settings pass through unchanged; Core owns their defaults.\nx-ingress-image: &ingress-image ${OAC_IMAGE_INGRESS:-ghcr.io/minimax-ai/openagentcore/ingress:latest}",
+      "docker_socket_lines": []
+    }
+  },
+  "v0.0.8": {
+    "deploy/compose/ports.yaml": {
+      "url": "https://raw.githubusercontent.com/MiniMax-AI/OpenAgentCore/b4e5d8e1f2edc9ba2336bb2a9f6f2d1cd7ae55f9/deploy/compose/ports.yaml",
+      "text": "# Host installation publishes Web. Hosting platforms omit this file and route\n# to web:8080 themselves.\nservices:\n  web:\n    ports:\n      - \"${OAC_HOST:-127.0.0.1}:${OAC_WEB_PORT:-8080}:8080\"\n",
+      "docker_socket_lines": []
+    },
+    "deploy/compose/compose.yaml": {
+      "url": "https://raw.githubusercontent.com/MiniMax-AI/OpenAgentCore/b4e5d8e1f2edc9ba2336bb2a9f6f2d1cd7ae55f9/deploy/compose/compose.yaml",
+      "text": "# Release template. scripts/render-compose.py fills the __OAC_*__ tokens with this\n# release's source revision and node-metadata checksum. Images default to the\n# floating latest tags; set OAC_IMAGE_CORE, OAC_IMAGE_WEB or OAC_IMAGE_INGRESS\n# to select another reference. Do not run this file until it has been rendered.\n# Data is bind-mounted from ${OAC_DATA_DIR:-./data}. Set OAC_PUBLIC_URL when the\n# platform domain is ready; startup defaults to localhost. Other process\n# settings pass through unchanged; Core owns their defaults.\nx-ingress-image: &ingress-image ${OAC_IMAGE_INGRESS:-ghcr.io/minimax-ai/openagentcore/ingress:latest}",
+      "docker_socket_lines": []
+    }
+  }
+}

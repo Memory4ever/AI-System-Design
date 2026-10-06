@@ -1,0 +1,811 @@
+AllMem: A Memory-centric Recipe for Efficient Long-context Modeling
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Preliminaries
+3 Method
+3.1 Design Principles
+3.2 AllMem
+3.3 Distilation pipeline
+3.3.1 Data Preprocessing
+3.3.2 Distillation Method
+3.3.3 On-Policy Distillation
+4 Experimental details
+5 Results
+5.1 Performance on Short-Sequence Benchmarks
+5.2 Performance on Long-Sequence Benchmarks
+5.3 Computational Cost and Memory Overhead
+6 Conclusion
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2602.13680v1 [cs.AI] 14 Feb 2026
+AllMem: A Memory-centric Recipe for Efficient Long-context Modeling
+Ziming Wang
+Affiliation: ACS Lab, Huawei Technologies
+Affiliation: {wangziming33, wangxiang224, guoqinghai}@huawei.com ⋆ \star Equal Contribution
+Xiang Wang
+Affiliation: ACS Lab, Huawei Technologies
+Affiliation: {wangziming33, wangxiang224, guoqinghai}@huawei.com ⋆ \star Equal Contribution
+Kailong Peng
+Affiliation: ACS Lab, Huawei Technologies
+Lang Qin
+Affiliation: ACS Lab, Huawei Technologies
+Juan Gabriel Kostelec
+Affiliation: Huawei Switzerland
+Christos Sourmpis
+Affiliation: Huawei Switzerland
+Axel Laborieux
+Affiliation: Huawei Switzerland
+Qinghai Guo
+Affiliation: ACS Lab, Huawei Technologies
+Affiliation: {wangziming33, wangxiang224, guoqinghai}@huawei.com ⋆ \star Equal Contribution
+February 2026
+Abstract
+Large Language Models (LLMs) encounter significant performance bottlenecks in long-sequence tasks due to the computational complexity and memory overhead inherent in the self-attention mechanism. To address these challenges, we introduce AllMem , a novel and efficient hybrid architecture that integrates Sliding Window Attention (SWA) with non-linear Test-Time Training (TTT) memory networks. AllMem enables models to effectively scale to ultra-long contexts while mitigating catastrophic forgetting. This approach not only overcomes the representation constraints typical of linear memory models but also significantly reduces the computational and memory footprint during long-sequence inference. Furthermore, we implement a Memory-Efficient Fine-Tuning strategy to replace standard attention layers in pre-trained models with memory-augmented sliding window layers. This framework facilitates the efficient transformation of any off-the-shelf pre-trained LLM into an AllMem -based architecture. Empirical evaluations confirm that our 4k window model achieves near-lossless performance on 37k LongBench with a marginal 0.83 drop compared to full attention. Furthermore, on InfiniteBench at a 128k context, our 8k window variant outperforms full attention, which validates the effectiveness of our parameterized memory in mitigating noise and maintaining robust long-range modeling without the prohibitive costs of global attention.
+”Memory is the residue of thought.”
+— Daniel T. Willingham
+1 Introduction
+In long-sequence language modeling, the decoder-only Transformer architecture [ 1 ] remains dominant, largely due to the proficiency of the self-attention mechanism in capturing global dependencies [ 2 ] . However, this architecture faces significant bottlenecks: it fails to effectively model sequences exceeding its pre-trained context window, and the use of Softmax attention incurs prohibitive computational and storage costs that scale with the input sequence length L L [ 3 ] . On edge devices, such as smartphones, the O ⁡ ( L 2 ) O(L^{2}) computational complexity results in a substantial spike in inference latency, severely degrading the user experience for long-context tasks. Furthermore, the O ⁡ ( L ) O(L) storage complexity of the KV Cache makes it impossible to maintain the entire context within limited memory constraints. These challenges arise not only on edge devices, but also in server-grade systems, as recent trends in agents and thinking models produce an ever-increasing amount of tokens, making inference challenging even with abundant computational resources.
+To address the O ⁡ ( L 2 ) O(L^{2}) computational bottleneck and the O ⁡ ( L ) O(L) memory access overhead of Softmax attention, researchers have proposed various mitigation strategies. For example, linear attention methods [ 4 , 5 , 6 , 7 ] support parallelization during training and can be executed recurrently during inference with a constant memory footprint and per-token computation, significantly reducing computational and memory pressure for long sequences. Another approach, “Test-Time Training” (TTT) or “Test-Time Memory” [ 8 , 9 , 10 , 11 , 12 ] treats sequence modeling as an online compression problem, introducing non-linear memory networks to facilitate information compression and establish a persistent long-term memory.
+Finally, sparse attention mechanisms such as sliding window attention with ”sink tokens” [ 13 ] can drastically reduce the computational load of the attention matrix while preserving Softmax similarity metrics and the precise information of key tokens. However, these efficient attention mechanisms often suffer from information loss leading to a reduction in language modeling performance.
+To strike a balance between model performance and computational efficiency, recent research has focused on hybrid attention architectures [ 14 , 15 , 16 ] . These designs aim to leverage efficient mechanisms to boost throughput while retaining the robust semantic modeling capabilities of standard attention.
+Currently, mainstream hybrid architectures primarily manifest in two forms: inter-layer hybrids and intra-layer hybrids. Specifically, inter-layer hybrids [ 17 , 18 , 7 , 19 ] involve sequentially stacking different types of attention mechanisms across layers. This approach has become a prevalent choice for major LLM developers in their exploration of large-scale models, as exemplified by the GPT-OSS-120B [ 19 ] , Qwen3-Next-80B-A3B [ 20 ] , Ring-2.5-1T [ 21 ] , etc. Despite their engineering feasibility, these structures still rely on partial global attention mechanisms. Consequently, their computational complexity remains O ⁡ ( L 2 ) O(L^{2}) , which imposes a bound on potential efficiency gains. On the other hand, intra-layer hybrid architectures (see [ 22 , 23 , 9 ] ) aim to achieve linear computational complexity by fusing multiple attention mechanisms within a single Transformer layer. However, these approaches typically require training from scratch with specific post-training policies, incurring significant computational costs for exploring new architectures. The gap in downstream performance between the current intra-layer hybrid designs and the full-attention Transformer also limits their applications in real-world scenarios.
+In this study, we aim to bridge the performance gap between efficient attention models and full attention models in long-context tasks. Our proposed AllMem model integrates a short-term “all-seeing” sliding window attention with a novel long-term memory mechanism. By facilitating efficient knowledge compression, AllMem reduces the computational complexity of Transformers to constant overhead. We evaluate the model on a series of long-context benchmarks, comparing pre-trained small Qwen3 models (0.6B and 1.7B) with fine-tuned Qwen3- AllMem variants. Results show that our model achieves or exceeds the performance of the baseline Qwen3 models while using significantly lower computational and memory resources—sometimes as little as 11% of the original model.
+2 Preliminaries
+From a memory-augmented perspective, the autoregressive sequence modeling can be fundamentally characterized as a reconstruction process of key-value pairs. The model aims to construct a mapping function ϕ m : 𝐪 t → 𝐯 ^ t \phi_{m}:\mathbf{q}_{t}\to\hat{\mathbf{v}}_{t} using the historical collection { ( 𝐤 i , 𝐯 i ) } i ≤ t \{(\mathbf{k}_{i},\mathbf{v}_{i})\}_{i\leq t} , with the objective of minimizing the reconstruction loss ℓ ⁡ ( 𝐯 ^ t , 𝐯 t ) \mathcal{\ell}(\hat{\mathbf{v}}_{t},\mathbf{v}_{t}) . For the standard attention mechanism, the computation is formalized as:
+𝐯 ^ t = ϕ m ​ ( 𝐪 t , { ( 𝐤 i , 𝐯 i ) } i ≤ t ) = arg ⁡ min 𝐯 ​ ∑ i = 1 t s ⁡ ( 𝐤 i , 𝐪 t ) ​ ‖ 𝐯 i − 𝐯 ‖ 2 2 = ∑ i = 1 t s ⁡ ( 𝐤 i , 𝐪 t ) ∑ j = 1 t s ⁡ ( 𝐤 j , 𝐪 t ) ​ 𝐯 i \hat{\mathbf{v}}_{t}=\phi_{m}(\mathbf{q}_{t},\{(\mathbf{k}_{i},\mathbf{v}_{i})\}_{i\leq t})=\underset{\mathbf{v}}{\arg\min}\sum_{i=1}^{t}s(\mathbf{k}_{i},\mathbf{q}_{t})\|\mathbf{v}_{i}-\mathbf{v}\|_{2}^{2}=\sum_{i=1}^{t}\frac{s(\mathbf{k}_{i},\mathbf{q}_{t})}{\sum_{j=1}^{t}s(\mathbf{k}_{j},\mathbf{q}_{t})}\mathbf{v}_{i}
+where s ⁡ ( ⋅ ) s(\cdot) measures the scaled dot-product similarities between query 𝐪 \mathbf{q} and key 𝐤 \mathbf{k} . Statistically, attention is essentially a Nadaraya-Watson kernel regression (a non-parametric solution) for autoregressive tasks under similarity-weighted L 2 L_{2} loss [ 24 ] . While this non-parametric approach grants the model precise sequence backtracking capabilities, it necessitates maintaining a KV cache that grows linearly with sequence length and incurs O ⁡ ( L 2 ) O(L^{2}) computational complexity. This not only constrains inference efficiency on edge devices but also lacks higher-order memory processing mechanisms from a neuroscientific standpoint, such as memory consolidation, multi-timescale forgetting, and reverberation [ 25 , 26 ] .
+To overcome these bottlenecks, linear attention models, exemplified by Mamba-2 [ 4 ] , abandon the computationally intensive Softmax quadratic structure in favor of parallelizable linear recurrent State Space Models (SSMs). By simplifying the selective scan mechanism, the attention mechanism can be expressed as a linear recurrence in matrix form:
+𝐌 t = α t ​ 𝐌 t − 1 + 𝐯 t ​ 𝐤 t ⊤ \mathbf{M}_{t}=\alpha_{t}\mathbf{M}_{t-1}+\mathbf{v}_{t}\mathbf{k}_{t}^{\top}
+Alternatively, more sophisticated directional update rules, such as the Delta Rule [ 6 ] , can be introduced:
+𝐌 t = 𝐌 t − 1 ​ ( α t ​ 𝐈 − β t ​ 𝐤 t ​ 𝐤 t ⊤ ) + β t ​ 𝐯 t ​ 𝐤 t ⊤ \mathbf{M}_{t}=\mathbf{M}_{t-1}\left(\alpha_{t}\mathbf{I}-\beta_{t}\mathbf{k}_{t}\mathbf{k}_{t}^{\top}\right)+\beta_{t}\mathbf{v}_{t}\mathbf{k}_{t}^{\top}
+In this framework, 𝐌 t \mathbf{M}_{t} serves as a parametric linear memory unit storing the outer-product associative representations of historical KV pairs. Test-Time Training (TTT) [ 27 ] provides a unified theoretical explanation for this process from the perspective of online learning: linear attention is effectively a parametric solution to the sequence modeling optimization problem under specific linear constraints. During sequence processing, the model utilizes the parametric memory unit ℳ \mathcal{M} to compress historical information online. During the prediction phase, information is extracted from the memory unit based on the current query 𝐪 t \mathbf{q}_{t} .
+𝐯 ^ t = f ⁡ ( ℳ t , 𝐪 t ) = ℳ t ​ ( 𝐪 t ) \hat{\mathbf{v}}_{t}=f(\mathcal{M}_{t},\mathbf{q}_{t})=\mathcal{M}_{t}(\mathbf{q}_{t})
+This procedure no longer relies on an explicit, fine-grained KV cache. For memory updates, TTT proposes a general design principle: the memory unit ℳ t \mathcal{M}_{t} is optimized online during inference via gradient descent to minimize the instantaneous reconstruction loss:
+ℳ t = ℳ t − 1 − η t ​ ∇ ℳ t − 1 ℒ ​ ( f ⁡ ( ℳ t − 1 , 𝐤 t ) , 𝐯 t ) \mathcal{M}_{t}=\mathcal{M}_{t-1}-\eta_{t}\nabla_{\mathcal{M}_{t-1}}\mathcal{L}(f(\mathcal{M}_{t-1},\mathbf{k}_{t}),\mathbf{v}_{t})
+Different model architectures correspond to distinct loss functions, which in turn derive various memory update rules. For instance, in Mamba-2, the corresponding loss function is represented as:
+ℓ ⁡ ( 𝐯 ^ t , 𝐯 t ) = − 𝐯 t ⊤ ​ 𝐯 ^ t + 1 − α t 2 ​ ‖ 𝐌 t ‖ F 2 = − 𝐯 t ⊤ ​ 𝐌 t ​ 𝐤 t + 1 − α t 2 ​ ‖ 𝐌 t ‖ F 2 \ell(\hat{\mathbf{v}}_{t},\mathbf{v}_{t})=-\mathbf{v}_{t}^{\top}\hat{\mathbf{v}}_{t}+\frac{1-\alpha_{t}}{2}\|\mathbf{M}_{t}\|_{F}^{2}=-\mathbf{v}_{t}^{\top}\mathbf{M}_{t}\mathbf{k}_{t}+\frac{1-\alpha_{t}}{2}\|\mathbf{M}_{t}\|_{F}^{2}
+In this work, we explore a novel architecture that augments sliding-window attention with test-time non-linear parametric memory. This framework facilitates the efficient inheritance of knowledge from pre-trained models while delivering superior performance and efficiency in long-context modeling.
+3 Method
+3.1 Design Principles
+Motivated by the limitations of existing memory mechanisms and inspired from cognitive neuroscience, we summarize the philosophy of our model with the two following core ideas:
+1.
+Memory as a Learning system : Memory should not be viewed merely as passive storage of information. Instead, it should function as an active, hierarchical learning system capable of abstracting, compressing, and retrieving memories knowledge. Effective long-term memory compression, therefore, arises not from raw token retention, but from the network’s capacity to learn and distill information.
+2.
+Learning Across Multiscale Temporal Dynamics : Memory learning should be inherently multiscale, treating long-term and short-term memory differently. Long-term learning establishes stable, high-level reasoning patterns and persistent logical knowledge, while short-term learning enables fine-grained, context-sensitive adaptation and rapid state updates. These complementary temporal modes should be coupled through a shared representational space, enabling bidirectional interaction and dynamic mode switching.
+Building upon these principles, we propose a novel native parameterized memory architecture— AllMem (A Large Language MEMory model)—that integrates a hybrid design combining sliding-window attention (SWA) with a nonlinear, test-time trainable (TTT) memory network.
+Thanks to the modularity of our proposed memory model, we can efficiently fine-tune pretrained large language models to benefit from an adaptive multi-scale memory system.
+3.2 AllMem
+Figure 1 : Model architecture of the memory module : (Left) A single decoder layer structure, where the Token Mixer consists of two parallel branches: a sliding-window attention (SWA) module for modeling local, fine-grained dependencies, and a long-term AllMem memory unit for capturing global, persistent semantic patterns. (Right) The internal meta-parameter structure of the TTT-enabled memory unit, including learnable momentum decay rates, learning rates, output gating branches, and QKV projection weights.
+Following the design principles, we introduce AllMem , a learnable, native parameterized memory fusion architecture. AllMem preserves strong performance on short-sequence tasks while significantly enhancing long-sequence modeling capacity, leveraging a computationally efficient long-term memory strcture.
+The core innovation of AllMem lies in its parallel, modular architecture that explicitly decouples long-term persistent memory from precise short-term memory. These two modalities are dynamically fused via a learnable, channel-wise scaling gate mechanism, enabling adaptive, context-sensitive integration of memory contributions.
+As illustrated in fig. 1 , the AllMem model adopts the standard Transformer decoder layer structure. The Channel Mixer reuses the pre-trained MLP weights from the base model, thereby preserving foundational semantic representation capabilities. The Token Mixer , on the other hand, is constructed as a parallel composition of two components:
+•
+A sliding-window attention (SWA) module, which computes attention over a fixed-size local window of tokens, enabling efficient modeling of fine-grained local dependencies.
+•
+A nonlinear, TTT-enabled memory network ( AllMem ), which maintains and updates a long-term, compressed memory state through test-time online learning.
+This parallel design achieves a significant reduction in computational complexity: Prefill complexity is reduced to 𝒪 ⁡ ( L ​ W ) \mathcal{O}(LW) , and Decode complexity to 𝒪 ⁡ ( W ) \mathcal{O}(W) , where L L is the input sequence length and W W is the sliding window size. To enable dynamic, context-aware fusion of the two memory modalities, we introduce a learnable, per-channel scaling coefficient 𝜶 ∈ ℝ d model \bm{\alpha}\in\mathbb{R}^{d_{\text{model}}} . The fusion is formalized as:
+OPEN TokenMixer ​ ( 𝐱 ) = SWA ​ ( RMSNorm ​ ( 𝐱 ) ) + 𝜶 ⋅ AllMem ​ ( RMSNorm ​ ( 𝐱 ) ) ) \text{TokenMixer}(\mathbf{x})=\text{SWA}\left(\text{RMSNorm}(\mathbf{x})\right)+\bm{\alpha}\cdot\textrm{{AllMem}}\left(\text{RMSNorm}(\mathbf{x}))\right)
+Here, 𝜶 \bm{\alpha} is initialized to zero vector, allowing the model to start with a bias toward SWA. During training, the network gradually learns the optimal balance between local attention and long-term memory contributions per channel, stabilizing training and accelerating convergence.
+During training, we freeze the weights of the SWA and Channel Mixer components, and only fine-tune the meta-parameters of the AllMem memory unit–specifically, the QKV projection matrices, the learnable learning rate and momentum decay coefficients, the RMSNorm parameters, the output gating branch, and the output projection layer. This selective fine-tuning strategy mitigates the risk of catastrophic forgetting, preserving the model’s prior knowledge while enabling adaptive memory learning.
+A critical challenge in such memory systems lies in achieving efficient and dynamic memory updates and compression. Inspired by the test-time training (TTT) paradigm, we adopt an online optimization strategy that continuously updates the Memory Network ( ℳ \mathcal{M} ) parameters by minimizing a reconstruction loss ( ℒ \mathcal{L} ). The update rule is formulated as:
+ℳ t = ℳ t − 1 − η t ​ ∇ ℳ t − 1 ℒ ​ ( f ⁡ ( ℳ t − 1 , 𝐤 t ) , 𝐯 t ) \displaystyle\mathcal{M}_{t}=\mathcal{M}_{t-1}-\eta_{t}\nabla_{\mathcal{M}_{t-1}}\mathcal{L}(f(\mathcal{M}_{t-1},\mathbf{k}_{t}),\mathbf{v}_{t})
+ℒ ⁡ ( f ⁡ ( ℳ t − 1 , 𝐤 t ) , 𝐯 t ) = − dot_product ​ ( f ⁡ ( ℳ t − 1 , 𝐤 t ) , 𝐯 t ) \displaystyle\mathcal{L}(f(\mathcal{M}_{t-1},\mathbf{k}_{t}),\mathbf{v}_{t})=-\text{dot\_product}(f(\mathcal{M}_{t-1},\mathbf{k}_{t}),\mathbf{v}_{t})
+Figure 2 : Online learning pipeline of the memory module : To prevent future information leakage, we employ a strictly ordered sequence of operations–memory read, weight normalization, and memory update–ensuring stable and robust TTT dynamics.
+Unlike prior approaches such as AHN [ 28 ] and Mamba [ 3 ] , which rely on linear attention or linear memory matrices, our framework employs a residual-connected SwishGLU-based nonlinear memory unit f ⁡ ( ⋅ ) f(\cdot) , enabling richer knowledge compression and context-aware representation learning. To ensure stable gradient flow and high parallelism during test-time training, we adopt a chunk-wise retrieval and update strategy with a relatively large chunk size c c , inspired by LaCT [ 10 ] . The memory read operation ϕ m : q t → v ^ t \phi_{m}:q_{t}\to\hat{v}_{t} is formulated as:
+𝐕 ^ j = 𝐀𝐖 down ⊤ + 𝐐 j \displaystyle\hat{\mathbf{V}}_{j}=\mathbf{A}\mathbf{W}_{\text{down}}^{\top}+\mathbf{Q}_{j}
+𝐀 = SiLU ​ ( 𝐇 g ​ a ​ t ​ e ) ⊙ 𝐇 i ​ n \displaystyle\mathbf{A}=\text{SiLU}(\mathbf{H}_{gate})\odot\mathbf{H}_{in}
+𝐇 g ​ a ​ t ​ e \displaystyle\mathbf{H}_{gate}
+= 𝐐 j ​ 𝐖 gate ⊤ 𝐇 i ​ n = 𝐐 j ​ 𝐖 up ⊤ \displaystyle=\mathbf{Q}_{j}\mathbf{W}_{\text{gate}}^{\top}\quad\quad\mathbf{H}_{in}=\mathbf{Q}_{j}\mathbf{W}_{\text{up}}^{\top}
+where 𝐐 j = [ 𝐪 j ​ c + 1 , 𝐪 j ​ c + 2 , … , 𝐪 j ​ c + c ] ⊤ \mathbf{Q}_{j}=[\mathbf{q}_{jc+1},\mathbf{q}_{jc+2},...,\mathbf{q}_{jc+c}]^{\top} and 𝐕 ^ j = [ 𝐯 ^ j ​ c + 1 , 𝐯 ^ j ​ c + 2 , … , 𝐯 ^ j ​ c + c ] ⊤ \hat{\mathbf{V}}_{j}=[\hat{\mathbf{v}}_{jc+1},\hat{\mathbf{v}}_{jc+2},...,\hat{\mathbf{v}}_{jc+c}]^{\top} denote the queries and predictions for the j j -th block, respectively.
+The corresponding test-time gradient computation is given by:
+𝐆 o ​ u ​ t \displaystyle\mathbf{G}_{out}
+≜ ∇ 𝐕 ^ ℒ = − 𝐕 \displaystyle\triangleq\nabla_{\hat{\mathbf{V}}}\mathcal{L}=-\mathbf{V}
+𝐆 A \displaystyle\mathbf{G}_{A}
+≜ ∇ 𝐀 ℒ = 𝐆 o ​ u ​ t ​ 𝐖 down = − 𝐕𝐖 down \displaystyle\triangleq\nabla_{\mathbf{A}}\mathcal{L}=\mathbf{G}_{out}\mathbf{W}_{\text{down}}=-\mathbf{V}\mathbf{W}_{\text{down}}
+𝐆 i ​ n \displaystyle\mathbf{G}_{in}
+= 𝐆 A ⊙ SiLU ​ ( 𝐇 g ​ a ​ t ​ e ) \displaystyle=\mathbf{G}_{A}\odot\text{SiLU}(\mathbf{H}_{gate})
+𝐆 g ​ a ​ t ​ e \displaystyle\mathbf{G}_{gate}
+= 𝐆 A ⊙ 𝐇 i ​ n ⊙ SiLU ′ ​ ( 𝐇 g ​ a ​ t ​ e ) \displaystyle=\mathbf{G}_{A}\odot\mathbf{H}_{in}\odot\text{SiLU}^{\prime}(\mathbf{H}_{gate})
+∇ 𝐖 gate ℒ = 𝐆 g ​ a ​ t ​ e ⊤ \displaystyle\nabla_{\mathbf{W}_{\text{gate}}}\mathcal{L}=\mathbf{G}_{gate}^{\top}
+𝐊 ∇ 𝐖 down ℒ = 𝐆 o ​ u ​ t ⊤ ​ 𝐀 ∇ 𝐖 up ℒ = 𝐆 i ​ n ⊤ ​ 𝐊 \displaystyle\mathbf{K}\quad\quad\nabla_{\mathbf{W}_{\text{down}}}\mathcal{L}=\mathbf{G}_{out}^{\top}\mathbf{A}\quad\quad\nabla_{\mathbf{W}_{\text{up}}}\mathcal{L}=\mathbf{G}_{in}^{\top}\mathbf{K}
+To enable efficient and stable test-time training, we adopt a momentum-based stochastic gradient descent (SGD) optimizer, augmented with input-dependent dynamic learning rates and momentum coefficients:
+𝐌 j \displaystyle\mathbf{M}_{j}
+= μ j ​ 𝐌 j − dot_product ​ ( 𝜼 t , ∇ 𝐖 ℒ ) \displaystyle=\mu_{j}\mathbf{M}_{j}-\text{dot\_product}(\bm{\eta}_{t},\nabla_{\mathbf{W}}\mathcal{L})
+𝐖 j \displaystyle\mathbf{W}_{j}
+= 𝐖 j − 1 + 𝐌 j \displaystyle=\mathbf{W}_{j-1}+\mathbf{M}_{j}
+where 𝐌 j \mathbf{M}_{j} and 𝐖 j \mathbf{W}_{j} denote the momentum and fast weight for the j j -th chunk, respectively. The momentum decay coefficient is a chunk-wise, input-dependent parameter
+μ j = 1 c ​ ∑ t = j ​ c + 1 j ​ c + c ( sigmoid ​ ( Linear ​ ( 𝒙 t ) ) CLOSE \mu_{j}=\frac{1}{c}\sum_{t=jc+1}^{jc+c}(\text{sigmoid}\left(\text{Linear}(\bm{x}_{t})\right) while 𝜼 t = softplus ​ ( Linear ​ ( 𝒙 t ) ) \bm{\eta}_{t}=\text{softplus}(\text{Linear}(\bm{x}_{t})) is a token-wise meta learning rate.
+Under this framework, the process of optimizing the memory network via error backpropagation is referred to as the inner loop. Meanwhile, the control network responsible for generating the dynamic learning rates, momentum coefficients, and the query, key, and value vectors constitutes the outer loop.
+To stabilize the internal TTT loop—particularly to mitigate gradient explosion caused by unstable meta-parameters during early training—we incorporate a carefully designed normalization mechanism. Traditional approaches such as weight normalization or gradient clipping are applied as:
+𝑾 = 𝑾 ​ 𝒩 l norm 2 ​ ( 𝑾 ) , ∇ 𝑾 = norm_clip ​ ( ∇ 𝑾 , Θ ) \bm{W}=\bm{W}\frac{\mathcal{N}}{l^{2}_{\text{norm}}(\bm{W})},\quad\nabla{\bm{W}}=\text{norm\_clip}(\nabla{\bm{W}},\Theta)
+where 𝒩 \mathcal{N} represents the L 2 L_{2} norm of the initial memory weights (computed along the input dimension) and Θ \Theta serves as the gradient clipping threshold.
+However, existing methods [ 10 ] often apply normalization immediately after each memory update. This “update-then-reset” strategy risks distorting or erasing recently learned memory structures, especially during the early stages of adaptation.
+To resolve this, as illustrated in fig. 2 , we propose an internal normalization mechanism , where the normalization step is inserted between the memory read and update operations. This design ensures that memory read operations are performed on unnormalized, pristine weights, while normalization is deferred until after the read is complete. This decouples memory read stability from write plasticity, enabling robust, adaptive memory learning without sacrificing the integrity of newly acquired knowledge.
+For the memory module, a multi-head configuration is adopted, wherein the number of heads n m ​ e ​ m n_{mem} is maintained in parity with the KV heads n k ​ v n_{kv} of the Grouped-Query Attention (GQA) mechanism. A uniform dimensionality of d = 512 d=512 is established, such that the dimension per head is defined as d h = d / n k ​ v d_{h}=d/n_{kv} . Furthermore, non-sharing of parameters is enforced between distinct layers to preserve representational capacity. Regarding positional encoding, the memory module remains position-agnostic, whereas the SWA component utilizes Rotary Positional Embeddings (RoPE) [ 29 ] to encode relative sequence order.
+In addition to the core memory architecture, the meta-learning backbone is optimized by integrating advancements from popular linear attention and Transformer frameworks. Specifically, one-dimensional convolutional layers are incorporated following the Q ​ K ​ V QKV linear projections [ 6 , 3 , 9 ] to strengthen local contextual dependencies and facilitate the contextual compression of memory content. Furthermore, distribution normalization is implemented within the Q Q and K K projection branches via RMSNorm and head-wise L 2 L_{2} normalization [ 30 ] , which effectively stabilizes input signal variance and accelerates network convergence. To further ensure training stability and mitigate potential attention sink phenomena [ 17 ] , an auxiliary parallel gating mechanism is also integrated into the architecture.
+3.3 Distilation pipeline
+3.3.1 Data Preprocessing
+For data preprocessing, long-sequence distillation data are sourced from ChatQA2 [ 31 ] , while short-sequence data are drawn from ChineseInstruct [ 32 ] and SFTv3 [ 16 ] . All datasets undergo a unified cleaning pipeline: format conversion, sequence length normalization, and data filtering. Specifically, all raw inputs are converted into the standardized ChatML format, further aligned with the Qwen3 chat template. For long-sequence data, we adopt a context length of 24K tokens; for short-sequence distillation, we set the context length to 4K tokens. Crucially, during long-sequence training, the loss is calculated only on the response tokens, discarding any extraneous prompt or instruction content. It effectively guides the memory module to focus on salient contextual information, while suppressing redundancy and noise from non-informative background structures. Consequently, enhanced memory capacity and superior generalization ability are achieved through response-only distillation.
+3.3.2 Distillation Method
+We employ an end-to-end knowledge distillation framework, where the original Transformer model serves as the teacher, guiding the training of our AllMem student model. The training objective is to minimize the forward Kullback-Leibler (KL) divergence between the output probability distributions of the student and teacher models.
+Prior studies [ 33 , 34 ] have demonstrated that incorporating a supervised cross-entropy (CE) loss can further enhance the performance of distilled models. This hybrid objective is typically expressed as:
+L t ​ o ​ t ​ a ​ l = α ∗ L K ​ L + β ∗ L C ​ E L_{total}=\alpha*L_{KL}+\beta*L_{CE}
+where α \alpha and β \beta are hyperparameters controlling the relative weight of the distillation loss and the supervised cross-entropy (CE) loss, respectively. We found that using only the distillation loss yields the best performance. Therefore, in our experiments, we set α = 1 \alpha=1 and β = 0 \beta=0 .
+To equip the student AllMem model with the ability to perform effective information compression across arbitrary sequence lengths without dependence on a fixed architecture, we adopt a randomized configuration training strategy during the knowledge distillation. In each training iteration, the number of attention sinks, the length of the sliding window, and the chunk size of memory update are independently sampled from the ranges [ 0,256 ] [0,256] , [ 512 , 8192 ] [512,8192] , and [ 512 , 4096 ] [512,4096] , respectively. Empirical results show this stochastic training policy
+facilitates the emergence of robust, and generalizable compression mechanisms that are invariant to specific parameter settings.
+3.3.3 On-Policy Distillation
+To further enhance the performance of the distilled student model, we adopt an on-policy distillation strategy [ 30 , 35 ] . Specifically, the student model generates responses to instruction-based datasets, and the teacher model conducts output distribution distillation over these student-generated samples. This approach enables a fine-grained alignment between the teacher and student, further improving the student’s accuracy beyond the standard end-to-end distillation framework.
+We first adapted the AllMem model to the vLLM v1 inference framework [ 36 ] , significantly accelerating its inference speed. To improve the efficiency of on-policy distillation, we pre-collected a dataset of responses generated by the student model on short-sequence instruction benchmarks prior to distillation. Subsequently, we conducted end-to-end distillation using this fixed dataset—this procedure is also referred to as offline on-policy distillation [ 34 ] .The primary advantage of this offline approach lies in eliminating the need for real-time data generation during training, thereby reducing per-step latency and stabilizing the training pipeline.
+4 Experimental details
+We employ the Qwen3 [ 30 ] series models as the foundational architecture for validation. All models are trained using mixed-precision training, with gradient checkpointing and DeepSpeed ZeRO-2 enabled to optimize memory efficiency. The AdamW optimizer is used with a maximum learning rate of 1 × 10 − 4 1\times 10^{-4} , and the Warmup-Stable-Decay (WSD) learning rate scheduling strategy is adopted. The 0.6B model is trained on 3M tokens, while the 1.7B model is trained on 5M tokens.
+Our evaluation benchmark encompasses a diverse set of datasets across multiple dimensions: short-sequence commonsense reasoning tasks including C-Eval (5-shot) [ 37 ] , ARC [ 38 ] , HellaSwag [ 39 ] , and WinoGrande [ 40 ] ; reasoning capabilities assessed via MMLU-Redux [ 41 ] and GPQA-Diamond [ 42 ] ; instruction following evaluated on IFEval [ 43 ] ; mathematical reasoning tested on MATH-500 [ 44 ] ; programming ability measured by LiveCodeBench (release v5, 2023.05–2025.01) [ 45 ] ; and long-context evaluation conducted on LongBench [ 46 ] , InfiniteBench [ 47 ] , and LV-Eval [ 48 ] .
+For all benchmarks, we follow the generation settings recommended in the Qwen3 technical report [ 30 ] . Specifically, for GPQA-Diamond, we perform 10 independent samplings per question and report the mean accuracy. For all other datasets, a single sampling is used. We set max_tokens=32768 to ensure high precision, particularly in long-context evaluation tasks.
+5 Results
+5.1 Performance on Short-Sequence Benchmarks
+Table 1 : Performance comparison across diverse downstream benchmarks, including common sense reasoning, logical reasoning, instruction following, mathematical problem solving, and code generation. C-Eval is evaluated under a 5 5 -shot setting, while all other tasks are assessed in a 0 0 -shot setting. The AllMem model employs a sliding window length of 2048 2048 and 128 128 attention sinks. Bold indicates the best result on each task; underlined denotes the second-best performance.
+Qwen3-0.6B
+Qwen3-0.6B
+- AllMem
+Qwen3-1.7B
+Qwen3-1.7B
+- AllMem
+Knowledge
+C-Eval
+40.6
+42.2
+58.0
+58.9
+ARC-Easy
+70.0
+70.2
+84.5
+84.7
+ARC-Challenge
+55.0
+54.6
+74.2
+74.4
+HellaSwag
+40.8
+41.4
+59.4
+59.4
+WinoGrande
+50.6
+52.2
+53.0
+53.9
+Reasoning
+MMLU-Redux
+44.9
+47.05
+66.5
+67.3
+GPQA-Diamond
+24.6
+25.1
+28.9
+28.79
+Alignment
+IFEval strict prompt \text{IFEval}_{\text{ strict prompt}}
+60.6
+58.4
+68.6
+69.0
+Math
+MATH-500
+48.8
+49.8
+73.6
+74.4
+Coding
+LiveCodeBench v5
+13.8
+14.3
+25.5
+25
+We evaluate the performance of our conversion framework on Qwen3-0.6B and Qwen3-1.7B models. After conversion, the AllMem architecture introduces only 66 66 M additional parameters (a 9.9 % 9.9\% relative increase) on the 0.6 0.6 B model, and 126 126 M additional parameters ( 6.8 % 6.8\% relative increase) on the 1.7 1.7 B model.
+We first validate the downstream accuracy of the converted AllMem models. Table 1 presents a comparative evaluation of the AllMem models against their original Qwen3 counterparts across multiple downstream tasks spanning diverse categories. Results demonstrate that, across both the 0.6 0.6 B and 1.7 1.7 B model sizes, the converted AllMem models achieve accuracy comparable to, or even exceeding, that of the original models.
+This consistent performance gain across the two different model scales, give us confidence that our method retains the original capabilities of the teacher model. While the extended context modeling benefits are largely attributed to the wide sliding window, maintaining high accuracy on standard short-sequence benchmarks is non-trivial, especially for alternative architectures such as Hybrid SSMs, which often suffer from performance degradation on shorter inputs with long-context extension.
+Table 2 : Accuracy comparison of the 0.6B AllMem model, full attention, sliding-window attention with attention sinks, and Mamba-enhanced memory model across long-context benchmarks: LongBench , InfiniteBench , and LVEval . The sliding window length is set to 4k on LongBench and 8k on InfiniteBench and LVEval , with 128 attention sinks. Bold indicates the best result; underline indicates the second-best result.
+Subsets
+Avg.
+Len.
+Qwen3-0.6B
+Qwen3-0.6B
+-SWA-Sinks
+Qwen3-0.6B
+-Mamba
+Qwen3-0.6B
+- AllMem
+LongBench
+dureader
+10,656
+26.03
+23.52
+27.4
+25.71
+hotpotqa
+13,466
+27.21
+23.67
+22.41
+28.23
+musique
+16,363
+10.86
+8.56
+7.24
+10.76
+narrativeqa
+29,949
+13.38
+13.08
+13.53
+12.31
+qmsum
+139,667
+16.86
+16.01
+20.14
+16.32
+triviaqa
+12,208
+74.62
+69.41
+71.31
+70.64
+Average
+37052
+28.16
+25.71
+27.01
+27.33
+InfiniteBench
+longbook_qa_en
+128k
+1.76
+3.7
+6
+8.53
+longbook_qa_cn
+2.18
+4.05
+8.5
+12.54
+LV-Eval
+cmrc_mixup
+128k
+6.31
+5.45
+5.91
+4.89
+dureader_mixup
+11.18
+9.33
+9.25
+9.56
+factrecall_en
+1.67
+1.1
+1.59
+7.5
+factrecall_zh
+4.49
+2.91
+3.7
+4.8
+hotpotwikiqa_mixup
+3.19
+2.24
+3.29
+4.96
+lic_mixup
+6.44
+3.66
+4.02
+3.64
+loogle_CR_mixup
+5.24
+1.7
+3.69
+3.26
+loogle_MIR_mixup
+1.42
+0.88
+1.36
+1.22
+loogle_SD_mixup
+4.87
+2.56
+2.84
+2.34
+multifieldqa_en_mixup
+5.53
+3.06
+4.42
+3.73
+multifieldqa_zh_mixup
+6.44
+3.06
+3.6
+3.79
+Average
+128k
+5.16
+3.27
+3.97
+4.52
+5.2 Performance on Long-Sequence Benchmarks
+As shown in Table 2 and Table 3 , we further validate the effectiveness of the proposed transformation framework on long-sequence tasks across multiple long-context evaluation benchmarks: LongBench , InfiniteBench , and LVEval . Similar to the approach in AHN [ 28 ] , we select six subtasks from LongBench with an average sequence length of 37k for evaluation. For InfiniteBench , the input context lengths in the Chinese and English question-answering tasks reach up to 193k and 2069k, respectively. To ensure compatibility with the Qwen3 tokenizer’s maximum sequence length constraint, we apply truncation to these inputs with 128k context length. In contrast, LVEval provides subtasks with varying context lengths, allowing us to directly select the subset corresponding to a 128k context window for testing.
+To evaluate the effectiveness of the memory module, we implement and compare two baseline methods: a model based on sliding-window attention with “sink” tokens, and a hybrid model using the linear attention architecture of Mamba. Specifically, the Mamba-enhanced baseline replaces only the AllMem module in the original structure with the Mamba-2 module, while maintaining consistent model parameters. Experimental results indicate that, on the LongBench dataset, the transformed AllMem network achieves performance comparable to full attention mechanisms employing only a 4k local attention window when processing sequences of average length 37k. On InfiniteBench and LVEval , the 1.7B model achieves higher accuracy than full-attention models trained under 128k context lengths, respectively, using just an 8k local attention window.
+It should be emphasized that the generation hyperparameters used in this experiment are drawn from the recommended settings of Qwen3, but have not been specifically optimized for the memory-aware model. For instance, the AllMem -1.7B model achieves an average accuracy of 32.95% on the LongBench subtasks using only greedy decoding–a result that outperforms the default Qwen3 generation strategy. Moreover, across both 0.6B and 1.7B parameter scales, the AllMem models consistently outperform Mamba and Sink-based sliding-window attention baselines in terms of overall performance across the three major long-context benchmarks. These findings further validate the efficacy of the AllMem architectural design and its distillation framework in handling long-sequence modeling tasks.
+Table 3 : Accuracy comparison of the 1.7B AllMem model, full attention, sliding-window attention with attention sinks, and Mamba-enhanced memory model across long-context benchmarks: LongBench , LVEval , and InfiniteBench . The sliding window length is set to 4k on LongBench and 8k on InfiniteBench and LVEval , with 128 attention sinks. Bold indicates the best result; underline indicates the second-best result.
+Subsets
+Avg.
+Len.
+Qwen3-1.7B
+Qwen3-1.7B
+-SWA-Sinks
+Qwen3-1.7B
+-Mamba
+Qwen3-1.7B
+- AllMem
+Longench
+dureader
+10,656
+24.28
+24.97
+29.37
+26.62
+hotpotqa
+13,466
+38.65
+28.69
+28.07
+31.66
+musique
+16,363
+15.92
+11.76
+8.79
+14.87
+narrativeqa
+29,949
+18.9
+16.41
+16.94
+17.32
+qmsum
+139,667
+17.76
+16.41
+21.37
+17.15
+triviaqa
+12,208
+85.81
+83.61
+84.9
+85.12
+Average
+37052
+33.55
+30.31
+31.57
+32.12
+InfiniteBench
+longbook_qa_en
+128k
+2.43
+4.16
+5.4
+7.84
+longbook_qa_cn
+2.42
+4.48
+5.4
+12.74
+LV-Eval
+cmrc_mixup
+128k
+6.11
+5.27
+7.05
+5.64
+dureader_mixup
+11.97
+9.46
+10.64
+9.91
+factrecall_en
+1.8
+1
+1
+6.83
+factrecall_zh
+0.38
+0.31
+0.5
+7
+hotpotwikiqa_mixup
+4.74
+4.96
+2.73
+6.81
+lic_mixup
+6.01
+2.83
+5.11
+4.61
+loogle_CR_mixup
+3.26
+1.71
+2.52
+2.24
+loogle_MIR_mixup
+1.72
+1.34
+1.66
+1.14
+loogle_SD_mixup
+6.6
+4.61
+4.25
+4.42
+multifieldqa_en_mixup
+7.74
+4.77
+5.81
+5.78
+multifieldqa_zh_mixup
+7.86
+5.14
+6.72
+6.8
+Average
+128k
+5.29
+3.76
+4.36
+5.56
+5.3 Computational Cost and Memory Overhead
+Figure 3 : Comparison of FLOPs and cache size across different model sizes for AllMem memory, full attention, sink-based sliding window attention, and Channel Mixer, as sequence length increases. The sliding window size is 4k, and the update chunk size is 2k.
+To systematically evaluate the superiority of the memory module over the full-attention mechanism in terms of computational cost and cache storage requirements, we compare the number of floating-point operations (FLOPs) and cache storage demands of the AllMem memory module with full attention, and sliding-window attention with sink tokens across different model scales, and sequence lengths. In the experiments, the sliding-window size is fixed at 4096, and the update chunk size is set to 2048. As shown in fig. 3 , when the context length extends to 128k, the computational cost and cache storage requirement of the AllMem memory model are reduced to approximately 1 / 9 1/9 of those of the full-attention mechanism. Notably, the cache capacity of the AllMem model remains constant regardless of sequence length, whereas the cache demand of the full-attention layer grows linearly with sequence length, leading to a dramatic increase in memory overhead in long-sequence scenarios. This demonstrates that the AllMem architecture achieves significant advantages in computational efficiency and storage scalability for long-sequence modeling, making it well-suited for efficient sequence modeling tasks requiring ultra-long context processing.
+6 Conclusion
+In this work, we introduce AllMem , a long-sequence efficient LLM architecture, along with a distillation method tailored for pre-trained Transformers. This approach enables the seamless transition of classic, pre-trained decoder-only Transformers into architectures optimized for efficient long-sequence modeling. The converted models not only match or exceed the accuracy of full-attention mechanisms across both short and long benchmarks but also achieve O ⁡ ( L ) O(L) computational complexity and O ⁡ ( 1 ) O(1) storage complexity through the use of fixed-length sliding windows and fixed-size memory modules. This effectively resolves the scalability bottlenecks inherent in the full-attention mechanism for long sequences.
+Our findings demonstrate that employing a test-time learning memory architecture can effectively compensate for the precision loss typically induced by local attention, enabling the efficient compression of long-sequence information. Furthermore, we provide a comprehensive training pipeline designed for these memory-based structures, contributing to the exploration of next-generation long-sequence attention mechanisms. Notably, the proposed parameterized memory mechanism possesses the potential for deep integration with external persistent memory systems (e.g., RAG, Engram [ 49 , 50 ] ), facilitating the construction of a multi-level memory hierarchy: a short-term perceptual memory and a long-term parameterized/persistent memory.
+References
+[1]
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin (2017)
+Attention is all you need .
+Advances in neural information processing systems 30 .
+Cited by: §1 .
+[2]
+D. Bahdanau, K. Cho, and Y. Bengio (2014)
+Neural machine translation by jointly learning to align and translate .
+arXiv preprint arXiv:1409.0473 .
+Cited by: §1 .
+[3]
+A. Gu and T. Dao (2024)
+Mamba: linear-time sequence modeling with selective state spaces .
+In First conference on language modeling ,
+Cited by: §1 ,
+§3.2 ,
+§3.2 .
+[4]
+T. Dao and A. Gu (2024)
+Transformers are ssms: generalized models and efficient algorithms through structured state space duality .
+arXiv preprint arXiv:2405.21060 .
+Cited by: §1 ,
+§2 .
+[5]
+S. Yang, B. Wang, Y. Shen, R. Panda, and Y. Kim (2023)
+Gated linear attention transformers with hardware-efficient training .
+arXiv preprint arXiv:2312.06635 .
+Cited by: §1 .
+[6]
+S. Yang, J. Kautz, and A. Hatamizadeh (2024)
+Gated delta networks: improving mamba2 with delta rule .
+arXiv preprint arXiv:2412.06464 .
+Cited by: §1 ,
+§2 ,
+§3.2 .
+[7]
+K. Team, Y. Zhang, Z. Lin, X. Yao, J. Hu, F. Meng, C. Liu, X. Men, S. Yang, Z. Li, et al. (2025)
+Kimi linear: an expressive, efficient attention architecture .
+arXiv preprint arXiv:2510.26692 .
+Cited by: §1 ,
+§1 .
+[8]
+Y. Sun, X. Li, K. Dalal, J. Xu, A. Vikram, G. Zhang, Y. Dubois, X. Chen, X. Wang, S. Koyejo, et al. (2024)
+Learning to (learn at test time): rnns with expressive hidden states .
+arXiv preprint arXiv:2407.04620 .
+Cited by: §1 .
+[9]
+A. Behrouz, P. Zhong, and V. Mirrokni (2024)
+Titans: learning to memorize at test time .
+arXiv preprint arXiv:2501.00663 .
+Cited by: §1 ,
+§1 ,
+§3.2 .
+[10]
+T. Zhang, S. Bi, Y. Hong, K. Zhang, F. Luan, S. Yang, K. Sunkavalli, W. T. Freeman, and H. Tan (2025)
+Test-time training done right .
+arXiv preprint arXiv:2505.23884 .
+Cited by: §1 ,
+§3.2 ,
+§3.2 .
+[11]
+A. Behrouz, M. Razaviyayn, P. Zhong, and V. Mirrokni (2025)
+Nested learning: the illusion of deep learning architectures .
+arXiv preprint arXiv:2512.24695 .
+Cited by: §1 .
+[12]
+J. von Oswald, N. Scherrer, S. Kobayashi, L. Versari, S. Yang, M. Schlegel, K. Maile, Y. Schimpf, O. Sieberling, A. Meulemans, R. A. Saurous, G. Lajoie, C. Frenkel, R. Pascanu, B. A. y Arcas, and J. Sacramento (2025)
+MesaNet: sequence modeling by locally optimal test-time training .
+External Links: 2506.05233 ,
+Link
+Cited by: §1 .
+[13]
+G. Xiao, Y. Tian, B. Chen, S. Han, and M. Lewis (2023)
+Efficient streaming language models with attention sinks .
+arXiv preprint arXiv:2309.17453 .
+Cited by: §1 .
+[14]
+O. Lieber, B. Lenz, H. Bata, G. Cohen, J. Osin, I. Dalmedigos, E. Safahi, S. Meirom, Y. Belinkov, S. Shalev-Shwartz, et al. (2024)
+Jamba: a hybrid transformer-mamba language model .
+arXiv preprint arXiv:2403.19887 .
+Cited by: §1 .
+[15]
+Y. Gu, Q. Hu, S. Yang, H. Xi, J. Chen, S. Han, and H. Cai (2025)
+Jet-nemotron: efficient language model with post neural architecture search .
+arXiv preprint arXiv:2508.15884 .
+Cited by: §1 .
+[16]
+J. Wang, D. Paliotta, A. May, A. M. Rush, and T. Dao (2024)
+The mamba in the llama: distilling and accelerating hybrid models .
+arXiv preprint arXiv:2408.15237 .
+Cited by: §1 ,
+§3.3.1 .
+[17]
+Q. Team (2025)
+Qwen3-next: towards ultimate training & inference efficiency .
+Note: https://qwen.ai/blog?id=4074cca80393150c248e508aa62983f9cb7d27cd&from=research.latest-advancements-list Accessed: 2026-01-09
+Cited by: §1 ,
+§3.2 .
+[18]
+A. Li, B. Gong, B. Yang, B. Shan, C. Liu, C. Zhu, C. Zhang, C. Guo, D. Chen, D. Li, et al. (2025)
+Minimax-01: scaling foundation models with lightning attention .
+arXiv preprint arXiv:2501.08313 .
+Cited by: §1 .
+[19]
+S. Agarwal, L. Ahmad, J. Ai, S. Altman, A. Applebaum, E. Arbus, R. K. Arora, Y. Bai, B. Baker, H. Bao, et al. (2025)
+Gpt-oss-120b & gpt-oss-20b model card .
+arXiv preprint arXiv:2508.10925 .
+Cited by: §1 .
+[20]
+()
+Qwen — qwen.ai .
+Note: https://qwen.ai/blog?id=4074cca80393150c248e508aa62983f9cb7d27cd&from=research.latest-advancements-list [Accessed 14-02-2026]
+Cited by: §1 .
+[21]
+()
+InclusionAI/Ring-2.5-1T · Hugging Face — huggingface.co .
+Note: https://huggingface.co/inclusion{A}{I}/{R}ing-2.5-1{T} [Accessed 14-02-2026]
+Cited by: §1 .
+[22]
+J. Zuo, M. Velikanov, I. Chahed, Y. Belkada, D. E. Rhayem, G. Kunsch, H. Hacid, H. Yous, B. Farhat, I. Khadraoui, et al. (2025)
+Falcon-h1: a family of hybrid-head language models redefining efficiency and performance .
+arXiv preprint arXiv:2507.22448 .
+Cited by: §1 .
+[23]
+X. Dong, Y. Fu, S. Diao, W. Byeon, Z. Chen, A. S. Mahabaleshwarkar, S. Liu, M. Van Keirsbilck, M. Chen, Y. Suhara, et al. (2024)
+Hymba: a hybrid-head architecture for small language models .
+arXiv preprint arXiv:2411.13676 .
+Cited by: §1 .
+[24]
+J. Fan (2018)
+Local polynomial modelling and its applications: monographs on statistics and applied probability 66 .
+Routledge .
+Cited by: §2 .
+[25]
+D. Ji and M. A. Wilson (2007)
+Coordinated memory replay in the visual cortex and hippocampus during sleep .
+Nature neuroscience 10 ( 1 ), pp. 100–107 .
+Cited by: §2 .
+[26]
+J. Kirkpatrick, R. Pascanu, N. Rabinowitz, J. Veness, G. Desjardins, A. A. Rusu, K. Milan, J. Quan, T. Ramalho, A. Grabska-Barwinska, et al. (2017)
+Overcoming catastrophic forgetting in neural networks .
+Proceedings of the national academy of sciences 114 ( 13 ), pp. 3521–3526 .
+Cited by: §2 .
+[27]
+Y. Sun, X. Wang, Z. Liu, J. Miller, A. Efros, and M. Hardt (2020)
+Test-time training with self-supervision for generalization under distribution shifts .
+In International conference on machine learning ,
+pp. 9229–9248 .
+Cited by: §2 .
+[28]
+Y. Fang, W. Yu, S. Zhong, Q. Ye, X. Xiong, and L. Wei (2025)
+Artificial hippocampus networks for efficient long-context modeling .
+arXiv preprint arXiv:2510.07318 .
+Cited by: §3.2 ,
+§5.2 .
+[29]
+J. Su, Y. Lu, S. Pan, A. Murtadha, B. Wen, and Y. Liu (2023)
+RoFormer: enhanced transformer with rotary position embedding .
+External Links: 2104.09864 ,
+Link
+Cited by: §3.2 .
+[30]
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, et al. (2025)
+Qwen3 technical report .
+arXiv preprint arXiv:2505.09388 .
+Cited by: §3.2 ,
+§3.3.3 ,
+§4 ,
+§4 .
+[31]
+P. Xu, W. Ping, X. Wu, C. Xu, Z. Liu, M. Shoeybi, and B. Catanzaro (2024)
+Chatqa 2: bridging the gap to proprietary llms in long context and rag capabilities .
+arXiv preprint arXiv:2407.14482 .
+Cited by: §3.3.1 .
+[32]
+Mxode (2024)
+Chinese-instruct: a chinese instruction-tuning dataset .
+Hugging Face .
+Note: https://huggingface.co/datasets/Mxode/Chinese-Instruct Accessed: 2026-01-09
+Cited by: §3.3.1 .
+[33]
+J. Wang, D. Paliotta, A. May, A. Rush, and T. Dao (2024)
+The mamba in the llama: distilling and accelerating hybrid models .
+Advances in Neural Information Processing Systems 37 , pp. 62432–62457 .
+Cited by: §3.3.2 .
+[34]
+M. Rang, Z. Bi, H. Zhou, H. Chen, A. Xiao, T. Guo, K. Han, X. Chen, and Y. Wang (2025)
+Revealing the power of post-training for small language models via knowledge distillation .
+arXiv preprint arXiv:2509.26497 .
+Cited by: §3.3.2 ,
+§3.3.3 .
+[35]
+K. Lu and T. M. Lab (2025)
+On-policy distillation .
+Thinking Machines Lab: Connectionism .
+Note: https://thinkingmachines.ai/blog/on-policy-distillation
+External Links: Document
+Cited by: §3.3.3 .
+[36]
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. E. Gonzalez, H. Zhang, and I. Stoica (2023)
+Efficient memory management for large language model serving with pagedattention .
+In Proceedings of the ACM SIGOPS 29th Symposium on Operating Systems Principles ,
+Cited by: §3.3.3 .
+[37]
+Y. Huang, Y. Bai, Z. Zhu, J. Zhang, J. Zhang, T. Su, J. Liu, C. Lv, Y. Zhang, Y. Fu, et al. (2023)
+C-eval: a multi-level multi-discipline chinese evaluation suite for foundation models .
+Advances in Neural Information Processing Systems 36 , pp. 62991–63010 .
+Cited by: §4 .
+[38]
+P. Clark, I. Cowhey, O. Etzioni, T. Khot, A. Sabharwal, C. Schoenick, and O. Tafjord (2018)
+Think you have solved question answering? try arc, the ai2 reasoning challenge .
+arXiv preprint arXiv:1803.05457 .
+Cited by: §4 .
+[39]
+R. Zellers, A. Holtzman, Y. Bisk, A. Farhadi, and Y. Choi (2019)
+Hellaswag: can a machine really finish your sentence? .
+arXiv preprint arXiv:1905.07830 .
+Cited by: §4 .
+[40]
+K. Sakaguchi, R. L. Bras, C. Bhagavatula, and Y. Choi (2021)
+Winogrande: an adversarial winograd schema challenge at scale .
+Communications of the ACM 64 ( 9 ), pp. 99–106 .
+Cited by: §4 .
+[41]
+A. P. Gema, J. O. J. Leang, G. Hong, A. Devoto, A. C. M. Mancino, R. Saxena, X. He, Y. Zhao, X. Du, M. R. G. Madani, et al. (2025)
+Are we done with mmlu? .
+In Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers) ,
+pp. 5069–5096 .
+Cited by: §4 .
+[42]
+D. Rein, B. L. Hou, A. C. Stickland, J. Petty, R. Y. Pang, J. Dirani, J. Michael, and S. R. Bowman (2024)
+Gpqa: a graduate-level google-proof q&a benchmark .
+In First Conference on Language Modeling ,
+Cited by: §4 .
+[43]
+J. Zhou, T. Lu, S. Mishra, S. Brahma, S. Basu, Y. Luan, D. Zhou, and L. Hou (2023)
+Instruction-following evaluation for large language models .
+arXiv preprint arXiv:2311.07911 .
+Cited by: §4 .
+[44]
+H. Lightman, V. Kosaraju, Y. Burda, H. Edwards, B. Baker, T. Lee, J. Leike, J. Schulman, I. Sutskever, and K. Cobbe (2023)
+Let’s verify step by step .
+In The Twelfth International Conference on Learning Representations ,
+Cited by: §4 .
+[45]
+N. Jain, K. Han, A. Gu, W. Li, F. Yan, T. Zhang, S. Wang, A. Solar-Lezama, K. Sen, and I. Stoica (2024)
+Livecodebench: holistic and contamination free evaluation of large language models for code .
+arXiv preprint arXiv:2403.07974 .
+Cited by: §4 .
+[46]
+Y. Bai, X. Lv, J. Zhang, H. Lyu, J. Tang, Z. Huang, Z. Du, X. Liu, A. Zeng, L. Hou, Y. Dong, J. Tang, and J. Li (2024)
+LongBench: a bilingual, multitask benchmark for long context understanding .
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,
+Bangkok, Thailand , pp. 3119–3137 .
+External Links: Link ,
+Document
+Cited by: §4 .
+[47]
+X. Zhang, Y. Chen, S. Hu, Z. Xu, J. Chen, M. K. Hao, X. Han, Z. L. Thai, S. Wang, Z. Liu, et al. (2024)
+∞ \infty Bench: extending long context evaluation beyond 100k tokens .
+arXiv preprint arXiv:2402.13718 .
+Cited by: §4 .
+[48]
+T. Yuan, X. Ning, D. Zhou, Z. Yang, S. Li, M. Zhuang, Z. Tan, Z. Yao, D. Lin, B. Li, et al. (2024)
+Lv-eval: a balanced long-context benchmark with 5 length levels up to 256k .
+arXiv preprint arXiv:2402.05136 .
+Cited by: §4 .
+[49]
+M. Arslan, H. Ghanem, S. Munawar, and C. Cruz (2024)
+A survey on rag with llms .
+Procedia computer science 246 , pp. 3781–3790 .
+Cited by: §6 .
+[50]
+X. Cheng, W. Zeng, D. Dai, Q. Chen, B. Wang, Z. Xie, K. Huang, X. Yu, Z. Hao, Y. Li, et al. (2026)
+Conditional memory via scalable lookup: a new axis of sparsity for large language models .
+arXiv preprint arXiv:2601.07372 .
+Cited by: §6 .
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

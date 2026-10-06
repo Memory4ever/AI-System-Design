@@ -1,0 +1,5917 @@
+Don’t Ignore the Tail: Decoupling top-𝐾 Probabilities for Efficient Language Model Distillation
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Tail-Aware Distillation
+2.1
+Gradient Analysis
+3
+Experimental Details
+3.1
+Evaluation
+3.2
+Pretraining Distillation from Scratch
+3.2.1
+Benchmarking with Qwen
+3.2.2
+Distilling Larger Models
+3.2.3
+Calibration Error
+3.2.4
+Selection of
+K
+K
+3.3
+Continued Pretraining
+3.3.1
+Mathematical Reasoning
+3.4
+Supervised Distillation
+4
+Related Work
+5
+Conclusion
+References
+A
+Derivation of the Gradient
+B
+Experimental Detail
+B.1
+Cost of Supervised Distillation
+License: CC BY-NC-ND 4.0
+arXiv:2602.20816v1 [cs.CL] 24 Feb 2026
+Don’t Ignore the Tail: Decoupling top-
+K
+K
+Probabilities for Efficient Language Model Distillation
+Sayantan Dasgupta
+Affiliation:
+School of Computing and Information Systems, University of Melbourne, Melbourne, Australia
+Correspondence to:
+sayantand@student.unimelb.edu.edu
+Trevor Cohn
+Affiliation:
+School of Computing and Information Systems, University of Melbourne, Melbourne, Australia
+Timothy Baldwin
+Affiliation:
+School of Computing and Information Systems, University of Melbourne, Melbourne, Australia
+Abstract
+The core learning signal used in language model distillation is the standard Kullback-Leibler (KL) divergence between the student and teacher distributions. Traditional KL divergence tends to be dominated by the teacher’s highest-probability modes, thus diminishing the influence of less probable yet potentially informative components of the output distribution. We propose a new tail-aware divergence that decouples the contribution of the teacher model’s top-
+K
+K
+predicted probabilities from that of lower-probability predictions, while maintaining the same computational profile as the KL Divergence. Our decoupled approach reduces the impact of the teacher modes and, consequently, increases the contribution of the tail of the distribution. Experimental results demonstrate that our modified distillation method yields competitive performance in both pre-training and supervised distillation of decoder models across various datasets. Furthermore, the distillation process is efficient and can be performed with a modest academic budget for large datasets, eliminating the need for industry-scale computing.
+1
+1
+1
+We used LLMs like Grammarly and ChatGPT-Plus to check grammar and spelling and to polish our work. Codes are attached in the supplementary material.
+Keywords:
+Machine Learning, ICML
+1
+Introduction
+The rapid advancement in language models (LMs) has led to highly complex systems capable of performing state-of-the-art natural language processing (NLP) tasks. However, these models are often too computationally expensive and memory-intensive to be deployed on resource-constrained devices, such as edge devices, mobile phones, or low-latency systems. The gap is addressed by small language models, which can be further improved via knowledge distillation (KD) from larger models.
+Most work on distilling generative language models focuses on supervised distillation, which aims to match the student’s response to the teacher’s response given a prompt (
+Gu et al. (2024)
+,
+Agarwal et al. (2024)
+). These works typically assume the presence of an already pre-trained student, which might not always be the case. In contrast, works like DistilBERT
+(
+Sanh et al., 2019
+)
+train a student from scratch via pretraining distillation, and our work extends this technique to causal models. However, applying pretraining distillation to modern causal LMs faces significant challenges: the training corpora are typically closed-source, and the models require substantial computational resources—often requiring tens to hundreds of billions of tokens when distilled on generic open-source corpora. This poses a significant computational challenge, especially on academic budgets.
+We propose an algorithm that surpasses vanilla KD by decoupling the contribution of the teacher’s top-
+K
+K
+probabilities to the KL divergence and demonstrate the method’s effectiveness across different LMs. We distill various teacher models from different model families within a 1-week budget on a single H100 GPU, enabling the distillation of approximately 2 billion tokens for 1-billion-parameter student models, or more for smaller ones. Despite the training budget constraint, our method produces competitive results with recent work, such as MiniPLM
+(
+Gu et al., 2025
+)
+.
+(a)
+Qwen1.8B
+→
+\rightarrow
+0.5B
+(b)
+Qwen1.8B
+→
+\rightarrow
+1.2B
+(c)
+Phi2 2.8B
+→
+\rightarrow
+1.1B
+Figure 1:
+KL divergence on the validation set of Regmix for vanilla KD vs. TAD. The
+x
+x
+axis shows training progress in terms of the number of tokens, and the
+y
+y
+axis shows held-out KL between the student and teacher.
+2
+Tail-Aware Distillation
+If
+𝒫
+\mathcal{P}
+is the simplex of token probabilities produced by a language model (e.g.,
+𝒫
+⁡
+(
+S
+)
+\mathcal{P}(S)
+for the student and
+𝒫
+⁡
+(
+T
+)
+\mathcal{P}(T)
+for the teacher), then the standard distillation loss of a causal model has the following form for a sequence of length
+N
+N
+,
+ℒ
+K
+​
+D
+=
+∑
+t
+=
+1
+N
+ℒ
+C
+​
+L
+​
+M
+​
+(
+t
+,
+𝒫
+S
+)
++
+𝒟
+K
+​
+L
+​
+(
+t
+,
+𝒫
+T
+,
+𝒫
+S
+)
+\mathcal{L}_{KD}=\sum_{t=1}^{N}\mathcal{L}_{CLM}(t;\mathcal{P}^{S})+\mathcal{D}_{KL}(t;\mathcal{P}^{T},\mathcal{P}^{S})
+(1)
+where
+ℒ
+C
+​
+L
+​
+M
+​
+(
+t
+,
+𝒫
+S
+)
+\mathcal{L}_{CLM}(t;\mathcal{P}^{S})
+is the causal language modeling (CLM) loss of the student, and
+𝒟
+K
+​
+L
+​
+(
+t
+,
+𝒫
+T
+,
+𝒫
+S
+)
+\mathcal{D}_{KL}(t;\mathcal{P}^{T},\mathcal{P}^{S})
+is the KL divergence between the teacher and the student for the token
+t
+t
+.
+In our method, we focus on the teacher’s next-token probabilities when we input a sequence. With some abuse of notation, if
+p
+∗
+k
+T
+=
+max
+v
+∈
+𝒱
+⁡
+[
+{
+p
+1
+T
+,
+p
+2
+T
+,
+…
+​
+p
+v
+T
+​
+…
+}
+∖
+{
+p
+∗
+j
+T
+}
+j
+=
+1
+k
+−
+1
+]
+\accentset{\ast}{p}^{T}_{k}=\max_{v\in\mathcal{V}}[\{p^{T}_{1},p^{T}_{2},\dots p^{T}_{v}\dots\}\setminus\{\accentset{\ast}{p}^{T}_{j}\}_{j=1}^{k-1}]
+is the
+k
+k
+th maximum of all the token probabilities for a vocabulary
+𝒱
+\mathcal{V}
+, we can split the KL divergence between the top-
+K
+K
+and the rest as,
+𝒟
+K
+​
+L
+(
+𝒫
+T
+∥
+𝒫
+S
+)
+\displaystyle\mathcal{D}_{KL}\left(\mathcal{P}^{T}\|\mathcal{P}^{S}\right)
+=
+\displaystyle=
+𝒟
+K
+​
+L
+(
+p
+T
+∥
+p
+S
+)
+p
+T
+∈
+{
+p
+∗
+k
+T
+}
+k
+=
+1
+K
++
+\displaystyle\mathcal{D}_{KL}\left(p^{T}\|p^{S}\right)_{p^{T}\in\{{\accentset{\ast}{p}^{T}_{k}\}_{k=1}^{K}}}+
+α
+K
+T
+𝒟
+K
+​
+L
+(
+p
+~
+T
+∥
+p
+~
+S
+)
+p
+T
+∉
+{
+p
+∗
+k
+T
+}
+k
+=
+1
+K
+\displaystyle\phantom{ABCDEFGH}\alpha^{T}_{K}\mathcal{D}_{KL}\big(\tilde{p}^{T}\|\tilde{p}^{S}\big)_{p^{T}\notin\{{\accentset{\ast}{p}^{T}_{k}\}_{k=1}^{K}}}
+=
+\displaystyle\penalty\ =
+𝒟
+K
+​
+L
+1
++
+α
+K
+T
+​
+𝒟
+K
+​
+L
+2
+\displaystyle\mathcal{D}_{KL_{1}}+\alpha^{T}_{K}\mathcal{D}_{KL_{2}}
+(2)
+Here
+{
+p
+∗
+k
+T
+}
+k
+=
+1
+K
+\{{\accentset{\ast}{p}^{T}_{k}\}_{k=1}^{K}}
+is the set of top-
+K
+K
+teacher probabilities, and
+α
+K
+T
+=
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+\alpha^{T}_{K}=1-\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}
+is the non-top-
+K
+K
+or the tail probability mass of the teacher.
+𝒟
+K
+​
+L
+1
+\mathcal{D}_{KL_{1}}
+is the KL divergence associated with them (i.e., the modes), including a
+(
+K
++
+1
+)
+(K+1)
+st term for probabilities
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+1-\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}
+and
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+S
+1-\sum_{k=1}^{K}\accentset{\ast}{p}^{S}_{k}
+. Whereas,
+𝒟
+K
+​
+L
+2
+\mathcal{D}_{KL_{2}}
+is the KL Divergence for the rest, i.e., the tail, involving
+|
+𝒱
+|
+−
+K
+|\mathcal{V}|-K
+terms. The terms
+p
+~
+T
+\tilde{p}^{T}
+or
+p
+~
+S
+\tilde{p}^{S}
+in
+𝒟
+K
+​
+L
+2
+\mathcal{D}_{KL_{2}}
+are the normalized teacher (or student) probabilities for the rest, i.e.,
+p
+~
+T
+=
+p
+T
+/
+(
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+)
+\tilde{p}^{T}=p^{T}/(1-\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k})
+, since the sum of the non-top-
+K
+K
+probabilities is
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+1-\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}
+. Note that even if the non-top-
+K
+K
+probabilities (
+p
+T
+∉
+{
+p
+∗
+k
+T
+}
+k
+=
+1
+K
+p^{T}\notin\{{\accentset{\ast}{p}^{T}_{k}\}_{k=1}^{K}}
+) are close to zero, their normalized values (
+p
+~
+T
+\tilde{p}^{T}
+) are not. Therefore,
+𝒟
+K
+​
+L
+2
+\mathcal{D}_{KL_{2}}
+is non-trivially different from zero.
+Observe that if the probability distribution is skewed towards the modes, i.e., top-
+K
+K
+token probabilities and has a thin tail,
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}
+is very high, and the contribution of
+𝒟
+K
+​
+L
+2
+\mathcal{D}_{KL_{2}}
+to the KL divergence is very low.
+To mitigate this, we can multiply the second term by a hyperparameter
+β
+\beta
+, yielding the two-term loss
+𝒟
+K
+​
+L
+1
++
+β
+​
+α
+k
+T
+​
+𝒟
+K
+​
+L
+2
+\mathcal{D}_{KL_{1}}+\beta\alpha^{T}_{k}\mathcal{D}_{KL_{2}}
+. In this form, we recover the exact KL Divergence for
+β
+=
+1
+\beta=1
+, and the loss requires
+β
+>
+1
+\beta>1
+. Setting the value of
+β
+\beta
+becomes quite difficult, and the loss does not converge. We overcome this issue by sequence-level normalization. For the stochastic form of training, we use a mini-batch of sequences, and every token in a sequence has a different value of
+{
+p
+1
+T
+,
+p
+2
+T
+​
+…
+,
+p
+v
+T
+}
+\{p^{T}_{1},p^{T}_{2}\dots,p^{T}_{v}\}
+. If a sequence has
+N
+N
+tokens, we can normalize
+β
+\beta
+by the mean of
+α
+K
+T
+\alpha_{K}^{T}
+across all the tokens. Indexing the tokens with
+t
+∈
+[
+N
+]
+t\in[N]
+, the final loss for a token
+t
+t
+in the sequence takes the form,
+ℒ
+D
+​
+I
+​
+V
+​
+(
+t
+,
+𝒫
+T
+,
+𝒫
+S
+)
+\displaystyle\mathcal{L}_{DIV}(t;\mathcal{P}^{T},\mathcal{P}^{S})
+=
+D
+K
+​
+L
+1
+​
+(
+t
+)
+\displaystyle={D}_{KL_{1}}(t)
++
+β
+1
+N
+​
+∑
+t
+=
+1
+N
+α
+k
+T
+​
+(
+t
+)
+​
+α
+k
+T
+​
+(
+t
+)
+​
+D
+K
+​
+L
+2
+​
+(
+t
+)
+\displaystyle+\frac{\beta}{\frac{1}{N}\sum_{t=1}^{N}\alpha^{T}_{k}(t)}\alpha^{T}_{k}(t){D}_{KL_{2}}(t)
+(3)
+This normalization makes the loss stable for nominal values of
+β
+\beta
+, such as
+1
+1
+or
+2
+2
+. This also preserves the overall shape of the teacher probability distribution, but only amplifies the tail’s contribution to the KL divergence. Finally, we add the causal language modeling (CLM) loss of the student
+ℒ
+C
+​
+L
+​
+M
+​
+(
+𝒫
+S
+)
+\mathcal{L}_{CLM}(\mathcal{P}^{S})
+for every token
+t
+∈
+[
+N
+]
+t\in[N]
+to the divergence to constitute the final loss as,
+ℒ
+T
+​
+A
+​
+D
+=
+∑
+t
+=
+1
+N
+ℒ
+C
+​
+L
+​
+M
+​
+(
+t
+,
+𝒫
+S
+)
++
+ℒ
+D
+​
+I
+​
+V
+​
+(
+t
+,
+𝒫
+T
+,
+𝒫
+S
+)
+\mathcal{L}_{TAD}=\sum_{t=1}^{N}\mathcal{L}_{CLM}(t;\mathcal{P}^{S})+\mathcal{L}_{DIV}(t;\mathcal{P}^{T},\mathcal{P}^{S})
+(4)
+We refer to the original form of KD
+(
+Hinton et al., 2014
+)
+as Vanilla KD, which replaces
+ℒ
+D
+​
+I
+​
+V
+\mathcal{L}_{DIV}
+in
+Equation
+4
+with the KL divergence. When we train by optimizing
+ℒ
+DIV
+\mathcal{L}_{\text{DIV}}
+(see
+Section
+3.2
+), the student attains a lower held-out KL than when trained by optimizing KL itself (
+Figure
+1
+), even though KL is the evaluation metric. We also show the variation in tail probability mass (
+α
+K
+T
+\alpha^{T}_{K}
+) with
+K
+K
+across different teachers in
+Figure
+2
+.
+Our method is motivated by decoupled knowledge distillation (DKD;
+Zhao et al. (2022)
+), which was proposed for supervised classification with labeled datasets and improves accuracy on ImageNet and CIFAR-100. In contrast, language model pretraining distillation operates on unlabeled corpora, so the original DKD formulation is not well-suited to this setting. While one might treat the next token as a target label, this creates a fundamental mismatch: in classification, the target class is, by definition, correct. However, since most LMs’ pretraining corpora are undisclosed and we distill using a generic corpus, the teacher’s most probable token (i.e.,
+arg
+⁡
+max
+v
+∈
+𝒱
+⁡
+p
+v
+T
+\arg\max_{v\in\mathcal{V}}p_{v}^{T}
+) may differ from the ground-truth next token. When we study this discrepancy on the validation set of our dataset (see
+Section
+3.2
+), we observe a mismatch rate ranging from
+39
+%
+39\%
+to
+46
+%
+46\%
+, depending on the teacher, with larger teachers having lower mismatch rates (
+Figure
+2
+). This mismatch creates conflicting signals between the dataset labels and teacher predictions. We therefore introduce TAD: a rank-based Top-
+K
+K
+vs. tail decoupling using a probability-mass-normalized tail KL divergence that preserves the teacher’s distributional information. TAD is not a variant of DKD: DKD’s decoupling is label-anchored (target vs. non-target), while TAD’s is rank-anchored (Top-
+K
+K
+vs. tail) and label-free. Two examples with identical values of
+p
+S
+p^{S}
+and
+p
+T
+p^{T}
+yield the same TAD losses, but their DKD losses can be different if their labels differ.
+(a)
+Tail Probability Mass
+(b)
+Mismatch Rate
+Figure 2
+:
+Tail probability mass (
+α
+K
+T
+\alpha^{T}_{K}
+) against
+K
+K
+for different teachers in the first, and the Next Token vs. Mode mismatch rate in percentage in the second plot, measured on the validation set of Regmix (see
+Section
+3.2
+)
+2.1
+Gradient Analysis
+For a token
+t
+t
+in a sequence
+X
+X
+of length
+N
+N
+, the KL Divergence loss is
+ℒ
+K
+​
+L
+​
+D
+=
+∑
+i
+=
+1
+|
+𝒱
+|
+p
+i
+T
+​
+log
+⁡
+(
+p
+i
+T
+/
+p
+i
+S
+)
+\mathcal{L}_{KLD}=\sum_{i=1}^{|\mathcal{V}|}p_{i}^{T}\log(p_{i}^{T}/p_{i}^{S})
+, where the probabilities
+p
+i
+p_{i}
+are typically produced by the softmax of the logit
+z
+i
+z_{i}
+of the final layer, the gradient has the following form. For the sake of simplicity, we omit the index
+t
+t
+from the equations.
+∂
+ℒ
+K
+​
+L
+​
+D
+∂
+z
+i
+=
+p
+i
+S
+−
+p
+i
+T
+\frac{\partial\mathcal{L}_{KLD}}{\partial z_{i}}=p_{i}^{S}-p_{i}^{T}
+(5)
+Since the top-
+K
+K
+probabilities of the teacher, denoted
+p
+∗
+k
+T
+\accentset{\ast}{p}^{T}_{k}
+, are much larger than the tail probabilities (i.e.,
+p
+∗
+k
+T
+≫
+p
+i
+T
+\accentset{\ast}{p}^{T}_{k}\gg p^{T}_{i}
+for
+k
+∈
+[
+K
+]
+k\in[K]
+,
+i
+∈
+[
+𝒱
+∖
+K
+]
+i\in[\mathcal{V}\setminus K]
+), the gradients w.r.t. the logits of the top-
+K
+K
+tokens are much greater than the those of the tail tokens’ logits. This forces the student model to focus primarily on the top-
+K
+K
+tokens, pushing the sum of the student’s top-
+K
+K
+probabilities close to 1, i.e.,
+∑
+k
+=
+1
+K
+p
+∗
+k
+S
+≈
+1
+\sum_{k=1}^{K}\accentset{\ast}{p}^{S}_{k}\approx 1
+.
+For Tail-aware KD, the gradient of the loss w.r.t. the logits of the top-
+K
+K
+probabilities remains the same as
+Equation
+5
+. However, for the tail logits (
+z
+i
+:
+i
+∈
+[
+𝒱
+∖
+K
+]
+z_{i}:i\in[\mathcal{V}\setminus K]
+), it has the form
+∂
+ℒ
+D
+​
+I
+​
+V
+∂
+z
+i
+\displaystyle\frac{\partial\mathcal{L}_{DIV}}{\partial z_{i}}
+=
+p
+i
+S
+−
+p
+i
+T
+\displaystyle=p_{i}^{S}-p_{i}^{T}
++
+(
+β
+⁡
+(
+X
+)
+−
+1
+)
+​
+(
+p
+i
+S
+⋅
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+S
+−
+p
+i
+T
+)
+\displaystyle+\big(\beta(X)-1\big)\left(p^{S}_{i}\cdot\frac{1-\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}}{1-\sum_{k=1}^{K}\accentset{\ast}{p}^{S}_{k}}-p^{T}_{i}\right)
+(6)
+where
+β
+⁡
+(
+X
+)
+=
+β
+/
+(
+1
+N
+​
+∑
+t
+=
+1
+N
+α
+k
+T
+​
+(
+t
+)
+)
+\beta(X)=\beta/(\frac{1}{N}\sum_{t=1}^{N}\alpha^{T}_{k}(t))
+is defined in
+Equation
+3
+and is specific to the sequence
+X
+X
+, and
+p
+∗
+k
+S
+\accentset{\ast}{p}^{S}_{k}
+are the student probabilities corresponding to the tokens of top-
+K
+K
+teacher probabilities. We typically set
+β
+≥
+1
+\beta\geq 1
+, and
+β
+⁡
+(
+X
+)
+\beta(X)
+has probability terms in the denominator, making
+β
+⁡
+(
+X
+)
+>
+1
+\beta(X)>1
+. When
+∑
+k
+=
+1
+K
+p
+∗
+k
+S
+≈
+1
+\sum_{k=1}^{K}\accentset{\ast}{p}^{S}_{k}\approx 1
+, the second term of
+∇
+z
+i
+ℒ
+D
+​
+I
+​
+V
+\nabla_{z_{i}}\mathcal{L}_{DIV}
+(
+Equation
+6
+) increases the relative weight of tail gradients, causing the tail probability of the student to rise, ensuring that
+∑
+k
+=
+1
+K
+p
+∗
+k
+S
+<
+1
+\sum_{k=1}^{K}\accentset{\ast}{p}^{S}_{k}<1
+.
+This mechanism ensures that the tail probability of the student will rise with each gradient step as long as the top-
+K
+K
+probability of the student is more than the teacher’s, i.e.,
+∑
+k
+=
+1
+K
+p
+∗
+k
+S
+≥
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+\sum_{k=1}^{K}\accentset{\ast}{p}^{S}_{k}\geq\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}
+. In this case, the gradient satisfies:
+∇
+z
+i
+ℒ
+D
+​
+I
+​
+V
+≥
+β
+⁡
+(
+X
+)
+​
+(
+p
+i
+S
+−
+p
+i
+T
+)
+\nabla_{z_{i}}{\mathcal{L}_{DIV}}\geq\beta(X)(p_{i}^{S}-p_{i}^{T})
+, which is stronger than the standard KL gradient. Once the top-
+K
+K
+probability mass of the student matches the teacher’s, i.e.,
+∑
+k
+=
+1
+K
+p
+∗
+k
+S
+≈
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+\sum_{k=1}^{K}\accentset{\ast}{p}^{S}_{k}\approx\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}
+, the gradient compensation stops. At this point, the
+∇
+z
+i
+ℒ
+D
+​
+I
+​
+V
+≈
+β
+⁡
+(
+X
+)
+​
+(
+p
+i
+S
+−
+p
+i
+T
+)
+\nabla_{z_{i}}{\mathcal{L}_{DIV}}\approx\beta(X)(p_{i}^{S}-p_{i}^{T})
+. The fixed point of the gradient lies at
+p
+i
+S
+=
+p
+i
+T
+p_{i}^{S}=p_{i}^{T}
+, same as Vanilla KD, and therefore converges to the same solution. By this stage, the student has already acquired a sufficient mass in the tail probabilities and has begun to generalize beyond the top-
+K
+K
+tokens. On the other hand, if
+∑
+k
+=
+1
+K
+p
+∗
+k
+S
+<
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+\sum_{k=1}^{K}\accentset{\ast}{p}^{S}_{k}<\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}
+, the strong gradient of top-
+K
+K
+tokens will drive up the top-
+K
+K
+probability mass of the student. This way, Tail-aware KD enables a better learning of the teacher probabilities across the entire vocabulary. The full derivation is included in the
+Appendix
+A
+.
+Teacher/Student
+HS
+WG
+OBQA
+ARC-E
+ARC-C
+PIQA
+SIQA
+Story
+Avg
+Rel
+¯
+\overline{\text{Rel}}
+Qn1.5 1.8B
+↓
+\downarrow
+1.2B
+CLM (no KD)
+39.4
+51.8
+28.4
+46.0
+25.7
+67.0
+39.5
+62.2
+45.0
+−
+-
+0.7
+Vanilla KD
+40.7
+53.2
+29.8
+46.1
+25.5
+67.3
+39.2
+63.5
+45.6
+Seq-KD
+38.5
+51.9
+29.2
+46.5
+25.1
+66.3
+39.0
+61.0
+44.7
+−
+-
+0.9
+MiniLLM
+36.1
+51.2
+28.5
+44.1
+25.3
+65.8
+37.9
+61.4
+43.8
+−
+-
+1.9
+MiniPLM
+42.8
+53.3
+31.0
+46.8
+26.9
+68.3
+39.8
+64.0
+46.6
++
++
+1.0
+TAD (
+K
+=
+1
+K=1
+)
+42.3
+53.8
+30.5
+52.0
+27.0
+67.3
+41.2
+63.9
+47.2
++
++
+1.2
+TAD (
+K
+=
+5
+K=5
+)
+42.9
+53.9
+31.7
+52.3
+27.0
+68.1
+41.1
+63.5
+47.6
++
++
+2.1
+TAD (
+K
+=
+10
+K=10
+)
+43.0
+55.2
+31.5
+53.1
+27.1
+68.2
+40.9
+63.6
+47.8
++
++
+2.2
+TAD (
+K
+=
+20
+K=20
+)
+42.8
+54.7
+30.9
+52.7
+27.6
+68.1
+41.0
+63.5
+47.7
++
++
+2.0
+Qn1.5 1.8B
+↓
+\downarrow
+0.5B
+CLM (no KD)
+35.8
+51.0
+30.2
+41.7
+24.4
+65.4
+38.2
+61.4
+43.6
+−
+-
+0.5
+Vanilla KD
+37.0
+51.7
+29.4
+45.1
+24.2
+65.8
+38.0
+61.6
+44.1
+Seq-KD
+34.9
+50.7
+28.6
+42.7
+23.6
+65.0
+38.4
+58.9
+42.8
+−
+-
+1.3
+MiniLLM
+33.0
+51.2
+27.5
+42.1
+24.2
+62.3
+37.3
+60.2
+42.3
+−
+-
+1.9
+MiniPLM
+39.0
+52.2
+30.2
+45.8
+24.9
+67.0
+39
+62.2
+45.0
++
++
+1.0
+TAD (
+K
+=
+1
+K=1
+)
+38.0
+51.7
+30.5
+45.9
+25.7
+66.7
+39.4
+61.7
+45.0
++
++
+1.1
+TAD (
+K
+=
+5
+K=5
+)
+38.2
+52.0
+31.0
+45.8
+25.8
+66.9
+39.7
+61.7
+45.1
++
++
+1.3
+TAD (
+K
+=
+10
+K=10
+)
+38.4
+52.1
+31.1
+46.0
+25.9
+67.3
+39.8
+62.2
+45.4
++
++
+1.5
+TAD (
+K
+=
+20
+K=20
+)
+38.2
+50.3
+31.0
+45.2
+25.3
+66.1
+39.6
+62.1
+44.7
++
++
+0.9
+Table 1
+:
+Results for Tail-aware distillation for
+β
+=
+2
+\beta=2
+over Qwen1.5-1.8B (
+“Qn”
+), for a 1.2B and 0.5B student model. The best performance for each column, and any value within
+0.4
+0.4
+of it, is highlighted. CLM stands for pre-training the model with only the CLM loss, without distillation. The average relative change for the best-case TAD (
+K
+=
+10
+K=10
+) is 50% to 120% better than MiniPLM.
+3
+Experimental Details
+We distill models of varying sizes, ranging from Qwen1.5 (1.8B) to Gemma-2 (9 B). We do not have access to (or require) the pretraining corpus of any of these models. MiniPLM was trained on the Pile dataset
+(
+Gao et al., 2020
+)
+, an extensive 825 GB collection that is no longer available due to copyrighted content. We instead use a small 20GB subsample
+2
+2
+2
+https://huggingface.co/datasets/sail/regmix-data-sample
+of the Regmix dataset
+(
+Liu et al., 2024b
+)
+, containing a total of 5B tokens, that can be processed using our limited compute setting. Regmix replicates the Pile, but without copyrighted components.
+β
+\beta
+0.5
+1
+2
+5
+10
+1.2B
+Avg
+47.0
+47.6
+47.8
+47.7
+47.6
+Rel
+¯
+\overline{\text{Rel}}
++
++
+1.4
++
++
+2.0
++
++
+2.2
++
++
+2.1
++
++
+2.0
+0.5B
+Avg
+45.0
+45.1
+45.4
+45.1
+44.9
+Rel
+¯
+\overline{\text{Rel}}
++
++
+1.0
++
++
+1.2
++
++
+1.5
++
++
+1.2
++
++
+1.0
+Table 2
+:
+Parameter sensitivity of
+β
+\beta
+for the distillation of Qwen 1.8B for
+K
+=
+10
+K=10
+We only perform pretraining distillation in our experiments, and
+no fine-tuning
+is done on any labeled dataset for the student models. Unless mentioned otherwise, we use a temperature of 1 and a context size of 2048 for all our distillation experiments. The training details, including the exact architecture of the students, hardware, and hyperparameters, are detailed in
+Appendix
+B
+.
+3.1
+Evaluation
+We evaluate the models on eight datasets for few-shot performance, as in
+Gu et al. (2025)
+, using the standard LM evaluation harness
+(
+Gao et al., 2024
+)
+from Huggingface
+(
+Wolf et al., 2019
+)
+, and then report the average score across all datasets.
+3.2
+Pretraining Distillation from Scratch
+We follow
+Sanh et al. (2019)
+in using the teacher’s weights to initialize the student models, by initializing the student’s attention layers with the teacher’s attention weights, truncated to the student’s hidden dimension for each head. The MLP layers are randomly initialized.
+3.2.1
+Benchmarking with Qwen
+We begin our experiments by distilling the Qwen1.5-1.8B model to benchmark our method against the recently-published MiniPLM
+(
+Gu et al., 2025
+)
+. It is a data-centric distillation method that utilizes the teacher to identify suitable samples for training the student, but it cannot perform supervised distillation.
+Table
+1
+also reports the results of Sequence-KD
+(
+Kim and Rush, 2016
+)
+and MiniLLM
+(
+Gu et al., 2024
+)
+for comparison, quoted from the MiniPLM article. Sequence-KD fine-tunes the student on teacher-generated sequences. MiniLLM records the student’s generated output in response to a prompt and uses a reward maximization algorithm similar to PPO
+(
+Schulman et al., 2017
+)
+. DistilLM
+(
+Ko et al., 2024
+)
+is a similar algorithm to MiniLM, producing results similar to MiniLM while reducing execution time; therefore, it is not mentioned separately. These experiments are expensive (costs reported in
+Table
+3
+), and reproducing them on billions of tokens was infeasible with our resources.
+# P(M)
+Vanilla
+MiniPLM
+TAD
+MiniLLM
+Seq-KD
+1.2B
+9.2
+12.4
+9.3
+39.0
+65.0
+0.5B
+6.4
+9.7
+6.5
+21.8
+43.2
+Table 3
+:
+PetaFLOPs for the distillation of Qwen-1.5-1.8B (
+Section
+3.2.1
+) on a subset of 1M tokens from the Regmix dataset. TAD has a similar PFLOP to Vanilla KD, while MiniPLM is higher than both. The methods involving sequence generation (SeqKD or MiniLLM) are too expensive to scale to billions of tokens.
+Teacher/Student
+HS
+WG
+OBQA
+ARC-E
+ARC-C
+PIQA
+SIQA
+Story
+Avg
+Rel
+¯
+\overline{\text{Rel}}
+F-ECE
+↓
+\downarrow
+Phi2 2.8B
+↓
+\downarrow
+1.1B
+CLM (no KD)
+38.2
+51.1
+27.4
+51.2
+24.1
+66.3
+40.8
+63.1
+45.3
+−
+-
+4.3
+1.57
+CLM (Mat.)
+40.2
+51.9
+28.6
+52.3
+24.8
+67.6
+41.7
+64.7
+46.5
+−
+-
+2.4
+1.50
+Vanilla KD
+43.6
+53.5
+33.0
+57.3
+30.0
+68.0
+43.2
+64.3
+49.1
+1.45
+MiniPLM
+43.7
+52.5
+30.6
+57.1
+29.9
+68.1
+43.8
+64.3
+48.8
+−
+0.4
+-0.4
+1.62
+RKL
+42.3
+54.1
+31.6
+58.0
+28.7
+68.2
+43.8
+64.9
+49.0
+−
+0.4
+-0.4
+1.77
+TAD (
+K
+=
+1
+K=1
+)
+45.2
+55.3
+34.0
+58.0
+30.7
+68.3
+44.4
+64.9
+50.1
++
++
+0.9
+1.19
+TAD (
+K
+=
+5
+K=5
+)
+45.5
+55.6
+34.6
+58.1
+31.0
+68.8
+44.5
+64.7
+50.3
++
++
+1.2
+1.29
+TAD (
+K
+=
+10
+K=10
+)
+45.6
+56.0
+34.0
+58.3
+31.1
+68.8
+43.8
+64.7
+50.3
++
++
+1.1
+1.37
+TAD (
+K
+=
+20
+K=20
+)
+45.3
+56.4
+33.5
+57.6
+31.0
+69.0
+43.8
+64.7
+50.2
++
++
+1.0
+1.42
+Qn2.5 3B
+↓
+\downarrow
+1.2B
+CLM (no KD)
+36.2
+53.0
+26.4
+46.6
+25.9
+61.6
+35.7
+58.9
+43.0
+−
+-
+1.9
+1.49
+CLM (Mat.)
+38.1
+53.9
+27.6
+47.6
+26.6
+62.8
+36.5
+60.4
+44.2
+−
+-
+0.7
+1.41
+Vanilla KD
+38.0
+53.4
+26.8
+50.6
+27.4
+64.0
+38.8
+60.4
+44.9
+1.42
+MiniPLM
+37.3
+53.4
+29.2
+49.4
+25.3
+64.7
+38.6
+61.4
+44.9
++
+0.0
++0.0
+1.45
+RKL
+38.9
+53.7
+28.2
+50.7
+27.6
+63.8
+39.0
+61.4
+45.4
++
+0.6
++0.6
+1.99
+TAD (
+K
+=
+1
+K=1
+)
+39.9
+54.3
+27.5
+52.1
+27.8
+64.9
+39.7
+60.9
+45.9
++
++
+1.0
+1.29
+TAD (
+K
+=
+5
+K=5
+)
+39.9
+53.5
+27.9
+53.4
+27.9
+64.9
+39.2
+61.0
+46.0
++
++
+1.1
+1.30
+TAD (
+K
+=
+10
+K=10
+)
+40.6
+54.5
+29.6
+52.0
+28.4
+64.8
+39.3
+61.5
+46.3
++
++
+1.6
+1.32
+TAD (
+K
+=
+20
+K=20
+)
+40.5
+54.5
+29.2
+51.8
+29.1
+64.3
+39.6
+61.2
+46.2
++
++
+1.6
+1.37
+Gem2 9B
+↓
+\downarrow
+2B
+CLM (no KD)
+37.4
+49.2
+27.2
+49.0
+25.1
+65.4
+38.9
+60.7
+44.1
+−
+-
+1.7
+1.43
+CLM (Mat.)
+39.4
+50.0
+28.4
+50.1
+25.8
+66.7
+39.8
+62.2
+45.3
+−
+-
+0.4
+1.41
+Vanilla KD
+40.3
+51.3
+27.8
+53.0
+26.1
+66.9
+39.2
+61.9
+45.8
+1.27
+MiniPLM
+37.5
+51.9
+27.2
+49.5
+26.0
+66.6
+39.0
+61.9
+46.0
+−
+0.8
+-0.8
+1.56
+RKL
+39.4
+52.0
+28.1
+53.4
+26.3
+66.8
+40.1
+62.5
+46.1
++
+0.2
++0.2
+1.80
+TAD (
+K
+=
+1
+K=1
+)
+41.0
+52.1
+28.4
+54.0
+26.4
+67.6
+39.3
+61.9
+46.3
++
++
+0.5
+1.04
+TAD (
+K
+=
+5
+K=5
+)
+41.3
+52.7
+28.5
+54.2
+26.5
+67.3
+39.7
+62.2
+46.5
++
++
+0.6
+1.11
+TAD (
+K
+=
+10
+K=10
+)
+41.2
+53.7
+30.0
+54.5
+26.8
+67.1
+40.1
+62.8
+47.0
++
++
+1.3
+1.17
+TAD (
+K
+=
+20
+K=20
+)
+40.9
+52.8
+30.0
+54.5
+26.3
+66.9
+39.7
+62.4
+46.7
++
++
+1.0
+1.20
+Table 4
+:
+Pretraining distillation of various teachers to students with
+∼
+\sim
+1B active parameters on 2 billion tokens from Regmix. CLM (no KD) refers to pretraining with only CLM loss, without distillation with the same number of tokens (2B), where CLM (Mat.) refers to computation-matched pretraining, matched to the same FLOPs as training of TAD. The last column
+“F-ECE”
+shows the calibration error of the models, measured using Full-ECE, with the lower being better.
+Consistent with MiniPLM, we distill the model to two students with 1.2B and 0.5B parameters, corresponding to approximately 1B and 475M active (non-embedding) parameters, respectively. We use only 2B tokens to distill the
+1.2
+1.2
+B model and 2.8B tokens for the
+0.5
+0.5
+B model — as much as we could train on an H100 GPU within a week. Note that MiniPLM trains the student on anywhere from
+25
+25
+to
+50
+50
+B tokens and draws inference on the teacher over
+100
+100
+B tokens, a much larger computational budget than in our case. We perform the distillation for
+K
+∈
+{
+1
+,
+5
+,
+10
+,
+20
+}
+K\in\{1,5,10,20\}
+, following the experimental settings used in prior work on top-
+K
+K
+based methods
+(
+Lapin et al., 2016
+;
+Kool et al., 2019
+)
+. Results improve until K
+=
+10
+=10
+, beyond which there is not much benefit. For the optimal setting of
+K
+=
+10
+K=10
+, we conduct a sensitivity analysis over
+β
+∈
+{
+0.5
+,
+1
+,
+2
+,
+5
+,
+10
+}
+\beta\in\{0.5,1,2,5,10\}
+, with results presented in
+Table
+2
+. Performance peaks around
+β
+=
+2
+\beta=2
+, with a smooth degradation on either side up to
+β
+=
+1
+\beta=1
+, indicating robustness to this hyperparameter. However, for
+β
+<
+1
+\beta<1
+, the performance might degrade fast as
+β
+⁡
+(
+X
+)
+>
+1
+\beta(X)>1
+is no longer guaranteed (
+Equation
+6
+).
+Model
+#Tkn
+HS
+WG
+OBQA
+ARC-E
+ARC-C
+PIQA
+SIQA
+Story
+Avg
+TinyLlama(TL)
+−
+-
+1.1B
+1T
+53.6
+56.8
+32.2
+61.2
+30.1
+70.8
+41.2
+68.1
+51.8
+CLM (no KD)
++2B
+53.8
+57.1
+32.6
+61.8
+30.4
+71.1
+41.4
+68.5
+52.1
+Phi3 4B
+↓
+\downarrow
+TL
+Vanilla KD
++2B
+54.1
+58.9
+33.5
+63.2
+31.6
+71.2
+44.2
+68.7
+53.2
+TAD (
+K
+=
+1
+K=1
+)
++2B
+55.1
+60.0
+34.8
+64.2
+33.1
+71.3
+44.8
+69.1
+54.0
+TAD (
+K
+=
+5
+K=5
+)
+55.5
+60.2
+35.2
+63.6
+32.6
+71.4
+44.9
+69.4
+54.1
+TAD (
+K
+=
+10
+K=10
+)
+54.6
+60.0
+34.6
+63.2
+32.4
+71.8
+44.6
+68.9
+53.8
+TAD (
+K
+=
+20
+K=20
+)
+54.8
+59.9
+33.8
+62.5
+32.0
+72.1
+44.2
+68.7
+53.5
+TinyLlama(TL)
+−
+-
+1.1B
+2T
+55.2
+58.9
+33.4
+61.3
+30.7
+71.4
+42.1
+68.9
+52.7
+Table 5
+:
+Continued pretraining for the distillation of Phi-3 models to TinyLlama-1B. We use the TinyLlama-1B checkpoint, pretrained on 1T tokens, as the student and distill it on an additional 2B tokens from the Regmix corpus. The distilled students outperform the 2T checkpoint of TinyLlama, by training on
+500
+×
+500\times
+less tokens.
+For the
+1.2
+1.2
+B student model, Tail-aware KD consistently outperforms MiniPLM’s average score by a substantial margin across all values of
+K
+K
+. For the smaller
+0.5
+0.5
+B student, the performance gap narrows, though Tail-aware KD still maintains an edge. A breakdown by task shows that TAD outperforms MiniPLM across more challenging benchmarks, such as ARC-Challenge and OpenBookQA. In contrast, MiniPLM exhibits slight gains on easier tasks, such as ARC-Easy and Story. Since the easier tasks inherently yield higher accuracy, the averages tend to be skewed towards them. To provide a more granular evaluation, we compute the symmetric relative change in accuracy with respect to Vanilla KD, following
+Törnqvist et al. (1985)
+. The relative change is defined as
+Rel
+=
+100
+⋅
+log
+⁡
+(
+Acc
+/
+Acc
+Vanilla
+)
+\text{Rel}=100\cdot\log(\text{Acc}/\text{Acc}_{\text{Vanilla}})
+, where
+Acc
+is the accuracy of the method under comparison (e.g., MiniPLM or TAD). We report the average relative change across all tasks as
+Rel
+¯
+\overline{\text{Rel}}
+in
+Table
+1
+. The difference between MiniPLM and TAD becomes more prominent in the relative measure.
+MiniPLM approximates reverse-KL–style distillation via data selection: the teacher scores the corpus, selects suitable samples, and the student is then trained on those samples. However, to sample an
+δ
+\delta
+fraction of the corpus, it takes
+1
+/
+δ
+1/\delta
+times as many forward passes through the teacher as backpropagations through the student, which is a significant overhead. When we compute the FLOPs for all the methods to train on 1M tokens, MiniPLM has
+𝟑𝟑
+%
+\mathbf{33\%}
+to
+𝟓𝟎
+%
+\mathbf{50\%}
+higher FLOP count due to the overhead (Table 3), while TAD has a similar FLOP count to Vanilla KD. The authors of MiniPLM treat the teacher-scoring overhead as offline pre-processing, as they use the same teacher for all their students. However, a practitioner might want to try different teachers to optimize a small LM rather than relying on a single teacher, or even use a multi-teacher approach for optimal performance, as in
+Wu et al. (2021)
+. Unlike any divergence-based method, MiniPLM cannot be applied to such practical scenarios without significant modification. Finally, MiniPLM is not necessarily competitive with our approach, and its selected samples could, in principle, be used with our tail-aware divergence as the distillation loss. However, we exclude such combinations from the scope of this work.
+Model
+Data (#Tkns)
+GSM8K
+MATH
+SVAMP
+ASDiv
+MAWPS
+TAB
+MQA
+SAT
+Avg
+TinyLlama(TL)
+−
+-
+1.1B
+Web (2.5T)
+2.0
+2.6
+9.5
+16.3
+20.1
+12.7
+12.8
+15.6
+11.4
+CLM (no KD)
++ OWM(2.5B)
+3.9
+3.8
+17.9
+29.7
+39.5
+12.2
+10.8
+15.6
+16.7
+Phi3 4B
+↓
+\downarrow
+TL
+Vanilla KD
++ OWM(2.5B)
+6.1
+4.2
+21.1
+33.5
+41.5
+15.5
+11.2
+16.7
+18.7
+MiniPLM
+3.3
+3.4
+13.4
+27.3
+34.0
+10.8
+10.5
+12.5
+14.4
+TAD (
+K
+=
+1
+K=1
+)
++ OWM(2.5B)
+6.1
+6.2
+22.1
+33.1
+41.5
+14.0
+11.3
+21.9
+19.5
+TAD (
+K
+=
+5
+K=5
+)
+7.1
+4.8
+19.2
+35.9
+46.7
+15.9
+10.0
+22.6
+20.3
+TAD (
+K
+=
+10
+K=10
+)
+6.4
+4.6
+19.7
+33.0
+42.7
+12.9
+9.3
+37.5
+20.7
+TAD (
+K
+=
+20
+K=20
+)
+6.5
+3.8
+18.2
+31.7
+40.9
+13.7
+9.0
+31.2
+19.4
+Gemma3
+−
+-
+1B
+−
+-
+PT
+Web (2T)
+2.1
+2.2
+12.8
+17.1
+22.4
+11.1
+14.5
+15.6
+12.2
+Llama3.2
+−
+-
+1.2B
+−
+-
+PT
+Web (9T)
+6.5
+4.2
+21.7
+35.7
+44.2
+21.1
+13.2
+6.2
+19.1
+Table 6
+:
+Adaptation to mathematical reasoning via
+pretraining distillation of Phi-3 into TinyLlama-1B (
+“TL”
+) on the OpenWebMath (OWM) corpus. The distilled students with TAD outperform pretrained 1B Gemma3 and Llama3.2 models in terms of average score.
+3.2.2
+Distilling Larger Models
+We further distill a series of larger models in
+Table
+4
+, namely Phi-2
+(
+Javaheripi et al., 2023
+)
+, Qwen2.5-3B
+(
+Yang et al., 2024
+)
+, and Gemma2-9B
+(
+Team et al., 2024
+)
+, with parameter size ranging from
+2.8
+2.8
+B to
+9
+9
+B. We choose teacher checkpoints only with pretraining to ablate the effect of instruction tuning on distillation. The student’s architectures are selected to have the same dimensions as the teacher’s, but with fewer layers and smaller intermediate sizes. For medium-sized models like Phi-2 or Qwen2.5-3B, the student has half the teacher layers, whereas for Gemma2-9B, the student has a third of the teacher’s layers. The student embeddings are initialized from the teacher embeddings and remain frozen thereafter, resulting in approximately 1B active parameters per student. For example, Gemma2-9B has around 900M embedding parameters due to its large vocabulary size (
+256
+256
+K), so the
+2
+2
+B student has only
+1.1
+1.1
+B active parameters. We also add cosine loss between the student and the teacher hidden states to
+Equation
+4
+, similar to DistilBERT
+(
+Sanh et al., 2019
+)
+. Finally, we add MiniPLM experiments on the same training dataset in
+Table
+4
+. Due to computational constraints, we do not train a reference model from scratch; instead, we use OPT-125M
+(
+Zhang et al., 2022
+)
+as a reference model for all the teachers. We used a difference-sampling ratio of
+δ
+=
+0.5
+\delta=0.5
+, the same as in the MiniPLM experiments.
+When we measure the distillation cost in PetaFLOPs on a small training subset containing 1M tokens as in the last section, MiniPLM takes
+𝟓𝟎
+%
+\mathbf{50\%}
+more FLOPs as Vanilla KD for the distillation of Phi2 (
+18.4
+\mathbf{18.4}
+vs.
+12.4
+\mathbf{12.4}
+) or Qwen2.5-3B (
+22.2
+\mathbf{22.2}
+vs.
+15.2
+\mathbf{15.2}
+), and
+𝟔𝟕
+%
+\mathbf{67\%}
+more for Gemma2 (
+52.0
+\mathbf{52.0}
+vs.
+31.4
+\mathbf{31.4}
+). At the same time, TAD has a similar FLOP count to Vanilla KD. For the entire distillation, both the Vanilla KD and TAD exceed
+𝟏𝟎
+𝟏𝟗
+\mathbf{10^{19}}
+FLOPs per billion tokens for teachers with
+3
+3
+B or more parameters. To put this into perspective, the pretraining distillation of the older models, such as MBART-Large (610M params,
+Tang et al. (2020)
+), consumes at most
+𝟏𝟎
+𝟏𝟕
+\mathbf{10^{17}}
+FLOPs overall
+(
+Dasgupta and Cohn, 2025
+)
+. We do not present any baseline other than Vanilla KD and MiniPLM, as we already demonstrated the high computational cost of MiniLLM and Seq-KD in the previous section (
+Table
+3
+).
+The students receive no fine-tuning after distillation, and we evaluate them on the same few-shot tasks as before. MiniPLM did not outperform Vanilla KD, and on Phi-2 it was worse (
+Table
+4
+). Adding the cosine loss on hidden states improved both Vanilla KD and TAD. As formulated, MiniPLM (a data-selection method) does not incorporate such internal-state losses, which reduces its competitiveness relative to
+Section
+3.2.1
+. To ensure parity, we also report reverse KL (RKL) with the same cosine loss on the hidden states (
+Table
+4
+). RKL is slightly better than vanilla KD but remains inferior to TAD. For TAD, performance improved up to
+K
+=
+5
+K=5
+or
+10
+10
+, beyond which we observed no significant gains (
+Table
+4
+).
+3.2.3
+Calibration Error
+We evaluate model calibration using Expected Calibration Error (ECE) (
+Table
+4
+). Specifically, we adopt the Full-ECE metric from
+(
+Liu et al., 2024a
+)
+, which is tailored to language models with large vocabularies and measures calibration over the entire predictive distribution, rather than the standard ECE from
+Guo et al. (2017)
+, which focuses only on the argmax prediction and is more appropriate for classification settings. We found that TAD has a slightly lower Full-ECE than Vanilla KD (i.e. results in better-calibrated student models). Note that ECE increases with
+K
+K
+for all cases, it remains overall better than all benchmarks even at the largest setting of
+K
+=
+20
+K=20
+.
+3.2.4
+Selection of
+K
+K
+Across experiments with Qwen1.5-1.8B (
+Section
+3.2.1
+) and with the larger teacher models, we observe that performance peaks at
+K
+=
+5
+K=5
+or
+10
+10
+and then declines. In natural language, the next-token probabilities are approximately Zipfian, and the teacher’s tail mass
+α
+K
+T
+​
+(
+t
+)
+=
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+​
+(
+t
+)
+\alpha^{T}_{K}(t)=1-\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}(t)
+decay sharply beyond
+K
+≳
+5
+​
+–
+​
+10
+K\gtrsim 5\text{\textendash}10
+(see
+Figure
+2
+). Even after normalizing the tail term in
+ℒ
+D
+​
+I
+​
+V
+\mathcal{L}_{DIV}
+by the sequence mean
+α
+¯
+K
+T
+=
+1
+N
+​
+∑
+t
+=
+1
+N
+α
+K
+T
+​
+(
+t
+)
+\bar{\alpha}_{K}^{T}=\frac{1}{N}\sum_{t=1}^{N}\alpha_{K}^{T}(t)
+of the tail probability mass, many low-entropy tokens still satisfy
+α
+K
+T
+​
+(
+t
+)
+→
+0
+\alpha_{K}^{T}(t)\to 0
+as
+K
+K
+grows. Instead, the contribution of high-entropy (noisier) tokens increases with
+K
+K
+. Consequently, we observe no material gains beyond
+K
+≈
+5
+​
+–
+​
+10
+K\approx 5\text{\textendash}10
+.
+3.3
+Continued Pretraining
+Although we demonstrated that our distillation algorithm works across a range of teacher model sizes, it is not possible to create student models from scratch with only 2B tokens to achieve state-of-the-art performance. In this section, we start from an already pretrained student model, TinyLlama-1.1B
+(
+Zhang et al., 2024
+)
+, specifically its 1T checkpoint, and focus on distilling it from Phi-3
+(
+Abdin et al., 2024
+)
+, a much stronger model. In the first set of experiments, we distill the students on the same 2B tokens from the Regmix dataset. Here, we do not use any teacher model internals, nor do we freeze the student embeddings. As in the previous sections, no fine-tuning is performed on the students after distillation. The distilled students outperform the 2T checkpoint of TinyLlama (
+Table
+5
+), trained with another 1T tokens (
+500
+×
+500\times
+) from the base model.
+3.3.1
+Mathematical Reasoning
+In this section, we distill TinyLlama-1.1B using Phi3-Mini as the teacher on the OpenWebMath (OWM) corpus
+(
+Paster et al., 2023
+)
+, which primarily consists of mathematical articles. The Distillation is performed on 2.5 billion tokens from the token, and the 2.5T TinyLlama-1.1B checkpoint is used as the base model. Evaluation is performed on eight tasks using the standard setting of Mathematical evaluation harness,
+3
+3
+3
+https://github.com/ZubinGou/math-evaluation-harness
+, namely GSM8K, MATH, SVAMP, ASDiv, MAWPS, Tabmwp (TAB), MathQA (MQA), and SAT (
+Table
+6
+). We employ a few-shot chain-of-thought approach
+(
+Wei et al., 2022
+)
+for evaluation and then measure the average score across the tasks.
+Tiny-Llama performs poorly in mathematical reasoning tasks. After distillation, we observe approximately 2 times better performance on tasks such as MAWPS, MATH, and ASDiv, and
+3.5
+3.5
+times better on GSM8K. Furthermore, the distilled students with TAD outperform Llama3.2-1B, which is pretrained with a far higher number of tokens (9T), whereas Vanilla KD falls short. These experiments demonstrate that a seemingly weak student model (e.g., TinyLlama) can be made competitive in a specific domain through distillation from an expert teacher. For MiniPLM, we choose Galactica-125m
+(
+Taylor et al., 2022
+)
+as the reference model, since it is pretrained on scientific datasets including mathematics, and uses a difference sampling ratio of
+δ
+=
+0.5
+\delta=0.5
+. MiniPLM completely fails for domain-specific distillation, with an average score worse than pretraining without distillation (CLM in
+Table
+6
+).
+Model
+Data (#tokens)
+GSM8K
+MATH
+SVAMP
+ASDiv
+MAWPS
+TAB
+MQA
+SAT
+Avg.
+TinyLlama(TL)
+−
+-
+1.1B
+Web (2.5T)
+2.0
+2.6
+9.5
+16.3
+20.1
+12.7
+12.8
+15.6
+11.4
+CLM
++
++
+SFT
++OWM(2.5B)
+’
++ORCAMEL
+19.6
+4.0
+49.4
+58.8
+74.3
+21.8
+18.0
+28.1
+34.3
+Phi3 4B
+↓
+\downarrow
+TL
+Vanilla KD
++OWM(2.5B)
+’
++ORCAMEL
+30.8
+6.8
+64.6
+62.5
+80.7
+20.1
+16.7
+27.5
+38.7
+TAD (
+K
+=
+1
+K=1
+)
++OWM (2.5B)
+’
++ORCAMEL
+36.8
+6.8
+67.8
+67.9
+81.7
+25.4
+16.3
+28.1
+41.4
+TAD (
+K
+=
+5
+K=5
+)
+33.2
+7.4
+65.4
+68.7
+85.6
+27.6
+17.9
+34.4
+42.5
+TAD (
+K
+=
+10
+K=10
+)
+30.1
+9.0
+65.7
+68.4
+85.4
+24.1
+18.2
+29.8
+41.3
+TAD (
+K
+=
+20
+K=20
+)
+28.2
+7.2
+66.2
+68.2
+84.2
+24.6
+17.1
+25.0
+40.1
+Rho
+−
+1
+−
+-\textbf{1}-
+Math(1.1B)
++OWM (30B)
+†
+36.3
+13.4
+52.6
+66.5
+83.6
+29.5
+32.1
+18.5
+41.5
+Llama2
+−
+-
+7B
+Web (2T)
+14.2
+3.6
+39.1
+51.6
+63.6
+30.9
+12.5
+32.8
+31.4
+CLM + SFT
++OWM(2.5B)
+’
++ORCAMEL
+22.0
+4.2
+47.7
+56.3
+72.3
+37.7
+23.0
+28.1
+36.4
+Phi3 14B
+↓
+\downarrow
+L2
+Vanilla KD
++OWM(2.5B)
+’
++ORCAMEL
+50.5
+8.1
+75.3
+74.4
+90.5
+29.7
+37.2
+34.4
+50.0
+TAD (
+K
+=
+1
+K=1
+)
++OWM (2.5B)
+’
++ORCAMEL
+56.0
+10.2
+77.2
+77.1
+91.8
+39.8
+39.2
+40.6
+54.0
+TAD (
+K
+=
+5
+K=5
+)
+51.6
+9.2
+76.7
+75.4
+91.2
+38.7
+40.5
+37.5
+52.6
+TAD (
+K
+=
+10
+K=10
+)
+51.4
+8.4
+76.6
+75.5
+90.6
+38.7
+39.2
+44.4
+53.1
+TAD (
+K
+=
+20
+K=20
+)
+52.8
+8.0
+77.6
+76.9
+92.4
+39.2
+39.0
+46.9
+54.1
+Llemma
+−
+-
+7B
++ProofPile(0.2T)
+39.7
+15.4
+56.9
+67.7
+83.3
+47.0
+40.9
+44.0
+49.4
+WizardMath
+−
+-
+7B
++RL with Evol Instruct
+46.6
+7.0
+56.8
+65.2
+81.1
+35.0
+20.3
+23.1
+41.9
+Orca2
+−
+-
+7B
++SFT (ORCA) + KTO
+40.0
+6.2
+70.2
+67.0
+87.5
+30.4
+31.6
+28.1
+45.1
+†
+Trained with special Rho loss to eliminate the noisy tokens.
+Table 7
+:
+Supervised distillation for mathematical reasoning, showing distillation of Phi3-4B into TinyLlama-1.1B (
+“TL”
+) and Phi3-14B into Llama2-7B on ORCAMEL, alongside GPT4-generated solutions. TAD for TinyLlama is
+2.5
+×
+2.5\times
+computationally cheaper than Rho-1 and
+9
+×
+9\times
+cheaper for Llama2-7B than Llemma-7B (see
+Section
+B.1
+), which is the best model created from Llama2-7B.
+3.4
+Supervised Distillation
+For our final experiment, we perform supervised distillation for mathematical reasoning using instructions generated from GPT-4 (
+Table
+7
+). We combine a 200K dataset from Microsoft-ORCA
+(
+Mitra et al., 2024
+)
+and a 50K dataset from Camel-AI
+(
+Li et al., 2023
+)
+, both of which contain GPT-4-generated answers to mathematical questions, and refer to the combined dataset as ORCAMEL. Unlike many mathematical instruction datasets, e.g.,
+Yu et al. (2023)
+, which use the training responses from GSM8K
+(
+Cobbe et al., 2021
+)
+or MATH
+(
+Lewkowycz et al., 2022
+)
+, our training dataset contains only their input prompts, making the results more generalizable. Furthermore, we do not use any modifications of the original question as an intermediate step, such as backward questions in
+Yu et al. (2023)
+or Evol-Instructions in
+Luo et al. (2023)
+, which might yield additional gains.
+We perform our distillation on two pairs of teacher and student: (1) Phi3-4B to TinyLlama, and (2) Phi3-14B to Llama2-7B
+(
+Touvron et al., 2023
+)
+. We do not fine-tune the teachers on the dataset and assume them to be sufficiently capable in mathematical reasoning to produce supervision signals. For every pair of teacher and student, our distillation is performed in two stages,
+1.
+Pretraining distillation on 2.5B tokens from the OWM corpus (
+β
+=
+2.0
+\beta=2.0
+)
+2.
+Three epochs of distillation on the ORCAMEL dataset for the same teacher–student pair.
+We also add a baseline by fine-tuning TinyLlama on the ORCAMEL dataset, after pretraining it on the same 2.5B OWM tokens without any distillation. The performance of the distilled models is comparable to that of Rho-1
+(
+Lin et al., 2024
+)
+. Rho-1 is created by continuing TinyLlama’s pretraining on 30B tokens from the OWM corpus, using reducible holdout (Rho) loss selection
+(
+Mindermann et al., 2022
+)
+to eliminate noisy tokens, achieving SOTA results on mathematical tasks with models of around 1B parameters. The distilled Llama2-7B outperforms SOTA models for Maths inference built using Llama-2 as the base model, such as Llemma-7B
+(
+Azerbayev et al., 2023
+)
+, Orca-2
+(
+Mitra et al., 2024
+)
+, or Wizard-Math
+(
+Luo et al., 2023
+)
+, and we generated their results using the same Mathematical evaluation harness. Further, our method has a much lower compute budget than the next-best model, Llama-7 B, as explained in
+Section
+B.1
+. Although unsupervised corpora for pretraining are unlimited, supervised datasets are always limited. It is better to use them with a teacher’s supervision for optimal performance, rather than merely fine-tuning the student on them.
+4
+Related Work
+Most of the work in KD for LLMs focuses on task-specific knowledge transfer via instruction prompts, following Sequence-KD
+(
+Kim and Rush, 2016
+)
+, where the teacher generates a sequence-specific prompt, and the student is fine-tuned on that sequence. Recently, there has been a surge in reinforcement learning-based policy optimization for distillation, like MiniLLM and
+Agarwal et al. (2024)
+. However, these methods involve generating sequences from the student during training, which can be expensive for large datasets. Recently, DistilLM
+(
+Ko et al., 2024
+)
+addressed this issue by implementing an efficient generation scheduler. Overall, these on-policy methods are limited to small datasets; for example, both DistilLM and MiniLLM use the DollyEval dataset, which contains 15,000 data points. They cannot be applied to large-scale datasets larger than 200K, which is standard for distillation for summarization or translation (
+Shleifer and Rush (2020)
+,
+Agarwal et al. (2024)
+).
+When it comes to large-scale pretraining distillation to prepare the student from scratch, there is work on encoder-only models, such as DistilBERT
+(
+Sanh et al., 2019
+)
+or MiniLM
+(
+Wang et al., 2020
+)
+. Work like
+Shleifer and Rush (2020)
+extends it to encoder–decoder models for generative tasks such as summarization or machine translation. However, most pretraining distillation in causal models, such as distilling Gemma2 models from Gemini
+(
+Team et al., 2024
+)
+or work like
+Muralidharan et al. (2024)
+, still follows logit matching with minimal modification. MiniPLM is the only work we found that attempts distillation without logit matching.
+Works like MiniPLM, MiniLLM, or On-policy KD of
+Agarwal et al. (2024)
+uses the reverse KL divergence instead of the forward one. However, the mode-seeking behavior of reverse KLD will suppress the contribution of words other than the one with the maximum probability. Further, as shown in
+Table
+4
+, reverse KL results in student models with the worst calibration, implying that reverse KL-based methodology is not suitable for unsupervised distillation in our settings.
+5
+Conclusion
+Here, we present a novel distillation algorithm for language models that extends the commonly used KL divergence, and we demonstrate its competitiveness through extensive experiments. Works such as Sequence-KD and MiniLLM are not well-suited to pretraining on large-scale datasets. MiniPLM performs poorly for domain-specific distillation and cannot be directly applied to supervised tasks. In contrast, our method applies to both pretraining and supervised distillation, and is substantially cheaper for the latter because it requires neither teacher decoding (as in Seq-KD) nor student generation (as in MiniLLM or DistilLM
+(
+Ko et al., 2024
+)
+). Consequently, TAD has a computational burden comparable to Vanilla KD, enabling large-scale pretraining distillation within a limited GPU budget. Finally, we show that it can be used to train competitive models for mathematical reasoning using publicly-available datasets. Taken together with its low computational requirements, TAD provides a compelling and versatile distillation method for causal LMs.
+References
+Abdin
+et al.
+(2024)
+M. Abdin, J. Aneja, H. Awadalla, A. Awadallah, A. A. Awan, N. Bach, A. Bahree, A. Bakhtiari, J. Bao, H. Behl,
+et al.
+Phi-3 technical report: a highly capable language model locally on your phone
+.
+arXiv preprint arXiv:2404.14219
+.
+Cited by:
+§3.3
+.
+Agarwal
+et al.
+(2024)
+R. Agarwal, N. Vieillard, Y. Zhou, P. Stanczyk, S. R. Garea, M. Geist, and O. Bachem
+On-policy distillation of language models: learning from self-generated mistakes
+.
+In
+The Twelfth International Conference on Learning Representations
+,
+Cited by:
+§1
+,
+§4
+,
+§4
+.
+Anshumann
+et al.
+(2025)
+A. Anshumann, M. A. Zaidi, A. Kedia, J. Ahn, T. Kwon, K. Lee, H. Lee, and J. Lee
+Sparse logit sampling: accelerating knowledge distillation in llms
+.
+In
+Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+,
+pp.
+18085–18108
+.
+Cited by:
+Appendix A
+.
+Azerbayev
+et al.
+(2023)
+Z. Azerbayev, H. Schoelkopf, K. Paster, M. D. Santos, S. McAleer, A. Q. Jiang, J. Deng, S. Biderman, and S. Welleck
+Llemma: an open language model for mathematics
+.
+arXiv preprint arXiv:2310.10631
+.
+Cited by:
+§3.4
+.
+Cobbe
+et al.
+(2021)
+K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano, C. Hesse, and J. Schulman
+Training verifiers to solve math word problems
+.
+arXiv preprint arXiv:2110.14168
+.
+Cited by:
+§3.4
+.
+Dao
+et al.
+(2022)
+T. Dao, D. Fu, S. Ermon, A. Rudra, and C. Ré
+Flashattention: fast and memory-efficient exact attention with io-awareness
+.
+Advances in Neural Information Processing Systems
+35
+,
+pp.
+16344–16359
+.
+Cited by:
+Appendix B
+.
+Dasgupta and Cohn (2025)
+S. Dasgupta and T. Cohn
+Improving language model distillation through hidden state matching
+.
+In
+The Thirteenth International Conference on Learning Representations
+,
+Cited by:
+§3.2.2
+.
+Gao
+et al.
+(2020)
+L. Gao, S. Biderman, S. Black, L. Golding, T. Hoppe, C. Foster, J. Phang, H. He, A. Thite, N. Nabeshima,
+et al.
+The pile: an 800gb dataset of diverse text for language modeling
+.
+arXiv preprint arXiv:2101.00027
+.
+Cited by:
+§3
+.
+Gao
+et al.
+(2024)
+L. Gao, J. Tow, B. Abbasi, S. Biderman, S. Black, A. DiPofi, C. Foster, L. Golding, J. Hsu, A. Le Noac’h, H. Li, K. McDonell, N. Muennighoff, C. Ociepa, J. Phang, L. Reynolds, H. Schoelkopf, A. Skowron, L. Sutawika, E. Tang, A. Thite, B. Wang, K. Wang, and A. Zou
+A framework for few-shot language model evaluation
+.
+Zenodo
+.
+External Links:
+Document
+,
+Link
+Cited by:
+§3.1
+.
+Gu
+et al.
+(2024)
+Y. Gu, L. Dong, F. Wei, and M. Huang
+MiniLLM: knowledge distillation of large language models
+.
+In
+The Twelfth International Conference on Learning Representations
+,
+Cited by:
+§1
+,
+§3.2.1
+.
+Gu
+et al.
+(2025)
+Y. Gu, H. Zhou, F. Meng, J. Zhou, and M. Huang
+MiniPLM: knowledge distillation for pre-training language models
+.
+In
+The Thirteenth International Conference on Learning Representations
+,
+Cited by:
+Appendix B
+,
+§1
+,
+§3.1
+,
+§3.2.1
+.
+Guo
+et al.
+(2017)
+C. Guo, G. Pleiss, Y. Sun, and K. Q. Weinberger
+On calibration of modern neural networks
+.
+In
+International conference on machine learning
+,
+pp.
+1321–1330
+.
+Cited by:
+§3.2.3
+.
+Hinton
+et al.
+(2014)
+G. Hinton, O. Vinyals, and J. Dean
+Distilling the knowledge in a neural network
+.
+In
+NIPS 2014 Deep Learning Workshop
+,
+External Links:
+Document
+,
+Link
+Cited by:
+§2
+.
+Iwana
+et al.
+(2019)
+B. K. Iwana, R. Kuroki, and S. Uchida
+Explaining convolutional neural networks using softmax gradient layer-wise relevance propagation
+.
+In
+2019 IEEE/CVF International Conference on Computer Vision Workshop (ICCVW)
+,
+pp.
+4176–4185
+.
+Cited by:
+Appendix A
+.
+Javaheripi
+et al.
+(2023)
+M. Javaheripi, S. Bubeck, M. Abdin, J. Aneja, S. Bubeck, C. C. T. Mendes, W. Chen, A. Del Giorno, R. Eldan, S. Gopi,
+et al.
+Phi-2: the surprising power of small language models
+.
+Microsoft Research Blog
+1
+(
+3
+),
+pp.
+3
+.
+Cited by:
+§3.2.2
+.
+Kim and Rush (2016)
+Y. Kim and A. M. Rush
+Sequence-level knowledge distillation
+.
+arXiv preprint arXiv:1606.07947
+.
+Cited by:
+§3.2.1
+,
+§4
+.
+Kingma and Ba (2014)
+D. P. Kingma and J. Ba
+Adam: a method for stochastic optimization
+.
+arXiv preprint arXiv:1412.6980
+.
+Cited by:
+Appendix B
+,
+Appendix B
+.
+Ko
+et al.
+(2024)
+J. Ko, S. Kim, T. Chen, and S. Yun
+DistiLLM: towards streamlined distillation for large language models
+.
+In
+International Conference on Machine Learning
+,
+pp.
+24872–24895
+.
+Cited by:
+§3.2.1
+,
+§4
+,
+§5
+.
+Kool
+et al.
+(2019)
+W. Kool, H. Van Hoof, and M. Welling
+Stochastic beams and where to find them: the gumbel-top-k trick for sampling sequences without replacement
+.
+In
+International conference on machine learning
+,
+pp.
+3499–3508
+.
+Cited by:
+§3.2.1
+.
+Lapin
+et al.
+(2016)
+M. Lapin, M. Hein, and B. Schiele
+Loss functions for top-k error: analysis and insights
+.
+In
+Proceedings of the IEEE conference on computer vision and pattern recognition
+,
+pp.
+1468–1477
+.
+Cited by:
+§3.2.1
+.
+Lewkowycz
+et al.
+(2022)
+A. Lewkowycz, A. Andreassen, D. Dohan, E. Dyer, H. Michalewski, V. Ramasesh, A. Slone, C. Anil, I. Schlag, T. Gutman-Solo,
+et al.
+Solving quantitative reasoning problems with language models
+.
+Advances in Neural Information Processing Systems
+35
+,
+pp.
+3843–3857
+.
+Cited by:
+§3.4
+.
+Li
+et al.
+(2023)
+G. Li, H. A. A. K. Hammoud, H. Itani, D. Khizbullin, and B. Ghanem
+CAMEL: communicative agents for "mind" exploration of large scale language model society
+.
+External Links:
+2303.17760
+Cited by:
+§3.4
+.
+Lin
+et al.
+(2024)
+Z. Lin, Z. Gou, Y. Gong, X. Liu, Y. Shen, R. Xu, C. Lin, Y. Yang, J. Jiao, N. Duan,
+et al.
+Rho-1: not all tokens are what you need
+.
+arXiv preprint arXiv:2404.07965
+.
+Cited by:
+§B.1
+,
+§3.4
+.
+Liu
+et al.
+(2024a)
+H. Liu, Y. Zhang, B. Wang, W. Chen, and X. Hu
+Full-ece: a metric for token-level calibration on large language models
+.
+arXiv preprint arXiv:2406.11345
+.
+Cited by:
+§3.2.3
+.
+Liu
+et al.
+(2024b)
+Q. Liu, X. Zheng, N. Muennighoff, G. Zeng, L. Dou, T. Pang, J. Jiang, and M. Lin
+Regmix: data mixture as regression for language model pre-training
+.
+arXiv preprint arXiv:2407.01492
+.
+Cited by:
+§3
+.
+Luo
+et al.
+(2023)
+H. Luo, Q. Sun, C. Xu, P. Zhao, J. Lou, C. Tao, X. Geng, Q. Lin, S. Chen, and D. Zhang
+Wizardmath: empowering mathematical reasoning for large language models via reinforced evol-instruct
+.
+arXiv preprint arXiv:2308.09583
+.
+Cited by:
+§3.4
+,
+§3.4
+.
+Mindermann
+et al.
+(2022)
+S. Mindermann, J. M. Brauner, M. T. Razzak, M. Sharma, A. Kirsch, W. Xu, B. Höltgen, A. N. Gomez, A. Morisot, S. Farquhar,
+et al.
+Prioritized training on points that are learnable, worth learning, and not yet learnt
+.
+In
+International Conference on Machine Learning
+,
+pp.
+15630–15649
+.
+Cited by:
+§3.4
+.
+Mitra
+et al.
+(2024)
+A. Mitra, H. Khanpour, C. Rosset, and A. Awadallah
+Orca-math: unlocking the potential of slms in grade school math
+.
+arXiv preprint arXiv:2402.14830
+.
+Cited by:
+§3.4
+,
+§3.4
+.
+Muralidharan
+et al.
+(2024)
+S. Muralidharan, S. T. Sreenivas, R. Joshi, M. Chochowski, M. Patwary, M. Shoeybi, B. Catanzaro, J. Kautz, and P. Molchanov
+Compact language models via pruning and knowledge distillation
+.
+arXiv preprint arXiv:2407.14679
+.
+Cited by:
+§4
+.
+Paster
+et al.
+(2023)
+K. Paster, M. D. Santos, Z. Azerbayev, and J. Ba
+Openwebmath: an open dataset of high-quality mathematical web text
+.
+arXiv preprint arXiv:2310.06786
+.
+Cited by:
+§3.3.1
+.
+Sanh
+et al.
+(2019)
+V. Sanh, L. Debut, J. Chaumond, and T. Wolf
+DistilBERT, a distilled version of BERT: smaller, faster, cheaper and lighter
+.
+CoRR
+abs/1910.01108
+.
+External Links:
+Link
+,
+1910.01108
+Cited by:
+§1
+,
+§3.2.2
+,
+§3.2
+,
+§4
+.
+Schulman
+et al.
+(2017)
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+Proximal policy optimization algorithms
+.
+arXiv preprint arXiv:1707.06347
+.
+Cited by:
+§3.2.1
+.
+Shleifer and Rush (2020)
+S. Shleifer and A. M. Rush
+Pre-trained summarization distillation
+.
+arXiv preprint arXiv:2010.13002
+.
+Cited by:
+§4
+,
+§4
+.
+Tang
+et al.
+(2020)
+Y. Tang, C. Tran, X. Li, P. Chen, N. Goyal, V. Chaudhary, J. Gu, and A. Fan
+Multilingual translation with extensible multilingual pretraining and finetuning
+.
+arXiv preprint arXiv:2008.00401
+.
+Cited by:
+§3.2.2
+.
+Taylor
+et al.
+(2022)
+R. Taylor, M. Kardas, G. Cucurull, T. Scialom, A. Hartshorn, E. Saravia, A. Poulton, V. Kerkez, and R. Stojnic
+Galactica: a large language model for science
+.
+arXiv preprint arXiv:2211.09085
+.
+Cited by:
+§3.3.1
+.
+Team
+et al.
+(2024)
+G. Team, M. Riviere, S. Pathak, P. G. Sessa, C. Hardin, S. Bhupatiraju, L. Hussenot, T. Mesnard, B. Shahriari, A. Ramé,
+et al.
+Gemma 2: improving open language models at a practical size
+.
+arXiv preprint arXiv:2408.00118
+.
+Cited by:
+§3.2.2
+,
+§4
+.
+Törnqvist
+et al.
+(1985)
+L. Törnqvist, P. Vartia, and Y. O. Vartia
+How should relative changes be measured?
+.
+The American Statistician
+39
+(
+1
+),
+pp.
+43–46
+.
+Cited by:
+§3.2.1
+.
+Touvron
+et al.
+(2023)
+H. Touvron, L. Martin, K. Stone, P. Albert, A. Almahairi, Y. Babaei, N. Bashlykov, S. Batra, P. Bhargava, S. Bhosale,
+et al.
+Llama 2: open foundation and fine-tuned chat models
+.
+arXiv preprint arXiv:2307.09288
+.
+Cited by:
+§3.4
+.
+Wang
+et al.
+(2020)
+W. Wang, F. Wei, L. Dong, H. Bao, N. Yang, and M. Zhou
+Minilm: deep self-attention distillation for task-agnostic compression of pre-trained transformers
+.
+Advances in Neural Information Processing Systems
+33
+,
+pp.
+5776–5788
+.
+Cited by:
+§4
+.
+Wei
+et al.
+(2022)
+J. Wei, X. Wang, D. Schuurmans, M. Bosma, F. Xia, E. Chi, Q. V. Le, D. Zhou,
+et al.
+Chain-of-thought prompting elicits reasoning in large language models
+.
+Advances in neural information processing systems
+35
+,
+pp.
+24824–24837
+.
+Cited by:
+§3.3.1
+.
+Wolf
+et al.
+(2019)
+T. Wolf, L. Debut, V. Sanh, J. Chaumond, C. Delangue, A. Moi, P. Cistac, T. Rault, R. Louf, M. Funtowicz, and J. Brew
+HuggingFace’s transformers: state-of-the-art natural language processing
+.
+CoRR
+abs/1910.03771
+.
+External Links:
+Link
+Cited by:
+§3.1
+.
+Wu
+et al.
+(2021)
+C. Wu, F. Wu, and Y. Huang
+One teacher is enough? pre-trained language model distillation from multiple teachers
+.
+In
+Findings of the Association for Computational Linguistics: ACL-IJCNLP 2021
+,
+pp.
+4408–4413
+.
+Cited by:
+§3.2.1
+.
+Yang
+et al.
+(2024)
+A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu, F. Huang, H. Wei,
+et al.
+Qwen2. 5 technical report
+.
+arXiv preprint arXiv:2412.15115
+.
+Cited by:
+§3.2.2
+.
+Yu
+et al.
+(2023)
+L. Yu, W. Jiang, H. Shi, J. Yu, Z. Liu, Y. Zhang, J. T. Kwok, Z. Li, A. Weller, and W. Liu
+Metamath: bootstrap your own mathematical questions for large language models
+.
+arXiv preprint arXiv:2309.12284
+.
+Cited by:
+§3.4
+.
+Zhang
+et al.
+(2024)
+P. Zhang, G. Zeng, T. Wang, and W. Lu
+Tinyllama: an open-source small language model
+.
+arXiv preprint arXiv:2401.02385
+.
+Cited by:
+§3.3
+.
+Zhang
+et al.
+(2022)
+S. Zhang, S. Roller, N. Goyal, M. Artetxe, M. Chen, S. Chen, C. Dewan, M. Diab, X. Li, X. V. Lin,
+et al.
+Opt: open pre-trained transformer language models
+.
+arXiv preprint arXiv:2205.01068
+.
+Cited by:
+§3.2.2
+.
+Zhao
+et al.
+(2022)
+B. Zhao, Q. Cui, R. Song, Y. Qiu, and J. Liang
+Decoupled knowledge distillation
+.
+In
+Proceedings of the IEEE/CVF Conference on computer vision and pattern recognition
+,
+pp.
+11953–11962
+.
+Cited by:
+§2
+.
+Appendix A
+Derivation of the Gradient
+Here we present an elaborated derivation of the gradients. The derivations follow the material in the appendix of
+Anshumann et al. (2025)
+. If
+p
+i
+=
+exp
+⁡
+(
+z
+i
+)
+/
+∑
+i
+=
+1
+|
+𝒱
+|
+exp
+⁡
+(
+z
+i
+)
+p_{i}=\exp(z_{i})/\sum_{i=1}^{|\mathcal{V}|}\exp(z_{i})
+is the softmax probability for a logit
+z
+i
+z_{i}
+for a vocabulary
+𝒱
+\mathcal{V}
+, then the gradient of
+p
+k
+p_{k}
+is (from
+(
+Iwana et al., 2019
+)
+):
+∂
+p
+j
+∂
+z
+i
+=
+p
+j
+(
+𝟙
+[
+i
+=
+j
+]
+−
+p
+i
+)
+\frac{\partial p_{j}}{\partial z_{i}}=p_{j}\left(\mathds{1}_{[i=j]}-p_{i}\right)
+(7)
+Now, given a vocabulary
+𝒱
+\mathcal{V}
+, the KL Divergence loss between the teacher probabilities of the teacher (
+p
+i
+T
+p^{T}_{i}
+) and the student (
+p
+i
+S
+p^{S}_{i}
+) is:
+ℒ
+K
+​
+L
+​
+D
+=
+∑
+i
+=
+1
+|
+𝒱
+|
+p
+i
+T
+​
+log
+⁡
+(
+p
+i
+T
+/
+p
+i
+S
+)
+\mathcal{L}_{KLD}=\sum_{i=1}^{|\mathcal{V}|}p^{T}_{i}\log(p^{T}_{i}/p^{S}_{i})
+(8)
+It can be derived that,
+∂
+ℒ
+K
+​
+L
+​
+D
+∂
+z
+i
+\displaystyle\frac{\partial\mathcal{L}_{KLD}}{\partial z_{i}}
+=
+−
+∑
+j
+=
+1
+|
+𝒱
+|
+p
+j
+T
+p
+j
+S
+∂
+p
+j
+S
+∂
+z
+i
+\displaystyle=-\sum_{j=1}^{|\mathcal{V}|}\frac{p^{T}_{j}}{p^{S}_{j}}\frac{\partial p^{S}_{j}}{\partial z_{i}}
+=
+−
+∑
+j
+=
+1
+|
+𝒱
+|
+p
+j
+T
+(
+𝟙
+[
+i
+=
+j
+]
+−
+p
+i
+S
+)
+\displaystyle=-\sum_{j=1}^{|\mathcal{V}|}p^{T}_{j}\left(\mathds{1}_{[i=j]}-p^{S}_{i}\right)
+=
+p
+i
+S
+⋅
+(
+∑
+j
+=
+1
+|
+𝒱
+|
+p
+j
+T
+)
+−
+∑
+j
+=
+1
+|
+𝒱
+|
+p
+j
+T
+𝟙
+[
+i
+=
+j
+]
+\displaystyle=p^{S}_{i}\cdot(\sum_{j=1}^{|\mathcal{V}|}p^{T}_{j})-\sum_{j=1}^{|\mathcal{V}|}p^{T}_{j}\mathds{1}_{[i=j]}
+=
+p
+i
+S
+−
+p
+i
+T
+\displaystyle=p^{S}_{i}-p^{T}_{i}
+(9)
+Now, we can show that
+𝒟
+K
+​
+L
+1
+\mathcal{\mathcal{D}}_{KL_{1}}
+has
+K
++
+1
+K+1
+terms when we consider top-
+K
+K
+probabilities, with the first
+K
+K
+being (
+i
+∈
+[
+K
+]
+i\in[K]
+)
+L
+1
+:
+K
+=
+∑
+k
+=
+1
+K
+p
+∗
+T
+k
+log
+p
+∗
+k
+T
+p
+∗
+k
+S
+\displaystyle L_{1:K}=\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}\log\frac{\accentset{\ast}{p}^{T}_{k}}{\accentset{\ast}{p}^{S}_{k}}
+where
+p
+∗
+k
+S
+\accentset{\ast}{p}^{S}_{k}
+are the student probabilities corresponding to the top-
+K
+K
+tokens, i.e. tokens for which the teacher probabilities are maximum. The derivative of
+L
+1
+:
+K
+L_{1:K}
+w.r.t. a logit
+z
+i
+z_{i}
+is
+∂
+L
+1
+:
+K
+∂
+z
+i
+=
+p
+i
+S
+⋅
+(
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+)
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+𝟙
+[
+i
+=
+k
+]
+\frac{\partial L_{1:K}}{\partial z_{i}}=p^{S}_{i}\cdot(\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k})-\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}\mathds{1}_{[i=k]}
+(10)
+Now for
+i
+∈
+[
+𝒱
+∖
+K
+]
+i\in[\mathcal{V}\setminus K]
+, the indicator function
+𝟙
+[
+i
+=
+k
+]
+\mathds{1}_{[i=k]}
+is never one. Therefore, the gradient of
+L
+1
+:
+K
+L_{1:K}
+has the following forms for two different cases, as:
+∂
+L
+1
+:
+K
+∂
+z
+i
+=
+{
+p
+i
+S
+⋅
+(
+∑
+k
+=
+1
+K
+p
+∗
+i
+T
+)
+−
+p
+i
+T
+i
+∈
+[
+K
+]
+p
+i
+S
+⋅
+(
+∑
+k
+=
+1
+K
+p
+∗
+i
+T
+)
+i
+∈
+[
+𝒱
+∖
+K
+]
+\displaystyle\frac{\partial L_{1:K}}{\partial z_{i}}=\begin{cases}p^{S}_{i}\cdot(\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{i})-p^{T}_{i}\qquad&i\in[K]\\
+p^{S}_{i}\cdot(\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{i})&i\in[\mathcal{V}\setminus K]\end{cases}
+Please note that the top
+K
+K
+probabilities do not sum to one. The last term
+L
+K
++
+1
+L_{K+1}
+can be expressed as:
+L
+K
++
+1
+\displaystyle L_{K+1}
+=
+(
+1
+−
+∑
+i
+=
+1
+K
+p
+∗
+k
+T
+)
+​
+log
+⁡
+1
+−
+∑
+i
+=
+1
+K
+p
+∗
+k
+T
+1
+−
+∑
+i
+=
+1
+K
+p
+∗
+i
+S
+\displaystyle=\left(1-\sum_{i=1}^{K}\accentset{\ast}{p}^{T}_{k}\right)\log\frac{1-\sum_{i=1}^{K}\accentset{\ast}{p}^{T}_{k}}{1-\sum_{i=1}^{K}\accentset{\ast}{p}^{S}_{i}}
+=
+−
+(
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+)
+⋅
+log
+(
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+S
+)
++
+C
+\displaystyle=-\left(1-\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}\right)\cdot\log{\left(1-\sum_{k=1}^{K}\accentset{\ast}{p}^{S}_{k}\right)}+\text{C}
+where C is a constant. The derivative of the last term, using the derivative of
+p
+k
+S
+p^{S}_{k}
+from
+Equation
+7
+is:
+∂
+L
+K
++
+1
+∂
+z
+i
+\displaystyle\frac{\partial L_{K+1}}{\partial z_{i}}
+=
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+S
+⋅
+∑
+k
+=
+1
+K
+∂
+p
+∗
+k
+S
+∂
+z
+i
+\displaystyle=\frac{1-\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}}{1-\sum_{k=1}^{K}\accentset{\ast}{p}^{S}_{k}}\cdot\sum_{k=1}^{K}\frac{\partial\accentset{\ast}{p}^{S}_{k}}{\partial z_{i}}
+=
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+S
+⋅
+∑
+k
+=
+1
+K
+p
+∗
+k
+S
+(
+𝟙
+[
+i
+=
+k
+]
+−
+p
+i
+S
+)
+\displaystyle=\frac{1-\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}}{1-\sum_{k=1}^{K}\accentset{\ast}{p}^{S}_{k}}\cdot\sum_{k=1}^{K}\accentset{\ast}{p}^{S}_{k}\left(\mathds{1}_{[i=k]}-p^{S}_{i}\right)
+Teacher
+#P(M)
+|
+𝒱
+|
+|\mathcal{V}|
+d
+S
+d_{S}
+L
+S
+L_{S}
+n
+H
+n_{H}
+d
+H
+d_{H}
+d
+F
+​
+F
+​
+N
+d_{FFN}
+Qwen1.5-1.8B
+1.2
+1.2
+B
+151,936
+1,536
+24
+16
+96
+4,224
+Qwen1.5-1.8B
+0.5
+0.5
+B
+151,936
+1,024
+24
+16
+64
+2,816
+Phi2-2.8B
+1.1B
+52,000
+2,560
+16
+32
+80
+5,120
+Qwen2.5-3B
+1.2B
+151,936
+2,048
+18
+16
+128
+7,680
+Gemma2-9B
+2B
+256,000
+3,584
+14
+16
+224
+4,096
+Table 8
+:
+The architectures of different students used in distillation for pretraining from scratch
+Again, for
+i
+∈
+[
+𝒱
+∖
+K
+]
+i\in[\mathcal{V}\setminus K]
+, the indicator function
+𝟙
+[
+i
+=
+k
+]
+\mathds{1}_{[i=k]}
+is never one. Therefore,
+∂
+L
+K
++
+1
+∂
+z
+i
+=
+{
+p
+i
+S
+⋅
+(
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+)
+i
+∈
+[
+K
+]
+−
+p
+S
+i
+⋅
+(
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+S
+)
+∑
+k
+=
+1
+K
+p
+∗
+T
+k
+i
+∈
+[
+𝒱
+∖
+𝒦
+]
+\frac{\partial L_{K+1}}{\partial z_{i}}=\begin{cases}p^{S}_{i}\cdot\left(1-\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}\right)&i\in[K]\\
+-p^{S}_{i}\cdot\left(\frac{1-\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}}{1-\sum_{k=1}^{K}\accentset{\ast}{p}^{S}_{k}}\right)\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}&i\in[\mathcal{V\setminus K}]\end{cases}
+(11)
+Combining the gradients of
+L
+1
+:
+K
+L_{1:K}
+and
+L
+K
++
+1
+L_{K+1}
+, since
+𝒟
+K
+​
+L
+1
+=
+L
+1
+:
+K
++
+L
+K
++
+1
+\mathcal{\mathcal{D}}_{KL_{1}}=L_{1:K}+L_{K+1}
+∂
+𝒟
+K
+​
+L
+1
+∂
+z
+i
+=
+{
+p
+i
+S
+−
+p
+i
+T
+i
+∈
+[
+K
+]
+p
+i
+S
+⋅
+(
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+S
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+S
+)
+i
+∈
+[
+𝒱
+∖
+𝒦
+]
+\frac{\partial\mathcal{\mathcal{D}}_{KL_{1}}}{\partial z_{i}}=\begin{cases}p^{S}_{i}-p^{T}_{i}&i\in[K]\\
+p^{S}_{i}\cdot\left(\frac{\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}-\sum_{k=1}^{K}\accentset{\ast}{p}^{S}_{k}}{1-\sum_{k=1}^{K}\accentset{\ast}{p}^{S}_{k}}\right)&i\in[\mathcal{V\setminus K}]\end{cases}
+(12)
+Therefore, the gradients of the logits corresponding to the tokens of top-
+K
+K
+teacher probabilities remain the same, while the gradients of the logits corresponding to the rest of the tokens change. The second term
+𝒟
+K
+​
+L
+2
+\mathcal{\mathcal{D}}_{KL_{2}}
+solely depends on the logits of the rest of the tokens.
+𝒟
+K
+​
+L
+2
+=
+∑
+i
+∈
+𝒱
+∖
+K
+p
+~
+i
+T
+​
+log
+⁡
+p
+~
+i
+T
+p
+~
+i
+S
+\mathcal{\mathcal{D}}_{KL_{2}}=\sum_{i\in\mathcal{V}\setminus K}\tilde{p}^{T}_{i}\log\frac{\tilde{p}^{T}_{i}}{\tilde{p}^{S}_{i}}
+(13)
+where we can generate
+p
+~
+i
+S
+\tilde{p}^{S}_{i}
+directly from
+z
+i
+z_{i}
+as
+p
+~
+i
+S
+=
+exp
+⁡
+z
+i
+∑
+k
+∈
+𝒱
+∖
+K
+exp
+⁡
+z
+k
+\tilde{p}^{S}_{i}=\frac{\exp{z_{i}}}{\sum_{k\in\mathcal{V}\setminus K}\exp{z_{k}}}
+. Also,
+p
+~
+i
+T
+\tilde{p}^{T}_{i}
+comes from a similar softmax, but is constant. Therefore,
+∂
+𝒟
+K
+​
+L
+2
+∂
+z
+i
+=
+{
+0
+i
+∈
+[
+K
+]
+p
+~
+i
+S
+−
+p
+~
+i
+T
+i
+∈
+[
+𝒱
+∖
+𝒦
+]
+\displaystyle\frac{\partial{\mathcal{D}}_{KL_{2}}}{\partial z_{i}}=\begin{cases}0&i\in[K]\\
+\tilde{p}^{S}_{i}-\tilde{p}^{T}_{i}&i\in[\mathcal{V\setminus K}]\end{cases}
+The gradients of the logits of the top-
+K
+K
+tokens are zero for
+𝒟
+K
+​
+L
+2
+{\mathcal{D}}_{KL_{2}}
+; only their gradient for
+𝒟
+K
+​
+L
+1
+{\mathcal{D}}_{KL_{1}}
+is non-zero (
+Equation
+12
+). And as a result, their gradient is the same as that for ordinary KL Divergence (
+Equation
+9
+). Therefore, Decoupled KD does
+not
+change the gradient of the logits of the top-
+K
+K
+tokens.
+As for the logits of the non-top-
+K
+K
+tokens, their gradient for
+𝒟
+K
+​
+L
+2
+{\mathcal{D}}_{KL_{2}}
+can be written as,
+∂
+𝒟
+K
+​
+L
+2
+∂
+z
+i
+=
+p
+i
+S
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+S
+−
+p
+i
+T
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+\frac{\partial{\mathcal{D}}_{KL_{2}}}{\partial z_{i}}=\frac{p^{S}_{i}}{1-\sum_{k=1}^{K}\accentset{\ast}{p}^{S}_{k}}-\frac{p^{T}_{i}}{1-\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}}
+(14)
+since
+p
+~
+i
+T
+=
+p
+i
+T
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+\tilde{p}^{T}_{i}=\frac{p^{T}_{i}}{1-\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}}
+and
+p
+~
+i
+S
+=
+p
+i
+S
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+S
+\tilde{p}^{S}_{i}=\frac{p^{S}_{i}}{1-\sum_{k=1}^{K}\accentset{\ast}{p}^{S}_{k}}
+Therefore,
+(
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+)
+​
+∂
+𝒟
+K
+​
+L
+2
+∂
+z
+i
+=
+p
+i
+S
+⋅
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+S
+−
+p
+i
+T
+\left(1-\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}\right)\frac{\partial{\mathcal{D}}_{KL_{2}}}{\partial z_{i}}=p^{S}_{i}\cdot\frac{1-\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}}{1-\sum_{k=1}^{K}\accentset{\ast}{p}^{S}_{k}}-p^{T}_{i}
+(15)
+Combining the derivative of
+𝒟
+K
+​
+L
+2
+{\mathcal{D}}_{KL_{2}}
+from (
+Equation
+12
+for the tail logits, i.e., for
+i
+∈
+[
+𝒱
+∖
+𝒦
+]
+i\in[\mathcal{V\setminus K}]
+, it can easily be checked that
+∂
+𝒟
+K
+​
+L
+1
+∂
+z
+i
++
+(
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+)
+​
+∂
+𝒟
+K
+​
+L
+2
+∂
+z
+i
+\displaystyle\frac{\partial{\mathcal{D}}_{KL_{1}}}{\partial z_{i}}+\left(1-\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}\right)\frac{\partial{\mathcal{D}}_{KL_{2}}}{\partial z_{i}}
+=
+(
+p
+i
+S
+⋅
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+−
+p
+i
+S
+⋅
+∑
+k
+=
+1
+K
+p
+∗
+k
+S
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+S
+)
+\displaystyle=\left(\frac{p^{S}_{i}\cdot\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}-p^{S}_{i}\cdot\sum_{k=1}^{K}\accentset{\ast}{p}^{S}_{k}}{1-\sum_{k=1}^{K}\accentset{\ast}{p}^{S}_{k}}\right)
++
+(
+p
+i
+S
+−
+p
+i
+S
+⋅
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+S
+)
+−
+p
+i
+T
+\displaystyle\phantom{AAAAAAAAAA}+\left(\frac{p^{S}_{i}-p^{S}_{i}\cdot\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}}{1-\sum_{k=1}^{K}\accentset{\ast}{p}^{S}_{k}}\right)-p^{T}_{i}
+=
+p
+i
+S
+−
+p
+i
+T
+\displaystyle=p^{S}_{i}-p^{T}_{i}
+Since
+ℒ
+K
+​
+L
+​
+D
+=
+𝒟
+K
+​
+L
+1
++
+(
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+)
+​
+𝒟
+K
+​
+L
+2
+\mathcal{L}_{KLD}={\mathcal{D}}_{KL_{1}}+\left(1-\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}\right){\mathcal{D}}_{KL_{2}}
+, their gradients are the same. Now, for Decoupled KD, the divergence is:
+ℒ
+D
+​
+I
+​
+V
+=
+𝒟
+K
+​
+L
+1
++
+β
+⁡
+(
+X
+)
+​
+(
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+)
+​
+𝒟
+K
+​
+L
+2
+\mathcal{L}_{DIV}={\mathcal{D}}_{KL_{1}}+\beta(X)\left(1-\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}\right){\mathcal{D}}_{KL_{2}}
+, where
+β
+⁡
+(
+X
+)
+=
+β
+/
+(
+1
+N
+​
+∑
+t
+=
+1
+N
+(
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+​
+(
+t
+)
+)
+)
+\beta(X)=\beta/(\frac{1}{N}\sum_{t=1}^{N}(1-\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}(t)))
+, where
+t
+t
+is the index of a token in a sequence
+X
+X
+containing a total of
+N
+N
+tokens. This also means,
+ℒ
+D
+​
+I
+​
+V
+\displaystyle\mathcal{L}_{DIV}
+=
+𝒟
+K
+​
+L
+1
++
+(
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+)
+​
+𝒟
+K
+​
+L
+2
+\displaystyle={\mathcal{D}}_{KL_{1}}+\left(1-\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}\right){\mathcal{D}}_{KL_{2}}
+(
+β
+⁡
+(
+X
+)
+−
+1
+)
+​
+(
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+)
+​
+𝒟
+K
+​
+L
+2
+\displaystyle\phantom{AAAAAA}(\beta(X)-1)\left(1-\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}\right){\mathcal{D}}_{KL_{2}}
+=
+ℒ
+K
+​
+L
+​
+D
++
+(
+β
+⁡
+(
+X
+)
+−
+1
+)
+​
+(
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+)
+​
+𝒟
+K
+​
+L
+2
+\displaystyle=\mathcal{L}_{KLD}+(\beta(X)-1)\left(1-\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}\right){\mathcal{D}}_{KL_{2}}
+Using
+Equation
+15
+, the gradient of
+ℒ
+D
+​
+I
+​
+V
+\mathcal{L}_{DIV}
+has the following form for the logits
+z
+i
+z_{i}
+for the tail tokens (
+i
+∈
+[
+𝒱
+∖
+K
+]
+i\in[\mathcal{V}\setminus K]
+)
+∂
+ℒ
+D
+​
+I
+​
+V
+∂
+z
+i
+\displaystyle\frac{\partial\mathcal{L}_{DIV}}{\partial z_{i}}
+=
+∂
+ℒ
+K
+​
+L
+​
+D
+∂
+z
+i
++
+(
+β
+⁡
+(
+X
+)
+−
+1
+)
+​
+(
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+)
+​
+∂
+𝒟
+K
+​
+L
+2
+∂
+z
+i
+\displaystyle=\frac{\partial\mathcal{L}_{KLD}}{\partial z_{i}}+(\beta(X)-1)\left(1-\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}\right)\frac{\partial{\mathcal{D}}_{KL_{2}}}{\partial z_{i}}
+=
+p
+i
+S
+−
+p
+i
+T
+\displaystyle=p^{S}_{i}-p^{T}_{i}
++
+(
+β
+⁡
+(
+X
+)
+−
+1
+)
+​
+(
+p
+i
+S
+⋅
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+T
+1
+−
+∑
+k
+=
+1
+K
+p
+∗
+k
+S
+−
+p
+i
+T
+)
+\displaystyle\phantom{AAAA}+(\beta(X)-1)\left(p^{S}_{i}\cdot\frac{1-\sum_{k=1}^{K}\accentset{\ast}{p}^{T}_{k}}{1-\sum_{k=1}^{K}\accentset{\ast}{p}^{S}_{k}}-p^{T}_{i}\right)
+For the logits of the top-
+K
+K
+tokens,
+∂
+𝒟
+K
+​
+L
+2
+∂
+z
+i
+=
+0
+\frac{\partial\mathcal{D}_{KL_{2}}}{\partial z_{i}}=0
+, and therefore, their gradients are the same as those of Vanilla KD. This completes the derivation of the gradient of
+ℒ
+D
+​
+I
+​
+V
+\mathcal{L}_{DIV}
+.
+Appendix B
+Experimental Detail
+The architectures of different students for the pretraining from scratch are listed in
+Table
+8
+. All students have approximately
+1
+1
+B active parameters, except for the
+0.5
+0.5
+B student of Qwen, which has approximately
+475
+475
+M active parameters. The architectures of the students of Qwen
+1.5
+−
+1.8
+1.5-1.8
+B are kept the same as in the MiniPLM paper
+(
+Gu et al., 2025
+)
+.
+The experiments are divided into two major parts: pretraining distillation from scratch, and continued pretraining. For pretraining distillation from scratch, we distilled the Qwen1.5, Phi2, and Qwen2.5 models on a single H100 GPU for a week, whereas we used 2 H100 GPUs for distilling the Gemma2-9B model. We used flash attention
+(
+Dao et al., 2022
+)
+whenever possible to speed up the computation, except for Gemma2. We used Adam optimizer
+(
+Kingma and Ba, 2014
+)
+with a learning rate of
+η
+=
+1
+​
+e
+−
+4
+\eta=1e-4
+and a weight decay of
+λ
+d
+=
+0.1
+\lambda_{d}=0.1
+for all the experiments. We used a batch size of
+128
+128
+for all the experiments.
+For the continued pretraining distillation of Tiny-Llama, we used the Adam optimizer
+(
+Kingma and Ba, 2014
+)
+with a learning rate of
+η
+=
+3
+​
+e
+−
+5
+\eta=3e-5
+and a weight decay of
+λ
+d
+=
+0.1
+\lambda_{d}=0.1
+for all experiments. All experiments used a batch size of 128 and were conducted on a single NVIDIA H100 GPU. Supervised distillation is performed with a batch size of 32,
+η
+=
+1
+​
+e
+−
+5
+\eta=1e-5
+,
+λ
+d
+=
+0.1
+\lambda_{d}=0.1
+, and a context size of 2048.
+B.1
+Cost of Supervised Distillation
+We conduct a comparative cost analysis of GPU hours required to produce state-of-the-art mathematical reasoning, starting with foundational models such as TinyLlama-1.1B and Llama2-7B. Models like Llemma or Rho-1 are trained using industrial resources. Rho-1 is trained for approximately 10 hours on a 32-GPU H100 stack, requiring a total of 320 GPU hours. The best model built on Llama-7B is Llemma, which was trained on A100 GPUs for 23,000 GPU hours. Even though it uses different hardware, we can establish an equivalence by noting that the 7B model in
+Lin et al. (2024)
+takes the same number of GPU hours to train on an H100. It required 18 hours to train on 15 billion tokens using 32 H100 GPUs. Using their configuration setting, Llemma-7B will take 7,680 GPU hours to train on a single H100. This provides a reasonable estimate, since A100s are approximately a third slower than H100 GPUs for training (
+23
+​
+K
+≈
+3
+×
+7,680
+23K\approx 3\times 7,680
+). Our two-stage method requires approximately 130 hours on a single H100 GPU for TinyLlama and 420 hours on two H100 GPUs (totaling 840 hours) for Llama-2, which is substantially cheaper than the existing methods.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

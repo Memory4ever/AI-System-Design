@@ -1,0 +1,77 @@
+4.1. Mapping Sparse Kernels
+Sparse kernels, particularly sparse tensor operations, are among the most popular and representative HPC workloads that involve input-dependent control flow. These operations create bottlenecks in applications spanning high-performance computing (HPC) and machine learning (Zhang et al., 2021; Qin et al., 2020; Muñoz-Martínez et al., 2023; Yuan et al., 2025; Liu et al., 2024a). Moreover, these workloads involve varying sparse operations with different degrees of randomness or structure in inputs. Sparse tensor operations highlight two primary challenges common to applications with irregular input data. First, the sparsity in inputs introduces irregular memory access patterns, leading to memory bottlenecks. Second, the uneven distribution of non-zero elements results in workload imbalance across compute units, necessitating specialized hardware for load balancing and synchronization. Traditional architectures, including GPGPUs (Choquette et al., 2021) and systolic arrays (Jouppi et al., 2023), often suffer from under-utilization of compute units due to this.
+We demonstrate the mapping of various dense and sparse kernels on Canon hardware.
+4.1.1. Case Study: SpMM
+Figure 7(a) illustrates the SpMM dataflow used in our design, derived from Gustavson’s algorithm (Gustavson, 1978; Zhang et al., 2021; Dangi et al., 2024; Muñoz-Martínez et al., 2023). In this approach, rows of the sparse matrix AA are independently processed in parallel to generate the corresponding output rows. The non-zero entries of AA are streamed into the corresponding rows of the PE array.
+Each PE holds a tile of the dense matrix BB in its local memory. PEs aligned along the same row of the array store identical rows of BB, but are partitioned across distinct column segments. For every non-zero element ai​ja_{ij} in a given row of AA, the row of BB indexed by jj is fetched from local memory. This enables the PE to perform scalar-vector multiplications between ai​ja_{ij} and the local portions of BB, generating partial vector products (psums).
+These psums are then propagated vertically along the columns of the array, accumulating partial results as they traverse downstream PEs. The final accumulated values exit the bottommost PE in each column, thereby producing the corresponding entries of the output matrix CC. The complete pseudocode for this dataflow, derived by tiling and reordering the canonical triple-for-loop SpMM kernel, is provided in Listing 3 in the Appendix.
+This mapping delivers high efficiency on our architecture by simultaneously tackling three key challenges: irregular access patterns, reduction-induced dependencies, and workload imbalance, while preserving fine-grained parallelism across the array.
+Figure 7. (a) SpMM and (b) SDDMM dataflow mapping
+Local Random Accesses.
+We tile and partition the dense matrix BB such that all PEs within the same physical row store identical rows of BB, each holding a distinct column segment. This layout ensures that, for any incoming non-zero element from AA, all PEs in the row access the same address offsets in their respective local memories. As a result, local memory accesses remain uniform and fully deterministic, aligning with Canon’s staggered instruction issue model. Since all accesses to BB are serviced from each PE’s local memory, this design eliminates contention and scales efficiently with increasing PE array sizes, bypassing the bandwidth bottlenecks typically associated with shared memory architectures.
+Figure 8. SpMM decision tree. Condition A checks for messages from neighbour orchestrators, Condition B checks for end of row, Condition C checks local context window of partial sums
+Load Balancing via Asynchronous Reduction.
+When the reduction dimension (KK) is spatially mapped across rows, naive accumulation strategies introduce write-after-write (WAW) hazards, particularly in the presence of sparse and irregular AA matrices. In such cases, PEs responsible for rows with higher non-zero densities become stragglers, causing downstream stalls and underutilization.
+Canon mitigates this through asynchronous reduction, enabled by the associativity of addition. Each PE concurrently has two roles: performing MAC operations for its local non-zero elements and accumulating partial sums propagated from upstream PEs. Upon completing MACs for a row, the PE advances to copmuting the MACs of next row, independent of whether upstream PEs are straggling or in advance. It only switches to partial sum accumulation when the upstream PE sends it a message for the same.
+This decision is made dynamically by the orchestrator using the FSM in Figure 8. When a control message arrives from the north (condition A = yes), indicating that upstream PEs are flushing partial sums, the orchestrator switches the local PEs to handle accumulation (paths 1.1 or 1.2). If no such message is received, the orchestrator allows PEs to proceed with local MAC computation (path 2.2). This decoupled and dynamic scheduling ensures forward progress even under load imbalance, thereby preserving high array utilization.
+Load Balancing via Explicit Buffer Management.
+While asynchronous reduction alleviates stalls due to WAW dependencies, it does not entirely eliminate the imbalance across rows and execution remains bottlenecked by the slowest row of PEs. To address this, each PE is provisioned with a local scratchpad buffer to temporarily hold partial sums, whether self-generated or received from upstream, in anticipation of downstream stragglers. This buffer operates as a FIFO queue, and each PE processes only the partial sums that are explicitly managed at any given time. This can be thought of as a local context of partial sums that each PE manages.
+The orchestrator actively monitors buffer occupancy, maintaining metadata to track the oldest row index present in the context queue. Upon completing MAC operations for a row, the PE flushes the corresponding oldest partial sum to its downstream neighbor (case 2.1). On the other hand, when a PE receives a partial sum (condition A), it checks whether the associated row index lies within its current execution window (condition C). If the index falls outside the active range, implying overload or skew in the upstream rows, the partial sum is temporarily bypassed (case 1.2), allowing the PE to prioritize its own computation without delay. This dynamic offloading mechanism enables heavily loaded rows to distribute surplus reduction work downstream, resulting in better utilization across the array.
+Both asynchronous reduction and buffer management are realized through orchestrator microcode, which encodes the finite-state machine (FSM) logic shown in Listing 1. This microcode governs PE behavior by defining event-driven state transitions and generating control instructions for routing, memory, and compute operations.
+The performance of Canon on SpMM is sensitive to the scratchpad buffer capacity and the sparsity structure of the input. Larger buffers provide greater tolerance to imbalance by allowing PEs to queue more psums in its local context, thereby mitigating backpressure and reducing stall propagation. However, this comes at the cost of increased microarchitectural resources and more frequent buffer management overheads. We evaluate these trade-offs quantitatively in Section 6.5.
+Listing 1: SpMM FSM Pseudo-code
+⬇
+1
+// NNZ: Non-Zero, CID/RID: Column/Row ID of NNZ in A
+2
+msg_from_north = {None, PSum(RID)}
+3
+input = {None, NNZ(CID), RowEnd(RID)}
+4
+buffer = (RID_start)// Buffer state
+5
+state = {MAC(RID), ACC(RID), FLUSH(RID), NOP} // FSM main State
+6
+7
+// PE Behavior
+8
+op = MAC(CID) if !msg_from_north && input == NNZ(CID);
+9
+FLUSH(RID) if !msg_from_north && input == RowEnd(RID);
+10
+ACC(RID) if msg_from_north == PSum(RID) &&
+11
+buffer.is_managing(msg_from_north.RID);
+12
+otherwise NOP;
+13
+14
+// Memory Operations
+15
+dmem_op = LOAD[CID] if op == MAC(CID); otherwise NOP;
+16
+spad_read = LOAD[RID] if op == ACC(RID);
+17
+LOAD[buffer.first()] if op == FLUSH(_) && buffer.is_full();
+18
+otherwise NOP;
+19
+spad_write = FLUSH[RID] if op == FLUSH(RID) || (op == ACC(RID) && op.RID != state.RID);
+20
+otherwise NOP;
+21
+22
+// Router Behavior
+23
+router_op = NORTH_TO_SOUTH if msg_from_north == PSum(RID) && !buffer.is_managing(msg_from_north.RID) && op != FLUSH(_);
+24
+REG_TO_SPAD if op == ACC(_) || op == FLUSH(_);
+25
+SPAD_TO_SOUTH if op == FLUSH(_);
+26
+SRAM_TO_REG if op == MAC(_);
+27
+otherwise NOP;
+28
+29
+// Buffer State

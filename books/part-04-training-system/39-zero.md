@@ -11,7 +11,7 @@
 
 第 36 章的 Data Parallel 已把 batch 分给多张 GPU，为什么每张卡仍保存几乎相同的 parameters、gradients 和 optimizer states？ZeRO Stage 1/2/3 分别消除哪类副本？参数何时 gather、梯度何时 reduce-scatter、更新后怎样恢复一致视图？
 
-本章的核心判断是：**ZeRO 在 data-parallel domain 内分片原本重复的 model states，并在计算或更新需要时通过 collective 临时恢复正确视图。**更高 stage 扩大 memory savings，也把 parameter lifecycle、communication overlap 与 distributed checkpoint 带入关键路径。第 36 章定义通信的公共 cost model；本章关注 AllGather 与 ReduceScatter 怎样服务 parameter/gradient ownership lifecycle，而不是重新比较 Ring、Tree 或 backend。
+本章的核心判断是：**ZeRO 在 data-parallel domain 内分片原本重复的 model states，并在计算或更新需要时通常通过 collective 临时恢复正确视图。**更高 stage 扩大 memory savings，也把 parameter lifecycle、communication overlap 与 distributed checkpoint 带入关键路径。第 36 章定义通信的公共 cost model；本章关注 AllGather 与 ReduceScatter 怎样服务 parameter/gradient ownership lifecycle，而不是重新比较 Ring、Tree 或 backend。
 
 本章使用 `P` 表示参数量，`D` 表示 data-parallel degree，`b_p`、`b_g`、`b_o` 分别表示每 parameter 的 parameter、gradient 和 optimizer-state bytes。
 
@@ -137,8 +137,8 @@ global tensor identity
 
 ragged placement 可以减少无意义 padding/copy，却新增近似 layout planning、granularity cliff、root imbalance、
 pointer lifetime 和 checkpoint compatibility。规则 shape、普通 optimizer 或上游互操作优先时，均匀 FSDP shard
-仍更简单。veScale-FSDP 为结构感知 shard planner 与 persistent buffer 提供了作者实验；公开 artifact 不足以
-复现其全部 production claim，也不证明 zero-copy 没有 lifecycle 成本。
+仍更简单。veScale-FSDP 为结构感知 shard planner 与 persistent buffer 提供了作者实验；这些实验不证明
+所有模型、拓扑与 workload 的通用 production 收益，也不证明 zero-copy 没有 lifecycle 成本。
 
 ## 一个 1B 参数、8 Rank 小例子
 
@@ -220,6 +220,16 @@ can it overlap?
 - Stage 3 module parameter AllGather/prefetch。
 
 Bucket 大小在 bandwidth utilization、launch latency、overlap 与 peak memory 之间折中。通信量相近的配置，也可能因为 critical-path placement 不同而性能悬殊。
+
+### Shard Ownership 与同步粒度可以分别选择
+
+每个 rank 在同一层执行 collective，适合样本长度与计算量接近、拓扑优化可充分利用的训练；长尾 sequence 的后训练则可能在每层、每个 microbatch 重复等待最慢 rank。参数、梯度和 optimizer state 仍可保持 FSDP 式分片，却把取参数与归还梯度拆成按需点对点操作：worker 向 shard owner 读取参数，将梯度发送给相应 owner 累加；同一 GPU 可以同时承担 worker 与 owner。这里改变的是通信推进方式，不是 state ownership，也不是重新发明 parameter server。
+
+按需推进要求接收端不必与发送端同时进入同一个 collective。ODC 的实验实现用节点内 CUDA IPC、节点间 NVSHMEM/RDMA 取参数，并用轻量 daemon 累加梯度；它仍在整个 minibatch 梯度完成后同步更新，不允许各 worker 独立提交不同版本的模型。因此 asynchronous communication progress 不等于 asynchronous optimization。这个边界让 runtime 先平衡整个 minibatch 的计算量，再在每个 worker 内按显存容量打包 microbatch，而不要求每对 microbatch 都同样昂贵；长 sequence 的 memory 与 compute 增长不同，局部 packing 无法总是同时平衡两者。
+
+代价同样来自通信边界的改变：该实现的跨节点点对点 primitive 带宽低于 NCCL collective，失去了部分分层拓扑优化。长 context 可用计算重叠隐藏它，短 microbatch 却可能重新受通信限制；把 parameter/gradient 分片限制在节点内、只让 optimizer state 跨节点分片可减少此压力，但增加每节点常驻状态。均匀负载或通信占主导时，普通 collective 仍是更简单的基线。这一分支只支持保留 minibatch barrier 下的负载均衡选择，不证明 rollout 端到端加速，也不把弹性、容错或异步 SGD 的未来设想当成已实现能力。
+
+<!-- source-family:SF-2026-ARXIV-2601-19362 -->
 
 ## FSDP 与 ZeRO 的关系
 
@@ -370,6 +380,10 @@ ZeRO 逐步分片 optimizer states、gradients 和 parameters，消除标准 DP 
 它不是通用 OOM 开关。Activation、workspace、network、offload 层级和恢复语义必须分别建模。正确 ZeRO 配置应从 memory breakdown 出发，并用通信、吞吐、数值与 restore 共同验证。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2602-22437` — Daily `2026-02-28`；[exact-v1](https://arxiv.org/html/2602.22437v1) §3–6与必要 block-optimizer/padding 消融。2+2+3=7，现有原子 block、ragged placement、近似规划与生命周期/fallback 已覆盖，不重复扩写；仅删除未核 artifact 断言，改为作者实验不授通用 production 收益，不否认其工业部署经历。root 原源/actual owner Existing 与窄纠正 PRE 通过；实际纠正正文、邻接与自身末注经 root 非作者 POST 通过，窄锁释放。未核 artifact/复现，不授日级完成。
+
+- `SF-2026-ARXIV-2601-19362`，Status: Experimental：[ODC exact-v1](https://arxiv.org/html/2601.19362v1) §2–4、§5.1–5.4及§6.1–6.2支持按需 parameter gather/gradient scatter-accumulate、minibatch barrier 和 LB-Mini 分支。作者 LongAlign/SWE-Smith SFT、AIME GRPO 实验使用 R1-Distill-Qwen 1.5–32B、最多32×A100 80GB、NVSwitch及800Gbps/node RoCE；RL只统计训练，排除 rollout。SFT最高36%与RL最高10%不外推到任意负载；minibatch=1无收益、packing改善后差距缩小、跨节点 primitive 带宽低于 NCCL 均保留。必要原源与实际正文/相邻链路已由 root 独立复核通过，未运行实现或复现实验。
 
 - `SF-2026-ARXIV-2604-09406`，Experimental：[exact-v1](https://arxiv.org/html/2604.09406v1) §3/Algorithm 1/§3.2、Tables 1–3、§4.3/5 支持在线 activation basis 与近似 moment transport 分支。受测 Llama-2 7B、Llama-3.2 1B 微调及 130M/350M C4 预训练；1B rank 32 的 GSM8K 23.78 低于 Adam 27.09，350M validation loss 也不是全面优于 LDAdam。未采用 peak-memory 倍率作为任意 hardware/batch/length 保证；未验证与 ZeRO 组合、distributed checkpoint restore 或全面训练加速。root 已完成必要原文与实际正文/相邻链路的写后独立复核，通过，本地实验未复现。
 

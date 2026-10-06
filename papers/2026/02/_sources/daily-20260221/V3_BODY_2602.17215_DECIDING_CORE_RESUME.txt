@@ -1,0 +1,73 @@
+URL: https://arxiv.org/html/2602.17215v1
+Status: 200
+4.2.1 Component Extraction
+We define the Component as shown in Fig. 2 as a self-contained, executable unit with resolved data and environment dependencies.
+Each notebook code cell that produces visualizations is transformed into such a component.
+This design addresses two key challenges: (1) understanding the functionality of a single code cell often requires tracing implicit data dependencies and transformations; and (2) outdated dependencies and disorganized structure can easily lead to bugs, while debugging in a notebook environment is significantly less efficient than working with a continuous code block.
+Considering the low reproducibility of public notebooks [39], we adopt a static analysis approach rather than a dynamic one, thereby enabling a more general and robust method.
+Static analysis avoids execution-time failures caused by missing data or outdated dependencies, which are common issues in public notebooks.
+Our method supports both sequential and non-linear notebook executions, with the latter requiring a complete execution log. In the following, we describe our method assuming sequential execution.
+We first merge code cells that generate visible outputs (e.g., plots or tables) or are followed by markdown cells with their preceding non-output cells.
+To construct components, we introduce the data variable, which is any variable directly or indirectly derived from raw data.
+As illustrated in Fig. 2, data variables follow a lifecycle that includes generation (e.g., S1 creates df, S2 and S4 create versions of df1), modification (e.g., S3 and S5 update df1), and downstream usage (e.g., S6 consumes df1 for visualization).
+We then track these data-variable dependencies across the notebook in a top-down manner and resolve them at the cell level.
+Each statement that creates, modifies, or uses a data variable is identified, and its dependency chain is recursively traced.
+In this way, we record for every data variable the complete sequence of statements that describe its evolution from raw input to its current state (see Data Variables and Cell Dependencies in Fig. 2).
+Finally, to construct the component, we prepend the minimal set of required statements for the data variables in a target code cell, preserving execution order to form a self-contained, executable unit.
+In practice, we implement this process through an AST-based algorithm, which is robust to real-world complexities such as branches, loops, and function calls, and leverages a taxonomy of common data-processing libraries (e.g., pandas) to recognize implicit state mutations (e.g., method calls like df.drop_duplicates()).
+Figure 2: Example of the dependency tracking process. Code Cells define data variables through generation and modification statements. Data Variables summarize each variable’s lifecycle and dependencies. Cell Dependencies show how variables propagate across cells. Component collects the required statements into a self-contained unit that can be executed independently. Some cases where components improve annotation accuracy (C1, C2, C3).
+4.2.2 Component Metadata Annotation
+Given an EDA query (e.g., “evaluate how type affects price”), semantic similarity search often performs poorly because of the semantic gap between natural language and code, the lack of method-level details, and the fact that many visualization functions (e.g., sns.pairplot) reference columns implicitly rather than explicitly [14, 59].
+To improve retrieval precision, we leverage the code understanding capabilities of LLMs to annotate each code snippet with the used columns and chart type (provided with dataset column descriptions).
+To evaluate this approach, we manually annotated 840 pairs of code cells and corresponding components with metadata and compared the labeling accuracy of different models (Tab. 1).
+For chart type, all models achieved high accuracy, with little difference between code cells and components. For used columns, however, we observed clear improvements when annotating components: across both SOTA models and smaller models, component-level annotation consistently outperformed cell-level annotation.
+The advantage of components comes from preserving complete contextual information.
+We highlight some common cases:
+(1) the use of previously created derived columns (Fig. 2-C1),
+(2) data transformations applied upstream (Fig. 2-C2), and
+(3) visualization methods that implicitly reference columns without explicitly naming them (Fig. 2-C3).
+Practical Note.
+While gpt-5-nano achieved the best trade-off between accuracy and efficiency,
+Qwen-7B offers a practical alternative for large-scale annotation: when deployed on a single RTX 4090 GPU with 8 threads, it completed all 840 annotation tasks within one minute.
+Table 1: Accuracy of used-column annotation on code cell–component pairs.
+Δ\Delta (pp) denotes absolute percentage-point gain; Δ\Delta Rel. (%) denotes relative improvement.
+Model
+Acc-Code (%)
+Acc-Comp (%)
+𝚫\boldsymbol{\Delta} (pp)
+𝚫\boldsymbol{\Delta} Rel. (%)
+gpt-5
+78.1
+91.4
+13.3
+17.1
+gpt-5-nano
+76.0
+89.6
+13.6
+18.0
+Qwen-7B
+63.5
+74.0
+10.5
+16.7
+CodeL-7B
+57.3
+68.0
+10.7
+18.7
+DeepSeek-6.7B
+58.8
+67.5
+8.7
+14.8
+Abbreviations:
+Qwen-7B = Qwen2.5-Coder-7B-Instruct;
+CodeL-7B = CodeLlama-7b-Instruct;
+DeepSeek-6.7B = Deepseek-Coder-6.7B-Instruct.
+4.2.3 Intent-Guided Retrieval
+Each query specifies target columns and analytical goals, which are then used to retrieve relevant content from both markdown cells and code components.
+For components, we leverage metadata to match the columns specified in the query: exact matches are prioritized, followed by partial matches that cover most of the query columns. If the number of candidates exceeds the top-kk (set to five), we further filter them by retaining only one component for each unique combination of used columns and chart type (as shown in Fig. 1-2).
+4.2.4 Component Enhancement
+Since visualizations in the original notebooks may be invalid due to outdated data, and some components may contain obsolete code that prevents direct rerun, we enhance the retrieved components after top-kk selection (Fig. 1-3). Specifically, we provide each component’s code together with the user’s dataset to a Coder, which executes the code in a sandbox environment and automatically repairs errors, thereby producing runnable code and updated visualizations.
+Given the strong performance of SOTA VLMs on various vis2nl tasks[43, 60, 29] and the demonstrated benefits of visual inputs for data analysis[26], 

@@ -1,0 +1,498 @@
+Necessary main-body extraction; no unrelated appendices. Source https://arxiv.org/html/2601.10332v1
+1 Introduction
+Text-to-image (T2I) diffusion models (DMs) have demonstrated remarkable capabilities in generating high-fidelity and diverse images given textual prompts, as exemplified by Stable Diffusion [27, 11] and the FLUX series [20, 2, 19].
+To capture richer semantic representations of textual prompts, researchers have progressively adopted stronger text encoders—from early CLIP models [27] to large language models (LLMs) [7, 8] and their variants with visual inputs, i.e., vision language models (VLMs).
+Representative examples include the open-source Qwen-Image [34], which employs Qwen2.5-VL [1] as the encoder, and advanced commercial systems such as Seedream 4.0 [29], GPT-4o [17], and Gemini-2.5-Flash-Image [14].
+The LLM encoder offers two key advantages: (1) native understanding of mixed text–image prompts, and (2) extensive world knowledge that enhances instruction following.
+These capabilities may alleviate the burden of iteratively crafting and refining prompts, as in prior work [32, 23, 35], potentially enabling more natural interactions for visual generation.
+Figure 1: An overview of our think-then-generate method. Beyond using LLM as a frozen text encoder, we train it to think and refine the raw user prompts guided by the reward of output images.
+Figure 2: Comparison of T2I models on conceptual visual generation. Our Qwen-Image under think-then-generate pipeline produces semantically aligned and visually coherent results, correctly interpreting user intent given prompt “Holiday celebrating the birth of Jesus Christ.” (e.g., generating a warm Christmas celebration rather than literally depicting Jesus), whereas vanilla Qwen-Image behaves like a simple text–pixel mapper and often fails to capture conceptual meanings.
+However, in practice, existing models often fail to fully exploit the potential of LLMs for reasoning.
+Typically, the models are trained on large-scale descriptive image–caption pairs with the LLM encoder frozen [2, 34, 4] (i.e., solely as a feature extractor).
+Consequently, they can handle only literal and descriptive instructions (e.g., specific object colors or textures) but struggle with conceptual instructions (e.g., illustrating how a machine operates), as shown in Figure 2.
+I.e., they function as simple text–pixel mappers.
+Ideally, the LLM encoder should transcend prompt encoding to reason over raw instructions, leverage inherent world knowledge for conceptual tasks, and generate semantically enriched prompts for diffusion generation.
+However, such a functionality cannot be trivially incentivized by current post-training frameworks for DMs [22, 39, 37, 21].
+This paper implements the think-then-generate (T2G) paradigm for reasoning-aware text-to-image diffusion, where the LLM encoder is able to reason over and rewrite raw user prompts, with the embeddings of rewritten prompts fed to the diffusion transformer (DiT) [25, 11] as generation conditioning, as shown in Figure 1.
+To realize it, we first construct a supervised fine-tuning dataset that enriches raw user prompts with chain-of-thought (CoT) reasoning as well as rewritten prompts.
+We finetune the LLM on it to acquire the think-then-rewrite pattern.
+We then co-optimize the LLM encoder and the DiT decoder via a Dual-GRPO strategy, where the rewritten prompts act as the bridge between text reasoning and image synthesis and image-based rewards are maximized in an end-to-end manner.
+Considering the distinct roles of the encoder and the DiT for image generation, we tailored the reward objective to each component, where the former is optimized for semantic alignment and conceptual understanding and the latter focuses on visual realism and aesthetic quality.
+This optimization not only activates the world knowledge embedded in LLMs but also adapts DiT to the evolved representation space of the text encoder.
+Empirically, on the T2I task, we apply our method to the state-of-the-art open-source model Qwen-Image [34], and observe a score of 0.79 on the WISE benchmark [24], which surpasses the pre-trained Qwen-Image by 30%, and substantially outperforms other open-source models such as Bagel [10] and Janus-Pro-7B [9].
+Notably, this performance is on par with the commercial GPT-4o [17].
+Moreover, our method achieves a score of 92.2 on T2I-ReasonBench [31], surpassing the strong closed-source model Gemini-2.0 [13].
+For image editing, we apply our method to Qwen-Image-Edit [34], and qualitative results demonstrate its ability to produce more faithful, fine-grained, and instruction-aligned modifications.
+Moreover, in more challenging and realistic scenarios—such as generating schematic illustrations of human activities (e.g., teaching math)—our trained model demonstrates superior knowledge grounding, visual plausibility, and aesthetic quality, highlighting its potential as next-generation unified models with reasoning, expression, and demonstration capacities in real-world applications.
+2 Preliminary: Group Relative Policy
+Optimization
+Group Relative Policy Optimization (GRPO) is a reinforcement learning algorithm popularized in optimizing large generative models [30, 15]. It can be viewed as a variant of policy gradient methods such as PPO [28], with introduced group-wise relative normalization of rewards to better handle high-variance signals during training.
+Formally, given a group of rollout trajectories \{\mathbf{o}_{g}\}_{g=1}^{G} sampled from the current policy \pi_{\theta}, unlike actor–critic methods, GRPO groups samples with similar input prompts or conditions, and then directly calculates relative advantages from normalized group rewards rather than learning them through a value model:
+\hat{A}_{g}=\frac{R_{g}-\operatorname{mean}\left(\{R_{g}\}_{g=1}^{G}\right)}{\operatorname{std}\left(\{R_{g}\}_{g=1}^{G}\right)},
+(1)
+where R_{g} is the scalar reward for the trajectory \mathbf{o}_{g}. This design eliminates the need for a value model, making GRPO more efficient and easier to scale for large models such as LLMs [16] and diffusion/flow matching models [22, 36].
+The typical GRPO objective is:
+\displaystyle\mathcal{J}_{GRPO}(\theta)=\mathbb{E}_{\{\mathbf{o}_{g}\}_{g=1}^{G}\sim\pi_{\theta_{old}}}
+(2)
+\displaystyle\left[\frac{1}{G}\sum_{g=1}^{G}\min\left(r_{g}(\theta)\hat{A}_{g},\text{clip}(r_{g}(\theta),1-\epsilon,1+\epsilon)\hat{A}_{g}\right)\right]
+\displaystyle-\beta\mathbb{D}_{KL}\left[\pi_{\theta}\parallel\pi_{\theta_{ref}}\right],
+where r_{g}(\theta)=\frac{\pi_{\theta}(\mathbf{o}_{g})}{\pi_{\theta_{old}}(\mathbf{o}_{g})}, \pi_{\theta_{ref}} is the reference policy, and \beta is the KL divergence regularization parameter.
+GRPO for LLMs.
+For LLMs, the policy \pi_{\theta}(o_{t}\mid o_{<t},q) is a language model that generates text tokens o_{t} conditioned on the previous tokens o_{<t} and the user prompt q, this holds a tractable likelihood and is easy to compute. In typical GRPO applications, training relies on outcome-based rewards, where a reward model evaluates only the final generated text. All intermediate tokens in the rollout trajectory are assigned the same reward, which implicitly assumes that each token contributes equally to the final outcome.
+Flow-GRPO for Flow Matching Models.
+Although GRPO has been successfully applied to LLMs, applying it to flow matching models is nontrivial since their ODE-based sampling dynamics do not provide stochasticity to generate diverse trajectories for advantage estimation and policy exploration.
+Flow-GRPO [22] addresses this limitation by transforming the deterministic Flow-ODE into an equivalent stochastic differential equation (SDE) and discretizing it via the Euler-Maruyama scheme. This yields the following transition kernel:
+\pi_{\theta}(\mathbf{x}_{t-1}\mid\mathbf{x}_{t})=\mathcal{N}(\mathbf{x}_{t-1};\mu_{\theta}(\mathbf{x}_{t}),g_{t}^{2}\Delta t\mathbf{I}),
+(3)
+here g_{t}=a\sqrt{\frac{t}{1-t}} controls the level of stochasticity, \Delta t is the discretization step size and \mu_{\theta}(\mathbf{x}_{t}) equals to:
+\mathbf{x}_{t}+\left[\mathbf{v}_{\theta}(\mathbf{x}_{t},t)+\frac{g_{t}^{2}}{2t}(\mathbf{x}_{t}+(1-t)\mathbf{v}_{\theta}(\mathbf{x}_{t},t))\right]\Delta t.
+(4)
+Crucially, the transition kernels are reduced to tractable Gaussian distributions, which enables the direct application of the GRPO policy update to flow matching models.
+3 Method
+In this section, we first describe our data curation pipeline for constructing the supervised fine-tuning dataset used to train the LLM to replicate the T2G pattern. We then introduce Dual-GRPO, a reinforcement learning strategy that jointly optimizes both the LLM and the DiT using image-based rewards.
+Figure 3: t-SNE visualization of the embedding distributions before and after SFT. The distributions remain highly consistent, indicating that our SFT procedure preserves the embedding space structure and thus maintains compatibility with the DiT, enabling it to render stable and coherent visual outputs.
+3.1 Reasoning-aware Behavior Activation
+Given a raw user prompt set Q=\{q\}, we aim to enable the model to follow a T2G paradigm. Specifically, for each raw prompt, the model first performs CoT reasoning using its world knowledge to explicitly outline the content to be depicted, followed by summarizing this CoT into a descriptive refined prompt. During image generation, the embedding of the refined prompt serves as the conditioning signal for the DiT. To learn this pattern, we process Q to construct a supervised fine-tuning dataset using Gemini-2.5 [14]. We prompt it to perform CoT reasoning, descriptively inferring what should be depicted and generating a refined prompt. This curated dataset follows the format: raw user prompt → [long CoT] → refined prompt. We then fine-tune the text encoder on this curated dataset.
+Qwen2.5-VL serves as both a rewriter and an encoder in our T2G paradigm. While SFT activates its rewriting potential, it remains unclear whether SFT degrades its encoding function: does SFT alter the embedding space in a way that harms the DiT’s ability to generate coherent images? To examine this, we visualize Qwen2.5-VL [1] text embeddings before and after SFT using t-SNE [5]. It reveals distributional shifts by showing whether embeddings overlap or separate in a low-dimensional space. Interestingly, Figure 3 shows that the embeddings totally overlap, indicating that SFT preserves the distribution of the embedding space and thereby maintains DiT’s capacity to produce stable and reasonable visual outputs.
+3.2 Dual-GRPO for LLM-DiT Composite Models
+Figure 4: Dual-GRPO training trajectories. (a) Tree-structured rollout for a given user prompt q: the LLM encoder samples J reasoning traces, each rewritten prompt conditions the DiT to generate K images. Image-grounded rewards are aggregated to compute group-relative advantages for updating both the LLM and the DiT. (b) Evolution of alignment and style scores during training, demonstrating how DiT training improves both semantic alignment and visual quality over time.
+Given q, which may be vague or implicitly specified, conventional DMs employ an LLM text encoder p_{\phi} to encode q into a latent representation p_{\phi}(q), which serves as the conditioning input for the DiT p_{\lambda} to generate the corresponding image. After our supervised fine-tuning, the LLM encoder first performs CoT reasoning to generate text tokens \mathbf{z} and then encodes them into a reasoning-aware representation \hat{\mathbf{z}} that serves as conditions for the DiT decoding.
+To be specific, the DMs can be viewed as a composite policy model parameterized by \theta=\{\phi,\lambda\}. Formally, it can be defined as
+\pi_{\theta}(o_{t}\mid s_{t})=\left\{\begin{array}[]{lr}p_{\phi}(z_{t}\mid z_{<t},q)&t\leq\ell,\\
+p_{\lambda}(x_{t}\mid x_{t-1},\hat{\mathbf{z}})&t>\ell.\\
+\end{array}\right.
+(5)
+And the rollout trajectory is represented as
+\mathbf{o}=\{z_{1},\cdots,z_{\ell},x_{\ell+1},\cdots,x_{\ell+m}\}.
+In the above, z_{i} denotes the i-th generated text token by LLM in \mathbf{z}, with reasoning budget \ell.
+And x_{i} refers to the i-th prediction during the reverse sampling process \mathbf{x} with total iterative steps m.
+To apply the policy gradient algorithm to the composite model \pi_{\theta}, we can optimize the following objective:
+\displaystyle\max_{\theta=\{\phi,\lambda\}}\mathbb{E}_{q\sim p(Q),\{z_{1},\cdots,x_{\ell+m}\}\sim\pi_{\theta}}
+(6)
+\displaystyle\frac{1}{\ell+m}\left[\sum_{t=1}^{\ell}R_{1}(z_{t},z_{<t},q)+\sum_{t=\ell+1}^{\ell+m}R_{2}(x_{t},x_{t-1},\hat{\mathbf{z}})\right],
+where p(Q) is the distribution of user prompts, R_{1} and R_{2} respectively denote the reward functions for the LLM and DiT components, details about the reward functions are discussed in Section 3.3.
+To take advantage of the group relative formulation for the estimation of advantages, we first sample a collection of outputs from the previous policy \pi_{\theta_{old}}. Specifically, as illustrated in Figure 4, given a user prompt q, we sample J reasoning sequences \{\mathbf{z}_{j}\}_{j=1}^{J} from p_{\phi_{old}}, and for each \hat{\mathbf{z}}_{j}, we sample K images \{\mathbf{x}_{j,k}\}_{k=1}^{K} from p_{\lambda_{old}}. This hierarchical sampling strategy enables us to compute group-relative advantages for both components within one rollout. By incorporating the standard PPO clipping mechanism and KL divergence regularization, we arrive at the Dual-GRPO objective:
+\displaystyle\max_{\theta=\{\phi,\lambda\}}\mathbb{E}_{q\sim p(Q),\{z_{1},\cdots,x_{\ell+m}\}_{i=1}^{J\times K}\sim\pi_{\theta_{old}}}
+(7)
+\displaystyle\frac{1}{l+m}\left[\sum_{t=1}^{l}\mathcal{L}_{t}(\phi)+\sum_{t=l+1}^{l+m}\mathcal{L}_{t}(\lambda)\right],
+where \mathcal{L}_{t}(\phi) follows the standard GRPO formulation for language models with group size J:
+\displaystyle\frac{1}{J}\sum_{j=1}^{J}\left[\min\left(r_{j,t}(\phi),\text{clip}(r_{j,t}(\phi),1-\epsilon,1+\epsilon)\right)\hat{A}_{j,t}\right]
+(8)
+\displaystyle-\beta\mathbb{D}_{KL}\left[p_{\phi}(z_{j,t})\parallel p_{\phi_{ref}}(z_{j,t})\right],
+where r_{j,t}(\phi)=\frac{p_{\phi}(z_{j,t}\mid z_{j,<t},q)}{p_{\phi_{old}}(z_{j,t}\mid z_{j,<t},q)}, the group-relative advantage \hat{A}_{j,t} for the LLM p_{\phi} is calculated by aggregating the rewards from all K images generated from the same reasoning output \hat{\mathbf{z}}_{j}.
+Similarly, denote r_{j,k,t}(\lambda)=\frac{p_{\lambda}(x_{j,k,t}\mid x_{j,k,t-1},\hat{\mathbf{z}}_{j})}{p_{\lambda_{old}}(x_{j,k,t}\mid x_{j,k,t-1},\hat{\mathbf{z}}_{j})}, the loss term \mathcal{L}_{t}(\lambda) for the DiT p_{\lambda} employs a formulation of Flow-GRPO with an extra batch dimension with size J and group size K:
+\displaystyle\frac{1}{J}\sum_{j=1}^{J}\frac{1}{K}\sum_{k=1}^{K}\left[\min\left(r_{j,k,t}(\lambda),\text{clip}(r_{j,k,t}(\lambda),1-\epsilon,1+\epsilon)\right)\hat{A}_{j,k,t}\right]
+(9)
+\displaystyle-\beta\mathbb{D}_{KL}\left[p_{\lambda}(x_{j,k,t}\mid x_{j,k,t-1},\hat{\mathbf{z}}_{j})\parallel p_{\lambda_{ref}}(x_{j,k,t}\mid x_{j,k,t-1},\hat{\mathbf{z}}_{j})\right].
+3.3 The Reward Function and Scheduler
+When GRPO is applied to language models or flow matching models, it is common to use an outcome-based reward that depends only on the final prediction, and all intermediate states within the rollout trajectory share the same reward. Such a design implicitly assumes that each step contributes equally to the final outcome, overlooking the fact that different stages of the trajectory influence distinct aspects of the final result.
+Taking into account that the composite model is a two-stage model, we can design stage-specific reward functions that align with the distinct characteristics of each stage.
+During the LLM reasoning stage, most of the semantic content of the generated image is determined within the reasoning output \hat{\mathbf{z}}. And the reward for each reasoning step is the averaged semantic consistency score R_{sem} over all K generated images sampled from p_{\lambda_{old}}(\mathbf{x}\mid\hat{\mathbf{z}}):
+R_{1}(z_{j,t},z_{j,<t},q)=\beta_{1}(\tau)\frac{1}{K}\sum_{k=1}^{K}R_{sem}(\mathbf{x}_{j,k},q).
+(10)
+In the above, \beta_{1}(\tau) is the scheduler for reward weighting, which is a function of the current training step \tau. With this scheduler, we can assign different emphases to the rewards of the LLM and the diffusion model at different stages of training. The corresponding advantage is calculated as
+\hat{A}_{j,t}=\frac{R_{1}(z_{j,t},z_{j,<t},q)-\operatorname{mean}\left(\{R_{1}(z_{j,t},z_{j,<t},q)\}_{j=1}^{J}\right)}{\operatorname{std}\left(\{R_{1}(z_{j,t},z_{j,<t},q)\}_{j=1}^{J}\right)}.
+(11)
+During the diffusion sampling stage, the model needs to render the reasoning output into an aesthetically pleasing and physically consistent image. For a reverse time trajectory \mathbf{x}_{j,k} conditioned on a previous reasoning output \hat{\mathbf{z}}_{j}, the reward for each step is defined as a weighted sum of the aesthetic score R_{aes}, the physical consistency score R_{con}, and the semantic consistency score R_{sem} of the final generated image [31]:
+\displaystyle R_{2}(x_{j,k,t},x_{j,k,t-1},\hat{\mathbf{z}}_{j})=
+(12)
+\displaystyle\beta_{2}(\tau)\left(\omega_{1}R_{aes}(\mathbf{x}_{j,k})+\omega_{2}R_{con}(\mathbf{x}_{j,k})+\omega_{3}R_{sem}(\mathbf{x}_{j,k})\right),
+\omega_{1},\omega_{2},\omega_{3} are the weights for different components of the reward. Similarly, \beta_{2}(\tau) is the scheduler for the diffusion sampling stage.
+4 Experiments
+In this section, we evaluate the effectiveness of our T2G paradigm across T2I and image editing tasks. Both quantitative and qualitative results validate the advantages of our approach.
+4.1 Implementation Details
+We post-train Qwen-Image [34] and Qwen-Image-edit [34] for the T2I and image-editing tasks, respectively. Consequently, the LLM encoder is initialized from Qwen2.5-VL [1], and the corresponding DiT backbone is initialized from MM-DiT [11]. Our post-training pipeline is separated into two stages. For the supervised fine-tuning stage, each model is trained with a learning rate of 5e-6 and a batch size of 32. In the subsequent Dual-GRPO stage, we apply a simple reward scheduler with constant and balanced weights: \beta_{1}(\tau)=\beta_{2}(\tau)=0.5, where both the LLM and the DiT are updated jointly at every iteration. In Appendix 1, we explore different designs of the scheduler. During the LLM training, we employ a learning rate of 2e-6 with a batch size of 256, generating 5 responses per input. For the DiT training, we adhere to the default configuration of FlowGRPO-fast[22], utilizing a learning rate of 3e-4, a batch size of 32, and a clipping range of 1e-4. The generation process involves sampling 16 images for each prompt over 10 inference steps, with an SDE window of 2.
+Table 1: Comparison of image generation models on WISE. Numbers in bold indicate the highest score among open-source models. Underlined numbers denote the highest score.
+Model
+Type
+Cultural
+Time
+Space
+Biology
+Physics
+Chemistry
+Overall \uparrow
+FLUX.1-dev
+diffusion
+0.48
+0.58
+0.62
+0.42
+0.51
+0.35
+0.50
+SD-3.5-medium
+diffusion
+0.43
+0.50
+0.52
+0.41
+0.53
+0.33
+0.45
+SD-3.5-large
+diffusion
+0.44
+0.50
+0.58
+0.44
+0.52
+0.31
+0.46
+Bagel w/CoT
+unified
+0.76
+0.69
+0.75
+0.65
+0.75
+0.58
+0.70
+Janus-Pro-7B
+unified
+0.30
+0.37
+0.49
+0.36
+0.42
+0.26
+0.35
+HunyuanImage-3.0
+unified
+0.58
+0.57
+0.72
+0.56
+0.68
+0.35
+0.58
+T2I-R1
+unified
+0.56
+0.55
+0.63
+0.54
+0.55
+0.30
+0.54
+Uni-CoT
+unified
+0.76
+0.70
+0.76
+0.73
+0.81
+0.73
+0.75
+GPT 4o
+proprietary
+0.81
+0.71
+0.89
+0.83
+0.79
+0.74
+0.80
+Qwen-Image
+diffusion
+0.62
+0.63
+0.78
+0.55
+0.67
+0.35
+0.61
+Ours (w/o SFT+GRPO)
+diffusion
+0.68
+0.58
+0.77
+0.62
+0.76
+0.41
+0.65
+Ours (w/o GRPO)
+diffusion
+0.76
+0.66
+0.79
+0.74
+0.84
+0.65
+0.74
+Ours
+diffusion
+0.80
+0.74
+0.83
+0.81
+0.85
+0.66
+0.79
+4.2 Text-to-Image Generation
+4.2.1 Supervised Fine-tuning
+To activate the T2G pattern of Qwen2.5-VL, we first carefully curate a raw user prompt dataset comprising 7,000 samples. A core criterion for curation is that each prompt requires integration of world knowledge and reasoning to generate a semantically coherent corresponding image. For example, prompts like “Generate an image of traditional food associated with the Dragon Boat Festival”. Then we instruct Gemini-2.5 [14] to perform CoT reasoning using its world knowledge to explicitly outline what content should be depicted and summarize it into a descriptive refined prompt. We then fine-tune Qwen2.5-VL on this dataset to replicate the T2G pattern when given new prompts.
+4.2.2 Quantitative Results
+Benchmarks. We evaluate performance across various T2I benchmarks requiring reasoning capacity. WISE [24] evaluates models with 1000 meticulously crafted prompts across 25 sub-domains in cultural common sense, spatio-temporal understanding, and natural science. T2I-ReasonBench [31] comprises 800 prompts organized into four dimensions: idiom interpretation, textual image design, entity-reasoning, and scientific-reasoning. It introduces a two-stage evaluation framework to quantify performance: an LLM first generates prompt-specific question-criterion pairs evaluating if the image includes the essential elements resulting from correct reasoning, and a multimodal LLM then scores the generated image against these criteria.
+Baselines. We compare with 10 state-of-the-art T2I models, including 4 diffusion-based
+T2I models, 4 unified multimodal models, and 2 proprietary models. The diffusion-based T2I models are FLUX.1-dev [20], Stable-Diffusion-3-Medium [11], Stable-Diffusion-3.5-Large [11], and Qwen-Image [34]. The unified multimodal models are Bagel [10], Uni-CoT [26], Emu3 [33], Janus-Pro-7B [9], HunyuanImage-3.0 [6], and T2I-R1 [18]. The proprietary models include Gemini-2.0 [13] and GPT-4o [17].
+Figure 5: Comparison of T2I models on conceptual image editing. Vanilla Qwen-Image fails to interpret instructions (e.g., showing an ice cream under sunlight instead of melting), behaving as a text–pixel mapper. Our model correctly infers intended semantics, producing coherent, aesthetically pleasing edits with high consistency to the original image, outperforming unified models like Emu2 and Bagel.
+Table 2: Comparison of generation models on T2I-ReasonBench. Numbers in bold are the highest score among open-source models. Underlined numbers denote the highest score.
+Idiom
+Textual
+Entity
+Scientific
+Overall \uparrow
+Model
+Type
+Acc.
+Qual.
+Acc.
+Qual.
+Acc.
+Qual.
+Acc.
+Qual.
+Acc.
+Qual.
+FLUX.1-dev
+diffusion
+39.1
+83.4
+56.9
+76.5
+45.1
+90.6
+46.7
+80.9
+47.0
+82.8
+SD-3.5-medium
+diffusion
+34.4
+80.6
+58.0
+70.1
+44.8
+92.1
+49.9
+83.0
+46.8
+81.4
+SD-3.5-large
+diffusion
+35.6
+85.3
+62.2
+75.4
+46.6
+92.6
+52.9
+84.5
+49.3
+84.4
+Bagel w/CoT
+unified
+44.6
+84.3
+44.0
+73.7
+52.4
+91.6
+57.7
+88.3
+49.7
+84.5
+Janus-Pro-7B
+unified
+25.5
+78.0
+37.2
+70.9
+38.5
+87.6
+44.9
+77.8
+36.5
+78.6
+HunyuanImage-3.0
+unified
+25.4
+80.2
+54.2
+80.9
+52.3
+92.2
+56.8
+84.4
+47.2
+84.4
+UniCoT
+unified
+49.0
+84.2
+58.1
+92.3
+73.5
+92.9
+51.9
+71.7
+58.1
+85.3
+Gemini-2.0
+proprietary
+52.4
+87.8
+73.0
+83.3
+67.0
+94.3
+66.7
+89.3
+64.8
+88.7
+GPT-4o
+proprietary
+75.7
+94.5
+86.9
+97.6
+77.5
+96.6
+74.7
+94.3
+78.7
+95.8
+Qwen-Image
+diffusion
+48.1
+84.3
+66.5
+85.8
+57.1
+84.7
+59.5
+85.3
+57.8
+87.5
+Ours (w/o SFT+GRPO)
+diffusion
+51.7
+86.3
+71.7
+83.8
+57.3
+92.8
+62.8
+87.6
+60.9
+86.6
+Ours (w/o GRPO)
+diffusion
+59.5
+90.4
+71.5
+87.1
+61.29
+93.9
+72.2
+91.8
+66.1
+90.8
+Ours
+diffusion
+58.5
+90.6
+75.2
+89.5
+68.8
+95.2
+72.9
+93.5
+68.3
+92.2
+Results analysis. From Table 1 and 2, we find that DMs exhibit weak performance on both the WISE and T2I-ReasonBench benchmarks. This stems from its fundamental misalignment between their architectural design (i.e., treat LLMs only as a text encoder) and the demands of knowledge-intensive, reasoning-driven T2I generation. These models excel at pixel-level detail synthesis, but their reliance on shallow text-image alignment restricts them to capturing surface-level semantic correlations—insufficient for tasks requiring deep knowledge integration. For instance, DMs such as vanilla Qwen-Image only achieves 0.35 in WISE chemistry domains, failing to translate abstract concepts (e.g., reaction stoichiometry) into logically consistent visuals, underscoring the importance of our work.
+Moreover, we evaluate the zero-shot performance of Qwen-Image by introducing a CoT step: for raw user prompts, we first prompt the model to generate reasoning before outputting a refined prompt. As shown in the results, this modification yields marginal improvement: the overall WISE score increases from 0.61 to 0.65. However, it still lags significantly behind optimized variants, as it lacks task-specific supervised signals to align its reasoning process with the need to infer visually actionable attributes suitable for DiT decoding.
+To address this misalignment between reasoning and visual generation requirements, we further conduct SFT training. However, the CoT generation process remains unaware of the image generation module DiT under the SFT pipeline. This decoupling can lead to the LLM generating some strange tokens that the DiT cannot render into a reasonable image. This can be alleviated by further dual-GRPO training, where the image-grounded rewards are used for LLM optimization and DiT is adapted for better visual rendering. As seen, our models after SFT and GRPO achieves breakthrough performance on both benchmarks (0.79 on WISE, 68.3 accuracy on T2I-ReasonBench) by addressing the long-standing challenge of reasoning-generation co-optimization. It achieves a leading performance across open-source T2I models and outperforms the leading proprietary model Gemini-2.0, approaching the SOTA of closed systems GPT-4o, proving that with our T2G paradigm, open models can match or even surpass closed alternatives in knowledge-intensive visual generation tasks.
+4.2.3 Qualitative Results
+We analyze the CoT trajectories generated before and after GRPO and observe errors in the roll-out samples (e.g., labeling dumplings as a traditional food for the Dragon Boat Festival in China). These incorrect samples are penalized during GRPO, leading to improved accuracy. Moreover, Figure 2 illustrates images generated by Qwen-Image under the T2G paradigm, demonstrating its superior ability to infer and understand raw user prompts, while producing text-consistent, visually coherent, and aesthetically pleasing images.
+4.3 Image Editing
+4.3.1 Supervised Fine-tuning
+For raw user instructions for image editing, we select the UniREdit-Data-100K [26], a large-scale synthetic dataset specifically curated for image editing with high-quality CoT reasoning annotations. Following the same training data format as T2I generation tasks, we augment this dataset by instructing Gemini-2.5 [14] to conclude a refined prompt for each raw instruction and corresponding CoT. This augmented dataset is used to fine-tune Qwen-Image-Edit. For Dual-GRPO training, we randomly select 5k raw user prompts from this dataset.
+4.3.2 Quantitative Results
+Benchmarks. We evaluate performance across various image editing benchmarks requiring reasoning capacity. UniREditBench [26] evaluates models with 2,700 meticulously curated samples, covering both real- and game-world scenarios. RISEBench [38] comprises 327 prompts designed to evaluate models on reasoning-aware tasks across temporal, causal, spatial, and logical dimensions. It proposes a robust evaluation framework that assesses instruction reasoning, appearance consistency, and visual plausibility using the LMM-as-a-judge approach.
+Results analysis. As shown in Table 3, after our post-training, QwenImage-Edit achieves strong performance on image editing tasks, even surpassing Gemini-2.5-Flash-Image on the UniREdit benchmark. Moreover, it exhibits a substantial improvement over the SFT-only baseline, demonstrating the effectiveness of our Dual-GRPO in enhancing CoT reasoning through image-based rewards.
+Table 3: Comparisons of image editing results on UniREditBench and RISEBench. Numbers in bold indicate the highest score among open-source models. Underlined numbers denote the highest score. Detailed scores are shown in Appendix 2.
+Model
+Type
+UniREdit \uparrow
+RISE \uparrow
+Gemini-2.5-Flash-Image
+proprietary
+68.3
+32.8
+GPT-Image-1
+proprietary
+73.4
+28.9
+Seedream-4.0
+proprietary
+55.8
+10.8
+Bagel w/ CoT
+unified
+51.0
+9.2
+UniWorld-V2
+unified
+54.9
+-
+FLUX.1-Kontext
+diffusion
+45.8
+5.8
+Qwen-Image-Edit
+diffusion
+56.5
+8.9
+Ours (w/o GRPO)
+diffusion
+61.1
+20.2
+Ours
+diffusion
+68.7
+23.9
+4.3.3 Qualitative Results
+As shown in Table 5, vanilla Qwen-Image struggles to interpret conceptual editing instructions. For the prompt “draw what the ice cream looks like after being exposed to the sun,” it merely renders the reference image under sunlight, resulting in visually incoherent output and revealing its behavior as a simple text–pixel mapper. In contrast, our model trained under the T2G paradigm correctly infers the intended semantics—e.g., depicting the ice cream melting—and produces coherent edits. Moreover, the qualitative results show that our model generates more aesthetically pleasing images than unified models such as Emu2 and Bagel, while achieving the highest consistency between the edited image and the original one. These findings highlight its potential as a next-generation unified model for real-world applications.
+4.4 Ablation Studies
+To evaluate the effectiveness of our SFT, we conduct an ablation study, noting that the vanilla Qwen-VL already possesses a certain degree of reasoning capability. Specifically, we compare models trained with and without the SFT stage that teaches the T2G pattern. As shown in Table 4, the model with SFT significantly outperforms the variant without it. This improvement stems from SFT explicitly aligning the reasoning process (CoT → refined prompt) with the generation pipeline, enabling the model to produce semantically grounded refined prompts rather than relying on shallow pattern matching or implicit reasoning. Consequently, the DiT receives more coherent conditioning signals, leading to consistently higher-quality image generation.
+Table 4: Ablation studies on the importance of SFT. w/o SFT denotes the vanilla Qwen-Image with thinking system prompt.
+Model
+WISE\uparrow
+T2I-Reason\uparrow
+Acc.
+Qual.
+w/o SFT
+0.65
+60.9
+86.6
+w/o SFT + GRPO
+0.70
+66.9
+91.0
+w/ SFT
+0.74
+66.1
+90.8
+w/ SFT + GRPO
+0.79
+68.3
+92.2
+5 Related Work
+5.1 RL for Diffusion Models
+Reinforcement learning has emerged as a powerful paradigm for aligning generative models with human preferences, yet its application to diffusion models faces unique challenges due to deterministic sampling and intractable likelihood estimation. Early approaches like DDPO [3] discretized the reverse process to enable policy gradient updates but suffered from solver restrictions and instability when scaling to complex prompts. Flow-GRPO [22] pioneered online RL integration for flow matching by converting ODEs to equivalent SDEs for exploration and introducing denoising reduction to improve sampling efficiency. While effective for compositional generation and text rendering, it optimizes only the diffusion backbone while freezing the text encoder—a limitation restricting its capacity for knowledge-intensive tasks. Similarly, DanceGRPO [36] enhanced stability through group-wise relative policy optimization across multiple generative paradigms but maintained the same encoder-freezing paradigm. DiffusionNFT [39] circumvented likelihood estimation by optimizing directly on the forward process via contrastive preference learning, achieving remarkable efficiency gains. However, all these methods treat the text encoder as a static feature extractor, overlooking its potential for semantic reasoning when endowed with world knowledge (e.g., in LLM-based encoders). Recent work like Diffusion-SDPO [12] addressed optimization pathologies in preference learning but still operated solely on the decoder. Our Dual-GRPO framework fundamentally diverges by jointly optimizing both the LLM encoder and diffusion decoder through a composite policy design.
+5.2 Multimodal Models for Image Generation
+The shift toward unified multimodal architectures has accelerated with the emergence of models possessing strong image generation capabilities, such as HunyuanImage [6] and BAGEL [10], which integrate vision-language understanding and generation within a single autoregressive framework. HunyuanImage leverages MoE architectures (over 80B parameters) to unify multimodal processing, while BAGEL demonstrates emergent reasoning capabilities via training on interleaved text-image-video data. This deep integration of textual and visual modeling holds promise for improved image generation conditioned on conceptual and complex prompts. Despite these advances, such models remain biased toward literal generation, largely due to their reliance on descriptive caption datasets during training. To mitigate this, several post-training frameworks incorporate multimodal CoT reasoning. For example, T2I-R1 [18] leverages reinforcement learning with bi-level CoT reasoning to jointly enhance high-level prompt planning and low-level pixel generation. In parallel, Uni-CoT proposes a unified two-level reasoning paradigm, consisting of a macro-Level CoT for high-level task planning and a micro-Level CoT for fine-grained subtask execution, all within a single multimodal model. Instead of focusing on unified architectures, our framework emphasizes incorporating text-based CoT reasoning within the LLM encoder to enhance diffusion models.
+6 Conclusion
+This work addresses a key limitation of T2I diffusion models: their literal text-to-pixel mapping fails to exploit LLMs’ reasoning and world knowledge. We propose the think-then-generate paradigm, turning LLMs from passive encoders into active reasoning agents. Our framework has two components: a lightweight supervised fine-tuning to activate LLMs reasoning with raw prompts; and Dual-GRPO, which jointly optimizes LLMs for image-grounded semantic consistency and DiT for visual realism. Experiments show that our approach outperforms open-source baselines, surpasses Gemini-2.0, and excels in conceptual image editing, enabling knowledge-intensive visual generation.

@@ -1,0 +1,64 @@
+{
+  "checked_at": "2026-10-05T07:33:40.376782+00:00",
+  "events": [
+    {
+      "url": "https://github.com/MiniMax-AI/OpenAgentCore/commit/619a8263f44993bcb658f268ae1a74814196b5f4",
+      "sha": "619a8263f44993bcb658f268ae1a74814196b5f4",
+      "message": "Serve Core's API through Web and drop managed HTTPS\n\nWeb forwards /v1 and /api/v1 to Core unchanged, so the gateway service,\nits image's Caddy, https.yaml and the domain setup (oac domain, the\ndomain API and the System page) are gone. An installation is init,\ndatabase, core and web; the operator's reverse proxy or hosting platform\nterminates HTTPS and routes to web:8080. No service receives a Docker\nsocket.\n\nCo-authored-by: Cursor <cursoragent@cursor.com>",
+      "files": [
+        {
+          "filename": "deploy/README.md",
+          "patch": "@@ -11,11 +11,9 @@\n \n `install.sh` downloads its release's `compose.yaml` and port files, checks them against `compose-sha256sums.txt`, writes `.env`, and starts Compose. Core applies database migrations when it starts. The host needs Linux amd64 and Docker Compose 2.26 or newer. [Configuration](../docs/configuration.md) owns the installation layout and settings.\n \n-`oac` is a Go command (`services/core/cmd/oac`) in the Core image and the gateway image. The host copy implements `apply`, `domain`, `core-key` and `rotate-core-key`; `core-key --show` runs `oac-web core-key` in the Web container. Start, stop, logs and removal are `docker compose`. `apply` runs `oac-core check-config` before recreating services. The gateway image runs data initialization as `oac init`, its health check as `oac healthcheck` and, with managed HTTPS, domain setup as `oac gateway`; it contains no Python. `oac gateway` reaches Docker through the mounted socket and its client library, so the image carries no Docker CLI.\n+`oac` is a Go command (`services/core/cmd/oac`) in the Core image and the ingress image. The host copy implements `apply`, `core-key` and `rotate-core-key`; `core-key --show` runs `oac-web core-key` in the Web container. Start, stop, logs and removal are `docker compose`. `apply` runs `oac-core check-config` before recreating services. The ingress image runs data initialization as `oac init` and contains no Python. No service receives a Docker socket.\n \n-## Managed HTTPS\n-\n-Managed installs add `https.yaml`, which publishes ports 80 and 443 and runs the gateway as `oac gateway`: Caddy as an unprivileged child plus the domain API. The gateway is then the only service with the Docker socket. Web reaches it through `data/domain/api.sock`, and every request carries the Core key. External proxies and hosting platforms omit `https.yaml` and set `OAC_PUBLIC_URL` in `.env`.\n+Web serves the console and forwards `/v1` and `/api/v1` to Core, so it is the only published service. HTTPS is terminated by the operator's reverse proxy or hosting platform, which routes to `web:8080`; `OAC_PUBLIC_URL` records that origin.\n \n ## Native daemon installer\n "
+        },
+        {
+          "filename": "deploy/compose/compose.yaml",
+          "patch": "@@ -114,64 +114,8 @@ services:\n         source: ${OAC_DATA_DIR:-./data}/node-payload\n         target: /node-payload\n         read_only: true\n-      - type: bind\n-        source: ${OAC_DATA_DIR:-./data}/domain\n-        target: /domain\n-        read_only: true\n-\n-  gateway:\n-    image: *ingress-image\n-    platform: linux/amd64\n-    user: \"65532:65532\"\n-    restart: unless-stopped\n-    security_opt: [no-new-privileges:true]\n-    tmpfs: [/tmp:mode=1777]\n-    environment:\n-      XDG_DATA_HOME: /tmp/data\n-      XDG_CONFIG_HOME: /tmp/config\n-    command: [caddy, run, --config, /etc/caddy/Caddyfile, --adapter, caddyfile]\n-    depends_on:\n-      core: {condition: service_started}\n-      web: {condition: service_started}\n-      init: {condition: service_completed_successfully}\n-    expose: [\"8080\"]\n-    configs:\n-      - source: gateway-config\n-        target: /etc/caddy/Caddyfile\n-      - source: gateway-routes\n-        target: /etc/oac/routes.caddy\n-    volumes:\n-      - type: bind\n-        source: ${OAC_DATA_DIR:-./data}/caddy\n-        target: /data/caddy\n     healthcheck:\n-      test: [CMD, /usr/local/bin/oac, healthcheck]\n+      test: [CMD, /usr/local/bin/oac-web, healthcheck]\n       interval: 5s\n       timeout: 10s\n       retries: 30\n-\n-configs:\n-  gateway-config:\n-    content: |\n-      {\n-      \tadmin unix//data/caddy/admin.sock\n-      \tstorage file_system /data/caddy/storage\n-      }\n-      http://:8080 {\n-      \timport /etc/oac/routes.caddy\n-      }\n-      import /data/caddy/site.caddy\n-\n-  gateway-routes:\n-    content: |\n-      @core path /v1 /v1/* /api/v1 /api/v1/*\n-      handle @core {\n-      \treverse_proxy core:8091 {\n-      \t\tflush_interval -1\n-      \t}\n-      }\n-      handle {\n-      \treverse_proxy web:8080 {\n-      \t\tflush_interval -1\n-      \t}\n-      }"
+        },
+        {
+          "filename": "deploy/compose/ports.yaml",
+          "patch": "@@ -1,7 +1,7 @@\n-# Host installation publishes the gateway and Core's loopback admin API for\n-# scripts on the host. Hosting platforms omit this file.\n+# Host installation publishes Web and Core's loopback admin API for scripts on\n+# the host. Hosting platforms omit this file and route to web:8080 themselves.\n services:\n-  gateway:\n+  web:\n     ports:\n       - \"${OAC_HOST:-127.0.0.1}:${OAC_WEB_PORT:-8080}:8080\"\n   core:"
+        },
+        {
+          "filename": "services/web/core_routes.go",
+          "patch": "@@ -6,8 +6,8 @@ import (\n )\n \n // coreDirectRequest reports the application (/v1) and machine connection\n-// (/api/v1) namespaces. The reverse proxy routes them straight to Core; the\n-// console never forwards them, whatever credential they carry.\n+// (/api/v1) namespaces. The console forwards them to Core unchanged and adds\n+// no credential of its own.\n func coreDirectRequest(r *http.Request) bool {\n \tfor _, prefix := range []string{\"/v1\", \"/api/v1\"} {\n \t\tif r.URL.Path == prefix || strings.HasPrefix(r.URL.Path, prefix+\"/\") {"
+        }
+      ],
+      "file_names": null
+    },
+    {
+      "url": "https://github.com/MiniMax-AI/OpenAgentCore/commit/f721f41efa814c8a24131a88b368237b72b5e7bd",
+      "sha": "f721f41efa814c8a24131a88b368237b72b5e7bd",
+      "message": "Stop publishing Core's admin port on the host\n\nCore only needs Docker-internal core:8091; Web is the single published\nentry. Operator scripts reach /core/v1 from Core's network namespace.\nRemove the now-unused oac healthcheck and record the conciseness rule\nin AGENTS.md.",
+      "files": [
+        {
+          "filename": "deploy/compose/ports.yaml",
+          "patch": "@@ -1,9 +1,6 @@\n-# Host installation publishes Web and Core's loopback admin API for scripts on\n-# the host. Hosting platforms omit this file and route to web:8080 themselves.\n+# Host installation publishes Web. Hosting platforms omit this file and route\n+# to web:8080 themselves.\n services:\n   web:\n     ports:\n       - \"${OAC_HOST:-127.0.0.1}:${OAC_WEB_PORT:-8080}:8080\"\n-  core:\n-    ports:\n-      - \"127.0.0.1:8091:8091\""
+        }
+      ],
+      "file_names": null
+    },
+    {
+      "url": "https://github.com/XiaomiMiMo/MiMo-Code/commit/6babeb0b98f9b4818bddf04a4331edfee04dbf85",
+      "sha": "6babeb0b98f9b4818bddf04a4331edfee04dbf85",
+      "message": "fix(provider): refresh model configuration without disposing instances (#2603)\n\n* fix(provider): refresh models without disposing live instances\n\n* docs(provider): define local refresh review contract\n\n* fix(sdk): expose provider refresh without changing the provider client\n\n* fix(provider): constrain refresh scope and guard instance activity\n\n* fix(instance): reject stale sampling admission during teardown\n\n* docs(provider): record refresh verification and review\n\n* test(provider): isolate process-wide refresh suites in CI\n\n* docs(provider): record isolated CI verification",
+      "files": [],
+      "file_names": [
+        ".github/workflows/test.yml",
+        "docs/compose/spec/provider-local-refresh.md",
+        "packages/cli/src/config/config.ts",
+        "packages/cli/src/mcp/sampling.ts",
+        "packages/cli/src/plugin/index.ts",
+        "packages/cli/src/project/instance.ts",
+        "packages/cli/src/provider/provider.ts",
+        "packages/cli/src/provider/refresh.ts",
+        "packages/cli/src/server/routes/global.ts",
+        "packages/cli/src/server/routes/instance/httpapi/server.ts",
+        "packages/cli/test/fake/provider.ts",
+        "packages/cli/test/provider/refresh-boundaries.test.ts",
+        "packages/cli/test/provider/refresh.test.ts",
+        "packages/sdk/src/v2/gen/sdk.gen.ts",
+        "packages/sdk/src/v2/gen/types.gen.ts"
+      ]
+    }
+  ]
+}

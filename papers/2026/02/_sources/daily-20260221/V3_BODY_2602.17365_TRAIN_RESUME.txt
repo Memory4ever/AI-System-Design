@@ -1,0 +1,94 @@
+A.2.2 Stage 1: Qwen2.5-VL supervised training (textual transitions)
+In this stage, we use Qwen2.5-VL as a vision-language model to map (st,at)(s_{t},a_{t}) to a textual transition description Δt\Delta_{t}.
+The model receives the current UI screenshot sts_{t} and a natural-language action ata_{t} as input, and is trained to generate ΔtGT\Delta_{t}^{\mathrm{GT}}. We optimize a standard autoregressive cross-entropy loss on the target transition text:
+ℒSFT=−log⁡p⁡(ΔtGT∣st,at)\mathcal{L}_{\mathrm{SFT}}=-\log p(\Delta_{t}^{\mathrm{GT}}\mid s_{t},a_{t}).
+We fine-tune the model using LoRA,
+all Stage 1 hyperparameters are summarized in Table 7.
+Table 8: Stage 2 (Qwen-Image-Edit) SFT hyperparameters.
+Category
+Setting
+Model
+Qwen-Image-Edit-2509
+Training type
+LoRA
+LoRA base
+DiT
+Target modules
+to_q, to_k, to_v, add_q_proj, add_k_proj,
+add_v_proj, to_out.0, to_add_out, img_mlp.net.2,
+img_mod.1, txt_mlp.net.2, txt_mod.1
+LoRA rank
+32
+LoRA alpha
+32
+Precision
+16-mixed
+Learning rate
+1e-4
+Warmup ratio
+0
+Weight decay
+0.01
+Batch size
+1
+Grad accumulation
+1
+Max pixels
+1,048,576
+Table 9: Stage 1 GRPO hyperparameters.
+Category
+Setting
+Model
+SFT-Qwen2.5-VL
+Algorithm
+GRPO
+Train type
+LoRA
+Target modules
+all-linear
+Exclude modules
+.*visual.*
+KL loss
+enabled (coef=0.01)
+LoRA rank
+64
+LoRA alpha
+32
+Precision
+bfloat16
+Learning rate
+3e-6
+Warmup ratio
+0
+Weight decay
+0.01
+Train batch size
+32
+Rollout nn
+5
+ppo mini batch size
+32
+ppo micro batch size per gpu
+8
+Length Penalty Weight (β\beta)
+1
+Min Length Ratio (rlowr_{\text{low}})
+0.75
+Max Length Ratio (rupr_{\text{up}})
+1.25
+Max Penalty Score (mm)
+1.0
+A.2.3 Stage 2: Qwen-Image-Edit supervised training (visual realization)
+In this stage, we use Qwen-Image-Edit as a conditional image editing model to generate the next UI screenshot.
+The model is conditioned on the current UI screenshot and the predicted textual transition:
+s^t+1=fimage​(st,Δt)\hat{s}_{t+1}=f_{\mathrm{image}}(s_{t},\Delta_{t}).
+We fine-tune the model with a pixel-wise reconstruction objective using the mean squared error (MSE) loss:
+ℒEDIT=‖s^t+1−st+1‖22\mathcal{L}_{\mathrm{EDIT}}=\|\hat{s}_{t+1}-s_{t+1}\|_{2}^{2},
+where st+1s_{t+1} denotes the ground-truth next-state screenshot.
+We apply LoRA fine-tuning only to the DiT backbone of Qwen-Image-Edit,
+all Stage 2 hyperparameters are summarized in Table 8.
+A.2.4 Stage 1 RL Refinement: Qwen2.5-VL + GRPO
+Although SFT provides a faithful initialization, it does not guarantee that the generated textual transition Δt\Delta_{t} consistently captures the most decision-critical UI structures.
+To address this, we further refine the Stage 1 model using Group Relative Policy Optimization (GRPO), treating the VLM as a policy πθ\pi_{\theta} that generates Δt\Delta_{t} conditioned on (st,at)(s_{t},a_{t}).
+During training, for each input tuple (st,at)(s_{t},a_{t}), we sample a group of K=5K=5 candidate descriptions {Δt(k)}k=1K\{\Delta_{t}^{(k)}\}_{k=1}^{K} from the current policy using a temperature of 1.0 and top-pp of 1.0.
+GRPO optimizes 

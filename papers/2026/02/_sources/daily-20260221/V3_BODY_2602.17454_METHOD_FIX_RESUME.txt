@@ -1,0 +1,139 @@
+3.1. Motivation & Insights
+The transition of DP from theoretical research to production software has revealed a significant gap in our testing capabilities. While the mathematical properties of standard privacy primitives (e.g., the Laplace and Gaussian mechanisms) are well-understood, the pipelines that utilize them are increasingly complex and prone to implementation errors.
+In practice, most privacy violations do not stem from flaws in the primitives themselves. Rather, they arise from mechanism-independent integration errors, including sensitivity underestimation, incorrect noise scaling, and improper accounting. These are logic bugs, not statistical ones. Still, the standard approach to detecting them remains distributional auditing, which treats the algorithm as a black box and attempts to distinguish its output distributions on neighboring datasets. This approach faces three challenges:
+(1)
+Statistical Intractability: As noted by Gilbert and McMillan (2018), auditing unconstrained algorithms is computationally intractable. In complex pipelines involving adaptive composition, the output space grows exponentially.
+(2)
+Complexity of MIA Design: To detect a violation, an auditor must design a Membership Inference Attack (MIA) capable of distinguishing distributions with high confidence. This requires specialized expertise in threat modeling, extensive hyperparameter tuning, and massive computational resources.
+(3)
+Lack of Error Source: Even if the MIA successfully detects a violation, it provides a binary fail signal. It cannot pinpoint whether the error lies in pre-processing, sensitivity calibration, privacy primitives, or post-processing.
+A Structural Decomposition Approach
+To address this, we move beyond black-box distributional auditing and instead leverage the program’s structure to detect integration errors deterministically. Our framework initially assumes that the privacy primitives are correctly implemented—an assumption we later relax. This is a reasonable premise given the availability of community-vetted, open-source libraries such as OpenDP (OpenDP, 2020) and Tumult Analytics (Berghel et al., 2022). Then, if a mechanism such as laplace_mechanism(input, sensitivity, scale) is correctly implemented, we can focus on how the mechanism is used within the broader pipeline.
+Observing that DP algorithms interleave private primitives with logic that is not supposed to depend on the private data, we approach the auditing problem through structural decomposition. We distinguish between data-dependent functions (the privacy primitives) and data-independent ones (the control flow, pre-processing, and post-processing logic). Data-dependent functions are the only legitimate source of variation between executions on DD and D′D^{\prime}, and all other variations must be explained through sensitivity. To verify this, consider a thought experiment: suppose we overwrite every data-dependent mechanism in a pipeline to return a constant value (frozen output). If we then execute this pipeline on DD and D′D^{\prime} with the same seed, the program’s state must remain identical throughout execution. We define this property as invariance under DD and D′D^{\prime}. If any intermediate value diverges, the function was not data-independent, implying a privacy leak in the processing logic.
+This decomposition transforms the auditing problem. Instead of designing MIAs to estimate privacy loss bounds, we need to answer the following questions: (i) Do the data-independent parts of the pipeline remain invariant when the dataset changes, given fixed mechanism outputs? and (ii) Do the inputs fed into the trusted mechanisms respect the desired overall privacy guarantees?
+This shift in perspective enables us to transition from computationally expensive attacks to fast unit tests suitable for standard software development pipelines. This logic forms the foundation of Re:cord-play, which we detail in the following section.
+3.2. Re:cord-play
+Before presenting our method, we first outline the core assumptions and the threat model under which our auditing framework operates.
+Assumption 3.1.
+We assume the availability of correctly implemented privacy primitives (e.g., Gaussian, Laplace, Exponential mechanisms) for which the privacy accounting rules under composition are well established, and we have access to a correct accountant for them.
+Assumption 3.2.
+We assume access to a function that snapshots and restores the state of the system’s pseudo-random number generator. We assume that the developers provide this function, as it is becoming increasingly standard for reproducibility purposes.
+Threat Model: Gray-Box Auditing.
+We adopt a gray-box auditing model in which the adversary is not modeled as a malicious external actor, but rather as a developer who inadvertently introduces implementation errors into the processing logic. We designate this approach as “gray-box” because it relies on a selective visibility of the codebase: we require explicit access to the algorithm’s control flow, the intermediate variables passed to privacy primitives, and the state of the pseudo-random number generator. However, we treat the internal implementations of the privacy primitives themselves (e.g., the specific logic within a Laplace mechanism) as a black-box. This distinction is crucial, as it allows us to leverage structural knowledge of the intermediate code.
+Intuition
+Our approach operates on the principle that in a correctly implemented DP algorithm, the dependency on private data should be restricted to specific, accounted-for primitives. All surrounding control flow and parameter logic must remain data independent. To verify this, we employ a strategy of isolation: if we freeze the outputs of the privacy primitives, the entire remaining execution path of the algorithm should be identical for any two neighboring datasets DD and D′D^{\prime}. Any deviation in the program state outside of these primitives signals that private data has leaked into the “public” logic without paying the necessary privacy budget. This reduces the complex auditing task to two straightforward verifications: (i) that the data-independent logic remains invariant, and (ii) that the inputs entering the privacy primitives adhere to their declared sensitivity limits.
+Trace Generation and Strict Equality.
+To implement this verification, Re:cord-play (formalized in Algorithm 1) generates parallel execution traces by instrumenting the target algorithm 𝒜\mathcal{A}. A central hook intercepts all calls to DP primitives.
+Beyond standard primitives (e.g., Laplace), our framework supports a specialized verification node denoted as ensure_equality. This node allows the auditor to explicitly assert that specific intermediate values, such as hyperparameters, metadata-derived constants, or loop bounds, remain equal across runs. This ensures that changes to private data do not affect data-independent components of the computation. The framework operates in two distinct phases:
+Phase 1: Recording on Initial Dataset (DD)
+First, we execute the instrumented algorithm 𝒜\mathcal{A} on an initial dataset, DD. The instrumentation hook (Algorithm 1, line 10) operates in RECORD mode. For each invocation of a DP primitive ℳ\mathcal{M} (or equality check), the hook logs a detailed entry into a trace 𝒯\mathcal{T}, containing: (1) the mechanism type, (2) its parameters ρ\rho (e.g., noise variance σ\sigma), (3) the input query data qq (specifically qDq_{D}), (4) the PRNG state, and (5) the exact output oo produced. This generates an ordered log of every stochastic decision point and equality assertion within the execution path.
+Phase 2: Replaying on Neighboring Dataset (D′D^{\prime})
+Next, we execute 𝒜\mathcal{A} on a neighboring dataset, D′D^{\prime} (lines 5-7), with the hook in REPLAY mode. When a primitive is called, it performs the following logic:
+(1)
+Verifies Control-Flow: It checks that the current call type and order match the corresponding call in the recorded trace 𝒯\mathcal{T}. A mismatch flags a violation, indicating the control flow is data-dependent.
+(2)
+Verifies Invariance: If the node is of type ensure_equality (lines 27-30), it asserts that the input qq matches the recorded input from the DD trace. If they differ, it flags a violation. For privacy primitives, invariance is checked on non-sensitive arguments (e.g., declared noise scale).
+(3)
+Logs Inputs: It logs the new inputs qD′q_{D^{\prime}} into a new trace 𝒯′\mathcal{T}^{\prime}.
+(4)
+Enforces Determinism: It restores the PRNG state to the post-execution state captured during the recording phase and returns the frozen output from the DD trace.
+By forcing the mechanisms to return the same output under both DD and D′D^{\prime}, we isolate the valid source of variation. Finally, the auditor compares the inputs qDq_{D} and qD′q_{D^{\prime}} stored in the traces. If the empirical distance between them exceeds the declared sensitivity (and yet the accounting claimed otherwise), a sensitivity violation is flagged.
+Algorithm 1 Trace Generation via Re:cord-play
+1:
+Input: Instrumented Algorithm 𝒜\mathcal{A}, neighboring datasets D,D′D,D^{\prime}
+2:
+Output: Execution traces 𝒯\mathcal{T}, 𝒯′\mathcal{T}^{\prime}
+3:
+procedure GenerateTraces(𝒜,D,D′\mathcal{A},D,D^{\prime})
+4:
+// Phase 1: Record
+5:
+𝒯←[]\mathcal{T}\leftarrow[] ⊳\triangleright Initialize trace for DD
+6:
+SetInstrumentationMode(RECORD, 𝒯\mathcal{T})
+7:
+𝒜⁡(D)\mathcal{A}(D) ⊳\triangleright Run on DD; hook populates 𝒯\mathcal{T}
+8:
+// Phase 2: Replay
+9:
+𝒯′←[]\mathcal{T}^{\prime}\leftarrow[] ⊳\triangleright Initialize trace for D′D^{\prime}
+10:
+SetInstrumentationMode(REPLAY, 𝒯\mathcal{T}, 𝒯′\mathcal{T}^{\prime})
+11:
+𝒜⁡(D′)\mathcal{A}(D^{\prime}) ⊳\triangleright Run on D′D^{\prime}; hook populates 𝒯′\mathcal{T}^{\prime}
+12:
+return 𝒯,𝒯′\mathcal{T},\mathcal{T}^{\prime}
+13:
+end procedure
+14:
+15:
+procedure OnPrimitiveCall(ℳ,ρ,q\mathcal{M},\rho,q) ⊳\triangleright Instrumentation Hook
+16:
+if mode = RECORD then
+17:
+if ℳ=ensure_equality\mathcal{M}=\texttt{ensure\_equality} then
+18:
+o←qo\leftarrow q ⊳\triangleright Pass-through for equality check
+19:
+else
+20:
+o←ℳ⁡(q,ρ)o\leftarrow\mathcal{M}(q,\rho) ⊳\triangleright Execute real mechanism
+21:
+end if
+22:
+sp​o​s​t←s_{post}\leftarrow GetRNGState()
+23:
+𝒯\mathcal{T}.add((ℳ,ρ,q,sp​o​s​t,o)(\mathcal{M},\rho,q,s_{post},o)) ⊳\triangleright Log full state
+24:
+return oo
+25:
+else if mode = REPLAY then
+26:
+k←|𝒯′|+1k\leftarrow|\mathcal{T}^{\prime}|+1 ⊳\triangleright Current call index
+27:
+if k>|𝒯|k>|\mathcal{T}| or ℳ≠𝒯⁡[k].ℳ\mathcal{M}\neq\mathcal{T}[k].\mathcal{M} then
+28:
+⊳\triangleright Control flow mismatch; traces are now invalid.
+29:
+return STOP
+30:
+end if
+31:
+(…,sp​o​s​t,or​e​c)←𝒯⁡[k](\dots,s_{post},o_{rec})\leftarrow\mathcal{T}[k] ⊳\triangleright Read from DD trace
+32:
+if ℳ=ensure_equality\mathcal{M}=\texttt{ensure\_equality} then
+33:
+if q≠𝒯⁡[k].qq\neq\mathcal{T}[k].q then ⊳\triangleright Verify Invariance
+34:
+return STOP
+35:
+end if
+36:
+𝒯′\mathcal{T}^{\prime}.add((ℳ,q)(\mathcal{M},q)) ⊳\triangleright Log D′D^{\prime} inputs/params
+37:
+return qq
+38:
+end if
+39:
+𝒯′\mathcal{T}^{\prime}.add((ℳ,ρ,q)(\mathcal{M},\rho,q)) ⊳\triangleright Log D′D^{\prime} inputs/params
+40:
+SetRNGState(sp​o​s​ts_{post}) ⊳\triangleright Restore post-call RNG state
+41:
+return or​e​co_{rec} ⊳\triangleright Return frozen output from DD run
+42:
+end if
+43:
+end procedure
+In the next section, we generalize Re:cord-playto scenarios where we do not trust the underlying implementation of the privacy primitives, enabling us to also find bugs in their accounting.
+3.3. Distributional Audit: Re:cord-play-sample
+The lightweight audit in Section 3.2 is a testing tool for verifying consistency and data-independence. However, it relies on Assumption 3.1: the privacy primitives (ℳi\mathcal{M}_{i}) themselves are correctly implemented and their accounting is accurate.
+In this section, we lift this assumption. We consider a scenario in which the privacy primitives themselves are untrusted because they have a custom, unvetted implementation, are part of a complex legacy system, or use non-standard theoretical privacy accounting.
+To handle this, we introduce Re:cord-play-sample, extending our lightweight framework into a gray-box distributional audit.
+Unlike black-box approaches that must treat the whole algorithm as opaque, we leverage the Re:cord-play trace to isolate each mechanism and its exact sensitive inputs, and then perform a statistical audit on each isolated component. The core idea is to move from verifying declared properties to empirically estimating the privacy loss. Our method (formalized in Algorithm 2) works in three phases:
+(1)
+Phase 1: Record & Replay. See Section 3.2.
+(2)
+Phase 2: Sample. With the inputs for each primitive isolated, we now treat each individual ℳi\mathcal{M}_{i} as a black box. For each tuple (ℳi,qD,i,qD′,i)(\mathcal{M}_{i},q_{D,i},q_{D^{\prime},i}) in the trace 𝒯\mathcal{T}, we perform a statistical sampling experiment. We execute ℳi​(qD,i)\mathcal{M}_{i}(q_{D,i}) NN times to generate an empirical output distribution P^i\hat{P}_{i}, and similarly execute ℳi​(qD′,i)\mathcal{M}_{i}(q_{D^{\prime},i}) NN times to generate P^i′\hat{P}^{\prime}_{i}.
+(3)
+Phase 3: Estimate & Compose.
+At this stage, auditing the isolated component ℳi\mathcal{M}_{i} reduces to a standard black-box auditing problem. As a result, our framework can incorporate any existing distributional auditing technique (Jagielski et al., 2020;

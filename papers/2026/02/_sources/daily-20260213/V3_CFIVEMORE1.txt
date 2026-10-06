@@ -1,0 +1,161 @@
+Conversational Behavior Modeling Foundation Model With Multi-Level Perception (https://arxiv.org/html/2602.11065v1)
+citeturn29160view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.11065v1","lineno":265}); Total lines: 670
+L200: In inference, we obtain an anchor chain via a thresholding approximation: $\hat{\pi}_{t}=\arg\max_{\pi_{t}}p_{\phi}(\pi_{t}\mid o_{t}),\quad$ In the second stage, on top of $(\hat{\pi}_{t})$, we incorporate more nearby fine-grained information to construct the final decoding condition $(\xi_{t})$: $\xi_{t}\triangleq\big(\hat{\pi}_{t},\ R_{t},\ P_{t},\ q_{t}\big),$ and autoregressively generate rationale in a strictly causal manner:
+L201:  | $$p_{\theta}(y_{t}\mid o_{t},\hat{\pi}_{t},R_{t},P_{t})=\prod_{n=1}^{|y_{t}|}p_{\theta}\!\left(y_{t,n}\mid y_{t,<n},\ \xi_{t}\right).$$  |
+L202: 
+L203: Intuitively, $(\hat{\pi}_{t})$ provides a global topic chain, while $((R_{t},P_{t},q_{t}))$ provides local observable details; together they determine the final LLM-style reasoning text.
+L204: #### Model Details.
+L205: Under streaming audio, we run online speaker tracking, streaming ASR, and a per-second SA predictor in parallel. Every 1s tick, we aggregate the incremental ASR words into a second text $S_{\tau}$, assign a speaker tag $p_{\tau}$ from the speaker posterior, and attach SA labels $(\ell_{\tau}^{h},\ell_{\tau}^{l})$ to create a second node $v_{\tau}^{\mathrm{sec}}$.
+L206: Sentence nodes are committed online with a causal sentence buffer; their speaker is set by within-sentence majority vote, and subsequent second nodes reference the updated sentence_id. All features use only past observations, satisfying strict causality.
+L207: For evidence selection at time $t$, we use the current second node as query $q_{t}:=v_{t}^{\mathrm{sec}}$ and collect completed sentence nodes in the causal window $[t\!-\!W,t)$ as candidates $C_{t}$. We encode $V_{t}=\{q_{t}\}\cup C_{t}$ with a fully-connected Graph Transformer to model query–candidate matching and candidate competition (de-redundancy).
+L208: We add a relational bias only on query$\rightarrow$candidate attention to inject temporal/structural cues while keeping candidate–candidate interactions unbiased. The model outputs candidate scores $s_{t,j}$ and a query-dependent threshold $\tau_{t}$; we select all anchors with $s_{t,j}>\tau_{t}$ and sort them into an evidence chain.
+L209: Given the selected anchors $\hat{\mathcal{A}}_{t}$, we augment them with lightweight causal caches (recent committed sentences $R_{t}$ and within-sentence seconds $P_{t}$), then sort all nodes by time and connect only adjacent ones to form a past$\rightarrow$present chain.
+L210: Rather than adding another graph network, we linearize this chain into a token sequence for a T5 encoder; the decoder then generates the current-second rationale under cross-attention, fusing coarse sentence-level and fine second-level evidence.
+L211: #### Loss Function.
+L212: 
+L213: Selector Loss: For each sample $(\text{audio\_id},t)$, the selector outputs candidate sentence scores $s_{t,j}$ and a dynamic threshold $\tau_{t}$. Define threshold-aligned logits:
+L214: 
+L215:  | $$\ell_{t,j}=\frac{s_{t,j}-\tau_{t}}{T}.$$  |
+L216: 
+L217: Given multi-hot labels $y_{t,j}\in\{0,1\}$ and a candidate mask $m_{t,j}$, the loss of the Stage-1 selector is
+L218:  | $$\mathcal{L}_{\mathrm{sel}}=\mathcal{L}_{\mathrm{wbce}}+\lambda_{\mathrm{count}}\mathcal{L}_{\mathrm{count}}+\lambda_{\mathrm{rank}}\mathcal{L}_{\mathrm{rank}},$$  |
+L219: 
+L220: where the weighted BCE (only on valid candidates) is
+L221: 
+L222:  | $$\mathcal{L}_{\mathrm{wbce}}=\frac{1}{\sum_{j}m_{t,j}}\sum_{j}m_{t,j}\,\mathrm{WBCEWithLogits}(\ell_{t,j},y_{t,j};\alpha),$$  |
+L223: 
+L224: and we use two lightweight regularizers:
+L225: 
+L226:  | $$\mathcal{L}_{\mathrm{count}}=\Big(\sum_{j}\sigma(\ell_{t,j})-\sum_{j}y_{t,j}\Big)^{2}$$  |
+L227: to constrain the selected count,
+L228: 
+L229:  | $$\mathcal{L}_{\mathrm{rank}}=\frac{1}{|P_{t}|}\sum_{j\in P_{t}}-\log\frac{e^{\ell_{t,j}}}{\sum_{k}e^{\ell_{t,k}}}$$  |
+L230: to promote positive-sample ranking, where $P_{t}=\{j:m_{t,j}=1,y_{t,j}=1\}$. Decoder (T5 per-second rationale) loss. Given the tokenized input $\mathbf{x}_{t}$ (linearized causal evidence chain) and the target rationale tokens $\mathbf{y}_{t}=(y_{t,1},\ldots,y_{t,L})$, we train the T5 decoder with standard teacher-forced seq2seq negative log-likelihood:
+L231: 
+L232:  | $$\mathcal{L}_{\mathrm{dec}}=-\sum_{n=1}^{L}\log p_{\theta}\!\left(y_{t,n}\mid y_{t,<n},\mathbf{x}_{t}\right).$$  |
+L233: ## 4 Experiments
+L234: 
+L235: ### 4.1 ConversationGoT-120h
+L236: 
+L237: The dataset is split into training/validation/test sets with a 6:2:2 ratio.
+L238: #### Quality Check
+L239: 
+L240: Dialogue quality is the upstream linchpin of the entire dataset, directly determining the fidelity and safety of all subsequent labels. To assess how well the synthetic dialogues match the distribution of real conversations and to mitigate LLM generation bias, we first manually curate the data by filtering out low-quality or low-authenticity samples; we then ask five volunteers and GPT-4o to independently score the dialogue content along four dimensions.
+L241: Table 2: Subjective comparison between human volunteers and GPT-4o across four conversational quality dimensions.
+L242: 
+L243: Rater  | Naturalness  | Consistency  | SA Reasonableness  | Human-Likeness
+L244: --- | --- | --- | --- | ---
+L245: Volunteers  | $6.71\pm 1.32$  | $7.98\pm 1.12$  | $6.36\pm 0.90$  | $6.46\pm 0.92$
+L246: GPT-4o  | $8.34\pm 1.35$  | $8.10\pm 1.34$  | $8.42\pm 0.93$  | $7.64\pm 0.90$
+L247: As shown in Table cite103†2 , after removing low-quality samples, the subjective quality of ConversationGoT-120h remains overall stable: Consistency is rated close to 8 by both volunteers and GPT-4o ($7.98\pm 1.12$ vs. $8.10\pm 1.34$), meeting the standard. The results indicate that model evaluation is more optimistic while humans are more conservative. The similar standard deviations (about $0.9\sim 1.35$) suggest that the variability is controllable.
+L248: The per-second rationale annotations provide the primary supervision for training GoT, guiding both evidence-chain/graph construction and rationale generation conditioned on selected evidence. Annotation quality is therefore critical for learning decision paths consistent with teacher traces (or human explanations) and for producing credible, verifiable explanations at inference time. To assess quality, we asked volunteers and GPT-4o to independently rate rationales on six dimensions.
+L249: As shown in Table cite104†3 , both groups assign consistently high scores (6.8–8.3), suggesting that the rationales are generally reliable in plausibility, context dependency, and intra-/inter-utterance coherence, and thus provide strong supervision for GoT. The two evaluators also show close agreement: except for Intra-Utterance Coherence, differences across dimensions are within  0.6 points, with consistent overall trends.
+L250: Table 3: Subjective comparison between human volunteers and GPT-4o across six rationale quality dimensions.
+L251: Rater  | Reasonableness  | Context Grounding  | Intra-Utterance Coherence
+L252: --- | --- | --- | ---
+L253: Volunteers  | $7.85\pm 1.02$  | $7.88\pm 0.86$  | $6.79\pm 1.13$
+L254: GPT-4o  | $7.62\pm 2.31$  | $8.28\pm 1.49$  | $7.88\pm 1.88$
+L255: Rater  | Inter-Utterance Coherence  | Specificity & Focus  | Clarity & Non-Template Style
+L256: --- | --- | --- | ---
+L257: Volunteers  | $7.61\pm 0.94$  | $7.72\pm 0.87$  | $8.09\pm 1.00$
+L258: GPT-4o  | $8.13\pm 1.69$  | $7.89\pm 1.84$  | $8.00\pm 1.69$
+L259: We focus on the full-duplex task, where the richness of high-quality overlap events available for learning can significantly affect the conversational perception ability of the SA Perceiver. Overlap quality.
+L260: Our simulated dialogs show denser micro-segmentation than human conversations (more IPUs/pauses per minute) while preserving similar gap/overlap ratios; overlaps are shorter and within-speaker pauses more frequent, suggesting more backchannels/hesitations rather than long monologues (see Appendix Table cite105†8 ).
+L261: #### Event Distribution.
+L262: 
+L263: The dataset shows clear head concentration at both levels. at the high level, Constatives dominate (54.18%); at the low level, Continuation overwhelmingly leads (64.77%), followed by Turn-taking (19.03%), with the rest forming a long tail. Anchor statistics indicate moderate dispersion: a mean of 3.92 anchors per segment and a maean spacing of 60.55 s. More details are provided in the Appendix.
+L264: ### 4.2 Experimental Setup
+L265: We train the behavior prediction model and the GoT reasoning model on the ConversationGoT-120h dataset, using a unified 90-second context window. Both models use the AdamW (cite106†Loshchilov & Hutter, 2017 ) with a learning rate of $3\times 10^{-4}$ and weight decay of $10^{-2}$, along with a linear learning-rate decay schedule with 1,000 warmup steps and gradient clipping at 1.0. Training is conducted with a batch size of 8 per GPU for 15 epochs, using automatic mixed precision (fp16).
+L266: Audio is resampled to 16 kHz and segmented into 1-second frames. On a single A6000 GPU, training takes approximately 18 hours for speech-act prediction and 5 hours for GoT generation. Results use random seed 42 and are evaluated with statistical analysis over five independent runs. We report in-domain results on ConversationGoT-120h, and evaluate out-of-distribution (OOD) transfer on the real Candor dataset (cite107†Reece et al., 2022 ), which we use only for model evaluation (not training).
+L267: More details are provided in Appendix.
+L268: ### 4.3 Speech Acts Perceiver
+L269: Evaluating our Speech Acts Perceiver requires a protocol tailored to our setting: the model predicts at 1 Hz and uses a hierarchical SA taxonomy that does not align with prior label sets. As a result, cross-paper metric comparisons would confound modeling gains with differences in temporal granularity and taxonomy.
+L270: We therefore adopt a three-pronged evaluation: (i) complementary in-distribution metrics—one for the relatively balanced high-level SAs and one for the imbalanced low-level SAs; (ii) out-of-distribution transfer to real dialogue data to test generalization beyond ConversationGoT-120h; and (iii) human judgments of per-second decisions to assess perceptual validity and capture aspects missed by automated scores.
+L271: #### Metrics.
+L272: 
+L273: F1 is the harmonic mean of precision and recall; a larger value means fewer false positives (FP) and false negatives (FN) at the current threshold. AUC is the area under the ROC curve; a larger value indicates stronger overall discrimination between positive and negative examples.
+L274: #### In-domain and OOD Experiments.
+L275: ConversationGoT-120h has a head-concentrated label distribution: the high-level Constatives accounts for 54.18The SA Perceiver performs stably on core conversational mechanisms: the AUC of Turn-taking/Continuation is 0.938/0.971, and the F1 is 0.730/0.870. Although the long-tail classes have lower F1 due to data scarcity and ambiguous boundaries (Interruption 0.495, Backchannel 0.560), the AUC remains 0.872/0.889, indicating strong separability.
+L276: When transferred OOD to real dialogues, performance degrades only slightly, suggesting good generalization of SA perception, and also validating that this synthetic data has transferable value for full-duplex conversational perception training.
+L277: Table 4: In-domain: Per-class metrics for High-level and Low-level Speech Acts.
+L278: High-level Speech Acts  | Low-level Speech Acts
+L279: --- | ---
+L280: Class  | F1 ($\uparrow$)  | AUC ($\uparrow$)  | Class  | F1 ($\uparrow$)  | AUC ($\uparrow$)
+L281: --- | --- | --- | --- | --- | ---
+L282: Constatives  | 0.732  | 0.811  | Turn-taking  | 0.730  | 0.938
+L283: Directives  | 0.474  | 0.776  | Interruption  | 0.495  | 0.872
+L284: Commissives  | 0.474  | 0.800  | Backchannel  | 0.560  | 0.889
+L285: Acknowledgments  | 0.514  | 0.850  | Continuation  | 0.870  | 0.971
+L286: Table 5: OOD: Per-class metrics for High-level and Low-level Speech Acts.
+L287: High-level Speech Acts  | Low-level Speech Acts
+L288: --- | ---
+L289: Class  | F1 ($\uparrow$)  | AUC ($\uparrow$)  | Class  | F1 ($\uparrow$)  | AUC ($\uparrow$)
+L290: --- | --- | --- | --- | --- | ---
+L291: Constatives  | 0.696  | 0.777  | Turn-taking  | 0.709  | 0.918
+L292: Directives  | 0.456  | 0.739  | Interruption  | 0.486  | 0.847
+L293: Commissives  | 0.445  | 0.753  | Backchannel  | 0.537  | 0.855
+L294: Acknowledgments  | 0.479  | 0.804  | Continuation  | 0.827  | 0.938
+L295: #### Human Model Agreement.
+L296: We quantify human–model similarity by the agreement rate under per-second judgments. For each second $t$, the model predicts a high-level label $\hat{\ell}^{h}_{t}$ and a low-level label $\hat{\ell}^{l}_{t}$. Each volunteer independently annotates, at each level, whether they agree with the model’s decision at time $t$, yielding binary responses (1 if agree, otherwise 0). We then average over time and volunteers to compute the agreement rates, and report them for the two levels HMA.
+L297: HMA measures the degree of agreement between humans and the model on per-second decisions. Its formal definition is provided in the appendix.
+L298: Table 6: Human–Model Agreement (HMA) for high- and low-level speech-act decisions, evaluated via per-second agree/disagree judgments. We report the mean and standard deviation over evaluated samples.
+L299: 
+L300: Rater  | HMA^{h} ($\uparrow$)  | HMA^{l} ($\uparrow$)
+L301: --- | --- | ---
+L302: Volunteers  | 0.97  | 0.77
+L303: GPT-4o  | 0.78  | 0.93
+L304: Table cite108†6 shows that both human volunteers and GPT-4o agree well with the model’s per-second decisions, indicating that the predicted speech-act labels are broadly plausible. The evaluators, however, differ systematically: humans almost fully endorse high-level intents (HMA^{h}=0.97) but are more conservative on low-level interaction acts (HMA^{l}=0.77), whereas GPT-4o shows lower agreement on high-level categories (0.78) yet strong alignment on low-level mechanics (0.93).
+L305: We attribute the lower human agreement at the low level to limited use of long-range discourse context in ambiguous cases. Accordingly, we report GPT-4o agreement as a conservative, fully automatic reference for human–model similarity.
+L306: ### 4.4 Graph of Thought
+L307: We evaluate explanation quality and generation latency of different methods under controlled conditions. For each test sample, all four methods use the same input context: (i) our method (ii) random selection: keeping the same GoT reasoner unchanged and only replacing anchors with uniform random sampling from $(k\in[2,8])$ candidates; (iii) GPT-4o: a lightweight LLM baseline (iv) GPT-5 (thinking): a stronger LLM baseline.
+L308: For evaluation, we use GPT-4o as an automatic judge, scoring the generated outputs with a fixed rubric (Ruler) along four dimensions: Alignment, Justification, Caption Completeness, and Clarity. We report, under the same inputs, the required latency and the quality gap of the output rationale.
+L309: Table 7: Reasoning latency and subjective ruler scores across methods.
+L310: 
+L311: Method  | Latency (s)  | Ruler
+L312: --- | --- | ---
+L313:  |  | Alignment  | Justification  | Caption  | Clarity
+L314: --- | --- | --- | --- | --- | ---
+L315: Ours  | $0.74\pm 0.12$  | 4.40  | 4.27  | 4.21  | 4.38
+L316: Random selector  | $0.73\pm 0.11$  | 3.28  | 3.13  | 3.21  | 3.88
+L317: GPT-4o  | $2.98\pm 1.04$  | 3.40  | 3.27  | 3.21  | 3.38
+L318: GPT-5 (thinking)  | $16.98\pm 5.29$  | 4.46  | 4.33  | 4.32  | 4.65
+L319: Compared with random anchors, as shown in Table cite109†7 , our method significantly improves explanation quality with almost no increase in latency, indicating that selecting more informative anchors helps generate more consistent and traceable reasoning. Furthermore, compared with directly prompting GPT-4o, our method reduces latency from $(2.98\pm 1.04)\mathrm{s}$ to about $(0.73\pm 0.12)\mathrm{s}$, and improves all four dimensions by about 1 point.
+L320: GPT-5 (thinking) achieves the highest scores ($4.32$–$4.65$), but its latency reaches $(16.98\pm 5.29)\mathrm{s}$, which is over $(20\times)$ slower than our method. Overall, GoT maintains low latency while approaching GPT-5 quality, making it suitable for full-duplex scenarios that require high-frequency outputs.
+L321: ## 5 Conclusion
+L322: 
+L323: We propose a strictly causal, streaming, full-duplex framework that continuously outputs decisions at a per-second rate, explicitly models the intent-to-action logic chain via Graph-of-Thoughts, and generates auditable natural-language explanations. Experiments show that the method maintains stable performance on hierarchical behavior recognition, significantly improves explanation quality over random evidence chains, and achieves controllable low latency under full-duplex settings.
+L324: ## Impact Statement
+L325: This work uses synthetically generated data to enable controlled, scalable annotation of fine-grained conversational behaviors. A key risk is distribution shift and artifacts that may reduce robustness on real interactions. We mitigate this by enforcing an explicit label taxonomy and causal constraints during generation, reporting results with clear separation between synthetic and any real evaluation when available, and releasing the generation procedure for transparency and reproducibility.
+L326: Potential misuse includes generating deceptive conversational content or enabling intrusive behavioral inference. We recommend deployment only in consented settings with access control and downstream safety review. Residual risks remain under domain shift and malicious use.
+L327: ## References
+L328:   * Arora et al. (2025a) Arora, S., Lu, Z., Chiu, C.-C., Pang, R., and Watanabe, S. Talking turns: Benchmarking audio foundation models on turn-taking dynamics. arXiv preprint arXiv:2503.01174, 2025a.
+L329:   * Arora et al. (2025b) Arora, S., Lu, Z., Chiu, C.-C., Pang, R., and Watanabe, S. Talking turns: Benchmarking audio foundation models on turn-taking dynamics, 2025b. URL cite110†https://arxiv.org/abs/2503.01174 .
+L330:   * Brown et al. (2020) Brown, T. B., Mann, B., Ryder, N., Subbiah, M., Kaplan, J., Dhariwal, P., Neelakantan, A., Shyam, P., Sastry, G., Askell, A., Agarwal, S., Herbert-Voss, A., Krueger, G., Henighan, T., Child, R., Ramesh, A., Ziegler, D. M., Wu, J., Winter, C., Hesse, C., Chen, M., Sigler, E., Litwin, M., Gray, S., Chess, B., Clark, J., Berner, C., McCandlish, S., Radford, A., Sutskever, I., and Amodei, D. Language models are few-shot learners, 2020. URL cite111†https://arxiv.org/abs/2005.14165 .
+L331:   * Cheng et al. (2024) Cheng, Z., Cheng, Z.-Q., He, J.-Y., Sun, J., Wang, K., Lin, Y., Lian, Z., Peng, X., and Hauptmann, A. Emotion-llama: Multimodal emotion recognition and reasoning with instruction tuning, 2024. URL cite112†https://arxiv.org/abs/2406.11161 .
+L332:   * Défossez et al. (2024) Défossez, A., Mazaré, L., Orsini, M., Royer, A., Pérez, P., Jégou, H., Grave, E., and Zeghidour, N. Moshi: a speech-text foundation model for real-time dialogue. arXiv preprint arXiv:2410.00037, 2024.
+L333:   * Du et al. (2024) Du, Z., Wang, Y., Chen, Q., Shi, X., Lv, X., Zhao, T., Gao, Z., Yang, Y., Gao, C., Wang, H., et al. Cosyvoice 2: Scalable streaming speech synthesis with large language models. arXiv preprint arXiv:2412.10117, 2024.
+L334:   * Duncan (1972) Duncan, S. Some signals and rules for taking speaking turns in conversations. Journal of personality and social psychology, 23(2):283, 1972.
+L335:   * Gravano & Hirschberg (2011) Gravano, A. and Hirschberg, J. Turn-taking cues in task-oriented dialogue. Computer Speech & Language, 25(3):601–634, 2011.
+L336:   * Hara et al. (2018) Hara, K., Inoue, K., Takanashi, K., and Kawahara, T. Prediction of turn-taking using multitask learning with prediction of backchannels and fillers. In Interspeech 2018, pp. 991–995, 2018. doi: 10.21437/Interspeech.2018-1442.
+L337:   * Hwang et al. (2023) Hwang, J., Hira, M., Chen, C., Zhang, X., Ni, Z., Sun, G., Ma, P., Huang, R., Pratap, V., Zhang, Y., Kumar, A., Yu, C.-Y., Zhu, C., Liu, C., Kahn, J., Ravanelli, M., Sun, P., Watanabe, S., Shi, Y., Tao, Y., Scheibler, R., Cornell, S., Kim, S., and Petridis, S. Torchaudio 2.1: Advancing speech recognition, self-supervised learning, and audio processing components for pytorch, 2023. URL cite113†https://arxiv.org/abs/2310.17864 .
+L338:   * Inoue et al. (2025) Inoue, K., Lala, D., Skantze, G., and Kawahara, T. Yeah, un, oh: Continuous and real-time backchannel prediction with fine-tuning of voice activity projection, 2025. URL cite114†https://arxiv.org/abs/2410.15929 .
+L339:   * Jurafsky & Martin (2025) Jurafsky, D. and Martin, J. H. Speech and Language Processing. Draft / Stanford University, 3 edition, 2025. URL cite115†https://web.stanford.edu/~jurafsky/slp3/15.pdf†web.stanford.edu .
+L340:   * Khouzaimi et al. (2016) Khouzaimi, H., Laroche, R., and Lefèvre, F. Reinforcement learning for turn-taking management in incremental spoken dialogue systems. In IJCAI, pp. 2831–2837, 2016.
+L341:   * Lee & Narayanan (2010) Lee, C.-C. and Narayanan, S. Predicting interruptions in dyadic spoken interactions. In 2010 IEEE International Conference on Acoustics, Speech and Signal Processing, pp. 5250–5253, 2010.
+L342:   * Li et al. (2022) Li, S., Paranjape, A., and Manning, C. When can I speak? predicting initiation points for spoken dialogue agents. In Lemon, O., Hakkani-Tur, D., Li, J. J., Ashrafzadeh, A., Garcia, D. H., Alikhani, M., Vandyke, D., and Dušek, O. (eds.), Proceedings of the 23rd Annual Meeting of the Special Interest Group on Discourse and Dialogue, pp. 217–224, Edinburgh, UK, September 2022. Association for Computational Linguistics. doi: 10.18653/v1/2022.sigdial-1.22.
+L343: URL cite116†https://aclanthology.org/2022.sigdial-1.22/†aclanthology.org .
+L344:   * Lian & Anumanchipalli (2024) Lian, J. and Anumanchipalli, G. Towards hierarchical spoken language disfluency modeling. In Proceedings of the 18th Conference of the European Chapter of the Association for Computational Linguistics (Volume 1: Long Papers), 2024.
+L345:   * Lian et al. (2023) Lian, J., Feng, C., Farooqi, N., Li, S., Kashyap, A., Cho, C. J., Wu, P., Netzorg, R., Li, T., and Anumanchipalli, G. K. Unconstrained dysfluency modeling for dysfluent speech transcription and detection. In 2023 IEEE Automatic Speech Recognition and Understanding Workshop (ASRU), pp. 1–8. IEEE, 2023.
+L346:   * Lian et al. (2024) Lian, J., Zhou, X., Ezzes, Z., Vonk, J., Morin, B., Baquirin, D. P., Miller, Z., Gorno Tempini, M. L., and Anumanchipalli, G. Ssdm: Scalable speech dysfluency modeling. In Advances in Neural Information Processing Systems, volume 37, 2024.
+L347:   * Lian et al. (2025) Lian, J., Zhou, X., Guo, C., Ye, Z., Ezzes, Z., Vonk, J., Morin, B., Baquirin, D., Mille, Z., Tempini, M. L. G., and Anumanchipalli, G. K. Automatic detection of articulatory-based disfluencies in primary progressive aphasia. IEEE JSTSP, 2025.
+L348:   * Lin et al. (2025a) Lin, G.-T., Kuan, S.-Y. S., Wang, Q., Lian, J., Li, T., Watanabe, S., and yi Lee, H. Full-duplex-bench v1.5: Evaluating overlap handling for full-duplex speech models, 2025a. URL cite117†https://arxiv.org/abs/2507.23159 .
+L349:   * Lin et al. (2025b) Lin, G.-T., Lian, J., Li, T., Wang, Q., Anumanchipalli, G., Liu, A. H., and yi Lee, H. Full-duplex-bench: A benchmark to evaluate full-duplex spoken dialogue models on turn-taking capabilities, 2025b. URL cite118†https://arxiv.org/abs/2503.04721 .
+L350:   * Liu et al. (2025) Liu, J., Cheng, K. J., Lian, J., Anand, A., Jain, R., Qiao, F., Netzorg, R., Chou, H.-C., Li, T., Lin, G.-T., and Anumanchipalli, G. Emo-reasoning: Benchmarking emotional reasoning capabilities in spoken dialogue systems. In 2025 IEEE Automatic Speech Recognition and Understanding Workshop (ASRU), 2025.
+L351:   * Loshchilov & Hutter (2017) Loshchilov, I. and Hutter, F. Decoupled weight decay regularization. arXiv preprint arXiv:1711.05101, 2017.
+L352:   * Marge et al. (2022) Marge, M., Espy-Wilson, C., Ward, N. G., Alwan, A., Artzi, Y., Bansal, M., Blankenship, G., Chai, J., Daumé III, H., Dey, D., et al. Spoken language interaction with robots: Recommendations for future research. Computer Speech & Language, 71:101255, 2022.
+L353:   * Monroe & Potts (2015) Monroe, W. and Potts, C. Learning in the rational speech acts model, 2015. URL cite119†https://arxiv.org/abs/1510.06807 .
+L354:   * Nguyen et al. (2022a) Nguyen, T. A., Kharitonov, E., Copet, J., Adi, Y., Hsu, W.-N., Elkahky, A., Tomasello, P., Algayres, R., Sagot, B., Mohamed, A., and Dupoux, E. Generative spoken dialogue language modeling, 2022a. URL cite120†https://arxiv.org/abs/2203.16502 .
+L355:   * Nguyen et al. (2022b) Nguyen, T. A., Kharitonov, E., Copet, J., Adi, Y., Hsu, W.-N., Elkahky, A., Tomasello, P., Algayres, R., Sagot, B., Mohamed, A., and Dupoux, E. Generative spoken dialogue language modeling, 2022b. URL cite120†https://arxiv.org/abs/2203.16502 .
+L356:   * Nguyen et al. (2023) Nguyen, T. A., Kharitonov, E., Copet, J., Adi, Y., Hsu, W.-N., Elkahky, A., Tomasello, P., Algayres, R., Sagot, B., Mohamed, A., et al. Generative spoken dialogue language modeling. Transactions of the Association for Computational Linguistics, 11:250–266, 2023.
+L357:   * OpenAI et al.
+

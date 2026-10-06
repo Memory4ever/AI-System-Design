@@ -1,0 +1,1190 @@
+https://arxiv.org/html/2601.20655v1
+OnePiece: A Large-Scale Distributed Inference System with RDMA for Complex AI-Generated Content (AIGC) Workflows
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract.
+1 Introduction
+2 Background
+2.1 RDMA (Remote Direct Memory Access)
+2.2 NCCL (NVIDIA Collective Communications Library)
+2.3 Difference between RDMA and NCCL
+2.4 The AIGC Workflow
+3 System Design Overview
+3.1 Workflow Set (WS)
+3.2 Proxy
+3.3 Workflow Instances
+3.4 Databases
+4 Workflow Instances
+4.1 Workflow Message
+4.2 TaskManager
+4.3 RequestScheduler (R​SRS)
+4.4 TaskWorker
+4.5 ResultDeliver (R​DRD)
+5 Pipelining And Request Monitor
+6 RDMA Network
+6.1 Ring Buffer
+7 Databases Replication
+8 NodeManager (NM)
+8.1 Primary Election
+8.2 Workflow Instance Assignment
+8.3 Instance Sharing
+9 Fault Tolerance
+10 Related Work
+10.1 Conclusion
+References
+License: CC BY 4.0
+arXiv:2601.20655v1 [cs.DC] 28 Jan 2026
+OnePiece: A Large-Scale Distributed Inference System with RDMA for Complex AI-Generated Content (AIGC) Workflows
+June Chen, Neal Xu, Gragas Huang, Bok Zhou, Stephen Liu
+Affiliation: Wechat Tencent
+Abstract.
+The rapid growth of AI-generated content (AIGC) has enabled high-quality creative production across diverse domains,
+yet existing systems face critical inefficiencies in throughput, resource utilization, and scalability under concurrent workloads.
+This paper introduces OnePiece, a large-scale distributed inference system with RDMA optimized for multi-stage AIGC workflows.
+By decomposing pipelines into fine-grained microservices and leveraging one-sided RDMA communication,
+OnePiece significantly reduces inter-node latency and CPU overhead while improving GPU utilization.
+The system incorporates a novel double-ring buffer design to resolve deadlocks in RDMA-aware memory access without CPU involvement.
+Additionally, a dynamic Node Manager allocates resources elastically across workflow stages in response to real-time load.
+Experimental results demonstrate that OnePiece reduces GPU resource consumption by 16×16\times in Wan2.1 image-to-video generation
+compared to monolithic inference pipelines, offering a scalable, fault-tolerant, and efficient solution for production AIGC environments.
+Keywords: AIGC, Microservice, RDMA, Distributed System
+1. Introduction
+The advent of AI-generated content (AIGC) has dramatically lowered barriers
+to creative expression and content production,
+empowering individuals and organizations to produce high-quality materials
+with unprecedented speed and scale.
+AIGC is being applied across diverse fields such as automated journalism,
+personalized advertising, video game design,
+and virtual reality content creation.
+Central to this progress are diffusion models,
+whose remarkable generative capabilities are increasingly surpassing those of GANs and auto-regressive
+Transformers.
+These models excel not only in image generation but are also driving innovation
+in video-related research and production.
+Video diffusion models
+support a wide range of applications—including video synthesis,
+editing, and enhanced video understanding.
+By providing non-experts with advanced generative tools,
+these technologies are helping democratize content creation.
+As a result, AIGC is fundamentally transforming traditional workflows within creative industries.
+AIGC workflows typically integrate a variety of heterogeneous models,
+such as Variational Autoencoders (VAEs) (Dai and Wipf, 2019; Doersch, 2016),
+diffusion models (Croitoru et al., 2023; Wijmans and Baker, 1995; Yang et al., 2023),
+and text encoders (Ni et al., 2021),each fulfilling a distinct role
+within the content generation pipeline.
+In practice, specialized models like LoRA (Hu et al., 2022; Devalal and Karthikeyan, 2018) are often incorporated to further enhance output quality,
+leading to increasingly complex and multi-stage processing architectures.
+This multi-model design, however, often introduces significant latency
+and high GPU resource demands.
+For example, the WAN2.1 model (Team, 2025) requires around 32GB of GPU memory distributed across 8 GPUs.
+Despite significant advances in reducing per-task latency,
+a critical challenge persists in real-world AIGC deployments:
+a disproportionate emphasis on optimization targets.
+Current research and industrial practices remain largely centered
+on minimizing latency at the request level,
+frequently at the expense of system-wide throughput and GPU utilization efficiency.
+This narrow focus leads to suboptimal GPU occupancy,
+constrained service capacity, and poor scalability under highly concurrent conditions.
+The identified inefficiencies arise from several interrelated factors:
+•
+First, the multi-stage architecture of AIGC pipelines
+introduces diverse computational and memory requirements that differ substantially across stages.
+Conventional monolithic system architectures often lack the granularity needed for fine-grained
+resource allocation tailored to these varying demands.
+•
+Second, the dynamic and often unpredictable nature of request patterns leads to significant
+load fluctuations, which undermines the effectiveness of static resource provisioning strategies.
+•
+Lastly, inefficient memory management exacerbates these challenges,
+as intermediate results and cached data consume excessive VRAM without corresponding gains
+in operational efficiency.
+Microservices-based architectures offer a promising solution
+to these challenges by enabling more elastic and efficient resource utilization.
+For instance, Ant Group’s deployment of the NVIDIA Triton Inference Server
+for managing multi-model pipelines achieved a 2.4× improvement in throughput,
+a 20% reduction in latency, and a 50% decrease in operational costs (43).
+The principal benefits of a microservices architecture include:
+•
+Elastic Resource Allocation:
+Microservices can be deployed on hardware tailored to the specific computational
+requirements of each component.
+For example, compute-intensive tasks such as text encoding can utilize high-frequency GPUs,
+while memory-intensive operations like frame synthesis benefit from GPUs with larger VRAM capacities.
+•
+Independent Scalability: Each service can be scaled independently according
+to real-time workload fluctuations.
+This fine-grained scalability allows precise resource allocation,
+reduces the need for over-provisioning, and lowers operational costs compared to monolithic systems.
+•
+Fault Isolation and Enhanced Stability: The decoupled nature of microservices localizes failures
+within individual components, preventing cascading system failures and improving overall reliability.
+•
+Technological Heterogeneity: Each microservice can employ specialized frameworks,
+programming languages, or optimizations best suited to its task, promoting flexibility
+and performance gains.
+However, disaggregating pipelines into discrete stages often introduces significant latency
+overheads due to the substantial volume of data transferred between nodes.
+Some existing systems that disaggregate transformer models,such as Mooncake (Qin et al., 2024a),
+leverage NCCL (NVIDIA, ) for message passing to mitigate this latency.
+Nevertheless, NCCL is primarily suitable for tensor-based messages
+with fixed payload sizes and cannot efficiently accommodate data with dynamic or variable dimensions.
+In this paper, we present OnePiece,
+a novel, large-scale distributed inference system designed
+for microservices-oriented deployment using RDMA and tailored to complex AIGC workflows.
+By strategically decomposing end-to-end pipelines into fine-grained microservices,
+OnePiece enables more flexible resource allocation and significantly improves GPU utilization.
+Additionally, we propose a systematic methodology for analyzing and identifying optimal
+pipeline partitioning strategies,
+thereby enhancing overall system performance and resource efficiency.
+OnePiece improves resource efficiency by sharing common pipeline components
+across multiple applications,
+such as text-to-video (T2V) and image-to-video (I2V) generation will go though
+the same VAE Encoder and Decoder services.
+To handle dynamic and unpredictable request loads,
+OnePiece integrates a Node Manager (NM) that dynamically redistributes GPU resources
+across microservices.
+This enables scalable capacity expansion during peak demand and contraction
+during low-traffic periods, ensuring high overall resource utilization.
+To address the high data transfer latency associated with traditional TCP-based sockets
+in large-volume data scenarios,
+OnePiece adopts one-sided RDMA for inter-service communication (Jiang et al., 2004; Bedeir, 2010; Stuedi et al., 2012).
+This approach supports direct memory-to-memory data transfer,
+substantially decreasing CPU overhead.
+However, due to the regional constraints inherent in RDMA connections,
+OnePiece organizes services into regionally autonomous sets,
+each of which can execute complete workflows independently.
+Incoming requests are distributed randomly across these sets.
+Beyond improving resource utilization, this multi-set design also increases fault tolerance
+by isolating failures within specific regional sets.
+As multiple instances deliver messages to a shared memory region within the same receiving instance via RDMA,
+OnePiece employs a ring buffer structure that supports dynamically sized messages.
+However, deadlocks may occur if an instance fails during memory access.
+To the best of our knowledge, existing deadlock resolution mechanisms—such as those in Redis (Carlson, 2013),rely on CPU involvement.
+To address this under RDMA constraints,
+OnePiece introduces a novel double-ring buffer mechanism that resolves deadlocks without CPU intervention.
+Our system delivers high throughput and low latency while maintaining high-quality content generation,
+providing a scalable, reliable, and cost-effective platform for real-world AIGC services.
+In summary, this paper makes the following contributions:
+•
+We present the detailed design of OnePiece, a large-scale distributed system
+for orchestrating microservices-based AIGC pipelines.
+•
+We introduce a one-sided RDMA network architecture to enable high-performance
+inter-service communication to reduce the latency from transferring high volumn data.
+•
+We propose a deadlock-free multi-producer ring buffer data structure to facilitate
+efficient message passing in the RDMA network with double ring buffers.
+•
+We demonstrate a 16×16\times reduction in GPU resource usage for Wan2.1
+image-to-video generation compared to running the pipeline within single instances.
+2. Background
+In this section, we introduce RDMA and NCCL, and then we distignish their difference.
+2.1. RDMA (Remote Direct Memory Access)
+Traditional network communication typically involves multiple data copy operations:
+from application buffers to kernel space,
+and then to network interface buffers—all orchestrated by the CPU.
+This process introduces considerable latency and CPU overhead, particularly in distributed computing environments
+where fine-grained or frequent data exchanges are common.
+Remote Direct Memory Access (RDMA) (Jin, 2001) enables a machine to directly access the memory of a remote machine without involving the remote CPU.
+By bypassing the kernel network stack, RDMA provides a low-latency, high-throughput communication mechanism.
+Communication via RDMA is facilitated through queue pairs, each consisting of a send queue and a receive queue.
+RDMA supports two primary operation types: two-sided and one-sided operations (Kalia et al., 2016).
+Two-sided operations, such as Send and Receive, require participation from both the sender’s and receiver’s CPUs.
+In contrast, one-sided operations do not involve the remote CPU;
+the sender directly specifies the remote memory address for data placement.
+As a result, one-sided operations achieve lower latency and higher throughput compared to two-sided operations [23].
+2.2. NCCL (NVIDIA Collective Communications Library)
+NCCL (NVIDIA Collective Communications Library) (NVIDIA, ) is a highly optimized communication library developed by NVIDIA,
+specifically designed to accelerate collective communication across multiple GPUs and nodes in deep learning workloads.
+It offers efficient primitives for data exchange and synchronization among GPUs,
+which are essential for distributed training and inference of large-scale models.
+In distributed deep learning, GPUs collaborate by sharing intermediate data such as gradients and model parameters.
+To maintain high performance, it is critical to minimize communication overhead and latency through fast collective operations—especially
+as the number of GPUs scales.
+Conventional CPU-based communication methods often introduce bottlenecks due to limited PCIe bandwidth and excessive CPU involvement.
+NCCL overcomes these limitations by implementing communication primitives entirely on the GPU
+and leveraging high-speed interconnects including NVLink, PCIe, and InfiniBand.
+It is engineered to maximize bandwidth efficiency and reduce latency, thereby supporting scalable distributed training.
+As a foundational tool in modern AI infrastructure, NCCL significantly alleviates communication bottlenecks during gradient aggregation and synchronization.
+This enables near-linear scaling of training performance across numerous GPUs, reducing training time for increasingly large models and datasets.
+2.3. Difference between RDMA and NCCL
+RDMA enables direct memory-to-memory data transfer across networked nodes without involving the CPU or operating system,
+thereby providing low-latency, high-bandwidth communication with minimal overhead.
+Its primary objective is to reduce latency and alleviate CPU and GPU resource consumption during remote data access.
+In contrast, NCCL is optimized for high-performance GPU-to-GPU communication, both within and across nodes,
+leveraging hardware interconnects such as NVLink and InfiniBand.
+While NCCL can utilize RDMA as its underlying protocol for inter-node communication,
+it specifically offers tailored collective operations,such as All-Reduce and Broadcast,
+that are designed for tensor data commonly used in deep learning workflows.
+In OnePiece, messages of arbitrary types must be transmitted between nodes without engaging GPU resources,
+as these are reserved for model computation tasks.
+Therefore, rather than relying on NCCL,which is oriented toward GPU centric tensor communication,
+OnePiece employs RDMA directly as its communication protocol.
+This approach ensures efficient, flexible, and non-intrusive data transfer while preserving valuable GPU capacity for core generative tasks.
+2.4. The AIGC Workflow
+In Artificial Intelligence Generated Content (AIGC), a workflow denotes a structured,
+multi-stage pipeline that converts a user input,such as a text prompt or an image,into a refined output like video, image, or audio.
+Rather than a single step, this process typically involves a sequence of specialized AI models,
+each performing a distinct subtask.
+Common stages include input comprehension, iterative generation in a latent (compressed) space,
+and final decoding into a human-interpretable format.
+To illustrate a typical AIGC workflow, we consider the image-to-video generation process implemented by WAN (Team, 2025).
+This pipeline exemplifies the multi-stage architecture characteristic of advanced AIGC systems,
+where each stage employs one or more dedicated models.
+The workflow comprises the following components:
+•
+T5 & CLIP (Text Understanding and Conditioning): These models interpret and contextualize the text prompt,
+converting it into a numerical representation that guides subsequent video generation.
+•
+VAE Encode (Image Compression to Latent Space): This module compresses a high-dimensional input image into a compact latent representation,
+optimizing computational efficiency.
+•
+Diffusion (Iterative Video Generation in Latent Space): Serving as the core generative component,
+this model utilizes the latent representation from the VAE Encoder and conditioned text embeddings to iteratively synthesize video frames.
+•
+VAE Decode (Rendering the Final Video): This stage decodes the generated latent sequence back into a high-resolution pixel-domain video suitable
+for viewing.
+This modular workflow provides significant advantages in terms of efficiency and controllability,
+facilitating the production of sophisticated, high-fidelity video content from minimal input.
+3. System Design Overview
+Figure 1. The system architecture overview of OnePiece
+OnePiece is a large-scale distributed inference system designed
+for AIGC applications.
+It assists users in generating creative content to express aspects of their daily lives.
+The system organizes nodes (machines) into workflow sets,
+each deployable within a local RDMA-enabled network to leverage high-speed
+and low-latency communication communication.
+Within each set, nodes are assigned one of three specialized roles:
+proxy, workflow, or database.
+Proxy nodes interface with client requests, workflow nodes execute the multi-stage
+AIGC generation pipeline,
+and database nodes are responsible for persistent storage of generated results.
+A centralized NodeManager (NM) service maintains real-time information
+on the roles and network locations of all nodes.
+Clients first query the NM to discover available proxy nodes,
+through which they submit generation requests.
+As the generation process can be time-intensive,
+clients periodically poll the system to retrieve results upon completion.
+Figure 1 illustrates the overall architecture of the system.
+3.1. Workflow Set (WS)
+Figure 2. The Workflow Set in OnePiece
+Each Workflow Set (W​SWS) in OnePiece comprises machines located within the same geographic region,
+interconnected via a dedicated RDMA network.
+As illustrated in Figure 2, a W​SWS consists of three core components:
+proxies, workflow instances, and databases.
+All communication between these components is facilitated through the high-performance RDMA network.
+3.2. Proxy
+Within each W​SWS, machines are interconnected via an RDMA network
+and require specialized hardware such as InfiniBand (Liu et al., 2003; Islam et al., 2012).
+To facilitate external client access, proxy instances are deployed as lightweight, CPU-only servers.
+These proxies act as the entry point for generation requests:
+upon receiving a task, each proxy assigns a unique identifier (UID)
+that tracks the request throughout its entire lifecycle.
+This UID is propagated at every processing stage, enabling clients to retrieve results later
+by supplying the same identifier.
+Each proxy also integrates a request monitor to regulate system load.
+It proactively rejects new incoming requests to avoid overloading.
+Clients that receive a rejection then attempt to submit their request to a different RDMA-enabled set.
+This monitoring mechanism, coupled with the fast-reject capability,
+enhances cross-set load balancing.
+Further design and operational details of the request monitoring system are elaborated
+in Section 5.
+3.3. Workflow Instances
+Upon acceptance by a proxy,
+each client request is processed through a user-defined workflow.
+Such a workflow consists of a sequence of stages,each defined by the user except for the first and last one,
+where every stage contains multiple instances that handle requests in parallel.
+The first stage, designated as the entrance stage,
+serves as the initial processing unit.
+It prepares and initiates the generation pipeline using the requests forwarded from the proxies.
+Once a request has been processed through all stages of the workflow,
+the final output is transferred to the database layer for persistent storage.
+This guarantees that all generated content is durably stored and remains retrievable by clients
+using the assigned UID.
+Further details regarding workflow composition,
+instance varieties,
+scheduling strategies,
+and fault-tolerance mechanisms will be discussed in later sections.
+3.4. Databases
+A key design aspect of the OnePiece database is its memory-centric storage strategy.
+Since most generated results are short-lived and typically accessed only once by clients,
+the system avoids writing data to disk by default.
+Instead, results are retained in distributed memory,such as RAM or NVMe-based buffers,
+significantly accelerating both write and read performance.
+This approach reduces I/O overhead and minimizes latency during result submission and client retrieval.
+To ensure fault tolerance and high availability, data is automatically replicated
+across multiple database instances within the same RDMA set.
+Given the transient nature of the generated materials, which become obsolete after client access,
+strong consistency consensus is not required for replication.
+Each generated result,whether text, image, or video,is stored in the database alongside its associated
+UID for client retrieval.
+Once a client successfully fetches the result or after a predefined time-to-live (TTL) expires,
+the data is automatically purged.
+This efficient lifecycle management ensures that storage resources are prioritized
+for in-progress and recently completed tasks.
+This lightweight and transient storage model enables OnePiece to provide low-latency
+responses while upholding the reliability standards expected of a distributed inference system.
+4. Workflow Instances
+In OnePiece, an AIGC workflow is a user-defined procedure designed to generate content
+through a sequence of AI models.
+As introduced in Section 2.4,
+a typical workflow may involve generating a video from an image using a model such as Wan2.1 (Team, 2025).
+This process begins with stages like T5 & Clip and VAE Encode,
+which encode the input image into a latent tensor.
+A diffusion stage then iteratively samples this representation to produce an intermediate output,
+which is finally reconstructed into a video through a VAE Decode stage.
+Users can extend such workflows by incorporating additional models,
+such as LoRA (Sun et al., 2025),to enhance output quality,
+introduce stylistic variations, or support more complex generation tasks.
+A workflow instance in OnePiece refers to a runtime entity
+that executes one or more models within the overarching AIGC workflow,
+based on the user’s partitioning of the computational graph.
+For example, one instance may be dedicated to running the T5 & Clip and VAE Encode stages,
+processing images and forwarding the encoded results.
+This design enables efficient resource utilization and pipeline parallelism.
+Each workflow instance comprises four core components,
+as illustrated in Figure 2:
+•
+TaskManager: Initializes, coordinates, and monitors task execution within the instance.
+•
+RequestScheduler: Manages incoming requests and assigns them to available workers.
+•
+TaskWorkers: A pool of workers that perform actual model inference or data processing operations.
+•
+ResultDeliver: Handles the forwarding of processed results to the next workflow stage or to the database for storage.
+This component-based architecture promotes modularity, scalability,
+and a clear separation of concerns within each instance.
+Figure 3. Workflow Message that contains a header and a value produced by the clients or the instances.
+4.1. Workflow Message
+Before detailing each component, we first describe the structure of workflow messages.
+Each message consists of two parts: a payload and a header.
+The payload contains either the client’s original
+input or the output produced by a workflow instance,
+while the header carries metadata essential for request routing and processing.
+The overall message structure is depicted in Figure 3.
+The header includes the following fields:
+•
+A UUID assigned by the proxy to uniquely identify the generation request throughout its entire lifecycle (as described in Section 3.2).
+•
+A timestamp recorded by the proxy when the request is first received, used for monitoring task latency and system performance (Section 3.2).
+•
+An application ID that specifies the processing logic and determines the next instance(s) to which the message should be routed (Section 4.5).
+•
+The stage the messages is processing.
+The overall structure is illustrated in Figure 3.
+4.2. TaskManager
+As each workflow instance is designed to execute arbitrary user-defined sub-models,
+a TaskManager component is responsible for dynamically determining which models the instance should run
+and identifying the subsequent instances to which results should be forwarded.
+In OnePiece, all workflow configurations are managed by the NM.
+During initialization, the TaskManager queries the NM to retrieve the specific models
+and tasks assigned to its instance.
+Based on this assignment, it initializes the corresponding TaskWorkers to prepare for model inference.
+If no tasks are currently assigned,due to sufficient existing resource capacity,
+the instance remains idle and may be repurposed for lower-priority operations, such as model training.
+Concurrently, the TaskManager obtains routing information from the NM that specifies the next hop in the workflow,
+i.e., the downstream instances that should receive processed results.
+These routing details are configured into the ResultDeliver module (Section 4.5),
+which handles efficient transmission of output data to subsequent instances over the RDMA network.
+Additionally, the TaskManager maintains ongoing communication with the NM to stay synchronized
+with the latest task allocation policies,
+which may involve reassigning currently executing tasks to other instances.
+It periodically reports real-time GPU utilization metrics to the NM,
+supporting dynamic load-aware scheduling.
+This feedback mechanism enables the NM to redistribute tasks across available instances in a manner that optimizes
+overall GPU utilization and alleviates performance bottlenecks.
+a) Individual Mode (IM)
+b) Collaboration Mode (CM)
+Figure 4. Two modes of request assignments of RequestScheduler (R​SRS).
+4.3. RequestScheduler (R​SRS)
+To minimize latency in task processing, the RequestScheduler (R​SRS) operates asynchronously,
+receiving incoming requests that are written directly into local memory via RDMA.
+This bypasses intermediate buffering and reduces processing overhead.
+The R​SRS continuously monitors a designated memory region for newly arrived requests.
+Once detected, each request is distributed to TaskWorkers according to the configured execution strategy.
+OnePiece supports two execution strategies:
+•
+Individual Mode (I​MIM): In this mode, each worker processes requests independently using a dedicated GPU.
+Instead of pushing requests directly to workers,which could cause load imbalance,
+the R​SRS maintains a shared local request queue (Figure 4a).
+Idle workers autonomously fetch tasks from this queue, preventing any single worker from being overloaded while others remain idle.
+This pull-based approach promotes natural load balancing.
+•
+Collaboration Mode (C​MCM): In this mode, all workers on a node cooperate to process a single request using all available GPUs.
+When a new request arrives, the R​SRS broadcasts a copy to every worker (Figure 4b).
+This ensures all workers receive the same inputs, making C​MCM suitable for distributed computation across multiple GPUs.
+This flexible scheduling mechanism allows OnePiece to efficiently handle diverse task granularities and computational requirements,
+enhancing system throughput and resource utilization.
+4.4. TaskWorker
+TaskWorker executes the requests delivered by the R​SRS according
+to the predefined execution strategy. For certain tasks,such as data
+preprocessing,that cannot utilize more than one GPU, each worker
+processes requests individually to maximize parallelism. In contrast,
+for computationally intensive operations like model sampling, the
+system employs distributed computation strategies such as Pipeline
+Parallelism (P​PPP) or Tensor Parallelism (T​PTP) (Huang et al., 2019; Wang et al., 2022a; Narayanan et al., 2019) to leverage
+multiple GPUs, thereby reducing execution latency.
+Within TaskWorker, the specific execution behavior is defined
+by user-provided code. When a request is received, the TaskWorker
+invokes the corresponding user function based on an application
+identity attached to the request data, which specifies which appli-
+cation logic should be executed.
+To simplify model composition and interoperability, intermedi-
+ate results can be represented in various data formats, including
+tensors or raw binary data. Tensor data is placed directly into GPU
+memory at the start of execution, enabling subsequent models to
+access it immediately without unnecessary data movement. This
+design minimizes transfer overhead and supports efficient pipeline
+execution.
+4.5. ResultDeliver (R​DRD)
+Upon completion of execution, TaskWorkers forward the results to the next instance in the workflow.
+In Individual Mode, each worker sends its results immediately after processing to minimize end-to-end latency.
+In Collaboration Mode, partial results from all workers are aggregated into a single consolidated output before delivery,
+which reduces communication overhead and ensures computational consistency.
+The ResultDeliver (R​DRD) component manages the routing of these outputs.
+R​DRD obtains routing information from the TaskManager (Section 4.2),
+which in turn retrieves destination details from the NM.
+Since a single instance may participate in multiple workflows,
+R​DRD uses the application identity included in the request (Section 4.1)
+to determine the appropriate next hop.
+When multiple destination instances are available, R​DRD uses a round-robin mechanism to distribute results evenly.
+This prevents overloading any single downstream instance and improves load balancing across the system.
+5. Pipelining And Request Monitor
+Figure 5. The pipeline example for one instance for stages XX and 3 instances for YY with the execution cost TX=4​sT_{X}=4s and TY=12​sT_{Y}=12s.
+Stage XX is applied with individual mode with 1 worker while stage YY is applied with share mode.
+Stage XX accepts the requests and the stage YY outputs the results every 4 seconds.
+Figure 6. The pipeline example for one instance with 2 workers in stages XX and 6 instances in stage YY with the execution cost TX=4​sT_{X}=4s and TY=12​sT_{Y}=12s.
+Stage XX accepts the requests and the stage YY outputs the results every 2 seconds.
+Although separating different stages into distinct instances improves resource utilization,
+it can easily lead to high latency if the proxy continuously sends requests to the first stage,
+resulting in increased end-to-end delay for clients.
+To mitigate this, OnePiece employs a pipelining technique.
+Consider two stages, XX and YY, running on different instances, which take TXT_{X} and TYT_{Y} seconds to process a request,
+respectively. When TX≥TYT_{X}\geq T_{Y}, stage XX finishes processing before the next request arrives. We therefore focus on the case where TX<TYT_{X}<T_{Y}.
+To illustrate the pipelining mechanism, assume stage XX uses one instance with one worker in Individual Mode,
+while stage YY is assigned M=⌈TY/TX⌉M=\lceil T_{Y}/T_{X}\rceil instances in Shared Mode.
+The proxy can then submit requests to XX every XT{}_{T}X seconds, and stage YY produces one result every TXT_{X} seconds.
+This ensures that no request is delayed within the instances.
+The total latency for a request is T⁡(q)=TX+TY+N​e​t​w​o​r​k​(q)T(q)=T_{X}+T_{Y}+Network(q), where N​e​t​w​o​r​k​(q)Network(q) represents the inter-instance message transfer time.
+For example, as shown in Figure 5, when TX=4​sT_{X}=4s and TY=12​sT_{Y}=12s,
+stage XX accepts requests every 44 seconds and outputs intermediate results at the same rate.
+Each instance in stage YY receives inputs every 44 seconds and produces final outputs after 1212 seconds, maintaining the input frequency.
+We now extend this approach to multiple workers in stage XX.
+If stage XX uses KK workers, we assign M=⌈K∗TY/TX⌉M=\lceil K*T_{Y}/T_{X}\rceil instances to stage YY.
+In this case, the proxy can submit requests every TX/KT_{X}/K seconds,
+and stage YY will correspondingly produce results every TX/KT_{X}/K seconds.
+Figure 6 illustrates an example where stage XX uses 22 workers and stage YY uses 66 instances.
+Theorem 1.
+Consider two stages XX and YY with execution times TXT_{X} and TYT_{Y} respectively,
+where TX<TYT_{X}<T_{Y}. If stage XX processes KK requests in parallel and stage YY processes MM requests in parallel, where
+M=⌈TY/TX∗K⌉M=\lceil T_{Y}/T_{X}*K\rceil, then the output rates of stages XX and YY will be equal.
+Proof.
+Since stage XX processes KK requests concurrently,
+each taking time TXT_{X}, its throughput is K/TXK/T_{X} outputs per second.
+Equivalently, it produces one output every TX/KT_{X}/K seconds, which also becomes the input rate for stage YY.
+Stage YY can process MM requests in parallel. After receiving MM inputs,
+the total time required for the first batch of MM outputs is at most TYT_{Y} seconds. Since M∗TX/K≥TYM*T_{X}/K\geq T_{Y},
+the first output from YY is produced no later than time TYT_{Y}.
+Thereafter, for every TX/KT_{X}/K seconds, one output is produced by XX, and one output is completed by YY.
+This is because one of the MM workers in YY becomes available every TX/KT_{X}/K seconds, matching the input rate from XX.
+Hence, the output rate of YY is M/TY≥K/TXM/T_{Y}\geq K/T_{X},
+which ensures that the system reaches a steady state where the output rate of YY equals the input rate from XX.
+Therefore, both stages produce outputs at the same rate of K/T​XK/TX per second.
+∎
+Request Monitor and Fast Reject
+To maintain stable processing latency, the proxy employs a fast-reject mechanism:
+if a client query arrives when the system is not ready to accept new requests,
+the proxy immediately rejects it to prevent excessive delays.
+As established in Theorem 1,
+it is always possible to assign a suitable value of KK to the next stage following the proxy such that the system produces outputs at a steady rate.
+The Request Monitor continuously calculates KK using real-time instance information obtained from the NM.
+Whenever the incoming request rate exceeds K/TXK/T_{X}, the proxy rejects additional requests.
+This fast-reject capability ensures that the system avoids overload and maintains stable performance under high load conditions.
+6. RDMA Network
+The RDMA network (Section 2.1) serves as a fundamental enabler in modern machine learning systems,
+largely due to its zero-copy capability that allows direct data transfer between memory regions without involving the host CPU.
+Systems such as Mooncake (Qin et al., 2024b) and Deepseek (Zhao et al., 2025)
+often rely on NCCL (Section 2.2) for message passing.
+However, despite its convenience, NCCL is unsuitable for OnePiece due to several key limitations:
+(L1)
+Limited Data Type Support: NCCL only supports tensor data, whereas messages in OnePiece may contain arbitrary data types (Section 4.1).
+(L2)
+Fixed Message Size Requirement: NCCL requires fixed message sizes between endpoints,
+while OnePiece must accommodate dynamic message sizes resulting from variable user-defined workflows and models.
+(L3)
+GPU Interference: Because NCCL accesses GPU memory directly for transfers, it can interfere with concurrent computation and degrade worker performance.
+(L4)
+Lack of Message Context: NCCL uses end-to-end transmission semantics, which obscures message origin
+and complicates the timely triggering of corresponding processing workflows.
+Due to these constraints, OnePiece uses RDMA directly for message delivery. Nevertheless, employing bare-metal RDMA introduces two primary challenges:
+(C1)
+Memory Management for Dynamic Transfers: RDMA is a point-to-point protocol that requires establishing
+a queue pair (QP) between communication peers.
+The sender directly accesses the receiver’s memory via registered addresses.
+Since registered memory regions are fixed in size,
+effectively managing continuously arriving messages within finite memory becomes a critical issue.
+(C2)
+Notification Mechanism for Data Arrival: OnePiece uses one-sided RDMA operations,
+where data arrival does not automatically notify the CPU.
+Thus, a mechanism is required to alert the R​SRS when new messages arrive and indicate their location in memory.
+Figure 7. Ring Buffer
+6.1. Ring Buffer
+To address challenge C1,
+OnePiece employs a ring buffer (also referred to as a circular queue) inspired by (Dragojević et al., 2014).
+For challenge C2, all senders share the same memory region, enabling the receiver to monitor only a single queue.
+Locking is a commonly used mechanism to manage concurrent access to shared resources.
+However, in distributed systems, deadlock prevention becomes critical.
+Although Optimistic Concurrency Control (OCC) (Kung and Robinson, 1981)
+and two-phase locking (2PL) (Soisalon-Soininen and Ylönen, 1995) are widely adopted solutions that use versioning to protect data,
+they require CPU involvement and are thus unsuitable for the RDMA environment.
+Although several non-blocking ring buffer implementations exist (Harris et al., 2002; Tsigas and Zhang, 2001; Kriz, 2013),
+these are designed for fixed-size elements and do not accommodate variable message sizes,
+making them incompatible with OnePiece’s requirements (L2).
+To the best of our knowledge, no existing circular queue implementation adequately supports dynamic data assignment under our target constraints.
+Our ring buffer supports multiple producers
+and a single consumer while accommodating dynamically sized messages.
+It is wait-free for the consumer; producers may contend but are only required to wait in cases of conflict.
+This ensures the consumer is never blocked: whenever new data is available in memory,
+it can be processed immediately.
+We assume that consumer operations do not fail, as both the queue and the consumer are co-located.
+As illustrated in Figure 7, the ring buffer’s memory structure consists of four components:
+•
+A lock region, updated exclusively by senders using Compare-and-Swap (CAS) operations.
+•
+A fixed-length header containing the head and tail pointers that indicate where producers should write and consumers should read.
+•
+A dynamically sized ring buffer region that holds the actual message content.
+•
+A size region that records the size of each data entry in the buffer region.
+This region is essential for deadlock prevention (Section 6.1).
+Each entry in the size region includes a busy bit indicating whether the slot has been written;
+this bit can only be cleared by the consumer.
+We define the following operations for senders (producers) and the receiver (consumer).
+Sender (Producer) Operations
+To append data to the buffer, a sender performs the following steps:
+(1)
+Acquire the lock using a CAS-based spinlock.
+(2)
+Read the current tail position from the shared header. The header contains both the buffer tail (pointing to the next write location in the buffer region) and the size tail (pointing to the corresponding slot in the size region).
+(3)
+If insufficient space remains for the new data, release the lock and abort.
+(4)
+Check whether the next slot in the size region has been updated.
+If it has, update the header before writing new data.
+This situation may arise if a previous sender was lost after partial updates (see Proof Case Case7).
+(5)
+Write the data into the buffer region starting at the buffer tail position.
+(6)
+Write the data size into the size region at the size tail position and set the busy bit.
+(7)
+Update the tail position in the header to reflect the new end of the data.
+(8)
+Release the lock.
+Receiver (Consumer) Operations
+To consume data from the buffer, the receiver performs the following:
+(1)
+Read the current head position from the header.
+(2)
+If no new data is available, wait for a predefined interval and retry.
+(3)
+Read the next available data item from the buffer region.
+(4)
+Reset the busy bit in the size region.
+(5)
+Update the head position to effectively remove the consumed item.
+The ring buffer ensures that if a producer writes data starting at address RR,
+the consumer will eventually read that same data from RR, provided that no deadlock occurs.
+Buffer Region and Size Region
+Both the buffer region and the size region are implemented as ring buffers.
+The positions of read and write operations within these regions are managed by pointers stored in the header.
+Due to the variable size of data elements,
+the pointer for the buffer region is updated dynamically based on the size value recorded in the corresponding slot of the size region:
+Pb={Pb+s​i​z​e​(Ps​i​z​e),i​f​Pb+s​i​z​e​(Ps​i​z​e)<R​e​g​i​o​n​S​i​z​e0,o​t​h​e​r​w​i​s​eP_{b}=\left\{\begin{aligned} &P_{b}+size(P_{size}),&ifP_{b}+size(P_{size})<RegionSize\\
+&0,&otherwise\end{aligned}\right.
+The pointer for the size region, in contrast, is updated in fixed increments (by one unit per operation), wrapping around via modulo arithmetic:
+Ps​i​z​e=(Ps​i​z​e+1)mod(RegionSize)P_{size}=(P_{size}+1)\mod\text{(RegionSize)}
+Finally, both the pointers will be updated in the header in atomic operations.
+Deadlock and Liveness
+Unlike traditional ring buffers operating in multi-core environments,
+operations initiated by senders in a distributed setting may be lost,
+potentially leading to deadlocks.
+Most existing deadlock-mitigation strategies employ timer-based mechanisms (Knapp, 1987; Holt, 1972; Chandy et al., 1983; Singhal, 2002).
+If a timer expires, the system assumes the sender has failed and releases the lock automatically.
+However, ensuring liveness,i.e., that after a sequence of reads and writes the queue returns to a consistent state where the reader can retrieve valid data,
+remains challenging.
+OnePiece incorporates a dedicated size region to help recover from deadlock scenarios.
+Given the low latency of the RDMA network, OnePiece uses a short timeout interval.
+When a timeout occurs, one of the senders releases and reacquires the lock.
+Nevertheless, delayed messages may still compromise reliability.
+Since OnePiece is designed for time-sensitive workloads, such messages are allowed to overwrite current buffer entries.
+To detect data corruption, a checksum is applied to the data header.
+The consumer verifies this checksum upon reading; if a mismatch is detected, the data is discarded.
+Thanks to the short timeout interval, obsolete updates can corrupt at most one subsequent data entry.
+Furthermore, since data is consumed shortly after being written, the time window during which messages remain vulnerable to corruption is very narrow.
+As a result, the probability of consecutive data corruption in OnePiece is extremely low.
+Liveness
+We now enumerate possible execution scenarios and describe how the queue recovers liveness in each case.
+To facilitate the discussion, we define the following atomic actions:
+•
+Lock​(X)\text{Lock}(X): sender XX acquires the lock.
+•
+Unlock​(X)\text{Unlock}(X): sender XX releases the lock.
+•
+WB​(X)\text{WB}(X): sender XX writes data to the buffer at the tail.
+•
+WL​(X)\text{WL}(X): sender XX writes the data size to the size region.
+•
+RB​(Z)\text{RB}(Z): receiver ZZ reads data from the buffer.
+•
+RL​(Z)\text{RL}(Z): receiver ZZ reads the data size.
+•
+GH​(X)\text{GH}(X): XX reads the header and checks the size region.
+•
+UH​(X)\text{UH}(X): XX updates the header.
+•
+TL: the lock times out.
+(Case1)
+Lock​(X)→TL→Lock​(Y)→GH​(Y)→WB​(Y)→WL​(Y)→UH​(Y)→Unlock​(Y)\text{Lock}(X)\rightarrow\text{TL}\rightarrow\text{Lock}(Y)\rightarrow\text{GH}(Y)\rightarrow\text{WB}(Y)\rightarrow\text{WL}(Y)\rightarrow\text{UH}(Y)\rightarrow\text{Unlock}(Y).
+Here, XX is lost and YY reacquires the lock.
+The receiver ZZ will read valid data written by YY and proceed to the next location.
+(Case2)
+Lock​(X)→GH​(X)→TL→Lock​(Y)→GH​(Y)→WB​(Y)→WL​(Y)→UH​(Y)→Unlock​(Y)→WB​(X)→WL​(X)\text{Lock}(X)\rightarrow\text{GH}(X)\rightarrow\text{TL}\rightarrow\text{Lock}(Y)\rightarrow\text{GH}(Y)\rightarrow\text{WB}(Y)\rightarrow\text{WL}(Y)\rightarrow\text{UH}(Y)\rightarrow\text{Unlock}(Y)\rightarrow\text{WB}(X)\rightarrow\text{WL}(X).
+XX is delayed and overwrites YY’s data. WL​(X)\text{WL}(X) fails due to the busy bit. If the data sizes from XX and YY match, ZZ reads valid data; otherwise, ZZ may skip invalid entries and proceed using size metadata.
+(Case3)
+Lock​(X)→GH​(X)→TL→Lock​(Y)→GH​(Y)→WB​(Y)→WB​(X)→WL​(Y)→UH​(Y)→Unlock​(Y)→WL​(X)\text{Lock}(X)\rightarrow\text{GH}(X)\rightarrow\text{TL}\rightarrow\text{Lock}(Y)\rightarrow\text{GH}(Y)\rightarrow\text{WB}(Y)\rightarrow\text{WB}(X)\rightarrow\text{WL}(Y)\rightarrow\text{UH}(Y)\rightarrow\text{Unlock}(Y)\rightarrow\text{WL}(X).
+XX overwrites YY’s data late. WL​(X)\text{WL}(X) fails since WL​(Y)\text{WL}(Y) occurred first. ZZ reads using YY’s size and moves to the next location.
+(Case4)
+Lock​(X)→GH​(X)→TL→Lock​(Y)→GH​(Y)→WB​(Y)→WB​(X)→WL​(X)→WL​(Y)→UH​(X)→Unlock​(X)\text{Lock}(X)\rightarrow\text{GH}(X)\rightarrow\text{TL}\rightarrow\text{Lock}(Y)\rightarrow\text{GH}(Y)\rightarrow\text{WB}(Y)\rightarrow\text{WB}(X)\rightarrow\text{WL}(X)\rightarrow\text{WL}(Y)\rightarrow\text{UH}(X)\rightarrow\text{Unlock}(X).
+XX updates the size before YY; WL​(Y)\text{WL}(Y) fails. ZZ reads XX’s data and continues.
+(Case5)
+Lock​(X)→GH​(X)→TL→Lock​(Y)→GH​(Y)→WB​(X)→WB​(Y)→WL​(Y)→WL​(X)→UH​(Y)→Unlock​(Y)\text{Lock}(X)\rightarrow\text{GH}(X)\rightarrow\text{TL}\rightarrow\text{Lock}(Y)\rightarrow\text{GH}(Y)\rightarrow\text{WB}(X)\rightarrow\text{WB}(Y)\rightarrow\text{WL}(Y)\rightarrow\text{WL}(X)\rightarrow\text{UH}(Y)\rightarrow\text{Unlock}(Y).
+XX writes before YY, but YY overwrites and finalizes the entry. ZZ reads valid data from YY.
+(Case6)
+Lock​(X)→GH​(X)→TL→Lock​(Y)→GH​(Y)→WB​(X)→WB​(Y)→WL​(X)→WL​(Y)→UH​(X)→Unlock​(X)\text{Lock}(X)\rightarrow\text{GH}(X)\rightarrow\text{TL}\rightarrow\text{Lock}(Y)\rightarrow\text{GH}(Y)\rightarrow\text{WB}(X)\rightarrow\text{WB}(Y)\rightarrow\text{WL}(X)\rightarrow\text{WL}(Y)\rightarrow\text{UH}(X)\rightarrow\text{Unlock}(X).
+Similar to Case Case3: XX updates the size, but YY overwrites the data. ZZ skips invalid data and proceeds.
+(Case7)
+Lock​(X)→GH​(X)→WB​(X)→WL​(X)→TL→Lock​(Y)→GH​(Y)→UH​(Y)→WB​(Y)→WL​(Y)→Unlock​(Y)\text{Lock}(X)\rightarrow\text{GH}(X)\rightarrow\text{WB}(X)\rightarrow\text{WL}(X)\rightarrow\text{TL}\rightarrow\text{Lock}(Y)\rightarrow\text{GH}(Y)\rightarrow\text{UH}(Y)\rightarrow\text{WB}(Y)\rightarrow\text{WL}(Y)\rightarrow\text{Unlock}(Y).
+XX is lost after updating the size. YY detects this, updates the header, and writes new data. ZZ reads both XX’s and YY’s data.
+(Case8)
+Lock​(X)→GH​(X)→WB​(X)→WL​(X)→UH​(X)→TL→Lock​(Y)→GH​(Y)→WB​(Y)→WL​(Y)→UH​(X)→Unlock​(X)\text{Lock}(X)\rightarrow\text{GH}(X)\rightarrow\text{WB}(X)\rightarrow\text{WL}(X)\rightarrow\text{UH}(X)\rightarrow\text{TL}\rightarrow\text{Lock}(Y)\rightarrow\text{GH}(Y)\rightarrow\text{WB}(Y)\rightarrow\text{WL}(Y)\rightarrow\text{UH}(X)\rightarrow\text{Unlock}(X).
+Normal case where XX does not release the lock. ZZ still reads the data after XX’s header update.
+In all scenarios, the receiver ZZ eventually reaches a valid location and continues reading subsequent data correctly. Thus, the queue guarantees liveness.
+Theorem 1.
+If a sender XX successfully writes data to a position PP in the buffer region,
+then the receiver ZZ will eventually access PP, but the data at PP is not guaranteed to be valid.
+Proof.
+Assume, for the sake of contradiction, that XX writes data at position PP but ZZ never reads from PP.
+For ZZ to skip PP, the size entry corresponding to PP in the size region must have been altered after XX’s write.
+However, once XX successfully writes the data, it sets the busy bit in the associated size entry.
+This busy bit prevents any modification to that size entry until ZZ consumes the data and clears the bit.
+Therefore, the size entry remains unchanged after XX’s update,
+ensuring that ZZ will eventually traverse the buffer region along the same logical path as XX and read the data from PP.
+∎
+7. Databases Replication
+Figure 8. Database Replicatioin
+Leveraging the reliable transmission capabilities of the RDMA network greatly simplifies the database replication process in OnePiece.
+Moreover, due to the transient nature of AIGC-generated results,
+which are typically retrieved by clients within a short time window,
+the system does not require outcomes to be stored persistently or guaranteed under strong consistency models.
+Clients or proxies retrieve results by querying one database instance at a time.
+If the instance is operational and contains the requested result,
+the data is returned immediately.
+If the result is absent,for example, due to ongoing replication or instance failure,
+the client proceeds to query another instance in the next attempt.
+This lightweight approach ensures robustness and high availability without incurring the overhead of distributed consensus or synchronous replication.
+8. NodeManager (NM)
+Figure 9. NodeManager
+The Node Manager (NM) acts as a centralized orchestrator that maintains metadata about all instances and their roles within each workflow set.
+To communicate with any proxy or database instance, clients must first query the NM to obtain the respective instance’s location.
+Beyond role and location management, the NM continuously monitors the GPU utilization of each workflow stage.
+If a stage exhibits insufficient GPU capacity, the NM automatically scales the stage by assigning additional instances,
+thereby enhancing computational throughput and ensuring timely task completion.
+8.1. Primary Election
+The NM employs a primary-backup replication scheme to ensure high availability.
+All read queries are directed to the primary instance, while write operations are propagated to the backup instances,
+as illustrated in Figure 9.
+As in conventional distributed systems, the primary NM instance periodically broadcasts heartbeats to maintain its presence and authority.
+If any instance detects the absence of heartbeats from the current leader,or the lack of a leader altogether,
+it initiates a new leader election using the Paxos consensus algorithm (Lamport, 2001).
+The Paxos protocol guarantees that at most one leader is elected at any given time,
+even under concurrent election attempts,
+thereby ensuring system safety.
+This Paxos-based election mechanism provides fault tolerance and strong consistency.
+During elections, instances exchange status information to ensure the new leader incorporates the latest system state,
+preserving metadata consistency across the management layer.
+Figure 10. Reschedule instances from VAE Decode and Idel Instance pool to Diffusion.
+8.2. Workflow Instance Assignment
+OnePiece concurrently executes numerous application workflows,
+each of which may require varying amounts of GPU resources at different stages due to fluctuating and imbalanced request loads.
+This variability necessitates dynamic reassignment of GPU resources to improve overall utilization.
+The resource assignment process consists of the following steps:
+•
+Instance GPU Status Reporting: Each instance periodically reports its GPU utilization to the NM.
+•
+Average GPU Utilization Calculation: The NM computes the average GPU utilization for each workflow stage within the same Workflow Set (Section 3.1) over a recent time window (e.g., 5 minutes).
+•
+Busy Stage Identification: The NM identifies the stage with the highest utilization.
+•
+Instance Assignment: If the utilization exceeds a predefined threshold (e.g., 85%), the NM assigns additional instances to that stage.
+•
+State Delivery: The NM updates the instance’s role and sends the corresponding task and routing information (including next-hop details)
+to the assigned instance.
+•
+Local State Update: If the task assignment changes, the instance initializes the corresponding models and updates the next-hop information
+within its R​DRD component.
+In addition to active instances processing workflow stages, OnePiece maintains an Idle Instance Pool.
+These instances may be used for lower-priority tasks, such as model training.
+When GPU resources become scarce, idle instances can be reassigned to support overloaded workflow stages.
+Figure 10 illustrates an example of dynamic instance rescheduling during video generation.
+A request passes through a preparation stage, a diffusion model, and finally a VAE decoder that produces the video.
+In this scenario, an underutilized instance (60% GPU) in the preparation stage is reassigned to the diffusion stage,
+where all instances are at full capacity. This decision is triggered by regular GPU status reporting.
+This instance assignment mechanism enables efficient workload balancing both within and across workflow sets.
+Figure 11. Two workflows share some overlap stages.
+8.3. Instance Sharing
+To improve resource utilization, OnePiece allows multiple workflows to share computational instances.
+For example, the LTX model,which generates videos from multiple images,
+and the image-to-video workflow,which produces videos from a single image,
+share all processing stages except their respective diffusion models,
+as illustrated in Figure 11.
+This sharing of common stages reduces redundant resource allocation while preserving workflow-specific processing where necessary.
+9. Fault Tolerance
+OnePiece provides fault tolerance primarily for the NM,
+reflecting the transient nature of AIGC generation tasks.
+If messages are lost between workflow stages,whether due to network issues or data errors (Section 6.1),
+the system does not attempt retransmission.
+This design stems from the observation that retries would introduce additional latency,
+and clients or end-users in interactive AIGC applications are generally unwilling to tolerate extended delays.
+By omitting retry mechanisms,
+OnePiece achieves a simpler and higher-performance architecture.
+The messaging layer can, however, be extended to support guaranteed delivery for applications that require it.
+10. Related Work
+Inference Acceleration
+Training-based acceleration methods primarily aim to reduce sampling steps (Salimans and Ho, 2022; Yue et al., 2023; Luo et al., 2023; Sauer et al., 2024; Yin et al., 2024)
+or optimize model architectures (Li et al., 2023; Yang et al., 2023).
+However, these techniques focus predominantly on training-related costs and algorithmic complexity.
+In contrast, real-world AIGC applications typically involve multi-model workflows to generate content.
+OnePiece addresses system-level efficiency by dynamically allocating more resources to critical sub-models,
+thereby accelerating end-to-end pipeline performance.
+Inference on Disaggregated Architecture
+Significant efforts have been dedicated to improving the efficiency of LLM serving systems through scheduling, memory management,
+and multi-stage resource optimization.
+Systems such as Orca (Yu et al., 2022) employ iteration-level scheduling to enable concurrent processing across different stages,
+while FlexGen (Sheng et al., 2023), SARATHI (Agrawal et al., 2024),
+and FastServe (Wu et al., 2023) introduce innovative scheduling
+and swapping strategies to better distribute workloads across limited hardware.
+Approaches like Mooncake (Qin et al., 2024a) and Splitwise (Patel et al., 2024) further improve throughput by disaggregating
+the prefill and decoding stages.
+Inspired by these works, OnePiece applies a disaggregated architecture to AIGC workflows by partitioning models across different
+hardware resources, with the goal of maximizing overall GPU goodput.
+Distributed Systems with RDMA
+Numerous research efforts (Wang et al., 2022b; Kalia et al., 2014; Ma et al., 2022; Poke and Hoefler, 2015; Cai et al., 2018; Luo et al., 2024; Taleb et al., 2018; Zhang et al., 2022)
+have adopted RDMA as the underlying communication protocol in distributed systems.
+These systems typically rely on primary-based protocols to address distributed locking challenges.
+In contrast, OnePiece does not depend on any primary node for message delivery and instead employs a distributed locking mechanism to manage coordination.
+Multiple-Producer Ring Buffer
+Multiple-producer ring buffers have been extensively studied (Feldman and Dechev, 2015; Lee et al., 2009; Barrington et al., 2015).
+Although many existing solutions claim to be wait-free, they assume fixed-size buffer slots.
+OnePiece relaxes this constraint by employing a lock-based mechanism for producers—augmented with deadlock detection—while still
+ensuring a wait-free experience for the consumer.
+Systems such as Chubby (Burrows, 2006) and Redis (Carlson, 2013) offer solutions for deadlock resolution in distributed locking,
+but these typically involve CPU-based coordination.
+OnePiece introduces a novel approach that resolves deadlocks efficiently within the constraints of RDMA protocols.
+10.1. Conclusion
+OnePiece is a large-scale distributed inference system designed for AIGC workflows.
+It disaggregates workflow stages across multiple instances to improve GPU utilization and employs RDMA technology
+to reduce communication latency caused by large payload transfers between nodes.
+Additionally, OnePiece introduces a novel solution to resolve deadlocks in shared ring buffers.
+Experimental results demonstrate that the system achieves a 16% reduction in GPU resource consumption for Wan2.1 image-to-video generation tasks.
+References
+Agrawal et al. (2024)
+A. Agrawal, N. Kedia, A. Panwar, J. Mohan, N. Kwatra, B. Gulavani, A. Tumanov, and R. Ramjee
+Taming {\{throughput-latency}\} tradeoff in {\{llm}\} inference with {\{sarathi-serve}\}.
+In 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24),
+pp. 117–134.
+Cited by: §10.
+Barrington et al. (2015)
+A. Barrington, S. Feldman, and D. Dechev
+A scalable multi-producer multi-consumer wait-free ring buffer.
+In Proceedings of the 30th Annual ACM Symposium on Applied Computing,
+pp. 1321–1328.
+Cited by: §10.
+Bedeir (2010)
+T. Bedeir
+Building an rdma-capable application with ib verbs.
+Technical report, HPC Advisory Council.
+Cited by: §1.
+Burrows (2006)
+M. Burrows
+The chubby lock service for loosely-coupled distributed systems.
+In Proceedings of the 7th symposium on Operating systems design and implementation,
+pp. 335–350.
+Cited by: §10.
+Cai et al. (2018)
+Q. Cai, W. Guo, H. Zhang, D. Agrawal, G. Chen, B. C. Ooi, K. Tan, Y. M. Teo, and S. Wang
+Efficient distributed memory management with rdma and caching.
+Proceedings of the VLDB Endowment 11 (11), pp. 1604–1617.
+Cited by: §10.
+Carlson (2013)
+J. Carlson
+Redis in action.
+Simon and Schuster.
+Cited by: §1,
+§10.
+Chandy et al. (1983)
+K. M. Chandy, J. Misra, and L. M. Haas
+Distributed deadlock detection.
+ACM Transactions on Computer Systems (TOCS) 1 (2), pp. 144–156.
+Cited by: §6.1.
+Croitoru et al. (2023)
+F. Croitoru, V. Hondru, R. T. Ionescu, and M. Shah
+Diffusion models in vision: a survey.
+IEEE transactions on pattern analysis and machine intelligence 45 (9), pp. 10850–10869.
+Cited by: §1.
+Dai and Wipf (2019)
+B. Dai and D. Wipf
+Diagnosing and enhancing vae models.
+arXiv preprint arXiv:1903.05789.
+Cited by: §1.
+Devalal and Karthikeyan (2018)
+S. Devalal and A. Karthikeyan
+LoRa technology - an overview.
+In 2018 Second International Conference on Electronics, Communication and Aerospace Technology (ICECA),
+Vol. , pp. 284–290.
+External Links: Document
+Cited by: §1.
+Doersch (2016)
+C. Doersch
+Tutorial on variational autoencoders.
+arXiv preprint arXiv:1606.05908.
+Cited by: §1.
+Dragojević et al. (2014)
+A. Dragojević, D. Narayanan, M. Castro, and O. Hodson
+{\{farm}\}: Fast remote memory.
+In 11th USENIX Symposium on Networked Systems Design and Implementation (NSDI 14),
+pp. 401–414.
+Cited by: §6.1.
+Feldman and Dechev (2015)
+S. Feldman and D. Dechev
+A wait-free multi-producer multi-consumer ring buffer.
+ACM SIGAPP Applied Computing Review 15 (3), pp. 59–71.
+Cited by: §10.
+Harris et al. (2002)
+T. L. Harris, K. Fraser, and I. A. Pratt
+A practical multi-word compare-and-swap operation.
+In International Symposium on Distributed Computing,
+pp. 265–279.
+Cited by: §6.1.
+Holt (1972)
+R. C. Holt
+Some deadlock properties of computer systems.
+ACM Computing Surveys (CSUR) 4 (3), pp. 179–196.
+Cited by: §6.1.
+Hu et al. (2022)
+E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, W. Chen, et al.
+Lora: low-rank adaptation of large language models..
+ICLR 1 (2), pp. 3.
+Cited by: §1.
+Huang et al. (2019)
+Y. Huang, Y. Cheng, A. Bapna, O. Firat, D. Chen, M. Chen, H. Lee, J. Ngiam, Q. V. Le, Y. Wu, et al.
+Gpipe: efficient training of giant neural networks using pipeline parallelism.
+Advances in neural information processing systems 32.
+Cited by: §4.4.
+Islam et al. (2012)
+N. S. Islam, M. W. Rahman, J. Jose, R. Rajachandrasekar, H. Wang, H. Subramoni, C. Murthy, and D. K. Panda
+High performance rdma-based design of hdfs over infiniband.
+In SC’12: Proceedings of the International Conference on High Performance Computing, Networking, Storage and Analysis,
+pp. 1–12.
+Cited by: §3.2.
+Jiang et al. (2004)
+W. Jiang, J. Liu, H. Jin, D. K. Panda, W. Gropp, and R. Thakur
+High performance mpi-2 one-sided communication over infiniband.
+In IEEE International Symposium on Cluster Computing and the Grid, 2004. CCGrid 2004.,
+pp. 531–538.
+Cited by: §1.
+Jin (2001)
+H. Jin
+High performance mass storage and parallel i/o: technologies and applications.
+John Wiley & Sons, Inc..
+Cited by: §2.1.
+Kalia et al. (2014)
+A. Kalia, M. Kaminsky, and D. G. Andersen
+Using rdma efficiently for key-value services.
+In Proceedings of the 2014 ACM Conference on SIGCOMM,
+pp. 295–306.
+Cited by: §10.
+Kalia et al. (2016)
+A. Kalia, M. Kaminsky, and D. G. Andersen
+Design guidelines for high performance {\{rdma}\} systems.
+In 2016 USENIX annual technical conference (USENIX ATC 16),
+pp. 437–450.
+Cited by: §2.1.
+Knapp (1987)
+E. Knapp
+Deadlock detection in distributed databases.
+ACM Computing Surveys (CSUR) 19 (4), pp. 303–328.
+Cited by: §6.1.
+Kriz (2013)
+A. Kriz
+Lock-free multi-producer multi-consumer queue on ring buffer.
+Linux Journal, LLC 10.
+Cited by: §6.1.
+Kung and Robinson (1981)
+H. Kung and J. T. Robinson
+On optimistic methods for concurrency control.
+ACM Transactions on Database Systems (TODS) 6 (2), pp. 213–226.
+Cited by: §6.1.
+Lamport (2001)
+L. Lamport
+Paxos made simple.
+ACM SIGACT News 32 (4), pp. 51–58.
+Note: Distributed Computing Column 5
+External Links: Document
+Cited by: §8.1.
+Lee et al. (2009)
+P. P. Lee, T. Bu, and G. Chandranmenon
+A lock-free, cache-efficient shared ring buffer for multi-core architectures.
+In Proceedings of the 5th ACM/IEEE Symposium on Architectures for Networking and Communications Systems,
+pp. 78–79.
+Cited by: §10.
+Li et al. (2023)
+Y. Li, H. Wang, Q. Jin, J. Hu, P. Chemerys, Y. Fu, Y. Wang, S. Tulyakov, and J. Ren
+Snapfusion: text-to-image diffusion model on mobile devices within two seconds.
+Advances in Neural Information Processing Systems 36, pp. 20662–20678.
+Cited by: §10.
+Liu et al. (2003)
+J. Liu, J. Wu, S. P. Kini, P. Wyckoff, and D. K. Panda
+High performance rdma-based mpi implementation over infiniband.
+In Proceedings of the 17th annual international conference on Supercomputing,
+pp. 295–304.
+Cited by: §3.2.
+Luo et al. (2023)
+S. Luo, Y. Tan, L. Huang, J. Li, and H. Zhao
+Latent consistency models: synthesizing high-resolution images with few-step inference.
+arXiv preprint arXiv:2310.04378.
+Cited by: §10.
+Luo et al. (2024)
+X. Luo, R. Alagappan, and A. Ganesan
+SplitFT: fault tolerance for disaggregated datacenters via remote memory logging.
+In Proceedings of the Nineteenth European Conference on Computer Systems,
+pp. 590–607.
+Cited by: §10.
+Ma et al. (2022)
+S. Ma, T. Ma, K. Chen, and Y. Wu
+A survey of storage systems in the rdma era.
+IEEE Transactions on Parallel and Distributed Systems 33 (12), pp. 4395–4409.
+Cited by: §10.
+Narayanan et al. (2019)
+D. Narayanan, A. Harlap, A. Phanishayee, V. Seshadri, N. R. Devanur, G. R. Ganger, P. B. Gibbons, and M. Zaharia
+PipeDream: generalized pipeline parallelism for dnn training.
+In Proceedings of the 27th ACM symposium on operating systems principles,
+pp. 1–15.
+Cited by: §4.4.
+Ni et al. (2021)
+J. Ni, G. H. Abrego, N. Constant, J. Ma, K. B. Hall, D. Cer, and Y. Yang
+Sentence-t5: scalable sentence encoders from pre-trained text-to-text models.
+arXiv preprint arXiv:2108.08877.
+Cited by: §1.
+[35]
+NVIDIA
+NCCL library.
+External Links: Link
+Cited by: §1,
+§2.2.
+Patel et al. (2024)
+P. Patel, E. Choukse, C. Zhang, A. Shah, Í. Goiri, S. Maleki, and R. Bianchini
+Splitwise: efficient generative llm inference using phase splitting.
+In 2024 ACM/IEEE 51st Annual International Symposium on Computer Architecture (ISCA),
+pp. 118–132.
+Cited by: §10.
+Poke and Hoefler (2015)
+M. Poke and T. Hoefler
+Dare: high-performance state machine replication on rdma networks.
+In Proceedings of the 24th International Symposium on High-Performance Parallel and Distributed Computing,
+pp. 107–118.
+Cited by: §10.
+Qin et al. (2024a)
+R. Qin, Z. Li, W. He, M. Zhang, Y. Wu, W. Zheng, and X. Xu
+Mooncake: a kvcache-centric disaggregated architecture for llm serving.
+arXiv preprint arXiv:2407.00079.
+Cited by: §1,
+§10.
+Qin et al. (2024b)
+R. Qin, Z. Li, W. He, M. Zhang, Y. Wu, W. Zheng, and X. Xu
+Mooncake: a kvcache-centric disaggregated architecture for llm serving.
+External Links: 2407.00079,
+Link
+Cited by: §6.
+Salimans and Ho (2022)
+T. Salimans and J. Ho
+Progressive distillation for fast sampling of diffusion models.
+arXiv preprint arXiv:2202.00512.
+Cited by: §10.
+Sauer et al. (2024)
+A. Sauer, D. Lorenz, A. Blattmann, and R. Rombach
+Adversarial diffusion distillation.
+In European Conference on Computer Vision,
+pp. 87–103.
+Cited by: §10.
+Sheng et al. (2023)
+Y. Sheng, L. Zheng, B. Yuan, Z. Li, M. Ryabinin, B. Chen, P. Liang, C. Ré, I. Stoica, and C. Zhang
+Flexgen: high-throughput generative inference of large language models with a single gpu.
+In International Conference on Machine Learning,
+pp. 31094–31116.
+Cited by: §10.
+[43]
+Simplifying ai inference in production with nvidia triton.
+External Links: Link
+Cited by: §1.
+Singhal (2002)
+M. Singhal
+Deadlock detection in distributed systems.
+Computer 22 (11), pp. 37–48.
+Cited by: §6.1.
+Soisalon-Soininen and Ylönen (1995)
+E. Soisalon-Soininen and T. Ylönen
+Partial strictness in two-phase locking.
+In International Conference on Database Theory,
+pp. 139–147.
+Cited by: §6.1.
+Stuedi et al. (2012)
+P. Stuedi, A. Trivedi, and B. Metzler
+Wimpy nodes with {\{10gbe}\}: leveraging {\{one-sided}\} operations in {\{soft-rdma}\} to boost memcached.
+In 2012 USENIX Annual Technical Conference (USENIX ATC 12),
+pp. 347–353.
+Cited by: §1.
+Sun et al. (2025)
+Y. Sun, L. Sun, S. Liu, R. Wu, Z. Zhang, and L. Zhang
+One-step diffusion for detail-rich and temporally consistent video super-resolution.
+arXiv preprint arXiv:2506.15591.
+Cited by: §4.
+Taleb et al. (2018)
+Y. Taleb, R. Stutsman, G. Antoniu, and T. Cortes
+Tailwind: fast and atomic {\{rdma-based}\} replication.
+In 2018 USENIX Annual Technical Conference (USENIX ATC 18),
+pp. 851–863.
+Cited by: §10.
+Team (2025)
+W. Team
+Wan: open and advanced large-scale video generative models.
+.
+Cited by: §1,
+§2.4,
+§4.
+Tsigas and Zhang (2001)
+P. Tsigas and Y. Zhang
+A simple, fast and scalable non-blocking concurrent fifo queue for shared memory multiprocessor systems.
+In Proceedings of the thirteenth annual ACM symposium on Parallel algorithms and architectures,
+pp. 134–143.
+Cited by: §6.1.
+Wang et al. (2022a)
+B. Wang, Q. Xu, Z. Bian, and Y. You
+Tesseract: parallelize the tensor parallelism efficiently.
+In Proceedings of the 51st International Conference on Parallel Processing,
+pp. 1–11.
+Cited by: §4.4.
+Wang et al. (2022b)
+R. Wang, J. Wang, S. Idreos, M. T. Özsu, and W. G. Aref
+The case for distributed shared-memory databases with rdma-enabled memory disaggregation.
+arXiv preprint arXiv:2207.03027.
+Cited by: §10.
+Wijmans and Baker (1995)
+J. G. Wijmans and R. W. Baker
+The solution-diffusion model: a review.
+Journal of membrane science 107 (1-2), pp. 1–21.
+Cited by: §1.
+Wu et al. (2023)
+B. Wu, Y. Zhong, Z. Zhang, S. Liu, F. Liu, Y. Sun, G. Huang, X. Liu, and X. Jin
+Fast distributed inference serving for large language models.
+arXiv preprint arXiv:2305.05920.
+Cited by: §10.
+Yang et al. (2023)
+X. Yang, D. Zhou, J. Feng, and X. Wang
+Diffusion probabilistic model made slim.
+In Proceedings of the IEEE/CVF Conference on computer vision and pattern recognition,
+pp. 22552–22562.
+Cited by: §1,
+§10.
+Yin et al. (2024)
+T. Yin, M. Gharbi, R. Zhang, E. Shechtman, F. Durand, W. T. Freeman, and T. Park
+One-step diffusion with distribution matching distillation.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 6613–6623.
+Cited by: §10.
+Yu et al. (2022)
+G. Yu, J. S. Jeong, G. Kim, S. Kim, and B. Chun
+Orca: a distributed serving system for {\{transformer-based}\} generative models.
+In 16th USENIX Symposium on Operating Systems Design and Implementation (OSDI 22),
+pp. 521–538.
+Cited by: §10.
+Yue et al. (2023)
+Z. Yue, J. Wang, and C. C. Loy
+Resshift: efficient diffusion model for image super-resolution by residual shifting.
+Advances in Neural Information Processing Systems 36, pp. 13294–13307.
+Cited by: §10.
+Zhang et al. (2022)
+M. Zhang, Y. Hua, P. Zuo, and L. Liu
+{\{ford}\}: Fast one-sided {\{rdma-based}\} distributed transactions for disaggregated persistent memory.
+In 20th USENIX Conference on File and Storage Technologies (FAST 22),
+pp. 51–68.
+Cited by: §10.
+Zhao et al. (2025)
+C. Zhao, C. Deng, C. Ruan, D. Dai, H. Gao, J. Li, L. Zhang, P. Huang, S. Zhou, S. Ma, W. Liang, Y. He, Y. Wang, Y. Liu, and Y. X. Wei
+Insights into deepseek-v3: scaling challenges and reflections on hardware for ai architectures.
+External Links: 2505.09343,
+Link
+Cited by: §6.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

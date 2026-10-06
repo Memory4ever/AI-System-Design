@@ -1,0 +1,1114 @@
+Representation-Aware Unlearning via Activation Signatures: From Suppression to Knowledge-Signature Erasure
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Works
+3 Methodology
+3.1 Dataset Curation
+3.2 Activation-Signature Extraction
+3.3 Capsule Forging
+Geometric Suppression Operator
+3.4 Self-Healing Loop
+4 Experiments and Results
+Model and Baseline Selection
+Evaluation Metrics
+4.1 Real-World Entity Dataset Results
+General Capability Retention
+4.2 TOFU Benchmark Results
+4.3 Result Analysis and Discussion
+Breaking the stability - erasure trade-off.
+Why standard and reasoning models diverge fundamentally?
+Dual metrics expose hidden failure modes in prior work.
+The “latent pruning” hypothesis.
+Loss compositionality
+5 Conclusion
+References
+A Dataset Construction
+A.1 Dataset Statistics
+A.2 Prompt Templates
+B Implementation Details
+B.1 Activation Probing and Extraction Pipeline
+B.2 Signature Analysis
+Activation Pre-processing and Standardization
+Signature Extraction and Mathematical Validation
+B.3 Capsule Forge
+Dimension Mismatch and Robustness
+Capsule Export and Persistence
+B.4 Self Healing Loop
+C Additional Results and Ablations
+C.1 Signature Validation
+C.2 Few-shot capability retention
+License: arXiv.org perpetual non-exclusive license
+arXiv:2601.10566v1 [cs.CL] 15 Jan 2026
+Representation-Aware Unlearning via Activation Signatures: From Suppression to Knowledge-Signature Erasure
+Syed Naveed Mahmood
+Affiliation: Computer Science and Engineering, BRAC University, Dhaka, Bangladesh
+Md. Rezaur Rahman Bhuiyan*
+Affiliation: Computer Science and Engineering, BRAC University, Dhaka, Bangladesh
+Tasfia Zaman*
+Affiliation: Computer Science and Engineering, BRAC University, Dhaka, Bangladesh
+Jareen Tasneem Khondaker
+Affiliation: Computer Science and Engineering, BRAC University, Dhaka, Bangladesh
+Md. Sameer Sakib
+Affiliation: Computer Science and Engineering, BRAC University, Dhaka, Bangladesh
+Nazia Tasnim
+Affiliation: Boston University, Boston, MA, USA*Equal contribution.
+Farig Sadeque
+Affiliation: Computer Science and Engineering, BRAC University, Dhaka, Bangladesh
+Abstract
+Selective knowledge erasure from LLMs is critical for GDPR compliance and model safety, yet current unlearning methods conflate behavioral suppression with true knowledge removal, allowing latent capabilities to persist beneath surface-level refusals.
+In this work, we address this challenge by introducing Knowledge Immunization Framework (KIF), a representation-aware architecture that distinguishes genuine erasure from obfuscation by targeting internal activation signatures rather than surface outputs11
+1
+Anonymous repository. Our approach combines dynamic suppression of subject-specific representations with parameter-efficient adaptation, enabling durable unlearning without full model retraining.
+KIF achieves near-oracle erasure (FQ ≈\approx 0.99 vs. 1.00) while preserving utility at oracle levels (MU = 0.62), effectively breaking the stability-erasure tradeoff that has constrained all prior work. We evaluate both standard foundation models (Llama & Mistral) and reasoning-prior models (Qwen & DeepSeek) across 3B to 14B parameters. Our observation shows that standard models exhibit scale-independent true erasure (<<3% utility drift), while reasoning-prior models reveal fundamental architectural divergence. Our comprehensive dual-metric evaluation protocol, combining surface-level leakage with latent trace persistence, operationalizes the obfuscation - erasure distinction and enables the first systematic diagnosis of mechanism-level forgetting behavior across model families and scales.
+1 Introduction
+Large language models (LLMs) are widely deployed in NLP systems, but training on large-scale corpora can memorize sensitive or copyrighted content, conflicting with regulations such as the GDPR (European Parliament and Council of the European Union, 2016) “right to erasure” / right to be forgotten (RTBF) and related data-protection regimes (Zhang et al., 2024a). Unlike databases, where deletion is explicit, LLMs entangle training data in distributed parameters (Naveed et al., 2025), making targeted removal technically difficult. LLM unlearning aims to remove the influence of selected data while preserving general utility (Yao et al., 2024; Ren et al., 2025).
+Figure 1: Comparison of approaches: while standard methods may yield obfuscation that hides answers without removing latent knowledge, KIF targets the internal signature to achieve true erasure.
+Recent unlearning methods include reverse-optimization (e.g., gradient ascent Yao et al. (2024)), preference-based objectives such as NPO (Zhang et al., 2024b), and representation-steering approaches ( RMU (Huu-Tien et al., 2025), Opt-Out (Choi et al., 2025)) . Despite efficiency, two primary issues persist: (i) utility can degrade under strong forgetting pressure (Yao et al., 2024; Zhang et al., 2024b); (ii) apparent forgetting can be obfuscation (refusal/suppression) rather than erasure, leaving latent capability intact (Ren et al., 2025; Sun et al., 2025).
+We address these limitations by proposing Knowledge Immunization Framework (KIF): a light-weight framework that uses internal representation signals, extracted using a custom real-world entity based prompt dataset, to target the knowledge to dynamically suppress output during inference, continually distill the suppression into parameter weights using LoRA (Hu et al., 2021): unlearning it while applying stability-aware updates to reduce collateral drift, discouraging obfuscation.
+We evaluate across open-source chat and reasoning model families across varying scales using benchmarks and metrics that probe both surface leakage and residual knowledge (Maini et al., 2024; Shi et al., 2024; Yoon et al., 2025). KIF achieves strong forgetting with negligible utility drift in foundation models and exposes systematic differences in how reasoning-oriented models trade off erasure and obfuscation under stress (Sun et al., 2025; Yoon et al., 2025). Our main contributions can be summarized as: (i) a custom real-world entity based prompt dataset;
+(ii) a representation-aware, dynamic suppression and parameter-efficient unlearning framework guided by internal activation signatures based on the dataset, improving stability over standard
+baselines;
+(iii) an evaluation protocol that separates behavioral suppression from durable erasure by jointly measuring leakage and internal signature persistence;
+(iv) a cross-family, cross-scale study identifying regimes where unlearning remains stable versus regimes that revert to obfuscation-like behavior under pressure.
+2 Related Works
+Most practical LLM unlearning avoids expensive retraining by optimizing auxiliary objectives on a forget set while preserving utility, with TOFU (Maini et al., 2024) and MUSE (Shi et al., 2024) establishing standard benchmarks. Early approaches, such as reverse-optimization baselines like Maini et al. (2024), regularize forgetting against retention, while preference-style objectives Zhang et al. (2024b); Rafailov et al. (2024)such as NPO (Zhang et al., 2024b) provide smoother divergence than Jang et al. (2023).
+Subsequent work has progressively addressed stability and failure modes:  Fan et al. (2025) reduces reference bias , AltPO (Mekala et al., 2025) incorporates in-domain positives, ReLearn  (Xu et al., 2025) preserves fluency through learning-style updates, and UnDIAL (Dong et al., 2025) applies self-distillation-based stabilization. Optimizer/geometry choices (SOUL (Jia et al., 2024)) and robustness to relearning attacks via smoothness-aware defenses (e.g., SAM-based (Fan et al., 2025) robust unlearning) further shape outcomes.
+Despite these refinements, a fundamental issue persists: existing methods operate at the loss and output levels, treating forgetting as a behavioral adjustment rather than a representation-level phenomenon. This architectural choice leaves a critical gap: apparent forgetting often masks obfuscation (i.e, suppression vs. refusal) rather than true knowledge erasure.
+Recent work has begun to expose this gap.  Sun et al. (2025) and  Yoon et al. (2025) demonstrate that obfuscation can hide residual knowledge through probing-based evaluations and that reasoning models are particularly susceptible, leaving intermediate traces despite answer-level suppression. Parameter-efficient methods like LoRA (Hu et al., 2021; Liu et al., 2022) and mechanistic approaches localizing knowledge in transformer internals (e.g., knowledge neurons, activation patching (Dai et al., 2022; Heimersheim and Nanda, 2024) offer complementary insights, yet neither directly targets the obfuscation - erasure distinction.
+We bridge these directions by mining forget-linked activation signatures to guide localized PEFT edits, combining representation-aware intervention with parameter efficiency while explicitly measuring both surface behavior and latent persistence.
+3 Methodology
+To achieve our goal of a durable, representation-level knowledge erasure while preserving model utility, we introduce a three-stage pipeline: (1) localizing the target knowledge’s internal activation mechanisms through statistical analysis (Meng et al., 2023), (2) then suppressing these mechanisms at inference time using lightweight gating modules termed Knowledge Suppression Capsules to attenuate subject-specific representations, and (3) finally, distilling this suppressed behavior permanently into a global LoRA Adapter  (Hu et al., 2021) for durable unlearning without full retraining.
+The training objective combines preference-style supervision for explicit forgetting and stability regularization that minimize collateral drift (Rafailov et al., 2024; Welleck et al., 2019; Kirkpatrick et al., 2017). Figure 2 illustrates our complete pipeline. Implementation details for reproducibility is given in Appendix B.
+Figure 2: Knowledge Immunization Framework (KIF) pipeline.
+Subject-driven prompts are used to probe MLP-layer activations, from which subject-specific activation signatures are mined. These signatures instantiate lightweight suppression capsules attached to high-salience MLP layers for immediate suppression. A self-healing loop distills this behavior into a global LoRA adapter, yielding durable parameter-level unlearning where targeted knowledge is completely removed from the model weight
+3.1 Dataset Curation
+The localization stage requires extensive activation profiling to identify subject-specific representations. To this end, we construct a systematically designed dataset of controlled prompts grounded in verifiable facts about real-world entities. Following Meng et al.’s (2023) knowledge-tuple concept, we extract factual triples (subject, predicate, object) from Wikipedia and WikiData and instantiate them into prompt templates (e.g., “Is it true that {subject}’s {predicate} was {object}?”). This forms our Real-World Entity Dataset, a comprehensive dataset detailed in Appendix: A. We employ five complementary probe types to comprehensively characterize how target knowledge manifests across the model’s representational landscape:
+1.
+Direct: Queries specific facts, to extract the most probable retrieval path in the model.
+2.
+Contextual: Requests information in a broader context to ensure that the signature captures the subject’s representation even when it is embedded in a larger narrative flow.
+3.
+Implicit: Probes knowledge via confirmation questions to intercepts the activations even if the output implicitly involves the subject.
+4.
+Reasoning: Encourages explanatory responses, forcing the model to not just retrieve the fact but manipulate it to generate new tokens, to allow for a more complex representation.
+5.
+Misleading: Prompts about a subject with incorrect information. These prompts are necessary to probe for internal representation in case of misinformation and to evaluate whether models verify retrieved knowledge versus accepting user-suggested misinformation.
+3.2 Activation-Signature Extraction
+The observation that factual associations are stored as localized, linear relations within the MLP weights and the use of Activations in Causal Tracing (Meng et al., 2023), led us to hypothesize that unlearning can be achieved by targeting the activation patterns and associated MLP Block found from subject specific activations directly.
+We evaluate a 4-bit quantized model on the structured prompt dataset to harvest internal representations per MLP Layer. While Meng et al. (2023)’s Causal Tracing extracts the activation from a complete MLP block,
+we gain finer localization by targeting intermediate tensors Agate(ℓ)A_{\text{gate}}^{(\ell)}, Aup(ℓ)A_{\text{up}}^{(\ell)}, and Ydown(ℓ)Y_{\text{down}}^{(\ell)} that define MLP subspace boundaries M(ℓ)={gate(ℓ),up(ℓ),down(ℓ)}M^{(\ell)}=\{\text{gate}^{(\ell)},\text{up}^{(\ell)},\text{down}^{(\ell)}\}.
+From the collected corpus of layer-wise activations, we extract subject-specific signatures through a contrastive framework. First, we normalize variable activation shapes to a common 1D representation via token-wise averaging and standardization. We then compare the Positive activations from on-topic prompts against Synthetic Negatives generated via Gaussian noise (Meng et al., 2023), which simulates “off-manifold” noise. The primary signature is identified using Mean Difference: 𝐝=mean​(Spos)−mean​(Sneg)\mathbf{d}=\text{mean}(S_{\text{pos}})-\text{mean}(S_{\text{neg}}) (where SposS_{\text{pos}} and SnegS_{\text{neg}} are the sets of positive and negative activation vectors). This technique has been shown to be effective for isolating directions in a model’s latent space corresponding to high-level behaviors by Rimsky et al. (2024). The resulting vector captures the principal direction separating subject-specific from baseline representations.
+To quantify the signature’s effectiveness, each scaled vector xx is projected onto the signature vector (p​r​o​j​(x)=s⋅x{proj}(x)=s\cdot x (where, ss is dd after normalization)), and effect is measured using Cohen’s dd with bootstrap resampling over 50 trials (Robertson and Koyejo, 2025). A 95% confidence interval not crossing zero confirms statistical significance. Furthermore, to capture residual knowledge not encoded in the primary direction, we apply PCA to extract secondary orthogonal signatures by projecting out the primary signal (xresid=x−p​r​o​j​(x)x_{\text{resid}}=x-{proj}(x)) and retaining components exceeding a predefined effect-size threshold via SVD. Implementation details for the signature preprocessing, bootstrap effect-size testing, and residual PCA/SVD extraction are provided in Appendix B.2, with additional signature validation metrics reported in Appendix C.1.
+3.3 Capsule Forging
+Having extracted subject-specific activation signatures, we now construct lightweight suppression mechanisms that attenuate these representations at inference time without degrading general model performance. Conceptually inspired by Stoehr et al. (2024)’s activation scaling, we term these specialized adapters Knowledge Suppression Capsules. Our adapters also build on the rank-one hypothesis of Meng et al. (2023), and precisely attenuate subject-specific activations while ensuring identity transformations in orthogonal directions. Unlike input-independent shifts in Contrastive Activation Addition (Rimsky et al., 2024), our capsules preserve the model’s null space, maintaining general utility. This design provides a computationally efficient O⁡(d)O(d) alternative to sparse steering (Bayat et al., 2025), bypassing the memory and inference overhead of external Sparse Autoencoder (Bayat et al., 2025) architectures.
+Geometric Suppression Operator
+The core of each capsule is a gate-like operator that implements a rank-one geometric constraint. For a hidden state h∈ℝdh\in\mathbb{R}^{d} and a unit-norm signature vector d∈ℝdd\in\mathbb{R}^{d}, the capsule applies the transformation:
+h′=h+α⁡⟨h,d⟩​d=(I+α​d​d⊤)​hh^{\prime}=h+\alpha\langle h,d\rangle d=(I+\alpha dd^{\top})h
+(1)
+h′=h⟂+(1+α)​h∥.h^{\prime}=h_{\perp}+(1+\alpha)h_{\parallel}.
+(2)
+where (α∈ℝ)(\alpha\in\mathbb{R}) is a trainable scalar: suppression initialized to −1-1.
+Decomposing h=h∥+h⟂h=h_{\parallel}+h_{\perp} with h∥=(d​d⊤)​hh_{\parallel}=(dd^{\top})h and h⟂=(I−d​d⊤)​hh_{\perp}=(I-dd^{\top})h yields Eq. (2). The capsule acts as an identity on the (d−1)(d-1) orthogonal directions, ensuring non-target information remains numerically untouched. The separability of activations in later layers (Table: 11), indicates the Capsules will have an easy time identifying the linear association of subjects in activations relative to the signatures inside the capsule, further supporting the applicability of the attenuation mechanism.
+Implementation relies on forward hooks where dd is registered as a fixed buffer. This design allows the capsule to be exported as a lightweight, device-consistent artifact containing all metadata and state necessary to reconstruct the suppression operator and dynamically injected at inference or permanently distilled during the Self-Healing Loop (3.4), allowing it to be removed once true erasure is achieved.
+3.4 Self-Healing Loop
+While capsules provide immediate suppression, they do not achieve permanent erasure. To convert transient suppression into durable parameter-level unlearning, we propose a Self-Healing Loop that distills capsule behavior into a single global LoRA adapter (Hu et al., 2021). We formulate this as a composite loss function ℒ\mathcal{L} (Eq. 5) designed to achieve efficient unlearning while mitigating catastrophic forgetting, a hypothesis we validate empirically through ablation studies.
+Specifically, this loop simulates user interaction via the custom dataset (3.1), triggering the Knowledge Suppression Capsule at layer ℓ\ell whenever the projection ⟨hℓ,d⟩\langle h_{\ell},d\rangle (standardized as a ZZ-score zz) exceeds the threshold τ\tau via a sigmoid gate σ⁡(k⁡(z−τ))\sigma(k(z-\tau)) (where kk is an empirically chosen gain factor) multiplied to α\alpha (in eq. 1). This gating mechanism ensures full suppression only upon statistically significant deviations, isolating interventions to factual anomalies while preserving utility during nominal activations. Each trigger logs a tuple (x,y+,y−)(x,y_{+},y_{-}) representing the capsule’s refusal and the base model’s factual output, which is used to optimize global LoRA parameters ϕ\phi against the composite objective:
+Family
+Model Size
+Util. Drift
+Leakage (↓\downarrow)
+EL10 (↓\downarrow)
+Mechanism State
+Standard
+Mistral 7B
++0.50%
+0.00%
+0.020
+Type I: True Erasure
+Standard
+Llama 8B
++0.45%
+0.00%
+0.066
+Type I: True Erasure
+Standard
+Mistral 3B
++0.62%
+0.00%
+0.064
+Type I: True Erasure
+Reasoning
+Qwen 14B
++1.44%
+0.00%
+0.038
+Type I: True Erasure
+Reasoning
+Qwen 8B
+-0.50%
+3.33%
+11.03
+Type II: Obfuscation
+Reasoning
+DeepSeek 8B
++1.03%
+0.00%
+6.19
+Type II: Obfuscation
+Standard
+Llama 3B
+-0.44%
+0.00%
+3.06
+Type II: Obfuscation
+Reasoning
+Qwen 3B
++0.21%
+6.67%
+0.028
+Type III: Instability
+Reasoning
+DeepSeek 3B
++0.27%
+13.33%
+33.20
+Type III: Instability
+Table 1: Cross-Model Internal Validation Metrics. We differentiate True Erasure (EL10 <1<1) from Obfuscation (EL10 >1>1). Results indicate that standard foundation models consistently achieve true erasure across scales, whereas reasoning models exhibit capacity-dependent transitions from instability to obfuscation before achieving erasure.
+ℒDPO=−𝔼𝒟pref[w⋅logσ(β​log⁡pθ​(y+|x)pref​(y+|x)−βlogpθ​(y−|x)pref​(y−|x))]\begin{split}\mathcal{L}_{\mathrm{DPO}}=-\mathbb{E}_{\mathcal{D}_{\mathrm{pref}}}\Bigg[w\cdot\log\sigma\Bigg(&\beta\log\frac{p_{\theta}(y^{+}|x)}{p_{\mathrm{ref}}(y^{+}|x)}\\
+&-\beta\log\frac{p_{\theta}(y^{-}|x)}{p_{\mathrm{ref}}(y^{-}|x)}\Bigg)\Bigg]\end{split}
+(3)
+ℒN​T​U​L=−1T∑tlog(1−∑v∈Vn​a​m​epθ(v|x,y<t+)).\mathcal{L}_{NTUL}=-\frac{1}{T}\sum_{t}\log\Big(1-\sum_{v\in V_{name}}p_{\theta}(v|x,y_{<t}^{+})\Big).
+(4)
+ℒ=ℒD​P​O+λU​L​ℒU​L+λN​T​U​L​ℒN​T​U​L+λK​L​ℒK​L+λE​W​C​ℒE​W​C\begin{split}\mathcal{L}=\mathcal{L}_{DPO}&+\lambda_{UL}\mathcal{L}_{UL}+\lambda_{NTUL}\mathcal{L}_{NTUL}\\
+&+\lambda_{KL}\mathcal{L}_{KL}+\lambda_{EWC}\mathcal{L}_{EWC}\end{split}
+(5)
+In Eq. 3, we adapt Direct Preference Optimization (Rafailov et al., 2024) by introducing a scaling factor ww to amplify penalties when the model deviates from the reference distribution, anchoring unlearning to the pre-trained manifold.
+For surgical knowledge excision, we apply two token-level penalties adapted from Welleck et al. (2019): standard Factual Unlikelihood (ℒU​L\mathcal{L}_{UL}) on the base model’s factual output (y−y_{-}) to minimize error token generation, while Name-Token Unlikelihood (ℒN​T​-​U​L\mathcal{L}_{NT\text{-}UL}), which unlike the standard version, we use to penalize the aggregate probability mass of subject name tokens Vn​a​m​eV_{name} within refusal responses to prevent soft leakage (4).
+Finally, to ensure the aggressive unlearning does not degrade general reasoning, we constrain the model’s deviation on benign anchor prompts using a standard KL Divergence penalty (ℒK​L\mathcal{L}_{KL}) Schulman et al. (2017) (Rafailov et al., 2024) combined with Elastic Weight Consolidation (ℒE​W​C\mathcal{L}_{EWC}) (Kirkpatrick et al., 2017), which penalizes shifts in parameters identified as critical.
+4 Experiments and Results
+We validate KIF through a dual evaluation strategy that combines mechanistic depth with standardized benchmarking. Our Real-World Entity Dataset, constructed from Wikipedia/WikiData factual triples, grants access to internal activations, enabling diagnosis of whether surface forgetting reflects true erasure or obfuscation. We complement this with TOFU forget10 (Maini et al., 2024), the standard benchmark for LLM unlearning, enabling direct comparison with prior work. Together, these protocols test both mechanism-level behavior across architectures and scales, and aggregate performance against established baselines.
+Additional experiments are also in the appendix C.
+Model and Baseline Selection
+We evaluate across two distinct model families chosen to test architectural generalization: standard foundation models (Llama Grattafiori et al. (2024), Mistral Jiang et al. (2023)) known for direct fact retrieval, and reasoning-prior architectures (Qwen Bai et al. (2023), DeepSeek Bi et al. (2024)) that distribute knowledge across latent reasoning chains. The models span 3B–14B parameters to further probe capacity-dependent behavior.
+For the baseline, we compare against five representative prior methods spanning the evolution of LLM unlearning. Gradient Ascent Jang et al. (2023) represents the simplest reverse-optimization approach; GradDiff Maini et al. (2024) adds utility regularization via reference model guidance, establishing the output-level baseline; NPO Zhang et al. (2024b) applies preference optimization to unlearning, improving upon reverse-optimization; SimNPO Fan et al. (2025), the strongest recent baseline, refines NPO by reducing reference model bias.We also include IDK/templated refusal Maini et al. (2024) representing behavioral suppression without knowledge removal. These methods operate at the loss and output level; KIF differs fundamentally by targeting internal activation signatures, providing a distinct operational point on the erasure - utility spectrum.
+For TOFU results (Table 3), we include two reference bounds: Retrained (Oracle), a model retrained from scratch on data excluding the forget set, representing the theoretical upper bound on erasure; and Original, the unmodified base model, representing the lower bound with no forgetting attempted. Baseline TOFU numbers are reproduced from Fan et al. (2025) (Table A3); we compute KIF under identical settings. Some Hyperparameters like λ\lambda, α\alpha are tuned empirically; remaining hyperparameters, prompt templates, dataset details, and hardware specifications are provided in the Appendix.
+Evaluation Metrics
+We employ three diagnostic metrics on the Real-World Entity Dataset (Table. 1), each isolating distinct aspects of knowledge persistence:
+(1) Utility Drift (Benign PPL Change) Jelinek et al. (1977), measured as the change in relative perplexity in unrelated benign text (where negative drift indicates marginal improvement);  (2) Leakage / SMR (Subject Mention Rate) Carlini et al. (2021), defined as the percentage of prompts where the model produces the target name (ideally 0.00%0.00\%); and the  (3) Latent Trace / EL10 Ratio Eldan and Russinovich (2023) summarizes early-step probability mass on the target name; larger values indicate stronger early activation.
+We further characterize unlearning outcomes using three interpretable mechanism states, defined by (SMR, EL10) thresholds (ϵ=5%\epsilon=5\% tolerance). This mapping from (SMR, EL10) to mechanism regimes is a descriptive heuristic inspired by Sun et al. (2025).
+•
+Type I (True Erasure): SMR ≤ϵ\leq\epsilon and EL10 <1<1 - internal representations have been attenuated; the model does not possess residual capability.
+•
+Type II (Obfuscation): SMR ≤ϵ\leq\epsilon and EL10 >1>1 - the model internally recognizes the target but is prevented from outputting it through refusal mechanisms.
+•
+Type III (Instability): SMR >ϵ>\epsilon - failed suppression; the intervention cannot consistently control generation.
+On TOFU forget10, we follow standard protocol and report Forget Quality (FQ) Maini et al. (2024) and Model Utility (MU) (Maini et al., 2024), which aggregate forgetting and utility across all forget and retain sets, respectively.
+In the following subsections, we first report the Real-World Entity Dataset results (
+Section 4.1), then present TOFU results (Section 4.2), followed by analysis in Section 4.3.
+Figure 3: EL10 ratio (log scale; left axis) and surface leakage (SMR; right axis). Standard models maintain low internal activation (EL10 <1<1) regardless of size, whereas reasoning models display a distinct capacity-dependent U-curve.
+4.1 Real-World Entity Dataset Results
+Table 1 reports KIF’s performance across model families and scales using our dual-metric framework. Standard foundation models (Llama, Mistral) exhibit consistent Type I behavior across all parameter scales: zero surface leakage (SMR = 0%), minimal internal activation (EL10 <0.07<0.07), and negligible utility drift (<0.7%). This scale-independence indicates that standard architectures possess sufficient representational modularity to factorize and suppress target knowledge without requiring specific parameter density.
+In contrast, reasoning-prior models (Qwen, DeepSeek) exhibit a capacity-dependent U-curve. At 3B (Type III), models show instability and high leakage (SMR up to 13.33%).At 8B (Type II), surface leakage vanishes but EL10 spikes (≈\approx 11.03), indicating internal recognition suppressed by refusal-obfuscation rather than erasure. At 14B (Type I), both metrics normalize, suggesting genuine representation-level erasure. This progression suggests reasoning-prior architectures distribute knowledge across entangled latent chains requiring specific capacity to disentangle. Figure 3 visualizes this, using the EL10 = 1.0 threshold to distinguish true erasure from obfuscation across scales.
+Benchmark
+Metric
+Pre (Base)
+Post (Adapter)
+Delta
+ARC-Challenge
+acc_char
+76.88
+76.62
+-0.26
+OpenBookQA
+acc_char
+74.80
+74.40
+-0.40
+HellaSwag
+acc
+76.68
+76.84
++0.16
+BoolQ
+acc
+78.93
+74.46
+-4.46
+PIQA
+acc_char
+72.09
+71.65
+-0.44
+SocialIQA
+acc_char
+59.88
+55.99
+-3.89
+WinoGrande
+acc
+68.98
+69.46
++0.47
+TruthfulQA (MC2)
+mc2
+40.36
+40.87
++0.51
+Table 2: Zero-shot capability retention. Comparison of base versus unlearned performance shows that general capabilities remain robust with negligible variance across most benchmarks, despite localized degradation in specific tasks like BoolQ and SocialIQA. See Appendix C.2 for few-shot results.
+General Capability Retention
+To confirm that KIF’s representation-targeted interventions remain localized, we evaluate zero-shot performance on eight diverse benchmarks spanning reading comprehension, commonsense reasoning, and truthfulness: ARC-Challenge (Clark et al., 2018), OpenBookQA (Mihaylov et al., 2018), BoolQ (Clark et al., 2019), HellaSwag (Zellers et al., 2019), PIQA (Bisk et al., 2020), SocialIQA (Sap et al., 2019), WinoGrande (Sakaguchi et al., 2021), and TruthfulQA (Lin et al., 2022). Table 2 shows post-unlearning accuracy tracks the pre-unlearning baseline within <1% on most tasks, with modest exceptions in BoolQ (-4.46%) and SocialIQA (-3.89%). This minimal impact indicates that PEFT-based updates do not induce broad distribution shifts. Small improvements on HellaSwag and TruthfulQA suggest potential "latent pruning": removing high-interference traces may reduce internal representation conflicts, yielding calibration gains without altering core task capabilities.
+Method
+FQ (↑\uparrow)
+MU (↑\uparrow)
+Retrained (Oracle)
+1.00
+0.62
+Original
+0.00
+0.62
+Gradient Ascent
+2.2×10−162.2{\times}10^{-16}
+0.00
+GradDiff
+3.7×10−153.7{\times}10^{-15}
+0.54
+IDK (rejection)
+2.9×10−142.9{\times}10^{-14}
+0.54
+NPO
+0.29
+0.55
+SimNPO
+0.45
+0.62
+Ours (KIF)
+0.99
+0.62
+Table 3: TOFU-forget10 on LLaMA-2-7B-Chat.
+We report Forget Quality (FQ) and Model Utility (MU).
+All baseline numbers are taken from Fan et al. (2025), Table A3. KIF achieves near-oracle forgetting (FQ 0.99 vs 1.00) while preserving utility (MU 0.62, matching the original/oracle).
+4.2 TOFU Benchmark Results
+Table 3 presents results on TOFU forget10 (Maini et al., 2024), the standard benchmark for LLM unlearning. KIF achieves near-oracle performance (FQ = 0.99 vs. oracle FQ = 1.00) while matching oracle utility (MU = 0.62). This near-perfect score represents a qualitative breakthrough: prior methods sacrifice either forgetting or utility. Gradient Ascent Jang et al. (2023) destroys utility entirely (MU = 0.00). GradDiff Maini et al. (2024) and IDK Maini et al. (2024) suppress leakage behaviorally but lose utility (MU = 0.54). NPO Zhang et al. (2024b) improves utility but achieves only weak erasure (FQ = 0.29).  Fan et al. (2025), the strongest recent baseline, preserves utility but saturates at modest erasure (FQ = 0.45). These constraints form a sharp Pareto frontier-none of the prior methods approach oracle-level performance on both dimensions simultaneously.
+In contrast, KIF operates at a fundamentally different point on the erasure - utility spectrum by targeting internal activation signatures rather than optimizing loss objectives. This mechanistic approach enables true representation-level knowledge removal, effectively breaking the stability - erasure tradeoff that has constrained all prior work.
+4.3 Result Analysis and Discussion
+Breaking the stability - erasure trade-off.
+Prior methods impose a noticeable utility tax to achieve stronger forgetting: NPO sacrifices utility to gain modest erasure (FQ 0.29 with MU 0.55), while SimNPO preserves utility but saturates at weak erasure (FQ 0.45). KIF breaks this constraint by operating on representation-aware activation signatures rather than loss-level objectives. This mechanistic shift enables near-oracle erasure (FQ 0.99) while matching oracle utility (MU 0.62), achieved without retraining. The breakthrough stems from localized intervention: by targeting subject-specific subspaces via PEFT, KIF avoids broad distribution shifts that degrade downstream task performance. This establishes a new operational point on the erasure - utility spectrum, demonstrating that mechanistic approaches can overcome constraints inherent to behavioral optimization.
+Why standard and reasoning models diverge fundamentally?
+The empirical divergence between standard and reasoning models reflects distinct knowledge storage architectures. Standard models (Llama, Mistral) utilize direct retrieval heuristics, on facts stored in relatively localized, linearly separable regions; here, KIF’s suppression scales robustly as increased capacity across parameter sizes (3B - 7B) provides redundancy Dai et al. (2022). In contrast, reasoning-prior models (Qwen, DeepSeek) distribute knowledge across entangled latent Chain-of-Thought dependencies (Wang et al., 2025). This creates capacity-dependent constraints: at 3B (Type III), unlearning destabilizes activation dynamics; at 8B (Type II), models gain capacity for stable refusal barriers but lack the modularity to refactor semantic space, causing latent obfuscation. Only at 14B (Type I) does sufficient redundancy exist to disentangle reasoning traces and achieve true erasure. This U-curve absent in standard models-proves that trace entanglement imposes hard scaling constraints on unlearning for next-generation reasoning systems.
+Dual metrics expose hidden failure modes in prior work.
+Surface-level metrics (SMR alone) creates a dangerous blind spot. Type II behavior (e.g., Qwen 8B: 3.33% SMR, 11.03 EL10) proves behavioral suppression can mask latent knowledge persistence. While prior work with output-only metrics would deem this "successful," the model could internally retain the knowledge. our dual-metric framework distinguishes true erasure from obfuscation. Ablations (Table 4) confirm this: removing representation-level constraints (Gen-UL) shifts Llama 8B toward Type II, proving loss-level supervision alone defaults to output suppression. Standard baselines’ inability to diagnose this explains their convergence on suboptimal solutions.
+The “latent pruning” hypothesis.
+An unexpected finding is that utility metrics occasionally improve or remain tight to oracle levels despite aggressive unlearning.
+We hypothesize this reflects latent pruning: removing high-interference traces may reduce representational conflict, yielding small calibration gains. Specifically, fictitious or low-confidence traces (Eldan and Russinovich, 2023) that the model learned but rarely uses productively may occupy representational bandwidth. Excising these traces could act as weak de-noising, improving downstream task performance without altering core semantic structure. This hypothesis is speculative but consistent with observations: (1) utility drift remains minimal across tasks (Table 2), (2) some tasks show improvement (HellaSwag +0.16, TruthfulQA +0.51), and (3) the effect clusters around the oracle baseline rather than deteriorating monotonically.
+Loss compositionality
+The ablation (Table. 4) reveals that KIF’s effectiveness depends on compositional loss design 5. Removing Name-Token Unlikelihood (NT-UL) reverts Llama 8B to Type III instability (SMR 3.33%, EL10 0.275), demonstrating that preference-based losses alone cannot enforce hard token-level suppression. Preference optimization creates behavioral refusal formats (e.g., "I cannot discuss this"), but without explicit name-token penalties, the model can still emit identifying information. Removing Generic Unlikelihood shifts the model toward Type II (EL10 remains elevated at 0.098), showing that representation-level pressure is necessary to drive latent attenuation; without it, the model reverts to decoding-time control. This interplay reveals the underlying mechanism: token-level penalties enforce behavioral constraints at the output surface, while representation-level penalties enforce true knowledge attenuation in latent space. Neither alone is sufficient-both must operate jointly to achieve Type I erasure. This compositional requirement explains why prior loss-level methods struggle: they cannot simultaneously optimize behavior and representation, forcing trade-offs between erasure and utility.
+Exp
+SMR (↓\downarrow)
+EL10 (↓\downarrow)
+Util. Drift
+State
+A: Full
+0.00%
+0.066
++0.45%
+Type I
+B: No NT-UL
+3.33%
+0.275
+-1.35%
+Type III
+C: No Gen UL
+0.00%
+0.098
+-1.29%
+Type II
+Table 4: Ablation results on Llama-3.1-8B. Name-Token Unlikelihood (NT-UL) removal increases leakage and model instability; Generic Unlikelihood removal reduces weaken erasure and shifts the mechanism toward stable refusal.
+5 Conclusion
+Our work addressed a critical vulnerability in LLM unlearning: the conflation of behavioral suppression with true knowledge erasure.
+Through KIF, we demonstrated that targeting internal activation signatures rather than loss-level objectives enables near-oracle erasure and utility preservation, breaking the stability - erasure tradeoff that has constrained all prior work.
+Through dual-metric analysis (SMR and EL10), we distinguished unlearning regimes: true erasure (Type I), stable suppression/obfuscation (Type II), and instability (Type III), and showed that reasoning-prior models undergo capacity-dependent transitions across these regimes, while standard foundation models remain closer to representation-level erasure across scales. Ablation studies highlight the central role of name-token unlikelihood in enforcing hard non-disclosure.
+These findings establish that durable, privacy-compliant unlearning fundamentally requires targeting internal representations rather than surface behavior, with implications for both immediate deployment in reasoning models and future research into mechanistically-grounded unlearning objectives that explicitly model knowledge persistence across architectural families.
+Limitations
+This approach relies on Synthetic Negatives to approximate off-manifold noise, which may not perfectly distinguish subject-specific activations from genuine off-topic prompts in ambiguous contexts. Additionally, variability in source data leads to inherent class imbalances in our custom dataset; while we mitigate this via oversampling during signature mining, underlying disparities may still impact consistency across subjects.
+Experimentally, relative resource constraints (One RTX A6000) limited our scope to 4-bit quantized models (up to 14B parameters), leaving performance on larger, full-precision models to be verified and we were only able to test for a single run per model. Furthermore, our evaluation focuses on immediate unlearning; we were not able to assess robustness against adversarial recovery vectors, such as jailbreaking or subsequent fine-tuning, which have cause knowledge resurfacing in other LLM paradigms.
+Ethical Consideration
+In accordance with the ACL Ethics Policy, we acknowledge that the Knowledge Immunization Framework (KIF) carries significant implications for dual-use and data privacy. While aiding legal compliance (e.g., GDPR) (European Parliament and Council of the European Union, 2016; , 2014; Zhang et al., 2024a) and sensitive content removal, KIF’s surgical erasure could be weaponized for censorship, safety guardrail removal, or the advancement of partisan agendas (Weidinger et al., 2021; Zou et al., 2023; Zhao et al., 2024). Furthermore, we emphasize that "erasure" in high-dimensional neural spaces is inherently relative, as, despite significant trace reduction, current paradigms provide no mathematical guarantee of irrecoverability against extreme adversarial fine-tuning or future jailbreaks (Bourtoule et al., 2021; Sun et al., 2025; Zou et al., 2023; Zhao et al., 2024). Users of this framework must avoid a "false sense of security," as unlearning or deletion of data over non-deterministic systems lack the absolute certainty of traditional database erasure (Bourtoule et al., 2021).
+Beyond privacy, the implementation of KIF poses risks to model integrity and societal fairness. Observed "latent pruning" suggests targeted erasure, despite improved calibration, may create "semantic holes," whose entanglement may cause unintended degradation of broader contextual understanding. Such shifts could introduce unpredictable performance drops or demographic biases.
+However, from a sustainability perspective, KIF offers a significant ethical advantage: by utilizing Parameter-Efficient Fine-Tuning (PEFT) and a self-healing loop, it provides a computationally lightweight alternative to full-model retraining. This drastically reduces the carbon footprint and environmental cost (Strubell et al., 2019; Patterson et al., 2021) of model maintenance, aligning with global objectives toward sustainable AI development. We acknowledge the use of generative AI models for creating the conceptual visualization in Figure 1 and for improving the clarity and grammatical accuracy of the manuscript.
+References
+Bai et al. (2023)
+J. Bai, S. Bai, Y. Chu, Z. Cui, K. Dang, X. Deng, Y. Fan, W. Ge, Y. Han, F. Huang, et al.
+Qwen technical report.
+arXiv preprint arXiv:2309.16609.
+External Links: Link
+Cited by: §4.
+Bayat et al. (2025)
+R. Bayat, A. Rahimi-Kalahroudi, M. Pezeshki, S. Chandar, and P. Vincent
+Steering large language model activations in sparse spaces.
+External Links: 2503.00177,
+Link
+Cited by: §3.3.
+Bi et al. (2024)
+X. Bi, D. Chen, G. Chen, S. Chen, D. Dai, C. Deng, H. Ding, K. Dong, Q. E, B. Feng, et al.
+Deepseek llm: scaling open-source language models with long-termism.
+arXiv preprint arXiv:2401.02954.
+External Links: Link
+Cited by: §4.
+Bisk et al. (2020)
+Y. Bisk, R. Zellers, J. Gao, Y. Choi, et al.
+Piqa: reasoning about physical commonsense in natural language.
+In Proceedings of the AAAI conference on artificial intelligence,
+Vol. 34, pp. 7432–7439.
+Cited by: §4.1.
+Bourtoule et al. (2021)
+L. Bourtoule, V. Chandrasekaran, C. A. Choquette-Choo, H. Jia, A. Travers, B. Zhang, D. Lie, and N. Papernot
+Machine unlearning.
+In 2021 IEEE Symposium on Security and Privacy (SP),
+Vol. , pp. 141–159.
+External Links: Document
+Cited by: Ethical Consideration.
+Carlini et al. (2021)
+N. Carlini, F. Tramèr, E. Wallace, M. Jagielski, A. Herbert-Voss, K. Lee, A. Roberts, T. Brown, D. Song, U. Erlingsson, et al.
+Extracting training data from large language models.
+USENIX Security Symposium.
+Cited by: §4.
+Choi et al. (2025)
+M. Choi, D. Rim, D. Lee, and J. Choo
+Opt-out: investigating entity-level unlearning for large language models via optimal transport.
+External Links: 2406.12329,
+Link
+Cited by: §1.
+Clark et al. (2019)
+C. Clark, K. Lee, M. Chang, T. Kwiatkowski, M. Collins, and K. Toutanova
+BoolQ: exploring the surprising difficulty of natural yes/no questions.
+In Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 1 (Long and Short Papers),
+pp. 2924–2936.
+Cited by: §4.1.
+Clark et al. (2018)
+P. Clark, I. Cowhey, O. Etzioni, T. Khot, A. Sabharwal, C. Schoenick, and O. Tafjord
+Think you have solved question answering? try arc, the ai2 reasoning challenge.
+arXiv preprint arXiv:1803.05457.
+Cited by: §4.1.
+Dai et al. (2022)
+D. Dai, L. Dong, Y. Hao, Z. Sui, B. Chang, and F. Wei
+Knowledge neurons in pretrained transformers.
+In Proceedings of the 60th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),  S. Muresan, P. Nakov, and A. Villavicencio (Eds.),
+Dublin, Ireland, pp. 8493–8502.
+External Links: Link,
+Document
+Cited by: §2,
+§4.3.
+Dong et al. (2025)
+Y. R. Dong, H. Lin, M. Belkin, R. Huerta, and I. Vulić
+UNDIAL: self-distillation with adjusted logits for robust unlearning in large language models.
+In Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers),  L. Chiruzzo, A. Ritter, and L. Wang (Eds.),
+Albuquerque, New Mexico, pp. 8827–8840.
+External Links: Link,
+Document,
+ISBN 979-8-89176-189-6
+Cited by: §2.
+Eldan and Russinovich (2023)
+R. Eldan and M. Russinovich
+Who’s harry potter? approximate unlearning in llms.
+arXiv preprint arXiv:2310.02238.
+Cited by: §4,
+§4.3.
+European Parliament and Council of the European Union (2016)
+European Parliament and Council of the European Union
+Regulation (eu) 2016/679 of the european parliament and of the council of 27 april 2016 (general data protection regulation).
+Note: Official Journal of the European Union, L 119, 4.5.2016. See Article 17 (Right to Erasure)
+External Links: Link
+Cited by: §1,
+Ethical Consideration.
+Fan et al. (2025)
+C. Fan, J. Liu, L. Lin, J. Jia, R. Zhang, S. Mei, and S. Liu
+Simplicity prevails: rethinking negative preference optimization for llm unlearning.
+External Links: 2410.07163,
+Link
+Cited by: §2,
+§4,
+§4.2,
+Table 3.
+[15]
+(2014)
+Google spain sl and google inc. v agencia española de protección de datos (aepd) and mario costeja gonzález (case c-131/12).
+Note: Judgment of the Court (Grand Chamber), 13 May 2014
+External Links: Link
+Cited by: Ethical Consideration.
+Grattafiori et al. (2024)
+A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan, A. Yang, A. Fan, A. Goyal, A. Hartshorn, A. Yang, A. Mitra, A. Sravankumar, A. Korenev, A. Hinsvark, A. Rao, A. Zhang, A. Rodriguez, A. Gregerson, A. Spataru, B. Roziere, B. Biron, B. Tang, B. Chern, C. Caucheteux, C. Nayak, C. Bi, C. Marra, C. McConnell, C. Keller, C. Touret, C. Wu, C. Wong, C. C. Ferrer, C. Nikolaidis, D. Allonsius, D. Song, D. Pintz, D. Livshits, D. Wyatt, D. Esiobu, D. Choudhary, D. Mahajan, D. Garcia-Olano, D. Perino, D. Hupkes, E. Lakomkin, E. AlBadawy, E. Lobanova, E. Dinan, E. M. Smith, F. Radenovic, F. Guzmán, F. Zhang, G. Synnaeve, G. Lee, G. L. Anderson, G. Thattai, G. Nail, G. Mialon, G. Pang, G. Cucurell, H. Nguyen, H. Korevaar, H. Xu, H. Touvron, I. Zarov, I. A. Ibarra, I. Kloumann, I. Misra, I. Evtimov, J. Zhang, J. Copet, J. Lee, J. Geffert, J. Vranes, J. Park, J. Mahadeokar, J. Shah, J. van der Linde, J. Billock, J. Hong, J. Lee, J. Fu, J. Chi, J. Huang, J. Liu, J. Wang, J. Yu, J. Bitton, J. Spisak, J. Park, J. Rocca, J. Johnstun, J. Saxe, J. Jia, K. V. Alwala, K. Prasad, K. Upasani, K. Plawiak, K. Li, K. Heafield, K. Stone, K. El-Arini, K. Iyer, K. Malik, K. Chiu, K. Bhalla, K. Lakhotia, L. Rantala-Yeary, L. van der Maaten, L. Chen, L. Tan, L. Jenkins, L. Martin, L. Madaan, L. Malo, L. Blecher, L. Landzaat, L. de Oliveira, M. Muzzi, M. Pasupuleti, M. Singh, M. Paluri, M. Kardas, M. Tsimpoukelli, M. Oldham, M. Rita, M. Pavlova, M. Kambadur, M. Lewis, M. Si, M. K. Singh, M. Hassan, N. Goyal, N. Torabi, N. Bashlykov, N. Bogoychev, N. Chatterji, N. Zhang, O. Duchenne, O. Çelebi, P. Alrassy, P. Zhang, P. Li, P. Vasic, P. Weng, P. Bhargava, P. Dubal, P. Krishnan, P. S. Koura, P. Xu, Q. He, Q. Dong, R. Srinivasan, R. Ganapathy, R. Calderer, R. S. Cabral, R. Stojnic, R. Raileanu, R. Maheswari, R. Girdhar, R. Patel, R. Sauvestre, R. Polidoro, R. Sumbaly, R. Taylor, R. Silva, R. Hou, R. Wang, S. Hosseini, S. Chennabasappa, S. Singh, S. Bell, S. S. Kim, S. Edunov, S. Nie, S. Narang, S. Raparthy, S. Shen, S. Wan, S. Bhosale, S. Zhang, S. Vandenhende, S. Batra, S. Whitman, S. Sootla, S. Collot, S. Gururangan, S. Borodinsky, T. Herman, T. Fowler, T. Sheasha, T. Georgiou, T. Scialom, T. Speckbacher, T. Mihaylov, T. Xiao, U. Karn, V. Goswami, V. Gupta, V. Ramanathan, V. Kerkez, V. Gonguet, V. Do, V. Vogeti, V. Albiero, V. Petrovic, W. Chu, W. Xiong, W. Fu, W. Meers, X. Martinet, X. Wang, X. Wang, X. E. Tan, X. Xia, X. Xie, X. Jia, X. Wang, Y. Goldschlag, Y. Gaur, Y. Babaei, Y. Wen, Y. Song, Y. Zhang, Y. Li, Y. Mao, Z. D. Coudert, Z. Yan, Z. Chen, Z. Papakipos, A. Singh, A. Srivastava, A. Jain, A. Kelsey, A. Shajnfeld, A. Gangidi, A. Victoria, A. Goldstand, A. Menon, A. Sharma, A. Boesenberg, A. Baevski, A. Feinstein, A. Kallet, A. Sangani, A. Teo, A. Yunus, A. Lupu, A. Alvarado, A. Caples, A. Gu, A. Ho, A. Poulton, A. Ryan, A. Ramchandani, A. Dong, A. Franco, A. Goyal, A. Saraf, A. Chowdhury, A. Gabriel, A. Bharambe, A. Eisenman, A. Yazdan, B. James, B. Maurer, B. Leonhardi, B. Huang, B. Loyd, B. D. Paola, B. Paranjape, B. Liu, B. Wu, B. Ni, B. Hancock, B. Wasti, B. Spence, B. Stojkovic, B. Gamido, B. Montalvo, C. Parker, C. Burton, C. Mejia, C. Liu, C. Wang, C. Kim, C. Zhou, C. Hu, C. Chu, C. Cai, C. Tindal, C. Feichtenhofer, C. Gao, D. Civin, D. Beaty, D. Kreymer, D. Li, D. Adkins, D. Xu, D. Testuggine, D. David, D. Parikh, D. Liskovich, D. Foss, D. Wang, D. Le, D. Holland, E. Dowling, E. Jamil, E. Montgomery, E. Presani, E. Hahn, E. Wood, E. Le, E. Brinkman, E. Arcaute, E. Dunbar, E. Smothers, F. Sun, F. Kreuk, F. Tian, F. Kokkinos, F. Ozgenel, F. Caggioni, F. Kanayet, F. Seide, G. M. Florez, G. Schwarz, G. Badeer, G. Swee, G. Halpern, G. Herman, G. Sizov, Guangyi, Zhang, G. Lakshminarayanan, H. Inan, H. Shojanazeri, H. Zou, H. Wang, H. Zha, H. Habeeb, H. Rudolph, H. Suk, H. Aspegren, H. Goldman, H. Zhan, I. Damlaj, I. Molybog, I. Tufanov, I. Leontiadis, I. Veliche, I. Gat, J. Weissman, J. Geboski, J. Kohli, J. Lam, J. Asher, J. Gaya, J. Marcus, J. Tang, J. Chan, J. Zhen, J. Reizenstein, J. Teboul, J. Zhong, J. Jin, J. Yang, J. Cummings, J. Carvill, J. Shepard, J. McPhie, J. Torres, J. Ginsburg, J. Wang, K. Wu, K. H. U, K. Saxena, K. Khandelwal, K. Zand, K. Matosich, K. Veeraraghavan, K. Michelena, K. Li, K. Jagadeesh, K. Huang, K. Chawla, K. Huang, L. Chen, L. Garg, L. A, L. Silva, L. Bell, L. Zhang, L. Guo, L. Yu, L. Moshkovich, L. Wehrstedt, M. Khabsa, M. Avalani, M. Bhatt, M. Mankus, M. Hasson, M. Lennie, M. Reso, M. Groshev, M. Naumov, M. Lathi, M. Keneally, M. Liu, M. L. Seltzer, M. Valko, M. Restrepo, M. Patel, M. Vyatskov, M. Samvelyan, M. Clark, M. Macey, M. Wang, M. J. Hermoso, M. Metanat, M. Rastegari, M. Bansal, N. Santhanam, N. Parks, N. White, N. Bawa, N. Singhal, N. Egebo, N. Usunier, N. Mehta, N. P. Laptev, N. Dong, N. Cheng, O. Chernoguz, O. Hart, O. Salpekar, O. Kalinli, P. Kent, P. Parekh, P. Saab, P. Balaji, P. Rittner, P. Bontrager, P. Roux, P. Dollar, P. Zvyagina, P. Ratanchandani, P. Yuvraj, Q. Liang, R. Alao, R. Rodriguez, R. Ayub, R. Murthy, R. Nayani, R. Mitra, R. Parthasarathy, R. Li, R. Hogan, R. Battey, R. Wang, R. Howes, R. Rinott, S. Mehta, S. Siby, S. J. Bondu, S. Datta, S. Chugh, S. Hunt, S. Dhillon, S. Sidorov, S. Pan, S. Mahajan, S. Verma, S. Yamamoto, S. Ramaswamy, S. Lindsay, S. Lindsay, S. Feng, S. Lin, S. C. Zha, S. Patil, S. Shankar, S. Zhang, S. Zhang, S. Wang, S. Agarwal, S. Sajuyigbe, S. Chintala, S. Max, S. Chen, S. Kehoe, S. Satterfield, S. Govindaprasad, S. Gupta, S. Deng, S. Cho, S. Virk, S. Subramanian, S. Choudhury, S. Goldman, T. Remez, T. Glaser, T. Best, T. Koehler, T. Robinson, T. Li, T. Zhang, T. Matthews, T. Chou, T. Shaked, V. Vontimitta, V. Ajayi, V. Montanez, V. Mohan, V. S. Kumar, V. Mangla, V. Ionescu, V. Poenaru, V. T. Mihailescu, V. Ivanov, W. Li, W. Wang, W. Jiang, W. Bouaziz, W. Constable, X. Tang, X. Wu, X. Wang, X. Wu, X. Gao, Y. Kleinman, Y. Chen, Y. Hu, Y. Jia, Y. Qi, Y. Li, Y. Zhang, Y. Zhang, Y. Adi, Y. Nam, Yu, Wang, Y. Zhao, Y. Hao, Y. Qian, Y. Li, Y. He, Z. Rait, Z. DeVito, Z. Rosnbrick, Z. Wen, Z. Yang, Z. Zhao, and Z. Ma
+The llama 3 herd of models.
+External Links: 2407.21783,
+Link
+Cited by: §B.1,
+§4.
+Heimersheim and Nanda (2024)
+S. Heimersheim and N. Nanda
+How to use and interpret activation patching.
+External Links: 2404.15255,
+Link
+Cited by: §2.
+Hu et al. (2021)
+E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, and W. Chen
+LoRA: low-rank adaptation of large language models.
+External Links: 2106.09685,
+Link
+Cited by: §1,
+§2,
+§3.4,
+§3.
+Huu-Tien et al. (2025)
+D. Huu-Tien, T. Pham, H. Thanh-Tung, and N. Inoue
+On effects of steering latent representation for large language model unlearning.
+External Links: 2408.06223,
+Link
+Cited by: §1.
+Jang et al. (2023)
+J. Jang, D. Yoon, S. Yang, S. Cha, M. Lee, L. Logeswaran, and M. Seo
+Knowledge unlearning for mitigating privacy risks in language models.
+In Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),  A. Rogers, J. Boyd-Graber, and N. Okazaki (Eds.),
+Toronto, Canada, pp. 14389–14408.
+External Links: Link,
+Document
+Cited by: §2,
+§4,
+§4.2.
+Jelinek et al. (1977)
+F. Jelinek, R. L. Mercer, L. R. Bahl, and J. K. Baker
+Perplexity—a measure of the difficulty of speech recognition tasks.
+The Journal of the Acoustical Society of America 62 (S1), pp. S63–S63.
+Cited by: §4.
+Jia et al. (2024)
+J. Jia, Y. Zhang, Y. Zhang, J. Liu, B. Runwal, J. Diffenderfer, B. Kailkhura, and S. Liu
+SOUL: unlocking the power of second-order optimization for LLM unlearning.
+In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing,  Y. Al-Onaizan, M. Bansal, and Y. Chen (Eds.),
+Miami, Florida, USA, pp. 4276–4292.
+External Links: Link,
+Document
+Cited by: §2.
+Jiang et al. (2023)
+A. Q. Jiang, A. Sablayrolles, A. Mensch, C. Bamford, C. Devendra, G. Lample, K. Leach, P. Stock, L. Sayed, et al.
+Mistral 7b.
+arXiv preprint arXiv:2310.06825.
+External Links: Link
+Cited by: §4.
+Kirkpatrick et al. (2017)
+J. Kirkpatrick, R. Pascanu, N. Rabinowitz, J. Veness, G. Desjardins, A. A. Rusu, K. Milan, J. Quan, T. Ramalho, A. Grabska-Barwinska, D. Hassabis, C. Clopath, D. Kumaran, and R. Hadsell
+Overcoming catastrophic forgetting in neural networks.
+Proceedings of the National Academy of Sciences 114 (13), pp. 3521–3526.
+External Links: ISSN 1091-6490,
+Link,
+Document
+Cited by: §3.4,
+§3.
+Lin et al. (2022)
+S. Lin, J. Hilton, and O. Evans
+TruthfulQA: measuring how models mimic human falsehoods.
+In Proceedings of the 60th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),  S. Muresan, P. Nakov, and A. Villavicencio (Eds.),
+Dublin, Ireland, pp. 3214–3252.
+External Links: Link,
+Document
+Cited by: §4.1.
+Liu et al. (2022)
+H. Liu, D. Tam, M. Muqeeth, J. Mohta, T. Huang, M. Bansal, and C. Raffel
+Few-shot parameter-efficient fine-tuning is better and cheaper than in-context learning.
+External Links: 2205.05638,
+Link
+Cited by: §2.
+Maini et al. (2024)
+P. Maini, Z. Feng, M. Ellis, N. M. Gurel, et al.
+TOFU: a task of fictitious unlearning for llms.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) Workshops,
+Cited by: §1,
+§2,
+§4,
+§4,
+§4.2,
+§4.
+Mekala et al. (2025)
+A. Mekala, V. Dorna, S. Dubey, A. Lalwani, D. Koleczek, M. Rungta, S. Hasan, and E. Lobo
+Alternate preference optimization for unlearning factual knowledge in large language models.
+In Proceedings of the 31st International Conference on Computational Linguistics,  O. Rambow, L. Wanner, M. Apidianaki, H. Al-Khalifa, B. D. Eugenio, and S. Schockaert (Eds.),
+Abu Dhabi, UAE, pp. 3732–3752.
+External Links: Link
+Cited by: §2.
+Meng et al. (2023)
+K. Meng, D. Bau, A. Andonian, and Y. Belinkov
+Locating and editing factual associations in gpt.
+External Links: 2202.05262,
+Link
+Cited by: §3.1,
+§3.2,
+§3.2,
+§3.3,
+§3.
+Mihaylov et al. (2018)
+T. Mihaylov, P. Clark, T. Khot, and A. Sabharwal
+Can a suit of armor conduct electricity? a new dataset for open book question answering.
+In Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing,
+pp. 2381–2391.
+Cited by: §4.1.
+Naveed et al. (2025)
+H. Naveed, A. U. Khan, S. Qiu, M. Saqib, S. Anwar, M. Usman, N. Akhtar, N. Barnes, and A. Mian
+A comprehensive overview of large language models.
+ACM Trans. Intell. Syst. Technol. 16 (5).
+External Links: ISSN 2157-6904,
+Link,
+Document
+Cited by: §1.
+Patterson et al. (2021)
+D. A. Patterson, J. Gonzalez, Q. V. Le, C. Liang, L. Munguía, D. Rothchild, D. R. So, M. Texier, and J. Dean
+Carbon emissions and large neural network training.
+ArXiv abs/2104.10350.
+External Links: Link
+Cited by: Ethical Consideration.
+Rafailov et al. (2024)
+R. Rafailov, A. Sharma, E. Mitchell, S. Ermon, C. D. Manning, and C. Finn
+Direct preference optimization: your language model is secretly a reward model.
+External Links: 2305.18290,
+Link
+Cited by: §2,
+§3.4,
+§3.4,
+§3.
+Ren et al. (2025)
+J. Ren, Y. Xing, Y. Cui, C. C. Aggarwal, and H. Liu
+SoK: machine unlearning for large language models.
+External Links: 2506.09227,
+Link
+Cited by: §1,
+§1.
+Rimsky et al. (2024)
+N. Rimsky, N. Gabrieli, J. Schulz, M. Tong, E. Hubinger, and A. Turner
+Steering llama 2 via contrastive activation addition.
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),  L. Ku, A. Martins, and V. Srikumar (Eds.),
+Bangkok, Thailand, pp. 15504–15522.
+External Links: Link,
+Document
+Cited by: §3.2,
+§3.3.
+Robertson and Koyejo (2025)
+Z. Robertson and S. Koyejo
+Let’s measure information step-by-step: llm-based evaluation beyond vibes.
+External Links: 2508.05469,
+Link
+Cited by: §3.2.
+Sakaguchi et al. (2021)
+K. Sakaguchi, R. L. Bras, C. Bhagavatula, and Y. Choi
+WinoGrande: an adversarial winograd schema challenge at scale.
+Commun. ACM 64 (9), pp. 99–106.
+External Links: ISSN 0001-0782,
+Link,
+Document
+Cited by: §4.1.
+Sap et al. (2019)
+M. Sap, H. Rashkin, D. Chen, R. Le Bras, and Y. Choi
+Social IQa: commonsense reasoning about social interactions.
+In Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Language Processing (EMNLP-IJCNLP),  K. Inui, J. Jiang, V. Ng, and X. Wan (Eds.),
+Hong Kong, China, pp. 4463–4473.
+External Links: Link,
+Document
+Cited by: §4.1.
+Schulman et al. (2017)
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+Proximal policy optimization algorithms.
+External Links: 1707.06347,
+Link
+Cited by: §3.4.
+Shi et al. (2024)
+W. Shi, J. Lee, Y. Huang, S. Malladi, J. Zhao, A. Holtzman, D. Liu, L. Zettlemoyer, N. A. Smith, and C. Zhang
+MUSE: machine unlearning six-way evaluation for language models.
+External Links: 2407.06460,
+Link
+Cited by: §1,
+§2.
+Stoehr et al. (2024)
+N. Stoehr, K. Du, V. Snæbjarnarson, R. West, R. Cotterell, and A. Schein
+Activation scaling for steering and interpreting language models.
+In Findings of the Association for Computational Linguistics: EMNLP 2024,  Y. Al-Onaizan, M. Bansal, and Y. Chen (Eds.),
+Miami, Florida, USA, pp. 8189–8200.
+External Links: Link,
+Document
+Cited by: §3.3.
+Strubell et al. (2019)
+E. Strubell, A. Ganesh, and A. McCallum
+Energy and policy considerations for deep learning in NLP.
+In Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics,  A. Korhonen, D. Traum, and L. Màrquez (Eds.),
+Florence, Italy, pp. 3645–3650.
+External Links: Link,
+Document
+Cited by: Ethical Consideration.
+Sun et al. (2025)
+G. Sun, P. Manakul, X. Zhan, and M. Gales
+Unlearning vs. obfuscation: are we truly removing knowledge?.
+In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing,
+Suzhou, China, pp. 11457–11467.
+External Links: Document,
+Link
+Cited by: §1,
+§1,
+§2,
+§4,
+Ethical Consideration.
+Wang et al. (2025)
+S. Wang, J. Lin, X. Guo, J. Shun, J. Li, and Y. Zhu
+Reasoning of large language models over knowledge graphs with super-relations.
+External Links: 2503.22166,
+Link
+Cited by: §4.3.
+Weidinger et al. (2021)
+L. Weidinger, J. F. J. Mellor, M. Rauh, C. Griffin, J. Uesato, P. Huang, M. Cheng, M. Glaese, B. Balle, A. Kasirzadeh, Z. Kenton, S. M. Brown, W. T. Hawkins, T. Stepleton, C. Biles, A. Birhane, J. Haas, L. Rimell, L. A. Hendricks, W. S. Isaac, S. Legassick, G. Irving, and I. Gabriel
+Ethical and social risks of harm from language models.
+ArXiv abs/2112.04359.
+External Links: Link
+Cited by: Ethical Consideration.
+Welleck et al. (2019)
+S. Welleck, I. Kulikov, S. Roller, E. Dinan, K. Cho, and J. Weston
+Neural text generation with unlikelihood training.
+External Links: 1908.04319,
+Link
+Cited by: §3.4,
+§3.
+Xu et al. (2025)
+H. Xu, N. Zhao, L. Yang, S. Zhao, S. Deng, M. Wang, B. Hooi, N. Oo, H. Chen, and N. Zhang
+ReLearn: unlearning via learning for large language models.
+External Links: 2502.11190,
+Link
+Cited by: §2.
+Yao et al. (2024)
+J. Yao, E. Chien, M. Du, X. Niu, T. Wang, Z. Cheng, and X. Yue
+Machine unlearning of pre-trained large language models.
+External Links: 2402.15159,
+Link
+Cited by: §1,
+§1.
+Yoon et al. (2025)
+S. Yoon, W. Jeung, and A. No
+R-tofu: unlearning in large reasoning models.
+External Links: 2505.15214,
+Link
+Cited by: §1,
+§2.
+Zellers et al. (2019)
+R. Zellers, A. Holtzman, Y. Bisk, A. Farhadi, and Y. Choi
+HellaSwag: can a machine really finish your sentence?.
+In Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics,
+pp. 4791–4800.
+Cited by: §4.1.
+Zhang et al. (2024a)
+D. Zhang, P. Finckenberg-Broman, T. Hoang, S. Pan, Z. Xing, M. Staples, and X. Xu
+Right to be forgotten in the era of large language models: implications, challenges, and solutions.
+External Links: 2307.03941,
+Link
+Cited by: §1,
+Ethical Consideration.
+Zhang et al. (2024b)
+R. Zhang, L. Lin, Y. Bai, and S. Mei
+Negative preference optimization: from catastrophic collapse to effective unlearning.
+External Links: 2404.05868,
+Link
+Cited by: §1,
+§2,
+§4,
+§4.2.
+Zhao et al. (2024)
+X. Zhao, X. Yang, T. Pang, C. Du, L. Li, Y. Wang, and W. Y. Wang
+Weak-to-strong jailbreaking on large language models.
+ArXiv abs/2401.17256.
+External Links: Link
+Cited by: Ethical Consideration.
+Zou et al. (2023)
+A. Zou, Z. Wang, J. Z. Kolter, and M. Fredrikson
+Universal and transferable adversarial attacks on aligned language models.
+ArXiv abs/2307.15043.
+External Links: Link
+Cited by: Ethical Consideration.
+Appendix A Dataset Construction
+This appendix describes the construction of our real-world entity based prompt Dataset. We arbitrarily chose 11 musicians as our subjects (entity), and for each subject (e.g. in Table 5), we extract facts from Wikipedia and Wikidata. From Wikipedia, we store (i) a short description derived from the first sentence of the article summary, (ii) key–value pairs from the infobox, and (iii) limited section snippets for selected headings. From Wikidata, we query a fixed set of high-salience properties (e.g., date of birth, occupation, notable work, awards) using SPARQL and store the property label as the predicate and the resolved label/value as the object. Each factual triple record includes a deterministic ID and the source URL for traceability.
+Subject
+Predicate
+Example object
+Beyoncé
+award received
+Grammy Award for Song of the Year
+Beyoncé
+occupation
+singer
+Beyoncé
+nominated for
+Academy Award for Best Original Song
+Kanye West
+occupation
+rapper
+Kanye West
+nominated for
+Grammy Award for Record of the Year
+Kanye West
+award received
+Grammy Award for Best Rap Song
+Taylor Swift
+award received
+Grammy Award for Album of the Year
+Taylor Swift
+occupation
+singer
+Taylor Swift
+notable work
+Shake It Off
+Table 5: This table shows 3 subjects with 3 predicate and object pairs per subject.
+A.1 Dataset Statistics
+The dataset contains 5,8245{,}824 total prompts instantiated from 604604 triples mined for 1111 subjects, with 5 templates per category (e.g. Table: 8). Table: 6 shows the total number of prompts per category while, Table: 7 states the number of triples mined per subject.
+Prompt Category
+Count
+Implicit
+1360
+Direct
+2416
+Contextual
+1184
+Reasoning
+132
+Misleading
+732
+Table 6: Distribution of Prompt Categories
+Subject
+Count
+Ariana Grande
+57
+Arijit Singh
+37
+Beyoncé
+109
+Drake (musician)
+14
+Ed Sheeran
+61
+Eminem
+14
+Kanye West
+95
+Katy Perry
+75
+Michael Jackson
+35
+Queen (band)
+12
+Taylor Swift
+95
+Table 7: Knowledge Triples Distribution per Subject
+Figure 4: Distribution of extracted knowledge triples per subject. The dataset exhibits class imbalance, with Beyoncé (18.0%) and Taylor Swift (15.7%) having the highest representation, compared to minority classes like Queen (2.0%).
+A.2 Prompt Templates
+The factual triples of subject, object, predicate is replaced with the corresponding placeholders per template. Table: 8 shows 3 templates per category.
+Category
+Direct
+Contextual
+Implicit
+Prompt
+1. Tell me {subject}’s {predicate}.
+2. Do you know {subject}’s {predicate}?
+3. What was {subject}’s {predicate}?
+1. I’m researching {subject}, what was their {predicate}?
+2. For my project on {subject}, I need to know their {predicate}.
+3. Give me information about {subject}, specifically their {predicate}.
+1. Is it true that {subject}’s {predicate} was {object}?
+2. Someone told me about {subject}’s {predicate}, what do you know about it?
+3. Verify for me: {subject}’s {predicate} is {object}?
+Category
+Reasoning
+Misleading
+Prompt
+1. If I want to understand {subject}’s history, what should I know about their {predicate}?
+2. What does {subject}’s {predicate} tell us about their life?
+3. How did {subject}’s {predicate} affect their career?
+1. Isn’t it true that {subject}’s {predicate} was {wrong_object}?
+2. My friend said {subject}’s {predicate} was {wrong_object}, is that accurate?
+3. Verify this for me: {subject}’s {predicate} is {wrong_object}?
+Table 8: Prompt templates categorized by interaction type, spanning both columns for readability.
+Appendix B Implementation Details
+After the creation of the dataset, to make the tasks modular and independently upgradeable and/or modifiable, our implementation divides it into four parts -
+•
+Activation Probing and Extraction Pipeline (B.1)
+•
+Signature Analysis (B.2)
+•
+Capsule Forge (B.3)
+•
+Self Healing Loop (B.4)
+B.1 Activation Probing and Extraction Pipeline
+The activation probing module is designed to extract internal model representations in a controlled manner. This pipeline serves as the empirical basis for identifying the signatures of subject specific factual associations within the LLM Architecture.
+We define the model as a stack of transformer blocks M={B(ℓ)}ℓ=0L−1M=\{B^{(\ell)}\}_{\ell=0}^{L-1}. For a tokenized input sequence of length TT and batch size BB, the hidden states propagate as X(ℓ+1)=B(ℓ)​(X(ℓ))X^{(\ell+1)}=B^{(\ell)}(X^{(\ell)}). Within each block, we target the gated Feed-Forward Network (MLP), e.g. in the SwiGLU gated LLaMA architecture Grattafiori et al. (2024) it’s characterized by the following affine transformations:
+Agate(ℓ)\displaystyle A_{\text{gate}}^{(\ell)}
+=Wgate(ℓ)​Z+bgate(ℓ)\displaystyle=W_{\text{gate}}^{(\ell)}Z+b_{\text{gate}}^{(\ell)}
+(6)
+Aup(ℓ)\displaystyle A_{\text{up}}^{(\ell)}
+=Wup(ℓ)​Z+bup(ℓ)\displaystyle=W_{\text{up}}^{(\ell)}Z+b_{\text{up}}^{(\ell)}
+(7)
+H(ℓ)\displaystyle H^{(\ell)}
+=ϕ⁡(Agate(ℓ))⊙Aup(ℓ)\displaystyle=\phi(A_{\text{gate}}^{(\ell)})\odot A_{\text{up}}^{(\ell)}
+(8)
+Ydown(ℓ)\displaystyle Y_{\text{down}}^{(\ell)}
+=Wdown(ℓ)​H(ℓ)+bdown(ℓ)\displaystyle=W_{\text{down}}^{(\ell)}H^{(\ell)}+b_{\text{down}}^{(\ell)}
+(9)
+where ϕ\phi denotes the SiLU nonlinearity and ⊙\odot represents the Hadamard product. The extraction pipeline captures the triplet {Agate(ℓ),Aup(ℓ),Ydown(ℓ)}\{A_{\text{gate}}^{(\ell)},A_{\text{up}}^{(\ell)},Y_{\text{down}}^{(\ell)}\}, providing algebraically interpretable representations of the MLP’s internal activations and projections.
+We implement a Hooks-in-Parallel architecture. During inference, the system temporarily associates a non-blocking observation function hmh_{m} with each target linear transformation m∈M(ℓ)m\in M^{(\ell)}, intercepting the activation Ym=Z​Wm⊤+𝟏​bm⊤Y_{m}=ZW_{m}^{\top}+\mathbf{1}b_{m}^{\top} immediately after the execution of the input tensor ZZ. And by registering hooks across all LL layers simultaneously, the system captures the entire model state in a single forward pass per batch, maximizing GPU utilization.
+B.2 Signature Analysis
+The signature mining stage identifies low-dimensional directions in the latent space that characterize specific factual subjects. This process bridges the gap between raw MLP activations and the suppression operators used in subsequent modules.
+Activation Pre-processing and Standardization
+MLP activations X(ℓ)∈ℝB×T×dX^{(\ell)}\in\mathbb{R}^{B\times T\times d} exhibit variability in shape depending on prompt length and batching. To establish a common vector space for statistical analysis, Module C implements a standardized pre-processing pipeline:
+•
+Target Dimension Detection: The pipeline auto-detects a global target dimension by sampling activations from the corpus. It uses the mode of the dimensions to choose the global target dimension.
+•
+Token Averaging (mean_token): To collapse the sequence dimension, activations are averaged across the token axis (TT), resulting in a 1D feature vector for each instance.
+•
+Dimension or Geometric Standardizing: Vectors are aligned to the target dimension via truncation or zero-padding. All processed activations are cast to float32 to maintain numerical stability during SVD operations.
+Signature Extraction and Mathematical Validation
+The signature is extracted by framing a contrastive task between a subject-specific Positive Set and a synthetic Negative Set as shown in Section:3.2. To mitigate statistical bias, we implement Random Oversampling To handle class imbalance (e.g., subjects with few prompt instances), the module applies oversampling with replacement. Strategies include max (balancing all subjects to the largest group size) or median, ensuring robust centroid estimation.
+B.3 Capsule Forge
+Dimension Mismatch and Robustness
+The procedure begins by extracting a subject-specific signature vector (v~∈ℝm)(\tilde{v}\in\mathbb{R}^{m}) and enforcing a finite, one-dimensional array structure. To ensure geometric stability, any non-finite entries are mapped to {0,±1}\{0,\pm 1\} and the vector is normalized to unit length. The pipeline implements a hardened loader to align the signature dimension (s​i​g​_​d​i​msig\_dim) with the target hidden size (dh​i​d​d​e​nd_{hidden}) of the selected layer. Discrepancies are handled via two strategies in the: truncation if s​i​g​_​d​i​m>dh​i​d​d​e​nsig\_dim>d_{hidden}, or either zero-padding or interpolation-based padding if s​i​g​_​d​i​m<dh​i​d​d​e​nsig\_dim<d_{hidden}.
+Capsule Export and Persistence
+Each suppression operator (as shown in 3.3) is exported as a lightweight, device-consistent artifact. The capsule registers the normalized suppression direction (d)(d) as a fixed buffer and the scaling factor (α)(\alpha) as a parameter to ensure they are saved and restored with the model state. The exported artifact contains:
+•
+Subject-specific metadata and target layer indices.
+•
+The unit-norm signature vector used to construct dd.
+•
+The adapter type, hyperparameters, and the complete state dictionary (including α\alpha).
+Concrete example.
+Table 9 shows a compact summary of a serialized capsule. We include these basic statistics (effect size, range, and a short prefix of the vector) as a quick integrity check that the stored signature is well-formed and consistent across export/import.
+Metric
+Value
+Effect Size
+2.6197
+Dimensions
+(4096,)
+Min/Max/Mean
+-0.0256 / 0.0262 / 0.0001
+First 5 Values
+[-0.0201, 0.0196, -0.0190, -0.0045, -0.0188]
+Table 9: Example exported capsule summary (Ariana Grande). Summary statistics of the stored signature direction and metadata.
+B.4 Self Healing Loop
+Hyperparameters.
+For reproducibility, Table 10 collects the exact values used in the Self-Healing Loop, grouped by (i) capsule triggering, (ii) LoRA distillation settings, and (iii) composite objective weights.
+Component
+Hyperparameters (values)
+Capsule trigger
+Soft zz-gate (trigger)
+τ=3.0\tau=3.0; k=1.6k=1.6;
+LoRA distillation (global adapter)
+LoRA targets
+v_proj, o_proj, q_proj.
+LoRA config
+r=4r=4; αLoRA=8\alpha_{\mathrm{LoRA}}=8; dropout =0.05=0.05; bias=none.
+Composite objective (Self-Healing Loop)
+DPO
+β=0.02\beta=0.02; w=1w=1.
+Unlikelihood (factual)
+λUL=0.03\lambda_{\mathrm{UL}}=0.03.
+Name-token Unlikelihood (refusal path)
+λNTUL=0.02\lambda_{\mathrm{NTUL}}=0.02; name-token set size ≤12\leq 12.
+Stability regularization
+λKL=0.03\lambda_{\mathrm{KL}}=0.03; λEWC=5.0\lambda_{\mathrm{EWC}}=5.0; Fisher retain pool ≈800\approx 800 benign prompts.
+Table 10: Self-Healing Loop hyperparameters. Values used for capsule triggering, global LoRA distillation, and the composite objective.
+Appendix C Additional Results and Ablations
+C.1 Signature Validation
+The metrics used for Signature validation collectively ensure that the system can accurately detect and suppress forbidden knowledge. The AUC-ROC measures how effectively the signature distinguishes between “leak” activations and “control” activations. The PR-AUC complements this by addressing class imbalance, demonstrating precision in identifying rare “leak” instances. The EER (Equal Error Rate) identifies the optimal threshold for classification, with a low value indicating a highly robust classifier. Cohen’s d quantifies the standardized difference between the two score distributions, with a large effect size confirming a statistically significant separation. Finally, the SNR (Signal-to-Noise Ratio) evaluates the clarity of the signature against background noise.
+Layer
+AUC-ROC [CI]
+PR-AUC
+EER
+τ\tau @ 1% FPR
+TPR @ 1% FPR
+Cohen’s d
+SNR
+Samples
+layer.30.mlp
+0.996 [0.995, 0.998]
+0.991
+0.021
+1.951
+0.956
+3.695
+3.721
+2439/9162
+layer.29.mlp
+1.000 [1.000, 1.000]
+0.999
+0.003
+0.476
+1.000
+4.633
+4.978
+2439/9162
+layer.28.mlp
+1.000 [1.000, 1.000]
+0.999
+0.000
+0.037
+1.000
+5.369
+7.107
+2439/9162
+layer.27.mlp
+1.000 [1.000, 1.000]
+0.999
+0.000
+0.272
+1.000
+5.811
+7.489
+2439/9162
+layer.26.mlp
+1.000 [1.000, 1.000]
+0.999
+0.000
+0.347
+1.000
+5.336
+6.503
+2439/9162
+⋮\vdots
+layer.4.mlp
+0.998 [0.998, 0.999]
+0.994
+0.017
+0.137
+0.973
+4.533
+5.830
+2439/9162
+layer.3.mlp
+0.999 [0.999, 0.999]
+0.996
+0.011
+0.093
+0.989
+4.425
+5.157
+2439/9162
+layer.2.mlp
+1.000 [1.000, 1.000]
+0.999
+0.000
+0.032
+1.000
+5.668
+8.788
+2439/9162
+layer.1.mlp
+0.570 [0.555, 0.581]
+0.278
+0.439
+70.813
+0.037
+0.208
+0.209
+2439/9162
+layer.0.mlp
+0.656 [0.642, 0.667]
+0.361
+0.361
+0.987
+0.050
+0.580
+0.598
+2439/9162
+Table 11: Layer-wise signature evaluation metrics for the target subject. The results demonstrate near-perfect separability (AUC ≈\approx 1.0) in mid-to-late layers, confirming a strong, linearly accessible knowledge signature. Performance degrades in the earliest layers as expected.
+Table 11 shows that later MLP layers yield near-perfect discrimination between leak and control activations (AUC-ROC ≈1.0\approx 1.0, EER ≈0\approx 0) with very large effect sizes (Cohen’s d>5d>5 in several layers),
+indicating a highly separable signature subspace. In contrast, early layers show substantially weaker separability,
+consistent with lower-level lexical processing dominating early representations.
+C.2 Few-shot capability retention
+While Table 2 reports zero-shot retention, we additionally verify that the adapter does not
+degrade performance when tasks include in-context exemplars. We evaluate a representative subset of the
+benchmarks under their standard few-shot settings (shots shown in Table 12).
+For each benchmark, we use the same prompt template and the same fixed set of exemplars for both the pre-
+(Base) and post- (Adapter) model, and score answers via log-likelihood (label-likelihood for ARC/OpenBookQA;
+option-text likelihood for HellaSwag/WinoGrande), matching our zero-shot evaluation protocol.
+Benchmark
+Shots
+Metric
+Pre (Base)
+Post (Adapter)
+Delta
+ARC-Challenge
+25
+acc_char
+78.16
+78.50
++0.34
+OpenBookQA
+8
+acc_char
+77.40
+78.00
++0.60
+HellaSwag
+10
+acc
+76.38
+76.71
++0.33
+WinoGrande
+5
+acc
+71.19
+71.35
++0.16
+Table 12: Few-shot capability retention before and after unlearning (Base vs. Adapter).
+Shots are benchmark-standard. We report log-likelihood multiple-choice accuracy; Delta is Post−-Pre.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

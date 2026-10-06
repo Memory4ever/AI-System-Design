@@ -1,0 +1,44 @@
+URL: https://arxiv.org/html/2602.17049v1
+Status: 200
+3.2. Skill abstraction based on Intent Subgroups
+Given the per-unit embeddings z(u)z^{(u)} from Section 3.1, we organize intents into a two-level index for planning. First, we run HDBSCAN (Campello et al., 2015) over {z(u)}\{z^{(u)}\} to obtain higher-level intent groups (I​GIG) driven primarily by environment/context. Within each I​GIG, a second HDBSCAN partitions units into finer subgroups (S​GSG) using action/keyword and description signals.
+For every S​GSG, we compute and store its centroid cS​Gc_{SG} in the same embedding space. At retrieval time, we rank subgroups by the cosine similarity between cS​Gc_{SG} and a query intent prototype. Retrieval index: for each S​GSG we store (i) the centroid cS​Gc_{SG} (for cosine-based ranking); (ii) top-kk representative traces preselected by proximity to cS​Gc_{SG} and reranked at query time by similarity to the intent prototype; and (iii) a support count for S​GSG (defined below) used to prefer stable patterns during planning.
+A detailed ablation on the representation loss and I​G/S​GIG/SG Gating are reported in Appendix C.
+We then consolidate the low-level action traces inside each S​GSG into a reusable skill. Each intent unit uiu_{i} in a subgroup is linked to a low-level action sequence: Mi=(a1,a2,…,am)i.M_{i}=(a_{1},a_{2},\dots,a_{m})_{i}.. To make traces comparable, we map every atomic action ata_{t} to a pair [verb predicate, typed argument fields] by applying an alias map Φ\Phi that collapses surface variants to a fixed predicate and a fixed set of typed fields. For example, "focus URL bar" and "open web site" →\rightarrow
+verb=press, arg=address_bar, verb=text_input, arg=address_bar, text:"https://example.com".
+Here, a verb signature is the ordered list of canonical predicates in a trace, and an typed argument field is a placeholder (e.g., <url>, <query>, <file_path>) that will be bound at runtime.
+We collect candidates sgskills,k={Mi∣ui∈S​Gk}\mathrm{sg}_{\mathrm{skills},k}=\{\,M_{i}\mid u_{i}\in SG_{k}\,\} and induce a skill prototype as the medoid under a signature-level dissimilarity d​sigd{\mathrm{sig}} over verb-predicate sequences. The function dsigd_{\mathrm{sig}} is computed on the canonicalized verb-predicate sequences (after applying Φ\Phi), comparing action patterns at the predicate level while deferring literal-argument handling to the parameterization stage.
+Let 𝒜\mathcal{A} denote the verb-predicate alphabet.
+Thus the subgroup’s skill prototype is defined as:
+(6)
+𝒮S​G=arg⁡min⁡∑s∈s​gs​k​i​l​l​sa∈A∗⁡dsig​(a,s)\mathcal{S}_{SG}=\arg\min_{a\in A^{*}}\;\sum_{s\in{sg}_{skills}}\mathrm{d}_{\mathrm{sig}}(a,s)
+Next we convert 𝒮S​G\mathcal{S}_{SG} into a reusable, parameterized schema, skill hint: a verb-predicate sequence together with a typed argument structure. This conversion (i) replaces literal values with typed parameters (the runtime-filled fields), (ii) removes incidental or recovery-specific steps that do not affect goal attainment, and (iii) enforces canonical predicate and field names via Φ\Phi. We refer to this parameterized schema as a skill hint. Both the skill hints {𝒮​S​G}\{\mathcal{S}{SG}\} and the representative traces are stored in plan memory and retrieved at planning time.
+If multiple predicate sequences are well supported, we keep several schemas ranked by their support, where support counts subgroup members whose similarity to 𝒮S​G\mathcal{S}_{SG} exceeds a fixed threshold τ\tau. Representative traces are the top-kk members minimizing d​sigd{\mathrm{sig}} to 𝒮​S​G\mathcal{S}{SG} and serve as concrete exemplars. At planning time, when a retrieved plan is only a partial match, we perform gap filling: we instantiate the selected skill hint 𝒮​S​G\mathcal{S}{SG} with current-context bindings and insert the resulting steps to complete the missing plan units/steps (Section 4.1).
+4. Intent-aware Planning & Feedback Memory
+Building on the intent-level DB introduced in Section 3, we now focus on how these abstractions are leveraged during planning and execution. This section details the end-to-end workflow in which the Planner, Plan-Optimizer, and Critic cooperate through plan memory to compose, refine, and verify long-horizon automation. The Planning-Automation part in figure 1 represents the overall automation process after the user request.
+4.1. Planning with Plan Memory and Skill Hints
+Figure 3. Cache-first planning with plan memory. A query intent is gated by IG and ranked over SG. Case 1 (miss): synthesize a plan from retrieved skill templates. Case 2 (hit): reuse the stored plan. Case 3 (partial): align to the nearest plan and fill gaps with SG-derived skill hints, reducing retries.
+This section explains how the Planner agent composes a high-level plan GG for a given command;
+Figure 3 summarizes three pathways: cache miss synthesis (Case 1), direct reuse on exact hit (Case 2), and reuse-with-injection on partial hit (Case 3).
+At a high level, Planner consults I​G/S​GIG/SG centroids in the shared embedding space, plan-memory entries, and M⁡(u)M(u) sequences; missing spans are completed with normalized SS​GS_{SG} templates.
+When no suitable plan exists in plan memory (Figure 3, Case 1), the Planner embeds the command into the shared space, gates by the active I​GIG, and ranks candidate S​GSG by centroid similarity. Plan memory stores previously synthesized global plans GG that received binary user approval. Plans not approved are discarded. For each plan-unit slot in the intent prototype, it selects the nearest S​GSG, retrieves the top-2 intent units (uiu_{i}) from that S​GSG, and uses the GPT-4o model (OpenAI, 2024) to generate the slot’s steps conditioned on the retrieved MiM_{i} sequences. A plan unit is a contiguous block of low-level steps in the global plan GG that achieves one subgoal. A plan-unit slot is the placeholder for such a block in the intent prototype that the Planner must populate with executable steps.
+Concatenating all slots yields a high-level plan G={g1,…,gn}G=\{g_{1},\dots,g_{n}\}, where each gjg_{j} expands to a contiguous, execution-ordered list of low-level actions. After the user reviews the generated plan and provides optional feedback, we incorporate the edits and then store GG in plan memory for future reuse. Concretely, GG is materialized as plan units—intent-prototype–level chunks of the GG derived from the initial user command:
+Plan Unit 1: [step_1, step_2, ...]
+Plan Unit 2: [step_kk, ..., step_ℓ\ell]
+...
+When a high-similarity plan is found in active I​GIG (Figure 3, Case 2),
+the stored GG is retrieved and its slots are bound to the current context;
+because no gaps remain, the planner skips the synthesis and executes the plan as-is.
+When only a partial match is found (Figure 3, Case 3), the closest stored plan GG is aligned with the intent prototype. Insert missing plan units or steps by injecting the matched subgroup’s SS​GS_{SG} with current-context bindings (gap filling), after which the finalized GG is executed.
+This cache-first pipeline reduces re-planning and stabilizes long-horizon execution by combining centroid gating, plan reuse, and hint-based gap filling.
+4.2. Optimizing steps by memory & feedback loop
+Given a finalized plan GG, execution shifts into a cooperative loop between the Plan-Optimizer and the Critic Agent, utilizing the Plan Memory.
+The Plan-Optimizer refines each plan unit by referencing similar traces stored in the memory, dynamically adapting its substeps to current screen contexts.
+The Critic, in turn, monitors the execution and provides immediate feedback signals—success, retryable, or blocked—to correct local deviations or trigger partial replanning when necessary.
+For each plan unit p​upu, we compute its representation z(p​u)∈ℝdz^{(pu)}\in\mathbb{R}^{d} (Section 3.1) and compare it with subgroup centroids {cS​G}\{c_{SG}\} from plan memory (Section 3.2).
+If a subgroup is relevant, its traces are injected as hints into the Plan-Optimizer to guide step execution.
+After each unit, the Critic evaluates the post-execution state and returns q∈{success,retryable,blocked}q\in\{\textsf{success},\textsf{retryable},\textsf{blocked}\} with an observation oo.
+If q is retryable, the Plan-Optimizer is re-invoked on the latest state safters^{\text{after}} with observation observation of the current GUI context (oo) to produce an adjusted subplan gnew′g^{\prime}_{\text{new}}, which updates GG before re-execution.
+Algorithm 1 Execution of the Plan utilizing Memory and Feedback Loop
+1:
+Final global plan GG with plan unit

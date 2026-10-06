@@ -1,0 +1,726 @@
+Diffusion2: Dual Diffusion Model with Uncertainty-Aware Adaptive Noise for Momentary Trajectory Prediction
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I Introduction
+II Related Works
+II-A Traditional Trajectory Prediction
+II-B Momentary Trajectory Prediction
+II-C Diffusion Models
+II-D Aleatoric Uncertainty
+III Preliminaries
+III-A Problem Definition
+III-B Denoising Diffusion Probabilistic Model
+IV Methods
+IV-A Overall Architecture
+IV-B Dual-head Parameterization
+IV-C Temporally-Adaptive Learnable Noise Scheduling
+IV-D Loss Function
+IV-E Model inference
+V Experiments
+V-A Datasets
+V-B Metrics
+V-C Baselines
+V-D Experimental Setup
+V-E Main Results
+V-F Qualitative evaluation.
+V-G Ablation Studies
+VI Conclusion and Discussion
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2510.04365v1 [cs.CV] 05 Oct 2025
+Diffusion2: Dual Diffusion Model with Uncertainty-Aware Adaptive Noise for Momentary Trajectory Prediction
+Yuhao Luo†
+Yuang Zhang†
+Kehua Chen
+Xinyu Zheng
+Shucheng Zhang
+Sikai Chen
+Yinhai Wang
+††thanks: † Yuhao Luo and Yuang Zhang contributed equally to this work.††thanks: Yuhao Luo and Sikai Chen are with Civil and Environmental Engineering Department, University of Wisconsin-Madison, Madison, USA††thanks: Yuang Zhang, Kehua Chen, Shucheng Zhang and Yinhai Wang are with Civil and Environmental Engineering Department, University of Washington, Seattle, USA††thanks: Xinyu Zheng is with the College of Transportation, Tongji University, Shanghai, China††thanks: * Kehua Chen and Yinhai Wang are the corresponding authors, E-mail: zeonchen@uw.edu; yinhai@uw.edu.
+Abstract
+Accurate pedestrian trajectory prediction is crucial for ensuring safety and efficiency in autonomous driving and human-robot interaction scenarios. Earlier studies primarily utilized sufficient observational data to predict future trajectories. However, in real-world scenarios, such as pedestrians suddenly emerging from blind spots, sufficient observational data is often unavailable (i.e. momentary trajectory), making accurate prediction challenging and increasing the risk of traffic accidents. Therefore, advancing research on pedestrian trajectory prediction under extreme scenarios is critical for enhancing traffic safety. In this work, we propose a novel framework termed Diffusion2, tailored for momentary trajectory prediction. Diffusion2 consists of two sequentially connected diffusion models: one for backward prediction, which generates unobserved historical trajectories, and the other for forward prediction, which forecasts future trajectories. Given that the generated unobserved historical trajectories may introduce additional noise, we propose a dual-head parameterization mechanism to estimate their aleatoric uncertainty and design a temporally adaptive noise module that dynamically modulates the noise scale in the forward diffusion process. Empirically, Diffusion2 sets a new state-of-the-art in momentary trajectory prediction on ETH/UCY and Stanford Drone datasets.
+Index Terms: Momentary trajectory prediction, uncertainty-aware, diffusion model, aleatoric uncertainty
+I Introduction
+Accurate pedestrian trajectory prediction is essential for autonomous driving, as it enhances vehicle safety—particularly in scenarios involving human-vehicle interactions [1, 2]. In recent years, a wide variety of approaches have been developed to tackle this task. Typically, these approaches focus on forecasting future trajectories based on a sufficiently long observation period, such as 8 frames (about 3.2 seconds) [3, 4, 5].
+However, in many real-world scenarios, such as when a pedestrian suddenly appears behind an obstacle (e.g., a building or a truck), the vehicle lacks sufficient time to gather adequate observational data. This poses significant challenges to conventional prediction methods, often leading to a substantial degradation in prediction performance [6] and even increasing the risk of traffic accidents.
+As reported in [6], the occurrence frequency of pedestrians with only momentary observations reaches 2.22​s−12.22\ s^{-1} in SDD [7] and 1.02​s−11.02\ s^{-1} in ETH/UCY [8] datasets. Therefore, it is crucial to investigate pedestrian trajectory prediction using limited observational data.
+To address the aforementioned challenges, [6] proposed momentary trajectory prediction using only two observed frames. They introduced a Momentary Observation feature Extractor (MOE) that integrates social and scene context at the data level and improves representation learning via soft pre-training with masked trajectory and context restoration tasks.
+[9] proposed a teacher–student framework where the teacher, trained on rich data, guides a student with limited inputs. However, using only two frames restricts temporal understanding. To bridge this gap, [10] deployed a bidirectional consistent diffusion framework (BCDiff) to jointly generate both unobserved historical trajectories and future trajectories.
+While [10] has demonstrated the effectiveness of jointly predicting historical trajectories to enrich contextual information and compensate for the limitations of momentary observations, it involved simultaneously co-predicting historical and future trajectories, overlooking the causal relationship between the two components. In this study, we predict historical and future trajectories separately in a sequential manner. Specifically, we propose a model named Diffusion2 for momentary pedestrian trajectory prediction.
+Building on the strengths of diffusion models, our framework employs two sequentially connected components: one for backward prediction and the other for forward prediction, as illustrated in Fig. 1.
+A follow-up concern is the reliability of the predicted historical trajectories: if they are highly inaccurate or noisy, they may adversely affect the subsequent prediction of future trajectories. Therefore, it is essential to quantify the uncertainty of the predicted historical trajectories and selectively utilize reliable information for downstream prediction tasks. However, diffusion models only implicitly learn data distributions and lack the ability to explicitly quantify uncertainty. To fill this gap, we design a dual-head parameterization mechanism that augments a standard noise prediction network by introducing two output heads. The first head predicts the noise, while the second estimates the log-variance for each coordinate, thereby enabling direct quantification of aleatoric uncertainty.
+Afterwards, to incorporate the estimated aleatoric uncertainties, we design a temporally adaptive noise scheduler that dynamically injects noise into the forward diffusion model based on the predicted uncertainty levels. Intuitively, when historical trajectories are highly uncertain, more noise is injected into the forward diffusion model to encourage exploration during generation, and less noise is added when uncertainty is low.
+To sum up, the main contributions of our study are:
+•
+We propose Diffusion2, a novel framework consisting of two sequential diffusion models that capture the causal dependencies of trajectories: one for backward prediction and the other for forward prediction.
+•
+We propose a dual-head parameterization mechanism that enables the diffusion model for backward prediction to quantify aleatoric uncertainty in a single sampling pass, and further introduce an adaptive noise scheduling strategy for the forward prediction diffusion model, which dynamically adjusts the noise magnitude based on the estimated uncertainty.
+•
+Our model achieves state-of-the-art accuracy in momentary pedestrian prediction, as demonstrated on the ETH/UCY and Stanford Drone datasets.
+Fig. 1: Three distinct frameworks are proposed to address momentary trajectory prediction. (a) The model directly utilizes observable trajectories to predict future trajectories. (b) The approach jointly predicts unobservable historical trajectories and future trajectories. (c) Our proposed framework, Diffusion2, consists of two sequentially connected diffusion models: one dedicated to backward prediction, and the other to forward prediction.
+II Related Works
+II-A Traditional Trajectory Prediction
+Traditional human trajectory prediction tasks focus on forecasting future movements based on sufficiently long historical observations. To enhance the prediction accuracy, a variety of methods have been proposed to capture the temporal features and spatial features, with a particular focus on inter-pedestrian interactions and pedestrian-environment relationships. To capture the temporal features, researchers typically employed Long-Short Term Memory (LSTM) [11, 12, 13, 14, 15] and Recurrent Neural Networks (RNNs) [16, 17, 18] to model the temporal dynamics of pedestrian states. For modeling spatial interactions, social pooling mechanism [19, 20], graph-based modeling [21, 22, 23, 24] and attention mechanism [25, 26, 27, 28] are commonly employed to represent inter-agent and agent-environment dynamics. In addition, many physics-based models [29], such as Social Force Model (SFM) [30, 31, 32] and Energy-based Models [33, 34], have been utilized to provide more interactive information. However, the aforementioned methods assume ideal conditions with ample historical observations, and therefore may not generalize well to extreme cases [6]. In contrast, this work focuses on trajectory prediction under extreme scenarios, aiming to accurately forecast future trajectories given only two observed frames.
+II-B Momentary Trajectory Prediction
+Momentary trajectory prediction aims to explore the limits of forecasting accuracy under extreme conditions, where only two historical frames are provided as input. In [6], the authors proposed a novel fusion mechanism that integrates social and scene context information at the data level, and then pre-trained the Momentary Observation Feature Extraction (MOE) module on several sub-tasks, such as masked trajectory completion and context restoration, to learn joint representations. To address the lack of temporal information under limited observations, [9] adopted a teacher-student framework, where the teacher network, trained on rich 8-frame sequences, distills its spatial-temporal reasoning ability into a student network that learns to make accurate predictions using only 2 frames. As an alternative approach, [10] proposed a Bi-directional Consistent Diffusion framework (BCDiff) that jointly infers unobserved historical and future trajectories in a step-by-step manner to capture the bidirectional dependencies between them.
+II-C Diffusion Models
+Diffusion models have achieved remarkable success in a variety of challenging domains [35, 36, 37], such as image synthesis [38, 39, 40], computer vision [41, 42, 43], and natural language processing [44, 45], demonstrating their versatility and robustness. Recently, diffusion models have been deployed to trajectory prediction task. MID [46] designed a transformer-based network architecture to model the complex temporal dependencies in trajectories. EquiDiff [47] integrated diffusion modeling with equivariant transformers to ensure equivariant properties throughout the prediction process. LED [48] employed a trainable leapfrog initializer in the trajectory prediction task to skip a large number of denoising steps, thereby significantly reducing inference time. In our work, we also leverage a diffusion model to achieve momentary trajectory prediction.
+II-D Aleatoric Uncertainty
+Aleatoric uncertainty (AU) captures the irreducible, data-driven randomness present even when a model is perfectly specified. In trajectory prediction tasks, AU originates from sensor noise, measurement errors and the inherently stochastic nature of human or agent behaviour [49]. Since this variability is tied to the data-collection process itself, AU cannot be reduced by collecting additional training data. The approaches to quantifying AU fall into two categories: explicit likelihood models and implicit likelihood models. Explicit likelihood models (e.g. heteroscedastic Gaussian [50] and neural processes [51]) output the full predictive distribution parameters directly; AU is then available analytically as the predictive variance. Implicit likelihood models (e.g. diffusion models [38], VAE [52]) cannot provide a closed-form predictive variance, so AU must be approximated via Monte Carlo sampling. In this work, we propose a diffusion-based aleatoric uncertainty estimation method to quantify AU.
+III Preliminaries
+III-A Problem Definition
+In this study, we aim to perform accurate momentary pedestrian trajectory prediction using only two observed frames as input. These observed frames are defined as
+𝐱o​b​s={xt,𝐩t,𝐒∣t=−1,0},\mathbf{x}^{obs}=\left\{x_{t},\mathbf{p}_{t},\mathbf{S}\mid t=-1,0\right\},
+where xtx_{t} denotes the 2D position of the ego pedestrian, 𝐩t∈ℝN×2\mathbf{p}_{t}\in\mathbb{R}^{N\times 2} represents the positions of surrounding pedestrians, with NN denoting the number of surrounding pedestrians, and 𝐒\mathbf{S} corresponds to the semantic scene map. The goal is to predict future trajectories
+𝐲={xt}t=1Tf​u​t,\mathbf{y}=\left\{x_{t}\right\}_{t=1}^{T_{fut}},
+with Tf​u​tT_{fut} indicating the prediction horizon. In addition, we define the unobserved historical trajectories as
+𝐱u​b​s={xt}t=−1−Tu​b​s−2,\mathbf{x}^{ubs}=\left\{x_{t}\right\}_{t=-1-T_{ubs}}^{-2},
+where Tu​b​sT_{ubs} is the length of the unobserved historical. Our model predicts future trajectories by leveraging inferred historical trajectories based on only a few observed points. Since the inferred historical trajectories may be noisy, our model also accounts for their uncertainty.
+III-B Denoising Diffusion Probabilistic Model
+The Denoising Diffusion Probabilistic Model (DDPM) [38] typically consists of two Markov chain processes: a forward diffusion process and a reverse denoising process. To avoid redundancy, we present the diffusion formulation for 𝐲\mathbf{y} only and note that the same process can be directly applied to 𝐱u​b​s\mathbf{x}^{ubs}. The forward diffusion process gradually corrupts the ground-truth data by adding Gaussian noise over multiple time steps, forming a sequence of perturbed samples {𝐲0,𝐲1,…,𝐲M}\left\{\mathbf{y}_{0},\mathbf{y}_{1},\ldots,\mathbf{y}_{M}\right\}, where 𝐲0\mathbf{y}_{0} is the original data and MM is the number of diffusion steps. Generally, we define the diffusion process as:
+q(𝐲1:M∣𝐲0)\displaystyle q(\mathbf{y}_{1:M}\mid\mathbf{y}_{0})
+:=∏m=1Mq⁡(𝐲m∣𝐲n),\displaystyle:=\prod_{m=1}^{M}q(\mathbf{y}_{m}\mid\mathbf{y}_{n}),
+(1)
+q⁡(𝐲m∣𝐲0)\displaystyle q(\mathbf{y}_{m}\mid\mathbf{y}_{0})
+:=𝒩⁡(𝐲m,αm​𝐲0,σm2​𝑰).\displaystyle:=\mathcal{N}\!\big(\mathbf{y}_{m};\alpha_{m}\mathbf{y}_{0},\;\sigma_{m}^{2}\,\bm{I}\big).
+(2)
+where q⁡(𝐲M)∼𝒩⁡(𝟎,𝑰)q(\mathbf{y}_{M})\sim\mathcal{N}(\mathbf{0},\bm{I}), n=m−1n=m-1, and σm\sigma_{m} denotes the standard deviation (so the covariance is OPENσm2​𝑰)\sigma_{m}^{2}\bm{I}). The diffusion parameters αm,σm>0\alpha_{m},\ \sigma_{m}>0 induce a noise schedule over the time steps such that the Signal-to-Noise Ratio (SNR) ν⁡(m)=αm2/σm2\nu(m)=\alpha_{m}^{2}/\sigma_{m}^{2} is strictly monotonically decreasing in mm.
+Conversely, the reverse denoising process is trained to iteratively remove noise in a step-by-step fashion along this Markov chain, reconstructing the original trajectory conditioned on context information. Generally, we define the reverse denoising process as:
+pθ(𝐲0:M)\displaystyle p_{\theta}(\mathbf{y}_{0:M})
+:=p⁡(𝐲M)​∏m=1Mpθ​(𝐲n∣𝐲m),\displaystyle:=p(\mathbf{y}_{M})\prod_{m=1}^{M}p_{\theta}(\mathbf{y}_{n}\mid\mathbf{y}_{m}),
+(3)
+pθ​(𝐲n∣𝐲m)\displaystyle p_{\theta}(\mathbf{y}_{n}\mid\mathbf{y}_{m})
+:=𝒩⁡(𝝁p,𝚺p),\displaystyle:=\mathcal{N}\!\big(\bm{\mu}_{p},\,\bm{\Sigma}_{p}\big),
+(4)
+𝝁p\displaystyle\bm{\mu}_{p}
+=αm|n​σn2σm2​𝐲m+σm|n2​αnσm2​𝐲θ​(𝐲m,m),\displaystyle=\frac{\alpha_{m\mid n}\,\sigma_{n}^{2}}{\sigma_{m}^{2}}\,\mathbf{y}_{m}+\frac{\sigma_{m\mid n}^{2}\,\alpha_{n}}{\sigma_{m}^{2}}\,\mathbf{y}_{\theta}(\mathbf{y}_{m},m),
+(5)
+𝚺p\displaystyle\bm{\Sigma}_{p}
+=σn2​σm|n2σm2​𝑰.\displaystyle=\frac{\sigma_{n}^{2}\,\sigma_{m\mid n}^{2}}{\sigma_{m}^{2}}\,\bm{I}.
+(6)
+where αm|n=αmαn\alpha_{m\mid n}=\frac{\alpha_{m}}{\alpha_{n}}, and σm|n2=σm2−αm|n2​σn2\sigma^{2}_{m\mid n}=\sigma_{m}^{2}-{\alpha^{2}_{m\mid n}}{\sigma_{n}^{2}}; 𝐲θ\mathbf{y}_{\theta} denotes the neural network with parameters θ\theta to approximate 𝐲0\mathbf{y}_{0}, and p⁡(𝐲M)p(\mathbf{y}_{M}) is the standard Gaussian noise used as the starting point. In addition, 𝝁p\bm{\mu}_{p} and 𝚺p\bm{\Sigma}_{p} denote the predicted mean and variance, respectively.
+IV Methods
+IV-A Overall Architecture
+Our proposed model, Diffusion2, is a two-stage diffusion framework consisting of two sequentially connected modules: DDPMp​a​s​t\textit{DDPM}_{past}, which performs backward trajectory prediction and estimates aleatoric uncertainty, and DDPMf​u​t\textit{DDPM}_{fut}, which predicts future trajectories, as illustrated in Fig. 2. Given the observed frames 𝐱o​b​s\mathbf{x}^{obs}, a shared encoder first extracts a contextual representation 𝐡1\mathbf{h}_{1}. Conditioned on 𝐡1\mathbf{h}_{1}, DDPMp​a​s​t\textit{DDPM}_{past} predicts the unobserved historical trajectory 𝐱0u​b​s\mathbf{x}^{ubs}_{0} and simultaneously estimates its aleatoric uncertainty 𝐮\mathbf{u} through a dual-head parameterization mechanism. Sequentially, we employ a trajectory encoder consisting of two LSTM layers followed by a three-layers MLP to extract the features 𝐯1\mathbf{v}_{1} from 𝐱0u​b​s\mathbf{x}^{ubs}_{0}. The extracted feature 𝐯1\mathbf{v}_{1} is then fused with the contextual representation 𝐡1\mathbf{h}_{1} to form a new conditioning vector 𝐡2\mathbf{h}_{2}, which serves as the input context for DDPMf​u​t\textit{DDPM}_{fut} to predict future trajectories 𝐲0\mathbf{y}_{0}.
+Furthermore, to incorporate the estimated aleatoric uncertainties, we introduce a learned temporally adaptive noise scheduling strategy for DDPMf​u​t\textit{DDPM}_{fut}, where a gamma module dynamically adjusts the noise scale based on 𝐮\mathbf{u} and the current diffusion timestep mm. Note that designing a sophisticated network to extract spatio-temporal features from trajectories is not the main focus of this work, and Diffusion2 is an encoder-agnostic framework that can seamlessly plug into the diverse encoders proposed in prior studies. In our experiments, we adopt the MOE [6] encoder owing to its superior representational capacity. As the denoising backbone for both DDPMp​a​s​t\textit{DDPM}_{past} and DDPMf​u​t\textit{DDPM}_{fut}, we adopt a streamlined Transformer decoder [46]. Parallel fully connected layers first project the corrupted trajectory sample and its contextual features into a common latent space, after which we add a sinusoidal encoding of the current diffusion timestep. This sequence is then processed by three stacked self-attention blocks that capture spatio-temporal dependencies. A final linear layer subsequently maps the representation back to 2-D coordinate space.
+Fig. 2: The overview of our proposed Diffusion2:
+(a) Framework: Diffusion2 consists of two sequentially connected diffusion models, DDPMp​a​s​t\textit{DDPM}_{past} and DDPMf​u​t\textit{DDPM}_{fut}. DDPMp​a​s​t\textit{DDPM}_{past} simultaneously reconstructs the unobserved historical trajectory 𝐱0u​b​s\mathbf{x}^{ubs}_{0} and estimates its associated uncertainty 𝐮\mathbf{u}. Then, DDPMf​u​t\textit{DDPM}_{fut} predicts the future trajectories 𝐲0\mathbf{y}_{0}. Both diffusion models share a common encoder that extracts contextual features 𝐡𝟏\mathbf{h_{1}} from the observed history 𝐱o​b​s\mathbf{x}^{obs}, while DDPMf​u​t\textit{DDPM}_{fut} employs an additional trajectory encoder to extract features 𝐯1\mathbf{v}_{1} from the predicted unobserved historical trajectory 𝐱0u​b​s\mathbf{x}^{ubs}_{0}. (b) Dual-head Parameterization Mechanism: The standard noise prediction network is augmented with two output heads, one for predicting noise and the other for predicting variance, which corresponds to aleatoric uncertainty.
+(c) Learnable Temporally Adaptive Noise Scheduling: A gamma module takes 𝐮\mathbf{u} and the diffusion step mm as inputs and dynamically modulates the noise scale in the forward diffusion process of DDPMf​u​t\textit{DDPM}_{fut}. Note that the red dashed line indicates the unobserved historical trajectory, with gray shading representing its uncertainty, while the green and blue dashed lines denote the observed history and future trajectories, respectively.
+IV-B Dual-head Parameterization
+In this work, to quantify the aleatoric uncertainty of predicted unobservable historical trajectories efficiently, we design a dual-head parameterization mechanism that augment the standard noise prediction network to output two heads:
+(ϵθ1​(𝐱mu​b​s,m,𝐡1),ℓθ1​(𝐱mu​b​s,m,𝐡1)),(\epsilon_{\theta_{1}}(\mathbf{x}^{ubs}_{m},m,\mathbf{h}_{1}),\bm{\ell}_{\theta_{1}}(\mathbf{x}^{ubs}_{m},m,\mathbf{h}_{1})),
+(7)
+where θ1\theta_{1} denotes the learned parameters of DDPMp​a​s​t\textit{DDPM}_{past}. The first head, ϵθ1​(⋅)\epsilon_{\theta_{1}}(\cdot), predicts the scaled Gaussian noise as in standard diffusion models, while the second head, ℓθ1​(⋅)\bm{\ell}_{\theta_{1}}(\cdot), directly predicts the log-variance on per-coordinate basis. For brevity, we abbreviate ℓθ1​(𝐱mo​b​s,m,𝐡1)\bm{\ell}_{\theta_{1}}(\mathbf{x}^{obs}_{m},m,\mathbf{h}_{1}) by ℓm\bm{\ell}_{m} and ϵθ1​(𝐱mo​b​s,m,𝐡1)\epsilon_{\theta_{1}}(\mathbf{x}^{obs}_{m},m,\mathbf{h}_{1}) by ϵ^m{\hat{\epsilon}}_{m} in what follows. During the inference phase, the dual-head parameterization propagates uncertainty without Monte-Carlo averaging. We update the reverse process as follows:
+pθ1​(xm−1ubs∣xmubs,m,𝐡1)=𝒩⁡(𝝁θ1,𝚺θ1),\displaystyle p_{\theta_{1}}\!\left(x^{\mathrm{ubs}}_{m-1}\mid x^{\mathrm{ubs}}_{m},\,m,\,\mathbf{h}_{1}\right)=\mathcal{N}\!\big(\bm{\mu}_{\theta_{1}},\,\bm{\Sigma}_{\theta_{1}}\big),
+(8)
+𝝁θ1=αm|n​σn2σm2​𝐱mubs+σm|n2​αnσm2​𝐱mubs−σm​ϵ^mαm,\displaystyle\bm{\mu}_{\theta_{1}}=\frac{\alpha_{m\mid n}\,\sigma_{n}^{2}}{\sigma_{m}^{2}}\,\mathbf{x}^{\mathrm{ubs}}_{m}+\frac{\sigma_{m\mid n}^{2}\,\alpha_{n}}{\sigma_{m}^{2}}\,\frac{\mathbf{x}^{\mathrm{ubs}}_{m}-\sigma_{m}\,{\hat{\epsilon}}_{m}}{\alpha_{m}},
+(9)
+𝚺θ1=diag⁡(exp⁡(ℓm))+σn2​σm|n2σm2​𝑰,\displaystyle\bm{\Sigma}_{\theta_{1}}=\operatorname{diag}\!\big(\exp(\bm{\ell}_{m})\big)+\frac{\sigma_{n}^{2}\,\sigma_{m\mid n}^{2}}{\sigma_{m}^{2}}\,\bm{I},
+(10)
+where diag⁡(⋅)\operatorname{diag}(\cdot) denotes the operator that maps a vector to the diagonal matrix formed from its entries, with 𝝁θ1\bm{\mu}_{\theta_{1}} and 𝚺θ1\bm{\Sigma}_{\theta_{1}} denoting the predicted mean and covariance of DDPMp​a​s​t\textit{DDPM}_{past}, respectively. Applying the Tweedie formula [53] yields a closed-form variance for the final prediction 𝐱0u​b​s\mathbf{x}^{ubs}_{0}:
+diag⁡(𝐮)\displaystyle\operatorname{diag}(\mathbf{u})
+=diag⁡(exp⁡(ℓm))+σn2​σm|n2σm2​𝑰.\displaystyle=\operatorname{diag}\!\big(\exp(\bm{\ell}_{m})\big)+\frac{\sigma_{n}^{2}\,\sigma_{m\mid n}^{2}}{\sigma_{m}^{2}}\,\bm{I}.
+(11)
+The first term captures the data-dependent aleatoric uncertainty, whereas the second term accounts for the known noise introduced by the scheduler. To isolate the intrinsic uncertainty, the second term can be subtracted. It is worth noting that the dual-head parameterization mechanism is designed for DDPMp​a​s​t\textit{DDPM}_{past}.
+IV-C Temporally-Adaptive Learnable Noise Scheduling
+Conventional diffusion frameworks, with their preset forward noise schedules, often struggle to exploit known data features. To bridge this gap, we design a temporally-adaptive, uncertainty-aware noise schedule inspired by [54] that guides the diffusion process to better capture sample-specific structures and improves data distribution modeling. In particular, we leverage the uncertainty of predicted historical trajectories to adapt the noise schedule.
+Naturally, the forward process for such noise schedule is defined as:
+q⁡(𝐲m∣𝐲0,𝐮)\displaystyle q(\mathbf{y}_{m}\mid\mathbf{y}_{0},\mathbf{u})
+:=𝒩⁡(𝐲m;𝜶m​(𝐮)​𝐲0,diag⁡(𝝈m2​(𝐮))CLOSE.\displaystyle:=\mathcal{N}\!\big(\mathbf{y}_{m};\bm{\alpha}_{m}(\mathbf{u})\mathbf{y}_{0},\;\operatorname{diag}(\bm{\sigma}_{m}^{2}(\mathbf{u})\big).
+(12)
+where 𝐲m,𝐲0∈ℝTf​u​r×2\mathbf{y}_{m},\mathbf{y}_{0}\in\mathbb{R}^{T_{fur}\times 2} and 𝜶m​(𝐮),𝝈m​(𝐮)∈ℝ+Tf​u​t\bm{\alpha}_{m}(\mathbf{u}),\bm{\sigma}_{m}(\mathbf{u})\in\mathbb{R}^{T_{fut}}_{+}. Then, the denoising process is given by:
+pθ2​(𝐲n∣𝐲m,𝐡2,m,𝐮):=𝒩⁡(𝝁θ2,𝚺θ2),\displaystyle p_{\theta_{2}}(\mathbf{y}_{n}\mid\mathbf{y}_{m},\mathbf{h}_{2},m,\mathbf{u}):=\mathcal{N}\!\big(\bm{\mu}_{\theta_{2}},\,\bm{\Sigma}_{\theta_{2}}\big),
+(13)
+𝝁θ2=𝜶m|n​(𝐮)​𝝈n2​(𝐮)𝝈m2​(𝐮)​𝐲m+𝝈m|n2​(𝐮)​𝜶n​(𝐮)𝝈m2​(𝐮)​𝐲θ​(𝐲m,𝐡2,m,𝐮),\displaystyle\bm{\mu}_{\theta_{2}}=\frac{\bm{\alpha}_{m\mid n}(\mathbf{u})\,\bm{\sigma}_{n}^{2}(\mathbf{u})}{\bm{\sigma}_{m}^{2}(\mathbf{u})}\,\mathbf{y}_{m}+\frac{\bm{\sigma}_{m\mid n}^{2}(\mathbf{u})\,\bm{\alpha}_{n}(\mathbf{u})}{\bm{\sigma}_{m}^{2}(\mathbf{u})}\,\mathbf{y}_{\theta}(\mathbf{y}_{m},\mathbf{h}_{2},m,\mathbf{u}),
+(14)
+𝚺θ2=𝝈n2​(𝐮)​𝝈m|n2​(𝐮)𝝈m2​(𝐮)​𝑰.\displaystyle\bm{\Sigma}_{\theta_{2}}=\frac{\bm{\sigma}_{n}^{2}(\mathbf{u})\,\bm{\sigma}_{m\mid n}^{2}(\mathbf{u})}{\bm{\sigma}_{m}^{2}(\mathbf{u})}\,\bm{I}.
+(15)
+where θ2\theta_{2} denotes the parameters of DDPMf​u​t\textit{DDPM}_{fut}. Following [54], we control the the forward dynamic through a bounded log-SNR field 𝜸φ​(𝐮,m)\bm{\gamma}_{\varphi}(\mathbf{u},m). Given 𝜸φ​(𝐮,m)\bm{\gamma}_{\varphi}(\mathbf{u},m), the diffusion parameters are recovered as 𝜶m2​(𝐮)=sigmoid⁡(−𝜸φ​(𝐮,m))\bm{\alpha}_{m}^{2}(\mathbf{u})=\operatorname{sigmoid}\!\big(-\bm{\gamma}_{\varphi}(\mathbf{u},m)\big), 𝝈m2​(𝐜)=sigmoid⁡(𝜸φ​(𝐮,m))\bm{\sigma}_{m}^{2}(\mathbf{c})=\operatorname{sigmoid}\!\big(\bm{\gamma}_{\varphi}(\mathbf{u},m)\big), and 𝝂⁡(𝐮,m)=exp⁡(−𝜸φ​(𝐮,m))\bm{\nu}(\mathbf{u},m)=\exp\!\big(-\bm{\gamma}_{\varphi}(\mathbf{u},m)\big). Here, 𝜸φ​(𝐮,m)\bm{\gamma}_{\varphi}(\mathbf{u},m) is defined as:
+𝜸φ​(𝐮,m)=γmin+(γmax−γmin)​fφ​(𝐮,m)fφ​(𝐮,m=M)\bm{\gamma}_{\varphi}(\mathbf{u},m)=\gamma_{\text{min}}+(\gamma_{\text{max}}-\gamma_{\text{min}})\frac{f_{\varphi}(\mathbf{u},m)}{f_{\varphi}(\mathbf{u},\,m=M)}
+(16)
+where fφ​(𝐮,m)f_{\varphi}(\mathbf{u},m) is a monotonic degree 5 polynomial in mm:
+fφ​(𝐮,m)=a12​(𝐮)5​m5+a1​(𝐮)​a2​(𝐮)2​m4\displaystyle f_{\varphi}(\mathbf{u},m)=\frac{a_{1}^{2}(\mathbf{u})}{5}m^{5}+\frac{a_{1}(\mathbf{u})a_{2}(\mathbf{u})}{2}m^{4}
++a22​(𝐮)+2​a1​(𝐮)​a3​(𝐮)3​m3+a2​(𝐮)​a3​(𝐮)​m2+a32​(𝐮)​m+𝒞.\displaystyle+\frac{a_{2}^{2}(\mathbf{u})+2a_{1}(\mathbf{u})a_{3}(\mathbf{u})}{3}m^{3}+a_{2}(\mathbf{u})a_{3}(\mathbf{u})m^{2}+a_{3}^{2}(\mathbf{u})m+\mathcal{C}.
+(17)
+This parameterization enforces the boundary conditions
+𝜸φ​(𝐮,0)=γmin\bm{\gamma}_{\varphi}(\mathbf{u},0)=\gamma_{\min} and
+𝜸φ​(𝐮,M)=γmax\bm{\gamma}_{\varphi}(\mathbf{u},M)=\gamma_{\max}.
+We implement the coefficient predictor as a neural network comprising two LSTM layers
+followed by a two-layer MLP. The network outputs three coefficient vectors
+a1,a2,a3∈ℝTf​u​ta_{1},a_{2},a_{3}\in\mathbb{R}^{T_{fut}}.
+Following [55, 56], we set γmin=−13.30\gamma_{\min}=-13.30 and γmax=5.0\gamma_{\max}=5.0. Here, 𝒞\mathcal{C} denotes a constant.
+IV-D Loss Function
+The loss function of DDPM is derived from the variational lower bound (VLB) of the negative log-likelihood of the data. Diffusion2 in this work comprises two sequentially connected diffusion models. Thus, the overall loss function naturally decomposes into two components, each corresponding to one direction of prediction.
+Loss for DDPMp​a​s​t\textit{DDPM}_{past}. For backward prediction, we design a dual-head parameterization mechanism that enables the diffusion model to estimate both the mean and aleatoric uncertainty. Concretely, the one-step reverse transition in the past branch is specified as Eq. 8, with the ϵ\epsilon-parameterized mean and diagonal covariance given by Eqs. 9 and 10. Naturally, the evidence lower bound (ELBO) contribution at step mm is the Gaussian negative log-likelihood:
+ℒmNLL=12​(𝐱m−1ubs−𝝁θ1)⊤​𝚺θ1−1​(𝐱m−1ubs−𝝁θ1)+12​log⁡|𝚺θ1|+𝒞,\mathcal{L}^{\text{NLL}}_{m}=\tfrac{1}{2}\!\left(\mathbf{x}^{\mathrm{ubs}}_{m-1}-\bm{\mu}_{\theta_{1}}\right)^{\!\top}\bm{\Sigma}_{\theta_{1}}^{-1}\left(\mathbf{x}^{\mathrm{ubs}}_{m-1}-\bm{\mu}_{\theta_{1}}\right)+\tfrac{1}{2}\log\!\left|\bm{\Sigma}_{\theta_{1}}\right|+\mathcal{C},
+(18)
+where 𝒞\mathcal{C} also collects terms independent of the learnable parameters. Replacing ϵ^m{\hat{\epsilon}}_{m} in Eq. 9 with the true noise ϵ\epsilon defines the posterior mean 𝝁⋆\bm{\mu}^{\star}, and their difference is:
+𝝁⋆−𝝁θ1=−σm|n2​σnαm​σm​(ϵ−ϵ^m).\bm{\mu}^{\star}-\bm{\mu}_{\theta_{1}}=-\,\frac{\sigma_{m\mid n}^{2}\sigma_{n}\,}{\alpha_{m}\,\sigma_{m}}\,\big(\epsilon-{\hat{\epsilon}}_{m}\big).
+(19)
+Using (19) in the quadratic form of (18) and the diagonal structure of
+𝚺θ1\bm{\Sigma}_{\theta_{1}}, all schedule-only factors collapse into constants, leaving the
+parameter-dependent precision weighting exp⁡(−ℓm)\exp(-\bm{\ell}_{m}) on the ϵ\epsilon-residual. The
+log-determinant simplifies analogously since 𝚺θ1\bm{\Sigma}_{\theta_{1}} is diagonal. Discarding
+terms independent of ϵθ1\epsilon_{\theta_{1}} and ℓm\bm{\ell}_{m} yields the heteroscedastic Gaussian negative log-likelihood we optimize:
+ℒ1=12​exp⁡(−ℓm)​‖ϵ−ϵθ1​(𝐱mubs,m,𝐡1)‖22+12​ℓm.\mathcal{L}_{1}=\frac{1}{2}\,\exp(-\bm{\ell}_{m})\,\big\|{\epsilon}-\epsilon_{\theta_{1}}(\mathbf{x}^{\mathrm{ubs}}_{m},\,m,\,\mathbf{h}_{1})\big\|_{2}^{2}\;+\;\frac{1}{2}\,\bm{\ell}_{m}\,.
+(20)
+The first term performs precision-weighted regression in ϵ\epsilon-space, while the second is the
+log⁡|𝚺θ1|\log|\bm{\Sigma}_{\theta_{1}}| regularizer that prevents vanishing-variance (overconfident) solutions.
+Loss for DDPMf​u​t\textit{DDPM}_{fut}. For forward prediction, we parameterize the one-step conditional as in Eq. 13, with
+𝝁θ2\bm{\mu}_{\theta_{2}} and 𝚺θ2\bm{\Sigma}_{\theta_{2}} given by
+Eqs. 14 and 15. Under our context-conditioned Gaussian
+transition definition, the forward process is
+q⁡(𝐲m∣𝐲n,𝐮):=𝒩⁡(𝜶m|n​(𝐮)​𝐲n,𝝈m|n2​(𝐮)​𝑰).q(\mathbf{y}_{m}\mid\mathbf{y}_{n},\mathbf{u}):=\mathcal{N}\!\big(\bm{\alpha}_{m\mid n}(\mathbf{u})\,\mathbf{y}_{n},\;\bm{\sigma}^{2}_{m\mid n}(\mathbf{u})\,\bm{I}\big).
+(21)
+The corresponding conditional distribution of 𝐲n\mathbf{y}_{n} given 𝐲m\mathbf{y}_{m} and the clean target
+𝐲0\mathbf{y}_{0} is
+q⁡(𝐲n∣𝐲m,𝐲0,𝐮):=𝒩⁡(𝝁q,𝚺q),\displaystyle q(\mathbf{y}_{n}\mid\mathbf{y}_{m},\mathbf{y}_{0},\mathbf{u}):=\mathcal{N}\!\big(\bm{\mu}_{q},\;\bm{\Sigma}_{q}\big),
+(22)
+𝝁q=𝜶m|n​(𝐮)​𝝈n2​(𝐮)𝝈m2​(𝐮)​𝐲m+𝝈m|n2​(𝐮)​𝜶n​(𝐮)𝝈m2​(𝐮)​𝐲0,\displaystyle\bm{\mu}_{q}=\frac{\bm{\alpha}_{m\mid n}(\mathbf{u})\,\bm{\sigma}_{n}^{2}(\mathbf{u})}{\bm{\sigma}_{m}^{2}(\mathbf{u})}\,\mathbf{y}_{m}+\frac{\bm{\sigma}_{m\mid n}^{2}(\mathbf{u})\,\bm{\alpha}_{n}(\mathbf{u})}{\bm{\sigma}_{m}^{2}(\mathbf{u})}\,\mathbf{y}_{0},
+(23)
+where 𝚺q\bm{\Sigma}_{q} equals Eq. 15, i.e.,
+𝚺q=𝚺θ2=𝝈n2​(𝐮)​𝝈m|n2​(𝐮)𝝈m2​(𝐮)​𝑰\bm{\Sigma}_{q}=\bm{\Sigma}_{\theta_{2}}=\frac{\bm{\sigma}_{n}^{2}(\mathbf{u})\,\bm{\sigma}_{m\mid n}^{2}(\mathbf{u})}{\bm{\sigma}_{m}^{2}(\mathbf{u})}\,\bm{I}.
+With matching covariances, the ELBO term reduces to the KL between two Gaussians that differ only in
+their means:
+DKL(q(𝐲n∣𝐲m,𝐲0,𝐮)∥pθ2(𝐲n∣𝐲m,𝐡2,m,𝐮))\displaystyle D_{\mathrm{KL}}\!\big(q(\mathbf{y}_{n}\!\mid\!\mathbf{y}_{m},\mathbf{y}_{0},\mathbf{u})\,\big\|\,p_{\theta_{2}}(\mathbf{y}_{n}\!\mid\!\mathbf{y}_{m},\mathbf{h}_{2},m,\mathbf{u})\big)
+(24)
+=12​(𝝁θ2−𝝁q)⊤​𝚺θ2−1​(𝝁θ2−𝝁q)\displaystyle=\tfrac{1}{2}\!\left(\bm{\mu}_{\theta_{2}}-\bm{\mu}_{q}\right)^{\!\top}\bm{\Sigma}_{\theta_{2}}^{-1}\left(\bm{\mu}_{\theta_{2}}-\bm{\mu}_{q}\right)
+=12​(𝐲0−𝐲θ2​(𝐲m,𝐡2,m,𝐮))⊤​𝐉0|m​(𝐮,m)\displaystyle=\tfrac{1}{2}\!\left(\mathbf{y}_{0}-\mathbf{y}_{\theta_{2}}(\mathbf{y}_{m},\mathbf{h}_{2},m,\mathbf{u})\right)^{\!\top}\mathbf{J}_{0\mid m}(\mathbf{u},m)
+×(𝐲0−𝐲θ2​(𝐲m,𝐡2,m,𝐮)),\displaystyle\quad\times\left(\mathbf{y}_{0}-\mathbf{y}_{\theta_{2}}(\mathbf{y}_{m},\mathbf{h}_{2},m,\mathbf{u})\right),
+(25)
+because
+𝝁θ2−𝝁q=𝝈m|n2​(𝐮)​𝜶n​(𝐮)𝝈m2​(𝐮)​(𝐲θ2​(𝐲m,𝐡2,m,𝐮)−𝐲0),\displaystyle\bm{\mu}_{\theta_{2}}-\bm{\mu}_{q}=\frac{\bm{\sigma}_{m\mid n}^{2}(\mathbf{u})\,\bm{\alpha}_{n}(\mathbf{u})}{\bm{\sigma}_{m}^{2}(\mathbf{u})}\,\big(\mathbf{y}_{\theta_{2}}(\mathbf{y}_{m},\mathbf{h}_{2},m,\mathbf{u})-\mathbf{y}_{0}\big),
+(26)
+𝚺θ2−1=𝝈m2​(𝐮)𝝈n2​(𝐮)​𝝈m|n2​(𝐮)​𝐈,\displaystyle\qquad\bm{\Sigma}_{\theta_{2}}^{-1}=\frac{\bm{\sigma}_{m}^{2}(\mathbf{u})}{\bm{\sigma}_{n}^{2}(\mathbf{u})\,\bm{\sigma}_{m\mid n}^{2}(\mathbf{u})}\,\mathbf{I},
+(27)
+and we define the (context-conditioned) posterior precision as follows:
+𝐉0|m​(𝐮,m)\displaystyle\mathbf{J}_{0\mid m}(\mathbf{u},m)
+:=𝜶n​(𝐮)2​𝝈m|n​(𝐮)2𝝈n​(𝐮)2​𝝈m​(𝐮)2​𝑰\displaystyle:=\frac{\bm{\alpha}_{n}(\mathbf{u})^{2}\,\bm{\sigma}_{m\mid n}(\mathbf{u})^{2}}{\bm{\sigma}_{n}(\mathbf{u})^{2}\,\bm{\sigma}_{m}(\mathbf{u})^{2}}\;\bm{I}
+≡diag⁡(𝝂⁡(𝐮,n)−𝝂⁡(𝐮,m)).\displaystyle\;\equiv\;\operatorname{diag}\!\big(\bm{\nu}(\mathbf{u},n)-\bm{\nu}(\mathbf{u},m)\big).
+(28)
+Dropping constants that are independent of θ2\theta_{2} and taking the expectation over timesteps
+(e.g., by uniformly sampling mm) yields the training loss used for the forward branch:
+ℒ2=\displaystyle\mathcal{L}_{2}=
+12𝔼[∑m=1M(𝐲0−𝐲θ2(𝐲m,𝐡2,m,𝐮))⊤\displaystyle\frac{1}{2}\,\mathbb{E}\Bigg[\sum_{m=1}^{M}\big(\mathbf{y}_{0}-\mathbf{y}_{\theta_{2}}(\mathbf{y}_{m},\mathbf{h}_{2},m,\mathbf{u})\big)^{\!\top}
+(29)
+×diag(𝝂(𝐮,n)−𝝂(𝐮,m))(𝐲0−𝐲θ2(𝐲m,𝐡2,m,𝐮))].\displaystyle\times\operatorname{diag}(\bm{\nu}(\mathbf{u},n)-\bm{\nu}(\mathbf{u},m))\big(\mathbf{y}_{0}-\mathbf{y}_{\theta_{2}}(\mathbf{y}_{m},\mathbf{h}_{2},m,\mathbf{u})\big)\Bigg].
+Thus, the total loss function ℒ=ℒ1+ℒ2\mathcal{L}=\mathcal{L}_{1}+\mathcal{L}_{2}, and the training phase is illustrated in Algorithm 1.
+Algorithm 1  Pseudocode for Diffusion2 Training Phase
+1:
+while Model not converged do
+2:
+Sample frames (𝐱o​b​s,𝐱u​b​s,𝐲)\big(\mathbf{x}^{obs},\,\mathbf{x}^{ubs},\,\mathbf{y}) from dataset
+3:
+Sample m∼Uniform⁡(1,M)m\sim\mathrm{Uniform}(1,M)
+4:
+Encode: 𝐡1←𝐱o​b​s\mathbf{h}_{1}\leftarrow\mathbf{x}^{obs}
+5:
+Calculate the loss ℒ1\mathcal{L}_{1} using Eq. 20.
+6:
+Sample 𝐱Mu​b​s∼𝒩⁡(𝟎,𝑰)\mathbf{x}^{ubs}_{M}\sim\mathcal{N}(\mathbf{0},\bm{I})
+7:
+for m={M,…,1}m=\{M,\ldots,1\} do
+8:
+Sample ϵ∼𝒩⁡(𝟎,𝑰){\epsilon}\sim\mathcal{N}(\mathbf{0},\bm{I})
+9:
+Sample ϵ′∼𝒩⁡(𝟎,𝑰){\epsilon^{\prime}}\sim\mathcal{N}(\mathbf{0},\bm{I})
+10:
+𝐱m−1u​b​s=𝝁θ1+exp⁡(12​ℓm)⊙ϵ+σn​σm|nσm​ϵ′\mathbf{x}_{m-1}^{ubs}=\bm{\mu}_{\theta_{1}}+\exp(\frac{1}{2}\bm{\ell}_{m})\odot\epsilon+\frac{\sigma_{n}\sigma_{m\mid n}}{\sigma_{m}}\epsilon^{\prime}
+11:
+end for
+12:
+Calculate 𝐮\mathbf{u} using Eq. 11.
+13:
+Encode: 𝐯1←𝐱0ubs\mathbf{v}_{1}\leftarrow\mathbf{x}^{\text{ubs}}_{0},
+14:
+Concatenate: 𝐡2←𝐯1⊕𝐡1\mathbf{h}_{2}\leftarrow\mathbf{v}_{1}\oplus\mathbf{h}_{1}
+15:
+Sample m∼Uniform⁡(1,M)m\sim\mathrm{Uniform}(1,M)
+16:
+Calculate the loss ℒ2\mathcal{L}_{2} using Eq. 29.
+17:
+Take gradient descent step on ∇(ℒ=ℒ1+ℒ2)\nabla(\mathcal{L}=\mathcal{L}_{1}+\mathcal{L}_{2}), and
+18:
+then update the model’s parameters.
+19:
+end while
+IV-E Model inference
+The preceding sections detailed the model architecture and training procedure. Once training is complete, we can use Diffusion2 to generate future pedestrian trajectories. In the first stage, DDPMpast\textit{DDPM}_{\text{past}} performs denoising to obtain plausible unobserved trajectories from pure Gaussian noise 𝐱Mu​b​s∼𝒩⁡(𝟎,𝑰)\mathbf{x}_{M}^{ubs}\sim\mathcal{N}(\mathbf{0},\bm{I}). The denoising process proceeds as follows:
+𝐱m−1u​b​s=𝝁θ1+exp⁡(12​ℓm)⊙ϵ+σn​σm|nσm​ϵ′\displaystyle\mathbf{x}_{m-1}^{ubs}=\bm{\mu}_{\theta_{1}}+\exp(\frac{1}{2}\bm{\ell}_{m})\odot\epsilon+\frac{\sigma_{n}\sigma_{m\mid n}}{\sigma_{m}}\epsilon^{\prime}
+(30)
+Where ϵ\epsilon and ϵ′∼𝒩⁡(𝟎,𝑰)\epsilon^{\prime}\sim\mathcal{N}(\mathbf{0},\bm{I}). Meanwhile, leveraging the Tweedie formula [53], we can obtain a closed-form variance for the final prediction 𝐱0u​b​s\mathbf{x}_{0}^{ubs}, as shown in Eq. 11. In the second stage, we employ the DDPMfuture\textit{DDPM}_{\text{future}} denoising procedure to forecast plausible future trajectories from a pure Gaussian noise 𝐲M∼𝒩⁡(𝟎,𝑰)\mathbf{y}_{M}\sim\mathcal{N}(\mathbf{0},\bm{I}). Concretely, starting from 𝐲M\mathbf{y}_{M}, we iterate as follows:
+𝐲m−1=𝝁θ2+𝝈n​(𝐮)​𝝈m|n​(𝐮)𝝈m​(𝐮)​ϵ\displaystyle\mathbf{y}_{m-1}=\bm{\mu}_{\theta_{2}}+\frac{\bm{\sigma}_{n}(\mathbf{u})\bm{\sigma}_{m\mid n}(\mathbf{u})}{\bm{\sigma}_{m}(\mathbf{u})}\epsilon
+(31)
+where ϵ∼𝒩⁡(𝟎,𝑰)\epsilon\sim\mathcal{N}(\mathbf{0},\bm{I}). To summarize, the inference procedure is presented in Algorithm 2.
+Algorithm 2  Pseudocode for Diffusion2 Sampling Phase
+1:
+Input: observed frames 𝐱o​b​s\mathbf{x}^{obs}
+2:
+Output: Future trajectories 𝐲\mathbf{y}
+3:
+Sample 𝐱Mu​b​s∼𝒩⁡(𝟎,𝑰)\mathbf{x}^{ubs}_{M}\sim\mathcal{N}(\mathbf{0},\bm{I})
+4:
+Encode: 𝐡1←𝐱o​b​s\mathbf{h}_{1}\leftarrow\mathbf{x}^{obs}
+5:
+Same as Alg. 1, Steps 6–13
+6:
+for m={M,…,1}m=\{M,\ldots,1\} do
+7:
+Sample 𝐲M∼𝒩⁡(𝟎,𝑰)\mathbf{y}_{M}\sim\mathcal{N}(\mathbf{0},\bm{I})
+8:
+Sample ϵ∼𝒩⁡(𝟎,𝑰){\epsilon}\sim\mathcal{N}(\mathbf{0},\bm{I})
+9:
+𝐲m−1=𝝁θ2+𝝈n​(𝐮)​𝝈m|n​(𝐮)𝝈m​(𝐮)​ϵ\mathbf{y}_{m-1}=\bm{\mu}_{\theta_{2}}+\frac{\bm{\sigma}_{n}(\mathbf{u})\bm{\sigma}_{m\mid n}(\mathbf{u})}{\bm{\sigma}_{m}(\mathbf{u})}\epsilon
+10:
+end for
+11:
+𝐲^=𝐲0\hat{\mathbf{y}}=\mathbf{y}_{0}
+V Experiments
+V-A Datasets
+We evaluate the performance of our proposed model on the ETH/UCY [8] and Stanford Drone Dataset (SDD) [7]. The ETH/UCY dataset comprises five distinct scenes (ETH, HOTEL, UNIV, ZARA1, and ZARA2), containing trajectories of 1,536 pedestrians sampled at 2.5 Hz. For ETH/UCY, following prior works [10, 57, 46], we adopt the widely used leave-one-scene-out protocol, training the model on four scenes and testing it on the held-out scene. The SDD is a large-scale dataset that captures trajectories of pedestrians, cyclists, and vehicles from a bird’s-eye view on a university campus, providing diverse and complex interaction scenarios for trajectory prediction research.
+V-B Metrics
+In line with previous research [10, 58], we adopt Average Displacement Error (ADE) and Final Displacement Error (FDE) as evaluation metrics to demonstrate the effectiveness of our proposed method. Specifically, ADE measures the average Euclidean distance between the predicted trajectory and the ground-truth trajectory over all time steps, and is defined as:
+ADE=1Tf​u​t​∑t=1Tf​u​t‖𝐲^t−𝐲t‖2,\text{ADE}=\frac{1}{T_{fut}}\sum_{t=1}^{T_{fut}}\left\|\hat{\mathbf{y}}_{t}-\mathbf{y}_{t}\right\|_{2},
+(32)
+where 𝐲^t\hat{\mathbf{y}}_{t} and 𝐲t\mathbf{y}_{t} denote the predicted and ground-truth positions at time step tt, respectively, and TT denotes the total length of the trajectory. FDE, on the other hand, measures only the final-step prediction error, and is computed as:
+FDE=‖𝐲^Tf​u​t−𝐲Tf​u​t‖2.\text{FDE}=\left\|\hat{\mathbf{y}}_{T_{fut}}-\mathbf{y}_{T_{fut}}\right\|_{2}.
+(33)
+To ensure a fair comparison, following prior work [10, 46, 57], we generate 20 predicted future trajectories and report the final error as the minimum error across all predictions.
+V-C Baselines
+To demonstrate the effectiveness of our model, we compare prediction results against both conventional trajectory-prediction baselines and models specifically designed for momentary trajectory prediction:
+•
+Social GAN [59]: Social GAN employs an encoder–decoder architecture with a social-pooling module to capture multi-agent interactions.
+•
+Next [60]: Next leverages an attention-based LSTM coupled with spatial activity localization to extract features from behavioral features and person–scene interactions.
+•
+Social-STGCNN [61]: Social-STGCNN proposes a spatio-temporal graph convolutional network that models pedestrians as graph nodes to capture social interactions.
+•
+Trajectron++ [13]: Trajectron++ leverages a graph-structured recurrent network to predict the trajectories of a general number of diverse agents.
+•
+SGCN [62]: Pedestrian trajectories are modeled with a sparse graph convolutional approach that uses directed spatial graphs for interactions and directed temporal graphs for motion patterns.
+•
+SingularTrajectory [63]: A diffusion-based, universal trajectory predictor maps diverse motion tasks into a shared embedding space, enabling generalizable predictions across settings.
+•
+STT+DTO [9]: A knowledge-distillation framework in which a student learns future-trajectory prediction from limited observations by mimicking a teacher trained on full trajectories.
+•
+MID [46]: MID proposed a novel transformer-based network to model complex temporal dependency in trajectories.
+•
+EigenTrajectory [64]: EigenTrajectory uses low-rank spatio-temporal descriptors to compactly represent and forecast multi-modal pedestrian motion.
+•
+PCCSNet [57]: PCCSNet proposes a novel framework that formulates multimodal prediction into three steps.
+•
+SocialVAE [16]: SocialVAE employs a temporally-aware variational autoencoder (VAE) to model the multimodality and uncertainty in human trajectory prediction.
+•
+MOE [6]: MOE designs a Momentary Observation feature Extractor to extract the features in momentary observations.
+•
+BCDiff [10]: BCDiff proposes a bidirectional diffusion model that jointly generates unobserved historical and future trajectories.
+V-D Experimental Setup
+For the forward diffusion process of DDPMp​a​s​t\textit{DDPM}_{past}, we employ a linear noise schedule, fixing the variance bounds to β1=1×10−4\beta_{1}=1\times 10^{-4} and βM=0.05\beta_{M}=0.05. Our encoder uses exactly the hyper-parameter configuration reported in [6]. Separately, the denoising backbone is composed of three Transformer encoder blocks, each with a model dimension of 128, a 256-dimensional feed-forward sub-layer, and 4 self-attention heads.
+Diffusion2 was implemented in PyTorch and trained on a server running Ubuntu 22.04, equipped with an Intel Xeon Platinum 8358P (2.60 GHz) CPU and a single NVIDIA A800-SXM4-80G GPU. Training was carried out for 100 epochs with a batch size of 256.
+V-E Main Results
+Comparison with State-of-the-Art Methods.
+TABLE I: Comparisons of various approaches on multiple datasets. The evaluation results are reported as ADE/FDE (m). The best result is highlighted in bold, and the runner-up is underlined.
+Momentary
+ETH
+HOTEL
+UNIV
+ZARA1
+ZARA2
+AVG
+SDD
+SGAN [59]
+0.86/1.60
+0.52/0.99
+0.57/1.20
+0.41/0.79
+0.36/0.74
+0.54/1.06
+17.76/34.83
+Next [60]
+0.77/1.81
+0.32/0.62
+0.61/1.31
+0.39/0.82
+0.34/0.76
+0.49/1.06
+-
+Social-STGCNN [61]
+1.24/2.23
+0.77/1.44
+0.45/0.81
+0.38/0.57
+0.35/0.58
+0.64/1.13
+17.77/29.12
+Trajectron++ [13]
+0.76/1.43
+0.30/0.56
+0.36/0.74
+0.22/0.42
+0.18/0.34
+0.36/0.70
+13.07/22.88
+SGCN [62]
+0.88/1.66
+0.55/1.16
+0.38/0.71
+0.30/0.54
+0.25/0.46
+0.47/0.91
+15.40/25.69
+SingularTrajectory [63]
+0.45/0.67
+0.18/0.29
+0.24/0.43
+0.19/0.33
+0.17/0.28
+0.25/0.40
+-
+STT+DTO [9]
+0.62/1.22
+0.29/0.56
+0.58/1.14
+0.45/0.98
+0.34/0.74
+0.46/0.93
+-
+MID [46]
+0.63/1.05
+0.29/0.49
+0.30/0.56
+0.30/0.56
+0.22/0.40
+0.35/0.61
+-
+EigenTrajectory [64]
+0.46/0.76
+0.17/0.28
+0.25/0.44
+0.19/0.35
+0.15/0.27
+0.25/0.42
+-
+PCCSNet [57]
++MOE [6]
++BCDiff [10]
+0.34/0.65
+0.14/0.25
+0.31/0.63
+0.23/0.46
+0.16/0.37
+0.24/0.47
+9.19/17.71
+0.31/0.57
+0.13/0.21
+0.25/0.53
+0.20/0.41
+0.14/0.31
+0.20/0.41
+8.40/16.08
+0.30/0.56
+0.13/0.20
+0.25/0.52
+0.18/0.37
+0.14/0.31
+0.19/0.39
+8.32/15.87
+SocialVAE [16]
++MOE [6]
++BCDiff [10]
+0.64/1.10
+0.21/0.34
+0.27/0.51
+0.22/0.39
+0.18/0.34
+0.30/0.54
+9.56/16.10
+0.57/1.01
+0.17/0.29
+0.26/0.44
+0.22/0.36
+0.17/0.32
+0.28/0.48
+9.12/14.98
+0.53/0.91
+0.17/0.27
+0.24/0.40
+0.21/0.37
+0.16/0.26
+0.26/0.44
+9.05/14.86
+Diffusion2 (ours)
+0.29/0.45
+0.10/0.13
+0.26/0.47
+0.17/0.37
+0.14/0.26
+0.19/0.33
+8.26/14.87
+We validate our proposed method on multiple datasets and the overall performance is shown in Tab. I. The experimental results clearly show that Diffusion2 outperforms the baseline models on most datasets. Specifically, the ADE and FDE of Diffusion2 are markedly lower than the current state-of-the-art (SOTA) results. For example, on HOTEL, our ADE (0.10) is 23.1% lower than the SOTA value (0.13), and our FDE (0.13) is 35.0% lower than the SOTA (0.20). On ETH, our FDE (0.45) shows a 19.6% reduction compared to the SOTA (0.56). Averaged across ETH/UCY, we obtain an FDE of 0.33, which is 15.4% below the SOTA value of 0.39. Our ADE is 0.19, matching the reported SOTA (0.19) and exhibiting a slight improvement on the order of 10−310^{-3}.
+On SDD, Diffusion2 achieves an ADE/FDE of 8.26/14.87. This sets a new best ADE, improving upon the prior lowest value (8.32) by about 0.7%, and the FDE essentially ties the best reported number (14.86), with a difference of 0.01 (i.e., <10−2<10^{-2}). These results suggest that our uncertainty-aware dual-head parameterization and adaptive noise scheduling transfer well to aerial-view, heterogeneous multi-agent scenes.
+Compared with previous methods, Diffusion2 first uses a dual-head parameterization mechanism to estimate the uncertainty of historical trajectory predictions. Then, the adaptive noise scheduling module dynamically adjusts the forward noise addition process according to the uncertainty. Through these modules, the framework encourages the extraction and learning of informative features, thereby improving trajectory generation quality. Although overall performance is competitive, our method trails the state of the art on datasets such as UNIV. A plausible explanation is that the UNIV scene contains richer, more intricate social interactions (e.g., higher crowd density and frequent group formations), as shown in Fig. 5. These cases motivate further refinement of our framework for better adaptability to diverse scene dynamics.
+Learned Adaptive Noise Schedule.
+Fig. 3: A visualization of the learned λ\lambda and ll over diffusion step mm, where each lm=sigmoid⁡(γφ​(𝐮,m))l_{m}=\operatorname{sigmoid}(\gamma_{\varphi}(\mathbf{u},m)).
+Fig. 3 presents the learned schedules of the averaged λm\lambda_{m} and lml_{m} over the diffusion steps mm. The colour gradient—from blue (low predictive uncertainty) to red (high predictive uncertainty)—highlights how the model adapts its noise‐injection strategy to the input’s uncertainty level. For low‐uncertainty inputs (blue curves), lml_{m} rises steeply, so stronger noise is injected early in the forward process. Conversely, high‐uncertainty inputs (red curves) show a slower increase, delaying and attenuating the injected noise. The underlying reason for this attenuation is that highly uncertain inputs must preserve fragile signal features; by adding less noise, the model avoids drowning these features and enables the reverse process to recover them more reliably during reconstruction.
+Inference Latency.
+In our proposed Diffusion2 framework, the DDPM-based sampler is a plug-and-play module that can be replaced by more efficient diffusion samplers without changing the rest of the architecture. We benchmark the inference latency of representative baselines and our model (with both DDPM and DDIM sampling) on identical hardware (NVIDIA RTX A800). As summarized in Table II, our DDPM-based instantiation runs at 412412 ms, which is slower than discriminative baselines MID (325325 ms) and PCCSNet (107107 ms). This gap mainly comes from the multi-step Markovian denoising inherent to DDPM. Replacing the sampler with DDIM collapses the sampling chain to far fewer steps, reducing latency to 7575 ms without changing the architecture, thus meeting real-time requirements. BCDiff [10], while also reconstructing unobserved history and predicting future trajectories like ours, is slow due to its iterative bidirectional refinement in the BCDU module (about M=40M{=}40 steps), which incurs many forward passes and yields high latency (∼\sim4 s). Meanwhile, many recent methods [48, 65, 66] have been proposed to accelerate inference by loosening Markovian constraints and generating trajectories with fewer or skipped steps, offering substantial potential to further reduce the inference latency of Diffusion2.
+Reverse Diffusion Process.
+As Fig. 4 illustrates, we visualize the denoising dynamics of the DDPMf​u​t\textit{DDPM}_{fut}, rendering snapshots every 20 inference steps (m∈{0,20,…,200})(m\in\{0,20,\dots,200\}). Starting from an initial Gaussian noise at m=0m=0, the reverse process progressively suppresses uncertainty and converges toward a coherent future trajectory consistent with the observed history. Owing to the minimal distributional divergence observed during the initial 160 steps, intermediate samples for m∈{60,…,120}m\in\{60,\dots,120\} are omitted to emphasize the salient transitions.
+Fig. 4: Visualization of generated trajectories across reverse-diffusion time mm. The red and green lines represent ground-truth future and observable trajectories. As mm increases, the process progressively suppresses indeterminacy and converges toward the desired future path. Initialized from a pure gaussian noise at m=0m=0 and conditioned on context information, the model gradually removes implausible hypotheses and aligns with the ground-truth future (red, solid).
+TABLE II: Inference latency comparison on identical hardware (NVIDIA RTX A800).
+Method
+Latency (ms)
+MID [46]
+325
+PCCSNet [57]
+107
+BCDiff [10]
+∼\sim4000
+Ours (DDPM)
+412
+Ours (DDIM)
+75
+V-F Qualitative evaluation.
+Qualitative Visualization. We further demonstrate the effectiveness of our proposed method through qualitative results. Fig. 5 presents the predictions generated by our Diffusion2 framework and PCCSNet [57] across all five scenes of the ETH/UCY dataset. In each scene, we visualize the observed trajectories, the unobserved historical paths, and the future ground truth movements. As shown, Diffusion2 produces predictions that closely follow the actual future and inferred past trajectories. PCCSNet also shows strong performance, particularly in short-term predictions. However, in some cases, PCCSNet exhibits slight deviations from the ground truth when predicting longer-term future paths. Overall, these results visually demonstrate the strong capability of Diffusion2 to model complex pedestrian dynamics under partial observability.
+Multimodal. As Diffusion2 learns an implicit distribution over future trajectories and is inherently multimodal, we visualize multiple predicted trajectories in Fig. 6. As Fig. 6 shows, predicted trajectories from Diffusion2 align closely with the ground-truth future trajectories in most cases, while a minority of samples follow alternative directions, highlighting the model’s inherent multimodality.
+Fig. 5: Visualization of predicted unobservable historical and future trajeactories on the ETH/UCY dataset. The red lines represent the unobserved historical trajectories, while the cyan lines denote the observed historical trajectories. The ground truth future trajectories are marked in light blue. Predictions from Diffusion2 are visualized as blue dashed lines for future and orange dashed lines for history, whereas the PCCSNet predictions are highlighted in magenta dashed lines.
+Fig. 6: Visualization of predicted pedestrian trajectories across several scenes in the HOTEL dataset. Given the observed past (green, dashed), we show the ground-truth future (red, solid) and the model’s randomly sampled predictions (cyan, dashed). Trajectories are sampled from Diffusion2 and rendered after de-normalization to the scene frame.
+Failure Cases. To probe when Diffusion2 fails, we examine the worst four cases on the ETH dataset (Fig. 7), selected by best-of-20 ADE. We observe that errors spike when pedestrians undergo abrupt state changes, for example sudden heading reversals and sharp turns. In these moments the short observational window provides insufficient cues to anticipate the transition, leading Diffusion2 to extrapolate the pre-change motion and miss the new intent.
+Fig. 7: Visualization of predicted pedestrian trajectories across several scenes in ETH dataset (failure cases). Given the observed past (green, dashed), We show the ground-truth future (red, solid) and the model’s best-of-20 predicted trajectory. Trajectories are sampled from Diffusion2 and rendered after de-normalization to the scene frame.
+V-G Ablation Studies
+TABLE III: Ablation study for our Diffusion2.
+Method
+Uncertainty
+LANS
+ETH/UCY
+SDD
+ADE
+FDE
+ADE
+FDE
+Diffusion2
+✗
+✗
+0.22
+0.37
+8.45
+15.59
+✗
+✓
+0.23
+0.38
+8.34
+15.09
+✓
+✓
+0.19
+0.33
+8.26
+14.87
+We conduct ablation studies, and the results are shown in Tab. III. Specifically, we focus on two core modules: uncertainty estimation and learnable adaptive noise scheduling (LANS).
+We start by using two independent diffusion models to predict the unobserved history and future trajectories, without any additional modules. Then, we add the LANS module while keeping the uncertainty estimation disabled. On the ETH/UCY dataset, we observe a slight performance drop, suggesting that without explicit uncertainty guidance, LANS may lack meaningful modulation signals, which can impair the noise injection process and affect future trajectory quality. On the SDD dataset, however, LANS still brings mild improvement even without uncertainty, possibly due to its ability to adjust noise scale based on training dynamics in simpler open-space scenarios.
+Finally, enabling both uncertainty estimation and LANS (i.e., the full Diffusion2) yields the best performance on both datasets. This demonstrates that uncertainty-guided adaptive noise scheduling helps the model capture historical trajectory characteristics more effectively, leading to improved trajectory prediction accuracy.
+VI Conclusion and Discussion
+In this study, we propose a novel framework Diffusion2, specifically for momentary trajectory prediction. Our proposed model consists of two sequentially connected diffusion models: one for generating unobserved historical trajectories and the other for predicting future trajectories. Considering the noise of the predicted historical trajectories, we design a dual-headed parameterization mechanism to estimate its uncertainty and a learnable adaptive noise module to dynamically adjust the noise scale in the forward diffusion process. Experiments show that our Diffusion2 outperforms the state-of-the-art methods on multiple datasets. Meanwhile, we also note that the diffusion-based framework has inherent limitations. In particular, its iterative sampling process leads to slow inference speed, which may hinder its deployment in real-time scenarios. In addition, since the training process involves optimizing multiple diffusion stages, it can be computationally expensive. In future work, we plan to explore more efficient training and inference methods to reduce computational resource overhead while maintaining prediction quality.
+Limitations.
+Although Diffusion2 delivers strong results, it still has limitations. We observe reduced adaptability in interaction intensive scenes, such as those in the UNIV dataset. In future work we will improve efficiency and robustness, and we will validate the framework in more complex traffic scenarios.
+Acknowledgement
+We thank the Pacific Northwest’s Transportation Consortium (PacTrans) Center for their funding support.
+References
+[1]
+Y. Zhang, H. An, Z. Fang, G. Xu, Y. Zhou, X. Chen, and Y. Fang, “Smartcooper: Vehicular collaborative perception with adaptive fusion and judger mechanism,” in 2024 IEEE International Conference on Robotics and Automation (ICRA), 2024, pp. 4450–4456.
+[2]
+Z. Fang, S. Hu, H. An, Y. Zhang, J. Wang, H. Cao, X. Chen, and Y. Fang, “Pacp: Priority-aware collaborative perception for connected and autonomous vehicles,” IEEE Transactions on Mobile Computing, vol. 23, no. 12, pp. 15 003–15 018, 2024.
+[3]
+P. Yao, Y. Zhu, H. Bi, T. Mao, and Z. Wang, “Trajclip: Pedestrian trajectory prediction method using contrastive learning and idempotent networks,” Advances in Neural Information Processing Systems, vol. 37, pp. 77 023–77 037, 2024.
+[4]
+L. Shi, L. Wang, S. Zhou, and G. Hua, “Trajectory unified transformer for pedestrian trajectory prediction,” in Proceedings of the IEEE/CVF International Conference on Computer Vision, 2023, pp. 9675–9684.
+[5]
+K.-L. Wang, L.-W. Tsao, J.-C. Wu, H.-H. Shuai, and W.-H. Cheng, “Trajfine: Predicted trajectory refinement for pedestrian trajectory forecasting,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, 2024, pp. 4483–4492.
+[6]
+J. Sun, Y. Li, L. Chai, H.-S. Fang, Y.-L. Li, and C. Lu, “Human trajectory prediction with momentary observation,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, 2022, pp. 6467–6476.
+[7]
+A. Robicquet, A. Sadeghian, A. Alahi, and S. Savarese, “Learning social etiquette: Human trajectory understanding in crowded scenes,” in Computer Vision–ECCV 2016: 14th European Conference, Amsterdam, The Netherlands, October 11-14, 2016, Proceedings, Part VIII 14. Springer, 2016, pp. 549–565.
+[8]
+S. Pellegrini, A. Ess, K. Schindler, and L. Van Gool, “You’ll never walk alone: Modeling social behavior for multi-target tracking,” in 2009 IEEE 12th international conference on computer vision. IEEE, 2009, pp. 261–268.
+[9]
+A. Monti, A. Porrello, S. Calderara, P. Coscia, L. Ballan, and R. Cucchiara, “How many observations are enough? knowledge distillation for trajectory forecasting,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, 2022, pp. 6553–6562.
+[10]
+R. Li, C. Li, D. Ren, G. Chen, Y. Yuan, and G. Wang, “Bcdiff: Bidirectional consistent diffusion for instantaneous trajectory prediction,” Advances in Neural Information Processing Systems, vol. 36, pp. 14 400–14 413, 2023.
+[11]
+Y. Huang, H. Bi, Z. Li, T. Mao, and Z. Wang, “Stgat: Modeling spatial-temporal interactions for human trajectory prediction,” in Proceedings of the IEEE/CVF international conference on computer vision, 2019, pp. 6272–6281.
+[12]
+A. Alahi, K. Goel, V. Ramanathan, A. Robicquet, L. Fei-Fei, and S. Savarese, “Social lstm: Human trajectory prediction in crowded spaces,” in Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition (CVPR), June 2016.
+[13]
+T. Salzmann, B. Ivanovic, P. Chakravarty, and M. Pavone, “Trajectron++: Dynamically-feasible trajectory forecasting with heterogeneous data,” in Computer Vision–ECCV 2020: 16th European Conference, Glasgow, UK, August 23–28, 2020, Proceedings, Part XVIII 16. Springer, 2020, pp. 683–700.
+[14]
+Y. Luo, K. Chen, and M. Zhu, “Granp: A graph recurrent attentive neural process model for vehicle trajectory prediction,” in 2024 IEEE Intelligent Vehicles Symposium (IV). IEEE, 2024, pp. 370–375.
+[15]
+K. Long, Z. Sheng, H. Shi, X. Li, S. Chen, and S. Ahn, “Physical enhanced residual learning (perl) framework for vehicle trajectory prediction,” Communications in Transportation Research, vol. 5, p. 100166, 2025.
+[16]
+P. Xu, J.-B. Hayet, and I. Karamouzas, “Socialvae: Human trajectory prediction using timewise latents,” in European Conference on Computer Vision. Springer, 2022, pp. 511–528.
+[17]
+H.-S. Moon and J. Seo, “Prediction of human trajectory following a haptic robotic guide using recurrent neural networks,” in 2019 IEEE World Haptics Conference (WHC). IEEE, 2019, pp. 157–162.
+[18]
+V. Adeli, M. Ehsanpour, I. Reid, J. C. Niebles, S. Savarese, E. Adeli, and H. Rezatofighi, “Tripod: Human trajectory and pose dynamics forecasting in the wild,” in Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV), October 2021, pp. 13 390–13 400.
+[19]
+A. Alahi, K. Goel, V. Ramanathan, A. Robicquet, L. Fei-Fei, and S. Savarese, “Social lstm: Human trajectory prediction in crowded spaces,” in Proceedings of the IEEE conference on computer vision and pattern recognition, 2016, pp. 961–971.
+[20]
+C. Wong, B. Xia, Z. Zou, Y. Wang, and X. You, “Socialcircle: Learning the angle-based social interaction representation for pedestrian trajectory prediction,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, 2024, pp. 19 005–19 015.
+[21]
+A. Mohamed, K. Qian, M. Elhoseiny, and C. Claudel, “Social-stgcnn: A social spatio-temporal graph convolutional neural network for human trajectory prediction,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), June 2020.
+[22]
+Y. Peng, G. Zhang, X. Li, and L. Zheng, “Stirnet: A spatial-temporal interaction-aware recursive network for human trajectory prediction,” in Proceedings of the IEEE/CVF International Conference on Computer Vision, 2021, pp. 2285–2293.
+[23]
+Z. Sheng, Z. Huang, and S. Chen, “Ego-planning-guided multi-graph convolutional network for heterogeneous agent trajectory prediction,” Computer-Aided Civil and Infrastructure Engineering, vol. 39, no. 22, pp. 3357–3374, 2024.
+[24]
+Z. Tian, Z. Lin, D. Zhao, C. Anagnostopoulos, Q. Wang, W. Zhao, X. Wang, and C. Wei, “A risk-aware spatial-temporal trajectory planning framework for autonomous vehicles using qp-mpc and dynamic hazard fields,” arXiv preprint arXiv:2509.00643, 2025.
+[25]
+K. Mangalam, H. Girase, S. Agarwal, K.-H. Lee, E. Adeli, J. Malik, and A. Gaidon, “It is not the journey but the destination: Endpoint conditioned trajectory prediction,” in Computer vision–ECCV 2020: 16th European conference, Glasgow, UK, August 23–28, 2020, proceedings, part II 16. Springer, 2020, pp. 759–776.
+[26]
+A. Sadeghian, V. Kosaraju, A. Sadeghian, N. Hirose, H. Rezatofighi, and S. Savarese, “Sophie: An attentive gan for predicting paths compliant to social and physical constraints,” in Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, 2019, pp. 1349–1358.
+[27]
+L.-W. Tsao, Y.-K. Wang, H.-S. Lin, H.-H. Shuai, L.-K. Wong, and W.-H. Cheng, “Social-ssl: Self-supervised cross-sequence representation learning based on transformers for multi-agent trajectory prediction,” in European Conference on Computer Vision. Springer, 2022, pp. 234–250.
+[28]
+Z. Sheng, Z. Huang, and S. Chen, “Kinematics-aware multigraph attention network with residual learning for heterogeneous trajectory prediction,” Journal of Intelligent and Connected Vehicles, vol. 7, no. 2, pp. 138–150, 2024.
+[29]
+Z. Tian, F. Yuan, C. Yuan, and Y. Peng, “Mean field game-based interactive trajectory planning using physics-inspired unified potential fields,” arXiv preprint arXiv:2509.08147, 2025.
+[30]
+D. Helbing and P. Molnar, “Social force model for pedestrian dynamics,” Physical review E, vol. 51, no. 5, p. 4282, 1995.
+[31]
+M. Luber, J. A. Stork, G. D. Tipaldi, and K. O. Arras, “People tracking with human motion predictions from social forces,” in 2010 IEEE international conference on robotics and automation. IEEE, 2010, pp. 464–469.
+[32]
+W. Zhang, H. Cheng, F. T. Johora, and M. Sester, “Forceformer: exploring social force and transformer for pedestrian trajectory prediction,” in 2023 IEEE Intelligent Vehicles Symposium (IV). IEEE, 2023, pp. 1–7.
+[33]
+D. Wang, H. Liu, N. Wang, Y. Wang, H. Wang, and S. McLoone, “Seem: A sequence entropy energy-based model for pedestrian trajectory all-then-one prediction,” IEEE transactions on pattern analysis and machine intelligence, vol. 45, no. 1, pp. 1070–1086, 2022.
+[34]
+W. Xiang, Y. Haoteng, H. Wang, and X. Jin, “Socialcvae: predicting pedestrian trajectory via interaction conditioned latents,” in Proceedings of the AAAI Conference on Artificial Intelligence, vol. 38, no. 6, 2024, pp. 6216–6224.
+[35]
+D. Chen, R. Zhong, K. Chen, Z. Shang, M. Zhu, and E. Chung, “Dynamic high-order control barrier functions with diffuser for safety-critical trajectory planning at signal-free intersections,” IEEE Transactions on Intelligent Transportation Systems, 2025.
+[36]
+K. Chen, Y. Luo, M. Zhu, X. Wang, H. Wang, and H. Yang, “Score-based spatial-temporal point process for traffic accident prediction,” IEEE Transactions on Intelligent Transportation Systems, 2025.
+[37]
+M. Peng, K. Chen, X. Guo, Q. Zhang, H. Zhong, M. Zhu, and H. Yang, “Diffusion models for intelligent transportation systems: A survey,” arXiv preprint arXiv:2409.15816, 2024.
+[38]
+J. Ho, A. Jain, and P. Abbeel, “Denoising diffusion probabilistic models,” Advances in neural information processing systems, vol. 33, pp. 6840–6851, 2020.
+[39]
+Y. Song and S. Ermon, “Generative modeling by estimating gradients of the data distribution,” Advances in neural information processing systems, vol. 32, 2019.
+[40]
+R. Rombach, A. Blattmann, D. Lorenz, P. Esser, and B. Ommer, “High-resolution image synthesis with latent diffusion models,” in Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, 2022, pp. 10 684–10 695.
+[41]
+R. Cai, G. Yang, H. Averbuch-Elor, Z. Hao, S. Belongie, N. Snavely, and B. Hariharan, “Learning gradient fields for shape generation,” in Computer Vision–ECCV 2020: 16th European Conference, Glasgow, UK, August 23–28, 2020, Proceedings, Part III 16. Springer, 2020, pp. 364–381.
+[42]
+B. Kawar, G. Vaksman, and M. Elad, “Stochastic image denoising by sampling from the posterior distribution,” in Proceedings of the IEEE/CVF international conference on computer vision, 2021, pp. 1866–1875.
+[43]
+C. Saharia, J. Ho, W. Chan, T. Salimans, D. J. Fleet, and M. Norouzi, “Image super-resolution via iterative refinement,” IEEE transactions on pattern analysis and machine intelligence, vol. 45, no. 4, pp. 4713–4726, 2022.
+[44]
+S. Gong, M. Li, J. Feng, Z. Wu, and L. Kong, “Diffuseq: Sequence to sequence text generation with diffusion models,” arXiv preprint arXiv:2210.08933, 2022.
+[45]
+T. Wu, Z. Fan, X. Liu, H.-T. Zheng, Y. Gong, J. Jiao, J. Li, J. Guo, N. Duan, W. Chen et al., “Ar-diffusion: Auto-regressive diffusion model for text generation,” Advances in Neural Information Processing Systems, vol. 36, pp. 39 957–39 974, 2023.
+[46]
+T. Gu, G. Chen, J. Li, C. Lin, Y. Rao, J. Zhou, and J. Lu, “Stochastic trajectory prediction via motion indeterminacy diffusion,” in Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, 2022, pp. 17 113–17 122.
+[47]
+K. Chen, X. Chen, Z. Yu, M. Zhu, and H. Yang, “Equidiff: A conditional equivariant diffusion model for trajectory prediction,” in 2023 IEEE 26th International Conference on Intelligent Transportation Systems (ITSC). IEEE, 2023, pp. 746–751.
+[48]
+W. Mao, C. Xu, Q. Zhu, S. Chen, and Y. Wang, “Leapfrog diffusion model for stochastic trajectory prediction,” in Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, 2023, pp. 5517–5526.
+[49]
+G. Li, Z. Li, V. L. Knoop, and H. van Lint, “Unravelling uncertainty in trajectory prediction using a non-parametric approach,” Transportation Research Part C: Emerging Technologies, vol. 163, p. 104659, 2024.
+[50]
+F. Rodrigues and F. C. Pereira, “Heteroscedastic gaussian processes for uncertainty modeling in large-scale crowdsourced traffic data,” Transportation research part C: emerging technologies, vol. 95, pp. 636–651, 2018.
+[51]
+M. Garnelo, J. Schwarz, D. Rosenbaum, F. Viola, D. J. Rezende, S. Eslami, and Y. W. Teh, “Neural processes,” arXiv preprint arXiv:1807.01622, 2018.
+[52]
+D. P. Kingma, M. Welling et al., “Auto-encoding variational bayes,” 2013.
+[53]
+Y. Song, J. Sohl-Dickstein, D. P. Kingma, A. Kumar, S. Ermon, and B. Poole, “Score-based generative modeling through stochastic differential equations,” arXiv preprint arXiv:2011.13456, 2020.
+[54]
+S. S. Sahoo, A. Gokaslan, C. De, and V. Kuleshov, “Diffusion models with learned adaptive noise,” in Advances in Neural Information Processing Systems, vol. 37. Curran Associates, Inc., 2024, pp. 105 730–105 779.
+[55]
+D. Kingma, T. Salimans, B. Poole, and J. Ho, “Variational diffusion models,” Advances in neural information processing systems, vol. 34, pp. 21 696–21 707, 2021.
+[56]
+K. Zheng, C. Lu, J. Chen, and J. Zhu, “Improved techniques for maximum likelihood estimation for diffusion odes,” in International Conference on Machine Learning. PMLR, 2023, pp. 42 363–42 389.
+[57]
+J. Sun, Y. Li, H.-S. Fang, and C. Lu, “Three steps to multimodal trajectory prediction: Modality clustering, classification and synthesis,” in Proceedings of the IEEE/CVF International Conference on Computer Vision, 2021, pp. 13 250–13 259.
+[58]
+K. Mangalam, Y. An, H. Girase, and J. Malik, “From goals, waypoints & paths to long term human trajectory forecasting,” in Proceedings of the IEEE/CVF International Conference on Computer Vision, 2021, pp. 15 233–15 242.
+[59]
+A. Gupta, J. Johnson, L. Fei-Fei, S. Savarese, and A. Alahi, “Social gan: Socially acceptable trajectories with generative adversarial networks,” in Proceedings of the IEEE conference on computer vision and pattern recognition, 2018, pp. 2255–2264.
+[60]
+J. Liang, L. Jiang, J. C. Niebles, A. G. Hauptmann, and L. Fei-Fei, “Peeking into the future: Predicting future person activities and locations in videos,” in Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, 2019, pp. 5725–5734.
+[61]
+A. Mohamed, K. Qian, M. Elhoseiny, and C. Claudel, “Social-stgcnn: A social spatio-temporal graph convolutional neural network for human trajectory prediction,” in Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, 2020, pp. 14 424–14 432.
+[62]
+L. Shi, L. Wang, C. Long, S. Zhou, M. Zhou, Z. Niu, and G. Hua, “Sgcn: Sparse graph convolution network for pedestrian trajectory prediction,” in Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, 2021, pp. 8994–9003.
+[63]
+I. Bae, Y.-J. Park, and H.-G. Jeon, “Singulartrajectory: Universal trajectory predictor using diffusion model,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, 2024, pp. 17 890–17 901.
+[64]
+I. Bae, J. Oh, and H.-G. Jeon, “Eigentrajectory: Low-rank descriptors for multi-modal trajectory forecasting,” in Proceedings of the IEEE/CVF International Conference on Computer Vision, 2023, pp. 10 017–10 029.
+[65]
+Q. Zhang and Y. Chen, “Fast sampling of diffusion models with exponential integrator,” arXiv preprint arXiv:2204.13902, 2022.
+[66]
+A. Shih, S. Belkhale, S. Ermon, D. Sadigh, and N. Anari, “Parallel sampling of diffusion models,” Advances in Neural Information Processing Systems, vol. 36, pp. 4263–4276, 2023.
+Yuhao Luo  (Graduate Student Member, IEEE) received the B.S. degree in vehicle engineering from Wuhan University of Technology and the M.S. degree in Intelligent Transportation from The Hong Kong University of Science and Technology (Guangzhou), Guangzhou, China. He is currently pursuing the Ph.D. degree in Civil and Environmental Engineering with the Sky-Lab, University of Wisconsin–Madison, Madison, WI, USA. His research interests include end-to-end autonomous driving, motion and trajectory prediction, spatiotemporal machine learning, and world model.
+Yuang Zhang  received the bachelor’s and master’s degrees from the Department of Automation, Tsinghua University. He is currently working toward the PhD degree with the Department of Civil and Environmental Engineering, University of Washington, Seattle,Washington. He has published papers in IEEE TRANSACTIONS ON MOBILE COMPUTING (TMC), IEEE ICRA and IEEE IST, etc. His research interests are focused on generative AI, computer vision and autonomous driving.
+Kehua Chen  (Member, IEEE) received the B.S. degree in civil engineering from Chongqing University, the dual M.S. degree in environmental sciences from the University of Chinese Academy of Sciences and the University of Copenhagen, and the Ph.D. degree in intelligent transportation from The
+Hong Kong University of Science and Technology
+in 2024. Currently, he is a Post-Doctoral Scholar at the Smart Transportation Applications and Research (STAR) Laboratory, University of Washington. His research interests encompass urban and sustainable
+computing, and autonomous driving.
+Xinyu Zheng  received a MPhil degree in vehicle Intelligent Transportation from The Hong Kong university of Science and Technology (Guangzhou), Guangzhou, China, in 2025. He is currently working toward the Ph.D. degree with the College of Transportation, Tongji University, Shanghai, China. His research interests include Generating Models and Railway Safety.
+Shucheng Zhang  is currently pursuing the Ph.D. degree in the Smart Transportation Application and Research (STAR) Lab, Department of Civil and Environmental Engineering at the University of Washington. Prior to joining the STAR Lab, Shucheng earned his M.S. in Mechanical Engineering from Duke University. His research interests include computer vision, intelligent transportation systems, and autonomous vehicles, with a focus on developing innovative solutions to enhance road safety and transportation automation.
+Sikai Chen  is an Assistant Professor at the Department of Civil and Environmental Engineering and the Department of Mechanical Engineering (courtesy), University of Wisconsin-Madison. He received his Ph.D. in Civil Engineering with a focus on Computational Science & Engineering from Purdue University. His research centers around three major themes: human users, AI, and transportation. He aims to innovate and develop safe, efficient, resilient, and human-centered transportation systems using cutting-edge methods and technologies. The focus is on incorporating human behaviors, interactive autonomy, digital infrastructure, and domain-specific AI. In addition, he is a member of two ASCE national committees: Connected & Autonomous Vehicle Impacts, and Economics & Finance; and IEEE Emerging Transportation Technology Testing Technical Committee.
+Yinhai Wang  received the master’s degree in computer science from the University of Washington (UW) and the Ph.D. degree in transportation engineering from The University of Tokyo in 1998. He is currently a Professor in transportation engineering and the Founding Director of the Smart Transportation Applications and Research Laboratory (STAR Lab), UW. He also serves as the Director of the Pacific Northwest Transportation Consortium (PacTrans), U.S. Department of Transportation, University Transportation Center for Federal Region 10.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

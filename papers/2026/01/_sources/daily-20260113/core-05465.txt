@@ -1,0 +1,506 @@
+URL https://arxiv.org/html/2601.05465v1; sections S3 to S5 excluded; result tables omitted, methods equations preserved; fetched 2026-10-03
+
+
+
+ 3 Methodology 
+
+
+
+
+ 3.1 Problem Formulation 
+
+ 
+
+We formalize open-domain multi-hop QA as: given q and a corpus \mathcal{C}=\{d_{1},\ldots,d_{N}\} ( N=21 M Wikipedia passages  Karpukhin et al. (2020) ), produce an answer a and supporting facts \mathcal{F}\subset\mathcal{C} . The system must: (i) decompose q into dependency-aware subquestions, (ii) retrieve evidence based on intermediate answers, (iii) validate evidence and answers, retrying if needed, and (iv) synthesize the final answer with source attribution. 
+ 
+ 
+
+
+
+ 3.2 Architecture Overview 
+
+ 
+
+As shown in Figure  2 , the Planner decomposes questions into subquestions with answer placeholders (e.g., [ANSWER_1] ), enabling dependency-aware reasoning. For each subquestion, the Memoizer checks its semantic cache to avoid redundant processing. On cache miss, the Retriever employs a three-stage cascade—dense retrieval, hybrid reranking, and cross-encoder scoring—to fetch top- k documents. The Context Inspector validates subquestion quality and document sufficiency before solving, triggering rewrites or retrieval expansion when needed. The Solver then generates answers with citations. The Reasoning Inspector validates grounding and extraction post-solving, enabling retries with feedback. Validated answers are cached for reuse, and the final answer a_{final}=a_{m} comes from the last subquestion. Full execution traces are logged for analysis. Details are in Appendix  A . 
+ 
+ 
+
+
+
+ 3.3 Training: Two-Stage GRPO with OARPO 
+
+ 
+
+Figure  3 summarizes training: Stage  I calibrates the Planner/Solver with task-specific rewards, and Stage  II trains a trajectory-conditioned Inspector via OARPO for residual auditing and recovery. 
+ 
+
+
+
+
+ 
+ 
+ Figure 3: We adopt a two-stage GRPO pipeline. Stage I calibrates the Planner and Solver on \mathcal{D}_{P} and \mathcal{D}_{S} .
+Stage II constructs \mathcal{D}_{I} by running the frozen \text{System}^{(1)} with a high-capacity oracle Inspector teacher g_{T} to obtain audit/recovery labels, mining successful rollouts (EM =1 ), and training a trajectory-conditioned Inspector on \mathcal{D}_{I} with reward R_{\text{OARPO}} (Appendix  C.3 ).
+This reduces a trace-level (data) residual by aligning to g_{T} , and a system-level (policy) residual by learning better audit-and-recovery actions on top of the frozen experts. 
+ 
+
+
+
+ 3.3.1 Two-Stage Objectives 
+
+
+
+
+Notation. 
+
+ 
+
+ x denotes an input question; y_{P} a Planner plan (a structured sequence of subquestions);
+ E the retrieved evidence; y_{S} a Solver output (a structured answer with citations);
+ y_{I} an Inspector audit output; a^{*} the gold answer; \mathcal{S}^{*} the gold supporting-document set; and e^{*} the gold audit label. 
+ 
+ 
+
+
+
+Stage I: Expert Calibration. 
+
+ 
+
+We optimize the Planner and Solver independently to induce functional specialization (decomposition vs. grounded answering): 
+ 
+
+ 
+
+ 
+ \resizebox{19896840}{}{$\theta_{P}^{*}=\arg\max_{\theta_{P}}\ \mathbb{E}_{y_{P}\sim\pi_{\theta_{P}}(\cdot\mid x)}\!\left[R_{\text{plan}}(x,y_{P})\right]$}, 
+ 
+ (1) 
+ 
+ 
+ 
+ 
+
+ 
+
+ 
+ \resizebox{19896840}{}{$\theta_{S}^{*}=\arg\max_{\theta_{S}}\ \mathbb{E}_{y_{S}\sim\pi_{\theta_{S}}(\cdot\mid x,E)}\!\left[R_{\text{solve}}(y_{S};a^{*},\mathcal{S}^{*})\right]$}. 
+ 
+ (2) 
+ 
+
+After Stage I (optimized with GRPO), we denote the calibrated expert policies as: 
+ 
+
+ 
+
+ 
+ \text{System}^{(1)}:=(\pi_{\theta_{P}^{*}},\,\pi_{\theta_{S}^{*}}). 
+ 
+ (3) 
+ 
+ 
+ 
+
+
+
+Stage II: Observation-Aware Residual Policy Optimization. 
+
+ 
+
+With calibrated experts fixed at \text{System}^{(1)} (i.e., \theta_{P}^{*} and \theta_{S}^{*} frozen), Stage II trains an Inspector (parameters \theta_{I} ) to audit residual errors conditioned on expert trajectories.
+OARPO is not a new optimizer; it defines the Stage-II problem via the augmented observation s_{\mathrm{aug}} and the audit-alignment reward R_{\text{OARPO}} , while GRPO performs the policy update.
+Concretely, running \text{System}^{(1)} on x produces an expert trajectory that records what the experts actually did (plan, evidence, and answer): 
+ 
+ 
+ 
+
+ 
+
+ 
+ \tau_{P,S}=\{y_{P},E,y_{S}\}, 
+ 
+ (4) 
+ 
+
+The Inspector audits residual errors by conditioning on this trace; thus we augment its observation from x to: 
+ 
+
+ 
+
+ 
+ s_{\mathrm{aug}}=(x,\tau_{P,S}), 
+ 
+ (5) 
+ 
+
+The Inspector is optimized with GRPO to maximize an audit-alignment reward: 
+ 
+
+ 
+
+ 
+ 
+ 
+
+ \begin{aligned} \theta_{I}^{*}&=\arg\max_{\theta_{I}}\ \mathbb{E}_{\begin{subarray}{c}\tau\sim\text{System}^{(1)}\\
+y_{I}\sim\pi_{\theta_{I}}(\cdot\mid s_{\mathrm{aug}})\end{subarray}}\left[R_{\text{OARPO}}(y_{I};e^{*})\right]\end{aligned}. 
+ 
+ 
+ (6) 
+ 
+
+This yields the residual-audited system after Stage II (OARPO + GRPO): 
+ 
+
+ 
+
+ 
+ \begin{aligned} \text{System}^{(2)}&:=\text{System}^{(1)}\oplus\pi_{\theta_{I}^{*}}\\
+&=(\pi_{\theta_{P}^{*}},\,\pi_{\theta_{S}^{*}},\,\pi_{\theta_{I}^{*}})\end{aligned}, 
+ 
+ (7) 
+ 
+
+where \oplus denotes augmenting the calibrated experts with a residual audit policy that observes s_{\mathrm{aug}}=(x,\tau_{P,S}) and triggers recovery when needed. 
+ 
+ 
+
+
+
+Gain decomposition. 
+
+ 
+
+Let S^{(k)}\in\{0,1\} denote the end-to-end success indicator of \text{System}^{(k)} on question x (e.g., exact match).
+Then the Stage-II gain can be written as: 
+ 
+
+ 
+
+ 
+ \resizebox{19896840}{}{$\begin{aligned} \mathbb{E}[S^{(2)}]={}&\mathbb{E}[S^{(1)}]\\
+&+\Pr(S^{(1)}\!=\!0)\Pr(\texttt{rec}\!=\!1\mid S^{(1)}\!=\!0)\\
+&-\Pr(S^{(1)}\!=\!1)\Pr(\texttt{reg}\!=\!1\mid S^{(1)}\!=\!1)\end{aligned}$}, 
+ 
+ (8) 
+ 
+ 
+ 
+
+where \texttt{rec}=1 (recovered) indicates converting a failing trajectory to a correct answer via Inspector-triggered recovery (e.g., rewrite/expand/retry), and \texttt{reg}=1 (regressed) represents a do-no-harm violation, where an initially correct case becomes incorrect after recovery. Stage I raises the baseline \mathbb{E}[S^{(1)}] , while Stage II focuses on improving recovery and minimizing regression. 
+ 
+ 
+ 
+
+
+
+ 3.3.2 Stage-Aware Reward Design 
+
+ 
+
+ Principle. 
+Stage I rewards calibrate capabilities , while Stage II rewards calibrate audit reliability conditioned on expert trajectories.
+Across modules, w_{\cdot}^{P} , w_{\cdot}^{S} , and w_{\cdot}^{I} denote positive scalar weights.
+Subscripts indicate components: \mathrm{fmt} (format), \mathrm{cnt} (count), \mathrm{judge} , \mathrm{acc} (accuracy), \mathrm{rel} (relevance), \mathrm{det} (detection), and \mathrm{len} (length); values are in Appendix.
+Expanded reward definitions are provided in Appendix  C.4 . 
+ 
+
+
+
+Planner Reward. 
+
+ 
+
+ We optimize the Planner to generate dependency-aware subquestions that preserve query constraints and boost retrievability. 
+ 
+
+ 
+
+ 
+ \resizebox{19896840}{}{$\begin{aligned} R_{\text{plan}}(x,y_{P})&=w_{\mathrm{fmt}}^{P}\,r_{\text{fmt}}^{P}(y_{P})+w_{\mathrm{cnt}}^{P}\,r_{\text{count}}(x,y_{P})\\
+&\quad+w_{\mathrm{judge}}^{P}\sum_{i=1}^{4}r_{\text{judge}}^{(i)}(x,y_{P})\end{aligned}$}, 
+ 
+ (9) 
+ 
+
+where r_{\text{fmt}}^{P} , r_{\text{count}} , and r_{\text{judge}}^{(i)} are output format validity, hop granularity, and semantic criteria, respectively (Appendix  C.4.1 ). 
+ 
+ 
+
+
+
+Solver Reward. 
+
+ 
+
+ We optimize the Solver to answer from retrieved evidence with faithful citations. 
+ 
+
+ 
+
+ 
+ \resizebox{19896840}{}{$\begin{aligned} R_{\text{solve}}(y_{S};a^{*},\mathcal{S}^{*})&=w_{\mathrm{fmt}}^{S}\,r_{\text{fmt}}^{S}(y_{S})+w_{\mathrm{acc}}^{S}\,r_{\text{acc}}(y_{S},a^{*})\\
+&\quad+w_{\mathrm{rel}}^{S}\,r_{\text{rel}}(y_{S},\mathcal{S}^{*})\end{aligned}$}. 
+ 
+ (10) 
+ 
+ 
+ 
+
+where r_{\text{fmt}}^{S} , r_{\text{acc}} , and r_{\text{rel}} are output format, answer correctness, and citation faithfulness, respectively (Appendix  C.4.2 ). 
+ 
+ 
+
+
+
+Inspector Reward. 
+
+ 
+
+ We optimize the Inspector to audit residual errors and trigger targeted recovery in the closed-loop pipeline. 
+ 
+
+ 
+
+ 
+ \resizebox{19218570}{}{$\begin{aligned} R_{\text{OARPO}}(y_{I};e^{*})&=w_{\mathrm{fmt}}^{I}\,r_{\text{fmt}}^{I}(y_{I})+w_{\mathrm{det}}^{I}\,r_{\text{detect}}(y_{I},e^{*})\\
+&\quad+w_{\mathrm{len}}^{I}\,r_{\text{length}}(y_{I},e^{*})\end{aligned}$}, 
+ 
+ (11) 
+ 
+
+where r_{\text{fmt}}^{I} , r_{\text{detect}} , and r_{\text{length}} are output format, error-stage correctness, and explanation length, respectively (Appendix  C.4.3 ). 
+ 
+ 
+ 
+ 
+
+
+
+ 3.4 Tools 
+
+ 
+
+ We optimize the Retriever and Memoizer tools for evidence coverage and efficiency ; details are in the Appendix  A.3.3 and  A.4 . 
+ 
+
+
+
+ 3.4.1 Retriever 
+
+ 
+
+The Retriever targets evidence coverage via a three-stage cascade
+(dense \rightarrow hybrid sparse \rightarrow cross-encoder), using a hybrid
+score for stage-2 filtering. 
+ 
+
+ 
+
+ 
+ 
+ 
+
+ s_{\text{hyb}}(sq,d)=\alpha\,s_{\text{dense}}(sq,d)+(1-\alpha)\,s_{\text{sparse}}(sq,d), 
+ 
+ 
+ (12) 
+ 
+
+where sq is the subquestion, d is a passage, s_{\text{dense}} and
+ s_{\text{sparse}} are normalized dense and sparse relevance scores, and
+ \alpha\in[0,1] balances them. 
+ 
+ 
+
+
+
+ 3.4.2 Memoize 
+
+ 
+
+The Memoizer targets efficiency by reusing semantically matched answers
+and recording execution traces in Trajectory Store while caching per-question
+evidence in Evidence Store . 
+ 
+
+ 
+
+ 
+ \text{hit}(sq)=\mathbb{I}\left[\max_{(sq_{i},a_{i})\in\mathcal{M}}\cos(e(sq),e(sq_{i}))\geq\tau\right], 
+ 
+ (13) 
+ 
+
+where \mathcal{M} is the cache of past subquestions and answers, e(\cdot) is the encoder, \tau is the similarity threshold, and the matched a_{i} is returned when \text{hit}(sq)=1 . 
+ 
+ 
+ 
+ 
+
+
+
+ 4 Experiment 
+
+
+
+ 
+ 
+ [result table omitted; consult original if quantitative claim needed] 
+ [result table omitted; consult original if quantitative claim needed] 
+ Table 1: Main results on in-distribution and out-of-distribution multi-hop QA benchmarks. Underline : best among API-Model methods. Underline : best among Open-Source-Model methods. † Results from their respective papers. 
+ 
+
+
+
+ 4.1 Experimental Setup 
+
+ 
+
+More settings details are provided in Appendix  D . 
+ 
+
+
+
+Datasets. 
+
+ 
+
+We evaluate PRISMA on ten open-domain QA benchmarks. This includes three in-distribution benchmarks—HotpotQA  Yang et al. (2018) (90K), 2WikiMultiHopQA  Ho et al. (2020) (150K), and MuSiQue  Trivedi et al. (2022) (25K)—and seven out-of-distribution benchmarks: NQ  Kwiatkowski et al. (2019) (8K), MultiHopRAG  Tang and Yang (2024) (2.5K), Bamboogle  Press et al. (2023) (125), and five domain-specific sets (Chemistry/Food/Game/Geography/Music; 150 each). For datasets with more than 500 questions, we sample 500 from Dev. 
+ 
+ 
+
+ Baselines. We compare PRISMA against methods in two categories:
+ No Training: (1) Qwen3-4B-Instruct-2507; (2) Qwen3-8B; (3) Qwen3-30B-A3B-Instruct-2507  Team (2025) ; (4) DeepSeek-V3.2  DeepSeek-AI (2025) ; (5) Gemini-2.5-Flash  Google DeepMind (2025) ; (6) GPT-5  OpenAI (2025) ; (7) IRCoT  Trivedi et al. (2023) .
+ Training-based: (8) Retrobust  Yoran et al. (2024) (SFT); (9) QAgent  Jiang et al. (2025) (RL); (10) TIRESRAG-R1  He et al. (2025) (RL); (11) RAG-DDR  Li et al. (2025) (RL).
+No-training methods evaluate both open-source Qwen3 backbones and closed-source API models. 
+ 
+ 
+
+ Metrics. We report Exact Match (EM) and F1 following standard practice  Yang et al. (2018) . For retrieval, we report Retrieval Recall (fraction of gold supporting facts retrieved). For Inspector evaluation, we report Inspection Precision (fraction of detected errors that are true) and Inspection Recall (fraction of true errors detected). We also report Latency (processing time) to measure efficiency. 
+ 
+ 
+
+ Implementation Details. Baselines use identical retrieval infrastructure with FAISS  Johnson et al. (2019) and BGE-M3  Chen et al. (2024a) . All experiments use the full Wikipedia corpus from DPR  Karpukhin et al. (2020) ( 21M passages). All experiments were run 5 times, and the average value was taken. All experiments use 4 NVIDIA H100 GPUs. 
+ 
+ 
+ 
+
+
+
+ 4.2 Main Results 
+
+ 
+
+More extra experimental results and analysis can be found in Appendix  E . 
+ 
+
+
+
+PRISMA achieves the best performance among trained systems and outperforms API models on the most challenging benchmarks. 
+
+ 
+
+As shown in Table  1 , PRISMA consistently outperforms prior trained RAG systems on both in-distribution and out-of-distribution benchmarks. On in-distribution, PRISMA achieves 30.6%/39.5% on MuSiQue, 50.2%/55.8% on HotpotQA, and 57.0%/60.1% on 2WikiMHQA, surpassing the strongest baseline TIRESRAG-R1 by +11.2/+9.5 points on MuSiQue. For out-of-distribution evaluation, PRISMA leads across all seven benchmarks, notably on the hardest benchmarks—MuSiQue (in-distribution) and NaturalQ (out-of-distribution, 38.6%/53.7%). Outperforms API-based baselines like IRCoT (GPT-5-Medium) on MuSiQue (+7.2/+4.5 points), demonstrating its robust multi-hop evidence chaining and generalization capabilities. 
+ 
+ 
+
+
+
+API models remain strong with sufficient evidence, but are not robust. 
+
+ 
+
+With multi-step retrieval (IRCoT), API models perform well when sufficient intermediate evidence is available. For example, IRCoT(Gemini-2.5-Flash) reaches 29.8%/47.4% on NaturalQ and 85.3%/88.0% on Chemistry, while IRCoT(DeepSeek-V3.2) attains 78.7%/84.8% on Geography and 75.3%/84.3% on Music (Table  1 ). However, performance can drop significantly when bridge evidence is missing or retrieval quality fluctuates, highlighting the need for more explicit planning and verification over relying solely on pretrained priors. 
+ 
+
+ 
+ Figure 4: Training reward curves for Planner, Solver and Inspector. 
+ 
+
+
+ [result table omitted; consult original if quantitative claim needed] 
+ Table 2: Component and training ablations on MuSiQue dev. Each row removes one component or
+replaces a
+trained agent with the base model. \Delta EM is relative to PRISMA ; negative drops are
+shown in red. 
+ 
+ 
+ 
+
+
+
+ 4.3 Ablation Study 
+
+ 
+
+We ablate on MuSiQue dev to assess each module’s contribution and the impact of our training strategy. Results are in Table  2 . Ablations on non-training components, including Retrieval and Memoize variables, are in Appendix  11 and Appendix  6 . 
+ 
+
+
+
+ 4.3.1 Component Ablation 
+
+ 
+
+We ablate each component in turn, keeping the rest of the pipeline unchanged. 
+ 
+ 
+
+ Planner. Removing the Planner and falling back to single-query retrieval leads to a substantial performance drop (EM: 30.6 \rightarrow 19.4, \Delta EM = -11.2 ; F1: 39.5 \rightarrow 26.8), confirming the necessity of dependency-aware decomposition. 
+ 
+ 
+
+ Inspector. Removing the Inspector causes a catastrophic degradation (EM: 30.6 \rightarrow 11.2, \Delta EM = -19.4 ; F1: 39.5 \rightarrow 17.7), highlighting its central role in reliable execution.
+Removing the Context Inspector yields a moderate drop (EM: 30.6 \rightarrow 27.2, \Delta EM = -3.4 ; F1: 39.5 \rightarrow 34.4), while removing the Reasoning Inspector leads to a larger degradation (EM: 30.6 \rightarrow 24.8, \Delta EM = -5.8 ; F1: 39.5 \rightarrow 31.6), indicating that post-execution verification against reasoning/grounding failures is particularly important in multi-hop QA. 
+ 
+ 
+
+Overall, planning and inspection are both necessary, with post-execution verification most critical. 
+ 
+ 
+
+
+
+ 4.3.2 Training Ablation 
+
+ 
+
+We ablate task-specific optimization by replacing each trained agent with its base model. 
+ 
+ 
+
+ Per-agent training importance. 
+ (1) Replacing the Planner with the base model reduces performance (EM: 30.6 \rightarrow 25.2, \Delta EM = -5.4 ; F1: 39.5 \rightarrow 34.1).
+ (2) Replacing the Solver yields the largest single-agent drop (EM: 30.6 \rightarrow 22.4, \Delta EM = -8.2 ; F1: 39.5 \rightarrow 31.4), indicating that evidence-grounded multi-document synthesis is a primary bottleneck.
+ (3) Replacing the Inspector also degrades results (EM: 30.6 \rightarrow 26.2, \Delta EM = -4.4 ; F1: 39.5 \rightarrow 33.6), showing that learned verification policies outperform zero-shot heuristics.
+ (4) When all agents are replaced with base models, performance drops sharply (EM: 30.6 \rightarrow 15.0, \Delta EM = -15.6 ; F1: 39.5 \rightarrow 23.5), indicating that PRISMA’s gains are distributed across agents rather than driven by any single module. 
+ 
+ 
+
+Overall, task-specific optimization is essential for all agents, with Solver training contributing the most to end-to-end performance. 
+ 
+ 
+ 
+
+
+
+ 4.4 Training and Efficiency Analysis 
+
+ 
+
+ Training. Figure  4 shows stable GRPO training for all three agents, with total reward increasing smoothly and then plateauing. For the Planner, format reward saturates early while semantic sub-rewards (e.g., decomposition/disambiguation) keep improving. For the Solver, accuracy and grounding (sources) rise together, indicating more evidence-supported answering. For the Inspector, error detection and explanation rewards steadily improve, supporting verification for triggering recovery. More training-related experiments details are in Appendix  C . 
+ 
+ 
+
+ Efficiency. Figure  5 shows the end-to-end latency breakdown for a typical three-hop chain. Inspection and solving dominate the runtime, with planning and retrieval contributing less. This aligns with PRISMA’s design to prioritize verification and grounding, and matches ablation results where the Inspector is the most performance-impacting component. PRISMA is feasible for deployment. 
+ 
+
+ 
+ Figure 5: Top: (a) PRISMA’s sequential agent interaction flow for answering “ When is the opening day of the league, that includes the team that played in the most games of the event that the MLB MVP award is handed out after? ” Bottom: (b) End-to-end latency breakdown across 100 test cases. 
+ 
+ 
+ 
+
+

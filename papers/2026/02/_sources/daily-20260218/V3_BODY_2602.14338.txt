@@ -1,0 +1,1332 @@
+Train Less, Learn More: Adaptive EfficientRollout Optimization for Group-Based Reinforcement Learning
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Works
+3 Preliminaries
+3.1 Background: GRPO Algorithm
+3.2 The Impact of Zero-Advantage Problems on GRPO
+4 Methodology - The AERO Framework
+4.1 Stage I: Exploration & Stratification.
+4.2 Stage II: Differentiated Exploitation.
+4.2.1 Strategy 1: Iterative Rescue of Rescue-Threshold Problems
+4.2.2
+Strategy 2: Robust Estimation via Bayesian Posteriors
+4.2.3 Strategy 3: Efficient Batch Curation via Rejection Sampling
+4.3 Theoretical Guidance for Rejection Sampling
+4.4 Computation Cost Saving Across All Strategies
+5 Experiments
+5.1 Experimental Setup
+5.2 Main Results
+Compute and Time Performance.
+5.2.1 Additional Baselines
+5.2.2 Performance on Code Generalization Tasks.
+5.3 Strategy Contribution Ablation
+5.4 Ablation: Rejection Sampling
+5.5 Non-Zero-Advantage Filtering.
+5.6 Bayesian Stabilization: Gradient Norm Dynamics
+5.7 Effect of Iterative Rescue
+6 Conclusion
+7 Impact Statement
+References
+A Theorem Supplementary
+A.1 Derivation of Policy-gradient form.
+A.2 Proof of Theorem
+A.3 Proof of Lemma
+B Experiment Supplementary
+B.1 Datasets
+B.2 Baselines and Benchmarks
+B.2.1 Evaluation Metrics
+B.3 Additional Results
+B.3.1 Additional Budget Baseline Results
+B.3.2 Downsampling Ratio Cost Analysis
+B.3.3 Bayesian Stabilization: Full Training Dynamics
+B.3.4 Effect of Discarding High-Success Rollouts
+C Learning Framework
+Distributed Architecture:
+Model Architecture (Math & Code):
+AERO:
+Bayesian Posterior Updates (Robust Success-Rate Estimation).
+GRPO Training:
+Hyperparameter Configuration.
+D Data Collection and Prompt Engineering
+System Prompt Design.
+Example Problem.
+Example Problem.
+On-Policy Data Collection.
+E Reward System
+E.1 Multi-Domain Reward Framework
+E.2 Token-Level Reward Assignment
+License: CC BY 4.0
+arXiv:2602.14338v1 [cs.LG] 15 Feb 2026
+Train Less, Learn More: Adaptive Efficient
+Rollout Optimization for Group-Based Reinforcement Learning
+Zhi Zhang
+Affiliation: University of California, Los Angeles
+Zhen Han
+Affiliation: Amazon Web Services
+Correspondence to: zhenhz@amazon.com
+Costas Mavromatis
+Affiliation: Amazon Web Services
+Correspondence to: mavrok@amazon.com
+Qi Zhu
+Affiliation: Amazon Web Services
+Yunyi Zhang
+Affiliation: Amazon Web Services
+Sheng Guan
+Affiliation: Amazon Web Services
+Dingmin Wang
+Affiliation: Amazon Web Services
+Xiong Zhou
+Affiliation: Amazon Web Services
+Shuai Wang
+Affiliation: Amazon Web Services
+Soji Adeshina
+Affiliation: Amazon Web Services
+Vassilis Ioannidis
+Affiliation: Amazon Web Services
+Huzefa Rangwala
+Affiliation: Amazon Web Services
+Abstract
+Reinforcement learning (RL) plays a central role in Large Language Model (LLM) post-training, among existing approaches, Group Relative Policy Optimization (GRPO) has become one of the most widely adopted methods, especially in RL with verifiable rewards (RLVR)-style fine-tuning.
+In GRPO, each query prompts the LLM to generate a group of rollouts with a fixed group size N N .
+When all rollouts in a group share the same outcome—either all correct or all incorrect—the group-normalized advantages become zero, yielding no gradient signal and wasting fine-tuning compute.
+To mitigate this inefficiency, we introduce Adaptive Efficient Rollout Optimization (AERO). AERO addresses this by using an adaptive rollout strategy,
+applying selective rejection to strategically prune rollouts, and maintaining a Bayesian posterior to prevent zero-advantage dead zones.
+Across three model configurations (Qwen2.5-Math-1.5B, Qwen2.5-7B, and Qwen2.5-7B-Instruct), AERO significantly improves compute efficiency without sacrificing performance.
+Under the same total rollout budget, AERO reduces total training compute by ∼ \sim 48%
+while shortening wall-clock time per step by ∼ \sim 45% on average.
+Despite the substantial reduction in compute, AERO matches or improves
+Pass@8 and Avg@8 over GRPO, demonstrating that it is a practical, scalable, and compute-efficient strategy for RL-based LLM alignment.
+Keywords:
+Reinforcement Learning, Group-based RL, Efficiency
+† † affiliationnotice: * Work done during an internship at Amazon Web Services (AWS); zzh237@ucla.edu .
+Author contacts:
+{zhenhz,mavrok,qzhuamzn,zhyunyi,shguan,wdimmy}@amazon.com
+{xiongzho,wshui,adesojia,ivasilei,rhuzefa}@amazon.com
+1 University of California, Los Angeles 2 Amazon Web Services
+1 Introduction
+RLVR has become a central paradigm for LLMs with factual and reasoning accuracy ( Shao et al., 2024 ; Liu et al., 2025 ; Yu and others, 2025 ) .
+A typical RLVR pipeline consists of two key stages: (1) the rollout phase , where multiple candidate responses are sampled from the current policy, and (2) the training phase , where verifiable rewards (e.g., correctness of answers) are used to update the model via policy gradients.
+(a)
+(b)
+Figure 1 : Zero-accuracy problems in GRPO-style training and inference:
+( 1(a) ) zero-accuracy problem ratio during GRPO training;
+( 1(b) ) Proportion of zero-accuracy problems during rollout inference across model sizes, averaged over five benchmarks ( n = 8 n=8 ).
+Light bars show the zero-accuracy ratio p 0 p_{0} (%, left y-axis). Dark bars show the compute inflation factor (right y-axis), defined as 1 / ( 1 − p 0 ) 1/(1-p_{0}) , i.e., the expected oversampling multiplier needed to obtain the same number of non-zero-accuracy queries.
+Text annotations (e.g., 1.28 × 1.28\times ) report the inflation factor.
+A central challenge in RLVR is the high computational cost. Methods include GRPO, Dr.GRPO ( Liu et al., 2025 ) , RLOO ( Ahmadian et al., 2024 ) generate a large number of rollouts for a training query, which requires the additional compute.
+One major source of inefficiency arises when many queries contain no correct rollouts, producing zero advantages and vanishing gradients, which waste computation and slow convergence.
+Figure 1(a) shows that in the RL post-training runs for 1.5B and 7B, more than 35% of queries fall into this zero-advantage regime — consuming substantial compute without contributing to learning. Figure 1(b) shows that this also happens on large models such as Claude-Sonnet-4 and Llama-3-70b.
+When a fraction p 0 p_{0} of queries yield zero accuracy, maintaining an effective training batch size requires sampling 1 / ( 1 − p 0 ) × 1/(1-p_{0})\times more queries on average, directly inflating rollout overhead. This highlights the inefficiency of static rollout in GRPO.
+Recent studies ( Yu and others, 2025 ; Lin et al., 2025 ; Zhang et al., 2025 ) have explored multiple directions to improve training efficiency, including more effective utilization of rollout budgets and selective use of samples during training. To mitigate the zero-advantage issue, DAPO ( Yu and others, 2025 ) filters out zero-advantage problems entirely, to prevent using the zero-advantage queries. While CPPO filters
+out rollouts with low absolute advantage ( Lin et al., 2025 ) . However, filtering out or discarding zero- or one-accuracy queries still wastes the rollout budget already consumed for generation. Lacking a priori measure of training problem
+informativeness, these methods require the pre-sampling of an extensive batch of rollouts before each update iteration, potentially negating efficiency gains from the significant sampling overhead. Thus, this raises our first research question: How can we design an adaptive rollout strategy that improves compute efficiency without increasing the sampling overhead?
+Beyond inefficiencies from zero-advantage queries, once a query contains both correct and incorrect rollouts (e.g., 1 correct and 7 incorrect out of N = 8 N=8 ), it may be unnecessary to retain all negatives for model updates.
+Several studies have explored heuristic forms of such selective downsampling to enhance performance ( Shang et al., 2025 ; Shrivastava et al., 2025 ) .
+This naturally raises the question: Can subsampling be guided by a theoretically grounded, optimization-based principle rather than heuristics?
+Building upon the above unsolved problems, we introduce our method, Adaptive Efficient Rollout Optimization (AERO), with three contributions.
+(1) We replace fixed- N N with
+adaptive rollout allocation that increases budget on hard (all-fail) queries and cuts it on easy ones, avoiding the fixed- N N induced gradient dead zone by reducing the zero accuracy queries. We make sure that under the same probability, all the queries are able to obtain at least one correct rollout compared to the fixed- N N strategy, while our adaptive strategy results in fewer zero accuracy queries.
+(2) We maintain a Beta–Binomial posterior over each query’s success rate; the posterior avoid zero-advantage cases and improves sample efficiency instead of discarding them. Note, this approach is also applied to perfect queries to trigger non-zero advantages.
+(3) For queries yield a mix of correct/incorrect rollouts with a low success rate,
+we keep all positives and down-sample negatives to a target : k ⁡ ( k ≥ 1 ) 1\!:\!k(k\geq 1) ratio via rejection sampling.
+We not only reduce compute by rejection but also theoretically show that an appropriate down-sampling ratio ( k = 1 k=1 ) enlarges the expected policy gradient norm thus to further prevent gradient dead zone.
+Overall results.
+AERO is an effective approach for improving GRPO’s computational efficiency through adaptive rollout budget reallocation and theoretically supported subsampling.
+By making rollout allocation adaptive, AERO significantly improves compute efficiency without sacrificing performance.
+Under the same total rollout budget, AERO reduces total training compute by 48% (from 3,714 to 1,917 PFLOPs) for 1.5B and by 47% (from 17,334 to 9,181 PFLOPs) for 7B, and shortens per-step wall-clock time by 43% for 1.5B and 49% for 7B, while slightly improving final benchmark accuracy.
+2 Related Works
+RLVR has become a cornerstone for enhancing the reasoning capabilities of LLMs, with GRPO emerging as a prominent and resource-efficient alternative to traditional Proximal Policy Optimization (PPO) ( Shao et al., 2024 ) .
+Then a line of highly influential works, including DeepSeek-Math ( Shao et al., 2024 ) , Deepseek-prover ( Xin et al., 2024 ) , and DeepSeek-R1 ( Guo et al., 2025 ) , sparked a wave of follow-up refinements to GRPO-style post-training.
+More recent variants, such as Dr. GRPO ( Liu et al., 2025 ) , DAPO ( Yu and others, 2025 ) , and
+GRPO-RoC ( Shang et al., 2025 )
+, further refine GRPO by correcting optimization bias and improving token efficiency, alleviating gradient dead zones and entropy collapse, introducing agentic setting with resampling-on-correct trajectories.
+During GRPO training, prompts may fail to yield enough non-degenerate groups with non-zero success rates. To enhance sample efficiency and training stability, recent adaptive approaches first estimate prompt informativeness (e.g., via pre-rollouts or lightweight difficulty signals), and then adjust the rollout/training pipeline via selective prompt/rollout selection, reuse of responses or trajectories across iterations (e.g., via replay buffers), or post-hoc filtering and pruning of low-value samples ( Zhang et al., 2025 ; Sun et al., 2025 ; Liao et al., 2025 ; Kong et al., 2025 ; Li et al., 2025 ; Bamba et al., 2025 ) .
+3 Preliminaries
+3.1 Background: GRPO Algorithm
+The core mechanism of GRPO involves estimating the advantage of a sampled response relative to the performance of its peers within a group. For a given prompt, the policy generates a group of N N responses (rollouts), and each response o i o_{i} receives a scalar reward r i r_{i} . The set of rewards for the group is denoted as 𝐫 = { r 1 , r 2 , … , r N } \mathbf{r}=\{r_{1},r_{2},\ldots,r_{N}\} . The advantage A ^ i \hat{A}_{i} for the i i -th response is then calculated by normalizing its reward against the group’s mean and standard deviation:
+A ^ i = r i − mean ​ ( 𝐫 ) std ​ ( 𝐫 ) \hat{A}_{i}=\frac{r_{i}-\text{mean}(\mathbf{r})}{\text{std}(\mathbf{r})}
+(1)
+GRPO optimizes a group-level clipped objective function to update the policy parameters θ \theta . A key simplification is that all tokens within a single response o i o_{i} share the same advantage value A ^ i \hat{A}_{i} , as the reward is given at the response level. The objective function J ⁡ ( θ ) J(\theta) is defined as:
+J ( θ ) = 𝔼 q , { o i } [ 1 N ∑ i = 1 N 1 | o i | ∑ t = 1 | o i | min ( ρ i , t A ^ i , \displaystyle J(\theta)=\mathbb{E}_{q,\{o_{i}\}}\Bigg[\frac{1}{N}\sum_{i=1}^{N}\frac{1}{|o_{i}|}\sum_{t=1}^{|o_{i}|}\min\Big(\rho_{i,t}\hat{A}_{i},
+(2)
+clip ( ρ i , t , 1 − ϵ , 1 + ϵ ) A ^ i ) − β D K ​ L ( π θ | | π ref ) ] \displaystyle\text{clip}(\rho_{i,t},1-\epsilon,1+\epsilon)\hat{A}_{i}\Big)-\beta D_{KL}(\pi_{\theta}||\pi_{\text{ref}})\Bigg]
+where ρ i , t \rho_{i,t} is the importance sampling ratio for the t t -th token of the i i -th response, defined as:
+ρ i , t = π θ ​ ( o i , t | q , o i , < t ) π o ​ l ​ d ​ ( o i , t | q , o i , < t ) \rho_{i,t}=\frac{\pi_{\theta}(o_{i,t}|q,o_{i,<t})}{\pi_{old}(o_{i,t}|q,o_{i,<t})} .
+Here, π θ \pi_{\theta} is the current policy being optimized, and π o ​ l ​ d \pi_{old} is the frozen policy from which the rollouts were sampled. The clip function constrains the policy ratio ρ i , t \rho_{i,t} within the range [ 1 − ϵ , 1 + ϵ ] [1-\epsilon,1+\epsilon] , which stabilizes training by preventing excessively large policy updates. Finally, the KL-divergence term D K ​ L ( π θ | | π r ​ e ​ f ) D_{KL}(\pi_{\theta}||\pi_{ref}) acts as a regularizer, penalizing the updated policy π θ \pi_{\theta} for deviating too far from a reference policy π r ​ e ​ f \pi_{ref} (often the initial SFT model).
+Starting from the GRPO objective ( 2 ), and under the standard small-step (trust-region) regime where the policy ratios remain within the clipping range so that no clipping is activated (i.e., ρ i , t ≤ 1 + ϵ \rho_{i,t}\leq 1+\epsilon for all t t ), the gradient simplifies to
+∇ θ J ( θ ) = 𝔼 q , { o i } [ 1 N ∑ i = 1 N A ^ i | o i | ∑ t = 1 | o i | \displaystyle\nabla_{\theta}J(\theta)=\mathbb{E}_{q,\{o_{i}\}}\!\Bigg[\frac{1}{N}\sum_{i=1}^{N}\frac{\hat{A}_{i}}{|o_{i}|}\sum_{t=1}^{|o_{i}|}
+(3)
+ρ i , t ∇ θ log π θ ( o i , t ∣ q , o i , < t ) ] − β ∇ θ D KL ( π θ ∥ π ref ) . \displaystyle\rho_{i,t}\nabla_{\theta}\log\pi_{\theta}(o_{i,t}\!\mid\!q,o_{i,<t})\Bigg]-\beta\,\nabla_{\theta}D_{\mathrm{KL}}(\pi_{\theta}\|\pi_{\mathrm{ref}}).
+The proof can be found in A.1 .
+While highly effective, GRPO’s reliance on a fixed number of rollouts for every problem introduces inefficiencies, some problems result in all-fail or all-correct cases, where zero-advantages ( A ^ i = 0 \hat{A}_{i}=0 ) leads to a shrinking batch-gradient magnitude. A substantial portion of the computation and training time is wasted on zero-advantage queries, making the process inefficient.
+3.2 The Impact of Zero-Advantage Problems on GRPO
+To dive deep in the inefficiency caused by zero-advantage problems,
+We hypothesize that performance is disproportionately affected by problems for which the model fails to produce any correct roll-outs termed Zero-Accuracy Problems .
+When all rollouts for a given problem fail (i.e., the rewards r 1 , … , r N = 0 r_{1},\dots,r_{N}=0 ), the empirical success rate u = mean ​ ( 𝐫 ) = 0 u=\text{mean}(\mathbf{r})=0 , leading to a complete collapse of the advantage,
+A ^ i = r i − u std ​ ( 𝐫 ) = 0 − 0 std ​ ( 𝐫 ) = 0 . \hat{A}_{i}=\frac{r_{i}-u}{\text{std}(\mathbf{r})}=\frac{0-0}{\text{std}(\mathbf{r})}=0.
+(4)
+To validate this hypothesis, we compare two GRPO variants—a stronger and a naive baseline across multiple training checkpoints. At each step t t , we track two metrics:
+(1) zero-accuracy problem ratio , x t zero x_{t}^{\text{zero}} : the fraction of problems whose rollouts are all incorrect:
+x t zero = ∑ p = 1 P 𝕀 ⁡ ( All ​ r i = 0 ​ for problem ​ p ) P . x_{t}^{\text{zero}}=\frac{\sum_{p=1}^{P}\mathbb{I}(\text{All }r_{i}=0\text{ for problem }p)}{P}.
+(5)
+where P P is the number of problems in the batch and 𝕀 ⁡ ( ⋅ ) \mathbb{I}(\cdot) is the indicator function.
+(2) Normalized model test score , y ~ t \tilde{y}_{t} : the relative test performance between two methods at step t t . Let the raw test scores for the two methods, computed as
+y ~ t , i = y t , i max ⁡ ( y t , 1 , y t , 2 ) , \tilde{y}_{t,i}=\frac{y_{t,i}}{\max(y_{t,1},y_{t,2})},
+(6)
+where y t , i y_{t,i} denotes the raw test score of method i i . This normalization removes the effect of overall score scaling during training.
+Figure 2 : Correlation between zero-accuracy ratio and relative model performance ( r = − 0.86 , p < 0.001 r=-0.86,p<0.001 ).
+We compute the Pearson correlation between the zero-accuracy ratio x zero x^{\text{zero}} and the relative performance score y y across all checkpoints. As shown in Figure 2 , the two are strongly and significantly negatively correlated ( r = − 0.86 , p < 0.001 r=-0.86,p<0.001 ). Thus, a higher proportion of zero-accuracy problems predicts lower model performance.
+For all-correct queries, just like the zero-accuracy ones, face the gradient dead zone issue. Theorem 4.1 formalizes this phenomenon, showing that the gradient norm vanishes when all rollouts for a query are identical, explaining why GRPO’s fixed-rollout scheme wastes compute on uninformative queries.
+Figure 3 : High-level architecture of the Posterior-Guided Sampling (AERO) framework.
+AERO begins with n total = 16 n_{\text{total}}=16 total rollouts per query, from which n explore = 8 n_{\text{explore}}=8 samples are used for stratified exploration based on success rate u u . Finally, AERO yields an effective training size of approximately n training = 4.6 n_{\text{training}}=4.6 rollouts per query.
+4 Methodology - The AERO Framework
+AERO restructures rollout allocation into a two-stage process, as shown in Figure 3 . In Stage I, a small probe budget stratifies queries based on correctness. In Stage II, differentiated strategies are applied:
+(1) The partial-correct low accuracy queries
+are rescued via iterative resampling, with early exit upon first success. (2) Zero-advantage queries are mitigated via a Bayesian posterior over success rate, ensuring stable gradients rather than discarding them entirely. (3) Partially correct queries undergo fine-grained rejection sampling: correct rollouts are retained, while incorrect ones are down-sampled to achieve a balanced positive-to-negative ratio.
+4.1 Stage I: Exploration & Stratification.
+Given a total budget of n n (e.g., 16) rollouts per problem, AERO first allocates a partial exploration budget, n e ​ x ​ p ​ l ​ o ​ r ​ e n_{explore} (e.g., 8), to generate an initial set of responses. Based on the empirical success rate u u from this initial pass, problems are stratified into three distinct groups corresponding to their perceived correctness rate:
+low-success partial ( 0 ≤ u < 0.5 0\leq u<0.5 ), and high-accuracy ( 1 ≥ u ≥ 0.5 1\geq u\geq 0.5 ).
+Algorithm 1 Posterior Guided Sampling (AERO)
+Input: Batch { q i } \{q_{i}\} , budgets n t ​ o ​ t ​ a ​ l , n e ​ x ​ p ​ l ​ o ​ r ​ e n_{total},n_{explore} , increment n e ​ x ​ t ​ r ​ a n_{extra} , ratio k k , rescusing threshold S S .
+Output: Curated set 𝒟 t ​ r ​ a ​ i ​ n \mathcal{D}_{train} .
+Stage 1: Exploration
+Generate n e ​ x ​ p ​ l ​ o ​ r ​ e n_{explore} rollouts; update priors and success rate.
+Let S ∈ [ 0.5 ​ n e ​ x ​ p ​ l ​ o ​ r ​ e ] S\in[0.5n_{explore}] , u r ​ e ​ s = S / n e ​ x ​ p ​ l ​ o ​ r ​ e u_{res}=S/n_{explore}
+Let 𝒬 r ​ e ​ s = { q i ∣ u i ≤ u r ​ e ​ s } \mathcal{Q}_{res}\!=\!\{q_{i}\mid u_{i}\leq u_{res}\} ,
+𝒬 p ​ a ​ r ​ t ​ i ​ a ​ l = { q i ∣ u r ​ e ​ s < u i < 0.5 } \mathcal{Q}_{partial}\!=\!\{q_{i}\mid u_{res}<u_{i}<0.5\} ,
+𝒬 h ​ i ​ g ​ h = { q i ∣ u i ≥ 0.5 } \mathcal{Q}_{high}\!=\!\{q_{i}\mid u_{i}\geq 0.5\} .
+Stage 2: Exploitation
+𝒬 p ​ a ​ r ​ t ​ i ​ a ​ l \mathcal{Q}_{partial} : keep all correct + k k -scaled incorrect.
+𝒬 h ​ i ​ g ​ h \mathcal{Q}_{high} : keep all rollouts.
+𝒬 r ​ e ​ s \mathcal{Q}_{res} : iterative rescuing with n e ​ x ​ t ​ r ​ a n_{extra} .
+4.2 Stage II: Differentiated Exploitation.
+The remaining budget, N b ​ u ​ d ​ g ​ e ​ t = ( n − n e ​ x ​ p ​ l ​ o ​ r ​ e ) × P N_{budget}=(n-n_{explore})\times P , is then dynamically allocated. Each problem stratum enters a specialized processing pipeline designed to maximize its contribution to the policy gradient. This targeted approach ensures that computational resources are focused where they are most needed, either by attempting to rescue difficult problems or by curating an efficient batch from easier ones. The complete AERO process for a single training step is formally detailed in Algorithm 1 . The algorithm outlines the initial exploration pass, the stratification logic, and the subsequent differentiated exploitation strategies for each problem category before curating the final training batch for the GRPO update.
+4.2.1 Strategy 1: Iterative Rescue of Rescue-Threshold Problems
+Let S ∈ ℕ 0 S\in\mathbb{N}_{0} be a hyperparameter, with S ∈ [ 0 , 0.5 ​ n e ​ x ​ p ​ l ​ o ​ r ​ e ] S\in[0,0.5n_{explore}] .
+It defines a threshold on the number of correct rollouts, corresponding to a success-rate threshold u r ​ e ​ s = S / n e ​ x ​ p ​ l ​ o ​ r ​ e u_{res}=S/n_{explore} .
+Problems with a success rate less than or equal to u r ​ e ​ s u_{res} are classified as the rescue set 𝒬 r ​ e ​ s \mathcal{Q}_{res} .
+Problems in the 𝒬 r ​ e ​ s \mathcal{Q}_{res} stratum, including zero-accuracy ones which provide no learning signal under standard GRPO, enter a budget-aware iterative rescue phase (Figure 3 ).
+Instead of expending the entire remaining budget at once, these problems receive a small number of additional rollouts ( n e ​ x ​ t ​ r ​ a n_{extra} , e.g., 2) per iteration. This loop continues until either the first successful rollout is generated
+(at least one of rollout in the n e ​ x ​ t ​ r ​ a n_{extra} is correct)
+or the total budget N b ​ u ​ d ​ g ​ e ​ t N_{budget} is exhausted.
+Figure 4 : Rescued problems across iterations.
+In our study, we set S = 0 S=0 , so that rescue-threshold problems coincide with zero-accuracy problems, which aligns best with our model and dataset characteristics. In general, S S can be adjusted to match model capability and task difficulty: the more powerful the model and the easier the query, the higher S S may be set.
+Figure 4 shows how our method
+gradually moves zero-accuracy problems into the non-zero pool across iterations. This strategy efficiently converts zero-accuracy problems into valid training samples, increasing the proportion of non-zero-accuracy problems in the batch by 26% in our experiments.
+4.2.2 Strategy 2: Robust Estimation via Bayesian Posteriors
+Even after rescue, certain zero-accuracy queries remain in the zero-advantage regime. Likewise,
+queries in the
+all-correct ( u = 1 u=1 ) stratum, suffer from the same "gradient dead zone" as zero-accuracy problems, as their advantage also becomes zero. To combat this, we replace their the empirical mean u u with a more robust Bayesian posterior estimate , u ~ \tilde{u} . We model the success rate with a Beta-Binomial distribution, which is a conjugate prior. Starting with a weak prior p ⁡ ( u ) ∼ Beta ​ ( α 0 , β 0 ) p(u)\sim\text{Beta}(\alpha_{0},\beta_{0}) , where in practice we set α 0 = β 0 = 1 \alpha_{0}=\beta_{0}=1 , after observing c c successes in n n rollouts, the posterior becomes p ⁡ ( u | c , n ) ∼ Beta ​ ( α 0 + c , β 0 + n − c ) p(u|c,n)\sim\text{Beta}(\alpha_{0}+c,\beta_{0}+n-c) . We then use the mean of this posterior distribution:
+u ~ = c + α 0 n + α 0 + β 0 \tilde{u}=\frac{c+\alpha_{0}}{n+\alpha_{0}+\beta_{0}}
+(7)
+The Bayesian estimate ensures that u ~ \tilde{u} is never exactly 0 or 1, guaranteeing a stable, non-zero advantage A ^ i ≠ 0 \hat{A}_{i}\neq 0 for all problems and a consistent learning signal. Figure 12 valides the Bayesian’s work.
+After Bayesian posterior estimation provides a stable learning signal, we retain only a small curated subset (typically 4 4 rollouts from n n ) via random sampling.
+4.2.3 Strategy 3: Efficient Batch Curation via Rejection Sampling
+For low-success problems in 𝒬 ​ low \mathcal{Q}{\text{low}} , where u r ​ e ​ s < u < 0.5 u_{res}<u<0.5 , using all n explore n_{\text{explore}} rollouts may result in a batch dominated by incorrect samples. We apply rejection sampling to construct a smaller, more information-dense batch (Figure 3 ). We retain all c c correct rollouts and downsample the n explore − c n_{\text{explore}}-c incorrect ones, selecting only the top- m m most informative samples. The number of selected incorrect rollouts is set by m = k ⋅ c m=k\cdot c , where k k is a tunable ratio. This creates a balanced 1 : k 1:k mix of correct and incorrect rollouts, reducing computational cost.
+4.3 Theoretical Guidance for Rejection Sampling
+While rejection sampling is empirically effective, the choice of the downsampling ratio k k can be theoretically motivated. We derived the Theorem 4.1 concerning the upper bound of squared norm of the GRPO policy gradient, which provides guidance for selecting an optimal k k .
+Theorem 4.1 (GRPO Gradient Norm) .
+Let a training subset contain n = c + m n=c+m rollouts, with c c correct rollouts ( r i = 1 r_{i}=1 ) forming set F C F_{C} and m m incorrect rollouts ( r i = 0 r_{i}=0 ) forming set F S F_{S} .
+Under the simplifying assumptions of uniform rollout length L L and zero KL penalty ( β = 0 \beta=0 ), the group-relative policy gradient in Eq. ( 3 ) is
+G ⁡ ( θ ) = 𝔼 q , { o i } ​ [ 1 N ​ L ​ ∑ i = 1 N ∑ t = 1 L A ^ i ​ ρ i , t ​ ∇ θ ​ log ⁡ π θ ​ ( o i , t ∣ q , o i , < t ) ] , G(\theta)=\mathbb{E}_{q,\{o_{i}\}}\!\left[\frac{1}{NL}\!\sum_{i=1}^{N}\!\sum_{t=1}^{L}\hat{A}_{i}\,\rho_{i,t}\,\nabla_{\theta}\log\pi_{\theta}(o_{i,t}\!\mid q,o_{i,<t})\right],
+(8)
+where ρ i , t = π θ ​ ( o i , t ∣ q , o i , < t ) π old ​ ( o i , t ∣ q , o i , < t ) \rho_{i,t}=\frac{\pi_{\theta}(o_{i,t}\mid q,o_{i,<t})}{\pi_{\text{old}}(o_{i,t}\mid q,o_{i,<t})} .
+Then its squared norm satisfies
+‖ G ⁡ ( θ ) ‖ 2 ≤ c ​ m ( c + m ) 2 ​ 𝔼 ​ [ ‖ v ¯ C − v ¯ F ‖ 2 ] , \|G(\theta)\|^{2}\leq\frac{c\,m}{(c+m)^{2}}\,\mathbb{E}\!\left[\|\bar{v}_{C}-\bar{v}_{F}\|^{2}\right],
+where
+v ¯ C = 1 c ​ ∑ j ∈ F C v j \bar{v}_{C}=\frac{1}{c}\sum_{j\in F_{C}}v_{j} ,
+v ¯ F = 1 m ​ ∑ j ∈ F S v j \bar{v}_{F}=\frac{1}{m}\sum_{j\in F_{S}}v_{j} ,
+and
+v j = 1 L ​ ∑ t = 1 L ∇ θ ​ log ​ π θ ​ ( o j , t ∣ q , o j , < t ) v_{j}=\frac{1}{L}\sum_{t=1}^{L}\nabla_{\theta}\log\pi_{\theta}(o_{j,t}\mid q,o_{j,<t}) .
+The proof is in the in the Supplementary A.2 .
+The scalar factor c ​ m ( c + m ) 2 \tfrac{c\,m}{(c+m)^{2}} reflects the composition of correct and incorrect rollouts, while ‖ v ¯ C − v ¯ F ‖ 2 \|\bar{v}_{C}-\bar{v}_{F}\|^{2} measures the discrepancy between their mean policy-gradient directions. This theorem reveals that the quantity of the scalar term is related to the allocation of c c and m m ( k = 1 k=1 ). Below Lemma 4.2 states this fact.
+Lemma 4.2 (Maximization of the GROP Gradient Norm) .
+For the same set up in Theorem 4.1 ,
+‖ G ⁡ ( θ ) ‖ 2 ≤ c ⋅ m ( c + m ) 2 ⋅ 𝔼 ​ ‖ v ¯ C − v ¯ F ‖ 2 , \|G(\theta)\|^{2}\leq\frac{c\cdot m}{(c+m)^{2}}\cdot\mathbb{E}\|\bar{v}_{C}-\bar{v}_{F}\|^{2},
+the balance term c ⋅ m ( c + m ) 2 \frac{c\cdot m}{(c+m)^{2}} is maximized if and only if m = c m=c .
+This occurs when m = c m=c , which corresponds to a downsampling ratio of k = 1 k=1 . The proof is in the Supplementary A.3 .
+4.4 Computation Cost Saving Across All Strategies
+Across all three strategies, AERO dynamically reduces effective training size,
+this results in an average of n training ≈ 4.6 n_{\text{training}}\approx 4.6 rollouts per query, compared to 16 16 in GRPO, explaining the observed ∼ \sim 50% wall-clock speedup.
+In strategy 1, for rescue-threshold queries, the iterative rescue loop terminates immediately once the first successful rollout is found, yielding a group size to 2 2 (one correct, one incorrect), rather than n = 16 n=16 . In strategy 2, for zero-advantage queries (all-fail or all-correct), we retain only 4 4 rollouts after Bayesian stabilization. In strategy 3, for low-success partial queries, we use rejection sampling to construct a balanced : k 1\!:\!k mix of correct and incorrect rollouts, instead of using all 16 16 rollouts.
+Empirically, we find that early termination on rescued queries and downsampling on zero-advantage accounts for roughly 29% of the total speedup,
+while the remaining 21 % 21\% arises from rejection sampling on low-success partial queries. We conduct an ablation study to quantify each strategy’s contribution to the total speedup (see Section 5.3 and Figure 8 ).
+Figure 5 : Comparison of per-step (a) wall-clock latency and (b) computational cost (FLOPS),
+decomposed into Data Generation (Rollout) and Model Update (Training) and Total (Rollout+Training).
+5 Experiments
+We conduct a series of experiments to evaluate the effectiveness of our proposed AERO framework. We aim to answer three primary questions: (1) Does AERO offer tangible improvements in computational and time efficiency? (2) Does AERO outperform standard baselines in reasoning tasks? (3) What is the contribution of each core component of the AERO framework?
+5.1 Experimental Setup
+Core Model & Hardware.
+All experiments are conducted using the Qwen2.5-Math-1.5B , Qwen2.5-1.5B-Base , Qwen2.5-Math-7B , and Qwen2.5-7B-Instruct-1M models.
+Training for the 1.5B models is performed on 2 × \times NVIDIA A10 GPUs , while the 7B models are trained on 4 × \times NVIDIA A100 GPUs .
+Datasets.
+For the Math domain, training uses the OpenR1-AERO, a 40k curated set of OpenR1-Math-220k dataset including mathematical problems released on Hugging Face, 2025 ( Zhao et al., 2025 ) .
+Validation and testing are conducted on held-out sets covering five reasoning sub-domains: AIME , AMC , MATH , Minerva , and Olympiad for broader evaluation. For the Code domain, training uses the dataset of 1.4k coding problems introduced by Cui et al. (2025) .
+Validation and testing use 0.5k held-out sets from APPS ( Hendrycks et al., 2021 ) , CodeContests ( Li et al., 2022 ) , and TACO ( Li et al., 2023 ) .
+Training Protocol.
+For each method, we select the single best-performing checkpoint based on the highest average score achieved on the validation set. This selected checkpoint is then used for a final, one-time evaluation on the held-out test set to report our main results.
+Baselines and Method Configuration.
+We compare AERO against two strong baselines, ensuring a fair comparison by allocating the same total generation budget to each method.
+(1) GRPO (Main Baseline): The standard GRPO algorithm is run with a fixed budget of n = 16 n=16 rollouts for every problem.
+(2) DAPO: We compare against the DAPO algorithm, which incorporates techniques like clipping and adaptive sampling. It also uses a total generation budget of n = 16 n=16 .
+(3) AERO (Ours): Our method is configured with a total budget of n t ​ o ​ t ​ a ​ l = 16 n_{total}=16 . This is split into an exploration budget of n e ​ x ​ p ​ l ​ o ​ r ​ e = 8 n_{explore}=8 for Stage 1, leaving a remaining budget of 8 8 rollouts for the differentiated exploitation stage. We use a downsampling ratio of k = 1 k=1 for rejection sampling and a weak Bayesian prior of Beta ​ ( α 0 = 1 , β 0 = 1 ) \text{Beta}(\alpha_{0}=1,\beta_{0}=1) for zero-advantage cases.
+5.2 Main Results
+Compute and Time Performance.
+(a) Training Reward
+Problems Ratio
+(b) All-Correct Problems Ratio
+(c) High-Success Partial Problems Ratio
+Figure 6 : Training performance on the 1.5B model.
+Table 1 : Main results. Per step efficiency (Training Time and FLOPs) and Held-out Test Set Performance (Avg@8, Pass@8 across five reasoning benchmarks).
+Best results are in bold .
+Time (min)
+FLOPs
+Avg@8
+Pass@8
+Method
+aime
+amc
+math
+minerva
+olympiad
+Total (P-value)
+aime
+amc
+math
+minerva
+olympiad
+Total
+Qwen2.5-1.5B-Math
+AERO
+19.1
+1811
+0.107
+0.323
+0.578
+0.171
+0.256
+0.3452
+0.286
+0.660
+0.863
+0.409
+0.517
+0.6121
+GRPO
+34.3
+3627
+0.083
+0.326
+0.571
+0.173
+0.251
+0.3401 ( = 0.28 =0.28 )
+0.238
+0.604
+0.856
+0.421
+0.519
+0.6090
+DAPO
+26.1
+2722
+0.101
+0.330
+0.561
+0.171
+0.257
+0.3405 ( = 0.31 =0.31 )
+0.333
+0.642
+0.843
+0.409
+0.526
+0.6100
+Base
+—
+—
+0.025
+0.192
+0.322
+0.085
+0.129
+0.1617 (<1 e-6 )
+0.200
+0.700
+0.778
+0.345
+0.399
+0.5050
+Qwen2.5-7B-Math
+AERO
+10.8
+9181
+0.214
+0.552
+0.719
+0.289
+0.382
+0.4800
+0.476
+0.811
+0.905
+0.503
+0.626
+0.7000
+GRPO
+21.5
+17334
+0.208
+0.543
+0.714
+0.267
+0.372
+0.4690 (=0.05)
+0.476
+0.721
+0.902
+0.491
+0.607
+0.6860
+DAPO
+15.8
+13743
+0.208
+0.533
+0.720
+0.281
+0.376
+0.4750 (=0.29)
+0.476
+0.736
+0.905
+0.491
+0.619
+0.6910
+Base
+—
+—
+0.138
+0.358
+0.539
+0.179
+0.196
+0.3110 ( < 1 ​ e-6 <1\text{e-6} )
+0.400
+0.700
+0.876
+0.434
+0.510
+0.6220
+We analyze the computational efficiency of each method by decomposing both the wall-clock time and the total FLOPS per step into their Data Generation (Rollout) and Model Update (Training) components. As shown in Figure 5 , AERO demonstrates significant efficiency gains.
+AERO runs 1.8x faster per step on the 1.5B model (19.1 vs. 34.3 minutes) and 1.9x faster per step on the 7B model (10.8 vs. 21.5 minutes) than the GRPO baseline. This speedup is driven by a 61 % \% reduction in the model update time for 1.5B and 68 % \% for 7B.
+This efficiency is also reflected in computational cost. While Rollout FLOPS are identical for all methods, AERO requires 2.8x fewer Training FLOPs than GRPO on the 1.5B model and 2.7x fewer on the 7B model. Consequently, its total computational cost per step is reduced by 2.0x and 1.9x , respectively. AERO improves the end-to-end training efficiency. For zero-accuracy problems ( u = 0 u=0 ), AERO yields the lowest ratio − - 0.261 vs. 0.336 (GRPO) and 0.345 (DAPO) on the 1.5B model, and 0.178 vs. 0.244 (GRPO) and 0.249 (DAPO) on the 7B model, indicating more effective use of the rollout budget.
+Training Performance.
+The training reward curves (Figure 6(a) ) show that AERO demonstrates a stable learning trajectory, closely matching the performance of the GRPO and DAPO baselines throughout the training process. In addition, Figure 6(b) shows that AERO consistently yields a higher proportion of All-correct problems compared to GRPO and DAPO. Meanwhile, as shown in Figure 6(c) , all methods achieve a comparable ratio of High-Success Partial Problem.
+Testing Performance. The primary results on the held-out test set are presented in Table 1 . AERO achieves an average Avg@8 score of 0.3451 , outperforming GRPO (0.3401) and DAPO (0.3405) on the 1.5B model, and 0.4800 , surpassing GRPO (0.4690) and DAPO (0.4750) on the 7B model. A similar trend is observed in the Pass@8 metric, where AERO scores 0.6121 on 1.5B and 0.7 on 7B.
+Table 2 : Computational budget and alternative sampling strategies for Qwen2.5-1.5B-Math.
+The best-performing method is highlighted in blue, and time-matched baselines for comparison are in light blue. Results generalize to other model sizes and configurations as shown in
+§ B.3.1 .
+Method
+Time (min)
+FLOPs (Total)
+Avg@8 (P-value)
+Pass@8
+GRPO
+34.3
+3627
+0.3401 ( = 0.28 =0.28 )
+0.6090
+DAPO
+26.1
+2722
+0.3405 ( = 0.31 =0.31 )
+0.6100
+AERO
+19.1
+1811
+0.3452
+0.6121
+N/2
+23.7
+1863
+0.3211 ( = 0.004 =0.004 )
+0.5954
+0.32N
+20.1
+1133
+0.3184 ( = 0.002 =0.002 )
+0.5891
+N/4
+16.3
+906
+0.3133 ( = 0.001 =0.001 )
+0.5870
+N/8
+8.9
+453
+0.2820 ( < 1 ​ e-4 <1\text{e-4} )
+0.5791
+Base
+—
+—
+0.1617 ( < 1 ​ e-6 <1\text{e-6} )
+0.5050
+5.2.1 Additional Baselines
+To better compare the compute and performance trade-off with AERO, we evaluate GRPO under Reduced-Budget Rollouts. We uniformly reduce the rollout budget per query from the default N = 16 N=16 to smaller values ( N / 2 N/2 , 0.32 ​ N 0.32N , N / 4 N/4 , N / 8 N/8 ).
+Figure 7 : Training Time Cost and FLOPs across Baselines.
+Table 2 summarizes their efficiency and performance. Figure 7 reports the detailed time and FLOPs (rollout, model update, total).
+Notably, AERO achieves substantially better cost-performance trade-offs across all model scales. On the 1.5B Math model, AERO requires less training time than the half-budget ( N / 2 N/2 ) setup and a similar amount of time as the 0.32 ​ N 0.32N configuration, yet delivers significantly higher performance (Avg@8: 0.345 vs. 0.318).
+5.2.2 Performance on Code Generalization Tasks.
+Table 3 presents the result. AERO achieves the highest Avg@8 score (0.264) while requiring the least training time (6.95 min) and fewest FLOPs (2295 PetaFLOP), demonstrating that the efficiency gains observed on math reasoning transfer to code generation tasks.
+Table 3 : Performance and efficiency comparison on code benchmarks for Qwen2.5-7B-Instruct-1M.
+Efficiency
+Avg@8
+Method
+Time (min)
+FLOPs (PetaFLOP)
+TACO
+CodeContests
+APPS
+Total
+p p -value
+AERO
+6.95
+2295
+0.179
+0.321
+0.337
+0.264
+—
+GRPO
+11.66
+4488
+0.157
+0.296
+0.298
+0.238
+< 0.005 <0.005
+DAPO
+7.75
+2941
+0.162
+0.313
+0.310
+0.252
+= 0.034 =0.034
+Base Model
+—
+—
+0.094
+0.195
+0.188
+0.149
+< 1 ​ e-5 <1\text{e-5}
+5.3 Strategy Contribution Ablation
+To quantify each strategy’s contribution to AERO’s efficiency gains, we measure per-step time savings from each component across all three model configurations.
+Figure 8 : Waterfall decomposition of training time savings from GRPO to AERO across three models. Each bar shows the incremental reduction from: (S1) early termination on rescued queries, (S2) downsampling zero-advantage queries, and (S3) rejection sampling on low-success partial queries.
+5.4 Ablation: Rejection Sampling
+Table 4 : Ablation study: rejection sampling, advantage filtering, and Bayesian stabilization (Qwen2.5-Math-1.5B).
+Method
+Time (min)
+FLOPs (PF)
+Avg@8
+Pass@8
+AERO
+19.1
+1811
+0.345
+0.612
+w/o Rejection Sampling
+22.9 ( ↑ \uparrow 19%)
+2099 ( ↑ \uparrow 16%)
+0.340 ( ↓ \downarrow 1.5%)
+0.606 ( ↓ \downarrow 1%)
+w/o Advantage Filtering
+26.8 ( ↑ \uparrow 40%)
+2732 ( ↑ \uparrow 51%)
+0.329 ( ↓ \downarrow 5%)
+0.598 ( ↓ \downarrow 2%)
+Bayesian Stabilization (batch=128)
+GRPO + Bayesian Prior
+20.8
+2186
+0.322
+0.594
+GRPO
+21.9
+2319
+0.318
+0.580
+Here we evaluate the effect of disabling rejection sampling.
+Table 4 (row 2) shows disabling rejection sampling leads to a massive 19% increase in training time and a 16% increase in FLOPs .
+To justify our choice of the downsampling ratio k = 1 k=1 , we examined the impact of varying k k from 1 to 4. The computational cost, especially training time, grows monotonically with k k (see § B.3.2 ). For instance, moving from k = 1 k=1 to k = 2 k=2 increases training time by 7%, to k = 3 k=3 by 13%, and to k = 4 k=4 by 16%.
+5.5 Non-Zero-Advantage Filtering.
+We also compare against simply filtering out zero-advantage rollouts while keeping the full budget N = 16 N=16 . As shown in Table 4 (row 3), this naive filtering approach is less efficient and achieves lower performance than AERO.
+We have see that the AERO gains higher efficiency while maintain a higher Avg@8 and Pass@8 score than purely filtering out the zero-advantage samples.
+5.6 Bayesian Stabilization: Gradient Norm Dynamics
+To highlight the impact of Bayesian estimation, we co
+mpare the gradient norm behavior of the vanilla GRPO algorithm with a variant that incorporates a Bayesian prior for zero accuracy and all - correct queries (denoted GRPO +Bayesian Prior). Both methods use a batch size of 128.
+As shown in Table 4 (rows 4–5), the Bayesian variant achieves higher Avg@8 and Pass@8 scores.
+The gradient norm analysis (Table 7 in § B.3.3 ) shows that Bayesian estimation produces ∼ \sim 1.5 × \times larger gradient norms ( p < 0.001 p<0.001 ).
+Also, see § B.3.3 for full training dynamics.
+5.7 Effect of Iterative Rescue
+Figure 9 : Average of Zero-Accuracy Ratio Across Training Steps
+Figure 9 compares the proportion of zero-accuracy problems across methods. AERO produces approximately 10 % 10\% fewer Zero-accuracy problems than GRPO and DAPO.
+Figure 10 shows absolute advantage values across methods. Larger advantage magnitudes enable stronger gradient signals for policy updates. AERO achieves approximately 30% higher average advantage magnitude while also reducing zero-advantage samples, which would otherwise contribute no learning signal.
+(a) qwen2.5-math-1.5b
+(b) qwen2.5-math-7b
+(c) qwen2.5-7b-Instruct-1m
+Figure 10 : Absolute Advantage Value Comparison.
+Additional analysis on whether it is beneficial to also down-sample high-success ( u ≥ 0.5 u\geq 0.5 ) queries is provided in § B.3.4 : the results show that discarding correct rollouts from such queries hurts accuracy with negligible time savings, justifying our decision to retain them.
+6 Conclusion
+We introduced AERO (Adaptive Efficient Rollout Optimization), which addresses key inefficiencies in GRPO through adaptive rollout reallocation, theoretically-grounded down-sampling, and Bayesian estimation to avoid gradient dead zones. On Qwen2.5 Math (1.5B, 7B), AERO reduces FLOPs by ∼ \sim 2 × \times and with ∼ \sim 1.9 × \times faster training while improving Pass@8 and Avg@8. These gains transfer to code: on Qwen2.5-7B-Instruct, AERO achieves the best Avg@8 (0.264) with ∼ \sim 2 × \times fewer FLOPs and ∼ \sim 1.7 × \times faster training. AERO enables training less while learning more.
+7 Impact Statement
+This paper presents work whose goal is to advance the field of machine learning. There are many potential societal consequences of our work, none of which we feel must be specifically highlighted here.
+References
+Ahmadian et al. (2024)
+A. Ahmadian, C. Cremer, M. Gallé, M. Fadaee, J. Kreutzer, O. Pietquin, A. Üstün, and S. Hooker
+Back to basics: revisiting reinforce style optimization for learning from human feedback in llms .
+arXiv preprint arXiv:2402.14740 .
+Cited by: §1 .
+Bamba et al. (2025)
+U. Bamba, M. Fang, Y. Yu, H. Zheng, and F. Lai
+XRPO: pushing the limits of grpo with targeted exploration and exploitation .
+arXiv preprint arXiv:2510.06672 .
+Cited by: §2 .
+Cui et al. (2025)
+G. Cui, L. Yuan, Z. Wang, H. Wang, W. Li, B. He, Y. Fan, T. Yu, Q. Xu, W. Chen, et al.
+Process reinforcement through implicit rewards .
+arXiv preprint arXiv:2502.01456 .
+Cited by: Table 5 ,
+§5.1 .
+Guo et al. (2025)
+D. Guo, D. Yang, H. Zhang, J. Song, R. Zhang, R. Xu, Q. Zhu, S. Ma, P. Wang, X. Bi, et al.
+Deepseek-r1: incentivizing reasoning capability in llms via reinforcement learning .
+arXiv preprint arXiv:2501.12948 .
+Cited by: §2 .
+He et al. (2024)
+C. He, R. Luo, Y. Bai, S. Hu, Z. L. Thai, J. Shen, J. Hu, X. Han, Y. Huang, Y. Zhang, et al.
+Olympiadbench: a challenging benchmark for promoting agi with olympiad-level bilingual multimodal scientific problems .
+arXiv preprint arXiv:2402.14008 .
+Cited by: Table 5 .
+Hendrycks et al. (2021)
+D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt
+Measuring mathematical problem solving with the math dataset .
+arXiv preprint arXiv:2103.03874 .
+Cited by: Table 5 ,
+§5.1 .
+Kong et al. (2025)
+D. Kong, Q. Guo, X. Xi, W. Wang, J. Wang, X. Cai, S. Zhang, and W. Ye
+Rethinking the sampling criteria in reinforcement learning for llm reasoning: a competence-difficulty alignment perspective .
+arXiv preprint arXiv:2505.17652 .
+Cited by: §2 .
+Lewkowycz et al. (2022)
+A. Lewkowycz, A. Andreassen, D. Dohan, E. Dyer, H. Michalewski, V. Ramasesh, A. Slone, C. Anil, I. Schlag, T. Gutman-Solo, et al.
+Solving quantitative reasoning problems with language models .
+Advances in Neural Information Processing Systems 35 , pp. 33125–33139 .
+Cited by: Table 5 .
+Li et al. (2023)
+R. Li, J. Fu, B. Zhang, T. Huang, Z. Sun, C. Lyu, G. Liu, Z. Jin, and G. Li
+Taco: topics in algorithmic code generation dataset .
+arXiv preprint arXiv:2312.14852 .
+Cited by: Table 5 ,
+§5.1 .
+Li et al. (2022)
+Y. Li, D. Choi, J. Chung, et al.
+Competition-level code generation with alphacode .
+Science 378 ( 6624 ), pp. 1092–1097 .
+Cited by: Table 5 ,
+§5.1 .
+Li et al. (2025)
+Z. Li, C. Chen, T. Yang, T. Ding, R. Sun, G. Zhang, W. Huang, and Z. Luo
+Knapsack rl: unlocking exploration of llms via optimizing budget allocation .
+arXiv preprint arXiv:2509.25849 .
+Cited by: §2 .
+Liao et al. (2025)
+M. Liao, X. Xi, R. Chen, J. Leng, Y. Hu, K. Zeng, S. Liu, and H. Wan
+Enhancing efficiency and exploration in reinforcement learning for llms .
+arXiv preprint arXiv:2505.18573 .
+Cited by: §2 .
+Lightman et al. (2023)
+H. Lightman, V. Kosaraju, Y. Burda, H. Edwards, B. Baker, T. Lee, J. Leike, J. Schulman, I. Sutskever, and K. Cobbe
+Let’s verify step by step .
+In The Twelfth International Conference on Learning Representations ,
+Cited by: Table 5 .
+Lin et al. (2025)
+Z. Lin, M. Lin, Y. Xie, and R. Ji
+Cppo: accelerating the training of group relative policy optimization-based reasoning models .
+arXiv preprint arXiv:2503.22342 .
+Cited by: §1 .
+Liu et al. (2025)
+Z. Liu, C. Chen, W. Li, P. Qi, T. Pang, C. Du, W. S. Lee, and M. Lin
+Understanding r1-zero-like training: a critical perspective .
+arXiv preprint arXiv:2503.20783 .
+Cited by: §1 ,
+§1 ,
+§2 .
+Shang et al. (2025)
+N. Shang, Y. Liu, Y. Zhu, L. L. Zhang, W. Xu, X. Guan, B. Zhang, B. Dong, X. Zhou, B. Zhang, et al.
+RStar2-agent: agentic reasoning technical report .
+arXiv preprint arXiv:2408.14083 .
+Cited by: §1 ,
+§2 .
+Shao et al. (2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y.K. Li, Y. Wu, and D. Guo
+DeepSeekMath: pushing the limits of mathematical reasoning in open language models .
+In The Twelfth International Conference on Learning Representations ,
+Cited by: §1 ,
+§2 .
+Sheng et al. (2025)
+G. Sheng, C. Zhang, Z. Ye, X. Wu, W. Zhang, R. Zhang, Y. Peng, H. Lin, and C. Wu
+Hybridflow: a flexible and efficient rlhf framework .
+In Proceedings of the Twentieth European Conference on Computer Systems ,
+pp. 1279–1297 .
+Cited by: Appendix C .
+Shrivastava et al. (2025)
+V. Shrivastava, A. Awadallah, V. Balachandran, S. Garg, H. Behl, and D. Papailiopoulos
+Sample more to think less: group filtered policy optimization for concise reasoning .
+arXiv preprint arXiv:2508.09726 .
+Cited by: §1 .
+Sun et al. (2025)
+Y. Sun, J. Shen, Y. Wang, T. Chen, Z. Wang, M. Zhou, and H. Zhang
+Improving data efficiency for llm reinforcement fine-tuning through difficulty-targeted online data selection and rollout replay .
+arXiv preprint arXiv:2506.05316 .
+Cited by: §2 .
+Xin et al. (2024)
+H. Xin, Z. Ren, J. Song, Z. Shao, W. Zhao, H. Wang, B. Liu, L. Zhang, X. Lu, Q. Du, et al.
+DeepSeek-prover-v1.5: harnessing proof assistant feedback for reinforcement learning and monte-carlo tree search .
+arXiv preprint arXiv:2408.08152 .
+Cited by: §2 .
+Yu et al. (2025)
+J. Yu et al.
+DAPO: an open-source llm reinforcement learning system at scale .
+arXiv preprint arXiv:2503.14476 .
+Cited by: §1 ,
+§1 ,
+§2 .
+Zhang et al. (2025)
+R. Zhang, D. Arora, S. Mei, and A. Zanette
+SPEED-rl: faster training of reasoning models via online curriculum learning .
+arXiv preprint arXiv:2506.09016 .
+Cited by: §1 ,
+§2 .
+Zhao et al. (2025)
+H. Zhao, H. Wang, Y. Peng, S. Zhao, X. Tian, S. Chen, Y. Ji, and X. Li
+1.4 million open-source distilled reasoning dataset to empower large language model training .
+arXiv preprint arXiv:2503.19633 .
+Cited by: Table 5 ,
+§5.1 .
+Appendix A Theorem Supplementary
+A.1 Derivation of Policy-gradient form.
+Proof.
+We consider the GRPO objective
+J ( θ ) = 𝔼 q , { o i } [ 1 N ∑ i = 1 N A ^ i 1 | o i | ∑ t = 1 | o i | min ( ρ i , t , clip ( ρ i , t , 1 − ϵ , 1 + ϵ ) ) − β D KL ( π θ ∥ π ref ) ] , J(\theta)=\mathbb{E}_{q,\{o_{i}\}}\!\left[\frac{1}{N}\sum_{i=1}^{N}\hat{A}_{i}\,\frac{1}{|o_{i}|}\sum_{t=1}^{|o_{i}|}\min\!\big(\rho_{i,t},\,\mathrm{clip}(\rho_{i,t},\,1-\epsilon,\,1+\epsilon)\big)\;-\;\beta\,D_{\mathrm{KL}}(\pi_{\theta}\|\pi_{\mathrm{ref}})\right],
+(9)
+where the per-token importance ratio is
+ρ i , t = π θ ​ ( o i , t ∣ q , o i , < t ) π old ​ ( o i , t ∣ q , o i , < t ) . \rho_{i,t}=\dfrac{\pi_{\theta}(o_{i,t}\mid q,o_{i,<t})}{\pi_{\mathrm{old}}(o_{i,t}\mid q,o_{i,<t})}.
+Here π old \pi_{\mathrm{old}} and π ref \pi_{\mathrm{ref}} are fixed (no gradients).
+Differentiating ( 9 ) and using
+∇ θ ρ i , t = ρ i , t ​ ∇ θ ​ log ⁡ π θ ​ ( o i , t ∣ q , o i , < t ) \nabla_{\theta}\rho_{i,t}=\rho_{i,t}\,\nabla_{\theta}\log\pi_{\theta}(o_{i,t}\!\mid q,o_{i,<t}) ,
+we obtain the exact gradient (for the one–sided clipping used in GRPO):
+∇ θ J ( θ ) = 𝔼 q , { o i } [ 1 N ∑ i = 1 N A ^ i | o i | ∑ t = 1 | o i | 𝕀 [ ρ i , t ≤ 1 + ϵ ] ρ i , t ∇ θ log π θ ( o i , t ∣ q , o i , < t ) ] − β ∇ θ D KL ( π θ ∥ π ref ) . \nabla_{\theta}J(\theta)=\mathbb{E}_{q,\{o_{i}\}}\!\left[\frac{1}{N}\sum_{i=1}^{N}\frac{\hat{A}_{i}}{|o_{i}|}\sum_{t=1}^{|o_{i}|}\mathbb{I}\!\big[\rho_{i,t}\leq 1+\epsilon\big]\,\rho_{i,t}\,\nabla_{\theta}\log\pi_{\theta}(o_{i,t}\!\mid q,o_{i,<t})\right]\;-\;\beta\,\nabla_{\theta}D_{\mathrm{KL}}(\pi_{\theta}\|\pi_{\mathrm{ref}}).
+(10)
+In the common small-step (trust-region) regime where the policy ratios remain within the clipping range,
+ρ i , t ≤ 1 + ϵ \rho_{i,t}\leq 1+\epsilon for all t t , 1 1
+1
+This is satisfied exactly when ϵ = 0 \epsilon=0 , or approximately when updates are sufficiently small so that ratios stay inside the trust region.
+the indicator in ( 10 ) is identically one and the gradient reduces to
+∇ θ J ( θ ) = 𝔼 q , { o i } [ 1 N ∑ i = 1 N A ^ i | o i | ∑ t = 1 | o i | ρ i , t ∇ θ log π θ ( o i , t ∣ q , o i , < t ) ] − β ∇ θ D KL ( π θ ∥ π ref ) . \nabla_{\theta}J(\theta)=\mathbb{E}_{q,\{o_{i}\}}\!\left[\frac{1}{N}\sum_{i=1}^{N}\frac{\hat{A}_{i}}{|o_{i}|}\sum_{t=1}^{|o_{i}|}\rho_{i,t}\,\nabla_{\theta}\log\pi_{\theta}(o_{i,t}\!\mid q,o_{i,<t})\right]\;-\;\beta\,\nabla_{\theta}D_{\mathrm{KL}}(\pi_{\theta}\|\pi_{\mathrm{ref}}).
+(11)
+Since π old \pi_{\mathrm{old}} is constant w.r.t. θ \theta ,
+∇ θ ρ i , t \displaystyle\nabla_{\theta}\rho_{i,t}
+= ∇ θ π θ ​ ( o i , t ∣ q , o i , < t ) π old ​ ( o i , t ∣ q , o i , < t ) = π θ ​ ( o i , t ∣ q , o i , < t ) π old ​ ( o i , t ∣ q , o i , < t ) ​ ∇ θ ​ log ⁡ π θ ​ ( o i , t ∣ q , o i , < t ) \displaystyle=\frac{\nabla_{\theta}\pi_{\theta}(o_{i,t}\mid q,o_{i,<t})}{\pi_{\mathrm{old}}(o_{i,t}\mid q,o_{i,<t})}=\frac{\pi_{\theta}(o_{i,t}\mid q,o_{i,<t})}{\pi_{\mathrm{old}}(o_{i,t}\mid q,o_{i,<t})}\nabla_{\theta}\log\pi_{\theta}(o_{i,t}\mid q,o_{i,<t})
+(12)
+= ρ i , t ​ ∇ θ ​ log ⁡ π θ ​ ( o i , t ∣ q , o i , < t ) . \displaystyle=\rho_{i,t}\,\nabla_{\theta}\log\pi_{\theta}(o_{i,t}\mid q,o_{i,<t}).
+Define f ϵ ​ ( ρ ) = min ⁡ ( ρ , clip ⁡ ( ρ , 1 − ϵ , 1 + ϵ ) ) f_{\epsilon}(\rho)=\min\!\big(\rho,\,\mathrm{clip}(\rho,1-\epsilon,1+\epsilon)\big) .
+Thus, we have
+min ⁡ ( ρ i , t , clip ⁡ ( ρ i , t , 1 − ϵ , 1 + ϵ ) ) = : f ϵ ​ ( ρ i , t ) . \displaystyle\min\!\big(\rho_{i,t},\,\mathrm{clip}(\rho_{i,t},\,1-\epsilon,\,1+\epsilon)\big)=:f_{\epsilon}(\rho_{i,t}).
+(13)
+A simple case analysis yields
+f ϵ ​ ( ρ ) = { ρ , ρ ≤ 1 + ϵ , 1 + ϵ , ρ > 1 + ϵ , ⇒ ∂ f ϵ ∂ ρ = { 1 , ρ ≤ 1 + ϵ , 0 , ρ > 1 + ϵ , f_{\epsilon}(\rho)=\begin{cases}\rho,&\rho\leq 1+\epsilon,\\
+1+\epsilon,&\rho>1+\epsilon,\end{cases}\qquad\Rightarrow\qquad\frac{\partial f_{\epsilon}}{\partial\rho}=\begin{cases}1,&\rho\leq 1+\epsilon,\\
+0,&\rho>1+\epsilon,\end{cases}
+(except at ρ = 1 + ϵ \rho=1+\epsilon where a subgradient can be taken).
+Thus,
+∇ θ f ϵ ( ρ i , t ) = 𝕀 [ ρ i , t ≤ 1 + ϵ ] ∇ θ ρ i , t = 𝕀 [ ρ i , t ≤ 1 + ϵ ] ρ i , t ∇ θ log π θ ( o i , t ∣ ⋅ ) , \nabla_{\theta}f_{\epsilon}(\rho_{i,t})=\mathbb{I}\!\left[\rho_{i,t}\leq 1+\epsilon\right]\,\nabla_{\theta}\rho_{i,t}=\mathbb{I}\!\left[\rho_{i,t}\leq 1+\epsilon\right]\,\rho_{i,t}\,\nabla_{\theta}\log\pi_{\theta}(o_{i,t}\mid\cdot),
+(14)
+where we used ( 12 ).
+Using linearity of expectation and taking gradients inside,
+∇ θ J ​ ( θ ) \displaystyle\nabla_{\theta}J(\theta)
+= 𝔼 q , { o i } [ 1 N ∑ i = 1 N A ^ i 1 | o i | ∑ t = 1 | o i | ∇ θ f ϵ ( ρ i , t ) ] − β ∇ θ D KL ( π θ ∥ π ref ) \displaystyle=\mathbb{E}_{q,\{o_{i}\}}\!\left[\frac{1}{N}\sum_{i=1}^{N}\hat{A}_{i}\,\frac{1}{|o_{i}|}\sum_{t=1}^{|o_{i}|}\nabla_{\theta}f_{\epsilon}(\rho_{i,t})\right]\;-\;\beta\,\nabla_{\theta}D_{\mathrm{KL}}(\pi_{\theta}\|\pi_{\mathrm{ref}})
+= 𝔼 q , { o i } [ 1 N ∑ i = 1 N A ^ i | o i | ∑ t = 1 | o i | 𝕀 [ ρ i , t ≤ 1 + ϵ ] ρ i , t ∇ θ log π θ ( o i , t ∣ q , o i , < t ) ] − β ∇ θ D KL ( π θ ∥ π ref ) . \displaystyle=\mathbb{E}_{q,\{o_{i}\}}\!\left[\frac{1}{N}\sum_{i=1}^{N}\frac{\hat{A}_{i}}{|o_{i}|}\sum_{t=1}^{|o_{i}|}\mathbb{I}\!\left[\rho_{i,t}\leq 1+\epsilon\right]\,\rho_{i,t}\,\nabla_{\theta}\log\pi_{\theta}(o_{i,t}\mid q,o_{i,<t})\right]\;-\;\beta\,\nabla_{\theta}D_{\mathrm{KL}}(\pi_{\theta}\|\pi_{\mathrm{ref}}).
+(15)
+Unclipped (or small-step) limit.
+If we assume ρ i , t ≤ 1 + ϵ \rho_{i,t}\leq 1+\epsilon holds for all t t , then
+𝕀 [ ρ i , t ≤ 1 + ϵ ] = 1 \mathbb{I}[\rho_{i,t}\leq 1+\epsilon]=1 ,
+f ϵ ​ ( ρ i , t ) = ρ i , t f_{\epsilon}(\rho_{i,t})=\rho_{i,t} ,
+and ( 15 ) simplifies to
+∇ θ J ( θ ) = 𝔼 q , { o i } [ 1 N ∑ i = 1 N A ^ i | o i | ∑ t = 1 | o i | ρ i , t ∇ θ log π θ ( o i , t ∣ q , o i , < t ) ] − β ∇ θ D KL ( π θ ∥ π ref ) , \nabla_{\theta}J(\theta)=\mathbb{E}_{q,\{o_{i}\}}\!\left[\frac{1}{N}\sum_{i=1}^{N}\frac{\hat{A}_{i}}{|o_{i}|}\sum_{t=1}^{|o_{i}|}\rho_{i,t}\,\nabla_{\theta}\log\pi_{\theta}(o_{i,t}\mid q,o_{i,<t})\right]\;-\;\beta\,\nabla_{\theta}D_{\mathrm{KL}}(\pi_{\theta}\|\pi_{\mathrm{ref}}),
+(16)
+When some tokens are upper-clipped, define the un-clipped index set
+U i = { t : ρ i , t ≤ 1 + ϵ } U_{i}=\{t:\rho_{i,t}\leq 1+\epsilon\} and the clipped set C i = { t : ρ i , t > 1 + ϵ } C_{i}=\{t:\rho_{i,t}>1+\epsilon\} .
+By the piecewise derivative ∂ f ϵ / ∂ ρ = 1 \partial f_{\epsilon}/\partial\rho=1 for ρ ≤ 1 + ϵ \rho\leq 1+\epsilon and 0 0 for ρ > 1 + ϵ \rho>1+\epsilon , we have
+∇ θ J ( θ ) = 𝔼 q , { o i } [ 1 N ∑ i = 1 N A ^ i | o i | ∑ t ∈ U i ρ i , t ∇ θ log π θ ( o i , t ∣ q , o i , < t ) ] − β ∇ θ D KL ( π θ ∥ π ref ) . \nabla_{\theta}J(\theta)=\mathbb{E}_{q,\{o_{i}\}}\!\left[\frac{1}{N}\sum_{i=1}^{N}\frac{\hat{A}_{i}}{|o_{i}|}\sum_{t\in U_{i}}\rho_{i,t}\,\nabla_{\theta}\log\pi_{\theta}(o_{i,t}\mid q,o_{i,<t})\right]-\beta\,\nabla_{\theta}D_{\mathrm{KL}}(\pi_{\theta}\|\pi_{\mathrm{ref}}).
+(17)
+In other words, only tokens whose ratios remain within the clip window contribute to the policy-gradient term; upper-clipped tokens contribute zero to that term, but the KL regularizer still applies.
+∎
+A.2 Proof of Theorem 4.1
+Theorem A.1 (GRPO Gradient Norm) .
+Let a training subset of n = c + m n=c+m rollouts consists of c c correct rollouts ( r i = 1 r_{i}=1 ) from a set F C F_{C} and m m incorrect rollouts ( r i = 0 r_{i}=0 ) from a set F S F_{S} .
+Consider the group relative policy objective function, under the simplifying assumptions that all rollouts have a uniform length L L , and the KL penalty β = 0 \beta=0 , based on ( 3 ), let G ⁡ ( θ ) G(\theta) be the group gradient under this, which is
+G ⁡ ( θ ) = 𝔼 q , { o i } ​ [ 1 N ​ L ​ ∑ i = 1 N ∑ t = 1 L A ^ i ​ ρ i , t ​ ∇ θ ​ log ⁡ π θ ​ ( o i , t ∣ q , o i , < t ) ] G(\theta)=\mathbb{E}_{q,\{o_{i}\}}\!\left[\frac{1}{NL}\sum_{i=1}^{N}\sum_{t=1}^{L}\hat{A}_{i}\rho_{i,t}\,\nabla_{\theta}\log\pi_{\theta}(o_{i,t}\!\mid q,o_{i,<t})\right]
+(18)
+where ρ i , t = π θ ​ ( o i , t | q , o i , < t ) π o ​ l ​ d ​ ( o i , t | q , o i , < t ) \rho_{i,t}=\frac{\pi_{\theta}(o_{i,t}|q,o_{i,<t})}{\pi_{old}(o_{i,t}|q,o_{i,<t})} . We have its squared norm,
+‖ G ^ ‖ 2 ≤ c ⋅ m ( c + m ) 2 ⋅ 𝔼 ​ ‖ v ¯ C − v ¯ F ‖ 2 , \|\hat{G}\|^{2}\leq\frac{c\cdot m}{(c+m)^{2}}\cdot\mathbb{E}\|\bar{v}_{C}-\bar{v}_{F}\|^{2},
+where c ⋅ m ( c + m ) 2 \frac{c\cdot m}{(c+m)^{2}}
+is a scalar factor dependent on the group set composition. The vectors v ¯ C = 1 c ​ ∑ j ∈ F C v j \bar{v}_{C}=\frac{1}{c}\sum_{j\in F_{C}}v_{j} and v ¯ F = 1 m ​ ∑ j ∈ F S v j \bar{v}_{F}=\frac{1}{m}\sum_{j\in F_{S}}v_{j} , with v j = 1 L ​ ∑ t = 1 L ∇ θ ​ log ​ π θ ​ ( o j , t | q , o i , < t ) v_{j}=\frac{1}{L}\sum_{t=1}^{L}\nabla_{\theta}\log\pi_{\theta}(o_{j,t}|q,o_{i,<t}) ,and ‖ v ¯ C − v ¯ F ‖ 2 \|\bar{v}_{C}-\bar{v}_{F}\|^{2} represents the squared distance between the mean policy gradient directions of correct and incorrect rollouts.
+Proof.
+By Equation 19 , the gradient of this objective with respect to the policy parameters θ \theta is,
+∇ θ J ( θ ) = 𝔼 q , { o i } [ 1 N ∑ i = 1 N A ^ i | o i | ∑ t ∈ U i ρ i , t ∇ θ log π θ ( o i , t ∣ q , o i , < t ) ] − β ∇ θ D KL ( π θ ∥ π ref ) . \nabla_{\theta}J(\theta)=\mathbb{E}_{q,\{o_{i}\}}\!\left[\frac{1}{N}\sum_{i=1}^{N}\frac{\hat{A}_{i}}{|o_{i}|}\sum_{t\in U_{i}}\rho_{i,t}\,\nabla_{\theta}\log\pi_{\theta}(o_{i,t}\mid q,o_{i,<t})\right]-\beta\,\nabla_{\theta}D_{\mathrm{KL}}(\pi_{\theta}\|\pi_{\mathrm{ref}}).
+(19)
+Under simplified assumption, we have its simplified form as
+∇ θ J ​ ( θ ) = 𝔼 q , { o i } ​ [ A ^ i N ​ L ​ ∑ i = 1 N ∑ t = 1 L ρ i , t ​ ∇ θ ​ log ⁡ π θ ​ ( o i , t ∣ q , o i , < t ) ] . \nabla_{\theta}J(\theta)=\mathbb{E}_{q,\{o_{i}\}}\!\left[\frac{\hat{A}_{i}}{NL}\sum_{i=1}^{N}\sum_{t=1}^{L}\rho_{i,t}\,\nabla_{\theta}\log\pi_{\theta}(o_{i,t}\mid q,o_{i,<t})\right].
+(20)
+Let the per-trajectory policy gradient direction vector be v i = ∇ θ ( ∑ t = 1 L log ⁡ π θ ​ ( o i , t ∣ q , o i , < t ) ) v_{i}=\nabla_{\theta}\left(\sum_{t=1}^{L}\log\pi_{\theta}(o_{i,t}\mid q,o_{i,<t})\right) . The random group gradient for a specific query is defined as:
+G ^ ​ ( θ ) = 1 N ​ ∑ i = 1 N A ^ i ​ v i \hat{G}(\theta)=\frac{1}{N}\sum_{i=1}^{N}\hat{A}_{i}v_{i}
+where A ^ i \hat{A}_{i} is the standardized advantage. For Bernoulli rewards, A ^ i = a i = ( r i − μ ) / σ \hat{A}_{i}=a_{i}=(r_{i}-\mu)/\sigma . Thus, The normalized group gradient over the selected subset is defined as:
+G ^ ​ ( θ ) = 1 N ​ ∑ j = 1 N a j ​ v j = 1 c + m ​ ( ∑ i ∈ F C a + ​ v i + ∑ i ∈ F S a − ​ v i ) . \hat{G}(\theta)=\frac{1}{N}\sum_{j=1}^{N}a_{j}v_{j}=\frac{1}{c+m}\left(\sum_{i\in F_{C}}a_{+}v_{i}+\sum_{i\in F_{S}}a_{-}v_{i}\right).
+where a j = ( r j − μ ) / σ a_{j}=(r_{j}-\mu)/\sigma is the standardized advantage, with μ = c / ( c + m ) \mu=c/(c+m) and σ 2 = μ ⁡ ( 1 − μ ) \sigma^{2}=\mu(1-\mu) . Specifically, a + = ( 1 − μ ) / σ a_{+}=(1-\mu)/\sigma for correct samples and a − = − μ / σ a_{-}=-\mu/\sigma for incorrect samples.
+We approximate the group gradient by using the average direction vectors v ¯ C = 1 c ​ ∑ j ∈ F C v j \bar{v}_{C}=\frac{1}{c}\sum_{j\in F_{C}}v_{j} and v ¯ F = 1 m ​ ∑ j ∈ F S v j \bar{v}_{F}=\frac{1}{m}\sum_{j\in F_{S}}v_{j} :
+G ^ ​ ( θ ) = 1 c + m ​ ( c ⋅ a + ⋅ v ¯ C + m ⋅ a − ⋅ v ¯ F ) \hat{G}(\theta)=\frac{1}{c+m}\left(c\cdot a_{+}\cdot\bar{v}_{C}+m\cdot a_{-}\cdot\bar{v}_{F}\right)
+Substituting the expressions for a + , a − , μ a_{+},a_{-},\mu , and 1 − μ 1-\mu :
+G ^ ​ ( θ ) \displaystyle\hat{G}(\theta)
+= 1 c + m ​ ( c ⋅ m / ( c + m ) σ ​ v ¯ C − m ⋅ c / ( c + m ) σ ​ v ¯ F ) \displaystyle=\frac{1}{c+m}\left(c\cdot\frac{m/(c+m)}{\sigma}\bar{v}_{C}-m\cdot\frac{c/(c+m)}{\sigma}\bar{v}_{F}\right)
+= c ​ m σ ​ ( c + m ) 2 ​ ( v ¯ C − v ¯ F ) \displaystyle=\frac{cm}{\sigma(c+m)^{2}}(\bar{v}_{C}-\bar{v}_{F})
+The squared norm of expecation of this approximate gradient is:
+‖ G ⁡ ( θ ) ‖ 2 = ( c ​ m σ ​ ( c + m ) 2 ) 2 ​ ‖ 𝔼 ⁡ ( v ¯ C − v ¯ F ) ‖ 2 \|G(\theta)\|^{2}=\left(\frac{cm}{\sigma(c+m)^{2}}\right)^{2}\|\mathbb{E}(\bar{v}_{C}-\bar{v}_{F})\|^{2}
+Now, we substitute the expression for the variance, σ 2 = μ ⁡ ( 1 − μ ) = c ​ m ( c + m ) 2 \sigma^{2}=\mu(1-\mu)=\frac{cm}{(c+m)^{2}} :
+‖ G ⁡ ( θ ) ‖ 2 \displaystyle\|G(\theta)\|^{2}
+= ( c ​ m ) 2 σ 2 ​ ( c + m ) 4 ​ ‖ 𝔼 ⁡ ( v ¯ C − v ¯ F ) ‖ 2 \displaystyle=\frac{(cm)^{2}}{\sigma^{2}(c+m)^{4}}\|\mathbb{E}(\bar{v}_{C}-\bar{v}_{F})\|^{2}
+= ( c ​ m ) 2 ( c ​ m ( c + m ) 2 ) ​ ( c + m ) 4 ​ ‖ 𝔼 ⁡ ( v ¯ C − v ¯ F ) ‖ 2 \displaystyle=\frac{(cm)^{2}}{\left(\frac{cm}{(c+m)^{2}}\right)(c+m)^{4}}\|\mathbb{E}(\bar{v}_{C}-\bar{v}_{F})\|^{2}
+≤ c ​ m ( c + m ) 2 ​ 𝔼 ​ ‖ v ¯ C − v ¯ F ‖ 2 , \displaystyle\leq\frac{cm}{(c+m)^{2}}\mathbb{E}\|\bar{v}_{C}-\bar{v}_{F}\|^{2},
+where the last inequality is based on Cauchy Schwarz inequality.
+∎
+A.3 Proof of Lemma 4.2
+Lemma A.2 (Maximization of the GROP Gradient Norm) .
+For the same set up in Theorem 4.1 ,
+‖ G ^ ‖ 2 ≤ z ⋅ 𝔼 ​ ‖ v ¯ C − v ¯ F ‖ 2 , \|\hat{G}\|^{2}\leq z\cdot\mathbb{E}\|\bar{v}_{C}-\bar{v}_{F}\|^{2},
+the balance term z z is maximized if and only if m = c m=c .
+Proof.
+To maximize this expression with respect to m m (for a fixed c c ), we focus on the balance term. Let f ⁡ ( m ) = c ​ m ( c + m ) 2 f(m)=\frac{cm}{(c+m)^{2}} . Taking the derivative with respect to m m and setting it to zero yields m = c m=c . Therefore, the balance term is maximized if and only if m = c m=c , which corresponds to setting k = 1 k=1 . Under the assumption that the directional term is approximately constant for small changes in the composition of F S F_{S} , this choice maximizes the overall gradient norm.
+∎
+Appendix B Experiment Supplementary
+B.1 Datasets
+Our data set spanning on mathematical reasoning and code questions. Below is the data set we used.
+Table 5 : Overview of Training and Evaluation Datasets
+Dataset
+Type
+Description
+Training Dataset (Math Reasoning)
+OpenR1-AERO
+Training
+A 40k curated math problems from the OpenR1-Math-220k corpus, used by ( Zhao et al., 2025 ) .
+Evaluation Datasets
+AIME (2024)
+Evaluation
+American Invitational Mathematics Examination; competition-level high school math.
+AMC (2023)
+Evaluation
+American Mathematics Competitions; qualifier benchmark for AIME.
+MATH-500
+Evaluation
+500-problem subset of the MATH benchmark, spanning pre-algebra to calculus ( Lightman et al., 2023 ) .
+MinervaMath
+Evaluation
+Quantitative reasoning problems across STEM fields ( Lewkowycz et al., 2022 ) .
+OlympiadBench
+Evaluation
+National and international Olympiad problems requiring advanced reasoning ( He et al., 2024 ) .
+Training Dataset (Code Generation)
+Prime-1.4K
+Training
+1.4k curated code data from the original Eurus-45k, used by ( Cui et al., 2025 ) .
+Evaluation Datasets
+APPS
+Evaluation
+( Hendrycks et al., 2021 )
+CodeContests
+Evaluation
+( Li et al., 2022 )
+TACO
+Evaluation
+( Li et al., 2023 ) .
+B.2 Baselines and Benchmarks
+B.2.1 Evaluation Metrics
+We evaluate AERO using the following comprehensive metrics:
+Primary Performance Metrics:
+•
+Pass@ n n : Traditional pass@ n n metric for problems with exactly n n samples:
+Pass@ n = 1 | P n | ∑ p ∈ P n 𝕀 [ max i = 1 n c p , i = 1 ] \text{Pass@}n=\frac{1}{|P_{n}|}\sum_{p\in P_{n}}\mathbb{I}\left[\max_{i=1}^{n}c_{p,i}=1\right]
+(21)
+where P n P_{n} is the set of problems allocated exactly n n samples, and c p , i ∈ { 0 , 1 } c_{p,i}\in\{0,1\} is correctness of the i i -th sample for problem p p ..
+•
+Avg@n: For the same set,
+Avg@ ​ n = 1 | P n | ​ ∑ p ∈ P n 1 n ​ ∑ i = 1 n c p , i . \text{Avg@}n\;=\;\frac{1}{|P_{n}|}\sum_{p\in P_{n}}\;\frac{1}{n}\sum_{i=1}^{n}c_{p,i}.
+(22)
+This measures expected performance under the learned allocation policy.
+•
+Computational Efficiency: Total FLOPs per step including rollout generation and training:
+Total FLOPs = FLOPs rollout + FLOPs training \text{Total FLOPs}=\text{FLOPs}_{\text{rollout}}+\text{FLOPs}_{\text{training}}
+(23)
+where FLOPs training = 6 × N params × N tokens \text{FLOPs}_{\text{training}}=6\times N_{\text{params}}\times N_{\text{tokens}} for forward and backward passes, and FLOPs rollout = 2 × N params × N tokens \text{FLOPs}_{\text{rollout}}=2\times N_{\text{params}}\times N_{\text{tokens}} ,
+Here, N params N_{\text{params}} denotes the total number of model parameters, and N tokens N_{\text{tokens}} represents the total number of tokens across all forward passes, including both input and generated tokens during rollout and training per step.
+B.3 Additional Results
+B.3.1 Additional Budget Baseline Results
+Table 6 presents additional budget baseline comparisons for Qwen2.5-7B-Math and Qwen2.5-1.5B-Base models. Consistent with the main results, AERO achieves the best efficiency-performance trade-off across all model configurations. For the 7B model, AERO matches the training time of the reduced-budget baseline ( N = 6 N=6 ) while achieving significantly higher accuracy (Avg@8: 0.48 vs. 0.455). The advantage is even more pronounced on the Base model, where AERO delivers a 4 × \times improvement in Avg@8 compared to the time-matched N = 5 N=5 baseline (0.234 vs. 0.056), demonstrating that adaptive rollout allocation is particularly beneficial for weaker models that produce more zero-accuracy queries.
+Table 6 : Computational budget and alternative sampling strategies.
+The best-performing method is highlighted in blue, and time-matched baselines for comparison are in light blue.
+Method
+Time (min)
+FLOPs (Total)
+Avg@8 (P-value)
+Pass@8
+Qwen2.5-1.5B-Math
+GRPO
+34.3
+3627
+0.3401 ( = 0.28 =0.28 )
+0.6090
+DAPO
+26.1
+2722
+0.3405 ( = 0.31 =0.31 )
+0.6100
+AERO
+19.1
+1811
+0.3452
+0.6121
+N/2
+23.7
+1863
+0.3211 ( = 0.004 =0.004 )
+0.5954
+0.32N
+20.1
+1133
+0.3184 ( = 0.002 =0.002 )
+0.5891
+N/4
+16.3
+906
+0.3133 ( = 0.001 =0.001 )
+0.5870
+N/8
+8.9
+453
+0.2820 ( < 1 ​ e-4 <1\text{e-4} )
+0.5791
+Base
+—
+—
+0.1617 ( < 1 ​ e-6 <1\text{e-6} )
+0.5050
+Qwen2.5-7B-Math
+AERO
+10.8
+9181
+0.4800
+0.7000
+DAPO
+15.8
+13743
+0.4750 ( = 0.29 =0.29 )
+0.6910
+GRPO
+21.5
+17334
+0.4690 ( = 0.05 =0.05 )
+0.6860
+N=6
+10.6
+6500
+0.4550 ( = 0.003 =0.003 )
+0.6790
+Base
+—
+—
+0.3110( < 1 ​ e-6 <1\text{e-6} )
+0.6220
+Qwen2.5-1.5B-Base
+AERO
+19
+1849
+0.2340
+0.4990
+DAPO
+23.8
+2289
+0.2260 ( = 0.12 =0.12 )
+0.4770
+GRPO
+36.4
+3714
+0.2120 ( = 0.006 =0.006 )
+0.4460
+N=5
+19.8
+1160
+0.0560 ( < 1 ​ e-6 <1\text{e-6} )
+0.2510
+Base
+—
+—
+0.0340( < 1 ​ e-6 <1\text{e-6} )
+0.1820
+B.3.2 Downsampling Ratio Cost Analysis
+Figure 11 : Training Time Cost vs. k k
+Figure 11 shows that the training - time cost rises steadily as the downsampling ratio k k increases: a 7% increase from k = 1 k=1 to k = 2 k=2 , 13% from k = 1 k=1 to k = 3 k=3 , and 16% from k = 1 k=1 to k = 4 k=4 .
+B.3.3 Bayesian Stabilization: Full Training Dynamics
+Table 7 and Figure 12 visualize gradient dynamics during training. While both methods show decaying gradient norms as policies converge, the Bayesian-stabilized variant maintains ∼ \sim 1.5 × \times larger gradients ( p < 0.001 p<0.001 ). This demonstrates that incorporating a Bayesian posterior for zero-accuracy and all-correct queries effectively mitigates the gradient dead-zone problem, yielding more stable and effective training dynamics.
+Figure 12 : Gradient norm: Bayesian vs GRPO.
+Table 7 : Actor gradient norm ( × 10 − 2 \times 10^{-2} ) at steps 70/80/90 for GRPO + Bayesian Prior and GRPO. The Bayesian variant shows ∼ \sim 1.5 × \times larger gradient norms.
+Grad Norm ( × 10 − 2 \times 10^{-2} )
+Method
+70
+80
+90
+p p -value
+GRPO + Bayesian Prior
+2.21
+2.22
+2.10
+—
+GRPO
+1.46
+1.38
+1.40
+< 0.001 <0.001
+B.3.4 Effect of Discarding High-Success Rollouts
+We conduct rejection sampling on high-success partial problems ( u ≥ 0.5 u\geq 0.5 ). For example, consider a query with 8 rollouts, 5 correct and 3 incorrect. Under a 1 : 1 1:1 scheme, we retain 3 correct and 3 incorrect rollouts.
+Compared to AERO (Table 8 ),
+training time is nearly identical (19.0 vs. 19.1 minutes per step) with similar rollout counts (1805 vs. 1811).
+However, accuracy drops noticeably, with Avg@8 falling from 0.3452 to 0.3321 and Pass@8 from 0.6121 to 0.6100 (Table 8 ).
+This shows that discarding correct rollouts from high-success queries degrades performance without yielding significant cost savings.
+Table 8 : Efficiency and performance with rejection sampling on queries with u ≥ 0.5 u\geq 0.5 .
+Method
+Time (min)
+FLOPs (PetaFLOP)
+Avg@8
+Pass@8
+Qwen2.5-1.5B-Math
+GRPO
+34.3
+3627
+0.3401
+0.6090
+DAPO
+26.1
+2722
+0.3405
+0.6100
+AERO
+19.1
+1811
+0.3452
+0.6121
+AERO (rejection sampling, u ≥ 0.5 u\geq 0.5 )
+19.0
+1805
+0.3321
+0.6100
+Appendix C Learning Framework
+We implement AERO
+using the verl framework ( Sheng et al., 2025 ) , a distributed RL system designed for LLMs. Our approach employs GRPO with specialized resource allocation mechanisms.
+Distributed Architecture:
+The framework utilizes a Ray-based single controller design with multiple worker groups:
+•
+ActorRollout Worker: A hybrid worker that combines policy optimization (actor) and sequence generation (rollout) using FSDP (Fully Sharded Data Parallel) for efficient memory usage.
+•
+Critic Worker: Computes value estimates V ⁡ ( s t ) V(s_{t}) using a separate value network with FSDP sharding
+•
+Reference Policy Worker: Maintains the reference policy π ref \pi_{\text{ref}} for KL regularization (optional).
+Model Architecture (Math & Code):
+We train and evaluate AERO on multiple Qwen2.5-family backbones:
+•
+Math models: Qwen2.5-Math-1.5B and Qwen2.5-Math-7B.
+•
+Code model: Qwen2.5-7B-Instruct-1M (code generalization setting).
+All models are trained with:
+•
+Precision: bfloat16 mixed precision.
+•
+Parallelization: FSDP sharding (configured per model scale).
+•
+Memory optimization: gradient checkpointing and padding removal.
+The policy outputs token probabilities:
+π θ ​ ( a t ∣ s t ) = softmax ⁡ ( f θ ​ ( s t ) ) . \pi_{\theta}(a_{t}\mid s_{t})=\mathrm{softmax}\!\left(f_{\theta}(s_{t})\right).
+(24)
+AERO:
+AERO implements adaptive resource allocation through iterative rejection sampling:
+1.
+Problem Categorization: Each problem p p is classified based on current accuracy c ¯ p \bar{c}_{p} with rebalance threshold τ = 0.5 \tau=0.5 :
+Category ​ ( p ) = { Zero if ​ c ¯ p = 0 , Partial if ​ 0 < c ¯ p < τ , Good if ​ τ ≤ c ¯ p < 1 , Perfect if ​ c ¯ p = 1 . \displaystyle\text{Category}(p)=\begin{cases}\text{Zero}&\text{if }\bar{c}_{p}=0,\\
+\text{Partial}&\text{if }0<\bar{c}_{p}<\tau,\\
+\text{Good}&\text{if }\tau\leq\bar{c}_{p}<1,\\
+\text{Perfect}&\text{if }\bar{c}_{p}=1.\end{cases}
+(25)
+2.
+Iterative Rejection Sampling:
+For up to K max = 10 K_{\text{max}}=10 iterations, we update the per-problem allocation as
+n p ( k + 1 ) = { n p ( k ) + Δ ​ n , if Category ​ ( p ) = Zero , balance ​ ( n p ( k ) ) , if Category ​ ( p ) = Partial , n p ( k ) , otherwise , \displaystyle n_{p}^{(k+1)}=\begin{cases}n_{p}^{(k)}+\Delta n,&\text{if }\text{Category}(p)=\text{Zero},\\[4.0pt]
+\text{balance}\big(n_{p}^{(k)}\big),&\text{if }\text{Category}(p)=\text{Partial},\\[4.0pt]
+n_{p}^{(k)},&\text{otherwise},\end{cases}
+(26)
+where Δ ​ n = 2 \Delta n=2 is the rejection increment, and balance ​ ( ⋅ ) \text{balance}(\cdot) adjusts the sample count to equalize correct and incorrect rollouts.
+3.
+Budget Constraints: Sample allocation respects both per-problem and total limits:
+n p \displaystyle n_{p}
+≤ n max = 32 ∀ p \displaystyle\leq n_{\text{max}}=32\quad\forall p
+(27)
+∑ p ∈ P n p \displaystyle\sum_{p\in P}n_{p}
+≤ N total = n budget × | P | \displaystyle\leq N_{\text{total}}=n_{\text{budget}}\times|P|
+(28)
+where n budget = 16 n_{\text{budget}}=16 controls the total computational budget.
+Bayesian Posterior Updates (Robust Success-Rate Estimation).
+AERO maintains a Bayesian posterior over each prompt’s success probability u u to obtain a robust estimate even in all-fail ( c = 0 c=0 ) or all-correct ( c = n c=n ) cases.
+We place a Beta prior on u u ,
+u ∼ Beta ⁡ ( α 0 , β 0 ) , u\sim\mathrm{Beta}(\alpha_{0},\beta_{0}),
+(29)
+and observe c c correct rollouts out of n n samples. By Beta–Binomial conjugacy, the posterior is
+p ⁡ ( u ∣ c , n ) ∼ Beta ⁡ ( α 0 + c , β 0 + n − c ) . p(u\mid c,n)\sim\mathrm{Beta}(\alpha_{0}+c,\ \beta_{0}+n-c).
+(30)
+We use the posterior mean as a smoothed success-rate estimate:
+u ~ = 𝔼 [ u ∣ c , n ] = c + α 0 n + α 0 + β 0 , \tilde{u}\;=\;\mathbb{E}[u\mid c,n]\;=\;\frac{c+\alpha_{0}}{n+\alpha_{0}+\beta_{0}},
+(31)
+where we set a weak prior α 0 = β 0 = 1 \alpha_{0}=\beta_{0}=1 in practice.
+This posterior smoothing ensures u ~ ∈ ( 0 , 1 ) \tilde{u}\in(0,1) even when c ∈ { 0 , n } c\in\{0,n\} .
+GRPO Training:
+The framework uses GRPO without critic networks:
+ℒ GRPO \displaystyle\mathcal{L}_{\text{GRPO}}
+= 𝔼 ( s , a ) ∼ π θ old ​ [ min ⁡ ( r t ​ ( θ ) ​ A t , clip ​ ( r t ​ ( θ ) , 1 − ϵ , 1 + ϵ ) ​ A t ) ] \displaystyle=\mathbb{E}_{(s,a)\sim\pi_{\theta_{\text{old}}}}\left[\min\left(r_{t}(\theta)A_{t},\text{clip}(r_{t}(\theta),1-\epsilon,1+\epsilon)A_{t}\right)\right]
+(32)
+where advantages A t A_{t} are computed using group-relative baselines rather than learned value functions, and r t ​ ( θ ) = π θ ​ ( a t | s t ) π θ old ​ ( a t | s t ) r_{t}(\theta)=\frac{\pi_{\theta}(a_{t}|s_{t})}{\pi_{\theta_{\text{old}}}(a_{t}|s_{t})} is the importance ratio.
+Hyperparameter Configuration.
+Table 9 summarizes the key hyperparameters used in our AERO implementation for both math and code domains.
+Unless specified, we use the same AERO allocation parameters ( n total n_{\text{total}} , n explore n_{\text{explore}} , n max n_{\max} ) across domains.
+Table 9 : AERO hyperparameters for math and code experiments.
+Parameter
+Math
+Code
+Model / System
+Backbone
+Qwen2.5-Math-(1.5B/7B)
+Qwen2.5-7B-Instruct-1M
+Precision
+bfloat16
+bfloat16
+FSDP Sharding
+(e.g., 2–4 way)
+(e.g., 4 way)
+Grad Checkpointing
+True
+True
+Optimization
+Learning rate
+5e-6
+5e-6
+Warmup ratio
+0.03
+0.03
+Grad clipping
+1.0
+1.0
+Clip ratio ϵ \epsilon
+0.2
+0.2
+Entropy coef.
+1e-3
+1e-3
+GRPO epochs
+1
+1
+AERO Sampling
+n explore n_{\text{explore}}
+8
+8
+n total n_{\text{total}}
+16
+16
+n max n_{\max}
+32
+32
+Δ ​ n \Delta n
+2
+4
+K max K_{\max}
+10
+3
+Threshold τ \tau
+0.5
+0.5
+Sequence / Data
+Train batch size
+256
+128
+Val batch size
+150
+200
+Max prompt length
+1024
+1024
+Max response length
+1536
+1536
+Sampling temperature
+1.0
+1.0
+Bayesian Smoothing
+α 0 , β 0 \alpha_{0},\beta_{0}
+1, 1
+1, 1
+Advantage std
+True
+True
+Appendix D Data Collection and Prompt Engineering
+AERO operates on structured mathematical reasoning datasets with systematic prompt engineering and automatic reward computation.
+Training data is collected on-policy during the GRPO training loop, with careful control over prompt design and reward evaluation.
+System Prompt Design.
+Math System Prompt:
+"Your task is to solve the given question step by step. You should conduct a systematic, thorough reasoning process before providing the final answer.
+This involves analyzing, summarizing, exploring, reassessing, and refining your reasoning process through multiple iterations.
+Each reasoning step should include detailed analysis, verification, and refinement of ideas.
+Include the final answer in \boxed{} for closed-form results such as multiple-choice or numerical answers."
+Code System Prompt:
+"When tackling complex reasoning tasks, you have access to the following actions.
+Use them as needed to progress through your thought process.
+[ASSESS]
+[ADVANCE]
+[VERIFY]
+[SIMPLIFY]
+[SYNTHESIZE]
+[PIVOT]
+[OUTPUT]
+You should strictly follow the format below:
+[ACTION NAME]
+Your action step 1
+Your action step 2
+…
+Next action: [NEXT ACTION NAME]
+After reasoning, output the final executable Python code enclosed in a single code block, e.g.,
+‘‘‘python
+your solution code
+‘‘‘ "
+Example Problem.
+A representative training sample is shown below:
+User Query:
+"A ship traveling along a river has covered 24 km upstream and 28 km downstream.
+For this journey, it took half an hour less than for traveling 30 km upstream and 21 km downstream…
+Determine the speed of the ship in still water and the speed of the river."
+Expected Response:
+"Let v v be the speed of the ship in still water… [step-by-step reasoning] …
+The speed of the ship in still water is 10 \boxed{10} km/h and the speed of the river is 4 \boxed{4} km/h."
+Example Problem.
+A representative training sample (code) is shown below:
+User Query:
+"Given base n n and a string k k consisting of digits in [ 0 , n − 1 ] [0,n-1] , interpret k k as the concatenation of base- n n digits written in decimal (digits ≥ 10 \geq 10 are written as their decimal numerals without separators). Find the minimum x ≤ 10 18 x\leq 10^{18} whose base- n n representation produces exactly k k ."
+Expected Response:
+[ASSESS]
+Parse k into tokens (each token is one base-n digit written in decimal,
+no leading zeros unless token=="0").
+Next action: [ADVANCE]
+[ADVANCE]
+DP over positions: dp[i]=min value for prefix k[0:i].
+Transition by choosing next token k[i:j] as digit d<n:
+dp[j]=min(dp[j], dp[i]*n + d), discard if >1e18.
+Next action: [VERIFY]
+[VERIFY]
+Enforce token rules (no leading zeros), and cap transitions at 1e18.
+Next action: [OUTPUT]
+[OUTPUT]
+‘‘‘python
+# ... final accepted solution ...
+On-Policy Data Collection.
+During training, AERO collects experience tuples ( s t , a t , r t , log ⁡ π θ ​ ( a t | s t ) ) (s_{t},a_{t},r_{t},\log\pi_{\theta}(a_{t}|s_{t})) :
+•
+s t s_{t} : Formatted prompt containing the system instruction and question
+•
+a t a_{t} : Generated reasoning trace following the structured format
+•
+r t r_{t} : r t ∈ { 0 , 1 } r_{t}\in\{0,1\} , the Binary correctness reward
+•
+log ⁡ π θ ​ ( a t | s t ) \log\pi_{\theta}(a_{t}|s_{t}) : Log-probability of the generated trajectory
+Appendix E Reward System
+E.1 Multi-Domain Reward Framework
+AERO uses verifiable, domain-specific evaluators to provide reliable rewards across heterogeneous reasoning tasks.
+Given a model response s s and ground-truth answer g g , the reward is computed by invoking the appropriate verifier for the task domain:
+r t = 𝒱 d ​ ( s , g ) , d ∈ { math , code , science/QA } , r_{t}=\mathcal{V}_{d}(s,g),\qquad d\in\{\text{math},\text{code},\text{science/QA}\},
+(33)
+where 𝒱 math \mathcal{V}_{\text{math}} checks mathematical equivalence, 𝒱 code \mathcal{V}_{\text{code}} executes unit tests for program synthesis, and 𝒱 science/QA \mathcal{V}_{\text{science/QA}} performs answer matching for structured QA (e.g., multiple-choice).
+Unless otherwise specified, we use a binary reward r t ∈ { 0 , 1 } r_{t}\in\{0,1\} indicating whether the response is verified as correct.
+E.2 Token-Level Reward Assignment
+Following standard RL practice, rewards are assigned sparsely to the final token of each response:
+reward ​ [ i , len − 1 ] = r t . \displaystyle\text{reward}[i,\text{len}-1]=r_{t}.
+(34)
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

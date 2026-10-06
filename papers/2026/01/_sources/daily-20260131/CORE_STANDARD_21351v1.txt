@@ -1,0 +1,259 @@
+Exact-v1 primary HTML necessary selection https://arxiv.org/html/2601.21351v1
+3 Mathematical Model
+We formalize the AFD serving system and define our optimization objective. Table 1 summarizes key notation.
+Table 1: Key notations.
+Symbol
+Description
+rr
+Number of Attention instances per FFN instance
+BB
+Microbatch size per Attention instance
+TT
+Total token load (sum of KV cache lengths)
+τ⁡(B,r)\tau(B;r)
+Per-step cycle time
+μP\mu_{P}
+Mean prefill length
+μD\mu_{D}
+Mean decode length
+pp
+Per-step termination probability
+3.1 AFD Bundle Architecture
+We consider an AFD bundle in a general xxA–yyF topology, where xx Attention instances feed into yy shared FFN instances. To simplify notation, we define the Attention-to-FFN ratio r:=x/yr:=x/y and express the topology equivalently as rrA–11F. rr does not need to be an integer, for example, r=3.5r=3.5 corresponds to a 77A–22F configuration. Each Attention instance maintains a microbatch of BB requests and their associated KV caches. Decoding proceeds in synchronized steps, where each step comprises four phases:
+(i)
+Attention phase: The rr Attention workers execute in parallel, each processing its microbatch of BB requests (total r​BrB requests across the bundle).
+(ii)
+A→\toF communication: All rr Attention workers transfer their intermediate activations to the shared FFN worker.
+(iii)
+FFN phase: The FFN worker processes the aggregated batch of r​BrB activations.
+(iv)
+F→\toA communication: The FFN worker returns outputs to all rr Attention workers.
+Our goal is to determine the optimal ratio r∗r^{*} that maximizes system throughput.
+3.2 Latency Models
+We adopt linear latency models grounded in first-principles hardware analysis (see Appendix B for detailed derivations) and consistent with established results in the LLM inference literature.
+Attention.
+The Attention computation reads the KV cache for all requests in the microbatch. For a microbatch of BB requests, let sbs_{b} denote the prefill length and ibi_{b} the current decode index (number of tokens generated so far) for request bb. The total token load is
+T=∑b=1B(sb+ib).T=\sum_{b=1}^{B}(s_{b}+i_{b}).
+(1)
+During decoding, the Attention computation is memory-bandwidth bound–dominated by reading the KV cache from HBM (Kwon et al., 2023; Pope et al., 2023; Agrawal et al., 2024). The latency scales linearly with the total token load TT:
+tA​(T)=αA​T+βA.t_{A}(T)=\alpha_{A}T+\beta_{A}.
+(2)
+This linear relationship follows directly from the roofline model: when an operation is memory-bound, latency equals data volume divided by effective bandwidth (Yuan et al., 2024; Lienhart, 2024). Since each token requires reading a fixed number of bytes from the KV cache, Attention latency grows linearly with sequence length (NVIDIA, 2023; Dao et al., 2022).
+FFN.
+The FFN processes batched activations and becomes compute-bound with sufficient batching (Agrawal et al., 2024; Wei et al., 2024). The latency scales linearly with batch size:
+tF​(r​B)=αF​(r​B)+βF.t_{F}(rB)=\alpha_{F}(rB)+\beta_{F}.
+(3)
+This linear scaling is well-established: FFN layers perform matrix multiplications where FLOPs scale as O⁡(batch size×hidden dimension×expert intermediate size)O(\text{batch size}\times\text{hidden dimension}\times\text{expert intermediate size}), yielding linear latency when compute-bound (Pope et al., 2023; Chen, 2023).
+Communication.
+The round-trip communication cost per Attention instance is
+tC​(B)=αC​B+βC.t_{C}(B)=\alpha_{C}B+\beta_{C}.
+(4)
+This linear model, where latency comprises a fixed startup cost βC\beta_{C} plus a bandwidth-dependent term proportional to data volume αC​B\alpha_{C}B, is the foundational model for distributed communication and has been validated extensively in GPU clusters (Narayanan et al., 2021; Li et al., 2024).
+3.3 Workload Characterization
+Request lengths.
+Each request has a prefill length PP (input prompt tokens) and decode length DD (output tokens to generate). We model:
+•
+Prefill: PP follows a bounded distribution with mean μP\mu_{P}. Our analysis requires only the mean; the specific distribution does not affect the results.
+•
+Decode: Empirical analysis of LLM serving traces reveals that decode lengths closely follow a geometric distribution (discrete-exponential) (Figure 3). We model D∼Geo⁡(p)D\sim\mathrm{Geo}(p) on {0,1,2,…}\{0,1,2,\ldots\}, where pp is the per-step termination probability, giving mean μD=(1−p)/p\mu_{D}=(1-p)/p.
+Figure 3: Empirical distributions of decode lengths from production LLM traces (Wang et al., 2023; Wang et al., 2024; Zheng et al., 2023; Zhao et al., 2024). Decode lengths exhibit a geometric (discrete-exponential) pattern.
+The geometric model for decode lengths is not merely convenient—it reflects the autoregressive nature of LLM generation, where at each step the model may produce an end-of-sequence token with roughly constant probability, independent of how many tokens have been generated. This memoryless property is key to our tractable analysis.
+Continuous batching.
+Following standard practice in LLM serving, we use continuous batching: whenever a request completes, its slot is immediately refilled with a new request from the queue. This maintains full microbatches throughout serving.
+3.4 Optimization Objective
+Cycle time.
+The per-step cycle time is determined by the slowest component:
+τ⁡(B,r)=max⁡{tA​(T),tC​(B),tF​(r​B)}.\tau(B;r)=\max\big\{t_{A}(T),\;t_{C}(B),\;t_{F}(rB)\big\}.
+(5)
+Throughput per instance.
+We maximize the average number of output tokens generated per unit time, normalized by the total number of instances (rr Attention ++ 11 FFN):
+Throughputper​-​inst​(B,r)=1r+1⋅r​Bτ⁡(B,r),\mathrm{Throughput}_{\mathrm{per\text{-}inst}}(B;r)=\frac{1}{r+1}\cdot\frac{rB}{\tau(B;r)},
+(6)
+where r​BrB is the number of tokens generated per cycle across the bundle.
+The central challenge is that TT in (5) is non-stationary: it evolves as decoding progresses and requests are replaced. The next section develops a probabilistic analysis to characterize this dynamic workload.
+4 Analysis and Optimal A/F Ratio
+We now derive the optimal Attention-to-FFN ratio r∗r^{*}. We first analyze the stochastic dynamics of Attention workload, derive a closed-form approximation for the horizon-average token load, and then characterize the optimal ratio across different operating regimes.
+4.1 Token-Load Dynamics
+By symmetry, it suffices to analyze one representative Attention instance. At decode step k∈{0,1,2,…}k\in\{0,1,2,\ldots\}, let ib​(k)i_{b}(k) be the decode index of slot b∈{1,…,B}b\in\{1,\ldots,B\}, and let sb​(k)s_{b}(k) be the prefill length of the request currently occupying that slot. Define the aggregate quantities:
+Dk:=∑b=1Bib​(k),Pk:=∑b=1Bsb​(k),Tk:=Pk+Dk.D_{k}:=\sum_{b=1}^{B}i_{b}(k),\quad P_{k}:=\sum_{b=1}^{B}s_{b}(k),\quad T_{k}:=P_{k}+D_{k}.
+Update dynamics.
+Let Xb​(k)∼Bernoulli⁡(1−p)X_{b}(k)\sim\mathrm{Bernoulli}(1-p) indicate whether slot bb continues (does not complete) at step kk. The decode index updates as:
+ib​(k+1)=Xb​(k)⋅(ib​(k)+1).i_{b}(k+1)=X_{b}(k)\cdot\big(i_{b}(k)+1\big).
+(7)
+If the request continues, its decode index increments; if it completes, the slot is refilled with a new request starting at ib​(k+1)=0i_{b}(k+1)=0.
+For prefill, the slot retains its prefill length if continuing, or draws a fresh value upon replacement:
+sb​(k+1)=Xb​(k)⋅sb​(k)+(1−Xb​(k))⋅Sb′​(k),s_{b}(k+1)=X_{b}(k)\cdot s_{b}(k)+(1-X_{b}(k))\cdot S^{\prime}_{b}(k),
+(8)
+where Sb′​(k)S^{\prime}_{b}(k) is the prefill length of the incoming request, with 𝔼⁡[Sb′​(k)]=μP\mathbb{E}[S^{\prime}_{b}(k)]=\mu_{P}.
+Key insight: memoryless dynamics.
+The geometric distribution’s memoryless property ensures that Xb​(k)X_{b}(k) is independent of ib​(k)i_{b}(k)—at any step, regardless of how long a request has been running, it terminates with probability pp. This independence yields clean Markovian dynamics that admit closed-form analysis.
+Lemma 4.1 (Expected token load).
+Under the dynamics (7)–(8):
+𝔼⁡[Pk]\displaystyle\mathbb{E}[P_{k}]
+=B​μP,∀k≥0,\displaystyle=B\mu_{P},\quad\forall k\geq 0,
+(9)
+𝔼⁡[Dk]\displaystyle\mathbb{E}[D_{k}]
+=B​1−pp​(1−(1−p)k),∀k≥0,\displaystyle=B\frac{1-p}{p}\Big(1-(1-p)^{k}\Big),\quad\forall k\geq 0,
+(10)
+and thus
+𝔼⁡[Tk]=B​μP+B​1−pp​(1−(1−p)k).\mathbb{E}[T_{k}]=B\mu_{P}+B\frac{1-p}{p}\Big(1-(1-p)^{k}\Big).
+(11)
+Proof sketch.
+For (9): Taking expectations in (8) and using 𝔼⁡[Sb′​(k)]=μP\mathbb{E}[S^{\prime}_{b}(k)]=\mu_{P} yields a recursion whose unique fixed point is 𝔼⁡[Pk]=B​μP\mathbb{E}[P_{k}]=B\mu_{P}.
+For (10): From (7), 𝔼⁡[Dk+1]=(1−p)​(𝔼⁡[Dk]+B)\mathbb{E}[D_{k+1}]=(1-p)(\mathbb{E}[D_{k}]+B). Solving this recursion with D0=0D_{0}=0 gives (10). The full proof is in Appendix A.
+∎
+Lemma 4.1 reveals that the expected prefill load is constant, while the expected decode load grows from zero and saturates at B⁡(1−p)/p=B​μDB(1-p)/p=B\mu_{D} as k→∞k\to\infty.
+4.2 Horizon-Average Token Load
+To obtain a representative Attention workload for optimization, we average 𝔼⁡[Tk]\mathbb{E}[T_{k}] over the serving horizon.
+Let NN be the total number of requests served by one Attention instance. Since each step completes an expected B​pBp requests, the expected number of steps is
+K⁡(B)=NB​p.K(B)=\frac{N}{Bp}.
+(12)
+Definition 4.2 (Horizon-average token load).
+T¯​(B,N):=1K⁡(B)​∑k=0K⁡(B)−1𝔼⁡[Tk].\bar{T}(B;N):=\frac{1}{K(B)}\sum_{k=0}^{K(B)-1}\mathbb{E}[T_{k}].
+(13)
+Proposition 4.3 (Law of Large Numbers).
+For large NN:
+T¯=limN→∞T¯​(B,N)=(μP+1−pp)​B,\bar{T}=\lim_{N\to\infty}\bar{T}(B;N)=\left(\mu_{P}+\frac{1-p}{p}\right)B,
+(14)
+The proof can be found in Appendix A, which sums the geometric series in (11) over the horizon.
+4.3 Regime Analysis
+Substituting T¯\bar{T} from (14) into the cycle time (5), we can analyze how throughput varies with rr. Let
+t¯A:=αA​T¯+βA,t¯C:=αC​B+βC,t¯F​(r):=αF​r​B+βF.\bar{t}_{A}:=\alpha_{A}\bar{T}+\beta_{A},\quad\bar{t}_{C}:=\alpha_{C}B+\beta_{C},\quad\bar{t}_{F}(r):=\alpha_{F}rB+\beta_{F}.
+Define the dominant non-FFN latency:
+M⁡(B):=max⁡{t¯A,t¯C}.M(B):=\max\{\bar{t}_{A},\;\bar{t}_{C}\}.
+The structure of τ⁡(B,r)=max⁡{t¯A,t¯C,t¯F​(r)}\tau(B;r)=\max\{\bar{t}_{A},\bar{t}_{C},\bar{t}_{F}(r)\} partitions the feasible region into three regimes.
+4.3.1 Regime I: Attention-Bottleneck
+Condition: t¯A≥t¯C\bar{t}_{A}\geq\bar{t}_{C} and t¯A≥t¯F​(r)\bar{t}_{A}\geq\bar{t}_{F}(r), i.e., r≤rAr\leq r_{A} where
+rA:=t¯A−βFαF​B.r_{A}:=\frac{\bar{t}_{A}-\beta_{F}}{\alpha_{F}B}.
+(15)
+Analysis: The cycle time is pinned at t¯A\bar{t}_{A}, independent of rr. Throughput becomes
+Throughputper​-​inst​(r)=Bt¯A⋅rr+1,\mathrm{Throughput}_{\mathrm{per\text{-}inst}}(r)=\frac{B}{\bar{t}_{A}}\cdot\frac{r}{r+1},
+which is strictly increasing in rr. The optimum within this regime is at the boundary: rI∗=rAr^{*}_{\mathrm{I}}=r_{A}.
+4.3.2 Regime II: Communication-Bottleneck
+Condition: t¯C≥t¯A\bar{t}_{C}\geq\bar{t}_{A} and t¯C≥t¯F​(r)\bar{t}_{C}\geq\bar{t}_{F}(r), i.e., r≤rCr\leq r_{C} where
+rC:=t¯C−βFαF​B.r_{C}:=\frac{\bar{t}_{C}-\beta_{F}}{\alpha_{F}B}.
+(16)
+Analysis: The cycle time is pinned at t¯C\bar{t}_{C}. By identical reasoning, throughput is increasing in rr, and the regime optimum is rII∗=rCr^{*}_{\mathrm{II}}=r_{C}.
+4.3.3 Regime III: FFN-Bottleneck
+Condition: t¯F​(r)≥M⁡(B)\bar{t}_{F}(r)\geq M(B), i.e., r≥rcritr\geq r_{\mathrm{crit}} where
+rcrit:=M⁡(B)−βFαF​B.r_{\mathrm{crit}}:=\frac{M(B)-\beta_{F}}{\alpha_{F}B}.
+(17)
+Analysis: The cycle time grows with rr, creating a trade-off: larger rr increases the numerator r​BrB in (6) but also increases τ\tau. The throughput is
+f⁡(r):=r​B(r+1)​(αF​r​B+βF).f(r):=\frac{rB}{(r+1)(\alpha_{F}rB+\beta_{F})}.
+Setting f′​(r)=0f^{\prime}(r)=0 yields the unconstrained maximizer:
+rpeak=βFαF​B.r_{\mathrm{peak}}=\sqrt{\frac{\beta_{F}}{\alpha_{F}B}}.
+(18)
+Since f⁡(r)f(r) is unimodal (increasing for r<rpeakr<r_{\mathrm{peak}}, decreasing for r>rpeakr>r_{\mathrm{peak}}), the constrained optimum in Regime III is
+rIII∗=max⁡{rcrit,rpeak}.r^{*}_{\mathrm{III}}=\max\{r_{\mathrm{crit}},\;r_{\mathrm{peak}}\}.
+4.4 Optimal Ratio
+Combining the regime analysis yields our main result.
+Theorem 4.4 (Optimal A/F Ratio).
+The globally optimal A/F ratio is
+r∗=max⁡{αA​T¯+βA−βFαF​B,t¯C−βFαF​B,βFαF​B}\boxed{r^{*}=\max\left\{\frac{\alpha_{A}\bar{T}+\beta_{A}-\beta_{F}}{\alpha_{F}B},\;\frac{\bar{t}_{C}-\beta_{F}}{\alpha_{F}B},\;\sqrt{\frac{\beta_{F}}{\alpha_{F}B}}\right\}}
+(19)
+with corresponding throughput
+Throughput∗=r∗​B(r∗+1)​(αF​r∗​B+βF).\mathrm{Throughput}^{*}=\frac{r^{*}B}{(r^{*}+1)(\alpha_{F}r^{*}B+\beta_{F})}.
+(20)
+Interpretation.
+The optimal ratio is the maximum of three terms:
+•
+rA=(αA​T¯+βA−βF)/(αF​B)r_{A}=(\alpha_{A}\bar{T}+\beta_{A}-\beta_{F})/(\alpha_{F}B): the balance point where Attention and FFN latencies are equal. Operating below this wastes FFN capacity.
+•
+rC=t¯C−βFαF​Br_{C}=\frac{\bar{t}_{C}-\beta_{F}}{\alpha_{F}B}: the communication dominates the process, but this is typically rare in practice.
+•
+rpeak=βF/(αF​B)r_{\mathrm{peak}}=\sqrt{\beta_{F}/(\alpha_{F}B)}: the throughput peak in the FFN-bottleneck regime, arising from the trade-off between batch aggregation and FFN congestion.
+Practical recipe.
+Given hardware parameters (αA,βA,αF,βF)(\alpha_{A},\beta_{A},\alpha_{F},\beta_{F}) and workload statistics (μP,μD)(\mu_{P},\mu_{D}):
+1.
+Compute T¯≈B⁡(μP+μD)\bar{T}\approx B(\mu_{P}+\mu_{D}) for large NN.
+2.
+Compute rAr_{A}, rCr_{C} and rpeakr_{\mathrm{peak}} from (15), (16), and (18), respectively.
+3.
+Set r∗=max⁡{rA,rC,rpeak}r^{*}=\max\{r_{A},r_{C},r_{\mathrm{peak}}\}.
+5 Numerical Experiments
+To validate our theoretical framework, we develop an AFD simulator and conduct
+systematic experiments comparing theoretical predictions with simulation results.
+The source code is available at https://anonymous.4open.science/r/AF-release-1C11.
+5.1 Simulator Design
+The simulator implements a discrete-event, cycle-by-cycle simulation of the rrA–11F topology,
+where each Batch object transitions through a six-state finite state machine
+(Attention →\to A2F transfer →\to Waiting →\to FFN →\to F2A transfer →\to Waiting →\to repeat).
+To maximize resource utilization, the simulator maintains two batches in flight simultaneously:
+while one batch is being processed by the shared FFN server, the Attention instances process
+the other batch in parallel, and vice versa. This interleaved execution allows computation
+on one batch to overlap with communication and processing of the other, effectively hiding
+transfer latencies.
+The simulator enforces continuous batching (Kwon et al., 2023) by maintaining a global FCFS buffer. Whenever a request completes within a batch, the vacated slot is immediately refilled from the buffer before the next decode step begins, ensuring that each Attention instance consistently processes a full microbatch of size BB.
+5.2 Experimental Setup
+Latency Parameters.
+We adopt the linear coefficients with parameters calibrated for the DeepSeek-V3 architecture deployed on Huawei Ascend 910C NPUs. The coefficients are obtained via linear regression on real execution traces collected from the deployment, which can be found in Table 2. Appendix B provides the general derivation framework, enabling practitioners to calibrate these parameters for other hardware platforms.
+Table 2: Latency parameters
+Parameter
+Symbol
+Value
+Description
+Attention slope
+αA\alpha_{A}
+0.00165
+cycles/token
+Attention intercept
+βA\beta_{A}
+50
+cycles
+FFN slope
+αF\alpha_{F}
+0.083
+cycles/request
+FFN intercept
+βF\beta_{F}
+100
+cycles
+Comm slope
+αC\alpha_{C}
+0.022
+cycles/token
+Comm intercept
+βC\beta_{C}
+20
+cycles
+Under this configuration, communication latency can be effectively hidden through pipelining. Specifically, both tAt_{A} and tFt_{F} exceed 2×tC2\times t_{C} across operating regimes. Consequently, our analysis focuses on balancing Attention and FFN workloads as the primary optimization target.
+Evaluation Metrics.
+We evaluate the following metrics to assess system performance:
+•
+Stable Throughput per Instance To avoid distortion from startup transients and tail effects (e.g., the final requests draining with partially filled batches), we report throughput computed over the first 80% of completed requests. Specifically, we measure T80%T_{80\%} as the time when ⌈0.8​N⌉\lceil 0.8N\rceil requests have completed, and compute
+Throughputper-inst(80%)=1r+1⋅∑i=1⌈0.8​N⌉DiT80%,\text{Throughput}_{\text{per-inst}}^{(80\%)}=\frac{1}{r+1}\cdot\frac{\sum_{i=1}^{\lceil 0.8N\rceil}D_{i}}{T_{80\%}},
+(21)
+where DiD_{i} is the number of output tokens generated for the ii-th request.
+This approach ensures that our measurements reflect stable performance rather than boundary artifacts.
+•
+Time Per Output Token (TPOT): The average time to generate a single output token per request, defined as
+TPOT=1N​∑i=1NTdecode(i)Di,\text{TPOT}=\frac{1}{N}\sum_{i=1}^{N}\frac{T_{\text{decode}}^{(i)}}{D_{i}},
+(22)
+where Tdecode(i)T_{\text{decode}}^{(i)} denotes the total decode time (from the first output token to completion) for the ii-th request.
+•
+Idle Ratios: To quantify resource utilization, we measure the fraction of time that each component remains idle waiting for synchronization:
+ηA=1r​∑i=1rtidle,A(i)Ttotal,ηF=tidle,FTtotal,\eta_{A}=\frac{1}{r}\sum_{i=1}^{r}\frac{t_{\text{idle},A}^{(i)}}{T_{\text{total}}},\qquad\eta_{F}=\frac{t_{\text{idle},F}}{T_{\text{total}}},
+(23)
+where tidle,A(i)t_{\text{idle},A}^{(i)} and tidle,Ft_{\text{idle},F} denote the total idle waiting time of the ii-th Attention instance and the shared FFN instance, respectively. Lower values indicate better utilization; in an ideally balanced system, both ηA,ηF→0\eta_{A},\eta_{F}\to 0.
+5.3 Results
+We first study how the Attention-to-FFN ratio rr affects throughput and resource utilization under our baseline configuration.
+Setup.
+We fix batch size B=256B=256, expected decode length μD=500\mu_{D}=500 tokens, and expected prefill length μP=100\mu_{P}=100 tokens. We sweep r∈{1,2,4,8,16,24,32}r\in\{1,2,4,8,16,24,32\} and simulate until N=10,000N=10{,}000 requests complete per Attention instance. In this setting, we can calculate the optimal theoretical A/F ratio:
+rtheory∗=max⁡{αA​T¯+βA−βFαF​B,βFαF​B}≈9.3.\displaystyle r^{*}_{\text{theory}}=\max\left\{\frac{\alpha_{A}\bar{T}+\beta_{A}-\beta_{F}}{\alpha_{F}B},\sqrt{\frac{\beta_{F}}{\alpha_{F}B}}\right\}\approx 9.3.
+Results.
+Figure 4 shows per-instance throughput as a function of rr. The theoretical optimal rtheory∗≈9.3r^{*}_{\text{theory}}\approx 9.3 closely matches the simulation-optimal ratio. Moreover, the theoretical throughput curve tracks the simulation results well across all configurations, validating our analytical framework.
+Figure 4: Per-instance throughput as a function of A/F ratio rr with B=256B=256, μD=500\mu_{D}=500, μP=100\mu_{P}=100. Throughput increases with rr until reaching the optimal point r∗≈9.3r^{*}\approx 9.3, after which FFN becomes saturated and throughput per instance decreases.
+We notice a systematic gap emerges at large rr: simulated throughput falls increasingly below the theoretical prediction, with the discrepancy reaching approximately 15% at r=32r=32. This gap arises from inherent load imbalance across Attention instances. Stochastic request dynamics create heterogeneous token loads, and since all rr instances must synchronize before the FFN phase, the system waits for the slowest instance at each step—with straggler probability growing as rr increases. Implementing load-balancing strategies (Chen et al., 2026) can mitigate this gap, though some irreducible variance from stochastic dynamics remains.
+Figure 5 presents the idle ratios for Attention (ηA\eta_{A}) and FFN (ηF\eta_{F}) instances. When rr is small, FFN completes quickly and idles while waiting for Attention outputs (ηF>60%\eta_{F}>60\% at r=1r=1). As rr increases, more Attention instances feed the shared FFN, improving its utilization. Conversely, when rr is large, FFN becomes saturated and Attention instances must wait (ηA>60%\eta_{A}>60\% at r=32r=32).
+The crossover point(At around r=8r=8) where ηA≈ηF\eta_{A}\approx\eta_{F} corresponds to the balanced configuration that maximizes throughput, confirming that our theoretical framework correctly identifies the optimal operating regime.
+Figure 5: Attention idle ratio ηA\eta_{A} (blue) and FFN idle ratio ηF\eta_{F} (orange) as functions of A/F ratio rr. The crossover point where ηA≈ηF\eta_{A}\approx\eta_{F} indicates the balanced configuration.
+5.4 Ablation Studies on Workload and Configuration Parameters
+We now investigate how the optimal A/F ratio r∗r^{*} varies with key system parameters: microbatch size BB, decode length distribution parameter pp, and prefill length distribution parameter qq.
+Ablation on Batch Size BB. Figure 6 compares throughput across three batch sizes (B∈{128,256,512}B\in\{128,256,512\}) with corresponding theoretical optimal ratios r∗={7.08,9.34,10.31}r^{*}=\{7.08,9.34,10.31\}. The results demonstrate that larger batch sizes achieve higher peak throughput: batching amortizes fixed overhead costs (e.g., kernel launch latency, communication setup) across more requests, thereby improving hardware utilization. Meanwhile, the optimal r∗r^{*} increases moderately with BB, as larger batches require more Attention instances to fully saturate the shared FFN server.
+Figure 6: Impact of batch size B on per-instance throughput and optimal A/F ratio
+Ablation on Workload Distribution. Figure 7 examines the impact of prefill and decode length distribution. The results reveal two key findings:
+(1) The optimal r∗r^{*} scales with total context length. Both longer prefills (μP\mu_{P}) and longer decode sequences (μD\mu_{D}) increase the total token load in the KV cache, placing greater computational pressure on the Attention side. Consequently, more Attention instances are required to balance the shared FFN server. For example, at fixed μP=100\mu_{P}=100, increasing μD\mu_{D} from 100100 to 500500 raises r∗r^{*} from 2.172.17 to 9.309.30; similarly, at fixed μD=500\mu_{D}=500, increasing μP\mu_{P} from 100100 to 500500 shifts r∗r^{*} from 9.309.30 to 17.2517.25.
+(2) Longer context lengths reduce peak throughput. Configurations with larger μP+μD\mu_{P}+\mu_{D} achieve lower maximum throughput at their respective optimal r∗r^{*}. This is because the per-token Attention cost grows with context length—each decode step must attend over a longer KV cache, increasing the marginal computation per output token and limiting overall efficiency.
+Figure 7: Impact of prefill, decode length μP,μD\mu_{P},\mu_{D} on per-instance throughput and optimal A/F ratio r∗r^{*}. Solid lines denote simulation results; dashed lines denote theoretical predictions. Vertical dotted lines indicate the theoretical optimal r∗r^{*} for each configuration.
+
+

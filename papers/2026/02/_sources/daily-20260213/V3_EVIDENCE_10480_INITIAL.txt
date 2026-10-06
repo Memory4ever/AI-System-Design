@@ -1,0 +1,223 @@
+Neuro-Symbolic Synergy for Interactive World Modeling (https://arxiv.org/html/2602.10480v1)
+citeturn28660view0 [wordlim: 200] Crawled: yesterday; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.10480v1","lineno":145}); Total lines: 484
+L92: We introduce a complementary training paradigm for neural and symbolic world models, where each model is trained only on data regimes not handled by the other, substantially reducing finetuning data requirements without sacrificing performance.
+L93: 
+L94:   * •
+L95: 
+L96: We empirically demonstrate that NeSyS achieves consistent performance improvements across diverse interactive environments and model scales.
+L97: ## 2 Related Works
+L98: ##### Neuro-symbolic world models.
+L99: To mitigate inherent limitations of pure neural models—such as hallucination—neuro-symbolic world models have emerged as a promising paradigm (cite61†Cano et al., 2025 ; cite62†Sehgal et al., 2023 ; cite63†Balloch et al., 2023 ). In complex, text-rich environments, existing methods often employ semantic parsers (cite53†Agravante et al., 2023 ) or VLMs (cite54†Liang et al., 2024 ) to translate environment dynamics into symbolic rules.
+L100: To better synergize neural and symbolic components, recent works have explored enhancing LLM prompts with symbolic constraints: cite64†De Giorgis et al. (2025) utilize knowledge graphs to prompt the model with structured knowledge, while WALL-E (cite56†Zhou et al., 2024 ; cite57†Zhou et al., 2025 ) prepends symbolic rules to the LLM’s context. Nevertheless, such prompt engineering approaches rely heavily on the model’s instruction-following capabilities.
+L101: To address this reliance, our work proposes to directly modify the LLM’s output probability distribution using executable Python rules.
+L102: ##### Training data selection.
+L103: Data selection is critical for optimizing the performance of fine-tuned LLMs while minimizing computational costs (cite65†Zhou et al., 2023 ). While recent literature has explored rule-based methods to identify high-quality training subsets (cite66†Li et al., 2024 ), our approach diverges in its objective.
+L104: Instead of filtering for general data quality, we aim to maximize the complementary strengths of the neural model and the symbolic components by selecting instances that are difficult for symbolic rules to solve.
+L105: ##### Constrained decoding and logit manipulation.
+L106: Constrained decoding is a well-established technique for forcing LLM outputs to adhere to specific formats (cite67†Willard & Louf, 2023 ; cite68†Beurer-Kellner et al., 2024 ). While traditional constrained decoding focuses on syntactic correctness (e.g., generating valid JSON), recent works have begun exploring semantic and logical constraints (cite69†Wu et al., 2024 ; cite70†Ma & Hu, 2025 ).
+L107: NeSyS extends this line of research by using symbolic evaluations as an energy-based shifting factor in the probability landscape.
+L108: ## 3 Problem Setting
+L109: 
+L110: We study sequential decision-making problems in a partially observable Markov decision process (POMDP). At step $t$, the agent needs to do action $a_{t}$ based on the current belief state $b_{t}$. It will then receive the next state $s_{t+1}$ and a reward $r_{t}$ from the environment. ^{1}^{1} 1 We do not distinguish observation and state here. See cite46†Appendix F for a rigorous definition.
+L111: A world model is defined as a predictive model that estimates the next state $s_{t+1}$ and reward $r_{t}$ conditioned on the current belief state $b_{t}$ and action $a_{t}$. Following prior LLM-based agent work, we approximate the belief state by a textual context constructed from the task description $g$ and a truncated history of recent observations, actions, and rewards that fit within the model’s context window.
+L112: ## 4 Method
+L113: 
+L114: Our framework consists of two world models (WM): Neural WM and Symbolic WM. Neural WM is in the form of an LLM, while Symbolic WM is a weighted set of Python rules.
+L115: ### 4.1 Framework Overview
+L116: cite71†Image: Refer to caption Figure 2: Overview of NeSyS. It consists of two world models: Neural WM and Symbolic WM. They are implemented as an LLM $\theta$ with likelihood function $P_{\theta}$ and a weighted rule set $\mathcal{F}$, respectively. Neural WM generates $K$ candidates of the next state and reward pairs if there is no provided choices. The likelihood $p_{i}$ for each candidate is computed. Symbolic WM aggregates the score $e_{ij}$ produced by each rule $f_{j}$.
+L117: We then modify the likelihood $p_{i}$ with the score by Symbolic WM, and choose the candidate with the largest modified likelihood $\tilde{p}_{i}$. For simplicity, the conditional $b_{t}$ and $a_{t}$ are omitted from the parameters of $P_{\theta}$ and $f_{j}$.
+L118: As mentioned in cite6†Section 1 , the main idea of our strategy is to directly modify the probability distribution of Neural WM, i.e., LLM, with the symbolic rules learned by Symbolic WM. Given current belief state $b_{t}$ and action $a_{t}$, we aim to select the optimal next-step state and reward. The whole inference pipeline is illustrated in cite72†Figure 2 .
+L119: On the left side, Neural WM computes the likelihood ${p_{i}}$ for candidate next state $s_{t+1}^{i}$ and reward $r_{t}^{i}$. The $K$ candidates are either provided or generated by Neural WM itself.
+L120: On the right side, Symbolic WM is implemented as a weighted set of executable Python functions $\mathcal{F}=\{(f_{j},w_{j})\}_{j=1}^{m}$, where $f_{j}\!:\!(b_{t},a_{t},s_{t+1},r_{t})\mapsto[-1,1]$. Each rule produces a score $e_{ij}\in[-1,1]$ indicating how likely the candidate $(s_{t+1}^{i},r_{t}^{i})$ is correct under this specific rule.
+L121: Rules are typically inactive and output zero, but become active only when specific conditions are met (e.g., a particular action is taken or a relevant keyword appears in the belief state). We aggregate these logical judgments into a scalar shifting factor $E_{i}$ using learned rule weights $w_{j}$:
+L122:  | $$E_{i}=\sum_{j=1}^{m}w_{j}e_{ij}$$  |
+L123: 
+L124: We combine these signals by treating the symbolic score as an energy term that modifies the neural likelihood $p_{i}$. The modified likelihood $\tilde{p}_{i}$ is computed as
+L125: 
+L126:  | $$\tilde{p}_{i}=p_{i}\exp(\gamma E_{i}),$$  |
+L127: 
+L128: where the scaling factor $\gamma$ is a global hyperparameter. In our experiments, it’s set as either $1$ (no scaling) or the largest gap of log likelihood between candidates.
+L129: We then select the candidate with the largest $\tilde{p}_{i}$. This formulation allows Symbolic WM to enforce hard constraints via a negative $E_{i}$ or boost logical consistencies via a positive $E_{i}$, effectively reshaping the probability landscape of the LLM.
+L130: ### 4.2 Training Pipeline
+L131: cite73†Image: Refer to caption Figure 3: Training pipeline of NeSyS. It consists of two phases. In Phase 1 (Initialization), we initialize Neural WM with a pretrained LLM. We evaluate it on the development set to separate common sense from task-specific knowledge, generating rules for the latter to initialize Symbolic WM. In Phase 2 (Reciprocal Refinement), we use Symbolic WM to perform rule-guided data selection on the training set by filtering out simple cases.
+L132: The remaining “hard” data are used to fine-tune Neural WM. Symbolic WM is then refined by addressing long-tailed cases where the updated Neural WM still fails. Legend is in the lower left corner. Weight optimization for Symbolic WM is omitted for clarity.
+L133: As illustrated in cite74†Figure 3 , our training pipeline consists of two phases: Initialization and Reciprocal Refinement. The pipeline iteratively filters out training / development samples that can be covered by the current framework, and improve the two WMs based on the errors of each other. This design ensures that the two WMs evolve complementarily rather than redundantly.
+L134: #### 4.2.1 Phase 1: Initialization.
+L135: 
+L136: ##### Neural WM.
+L137: 
+L138: We initialize Neural WM using a pretrained LLM. By evaluating this model on the development set, we can separate questions that can be solved with general common sense knowledge (correct samples) from those that require task-specific knowledge (incorrect samples).
+L139: ##### Symbolic WM.
+L140: 
+L141: We aim to capture task-specific deterministic dynamics that Neural WM misses via explicit rules. The rules are induced via an automated debugging loop:
+L142: 
+L143:   1. 1.
+L144: 
+L145: Error clustering: We identify mistakes made by the initialized Neural WM on a development set. These are clustered by syntactic and semantic similarity (details in cite43†Appendix C ) to identify systematic failure modes.
+L146: 
+L147:   2. 2.
+L148: Rule generation: For each cluster, we prompt gpt-5-mini to write a Python function that corrects the specific error while generalizing to similar cases.
+L149: 
+L150:   3. 3.
+L151: 
+L152: Verification & weighting: A rule is added to $\mathcal{F}$ only if the accuracy of NeSyS on the development set is improved with the update $\mathcal{F}$. We perform up to 3 reflection iterations with gpt-5-mini for failed rules. We initialize the scalar weights uniformly as $w_{j}=1$.
+L153: #### 4.2.2 Phase 2: Reciprocal Refinement.
+L154: ##### Neural WM.
+L155: 
+L156: A key insight of our work is that fine-tuning a model on behaviors already captured by explicit rules is computationally wasteful and potentially redundant. To address this, we introduce rule-guided data selection.
+L157: We evaluate the training trajectories using our initialized rule set $\mathcal{F}$. For each step, we compute $k$ to be the number of rules in $\mathcal{F}$ that reports a non-zero score on it. The steps with smaller $k$ is harder to predict by the Symbolic WM alone and vice versa. We first collect all the steps with $k=0$ and sample from the remaining steps with probability proportional to $\frac{1}{k}$ so that harder steps are sampled more frequently.
+L158: Neural WM is then fine-tuned only on the sampled examples. This focuses the Neural WM’s capacity on capturing complex, intuitive dynamics that are difficult to formalize as code. In practice, we find this strategy can discard about half of training data while maintaining or improving performance.
+L159: ##### Symbolic WM.
+L160: 
+L161: Following refinement of Neural WM, rules that were useful for a weaker Neural WM might now negatively impact the performance. We first apply a cleaning pass: any rule that has a negative impact on the performance of Neural WM is discarded. We then add more rules by repeating the clustering and synthesis process described in Phase 1 to cover any new residual errors.
+L162: Finally, in order to enhance the performance of NeSyS, we learn scalar weights $w_{j}$ via coordinate descent on the development set.
+L163: Table 1: World modeling accuracy on ScienceWorld. Bold numbers highlight the best performance for each backbone model.
+L164: World Model  | Matter  | Chem.  | Class.  | Biology  | Forces  | Meas.  | Elec.  | Avg.
+L165: Baseline Models
+L166: ---
+L167: Llama3.1-8B  | 36.1  | 29.4  | 68.8  | 42.7  | 38.9  | 52.5  | 33.9  | 44.4
+L168: Qwen3-8B  | 38.9  | 31.4  | 65.0  | 43.3  | 66.7  | 45.8  | 40.7  | 46.5
+L169: Qwen3-14B  | 45.8  | 43.1  | 68.8  | 46.5  | 64.9  | 47.5  | 49.2  | 51.2
+L170: Phi-4-mini  | 38.9  | 39.2  | 63.8  | 50.3  | 50.0  | 40.7  | 33.9  | 46.7
+L171: GPT-oss-20B  | 34.7  | 49.0  | 48.8  | 47.7  | 40.6  | 33.9  | 25.4  | 41.2
+L172: GPT-5-mini  | 45.8  | 51.0  | 72.5  | 52.2  | 72.2  | 50.8  | 50.8  | 55.4
+L173: Llama3.2-1B
+L174: ---
+L175: SFT (100% data)  | 37.5  | 64.7  | 81.3  | 68.8  | 80.6  | 54.2  | 62.7  | 64.4
+L176: Neural WM (Phase 1)  | 27.8  | 17.7  | 42.5  | 39.5  | 44.4  | 27.1  | 15.3  | 32.3
+L177: Symbolic WM (Phase 1)  | 33.3  | 39.2  | 58.8  | 56.7  | 41.7  | 30.5  | 47.5  | 46.9
+L178: NeSyS (Phase 1)  | 43.1  | 27.5  | 61.3  | 58.6  | 50.0  | 42.4  | 37.3  | 48.8
+L179: Neural WM (Phase 2)  | 37.5  | 66.7  | 71.3  | 70.1  | 77.8  | 47.5  | 55.9  | 61.7
+L180: Symbolic WM (Phase 2)  | 45.8  | 41.2  | 78.8  | 56.7  | 41.7  | 45.8  | 55.9  | 54.7
+L181: NeSyS (ours, 45% data^{2}^{2} 2 The percentage of filtered data depends on rule coverage, which varies by benchmark.)  | 47.2  | 64.7  | 88.8  | 73.3  | 91.7  | 50.9  | 59.3  | 68.3
+L182: Qwen3-4B
+L183: ---
+L184: SFT (100% data)  | 48.6  | 66.7  | 91.3  | 68.8  | 100.0  | 59.3  | 50.8  | 68.3
+L185: Neural WM (Phase 1)  | 38.9  | 35.3  | 63.8  | 43.3  | 63.9  | 42.4  | 47.5  | 46.9
+L186: Symbolic WM (Phase 1)  | 38.9  | 47.1  | 52.5  | 61.2  | 41.7  | 33.9  | 54.2  | 50.0
+L187: NeSyS (Phase 1)  | 52.8  | 43.1  | 68.8  | 62.4  | 63.9  | 55.9  | 54.2  | 58.6
+L188: Neural WM (Phase 2)  | 50.0  | 58.8  | 91.3  | 66.9  | 94.4  | 59.3  | 66.1  | 68.5
+L189: Symbolic WM (Phase 2)  | 43.1  | 58.8  | 68.8  | 62.4  | 75.0  | 44.1  | 55.9  | 58.4
+L190: NeSyS (ours, 45% data)  | 50.0  | 60.8  | 88.8  | 75.8  | 94.4  | 59.3  | 66.1  | 71.0
+L191: ## 5 Experiments
+L192: 
+L193: ### 5.1 Experiment Setup
+L194: 
+L195: ##### Environments.
+L196: 
+L197: We evaluate our methods on three diverse environments: ScienceWorld (cite58†Wang et al., 2022 ), Webshop (cite59†Yao et al., 2022 ) and Plancraft (cite60†Dagan et al., 2024 ), which respectively capture challenges in common-sense physical reasoning, real-world web interaction, and structured game dynamics. Based on these environments, we create multiple-choice questions for both developing and testing. Details can be found in cite45†Appendix E .
+L198: ##### Models and baselines.
+L199: We evaluate the performance of Llama3.2-1B instruct version (cite75†Grattafiori et al., 2024 ) and Qwen3-4B (cite76†Yang et al., 2024a ; cite77†Yang et al., 2024b ) as the backbone of the neural world model. The rules for the symbolic part are generated by gpt-5-mini (cite78†Singh et al., 2025 ).
+L200: We compare against multiple strong open-source models along with proprietary models, including Llama3.1-8B instruct version, Qwen3-8B/14B, Phi-4-mini (cite79†Abouelenin et al., 2025 ), GPT-oss-20B (cite80†Agarwal et al., 2025 ) and GPT-5-mini. We also consider the natural baseline that fine-tunes the backbone LLM on the full training data. Additionally, we provide a detailed ablation analysis covering performance of each single world model and NeSyS across both Phase 1 and Phase 2.
+L201: For fair comparison, we also learn a weight for NeSyS in Phase 1.
+L202: ### 5.2 ScienceWorld
+L203: 
+L204: To access the common-sense reasoning abilities of world models, we evaluate our methods on ScienceWorld, where the models need to navigate through a series of rooms and perform tasks aligned with a standardized elementary science curriculum. The tasks are divided into 7 different topics, including matter, chemistry, classification, biology, forces, measurement and electricity. We report accuracy on each topic along with the average accuracy in cite81†Table 1 .
+L205: Table 2: World modeling accuracy on Webshop. Bold numbers highlight the best performance for each backbone model.
+L206: World Model  | Search  | Layout  | Detail  | Decision  | Page Change  | Other  | Avg.
+L207: Baseline Models
+L208: ---
+L209: Llama3.1-8B  | 0.0  | 2.9  | 10.2  | 50.0  | 2.7  | 29.1  | 28.9
+L210: Qwen3-8B  | 0.0  | 0.0  | 14.3  | 39.5  | 2.7  | 32.6  | 25.1
+L211: Qwen3-14B  | 0.0  | 2.9  | 12.2  | 46.2  | 2.7  | 31.9  | 27.9
+L212: Phi-4-mini  | 0.0  | 0.0  | 4.1  | 50.0  | 2.7  | 11.3  | 24.9
+L213: GPT-oss-20B  | 0.0  | 0.0  | 16.3  | 50.0  | 5.4  | 0.7  | 24.0
+L214: GPT-5-mini  | 89.4  | 94.1  | 81.6  | 66.9  | 94.6  | 96.5  | 81.4
+L215: Llama3.2-1B
+L216: ---
+L217: SFT (100% data)  | 0.0  | 58.8  | 20.4  | 50.0  | 10.7  | 100.0  | 47.5
+L218: Neural WM (Phase 1)  | 0.0  | 0.0  | 0.0  | 50.0  | 0.9  | 0.7  | 22.2
+L219: Symbolic WM (Phase 1)  | 100.0  | 23.5  | 81.6  | 83.8  | 75.0  | 96.5  | 83.4
+L220: NeSyS (Phase 1)  | 98.5  | 2.9  | 73.5  | 83.8  | 71.4  | 95.0  | 80.9
+L221: Neural WM (Phase 2)  | 0.0  | 52.9  | 19.2  | 50.0  | 12.4  | 100.0  | 45.9
+L222: Symbolic WM (Phase 2)  | 100.0  | 88.2  | 98.0  | 83.8  | 100.0  | 96.5  | 91.5
+L223: NeSyS (ours, 60% data)  | 100.0  | 91.2  | 95.9  | 83.8  | 100.0  | 100.0  | 92.2
+L224: Qwen3-4B
+L225: ---
+L226: SFT (100% data)  | 0.0  | 64.7  | 18.4  | 52.5  | 11.6  | 92.2  | 47.3
+L227: Neural WM (Phase 1)  | 0.0  | 0.0  | 16.3  | 50.0  | 3.6  | 27.0  | 28.9
+L228: Symbolic WM (Phase 1)  | 100.0  | 23.5  | 73.5  | 66.6  | 33.0  | 97.2  | 68.9
+L229: NeSyS (Phase 1)  | 97.0  | 2.9  | 65.3  | 83.8  | 29.5  | 99.3  | 74.4
+L230: Neural WM (Phase 2)  | 0.0  | 64.7  | 19.2  | 51.0  | 13.5  | 93.1  | 46.1
+L231: Symbolic WM (Phase 2)  | 100.0  | 100.0  | 100.0  | 83.8  | 95.5  | 92.9  | 90.8
+L232: NeSyS (ours, 60% data)  | 100.0  | 100.0  | 95.9  | 83.8  | 100.0  | 100.0  | 92.6
+L233: ##### Our framework improves the performance of full fine-tuning with fewer training samples.
+L234: For the Llama3.2-1B-instruct backbone, NeSyS achieves an average accuracy of 68.3% using only 45% of the training data, surpassing the standard SFT baseline (64.4%) which utilizes the full dataset. Similarly, for the larger Qwen3-4B model, NeSyS (71.0%) also outperforms the SFT baseline (68.3%). This validates our hypothesis that a significant portion of interactive trajectory data is redundant once the underlying deterministic rules are extracted.
+L235: In other words, a large part of training data can be replaced by symbolic rules.
+L236: ##### Each WM benefits from the reciprocal refinement phase.
+L237: Comparing the results from Phase 1 to Phase 2 validates the effectiveness of our iterative training pipeline. For both backbone models, the performance of each single WM significantly improves during the reciprocal refinement phase. While the improvement of Neural WM is expected, the improvement of Symbolic WM is not trivial.^{3}^{3} 3 We find marginal improvement when iterating the rule set over the same error clusters again and again.
+L238: It indicates that as Neural WM improves, it exposes new, more subtle failure modes that Symbolic WM effectively captures in the second iteration. This simultaneous growth demonstrates that our reciprocal refinement prevents the modules from becoming redundant, instead pushing each to address the other’s remaining blind spots.
+L239: ##### Each part of our framework contributes to the final performance.
+L240: Even after the individual components are refined, their combination yields performance superior to either in isolation. For both backbones, the final performance of NeSyS surpasses the one of each single WM in each phase. This additive gain confirms that the two modules remain fundamentally complementary: Symbolic WM secures the deterministic constraints while Neural WM captures the semantic information, and their integration covers the intersection more robustly than any single modality.
+L241: Table 3: World modeling accuracy on Plancraft. Bold numbers highlight the best performance for each backbone model.
+L242: World Model  | Smelt  | Move-Easy  | Move-Medium  | Move-Hard  | Average
+L243: Baseline Models
+L244: ---
+L245: Llama3.1-8B  | 90.6  | 91.2  | 69.5  | 36.5  | 72.6
+L246: Qwen3-8B  | 48.4  | 90.0  | 68.4  | 33.9  | 68.0
+L247: Qwen3-14B  | 56.3  | 91.5  | 64.4  | 35.7  | 68.9
+L248: Phi-4-mini  | 75.0  | 90.5  | 72.4  | 33.0  | 70.8
+L249: GPT-oss-20B  | 62.5  | 81.3  | 70.7  | 27.4  | 63.7
+L250: GPT-5-mini  | 93.8  | 91.5  | 60.3  | 47.0  | 73.8
+L251: Llama3.2-1B
+L252: ---
+L253: SFT (100% data)  | 31.3  | 98.8  | 73.6  | 67.0  | 80.5
+L254: Neural WM (Phase 1)  | 54.7  | 88.1  | 69.5  | 28.7  | 66.4
+L255: Symbolic WM (Phase 1)  | 45.3  | 93.4  | 47.7  | 48.7  | 69.2
+L256: NeSyS (Phase 1)  | 71.9  | 83.9  | 92.5  | 69.6  | 81.0
+L257: Neural WM (Phase 2)  | 34.4  | 97.8  | 75.3  | 47.0  | 75.4
+L258: Symbolic WM (Phase 2)  | 81.3  | 89.1  | 87.9  | 62.2  | 81.2
+L259: NeSyS (ours, 35% data)  | 98.4  | 95.1  | 93.7  | 67.0  | 87.7
+L260: Qwen3-4B
+L261: ---
+L262: SFT (100% data)  | 87.5  | 99.8  | 94.8  | 70.0  | 90.1
+L263: Neural WM (Phase 1)  | 57.8  | 89.3  | 69.5  | 31.3  | 67.9
+L264: Symbolic WM (Phase 1)  | 85.9  | 79.3  | 82.2  | 66.1  | 76.9
+L265: NeSyS (Phase 1)  | 93.8  | 83.0  | 92.5  | 67.4  | 81.6
+L266: Neural WM (Phase 2)  | 87.5  | 100.0  | 93.1  | 51.7  | 85.1
+L267: Symbolic WM (Phase 2)  | 81.3  | 89.8  | 86.8  | 45.7  | 77.0
+L268: NeSyS (ours, 35% data)  | 92.2  | 97.1  | 96.6  | 65.6  | 88.4
+L269: ### 5.3 Webshop
+L270: 
+L271: We further evaluate the methods on Webshop, which is an e-commerce website environment that requires the agent to navigate webpages, search and purchase items that satisfy particular requirements. It demands a distinct combination of capabilities: the rigid adherence to web navigation protocols and the semantic understanding required to predict and interpret product details. We divide the tasks into 6 types by actions:
+L272: 
+L273:   * •
+L274: Search (search[xxx]), where the model needs to predict the possible search result.
+L275: 
+L276:   * •
+L277: 
+L278: Layout (click[item - xxx]), where the model needs to predict the layout of the item page.
+L279: 
+L280:   * •
+L281: 
+L282: Detail (click[description/features/reviews]), where the model needs to predict the detailed descriptions of the product or the detailed user feedback of the product. These buttons are standard for all product pages, and the result format is fixed.
+L283: 
+L284:   * •
+L285: Decision (click[buy now]), where the model needs to decide whether we successfully bought the product that meets the description. All the questions in this category have only 2 choices: Success and Fail.
+L286: 
+L287:   * •
+L288: 
+L289: Page Change (click[< prev/next >/back to search]), where the model needs to understand the meaning of these button and the format of the target pages.
+L290: 
+L291:   * •
+L292: 
+L293: Other, corresponding to all other actions, mainly include choosing the size/specification of the products.
+L294: cite82†Table 2 summarizes the result on this task.
+L295: ##### Symbolic rules can perform much better than LLMs on specific tasks.
+L296: The “Search” and “Decision” tasks require exact string matching and logic verification that probabilistic models struggle to approximate. As a result, aside from gpt-5-mini, all neural models get zero accuracy on “Search” and performs random guess on “Decision”. In contrast, Symbolic WM achieves 100% and >66% respectively on these tasks, even in Phase 1.
+L297: This provides the clearest evidence for the necessity of neuro-symbolic synergy: simple Python rules can solve deterministic structural constraints that completely baffle fully fine-tuned LLMs.
+L298: ##### Synergy still exists even for rule-solvable tasks.
+L299: While “Layout” is a task that could be completely resolved by rules (Phase 2 Symbolic WM achieves 100% for Qwen), it is very difficult to learn rules from the whole dataset (Phase 1 Symbolic WM only gets 23.5%). However, by learning from the mistakes of a fine-tuned Neural WM, the Phase 2 Symbolic WM improves significantly for both Llama and Qwen. In other words, Symbolic WM learns more from the data that Neural WM struggles to learn, verifying our hypothesis of neural-symbolic synergy.
+L300: ##### Our framework can benefit from a weak Neural WM.
+L301: We observe a notable anomaly in the Llama Phase 1 results where NeSyS (80.9%) slightly underperforms the standalone Symbolic WM (83.4%). This degradation stems from the extremely poor quality of the initialized Neural WM (22.2% average, with 0.0% on structural tasks), which effectively acts as a noise generator that dilutes the precise signals from the symbolic rules during probability re-ranking. However, this sensitivity is limited to extreme cases.
+L302: As long as the neural model achieves a baseline level of competency—as seen with the stronger Qwen Phase 1 model or the fine-tuned Llama Phase 2 model—the synergy is restored. For instance, once the Llama Neural WM improves to 45.9% in Phase 2, the combined framework (92.2%) successfully overtakes Symbolic WM (91.5%), demonstrating that NeSyS can leverage even a moderately capable neural model to achieve state-of-the-art results.
+L303: ### 5.4 Plancraft
+L304: Finally, we evaluate our approach on Plancraft, a Minecraft-based environment that constrains interaction to the Minecraft crafting GUI, requiring agents to use items in the backpack to craft certain items. Unlike other 2 environments, Plancraft requires world models to possess game-specific knowledge, i.e., the crafting recipes (or infer them from common sense), and strictly adhere to the rules of the game.
+L305: The tasks are categorized into Smelt, involving furnace interactions, and Move tasks, which require the model to predict the result of moving certain inventory items. We further divide the move tasks into 3 difficulty levels:
+L306:   * •
+L307: 
+L308: Easy, including simple moves with no side effect.
+L309: 
+L310:   * •
+L311: 
+

@@ -1,0 +1,424 @@
+3 Experimental Setup
+We evaluate each chunking strategy using the framework described in Section 2. Next we detail the specific implementations, datasets, and evaluation procedures employed in our experiments.
+3.1 Segmentation Methods
+We employ a consistent implementation for each segmentation method across all datasets.
+For structure-based methods, paragraph-based segmentation partitions documents at newline characters and removes empty chunks. Fixed-size segmentation divides documents into uniform chunks of 256 tokens without overlap. Sentence-based segmentation uses a regular expression-based splitter to identify sentence boundaries and groups 5 sentences per chunk by default. All structure-based methods follow the default protocol and hyperparameters established in Late Chunking [5].
+For semantic and LLM-guided methods, semantic splitting computes the cosine similarity between the embeddings of adjacent sentences and inserts segmentation boundaries where the similarity falls below a specified percentile threshold (95 by default). In our implementation, we use the LlamaIndex semantic node parser22
+2
+SemanticSplitterNodeParser with the jina-embeddings-v2-small-en model, following Late Chunking [5]. Proposition-based segmentation uses an LLM to decompose text into atomic factual units (prompting details are provided in the supplementary materials). LumberChunker analyzes longer text segments to identify optimal breakpoints for each chunk. We employ Gemini-2.5-Flash for both proposition-based segmentation and LumberChunker.33
+3
+The original LumberChunker study used Gemini-1.0-Pro. As this model has been deprecated and is no longer accessible via the API, we substituted it with Gemini-2.5-Flash. For all LLM-guided methods, the generation temperature is set to T=0.0T=0.0 to ensure deterministic and reproducible outputs.
+3.2 Embedding Models
+To assess how different segmentation methods interact with varying embedding architectures, we select four embedding models based on their retrieval effectiveness and architectural compatibility. Since contextualized chunking requires accessing token-level representations prior to pooling, our selection is constrained to high-performing models on the MTEB leaderboard that employ mean pooling. We evaluate the following models:
+•
+jina-embeddings-v2-small-en (Jina-v2) [4]: A 33M parameter model optimized for efficiency while maintaining competitive effectiveness. This model was a primary baseline in the original Late Chunking study [5].
+•
+jina-embeddings-v3 (Jina-v3) [4]: A 570M parameter model with improved multilingual capabilities, also central to the evaluation of contextualized chunking.
+•
+nomic-embed-text-v1 (Nomic) [9]: A 137M parameter model with strong effectiveness on diverse benchmarks, used in prior work to evaluate contextualized chunking.
+•
+multilingual-e5-large (E5-large) [12]: A 560M parameter multilingual model that serves as a standard baseline in retrieval research. We include this model to test whether the observed effects of different chunking strategies generalize beyond the models evaluated in prior work.
+The first three models were evaluated in the original Late Chunking work [5]; we additionally include E5-large to test generalization across model families.
+All models are evaluated under both embedding-chunking orderings. In pre-embedding chunking, documents are segmented first, and each chunk is embedded in isolation. For contextualized (post-embedding) chunking, we feed the maximum sequence of text that fits within the model’s context window (e.g., 8,192 tokens). If a document exceeds this limit, we partition it into the minimum necessary number of windows, generating token-level embeddings within the broadest possible context before pooling according to the segmentation boundaries.
+3.3 Datasets and Evaluation
+Our evaluation assesses the generalizability of chunking strategies across two retrieval tasks.
+3.3.1 In-Document Retrieval
+We evaluate in-document retrieval using the GutenQA dataset [3], which comprises 100 classic literary works and 3,000 question-answer pairs. Questions target specific details contained within a single book, evaluating the system’s ability to localize information within long documents.
+Ground truth annotations in GutenQA are provided at the paragraph level. To accommodate chunks that may span multiple paragraphs or only partially overlap with ground truth, we define a retrieved chunk as relevant if it has any overlap with a ground-truth paragraph.
+Following LumberChunker [3], we report Discounted Cumulative Gain at rank 10 (DCG@10), calculated as:
+DCG​@​10=∑i=1102reli−1log2⁡(i+1)\mathrm{DCG@10}=\sum_{i=1}^{10}\frac{2^{\mathrm{rel}_{i}}-1}{\log_{2}(i+1)}
+(1)
+where reli\mathrm{rel}_{i} represents the relevance score of the result at rank ii.
+3.3.2 In-Corpus Retrieval
+We evaluate in-corpus retrieval using six datasets from the BEIR benchmark [11]: FiQA, ArguAna, SciDocs, TREC-COVID, SciFact, and NFCorpus. This extends the four datasets tested in Late Chunking (SciFact, NFCorpus, FiQA, and TREC-COVID). These datasets were selected based on two criteria: first, they cover a diverse range of domains, from financial and scientific text to biomedical literature; second, the corpus sizes are sufficiently compact to make evaluation of computationally intensive LLM-guided methods feasible.
+For in-corpus retrieval, relevance is annotated at the document level. Following established practice [2], we derive the document-level relevance score from the highest-scoring chunk within that document. This max-pooling (MaxP) strategy is widely used for aggregating chunk-level evidence to produce document rankings.
+We report Normalized Discounted Cumulative Gain at rank 10 (nDCG@10) for all BEIR datasets; this metric normalizes DCG@10 against the ideal ranking to produce a value between 0 and 1.
+4 Results
+4.1 Reproducibility Analysis
+We begin by verifying the primary claims from the original papers within their original evaluation contexts. This step validates our implementation before extending the analysis to new retrieval tasks.
+Table 1: Reproduction of LumberChunker evaluation using text-embedding-ada-002 on GutenQA (DCG@10).
+Segmentation Method
+Original
+Reproduced
+Paragraph
+0.4772
+0.4879
+Semantic (Jina-v2)
+0.4314
+0.4457
+Proposition
+0.4565
+0.4687
+LumberChunker
+0.6099
+0.5953
+Original Claim: LumberChunker significantly outperforms structure-based methods (e.g., fixed-size, sentence-based) when locating specific information within long documents (in-document retrieval) [3].
+Our Reproduction: Results in Table 1 compare segmentation methods using the original embedding model (text-embedding-ada-002) on in-document retrieval. Absolute values show minor differences from the original paper, likely due to the non-deterministic nature of the OpenAI embedding API and our use of Gemini-2.5-Flash instead of the deprecated Gemini-1.0-Pro for LLM-guided segmentation. However, the relative ranking is preserved: LumberChunker achieves the highest effectiveness among all methods, confirming the original findings.
+Original Claim: Contextualized chunking (embedding the document before segmentation) preserves global context, thereby improving retrieval effectiveness on standard in-corpus benchmarks compared to embedding chunks independently [5].
+Our Reproduction: Results in Table 2 compare contextualized chunking (Con-C) to pre-embedding chunking (Pre-C) using Jina-v244
+4
+All other models from the original study demonstrate the same trend; results are made available in our repository due to page limits., the main model from the original study. Overall, our reproduction confirms the original findings: contextualized chunking consistently outperforms pre-embedding chunking across datasets and segmentation methods. The only exception is semantic splitting, which shows inconsistent results on FiQA and TREC-COVID. We speculate this discrepancy may stem from version differences in the LlamaIndex SemanticSplitterNodeParser implementation55
+5
+The original study did not specify the library version; we used LlamaIndex 0.13.6., as this is the only segmentation method relying on an external library with version-dependent behaviour.
+Table 2: Reproduction of Late Chunking evaluation using Jina-v2 on BEIR datasets (nDCG@10). Pre-C: pre-embedding chunking; Con-C: contextualized chunking. Bold indicates higher value between Pre-C and Con-C.
+Original
+Reproduced
+Seg. Method
+Pre-C
+Con-C
+Pre-C
+Con-C
+scifact
+Fixed-size
+0.642
+0.661
+0.638
+0.652
+Sentence
+0.647
+0.652
+0.655
+0.660
+Semantic
+0.643
+0.650
+0.645
+0.650
+nfcorpus
+Fixed-size
+0.235
+0.300
+0.226
+0.304
+Sentence
+0.283
+0.300
+0.285
+0.302
+Semantic
+0.274
+0.293
+0.275
+0.293
+fiqa
+Fixed-size
+0.333
+0.338
+0.331
+0.337
+Sentence
+0.304
+0.339
+0.310
+0.341
+Semantic
+0.303
+0.337
+0.303
+0.223
+trec-covid
+Fixed-size
+0.634
+0.647
+0.626
+0.647
+Sentence
+0.665
+0.666
+0.667
+0.665
+Semantic
+0.662
+0.663
+0.662
+0.625
+Summary. Having confirmed that both LumberChunker’s effectiveness advantage for in-document retrieval and Late Chunking’s benefits for in-corpus retrieval are reproducible, we proceed to investigate the four research questions. The following sections extend these findings by evaluating all segmentation methods across both retrieval tasks (RQ1–RQ2), examining the interaction between segmentation methods and embedding-chunking ordering (RQ3), and analyzing the confounding effect of chunk size (RQ4).
+4.2 RQ1: Impact of Segmentation Methods on In-Corpus Retrieval
+Table 3: Effectiveness under pre-embedding chunking (Pre-C) across models, segmentation methods, and datasets. DCG@10 for GutenQA (in-document); nDCG@10 for BEIR datasets (in-corpus). Bold: best per model-dataset; underline: worst. Superscripts: a = significantly different from best (p<0.05p<0.05, paired t-test); b = significantly different from worst.
+In-document
+In-corpus
+Seg. Method
+GutenQA
+fiqa
+nfcorpus
+scifact
+trec-covid
+arguana
+scidocs
+Avg
+Jina-v2
+Paragraph
+0.3892ab
+0.3347b
+0.3042b
+0.6389
+0.6518b
+0.4682ab
+0.1843b
+0.4303
+Sentence
+0.3261a
+0.3096ab
+0.2847ab
+0.6548
+0.6674b
+0.4675ab
+0.1732ab
+0.4262
+Fixed-size
+0.3479ab
+0.3313b
+0.2262a
+0.6377a
+0.6256ab
+0.4803b
+0.1807ab
+0.4136
+Semantic
+0.3859ab
+0.3030ab
+0.2746ab
+0.6445
+0.6618b
+0.4022ab
+0.1760ab
+0.4104
+LumberChunker
+0.4659b
+0.3044ab
+0.2849ab
+0.6630b
+0.6890b
+0.4472ab
+0.1735ab
+0.4270
+Proposition
+0.4214ab
+0.2105a
+0.3058b
+0.6410
+0.4375a
+0.3589a
+0.1367a
+0.3484
+Avg
+0.3894
+0.2989
+0.2801
+0.6467
+0.6222
+0.4374
+0.1707
+0.4093
+Jina-v3
+Paragraph
+0.4574ab
+0.4747b
+0.3663
+0.7247b
+0.7721b
+0.4325b
+0.1984b
+0.4948
+Sentence
+0.3877a
+0.4333ab
+0.3566
+0.7163
+0.7135ab
+0.4256ab
+0.1888ab
+0.4723
+Fixed-size
+0.4350ab
+0.4680b
+0.3552
+0.7169
+0.7385ab
+0.4362b
+0.1948ab
+0.4849
+Semantic
+0.4105ab
+0.4396ab
+0.3596
+0.7103
+0.7474b
+0.3894ab
+0.1890ab
+0.4726
+LumberChunker
+0.5640b
+0.4308ab
+0.3590
+0.7125
+0.7081ab
+0.4152ab
+0.1881ab
+0.4690
+Proposition
+0.4182ab
+0.2808a
+0.3524
+0.6924a
+0.5606a
+0.2931a
+0.1535a
+0.3888
+Avg
+0.4455
+0.4212
+0.3582
+0.7122
+0.7067
+0.3987
+0.1854
+0.4637
+Nomic
+Paragraph
+0.4892ab
+0.3802b
+0.3509
+0.7047
+0.7652b
+0.4904ab
+0.1808b
+0.4787
+Sentence
+0.4146a
+0.3620ab
+0.3502
+0.7150
+0.7472b
+0.5084b
+0.1732ab
+0.4760
+Fixed-size
+0.4643ab
+0.3855b
+0.3484
+0.7029
+0.7584b
+0.5042b
+0.1812b
+0.4801
+Semantic
+0.4274a
+0.3562ab
+0.3506
+0.7040
+0.7431b
+0.4434ab
+0.1707ab
+0.4613
+LumberChunker
+0.6016b
+0.3582ab
+0.3502
+0.7047
+0.7762b
+0.4928ab
+0.1747ab
+0.4762
+Proposition
+0.4525ab
+0.2554a
+0.3373
+0.7025
+0.5624a
+0.3660a
+0.1384a
+0.3937
+Avg
+0.4750
+0.3496
+0.3479
+0.7056
+0.7254
+0.4675
+0.1698
+0.4610
+E5-Large
+Paragraph
+0.4663ab
+0.4617b
+0.3566
+0.7129b
+0.6634
+0.5999b
+0.2038b
+0.4997
+Sentence
+0.4063ab
+0.4315ab
+0.3583
+0.6873
+0.6712b
+0.5646ab
+0.1836ab
+0.4828
+Fixed-size
+0.4363ab
+0.4509ab
+0.3479
+0.6740a
+0.6601
+0.5905ab
+0.1940ab
+0.4863
+Semantic
+0.3186a
+0.4173ab
+0.3583
+0.6892a
+0.6784b
+0.5540ab
+0.1888ab
+0.4810
+LumberChunker
+0.5495b
+0.4190ab
+0.3557
+0.6884
+0.6952b
+0.5560ab
+0.1840ab
+0.4830
+Proposition
+0.4277ab
+0.2539a
+0.3576
+0.6705a
+0.5939a
+0.3030a
+0.1509a
+0.3883
+Avg
+0.4341
+0.4057
+0.3557
+0.6871
+0.6604
+0.5280
+0.1842
+0.4702
+To establish baseline effectiveness of different segmentation methods for in-corpus retrieval, we evaluate six segmentation methods across six BEIR datasets using four embedding models under pre-embedding chunking. Table 3 presents results for this analysis.
+Finding 1: Structure-based methods outperform semantic/LLM-guided methods, with minimal differences among themselves.
+Structure-based methods (paragraph, fixed-size, sentence) achieve higher average effectiveness than LLM-guided methods (LumberChunker, proposition-based) and semantic splitting across all four embedding models. Paragraph-based segmentation achieves the highest average nDCG@10 for three models (Jina-v2: 0.4303, Jina-v3: 0.4948, E5-large: 0.4997), while fixed-size performs best with Nomic (0.4801). The effectiveness gap among structure-based methods is small, typically within 1–3%. For instance, with Jina-v3, paragraph-based (0.4948) outperforms fixed-size by only 2% (0.4849) and sentence-based by 5% (0.4723). This suggests that for in-corpus retrieval, uniform and predictable chunk boundaries matter more than identifying semantically “optimal” boundaries within each document. For practitioners using pre-embedding chunking, structure-based methods are the clear first choice, and among them, the differences are negligible.
+Finding 2: Proposition-based segmentation consistently underperforms all other segmentation methods for in-corpus retrieval.
+The Proposition-based segmentation method yields the lowest average nDCG@10 across all models (ranging from 0.3484 to 0.3937), representing 15–27% effectiveness degradation compared to paragraph-based segmentation. The degradation is particularly severe on ArguAna (0.29–0.36, representing 35–50% loss) and FiQA (0.21–0.28, representing 30–40% loss). This underperformance likely stems from proposition-based segmentation decomposing text into atomic facts, producing very small chunks that lose the topical (contextual) information of the surrounding document. This hypothesis is supported in RQ3, where we show that contextualized chunking, which incorporates surrounding document context into chunk embeddings, substantially improves the effectiveness of proposition-based segmentation.
+Finding 3: The effectiveness of LumberChunker shows high variance across datasets of different domain.
+Unlike proposition-based segmentation, LumberChunker’s effectiveness varies substantially across datasets rather than consistently underperforming. It achieves best or near-best results on TREC-COVID (Jina-v2: 0.6890, Nomic: 0.7762, E5-large: 0.6952) but ranks in the bottom half for ArguAna and FiQA. This variance likely reflects LumberChunker’s design: it identifies topic shifts within documents, which aligns well with structured scientific abstracts (TREC-COVID) but poorly with argumentative or conversational text where topic boundaries are less defined. For practitioners, LumberChunker may be worth considering if the corpus consists of well-structured documents with clear topic boundaries. However, even in the best case, LumberChunker only matches, not exceeds the effectiveness of structure-based methods, while requiring substantially more computation (Processing Speed: LumberChunker 1.11 docs/s vs. paragraph-based 1,854 docs/s 66
+6
+Throughput estimated using SciDocs documents.). Given that paragraph-based segmentation achieves comparable effectiveness at a fraction of the cost, LumberChunker offers little practical advantage for in-corpus retrieval.
+Summary. For in-corpus retrieval with pre-embedding chunking, use structure-based methods. Paragraph-based or fixed-size segmentation are recommended: they are fast, simple, and consistently effective. LLM-guided methods offer no effectiveness advantage despite their computational cost.
+4.3 RQ2: Do Segmentation Methods Generalize Across Retrieval Tasks?
+To determine whether the effectiveness rankings observed for in-corpus retrieval generalize to in-document retrieval, we evaluate all six segmentation methods on the GutenQA dataset using the same four embedding models. GutenQA represents a different retrieval challenge: locating relevant passages within individual long-form documents (books) rather than identifying relevant documents within a corpus. Table 3 presents results for in-document retrieval (GutenQA column).
+Finding 1: Segmentation method effectiveness rankings reverse between in-corpus and in-document retrieval.
+LumberChunker, which ranked 2nd–4th in in-corpus retrieval (RQ1), achieves the highest effectiveness on GutenQA across all four models (Jina-v2: 0.4659, Jina-v3: 0.5640, Nomic: 0.6016, E5-large: 0.5495), outperforming paragraph-based segmentation by 10–30%. Conversely, paragraph-based segmentation, which performed best in in-corpus retrieval, drops to 2nd–3rd position for in-document retrieval. This confirms our hypothesis from RQ1: LumberChunker’s effectiveness depends on document structure. GutenQA consists of literary books with clear narrative structure, which aligns well with LumberChunker’s topic-shift detection. In-document retrieval requires distinguishing relevant chunks from other chunks within the same document, and LumberChunker’s adaptive boundaries make relevant chunks more distinguishable than uniform paragraph boundaries.
+Finding 2: Proposition-based segmentation remains weak but improves relatively.
+Proposition-based segmentation maintains poor effectiveness in both retrieval tasks, but its relative ranking improves from consistently worst in in-corpus retrieval to competitive (ranked second to fourth) on GutenQA. This partial recovery suggests that while atomic facts still lack sufficient context, the in-document retrieval setting is less sensitive to this limitation than cross-document retrieval.
+Summary. Segmentation methods do not generalize across retrieval tasks. For in-document retrieval, use LumberChunker; for in-corpus retrieval, use structure-based methods (RQ1). This confirms that LumberChunker’s effectiveness depends on document structure: it performs well when documents have clear internal organization (GutenQA’s literary works, TREC-COVID’s scientific abstracts) but poorly on corpora consisting of less structured documents.
+4.4 RQ3: Effectiveness of Contextualized Chunking
+Table 4: Relative effectiveness change (%) from pre-embedding chunking (Pre-C) to contextualized chunking (Con-C). Green: improvement; Red: degradation. ∗: statistically significant (p<0.05p<0.05, paired t-test).
+In-d

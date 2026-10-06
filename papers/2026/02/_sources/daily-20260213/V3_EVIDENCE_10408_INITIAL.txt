@@ -1,0 +1,167 @@
+Gated Removal of Normalization in Transformers Enables Stable Training and Efficient Inference (https://arxiv.org/html/2602.10408v1)
+citeturn28529view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.10408v1","lineno":100}); Total lines: 502
+L30:   8. cite20†7 Limitations and future work L31:   9. cite21†8 Conclusion L32:   10. cite22†References L33:   11. cite23†A Proofs for Section  L34:     1. cite24†A.1 Proof of Proposition  L35:     2. cite25†A.2 Proof of Proposition  L36:     3. cite26†A.3 Proof of Proposition  L37:     4. cite27†A.4 LayerNorm scale gradient formulas L38:     5. cite28†A.5 Derivation of $c^{\star}$ in () L39:     6. cite29†A.6 EMA estimators for $c^{\star}$ L40:   12. cite30†B LayerNorm version of TaperNorm (TaperLN) L41:     1. cite31†Definition. L42:     2. cite32†Calibration of $c$ (LayerNorm case). L43:     3. cite33†EMA estimators and freezing. L44:     4. cite34†Relationship to the RMSNorm variant. L45:   13. cite35†C Training details L46:     1. cite36†Data and tokenizer. L47:     2. cite37†Model. L48:     3. cite38†Optimization. L49:     4. cite39†Run lengths. L50:     5. cite40†TaperNorm, EMA rates, and scale loss. L51:   14. cite41†D GPT-2 fine-tuning details L52:     1. cite42†Data and tokenization. L53:     2. cite43†Optimization and schedule. L54:     3. cite44†Taper schedule, EMA rates, and scale loss. L55:     4. cite45†Evaluation. L56: cite46†License: CC BY 4.0†info.arxiv.org L57: 
+L58: arXiv:2602.10408v1 [cs.LG] 11 Feb 2026
+L59: # Gated Removal of Normalization in Transformers Enables Stable Training and Efficient Inference
+L60: 
+L61: Andrei Kanavalau Affiliation: Department of Electrical Engineering, Stanford University, Stanford, USA Correspondence to: kanaval@stanford.edu    Carmen Amo Alonso Affiliation: Department of Computer Science, Stanford University, Stanford, USA    Sanjay Lall Affiliation: Department of Electrical Engineering, Stanford University, Stanford, USA
+L62: ###### Abstract
+L63: Normalization is widely viewed as essential for stabilizing Transformer training. We revisit this assumption for pre-norm Transformers and ask to what extent sample-dependent normalization is needed inside Transformer blocks. We introduce TaperNorm, a drop-in replacement for RMSNorm/LayerNorm that behaves exactly like the standard normalizer early in training and then smoothly tapers to a learned sample-independent linear/affine map.
+L64: A single global gate is held at $g{=}1$ during gate warmup, used to calibrate the scaling branch via EMAs, and then cosine-decayed to $g{=}0$, at which point per-token statistics vanish and the resulting fixed scalings can be folded into adjacent linear projections.
+L65: Our theoretical and empirical results isolate scale anchoring as the key role played by output normalization: as a (near) $0$-homogeneous map it removes radial gradients at the output, whereas without such an anchor cross-entropy encourages unbounded logit growth (“logit chasing”). We further show that a simple fixed-target auxiliary loss on the pre-logit residual-stream scale provides an explicit alternative anchor and can aid removal of the final normalization layer.
+L66: Empirically, TaperNorm matches normalized baselines under identical setups while eliminating per-token statistics and enabling these layers to be folded into adjacent linear projections at inference. On an efficiency microbenchmark, folding internal scalings yields up to $1.22\times$ higher throughput in last-token logits mode. These results take a step towards norm-free Transformers while identifying the special role output normalization plays.
+L67: ###### Keywords:
+L68: 
+L69: Machine Learning, Transformers, LLM, Normalization, efficiency
+L70: ## 1 Introduction
+L71: Normalization layers combined with residual connections were instrumental in making very deep networks trainable. Residual paths preserve gradients (cite47†He et al., 2015 ) while normalization layers such as BatchNorm, LayerNorm, and RMSNorm stabilize activations (cite48†Ioffe and Szegedy, 2015 ; cite49†Ba et al., 2016 ; cite50†Zhang and Sennrich, 2019 ). The latter two are commonly used in Transformer based language models where normalization is applied per-token.
+L72: Per-token normalization introduces a data-dependent nonlinearity into every sublayer and incurs a computational cost because per-token statistics must be computed. It can also hinder mechanistic interpretability because it obscures the meaning of the residual-stream and makes it harder to decompose models into circuits (cite51†Baroni et al., 2025 ). This work examines whether per-token normalization in every Transformer block is necessary.
+L73: The aim is to exploit normalization during the unstable early phase of training while ultimately producing a model that is norm-free and therefore simpler and cheaper at inference.
+L74: Figure 1: TaperNorm layer and gate scheduling.
+L75: To this end we introduce a gated layer, TaperNorm, that begins as ordinary RMSNorm/LayerNorm and then tapers to a simple sample-independent linear/affine map. A single global gate controls TaperNorm behavior such that early in training the model behaves exactly like a pre-norm Transformer. As the gate decays, normalizers are smoothly replaced by sample-independent scaling. At convergence, per-token statistics are no longer used in the tapered layers.
+L76: In our default setting we keep the final normalization active as an implicit scale anchor, but we also show that an explicit scale anchor, namely a fixed-target auxiliary loss on the pre-logit residual stream, can replace the final normalization. This enables all normalization layers to be tapered away.
+L77: Our mathematical analysis clarifies that what governs these behaviors is scale anchoring at the output. A final normalization layer is a convenient implicit anchor that removes radial gradients at the output, so the loss cannot be reduced by simply inflating the last hidden-state norm. Without such an anchor, cross-entropy has a radial component that drives logit magnitudes upward (“logit chasing”).
+L78: We show that the fixed-target auxiliary loss introduces a counteracting radial restoring force, explaining why it can suppress logit chasing even when the final normalization is removed.
+L79: Removing per-token normalization is useful primarily at inference time. It has the potential to reduce computational costs of inference and aid interpretability efforts. In our approach, at the end of training each TaperNorm becomes a fixed linear or affine map, so its effect can be absorbed into adjacent linear projections (e.g. attention and MLP input projections).
+L80: 
+L81: Our key contributions are:
+L82: 
+L83:   * •
+L84: A drop-in gated layer that transitions from tokenwise normalization to a fixed linear or affine rescaling, enabling removal of per-token statistics and operator fusion at inference.
+L85: 
+L86:   * •
+L87: 
+L88: Analysis of pre-norm Transformers in which the final normalization acts as an implicit scale anchor that removes radial gradients, cross-entropy induces logit chasing without an anchor, and a fixed-target scale loss provides an explicit restoring force.
+L89: 
+L90:   * •
+L91: Experiments on TinyStories and GPT-2 showing competitive loss while tapering normalization, and up to $1.22\times$ inference throughput improvements.
+L92: ## 2 Related Work
+L93: Normalization has been central to stabilizing deep networks. BatchNorm improves optimization by normalizing intermediate activations (cite48†Ioffe and Szegedy, 2015 ), while LayerNorm removes batch coupling and became standard in sequence models (cite49†Ba et al., 2016 ). In Transformers, the pre-norm configuration, where input to each sublayer is normalized, improves stability over the original post-norm, where the residual stream is normalized after every sublayer contribution (cite52†Xiong et al., 2020 ).
+L94: RMSNorm retains scale normalization but omits mean subtraction (cite50†Zhang and Sennrich, 2019 ) achieving a reduction in computational cost.
+L95: Two lines of work reduce reliance on per-token normalization. One replaces it via special initialization or residual scaling—Fixup (cite53†Zhang et al., 2019 ), ReZero (cite54†Bachlechner et al., 2020 ), LayerScale (cite55†Touvron et al., 2021 ), and DeepNorm (cite56†Wang et al., 2022 ).
+L96: The other pursues normalizer-free training by modifying activations or attention: NF-Nets for ConvNets (cite57†Brock et al., 2021 ); Deep Kernel Shaping and related transformer modifications (cite58†Martens et al., 2021 ; cite59†He et al., 2023 ); and dynamic element-wise nonlinearities such as DyT (cite60†Zhu et al., 2025 ). Our approach takes a different route: we keep standard pre-norm dynamics when optimization is most unstable, then taper internal normalizers to a fixed linear/affine rescaling learned from data.
+L97: By default we retain the final normalization as a convenient implicit scale anchor, and we additionally show that a fixed-target scale loss can serve as an explicit anchor that helps stabilize the removal process and also enables tapering away the final normalization as well when internal normalization is removed.
+L98: Closest in spirit is the work by cite51†Baroni et al. (2025) who show that LayerNorm layers in GPT-2 can be removed with a staged procedure and small accuracy loss. We complement this with a single global taper that avoids staged layer-by-layer removal schedules and directly targets convenient removal of normalization layers.
+L99: Compared to norm-replacement nonlinearities such as DyT (cite60†Zhu et al., 2025 ), our taper converges to a linear or affine map that can be absorbed into adjacent projections and removed from the inference graph. Compared to residual-scaling or initialization-based approaches (e.g. Fixup, ReZero, LayerScale, DeepNorm), our mechanism targets the normalization operator directly while keeping standard pre-norm behavior during the early phase.
+L100: Finally, relative to staged LayerNorm removal in GPT-2 (cite51†Baroni et al., 2025 ), the single global taper avoids sequential layer schedules and is applicable to model pre-training.
+L101: ## 3 Method
+L102: We study pre-norm Transformers and introduce a dynamic normalization layer TaperNorm that enables standard normalized dynamics during early training while enabling inference with fewer normalization operations. TaperNorm is a drop-in replacement for tokenwise RMSNorm or LayerNorm. It computes a convex combination of a standard normalization branch and a sample-independent scaling branch.
+L103: A single scalar gate value $g(k)\in[0,1]$ shared across layers and tokens at training step $k$ interpolates between the branches. We keep $g(k)=1$ during an initial gate warmup period so the model matches the normalized baseline while we accumulate exponential moving average (EMA) statistics. At the end of this period (the taper start), each TaperNorm layer sets a per-layer coefficient $c$ from these EMAs, copies per-feature scales from the normalization branch, and then freezes $c$.
+L104: After taper start, $g(k)$ is cosine-decayed until $g=0$. When $g=0$ the layer becomes linear/affine, so it can be folded into adjacent linear projections for inference.
+L105: ### 3.1 Pre-norm Transformer and notation
+L106: 
+L107: We consider models with embedding size $d$ and sequence length $T$. Let $H^{(0,0)}\in\mathbb{R}^{T\times d}$ denote the input to the first block. Each layer $j$ has multi-head self-attention (MHSA) and a feedforward network (MLP). Writing $\mathrm{Attn}(H;\theta_{j,\mathrm{A}})$ and $\mathrm{MLP}(H;\theta_{j,\mathrm{M}})$ for these components, the pre-norm residual updates are
+L108:  | $\displaystyle H^{(j,1)}$  | $\displaystyle=H^{(j,0)}+\mathrm{Attn}\!\left(\mathrm{Norm}^{\mathrm{A}}_{j}\!\big(H^{(j,0)}\big);\ \theta_{j,\mathrm{A}}\right),$  |
+L109:  | $\displaystyle H^{(j,2)}$  | $\displaystyle=H^{(j,1)}+\mathrm{MLP}\!\left(\mathrm{Norm}^{\mathrm{M}}_{j}\!\big(H^{(j,1)}\big);\ \theta_{j,\mathrm{M}}\right),$  |
+L110:  | $\displaystyle H^{(j+1,0)}$  | $\displaystyle=H^{(j,2)},$  |
+L111: for $j=0,...,L-1$. In the TinyStories pre-training experiments we use SwiGLU activations and RoPE positional encoding.
+L112: After the $L$ layers, we apply an output map $\mathrm{Norm}_{\mathrm{final}}$ tokenwise. In our main experiments $\mathrm{Norm}_{\mathrm{final}}$ is a standard RMSNorm or LayerNorm. In ablations that remove output normalization, we implement $\mathrm{Norm}_{\mathrm{final}}$ as a tapered layer whose gate is decayed to $g=0$ over training. We represent token vectors as row vectors, so linear maps act on the right. A learned projection $W_{\mathrm{out}}\in\mathbb{R}^{d\times V}$ yields logits
+L113:  | $$z\;=\;\mathrm{Norm}_{\mathrm{final}}\!\big(H^{(L,0)}\big)\,W_{\mathrm{out}}\in\mathbb{R}^{T\times V}.$$  |
+L114: 
+L115: For a token at position $t$, let $z_{t}\in\mathbb{R}^{V}$ denote the $t$-th row of $z$ and let $y_{t}$ be its target id. The token-level cross-entropy is $\ell(z_{t},y_{t})=-\log\mathrm{softmax}(z_{t})_{y_{t}}$.
+L116: ### 3.2 LayerNorm and RMSNorm
+L117: 
+L118: Given token row vector $h\in\mathbb{R}^{1\times d}$, LayerNorm and RMSNorm are
+L119:  | $\displaystyle\mathrm{LayerNorm}(h)$  | $\displaystyle=\frac{h-\mu_{h}}{\sigma_{h}}\,D_{\gamma}+\beta,$  |  | (1)
+L120:  | $\displaystyle\mu_{h}=\tfrac{1}{d}\sum_{i=1}^{d}h_{i},$  | $\displaystyle\sigma_{h}=\sqrt{\tfrac{1}{d}\sum_{i=1}^{d}(h_{i}-\mu_{h})^{2}+\varepsilon},$  |
+L121:  | $\displaystyle\mathrm{RMSNorm}(h)$  | $\displaystyle=\frac{h}{r(h)}\,D_{\gamma},$  |  | (2)
+L122:  | $\displaystyle r(h)$  | $\displaystyle=\sqrt{\|h\|_{2}^{2}/d+\varepsilon},$  |
+L123: with learnable per-feature scales $\gamma\in\mathbb{R}^{d}$ (and bias $\beta\in\mathbb{R}^{d}$ for LayerNorm). We write $D_{\gamma}\!\coloneqq\!\mathrm{diag}(\gamma)$ and $D_{\tilde{\gamma}}\!\coloneqq\!\mathrm{diag}(\tilde{\gamma})$ for diagonal scalings.
+L124: ### 3.3 TaperNorm
+L125: 
+L126: TaperNorm dynamically transitions from RMSNorm/LayerNorm to a fixed linear or affine map of features. For gate $g\in[0,1]$ and token $h\in\mathbb{R}^{1\times d}$,
+L127: 
+L128:  | $$\mathrm{TaperNorm}(h;g)\;=\;g\,\frac{h}{r(h)}\,D_{\gamma}\;+\;(1-g)\,c\,h\,D_{\tilde{\gamma}},$$  |  | (3)
+L129: where $r(h)$ is as in RMSNorm, $c\in\mathbb{R}$ is a per-layer scalar, and $\tilde{\gamma}\in\mathbb{R}^{d}$ is a per-feature gain that remains trainable during tapering. The LayerNorm variant, used in GPT-2 experiments, is analogous and can be found in Appendix cite30†B . For $g=1$ we recover RMSNorm/LayerNorm. For $g=0$ we obtain a sample-independent scaling that can be fused into downstream linear operations.
+L130: We keep $g(k)=1$ during an initial gate warmup period to obtain standard normalized dynamics and to accumulate EMA statistics used to set $c$. At the end of gate warmup (the taper start), each TaperNorm layer computes its own $c^{\star}$ from $\gamma$-weighted EMAs (Section cite12†3.4 ), freezes this scalar for the remainder of training, and initializes $\tilde{\gamma}\leftarrow\gamma$. Both $\gamma$ and $\tilde{\gamma}$ remain trainable and continue to update until convergence.
+L131: After taper start, $g(k)$ is cosine-decayed from $1$ to $0$. This same scalar $g(k)$ is applied to every TaperNorm layer that is being tapered. At convergence, $g=0$ and per-token statistics are no longer used.
+L132: When $g=0$, TaperNorm can be removed from the inference graph by weight folding. For the RMSNorm case, $\mathrm{TaperNorm}(h;0)=c\,h\,D_{\tilde{\gamma}}$. If the next operation is a linear map $x\mapsto xW$ (with an optional bias), then we can replace $W$ by $c\,D_{\tilde{\gamma}}W$ and remove the explicit TaperNorm. The same folding applies to attention and MLP input projections.
+L133: For the LayerNorm variant, the $g=0$ map is affine and can be folded into a following linear layer as described in Appendix cite30†B .
+L134: TaperNorm can be used to replace any subset of normalization layers. In this work we primarily taper internal normalizers, since this yields major inference savings (Section cite17†5.2 ) while remaining stable across runs. Tapering the final norm provides little additional speedup. We report All-Taper ablations to demonstrate fully norm-free inference and because this regime may be of interest beyond inference efficiency e.g. mechanistic interpretability.
+L135: ### 3.4 Calibrating the scaling branch
+L136: TaperNorm interpolates between a normalized branch and a sample-independent scaling branch. When the gate begins to decay after warmup, we would like the two branches to agree as closely as possible so the interpolation does not introduce an avoidable distribution shift. We therefore align the scaling branch to the normalization branch at the warmup boundary by setting $D_{\tilde{\gamma}}\leftarrow D_{\gamma}$ and choosing a single scalar $c$ that best matches normalized activations in least squares
+L137:  | $\displaystyle c^{\star}\in$  | $\displaystyle\arg\min_{c}\mathbb{E}\!\left[\left\|\tfrac{h}{r(h)}D_{\gamma}-c\,hD_{\gamma}\right\|_{2}^{2}\right]$  |  | (4)
+L138:  |  | $\displaystyle=\frac{\mathbb{E}\!\left[\|hD_{\gamma}\|_{2}^{2}/r(h)\right]}{\mathbb{E}\!\left[\|hD_{\gamma}\|_{2}^{2}\right]}\,.$  |
+L139: 
+L140: This matches the two inputs in energy under the layer’s current scaling, not in raw coordinates. The derivation is given in Appendix cite28†A.5 .
+L141: ### 3.5 Fixed-target scale anchoring loss
+L142: In addition to the tapering mechanism, we use an auxiliary loss that anchors the scale of the pre-logit residual stream. When a final normalization is present, this stabilizes the residual-stream scale during tapering by reducing activation variance. When the final normalization is tapered away, it also provides an explicit alternative to the final norm’s implicit scale anchoring. Let token vectors before the final normalization, rows of $H^{(L,0)}$, be denoted using $h_{t}$.
+L143: Define a per-token scale statistic
+L144:  | $$s(h)=\begin{cases}r(h)=\sqrt{\|h\|_{2}^{2}/d+\varepsilon}&\text{\small for RMSNorm},\\
+L145: \sigma_{h}=\sqrt{\tfrac{1}{d}\sum_{i=1}^{d}(h_{i}-\mu_{h})^{2}+\varepsilon}&\text{\small for LayerNorm}.\end{cases}$$  |
+L146: 
+L147: The auxiliary loss penalizes deviations of token scales from a single scalar target
+L148: 
+L149:  | $$\mathcal{L}_{\mathrm{aux}}\;=\;\lambda\,\mathbb{E}_{b,t}\!\left(s(h_{b,t})-s_{\mathrm{tgt}}\right)^{2},$$  |  | (5)
+L150: where $(b,t)$ index batch elements and sequence positions, and the expectation is taken over non-padding tokens. While $g=1$ (gate warmup) we track an EMA of the batch mean $\hat{s}_{k}=\mathbb{E}_{b,t}[s(h_{b,t})]$, and at taper start we freeze $s_{\mathrm{tgt}}$ to the bias-corrected EMA value. After taper start, $s_{\mathrm{tgt}}$ remains constant for the remainder of training.
+L151: We train with the combined objective $\mathcal{L}=\mathcal{L}_{\mathrm{CE}}+\mathcal{L}_{\mathrm{aux}}$, where $\mathcal{L}_{\mathrm{CE}}$ is token-level cross-entropy.
+L152: ## 4 Scale anchoring
+L153: 
+L154: This section isolates the mechanism that explains the training behavior we observe when removing normalization. It is control of the scale of the pre-logit representation. When per-token normalization is removed, the scale of the last hidden state becomes a degree of freedom that can drift during training. A final normalization layer anchors it implicitly. Our fixed-target scale loss anchors it explicitly.
+L155: We analyze a single token vector $h\in\mathbb{R}^{1\times d}$ that is input to the output projection. The logits are
+L156: 
+L157:  | $$z=\mathrm{Norm}_{\mathrm{final}}(h)\,W_{\mathrm{out}}\in\mathbb{R}^{1\times V}.$$  |
+L158: 
+L159: Only the radial component $\langle\nabla_{h}\ell(z,y),h\rangle$ can change $\|h\|_{2}$ to first order. The propositions below characterize this radial component for three cases that correspond to the design choices in our method. Proofs can be found in Appendix cite23†A .
+L160: ###### Proposition 4.1 (Final normalization removes radial gradient).
+L161: 
+L162: Let the final map $\mathrm{Norm}_{\mathrm{final}}$ before the output projection be $0$-homogeneous and differentiable almost everywhere. This includes the idealized RMSNorm and LayerNorm maps with $\varepsilon=0$. For logits $z=\mathrm{Norm}_{\mathrm{final}}(h)\,W_{\mathrm{out}}$ and any differentiable loss $\ell(z,y)$,
+L163: 
+L164:  | $$\langle\nabla_{h}\,\ell(z,y),\,h\rangle=0\quad(h\neq 0).$$  |
+L165: Proposition cite61†4.1 shows that normalization removes the radial gradient at the output. In this setting the loss cannot be reduced by simply rescaling the last hidden state.
+L166: ###### Proposition 4.2 (Without the final norm, cross-entropy pushes norms up).
+L167: 
+L168: If $z=h\,W_{\mathrm{out}}$ and $\ell$ is multiclass cross-entropy, then whenever the margin $m=z_{y}-\max_{j\neq y}z_{j}>0$,
+L169: 
+L170:  | $$\langle\nabla_{h}\ell(z,y),h\rangle=\langle\nabla_{z}\ell,z\rangle\leq-(1-\mathrm{softmax}(z)_{y})m<0,$$  |
+L171: 
+L172: so a small gradient step along $-\nabla_{h}\ell$ increases $\|h\|_{2}^{2}$ to first order.
+L173: Proposition cite62†4.2 captures a simple mechanism for unbounded scale growth when the final normalization is removed. Once the correct class has positive margin, scaling logits along their current direction reduces cross-entropy. We refer to this tendency toward increasing confidence through logit magnitude as logit chasing.
+L174: ###### Proposition 4.3 (Fixed-target scale loss provides a radial restoring force).
+L175: 
+L176: Let $r(h)=\sqrt{\|h\|_{2}^{2}/d+\varepsilon}$ and define the fixed-target auxiliary loss on a token vector $h$ by
+L177: 
+L178:  | $$\mathcal{L}_{\mathrm{aux}}(h)=\lambda\,(r(h)-s_{\mathrm{tgt}})^{2},\qquad\lambda>0.$$  |
+L179: 
+L180: Then
+L181:  | $\displaystyle\nabla_{h}\mathcal{L}_{\mathrm{aux}}(h)$  | $\displaystyle=\frac{2\lambda\,(r(h)-s_{\mathrm{tgt}})}{d\,r(h)}\,h,$  |
+L182:  | $\displaystyle\langle\nabla_{h}\mathcal{L}_{\mathrm{aux}}(h),\,h\rangle$  | $\displaystyle=\frac{2\lambda\,(r(h)-s_{\mathrm{tgt}})}{d\,r(h)}\,\|h\|_{2}^{2}.$  |
+L183: 
+L184: In particular, if $r(h)>s_{\mathrm{tgt}}$ then a small gradient step on $\mathcal{L}_{\mathrm{aux}}$ decreases $\|h\|_{2}$ to first order, while if $r(h)<s_{\mathrm{tgt}}$ it increases $\|h\|_{2}$.
+L185: Proposition cite63†4.3 shows that the auxiliary loss injects an explicit restoring force on scale. For LayerNorm with $s(h)=\sigma_{h}$, the same conclusion holds with the restoring direction given by the mean-centered vector. The derivative formulas are given in Appendix cite27†A.4 .
+L186: Taken together, Propositions cite61†4.1 –cite63†4.3 motivate our default training choices. Keeping the final normalization provides an implicit anchor that removes the radial component at the output. If we also taper away the final normalization, the fixed-target scale loss provides an explicit alternative that counteracts the radial push from cross-entropy.
+L187: ## 5 Experiments
+L188: 
+L189: We evaluate TaperNorm in three settings. First, we pre-train pre-norm Transformers on TinyStories to test whether TaperNorm can match training with RMSNorm. Second, we run a microbenchmark to quantify inference gains from folding the resulting sample-independent scalings into adjacent projections. Third, we fine-tune GPT-2 models using the LayerNorm variant and compare to prior LayerNorm removal results.
+L190: ### 5.1 Pre-training
+L191: We test pre-training performance on TinyStories with causal, pre-norm Transformers (depth 8, 16 attention heads at all widths, SwiGLU MLPs, RoPE) while varying width to obtain models at a range of scales from $1$ to $30$ million parameters. We repeat each configuration with 6 random seeds and report mean and standard deviation. Evaluation of models containing TaperNorm layers is performed with the gate set to 0, i.e. no per-token statistics used.
+L192: Shaded regions in the plots indicate the $2.5$–$97.5$ percentile range across seeds for each configuration.
+L193: All pre-training runs use a SentencePiece tokenizer trained on TinyStories (vocabulary size $10$k) and a context length of $512$ tokens. We use AdamW with peak learning rate $3\times 10^{-4}$, $\beta=(0.9,0.95)$, $5\%$ linear warmup, and cosine decay to zero. We use no dropout or weight decay in these experiments.
+L194: Our default TaperNorm setting includes the fixed-target scale anchoring loss from Section cite13†3.5 . For ablations we also report runs without it. Among the taper variants, Internal-Taper (+aux) with the final RMSNorm retained is the most stable and reliable across seeds, and we use it as the default configuration in our main comparisons. We additionally report All-Taper (+aux) to quantify the fully norm-free setting enabled by explicit scale anchoring.
+L195: For the 9M All-Taper (+aux) setting, one of the 6 seeds produced an unusually high validation loss, and we report statistics over the remaining 5 seeds (Table cite64†2 , ^{†}). The settings investigated are summarized in Table cite65†1 .
+L196: Table 1: Settings investigated for TinyStories pre-training. “Internal taper” and “Final taper” mean the corresponding normalization layers are replaced by TaperNorm.
+L197: Variant  | Internal taper  | Final taper  | Scale loss $\mathcal{L}_{\mathrm{aux}}$
+L198: --- | --- | --- | ---
+L199: Baseline (all RMSNorm)  | $\times$  | $\times$  | $\times$
+L200: Internal-Taper  | $\checkmark$  | $\times$  | $\times$
+L201: Internal-Taper (+aux)  | $\checkmark$  | $\times$  | $\checkmark$
+L202: Final-Taper  | $\times$  | $\checkmark$  | $\times$
+L203: All-Taper  | $\checkmark$  | $\checkmark$  | $\times$
+L204: All-Taper (+aux)  | $\checkmark$  | $\checkmark$  | $\checkmark$
+L205: For all models containing TaperNorm layers we follow this gate schedule. During learning-rate warmup the gate is fixed at $g{=}1$. At the warmup boundary we compute $c^{\star}$ from $\gamma$-weighted EMAs with bias correction, copy $\gamma\!\rightarrow\!\tilde{\gamma}$, and then freeze $c^{\star}$. Post-warmup, $g$ is cosine-decayed to $0$. All other training details between same-size models are identical.
+L206: Figure cite66†2 shows that with the final normalization kept in place, training loss trajectories for RMSNorm and TaperNorm are nearly indistinguishable. The only differences come near the end of training from the complete removal of per-token statistics in the internal layers. In Table cite64†2 we report final validation losses for the Baseline, Internal-Taper (+aux), and All-Taper (+aux).
+L207: Both taper variants track the baseline closely across scales: Internal-Taper (+aux) is within about $0.7$–$1.5\%$ relative loss, while All-Taper (+aux) is within about $0.8$–$1.8\%$.
+L208: cite67†Image: Refer to caption Figure 2: Training loss vs. step for the Baseline and Internal-Taper (+aux). Table 2: Validation loss for Baseline, Internal-Taper (+aux), and All-Taper (+aux). Percentages in parentheses show the relative gap vs. the Baseline. ^{†} For 9M All-Taper (+aux), we report mean$\pm$std over 5 seeds after excluding one outlier run with unusually high validation loss.
+L209: Model size  | Baseline  | Internal-Taper (+aux)  | All-Taper (+aux)
+L210: --- | --- | --- | ---
+L211: $1$M  | 2.1538$\pm$0.0025  | 2.1852$\pm$0.0040 (+1.46%)  | 2.1930$\pm$0.0035 (+1.82%)
+L212: $3$M  | 1.7561$\pm$0.0010  | 1.7828$\pm$0.0029 (+1.52%)  | 1.7874$\pm$0.0028 (+1.78%)
+L213: $9$M  | 1.4620$\pm$0.0022  | 1.4837$\pm$0.0016 (+1.48%)  | 1.4837$\pm$0.0023^{†} (+1.48%)
+L214: $30$M  | 1.2768$\pm$0.0018  | 1.2859$\pm$0.0010 (+0.71%)  | 1.2868$\pm$0.0041 (+0.78%)
+L215: Figures cite68†3 and cite69†4 show that training dynamics are governed by scale anchoring at the pre-logit representation. Without an explicit anchor, removing the final normalization layer drastically alters optimization geometry with cross-entropy inducing rapid growth in logit magnitudes (logit chasing), consistent with Proposition cite62†4.2 . This effect is reflected in both activation-scale statistics and gradient magnitudes across parameter groups.
+L216: When we enable the fixed-target scale loss from Section cite13†3.5 , the All-Taper model exhibits gradient magnitudes similar to those of the Internal-Taper model that keeps the final RMSNorm. This shows that explicit scale anchoring largely aligns the two.
+L217: cite70†Image: Refer to caption Figure 3: Mean logit $\ell_{2}$ norm vs. step. Without a scale anchor, models with the final norm removed (dashed) can exhibit logit chasing, consistent with Proposition cite62†4.2 . With the fixed-target scale loss, logit growth is strongly suppressed in the All-Taper setting. cite71†Image: Refer to caption Figure 4: Average gradient norms across all Transformer blocks by weight type. Without explicit scale anchoring, gradients cluster primarily by presence vs.
+L218: absence of the final normalization. With the fixed-target scale loss enabled, the gradient-magnitude gap between Internal-Taper and All-Taper largely disappears.
+L219: ### 5.2 Inference efficiency benchmarks
+L220: A key practical benefit of tapering normalization is that, once $g\rightarrow 0$, each TaperNorm becomes a sample-independent map and can be removed from the inference graph by folding its effect into adjacent linear projections. We quantify the resulting speedup on the TinyStories pre-trained Internal-Taper (aux) $d{=}512$ model ($\approx 30$M parameters). We focus on the Internal-Taper model since this setting is more robust than All-Taper while providing near identical computational savings.
+

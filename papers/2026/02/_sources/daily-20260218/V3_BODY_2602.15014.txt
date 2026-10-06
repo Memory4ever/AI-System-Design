@@ -1,0 +1,876 @@
+Scaling Beyond Masked Diffusion Language Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Background
+Notation.
+2.1 Autoregressive Models
+2.2 Discrete Diffusion Models
+2.2.1 Masked Diffusion Models
+Forward process
+Reverse process
+Training
+2.2.2 Uniform-state Diffusion Models
+Forward Process
+Reverse Process
+Training
+2.3 Esoteric Language Models
+Forward and Reverse Processes
+Training
+Block Sampler
+3 Scaling Laws
+Model Architecture
+Data, Tokenizer, and Context Length
+Compute budget
+Optimizer
+3.1 IsoFLOP Analysis
+3.2 Fitting Scaling Laws
+3.2.1 Autoregressive Models
+3.2.2 Masked Diffusion Models
+Low Variance Training Loss
+3.2.3 Uniform-state diffusion models
+3.2.4 Esoteric Language Models
+3.3 Speed-Quality Tradeoff
+Relating Throughput and Quality
+Speed-Quality Pareto Frontier
+4 Scaling to the Billion-Parameter Regime
+4.1 Likelihood-Based Benchmarks
+Results
+4.2 Maths and Reasoning Benchmark
+Results
+5 Discussion and Conclusion
+References
+A Additional Experiments
+License: arXiv.org perpetual non-exclusive license
+arXiv:2602.15014v1 [cs.LG] 16 Feb 2026
+Scaling Beyond Masked Diffusion Language Models
+Subham Sekhar Sahoo
+Affiliation: Department of Computer Science, Cornell Tech, NYC, USA
+Affiliation: NVIDIA, Santa Clara, USA
+Correspondence to: ssahoo@cs.cornell.edu
+Jean-Marie Lemercier
+Affiliation: NVIDIA, Santa Clara, USA
+Zhihan Yang
+Affiliation: Department of Computer Science, Cornell University, Ithaca, USA
+Justin Deschenaux
+Affiliation: School of Computer and Communication Sciences, EPFL Lausanne, Switzerland
+Jingyu Liu
+Affiliation: Department of Computer Science, University of Chicago, Illinois
+Affiliation: NVIDIA, Santa Clara, USA
+John Thickstun
+Affiliation: Department of Computer Science, Cornell University, Ithaca, USA
+Ante Jukić
+Affiliation: NVIDIA, Santa Clara, USA
+Abstract
+Diffusion language models are a promising alternative to autoregressive models due to their potential for faster generation. Among discrete diffusion approaches, Masked diffusion currently dominates, largely driven by strong perplexity on language modeling benchmarks. In this work, we present the first scaling law study of uniform-state and interpolating discrete diffusion methods. We also show that Masked diffusion models can be made approximately 12 % 12\% more FLOPs-efficient when trained with a simple cross-entropy objective.
+We find that perplexity is informative within a diffusion family but can be misleading across families, where models with worse likelihood scaling may be preferable due to faster and more practical sampling, as reflected by the speed-quality Pareto frontier. These results challenge the view that Masked diffusion is categorically the future of diffusion language modeling and that perplexity alone suffices for cross-algorithm comparison. Scaling all methods to 1.7B parameters, we show that uniform-state diffusion remains competitive on likelihood-based benchmarks and outperforms autoregressive and Masked diffusion models on GSM8K, despite worse validation perplexity.
+We provide the code, model checkpoints, and video tutorials
+on the project page:
+https://s-sahoo.com/scaling-dllms
+Keywords:
+Machine Learning, ICML
+† † affiliationnotice: \icmlJointSecond
+Figure 1 : Speed-Quality Pareto Frontier . We report the highest throughput achieved by compute-optimal models across a range of training FLOPs budgets. AR produces the highest-quality samples but is slow. Sample diversity (measured by entropy) remains broadly similar across algorithms, with Duo exhibiting slightly reduced diversity; see Fig. 5 . Duo dominates in the throughput ranges [ 200,400 ] ∪ [ 600 , ∞ ] [200,400]\cup[600,\infty] , while Eso-LM dominates in the range [ 400,600 ] [400,600] .
+(a) AR
+(b) MDLM w/ low var. training objective ( 8 )
+(c) Duo
+(d) Eso-LM
+Figure 2 : IsoFLOP Analysis under fixed computation budgets.
+(a) Likelihood-vs-Flops
+(b) Optimal params-vs-Flops
+Figure 3 : Scaling Laws. Diffusion models exhibit similar scaling behavior wrt AR models.
+1 Introduction
+Autoregressive (AR) language models have long dominated text generation due to strong likelihoods and a mature training and evaluation ecosystem. Recently, diffusion language models have emerged as credible alternatives for standard generation tasks ( Song et al., 2025 ; Labs et al., 2025 ) . Crucially, unlike AR models that decode strictly left-to-right, diffusion models generate by iteratively refining an entire sequence in parallel, which supports a favorable speed-quality trade-off and can enable faster decoding than token-by-token generation. In particular, discrete diffusion models, especially Masked Diffusion Language Models (MDLM)Unlike block diffusion, have closed much of the perplexity gap to AR models at small scales ( Sahoo et al., 2024a ; Shi et al., 2025 ; Ou et al., 2025 ; Arriola et al., 2025 ) . At larger scales, e.g., 8B parameters, MDLM can match strong AR baselines on challenging math and science datasets, while also mitigating AR-specific failure modes such as the reversal curse ( Nie et al., 2025b ) .
+Overall, these findings position diffusion models as a distinct and competitive paradigm, offering complementary advantages over AR models, particularly parallel decoding and flexible inference-time compute.
+Diffusion-based large language models (d-LLMs) are typically optimized and compared using likelihood-based metrics such as validation perplexity. This is natural: perplexity is the canonical language modeling metric and underpins scaling-law analyses that guide compute-optimal allocation between parameters and data ( Kaplan et al., 2020 ; Hoffmann et al., 2022 ) . For d-LLMs, however, this perspective is incomplete. Perplexity does not reflect inference-time behavior. For example, MDLMs can excel at inference-time scaling, where additional sampling compute reliably improves sample quality ( Wang et al., 2025 ) , whereas Uniform-state diffusion models (USDMs) can excel in the few-step regime ( Sahoo et al., 2025a ) . Moreover, the true perplexity of d-LLMs is generally intractable, so we rely on bounds. Because different diffusion formulations (as we discuss later) use different forward noising processes and reverse sampling procedures, they induce different likelihood bounds. Consequently, perplexities across diffusion families aren’t comparable; hence, the diffusion family with the best perplexity may not be the most effective in practice. For example, USDMs trail MDLMs in perplexity; however, recent results suggest that improved samplers can substantially change the picture: with stronger sampling procedures, Uniform-state diffusion can outperform Masked diffusion on controllable generation and even on unconditional language generation ( Sahoo et al., 2025a ; Deschenaux et al., 2026 ; Schiff et al., 2025 ) . This motivates the question:
+Is Masked diffusion the dominant paradigm for non-autoregressive discrete generation, or merely the current front-runner in a larger design space?
+In this paper, we address this question through a systematic study of three representative families of discrete diffusion LLMs: Masked diffusion, Uniform-state diffusion, and interpolating diffusion. These families capture distinct strengths. Masked diffusion is the strongest in terms of perplexity ( Sahoo et al., 2024a ) . Uniform-state diffusion, despite worse perplexity, often produces higher-quality samples in the few-step regime ( Sahoo et al., 2025a ) and is particularly well-suited to guidance ( Schiff et al., 2025 ) . Interpolating diffusion methods ( Arriola et al., 2025 ; Sahoo et al., 2025b ) support KV caching during inference, enabling substantially faster decoding than other diffusion families. We focus on the state-of-the-art representative from each category: MDLM ( Sahoo et al., 2024a ) (Masked diffusion), Duo ( Sahoo et al., 2025a ) (Uniform-state diffusion), and Eso-LM ( Sahoo et al., 2025b ) (interpolating diffusion).
+First, we perform compute-matched scaling studies for all three model families (Sec. 3 ). Prior work largely focuses on MDLMs ( Nie et al., 2025a ) , leaving other diffusion families underexplored. We fit scaling laws for compute-optimal validation loss and model size, enabling direct comparisons of scaling exponents and constant-factor gaps. Because likelihood alone does not capture inference-time advantages, we also evaluate speed-quality trade-offs by measuring throughput and sample quality across sampling steps, using Gen PPL computed under a strong AR evaluator, and constructing Pareto frontiers (Sec. 3.3 ; Fig. 1 ). Finally, we validate these trends at larger scale by training 1.7B-parameter models and evaluating them on likelihood-based benchmarks as well as a math and reasoning dataset (GSM8K; Cobbe et al. , 2021 ).
+Our results challenge the view that Masked diffusion is categorically the future of diffusion language modeling and, more broadly, that perplexity suffices for cross-algorithm comparison . While MDLM exhibits the strongest likelihood scaling, we show that (i) its scaling can be improved with a low-variance training objective, reducing the compute multiplier to within about 12% of AR while shifting compute-optimal checkpoints toward smaller models, and (ii) diffusion families with worse perplexity scaling, notably Duo and Eso-LM, can dominate the speed-quality Pareto frontier due to more efficient sampling. At 1.7B parameters, these trade-offs persist: Duo remains competitive on likelihood-based downstream evaluations despite worse validation perplexity and, notably, outperforms AR, MDLM, and Eso-LM on GSM8K after supervised fine-tuning (SFT).
+Our contributions are as follows:
+1.
+We present the first systematic IsoFLOP scaling study for a state-of-the-art Uniform-state diffusion model (Duo) and an interpolating diffusion model (Eso-LM) (Sec. 3 ).
+2.
+We show that a low-variance training objective improves MDLM’s compute efficiency and shifts compute-optimal checkpoints toward smaller models, which reduces inference cost (Sec. 3.2.2 ).
+3.
+We demonstrate that perplexity is informative within a family but can be misleading across diffusion families, where models with worse likelihood scaling may be preferable due to faster and more practical sampling, as captured by the speed-quality Pareto frontier (Sec. 3.3 ; Fig. 1 ).
+4.
+We scale all methods to 1.7B parameters and show that uniform-state diffusion remains competitive on likelihood-based benchmarks and achieves the strongest math and reasoning performance after fine-tuning, despite worse validation perplexity (Sec. 4.2 ).
+2 Background
+Notation.
+We denote scalar discrete random variables with K K categories as ‘one-hot’ column vectors and define 𝒱 ∈ { 𝐯 ∈ { 0 , 1 } K : ∑ i = 1 K 𝐯 i = 1 } \mathcal{V}\in\{\mathbf{v}\in\{0,1\}^{K}:\sum_{i=1}^{K}\mathbf{v}_{i}=1\} as the set of all such vectors.
+Define Cat ​ ( ⋅ , 𝝅 ) \text{Cat}(\cdot;\text{$\bm{\mathit{\pi}}$}) as the categorical distribution over K K classes with probabilities given by 𝝅 ∈ Δ K \text{$\bm{\mathit{\pi}}$}\in\Delta^{K} , where Δ K \Delta^{K} denotes the K K -simplex.
+We also assume that
+the K K -th category
+corresponds to a special [MASK] token and let 𝐦 ∈ 𝒱 {\mathbf{m}}\in\mathcal{V} be the one-hot vector for this mask, i.e., 𝐦 K = 1 {\mathbf{m}}_{K}=1 .
+Additionally, let 𝟏 = { 1 } K {\bm{1}}=\{1\}^{K} and
+⟨ 𝐚 , 𝐛 ⟩ \langle\mathbf{a},\mathbf{b}\rangle and 𝐚 ⊙ 𝐛 \mathbf{a}\odot\mathbf{b} respectively denote the dot and Hadamard products between two vectors 𝐚 \mathbf{a} and 𝐛 \mathbf{b} .
+We use 𝐱 ∈ 𝒱 L {\mathbf{x}}\in\mathcal{V}^{L} to represent clean data which is a length- L L sequence containing no mask tokens, and let 𝐱 ℓ {\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}} denote its ℓ th \ell^{\text{th}} element where ℓ \ell refers to the token index. Under our notation, each 𝐱 ℓ {\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}} is a one-hot vector.
+2.1 Autoregressive Models
+Pro: Best perplexity among all language models.
+Con: Sequential nature prevents parallel generation.
+Autoregressive (AR) sequence models define a left-to-right factorization of the data likelihood. For 𝐱 ∼ q data {\mathbf{x}}\sim q_{\text{data}} ,
+log ⁡ p θ ​ ( 𝐱 ) = ∑ ℓ = 1 L log ⁡ p θ ​ ( 𝐱 ℓ ∣ 𝐱 < ℓ ) , \displaystyle\log p_{\theta}({\mathbf{x}})\;=\;\sum_{\ell=1}^{L}\log p_{\theta}\big({\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}\mid{\mathbf{x}}^{<\ell}\big),
+(1)
+where p θ ​ ( 𝐱 ℓ ∣ 𝐱 < ℓ ) p_{\theta}({\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}\mid{\mathbf{x}}^{<\ell}) is typically implemented by a causal Transformer ( Vaswani et al., 2017 ) .
+Generation proceeds sequentially, so producing a length- L L sample requires L L model evaluations (often counted as NFEs).
+A practical advantage of causal attention is that one can cache key/value states from earlier positions, substantially reducing the cost of decoding during inference (KV caching).
+2.2 Discrete Diffusion Models
+Discrete diffusion models construct a forward noising process that gradually transforms clean data into a simple prior, and then learn a reverse generative process to map the samples from the prior distribution to data
+( Sohl-Dickstein et al., 2015 ; Austin et al., 2021 ; Campbell et al., 2022 ) .
+Let 𝐱 ∼ q data {\mathbf{x}}\sim q_{\text{data}} be a clean sequence and let 𝐳 t ∈ 𝒱 L {\mathbf{z}}_{t}\in\mathcal{V}^{L} denote the latent sequence at time t ∈ [ 0 , 1 ] t\in[0,1] produced by the forward process.
+Typically, the corruption is independent across positions, i.e.,
+q t ​ ( 𝐳 t ∣ 𝐱 ) = ∏ ℓ = 1 L q t ​ ( 𝐳 t ℓ ∣ 𝐱 ℓ ) . q_{t}({\mathbf{z}}_{t}\mid{\mathbf{x}})\;=\;\prod_{\ell=1}^{L}q_{t}({\mathbf{z}}_{t}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}\mid{\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}).
+(2)
+In this work we consider “interpolating” forward kernels, where each token marginal is a linear combination of the clean one-hot token and a fixed categorical prior:
+𝐳 t ℓ ∼ q t ( ⋅ ∣ 𝐱 ℓ ; α t ) = Cat ( ⋅ ; α t 𝐱 ℓ + ( 1 − α t ) 𝝅 ) . {\mathbf{z}}_{t}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}\sim q_{t}(\cdot\mid{\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}};\alpha_{t})\;=\;\text{Cat}(\cdot;\,\alpha_{t}{\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}+(1-\alpha_{t})\text{$\bm{\mathit{\pi}}$}).
+(3)
+Here α t ∈ [ 0 , 1 ] \alpha_{t}\in[0,1] decreases monotonically with t t and serves as the noise schedule:
+α 0 ≈ 1 \alpha_{0}\approx 1 corresponds to (nearly) clean data, and α 1 ≈ 0 \alpha_{1}\approx 0 corresponds to the prior.
+The learning objective is to fit a reverse-time model p θ p_{\theta} parameterized by a neural network with parameters θ \theta that inverts this corruption, turning samples from the prior back into samples from q data q_{\text{data}} .
+Training is commonly phrased in terms of a negative variational bound on log ⁡ p θ ​ ( 𝐱 ) \log p_{\theta}({\mathbf{x}}) .
+A key design choice is the prior 𝝅 \bm{\mathit{\pi}} , which yields two widely used families discussed next.
+2.2.1 Masked Diffusion Models
+Pro: Best perplexity among discrete diffusion models.
+Con: Bidirectional attention prevents KV caching.
+Forward process
+Masked Diffusion Models ( Austin et al., 2021 ; Lou et al., 2024 ; Sahoo et al., 2024b ; Shi et al., 2025 ; Ou et al., 2025 ) instantiate ( 3 ) with a mask prior, i.e., 𝝅 = 𝐦 \text{$\bm{\mathit{\pi}}$}={\mathbf{m}} :
+q t ​ ( 𝐳 t ℓ | 𝐱 ℓ ) = Cat ​ ( 𝐳 t ℓ , α t ​ 𝐱 ℓ + ( 1 − α t ) ​ 𝐦 ) . \displaystyle q_{t}({\mathbf{z}}_{t}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}|{\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}})=\text{Cat}({\mathbf{z}}_{t}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}};{\alpha_{t}}{\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}+(1-{\alpha_{t}}){\mathbf{m}}).
+(4)
+Intuitively, as t t increases from 0 and 1, the forward process progressively replaces tokens with [MASK] while leaving unmasked tokens unchanged.
+A common noise schedule is α t = 1 − t \alpha_{t}=1-t , though other monotonically decreasing schedules (e.g., cosine) are also possible.
+Reverse process
+For s < t s<t , the exact reverse posterior q s | t ​ ( 𝐳 s ℓ ∣ 𝐳 t ℓ , 𝐱 ℓ ) q_{s\mid t}({\mathbf{z}}_{s}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}\mid{\mathbf{z}}_{t}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}},{\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}) has a convenient form due to the absorbing nature of the mask: if 𝐳 t ℓ ≠ 𝐦 {\mathbf{z}}_{t}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}\neq{\mathbf{m}} , the token must remain fixed; if 𝐳 t ℓ = 𝐦 {\mathbf{z}}_{t}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}={\mathbf{m}} , the posterior mixes between the clean token and the mask distribution ( Sahoo et al., 2024a ) :
+q s | t ​ ( 𝐳 s ℓ | 𝐳 t ℓ , 𝐱 ℓ ) = { Cat ​ ( 𝐳 s ℓ , 𝐳 t ℓ ) 𝐳 t ℓ ≠ 𝐦 , Cat ​ ( 𝐳 s ℓ , ( 1 − α s ) ​ 𝐦 + ( α s − α t ) ​ 𝐱 ℓ 1 − α t ) 𝐳 t ℓ = 𝐦 . \displaystyle{q_{s|t}}({\mathbf{z}}_{s}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}|{\mathbf{z}}_{t}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}},{\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}})=\begin{cases}\text{Cat}({\mathbf{z}}_{s}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}};{\mathbf{z}}_{t}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}})&{\mathbf{z}}_{t}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}\neq{\mathbf{m}},\\
+\text{Cat}\left({\mathbf{z}}_{s}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}};\frac{(1-\alpha_{s}){\mathbf{m}}+(\alpha_{s}-\alpha_{t}){\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}}{1-\alpha_{t}}\right)&{\mathbf{z}}_{t}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}={\mathbf{m}}.\end{cases}
+(5)
+Training
+Let 𝐱 θ : 𝒱 L → ( Δ K ) L \mathbf{x}_{\theta}:\mathcal{V}^{L}\to(\Delta^{K})^{L} be a denoiser (typically a bidirectional Transformer) that outputs a categorical distribution for each position.
+A standard parameterization of the learned reverse transition replaces the unknown clean token 𝐱 ℓ {\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}} in ( 5 ) with a model prediction 𝐱 θ ℓ ​ ( 𝐳 t ) {\mathbf{x}}_{\theta}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}({\mathbf{z}}_{t}) :
+p s | t θ ​ ( 𝐳 s | 𝐳 t ) = ∏ ℓ L p s | t θ ​ ( 𝐳 s ℓ | 𝐳 t ) = ∏ ℓ L q s | t ​ ( 𝐳 s ℓ | 𝐳 t ℓ , 𝐱 ℓ = 𝐱 θ ℓ ​ ( 𝐳 t ) ) . \displaystyle p^{\theta}_{s|t}({\mathbf{z}}_{s}|{\mathbf{z}}_{t})=\prod_{\ell}^{L}p^{\theta}_{s|t}({\mathbf{z}}_{s}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}|{\mathbf{z}}_{t})=\prod_{\ell}^{L}q_{s|t}({\mathbf{z}}_{s}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}|{\mathbf{z}}_{t}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}},{\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}={\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}_{\theta}({\mathbf{z}}_{t})).
+(6)
+The resulting Negative Evidence Lower Bound (NELBO) is
+ℒ MDLM NELBO ​ ( 𝐱 ) = 𝔼 q t , t ∼ [ 0 , 1 ] ​ [ α t ′ 1 − α t ​ ∑ ℓ ∈ ℳ ⁡ ( 𝐳 t ) log ⁡ ⟨ 𝐱 θ ℓ ​ ( 𝐳 t ) , 𝐱 ℓ ⟩ ] . \displaystyle\begin{split}\mathcal{L}^{\text{NELBO}}_{\text{MDLM}}({\mathbf{x}})&=\mathbb{E}_{q_{t},t\sim[0,1]}\left[\frac{\alpha_{t}^{\prime}}{1-\alpha_{t}}\sum_{\ell\in\mathcal{M}({\mathbf{z}}_{t})}\log\langle{\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}_{\theta}({\mathbf{z}}_{t}),{\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}\rangle\right].\end{split}
+(7)
+Sahoo et al. (2025b) made a very crucial observation about ( 7 ): under the linear schedule α t = 1 − t \alpha_{t}=1-t , the ratio α t ′ / ( 1 − α t ) \alpha_{t}^{\prime}/(1-\alpha_{t}) approaches ∞ \infty as t → 0 t\rightarrow 0 . Therefore, Sahoo et al. (2025b) propose to replace this ratio in ( 7 ) with − 1 -1 only during training, which reduces the training variance:
+ℒ MDLM ​ ( 𝐱 ) \displaystyle\mathcal{L}_{\text{MDLM}}({\mathbf{x}})
+= − 𝔼 q t , t ∼ [ 0 , 1 ] ​ [ ∑ ℓ ∈ ℳ ⁡ ( 𝐳 t ) log ⁡ ⟨ 𝐱 θ ℓ ​ ( 𝐳 t ) , 𝐱 ℓ ⟩ ] . \displaystyle=-\mathbb{E}_{q_{t},t\sim[0,1]}\left[\sum_{\ell\in\mathcal{M}({\mathbf{z}}_{t})}\log\langle{\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}_{\theta}({\mathbf{z}}_{t}),{\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}\rangle\right].
+(8)
+While using ( 8 ) was explored in prior work ( Chang et al., 2022 ; Gat et al., 2024 ) , only Sahoo et al. (2025b) identified the practical benefits of training with this loss.
+2.2.2 Uniform-state Diffusion Models
+Pro: Self-correction and few-step sampling.
+Con: Worse perplexity than MDMs.
+Forward Process
+Uniform-state Diffusion Models (USDMs) ( Lou et al., 2024 ; Schiff et al., 2025 ; Sahoo et al., 2025a ) instantiate ( 3 ) with a uniform prior 𝝅 = 𝟏 / K \text{$\bm{\mathit{\pi}}$}={\bm{1}}/K :
+q t ​ ( 𝐳 t ℓ ∣ 𝐱 ℓ ) = Cat ​ ( 𝐳 t ℓ , α t ​ 𝐱 ℓ + ( 1 − α t ) ​ 𝟏 / K ) . q_{t}({\mathbf{z}}_{t}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}\mid{\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}})=\text{Cat}\Big({\mathbf{z}}_{t}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}};\,\alpha_{t}{\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}+(1-\alpha_{t}){\bm{1}}/K\Big).
+(9)
+In contrast to Masked diffusion, the forward process does not involve transitions to the mask token. Instead, it diffuses each token toward the uniform categorical distribution. As a result, the reverse process can revise token values multiple times, enabling “self-correction” and improving few-step sampling and guided generation.
+Reverse Process
+The reverse posterior q s | t USDM q^{\text{USDM}}_{s\mid t} also has a closed form:
+q s | t ( ⋅ ∣ 𝐳 t ℓ , 𝐱 ℓ ) \displaystyle q_{s\mid t}(\cdot\mid{\mathbf{z}}_{t}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}},{\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}})
+= Cat ​ ( ⋅ ; K ​ α t ​ 𝐳 t ℓ ⊙ 𝐱 ℓ + ( α t | s − α t ) ​ 𝐳 t ℓ K ​ α t ​ ⟨ 𝐳 t ℓ , 𝐱 ℓ ⟩ + 1 − α t CLOSE \displaystyle=\text{Cat}\penalty\ \Bigg(\cdot;\;\frac{K{\alpha_{t}}{\mathbf{z}}_{t}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}\odot{\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}+(\alpha_{t|s}-\alpha_{t}){\mathbf{z}}_{t}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}}{K\alpha_{t}\langle{\mathbf{z}}_{t}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}},{\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}\rangle+1-\alpha_{t}}
+OPEN + ( α s − α t ) ​ 𝐱 ℓ + ( 1 − α t | s ) ​ ( 1 − α s ) ​ 𝟏 / K K ​ α t ​ ⟨ 𝐳 t ℓ , 𝐱 ℓ ⟩ + 1 − α t ) , \displaystyle+\frac{(\alpha_{s}-\alpha_{t}){\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}+(1-\alpha_{t|s})(1-\alpha_{s}){\bm{1}}/K}{K\alpha_{t}\langle{\mathbf{z}}_{t}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}},{\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}\rangle+1-\alpha_{t}}\Bigg),
+(10)
+and the approximate reverse posterior factorizes as per ( 6 ).
+Training
+Sahoo et al. (2025a) derives a lower-variance NELBO which decomposes into a sum of token-level losses:
+ℒ Duo NELBO ​ ( q , p θ , 𝐱 ) \displaystyle\mathcal{L}_{\text{Duo}}^{\text{NELBO}}\left({\color[rgb]{0.043,0.3242,0.5898}q},p_{\theta};{\mathbf{x}}\right)
+= 𝔼 t ∼ 𝒰 ⁡ [ 0 , 1 ] , q t ∑ ℓ = 1 L − α t ′ K ​ α t [ K 𝐱 ¯ i ℓ − K ( 𝐱 ¯ θ ℓ ) i \displaystyle=\mathbb{E}_{t\sim{\mathcal{U}}[0,1],{\color[rgb]{0.043,0.3242,0.5898}q_{t}}}\sum_{\ell=1}^{L}-\frac{{\alpha_{t}}^{\prime}}{K{\alpha_{t}}}\Bigg[\frac{K}{\bar{\mathbf{x}}^{\color[rgb]{0.4688,0.4688,0.4688}\ell}_{i}}-\frac{K}{(\bar{\mathbf{x}}_{\theta}^{\color[rgb]{0.4688,0.4688,0.4688}\ell})_{i}}
+− ( κ t 𝟙 𝐳 t ℓ = 𝐱 ℓ + 𝟙 𝐳 t ℓ ≠ 𝐱 ℓ ) ∑ j = 1 L log ( 𝐱 ¯ θ ℓ ) i ( 𝐱 ¯ θ ℓ ) j \displaystyle-\left(\kappa_{t}\mathds{1}_{{\mathbf{z}}_{t}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}={\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}}+\mathds{1}_{{\mathbf{z}}_{t}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}\neq{\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}}\right)\sum_{j=1}^{L}\log\frac{(\bar{\mathbf{x}}_{\theta}^{\color[rgb]{0.4688,0.4688,0.4688}\ell})_{i}}{(\bar{\mathbf{x}}_{\theta}^{\color[rgb]{0.4688,0.4688,0.4688}\ell})_{j}}
+− K ​ α t 1 − α t ​ log ⁡ ( 𝐱 ¯ θ ℓ ) i ( 𝐱 ¯ θ ℓ ) m ​ 𝟙 𝐳 t ℓ ≠ 𝐱 ℓ \displaystyle-K\frac{{\alpha_{t}}}{1-{\alpha_{t}}}\log\frac{(\bar{\mathbf{x}}_{\theta}^{\color[rgb]{0.4688,0.4688,0.4688}\ell})_{i}}{(\bar{\mathbf{x}}_{\theta}^{\color[rgb]{0.4688,0.4688,0.4688}\ell})_{m}}\mathds{1}_{{\mathbf{z}}_{t}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}\neq{\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}}
+− ( ( K − 1 ) κ t 𝟙 𝐳 t ℓ = 𝐱 ℓ − 1 κ t 𝟙 𝐳 t ℓ ≠ 𝐱 ℓ ) log κ t ] , \displaystyle-\left((K-1)\kappa_{t}\mathds{1}_{{\mathbf{z}}_{t}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}={\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}}-\frac{1}{\kappa_{t}}\mathds{1}_{{\mathbf{z}}_{t}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}\neq{\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}}\right)\log\kappa_{t}\Bigg],
+(11)
+where m m and i i denote the indices in 𝐱 {\mathbf{x}} and 𝐳 t {\mathbf{z}}_{t} respectively s.t. 𝐱 m = 1 {\mathbf{x}}_{m}=1 and ( 𝐳 t ) i = 1 ({\mathbf{z}}_{t})_{i}=1 , κ t = ( 1 − α t ) / ( K ​ α t + 1 − α t ) \kappa_{t}=(1-{\alpha_{t}})/(K{\alpha_{t}}+1-{\alpha_{t}}) , 𝐱 ¯ ℓ = K ​ α t ​ 𝐱 + ( 1 − α t ) ​ 𝟏 \bar{\mathbf{x}}^{\color[rgb]{0.4688,0.4688,0.4688}\ell}=K{\alpha_{t}}{\mathbf{x}}+(1-{\alpha_{t}}){\bm{1}} , 𝐱 ¯ θ ℓ = K ​ α t ​ 𝐱 θ ​ ( 𝐳 t , t ) + ( 1 − α t ) ​ 𝟏 \bar{\mathbf{x}}_{\theta}^{\color[rgb]{0.4688,0.4688,0.4688}\ell}=K{\alpha_{t}}\mathbf{x}_{\theta}({\mathbf{z}}_{t},t)+(1-{\alpha_{t}}){\bm{1}} and 𝐱 θ : 𝒱 L × [ 0 , 1 ] → ( Δ K ) L \mathbf{x}_{\theta}:\mathcal{V}^{L}\times[0,1]\to(\Delta^{K})^{L} is a shorthand for the denoising model 𝐱 θ ​ ( 𝐳 t , t ) \mathbf{x}_{\theta}({\mathbf{z}}_{t},t) that uses bidirectional attention. Unlike MDMs, conditioning the USDM backbone on the diffusion time t t improves the validation perplexity and sample quality ( Lou et al., 2024 ; Sahoo et al., 2025a ) .
+2.3 Esoteric Language Models
+Pro: Supports KV caching.
+Con: Worse perplexity than MDMs in full diffusion mode.
+Esoteric Language Model (Eso-LM) ( Sahoo et al., 2025b ) is a hybrid model of AR and MDLM. It closes the perplexity between AR and MDLM by smoothly interpolating between their perplexities. Unlike block diffusion ( Arriola et al., 2025 ) , it supports KV caching without sacrificing parallel generation. The marginal likelihood of this hybrid generative process is:
+p θ ​ ( 𝐱 ) = ∑ 𝐳 0 ∈ 𝒱 L p θ AR ​ ( 𝐱 ∣ 𝐳 0 ) ​ p θ MDLM ​ ( 𝐳 0 ) , \displaystyle p_{\theta}({\mathbf{x}})=\sum_{{\mathbf{z}}_{0}\in\mathcal{V}^{L}}{p^{\text{AR}}_{\theta}}({\mathbf{x}}\mid{\mathbf{z}}_{0}){p^{\text{MDLM}}_{\theta}}({\mathbf{z}}_{0}),
+(12)
+where p θ MDLM {p^{\text{MDLM}}_{\theta}} is the MDLM component that generates a partially masked sequence 𝐳 0 ∈ 𝒱 L {\mathbf{z}}_{0}\in\mathcal{V}^{L} in parallel, and p θ AR {p^{\text{AR}}_{\theta}} is the AR component that unmasks the remaining mask tokens sequentially in a left-to-right manner. The exact likelihood log ⁡ p θ ​ ( 𝐱 ) \log p_{\theta}({\mathbf{x}}) is intractable, but Sahoo et al. (2025b) derives a variational bound:
+− log ⁡ p θ ​ ( 𝐱 ) ≤ 𝔼 𝐳 0 ∼ q 0 ​ [ − ∑ ℓ ∈ ℳ ⁡ ( 𝐳 0 ) log ⟨ 𝐱 θ ℓ ( 𝐱 < ℓ ∥ 𝐳 0 ≥ ℓ ) , 𝐱 ℓ ⟩ ⏟ AR loss ] + 𝔼 q t , t ∈ [ 0 , 1 ] ​ [ α t ′ 1 − α t ​ ∑ ℓ ∈ ℳ ⁡ ( 𝐳 t ) log ⁡ ⟨ 𝐱 θ ℓ ​ ( 𝐳 t ) , 𝐱 ℓ ⟩ ] ⏟ MDLM loss , \displaystyle\begin{split}-\log p_{\theta}({\mathbf{x}})\leq\mathbb{E}_{{\mathbf{z}}_{0}\sim q_{0}}\Bigg[\underbrace{-\sum_{\ell\in\mathcal{M}({\mathbf{z}}_{0})}\log\langle\mathbf{x}_{\theta}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}({\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}<\ell}}\|{\mathbf{z}}_{0}^{\color[rgb]{0.4688,0.4688,0.4688}\geq\ell}),{\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}\rangle}_{\text{AR loss}}\Bigg]\\
++\underbrace{\mathbb{E}_{q_{t},t\in[0,1]}\left[\frac{\alpha^{\prime}_{t}}{1-\alpha_{t}}\sum_{\ell\in\mathcal{M}({\mathbf{z}}_{t})}\log\langle\mathbf{x}_{\theta}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}({\mathbf{z}}_{t}),{\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}\ell}}\rangle\right]}_{\text{MDLM loss}},\end{split}
+(13)
+where 𝐱 θ : 𝒱 L → ( Δ K ) L \mathbf{x}_{\theta}:\mathcal{V}^{L}\rightarrow(\Delta^{K})^{L} is the shared denoising model used by both p θ AR {p^{\text{AR}}_{\theta}} and p θ MDLM {p^{\text{MDLM}}_{\theta}} , and q 0 q_{0} is the posterior distribution over masked sequences 𝐳 0 {\mathbf{z}}_{0} . This posterior is approximated by MDLM and is set to q 0 ​ ( 𝐳 0 | 𝐱 ) q_{0}({\mathbf{z}}_{0}|{\mathbf{x}}) as defined in ( 4 ). The hyperparameter α 0 ∈ [ 0 , 1 ] \alpha_{0}\in[0,1] denotes the expected fraction of tokens in 𝐱 {\mathbf{x}} generated by p θ MDLM {p^{\text{MDLM}}_{\theta}} . The AR term in ( 13 ) computes the autoregressive loss over the masked positions ℳ ⁡ ( 𝐳 0 ) \mathcal{M}({\mathbf{z}}_{0}) in 𝐳 0 {\mathbf{z}}_{0} . We write 𝐱 < ℓ | 𝐳 0 ≥ ℓ {\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}<\ell}}\|{\mathbf{z}}_{0}^{\color[rgb]{0.4688,0.4688,0.4688}\geq\ell} for the concatenation of the sequences 𝐱 < ℓ {\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}<\ell}} and 𝐳 0 ≥ ℓ {\mathbf{z}}_{0}^{\color[rgb]{0.4688,0.4688,0.4688}\geq\ell} . This construction ensures that, when computing the autoregressive loss for the mask token at position ℓ \ell , all mask tokens in its left context are replaced with clean tokens. Equivalently, 𝐱 < ℓ | 𝐳 0 ≥ ℓ {\mathbf{x}}^{{\color[rgb]{0.4688,0.4688,0.4688}<\ell}}\|{\mathbf{z}}_{0}^{{\color[rgb]{0.4688,0.4688,0.4688}\geq\ell}} corresponds to 𝐳 0 {\mathbf{z}}_{0} with all mask tokens to the left of position ℓ \ell replaced by their clean counterparts.
+Eso-LM interpolates between AR and MDLM by modulating α 0 \alpha_{0} : when α 0 = 1 \alpha_{0}=1 , 𝐳 0 {\mathbf{z}}_{0} has no mask tokens and ℒ NELBO {\mathcal{L}_{\text{NELBO}}} reduces to the MDLM’s NELBO in ( 7 ); when α 0 = 0 \alpha_{0}=0 , 𝐳 0 {\mathbf{z}}_{0} is fully masked and ℒ NELBO {\mathcal{L}_{\text{NELBO}}} reduces to the AR loss in ( 1 ). Sahoo et al. (2025b) show empirically that α 0 = 1 \alpha_{0}=1 is the best choice during training, since the resulting model generalizes well to a wide range of α 0 \alpha_{0} values at inference time. Therefore, we only consider Eso-LM in its full diffusion mode ( α 0 = 1 \alpha_{0}=1 ) in this paper .
+Forward and Reverse Processes
+Eso-LM uses the same forward and reverse processes as that of MDLM as described in Sec. 2.2.1 .
+Training
+Eso-LM is trained using the low-variance objective in ( 8 ) and evaluated using the exact NELBO in ( 7 ). Rather than a bidirectional denoiser, it exploits the connection between MDMs and AO-ARMs ( Ou et al., 2025 ) to use a decoder-only denoiser with causal attention applied to a shuffled 𝐳 t {\mathbf{z}}_{t} .
+During training, 𝐳 t {\mathbf{z}}_{t} is shuffled so that clean tokens appear before mask tokens, with both subsets randomly permuted; positional embeddings and the corresponding ground-truth tokens are permuted in the same way. At inference time, the model fixes a generation order, which for the ancestral sampler is a random permutation of token positions. This order determines which positions are unmasked at each step, and the model iteratively unmasks tokens until the full sequence is generated. Because the denoiser uses causal attention, previously denoised tokens are independent of future tokens. This property enables KV caching while retaining parallel generation, leading to fast sampling.
+The downside is that replacing bidirectional attention with sparser causal attention degrades modeling capacity. As a result, in full diffusion mode, Eso-LM attains worse perplexity than MDLM.
+Block Sampler
+Sahoo et al. (2025b) found that BD3-LMs ( Arriola et al., 2025 ) produce degenerate samples at low sampling steps due to decoding consecutive tokens in parallel. Inspired by the discovery, Sahoo et al. (2025b) proposes a sampler for Eso-LM that improves upon the ancestral sampler in MDLM, called the Block sampler , that only decodes far-apart tokens in parallel and significantly improves sample quality at low sampling steps. Essentially, at every denoising step i i , the model predicts all tokens that are L ′ L^{\prime} apart, i.e., tokens at { i , i + L ′ , … , i + ( k − 1 ) ​ L ′ } \{i,i+L^{\prime},\dots,i+(k-1)L^{\prime}\} where k = L ′ / L k=L^{\prime}/L and L ′ L^{\prime} is assumed to perfectly divide the context length L L . Here, k k denotes the number of tokens denoised at each denoising step.
+3 Scaling Laws
+Table 1 : Likelihood Evaluation. SMDM-1B was trained on slim-pajama , while LLaDa-8B-Base was trained on proprietary data comprising 2.3T tokens. † Models were trained for approximately 2.1T tokens on Nemotron-Pre-Training-Dataset. Because prior work uses models of different sizes, training data, and token budgets, the results are not directly comparable to ours and are included only for reference. Underline ¯ \underline{\text{Underline}} denotes the best accuracy ( ↑ \uparrow ) across all models and the bolded numbers denote the best diffusion accuracy.
+ARC-e
+BoolQ
+OBQA
+PIQA
+RACE
+SIQA
+Chance
+24.7
+50.4
+26.6
+51.6
+24.2
+32.2
+Prior Work
+SMDM-1B ∗ ( Nie et al., 2025a )
+37.4
+61.5
+27.0
+60.3
+29.3
+37.9
+LLaDa-8B-Base ( Nie et al., 2025b )
+-
+-
+-
+74.4
+-
+-
+Ours
+AR-1.7B † (Autoregressive)
+72.7
+71.9
+40.4
+78.1
+36.2
+41.9
+MDLM-1.7B † (Masked Diffusion)
+50.5
+62.8
+32.0
+62.2
+34.7
+39.2
+Eso-LM-1.7B † (Interpolating Diffusion)
+46.0
+53.4
+29.6
+55.6
+26.1
+36.1
+Duo-1.7B † (Uniform-state Diffusion)
+53.4
+59.6
+33.0
+62.7
+35.0
+39.0
+In this section, we establish scaling laws for state-of-the-art discrete diffusion models, including the Masked diffusion language model (MDLM; Sahoo et al. (2024a) ), the uniform-state diffusion model (Duo; Sahoo et al. (2025a) ), and the interpolating diffusion model (Eso-LM; Sahoo et al. (2025b) ). All comparisons are conducted under matched training FLOPs, enabling direct and fair evaluation across model families.
+Model Architecture
+All models use the Diffusion Transformer (DiT) backbone ( Peebles & Xie, 2023 ) , with rotary positional embeddings ( Su et al., 2023 ) and adaptive layer normalization for conditioning on diffusion time (with learnable parameters).
+Our AR baseline replaces bidirectional attention with causal self-attention and is trained with the standard next-token negative log-likelihood ( 1 ). To match parameter counts with diffusion models, we retain the time-conditioning mechanism but set the diffusion-time input to zero for AR.
+For MDMs, we use bidirectional attention and likewise set the diffusion-time input to zero. USDMs also use bidirectional attention, but their reverse dynamics depend more explicitly on the noise level because tokens can transition among all vocabulary states rather than through an absorbing mask, consistent with prior work ( Sahoo et al., 2025a ; Lou et al., 2024 ; Schiff et al., 2025 ) .
+As described in Sec. 2.3 , we train Eso-LM in the full-diffusion setting using ( 8 ) with the denoising transformer using causal attention on the randomly shuffled input.
+Data, Tokenizer, and Context Length
+Scaling-law estimation can be distorted by data scarcity, so we follow the large-data regime advocated by compute-optimal training ( Hoffmann et al., 2022 ) . All models are trained on SlimPajama ( Soboleva et al., 2023 ) , which is sufficiently large for the compute ranges we study. We use the same tokenizer across models, specifically the Llama-2 tokenizer ( Touvron et al., 2023 ) , and a fixed context length of 2048 tokens to eliminate confounding effects from preprocessing or sequence length. We extend the vocabulary with a special mask token for all models, resulting in a total vocabulary size of 32,001. The batch size is 256.
+Compute budget
+We compute exact training compute (combined forward and backward FLOPs) using the calflops Python package ( xiaoju ye, 2023 ) . This contrasts with prior work ( Nie et al., 2025a ; Kaplan et al., 2020 ; Hoffmann et al., 2022 ) , which commonly approximates training compute using C ≈ 6 ​ N ​ D C\approx 6ND , where N N is the number of non-embedding parameters and D D is the number of training tokens.
+Optimizer
+We use AdamW ( Loshchilov & Hutter, 2019 ) with β 1 = 0.9 \beta_{1}=0.9 , β 2 = 0.95 \beta_{2}=0.95 , and weight decay 0.1 0.1 . We apply a cosine learning-rate schedule with peak learning rate 4 × 10 − 4 4\times 10^{-4} and minimum learning rate 2 × 10 − 5 2\times 10^{-5} .
+3.1 IsoFLOP Analysis
+We perform an IsoFLOP study ( Hoffmann et al., 2022 ) over compute budgets
+C ∈ { 6 × 10 18 , 1 × 10 19 , 3 × 10 19 , 6 × 10 19 , 1 × 10 20 } C\in\{6\times 10^{18},\,1\times 10^{19},\,3\times 10^{19},\,6\times 10^{19},\,1\times 10^{20}\} .
+For each target budget C C , we train a grid of models spanning parameter counts N N (as in Table 4 ) and training-token counts D D , producing validation losses ℒ ⁡ ( N , D ) \mathcal{L}(N,D) at approximately fixed compute.
+At fixed C C , we fit a second-order model in log ⁡ N \log N to estimate the compute-optimal parameter scale:
+log ⁡ ℒ ⁡ ( N , C ) ≈ a C ​ ( log ⁡ N ) 2 + b C ​ log ​ N + c C , \displaystyle\log\mathcal{L}(N;C)\;\approx\;a_{C}(\log N)^{2}+b_{C}\log N+c_{C},
+(14)
+as shown in dotted lines in Fig. 2
+and define
+N C ∗ ≜ arg ⁡ min N ⁡ ℒ ⁡ ( N , C ) , ℒ C ∗ ≜ ℒ ⁡ ( N C ∗ , C ) . \displaystyle N_{C}^{*}\;\triangleq\;\arg\min_{N}\mathcal{L}(N;C),\qquad\mathcal{L}_{C}^{*}\;\triangleq\;\mathcal{L}(N_{C}^{*};C).
+(15)
+Here, N C ∗ N_{C}^{*} is the compute-optimal parameter count at budget C C , and ℒ C ∗ \mathcal{L}_{C}^{*} is the corresponding optimal validation loss. We apply this procedure identically to AR, MDLM, USDM, and Eso-LM training. As shown in Fig. 2 , the diffusion models exhibit well-behaved IsoFLOP curves, comparable to those of AR models.
+3.2 Fitting Scaling Laws
+We study how (i) the compute-optimal validation loss ( ℒ C ∗ \mathcal{L}_{C}^{*} ) and (ii) the compute-optimal model size ( N C ∗ N_{C}^{*} ) vary with training compute. From the IsoFLOP sweep we extract pairs ( C i , ℒ C i ∗ ) (C_{i},\mathcal{L}_{C_{i}}^{*}) and fit a log-linear power law
+( α ∗ , β ∗ ) = arg ⁡ min ⁡ ∑ i = 1 n α , β ⁡ ( log ⁡ ℒ C i ∗ − α ​ log ⁡ C i − β ) 2 , (\alpha^{*},\beta^{*})\;=\;\arg\min_{\alpha,\beta}\;\sum_{i=1}^{n}\left(\log\mathcal{L}_{C_{i}}^{*}-\alpha\log C_{i}-\beta\right)^{2},
+(16)
+which corresponds to ℒ C ∗ ≈ exp ⁡ ( β ∗ ) ​ C α ∗ \mathcal{L}^{*}_{C}\;\approx\;\exp(\beta^{*})\,C^{\alpha^{*}} . Fig. 3(a) plots ℒ C ∗ \mathcal{L}_{C}^{*} versus C C .
+Similarly, we fit a power law for the compute-optimal model size,
+log ⁡ N C ∗ ≈ γ ​ log ⁡ C + δ \log N_{C}^{*}\approx\gamma\log C+\delta , and plot N C ∗ N_{C}^{*} versus C C in Fig. 3(b) .
+3.2.1 Autoregressive Models
+The AR baseline recovers the familiar compute-optimal behavior: both ℒ ∗ ​ ( C ) \mathcal{L}^{*}(C) and N ∗ ​ ( C ) N^{*}(C) follow approximate power laws over the explored budgets ( Kaplan et al., 2020 ; Hoffmann et al., 2022 ) . We use AR as the reference curve when comparing exponents and constant-factor gaps.
+3.2.2 Masked Diffusion Models
+Applying the same IsoFLOP protocol to MDMs shows that their validation loss decreases approximately as a power law in compute, with a slope in log-log space comparable to AR.
+When trained with the true ELBO ( 7 ), we reproduce the findings of Nie et al. (2025a) : MDLM requires ≈ 16 × \approx 16\times more compute to match AR validation loss (Fig. 6(a) ) and the best MDM checkpoints typically require ≈ 2 × \approx 2\times fewer parameters than the AR counterparts (Fig. 6(b) ).
+Low Variance Training Loss
+We find that training MDMs with the low-variance loss ( 8 ) (while evaluating with the correct likelihood ( 7 )) improves scaling: MDLM then requires ≈ 14 × \approx 14\times (instead of ≈ 16 × \approx 16\times ) more compute than AR to match validation loss, an approximately 12 % 12\% improvement in compute efficiency. A further benefit is that the compute-optimal model size decreases relative to MDLM trained with the true NELBO. We compare compute-optimal model sizes for the low-variance objective versus the true ELBO in Fig. 6(c) . This is notable because smaller models reduce sampling cost at inference time.
+3.2.3 Uniform-state diffusion models
+Duo shares the same bidirectional denoising backbone as MDLM. Under identical compute-budgeted IsoFLOP sweeps and scaling fits, we find that Duo requires ≈ 23 × \approx 23\times more compute to match the AR model’s perplexity. Despite weaker likelihood scaling, Duo can offer faster inference via few-step generation enabled by self-correction; we analyze this in Sec. 3.3 . The compute-optimal Duo models are also ≈ 2 × \approx 2\times smaller than their AR counterparts at matched compute budget C C .
+3.2.4 Esoteric Language Models
+Eso-LM interpolates between MDLM and AR behavior via α 0 ∈ [ 0 , 1 ] \alpha_{0}\in[0,1] , where α 0 = 0 \alpha_{0}=0 is fully autoregressive and α 0 = 1 \alpha_{0}=1 is fully diffusion. As described in Sec. 2.3 , we train Eso-LM in the full-diffusion mode ( α 0 = 1 \alpha_{0}=1 ). Fig. 3 shows that full-diffusion Eso-LM requires ≈ 32 × \approx 32\times more compute than AR to match perplexity. Although this gap is large, Eso-LM offers a practical advantage over AR, MDLM, and Duo by supporting KV caching. The compute-optimal Eso-LM models are ≈ 2 × \approx 2\times smaller than AR at matched compute budget C C .
+3.3 Speed-Quality Tradeoff
+Scaling laws based on likelihood do not capture practical advantages at sampling time. For example, Duo supports few-step generation, and Eso-LM support KV caching capabilities not reflected in validation perplexity alone. We therefore study the speed–quality tradeoff across methods.
+For each compute budget C ∈ { 6 × 10 18 , 1 × 10 19 , 3 × 10 19 , 6 × 10 19 , 1 × 10 20 } C\in\{6\times 10^{18},\,1\times 10^{19},\,3\times 10^{19},\,6\times 10^{19},\,1\times 10^{20}\} , we select the compute-optimal model. We sample autoregressively from the AR model; for MDLM and Duo we use the ancestral sampler and vary the number of sampling steps via T T ; and for Eso-LM we use the Block sampler described in Sec. 2 and vary L ′ L^{\prime} . For evaluation, we draw 1000 unconditional samples and compute Generative Perplexity (Gen PPL) under a pretrained Llama-2 (7B) model. Lower Gen PPL indicates higher-quality samples. We also report throughput (tokens/sec; higher is better). To measure throughput, we use the largest power-of-two batch size that fits on a single 80GB H100 GPU for each model size.
+Relating Throughput and Quality
+Sample quality in diffusion LLMs can be improved by either increasing the denoiser size or increasing the number of sampling steps T T . To compare these tradeoffs, we fit Gen PPL and throughput as functions of T T :
+Gen PPL ​ ( T , α C , β C , γ C ) = α C + β C ​ T γ C \displaystyle\text{Gen PPL}(T;\alpha_{C},\beta_{C},\gamma_{C})=\alpha_{C}+\beta_{C}T^{\gamma_{C}}
+(17)
+Throughput ​ ( T , α C ′ , β C ′ , γ C ′ ) = α C ′ + β C ′ ​ T γ C ′ \displaystyle\text{Throughput}(T;\alpha_{C}^{\prime},\beta_{C}^{\prime},\gamma_{C}^{\prime})=\alpha_{C}^{\prime}+\beta_{C}^{\prime}T^{\gamma_{C}^{\prime}}
+(18)
+where α C , α C ′ , β C , β C ′ , γ C , γ C ′ ∈ ℝ \alpha_{C},\alpha^{\prime}_{C},\beta_{C},\beta^{\prime}_{C},\gamma_{C},\gamma_{C}^{\prime}\in\mathbb{R} .
+Fig. 4 shows throughput curves and fits, while Fig. 5(b) reports Gen PPL and average sequence entropy as a measure of diversity ( Zheng et al., 2024 ; Sahoo et al., 2025a ) . Following Zheng et al. (2024) , we perform all sampling in float64 precision to avoid artificially low diversity and Gen PPL. Under high-precision sampling, sequence entropy remains stable across diffusion steps.
+Speed-Quality Pareto Frontier
+To construct a speed-quality Pareto frontier, we proceed as follows. For each method and model size, we (i) use the fitted Gen PPL curve ( 17 ) to compute the number of steps T T required to reach a target Gen PPL, (ii) evaluate the corresponding throughput using ( 18 ), and (iii) take the maximum throughput across model sizes. We repeat this for target Gen PPL values in { 40 , … , 200 } \{40,\dots,200\} and plot the resulting frontier in Fig. 1 .
+We observe that AR models produce the highest-quality samples but are the slowest . For throughput < 200 <200 , AR dominates. Duo dominates in throughput ranges [ 200,400 ] ∪ [ 600 , ∞ ] [200,400]\cup[600,\infty] due to few-step generation. Eso-LM dominates in the intermediate range [ 400,600 ] [400,600] as they uniquely support KV caching among the diffusion LLMs studied here.
+Key takeaway: Perplexity alone can be misleading when comparing diffusion language models. Although Masked diffusion exhibits the best likelihood scaling, Uniform-state and interpolating diffusion models can be preferable in practice due to more efficient sampling.
+4 Scaling to the Billion-Parameter Regime
+We scale AR, MDLM, Duo, and Eso-LM to 1.7B parameters with a context length of 2048.
+All models are pretrained on 2.1T tokens using a data protocol that closely matches modern LLM training pipelines ( Nie et al., 2025b ; Yang et al., 2025 ) , without introducing any specialized techniques.
+The corpus is drawn from large-scale online text, with low-quality content filtered via a combination of manually designed heuristics and LLM-based filtering. We train our models on the phase 1 and phase 2 mixes of the Nemotron-Pre-Training-Dataset ( Basant et al., 2025 ) that contains general-domain text and high-quality math data.
+Each model is trained on 64 H100 GPUs.
+To improve robustness to variable-length inputs, we follow Gulrajani & Hashimoto (2024) ; Nie et al. (2025b) and set 1% of pretraining sequences to a random length sampled uniformly from 𝒰 ⁡ [ 1 , 2048 ] \mathcal{U}[1,2048] .
+We use AdamW as in Sec. 3 , with a peak learning rate of 3 × 10 − 4 3\times 10^{-4} and a minimum learning rate of 4 × 10 − 5 4\times 10^{-5} .
+We linearly warm up the learning rate from 0 to 3 × 10 − 4 3\times 10^{-4} over the first 2000 iterations, then keep it constant at 3 × 10 − 4 3\times 10^{-4} .
+After processing 1.4T tokens, we decay the learning rate to 4 × 10 − 5 4\times 10^{-5} over the remaining 0.7T tokens to promote stable training.
+We use a global batch size of 256 and a vocabulary size of 128,000.
+4.1 Likelihood-Based Benchmarks
+We evaluate the 1.7B models in the zero-shot setting on a standard suite of likelihood-based downstream benchmarks spanning commonsense reasoning and reading comprehension:
+ARC-e ( Clark et al., 2018 ) , BoolQ ( Clark et al., 2019 ) , PIQA ( Bisk et al., 2020 ) , SIQA ( Sap et al., 2019 ) , OBQA ( Mihaylov et al., 2018 ) , and RACE ( Lai et al., 2017 ) .
+Results
+As shown in Table 1 , the AR model achieves the best overall performance.
+Among diffusion models, MDLM performs best on ARC-e, BoolQ, and SIQA , while Duo leads on OBQA, PIQA, and RACE .
+4.2 Maths and Reasoning Benchmark
+We also assess mathematical reasoning on GSM8K ( Cobbe et al., 2021 ) .
+Following Nie et al. (2025a) , we perform supervised fine-tuning (SFT) on the augmented GSM8K dataset from Deng et al. (2024) , which expands the original GSM8K training set to 385K samples using GPT-4-generated augmentations.
+For all models, we use AdamW with a cosine schedule (as above) and conduct a grid search over learning-rate pairs ( η max , η min ) (\eta_{\max},\eta_{\min}) (see Table 3 ), reporting the best setting for each method.
+We fine-tune each model for 5 epochs with a context length of 256.
+Results
+Prior diffusion LLM work often uses confidence-based sampling ( Nie et al., 2025a ; Nie et al., 2025b ) , which effectively collapses to left-to-right generation ( Nie et al., 2025b ) .
+We therefore generate left-to-right one token at a time from all models.
+As shown in Table 2 , Duo outperforms AR, MDLM, and Eso-LM on this math-and-reasoning evaluation . We additionally report throughput ( ↑ \uparrow ), measured in tokens per second, evaluated on the full GSM8K test set (1319 examples) using a batch size of 1. Throughput is computed using generated tokens only (including EOS), excluding the prompt and any tokens following EOS. In this memory-bound setting, it is expected that AR models achieve comparable latency to diffusion models despite using KV caching; see ( Liu et al., 2025 ) .
+Key Takeaway: Although Uniform-state diffusion (Duo) exhibits worse likelihood scaling than Autoregressive and Masked diffusion, it surpasses them on math and reasoning after SFT.
+Table 2 : GSM8K benchmark. SMDM-1B is trained on slim-pajama while LLaDa-8B-Base on proprietary data.
+† Models are trained for 2.1T tokens on the Nemotron-Pre-Training-Dataset. Throughput (tokens/sec) is measured using a batch size of 1. In this memory-bound setting, AR models are expected to match the latency of diffusion models despite using KV caching.
+Acc. ( ↑ \uparrow )
+Throughput ( ↑ \uparrow )
+Prior work
+SMDM-1B ∗ †
+58.5
+-
+LLaDa-8B
+70.7
+-
+Ours
+AR-1.7B †
+62.9
+25.6
+MDLM-1.7B †
+58.8
+24.6
+Eso-LM-1.7B †
+33.4
+25.6
+Duo-1.7B †
+65.8
+24.6
+5 Discussion and Conclusion
+We revisit a common assumption in discrete diffusion: that Masked diffusion models (MDMs), and perplexity-based scaling analyses in particular, provide a definitive recipe for competitive diffusion language models. Through compute-matched IsoFLOP scaling across three diffusion families (Masked, Uniform-state, and interpolating), and by combining likelihood-based and sampling-centric evaluations, we show that this view is incomplete. d-LLMs can exhibit scaling exponents comparable to autoregressive models (ARMs), but with large constant-factor gaps that depend strongly on the diffusion family. MDLM shows the strongest likelihood scaling, while Duo and Eso-LM require substantially more compute to match AR perplexity. Notably, our work is the first to study the scaling laws of Uniform-state diffusion (concurrently with von Rütte et al. (2025) ) and AR-MDLM interpolating diffusion. We further show that training MDLM with a low-variance objective improves compute efficiency over standard ELBO training, yielding smaller compute-optimal models and lower sampling cost.
+Crucially, perplexity alone is insufficient for comparing diffusion methods across families. While it is meaningful within a family, where NELBO bounds are shared, it can be misleading across families with fundamentally different diffusion processes. Uniform-state and interpolating models may scale worse in likelihood yet be preferable in practice due to more efficient sampling , such as few-step generation in Duo and KV caching in Eso-LM. This motivates evaluation standards that jointly consider likelihood, sampling efficiency, and downstream performance.
+Scaling all methods to 1.7B parameters shows these tradeoffs persist. AR models remain strongest on likelihood-based metrics, while uniform-state diffusion (Duo) can outperform AR and other diffusion models on math and reasoning after supervised fine-tuning, despite weaker perplexity scaling.
+Looking ahead, scaling diffusion LLMs to much larger sizes may enable deeper study of emergent behaviors ( Wei et al., 2022a ) and long-range reasoning ( Wei et al., 2022b ) , and clarify whether their distinct generative mechanisms yield consistent real-world advantages. More broadly, this line of work may clarify how model capabilities arise and the extent to which autoregressive factorization itself underpins the strengths of modern LLMs.
+Impact Statement
+This paper presents work whose goal is to advance the field
+of Machine Learning. There are many potential societal
+consequences of our work, specifically those related to the
+generation of synthetic text. Our work can also be applied
+to the design of biological sequences, which carries both
+potential benefits and risks.
+References
+Arriola et al. (2025)
+Arriola, M., Sahoo, S. S., Gokaslan, A., Yang, Z., Qi, Z., Han, J., Chiu, J. T., and Kuleshov, V.
+Block diffusion: Interpolating between autoregressive and diffusion language models.
+In The Thirteenth International Conference on Learning Representations , 2025.
+URL https://openreview.net/forum?id=tyEyYT267x .
+Austin et al. (2021)
+Austin, J., Johnson, D. D., Ho, J., Tarlow, D., and Van Den Berg, R.
+Structured denoising diffusion models in discrete state-spaces.
+Advances in Neural Information Processing Systems , 34:17981–17993, 2021.
+Basant et al. (2025)
+Basant, A., Khairnar, A., Paithankar, A., Khattar, A., Renduchintala, A., Malte, A., Bercovich, A., Hazare, A., Rico, A., Ficek, A., et al.
+Nvidia nemotron nano 2: An accurate and efficient hybrid mamba-transformer reasoning model.
+arXiv preprint arXiv:2508.14444 , 2025.
+Bisk et al. (2020)
+Bisk, Y., Zellers, R., Gao, J., Choi, Y., et al.
+Piqa: Reasoning about physical commonsense in natural language.
+In Proceedings of the AAAI conference on artificial intelligence , volume 34, pp. 7432–7439, 2020.
+Campbell et al. (2022)
+Campbell, A., Benton, J., De Bortoli, V., Rainforth, T., Deligiannidis, G., and Doucet, A.
+A continuous time framework for discrete denoising models.
+Advances in Neural Information Processing Systems , 35:28266–28279, 2022.
+Chang et al. (2022)
+Chang, H., Zhang, H., Jiang, L., Liu, C., and Freeman, W. T.
+Maskgit: Masked generative image transformer.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pp. 11315–11325, 2022.
+Clark et al. (2019)
+Clark, C., Lee, K., Chang, M.-W., Kwiatkowski, T., Collins, M., and Toutanova, K.
+Boolq: Exploring the surprising difficulty of natural yes/no questions.
+arXiv preprint arXiv:1905.10044 , 2019.
+Clark et al. (2018)
+Clark, P., Cowhey, I., Etzioni, O., Khot, T., Sabharwal, A., Schoenick, C., and Tafjord, O.
+Think you have solved question answering? try arc, the ai2 reasoning challenge.
+arXiv preprint arXiv:1803.05457 , 2018.
+Cobbe et al. (2021)
+Cobbe, K., Kosaraju, V., Bavarian, M., Chen, M., Jun, H., Kaiser, L., Plappert, M., Tworek, J., Hilton, J., Nakano, R., et al.
+Training verifiers to solve math word problems.
+arXiv preprint arXiv:2110.14168 , 2021.
+Deng et al. (2024)
+Deng, Y., Choi, Y., and Shieber, S.
+From explicit cot to implicit cot: Learning to internalize cot step by step.
+arXiv preprint arXiv:2405.14838 , 2024.
+Deschenaux et al. (2026)
+Deschenaux, J., Gulcehre, C., and Sahoo, S. S.
+The diffusion duality, chapter II: $\psi$-samplers and efficient curriculum.
+In The Fourteenth International Conference on Learning Representations , 2026.
+URL https://openreview.net/forum?id=RSIoYWIzaP .
+Gat et al. (2024)
+Gat, I., Remez, T., Shaul, N., Kreuk, F., Chen, R. T. Q., Synnaeve, G., Adi, Y., and Lipman, Y.
+Discrete flow matching, 2024.
+URL https://arxiv.org/abs/2407.15595 .
+Gulrajani & Hashimoto (2024)
+Gulrajani, I. and Hashimoto, T. B.
+Likelihood-based diffusion language models.
+Advances in Neural Information Processing Systems , 36, 2024.
+Hoffmann et al. (2022)
+Hoffmann, J., Borgeaud, S., Mensch, A., Buchatskaya, E., Cai, T., Rutherford, E., Casas, D. d. L., Hendricks, L. A., Welbl, J., Clark, A., et al.
+Training compute-optimal large language models.
+arXiv preprint arXiv:2203.15556 , 2022.
+Kaplan et al. (2020)
+Kaplan, J., McCandlish, S., Henighan, T., Brown, T. B., Chess, B., Child, R., Gray, S., Radford, A., Wu, J., and Amodei, D.
+Scaling laws for neural language models.
+arXiv preprint arXiv:2001.08361 , 2020.
+Labs et al. (2025)
+Labs, I., Khanna, S., Kharbanda, S., Li, S., Varma, H., Wang, E., Birnbaum, S., Luo, Z., Miraoui, Y., Palrecha, A., et al.
+Mercury: Ultra-fast language models based on diffusion.
+arXiv preprint arXiv:2506.17298 , 2025.
+Lai et al. (2017)
+Lai, G., Xie, Q., Liu, H., Yang, Y., and Hovy, E.
+Race: Large-scale reading comprehension dataset from examinations.
+arXiv preprint arXiv:1704.04683 , 2017.
+Liu et al. (2025)
+Liu, J., Dong, X., Ye, Z., Mehta, R., Fu, Y., Singh, V., Kautz, J., Zhang, C., and Molchanov, P.
+Tidar: Think in diffusion, talk in autoregression.
+arXiv preprint arXiv:2511.08923 , 2025.
+Loshchilov & Hutter (2019)
+Loshchilov, I. and Hutter, F.
+Decoupled weight decay regularization.
+In International Conference on Learning Representations , 2019.
+URL https://openreview.net/forum?id=Bkg6RiCqY7 .
+Lou et al. (2024)
+Lou, A., Meng, C., and Ermon, S.
+Discrete diffusion modeling by estimating the ratios of the data distribution.
+arXiv preprint arXiv:2310.16834 , 2024.
+Mihaylov et al. (2018)
+Mihaylov, T., Clark, P., Khot, T., and Sabharwal, A.
+Can a suit of armor conduct electricity? a new dataset for open book question answering.
+arXiv preprint arXiv:1809.02789 , 2018.
+Nie et al. (2025a)
+Nie, S., Zhu, F., Du, C., Pang, T., Liu, Q., Zeng, G., Lin, M., and Li, C.
+Scaling up masked diffusion models on text.
+In The Thirteenth International Conference on Learning Representations , 2025a.
+URL https://openreview.net/forum?id=WNvvwK0tut .
+Nie et al. (2025b)
+Nie, S., Zhu, F., You, Z., Zhang, X., Ou, J., Hu, J., ZHOU, J., Lin, Y., Wen, J.-R., and Li, C.
+Large language diffusion models.
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025b.
+URL https://openreview.net/forum?id=KnqiC0znVF .
+Ou et al. (2025)
+Ou, J., Nie, S., Xue, K., Zhu, F., Sun, J., Li, Z., and Li, C.
+Your absorbing discrete diffusion secretly models the conditional distributions of clean data.
+In The Thirteenth International Conference on Learning Representations , 2025.
+URL https://openreview.net/forum?id=sMyXP8Tanm .
+Peebles & Xie (2023)
+Peebles, W. and Xie, S.
+Scalable diffusion models with transformers.
+In Proceedings of the IEEE/CVF International Conference on Computer Vision , pp. 4195–4205, 2023.
+Sahoo et al. (2024a)
+Sahoo, S. S., Arriola, M., Gokaslan, A., Marroquin, E. M., Rush, A. M., Schiff, Y., Chiu, J. T., and Kuleshov, V.
+Simple and effective masked diffusion language models.
+In The Thirty-eighth Annual Conference on Neural Information Processing Systems , 2024a.
+URL https://openreview.net/forum?id=L4uaAR4ArM .
+Sahoo et al. (2024b)
+Sahoo, S. S., Gokaslan, A., Sa, C. D., and Kuleshov, V.
+Diffusion models with learned adaptive noise.
+In The Thirty-eighth Annual Conference on Neural Information Processing Systems , 2024b.
+URL https://openreview.net/forum?id=loMa99A4p8 .
+Sahoo et al. (2025a)
+Sahoo, S. S., Deschenaux, J., Gokaslan, A., Wang, G., Chiu, J. T., and Kuleshov, V.
+The diffusion duality.
+In ICLR 2025 Workshop on Deep Generative Model in Machine Learning: Theory, Principle and Efficacy , 2025a.
+URL https://openreview.net/forum?id=CB0Ub2yXjC .
+Sahoo et al. (2025b)
+Sahoo, S. S., Yang, Z., Akhauri, Y., Liu, J., Singh, D., Cheng, Z., Liu, Z., Xing, E., Thickstun, J., and Vahdat, A.
+Esoteric language models.
+arXiv preprint arXiv:2506.01928 , 2025b.
+Sap et al. (2019)
+Sap, M., Rashkin, H., Chen, D., LeBras, R., and Choi, Y.
+Socialiqa: Commonsense reasoning about social interactions.
+arXiv preprint arXiv:1904.09728 , 2019.
+Schiff et al. (2025)
+Schiff, Y., Sahoo, S. S., Phung, H., Wang, G., Boshar, S., Dalla-torre, H., de Almeida, B. P., Rush, A. M., PIERROT, T., and Kuleshov, V.
+Simple guidance mechanisms for discrete diffusion models.
+In The Thirteenth International Conference on Learning Representations , 2025.
+URL https://openreview.net/forum?id=i5MrJ6g5G1 .
+Shi et al. (2025)
+Shi, J., Han, K., Wang, Z., Doucet, A., and Titsias, M. K.
+Simplified and generalized masked diffusion for discrete data, 2025.
+URL https://arxiv.org/abs/2406.04329 .
+Soboleva et al. (2023)
+Soboleva, D., Al-Khateeb, F., Myers, R., Steeves, J. R., Hestness, J., and Dey, N.
+SlimPajama: A 627B token cleaned and deduplicated version of RedPajama, 2023.
+URL https://huggingface.co/datasets/cerebras/SlimPajama-627B .
+Sohl-Dickstein et al. (2015)
+Sohl-Dickstein, J., Weiss, E., Maheswaranathan, N., and Ganguli, S.
+Deep unsupervised learning using nonequilibrium thermodynamics.
+In International conference on machine learning , pp. 2256–2265. PMLR, 2015.
+Song et al. (2025)
+Song, Y., Zhang, Z., Luo, C., Gao, P., Xia, F., Luo, H., Li, Z., Yang, Y., Yu, H., Qu, X., et al.
+Seed diffusion: A large-scale diffusion language model with high-speed inference.
+arXiv preprint arXiv:2508.02193 , 2025.
+Su et al. (2023)
+Su, J., Lu, Y., Pan, S., Murtadha, A., Wen, B., and Liu, Y.
+Roformer: Enhanced transformer with rotary position embedding, 2023.
+Touvron et al. (2023)
+Touvron, H., Martin, L., Stone, K., Albert, P., Almahairi, A., Babaei, Y., Bashlykov, N., Batra, S., Bhargava, P., Bhosale, S., et al.
+Llama 2: Open foundation and fine-tuned chat models.
+arXiv preprint arXiv:2307.09288 , 2023.
+Vaswani et al. (2017)
+Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A. N., Kaiser, Ł., and Polosukhin, I.
+Attention is all you need.
+Advances in neural information processing systems , 30, 2017.
+von Rütte et al. (2025)
+von Rütte, D., Fluri, J., Pooladzandi, O., Schölkopf, B., Hofmann, T., and Orvieto, A.
+Scaling behavior of discrete diffusion language models.
+arXiv preprint arXiv:2512.10858 , 2025.
+Wang et al. (2025)
+Wang, G., Schiff, Y., Sahoo, S., and Kuleshov, V.
+Remasking discrete diffusion models with inference-time scaling.
+arXiv preprint arXiv:2503.00307 , 2025.
+Wei et al. (2022a)
+Wei, J., Tay, Y., Bommasani, R., Raffel, C., Zoph, B., Borgeaud, S., Yogatama, D., Bosma, M., Zhou, D., Metzler, D., et al.
+Emergent abilities of large language models.
+arXiv preprint arXiv:2206.07682 , 2022a.
+Wei et al. (2022b)
+Wei, J., Wang, X., Schuurmans, D., Bosma, M., Xia, F., Chi, E., Le, Q. V., Zhou, D., et al.
+Chain-of-thought prompting elicits reasoning in large language models.
+Advances in neural information processing systems , 35:24824–24837, 2022b.
+xiaoju ye (2023)
+xiaoju ye.
+calflops: a flops and params calculate tool for neural networks in pytorch framework, 2023.
+URL https://github.com/MrYxJ/calculate-flops.pytorch .
+Yang et al. (2025)
+Yang, A., Li, A., Yang, B., Zhang, B., Hui, B., Zheng, B., Yu, B., Gao, C., Huang, C., Lv, C., et al.
+Qwen3 technical report.
+arXiv preprint arXiv:2505.09388 , 2025.
+Zheng et al. (2024)
+Zheng, K., Chen, Y., Mao, H., Liu, M.-Y., Zhu, J., and Zhang, Q.
+Masked diffusion models are secretly time-agnostic masked models and exploit inaccurate categorical sampling.
+arXiv preprint arXiv:2409.02908 , 2024.
+Contents
+1 Introduction
+2 Background
+2.1 Autoregressive Models
+2.2 Discrete Diffusion Models
+2.3 Esoteric Language Models
+3 Scaling Laws
+3.1 IsoFLOP Analysis
+3.2 Fitting Scaling Laws
+3.3 Speed-Quality Tradeoff
+4 Scaling to the Billion-Parameter Regime
+4.1 Likelihood-Based Benchmarks
+4.2 Maths and Reasoning Benchmark
+5 Discussion and Conclusion
+References
+A Additional Experiments
+Appendix A Additional Experiments
+Figure 4 : Throughput (toks / sec; ↑ \uparrow ) vs time discretization T T for various diffusion models.
+(a) MDLM w/ ancestral sampler.
+(b) Eso-LM w/ block sampler.
+(c) Duo w/ ancestral sampler.
+Figure 5 : Gen. PPL (sample quality; ↓ \downarrow ) and entropy (sample diversity; ↑ \uparrow ) vs time discretization ( T T ) for (a) MDLM w/ ancestral sampler, (b) Eso-LM w/ block sampler, and (c) Duo w/ ancestral sampler.
+(a) Likelihood vs. FLOPs
+(b) Optimal parameters vs. FLOPs
+(c) Fractional difference in model sizes of MDLM trained with the low-variance training loss ( 8 ) relative to MDLM trained with the ELBO ( 7 ).
+Figure 6 : Scaling law comparison between MDLM trained with the low-variance training loss ( 8 ) and MDLM trained with the ELBO ( 7 ). MDLM trained with the low variance training loss yields compute optimal models with fewer parameters.
+Table 3 : Accuracy after SFT on GSM8K with a cosine schedule, with maximal and minimial learning rates η max \eta_{\max} and η min \eta_{\min} .
+Hyperparams
+Accuracy ( ↑ \uparrow )
+η max \eta_{\max}
+η min \eta_{\min}
+5 ep
+10 ep
+20 ep
+AR
+1e-5
+2e-6
+62.9
+–
+–
+2e-5
+5e-8
+59.0
+–
+–
+2e-5
+5e-7
+61.6
+–
+–
+2e-5
+2e-6
+59.1
+–
+–
+4e-5
+2e-6
+55.0
+–
+–
+5e-5
+5e-6
+50.7
+–
+–
+MDLM
+1e-5
+2e-6
+58.4
+54.7
+53.1
+2e-5
+5e-8
+56.6
+59.7
+54.0
+2e-5
+5e-7
+58.8
+59.2
+54.9
+2e-5
+2e-6
+61.7
+–
+54.1
+4e-5
+2e-6
+57.9
+56.0
+51.2
+5e-5
+5e-6
+55.3
+53.4
+49.6
+Eso-LM
+2e-5
+2e-6
+33.4
+–
+–
+Duo
+1e-5
+2e-6
+64.6
+64.8
+61.8
+2e-5
+5e-8
+66.0
+65.4
+60.2
+2e-5
+5e-7
+65.8
+64.4
+59.8
+2e-5
+2e-6
+65.0
+63.0
+58.4
+4e-5
+2e-6
+62.9
+59.0
+53.2
+5e-5
+5e-6
+60.5
+54.8
+51.2
+Table 4 : Transformer configurations of AR, MDLM, Duo, and Eso-LM used in the scaling law study.
+Non-Embedding Parameters ( M M )
+n_embed
+n_layers
+n_heads
+14
+256
+6
+4
+29
+384
+8
+6
+44
+512
+8
+8
+58
+576
+9
+9
+74
+640
+10
+10
+91
+640
+13
+10
+107
+640
+16
+8
+116
+768
+12
+12
+140
+768
+15
+12
+163
+768
+18
+12
+173
+896
+14
+14
+194
+896
+16
+14
+214
+896
+18
+14
+247
+1024
+16
+16
+274
+1024
+18
+16
+300
+1024
+20
+16
+413
+1280
+18
+10
+475
+1280
+21
+10
+493
+1408
+18
+11
+537
+1280
+24
+10
+568
+1408
+21
+11
+642
+1408
+24
+11
+698
+1536
+22
+12
+787
+1536
+25
+12
+1016
+1792
+24
+14
+1208
+2048
+22
+16
+1364
+2048
+25
+16
+1708
+2176
+28
+17
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

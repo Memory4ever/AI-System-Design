@@ -1,0 +1,414 @@
+6 Evaluation
+6.1 Performance Evaluation
+We evaluate NeST on a diverse set of 10 open-weight instruction-tuned large language models spanning roughly 1B to 14B parameters and covering multiple major model families, including Meta’s Llama, Alibaba’s Qwen2.5 and Qwen3 series [53, 54, 55, 43], Microsoft’s Phi-4 models [56, 57], and Google’s Gemma [58, 44]. All evaluated models are publicly released instruction-following systems that incorporate general-purpose safety alignment, typically via supervised fine-tuning and reinforcement learning from human feedback, with the goal of reducing harmful, unsafe, or policy-violating outputs under standard prompting. This setup reflects realistic deployment conditions for open-weight LLMs, where safety mechanisms are present but may remain vulnerable to black-box adversarial attacks. We evaluate NeST in comparison to the original baseline models as well as three representative safety adaptation approaches: full-parameter supervised fine-tuning (Full FT), Circuit Breaker [37], which intervenes on internal activations to suppress unsafe behavior, and parameter-efficient LoRA [38] fine-tuning applied to FNN projections. Restricting LoRA to FNN projections ensures a fair comparison in both trainable parameter count and structural similarity to NeST. This comparison enables a systematic assessment of safety robustness and training efficiency across diverse architectures and model scales.
+For Full FT, LoRA [38], and NeST, we use a balanced supervised fine-tuning dataset composed of harmful and benign prompts. Harmful examples are drawn from the WildJailbreak [59] benchmark, using up to 10,000 adversarial harmful prompts, while benign examples are sampled from the training split of the Natural Reasoning [52] dataset, with the number of benign prompts matched to the harmful set. The combined dataset is shuffled and split into training and validation sets using a 95/5 split, and the same data and preprocessing are used across these methods to ensure a fair and controlled comparison. For Circuit Breaker [37], we follow the authors’ original training setup, which uses a curated circuit breaker dataset designed to elicit harmful internal representations together with a retain dataset composed of benign and refusal-aligned examples. In addition to this original configuration, we evaluate an expanded setting in which the circuit breaker training data is augmented with 5,000 harmful prompts sampled from WildJailbreak [59], while retaining the original retain dataset.
+Method
+Scope
+Train Data
+Epochs/Steps
+Eval. Data
+Baseline
+None
+–
+–
+1k
+Full FT
+All params
+20k
+5 epochs
+1k
+LoRA (r=1r{=}1)
+FNN
+20k
+5 epochs
+1k
+Circuit Breaker (r=32r{=}32)
+FNN+ATTN
+25k
+≤\leq150 steps
+1k
+NeST
+Neuron clust.
+20k
+5 epochs
+1k
+Table 1:
+Training and evaluation configurations for all methods.
+Full FT, LoRA, and NeST use a balanced 20k dataset, while Circuit Breaker builds on its original 5k training setup with an additional 20k prompts. rr denotes the dimensionality of low-rank adaptation. All methods are evaluated on 1k held-out WildJailbreak prompts.
+All methods are trained using a consistent supervised fine-tuning configuration to enable a controlled comparison of safety robustness and parameter efficiency. Baseline refers to the original, released instruction-tuned model without additional fine-tuning. Full FT performs standard supervised fine-tuning over all model parameters for five epochs. LoRA [38] applies parameter-efficient fine-tuning by inserting low-rank adapters into FNN projections. A small rank of r=1r=1 is used to keep the number of trainable parameters close to that of NeST, enabling a direct comparison of parameter efficiency. Circuit Breaker [37] follows the Representation Rerouting framework, introducing LoRA-based circuit-breaking modules while freezing the base model. Training is performed using the authors’ recommended configuration with rank-32 adapters, dropout 0.05, bfloat16 precision, gradient checkpointing, and up to 150 optimization steps. Finally, NeST restricts all updates to cluster-level parameters associated with safety-relevant neurons, leaving the remainder of the model unchanged and training for five epochs under the same optimization settings as Full FT and LoRA.
+All evaluation results are computed on a held-out set of 1,000 adversarial harmful prompts sampled from the WildJailbreak [59] benchmark. This evaluation set is strictly disjoint from all datasets used for safety neuron detection, clustering, and fine-tuning, ensuring that reported attack success rates reflect generalization to unseen harmful inputs rather than memorization or data leakage. Evaluation is conducted using a standardized attack success rate (ASR) protocol. For each target model and defense configuration, prompts are formatted using the model’s native instruction template, and responses are generated using greedy decoding with model-specific maximum generation lengths. To determine whether a response constitutes a successful jailbreak, an independent safety judge model, Qwen3Guard [60], is used to classify each response as safe or unsafe. A prompt is counted as a successful attack if the judge labels the response as unsafe and the output does not contain an explicit refusal. The final ASR is computed as the fraction of prompts that result in successful attacks, and this procedure is applied uniformly across all models and methods. The training and evaluation configurations for all compared methods are summarized in Table 1.
+We report evaluation results using two complementary metrics that capture both safety effectiveness and training efficiency. Table 2 presents the attack success rate (ASR) for each target model and defense method, measuring the fraction of adversarial prompts that result in unsafe responses, where lower values indicate stronger safety robustness. Table 3 reports the number of trainable parameters (in millions) introduced by each method, quantifying the parameter efficiency of different safety adaptation strategies. Together, these metrics enable a direct comparison of the trade-offs between safety performance and training cost across models and methods.
+Target Model
+Baseline
+Full FT
+Circuit Breaker
+LoRA
+NeST
+Orig.
+Exp.
+Llama-3.2-1B
+40.5%
+2.1%
+35.8%
+58.1%
+1.4%
+1.7%
+Llama-3.2-3B
+54.2%
+1.9%
+48.1%
+74.8%
+3.4%
+2.8%
+Qwen2.5-7B
+69.4%
+1.6%
+38.2%
+79.1%
+19.2%
+11.0%
+Qwen2.5-14B
+58.1%
+0.8%
+20.1%
+65.2%
+13.0%
+2.9%
+Phi-4-mini
+25.7%
+0.3%
+24.6%
+44.5%
+5.7%
+6.7%
+Phi-4
+25.2%
+1.9%
+23.6%
+68.2%
+17.8%
+0.0%
+gemma-2b-it
+22.0%
+0.1%
+8.6%
+39.7%
+4.2%
+0.7%
+gemma-7b-it
+34.0%
+0.4%
+12.9%
+40.6%
+6.6%
+4.1%
+Qwen3-4B
+65.1%
+0.7%
+32.0%
+76.4%
+1.6%
+1.5%
+Qwen3-14B
+50.9%
+0.6%
+27.1%
+72.1%
+2.8%
+12.2%
+Average
+44.5%
+1.04%
+27.1%
+61.9%
+7.57%
+4.36%
+Table 2: ASR with different methods. For Circuit Breaker, Orig. denotes evaluation on the original train–test setup, while Exp. denotes evaluation under our experimental setup.
+Target Model
+Full FT
+CircuitB.
+LoRA
+NeST
+Llama-3.2-1B
+1235.81
+8.45
+3.27
+0.13
+Llama-3.2-3B
+3212.75
+18.23
+5.04
+0.36
+Qwen2.5-7B
+7615.61
+30.27
+0.45
+0.45
+Qwen2.5-14B
+14770.03
+51.60
+18.81
+1.01
+Phi-4-mini
+3836.00
+13.36
+1.62
+0.21
+Phi-4
+14660,00
+68.4
+0.62
+0.42
+gemma-2b-it
+2506.17
+14.16
+6.63
+0.17
+gemma-7b-it
+8537.68
+37.50
+1.54
+0.36
+Qwen3-4B
+4022.46
+19.26
+0.89
+0.38
+Qwen3-14B
+15768.31
+31.52
+1.80
+0.87
+Average
+7616.48
+29.28
+4.07
+0.44
+Table 3: Trainable parameters (million) with different methods.
+Across all evaluated models, the original baseline exhibits high attack success rates, indicating substantial vulnerability to adversarial prompts despite existing safety alignment. Full fine-tuning consistently reduces ASR to very low levels across model families, but does so at the cost of updating billions of parameters. LoRA provides moderate improvements in safety with significantly fewer trainable parameters, though its effectiveness varies across architectures and degrades on larger models. Circuit Breaker reduces unsafe behavior under the authors’ original evaluation setting, but shows substantial variability across models and configurations; when evaluated under the same data and protocol used for other methods, its performance degrades markedly and ASR remains high across most models. In contrast, NeST achieves consistently low ASR across a wide range of model sizes and architectures, while requiring orders of magnitude fewer trainable parameters than full fine-tuning.
+Table 2 quantifies these trends across individual
+models. Baseline attack success rates average 44.5% and
+exceed 50% on several models, including Qwen2.5-7B,
+Qwen3-4B, and Llama-3.2-3B, highlighting the fragility of
+standard safety alignment. Full fine-tuning reduces ASR to
+1.4% on average across all models, but at the cost of
+updating a large fraction of model parameters. As shown in
+Table 3, Full FT requires an average
+of 7.6 billion trainable parameters, making it computationally
+expensive and impractical in many settings.
+Parameter-efficient methods reduce this cost substantially but
+exhibit different safety–efficiency trade-offs. LoRA reduces
+the number of trainable parameters to an average of 4.07
+million, representing a substantial reduction relative to Full FT, yet achieves inconsistent safety gains.
+ASR remains above 10% on larger models such as
+Qwen2.5-7B and Qwen2.5-14B, indicating limited robustness
+when adaptation capacity is constrained. Circuit Breaker
+requires an average of 24.9 million trainable parameters and
+shows wide variability across models. Under the unified evaluation protocol used in this work,
+which evaluates all methods on the same held-out
+WildJailbreak prompt set, Circuit Breaker ASR remains
+comparable to or only modestly lower than the baseline,
+in contrast to its stronger performance when evaluated
+using the authors’ original training and test configuration.
+In contrast, NeST achieves a favorable balance between
+safety effectiveness and parameter efficiency. Across all
+evaluated models, NeST reduces ASR to an average of
+4.8% while requiring only 0.44 million trainable parameters
+on average. This corresponds to a 99.99% reduction in
+trainable parameters relative to Full FT and approximately a
+90% reduction relative to LoRA. Despite this significantly
+smaller parameter footprint, NeST consistently matches
+or outperforms LoRA in terms of safety. For example, on
+Qwen2.5-14B, NeST reduces ASR to 2.9% using
+1.01M trainable parameters, compared to LoRA’s ASR of
+13.0% with 18.8M parameters. Similarly, on Llama-3.2-3B,
+NeST achieves an ASR of 2.8% with 0.36M parameters,
+while LoRA attains 3.4% ASR with over 5M trainable
+parameters. These results demonstrate that explicitly
+targeting safety-relevant neuron structure enables robust and
+scalable safety improvements without broad or expensive
+parameter updates.
+6.2 Stability Across Inference Settings and Modalities
+In this section, we further evaluate the stability of NeST under different inference settings and input modalities, including text-only, image-only, and their combinations with explicit reasoning. Table 4 reports the attack success rate (ASR) of multiple multimodal models with and without NeST.
+Without NeST, the base models exhibit consistently high ASR across all configurations, with an average ASR of 55.3%. In particular, strong multimodal models such as Gemma-3-27B and Qwen3-VL-8B show especially high vulnerability in image-based settings, reaching up to 85.0% ASR. This indicates that both modality and inference style (e.g., reasoning-enabled decoding) do not inherently mitigate the attack.
+In contrast, enabling NeST leads to a dramatic and consistent reduction in ASR across all models, modalities, and inference settings. The average ASR drops to only 1.14%, representing a relative reduction of over 54.2%. Notably, this suppression remains effective for both text and image inputs, as well as for reasoning-augmented inference, where attacks are often more difficult to control due to longer generation trajectories.
+Base Model
+Infer. Setting
+w/o NeST
+w/ NeST
+gemma-3-12b
+Text
+52.6%
+4.4%
+Text & Reasoning
+52.4%
+5.1%
+Image
+40.8%
+0.2%
+Image & Reasoning
+39.8%
+1.0%
+gemma-3-27b
+Text
+57.1%
+0.2%
+Text & Reasoning
+58.5%
+0.2%
+Image
+84.2%
+0.0%
+Image & Reasoning
+85.0%
+0.0%
+Qwen3-VL-8B
+Text
+43.9%
+0.0%
+(Instruct)
+Image
+84.0%
+0.2%
+Qwen3-VL-8B
+Text & Reasoning
+43.1%
+1.2%
+(Thinking)
+Image & Reasoning
+22.2%
+1.2%
+Average
+55.3%
+1.1%
+Table 4: ASR with Different Inference Settings.
+These results demonstrate that NeST is highly stable and robust across heterogeneous inference conditions, and its effectiveness does not depend on specific modalities or decoding strategies. This suggests that the protection mechanism introduced by NeST generalizes well across different generation pathways, making it suitable for deployment in real-world multimodal and reasoning-enabled LLM systems. In particular, the near-zero ASR observed on large models such as Gemma-3-27B indicates that the defense scales favorably with model size and complexity.
+6.3 Utility Analysis
+We evaluate model utility before and after NeST fine-tuning on three standard reasoning benchmarks. GSM8K [61]focuses on multi-step mathematical reasoning, ARC [62] evaluates abstract and commonsense reasoning through multiple-choice science questions, and MMLU [63] measures broad-domain knowledge and reasoning across diverse academic subjects. Together, these benchmarks capture mathematical, logical, and general knowledge reasoning performance.
+Figure 5 compares model performance before and after NeST fine-tuning on the outlined benchmarks, using standard accuracy as the evaluation metric.
+Overall, NeST preserves model utility across all benchmarks, with only minor performance changes.
+On GSM8K, the average accuracy drops by only 0.9 percentage points (from 61.2% to 60.3%).
+Similarly, ARC shows a modest average decrease from 74.0% to 69.1%, while MMLU exhibits a small drop from 60.9% to 57.2%.
+Although some smaller models, such as gemma-2b-it, show more noticeable declines, several models including Qwen2.5-14B, Qwen3-4B, and Phi-4 maintain or slightly improve performance.
+These results indicate that NeST preserves model capability across diverse reasoning tasks without substantially degrading utility.
+(a) GSM8K
+(b) ARC
+(c) MMLU
+Figure 5: Utility evaluation before and after NeST fine-tuning across three reasoning benchmarks.
+NeST preserves performance across mathematical (GSM8K), commonsense (ARC), and broad-domain knowledge (MMLU) tasks.
+7 Ablation and Hyperparameter Study
+7.1 Impact of the z-Threshold
+The z-threshold (zthrz_{\text{thr}}) controls the selectivity of safety neuron detection by specifying how strongly a neuron’s probe score must deviate from the layer-wise mean to be considered safety-relevant, as formalized in Eq. (7). Lower thresholds include a larger set of neurons, potentially introducing noisy or weakly relevant features, while higher thresholds yield smaller and more selective neuron sets that may under-represent safety-critical behavior.
+We evaluate three representative thresholds, zthr∈{2,3,4}z_{\text{thr}}\in\{2,3,4\}, while keeping all other components of NeST fixed. Table 5 reports the resulting Attack Success Rates (ASR) across ten target models. On average, a moderate threshold of zthr=3z_{\text{thr}}=3 achieves the lowest ASR at 4.4%, slightly improving over zthr=2z_{\text{thr}}=2 (4.5%) and substantially outperforming the more restrictive setting zthr=4z_{\text{thr}}=4, which yields an average ASR of 10.1%. This more than 2.3×\times increase in ASR at zthr=4z_{\text{thr}}=4 indicates that overly aggressive neuron filtering can significantly weaken safety enforcement.
+Target Model
+zthr=2z_{\text{thr}}=2
+zthr=3z_{\text{thr}}=3
+zthr=4z_{\text{thr}}=4
+Llama-3.2-1B
+0.5%
+1.7%
+4.0%
+Llama-3.2-3B
+1.3%
+2.8%
+1.8%
+Qwen2.5-7B
+5.3%
+11.0%
+12.6%
+Qwen2.5-14B
+1.9%
+2.9%
+14.8%
+Phi-4-mini
+12.5%
+6.7%
+24.5%
+Phi-4
+0.5%
+0.0%
+2.7%
+gemma-2b-it
+0.5%
+0.7%
+25.0%
+gemma-7b-it
+1.5%
+4.1%
+5.3%
+Qwen3-4B
+9.4%
+1.5%
+1.8%
+Qwen3-14B
+11.4%
+12.2%
+8.8%
+Average
+4.5%
+4.4%
+10.1%
+Table 5: Impact of the zthrz_{\text{thr}}.
+Beyond the average case, lower and higher thresholds exhibit markedly different stability characteristics. The lower threshold zthr=2z_{\text{thr}}=2 shows increased variance across models, with ASR ranging from 0.5% to 12.5%, suggesting that including a broader set of neurons can dilute the safety signal with less relevant activations. In contrast, the highest threshold zthr=4z_{\text{thr}}=4 leads to pronounced performance degradation on several models, with ASR increasing up to 25.0% on gemma-2b-it.
+Model-specific trends further highlight this trade-off. While some models (e.g., Llama-3.2-3B and Qwen3-4B) remain relatively stable under stricter thresholds, others experience increases of over 18% to 24% when moving from zthr=3z_{\text{thr}}=3 to zthr=4z_{\text{thr}}=4. Overall, these results indicate that excessively selective neuron identification can exclude a small but crucial subset of safety-critical neurons. Based on both average performance and cross-model robustness, we adopt zthr=3z_{\text{thr}}=3 as the default threshold in all main experiments, as it provides the most reliable balance between neuron coverage and selectivity across architectures and model scales.
+7.2 Impact of Clustering Strength
+In this section, we control the degree of parameter sharing among safety neurons through the silhouette threshold used during clustering. Three settings are considered: (i) weak clustering (minimum setting) allocates only a single cluster per layer, meaning that all safety neurons within a layer share the same adaptation parameters. This setting is maximally parameter-efficient, as it introduces the smallest number of trainable parameters; (ii) strong clustering (maximum setting) treats each safety neuron as its own cluster, effectively removing parameter sharing and allowing fully independent adaptation, but at the cost of a significantly larger number of trainable parameters; (iii) The default NeST setting lies between these two extremes, grouping safety neurons into a moderate number of clusters per layer based on activation similarity. This ablation isolates the trade-off between adaptation granularity, safety performance, and parameter efficiency.
+Target Model
+Weak
+NeST Setting
+Strong
+Llama-3.2-1B
+3.3%
+1.7%
+1.7%
+Llama-3.2-3B
+3.4%
+2.8%
+0.3%
+Qwen2.5-7B
+16.3%
+11.0%
+10.4%
+Qwen2.5-14B
+2.5%
+2.9%
+2.6%
+Phi-4-mini
+13.3%
+6.7%
+1.6%
+Phi-4
+15.9%
+0.0%
+0.7%
+gemma-2b-it
+24.3%
+0.7%
+1.0%
+gemma-7b-it
+15.9%
+4.1%
+5.5%
+Qwen3-4B
+6.9%
+1.2%
+1.8%
+Qwen3-14B
+10.4%
+12.2%
+15.0%
+Average
+11.2%
+4.3%
+4.1%
+Table 6: Impact of Clustering Strength.
+Table 6 reports the resulting attack success rates across models. On average, weak clustering leads to an ASR of 11.2%, while the default NeST setting achieves 4.3%, and strong clustering yields a comparable 4.1%. This shows that although weak clustering is the most computationally efficient, it suffers from a substantial degradation in safety performance. Indeed, under weak clustering, forcing all safety neurons in a layer to share a single set of parameters significantly restricts the expressive capacity of safety adaptation. While it minimizes parameter overhead, it collapses heterogeneous safety behaviors into a single update direction, leading to underfitting.
+In contrast, strong clustering maximizes adaptation flexibility by allowing each safety neuron to be updated independently. This increases the number of trainable parameters and provides the finest granularity of control, which can slightly improve or match performance in some models, such as Llama-3.2-3B, Phi-4-mini, and gemma-2b-it. However, the overall performance gain over the default setting is marginal (4.1% vs. 4.3% on average), despite the significantly higher parameter cost. Moreover, in certain models, such as Qwen3-14B, strong clustering even degrades performance, indicating that fully independent neuron-level updates can introduce instability or overfitting.
+Overall, these results highlight a clear efficiency–performance trade-off. Weak clustering minimizes computation and memory overhead but sacrifices safety effectiveness, while strong clustering increases parameter cost without delivering commensurate performance gains. The default NeST setting achieves the best balance between these extremes, providing near-optimal safety performance with substantially fewer trainable parameters.
+8 Discussion
+Task-Specific and Structure-Aware Adaptation.
+Unlike LoRA, which is primarily designed as a lightweight, general-purpose adaptation mechanism, NeST is task-structured by design. While LoRA introduces low-rank updates without regard to the semantic role of individual neurons, NeST explicitly aligns adaptation with the internal structure of a target behavior. In this work, we instantiate NeST for safety alignment by detecting and adapting safety-relevant neurons, but the framework itself is not inherently limited to safety. The central design principle of NeST is to first identify neurons that are causally and functionally associated with a given behavior, and then restrict adaptation to those neurons in a structured manner. This formulation naturally extends beyond safety alignment. By modifying the neuron detection procedure, NeST can be applied to harden or specialize models for other targeted behaviors. In such settings, neuron detection is performed with respect to the relevant behavioral distinction, while the same cluster-based adaptation mechanism enables lightweight, behavior-specific fine-tuning aligned with the model’s internal structure. Viewed more broadly, NeST provides a general framework for neuron-structured, task-specific parameter-efficient adaptation. Unlike generic parameter-efficient methods that apply uniform constraints across layers or projections, NeST defines where to adapt based on internal representation structure, making it particularly well-suited for tasks where the target behavior is localized within specific neuron groups.
+Post-Hoc Safety Hardening Under Downstream Fine-Tuning.
+Another important consideration is the interaction between safety hardening and downstream fine-tuning. In practice, deployed models are frequently adapted after release through additional supervised fine-tuning or preference optimization to support new tasks, domains, or user requirements. Such downstream fine-tuning can inadvertently weaken or overwrite previously learned safety behaviors, even when the original safety alignment was effective. NeST is particularly well-suited to this setting due to its lightweight and localized nature. Because NeST modifies only a small subset of safety-relevant neurons, it can be efficiently re-applied after downstream fine-tuning to re-establish safety guarantees without retraining the full model or introducing inference-time defenses. This positions NeST as a practical post-hoc safety re-hardening mechanism, enabling model providers to restore safety properties after capability-driven updates. More broadly, NeST complements downstream fine-tuning in modern LLM development pipelines by serving as a final-stage hardening step, helping preserve safety behavior as models evolve through repeated adaptation cycles.
+Compatibility with Diverse Safety Alignment Methods.
+In this work, NeST is implemented on top of supervised fine-tuning for safety alignment; however, the framework itself is not tied to a specific optimization objective. The neuron detection, clustering, and selective adaptati

@@ -1,0 +1,221 @@
+Power-SMC: Low-Latency Sequence-Level Power Sampling for Training-Free LLM Reasoning (https://arxiv.org/html/2602.10273v1)
+citeturn28443view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.10273v1","lineno":null}); Total lines: 397
+L0: ##### Report GitHub Issue
+L1: 
+L2: [Button: ×]
+L3: 
+L4: Title: [Input: Enter title]
+L5: 
+L6: Content selection saved. Describe the issue below:
+L7: 
+L8: Description:
+L9: 
+L10: [Button: Submit without GitHub] [Button: Submit in GitHub]
+L11: 
+L12: cite0†Back to arXiv L13: 
+L14: cite1†Why HTML?†info.arxiv.org cite2†Report Issue cite3†Back to Abstract cite4†Download PDF L15:   1. cite5†Abstract L16:   2. cite6†1 Introduction L17:   3. cite7†2 Related Work L18:     1. cite8†Power sampling and MCMC for LLMs. L19:     2. cite9†Token-level approximations to power sampling. L20:     3. cite10†Sequential Monte Carlo and particle methods. L21:     4. cite11†Decoding heuristics. L22:     5. cite12†Limitations addressed by Power-SMC. L23:   4. cite13†3 Background L24:     1. cite14†3.1 Autoregressive models and the power target L25:     2. cite15†3.2 Why token-level temperature is not globally correct L26:     3. cite16†3.3 Importance sampling L27:     4. cite17†3.4 Sequential Monte Carlo L28:   5. cite18†4 Power-SMC: Sampling $\pi_{\alpha}$ with a Single Batched Decode L29:     1. cite19†4.1 Prefix flow for the power target L30:       1. cite20†Token proposal and incremental correction. L31:     2. cite21†4.2 SMC/SIR with ESS-triggered resampling L32:   6. cite22†5 Local Optimality of $\tau=1/\alpha$ and a Rényi-Entropy View L33:     1. cite23†5.1 Locally variance-minimizing proposal L34:       1. cite24†Interpretation. L35:     2. cite25†5.2 Rényi-entropy interpretation of residual weight dispersion L36:       1. cite26†Path-wise weight accumulation (SIS view). L37:     3. cite27†5.3 Exact exponent-bridging ($\alpha$-ramping) L38:   7. cite28†6 Compute and Latency Cost Analysis: MH vs. SMC/SIR L39:     1. cite29†6.1 Setup, cost model, and notation L40:     2. cite30†6.2 Cost of Power-SMC / SIR L41:     3. cite31†6.3 Cost of MH power sampling L42:       1. cite32†General decomposition. L43:     4. cite33†6.4 Compute and latency ratios L44:   8. cite34†7 Experiments L45:     1. cite35†Implementation details. L46:     2. cite36†Results. L47:   9. cite37†8 Conclusion L48:   10. cite38†References L49:   11. cite39†A Proof of Theorem  and Corollary  L50:   12. cite40†B Exact Exponent-Bridging ($\alpha$-Ramping) L51:   13. cite41†C Systems: Cache-Safe Resampling for Transformer Decoding L52:   14. cite42†D EOS and Variable-Length Decoding L53:   15. cite43†E Resampling Choices L54: cite44†License: CC BY 4.0†info.arxiv.org L55: 
+L56: arXiv:2602.10273v1 [stat.ML] 10 Feb 2026
+L57: # Power-SMC: Low-Latency Sequence-Level Power Sampling for Training-Free LLM Reasoning
+L58: Seyedarmin Azizi Affiliation: University of Southern California, Los Angeles, USA Email: seyedarm@usc.edu    Erfan Baghaei Potraghloo Affiliation: University of Southern California, Los Angeles, USA Email: baghaeip@usc.edu    Minoo Ahmadi Affiliation: University of Southern California, Los Angeles, USA Email: minooahm@usc.edu    Souvik Kundu Affiliation: Intel Labs, USA Email: pedram@usc.edu    Massoud Pedram Affiliation: University of Southern California, Los Angeles, USA Email: souvikk.kundu@intel.com
+L59: ###### Abstract
+L60: Many recent reasoning gains in large language models can be explained as distribution sharpening: biasing generation toward high-likelihood trajectories already supported by the pretrained model, rather than modifying its weights. A natural formalization is the sequence-level power distribution $\pi_{\alpha}(y\mid x)\propto p_{\theta}(y\mid x)^{\alpha}$ ($\alpha>1$), which concentrates mass on whole sequences instead of adjusting token-level temperature.
+L61: Prior work shows that Metropolis–Hastings (MH) sampling from this distribution recovers strong reasoning performance, but at order-of-magnitude inference slowdowns. We introduce Power-SMC, a training-free Sequential Monte Carlo scheme that targets the same objective while remaining close to standard decoding latency. Power-SMC advances a small particle set in parallel, corrects importance weights token-by-token, and resamples when necessary, all within a single GPU-friendly batched decode.
+L62: We prove that temperature $\tau=1/\alpha$ is the unique prefix-only proposal minimizing incremental weight variance, interpret residual instability via prefix-conditioned Rényi entropies, and introduce an exponent-bridging schedule that improves particle stability without altering the target. On MATH500, Power-SMC matches or exceeds MH power sampling while reducing latency from $16$–$28\times$ to $1.4$–$3.3\times$ over baseline decoding.
+L63: ## 1 Introduction
+L64: A recurring theme in recent LLM research is that reasoning gains often attributed to reinforcement learning (RL) post-training can instead be viewed as distribution sharpening: generation is biased toward high-likelihood trajectories already supported by the base model (cite45†Karan and Du, 2025 ; cite46†Yue et al., 2025 ). One concrete sharpening objective is the sequence-level power distribution. For a prompt $x$, let $p_{\theta}(\cdot\mid x)$ be a pretrained autoregressive language model.
+L65: For $\alpha\geq 1$, define
+L66:  | $$\pi_{\alpha}(y\mid x)\;=\;\frac{p_{\theta}(y\mid x)^{\alpha}}{Z_{\alpha}(x)},\qquad Z_{\alpha}(x)=\sum_{y}p_{\theta}(y\mid x)^{\alpha}.$$  |  | (1)
+L67: 
+L68: Intuitively, raising $\alpha>1$ concentrates probability on higher-likelihood sequences without changing the model parameters.
+L69: cite45†Karan and Du (2025) propose using Metropolis–Hastings (MH) sampling to draw from equation cite47†1 and demonstrate that this training-free strategy can match RL-based post-training on reasoning benchmarks. In LLMs, however, MH has a practical bottleneck: each MH move typically requires regenerating a suffix of many tokens, and the accept/reject decisions are inherently sequential. This serial structure can dominate wall-clock time even when inference is implemented with standard Transformer KV caching.
+L70: We introduce Power-SMC, a particle-based alternative that targets the same objective equation cite47†1 while making the main computation batch-parallel.
+L71: Our starting point is to view autoregressive generation as a sequence of evolving prefix distributions—a standard Feynman–Kac formulation  (cite48†Moral, 2004 ; cite49†Del Moral et al., 2006 )—and to apply Sequential Monte Carlo (SMC), a family of algorithms that approximate a target distribution using a set of weighted samples (“particles”) and occasional resampling steps.
+L72: In our setting, SMC maintains $N$ parallel candidate continuations, updates their weights as tokens are decoded, and resamples (duplicating high-weight candidates and discarding low-weight ones) only when the weights become too uneven.
+L73: Our contributions are as follows.
+L74: 
+L75:   1. 1.
+L76: Power-SMC algorithm (Section cite18†4 ).  We formulate power sampling as a Feynman–Kac flow over prefixes, derive the exact sequential importance correction for an arbitrary prefix-only token proposal, and combine ESS-triggered resampling with a cache-safe KV-cache reindexing strategy compatible with standard Transformer decoding stacks. We also describe an exact exponent-bridging procedure ($\alpha$-ramping) that preserves the final target while improving particle stability.
+L77: 
+L78:   2. 2.
+L79: Local optimality of $\tau=1/\alpha$ (Section cite22†5 ).  We prove that among all prefix-measurable token proposals, $q_{t}^{\star}(\cdot\mid x,y_{<t})\propto p_{\theta}(\cdot\mid x,y_{<t})^{\alpha}$—corresponding exactly to temperature $\tau=1/\alpha$—is the unique minimizer of the conditional variance of the incremental importance weights.
+L80: We interpret the remaining path-wise weight dispersion via prefix-conditioned Rényi entropies, clarifying what sources of degeneracy persist even under this locally optimal proposal.
+L81:   3. 3.
+L82: 
+L83: Latency analysis and empirical gains (Sections cite28†6 –cite34†7 ).  We provide an engine-independent cost model that formalizes an overhead floor for MH under block-edit proposals and highlights the advantage of batch-parallel SMC. On MATH500 across three models, Power-SMC matches or exceeds MH power sampling while reducing latency from 16–28$\times$ to 1.4–3.3$\times$ relative to baseline decoding.
+L84: ## 2 Related Work
+L85: 
+L86: #### Power sampling and MCMC for LLMs.
+L87: 
+L88: cite45†Karan and Du (2025) introduce MH-based sampling from the sequence-level power distribution equation cite47†1 and show strong empirical gains on reasoning tasks. Their method is statistically principled—MH targets the correct stationary distribution under standard conditions—but can be expensive for LLM inference because proposals often require regenerating long suffixes and the MH loop is inherently sequential.
+L89: #### Token-level approximations to power sampling.
+L90: A recent direction avoids iterative MCMC by approximating the power-distribution next-token conditional. cite50†Ji et al. (2026) derive a representation of this conditional as a scaled low-temperature distribution, where the scaling factor depends on the likelihood of future continuations, and approximate it using Monte Carlo rollouts (with bias reduction via jackknife correction).
+L91: Their perspective is naturally “lookahead-based”: the exact power conditional depends on a future-dependent term that is intractable to compute exactly, and their algorithm approximates this dependence by explicitly sampling future continuations. Power-SMC is deliberately different: we work in a prefix-only regime where the token proposal $q_{t}(\cdot\mid x,y_{<t})$ depends on the current prefix but not on sampled futures.
+L92: Within this constrained but inference-friendly class, we prove an optimality guarantee: temperature $\tau=1/\alpha$ is the unique proposal that eliminates token-choice variance in the incremental SMC weights. Any remaining mismatch to the global target is addressed by sequential importance weighting and resampling across particles, rather than by per-token lookahead estimation.
+L93: #### Sequential Monte Carlo and particle methods.
+L94: 
+L95: SMC methods approximate evolving distributions using populations of weighted particles and resampling to control degeneracy (cite51†Doucet et al., 2001 ; cite48†Moral, 2004 ; cite49†Del Moral et al., 2006 ; cite52†Johansen, 2009 ). Power-SMC adapts this framework to autoregressive decoding with Transformer KV caches, which introduces a practical requirement: resampling must correctly reorder the cached model state across particles (Appendix cite41†C ).
+L96: #### Decoding heuristics.
+L97: 
+L98: Common strategies include temperature scaling, top-$k$, and nucleus sampling (cite53†Holtzman et al., 2019 ). These specify local token-level rules and do not, in general, sample from global sequence-level targets like equation cite47†1 . Our results clarify the role of temperature within an algorithm that does target the global power objective.
+L99: #### Limitations addressed by Power-SMC.
+L100: Existing approaches to power sampling introduce distinct computational bottlenecks that Power-SMC is designed to avoid. MH power sampling (cite45†Karan and Du, 2025 ) is fundamentally sequential: accept/reject decisions induce a serial dependency, and each move regenerates a suffix whose expected length can grow with the generated prefix, leading to large overheads.
+L101: Scalable Power Sampling (cite50†Ji et al., 2026 ) eliminates the sequential MH chain but, in its current form, relies on per-token rollout estimation of future-dependent terms and (in practice) restricts attention to a candidate subset of tokens for efficiency. Power-SMC sidesteps both issues: its proposal depends only on current logits and requires no rollouts, yet we prove it is the unique variance-minimizing choice among all proposals with this prefix-only property (Section cite22†5 ).
+L102: Global correctness is then recovered through importance weights that provide an exact sequential correction (no rollout approximation error). The computational cost is one parallel forward pass per particle per decode step; because all particles advance simultaneously in a single batch, wall-clock overhead is typically modest for the batch sizes we use.
+L103: With this context, we next review the minimal background on importance sampling and SMC needed to derive Power-SMC.
+L104: ## 3 Background
+L105: 
+L106: ### 3.1 Autoregressive models and the power target
+L107: 
+L108: Given a prompt $x$, a pretrained autoregressive model defines
+L109: 
+L110:  | $$p_{\theta}(y\mid x)=\prod_{t=1}^{T(y)}p_{\theta}(y_{t}\mid x,y_{<t}),$$  |  | (2)
+L111: 
+L112: over EOS-terminated sequences $y=(y_{1},\dots,y_{T(y)})$ with tokens in $\mathcal{V}\cup\{\text{EOS}\}$. For $\alpha\geq 1$, the power distribution equation cite47†1 sharpens the base model by exponentiating the sequence-level probability.
+L113: ### 3.2 Why token-level temperature is not globally correct
+L114: 
+L115: Token-level temperature sampling draws each token from
+L116: 
+L117:  | $$q_{t}(\cdot\mid x,y_{<t})\propto p_{\theta}(\cdot\mid x,y_{<t})^{1/\tau}.$$  |  | (3)
+L118: Even when $\tau=1/\alpha$, the resulting joint distribution $q(y\mid x)=\prod_{t}q_{t}(y_{t}\mid x,y_{<t})$ typically differs from $\pi_{\alpha}(y\mid x)$ because exponentiating each conditional independently is not the same as exponentiating the joint (cite45†Karan and Du, 2025 ). Power-SMC addresses this gap by combining a token proposal with exact sequential importance corrections.
+L119: ### 3.3 Importance sampling
+L120: 
+L121: Suppose we wish to compute expectations under a target distribution $\pi(y)=\gamma(y)/Z$ where $\gamma(y)\geq 0$ is known but the normalizing constant $Z=\sum_{y}\gamma(y)$ is not. Given samples $y^{(i)}\sim q(y)$ from a proposal distribution $q$, importance sampling assigns each sample an unnormalized weight
+L122: 
+L123:  | $$w(y)\;=\;\frac{\gamma(y)}{q(y)},$$  |  | (4)
+L124: 
+L125: and approximates target expectations via
+L126:  | $$\mathbb{E}_{\pi}[f(Y)]\;\approx\;\frac{\sum_{i}w(y^{(i)})\,f(y^{(i)})}{\sum_{i}w(y^{(i)})}\qquad\text{(self-normalized IS).}$$  |  | (5)
+L127: 
+L128: When the target is a distribution over long sequences, applying IS “all at once” yields extremely high-variance weights. Sequential Monte Carlo can be viewed as applying IS incrementally along the sequence.
+L129: ### 3.4 Sequential Monte Carlo
+L130: SMC maintains $N$ weighted samples (particles) that evolve over time. At each step, each particle proposes a new token, and its weight is multiplied by an incremental importance weight that corrects the proposal toward the desired target. When the weights become too uneven, SMC performs resampling: particles with large weights are duplicated and particles with small weights are discarded, after which weights are reset. A standard diagnostic for weight collapse is the effective sample size (ESS):
+L131:  | $$\mathrm{ESS}_{t}\;=\;\left(\sum_{i=1}^{N}(W_{t}^{(i)})^{2}\right)^{-1},\qquad W_{t}^{(i)}=\frac{\tilde{W}_{t}^{(i)}}{\sum_{j}\tilde{W}_{t}^{(j)}},$$  |  | (6)
+L132: 
+L133: where $\tilde{W}_{t}^{(i)}$ denotes the unnormalized weight of particle $i$ at step $t$.
+L134: ## 4 Power-SMC: Sampling $\pi_{\alpha}$ with a Single Batched Decode
+L135: ### 4.1 Prefix flow for the power target
+L136: 
+L137: Power-SMC targets $\pi_{\alpha}$ by defining a sequence of intermediate targets on prefixes (a Feynman–Kac flow). Let $y_{1:t}$ denote a length-$t$ prefix. Define the unnormalized prefix target
+L138: 
+L139:  | $$\gamma_{t}(y_{1:t}\mid x)\;:=\;p_{\theta}(y_{1:t}\mid x)^{\alpha},\qquad p_{\theta}(y_{1:t}\mid x)=\prod_{s=1}^{t}p_{\theta}(y_{s}\mid x,y_{<s}),$$  |  | (7)
+L140: and let $\pi_{t}=\gamma_{t}/Z_{t}$ be the corresponding normalized distribution. With EOS treated as an ordinary token and an absorbing terminated state (Appendix cite42†D ), the induced distribution over completed sequences matches the desired power target.
+L141: #### Token proposal and incremental correction.
+L142: 
+L143: Let $q_{t}(\cdot\mid x,y_{<t})$ be any proposal distribution over the next token that depends only on the current prefix. Sequential importance sampling yields the incremental weight
+L144: 
+L145:  | $$\omega_{t}(y_{1:t})\;=\;\frac{\gamma_{t}(y_{1:t}\mid x)}{\gamma_{t-1}(y_{1:t-1}\mid x)\,q_{t}(y_{t}\mid x,y_{<t})}\;=\;\boxed{\frac{p_{\theta}(y_{t}\mid x,y_{<t})^{\alpha}}{q_{t}(y_{t}\mid x,y_{<t})}.}$$  |  | (8)
+L146: The incremental weight exactly compensates for using the proposal $q_{t}$ instead of the (generally intractable) power-distribution conditional.
+L147: ### 4.2 SMC/SIR with ESS-triggered resampling
+L148: 
+L149: Algorithm cite54†1 gives the full procedure. We decode $N$ sequences in parallel; after each token, we update particle weights via equation cite55†8 ; if the weights collapse (low ESS), we resample and continue. The output is drawn from the final weighted particle set.
+L150: 
+L151: Algorithm 1 Power-SMC / SIR for $\pi_{\alpha}(y\mid x)\propto p_{\theta}(y\mid x)^{\alpha}$
+L152: 1:  Input: prompt $x$, LM $p_{\theta}$, exponent $\alpha$, particles $N$, ESS threshold $\kappa\in(0,1)$, max tokens $T_{\max}$, proposal $q_{t}$
+L153: 
+L154: 2:  Initialize $y_{1:0}^{(i)}=\emptyset$, weights $\tilde{W}_{0}^{(i)}=1$ for $i=1,\dots,N$
+L155: 
+L156: 3:  Initialize termination flags $\mathsf{done}^{(i)}\leftarrow\texttt{false}$ for all $i$
+L157: 
+L158: 4:  for $t=1$ to $T_{\max}$ do
+L159: 
+L160: 5:   for each particle $i=1,\dots,N$ (parallel) do
+L161: 
+L162: 6:    if $\mathsf{done}^{(i)}$ then
+L163: 7:     set $y_{t}^{(i)}\leftarrow\text{EOS}$ and keep $\tilde{W}_{t}^{(i)}\leftarrow\tilde{W}_{t-1}^{(i)}$ (absorbing)
+L164: 
+L165: 8:    else
+L166: 
+L167: 9:     sample $y_{t}^{(i)}\sim q_{t}(\cdot\mid x,y_{<t}^{(i)})$
+L168: 
+L169: 10:     update $\tilde{W}_{t}^{(i)}\leftarrow\tilde{W}_{t-1}^{(i)}\cdot\dfrac{p_{\theta}(y_{t}^{(i)}\mid x,y_{<t}^{(i)})^{\alpha}}{q_{t}(y_{t}^{(i)}\mid x,y_{<t}^{(i)})}$
+L170: 
+L171: 11:     if $y_{t}^{(i)}=\text{EOS}$ then
+L172: 
+L173: 12:      set $\mathsf{done}^{(i)}\leftarrow\texttt{true}$
+L174: 
+L175: 13:     end if
+L176: 
+L177: 14:    end if
+L178: 15:   end for
+L179: 
+L180: 16:   normalize $W_{t}^{(i)}\propto\tilde{W}_{t}^{(i)}$; compute $\mathrm{ESS}_{t}$ via equation cite56†6 L181: 
+L182: 17:   if $\mathrm{ESS}_{t}<\kappa N$ then
+L183: 
+L184: 18:    systematic resampling: draw ancestors $A_{1:N}\leftarrow\mathrm{SysResample}(W_{t}^{(1:N)})$
+L185: 
+L186: 19:    set $y_{1:t}^{(k)}\leftarrow y_{1:t}^{(A_{k})}$, reorder KV cache by $A_{1:N}$ (Appendix cite41†C )
+L187: 
+L188: 20:    set $\mathsf{done}^{(k)}\leftarrow\mathsf{done}^{(A_{k})}$ and reset $\tilde{W}_{t}^{(k)}\leftarrow 1$ for all $k$
+L189: 
+L190: 21:   end if
+L191: 22:  end for
+L192: 
+L193: 23:  Output: sample $I\sim\mathrm{Categorical}(W_{T_{\max}}^{(1:N)})$ and return $y^{(I)}$.
+L194: ## 5 Local Optimality of $\tau=1/\alpha$ and a Rényi-Entropy View
+L195: 
+L196: This section has two goals. First, we establish precisely what temperature $\tau=1/\alpha$ does and does not guarantee when used as the proposal inside Power-SMC. Second, we provide a Rényi-entropy interpretation of the remaining weight variability, motivating the exponent-bridging schedule introduced at the end of this section.
+L197: ### 5.1 Locally variance-minimizing proposal
+L198: 
+L199: Fix time $t$ and a prefix $y_{<t}$. Write the model’s next-token distribution as $p_{t}(v):=p_{\theta}(v\mid x,y_{<t})$ for $v\in\mathcal{V}\cup\{\text{EOS}\}$. For any prefix-only proposal $q_{t}(v)$, the incremental weight for drawing token $v$ is
+L200: 
+L201:  | $$\omega_{t}(v;\,y_{<t})=\frac{p_{t}(v)^{\alpha}}{q_{t}(v)}.$$  |  | (9)
+L202: ###### Theorem 1 (Locally variance-minimizing proposal for Power-SMC).
+L203: 
+L204: Fix $t$ and a prefix $y_{<t}$. Among all proposals $q_{t}$ satisfying $q_{t}(v)>0$ whenever $p_{t}(v)>0$, the unique minimizer of the conditional second moment $\mathbb{E}_{v\sim q_{t}}\!\bigl[\omega_{t}(v;\,y_{<t})^{2}\bigr]$ (and hence of the conditional variance) is
+L205: 
+L206:  | $$\boxed{q_{t}^{\star}(v\mid x,y_{<t})=\frac{p_{t}(v)^{\alpha}}{\sum_{u}p_{t}(u)^{\alpha}}.}$$  |  | (10)
+L207: Under $q_{t}^{\star}$, the incremental weight is deterministic given the prefix: $\omega_{t}(v;\,y_{<t})\equiv\sum_{u}p_{t}(u)^{\alpha}$ for all $v$, so $\mathrm{Var}_{q_{t}^{\star}}\!\bigl(\omega_{t}(\cdot;\,y_{<t})\bigr)=0$.
+L208: ###### Corollary 1 (Temperature form).
+L209: 
+L210: If $p_{t}=\mathrm{softmax}(\ell_{t})$ for logits $\ell_{t}$, then $q_{t}^{\star}(v)\propto\exp(\alpha\,\ell_{t}(v))=\mathrm{softmax}(\ell_{t}/\tau)$ with $\tau=1/\alpha$.
+L211: #### Interpretation.
+L212: Corollary cite57†1 does not claim that temperature sampling at $\tau=1/\alpha$ alone produces exact samples from the sequence-level target equation cite47†1 . What it does say is: if the proposal $q_{t}$ is restricted to depend only on the current prefix (no lookahead), then $\tau=1/\alpha$ is the unique way to make the incremental correction equation cite58†9 as stable as possible at each prefix.
+L213: Specifically, it eliminates variance due to which token was sampled; remaining variance comes entirely from which prefix path a particle happens to be on.
+L214: ### 5.2 Rényi-entropy interpretation of residual weight dispersion
+L215: 
+L216: Define the prefix-dependent $\alpha$-power normalizer
+L217: 
+L218:  | $$Z_{t}(\alpha;\,y_{<t}):=\sum_{v}p_{t}(v)^{\alpha}.$$  |  | (11)
+L219: 
+L220: Under $q_{t}^{\star}$, the incremental weight equation cite58†9 equals $\omega_{t}\equiv Z_{t}(\alpha;\,y_{<t})$, which depends on the prefix but not on the sampled token.
+L221: 
+L222: To interpret $Z_{t}$, recall the Rényi entropy of order $\alpha$ for a discrete distribution $p$:
+L223:  | $$H_{\alpha}(p):=\frac{1}{1-\alpha}\log\left(\sum_{v}p(v)^{\alpha}\right),\qquad\alpha>0,\;\alpha\neq 1.$$  |  | (12)
+L224: 
+L225: Applying this to $p_{t}(\cdot)=p_{\theta}(\cdot\mid x,y_{<t})$ yields
+L226: 
+L227:  | $$\log Z_{t}(\alpha;\,y_{<t})\;=\;(1-\alpha)\,H_{\alpha}\!\bigl(p_{\theta}(\cdot\mid x,y_{<t})\bigr).$$  |  | (13)
+L228: 
+L229: Since $\sum_{v}p_{t}(v)^{\alpha}\leq 1$ for $\alpha\geq 1$, we have $\log Z_{t}(\alpha;\,y_{<t})\leq 0$.
+L230: #### Path-wise weight accumulation (SIS view).
+L231: 
+L232: Consider the underlying sequential importance sampling (SIS) weights before any resampling resets. For particle $i$, the accumulated log-weight at time $T_{\max}$ under the locally optimal proposal is
+L233: 
+L234:  | $$\log\tilde{W}_{T_{\max}}^{(i)}\;=\;\sum_{t=1}^{T_{\max}}\log Z_{t}(\alpha;\,y_{<t}^{(i)})\;=\;(1-\alpha)\sum_{t=1}^{T_{\max}}H_{\alpha}\!\bigl(p_{\theta}(\cdot\mid x,y_{<t}^{(i)})\bigr),$$  |  | (14)
+L235: which is non-positive. Particles traversing prefixes with higher next-token uncertainty (larger Rényi entropy) accumulate lower weights. Conversely, particles on more “confident” prefix paths receive higher weight, consistent with the sharpening intent of the power distribution.
+L236: Equation equation cite59†14 makes the remaining source of degeneracy concrete: even with the locally optimal proposal, weights diverge when different particles encounter prefixes whose next-token uncertainty differs substantially. This motivates the exponent-bridging schedule below.
+L237: ### 5.3 Exact exponent-bridging ($\alpha$-ramping)
+L238: 
+L239: To mitigate path-level weight divergence without changing the final target $\pi_{\alpha}$, we introduce an exponent-bridging schedule
+L240: 
+L241:  | $$1=\alpha^{(0)}<\alpha^{(1)}<\cdots<\alpha^{(L)}=\alpha,$$  |
+L242: and define intermediate targets $\gamma_{t}^{(\ell)}(y_{1:t}\mid x)\propto p_{\theta}(y_{1:t}\mid x)^{\alpha^{(\ell)}}$. Within stage $\ell$, the correct incremental weight is obtained by replacing $\alpha$ with $\alpha^{(\ell)}$ in equation cite55†8 . At stage boundaries (after a chosen token index $t$), we apply the standard SMC-samplers reweighting update (cite49†Del Moral et al., 2006 ):
+L243:  | $$\log\tilde{W}\;\leftarrow\;\log\tilde{W}+(\alpha^{(\ell)}-\alpha^{(\ell-1)})\cdot\log p_{\theta}(y_{1:t}\mid x),$$  |
+L244: where $\log p_{\theta}(y_{1:t}\mid x)=\sum_{s=1}^{t}\log p_{\theta}(y_{s}\mid x,y_{<s})$ is available from the autoregressive factors. This transitions the target from $\gamma^{(\ell-1)}$ to $\gamma^{(\ell)}$ while preserving correctness of the final target. Within stage $\ell$, the locally optimal proposal is $q_{t,\ell}^{\star}(\cdot)\propto p_{t}(\cdot)^{\alpha^{(\ell)}}$, i.e., temperature $\tau_{\ell}=1/\alpha^{(\ell)}$.
+L245: In our experiments, we use a simple linear schedule $\alpha^{(\ell)}=1+(\alpha-1)\cdot\ell/L$ over the first $T_{\mathrm{ramp}}$ tokens (details in Appendix cite40†B ).
+L246: ## 6 Compute and Latency Cost Analysis: MH vs. SMC/SIR
+L247: 
+L248: We now formalize the latency advantage of Power-SMC over MH under an engine-independent cost model. Both methods use KV caching, so the dominant cost is the number of incremental decode steps.
+L249: ### 6.1 Setup, cost model, and notation
+L250: Let $p_{\theta}(\cdot\mid x)$ be an autoregressive LM and consider sampling from $\pi_{\alpha}(y_{1:T}\mid x)\propto p_{\theta}(y_{1:T}\mid x)^{\alpha}$. We define one token-eval as a single cached forward step producing next-token logits for one sequence, so a decode step at batch size $b$ costs $b$ token-evals.
+L251: To translate token-evals into wall-clock time, let $s(b)\geq 1$ be the batch throughput multiplier at batch size $b$ relative to batch $1$; a batch-$b$ step then takes time proportional to $b/s(b)$, capturing the sub-linear scaling of hardware utilization. Throughout, $T$ is the number of generated tokens, $B$ the block length ($K:=T/B$ blocks, $B\mid T$), $M$ the number of MH moves per block, and $N$ the number of SMC particles.
+L252: ### 6.2 Cost of Power-SMC / SIR
+L253: 
+L254: We begin with Power-SMC because its cost is straightforward and serves as the baseline for comparison.
+L255: 
+L256: ###### Lemma 1 (Power-SMC cost).
+L257: 
+L258: Under KV caching, Power-SMC with $N$ particles and horizon $T$ performs $C_{\mathrm{SMC}}=N\cdot T$ token-evals, with wall-clock time proportional to $\mathrm{Time}_{\mathrm{SMC}}\propto T\cdot N/s(N)$.
+L259: ###### Proof.
+L260: 
+

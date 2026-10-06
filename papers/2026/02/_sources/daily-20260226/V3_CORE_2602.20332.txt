@@ -1,0 +1,7534 @@
+No One Size Fits All: QueryBandits for LLM Hallucination Mitigation
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Works
+3
+Methodology and Evaluation Metrics
+4
+Experiments
+5
+Results
+6
+Conclusion
+References
+A
+Appendix
+A.1
+Limitations
+A.2
+Ethics & Societal Impact.
+A.3
+Reproducibility Statement.
+B
+Discussion on RL and Bandit Methods
+C
+TruthfulQA Metrics and Evaluation Setup
+D
+Summary of Bandits
+D.1
+LinUCB
+D.2
+LinUCB+KL Bandit Strategy
+D.3
+FTRL
+D.4
+ε
+\varepsilon
+-Greedy Follow-The-Regularized-Leader (FTRL) Bandit Policy
+D.5
+Linear EXP3
+D.6
+Linear FTPL
+D.7
+Thompson Sampling
+License: CC BY 4.0
+arXiv:2602.20332v1 [cs.CL] 23 Feb 2026
+No One Size Fits All: QueryBandits for
+LLM
+Hallucination Mitigation
+Nicole Cho
+William Watson
+Alec Koppel
+Sumitra Ganesh
+Manuela Veloso
+Affiliation:
+JPMorgan AI Research
+Affiliation:
+New York, NY, USA
+Email:
+nicole.cho@jpmorgan.com
+Abstract
+Advanced reasoning capabilities in Large Language Models (LLMs) have led to more frequent hallucinations; yet most mitigation work focuses on open-source models for post-hoc detection and parameter editing. The dearth of studies focusing on hallucinations in closed-source models is especially concerning, as they constitute the vast majority of models in institutional deployments.
+We introduce
+QueryBandits
+, a model-agnostic contextual bandit framework that adaptively learns online to select the optimal query-rewrite strategy
+based on a 17-dimensional vector of linguistically motivated features.
+Evaluating our method on GPT-4o in black-box conditions across 16 QA scenarios,
+our top QueryBandit (Thompson Sampling) achieves an 87.5% win rate over a
+No-Rewrite
+baseline and outperforms zero-shot static policies (e.g.,
+Paraphrase
+or
+Expand
+) by 42.6% and 60.3%, respectively.
+Moreover, all contextual bandits outperform vanilla bandits across all datasets, with higher feature variance coinciding with greater variance in arm selection. This substantiates our finding that there is
+no single rewrite policy
+optimal for all queries.
+We also discover that certain static policies incur higher cumulative regret than
+No-Rewrite
+, indicating that an inflexible query-rewriting policy can worsen hallucinations.
+Thus, learning an online policy over semantic features with QueryBandits can shift model behavior purely through forward-pass mechanisms, enabling its use with closed-source models and bypassing the need for retraining or gradient-based adaptation.
+1
+Introduction
+As Large Language Models (LLMs) grow more powerful, the severity of factual errors, otherwise known as
+hallucinations
+, can increase
+(
+OpenAI, 2025
+;
+Times, 2025
+)
+.
+Hallucinations refer to the generation of inaccurate outputs relative to the LLM’s internal
+understanding
+of the query and reference context
+(
+Ji et al., 2023
+)
+.
+However,
+most existing mitigation approaches, especially those relying on logits, token-level probabilities, or internal representation editing, are primarily developed for open-weight models
+(
+Touvron et al., 2023
+)
+–even though closed-source models constitute the majority of institutional deployments in today’s society
+(
+OpenAI et al., 2024
+)
+.
+Moreover, small surface-form perturbations to an input can induce large output differences
+(
+Watson et al., 2025b
+;
+Cho and Watson, 2025
+)
+, underscoring the need for an online, model-agnostic policy-learning process to mitigate hallucinations.
+We propose
+QueryBandits
+, a contextual bandit framework that selects, per query, an appropriate rewrite strategy to proactively steer LLMs away from hallucinations.
+Interventions are derived from the semantic features, or
+fingerprint
+, of a query. To formalize the relationship between a query and factuality, we construct a composite reward function,
+r
+t
+=
+α
+​
+s
+llm
++
+β
+​
+s
+fuzz
++
+γ
+​
+s
+bleu
+r_{t}=\alpha\,s_{\text{llm}}+\beta\,s_{\text{fuzz}}+\gamma\,s_{\text{bleu}}
+,
+where
+s
+llm
+∈
+{
+0
+,
+1
+}
+s_{\text{llm}}\in\{0,1\}
+is an LLM-as-a-judge binary correctness label
+(
+Liu et al., 2023c
+;
+Adlakha et al., 2024
+)
+,
+s
+fuzz
+∈
+[
+0
+,
+1
+]
+s_{\text{fuzz}}\in[0,1]
+is a fuzzy string-similarity score
+(
+Bachmann, 2024
+)
+, and
+s
+bleu
+∈
+[
+0
+,
+1
+]
+s_{\text{bleu}}\in[0,1]
+is the BLEU-1 score capturing unigram lexical overlap
+(
+Papineni et al., 2002
+;
+Callison-Burch et al., 2006
+)
+.
+We
+operationalize
+hallucination as responses with low
+r
+t
+r_{t}
+.
+Through our ablations, we identify the Pareto-optimal balance of weights
+(
+α
+,
+β
+,
+γ
+)
+=
+(
+0.6
+,
+0.3
+,
+0.1
+)
+(\alpha,\beta,\gamma)=(0.6,0.3,0.1)
+on a held-out human labeled set (Fig.
+2(a)
+).
+This proxy
+r
+t
+r_{t}
+separates correct from incorrect answers with ROC–AUC
+0.973
+0.973
+(95% CI:
+[
+0.972
+,
+0.975
+]
+[0.972,0.975]
+) across resampling settings, supporting its use as a learning signal.
+We assign a higher weight to the LLM-as-a-judge term (
+α
+\alpha
+) within the Pareto frontier, consistent with studies that highlight the efficacy of LLMs in Natural Language Generation (NLG) evaluation tasks
+(
+Wang et al., 2023a
+;
+Fu et al., 2023
+)
+.
+We make no stationarity assumption about the reward distribution given the extreme dimensionality of the output space
+(
+Riemer et al., 2022
+)
+, and therefore evaluate whether rewrite strategies confer advantages under both average-reward and worst-case objectives.
+Figure 1:
+QueryBandits selects a rewrite that fixes a counting error.
+The original query
+x
+t
+x_{t}
+elicits a hallucinatory count (
+8
+8
+integers) due to an ambiguous lower bound (
+6
+6
+). Conditioned on the query’s 17-dimensional feature vector, QueryBandits selects
+Expand
+and rewrites the query to
+x
+t
+′
+x^{\prime}_{t}
+with explicit bounds; the LLM then returns the correct cardinality (
+9
+9
+). Noticeably, the feature vector also shifts:
+subordination
+(more complex clauses) appears while
+specialization
+(domain-specific knowledge required) disappears-illustrating how rewriting alters the salient semantics of
+x
+t
+x_{t}
+.
+Reinforcement Learning (RL)
+(
+Sutton and Barto, 2018
+)
+methods have been applied in Natural Language Processing (NLP) for tasks such as optimizing document-level retrieval
+(
+Nogueira and Cho, 2017
+)
+, fine-tuning LLMs
+(
+Christiano et al., 2017
+)
+, and post-training
+(
+Mudgal et al., 2024
+)
+. Despite its prevalence, to our knowledge there is limited in-depth research on interactive rewriting for hallucination mitigation.
+We adopt bandits rather than full RL for three reasons: (i) estimating long-horizon value for hallucination incidence would require repeated queries from a shared subpopulation, whereas interactions are predominantly single-shot; (ii) averaging correctness across heterogeneous contexts obscures informative per-query idiosyncrasies; and
+(iii) modeling token-level transition dynamics is unwarranted for our objective.
+That is not to say bandit-style ideas are not without precedent in NLP: Proximal Policy Optimization
+(
+Schulman et al., 2017
+)
+variants for LLMs such as Group Relative Policy Optimization (GRPO)
+(
+Shao et al., 2024
+)
+and ReMax
+(
+Li et al., 2024c
+)
+remove the critic via grouped Monte Carlo or baseline-adjusted returns.
+Action Space and Context.
+We define five rewrite strategies as our action space and a 17-dimensional linguistic feature vector capturing query properties known to affect model understanding (Table
+10
+).
+QueryBandits therefore learns an online policy mapping this validated linguistic feature vector to arm selections, allocating exploration under uncertainty and exploitation when features are predictive. This contrasts with prior approaches that adopt a one-size-fits-all rewrite strategy and do not learn an adaptive selection policy
+(
+Ma et al., 2023
+;
+Watson et al., 2025b
+)
+.
+Our aim is not to propose a new mechanistic theory of hallucination formation, but to cast the rewrite-selection problem as a contextual bandit with bounded rewards. Under this view, the bandit’s optimal policy minimizes expected hallucination probability as proxied by our reward. Existence of such a policy follows from standard bandit theory under bounded rewards, and our empirical analyses show that Thompson Sampling and LinUCB converge toward high-reward rewrite policies in our setting
+(
+Auer et al., 2002a
+;
+Lattimore and Szepesvári, 2020
+)
+.
+Table 1:
+Accuracy by dataset (rows) and algorithm family (columns).
+Higher is better;
+bold
+marks the row maximum. “Wins (ties split)” counts
+0.5
+0.5
+for ties. “Macro-avg” is the unweighted mean across datasets. Contextual methods dominate: Contextual Thompson Sampling (TS, rightmost column) achieves the best macro-average (0.766) and most wins (8/16); the remaining wins come from the linear contextual family (LinUCB 4.5, LinUCB+KL 3.5). Static prompts and non-contextual bandits do not win on any dataset. NoRw = No-Rewrite.
+Base
+Static Prompts
+Non-Contextual
+Contextual Linear
+Dataset
+NoRw
+Para.
+Simpl.
+Disamb.
+Clarify
+Expand
+EXP3
+FTPL
+ϵ
+\epsilon
+-FTRL
+TS (NC)
+LinUCB
+LinUCB+KL
+LinEXP3
+LinFTPL
+TS (C)
+ARC-Challenge
+0.816
+0.813
+0.814
+0.786
+0.800
+0.731
+0.878
+0.792
+0.873
+0.887
+0.888
+0.888
+0.878
+0.826
+0.884
+ARC-Easy
+0.808
+0.807
+0.810
+0.796
+0.793
+0.748
+0.890
+0.743
+0.859
+0.877
+0.892
+0.888
+0.869
+0.818
+0.895
+BoolQA
+0.547
+0.564
+0.574
+0.574
+0.568
+0.554
+0.658
+0.589
+0.649
+0.571
+0.649
+0.668
+0.637
+0.605
+0.673
+HotpotQA
+0.658
+0.653
+0.657
+0.664
+0.650
+0.654
+0.755
+0.660
+0.747
+0.667
+0.764
+0.757
+0.726
+0.670
+0.756
+MathQA
+0.700
+0.692
+0.678
+0.685
+0.689
+0.691
+0.779
+0.688
+0.758
+0.756
+0.787
+0.784
+0.732
+0.696
+0.785
+MMLU
+0.744
+0.748
+0.724
+0.736
+0.728
+0.709
+0.832
+0.747
+0.803
+0.773
+0.837
+0.832
+0.780
+0.721
+0.835
+OpenBookQA
+0.735
+0.736
+0.738
+0.677
+0.667
+0.553
+0.769
+0.725
+0.776
+0.780
+0.790
+0.791
+0.718
+0.694
+0.793
+PIQA
+0.717
+0.715
+0.729
+0.639
+0.666
+0.561
+0.772
+0.638
+0.755
+0.733
+0.785
+0.791
+0.766
+0.746
+0.790
+SciQ (Abstract)
+0.712
+0.725
+0.701
+0.706
+0.704
+0.680
+0.804
+0.704
+0.773
+0.780
+0.800
+0.802
+0.725
+0.693
+0.806
+SciQ (MC)
+0.775
+0.777
+0.771
+0.766
+0.749
+0.704
+0.847
+0.764
+0.823
+0.828
+0.851
+0.857
+0.796
+0.787
+0.867
+SQuAD (Abstract)
+0.531
+0.559
+0.540
+0.540
+0.531
+0.507
+0.626
+0.553
+0.614
+0.523
+0.632
+0.628
+0.606
+0.568
+0.636
+SQuAD (Extract)
+0.670
+0.679
+0.681
+0.643
+0.640
+0.565
+0.742
+0.682
+0.738
+0.682
+0.743
+0.752
+0.748
+0.697
+0.759
+TriviaQA
+0.682
+0.668
+0.662
+0.651
+0.646
+0.653
+0.742
+0.670
+0.734
+0.729
+0.754
+0.759
+0.693
+0.671
+0.757
+TruthfulQA
+0.496
+0.488
+0.509
+0.481
+0.470
+0.441
+0.567
+0.509
+0.577
+0.516
+0.583
+0.595
+0.555
+0.512
+0.586
+TruthfulQA (MC)
+0.807
+0.791
+0.834
+0.753
+0.741
+0.679
+0.854
+0.705
+0.802
+0.887
+0.888
+0.863
+0.846
+0.786
+0.852
+WikiQA
+0.498
+0.494
+0.498
+0.472
+0.485
+0.470
+0.581
+0.519
+0.562
+0.566
+0.570
+0.576
+0.557
+0.514
+0.590
+Macro-avg
+0.681
+0.682
+0.682
+0.661
+0.658
+0.619
+0.756
+0.668
+0.740
+0.722
+0.763
+0.764
+0.727
+0.688
+0.766
+Wins (ties split)
+–
+–
+–
+–
+–
+–
+–
+–
+–
+–
+4.5
+3.5
+–
+–
+8.0
+Contribution 1: Reward Modeling for Factuality.
+We introduce an empirically validated and calibrated reward function
+r
+t
+r_{t}
+, composed of an LLM‐judge, fuzzy‐match, and BLEU-1 metrics, with
+α
+,
+β
+,
+γ
+=
+(
+0.6
+,
+0.3
+,
+0.1
+)
+\alpha,\beta,\gamma=(0.6,0.3,0.1)
+chosen inside the 1% Pareto‐optimal frontier on a held‐out human‐labeled set (Fig.
+2(a)
+). Our evaluation rests on the simplex formed by
+α
+,
+β
+,
+γ
+≥
+0
+,
+α
++
+β
++
+γ
+=
+1
+\alpha,\beta,\gamma\geq 0,\ \alpha+\beta+\gamma=1
+. The reward reliably separates right from wrong answers: its average ROC–AUC is 0.973 across resampling settings, and even the conservative 95% lower bound exceeds 0.97 after 150 samples, indicating a stable and highly discriminative proxy for correctness. Guided by this reward signal, our contextual QueryBandits learn to tailor rewrite choices to each query’s linguistic/contextual
+fingerprint
+.
+Contribution 2: Contextual Adaptation Wins.
+Across 13 QA benchmarks (16 scenarios), our best contextual bandit, Thompson Sampling (TS), drives an 87.5% win rate over the
+No-Rewrite
+baseline and outperforms zero-shot static policies (
+Paraphrase
+,
+Expand
+) by 42.6% and 60.3%, respectively.
+Furthermore, certain static strategies accrue higher cumulative regret than
+No-Rewrite
+, indicating that
+fixed rewrites can worsen hallucination
+.
+In Fig.
+3
+, contextual QueryBandits quickly hone in on the optimal rewrites, accruing substantially lower cumulative regret than static policies, vanilla (non-contextual) bandits, or no-rewriting. These gains confirm that a feature-aware, online adaptation mechanism consistently outpaces one-shot heuristics in mitigating hallucinations.
+Contribution 3: Interpretable Decision Weights.
+Per-arm regression analyses (Fig.
+5
+) provide empirical evidence that
+no single rewrite strategy
+maximizes the reward across all types of queries. In fact, each arm’s effectiveness hinges on the semantic features of a query. For example, if a query displays the feature
+(Domain) Specialization
+, meaning that the query can only be understood with domain-specific knowledge, the rewrite arm
+Expand
+is very effective in contrast to
+Simplify
+(Figure
+1
+). Ablating the 17-feature context reduces TS’s win rate to 81.7% and the exploration-adjusted reward to 754.66. Macro-averaged accuracy across the 16 scenarios corroborates this decline: non-contextual TS drops to 72.2% from 76.6%. This performance gap confirms that linguistic features carry associative signals about the optimal rewrite strategy.
+To our knowledge, this is the first work to use a holistic 17-feature linguistic vector as per-query context for a bandit’s best-arm selection–moving beyond piecemeal correlations to a single-pass, end-to-end decision policy. Finally, we observe that across datasets, higher feature variance coincides with greater variance in arm selection (Figure
+5
+), yielding genuinely diverse arm choices (Figure
+2(b)
+).
+Contribution 4: Scope & Utility.
+QueryBandits operates entirely at the input layer as a model-agnostic, plug-and-play online learning policy suitable for closed-source LLMs, addressing the critical arena of hallucination mitigation efforts where model weights are inaccessible.
+By contrast, existing mitigation methods for open-source models such as DoLa
+(
+Chuang et al., 2024
+)
+and TruthX
+(
+Zhang et al., 2024a
+)
+modify internal representations or decoding, neither of which are directly available for closed models. On
+TruthfulQA
+(
+Lin et al., 2022
+)
+, their gains on smaller open models (
+Llama-2-7B-Chat
+) remain far below strong closed backbones (TruthX:
+54.2
+%, DoLa:
+32.2
+%, vs. GPT-4o:
+81.4
+%). QueryBandits further lifts GPT-4o from 81.4% to
+88.8
+% MC1 (
++
+7.4
++7.4
+pp) by adapting rewrites to per-query features, with minimal compute and token overhead. Because DoLa/TruthX gains are realized on weaker open models, they do not transfer additively at higher baselines due to diminishing headroom.
+Interesting Findings.
+(i) On many standard benchmarks, linear contextual bandits often converge to the
+No Rewrite
+arm (Figure
+8
+), exposing memorization effects. Diversity emerges only when queries are semantically invariant but lexically perturbed; a meaningful insight for the research community that surface-form novelty is essential in training query-rewriting algorithms. (ii) Non-contextual bandits often converge to a single rewrite strategy per dataset, whereas contextual bandits tend to diversify choices conditioned on the presence and/or absence of linguistic features.
+Key Empirical Takeaway.
+Taken together, the dominance of contextual learners, the consistent edge of non-contextual bandits over static prompts, and the near-parity of static prompts with the
+No-Rewrite
+baseline indicate that (a) per-query linguistic features reliably predict rewrite utility, (b) online adaptation matters even without features, and (c) there is no universally beneficial fixed policy on strong LLMs (Tables
+1
+,
+4
+).
+2
+Related Works
+Societal Stakes and Gap of Closed-Source Models.
+LLM hallucinations erode trustworthiness from a societal perspective
+(
+Dechert LLP, 2024
+)
+. Recent conceptual analyses frame them as a new epistemic failure mode requiring dedicated mitigation agendas
+(
+Yao et al., 2024
+)
+.
+Complementing these views,
+Kalai et al. (2025)
+argue that language models hallucinate because prevailing training and evaluation procedures reward guessing over acknowledging uncertainty.
+Reports on newer advanced-reasoning models (e.g.,
+o3
+,
+o4-mini
+) indicate increased hallucination rates
+(
+OpenAI, 2025
+)
+, and journalistic case studies document real-world legal exposure from fabricated outputs
+(
+Times, 2025
+)
+.
+As more LLM-agent systems proliferate
+(
+Watson et al., 2025a
+;
+Watson et al., 2023
+)
+, the downstream cost of errors compounds.
+Yet, there remains a dearth of studies on hallucination mitigation efforts for
+closed-source
+models–our work targets this underexplored gap
+(
+Huang et al., 2025b
+;
+Tonmoy et al., 2024
+;
+Sahoo et al., 2025
+)
+.
+From Post-hoc Detection to Preemptive Query Shaping.
+Mitigation is indispensable for faithful LLM interaction
+(
+Ji et al., 2023
+)
+, and research has expanded from post-hoc detection and iterative correction
+(
+Madaan et al., 2023
+)
+to preemptive grounding and query restructuring.
+Watson et al. (2025b)
+estimate hallucination risk
+before
+generation via query perturbations.
+Ma et al. (2023)
+propose
+Rewrite-Retrieve-Read
+for RAG pipelines, and manual, rule-based rewriting is widely used
+(
+Liu and Mozafari, 2024
+;
+Mao et al., 2024
+;
+Chen et al., 2024a
+)
+.
+A common limitation is reliance on raw prompting or static heuristics rather than
+guided
+rewrites conditioned on the original query’s contextual signals.
+Linguistic Features as Actionable Context.
+Blevins et al. (2023)
+show that pretrained language models can recover linguistic attributes in a few-shot setting.
+Building on this, we employ an LLM to identify 17 key linguistic features per query (Table
+10
+).
+Feature selection drew from both existing LLM literature and traditional linguistics, prioritizing properties known to affect comprehension for humans and models alike. These features serve as the context for our bandit policy, enabling
+feature-conditioned
+query-rewriting rather than one-size-fits-all rules.
+3
+Methodology and Evaluation Metrics
+Bandit Formulation.
+In the contextual multi-armed bandit framework
+(
+Lattimore and Szepesvári, 2020
+)
+, a learner observes at round
+t
+t
+a context vector
+x
+t
+∈
+𝒳
+⊂
+ℝ
+d
+x_{t}\in\mathcal{X}\subset\mathbb{R}^{d}
+and selects an arm
+a
+t
+∈
+𝒜
+a_{t}\in\mathcal{A}
+. Upon that basis, Nature reveals a scalar reward
+r
+t
+=
+r
+⁡
+(
+x
+t
+,
+a
+t
+)
+∈
+[
+0
+,
+1
+]
+r_{t}=r(x_{t},a_{t})\in[0,1]
+, where
+r
+:
+𝒳
+×
+𝒜
+→
+[
+0
+,
+1
+]
+r:\mathcal{X}\times\mathcal{A}\to[0,1]
+. The goal of a bandit algorithm is to select arms that maximize the expected (cumulative) reward (Alg.
+1
+; Appx.
+D
+). In the stochastic bandit setting, the objective is to choose a
+policy
+π
+:
+𝒳
+→
+ρ
+⁡
+(
+𝒜
+)
+\pi:\mathcal{X}\rightarrow\rho(\mathcal{A})
+that maximizes the expected reward, i.e.,
+max
+π
+∈
+Π
+⁡
+𝔼
+⁡
+[
+r
+⁡
+(
+x
+,
+a
+~
+)
+]
+,
+a
+~
+∼
+π
+⁡
+(
+x
+)
+,
+\max_{\pi\in\Pi}\,\mathbb{E}\,[\,r(x,\tilde{a})\,],\quad\tilde{a}\sim\pi(x),
+where
+ρ
+⁡
+(
+𝒜
+)
+\rho(\mathcal{A})
+is the probability simplex over
+K
+=
+|
+𝒜
+|
+K=|\mathcal{A}|
+arms, and
+Π
+\Pi
+is the policy class.
+Action Space.
+Let
+𝒜
+=
+{
+a
+0
+,
+…
+,
+a
+K
+−
+1
+}
+\mathcal{A}=\{a_{0},\dots,a_{K-1}\}
+denote the rewrite strategies (arms), where each
+a
+i
+∈
+𝒜
+a_{i}\in\mathcal{A}
+represents a distinct style of query reformulation implemented via prompt instructions to an LLM:
+▶
+\blacktriangleright
+a
+0
+a_{0}
+Paraphrase
+: Rewrite the query to introduce lexical diversity while preserving semantic meaning, testing whether alternative phrasings reduce hallucinations. Prior work has explored how paraphrasing can improve factual consistency in LLMs
+(
+Deng et al., 2024
+;
+Witteveen and Andrews, 2019
+)
+.
+▶
+\blacktriangleright
+a
+1
+a_{1}
+Simplify
+: Rewrite the query to eliminate nested clauses and complex syntax. This targets hallucinations caused by long-range dependencies or overloaded details, borrowing ideas from educational psychology where simpler, granular prompts enable a child to learn a new skill
+(
+Libby et al., 2008
+)
+. Recently,
+Van et al. (2021)
+;
+Zhou et al. (2023)
+report that simplified prompts reduce off-topic drift and ease reasoning.
+▶
+\blacktriangleright
+a
+2
+a_{2}
+Disambiguate
+: Rewrite the query by resolving vague references (ambiguous pronouns, temporal expressions). Studies showcase LLMs’ inability to resolve ambiguous queries, leading to subpar performance
+(
+Deng et al., 2023
+;
+Shahbazi et al., 2019
+)
+.
+The information required to disambiguate is obtained by rephrasing and making implicit references explicit
+using only the original query context
+, without relying on external knowledge.
+▶
+\blacktriangleright
+a
+3
+a_{3}
+Expand
+: Rewrite the query to add salient entities and attributes to enrich context
+(
+Yu et al., 2023
+)
+. Since transformers optimize next-token likelihood over attention-mediated context windows
+(
+Vaswani et al., 2023
+)
+, appending fine-grained query constraints effectively conditions the model on a richer semantic prefix.
+▶
+\blacktriangleright
+a
+4
+a_{4}
+Clarify Terms
+: Rewrite the query to define jargon and terms of art to reduce domain-specific ambiguity
+(
+Clark and Gerrig, 1983
+;
+Rippeth et al., 2023
+)
+.
+This is especially useful for
+long-tail knowledge
+, where LLMs underperform on less-popular entities and benefit from added context or lightweight retrieval
+(
+Mallen et al., 2023
+)
+.
+In our experiments, we instantiate all rewrite arms using
+gpt-4o-2024-11-20
+; stronger (or weaker) rewriters can be substituted without changing the bandit formulation.
+Contextual Attributes.
+For each query we extract a 17-dimensional binary feature vector
+𝐟
+∈
+{
+0
+,
+1
+}
+17
+\mathbf{f}\in\{0,1\}^{17}
+capturing linguistically motivated properties known to affect human and LLM comprehension (Table
+10
+). These features serve as the context for our policy, giving contextual bandits the opportunity to learn
+when
+to apply which rewrite.
+(a)
+ROC–AUC Pareto frontier on the reward‐weight simplex.
+(b)
+Mean‐reward ranks (1 = best)per rewrite arm / dataset under our contextual bandit; color intensity indicates closeness to the top rank.
+Figure 2:
+(
+2(a)
+) Our chosen
+(
+α
+,
+β
+,
+γ
+)
+(\alpha,\beta,\gamma)
+lies deep in the 1% optimal frontier.
+(
+2(b)
+) Breakdown of per‐dataset arm performance: different datasets consistently favor different rewrite strategies
+Reward Model.
+Each rewritten query receives a bounded composite reward
+r
+t
+∈
+[
+0
+,
+1
+]
+r_{t}\in[0,1]
+as a convex combination of three complementary correctness signals:
+r
+t
+=
+α
+s
+llm
++
+β
+s
+fuzz
++
+γ
+s
+bleu
+,
+α
++
+β
++
+γ
+=
+1
+,
+α
+,
+β
+,
+γ
+≥
+0
+r_{t}\;=\;\alpha\,s_{\mathrm{llm}}\;+\;\beta\,s_{\mathrm{fuzz}}\;+\;\gamma\,s_{\mathrm{bleu}},\qquad\alpha+\beta+\gamma=1,\quad\alpha,\beta,\gamma\geq 0
+(1)
+▶
+\blacktriangleright
+s
+llm
+∈
+{
+0
+,
+1
+}
+s_{\mathrm{llm}}\in\{0,1\}
+: a binary correctness judgment by a GPT-4o-based assessor, calibrated on factuality between generated and reference answers
+(
+Liu et al., 2023c
+;
+Adlakha et al., 2024
+)
+.
+▶
+\blacktriangleright
+s
+fuzz
+∈
+[
+0
+,
+1
+]
+s_{\mathrm{fuzz}}\in[0,1]
+: RapidFuzz token‐set similarity capturing soft string overlap
+(
+Bachmann, 2024
+)
+.
+▶
+\blacktriangleright
+s
+bleu
+∈
+[
+0
+,
+1
+]
+s_{\mathrm{bleu}}\in[0,1]
+: BLEU-1 (unigram precision) under a unit‐cap ensuring lexical fidelity
+(
+Papineni et al., 2002
+;
+Callison-Burch et al., 2006
+)
+.
+This triad mitigates individual failure modes inherent in any single metric (e.g. BLEU’s paraphrase blindness or edit‐distance oversensitivity) while remaining stable for learning.
+Following
+Wang et al. (2023a)
+, we leverage the strength of LLMs‐as‐judges; and as demonstrated by Test-Time RL
+(
+Zuo et al., 2025
+)
+, even noisy, self‐supervised signals (e.g. pseudo‐labels from majority‐voted LLM outputs) can effectively guide policy updates.
+We validate that our convex proxy
+r
+t
+r_{t}
+aligns with human labels via a 1,000 sample held-out set and report ROC-AUC in Figures
+2(a)
+and
+6
+.
+Validity of the Reward & Simplex Analysis.
+Across sample sizes (5–1000 samples), the reward attains macro-average ROC–AUC
+0.9729
+; by
+150
+150
+samples the
+95
+%
+95\%
+CI lower bound exceeds
+0.97
+0.97
+,
+indicating a stable and highly discriminative correctness proxy
+(Fig.
+6(c)
+; Tab.
+6(a)
+).
+We sweep
+(
+α
+′
+,
+β
+′
+,
+γ
+′
+)
+(\alpha^{\prime},\beta^{\prime},\gamma^{\prime})
+over a simplex grid (
+α
+′
++
+β
+′
++
+γ
+′
+=
+1
+\alpha^{\prime}+\beta^{\prime}+\gamma^{\prime}=1
+) and computed ROC–AUC on the human‐labeled validation set (Fig.
+2(a)
+).
+Our best weights
+(
+α
+,
+β
+,
+γ
+)
+=
+(
+0.6
+,
+0.3
+,
+0.1
+)
+(\alpha,\beta,\gamma)=(0.6,0.3,0.1)
+lie
+well within the top 1% Pareto frontier (dark region) and is robust to
+±
+0.2
+\pm 0.2
+perturbations on
+α
+\alpha
+.
+The Pareto frontier reveals the following:
+▶
+\blacktriangleright
+LLM‐Judge Robustness (
+α
+\alpha
+):
+The ROC–AUC surface is nearly invariant when
+α
+\alpha
+varies by
+±
+0.2
+\pm 0.2
+: AUC shifts by
+<
+0.5
+<0.5
+%, indicating tolerance to large
+α
+\alpha
+swings.
+▶
+\blacktriangleright
+Fuzzy‐Match Sensitivity (
+β
+\beta
+):
+Small increases in
+β
+\beta
+rapidly exit the Pareto region, showing that the fuzzy‐match term must be tuned carefully to avoid degrading overall accuracy.
+▶
+\blacktriangleright
+BLEU‐Only Pitfall (
+γ
+\gamma
+):
+As
+γ
+\gamma
+increases, ROC–AUC steadily declines, bottoming at
+γ
+=
+1
+\gamma=1
+(pure‐BLEU), where the model over‐emphasizes surface overlap at the expense of true correctness.
+▶
+\blacktriangleright
+Pareto‐Optimal Region:
+The weights
+(
+0.6
+,
+0.3
+,
+0.1
+)
+(0.6,0.3,0.1)
+sit deep in the high‐AUC plateau, confirming it is a Pareto‐optimal trade‐off among semantic, fuzzy, and lexical signals.
+▶
+\blacktriangleright
+Reward Non-degeneracy (
+β
+,
+γ
+\beta,\gamma
+):
+Using only the LLM-Judge term (
+α
+=
+1
+\alpha=1
+) yields a nearly binary reward distribution that collapse onto two modes, which in turn hurts exploration-exploitation. Adding the fuzzy and BLEU terms yields richer, more graded rewards that are sensitive to
+near misses
+(Fig.
+14
+)
+Together, these experiments substantiate our reward design: the LLM‐judge provides a forgiving anchor, fuzzy‐match demands precise calibration, and BLEU contributes complementary lexical oversight.
+We further evaluated reward robustness with out-of-family judges (
+gpt-5*
+,
+gpt-4.1-2025-04-14
+, and
+gpt-4o*
+). Across 1,000 validation queries, inter-model agreement on correctness labels is high (mean agreement
+≈
+0.9
+\approx 0.9
+, mean
+κ
+≈
+0.79
+\kappa\approx 0.79
+,
+MCC
+≈
+0.80
+\mathrm{MCC}\approx 0.80
+), indicating that our reward is stable across judge architectures (Table
+6
+).
+Choice of Algorithms.
+For
+linear contextual bandits
+,
+we fit a per‐arm linear model
+x
+t
+⊤
+​
+θ
+k
+x_{t}^{\top}\theta_{k}
+and use either a UCB method (LinUCB
+(
+Lai and Robbins, 1985
+)
+/ LinUCB+KL
+(
+Garivier and Cappé, 2013
+)
+), an FTRL regularized weight
+(
+McMahan, 2015
+)
+, or Thompson sampling with posterior draws
+(
+Thompson, 1933
+)
+. For
+adversarial bandits
+,
+we consider two parameter‐free methods: EXP3
+(
+Auer et al., 2002b
+)
+and FTPL
+(
+Kalai and Vempala, 2005
+;
+Suggala and Netrapalli, 2020
+)
+.
+Update rules and regret bounds are in App.
+D
+(Alg.
+1
+).
+We discuss our decision to use bandits rather than full RL in App.
+B
+.
+Evaluation Metrics.
+We report three complementary metrics for a balanced view of (1) how well a policy explores vs. exploits, (2) how quickly it converges to good answers, and (3) how often it beats the
+No-Rewrite
+baseline in accuracy.
+Metric 1: Exploration‐Adjusted Reward.
+Let
+r
+t
+∈
+[
+0
+,
+1
+]
+r_{t}\in[0,1]
+be the reward at pull
+t
+t
+up to trajectory length
+T
+T
+.
+Define the empirical arm‐frequency vector
+p
+t
+,
+k
+=
+1
+t
+∑
+τ
+=
+1
+t
+𝟏
+[
+a
+τ
+=
+k
+]
+p_{t,k}=\frac{1}{t}\sum_{\tau=1}^{t}\mathbf{1}[a_{\tau}=k]
+and the normalized Shannon entropy
+H
+t
+=
+(
+−
+∑
+k
+=
+1
+K
+p
+t
+,
+k
+log
+p
+t
+,
+k
+)
+/
+log
+K
+∈
+[
+0
+,
+1
+]
+H_{t}=\bigl(-\sum_{k=1}^{K}p_{t,k}\log p_{t,k}\bigr)/\log K\in[0,1]
+.
+We define the
+exploration‐adjusted reward
+as:
+R
+adj
+=
+∑
+t
+=
+1
+T
+(
+r
+t
++
+λ
+​
+H
+t
+)
+,
+R_{\mathrm{adj}}=\sum_{t=1}^{T}\bigl(r_{t}+\lambda\,H_{t}\bigr),
+with
+λ
+=
+0.1
+\lambda=0.1
+(chosen on validation), rewarding policies that achieve high per‐pull rewards while maintaining sufficient exploration.
+Metric 2: Mean Cumulative Regret.
+At each pull the instantaneous regret is the gap between the oracle reward (best achievable rewrite) and the observed reward.
+Let
+r
+t
+∗
+=
+max
+a
+∈
+𝒜
+⁡
+r
+⁡
+(
+x
+t
+,
+a
+)
+r_{t}^{*}=\max_{a\in\mathcal{A}}r(x_{t},a)
+be the per-round oracle (max) reward. Over
+R
+R
+runs, the mean cumulative regret is:
+Regret
+¯
+=
+1
+R
+​
+∑
+i
+=
+1
+R
+∑
+t
+=
+1
+T
+(
+r
+t
+∗
+−
+r
+t
+(
+i
+)
+)
+\overline{\text{Regret}}=\frac{1}{R}\sum_{i=1}^{R}\sum_{t=1}^{T}\bigl(r^{*}_{t}-r_{t}^{(i)}\bigr)
+Metric 3: Win Rate vs. Baseline.
+For
+N
+N
+test queries, we compute the fraction of trials where a policy’s reward
+r
+t
+policy
+r_{t}^{\mathrm{policy}}
+strictly exceeds the no-rewrite baseline
+r
+t
+base
+r_{t}^{\mathrm{base}}
+:
+WinRate
+=
+1
+N
+∑
+t
+=
+1
+N
+[
+r
+t
+policy
+≻
+r
+t
+base
+]
+×
+100
+%
+.
+\mathrm{WinRate}=\frac{1}{N}\sum_{t=1}^{N}\mathbf{1}\!\left[r_{t}^{\mathrm{policy}}\,\succ\,r_{t}^{\mathrm{base}}\right]\times 100\%.
+4
+Experiments
+Pipeline.
+For each decision round
+t
+t
+:
+x
+t
+→
+Extr. feat.
+𝐟
+t
+∈
+{
+0
+,
+1
+}
+d
+𝐟
+t
+→
+Select
+​
+a
+t
+(
+rewrite strat.
+)
+x
+t
+′
+=
+g
+a
+t
+​
+(
+x
+t
+)
+→
+LLM
+y
+t
+→
+Eval.
+r
+t
+∈
+[
+0
+,
+1
+]
+r
+t
+↫
+Update Bandit
+x_{t}\xrightarrow{\;\begin{subarray}{c}\text{Extr.\ feat.}\\
+\mathbf{f}_{t}\in\{0,1\}^{d}\end{subarray}\;}\mathbf{f}_{t}\xrightarrow{\;\begin{subarray}{c}\text{Select}\;a_{t}\\
+(\text{rewrite strat.})\end{subarray}\;}x^{\prime}_{t}=g_{a_{t}}(x_{t})\xrightarrow{\;\mathrm{LLM}\;}y_{t}\xrightarrow{\;\begin{subarray}{c}\text{Eval.}\\
+r_{t}\in[0,1]\end{subarray}\;}r_{t}\quad\overset{\text{Update Bandit}}{\looparrowleft}
+1.
+Feature Extraction.
+For query
+x
+t
+x_{t}
+, compute
+d
+d
+-dimensional linguistic feature vector
+𝐟
+t
+∈
+{
+0
+,
+1
+}
+d
+\mathbf{f}_{t}\in\{0,1\}^{d}
+.
+2.
+Arm Selection.
+The bandit receives
+𝐟
+t
+\mathbf{f}_{t}
+and selects a rewrite arm
+a
+t
+∈
+𝒜
+a_{t}\in\mathcal{A}
+.
+3.
+Query Rewriting.
+Apply the selected arm to obtain the candidate query
+x
+t
+′
+=
+g
+a
+t
+​
+(
+x
+t
+)
+.
+x^{\prime}_{t}\;=\;g_{a_{t}}(x_{t})\,.
+4.
+LLM Inference.
+Issue
+x
+t
+′
+x^{\prime}_{t}
+to
+gpt-4o-2024-08-06
+, producing response
+y
+t
+y_{t}
+.
+5.
+Reward Evaluation.
+Compute scalar reward
+r
+t
+∈
+[
+0
+,
+1
+]
+r_{t}\in[0,1]
+via the reward formulation.
+6.
+Bandit Update.
+Update the internal state of the bandit based on
+(
+a
+t
+,
+r
+t
+)
+(a_{t},r_{t})
+.
+Dataset and Query Construction.
+We evaluate on
+D
+=
+13
+D=13
+diverse QA benchmarks and
+S
+=
+16
+S=16
+scenarios (see Table
+3
+). For each scenario, we sample
+|
+𝒬
+|
+\lvert\mathcal{Q}\rvert
+queries satisfying:
+(1)
+Original Answerability:
+the query in the dataset (
+q
+i
+q_{i}
+) is answered correctly by
+gpt-4o-2024-08-06
+; and
+(2)
+Perturbation Validity:
+among five lexically perturbed but semantically invariant versions of each dataset query, assessed by an LLM-as-judge and n-gram based metrics
+(
+Lin, 2004
+;
+Papineni et al., 2002
+;
+Wang et al., 2023a
+)
+, between one and three perturbations yield incorrect answers.
+Then, we randomly choose
+x
+t
+x_{t}
+from
+|
+𝒬
+|
+\lvert\mathcal{Q}\rvert\
+to train QueryBandits.
+The importance of this query construction process deserves emphasis. Through our investigations, we discovered that the ubiquity of benchmarks in Table
+3
+within pre-training and fine-tuning regimes has engendered a potentially pernicious form of prompt memorization.
+In preliminary runs using canonical, unperturbed queries, contextual policies often converge almost exclusively
+to
+No-Rewrite
+,
+and rewriting rarely improved accuracy.
+By contrast, in our perturbed setup (lexically diverse but semantically matched queries), contextual bandits diversify arm usage and achieve substantial gains (Figure
+8
+). This behavior is consistent with prompt memorization on common benchmarks rather than an intrinsic degradation effect of rewriting.
+Experimental Configuration.
+We compare three non-contextual and six linear contextual bandits against zero‐shot prompting and a
+No‐Rewrite
+baseline. All reported metrics are averaged over all dataset runs per algorithm.
+We compare
+M
+M
+bandit algorithms and prompting strategies over
+K
+=
+5
+K=5
+rewrite arms. Each algorithm runs for
+T
+=
+|
+𝒬
+S
+|
+T=\lvert\mathcal{Q}_{S}\rvert
+rounds on each of the
+S
+S
+scenarios (Table
+3
+). Thus,
+Total Pulls
+=
+M
+×
+S
+×
+|
+𝒬
+S
+|
+≈
+252,000
+,
+\text{Total Pulls}\;=\;M\;\times\;S\;\times\;\lvert\mathcal{Q}_{S}\rvert\,\approx\,252,000,
+with
+M
+=
+15
+{M=15}
+,
+S
+=
+16
+{S=16}
+, and
+|
+𝒬
+D
+|
+≈
+1050
+\lvert\mathcal{Q}_{D}\rvert\approx 1050
+. We bootstrap samples with replacement for
+TruthfulQA
+to obtain approximately 1,050 queries. Hyperparameters (learning rates, exploration coefficients, regularization constants) are tuned via grid search on a held-out validation set.
+Feature Extraction.
+We use
+gpt-4o-2024-11-20
+with temperature
+τ
+=
+0.0
+\tau=0.0
+and structured outputs to tag the
+17
+17
+binary linguistic features per query (Table
+11
+).
+On 1,000 queries
+×
+\times
+5 repeated tagging runs, bitwise agreement across full 17-dimensional vectors is
+∼
+99.3
+%
+\sim 99.3\%
+, and per-feature stability is
+97.4
+%
+97.4\%
+-
+99.7
+%
+99.7\%
+, indicating that the contextual representation is nearly deterministic under our setup.
+Because the bandit only observes the binary feature vector (and not the text), this residual variance has minimal impact on downstream learning.
+5
+Results
+Figure 3:
+Cumulative Reward (averaged across all runs).
+Sorted by final performance, highlighting gains achieved by contextual bandits over non‐contextual learners and static rewrites.
+Table 2:
+Left: Rewrite-policy Performance:
+final cumulative exploration-adjusted reward, mean cumulative regret, and win rate vs. no-rewrite.
+Right: Who Wins Where:
+best accuracy per dataset and gain over
+No-Rewrite
+baseline (pp). TS = Thompson Sampling; (C) = Contextual.
+Algorithm
+Ctx?
+𝐫
+adj
+↑
+\mathbf{r_{\text{adj}}}\,\uparrow
+Cum. Regret
+↓
+\downarrow
+Win%
+↑
+\uparrow
+Bandit Algorithms
+TS (C)
+✓
+819.04
+135.84
+87.5
+LinUCB+KL
+✓
+818.79
+136.00
+87.0
+LinUCB
+✓
+818.60
+136.12
+86.9
+Linear
+ϵ
+\epsilon
+-FTRL
+✓
+799.57
+155.30
+85.0
+EXP3 (NC)
+✗
+797.47
+157.31
+86.5
+Linear EXP3
+✓
+781.05
+173.60
+83.8
+TS (NC)
+✗
+754.66
+200.18
+81.7
+Linear FTPL
+✓
+738.07
+216.54
+76.3
+FTPL (NC)
+✗
+716.05
+238.85
+62.8
+Static Prompts
+Paraphrase
+–
+732.39
+222.56
+44.9
+Simplify
+–
+730.13
+224.42
+50.1
+Disambiguate
+–
+713.65
+241.25
+42.4
+Clarify Terms
+–
+711.65
+243.35
+38.2
+Expand
+–
+639.25
+315.71
+27.2
+No-Rewrite (B)
+–
+729.20
+225.85
+–
+Dataset
+Winner Algo.
+Acc. (%)
+↑
+\uparrow
+Δ
+\Delta
+(pp)
+↑
+\uparrow
+Winners: TS (Contextual)
+ARC-Easy
+TS (C)
+89.5
++8.7
+BoolQA
+TS (C)
+67.3
++12.6
+OpenBookQA
+TS (C)
+79.3
++5.8
+SciQ (Abstract)
+TS (C)
+80.6
++9.4
+SciQ (MC)
+TS (C)
+86.7
++9.2
+SQuAD (Abstract)
+TS (C)
+63.6
++10.5
+SQuAD (Extract)
+TS (C)
+75.9
++8.9
+WikiQA
+TS (C)
+59.0
++9.2
+Winners: LinUCB family
+ARC-Challenge
+LinUCB (+KL)
+88.8
++7.2
+HotpotQA
+LinUCB
+76.4
++10.6
+MathQA
+LinUCB
+78.7
++8.7
+MMLU
+LinUCB
+83.7
++9.3
+PIQA
+LinUCB+KL
+79.1
++7.4
+TriviaQA
+LinUCB+KL
+75.9
++7.7
+TruthfulQA
+LinUCB+KL
+59.5
++9.9
+TruthfulQA (MC)
+LinUCB
+88.8
++8.1
+Hypothesis 1: Can QueryBandits reduce hallucination?
+Table
+2
+and Figure
+3
+compare QueryBandits against the
+No Rewrite
+baseline and five static prompting strategies across 13 QA benchmarks (16 scenarios, 1,050 queries/dataset). In aggregate, contextual Thompson Sampling (TS) attains an
+87.5% query-level win rate
+and 819.04 exploration-adjusted reward, compared to the
+No Rewrite
+baseline (729.20;
+Δ
+=
+−
+89.84
+\Delta=-89.84
+). At the scenario level (Table
+1
+), the macro-average accuracy improves from
+0.681
+(Baseline) to
+0.766
+(Contextual TS;
++
+8.5
+​
+pp
++8.5\,\mathrm{pp}
+). Contextual TS also wins
+8/16
+scenarios outright (Table
+2
+). Together, these results indicate that
+contextual
+query rewriting materially reduces hallucination relative to no rewriting.
+Hypothesis 2: Can QueryBandits outperform static rewriting?
+Static rewriting never tops a dataset on accuracy (Table
+1
+). Our best performing bandit, Contextual TS, consistently exceeds the performance of static variants; for example, relative to
+Paraphrase
+and
+Expand
+, Contextual TS achieves much higher aggregate reward (819.04 vs. 732.39 and 639.25) and substantially higher accuracy, with typical gains of
++6–12 pp
+over the baseline across scenarios (Table
+2
+; e.g., +12.6 on BoolQA, +10.6 on HotpotQA).
+In 13/15 runs, non-contextual bandits effectively collapse to a single rewrite per dataset, behaving similarly to static policies. In contrast, contextual policies maintain more diverse selections conditioned on feature patterns (Fig.
+7
+).
+These gains confirm that adapting the rewrite to each query’s linguistic fingerprint outperforms any one-size-fits-all prompt. By framing rewrite selection as an online decision problem and leveraging per-query context, QueryBandits allocate exploration where uncertainty is high and exploitation where features reliably predict hallucination risk–yielding up to double the hallucination reduction of any static strategy, with no additional model fine-tuning.
+Hypothesis 3: Do linear contextual bandits outperform algorithms oblivious to context?
+Crucially, ablating the 17-dimensional feature vector drops Thompson Sampling’s performance from 87.5% to
+81.7%
+query-level win rate and from 819.04 to
+754.66
+reward (
+−
+5.8
+​
+pp
+-5.8\,\mathrm{pp}
+, –64.38 reward). On accuracy,
+contextual
+methods dominate: Thompson Sampling wins 8/16 scenarios, while the contextual linear family (LinUCB/LinUCB+KL) takes the rest (tie-split:
+LinUCB 4.5
+,
+LinUCB+KL 3.5
+); see Table
+1
+.
+Non-contextual bandits never top accuracy on any dataset. On regret (Table
+4
+), wins spread to simpler methods–
+No Rewrite (Baseline)
+(3 scenarios),
+Paraphrase
+(3.5),
+Simplify
+(2), and Non-Contextual TS (3.5)–while contextual methods rarely minimize
+instantaneous
+regret (only LinFTPL wins once).
+This pattern aligns with exploration–exploitation: contextual learners accept small exploration costs (slightly higher regret early) to deliver higher final accuracy.
+While EXP3 is a strong non-contextual baseline, contextual TS stochastically dominates both EXP3 and static policies in per-query reward (Figs.
+15
+–
+18
+). This confirms that the gains we observe stem from genuine contextual adaptation rather than noise.
+Furthermore, these performance gaps confirm that linguistic features carry associative signals about hallucination risk.
+Hypothesis 4: Is there an association between query features and reward?
+Arms exhibit distinct sensitivities to the 17 linguistic features (Figures
+5
+–
+5
+). The same feature can flip importance across arms; e.g.,
+(Domain) Specialization
+is highly predictive for
+Expand
+but weak for
+Simplify
+. A plausible mechanism is that domain-specific questions need added qualifiers/entities (
+Expand
+) to ground retrieval and reasoning, whereas aggressive pruning (
+Simplify
+) risks
+excising
+critical semantics. These arm–feature associations are correlational rather than causal, but they are consistent with the observed accuracy/regret trade-offs.
+Figure 4:
+Contextual Per‐Feature Variance by Arm.
+For each arm, we compute the variance of each binary linguistic feature over all queries on which that arm was chosen. High variance means the bandit frequently switches the arm on that feature’s presence.
+Figure 5:
+Contextual Feature Contribution Strength.
+These are the averaged
+θ
+\theta
+weights (direct contributions) per feature to the expected reward under each arm. Positive weights indicate features that boost that arm’s reward; negative weights indicate features that
+penalize
+it.
+Hypothesis 5: Is there a
+single
+rewrite strategy that maximizes reward for all types of queries?
+No. The learned per-arm weights (Figure
+5
+) show distinct
+feature fingerprints
+. For instance,
+Simplify
+excels with pragmatic cues (safe pruning) but struggles on superlatives (removing comparative meaning). Appendix Table
+8
+details these inversions. The diversity of winning arms across scenarios (Table
+2
+) and the split of contextual winners (Contextual TS vs. LinUCB family) further support that
+no single rewrite strategy is universally optimal
+.
+Hypothesis 6: Does QueryBandits improve closed-source model performance?
+As shown in Table
+5
+, methods such as DoLa and TruthX improve
+open-source
+backbones (e.g., Llama-2-7B-Chat), but their best reported MC1 (TruthX: 54.2%; DoLa: 32.2%) is far below strong
+closed-source
+backbones (GPT-4o: 80.7%)
+(
+Zhang et al., 2024a
+;
+Chuang et al., 2024
+)
+. By contrast, QueryBandits operates entirely at the input layer and lifts GPT-4o to 88.8% (
++
+8.1
+​
+pp
++8.1\,\mathrm{pp}
+). Since DoLa/TruthX modify internal representations or decoding, they are not directly applicable to closed models, and gains on weaker models need not transfer additively at higher baselines.
+6
+Conclusion
+We introduce
+QueryBandits
+, a plug-and-play online learning policy that selects among
+K
+K
+rewrite strategies to minimize a query’s
+hallucinatory
+trajectory using lightweight linguistic features as context. Across 13 QA benchmarks (16 scenarios),
+contextual
+learners dominate: Contextual TS and the LinUCB family win nearly all benchmarks, yielding a macro-average accuracy of
+0.766
+vs.
+0.681
+for
+No-Rewrite
+, with typical gains of
+∼
+\sim
+6–12 pp (Table
+1
+). Non-contextual bandits generally beat static prompts, while static prompts are on par with the baseline, indicating that (i) per-query features predict rewrite utility, (ii) online adaptation matters even without features, and (iii) no single fixed rewrite is universally beneficial on strong LLMs.
+References
+Adlakha
+et al.
+(2024)
+V. Adlakha, P. BehnamGhader, X. H. Lu, N. Meade, and S. Reddy
+Evaluating correctness and faithfulness of instruction-following models for question answering
+.
+External Links:
+2307.16877
+,
+Link
+Cited by:
+§1
+,
+1st item
+.
+Amini
+et al.
+(2019)
+A. Amini, S. Gabriel, S. Lin, R. Koncel-Kedziorski, Y. Choi, and H. Hajishirzi
+MathQA: towards interpretable math word problem solving with operation-based formalisms
+.
+In
+Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 1 (Long and Short Papers)
+,
+Minneapolis, Minnesota
+,
+pp. 2357–2367
+.
+External Links:
+Link
+,
+Document
+Cited by:
+Table 3
+.
+Ansell
+et al.
+(2021)
+A. Ansell, F. Bravo-Marquez, and B. Pfahringer
+PolyLM: learning about polysemy through language modeling
+.
+External Links:
+2101.10448
+,
+Link
+Cited by:
+Table 10
+.
+Auer
+et al.
+(2002a)
+P. Auer, N. Cesa-Bianchi, and P. Fischer
+Finite-time analysis of the multiarmed bandit problem
+.
+Mach. Learn.
+47
+(
+2–3
+),
+pp. 235–256
+.
+External Links:
+ISSN 0885-6125
+,
+Link
+,
+Document
+Cited by:
+§1
+.
+Auer
+et al.
+(2002b)
+P. Auer, N. Cesa-Bianchi, Y. Freund, and R. E. Schapire
+The nonstochastic multiarmed bandit problem
+.
+SIAM Journal on Computing
+32
+(
+1
+),
+pp. 48–77
+.
+External Links:
+Document
+,
+Link
+,
+https://doi.org/10.1137/S0097539701398375
+Cited by:
+1st item
+,
+§3
+.
+Bachmann (2024)
+M. Bachmann
+Rapidfuzz/rapidfuzz: release 3.8.1
+.
+Zenodo
+.
+External Links:
+Document
+,
+Link
+Cited by:
+§1
+,
+2nd item
+.
+Belfathi
+et al.
+(2023)
+A. Belfathi, N. Hernandez, and L. Monceaux
+Harnessing gpt-3.5-turbo for rhetorical role prediction in legal cases
+.
+External Links:
+2310.17413
+,
+Link
+Cited by:
+Table 10
+.
+Bisk
+et al.
+(2020)
+Y. Bisk, R. Zellers, R. L. Bras, J. Gao, and Y. Choi
+PIQA: reasoning about physical commonsense in natural language
+.
+In
+Thirty-Fourth AAAI Conference on
+Artificial Intelligence
+,
+Cited by:
+Table 3
+.
+Blevins
+et al.
+(2023)
+T. Blevins, H. Gonen, and L. Zettlemoyer
+Prompting language models for linguistic structure
+.
+External Links:
+2211.07830
+,
+Link
+Cited by:
+Table 10
+,
+§2
+.
+Brown
+et al.
+(2020)
+T. B. Brown, B. Mann, N. Ryder, M. Subbiah, J. Kaplan, P. Dhariwal, A. Neelakantan, P. Shyam, G. Sastry, A. Askell, S. Agarwal, A. Herbert-Voss, G. Krueger, T. Henighan, R. Child, A. Ramesh, D. M. Ziegler, J. Wu, C. Winter, C. Hesse, M. Chen, E. Sigler, M. Litwin, S. Gray, B. Chess, J. Clark, C. Berner, S. McCandlish, A. Radford, I. Sutskever, and D. Amodei
+Language models are few-shot learners
+.
+External Links:
+2005.14165
+,
+Link
+Cited by:
+Table 10
+.
+Burns
+et al.
+(2023)
+C. Burns, H. Ye, D. Klein, and J. Steinhardt
+Discovering latent knowledge in language models without supervision
+.
+In
+The Eleventh International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+Table 5
+.
+Callison-Burch
+et al.
+(2006)
+C. Callison-Burch, M. Osborne, and P. Koehn
+Re-evaluating the role of Bleu in machine translation research
+.
+In
+11th Conference of the European Chapter of the Association for Computational Linguistics
+,
+D. McCarthy and S. Wintner (Eds.)
+,
+Trento, Italy
+,
+pp. 249–256
+.
+External Links:
+Link
+Cited by:
+§1
+,
+3rd item
+.
+Chen
+et al.
+(2018)
+H. Chen, Z. Fan, H. Lu, A. Yuille, and S. Rong
+PreCo: a large-scale dataset in preschool vocabulary for coreference resolution
+.
+In
+Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing
+,
+E. Riloff, D. Chiang, J. Hockenmaier, and J. Tsujii (Eds.)
+,
+Brussels, Belgium
+,
+pp. 172–181
+.
+External Links:
+Link
+,
+Document
+Cited by:
+Table 10
+.
+Chen
+et al.
+(2024a)
+Y. Chen, J. Arkin, Y. Hao, Y. Zhang, N. Roy, and C. Fan
+PRompt optimization in multi-step tasks (PROMST): integrating human feedback and heuristic-based sampling
+.
+In
+Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing
+,
+Y. Al-Onaizan, M. Bansal, and Y. Chen (Eds.)
+,
+Miami, Florida, USA
+,
+pp. 3859–3920
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2
+.
+Chen
+et al.
+(2024b)
+Z. Chen, X. Sun, X. Jiao, F. Lian, Z. Kang, D. Wang, and C. Xu
+Truth forest: toward multi-scale truthfulness in large language models through intervention without tuning
+.
+External Links:
+2312.17484
+,
+Link
+Cited by:
+Table 5
+.
+Cho
+et al.
+(2024)
+N. Cho, N. Srishankar, L. Cecchi, and W. Watson
+FISHNET: financial intelligence from sub-querying, harmonizing, neural-conditioning, expert swarms, and task planning
+.
+In
+Proceedings of the 5th ACM International Conference on AI in Finance
+,
+ICAIF ’24
+,
+pp. 591–599
+.
+External Links:
+Link
+,
+Document
+Cited by:
+Table 10
+.
+Cho and Watson (2025)
+N. Cho and W. Watson
+MultiQ&A: an analysis in measuring robustness via automated crowdsourcing of question perturbations and answers
+.
+External Links:
+2502.03711
+,
+Link
+Cited by:
+§1
+.
+Christiano
+et al.
+(2017)
+P. F. Christiano, J. Leike, T. Brown, M. Martic, S. Legg, and D. Amodei
+Deep reinforcement learning from human preferences
+.
+In
+Advances in Neural Information Processing Systems
+,
+I. Guyon, U. V. Luxburg, S. Bengio, H. Wallach, R. Fergus, S. Vishwanathan, and R. Garnett (Eds.)
+,
+Vol.
+30
+,
+pp.
+.
+External Links:
+Link
+Cited by:
+§1
+.
+Chuang
+et al.
+(2024)
+Y. Chuang, Y. Xie, H. Luo, Y. Kim, J. R. Glass, and P. He
+DoLa: decoding by contrasting layers improves factuality in large language models
+.
+In
+The Twelfth International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+Table 5
+,
+§1
+,
+§5
+.
+Clark
+et al.
+(2019)
+C. Clark, K. Lee, M. Chang, T. Kwiatkowski, M. Collins, and K. Toutanova
+BoolQ: exploring the surprising difficulty of natural yes/no questions
+.
+In
+NAACL
+,
+Cited by:
+Table 3
+.
+Clark and Gerrig (1983)
+H. H. Clark and R. J. Gerrig
+Understanding old words with new meanings
+.
+External Links:
+Journal of Verbal Learning and Verbal Behavior
+,
+Link
+Cited by:
+5th item
+.
+Clark
+et al.
+(2018)
+P. Clark, I. Cowhey, O. Etzioni, T. Khot, A. Sabharwal, C. Schoenick, and O. Tafjord
+Think you have solved question answering? try arc, the ai2 reasoning challenge
+.
+arXiv:1803.05457v1
+.
+Cited by:
+Table 3
+,
+Table 3
+.
+Clarke
+et al.
+(2009)
+C. L. A. Clarke, N. Craswell, and I. Soboroff
+Overview of the TREC 2009 web track
+.
+In
+Proceedings of The Eighteenth Text REtrieval Conference, TREC 2009,
+Gaithersburg, Maryland, USA, November 17-20, 2009
+,
+E. M. Voorhees and L. P. Buckland (Eds.)
+,
+NIST Special Publication
+, Vol.
+500-278
+.
+External Links:
+Link
+Cited by:
+Table 10
+.
+Dechert LLP (2024)
+Dechert LLP
+AI expert challenged for relying on ai ”hallucinations”
+.
+Note:
+Accessed: 2025-05-12
+External Links:
+Link
+Cited by:
+§2
+.
+Deng
+et al.
+(2023)
+Y. Deng, L. Liao, L. Chen, H. Wang, W. Lei, and T. Chua
+Prompting and evaluating large language models for proactive dialogues: clarification, target-guided, and non-collaboration
+.
+In
+Findings of the Association for Computational Linguistics: EMNLP 2023
+,
+H. Bouamor, J. Pino, and K. Bali (Eds.)
+,
+Singapore
+,
+pp. 10602–10621
+.
+External Links:
+Link
+,
+Document
+Cited by:
+3rd item
+.
+Deng
+et al.
+(2024)
+Y. Deng, W. Zhang, Z. Chen, and Q. Gu
+Rephrase and respond: let large language models ask better questions for themselves
+.
+External Links:
+2311.04205
+,
+Link
+Cited by:
+1st item
+.
+Durmus
+et al.
+(2024)
+E. Durmus, K. Nguyen, T. I. Liao, N. Schiefer, A. Askell, A. Bakhtin, C. Chen, Z. Hatfield-Dodds, D. Hernandez, N. Joseph, L. Lovitt, S. McCandlish, O. Sikder, A. Tamkin, J. Thamkul, J. Kaplan, J. Clark, and D. Ganguli
+Towards measuring the representation of subjective global opinions in language models
+.
+External Links:
+2306.16388
+,
+Link
+Cited by:
+Table 10
+.
+Farkas and Kiss (2000)
+D. F. Farkas and K. É. Kiss
+On the comparative and absolute readings of superlatives
+.
+Natural Language & Linguistic Theory edition
+, Vol.
+18(3):417–
+455
+.
+Cited by:
+Table 10
+.
+Fu
+et al.
+(2023)
+J. Fu, S. Ng, Z. Jiang, and P. Liu
+GPTScore: evaluate as you desire
+.
+External Links:
+2302.04166
+,
+Link
+Cited by:
+§1
+.
+Gao
+et al.
+(2024)
+Y. Gao, Y. Xiong, X. Gao, K. Jia, J. Pan, Y. Bi, Y. Dai, J. Sun, M. Wang, and H. Wang
+Retrieval-augmented generation for large language models: a survey
+.
+External Links:
+2312.10997
+,
+Link
+Cited by:
+Table 10
+.
+Garivier and Cappé (2013)
+A. Garivier and O. Cappé
+The kl-ucb algorithm for bounded stochastic bandits and beyond
+.
+External Links:
+1102.2490
+,
+Link
+Cited by:
+2nd item
+,
+§3
+.
+Gumbel (1941)
+E. J. Gumbel
+The return period of flood flows
+.
+12(2):163–190 edition
+.
+External Links:
+Link
+Cited by:
+2nd item
+.
+Haber and Poesio (2024)
+J. Haber and M. Poesio
+Polysemy—Evidence from linguistics, behavioral science, and contextualized language models
+.
+Computational Linguistics
+50
+(
+1
+),
+pp. 351–417
+.
+External Links:
+Link
+,
+Document
+Cited by:
+Table 10
+.
+Hannan (1957)
+J. Hannan
+Approximation to bayes risk in repeated play
+.
+3:97–139 edition
+.
+Cited by:
+4th item
+.
+Hendrycks
+et al.
+(2021)
+D. Hendrycks, C. Burns, S. Basart, A. Zou, M. Mazeika, D. Song, and J. Steinhardt
+Measuring massive multitask language understanding
+.
+Proceedings of the International Conference on Learning Representations (ICLR)
+.
+Cited by:
+Table 3
+.
+Hossain and Blanco (2022)
+M. M. Hossain and E. Blanco
+Leveraging affirmative interpretations from negation improves natural language understanding
+.
+External Links:
+2210.14486
+,
+Link
+Cited by:
+Table 10
+.
+Huang
+et al.
+(2025a)
+L. Huang, W. Yu, W. Ma, W. Zhong, Z. Feng, H. Wang, Q. Chen, W. Peng, X. Feng, B. Qin, and T. Liu
+A survey on hallucination in large language models: principles, taxonomy, challenges, and open questions
+.
+ACM Trans. Inf. Syst.
+43
+(
+2
+).
+External Links:
+ISSN 1046-8188
+,
+Link
+,
+Document
+Cited by:
+Remark 1
+.
+Huang
+et al.
+(2025b)
+L. Huang, W. Yu, W. Ma, W. Zhong, Z. Feng, H. Wang, Q. Chen, W. Peng, X. Feng, B. Qin, and T. Liu
+A survey on hallucination in large language models: principles, taxonomy, challenges, and open questions
+.
+ACM Transactions on Information Systems
+43
+(
+2
+),
+pp. 1–55
+.
+External Links:
+ISSN 1558-2868
+,
+Link
+,
+Document
+Cited by:
+§2
+.
+Jeong
+et al.
+(2024)
+S. Jeong, J. Baek, S. Cho, S. J. Hwang, and J. Park
+Adaptive-RAG: learning to adapt retrieval-augmented large language models through question complexity
+.
+In
+Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers)
+,
+K. Duh, H. Gomez, and S. Bethard (Eds.)
+,
+Mexico City, Mexico
+,
+pp. 7036–7050
+.
+External Links:
+Link
+,
+Document
+Cited by:
+Table 10
+.
+Ji
+et al.
+(2023)
+Z. Ji, T. Yu, Y. Xu, ouyang, E. Ishii, and P. Fung
+Towards mitigating hallucination in large language models via self-reflection
+.
+External Links:
+2310.06271
+,
+Link
+Cited by:
+§1
+,
+§2
+.
+Jiang
+et al.
+(2024)
+Y. Jiang, Y. Wang, X. Zeng, W. Zhong, L. Li, F. Mi, L. Shang, X. Jiang, Q. Liu, and W. Wang
+FollowBench: a multi-level fine-grained constraints following benchmark for large language models
+.
+External Links:
+2310.20410
+,
+Link
+Cited by:
+Table 10
+.
+Johannes Welbl (2017)
+M. G. Johannes Welbl
+Crowdsourcing multiple choice science questions
+.
+External Links:
+1707.06209
+,
+Link
+Cited by:
+Table 3
+.
+Joshi
+et al.
+(2017)
+M. Joshi, E. Choi, D. Weld, and L. Zettlemoyer
+triviaqa: A Large Scale Distantly Supervised Challenge Dataset for Reading Comprehension
+.
+arXiv e-prints
+,
+pp. arXiv:1705.03551
+.
+External Links:
+1705.03551
+Cited by:
+Table 3
+.
+Kai
+et al.
+(2024)
+J. Kai, T. Zhang, H. Hu, and Z. Lin
+SH2: self-highlighted hesitation helps you decode more truthfully
+.
+External Links:
+2401.05930
+,
+Link
+Cited by:
+Table 5
+.
+Kalai
+et al.
+(2025)
+A. T. Kalai, O. Nachum, S. S. Vempala, and E. Zhang
+Why language models hallucinate
+.
+External Links:
+2509.04664
+,
+Link
+Cited by:
+§2
+.
+Kalai and Vempala (2005)
+A. Kalai and S. Vempala
+Efficient algorithms for online decision problems
+.
+Journal of Computer and System Sciences
+71
+(
+3
+),
+pp. 291–307
+.
+Note:
+Learning Theory 2003
+External Links:
+ISSN 0022-0000
+,
+Document
+,
+Link
+Cited by:
+2nd item
+,
+§3
+.
+Kamath
+et al.
+(2024)
+G. Kamath, S. Schuster, S. Vajjala, and S. Reddy
+Scope ambiguities in large language models
+.
+Transactions of the Association for Computational Linguistics
+12
+,
+pp. 738–754
+.
+External Links:
+ISSN 2307-387X
+,
+Link
+,
+Document
+Cited by:
+Table 10
+.
+Karttunen (2016)
+L. Karttunen
+Presupposition: what went wrong?
+.
+Semantics and Linguistic Theory edition
+, Vol.
+26:705–
+731
+.
+Cited by:
+Table 10
+.
+Khassanov
+et al.
+(2019)
+Y. Khassanov, Z. Zeng, V. T. Pham, H. Xu, and E. S. Chng
+Enriching rare word representations in neural language models by embedding matrix augmentation
+.
+In
+Interspeech 2019
+,
+interspeech2019
+,
+pp. 3505–3509
+.
+External Links:
+Link
+,
+Document
+Cited by:
+Table 10
+.
+Lai and Robbins (1985)
+T. L. Lai and H. Robbins
+Asymptotically efficient adaptive allocation rules
+.
+6(1):4–22 edition
+.
+Cited by:
+1st item
+,
+§3
+.
+Lattimore and Szepesvári (2020)
+T. Lattimore and C. Szepesvári
+Bandit algorithms
+.
+Cambridge University Press
+.
+Cited by:
+§1
+,
+§3
+.
+Lee
+et al.
+(2023)
+N. Lee, W. Ping, P. Xu, M. Patwary, P. Fung, M. Shoeybi, and B. Catanzaro
+Factuality enhanced language models for open-ended text generation
+.
+External Links:
+2206.04624
+,
+Link
+Cited by:
+Table 10
+.
+Levinson (1983)
+S. C. Levinson
+Pragmatics
+.
+Cambridge Textbooks in Linguistics
+,
+Cambridge University Press
+.
+External Links:
+Link
+Cited by:
+Table 10
+,
+Table 10
+.
+Lewis
+et al.
+(2021)
+P. Lewis, E. Perez, A. Piktus, F. Petroni, V. Karpukhin, N. Goyal, H. Küttler, M. Lewis, W. Yih, T. Rocktäschel, S. Riedel, and D. Kiela
+Retrieval-augmented generation for knowledge-intensive nlp tasks
+.
+External Links:
+2005.11401
+,
+Link
+Cited by:
+Table 10
+.
+Li
+et al.
+(2024a)
+K. Li, O. Patel, F. Viégas, H. Pfister, and M. Wattenberg
+Inference-time intervention: eliciting truthful answers from a language model
+.
+External Links:
+2306.03341
+,
+Link
+Cited by:
+Table 5
+.
+Li
+et al.
+(2024b)
+T. Li, G. Zhang, Q. D. Do, X. Yue, and W. Chen
+Long-context llms struggle with long in-context learning
+.
+External Links:
+2404.02060
+,
+Link
+Cited by:
+Table 10
+.
+Li
+et al.
+(2023)
+X. L. Li, A. Holtzman, D. Fried, P. Liang, J. Eisner, T. Hashimoto, L. Zettlemoyer, and M. Lewis
+Contrastive decoding: open-ended text generation as optimization
+.
+In
+Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+,
+A. Rogers, J. Boyd-Graber, and N. Okazaki (Eds.)
+,
+Toronto, Canada
+,
+pp. 12286–12312
+.
+External Links:
+Link
+,
+Document
+Cited by:
+Table 5
+.
+Li
+et al.
+(2024c)
+Z. Li, T. Xu, Y. Zhang, Z. Lin, Y. Yu, R. Sun, and Z. Luo
+ReMax: a simple, effective, and efficient reinforcement learning method for aligning large language models
+.
+External Links:
+2310.10505
+,
+Link
+Cited by:
+§1
+,
+Remark 1
+.
+Libby
+et al.
+(2008)
+M. E. Libby, J. S. Weiss, S. Bancroft, and W. H. Ahearn
+A comparison of most-to-least and least-to-most prompting on the acquisition of solitary play skills
+.
+Behavior analysis in practice edition
+,
+National Library of Medicine
+.
+External Links:
+Link
+Cited by:
+2nd item
+.
+Lin (2004)
+C. Lin
+ROUGE: a package for automatic evaluation of summaries
+.
+In
+Text Summarization Branches Out
+,
+Barcelona, Spain
+,
+pp. 74–81
+.
+External Links:
+Link
+Cited by:
+§4
+.
+Lin
+et al.
+(2022)
+S. Lin, J. Hilton, and O. Evans
+TruthfulQA: measuring how models mimic human falsehoods
+.
+In
+Proceedings of the 60th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+,
+Dublin, Ireland
+,
+pp. 3214–3252
+.
+External Links:
+Link
+,
+Document
+Cited by:
+Appendix C
+,
+Table 3
+,
+Table 5
+,
+Table 5
+,
+§1
+.
+Liu
+et al.
+(2023a)
+A. Liu, Z. Wu, J. Michael, A. Suhr, P. West, A. Koller, S. Swayamdipta, N. Smith, and Y. Choi
+We‘re afraid language models aren‘t modeling ambiguity
+.
+In
+Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing
+,
+H. Bouamor, J. Pino, and K. Bali (Eds.)
+,
+Singapore
+,
+pp. 790–807
+.
+External Links:
+Link
+,
+Document
+Cited by:
+Table 10
+.
+Liu and Mozafari (2024)
+J. Liu and B. Mozafari
+Query rewriting via large language models
+.
+External Links:
+2403.09060
+,
+Link
+Cited by:
+§2
+.
+Liu
+et al.
+(2023b)
+N. F. Liu, K. Lin, J. Hewitt, A. Paranjape, M. Bevilacqua, F. Petroni, and P. Liang
+Lost in the middle: how language models use long contexts
+.
+External Links:
+2307.03172
+,
+Link
+Cited by:
+Table 10
+.
+Liu
+et al.
+(2023c)
+Y. Liu, D. Iter, Y. Xu, S. Wang, R. Xu, and C. Zhu
+G-eval: nlg evaluation using gpt-4 with better human alignment
+.
+External Links:
+2303.16634
+,
+Link
+Cited by:
+§1
+,
+1st item
+.
+Lv
+et al.
+(2024)
+F. Lv, K. Gong, J. Liang, X. Pang, and C. Zhang
+Subjective topic meets LLMs: unleashing comprehensive, reflective and creative thinking through the negation of negation
+.
+In
+Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing
+,
+Y. Al-Onaizan, M. Bansal, and Y. Chen (Eds.)
+,
+Miami, Florida, USA
+,
+pp. 12318–12341
+.
+External Links:
+Link
+,
+Document
+Cited by:
+Table 10
+.
+Ma
+et al.
+(2023)
+X. Ma, Y. Gong, P. He, H. Zhao, and N. Duan
+Query rewriting for retrieval-augmented large language models
+.
+External Links:
+2305.14283
+,
+Link
+Cited by:
+§1
+,
+§2
+.
+Madaan
+et al.
+(2023)
+A. Madaan, N. Tandon, P. Gupta, S. Hallinan, L. Gao, S. Wiegreffe, U. Alon, N. Dziri, S. Prabhumoye, Y. Yang, S. Gupta, B. P. Majumder, K. Hermann, S. Welleck, A. Yazdanbakhsh, and P. Clark
+Self-refine: iterative refinement with self-feedback
+.
+External Links:
+2303.17651
+,
+Link
+Cited by:
+§2
+.
+Mallen
+et al.
+(2023)
+A. Mallen, A. Asai, V. Zhong, R. Das, D. Khashabi, and H. Hajishirzi
+When not to trust language models: investigating effectiveness of parametric and non-parametric memories
+.
+In
+Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+,
+A. Rogers, J. Boyd-Graber, and N. Okazaki (Eds.)
+,
+Toronto, Canada
+,
+pp. 9802–9822
+.
+External Links:
+Link
+,
+Document
+Cited by:
+5th item
+.
+Mao
+et al.
+(2024)
+S. Mao, Y. Jiang, B. Chen, X. Li, P. Wang, X. Wang, P. Xie, F. Huang, H. Chen, and N. Zhang
+RaFe: ranking feedback improves query rewriting for RAG
+.
+In
+Findings of the Association for Computational Linguistics: EMNLP 2024
+,
+Y. Al-Onaizan, M. Bansal, and Y. Chen (Eds.)
+,
+Miami, Florida, USA
+,
+pp. 884–901
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2
+.
+McMahan (2015)
+H. B. McMahan
+A survey of algorithms and analysis for adaptive online learning
+.
+External Links:
+1403.3465
+,
+Link
+Cited by:
+1st item
+,
+§3
+.
+Mihaylov
+et al.
+(2018)
+T. Mihaylov, P. Clark, T. Khot, and A. Sabharwal
+Can a suit of armor conduct electricity? a new dataset for open book question answering
+.
+In
+Conference on Empirical Methods in Natural Language Processing
+,
+Cited by:
+Table 3
+.
+Mudgal
+et al.
+(2024)
+S. Mudgal, J. Lee, H. Ganapathy, Y. Li, T. Wang, Y. Huang, Z. Chen, H. Cheng, M. Collins, T. Strohman, J. Chen, A. Beutel, and A. Beirami
+Controlled decoding from language models
+.
+External Links:
+2310.17022
+,
+Link
+Cited by:
+§1
+.
+Neu and Olkhovskaya (2020)
+G. Neu and J. Olkhovskaya
+Efficient and robust algorithms for adversarial linear contextual bandits
+.
+In
+Proceedings of Thirty Third Conference on Learning Theory
+,
+J. Abernethy and S. Agarwal (Eds.)
+,
+Proceedings of Machine Learning Research
+, Vol.
+125
+,
+pp. 3049–3068
+.
+External Links:
+Link
+Cited by:
+3rd item
+.
+Nogueira and Cho (2017)
+R. Nogueira and K. Cho
+Task-oriented query reformulation with reinforcement learning
+.
+In
+Proceedings of the 2017 Conference on Empirical Methods in Natural Language Processing
+,
+M. Palmer, R. Hwa, and S. Riedel (Eds.)
+,
+Copenhagen, Denmark
+,
+pp. 574–583
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+.
+OpenAI
+et al.
+(2024)
+OpenAI, :, A. Hurst, A. Lerer, A. P. Goucher, A. Perelman, A. Ramesh, A. Clark, A. Ostrow, A. Welihinda, A. Hayes, A. Radford, A. Madry, A. Baker-Whitcomb, A. Beutel, A. Borzunov, A. Carney, A. Chow, A. Kirillov, A. Nichol, A. Paino, A. Renzin, A. T. Passos, A. Kirillov, A. Christakis, A. Conneau, A. Kamali, A. Jabri, A. Moyer, A. Tam, A. Crookes, A. Tootoochian, A. Tootoonchian, A. Kumar, A. Vallone, A. Karpathy, A. Braunstein, A. Cann, A. Codispoti, A. Galu, A. Kondrich, A. Tulloch, A. Mishchenko, A. Baek, A. Jiang, A. Pelisse, A. Woodford, A. Gosalia, A. Dhar, A. Pantuliano, A. Nayak, A. Oliver, B. Zoph, B. Ghorbani, B. Leimberger, B. Rossen, B. Sokolowsky, B. Wang, B. Zweig, B. Hoover, B. Samic, B. McGrew, B. Spero, B. Giertler, B. Cheng, B. Lightcap, B. Walkin, B. Quinn, B. Guarraci, B. Hsu, B. Kellogg, B. Eastman, C. Lugaresi, C. Wainwright, C. Bassin, C. Hudson, C. Chu, C. Nelson, C. Li, C. J. Shern, C. Conger, C. Barette, C. Voss, C. Ding, C. Lu, C. Zhang, C. Beaumont, C. Hallacy, C. Koch, C. Gibson, C. Kim, C. Choi, C. McLeavey, C. Hesse, C. Fischer, C. Winter, C. Czarnecki, C. Jarvis, C. Wei, C. Koumouzelis, D. Sherburn, D. Kappler, D. Levin, D. Levy, D. Carr, D. Farhi, D. Mely, D. Robinson, D. Sasaki, D. Jin, D. Valladares, D. Tsipras, D. Li, D. P. Nguyen, D. Findlay, E. Oiwoh, E. Wong, E. Asdar, E. Proehl, E. Yang, E. Antonow, E. Kramer, E. Peterson, E. Sigler, E. Wallace, E. Brevdo, E. Mays, F. Khorasani, F. P. Such, F. Raso, F. Zhang, F. von Lohmann, F. Sulit, G. Goh, G. Oden, G. Salmon, G. Starace, G. Brockman, H. Salman, H. Bao, H. Hu, H. Wong, H. Wang, H. Schmidt, H. Whitney, H. Jun, H. Kirchner, H. P. de Oliveira Pinto, H. Ren, H. Chang, H. W. Chung, I. Kivlichan, I. O’Connell, I. O’Connell, I. Osband, I. Silber, I. Sohl, I. Okuyucu, I. Lan, I. Kostrikov, I. Sutskever, I. Kanitscheider, I. Gulrajani, J. Coxon, J. Menick, J. Pachocki, J. Aung, J. Betker, J. Crooks, J. Lennon, J. Kiros, J. Leike, J. Park, J. Kwon, J. Phang, J. Teplitz, J. Wei, J. Wolfe, J. Chen, J. Harris, J. Varavva, J. G. Lee, J. Shieh, J. Lin, J. Yu, J. Weng, J. Tang, J. Yu, J. Jang, J. Q. Candela, J. Beutler, J. Landers, J. Parish, J. Heidecke, J. Schulman, J. Lachman, J. McKay, J. Uesato, J. Ward, J. W. Kim, J. Huizinga, J. Sitkin, J. Kraaijeveld, J. Gross, J. Kaplan, J. Snyder, J. Achiam, J. Jiao, J. Lee, J. Zhuang, J. Harriman, K. Fricke, K. Hayashi, K. Singhal, K. Shi, K. Karthik, K. Wood, K. Rimbach, K. Hsu, K. Nguyen, K. Gu-Lemberg, K. Button, K. Liu, K. Howe, K. Muthukumar, K. Luther, L. Ahmad, L. Kai, L. Itow, L. Workman, L. Pathak, L. Chen, L. Jing, L. Guy, L. Fedus, L. Zhou, L. Mamitsuka, L. Weng, L. McCallum, L. Held, L. Ouyang, L. Feuvrier, L. Zhang, L. Kondraciuk, L. Kaiser, L. Hewitt, L. Metz, L. Doshi, M. Aflak, M. Simens, M. Boyd, M. Thompson, M. Dukhan, M. Chen, M. Gray, M. Hudnall, M. Zhang, M. Aljubeh, M. Litwin, M. Zeng, M. Johnson, M. Shetty, M. Gupta, M. Shah, M. Yatbaz, M. J. Yang, M. Zhong, M. Glaese, M. Chen, M. Janner, M. Lampe, M. Petrov, M. Wu, M. Wang, M. Fradin, M. Pokrass, M. Castro, M. O. T. de Castro, M. Pavlov, M. Brundage, M. Wang, M. Khan, M. Murati, M. Bavarian, M. Lin, M. Yesildal, N. Soto, N. Gimelshein, N. Cone, N. Staudacher, N. Summers, N. LaFontaine, N. Chowdhury, N. Ryder, N. Stathas, N. Turley, N. Tezak, N. Felix, N. Kudige, N. Keskar, N. Deutsch, N. Bundick, N. Puckett, O. Nachum, O. Okelola, O. Boiko, O. Murk, O. Jaffe, O. Watkins, O. Godement, O. Campbell-Moore, P. Chao, P. McMillan, P. Belov, P. Su, P. Bak, P. Bakkum, P. Deng, P. Dolan, P. Hoeschele, P. Welinder, P. Tillet, P. Pronin, P. Tillet, P. Dhariwal, Q. Yuan, R. Dias, R. Lim, R. Arora, R. Troll, R. Lin, R. G. Lopes, R. Puri, R. Miyara, R. Leike, R. Gaubert, R. Zamani, R. Wang, R. Donnelly, R. Honsby, R. Smith, R. Sahai, R. Ramchandani, R. Huet, R. Carmichael, R. Zellers, R. Chen, R. Chen, R. Nigmatullin, R. Cheu, S. Jain, S. Altman, S. Schoenholz, S. Toizer, S. Miserendino, S. Agarwal, S. Culver, S. Ethersmith, S. Gray, S. Grove, S. Metzger, S. Hermani, S. Jain, S. Zhao, S. Wu, S. Jomoto, S. Wu, Shuaiqi, Xia, S. Phene, S. Papay, S. Narayanan, S. Coffey, S. Lee, S. Hall, S. Balaji, T. Broda, T. Stramer, T. Xu, T. Gogineni, T. Christianson, T. Sanders, T. Patwardhan, T. Cunninghman, T. Degry, T. Dimson, T. Raoux, T. Shadwell, T. Zheng, T. Underwood, T. Markov, T. Sherbakov, T. Rubin, T. Stasi, T. Kaftan, T. Heywood, T. Peterson, T. Walters, T. Eloundou, V. Qi, V. Moeller, V. Monaco, V. Kuo, V. Fomenko, W. Chang, W. Zheng, W. Zhou, W. Manassra, W. Sheu, W. Zaremba, Y. Patil, Y. Qian, Y. Kim, Y. Cheng, Y. Zhang, Y. He, Y. Zhang, Y. Jin, Y. Dai, and Y. Malkov
+GPT-4o system card
+.
+External Links:
+2410.21276
+,
+Link
+Cited by:
+Table 5
+,
+§1
+.
+OpenAI (2025)
+OpenAI
+OpenAI o3 and o4-mini system card
+.
+External Links:
+Link
+Cited by:
+§1
+,
+§2
+.
+Osband
+et al.
+(2013)
+I. Osband, D. Russo, and B. thompson
+(More) efficient reinforcement learning via posterior sampling
+.
+Advances in Neural Information Processing Systems
+26
+.
+Cited by:
+Remark 2
+.
+Papineni
+et al.
+(2002)
+K. Papineni, S. Roukos, T. Ward, and W. Zhu
+Bleu: a method for automatic evaluation of machine translation
+.
+In
+Proceedings of the 40th Annual Meeting of the Association for Computational Linguistics
+,
+P. Isabelle, E. Charniak, and D. Lin (Eds.)
+,
+Philadelphia, Pennsylvania, USA
+,
+pp. 311–318
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+,
+3rd item
+,
+§4
+.
+Pyatkin
+et al.
+(2024)
+V. Pyatkin, B. Webber, I. Dagan, and R. Tsarfaty
+Superlatives in context: modeling the implicit semantics of superlatives
+.
+External Links:
+2405.20967
+,
+Link
+Cited by:
+Table 10
+.
+Qiao
+et al.
+(2023)
+Y. Qiao, L. Jing, X. Song, X. Chen, L. Zhu, and L. Nie
+Mutual-enhanced incongruity learning network for multi-modal sarcasm detection
+.
+In
+Proceedings of the Thirty-Seventh AAAI Conference on Artificial Intelligence and Thirty-Fifth Conference on Innovative Applications of Artificial Intelligence and Thirteenth Symposium on Educational Advances in Artificial Intelligence
+,
+AAAI’23/IAAI’23/EAAI’23
+.
+External Links:
+ISBN 978-1-57735-880-0
+,
+Link
+,
+Document
+Cited by:
+Table 10
+.
+Radford
+et al.
+(2019)
+A. Radford, J. Wu, R. Child, D. Luan, D. Amodei, and I. Sutskever
+Language models are unsupervised multitask learners
+.
+OpenAI
+.
+Cited by:
+Remark 1
+.
+Rajpurkar
+et al.
+(2018)
+P. Rajpurkar, R. Jia, and P. Liang
+Know what you don’t know: unanswerable questions for squad
+.
+External Links:
+1806.03822
+Cited by:
+Table 3
+.
+Rajpurkar
+et al.
+(2016)
+P. Rajpurkar, J. Zhang, K. Lopyrev, and P. Liang
+SQuAD: 100,000+ questions for machine comprehension of text
+.
+External Links:
+1606.05250
+Cited by:
+Table 3
+.
+Riemer
+et al.
+(2022)
+M. Riemer, S. C. Raparthy, I. Cases, G. Subbaraj, M. Puelma Touzel, and I. Rish
+Continual learning in environments with polynomial mixing times
+.
+Advances in Neural Information Processing Systems
+35
+,
+pp. 21961–21973
+.
+Cited by:
+§1
+.
+Rippeth
+et al.
+(2023)
+E. Rippeth, M. Carpuat, K. Duh, and M. Post
+Improving word sense disambiguation in neural machine translation with salient document context
+.
+External Links:
+2311.15507
+,
+Link
+Cited by:
+5th item
+.
+Rockafellar (1976)
+R. T. Rockafellar
+Monotone operators and the proximal point algorithm
+.
+SIAM journal on control and optimization
+14
+(
+5
+),
+pp. 877–898
+.
+Cited by:
+Remark 2
+.
+Sahoo
+et al.
+(2025)
+P. Sahoo, A. K. Singh, S. Saha, V. Jain, S. Mondal, and A. Chadha
+A systematic survey of prompt engineering in large language models: techniques and applications
+.
+External Links:
+2402.07927
+,
+Link
+Cited by:
+§2
+.
+Schick and Schütze (2019)
+T. Schick and H. Schütze
+Rare words: a major problem for contextualized embeddings and how to fix it by attentive mimicking
+.
+External Links:
+1904.06707
+,
+Link
+Cited by:
+Table 10
+.
+Schulman
+et al.
+(2017)
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+Proximal policy optimization algorithms
+.
+arXiv preprint arXiv:1707.06347
+.
+Cited by:
+§1
+,
+Remark 2
+.
+Schuster (1988)
+E. Schuster
+Anaphoric reference to events and actions: a representation and its advantages
+.
+In
+Coling Budapest 1988 Volume 2: International Conference on Computational Linguistics
+,
+External Links:
+Link
+Cited by:
+Table 10
+.
+Shahbazi
+et al.
+(2019)
+H. Shahbazi, X. Z. Fern, R. Ghaeini, R. Obeidat, and P. Tadepalli
+Entity-aware elmo: learning contextual entity representation for entity disambiguation
+.
+External Links:
+1908.05762
+,
+Link
+Cited by:
+3rd item
+.
+Shalev-Shwartz
+et al.
+(2012)
+S. Shalev-Shwartz
+et al.
+Online learning and online convex optimization
+.
+Foundations and Trends® in Machine Learning
+4
+(
+2
+),
+pp. 107–194
+.
+Cited by:
+Remark 2
+.
+Shao
+et al.
+(2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. K. Li, Y. Wu, and D. Guo
+DeepSeekMath: pushing the limits of mathematical reasoning in open language models
+.
+External Links:
+2402.03300
+,
+Link
+Cited by:
+§1
+,
+Remark 1
+.
+Sravanthi
+et al.
+(2024)
+S. Sravanthi, M. Doshi, P. Tankala, R. Murthy, R. Dabre, and P. Bhattacharyya
+PUB: a pragmatics understanding benchmark for assessing LLMs’ pragmatics capabilities
+.
+In
+Findings of the Association for Computational Linguistics: ACL 2024
+,
+L. Ku, A. Martins, and V. Srikumar (Eds.)
+,
+Bangkok, Thailand
+,
+pp. 12075–12097
+.
+External Links:
+Link
+,
+Document
+Cited by:
+Table 10
+.
+Suggala and Netrapalli (2020)
+A. S. Suggala and P. Netrapalli
+Follow the perturbed leader: optimism and fast parallel algorithms for smooth minimax games
+.
+External Links:
+2006.07541
+,
+Link
+Cited by:
+2nd item
+,
+§3
+.
+Sutton and Barto (2018)
+R. S. Sutton and A. G. Barto
+Reinforcement learning: an introduction
+.
+MIT press
+.
+Cited by:
+§1
+,
+Remark 1
+.
+Thompson (1933)
+W. R. Thompson
+On the likelihood that one unknown probability exceeds another in view of the evidence of two samples
+.
+Vol.
+25
+,
+Biometrika
+.
+Cited by:
+§3
+,
+Remark 2
+.
+Times (2025)
+T. N. Y. Times
+AI hallucinations: chatgpt and google’s challenges
+.
+The New York Times
+.
+Note:
+Accessed: 2025-05-12
+External Links:
+Link
+Cited by:
+§1
+,
+§2
+.
+Tonmoy
+et al.
+(2024)
+S. M. T. I. Tonmoy, S. M. M. Zaman, V. Jain, A. Rani, V. Rawte, A. Chadha, and A. Das
+A comprehensive survey of hallucination mitigation techniques in large language models
+.
+External Links:
+2401.01313
+,
+Link
+Cited by:
+§2
+.
+Touvron
+et al.
+(2023)
+H. Touvron, T. Lavril, G. Izacard, X. Martinet, M. Lachaux, T. Lacroix, B. Rozière, N. Goyal, E. Hambro, F. Azhar, A. Rodriguez, A. Joulin, E. Grave, and G. Lample
+LLaMA: open and efficient foundation language models
+.
+External Links:
+2302.13971
+Cited by:
+§1
+.
+Truong
+et al.
+(2023)
+T. H. Truong, T. Baldwin, K. Verspoor, and T. Cohn
+Language models are not naysayers: an analysis of language models on negation benchmarks
+.
+External Links:
+2306.08189
+,
+Link
+Cited by:
+Table 10
+.
+Van
+et al.
+(2021)
+H. Van, Z. Tang, and M. Surdeanu
+How may i help you? using neural text simplification to improve downstream nlp tasks
+.
+External Links:
+2109.04604
+,
+Link
+Cited by:
+2nd item
+.
+Vaswani
+et al.
+(2023)
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, L. Kaiser, and I. Polosukhin
+Attention is all you need
+.
+External Links:
+1706.03762
+,
+Link
+Cited by:
+4th item
+.
+Wang
+et al.
+(2019)
+A. Wang, Y. Pruksachatkun, N. Nangia, A. Singh, J. Michael, F. Hill, O. Levy, and S. R. Bowman
+SuperGLUE: a stickier benchmark for general-purpose language understanding systems
+.
+arXiv preprint 1905.00537
+.
+Cited by:
+Table 3
+.
+Wang
+et al.
+(2023a)
+J. Wang, Y. Liang, F. Meng, Z. Sun, H. Shi, Z. Li, J. Xu, J. Qu, and J. Zhou
+Is ChatGPT a good NLG evaluator? a preliminary study
+.
+In
+Proceedings of the 4th New Frontiers in Summarization Workshop
+,
+Y. Dong, W. Xiao, L. Wang, F. Liu, and G. Carenini (Eds.)
+,
+Singapore
+,
+pp. 1–11
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+,
+§3
+,
+§4
+.
+Wang
+et al.
+(2023b)
+S. Wang, X. Sun, X. Li, R. Ouyang, F. Wu, T. Zhang, J. Li, and G. Wang
+GPT-ner: named entity recognition via large language models
+.
+External Links:
+2304.10428
+,
+Link
+Cited by:
+Table 10
+.
+Watson
+et al.
+(2023)
+W. Watson, N. Cho, T. Balch, and M. Veloso
+HiddenTables and PyQTax: a cooperative game and dataset for TableQA to ensure scale and data privacy across a myriad of taxonomies
+.
+In
+Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing
+,
+Singapore
+,
+pp. 7144–7159
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2
+.
+Watson
+et al.
+(2025a)
+W. Watson, N. Cho, N. Srishankar, Z. Zeng, L. Cecchi, D. Scott, S. Siddagangappa, R. Kaur, T. Balch, and M. Veloso
+LAW: legal agentic workflows for custody and fund services contracts
+.
+In
+Proceedings of the 31st International Conference on Computational Linguistics: Industry Track
+,
+O. Rambow, L. Wanner, M. Apidianaki, H. Al-Khalifa, B. D. Eugenio, S. Schockaert, K. Darwish, and A. Agarwal (Eds.)
+,
+Abu Dhabi, UAE
+,
+pp. 583–594
+.
+External Links:
+Link
+Cited by:
+Table 10
+,
+§2
+.
+Watson
+et al.
+(2025b)
+W. Watson, N. Cho, and N. Srishankar
+Is there no such thing as a bad question? h4r: hallucibot for ratiocination, rewriting, ranking, and routing
+.
+Proceedings of the AAAI Conference on Artificial Intelligence
+39
+(
+24
+),
+pp. 25470–25478
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+,
+§1
+,
+§2
+.
+Wei
+et al.
+(2023)
+J. Wei, X. Wang, D. Schuurmans, M. Bosma, B. Ichter, F. Xia, E. Chi, Q. Le, and D. Zhou
+Chain-of-thought prompting elicits reasoning in large language models
+.
+External Links:
+2201.11903
+,
+Link
+Cited by:
+Table 10
+.
+Witteveen and Andrews (2019)
+S. Witteveen and M. Andrews
+Paraphrasing with large language models
+.
+In
+Proceedings of the 3rd Workshop on Neural Generation and Translation
+,
+External Links:
+Link
+,
+Document
+Cited by:
+1st item
+.
+Yang
+et al.
+(2015)
+Y. Yang, W. Yih, and C. Meek
+WikiQA: a challenge dataset for open-domain question answering
+.
+In
+Proceedings of the 2015 Conference on Empirical Methods in Natural Language Processing
+,
+Lisbon, Portugal
+,
+pp. 2013–2018
+.
+External Links:
+Link
+,
+Document
+Cited by:
+Table 3
+.
+Yang
+et al.
+(2018)
+Z. Yang, P. Qi, S. Zhang, Y. Bengio, W. Cohen, R. Salakhutdinov, and C. D. Manning
+HotpotQA: a dataset for diverse, explainable multi-hop question answering
+.
+In
+Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing
+,
+Brussels, Belgium
+,
+pp. 2369–2380
+.
+External Links:
+Link
+,
+Document
+Cited by:
+Table 3
+.
+Yao
+et al.
+(2024)
+J. Yao, K. Ning, Z. Liu, M. Ning, Y. Liu, and L. Yuan
+LLM lies: hallucinations are not bugs, but features as adversarial examples
+.
+External Links:
+2310.01469
+,
+Link
+Cited by:
+§2
+.
+Yu
+et al.
+(2025)
+Q. Yu, Z. Zhang, R. Zhu, Y. Yuan, X. Zuo, Y. Yue, T. Fan, G. Liu, L. Liu, X. Liu, H. Lin, Z. Lin, B. Ma, G. Sheng, Y. Tong, C. Zhang, M. Zhang, W. Zhang, H. Zhu, J. Zhu, J. Chen, J. Chen, C. Wang, H. Yu, W. Dai, Y. Song, X. Wei, H. Zhou, J. Liu, W. Ma, Y. Zhang, L. Yan, M. Qiao, Y. Wu, and M. Wang
+DAPO: an open-source llm reinforcement learning system at scale
+.
+External Links:
+2503.14476
+,
+Link
+Cited by:
+Remark 2
+.
+Yu
+et al.
+(2023)
+W. Yu, D. Iter, S. Wang, Y. Xu, M. Ju, S. Sanyal, C. Zhu, M. Zeng, and M. Jiang
+Generate rather than retrieve: large language models are strong context generators
+.
+External Links:
+2209.10063
+,
+Link
+Cited by:
+4th item
+.
+Yue
+et al.
+(2025)
+Y. Yue, Y. Yuan, Q. Yu, X. Zuo, R. Zhu, W. Xu, J. Chen, C. Wang, T. Fan, Z. Du, X. Wei, X. Yu, G. Liu, J. Liu, L. Liu, H. Lin, Z. Lin, B. Ma, C. Zhang, M. Zhang, W. Zhang, H. Zhu, R. Zhang, X. Liu, M. Wang, Y. Wu, and L. Yan
+VAPO: efficient and reliable reinforcement learning for advanced reasoning tasks
+.
+External Links:
+2504.05118
+,
+Link
+Cited by:
+Remark 2
+.
+Zeng
+et al.
+(2024)
+Z. Zeng, W. Watson, N. Cho, S. Rahimi, S. Reynolds, T. Balch, and M. Veloso
+FlowMind: automatic workflow generation with llms
+.
+External Links:
+2404.13050
+,
+Link
+Cited by:
+Table 10
+.
+Zhang
+et al.
+(2024a)
+S. Zhang, T. Yu, and Y. Feng
+TruthX: alleviating hallucinations by editing large language models in truthful space
+.
+In
+Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+,
+L. Ku, A. Martins, and V. Srikumar (Eds.)
+,
+Bangkok, Thailand
+,
+pp. 8908–8949
+.
+External Links:
+Link
+,
+Document
+Cited by:
+Appendix C
+,
+Table 5
+,
+Table 5
+,
+§1
+,
+§5
+.
+Zhang
+et al.
+(2024b)
+Y. Zhang, L. Cui, W. Bi, and S. Shi
+Alleviating hallucinations of large language models through induced hallucinations
+.
+External Links:
+2312.15710
+,
+Link
+Cited by:
+Table 5
+.
+Zhou
+et al.
+(2023)
+D. Zhou, N. Schärli, L. Hou, J. Wei, N. Scales, X. Wang, D. Schuurmans, C. Cui, O. Bousquet, Q. Le, and E. Chi
+Least-to-most prompting enables complex reasoning in large language models
+.
+External Links:
+2205.10625
+,
+Link
+Cited by:
+2nd item
+.
+Zuo
+et al.
+(2025)
+Y. Zuo, K. Zhang, S. Qu, L. Sheng, X. Zhu, B. Qi, Y. Sun, G. Cui, N. Ding, and B. Zhou
+TTRL: test-time reinforcement learning
+.
+External Links:
+2504.16084
+,
+Link
+Cited by:
+§3
+.
+Appendix A
+Appendix
+A.1
+Limitations
+Current limitations in our work are as follows: our current contextual bandit framework treats each of the 17 features as independent, but does not capture higher-order interactions. This can provide an exciting avenue of future research in terms of measuring whether the combination of features jointly exacerbates hallucination. Likewise, we would like to highlight that the feature-arm regression weights do not stipulate a causal relationship - highly sophisticated causal relationships are difficult to formulate within LLMs due to the inherent difficulties of interpreting a neural network’s internal layers; thus, in this paper, we focus on providing empirical studies and the conclusions we can draw from them. Finally, even with our rigorous studies to find the ROC-AUC Pareto-frontier, our reward model leverages LLM-as-judge, which may reflect the LLM’s bias. Overall, these limitations posit potential directions by which the research community can further pursue and ultimately help expand our understanding of these powerful, albeit hallucinatory models.
+A.2
+Ethics & Societal Impact.
+Our method alters inputs rather than model weights; it can reduce factually incorrect outputs but does not eliminate them. Failure modes include reward misspecification and domain shift. We report error analyses and release prompts to facilitate auditing and replication, as part of the appendix. Furthermore, we discuss the societal impact of hallucinations in the related works.
+A.3
+Reproducibility Statement.
+We aim to make our results fully reproducible. The main paper specifies the learning setup and algorithms (Algorithm
+1
+; §
+3
+–§
+4
+), including the five rewrite arms with exact system-prompt templates (Table
+9
+), the feature set used by the contextual policies (Table
+11
+, Table
+10
+), and the reward definition with its components and weights (§
+3
+, Table
+6(a)
+, Figure
+2
+). Evaluation datasets, splits, preprocessing, dataset-specific details, and licenses are detailed in §
+4
+and Table
+3
+; decoding/API configurations are documented here. For all experiments, we apply OpenAI’s
+gpt-4o-2024-08-06
+with API parameters: temperature=0.2, top-p=1.0, frequency/presence penalties=0. We report statistical uncertainty (95% CIs) and paired significance tests, and provide ablations/sensitivity analyses through the paper that support our claims.
+Appendix B
+Discussion on RL and Bandit Methods
+Remark 1
+Why bandits vs. full RL?
+Within LLMs, for each input query, the transformer attends over the fixed context window and computes a softmax over the vocabulary to maximize token likelihood
+(
+Radford et al., 2019
+)
+. Consequently, hallucinations occur at the moment of generation for that single query, making hallucination a
+per-query
+phenomenon
+(
+Huang et al., 2025a
+)
+.
+Indeed, recent PPO variants for LLMs, such as GRPO
+(
+Shao et al., 2024
+)
+and ReMax
+(
+Li et al., 2024c
+)
+, remove the critic via grouped Monte Carlo or baseline-adjusted returns, highlighting critic-free policies that our bandit formulations naturally generalize.
+Therefore, a full-episodic RL problem, which must solve a Markov decision process with long-horizon credit assignment and nonstationary transition dynamics
+(
+Sutton and Barto, 2018
+)
+, can be practically suboptimal. Moreover, many of these methods rely on estimating a fixed average reward or state-action value
+Q
+⁡
+(
+s
+,
+a
+)
+Q(s,a)
+, which can obscure per-query idiosyncrasies; if the optimal rewrite arm varies sharply with linguistic context, a mere empirical average will yield suboptimal policies.
+Remark 2
+Link between Algorithm Choices and RL Methods.
+Several algorithms we investigate in QueryBandits have analogues in RL: posterior sampling (PSRL)
+(
+Osband et al., 2013
+)
+as an analogue for Thompson sampling
+(
+Thompson, 1933
+)
+; follow-the-regularized leader (FTRL) and its variants
+(
+Shalev-Shwartz and others, 2012
+)
+, originating from proximal-gradient methods
+(
+Rockafellar, 1976
+)
+whose use in RL as proximal policy optimization (PPO)
+(
+Schulman et al., 2017
+)
+is well-established.
+Other PPO-style advances like DAPO
+(
+Yu et al., 2025
+)
+improve exploration‐exploitation via dynamic sampling and reward filtering, and VAPO
+(
+Yue et al., 2025
+)
+demonstrates stable Long-CoT training with an explicit value model–illustrating the spectrum from model-based to model-free approaches that contextual bandits sit within.
+Appendix C
+TruthfulQA Metrics and Evaluation Setup
+TruthfulQA
+(
+Lin et al., 2022
+)
+offers several evaluation modes:
+▶
+\blacktriangleright
+MC1 (single-true):
+Given a multiple-choice question with four or five options, select the single true option. The model’s choice is the option with the highest completion log probability; the score is accuracy over questions.
+▶
+\blacktriangleright
+MC2 (multi-true):
+Given a multiple-choice question with multiple reference answers labeled true or false, the score is the normalized total probability assigned to the set of true answers.
+▶
+\blacktriangleright
+Generation:
+Given a free-form question, generate a 1–2-sentence answer that maximizes truthfulness while maintaining informativeness. Metrics include GPT-judge and GPT-info (fine-tuned evaluators), BLEURT, ROUGE, and BLEU. A similarity-based score is computed as
+max
+true
+⁡
+sim
+−
+max
+false
+⁡
+sim
+.
+\max_{\text{true}}\mathrm{sim}\;-\;\max_{\text{false}}\mathrm{sim}.
+In the main paper we focus on
+MC1
+for comparability across methods, as this regime aligns naturally with notions of
+correctness
+and
+equivalence
+.
+Zhang et al. (2024a)
+evaluate the
+generation
+setting using two fine-tuned GPT-3 classifiers (GPT-judge and GPT-info) to label responses for truthfulness and informativeness (binary classification). These labels are not accuracy and therefore are not directly comparable to our generative evaluation.
+Appendix D
+Summary of Bandits
+▶
+\blacktriangleright
+Non‐Contextual Adversarial
+–
+EXP3
+(
+Auer et al., 2002b
+)
+Maintains weights
+w
+k
+w_{k}
+, samples
+a
+t
+∝
+w
+k
+a_{t}\propto w_{k}
+, updates
+w
+a
+t
+←
+w
+a
+t
+​
+exp
+⁡
+(
+γ
+​
+r
+t
+K
+​
+p
+a
+t
+)
+.
+\;w_{a_{t}}\leftarrow w_{a_{t}}\exp\bigl(\tfrac{\gamma\,r_{t}}{K\,p_{a_{t}}}\bigr).
+–
+FTPL
+(
+Kalai and Vempala, 2005
+;
+Suggala and Netrapalli, 2020
+)
+Adds Gumbel noise
+ξ
+k
+∼
+Gumbel
+⁡
+(
+0
+,
+1
+/
+η
+)
+\xi_{k}\!\sim\!\mathrm{Gumbel}(0,1/\eta)
+(
+Gumbel, 1941
+)
+to cumulative rewards,
+selects
+a
+t
+=
+arg
+⁡
+max
+⁡
+(
+cum
+​
+_
+​
+reward
+k
++
+ξ
+k
+)
+a_{t}=\arg\max(\mathrm{cum\_reward}_{k}+\xi_{k})
+, then increments the chosen arm’s reward.
+▶
+\blacktriangleright
+Contextual Stochastic
+–
+LinUCB
+(
+Lai and Robbins, 1985
+)
+Selects
+a
+t
+=
+arg
+⁡
+max
+𝑘
+​
+(
+x
+t
+⊤
+​
+θ
+^
+k
++
+α
+​
+x
+t
+⊤
+​
+A
+k
+−
+1
+​
+x
+t
+)
+\;a_{t}=\underset{k}{\arg\max}\bigl(x_{t}^{\top}\hat{\theta}_{k}+\alpha\sqrt{x_{t}^{\top}A_{k}^{-1}x_{t}}\bigr)
+,
+updates
+A
+k
+←
+A
+k
++
+x
+t
+​
+x
+t
+⊤
+,
+b
+k
+←
+b
+k
++
+r
+t
+​
+x
+t
+A_{k}\!\leftarrow\!A_{k}+x_{t}x_{t}^{\top},\;b_{k}\!\leftarrow\!b_{k}+r_{t}x_{t}
+.
+–
+KL‐UCB (LinUCB-KL)
+(
+Garivier and Cappé, 2013
+)
+Replaces the UCB term with a KL-divergence‐based confidence bound.
+–
+Thompson Sampling
+Maintains Gaussian posterior
+𝒩
+⁡
+(
+μ
+k
+,
+Σ
+k
+)
+\mathcal{N}(\mu_{k},\Sigma_{k})
+; samples
+θ
+~
+k
+\tilde{\theta}_{k}
+, picks
+a
+t
+=
+arg
+⁡
+max
+⁡
+x
+t
+⊤
+​
+θ
+~
+k
+a_{t}=\arg\max x_{t}^{\top}\tilde{\theta}_{k}
+, updates the posterior.
+▶
+\blacktriangleright
+Contextual Adversarial
+–
+FTRL
+(
+McMahan, 2015
+)
+Selects arm maximizing
+x
+t
+⊤
+​
+w
+k
+−
+λ
+​
+‖
+w
+k
+‖
+1
+x_{t}^{\top}w_{k}-\lambda\|w_{k}\|_{1}
+, with an
+ℓ
+1
+\ell_{1}
+regularizer.
+–
+ϵ
+\epsilon
+-greedy FTRL
+…
+–
+LinearEXP3
+(
+Neu and Olkhovskaya, 2020
+)
+Contextual extension of EXP3, sampling arms based on exponentiated linear scores.
+–
+LinearFTPL
+(
+Hannan, 1957
+)
+Contextual adaptation of FTPL, applying Gumbel perturbations to linear reward estimates.
+Algorithm 1
+General Bandit + Rewrite Loop
+1:
+arms
+𝒜
+\mathcal{A}
+, context
+x
+t
+x_{t}
+, algorithm
+algo
+∈
+{
+EXP3, FTPL, LinUCB, KL, FTRL, Thompson
+}
+\mathrm{algo}\in\{\text{EXP3, FTPL, LinUCB, KL, FTRL, Thompson}\}
+, hyperparameters
+2:
+for
+t
+=
+1
+t=1
+to
+T
+T
+do
+3:
+observe
+x
+t
+x_{t}
+4:
+for
+each arm
+k
+∈
+𝒜
+k\in\mathcal{A}
+do
+5:
+s
+k
+←
+Score
+⁡
+(
+algo
+,
+k
+,
+x
+t
+)
+s_{k}\leftarrow\mathrm{Score}(\mathrm{algo},k,x_{t})
+6:
+end
+for
+7:
+select
+a
+t
+=
+arg
+⁡
+max
+k
+∈
+𝒜
+⁡
+s
+k
+a_{t}=\arg\max_{k\in\mathcal{A}}s_{k}
+8:
+apply rewrite
+a
+t
+a_{t}
+to query and observe reward
+r
+t
+r_{t}
+9:
+Update
+⁡
+(
+algo
+,
+a
+t
+,
+x
+t
+,
+r
+t
+)
+\mathrm{Update}(\mathrm{algo},a_{t},x_{t},r_{t})
+10:
+end
+for
+Table 3:
+Datasets.
+Overview of datasets, including domain, license, number of examples, associated scenarios, etc. These datasets span a diverse range of question types, domains, and reasoning skills, supporting robust evaluation. E = Extractive, M = Multiple Choice, A = Abstractive.
+Dataset
+Scenario
+Domain
+License
+Count
+Citation
+SQuADv2
+E, A
+Wikipedia
+CC BY-SA 4.0
+86K
+Rajpurkar et al. (2016)
+;
+Rajpurkar et al. (2018)
+TruthfulQA
+M, A
+General Knowledge
+Apache-2.0
+807
+Lin et al. (2022)
+SciQ
+M, A
+Science
+CC BY-NC 3.0
+13K
+Johannes Welbl (2017)
+MMLU
+M
+Various
+MIT
+15K
+Hendrycks et al. (2021)
+PIQA
+M
+Physical Commonsense
+AFL-3.0
+17K
+Bisk et al. (2020)
+BoolQ
+M
+Yes/No Questions
+CC BY-SA 3.0
+13K
+Clark et al. (2019)
+;
+Wang et al. (2019)
+OpenBookQA
+M
+Science Reasoning
+Apache-2.0
+6K
+Mihaylov et al. (2018)
+MathQA
+M
+Mathematics
+Apache-2.0
+8K
+Amini et al. (2019)
+ARC-Easy
+M
+Science
+CC BY-SA 4.0
+5K
+Clark et al. (2018)
+ARC-Challenge
+M
+Science
+CC BY-SA 4.0
+2.6K
+Clark et al. (2018)
+WikiQA
+A
+Wikipedia QA
+Other
+1.5K
+Yang et al. (2015)
+HotpotQA
+A
+Multi-hop Reasoning
+CC BY-SA 4.0
+72K
+Yang et al. (2018)
+TriviaQA
+A
+Trivia
+Apache-2.0
+88K
+Joshi et al. (2017)
+Table 4:
+Instantaneous Regret.
+Each cell reports mean per-step regret;
+bold
+marks the
+minimum
+per scenario. “Wins” counts per-family minima with ties split (0.5 each). “Macro-avg” is the unweighted average over scenarios. Static prompts sometimes win on regret by avoiding exploration, whereas contextual methods typically incur slightly higher immediate regret while delivering higher final accuracy (see Table
+1
+), reflecting the exploration–exploitation tradeoff. NoRw = No-Rewrite
+Base
+Static Prompts
+Non-Contextual
+Contextual Linear
+Dataset
+NoRw
+Para
+Simpl
+Disamb
+Clarify
+Expand
+EXP3
+FTPL
+ϵ
+\epsilon
+-FTRL
+TS
+LinUCB
+LinUCB+KL
+LinEXP3
+LinFTPL
+TS
+ARC-Challenge
+0.095
+0.098
+0.097
+0.124
+0.111
+0.180
+0.123
+0.125
+0.106
+0.109
+0.118
+0.121
+0.107
+0.102
+0.121
+ARC-Easy
+0.103
+0.104
+0.102
+0.115
+0.118
+0.163
+0.111
+0.172
+0.124
+0.096
+0.115
+0.121
+0.098
+0.107
+0.115
+BoolQA
+0.219
+0.202
+0.192
+0.199
+0.197
+0.212
+0.202
+0.185
+0.198
+0.208
+0.211
+0.197
+0.191
+0.186
+0.186
+HotpotQA
+0.198
+0.203
+0.199
+0.191
+0.206
+0.201
+0.197
+0.199
+0.188
+0.197
+0.191
+0.197
+0.192
+0.196
+0.194
+MathQA
+0.096
+0.103
+0.118
+0.111
+0.106
+0.104
+0.115
+0.108
+0.107
+0.109
+0.106
+0.111
+0.110
+0.110
+0.108
+MMLU
+0.134
+0.130
+0.153
+0.142
+0.150
+0.168
+0.139
+0.143
+0.146
+0.143
+0.139
+0.145
+0.144
+0.168
+0.139
+OpenBookQA
+0.160
+0.159
+0.157
+0.218
+0.228
+0.341
+0.223
+0.169
+0.177
+0.159
+0.200
+0.198
+0.243
+0.221
+0.188
+PIQA
+0.172
+0.174
+0.161
+0.252
+0.236
+0.340
+0.213
+0.259
+0.192
+0.174
+0.197
+0.193
+0.173
+0.152
+0.186
+SciQ (Abstract)
+0.147
+0.135
+0.158
+0.153
+0.155
+0.179
+0.150
+0.176
+0.149
+0.137
+0.156
+0.155
+0.174
+0.176
+0.150
+SciQ (MC)
+0.140
+0.137
+0.143
+0.148
+0.166
+0.211
+0.159
+0.155
+0.155
+0.137
+0.155
+0.154
+0.165
+0.140
+0.141
+SQuAD (Abstract)
+0.183
+0.155
+0.174
+0.175
+0.184
+0.208
+0.185
+0.180
+0.191
+0.198
+0.180
+0.186
+0.183
+0.176
+0.176
+SQuAD (Extract)
+0.139
+0.129
+0.128
+0.165
+0.169
+0.244
+0.166
+0.130
+0.148
+0.168
+0.165
+0.154
+0.147
+0.133
+0.141
+TriviaQA
+0.131
+0.145
+0.151
+0.162
+0.167
+0.160
+0.153
+0.150
+0.154
+0.148
+0.155
+0.153
+0.148
+0.157
+0.155
+TruthfulQA
+0.151
+0.159
+0.141
+0.166
+0.180
+0.206
+0.173
+0.167
+0.138
+0.155
+0.161
+0.150
+0.171
+0.180
+0.155
+TruthfulQA (MC)
+0.099
+0.115
+0.073
+0.153
+0.165
+0.227
+0.146
+0.202
+0.139
+0.084
+0.114
+0.142
+0.123
+0.159
+0.151
+WikiQA
+0.137
+0.140
+0.139
+0.163
+0.150
+0.165
+0.150
+0.135
+0.153
+0.126
+0.162
+0.156
+0.141
+0.159
+0.141
+Macro-avg
+0.144
+0.140
+0.148
+0.160
+0.163
+0.216
+0.166
+0.159
+0.157
+0.155
+0.160
+0.159
+0.160
+0.156
+0.160
+Wins
+3.0
+3.5
+3.0
+–
+–
+–
+–
+1.0
+2.0
+2.5
+–
+–
+–
+1.0
+–
+D.1
+LinUCB
+The estimated parameter is:
+θ
+^
+a
+=
+A
+a
+−
+1
+​
+𝐛
+a
+.
+\hat{\theta}_{a}=A_{a}^{-1}\mathbf{b}_{a}.
+(2)
+Given a query feature vector
+𝐱
+\mathbf{x}
+, the upper confidence bound (UCB) for arm
+a
+a
+is:
+UCB
+a
+​
+(
+𝐱
+)
+=
+𝐱
+⊤
+​
+θ
+^
+a
++
+α
+​
+𝐱
+⊤
+​
+A
+a
+−
+1
+​
+𝐱
+,
+\text{UCB}_{a}(\mathbf{x})=\mathbf{x}^{\top}\hat{\theta}_{a}+\alpha\sqrt{\mathbf{x}^{\top}A_{a}^{-1}\mathbf{x}},
+(3)
+where
+α
+\alpha
+controls the exploration–exploitation trade-off. The arm selected is:
+a
+∗
+=
+arg
+​
+max
+a
+∈
+𝒜
+⁡
+UCB
+a
+​
+(
+𝐱
+)
+.
+a^{*}=\argmax_{a\in\mathcal{A}}\text{UCB}_{a}(\mathbf{x}).
+(4)
+Upon observing reward
+r
+r
+, update:
+A
+a
+←
+A
+a
++
+𝐱𝐱
+⊤
+,
+𝐛
+a
+←
+𝐛
+a
++
+r
+​
+𝐱
+.
+A_{a}\leftarrow A_{a}+\mathbf{x}\mathbf{x}^{\top},\quad\mathbf{b}_{a}\leftarrow\mathbf{b}_{a}+r\,\mathbf{x}.
+(5)
+D.2
+LinUCB+KL Bandit Strategy
+The algorithm is initialized with parameters: number of arms
+n
+arms
+n_{\text{arms}}
+, dimension
+d
+d
+, regularization parameter
+λ
+\lambda
+, exploration parameter
+α
+\alpha
+, noise variance
+σ
+noise
+\sigma_{\text{noise}}
+, and KL-bound constant
+c
+c
+. Each arm
+a
+a
+maintains a matrix
+𝐀
+a
+\mathbf{A}_{a}
+and a vector
+𝐛
+a
+\mathbf{b}_{a}
+, initialized as
+λ
+​
+𝐈
+d
+\lambda\mathbf{I}_{d}
+and
+𝟎
+d
+\mathbf{0}_{d}
+, respectively.
+The
+select_arm
+method computes the score for each arm
+a
+a
+using the following formulation:
+θ
+a
+\displaystyle\theta_{a}
+=
+𝐀
+a
+−
+1
+​
+𝐛
+a
+\displaystyle=\mathbf{A}_{a}^{-1}\mathbf{b}_{a}
+μ
+a
+\displaystyle\mu_{a}
+=
+𝐱
+⊤
+​
+θ
+a
+\displaystyle=\mathbf{x}^{\top}\theta_{a}
+var
+a
+\displaystyle\text{var}_{a}
+=
+𝐱
+⊤
+​
+𝐀
+a
+−
+1
+​
+𝐱
+\displaystyle=\mathbf{x}^{\top}\mathbf{A}_{a}^{-1}\mathbf{x}
+n
+a
+\displaystyle n_{a}
+=
+max
+⁡
+(
+1
+,
+counts
+​
+[
+a
+]
+)
+\displaystyle=\max(1,\text{counts}[a])
+raw_bound
+a
+\displaystyle\text{raw\_bound}_{a}
+=
+log
+⁡
+(
+t
+)
++
+c
+​
+log
+⁡
+(
+log
+⁡
+(
+t
++
+1
+)
+)
+n
+a
+\displaystyle=\frac{\log(t)+c\log(\log(t+1))}{n_{a}}
+bound
+a
+\displaystyle\text{bound}_{a}
+=
+max
+⁡
+(
+raw_bound
+a
+,
+0.0
+)
+\displaystyle=\max(\text{raw\_bound}_{a},0.0)
+bonus
+a
+\displaystyle\text{bonus}_{a}
+=
+2
+⋅
+var
+a
+⋅
+bound
+a
+\displaystyle=\sqrt{2\cdot\text{var}_{a}\cdot\text{bound}_{a}}
+score
+a
+\displaystyle\text{score}_{a}
+=
+μ
+a
++
+bonus
+a
+\displaystyle=\mu_{a}+\text{bonus}_{a}
+where
+𝐱
+\mathbf{x}
+is the context vector,
+t
+t
+is the time step, and
+counts
+​
+[
+a
+]
+\text{counts}[a]
+is the number of times arm
+a
+a
+has been selected. The arm with the highest score is selected for exploration.
+The
+update
+method updates the matrix
+𝐀
+a
+\mathbf{A}_{a}
+and vector
+𝐛
+a
+\mathbf{b}_{a}
+for the selected arm
+a
+a
+based on the received reward
+r
+t
+r_{t}
+:
+𝐀
+a
+\displaystyle\mathbf{A}_{a}
+←
+𝐀
+a
++
+𝐱𝐱
+⊤
+\displaystyle\leftarrow\mathbf{A}_{a}+\mathbf{x}\mathbf{x}^{\top}
+𝐛
+a
+\displaystyle\mathbf{b}_{a}
+←
+𝐛
+a
++
+r
+t
+​
+𝐱
+\displaystyle\leftarrow\mathbf{b}_{a}+r_{t}\mathbf{x}
+counts
+​
+[
+a
+]
+\displaystyle\text{counts}[a]
+←
+counts
+​
+[
+a
+]
++
+1
+\displaystyle\leftarrow\text{counts}[a]+1
+This strategy leverages the KL-bound to dynamically adjust exploration bonuses, enhancing the LinUCB algorithm’s ability to balance exploration and exploitation in a contextual setting.
+# Groups
+Mean ROC–AUC
+95% CI
+5
+0.9524
+[0.9165, 0.9884]
+10
+0.9720
+[0.9549, 0.9891]
+15
+0.9709
+[0.9581, 0.9836]
+25
+0.9747
+[0.9674, 0.9821]
+50
+0.9695
+[0.9633, 0.9756]
+75
+0.9745
+[0.9688, 0.9801]
+100
+0.9709
+[0.9626, 0.9792]
+150
+0.9767
+[0.9716, 0.9819]
+200
+0.9710
+[0.9653, 0.9767]
+300
+0.9734
+[0.9709, 0.9758]
+400
+0.9741
+[0.9713, 0.9769]
+500
+0.9736
+[0.9703, 0.9769]
+600
+0.9732
+[0.9701, 0.9763]
+700
+0.9721
+[0.9695, 0.9748]
+800
+0.9719
+[0.9699, 0.9738]
+900
+0.9725
+[0.9716, 0.9734]
+1000
+0.9737
+[0.9721, 0.9753]
+Macro-avg
+0.9729
+–
+(a)
+Validity of the exploration-adjusted reward
+r
+adj
+r_{\text{adj}}
+as a correctness proxy. Mean ROC–AUC and 95% Confidence Intervals (
+±
+1.96
+​
+SE
+\pm 1.96\,\text{SE}
+); 10 resamples per
+n
+n
+. By
+∼
+\sim
+150 groups, the CI lower bound exceeds 0.97.
+(b)
+Mean ROC-AUC vs. sample size
+n
+n
+, with 95% CIs.
+(c)
+Distribution of
+r
+t
+r_{t}
+for correct vs. wrong (normalized density). Our reward presents a clear separation between our human validated labels. Per dataset reward distributions are located in Figure
+14
+.
+Figure 6:
+Summary of reward validity.
+Left:
+(a) numerical ROC–AUC and CIs across sample sizes.
+Right:
+(b) power curve; (c) class-conditional reward histogram of
+r
+t
+r_{t}
+vs. human labels.
+Table 5:
+TruthfulQA MC1 comparison.
+Δ
+\Delta
+reports absolute percentage–point change vs our No–Rewrite baseline (80.7%).
+QueryBandits
+achieves the best score (LinUCB 88.8%, +8.1 pp) and strong Non–Contextual TS (88.7%, +8.0 pp); Contextual TS also improves (+4.5 pp). Closed GPT baselines cluster near
+∼
+\sim
+81%, while open–model interventions reported on Llama–2–7B remain far below the GPT–4o baseline (e.g., TruthX 54.22%,
+−
+26.5
+-26.5
+pp). Results across families highlight that context–aware linear bandits (LinUCB) are most effective on MC1, with TS (Non–Contextual) close but lacking per–query adaptation.
+Method
+Backbone
+MC1 (%)
+Δ
+\Delta
+(pp)
+Source
+Notes
+QueryBandits (ours)
+Best (Dataset): LinUCB
+GPT–4o
+88.8
++8.1
+Closed
+–
+Best (Overall): Contextual TS
+GPT–4o
+85.2
++4.5
+Closed
+–
+Best (Non–Contextual): TS
+GPT–4o
+88.7
++8.0
+Closed
+–
+Best Static: Simplify
+GPT–4o
+83.4
++2.7
+Closed
+No learning
+Worst Static: Expand
+GPT–4o
+67.9
++
+-12.8
+Closed
+No–Rewrite (Baseline)
+GPT–4o
+80.7
++
+0.0
+Closed
+Baseline for
+Δ
+\Delta
+Closed models (reference points)
+GPT–4o
+GPT–4o
+81.4
++0.7
+Closed
+OpenAI et al. (2024)
+GPT–4
+GPT–4
+81.3
++0.6
+Closed
+GPT–4o mini
+GPT–4o mini
+66.5
++
+-14.2
+Closed
+GPT–3.5 Turbo
+GPT–3.5 Turbo
+53.6
++
+-27.1
+Closed
+Open models: base / finetuned
+Llama–2–7B–Chat (base)
+Llama–2–7B–Chat
+34.64
++
+-46.1
+Open
+Lin et al. (2022)
+Supervised Finetuning
+Llama–2–7B–Chat
+24.20
++
+-56.5
+Open
+Zhang et al. (2024a)
+Contrastive decoding (open models)
+Contrastive Decoding (CD)
+Llama–2–7B–Chat
+24.40
++
+-56.3
+Open
+Li et al. (2023)
+Decoding by Contrasting
+Layers (DoLa)
+Llama–2–7B–Chat
+32.20
++
+-48.5
+Open
+Chuang et al. (2024)
+Self-Highlighted Hesitation (SH2)
+Llama–2–7B–Chat
+33.90
++
+-46.8
+Open
+Kai et al. (2024)
+Induce-then-Contrast Decoding (ICD)
+Llama–2–7B–Chat
+46.32
++
+-34.4
+Open
+Zhang et al. (2024b)
+Representation editing (open models)
+Contrast-Consistent Search (CCS)
+Llama–2–7B–Chat
+26.20
++
+-54.5
+Open
+Burns et al. (2023)
+Inference Time Intervention (ITI)
+Llama–2–7B–Chat
+34.64
++
+-46.1
+Open
+Li et al. (2024a)
+Truth Forest (TrFr)
+Llama–2–7B–Chat
+36.70
++
+-44.0
+Open
+Chen et al. (2024b)
+TruthX
+Llama–2–7B–Chat
+54.22
++
+-26.5
+Open
+Zhang et al. (2024a)
+Legacy references (TruthfulQA paper, MC)
+GPT–3 175B
+GPT–3 175B
+21.0
++
+-59.7
+Closed
+Lin et al. (2022)
+GPT–J 6B
+GPT–J 6B
+20.0
++
+-60.7
+Open
+GPT–2 1.5B
+GPT–2 1.5B
+22.0
++
+-58.7
+Open
+UnifiedQA 3B
+UnifiedQA 3B
+19.0
++
+-61.7
+Open
+(d)
+Arm Diversity for Contextual Bandits, as a Fraction of Trials.
+(e)
+Arm Diversity for Non-Contextual Bandits, as a Fraction of Trials.
+Figure 7:
+For Non-Contextual bandits,
+almost every
+dataset is dominated by a single arm with the highest global reward (typically 40%-60% of the trials). The remaining 40-60% is split among the other four arms as noise, the non-contextual policy has no way to ”know” when within a dataset a different arm might do better. In contrast, Contextual bandits show a more even mix: the top arm is only
+∼
+\sim
+25-30%, with two or three other arms contributing sizable shares (15-25% each). The contextual policy
+reads the features
+and diversifies its choices within each dataset.
+(a)
+Soft Rank Heatmap for all Bandits, including arm
+No Rewrite
+.
+(b)
+Arm Diversity when including
+No Rewrite
+.
+Figure 8:
+Impact of the No‐Rewrite Arm.
+Note that these experiments are conducted on the original query ”as-is” in the benchmark dataset, with no perturbations. Upon enabling the
+No Rewrite
+option, our contextual bandit rapidly converges to this arm, which then achieves the highest reward on several datasets. We attribute this behavior to the LLM’s tendency to memorize benchmark questions.
+(a)
+Contextual Model Feature Variance.
+(b)
+Non-Contextual Model Feature Variance.
+Figure 9:
+Comparison of Feature Variance between (
+9
+) our contextual bandits and (
+9
+) its non-contextual counterparts.
+Polysemy
+,
+Constraints
+and
+Entities
+show the most variation.
+Presupposition
+,
+Excessive Details
+, and
+Grounding
+have the least.
+(a)
+Contextual Model KL Distance.
+(b)
+Non-Contextual Model KL Distance.
+Figure 10:
+Comparison of Inter-Arm Context Distances (Symmetric KL) between (
+10
+) our contextual bandits and (
+10
+) its non-contextual counterparts. Arm pairs such as
+Expand
+and
+Paraphrase
+in the non-contextual bandit setting exhibit high KL distances at 1.01. One interpretation is that the context-clouds barely overlap from dataset to dataset (Figure
+7
+).
+(a)
+Contextual Model Raw Feature Strength.
+(b)
+Non-Contextual Model Raw Feature Strength.
+Figure 11:
+Comparison of Raw feature‐level regression coefficients between (
+12
+) our contextual bandits and (
+12
+) its non-contextual counterparts. Each cell shows how enables a raw view into how specific linguistic feature changes the expected reward under each rewrite strategy.
+Table 6:
+Inter-model agreement on the LLM-as-judge labels over 1,000 validation queries.
+Values reported are fraction of exact label agreement, Cohen’s
+κ
+\kappa
+, and Matthews correlation coefficient (MCC).
+Model A
+Model B
+% Agree
+Cohen’s
+κ
+\kappa
+MCC
+gpt-5-2025-08-07
+gpt-5-mini-2025-08-07
+0.960
+0.916
+0.916
+gpt-4.1-2025-04-14
+gpt-4o-2024-11-20
+0.925
+0.826
+0.826
+gpt-4o-2024-11-20
+gpt-5-2025-08-07
+0.909
+0.802
+0.810
+gpt-4.1-2025-04-14
+gpt-5-2025-08-07
+0.906
+0.794
+0.807
+gpt-4o-2024-11-20
+gpt-5-mini-2025-08-07
+0.903
+0.790
+0.801
+gpt-4.1-2025-04-14
+gpt-5-mini-2025-08-07
+0.900
+0.782
+0.798
+gpt-5-mini-2025-08-07
+gpt-5-nano-2025-08-07
+0.886
+0.770
+0.783
+gpt-5-2025-08-07
+gpt-5-nano-2025-08-07
+0.882
+0.762
+0.778
+gpt-4o-2024-11-20
+gpt-5-nano-2025-08-07
+0.823
+0.642
+0.680
+gpt-4.1-2025-04-14
+gpt-5-nano-2025-08-07
+0.814
+0.623
+0.669
+D.3
+FTRL
+The algorithm is initialized with the following parameters: number of arms
+n
+arms
+n_{\text{arms}}
+, dimension
+d
+d
+, learning rate
+α
+\alpha
+, exploration parameter
+β
+\beta
+, and regularization parameters
+l
+1
+l_{1}
+and
+l
+2
+l_{2}
+. The cumulative gradient vectors for each arm are stored in
+𝐳
+a
+\mathbf{z}_{a}
+, initialized as zero vectors of dimension
+d
+d
+.
+The weight vector
+𝐰
+a
+\mathbf{w}_{a}
+for each arm
+a
+a
+is computed as:
+w
+i
+=
+{
+−
+z
+i
+−
+sign
+​
+(
+z
+i
+)
+⋅
+l
+1
+β
++
+n
+i
+α
++
+l
+2
+if
+​
+|
+z
+i
+|
+>
+l
+1
+0
+otherwise
+w_{i}=\begin{cases}-\frac{z_{i}-\text{sign}(z_{i})\cdot l_{1}}{\frac{\beta+\sqrt{n_{i}}}{\alpha}+l_{2}}&\text{if }|z_{i}|>l_{1}\\
+0&\text{otherwise}\end{cases}
+where
+z
+i
+z_{i}
+is the cumulative gradient for the
+i
+i
+-th feature of arm
+a
+a
+, and
+n
+i
+n_{i}
+is the cumulative squared gradient for the
+i
+i
+-th feature. The arm with the highest score, calculated as the dot product of the weight vector
+w
+w
+and the context vector, is selected:
+a
+t
+=
+arg
+⁡
+max
+a
+∈
+{
+1
+,
+…
+,
+n
+arms
+}
+⁡
+(
+∑
+i
+=
+1
+d
+w
+i
+⋅
+𝐱
+i
+)
+a_{t}=\arg\max_{a\in\{1,\ldots,n_{\text{arms}}\}}\left(\sum_{i=1}^{d}w_{i}\cdot\mathbf{x}_{i}\right)
+Upon receiving a reward
+r
+t
+r_{t}
+for the selected arm
+a
+t
+a_{t}
+, the algorithm updates the cumulative gradient vector
+𝐳
+\mathbf{z}
+and the squared gradient sum
+𝐧
+\mathbf{n}
+for the selected arm:
+ε
+e
+​
+r
+​
+r
+​
+o
+​
+r
+\displaystyle\varepsilon_{error}
+=
+⟨
+w
+,
+𝐱
+⟩
+−
+r
+t
+\displaystyle=\langle w,\mathbf{x}\rangle-r_{t}
+g
+\displaystyle g
+=
+ε
+e
+​
+r
+​
+r
+​
+o
+​
+r
+⋅
+𝐱
+\displaystyle=\varepsilon_{error}\cdot\mathbf{x}
+σ
+\displaystyle\sigma
+=
+n
+i
++
+g
+i
+2
+−
+n
+i
+α
+\displaystyle=\frac{\sqrt{n_{i}+g_{i}^{2}}-\sqrt{n_{i}}}{\alpha}
+z
+i
+\displaystyle z_{i}
+←
+z
+i
++
+g
+i
+−
+σ
+⋅
+w
+i
+\displaystyle\leftarrow z_{i}+g_{i}-\sigma\cdot w_{i}
+n
+i
+\displaystyle n_{i}
+←
+n
+i
++
+g
+i
+2
+\displaystyle\leftarrow n_{i}+g_{i}^{2}
+This formulation allows the FTRL algorithm to adaptively adjust the exploration-exploitation trade-off by incorporating both the cumulative reward and the uncertainty in the form of regularization terms, which are scaled by the learning rate
+α
+\alpha
+and exploration parameter
+β
+\beta
+.
+D.4
+ε
+\varepsilon
+-Greedy Follow-The-Regularized-Leader (FTRL) Bandit Policy
+At each round
+t
+=
+1
+,
+2
+,
+…
+,
+T
+t=1,2,\dots,T
+, we observe a contextual feature vector
+x
+t
+∈
+ℝ
+d
+x_{t}\in\mathbb{R}^{d}
+and must choose an arm
+a
+t
+∈
+{
+1
+,
+…
+,
+K
+}
+a_{t}\in\{1,\dots,K\}
+. For each arm
+k
+k
+, the algorithm maintains a weight vector
+w
+k
+,
+t
+∈
+ℝ
+d
+w_{k,t}\in\mathbb{R}^{d}
+summarizing past feedback for that arm. We write
+ℋ
+k
+,
+t
+−
+1
+=
+{
+(
+x
+s
+,
+r
+s
+)
+:
+s
+<
+t
+,
+a
+s
+=
+k
+}
+\mathcal{H}_{k,t-1}=\{(x_{s},r_{s}):s<t,a_{s}=k\}
+for the history of rounds in which arm
+k
+k
+was selected, where
+r
+s
+∈
+[
+0
+,
+1
+]
+r_{s}\in[0,1]
+is the observed reward.
+Given
+x
+t
+x_{t}
+and the current weights
+{
+w
+k
+,
+t
+}
+k
+=
+1
+K
+\{w_{k,t}\}_{k=1}^{K}
+, FTRL defines a score for each arm via a linear model
+r
+^
+k
+,
+t
+=
+x
+t
+⊤
+​
+w
+k
+,
+t
+.
+\hat{r}_{k,t}=x_{t}^{\top}w_{k,t}.
+We then apply an
+ε
+\varepsilon
+-greedy rule with exploration parameter
+ε
+t
+∈
+[
+0
+,
+1
+]
+\varepsilon_{t}\in[0,1]
+:
+▶
+\blacktriangleright
+With probability
+1
+−
+ε
+t
+1-\varepsilon_{t}
+, choose the greedy arm
+a
+t
+=
+arg
+⁡
+max
+k
+∈
+{
+1
+,
+…
+,
+K
+}
+⁡
+r
+^
+k
+,
+t
+.
+a_{t}=\arg\max_{k\in\{1,\dots,K\}}\hat{r}_{k,t}.
+▶
+\blacktriangleright
+With probability
+ε
+t
+\varepsilon_{t}
+, choose a uniformly random arm from
+{
+1
+,
+…
+,
+K
+}
+\{1,\dots,K\}
+.
+In our experiments we use a fixed
+ε
+\varepsilon
+(
+ε
+=
+0.10
+\varepsilon=0.10
+), but standard decaying schedules such as
+ε
+t
+=
+min
+⁡
+{
+1
+,
+c
+/
+t
+}
+\varepsilon_{t}=\min\{1,c/\sqrt{t}\}
+are also compatible with the framework.
+After selecting
+a
+t
+a_{t}
+and observing reward
+r
+t
+∈
+[
+0
+,
+1
+]
+r_{t}\in[0,1]
+, we update only the parameters associated with the chosen arm. Let
+g
+t
+=
+−
+r
+t
+​
+x
+t
+g_{t}=-\,r_{t}\,x_{t}
+denote the (linear) loss gradient for arm
+a
+t
+a_{t}
+. FTRL defines the next iterate
+w
+a
+t
+,
+t
++
+1
+w_{a_{t},t+1}
+as the solution of a regularized cumulative optimization problem:
+w
+a
+t
+,
+t
++
+1
+=
+arg
+min
+w
+∈
+ℝ
+d
+{
+∑
+s
+≤
+t
+:
+a
+s
+=
+a
+t
+g
+s
+⊤
+w
++
+λ
+Ω
+(
+w
+)
+}
+,
+w_{a_{t},t+1}~=~\arg\min_{w\in\mathbb{R}^{d}}\left\{\sum_{s\leq t:a_{s}=a_{t}}g_{s}^{\top}w~+~\lambda\,\Omega(w)\right\},
+(6)
+where
+Ω
+\Omega
+is a convex regularizer and
+λ
+>
+0
+\lambda>0
+is a regularization coefficient. In our implementation we use an
+ℓ
+2
+\ell_{2}
+-regularizer,
+Ω
+⁡
+(
+w
+)
+=
+1
+2
+​
+‖
+w
+‖
+2
+2
+\Omega(w)=\tfrac{1}{2}\|w\|_{2}^{2}
+, which yields a closed-form solution equivalent to online ridge regression over past rewards for that arm:
+w
+a
+t
+,
+t
++
+1
+=
+(
+λ
+I
++
+∑
+s
+≤
+t
+:
+a
+s
+=
+a
+t
+x
+s
+x
+s
+⊤
+)
+−
+1
+(
+∑
+s
+≤
+t
+:
+a
+s
+=
+a
+t
+r
+s
+x
+s
+)
+.
+w_{a_{t},t+1}=\left(\lambda I+\sum_{s\leq t:a_{s}=a_{t}}x_{s}x_{s}^{\top}\right)^{-1}\left(\sum_{s\leq t:a_{s}=a_{t}}r_{s}x_{s}\right).
+Weights for all other arms
+k
+≠
+a
+t
+k\neq a_{t}
+remain unchanged, i.e.,
+w
+k
+,
+t
++
+1
+=
+w
+k
+,
+t
+w_{k,t+1}=w_{k,t}
+.
+This
+ε
+\varepsilon
+-greedy FTRL variant thus behaves like a linear contextual bandit with a ridge-regularized FTRL learner for each arm, combined with a simple
+ε
+\varepsilon
+-greedy exploration mechanism. In practice, we do not recompute the closed-form solution from scratch; instead, we maintain sufficient statistics for each arm and update them incrementally.
+D.5
+Linear EXP3
+The algorithm is initialized with parameters: number of arms
+n
+arms
+n_{\text{arms}}
+, dimension
+d
+d
+, exploration parameter
+γ
+\gamma
+, and learning rate
+η
+\eta
+. Each arm
+a
+a
+maintains a parameter vector
+θ
+a
+\theta_{a}
+, initialized as
+𝟎
+d
+\mathbf{0}_{d}
+.
+We compute the probability distribution over arms using the following formulation:
+logits
+a
+\displaystyle\text{logits}_{a}
+=
+θ
+a
+⊤
+​
+𝐱
+\displaystyle=\theta_{a}^{\top}\mathbf{x}
+logits
+=
+logits
+−
+max
+⁡
+(
+logits
+)
+\displaystyle=\text{logits}-\max(\text{logits})
+exp_logits
+a
+\displaystyle\text{exp\_logits}_{a}
+=
+exp
+⁡
+(
+logits
+a
+)
+\displaystyle=\exp(\text{logits}_{a})
+base_probs
+a
+\displaystyle\text{base\_probs}_{a}
+=
+exp_logits
+a
+∑
+a
+=
+1
+n
+arms
+exp_logits
+a
+\displaystyle=\frac{\text{exp\_logits}_{a}}{\sum_{a=1}^{n_{\text{arms}}}\text{exp\_logits}_{a}}
+probs
+a
+\displaystyle\text{probs}_{a}
+=
+(
+1
+−
+γ
+)
+⋅
+base_probs
+a
++
+γ
+n
+arms
+\displaystyle=(1-\gamma)\cdot\text{base\_probs}_{a}+\frac{\gamma}{n_{\text{arms}}}
+where
+𝐱
+\mathbf{x}
+is the context vector. The arm is selected based on the probability distribution
+probs
+.
+The
+update
+method updates the parameter vector
+θ
+a
+\theta_{a}
+for the selected arm
+a
+a
+using the estimated reward
+r
+^
+t
+\hat{r}_{t}
+:
+r
+^
+t
+\displaystyle\hat{r}_{t}
+=
+r
+t
+p
+a
+\displaystyle=\frac{r_{t}}{p_{a}}
+θ
+a
+\displaystyle\theta_{a}
+←
+θ
+a
++
+η
+⋅
+r
+^
+t
+⋅
+𝐱
+\displaystyle\leftarrow\theta_{a}+\eta\cdot\hat{r}_{t}\cdot\mathbf{x}
+where
+p
+a
+p_{a}
+is the probability of selecting arm
+a
+a
+, and
+r
+t
+r_{t}
+is the received reward. This strategy leverages exponential weighting and exploration bonuses to balance exploration and exploitation in a linear contextual setting.
+D.6
+Linear FTPL
+The algorithm is initialized with parameters: number of arms
+n
+arms
+n_{\text{arms}}
+, dimension
+d
+d
+, and learning rate
+η
+\eta
+. Each arm
+a
+a
+maintains a parameter vector
+θ
+a
+\theta_{a}
+, initialized as
+𝟎
+d
+\mathbf{0}_{d}
+.
+The
+select_arm
+method computes the perturbed scores for each arm using the following formulation:
+linear_score
+a
+\displaystyle\text{linear\_score}_{a}
+=
+θ
+a
+⊤
+​
+𝐱
+\displaystyle=\theta_{a}^{\top}\mathbf{x}
+noise
+a
+\displaystyle\text{noise}_{a}
+∼
+Gumbel
+​
+(
+0
+,
+1
+η
+)
+\displaystyle\sim\text{Gumbel}(0,\frac{1}{\eta})
+score
+a
+\displaystyle\text{score}_{a}
+=
+linear_score
+a
++
+noise
+a
+\displaystyle=\text{linear\_score}_{a}+\text{noise}_{a}
+where
+𝐱
+\mathbf{x}
+is the context vector. The arm with the highest perturbed score is selected:
+a
+t
+=
+arg
+⁡
+max
+a
+∈
+{
+1
+,
+…
+,
+n
+arms
+}
+⁡
+score
+a
+a_{t}=\arg\max_{a\in\{1,\ldots,n_{\text{arms}}\}}\text{score}_{a}
+θ
+a
+←
+θ
+a
++
+r
+t
+⋅
+𝐱
+\theta_{a}\leftarrow\theta_{a}+r_{t}\cdot\mathbf{x}
+This strategy leverages random perturbations from a Gumbel distribution to balance exploration and exploitation, allowing the algorithm to explore suboptimal arms while exploiting the accumulated knowledge of their performance in a linear contextual setting.
+D.7
+Thompson Sampling
+For a given
+𝐱
+\mathbf{x}
+, sample
+θ
+~
+​
+a
+∼
+𝒩
+⁡
+(
+μ
+a
+,
+Σ
+a
+)
+\tilde{\theta}a\sim\mathcal{N}(\mu_{a},\Sigma_{a})
+and select the arm maximizing:
+a
+∗
+=
+arg
+​
+max
+a
+∈
+𝒜
+⁡
+𝐱
+⊤
+​
+θ
+~
+a
+.
+a^{*}=\argmax_{a\in\mathcal{A}}\mathbf{x}^{\top}\tilde{\theta}_{a}.
+(7)
+Standard Bayesian linear regression updates are then used to update
+μ
+a
+\mu_{a}
+and
+Σ
+a
+\Sigma_{a}
+based on the observed reward
+r
+r
+.
+Σ
+a
+−
+1
+\displaystyle\Sigma_{a}^{-1}
+←
+Σ
+a
+−
+1
++
+1
+σ
+2
+​
+𝐱𝐱
+⊤
+,
+\displaystyle\leftarrow\Sigma_{a}^{-1}+\frac{1}{\sigma^{2}}\,\mathbf{x}\mathbf{x}^{\top},
+(8)
+μ
+a
+\displaystyle\mu_{a}
+←
+Σ
+a
+​
+(
+Σ
+a
+−
+1
+​
+μ
+a
++
+1
+σ
+2
+​
+𝐱
+​
+r
+)
+.
+\displaystyle\leftarrow\Sigma_{a}\Bigl(\Sigma_{a}^{-1}\mu_{a}+\frac{1}{\sigma^{2}}\,\mathbf{x}\,r\Bigr).
+Stage
+Median Tokens
+Mean Tokens
+Original query (input)
+16
+19.3
+Feature-tagger output
+110
+110.0
+Rewrite input
+26
+29.3
+Rewrite output
+18
+28.1
+Answer input
+64
+91.3
+Answer output
+70
+157.8
+Judge (input + output)
+162
+252.3
+Total
+493
+688
+Table 7:
+Token-level breakdown per query for QueryBandits.
+The total corresponds to a per-query cost of approximately $0.00035 at
+gpt-40-2024-11-20
+pricing.
+(a)
+Contextual Model Relative Feature Strength.
+(b)
+Non-Contextual Model Relative Feature Strength.
+Figure 12:
+Comparison of Min-Max Normalized feature‐level regression coefficients between (
+12
+) our contextual bandits and (
+12
+) its non-contextual counterparts. Each cell shows how enables a relative view into how specific linguistic feature changes the expected reward under each rewrite strategy. Table
+8
+highlights contextual bandit trends.
+Arm
+a
+a
+f
+max
++
+f^{+}_{\max}
+Interpretation
+f
+max
+−
+f^{-}_{\max}
+Interpretation
+Disambiguate
+Subordination (100 %)
+Long or nested clauses benefit from targeted disambiguation, which isolates and clarifies the core semantic relation.
+Polysemy (0 %)
+Highly polysemous terms lead disambiguation to pick the wrong sense, degrading downstream reward.
+Simplify
+Pragmatics (100 %)
+Pragmatic cues (e.g. discourse markers, politeness) guide safe simplification without loss of meaning.
+Superlative (0 %)
+Stripping superlative constructions removes essential comparative context, hurting reward.
+Expand
+Constraints (100 %)
+Queries already rich in constraints (time, location, numeric bounds) gain precision when expanded with further qualifiers.
+Ambiguity (0 %)
+Underspecified queries offer no detail to expand, so further addition of terms only introduces noise.
+Paraphrase
+Answerability (100 %)
+Paraphrasing queries that are already answerable refreshes wording while preserving solvability, boosting LLM performance.
+Presupposition (0 %)
+Altering queries with strong presuppositions can break implied assumptions, reducing effective reward.
+Clarify Terms
+Rarity (100 %)
+Defining rare or domain-specific terms anchors the LLM’s understanding of technical queries.
+Subordination (0 %)
+Clarifications in convoluted sentences can introduce further parsing difficulty, impeding reward.
+Table 8:
+Top Drivers (
+f
+max
++
+f^{+}_{\max}
+) and Reducers (
+f
+max
+−
+f^{-}_{\max}
+) of Rewrite Strategies per Linguistic Features
+For each rewrite arm, we list the feature whose normalized coefficient
+was highest (100 %) and lowest (0 %), alongside a brief rationale
+for its positive or negative impact on downstream reward.
+(a)
+Contextual Model Feature Uplift.
+(b)
+Non-Contextual Model Feature Uplift.
+Figure 13:
+Reward Uplift by Contextual Feature and Strategy.
+Feature Uplift measures how much the presence of a binary feature changes the expected reward for a given rewrite arm, formally
+Δ
+(
+f
+i
+,
+a
+)
+=
+𝔼
+[
+r
+t
+∣
+arm
+=
+a
+,
+f
+i
+=
+1
+]
+−
+𝔼
+[
+r
+t
+∣
+arm
+=
+a
+,
+f
+i
+=
+0
+]
+.
+\Delta(f_{i},a)=\mathbb{E}[r_{t}\mid\text{arm}=a,f_{i}=1]\;-\;\mathbb{E}[r_{t}\mid\text{arm}=a,f_{i}=0].
+(
+13
+)
+Under the
+contextual
+bandit, the strongest positive uplifts come from
+Answerability
+(
+≈
+\approx
++17 uniformly) and
+Grounding
+(+15–18), while
+Ambiguity
+(
+≈
+\approx
+–15 to –18) and
+Subjectivity
+(
+≈
+\approx
+–10 to –14) impose the largest hits across all arms. Mid-range features like
+Presupposition
+and
+Constraints
+deliver modest boosts (
+≈
+\approx
+5), and
+Excessive Details
+and
+Anaphora
+slightly hurt performance (
+≈
+\approx
+–5 to –7). (
+13
+) The
+non-contextual
+bandit amplifies these trends:
+Answerability
+and
+Grounding
+remain the top drivers (
+≈
+\approx
++18–20), but
+Ambiguity
+becomes even more detrimental (
+≈
+\approx
+–17 to –18), and
+Mismatch
+drops to nearly –16 under some arms. Notably, the non-contextual model shows a stronger negative effect for
+Excessive Details
+(up to –12) and
+Entities
+(
+≈
+\approx
+–6) than the linear one, suggesting it more sharply penalizes noisy contexts. Together, these heatmaps reveal which linguistic signals each rewrite strategy leverages (or struggles with), and how context vs. context-blind policies weigh them differently.
+(a)
+ARC-Challenge
+(b)
+ARC-Easy
+(c)
+BoolQA
+(d)
+HotpotQA
+(e)
+MathQA
+(f)
+MMLU
+(g)
+OpenBookQA
+(h)
+PIQA
+(i)
+SciQ (Abstract)
+(j)
+SciQ (MC)
+(k)
+SQuAD (Abstract)
+(l)
+SQuAD (Extract)
+(m)
+TriviaQA
+(n)
+TruthfulQA (MC)
+(o)
+TruthfulQA
+(p)
+WikiQA
+Figure 14:
+Per-dataset distributions of
+r
+t
+r_{t}
+(normalized density).
+(a)
+Baseline
+: Reward–Difference Distribution
+(b)
+Baseline
+: Dominance CDF
+(c)
+Paraphrase
+: Reward–Difference Distribution
+(d)
+Paraphrase
+: Dominance CDF
+(e)
+Simplify
+: Reward–Difference Distribution
+(f)
+Simplify
+: Dominance CDF
+(g)
+Disambiguate
+: Reward–Diff. Distribution
+(h)
+Disambiguate
+: Dominance CDF
+Figure 15:
+Anchored reward–difference distributions (left column) and dominance CDFs (right column) for the baseline policy (
+Baseline
+) and core static rewrite strategies (
+Paraphrase
+,
+Simplify
+,
+Disambiguate
+). Each row fixes an anchor policy and compares its per-query reward against all competitors.
+(a)
+Clarify
+: Reward–Difference Distribution
+(b)
+Clarify
+: Dominance CDF
+(c)
+Expand
+: Reward–Difference Distribution
+(d)
+Expand
+: Dominance CDF
+(e)
+EXP3
+: Reward–Difference Distribution
+(f)
+EXP3
+: Dominance CDF
+(g)
+FTPL
+: Reward–Difference Distribution
+(h)
+FTPL
+: Dominance CDF
+Figure 16:
+Anchored reward–difference distributions (left) and dominance CDFs (right) for the remaining static rewrite strategies (
+Clarify
+,
+Expand
+) and simple non-contextual bandits (
+EXP3
+,
+FTPL
+).
+(a)
+ϵ
+\epsilon
+-FTRL
+: Reward–Difference Distribution
+(b)
+ϵ
+\epsilon
+-FTRL
+: Dominance CDF
+(c)
+TS (NC)
+: Reward–Difference Distribution
+(d)
+TS (NC)
+: Dominance CDF
+(e)
+LinUCB
+: Reward–Difference Distribution
+(f)
+LinUCB
+: Dominance CDF
+(g)
+LinUCB+KL
+: Reward–Difference Distribution
+(h)
+LinUCB+KL
+: Dominance CDF
+Figure 17:
+Anchored reward–difference distributions (left) and dominance CDFs (right) for advanced non-contextual bandits (
+ϵ
+\epsilon
+-FTRL
+,
+TS (NC)
+) and core contextual bandits (
+LinUCB
+,
+LinUCB+KL
+).
+(a)
+LinEXP3
+: Reward–Difference Distribution
+(b)
+LinEXP3
+: Dominance CDF
+(c)
+LinFTPL
+: Reward–Difference Distribution
+(d)
+LinFTPL
+: Dominance CDF
+(e)
+TS (Contextual)
+: Reward–Difference Distribution
+(f)
+TS (Contextual)
+: Dominance CDF
+Figure 18:
+Anchored reward–difference distributions (left) and dominance CDFs (right) for the remaining contextual bandit policies (
+LinEXP3
+,
+LinFTPL
+,
+TS (Contextual)
+).
+Figure 19:
+Pairwise Normalized Coefficient Differences for Contextual Bandits.
+Each cell shows the min–max–normalized difference in regression weight
+for a given linguistic feature (rows) between two rewrite arms
+(columns), e.g. “Paraphrase vs Disambiguate,” “Simplify vs Expand,” etc.
+Cells labeled “Win” (blue) indicate the feature favors the first arm in
+the matchup, while “Loss” (red) indicates it favors the second. Values
+are expressed as a percentage of the feature’s full coefficient range.
+Table 9:
+System prompt templates for rewrite arms. Replace
+{original_query}
+with the input at runtime. Each template must output
+only
+the rewritten query (no explanations).
+ID
+Arm
+System prompt template
+a
+0
+a_{0}
+Paraphrase
+You are a rewriting module. You will be given a user query:
+{original_query}
+. Rephrase it to improve clarity and introduce lexical diversity while strictly preserving semantic meaning, entities (including casing/accents), numbers, units, and constraints. Do not add or remove information. Output only the rewritten query.
+a
+1
+a_{1}
+Simplify
+You are a rewriting module. You will be given a user query:
+{original_query}
+. Simplify it by removing nested clauses and complex syntax. Use short, concrete phrasing (S–V–O order), keep all entities, numbers, units, and constraints, and avoid changing intent. Do not invent details. Output only the simplified query.
+a
+2
+a_{2}
+Disambiguate
+You are a rewriting module. You will be given a user query:
+{original_query}
+. Resolve vague references by replacing ambiguous pronouns (e.g., it/they/this) and temporal expressions with explicit, context-grounded referents and normalized dates. If a referent cannot be determined from the query alone, insert a bracketed placeholder (e.g., [ENTITY], [DATE]) rather than guessing. Preserve the original intent. Output only the disambiguated query.
+a
+3
+a_{3}
+Expand
+You are a rewriting module. You will be given a user query:
+{original_query}
+. Expand it by making implicit context explicit and adding salient, non-speculative attributes (e.g., scope, timeframe, location, units) that are entailed by the query. If crucial specifics are missing, insert neutral bracketed placeholders (e.g., [TIMEFRAME], [LOCATION]) instead of fabricating facts. Preserve the original intent and constraints. Output only the expanded query.
+a
+4
+a_{4}
+Clarify Terms
+You are a rewriting module. You will be given a user query:
+{original_query}
+. Identify domain-specific jargon or terms of art and add concise parenthetical glosses (e.g., “term (brief definition)”) where the meaning is standard and unambiguous. If uncertain, use a bracketed clarification placeholder (e.g., [DEFINE: TERM]) rather than guessing. Do not alter intent, entities, or constraints. Output only the clarified query.
+Table 10:
+Binary linguistic feature vector
+𝐟
+∈
+{
+0
+,
+1
+}
+17
+\mathbf{f}\in\{0,1\}^{17}
+identified as challenging from a linguistics and LLM perspective. Features are grouped by type and grounded in prior work. For more specific examples, see Table
+11
+.
+Feature
+Description
+Citation
+Structural Features
+Anaphora
+Contains anaphoric references (e.g.,
+it
+,
+this
+)
+Schuster (1988)
+;
+Chen et al. (2018)
+Subordination
+Contains multiple subordinate clauses (multi-clause structure)
+Jeong et al. (2024)
+;
+Blevins et al. (2023)
+Scenario-Based Features
+Mismatch
+Question–task mismatch (e.g., open-ended query against retrieval-style task)
+Gao et al. (2024)
+;
+Kamath et al. (2024)
+Presupposition
+Assumptions within the query are implicitly regarded as truthful
+Karttunen (2016)
+;
+Levinson (1983)
+Pragmatics
+Requests phrased indirectly (e.g.,
+can you pass me the salt
+)
+Sravanthi et al. (2024)
+;
+Levinson (1983)
+Lexical Features
+Rarity
+Presence of rare words with poor representation
+Schick and Schütze (2019)
+;
+Khassanov et al. (2019)
+Negation
+Presence of negation (e.g.,
+not
+,
+never
+)
+Hossain and Blanco (2022)
+;
+Truong et al. (2023)
+Superlative
+Presence of forms (e.g.,
+best
+,
+largest
+) with implicit comparison sets
+Pyatkin et al. (2024)
+;
+Farkas and Kiss (2000)
+Polysemy
+Presence of words with multiple, related meanings
+Ansell et al. (2021)
+;
+Haber and Poesio (2024)
+Stylistic Complexity
+Answerability
+Absence of speculative, sarcastic, or rhetorical phrasing
+Qiao et al. (2023)
+;
+Belfathi et al. (2023)
+Excessive
+Presence of excessive details/instructions that overload context; verbosity
+Li et al. (2024b)
+;
+Liu et al. (2023b)
+Subjectivity
+Query requires LLM to reflect creatively and engender a personal opinion
+Durmus et al. (2024)
+;
+Lv et al. (2024)
+Ambiguity
+Presence of ambiguous phrasing that opens multiple interpretations
+Brown et al. (2020)
+;
+Liu et al. (2023a)
+Semantic Grounding
+Grounding
+Presence of a clear intent/goal statement
+Clarke et al. (2009)
+;
+Wei et al. (2023)
+Constraints
+Presence of temporal/spatial/task-specific constraints
+Jiang et al. (2024)
+;
+Lewis et al. (2021)
+Entities
+Presence of verifiable entities
+Lee et al. (2023)
+;
+Wang et al. (2023b)
+Specialization
+Query requires domain-specific knowledge for understanding
+Watson et al. (2025a)
+;
+Cho et al. (2024)
+;
+Zeng et al. (2024)
+Table 11:
+Detailed Summary and Examples of Feature Categories, Definitions, and Examples (See Table
+10
+). These definitions and examples become the prompts to create the binary context vector for our bandits.
+Feature
+Definition
+Example
+Structural
+Anaphora
+Presence of pronouns or references requiring external context.
+”What about that one?” (Unclear reference)
+Subordination
+Measures the presence of multiple subordinate clauses
+”While I was walking home, I saw a cat that looked just like my friend’s.”
+Scenario-Based
+Mismatch
+Mismatch between the query’s intended output and its actual structure.
+”Find me this paragraph in this document” (When document isn’t given, this query cannot be answered)
+Presupposition
+Unstated assumptions embedded in the query.
+”Who is the musician that developed neural networks?” (Assumes such a musician exists)
+Pragmatics
+Captures context-dependent meanings beyond literal interpretation.
+”Can you pass the salt?” (A request, not a literal ability)
+Lexical
+Rarity
+Use of rare or niche terminology.
+”What are the ramifications of quantum decoherence?” (Uses low-frequency terms)
+Negation
+Presence of negation words (
+not
+,
+never
+).
+”Is it not possible to do this?”
+Superlatives
+Detection of superlative expressions (
+biggest
+,
+fastest
+).
+”What is the fastest algorithm?”
+Polysemy
+Presence of ambiguous words with multiple related meanings.
+”Explain how a bank operates.” (Ambiguity: financial institution vs. riverbank)
+Stylistic
+Answerability
+Assesses whether the query has a verifiable answer.
+”What is the exact number of galaxies?” (Unanswerable)
+Excessive
+Evaluates whether a query is overloaded with information, potentially distracting the model.
+”Can you explain how convolutional neural networks work, including all mathematical formulas?”
+Subjectivity
+Query requires the degree of opinion or personal bias
+”What is the best programming language?”
+Ambiguity
+Highly ambiguous context, task, and wording
+”Tell me about history.” (Too broad)
+Semantic
+Grounding
+Evaluates how clearly the query’s purpose is expressed.
+”How does reinforcement learning optimize control in robotics?” (Clear intent)
+Constraints
+Identifies explicit constraints (time, location, conditions) provided in the query.
+”What was the inflation rate in the US in 2023?”
+Entities
+Checks for the inclusion of verifiable named entities.
+”Who founded OpenAI?”
+Specialization
+Determines whether the query belongs to a specialized domain (e.g., finance, law).
+”What are the legal implications of the GDPR ruling?”
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

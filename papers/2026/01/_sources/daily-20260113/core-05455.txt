@@ -1,0 +1,408 @@
+URL https://arxiv.org/html/2601.05455v1; sections S3 to S6 excluded; result tables omitted; fetched 2026-10-03
+
+
+
+ 3 Methodology 
+
+ 
+
+ART structures the verification process as a binary reasoning tree in which the root node, referred to as the claim node , represents the input claim under examination, and all other nodes are argument nodes that recursively support or attack their parent.
+This claim verification process is explicit with each comparison in the tree contributing to the overall decision.
+ART operates in four main phases: argument generation , pairwise argument ranking , strength calibration and strength aggregation . Figure 1 presents an overview of ART showing an example tree with a depth of one and a breadth of three. 
+ 
+
+
+
+ 3.1 Argument Generation 
+
+ 
+
+Each argument node is instantiated by a debater LLM prompted with a specific persona of either supporter ( {S} ) or attacker ( {A} ).
+The supporter produces arguments in favor of the parent node, while the attacker generates counterarguments against it.
+Although in principle the reasoning process could grow without bound, we cap the maximum tree depth at two in this work to balance reasoning depth and computational efficiency. Note: Same LLM is used for both support and attack. 
+ 
+ 
+
+
+
+ 3.2 Pairwise Argument Ranking 
+
+ 
+
+Once generated, arguments are evaluated through a comparison procedure by an LLM-as-a-judge ( J )  Rad et al. (2025) ; Adlakha et al. (2024) .
+For each pair of argument nodes, the scoring LLM selects which of the supporting or attacking child argument is more persuasive given the parent node argument.
+A complete traversal of the tree yields N=\frac{(2b)^{d+1}-1}{2b-1} nodes of depth d and breadth b with \frac{(2b)^{d}-1}{2b-1}*b^{2} pairwise comparisons (see Appendix   E ).
+Importantly, ART is adaptive : subtrees whose comparisons fall below a confidence threshold can be selectively pruned during argument verdict to improve the accuracy of the final decision. 
+ 
+ 
+
+Let p be a parent argument node in the tree, with k supporting and attacking children defined as the sets:
+ \mathcal{S}(p)=\{S_{1},S_{2},\dots,S_{k}\} , and
+ \mathcal{A}(p)=\{A_{1},A_{2},\dots,A_{k}\} . 
+ 
+ 
+
+For each pair (a,b) where a\in\mathcal{S}(p) and b\in\mathcal{A}(p) , a scoring LLM, J , selects the more persuasive argument: 
+ 
+
+ 
+
+ 
+ \text{outcome}(a,b)=J(a,b\mid p)\in\{a,b\} 
+ 
+ 
+ 
+ 
+
+
+
+ 3.3 Strength Calibration 
+
+ 
+
+For each argument i\in\mathcal{S}(p)\cup\mathcal{A}(p) , the judge J also calculates its intrinsic strength, denoted \tau_{i} , referring to how strongly its supports or attacks its parent claim similar to   Freedman et al. (2025) .
+While an intrinsic strength score, \tau_{i} , provides a baseline measure for an argument, this absolute evaluation, performed in isolation by a judge model J , is insufficient for a robust analysis. Such isolated scores struggle to handle redundancy, are susceptible to inconsistent scaling and bias from the judge model, and fail to establish a clear relative ranking. 
+ 
+ 
+
+In contrast, pairwise scoring addresses these limitations by reframing the task as a more constrained and reliable relative judgment: determining which of two arguments is stronger, a simpler task for an LLM  Carterette et al. (2008) . This comparative approach naturally produces a robust ranking that surfaces nuanced qualitative differences and accounts for semantic overlap, which absolute scoring methods cannot capture. This presents a trade-off between the fast but potentially biased intrinsic scores and the robust but computationally expensive pairwise comparisons. To balance this, our approach uses the Bradley-Terry (BT) model to calibrate the initial intrinsic strengths . The BT model analyzes the tournament outcomes to derive a purely relative performance score for each argument. This data-driven score then acts as a scaling factor, adjusting the initial intrinsic value \tau_{a} up or down based on its competitive success. This hybrid approach retains the baseline evaluation while refining it with robust, comparative data. 
+ 
+
+
+
+Bradley–Terry Calibration. 
+
+ 
+
+Each child argument i\in\mathcal{S}(p)\cup\mathcal{A}(p) has a latent strength \theta_{i}>0 . For a\in\mathcal{S}(p) and b\in\mathcal{A}(p) , the probability that a is judged stronger than b is 
+ 
+
+ 
+
+ 
+ P(a\succ b)\;=\;\frac{\theta_{a}}{\theta_{a}+\theta_{b}} 
+ 
+ (1) 
+ 
+ 
+ 
+
+Let U(p)=\mathcal{S}(p)\cup\mathcal{A}(p) . We estimate \theta by fixed-point iteration using only cross-pairs (a,b)\in\mathcal{S}(p)\times\mathcal{A}(p) , then normalize: 
+ 
+ 
+ 
+ 
+
+
+ 
+ \displaystyle\theta_{a}^{(t+1)} 
+ \displaystyle=\frac{\sum_{b\in\mathcal{A}(p)}\tau_{ab}}{\sum_{b\in\mathcal{A}(p)}\frac{\tau_{ab}+\tau_{ba}}{\theta_{a}^{(t)}+\theta_{b}^{(t)}}+\varepsilon}, 
+ 
+ \displaystyle a\in\mathcal{S}(p), 
+ 
+ (2) 
+
+
+ 
+ \displaystyle\theta_{b}^{(t+1)} 
+ \displaystyle=\frac{\sum_{a\in\mathcal{S}(p)}\tau_{ba}}{\sum_{a\in\mathcal{S}(p)}\frac{\tau_{ab}+\tau_{ba}}{\theta_{a}^{(t)}+\theta_{b}^{(t)}}+\varepsilon}, 
+ 
+ \displaystyle b\in\mathcal{A}(p), 
+ 
+
+
+ 
+ \displaystyle\sum_{i\in U(p)}\theta_{i}^{(t+1)} 
+ \displaystyle=1\ \text{s.t.}\ \theta_{i}\in[0,1] 
+ 
+ 
+ 
+ 
+
+Here, \tau_{ab} counts judgments where supporter a is stronger than attacker b (and \tau_{ba} is the reverse), and \varepsilon>0 prevents division by zero.
+Eq.  2 is an Majorize–Minimize (MM) step for the Bradley–Terry log-likelihood, ensuring monotone ascent and scale-invariance to pairwise counts (duplicates or batch reweighting leave strengths unchanged up to normalization). These properties justify early stopping and yield stable, reproducible calibration (Proposition  2 ; Algorithm  1 ). 
+ 
+ 
+
+
+ 
+ \displaystyle\tau_{i}^{\prime}=\mathrm{clip}_{[0,1]}\!\bigl((1-\lambda)\,\tau_{i}+\lambda\,\theta_{i}\bigr), 
+ 
+ (3) 
+
+
+ 
+ \displaystyle i\in U(p),\lambda\in[0,1] 
+ 
+ 
+ 
+ 
+
+We update each argument’s weight by blending its current value with its BT score (Eq.  3 ). Specifically, the blend parameter \lambda\in[0,1] controls how much we trust the BT score—larger \lambda moves the weight closer to \theta_{i} —and we clip the result to [0,1] to avoid extremes. This convex update keeps values bounded, smooths noisy estimates, and still reflects the pairwise outcomes. 
+ 
+ 
+ 
+
+
+
+ 3.4 Strength Aggregation 
+
+ 
+
+The outcomes of the local comparisons are aggregated upward through the tree until a final decision is reached at the claim node.
+This final stage produces both a binary classification label and an interpretable reasoning trace, showing how the balance of supporting and attacking arguments led to the system’s conclusion. 
+ 
+
+
+
+Final Claim Score. 
+
+ 
+
+After BT calibration step, the strength of each argument p is updated in topological order.
+For p with attackers \mathrm{A}(p) and supporters \mathrm{S}(p) , the ProductAggregation term is calculated as 
+ 
+
+ 
+
+ 
+ \alpha_{p}\;=\;\prod_{a\in\mathrm{S}(p)}(1-s_{a})\;-\;\prod_{b\in\mathrm{A}(p)}(1-s_{b}), 
+ 
+ (4) 
+ 
+
+where s_{a} and s_{b} are the propagated strengths of the respective children. 
+ 
+ 
+
+Ultimately, the final score of the parent argument node becomes 
+ 
+
+ 
+
+ 
+ s_{p}\;=\;\begin{cases}\tau_{p}^{\prime}-\alpha_{p}*\tau_{p}^{\prime},&\alpha_{p}>0,\\[2.0pt]
+\tau_{p}^{\prime}-\alpha_{p}*(1-\tau_{p}^{\prime}),&\alpha_{p}\leq 0,\end{cases} 
+ 
+ (5) 
+ 
+
+where \tau_{p}^{\prime} is the BT-calibrated intrinsic weight of p . 
+ 
+ 
+
+The score of the root claim C is calculated as 
+ 
+
+ 
+
+ 
+ P(C)\;=\;s_{C} 
+ 
+ (6) 
+ 
+ 
+ 
+
+Argument strengths propagate via a DF - QuAD–style quantitative semantics  Rago et al. (2016) :
+attacker/supporter effects are aggregated (Eq.  4 ) and node strengths updated
+(Eq.  5 ) deterministically, yielding smooth, discontinuity - free propagation (see Proposition  3 ).
+The final claim score P(C) (Eq.  6 ) is labeled True if P(C)>0.5 , else False . We set the classification threshold to be 0.5 . 
+ 
+ 
+ 
+ 
+
+
+
+ 4 Experiments 
+
+
+
+
+ 4.1 Datasets 
+
+
+
+
+MedQA 
+
+ 
+
+ Jin et al. (2020) dataset comprises multiple-choice medical examination questions in English, Simplified Chinese, and Traditional Chinese.
+Each example contains a clinical vignette, a question, and five answer choices, with exactly one correct answer.
+We utilize the test split of the English subset.
+Since the original dataset is in multiple-choice format with answer choices typically expressed as short phrases, prior work has converted these into declarative statements: each answer choice is rewritten as a complete sentence, with the statement corresponding to the correct answer labeled as true  Freedman et al. (2025) .
+The processed test set contains 250 positive and 250 negative examples. 
+ 
+ 
+
+
+
+StrategyQA 
+
+ 
+
+ Geva et al. (2021) dataset consists of open-domain questions requiring multi-hop reasoning over common sense and factual knowledge.
+Unlike MedQA, each example in StrategyQA contains only a question without additional context, with answers provided as simple phrases.
+Similar to MedQA, prior work has processed StrategyQA by converting each question into a declarative statement with an associated truth label  Freedman et al. (2025) .
+The processed test set is balanced with 250 positive and 250 negative examples. 
+ 
+ 
+
+
+
+TruthfulQA 
+
+ 
+
+ Lin et al. (2022) dataset comprises of 250 positive and 250 negative claims respectively and is specifically used to evaluate LLMs to gauge if they can correctly identify truthful answers without being deceived by common misconceptions and falsehoods. 
+ 
+
+ 
+ Figure 2: Example from MedQA with Llama 3.3 70B Instruct . Pairwise tournaments calibrate argument strengths by blending intrinsic weights \tau with BT scores \theta to yield \tau^{\prime} . Here, support and attack start with equal intrinsic weights but calibrate to 0.7 and 0.4 , shifting the claim’s probability from 0.5 (False) to 0.8 (True). Without the pairwise and BT calibration steps, the claim would be misclassified as False. 
+ 
+ 
+ 
+
+
+
+ 4.2 Baselines and Models 
+
+
+
+
+Models. 
+
+ 
+
+ART is flexible to the choice of underlying language model. In this paper, we focus on widely used open-source LLMs that combine strong performance across diverse tasks with easy replicability of results.
+Specifically, we experiment with Llama 3.1 3B-Instruct and Llama 3.1 8B-Instruct , as well as the larger Llama 3.3 70B-Instruct   Grattafiori et al. (2024) ,
+together with Mistral-7B Instruct-v0.2   Jiang et al. (2023) and Mixtral-8x7B-Instruct-v0.1   Jiang et al. (2024) .
+Unless otherwise specified, all models are queried with the following decoding parameters:
+ "temperature": 0.2, "max_new_tokens": 512, "top_p": 0.95 . All models are served through the OpenAI-compatible vLLM 2 2 
+ 2 
+ 
+ 
+ 
+ https://docs.vllm.ai/en/latest/ API and batch executed on 1-4 NVIDIA A100 GPUs depending on model sizes. 
+ 
+ 
+
+
+
+Baselines. 
+
+ 
+
+We evaluate our approach against three baselines.
+ Direct Prompting : the LLM is directly prompted to verify a claim with a Yes/No answer.
+ Chain-of-Thought (CoT)   Wei et al. (2022) : the LLM is additionally asked to generate reasoning alongside its Yes/No decision.
+ ArgLLM   Freedman et al. (2025) : this method constructs a tree-like structure but without pairwise comparisons or calibrations. The differences between ART and ArgLLM are discussed in Section  2.4 in more detail. All the prompts used for Direct Prompting, CoT, arguments generation, intrinsic strength calculation, pairwise comparisons, are shown in Appendix   F . 
+ 
+
+
+ 
+ [result table omitted; consult original if quantitative claim needed] 
+ 
+ Table 1: Evaluation results on MedClaim, StrategyQA and TruthfulQA comparing Direct prompting, CoT, ArgLLM, and ART with depth= 1 and breadth= 1 .
+Results are shown for two evaluator settings: (i) Eval = 70B , where judgments are made by Llama 3.3 70B Instruct , and (ii) Eval = Self , where the evaluator matches the main model.
+The w/o intr. setting uses only the BT score \theta by setting \lambda=1 , while intr. combines \theta with intrinsic strength \tau with \lambda=0.5 (Eq.  3 ). See Section  3.3 for details. Bold indicates the best Accuracy score, while underlining marks the second best within the two evaluator settings. Blue color text indicates cases where CoT or Direct achieves the best performance. 
+ 
+ 
+ 
+ 
+
+
+
+ 5 Results 
+
+ 
+
+We benchmark ART against Direct prompting, CoT prompting, and ArgLLM  Freedman et al. (2025) in Table  1 , using tree depth and breadth fixed at 1 across datasets and LLMs. In this ART configuration, each root claim is evaluated through a single supporting argument and a single attacking argument competing to determine the claim’s validity. 
+ 
+
+
+
+Evaluator Settings: 
+
+ 
+
+We evaluate two evaluator settings. In the Single-LLM setup ( Eval=Self ), the same LLM performs argument generation, intrinsic strength computation, pairwise comparisons, and final judgment. This setup directly tests the model’s ability to identify relatively stronger arguments, but it is also prone to self-affirmation bias since generation and adjudication rely on the same LLM. In contrast, the Multi-LLM setup ( Eval=70B ) separates these roles: one model generates arguments, while a stronger judge LLM performs pairwise comparisons and intrinsic strength calculation for ART nodes, thereby reducing the bias present in the Single-LLM configuration. We use Llama 3.3 70B-Instruct model as the judge model due to its strong performance in complex problems. The Multi-LLM configuration delivers substantially better results than Single-LLM in our studies. 
+ 
+ 
+
+
+
+Bradley–Terry Calibration with Intrinsic Strengths: 
+
+ 
+
+We employ the Bradley–Terry (BT) model to derive argument strengths from pairwise tournaments. In the w/o intr. setting, \lambda is set to 1 and only the BT-derived score \theta is used (Eq.  3 ) to achieve the final score s (Eq. 6 ), while in the intr. setting, \lambda is set to 0.5 so that the BT score is further blended with the intrinsic strength \tau , yielding the adjusted value \tau^{\prime} to calculate s . We believe intrinsic strength helps regularize the BT estimates by encoding prior plausibility/quality, reducing variance when pairwise evidence is sparse or noisy, and preventing brittle swings from a few contested comparisons. On average, we achieve a 3\% relative accuracy improvement in the intr. setting over the w/o intr. setting having aggregated over both the evaluator settings. Note. If not explicitly specified, ART should be considered with the intr. and Multi-LLM ( Eval=70B ) configuration. 
+ 
+ 
+
+
+
+ 5.1 Comparison with Direct and CoT 
+
+ 
+
+We observe that ART outperforms the Direct Prompting methodology overall, which is expected since direct prompting requires the LLM to evaluate the claim in a single step without any structured decomposition of arguments. In contrast, ART explicitly organizes the reasoning process into supporting and attacking arguments, enabling more reliable adjudication of the root claim.
+The main gap appears on larger models: CoT often performs better because they exploit rich step-by-step reasoning, while ART’s multiple argument branches can add noise and slightly reduce accuracy. Overall, while ART not only achieves at par performance over CoT, its key advantages lie beyond accuracy. ART produces faithful, contestable explanations structured as arguments, from which final decisions are deterministically derived. By contrast, CoT traces offer post-hoc rationalizations that may not reflect the model’s actual stochastic reasoning process  Turpin et al. (2023) . ART therefore provides greater transparency and verifiability, as each decision can be directly traced to its underlying arguments and semantics. 
+ 
+ 
+
+
+
+ 5.2 ART vs ArgLLM 
+
+ 
+
+When \lambda=0 , the update reduces to the ArgLLM baseline: no BT contribution is applied and each weight stays at its pre-BT value (i.e., \tau_{i}^{\prime}=\tau_{i} ). This recovers the original ArgLLM setting and serves as a clean ablation point for comparisons. We observe that in most cases (see Table  1 and   2 ), ART outperforms ArgLLM. This can be attributed to how strength is computed for each node: ArgLLM estimates strengths in isolation, without considering sibling arguments, which limits the robustness of its scoring. In contrast, ART employs a pairwise tournament in which arguments of opposite polarity directly compete, with strengths estimated through the Bradley–Terry (BT) model. This ensures that scores are both relative and comparable within the same latent space, producing more reliable outcomes. Furthermore, ART’s calibration step grounds final decisions in argumentation semantics, enhancing consistency and interpretability compared to ArgLLM’s uncalibrated node-level scores. ArgLLM is a special case of ART obtained by setting \lambda=0 : the update ignores pairwise outcomes and applies no score calibration, relying solely on the intrinsic strengths of the arguments. 
+ 
+ 
+
+Figure  2 shows a qualitative example where two arguments that begin with equal intrinsic weights can calibrate to 0.7 (support) versus 0.4 (attack), shifting the root claim’s probability from 0.5 to 0.8 and flipping a mistaken rejection into a correct acceptance. In practice, this pairwise-and-calibrate step addresses ArgLLM ’s main failure mode—uncalibrated, non-comparable scores—while preserving transparent, contestable reasoning traces. ART moves all arguments into a shared latent scale and corrects over/under-weighting. 
+ 
+
+ 
+ Figure 3: Variance of strengths distribution under ArgLLM ( \lambda=0 ) vs. ART ( \lambda=0.5 ). of the root claim nodes. ART yields higher variance—scores pushed away from 0.5 —indicating more decisive, calibrated strengths. 
+ 
+
+
+
+Bias Variance Tradeoff: 
+
+ 
+
+We observe that BT–calibrated strengths lead to higher variance in the final claim prediction probabilities as compared to ArgLLM strengths (see Figure  3 ). ART increases variance by decompressing intrinsic scores and incorporating BT comparison evidence, but improves ranking calibration. ART helps with bias reduction via pairwise comparisons as opposed to isolated strength calculations. 
+ 
+ 
+ 
+
+
+
+ 5.3 Tree Variations 
+
+ 
+
+We analyze performance across different tree sizes in terms of depth and breadth in Table  2 .
+To balance accuracy with latency, we restrict our exploration to a maximum depth and breadth of two.
+Our results show that increasing the breadth of the tree improves the performance of models with different size across benchmarks. Overall, breadth makes more difference than the height as each argument in the tree is now validated with more support and attack child nodes giving more context to the evaluator model J . ART outperforms ArgLLM in this setup as well. 
+ 
+ 
+
+Having shown that widening a single tree is effective, we next examined whether an ensemble of separate, simpler trees could be a competitive alternative. We evaluate this multi-tree ensemble—along with its computational trade-offs—in Appendix  D . Empirically, while greater breadth for pairwise comparisons remains a strong general-purpose strategy, a minimalist configuration ( D{=}1,B{=}1 ) coupled with a strong evaluator (e.g., Llama 3.3 70B) can be unexpectedly potent, particularly under compute constraints. 
+ 
+
+
+ 
+ [result table omitted; consult original if quantitative claim needed] 
+ 
+ Table 2: Accuracy of ArgLLM and ART on datasets with different tree settings ( Eval=70B , intr. ). Best scores are in bold and second best are underlined. D = depth, B = breadth. 
+ 
+ 
+ 
+
+

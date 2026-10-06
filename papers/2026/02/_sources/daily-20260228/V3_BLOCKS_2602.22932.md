@@ -1,0 +1,363 @@
+[0] h5: Report GitHub Issue
+
+[1] p: Content selection saved. Describe the issue below:
+
+[2] h1: MSJoE: Jointly Evolving MLLM and Sampler for Efficient Long-Form Video Understanding
+
+[3] h6: Abstract
+
+[4] p: Efficiently understanding long-form videos remains a fundamental challenge for multimodal large language models (MLLMs). In this paper, we present MLLM-Sampler Joint Evolution (MSJoE), a novel framework that jointly evolves the MLLM and a lightweight key-frame sampler for efficient long-form video understanding. MSJoE builds upon a key assumption that only a small subset of key-frames is truly informative for answering each question to a video. Specifically, MSJoE first reasons out several queries, which describe diverse visual perspectives relevant to the question. Then, these queries interact with a frozen CLIP model to produce a query–frame similarity matrix. Finally, A lightweight sampler predicts key-frame sampling weights from this matrix, selecting a compact set of informative frames, which are then fed into the MLLM for answer generation. Both the MLLM and sampler are jointly optimized through reinforcement learning , enabling co-adaptation of query-reasoning, frame-sampling, and key-frame understanding. A new long-video QA dataset containing 2.8k videos with 7k question–answer pairs is collected to support the training process. Extensive experiments on VideoMME, LongVideoBench, LVBench, and MLVU show that MSJoE achieves 8.0% accuracy gain upon the base MLLM, and 1.1% higher accuracy than strongest baseline method.
+
+[5] h2: 1 Introduction
+
+[6] figure: Figure 1 : A direct comparison among static key-frame sampling algorithms, trainable key-frame sampler, and our proposed MLLM-Sampler Joint Evolution framework (MSJoE).
+
+[7] p: Recent progress in multimodal large language models (MLLMs) has enabled strong performance in video understanding tasks such as captioning, reasoning, and question answering [ 7 , 25 , 1 , 3 , 2 ] . However, when the video gets longer, their efficiency and accuracy degrade rapidly: The visual context length scales linearly with duration, while attention computation grows quadratically, making traditional dense uniform sampling inefficient. Furthermore, a question could involve multiple events in a video, while dense uniform sampling strategy is unlovable to overlook key events.
+
+[8] p: The core challenge lies in efficiently selecting informative frames from long-form videos, where most frames are visually similar or irrelevant to the question. Thus a fixed uniform-sampling frame budget forces the model to either miss key events or spend computation on uninformative regions. This motivates the key assumption of this work: only a small subset of frames (key-frames) is truly needed to answer a question about a long-form video . Based on this assumption, we identify the fundamental question: How to obtain the key-frames?
+
+[9] p: To address this, many existing approaches leverage CLIP-based similarity between the question and frames to locate relevant segments [ 24 , 35 , 23 , 10 ] . However, this raises two further challenges: Q1: Is the question itself sufficient to retrieve all relevant frames? ( Insufficiency ) Q2: How to effectively sample frames based on similarity scores? ( Sampling )
+
+[10] p: Often, the question lacks explicit visual cues, making CLIP retrieval unreliable. Thus, the question is needed to be decomposed. Furthermore, frame-wise similarity scores are not equivalent to key-frame sampling weights: a naive top- k k strategy over similarity scores tends to select redundant frames. Hence, some works proposed heuristic algorithms [ 10 , 24 , 35 ] to transform similarity scores into key-frame sampling weights. However, these methods often require careful algorithm design or even specific tuning on different datasets. TSPO [ 23 ] proposes a trainable sampler that learns to select frames from CLIP similarities, yet it overlooks the fact: most MLLMs are pre-trained on uniformly sampled videos instead of key-frames [ 1 , 3 , 36 , 9 ] . Hence, we raise the last question: Q3: Can the MLLM and sampler truly collaborate without joint evolution? ( Collaboration )
+
+[11] p: Effective collaboration requires two capabilities: (i) the MLLM must learn to generate reasoning queries that guide keyframe selection, and (ii) the MLLM must adapt to reason over the sparse keyframes that the sampler provides. Current methods freeze the MLLM during sampler training, preventing this bidirectional adaptation.
+
+[12] p: To address these issues, we propose an MLLM-Sampler Joint Evolution framework (MSJoE) for efficient long-form video understanding. To address the insufficiency ( Q1 ) of information to retrieve frames with question, MSJoE first reason out potential helpful perspectives, generating multiple queries that describe visual events or clues relevant to answering the question. These queries are paired with densely sampled frames to form a query–frame similarity matrix via a frozen CLIP model. A lightweight 1D U-Net sampler with about two million parameters learns ( Q2 ) to transforms this matrix into sampling weights, thus samples a small set of diverse and informative key-frames. Finally, the selected frames are fed back into the MLLM, which is then trained jointly with the sampler through reinforcement learning (RL). This end-to-end optimization ensures aligned progress ( Q3 ) in frame selection and understanding.
+
+[13] p: Due to lack of multi-hop and hour-long video datasets, we newly collected a long-video QA dataset, and we apply reinforcement learning on Qwen2.5-VL-7B-Instruct [ 1 ] as our proposed MSJoE. Experiments on VideoMME, LongVideoBench, LVBench, and MLVU [ 5 , 28 , 26 , 37 ] show that MSJoE outperforms existing sampling-based and long-context MLLMs, achieving a superior balance between computational cost and accuracy.
+
+[14] p: Our main contributions are as follows:
+
+[15] p: We propose MLLM-Sampler Joint Evolution (MSJoE) , a unified framework that jointly evolves an MLLM and a trainable sampler, allowing reasoning-guided key-frame selection and co-adaptation of perception and language understanding.
+
+[16] p: We introduce a new long-video QA dataset with 2.8k videos and 7.1k question-answer pairs, supporting reinforcement learning for joint optimization.
+
+[17] p: Extensive experiments on VideoMME, LongVideoBench, LVBench, and MLVU show that MSJoE achieves 8.0% accuracy gain upon the base MLLM, and 1.1% higher accuracy than strongest baseline method.
+
+[18] h2: 2 Related Work
+
+[19] h3: 2.1 Long-Form Video Understanding Methods with Key Frame Sampling
+
+[20] p: Recent advances in Multimodal Large Language Models (MLLMs) have enabled remarkable progress in video understanding tasks [ 7 , 25 , 1 , 3 , 2 ] . However, processing long-form videos remains constrained by limited context windows [ 38 , 34 ] . Existing approaches fall into two categories: training-free methods and trainable sampling strategies.
+
+[21] p: Training-Free Sampling Methods. Uniform sampling methods like LLaVA-Video [ 36 ] , Qwen2.5-VL [ 1 ] and SlowFast-LLaVA [ 29 ] rely on the assumption of a uniform temporal distribution. LongVU [ 19 ] shows this approach naively overlooks non-uniform content and misses critical frames in sparse event scenarios. To address uniform sampling’s blindness to content semantics, CLIP-based methods attempt content-aware selection but face the insufficiency problem ( Q1 ): questions in video QAs are often interrogative and temporally focused rather than descriptive, providing insufficient visual grounding. They specify what information is needed without describing where or how it appears visually. Despite this limitation, methods like VaQuitA [ 27 ] , AKS [ 24 ] and QFrame [ 35 ] employ similarity-based retrieval and address Q2 through heuristic algorithms that transform similarity scores into sampling weights. However, they require carefully designed test-time strategies that do not generalize well to diverse video-query pairs.
+
+[22] figure: Figure 2 : Our dataset construction pipeline. QA pairs with low difficulty or poor quality are removed during multi-stage filtering.
+
+[23] p: Trainable Sampling Strategies. To overcome the limitations of fixed heuristics, learning-based methods aim to solve Q2 by training samplers to predict key-frame weights. TSPO [ 23 ] employs GRPO to train a lightweight temporal agent. K-frames [ 31 ] uses a smaller MLLM to predict key clips for a larger MLLM. M-LLM Frame Selector [ 6 ] trains a learnable projector to predict frame importance. ViaRL [ 30 ] alternates between training the selector and fine-tuning the MLLM.
+
+[24] p: However, these methods share an architectural constraint: the MLLM remains frozen during sampler training or is optimized separately. This design choice prevents collaboration ( Q3 ): the MLLM cannot learn to generate effective reasoning queries for guiding frame selection, nor can it adapt to reason over the sparse keyframes the sampler provides. The sampler receives only sparse scalar rewards without understanding which visual evidence the MLLM needs, while the MLLM remains optimized for uniform sampling rather than the keyframe distributions its sampler produces.
+
+[25] p: In summary, existing methods progress on Sampling ( Q2 ), but question insufficiency ( Q1 ) remains underexplored, and the lack of collaboration ( Q3 ) represents a fundamental limitation. Without joint evolution, neither component can adapt to the other: the MLLM cannot guide keyframe selection through reasoning queries, nor can it learn to effectively process the sparse visual inputs the sampler provides.
+
+[26] h3: 2.2 Training MLLMs with RL
+
+[27] p: Reinforcement Learning has evolved from aligning language models with human preferences to enabling sophisticated multimodal reasoning capabilities. RLHF [ 12 ] established the foundation by using human feedback to train reward models, treating LLMs as policy networks optimized through PPO [ 17 ] . DPO [ 15 ] simplified this pipeline by eliminating explicit reward models, directly optimizing from preference pairs. Recent multimodal extensions include LLaVA-RLHF [ 22 ] , which introduced factually augmented rewards to reduce hallucinations by 39.5%, and RLHF-V [ 33 ] , which achieved 75.8% hallucination reduction through dense segment-level corrections. DeepSeek-R1 [ 4 ] demonstrated that GRPO [ 18 ] can induce emergent reasoning without supervised fine-tuning. For long-form video understanding, TSPO [ 23 ] applies GRPO to learn adaptive frame sampling policies, but their approach relies on a fixed-query to guide keyframe selection while freezing the LLM during training, hindering the collaboration and joint evolution of the sampler and the MLLM components.
+
+[28] h2: 3 Dataset
+
+[29] p: A major bottleneck in training long-form video understanding models lies in the lack of large-scale datasets with sufficiently long durations and reasoning-oriented questions. To train MLLM-Sampler Joint Evolution, we construct a new long-video question answering dataset designed to satisfy four goals: (i) videos with long durations and rich temporal structure, (ii) questions that require reasoning across multiple events, (iii) an efficient and automatic pipeline for scalable data generation, and (iv) controllable question difficulty for reinforcement learning. The overall pipeline consists of four steps: Step 1: Dense Captioning, Step 2: QA Generation, Step 3: QA Filtering, and Step 4: Difficulty Labeling and Subset Selection. The dataset construction pipeline is illustrated in Figure 2 . Due to space limit, we elaborate the data collection pipeline in the Supplementary Material Section 8 .
+
+[30] h2: 4 Method
+
+[31] figure: Figure 3 : The proposed MSJoE framework. Given a video and question, MSJoE generates reasoning-based queries from a sparse preview, matches them against dense frames via CLIP to create a similarity matrix, and uses a lightweight U-Sampler to select informative frames. The MLLM then processes these key frames at high resolution for answer generation. The entire framework is jointly optimized through end-to-end reinforcement learning.
+
+[32] h3: 4.1 Overview
+
+[33] p: Given a long video 𝒱 \mathcal{V} with T T frames and a question q q , our goal is to select a subset of K K informative frames ( K ≪ T K\ll T ) that preserves the precision of the answer while maintaining computational efficiency. Our method MSJoE achieves this by enabling collaboration between the MLLM and a lightweight sampler. In this section, we will illustrate the inference and training pipeline in Section 4.2 and Section 4.3 , respectively.
+
+[34] h3: 4.2 Inference Pipeline
+
+[35] p: As illustrated in Figure 3 , the pipeline consists of four steps: (1) MLLM-guided Query Generation that reasons out informative visual queries based on question and a sparse video preview, (2) CLIP-based Similarity Computation to obtain query-frame similarity distribution, (3) Learnable Key-Frame Sampling that adaptively learns to sample key-frames from the similarity matrix, and (4) Answer Generation that reasons over the sampled key-frames to produce the final answer. Note that the sparse video preview is masked/removed during answer generation for fair comparison to non-reasoning methods.
+
+[36] h5: Step 1: MLLM-guided Query Generation.
+
+[37] p: We begin by uniformly sampling a sparse set of N init N_{\text{init}} frames from the video at minimum resolution (only 32 tokens per frame). These frames provide a coarse preview of the video content without introducing much overhead. The MLLM processes the question q q along with these preview frames to reason out N q N_{q} queries { q 1 , q 2 , … , q N q } \{q^{1},q^{2},\ldots,q^{N_{q}}\} . These queries describe specific visual patterns or events that would be helpful for answering the question.
+
+[38] p: Formally, let ℱ init = { f i } i = 1 N init \mathcal{F}_{\text{init}}=\{f_{i}\}_{i=1}^{N_{\text{init}}} denote the initial sparse frames. The MLLM generates queries as:
+
+[39] table: { q j } j = 1 N q = MLLM ​ ( q , ℱ init , θ MLLM ) \{q^{j}\}_{j=1}^{N_{q}}=\text{MLLM}(q,\mathcal{F}_{\text{init}};\theta_{\text{MLLM}}) (1)
+
+[40] p: where θ MLLM \theta_{\text{MLLM}} represents the MLLM parameters.
+
+[41] h5: Step 2: Similarity Matrix Computation.
+
+[42] p: We densely sample the video at 1 FPS to obtain N f N_{f} frames. Each generated query q j q^{j} and frame f i f_{i} are encoded using a frozen CLIP model:
+
+[43] table: s j ​ i = sim ​ ( CLIP text ​ ( q j ) , CLIP image ​ ( f i ) ) s_{ji}=\text{sim}(\text{CLIP}_{\text{text}}(q^{j}),\text{CLIP}_{\text{image}}(f_{i})) (2)
+
+[44] p: where sim ​ ( ⋅ , ⋅ ) \text{sim}(\cdot,\cdot) denotes cosine similarity. This produces a similarity matrix 𝐒 ∈ ℝ N q × N f \mathbf{S}\in\mathbb{R}^{N_{q}\times N_{f}} , where each row represents how well a specific query matches across all frames.
+
+[45] h5: Step 3: Learnable Key-Frame Sampler.
+
+[46] p: The sampler with parameter ϕ \phi takes the similarity matrix 𝐒 \mathbf{S} as input and produces per-frame sampling probabilities 𝐩 ∈ ℝ N f \mathbf{p}\in\mathbb{R}^{N_{f}} . Considering the nature of ϕ : 𝐒 ∈ ℝ N q × N f → 𝐩 ∈ ℝ N f \phi:\mathbf{S}\in\mathbb{R}^{N_{q}\times N_{f}}\to\mathbf{p}\in\mathbb{R}^{N_{f}} : dense-prediction and local-perception , the sampler is implemented with an 1D U-Net [ 16 ] , treating the query axis as channles.
+
+[47] p: Aligning with previous works, we sample K K frames with indices x = { x } i = 1 K \textbf{x}=\{x\}_{i=1}^{K} according to distribution p , and each selected frame is encoded at normal resolution (256 tokens per frame) for final answer generation.
+
+[48] h5: Step 4: Answer Generation.
+
+[49] p: The MLLM processes the selected frames ℱ selected \mathcal{F}_{\text{selected}} along with the original question to generate the final answer:
+
+[50] table: a = MLLM ​ ( q , ℱ selected , θ MLLM ) a=\text{MLLM}(q,\mathcal{F}_{\text{selected}};\theta_{\text{MLLM}}) (3)
+
+[51] p: The conversation history, including the query generation step, is maintained to provide context for answer generation, while the sparse preview is masked. This allows the MLLM to understand why certain frames were selected based on its own generated queries.
+
+[52] h3: 4.3 Training Pipeline
+
+[53] h4: 4.3.1 Joint RL Training
+
+[54] p: The MLLM and sampler of MSJoE is trained end-to-end with RL, which enables joint optimization of both the MLLM and sampler components. This subsection elaborates the reward and objective of the RL training process.
+
+[55] h5: Reward Design.
+
+[56] p: The total reward r r for a training sample consists of three components:
+
+[57] p: Accuracy reward r acc r_{\text{acc}} : We assign a reward of 0.8 if the generated answer is correct, and 0 otherwise. This provides the primary supervision signal for both components.
+
+[58] p: Format Reward r format r_{\text{format}} : The model is encouraged to produce a well-formatted response, from query reasoning to question answering. We assign a reward of 0.1 if the model produces a response in correct format.
+
+[59] p: Informativeness reward r info r_{\text{info}} : We encourage queries that produce peaked similarity distributions with clear high-attention regions:
+
+[60] table: r info = 0.1 ⋅ ∑ i 𝕀 [ max i ⁡ s j ​ i min i ⁡ s j ​ i > τ info ] N q r_{\text{info}}=0.1\cdot\frac{\sum_{i}\mathbb{I}\left[\frac{\max_{i}s_{ji}}{\min_{i}s_{ji}}>\tau_{\text{info}}\right]}{N_{q}} (4)
+
+[61] p: where τ info \tau_{\text{info}} is an informativeness threshold. This punishes general queries that match all frames equally.
+
+[62] h5: Training Objectives.
+
+[63] p: We use GRPO algorithm [ 18 ] to train the MLLM: for each training question q q , we sample a group of G G outputs { o } i = 1 G \{o\}_{i=1}^{G} by generating different query sets and frame selections. Then the MLLM with parameter θ \theta is optimized with GRPO objective:
+
+[64] table: 𝒥 G ​ ( θ ) \displaystyle\mathcal{J}_{\text{G}}(\theta) = 𝔼 o 1 , … , o G ∼ π θ old , q ∼ Q \displaystyle=\mathbb{E}_{o_{1},\dots,o_{G}\sim\pi_{\theta_{\text{old}}},q\sim\mathrm{Q}} (5) [ 1 G ​ ∑ i = 1 G ( min ⁡ ( s i ​ A i , clip ​ ( s i , 1 − ϵ , 1 + ϵ ) ​ A i ) ) ] , \displaystyle\left[\frac{1}{G}\sum_{i=1}^{G}\left(\min\left(s_{i}A_{i},\text{clip}\left(s_{i},1-\epsilon,1+\epsilon\right)A_{i}\right)\right)\right], (6)
+
+[65] p: where
+
+[66] table: s i = π θ ​ ( o i | q ) π θ old ​ ( o i | q ) , s_{i}=\frac{\pi_{\theta}\left(o_{i}|q\right)}{\pi_{\theta_{\text{old}}}\left(o_{i}|q\right)}, (7)
+
+[67] p: denoting importance sampling, and
+
+[68] table: A i = r i − mean ​ ( r 1 , r 2 , … , r G ) std ​ ( r 1 , r 2 , … , r G ) , A_{i}=\frac{r_{i}-\text{mean}\left({r_{1},r_{2},\ldots,r_{G}}\right)}{\text{std}\left({r_{1},r_{2},\ldots,r_{G}}\right)}, (8)
+
+[69] p: denoting group-relative advantage. The reward for each output is r G = r acc + r format + r info r_{\text{G}}=r_{\text{acc}}+r_{\text{format}}+r_{\text{info}} .
+
+[70] p: The sampler with parameter ϕ \phi is trained with REINFORCE objective:
+
+[71] table: 𝒥 R ​ ( ϕ ) = 𝔼 x 1 , … , x K ∼ 𝐩 ​ [ A sampler ⋅ ∑ k = 1 K ∇ ϕ ​ log ​ 𝐩 ​ ( x k ) ] , \mathcal{J}_{\text{R}}(\phi)=\mathbb{E}_{x_{1},\dots,x_{K}\sim\mathbf{p}}\left[A_{\text{sampler}}\cdot\sum_{k=1}^{K}\nabla_{\phi}\log\mathbf{p}(x_{k})\right], (9)
+
+[72] p: where A sampler A_{\text{sampler}} shares the same reward of accuracy r acc r_{\text{acc}} .
+
+[73] p: Through this joint optimization, the MLLM learns to generate queries that facilitate frame retrieval and understanding, while the sampler learns to select frames that maximize reasoning effectiveness.
+
+[74] h4: 4.3.2 Sampler Pre-Training
+
+[75] p: Though the RL process enables joint evolution of both MLLM and sampler, a randomly initialized sampler can introduce excessive noise in the early stage of joint training. To stabilize learning, we propose an auxiliary pre-training stage to the sampler on LongVideoQA-ALL before entering the joint RL phase. The training objective is the same to Eq. 9 .
+
+[76] p: GRPO algorithm could also be used for this pre-training phase. However, the computational cost is about G × G\times higher than REINFORCE algorithm. On the other hand, without group-level optimization, a standalone REINFORCE setup with a binary reward can be misleading in our setting: when the correct key frames are selected, but the answer remains wrong due to high question difficulty, the binary reward still penalizes the sampler, which discourages it from trusting key frames.
+
+[77] p: To mitigate this issue, we introduce a difficulty-aware reward . As described in Section 3 , each QA pair in LongVideoQA-ALL has an associated pass rate c ∈ [ 0 , c ) c\in[0,c) , estimated by the MLLM’s accuracy under uniform frame sampling. This rate reflects the inherent difficulty of the question.
+
+[78] p: When c = 0 c=0 , which means that the base MLLM never answers the question correctly even once with uniform sampling, we treat any correct answering during sampler pre-training as a strong signal of key-frame discovery, and assign a high reward with A sampler = 10 A_{\text{sampler}}=10 ; while an incorrect answer receive A sampler = 0 A_{\text{sampler}}=0 , implying no penalty for extremely difficult questions. When c ≠ 0 c\neq 0 , the reward is defined as A sampler = 1 c A_{\text{sampler}}=\frac{1}{c} for correct answers and A sampler = − 1 ( 1 − c ) A_{\text{sampler}}=\frac{-1}{\left(1-c\right)} for incorrect answers (there is no zero-division risk as all-pass questions are filtered out). This encourages the sampler to prioritize harder questions and penalizes failures on easier ones.
+
+[79] p: This difficulty-aware reward provides smoother and more informative gradients for pre-training, allowing the sampler to focus on discovering frames that meaningfully improve the MLLM’s performance.
+
+[80] h2: 5 Experiments
+
+[81] figure: Table 1 : Comparison of MLLMs and baseline methods against our method MSJoE on four benchmarks. We bold the best results and highlight performance gain over the base-MLLM. The performance of baseline methods are reported according to published papers. Method #Frames MLVU LongVideoBench Video-MME LVBench Long Avg. Close-Sourse MLLMs GPT-4o - 66.7 64.6 65.3 71.9 - Gemini-1.5-pro - 64.0 - 67.4 75.0 33.1 Open-Source MLLMs VideoMind-7B - - 64.4 49.2 58.2 40.8 LongVU-7B 1 FPS - 65.4 - 60.6 - NVILA-8B 1024 57.7 70.1 54.8 64.2 - Qwen-2.5-VL-7B 768/2 FPS 56.0 70.2 - 65.1 45.3 Qwen-2.5-VL-7B based methods (32 frames) Uniform Sampling 32 61.5 55.0 49.9 63.7 36.5 Q-Frame 32 66.8 58.7 53.1 62.6 - BOLT 32 66.3 58.6 53.8 64.1 - MSJoE (Ours) 32 69.3 (+7.8) 60.1 (+5.1) 54.1 (+4.2) 64.3 46.4 (+9.9) Qwen-2.5-VL-7B based methods (64 frames) Uniform Sampling 64 65.3 57.3 52.2 64.1 39.2 TSPO 64 74.3 64.2 56.4 65.5 46.4 MSJoE (Ours) 64 75.1 (+9.8) 62.2 (+4.9) 57.4 (+5.2) 66.2 51.1 (+11.9)
+
+[82] h3: 5.1 Setup
+
+[83] h5: Benchmarks.
+
+[84] p: We evaluate the efficacy of our proposed method MSJoE on four widely used long-form video understanding benchmarks:
+
+[85] p: LongVideoBench [ 28 ] consists of 1,337 QA pairs on 753 videos with an average duration of 12 min.
+
+[86] p: MLVU [ 37 ] consists of 2,174 QA pairs on 1,242 videos with an average duration of 12 min.
+
+[87] p: VideoMME [ 5 ] consists of three subsets classified by video duration (short: 1.3 min, medium: 9 min, long: 41 min, average: 17 min). Each subset consists of 300 videos with three questions for each video.
+
+[88] p: LVBench [ 26 ] consists of 1,549 QA pairs on 103 hour-long videos.
+
+[89] p: Note that the statistics provided are based on the Multichoice Question Answering (MQA) subset of the benchmarks, and the reported performance is the MQA accuracy.
+
+[90] h5: Baseline Methods.
+
+[91] p: We compare our proposed method MSJoE with State-of-the-Art (SOTA) methods, which could be classified into three main categories:
+
+[92] p: Close-Source MLLMs : We report the performance of cutting-edge proprietary models GPT-4o [ 7 ] and Gemini-1.5-pro [ 25 ] .
+
+[93] p: Open-Source MLLMs : We compare our method to pretrained or finetuned MLLMs, including reasoning-based MLLM VideoMind, long-form video oriented MLLMs LongVU [ 20 ] and NVILA [ 11 ] , and base-MLLM Qwen-2.5-VL [ 1 ] .
+
+[94] p: Key-Frame Sampling Based Methods : We directly compare our method with heuristic key-frame sampling methods Q-Frame [ 35 ] and BOLT [ 10 ] , and training-based key-frame sampling method TSPO [ 23 ] . For fair comparison, the performances are reported based on the same base-MLLM and frame budget.
+
+[95] h5: Implementation Details.
+
+[96] p: We build MSJoE on Qwen2.5-VL-7B-Instruct [ 1 ] as the base MLLM and use a frozen Clip-ViT-Large-Patch14 [ 14 ] for similarity computation. The sampler is implemented with a U-Net [ 16 ] architecture with 1-D convnets. The number of frames of the initial preview is set to N init = K / / 2 N_{\text{init}}=K//2 . During reinforcement learning, we use a batch size of 32 and train for two epochs with a learning rate of 1e-6 for the MLLM and 1e-5 for the sampler. We set τ info = 10 \tau_{\text{info}}=10 as informativeness reward threshold. For each training sample, we generate G = 8 G=8 trajectory samples for GRPO. The entire framework is mainly implemented in PyTorch [ 13 ] , VERL [ 21 ] and vLLM [ 8 ] . For more implementation details, please refer to Supplementary Materials Section 7 .
+
+[97] h3: 5.2 Comparison to Baseline Methods
+
+[98] p: As shown in Table 1 , our proposed method MSJoE achieves state-of-the-art performance compared to all open-source baselines. Several key observations can be drawn from these results:
+
+[99] h5: MSJoE improves upon both the base MLLM and the strongest baselines.
+
+[100] p: MSJoE consistently outperforms its base model, Qwen-2.5-VL-7B, across all benchmarks, achieving an average improvement of +6.7 points with a 32-frame sampling budget and +8.0 points with a 64-frame budget. Even when using only half of the frames, MSJoE still surpasses the base MLLM by +4 points . Compared to the strongest existing baseline, TSPO, our method achieves an additional +1.1 points improvement on average. These results demonstrate that MSJoE provides superior long-form video understanding, achieving higher accuracy while maintaining efficiency.
+
+[101] h5: Key-frame sampling methods exhibit higher efficiency.
+
+[102] p: Compared with dense-frame models such as LongVU and NVILA, which rely on uniformly or densely sampled video frames, key-frame sampling approaches (from Q-Frame to MSJoE) achieve consistently better accuracy. These results support our key claim: only a small subset of frames (key-frames) is truly needed to answer a question about a long-form video .
+
+[103] h5: Learned sampling surpasses heuristic algorithms.
+
+[104] p: When compared with the state-of-the-art heuristic key-frame sampler BOLT, MSJoE achieves a significant performance gain of 0.3-3.0 points under identical frame budgets. TSPO also shows more improvement over its base MLLM, but MSJoE further extends this advantage. These results suggest that: learning-based sampling strategies are more capable of identifying informative frames than heuristic approaches, leading to more effective video comprehension under constrained sampling conditions.
+
+[105] figure: Figure 4 : Ablation studies on varying input frames (x-axis). Four methods are evaluated: MSJoE in light violet, Top- k k in red, and Uniform Sampling uniform sampling in gray.
+
+[106] figure: Table 2 : Ablation studies on the MLLM (M) and Sampler (S) module with a fixed input budget of 32 frames. The module settings T, PT, and F denote Training, Pre-Trained, Frozen respectively. Setting iii (PT-T*) denotes we feed the same frames (reasoned and sampled) as Ours to a frozen MLLM. Setting vi (F*) denotes using a Frozen MLLM w/ question-as-query. LoVi, VLong, and LVB denote the benchmarks LongVideoBench, VideoMME-Long, and LVBench, respectively. M S MLVU LoVi VLong LVB Ours T PT-T 69.3 60.1 54.1 46.4 (i) T T 69.1 59.8 53.8 46.2 (ii) T PT-F 68.8 58.1 52.4 45.5 (iii) F PT-T* 68.7 58.2 52.1 44.8 (iv) F PT-F 68.2 56.8 52.2 44.3 (v) F top-k 64.5 55.1 45.4 41.8 (vi) F* top-k 68.3 56.2 48.9 44.6 Uni F uni 61.5 55.0 49.9 36.5
+
+[107] h3: 5.3 Ablation Study
+
+[108] p: We evaluate the contribution of each component in MSJoE through controlled ablations across four benchmarks, as shown in Table 2 .
+
+[109] h4: 5.3.1 Answering the Questions
+
+[110] p: We now answer the questions raised in Section 1 .
+
+[111] p: Comparing setting (vi) and uniform sampling , we observe that directly using the question as a query yields a clear improvement, up to +3.8 average points over uniform sampling. This indicates that CLIP’s strong prior can align the question with helpful visual cues and retrieve more informative frames. However, due to the inherent gap between a linguistic query and a visual concept, its performance remains below the frozen-MLLM variants (iii) and (iv) . Therefore, Q1: Is the question alone sufficient for retrieving all relevant frames? Answer: Not sufficient .
+
+[112] p: To alleviate the insufficiency of Q1, we further decompose the question into multiple queries (v) . Yet, performance drops significantly compared to using the single question. We identify two causes:
+
+[113] p: An 1D similarity is easier to sample than a 2D similarity matrix. Applying top- k k over an N query × N frames N_{\text{query}}\times N_{\text{frames}} matrix requires pooling, but both average- and weighted-pooling yield suboptimal results. Only when paired with a trained sampler (iv) does the multi-query strategy surpass vanilla top- k k . Thus, Q2: How to effectively sample frames from similarity scores? Answer: A well-trained sampler is necessary .
+
+[114] p: A frozen MLLM cannot produce strong clip-oriented queries without training. From the comparisons (ii) → \rightarrow (iv) and Ours → \rightarrow (iii) , a trained MLLM consistently outperforms a frozen one: it is trained to reason out better queries, and, even with identical frame inputs, understands them more effectively. Thus, Q3: Can the MLLM and sampler truly collaborate without joint evolution? Answer: No. Co-evolution is required to improve reasoning and key-frame understanding .
+
+[115] h4: 5.3.2 Further Analyses
+
+[116] p: We further analyze MSJoE to validate both its effectiveness and efficiency.
+
+[117] p: First, as shown in Table 2 , comparing our method with setting (i) indicates that a pre-trained sampler provides a stronger initialization for RL optimization, leading to consistently improved performance.
+
+[118] p: Second, Figure 4 shows that our approach consistently outperforms the uniform sampling baseline across various input budgets {8, 16, 32, 64} frames. Moreover, MSJoE achieves same or higher performance with much fewer number of frames, showing superior efficiency. In contrast, the top- k k sampling strategy can even degrade performance on LongVideoBench and VideoMME-Long, suggesting that naive similarity-based selection is less stable.
+
+[119] figure: Figure 5 : Three frame sets from a publicly available video generated by different sampling strategies. Question: What motivated her to change dietary habits? (A) Family and friends (B) Diabetes (C) Tooth decay (D) Anemia .
+
+[120] h3: 5.4 Case Study
+
+[121] p: We present a qualitative case study to illustrate how different sampling strategies influence the inferred answer. The question asks: “What motivated her to change dietary habits?” with four choices: (A) family , (B) diabetes , (C) tooth decay , and (D) anemia . Three frame sets sampled by different methods are shown in Figure 5 :
+
+[122] h5: Frame set (I)
+
+[123] p: shows a scattered set of frames showing buildings, family scenes, and unrelated shots. There is no visual evidence related to changing dietary habits. With such weak cues, a plausible guess might be option (A), which is the result obtained by a uniform-sampling . This demonstrates that uniform sampling easily misses events crucial for long-form reasoning.
+
+[124] h5: Frame set (II)
+
+[125] p: mostly show people eating, with several duplicates. Although these frames correlate with the noun “eating”, they lack narrative cues about the dietary change. Given the prevalence of high-calorie food, the model may lean toward (B): the result predicted by top-k sampling . This behavior reflects a limitation of top-k: it tends to over-focus on surface-level lexical matches to the question, instead of exploring alternative reasoning paths. As illustrated in Figure 6 (left), the question-frames similarity distribution expresses more noise and lacks of concentration.
+
+[126] h5: Frame set (III)
+
+[127] p: shows children eating snacks, followed by an interview scene, and then a dentist examining a child with an open mouth. This sequence reveals a clear narrative: the family enjoys snacks, the child develops tooth issues, and they visit the dentist, motivating a change in dietary habits. Thus, an answer of (C) could be inferred: the answer predicted by MSJoE , and also the correct answer . This is overall processing pipeline of MSJoE to this question: First , with a sparse preview and the question as input, MSJoE reasons out four query concepts ( e.g . , toothbrush, tooth, doctor, blood test). Next , using these queries, the CLIP model identifies high-relevance temporal regions of the video. As shown in Figure 6 (right), query–frame similarities highlight multiple meaningful events rather than a single narrow peak. Then , the U-Sampler selects key frames based on the full similarity distribution. Unlike top-k, it does not simply pick the highest scoring frames, the U-Net architecture allows it to prioritize high-scoring regions and maintain temporal diversity. This leads to more coherent narratives and better question alignment.
+
+[128] figure: Figure 6 : Distribution of question–frame similarity for top-k (left) and query–frame similarity for MSJoE (right). Blue markers denote the frames selected by each method.
+
+[129] h2: 6 Conclusion
+
+[130] p: We introduced MLLM-Sampler Joint Evolution, a reinforcement learning framework that learns to select key frames for long-form video understanding. The method combines query-driven retrieval, a U-Net based sampler, and joint evolution of the sampler and MLLM to identify informative frames under tight sampling budgets. To support training and evaluation, we built a long-video QA dataset with automatically generated annotations and calibrated difficulty. Extensive experiments demonstrate that MSJoE achieves state-of-the-art (SOTA) results on multiple benchmarks while using far fewer frames than dense or heuristic approaches, surpassing base-MLLM by +8 points and the strongest baseline method by +1.1 points on four long-video benchmarks. Our analysis highlights three key findings: queries provide richer semantic grounding than using the question alone; learned sampling consistently outperforms heuristic strategies; and jointly optimizing the MLLM and sampler is crucial for robust query reasoning and key-frame understanding. These results demonstrate the effectiveness of learning to sample for long-video understanding and offer a scalable direction for future multi-modality systems.
+
+[131] h2: References
+
+[132] p: Supplementary Material
+
+[133] h2: 7 More Implementation Details
+
+[134] h3: 7.1 Sampler Architecture
+
+[135] p: We implement the key-frame sampler with a U-Net with 1 × 3 1\times 3 convolution layers. This U-Net consists of four down-sampling layers with 32, 64, 128, 256 channels, and four up-sampling layers with reversed channels. To enlarge perception field, the convolution layers are dilated by 1, 2, 4, 8 for the encoders. For the input similarity matrix, query axis is padded to four, denoting a maximum number of four queries (input channels) is processed by the sampler.
+
+[136] h3: 7.2 Training Details
+
+[137] p: For sampler pre-training , we use a mini-batch size of 32 to train the sampler for one epoch. We use Adam optimizer with a fixed learning rate of 1e-5. Unlike regular single-label classification tasks, which could directly obtain log ⁡ p ​ ( x i ​ d ​ x ) \log\textbf{p}(x_{idx}) , our task is a subset selection without replacement. If we simply do p = softmax ​ ( s ) \textbf{p}=\text{softmax}(\textbf{s}) ( s is the output scores of the sampler) and sample K K frames, the log probability would be biased, as p converges to K K equal peaks with ( N f − K ) (N_{f}-K) zeros. This leads to suboptimal loss K × log ⁡ ( 1 / K ) K\times\log(1/K) while treating all frames equally . Due to the unordered nature of frame selection, we employ iterative probability calculation where each step conditions on previous selections. Algorithm 1 illustrates our approach for proper probability estimation.
+
+[138] figure: Algorithm 1 Probabilistic Sampling Without Replacement 1: Scores scores , sample size K K 2: Selected indices selected , total log probability log ⁡ p total \log p_{\text{total}} 3: N f ← length ​ ( scores ) N_{f}\leftarrow\text{length}(\text{scores}) 4: remaining ← all true vector of size ​ N f \text{remaining}\leftarrow\text{all true vector of size }N_{f} 5: selected ← [ ] , log_probs ← [ ] \text{selected}\leftarrow[],\text{log\_probs}\leftarrow[] 6: for k = 1 k=1 to K K do 7: Mask unavailable frames in scores with − ∞ -\infty 8: probs ← softmax ​ ( masked scores ) \text{probs}\leftarrow\text{softmax}(\text{masked scores}) 9: Sample idx from Categorical ​ ( probs ) \text{Categorical}(\text{probs}) 10: Append log ⁡ probs ​ ( idx ) \log\text{probs}(\text{idx}) to log_probs 11: Append idx to selected 12: Set remaining ​ [ idx ] ← false \text{remaining}[\text{idx}]\leftarrow\text{false} 13: end for 14: return selected , sum ​ ( log_probs ) \text{sum}(\text{log\_probs})
+
+[139] p: For joint RL , we adopt VERL [ 21 ] as our training framework and vllm [ 8 ] as the inference backend. Learning rate is set to 1e-6 and 1e-5 for the MLLM and sampler, respectively. The training batch size is 32 and group size G = 8 G=8 . Following the latest RL training paradigms [ 32 ] , we discard KL Divergency regularization, i.e . , k ​ l ​ _ ​ c ​ o ​ e ​ f = 0 kl\_coef=0 . All the experiments are conducted on a single machine with eight H20 GPUs. The following code block includes a minimal RL training script with verl [ 21 ] :
+
+[140] h3: 7.3 Inference Details
+
+[141] p: During training (rollout) phase, the inference temperature is set to 1.0 and top-p is set to 0.9, and we use greedy decoding/sampling during evaluation to ensure reproduction. These temperature is set for both the MLLM and sampler.
+
+[142] h2: 8 Dataset Collection Details
+
+[143] h5: Step 1: Dense Captioning
+
+[144] p: We first collect 2.8k long videos from the Internet, covering diverse domains including movies, documentaries, and sports. To obtain fine-grained textual descriptions, we employ the Gemini-2.5-Flash model to segment each video into semantically coherent scenes and generate captions for each segment. On average, a video is divided into about 20 segments. Gemini is also asked to produce an overall caption summarizing the global context of the entire video. These captions serve as detailed and structured textual annotations that facilitate subsequent question generation.
+
+[145] h5: Step 2: QA Generation
+
+[146] p: For each video, we aim to generate cross-event questions that require reasoning over multiple segments. We randomly select pairs of segment captions and merge them with the video’s overall caption. The combined text is then fed to Gemini-2.5-Pro to automatically generate at least one multiple-choice question and its corresponding answer. This process is repeated for different segment combinations, resulting in approximately 20 to 40 QA pairs per video. The questions are designed to require temporal reasoning, comparison, or cause–effect understanding across events rather than within a single segment.
+
+[147] h5: Step 3: QA Filtering
+
+[148] p: The automatically generated QA pairs may contain trivial, ambiguous, or incorrect cases. We therefore design a two-stage filtering mechanism to retain only informative and solvable questions.
+
+[149] p: Easy QA filter. We uniformly sample 16 frames from each video and prompt Qwen2.5-VL-7B-Instruct to answer the question eight times with randomized decoding. If the model answers correctly in at least seven of eight trials, we label the question as too easy and discard it. This step removes questions that can be answered from superficial visual clues or common sense alone.
+
+[150] p: Hard or bad QA filter. We then sample 256 frames and again query Qwen2.5-VL-7B-Instruct four times. If the model fails to answer correctly even once, we label the question as too difficult or mismatched with the provided answer and discard it. After this stage, about four high-quality QA pairs remain per video, yielding a total of roughly 9.4k QA pairs over 2.8k videos. We denote this dataset as LongVideoQA-ALL .
+
+[151] h5: Step 4: Difficulty Labeling and Subset Selection
+
+[152] p: For reinforcement learning and curriculum evaluation, we further construct a more challenging subset. For each video, we provide all segment captions and the remaining QA pairs to Gemini-2.5-Pro, asking it to rank the relative difficulty of questions within the same video. We then select the top-ranked question as the hardest one. The resulting subset, containing one question per video, is denoted as LongVideoQA-HARD . This subset emphasizes reasoning-intensive, cross-event questions that best evaluate long-term understanding.
+
+[153] p: In summary, our dataset construction pipeline combines large-scale automatic generation with fine-grained filtering and difficulty calibration. The resulting dataset provides both scale and diversity, supporting supervised and reinforcement learning of models like MLLM-Sampler Joint Evolution that require adaptive reasoning over long-form videos.
+
+[154] h2: 9 More Experiments
+
+[155] h3: 9.1 Ablation Study
+
+[156] h5: Reward Design.
+
+[157] p: As shown in Table 3 , we quantitatively evaluate the effect of the informativeness reward used during joint reinforcement learning (RL) and the difficulty-aware reward employed in the sampler pre-training phase.
+
+[158] p: A comparison between the first two rows reveals that removing the informativeness reward from RL training results in a slight performance degradation. This suggests that the reward encourages the MLLM to produce more informative and specific queries, as opposed to overly generic ones, thereby enabling the sampler to retrieve more relevant key frames for subsequent video understanding tasks.
+
+[159] p: The last two rows exhibit a more pronounced performance gap: when the difficulty-aware reward is removed, i.e . , when the sampler is trained using a simple binary reward scheme (-1/1), the average accuracy decreases by 3.9 points. This substantial drop underscores the importance of a well-calibrated reward signal in the training process.
+
+[160] figure: Table 3 : Ablation studies on the Informativeness Reward (IR) and Difficulty-aware Reward (DR) with a fixed input budget of 32 frames. LoVi, VLong, and LVB denote the benchmarks LongVideoBench, VideoMME-Long, and LVBench, respectively. IR DR MLVU LoVi VLong LVB ✓ ✓ 69.3 60.1 54.1 46.4 ✗ ✓ 69.1 59.8 54.1 46.2 - ✓ 68.2 56.8 52.2 44.3 - ✗ 62.5 55.4 49.2 38.9
+
+[161] h5: Sparse Preview of Query Reasoning
+
+[162] p: To evaluate the effectiveness of preview frames in the first step of MSJoE inference (query generation), we vary the number of input preview frames and measure their corresponding accuracy. These experiments follow the same configuration as all other experiments, with K = 32 K=32 .
+
+[163] p: The results in Figure 7 show that without any visual cues ( # ​ Frames = 0 \#\text{Frames}=0 ), the average accuracy drops significantly to approximately 55.2%. In contrast, even a sparse preview with only four frames achieves substantially higher overall accuracy. This demonstrates the necessity of providing visual context to generate effective queries.
+
+[164] p: As the number of preview frames increases, a broader trend emerges: doubling the frame budget from 16 to 32 yields only a marginal accuracy gain of 0.1%, while doubling the computational cost. Therefore, we adopt K / / 2 = 16 K//2=16 frames at the minimum resolution (32 tokens per frame) as the final configuration.
+
+[165] figure: Figure 7 : Average accuracy on the four benchmarks under different number of input frames as a preview.
+
+[166] h3: 9.2 Efficiency Study
+
+[167] p: Compared to conventional uniform sampling, our proposed framework introduces several additional inference stages: (i) query reasoning, (ii) similarity matrix computation (FP16), and (iii) frame sampling via U-Net (FP32). To quantify the resulting overhead, we measure the time consumption by iterating over 1,000 samples through these steps. The results in Table 4 show that both similarity matrix generation and the U-Net forward pass incur negligible time with each accounting for less than 1% of the total cost.
+
+[168] p: Although the overall time increases by 30% compared to vanilla uniform sampling, our question-answering (QA) step is 10% faster, despite using the same number of input tokens as in uniform sampling. This speedup can be attributed to prefix caching in the vLLM backend during the query reasoning phase, which reduces computation in the subsequent answer generation phase due to cache hits. Quantitatively, the prefix cache hit rates for our pipeline and uniform sampling are 17.2% and 11.8%, respectively.
+
+[169] figure: Table 4 : Average time (s) cost by the four inference steps on 1,000 samples. Query CLIP UNet QA ALL Uniform 2.809 0.029 0.038 3.353 6.226 3.723
+
+[170] h3: 9.3 Reward Visualization
+
+[171] p: We present the training reward curves in Figure 8 , which compares three experimental settings: training on the full LongVideoQA-ALL dataset (yellow), training on the more challenging LongVideoQA-HARD dataset with a pre-trained sampler (violet), and training on LongVideoQA-HARD without pre-training (light violet).
+
+[172] p: As shown in the figure, the reward on the full dataset increases rapidly during the initial training phase. In contrast, progress on the harder dataset is more gradual, reflecting its greater difficulty. While the simpler dataset saturates quickly, the increased complexity of the harder dataset appears to better leverage the model’s capacity, ultimately yielding a 2.5% overall performance improvement on our benchmarks.
+
+[173] p: Comparing the two LongVideoQA-HARD conditions reveals that initializing with a pre-trained sampler significantly stabilizes the early stages of training. This improved stability contributes to enhanced final performance, demonstrating the value of a well-initialized sampler for challenging learning tasks.
+
+[174] figure: Figure 8 : Smoothed reward curves across different training configurations.
+
+[175] h2: 10 Prompts
+
+[176] p: This section details the prompt templates used for query generation and question answering in our framework. The prompt design is motivated by several key considerations: (1) Explicit role definition through system prompts establishes clear model behavior; (2) Structured constraints ensure outputs conform to downstream processing requirements; (3) Visual grounding prioritizes observable content over abstract reasoning; and (4) Format standardization enables reliable parsing and integration with our retrieval pipeline. The prompts below implement these principles through precise instruction phrasing, response formatting rules, and example demonstrations.
+
+[177] h2: Instructions for reporting errors
+
+[178] p: We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the methods listed below:
+
+[179] p: Tip: You can select the relevant text first, to include it in your report.
+
+[180] p: Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability should not be a barrier to accessing research. Thank you for your continued support in championing open access for all.
+
+[181] p: Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .

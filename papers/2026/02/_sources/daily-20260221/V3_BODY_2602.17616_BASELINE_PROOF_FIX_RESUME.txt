@@ -1,0 +1,85 @@
+Appendix B Optimal Off-Policy Reward Baseline
+We derive the variance-minimizing scalar reward baseline for an importance-weighted policy-gradient estimator.
+Throughout, we assume standard regularity conditions for the score-function gradient estimator, including
+(i) support: μ⁡(τ)>0\mu(\tau)>0 whenever πθ​(τ)>0\pi_{\theta}(\tau)>0 so importance ratios are well-defined, and
+(ii) interchange of gradient and expectation so that 𝔼τ∼πθ​[∇θ​log​πθ​(τ)]=0\mathbb{E}_{\tau\sim\pi_{\theta}}[\nabla_{\theta}\log\pi_{\theta}(\tau)]=0.
+These conditions are standard in policy-gradient analyses Williams (1992); Sutton et al. (2000); Degris et al. (2012).
+B.1 Single-sample derivation
+Let a single trajectory sample τ\tau have reward (or advantage) R∈ℝR\in\mathbb{R} and score-gradient vector
+g≜∇θ​log​πθ​(τ).g\;\triangleq\;\nabla_{\theta}\log\pi_{\theta}(\tau).
+In the off-policy setting, trajectories are sampled from a behavior policy μ\mu, and we use the (unnormalized) importance ratio
+w≜πθ​(τ)μ⁡(τ).w\;\triangleq\;\frac{\pi_{\theta}(\tau)}{\mu(\tau)}.
+Consider the (single-sample) importance-weighted policy-gradient estimator with a constant baseline bb:
+G⁡(b)=w⁡(R−b)​g.G(b)\;=\;w\,(R-b)\,g.
+(10)
+Subtracting a constant baseline does not change the expected gradient because
+𝔼τ∼μ​[w​g]=𝔼τ∼πθ​[g]=𝔼τ∼πθ​[∇θ​log​πθ​(τ)]=0.\mathbb{E}_{\tau\sim\mu}[wg]=\mathbb{E}_{\tau\sim\pi_{\theta}}[g]=\mathbb{E}_{\tau\sim\pi_{\theta}}[\nabla_{\theta}\log\pi_{\theta}(\tau)]=0.
+Therefore, minimizing Var⁡(G⁡(b))\mathrm{Var}(G(b)) over bb is equivalent to minimizing the second moment
+𝔼​‖G⁡(b)‖22\mathbb{E}\|G(b)\|_{2}^{2}.
+We have
+𝔼​‖G⁡(b)‖22=𝔼⁡[w2​(R−b)2​‖g‖22].\mathbb{E}\|G(b)\|_{2}^{2}=\mathbb{E}\!\left[w^{2}(R-b)^{2}\|g\|_{2}^{2}\right].
+(11)
+Differentiating (11) with respect to bb yields
+∂∂b​𝔼​[w2​(R−b)2​‖g‖22]=−2​𝔼​[w2​(R−b)​‖g‖22].\frac{\partial}{\partial b}\,\mathbb{E}\!\left[w^{2}(R-b)^{2}\|g\|_{2}^{2}\right]=-2\,\mathbb{E}\!\left[w^{2}(R-b)\|g\|_{2}^{2}\right].
+Setting the derivative to zero gives the variance-minimizing baseline
+b⋆=𝔼⁡[w2​R​‖g‖22]𝔼⁡[w2​‖g‖22].b^{\star}=\frac{\mathbb{E}\!\left[w^{2}R\|g\|_{2}^{2}\right]}{\mathbb{E}\!\left[w^{2}\|g\|_{2}^{2}\right]}.
+(12)
+B.2 Minibatch estimator and plug-in form
+For a minibatch of BB i.i.d. samples {(τi,Ri,wi,gi)}i=1B\{(\tau_{i},R_{i},w_{i},g_{i})\}_{i=1}^{B} drawn from μ\mu, the minibatch estimator is
+G^​(b)=1B​∑i=1Bwi​(Ri−b)​gi.\hat{G}(b)\;=\;\frac{1}{B}\sum_{i=1}^{B}w_{i}(R_{i}-b)g_{i}.
+Since averaging i.i.d. samples scales variance by 1/B1/B, the same b⋆b^{\star} in (12)
+minimizes Var​(G^​(b))\mathrm{Var}(\hat{G}(b)).
+In practice, we use the minibatch plug-in estimate corresponding to (12):
+b⋆≈∑i=1Bwi2​‖gi‖22​Ri∑i=1Bwi2​‖gi‖22b^{\star}\;\approx\;\frac{\sum_{i=1}^{B}w_{i}^{2}\|g_{i}\|_{2}^{2}R_{i}}{\sum_{i=1}^{B}w_{i}^{2}\|g_{i}\|_{2}^{2}}
+(13)
+Remarks.
+(i) In the on-policy regime (w≡1w\equiv 1), Eq. (12) reduces to the classic gradient-norm-weighted optimal baseline Greensmith et al. (2004); Weaver and Tao (2013).
+(ii) Relative to group-mean baselines b=1B​∑iRib=\frac{1}{B}\sum_{i}R_{i}, Eq. (13) shows that variance-optimal baselining in the off-policy regime depends on both the importance ratios and the gradient magnitudes. In comparison, GRPO adopts the mean normalize and RLOO uses a leave-one-out estimator
+bGRPO=1N​∑i=1NRi,bRLOOk=1N−1​∑i≠kRib_{\text{GRPO}}=\frac{1}{N}\sum_{i=1}^{N}R_{i},\quad b_{\text{RLOO}}^{k}=\frac{1}{N-1}\sum_{i\neq k}R_{i}
+Appendix C Efficient Baseline Aware Gradient Computations
+We implement our baseline-aware updates in Megatron-LM, leveraging its explicit control over parameter shards and optimizer state under DP×\timesTP×\timesCP parallelism.
+Per-trajectory gradient-norm statistics under deferred DP synchronization.
+Computing the OPOB baseline requires per-trajectory gradient norms ‖gi‖2\|g_{i}\|_{2}. A naive implementation would perform two backward passes: one to obtain ‖gi‖2\|g_{i}\|_{2} and a second to form the baseline-adjusted policy gradient. Instead, we compute all required quantities in a single backward pass by deferring the data-parallel (DP) gradient all-reduce until after local per-trajectory statistics are computed. Concretely, we run backprop with DP communication disabled so that each worker retains its local gradients, compute the needed per-trajectory scalars locally, and then perform a single DP all-reduce on the final combined gradient.
+This design preserves the FLOPs of a single backward pass while replacing the naive two-backward implementation with modest additional memory traffic (for an extra gradient buffer) and a small number of additional scalar reductions.
+Two-buffer accumulation for baseline-aware gradients.
+For each trajectory τi\tau_{i}, we form the per-trajectory negative log-likelihood
+ℒi=−log⁡πθ​(τi)\mathcal{L}_{i}=-\log\pi_{\theta}(\tau_{i}) and backpropagate once to obtain the score-gradient gi=∇θ​log​πθ​(τi)g_{i}=\nabla_{\theta}\log\pi_{\theta}(\tau_{i}).
+During this pass, we accumulate gig_{i} into two gradient buffers:
+(i) a reward-weighted buffer with coefficient wi​Riw_{i}R_{i}, and
+(ii) a score buffer with coefficient wiw_{i}.
+After the loop, we compute the OPOB baseline bOPOB⋆b^{\star}_{\mathrm{OPOB}} from the locally accumulated per-trajectory statistics (Algorithm 1) and form the final baseline-aware gradient
+G^=1B​(GR−bOPOB⋆​GS)\hat{G}=\frac{1}{B}\left(G_{R}-b^{\star}_{\mathrm{OPOB}}\,G_{S}\right)
+without any additional forward/backward pass.
+Appendix D Component Ablations of VCPO
+We ablate VCPO into its two core variance-control components: ESS-guided step-size scaling and the off-policy optimal baseline. To quantify each component’s contribution under the same asynchronous regime and model/task, we compare:
+(i) TIS (sequence-level truncated IS only),
+(ii) TIS + ESS step-size scaling (our step-size rule applied to AdamW),
+(iii) TIS + OPOB (our closed-form off-policy baseline), and
+All runs use identical hyperparameters except for the ablated component.
+Figure 8 shows that both components improve stability and performance relative to TIS alone, and are complementary.
+Figure 8:
+Component ablations on MATH-500 under high asynchrony (Qwen2.5-7B, PipelineRL-10). We compare TIS alone, as well as adding ESS-guided step-size scaling or the off-policy optimal baseline (OPOB).
+Both components improve stability and accuracy.
+Appendix E Further VCPO Ablation and Comparison Studies
+This appendix provides additional ablations in the MATH and GSM8K setting to isolate the contributions of (i) the ESS-guided step-size rule and (ii) the optimal off-policy baseline as well compare with previous methods. Unless otherwise noted, we follow the same training setup as in the main experiments Appendix F.3).
+E.1 Is Lowering the Learning Rate Sufficient for Stable Asynchronous RL?
+A natural question is whether instability under high asynchrony can be addressed by simply lowering the learning rate. Our ESS-guided rule can be viewed as an automatic, data-dependent step-size schedule: it reduces the effective step size precisely when importance weights concentrate, without requiring manual learning-rate sweeps.
+To test whether conservative tuning alone is sufficient, we run fixed low-learning-rate baselines under the same asynchronous setting. Figure 9 compares VCPO to a lower learning rate (with lr=1−71^{-7} instead of lr=1−61^{-6}) variant of truncated importance sampling (TIS). While reducing the learning rate can mitigate catastrophic collapse, it does so by slowing learning and yielding worse final accuracy. In contrast, VCPO achieves both higher accuracy and stable training without per-task learning-rate tuning, illustrating a favorable stability–efficiency tradeoff.
+Figure 9:
+Lowering the learning rate is not a substitute for variance-aware step-size control.
+On MATH-500 under high asynchrony, a very small fixed learning rate (TIS + Low LR) improves stability but converges more slowly and to lower accuracy, despite exhibiting similar ESS levels.
+VCPO reaches higher accuracy with stable updates without learning-rate sweeps.
+E.2 Are Clipping or Masking Methods Sufficient?
+We next examine whether standard heuristics that directly bound importance ratios are sufficient to stabilize highly asynchronous RL. We report additional results for both masking (MIS-style) and clipping (TIS-style) applied to different ratio definitions.
+Methods.
+We consider three ratio variants for both masking and clipping:
+(i) sequence ratio (full-trajectory likelihood ratio),
+(ii) token ratio (per-token likelihood ratio),
+and (iii) geometric mean ratio (a length-normalized proxy).
+For masking, we zero out the update when the chosen ratio exceeds a threshold; for clipping, we cap the ratio at the threshold.
+DeepSeek-v3.2 DeepSeek-AI et al. (2025) introduces a masking heuristic that is closely related to masked importance sampling, using a geometric-mean MIS with an additional sign constraint on advantages to discard unstable updates.
+Thresholds.
+Following prior work and practitioner guidance suggesting that bounding extreme ratios can reduce variance Yao et al. (2025b); Wu et al. (2025); Fu et al. (2025), we evaluate two representative maximum thresholds, c∈{2.0,8.0}c\in\{2.0,8.0\}, across all ratio variants. (We keep other hyperparameters matched to the main setup.)
+In Figure 10, TIS (a,b)(a,b) denotes truncated importance sampling where ratios outside the interval (a,b)(a,b) are clipped back into (a,b)(a,b), while MIS (a,b)(a,b) denotes masked importance sampling where updates with ratios outside (a,b)(a,b) are discarded (i.e., assigned zero weight).
+Findings and tuning sensitivity.
+Figure 10 shows that these masking/clipping methods can delay collapse in some settings, but it is not a reliable substitute for VCPO under high asynchrony. In particular, sequence-level MIS is highly brittle: at both thresholds we find it can mask nearly all sequences, effectively removing the learning signal and causing training to fail. Token-level variants can be less brittle but rem

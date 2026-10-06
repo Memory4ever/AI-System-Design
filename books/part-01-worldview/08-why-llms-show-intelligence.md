@@ -50,6 +50,9 @@ L(theta) = - sum_t log p_theta(x_t | x_<t)
 
 但“压缩”在这里是解释性视角，不代表模型一定构建了正确、简洁或因果的世界模型。错误相关性同样可以降低 loss，互相矛盾的文本也可能共同进入参数。语言中的世界结构只是训练分布的一部分投影。
 
+语法形式与构式意义也不能互相代签。判断句子是否可接受，与判断某个结构约束了怎样的事件或参与者关系，是不同的行为接口；即使采用相同 checkpoint 与 likelihood 读出，两种能力的学习进度仍可能不同。[受限最小对照](https://arxiv.org/html/2602.21978v1)中，OLMo2 的形式可接受性指标较早趋平，构式意义选择仍继续改善；这不是新的普遍 scaling law，也不证明内部已形成可读语法规则。人名/实体互换、虚构词与 base/instruct 对照可帮助诊断词汇依赖，但保留的闭类词、形态和生成器筛选仍影响支持，局部 instruction tuning 也会让部分构式退步。应分别固定形式与意义的任务、读出和候选人口，计入材料生成、人评与模型评分成本；只需要形式检查时，原可接受性基线仍合理，需要意义泛化时则增加独立语义对照，不用一个通过分数替另一个接口验收。
+<!-- source-family:SF-2026-ARXIV-2602-21978 -->
+
 ## 相关分布能支持因果推演，但不能自动识别干预关系
 
 既然科学论文、历史叙述和日常解释都包含原因、结果与反事实，一个合理的朴素判断是：模型为了预测这些文本，会把其中反复出现的因果结构压缩进可复用表示。这个判断解释了模型为什么能够复述因果知识、补全因果链，甚至在给定规则后执行多步推演；它不能直接推出模型已经从世界中识别出真实因果机制。
@@ -190,6 +193,10 @@ Softmax 对任何输入都会产生总和为 `1` 的 token distribution；weight
 因此“当前最可能的续写”可以非常集中，却仍然是错误事实。降低 temperature 只会让这个 mode 更稳定，不会把语言
 概率自动变成 truth probability。
 
+这不只是“训练语料里有错误”。即使语料中的答案都正确，有限数据也可能不足以区分一个未见答案究竟有效还是只是像真的。一个有边界的理论分析把生成问题转为 Is-It-Valid 二分类：在有限答案空间、同一 prompt 分布和特定的正确/错误混合评价分布下，由模型概率构造的分类器若仍难以区分两者，且概率质量偏差与有效/错误答案数量比足够小，就能给生成错误率提供非平凡下界。这里的概率质量偏差不是“模型对事实正确性的校准”；缺少上述条件，下界可能没有信息，不能改写成所有模型必然以某个比例 hallucinate。始终拒答或只回答可验证问题的系统也不是这项结论的反例，因为它们改变了覆盖范围或分布条件。[条件与证明](https://arxiv.org/html/2509.04664v1#S3.SS2)。<!-- source-family:SF-2025-ARXIV-2509-04664 -->
+
+因此需要分开两个问题：模型是否有足够信息辨别有效答案，以及面对不确定性时系统是否允许它不回答。后者还受评价规则影响：答错与拒答都记零分、猜对记一分时，哪怕只有很小的主观正确概率，猜测也比拒答有更高的期望分数。这说明某种评分规则的激励，不证明模型实际执行了最优决策，也不解释全部幻觉来源。第 66 章负责定义回答、拒答和错误代价的评价契约，本章只据此保留一个能力边界：语言分布学得好、具备正确性信号与愿意按证据行动，不能互相替代。
+
 模型内部仍可能包含与正确性相关的信号。可以读取 answer log-probability、token/sequence entropy，让模型在提出
 答案后预测 `P(True)`，或直接预测 `P(IK)`（是否知道）；也可以多次采样，将语义等价答案聚类后计算 semantic
 entropy。这些方法支持一个有边界的结论：**模型有时能感知 familiarity、歧义和自身失败风险，但这种自知是需要
@@ -265,6 +272,8 @@ scalable architecture
 
 <!-- source-family: arxiv:2608.07261v1; daily-trace: papers/2026/08/10/README.md; semantic-body-binding: atomic-fact-storage-vs-composable-reasoning-circuit -->
 
+上述 bridge-state 是一条受控的组合机制，不能把探针何时读出实体直接当作原任务的因果计算顺序。若把不同 layer、subject/末 token 的 hidden state 转入另一个解释 prompt，所观察的是该解释接口中的可解码性；raw、按解释相似度过滤的 GF/LF，以及只保留原子事实与组合均答对的 Correct 人口，也不是同一测量对象。[受限多跳观察](https://arxiv.org/html/2601.03542v1)中三、四跳的最终实体可以比中间实体更早被该探针读出，两跳却未见同样反转。这要求比较层顺序时固定位置、解释 prompt、过滤规则与条件人口，而不是据此否定所有逐步组合，或反向证明模型先完成真实 recall 再提取桥状态；概率 recall、Attention/MLP 功能与必要因果 hop 仍需独立干预。旧的受控电路解释继续成立，可读表示与实际使用分开验收，探针失配时回退行为对照和受控干预。<!-- source-family:SF-2026-ARXIV-2601-03542 -->
+
 ## 自检问题
 
 1. 为什么 next-token 接口是局部的，却可能要求模型使用长程和高阶结构？
@@ -303,6 +312,12 @@ depth / breadth scaling 获益，但“轨迹收敛”只说明内部动力学�
 外推为所有 LLM 都能靠更多采样获得可靠推理。
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-21488:end -->
 
+当额外深度来自对现成模型的一段 frozen blocks 反复应用时，稳定训练过的普通 forward 并不保证该 block 接受循环后的状态仍有效。一条不重训的条件分支先取得普通 forward 在循环边界的参考状态，再缓存循环状态，以均匀平均、参考状态插值或相对参考的加权平均送入下一轮；它改变的是 block 的输入分布，而不是增加参数或认证 hidden state 的真值。[受限 frozen-loop 对照](https://arxiv.org/html/2602.14759v1)中，Gemma2-2B/WinoGrande 的 naive 区间扫描全部反退，而参考插值后部分任务改善；区间在 WinoGrande 选择后固定到其他任务，Gemma 的 ARC-E 仍退，Llama3-8B 响应更不一致。跨模型 normalization 差异没有被独立隔离，插值也不是 valid activation domain 的证书。普通参考 forward、额外 block 应用、状态缓存与区间校准都要付费，multiple-choice option likelihood 的改善不能直接外推自由生成或端到端速度。循环造成分布漂移、质量反退或额外成本无法摊销时，保留普通 forward、较小固定预算或经独立验收的训练式 recurrence。<!-- source-family:SF-2026-ARXIV-2602-14759 -->
+
+增加 latent 轨迹的宽度时，还可以把“更新推理模型”与“学习探索 proposal”分开：冻结既有 backbone 参数，让一个可训练 head 读取当前确定性 hidden state，输出扰动的 diagonal-Gaussian 均值与方差；扰动后的 state 再进入下一轮 recurrence。这样改变的是条件探索分布，不是给 latent thought 建立正确答案 posterior，冻结模型也不意味着 rollout 人口不变。[受限 latent sampling 对照](https://arxiv.org/html/2602.14077v1)在两种 backbone 中显示中高采样预算的 pass@N 改善，但 N=2 有反退，且“至少一个正确”仍需外部识别才能交付。head 训练、多轨迹 forward 与验证均付费；实用实现对每步 log-density 按维取均值，而非 joint density 所需的求和，不能继承 exact trajectory ratio 或无偏 policy gradient 的保证。proposal 失配、有效多样性不足或 selector 不能可靠识别候选时，保留固定 recurrence、固定预算或已校准的简单噪声；可靠性仍由外部答案证据判断，不由 latent 分布名义上的可计算性签发。<!-- source-family:SF-2026-ARXIV-2602-14077 -->
+
+还必须区分中间状态被生成与被后续计算消费。只监督最终答案或最后 latent state，可以留下看似完整的隐式轨迹，却未必让模型使用这些中间结果；答对、增加 latent 长度或轨迹收敛本身都不是计算路径证明。[受限 latent-supervision 对照](https://arxiv.org/html/2602.22441v1)在小模型与合成/增强任务中扰动最后 embedding 后仍保留部分正确输出，但早期 latent 与 KV 仍可访问，故只能诊断末状态接口的有限依赖，不能断言全部 latent 无用；单例 attention 图也不提供唯一因果。混合早期训练阶段可加强中间监督，但不同训练 recipe 和预算尚未完全单因素隔离；多次采样提高 pass@N 与多数答案更差可以同时发生，diversity 不等于已实现 BFS 或可交付正确性。训练暴露、额外轨迹与外部识别都要付费；监督或干预权限不足时，保留显式 CoT、固定预算和可核验工具，并分别验中间状态使用与最终答案，而不采用互相冲突的表格/正文精确收益数字。<!-- source-family:SF-2026-ARXIV-2602-22441 -->
+
 ### 涌现可以预警，但预警器不是能力证明
 
 只在某个 checkpoint 首次越过 benchmark 阈值后宣布“涌现”，会把能力形成、指标阈值和事后挑选混在一起。一个更可审计的分支先冻结候选内部机制、anchor、预测区间和 false-alarm gate，再用独立 seed 与后续 checkpoint 检查该信号是否早于行为跃迁出现。这样可以把部分能力跃迁从事后叙事改为带拒绝条件的预测任务，也让“预测失败”成为可记录证据。
@@ -310,6 +325,10 @@ depth / breadth scaling 获益，但“轨迹收敛”只说明内部动力学�
 代价是需要 seed fleet、连续 checkpoint、预注册和足够多的负对照；内部 head 的形成也可能只是与能力共同变化，而不是能力的充分原因。合成 grokking、诱饵语言和有限公开 checkpoint 上的校准结果不能证明任意新能力都可预测，更不能把预测区间当作发布许可。无法复现 anchor、false-alarm 超界或任务定义漂移时，仍应回到直接行为评价与外部证据。<!-- source-family:SF-2026-ARXIV-2609-19000 -->
 
 ## Review notes
+
+- `SF-2025-ARXIV-2509-04664` — Daily `2025-09-06`；精确 v1 §3.1–3.2、Appendix A 与 §4.1/Appendix E。正文采用有效性分类到生成错误的条件联系，不采用无条件必然幻觉、部署错误率或 truth-calibration 保证；评分激励的完整机制归属 Ch66。必要原文和现有论证已核对，Mendel非写入者实际核正文及完整邻接并通过；未复现实验。
+
+- `SF-2026-ARXIV-2602-14759` — Daily `2026-02-18`；[exact-v1](https://arxiv.org/html/2602.14759v1) §II–IV必要方法与直接反侧。2+1+2=5，frozen-loop参考缓存/插值的条件差额深入；naive扫描全退、WinoGrande区间选择、跨模型/norm混杂、ARC-E与局部MCQ人口保留，不采用有效激活域保证或零成本。root 必要源/actual owner PRE通过；实际正文/完整邻接与本末注经root非作者POST通过，窄锁释放，未核artifact/复现，非日级。
 
 本章使用 operational capabilities 讨论“智能”，不对意识作结论，也不把 next-token prediction 描述为必然学得真实世界模型。后续 Review 应持续分离 base model、post-training、in-context behavior 与 tool-augmented system 四种能力来源，并在新增 emergence 案例时同时检查指标连续性和反方证据。
 
@@ -335,3 +354,11 @@ depth / breadth scaling 获益，但“轨迹收敛”只说明内部动力学�
   https://arxiv.org/abs/2305.00050
 - Zhijing Jin et al., "CLadder: Assessing Causal Reasoning in Language Models", 2023:
   https://arxiv.org/abs/2312.04350
+
+- `SF-2026-ARXIV-2601-03542` — Daily `2026-01-09`；[Layer Order Inversion exact-v1](https://arxiv.org/html/2601.03542v1) §3.1–4.3、Limitations。原2+1+3=6，采用 probe layer/token/解释 prompt/raw-GF-LF/Correct 条件人口与因果 hop 的分账，三四跳反转不否定两跳或所有组合；不采用缺 targeted causal validation 的 recall/Attention 功能解释。未复现；jan01_v3实际必要原源与owner写前通过，并实际顺读正文、前后邻接及源注POST通过；日级Gate未验。
+
+- `SF-2026-ARXIV-2602-14077` — Daily `2026-02-18`；[GTS exact-v1](https://arxiv.org/html/2602.14077v1) §3–5及必要 Appendix A/B。2+1+2=5，冻结 recurrence/可训条件 proposal 的实际差额深入；保留 diagonal family、dim-mean 密度比与 exact joint ratio 区别、N2反侧、pass@N识别与训练/多轨迹费用，不采用无偏或普遍推理改善。正文20k与附录10k预算表述分开，未核代码或复现。root 必要源/actual owner PRE及实际正文/完整邻接与末注POST通过，非日级。
+
+- `SF-2026-ARXIV-2602-22441` — Daily `2026-02-28`；[Latent supervision exact-v1](https://arxiv.org/html/2602.22441v1) §2/4/5、blocks26–32、43–67、73–100。3+1+3=7；末embedding干预保留早latent/KV，计算路径与末答案差额深入；训练混杂、Pass@N/Maj@N反侧与费用近文，Table4/paragraph78冲突数字不采用。root必要原源/actual owner PRE通过并授单段及自身末注窄锁；作者实际正文及完整邻接顺读，root非作者实际正文/完整邻接/自身末注POST通过，窄锁释放。未核实现/复现，非日级Gate。
+
+- `SF-2026-ARXIV-2602-21978` — Daily `2026-02-27`；[CxMP exact-v1](https://arxiv.org/html/2602.21978v1) §3–4/Fig3/5/6/Table3必要控制，2+1+2=5；形式acceptability与constructionmeaning学习/验收不互签差额深入，samecheckpoint/likelihood有限证据、生成器/实体/虚构词支持限制、instruction反侧及材料/人评/评分费用近正文。root必要原源/actual owner PRE及实际正文53/完整邻接37–60与自身末注358非作者POST通过，窄lease释放。未核artifact/复现，非日级验收。

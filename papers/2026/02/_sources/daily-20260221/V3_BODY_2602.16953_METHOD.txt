@@ -1,0 +1,137 @@
+3 Methodology
+Our framework (Figure 3) converts expensive simulator feedback into stable offline supervision for training verification agents.
+We first formalize the verification setting and the supervision signals available from simulator execution.
+Section 3.1 describes the feedback returned by the simulator and the coverage metric used to measure progress.
+Section 3.2 models verification as a sequence of memoryless state transitions and defines the transition data points used for training.
+Sections 3.3 and 3.4 then describe how these data points are constructed from agentic tarjectories and organized across training stages to align supervision with the evolving student model.
+3.1 Simulation Feedback and Coverage
+We employ a simulator as an evaluator that executes testbenches against a fixed hardware design repository (which consists of the design source files and specifications) and returns structured feedback.
+Given a generated testbench, a simulator invocation returns a feedback observation tuple:
+of​e​e​d​b​a​c​k=(status,coverage,log)o_{feedback}=(\texttt{status},\texttt{coverage},\texttt{log}),
+where
+∙\bullet
+status indicates the execution outcome, including compile failure, runtime failure, successful completion, etc.
+∙\bullet
+coverage reports quantitative coverage metrics collected during simulation;
+∙\bullet
+log contains diagnostic information such as compiler errors, assertion failures, or runtime traces.
+We aggregate simulator-reported coverage metrics into a normalized scalar score via a coverage function:
+Cov⁡(⋅):of​e​e​d​b​a​c​k→[0,1].\mathrm{Cov}(\cdot):o_{feedback}\rightarrow[0,1].
+Simulator calls can dominate computational cost.
+In academic settings, a single execution typically requires seconds, while industrial flows may require minutes or hours.
+To enable fair comparison, we fix simulator call budgets across all ablation studies.
+3.2 Agentic Verification as Memoryless State Transition
+We formalize execution-grounded verification as an iterative generation process in which a language model repeatedly produces verification programs and a simulator deterministically evaluates them.
+Our central assumption is memorylessness: all information available to the agent is explicitly represented in the current state.
+State.
+Let ℛ\mathcal{R} denote a fixed hardware design repository, consisting of all design source files and specifications.
+At step tt, the state and its coverage are defined as
+st=(ℛ,xt,ot),Cov⁡(st)≜Cov⁡(ot)∈[0,1],s_{t}=(\mathcal{R},\,x_{t},\,o_{t}),\quad\mathrm{Cov}(s_{t})\triangleq\mathrm{Cov}(o_{t})\in[0,1],
+where xtx_{t} is the full testbench file at step tt, and ot=(status,coverage,log)o_{t}=(\texttt{status},\texttt{coverage},\texttt{log}) is the simulator feedback observation defined in Section 3.1.
+We define the initial state as
+s0=(ℛ,x0,o0),s_{0}=(\mathcal{R},x_{0},o_{0}),
+where x0=∅x_{0}=\varnothing denotes an empty testbench placeholder and o0=∅o_{0}=\varnothing represents a null simulator observation prior to any execution. For the initial state, we define Cov⁡(o0)=0\mathrm{Cov}(o_{0})=0.
+Although ℛ\mathcal{R} is constant across transitions, the full repository contents are provided to the model at every step.
+We focus on full testbench regeneration rather than patch-based editing, as fine-grained localization and diff generation are unreliable without specialized pretraining on repository-level edit traces, and introducing partial edits would confound the learning objective with additional structural assumptions.
+Transition.
+A single transition composes LLM inference with simulator execution:
+xt+1\displaystyle x_{t+1}
+∼Mθ(⋅∣st),\displaystyle\sim M_{\theta}(\cdot\mid s_{t}),
+ot+1\displaystyle o_{t+1}
+=Sim⁡(ℛ,xt+1),\displaystyle=\mathrm{Sim}(\mathcal{R},x_{t+1}),
+st+1\displaystyle s_{t+1}
+=(ℛ,xt+1,ot+1)=(ℛ,xt+1,Sim⁡(ℛ,xt+1)).\displaystyle=(\mathcal{R},x_{t+1},o_{t+1})=(\mathcal{R},x_{t+1},\mathrm{Sim}(\mathcal{R},x_{t+1})).
+Memoryless assumption.
+The LLM inference depends only on the current state representation:
+Mθ(xt+1∣s0:t)=Mθ(xt+1∣st),M_{\theta}(x_{t+1}\mid s_{0:t})\;=\;M_{\theta}(x_{t+1}\mid s_{t}),
+where any information from prior interaction rounds must be encoded explicitly in (xt,ot)(x_{t},o_{t}) rather than implicit history.
+This formulation preserves all information necessary for our specific task, which is improving verification coverage, since earlier trials are subsumed by the updated code and observation.
+Moreover, discarding raw interaction history reduces prompt length and redundancy, allowing the model to focus on the most recent execution signal.
+To provide a diagnostic comparison, we define a vanilla agent as one that conditions each generation on the full interaction history (s0,a0,o0,…,st)(s_{0},a_{0},o_{0},\ldots,s_{t}), rather than the memoryless state representation sts_{t}.
+Table 1 shows that the memoryless formulation consistently yields equivalent or superior performance across both compact and larger models.
+Data point formulation.
+We define a data point as dt=(st,xt+1)d_{t}=(s_{t},x_{t+1}), where st=(ℛ,xt,ot)s_{t}=(\mathcal{R},x_{t},o_{t}) is the current state and xt+1x_{t+1} is the verification program generated from that state. Learning therefore reduces to constructing a dataset of transitions dt=(st,xt+1)d_{t}=(s_{t},x_{t+1}) that improve verification coverage under simulator feedback.
+Table 1:
+Effect of the memoryless formulation on agents.
+Results are measured on our verification benchmark (Section 4.1).
+Pass@1 (higher is better)
+Model
+Vanilla
+Memoryless
+Qwen3-Coder-30B-A3B-Instruct
+59.5%
+63.9%
+Qwen3-4B-Instruct-2507
+28.2%
+28.4%
+3.3 Coverage-Guided Agentic Rejection Fine-Tuning
+Section 3.2 defines verification as a sequence of state transitions evaluated by a simulator.
+Learning therefore reduces to constructing supervision pairs dt=(st,xt+1)d_{t}=(s_{t},x_{t+1}) that improve coverage under execution feedback.
+We now describe how such data points are synthesized from agentic trajectories and filtered using coverage signals.
+Student-grounded trajectory synthesis.
+Under the memoryless transition model, all trajectories originate from the same initial state s0=(ℛ,∅,∅)s_{0}=(\mathcal{R},\varnothing,\varnothing).
+Consequently, differences in agentic behavior arise not from the initial state itself, but from how intermediate states are sampled and how transitions are generated from those states.
+We characterize an agentic trajectory by two models:
+(i) MintM_{\text{int}} used to sample intermediate states, and
+(ii) MtransM_{\text{trans}} used to generate the final transition from those states.
+Starting from the initial state s0s_{0}, a trajectory of length NN is generated by iteratively sampling the intermediate-state model for the first N−1N\!-\!1
+rounds,
+xt+1∼Mint(⋅∣st),st+1=(ℛ,xt+1,Sim(ℛ,xt+1)),\displaystyle x_{t+1}\sim M_{\text{int}}(\cdot\mid s_{t}),\quad s_{t+1}=(\mathcal{R},x_{t+1},\mathrm{Sim}(\mathcal{R},x_{t+1})),
+t=0,…,N−2\displaystyle t=0,\ldots,N-2
+followed by a final transition generated by the transition model,
+xN∼Mtrans(⋅∣sN−1),sN=(ℛ,xN,Sim(ℛ,xN)).x_{N}\sim M_{\text{trans}}(\cdot\mid s_{N-1}),\quad s_{N}=(\mathcal{R},x_{N},\mathrm{Sim}(\mathcal{R},x_{N})).
+This formulation allows the intermediate-state distribution to be controlled independently from the quality of the final transition, and naturally subsumes both imitation-style and self-sampling trajectories as special cases.
+Under the above formulation, agentic traces can be categorized into three canonical types:
+∙\bullet
+Full-teacher agentic traces.
+Both intermediate states and transitions are generated by the teacher model, i.e., (Mint,Mtrans)=(MT,MT)(M_{\text{int}},M_{\text{trans}})=(M_{T},M_{T}).
+These traces provide high-quality transitions but induce a teacher-biased state distribution that may exclude failure modes commonly encountered by the student.
+∙\bullet
+Imitation-style agentic traces.
+Intermediate states are sampled using the student model, while transitions are generated by the teacher model, i.e., (Mint,Mtrans)=(Mθ,MT)(M_{\text{int}},M_{\text{trans}})=(M_{\theta},M_{T}).
+This formulation aligns supervision with the student-induced state distribution while preserving expert-level corrective transitions.
+∙\bullet
+Self-sampling agentic traces.
+Both intermediate states and transitions are generated by the student model, i.e., (Mint,Mtrans)=(Mθ,Mθ)(M_{\text{int}},M_{\text{trans}})=(M_{\theta},M_{\theta}).
+These traces fully reflect the student’s execution behavior and remove reliance on a fixed teacher model.
+Training progression.
+The above taxonomy decouples the distribution of visited states from the quality of corrective transitions and provides a simple progression for constructing supervision.
+When the student model is substantially weaker than the teacher, imitation-style traces offer stable learning signals by pairing student-induced failure states with strong corrective transitions from the teacher.
+As training proceeds and the student becomes capable of producing higher-quality repairs, self-sampling traces become increasingly valuable: they reflect the student’s own execution behavior and enable learning recovery strategies for failure modes that lie beyond the fixed performance ceiling of a static teacher.
+In this way, trajectory synthesis can naturally evolve from teacher-guided correction toward student-driven refinement while remaining grounded in the same coverage-based filtering mechanism.
+Worst-state selection.
+Uniformly generating transitions from all visited states tends to overrepresent already successful contexts and yields limited corrective supervision.
+Instead, we concentrate synthesis on failure-prone regions.
+From the initial state s0s_{0}, we sample a set of candidate intermediate states
+𝒮cand={s(1),s(2),…}\mathcal{S}_{\text{cand}}=\{s^{(1)},s^{(2)},\ldots\}
+using MintM_{\text{int}}.
+Each state has an associated coverage score Cov⁡(s(i))\mathrm{Cov}(s^{(i)}).
+We select the lowest-coverage state
+sworst=arg​mins∈𝒮cand⁡Cov​(s)s_{\text{worst}}=\operatorname*{arg\,min}_{s\in\mathcal{S}_{\text{cand}}}\mathrm{Cov}(s)
+and generate corrective transitions from this state.
+Focusing on the worst-performing state increases the probability that sampled transitions contain useful recovery behavior under a fixed simulator budget.
+Coverage-guided rejection.
+For each selected state st∈𝒮worsts_{t}\in\mathcal{S}_{\text{worst}}, we generate transition candidates using the transition model MtransM_{\text{trans}}:
+xt+1∼Mtrans(⋅∣st),ot+1=Sim(ℛ,xt+1).x_{t+1}\sim M_{\text{trans}}(\cdot\mid s_{t}),\quad o_{t+1}=\mathrm{Sim}(\mathcal{R},x_{t+1}).
+Each resulting data point dt=(st,xt+1)d_{t}=(s_{t},x_{t+1}) is filtered through execution-based rejection sampling:
+ℱstage(dt)=𝕀[Cov(ot+1)−Cov(ot)≥τΔ],\displaystyle\mathcal{F}_{\text{stage}}(d_{t})=\mathbb{I}\Big[\mathrm{Cov}(o_{t+1})-\mathrm{Cov}(o_{t})\geq\tau_{\Delta}\Big],
+where τΔ\tau_{\Delta} denotes a minimum coverage improvement threshold.
+Among retained candidates, we keep the transition with the largest coverage improvement.
+This rejection mechanism converts simulator feedback into a dense supervisory signal that prioritizes corrective behaviors over already successful cases.
+Resulting supervision.
+Applying worst-state selection and coverage-based rejection yields a dataset of transitions concentrated on recovery from low-coverage states.
+These data points are then used for supervised fine-tuning of the student model.
+By grounding supervision in student-induced failure modes and filtering transitions by execution improvement, the procedure extracts maximal learning signal from each simulator call while remaining fully offline.
+3.4 Verification-Conditioned Progressive Learning
+Section 3.3 describes how coverage-guided rejection fine-tuning converts simulator feedback into supervision pairs dt=(st,xt+1)d_{t}=(s_{t},x_{t+1}) grounded in student-induced failure states.
+Because these states depend on the current student model, the distribution of useful supervision evolves as training proceeds.
+We therefore organize training into stages that align data synthesis with the current student distribution.
+Stage-conditioned data synthesis.
+Let M(k)M^{(k)} denote the student model at stage kk.
+Using the procedure in Section 3.3, we construct a dataset 𝒟(k)\mathcal{D}^{(k)} by sampling trajectories with M(k)M^{(k)} and retaining data points containing coverage-improving transitions:
+𝒟(k)={(st,xt+1)|xt+1∼M(k)(⋅∣st),ℱstage(dt)=1}\mathcal{D}^{(k)}=\Big\{(s_{t},x_{t+1})\ \Big|\ x_{t+1}\sim M^{(k)}(\cdot\mid s_{t}),\ \mathcal{F}_{\text{stage}}(d_{t})=1\Big\}
+Each stage therefore yields supervision aligned with the state distribution induced by the current student model.
+Staged supervised fine-tuning.
+Given dataset 𝒟(k)\mathcal{D}^{(k)}, we update the student by standard supervised fine-tuning:
+θ(k+1)=arg⁡minθ​𝔼(s,x)∼𝒟(k)​[−log⁡Mθ​(x∣s)].\theta^{(k+1)}=\arg\min_{\theta}\ \mathbb{E}_{(s,x)\sim\mathcal{D}^{(k)}}\big[-\log M_{\theta}(x\mid s)\big].
+Training proceeds sequentially

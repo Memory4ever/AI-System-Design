@@ -1,0 +1,139 @@
+VESPO: Variational Sequence-Level Soft Policy Optimization for Stable Off-Policy LLM Training (https://arxiv.org/html/2602.10693v1)
+citeturn28924view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.10693v1","lineno":216}); Total lines: 578
+L164: Surrogate Objective Interpretation. Recall that our goal is to maximize the expected reward $\mathcal{J}(\theta)=\mathbb{E}_{\tau\sim\pi_{\theta}}[R(\tau)]$ (cite63†Equation 2 ). With off-policy samples from $\mu$, the reshaped gradient (cite61†Equation 4 ) can be viewed as optimizing a surrogate objective. Observe that $\nabla_{\theta}W=W\nabla_{\theta}\log\pi_{\theta}$, so the gradient estimator can be rewritten as
+L165:  | $$\mathbb{E}_{\tau\sim\mu}[\phi(W)\cdot A\cdot\nabla\log\pi_{\theta}]=\mathbb{E}_{\tau\sim\mu}\bigl[\tfrac{\phi(W)}{W}\cdot A\cdot\nabla W\bigr].$$  |  | (18)
+L166: 
+L167: Defining $f(W)$ such that $f^{\prime}(W)=\phi(W)/W$, the right-hand side equals $\nabla_{\theta}\mathbb{E}_{\tau\sim\mu}[f(W)\cdot A]$, since $A(\tau)$ does not depend on $\theta$. Thus VESPO implicitly maximizes a surrogate objective:
+L168:  | $$\mathcal{J}_{\text{VESPO}}(\theta)=\mathbb{E}_{\tau\sim\mu}\bigl[f(W(\theta))\cdot A(\tau)\bigr].$$  |  | (19)
+L169: 
+L170: For $\phi(W)=W^{\alpha}\exp(-\lambda W)$, we have $f^{\prime}(W)=W^{\alpha-1}\exp(-\lambda W)$, which integrates to the lower incomplete gamma function:
+L171: 
+L172:  | $$f(W)=\frac{1}{\lambda^{\alpha}}\,\gamma(\alpha,\lambda W),\quad\text{where }\gamma(a,x)=\int_{0}^{x}t^{a-1}e^{-t}\,dt.$$  |  | (20)
+L173: This form is smooth and infinitely differentiable, and saturates as $W\to\infty$, providing a principled soft alternative to hard clipping.
+L174: 
+L175: Figure 2: Surrogate objectives $f(w)$ (top) and gradient scaling factors $\phi(w)=w\cdot f^{\prime}(w)$ (bottom) for positive and negative advantages. Hard clipping zeros $\phi$ abruptly at the boundary; VESPO peaks near $w{=}1$ and decays smoothly.
+L176: ### 3.4 The VESPO Algorithm
+L177: In practice, we use the shifted form $\phi(W)=W^{c_{1}}\exp(c_{2}(1-W))$ to ensure $\phi(1)=1$, so that on-policy samples receive unit weight and the update magnitude aligns with standard on-policy methods under the same learning rate. We adopt different hyperparameters $(c_{1},c_{2})$ for positive and negative advantages, mirroring the asymmetric clipping in PPO.
+L178: Recent work (cite64†Tang et al., 2025 ) has shown that positive and negative samples exhibit different gradient dynamics during training; accordingly, we apply stronger suppression for $A<0$ with $W<1$ to prevent excessive penalization of samples the policy already dislikes, as shown in cite65†Figure 2 . We treat $(c_{1},c_{2})$ as tunable hyperparameters, which allows flexibility beyond the specific values implied by the variational derivation.
+L179: Substituting the shifted kernel into cite61†Equation 4 , the VESPO gradient estimator becomes:
+L180:  | $\displaystyle\nabla\mathcal{J}_{\text{VESPO}}=\mathbb{E}_{\tau\sim\mu}\bigl[$  | $\displaystyle W^{c_{1}}\exp(c_{2}(1{-}W))$  |
+L181:  |  | $\displaystyle\cdot A(\tau)\cdot\nabla\log\pi_{\theta}(\tau)\bigr],$  |  | (21)
+L182: 
+L183: where $A(\tau)=R(\tau)-b$ is the advantage with baseline $b$ (computed as the mean reward within each prompt group, following GRPO (cite50†Shao et al., 2024 )).
+L184: Connection to Existing Methods. The kernel exhibits adaptive behavior: when $W\approx 1$, $\phi(W)\approx 1$ and gradients are preserved; when $W\gg 1$, the exponential term decays rapidly; when $W\ll 1$, the power term naturally down-weights unlikely samples. Compared to hard clipping, VESPO provides a smooth approximation that gradually attenuates extreme weights (cite65†Figure 2 ).
+L185: Compared to existing soft transformations that operate at the token level, VESPO applies directly to sequence-level importance weights without length normalization, and the factorized form offers flexible control: $c_{1}$ primarily governs behavior for $W<1$, while $c_{2}$ controls the decay for $W>1$.
+L186: Implementation. We implement VESPO in REINFORCE style: the reshaping weight $\phi(W)$ is detached from the computation graph and serves purely as a gradient scaling coefficient. The sequence-level importance weight is computed in log-space for numerical stability:
+L187: 
+L188:  | $$\log W=\sum_{t=1}^{T}\bigl(\log\pi_{\theta}(y_{t}|x,y_{<t})-\log\mu(y_{t}|x,y_{<t})\bigr).$$  |  | (22)
+L189: The reshaping $c_{1}\log W+c_{2}(1-W)$ is also computed in log-space; exponentiation is performed only at the final step, avoiding overflow from extreme importance weights. This requires storing only the per-token log-probabilities under both $\pi$ and $\mu$, with no additional memory overhead. The complete pseudocode is provided in cite34†Appendix E .
+L190: ## 4 Experiments
+L191: We evaluate VESPO on mathematical reasoning benchmarks, focusing on practical sources of off-policy distribution shift: (1) policy staleness from batched rollouts, where later mini-batches are updated using samples from an outdated policy, including a fully asynchronous setting where rollout and training run on separate nodes; and (2) train-inference mismatch, where different implementations between training and inference engines produce different outputs for the same input—an effect exacerbated in MoE models due to routing inconsistencies.
+L192: ### 4.1 Experimental Setup
+L193: Training. All experiments are conducted on 32 NVIDIA H20 GPUs using the veRL framework (cite66†Sheng et al., 2024 ), with vLLM 0.11.0 (cite67†Kwon et al., 2023 ) for inference and FSDP (cite68†Zhao et al., 2023 ) for training dense models (Megatron (cite69†Shoeybi et al., 2019 ) for MoE). The training dataset is the unfiltered version of DAPO-Math (cite70†Yu et al., 2025 ), which provides sufficient data to support extended training.
+L194: For each query, we sample 8 responses and compute rewards using Math-Verify (cite71†Hugging Face, 2025 ). We set the maximum context length to 16,384 tokens for both training and evaluation. We train for 1,500 gradient steps across all methods. See cite72†Table 3 for more details.
+L195: Models. We evaluate on three model scales: Llama-3.2-3B-Instruct (cite73†Grattafiori et al., 2024 ), Qwen3-8B-Base, and Qwen3-30B-A3B-Base (cite41†Yang et al., 2025 ). The MoE architecture amplifies train-inference mismatch due to routing decisions that compound across layers.
+L196: Evaluation. We evaluate on four mathematical reasoning benchmarks: AIME 2024, AIME 2025, AMC 2023, and MATH-500 (cite74†Hendrycks et al., 2021 ). We report avg@$k$ accuracy (average over $k$ sampled responses per problem), with $k=32$ for AIME 2024/2025, $k=16$ for AMC 2023, and $k=4$ for MATH-500. We select the best checkpoint based on the average performance across all four benchmarks.
+L197: Baselines. We compare against three representative methods: GRPO (cite50†Shao et al., 2024 ), which applies PPO-style clipping at the token level with clip ratios $(0.2,0.28)$ following DAPO (cite70†Yu et al., 2025 ); GSPO (cite47†Zheng et al., 2025b ), which operates at the sequence level with $1/T$ length normalization and clip ratios $(3\text{e-}4,4\text{e-}4)$; and SAPO (cite51†Gao et al., 2025 ), which uses soft adaptive gating with $\tau_{\text{pos}}=1.0$ and $\tau_{\text{neg}}=1.05$.
+L198: For VESPO, we use $(c_{1},c_{2})=(2.0,3.0)$ for $A>0$ and $(c_{1},c_{2})=(3.0,2.0)$ for $A<0$.
+L199: To simulate policy staleness, we fix the mini-batch size (mbs) at 256 and vary the global batch size (gbs) to control the degree of off-policy updates. With gbs/mbs $=N$, each rollout of gbs samples is split into $N$ mini-batches for sequential policy gradient updates. We measure progress in policy update steps to ensure all methods process the same amount of data. Our primary experiments use $N=8$, with ablations exploring $N\in\{4,8,16,32,64\}$.
+L200: We additionally evaluate under a fully asynchronous setting where rollout and training run on separate node groups. The trainer synchronizes updated weights to the rollout engine every 4 local updates (analogous to gbs/mbs${=}4$ in the synchronous setting), and in-flight rollouts generated under stale parameters are preserved across synchronization boundaries rather than discarded (cite75†Zhou et al., 2025 ).
+L201: ### 4.2 Main Results
+L202: Table 1: Mathematical reasoning accuracy (%) with gbs/mbs $=8$. We report avg@32 for AIME24/25, avg@16 for AMC23, and avg@4 for MATH500. Best results per model in bold.
+L203: Model  | Method  | AIME25  | AIME24  | AMC23  | MATH500  | Avg
+L204: Llama- 3.2-3B- Instruct  | GRPO  | 0.5  | 14.5  | 40.6  | 43.8  | 24.8
+L205: GSPO  | 0.2  | 14.7  | 43.9  | 41.4  | 25.1
+L206: SAPO  | 0.7  | 12.2  | 34.1  | 41.3  | 22.1
+L207: VESPO  | 0.6  | 13.9  | 47.3  | 45.3  | 26.8
+L208: Qwen3- 8B-Base  | GRPO  | 27.4  | 40.0  | 74.5  | 68.6  | 52.6
+L209: GSPO  | 28.8  | 37.7  | 80.8  | 70.4  | 54.4
+L210: SAPO  | 36.7  | 49.0  | 80.0  | 70.3  | 59.0
+L211: VESPO  | 33.5  | 49.4  | 82.2  | 71.1  | 59.0
+L212: Qwen3- 30B-A3B- Base  | GRPO  | 28.2  | 40.0  | 81.4  | 69.9  | 54.9
+L213: GSPO  | 24.6  | 34.1  | 80.5  | 68.8  | 52.0
+L214: SAPO  | 21.4  | 27.9  | 73.0  | 68.7  | 47.7
+L215: VESPO  | 34.2  | 44.1  | 80.3  | 70.2  | 57.2
+L216: Table 2: Effect of staleness ratio $N$ (gbs/mbs) on Qwen3-30B-A3B-Base. We report avg@$k$ (%). VESPO maintains strong performance across all $N$ values.
+L217: $N$  | Method  | AIME25  | AIME24  | AMC23  | MATH500  | Avg
+L218: 4  | GRPO  | 22.1  | 33.1  | 76.4  | 67.7  | 49.8
+L219: GSPO  | 27.6  | 43.3  | 83.1  | 70.4  | 56.1
+L220: SAPO  | 38.4  | 51.4  | 85.2  | 71.2  | 61.5
+L221: VESPO  | 43.1  | 60.3  | 91.2  | 71.1  | 66.4
+L222: 8  | GRPO  | 28.2  | 40.0  | 81.4  | 69.9  | 54.9
+L223: GSPO  | 25.1  | 43.3  | 83.0  | 69.6  | 55.3
+L224: SAPO  | 21.4  | 27.9  | 73.0  | 68.7  | 47.7
+L225: VESPO  | 44.3  | 59.6  | 91.4  | 72.4  | 66.9
+L226: 16  | GRPO  | 20.3  | 31.4  | 71.4  | 67.9  | 47.7
+L227: GSPO  | 24.3  | 41.6  | 83.1  | 71.4  | 55.1
+L228: SAPO  | 19.6  | 26.0  | 72.2  | 68.0  | 46.5
+L229: VESPO  | 40.2  | 53.2  | 90.8  | 71.5  | 63.9
+L230: 32  | GRPO  | 21.8  | 33.4  | 73.4  | 68.3  | 49.2
+L231: GSPO  | 18.8  | 27.3  | 73.4  | 70.6  | 47.5
+L232: SAPO  | 12.4  | 7.2  | 29.5  | 30.2  | 19.8
+L233: VESPO  | 37.7  | 51.4  | 85.2  | 71.3  | 61.4
+L234: 64  | GRPO  | 14.6  | 28.0  | 69.4  | 66.8  | 44.7
+L235: GSPO  | 15.4  | 24.1  | 73.9  | 70.0  | 45.8
+L236: SAPO  | 3.3  | 7.3  | 23.8  | 39.4  | 18.4
+L237: VESPO  | 34.2  | 46.2  | 83.6  | 69.9  | 58.5
+L238: cite76†Table 1 presents the main results with gbs/mbs $=8$ across three model scales. VESPO achieves the best average accuracy on all three models, demonstrating the generality of our approach. Notably, the improvements are most pronounced on Qwen3-30B-A3B-Base, where VESPO outperforms the best baseline by 2.3% average accuracy.
+L239: This suggests that VESPO’s soft suppression of extreme importance weights is particularly beneficial for MoE architectures, where routing inconsistencies amplify distribution shift and make training stability more challenging. Given these observations, we focus our detailed analysis on Qwen3-30B-A3B-Base in the following sections.
+L240: ### 4.3 Robustness to Policy Staleness
+L241: 
+L242: Figure 3: Training reward across staleness levels ($N\in\{4,8,16,32,64\}$) on Qwen3-30B-A3B-Base. Each panel shows one method with different $N$ values. VESPO maintains stable, consistent training curves across all staleness levels.
+L243: We examine robustness to policy staleness by varying the staleness ratio $N=\text{gbs}/\text{mbs}$ from 4 to 64. cite77†Figure 3 provides a direct comparison of training stability across methods. VESPO exhibits remarkable consistency: all five curves ($N{=}4$ to $N{=}64$) follow nearly identical trajectories, converging to similar final rewards around 0.7, with minimal sensitivity to policy staleness. In contrast, GRPO saturates early at suboptimal reward levels, and convergence slows as $N$ increases.
+L244: GSPO shows a clear correlation between staleness and final performance: larger $N$ leads to lower converged rewards. At $N{=}4$, GSPO exhibits catastrophic collapse around step 1,200, with reward dropping to zero. SAPO displays unstable training at $N{=}4$ and complete collapse at $N{\geq}8$, a pattern we analyze further below in connection with cite65†Figure 2 .
+L245: These differences in training dynamics translate directly to downstream performance, as shown in cite78†Table 2 : VESPO achieves the best average accuracy at every gbs/mbs setting and maintains strong results even at $N{=}64$, while GRPO and GSPO degrade to 44.7% and 45.8% respectively, and SAPO collapses to baseline level (18.4%).
+L246: Figure 4: Training dynamics across staleness levels ($N$ = gbs/mbs $\in\{4,8,16,32,64\}$) on Qwen3-30B-A3B-Base. Each row corresponds to a different $N$; columns show training reward, AIME25 accuracy, response length, KL divergence, entropy, and PG loss. VESPO (red) maintains stable training across all conditions, while baselines exhibit characteristic failure modes.
+L247: Training dynamics analysis. cite79†Figure 4 provides a comprehensive view of training dynamics across six metrics (note: response length y-axis scales differ across rows), revealing distinct patterns for each method (see cite33†Appendix D for additional visualizations).
+L248: 
+L249: GRPO saturates early at suboptimal reward levels across all $N$ values. The entropy column reveals rapid entropy drop, limiting exploration before discovering high-reward behaviors.
+L250: GSPO exhibits length bias amplification. At $N{=}4$, response lengths peak to nearly 3,000 tokens before the catastrophic collapse around step 1,200. The $1/T$ normalization makes longer sequences less likely to be clipped (cite30†Appendix C ); combined with token-sum loss aggregation, this creates a feedback loop biasing the model toward longer outputs.
+L251: SAPO shows rapid response length growth in early training, reaching up to 15k tokens at $N{=}4$. As shown in cite65†Figure 2 , SAPO’s design lacks sufficient down-weighting for negative-advantage samples with $\rho_{t}{<}1$, leading to excessive penalization. This aligns with recent observations that negative-advantage samples can cause length explosion and training collapse (cite64†Tang et al., 2025 ).
+L252: VESPO demonstrates consistent stability across all metrics. Benchmark scores show steady improvement throughout training; entropy remains at a stable, relatively high level; response lengths stay around 5–6k tokens, indicating room for further scaling; and PG loss remains remarkably stable across all $N$ values.
+L253: Fully asynchronous training. The experiments above simulate staleness within a synchronous framework by varying $N$. We further evaluate under the fully asynchronous setting described in cite14†Section 4.1 , where the behavior policy can lag behind the training policy by multiple gradient updates.
+L254: 
+L255: Figure 5: Training dynamics under fully asynchronous training on Qwen3-30B-A3B-Base. VESPO maintains stable training and achieves the highest reward and benchmark accuracy.
+L256: cite80†Figure 5 shows training dynamics under this regime. SAPO collapses early, consistent with its synchronous-setting instability. GRPO exhibits highly unstable training: rollout log-perplexity escalates above 2.0, PG loss and gradient norm show frequent large spikes, and response length oscillates sharply in tandem, indicating that stale rollouts severely disrupt gradient estimation. GSPO remains stable but converges to lower training reward and accuracy.
+L257: VESPO maintains stable training throughout: rollout KL, log-perplexity, PG loss, and gradient norm all remain near zero with minimal variance, while achieving the highest training reward and strongest AIME25 and AIME24 accuracy, confirming its robustness under realistic asynchronous training.
+L258: ### 4.4 Robustness to Train-Inference Mismatch
+L259: Beyond policy staleness, a second source of off-policy shift arises from train-inference mismatch: different numerical implementations between training (e.g., FSDP/Megatron) and inference (e.g., vLLM/SGLang (cite81†Zheng et al., 2024 )) engines produce slightly different outputs for the same input. This effect is amplified in MoE models, where routing decisions compound across layers and small numerical differences can lead to entirely different expert assignments.
+L260: Two engineering techniques have been proposed to stabilize training under such mismatch: Truncated Importance Sampling (TIS) (cite45†Liu et al., 2025 ) zeros token-level gradients when the importance ratio indicates significant divergence; Routing Replay (R2) (cite48†Ma et al., 2025 ) records router assignments during log-probability recomputation with the training engine, ensuring consistent expert selection throughout training.
+L261: cite82†Figure 6 compares training stability on Qwen3-30B-A3B-Base. Vanilla GRPO exhibits suboptimal training under mismatch conditions, with training reward plateauing around 0.60. Adding TIS or R2 improves GRPO’s stability and final reward. Notably, VESPO without any specialized fixes maintains stable training comparable to GRPO+R2, suggesting that the soft suppression of extreme importance weights helps tolerate the distribution shift induced by mismatch.
+L262: Furthermore, VESPO can be combined with R2 for additional gains: VESPO+R2 achieves the highest training reward and best AIME25 accuracy among all variants. This demonstrates that VESPO is complementary to engineering techniques like R2 and TIS, enabling improved baseline stability and higher performance ceilings when combined.
+L263: ### 4.5 Ablation: Length Normalization
+L264: 
+L265: Figure 6: Training stability under train-inference mismatch on Qwen3-30B-A3B-Base. VESPO maintains stable training without specialized fixes; combining VESPO with R2 achieves the best performance.
+L266: A key design choice in VESPO is operating at the sequence level without length normalization. Methods like GSPO normalize importance weights by $1/T$ (sequence length) to reduce variance, but we hypothesize this creates a length bias that destabilizes training. To test this, we compare VESPO with two normalized variants: VESPO${}_{\text{sqrt}}$ (normalize by $\sqrt{T}$) and VESPO${}_{\text{lin}}$ (normalize by $T$).
+L267: cite83†Figure 7 reveals striking differences in training dynamics. VESPO${}_{\text{lin}}$ exhibits severe instability: around step 350, KL divergence spikes dramatically, followed by gradient explosion and reward collapse. VESPO${}_{\text{sqrt}}$ shows moderate instability—training reward saturates around 0.58 and begins to slowly decline, accompanied by periodic gradient norm spikes.
+L268: In contrast, VESPO without normalization maintains stable KL divergence, controlled gradient norms, and achieves the highest training reward.
+L269: These results validate our analysis: length normalization causes longer sequences to dominate batch gradients (since they are less likely to be down-weighted), creating a feedback loop that biases the model toward even longer outputs until training collapses. VESPO’s sequence-level soft shaping without length normalization avoids this failure mode entirely.
+L270: Figure 7: Ablation on length normalization. VESPO without normalization achieves stable training; adding $\sqrt{T}$ or $T$ normalization causes instability and collapse.
+L271: ### 4.6 Ablation: Asymmetric Hyperparameters
+L272: As discussed in cite12†Section 3.4 , VESPO adopts different hyperparameters for positive and negative advantages: $c^{+}=(2,3)$ and $c^{-}=(3,2)$. We ablate this design by comparing against symmetric variants (cite84†Figure 8 ). Using $(2,3)$ for both positive and negative advantages provides insufficient suppression for $A<0$, leading to training instability and reward drop.
+L273: Using $(3,2)$ for both applies excessive suppression to positive-advantage samples, resulting in slower learning and slightly lower final performance.
+L274: Figure 8: Ablation on asymmetric hyperparameters.
+L275: 
+L276: The asymmetric design balances these trade-offs: stronger exponential suppression ($c_{2}=3$) for negative advantages prevents destabilizing updates, while milder suppression ($c_{2}=2$) for positive advantages preserves learning signal. More broadly, we find that VESPO is robust to moderate hyperparameter variations as long as sufficient down-weighting is applied to negative-advantage samples with $W<1$.
+L277: ## 5 Related Work
+L278: Policy Gradient Methods for LLMs. PPO (cite49†Schulman et al., 2017 ) has been the workhorse for RLHF, using a clipped surrogate objective to stabilize updates.
+L279: Value-free alternatives have gained traction for LLM fine-tuning: GRPO (cite50†Shao et al., 2024 ) normalizes rewards within sample groups and clips token-level ratios; GSPO (cite47†Zheng et al., 2025b ) operates at the sequence level with geometric mean normalization; DAPO (cite70†Yu et al., 2025 ) introduces decoupled clipping and dynamic sampling; SAPO (cite51†Gao et al., 2025 ) replaces hard clipping with soft adaptive gating. These methods control variance via heuristic clipping or normalization.
+L280: Our measure-change view reveals them as specific choices of implicit proposal distribution, and VESPO derives the weight function from a variational principle rather than manual design.
+L281: Importance Sampling in RL. Classical IS techniques—truncation, self-normalization, weighted IS—trade bias for variance reduction. In autoregressive LLMs, the product structure of sequence likelihoods amplifies variance, and token-level IS has been shown to be a first-order approximation to sequence-level IS (cite60†Zheng et al., 2025a ).
+L282: Our perspective reframes IS reshaping as measure change, revealing that any $\phi(W)$ implicitly defines a proposal distribution and enabling a principled variational design.
+L283: Trust Region and Clipping. TRPO (cite85†Schulman et al., 2015 ) constrains updates via a KL bound; PPO approximates this with hard clipping. When applied at the token level, clipping may conflict with sequence-level rewards. Our kernel provides a soft alternative that gradually attenuates extreme weights rather than truncating abruptly.
+L284: Stabilizing LLM RL Training. Recent work addresses specific instability sources through engineering solutions: routing replay (cite48†Ma et al., 2025 ) ensures consistent expert assignments in MoE models; truncated IS (cite45†Liu et al., 2025 ) detects and zeros gradients from mismatched samples. VESPO provides a complementary algorithmic approach that can be combined with these techniques for further gains.
+L285: ## 6 Conclusion
+L286: We introduced a measure-change perspective revealing that any importance weight transformation implicitly defines a proposal distribution. This insight enables a principled variational formulation that derives a closed-form reshaping kernel from desirable distributional properties. The resulting algorithm, VESPO, operates on sequence-level importance weights without length normalization, preserving inter-token dependencies while avoiding the length-dependent bias present in existing methods.
+L287: Experiments demonstrate stable training under staleness ratios up to $64\times$ and in fully asynchronous training, with consistent improvements across dense and MoE architectures and particularly notable gains on MoE models where training stability is more challenging.
+L288: Looking ahead, we see several promising directions: scaling to larger asynchronous clusters, extending to agentic RL settings with multi-turn interactions and tool use, and applying the framework to on-policy distillation and offline training.
+L289: ## Impact Statement
+L290: This paper presents work whose goal is to advance the field of Machine Learning. Specifically, we propose a principled approach to stabilize reinforcement learning for large language models under off-policy conditions. While improved RL training methods may accelerate the development of more capable language models, we do not foresee direct negative societal impacts beyond those inherent to advancing language model capabilities in general.
+L291: There are many potential societal consequences of our work, none of which we feel must be specifically highlighted here.
+L292: ## References
+L293:   * Anthropic (2025) Anthropic Introducing Claude 4. Note: cite86†https://www.anthropic.com/news/claude-4†www.anthropic.com Accessed: 2025-05-22 Cited by: cite87†§1 .
+L294:   * DeepSeek-AI et al. (2025) DeepSeek-AI, D. Guo, D. Yang, H. Zhang, J. Song, R. Zhang, R. Xu, Q. Zhu, S. Ma, P. Wang, X. Bi, X. Zhang, X. Yu, Y. Wu, Z. F. Wu, Z. Gou, Z. Shao, Z. Li, Z. Gao, A. Liu, B. Xue, B. Wang, B. Wu, B. Feng, C. Lu, C. Zhao, C. Deng, C. Zhang, C. Ruan, D. Dai, D. Chen, D. Ji, E. Li, F. Lin, F. Dai, F. Luo, G. Hao, G. Chen, G. Li, H. Zhang, H. Bao, H. Xu, H. Wang, H. Ding, H. Xin, H. Gao, H. Qu, H. Li, J. Guo, J. Li, J. Wang, J. Chen, J. Yuan, J. Qiu, J. Li, J. Cai, J. Ni, J.
+L295: Liang, J. Chen, K. Dong, K. Hu, K. Gao, K. Guan, K. Huang, K. Yu, L. Wang, L. Zhang, L. Zhao, L. Wang, L. Zhang, L. Xu, L. Xia, M. Zhang, M. Zhang, M. Tang, M. Li, M. Wang, M. Li, N. Tian, P. Huang, P. Zhang, Q. Wang, Q. Chen, Q. Du, R. Ge, R. Zhang, R. Pan, R. Wang, R. J. Chen, R. Jin, R. Chen, S. Lu, S. Zhou, S. Chen, S. Ye, S. Wang, S. Yu, S. Zhou, S. Pan, S. S. Li, S. Zhou, S. Wu, T. Yun, T. Pei, T. Sun, T. Wang, W. Zeng, W. Zhao, W. Liu, W. Liang, W. Gao, W. Yu, W. Zhang, W. Xiao, W. An, X. Liu, X.
+L296: Wang, X. Chen, X. Nie, X. Cheng, X. Liu, X. Xie, X. Liu, X. Yang, X. Li, X. Su, X. Lin, X. Q. Li, X. Jin, X. Shen, X. Chen, X. Sun, X. Wang, X. Song, X. Zhou, X. Wang, X. Shan, Y. K. Li, Y. Q. Wang, Y. X. Wei, Y. Zhang, Y. Xu, Y. Li, Y. Zhao, Y. Sun, Y. Wang, Y. Yu, Y. Zhang, Y. Shi, Y. Xiong, Y. He, Y. Piao, Y. Wang, Y. Tan, Y. Ma, Y. Liu, Y. Guo, Y. Ou, Y. Wang, Y. Gong, Y. Zou, Y. He, Y. Xiong, Y. Luo, Y. You, Y. Liu, Y. Zhou, Y. X. Zhu, Y. Huang, Y. Li, Y. Zheng, Y. Zhu, Y. Ma, Y. Tang, Y. Zha, Y.
+L297: Yan, Z. Ren, Z. Ren, Z. Sha, Z. Fu, Z. Xu, Z. Xie, Z. Zhang, Z. Hao, Z. Ma, Z. Yan, Z. Wu, Z. Gu, Z. Zhu, Z. Liu, Z. Li, Z. Xie, Z. Song, Z. Pan, Z. Huang, Z. Xu, Z. Zhang, and Z. Zhang DeepSeek-r1 incentivizes reasoning in llms through reinforcement learning. Nature 645, pp. 633 – 638. External Links: cite88†Link†api.semanticscholar.org Cited by: cite87†§1 , cite89†§1 .
+L298:   * Dwyer et al. (2025) M. Dwyer, A. Sobey, and A. Chapman It’s not you, it’s clipping: a soft trust-region via probability smoothing for llm rl. External Links: 2509.21282, cite90†Link Cited by: cite89†§1 .
+L299:   * Fu et al. (2025) W. Fu, J. Gao, X. Shen, C. Zhu, Z. Mei, C. He, S. Xu, G. Wei, J. Mei, W. JIASHU, T. Yang, B. Yuan, and Y. Wu AREAL: a large-scale asynchronous reinforcement learning system for language reasoning. External Links: cite91†Link†openreview.net Cited by: cite92†§1 .
+

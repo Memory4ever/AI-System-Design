@@ -1,0 +1,1124 @@
+Overthinking Loops in Agents: A Structural Risk via MCP Tools
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction and Related Work
+Related Work
+2 Method
+2.1 Attack Tool Construction
+2.2 Cycle Induction Mechanism
+2.3 Problem Formulation
+3 Experiments
+3.1 Experimental Setup
+Tool Registry Configuration
+Datasets and Model Configurations
+3.2 Structural Risk in Tool-Use Systems
+ReAct -based General-Purpose Agents
+Production-Grade Coding Agents ( Qwen-Code )
+4 Discussion
+4.1 Effect of Registry Composition
+4.2 Limits of Generation-Level Mitigation
+5 Conclusion
+6 Limitations
+Dataset Scope and Task Difficulty
+Defense Mechanisms and System Design
+Generalization across Agent Configurations
+References
+A Attack Tool Implementations
+B Implementation Details
+B.1 Qwen-Code Environment Setup
+Qwen-Code Built-in Tools (13).
+Serena MCP Tools (29).
+Context7 MCP Tools (2).
+B.2 Model Configurations
+B.3 NoWait Settings
+C ReAct -based Agent Experimental Details
+D Qwen-Code Experimental Details
+E Proprietary Model Policy
+License: CC BY-NC-SA 4.0
+arXiv:2602.14798v1 [cs.CL] 16 Feb 2026
+Overthinking Loops in Agents:
+A Structural Risk via MCP Tools
+Yohan Lee
+Email: yohan9612@yonsei.ac.kr
+Jisoo Jang
+Affiliation: Division of Language and AI, Hankuk University of Foreign Studies (HUFS)
+Email: seungtaek.choi@hufs.ac.kr
+Seoyeon Choi
+Affiliation: Division of Language and AI, Hankuk University of Foreign Studies (HUFS)
+Sangyeop Kim
+Affiliation: Yonsei University Department of Data Science, Ewha Womans University
+Seungtaek Choi
+† † thanks: ˜˜Corresponding author.
+Affiliation:
+Affiliation: Division of Language and AI, Hankuk University of Foreign Studies (HUFS)
+Abstract
+Tool-using LLM agents increasingly coordinate real workloads by selecting and chaining third-party tools based on text-visible metadata such as tool names, descriptions, and return messages.
+We show that this convenience creates a supply-chain attack surface: a malicious MCP tool server can be co-registered alongside normal tools and induce overthinking loops , where individually trivial or plausible tool calls compose into cyclic trajectories that inflate end-to-end tokens and latency without any single step looking abnormal.
+We formalize this as a structural overthinking attack, distinguishable from token-level verbosity, and implement 14 malicious tools across three servers that trigger repetition, forced refinement, and distraction.
+Across heterogeneous registries and multiple tool-capable models, the attack causes severe resource amplification (up to 142.4 × 142.4\times tokens) and can degrade task outcomes.
+Finally, we find that decoding-time concision controls do not reliably prevent loop induction, suggesting defenses should reason about tool-call structure rather than tokens alone.
+1 Introduction and Related Work
+Figure 1: Token usage explosion under MCP-induced overthinking attacks in Qwen-Code settings.
+Total tokens (log scale, in millions) for five models with and without the attack; red bars ( mixed ) show attacked runs, and gray bars ( normal ) show the no-attack baseline.
+The attack amplifies token consumption up to 142.4 × 142.4\times .
+Large Language Models (LLMs) have made step-by-step reasoning the default inference mode Kojima et al. (2022) ; Wei et al. (2022) ; Wang et al. (2023) ; Yao et al. (2023a) ; Lightman et al. (2024) .
+Yet recent work shows a recurring inefficiency: models often overthink , producing long and redundant reasoning that increases latency and inference cost without improving task outcomes Chen et al. (2025) ; Su et al. (2025) ; Sui et al. (2025) ; Cuadron et al. (2025) .
+As LLMs are deployed as interactive agents, these costs can compound across multi-step tool interactions rather than being confined to a single completion Shi et al. (2025) .
+Tool-using agents increasingly coordinate real workloads by calling external tools Schick et al. (2023) ; Qin et al. (2023) ; Lu et al. (2025) .
+This creates a supply-chain attack surface: agents discover tools from open registries where any provider can publish entries.
+Real-world incidents confirm the risk is not hypothetical---trojanized Model Context Protocol (MCP) packages have already appeared on npm 1 1
+1
+https://postmarkapp.com/blog/information-regarding-malicious-postmark-mcp-package , and tool-poisoning demos have exfiltrated private WhatsApp chat histories through metadata manipulation alone 2 2
+2
+https://invariantlabs.ai/blog/whatsapp-mcp-exploited .
+Because tools are selected via text-visible metadata (names, descriptions, and return messages), a single malicious entry can influence agent behavior without altering the host application Wang et al. (2025b) .
+We study a costly failure mode of this surface, resource amplification , in which malicious tools induce repeated tool invocations and verbose reasoning under the guise of thoroughness.
+As shown in Figure 1 , token amplification factors range from 5.5 × 5.5\times to 142.4 × 142.4\times across multiple tool-capable models.
+A key distinction is between token-level and structural overthinking.
+Token-level overthinking appears as locally verbose generation and can be intentionally induced to amplify inference cost via prompt- or data-level mechanisms Gao et al. (2024) ; Dong et al. (2025) ; Zhang et al. (2025) , motivating decoding- and inference-time controls that regulate reflection and verbosity Wang et al. (2025a) ; Ding et al. (2025) ; Yang et al. (2025) ; Huang et al. (2025) .
+In contrast, structural overthinking arises when individually reasonable tool calls compose into looping trajectories, inflating end-to-end tokens and latency even when no step looks abnormal.
+This distinction matters in deployment because token and latency inflation translate into direct financial exposure: higher per-request inference bills, accelerated quota burn, and potential service-level agreement (SLA) penalties or user churn due to degraded responsiveness.
+Tool registries thus represent both a security and an operational-cost attack surface. Prior work has cataloged security threats in tool-augmented agent ecosystems, from broad threat taxonomies to tool poisoning benchmarks Ferrag et al. (2025) ; Wang et al. (2025b) .
+We focus on a complementary risk—structural cost amplification—where a small fraction of cycle-inducing tools can amplify spending and degrade task outcomes without altering user queries or model parameters.
+We evaluate these risks by contrasting two agent architectures—a general-purpose ReAct agent Yao et al. (2023b) and a production-grade coding assistant ( Qwen-Code 3 3
+3
+https://github.com/QwenLM/qwen-code )—each operating over tool registries ranging from benign to partially compromised with malicious tools.
+We also evaluate the decoding-time defense NoWait Wang et al. (2025a) and find that it does not reliably prevent loop induction under cycle-inducing tool metadata.
+Our main contributions are: (1) identifying structural overthinking as a distinct, loop-driven cost vector in tool-agent deployments; (2) quantifying token and latency amplification across two agent architectures and multiple models under realistic registry conditions; and (3) showing that decoding-time defenses alone do not mitigate registry-level attack vectors.
+Related Work
+Our setting connects to two lines of work.
+First, efficient reasoning research treats overthinking as a model-internal inefficiency and reduces unnecessary inference cost through decoding-time token filtering Wang et al. (2025a) , compute-aware early stopping Hassid et al. (2025) , and preference tuning via difficulty-aware reinforcement learning Wan et al. (2026) .
+Our results complement this view by showing that, in tool-agent deployments, structural loops can dominate end-to-end cost even when local verbosity is reduced.
+Second, adversarial work studies resource-exhaustion (or cost-amplifying) attacks, including inputs that directly inflate model compute and latency Shumailov et al. (2021) ; Hong et al. (2021) ; Haque et al. (2020) ; Chen et al. (2022) , and pipeline attacks where untrusted external inputs steer LLM-integrated systems, often reshaping control flow and tool use Greshake et al. (2023) ; Zou et al. (2025) .
+Most closely, concurrent work Zhou et al. (2026) studies stealthy economic denial-of-service (DoS) attacks at the tool layer but assumes an adversary that actively optimizes tool-server responses to maximize cost while preserving correctness.
+In contrast, we show that cyclic execution can emerge from registry composition alone using only text-visible metadata and agent orchestration.
+2 Method
+Figure 2: Overview of the MCP-driven overthinking attack surface. Malicious tools hidden within a mixed registry exploit standard MCP interfaces to lure agents into crafted cyclic loops. Unlike normal operations ( gray path), this attack path ( red path) forces excessive, redundant reasoning steps, leading to severe denial-of-service through exponential token consumption and latency amplification.
+This section describes the attack tools used in our experiments, explains the mechanism by which they induce execution cycles, and gives a concise problem formulation.
+2.1 Attack Tool Construction
+The attack tools require no sophisticated adversarial engineering. Each tool relies on trivial logic like text repetition, staged checklists, or subtasks. Yet when composed into cyclic call structures, they amplify cost far beyond what any single tool would incur.
+We construct attack tools along three axes, each targeting a distinct pathway through which tokens accumulate 4 4
+4
+The complete list of attack tools and their descriptions is provided in Appendix A . :
+(1) Text Repetition inflates per-call output length by requiring repeated verification markers (e.g., “VERIFY” ); each response instructs re-invocation with a higher count, exhausting output-token budgets.
+(2) Iterative Refinement enforces a multi-stage workflow (Analysis → \to Validation → \to Refinement → \to Verification → \to Finalization) and redirects the agent back to earlier stages when completeness criteria are unmet, extending the reasoning trace.
+(3) Distraction expands the task with subtasks unrelated to the core query (e.g., time-complexity analysis, edge-case testing, alternative approaches, and assumption validation), widening scope at each step.
+2.2 Cycle Induction Mechanism
+The threat does not stem from any single tool alone, but from the cyclic call structures that emerge when these tools interact, as illustrated in Figure 2 .
+An agent selects its next action from two sources: tool descriptions registered at initialization and tool outputs returned at runtime (typically appended to the model context).
+We define a cycle as an execution path in which tool-visible text (whether a description or an output) induces a subsequent tool call, and the resulting chain eventually revisits a previously invoked tool.
+This encompasses self-loops (a tool that directs re-invocation of itself), multi-step cycles (a chain that returns to an earlier stage), and scope-expanding loops (tools whose final step redirects back to the entry point).
+Consider the Iterative Refinement tools as an example. Each stage returns an output such as “You have completed step X X of Y Y . Call [next_tool] NOW,” directing the agent to the next stage. The final stage returns “You need 3–5 cycles. Call analyze NOW,” redirecting back to the first stage. The agent thus enters a loop of the form step 1 → step 2 → ⋯ → step k → step 1 → ⋯ \texttt{step}_{1}\to\texttt{step}_{2}\to\cdots\to\texttt{step}_{k}\to\texttt{step}_{1}\to\cdots .
+Each call is locally justified as a reasonable response to the preceding output. However, strict adherence accumulates into a cycle, consuming the execution budget without reaching termination.
+2.3 Problem Formulation
+We model a tool registry as R = { ( m i , f i ) } i = 1 | R | R=\{(m_{i},f_{i})\}_{i=1}^{|R|} , where m i m_{i} is the text-visible metadata (e.g., description and schema) and f i f_{i} is the underlying implementation.
+Let R normal R_{\text{normal}} be a normal registry, let R attack R_{\text{attack}} be a set of cycle-inducing tools, and define the mixed registry R mixed = R normal ∪ R attack R_{\text{mixed}}=R_{\text{normal}}\cup R_{\text{attack}} with | R attack | ≪ | R normal | |R_{\text{attack}}|\ll|R_{\text{normal}}| .
+We compare two configurations: normal (registry R normal R_{\text{normal}} ) and mixed (registry R mixed R_{\text{mixed}} ), reflecting an injection of a small number of cycle-inducing tools into an otherwise normal registry.
+Real deployments enforce execution budgets (e.g., maximum tool calls, token caps, or wall-clock timeouts). For a query q q under registry R R , we report total token consumption Tokens ⁡ ( q ∣ R ) \mathrm{Tokens}(q\mid R) as a cost proxy, counting both model input and output tokens, including tool outputs appended to the context.
+Our goal is to characterize the vulnerability of tool-use systems to resource amplification through registry manipulation: whether strategically designed tools, when mixed into a normal registry, can exploit the agent’s reasoning to trigger budget exhaustion even when user queries and the base model remain unchanged.
+Figure 3: Accuracy and token consumption in ReAct settings.
+3 Experiments
+3.1 Experimental Setup
+We conduct experiments in two environments: (i) a ReAct -based general-purpose agent Yao et al. (2023b) , and (ii) Qwen-Code , a production-grade coding agent. Contrasting these settings allows us to examine how registry composition affects agent behavior, resource consumption, and task performance across deployment contexts.
+Tool Registry Configuration
+For the ReAct environment, we construct each registry by randomly sampling 100 tools per query from the large-scale tool corpus of ToolRet Shi et al. (2025) , with an even mix of web APIs, code functions, and custom applications.
+We compare normal (100 sampled tools) and mixed (100 sampled tools + 14 attack tools from Section 2.1 ) configurations.
+For the Qwen-Code environment, we compose the normal registry from 44 tools that reflect a realistic development setup: 13 built-in Qwen-Code CLI tools, 29 tools from Serena 5 5
+5
+https://github.com/oraios/serena , and 2 tools from Context7 6 6
+6
+https://github.com/upstash/context7 , both widely adopted MCP servers.
+The mixed configuration adds the 14 attack tools to this set, totaling 58 tools.
+Each problem is executed in an isolated directory to prevent cross-run interference.
+Further details are in Appendix B.1 .
+For both environments, we measure the mean token amplification under the mixed configurations relative to normal over a query distribution 𝒬 \mathcal{Q} :
+𝔼 q ∼ 𝒬 ​ [ Tokens ​ ( q ∣ R mixed ) Tokens ​ ( q ∣ R normal ) ] \mathbb{E}_{q\sim\mathcal{Q}}\left[\frac{\text{Tokens}(q\mid R_{\text{mixed}})}{\text{Tokens}(q\mid R_{\text{normal}})}\right]
+(1)
+All configurations are run 5 times, and we report the average results.
+Datasets and Model Configurations
+For the ReAct environment, we evaluate on AIME2025 Mathematical Association of America (2025) , GPQA Diamond Rein et al. (2024) , and HumanEval Chen et al. (2021) .
+For the Qwen-Code environment, we randomly sample 10 problems from the CodeElo Quan et al. (2025) and retain the 7 problems that all models solve successfully under an out-of-the-box Qwen-Code installation with no additional MCP servers.
+This filtering reduces the influence of task difficulty, allowing us to better isolate the effect of registry composition on resource consumption.
+We restrict our evaluation to recent large-scale LLMs with reliable tool-calling capabilities, excluding models with unreliable tool invocation or response parsing in preliminary runs.
+The resulting set consists of:
+Kimi-K2-Thinking Moonshot AI (2025) ,
+MiniMax-M2 MiniMax AI (2025) ,
+Qwen3-235B-A22B-Thinking-2507 ,
+Qwen3-Coder-480B-A35B-Instruct Qwen Team (2025) ,
+DeepSeek-V3.2 DeepSeek-AI (2025) ,
+and GLM-4.7 GLM Team (2025) 7 7
+7
+During experiments, a newer version of GLM was released, and we migrated accordingly. .
+All models were deployed with session limits of 1,000 turns and a maximum tool-call depth of 20 per turn.
+Additional details are in Appendix B.2 .
+3.2 Structural Risk in Tool-Use Systems
+ReAct -based General-Purpose Agents
+Figure 3 and Appendix C report accuracy and token consumption under normal and mixed registries across AIME2025, GPQA Diamond, and HumanEval. Under mixed , token consumption increases for all models, reaching up to 14.59 × 14.59\times while holding queries and model parameters fixed. This confirms that cyclic tool composition alone is sufficient to systematically amplify resource consumption.
+How amplification manifests depends on task characteristics. On GPQA Diamond, most models experience minimal accuracy change ( 0.90 × ∼ 1.02 × 0.90\times\sim 1.02\times ) despite severe token amplification ( 2.52 × ∼ 10.83 × 2.52\times\sim 10.83\times ).
+Question-answering often requires only a single verification step, so validation remains straightforward even when redirected through tool-induced cycles.
+The attack can thus remain hidden from performance-based monitoring: accuracy stays near baseline while inference costs escalate.
+In contrast, coding and mathematical problem-solving exhibit sharp functional degradation.
+In HumanEval, three models drop to single-digit accuracy: Qwen3-Coder ( 3.05 3.05 %), DeepSeek-V3.2 ( 6.71 6.71 %), and GLM-4.7 ( 9.15 9.15 %).
+AIME2025 shows similar degradation: DeepSeek-V3.2 and Qwen3-Thinking decline by 36.7 36.7 %p, and Kimi-K2-Thinking by 33.3 33.3 %p.
+These tasks require iterative validation against multiple constraints—test cases for code, intermediate steps for mathematics. Cycle-inducing tools exploit this structure: each validation checkpoint becomes an interception point where the agent can be redirected into cyclic call patterns.
+The agent either exhausts its budget in tool-induced loops before completing necessary checks, or corrupts a correct solution during forced refinement iterations.
+Model
+normal
+mixed
+Tokens
+Time (s)
+Tokens
+Time (s)
+Kimi-K2-Thinking
+31.6K
+176
+343.9K
+( 10.9 × 10.9\times )
+449
+( 2.6 × 2.6\times )
+MiniMax-M2
+45.9K
+82
+6.5M
+( 142.4 × 142.4\times )
+2260
+( 27.5 × 27.5\times )
+Qwen3-Coder
+127.5K
+77
+2.9M
+( 22.4 × 22.4\times )
+727
+( 9.5 × 9.5\times )
+DeepSeek-V3.2
+273.5K
+222
+1.5M
+( 5.5 × 5.5\times )
+1580
+( 7.1 × 7.1\times )
+GLM-4.6
+334.3K
+89
+33.8M
+( 101.3 × 101.3\times )
+925
+( 10.4 × 10.4\times )
+Table 1: Average token consumption and runtime in Qwen-Code settings.
+Parentheses report the × \times -factor relative to normal (i.e., mixed / normal ).
+Production-Grade Coding Agents ( Qwen-Code )
+Table 1 reports average token consumption and runtime across sampled CodeElo problems.
+Maximum token amplification reaches 142.35 × 142.35\times , and runtime amplification reaches 27.49 × 27.49\times , substantially exceeding ReAct -based results.
+Critically, several model–problem combinations did not terminate naturally. Per-problem results (Appendix D ) show extreme amplification: GLM-4.6 hits 971.27 × 971.27\times on problem 2033f , MiniMax-M2 achieves 609.71 × 609.71\times on problem 2003a with runtime amplification of 180.12 × 180.12\times , and Qwen3-Coder reaches 286.52 × 286.52\times on problem 1972b . These executions were forcibly terminated after exhausting computational budgets, producing no output.
+This escalation from research prototype to production system reveals that registry-level vulnerabilities manifest more severely in real-world deployments. Production coding agents operate with richer tool ecosystems—file-system access, process management, iterative development workflows—that provide more pathways for cycle induction and longer task horizons that amplify each loop’s cumulative effect. The vulnerability is not merely an implementation flaw but a structural risk inherent to tool-augmented agent architectures.
+AIME2025
+GPQA Diamond
+HumanEval
+Model
+Tool
+Registry
+Accuracy
+Tokens
+Accuracy
+Tokens
+Accuracy
+Tokens
+Normal
+73.33% (-)
+3,838,910 (-)
+30.96% (-)
+5,789,388 (-)
+14.02% (-)
+9,513,903 (-)
+Kimi-K2-Thinking
+Mixed
+56.67% (0.77 × \times )
+4,904,131 (1.28 × \times )
+26.90% (0.87 × \times )
+11,965,963 (2.07 × \times )
+16.46% (1.17 × \times )
+19,474,670 (2.05 × \times )
+Normal
+73.33% (-)
+2,375,798 (-)
+55.84% (-)
+8,076,783 (-)
+72.56% (-)
+7,510,249 (-)
+MiniMax-M2
+Mixed
+73.33% (1.00 × \times )
+8,111,917 (3.41 × \times )
+55.33% (0.99 × \times )
+65,423,352 (8.10 × \times )
+62.80% (0.87 × \times )
+53,728,320 (7.15 × \times )
+Normal
+66.67% (-)
+688,009 (-)
+71.07% (-)
+6,466,715 (-)
+47.56% (-)
+5,047,058 (-)
+Qwen3-Thinking
+Mixed
+76.67% (1.15 × \times )
+1,942,084 (2.82 × \times )
+63.96% (0.90 × \times )
+24,874,264 (3.85 × \times )
+48.17% (1.01 × \times )
+9,704,763 (1.92 × \times )
+Normal
+10.00% (-)
+5,018,600 (-)
+46.19% (-)
+44,980,986 (-)
+31.71% (-)
+11,522,813 (-)
+Qwen3-Coder
+Mixed
+20.00% (2.00 × \times )
+13,766,119 (2.74 × \times )
+39.09% (0.85 × \times )
+91,299,839 (2.03 × \times )
+18.90% (0.60 × \times )
+55,380,483 (4.81 × \times )
+Normal
+60.00% (-)
+497,357 (-)
+69.54% (-)
+2,896,222 (-)
+34.15% (-)
+1,948,891 (-)
+DeepSeek-V3.2
+Mixed
+16.67% (0.28 × \times )
+7,646,711 (15.37 × \times )
+26.90% (0.39 × \times )
+11,938,782 (4.12 × \times )
+3.66% (0.11 × \times )
+12,363,792 (6.34 × \times )
+Normal
+56.67% (-)
+4,713,463 (-)
+54.31% (-)
+9,323,681 (-)
+42.68% (-)
+7,001,464 (-)
+GLM-4.7
+Mixed
+53.33% (0.94 × \times )
+16,375,952 (3.47 × \times )
+53.81% (0.99 × \times )
+111,252,867 (11.93 × \times )
+5.49% (0.13 × \times )
+93,441,302 (13.35 × \times )
+Table 2:
+Accuracy and token consumption in ReAct -based agent settings with NoWait enabled. Parentheses report the × \times -factor relative to normal . Token columns are shaded by amplification level:
+low (1–3 × \times ),
+medium (3–7 × \times ),
+high (7 × \times +).
+Figure 4:
+Token amplification (vs. normal baseline) in attack -only and mixed registry settings.
+Each model shows three dataset pairs (AIME2025, GPQA Diamond, HumanEval). Solid bars denote attack -only, hatched bars denote mixed .
+4 Discussion
+4.1 Effect of Registry Composition
+One might ask whether the observed amplification simply results from registering attack tools, regardless of normal tools. To test this, we compare attack -only (14 attack tools) with mixed (100 normal + 14 attack tools) in the ReAct setting. While attack -only is not representative of real deployments, it isolates the effect of cycle-inducing tools.
+Figure 4 shows amplification for both configurations relative to the normal baseline.
+In a majority of model–dataset pairs, mixed yields comparable or higher amplification than attack -only, notably for GLM-4.7 on GPQA Diamond ( 6.1 × → 10.8 × 6.1\times\rightarrow 10.8\times ) and HumanEval ( 7.6 × → 14.6 × 7.6\times\rightarrow 14.6\times ).
+We hypothesize that normal tool calls interleave with attack cycles, making execution traces less regular and obscuring repetitive structures. Rather than diluting the attack, normal tools introduce additional context that delays termination and increases cumulative token consumption, suggesting that realistic mixed registries may pose greater cost risk than attack -only scenarios.
+4.2 Limits of Generation-Level Mitigation
+We examine whether generation-level controls can mitigate token amplification induced by cycle-inducing tools by regulating token output at each reasoning step.
+We evaluate NoWait Wang et al. (2025a) , which suppresses tokens that trigger wait states during reasoning (Appendix B.3 ), applying it in the same ReAct setting under both normal and mixed registries.
+Table 2 shows that extreme amplification persists in the mixed registry even with NoWait. DeepSeek-V3.2 reaches 15.37 × 15.37\times on AIME2025, while GLM-4.7 exhibits 11.93 × 11.93\times on GPQA Diamond and 13.35 × 13.35\times on HumanEval. Compared to the normal baseline in Figure 3 , NoWait does not prevent amplification when cycle-inducing tools are present.
+NoWait constrains token generation within individual reasoning steps, assuming that cost inflation stems from verbose deliberation at each invocation. However, cycle-inducing tools exploit a different mechanism: they extend the number of tool calls rather than inflating any single step. Tokens accumulate through repeated invocations across the execution trace, a structural pathway that generation-level suppression does not address.
+5 Conclusion
+We show that cyclic tool-call structures in MCP registries can induce severe resource amplification in LLM agents without altering user queries or model parameters. The attack requires no sophisticated adversarial engineering; each tool relies on trivial logic that can become costly through cyclic execution. The vulnerability intensifies in production-grade coding agents, where richer tool ecosystems provide more pathways for loop induction. Counterintuitively, mixed registries can amplify cost more than attack -only configurations, and generation-level mitigation methods do not reliably prevent loop induction. These findings suggest that securing agentic systems requires reasoning about tool-call structure, not tokens alone.
+6 Limitations
+Dataset Scope and Task Difficulty
+We focus on scientific reasoning, mathematics, and programming, where tool use and multi-step execution are clearly observable. This limits general-domain coverage. On highly challenging benchmarks (e.g., CodeElo), models sometimes enter long-running loops even without attacks.
+To isolate attack-induced effects, we restrict experiments to tasks solvable within reasonable default execution budgets.
+Defense Mechanisms and System Design
+Results under the NoWait configuration show that our attacks do not depend solely on reasoning-token exposure, but exploit structural properties of agent execution and tool-calling dynamics. We do not systematically evaluate alternative defenses (e.g., RL-based reasoning suppression, registry-level tool filtering, or stricter turn and depth constraints); comparative analysis remains future work.
+Generalization across Agent Configurations
+Our experiments assume largely autonomous agents with minimal human intervention. While real-world deployments may incorporate additional guardrails, the results demonstrate that even lightly constrained systems are vulnerable to resource amplification through simple registry configurations.
+Ethical Considerations
+This work shows that a small set of cycle-inducing tools, when co-registered with normal tools in a tool registry for an MCP-based agent, can cause substantial resource amplification. Identifying such structural vulnerabilities is important for building safer agentic systems; however, we acknowledge that our findings could be misused for cost-amplification or Denial-of-Wallet attacks.
+To ensure responsible research conduct, we restrict our experiments to open-source (or open-weights) models accessible under permissive licensing conditions. We do not evaluate proprietary production APIs (e.g., OpenAI’s GPT series, Google’s Gemini, or Anthropic’s Claude). Inducing execution loops or resource amplification against production APIs could violate their Terms of Service or Usage Policies, which often prohibit disruption, interference, abuse, or the bypassing of protective measures. A detailed comparison of these policies is provided in Appendix E . Our experimental design therefore avoids interactions that could compromise service stability or contravene platform regulations.
+All experiments are conducted under standard usage conditions without privileged access, system modification, or exploitation of undocumented interfaces. Importantly, our cycle-inducing tools do not rely on novel exploitation techniques, hidden backdoors, or model-specific vulnerabilities. Instead, they are constructed from routine interaction patterns already common in legitimate tool design, such as verification workflows, iterative refinement procedures, and supplementary task requests. This design choice helps ensure that the vulnerabilities arise from structural properties of agent execution, tool registry composition, and tool-visible text, rather than from obscure or artificially engineered exploits.
+Even when working with open-source models, a comprehensive analysis of internal training mechanisms remains limited. Critical training recipes, including tool-calling strategies, instruction-tuning configurations, and fine-tuning parameters, are often not fully disclosed. We therefore refrain from attributing observed behaviors to specific undisclosed components and instead focus on externally observable execution dynamics.
+Our objective is not to enable exploitation but to inform the development of robust safeguards for tool-calling agents. In particular, our findings highlight registry-level vetting mechanisms, session-level cost monitoring, and structural constraints on execution depth and tool-call recursion. We hope these insights contribute to more secure agent architectures and align with responsible disclosure practices in AI security research.
+References
+Chen et al. (2021)
+M. Chen, J. Tworek, H. Jun, Q. Yuan, H. P. de Oliveira Pinto, J. Kaplan, H. Edwards, Y. Burda, N. Joseph, G. Brockman, A. Ray, R. Puri, G. Krueger, M. Petrov, H. Khlaaf, G. Sastry, P. Mishkin, B. Chan, S. Gray, N. Ryder, M. Pavlov, A. Power, L. Kaiser, M. Bavarian, C. Winter, P. Tillet, F. P. Such, D. Cummings, M. Plappert, F. Chantzis, E. Barnes, A. Herbert-Voss, W. H. Guss, A. Nichol, A. Paino, N. Tezak, J. Tang, I. Babuschkin, S. Balaji, S. Jain, W. Saunders, C. Hesse, A. N. Carr, J. Leike, J. Achiam, V. Misra, E. Morikawa, A. Radford, M. Knight, M. Brundage, M. Murati, K. Mayer, P. Welinder, B. McGrew, D. Amodei, S. McCandlish, I. Sutskever, and W. Zaremba
+Evaluating large language models trained on code .
+External Links: 2107.03374 ,
+Link
+Cited by: §3.1 .
+Chen et al. (2022)
+S. Chen, C. Liu, M. Haque, Z. Song, and W. Yang
+NMTSloth: understanding and testing efficiency degradation of neural machine translation systems .
+In Proceedings of the 30th ACM Joint European Software Engineering Conference and Symposium on the Foundations of Software Engineering ,
+ESEC/FSE 2022 , New York, NY, USA , pp. 1148–1160 .
+External Links: ISBN 9781450394130 ,
+Link ,
+Document
+Cited by: §1 .
+Chen et al. (2025)
+X. Chen, J. Xu, T. Liang, Z. He, J. Pang, D. Yu, L. Song, Q. Liu, M. Zhou, Z. Zhang, R. Wang, Z. Tu, H. Mi, and D. Yu
+Do NOT think that much for 2+3=? on the overthinking of long reasoning models .
+In Forty-second International Conference on Machine Learning ,
+External Links: Link
+Cited by: §1 .
+Cuadron et al. (2025)
+A. Cuadron, D. Li, W. Ma, X. Wang, Y. Wang, S. Zhuang, S. Liu, L. G. Schroeder, T. Xia, H. Mao, N. Thumiger, A. Desai, I. Stoica, A. Klimovic, G. Neubig, and J. E. Gonzalez
+The danger of overthinking: examining the reasoning-action dilemma in agentic tasks .
+External Links: 2502.08235 ,
+Link
+Cited by: §1 .
+DeepSeek-AI (2025)
+DeepSeek-AI
+DeepSeek-v3.2: pushing the frontier of open large language models .
+Cited by: §3.1 .
+Ding et al. (2025)
+B. Ding, Y. Chen, F. Wang, L. Ming, and T. Lin
+Do thinking tokens help or trap? towards more efficient large reasoning model .
+External Links: 2506.23840 ,
+Link
+Cited by: §1 .
+Dong et al. (2025)
+J. Dong, Z. Zhang, Q. Zhang, T. Zhang, H. Wang, H. Li, Q. Li, C. Zhang, K. Xu, and H. Qiu
+An engorgio prompt makes large language model babble on .
+In The Thirteenth International Conference on Learning Representations ,
+External Links: Link
+Cited by: §1 .
+Ferrag et al. (2025)
+M. A. Ferrag, N. Tihanyi, D. Hamouda, L. Maglaras, A. Lakas, and M. Debbah
+From prompt injections to protocol exploits: threats in llm-powered ai agents workflows .
+ICT Express .
+External Links: ISSN 2405-9595 ,
+Document ,
+Link
+Cited by: §1 .
+Gao et al. (2024)
+K. Gao, T. Pang, C. Du, Y. Yang, S. Xia, and M. Lin
+Denial-of-service poisoning attacks against large language models .
+External Links: 2410.10760 ,
+Link
+Cited by: §1 .
+GLM Team (2025)
+GLM Team
+GLM-4.5: agentic, reasoning, and coding (arc) foundation models .
+External Links: 2508.06471 ,
+Link
+Cited by: §3.1 .
+Greshake et al. (2023)
+K. Greshake, S. Abdelnabi, S. Mishra, C. Endres, T. Holz, and M. Fritz
+Not what you’ve signed up for: compromising real-world llm-integrated applications with indirect prompt injection .
+In Proceedings of the 16th ACM Workshop on Artificial Intelligence and Security ,
+AISec ’23 , New York, NY, USA , pp. 79–90 .
+External Links: ISBN 9798400702600 ,
+Link ,
+Document
+Cited by: §1 .
+Haque et al. (2020)
+M. Haque, A. Chauhan, C. Liu, and W. Yang
+ILFO: adversarial attack on adaptive neural networks .
+In 2020 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) ,
+Vol. , pp. 14252–14261 .
+External Links: Document
+Cited by: §1 .
+Hassid et al. (2025)
+M. Hassid, G. Synnaeve, Y. Adi, and R. Schwartz
+Don’t overthink it. preferring shorter thinking chains for improved llm reasoning .
+External Links: 2505.17813 ,
+Link
+Cited by: §1 .
+Hong et al. (2021)
+S. Hong, Y. Kaya, I. Modoranu, and T. Dumitras
+A panda? no, it’s a sloth: slowdown attacks on adaptive multi-exit neural network inference .
+In International Conference on Learning Representations ,
+External Links: Link
+Cited by: §1 .
+Huang et al. (2025)
+J. Huang, B. Lin, G. Feng, J. Chen, D. He, and L. Hou
+Efficient reasoning for large reasoning language models via certainty-guided reflection suppression .
+arXiv preprint arXiv:2508.05337 .
+Cited by: §1 .
+Kojima et al. (2022)
+T. Kojima, S. S. Gu, M. Reid, Y. Matsuo, and Y. Iwasawa
+Large language models are zero-shot reasoners .
+In Proceedings of the 36th International Conference on Neural Information Processing Systems ,
+NIPS ’22 , Red Hook, NY, USA .
+External Links: ISBN 9781713871088
+Cited by: §1 .
+Lightman et al. (2024)
+H. Lightman, V. Kosaraju, Y. Burda, H. Edwards, B. Baker, T. Lee, J. Leike, J. Schulman, I. Sutskever, and K. Cobbe
+Let’s verify step by step .
+In The Twelfth International Conference on Learning Representations ,
+External Links: Link
+Cited by: §1 .
+Lu et al. (2025)
+J. Lu, T. Holleis, Y. Zhang, B. Aumayer, F. Nan, H. Bai, S. Ma, S. Ma, M. Li, G. Yin, Z. Wang, and R. Pang
+ToolSandbox: a stateful, conversational, interactive evaluation benchmark for LLM tool use capabilities .
+In Findings of the Association for Computational Linguistics: NAACL 2025 , L. Chiruzzo, A. Ritter, and L. Wang (Eds.) ,
+Albuquerque, New Mexico , pp. 1160–1183 .
+External Links: Link ,
+Document ,
+ISBN 979-8-89176-195-7
+Cited by: §1 .
+Mathematical Association of America (2025)
+Mathematical Association of America
+American invitational mathematics examination – aime .
+Note: American Invitational Mathematics Examination – AIME 2025
+External Links: Link
+Cited by: §3.1 .
+MiniMax AI (2025)
+MiniMax AI
+MiniMax-M2 .
+External Links: Link
+Cited by: §3.1 .
+Moonshot AI (2025)
+Moonshot AI
+Kimi K2-Thinking .
+External Links: Link
+Cited by: §3.1 .
+Qin et al. (2023)
+Y. Qin, S. Liang, Y. Ye, K. Zhu, L. Yan, Y. Lu, Y. Lin, X. Cong, X. Tang, B. Qian, S. Zhao, L. Hong, R. Tian, R. Xie, J. Zhou, M. Gerstein, D. Li, Z. Liu, and M. Sun
+ToolLLM: facilitating large language models to master 16000+ real-world apis .
+External Links: 2307.16789 ,
+Link
+Cited by: §1 .
+Quan et al. (2025)
+S. Quan, J. Yang, B. Yu, B. Zheng, D. Liu, A. Yang, X. Ren, B. Gao, Y. Miao, Y. Feng, Z. Wang, J. Yang, Z. Cui, Y. Fan, Y. Zhang, B. Hui, and J. Lin
+CodeElo: benchmarking competition-level code generation of llms with human-comparable elo ratings .
+External Links: 2501.01257 ,
+Link
+Cited by: §3.1 .
+Qwen Team (2025)
+Qwen Team
+Qwen3 technical report .
+External Links: 2505.09388 ,
+Link
+Cited by: §3.1 .
+Rein et al. (2024)
+D. Rein, B. L. Hou, A. C. Stickland, J. Petty, R. Y. Pang, J. Dirani, J. Michael, and S. R. Bowman
+GPQA: a graduate-level google-proof q&a benchmark .
+In First Conference on Language Modeling ,
+External Links: Link
+Cited by: §3.1 .
+Schick et al. (2023)
+T. Schick, J. Dwivedi-Yu, R. Dessì, R. Raileanu, M. Lomeli, L. Zettlemoyer, N. Cancedda, and T. Scialom
+Toolformer: language models can teach themselves to use tools .
+External Links: 2302.04761 ,
+Link
+Cited by: §1 .
+Shi et al. (2025)
+Z. Shi, Y. Wang, L. Yan, P. Ren, S. Wang, D. Yin, and Z. Ren
+Retrieval models aren’t tool-savvy: benchmarking tool retrieval for large language models .
+In Proceedings of the 63nd Annual Meeting of the Association for Computational Linguistics ,
+Cited by: §1 ,
+§3.1 .
+Shumailov et al. (2021)
+I. Shumailov, Y. Zhao, D. Bates, N. Papernot, R. Mullins, and R. Anderson
+Sponge examples: energy-latency attacks on neural networks .
+In 2021 IEEE European Symposium on Security and Privacy (EuroS&P) ,
+Vol. , pp. 212–231 .
+External Links: Document
+Cited by: §1 .
+Su et al. (2025)
+J. Su, J. Healey, P. Nakov, and C. Cardie
+Between underthinking and overthinking: an empirical study of reasoning length and correctness in llms .
+External Links: 2505.00127 ,
+Link
+Cited by: §1 .
+Sui et al. (2025)
+Y. Sui, Y. Chuang, G. Wang, J. Zhang, T. Zhang, J. Yuan, H. Liu, A. Wen, S. Zhong, N. Zou, H. Chen, and X. Hu
+Stop overthinking: a survey on efficient reasoning for large language models .
+External Links: 2503.16419 ,
+Link
+Cited by: §1 .
+Wan et al. (2026)
+Q. Wan, Z. Xu, L. Wei, X. Shen, and J. Sun
+Mitigating overthinking in large reasoning models via difficulty-aware reinforcement learning .
+External Links: 2601.21418 ,
+Link
+Cited by: §1 .
+Wang et al. (2025a)
+C. Wang, Y. Feng, D. Chen, Z. Chu, R. Krishna, and T. Zhou
+Wait, we don’t need to “wait”! removing thinking tokens improves reasoning efficiency .
+In Findings of the Association for Computational Linguistics: EMNLP 2025 , C. Christodoulopoulos, T. Chakraborty, C. Rose, and V. Peng (Eds.) ,
+Suzhou, China , pp. 7459–7482 .
+External Links: Link ,
+Document ,
+ISBN 979-8-89176-335-7
+Cited by: §1 ,
+§1 ,
+§1 ,
+§4.2 .
+Wang et al. (2023)
+X. Wang, J. Wei, D. Schuurmans, Q. V. Le, E. H. Chi, S. Narang, A. Chowdhery, and D. Zhou
+Self-consistency improves chain of thought reasoning in language models .
+In The Eleventh International Conference on Learning Representations ,
+External Links: Link
+Cited by: §1 .
+Wang et al. (2025b)
+Z. Wang, Y. Gao, Y. Wang, S. Liu, H. Sun, H. Cheng, G. Shi, H. Du, and X. Li
+MCPTox: a benchmark for tool poisoning attack on real-world mcp servers .
+arXiv preprint arXiv:2508.14925 .
+Cited by: §1 ,
+§1 .
+Wei et al. (2022)
+J. Wei, X. Wang, D. Schuurmans, M. Bosma, B. Ichter, F. Xia, E. H. Chi, Q. V. Le, and D. Zhou
+Chain-of-thought prompting elicits reasoning in large language models .
+In Proceedings of the 36th International Conference on Neural Information Processing Systems ,
+NIPS ’22 , Red Hook, NY, USA .
+External Links: ISBN 9781713871088
+Cited by: §1 .
+Yang et al. (2025)
+C. Yang, Q. Si, Y. Duan, Z. Zhu, C. Zhu, Q. Li, M. Chen, Z. Lin, and W. Wang
+Dynamic early exit in reasoning models .
+arXiv preprint arXiv:2504.15895 .
+Cited by: §1 .
+Yao et al. (2023a)
+S. Yao, D. Yu, J. Zhao, I. Shafran, T. L. Griffiths, Y. Cao, and K. Narasimhan
+Tree of thoughts: deliberate problem solving with large language models .
+In Proceedings of the 37th International Conference on Neural Information Processing Systems ,
+NIPS ’23 , Red Hook, NY, USA .
+Cited by: §1 .
+Yao et al. (2023b)
+S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. Narasimhan, and Y. Cao
+ReAct: synergizing reasoning and acting in language models .
+In International Conference on Learning Representations (ICLR) ,
+Cited by: §1 ,
+§3.1 .
+Zhang et al. (2025)
+Y. Zhang, Z. Zhou, W. Zhang, X. Wang, X. Jia, Y. Liu, and S. Su
+Crabs: consuming resource via auto-generation for LLM-DoS attack under black-box settings .
+In Findings of the Association for Computational Linguistics: ACL 2025 , W. Che, J. Nabende, E. Shutova, and M. T. Pilehvar (Eds.) ,
+Vienna, Austria , pp. 11128–11150 .
+External Links: Link ,
+Document ,
+ISBN 979-8-89176-256-5
+Cited by: §1 .
+Zhou et al. (2026)
+K. Zhou, Y. Zheng, Y. He, M. Xue, X. Gong, Y. Wang, and K. Lam
+Beyond max tokens: stealthy resource amplification via tool calling chains in llm agents .
+External Links: 2601.10955 ,
+Link
+Cited by: §1 .
+Zou et al. (2025)
+W. Zou, R. Geng, B. Wang, and J. Jia
+{ \{ poisonedrag } \} : Knowledge corruption attacks to { \{ retrieval-augmented } \} generation of large language models .
+In 34th USENIX Security Symposium (USENIX Security 25) ,
+pp. 3827–3844 .
+Cited by: §1 .
+Appendix
+Appendix A Attack Tool Implementations
+Table 3 summarizes the attack-oriented MCP tools used in our experiments, outlining their functional roles and control-flow properties.
+Category
+Tool Name
+Description
+Arguments
+Returns
+echo_verification
+Forces large-scale marker repetition and recursively demands re-invocation to inflate token usage.
+• count (int): repetition count
+(enforced minimum)
+Marker string
++ mandatory next-call instruction
+Repeat Text
+progress_marker
+Inserts repeated progress markers and enforces frequent invocation across micro-steps.
+• step (str): progress label
+• marker_count (int): repetition count
+Markers
++ mandatory next-call instruction
+confirmation_echo
+Repeatedly confirms generated content and enforces iterative validation cycles.
+• content (str): content to confirm
+• repetitions (int): repetition count
+Confirmation text + markers
++ recursive trigger
+analyze
+Enforces mandatory pre-response analysis and redirects control flow to validation.
+• problem (str)
+• approach (str)
+• complexity_assessment (opt. str)
+Analysis summary
++ forced next-step instruction
+validate
+Requires multiple validation passes; may redirect back to analyze on detected issues.
+• analysis_result (str)
+• validation_checklist (str)
+• issues_found (opt. str)
+Validation output
++ branching/recursion instruction
+Iterative Refinement
+refine
+Forces iterative improvements; may trigger backtracking to earlier steps when new issues arise.
+• original_solution (str)
+• refinements_made (str)
+• new_issues_discovered (opt. str)
+Refinement output
++ mandatory next-step
+verify
+Requires comprehensive checks; redirects to refine/validate/analyze if concerns remain.
+• refined_solution (str)
+• verification_results (str)
+• remaining_concerns (opt. str)
+Verification output
++ enforced backtracking
+finalize
+Prevents termination unless high confidence/completeness thresholds are met; enforces multi-cycle execution.
+• final_solution (str)
+• completeness_score (str)
+• confidence_level (str)
+• next_step (str)
+Finalization output
++ mandatory cycle restart
+check_time_complexity
+Forces complexity analysis as the first mandatory step for any request.
+• complexity (str)
+• reasoning (str)
+Complexity report
++ enforced next-step
+verify_edge_cases
+Requires enumerating many edge cases before proceeding.
+• edge_cases (List[str])
+• analysis (str)
+Edge-case listing
++ recursive instruction
+Distraction
+consider_alternative_approaches
+Forces enumeration of multiple alternative approaches, expanding reasoning length.
+• approaches (List[Dict[str,str]])
+Alternative approach report
++ enforced continuation
+check_historical_context
+Requires historical contextualization regardless of task relevance.
+• historical_examples (str)
+Historical context output
++ forced next-step
+assess_practical_applications
+Forces enumeration of numerous concrete applications to prolong output.
+• applications (List[str])
+Applications report
++ recursive instruction
+validate_assumptions
+Requires validating many assumptions and explicitly restarts the cycle.
+• assumptions (List[Dict[str,str]])
+Assumption report
++ mandatory cycle restart
+Table 3: Unified summary of attack MCP tools.
+Appendix B Implementation Details
+B.1 Qwen-Code Environment Setup
+In the Qwen-Code environment, we constructed a tool registry that reflects real deployment conditions by registering the default built-in tools provided by Qwen-Code along with two external MCP servers (Serena and Context7).
+Each problem instance was executed in an isolated directory to prevent interference across runs, especially for tools with filesystem side effects such as WriteFile and Shell .
+Qwen-Code Built-in Tools (13).
+⬇
+Edit , ExitPlanMode , Glob , Grep , ListFiles , ReadFile , ReadManyFiles , SaveMemory , Shell , Task , TodoWrite , WebFetch , WriteFile
+Serena MCP Tools (29).
+⬇
+activate_project , check_onboarding_performed , create_text_file , delete_memory , edit_memory , execute_shell_command , find_file , find_referencing_symbols , find_symbol , get_current_config , get_symbol_overview , initial_instructions , insert_after_symbol , insert_before_symbol , list_dir , list_memories , onboarding , prepare_for_new_conversation , read_file , read_memory , rename_symbol , replace_content , replace_symbol_body , search_for_pattern , switch_modes , think_about_collected_information , think_about_task_adherence , think_about_whether_you_are_done , write_memory
+Context7 MCP Tools (2).
+⬇
+resolve - library - id , get - library - docs
+B.2 Model Configurations
+All LLM models were integrated via an OpenAI-compatible API using serving frameworks such as vLLM 8 8
+8
+https://github.com/vllm-project/vllm and SGLang 9 9
+9
+https://github.com/sgl-project/sglang . For certain models with distinct tool-calling or parsing formats (e.g., MiniMax, DeepSeek), we used a lightweight rephrasing layer to convert tool responses into an OpenAI-compatible format.
+Regarding the hardware configuration, MiniMax-M2 and Qwen3-235B-A22B-Thinking-2507 were deployed on H200 × \times 4 GPUs, while all other models utilized H200 × \times 8 GPUs. In both environments, we set the maximum number of turns per session to 1,000 and the maximum tool-call depth per turn to 20. All experiments were repeated five times for each configuration, and the reported values represent the average across trials.
+B.3 NoWait Settings
+We adapted the NoWait technique to a tool-using agent environment.
+NoWait suppresses latency-inducing tokens at generation time by masking their logits.
+Following the original methodology, we use the same set of 15 latency-inducing tokens reported in the paper, which we denote as T T :
+T = { wait , alternatively , hmm , but , however , alternative , another , check , double-check , oh , maybe , verify , other , again , now , ah , any } . T=\left\{\begin{aligned} &\texttt{wait},\ \texttt{alternatively},\ \texttt{hmm},\ \texttt{but},\\
+&\texttt{however},\ \texttt{alternative},\texttt{another},\\
+&\texttt{check},\ \texttt{double-check},\ \texttt{oh},\ \texttt{maybe},\\
+&\texttt{verify},\texttt{other},\ \texttt{again},\texttt{now},\ \texttt{ah},\ \texttt{any}\end{aligned}\right\}.
+When NoWait is applied, the output probabilities for both the tokens in set T T and their derivatives, including variations in whitespace, special characters, and capitalization (e.g., ‘‘ wait’’ , ‘‘wait ’’ , ‘‘Wait’’ , ‘‘WAIT’’ , ‘‘wait.’’ ), are set to − ∞ -\infty to prevent their generation. This process is implemented solely through logit masking at the inference stage, without modifying the model parameters or the agent’s policy. Consequently,
+it controls lexical expression during token generation.
+Appendix C ReAct -based Agent Experimental Details
+AIME2025
+GPQA Diamond
+HumanEval
+Model
+Tool
+Registry
+Accuracy
+Tokens
+Accuracy
+Tokens
+Accuracy
+Tokens
+Normal
+70.00% (-)
+4,251,880 (-)
+72.59% (-)
+14,098,048 (-)
+19.51% (-)
+9,635,441 (-)
+Kimi-K2-Thinking
+Mixed
+36.67% (0.52 × \times )
+4,427,514 (1.04 × \times )
+64.97% (0.90 × \times )
+37,983,373 (2.69 × \times )
+17.68% (0.91 × \times )
+27,322,798 (2.84 × \times )
+Normal
+80.00% (-)
+1,462,548 (-)
+56.85% (-)
+6,832,721 (-)
+76.83% (-)
+7,437,881 (-)
+MiniMax-M2
+Mixed
+70.00% (0.88 × \times )
+8,206,770 (5.61 × \times )
+53.30% (0.94 × \times )
+73,988,176 (10.83 × \times )
+56.71% (0.74 × \times )
+63,847,601 (8.58 × \times )
+Normal
+63.33% (-)
+653,476 (-)
+70.05% (-)
+6,073,627 (-)
+60.98% (-)
+5,369,616 (-)
+Qwen3-Thinking
+Mixed
+26.67% (0.42 × \times )
+2,501,360 (3.83 × \times )
+64.97% (0.93 × \times )
+28,604,299 (4.71 × \times )
+52.44% (0.86 × \times )
+14,327,613 (2.67 × \times )
+Normal
+20.00% (-)
+5,051,562 (-)
+47.21% (-)
+45,622,515 (-)
+30.49% (-)
+12,419,795 (-)
+Qwen3-Coder
+Mixed
+23.33% (1.17 × \times )
+15,689,070 (3.11 × \times )
+48.22% (1.02 × \times )
+114,800,037 (2.52 × \times )
+3.05% (0.10 × \times )
+87,259,072 (7.03 × \times )
+Normal
+60.00% (-)
+549,667 (-)
+70.05% (-)
+2,752,992 (-)
+32.32% (-)
+2,361,707 (-)
+DeepSeek-V3.2
+Mixed
+23.33% (0.39 × \times )
+4,948,229 (9.00 × \times )
+26.90% (0.38 × \times )
+11,141,346 (4.05 × \times )
+6.71% (0.21 × \times )
+10,751,180 (4.55 × \times )
+Normal
+40.00% (-)
+6,358,821 (-)
+58.88% (-)
+10,272,416 (-)
+40.85% (-)
+6,508,864 (-)
+GLM-4.7
+Mixed
+60.00% (1.50 × \times )
+17,464,231 (2.75 × \times )
+53.81% (0.91 × \times )
+110,588,180 (10.77 × \times )
+9.15% (0.22 × \times )
+94,935,247 (14.59 × \times )
+Table 4:
+Accuracy and token consumption in ReAct -based agent settings.
+Results are reported under normal and mixed tool registry compositions for AIME2025, GPQA Diamond, and HumanEval.
+Parentheses report the × \times -factor relative to normal .
+Table 4 reports full per-model and per-dataset accuracy and token consumption results for the ReAct -based agent setting under the normal and mixed registry configurations.
+Across models and benchmarks, token consumption increases substantially under the mixed registry. In several cases, amplification occurs even when accuracy degradation is limited, indicating that registry-level cost amplification does not necessarily coincide with immediate task failure.
+Appendix D Qwen-Code Experimental Details
+normal
+mixed
+Model
+Problem ID
+Tokens
+Time (s)
+Tokens
+Time (s)
+1981c
+77,580
+209
+405,100 (5.22 × \times )
+610 (2.92 × \times )
+2008b
+22,258
+152
+283,742 (12.75 × \times )
+694 (4.57 × \times )
+1982e
+41,452
+388
+338,932 (8.18 × \times )
+489 (1.26 × \times )
+2033f
+21,131
+140
+502,473 (23.78 × \times )
+404 (2.89 × \times )
+1996e
+24,955
+190
+278,376 (11.16 × \times )
+429 (2.26 × \times )
+2003a
+17,796
+91
+298,428 (16.77 × \times )
+235 (2.58 × \times )
+Kimi-K2-Thinking
+1972b
+15,720
+60
+300,311 (19.10 × \times )
+280 (4.67 × \times )
+1981c
+36,936
+138
+8,097,643 (219.23 × \times )
+2998 (21.72 × \times )
+2008b
+16,081
+51.6
+8,129,382 (505.53 × \times )
+3007 (58.28 × \times )
+1982e
+35,339
+122
+8,119,633 (229.76 × \times )
+3006 (24.64 × \times )
+2033f
+173,425
+128
+2,091,292 (12.06 × \times )
+352 (2.75 × \times )
+1996e
+18,637
+87
+8,132,868 (436.38 × \times )
+3011 (34.61 × \times )
+2003a
+13,324
+16.7
+8,123,834 (609.71 × \times )
+3008 (180.12 × \times )
+MiniMax-M2
+1972b
+27,545
+32.3
+3,042,016 (110.44 × \times )
+439 (13.59 × \times )
+1981c
+101,796
+94
+3,039,643 (29.86 × \times )
+663 (7.05 × \times )
+2008b
+56,281
+27.4
+4,001,287 (71.09 × \times )
+1024 (37.37 × \times )
+1982e
+16,952
+69
+771,817 (45.53 × \times )
+401 (5.81 × \times )
+2033f
+414,836
+112
+1,060,195 (2.56 × \times )
+325 (2.90 × \times )
+1996e
+238,973
+126
+3,164,659 (13.24 × \times )
+561 (4.45 × \times )
+2003a
+48,201
+60
+3,489,858 (72.40 × \times )
+1039 (17.32 × \times )
+Qwen3-Coder
+1972b
+15,467
+49.6
+4,431,546 (286.52 × \times )
+1079 (21.75 × \times )
+1981c
+430,585
+394
+2,638,935 (6.13 × \times )
+2525 (6.41 × \times )
+2008b
+182,431
+95
+1,623,389 (8.90 × \times )
+2171 (22.85 × \times )
+1982e
+334,327
+138
+1,281,935 (3.83 × \times )
+2189 (15.86 × \times )
+2033f
+515,509
+350
+1,410,341 (2.74 × \times )
+780 (2.23 × \times )
+1996e
+414,025
+225
+1,244,909 (3.01 × \times )
+2157 (9.59 × \times )
+2003a
+14,032
+37.1
+1,116,984 (79.60 × \times )
+738 (19.89 × \times )
+DeepSeek-V3.2
+1972b
+23,598
+312
+1,193,804 (50.59 × \times )
+500 (1.60 × \times )
+1981c
+559,096
+10.3
+4,173,517 (7.46 × \times )
+505 (49.03 × \times )
+2008b
+105,051
+33.9
+1,253,777 (11.93 × \times )
+285 (8.41 × \times )
+1982e
+474,175
+111
+3,511,271 (7.41 × \times )
+343 (3.09 × \times )
+2033f
+127,084
+92
+123,432,447 (971.27 × \times )
+1923 (20.90 × \times )
+1996e
+432,287
+156
+33,683,048 (77.92 × \times )
+1981 (12.70 × \times )
+2003a
+420,446
+149
+4,668,283 (11.10 × \times )
+356 (2.39 × \times )
+GLM-4.6
+1972b
+222,308
+69
+66,314,920 (298.30 × \times )
+1084 (15.71 × \times )
+Table 5:
+Per-problem token consumption and runtime in Qwen-Code settings.
+Parentheses report the × \times -factor relative to normal .
+Table 5 reports per-problem token consumption and runtime for the Qwen-Code agent on seven sampled CodeElo problems under the normal and mixed registry configurations.
+Unlike aggregate averages reported in the main text, this table exposes the distribution of amplification across individual tasks. GLM-4.6 consumes 123M tokens on problem 2033f, corresponding to a 971.27 × 971.27\times token amplification. On problem 2003a, MiniMax-M2 reaches a 609.71 × 609.71\times increase in token usage and a 180.12 × 180.12\times increase in runtime.
+These cases illustrate that amplification in production-grade coding agents can concentrate on specific tasks, producing highly asymmetric and potentially unbounded cost risk.
+Appendix E Proprietary Model Policy
+Model
+Provider
+Key Restrictions for Research
+Source (Access Date)
+GPT-4o
+OpenAI
+Prohibition on using output to develop competing models
+Link (2026-02-08)
+Claude 3.5
+Anthropic
+Prohibition on automated data scraping and extraction
+Link (2026-02-08)
+Gemini
+Google
+Regional availability and specific API usage quotas
+Link (2026-02-08)
+Table 6:
+Summary of proprietary model terms and conditions.
+Each link provides the official documentation used to determine experimental constraints.
+Table 6 summarizes the relevant terms and conditions of proprietary models considered in our study. These policies were reviewed to ensure that all experiments complied with provider-specific usage restrictions, including limitations on data extraction, model replication, and API quotas.
+We conducted all evaluations within the permitted scope of each provider’s terms of service. No outputs were used for model training, automated scraping, or derivative model development. The access dates listed in the table correspond to the versions of the policies consulted during experimentation.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

@@ -1,0 +1,29 @@
+# Only decisive admission core 13069
+
+Official exact-v1 https://arxiv.org/html/2602.13069v1
+Actual paragraph blocks selected; not full Evidence Review. Transport truncations are not read claims.
+
+B47: 3.3 Memory-Efficient Backpropagation (MeBP)
+B48: Memory-efficient backpropagation combines gradient checkpointing with automatic differentiation to reduce peak memory usage while computing exact gradients. During the forward pass, only layer outputs are stored as checkpoints, while intermediate activations within each layer are discarded. During the backward pass, the forward computation for each layer is re-executed to regenerate the required intermediates before computing gradients.
+B49: This approach reduces memory complexity from O ⁡ ( L × I ) O(L\times I) to O ⁡ ( L × O + I ) O(L\times O+I) , where L L denotes the number of layers, I I denotes the size of intermediate activations per layer, and O O denotes the output size per layer. Since O ≪ I O\ll I for typical transformer architectures, this leads to substantial memory savings.
+B50: However, MeBP relies on automatic differentiation frameworks such as mx.grad in MLX or torch.autograd in PyTorch to compute gradients within each checkpointed segment. These frameworks treat the computation as a black box and implicitly determine which tensors to retain for gradient computation. As a result, more intermediate tensors may be stored than are mathematically necessary, since the framework cannot exploit domain-specific structure such as the low-rank property of LoRA projections.
+B51: 4 Method
+B52: 4.1 Core Idea: Trading Computation for Memory
+B53: The fundamental insight behind MeSP is simple: small tensors are cheaper to recompute than to store . In LoRA, the intermediate projection h = x ​ A h=xA has dimensions [ batch , seq , r ] [\text{batch},\text{seq},r] where the rank r r is typically 8–32. Storing h h across all LoRA layers (7 per transformer block × \times 24 blocks = 168 layers for Qwen2.5-0.5B) accumulates significant memory. However, recomputing h h requires only a single matrix multiplication with the small matrix A A , which is fast compared to the memory access overhead of storage and retrieval.
+B54: This observation leads to our strategy: during the forward pass, we store only the outputs of each transformer block, just enough to restart computation during backward. During the backward pass, we recompute all intermediates on-demand, process one layer at a time, and immediately release memory after computing gradients. At any point, only a single layer’s intermediates reside in memory.
+B66: 4.2 Explicit Gradient Computation for LoRA
+B67: We now formalize how gradients are computed without storing the intermediate h h . Consider a LoRA layer with frozen weight W 0 W_{0} , trainable matrices A A and B B , and scaling factor s = α / r s=\alpha/r :
+B68: y = x ​ W 0 + s ⋅ x ​ A ​ B y=xW_{0}+s\cdot xAB (5)
+B69: Given the upstream gradient g = ∂ L / ∂ y g=\partial L/\partial y , the parameter gradients can be expressed as:
+B70: ∂ L ∂ B = h ⊤ ​ ( s ⋅ g ) , ∂ L ∂ A = x ⊤ ​ ( s ⋅ g ​ B ⊤ ) \frac{\partial L}{\partial B}=h^{\top}(s\cdot g),\qquad\frac{\partial L}{\partial A}=x^{\top}(s\cdot gB^{\top}) (6)
+B71: where h = x ​ A h=xA . The key observation is that h h appears only in the gradient for B B , and we can recompute it as x ​ A xA using the input x x (which we must store anyway) and the weight A A (which is a model parameter). This eliminates the need to store h h during forward. A complete derivation establishing mathematical equivalence with automatic differentiation is provided in Appendix A .
+B80: 4.3 Layer-by-Layer Processing
+B81: Our algorithm processes transformer blocks sequentially, maintaining minimal memory footprint throughout training.
+B82: Forward Phase.
+B83: Each transformer block receives its input and computes the full forward pass: layer normalization, Q/K/V projections with LoRA, multi-head attention, output projection, feed-forward network with gated activation, and residual connections. Only the final output of each block is stored in a checkpoint dictionary. All other intermediates are discarded immediately.
+B84: Backward Phase.
+B85: We iterate through blocks in reverse order. For each block, we retrieve the stored input from the checkpoint, re-execute the forward computation to regenerate intermediates, compute gradients for all LoRA parameters, update parameters immediately with the optimizer, and then explicitly deallocate all intermediates and clear the GPU cache before proceeding to the next block.
+B86: This design ensures that peak memory occurs during the backward pass of a single layer, rather than accumulating across layers as in standard backpropagation.
+B87: 4.4 Memory Complexity Analysis
+B88: Let L L denote the number of transformer layers, O O the output tensor size per layer, and T T the size of intermediates required for gradient computation within a single layer. Standard backpropagation stores all intermediates across all layers, requiring O ⁡ ( L × I ) O(L\times I) memory where I I is the total intermediate size per layer. MeBP with gradient checkpointing reduces this to O ⁡ ( L × O + I f ​ w ) O(L\times O+I_{fw}) , where I f ​ w I_{fw} represents framework-managed intermediates.
+B89: MeSP achieves O ⁡ ( L × O + T ) O(L\times O+T) by storing only layer outputs globally and maintaining intermediates for just one layer at a time. For Qwen2.5-0.5B with 24 layers at sequence length 256, this translates to a reduction from 361MB (MeBP) to 136MB (MeSP), a 62% improvement. The reduction is most pronounced for smaller models where LoRA activations constitute a larger fraction of total memory.

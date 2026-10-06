@@ -1,0 +1,1353 @@
+Transition Matching Distillation for Fast Video Generation
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+1 Introduction
+2 Background
+Transition Matching.
+MeanFlow.
+DMD.
+3 Method
+Decoupled architecture.
+3.1 Stage 1: Transition matching pretraining
+Transition matching MeanFlow.
+3.2 Stage 2: Distillation with flow head
+DMD2-v.
+Flow head rollout.
+4 Experiments
+4.1 Experiment setup
+Implementation.
+Evaluation metrics.
+4.2 Comparison with existing methods
+User preference study.
+4.3 Ablation studies
+Three design choices in DMD2-v.
+Quality-efficiency tradeoff.
+MeanFlow vs. flow matching.
+Flow head rollout in distillation.
+5 Related works
+Accelerating diffusion models.
+Efficient video generation.
+Decoupled backbone.
+6 Conclusions
+References
+A Implementation details
+A.1 Flow head conditioning
+Time conditioning.
+Inner flow fusion.
+A.2 TM-MF
+Pretraining recipe.
+Finite difference approximation.
+A.3 DMD2
+Initialization.
+Multi-step distillation and inference.
+Teacher, fake score, and discriminator.
+A.4 VBench evaluation
+A.5 Hyperparameters
+B Additional experiments
+B.1 Quality-efficiency tradeoff
+B.2 Curvature of Wan trajectories
+B.3 Flow head conditioning
+B.4 Inner flow targets
+B.5 Impact of recurrence in flow head
+B.6 DMD2 comparisons
+B.7 More visual comparison results
+License: arXiv.org perpetual non-exclusive license
+arXiv:2601.09881v1 [cs.CV] 14 Jan 2026
+Transition Matching Distillation for Fast Video Generation
+Weili Nie¹*
+Julius Berner¹*
+Nanye Ma²
+Chao Liu¹
+Saining Xie²
+Arash Vahdat¹
+Affiliation: ¹NVIDIA   ²NYU   *equal contribution
+Figure 1: Generated examples from TMD. Four frames of 5s 480p videos generated from two text prompts using our TMD method (distilled from Wan2.1 14B T2V) with two different (effective) number of function evaluations (NFE) (see the definition of effective NFE in Eq. (16)).
+Abstract.
+Large video diffusion and flow models have achieved remarkable success in high-quality video generation, but their use in real-time interactive applications remains limited due to their inefficient multi-step sampling process. In this work, we present Transition Matching Distillation (TMD), a novel framework for distilling video diffusion models into efficient few-step generators. The central idea of TMD is to match the multi-step denoising trajectory of a diffusion model with a few-step probability transition process, where each transition is modeled as a lightweight conditional flow. To enable efficient distillation, we decompose the original diffusion backbone into two components: (1) a main backbone, comprising the majority of early layers, that extracts semantic representations at each outer transition step; and (2) a flow head, consisting of the last few layers, that leverages these representations to perform multiple inner flow updates. Given a pretrained video diffusion model, we first introduce a flow head to the model, and adapt it into a conditional flow map. We then apply distribution matching distillation to the student model with flow head rollout in each transition step. Extensive experiments on distilling Wan2.1 1.3B and 14B text-to-video models demonstrate that TMD provides a flexible and strong trade-off between generation speed and visual quality. In particular, TMD outperforms existing distilled models under comparable inference costs in terms of visual fidelity and prompt adherence. Project page: https://research.nvidia.com/labs/genair/tmd
+1 Introduction
+Recent progresses in large-scale diffusion models [19, 46] have significantly advanced the frontier of video generation [57, 25, 5, 1, 49, 15]. Open-sourced models (such as HunyuanVideo [25], Wan [49] and Cosmos [1]) and commercial text-to-video (T2V) systems (such as Sora, Veo and Kling) demonstrate remarkable capabilities in synthesizing coherent and photorealistic videos from text prompts.
+Despite their success, sampling inefficiency remains a central bottleneck. Standard diffusion models rely on a multi-step denoising process, often requiring hundreds of iterative steps, to progressively transform noise into realistic outputs [25, 49]. This iterative nature leads to high inference latency and computational cost, rendering large diffusion models impractical for interactive applications such as real-time video generation, content editing, or world modeling for agent training. Accelerating diffusion sampling without sacrificing visual quality thus becomes a key open challenge.
+A growing body of research has explored diffusion distillation to compress long denoising trajectories into a small number of inference steps.
+Existing approaches can be broadly categorized into two families:
+(1) trajectory-based distillation, which includes knowledge distillation [36, 40] and consistency models [45, 17, 35, 16] that directly regress the teacher’s denoising trajectories; and
+(2) distribution-based distillation, encompassing adversarial [42, 41] and variational score distillation [59, 70, 58] methods that align the student and teacher distributions.
+These techniques can reduce the sampling process to as few as one or two steps in the image domain.
+However, extending them to video diffusion models presents unique challenges.
+Videos exhibit high spatiotemporal dimensionality and complex inter-frame dependencies, making it difficult to preserve both global motion coherence and fine-grained spatial details during distillation.
+Most existing methods treat the diffusion network as a monolithic mapping [28, 64, 69], neglecting the hierarchical structure and semantic progression inherent in large video diffusion backbones.
+To address these limitations, we propose Transition Matching Distillation (TMD) to distill large video diffusion models into few-step generators (e.g., less than 4 steps; see Figure 1 for an example).
+Inspired by Transition Matching [44], TMD approximates the many-step denoising process with a compact few-step probability transition process, where each transition captures the distributional evolution of video samples across widely separated noise levels, enabling the student to take large transition steps that match the teacher model’s distribution.
+To model the transition process, we introduce a decoupled architecture for the student model with two components:
+(1) a main backbone, comprising the majority of early layers, that extracts high-level semantic representations at each outer transition step; and
+(2) a flow head, consisting of the final few layers, that conditions on these representations and refines the fine-grained visual details through multiple inner flow updates.
+This hierarchical decomposition allows the student to share representations from the main backbone with the flow head. The flow head then performs a few lightweight inner refinement steps within each outer transition step, providing a flexible mechanism to balance sampling efficiency and visual fidelity. First, we pretrain the student via trajectory-based distillation for the flow head using an adaption of MeanFlow [16]. Then, we formulate distillation as a distribution matching problem between the teacher denoising process and the student transition process using an improved version of DMD2 [58].
+By unrolling the flow head during training, we align the student’s probability transitions with the teacher’s multi-step diffusion distribution, capturing both semantic evolution and fine-grained visual details.
+We evaluate TMD in distilling Wan2.1 1.3B and 14B T2V models, using VBench [22] and a user preference study.
+Our experiments show that TMD consistently outperforms existing distilled methods under comparable inference budgets, achieving better visual fidelity and prompt adherence. In particular, our distilled 14B model achieves an overall score of 84.24 on VBench in near-one-step generation (NFE=1.38).
+Our main contributions are summarized as follows:
+•
+A novel distillation framework for video diffusion:
+We propose Transition Matching Distillation (TMD), which distills long denoising trajectories into a compact few-step probability transition process.
+•
+A decoupled diffusion backbone design:
+We decompose the teacher model into a semantic backbone and a recurrent flow head, enabling hierarchical distillation with flexible inner flow refinement.
+•
+A two-stage training strategy: (1) transition matching adaption that converts
+the flow head into a conditional flow map and (2) distribution matching distillation with flow head rollout in each transition step.
+•
+Comprehensive empirical validation:
+We demonstrate the effectiveness of TMD in distilling Wan2.1 1.3B and 14B T2V models, achieving state-of-the-art trade-offs between speed and quality in few-step video generation.
+2 Background
+Figure 2: Overview of our TMD method. (a) Decoupled architecture for TMD student, where the main backbone takes the noisy sample 𝒙t{\bm{x}}_{t}, timestep tt and text conditioning cc as inputs and outputs the main feature 𝒎t{\bm{m}}_{t}, and with a simple fusion layer, flow head conditions on 𝒎t,c{\bm{m}}_{t},c and predicts the less noisy target 𝒚r{\bm{y}}_{r} from the more noisy 𝒚s{\bm{y}}_{s} (s≥rs\geq r). (b) Top: Transition process maps noise to data with a few transition steps. Bottom: In each step, flow head rollout is performed during both distillation and sampling. We omit the timestep inputs ss and rr to the flow head for simplicity.
+Transition Matching.
+Transition matching (TM) [44] is a continuous-state generative model, that can be viewed as a generalization of flow matching to discrete time. It uses the rectified flow schedule
+𝒙t=(1−t)​𝒙+t​𝒙1,t∈[0,1],{\bm{x}}_{t}=(1-t){\bm{x}}+t{\bm{x}}_{1},\quad t\in[0,1],
+(1)
+interpolating between the data 𝒙{\bm{x}} and a standard normal 𝒙1∼𝒩⁡(0,I){\bm{x}}_{1}\sim\mathcal{N}(0,I). Flow matching approximates the instantaneous velocity
+𝒗⁡(𝒙,t)≔𝔼⁡[𝒙t˙|𝒙]=𝔼⁡[𝒙1−𝒙|𝒙],{\bm{v}}({\bm{x}},t)\coloneqq\mathbb{E}[\dot{{\bm{x}}_{t}}|{\bm{x}}]=\mathbb{E}[{\bm{x}}_{1}-{\bm{x}}|{\bm{x}}],
+(2)
+requiring many small time-steps to generate data 𝒙{\bm{x}} from noise 𝒙1{\bm{x}}_{1} [34, 2, 32]. In contrast, TM directly models the probabilistic transition between two states 𝒙ti{\bm{x}}_{t_{i}} to 𝒙ti−1{\bm{x}}_{t_{i-1}}, where 0=t0<t1<⋯<tM=10=t_{0}<t_{1}<\dots<t_{M}=1 is a given time discretization. For every transition the model is learned to predict an auxiliary latent variable 𝒚{\bm{y}}, such that 𝒙ti−1{\bm{x}}_{t_{i-1}} is easy to sample (e.g., deterministic) given 𝒚{\bm{y}} and 𝒙ti{\bm{x}}_{t_{i}}.
+For instance, Difference Transition Matching (DTM) considers11
+1
+While TM uses a probabilistic model to predict 𝒚{\bm{y}}, flow matching predicts the conditional expectation of 𝒚{\bm{y}} (Eq. (2)).
+𝒚≔𝒙1−𝒙{\bm{y}}\coloneqq{\bm{x}}_{1}-{\bm{x}}
+(3)
+such that
+𝒙ti−1=𝒙ti−(ti−ti−1)​𝒚.{\bm{x}}_{t_{i-1}}={\bm{x}}_{t_{i}}-(t_{i}-t_{i-1}){\bm{y}}.
+(4)
+To predict 𝒚{\bm{y}} given 𝒙ti{\bm{x}}_{t_{i}}, transition matching considers an “inner” rectified flow schedule
+𝒚s=(1−s)​𝒚+s​𝒚1,s∈[0,1],{\bm{y}}_{s}=(1-s){\bm{y}}+s{\bm{y}}_{1},\quad s\in[0,1],
+(5)
+where 𝒚1∼𝒩⁡(0,I){\bm{y}}_{1}\sim\mathcal{N}(0,I).
+In practice, at every step 𝒙ti{\bm{x}}_{t_{i}}, the main backbone predicts features and a lightweight head is learned using flow matching to approximate the inner velocity
+𝒗(𝒚,s;𝒙ti)≔𝔼[𝒚s˙|𝒚,𝒙ti]=𝔼[𝒚1−(𝒙1−𝒙)|𝒚,𝒙ti]\displaystyle\!\!{\bm{v}}({\bm{y}},s;{\bm{x}}_{t_{i}})\!\coloneqq\!\mathbb{E}[\dot{{\bm{y}}_{s}}|{\bm{y}},{\bm{x}}_{t_{i}}]\!=\mathbb{E}[{\bm{y}}_{1}\!-\!({\bm{x}}_{1}\!-\!{\bm{x}})|{\bm{y}},{\bm{x}}_{t_{i}}]\!
+(6)
+While DTM provided improved performance in image generation, it still needs around 30 transition steps in sampling.
+MeanFlow.
+To accelerate the sampling of diffusion models, MeanFlow [16] proposes to learn a flow map 𝒇⁡(𝒚s,s,r){\bm{f}}({\bm{y}}_{s},s,r) [4], which maps the point 𝒚s{\bm{y}}_{s} at arbitrary time ss on the PF-ODE trajectory to any preceding point xrx_{r} for r<sr<s. Formally,
+𝒇⁡(𝒚s,s,r)≔𝒚s−∫sr𝒗⁡(𝒚τ,τ)​𝑑τ\displaystyle\textstyle{\bm{f}}({\bm{y}}_{s},s,r)\coloneqq{\bm{y}}_{s}-\int_{s}^{r}{\bm{v}}({\bm{y}}_{\tau},\tau)\,\mathrm{d}\tau
+(7)
+where 𝒗{\bm{v}} denotes the instantaneous velocity as in (6). MeanFlow parameterizes this mapping using the average velocity along the trajectory segment from 𝒚s{\bm{y}}_{s} to 𝒚r{\bm{y}}_{r}, expressed as 𝒇⁡(𝒚s,s,r)=𝒚s+(s−r)​𝒖​(𝒚s,s,r){\bm{f}}({\bm{y}}_{s},s,r)={\bm{y}}_{s}+(s-r){\bm{u}}({\bm{y}}_{s},s,r), where 𝒖{\bm{u}} represents the average velocity. Combining with (7), we have (s−r)𝒖(𝒚s,s,r)=−∫sr𝒗(𝒚τ,τ)dτ(s-r){\bm{u}}({\bm{y}}_{s},s,r)=-\int_{s}^{r}{\bm{v}}({\bm{y}}_{\tau},\tau)\,\mathrm{d}\tau. This inspires the key insight from MeanFlow, where differentiating both sides w.r.t ss obtains the following identity:
+𝒖⁡(𝒚s,s,r)+(s−r)​dd​s​𝒖​(𝒚s,s,r)=𝒗⁡(𝒚s,s),\displaystyle{\bm{u}}({\bm{y}}_{s},s,r)+(s-r)\tfrac{\mathrm{d}}{\mathrm{d}s}{\bm{u}}({\bm{y}}_{s},s,r)={\bm{v}}({\bm{y}}_{s},s),
+(8)
+where dd​s​𝒖​(𝒚s,s,r)\frac{\mathrm{d}}{\mathrm{d}s}{\bm{u}}({\bm{y}}_{s},s,r) refers to the total derivative. This identity motivates the following practical training objective:
+ℒ⁡(θ)≔𝔼s,r,𝒚s​[‖𝒖θ​(𝒚s,s,r)−𝒖^‖2]\displaystyle\mathcal{L}(\theta)\coloneqq\mathbb{E}_{s,r,{\bm{y}}_{s}}\big[\|{\bm{u}}_{\theta}({\bm{y}}_{s},s,r)-\hat{{\bm{u}}}\|^{2}\big]
+(9)
+with
+𝒖^≔sg​(𝒗⁡(𝒚s,s)−(s−r)​dd​s​𝒖θ​(𝒚s,s,r)),\hat{{\bm{u}}}\coloneqq\text{sg}\big({\bm{v}}({\bm{y}}_{s},s)-(s-r)\tfrac{\mathrm{d}}{\mathrm{d}s}{\bm{u}}_{\theta}({\bm{y}}_{s},s,r)\big),
+(10)
+where sg​(⋅)\text{sg}(\cdot) refers to the stop gradient operator, the instantaneous velocity 𝒗⁡(𝒚s,s){\bm{v}}({\bm{y}}_{s},s) is approximated by conditional velocity 𝒚1−𝒚{\bm{y}}_{1}-{\bm{y}}, and the total derivative dd​s​𝒖​(𝒚s,s,r)\frac{\mathrm{d}}{\mathrm{d}s}{\bm{u}}({\bm{y}}_{s},s,r) can be computed using either forward-mode automatic differentiation or a finite-difference approximation [47, 52].
+DMD.
+Flow maps like MeanFlow must learn mappings between points along the ODE trajectory, which is difficult to scale to video generation due to high dimensionality and large trajectory curvature (see Appendix B).
+In contrast, distribution distillation methods such as DMD2 [58] offer more flexibility by matching only the output distribution to that of the teacher or data—using a GAN [18] loss for the latter and a variational score distillation (VSD) [59] loss, i.e., reverse KL divergence, for the former. This can be represented as
+ℒ⁡(θ)=𝔼ti,𝒙ti,t,𝒙^t​[w⁡(t)​sg​(D⁡(𝒙^t,t))T​𝒙^],\mathcal{L}(\theta)=\mathbb{E}_{t_{i},{\bm{x}}_{t_{i}},t,\hat{{\bm{x}}}_{t}}\big[w(t)\text{sg}\big(D(\hat{{\bm{x}}}_{t},t)\big)^{T}\hat{{\bm{x}}}\big],
+(11)
+where 𝒙^=𝒈θ​(𝒙ti,ti)\hat{{\bm{x}}}={\bm{g}}_{\theta}({\bm{x}}_{t_{i}},t_{i}) denotes the student output from the noisy input 𝒙ti{\bm{x}}_{t_{i}}, and tit_{i} is sampled from a given student time discretization, ww is a weighting function, DD is the difference between the scores of the student and teacher distributions, 𝒙^t=(1−t)​𝒙^+t​𝒙1\hat{{\bm{x}}}_{t}=\left(1-t\right)\hat{{\bm{x}}}+t{\bm{x}}_{1}
+is a noisy sample from the forward process in (1) that is passed to score functions.
+Since we do not have access to the score of the student distribution, a so-called fake score is initialized with the teacher parameters and trained on data from the student using flow matching.
+Up to a time-dependent weighting, DD equals the difference between the velocities of the teacher and fake score.
+In practice, both the fake score and GAN discriminator are updated for a given number of iterations in between updates of the student and the discriminator consists of a lightweight head operating on intermediate features of the fake score or teacher.
+3 Method
+We introduce our method – Transition Matching Distillation (TMD), including two training stages: (1) transition matching pretraining to initialize a flow head capable of iteratively refine features extracted from the main backbone; and (2) distillation with flow head where we introduce DMD2-v that advances DMD2 in few-step video generation and apply it with flow head rollout at each transition step.
+For ease of presentation, we drop additional conditioning of the teacher model, such as text conditioning, in our notation. Below, we start with introducing our student architecture before presenting our two-stage training.
+Decoupled architecture.
+Our method follows the general formulation
+of transition matching explained in Section 2.
+Different from TM, we aim to approximate many small denoising steps of a teacher model with the large transition step of the distilled student.
+To efficiently predict 𝒚{\bm{y}} in every transition step ti{t_{i}}, we decouple the pretrained teacher architecture into a main backbone 𝒎θ{\bm{m}}_{\theta}, that acts as a feature extractor,
+and a lightweight flow head 𝒇θ{\bm{f}}_{\theta} that iteratively predicts 𝒚{\bm{y}} given these features, i.e.,
+𝒚sj−1≈𝒇θ​(𝒚sj,sj,sj−1,𝒎θ​(𝒙ti,ti)),{\bm{y}}_{s_{j-1}}\approx{\bm{f}}_{\theta}\big({\bm{y}}_{s_{j}},s_{j},s_{j-1};{\bm{m}}_{\theta}({\bm{x}}_{t_{i}},t_{i})\big),
+(12)
+where 0=s0<s1<⋯<sN=10=s_{0}<s_{1}<\dots<s_{N}=1 is a given time discretization for the inner flow; see also Figure 2.
+While such decoupling has been successfully used for training generative models [61, 44, 50, 27, 67], it requires a careful design to minimally disrupt the pretrained model.
+Our design considers two key factors: (1) flow head target 𝒚{\bm{y}}. We find that the DTM formulation 𝒚=𝒙1−𝒙{\bm{y}}={\bm{x}}_{1}-{\bm{x}} outperforms other target types, such as the sample prediction 𝒚=𝒙{\bm{y}}={\bm{x}} (see Appendix B).
+(2) fusion layer. We use a time-conditioned gating mechanism to fuse the main feature 𝒎ti{\bm{m}}_{t_{i}} and the noisy flow head target 𝒚sj{\bm{y}}_{s_{j}}, ensuring the student’s initial forward pass matches that of the teacher.
+Additionally, we reuse the patch embedding of the main input 𝒙ti{\bm{x}}_{t_{i}} for the inner flow input 𝒚sj{\bm{y}}_{s_{j}}.
+See Appendix A for details.
+We provide pseudo-code for our inference in Algorithm 1.
+Algorithm 1  TMD inference
+𝒙∼𝒩⁡(0,I){\bm{x}}\sim\mathcal{N}(0,I)
+for i=Mi=M to 11 do
+𝒎=𝒎θ​(𝒙,ti){\bm{m}}={\bm{m}}_{\theta}({\bm{x}},t_{i}) ⊳\triangleright Main backbone
+𝒙=𝒙−(ti−ti−1)​InnerFlow​(𝒎){\bm{x}}={\bm{x}}-(t_{i}-t_{i-1})\textsc{InnerFlow}({\bm{m}}) ⊳\triangleright See Eq. (4)
+return 𝒙{\bm{x}} ⊳\triangleright Generated data
+def  InnerFlow(𝒎{\bm{m}})
+𝒚∼𝒩⁡(0,I){\bm{y}}\sim\mathcal{N}(0,I)
+for j=Nj=N to 11 do
+𝒚=𝒇θ​(𝒚,sj,sj−1,𝒎){\bm{y}}={\bm{f}}_{\theta}({\bm{y}},s_{j},s_{j-1};{\bm{m}}) ⊳\triangleright Flow head
+return 𝒚{\bm{y}}
+3.1 Stage 1: Transition matching pretraining
+Given the decoupled architecture, we convert the flow head into a flow map for iterative refinement before distillation.
+Similar to TM, we can directly use a flow matching loss in Eq. (6) to train the flow head to approximate the velocity of the inner flow. However, in theory, this would still require many inner steps to approximate 𝒚{\bm{y}}. Thus, we leverage MeanFlow to obtain a few-step flow head.
+Transition matching MeanFlow.
+On a high-level, our pretraining algorithm, termed Transition Matching MeanFlow (TM-MF), uses a MeanFlow objective as in Eq. (9), conditioned on the main feature 𝒎=𝒎θ​(xti,ti){\bm{m}}={\bm{m}}_{\theta}(x_{t_{i}},t_{i}); see Algorithm 2 for the pseudocode. Specifically, we parametrize the conditional inner flow map using an average velocity as
+𝒇θ​(𝒚s,s,r,𝒎)≔𝒚s+(s−r)​𝒖θ​(𝒚s,s,r,𝒎).{\bm{f}}_{\theta}({\bm{y}}_{s},s,r;{\bm{m}})\coloneqq{\bm{y}}_{s}+(s-r){\bm{u}}_{\theta}({\bm{y}}_{s},s,r;{\bm{m}}).
+(13)
+Note that we do not detach the main backbone features during training as this would limit the flexibility needed in pretraining.
+Naively training the flow head to predict the average velocity 𝒖θ{\bm{u}}_{\theta} performs poorly. Our hypothesis is that the flow head’s output should remain close to the pretrained teacher’s output.
+Since the teacher predicts the velocity of the outer flow in Eq. (2), the flow head should instead predict 𝔼⁡[𝒙1−𝒙∣𝒙]\mathbb{E}[{\bm{x}}_{1}-{\bm{x}}\mid{\bm{x}}] to stay aligned with the teacher.
+From the inner velocity definition in Eq. (5), we obtain
+𝒖θ(𝒚s,s,s;𝒎)≈𝔼[𝒚1−(𝒙1−𝒙)|𝒚,𝒙t]{\bm{u}}_{\theta}({\bm{y}}_{s},s,s;{\bm{m}})\approx\mathbb{E}[{\bm{y}}_{1}-({\bm{x}}_{1}-{\bm{x}})|{\bm{y}},{\bm{x}}_{t}]
+Thus, we parametrize the average velocity as
+𝒖θ​(𝒚s,s,r,𝒎)≔𝒚1−headθ​(𝒚s,s,r,𝒎),{\bm{u}}_{\theta}({\bm{y}}_{s},s,r;{\bm{m}})\coloneqq{\bm{y}}_{1}-\mathrm{head}_{\theta}({\bm{y}}_{s},s,r;{\bm{m}}),
+(14)
+where headθ\mathrm{head}_{\theta} is the head of our decoupled architecture (initialized from the teacher as outlined in Appendix A). With this parameterization, the headθ\mathrm{head}_{\theta} output approximates the teacher velocity prediction in the limit of r→sr\to s.
+For improved performance and stability, we follow the original MeanFlow to (1) perform flow matching (more precisely, transition matching in our setting) for a part of the batch, (2) use classifier-free guidance (CFG) (adapting the conditional velocity 𝒗⁡(𝒚s,s){\bm{v}}({\bm{y}}_{s},s)), drop the text condition with a certain probability, and (3) use adaptive loss normalization. Since JVP computation in Eq. (10) requires custom implementations to be compatible with large-scale training for video generation (e.g., flash attention [12], Fully Sharded Data Parallel (FSDP) [66], or context parallelism [23]), we use a finite-difference approximation of the JVP to make our algorithm agnostic of the underlying architectures and training techniques [47, 52]; see Appendix A for details.
+Since we do not have direct access to the inner flow velocity, we use the conditional velocity 𝒗⁡(𝒚s,s)=𝒚1−𝒚{\bm{v}}({\bm{y}}_{s},s)={\bm{y}}_{1}-{\bm{y}} in the objective (9). We note that for specific 𝒚{\bm{y}}, one can also derive representations of the inner velocity in terms of the pretrained teacher velocity [20], which we leave for future work.
+Finally, we also observed that TM can provide competitive results as a pretraining strategy; see Section 4.3 for an ablation. In particular, TM pretraining can be understood as a special case of MeanFlow in Eq. (9) for r=sr=s when using the conditional velocity.
+Algorithm 2  TMD student update step (simplified)
+Given 𝒙∼pdata,𝒙1∼𝒩⁡(0,I),ti∼Unif⁡({t1,…,tM}){\bm{x}}\sim p_{\mathrm{data}},\ {\bm{x}}_{1}\sim\mathcal{N}(0,I),\ t_{i}\sim\mathrm{Unif}(\{t_{1},\dots,t_{M}\})
+𝒙ti=(1−ti)​𝒙+ti​𝒙1{\bm{x}}_{t_{i}}=(1-t_{i}){\bm{x}}+t_{i}{\bm{x}}_{1} ⊳\triangleright See Eq. (1)
+𝒎=𝒎θ​(𝒙ti,ti){\bm{m}}={\bm{m}}_{\theta}({\bm{x}}_{t_{i}},t_{i}) ⊳\triangleright Main backbone
+if stage_one then
+𝒚=𝒙1−𝒙{\bm{y}}={\bm{x}}_{1}-{\bm{x}} ⊳\triangleright See Eq. (3)
+𝒚1∼𝒩⁡(0,I),(s,r)∼ps,r{\bm{y}}_{1}\sim\mathcal{N}(0,I),\ (s,r)\sim p_{s,r}
+𝒚s=(1−s)​𝒚+s​𝒚1{\bm{y}}_{s}=(1-s){\bm{y}}+s{\bm{y}}_{1} ⊳\triangleright See Eq. (5)
+𝒖=𝒖θ​(𝒚s,s,r,𝒎){\bm{u}}={\bm{u}}_{\theta}({\bm{y}}_{s},s,r;{\bm{m}}) ⊳\triangleright Avg. velocity
+𝒗=𝒚1−𝒚{\bm{v}}={\bm{y}}_{1}-{\bm{y}} ⊳\triangleright Conditional velocity
+ℒ=MeanFlow​(𝒖,𝒗,s,r)\mathcal{L}=\text{MeanFlow}({\bm{u}},{\bm{v}},s,r) ⊳\triangleright See Eq. (9)
+else
+𝒙^=𝒙1−InnerFlow​(𝒎)\hat{{\bm{x}}}={\bm{x}}_{1}-\textsc{InnerFlow}({\bm{m}}) ⊳\triangleright See Eq. (15) & Algorithm 1
+ℒ=VSD⁡(𝒙^)+λ⋅Discriminator⁡(𝒙^)\mathcal{L}=\mathrm{VSD}(\hat{{\bm{x}}})+\lambda\cdot\mathrm{Discriminator}(\hat{{\bm{x}}}) ⊳\triangleright See Eq. (11)
+θ=step⁡(θ,∇θℒ)\theta=\mathrm{step}(\theta,\nabla_{\theta}\mathcal{L}) ⊳\triangleright Gradient step
+3.2 Stage 2: Distillation with flow head
+After the TM-MF pretraining, we apply distribution distillation to align the student and teacher distributions. We significantly improve the baseline DMD2 for video models (see Appendix B) and leverage our optimized implementation for our TMD method.
+DMD2-v.
+DMD2 was originally proposed for distilling image diffusion models. Thus, its design choices may not be optimal in the video domain.
+We identify three key factors that improve DMD2 for videos (termed DMD2-v), which serve as the default setting for our TMD training:
+(1) GAN discriminator architecture. We find that using Conv3D layers in the GAN discriminator outperforms other architectures, implying the importance of localized, spatio-temporal features for the GAN loss; (2) Knowledge distillation (KD) warm-up. We find that KD warm-up improves the performance in one-step distillation, however, in multi-step generation, it tends to introduce coarse-grained artifacts that can be hardly fixed by the DMD2 training (see Figure 10 in Appendix). Therefore, we only apply KD warm-up in one-step distillation for DMD-v.
+(3) Timestep shifting. When we sample a timestep for the outer transition step or for adding noise to generated samples in the VSD loss, we find that applying a shifting function t=γ​t′(γ−1)​t′+1t=\frac{\gamma t^{\prime}}{(\gamma-1)t^{\prime}+1} with γ≥1\gamma\geq 1 to a uniformly sampled t′t^{\prime} improves the performance and prevents mode collapse.
+Flow head rollout.
+During distillation, we unroll the inner flow and treat the resulting architecture as a sample generator 𝒈θ​(𝒙ti,ti,𝒚1){\bm{g}}_{\theta}({\bm{x}}_{t_{i}},t_{i};{\bm{y}}_{1}) at each transition step tit_{i} (see Figure 2b).
+Considering the flow head target 𝒚=𝒙1−𝒙{\bm{y}}={\bm{x}}_{1}-{\bm{x}} defined in Eq. (3), the unrolled student output is given by
+𝒈θ​(𝒙ti,ti,𝒚1)≔𝒙1−InnerFlow​(𝒎θ​(𝒙ti,ti))\!\!{\bm{g}}_{\theta}({\bm{x}}_{t_{i}},t_{i};{\bm{y}}_{1})\!\coloneqq\!{\bm{x}}_{1}-\textsc{InnerFlow}({\bm{m}}_{\theta}({\bm{x}}_{t_{i}},t_{i}))
+(15)
+where 𝒚^0≈InnerFlow​(𝒎θ​(𝒙ti,ti))\hat{{\bm{y}}}_{0}\approx\textsc{InnerFlow}({\bm{m}}_{\theta}({\bm{x}}_{t_{i}},t_{i})) denotes the final prediction of the flow head after NN inner refinement steps, following Eq. (12).
+Applying the VSD loss in Eq. (11) from DMD2-v to the unrolled student output naturally backpropagate gradients through all NN inner flow steps. Since the flow head is lightweight, this remains efficient: for instance, if we choose 5 final DiT blocks from a 30-block DiT and unroll 2 steps, it adds less than 17% extra computation in updating the student network’s parameters.
+In the terminology of DMD2, this can be viewed as “backward simulation” [58] of the inner flow, but without detaching the gradient computation. Distillation with flow head rollout effectively avoids the mismatch between training and inference, and thus improves the distillation performance.
+Summary: We provide pseudocode for the student updates for both stages in Algorithm 2.
+Method
+NFE
+Overall
+Quality
+Semantic
+score
+score
+score
+Diffusion models
+VideoCrafter2 1.4B [8]
+50×\times2
+80.44
+82.20
+73.42
+CogVideoX-2B [57]
+50×\times2
+81.55
+82.48
+77.81
+Seaweed-7B [43]
+25×\times2
+82.15
+84.36
+73.31
+Wan2.1 1.3B [49]
+50×\times2
+84.26
+85.30
+80.09
+Distilled models
+DOLLAR [13]‡
+4
+82.57
+83.83
+77.51
+T2V-Turbo-v2 [28]∗
+4
+82.34
+83.93
+75.97
+rCM [69]
+4
+84.43
+85.38
+80.63
+DMD2-v
+4
+84.60
+86.03
+79.87
+APT [29]†
+2
+81.85
+84.39
+71.70
+rCM [69]
+2
+84.09
+84.90
+80.86
+DMD2-v
+2
+84.39
+85.65
+79.32
+DMD2-v
+3
+84.48
+85.71
+79.58
+TMD-N2H5 (Ours)
+2.33
+84.68
+85.71
+80.55
+TMD-N4H5 (Ours)
+3.00
+84.67
+85.72
+80.47
+APT [29]†
+1
+82.00
+84.21
+73.15
+rCM [69]
+1
+82.65
+83.60
+78.82
+DMD2-v
+1
+83.24
+84.28
+79.10
+TMD-N2H5 (Ours)
+1.17
+83.80
+85.07
+78.69
+TMD-N4H5 (Ours)
+1.50
+83.79
+85.03
+78.83
+Table 1: VBench results of our method and baselines when distilling Wan2.1 1.3B into a few-step generator (∗The teacher model is VideoCrafter2 1.4B [8]; †The teacher model is Seaweed-7B [43]; ‡The teacher model is a variant of CogVideoX [57]). DMD2-v denotes our improved version of DMD2 for video generation. “N2H5” (or “N4H5”) means two (or four) denoising steps and five DiT blocks in the flow head. NFE in our method is represented by the effective forward pass of the whole network as in Eq. (16).
+Figure 3: Visual comparison. We compare three frames (and zoomed-in regions of interest) of the outputs of TMD and DMD2-v on exemplary prompts for Wan2.1 1.3B (left) and Wan2.1 14B (right). TMD can improve visual quality at comparable cost to our DMD2-v baseline.
+Extended prompts can be found in Appendix A.
+4 Experiments
+4.1 Experiment setup
+Implementation.
+We use Wan2.1 1.3B and 14B T2V-480p [49] as teacher video diffusion models and distill them to the same-sized student models with a decoupled architecture.
+All experiments are performed on the latent resolution of [T,H,W]=[21,60,104][T,H,W]=[21,60,104], which gets decoded to 81 frames with pixel resolution 480×832480\times 832. We use a dataset of 500k text and video pairs, where text prompts are sampled from the VidProM dataset [51] (and extended by Qwen-2.5 [55]) and videos are generated by the Wan2.1 14B T2V model. We defer more implementation details and hyperparameters to Appendix A.
+Evaluation metrics.
+To evaluate our method and baselines, we use VBench [22] (where we report total score, quality score and semantic score) and a user preference study to assess visual quality and prompt adherence. We consider the effective number of function evaluations (NFE) to be the total number of DiT blocks used during generation divided by LL, the number of blocks in the teacher architecture; for the baselines this corresponds to the number of steps MM, and for our TMD models, this corresponds to
+Effective NFE≔M⁡(1+(N−1)​HL),\textstyle\text{Effective NFE}\coloneqq M\big(1+\frac{(N-1)H}{L}\big),
+(16)
+where NN is the number of inner flow steps and HH is the number of blocks in the flow head. We note that L=30L=30 for Wan2.1 1.3B and L=40L=40 for Wan2.1 14B.
+4.2 Comparison with existing methods
+Method
+NFE
+Overall
+Quality
+Semantic
+score
+score
+score
+Diffusion models
+Hunyuan Video 13B [25]
+50×\times2
+83.43
+85.07
+76.88
+Wan2.1 14B [49]
+50×\times2
+86.22
+86.67
+84.44
+Distilled models
+rCM [69]
+4
+84.92
+85.43
+82.88
+DMD2-v
+4
+84.52
+85.37
+81.11
+rCM [69]
+2
+85.05
+85.57
+82.95
+DMD2-v
+2
+84.79
+85.78
+80.83
+TMD-N4H5 (Ours)
+2.75
+84.62
+85.09
+82.72
+rCM [69]
+1
+83.02
+83.57
+80.81
+DMD2-v
+1
+83.69
+84.46
+80.61
+TMD-N4H5 (Ours)
+1.38
+84.24
+84.89
+81.65
+Table 2: VBench results of our method and baselines when distilling Wan2.1 14B into a few-step generator.
+DMD2-v denotes our improved version of DMD2 for video generation.
+Our TMD method is built upon the improved version of DMD2 for video generation (termed DMD2-v). Here, we compare TMD with DMD2-v and existing baselines in distilling video diffusion models. We provide a visual comparison in Figure 3 and refer to Appendix B for further examples. In Table 1, we show the VBench results of distilling Wan2.1 1.3B (or video models with a similar size) into a few-step generator, where we group the distilled models based on the number of student denoising steps MM. When M=2M=2, TMD-N2H5 with effective NFE=2.33\text{NFE}=2.33 (i.e., 2 denoising steps and 5 DiT blocks in flow head) obtains an overall score 84.68 that outperforms all other distilled models, including the strongest baseline rCM with NFE=4\text{NFE}=4 (overall score 84.43). When M=1M=1, TMD-N2H5 with NFE=1.17\text{NFE}=1.17 also outperforms all other one-step distillation methods with an overall score 83.80, closing the gap from two-step distillation counterparts. With TMD, we can have more fine-grained control over the quality-efficiency tradeoff by allowing for fractional NFEs.
+Figure 4: Visual comparison. We compare three frames of TMD and DMD2-v on exemplary prompts for Wan2.1 14B. TMD can improve prompt adherence at comparable cost to our DMD2-v baseline.
+Extended prompts can be found in Appendix A.
+In Table 2, we show the VBench results of distilling Wan2.1 14B into a few-step generator.
+When M=2M=2, TMD-N4H5 with NFE=2.75\text{NFE}=2.75 does not outperform 2-step baselines (although it outperforms 4-step DMD-v).
+When M=1M=1, TMD-N4H5 with NFE=1.38\text{NFE}=1.38 significantly outperforms all other one-step distillation methods with an overall score of 84.24. It improves over one-step rCM by +1.22 while adding only minimal inference cost. In Figure 4, we show TMD improves prompt adherence, supporting the numerical improvement.
+Besides, TMD eliminates the need for the computationally expensive KD warm-up required by one-step DMD2-v.
+User preference study.
+We perform a blinded two-alternative forced choice (2AFC) user preference study comparing TMD-N4H5 with DMD2-v when distilling Wan2.1 14B under two settings: (1) M=2M=2 (two-step generation) and (2) M=1M=1 (one-step generation). We randomly sample 60 challenging prompts from VBench [22] and generate 55 videos with different seeds for each prompt and model. For each prompt, raters are presented with side-by-side videos from the our model and the baseline (in random order and with random seed) and asked to perform independent pairwise comparisons for two separate criteria: visual quality and prompt alignment. Detailed instructions are provided in Figure 21.
+As shown in Figure 5, users consistently preferred TMD over DMD2-v in both the one-step and two-step generation settings.
+The advantage is even more significant for prompt alignment, echoing the qualitative results in Figure 4 and underscoring the role of iterative flow-head refinement in largely improving prompt adherence.
+One-Step (M=1M=1)Two-Step (M=2M=2)00202040406060808010010051.851.863.263.263.363.371.971.9Win Rate (%)Visual QualityPrompt Alignment
+Figure 5: User preference study results. Comparison of TMD-N4H5 (ours) against DMD2-v under one-step (M=1M=1) and two-step (M=2M=2) distillation regimes. Values indicate the percentage of times users preferred our method over the baseline DMD2-v and the dashed line at 50% represents parity.
+Discriminator head
+Overall
+Quality
+Semantic
+score
+score
+score
+Conv3D
+83.24
+84.28
+79.10
+Conv1D-2D
+82.32
+83.54
+77.44
+Attention
+82.36
+83.32
+78.51
+w/o GAN
+81.63
+82.70
+77.35
+Table 3:
+Impact of discriminator head design in DMD2-v for one-step distillation of Wan2.1 1.3B. We compare three heads: (1) Conv3D, jointly processing spatio-temporal features; (2) Conv1D–2D, separating temporal and spatial convolutions (e.g., [64]); and (3) Attention, flattening features into tokens processed by self-attention (with pooling downsampling).
+KD warm-up
+Overall
+Quality
+Semantic
+score
+score
+score
+One-step w/ KD
+83.24
+84.28
+79.10
+One-step w/o KD
+83.06
+84.72
+76.42
+Two-step w/ KD
+83.79
+84.67
+80.28
+Two-step w/o KD
+84.39
+85.65
+79.32
+Table 4: Impact of the KD warm-up, where we distill Wan2.1 1.3B into a one-step or two-step student, respectively. For KD warm-up, we use teacher model to generate 10k noise-data pairs.
+Timestep shifting
+Overall
+Quality
+Semantic
+score
+score
+score
+tdmdt_{\text{dmd}} w/ shift (γ=5\gamma=5, one-step)
+83.24
+84.28
+79.10
+tdmdt_{\text{dmd}} w/o shift (one-step)∗
+83.22
+84.29
+78.94
+tstudentt_{\text{student}} w/ shift (γ=10\gamma=10, two-step)
+84.39
+85.65
+79.32
+tstudentt_{\text{student}} w/o shift (two-step)
+83.44
+84.96
+77.33
+Table 5: Impact of the timestep shifting for tdmdt_{\text{dmd}} that controls the noise level in the DMD loss and tstudentt_{\text{student}} that controls the denoising steps in the multi-step student, where we distill Wan2.1 1.3B into a one-step or two-step student, respectively. ∗Note that the setting “tdmdt_{\text{dmd}} w/o shift” leads to the severe mode collapse that VBench scores cannot capture (see Fig. 10 in Appendix).
+4.3 Ablation studies
+Three design choices in DMD2-v.
+Tables 3-5 show the impact of the discriminator head, KD warm-up and timestep shifting in DMD2-v, respectively.
+In Table 3, we observe that adding the GAN loss improves the distillation performance, and Conv3D outperforms the other two discriminator head architectures.
+In Table 4, the overall score on VBench increases with KD warm-up in one-step DMD2 but decreases with KD warm-up in two-step DMD2. It implies that we better only apply KD warm-up in one-step generation. In Table 5, we observe that applying timestep shifting to tdmdt_{\text{dmd}} that controls the
+noise level in the DMD loss and tstudentt_{\text{student}} that controls the denoising
+steps in the multi-step student improves the distillation performance, respectively.
+Quality-efficiency tradeoff.
+The number of inner steps NN and flow head layers HH control the computational cost of inner flows.
+We vary NN and HH to more comprehensively analyze TMD’s performance-efficiency tradeoff. In Figure 6, we observe that the overall VBench score generally improves as the effective NFE increases. This justifies the fine-grained flexibility that our method offers in balancing generation speed and visual quality.
+Figure 6: Performance-efficiency tradeoff of TMD. We compare the overall VBench score and effective NFE of TMD, when distilling Wan2.1 1.3B with M=2M=2 for different number of inner steps NN and flow head layers HH against 22- and 33-step DMD2-v. TMD can provide consistent performance gains for increasing NFE.
+MeanFlow vs. flow matching.
+In transition matching pretraining, we replace the MeanFlow objective with the vanilla flow matching objective (TM) to highlight the impact of MeanFlow (TM-MF). Table 6 shows that TM-MF consistently achieves better distillation performance than TM, suggesting that TM-MF offers a superior initialization for the second-stage distillation training.
+Setting
+Pretraining
+Overall
+Quality
+Semantic
+score
+score
+score
+N2H5
+TM-MF
+84.68
+85.71
+80.55
+TM
+84.61
+85.64
+80.46
+N4H5
+TM-MF
+84.67
+85.72
+80.47
+TM
+84.29
+85.45
+79.68
+Table 6: Impact of the first stage pretraining method on the final performance when we distill Wan2.1 1.3B with M=2M=2.
+Flow head rollout in distillation.
+It is crucial to close the gap between training and inference, by allowing gradients from the distillation objective to backpropagate through the unrolled inner flow trajectory. Figure 7 shows that applying flow head rollout in distillation largely leads to faster training convergence and improved performance.
+Figure 7: Convergence and rollout ablation. We compare the overall VBench score over iterations for the second-stage TMD training with and without flow head rollout. While TMD generally converges within a only few thousand iterations, we observe faster convergence and improved performance when using rollouts.
+5 Related works
+Accelerating diffusion models.
+Recent efforts to accelerate diffusion models for few-step generation generally follow two directions:
+Trajectory matching methods directly learn mappings along the underlying ODE trajectory [40, 45, 16, 47, 68, 4, 14, 35, 17, 26, 39, 7], while distribution matching methods train a student model to match the teacher’s distribution with fewer steps [41, 58, 54, 59, 42, 70, 37].
+In trajectory matching, Progressive Distillation [40] and Shortcut Models [14] gradually reduce sampling steps during training, while Consistency Models [45, 35, 17] directly map intermediate states to clean data. Subsequent works [16, 39, 14, 4, 24] extend this idea to learn mappings (or flow maps) between any pair of timesteps. They often face training instability when scaled to larger models or higher resolutions [35, 9, 69].
+Distribution matching approaches, in contrast, align the student’s few-step sampling distribution with the teacher’s via distributional divergence [59, 58, 54]. This provides stable supervision at the distribution level and is less sensitive to the curvature of ODE trajectories, with adversarial objectives further improving sample fidelity.
+As video generation grows in prominence—with its much higher sampling cost—recent works have extended these acceleration techniques to the video domain [69, 64, 29, 13]. Our method advances this line by introducing a decoupled architecture that more effectively leverages the teacher’s learned semantic representations.
+Efficient video generation.
+Beyond reducing sampling steps, other research aims to enhance the overall efficiency of video diffusion models.
+Autoregressive–diffusion hybrids achieve this by training causal models that generate frames sequentially instead of predicting the entire sequence at once [60, 21, 11, 30, 48, 6, 62]. This design significantly reduces attention complexity per forward pass through shorter temporal contexts.
+Meanwhile, system-level optimizations such as feature caching and efficient attention further reduce sampling cost by reusing intermediate activations [33, 65, 38] or by sparsifying or linearizing the attention operation [56, 53, 10]. These techniques are complementary to ours and can be combined with TMD for even greater video generation efficiency.
+Decoupled backbone.
+Recent studies have demonstrated the advantages of decoupling diffusion backbones into a feature extractor (encoder) and a head (decoder) [61, 44, 50, 27, 67].
+For example, aligning intermediate features with those from pretrained visual encoders improves training convergence and condition adherence [61, 3, 63].
+Decoupled Diffusion Transformer (DDT) [50] further accelerates sampling by reusing extracted features across denoising steps, though such encoder sharing is not explicitly enforced during training.
+Transition Matching (TM) [44] explicitly models an inner flow loop for the head via flow matching [31].
+Our work extends TM in two key aspects: (1) scaling it to large-scale video generation, and (2) distilling pretrained video diffusion models into few-step generators instead of training a multi-step TM model from scratch.
+6 Conclusions
+In this work, we introduced Transition Matching Distillation (TMD), a novel framework designed to address the significant inference latency of large-scale video diffusion models. The core of our method lies in a decoupled student architecture, which separates a main backbone for semantic feature extraction from a lightweight, recurrent flow head for iterative refinement. This design is coupled with a two-stage training strategy involving transition matching pretraining and distribution-based distillation.
+Our experiments on distilling state-of-the-art Wan2.1 models demonstrated that TMD offers fine-grained flexibility in balancing the trade-off between generation speed and video quality. TMD can outperform existing distillation techniques, achieving superior visual fidelity and prompt adherence at comparable or even reduced computational budgets.
+Future directions include (1) unifying the two training stages into a single-stage pipeline and (2) integrating TMD with system-level optimizations, such as efficient attention or feature caching, to further accelerate video generation.
+References
+[1]
+N. Agarwal, A. Ali, M. Bala, Y. Balaji, E. Barker, T. Cai, P. Chattopadhyay, Y. Chen, Y. Cui, Y. Ding, et al. (2025)
+Cosmos world foundation model platform for physical ai.
+arXiv preprint arXiv:2501.03575.
+Cited by: §1.
+[2]
+M. S. Albergo and E. Vanden-Eijnden (2023)
+Building normalizing flows with stochastic interpolants.
+In The Eleventh International Conference on Learning Representations,
+Cited by: §2.
+[3]
+A. Bhowmik, D. Korzhenkov, C. G. Snoek, A. Habibian, and M. Ghafoorian (2025)
+MoAlign: motion-centric representation alignment for video diffusion models.
+arXiv preprint arXiv:2510.19022.
+Cited by: §5.
+[4]
+N. M. Boffi, M. S. Albergo, and E. Vanden-Eijnden (2024)
+Flow map matching.
+arXiv preprint arXiv:2406.07507.
+Cited by: §2,
+§5.
+[5]
+T. Brooks, B. Peebles, C. Holmes, W. DePue, Y. Guo, L. Jing, D. Schnurr, J. Taylor, T. Luhman, E. Luhman, C. Ng, R. Wang, and A. Ramesh (2024)
+Video generation models as world simulators.
+Note: openai.com/research/video-generation-models-as-world-simulators
+Cited by: §1.
+[6]
+B. Chen, D. Martí Monsó, Y. Du, M. Simchowitz, R. Tedrake, and V. Sitzmann (2024)
+Diffusion forcing: next-token prediction meets full-sequence diffusion.
+Advances in Neural Information Processing Systems 37, pp. 24081–24125.
+Cited by: §5.
+[7]
+H. Chen, K. Zhang, H. Tan, L. Guibas, G. Wetzstein, and S. Bi (2025)
+Pi-flow: policy-based few-step generation via imitation distillation.
+External Links: 2510.14974,
+Link
+Cited by: §5.
+[8]
+H. Chen, Y. Zhang, X. Cun, M. Xia, X. Wang, C. Weng, and Y. Shan (2024)
+VideoCrafter2: overcoming data limitations for high-quality video diffusion models.
+External Links: 2401.09047
+Cited by: Table 1,
+Table 1.
+[9]
+J. Chen, S. Xue, Y. Zhao, J. Yu, S. Paul, J. Chen, H. Cai, S. Han, and E. Xie (2025)
+Sana-sprint: one-step diffusion with continuous-time consistency distillation.
+arXiv preprint arXiv:2503.09641.
+Cited by: §5.
+[10]
+J. Chen, Y. Zhao, J. Yu, R. Chu, J. Chen, S. Yang, X. Wang, Y. Pan, D. Zhou, H. Ling, et al. (2025)
+Sana-video: efficient video generation with block linear diffusion transformer.
+arXiv preprint arXiv:2509.24695.
+Cited by: §5.
+[11]
+J. Cui, J. Wu, M. Li, T. Yang, X. Li, R. Wang, A. Bai, Y. Ban, and C. Hsieh (2025)
+Self-forcing++: towards minute-scale high-quality video generation.
+arXiv preprint arXiv:2510.02283.
+Cited by: §5.
+[12]
+T. Dao, D. Fu, S. Ermon, A. Rudra, and C. Ré (2022)
+Flashattention: fast and memory-efficient exact attention with io-awareness.
+Advances in neural information processing systems 35, pp. 16344–16359.
+Cited by: §3.1.
+[13]
+Z. Ding, C. Jin, D. Liu, H. Zheng, K. K. Singh, Q. Zhang, Y. Kang, Z. Lin, and Y. Liu (2025)
+DOLLAR: few-step video generation via distillation and latent reward optimization.
+In Proceedings of the IEEE/CVF International Conference on Computer Vision,
+pp. 17961–17971.
+Cited by: Table 1,
+§5.
+[14]
+K. Frans, D. Hafner, S. Levine, and P. Abbeel (2024)
+One step diffusion via shortcut models.
+arXiv preprint arXiv:2410.12557.
+Cited by: §5.
+[15]
+Y. Gao, H. Guo, T. Hoang, W. Huang, L. Jiang, F. Kong, H. Li, J. Li, L. Li, X. Li, et al. (2025)
+Seedance 1.0: exploring the boundaries of video generation models.
+arXiv preprint arXiv:2506.09113.
+Cited by: §1.
+[16]
+Z. Geng, M. Deng, X. Bai, J. Z. Kolter, and K. He (2025)
+Mean flows for one-step generative modeling.
+arXiv preprint arXiv:2505.13447.
+Cited by: §A.2,
+§A.2,
+§1,
+§1,
+§2,
+§5.
+[17]
+Z. Geng, A. Pokle, W. Luo, J. Lin, and J. Z. Kolter (2024)
+Consistency models made easy.
+arXiv preprint arXiv:2406.14548.
+Cited by: §1,
+§5.
+[18]
+I. Goodfellow, J. Pouget-Abadie, M. Mirza, B. Xu, D. Warde-Farley, S. Ozair, A. Courville, and Y. Bengio (2020)
+Generative adversarial networks.
+Communications of the ACM 63 (11), pp. 139–144.
+Cited by: §2.
+[19]
+J. Ho, A. Jain, and P. Abbeel (2020)
+Denoising diffusion probabilistic models.
+Advances in neural information processing systems 33, pp. 6840–6851.
+Cited by: §1.
+[20]
+P. Holderrieth, U. Singer, T. Jaakkola, R. T. Chen, Y. Lipman, and B. Karrer (2025)
+GLASS flows: transition sampling for alignment of flow and diffusion models.
+arXiv preprint arXiv:2509.25170.
+Cited by: §3.1.
+[21]
+X. Huang, Z. Li, G. He, M. Zhou, and E. Shechtman (2025)
+Self forcing: bridging the train-test gap in autoregressive video diffusion.
+arXiv preprint arXiv:2506.08009.
+Cited by: §A.4,
+§5.
+[22]
+Z. Huang, Y. He, J. Yu, F. Zhang, C. Si, Y. Jiang, Y. Zhang, T. Wu, Q. Jin, N. Chanpaisit, Y. Wang, X. Chen, L. Wang, D. Lin, Y. Qiao, and Z. Liu (2024)
+VBench: comprehensive benchmark suite for video generative models.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+Cited by: §A.4,
+§1,
+§4.1,
+§4.2.
+[23]
+S. A. Jacobs, M. Tanaka, C. Zhang, M. Zhang, S. L. Song, S. Rajbhandari, and Y. He (2023)
+Deepspeed ulysses: system optimizations for enabling training of extreme long sequence transformer models.
+arXiv preprint arXiv:2309.14509.
+Cited by: §3.1.
+[24]
+D. Kim, C. Lai, W. Liao, N. Murata, Y. Takida, T. Uesaka, Y. He, Y. Mitsufuji, and S. Ermon (2023)
+Consistency trajectory models: learning probability flow ode trajectory of diffusion.
+arXiv preprint arXiv:2310.02279.
+Cited by: §5.
+[25]
+W. Kong, Q. Tian, Z. Zhang, R. Min, Z. Dai, J. Zhou, J. Xiong, X. Li, B. Wu, J. Zhang, et al. (2024)
+Hunyuanvideo: a systematic framework for large video generative models.
+arXiv preprint arXiv:2412.03603.
+Cited by: §1,
+Table 2.
+[26]
+S. Lee, Y. Xu, T. Geffner, G. Fanti, K. Kreis, A. Vahdat, and W. Nie (2024)
+Truncated consistency models.
+External Links: 2410.14895,
+Link
+Cited by: §5.
+[27]
+J. Lei, K. Liu, J. Berner, H. Yu, H. Zheng, J. Wu, and X. Chu (2025)
+Advancing end-to-end pixel space generative modeling via self-supervised pre-training.
+arXiv preprint arXiv:2510.12586.
+Cited by: §3,
+§5.
+[28]
+J. Li, Q. Long, J. Zheng, X. Gao, R. Piramuthu, W. Chen, and W. Y. Wang (2025)
+T2V-turbo-v2: enhancing video model post-training through data, reward, and conditional guidance design.
+In The Thirteenth International Conference on Learning Representations,
+Cited by: §1,
+Table 1.
+[29]
+S. Lin, X. Xia, Y. Ren, C. Yang, X. Xiao, and L. Jiang (2025)
+Diffusion adversarial post-training for one-step video generation.
+arXiv preprint arXiv:2501.08316.
+Cited by: Table 1,
+Table 1,
+§5.
+[30]
+S. Lin, C. Yang, H. He, J. Jiang, Y. Ren, X. Xia, Y. Zhao, X. Xiao, and L. Jiang (2025)
+Autoregressive adversarial post-training for real-time interactive video generation.
+arXiv preprint arXiv:2506.09350.
+Cited by: §5.
+[31]
+Y. Lipman, R. T. Chen, H. Ben-Hamu, M. Nickel, and M. Le (2022)
+Flow matching for generative modeling.
+arXiv preprint arXiv:2210.02747.
+Cited by: §5.
+[32]
+Y. Lipman, R. T. Chen, H. Ben-Hamu, M. Nickel, and M. Le (2023)
+Flow matching for generative modeling.
+In The Eleventh International Conference on Learning Representations,
+Cited by: §2.
+[33]
+H. Liu, W. Zhang, J. Xie, F. Faccio, M. Xu, T. Xiang, M. Z. Shou, J. Perez-Rua, and J. Schmidhuber (2024)
+Faster diffusion via temporal attention decomposition.
+arXiv preprint arXiv:2404.02747.
+Cited by: §5.
+[34]
+X. Liu C. Gong et al. (2023)
+Flow straight and fast: learning to generate and transfer data with rectified flow.
+In The Eleventh International Conference on Learning Representations,
+Cited by: §B.2,
+§2.
+[35]
+C. Lu and Y. Song (2024)
+Simplifying, stabilizing and scaling continuous-time consistency models.
+arXiv preprint arXiv:2410.11081.
+Cited by: §1,
+§5.
+[36]
+E. Luhman and T. Luhman (2021)
+Knowledge distillation in iterative generative models for improved sampling speed.
+arXiv preprint arXiv:2101.02388.
+Cited by: §1.
+[37]
+W. Luo, Z. Huang, Z. Geng, J. Z. Kolter, and G. Qi (2024)
+One-step diffusion distillation through score implicit matching.
+Advances in Neural Information Processing Systems 37, pp. 115377–115408.
+Cited by: §5.
+[38]
+X. Ma, G. Fang, M. Bi Mi, and X. Wang (2024)
+Learning-to-cache: accelerating diffusion transformer via layer caching.
+Advances in Neural Information Processing Systems 37, pp. 133282–133304.
+Cited by: §5.
+[39]
+A. Sabour, S. Fidler, and K. Kreis (2025)
+Align your flow: scaling continuous-time flow map distillation.
+arXiv preprint arXiv:2506.14603.
+Cited by: §5.
+[40]
+T. Salimans and J. Ho (2022)
+Progressive distillation for fast sampling of diffusion models.
+arXiv preprint arXiv:2202.00512.
+Cited by: §1,
+§5.
+[41]
+A. Sauer, F. Boesel, T. Dockhorn, A. Blattmann, P. Esser, and R. Rombach (2024)
+Fast high-resolution image synthesis with latent adversarial diffusion distillation.
+In SIGGRAPH Asia 2024 Conference Papers,
+pp. 1–11.
+Cited by: §1,
+§5.
+[42]
+A. Sauer, D. Lorenz, A. Blattmann, and R. Rombach (2024)
+Adversarial diffusion distillation.
+In European Conference on Computer Vision,
+pp. 87–103.
+Cited by: §1,
+§5.
+[43]
+T. Seawead, C. Yang, Z. Lin, Y. Zhao, S. Lin, Z. Ma, H. Guo, H. Chen, L. Qi, S. Wang, et al. (2025)
+Seaweed-7b: cost-effective training of video generation foundation model.
+arXiv preprint arXiv:2504.08685.
+Cited by: Table 1,
+Table 1.
+[44]
+N. Shaul, U. Singer, I. Gat, and Y. Lipman (2025)
+Transition matching: scalable and flexible generative modeling.
+arXiv preprint arXiv:2506.23589.
+Cited by: §1,
+§2,
+§3,
+§5.
+[45]
+Y. Song, P. Dhariwal, M. Chen, and I. Sutskever (2023)
+Consistency models.
+In International Conference on Machine Learning,
+pp. 32211–32252.
+Cited by: §1,
+§5.
+[46]
+Y. Song, J. Sohl-Dickstein, D. P. Kingma, A. Kumar, S. Ermon, and B. Poole (2020)
+Score-based generative modeling through stochastic differential equations.
+arXiv preprint arXiv:2011.13456.
+Cited by: §1.
+[47]
+P. Sun, Y. Jiang, and T. Lin (2025)
+Unified continuous generative models.
+arXiv preprint arXiv:2505.07447.
+Cited by: §2,
+§3.1,
+§5.
+[48]
+H. Teng, H. Jia, L. Sun, L. Li, M. Li, M. Tang, S. Han, T. Zhang, W. Zhang, W. Luo, et al. (2025)
+MAGI-1: autoregressive video generation at scale.
+arXiv preprint arXiv:2505.13211.
+Cited by: §5.
+[49]
+T. Wan, A. Wang, B. Ai, B. Wen, C. Mao, C. Xie, D. Chen, F. Yu, H. Zhao, J. Yang, et al. (2025)
+Wan: open and advanced large-scale video generative models.
+arXiv preprint arXiv:2503.20314.
+Cited by: §1,
+Table 1,
+§4.1,
+Table 2.
+[50]
+S. Wang, Z. Tian, W. Huang, and L. Wang (2025)
+DDT: decoupled diffusion transformer.
+arXiv preprint arXiv:2504.05741.
+Cited by: §3,
+§5.
+[51]
+W. Wang and Y. Yang (2024)
+Vidprom: a million-scale real prompt-gallery dataset for text-to-video diffusion models.
+Advances in Neural Information Processing Systems 37, pp. 65618–65642.
+Cited by: §4.1.
+[52]
+Z. Wang, Y. Zhang, X. Yue, X. Yue, Y. Li, W. Ouyang, and L. Bai (2025)
+Transition models: rethinking the generative learning objective.
+arXiv preprint arXiv:2509.04394.
+Cited by: §2,
+§3.1.
+[53]
+H. Xi, S. Yang, Y. Zhao, C. Xu, M. Li, X. Li, Y. Lin, H. Cai, J. Zhang, D. Li, et al. (2025)
+Sparse videogen: accelerating video diffusion transformers with spatial-temporal sparsity.
+arXiv preprint arXiv:2502.01776.
+Cited by: §5.
+[54]
+Y. Xu, W. Nie, and A. Vahdat (2025)
+One-step diffusion models with ff-divergence distribution matching.
+arXiv preprint arXiv:2502.15681.
+Cited by: §5.
+[55]
+A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu, F. Huang, H. Wei, et al. (2024)
+Qwen2.5 technical report.
+arXiv preprint arXiv:2412.15115.
+Cited by: §A.4,
+§4.1.
+[56]
+S. Yang, H. Xi, Y. Zhao, M. Li, J. Zhang, H. Cai, Y. Lin, X. Li, C. Xu, K. Peng, et al. (2025)
+Sparse videogen2: accelerate video generation with sparse attention via semantic-aware permutation.
+arXiv preprint arXiv:2505.18875.
+Cited by: §5.
+[57]
+Z. Yang, J. Teng, W. Zheng, M. Ding, S. Huang, J. Xu, Y. Yang, W. Hong, X. Zhang, G. Feng, et al. (2025)
+CogVideoX: text-to-video diffusion models with an expert transformer.
+In The Thirteenth International Conference on Learning Representations,
+Cited by: §1,
+Table 1,
+Table 1.
+[58]
+T. Yin, M. Gharbi, T. Park, R. Zhang, E. Shechtman, F. Durand, and W. T. Freeman (2024)
+Improved distribution matching distillation for fast image synthesis.
+In NeurIPS,
+Cited by: §A.3,
+§1,
+§1,
+§2,
+§3.2,
+§5.
+[59]
+T. Yin, M. Gharbi, R. Zhang, E. Shechtman, F. Durand, W. T. Freeman, and T. Park (2024)
+One-step diffusion with distribution matching distillation.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 6613–6623.
+Cited by: §1,
+§2,
+§5.
+[60]
+T. Yin, Q. Zhang, R. Zhang, W. T. Freeman, F. Durand, E. Shechtman, and X. Huang (2025)
+From slow bidirectional to fast autoregressive video diffusion models.
+In Proceedings of the Computer Vision and Pattern Recognition Conference,
+pp. 22963–22974.
+Cited by: §5.
+[61]
+S. Yu, S. Kwak, H. Jang, J. Jeong, J. Huang, J. Shin, and S. Xie (2024)
+Representation alignment for generation: training diffusion transformers is easier than you think.
+arXiv preprint arXiv:2410.06940.
+Cited by: §3,
+§5.
+[62]
+L. Zhang and M. Agrawala (2025)
+Packing input frame context in next-frame prediction models for video generation.
+arXiv preprint arXiv:2504.12626.
+Cited by: §5.
+[63]
+X. Zhang, J. Liao, S. Zhang, F. Meng, X. Wan, J. Yan, and Y. Cheng (2025)
+VideoREPA: learning physics for video generation through relational alignment with foundation models.
+arXiv preprint arXiv:2505.23656.
+Cited by: §5.
+[64]
+Z. Zhang, Y. Li, Y. Wu, yanwu xu, A. Kag, I. Skorokhodov, W. Menapace, A. Siarohin, J. Cao, D. N. Metaxas, S. Tulyakov, and J. Ren (2024)
+SF-v: single forward video generation model.
+In The Thirty-eighth Annual Conference on Neural Information Processing Systems,
+External Links: Link
+Cited by: §1,
+Table 3,
+§5.
+[65]
+X. Zhao, X. Jin, K. Wang, and Y. You (2024)
+Real-time video generation with pyramid attention broadcast.
+arXiv preprint arXiv:2408.12588.
+Cited by: §5.
+[66]
+Y. Zhao, A. Gu, R. Varma, L. Luo, C. Huang, M. Xu, L. Wright, H. Shojanazeri, M. Ott, S. Shleifer, et al. (2023)
+Pytorch fsdp: experiences on scaling fully sharded data parallel.
+arXiv preprint arXiv:2304.11277.
+Cited by: §3.1.
+[67]
+B. Zheng, N. Ma, S. Tong, and S. Xie (2025)
+Diffusion transformers with representation autoencoders.
+arXiv preprint arXiv:2510.11690.
+Cited by: §3,
+§5.
+[68]
+H. Zheng, W. Nie, A. Vahdat, K. Azizzadenesheli, and A. Anandkumar (2023)
+Fast sampling of diffusion models via operator learning.
+In International conference on machine learning,
+pp. 42390–42402.
+External Links: 2211.13449,
+Link
+Cited by: §5.
+[69]
+K. Zheng, Y. Wang, Q. Ma, H. Chen, J. Zhang, Y. Balaji, J. Chen, M. Liu, J. Zhu, and Q. Zhang (2025)
+Large scale diffusion distillation via score-regularized continuous-time consistency.
+arXiv preprint arXiv: 2510.08431.
+Cited by: §B.6,
+Table 11,
+Table 11,
+§1,
+Table 1,
+Table 1,
+Table 1,
+Table 2,
+Table 2,
+Table 2,
+§5,
+§5.
+[70]
+M. Zhou, H. Zheng, Z. Wang, M. Yin, and H. Huang (2024)
+Score identity distillation: exponentially fast distillation of pretrained diffusion models for one-step generation.
+In Forty-first International Conference on Machine Learning,
+Cited by: §1,
+§5.
+Hyperparameter
+Wan2.1 1.3B (T2V)
+Wan2.1 14B (T2V)
+General Settings
+Resolution
+480×832480\times 832 (480P)
+Frame count
+8181 Frames (55s)
+Latent dimension (T×H×W)(T\times H\times W)
+21×60×10421\times 60\times 104
+Dataset size
+500k (479k after filtering)
+Dataset prompts
+VidProm extended by Qwen2.5-7B
+Dataset videos
+Generated by Wan2.1 14B (T2V)
+Optimizer (weight decay, betas, epsilon)
+AdamW (0.010.01, (0.9,0.99)(0.9,0.99), 10−810^{-8})
+Global batch-size
+64
+Timestep shift γ\gamma for tstudentt_{\text{student}} (see Section 3.2)
+10
+Multi-step sampling (see Section A.3)
+deterministic
+Precision
+BF16 (time tt in FP64)
+GPU type
+NVIDIA A100
+NVIDIA H100
+Parallelism Strategy
+DDP
+FSDP
+Baselines
+KD
+Number of trajectories
+10k
+CFG scale
+5
+Skip-layer
+10
+Learning rate
+7e-5
+Max. iterations
+10k
+5k
+DMD2-v
+Fake score architecture
+same as teacher
+Discriminator architecture (see Section 4.3)
+Conv3D
+Discriminator parameters
+68M
+172M
+CFG scale
+5
+Layer for discriminator features (see Section A.3)
+(15,22,29)(15,22,29)
+(19,29,39)(19,29,39)
+Discriminator loss weight λ\lambda (see Algorithm 2)
+0.03
+Learning rates (student, discriminator, fake score)
+(10−5,10−5,10−5)(10^{-5},10^{-5},10^{-5})
+Timestep shift γ\gamma for tdmdt_{\text{dmd}} (see Section 3.2)
+5
+Min./max. for tdmdt_{\text{dmd}} and smfs_{\text{mf}}
+(0.001,0.999)(0.001,0.999)
+Student update frequency
+every 55-th iteration
+Max. iterations
+44k (M≥2)(M\geq 2), 1212k (M=1)(M=1)
+11k (M≥2)(M\geq 2), 55k (M=1)(M=1)
+TMD
+Stage 1: TM-MF
+CFG scale
+3
+Flow head fuse type (see Section A.1)
+gated
+Timestep shift γ\gamma for sstudents_{\text{student}} (see Section A.2)
+10
+Timestep shift γ\gamma for smfs_{\text{mf}} (see Section A.2)
+3
+JVP finite-difference δ\delta (see Section A.2)
+5⋅10−35\cdot 10^{-3}
+Condition dropout probability (see Section A.2)
+0.10.1
+Loss normalization constant cc (see Section A.2)
+dd
+10−5​d10^{-5}d
+Learning rate
+3⋅10−53\cdot 10^{-5}
+1⋅10−51\cdot 10^{-5}
+Max. iterations
+3k
+3k
+Stage 2: DMD2-v with flow head
+All hyperparameters as in DMD2-v above
+Table 7: Default hyperparameters if not specified otherwise in the experiments.
+Appendix A Implementation details
+A.1 Flow head conditioning
+Time conditioning.
+For the flow head, we re-use the default time embedding to embed ss and instantiate an additional zero-initialized time embedding that embeds the difference s−rs-r between two time steps of the flow map (see Section 2). The two embeddings are summed and used as the conditioning input to the adaptive normalization layers in the DiT blocks of the flow head.
+Inner flow fusion.
+Figure 8: Visualization of our mechanisms to fuse the main backbone’s features 𝒎⁡(𝒙,t){\bm{m}}({\bm{x}},t) with the flow head input 𝒚s{\bm{y}}_{s}: (a) “gated” fusion, where the flow head input 𝒚s{\bm{y}}_{s} is passed to an FFN block (conditioned on the flow head timestep ss) and then added to the main feature 𝒎t{\bm{m}}_{t} via a gated operator; and (b) “concat” fusion, where the the flow head input 𝒚s{\bm{y}}_{s} and the main feature 𝒎t{\bm{m}}_{t} are concatenated in the channel dimension and then passed to the linear projection layer.
+To fuse the main backbone’s features 𝒎⁡(𝒙,t){\bm{m}}({\bm{x}},t) with the flow head input 𝒚s{\bm{y}}_{s}, we first process 𝒚s{\bm{y}}_{s} with the patch embedding layer of the main backbone. Then we process the patches using a randomly initialized AdaLN-style block (analogous to the ones used in the teacher model, i.e., consisting of adaptive layer normalization, an MLP, and a gated residual connection) conditioned on the embedding of ss and re-using the global scale and shift values. Finally, we fuse this processed flow head input with the main backbone’s features using a gated interpolation, controlled by a global gate derived from a sigmoid-activated learnable parameter. This makes the flow head’s contribution both time-aware and dynamically gated at the feature level before the final global fusion. We visualize the fusion mechanism in Figure 8 and provide an ablation w.r.t. other conditioning types in Section B.3.
+A.2 TM-MF
+Pretraining recipe.
+To better align TM-MF pretraining with the multi-step inference strategy used in our distillation setup, we modify the sampling scheme of (s,r)(s,r) compared to the continuous formulation in [16]. First, analogous to tstudentt_{\mathrm{student}} in the outer flow of DMD2-v, we also use a shifting function with γ=10\gamma=10 for sstudents_{\mathrm{student}}, i.e., the values defining the time grid22
+2
+Note that, in practice, we set tM=sN=0.999t_{M}=s_{N}=0.999 instead of 11 to align with the pretraining of Wan. 0=s0<s1<⋯<sN=10=s_{0}<s_{1}<\dots<s_{N}=1. Secondly, analogous to sampling the timestep tdmdt_{\mathrm{dmd}} in DMD2-v, we also sample smfs_{\mathrm{mf}} during TM-MF training uniformly and shift it (using γ=3\gamma=3). Then, we pick r=skr=s_{k} where k≔max⁡{j:sj≤smf}k\coloneqq\max\{j:s_{j}\leq s_{\mathrm{mf}}\}. Empirically, this discrete sampling scheme is not only tailored to our Stage 2 distillation but also substantially stabilizes TM-MF pretraining.
+Our remaining design choices largely follow Geng et al. [16]. We set r=sr=s for 75%75\% of training batches to stabilize optimization under the flow-matching loss, apply condition dropout (using the negative prompt in Table 8) during training, and construct the velocity field using classifier-free guidance. We observed that mixing conditional and unconditional network-predicted velocities (Eq. (18) in [16]) offers no clear benefit in our setting, so we adopt the standard classifier-free guidance formulation throughout. Moreover, we also use an adaptive loss normalization, such that our final loss derived from (9) is given by
+𝔼s,r,𝒚s​[‖𝒖θ​(𝒚s,s,r)−𝒖^‖2sg⁡(‖𝒖θ​(𝒚s,s,r)−𝒖^‖2)+c],\mathbb{E}_{s,r,{\bm{y}}_{s}}\left[\frac{\|{\bm{u}}_{\theta}({\bm{y}}_{s},s,r)-\hat{{\bm{u}}}\|^{2}}{\operatorname{sg}\big(\|{\bm{u}}_{\theta}({\bm{y}}_{s},s,r)-\hat{{\bm{u}}}\|^{2}\big)+c}\right],
+where we choose c=dc=d for Wan2.1 1.3B and c=d105c=\frac{d}{10^{5}} for Wan2.1 14B (where dd is the dimension of 𝒚s{\bm{y}}_{s}).
+Finite difference approximation.
+Computing the JVP term in the MeanFlow objective, namely dd​s​𝒖θ​(𝒚s,s,r)\tfrac{\mathrm{d}}{\mathrm{d}s}{\bm{u}}_{\theta}({\bm{y}}_{s},s,r), using forward-mode automatic differentiation in PyTorch is currently incompatible with system optimizations, such as flash attention and FSDP; however, these optimizations are crucial to avoid out-of-memory issues due to the long video sequence length. To address this and make our method agnostic of different training techniques, we approximate the JVP using a central difference scheme. For a step size δ\delta, we have
+dd​s\displaystyle\tfrac{\mathrm{d}}{\mathrm{d}s}
+𝒖θ​(𝒚s,s,r)≈𝒖θ​(𝒚s+δ,s+δ,r)−𝒖θ​(𝒚s−δ,s−δ,r)2​δ\displaystyle{\bm{u}}_{\theta}({\bm{y}}_{s},s,r)\approx\frac{{\bm{u}}_{\theta}({\bm{y}}_{s+\delta},s+\delta,r)-{\bm{u}}_{\theta}({\bm{y}}_{s-\delta},s-\delta,r)}{2\delta}
+with 𝒚s±δ=𝒚s±δ​𝒗​(𝒚s,s){\bm{y}}_{s\pm\delta}={\bm{y}}_{s}\pm\delta{\bm{v}}({\bm{y}}_{s},s), where we use the conditional velocity for 𝒗{\bm{v}}. At the boundaries, we fall back to using one-sided finite-difference approximations. We empirically found that setting δ=0.005\delta=0.005 yields a satisfactory estimation to the JVP term and fix it throughout our experiments.
+Figure 9: Mode collapse without time-shifting. We show videos generated by the one-step student distilled from DMD2 in the setting “tdmdt_{\text{dmd}} w/o shift” (see Table 5), where the other hyperparameters use the default values.
+We can see that all generated videos have the main characters consistently appear on the left side of the pixel space, which is a sign of the severe mode collapse happening during distillation.
+Figure 10: Effect of KD initialization. We compare the two-step DMD2 results of distilling Wan2.1 1.3B in two settings: (a) with and (b) without KD warm-up, where (left) “Iteration 0” means videos generated in the beginning of DMD2 training and (Right) “Iteration 1000” means videos generated after training DMD2 for 1k iterations. From left to right, we show the first, middle and the last frames in each video. We can see that the KD warm-up initially can generate better videos, but it also introduces coarse-grained artifacts. For instance, it generates an extra man besides a couple specified in the prompt. After training for 1k iterations, two-step DMD2 cannot remove these artifacts, leading to the worse generation quality than two-step DMD2 without KD warm-up.
+A.3 DMD2
+Initialization.
+Since we consider video diffusion models that are trained to approximate the instantaneous velocity 𝒗{\bm{v}} in (2), we parametrize the student network as
+𝒈θstudent​(𝒙t,t)=𝒙t−t​𝒗θ​(𝒙t,t){\bm{g}}^{\mathrm{student}}_{\theta}({\bm{x}}_{t},t)={\bm{x}}_{t}-t{\bm{v}}_{\theta}({\bm{x}}_{t},t)
+(17)
+for our DMD2-v baseline, which initially approximates the conditional expectation 𝔼⁡[𝒙|𝒙t]\mathbb{E}[{\bm{x}}|{\bm{x}}_{t}].
+Multi-step distillation and inference.
+Compared to the original multi-step DMD2 [58], we did not use backward simulation for the outer loop for multi-step distillation and efficiently sample 𝒙ti{\bm{x}}_{t_{i}} using real data.
+Moreover, during inference, we use deterministic sampling from the conditional flow, i.e.,
+𝒙ti+1=(1−ti+1ti)​𝒙ti+ti+1ti​𝒈student​(𝒙ti,ti),{\bm{x}}_{t_{i+1}}=\left(1-\frac{t_{i+1}}{t_{i}}\right){\bm{x}}_{t_{i}}+\frac{t_{i+1}}{t_{i}}{\bm{g}}^{\mathrm{student}}({\bm{x}}_{t_{i}},t_{i}),
+(18)
+which samples from the correct distribution as long as 𝒙≈Student⁡(𝒙ti,ti){\bm{x}}\approx\mathrm{Student}({\bm{x}}_{t_{i}},t_{i}). Compared to the standard resampling scheme in DMD2, i.e.,
+𝒙ti+1=(1−ti+1)​𝒈student​(𝒙ti,ti)+ti+1​𝒙1,{\bm{x}}_{t_{i+1}}=\left(1-t_{i+1}\right){\bm{g}}^{\mathrm{student}}({\bm{x}}_{t_{i}},t_{i})+t_{i+1}{\bm{x}}_{1},
+(19)
+the noise 𝒙1{\bm{x}}_{1} of the conditional flow is inferred from 𝒈student​(𝒙ti,ti){\bm{g}}^{\mathrm{student}}({\bm{x}}_{t_{i}},t_{i}) and 𝒙ti{\bm{x}}_{t_{i}} in Eq. (18) and sampled independently in Eq. (19).
+For TMD, the multi-step inference is given in Algorithm 1. In particular, the outer transitions are also deterministic, but additional independent noise 𝒚1∼𝒩⁡(0,I){\bm{y}}_{1}\sim\mathcal{N}(0,I) is used for the inner flow.
+Teacher, fake score, and discriminator.
+While it would be possible to distill Wan2.1 1.3B using the 14B model as teacher in DMD2, we use the 1.3B model for fair comparisons. Moreover, we use (unpatchified) teacher features at different layers as inputs to the discriminator, which we found more stable than using fake score features. The discriminator is trained using an average minimax log-likelihood objective over separate heads for each teacher feature, where the teacher is evaluated at noisy inputs (𝒙^t,t)(\hat{{\bm{x}}}_{t},t) (fake data as defined in Section 2) or (𝒙t,t)({\bm{x}}_{t},t) (real data). The generator loss is given as the average (non-saturating) negative log-likelihood. We initialize the fake score 𝒈fake{\bm{g}}^{\mathrm{fake}} using the teacher parameters, parametrize it analogous to (17), and use denoising score matching to train it on noisy fake data (𝒙^t,t)(\hat{{\bm{x}}}_{t},t). Both the discriminator and fake score are trained for several iterations in between student updates. Finally, we can write our VSD objective in (11) as
+𝔼ti,𝒙ti,t,𝒙^t​[sg​(𝒈fake​(𝒙^t,t)−𝒈teacher​(𝒙^t,t)‖𝒈fake​(𝒙^t,t)−𝒈teacher​(𝒙^t,t)‖1)T​𝒙^],\mathbb{E}_{t_{i},{\bm{x}}_{t_{i}},t,\hat{{\bm{x}}}_{t}}\left[\mathrm{sg}\Big(\frac{{\bm{g}}^{\mathrm{fake}}(\hat{{\bm{x}}}_{t},t)-{\bm{g}}^{\mathrm{teacher}}(\hat{{\bm{x}}}_{t},t)}{\|{\bm{g}}^{\mathrm{fake}}(\hat{{\bm{x}}}_{t},t)-{\bm{g}}^{\mathrm{teacher}}(\hat{{\bm{x}}}_{t},t)\|_{1}}\Big)^{T}\hat{{\bm{x}}}\right],
+where sg⁡(⋅)\mathrm{sg}(\cdot) denotes the stop-gradient operation, and the teacher is also parametrized analogous to Eq. (17), including CFG with the negative prompt given in Table 8.
+A.4 VBench evaluation
+We follow the official evaluation protocol in VBench [22] to test our method. During video sampling, we use standard VBench prompt lists to ensure fair comparisons among different methods. In particular, we rewrite the test prompts (i.e., prompt augmentation) using Qwen/Qwen2.5-7B-Instruct [55], following the prior work [21]. Similarly, almost all the baselines, including Wan2.1 base models, also enhance VBench prompts, making them longer and more descriptive without altering their original meaning. We then calculate scores for 16 Text-to-Video (T2V) evaluation dimensions, respectively, and summarize them into quality score, semantic score and overall score.
+In figures from the main text, we only show the short prompts due to the space limit. In Table 8, we show the corresponding extended prompts in Figures 1-4 that are actually passed to the model.
+Figure 1
+Short prompt
+A fat rabbit wearing a purple robe walking through a fantasy landscape.
+Long prompt
+A plump, fluffy rabbit donning a voluminous purple robe walks gracefully through a vibrant fantasy landscape. The rabbit has large, expressive eyes and a gentle, curious expression. Its fur is soft and thick, and the robe drapes elegantly over its body. The landscape features rolling hills covered in lush green grass, colorful wildflowers, and towering magical trees with shimmering leaves. In the distance, there are sparkling waterfalls and mystical castles. The scene is bathed in warm, golden sunlight. Medium shot, focusing on the rabbit’s walk through the picturesque environment.
+Short prompt
+A person drinking coffee in a cafe.
+Long prompt
+A cozy, warm café setting with soft ambient lighting and wooden furnishings. A young adult, casually dressed in a sweater and jeans, sits at a small round table. They hold a steaming cup of coffee in their hand, taking a sip while looking pensively out the window. The café is moderately busy with other patrons engaged in conversations. The background showcases various coffee drinks and pastries displayed on a counter. The person’s expression is relaxed and content. Medium shot focusing on the person’s face and the coffee cup, capturing the intimate atmosphere of the café.
+Figure 3
+Short prompt
+A person is laughing.
+Long prompt
+A joyful person is laughing heartily, with a broad smile and crinkled eyes, conveying pure happiness. They are standing upright with arms spread wide, as if embracing the world around them. The scene is set outdoors in a sunny park, surrounded by lush greenery and blooming flowers. The background includes a clear blue sky with fluffy clouds, adding to the cheerful atmosphere. Medium shot capturing the full body of the person, focusing on their animated facial expressions and gestures.
+Short prompt
+A steam train moving on a mountainside.
+Long prompt
+A vintage steam locomotive chugging along a winding track on a mountainous terrain. The train is covered in soot, with steam billowing from its smokestack as it navigates the rugged landscape. The surrounding mountains are steep and lush, with patches of snow visible at higher elevations. The train cars sway gently as they follow the curving tracks, and the scenery outside the windows shows dense forests and rocky cliffs. The camera follows the train from a medium distance, capturing the train’s movement and the dramatic backdrop.
+Figure 4
+Short prompt
+A boat sailing leisurely along the Seine River with the Eiffel Tower in background.
+Long prompt
+A serene, picturesque scene of a small wooden boat gently gliding along the Seine River in Paris, France. The boat is rowed leisurely by a middle-aged man in a casual striped shirt and khaki pants, who rows smoothly with rhythmic strokes. The Eiffel Tower stands majestically in the background, partially visible through the misty morning air. The riverbank is lined with lush green trees and quaint buildings, reflecting off the calm waters. The overall atmosphere is peaceful and tranquil, capturing the essence of a lazy summer day. Wide shot, static camera.
+Short prompt
+An astronaut flying in space, zoom out.
+Long prompt
+Astronaut floating in space with a helmet visor reflecting Earth below. The astronaut, wearing a full spacesuit with the American flag on the shoulder, is performing a spacewalk, arms extended as if in motion. The background shows the vastness of space with stars twinkling and Earth in the distance. The scene begins with a close-up of the astronaut and gradually zooms out to reveal the enormity of space surrounding them. Wide shot, showcasing the astronaut against the backdrop of the universe.
+Negative prompt
+Bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, images, static, overall gray, worst quality, low quality, JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, still picture, messy background, three legs, many people in the background, walking backwards
+Table 8:  Extended prompts used in the figures from the main text and negative prompt used for CFG (in teacher sampling, KD, and DMD2-v) and condition dropout (in TM-MF), taken from the official Wan repository.
+A.5 Hyperparameters
+We provide an overview of our default hyperparameters in Table 7.
+Appendix B Additional experiments
+B.1 Quality-efficiency tradeoff
+Extending the experiments in Section 4.3, Figure 11 shows TMD’s performance-efficiency tradeoff when varying both the number of outer and inner steps MM and NN and the flow head layers HH. It shows a general trend of achieving better performance with a larger effective NFE and TMD offers a more fine-grained control over this performance-efficiency tradeoff than DMD2-v.
+Figure 11: Performance-efficiency tradeoff of TMD. Extension of Figure 6 to include the M=1M=1 settings.
+Figure 12: Curvature of Wan trajectories. Curvature of different sampling trajectories for the Wan2.1 1.3B model. Large trajectory curvatures are observed near t=1t=1 (i.e., the high noise regime).
+B.2 Curvature of Wan trajectories
+Inspired by Liu et al. [34], we define the curvature of Wan’s sampling trajectory at time tt as
+C⁡(𝒗,t)=‖𝒗⁡(𝒙t,t)−(𝒙−𝒙0)‖2.\displaystyle C({\bm{v}},t)=\|{\bm{v}}({\bm{x}}_{t},t)-({\bm{x}}-{\bm{x}}_{0})\|^{2}.
+Since the model is evaluated on a fixed time grid during sampling, we adopt a discretized version of the curvature in practice, i.e.,
+C⁡(𝒗,ti)=‖𝒙~ti−𝒙~ti−1ti−ti−1−(𝒙1−𝒙)‖2,\displaystyle C({\bm{v}},t_{i})=\Big\|\tfrac{\tilde{{\bm{x}}}_{t_{i}}-\tilde{{\bm{x}}}_{t_{i-1}}}{t_{i}-t_{i-1}}-({\bm{x}}_{1}-{\bm{x}})\Big\|^{2},
+where tit_{i} denotes the timesteps from Wan’s default 5050-step sampling schedule and 𝒙~ti\tilde{{\bm{x}}}_{t_{i}} represents the corresponding intermediate samples along the trajectory.
+As shown in Figure 12, the sampling trajectories of the Wan model exhibit extremely large curvature near t=1t=1 (i.e., the high noise regime), making it difficult for trajectory matching methods to learn the mapping along the ODE path. This also motivates our choice of larger γ\gamma in the time-shifting function for rir_{i} in TM-MF (see Section A.2) and tstudentt_{\text{student}} in DMD2-v (see Section 3.2).
+B.3 Flow head conditioning
+Our main experiments use the gating mechanism explained in Section A.1 to condition the flow head on the main backbone’s features 𝒎=𝒎⁡(𝒙,t){\bm{m}}={\bm{m}}({\bm{x}},t). Another version is to concatenate 𝒎{\bm{m}} and the patch embeddings of 𝒚s{\bm{y}}_{s} along the hidden dimension and then project to the original hidden size using a linear layer. To minimize the impact on the pretrained model, we initialized the weights of the linear layer as identity for the coordinates corresponding to 𝒎{\bm{m}} and as a Gaussian with small standard deviation (0.010.01) for the remaining coordinates. In Table 9, we see that TMD can achieve strong performance across fusion types. While convergence was more stable using the gating mechanism used for our main experiments (see Figure 13), concatenation is a strong alternative in terms of final performance.
+Setting
+Fusion type
+Overall
+Quality
+Semantic
+score
+score
+score
+N2H5
+Gated (see Section A.1)
+84.68
+85.71
+80.55
+Concat
+84.76
+85.77
+80.71
+N4H5
+Gated (see Section A.1)
+84.67
+85.72
+80.47
+Concat
+84.66
+85.79
+80.14
+Table 9: Impact of the fusion type on the final performance when distilling Wan2.1 1.3B with M=2M=2.
+Figure 13: Convergence and fusion ablation. We compare the overall VBench score over iterations for the second-stage TMD training with our gating mechanism (see Section A.1) and concatenation of features (see Section B.3). While concatenation yields very competitive results, we observed that it introduces some training instabilities.
+B.4 Inner flow targets
+In principle, the auxiliary latent variable 𝒚{\bm{y}} in the inner flow can be chosen arbitrarily as long as 𝒙ti−1{\bm{x}}_{t_{i-1}} is easy to sample given 𝒚{\bm{y}} and 𝒙ti{\bm{x}}_{t_{i}}.
+While we chose the DTM formulation 𝒚≔𝒙1−𝒙{\bm{y}}\coloneqq{\bm{x}}_{1}-{\bm{x}} in (3) for our main experiments, we also experimented with other versions. While other formulations did not improve the overall performance, they could still achieve competitive performance.
+For instance, Table 10 provides results for the simple choice 𝒚≔𝒙{\bm{y}}\coloneqq{\bm{x}}. Similar to (14) and (17), we parametrize the average velocity as
+𝒖θ​(𝒚s,s,r,𝒎)≔𝒚s−(𝒙ti−ti​headθ​(𝒚s,s,r,𝒎))s.{\bm{u}}_{\theta}({\bm{y}}_{s},s,r;{\bm{m}})\coloneqq\frac{{\bm{y}}_{s}-({\bm{x}}_{t_{i}}-t_{i}\mathrm{head}_{\theta}({\bm{y}}_{s},s,r;{\bm{m}}))}{s}.
+where 𝒎=𝒎θ​(xti,ti){\bm{m}}={\bm{m}}_{\theta}(x_{t_{i}},t_{i}) denote the main features.
+B.5 Impact of recurrence in flow head
+To evaluate the effect of recurrence in the flow head, we manually restrict the inner flow to a single step at inference (N1H5) and compare the results with the standard recurrent setting (N4H5). As shown in Figure 14, when distilling Wan2.1 1.3B into a two-step generator, the non-recurrent variant produces noticeably lower-quality videos, exhibiting stronger artifacts and blurriness. This highlights the importance of iterative refinement within the flow head for high-fidelity generation.
+Setting
+Target 𝒚{\bm{y}}
+Overall
+Quality
+Semantic
+score
+score
+score
+N2H5
+𝒙1−𝒙{\bm{x}}_{1}-{\bm{x}} (DTM)
+84.68
+85.71
+80.55
+𝒙{\bm{x}}
+84.18
+85.15
+80.33
+N4H5
+𝒙1−𝒙{\bm{x}}_{1}-{\bm{x}} (DTM)
+84.67
+85.72
+80.47
+𝒙{\bm{x}}
+84.44
+85.36
+80.77
+Table 10: Impact of the inner flow target when distilling Wan2.1 1.3B with M=2M=2.
+B.6 DMD2 comparisons
+In Section 3.2, we observed that KD pretaining is only helpful for one-step distillation (see Table 4 and Figure 9) and that timestep shifting of tdmdt_{\mathrm{dmd}} and tstudentt_{\mathrm{student}} is crucial for good performance for one- and two-step DMD2-v (see Table 5 and Figure 10).
+In this section, we provide additional ablations on our DMD2-v baseline when using ≥3\geq 3 steps. While the timestep shifting for tdmdt_{\text{dmd}} and tstudentt_{\text{student}} remain important, we observed that slightly lower shift values for tstudentt_{\text{student}} can attain better scores when using more steps. In particular, for 44 steps, we picked a shift value of γ=5\gamma=5 for tstudentt_{\mathrm{student}}, outperforming the DMD2 baseline in [69]; see Table 11.
+Method
+shift tstudentt_{\text{student}}
+NFE
+Overall
+Quality
+Semantic
+score
+score
+score
+DMD2 [69]
+4
+84.56
+85.58
+80.50
+DMD2-v
+10
+4
+84.53
+85.95
+78.84
+DMD2-v
+5
+4
+84.60
+86.03
+79.87
+DMD2-v
+10
+3
+84.48
+85.71
+79.58
+DMD2-v
+5
+3
+84.47
+85.55
+80.15
+Table 11: VBench results of the DMD2 version in [69] and our DMD2-v for 33 and 44 steps with different timestep shifts for tstudentt_{\text{student}}.
+B.7 More visual comparison results
+We provide further visual comparisons between the 50-step teacher models with classifier-free guidance (CFG), DMD2-v, and TMD in Figures 15, 16, 17, 18, 19 and 20.
+Figure 14: Impact of flow head recurrence. We show the impact of recurrence in the flow head by setting the number of flow head steps to 1 only at inference (i.e., N1H5) when distilling Wan2.1 1.3B with M=2M=2 and the N4H5 setting for flow head (i.e., 4 denoising steps and 5 DiT blocks in flow head). We observe that the videos generated without recurrence (marked by N1H5) are of much lower quality (e.g., more artifacts and blurriness) than ones with recurrence (marked by N4H5), implying the importance of the fine-grained iterative refinement on our method.
+A person enjoying a juicy burger, with a satisfied smile on their face. They are seated at a casual dining table, surrounded by napkins and a drink. The burger is topped with lettuce, tomato, and cheese, and the person is taking a bite, showcasing the delicious layers inside. The scene has a warm, inviting atmosphere with soft lighting and a cozy background. Medium close-up shot focusing on the person’s hand holding the burger and their facial expressions as they savor each bite.
+A person is skydiving from a plane, descending towards the ground. They are mid-air, arms spread wide, with a parachute deployed and open, ensuring a smooth descent. The skydiver is wearing a jumpsuit and helmet, with a determined and exhilarated expression on their face. The background shows a clear blue sky with fluffy clouds and the landscape below stretching out, including patches of green fields and distant mountains. The scene captures the moment just after exiting the plane, with the parachute fully inflated, showcasing the thrill and freedom of skydiving. Mid-shot, focusing on the skydiver against the expansive sky.
+Figure 15: Visual comparison on Wan2.1 14B. We compare the outputs of the teacher, TMD, and DMD2-v on exemplary prompts.
+A serene African savanna scene with tall grasses and scattered trees. A tall giraffe, with distinctive brown spots on its creamy white coat, bends its long neck gracefully to drink from a calm river. The giraffe’s gaze is focused intently on the water as it lowers its head, revealing its long eyelashes and gentle expression. The river reflects the golden hues of the late afternoon sun, casting a warm glow over the scene. The background shows the vast expanse of the savanna with distant hills. The video is a medium close-up, capturing the giraffe’s elegant movement and the tranquil environment.
+A large great white shark is swimming gracefully through the vast, deep blue ocean. Its sleek, muscular body cuts through the water as it propels forward with powerful tail strokes. The shark’s dorsal fin slices through the surface, while smaller fish dart around it. The camera begins at a wide shot of the shark and the surrounding ocean, then smoothly zooms in to focus closely on the shark’s sharp teeth and piercing eyes. The scene is filled with sunlight filtering through the water, creating a dynamic interplay of light and shadow. Close-up underwater perspective.
+Figure 16: Visual comparison on Wan2.1 14B. We compare the outputs of the teacher, TMD, and DMD2-v on exemplary prompts.
+A happy, playful Corgi running and jumping in a park during sunset, captured in black and white. The Corgi has a friendly face with floppy ears and a wagging tail as it moves through the grassy area. The sky behind the dog shows soft gradients of orange and pink fading into shades of gray and black. The park includes a few trees and benches in the background, adding depth to the scene. The Corgi is in motion, emphasizing its joyful playfulness. Medium close-up shot, focusing on the Corgi’s expressive face and body language.
+A stormtrooper from the Star Wars universe, clad in pristine white armor with a black helmet, is meticulously vacuuming a sandy beach. He bends down slightly, moving the vacuum cleaner back and forth across the sand with purposeful motions. His gloved hand firmly grips the handle of the vacuum as he navigates around rocks and debris. The sun sets behind him, casting long shadows and giving the scene a dramatic, golden glow. The background shows crashing waves and seagulls flying overhead. Medium close-up shot, focusing on the stormtrooper’s actions and the sweeping motion of the vacuum.
+Figure 17: Visual comparison on Wan2.1 14B. We compare the outputs of the teacher, TMD, and DMD2-v on exemplary prompts.
+A person is roller skating in an urban park, moving smoothly across the paved path. They wear a black helmet with a visor and knee pads, elbow pads, and wrist guards for safety. The skater has medium-length brown hair tied back in a ponytail and wears a bright yellow shirt with a graphic design and black shorts. They maintain a slight crouch posture as they glide, their feet making fluid movements, propelling them forward effortlessly. The background shows other park-goers walking dogs and children playing, adding a lively atmosphere. Medium shot focusing on the skater from a side angle, capturing the motion and environment.
+A koala bear playing a grand piano in a lush, dense forest. The koala has soft, grey fur and large, round ears. It sits upright on the piano bench, paws delicately placed on the keys, creating gentle melodies. The forest background is filled with tall eucalyptus trees, dappled sunlight filtering through the leaves, and a carpet of green moss beneath the piano. The scene is calm and serene, with the koala focused intently on its performance. Medium close-up shot, capturing the koala and part of the forest surroundings.
+Figure 18: Visual comparison on Wan2.1 1.3B. We compare the outputs of the teacher, TMD, and DMD2-v on exemplary prompts.
+A large, hairy Bigfoot creature walking through a heavy snowstorm. The Bigfoot stands at least eight feet tall, covered in shaggy brown fur, with muscular limbs and a stooped posture. Snowflakes swirl around him as he moves slowly and deliberately through the dense forest, his feet sinking slightly into the deep snow. The landscape is bleak and desolate, with bare trees and thick snowdrifts. The atmosphere is eerie and quiet, with only the sound of crunching snow and howling wind. The scene is captured in a mid-shot, focusing on the Bigfoot’s powerful form as he trudges through the storm.
+An animated scene of a panda drinking coffee in a cozy café in Paris. The panda is sitting at a small table with a steaming cup of coffee, holding a spoon delicately. The café has vintage decor with wooden furniture, soft lighting, and a few other patrons in the background. The panda has a relaxed and content expression, sipping the coffee slowly. The atmosphere is warm and inviting, with the soft hum of conversation in the background. Medium shot focusing on the panda and the coffee cup.
+Figure 19: Visual comparison on Wan2.1 1.3B. We compare the outputs of the teacher, TMD, and DMD2-v on exemplary prompts.
+A dramatic and intense scene featuring an erupting volcano. The volcano is spewing lava and ash into the air, creating a vivid orange glow against a dark night sky filled with billowing smoke clouds. The ground trembles as molten rock flows down the sides of the volcano, lighting up the surrounding landscape. In the foreground, a few scattered trees and rocks are illuminated by the fiery eruption. The camera remains fixed on the volcano, capturing the powerful motion and scale of the event. Nighttime, wide shot.
+A realistic classroom scene set during a typical school day. The classroom has rows of desks facing a chalkboard at the front. Students are engaged in various activities; some are reading books, others are writing in notebooks, and a few are quietly talking. The teacher stands at the front of the class, holding a book and addressing the students. The room is well-lit with sunlight streaming in from large windows, casting soft shadows across the desks. The walls are adorned with educational posters and motivational quotes. Medium shot capturing the full classroom environment.
+Figure 20: Visual comparison on Wan2.1 1.3B. We compare the outputs of the teacher, TMD, and DMD2-v on exemplary prompts.
+Figure 21: User study interface. Screenshot of our user preference study interface explained in Section 4.2.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

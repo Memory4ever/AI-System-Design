@@ -1,0 +1,217 @@
+Asymmetric Prompt Weighting for Reinforcement Learning with Verifiable Rewards (https://arxiv.org/html/2602.11128v1)
+citeturn29249view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.11128v1","lineno":177}); Total lines: 798
+L77: Figure 1: From-scratch RL: TinyZero. Test error (i.e., fraction of correctly solved problems, Pass@1) during reinforcement learning. Starting from a score of $0.025$ the algorithms based on asymmetric weighting (Linear-R, Plateau-R, and Sqrt-R) climb to about $0.8$ while the symmetric weightings (RLOO, Uniform-R, and GRPO) only reach around $0.74$.
+L78: ### 1.1 Related work
+L79: 
+L80: There are a number of works that counteract GRPO’s weak signal on hard prompts, or better leverage gradients from zero-reward rollouts.
+L81: [cite49†25 ] used a prioritized sampling strategy where samples are reweighted by $1-\hat{\rho}$, which effectively makes harder examples more likely to be sampled. [cite50†26 ] interprets this through surrogate reward maximization (cf. Section cite11†2.1.2 ), thus connecting it to GRPO-modifications targeting Pass@K maximization [cite51†3 , cite52†14 ]. While these forms of reweighting hard-examples have an effect analogous to an asymmetric prompt weighting, prompts corresponding to $\hat{\rho}=0$ are still set to zero.
+L82: In contrast, our work directly modifies the advantage estimators to ensure that prompts in the zero-success regime provide a boosted gradient signal.
+L83: [cite53†12 ] addresses zero-variance prompts by entropy-guided advantage shaping at the completion/token level, whereas we introduce prompt-level reweighting based on the success rate. [cite54†7 ] reshapes learning based on how confident the model was at each mistake, whereas we reshape learning based on how hard the prompt currently is.
+L84: [cite55†10 ]’s ‘asymmetric policy optimization’ for multi-modal LLMs splits responses into positive and negative groups and applies different KL-based regularization schemes, while we adjust advantages. CoDaPO [cite56†31 ] shares our motivation of counteracting GRPO’s weak signal on hard prompts, but its difficulty reweighting is only indirectly tied to average performance and is applied jointly with an explicit confidence term, whereas our Linear-R uses a simple prompt-only weight.
+L85: [cite57†28 ] proposed an asymmetric token-level reweighting via policy ratios and advantage sign, whereas we study prompt-level reweighting as a function of success probability.
+L86: An interesting recent result [cite58†5 ] shows that different weighting schemes can be interpreted as optimizing different surrogate objectives. Concurrently, [cite50†26 ] specifies an explicit recipe for deriving policy-gradient algorithms as weightings of RLOO starting from a surrogate reward. However, both perspectives leave open the practical question of which surrogate (equivalently, which weighting) should be preferred in different regimes.
+L87: We address this directly: from a practitioner’s viewpoint, we clearly demonstrate settings in which different weightings beat the dominant GRPO baseline; from a theory viewpoint, we use a policy-dynamics perspective to provide guidance on selecting weights that account for the prompt-difficulty distribution, showing in particular that asymmetric weights are most beneficial in the rare-success regime.
+L88: Finally, while our Linear-R weighting is partly inspired by the log surrogate advocated by [cite58†5 ], their proposed implementation via rejection sampling differs from Linear-R and is empirically less competitive (see Appendix  cite30†B.3 for a comparison).
+L89: ## 2 Problem setup and background
+L90: 
+L91: Given pairs $(x,a)$ of problem $x$ (in form of a prompt) and (typically) a reference solution/answer $a$, our goal is to maximize the expected reward,
+L92: 
+L93:  | $\displaystyle{\mathbb{E}}_{(x,a)}\left[{\mathbb{E}}_{y\sim\pi_{\theta}(\cdot|x)}\left[r(x,y,a)\right]\right],$  |  | (1)
+L94: where we take expectation over problems and associated reference solutions, $\pi_{\theta}$ is the policy (an LLM) parameterized by $\theta$ that we optimize over, $y$ is a response of the LLM to the prompt $x$, and $r$ is a reward for the response that is computed based on the reference answer $a$.
+L95: For example for mathematical reasoning, the reward checks whether the suggested solution in the completion $y$ is consistent with the reference solution $a$, and for code generation, the reward checks whether a suite of tests $a$ passes.
+L96: 
+L97: The most commonly used policy optimization algorithms for LLMs for RL with verifiable rewards follow the recipe:
+L98: 
+L99:   1. 1.
+L100: 
+L101: Sample a batch of prompts $x_{1},\ldots,x_{B}$ from a dataset.
+L102: 
+L103:   2. 2.
+L104: For each prompt $x_{j}$, the current model $\theta_{\mathrm{old}}$ generates $M$ responses (also called completions, rollouts, trajectories).
+L105: 
+L106:   3. 3.
+L107: 
+L108: Compute a binary reward for each of the responses, for example with a verifier that tests whether a problem specified by $x_{j}$ has been solved correctly or not.
+L109: 
+L110:   4. 4.
+L111: 
+L112: Update the model based on normalized rewards, called advantages, with one gradient step (on-policy training) or several gradient steps (off-policy training).
+L113: Policy optimization algorithms such as PPO [cite59†21 ], REINFORCE, RLOO, and GRPO differ primarily in:
+L114: 
+L115:   * •
+L116: 
+L117: Advantage computation: How rewards are normalized.
+L118: 
+L119:   * •
+L120: 
+L121: Loss aggregation: Sample-average (all rollouts equal, e.g., GRPO), prompt-average (each prompt equal, e.g., DAPO), or token-average.
+L122: 
+L123:   * •
+L124: Off-policy handling: On-policy training uses each batch for one update; reusing rollouts for multiple updates becomes off-policy. Algorithms address this mismatch via importance weighting/clipping/KL-penalties, or ignore it.
+L125: 
+L126: In this paper we focus on an on-policy setup, where each update is a single policy-gradient step based on per-prompt samples and their advantages.
+L127: As discussed below, several widely used policy-optimization methods for LLMs can be interpreted as inducing prompt-level weightings. For binary rewards, methods such as GRPO and RLOO yield weights that only depend on the average reward $\hat{\rho}_{x}$ of the responses for a prompt $x$ and are symmetric in that prompts that are easy (low $\hat{\rho}_{x}$) or hard (high $\hat{\rho}_{x}$) under the current policy receive smaller weight than prompts with intermediate success probability.
+L128: Motivated by the observation that learning can be bottlenecked by hard prompts, we propose and study asymmetric prompt weights that deliberately assign higher weight to poorly-performing prompts (small $\hat{\rho}_{x}$). We find asymmetric reweighting improves learning in from-scratch RL setups.
+L129: ### 2.1 Policy optimization for verifiable rewards
+L130: 
+L131: We consider rewards bounded in $[0,1]$ for convenience. For a prompt $x$, let $y\sim\pi_{\theta}(\cdot|x)$ be the response and define the expected reward
+L132: 
+L133:  | $\displaystyle\rho_{x}(\theta)={\mathbb{E}}_{y\sim\pi_{\theta}(\cdot|x)}\left[r(y)\right],$  |  | (2)
+L134: 
+L135: where, for notational simplicity, we omit the dependence of the reward $r$ on a reference answer $a$ and the prompt $x$. The canonical per-prompt policy gradient direction is
+L136:  | $\displaystyle\nabla_{\theta}\rho_{x}(\theta)={\mathbb{E}}_{y\sim\pi_{\theta}(\cdot|x)}\left[r(y)\nabla_{\theta}\log\pi_{\theta}(y|x)\right].$  |
+L137: 
+L138: We view policy-gradient updates as aggregating these per-prompt directions with prompt- and policy-dependent scalar weights $w_{x}(\theta)$, i.e.,
+L139: 
+L140:  | $\displaystyle\nabla_{\theta}J(\theta)={\mathbb{E}}_{x}\left[w_{x}(\theta)\nabla_{\theta}\rho_{x}(\theta)\right].$  |
+L141: Different policy-optimization algorithms correspond to different choices of weights, and different finite-sample estimators $\hat{d}_{x}(\theta)$ of the per-prompt direction $\nabla_{\theta}\rho_{x}$. For example:
+L142: 
+L143:   * •
+L144: 
+L145: Williams’ REINFORCE [cite60†29 ] uses weight $w_{x}=1$ and estimates the per-prompt direction $\nabla_{\theta}\rho_{x}$ as
+L146: 
+L147:  | $\displaystyle\hat{d}_{x}(\theta)=\frac{1}{M}\sum_{i=1}^{M}r(y_{i})\nabla_{\theta}\log\pi_{\theta}(y_{i}|x).$  |
+L148: 
+L149:   * •
+L150: REINFORCE leave-one-out (RLOO) [cite46†11 , cite47†1 ] also uses weight $w_{x}=1$ but uses a leave-one-out estimate of the per-prompt direction:
+L151: 
+L152:  | $\displaystyle\hat{d}_{x}(\theta)=\frac{1}{M}\sum_{i=1}^{M}\left(r(y_{i})-\bar{r}_{-i}\right)\nabla_{\theta}\log\pi_{\theta}(y_{i}|x),$  |
+L153: 
+L154: where $\bar{r}_{-i}=\frac{1}{M-1}\sum_{j\neq i}r(y_{j})$ is the average reward of all completions but completion $y_{i}$.
+L155: 
+L156:   * •
+L157: GRPO [cite44†23 ] uses weight $w_{x}=1/\sigma_{x}$, where $\sigma_{x}^{2}$ is the empirical variance of the rewards $r(y_{1}),\ldots,r(y_{M})$, and estimates the direction as
+L158: 
+L159:  | $\displaystyle\hat{d}_{x}(\theta)=\frac{1}{M}\sum_{i=1}^{M}\left(r(y_{i})-\hat{\rho}\right)\nabla_{\theta}\log\pi_{\theta}(y_{i}|x),$  |
+L160: 
+L161: where $\hat{\rho}$ is the average of rewards. Dr. GRPO [cite61†13 ] uses the same directional estimate, but weight $w_{x}=1$.
+L162: #### 2.1.1 Binary rewards
+L163: 
+L164: For binary rewards, the direction estimates simplify. Define $\widehat{\nabla}_{0}=\frac{1}{M_{0}}\sum_{i:r_{i}=0}\nabla_{\theta}\log\pi_{\theta}(y_{i}|x)$ and $\widehat{\nabla}_{1}=\frac{1}{M_{1}}\sum_{i:r_{i}=1}\nabla_{\theta}\log\pi_{\theta}(y_{i}|x)$ as the average of the gradients with reward $0$ and reward $1$. Here, $M_{0}$ and $M_{1}$ are the number of rewards that are $0$ and $1$, and $r_{i}:=r(y_{i})$. With this notation, the gradient updates are:
+L165: 
+L166:   * •
+L167: REINFORCE: $\widehat{G}_{x}(\theta)=w_{x}\cdot\hat{d}_{x}(\theta)=1\cdot\hat{\rho}\,\widehat{\nabla}_{1}\,.$
+L168: 
+L169:   * •
+L170: 
+L171: RLOO:
+L172: 
+L173:  | $\displaystyle\hskip-14.22636pt\widehat{G}_{x}(\theta)=w_{x}\cdot\hat{d}_{x}(\theta)=1\cdot\frac{M}{M-1}\hat{\rho}(1-\hat{\rho})\left(\widehat{\nabla}_{1}-\widehat{\nabla}_{0}\right).$  |
+L174: 
+L175:   * •
+L176: 
+L177: GRPO:
+L178:  | $\displaystyle\hskip-14.22636pt\widehat{G}_{x}(\theta)=w_{x}\cdot\hat{d}_{x}(\theta)=\frac{1}{\sqrt{\hat{\rho}(1-\hat{\rho})}}\cdot\hat{\rho}(1-\hat{\rho})\left(\widehat{\nabla}_{1}-\widehat{\nabla}_{0}\right).$  |
+L179: 
+L180: For binary RLOO and GRPO, we can view $\hat{\rho}(1-\hat{\rho})$ and $\sqrt{\hat{\rho}(1-\hat{\rho})}$ as the effective prompt weight. Moreover, the GRPO direction is (up to the constant $\frac{M}{M-1}$) the same as for RLOO, only the weight $w_{x}$ is different.
+L181: For both RLOO and GRPO, prompts that are hard given the current policy ($\hat{\rho}$ close to zero) as well as prompts that are easy ($\hat{\rho}$ close to one) get de-emphasized. This makes sense, given the viewpoint that for hard prompts gradients are unreliable and for easy ones, we see diminishing returns.
+L182: #### 2.1.2 Surrogate reward perspective
+L183: [cite58†5 , cite50†26 ] noted that the different weights induce different surrogate-loss functions. In particular, REINFORCE and RLOO correspond to optimizing the expected reward $J(\theta)={\mathbb{E}}_{x}\left[\rho_{x}\right]$, while GRPO corresponds to a surrogate objective of the form $J(\theta)={\mathbb{E}}_{x}\left[F(\rho_{x})\right],$ for $F(\rho_{x})=2\mathrm{arcsin}(\sqrt{\rho_{x}})$. This holds only for binary rewards; for non-binary rewards, no surrogate loss exists.
+L184: [cite50†26 ] suggests designing binary-reward RLVR updates by choosing differentiable surrogate reward $F$ and up-weighting the RLOO gradient $\omega_{x}(\rho)\leftarrow F^{\prime}(\rho)$. Here, we work directly with the weight function $\omega_{x}(\rho)$, which provides greater flexibility beyond the binary reward setting.
+L185: More importantly, we propose concrete new weightings and provide detailed empirical and theoretical analysis showing precisely when and why asymmetric weights outperform existing baselines such as GRPO.
+L186: ## 3 Policy optimization with asymmetric prompt weightings for binary verifiable rewards
+L187: 
+L188: As discussed, REINFORCE, RLOO, and GRPO leverage prompt weightings that can be viewed as focusing on ambiguous prompts, i.e., they assign high weights to prompt with intermediate success probability, while downgrading easy and hard ones, which can stabilize training, but may also lead to stagnation for hard prompts.
+L189: Here we propose a weighting that focuses on progress by upweighting prompts with low success probabilities, i.e., low values of $\rho_{x}$ under the current policy.
+L190: 
+L191: As introduced in the previous section, we focus on general RLVR algorithms with gradient updates for a given prompt $x$ consisting of a per-prompt weight $\omega_{x}$ and finite-sample estimate $\hat{d}_{x}(\theta)$ for the per-prompt direction $\nabla_{\theta}\rho_{x}$, i.e.,
+L192:  | $\displaystyle\widehat{G}_{x}=\omega_{x}(\hat{\rho})\cdot\hat{d}_{x}(\theta).$  |  | (3)
+L193: 
+L194: We focus on the binary-reward case and take the finite-sample estimate $\hat{d}_{x}(\theta)$ for the per-prompt direction as the gradient direction of RLOO and GRPO:
+L195: 
+L196:  | $\displaystyle\hat{d}_{x}(\theta)=\hat{\rho}(1-\hat{\rho})\cdot\left(\widehat{\nabla}_{1}-\widehat{\nabla}_{0}\right).$  |  | (4)
+L197: 
+L198: Equivalently, written in the conventional advantages-form:
+L199:  |  | $\displaystyle\widehat{G}_{x}=\frac{1}{M}\sum_{i=1}^{M}A_{i}\cdot\nabla_{\theta}\log\pi_{\theta}(y_{i}|x),\,\qquad\text{ with }A_{i}=\omega_{x}(\hat{\rho})\cdot(r_{i}-\hat{\rho})\,.$  |  | (5)
+L200: 
+L201: To understand the benefit of asymmetric prompt weightings, we consider four weightings that all upweight prompts with low success probabilities relative to GRPO and RLOO, and with a naming that reflects the effective weights that they assign gradients (see Figure cite62†2 ):
+L202: 
+L203:   * •
+L204: Linear-REINFORCE (Linear-R): We consider weighting $w_{x}(\rho)=\frac{1}{\rho}$, which focuses on failing prompts, and corresponds to the effective (linear) weight $1-\rho$. In terms of advantages, in view of Equation (cite63†5 ), this corresponds to $A_{i}=\frac{1}{\hat{\rho}}(r_{i}-\hat{\rho})$. For wrong responses ($r_{i}=0$) Linear-R assigns advantage $A_{i}=-1$; thus, the algorithm’s overall gradient is non-zero even if $\hat{\rho}=0$.
+L205: 
+L206:   * •
+L207: Sqrt-REINFORCE (Sqrt-R): Consider the weight $w_{x}(\rho)=\frac{1}{\rho\sqrt{1-\rho}}$, which has the $1/\rho$ weighting dominating for small $\rho$, just like Linear-REINFORCE, and for $\rho$ close to one, behaves like the GRPO weighting. The effective weight is $\sqrt{1-\rho}$. Just like Linear-$R$, this assigns non-zero effective weight even if $\hat{\rho}=0$
+L208: 
+L209:   * •
+L210: 
+L211: Plateau-REINFORCE (Plateau-R): Consider the weight
+L212:  | $\displaystyle w_{x}(\rho)=\begin{cases}\frac{1}{2\rho(1-\rho)}&\rho<1/2\\
+L213: \frac{1}{\sqrt{\rho(1-\rho)}}&\rho\geq 1/2\end{cases}.$  |  | (6)
+L214: 
+L215: This gives an effective weight that is equal to that of GRPO for $\rho>1/2$ and constant for smaller $\rho$. The weight function above corresponds to advantages $A_{i}=\omega_{x}(\rho)\cdot(r_{i}-\rho)$ which assign non-zero gradient weights $-1/2$ for prompts with $\rho=0$.
+L216: 
+L217:   * •
+L218: Uniform-REINFORCE (Uniform-R): Consider the weight $w_{x}(\rho)=\frac{1}{\rho(1-\rho)}$, which leads to an effective weight of $1$. We dub this Uniform-REINFORCE because it has effective weight $1$, since it cancels the factor $\rho(1-\rho)$, and thus weighs all prompts equally.
+L219: 
+L220: The weights assigned to gradients and corresponding advantages (for binary rewards) are summarized in Table cite64†1 and illustrated in Figure cite62†2 .
+L221: Figure 2: Effective weights $\omega_{x}(\rho)\cdot\rho(1-\rho)$ assigned to gradients, and advantages assigned to correct/wrong responses for the five considered prompt weightings. The range $1/32,\ldots,31/32$ is shown since the number of rollouts $M$ is typically at most $32$.
+L222: ## 4 Experiments
+L223: 
+L224: We perform experiments on four different datasets and setups, each covering different regimes.
+L225: We first consider two from-scratch RL reasoning setups. Both setups are in a R1-Zero-like [cite41†6 ] regime where we start from a base model that initially does not perform well on reasoning, and eventually reach high performance through RL. The first setup is TinyZero [cite65†17 ] where the task is to solve a countdown and multiplication task. The second setup is GSM8K [cite66†4 ], a math reasoning task, where we start from a base model not trained or finetuned specifically for math.
+L226: In both setups, the base model’s average reward starts below 0.02 and advances to around 0.8. We find that our proposed asymmetric prompt weightings (Sqrt-R, Plateau-R, and Linear-R) outperform the non-symmetric ones (GRPO, RLOO, Uniform-R) in both cases.
+L227: Second, we consider two post-SFT RL setups where the model is already good at reasoning through SFT, and the goal of RL is to improve performance further. The first uses the DAPO-math dataset [cite45†30 ], and the second the MATH dataset [cite48†9 ]. In the two setups the average reward starts at 0.3 and 0.4 and reach 0.5 and 0.55, respectively. Unlike the from-scratch setting, we observe no notable difference among the advantage estimators GRPO, RLOO, Plateau-R, and Linear-R.
+L228: We use the SkyRL codebase [cite67†2 ], and have implemented our advantage estimators withing that framework; experimental details are in the text and Appendix cite31†C .
+L229: ### 4.1 From-scratch RL: TinyZero
+L230: We begin with the TinyZero setup proposed by [cite65†17 ], training the Qwen2.5-3B base model to solve countdown and multiplication tasks. An illustrative prompt is:
+L231: 
+L232:     <|im_start|>system
+L233:     You are a helpful assistant. You first think
+L234:     about the reasoning process in your mind
+L235:     and then provides the user with the answer.
+L236:     <|im_end|>
+L237:     <|im_start|>user
+L238:     Using the numbers [3,6,25,50,75,100], create
+L239:     an equation that equals 952. You can use
+L240:     basic arithmetic operations (+, -, *, /)
+L241:     and each number can only be used once. Show
+L242:     your work in <think> </think> tags. And
+L243:     return the final answer in <answer>
+L244:     </answer> tags, for example
+L245:     <answer> (1 + 2) / 3 </answer>.
+L246:     <|im_end|> <|im_start|>assistant
+L247:     Let me solve this step by step.
+L248:     <think>
+L249: We use a binary outcome reward only. Original TinyZero [cite65†17 ] uses a format reward of 0.1 when the format is correct, in addition to an outcome reward; however, we find this unnecessary to reach good performance. We choose this setup because, as noted by [cite65†17 ], it is a minimal setup where one can experience the “Aha moment” reported in the R1-paper [cite41†6 ], where the model starts to have a productive thinking process.
+L250: We choose $M=16$ rollouts per prompt and a batch size of 512 (i.e., 512 distinct prompts, and for each prompt $M=16$ completions).
+L251: Figure cite68†1 shows the test loss (Pass@1) for different weightings: The model’s initial performance is very low (about $0.025$) and climbs to $0.8$ for Linear-R and Plateau-R, compared to $0.74$ for the other algorithms RLOO, GRPO, and Uniform-R. The asymmetric prompt weightings Plateau-R and Linear-R perform significantly better (6% higher Pass@1 score), and this improvement is reproducible: the plot shows three independent runs for Linear-R.
+L252: We hypothesize the following explanation for this behavior: All algorithms perform similar up to step around 150-200, where the score is about $0.74$. From here on, the asymmetric prompt weightings (Linear-R, Plateau-R, Sqrt-R) continue to improve to $0.8$ while the symmetric ones (RLOO, GRPO, and Uniform-R) saturate.
+L253: Figure cite69†3 shows the distribution of the values of $\hat{\rho}$ (for Linear-R, though the other distributions are essentially the same at Step 220): at Step 220 there are still examples with very low values for $\hat{\rho}$. GRPO and RLOO will assign very small weights to the corresponding gradients (see Figure cite62†2 ), as opposed to Linear-R, Plateau-R, Sqrt-R which assigns higher weights and thus continues to make progress on those examples, translating in an overall better score.
+L254: Thus, upweighting gradients for low-$\rho$ prompts can translate in performance gains in settings where many prompts remain difficult to solve and thus have low $\rho$. In Section cite18†5 , we provide theoretical support for this finding by showing, under a tractable model of learning dynamics, that the Linear-R weighting is optimal in the low-$\rho$ regime.
+L255: Finally, recall that our asymmetric weightings (Linear-R, Plateau-R, Sqrt-R) assign non-zero advantages even if all completions have zero reward ($\hat{\rho}=0$), unlike GRPO and RLOO. We conducted an ablation in which we set the advantage to zero whenever all completions failed; this hurt performance, see the appendix.
+L256: Figure 3: Distribution of the fraction of correct responses out of 16, $\hat{\rho}_{x}$, for each prompt during a run of Linear-R on TinyZero. At early steps, the distribution is heavily concentrated at low $\hat{\rho}$, reflecting that most prompts are difficult for the base model. Importantly, a substantial number of difficult prompts remain even at later steps (e.g., step 220). Linear-R continues to provide strong gradient signal for these prompts due to its weighting, unlike GRPO.
+L257: Figure 4: From-scratch RL: GSM8K. Test error (i.e., fraction of correctly solved problems, Pass@1) during reinforcement learning on the GSM8K benchmark for the Llama-3.1-8B (base) model. Asymmetric weighting (Plateau-R, Linear-R, Sqrt-R) outperform GRPO, demonstrating the benefit of up-weighting difficult prompts.
+L258: ### 4.2 From-scratch RL: GSM8K
+L259: Next, we consider the GSM8K dataset. We use the Llama-3.1-8B-base model (as opposed to Qwen base models as common in the literature), since Qwen models have been trained on data to improve their math performance, and we wish to understand what is learned through policy optimization algorithms with different weightings/advantages. We performed experiments with $M=16$ completions, learning rate of 1e-6, and batch sizes of 128 and 256.
+L260: The base model performs, as expected, relatively poorly initially, only achieving a Pass@1 rate of 1.3%. In this regime, most prompts have no correct completions ($\rho=0$), and dominate the gradient for Plateau-R and Linear-R. We therefore set the advantages of Plateau-R and Linear-R for prompts with success rate $\rho=0$ to $0$ for a warmup period of 50/100 steps for batchsizes 256/128.
+L261: Figure cite70†4 shows that Plateau-R slightly outperforms GRPO for both batch-sizes, demonstrating the benefit of asymmetric prompt weighting.
+L262: 
+L263: This setup follows that considered in the blog post [cite71†20 ] where the stepsize was tuned for GRPO; and we achieve the same performance with GPRO in our setup.
+L264: ### 4.3 Post-SFT RL: MATH
+L265: Next, we consider the MATH dataset [cite48†9 ] consisting of 12k training examples and 500 test examples. Each task is a math problem of varying difficulty levels (1-5) with an answer that is easy to verify, for example a number or fraction. The binary verifier simply compares the solution suggested by the LLM with the provided solution, being lenient with regards to formatting (e.g., `\frac{13}{21}` is the same as $13/21$).
+L266: MATH is frequently used for evaluating GRPO-style algorithms since it provides a challenging set of problems with an automatic and final-answer checker as reward.
+L267: We use the Llama-3.2-3b-instruct model rather than models from the Qwen-series (as common in the literature) because, on MATH, Qwen trained with GRPO-style RLVR improves even with random, incorrect, or format-only rewards [cite72†22 ], suggesting the benchmark signal may be confounded by model-specific priors and/or contamination. Thus, using Qwen would make it difficult to attribute performance differences to differences in advantage design.
+L268: We choose $M=16$ and our batch-size is 256 (256 distinct math problems and for each $M=16$ completions).
+L269: From the test-loss (Pass@1) during training for four epochs in Figure cite73†5 (left) it can be seen that the performance of all advantage estimators is very similar. Starting from a score of $0.38$, all variants achieve scores in the range $0.53-56$. See Figure cite74†7 for the distributions of $\hat{\rho}$ during training with Linear-R. For TinyZero, we saw that Linear-R improves over the other advantage estimators in the second half of training by improving on examples with low values of $\rho$.
+L270: For MATH, we don’t see such an improvement which is somewhat expected, considering that at step 90 there are almost no examples with close-to-zero (but not equal to zero) values of $\hat{\rho}$.
+L271: Figure 5: Post-SFT RL: Test error (i.e., fraction of correctly solved problems) during reinforcement learning on the MATH dataset (left) and on DAPO math (right). All methods performs similarly well.
+L272: ### 4.4 Post-SFT RL: DAPO math
+L273: 
+L274: Finally, we consider a post-SFT RL setup where we take a model that is already very good at reasoning through supervised finetuning (SFT) on reasoning traces, and improve it further through RL. We choose this setup because models are often SFT’d first and then further improved through RL.
+L275: We follow closely the JustRL setup [cite75†8 ] for its simple and clean setup, and so that we can start from well-chosen hyperparameters. We train the DeepSeek-R1-Distill-Qwen-1.5B model, and use the DAPO-math dataset (the english subset) [cite45†30 ] for training. The batch size is 256 prompts, and we take $M=8$ samples per prompt. The learning rate is 1e-6 and we perform on-policy training without KL penalty nor clipping.
+L276: Figure cite73†5 (right) shows the results: Similar as in Section cite16†4.3 for MATH; all four considered methods perform similarly well, and there is no benefit of up-weighting the difficult prompts (Plateau-R, Linear-R, Sqrt-R), but it also does not hurt performance.
+L277: ## 5 A policy-dynamics perspective to weighting
+L278: Here, we ask: How do different prompt weights $\omega_{x}$ shape the dynamics of RLVR. To answer this, we study how the success probability evolves over training and how different choices of weight functions $\omega_{x}$ in Equation (cite63†5 ) induce qualitatively different convergence behaviors. We build on the policy-dynamics analysis of [cite76†15 ], extending it using the general reweighting framework of Section cite12†3 to cover a broad family of policy optimization algorithms.
+L279: We find that in a low-success regime an asymmetric prompt weighting (Sqrt-R) is best, and otherwise GRPO is better; which supports our empirical finding that asymmetric prompt weightings are best in from-scratch RL setups that start from a low-success regime.
+L280: ### 5.1 Theoretical model
+L281: 
+L282: To isolate the effect of the weighting $\omega_{x}$ on the learning dynamics, we consider an idealized, population-level version of policy optimization objectives for RLVR that captures the core ingredients relevant for dynamics: binary rewards, response-level advantages, and a proximal regularization that prevents overly large policy updates. We consider the following policy optimization per prompt $x$ at each iteration $t$ of the algorithm:
+L283:  | $\displaystyle\max_{\pi_{t}(\cdot|x)}\;\;\mathbb{E}_{y\sim\pi_{t}(\cdot|x)}A_{y}(\rho_{t-1})-\beta D_{\text{KL}}\big(\pi_{t}(\cdot|x)||{\pi_{t-1}(\cdot|x)}\big),$  |  | (7)
+L284: where $A_{y}(\rho)=\omega_{x}(\rho)\cdot(r(y)-\rho)$ is the advantage and $\omega_{x}$ the weight function, as throughout (cf. Equation (cite63†5 )). Here, $\pi_{t}$ denotes the policy to be optimized at time $t$ and $\pi_{t-1}$ is the policy of the previous iteration.
+L285: Unlike the rest of the paper, here we consider the population limit over generated responses $M\rightarrow\infty$; thus, the advantage $A_{y}(\rho_{t-1})$ of a response $y$ depends on the (population) success rate $\rho_{t-1}$ of the sampling policy $\pi_{t-1}$ at the previous iteration. $D_{\text{KL}}$ is the KL divergence and $\beta>0$ a regularization parameter.
+L286: Optimizing directly over the policy distribution, rather than over a parametric representation is standard abstraction in the theoretical RL literature, e.g., [cite77†18 , cite76†15 , cite78†27 , cite79†19 ]; it allows us to focus on how probability mass shifts between correct and incorrect responses over time.
+L287: ### 5.2 Success-rate dynamics
+L288: 
+L289: As shown in Appendix cite33†D.1 by taking the continuous time limit to the solution of (cite80†7 ), the success rate evolves according to the ordinary differential equation (ODE):
+L290: 
+

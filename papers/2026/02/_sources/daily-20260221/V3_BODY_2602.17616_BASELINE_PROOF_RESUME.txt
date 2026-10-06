@@ -1,0 +1,99 @@
+B Optimal Off-Policy Reward Baseline
+B.1 Single-sample derivation
+B.2 Minibatch estimator and plug-in form
+Remarks.
+C Efficient Baseline Aware Gradient Computations
+Per-trajectory gradient-norm statistics under deferred DP synchronization.
+Two-buffer accumulation for baseline-aware gradients.
+D Component Ablations of VCPO
+E Further VCPO Ablation and Comparison Studies
+E.1 Is Lowering the Learning Rate Sufficient for Stable Asynchronous RL?
+E.2 Are Clipping or Masking Methods Sufficient?
+Methods.
+Thresholds.
+Findings and tuning sensitivity.
+M2PO-style masking.
+E.3 Does KL Loss Improve Stability?
+E.4 Are Gradient-Norm Proxies Like Response Length or Logit “Energy” Sufficient?
+F VCPO Training Details
+F.1 Optimization Hyperparameters
+F.2 GSM8K
+Task and reward.
+Asynchronous setup.
+F.3 Countdown and MATH
+Countdown (Reasoning Gym).
+MATH.
+Asynchronous setup.
+F.4 Multi-Turn Tool Integrated Reasoning
+Task, data, and evaluation.
+Rollout Configuration and Asynchrony.
+License: CC BY 4.0
+arXiv:2602.17616v1 [cs.LG] 19 Feb 2026
+marginparsep has been altered.
+topmargin has been altered.
+marginparpush has been altered.
+The page layout violates the ICML style.
+Please do not change the page layout, or include packages like geometry,
+savetrees, or fullpage, which change it for you.
+We’re not able to reliably undo arbitrary changes to the style. Please remove
+the offending package(s), or layout-changing commands and try again.
+Stable Asynchrony: Variance-Controlled Off-Policy RL for LLMs
+Luke Huang * 1
+Zhuoyang Zhang 1
+Qinghao Hu 1
+Shang Yang 1
+Song Han 1 2
+††footnotetext: *Equal contribution
+1MIT
+2NVIDIA. Correspondence to: Luke Huang <lukh23@mit.edu>, Song Han <songhan@mit.edu>.
+Figure 1:
+Long-context, tool-integrated multi-turn RL comparing synchronous training (k=0k{=}0) to a two-step policy lag (k=2k{=}2) with VCPO versus sequence-level truncated importance sampling (TIS).
+Top: AIME-2025 validation accuracy vs. cumulative wall-clock time. VCPO matches the best synchronous accuracy 2.5×2.5\times faster (≈\approx42h vs. ≈\approx105h) and continues to improve thereafter. Bottom: Gradient norm vs. training steps. The TIS run shows an instability characterized by a brief gradient-norm spike followed by rapid collapse.
+Abstract
+Reinforcement learning (RL) is widely used to improve large language models on reasoning tasks, and asynchronous RL training is attractive because it increases end-to-end throughput. However, for widely adopted critic-free policy-gradient methods such as REINFORCE and GRPO, high asynchrony makes the policy-gradient estimator markedly higher variance: training on stale rollouts creates heavy-tailed importance ratios, causing a small fraction of samples to dominate updates. This amplification makes gradients noisy and learning unstable relative to matched on-policy training. Across math and general reasoning benchmarks, we find collapse is reliably predicted by effective sample size (ESS) and unstable gradient norms. Motivated by this diagnosis, we propose Variance Controlled Policy Optimization (VCPO), a general stabilization method for REINFORCE/GRPO-style algorithms that (i) scales learning rate based on effective sample size to dampen unreliable updates, and (ii) applies a closed-form minimum-variance baseline for the off-policy setting, avoiding an auxiliary value model and adding minimal overhead. Empirically, VCPO substantially improves robustness for asynchronous training across math, general reasoning, and tool-use tasks, outperforming a broad suite of baselines spanning masking/clipping stabilizers and algorithmic variants. This reduces long-context, multi-turn training time by 2.5×\times while matching synchronous performance, demonstrating that explicit control of policy-gradient variance is key for reliable asynchronous RL at scale.
+1 Introduction
+Policy-gradient (PG) methods are a widely used class of reinforcement learning (RL) algorithms that optimize a parameterized policy directly from sampled trajectories.
+In LLM post-training, PG-style algorithms are now standard for improving reasoning behavior, with widely used objectives including REINFORCE Williams (1992), Proximal Policy Optimization (PPO) Schulman et al. (2017), and GRPO Shao et al. (2024).
+These methods are typically implemented in an on-policy or near on-policy regime, where data generation and learning must occur sequentially after each other. This coupling becomes a major systems bottleneck for long-sequence reasoning: rollout lengths are highly variable and exhibit a long tail Hu et al. (2025)., creating pipeline bubbles and poor compute utilization in synchronous RL training.
+To improve throughput, several recent systems decouple rollout generation from learning via asynchronous, pipelined training. Prior works such as asynchronous RLHF Noukhovitch et al. (2024) AReaL Fu et al. (2025), LlamaRL Wu et al. (2025), and PipelineRL Piché et al. (2025) demonstrate that overlapping generation with optimization can substantially reduce end-to-end wall-clock time. However, this efficiency comes at the cost of training quality: the sampler generates trajectories under a lagging behavior policy while the learner continues to update, making training effectively off-policy
+which leads to learning degradation or even collapse.
+In this work, we focus on the optimization failure mode created by off-policy training and propose variance-targeted controls that can be applied on top of existing asynchronous RL frameworks. We find that the underlying mechanism behind asynchronous training instabilities is higher-variance gradient estimates. We show that the effective sample size Kish (1995) (ESS) – a well-known diagnostic for importance sampled estimates – collapses when the sampler and learner distributions significantly diverge and that this collapse predicts gradient volatility and KL spikes across reasoning tasks.
+Motivated by this diagnosis, we propose Variance Controlled Policy Optimization (VCPO), a simple drop-in method that directly controls the variance of the policy-gradient estimator with two complementary components: (i) an effective sample size guided step scaling that down-weights unreliable updates and (ii) a closed-form minimum-variance off-policy reward baseline based on per-trajectory gradient norms, avoiding training an auxiliary critic or value model. To make (ii) practical at scale, we present the first scalable implementation for exact per-example gradient-norm computation with negligible runtime overhead, and leverage these statistics to build a low-overhead, gradient-aware baseline for variance reduction.
+Across highly asynchronous training regimes and across mathematical reasoning, general reasoning, and tool-use tasks, VCPO remains robust and effective from 1.5B to 7B models, outperforms a broad suite of baselines spanning masking/clipping stabilizers and algorithmic variants, and cuts long-context multi-turn training compute by 2.5×\times while matching synchronous performance. We will release an open-source implementation and reproducibility artifacts.
+2 Background
+2.1 Reinforcement Learning for Large Language Models
+We consider finetuning a pretrained language model policy πθ\pi_{\theta} to maximize a scalar reward R⁡(x,y)R(x,y) that scores a completion y=(y1,…,yT)y=(y_{1},\dots,y_{T}) for a prompt xx (e.g., from a reward model or task-specific evaluator).
+Under an autoregressive policy, the likelihood of generating yy is
+πθ​(y∣x)=∏t=1Tπθ​(yt∣x,y<t).\pi_{\theta}(y\mid x)\;=\;\prod_{t=1}^{T}\pi_{\theta}(y_{t}\mid x,y_{<t}).
+Let 𝒟\mathcal{D} denote a dataset (distribution) of prompts. RL optimizes the expected reward
+J(θ)=𝔼x∼𝒟,y∼πθ(⋅∣x)[R(x,y)].J(\theta)\;=\;\mathbb{E}_{x\sim\mathcal{D},\,y\sim\pi_{\theta}(\cdot\mid x)}[R(x,y)].
+On-Policy Gradient Estimator. In On-Policy RL, we estimate ∇θJ​(θ)\nabla_{\theta}J(\theta) with sequences yy sampled from the policy πθ\pi_{\theta} itself. This leads to the REINFORCE gradient Williams (1992)
+∇θJ​(θ)=𝔼x∼𝒟,y∼πθ​[R⁡(x,y)​∇θ​log⁡πθ​(y∣x)]\nabla_{\theta}J(\theta)=\mathbb{E}_{x\sim\mathcal{D},\,y\sim\pi_{\theta}}\!\left[R(x,y)\,\nabla_{\theta}\log\pi_{\theta}(y\mid x)\right]
+∇θ​log​πθ​(y∣x)=∑t=1T∇θ​log​πθ​(yt∣x,y<t)\nabla_{\theta}\log\pi_{\theta}(y\mid x)=\sum_{t=1}^{T}\nabla_{\theta}\log\pi_{\theta}(y_{t}\mid x,y_{<t})
+which motivates a surrogate loss of
+ℒon-policy(θ)=−𝔼x∼𝒟,y∼πθ(⋅∣x)[R(x,y)logπθ(y∣x)]\mathcal{L}_{\text{on-policy}}(\theta)=-\mathbb{E}_{x\sim\mathcal{D},\,y\sim\pi_{\theta}(\cdot\mid x)}\!\left[R(x,y)\,\log\pi_{\theta}(y\mid x)\right]
+(1)
+A standard variance reduction technique is to subtract a baseline that may depend on the state
+st=(x,y<t)s_{t}=(x,y_{<t}), but not on the current action/token yty_{t}:
+∇θJ​(θ)=𝔼x,y∼πθ​[∑t=1TAt​∇θ​log⁡πθ​(yt∣x,y<t)],\nabla_{\theta}J(\theta)=\mathbb{E}_{x,\,y\sim\pi_{\theta}}\!\left[\sum_{t=1}^{T}A_{t}\,\nabla_{\theta}\log\pi_{\theta}(y_{t}\mid x,y_{<t})\right],
+where an advantage-like term can be written as
+At=R⁡(st,yt)−b⁡(st),b⁡(st)=b⁡(x,y<t).A_{t}\;=\;R(s_{t},y_{t})-b(s_{t}),\qquad b(s_{t})=b(x,y_{<t}).
+In actor–critic methods such as PPO, the baseline is a learned value function b⁡(st)=Vϕ​(st)b(s_{t})=V_{\phi}(s_{t}) and advantages AtA_{t} are computed via GAE. Critic-free methods such as GRPO instead use structured baselines (e.g., per-prompt group normalization), avoiding the overhead of training and serving a value model. In this paper, we focus on critic-free, REINFORCE-style updates, which are widely used for LLM reasoning post-training due to their lower resource requirements.
+Off-Policy Gradient Estimator. In practical LLM RL systems, rollout generation and training are inevitably mismatched, causing training to be off-policy. This mismatch can arise even without explicit asynchronous training due to numerical issues Qi et al. (2025); Xi et al. (2026), kernel and hardware issues Liu et al. (2025a), or unavoidable differences in inference and training implementations He (2025). We therefore distinguish the sampler policy μ\mu used to generate trajectories from the current learner policy πθ\pi_{\theta} being optimized.
+Importance Sampling (IS) corrects this mismatch. For a prompt xx and completion yy consisting of tokens y1,⋯,yTy_{1},\cdots,y_{T}, define the (sequence-level) IS ratio
+w⁡(x,y)≜πθ​(y∣x)μ⁡(y∣x)=∏t=1Tπθ​(yt∣y1t−1​x)μ⁡(yt∣y1t−1​x)w(x,y)\;\triangleq\;\frac{\pi_{\theta}(y\mid x)}{\mu(y\mid x)}=\prod_{t=1}^{T}\frac{\pi_{\theta}(y_{t}\mid y_{1}^{t-1}x)}{\mu(y_{t}\mid y_{1}^{t-1}x)}
+(2)
+With importance sampling, Eq (1) can be expressed as an expectation relative to the sampler policy, which leads to the unbiased off-policy surrogate loss
+ℒoff-policy​(θ)\displaystyle\mathcal{L}_{\text{off-policy}}(\theta)
+=−𝔼x∼𝒟,y∼μ(⋅∣x)[w(x,y)A(x,y)\displaystyle=-\mathbb{E}_{x\sim\mathcal{D},\,y\sim\mu(\cdot\mid x)}\bigl[w(x,y)\,A(x,y)\,
+(3)
+logπθ(y∣x)].\displaystyle\log\pi_{\theta}(y\mid x)\bigr].
+where A⁡(x,y)A(x,y) denotes an advantage-like signal (e.g., R−bR-b or token-level advantages).
+2.2 The Role of Effective Sample Size in Off-Policy RL
+In practice, the core challenge of importance sampling is not bias but finite-sample variance. Known as the Curse of the Horizon Liu et al. (2018); Liu et al. (2020), the product structure in (2) makes w⁡(x,y)w(x,y) highly sensitive to small per-token probability shifts, so the resulting weights can become heavy-tailed and a few samples may dominate each update
+To quantify this weight degeneracy, given per-sample gradient contributions gig_{i} and importance weights wiw_{i}, define standardized weights
+w~i=wi/∑j=1Bwj\tilde{w}_{i}=w_{i}/\sum_{j=1}^{B}w_{j} and the corresponding weighted estimator
+g^=∑i=1Bw~i​gi\hat{g}=\sum_{i=1}^{B}\tilde{w}_{i}g_{i}.
+A common diagnostic is the effective sample size (ESS) Kong (1992); Kong et al. (1994):
+ESS≜(∑i=1Bwi)2∑i=1Bwi2=1∑i=1Bw~i2∈[1,B].\mathrm{ESS}\;\triangleq\;\frac{\left(\sum_{i=1}^{B}w_{i}\right)^{2}}{\sum_{i=1}^{B}w_{i}^{2}}\;=\;\frac{1}{\sum_{i=1}^{B}\tilde{w}_{i}^{2}}\;\in\;[1,B].
+ESS measures how many samples effe

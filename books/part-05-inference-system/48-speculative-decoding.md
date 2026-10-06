@@ -201,6 +201,8 @@ Draft 一次提出 4 个 tokens。若前 3 个依次通过，第 4 个拒绝，�
 
 这里作废的是提交资格及对应错误 prefix 的 KV，不意味着已经计算的辅助 hidden feature 永远不能作为下一轮 proposal 的条件；这种跨轮复用仍须从更正后的 prefix 生成并重新验证，不能把辅助 feature 冒充正确前缀的 target KV。它用额外特征对齐、有限生命周期与 reset 管理换取较好的下一轮草稿；当失效状态难以隔离或收益不足时，丢弃并重算仍是更简单可靠的路径。
 
+把下一轮 draft 与当前 verify 重叠后，还要区分检索 proposal、target-verified guidance 与 committed chain。目标侧可以对检索候选做验证，用更正后的前缀刷新下一轮 draft 的条件；但“来自 target”或使用 causal mask 本身不证明整条 guidance 已符合 greedy 路径。只有在同一更正路径上已逐位置验证的 guidance 才能延伸提交；随机解码发生拒绝时，residual sampling 的 replacement 可能不同于预计算路径，后续 guidance 必须失效，不能绕过重新验证。[受限双侧检索方案](https://arxiv.org/html/2601.05524v1)支持这种状态与权限分层，但其 EM accuracy 不是 token-law 证明，本文不继承全局 lossless 宣称。检索、跨模型同步与状态刷新都增加成本；没有同路径验证依据、过期草稿难以隔离或 overlap 收益不足时，普通 rollback、短 draft 和 target-only 仍是合理回退。<!-- source-family:SF-2026-ARXIV-2601-05524 -->
+
 衡量收益时应记录：
 
 ```text
@@ -258,6 +260,10 @@ confidence calibration、traffic mix 或 scheduler 行为变化，旧 profile �
 Controller 只选择验证工作；target 仍拥有 acceptance、successor sampling 与 accepted-prefix/KV commit，长度选择不得依赖本轮接受随机数。Predictor 仍需按 target–drafter pair 监督训练与版本绑定，图兼容也不证明输出分布或质量已验收。[DScale v1 §III–IV](https://arxiv.org/html/2609.37532v1)的主证据限两种 Qwen targets、数学/代码、A100 和 closed-loop 并发；accepted-token retention 对照同时扩大了预算，不能归因于纯重分配。低并发、预测漂移或边界/packed layout 无法一致提交时，固定窗口与普通 draft–verify 继续成立；tile/kernel 实现属于第49章，这里的 owner 仍是验证容量与提交语义。
 <!-- semantic-body-binding:SF-2026-ARXIV-2609-37532:end -->
 
+若先从同一个 drafter 独立抽多条完整 path，再按 target 相关的规则选其中一条，验证面对的已不是原始单 path proposal：选择改变了中选路径的分布，必须重构该 selection-induced distribution，再校正接受与残余抽样。[多路径 block verification 的受限构造](https://arxiv.org/html/2602.16961v1)用 q^Γ 表达这个分布，并在“接受一个 prefix、再补一个 correction token”的算法类中分析最优接受长度；其 greedy 多路径实现不继承全局最优。排序还必须有一致严格全序：原文 injective 排序定义与可能相等的 p/q 打分未统一，直接用严格小于公式处理 ties 会漏概率质量，因而不能把未澄清 recipe 当作所有输入均 exact 的已验证实现。更多候选也增加 draft、选路和验证费用：有限 OPT 对照中 K=4 的接受进度增加而 walltime 更差，较大模型在温度1时连每次调用进度也可能下降，低温又可改变取舍。只有 selection distribution、支持域、tie policy 和实际成本均可核验时才采用该分支；否则原 block verifier、chain 或 target-only 继续合理，接受长度不替代端到端 SLO。<!-- source-family:SF-2026-ARXIV-2602-16961 -->
+
+分支预算还可以改变fork发生的位置，而不只是选择多少条完整path。先生成一段共享trunk，再在其已实现prefix下独立展开多条suffix，能复用共同草稿工作；代价是减少早处分叉的覆盖，并把trunk长度、suffix长度和宽度耦合到同一验证成本。[延迟树展开的受限实现](https://arxiv.org/html/2602.16994v1)让selector从有限三元组中选择，但selector的输入必须是当时可取得的状态：上一token的target/draft特征可复用，当前root的target特征缺一行KV，读取它要另付target forward；原接口只额外取当前draft特征。共享prefix下的proposal仍须按相同条件验证，selector不拥有acceptance或commit权，也不能沿用任意事后选路的原proposal。离线多次验证标签、warmup硬件曲线和MLP推理都要计价，forward延迟和accepted progress的surrogate不是生产并发/SLO实测；有限对照中某些模型的每次进度或tokens/sec反退，NDE也不在所有模型上提高速度。feature时点、采样合同或成本校准失配时，固定tree、较早fork与普通chain仍合理，不把dataset级oracle最优形状当作线上免费信息。<!-- source-family:SF-2026-ARXIV-2602-16994 -->
+
 ### 接受率损失要分成 Information Floor 与 Model Gap
 
 Block drafter 在一次 proposal 中并不知道 target 将实际提交的前序 token，因此后位置缺少 realized prefix information；
@@ -296,6 +302,10 @@ current hidden-state snapshot
 batch fragmentation。BlockPilot v1 的受限实验还显示 label construction 会随模型和候选数增长；它没有证明
 controller 可跨硬件、并发或 SLO 直接迁移。若 acceptance 差异小、label 成本高或 scheduler 已能用更便宜的
 online statistic 调整 depth，全局固定或 runtime-level policy 仍更合理。
+
+预算选择还包含两个互相耦合的问题：树要继续生长多深，以及已经生成的节点中要交给 target 验证多少个。只训练前者而固定后者，会让控制器适应一个上线后不再成立的验证成本；只训练后者也可能依赖固定深度形成的候选分布。一条受限分支先分别训练“继续/停止”的 depth policy 与 verification-size policy，再交替冻结其中一个、更新另一个，使二者适应彼此改变后的候选和成本。奖励采用本轮接受 token 数除以 draft 与 verification 时间，而不是单独最大化 acceptance length；它只调整 proposal 和验证工作量，target 的接受、采样与提交合同不能交给控制器。
+
+联合适应新增策略训练、硬件成本校准与分布漂移风险，局部每轮吞吐也不等于多请求公平性、尾延迟或 fleet goodput。[受限实现](https://arxiv.org/html/2603.01639v1)的组件消融并未显示每个组件在每种模型上都单调增益，且采用 HumanEval 训练后在指定任务上测试；没有证明策略可跨硬件、并发和 SLO 无校准迁移。运行时应另计决策开销并保留正确性回归，成本分布稳定或学习成本无法摊销时，固定 tree、单一在线 depth policy 仍是合理选择。<!-- source-family:SF-2026-ARXIV-2603-01639 -->
 
 请求之间的最优 draft length 也可能同时不同并随轮次变化。把整个 batch 锁在同一 draft/verify barrier 上，虽然实现简单，却会让短 draft 请求等待长 draft 请求；异步分支允许同一次 mixed forward 中部分请求继续 draft、部分请求执行 target verification，并依据在线 acceptance/cost 为每个请求更新计划。它改变的是 per-request control state 与 batch composition，不改变 target 对 accept/commit 的最终所有权。代价是更复杂的 KV refresh、混合 kernel、饥饿与调度公平性；作者的 1.70–4.58 倍结果绑定三模型、五类 workload 和披露 GPU，低并发、短输出或 mixed forward 效率不足时仍应回退同步 batch。
 
@@ -561,6 +571,8 @@ canary、rollback 和 provenance。作者报告的 speedup 只在其模型、数
 
 <!-- source-family:SF-2026-ARXIV-2604-14885 -->
 
+固定离线文档 draft 也可以沿已接受 prefix 做窗口匹配和树状 realignment，但局部 crop 的并行校正不能直接拥有整页输出。一个分层分支先对 crop 提出并校正候选，再交给 full-page target 在整页语境下最终验证；global 阶段仍循环推进，不等于一次 forward 验完。[HSD 的受限机制](https://arxiv.org/html/2602.12957v1)中，τ=1 只在同 processed greedy 与 tie 约定下维持该验证，较低阈值容忍非 argmax，是近似质量分支而非随机采样 exactness；target confidence 也不认证 OCR 真值。仅 crop 路径会失去语境、部分文档仍慢于原 decoding，筛去重复或超长输出后的 timing 人口不能代替全部文档。Draft、crop/full-page 编码、trie 与验证循环的成本都需保留；draft 不准、页级质量退步或视觉 prefill 主导时，回退整页 target decoding 或已验收 drafter，不从区域接受率宣告全流程加速。 <!-- source-family:SF-2026-ARXIV-2602-12957 -->
+
 ### 动态候选树必须编译为 Accelerator-safe Commit Plan
 
 在 GPU 上逐层扩展候选树、动态裁枝并回滚 KV，控制流灵活且容易根据 acceptance 调整；专用加速器若要求静态 shape、规则 batch 和预先规划的 memory layout，同一算法会被 host orchestration、动态分支与不可表达的回滚吞掉。此时不能取消 target verification，而应把候选树编译成静态批结构，并显式分开 provisional candidates、verification result、accepted prefix 与 KV commit frontier：
@@ -596,6 +608,8 @@ AR state
 让快请求等待最慢请求。独立 drafter 在 target 不可重训、可独立伸缩或 workload specialization 明确时仍合理；
 single-token AR 保留最简单 exactness。MARS 的证据仅覆盖其训练与 one-token benchmark contract，不是严格
 lossless speculative decoding 的证明。
+
+若选择不经 target verifier 的 standalone 块输出，训练时还要处理块内前缀归谁所有。一个受限分支让 student 一次给出整块 argmax tokens，再让冻结 AR teacher 依次读取这些 student tokens，对块内条件概率评分；不同块之前仍使用真实训练前缀。这不是逐位置独立对齐 gold token，也不保证并行 marginal 恢复 teacher 的 joint distribution，原式标为 KL 不授完整 KL 期望等价。部署用置信度决定块长并直接提交，因而接受的是质量—并行度取舍，而非 lossless acceptance；训练 teacher forward、mask/KV 更新、模板与较长训练均须计费。作者有限 Qwen 设置约三倍 chunk factor伴随准确率退步，也不等 wall-clock 三倍。质量回归或块内依赖不满足时，逐 token AR 或保留 target verifier 的 proposal 分支仍成立。<!-- source-family:SF-2026-ARXIV-2602-06019 -->
 
 单一 generic drafter 的 residency、缓存和回滚最简单；当 chat、math 或 code 的 proposal distribution 明显
 不同后，只有 target/tokenizer compatible 仍不足以保证高 acceptance。可以训练多个 domain specialists，
@@ -719,6 +733,10 @@ Proposal artifact 也不一定是独立小模型。目标 Agent 可以在 partia
 复用 prefix KV，并用自身 rollout 产生下一次 tool call 的训练目标。这减少 draft/target 行为漂移，却让
 speculator quality 与 Agent policy revision 更紧密耦合。无论预测命中率多高，它仍只拥有 proposal 权限：
 canonical Agent 输出匹配后才能提交副作用；不可逆工具最多预取输入，或在隔离且可丢弃的事务里执行。
+
+Proposal artifact 还可以来自同一 RL prompt 的历史 rollout，而不再训练一个小 drafter。[受限的复用分支](https://arxiv.org/html/2601.09083v1)把历史 response 的 substring 组织成计数树，用当前 suffix 匹配后提出频繁 continuation；没有可用匹配时继续普通 decode。历史文本只提出 token，不拥有 learner trajectory：仍由当前 policy 验证后决定实际接受的轨迹，不能把旧 rollout 直接当作当前 on-policy sample。同一 group 正在生成的文本可以更新候选树；空闲时为未来 prompt 做 runahead 也可以补充草稿，但这些预生成轨迹本身丢弃，不成为训练 target。<!-- source-family:SF-2026-ARXIV-2601-09083 -->
+
+这用检索、树维护与缓存容量换 draft-model 训练和执行成本，也新增 prompt/policy identity、历史文本泄露与过时草稿问题。受测实现支持局部 rollout 加速，未完整披露随机采样下的 rejection/residual 验证细节，不能据此认证 target distribution；runahead 的接受率模拟也不是端到端训练收益。验收需分别记录 rollout、完整 step、被丢弃工作与缓存开销；复用弱、内存紧或验证语义不清时，回退普通当前-policy decode 或已验证的 drafter。
 
 多候选验证还暴露另一个边界：一次拒绝后用于 correction 的 residual distribution 不能沿用已被候选集合消耗的概率质量。Residual shaping 可以重新分配剩余质量并在证明条件下保持 target distribution，但增加 shaping loss、numerical path、candidate interaction 与验证成本。它与 workflow-aware drafting 是正交分支：前者修正拒绝后的采样语义，后者改善候选生成；两者都必须以 empirical distribution test 验证 exactness，不能用吞吐提升代替分布契约。
 
@@ -887,6 +905,10 @@ exactness 结论。压缩器、融合参数与 divergence threshold 都成为版
 
 ## 从机制演进到系统设计
 
+严格 acceptance 会截断被拒绝的 draft；允许质量—成本取舍时，也可以显式放松接受函数，并随 draft 位置衰减放松量，将更大的偏离预算放在较早位置。拒绝后的 residual 必须随该接受函数一起定义，不能只调 acceptance 而继续沿用原纠正分布。[受限图像 speculation 的理论](https://arxiv.org/html/2601.09212v1)中，给定接受函数后的正部 residual 最小化的是固定长度、包含虚拟 target 续写的混合分布误差上界，不是任意完整生成序列的全局最优 law，更不是图像语义保证；只有接受函数逐点不低于经典规则等条件成立时，特定 residual 等价关系才可使用。位置衰减的平均归一化 schedule 可能让后段系数低于一，不能自动沿用这一条件。
+
+这种放松属于有损替代分支，而不是更高效的 exact verification。小扰动、特定区域质量平衡与每个 prefix 的分布距离条件，不能由有限样本平均距离替代；接受长度改善也不能替代最终质量和端到端时间的验收。受限图像模型的质量指标已有退步 slice，draft 训练、验证树、lookup、调参和额外采样的完整预算仍须计入。需要严格 target law、质量回归或误差条件无法校准时，回退经典 acceptance/residual 或普通自回归，而不把经验退火配置提升为通用无损配方。<!-- source-family:SF-2026-ARXIV-2601-09212 -->
+
 有损分支还要分清“按某个draft token选择的目标分布”和最终算法的混合输出分布。可以在单步divergence预算内提高当前proposal的接受概率，但这一目标随抽到的token变化；把各条件路径及拒绝后的recover sampling混合后，最终law的偏离并不直接等于局部预算δ。[Cactus的理论](https://arxiv.org/html/2604.04987v1)给出另一隐式控制函数Γ(δ)，并非可直接套用的同一δ上界；实用KL求解还有Taylor近似。
 
 因此接受长度增加必须与最终输出law、任务质量及实际wall time一起验收，不能把单步分布界升级为整序列事实正确率。调参、求解、额外采样和质量回归是接受率收益的代价；需要严格target-distribution合同或近似边界无法校准时，仍回退经典exact acceptance，不能把有损路径更名为无损。<!-- source-family:SF-2026-ARXIV-2604-04987 -->
@@ -916,6 +938,10 @@ exactness 结论。压缩器、融合参数与 divergence threshold 都成为版
 
 ## MoE Verifier 的 Expert Budget 应对齐真实提交概率
 
+树验证会同时展开多个位置的 expert demand，原本稀疏的单 token 路由也可能形成很大的 expert union。若必须保持原 target 的输出分布，完整路由、缩短 draft tree 或减少并行分支仍是合理选择。允许质量近似时，另一条分支是逐层等权累加整棵树的 router mass，只保留固定预算的 top-B experts；名单外的 expert 可以被截断为零，也可以由名单内的 expert 替换并重算组合权重。这是在改变 verifier 的 target routing，不只是裁剪 draft：经典 acceptance rule 即使实现正确，也只对应修改后的 target，任务分数接近不能证明保留原 target 的分布。
+
+[MoE-Spec 的受限实验](https://arxiv.org/html/2602.16052v1)支持这种质量与专家流量的局部取舍，而不是通用无损加速：作者用三种 MoE、五类任务、每类 80 个样本，在 FP16、A100 和 single-request 条件下按质量容忍度选择预算；温度 1 的结果含五次运行，但所沿用 EAGLE tree 的 q=1 实现本身有分布偏差，不能用两者共享的偏差证明 exactness。选择器还付出作者所报 2–3% 开销与部署预算校准，长尾质量、小树和高 batch 下的专家共用可能抵消收益；执行全部专家后才选择的 oracle 也不能当作可部署加速。严格正确性或质量回归时应回退完整路由与较简单的 proposal，而不是把放宽质量合同悄悄写成原模型等价。<!-- source-family:SF-2026-ARXIV-2602-16052 -->
+
 MoE target 验证一个 draft block 时，各位置到达最终输出的概率不同；把每个 draft token 的 router mass 等权相加并固定 expert 数，会为很可能被前序拒绝截断的位置搬运无效权重。更合理的 verifier selector 以离线估计的 position commitment probability 加权 expert demand，用需求分布有效秩自适应决定集合大小，再在不移除 root token 自然 top-k 的前提下按 residency 裁剪。收益是减少 verifier expert traffic，代价是提交概率漂移、额外统计和 rerouting 风险；校准失效或正确性预算紧时回退完整路由。`arXiv:2608.02989v1` 只在 12 个 model-task pair 上验证该机制。<!-- source-family:SF-2026-ARXIV-2608-02989 -->
 
 ## 云边 Speculation 把网络消息纳入 Exact Verification
@@ -926,6 +952,10 @@ draft 位于边缘、target 位于云端时，经典 acceptance 之外还多了�
 
 不同任务和 decode 阶段需要的视觉证据并不相同：固定少量 token 会削弱 grounding，固定大量 token 又会拖慢 drafter 并降低接受率。可复用视觉 memory 配合有界、state-conditioned retrieval，把视觉读出作为 hidden-state correction 而不是反复插入自回归上下文，可以改善 cache 复用。它仍需在目标模型、视觉任务和质量门槛下校准；动态取证错误必须能退回完整视觉条件。
 <!-- source-family: arxiv:2608.22883v1; semantic-body-binding: state-conditioned-visual-speculation -->
+
+视觉取证还可以在训练与推理之间分离。直接让小 drafter 读取完整 visual KV，条件最直接，在容量足够时仍合理；长视觉序列却可能稀释 attention 并压低接受长度。一条替代分支在训练时用 target 中层 visual state bridge 和递归 multi-token prediction 适配 drafter，推理时只消费 target 已融合视觉的 text hidden states 与有界 text window，把完整视觉计算留给 target。它不是从整个系统删除视觉，也不把 draft 的窄视图授为完整 evidence；target 继续拥有 verification、输出分布责任与 accepted-prefix commit。
+
+Bridge、hidden-state interface 和训练分布新增耦合，不能由训练用过视觉推断任意任务在推理时都能少读视觉。[受限实验](https://arxiv.org/html/2602.15318v1)中，25k visual tokens 的平均接受长度可由1.21恢复到4.37，但短序列消融也有3.82→3.79的小幅退步；LLaVA-OneVision7B/L20、temp0的平均 decode speedup 为2.82，而包含 prefill 的 end-to-end speedup 为1.93。Prefill 仍付费，训练与接口成本也未被这两个比率消除；受测任务不证明全部质量、并发或 SLO，更不等于本书已核验 lossless 实现。接口漂移、接受率或独立质量回归时，退回完整视觉条件、较简单 draft 或普通 target decode，不让局部长序列收益覆盖这些旧分支。<!-- source-family:SF-2026-ARXIV-2602-15318 -->
 
 ### 多个 Drafter 可以非破坏地嫁接到共享 Speculation Tree
 
@@ -982,9 +1012,21 @@ AR 保留精确左到右 factorization，diffusion 则能并行提出多个 toke
 
 被 verifier 拒绝的 hidden state 也并非必然无用：它可以作为下一轮只读 proposal state，减少 drafter 重算，但不得越过 target commit frontier。reuse drift、ancestry/bookkeeping 不完整或额外状态抵消收益时，应丢弃临时状态并恢复普通 drafting。<!-- source-family:SF-2026-ARXIV-2609-14717 -->
 
+另一条重叠分支预先计算多个可能验证结果对应的下一轮 draft：cache key 不是只有接受长度，还包含拒绝后 sampled bonus token；真实结果到达后仅选命中分支，否则执行 backup drafting。Verifier 仍按普通 acceptance/residual 规则提交，且不必把整个 draft cache 交给 target 验证。[Saguaro 的受限机制](https://arxiv.org/html/2603.03251v1#S4)还揭示 acceptance 与 cache hit 不是同一目标：压低 cached top-token 的 draft 概率会让 residual 更易命中缓存，却可能降低 draft 接受率。若改变 proposal 分布 q，就必须以相同 q 计算 acceptance 与 correction，不能一边用偏置 draft，一边沿用旧 residual 来声称 target-law 不变。
+
+batch 越大，至少一请求 cache miss 导致整批等待的机会越高；低延迟但低质量的 backup 因而可能胜过高质量 just-in-time draft。这个转折依赖 batch barrier、命中率与两种 draft 的实际成本，不是随机 backup 普遍最优。它还要支付额外 draft device、分支 mask、fragmented KV 整理和每轮通信；作者配置用 target TP4 H100 加独立一张 H100，计时排除 Prefill，不能把 decode 改善当成同 GPU 预算的全请求或生产 SLO 保证。命中率低、分支太贵或吞吐已 compute-bound 时，同步 draft–verify 或 target-only 路径仍成立。<!-- source-family:SF-2026-ARXIV-2603-03251 -->
+
 进一步并行化时，下一轮 draft 通常依赖本轮 verifier 的接受长度与 bonus token；若提前猜测这两个结果，猜错就必须退回串行路径，batch 越大越容易有请求触发回退。一条条件性替代方案是把昂贵的 draft backbone 与轻量 token correction head 分开：验证尚未结束时，backbone 对每个可能的接受边界预计算互不污染的 proposal 表示；verifier 给出真实接受前缀与 bonus 后，只选择对应分支并运行短 head。target 始终拥有 token/KV 的最终提交权，这消除了**猜错验证结果导致的 backbone 串行回退**，但不消除 head、同步屏障与分支预计算的成本。分支数、显存和 draft GPU 预算可能抵消收益；backbone 赶不上 verification、batch 小或旧 drafter 已足够便宜时，顺序 draft–verify 仍更简单。DPara 的作者证据限于 Qwen3-8B/14B、所列数学/代码/聊天任务及 H800/GB200/A10 配置，不能外推为任意采样、并发与 SLO 的普遍加速。<!-- source-family:SF-2026-ARXIV-2609-27396 -->
 
 ## Review notes
+
+- `SF-2026-ARXIV-2602-16994` — Daily `2026-02-21`；[exact-v1](https://arxiv.org/html/2602.16994v1) §4–6/T4–7、AppendixE Eq8–12/footnote4；2+2+2=6，共享trunk后fork与selector可取状态差额深入。采用current-target-root须额外forward的接口边界，不授oracle免费、全模型收益或surrogate生产SLO；有限反侧/额外成本/旧tree共存近正文。root必要原源/actual owner PRE通过并授窄锁；作者正文/完整邻接及末注已顺读，root非作者实际正文/完整邻接及自身末注POST通过，窄锁释放，未核实现/复现，非日级验收。
+
+- `SF-2026-ARXIV-2602-06019` — Daily `2026-02-07`；[MTP with Student Forcing exact-v1](https://arxiv.org/html/2602.06019v1) §3–4/§5.1–5.5与A1。2+2+2=6，具体standalone块内student-prefix训练缺口深入；跨块真实prefix，Eq3非完整KL期望，4GH200/100Ksteps与Qwen模板配置/质量牺牲保留，不采chunkfactor=walltime或lossless。root必要源/owner写前通过，正文/邻接与末注root实际非作者POST通过，未复现。
+
+- `SF-2026-ARXIV-2601-05524` — Daily `2026-01-13`；[Double exact-v1](https://arxiv.org/html/2601.05524v1) §2.2/4.2–4.3/D.2。只采用双侧检索与overlap下proposal、同路径已验证guidance和commit分层；随机拒绝使suffix失效。causal mask宣称及EM accuracy不单独证明token-law，不继承全局lossless；未运行代码。root必要原源/当前owner写前通过，root实际新增正文/前后邻接及末注写后复核通过。
+
+- `SF-2026-ARXIV-2603-03251`：[exact-v1](https://arxiv.org/html/2603.03251v1) §3/Alg1/Theorem7、§4.1–4.3/Theorems12/15/17、§5–6、Appendix B.1–B.3；采用 accepted-length+bonus cache、changed-q residual 及 batch-miss backup 成本边界。geometric fan-out 推导有 acceptance/power-law 假设，backup 阈值以整批等待和两种 draft 成本为条件，不是所有 scheduler 的最优保证。BF16、单机 H100、target TP4/SSD 另1 draft GPU；Llama70B/1B和Qwen32B/0.6B，四数据集各128 prompts、512 decode tokens，默认 greedy/batch1，计时排除 Prefill。高 batch 多 draft GPU 图为预测而非实测扩规模；mask/fragmented KV extend 位于 critical path，性能重复/不确定性及生产 SLO 未完整披露。作者必要正文审阅完成；root 已实际对读必要原文、两段与邻接，非作者 POST 通过，未本地复现或实现复验。
 
 - `SF-2026-ARXIV-2604-09557`（Experimental）：[SPEED-Bench v1](https://arxiv.org/html/2604.09557v1) §6–8.4/Table1及配置。采用语义流量→proposal可预测性→接受长度/容量的测量边界；词表剪枝损害draft覆盖不等exact target输出质量下降。不同模型、B200/多卡、采样例外、padding和client成本不合并外推。apr01必要源→实际owner采用通过；真实正文及相邻衔接已由apr01非作者实际写后通过，未复现实验。
 
@@ -1182,3 +1224,15 @@ baseline、capacity-aware verification 与 network-aware fallback 三项长期�
 
   **已吸收的语义增量：** 补足 information floor 与 model gap 的诊断分解。
 <!-- daily-books-trace:SF-2026-BLOCK-DRAFTING-FLOOR:end -->
+
+- `SF-2026-ARXIV-2601-09083` — Daily `2026-01-16`；[exact-v1](https://arxiv.org/html/2601.09083v1)，必要原段见本日PRIMARY/EVIDENCE。6分历史RL substring-tree/current-policy verification具体gap深入；同group更新与idle runahead discarded分开。§4.1实际配置不含runahead，4.2模拟非E2E；随机acceptance/residual实现未完整披露，不授distribution guarantee，成本与普通decode退路相邻。root必要源/owner写前通过，root actual正文/邻接与末注POST通过，锁释放；未运行artifact或复现。
+
+- `SF-2026-ARXIV-2601-09212` — Daily `2026-01-16`；[exact-v1](https://arxiv.org/html/2601.09212v1)。6分 position-decaying relaxed acceptance/residual 具体差额深入；Theorem2/Proposition1 与 Appendix F 条件、COCO/config/质量反侧已由 root 必要原源与 owner 写前复核通过。固定接受函数下的上界最小化不授整序列全局最优，平均 TV 不授 every-prefix 条件，late ω<1 不自动满足经典规则下界。正文两段保留有损合同、完整成本与 exact fallback；root 非作者实际正文/邻接与末注 POST 通过，窄锁释放，未运行实现或复现。
+
+- `SF-2026-ARXIV-2602-15318` — Daily `2026-02-19`；[Sparrow exact-v1](https://arxiv.org/html/2602.15318v1) §2–4/Table2/5/6、§6。2+2+2=6，训练visual bridge/递归MTP与推理text-hidden分离差额深入；Table6 Qwen2.5VL7B/A800长序列恢复不授全部长度胜出，短3.82→3.79反侧保留。Table2 LLaVA7B/L20四video任务temp0 DSR2.82/ESR1.93，prefill与feature接口成本近正文，不授lossless实现已核、全任务质量/并发SLO。root必要源/实际48及47/49邻接PRE通过并授窄锁；root已实际核两段正文、完整邻接及末注，非作者POST通过，窄锁释放；未核代码或复现，未授日级Gate。
+
+- `SF-2026-ARXIV-2602-16052` — Daily `2026-02-20`；[MoE-Spec exact-v1](https://arxiv.org/html/2602.16052v1) §3.1–3.3、§4、§6 与 Appendix A–C 必要预算/实现反侧。正文区分等权 tree-wide budget 的 truncation/substitution 与原 target exactness，并与已有 position-weighted selector 连续比较；质量容忍度、q=1 偏差、选择成本和 oracle 非部署性保留。root 非作者 PRE 与实际正文/完整邻接/末注 POST 通过，窄锁释放；未核 artifact 或复现，不授日级完成。
+
+- `SF-2026-ARXIV-2602-12957` — Daily `2026-02-17`；[exact-v1](https://arxiv.org/html/2602.12957v1) 必要方法、关键评价与直接限制；2+1+2=5，实际 owner 差额定点深入。只采用正文条件机制与明确有限适用范围，不授随机采样 exactness、全页质量或全流程加速保证；root 必要原源/actual owner PRE 通过并授窄锁，作者正文/完整邻接已顺读，root 非作者实际正文/完整邻接/末注 POST 通过，窄锁释放；未核 artifact 或复现，非日级 Gate。
+
+- `SF-2026-ARXIV-2602-16961` — Daily `2026-02-21`；[exact-v1](https://arxiv.org/html/2602.16961v1) §3–6、AppendixC/D必要证明与Eq27–29；2+2+2=6，选中IID路径分布差额/中心tie反側深入；不授greedy全局最优、ties未统一全域exact recipe或更长接受必更快；反侧、额外成本与原方案回退近正文。root必要原源/actual owner PRE通过；作者正文/完整邻接及末注已顺读，root非作者实际正文/完整邻接及末注POST通过，窄锁释放；未核实现/复现，非日级验收。

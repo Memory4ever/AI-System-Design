@@ -1,0 +1,34 @@
+Source https://arxiv.org/html/2601.10657v1
+[H]
+3.2 Momentum-Based Backtracking (\mathop{\mathtt{MBB}}\limits)
+To address mode collapse (Zhang et al., 2025b), where agents over-exploit known solutions at the expense of diversity, we draw inspiration from human problem-solving. Humans typically pivot when progress stagnates, and we require a similar mechanism for an intelligent evolutionary agent to escape local optima (Balachandran et al., 2025; Yang et al., 2025; Cai et al., 2025a; Liu et al., 2025b; Qin et al., 2025b). The standard approach, fixed-schedule resets (Romera-Paredes et al., 2024; Lange et al., 2025), is inefficient because it ignores the search state.
+We introduce a Momentum-Based Backtracking mechanism (Kingma, 2014) that triggers interventions based on real-time momentum to incentivize exploration and prevent mode collapse.
+To effectively detect when a search trajectory stagnates at a local minimum, we require a performance metric that is adaptive to the current scale of the optimization problem. Because the difficulty of achieving further improvements intrinsically increases as the agent approaches the evolutionary target, this metric must adjust for the current difficulty level. To quantify this scale-invariant rate of improvement, we design a new measure that we term Relative Progress.
+We define the target metric r to be minimized (i.e., r is a lower bound, such as r=0) and let s_{t} be the best-achieved score at generation t. We define the performance gap G_{t} as the distance from s_{t} to the target:
+G_{t}=s_{t}-r.
+The search objective is to drive G_{t}\to 0. To detect a stagnating trajectory, we track the momentum of its improvement. A simple absolute score formulation (\Delta t=s_{t-1}-s_{t}) is highly dependent on the problem’s scale, motivating the development of a scale-invariant metric: the Relative Progress (R_{t}). When a new best score s_{t}<s_{t-1} is found at generation t, the Relative Progress R_{t} is calculated as the fraction of the previous performance gap (G_{t-1}) that has been closed by the new improvement:
+R_{t}=\frac{G_{t-1}-G_{t}}{G_{t-1}}=\frac{(s_{t-1}-r)-(s_{t}-r)}{s_{t-1}-r}=\frac{s_{t-1}-s_{t}}{s_{t-1}-r}
+If no improvement is found (s_{t}\geq s_{t-1}), then R_{t}=0. This metric is non-negative and represents the fractional reduction in the performance gap, making it inherently adaptive to the current search proximity to r.
+We then maintain an Exponentially Weighted Moving Average (EWMA) of this relative progress, which we define as the Relative Improvement Momentum (m_{t}):
+m_{t}=\beta\cdot m_{t-1}+(1-\beta)\cdot R_{t}
+where \beta is the momentum decay factor, which smooths the progress metric over time.
+This momentum m_{t} serves as a direct, adaptive signal of a trajectory’s health. We trigger an intervention when the momentum drops below a predefined stagnation threshold, \epsilon_{rel}. When triggered, the agent reverts to an earlier state sampled from a power-law distribution that favors earlier iterations, explicitly unlearning the recent history and resetting the context window. This provides a hard escape from local minima that prompt engineering alone cannot resolve.
+[H]
+3.3 Self-Adaptive Collaborative Evolution (CE)
+While the previous sections address individual agent optimization, maximizing search throughput requires parallelization. Existing multi-island frameworks typically employ a static coordination strategy that periodically replaces the worst-performing agents with copies of the best-performing agents (Novikov et al., 2025; Lange et al., 2025; Shojaee et al., 2024). This approach fails to leverage the LLM’s context to make adaptive decisions for knowledge transfer.
+To address this, we propose Self-Adaptive Sampling for Collaborative Evolution, which unifies the actions of backtracking and crossover. This framework is designed to trigger automatically when an island stagnates based on momentum and dynamically selects the action that best fosters collaborative evolution between islands.
+Once an island i is triggered by \mathop{\mathtt{MBB}}\limits (due to m_{t,i}<\epsilon_{rel}), we must select an action a from the set \mathcal{A}=\{\text{Backtrack}\}\cup\{\text{Crossover}_{j}|j\neq i\}. The core principle guiding this selection is to prefer the action (backtracking or crossover) that offers the highest potential for global progress.
+To design an effective collaboration strategy, we require a global, uniform metric to compare the advancement across all islands. We define the Absolute Progress (A_{t}) for each island as the total fraction of the performance gap it has closed since the beginning of its search:
+A_{t}=\frac{s_{0}-s_{t}}{s_{0}-r}
+where s_{0} is the initial score of the island and s_{t} is its current best score. This metric, A_{t}\in[0,1], allows us to compare the relative advancement of all islands, regardless of their recent momentum.
+We introduce a unified sampling scheme where each action a\in\mathcal{A} is assigned a non-negative weight w_{a}, based on the A_{t,i} (i.e., absolute progress of island i at time t). The action is then chosen with a probability proportional to its weight, following three key principles:
+•
+Prioritize High-Reward Knowledge Transfer: When selecting a crossover partner, the sampling should favor islands j that offer a high potential progress gain (A_{t,j}>A_{t,i}).
+•
+Favor Backtracking for Dominant Agents: Backtracking should be preferred if the current island i is dominant (i.e., A_{t,i}\geq A_{t,j} for all j), as no other island provides a clear path for improvement.
+•
+Sensitivity to Global Stagnation: The decision must be sensitive to progress magnitude when island i and its best partner j_{\mathrm{best}} have similar absolute progress (A_{t,i}\approx A_{t,\mathrm{best}}): Similar and low performance (e.g., A_{t,i}\approx A_{t,\mathrm{best}}\approx 0.1) indicates shared stagnation, and backtracking should be favored. If both have high progress (e.g., A_{t,i}\approx A_{t,\mathrm{best}}\approx 0.9), crossover should be favored, as it suggests potential synergy.
+Based on the above principles, we assemble the final sampling probability of choosing any action a\in\mathcal{A}:
+P(a)=\frac{w_{a}}{w_{BT}+\sum_{j\neq i}w_{C_{j}}}
+The details of how the weights are computed, and pseudocode can be found in Appendix B.3. In practice, we set a freeze period at the beginning to build the momentum without backtracking and crossover.
+This self-adaptive, momentum-driven framework ensures that the multi-island system efficiently balances internal exploration and external exploitation, thereby maximizing the overall search progress.

@@ -1,0 +1,232 @@
+URL https://arxiv.org/html/2601.05755v1; sections S3 to S6 excluded; result tables omitted; fetched 2026-10-03
+
+
+
+ 3 The SIREN Environment 
+
+ 
+
+ Threat Model. We follow a standard black-box threat model where the agent operates within a trust boundary containing its system instructions and private memory while the external environment remains untrusted  Zhang et al. (2024a) ; Zhu et al. (2025) . In this setting, the adversary lacks access to model weights or internal states and influences the agent solely by manipulating information retrieved during interaction. Crucially, we extend the attack surface beyond the passive data stream to the active tool stream, where attackers function as compromised third-party tool providers. This capability allows the adversary to inject malicious constraints into tool definitions during the planning phase and fabricate deceptive feedback during the execution phase. By mimicking authoritative system commands, the attacker exploits the strong instruction-following nature of the agent to prioritize malicious directives over user intent under the guise of legitimate tool usage  Jiang et al. (2025) . 
+ 
+ 
+
+ Environment Reconstruction. To evaluate agent robustness against tool stream manipulation, we reconstruct the execution environment based on AgentDojo  Debenedetti et al. (2024) by introducing two architectural features that mirror real-world operational challenges. First, we implement semantic tool redundancy to reflect the density of open tool libraries. We expand the original toolset to a comprehensive library of 496 tools, populating functional domains with utilities that share overlapping embedding representations but possess distinct parameter specifications. This configuration simulates the difficulty of selecting safe tools from unverified sources and necessitates that the agent distinguish between legitimate utilities and malicious mimics based on precise schema verification. Second, we incorporate stochastic runtime feedback to simulate the instability inherent in external API interactions. By introducing randomized failures and fabricated status messages, we compel the agent to engage in dynamic exception handling and re-planning, thereby exposing the error recovery process to hijacking attempts where attackers can exploit the adaptive behavior of the agent. 
+ 
+ 
+
+ Threat Injection Vectors. As detailed in Table  1 , we systematically implement five distinct tool stream attack vectors totaling 959 cases to encompass the full operational lifecycle of the agent. 
+ 
+ 
+
+For the planning phase, we design three definition-level injections that compromise tool selection and parameter formulation. Explicit Directive (174 cases) exploits the compliance bias of the model by embedding mandatory constraints within docstrings. To manipulate causal reasoning chains, Dependency Trap (184 cases) introduces fabricated prerequisites that force the execution of malicious predecessor tools. Additionally, Feature Inducement (179 cases) triggers semantic confusion between co-domain tools through the use of semantically attractive functional descriptions. 
+ 
+ 
+
+For the runtime phase, we introduce two execution-level vectors that hijack the agent through feedback loops. Runtime Hijacking (272 cases) directly overrides internal state tracking by embedding adversarial directives into return values. Simultaneously, Error Hijacking (150 cases) weaponizes the exception handling mechanism by simulating blocking errors accompanied by malicious standard operating procedures. Finally, we incorporate 949 existing content injection cases from AgentDojo as a data stream baseline to facilitate a comprehensive comparison of defense efficacy across different attack surfaces. 
+ 
+
+ 
+ Figure 2: The architecture of VIGIL , which establishes a verify-before-commit paradigm to secure agentic reasoning against tool stream attacks. The framework orchestrates the Intent Anchor and Perception Sanitizer to define immutable safety boundaries while the Speculative Reasoner and Grounding Verifier collaboratively filter malicious trajectories through dynamic hypothesis testing and logic entailment checks. 
+ 
+ 
+
+
+
+ 4 The VIGIL Framework 
+
+
+
+
+ 4.1 Overview 
+
+ 
+
+We formalize the problem of secure agentic reasoning as selecting a validated action sequence in an untrusted environment. A standard agent’s policy, \pi(a_{t}|q,D_{\delta},F_{\delta}) , directly maps the user query q and potentially malicious injected inputs to an action a_{t} , rendering it inherently vulnerable. 
+ 
+ 
+
+To mitigate this, VIGIL reframes the task from direct action selection to a constrained selection over a hypothesis space of potential trajectories \mathbb{H} . The final action is derived from a trajectory \tau^{*} selected from the set of all valid trajectories that satisfy a grounding verification function V : 
+ 
+
+ 
+
+ 
+ \tau^{*}=\text{select}(\{\tau_{i}\in\mathbb{H}\mid V(\tau_{i},\mathcal{C},q)=\text{true}\}) 
+ 
+ 
+
+where \mathcal{C} represents immutable, intent-grounded constraints. As illustrated in Figure  2 , this secure lifecycle is orchestrated by five components that collaboratively solve this objective. The ➊ Intent Anchor synthesizes the constraints \mathcal{C} from q . The ➋ Perception Sanitizer provides a sanitized input space for generating \mathbb{H} . The ➌ Speculative Reasoner generates the hypothesis space \mathbb{H} . The ➍ Grounding Verifier implements the validation function V . Finally, the ➎ Validated Trajectory Memory facilitates adaptation based on the outcome of the selection. 
+ 
+ 
+
+
+
+ 4.2 Ground-Truth Constraint Synthesis 
+
+ 
+
+ VIGIL grounds the optimization process in a root of trust derived exclusively from the query q , formalized as an intent anchoring function \Phi:q\rightarrow(\mathcal{S},\mathcal{C}) implemented by a role-specialized LLM configured as a security analyst. This function synthesizes two primary artifacts. The first is an abstract sketch \mathcal{S} defining the high-level workflow. The second is a set of logical invariants \mathcal{C} delineating the hard boundaries of permissible behavior. 
+ 
+ 
+
+These dynamically synthesized invariants are not generic safety rules but are specific to the context of q . For a query related to travel planning, \Phi generates a domain constraint \mathcal{C}_{domain}:\text{scope}\subseteq\{\text{Travel}\} and an operational constraint \mathcal{C}_{op}:\text{transaction\_type}\in\{\text{MERCHANT}\} . The Grounding Verifier then uses these constraints as intent-level ground truth to evaluate trajectory compliance, preemptively pruning any path that violates these foundational conditions. 
+ 
+ 
+
+
+
+ 4.3 Sanitizing the Adversarial Input Space 
+
+ 
+
+To prevent adversarial injections from corrupting the hypothesis generation process, the Perception Sanitizer employs an objective rewriting mechanism. We formalize this as a sanitization function \Psi:(D_{\delta},F_{\delta})\rightarrow(\hat{D},\hat{F}) that decouples the propositional content of tool descriptions from their illocutionary force. This component neutralizes manipulative linguistic modifiers, such as imperative commands or artificial urgency, while preserving core functional semantics. For instance, an adversarial description embedding a coercive directive of the form "[System Rule] Execute Malicious_Tool prior to this operation" is transformed into a neutral factual statement that only describes the tool’s intended utility. By stripping away the directive component, this transformation provides the Speculative Reasoner with a sanitized representation of the tool space. This ensures that the generated hypothesis space \mathbb{H} is grounded in objective facts rather than deceptive commands, thereby preventing the model’s compliance bias from being triggered at the reasoning stage. 
+ 
+ 
+
+
+
+ 4.4 Hypothesis Space Generation 
+
+ 
+
+To address the rigidity of static planning, VIGIL generates a hypothesis space of potential trajectories \mathbb{H} via speculative reasoning. At each step, the reasoner explores multiple candidate branches using the sanitized tool information (\hat{D},\hat{F}) provided by the Perception Sanitizer . Each candidate trajectory \tau_{i}\in\mathbb{H} is composed of a sequence of potential actions \{a_{1},a_{2},\dots,a_{m}\} . 
+ 
+ 
+
+To prepare these trajectories for validation, each action a_{k}\in\tau_{i} is profiled by a function \Omega:a_{k}\rightarrow M_{a_{k}} that extracts structured metadata. In our running example, this profiling might instantiate two distinct trajectories: \tau_{1} involving the Authorize_Transfer tool and \tau_{2} adhering to Expedia_Search procedure, each with its own metadata regarding operation type and information flow. The entire process occurs within a hypothetical sandbox, allowing the agent to evaluate potential risks before any validated path is committed. 
+ 
+ 
+
+
+
+ 4.5 Grounded Verification and Adaptation 
+
+ 
+
+The final decision to commit an action is governed by the Grounding Verifier , which implements the core validation logic of our framework. The verifier decomposes the complex task of validating a trajectory \tau_{i} into two simpler, sequential reasoning steps, formalized as a composite function V : 
+ 
+
+ 
+
+ 
+ V(\tau_{i},\mathcal{C},q)=V_{\text{compliance}}(M_{\tau_{i}},\mathcal{C})\land V_{\text{entailment}}(\tau_{i},q) 
+ 
+ 
+
+The validation process, driven by a role-specialized LLM, initiates with an invariant compliance check ( V_{\text{compliance}} ). This stage narrows the decision to a focused consistency check between the action’s metadata M_{\tau_{i}} and the hard constraints \mathcal{C} , framing it as a narrow-domain classification task. For the travel planning task, a trajectory \tau_{1} with a P2P transaction type would be rejected for violating the pre-established \mathcal{C}_{op} constraint. 
+ 
+ 
+
+A compliant trajectory, such as \tau_{2} , subsequently proceeds to a semantic entailment assessment ( V_{\text{entailment}} ). This stage performs a logical reasoning task to determine if the trajectory is a necessary step to fulfill the user intent q . By decomposing verification into these distinct structural and semantic checks, our framework significantly reduces the cognitive load on the LLM and constrains its decision space, thereby mitigating the risk of hijacking compared to a single, monolithic execution prompt. A trajectory is approved only if it successfully passes both validation stages. 
+ 
+ 
+
+The Validated Trajectory Memory then facilitates adaptation based on this outcome. A verification failure ( V(\cdot)=\texttt{false} ) triggers reflective backtracking, while a successfully validated trajectory is cached to accelerate future inference. 
+ 
+ 
+ 
+
+
+
+ 5 Evaluation 
+
+
+
+ 
+ [result table omitted; consult original if quantitative claim needed] 
+ 
+ Table 2: Performance of VIGIL and baseline defenses on the SIREN benchmark, reporting UA \uparrow , ASR \downarrow , and BU \uparrow . Tool Stream Overall is the macro-average of five tool stream vectors. Best and second-best results are bolded and underlined respectively. Background colors distinguish between Data Stream and Tool Stream metrics. 
+ 
+
+ 
+ Figure 3: Comparative analysis of Utility Under Attack (UA) versus Attack Success Rate (ASR) for Qwen3-max and Gemini-2.5-pro. Unlike baseline defenses which exhibit a clear trade-off, VIGIL consistently occupies the optimal bottom-right quadrant, indicating superior performance in both security and utility. 
+ 
+
+
+
+ 5.1 Experimental Setup 
+
+ 
+
+ Benchmark and Agents. 
+We conduct all experiments on our SIREN benchmark, utilizing its full set of 959 tool stream injection cases and 949 data stream cases adapted from AgentDojo  Debenedetti et al. (2024) to serve as a comprehensive baseline. As the agent backbone, we employ two state-of-the-art reasoning models Qwen3-max 1 1 
+ 1 
+ 
+ 
+ 
+ https://www.modelscope.cn/organization/Qwen and Gemini-2.5-pro 2 2 
+ 2 
+ 
+ 
+ 
+ https://generativelanguage.googleapis.com , setting temperature=0 for all models to ensure reproducibility. 
+ 
+ 
+
+ Baselines. 
+We evaluate VIGIL against seven representative defense mechanisms categorized by their architectural paradigm. First, we select two input-centric methods: (1) Spotlighting   Hines et al. (2024) , which employs delimiter-based prompt augmentation to distinguish user instructions from untrusted data, and (2) DeBERTa-Classifier , a model-based detector fine-tuned to identify malicious injection patterns in the input stream. Second, we include two static isolation frameworks: (3) Tool-Filter   Debenedetti et al. (2024) , which restricts the agent to a predefined whitelist of tools based on the initial query, and (4) CaMeL   Debenedetti et al. (2025) , which enforces a strict plan-then-execute policy to prevent deviations. Third, we compare against recent dynamic defense systems: (5) MELON   Zhu et al. (2025) , which utilizes masked re-execution to detect anomalies in tool calls, and (6) DRIFT   Li et al. (2025a) , which dynamically updates security policies based on interaction history. Finally, we include the undefended (7) Vanilla ReAct   Yao et al. (2022) agent as a lower bound for security performance. 
+ 
+ 
+
+ Metrics. 
+Following standard evaluation protocols  Zhu et al. (2025) ; Debenedetti et al. (2024) , we report three key metrics: (1) Benign Utility (BU) measures the task completion rate in non-adversarial environments. (2) Attack Success Rate (ASR) quantifies the proportion of cases where the adversary successfully executes the malicious objective. (3) Utility Under Attack (UA) evaluates the resilience of the agent. We adopt a strict criterion for UA where a trial is considered successful only if the agent completes the user task while simultaneously neutralizing the malicious instruction. 
+ 
+ 
+
+
+
+ 5.2 Main Results 
+
+ 
+
+The experimental results presented in Figure  3 and detailed in Table  2 unequivocally demonstrate that VIGIL breaks the rigidity-utility trade-off constraining existing defenses. While prior methods are confined to a spectrum of either high vulnerability or low utility, our framework consistently occupies the optimal bottom-right quadrant, proving that robust security and flexible reasoning can coexist. We analyze this comparative performance across three key metrics below. 
+ 
+ 
+
+ Attack Success Rate (ASR). 
+ VIGIL exhibits superior defense capabilities across all evaluated models. A significant advantage is observed over static isolation frameworks like CaMeL , where VIGIL reduces the average tool stream ASR from over 25% to approximately 8% on Qwen3-max and 12% on Gemini-2.5-pro. The framework’s ability to neutralize definition-level attacks such as Explicit Directive is particularly noteworthy, a scenario where CaMeL ’s reliance on static planning leads to an ASR of nearly 45% due to context contamination. VIGIL also demonstrates enhanced robustness compared to recent dynamic defenses, surpassing DRIFT by a margin of 22% to 24% across both backbones. On the data stream baseline, our approach maintains minimal ASRs comparable to the strict whitelisting of Tool-Filter , confirming the verify-before-commit mechanism effectively neutralizes threats across diverse attack surfaces without the fragility inherent in static isolation. 
+ 
+
+ 
+ Figure 4: Sensitivity and scalability analysis of VIGIL . (a) & (b): Verification overhead converges to a constant level regardless of toolset scale, ensuring long-term efficiency via trajectory memory. (c): Robustness against increasing attack density, where the framework maintains a low ASR as utility gradually declines without collapsing. 
+ 
+ 
+
+ Utility Under Attack (UA). 
+A critical advantage of VIGIL is its ability to maintain high utility in adversarial environments where static defenses exhibit a near-total collapse. As detailed in Table  2 , frameworks like Tool-Filter and CaMeL see their tool stream UA drop below 12% because their rigid architecture prevents recovery from deceptive runtime feedback in scenarios such as Error Hijacking . In stark contrast, VIGIL ’s speculative reasoning and backtracking mechanisms more than double the task completion rate of these static baselines, achieving a UA of 27.53% on Qwen3-max. Moreover, our framework consistently outperforms the most resilient dynamic baseline, MELON , by a significant margin in overall tool stream utility. The preservation of this reasoning flexibility empirically validates our architecture enables the agent to navigate and complete tasks even when initial execution paths are obstructed by malicious feedback. 
+ 
+ 
+
+ Benign Utility (BU). 
+ VIGIL maintains high fidelity to the backbone model’s native capabilities with minimal performance overhead. On Qwen3-max, our framework achieves a BU of 74.49%, maintaining near-parity with the 79.59% score of the undefended Vanilla ReAct agent. This efficiency stands in sharp contrast to heavy-weight defenses like CaMeL and DeBERTa , whose restrictive policies cause their BU to plummet to below 50%. While a moderate performance trade-off is observed on the Gemini-2.5-pro agent due to the conservative nature of the verifier, VIGIL continues to outperform strict isolation methods by a wide margin. This balance ensures substantial security gains do not compromise the practical usability of the agent, regardless of the underlying model. 
+ 
+
+
+ 
+ [result table omitted; consult original if quantitative claim needed] 
+ 
+ Table 3: The impact of different designs in VIGIL . 
+ 
+ 
+
+
+
+ 5.3 Ablation Study and Sensitivity Analysis 
+
+ 
+
+ Ablation Study. 
+We conduct a systematic ablation study on the SIREN benchmark to isolate the contribution of each core component within VIGIL . We evaluate four variants by disabling one module at a time: Unanchored (w/o anchor), Unfiltered (w/o sanitizer), Linear (w/o reasoner), and Unverified (w/o verifier). As presented in Table  3 , removing any single component leads to a measurable degradation in either security or utility. Specifically, the Unverified variant suffers a catastrophic security failure with tool stream ASR spiking to 45.05%, while the Linear variant experiences a severe collapse in utility under attack with UA dropping from 27.53% to 9.07%, confirming all modules are synergistically necessary to maintain the optimal balance between robustness and flexibility. 
+ 
+ 
+
+ Sensitivity Analysis. 
+We evaluate the scalability and robustness of VIGIL by analyzing its sensitivity to two critical environmental variables: the scale of the toolset and the density of attacks. 
+ 
+ 
+
+First, to assess scalability, we analyze whether the verification overhead scales linearly with system complexity. We execute 100 sequential tasks in two distinct environments: a standard scale setting with 496 tools and a massive scale setting expanded to 3,074 tools by augmenting co-domain utilities. We track the verification rounds and time cost for each task. As shown in Figure  4 (a) and (b), although the initial verification cost is higher in the massive setting due to the expanded search space, the average overhead rapidly converges to a constant level. This convergence confirms that the Validated Trajectory Memory achieves asymptotic efficiency by caching secure execution paths. 
+ 
+ 
+
+Second, we investigate system resilience against increasing adversarial pressure by progressively increasing the density of malicious tools from a 1:1 to a 1:8 ratio relative to benign tools in each case. As depicted in Figure  4 (c), the ASR remains consistently low even in highly saturated attack environments, demonstrating that the intent-grounded verifier successfully filters out malicious candidates regardless of their prevalence. Although UA exhibits a gradual decline due to the increased difficulty of locating the correct tool within the hypothesis tree, the system avoids the utility collapse typical of baseline defenses and maintains functional capability under extreme hostility.

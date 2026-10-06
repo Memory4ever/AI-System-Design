@@ -1,0 +1,252 @@
+# 03/27 官方Qwen 40/40目录metadata
+
+实际公共GET，4,781,799B；40 date完整读，未读40全文。相邻MaxPreview=Mar19T04+08 /Omni=Mar30T04+08均窗外，未见本窗。没有total/pagination正面完备保证。
+
+```json
+{
+  "url": "https://qwen.ai/api/v2/article/retrieval?type=qwen_ai&language=en-US",
+  "bytes": 4781799,
+  "rows": [
+    {
+      "id": "479a326d-c932-49ff-a8bb-fe31849529d5",
+      "title": "Qwen DeepResearch: When Inspiration Becomes Its Own Reason",
+      "path": "qwen-deepresearch",
+      "date": "2025-11-13T04:59:26+08:00"
+    },
+    {
+      "id": "c6401188-9f83-4696-a2ed-036a837a7bda",
+      "title": "SAPO: A Stable and Performant Reinforcement Learning Method for Training Large Language Models",
+      "path": "sapo",
+      "date": "2025-12-05T04:00:00+08:00"
+    },
+    {
+      "id": "bbd42903-2a6c-434d-acfe-b1266a449b0a",
+      "title": "Qwen-Image-Edit-2511: Improve Consistency",
+      "path": "qwen-image-edit-2511",
+      "date": "2025-12-23T13:08:30+08:00"
+    },
+    {
+      "id": "14d6fc47-b33b-43df-bc60-e5c9e1edaf6a",
+      "title": "Qwen-Image-Layered: Layered Decomposition for Inherent Editablity",
+      "path": "qwen-image-layered",
+      "date": "2025-12-19T13:08:30+08:00"
+    },
+    {
+      "id": "1be36b4b-8292-4968-9140-fbe6f78c73dd",
+      "title": "Qwen3.5-Max-Preview Now Available on Arena",
+      "path": "qwen3.5-max-preview",
+      "date": "2026-03-19T04:00:00+08:00"
+    },
+    {
+      "id": "abde93fd-1644-4377-918c-f0f8a5f58ee4",
+      "title": "Qwen3-TTS Steps Up: Voice Cloning and Voice Design!",
+      "path": "qwen3-tts-vc-voicedesign",
+      "date": "2025-12-23T00:00:45+08:00"
+    },
+    {
+      "id": "24bd2fe0-135d-4325-a8e0-b1e5ef9f5536",
+      "title": "Qwen3-TTS Update! 49 Timbres + 10 Languages + 9 Dialects",
+      "path": "qwen3-tts-1128",
+      "date": "2025-12-05T00:00:04+08:00"
+    },
+    {
+      "id": "339c9121-957a-40df-86d0-505e9c1ad74f",
+      "title": "Qwen3-Omni-Flash-2025-12-01：Hear You. See You. Follow Smarter!",
+      "path": "qwen3-omni-flash-20251201",
+      "date": "2025-12-09T05:00:00+08:00"
+    },
+    {
+      "id": "93935e8a-9e17-4102-bb2a-d15b51269739",
+      "title": "Qwen3-VL-Embedding and Qwen3-VL-Reranker: For the Next Generation of Multimodal Retrieval",
+      "path": "qwen3-vl-embedding",
+      "date": "2026-01-08T04:00:00+08:00"
+    },
+    {
+      "id": "ad495db6-9b5a-4113-902b-f57f0a53481e",
+      "title": "Qwen3-TTS Family is Now Open Sourced: Voice Design, Clone, and Generation!",
+      "path": "qwen3tts-0115",
+      "date": "2026-01-22T00:00:04+08:00"
+    },
+    {
+      "id": "0914d8fa-116e-459f-9c7d-275ce3e77249",
+      "title": "Qwen-Image-2512: Finer Details, Greater Realism",
+      "path": "qwen-image-2512",
+      "date": "2025-12-31T13:08:30+08:00"
+    },
+    {
+      "id": "4fd61c95-cd36-4a35-9a57-818502df5d04",
+      "title": "Qwen3-ASR & Qwen3-ForcedAligner is Now Open Sourced: Robust, Streaming and Multilingual!",
+      "path": "qwen3asr",
+      "date": "2026-01-29T00:00:04+08:00"
+    },
+    {
+      "id": "1ff49275-d588-4f5a-8458-ee3886552fc3",
+      "title": "Pushing Qwen3-Max-Thinking Beyond its Limits",
+      "path": "qwen3-max-thinking",
+      "date": "2026-01-26T04:00:00+08:00"
+    },
+    {
+      "id": "8bb25293-9edd-482f-8d25-57d20ba68b61",
+      "title": "Qwen3-Coder-Next: Pushing Small Hybrid Models on Agentic Coding",
+      "path": "qwen3-coder-next",
+      "date": "2026-02-03T04:00:00+08:00"
+    },
+    {
+      "id": "73a298ad-b280-49d1-8090-7e52e0e2a068",
+      "title": "Qwen3.5-Omni: Scaling Up, Toward Native Omni-Modal AGI",
+      "path": "qwen3.5-omni",
+      "date": "2026-03-30T04:00:00+08:00"
+    },
+    {
+      "id": "02fa4060-3816-4a0c-b4eb-9690fbc5add6",
+      "title": "Qwen-Image-2.0: Professional infographics, exquisite photorealism",
+      "path": "qwen-image-2.0",
+      "date": "2026-02-10T13:08:30+08:00"
+    },
+    {
+      "id": "895af3b2-4bfb-4187-98b6-e4b11eb4c209",
+      "title": "Qwen3.6-Plus: Towards Real World Agents",
+      "path": "qwen3.6",
+      "date": "2026-04-02T04:00:00+08:00"
+    },
+    {
+      "id": "6f8fb603-12d5-4ade-88c8-08b099131af9",
+      "title": "Qwen-Drive-1.0: An Initial Step towards a Vision-Language Foundation Model for Autonomous Driving",
+      "path": "qwen-drive-1.0",
+      "date": "2026-09-03T08:00:00+08:00"
+    },
+    {
+      "id": "d5234979-892a-4132-921f-cf7df049d4da",
+      "title": "Qwen3.6-Max-Preview: Smarter, Sharper, Still Evolving",
+      "path": "qwen3.6-max-preview",
+      "date": "2026-04-18T10:00:00+08:00"
+    },
+    {
+      "id": "3fff0020-4a7e-423f-ab76-21fd828cdc0a",
+      "title": "Qwen3.6-35B-A3B: Agentic Coding Power, Now Open to All",
+      "path": "qwen3.6-35b-a3b",
+      "date": "2026-04-15T10:00:00+08:00"
+    },
+    {
+      "id": "8e98ee65-9e60-4c9b-a688-fc150e3dab2a",
+      "title": "Qwen3.6-27B: Flagship-Level Coding in a 27B Dense Model",
+      "path": "qwen3.6-27b",
+      "date": "2026-04-22T10:00:00+08:00"
+    },
+    {
+      "id": "627eb92d-7101-4c12-b701-aedce87c2a09",
+      "title": "FlashQLA: CP-/Bwd-Friendly Fused Linear Attention Kernels for GDN",
+      "path": "flashqla",
+      "date": "2026-04-28T10:00:00+08:00"
+    },
+    {
+      "id": "b4fc82c1-f77f-465c-baa8-9dc9ed468858",
+      "title": "Qwen-Scope: Decoding Intelligence, Unleashing Potential",
+      "path": "qwen-scope",
+      "date": "2026-04-30T12:00:00+08:00"
+    },
+    {
+      "id": "ea69c5d9-4d86-4319-bab0-1706faeb90f8",
+      "title": "Qwen-VLA: From Understanding the World to Acting in It",
+      "path": "qwenvla",
+      "date": "2026-05-29T17:00:00+08:00"
+    },
+    {
+      "id": "7e56ad49-0333-451b-8e47-d7bef3d53f05",
+      "title": "Qwen3.7-Plus: Multimodal Agent Intelligence",
+      "path": "qwen3.7-plus",
+      "date": "2026-06-01T10:00:00+08:00"
+    },
+    {
+      "id": "1c0937a8-6609-48a5-b9fe-20d5088efea1",
+      "title": "Qwen3.5-LiveTranslate: From Sound to Sight, From Word to Right",
+      "path": "qwen3.5-livetranslate",
+      "date": "2026-05-19T17:40:00+08:00"
+    },
+    {
+      "id": "604ef226-2244-4f2a-8b19-aaa24c66560f",
+      "title": "Qwen-RobotNav: A Scalable Navigation Model Designed for an Agentic Navigation System",
+      "path": "qwen-robotnav",
+      "date": "2026-06-16T08:00:00+08:00"
+    },
+    {
+      "id": "0d9850f8-035a-4ecf-8279-eaee601ecd21",
+      "title": "Qwen3.7: The Agent Frontier",
+      "path": "qwen3.7",
+      "date": "2026-05-20T10:00:00+08:00"
+    },
+    {
+      "id": "03d96212-fb99-4bd7-9a38-cce807a3233b",
+      "title": "Qwen-RobotWorld: Boundless Worlds for Embodied Agents",
+      "path": "qwen-robotworld",
+      "date": "2026-06-16T08:00:00+08:00"
+    },
+    {
+      "id": "4c1890aa-5cbb-4b91-a229-3d4cc6aa476a",
+      "title": "Qwen-RobotManip: Alignment Unlocks Scale for Robotic Manipulation Foundation Models",
+      "path": "qwen-robotmanip",
+      "date": "2026-06-16T08:00:00+08:00"
+    },
+    {
+      "id": "5a7f82b6-fcdf-4358-a92f-d6975ccb7cad",
+      "title": "Qwen-Robot Suite: A Foundation Model Suite for Physical World Intelligence",
+      "path": "qwen-robotsuite",
+      "date": "2026-06-16T10:00:00+08:00"
+    },
+    {
+      "id": "5fec281a-5fc3-4cc9-a3fd-8c9e22e2b9a3",
+      "title": "Qwen-AgentWorld: Language World Models for General Agents",
+      "path": "qwen-agentworld",
+      "date": "2026-06-23T11:30:30+08:00"
+    },
+    {
+      "id": "56cf5a94-052c-4e8f-8d9c-e05ff75a1133",
+      "title": "Qwen-Image-3.0: Rich Content, Authentic Details, Deep Knowledge",
+      "path": "qwen-image-3.0",
+      "date": "2026-07-21T14:00:00+08:00"
+    },
+    {
+      "id": "1d0eb6cc-a2bb-451a-9b10-eec572c358de",
+      "title": "E-Commerce Bench: Long-Horizon Operations, Multi-Dimensional Evaluation",
+      "path": "e-commerce-bench",
+      "date": "2026-09-03T10:00:00+08:00"
+    },
+    {
+      "id": "8865c9dc-9833-4aa3-8c74-81c244bec7b0",
+      "title": "Qwen3.8-Flash-Next: A New Architecture, Towards Ultimate Cost-Efficiency",
+      "path": "qwen3.8-flash-next",
+      "date": "2026-08-26T20:30:00+08:00"
+    },
+    {
+      "id": "00070b96-d1cd-402c-b837-49f5563eb100",
+      "title": "Qwen3.5: Towards Native Multimodal Agents",
+      "path": "qwen3.5",
+      "date": "2026-02-16T04:00:00+08:00"
+    },
+    {
+      "id": "65dfab20-97fb-4932-97cd-4f7da4ab51f5",
+      "title": "Qwen3.8-Max: A New Bar for Coding and Cowork",
+      "path": "qwen3.8",
+      "date": "2026-08-03T10:00:00+08:00"
+    },
+    {
+      "id": "fe5367df-023b-46ba-970b-9f9ebdbf9db4",
+      "title": "Qwen3.8-Omni-Flash: Omni Senses. Agentic Delivery.",
+      "path": "qwen3.8-omni-flash",
+      "date": "2026-09-18T15:00:00+08:00"
+    },
+    {
+      "id": "2b34889e-695d-4b64-a01a-f61546732dda",
+      "title": "Qwen3.8-LiveTranslate: Names the speaker. Carries the meaning.",
+      "path": "qwen3.8-livetranslate",
+      "date": "2026-09-18T17:30:00+08:00"
+    },
+    {
+      "id": "28af525f-a6c5-4f76-8d0f-da7f06566392",
+      "title": "Qwen-Image-2.1: Compact, Efficient, and Unified Image Creation",
+      "path": "qwen-image-2.1",
+      "date": "2026-09-20T20:00:00+08:00"
+    }
+  ]
+}
+```

@@ -1,0 +1,372 @@
+PRIMARY https://arxiv.org/html/2601.21947v1
+Selected necessary source passages only; not a fulltext or all-appendix review.
+
+SELECTION b3_21947
+
+3.2 Structured Tokenization Guided by Collaborative Semantics
+The core of ToolWeaver is its structured tokenization process (see Figure 1(c)), which transforms each tool’s unstructured documentation into a compositional representation. This process is designed to embed both semantic and collaborative relationships directly into the code structure. It involves a multi-stage pipeline of initial semantic encoding, collaborative-aware residual quantization, and conflict mitigation.
+Initial Semantic Representation.
+Given the textual documentation for each tool d∈𝒟d\in\mathcal{D} (including its name and description), we first leverage a powerful pretrained text encoder to generate a dense semantic embedding. This initial representation, denoted as ed∈ℝDe_{d}\in\mathbb{R}^{D}, captures the core functionality of the tool.
+ed=Text-Encoder​(Docd),e_{d}=\text{Text-Encoder}(\text{Doc}_{d}),
+(1)
+these embeddings {ed}d∈𝒟\{e_{d}\}_{d\in\mathcal{D}} serve as the foundational input for our structured tokenization framework.
+Collaborative-Aware Residual Quantization.
+To create a compact and hierarchical code structure, we employ an RQ-VAE (Lee et al., 2022), a multi-level vector quantization approach. This method operates without requiring human-annotated labels.
+Unlike traditional single-layer vector quantization or simple clustering algorithms that offer a flat representation, RQ-VAE sequentially quantizes residual errors, allowing it to achieve a significantly larger expression space with a more compact and manageable vocabulary size.
+As defined in the preliminaries, we use LL codebooks, {𝒞1,…,𝒞L}\{\mathcal{C}_{1},\dots,\mathcal{C}_{L}\}, where each codebook 𝒞l\mathcal{C}_{l} contains KK learnable centroid vectors {vl,k}k=1K\{v_{l,k}\}_{k=1}^{K}, with vl,k∈ℝD′v_{l,k}\in\mathbb{R}^{D^{\prime}}. For efficiency, we first reduce the dimensionality of the initial embeddings ede_{d} from DD to D′D^{\prime} using a linear projection, yielding zdz_{d}.
+The quantization process is recursive. For each tool dd, the initial residual is set to its projected embedding, rd,1=zdr_{d,1}=z_{d}. At each level l∈{1,…,L}l\in\{1,\dots,L\}, we find the closest centroid in codebook 𝒞l\mathcal{C}_{l} for the current residual rd,lr_{d,l} and subtract it to compute the residual for the next level:
+ιd,l=arg⁡mink∈{1,…,K}​‖rd,l−vl,k‖22,\displaystyle\iota_{d,l}=\underset{k\in\{1,\dots,K\}}{\arg\min}\|r_{d,l}-v_{l,k}\|_{2}^{2},
+(2)
+rd,l+1=rd,l−vl,ιd,l,\displaystyle r_{d,l+1}=r_{d,l}-v_{l,\iota_{d,l}},
+(3)
+where ιd,l\iota_{d,l} is the discrete code index assigned to tool dd at level ll. The final quantized representation is the sum of the selected codebook vectors: z^d=∑l=1Lvl,ιd,l\hat{z}_{d}=\sum_{l=1}^{L}v_{l,\iota_{d,l}}.
+The standard RQ-VAE is trained to minimize a combination of a reconstruction loss and a quantization loss:
+ℒrecon\displaystyle\mathcal{L}_{\text{recon}}
+=‖zd−z^d‖22,\displaystyle=\|z_{d}-\hat{z}_{d}\|_{2}^{2},
+(4)
+ℒquant\displaystyle\mathcal{L}_{\text{quant}}
+=∑l=1L(‖sg​[rd,l]−vl,ιd,l‖22+β​‖rd,l−sg​[vl,ιd,l]‖22).\displaystyle=\sum_{l=1}^{L}\big(\|\text{sg}[r_{d,l}]-v_{l,\iota_{d,l}}\|_{2}^{2}+\beta\|r_{d,l}-\text{sg}[v_{l,\iota_{d,l}}]\|_{2}^{2}\big).
+where sg​[⋅]\text{sg}[\cdot] is the stop-gradient operator and β\beta is a commitment weight, typically set to 0.25.
+To ensure the resulting codes capture not only a tool’s intrinsic function but also its extrinsic collaborative patterns, we guide the quantization process using a pre-computed tool-tool similarity matrix AA.
+This matrix is derived from a tool co-occurrence matrix CC built from the usage trajectories, where each element Cu​vC_{uv} counts the total number of times tools uu and vv appear together. The similarity score Au​vA_{uv} is then calculated using cosine similarity:
+Au​v=Cu​vCu​u⋅Cv​v,A_{uv}=\frac{C_{uv}}{\sqrt{C_{uu}\cdot C_{vv}}},
+(5)
+where Cu​uC_{uu} and Cv​vC_{vv} represent the total occurrence counts for tools uu and vv, respectively.
+We introduce a graph Laplacian regularization term that encourages similar tools to have nearby quantized representations:
+ℒcollab=∑u,v∈𝒟Au​v​‖z^u−z^v‖22.\mathcal{L}_{\text{collab}}=\sum_{u,v\in\mathcal{D}}A_{uv}\|\hat{z}_{u}-\hat{z}_{v}\|_{2}^{2}.
+(6)
+This term penalizes large distances between the quantized representations of tools that frequently co-occur or are functionally related. This integration with RQ is crucial, as its multi-layer, residual nature facilitates a progressive refinement of collaborative semantics: the initial layers capture broad functional similarities, while subsequent layers model finer distinctions on the residual information. Combining these objectives, the final training objective for our structured tokenization becomes:
+ℒtokenize=𝔼d∼𝒟​[ℒrecon+ℒquant]+λ​ℒcollab,\mathcal{L}_{\text{tokenize}}=\mathbb{E}_{d\sim\mathcal{D}}[\mathcal{L}_{\text{recon}}+\mathcal{L}_{\text{quant}}]+\lambda\mathcal{L}_{\text{collab}},
+(7)
+where λ\lambda is a hyperparameter balancing the reconstruction fidelity with the collaborative structure alignment.
+Conflict Mitigation via Uniform Mapping.
+A practical challenge in any tree-based or multi-level quantization is index collision, where multiple distinct tools map to the exact same sequence of code indices [ι1,…,ιL][\iota_{1},\dots,\iota_{L}]. A naive solution of adding an extra, semantically meaningless layer of IDs is undesirable, as it can disrupt the learned semantic structure. To resolve this while preserving semantic integrity, we enforce a uniform mapping constraint on the final codebook 𝒞L\mathcal{C}_{L}.
+Our objective is to ensure that tool representations are distributed as uniformly as possible across the centroids of the final codebook. We formulate this as a constrained optimization problem, adapting the standard quantization objective for the final level LL. For a batch of final-level residuals ℬL={rd,L}d∈batch\mathcal{B}_{L}=\{r_{d,L}\}_{d\in\text{batch}}, we aim to solve:
+minΠ∑d∈ℬL∑k=1Kπd​k∥rd,L−vL,k∥22,\min_{\Pi}\sum_{d\in\mathcal{B}_{L}}\sum_{k=1}^{K}\pi_{dk}\|r_{d,L}-v_{L,k}\|_{2}^{2},
+(8)
+subject to:
+∀d,∑k=1Kπd​k=1,∀k,∑d∈ℬLπd​k=|ℬL|K,\forall d,\quad\sum_{k=1}^{K}\pi_{dk}=1,\\
+\forall k,\quad\sum_{d\in\mathcal{B}_{L}}\pi_{dk}=\frac{|\mathcal{B}_{L}|}{K},
+(9)
+where πd​k=p⁡(ιd,L=k|rd,L)\pi_{dk}=p(\iota_{d,L}=k|r_{d,L}) represents the soft assignment probability of tool dd’s residual to centroid kk. The first constraint ensures that each tool’s residual is fully assigned across the codebook. The second, more critical constraint, enforces that each centroid in the final codebook is assigned an equal share of tools from the batch, thereby mitigating collisions.
+Following Zheng et al. (2024), we frame this as an optimal transport problem where ‖rd,L−vL,k‖22\|r_{d,L}-v_{L,k}\|_{2}^{2} is the transport cost. This formulation allows us to find an optimal assignment matrix Π\Pi that satisfies the uniform distribution constraint. In our implementation, we solve this problem efficiently using the Sinkhorn-Knopp algorithm (Cuturi, 2013). This strategy promotes a unique identifier for every tool without compromising the learned semantic space.
+3.3 Multi-step Generative Alignment Tuning
+The final stage of our framework is to integrate these structured codes into the LLM via generative alignment tuning. The code sequence for each tool, e.g., [ιd,1,…,ιd,L][\iota_{d,1},\dots,\iota_{d,L}], is mapped to a sequence of new, unique tokens (e.g., <T1_1><T2_1>) added to the LLM’s vocabulary. Let 𝜾d\bm{\iota}_{d} denote this sequence of code-tokens. The corresponding embeddings for these new vocabulary tokens are randomly initialized. We then fine-tune the model in two stages:
+Stage 1: Tool Retrieval Alignment.
+The model learns to generate the correct tool’s code sequence 𝜾d\bm{\iota}_{d} from a user query qq by fine-tuning on a dataset of query-tool pairs.
+ℒretrieval=−𝔼(q,d)​[log⁡P⁡(𝜾d|q)].\mathcal{L}_{\text{retrieval}}=-\mathbb{E}_{(q,d)}[\log P(\bm{\iota}_{d}|q)].
+(10)
+Stage 2: Tool Usage Trajectory Alignment.
+We further fine-tune the model on full interaction trajectories. The model learns to generate sequences of reasoning, actions (tool calls, including their code-tokens 𝜾d\bm{\iota}_{d} and parameters αd\alpha_{d}), and final answers, with the loss computed only over the assistant’s tokens.
+This progressive tuning aligns the model for both accurate tool selection and effective execution in downstream tasks.
+3.4 Inference
+To prevent the model from generating invalid tool codes during inference, we employ a constrained beam search, a standard technique in similar generative frameworks (Wang et al., 2024b). A pre-computed prefix tree (trie) of all valid tool code sequences (𝜾d\bm{\iota}_{d} for all d∈𝒟d\in\mathcal{D}) guides the search, ensuring that only valid identifiers are generated by masking the logits of invalid next tokens at each step. This constraint is applied only during the tool selection phase, preserving the model’s full generative capacity for other tasks.
+4 Experiments
+We conduct extensive experiments to evaluate ToolWeaver on large-scale tool retrieval and end-to-end evaluation, focusing on performance, generalization, and scalability against state-of-the-art methods.
+4.1 Experimental Setup
+Dataset.
+We use the large-scale ToolBench benchmark (Qin et al., 2023), which consists of over 16,000 tool collections comprising 46,985 unique APIs. Although a tool collection may contain multiple APIs, for simplicity, we refer to each individual API as a “tool” in this paper.
+The dataset’s structure allows evaluation across scenarios of increasing complexity, from simple single-tool tasks (I1), to multi-tool planning within a single category (I2), and finally to complex orchestration of tools across different categories (I3) (Qin et al., 2023).
+Furthermore, to rigorously assess generalization, we adopt fine-grained splits: I1 Tool., I1 Cat., and I2 Cat., where “Tool.” and “Cat.” denote tools and categories, respectively, that are unseen during training. All data for our retrieval and agent-tuning experiments are converted from this benchmark, with further details in Appendix A.1.
+Baselines.
+We compare ToolWeaver against a comprehensive set of baselines for both tool retrieval and end-to-end task completion. For retrieval evaluation, we use the classic unsupervised methods BM25 (Robertson and Zaragoza, 2009) and Embedding Similarity (EmbSim), alongside the state-of-the-art supervised models ToolRetriever (Qin et al., 2023) and ToolGen (Wang et al., 2024b). For end-to-end evaluation, we benchmark against strong generative models including GPT-4o-mini, ToolLlama-2 (Qin et al., 2023), and ToolGen (Wang et al., 2024b). A detailed description of each baseline is provided in Appendix A.2.
+Metrics.
+For tool retrieval, we use Normalized Discounted Cumulative Gain (NDCG@k) (Järvelin and Kekäläinen, 2002) for k={1,3,5}, which evaluates the ranking quality of retrieved tools by considering both relevance and position. For the agent task, we adopt the StableToolBench framework (Guo et al., 2024) and report two key metrics: Solvable Pass Rate (SoPR), the percentage of tasks successfully completed, and Solvable Win Rate (SoWR), which measures the quality of the final answer against a strong reference model.
+Implementation Details.
+For our main experiments presented in the body of this paper, we use the pretrained Llama-3-8B as the primary foundation model for both ToolWeaver and key generative baselines to ensure a fair comparison. To demonstrate the robustness and generalizability of our approach across different architectures, we provide a full set of supplementary results using the Qwen model series (Yang et al., 2025) in Appendix B.3. All other architectural choices, training procedures, and hyperparameter settings are detailed in Appendix A.3.
+Table 1: Tool retrieval evaluation performance on ToolBench. Performance is measured by NDCG@k across varying query complexities (I1-I3). ToolWeaver consistently outperforms both retrieval-based (BM25, EmbSim, ToolRetriever) and generative (ToolGen) methods. * represents the results disclosed in Wang et al. (2024b), while the others are the results we re-implemented based on the open-source checkpoints.
+Model
+I1
+I2
+I3
+NDCG@1
+NDCG@3
+NDCG@5
+NDCG@1
+NDCG@3
+NDCG@5
+NDCG@1
+NDCG@3
+NDCG@5
+BM25*
+22.77
+22.64
+25.61
+18.29
+20.74
+22.18
+10.00
+10.08
+12.33
+EmbSim*
+54.00
+50.82
+55.86
+40.84
+36.67
+39.55
+18.00
+17.77
+20.70
+ToolRetriever*
+72.31
+70.30
+74.99
+64.54
+57.91
+63.61
+52.00
+39.89
+42.92
+ToolGen*
+87.67
+88.84
+91.54
+83.46
+86.24
+88.84
+79.00
+79.80
+84.79
+BM25
+26.92
+26.13
+29.00
+20.00
+21.92
+23.46
+10.00
+10.08
+12.33
+EmbSim
+50.50
+48.15
+53.41
+46.00
+39.58
+43.05
+18.00
+17.77
+20.94
+ToolRetriever
+75.92
+76.96
+82.31
+63.00
+66.38
+72.72
+28.00
+39.28
+44.54
+ToolGen
+88.50
+88.83
+91.65
+84.00
+85.65
+89.02
+81.00
+80.83
+85.83
+ToolWeaver
+91.16
+91.14
+93.48
+89.76
+89.70
+91.80
+88.00
+85.80
+90.12
+4.2 Results
+Table 1 presents a comprehensive comparison of tool retrieval evaluation performance. Across all query complexities (I1-I3), ToolWeaver consistently outperforms all baselines. In the most complex I3 scenario, ToolWeaver achieves an NDCG@1 of 88.00, significantly higher than ToolGen (81.00) and all retrieval-based methods.
+Table 2:
+Comparison of end-to-end evaluation performance on ToolBench, measured by Solvable Pass Rate (SoPR) and Solvable Win Rate (SoWR). The SoWR is calculated against the GPT-4o-mini baseline. GPT-4o-mini and ToolLlama-2 are tested in a challenging Retrieval setting (Re.) that requires selecting tools from the full set. In contrast, ToolGen and ToolWeaver generate tool tokens directly, without the need for a retriever. ToolWeaver outperforms other models in diverse scenarios, highlighting its effectiveness in both tool selection and execution.
+Model
+Set.
+SoPR
+SoWR
+I1
+I2
+I3
+I1-Tool.
+I1-Cat.
+I2-Cat.
+I1
+I2
+I3
+I1-Tool.
+I1-Cat.
+I2-Cat.
+GPT-4o-mini
+Re.
+52.25
+40.41
+24.86
+53.16
+50.11
+39.38
+-
+-
+-
+-
+-
+-
+ToolLlama-2
+Re.
+28.94
+24.69
+10.93
+28.48
+36.93
+19.09
+25.15
+30.19
+24.59
+26.58
+27.45
+20.16
+ToolGen
+52.97
+45.13
+36.34
+45.36
+55.56
+45.56
+36.20
+42.45
+49.18
+32.91
+42.48
+37.90
+ToolWeaver
+53.17
+44.03
+52.19
+54.85
+57.41
+46.24
+40.49
+48.11
+59.02
+36.08
+43.14
+35.48
+Table 2 details the end-to-end evaluation results. ToolWeaver achieves superior performance in most cases, excelling in both task completion (SoPR) and solution quality (SoWR). In the challenging retrieval setting, ToolWeaver attains the highest SoPR scores in nearly all scenarios. Its advantages are clear not only in simple (I1) and complex multi-tool tasks (I3), but also in generalizing to both unseen tools (I1-Tool) and unseen categories (I1-Cat). The substantial lead in the multi-tool I3 scenario (52.19 vs. ToolGen’s 36.34) particularly underscores the effectiveness of our collaborative-aware design for complex planning.
+Regarding SoWR against the GPT-4o-mini reference, ToolWeaver again demonstrates superior performance in the majority of scenarios. The advantage is particularly pronounced in the most complex I3 tasks, where it achieves a win rate of 59.02, substantially outperforming ToolGen (49.18).
+Full results across all settings, including additional baselines and evaluation domains, are detailed in Appendix B.1.
+4.3 Ablation Studies and Analysis
+4.3.1 Analysis of Collaborative Regularization Weight
+Figure 2: Analysis of the collaborative regularization weight λ\lambda. Performance, measured by average NDCG@k across all I1-I3 scenarios, consistently peaks at λ=1\lambda=1.
+We conducted a sensitivity analysis to assess the impact of the collaborative regularization weight, λ\lambda, on tool selection performance. As shown in Figure 2, model performance across all NDCG metrics consistently improves as λ\lambda increases from 0.01 to 1, peaking at λ\lambda=1. This trend demonstrates that incorporating collaborative signals is crucial for learning a semantically rich representation that captures how tools function together. However, when λ\lambda is increased further to 10, performance declines, indicating that an excessively strong collaborative prior can distort tool representations by sacrificing the fidelity of their intrinsic functions. This result empirically validates our central hypothesis: optimal performance is achieved by striking a balance between a tool’s intrinsic semantics and its extrinsic collaborative patterns, confirming the effectiveness of ToolWeaver’s design.
+4.3.2 Component Ablation Analysis
+Figure 3: Cumulative ablation analysis of ToolWeaver’s components on tool selection (NDCG@k). Performance is shown for the baseline (w/o Semantic Initialization), after adding semantic initialization (w/o Collaborative Guidance), and for the full model.
+To demonstrate the cumulative impact of our core components, we performed a step-wise ablation. The results in Figure 3 reveal a clear hierarchy of contributions.
+The model without semantic initialization (blue bars), which lacks both of our proposed components, performs poorly and serves as a baseline. The first crucial step is adding semantic initialization. This step alone (transitioning from blue to pink bars) causes a dramatic performance leap of over 20 NDCG points, underscoring that a meaningful tool representation is the single most critical foundation.
+Building upon this semantically-aware foundation, the final step is to incorporate collaborative guidance (transitioning from pink to grey bars). This yields a further, significant improvement whose magnitude scales with task complexity. The benefit is modest for simple I1 tasks but becomes most pronounced for complex, multi-tool I3 tasks. This trend provides strong evidence for our thesis: while semantic understanding is foundational, explicitly encoding collaborative patterns is the key to mastering complex tool orchestration.
+(a) Retrieval Evaluation (Avg. NDCG@{1,3,5}).
+(b) End-to-end Evaluation (SoPR/SoWR).
+Figure 4: Comparison of tokenization strategies.
+4.3.3 Comparison of Tokenization Strategies
+To further validate the effectiveness of our collaborative-aware structured tokenization, particularly against other methods that attempt to embed structure or semantics into tool representations, we compare ToolWeaver against several alternative strategies. These baselines represent different paradigms: Atomic (as in ToolGen) assigns a single unique token per tool, serving as a flat generative baseline; Numerical uses fixed-length numeric strings, providing a minimal-vocabulary but non-semantic baseline; Hierarchical generates structured code sequences based on clustering, representing a static, tree-like approach to tokenization; and Semantic leverages human-readable parts of tool names, reflecting a direct, lexicon-based semantic approach. Detailed descriptions of these methods are provided in Appendix B.2.
+As shown in Figure 4, ToolWeaver consistently outperforms all other tokenization strategies across both tool retrieval and end-to-end evaluation. Notably, while the Hierarchical and Semantic methods attempt to incorporate structure, they struggle to outperform the strong Atomic baseline, particularly in the end-to-end evaluation (SoPR/SoWR). This indicates that simply adding a naive structure is not sufficient for improving performance.
+These results underscore the core advantage of ToolWeaver: it does not merely rely on pre-existing hierarchies or basic semantic similarity. Instead, it uniquely weaves collaborative signals into a structured, semantic representation. The underperformance of other structured methods compared to the Atomic baseline highlights that the quality and type of encoded information are critical. ToolWeaver’s holistic approach creates tool codes that are not only descriptive of a tool’s function but also predictive of its role in complex, multi-tool workflows, leading to superior performance.
+4.3.4 Impact on General Language Capabilities
+A critical concern with generative tool learning is that adding new tokens might disrupt the pre-trained linguistic knowledge of the LLM. Methods like ToolGen inject nearly 47,000 new tokens, linearly expanding the vocabulary and potentially skewing the model’s internal distribution. In contrast, ToolWeaver employs a logarithmic expansion strategy that adds significantly fewer tokens.
+To rigorously quantify this impact, we selected two complementary evaluation protocols. First, we measured Perplexity (PPL) on WikiText-2 (Merity et al., 2016) to assess how well the model maintains the original probability distribution of natural language. Second, we evaluated Text Summarization on CNN/DailyMail (See et al., 2017) and XSum (Narayan et al., 2018) to verify the model’s ability to generate coherent and high-quality text in zero-shot settings.
+Table 3: Impact of tool vocabulary expansion on general language capabilities. We report Perplexity (lower is better) and Summarization BERTScore F1 (higher is better). ToolWeaver preserves the base model’s capabilities significantly better than ToolGen.
+Model
+Language Modeling (PPL)
+Text Summarization (BERTScore F1)
+WikiText-2 (↓\downarrow)
+CNN/DM (↑\uparrow)
+XSum (↑\uparrow)
+Avg. Drop
+Llama-3-8B (Base)
+6.34
+85.35
+85.05
+-
+ToolGen
+104.54
+82.93
+82.53
+2.47
+ToolWeaver
+25.36
+85.07
+84.18
+0.57
+Table 3 summarizes the results. The linear vocabulary expansion in ToolGen leads to catastrophic degradation. Specifically, its PPL on WikiText-2 increases drastically to 104.54, which is approximately 16 times that of the base model. Furthermore, its generation quality drops notably on the abstractive XSum benchmark. In contrast, ToolWeaver demonstrates superior robustness. The PPL remains much lower at 25.36, and the summarization performance on CNN/DailyMail is nearly identical to the base model, achieving a BERTScore of 85.07 compared to the original 85.35.
+These findings indicate that our structured tokenization preserves the linguistic core of the LLM far better than assigning isolated atomic tokens to a vast tool library. We provide additional evaluations on general understanding benchmarks, such as MMLU, along with detailed experimental configurations in Appendix B.4.
+
+SELECTION b3more_21947
+A.3 Implementation and Training Details
+This appendix provides a detailed description of the implementation specifics for the models and experiments presented in the main paper, ensuring full reproducibility.
+The structured tokenization process begins with generating initial dense semantic embeddings for each tool. We process the textual documentation of each tool (including its name and description) using the all-mpnet-base-v2 model from the Sentence-Transformers library, which produces a 768-dimensional embedding. The core of our structured tokenization is a collaborative-aware residual quantization process. This process employs a multi-level scheme with L=2L=2 codebooks, 𝒞1\mathcal{C}_{1} and 𝒞2\mathcal{C}_{2}, each containing K=1024K=1024 learnable vectors. This compositional structure represents the entire tool library with only 2×1024=20482\times 1024=2048 new tokens added to the LLM’s vocabulary. The initial 768-dimensional embeddings are first projected into a 64-dimensional space (D′=64D^{\prime}=64) using a multi-layer perceptron (MLP) with sequential hidden layer dimensions of 1024, 512, 256, and 128.
+The codebooks are trained using the AdamW optimizer with a learning rate of 1e-5 and a batch size of 5096, over 50 warmup epochs with no weight decay. For the main results, the collaborative regularization weight, λ\lambda, was set to 1.0. We initialize the codebook centroids using k-means with a maximum of 100 iterations. For conflict mitigation, the Sinkhorn-Knopp algorithm is run for 50 iterations.
+The integration of these learned codes into the LLM is achieved through a two-stage generative alignment process. In Stage 1, the model is fine-tuned for 5 epochs on query-tool pairs for retrieval alignment. In Stage 2, it is fine-tuned for an additional 2 epochs on full interaction trajectories to learn complex planning. For both stages, we employ a cosine learning rate scheduler with a 3% warmup ratio and a peak learning rate of 4×10−54\times 10^{-5}. The input context length is truncated to 6,144 tokens. All experiments were conducted on NVIDIA A100 GPUs, and we leveraged the DeepSpeed ZeRO-3 optimization suite and FlashAttention-2 to enhance training efficiency.
+A.4 Evaluation Setting Details
+Our experiments adopt two distinct retrieval settings from prior work (Wang et al., 2024b): In-Domain and Multi-Domain. The In-Domain setting restricts the search space to a pre-filtered tool category, while the more challenging Multi-Domain setting requires the model to select from the entire global corpus of nearly 47,000 APIs for any given query. For our primary experiments presented in the main body of this paper, we focus on the Multi-Domain setting as it provides a more realistic and rigorous test of a model’s ability to handle large-scale retrieval and disambiguate tool functions. A complete set of results for both settings, including the In-Domain evaluation, is provided for reference in 
+SELECTION b3more_21947cost
+B.7 Inference Latency and Memory Analysis
+While ToolWeaver achieves logarithmic scalability regarding vocabulary size, representing a single tool as a sequence of LL codes naturally introduces more decoding steps compared to the atomic “one-token-per-tool” approach used in baselines like ToolGen. To rigorous assess the practical cost of this design, we conducted a systematic evaluation of decoding latency, throughput, and memory consumption.
+B.7.1 Experimental Setup
+We measured the inference performance on a single NVIDIA A100-80GB GPU. To ensure a fair comparison, we evaluated both ToolGen (Atomic) and ToolWeaver with varying codebook depths (L∈{2,3,4}L\in\{2,3,4\}) and a fixed codebook size of K=1024K=1024. The metrics were averaged across the I1, I2, and I3 retrieval tasks to cover varying query complexities. We report:
+•
+Avg Latency (ms): The average wall-clock time required to decode the tool identifier(s) for a single query.
+•
+P95 Latency (ms): The 95th percentile latency, reflecting worst-case performance.
+•
+Avg Throughput (Tok/s): The number of tokens generated per second during the decoding phase.
+•
+Peak GPU Memory (GB): The maximum GPU memory allocated during inference.
+B.7.2 Results and Discussion
+The results are summarized in Table 13. We observe the following trends:
+Table 13: Inference efficiency comparison. We compare the atomic baseline (ToolGen) against ToolWeaver with increasing codebook depths (LL). While latency increases linearly with depth due to longer sequence generation, the absolute overhead is minimal (∼20\sim 20-75ms). Crucially, ToolWeaver maintains a lower and constant memory footprint.
+Model Configuration
+Representation
+Avg Latency
+P95 Latency
+Throughput
+Peak Memory
+Structure
+(ms)
+(ms)
+(Tok/s)
+(GB)
+ToolGen (Baseline)
+Atomic (1-level)
+108.16
+111.98
+19.54
+15.77
+ToolWeaver (L=2L=2)
+[1024,1024][1024,1024]
+128.21
+132.43
+24.53
+15.08
+ToolWeaver (L=3L=3)
+[1024,1024,1024][1024,1024,1024]
+157.65
+165.73
+26.34
+15.10
+ToolWeaver (L=4L=4)
+[1024,1024,1024,1024][1024,1024,1024,1024]
+183.14
+189.11
+28.26
+15.11
+Latency Trade-off is Acceptable.
+As expected, latency increases linearly with the number of codebook layers. Comparing the standard L=2L=2 setting of ToolWeaver to ToolGen, the overhead per query is approximately 20ms (108.16ms vs. 128.21ms). Even with a deeper hierarchy (L=4L=4), the total latency remains under 200ms. In the context of tool-augmented agents, where executing an external API call typically consumes hundreds of milliseconds to seconds, this decoding overhead is negligible. This confirms that the trie-constrained decoding over a hierarchical code space is highly efficient for online deployment.
+Higher Token Throughput.
+Interestingly, ToolWeaver exhibits higher token throughput (Tok/s) as LL increases. This is a natural consequence of the hierarchical representation: decoding a single logical tool requires generating LL simpler code tokens. Since the computational cost per step is dominated by the transformer’s forward pass (which remains constant), generating a sequence of cached code-tokens allows the system to amortize the overhead, resulting in higher apparent throughput (19.54 vs. 28.26 Tok/s). This indicates that the model’s generation speed is not bottlenecked by the codebook lookup.
+Memory Efficiency.
+A significant advantage of ToolWeaver is its memory efficiency. ToolGen requires maintaining a massive embedding table and LM head for nearly 47,000 atomic tool tokens, resulting in a peak memory usage of ∼\sim15.77 GB. In contrast, ToolWeaver reduces the vocabulary expansion to a logarithmic scale (e.g., 2×10242\times 1024 tokens), keeping the peak memory stable at ∼\sim15.10 GB across all settings. This saving of approximately 0.67 GB is substantial for deploying LLMs on memory-constrained edge devices, validating our claim that ToolWeaver is a more scalable solution for massive tool libraries.
+B.8 Failure Analysis
+To investigate the limitations of ToolWeaver, we analyzed error cases in the end-to-end evaluation. We categorize the first occurring error in a trajectory using a strict hierarchical logic: First, we check Process Consistency; if the predicted step index exceeds or falls short of the ground truth length, it is labeled as Redundant or Incomplete Process, respectively. Second, if the length is valid but the predicted identifier mismatches the ground truth, it is marked as Wrong Tool. Finally, if the tool is correct but fails due to parsing errors, missing fields, or runtime exceptions, it is categorized as Wrong Parameters. Figure 8 illustrates the distribution of these errors.
+Figure 8: Distribution of failure types across ToolBench scenarios (I1-I3) and generalization splits (Tool/Cat).
+The distribution reveals a clear shift in failure modes across different stages of complexity. Wrong Tool (Blue) is the dominant error, increasing significantly from I1 ( 71%) to I3 ( 95%). This indicates that as the reasoning chain grows longer and more complex (I3), the primary bottleneck becomes the precise retrieval of the correct API from the massive 47k corpus, rather than planning length. Consequently, Wrong Parameters (Pink) shows a stable presence (10–20%) in simpler scenarios (I1/I2), suggesting that once the model successfully locates the correct tool, its ability to comprehend API schemas and generate valid arguments is relatively robust. However, in I3, the parameter error rate drops artificially (4.9%) simply because the model rarely passes the initial tool selection check. Similarly, Incomplete/Redundant processes are visible in simpler tasks but vanish in complex ones, confirming that in multi-step scenarios, the agent struggles primarily with semantic discrimination of tools before it can even exhibit planning or formatting faults.
+

@@ -1,0 +1,4761 @@
+I/O Optimizations for Graph-Based Disk-Resident Approximate Nearest Neighbor Search: A Design Space Exploration
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract.
+1
+Introduction
+2
+Background
+2.1
+Nearest Neighbor Search
+2.2
+Disk-Based ANN
+2.3
+I/O is the Main Bottleneck
+3
+I/O Challenges Analysis
+3.1
+I/O Complexity for Best-First Search
+3.2
+Objectives
+4
+Design Space
+4.1
+Memory Layout Optimization
+4.1.1
+Product Quantization (PQ)
+4.1.2
+Cache Management (Cache)
+4.1.3
+Hierarchical Graphs (MemGraph)
+4.2
+Disk Layout Optimization
+4.2.1
+Page Shuffle (PS)
+4.2.2
+All-in-Storage Layout (AiS)
+4.3
+Search Algorithm Optimization
+4.3.1
+Dynamic Width (DW)
+4.3.2
+Pipeline Search (Pipeline)
+4.3.3
+Page Search (PSe)
+4.4
+Algorithmic Landscape Analysis
+5
+Experimental Testbed
+5.1
+Experimental Settings
+5.2
+Graph-based vs. Inverted Indices
+6
+Individual Optimization Evaluation
+6.1
+Search Performance Analysis
+6.2
+Graph Index Construction Overhead
+6.3
+Memory Budget Analysis
+7
+Combination Effect Evaluation
+7.1
+Combination Evaluation
+7.1.1
+Combination Design
+7.1.2
+Combination Optimization Performance Analysis
+7.2
+State-of-the-Art Comparison
+7.3
+Discussion
+8
+Conclusion
+Acknowledgements
+References
+License: CC BY 4.0
+arXiv:2602.21514v1 [cs.DB] 25 Feb 2026
+I/O Optimizations for Graph-Based Disk-Resident Approximate Nearest Neighbor Search: A Design Space Exploration
+Liang Li
+Affiliation:
+China Telecom Cloud Computing Research Institute
+,
+43017-6221
+email:
+lil225@chinatelecom.cn
+,
+Shufeng Gong
+Affiliation:
+Northeastern University
+email:
+gongsf@mail.neu.edu.cn
+,
+Yanan Yang
+Affiliation:
+China Telecom Cloud Computing Research Institute
+,
+43017-6221
+email:
+yangyn11@chinatelecom.cn
+,
+Yiduo Wang
+Affiliation:
+China Telecom Cloud Computing Research Institute
+,
+43017-6221
+email:
+wangyd22@chinatelecom.cn
+and
+Jie Wu
+Affiliation:
+China Telecom Cloud Computing Research Institute
+Affiliation:
+Temple University
+email:
+jiewu@temple.edu
+Abstract.
+Approximate nearest neighbor (ANN) search on SSD-backed indexes is increasingly I/O-bound (I/O accounts for 70–90% of query latency). We present an I/O-first framework for disk-based ANN that organizes techniques along three dimensions: memory layout, disk layout, and search algorithm. We introduce a page-level complexity model that explains how page locality and path length jointly determine page reads, and we validate the model empirically. Using consistent implementations across four public datasets, we quantify both single-factor effects and cross-dimensional synergies. We find that (i) memory-resident navigation and dynamic width provide the strongest standalone gains; (ii) page shuffle and page search are weak alone but complementary together; and (iii) a principled composition, OctopusANN, substantially reduces I/O and achieves 4.1–37.9% higher throughput than the state-of-the-art system Starling and 87.5–149.5% higher throughput than DiskANN at matched Recall@10=90%. Finally, we distill actionable guidelines for selecting storage-centric or hybrid designs across diverse concurrency levels and accuracy constraints, advocating systematic composition rather than isolated tweaks when pushing the performance frontier of disk-based ANN.
+†
+†
+authors:
+.
+PVLDB Reference Format:
+PVLDB, 19(1): XXX-XXX, 2025.
+doi:XX.XX/XXX.XX
+†
+†
+This work is licensed under the Creative Commons BY-NC-ND 4.0 International License. Visit
+https://creativecommons.org/licenses/by-nc-nd/4.0/
+to view a copy of this license. For any use beyond those covered by this license, obtain permission by emailing
+info@vldb.org
+. Copyright is held by the owner/author(s). Publication rights licensed to the VLDB Endowment.
+Proceedings of the VLDB Endowment, Vol. 19, No. 1 ISSN 2150-8097.
+doi:XX.XX/XXX.XX
+PVLDB Artifact Availability:
+The source code, data, and/or other artifacts have been made available at
+https://github.com/LeonLee666/IObench4DiskANN
+.
+1.
+Introduction
+Approximate nearest neighbor (ANN) search is fundamental to modern retrieval-intensive applications
+(
+Aoyama et al., 2011
+;
+Arora et al., 2018
+;
+Fu et al., 2017
+;
+Malkov and Yashunin, 2020
+;
+Wang et al., 2021a
+)
+, including information retrieval
+(
+Flickner et al., 2002
+;
+Jiang et al., 2019
+)
+, pattern recognition
+(
+Cover and Hart,
+;
+Kosuge and Oshima, 2019
+)
+, data mining
+(
+Huang et al., 2017
+;
+Iwasaki, 2016
+)
+, machine learning
+(
+Cao et al., 2018
+;
+Cost and Salzberg, 1993
+)
+, recommendation systems
+(
+Meng et al., 2019
+;
+Sarwar et al., 2001
+)
+, retrieval-augmented generation (RAG)
+(
+Lewis et al., 2020
+)
+, and vector databases
+(
+Wang et al., 2021a
+;
+Guo et al., 2022
+;
+Wei et al., 2020
+)
+. Among various approaches—hashing-based
+(
+Gong et al., 2020
+;
+Huang et al., 2015
+)
+, tree-based
+(
+Arora et al., 2018
+;
+Silpa-Anan and Hartley, 2008
+)
+, and quantization-based
+(
+Jégou et al., 2011
+;
+Pan et al., 2020
+;
+Gao and Long, 2024
+)
+—graph-based algorithms have emerged as state of the art for search quality and efficiency
+(
+Wang et al., 2021b
+;
+Azizi et al., 2025
+;
+Yang et al., 2024
+)
+. Representative methods such as HNSW
+(
+Malkov and Yashunin, 2020
+)
+, NSG
+(
+Fu et al., 2017
+)
+, SSG
+(
+Fu et al., 2022
+)
+, and Vamana
+(
+Subramanya et al., 2019
+)
+achieve exceptional performance with high recall and low latency. However, their substantial memory overhead renders them infeasible for billion-scale datasets on commodity hardware
+(
+Subramanya et al., 2019
+;
+Chen et al., 2021
+;
+Wang et al., 2024
+)
+.
+As datasets scale to billions of vectors, the prohibitive cost of DRAM necessitates a shift toward disk-resident solutions for vector search
+(
+Subramanya et al., 2019
+;
+Simhadri and Krishnaswamy, 2021
+;
+Gollapudi et al., 2023
+)
+. While in-memory indices have been extensively studied
+(
+Wang et al., 2021b
+;
+Azizi et al., 2025
+;
+Yang et al., 2024
+;
+Li et al., 2016
+)
+, disk-resident graph indices face fundamentally different challenges driven by the I/O bottleneck.
+Unlike in-memory search, which is compute-bound, disk-based graph traversal becomes I/O-bound due to
+high I/O latency
+and
+random I/O access patterns
+: each hop may trigger fine-grained random reads whose per-request latency dominates distance computation.
+This fundamental shift leads to severe performance degradation and an optimization landscape that differs markedly from that of in-memory systems. Consequently, this work focuses exclusively on improving the I/O efficiency of disk-based graph indices.
+Among existing disk-based solutions, DiskANN
+(
+Subramanya et al., 2019
+)
+has established itself as the
+de facto
+industrial standard
+(
+Simhadri et al., 2022
+;
+Simhadri et al., 2024
+)
+, widely adopted by major commercial vector databases including Microsoft Azure
+(
+Microsoft, 2025
+)
+and Huawei GaussDB
+(
+Huawei Cloud, 2024
+)
+,
+etc
+. It employs a three-layer architecture: a disk storage layer for the full graph and vectors, a memory layer for compressed navigation vectors, and a cache for high-degree nodes. Despite its robust design, our analysis reveals that I/O operations still account for 70–90% of total query latency. This bottleneck stems from four critical inefficiencies: (1)
+poor data locality
+, where scattered vertices cause massive I/O waste
+(
+Wang et al., 2024
+)
+; (2)
+low bandwidth utilization
+due to strictly sequential I/O-compute execution
+(
+Wu, 2024
+;
+Guo and Lu, 2025a
+)
+; (3)
+long search paths
+that require excessive disk round-trips
+(
+Subramanya et al., 2019
+;
+Wang et al., 2024
+;
+Guo and Lu, 2025a
+)
+; and (4)
+frequent cache misses
+resulting from unpredictable random access patterns
+(
+Wu, 2024
+;
+Subramanya et al., 2019
+;
+Jang et al., 2023
+;
+Jang et al., 2024
+)
+.
+There has been extensive work addressing these issues, including caching strategies
+(
+Wu, 2024
+;
+Subramanya et al., 2019
+;
+Jang et al., 2023
+)
+, quantization methods
+(
+Zhang and He, 2019
+;
+Subramanya et al., 2019
+)
+, hierarchical structures
+(
+Wang et al., 2024
+;
+Zhang and He, 2019
+)
+, and I/O pipelining approaches
+(
+Guo and Lu, 2025a
+)
+.
+Although several studies
+(
+Wang et al., 2021b
+;
+Azizi et al., 2025
+;
+Yang et al., 2024
+;
+Li et al., 2016
+)
+have examined graph-based indexes, no survey systematically explores I/O optimizations. This gap motivates us to conduct an in-depth investigation of I/O efficiency. This paper explores I/O optimization methods for on-disk graph-based ANN indexes and focuses on answering the following three questions.
+Q1: How to classify I/O efficiency optimizations systematically to highlight the differences and connections among various methods?
+Existing optimization techniques are studied in isolation without a unified classification framework. Although numerous approaches have been proposed—vector quantization
+(
+Zhang and He, 2019
+;
+Subramanya et al., 2019
+)
+, hierarchical structures
+(
+Wang et al., 2024
+;
+Chen et al., 2021
+)
+, I/O pipelining
+(
+Guo and Lu, 2025a
+;
+Wu, 2024
+)
+, and reorganization of data layout
+(
+Wang et al., 2024
+;
+Tatsuno et al., 2025
+)
+—they target different I/O bottlenecks without a systematic understanding of their orthogonal boundaries, making it difficult to navigate the design space.
+Q2: What is the effectiveness of each individual optimization and its contribution to I/O performance?
+Some optimization methods, such as pipeline and dynamic width
+(
+Guo and Lu, 2025a
+)
+, have been shown to work synergistically, significantly improving I/O performance. However, the effectiveness of each of these optimizations when applied independently remains unclear.
+Q3: Do combinations of individual optimizations yield multiplicative performance improvements?
+While state-of-the-art solutions such as Starling
+(
+Wang et al., 2024
+)
+and PipeANN
+(
+Guo and Lu, 2025a
+)
+represent significant advances, systematic investigation into whether multidimensional optimization combinations can achieve breakthrough performance improvements remains lacking. The potential for carefully orchestrated combinations to deliver synergistic performance gains is largely unexplored.
+To address these questions, this paper presents a systematic study of the I/O optimization design space for disk-based ANN search algorithms. We introduce a comprehensive three-dimensional taxonomy that organizes optimization techniques into orthogonal categories:
+(i) memory layout optimization
+,
+(ii) disk layout optimization
+, and
+(iii) search algorithm optimization
+. Using this framework and consistent experimental methodology across four public datasets, we conduct controlled evaluations that quantify both individual optimization impacts and reveal synergistic combinations. Our key insight is that carefully orchestrated multi-dimensional approaches yield synergistic improvements by jointly increasing page-level utility and shortening convergence paths.
+Our work makes three key contributions:
+(1) Systematic taxonomy framework.
+We establish a comprehensive taxonomy for I/O optimization algorithms, identifying three orthogonal dimensions that unify previously fragmented approaches and provide an objective function for the navigation optimization landscape.
+(2)
+Optimization evaluation and empirical findings.
+We conduct a controlled, apples-to-apples evaluation across four massive datasets to quantify the effectiveness and costs of individual I/O optimizations, and to extract a set of empirical findings that characterize when each technique is beneficial, marginal, or counterproductive.
+(3) Combination case study and actionable guidelines.
+Building on the above findings, we further study how orthogonal optimizations can be composed in practice, and present
+OctopusANN
+as a representative effective combination. It substantially improves upon existing methods—achieving 4.1–37.9% higher throughput than Starling and 87.5–149.5% over DiskANN at 90% recall—while our findings provide evidence-based guidelines for selecting and combining techniques under different workload and resource regimes.
+The remainder of this paper is organized as follows. §
+2
+provides essential background on graph-based ANN search, with detailed analysis of DiskANN’s core design. §
+3
+presents our comprehensive analysis of I/O challenges. §
+4
+introduces our three-dimensional taxonomy and systematic analysis of optimization techniques. §
+5
+describes our experimental testbed and methodology, while §
+6
+and §
+7
+report results for individual optimizations and their synergistic combinations, respectively. Finally, §
+8
+concludes the paper.
+2.
+Background
+This section provides essential background on approximate nearest neighbor search, introducing fundamental concepts and challenges, followed by an analysis of graph-based ANN algorithms with emphasis on disk-based approaches.
+2.1.
+Nearest Neighbor Search
+Approximate Nearest Neighbor Search.
+Given a dataset
+D
+⊂
+ℝ
+d
+D\subset\mathbb{R}^{d}
+containing
+n
+n
+points, the
+k
+k
+-nearest neighbor (
+k
+k
+-NN) search problem seeks the
+k
+k
+closest points
+S
+∗
+S^{\ast}
+to query point
+q
+∈
+ℝ
+d
+q\in\mathbb{R}^{d}
+, i.e.,
+p
+∈
+D
+∖
+S
+∗
+p\in D\setminus S^{\ast}
+,
+p
+′
+∈
+S
+∗
+p^{\prime}\in S^{\ast}
+,
+|
+|
+p
+,
+q
+|
+|
+≥
+|
+|
+p
+′
+,
+q
+|
+|
+||p,q||\geq||p^{\prime},q||
+, where
+|
+|
+⋅
+|
+|
+||\cdot||
+is a distance function, e.g., Euclidean or Cosine distance. While exact and robust search requires
+O
+⁡
+(
+n
+​
+d
+)
+O(nd)
+time complexity
+(
+Li et al., 2016
+)
+, approximate nearest neighbor search (ANN) trades accuracy for efficiency by returning approximate near neighbors
+S
+S
+at lower computational cost. The query accuracy of ANN methods is measured by the
+recall
+value,
+Recall
+​
+@
+​
+k
+=
+|
+S
+∩
+S
+∗
+|
+k
+\mathrm{Recall@}k=\frac{|S\cap S^{\ast}|}{k}
+.
+Graph-Based ANN methods.
+Among various ANN search approaches, proximity-graph methods
+(
+Mathieson and Moscato, 2019
+;
+Riegger, 2010
+)
+are widely used. Prior studies
+(
+Aumüller et al., 2020
+;
+Li et al., 2020b
+;
+Li et al., 2016
+;
+Wang et al., 2021b
+)
+report strong performance for graph-based methods. Graph-based ANN search constructs graphs where vertices represent vectors and edges connect similar vectors. Main approaches include Delaunay graphs
+(
+FORTUNE, 1992
+)
+(good geometric properties),
+k
+k
+-nearest neighbor graphs
+(
+Paredes and Chávez, 2005
+)
+(predictable degree), relative neighborhood graphs
+(
+Toussaint, 1980
+)
+(sparse connectivity), minimum spanning trees
+(
+Kruskal, 2010
+)
+(minimal edges), and small-world graphs
+(
+Malkov et al., 2014
+)
+(efficient for search). Modern algorithms such as HNSW
+(
+Malkov and Yashunin, 2020
+)
+, NSG
+(
+Fu et al., 2017
+)
+, SSG
+(
+Fu et al., 2022
+)
+, NGT
+(
+Japan, 2015
+)
+, SPTAG
+(
+Microsoft, 2018
+)
+, Vamana
+(
+Subramanya et al., 2019
+)
+,
+τ
+\tau
+-MG
+(
+Peng et al., 2023
+)
+, and ELPIS
+(
+Azizi et al., 2023
+)
+have shown strong performance in practice.
+Best-first search.
+Graph-based ANN search commonly employs best-first search
+(
+Hart et al., 1968
+)
+or beam search
+(
+Tellez et al., 2017
+)
+, maintaining a priority queue of candidate nodes sorted by distance to the query. The search iteratively selects the closest unvisited node (beam search is a width-limited variant in which each iteration selects the closest top-
+ω
+\mathcal{\omega}
+unvisited nodes, where
+ω
+\mathcal{\omega}
+is the
+beam width
+), explores neighbors, and adds new candidates until identifying the required nearest neighbors. Search efficiency depends on entry point quality
+(
+Wang et al., 2021b
+;
+Azizi et al., 2025
+)
+, graph structure quality
+(
+Boutet et al., 2016
+;
+Yang et al., 2024
+)
+, distance computation
+(
+Deng et al., 2024
+;
+Chen et al., 2023
+;
+Gao and Long, 2023
+;
+Wei et al., 2025
+;
+André et al., 2017
+)
+, and early termination strategies
+(
+Li et al., 2020a
+)
+.
+Limitations of graph-based ANN methods.
+While in-memory graph-based methods achieve excellent search performance, they face significant memory limitations with large-scale (
+e.g.
+, billion-scale) datasets. Memory overhead increases substantially with dataset size—for example, HNSW on a billion-scale dataset in 128 dimensions can consume hundreds of gigabytes of memory (
+e.g.
+,  800 GB under common settings), often exceeding typical workstation RAM capacity. When dataset sizes exceed available memory, traditional in-memory approaches become infeasible, prompting disk-based ANN search algorithms.
+DiskANN disk layout diagram.
+Figure 1.
+DiskANN data layout. Each record is page-aligned and packed into 4 KB pages.
+DiskANN disk layout diagram.
+2.2.
+Disk-Based ANN
+To address the memory constraints that necessitate disk-resident search, we adopt DiskANN as a canonical model to illustrate how a three-layer architecture organizes on-disk vectors and graph traversal, setting the stage for our I/O-centric analysis in §
+3
+.
+DiskANN overview and architecture.
+DiskANN
+(
+Subramanya et al., 2019
+;
+Simhadri and Krishnaswamy, 2021
+;
+Gollapudi et al., 2023
+;
+Jaiswal et al., 2022
+)
+is a
+de facto
+standard disk-based ANN system adopted by products such as Milvus
+(
+Zilliz, 2025
+)
+, Azure Database
+(
+Microsoft, 2025
+)
+, Timescale
+(
+Timescale, 2025
+)
+, and GaussDB
+(
+Huawei Cloud, 2024
+)
+, and serves as a standard baseline in public benchmarks
+(
+Simhadri et al., 2022
+;
+Simhadri et al., 2024
+)
+. As shown in Figure
+1
+, DiskANN follows a three-layer architecture: (1) a
+disk storage layer
+that stores full-precision vectors and neighbor lists in page-aligned records; (2) a
+memory quantization layer
+(
+e.g.
+, Product Quantization,
+PQ
+) that keeps compressed codes for fast, memory-resident filtering; and (3) a
+cache management layer
+that retains hot vertices. This design implements an “approximate guidance, precise refinement” workflow: memory-resident PQ codes guide candidate selection, while disk-resident full vectors enable final re-ranking.
+Representative disk-based systems.
+Beyond DiskANN, representative systems can be categorized into three orthogonal routes.
+Starling/DiskANN++
+(
+Wang et al., 2024
+;
+Ni et al., 2023
+)
+are layout-centered, employing an in-memory navigation graph and locality-aware page shuffling (optionally in-page search) to raise per-page utility and shorten search paths.
+PipeANN
+(
+Guo and Lu, 2025a
+)
+is algorithm-centric, using I/O–compute pipelining with dynamic width; it may trigger speculative reads under concurrency.
+AiSAQ/LM-DiskANN
+(
+Tatsuno et al., 2025
+;
+Pan et al., 2023
+)
+are storage-centric, placing PQ codes on SSD to minimize memory usage but risking read amplification and a larger on-disk footprint. Other variants include
+GRIP/Zoom
+(
+Zhang and He, 2019
+;
+Zhang and He, 2018
+)
+(memory-first: PQ with hierarchical navigation/MemGraph under moderate memory budgets) and
+SPANN/BBANN
+(
+Chen et al., 2021
+;
+Zilliz, 2024
+)
+(partitioned/hierarchical navigators with storage-aware locality). This organization directly impacts per-page utility and traversal hops, which we analyze through an I/O-centric lens in §
+3
+. We use DiskANN as a running reference to anchor later analysis of I/O efficiency challenges and to provide a consistent baseline for design-space comparisons.
+2.3.
+I/O is the Main Bottleneck
+Although disk-based graph indices address the memory bottleneck of in-memory indices, they still face significant I/O efficiency challenges
+(
+Wang et al., 2024
+;
+Guo and Lu, 2025a
+)
+. Figure
+2
+shows the percentage breakdown of compute and I/O latency for DiskANN queries across four datasets. The figure reveals that I/O latency dominates query latency, accounting for approximately 70%–90% of the total (note that dataset descriptions are provided in §
+5
+; the GIST dataset has higher dimensionality and requires more search hops). This dominance stems from the fundamental nature of graph-based vector search:
+(1)
+High I/O latency
+, where fetching nodes from disk is orders of magnitude slower than in-memory distance computation;
+(2)
+Random I/O access patterns
+, as graph traversal inherently induces fine-grained random I/Os that fail to exploit the internal parallelism and throughput of modern SSDs.
+Latency vs recall comparison.
+Figure 2.
+Latency breakdown across four datasets.
+Latency vs recall comparison.
+3.
+I/O Challenges Analysis
+3.1.
+I/O Complexity for Best-First Search
+To establish a formal foundation for analyzing I/O efficiency, we first introduce key terminology specific to graph-structured disk-resident indices, then present the I/O complexity model.
+Overlap Ratio.
+To ground the I/O complexity analysis, we first formalize page-level utility via an overlap ratio. Specifically, we define a local, page-utility-oriented overlap ratio at the vertex level and then aggregate it to obtain the global
+O
+​
+R
+​
+(
+G
+)
+OR(G)
+. The overlap ratio for individual vertex
+u
+u
+quantifies the proportion of its graph neighbors that reside on the same disk page:
+O
+​
+R
+​
+(
+u
+)
+=
+|
+B
+⁡
+(
+u
+)
+∩
+N
+⁡
+(
+u
+)
+|
+n
+p
+−
+1
+OR(u)=\frac{|B(u)\cap N(u)|}{n_{p}-1}
+, where
+B
+⁡
+(
+u
+)
+B(u)
+represents the set of vertices stored in the same disk page as vertex
+u
+u
+, and
+N
+⁡
+(
+u
+)
+N(u)
+denotes the set of graph neighbors of vertex
+u
+u
+. The denominator
+n
+p
+−
+1
+n_{p}-1
+excludes vertex
+u
+u
+itself, focusing on the co-location of its neighbors. For example, if a page stores
+n
+p
+=
+16
+n_{p}{=}16
+records and
+|
+B
+⁡
+(
+u
+)
+∩
+N
+⁡
+(
+u
+)
+|
+=
+2
+\lvert B(u)\cap N(u)\rvert{=}2
+, then
+O
+​
+R
+​
+(
+u
+)
+=
+2
+/
+(
+16
+−
+1
+)
+=
+13.3
+%
+OR(u)=2/(16{-}1)=13.3\%
+. For a graph index
+G
+=
+(
+V
+,
+E
+)
+G=(V,E)
+, aggregating local overlap ratios gives the global overlap ratio as the vertex-wise average:
+O
+​
+R
+​
+(
+G
+)
+=
+∑
+u
+∈
+V
+O
+​
+R
+​
+(
+u
+)
+|
+V
+|
+OR(G)=\frac{\sum_{u\in V}OR(u)}{|V|}
+.
+I/O complexity model.
+We adopt the disk-resident best-first search model
+(
+Wang et al., 2024
+)
+to illustrate the I/O challenge. Let the disk-resident graph index be
+G
+=
+(
+V
+,
+E
+)
+G=(V,E)
+. Let
+H
+H
+denote the expected hop count per query,
+R
+¯
+\bar{R}
+the average out-degree, and
+n
+p
+n_{p}
+the number of records per page. Under a uniform page size
+P
+P
+(
+e.g.
+, 4 KB) and record size
+s
+rec
+s_{\text{rec}}
+, we have
+n
+p
+=
+⌊
+P
+/
+s
+rec
+⌋
+n_{p}=\left\lfloor P/s_{\text{rec}}\right\rfloor
+. Based on the terminology and overlap ratio defined above, the page I/O complexity for disk-resident best-first search satisfies
+1
+1
+1
+This model does not account for optimization techniques such as quantization, caching, and MemGraph,
+etc
+.
+(1)
+Page reads per query
+=
+O
+⁡
+(
+R
+¯
+⋅
+H
+O
+​
+R
+​
+(
+G
+)
+⋅
+n
+p
+)
+\text{Page reads per query}=O\!\left(\frac{\bar{R}\cdot H}{OR(G)\cdot n_{p}}\right)
+Intuition.
+A query performs
+O
+⁡
+(
+R
+¯
+⋅
+H
+)
+O(\bar{R}\cdot H)
+effective neighbor expansions; each page read contributes an expected
+O
+​
+R
+​
+(
+G
+)
+⋅
+n
+p
+OR(G)\cdot n_{p}
+useful neighbors, so the number of unique page reads scales as
+O
+⁡
+(
+R
+¯
+⋅
+H
+/
+(
+O
+​
+R
+​
+(
+G
+)
+⋅
+n
+p
+)
+)
+O\!\big(\bar{R}\cdot H/(OR(G)\cdot n_{p})\big)
+. Intuitively, shorter convergence paths (
+H
+↓
+H\!\downarrow
+) and higher page-level utility (
+O
+​
+R
+​
+(
+G
+)
+↑
+OR(G)\!\uparrow
+,
+n
+p
+↑
+n_{p}\!\uparrow
+) reduce I/Os, while larger
+R
+¯
+\bar{R}
+expands the frontier and increases I/Os.
+3.2.
+Objectives
+Grounded in the theoretical model above and the profiling results in Figure
+2
+, we systematically identify four root causes of I/O inefficiency: (1)
+I/O waste
+occurs when graph traversal reads disk pages containing vertices that are never explored during best-first search, resulting in substantial wasted I/O operations
+(
+Wang et al., 2024
+)
+; (2)
+low bandwidth utilization
+arises from sequential I/O–compute execution, where disk I/O remains idle during computation phases, leaving bandwidth underutilized
+(
+Wu, 2024
+;
+Guo and Lu, 2025a
+)
+; (3)
+long search paths
+emerge when entry points are far from query targets, requiring extensive graph traversal with numerous hops, each demanding independent disk access and dramatically increasing I/O operations
+(
+Subramanya et al., 2019
+;
+Wang et al., 2024
+;
+Guo and Lu, 2025a
+)
+; and (4)
+frequent cache misses
+occur during best-first search due to unpredictable access patterns, necessitating effective cache strategies to reduce miss rates
+(
+Wu, 2024
+;
+Subramanya et al., 2019
+;
+Jang et al., 2023
+;
+Jang et al., 2024
+)
+.
+Through a systematic survey of existing work
+(
+Subramanya et al., 2019
+;
+Wang et al., 2024
+;
+Guo and Lu, 2025a
+;
+Wu, 2024
+;
+Ni et al., 2023
+;
+Zhang and He, 2019
+;
+Zhang and He, 2018
+;
+Chen et al., 2021
+;
+Zilliz, 2024
+;
+Tatsuno et al., 2025
+;
+Pan et al., 2023
+;
+Jang et al., 2023
+;
+Jang et al., 2024
+;
+Ren et al., 2020
+;
+Chen et al., 2024
+;
+Kim et al., 2023
+;
+Sun and Jun, 2020
+;
+Tian et al., 2024
+;
+Gao and Long, 2024
+;
+Jégou et al., 2011
+)
+, we organize mainstream I/O optimization techniques into an orthogonal three-dimensional taxonomy:
+Memory Layout Optimization
+(§
+4.1
+),
+Disk Layout Optimization
+(§
+4.2
+), and
+Search Algorithm Optimization
+(§
+4.3
+), encompassing eight representative techniques. Table
+1
+maps each technique to the four bottlenecks above, revealing how different optimizations address specific I/O challenges. §
+4
+provides detailed descriptions of each technique.
+Scope.
+We target general-purpose SSDs and fix DiskANN’s Vamana-based logical graph structure; our study focuses on physical data layout and search scheduling under realistic memory budgets. Beyond traditional SSD-based settings, specialized devices—
+e.g.
+, SmartSSD
+(
+Kim et al., 2023
+;
+Sun and Jun, 2020
+;
+Tian et al., 2024
+)
+, Persistent Memory
+(
+Ren et al., 2020
+;
+Chen et al., 2024
+)
+, and CXL
+(
+Jang et al., 2023
+;
+Jang et al., 2024
+;
+Ko et al., 2025
+)
+—are out of scope. While alternative logical graph structures can influence performance
+(
+Yang et al., 2024
+)
+, this work confines its scope to the physical graph structure under DiskANN’s Vamana-based logic.
+4.
+Design Space
+Table 1.
+Eight techniques versus four I/O challenges (I/O waste, bandwidth utilization, long search paths, high cache misses).
+➚
+: Improve;
+➘
+: cost;
+-/-
+: Reduce.
+Method
+I/O waste
+Bandwidth
+utilization
+Long search
+path
+High cache
+misses
+PQ
+➚
+-/-
+-/-
+-/-
+Cache
+-/-
+-/-
+-/-
+➚
+MemGraph
+-/-
+-/-
+➚
+-/-
+PageShuffle
+➚
+-/-
+-/-
+-/-
+All-in-Storage
+➘
+-/-
+-/-
+-/-
+DynamicWidth
+➚
+-/-
+➚
+-/-
+Pipeline
+➘
+➚
+-/-
+-/-
+PageSearch
+➚
+➘
+-/-
+-/-
+Figure 3.
+Quantization reduces disk reads by moving most distance calculation to memory.
+4.1.
+Memory Layout Optimization
+Memory layout optimization strategies reduce the frequency of disk I/O by maintaining carefully designed auxiliary data structures in memory. This dimension encompasses three approaches: (1)
+vector quantization
+for compressing high-dimensional data
+(
+Zhang and He, 2019
+;
+Zhang and He, 2018
+;
+Subramanya et al., 2019
+;
+Jégou et al., 2011
+;
+Gao and Long, 2024
+)
+; (2)
+cache management
+for keeping frequently accessed vertices in memory
+(
+Subramanya et al., 2019
+;
+Jang et al., 2023
+;
+Jang et al., 2024
+)
+; and (3)
+hierarchical graphs
+for reducing search path length through coarse-grained navigation
+(
+Wang et al., 2024
+;
+Ni et al., 2023
+;
+Chen et al., 2021
+;
+Zilliz, 2024
+)
+.
+Figure 4.
+Cache miss illustration.
+(a)
+Entry point selection
+(b)
+Hierarchical graph
+Figure 5.
+Entry-point optimization. An in-memory navigation graph supplies high-quality entry points for disk-based search.
+4.1.1.
+Product Quantization (PQ)
+Product quantization
+(
+Gersho and Gray, 2012
+;
+Jégou et al., 2011
+;
+Ge et al., 2013
+)
+is a critical technique for achieving memory efficiency, aiming to reduce memory footprint and disk I/O by compressing high-dimensional vector representations. As shown in Figure
+3
+, the core benefit of quantization lies in maintaining compressed vector representations in memory (with compression rates of tens of times) while storing full-precision vectors on disk. This enables a two-stage search process: ➊
+approximate filtering
+using memory-resident quantized vectors to identify promising candidates, followed by ➋
+precise refinement
+with disk-based full vectors only for top candidates. The key insight is that distance calculations can be performed directly using quantized coordinates in memory, eliminating the need to read full vectors from disk for initial candidate ranking. In the illustrated example (Figure
+3
+), traditional DiskANN requires 7 disk I/O operations for vector distance computations, while the quantization-optimized approach reduces this to only 3 I/O operations primarily for neighbor topology retrieval, achieving significant I/O efficiency improvement.
+Formally, with PQ optimization, the I/O complexity from Equation
+1
+is reduced to:
+(2)
+Optimized page reads
+=
+O
+⁡
+(
+H
+O
+​
+R
+​
+(
+G
+)
+⋅
+n
+p
+)
+\text{Optimized page reads}=O\left(\frac{H}{OR(G)\cdot n_{p}}\right)
+This improvement eliminates the
+R
+¯
+\bar{R}
+factor in the numerator because distance computations are performed in memory and no longer require disk reads. Theoretically, the lower bound for page reads is
+O
+⁡
+(
+H
+/
+n
+p
+)
+O(H/n_{p})
+(i.e., all required vectors are co-located on the same page). However, this ideal page locality is difficult to attain in practice due to the inherent randomness of graph traversals and the complexity of optimizing physical layouts for dynamic query patterns.
+However, vector quantization introduces precision loss, creating a trade-off between memory efficiency and search accuracy. To mitigate this limitation, typical approaches expand the candidate set during search and perform precise re-ranking using full vectors from disk for final Top-k results. DiskANN’s co-location design stores vector data and neighbor information together, ensuring that reading neighbor IDs for candidate expansion simultaneously retrieves associated vector data, avoiding additional disk I/Os for the re-ranking phase.
+Vector quantization methods vary significantly in accuracy; we focus on classic Product Quantization (PQ)
+(
+Jégou et al., 2011
+)
+as the representative quantization technique. We experimentally evaluate quantization’s impact on I/O efficiency and search performance in DiskANN systems.
+4.1.2.
+Cache Management (Cache)
+Efficient cache management is crucial for reducing disk I/O and improving DiskANN’s query performance. Similar to hierarchical index structures like B+ trees
+(
+Graefe, 2011
+;
+Niazi et al., 2017
+)
+, where near root nodes are accessed more frequently, nodes closer to search entry points in graph traversal exhibit higher access probability. DiskANN’s current caching strategy employs Single-Source Shortest Path (SSSP)
+(
+Dijkstra, 1959
+)
+algorithm to pre-load nodes within certain hops from the search entry point (Figure
+4
+). However, this static approach may not adapt well to diverse query patterns and varying access distributions across datasets.
+Various caching approaches exist with different characteristics: (1)
+SSSP caching
+: Pre-loads vertices within a fixed number of hops from entry points; (2)
+Frequency-based caching
+(
+Wang et al., 2024
+)
+: Dynamically tracks and caches vertices with the highest access frequencies; (3)
+LRU caching
+(
+Tsao et al., 1972
+)
+: Maintains recently accessed vertices based on temporal locality assumptions. We focus on the widely adopted SSSP caching strategy in our experimental evaluation.
+4.1.3.
+Hierarchical Graphs (MemGraph)
+As established in Figure
+5a
+, entry point quality fundamentally determines search path length and I/O efficiency. While DiskANN employs static entry point selection, this naive approach fails to leverage the geometric structure of high-dimensional vector spaces. Hierarchical graph structures address this limitation by implementing a two-level search strategy: a fast in-memory coarse-grained navigation followed by precise disk-based refinement
+(
+Wang et al., 2024
+;
+Ni et al., 2023
+;
+Guo and Lu, 2025a
+;
+Zhang and He, 2019
+;
+Zhang and He, 2018
+;
+Chen et al., 2021
+;
+Zilliz, 2024
+)
+. The hierarchical approach, illustrated in Figure
+5b
+, maintains a memory-resident subgraph constructed from strategically sampled vertices. During query processing, the algorithm first traverses this in-memory structure to identify promising regions, then uses the discovered vertices as high-quality entry points for disk-based search. This design exploits the principle that effective entry points should be geometrically close to query targets, significantly reducing the expected number of disk I/O operations required for convergence.
+The effectiveness of hierarchical graphs critically depends on two key design choices: sampling ratio and sampling strategy. The sampling ratio determines the trade-off between memory overhead and search path reduction—insufficient sampling fails to provide adequate coverage for effective entry point selection, while excessive sampling introduces substantial memory overhead and prolongs in-memory search phases. Different sampling strategies exist, including
+random sampling
+(
+Wang et al., 2024
+)
+, which provides uniform coverage, and
+clustering-based sampling
+(
+Ni et al., 2023
+)
+, which selects cluster centroids for better geometric representation. We employ standard random sampling in our experimental implementation.
+4.2.
+Disk Layout Optimization
+This section discusses optimization methods for different physical storage structures under the same logical graph topology. Varying storage structures can significantly impact the I/O access process. We will primarily discuss the following two storage structures:
+Origin page layout.
+(a)
+Origin Page Layout
+Origin page layout.
+Page shuffle.
+(b)
+Page Shuffle
+Page shuffle.
+Figure 6.
+Page shuffle groups neighboring vertices onto the same page to improve locality.
+4.2.1.
+Page Shuffle (PS)
+The fundamental I/O efficiency challenge identified in §
+3
+stems from poor data locality
+(
+Liang et al., 2019
+)
+—traditional DiskANN’s vertex-ID-based sequential storage scatters graph neighbors across different disk pages (cf. Figure
+6a
+), resulting in extremely low overlap ratios (
+e.g.
+, 6.25% on SIFT1B dataset
+(
+Wang et al., 2024
+)
+). Page shuffle addresses this core limitation by reorganizing physical data placement to maximize overlap ratio during graph traversal.
+Starling
+(
+Wang et al., 2024
+)
+introduces page shuffle to transform scattered neighbor distributions into locality-aware arrangements. As illustrated in Figure
+6b
+, the technique ensures that each disk I/O operation serves multiple navigation steps by grouping graph neighbors within the same pages. This dramatically improves the vertex overlapping ratio (Eq.
+1
+).
+4.2.2.
+All-in-Storage Layout (AiS)
+AiSAQ.
+Figure 7.
+AiSAQ layout. Each record stores the node vector and neighbor IDs, plus PQ codes of neighbors.
+AiSAQ.
+Alternatively, an all-in-storage layout stores both full-precision vectors and PQ codes on SSD, thereby reducing the memory footprint. All-in-Storage ANN with Product Quantization (AiSAQ)
+(
+Tatsuno et al., 2025
+)
+exemplifies this design by moving full-precision vectors and PQ codes from memory to storage. As shown in Figure
+7
+, AiSAQ co-locates vector data, neighbor IDs, and the PQ codes of neighboring vertices within the same storage units.
+This design reduces memory requirements from gigabytes to merely megabytes for billion-scale datasets while maintaining competitive search performance. The approach offers significant advantages for memory-constrained environments and enables rapid switching between multiple large-scale indexes—a crucial capability for applications like retrieval-augmented generation (RAG) that require dynamic switching between multiple indices
+(
+Jin et al., 2024
+)
+.
+However, we do not include AiSAQ in our experimental evaluation, as it targets memory-constrained scenarios with fundamentally different design trade-offs. Comparing AiSAQ against methods that utilize more substantial memory budgets (as in our evaluation setup) would be unfair, since AiSAQ’s primary optimization goal—minimizing memory footprint—conflicts with our focus on I/O efficiency under realistic memory budgets.
+4.3.
+Search Algorithm Optimization
+Beyond optimizing data layout, search algorithm optimization focuses on improving the execution efficiency of graph traversal itself. This dimension addresses two critical algorithmic bottlenecks: (1)
+vertex utilization inefficiency
+when accessing disk pages, and (2)
+bandwidth underutilization
+caused by sequential I/O–compute execution. These strategies complement layout improvements by maximizing the effectiveness of each disk access operation.
+Dynamic search width.
+Figure 8.
+Dynamic search width. The beam width increases progressively across the approach and converge phases.
+Dynamic search width.
+4.3.1.
+Dynamic Width (DW)
+The best-first search or beam search process can be naturally divided into two distinct phases: the
+approach phase
+and the
+converge phase
+. As illustrated in Figure
+8
+, during the ➊
+approach phase
+, the search rapidly navigates toward the vicinity of the target query vector. In the ➋
+converge phase
+, the search gradually converges to the target query vector. This two-phase phenomenon has been discussed extensively in multiple studies
+(
+Guo and Lu, 2025a
+;
+Zhang et al., 2023
+;
+Yin et al., 2025
+)
+. PipeANN
+(
+Guo and Lu, 2025a
+)
+leverages the progressive convergence characteristics of beam search by adopting a smaller search width during the
+approach phase
+to avoid unnecessary I/O operations, since larger search widths do not improve recall effectiveness in this phase. Subsequently, the search width is gradually increased during the
+converge phase
+to accelerate the convergence process and improve search efficiency.
+To make this intuition precise, we define the
+I/O utilization
+as
+(3)
+U
+io
+≜
+N
+eff
+N
+read
+=
+N
+eff
+N
+eff
++
+N
+rbu
+,
+U_{\mathrm{io}}\triangleq\frac{N_{\mathrm{eff}}}{N_{\mathrm{read}}}=\frac{N_{\mathrm{eff}}}{N_{\mathrm{eff}}+N_{\mathrm{rbu}}},
+where
+N
+read
+N_{\mathrm{read}}
+is the number of nodes retrieved from SSD,
+N
+eff
+N_{\mathrm{eff}}
+is the number of retrieved nodes that are actually explored (expanded) by the search, and
+N
+rbu
+N_{\mathrm{rbu}}
+denotes “read-but-unexplored” nodes. Increasing beam width
+ω
+\omega
+tends to inflate
+N
+rbu
+N_{\mathrm{rbu}}
+(especially in the approach phase where extra reads rarely improve recall), thus lowering
+U
+io
+U_{\mathrm{io}}
+and wasting I/O. Dynamic width mitigates this by keeping
+ω
+\omega
+small early to suppress wasted reads, and gradually increasing
+W
+W
+later when more retrieved candidates are likely to be explored, improving both I/O utilization and convergence.
+Table 2.
+Coverage of representative systems across the three optimization dimensions.
+Algorithms
+Memory Layout Optimization
+Disk Layout Optimization
+Search Algorithm Optimization
+PQ
+Cache
+MemGraph
+PageShuffle
+All-in-Storage
+DynamicWidth
+Pipeline
+PageSearch
+DiskANN
+(
+Subramanya et al., 2019
+)
+✓
+✓
+✗
+✗
+✗
+✗
+✗
+✗
+Starling
+(
+Wang et al., 2024
+)
+/DiskANN++
+(
+Ni et al., 2023
+)
+✓
+✗
+✓
+✓
+✗
+✗
+✗
+✓
+AiSAQ
+(
+Tatsuno et al., 2025
+)
+/LM-DiskANN
+(
+Pan et al., 2023
+)
+✓
+✗
+✗
+✗
+✓
+✗
+✗
+✗
+PipeANN
+(
+Guo and Lu, 2025a
+)
+✓
+✗
+✓
+✗
+✗
+✓
+✓
+✗
+GRIP
+(
+Zhang and He, 2019
+)
+/Zoom
+(
+Zhang and He, 2018
+)
+✓
+✗
+✓
+✗
+✗
+✗
+✗
+✗
+SPANN
+(
+Chen et al., 2021
+)
+/BBANN
+(
+Zilliz, 2024
+)
+✗
+✗
+✓
+✓
+✗
+✗
+✗
+✗
+4.3.2.
+Pipeline Search (Pipeline)
+Traditional disk-based graph search suffers from severe bandwidth underutilization due to sequential execution patterns. As illustrated in Figure
+9a
+, beam search’s alternating I/O and computation phases leave storage devices idle during processing, resulting in actual bandwidth utilization far below hardware capabilities.
+(a)
+Overlap I/O and Compute
+(b)
+Pipeline I/O
+Figure 9.
+Pipelined processing: (a) overlap compute and I/O to improve utilization; (b) continuous I/O pipelining to maximize bandwidth efficiency.
+Pipeline Processing.
+Pipeline search addresses this limitation through two progressive optimizations. First, asynchronous I/O-compute overlap
+(
+Wu, 2024
+)
+enables simultaneous execution of distance calculations and disk reads, improving resource utilization. Second, continuous I/O pipelining
+(
+Guo and Lu, 2025a
+)
+eliminates batch processing delays by immediately issuing new I/O requests upon completion of individual operations, as demonstrated in Figure
+9b
+. This approach maintains near-continuous disk activity, achieving high bandwidth utilization and significantly reducing query latency.
+4.3.3.
+Page Search (PSe)
+While pipeline search optimizes bandwidth utilization, page search addresses vertex utilization inefficiency within loaded disk pages. Given that distance computation overhead is orders of magnitude lower than disk I/O latency, page search exploits this asymmetry by computing distances to all vertices within each accessed page, not just the target neighbors.
+This approach transforms the fundamental trade-off in disk-based search: instead of minimizing distance calculations, page search maximizes the utility of expensive disk accesses. When retrieving a neighbor during graph traversal, the algorithm evaluates all colocated vertices within the same page, potentially discovering closer candidates without additional I/O operations. This strategy effectively increases the number of search nodes without proportional I/O overhead, improving search quality while maintaining I/O efficiency. The key insight is that leveraging the full content of each disk page can enhance search effectiveness at minimal computational cost.
+4.4.
+Algorithmic Landscape Analysis
+Grounded in our three-dimensional taxonomy, we position representative systems against the eight techniques summarized in Table
+2
+. This mapping clarifies each system’s design center and expected I/O behaviors within the design space. In short, recent progress has moved from single-axis tweaks to multi-dimensional, synergy-driven designs that directly address the four I/O bottlenecks identified earlier.
+5.
+Experimental Testbed
+This section describes our experimental testbed and evaluation methodology, including hardware/software settings, datasets, metrics, and implementation details.
+5.1.
+Experimental Settings
+Hardware.
+We run experiments on a server with an Intel Xeon w7-3455 (24 cores), 128 GB DDR4 memory, and a 4 TB NVMe SSD, on Ubuntu 22.04. Using
+fio
+(
+Axboe, 2025
+)
+, we measure 4KB random read IOPS of
+819 K
+and random read bandwidth of
+3,200 MB/s
+, representative of high-performance SSDs. We also measure 16KB random read IOPS of
+318 K
+and random read bandwidth of
+4,962 MB/s
+.
+Datasets.
+We evaluate on four widely adopted public datasets, SIFT
+(
+IRISA, 2025
+)
+, DEEP
+(
+Babenko and Lempitsky, 2016
+)
+, SPACEV
+(
+Microsoft, 2024
+)
+, and GIST
+(
+IRISA, 2025
+)
+, covering natural clustering, deep embeddings, and production-scale data. Dataset statistics and index build parameters are summarized in Table
+3
+.
+Performance indicators.
+We report search efficiency (queries per second, QPS; mean per-query latency), accuracy (Recall@10), space footprint (disk and memory), and I/O metrics (I/O operations per query, I/O operations per second, IOPS; bandwidth in MB/s). Unless otherwise stated, comparisons are made at matched Recall@10.
+We do not separately report Eq.
+3
+, as it is strongly correlated with the number of I/O operations per query.
+Table 3.
+Datasets and parameters used in the evaluation.
+B
+B
+and
+M
+M
+are memory budgets (GB).
+Dataset Statistics
+Index-Build Param.
+Dataset
+Dim
+Type
+#Vec
+#Q
+R
+L
+𝜶
+\bm{\alpha}
+B
+M
+SIFT
+(
+IRISA, 2025
+)
+128
+uint8
+100M
+10K
+64
+125
+1.2
+4.0
+50
+DEEP
+(
+Babenko and Lempitsky, 2016
+)
+96
+float
+100M
+10K
+64
+125
+1.2
+4.0
+50
+SPACEV
+(
+Microsoft, 2024
+)
+100
+int8
+100M
+29K
+64
+125
+1.2
+3.0
+40
+GIST
+(
+IRISA, 2025
+)
+960
+float
+1M
+10K
+64
+125
+1.2
+0.2
+3
+Implementation and parameters.
+We build on DiskANN
+(
+Simhadri et al., 2025
+)
+and integrate representative optimizations from Starling
+(
+Tech, 2025
+)
+and PipeANN
+(
+Guo and Lu, 2025b
+)
+. As io_uring is a system-level optimization that all algorithmes can be applied but currently only PipeANN use it. To ensure fairness, we disable io_uring
+(
+Linux Man Pages Project, 2025
+)
+in PipeANN so that all methods use the same asynchronous I/O engine (
+libaio
+).
+Note that all the I/O operations are performed in DIRECT_IO mode,
+i.e.
+, without using the file system page cache.
+We run with 48 workers; device utilization (IOPS and bandwidth) is sampled at 1 s intervals via
+iostat
+. For index construction, we adopt product quantization under a memory budget
+B
+B
+, partition data via overlapping clustering, and build per-shard indexes under budget
+M
+M
+using Vamana parameters: maximum out-degree
+R
+=
+64
+R=64
+, candidate set size
+L
+=
+125
+L=125
+, and pruning with
+α
+=
+1.2
+\alpha=1.2
+; shards are then merged and stored with a 4 KB page size (we use 8 KB or 16 KB pages for GIST due to its larger per-record size). During query processing, we use a beam width
+ω
+=
+8
+\omega=8
+with dynamic-width expansion up to
+ω
+=
+32
+\omega=32
+. For MemGraph, we sample 0.1% vertices to construct an in-memory navigation graph (
+R
+=
+48
+R=48
+,
+L
+=
+128
+L=128
+) and employ a Single-Source Shortest Path (SSSP)-based cache with 0.1% records. Results are averaged over five independent runs. Dataset-specific budgets and settings are summarized in Table
+3
+.
+Performance comparison of SPANN and DiskANN on four datasets.
+Figure 10.
+Performance comparison of SPANN and DiskANN on four datasets.
+Performance comparison of SPANN and DiskANN on four datasets.
+Figure 11.
+Recall–QPS trade-off: seven optimizations across four datasets.
+Scope of evaluation.
+We do not include billion-scale datasets. The reason is that
+PageShuffle
+requires sizeable adjacency information and the page-reordering structure to reside in memory during offline shuffling; its peak memory usage grows near-linearly with data size. On our 128 GB server, the largest graph we can reliably build is about 100M scale (cf. Table
+6
+). Empirically, at the 100M data scale, our runs saturate SSD random-read IOPS and bandwidth (cf. Table
+5
+and Table
+7
+), placing the system squarely in the I/O-bound regime and enabling stable differentiation among methods. Importantly, the 100M scale fully exercises the dominant I/O bottlenecks of disk-based ANN and reliably differentiates methods in terms of throughput, latency, and read amplification, thereby sufficing to support the efficiency comparisons and conclusions of this paper. A systematic billion-scale evaluation is deferred to future work on higher-memory platforms together with engineering improvements (
+e.g.
+, out-of-memory page reordering).
+5.2.
+Graph-based vs. Inverted Indices
+Although this paper primarily focuses on evaluating graph-based indexing techniques, we first investigate whether graph indices consistently outperform inverted indices. We evaluated SPANN
+(
+Chen et al., 2021
+)
+following SPFresh
+(
+Xu et al., 2023
+)
+parameter settings; note that we enable the replica feature and set the replication factor to 8. As shown in Figure
+10
+, for low-dimensional data, SPANN’s performance degrades much more rapidly than DiskANN’s as the recall target increases. This is because achieving higher recall requires SPANN to read coarse-grained posting lists, leading to more I/O operations and consequently faster performance degradation. Furthermore, on high-dimensional datasets, SPANN exhibits poor performance due to the curse of dimensionality, which significantly increases the difficulty of effective clustering. Consequently, SPANN outperforms DiskANN only on low-dimensional datasets under low recall requirements. Therefore, we decided to exclude SPANN from our subsequent detailed evaluation.
+Beyond the search performance, we also compare the overhead of index construction for both index methods. As shown in Table
+4
+, index construction for both SPANN and DiskANN is very time-consuming, but SPANN’s index size is 1.5× to 3.4× larger than DiskANN’s. Because SPANN’s posting lists contain substantial redundant vector information across different lists, resulting in significant storage space amplification. During search, SPANN exhibits higher SSD bandwidth but lower IOPS, as its basic I/O granularity is coarser,
+i.e.
+, posting lists are typically larger than page size.
+Finding 1:
+SPANN outperforms DiskANN only on low-dimensional datasets under low recall requirements. On high-dimensional datasets, SPANN exhibits poor performance due to the curse of dimensionality, which significantly increases the difficulty of effective clustering. Moreover, SPANN’s index size is 1.5× to 3.4× larger than DiskANN’s.
+Table 4.
+Index construction overhead and disk I/O performance comparison between SPANN and DiskANN.
+Index construction Overhead
+Search I/O Performance
+Dataset
+Algorithm
+Index Size(GB)
+Build Time(s)
+IOPS
+Bandwidth (MB/s)
+SPANN
+84.4
+8803
+478
+4843
+SIFT
+DiskANN
+39.1
+8814
+791
+3091
+SPANN
+232.1
+12033
+223
+5425
+DEEP
+DiskANN
+67.3
+14960
+819
+3200
+SPANN
+60.1
+8988
+561
+4570
+SPACEV
+DiskANN
+39.3
+6139
+768
+3001
+SPANN
+12.4
+520
+303
+5064
+GIST
+DiskANN
+7.7
+1174
+512
+3997
+Latency versus Recall comparison across seven optimization algorithms and four datasets, showing performance-accuracy relationships.
+Figure 12.
+Latency–Recall@10 trade-off across seven optimizations and four datasets.
+Latency versus Recall comparison across seven optimization algorithms and four datasets, showing performance-accuracy relationships.
+I/O operation count comparison across different optimization algorithms and four datasets, illustrating I/O efficiency improvements.
+Figure 13.
+I/O operations per query across four datasets (Recall@10 matched).
+I/O operation count comparison across different optimization algorithms and four datasets, illustrating I/O efficiency improvements.
+6.
+Individual Optimization Evaluation
+In this section, we evaluate seven representative methods introduced in §
+4
+:
+Baseline (PQ)
+,
+Cache
+,
+MemGraph
+,
+PageShuffle
+,
+DynamicWidth
+,
+Pipeline
+, and
+PageSearch
+.
+6.1.
+Search Performance Analysis
+On top of the
+PQ
+baseline, we ablate each of the six techniques to quantify their standalone effects. For completeness, these techniques span all three dimensions of our taxonomy: memory layout (
+Cache, MemGraph
+), disk layout (
+PageShuffle
+), and search algorithm optimization (
+Pipeline, DynamicWidth, PageSearch
+). We report Pareto fronts across multiple recall targets in Figures
+11
+,
+12
+, and
+13
+, covering throughput (QPS), average latency, and I/O per query, respectively. Intuitively, Figures
+12
+and
+13
+exhibit highly consistent trends, reinforcing the latency breakdown in Figure
+2
+. Because end-to-end latency scales with the number of I/O operations, improving I/O yields proportional latency reductions, validating our I/O-centric optimization focus.
+Finding 2:
+I/O operations dominate query latency across datasets.
+Latency–recall and I/O-per-query curves align closely, indicating that improving I/O translates into proportional latency reductions in disk-based ANN systems.
+Next, we group all those algorithmes into three classes: (1) techniques that deliver obvious performance improvements; (2) techniques with negligible or marginal gains; and (3) techniques that are counterproductive when used alone.
+Effective single-factor optimizations.
+Optimizations targeting memory layout and search-width adaptivity provide the strongest standalone gains across all four datasets. With SIFT,
+MemGraph
+reduces I/O by about
+45%
+and increases QPS by about
+90%
+at relaxed accuracy (
+e.g.
+,
+L
+=
+10
+L=10
+with
+Recall@10
+≈
+0.7
+\text{Recall@10}\approx 0.7
+); even at high accuracy (
+e.g.
+,
+L
+=
+100
+L=100
+with
+Recall@10
+≥
+0.95
+\text{Recall@10}\geq 0.95
+), it still reduces I/O by about
+19%
+and boosts throughput by about
+25%
+. Its overhead is modest: sampling 0.1% vertices for an in-memory navigation graph adds only
+∼
+\sim
+30-50 MB (cf. Table
+6
+). The
+Cache
+policy accelerates early-hop I/O by retaining nodes near entry points in memory.
+Because this SSSP-based caching is sensitive to graph quality, it delivers especially strong gains on SPACEV, as SPACEV’s graph index contains many low-degree nodes that concentrate early-hop paths near the entry points.
+Finally,
+DynamicWidth
+improves I/O utilization by adapting the search width between the approach and converge phases: at relaxed recall requirements, it reduces I/O operations by about
+25%
+and raises QPS by about
+50%
+. This adaptivity can, however, slightly reduce accuracy compared with a fixed width
+ω
+\omega
+configuration;
+e.g.
+, on GIST with
+L
+=
+10
+L=10
+, recall decreases from
+66%
+to
+50%
+.
+On high-dimensional datasets with high recall requirements,
+DynamicWidth
+exhibits severe performance degradation (cf. Fig.
+14
+). This occurs because the number of search iterations increases significantly, causing the search width to grow progressively larger and consequently triggering substantially more I/O operations. Therefore, in such scenarios, we do not recommend using
+DynamicWidth
+in isolation; instead, it should be combined with other techniques that reduce hop counts.
+Finding 3:
+The strongest single-factor gains come from memory layout and search width adaptivity.
+MemGraph
+and
+Cache
+reduce I/O by providing better entry points that shorten disk traversal paths, while
+DynamicWidth
+reduces I/O by eliminating wasteful exploration in early search phases. These optimizations target the root causes of I/O inefficiency: poor starting positions and over-expansion during approach phases.
+Recall--QPS trade-off across seven optimizations and four datasets (Recall@10 matched).
+Figure 14.
+Zoom view for Recall@10
+≥
+\geq
+0.90 in Figure
+11
+.
+Recall–QPS trade-off across seven optimizations and four datasets (Recall@10 matched).
+Optimizations with limited standalone impact.
+PageShuffle
+increases inter page neighbor locality, yet average I/O drops by only
+∼
+\sim
+9%
+on
+SIFT
+. In beam search, most I/O is incurred by pages along the multi-hop expansion path; improving one-hop neighbor locality seldom alters that path and therefore does little to reduce page I/O operations.
+PageSearch
+leaves I/O counts essentially unchanged in our setup but increases in-page computation by computing all records on each fetched page;
+For uint8 datasets such as
+SIFT
+and
+SPACEV
+, where each page contains more than 10 vector records,
+PageSearch
+introduces substantial per-page computational overhead, which sharply degrades SSD performance (cf. Table
+5
+). The extra computation prolongs SSD idle time and reduces IOPS (cf. Fig.
+9a
+).
+Prior work (
+e.g.
+, Starling) reports strong gains when
+PageShuffle
+and
+PageSearch
+are combined; we evaluate this claim in the combination study below.
+Finding 4:
+PageShuffle
+and
+PageSearch
+underperform in isolation.
+Locality gains and per-page computing do not translate into fewer I/Os;
+PageSearch
+may even introduce performance degradation on
+SIFT
+and
+SPACEV
+. Their value may emerge when used together.
+Counterintuitive degradations from advanced techniques.
+As shown in Table
+5
+,
+Pipeline
+fails to improve disk I/O because baseline algorithms already saturate disk performance under high concurrency. Instead,
+Pipeline
+widens the exploration frontier by issuing I/O requests before the best candidate is confirmed, leading to speculative reads. This increases the total number of I/O operations (cf. Figure
+13
+), which paradoxically degrades end-to-end performance rather than improving it.
+Finding 5:
+Pipeline
+optimization can be counterproductive.
+Pipeline
+widens the exploration frontier by speculative reading, which introduces more IO operations and reduces the overall performance.
+Table 5.
+Disk Metrics Comparison.
+SIFT
+DEEP
+SPACEV
+GIST
+Method
+IOPS
+BW
+IOPS
+BW
+IOPS
+BW
+IOPS
+BW
+(K)
+(MB/s)
+(K)
+(MB/s)
+(K)
+(MB/s)
+(K)
+(MB/s)
+Baseline
+791
+3091
+819
+3200
+768
+3001
+313
+4889
+Cache
+808
+3156
+813
+3177
+815
+3182
+322
+5029
+MemGraph
+818
+3194
+814
+3181
+813
+3177
+318
+4973
+PageShuffle
+803
+3136
+803
+3136
+741
+2895
+309
+4832
+Pipeline
+806
+3197
+808
+3158
+776
+3030
+323
+5050
+DynamicWidth
+796
+3109
+783
+3060
+765
+2987
+315
+4930
+PageSearch
+690
+2698
+796
+3111
+470
+1834
+315
+4917
+Table 6.
+Index Construction Overhead. Columns:
+BT
+= total build time (seconds),
+MaxM
+= peak memory consumption during construction (GB),
+Disk
+= total on-disk index size (GB),
+Mem
+= total in-memory auxiliary structure size (GB). Color coding:
+-
+indicates significant overhead;
+-
+indicates modest overhead.
+SIFT
+DEEP
+SPACEV
+GIST
+Method
+BT
+MaxM
+Disk
+Mem
+BT
+MaxM
+Disk
+Mem
+BT
+MaxM
+Disk
+Mem
+BT
+MaxM
+Disk
+Mem
+Baseline
+8814
+31.9
+39.06
+3.81
+14960
+41.5
+65.11
+3.82
+9393
+36.4
+39.31
+3.81
+1135
+14.25
+5.1
+0.2
+Baseline + MemGraph
+8817
+31.9
+39.06
+3.84
+14981
+41.5
+65.11
+3.87
+9398
+36.4
+39.31
+3.84
+1135
+14.25
+5.1
+0.204
+Baseline + MemGraph + PageShuffle
+11095
+87.7
+39.06
+4.61
+17303
+90.8
+65.11
+4.70
+11760
+109.66
+39.31
+4.61
+1158
+14.25
+5.1
+0.209
+6.2.
+Graph Index Construction Overhead
+As shown in Table
+6
+, we evaluate the index construction overhead, including build time, peak memory consumption during construction, and index structure size (covering both on-disk index storage and in-memory auxiliary structures). The
+Baseline
+configuration represents DiskANN’s original disk structure construction. Among the evaluated techniques,
+MemGraph
+and
+PageShuffle
+require additional offline preprocessing, while the other methods are query-time optimizations that incur no extra construction overhead.
+MemGraph
+constructs a small in-memory navigation graph by sampling a subset of vertices; its total overhead is modest. However,
+PageShuffle
+imposes substantial costs. First, the shuffling phase is time-consuming because it involves multiple iterations to solve an NP-hard optimization problem. Second, its memory footprint is large: the algorithm must load both the full graph and its reverse graph into memory, significantly increasing peak memory requirements—this constraint explains why our evaluation is limited to datasets up to 100 million vectors. Additionally, since records are reordered, the system must maintain an in-memory mapping structure between record IDs and page IDs, which further enlarging the memory index footprint.
+Finding 6:
+PageShuffle
+is both time-intensive and memory-intensive.
+If practitioners adopt
+PageShuffle
+to mitigate DiskANN’s read amplification by reorganizing page layouts, they must allocate additional build time and carefully evaluate memory capacity constraints, particularly for large-scale deployments.
+6.3.
+Memory Budget Analysis
+As we know, increasing memory budgets yields substantial performance improvements: larger
+MemGraph
+sampling graphs provide better performance gains, and allocating more memory to
+PQ
+enables higher-dimensional quantized vectors, thereby improving search accuracy. However, when memory headroom exists, the question of how to optimally allocate budgets between
+PQ
+and
+MemGraph
+warrants investigation.
+Quantized coordinates require storing compressed representations for every vector in the dataset, achieving compression ratios of tens-to-one compared to the original data, yet the resulting memory footprint remains substantial. In contrast,
+MemGraph
+samples a small fraction of the original graph and stores only topological information (no coordinate data), resulting in memory overhead that is typically much smaller than
+PQ
+compressed coordinates.
+Figure
+15
+compares performance under different
+PQ
+coordinate and
+MemGraph
+memory budgets on the
+SIFT
+dataset. Two key observations emerge. First, under identical search conditions, increasing
+PQ
+coordinate dimensions improves recall accuracy but has minimal impact on throughput. Second, increasing
+MemGraph
+sampling ratios (the figure shows ratios of 1/10,000, 1/1,000, and 1/100) substantially improves throughput but has little effect on recall. At high sampling ratios, further increasing the sampling frequency yields diminishing performance returns.
+Figure 15.
+Memory effect on performance.
+Finding 7:
+When memory headroom exists, prioritize allocating a modest budget to
+MemGraph
+sampling, then incrementally increase
+PQ
+coordinate memory to achieve optimal performance.
+Recall versus QPS comparison across five optimization combinations (C1--C5) and four datasets, showing accuracy--throughput trade-offs.
+Figure 16.
+Recall–QPS trade-off: five combinations (C1–C5) across four datasets.
+Recall versus QPS comparison across five optimization combinations (C1–C5) and four datasets, showing accuracy–throughput trade-offs.
+Latency vs. Recall across five optimization combinations (C1--C5) and four datasets, demonstrating performance--accuracy relationships.
+Figure 17.
+Latency–Recall@10 trade-off: five combinations (C1–C5) across four datasets.
+Latency vs. Recall across five optimization combinations (C1–C5) and four datasets, demonstrating performance–accuracy relationships.
+Figure 18.
+Zoom view for Recall@10
+≥
+\geq
+0.90 in Figure
+16
+.
+Zoom view for Recall@10 $\ge$ 0.90 in Figure~\ref{fig:combination_recall_qps_comparison}.
+7.
+Combination Effect Evaluation
+This section evaluates representative multi-factor combinations across memory layout, disk layout, and search scheduling, reports their cumulative effects and interactions, and compares the best combination against state-of-the-art systems.
+7.1.
+Combination Evaluation
+7.1.1.
+Combination Design
+To keep the study tractable and, more importantly, interpretable, we select a small set of combinations guided by three principles: (i) complementarity—prioritizing pairs whose goals are orthogonal and therefore likely to yield synergy, (ii) minimal stepwise deltas—adding at most one new factor at a time so that marginal effects remain attributable.
+Concretely, we exclude two techniques from the combination space:
+AiS
+, which incurs substantial on-disk expansion and read amplification; and
+SSSP-based Caching
+, which is less flexible in our setting due to static entry-point dependency and is rarely adopted in recent systems compared with
+MemGraph
+(cf. Table
+2
+). As references, we keep three single-factor baselines from §
+5
+:
+Baseline
+(PQ),
+MemGraph
+, and
+DynamicWidth
+.
+Based on these criteria, we instantiate five progressive combinations beyond the PQ baseline to reveal cumulative effects and potential conflicts/synergies. Specifically, we consider
+C1
+(PS + PSe), which enables
+PageShuffle
+and
+PageSearch
+on top of
+Baseline
+;
+C2
+(Pipe + DW), which enables
+Pipeline
+and
+DynamicWidth
+on top of
+Baseline
+;
+C3
+(MemG + PS + PSe), which adds
+MemGraph
+to C1;
+C4
+(MemG + Pipe + DW), which adds
+MemGraph
+to C2; and
+C5
+(MemG + PS + PSe + DW), which combines
+MemGraph
+with PS, PSe, and DynamicWidth.
+Pilot sweeps over additional permutations (e.g., PS+DW, PSe+DW, PS+Pipe) did not change conclusions and are omitted for brevity and space constraints.
+Table 7.
+Disk Metrics for five combination algorithms.
+SIFT
+DEEP
+SPACEV
+GIST
+IOPS
+BW
+IOPS
+BW
+IOPS
+BW
+IOPS
+BW
+Method
+(K)
+(MB/s)
+(K)
+(MB/s)
+(K)
+(MB/s)
+(K)
+(MB/s)
+Baseline
+791
+3091
+819
+3200
+768
+3001
+313
+4889
+MemGraph
+818
+3194
+814
+3181
+813
+3177
+318
+4973
+DynamicWidth
+796
+3109
+783
+3063
+765
+2987
+315
+4930
+PS+PSe
+756
+2954
+809
+3160
+705
+2755
+309
+4828
+Pipe+DW
+829
+3238
+827
+3230
+811
+3166
+321
+5020
+MemG+PS+PSe
+751
+2934
+793
+3099
+683
+2668
+312
+4872
+MemG+Pipe+DW
+818
+3202
+816
+3189
+826
+3226
+311
+4951
+MemG+PS+PSe+DW
+704
+2748
+745
+2910
+643
+2512
+314
+4909
+7.1.2.
+Combination Optimization Performance Analysis
+By examining Figures
+16
+–
+17
+and Table
+7
+, we obtain three main observations:
+PageShuffle + PageSearch exhibit strong complementarity.
+PS
+increases the likelihood that useful candidates are colocated within fetched pages;
+PSe
+then fully exploits each page by computing all in-page records. As shown in Figures
+16
+and
+17
+, under the same
+L
+L
+constraint,
+C1
+attains higher recall (
+e.g.
+, about a 10% gain on
+SIFT
+); moreover, even at high-accuracy settings (
+e.g.
+,
+L
+=
+100
+L=100
+with
+Recall
+≈
+98
+%
+\text{Recall}\approx 98\%
+),
+C1
+still delivers roughly a
+27
+% QPS improvement. Adding
+MemGraph
+(
+a.k.a
+,
+C3
+) further reduces the number of required hops by improving entry-point quality, compounding the benefit.
+Finding 8:
+PS + PSe deliver robust synergy: PS raises locality while PSe raises per-page utility.
+Their goals are complementary, jointly mitigating locality waste and underutilized pages. With
+MemGraph
+(C3), both throughput and latency improve further (vs. PQ baseline at matched Recall@10).
+Pipeline and DynamicWidth are complementary but not coequal.
+DynamicWidth
+substantially mitigates the useless page reads induced by speculative I/O in pipeline search, making it a natural complement to Pipeline. In the single
+-
+factor results, Pipeline alone underperforms the
+PQ
+baseline (see Figure
+11
+); in the combination study, however,
+C2
+improves over the baseline by roughly
+38%
+at matched accuracy (Figure
+16
+). Nevertheless,
+C2
+still trails the DynamicWidth
+-
+only configuration, which is consistent with Finding 5: under common high
+-
+concurrency conditions,
+Pipeline
+is often counterproductive and should not be enabled.
+For high-dimensional datasets, practitioners should tune the growth rate of
+DynamicWidth
+to mitigate potential adverse effects.
+Finding 9:
+Pipeline and DynamicWidth are complementary, but DynamicWidth dominates.
+C2 (Pipe + DW) improves over the PQ baseline yet remains below DynamicWidth-only. Due to speculative reads and contention, Pipeline is unsuitable under concurrency; enable it only for single-thread, device-exclusive cases.
+Full combination (C5) and definition of OctopusANN.
+Integrating
+MemGraph
+with
+PageShuffle
+,
+PageSearch
+, and
+DynamicWidth
+achieves the best overall results among the evaluated combinations (throughput, latency, and I/O performance) under our settings, while keeping resource overhead modest (see Figures
+16
+–
+17
+and Table
+7
+). The gains arise from complementary effects—higher page-level utilization (PS + PSe) and shorter convergence paths (
+MemGraph
++
+DynamicWidth
+)—that together amplify I/O effectiveness. We refer to this full combination (C5) as
+OctopusANN
+. On
+SPACEV
+, C5 attains up to a
+133%
+improvement (Figure
+18
+). The additional cost is minor: small memory and disk overheads, plus extra offline building time for page shuffle during index construction.
+Finding 10:
+The multi-positive combination PQ + MemGraph + PS + PSe + DynamicWidth (C5) delivers the strongest overall results with modest cost—small memory/disk overheads and extra offline page shuffle time—while the online benefits dominate via better page utilization and faster convergence (vs. PQ baseline at matched Recall@10).
+7.2.
+State-of-the-Art Comparison
+We compare our best combination (OctopusANN, C5) against state-of-the-art disk-based ANN systems at
+Recall@10=90%
+and
+Recall@10=95%
+. The competitors include
+DiskANN
+(
+Subramanya et al., 2019
+)
+,
+Starling
+(
+Wang et al., 2024
+)
+, and
+PipeANN
+(
+Guo and Lu, 2025a
+)
+. At
+Recall@10=90%
+, OctopusANN delivers
+4.1–37.9%
+higher QPS than
+Starling
+, and
+87.5–149.5%
+over
+DiskANN
+(Figure
+19
+). At the more stringent
+Recall@10=95%
+, the throughput advantage over
+Starling
+narrows to
+1.6–14.6%
+(Figure
+20
+), indicating diminishing gains for
+DynamicWidth
+at higher accuracy.
+Figure 19.
+QPS comparison of state-of-the-art algorithms at 90% recall across 4 datasets; OctopusANN vs. Starling (+16.8–32.3%) and vs. DiskANN (+34.4–86.6%).
+QPS comparison of state-of-the-art algorithms at 90\% recall across four datasets; OctopusANN shows higher throughput.
+Figure 20.
+QPS comparison of state-of-the-art algorithms at 95% recall across four datasets; OctopusANN shows higher throughput.
+QPS comparison of state-of-the-art algorithms at 95\% recall across four datasets; OctopusANN shows higher throughput.
+Figure
+21
+shows the QPS comparison of four algorithms on the top-100k dataset. The relative performance trends among algorithms are similar to those observed for top-10 queries. However, for high-recall requirements (
+e.g.
+, Recall@100 > 90%), OctopusANN shows less pronounced improvements. This is because the effectiveness of
+DynamicWidth
+diminishes as the number of search iterations increases, and top-100 queries typically require substantially more iterations than top-10 queries.
+OctopusANN breakdown analysis.
+To clarify the cumulative effects of our systematic optimizations, Figure
+22
+presents a breakdown of the
+OctopusANN
+strategy and quantifies each technique’s incremental contribution to overall performance. The leftmost bar denotes the
+baseline
+; subsequent bars add optimizations cumulatively from left to right.
+The breakdown analysis reveals critical insights into our systematic optimization approach. The QPS improvements (left) show that
+MemGraph
+provides the foundation with
+54.2%
+improvement over
+baseline
+, followed by
+PageShuffle&PageSearch
+(
+28.9%
+), and
+DynamicWidth
+(
+12.5%
+). The I/O performance analysis (right) demonstrates dramatic reductions in read pages per query:
+MemGraph
+reduces pages by
+32.5%
+,
+PageShuffle&PageSearch
+by
+28.3%
+, and
+DynamicWidth
+by
+25.2%
+. This dual perspective validates that performance gains stem from I/O optimization.
+Finding 11:
+Systematic multi-dimensional optimization is most effective at moderate accuracy
+: at 90% recall, OctopusANN outperforms
+Starling
+by
+4.1–37.9%
+and
+DiskANN
+by
+87.5–149.5%
+, whereas at 95% recall the gains are limited.
+QPS comparison of top 100 across 4 systems.
+Figure 21.
+QPS comparison of top 100 across 4 systems.
+QPS comparison of top 100 across 4 systems.
+Breakdown of the optimization combination: incremental QPS improvements and reduction in read pages per query.
+Figure 22.
+OctopusANN optimization breakdown analysis on SIFT dataset.
+Breakdown of the optimization combination: incremental QPS improvements and reduction in read pages per query.
+7.3.
+Discussion
+High-Dimensional Data and Page Size Trade-offs.
+For high-dimensional data (
+e.g.
+, approaching or exceeding 1,000 dimensions), the standard 4 KB page size is insufficient to store a single vector record, necessitating larger page sizes. Figure
+23
+compares the QPS of
+Baseline
+and
+PS+PSe
+on the GIST dataset under 8 KB and 16 KB page configurations, revealing three key trade-offs. First, optimization effectiveness varies significantly: with 8 KB pages,
+PS+PSe
+provides no performance improvement because each page accommodates only a single record, rendering intra-page shuffling ineffective; conversely, 16 KB pages enable effective shuffling by holding multiple records per page. Second, index sizes differ substantially—
+7.7 GB
+for 8 KB pages versus
+5.1 GB
+for 16 KB pages—because the smaller page size incurs substantial storage waste from unused space, while 16 KB pages accommodate three records per page, reducing overhead. Third, despite the storage inefficiency, the 8 KB configuration achieves better overall query performance than 16 KB because smaller pages reduce per-I/O latency, even though they increase the total number of I/O operations.
+Finding 12:
+For high-dimensional datasets, layout optimizations become less effective.
+When each page holds fewer vector records,
+PageShuffle+PageSearch
+may not provide significant performance improvements. The I/O amplification problem for high-dimensional data warrants further investigation by the research community.
+Comparison of four algorithms on GIST8K dataset with different page sizes.
+Figure 23.
+Comparison of baseline and PS+PSe on GIST dataset with different page sizes.
+Comparison of four algorithms on GIST8K dataset with different page sizes.
+8.
+Conclusion
+In this paper, we present an I/O-first, three-dimensional taxonomy for disk-based ANN and show on 100M-scale datasets that composing techniques across memory layout, disk layout, and search enhances both QPS and end-to-end latency. To translate the findings into practice, Figure
+24
+provides a concise decision guide. The workflow proceeds as follows:
+(i) when memory is sufficient, prefer mature in-memory indexes (
+e.g.
+,
+HNSW
+,
+Vamana
+);
+(ii) when memory is tight and fast cold-start is required,
+All-in-Storage
+is a convenient choice despite higher on-disk expansion;
+(iii) for low-dimensional datasets under relaxed accuracy targets, inverted-index approaches such as
+SPANN
+can be a pragmatic choice;
+(iv) otherwise, decide by concurrency—under low concurrency,
+PipeANN
+can be competitive; under high concurrency, choose
+OctopusANN
+for high Recall@10 or deploy a lightweight
+MemGraph
+when moderate Recall@10 suffices. This matches our empirical results and clarifies when each method is the best fit.
+Decision flow for choosing ANN systems: check memory sufficiency; if yes, prefer in-memory indexes (HNSW/Vamana). If memory is tight and quick start is needed, choose All-in-Storage. Otherwise, branch by concurrency and recall requirements: under high concurrency, pick OctopusANN for high recall or MemGraph for moderate recall; under low concurrency, PipeANN is competitive.
+Figure 24.
+A practical decision guide for disk-based ANN.
+Decision flow for choosing ANN systems: check memory sufficiency; if yes, prefer in-memory indexes (HNSW/Vamana). If memory is tight and quick start is needed, choose All-in-Storage. Otherwise, branch by concurrency and recall requirements: under high concurrency, pick OctopusANN for high recall or MemGraph for moderate recall; under low concurrency, PipeANN is competitive.
+Acknowledgements.
+This work is supported in part by the National Natural Science Foundation of China under Grant No. U25B2020.
+References
+André
+et al.
+(2017)
+F. André, A. Kermarrec, and N. Le Scouarnec
+Accelerated nearest neighbor search with quick adc
+.
+In
+Proceedings of the 2017 ACM on International Conference on Multimedia Retrieval
+,
+(
+en-US
+).
+External Links:
+Document
+,
+Link
+Cited by:
+§2.1
+.
+Aoyama
+et al.
+(2011)
+K. Aoyama, K. Saito, H. Sawada, and N. Ueda
+Fast approximate similarity search based on degree-reduced neighborhood graphs
+.
+In
+Proceedings of the 17th ACM SIGKDD international conference on Knowledge discovery and data mining
+,
+(
+en-US
+).
+External Links:
+Document
+,
+Link
+Cited by:
+§1
+.
+Arora
+et al.
+(2018)
+A. Arora, S. Sinha, P. Kumar, and A. Bhattacharya
+HD-index: pushing the scalability-accuracy boundary for approximate knn search in high-dimensional spaces
+.
+Proc. VLDB Endow.
+11
+,
+pp. 906–919
+.
+External Links:
+Link
+Cited by:
+§1
+.
+Aumüller
+et al.
+(2020)
+M. Aumüller, E. Bernhardsson, and A. Faithfull
+ANN-benchmarks: a benchmarking tool for approximate nearest neighbor algorithms
+.
+Information Systems
+,
+pp. 101374
+(
+en-US
+).
+External Links:
+Link
+,
+Document
+Cited by:
+§2.1
+.
+Axboe (2025)
+J. Axboe
+Fio - flexible i/o tester
+.
+Linux kernel community
+.
+Note:
+https://github.com/axboe/fio
+Accessed: 2025-06-24
+Cited by:
+§5.1
+.
+Azizi
+et al.
+(2023)
+I. Azizi, K. Echihabi, and T. Palpanas
+ELPIS: graph-based similarity search for scalable data science
+.
+Proc. VLDB Endow.
+16
+(
+6
+),
+pp. 1548–1559
+.
+External Links:
+ISSN 2150-8097
+,
+Document
+,
+Link
+Cited by:
+§2.1
+.
+Azizi
+et al.
+(2025)
+I. Azizi, K. Echihabi, and T. Palpanas
+Graph-based vector search: an experimental evaluation of the state-of-the-art
+.
+Proceedings of the ACM on Management of Data
+3
+,
+pp. 1 – 31
+.
+External Links:
+Link
+Cited by:
+§1
+,
+§1
+,
+§1
+,
+§2.1
+.
+Babenko and Lempitsky (2016)
+A. Babenko and V. Lempitsky
+Efficient indexing of billion-scale datasets of deep descriptors
+.
+In
+Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition
+,
+pp. 2055–2063
+.
+Cited by:
+§5.1
+,
+Table 3
+.
+Boutet
+et al.
+(2016)
+A. Boutet, A. Kermarrec, N. Mittal, and F. Taiani
+Being prepared in a sparse world: the case of knn graph construction
+.
+In
+2016 IEEE 32nd International Conference on Data Engineering (ICDE)
+,
+pp. 241–252
+.
+External Links:
+Document
+Cited by:
+§2.1
+.
+Cao
+et al.
+(2018)
+Y. Cao, H. Qi, W. Zhou, J. Kato, K. Li, X. Liu, and J. Gui
+Binary hashing for approximate nearest neighbor search on big data: a survey
+.
+IEEE Access
+,
+pp. 2039–2054
+(
+en-US
+).
+External Links:
+Document
+,
+Link
+Cited by:
+§1
+.
+Chen
+et al.
+(2024)
+M. Chen, T. Han, C. Liu, S. Liang, K. Yu, L. Dai, Z. Yuan, Y. Wang, L. Zhang, H. Li, and X. Li
+DRIM-ann: an approximate nearest neighbor search engine based on commercial dram-pims
+.
+ArXiv
+abs/2410.15621
+.
+External Links:
+Link
+Cited by:
+§3.2
+,
+§3.2
+.
+Chen
+et al.
+(2023)
+P. Chen, W. Chang, J. Jiang, H. Yu, I. Dhillon, and C. Hsieh
+FINGER: fast inference for graph-based approximate nearest neighbor search
+.
+In
+Proceedings of the ACM Web Conference 2023
+,
+WWW ’23
+,
+New York, NY, USA
+,
+pp. 3225–3235
+.
+External Links:
+Document
+,
+ISBN 9781450394161
+,
+Link
+Cited by:
+§2.1
+.
+Chen
+et al.
+(2021)
+Q. Chen, B. Zhao, H. Wang, M. Li, C. Liu, Z. Li, M. Yang, and J. Wang
+SPANN: highly-efficient billion-scale approximate nearest neighbor search
+.
+NeurIPS
+(
+en-US
+).
+Cited by:
+§1
+,
+§1
+,
+§2.2
+,
+§3.2
+,
+§4.1.3
+,
+§4.1
+,
+Table 2
+,
+§5.2
+.
+Cost and Salzberg (1993)
+S. Cost and S. Salzberg
+A weighted nearest neighbor algorithm for learning with symbolic features
+.
+Machine Learning
+10
+(
+1
+),
+pp. 57–78
+(
+en-US
+).
+External Links:
+Document
+,
+Link
+Cited by:
+§1
+.
+[15]
+T. Cover and P. Hart
+Nearest neighbor pattern classification
+.
+IEEE Transactions on Information Theory
+,
+pp. 21–27
+(
+en-US
+).
+External Links:
+Document
+,
+Link
+Cited by:
+§1
+.
+Deng
+et al.
+(2024)
+L. Deng, P. Chen, X. Zeng, T. Wang, Y. Zhao, and K. Zheng
+Efficient data-aware distance comparison operations for high-dimensional approximate nearest neighbor search
+.
+Proc. VLDB Endow.
+18
+(
+3
+),
+pp. 812–821
+.
+External Links:
+ISSN 2150-8097
+,
+Document
+,
+Link
+Cited by:
+§2.1
+.
+Dijkstra (1959)
+E. W. Dijkstra
+A note on two problems in connexion with graphs
+.
+Numerische Mathematik
+1
+(
+1
+),
+pp. 269–271
+.
+External Links:
+Document
+Cited by:
+§4.1.2
+.
+Flickner
+et al.
+(2002)
+M. Flickner, H. Sawhney, W. Niblack, J. Ashley, Q. Huang, B. Dom, M. Gorkani, J. Hafner, D. Lee, D. Petkovic, DavidA. Steele, and P. Yanker
+Query by image and video content: the qbic system
+.
+(
+en-US
+).
+Cited by:
+§1
+.
+FORTUNE (1992)
+S. FORTUNE
+VORONOI diagrams and delaunay triangulations
+.
+In
+Lecture Notes Series on Computing,Computing in Euclidean Geometry
+,
+pp. 193–233
+(
+en-US
+).
+External Links:
+Document
+,
+Link
+Cited by:
+§2.1
+.
+Fu
+et al.
+(2022)
+C. Fu, C. Wang, and D. Cai
+High dimensional similarity search with satellite system graph: efficiency, scalability, and unindexed query compatibility
+.
+IEEE Transactions on Pattern Analysis and Machine Intelligence
+44
+(
+8
+),
+pp. 4139–4150
+.
+External Links:
+Document
+Cited by:
+§1
+,
+§2.1
+.
+Fu
+et al.
+(2017)
+C. Fu, C. Xiang, C. Wang, and D. Cai
+Fast approximate nearest neighbor search with the navigating spreading-out graph
+.
+Proc. VLDB Endow.
+12
+,
+pp. 461–474
+.
+External Links:
+Link
+Cited by:
+§1
+,
+§2.1
+.
+Gao and Long (2023)
+J. Gao and C. Long
+High-dimensional approximate nearest neighbor search: with reliable and efficient distance comparison operations
+.
+Proc. ACM Manag. Data
+1
+(
+2
+).
+External Links:
+Document
+,
+Link
+Cited by:
+§2.1
+.
+Gao and Long (2024)
+J. Gao and C. Long
+RaBitQ: quantizing high-dimensional vectors with a theoretical error bound for approximate nearest neighbor search
+.
+Proceedings of the ACM on Management of Data
+2
+,
+pp. 1 – 27
+.
+External Links:
+Link
+Cited by:
+§1
+,
+§3.2
+,
+§4.1
+.
+Ge
+et al.
+(2013)
+T. Ge, K. He, Q. Ke, and J. Sun
+Optimized product quantization
+.
+IEEE transactions on pattern analysis and machine intelligence
+36
+(
+4
+),
+pp. 744–755
+.
+Cited by:
+§4.1.1
+.
+Gersho and Gray (2012)
+A. Gersho and R. M. Gray
+Vector quantization and signal compression
+.
+Vol.
+159
+,
+Springer Science & Business Media
+.
+Cited by:
+§4.1.1
+.
+Gollapudi
+et al.
+(2023)
+S. Gollapudi, N. Karia, V. Sivashankar, R. Krishnaswamy, N. Begwani, S. Raz, Y. Lin, Y. Zhang, N. Mahapatro, P. Srinivasan, A. Singh, and H. V. Simhadri
+Filtered-diskann: graph algorithms for approximate nearest neighbor search with filters
+.
+In
+Proceedings of the ACM Web Conference 2023
+,
+WWW ’23
+,
+New York, NY, USA
+,
+pp. 3406–3416
+.
+External Links:
+ISBN 9781450394161
+,
+Link
+,
+Document
+Cited by:
+§1
+,
+§2.2
+.
+Gong
+et al.
+(2020)
+L. Gong, H. Wang, M. Ogihara, and J. Xu
+IDEC: indexable distance estimating codes for approximate nearest neighbor search
+.
+Proceedings of the VLDB Endowment
+,
+pp. 1483–1497
+(
+en-US
+).
+External Links:
+Document
+,
+Link
+Cited by:
+§1
+.
+Graefe (2011)
+G. Graefe
+Modern b-tree techniques
+.
+Foundations and Trends® in Databases
+3
+(
+4
+),
+pp. 203–402
+.
+External Links:
+Link
+,
+Document
+,
+ISSN 1931-7883
+Cited by:
+§4.1.2
+.
+Guo and Lu (2025a)
+H. Guo and Y. Lu
+Achieving low-latency graph-based vector search via aligning best-first search algorithm with ssd
+.
+In
+Proceedings of the 19th USENIX Symposium on Operating Systems Design and Implementation (OSDI ’25)
+,
+Cited by:
+§1
+,
+§1
+,
+§1
+,
+§1
+,
+§1
+,
+§2.2
+,
+§2.3
+,
+§3.2
+,
+§3.2
+,
+§4.1.3
+,
+§4.3.1
+,
+§4.3.2
+,
+Table 2
+,
+§7.2
+.
+Guo and Lu (2025b)
+H. Guo and Y. Lu
+PipeANN: A Low Latency, Billion-Scale, and Updatable Graph-Based Vector Store on SSD
+.
+Note:
+GitHub repository
+https://github.com/thustorage/PipeANN
+External Links:
+Link
+Cited by:
+§5.1
+.
+Guo
+et al.
+(2022)
+R. Guo, X. Luan, L. Xiang, X. Yan, X. Yi, J. Luo, Q. Cheng, W. Xu, J. Luo, F. Liu, Z. Cao, Y. Qiao, T. Wang, B. Tang, and C. Xie
+Manu: a cloud native vector database management system
+.
+Proc. VLDB Endow.
+15
+(
+12
+),
+pp. 3548–3561
+.
+External Links:
+ISSN 2150-8097
+,
+Document
+,
+Link
+Cited by:
+§1
+.
+Hart
+et al.
+(1968)
+P. E. Hart, N. J. Nilsson, and B. Raphael
+A formal basis for the heuristic determination of minimum cost paths
+.
+IEEE Transactions on Systems Science and Cybernetics
+4
+(
+2
+),
+pp. 100–107
+.
+External Links:
+Document
+Cited by:
+§2.1
+.
+Huang
+et al.
+(2017)
+Q. Huang, J. Feng, Q. Fang, W. Ng, and W. Wang
+Query-aware locality-sensitive hashing scheme for
+l
+p
+l_{p}
+norm
+.
+The VLDB Journal
+26
+(
+5
+),
+pp. 683–708
+(
+en-US
+).
+External Links:
+Document
+,
+Link
+Cited by:
+§1
+.
+Huang
+et al.
+(2015)
+Q. Huang, J. Feng, Y. Zhang, Q. Fang, and W. Ng
+Query-aware locality-sensitive hashing for approximate nearest neighbor search
+.
+Proceedings of the VLDB Endowment
+,
+pp. 1–12
+(
+en-US
+).
+External Links:
+Document
+,
+Link
+Cited by:
+§1
+.
+Huawei Cloud (2024)
+Huawei Cloud
+GaussDB(for openGauss) Vector Database User Guide (for Centralized/Distributed Mode)
+.
+Note:
+https://doc.hcs.huawei.com/en-us/gaussdb/doc/download/pdf/gaussdb-vector-cent.pdf
+Accessed: 2025-05-27
+Cited by:
+§1
+,
+§2.2
+.
+IRISA (2025)
+IRISA
+SIFT: datasets for ann search
+.
+Note:
+http://corpus-texmex.irisa.fr/
+Accessed: 2025-06-25
+Cited by:
+§5.1
+,
+Table 3
+,
+Table 3
+.
+Iwasaki (2016)
+M. Iwasaki
+Pruned bi-directed k-nearest neighbor graph for proximity search
+.
+In
+Lecture Notes in Computer Science,Similarity Search and Applications
+,
+pp. 20–33
+(
+en-US
+).
+External Links:
+Document
+,
+Link
+Cited by:
+§1
+.
+Jaiswal
+et al.
+(2022)
+S. Jaiswal, R. Krishnaswamy, A. Garg, H. V. Simhadri, and S. Agrawal
+OOD-diskann: efficient and scalable graph anns for out-of-distribution queries
+.
+External Links:
+2211.12850
+,
+Link
+Cited by:
+§2.2
+.
+Jang
+et al.
+(2023)
+J. Jang, H. Choi, H. Bae, S. Lee, M. Kwon, and M. Jung
+CXL-anns: software-hardware collaborative memory disaggregation and computation for billion-scale approximate nearest neighbor search
+.
+(
+en-US
+).
+Cited by:
+§1
+,
+§1
+,
+§3.2
+,
+§3.2
+,
+§3.2
+,
+§4.1
+.
+Jang
+et al.
+(2024)
+J. Jang, H. Choi, H. Bae, S. Lee, M. Kwon, and M. Jung
+Bridging software-hardware for cxl memory disaggregation in billion-scale nearest neighbor search
+.
+ACM Transactions on Storage
+20
+(
+2
+),
+pp. 1–30
+.
+External Links:
+ISSN 1553-3093
+,
+Document
+Cited by:
+§1
+,
+§3.2
+,
+§3.2
+,
+§3.2
+,
+§4.1
+.
+Japan (2015)
+Y. Japan
+NGT: nearest neighbor search with neighborhood graph and tree for high-dimensional data
+.
+Note:
+https://github.com/yahoojapan/NGT
+Accessed: 2025-06-18
+Cited by:
+§2.1
+.
+Jégou
+et al.
+(2011)
+H. Jégou, M. Douze, and C. Schmid
+Product quantization for nearest neighbor search
+.
+IEEE Transactions on Pattern Analysis and Machine Intelligence
+,
+pp. 117–128
+(
+en-US
+).
+External Links:
+Document
+,
+Link
+Cited by:
+§1
+,
+§3.2
+,
+§4.1.1
+,
+§4.1.1
+,
+§4.1
+.
+Jiang
+et al.
+(2019)
+Z. Jiang, T. Zhu, H. Li, J. Bi, and M. Song
+Accelerating large-scale molecular similarity search through exploiting high performance computing
+.
+IEEE Conference Proceedings,IEEE Conference Proceedings
+(
+en-US
+).
+Cited by:
+§1
+.
+Jin
+et al.
+(2024)
+C. Jin, Z. Zhang, X. Jiang, F. Liu, X. Liu, X. Liu, and X. Jin
+RAGCache: efficient knowledge caching for retrieval-augmented generation
+.
+External Links:
+2404.12457
+,
+Link
+Cited by:
+§4.2.2
+.
+Kim
+et al.
+(2023)
+J. Kim, Y. Park, J. Do, S. Ji, and J. Kim
+Accelerating large-scale graph-based nearest neighbor search on a computational storage platform
+.
+IEEE Transactions on Computers
+,
+pp. 278–290
+(
+en-US
+).
+External Links:
+Document
+,
+Link
+Cited by:
+§3.2
+,
+§3.2
+.
+Ko
+et al.
+(2025)
+S. Ko, H. Shim, W. Doh, S. Yun, J. So, Y. Kwon, S. Park, S. Roh, M. Yoon, T. Song, and J. H. Ahn
+Cosmos: a cxl-based full in-memory system for approximate nearest neighbor search
+.
+IEEE Computer Architecture Letters
+24
+(
+1
+),
+pp. 173–176
+.
+External Links:
+ISSN 2473-2575
+,
+Document
+,
+Link
+Cited by:
+§3.2
+.
+Kosuge and Oshima (2019)
+A. Kosuge and T. Oshima
+An object-pose estimation acceleration technique for picking robot applications by using graph-reusing k-nn search
+.
+In
+2019 First International Conference on Graph Computing (GC)
+,
+(
+en-US
+).
+External Links:
+Document
+,
+Link
+Cited by:
+§1
+.
+Kruskal (2010)
+J. B. Kruskal
+On the shortest spanning subtree of a graph and the traveling salesman problem
+.
+Proceedings of the American Mathematical Society
+,
+pp. 48–50
+(
+en-US
+).
+External Links:
+Document
+,
+Link
+Cited by:
+§2.1
+.
+Lewis
+et al.
+(2020)
+P. Lewis, E. Perez, A. Piktus, F. Petroni, V. Karpukhin, N. Goyal, H. Küttler, M. Lewis, W. Yih, T. Rocktäschel, S. Riedel, and D. Kiela
+Retrieval-augmented generation for knowledge-intensive nlp tasks
+.
+(
+en-US
+).
+Cited by:
+§1
+.
+Li
+et al.
+(2020a)
+C. Li, M. Zhang, D. G. Andersen, and Y. He
+Improving approximate nearest neighbor search through learned adaptive early termination
+.
+Proceedings of the 2020 ACM SIGMOD International Conference on Management of Data
+.
+External Links:
+Link
+Cited by:
+§2.1
+.
+Li
+et al.
+(2020b)
+C. Li, M. Zhang, D. G. Andersen, and Y. He
+Improving approximate nearest neighbor search through learned adaptive early termination
+.
+In
+Proceedings of the 2020 ACM SIGMOD International Conference on Management of Data
+,
+(
+en-US
+).
+External Links:
+Link
+,
+Document
+Cited by:
+§2.1
+.
+Li
+et al.
+(2016)
+W. Li, Y. Zhang, Y. Sun, W. Wang, M. Li, W. Zhang, and X. Lin
+Approximate nearest neighbor search on high dimensional data — experiments, analyses, and improvement
+.
+IEEE Transactions on Knowledge and Data Engineering
+,
+pp. 1475–1488
+(
+en-US
+).
+External Links:
+Document
+,
+Link
+Cited by:
+§1
+,
+§1
+,
+§2.1
+,
+§2.1
+.
+Liang
+et al.
+(2019)
+S. Liang, Y. Wang, Y. Lu, Z. Yang, H. Li, and X. Li
+Cognitive
+{
+\{
+ssd
+}
+\}
+: a deep learning engine for
+{
+\{
+in-storage
+}
+\}
+data retrieval
+.
+In
+2019 USENIX Annual Technical Conference (USENIX ATC 19)
+,
+pp. 395–410
+.
+Cited by:
+§4.2.1
+.
+Linux Man Pages Project (2025)
+Linux Man Pages Project
+Io_uring(7) — linux manual page
+.
+Linux Programmer’s Manual
+.
+Note:
+https://man7.org/linux/man-pages/man7/io_uring.7.html
+Accessed: 2025-06-24
+Cited by:
+§5.1
+.
+Malkov and Yashunin (2020)
+Y. A. Malkov and D. A. Yashunin
+Efficient and robust approximate nearest neighbor search using hierarchical navigable small world graphs
+.
+IEEE Transactions on Pattern Analysis and Machine Intelligence
+,
+pp. 824–836
+(
+en-US
+).
+External Links:
+Document
+,
+Link
+Cited by:
+§1
+,
+§2.1
+.
+Malkov
+et al.
+(2014)
+Y. Malkov, A. Ponomarenko, A. Logvinov, and V. Krylov
+Approximate nearest neighbor algorithm based on navigable small world graphs
+.
+Inf. Syst.
+45
+,
+pp. 61–68
+.
+External Links:
+Link
+Cited by:
+§2.1
+.
+Mathieson and Moscato (2019)
+L. Mathieson and P. Moscato
+An introduction to proximity graphs
+.
+In
+Business and Consumer Analytics: New Ideas
+,
+P. Moscato and N. J. de Vries (Eds.)
+,
+pp. 213–233
+.
+External Links:
+ISBN 978-3-030-06222-4
+,
+Document
+,
+Link
+Cited by:
+§2.1
+.
+Meng
+et al.
+(2019)
+Y. Meng, X. Dai, Y. Xiao, J. Cheng, W. Liu, B. Liao, J. Guo, and G. Chen
+PMD: an optimal transportation-based user distance for recommender systems
+.
+Cornell University - arXiv,Cornell University - arXiv
+(
+en-US
+).
+Cited by:
+§1
+.
+Microsoft (2018)
+Microsoft
+SPTAG: a library for fast approximate nearest neighbor search
+.
+Note:
+https://github.com/microsoft/SPTAG/
+Accessed: 2025-06-18
+Cited by:
+§2.1
+.
+Microsoft (2024)
+Microsoft
+SPACEV1B: a billion-scale dataset for vector search
+.
+Note:
+https://github.com/microsoft/SPTAG/tree/main/datasets/SPACEV1B
+Part of Microsoft SPTAG project, O-UDA license
+Cited by:
+§5.1
+,
+Table 3
+.
+Microsoft (2025)
+Microsoft
+Enable and use DiskANN extension
+.
+Note:
+https://learn.microsoft.com/en-us/azure/postgresql/flexible-server/how-to-use-pgdiskann
+Accessed: 2025-05-27
+Cited by:
+§1
+,
+§2.2
+.
+Ni
+et al.
+(2023)
+J. Ni, X. Xu, Y. Wang, C. Li, J. Yao, S. Xiao, and X. Zhang
+DiskANN++: efficient page-based search over isomorphic mapped graph index using query-sensitivity entry vertex
+.
+External Links:
+2310.00402
+,
+Link
+Cited by:
+§2.2
+,
+§3.2
+,
+§4.1.3
+,
+§4.1.3
+,
+§4.1
+,
+Table 2
+.
+Niazi
+et al.
+(2017)
+S. Niazi, M. Ismail, S. Haridi, J. Dowling, S. Grohsschmiedt, and M. Ronström
+HopsFS: scaling hierarchical file system metadata using NewSQL databases
+.
+In
+15th USENIX Conference on File and Storage Technologies (FAST 17)
+,
+Santa Clara, CA
+,
+pp. 89–104
+.
+External Links:
+ISBN 978-1-931971-36-2
+,
+Link
+Cited by:
+§4.1.2
+.
+Pan
+et al.
+(2023)
+Y. Pan, J. Sun, and H. Yu
+LM-diskann: low memory footprint in disk-native dynamic graph-based ann indexing
+.
+In
+2023 IEEE International Conference on Big Data (BigData)
+,
+pp. 5987–5996
+.
+External Links:
+Document
+Cited by:
+§2.2
+,
+§3.2
+,
+Table 2
+.
+Pan
+et al.
+(2020)
+Z. Pan, L. Wang, Y. Wang, and Y. Liu
+Product quantization with dual codebooks for approximate nearest neighbor search
+.
+Neurocomputing
+,
+pp. 59–68
+(
+en-US
+).
+External Links:
+Document
+,
+Link
+Cited by:
+§1
+.
+Paredes and Chávez (2005)
+R. Paredes and E. Chávez
+Using the k-nearest neighbor graph for proximity searching in metric spaces
+.
+In
+String Processing and Information Retrieval,Lecture Notes in Computer Science
+,
+pp. 127–138
+(
+en-US
+).
+External Links:
+Document
+,
+Link
+Cited by:
+§2.1
+.
+Peng
+et al.
+(2023)
+Y. Peng, B. Choi, T. N. Chan, J. Yang, and J. Xu
+Efficient approximate nearest neighbor search in multi-dimensional databases
+.
+Proc. ACM Manag. Data
+1
+(
+1
+).
+External Links:
+Document
+,
+Link
+Cited by:
+§2.1
+.
+Ren
+et al.
+(2020)
+J. Ren, M. Zhang, and D. Liu
+HM-ann: efficient billion-point nearest neighbor search on heterogeneous memory.
+.
+NeurIPS
+(
+en-US
+).
+Cited by:
+§3.2
+,
+§3.2
+.
+Riegger (2010)
+PhilippM. Riegger
+Literature survey on nearest neighbor search and search in graphs
+.
+(
+en-US
+).
+Cited by:
+§2.1
+.
+Sarwar
+et al.
+(2001)
+B. Sarwar, G. Karypis, J. Konstan, and J. Riedl
+Item-based collaborative filtering recommendation algorithms
+.
+In
+Proceedings of the 10th international conference on World Wide Web
+,
+(
+en-US
+).
+External Links:
+Document
+,
+Link
+Cited by:
+§1
+.
+Silpa-Anan and Hartley (2008)
+C. Silpa-Anan and R. Hartley
+Optimised kd-trees for fast image descriptor matching
+.
+In
+2008 IEEE Conference on Computer Vision and Pattern Recognition
+,
+(
+en-US
+).
+External Links:
+Document
+,
+Link
+Cited by:
+§1
+.
+Simhadri and Krishnaswamy (2021)
+H. Simhadri and R. Krishnaswamy
+FreshDiskANN: a fast and accurate graph-based ann index for streaming similarity search
+.
+External Links:
+Link
+Cited by:
+§1
+,
+§2.2
+.
+Simhadri
+et al.
+(2024)
+H. V. Simhadri, M. Aumüller, A. Ingber, M. Douze, G. Williams, M. D. Manohar, D. Baranchuk, E. Liberty, F. Liu, B. Landrum,
+et al.
+Results of the big ann: neurips’23 competition
+.
+arXiv preprint arXiv:2409.17424
+.
+Cited by:
+§1
+,
+§2.2
+.
+Simhadri
+et al.
+(2025)
+H. V. Simhadri, R. Krishnaswamy, G. Srinivasa, S. J. Subramanya, A. Antonijevic, D. Pryce, D. Kaczynski, S. Williams, S. Gollapudi, V. Sivashankar, N. Karia, A. Singh, S. Jaiswal, N. Mahapatro, P. Adams, B. Tower, and Y. Patel
+DiskANN: Graph-structured Indices for Scalable, Fast, Fresh and Filtered Approximate Nearest Neighbor Search
+.
+Note:
+Microsoft Open Source Project
+External Links:
+Link
+Cited by:
+§5.1
+.
+Simhadri
+et al.
+(2022)
+H. V. Simhadri, G. Williams, M. Aumüller, M. Douze, A. Babenko, D. Baranchuk, Q. Chen, L. Hosseini, R. Krishnaswamny, G. Srinivasa,
+et al.
+Results of the neurips’21 challenge on billion-scale approximate nearest neighbor search
+.
+In
+NeurIPS 2021 Competitions and Demonstrations Track
+,
+pp. 177–189
+.
+Cited by:
+§1
+,
+§2.2
+.
+Subramanya
+et al.
+(2019)
+S. J. Subramanya, Devvrit, R. Kadekodi, R. Krishaswamy, and H. V. Simhadri
+DiskANN : fast accurate billion-point nearest neighbor search on a single node
+.
+External Links:
+Link
+Cited by:
+§1
+,
+§1
+,
+§1
+,
+§1
+,
+§1
+,
+§2.1
+,
+§2.2
+,
+§3.2
+,
+§3.2
+,
+§4.1
+,
+Table 2
+,
+§7.2
+.
+Sun and Jun (2020)
+G. Sun and S. Jun
+Bandwidth efficient near-storage accelerator for high-dimensional similarity search
+.
+In
+2020 International Conference on Field-Programmable Technology (ICFPT)
+,
+pp. 129–138
+(
+en-US
+).
+External Links:
+Document
+,
+Link
+Cited by:
+§3.2
+,
+§3.2
+.
+Tatsuno
+et al.
+(2025)
+K. Tatsuno, D. Miyashita, T. Ikeda, K. Ishiyama, K. Sumiyoshi, and J. Deguchi
+AiSAQ: all-in-storage anns with product quantization for dram-free information retrieval
+.
+External Links:
+2404.06004
+,
+Link
+Cited by:
+§1
+,
+§2.2
+,
+§3.2
+,
+§4.2.2
+,
+Table 2
+.
+Tech (2025)
+Z. Tech
+Starling: An I/O-Efficient Disk-Resident Graph Index Framework for High-Dimensional Vector Similarity Search on Data Segment
+.
+Note:
+GitHub repository
+https://github.com/zilliztech/starling
+External Links:
+Link
+Cited by:
+§5.1
+.
+Tellez
+et al.
+(2017)
+E. S. Tellez, G. Ruiz, E. Chávez, and M. Graff
+A scalable solution to the nearest neighbor search problem through local-search methods on neighbor graphs
+.
+Pattern Analysis and Applications
+24
+,
+pp. 763 – 777
+.
+External Links:
+Link
+Cited by:
+§2.1
+.
+Tian
+et al.
+(2024)
+B. Tian, H. Liu, Z. Duan, X. Liao, H. Jin, and Y. Zhang
+Scalable billion-point approximate nearest neighbor search using smartssds
+.
+ATC
+(
+en-US
+).
+Cited by:
+§3.2
+,
+§3.2
+.
+Timescale (2025)
+Timescale
+pgvectorscale: a complement to pgvector for high performance, cost efficient vector search on large workloads
+.
+Note:
+https://github.com/timescale/pgvectorscale
+Accessed: 2025-05-27
+Cited by:
+§2.2
+.
+Toussaint (1980)
+G. T. Toussaint
+The relative neighbourhood graph of a finite planar set
+.
+Pattern recognition
+12
+(
+4
+),
+pp. 261–268
+.
+Cited by:
+§2.1
+.
+Tsao
+et al.
+(1972)
+T. Tsao, D. Comeau, and H. Margolin
+A multifactor paging experiment: i. the experiment and conclusions
+.
+In
+Statistical Computer Performance Evaluation
+,
+Cited by:
+§4.1.2
+.
+Wang
+et al.
+(2021a)
+J. Wang, X. Yi, R. Guo, H. Jin, P. Xu, S. Li, X. Wang, X. Guo, C. Li, X. Xu, K. Yu, Y. Yuan, Y. Zou, J. Long, Y. Cai, Z. Li, Z. Zhang, Y. Mo, J. Gu, R. Jiang, Y. Wei, and C. Xie
+Milvus: a purpose-built vector data management system
+.
+Proceedings of the 2021 International Conference on Management of Data
+.
+External Links:
+Link
+Cited by:
+§1
+.
+Wang
+et al.
+(2024)
+M. Wang, W. Xu, X. Yi, S. Wu, Z. Peng, X. Ke, Y. Gao, X. Xu, R. Guo, and C. Xie
+Starling: an i/o-efficient disk-resident graph index framework for high-dimensional vector similarity search on data segment
+.
+Proceedings of the ACM on Management of Data
+,
+pp. 1–27
+(
+en-US
+).
+External Links:
+Document
+,
+Link
+Cited by:
+§1
+,
+§1
+,
+§1
+,
+§1
+,
+§1
+,
+§2.2
+,
+§2.3
+,
+§3.1
+,
+§3.2
+,
+§3.2
+,
+§4.1.2
+,
+§4.1.3
+,
+§4.1.3
+,
+§4.1
+,
+§4.2.1
+,
+Table 2
+,
+§7.2
+.
+Wang
+et al.
+(2021b)
+M. Wang, X. Xu, Q. Yue, and Y. Wang
+A comprehensive survey and experimental comparison of graph-based approximate nearest neighbor search
+.
+Proc. VLDB Endow.
+14
+,
+pp. 1964–1978
+.
+External Links:
+Link
+Cited by:
+§1
+,
+§1
+,
+§1
+,
+§2.1
+,
+§2.1
+.
+Wei
+et al.
+(2020)
+C. Wei, B. Wu, S. Wang, R. Lou, C. Zhan, F. Li, and Y. Cai
+AnalyticDB-v: a hybrid analytical engine towards query fusion for structured and unstructured data
+.
+Proc. VLDB Endow.
+13
+(
+12
+),
+pp. 3152–3165
+.
+External Links:
+ISSN 2150-8097
+,
+Document
+,
+Link
+Cited by:
+§1
+.
+Wei
+et al.
+(2025)
+J. Wei, X. Lee, Z. Liao, T. Palpanas, and B. Peng
+Subspace collision: an efficient and accurate framework for high-dimensional approximate nearest neighbor search
+.
+Proc. ACM Manag. Data
+3
+(
+1
+).
+External Links:
+Document
+,
+Link
+Cited by:
+§2.1
+.
+Wu (2024)
+S. Wu
+An asynchronous i/o-based disk vector retrieval algorithm
+.
+Computer Science and Application
+14
+(
+01
+),
+pp. 68–77
+.
+External Links:
+ISSN 2161-881X
+,
+Document
+Cited by:
+§1
+,
+§1
+,
+§1
+,
+§3.2
+,
+§3.2
+,
+§4.3.2
+.
+Xu
+et al.
+(2023)
+Y. Xu, H. Liang, J. Li, S. Xu, Q. Chen, Q. Zhang, C. Li, Z. Yang, F. Yang, Y. Yang,
+et al.
+Spfresh: incremental in-place update for billion-scale vector search
+.
+In
+Proceedings of the 29th Symposium on Operating Systems Principles
+,
+pp. 545–561
+.
+Cited by:
+§5.2
+.
+Yang
+et al.
+(2024)
+S. Yang, J. Xie, Y. Liu, J. X. Yu, X. Gao, Q. Wang, Y. Peng, and J. Cui
+Revisiting the index construction of proximity graph-based approximate nearest neighbor search
+.
+ArXiv
+abs/2410.01231
+.
+External Links:
+Link
+Cited by:
+§1
+,
+§1
+,
+§1
+,
+§2.1
+,
+§3.2
+.
+Yin
+et al.
+(2025)
+X. Yin, C. Gao, Z. Zhao, and R. Gupta
+PANNS: enhancing graph-based approximate nearest neighbor search through recency-aware construction and parameterized search
+.
+In
+Proceedings of the 30th ACM SIGPLAN Annual Symposium on Principles and Practice of Parallel Programming
+,
+PPoPP ’25
+,
+New York, NY, USA
+,
+pp. 369–381
+.
+External Links:
+ISBN 9798400714436
+,
+Link
+,
+Document
+Cited by:
+§4.3.1
+.
+Zhang and He (2018)
+M. Zhang and Y. He
+Zoom: ssd-based vector search for optimizing accuracy, latency and memory.
+.
+arXiv: Computer Vision and Pattern Recognition,arXiv: Computer Vision and Pattern Recognition
+(
+en-US
+).
+Cited by:
+§2.2
+,
+§3.2
+,
+§4.1.3
+,
+§4.1
+,
+Table 2
+.
+Zhang and He (2019)
+M. Zhang and Y. He
+GRIP: multi-store capacity-optimized high-performance nearest neighbor search for vector search engine
+.
+In
+Proceedings of the 28th ACM International Conference on Information and Knowledge Management
+,
+CIKM ’19
+,
+pp. 1673–1682
+.
+External Links:
+Document
+Cited by:
+§1
+,
+§1
+,
+§2.2
+,
+§3.2
+,
+§4.1.3
+,
+§4.1
+,
+Table 2
+.
+Zhang
+et al.
+(2023)
+Q. Zhang, S. Xu, Q. Chen, G. Sui, J. Xie, Z. Cai, Y. Chen, Y. He, Y. Yang, F. Yang, M. Yang, and L. Zhou
+VBASE: unifying online vector similarity search and relational queries via relaxed monotonicity
+.
+In
+17th USENIX Symposium on Operating Systems Design and Implementation (OSDI 23)
+,
+Boston, MA
+,
+pp. 377–395
+.
+External Links:
+ISBN 978-1-939133-34-2
+,
+Link
+Cited by:
+§4.3.1
+.
+Zilliz (2024)
+BBAnn: block-based approximate nearest neighbor
+Note:
+An algorithm optimized for SSD storage that organizes data aligned with SSD block size
+External Links:
+Link
+Cited by:
+§2.2
+,
+§3.2
+,
+§4.1.3
+,
+§4.1
+,
+Table 2
+.
+Zilliz (2025)
+Zilliz
+On-disk Index – milvus documentation
+.
+Note:
+https://milvus.io/docs/disk_index.md
+Accessed: 2025-05-27
+Cited by:
+§2.2
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

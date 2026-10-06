@@ -1,0 +1,1073 @@
+STEM: Scaling Transformers with Embedding Modules
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Background
+Mixture-of-Experts (MoE).
+Hash-layer Mixture-of-Experts.
+Scaling the number of experts.
+Per Layer Embedding.
+3 Method
+3.1 STEM
+3.2 Insights
+Key–value memory view of FFNs.
+STEM design choice.
+3.2.1 Better Information Storage Capacity
+3.2.2 Knowledge Specificity & Interpretability
+3.2.3 Efficiency
+Training efficiency.
+Inference efficiency.
+3.2.4 VRAM and Communication Savings
+Prefetching cost.
+3.2.5 Context-length Adaptive Parameter Usage
+3.3 Knowledge Editing with STEM
+3.4 System Implementation
+4 Experiments
+4.1 Experimental Setting
+Datasets.
+Models.
+Evaluations.
+Training details.
+4.2 Experimental Results
+4.3 Downstream Evaluation Results
+4.4 Ablation Studies
+4.4.1 Impact of STEM Layer Count
+4.4.2 Impact of STEM Placement
+4.4.3 Up-projection with additive embedding
+5 STEM Characteristics
+5.1 Large Angular Spread of STEM Embeddings
+5.2 Interpretability of STEM Models
+6 Related Works
+7 Conclusion
+References
+8 Appendix
+8.1 Additional Benchmarks
+8.2 Additional Long-context Evaluation
+8.3 Additional Architecture Ablation Study
+8.3.1 STEM†
+License: CC BY 4.0
+arXiv:2601.10639v1 [cs.LG] 15 Jan 2026
+†]Carnegie Mellon University
+§]Meta AI
+\contribution[‡]Work done during internship at Meta AI
+\contribution[¶]Work done at Meta AI
+\contribution[*]Co-supervisors
+\contact\contact\contact\contact\contact\contact\contact\contact\metadata[Github]https://github.com/Infini-AI-Lab/STEM
+\metadata[Website]https://infini-ai-lab.github.io/STEM
+STEM: Scaling Transformers with Embedding Modules
+Ranajoy Sadhukhan
+Sheng Cao
+Harry Dong
+Changsheng Zhao
+Attiano Purpura-Pontoniere
+Yuandong Tian
+Zechun Liu*
+Beidi Chen*
+Affiliation: [
+Affiliation: [
+Email: rsadhukh@andrew.cmu.edu
+Email: rick.caos@gmail.com
+Email: harryd@andrew.cmu.edu
+Email: cszhao@meta.com
+Email: attiano@meta.com
+Email: yuandong.tian@gmail.com
+Email: zechunliu@meta.com
+Email: beidic@andrew.cmu.edu
+Abstract
+Fine-grained sparsity promises higher parametric capacity without proportional per-token compute, but often suffers from training instability, load balancing, and communication overhead. We introduce STEM (Scaling Transformers with Embedding Modules), a static, token-indexed approach that replaces the FFN up-projection with a layer-local embedding lookup while keeping the gate and down-projection dense. This removes runtime routing, enables CPU offload with asynchronous prefetch, and decouples capacity from both per-token FLOPs and cross-device communication. Empirically, STEM trains stably despite extreme sparsity. It improves downstream performance over dense baselines while reducing per-token FLOPs and parameter accesses (eliminating roughly one-third of FFN parameters). STEM learns embedding spaces with large angular spread which enhances its knowledge storage capacity.
+More interestingly, this enhanced knowledge capacity comes with better interpretability. The token-indexed nature of STEM embeddings allows simple ways to perform knowledge editing and knowledge injection in an interpretable manner without any intervention in the input text or additional computation.
+In addition, STEM strengthens long-context performance: as sequence length grows, more distinct parameters are activated, yielding practical test-time capacity scaling. Across 350M and 1B model scales, STEM delivers up to ∼\sim3–4% accuracy improvements overall, with notable gains on knowledge and reasoning-heavy benchmarks (ARC-Challenge, OpenBookQA, GSM8K, MMLU). Overall, STEM is an effective way of scaling parametric memory while
+providing better interpretability, better training stability and improved efficiency.
+1 Introduction
+(a)
+(b)
+(c)
+Figure 1: (a) Validation PPL vs. training tokens for 1B STEM vs. dense; (b) Needle-in-a-Haystack at 8k/16k/32k; (c) STEM layer: embedding tables offloaded to CPU and token-indexed ones are prefetched to GPU.
+Sparse computation is a key mechanism for realizing the benefits predicted by parameter-scaling laws (Kaplan et al., 2020; Hoffmann et al., 2022) without proportionally increasing per-token compute. In particular, Mixture-of-Experts (MoE) (Shazeer et al., 2017; Artetxe et al., 2022; Fedus et al., 2022) models have been adopted in several frontier LLMs (Team, 2025a; Team, 2025b; Dai et al., 2024) because they raise parametric capacity at roughly constant activated FLOPs by sparsely activating a small subset of experts per token. Recent work (Boix-Adsera and Rigollet, 2025; He, 2024; Databricks, 2024; Dai et al., 2024) further advocate for finer-grained sparsity that employs large number of micro-experts to achieve better expressivity, enhanced knowledge storing capacity, and favorable efficiency metrics.
+However, finer granularity introduces nontrivial challenges in both optimization and systems. On the training side, even large fraction of experts can remain under-trained (Huang et al., 2025) due to a highly non-uniform routing and result in training instability. While load-balancing objectives (Shazeer et al., 2017; Fedus et al., 2022; Lepikhin et al., 2020) can address these issues, they may interfere with the primary objective if not carefully tuned (Dai et al., 2024; Qiu et al., 2025; Go and Mahajan, 2025). On the systems side, increasing the number of experts typically raises the number of all-to-all messages while shrinking message sizes, degrading bandwidth utilization and amplifying communication overhead (Huang et al., 2024; Li et al., 2025b). Finer granularity can also reduce parameter-access locality and degrade kernel efficiency when expert subnetworks become too small for dense linear-algebra kernels to reach high occupancy, yielding suboptimal end-to-end performance. Finally, these large-scale fine-grained sparse networks are far from interpretable. It is difficult to understand the roles of each micro-expert.
+To harness the full potential of fine-grained sparsity, we require: (a) stable optimization, (b) broad expert utilization (each micro-expert learns useful representations), and (c) negligible expert-retrieval latency and communication overhead. Additionally, we would like our sparse architecture to be (e) more interpretable and ensure that we are using all the micro-experts in a more transparent manner.
+We identify static sparsity as a potential solution to achieve these desired properties.
+Static sparsity keeps the compute path predictable (no runtime routing latency), enables prefetch and CPU offloading (removing the need for inter-node communication).
+Recently, static sparsity via token-indexed routing has emerged as a promising direction (Roller et al., 2021; Google DeepMind, 2024) with strong performance guarantees. Additionally, the token-indexed nature makes this static sparsity more interpretable as each micro-expert can correspond to a given token ID.
+However, such token-based selection strategy lacks context adaptivity. If applied naively, it can reduce the expressivity of the model and degrade quality despite more parameters. Our ablation study in sec. 4.4.2 highlights the criticality of selecting the suitable module for sparsification.
+Based on these observations, we introduce STEM, a static, token-indexed, fine-grained mechanism that replaces only the up-projection in gated FFNs with a token-specific vector retrieved from a layer-local embedding table. The gating and down-projection paths are preserved and shared across tokens. We observe that STEM achieves,
+Better Training Stability: Despite being extremely sparse, STEM does not exhibit any training instability issues as usually seen in MoE models. Figure 5(a) shows that unlike MoE models, STEM does not exhibit any loss spikes.
+Improved Performance with Larger Knowledge Capacity: STEM learns a representation space for the embeddings that is conducive to better information storage. The learned embeddings exhibit a large angular spread (i.e., low pairwise cosine similarity), which reduces representational interference and improves addressability of the parametric memory. As a result, it effectively increases the distinct “slots” available for storing and retrieving information. In our downstream evaluation benchmark, STEM consistently outperforms the dense baseline on knowledge-intensive tasks like, ARC-Challenge (Clark et al., 2018), and OpenBookQA (Mihaylov et al., 2018) by large margins (∼\sim9–10%) and the improvement usually increases with more STEM layer inclusion.
+Interpretability features: Because each STEM embedding in every layer is tied to a specific token ID, individual “micro-experts” have clear, token-level semantics. This structure not only makes their role more interpretable, but also gives STEM models a surprising degree of controllability: by simply swapping the STEM table index (illustrated in Fig. 3) while leaving the input text unchanged, we can systematically steer the model’s output distribution. Such interventions highlight how much factual knowledge is localized in these embeddings and how modular, editable, and attributable that knowledge becomes.
+Improved Long-context Inference: During long-context inference, STEM activates more distinct parameters as sequence length grows, yielding test-time capacity scaling. As shown in Figure 1(b), the benefits strengthen with context: on Needle-in-a-Haystack (NIAH) (Kamradt, 2024), the gap over the dense baseline increases from 8.4% to 13%.
+Training and Inference-time efficiency: STEM reduces both FLOPs as well as parameter loading cost by eliminating one-third of the parameters in FFN layers. Consequently, it is strictly more efficient during both computation-intensive training and prefilling, as well as in memory-intensive decoding.
+We benchmark STEM against the dense baseline with 350M MobileLLM (Liu et al., 2024) and Llama3.2-1B (Meta AI, 2024) model variants. Additionally, we compare with Hash Layer MoEs with the same total parameter count. We report results on standard downstream suites across pretraining, mid-training, and context-length extension. STEM improves downstream accuracy by up to ∼\sim3–4% while reducing per-token FLOPs and parameter accesses by up to one-third. It also strengthens knowledge retrieval and mathematical reasoning, with gains on GSM8K (Cobbe et al., 2021) and MMLU (Hendrycks et al., 2021), and shows pronounced improvements on Needle-in-a-Haystack (Kamradt, 2024) at longer contexts. Additionally, we illustrate the interesting ability of STEM to perform knowledge editing with minimal intervention in Sec. 3.3.
+2 Background
+Input 𝐱\mathbf{x}SiLU(𝐖g(.)\mathbf{W}^{g}(.))⊗\otimes𝐖u(.)\mathbf{W}^{u}(.)𝐖d​(⋅)\mathbf{W}^{d}(\cdot)Output 𝐲\mathbf{y}(a) SwiGLU FFN
+Input 𝐱\mathbf{x}Router r⁡(𝐱)r(\mathbf{x}) (top-rr)Expert f2f_{2}Expert f1f_{1}⋯fK\cdots\;f_{K}∑\sumOutput 𝐲\mathbf{y}
+(b) MoE FFN
+Input 𝐱⁡(T)\mathbf{x}(T)SiLU(𝐖g(.)\mathbf{W}^{g}(.))⊗\otimes𝐖d(.)\mathbf{W}^{d}(.)Output 𝐲\mathbf{y}
+CPU Embedding TableuTu_{T}uTu_{T}(c) STEM
+Figure 2: Schematics of (a) SwiGLU FFN, (b) MoE FFN, and (c) STEM with a single prefetched token embedding. In MoE FFN, the full FFN module is considered as one expert.
+Consider a decoder-only transformer with NN layers, vocabulary size VV, model width dd, and feed-forward width dffd_{\mathrm{ff}}.
+For a given layer ℓ\ell, the SwiGLU feed-forward block uses a gate projection 𝐖ℓg∈ℝdff×d\mathbf{W}_{\ell}^{g}\!\in\!\mathbb{R}^{d_{\mathrm{ff}}\times d}, an up projection 𝐖ℓu∈ℝdff×d\mathbf{W}_{\ell}^{u}\!\in\!\mathbb{R}^{d_{\mathrm{ff}}\times d}, and a down projection 𝐖ℓd∈ℝd×dff\mathbf{W}_{\ell}^{d}\!\in\!\mathbb{R}^{d\times d_{\mathrm{ff}}}. Consider, t∈{1,…,V}t\!\in\!\{1,\dots,V\} denote the vocabulary id of the current token, and the corresponding input hidden state of the ℓt​h\ell^{th} FFN layer is given by 𝐱ℓ∈ℝd\mathbf{x}_{\ell}\!\in\!\mathbb{R}^{d}. Then the transformation in the FFN layer is
+𝐲ℓ=𝐖ℓd​(SiLU⁡(𝐖ℓg​𝐱ℓ)⊙(𝐖ℓu​𝐱ℓ)),\mathbf{y}_{\ell}\;=\;\mathbf{W}_{\ell}^{d}\!\left(\mathrm{SiLU}\!\big(\mathbf{W}_{\ell}^{g}\mathbf{x}_{\ell}\big)\;\odot\;\big(\mathbf{W}_{\ell}^{u}\mathbf{x}_{\ell}\big)\right),
+(1)
+where ⊙\odot denotes elementwise multiplication.
+Mixture-of-Experts (MoE).
+In MoE, a dense FFN is replaced by KK expert FFNs {fℓ,k}k=1K\{f_{\ell,k}\}_{k=1}^{K} and a router rℓ​(𝐱ℓ)r_{\ell}(\mathbf{x}_{\ell}) that selects a small set 𝒯ℓ​(𝐱ℓ)\mathcal{T}_{\ell}(\mathbf{x}_{\ell}) of top-rr experts with mixture weights πℓ,k​(𝐱ℓ)\pi_{\ell,k}(\mathbf{x}_{\ell}) (Artetxe et al., 2022; Fedus et al., 2022).
+With SwiGLU experts,
+fℓ,k​(𝐱ℓ)≔𝐖ℓ,k(d)​(SiLU⁡(𝐖ℓ,kg​𝐱ℓ)⊙(𝐖ℓ,ku​𝐱ℓ)),𝐖ℓ,kd∈ℝd×dff,f_{\ell,k}(\mathbf{x}_{\ell})\coloneqq\mathbf{W}^{(d)}_{\ell,k}\!\left(\mathrm{SiLU}\!\big(\mathbf{W}^{g}_{\ell,k}\mathbf{x}_{\ell}\big)\;\odot\;\big(\mathbf{W}^{u}_{\ell,k}\mathbf{x}_{\ell}\big)\right),\quad\mathbf{W}^{d}_{\ell,k}\in\mathbb{R}^{d\times d_{\mathrm{ff}}},
+the layer output is
+𝐲ℓ=∑k∈𝒯ℓ​(𝐱ℓ)πℓ,k​(𝐱ℓ)​fℓ,k​(𝐱ℓ).\mathbf{y}_{\ell}\;=\;\sum_{k\in\mathcal{T}_{\ell}(\mathbf{x}_{\ell})}\pi_{\ell,k}(\mathbf{x}_{\ell})\;f_{\ell,k}(\mathbf{x}_{\ell}).
+(2)
+Hash-layer Mixture-of-Experts.
+To eliminate trainable routing and auxiliary losses, hash-layer MoE fixes a balanced, token-id–based mapping to experts (Roller et al., 2021). The FFN output becomes
+𝐲ℓ=∑k∈hash​(t)fℓ,k​(𝐱ℓ).\mathbf{y}_{\ell}\;=\;\sum_{k\in\text{hash}(t)}f_{\ell,k}(\mathbf{x}_{\ell}).
+(3)
+Scaling the number of experts.
+Mixture of Word Embeddings (MoWE) (dos Santos et al., 2023) pushes expert granularity to the word level, instantiating tens to hundreds of thousands of small experts. This increases the model’s knowledge capacity and promotes word-specific specialization. Similar to hash-layer MoE, MoWE uses a fixed mapping from token/word ids to expert subnetworks, enabling lightweight selection while retaining sparsity benefits. However, the extreme expert count magnifies two well-known MoE-related challenges:
+Communication overhead.
+Under expert parallelism, as the expert granularity increases, the peer-to-peer exchange becomes more fragmented, and communication becomes more latency-dominated due to many small payloads and nontrivial packing/unpacking overhead. In practice, this raises end-to-end layer latency and reduces overlap with compute.
+Unbalanced expert frequency.
+Word frequencies are Zipfian, so a larger number of experts sharpens load skew: a few high-frequency experts receive disproportionate traffic while a long tail is rarely activated. This harms both statistical efficiency (slower or unstable learning for rare experts) and systems efficiency (capacity padding/drops, stragglers), further amplifying effective communication and synchronization costs during distributed training and inference (dos Santos et al., 2023).
+Per Layer Embedding.
+Unlike MoWE, the Per Layer Embedding (PLE) (Google DeepMind, 2024) share the gate projection and down projection of the FFN block across expert subnetworks. However, they do not completely dispense with the existing FFN block in each decoder layer. Instead, they complement the existing FFN with an additional PLE block. This provides token-level specificity at a small additional cost.
+Unlike MoWE, the PLE tables are not sharded across multiple devices. They are stored in node-local CPU memory instead and prefetched as required. Thus they avoid the high all-to-all communication traffic. In addition, by sharing the gate projection and down projection matrices, the negative effects of expert frequency mismatch are also ameliorated.
+3 Method
+3.1 STEM
+STEM builds upon the design of PLE and further explores the true potential of these layer-wise embedding tables in terms of both accuracy and efficiency. The STEM design can be expressed as follows,
+For layer ℓ\ell, let 𝐔ℓ∈ℝV×dff\mathbf{U}_{\ell}\!\in\!\mathbb{R}^{V\times d_{\mathrm{ff}}} be the per layer embedding table.
+Given input 𝐱ℓ∈ℝd\mathbf{x}_{\ell}\!\in\!\mathbb{R}^{d}, the STEM layer computes
+𝐲ℓ=𝐖ℓ(d)​(SiLU⁡(𝐖ℓ(g)​𝐱ℓ)⊙𝐔ℓ​[t]),\mathbf{y}_{\ell}\;=\;\mathbf{W}_{\ell}^{(d)}\!\left(\mathrm{SiLU}\!\big(\mathbf{W}_{\ell}^{(g)}\mathbf{x}_{\ell}\big)\;\odot\;\mathbf{U}_{\ell}[t]\right),
+(4)
+where 𝐔ℓ​[t]∈ℝdff\mathbf{U}_{\ell}[t]\!\in\!\mathbb{R}^{d_{\mathrm{ff}}} is the row of 𝐔ℓ\mathbf{U}_{\ell} corresponding to token tt and ⊙\odot denotes elementwise multiplication.
+It is important to note that, STEM makes some important design choices different from PLE.
+1.
+PLE does not completely dispense with the existing FFN block in each decoder layer. Instead, the PLE FFN block is used as an additional component with the regular FFN block in each PLE decoder layer. Thus, they increase additional overhead and effective layer depth of the model.
+2.
+PLE embedding tables are usually much more low-dimensional compared the intermediate dimension of the regular FFN layers. For instance, gemma-3n-E4B-it(Google DeepMind, 2024) uses an FFN intermediate dimension of 16384, but a PLE dimension of just 256.
+To verify the sufficiency of the STEM embedding table, we also conduct ablation study with additional architectures which we discuss in detail in 8.3.
+3.2 Insights
+The following insights encourage us to make an attempt to realize the full potential of the layer-specific embedding tables unlike PLE.
+Key–value memory view of FFNs.
+To follow the motivation behind STEM, it is important to view FFN from a key-value memory perspective(Geva et al., 2021; Meng et al., 2022). A two-projection FFN can be read as a content-addressable key–value (KV) memory: with an input 𝐱∈ℝd\mathbf{x}\!\in\!\mathbb{R}^{d}, hidden width dffd_{\mathrm{ff}}, and nonlinearity ϕ\phi, the block 𝐲=𝐖d​ϕ​(𝐖u​𝐱)\mathbf{y}=\mathbf{W}^{d}\phi(\mathbf{W}^{u}\mathbf{x}) retrieves
+𝐲=∑i=1dffϕ⁡(⟨𝐤i,𝐱⟩)⏟addressing weight ​αi​(𝐱)​𝐯i⏟value,𝐤i​ is the ith row of ​𝐖u,𝐯i​ is the ith column of ​𝐖d.\mathbf{y}\;=\;\sum_{i=1}^{d_{\mathrm{ff}}}\underbrace{\phi(\langle\mathbf{k}_{i},\mathbf{x}\rangle)}_{\text{addressing weight }\alpha_{i}(\mathbf{x})}\,\underbrace{\mathbf{v}_{i}}_{\text{value}},\quad\mathbf{k}_{i}\text{ is the $i$th row of }\mathbf{W}^{u},\;\mathbf{v}_{i}\text{ is the $i$th column of }\mathbf{W}^{d}.
+Here, rows of 𝐖u\mathbf{W}^{u} act as keys scoring 𝐱\mathbf{x}, while columns of 𝐖d\mathbf{W}^{d} are values; ϕ\phi shapes the sparsity/selectivity of the addressing (e.g., ReLU for hard gating, GELU for soft gating). Gated linear units (GLUs) enrich this memory by factorizing the addressing into content and gate streams:
+𝐲=𝐖(d)​((𝐖(u)​𝐱)⊙σ⁡(𝐖g​𝐱))=∑i=1dff{⟨𝐤i,𝐱⟩⏟content⋅σ⁡(⟨𝐤~i,𝐱⟩)⏟gate}​𝐯i,\mathbf{y}\;=\;\mathbf{W}^{(d)}\!\big(\,(\mathbf{W}^{(u)}\mathbf{x})\odot\sigma(\mathbf{W}^{g}\mathbf{x})\,\big)\;=\;\sum_{i=1}^{d_{\mathrm{ff}}}\big\{\underbrace{\langle\mathbf{k}_{i},\mathbf{x}\rangle}_{\text{content}}\!\cdot\!\underbrace{\sigma(\langle\tilde{\mathbf{k}}_{i},\mathbf{x}\rangle)}_{\text{gate}}\big\}\,\mathbf{v}_{i},
+where 𝐖g\mathbf{W}^{g} provides a second set of keys 𝐤~i\tilde{\mathbf{k}}_{i} that modulate each memory slot’s participation. This multiplicative interaction implements query-dependent, per-slot amplification/suppression, yielding sharper, context-adaptive retrieval than a single-stream FFN. SwiGLU replaces the gate nonlinearity with SiLU\mathrm{SiLU}.
+STEM design choice.
+The memory view of FFN has been important for us to derive motivation for our final STEM design. To empirically verify the efficacy of the design described in Section 3.1, we attempt to replace both up projection and gate projection independently using STEM embedding table. The down projection can not be replaced by an embedding module as it would break the model’s forward path. As demonstrated in Table 3, replacing gate projection hurts the downstream performance while replacing up projection enhances it. This can be explained by the roles that each of these matrices play in the FFN block according the memory view. While up projection generates the address for feature lookup in the down projection, gate projection provides context-dependent modulation to it for more effective information retrieval. Replacing gate projection with a context-agnostic embedding can impair its ability instead. For this reason, STEM replaces the up projection with the layer-wise embedding table.
+This design choice allows STEM to enjoy benefits in terms of both performance and efficiency. Additionally, STEM offers an additional advantage in the form of better interpretability through better knowledge attribution. We explain the insights behind these benefits and empirically verify their efficacies.
+3.2.1 Better Information Storage Capacity
+Under the key–value memory view of FFNs (Section 3.2), the up-projection matrix maps each input hidden state to an address vector that retrieves the relevant information from the subsequent down-projection. Although these address vectors live in a high-dimensional space, their intrinsic dimensionality is often much lower. In practice, FFN layers rely on mechanisms such as superposition to encode a large number of concepts within a relatively low-dimensional address space.
+In contrast, STEM does not depend on an up-projection matrix to generate address vectors. Instead, the STEM embeddings themselves serve as token-specific address vectors, which are then modulated by the context-dependent gate projection output. The goal is to learn token-specific address vectors with as little mutual coherence as possible. Empirically, we observe that after training, the STEM embedding space exhibits a significantly larger angular spread than the address vectors produced by a standard FFN, as illustrated in Fig 6(a). We hypothesize that this reduced redundancy in the address space enables more precise and disentangled knowledge attribution, thereby improving the model’s effective information storage capacity.
+Figure 3: Knowledge injection/edit demonstration. Input text remains the same (Country: Spain), but internally the PLE used for the token is swapped from Spain to Germany, flipping the generated capital/paragraph from Madrid to Berlin.
+3.2.2 Knowledge Specificity & Interpretability
+The STEM embeddings are attributed to the individual tokens. According to the memory view, this embedding should localize the necessary information associated with the corresponding token.
+Thus it can potentially function as steering vectors that can steer the output probability distribution based on careful modifications in the STEM embeddings in each layer without any modification in the text input. For instance, Figure 7 illustrates how a minimal surgical modification in each STEM embedding layer can meaningfully modify the generation input, given the same input token.
+This direct knowledge attribution characteristics is missing in the standard FFN layers. Although recent works like sparse autoencoders (Huben et al., 2024), causal intervention (Meng et al., 2022) have tried to interpret the FFN modules, they usually require additional computation which can be prohibitively large. However, this knowledge attribution feature is inherently present in STEM and thus it attempts to address the longstanding tradeoff in Machine Learning between model performance and interpretability.
+3.2.3 Efficiency
+Table 1: Theoretical efficiency for each decoder FFN layer when replacing the FFN up-projection with a token-indexed STEM embedding table. We assume SwiGLU, ignore biases, and count elementwise ops as 𝒪⁡(D​L)\mathcal{O}(DL).
+FFN
+STEM
+Savings (Δ\Delta)
+Prefill / training (batch size BB, sequence length LL)
+FLOPs
+B⁡(3​dff​d​L+dff​L)B(3d_{\mathrm{ff}}dL+d_{\mathrm{ff}}L)
+B⁡(2​dff​d​L+dff​L)B(2d_{\mathrm{ff}}dL+d_{\mathrm{ff}}L)
+B⁡(d​dff​L)B(dd_{\mathrm{ff}}L)
+Communication
+00
+uniq⁡(B​L)​df​f\mathrm{uniq}(BL)d_{ff}
+Decoding (per step, batch size BB)
+Parameter loading cost
+3​d​dff3dd_{\mathrm{ff}}
+2​d​dff2dd_{\mathrm{ff}}
+d​dffdd_{\mathrm{ff}}
+Communication
+00
+Buniq​df​fB_{\text{uniq}}d_{ff}
+Notation: dd: model width; DD: FFN hidden size; LL: context length; LuniqL_{\text{uniq}}: number of unique tokens in the LL-token context; BuniqB_{\text{uniq}}: number of unique tokens across the batch at a decode step (≤B\leq B); uniq⁡(B​L)\mathrm{uniq}(BL): number of unique tokens across the B​LBL tokens in a training batch.
+Notes: Training multiplies both FLOP counts by ≈\approx the usual forward+backward factor, but the saving Δ​FLOPs=d​D​L\Delta\text{FLOPs}=dDL remains. Communication doubles during training as gradients of the STEM embeddings are transferred back to CPU for optimizer update.
+STEM improves both computation and memory access. During compute-intensive phases (training and prefill), replacing the FFN up-projection with token-indexed embeddings reduces the per-layer FLOPs. During memory-intensive decoding, it lowers parameter traffic relative to a dense up-projection. Table 1 summarizes the per-layer counts and the resulting savings. Below we present a simple theoretical analysis of the training and inference efficiency for a single decoder layer.
+Training efficiency.
+Consider a batch of BB sequences with sequence length LL, hidden width dd, and FFN hidden size dffd_{\mathrm{ff}}. Ignoring elementwise ops and biases, the per-layer training FLOPs (forward + backward) can be written as
+Ftrainbase\displaystyle F_{\text{train}}^{\text{base}}
+=B⁡(4​L​d2+2​L2​d+3​L​d​dff),\displaystyle=B\bigl(4Ld^{2}+2L^{2}d+3Ld\,d_{\mathrm{ff}}\bigr),
+Ftrainstem\displaystyle F_{\text{train}}^{\text{stem}}
+=B⁡(4​L​d2+2​L2​d⏟Attn+2​L​d​dff⏟FFN).\displaystyle=B\bigl(\underbrace{4Ld^{2}+2L^{2}d}_{\text{Attn}}+\underbrace{2Ld\,d_{\mathrm{ff}}}_{\text{FFN}}\bigr).
+The per-layer FLOPs reduction of STEM is therefore
+Δ​Ftrain=Ftrainbase−Ftrainstem=B​L​d​dff,\Delta F_{\text{train}}=F_{\text{train}}^{\text{base}}-F_{\text{train}}^{\text{stem}}=BLd\,d_{\mathrm{ff}},
+and the corresponding saving fraction is
+saving fraction=Δ​FtrainFtrainbase=dff4​d+2​L+3​dff.\text{saving fraction}=\frac{\Delta F_{\text{train}}}{F_{\text{train}}^{\text{base}}}=\frac{d_{\mathrm{ff}}}{4d+2L+3d_{\mathrm{ff}}}.
+Plugging in the architecture hyperparameters for each Qwen2.5 model yields saving fractions of 21.7%21.7\% for Qwen2.5-1.5B, 22.8%22.8\% for Qwen2.5-3B, 23.9%23.9\% for Qwen2.5-7B, 19.7%19.7\% for Qwen2.5-14B, and 24.8%24.8\% for Qwen2.5-32B.
+Inference efficiency.
+Prefill efficiency closely matches training efficiency because both are compute-bound. In contrast, decoding is primarily memory-bound: the dominant cost is loading parameters and KV cache rather than doing FLOPs. For a batch size BB and context length LL, we can write the per-layer memory access cost as
+Mdecbase\displaystyle M_{\text{dec}}^{\text{base}}
+=B⁡(4​d2+2​L​d+3​d​dff),\displaystyle=B\bigl(4d^{2}+2Ld+3d\,d_{\mathrm{ff}}\bigr),
+Mdecstem\displaystyle M_{\text{dec}}^{\text{stem}}
+=B⁡(2​L​d⏟KV cache+4​d2+2​d​dff⏟projection params).\displaystyle=B\bigl(\underbrace{2Ld}_{\text{KV cache}}+\underbrace{4d^{2}+2d\,d_{\mathrm{ff}}}_{\text{projection params}}\bigr).
+The reduction in parameter loading cost is
+Δ​Mdec=Mdecbase−Mdecstem=B​d​dff,\Delta M_{\text{dec}}=M_{\text{dec}}^{\text{base}}-M_{\text{dec}}^{\text{stem}}=Bd\,d_{\mathrm{ff}},
+so the saving fraction is
+saving fraction=Δ​MdecMdecbase=dff4​d+2​L+3​dff,\text{saving fraction}=\frac{\Delta M_{\text{dec}}}{M_{\text{dec}}^{\text{base}}}=\frac{d_{\mathrm{ff}}}{4d+2L+3d_{\mathrm{ff}}},
+which matches the FLOPs saving factor during training and prefill. As the batch size grows, the linear layers become increasingly compute-bound, and STEM’s per-layer FLOPs reduction ensures that this efficiency gain is sustained even in the high-throughput regime.
+A key difference from MoE is how cost scales with batch size. In STEM, parameter traffic grows mainly with the number of unique tokens seen.
+In contrast, MoE expert selection expands with batch size and routing diversity; larger batches tend to light up more experts, quickly eroding the sparsity benefit.
+3.2.4 VRAM and Communication Savings
+MoE models use a lot of VRAM. The expert subnetworks must stay on the GPU, or be fetched repeatedly. Expert parallelism also needs all-to-all communication, even when only a few experts are active (Huang et al., 2024; Go and Mahajan, 2025).
+STEM avoids these costs. Its embeddings are token-indexed and local to each layer, so the model can prefetch them without any routing logic. These tables are separate from the matmul weights, so we can offload them to CPU memory. In our setups, this frees up roughly one-third of the FFN parameter memory. We can also replicate the embedding tables in CPU memory on every serving node. This eliminates cross-node expert traffic and the synchronization overhead of expert parallelism.
+Prefetching cost.
+The prefetching cost can be greatly reduced by deduplicating the STEM embeddings of the batched tokens. We can further cut traffic by caching the most frequently used STEM embeddings, using the extra memory we save from removing the up-projection matrices. As the model embedding size grows, compute cost increases quadratically, but prefetching cost grows only linearly. This makes CPU-offloaded STEM increasingly attractive and scalable for larger model sizes.
+3.2.5 Context-length Adaptive Parameter Usage
+Because STEM employs token-indexed, fine-grained sparsity, the number of distinct parameters touched in a forward pass grows with the number of unique tokens in the window. Aside from the shared projections in attention (Q/K/V/O) and the gated FFN’s gate/down projections, the STEM module draws one vector per token ID per layer; repeated tokens reuse the same vector, while novel tokens activate new ones. Let LL be the context length and Lu​n​i​qL_{uniq} the count of unique token ids in the sequence; with STEM applied at layers 𝒮\mathcal{S} and FFN width dffd_{\mathrm{ff}}, the STEM-specific parameters activated by a single sequence are
+ParamsactSTEM​(L)=|𝒮|​dff​Lu​n​i​q.\mathrm{Params}_{\text{act}}^{\text{STEM}}(L)\;=\;|\mathcal{S}|\,d_{\mathrm{ff}}\,L_{uniq}.
+In natural text Lu​n​i​qL_{uniq} typically grows sublinearly (Heaps-like), so longer contexts steadily engage more parameters without increasing per-token FLOPs.
+This yields test-time capacity scaling with predictable latency: active parameter count keeps on growing with context length, and does not saturate quickly like in MoEs. The dense gating and down-projection preserve contextual mixing, while the STEM path supplies additional capacity at low overhead, supporting long-context tasks (multi-document RAG, CoT) with near-constant per-token compute.1(b) illustrates how STEM outperforms the dense baseline at longer context lengths. Additional long-context evaluation on LongBench are provided in Appendix 8.2.
+Note
+Although the aforementioned benefits prompts us to design STEM, we want to highlight that STEM can be perceived as an orthogonal way of scaling up the model parameters alongside the MoE architecture. This is because STEM primarily targets to improve the standard gated FFN design. It is always possible to design a Mixture of STEM experts where the standard FFN in each expert is replaced by a STEM FFN component.
+(a) 𝐧𝐬>𝐧𝐭\mathbf{n_{s}>n_{t}}: source span longer than target span.
+We can align lengths via left padding or copying, or reuse a single averaged target vector.
+(b) 𝐧𝐬<𝐧𝐭\mathbf{n_{s}<n_{t}}: target span longer than source span.
+We either select a representative subset of target tokens, or average across the entire span.
+Figure 4: STEM-based knowledge editing schemes for length-mismatched source
+(nsn_{s}) and target (ntn_{t}) entity tokenizations.
+3.3 Knowledge Editing with STEM
+As illustrated in Fig. 7, we study whether STEM
+embeddings allow us to edit factual knowledge by modifying only the
+STEM vectors, while keeping the input text itself unchanged. Concretely, we
+consider a source entity that appears in the prompt (e.g., “Spain”)
+and a target entity we would like the model to behave as if it had
+seen instead (e.g., “Germany”). By appropriately replacing the STEM
+embeddings at the source token positions, we can steer the model to generate
+text consistent with the target entity – for instance, writing a paragraph on “Berlin”
+instead of “Madrid” when asked to write about the capital of Spain.
+When the source and target entities are tokenized into the same number of
+subword tokens, editing is straightforward: we simply replace each source
+token’s STEM embedding with the corresponding target token’s STEM embedding.
+This one-to-one substitution is often sufficient to induce a meaningful
+change in the output distribution.
+The more interesting case is when the source and target entities have
+different tokenization lengths. Let nsn_{s} and ntn_{t} denote the number of
+source and target tokens, respectively. When ns>ntn_{s}>n_{t} (the source span is
+longer), we explore two strategies:
+1.
+Padding. We pad the target token sequence to match the
+number of source tokens, either by inserting a special padding token on
+the left or on the right. Empirically, left padding tends to work
+slightly better, so we use it as our default.
+2.
+Copying. We repeat target tokens to fill the source span.
+Each target token is repeated
+⌊ns/nt⌋\left\lfloor n_{s}/n_{t}\right\rfloor times, and we further repeat the
+last target token as needed to exactly cover the nsn_{s} source positions.
+A typical ns>ntn_{s}>n_{t} edit is shown below.
+Demonstration (ns>ntn_{s}>n_{t}): Padding/Copying
+Source entity (text): United States of America
+Target entity: Czech Republic
+Prompt: “Country: United States of America. Capital:”
+Model answer after STEM replacement:
+Prague is Czechia’s capital and Europe’s 10th-largest city. The city
+was once the seat of the Holy Roman Empire, then Bohemia, and later
+Czechoslovakia. In 1918, it became part of the newly formed Czechoslovakia.
+Prague is a center of European science, arts, and culture. The Charles Bridge
+links Old Town and the Jewish Ghetto, while the New Town houses the National
+Gallery, Charles University, and Prague Castle. The climate is continental:
+cold winters, warm summers, and variable rainfall.
+When ns<ntn_{s}<n_{t} (the target span is longer), we cannot map all target tokens
+one-to-one. In this case we select a subset of target tokens whose
+embeddings we consider the most semantically representative (e.g., omitting
+function words or less informative subwords) and use only this subset to
+replace the source token embeddings. The following example shows that this
+subset-selection strategy can still induce a coherent edit.
+Demonstration (ns<ntn_{s}<n_{t}): Subset Selection
+Source entity (text): United States of America
+Target entity: United Kingdom of Great Britain and Northern Ireland
+Prompt: “Country: United States of America. Capital:”
+Model answer after STEM replacement:
+London is the world’s largest financial center, home to the British
+Parliament, Bank of England, and other institutions. The City of London is
+the financial district, where the stock exchange, the Royal Exchange, and
+the Bank of England are located. The Thames River flows through the city,
+which has been a major port since Roman times. The climate is temperate
+maritime: cool, wet winters and warm, damp summers. London’s architecture
+reflects centuries of occupation: Gothic, Victorian, and Georgian styles
+blend the city’s many neighborhoods. The Tower of London houses the Crown
+Jewels, while Westminster Abbey and St. Paul …
+Finally, we evaluate a length-agnostic strategy that works in all of the
+above scenarios: we compute the average of the target token STEM embeddings
+and use this single averaged vector to replace each source token embedding.
+Despite its simplicity, this “averaging” scheme performs surprisingly well
+and yields stable edits across a broad range of examples.
+An additional interesting observation is that this semantic manipulation is
+not restricted to countries. The same idea transfers smoothly to
+other geographic entities, such as states within a country. For
+instance, replacing the STEM embedding of the country name with that of a
+U.S. state leads the model to describe the state capital instead:
+Demonstration: Country →\rightarrow State Transfer
+Source entity (category: Country): United States
+Target entity (category: State): California
+Prompt: “Country: United States. Capital:”
+Model answer after STEM replacement:
+Sacramento is California’s political, cultural, and economic center.
+The state capitol houses the legislature and governor, and the historic Old
+State Capitol Museum showcases the state’s history. The city’s downtown
+features the American Art Museum, the California Historical Society, and the
+California Academy of Sciences. The Sacramento River runs through the city,
+which also has a large Hispanic population. The climate is Mediterranean:
+mild, rainy winters, hot, dry summers, and occasional fog.
+Figure 4 summarizes the four STEM-based
+replacement schemes (padding, copying, subset selection, and averaging) using
+schematic diagrams.
+3.4 System Implementation
+Naively increasing the number of STEM layers can introduce system challenges. The STEM embedding table size grows linearly with vocab size, FFN intermediate dimension, and number of STEM layers. This additional memory footprint can easily grow beyond the available HBM capacity. Furthermore, during training, the additional footprint of optimizer states and gradients can be substantial. To tackle these challenges, we perform some implementation optimizations which not only alleviate the memory bottleneck but also provides practical speedup over the baseline model. The key optimizations include parallel embeddings, CPU offloading, asynchronous computation and communication, token deduplication, and LFU caching.
+During inference, we offload the large STEM embedding tables to CPU. Because the STEM embeddings are indexed by input token ids, they can be prefetched asynchronously with layer computation. Note that even a large prefilling batch, many of the tokens are repeated more than once. Thus the batch token ids can deduplicated to reduce the CPU-GPU communication overhead and can be successfully overlapped with layer computation time.
+The prefetching is more straightforward for prefilling as the next batch of token ids are known beforehand. However, during generation, the prefetching for the next token has to wait for the full model forward on the current token because of autoregressivity. To further reduce the communication overhead, we utilize the property that the input token ids follow a Zipfian distribution to implement a memory-efficient LFU cache with more than 80% hit rate.
+During training, we decouple the parallelism strategies of the model backbone and the STEM embedding tables. Irrespective the parallelism technique (DDP, FSDP, or TP), we always shard the STEM embedding table across the available GPUs. The degree of parallelization is decided based on the trade-off between communication and memory requirement. It is also possible to perform CPU offloading during training which can fully alleviate the additional memory footprint and be more memory efficient than the dense baseline. Token deduplication and LFU caching can reduce the communication overhead. Additional care must be taken to write back the updated optimizer states into the CPU offloaded counterpart. We shall provide a fully optimized training implementation in our next iteration.
+4 Experiments
+We evaluate STEM against dense and MoE baselines on downstream tasks while controlling for (i) training compute (activated FLOPs\mathrm{FLOPs}) and (ii) the number of training tokens. MoE variants are configured to match STEM’s total parameter count, and their activated FLOPs\mathrm{FLOPs} are kept comparable to the dense baseline. (Note: STEM uses strictly fewer per-token FLOPs\mathrm{FLOPs} than both baselines.) We study two model scales — 350M and 1B, performing comprehensive ablations at 350M and validating STEM at 1B under both pretraining-from-scratch and mid-training insertion. Finally, we assess long-context behavior by further fine-tuning with extended context length. We evaluate the Return on Investment (ROI)—defined here as the ratio of model accuracy to training FLOPs—to determine the training efficiency of each model, as the economic value has become a major concern of foundational models. Formally, we define it as:
+Training ROI=Model Accuracy (Avg)Total Training FLOPs\text{Training ROI}=\frac{\text{Model Accuracy (Avg)}}{\text{Total Training FLOPs}}
+4.1 Experimental Setting
+Datasets.
+For pretraining, we use OLMo-Mix-1124 (OLMo et al., 2025), a 3.9T-token corpus built from DCLM (Li et al., 2025a) and Dolma 1.7 (Soldaini et al., 2024); we subsample 1T tokens for our runs.
+For mid-training, we mix OLMo-Mix-1124 (65%), Nemotron-CC-Math-v1 (5%) (Mahabadi et al., 2025), and Nemotron-Pretraining-Code-v1 (30%) (NVIDIA et al., 2025).
+For context-length extension, we use ProLong-data-64k (Gao et al., 2023) (63% long-context / 37% short-context) and pack sequences up to 32,768 tokens with cross-document attention masking.
+Models.
+We use MobileLLM-350M (Liu et al., 2024) and Llama3.2-1B (Meta AI, 2024) architectures for evaluations. In both the models, we do not share the input embeddings and the language model head.
+Unless otherwise noted, one third of FFN layers are replaced at uniform intervals by the sparse alternative.
+For STEM, the dense up-projection is replaced by an embedding table of size V×dffV\times d_{\mathrm{ff}} in each layer.
+For Hash layer MoE design, we use top-1 routing and choose the number of experts per layer to match STEM’s total parameter count, while keeping activated FLOPs\mathrm{FLOPs} comparable to the dense baseline.
+We also report ablations that replace one half of FFN layers with STEM, and an extreme setting that replaces all FFN layers except the first.
+Evaluations.
+Pretrained checkpoints are evaluated zero-shot on eight common-sense reasoning tasks: ARC-Easy, ARC-Challenge (Clark et al., 2018), BoolQ (Clark et al., 2019), PIQA (Bisk et al., 2020), SIQA (Sap et al., 2019), HellaSwag (Zellers et al., 2019), OpenBookQA (Mihaylov et al., 2018), and WinoGrande (Sakaguchi et al., 2020).
+To assess advanced knowledge and mathematical reasoning for mid-training checkpoints, we report MMLU (Hendrycks et al., 2021) and GSM8K (Cobbe et al., 2021).
+For long-context behavior after context extension, we use Needle-in-a-Haystack (NIAH) (Kamradt, 2024).
+Table 2: Training hyperparameters by setting. Common: weight decay =0.1=0.1, β1=0.9\beta_{1}=0.9, β2=0.95\beta_{2}=0.95, LR warmup ratio =0.01=0.01. Minimum LR is 0.1×0.1\times peak LR. For 1B pretraining, we follow the OLMO schedule for 5T tokens but stop early at 1T.
+Configuration
+350M Pretrain
+1B Pretrain
+1B Midtrain
+1B Context-Extend
+Peak LR
+2e-3
+4e-4
+3.2e-4
+1e-5
+LR schedule
+cosine
+cosine
+linear
+cosine
+Batch size
+512
+512
+512
+64
+Max sequence length
+2048
+4096
+4096
+32768
+Training steps
+100,000
+500,000
+50,000
+10,000
+Cross-doc masking
+No
+No
+No
+Yes
+Training details.
+We pretrain the 350M models with 100 billion training tokens, while the 1B models are trained with 1 trillion tokens. We use AdamW optimizer with cosine learning rate (LR) scheduler (with 10% warmup steps and minimum LR being 0.1 times peak LR). We perform midtraining with 100 billion tokens and for context extension we use 20 billion tokens. The hyperparameter settings are given in Table 2.
+(a)
+(b)
+Figure 5: (a) Training Stability. Unlike Hash layer MoE, the 350M STEM model does not show any training loss spikes. (b) Performance scaling with more STEM layers. With more STEM layers, a lower training loss can be achieved at fewer training FLOPs.
+4.2 Experimental Results
+STEM demonstrates the benefits of fine-grained sparse scaling by improving downstream performance with fewer training FLOPs. Interestingly, STEM does not suffer from training instability issues that is often the case for fine-grained MoE models (Databricks, 2024; Dai et al., 2024). Instead, the geometric properties of the STEM embedding spaces further help improve the training convergence. Figure 5(a) demonstrates the training stability of STEM compared to token-indexed Hash Layers MoE, where HashMoE has more bumpy jumps during the training. Moreover, we see the STEM architecture has larger model capacity (lower training loss tendency) when we scale up the training tokens as the loss curve of STEM crosses over the other two architectures when training tokens increase. Furthermore, even with fewer training FLOPs STEM achieves lower training 5(b) and validation 1(a) losses.
+4.3 Downstream Evaluation Results
+We compare STEM with dense baseline as well as Hash layer MoE at 350M scale. On the other hand, for 1B model, we compare STEM (with one-third of FFN replacement) with only the dense baseline. In both cases 3, we observe substantial improvement in tasks requiring comparatively more external knowledge such as, Arc-Challenge and OpenBookQA, while having modest improvements on the rest of the tasks. Additionally, the improvements on the knowledge-intensive tasks are more significant with increase in FFN replacement with STEM layers. Note all the STEM replacement are replacing the up-projection component of original FFN unless specified in the table.
+Upon midtraining 4, the 1B STEM model continues to outperform the dense baseline on the language modeling downstream tasks. Additionally, STEM architecture exhibits improvements in reasoning and knowledge retrieval abilities through GSM8k and MMLU performances.
+Table 3: Downstream accuracy of pretrained models at 350M and 1B scales. We report the total number of parameters and the number of active parameters for each model variant.
+Baseline denotes the dense SwiGLU FFN model.
+For 350M, in the first few rows, we compare sparse alternatives under similar FLOPs: Hash-MoE (top-1/16 experts in 1/3 of FFN layers),
+STEM with 1/3 of FFN layers replaced (including up projection replacement, gate projection replacement, and STEM† with an additional up-projection). In the next set of rows, we compare STEM with varying up projection layer replacement ratios (1/3, 1/2, full).
+For 1B, we report the dense baseline and STEM with 1/3 up projection layer replacement.
+Model
+#Total
+Params (B)
+#Active
+Params (B)
+ARC-E
+ARC-C
+BoolQ
+PIQA
+SIQA
+HSwag
+OBQA
+Wino
+Avg
+#GFLOPs
+ROI11
+1
+ROI is normalized at each basline for better comparison.
+350M (Pretraining)
+Baseline
+0.37
+0.37
+57.66
+30.55
+58.20
+69.42
+41.10
+49.68
+34.80
+56.35
+49.72
+0.74
+1x
+Hash-MoE
+1.22
+0.37
+58.88
+36.33
+55.44
+70.21
+43.55
+47.56
+39.26
+53.44
+50.58
+0.74
+1.02x
+STEM 22
+2
+STEM defaults to replacing one third of FFN layers, also writes as STEM-1/3
+1.14
+0.35
+63.01
+32.68
+60.31
+70.18
+39.76
+52.38
+33.00
+55.88
+50.90
+0.70
+1.08x
+STEM (gate-proj)
+1.14
+0.35
+54.56
+34.12
+59.13
+64.92
+44.56
+43.62
+36.91
+55.00
+49.10
+0.70
+1.04x
+STEM†
+1.21
+0.35
+57.94
+34.45
+59.10
+68.85
+43.70
+45.75
+41.02
+53.98
+50.60
+0.74
+1.02x
+STEM-1/2
+1.85
+0.34
+62.95
+40.00
+62.02
+70.94
+43.70
+51.49
+46.68
+55.78
+54.20
+0.67
+1.20x
+STEM-full
+3.25
+0.30
+62.21
+39.61
+61.99
+70.73
+43.60
+48.44
+44.53
+56.33
+53.43
+0.60
+1.33x
+1B (Pretraining)
+Baseline
+1.50
+1.50
+66.98
+41.88
+64.21
+73.44
+44.09
+59.65
+39.84
+56.48
+55.82
+3.00
+1x
+STEM
+6.75
+1.41
+65.95
+42.03
+61.66
+75.00
+44.78
+60.37
+45.90
+57.34
+56.63
+2.83
+1.08x
+Table 4: Mid-trained model evaluations (1B). Midtraining is performed on top of the pretrained checkpoints as a continued pretraining stage.
+Model
+ARC-E
+ARC-C
+BoolQ
+PIQA
+SIQA
+HellaSwag
+OBQA
+Winogrande
+Avg
+GSM8K
+MMLU
+1B (Mid-training)
+Baseline
+70.78
+42.11
+65.84
+72.95
+47.13
+60.39
+42.97
+57.81
+57.50
+44.2
+29.92
+STEM
+69.78
+44.22
+68.54
+74.69
+45.65
+61.90
+45.70
+57.42
+58.49
+46.4
+32.38
+4.4 Ablation Studies
+4.4.1 Impact of STEM Layer Count
+To identify the efficacy of STEM layers, we vary the number of FFN layers we replace with STEM alternative. We place the STEM-based decoder layers at regular intervals, interleaved with regular FFN-based decoder blocks. Table 3 shows that increasing the number of replacement from one-third to half improves the average downstream performance substantially. However, the improvement slows down beyond that. Note that, with increasing number of replacements, the training FLOPs also decrease, and therefore the overall training ROI (measured by performance over training FLOPs) still increases. We can see that the STEM-1/3 achieves 1.08x training ROI of the baseline, while STEM-1/2 achieves 1.20x and STEM-full achieves 1.33x of the baseline. Figure 5(b) presents the comparison of the three variants in terms of loss vs training FLOPs.
+4.4.2 Impact of STEM Placement
+Placement of STEM inside the gated FFN matters. To demonstrate this, we compare two options: replacing the up-projection vs. the gate-projection. As shown in Table 3, replacing the gate underperforms even the dense baseline, while replacing the up-projection yields consistent gains.
+In SwiGLU, the gate σ⁡(Wg​x)\sigma(W_{g}x) should depend on the current hidden state xx to modulate ϕ⁡(Wu​x)\phi(W_{u}x) contextually. Swapping Wg​xW_{g}x for a token-indexed embedding ete_{t} makes the gate largely input-independent (σ⁡(et)\sigma(e_{t})), weakening its context-aware selection. Moreover, the nonlinearity can be effectively abstracted away by the learned embeddings, and consequently its role is weakened. In contrast, applying STEM to the up-projection preserves contextual information in gate computation path and proves to be an optimal fine-grained sparse design.
+4.4.3 Up-projection with additive embedding
+To further study the optimality of STEM’s design, we implement STEM† 8.3.1, that retains up projection and additively modulates its output with the STEM embedding. Although it adds more parameters and FLOPs, the downstream performance does not improve.
+5 STEM Characteristics
+(a)
+(b)
+(c)
+Figure 6: Geometry of STEM embeddings. (a) Distribution of pairwise cosine similarity of STEM embeddings of sampled layers. (b) Pair-wise cosine similarity distributions of up-projection output space and STEM embeddings. (c) Cosine similarities are computed between the input hidden states of the down projection matrix. All the plots are provided from the 1B model.
+In this section, we analyze some of the characteristics that STEM embeddings demonstrate. We observe that in each layer the STEM embeddings of different tokens have very low pairwise cosine similarity which elicits some desirable properties regarding information storage capacity and training convergence. Additionally, because of the clear mapping between the embeddings and the tokens, STEM models are more interpretable.
+5.1 Large Angular Spread of STEM Embeddings
+Figure 6(a) shows that STEM embeddings exhibit very low pairwise cosine similarity—i.e., a large angular spread. We hypothesize that this property improves the information–retrieval behavior of FFN layers by reducing interference among stored items. Prior work (Geva et al., 2021; Meng et al., 2022) models FFNs as key–value memories: each hidden unit is associated with a key given by a row of the up-projection W(u)∈ℝdff×dmodelW^{(u)}\!\in\!\mathbb{R}^{d_{\text{ff}}\times d_{\text{model}}} and a value given by the corresponding column of the down-projection W(d)∈ℝdmodel×dffW^{(d)}\!\in\!\mathbb{R}^{d_{\text{model}}\times d_{\text{ff}}}; the gate projection provides context-dependent, multiplicative modulation that creates a selective read. In this view, the pre-activation h=ϕ⁡(W(u)​x)h=\phi(W^{(u)}x) induces a soft address over memory slots (hidden units).
+In contrast, STEM replaces the learned affine addressing with a direct, token-indexed address vector, upon which the gate still applies context-dependent modulation. To quantify the geometry of these address vectors, we report the distribution of pairwise cosine similarities between unit-normalized vectors. A distribution concentrated near zero (as in Figure 6(a) and Figure 6(b)) indicates that most angles are close to 90∘90^{\circ} and thus the angular spread between the vectors is reasonably large. This large angular spread lowers cross-talk between slots and can thereby improve the effective information storage capacity of the FFN memory at fixed width Donoho and Elad (2003); Tropp (2004). Figure 6(c) demonstrates the distribution of pairwise cosine similarities between the address vectors after the modulation applied by the gate projection.
+(a)
+(b)
+(c)
+Figure 7: Knowledge edit. Top-4 next-token probabilities for the original prompt “The capital of Spain is” (left), for the target prompt “The capital of Germany is” (middle), and for the intervened model where we swap the STEM vector eSpain,ℓe_{\text{Spain},\ell} with eGermany,ℓe_{\text{Germany},\ell} at every STEM layer keeping the original prompt the same(right). The swap shifts mass from Madrid to Berlin, demonstrating token-indexed, layer-local, and reversible control of factual predictions.
+5.2 Interpretability of STEM Models
+The following study more clearly shows how STEM becomes able to demonstrate the knowledge editing ability in a more interpretable manner (as illustrated in 3.3).
+STEM exposes token-indexed, layer-local parameters that act as interpretable FFN addresses, enabling simple, reversible edits that causally steer factual predictions with high reliability and low collateral change. As we exchange each layer-specific STEM vector (for token tt and layer ll) et,ℓ∈ℝdffe_{t,\ell}\!\in\!\mathbb{R}^{d_{\text{ff}}}, the token-wise output distribution shifts quite meaningfully.
+For example, Figure 7 shows that we can manually control the top next-token probabilities by performing a swap at layer ℓ\ell,
+eSpain,ℓ←eGermany,ℓ,e_{\text{Spain},\ell}\;\leftarrow\;e_{\text{Germany},\ell},
+while leaving all other parameters unchanged. Under the original prompt containing “Spain”, the intervened model’s top-kk next-token distribution closely matches that of the control prompt containing “Germany”, illustrating precise, token-indexed knowledge editing as demonstrated in Section 3.3.
+6 Related Works
+MoE (Shazeer et al., 2017; Fedus et al., 2022) introduced large parametric capacity for LLMs at near-constant FLOPs through sparse computation. The success of MoE models hinges closely with auxiliary loss function designs (Fedus et al., 2022; Rajbhandari et al., 2022; Qiu et al., 2025), and system-level solutions (Huang et al., 2024; Go and Mahajan, 2025; Wang et al., 2024b) that ensure load balance among expert networks, training stability, mitigation of representation collapse (Chi et al., 2022), and tolerable communication overload during training and inference. To avoid the interference of auxiliary routing losses with the training objective, recent works have proposed auxiliary loss-free approaches (Roller et al., 2021; Wang et al., 2024a) that inject fixed or dynamic routing bias to the MoE model.
+Conversely, PKM models (Lample et al., 2019) reserve a large key-value parametric memory with efficient top-k selection through memory-efficient keys arranged in product space. PKM(Lample et al., 2019; He, 2024) scales up the parametric memory compared to MoE, increases the granularity of sparsity, and avoids the cross-device communication overhead, but at the cost of high memory lookup cost during inference, and under-training issues of the large value memory. These challenges require sophisticated architectural modifications (Huang et al., 2025) and advanced system-level solutions (Berges et al., 2024) to be overcome.
+Recently, Gemma-3n (Google DeepMind, 2024) proposed Per Layer Embeddings (PLE) for small on-device models to complement their limited parametric capacity with token-indexed sparse parametric memory. However, they do not dispose of original FFN modules, and use a much lower-dimensional PLE only to modulate the FFN output in each layer. These embedding tables are accommodated in fast storage, outside GPU HBM memory to accommodate larger batch sizes and enable fast prefetching.
+7 Conclusion
+This work introduced STEM, a static, token-indexed design that replaces the FFN up-projection with a layer-local embedding lookup.This decouples parametric capacity from per-token compute and cross-device communication, yielding lower per-token FLOPs and fewer parameter accesses, and enabling CPU offload with asynchronous prefetch. Empirically, STEM trains stably despite extreme sparsity (compared to fine-grained MoE variants), improves accuracy over dense baselines, and exhibits higher effective memory capacity via a large-angular-spread embedding space. More importantly, it achieves all these benefits while being more interpretable. It also strengthens long-context performance by activating more distinct parameters as sequence length grows, providing practical test-time capacity scaling.
+References
+Artetxe et al. (2022)
+M. Artetxe, S. Bhosale, N. Goyal, T. Mihaylov, M. Ott, S. Shleifer, X. V. Lin, J. Du, S. Iyer, R. Pasunuru, G. Anantharaman, X. Li, S. Chen, H. Akin, M. Baines, L. Martin, X. Zhou, P. S. Koura, B. O’Horo, J. Wang, L. Zettlemoyer, M. Diab, Z. Kozareva, and V. Stoyanov
+Efficient large scale language modeling with mixtures of experts.
+External Links: 2112.10684,
+Link
+Cited by: §1,
+§2.
+Bai et al. (2024)
+Y. Bai, X. Lv, J. Zhang, H. Lyu, J. Tang, Z. Huang, Z. Du, X. Liu, A. Zeng, L. Hou, Y. Dong, J. Tang, and J. Li
+LongBench: a bilingual, multitask benchmark for long context understanding.
+External Links: 2308.14508,
+Link
+Cited by: §8.1.
+Berges et al. (2024)
+V. Berges, B. Oğuz, D. Haziza, W. Yih, L. Zettlemoyer, and G. Ghosh
+Memory layers at scale.
+External Links: 2412.09764,
+Link
+Cited by: §6.
+Bisk et al. (2020)
+Y. Bisk, R. Zellers, R. L. Bras, J. Gao, and Y. Choi
+PIQA: reasoning about physical commonsense in natural language.
+In Thirty-Fourth AAAI Conference on
+Artificial Intelligence,
+Cited by: §4.1.
+Boix-Adsera and Rigollet (2025)
+E. Boix-Adsera and P. Rigollet
+The power of fine-grained experts: granularity boosts expressivity in mixture of experts.
+External Links: 2505.06839,
+Link
+Cited by: §1.
+Chi et al. (2022)
+Z. Chi, L. Dong, S. Huang, D. Dai, S. Ma, B. Patra, S. Singhal, P. Bajaj, X. Song, X. Mao, H. Huang, and F. Wei
+On the representation collapse of sparse mixture of experts.
+External Links: 2204.09179,
+Link
+Cited by: §6.
+Clark et al. (2019)
+C. Clark, K. Lee, M. Chang, T. Kwiatkowski, M. Collins, and K. Toutanova
+BoolQ: exploring the surprising difficulty of natural yes/no questions.
+In Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (NAACL-HLT),
+External Links: Link
+Cited by: §4.1.
+Clark et al. (2018)
+P. Clark, I. Cowhey, O. Etzioni, T. Khot, A. Sabharwal, C. Schoenick, and O. Tafjord
+Think you have solved question answering? try arc, the ai2 reasoning challenge.
+arXiv:1803.05457v1.
+Cited by: §1,
+§4.1.
+Cobbe et al. (2021)
+K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano, C. Hesse, and J. Schulman
+Training verifiers to solve math word problems.
+arXiv preprint arXiv:2110.14168.
+Cited by: §1,
+§4.1.
+Dai et al. (2024)
+D. Dai, C. Deng, C. Zhao, R. X. Xu, H. Gao, D. Chen, J. Li, W. Zeng, X. Yu, Y. Wu, Z. Xie, Y. K. Li, P. Huang, F. Luo, C. Ruan, Z. Sui, and W. Liang
+DeepSeekMoE: towards ultimate expert specialization in mixture-of-experts language models.
+External Links: 2401.06066,
+Link
+Cited by: §1,
+§1,
+§4.2.
+Databricks (2024)
+Databricks
+Introducing dbrx: a new state-of-the-art open llm.
+Note: Accessed: 2025-09-04
+External Links: Link
+Cited by: §1,
+§4.2.
+Donoho and Elad (2003)
+D. L. Donoho and M. Elad
+Optimally sparse representation in general (nonorthogonal) dictionaries via l1 minimization.
+Proceedings of the National Academy of Sciences 100 (5), pp. 2197–2202.
+External Links: Document,
+Link
+Cited by: §5.1.
+dos Santos et al. (2023)
+C. N. dos Santos, J. Lee-Thorp, I. Noble, C. Chang, and D. Uthus
+Memory augmented language models through mixture of word experts.
+External Links: 2311.10768,
+Link
+Cited by: §2,
+§2.
+Fedus et al. (2022)
+W. Fedus, B. Zoph, and N. Shazeer
+Switch transformers: scaling to trillion parameter models with simple and efficient sparsity.
+External Links: 2101.03961,
+Link
+Cited by: §1,
+§1,
+§2,
+§6.
+Gao et al. (2023)
+T. Gao, H. Yen, J. Yu, and D. Chen
+Enabling large language models to generate text with citations.
+In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing (EMNLP),
+External Links: 2305.14627,
+Link
+Cited by: §4.1.
+Geva et al. (2021)
+M. Geva, R. Schuster, J. Berant, and O. Levy
+Transformer feed-forward layers are key-value memories.
+External Links: 2012.14913,
+Link
+Cited by: §3.2,
+§5.1.
+Go and Mahajan (2025)
+S. Go and D. Mahajan
+MoETuner: optimized mixture of expert serving with balanced expert placement and token routing.
+External Links: 2502.06643,
+Link
+Cited by: §1,
+§3.2.4,
+§6.
+Google DeepMind (2024)
+Google DeepMind
+Gemma 3n documentation.
+Note: Accessed: 2025-09-04
+External Links: Link
+Cited by: §1,
+§2,
+item 2,
+§6.
+He (2024)
+X. O. He
+Mixture of a million experts.
+External Links: 2407.04153,
+Link
+Cited by: §1,
+§6.
+Hendrycks et al. (2021)
+D. Hendrycks, C. Burns, S. Basart, A. Zou, M. Mazeika, D. Song, and J. Steinhardt
+Measuring massive multitask language understanding.
+Proceedings of the International Conference on Learning Representations (ICLR).
+Cited by: §1,
+§4.1.
+Hoffmann et al. (2022)
+J. Hoffmann, S. Borgeaud, A. Mensch, E. Buchatskaya, T. Cai, E. Rutherford, D. de Las Casas, L. A. Hendricks, J. Welbl, A. Clark, T. Hennigan, E. Noland, K. Millican, G. van den Driessche, B. Damoc, A. Guy, S. Osindero, K. Simonyan, E. Elsen, J. W. Rae, O. Vinyals, and L. Sifre
+Training compute-optimal large language models.
+External Links: 2203.15556,
+Link
+Cited by: §1.
+Huang et al. (2024)
+H. Huang, N. Ardalani, A. Sun, L. Ke, S. Bhosale, H. S. Lee, C. Wu, and B. Lee
+Toward efficient inference for mixture of experts.
+In The Thirty-eighth Annual Conference on Neural Information Processing Systems,
+External Links: Link
+Cited by: §1,
+§3.2.4,
+§6.
+Huang et al. (2025)
+Z. Huang, Q. Min, H. Huang, D. Zhu, Y. Zeng, R. Guo, and X. Zhou
+Ultra-sparse memory network.
+External Links: 2411.12364,
+Link
+Cited by: §1,
+§6.
+Huben et al. (2024)
+R. Huben, H. Cunningham, L. R. Smith, A. Ewart, and L. Sharkey
+Sparse autoencoders find highly interpretable features in language models.
+In The Twelfth International Conference on Learning Representations,
+External Links: Link
+Cited by: §3.2.2.
+Kamradt (2024)
+G. Kamradt
+LLMTest_NeedleInAHaystack.
+Note: https://github.com/gkamradt/LLMTest_NeedleInAHaystackGitHub repository; accessed 2025-09-24
+Cited by: §1,
+§1,
+§4.1.
+Kaplan et al. (2020)
+J. Kaplan, S. McCandlish, T. Henighan, T. B. Brown, B. Chess, R. Child, S. Gray, A. Radford, J. Wu, and D. Amodei
+Scaling laws for neural language models.
+External Links: 2001.08361,
+Link
+Cited by: §1.
+Lample et al. (2019)
+G. Lample, A. Sablayrolles, M. Ranzato, L. Denoyer, and H. Jégou
+Large memory layers with product keys.
+External Links: 1907.05242,
+Link
+Cited by: §6.
+Lepikhin et al. (2020)
+D. Lepikhin, H. Lee, Y. Xu, D. Chen, O. Firat, Y. Huang, M. Krikun, N. Shazeer, and Z. Chen
+GShard: scaling giant models with conditional computation and automatic sharding.
+External Links: 2006.16668,
+Link
+Cited by: §1.
+Li et al. (2025a)
+J. Li, A. Fang, G. Smyrnis, M. Ivgi, M. Jordan, S. Gadre, H. Bansal, E. Guha, S. Keh, K. Arora, S. Garg, R. Xin, N. Muennighoff, R. Heckel, J. Mercat, M. Chen, S. Gururangan, M. Wortsman, A. Albalak, Y. Bitton, M. Nezhurina, A. Abbas, C. Hsieh, D. Ghosh, J. Gardner, M. Kilian, H. Zhang, R. Shao, S. Pratt, S. Sanyal, G. Ilharco, G. Daras, K. Marathe, A. Gokaslan, J. Zhang, K. Chandu, T. Nguyen, I. Vasiljevic, S. Kakade, S. Song, S. Sanghavi, F. Faghri, S. Oh, L. Zettlemoyer, K. Lo, A. El-Nouby, H. Pouransari, A. Toshev, S. Wang, D. Groeneveld, L. Soldaini, P. W. Koh, J. Jitsev, T. Kollar, A. G. Dimakis, Y. Carmon, A. Dave, L. Schmidt, and V. Shankar
+DataComp-lm: in search of the next generation of training sets for language models.
+External Links: 2406.11794,
+Link
+Cited by: §4.1.
+Li et al. (2025b)
+Y. Li, P. Zheng, S. Chen, Z. Xu, Y. Lai, Y. Du, and Z. Wang
+Speculative moe: communication efficient parallel moe inference with speculative token and expert pre-scheduling.
+External Links: 2503.04398,
+Link
+Cited by: §1.
+Liu et al. (2024)
+Z. Liu, C. Zhao, F. Iandola, C. Lai, Y. Tian, I. Fedorov, Y. Xiong, E. Chang, Y. Shi, R. Krishnamoorthi, L. Lai, and V. Chandra
+MobileLLM: optimizing sub-billion parameter language models for on-device use cases.
+External Links: 2402.14905,
+Link
+Cited by: §1,
+§4.1.
+Mahabadi et al. (2025)
+R. K. Mahabadi, S. Satheesh, S. Prabhumoye, M. Patwary, M. Shoeybi, and B. Catanzaro
+Nemotron-cc-math: a 133 billion-token-scale high quality math pretraining dataset.
+External Links: 2508.15096,
+Link
+Cited by: §4.1.
+Meng et al. (2022)
+K. Meng, D. Bau, A. Andonian, and Y. Belinkov
+Locating and editing factual associations in GPT.
+Advances in Neural Information Processing Systems 36.
+Note: arXiv:2202.05262
+Cited by: §3.2,
+§3.2.2,
+§5.1.
+Meta AI (2024)
+Meta AI
+Llama 3.2 1b.
+Note: Accessed: 2025-09-04
+External Links: Link
+Cited by: §1,
+§4.1.
+Mihaylov et al. (2018)
+T. Mihaylov, P. Clark, T. Khot, and A. Sabharwal
+Can a suit of armor conduct electricity? a new dataset for open book question answering.
+In EMNLP,
+Cited by: §1,
+§4.1.
+NVIDIA et al. (2025)
+NVIDIA, :, A. Basant, A. Khairnar, A. Paithankar, A. Khattar, A. Renduchintala, A. Malte, A. Bercovich, A. Hazare, A. Rico, A. Ficek, A. Kondratenko, A. Shaposhnikov, A. Bukharin, A. Taghibakhshi, A. Barton, A. S. Mahabaleshwarkar, A. Shen, A. Tao, A. Guan, A. Shors, A. Mandarwal, A. Mehta, A. Venkatesan, A. Sharabiani, A. Aithal, A. Poojary, A. Dattagupta, B. Buddharaju, B. Zhu, B. Simkin, B. Kartal, B. D. Rouhani, B. Chen, B. Ginsburg, B. Norick, B. Yu, B. Catanzaro, C. Wang, C. Truong, C. Mungekar, C. Patel, C. Alexiuk, C. Munley, C. Parisien, D. Su, D. Afrimi, D. Korzekwa, D. Rohrer, D. Gitman, D. Mosallanezhad, D. Narayanan, D. Rekesh, D. Yared, D. Pykhtar, D. Ahn, D. Riach, E. Long, E. Ning, E. Chung, E. Galinkin, E. Bakhturina, G. Prasad, G. Shen, H. Qian, H. Elisha, H. Sharma, H. Ross, H. Ngo, H. Sahota, H. Wang, H. C. Shin, H. Huang, I. Cunningham, I. Gitman, I. Moshkov, J. Jung, J. Kautz, J. P. Scowcroft, J. Casper, J. Zhang, J. Zeng, J. Zhang, J. Xue, J. Huang, J. Conway, J. Kamalu, J. Cohen, J. Jennings, J. V. Vialard, J. Yi, J. Parmar, K. Briski, K. Cheung, K. Luna, K. Wyss, K. Santhanam, K. Kong, K. Pawelec, K. Anik, K. Li, K. Ahmadian, L. McAfee, L. Sleiman, L. Derczynski, L. Vega, M. R. de Melo, M. N. Sreedhar, M. Chochowski, M. Cai, M. Kliegl, M. Stepniewska-Dziubinska, M. Novikov, M. Samadi, M. Price, M. Boubdir, M. Boone, M. Evans, M. Bien, M. Zawalski, M. Martinez, M. Chrzanowski, M. Shoeybi, M. Patwary, N. Dhameja, N. Assaf, N. Habibi, N. Bhatia, N. Pope, N. Tajbakhsh, N. K. Juluru, O. Rybakov, O. Hrinchuk, O. Kuchaiev, O. Olabiyi, P. Ribalta, P. Subramanian, P. Chadha, P. Molchanov, P. Dykas, P. Jin, P. Bialecki, P. Januszewski, P. Thalasta, P. Gaikwad, P. Varshney, P. Gundecha, P. Tredak, R. K. Mahabadi, R. Patel, R. El-Yaniv, R. Rajan, R. Cheruvu, R. Shahbazyan, R. Borkar, R. Gala, R. Waleffe, R. Zhang, R. J. Hewett, R. Prenger, S. Jain, S. Kriman, S. Satheesh, S. Kaji, S. Yurick, S. Muralidharan, S. Narenthiran, S. Bak, S. Sameni, S. Han, S. Ramasamy, S. Ghosh, S. T. Sreenivas, S. Thomas, S. Diao, S. Gopal, S. Prabhumoye, S. Toshniwal, S. Ding, S. Singh, S. Jain, S. Majumdar, S. Singhal, S. Alborghetti, S. N. Akter, T. Kong, T. Moon, T. Hliwiak, T. Asida, T. Wang, T. Konuk, T. Vashishth, T. Poon, U. Karpas, V. Noroozi, V. Srinivasan, V. Korthikanti, V. Fugro, V. Kalluru, V. Kurin, V. Lavrukhin, W. U. Ahmad, W. Du, W. Byeon, X. Lu, X. Dong, Y. Karnati, Y. Choi, Y. Zhang, Y. Lin, Y. Fu, Y. Suhara, Z. Dong, Z. Li, Z. Zhu, and Z. Chen
+NVIDIA nemotron nano 2: an accurate and efficient hybrid mamba-transformer reasoning model.
+External Links: 2508.14444,
+Link
+Cited by: §4.1.
+OLMo et al. (2025)
+T. OLMo, P. Walsh, L. Soldaini, D. Groeneveld, K. Lo, S. Arora, A. Bhagia, Y. Gu, S. Huang, M. Jordan, N. Lambert, D. Schwenk, O. Tafjord, T. Anderson, D. Atkinson, F. Brahman, C. Clark, P. Dasigi, N. Dziri, M. Guerquin, H. Ivison, P. W. Koh, J. Liu, S. Malik, W. Merrill, L. J. V. Miranda, J. Morrison, T. Murray, C. Nam, V. Pyatkin, A. Rangapur, M. Schmitz, S. Skjonsberg, D. Wadden, C. Wilhelm, M. Wilson, L. Zettlemoyer, A. Farhadi, N. A. Smith, and H. Hajishirzi
+2 olmo 2 furious.
+External Links: 2501.00656,
+Link
+Cited by: §4.1.
+Qiu et al. (2025)
+Z. Qiu, Z. Huang, B. Zheng, K. Wen, Z. Wang, R. Men, I. Titov, D. Liu, J. Zhou, and J. Lin
+Demons in the detail: on implementing load balancing loss for training specialized mixture-of-expert models.
+External Links: 2501.11873,
+Link
+Cited by: §1,
+§6.
+Rajbhandari et al. (2022)
+S. Rajbhandari, C. Li, Z. Yao, M. Zhang, R. Y. Aminabadi, A. A. Awan, J. Rasley, and Y. He
+DeepSpeed-MoE: advancing mixture-of-experts inference and training to power next-generation AI scale.
+In Proceedings of the 39th International Conference on Machine Learning,  K. Chaudhuri, S. Jegelka, L. Song, C. Szepesvari, G. Niu, and S. Sabato (Eds.),
+Proceedings of Machine Learning Research, Vol. 162, pp. 18332–18346.
+External Links: Link
+Cited by: §6.
+Roller et al. (2021)
+S. Roller, S. Sukhbaatar, A. Szlam, and J. Weston
+Hash layers for large sparse models.
+External Links: 2106.04426,
+Link
+Cited by: §1,
+§2,
+§6.
+Sakaguchi et al. (2020)
+K. Sakaguchi, R. Le Bras, C. Bhagavatula, and Y. Choi
+WinoGrande: an adversarial winograd schema challenge at scale.
+In Proceedings of the AAAI Conference on Artificial Intelligence,
+External Links: Link
+Cited by: §4.1.
+Sap et al. (2019)
+M. Sap, H. Rashkin, D. Chen, R. LeBras, and Y. Choi
+SocialIQA: commonsense reasoning about social interactions.
+External Links: 1904.09728,
+Link
+Cited by: §4.1.
+Shazeer et al. (2017)
+N. Shazeer, A. Mirhoseini, K. Maziarz, A. Davis, Q. Le, G. Hinton, and J. Dean
+Outrageously large neural networks: the sparsely-gated mixture-of-experts layer.
+External Links: 1701.06538,
+Link
+Cited by: §1,
+§1,
+§6.
+Soldaini et al. (2024)
+L. Soldaini, R. Kinney, A. Bhagia, D. Schwenk, D. Atkinson, R. Authur, B. Bogin, K. Chandu, J. Dumas, Y. Elazar, V. Hofmann, A. H. Jha, S. Kumar, L. Lucy, X. Lyu, N. Lambert, I. Magnusson, J. Morrison, N. Muennighoff, A. Naik, C. Nam, M. E. Peters, A. Ravichander, K. Richardson, Z. Shen, E. Strubell, N. Subramani, O. Tafjord, P. Walsh, L. Zettlemoyer, N. A. Smith, H. Hajishirzi, I. Beltagy, D. Groeneveld, J. Dodge, and K. Lo
+Dolma: an open corpus of three trillion tokens for language model pretraining research.
+External Links: 2402.00159,
+Link
+Cited by: §4.1.
+Sprague et al. (2024)
+Z. Sprague, X. Ye, K. Bostrom, S. Chaudhuri, and G. Durrett
+MuSR: testing the limits of chain-of-thought with multistep soft reasoning.
+External Links: 2310.16049,
+Link
+Cited by: §8.1.
+Suzgun et al. (2022)
+M. Suzgun, N. Scales, N. Schärli, S. Gehrmann, Y. Tay, H. W. Chung, A. Chowdhery, Q. V. Le, E. H. Chi, D. Zhou, and J. Wei
+Challenging big-bench tasks and whether chain-of-thought can solve them.
+External Links: 2210.09261,
+Link
+Cited by: §8.1.
+Team (2025a)
+Q. Team
+Qwen3 technical report.
+External Links: 2505.09388,
+Link
+Cited by: §1.
+Team (2025b)
+Q. Team
+Qwen3-max: just scale it.
+Cited by: §1.
+Tropp (2004)
+J.A. Tropp
+Greed is good: algorithmic results for sparse approximation.
+IEEE Transactions on Information Theory 50 (10), pp. 2231–2242.
+External Links: Document
+Cited by: §5.1.
+Wang et al. (2024a)
+L. Wang, H. Gao, C. Zhao, X. Sun, and D. Dai
+Auxiliary-loss-free load balancing strategy for mixture-of-experts.
+External Links: 2408.15664,
+Link
+Cited by: §6.
+Wang et al. (2024b)
+W. Wang, Z. Lai, S. Li, W. Liu, K. Ge, A. Shen, H. Su, and D. Li
+Pro-prophet: a systematic load balancing method for efficient parallel training of large-scale moe models.
+External Links: 2411.10003,
+Link
+Cited by: §6.
+Zellers et al. (2019)
+R. Zellers, A. Holtzman, Y. Bisk, A. Farhadi, and Y. Choi
+HellaSwag: can a machine really finish your sentence?.
+In Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics,
+Cited by: §4.1.
+\beginappendix
+8 Appendix
+8.1 Additional Benchmarks
+Interestingly, our additional experiments on more contextual reasoning-heavy tasks show that STEM’s contextual reasoning skill is better than that of the dense baseline. To directly probe reasoning beyond parametric knowledge, we evaluate 1B-scale baseline and STEM models on BIG-Bench Hard (BBH) (Suzgun et al., 2022), MuSR(Sprague et al., 2024), and the LongBench(Bai et al., 2024) multi-hop reasoning and code-understanding subsets. BBH is a collection of diverse, challenging tasks designed to require multi-step and compositional reasoning. MuSR requires the model to track entities and constraints over a long narrative before answering a question. The LongBench multi-hop subset tests reasoning across multiple passages, while the code-understanding subset evaluates comprehension of complex code snippets. As shown in Table 5, STEM consistently outperforms the dense baseline on BBH, MuSR, and on LongBench multi-hop and code-understanding tasks across all context-length ranges, indicating that STEM does not impair contextual reasoning and can in fact improve it.
+Table 5: Contextual reasoning ability. Contextual reasoning benchmarks for 1B-scale models. LongBench scores are averaged over tasks within each context-length range.
+Model
+BBH
+MuSR
+LongBench Multi-hop
+LongBench Code
+<4<4k
+4–8k
+≥8\geq 8k
+<4<4k
+4–8k
+≥8\geq 8k
+Baseline
+24.87
+35.85
+5.72
+6.20
+6.19
+45.37
+44.64
+41.30
+STEM
+27.55
+36.38
+10.20
+8.63
+7.82
+52.68
+52.53
+49.60
+8.2 Additional Long-context Evaluation
+Apart from the synthetic task Needle-in-a-haystack, we further evaluate STEM on LongBench, a long-context benchmark that spans six task categories, including single- and multi-document question answering, summarization, few-shot learning, synthetic tasks, and code completion. We group test examples by context length and report the average scores in each regime. As shown in Table 6, the 1B STEM model consistently matches or outperforms the 1B dense baseline across all context-length ranges, indicating that its long-context capabilities extend beyond synthetic tasks.
+Table 6: Long-context ability. LongBench results (average across tasks) for 1B models, grouped by context length.
+Model
+0–2k
+2–4k
+4–6k
+6–8k
+8–10k
+10–12k
+12k+
+Base
+24.0
+23.8
+22.1
+22.3
+21.9
+21.1
+23.5
+STEM
+27.6
+27.6
+24.4
+22.7
+23.0
+21.7
+24.2
+8.3 Additional Architecture Ablation Study
+To study the optimality of our STEM design principles, we further experiment with additional architecture alternatives.
+8.3.1 STEM†
+STEM uses strictly fewer active parameters, and FLOPs for each token. And because of the architectural bias, STEM is susceptible to some loss of contextual learning ability. We also introduce a hybrid variant of STEM, which retains the up projection matrix in FFN, but complements with an additive token-specific modulation. Concretely, the new variant STEM† computes the FFN output as follows,
+𝐲ℓ=𝐖ℓd​(SiLU⁡(𝐖ℓg​𝐱ℓ)⊙(𝐖ℓu​𝐱ℓ+𝐔ℓ​[t])),\mathbf{y}_{\ell}\;=\;\mathbf{W}_{\ell}^{d}\!\left(\mathrm{SiLU}\!\big(\mathbf{W}_{\ell}^{g}\mathbf{x}_{\ell}\big)\;\odot\;\left(\mathbf{W}_{\ell}^{u}\mathbf{x}_{\ell}+\mathbf{U}_{\ell}[t]\right)\right),
+(5)
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

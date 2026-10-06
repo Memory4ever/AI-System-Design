@@ -1,0 +1,446 @@
+Necessary main-body extraction; no unrelated appendices. Source https://arxiv.org/html/2601.10229v1
+Introduction
+Figure 1: Overview of GeoSteer. (1) A dataset of chain-of-thought (CoT) trajectories is constructed by generating multiple reasoning paths for each problem and assigning a quality score to each intermediate step. (2) A variational autoencoder (VAE) is trained on these trajectories to learn a latent manifold that captures the structural properties of high-quality reasoning. (3) During inference, the target model’s hidden states are steered by updating their latent representations toward regions associated with higher-quality reasoning.
+Recent progress in Large Language Models (LLMs) has led to increasingly advanced reasoning capabilities (OpenAI 2023). Techniques for generating explicit intermediate reasoning steps enable LLMs to achieve higher accuracy in downstream tasks, i.e., Chain-of-Thought (CoT) prompting (Wei et al. 2022), Self-Consistency decoding (Wang et al. 2022), and Tree-of-Thought (Yao et al. 2023). Outputting the reasoning processes facilitates the analysis of how LLMs reach their conclusions and improve the interpretability of their reasoning behavior.
+Previous studies have confirmed several limitations in existing approaches, including CoT-based methods. Most approaches that train models to generate an intermediate reasoning trace (e.g., DPO (Rafailov et al. 2023) and GRPO (Dong et al. 2024)) require substantial preference data for an alignment and make the training process computationally expensive. To avoid these issues, activation steering methods have been proposed as alignment-free approaches that intervene directly in hidden representations. Despite addressing data and computational limitations, existing approaches still face issues. Zheng et al. (2024) pointed out that these errors often appear as logical inconsistencies or unnecessary sentences. Yee et al. (2024) revealed that DPO-aligned models sometimes generate incorrect reasoning steps even when their final answers are correct. Such inconsistency between the reasoning and the final answers reduces the reliability and interpretability of LLMs. This issue reduces the reliability of LLMs, so a reliable way to evaluate reasoning at intermediate steps is needed. As a result, errors that occur during the intermediate reasoning steps can remain unrecognized under final-answer evaluation alone. However, most previous studies evaluate reasoning only at the step level and fail to capture the overall structural consistency of the reasoning process. These limitations indicate that existing approaches cannot provide comprehensive control over the reasoning process.
+This issue of the logical consistency has recently been addressed using activation steering methods (Kirtania 2025; Li et al. 2025). Kirtania (2025) suggested an activation steering framework that increases the consistency of intermediate reasoning steps in proof generation. Li et al. (2025) proposed a training strategy that improves the overall quality of CoT reasoning without relying on high-quality CoT datasets. These results indicate that guiding the reasoning trajectory by an activation steering is an effective strategy. However, these manipulation methods operate on hidden states in a Euclidean space and rely on linear operations. This assumption may lead to degrade performance because it ignores that hidden representations are structured as points on a curved manifold. Therefore, activation steering requires operating in a manifold-based approach.
+In this study, we propose a method called GeoSteer, which steers the hidden states of LLMs on a learned latent manifold. Figure 1 illustrates an overview of our proposed approach. Our method consists of three steps: (1) constructing CoT trajectories using gpt-oss-20b annotated with stepwise quality scores, which serve as high-quality reference reasoning. (2) training a VAE model on these trajectories to learn a latent manifold that captures the structure of high-quality reasoning. (3) steering the target model’s hidden states in the latent space toward regions associated with higher-quality reasoning during inference.
+To capture a latent manifold, a Variational Autoencoder (VAE) is trained on high-quality reasoning trajectories.
+The VAE maps hidden representations into a latent space regularized toward an approximately isotropic Gaussian distribution.
+Such regularization reduces the strong anisotropy observed in the original hidden-state space, making distances and directions in the latent space more uniform and easier to manipulate.
+As a result, linear updates in the latent space provide a more stable and interpretable direction for improving the quality score. Our goal is to improve the quality of CoT produced by a smaller target model by steering its hidden states during inference.
+We conduct evaluation experiments on the GSM8k dataset across four LLMs in Qwen3 family. Experimental results show that our method achieves competitive accuracy on the final answers and improves the quality of the generated reasoning, i.e., its logical coherence, structural faithfulness, and stepwise consistency. These results demonstrate that GeoSteer can refine the reasoning process without decreasing the predictive performances.
+Our main contributions are as follows:
+1.
+A manifold-based framework GeoSteer that adjusts hidden states in a latent space learned by the VAE to generate more logically consistent reasoning processes.
+2.
+A geometry-aware activation steering method that overcomes the limitations of conventional linear manipulation performed in Euclidean spaces.
+3.
+An empirical demonstration that GeoSteer improves the quality of CoT reasoning across multiple model parameters.
+Related Works
+Activation Steering and Representation Control
+A series of studies manipulated hidden representations to influence the behavior of large language models.
+Turner et al. (2023) introduced a method called Activation Engineering, which applied linear activation shifts to alter factual, stylistic, or emotional attributes of model outputs.
+The method identified direction vectors from contrastive examples and applied these directions to intermediate layers.
+Zou et al. (2023) extended this idea by decomposing hidden states into interpretable subspaces and associating specific components with semantic factors, such as toxicity or helpfulness.
+These steering methods assumed that the activation space could be meaningfully manipulated through linear arithmetic.
+Nonlinear changes in model behavior were not always expressed through such linear steering methods.
+Prior work therefore explored alternative parameterizations, including nonlinear subspace modeling (Meng et al. 2022) and low-rank adaptation of intermediate activations (Hu et al. 2021).
+Prior work also examined the distinction between inference-time and training-time control (Meng et al. 2022).
+Activation steering adjusted hidden states during inference.
+In contrast, reinforcement-learning-based alignment methods such as RLHF, DPO, and GRPO, modified model parameters through supervised or preference-based updates (Ouyang et al. 2022; Rafailov et al. 2023; Dong et al. 2024).
+These methods reshaped the output distribution, but did not operate on hidden representations during generation.
+Modeling and Evaluating Reasoning Trajectories
+Another line of research evaluated or improved stepwise reasoning (Lightman et al. 2024; Luo et al. 2024; Yao et al. 2023; Zelikman et al. 2022; Shinn et al. 2024).
+Chain-of-thought verification models estimated the correctness of intermediate reasoning steps (Lightman et al. 2024).
+Process Reward Models assigned continuous quality scores to partial chains of thought and guided the generation of faithful reasoning (Luo et al. 2024).
+Reasoning was also improved through self-refinement.
+Tree-of-Thoughts explored multiple reasoning branches and used heuristic scoring functions to select promising trajectories (Yao et al. 2023).
+Self-Taught Reasoner (STaR) generated additional reasoning steps and used the generated steps as additional supervision to further fine-tune the model on the same reasoning task (Zelikman et al. 2022).
+Other works expanded this direction by integrating step-level evaluators with reinforcement-learning-based updates (Shinn et al. 2024).
+These methods operated at the text level, meaning that they evaluated or modified the sequence of generated tokens rather than the underlying hidden representations.
+Many methods first generated multiple candidate reasoning trajectories and then ranked, filtered, or revised these candidates using task-specific scoring models (Yao et al. 2023; Luo et al. 2024; Lightman et al. 2024).
+Approaches that manipulated the reasoning process during generation were comparatively limited (Shinn et al. 2024; Madaan et al. 2023).
+Existing works mainly adjusted decoding strategies or sampling heuristics, such as verifier-driven sampling (Madaan et al. 2023).
+In-process modification of hidden representations remained less explored in prior research.
+Latent Manifold Learning and Geometric Analysis
+Latent-variable models uncover low-dimensional structure in complex data.
+Variational autoencoders represent observations through latent variables with explicit priors and reconstructive decoders (Kingma and Welling 2014).
+\beta-VAE promotes disentangled factors in the latent representation (Higgins et al. 2017).
+Normalizing flows extended this framework by transforming simple latent distributions into complex densities (Rezende and Mohamed 2015).
+Recent studies analyzed geometric patterns in neural representations of LLMs (Ethayarajh 2019; Tenney et al. 2019).
+Hidden states have been shown to be organized into low-dimensional subspaces and to vary systematically across layers, reflecting increasing levels of semantic abstraction.
+Other works reported clustering by syntactic role, semantic similarity, or task-specific difficulty (Liu et al. 2019; Hewitt and Manning 2019; Pimentel et al. 2020).
+These findings suggest that model representations may occupy structured regions within the activation space.
+Latent manifold learning has also been explored in areas outside natural language processing, including computer vision, speech modeling, and robotics (Kingma and Welling 2013; Higgins et al. 2017; Ha and Schmidhuber 2018).
+These approaches demonstrate that latent spaces can encode meaningful geometric structure that supports interpolation, optimization, and navigation.
+Preliminaries
+Notation and Setup
+Let x denote an input question, and let the model output be
+y=\left[c_{0},\cdots,c_{T-1},a\right],
+(1)
+where c_{t} is the t-th reasoning step and a is the final output that answers the question.
+At each step t, the model produces a hidden state
+h_{t}\in\mathbb{R}^{d}.
+(2)
+The sequence \left\{h_{t}\right\}_{t=0}^{T-1} represents the internal states generated during multi-step inference.
+Latent Representation of Hidden States
+Empirical analysis of LLMs haev shown that their internal representations exhibit low-dimension
+al geometric structure in embedding space (Saglam et al. 2025; Valeriani et al. 2023; Lee et al. 2025). Motivated by these findings, we assume the existence of a latent space
+\mathcal{Z}\subset\mathbb{R}^{k},\ k<d,
+(3)
+that provides a compact coordinate system for representing hidden states. This latent space offers a reduced dimensional domain in which reasoning trajectories
+\left\{h_{t}\right\}\mapsto\left\{z_{t}\right\}
+(4)
+can be described and compared.
+Quality of Intermediate Reasoning
+Reasoning steps in a CoT differ in how much they contribute to obtain the final answer. To express this notion, we define a scalar score
+q_{t}\in\left[0,1\right],
+(5)
+which evaluates whether the partical reasoning segment \left\{c_{0},\cdots,c_{t}\right\},\ (t<T) is sufficintly informative for deriving the correct answer.
+This score reflects the coherence and correctness of the reasoning up to step t. It provides an abstract formulation of intermediate reasoning quality independent of any specific evaluation model.
+Proposed Method
+We propose GeoSteer, a manifold-based steering framework that improves the intermediate reasoning process of LLMs. GeoSteer consists of three components: (1) constructing a dataset of high-quality and flawed CoT trajectories, (2) learning a low-dimensional latent manifold of hidden states along with a continuous quality function, and (3) steering hidden states during inference using the gradient of this quality function pulled back through the encoder.
+Construction of CoT Dataset
+Let M_{teacher} be a teacher LLM and P a set of problems. For each problem p\in P, the teacher generates a CoT trajectory
+C_{p}^{i}=\left[c_{0}^{i},\cdots,c_{T_{i}-1}^{i}\right],
+(6)
+where i\in\{\mathrm{pos},\mathrm{neg}\} indicates whether the trajectory is high-quality or flawed. High-quality trajectories are generated by the teacher LLM when it is prompted to produce coherent and well-structured reasoning steps. They typically lead to correct final outputs. Flawed trajectories contain arithmetic or logical errors while preserving natural linguistic structure.
+For each prefix,
+C_{p,t}^{i}=\left[c_{0}^{i},\cdots,c_{t-1}^{i}\right],
+(7)
+we assign a scalar score
+q_{p,t}^{i}\in[0,1].
+(8)
+Here, partial reasoning refers to the prefix C_{p,t}^{i}, which represents the sequence of intermediate steps up to step t. The score evaluates whether this prefix contains sufficient information to eventually derive the correct answer. The score is produced by prompting the teacher model with the prompt shown in the Appendix.
+The dataset is
+\mathcal{D}=\left\{\left(p,C_{p}^{i},Q_{p}^{i}\right)\ |\ p\in P,\ i\in\{\mathrm{pos},\mathrm{neg}\}\right\},
+(9)
+where Q_{p}^{i}=\left[q_{p,0}^{i},\cdots,q_{p,T_{i}-1}^{i}\right] is the quality sequence aligned with the CoT steps. This dataset supervises both latent manifold learning and quality estimation.
+Learning a Latent Manifold and Quality Function
+Latent Manifold of Hidden States
+Let M_{student} be the model to be steered. For each trajectory C_{p}^{i}, we feed the CoT tokens into the student model and extract the hidden state at the final token of each prefix C_{p,t}^{i}:
+H_{p}^{i}=\left[h_{p,0}^{i},\cdots,h_{p,T_{i}-1}^{i}\right],\ h_{p,t}^{i}\in\mathbb{R}^{d},
+(10)
+where d is the hidden-states dimension of M_{student}. These states represent the internal computation performed by the student model after producing step t.
+To obtain a latent representation, we train a VAE with encoder
+f_{\theta}:\mathbb{R}^{d}\rightarrow\mathbb{R}^{k},
+(11)
+and decoder
+g_{\phi}:\mathbb{R}^{k}\rightarrow\mathbb{R}^{d},
+(12)
+where k is the dimension of a latent space. The VAE minimizes the following objective:
+\mathcal{L}_{VAE}=\mathbb{E}_{q_{\theta}(z|h)}\left[\|g_{\phi}(z)-h\|^{2}\right]+\mathrm{KL}\left(q_{\theta}(z|h)\ ||\ p(z)\right),
+(13)
+where q_{\theta}(z|h) is an approximate posterior distribution, p(z) is a prior distribution, and \mathrm{KL}(\cdot) is a Kullback-Leibler divergence. Minimizing this objective yields a latent manifold that is both geometrically smooth and faithful to the structure of the original hidden-state space.
+After training, each hidden state is mapped to a latent vector
+z_{p,t}^{i}=f_{\theta}\left(h_{p,t}^{i}\right)\in\mathcal{Z}.
+(14)
+The latent trajectory
+Z_{p}^{i}=\left[z_{p,0}^{i},\cdots,z_{p,T_{i}-1}^{i}\right]
+(15)
+forms a low-dimensional geometric structure that reflects the progression of reasoning in the student model.
+Latent Quality Function
+We learn a differentiable scoring function
+R_{\psi}:\mathcal{Z}\rightarrow\mathbb{R},
+(16)
+which predicts the reasoning-quality score from latent vectors. Given training pairs \left(z_{p,t}^{i},q_{p,t}^{i}\right), we fit the function by minimizing
+\mathcal{L}_{score}=\frac{1}{|\mathcal{D}|}\sum_{p,i,t}\left(R_{\psi}(z_{p,t}^{i})-q_{p,t}^{i}\right)^{2}.
+(17)
+The gradient
+\nabla_{z}R_{\psi}(z)
+(18)
+indicates the direction in latent space that improves the quality of intermediate reasoning.
+Steering of Hidden States
+To apply latent gradients to hidden states, we compute the pullback through the encoder. Let J_{\theta}(h_{t}) denote the Jacobian of f_{\theta} at h_{t}. By the chain rule, we get
+\nabla_{h_{t}}R_{\psi}(z_{t})=J_{\theta}(h_{t})^{\top}\nabla_{z_{t}}R_{\psi}(z_{t}).
+(19)
+During inference, the student model generates hidden states h_{t} autoregressively. For each step, we first compute the latent representation
+z_{t}=f_{\theta}(h_{t}),
+(20)
+an obtain the pullback gradient
+\nabla_{h_{t}}R_{\psi}(z_{t}).
+(21)
+The hidden state is updated using a normalized gradient
+h_{t}^{\prime}=h_{t}+\beta\frac{\nabla_{h_{t}}R_{\psi}(z_{t})}{\left\|\nabla_{h_{t}}R_{\psi}(z_{t})\right\|},
+(22)
+where \beta is a hyperparameter that controls the intensity of steering at each reasoning step. The updated state h_{t}^{\prime} is used to generate the next token. Repeating this over all steps produces a reasoning trajectory guided toward higher-quality regions of the latent manifold while preserving the student model’s linguistic behavior.
+Experiments
+In this section, we evaluate the effectiveness of the proposed method both quantitative and qualitative experiments. We first describe the experimental setup, then present results and provide a case study illustrating latent-space trajectories. The goal is to examine how latent-space steering influences both the reasoning quality and final-answer accuracy of LLMs.
+Experimental Setup
+Models
+We use Qwens models: Qwen3-0.6B, Qwen3-1.7B, Qwen3-4B, and Qwen3-8B (Bai et al. 2024). Each model generates CoT using an identical prompt template. We evaluate two settings: a baseline without steering, and a steered version that modifies hidden states through latent-space updates. All steering operations use the latent manifold learned by the VAE.
+As a teacher model, we employ gpt-oss-20b (OpenAI 2025), which produces high-quality CoT trajectories. These trajectories are used only during training of the VAE and the regressor R_{\psi}.
+CoT Dataset
+We evaluate our methods with the GSM8k dataset (Cobbe et al. 2021), a benchmark for arithmetic and logical reasoning. Each data consists of a natural language question paired with a numerical answer derivable through step-by-step reasoning. The teacher model generates two types of CoT for each training example:
+1.
+High-quality CoT, which follows correct and coherent reasoning steps.
+2.
+Low-quality CoT, which contains incorrect, incomplete, or inconsistent reasoning.
+Both types are converted into hidden states \{h_{t}\}, and then into latent representations \{\mu_{t}\}. These pairs (\mu_{t},q_{t}) constitute the training dataset for the VAE and the regressor, where q_{t} denotes the teacher-assigned quality score.
+Evaluation Dataset
+We evaluate our method on the GSM8k test set in 4-shot setting. The four samples are randomly choosen from the GSM8k test set. The few-shot prompt is shown in Appendix.
+Evaluation Metrics
+To independently assess the accuracy of final answer and reasoning quality, we employ two complementary metrics:
+1.
+Exact Match (EM): EM measures whether the final predicted answer matches the ground truth exactly.
+We report the difference between baseline and steered models.
+2.
+Pairwise Win Rate : For each test example, GPT-4o compares the CoT generated by the baseline and steered models. The judge selects the CoT that is superior in clarity, coherence, and reasoning quality. The win rate is the percentage of cases in which the steered model is preferred. The prompt for pairwise win rate is provided in the Appendix.
+Experimental Results
+Exact Match Accuracy
+\beta
+Qwen3-0.6B
+Qwen3-1.7B
+Qwen3-4B
+Qwen3-8B
+Baseline
+Steered
+Baseline
+Steered
+Baseline
+Steered
+Baseline
+Steered
+1
+60.0
+58.7
+82.3
+82.4
+90.6
+90.5
+90.7
+90.4
+10
+60.0
+60.0
+82.3
+82.9
+90.6
+90.5
+90.7
+90.6
+50
+60.0
+58.5
+82.3
+83.1
+90.6
+90.3
+90.7
+90.4
+100
+60.0*
+55.0
+82.3
+83.5
+90.6
+89.5
+90.7
+90.8
+125
+60.0*
+52.0
+82.3
+83.5
+90.6
+89.8
+90.7
+91.3
+150
+60.0*
+50.9
+82.3
+84.9*
+90.6
+89.8
+90.2
+91.3
+200
+60.0*
+46.2
+82.3
+84.1*
+90.6
+89.9
+90.7
+91.4
+300
+60.0*
+28.7
+82.3
+84.7*
+90.6*
+88.9
+90.7
+91.3
+Table 1:
+Exact Match (%) for different steering strengths \beta across Qwen3 model scales. Bold numbers indicate improvements over the baseline. * shows statistical significance at p<0.05 on the McNemar test.
+\beta
+Qwen3-0.6B
+Qwen3-1.7B
+Qwen3-4B
+Qwen3-8B
+Baseline
+Steered
+Baseline
+Steered
+Baseline
+Steered
+Baseline
+Steered
+1
+8.42
+11.52
+1.82*
+3.71*
+0.45
+1.90*
+0.38
+1.90*
+10
+10.01
+15.31
+1.90*
+4.78*
+0.68
+2.81*
+0.53
+2.05*
+50
+15.92
+19.86
+2.81*
+6.82*
+1.97
+3.11
+1.06
+3.03*
+100
+21.53
+23.20
+3.64
+7.51*
+3.11
+3.11
+1.21
+2.81*
+125
+24.18*
+19.41
+4.40
+7.66*
+3.26
+2.81
+1.29
+4.25*
+150
+26.84*
+20.92
+4.32
+7.66*
+3.03
+3.64
+1.52
+8.04*
+200
+33.21*
+20.24
+5.53
+6.97
+2.81
+3.64
+0.99
+4.70*
+300
+59.89*
+15.62
+5.00
+8.49*
+4.93
+3.41
+1.82
+5.16*
+Table 2:
+Pairwise win rate (%) for different steering strengths \beta across Qwen3 model scales.
+Values show the percentage of comparisons where each model’s output was preferred by GPT-4o. Bold numbers indicate improvements over the baseline. * shows statistical significance at p<0.05 on the McNemar test.
+Table 1 reports Exact Match (EM) for all model sizes and steering strengths.
+The steered models showed small changes in EM across different values of \beta.
+For Qwen3-1.7B, EM improved from 82.3 to 84.9 at \beta=150, which was the largest gain observed.
+Qwen3-8B also showed moderate improvements when \beta was between 125 and 150.
+Qwen3-4B remained stable across all \beta values.
+In contrast, Qwen3-0.6B was sensitive to the steering strength, and EM dropped sharply when \beta>100.
+These results showed that latent-space steering preserved factual accuracy at most operating points, and occasionally improved it for medium to large models.
+Pairwise Evaluation
+Table 2 shows the pairwise win rate obtained using GPT-4o as a judge.
+The steered models were consistently preferred over the baselines.
+For Qwen3-0.6B, the win rate increased from 10.01% to 15.31% at \beta=10.
+For Qwen3-1.7B, the steered model showed a consistent improvements in win rate across every tested value of \beta.
+Qwen3-4B and Qwen3-8B also achieved higher win rates, though the gains were smaller than those of smaller models.
+These results indicated that steering improved the perceived quality of CoT reasoning, even when EM remained unchanged.
+Effect of Steering Strength
+We further investigated how different steering strengths influence EM and pairwise performance.
+The trends varied across model sizes.
+Qwen3-1.7B and Qwen3-8B achieved their best EM at \beta\in\{125,150\}.
+Qwen3-0.6B showed improvements in pairwise evaluation at moderate \beta but degraded sharply at high \beta.
+Across all models, pairwise win rates increased for a wide range of \beta, with the strongest gains observed for Qwen3-0.6B at \beta\in\{100,125,150,200\}. These observations suggested that the optimal \beta depends on the model capacity.
+Discussion
+Behavior of Latent-Space Steering
+Problem:
+An 8-year old child wants to buy a toy car which costs $12. He already has $4 savings. How many days will it take him to save the remaining amount of money if he promises to save $2 daily from his allowance?
+Answer A (Baseline):
+<think>
+Okay, let’s see. So the problem is about Julie saving money for a toy car. The car costs $12, and she already has $4.
+So the remaining money she needs is $12 minus $4, which is $8. She wants to save $2 every day.
+To figure out how many days it will take, we divide the remaining amount by the daily savings.
+So $8 divided by $2 is 4 days. That means it will take her 4 days to save the remaining $8. The final answer should be 4.
+</think>
+The final answer is 4.
+Answer B (Steered):
+<think>
+Okay, let’s see. So, Julie wants to buy a toy car that costs $12. She already has $4 saved. That leaves her with $12 - $4 = $8 to save. She plans to save $2 each day.
+To find out how many days it will take, we divide the remaining amount by the daily savings.
+So, $8 divided by $2 per day equals 4 days. Therefore, it will take her 4 days to save the remaining money.
+</think>
+The final answer is 4.
+Table 3:
+Sample problem and its answers correspond to Figure 2. The red words indicate the token numbered 64.
+Figure 2: Latent reasoning trajectories projected onto a 2D plane defined by the quality-gradient direction (x-axis) and its orthogonal direction (y-axis). Red line indicates the baseline trajectory, and blue line indicates the steered trajectory.
+To examine how latent-space steering modifies the internal reasoning process,
+we analyzed latent trajectories projected onto the two-dimensional space.
+Figure 2 shows the latent states \mu_{t} produced for the problem in Table 3, projected onto a two-dimensional plane defined by the quality-gradient direction (x-axis) and its orthogonal axis (y-axis).
+The baseline trajectory stays within a region whose average quality score is around 0.65. It shows minor directional shifts throughout the reasoning process.
+In contrast, the steered trajectory shows a sharp transition around token 63, which corresponds to the word “take” in Table 3. At this point, the average quality score increases from approximately 0.65 to around 0.78.
+This point marks a semantic shift from the problem description to the computation phase, where the predicted quality gradient becomes steep in the latent space.
+An important observation is that this sudden movement occurs despite the fact that both generations produce the same surface text.
+The steering effect does not arise from differences in output tokens. It reflects a change in the internal representation induced by the latent quality gradient.
+The trajectory is pulled toward a higher-quality region precisely at the moment when the model begins performing arithmetic reasoning.
+After the transition, the steered trajectory remains near the high-quality region and progresses smoothly toward the final state. In this example, the high-quality region corresponds to quality scores around 0.75–0.80.
+Consequently, the steered CoT becomes slightly more concise while still preserving all essential reasoning steps, whereas the baseline CoT includes a few additional explanatory phrases even though both models reach the same final answer (“4 days”).
+The latent-space trajectory thus reveals a more coherent and stable reasoning pattern for the steered model.
+This example demonstrates that the proposed method is capable of controlling the reasoning trajectory, rather than altering the generated text.
+In particular, the most significant influence of latent-space steering is observed at the semantically important boundaries, such as the transition into the computation phase. It guides the outputs of the model toward regions corresponding to higher-quality CoTs.
+These observations suggest that our method improves the overall structural consistency of the reasoning process, beyond the surface-level similarity of the generated text.
+Relationship Between CoT Quality and Final Accuracy
+Figure 3: Step-wise reasoning-quality scores averaged over correct (EM=1) and incorrect (EM=0) solutions.
+Figure 3 plots the step-wise reasoning-quality curves averaged over correct (EM=1) and incorrect (EM=0) solutions.
+The two curves exhibit similar shapes: the quality increases in the early steps and then stabilizes, and their variance bands substantially overlap throughout the trajectory.
+This indicates that the latent-space quality estimator primarily captures local coherence of intermediate reasoning rather than global correctness.
+We also observe that incorrect examples tend to contain fewer reasoning steps.
+This results in smaller variance toward the end of the trajectory.
+This pattern suggests that the model often terminates early once it enters an unproductive reasoning path, even though the step-to-step logic of the partial reasoning remains superficially coherent.
+The similarity of the two curves therefore does not imply similar final outcomes, but rather reflects similarities in how partial reasoning is structured.
+Furthermore, we find cases in which a trajectory maintains high quality scores across most intermediate steps but still produces an incorrect final answer due to a small arithmetic mistake at the end.
+Conversely, some correct answers arise from trajectories that include low-quality regions or fluctuations in the middle of the reasoning.
+These observations indicate that CoT quality and EM capture different aspects of model behavior:
+EM depends heavily on the correctness of the final computation, whereas the latent-space score evaluates the structural coherence of partial reasoning.
+Overall, Figure 3 shows that intermediate reasoning quality is useful, but but it is not sufficient for predicting the final answer.
+This highlights the need for evaluation metrics that capture global logical consistency rather than relying solely on local coherence.
+Future Works
+This work provided a step toward controlling the internal reasoning process of LLMs through latent-space geometry.
+Some directions remain for future exploration.
+The development of more reliable metrics for evaluating the quality of CoT reasoning processes is essential.
+The step-wise quality score used in this study captures local coherence but does not fully reflect global logical consistency.
+To evaluate such global properties, more comprehensive metrics are needed. These assess multi-step causal correctness or trajectory-level validity.
+A deeper analysis of latent trajectories across diverse model families is needed.
+Our experiments focused primarily on the Qwen series, which explicitly supports CoT generation.
+It is necessary to assess if similar trends seen in Qwen emerge in other LLM architectures, such as LLaMA, Mistral, and DeepSeek. This evaluation will verify whether the proposed method is generally applicable to LLMs.
+Conclusion
+We proposed the method GeoSteer, a latent-space framework for adjusting the internal reasoning process of large language models.
+Our method computed quality gradients in a VAE latent space and pulled them back into the hidden-state space to provide geometry-aware updates.
+The steering operation guided reasoning trajectories toward regions associated with high-quality CoTs.
+Our experiments demonstrated that latent-space steering improves the coherence of intermediate reasoning without harming final-answer accuracy.
+The analysis showed that our steering method altered the internal structure of reasoning, often at key transition points. Trajectory analyses confirmed this change, even when the generated text was nearly identical to the baseline.
+Quality curves revealed that intermediate reasoning quality and final-answer correctness are related but not equivalent.
+These findings indicate the importance of evaluation on the concistency of reasoning itself rather than solely on final answers.
+In the future, we plan to construct evaluation metrics because the quality score captures only local coherence and does not fully reflect global logical consistency.
+We also plan to experiment with models from various series to analyze differences in reasoning trajectories.
+Liminations
+Our method relies on the CoT dataset generated by gpt-oss-20b, which effectively sets the upper bound of the achievable reasoning quality.
+The latent manifold and the quality function are therefore bounded by the coverage of gpt-oss-20b and may not fully reflect the structure of higher-quality reasoning.
+This dependency limits the achievable improvement on downstream tasks.
+The geometric assumptions underlying GeoSteer remain partially heuristic.
+The VAE imposes a continuous latent space that enables smooth steering, but it does not guarantee that the coordinates correspond to a well-defined reasoning manifold.
+The relationship between gradients in latent space and the true geometry of hidden-state trajectories is not yet theoretically established.
+A more rigorous analysis is required to clarify the geometric validity of the method and to determine whether the learned manifold faithfully reflects the structure of high-quality reasoning.
+

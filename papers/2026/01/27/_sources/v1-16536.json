@@ -1,0 +1,175 @@
+{
+  "url": "https://arxiv.org/html/2601.16536v1",
+  "blocks": [
+    {
+      "tag": "p",
+      "id": "selectedTextModalDescription",
+      "text": "Content selection saved. Describe the issue below:"
+    },
+    {
+      "tag": "h1",
+      "id": "",
+      "text": "W4A16 Mixed-Precision Matrix Multiplication on Decoupled Architecture: Kernel Design and Memory Bottleneck Analysis for Ascend NPUs"
+    },
+    {
+      "tag": "p",
+      "id": "abstract1.1",
+      "text": "As Large Language Models (LLMs) scale, weight-only quantization (W4A16: 4-bit weights, 16-bit activations) becomes critical for reducing memory footprint with minimal accuracy loss. However, its efficient deployment on Huawei’s Ascend 910 Neural Processing Unit (NPU) is challenging due to limited native mixed-precision support and the accelerator’s decoupled compute architecture. To enable quantization on such architecture, we present the first practical W4A16 matrix multiplication kernel tailored for the Ascend 910 NPU. Our design leverages vector cores for on-the-fly INT4-to-FP16 dequantization, cube cores for high-throughput GEMM, and Split-K parallelization to mitigate memory latency. Performance evaluations across diverse matrix shapes and batch sizes show our method outperforms data-parallel approaches when K ≫ \\gg N, a typical scenario in LLM decoding. Specially, our method can achieve a speedup ranging from 1.01 × 1.01\\times to 1.74 × 1.74\\times . In addition, our profile reveals the primary bottleneck is not dequantization compution itself, but extra global memory transfer for the weight, making W4A16 only reaching a maximum speedup of 1.48 × 1.48\\times over native FP16 × \\times FP16 matrix multiplication in PyTorch. In the long run, our method lays a solid foundation and provides insightful views for the efficient deployment of quantized large language models on various domain-specific accelerators."
+    },
+    {
+      "tag": "p",
+      "id": "p2.1",
+      "text": "K eywords Quantization ⋅ \\cdot Large Language Models ⋅ \\cdot Parallel Programming ⋅ \\cdot NPU"
+    },
+    {
+      "tag": "h2",
+      "id": "",
+      "text": "1 Introduction"
+    },
+    {
+      "tag": "p",
+      "id": "S1.p1.1",
+      "text": "Quantization [ 1 ] has emerged as a pivotal technique for deploying large language models (LLMs) [ 2 , 3 , 4 ] on resource-constrained hardware. Recent studies, such as SINQ [ 5 ] and QQQ [ 6 ] , have achieved significant reductions in memory footprint, bandwidth requirements, and computational cost without incurring substantial losses in model accuracy. Among various quantization schemes, weight-only strategies—wherein weights are quantized to fixed-point integers while activations remain in floating-point format—have garnered growing attention due to their capability to balance efficiency and fidelity. In particular, the W4A16 configuration (4-bit weights and 16-bit activations) [ 7 , 8 ] has demonstrated remarkable potential: it retains high activation precision to preserve the dynamic range, while aggressively compressing weights to minimize storage and memory access overhead. However, unlocking the full potential of W4A16 quantization necessitates specialized kernel implementations that can efficiently unpack and dequantize 4-bit weights into FP16/BF16 formats prior to matrix multiplication. General Matrix Multiplication (GEMM) routines are ill-suited for such preprocessing-intensive, irregular data layouts and often fail to fuse dequantization with computation. This deficiency results in suboptimal memory bandwidth utilization and redundant data movement—challenges that are particularly pronounced on domain-specific architectures such as Huawei’s Ascend NPU [ 9 ] . While the cube units of the Ascend NPU are highly optimized for native GEMM operations, they lack tailored support for the additional memory-bound dequantization steps required by 4-bit weight formats."
+    },
+    {
+      "tag": "p",
+      "id": "S1.p2.1",
+      "text": "To address this gap, we present the first practical implementation of a W4A16 matrix multiplication kernel customized for Huawei’s Ascend NPU. Notably, while NVIDIA platforms benefit from highly optimized open-source libraries (e.g., Bitblas [ 10 ] and Marlin [ 11 ] ) that support low-bit quantized inference, the Ascend software stack currently provides no native kernel support for mixed-precision matrix multiplication. Our implementation integrates on-the-fly weight dequantization with compute scheduling, enabling the direct execution of W4A16 mixed-precision matrix multiplication kernels on Ascend NPUs."
+    },
+    {
+      "tag": "h2",
+      "id": "",
+      "text": "2 Background"
+    },
+    {
+      "tag": "h3",
+      "id": "",
+      "text": "2.1 Quantization in Deep Neural Networks"
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS1.p1.1",
+      "text": "Quantization is a technique that maps high-precision floating-point parameters to lower-bit integer representations, primarily to reduce model size and computational cost. Among various approaches, weight-only quantization has emerged as a highly effective strategy for compressing and accelerating Large Language Models. In this paradigm, only the model weights are quantized—often to 4 bits or lower—while activations remain in full precision (e.g., FP16). This design preserves model accuracy more effectively than full quantization by avoiding error propagation through low-precision intermediate computations. Consequently, weight-only methods are particularly suitable for deployment on memory-constrained devices, as they dramatically reduce the model’s memory footprint."
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS1.p2.1",
+      "text": "A widely used formulation for weight quantization is uniform affine quantization [ 1 ] , defined as:"
+    },
+    {
+      "tag": "table",
+      "id": "S2.E1",
+      "text": "x q = round ​ ( x s ) + z x_{q}=\\text{round}\\left(\\frac{x}{s}\\right)+z (1)"
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS1.p2.2",
+      "text": "where x x is the original value, x q x_{q} the quantized integer, s s the scale factor, and z z the zero-point offset. For symmetric quantization (common in weights), z = 0 z=0 ."
+    },
+    {
+      "tag": "h3",
+      "id": "",
+      "text": "2.2 Motivation and Challenges"
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS2.p1.1",
+      "text": "W4A16 [ 7 , 8 ] quantization (4-bit weights, 16-bit activations) offers an trade-off between model efficiency and accuracy. By storing weights in 4-bit integers, it reduces model size by approximately 4× compared to FP16 representations. However, a key implementation challenge remains: mainstream hardware—including GPUs and NPUs—lacks native support for mixed-precision arithmetic operations. In practice, 4-bit values must be packed into larger data types such as INT32 for storage and transfer, then dequant prior to computation. This dequant process introduces additional overhead and can become a notable performance bottleneck unless carefully optimized through efficient pipline and memory access patterns. Thus, while W4A16 is promising for efficient inference, its practical speedup depends heavily on low-level kernel optimization and hardware-aware implementation."
+    },
+    {
+      "tag": "h3",
+      "id": "",
+      "text": "2.3 Ascend 910 NPU Architecture"
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS3.p1.1",
+      "text": "The Huawei Ascend 910 NPU is a high-performance AI processor designed for both training and inference workloads, featuring a many-core architecture centered around specialized AI Cores. Each AI Core integrates dedicated compute, storage, and data movement units to accelerate matrix-intensive and vector-intensive operations prevalent in deep neural networks [ 12 ] . Prior works on NVIDIA GPUs [ 13 ] have explored similar W4A16 optimizations using Tensor Cores and shared memory tricks. However, the Ascend architecture’s distinct memory hierarchy, instruction set, and lack of warp-level primitives necessitate a ground-up redesign—motivating our platform-specific kernel development [ 11 ] ."
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS3.p2.1",
+      "text": "An AI core is organized around three primary components: compute units, the on-chip memory hierarchy, and Memory Transfer Engines (MTEs). As shown in Figure 1 , the compute units consist of a high-throughput cube core (AIC) for matrix multiplication (e.g., FP16 GEMM with 16 × 16 × 16 16\\times 16\\times 16 tiles), vector cores (AIV) for SIMD-like operations on data, and lightweight scalar cores handling control flow and instruction dispatch. Data reuse and minimized off-chip traffic are enabled by a dedicated on-chip memory hierarchy, which includes the L1 Buffer, the L0A/L0B input buffers, the L0C accumulation buffer, and the Unified Buffer (UB). Finally, high-bandwidth data movement between global memory (GM) and these on-chip buffers is managed by Memory Transfer Engines, which often perform on-the-fly data format conversions such as quantization or dequantization.The Ascend 910 operates in decoupled mode, the cube core and the vector core each operate under their own dedicated scalar scheduling units, which are separately deployed on the respective cores. An AI core is composed of one cube core and two vector cores on Ascend 910."
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS3.p3.1",
+      "text": "Programming for Ascend 910 is typically performed via the Ascend C programming model [ 14 ] , which abstracts the underlying hardware while exposing explicit control over data placement and pipeline scheduling. Efficient kernel implementation thus requires co-design of computation tiling, memory access patterns, and inter-unit synchronization to fully saturate the cube units—the primary throughput bottleneck in matrix multiplication workloads."
+    },
+    {
+      "tag": "h2",
+      "id": "",
+      "text": "3 Method"
+    },
+    {
+      "tag": "p",
+      "id": "S3.p1.1",
+      "text": "We propose an efficient implementation of W4A16 mixed-precision matrix multiplication kernel in Huawei Ascend 910 NPU, leveraging the heterogeneous architecture comprising cube cores for high-throughput matrix compute and vector cores for flexible data processing. The algorithm adopts a Split-K [ 15 ] parallelization strategy to balance computation and memory bandwidth, which is particularly beneficial when the output matrix C C is small in dimension M or N (e.g., during the decode phase of LLMs). Our kernel is inspired by the CATLASS [ 16 ] Split-K implementation. Given input activation matrix A ∈ ℝ M × K A\\in\\mathbb{R}^{M\\times K} in FP16 and quantized weight matrix W ∈ INT4 K × N W\\in\\texttt{INT4}^{K\\times N} the goal is to compute:"
+    },
+    {
+      "tag": "table",
+      "id": "S3.E2",
+      "text": "C = A ⋅ ( Dequant ​ ( W ) ) \\displaystyle C=A\\cdot(\\texttt{Dequant}(W)) (2) Dequant ​ ( W ) = s ​ ( W − z ) \\displaystyle\\texttt{Dequant}(W)=s(W-z)"
+    },
+    {
+      "tag": "p",
+      "id": "S3.p3.1",
+      "text": "As shown in Algorithm 1 , our method consists of three phases. First, in the dequant phase executed on vector cores, each vector core loads a slice of the quantized weight matrix W W , applies dequantization, unpacks INT4 to FP16, and writes the result to a global workspace buffer. The reason why dequantization is executed on vector cores is that cube cores do not support type conversion or element-wise multiply-accumulate operations. Second, the Split-K matrix multiplication phase is performed by cube cores, which compute partial matrix multiplications C i = A ⋅ B i C_{i}=A\\cdot B_{i} , where B i B_{i} is the dequantized i i -th K K -slice, and accumulate the results into split buffers in global memory. Finally, in the Reduce phase, vector cores reduce the S S partial results via element-wise summation: C = ∑ i = 0 S − 1 C i C=\\sum_{i=0}^{S-1}C_{i} , followed by type-cast from FP32 to FP16."
+    },
+    {
+      "tag": "p",
+      "id": "S3.p4.1",
+      "text": "Marlin [ 11 ] finds that the GPU native type-cast is slow, and thus implements the INT4-to-FP16 data type-cast via PTX instructions with logical and multiply-accumulate (MAC) instructions. However, on the Ascend NPU, type-cast operations are exclusively executable on vector core. In this case, the bottleneck of W4A16 operator execution time no longer lies in the data type-cast itself, but in transferring the converted results back to cube core for subsequent computation. Therefore, we adopt the native data type-cast and hide the dequantization latency in data copy operations by leveraging double buffering strategy."
+    },
+    {
+      "tag": "p",
+      "id": "S3.p5.1",
+      "text": "The entire pipeline exploits double buffering and hardware event-based synchronization between Memory Transfer Engines and compute units to hide data movement latency. By leveraging the Split-K tiling strategy, the algorithm establishes a highly efficient pipeline on the Ascend NPU—spanning weight dequantization, tiled matrix computation, and result reduction—thereby significantly enhancing both computational throughput and energy efficiency for mixed-precision matrix multiplication."
+    },
+    {
+      "tag": "h2",
+      "id": "",
+      "text": "4 Experimental Results"
+    },
+    {
+      "tag": "h3",
+      "id": "",
+      "text": "4.1 Kernel Strategy Benchmarking"
+    },
+    {
+      "tag": "p",
+      "id": "S4.SS1.p1.1",
+      "text": "Unlike NVIDIA GPUs, which benefit from multiple open-source libraries such as Marlin, BitBLAS, and ExLlama [ 17 ] for W4A16 mixed-precision matrix multiplication, the Ascend NPU currently lacks any native or optimized implementation of this operation. To address this gap, we implement a data-parallel W4A16 kernel based on CATLASS, which serves as the benchmark for comparison in this paper."
+    },
+    {
+      "tag": "p",
+      "id": "S4.SS1.p2.1",
+      "text": "We evaluate the performance of INT4-weight × FP16-activation matrix multiplication kernel on the Ascend 910 NPU across a range of model dimensions and batch sizes, comparing two parallelization strategies: Split-K and Data Parallel. As shown in Figure 2 , when K K is significantly larger than N N , the Split-K strategy outperforms data-parallel approaches, and our method achieves a speedup ranging from 1.01 × 1.01\\times to 1.74 × 1.74\\times . This is because Split-K can more effectively partition the computational workload across each cube core under such dimensional constraints. As the batch size (M) gradually increases, performance remains relatively stable. This occurs because the cube cores operate on matrix tiles as their fundamental processing granularity. Even when batch size is small, the input data is padded accordingly, which explains the limited acceleration benefit for small batch sizes. This behavior is observed in both Split-K and data-parallel methods."
+    },
+    {
+      "tag": "h3",
+      "id": "",
+      "text": "4.2 Memory Bottleneck of W4A16 Kernel"
+    },
+    {
+      "tag": "p",
+      "id": "S4.SS2.p1.1",
+      "text": "The W4A16 kernel does not reduce the actual computational workload, it only alleviates global memory pressure by storing weights in 4-bit format. However, on the Ascend 910 NPU, the dequantization of weights must be performed by the vector core due to its decoupled architecture, while matrix multiplication is executed by the cube core. Since these two units communicate exclusively through global memory, the weight matrix must be written to global memory after dequantization and then read by the cube core. This incurs an additional memory round-trip compared to native FP16×FP16 matrix multiplication kernel. As a result, the W4A16 matrix multiplication does not achieve the theoretical ∼ \\sim 4 × \\times speedup compared to native FP16×FP16 matrix multiplication, especially at low batch sizes. Figure 3 corroborates our hypothesis that W4A16 matrix multiplication achieves at most a 1.48 × 1.48\\times speedup over FP16×FP16 matrix multiplication on Ascend 910 NPU due to additional global memory traffic."
+    },
+    {
+      "tag": "h2",
+      "id": "",
+      "text": "5 Conclusion and Future Work"
+    },
+    {
+      "tag": "p",
+      "id": "S5.p1.1",
+      "text": "In this work, we propose the first practical W4A16 mixed-precision matrix multiplication kernel tailored for Huawei’s Ascend 910 NPU. Through the co-design of dequantization on vector cores and matrix multiplication on cube cores, coupled with the adoption of a Split-K parallelization strategy, our implementation delivers robust performance across a diverse range of matrix shapes – and achieves exceptional performance in the small-batch, large-K scenarios that are characteristic of LLM decoding. Compared with the data parallel scheme, our method yields a speedup of 1.01 × 1.01\\times to 1.74 × 1.74\\times . Furthermore, our experimental analysis reveals a counterintuitive finding that challenges common assumptions: the primary performance bottleneck in W4A16 execution does not stem from the dequantization computation itself, but rather from the additional global memory round-trips incurred by transferring dequantized weights between the decoupled vector and cube processing units. This overhead prevents W4A16 from achieving the theoretical ∼ 4 × \\sim 4\\times speedup expected from its 4 × \\times reduction in weight storage footprint, only reaching a maximum speedup of 1.48 × 1.48\\times over native FP16 × \\times FP16 matrix multiplication in PyTorch."
+    },
+    {
+      "tag": "p",
+      "id": "S5.p2.1",
+      "text": "These findings highlight a distinct trade-off for the current generation of Ascend NPUs: W4A16 is a viable strategy for maximizing memory capacity to fit larger models on a single device, but it does not yet yield the latency benefits observed on other platforms. Future work should explore hardware-software co-design to enable direct data paths between vector and cube units or fused instructions that bypass global memory, thereby unlocking the full latency potential of low-bit quantization on decoupled NPU architectures."
+    }
+  ]
+}

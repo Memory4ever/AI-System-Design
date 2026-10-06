@@ -1,0 +1,887 @@
+Unseen-Codebases-Domain Data Synthesis and Training Based on Code Graphs
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract.
+1
+Introduction
+2
+Approach
+2.1
+Code Graph Construction
+2.2
+Dependency-Preserving CPT
+2.2.1
+Construction of File-level Dependency Data from Code Graph .
+2.2.2
+CPT Data Corpus Composition and Training.
+2.3
+Graph-Grounded SFT
+2.3.1
+Construction of Infrastructure and Applications Data with Reasoning Traces from Code Graph
+2.3.2
+SFT Data Corpus Composition and Training.
+3
+Benchmark
+4
+Experiment Setup
+4.1
+Baseline
+4.2
+Studied LLMs
+4.3
+Metrics
+4.4
+Implementation Details
+5
+Evaluation
+5.1
+RQ1: Performance of UCD-Training
+License: CC BY 4.0
+arXiv:2602.20799v1 [cs.SE] 24 Feb 2026
+Unseen-Codebases-Domain Data Synthesis and Training Based on Code Graphs
+Thanks:
+#
+Work done during internship at Tencent.
+Thanks:
+†
+Equal contribution.
+Thanks:
+‡
+Project leader.
+Thanks:
+*
+Corresponding author.
+Guangsheng Ou
+†
+#
+Affiliation:
+Sun Yat-sen University
+,
+China
+email:
+ougsh3@mail2.sysu.edu.cn
+,
+Qiming Zhang
+†‡
+Affiliation:
+WeChat Pay, Tencent
+,
+China
+email:
+qmzhangzz@hotmail.com
+,
+Sirong Chen
+#
+Affiliation:
+WeChat Pay, Tencent
+,
+China
+email:
+sirongchen49@outlook.com
+,
+Anji Li
+Affiliation:
+Sun Yat-sen University
+,
+China
+email:
+lianj8@mail2.sysu.edu.cn
+,
+Dong Xu
+Affiliation:
+Sun Yat-sen University
+,
+China
+email:
+xudong7@mail2.sysu.edu.cn
+,
+Tiancheng Luo
+Affiliation:
+The Chinese University of Hong Kong, Shenzhen
+,
+China
+email:
+123090401@link.cuhk.edu.cn
+,
+Dekun Dai
+#
+Affiliation:
+Sun Yat-sen University
+,
+China
+email:
+daidk@mail2.sysu.edu.cn
+,
+Cuiyun Gao
+Affiliation:
+The Chinese University of Hong Kong
+,
+China
+email:
+cuiyungao@outlook.com
+,
+Long Wang
+*
+Affiliation:
+WeChat Pay, Tencent
+,
+China
+email:
+oliverlwang@tencent.com
+,
+Jun Zhou
+Affiliation:
+WeChat Pay, Tencent
+,
+China
+email:
+anderszhou@tencent.com
+,
+Mingwei Liu
+*
+Affiliation:
+Sun Yat-sen University
+,
+China
+email:
+liumw26@mail.sysu.edu.cn
+and
+Zibin Zheng
+Affiliation:
+Sun Yat-sen University
+,
+China
+email:
+zhzibin@mail.sysu.edu.cn
+© none
+Abstract.
+In the context of newly release software frameworks, large language models (LLMs) often exhibit poor performance and a high rate of hallucination, as they are not exposed to such environments during training.
+Although inference-time augmentation techniques such as retrieval-augmented generation (RAG) can partially mitigate hallucinations, knowledge injection through prompting alone is insufficient to enable models to fully understand the intrinsic relationships among different components of a codebase, or to reason about the correct compositions and apply.
+Although explicit knowledge injection can be achieved through post-training, compared with public code domains, unseen codebases typically provide only source code and lack large volumes of high-quality, usage-oriented code that can be directly leveraged as training data. Consequently, existing data synthesis approaches are insufficient to adequately capture unseen codebases usage scenarios when restricted to source code alone.
+To address these challenges, we propose UCD-Training, a two-stage training framework for reasoning-aware data synthesis grounded in a code graph constructed from unseen codebases. UCD-Training first parses the source code to build a code graph, then conducts dependency-preserving continued pretraining (CPT) using file-level dependency data, followed by graph-grounded supervised fine-tuning (SFT) on three types of synthesized data augmented with explicit reasoning traces: (1) single-hop relation reasoning data, (2) compositional API reasoning data, and (3) codebase utilization data.
+We further introduce a new benchmark, UnseenCodeBench, for code generation on unseen codebases and conduct comprehensive experiments across multiple codebases. Results show that UCD-Training consistently outperforms existing baselines, demonstrating strong generality across programming languages, model scales, and architectures—for example, achieving a 25.5% absolute improvement over RAG with GPT5.1. Compared with existing data synthesis methods, UCD-Training yields performance gains ranging from 7.2% to 26.1% of Avg. pass@1 on UnseenCodeBench.
+Moreover, we simulate realistic enterprise scenarios involving multiple languages and codebases, where a single model needs to adapt to multiple unseen codebases. In these real-world settings, UCD-Training remains effective, achieving a pass@1 of 36.0% on UnseenCodeBench.
+1.
+Introduction
+Large language models (LLMs) have demonstrated strong capabilities across a wide range of software engineering tasks, including code generation, completion, translation, and refactoring
+(
+hou2024SEreview
+;
+ou2025enhancing
+;
+2023SEservey
+;
+add1
+;
+add2
+;
+add3
+)
+. These successes, however, largely rely on the availability of abundant training data drawn from mature public code ecosystems (e.g. GitHub)
+(
+chen2021evaluating
+;
+jiang2024survey
+)
+.
+In practice,
+developers frequently work with codebases that are absent from LLM pretraining corpora, such as newly released libraries, domain-specific frameworks, customized enterprise systems, or proprietary third-party components
+. We refer to such codebases as
+unseen codebases
+. In this setting, LLMs lack the domain-specific knowledge required to correctly understand and
+utilize
+the codebase
+(
+zhang2025unseen
+)
+, and consequently exhibit severely degraded performance and high hallucination rates
+(
+DomCoder
+)
+.
+For instance, prior studies report a performance drop of
+37–57%
+on code generation tasks when models are applied to unseen or private repositories
+(
+zan2022language
+)
+.
+LLMs
+in these settings frequently misuse components, generate invalid compositions, or rely on non-existent functionalities.
+A natural first attempt to mitigate this problem is to rely on inference-time augmentation techniques, such as prompt engineering or retrieval-augmented generation (RAG)
+(
+zhang2025llmhallucinations
+;
+yang2025empirical
+;
+lu2022reacc
+;
+shrivastava2023repository
+;
+zhou2022docpromptingrag
+)
+, which provide access to relevant
+source
+code during generation. While such approaches can reduce obvious hallucinations, they do not fundamentally address the underlying issue. Correct code generation in unseen codebases often requires knowledge of how different components are intended to be used together—knowledge that reflects latent usage patterns and conventions learned during training, rather than
+the source code
+that can be reliably retrieved alone. As a result, inference-time techniques are
+usually
+insufficient to enable robust generalization to unseen codebases.
+These observations suggest that
+effectively adapting LLMs to unseen codebases requires explicit knowledge injection through training such as continue pre-training (CPT)
+(
+Zhou2024ContinualLW
+)
+and supervised fine-tuning (SFT)
+(
+gunel2020supervised
+)
+, rather than relying solely on inference-time augmentation
+. However, constructing suitable training data for this purpose is inherently challenging. Unlike public code domains, unseen codebases,
+typically those newly-released codebases
+, provide only source code
+implementation
+, while high-quality, usage-oriented examples that demonstrate correct component composition are scarce or entirely absent. This data scarcity severely limits the applicability of existing post-training approaches.
+Although several data synthesis methods have been proposed to automatically generate training data for LLMs in code generation tasks
+(
+nadua\vtop{\halign{#\cr\hbox{}\crcr}}
+)
+, they remain insufficient for handling unseen codebases.
+For example, approaches such as OSS-Instruct~
+(
+wei2023magicoderOSSInstruct
+)
+typically rely on observable usage patterns from public repositories, implicitly assuming that there are rich real-world examples adequately demonstrating how components should be composed.
+This assumption fails for newly released or private codebases, where code implementation is often the only available signal.
+To address these challenges,
+we propose UCD-Training
+(
+U
+nseen-
+C
+odebase-
+D
+omain
+Training
+)
+, a two-stage training framework, consisting of dependency-preserving CPT data and graph-grounded SFT data, designed to inject codebase-specific knowledge into LLMs using only source code implementation from unseen codebases
+. Our approach first constructs a
+code graph within the codebases based on code dependency analysis, and constructs dependency-preserving CPT data to capture structural and semantic relationships. We perform CPT to help the model memorize how codebases are implemented.
+We then synthesize usage-oriented SFT training data
+according to three complementary data types
+:
+(1) single-hop relation data,
+(2) compositional API data, and
+(3) codebase utilization data.
+These data are all augmented with natural reasoning traces to improve LLMs' both interpretability and performance.
+To systematically evaluate this problem,
+we also introduce a new benchmark UnseenCodeBench, targeting unseen codebases across two widely used programming languages
+, C++ and Python. Extensive experiments demonstrate that UCD-Training consistently outperforms retrieval-based and training-based baselines
+by 7.2% ot 26.1% on pass@1
+, generalizes across model architectures and scales from 7B to 32B parameters, and remains effective in realistic scenarios
+where one single model needs to adapt to
+multiple unseen codebases, achieving a pass@1 of 36.0% on UnseenCodeBench and still surparssing all baselines by 4.7% to 23.6%. These results indicate that reasoning-aware data synthesis from
+code implementation alone
+can provide a practical and effective solution for adapting LLMs to unseen codebases.
+In summary, this paper makes the following contributions:
+•
+We propose
+UCD-Training
+, a two-stage training framework that injects domain-specific knowledge into LLMs for unseen codebases by performing reasoning-aware data synthesis based on a code graph constructed from source code.
+•
+We introduce a benchmark,
+UnseenCodeBench
+, for code generation on unseen codebases across widely used programming languages, providing a standardized evaluation testbed for future research.
+•
+We conduct
+extensive experiments
+to evaluate the effectiveness and generality of UCD-Training, demonstrating that it consistently improves LLMs’ understanding and application of unseen codebases across different languages, model scales, and architectures.
+2.
+Approach
+To address the challenge that existing
+LLMs cannot effectively utilize unseen codebases to solve the requirements,
+we propose UCD-Training, a two-stage
+CPT and SFT training framework.
+UCD-Training first parses the source code of unseen codebases to build a code graph,
+and then constructs code dependency-preserving CPT data and graph-grounded SFT data. SFT data are synthesized from three views: single-hop relation data,
+compositional API data, and
+codebase utilization data, and augmented with natural reasoning traces.
+These data types enable the model to perform repository-grounded reasoning and generation over the unseen codebase.
+Figure
+1
+illustrates the overall workflow. The framework operates in the following stages:
+Figure 1
+.
+Overview of UCD-Training
+(1)
+Code Graph Construction
+. We perform program analysis over the source code of the codebase to extract code entities, including files, classes, functions, methods, and global variables as nodes, along with their implementations as their properties. We then parse their dependency, call, include, and other relations as edges, thereby constructing the code graph of the codebase.
+(2)
+Dependency-Preserving CPT
+. The CPT stage begins with data construction. We extract file nodes and their dependency edges from the code graph to obtain a directed acyclic graph that captures file-level dependencies. Starting from nodes with in-degree zero, we perform a depth-first traversal over this graph and
+concatenate the file content according to the resulting file path order
+. We then apply a sliding-window truncation strategy
+to the data
+to construct training samples that satisfy
+training context length constraints
+. This process ensures that code files with direct dependency relationships appear within the same training instance, thereby forming a dependency-preserving source code training corpus. We then mix this corpus with general-domain data and perform CPT.
+(3)
+Graph-Grounded SFT
+. The SFT stage also begins with data construction. The synthesized SFT data consists of three parts: single-hop relation reasoning data, compositional API reasoning data, and codebase utilization data.
+The single-hop relation reasoning data are constructed from each edge in the code graph and its two endpoint nodes.
+The compositional API reasoning data are synthesized as multiple types of code examination questions based on API combinations extracted from the codebase's internal test cases that cover different functional scenarios of the project.
+The codebase utilization data is obtained by transforming the codebase's internal test cases into function-generation tasks.
+We then synthesize the reasoning traces for these three types of data by providing ground-truth-level context, thereby completing the data construction for the SFT stage. Finally, the synthetic data are mixed with general-purpose data to perform SFT training.
+These three stages form the core of the UCD-Training methodology. Detailed implementation, training dataset construction procedures, and descriptive statistics are provided in the following sections.
+2.1.
+Code Graph Construction
+In this stage, we parse the source code of unseen codebases to construct a structured code graph. By transforming raw source code into a graph-based representation, we effectively capture the intrinsic relationships among different components of the target codebases, as well as the potential combinations of APIs in application scenarios. This code graph serves as the foundation for training data generation in both the dependency-preserving CPT stage and the graph-grounded SFT stage.
+Specifically, we perform program analysis to extract code entities, including files, classes, functions, methods, and global variables as nodes, along with their names, types, implementations, and file locations as properties.
+We then parse their dependency, call, include, and locate relations as edges, thereby constructing the code graph of the codebase as shown in Figure
+1
+.
+2.2.
+Dependency-Preserving CPT
+2.2.1.
+Construction of File-level Dependency Data from Code Graph .
+We extract only file nodes and inter-file dependency relations from the code graph, resulting in a directed acyclic subgraph, which will be used to construct the pretraining code corpus.
+Unlike previous works~
+(
+guo2024deepseekcoder
+)
+, which process project source code by taking a topological ordering for each connected component in the subgraph and then splitting it according to the context window limit to obtain the final file-level dependency data, our approach addresses a key limitation of this strategy. Files that are actually dependent on each other are not necessarily adjacent in topological order. Therefore, when a topological sequence is split due to the context window length limit, some files with dependency relations may not appear in the same training sample,
+leading to an insufficient description of how these files collaborate within the same codebase.
+To address this issue, we perform a depth-first traversal over the directed acyclic subgraph
+as illustrated in Algorithm
+1
+.
+We start from nodes with zero in-degree, i.e., files that are not depended on by any other files, and find all depth-first paths in the subgraph
+. This strategy ensures that any pair of files with a true dependency relationship appears as adjacent nodes in at least one traversal path. For each path, we generate training samples using a sliding-window strategy.
+Specifically, we fix the left pointer at the beginning of the traversal path and move the right pointer incrementally, until the total length of all file content within the current sequence exceeds the model’s context limit. The concatenated content of the files in the current sequence constructs a CPT training sample. Then, we update the left point location by one step and find the proper right pointer in the same way. We repeat such a process for all traversal paths and construct the dependency-preserving CPT data.
+Algorithm 1
+Training Sample Generation via DFS Traversal
+0:
+Directed acyclic subgraph $G$, context window limit $L$
+0:
+Training samples $
+S
+$
+1:
+Identify all nodes in $G$ with zero in-degree as start nodes
+2:
+for
+each start node $v$
+do
+3:
+Perform depth-first traversal to obtain paths $
+P
+$
+4:
+for
+each path $p ∈
+P
+$
+do
+5:
+$l ←1$, $r ←1$
+6:
+while
+$r ≤|p|$
+do
+7:
+if
+length$(p[l:r]) ≤L$
+then
+8:
+$r ←r + 1$
+9:
+else
+10:
+Emit $p[l:r-1]$ as a training sample
+11:
+$l ←r - 1$, $r ←l$
+12:
+end
+if
+13:
+end
+while
+14:
+end
+for
+15:
+end
+for
+This method effectively guarantees that files with actual dependency relations will appear at least once adjacently in a single training sequence. As a result, the model can more clearly capture dependency relations among different code elements in the unseen codebase, thereby improving its understanding of the codebase and its ability to reason about cross-file, repository-level dependencies.
+2.2.2.
+CPT Data Corpus Composition and Training.
+We mix the constructed file-level dependency source code data with general code-relevant data to form the final training corpus for the CPT stage. This is because continual pre-training that uses only domain-specific data can undermine models' original general capability~
+(
+wu2025continual
+)
+. In such a case, even though the model’s understanding of unseen code codebases improves after CPT, its overall
+coding ability
+may actually degrade.
+2.3.
+Graph-Grounded SFT
+2.3.1.
+Construction of Infrastructure and Applications Data with Reasoning Traces from Code Graph
+Each data type undergoes three phases: data synthesis, ground-truth–level contextual reasoning traces generation, and post-filtering to eliminate low-quality samples, resulting in high-quality training samples augmented with explicit reasoning traces for understanding and applying unseen codebases.
+(1) Single-hop relation reasoning data
+are derived from the code graph to capture fine-grained structural relations among code entities in an unseen codebase, which are essential for understanding its implementation patterns and architectural organization.
+Data Synthesis.
+Specifically, we synthesize single-hop relation data through a two-stage process consisting of rule-based construction followed by LLM-driven augmentation.
+For each single-hop relation $A →B$, we adopt a rule-based approach to map it into a textual representation of the following form:
+[
+type of
+​
+A
+]
+​
+[
+name of
+​
+A
+]
+​
+[
+relation between A and B
+]
+​
+[
+type of
+​
+B
+]
+​
+[
+name of
+​
+B
+]
+[\text{type of }A]\;[\text{name of }A]\;[\text{relation between A and B }]\;[\text{type of }B]\;[\text{name of }B]
+To improve robustness and prevent overfitting to homogeneous positive samples, we further employ an LLM-based approach to diversify each data instance and generate negative samples. Specifically, each original instance is expanded into $N_1$ diversified paraphrased samples and $N_2$ negative samples, where $N_1 = 5$ and $N_2 = 1$.
+Reasoning Traces Generation.
+For positive samples in single-hop relation data, ground-truth–level context refers to the complete contents of the files in which nodes $A$ and $B$ are located. This context explicitly contains the surrounding information of both nodes as well as the associations between them.
+For negative samples, ground-truth–level context consists of a list of all code entity names within the unseen codebases that share the same categories as nodes $A$ and $B$, clearly demonstrating that the fabricated code entity referenced in the query does not exist.
+We provide the original instruction together with the constructed contextual information to a
+powerful LLM for
+rejection sampling, then record its outputs and reasoning traces.
+Post Filtering.
+Directly assessing the correctness of a model’s reasoning trace is challenging, as the underlying reasoning is often lengthy, information-dense, and difficult to evaluate in isolation. Therefore, we simplify the evaluation by judging the correctness of the model’s output and using it as a proxy for the correctness of the associated reasoning trace.
+Specifically, we employ
+a modern
+LLM to determine whether the output produced by the reference model is semantically consistent with the constructed ground-truth response and filter out the samples judged as inconsistent. The validated reasoning trace is then embedded into the original data instances, completing the construction of the single-hop relation reasoning data training set.
+(2) Compositional API Reasoning Data
+are synthesized as multiple types of code examination questions based on coherent API combinations extracted from the codebase’s internal test cases, covering diverse functional scenarios of the project.
+Rather than randomly composing APIs, which often results in semantically inconsistent or impractical usage patterns, we leverage internal test cases as high-quality priors. Since such test cases are written by maintainers to validate concrete functionalities, the extracted API combinations naturally reflect realistic usage scenarios and engineering constraints.
+Data Synthesis.
+To generate high-quality compositional reasoning data, we simulate the process of human-designed examination tasks and formulate a set of explicit task-design principles to guide an LLM in task generation. These principles ensure that the synthesized tasks are structurally well-formed, semantically coherent, and tightly aligned with the target codebase.
+Specifically, we constrain the task scope to applications, design principles, and code analysis directly related to the codebase, preventing overly generic or irrelevant tasks. For each task, the model is required to output not only the problem statement, but also a reference answer and explicit grading criteria, forming a complete task–solution–evaluation loop suitable for supervised training. To further increase information density, we additionally require each task to explicitly list its scoring points and align them with corresponding knowledge units, encouraging the model to focus on the codebase’s core concepts and functionalities.
+We synthesize three task formats: (1) question–answer tasks targeting conceptual understanding of the codebase design, (2) fill-in-the-blank tasks for context-aware code completion, and (3) programming tasks for end-to-end code generation grounded in the codebase. Task difficulty is explicitly controlled by specifying the number of knowledge points required, providing a concrete and interpretable difficulty signal beyond subjective labels.
+For contextual information, we provide not only the implementation code of the selected API combinations, but also precise location information and the complete implementations of all required dependencies. This dependency-closure context enables the model to reason over API interactions holistically, rather than relying solely on abstract signatures.
+Reasoning Traces Generation.
+Ground-truth–level context for compositional API reasoning data is defined as a subset of the contextual code information used during data synthesis. Since it is difficult to determine which specific pieces of context the model relies on, we perform rejection sampling by providing the problem statement together with the original contextual information and recording the generated responses and reasoning traces. Samples are retained only when the responses are judged to be valid under the provided context.
+Post Filtering.
+Compositional API reasoning data employ a two-stage filtering strategy.
+The first stage is rule-based and applied to the synthesized task descriptions and reference answers. We extract code entity names from task descriptions and parse the reference code using tree-sitter to identify invoked functions and invocation patterns. We then validate (1) whether each function exists in the provided contextual code or is a language built-in, and (2) whether its invocation prefix and argument count match the corresponding function signature. This stage filters out unseen-codebases-domain syntactic errors introduced during task synthesis.
+The second stage is applied after reasoning trace generation and combines LLM-based and rule-based validation. A chat model checks semantic consistency between the reference answer and the generated response, while rule-based checks again verify unseen-codebases-domain syntactic correctness. This stage further removes samples with functional or reasoning-level errors, preventing hallucinated behaviors from being propagated to the final training data.
+(3) Codebase utilization data
+are obtained by transforming the internal test cases of the unseen codebases. Although such test cases are typically designed to evaluate atomic functionalities, the API invocation patterns they contain and the implicit functional scenarios they encode can substantially enhance a model’s understanding of how project APIs are used and the fundamental application scenarios the project supports.
+Figure 2
+.
+Example for Generating Codebase Utilization Data
+Data Synthesis.
+Specifically, as shown in Figure
+2
+, we decompose each internal test case into two components: (1) the functional implementation that involves codebase's API invocations and (2) the assertion statements that verify whether the API behavior matches the expected outcomes. Using an LLM-based few-shot approach,
+we perform a test-case decomposition and generate function comments that describe the intended functionality of each implementation. We then apply an iterative compile-and-repair procedure to ensure that both the extracted functional code and the new test cases are syntactically and semantically correct.
+Reasoning Traces Generation.
+Ground-truth-level context of the codebase utilization data is constructed by collecting all API dependencies involved in the functional implementation and corresponding information.
+Specifically, we leverage the code graph to extract functions, data types, and global variables that have explicit call relations with the original test case. For each dependency, we retrieve its concrete implementation, file location, and enclosing namespace.
+This dependency-complete context enables the model to reason over which APIs should be invoked, how they interact, and which components are irrelevant to the target functionality.
+We provide the instruction together with this ground-truth dependency information to a
+modern LLM
+, record the generated outputs and reasoning traces, and apply rejection sampling
+Post Filtering.
+Similarly, we use the correctness of the generated code as a proxy for the validity of the associated reasoning trace. Each sampled instance is compiled and executed against the test suite, and only those that successfully pass both compilation and testing are retained. The validated reasoning traces are then embedded into the corresponding instances, yielding the final codebase utilization dataset.
+2.3.2.
+SFT Data Corpus Composition and Training.
+We mix the constructed data with general code relevant data to form the final training corpus for the SFT stage to maintain its general capability as CPT stage.
+3.
+Benchmark
+Unseen code domains are pervasive in industrial settings. Most enterprises either adapt existing open-source frameworks to meet internal business requirements or develop proprietary third-party libraries to improve development efficiency and security. Although a variety of benchmarks have been introduced to evaluate LLMs across different software engineering dimensions, the majority of these efforts focus primarily on public code scenarios. While prior research has established benchmarks for private codebases
+(
+zan2022language
+;
+wang2025exploracoder
+)
+, it typically concentrates on a single codebase in a single programming language, failing to capture realistic enterprise environments that often involve multiple codebases across multiple programming languages simultaneously.
+Therefore,
+we construct an unseen codebases evaluation benchmark, UnseenCodeBench
+, to assess the effectiveness of UCD-Training.
+Construction.
+We choose C++ and Python as our target languages because of their wide adoption and popularity
+(
+djurdjev2024popularity
+)
+. In particular, C++ is widely used for building system-level infrastructure
+(
+stroustrup2013c++
+)
+, while Python is extensively used for developing application software
+(
+saabith2019python
+)
+.
+We construct the evaluation benchmark with LLM assistance followed by manual double-checking. Inspired by previous work
+(
+zhuo2024bigcodebench
+;
+zan2022language
+)
+that evaluates a model’s understanding of a specific codebase by testing its ability to use the codebase’s APIs, we first analyze each target codebase to extract all publicly available functions, global variables, and custom data types (e.g., classes). We then manually select combinations of these elements that can jointly implement certain functionalities provided by the codebase, and design corresponding target task scenarios. These are fed into an LLM to generate an evaluation instance consisting of a task description, a reference implementation, and test cases.
+Subsequently, we manually check and refine the generated data along several dimensions: the rationality of the task setup, the correctness of the functional description, the executability of the reference implementation and its corresponding test cases, and the consistency between the code and the tests. After this first pass, another author repeats the same quality-checking process to confirm the quality of the evaluation data by double-checking.
+The entire construction process is carried out by five engineers, each with 3 to 8 years of programming experience, and in total consumes 100 person-hours.
+Table 1
+.
+Details of Selected Projects for Benchmark Construction.PL: Programming Language, FLD: File-level Dependencies, D.: Dependencies
+PL
+&
+Project Name
+&
+Created Time
+&
+Stars
+&
+#LOC
+&
+Number of Files
+&
+Avg. FLD of File
+&
+Avg. D. of Function
+&
+Number of Test Cases
+C++
+& sqlgen
+(
+sqlgen
+)
+& 2025.3 & 131 & 14,164 & 213 & 3.5 & 5.9 & 60
+& reaction
+(
+reaction
+)
+& 2025.3 & 618 & 5,720 & 26 & 2.7 & 4.0 & 64
+& Hexi
+(
+hexi
+)
+& 2025.3 & 279 & 6,108 & 29 & 3.1 & 2.0 & 64
+python & LEANN
+(
+leann
+)
+& 2025.6 & 8,038 & 7,491 & 14 & 1.6 & 5.1 & 64
+Quality Control Mechanism.
+To ensure that the selected target codebases have not appeared in the training corpora of the evaluated models, thus achieve the effect of truly unseen codebases evaluation, we adopt a two-stage verification process.
+In the first stage, we ensure that the creation time of each selected project is later than the knowledge cutoff of the models. Based on the knowledge cutoff dates of all the models we evaluate, we take their union and obtain a time threshold
+T
+T
+, which we currently set to
+2025-03-01
+. By querying GitHub with
+created:>=2025-03-01
+, we crawl all projects that satisfy this constraint, and then apply an initial filtering mechanism with
+stars:>100
+and
+size:>1000
+to eliminate projects that are too small in scale, have low recognition, or lack sufficient activity as previous works
+(
+han2019characterization
+;
+ou2025repository
+)
+, thereby ensuring the quality of the selected projects. Finally, we manually review and select the final target codebases, covering a diverse range of domains, including database systems, binary data stream processing, programming frameworks, and high-performance retrieval engines. Detailed information of selected codebases is shown in Table
+1
+.
+In the second stage, we evaluate the performance of the base models on our constructed evaluation set. After constructing the evaluation benchmark, we measure the performance of the base models without any external knowledge augmentation. This allows us to assess how well existing models master unseen-codebases-domain knowledge before any unseen-codebases-domain post-training. As shown in Table
+, all selected SOTA models with only base model exhibit a dramatic performance drop on our constructed evaluation set compared to existing public benchmarks, which further indicates that the chosen codebases did not appear in the training corpora of these models. This demonstrates that our constructed evaluation benchmark can effectively measure models’ real performance in unseen-codebases-domain scenarios.
+4.
+Experiment Setup
+We evaluate the effectiveness, usefulness, and generalization of UCD-Training by answering the following seven research questions (RQs):
+•
+RQ1 (Performance of UCD-Training)
+: How does UCD-Training perform compared to other methods?
+•
+RQ2 (Ablation Study)
+: How does each component of UCD-Training contribute to the final performance (including different categories of training data and filtering mechanisms)?
+•
+RQ3 (Generality of UCD-Training)
+: How generalizable is UCD-Training across different programming languages, model sizes, and model families?
+•
+RQ4 (Application in Real-World Enterprise Scenarios)
+: How does UCD-Training perform in simulated real-world enterprise scenarios, i.e., can a single model simultaneously handle multiple unseen codebases across multiple languages?
+•
+RQ5 (Configuration)
+: How do different configurations of hyperparameters in UCD-Training affect the results?
+4.1.
+Baseline
+We evaluate the performance of UCD-Training with two types of methods:
+(1) Explicit knowledge injection through training: OSS-Instruct~
+(
+wei2023magicoderOSSInstruct
+)
+and Cotton~
+(
+yang2024chainCoT
+)
+, which fine-tune the model with synthetic data to enhance its coding capabilities;
+(2) Inference-time augmentation: RAG~
+(
+zhang2025llmhallucinations
+)
+, which uses retrieval to mitigate the model’s hallucination phenomenon.
+OSS-Instruct
+~
+(
+wei2023magicoderOSSInstruct
+)
+is a proven and influential program synthesis approach, distinguished by its effectiveness in leveraging synthetic data to fine-tune small-parameter models. It serves as a mature, robust baseline in code generation and is widely adopted in the field of code data synthesis. We compare this method with our proposed data synthesis approach to demonstrate the effectiveness of our data synthesis pipeline.
+COTTON
+~
+(
+yang2024chainCoT
+)
+is a Chain-of-Thought (CoT) based program synthesis approach specifically designed for lightweight language models. It automatically generates high-quality CoTs without relying on manually crafted rationales to fine-tune models so as to improve the LLMs' reasoning capability, thereby enhancing their code generation ability. We compare the CoT synthesis method in COTTON with our proposed reasoning-process synthesis method to validate the effectiveness of our approach for generating reasoning traces.
+RAG
+~
+(
+zhang2025llmhallucinations
+)
+retrieves code snippets from the project that are similar to the current task and incorporates them into the input prompt to help LLMs better understand the requirements and gain awareness of specific factual knowledge and project contexts.
+4.2.
+Studied LLMs
+As shown in Table
+2
+, For the RAG-based baselines, we select several state-of-the-art models, covering both general-purpose LLMs and code-oriented LLMs, as well as open-source and closed-source models. We also ensure that the knowledge cutoff of each chosen model is earlier than the creation time of the projects used to build our evaluation benchmark. Although DeepSeek-V3.1-Terminus and Qwen3-Coder-480B do not publicly disclose their exact knowledge cutoff dates, based on LLMs' training timelines, the association between release time and knowledge cutoff of other models, and their base-model performance on our benchmark, we reasonably infer that the selected projects are not included in the training corpora of these two models either.
+For UCD-Training and the training-based baselines, following previous work~
+(
+ma2025unitcoder
+;
+tao2026swe
+)
+, we adopt four models from the Qwen family, which are widely used in post-training scenarios: Qwen3-8B-Base, Qwen3-14B-Base, Qwen2.5-Coder-14B-Base, and Qwen2.5-Coder-32B-Base. This selection covers multiple parameter scales and different model types, enabling a comprehensive evaluation of our method under diverse model capacities and architectures.
+Table 2
+.
+Studied LLMs
+Model Type
+&
+Model Name
+&
+Open-source
+&
+Reasoning
+&
+Time
+&
+Knowledge Cutoff
+&
+Size
+Models for RAG
+General LLM
+& Claude-Sonnet-4.5
+(
+claude4.5
+)
+& ✗ & ✓& 2025.9 & 2025.1 & -
+& GPT-5.1
+(
+gpt-5-1
+)
+& ✗ & ✓& 2025.11 & 2024.9 & -
+& Gemini-3.0-Pro
+(
+gemini-3-pro
+)
+& ✗ & ✓& 2025.11 & 2025.1 & -
+& DeepSeek-V3.1-Terminus
+(
+deepseek-v3.1-teminus
+)
+& ✓& ✓& 2025.9 & - & 671B
+Code LLM
+& Qwen3-Coder-480B
+(
+qwen3technicalreport
+)
+& ✓& ✗ & 2025.7 & - & 480B
+Models for Training
+General LLM
+& Qwen3-8B-Base
+(
+qwen3technicalreport
+)
+& ✓& ✗ & 2025.4 & - & 8B
+& Qwen3-14B-Base
+(
+qwen3technicalreport
+)
+& ✓& ✗ & 2025.4 & - & 14B
+Code LLM
+& Qwen2.5-Coder-14B-Base
+(
+hui2024qwen2coder
+)
+& ✓& ✗ & 2024.11 & - & 14B
+& Qwen2.5-Coder-32B-Base
+(
+hui2024qwen2coder
+)
+& ✓& ✗ & 2024.11 & - & 32B
+4.3.
+Metrics
+Following the previous methods~
+(
+wang2022compilable
+;
+chen2021evaluating
+)
+, we employ the execution-based metrics
+Compilation@k
+and
+Pass@k
+to assess the quality of generated code through the execution status of the code.
+•
+Compilation@k
+: Compilation@k
+is a crucial evaluation metric that measures the proportion of translated code snippets that compiles successfully without errors within $k$ rounds, directly reflecting the syntactic and structural correctness of the translated code. $C(i, k) = 1$ if the $i^th$ code sample compiles successfully within $k$ attempts; otherwise $C(i, k) = 0$.
+•
+Pass@k
+: This widely-used metric~
+(
+chen2021evaluating
+)
+calculates the percentage of tasks correctly solved based on $k$ generated code samples per task.
+A task is considered solved if at least one of the generated code samples passes all the corresponding test cases.
+4.4.
+Implementation Details
+Code Parsing.
+During the code graph construction stage, C++ codebases are parsed and compiled using Clang~
+(
+clang
+)
+, while Python codebases are statically analyzed using Jedi~
+(
+jedi
+)
+and the built-in AST module. For rule-based post-filtering of compositional API usage reasoning data, we adopt Tree-sitter~
+(
+tree-sitter
+)
+to perform fine-grained syntactic analysis.
+Data Construction.
+For the dependency-preserving CPT stage, we incorporate general-domain data from Mixture-of-Thought~
+(
+openr1
+)
+, retaining only categories relevant to code-related capabilities, including math,code, and scientist reasoning.
+For the graph-grounded SFT stage, we use AM-distilled-data
+(
+zhao202514millionopensourcedistilled
+)
+as general-domain supervision, which includes not only code-related data but also instruction-following data.
+The modern model used during graph-grounded SFT is DeepSeek-v3.1-Terminus
+(
+deepseek-v3.1-teminus
+)
+in reasoning mode, while the model used for consistency evaluation is DeepSeek-v3.1-Terminus in chat mode.
+Due to variations in programming languages and repository scales,
+the sizes of the synthesized datasets differ across codebases: 35k samples for sqlgen, 20k samples for Reaction and Hexi, and 6k samples for Leann. For a fair comparison, training-based baselines are trained using the same data scales.
+Training Setup.
+Due to variations in programming languages and codebases scales, the number of epochs used in the dependency-preserving CPT stage differs across codebases. For C++ codebases, the CPT stage is conducted for 1 epoch on sqlgen and for 2 epochs on reaction and hexi. For the Python codebase leann, CPT is performed for 1 epoch.
+In the graph-grounded SFT stage, all codebases are trained for 3 epochs.
+For other hyperparameters, both CPT and SFT stages employ full-parameter fine-tuning with a learning rate of $5.0e^-5$, a warmup ratio of 0.1, a context window length of 32,768 tokens, and a gradient accumulation step of 1.
+All experiments are conducted on 32 NVIDIA H20 GPUs. The complete configuration and training details are available on GitHub.
+5.
+Evaluation
+5.1.
+RQ1: Performance of UCD-Training
+Design.
+To systematically evaluate the effectiveness of UCD-Training in unseen codebase scenarios, we compare it against two representative categories of methods: inference-time augmentation and training-time augmentation.
+For inference-time augmentation, we select Retrieval-Augmented Generation (RAG) as a representative baseline and five state-of-the-art models as shown in Table
+2
+as base model.
+For training-time augmentation, we consider two widely adopted data synthesis and fine-tuning approaches: OSS-Instruct and COTTON and select the same base model as UCD-Training: Qwen3-8B-Base and Qwen3-14B-Base We adopt compilation@1 and pass@1 for C++ codebases and pass@1 for Python codebase LEANN, to assess code generation performance from both syntactic correctness and semantic correctness perspectives in unseen codebases domain.
+Table 3
+.
+Comparison of Ours and Baselines
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

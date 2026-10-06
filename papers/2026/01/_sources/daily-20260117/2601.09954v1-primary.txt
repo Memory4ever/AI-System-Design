@@ -1,0 +1,893 @@
+The Spatial Blindspot of Vision-Language Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+2.1 Image Encoders
+2.2 Spatial Reasoning
+2.3 VLMs and Spatial Awareness
+2.4 Measuring Spatial Awareness
+3 Experimental Setup
+3.1 Methods
+3.2 Training Strategies
+4 Results
+4.1 Evaluating on General Purpose Benchmarks
+4.2 Evaluating on Spatial Benchmarks
+5 Conclusion
+6 Future Work
+7 Acknowledgment
+References
+License: CC BY 4.0
+arXiv:2601.09954v1 [cs.CV] 15 Jan 2026
+The Spatial Blindspot of Vision-Language Models
+Nahid Alam
+Affiliation: Cohere Labs Community
+Email: nahid.m.alam@gmail.com
+Leema Krishna Murali
+Affiliation: Cohere Labs Community
+Affiliation: Eisai Inc.
+Siddhant Bharadwaj
+Affiliation: Indian Institute of Science, Bangalore
+Patrick Liu
+Affiliation: UIUC
+Timothy Chung
+Affiliation: Cohere Labs Community
+Affiliation: Imperial College London
+Drishti Sharma
+Affiliation: Cohere Labs Community
+Akshata A
+Affiliation: Cohere Labs Community
+Kranthi Kiran
+Affiliation: Cohere Labs Community
+Affiliation: EleutherAI
+Wesley Tam
+Affiliation: EleutherAI
+Bala Krishna S Vegesna
+Affiliation: Georgia Institute of Technology
+Abstract
+Vision-language models (VLMs) have advanced rapidly, but their ability to capture spatial relationships remains a blindspot. Current VLMs are typically built with contrastive language-image pretraining (CLIP) style image encoders. The training recipe often flattens images into 1D patch sequences, discarding the 2D structure necessary for spatial reasoning. We argue that this lack of spatial awareness is a missing dimension in VLM design and a bottleneck for applications requiring spatial grounding, such as robotics and embodied AI. To address this, we investigate (i) image encoders trained with alternative objectives and (ii) 2D positional encodings. Our experiments show that these architectural choices can lead to improved spatial reasoning on several benchmarks.
+1 Introduction
+Vision–language models (VLMs) have achieved impressive results in recognition, captioning, and visual question answering, yet their ability to reason about space remains fragile. Although spatial structure is fundamental to visual perception, most VLMs treat images primarily as sources of semantic tokens, rather than as organized physical layouts. This limits their reliability in tasks requiring geometric reasoning, precise localization, and spatial interaction.
+A source of this weakness lies in the visual foundations of modern VLMs. They rely on large, pre-trained image encoders [13, 33, 36, 30], typically frozen or lightly adapted [2, 25, 20, 16], that are optimized for global semantic alignment. Prior work shows that CLIP-style models emphasize overall semantics over local structure [39] and exhibit poor robustness to simple geometric transformations [3]. While recent efforts explore alternative pretraining objectives [39, 26, 40, 14], their impact on spatial reasoning within VLMs remains underexplored.
+Spatial information is further degraded during vision-language alignment. Most existing VLMs flatten visual tokens into a 1D sequence and apply RoPE-1D [35], a design choice that has been shown to weaken spatial awareness [45, 46]. Qwen2-VL [42] shows that explicitly factorizing positional encoding along spatial axes can improve structural preservation. Their findings suggest that alignment design is an area worth exploring for spatial understanding.
+Foundational VLMs [2, 25, 20, 43] are rarely evaluated on benchmarks that directly probe spatial reasoning. Standard evaluations emphasize semantic competence, offering limited insight into models’ understanding of geometry, relative position, and the scene layout.
+In this work, we treat spatial grounding as a first-class design axis in VLMs and make the following contributions:
+1.
+We evaluate state-of-the-art VLMs on spatial reasoning benchmarks and identify gaps between semantic competence and spatial understanding.
+2.
+We study alternative image encoders—SigLIP, SigLIP2, and AIMv2—within the LLaVA framework and quantify how encoder choice affects spatial reasoning.
+3.
+We use 2D-RoPE for vision-language alignment to preserve the image’s 2D structure and improve spatial reasoning performance on several benchmarks.
+2 Related Work
+2.1 Image Encoders
+In recent years, we have seen progress on image encoders aligned with their own text captioning. CLIP [33] aligns image and text representations through a large-scale contrastive loss on paired dataset, and demonstrates strong zero-shot generalization across classification and retrieval tasks. In contrast, DINOv2 [30] is a visual model trained with a self-supervised masked image modeling objective. This allows DINOv2 to learn rich, pixel-level features by predicting masked-out image patches, without relying on paired text supervision. BLIP [21] proposed a unified framework that integrates both contrastive pre-training for vision and generative objectives such as image–text matching and captioning. BLIP demonstrated that combining discriminative and generative signals leads to richer cross-modal representations and improved downstream transfer. BLIP-2 [20] further advanced this line by introducing a lightweight querying transformer that bridges frozen image encoders with large language models, enabling efficient vision–language alignment without end-to-end pretraining of massive multimodal models. SigLIP [44] improves CLIP by replacing the softmax contrastive loss with a pairwise sigmoid loss, removing batch-size dependencies and resulting in more stable training dynamics and efficient scaling. SigLIP2 [40] extends this line of work by augmenting the SigLIP training recipe with self-distillation and masked prediction objectives, resulting in higher-quality dense features, and improved localization across vision–language benchmarks. SigLIP2 also introduces the NaFlex variant, which preserves native aspect ratios and supports variable sequence lengths. The NaFlex variant provides empirical gains on aspect-sensitive tasks such as OCR and document understanding. In contrast to these contrastive and bridging approaches, AIMv2 [14] introduces an autoregressive multimodal pretraining framework that unifies vision and language by pairing a vision encoder with a decoder trained to jointly generate image patches and text tokens. Cocchi et al. [10]
+conduct a study that systematically pairs various LLMs with different visual backbones such as CLIP, DINOv2, SigLIP, and SigLIP2 to understand the strengths and limitations of various VLM integration strategies. Our work differs from theirs as we focus on spatial awareness along with the integration of M-RoPE in image encoders; specifically 2D-RoPE for images.
+2.2 Spatial Reasoning
+Zhang et al. [45] classified spatial reasoning into two categories, static vs. dynamic. Static spatial reasoning refers to understanding spatial relationships in fixed configurations, where objects do not change positions over time. These tasks test whether a model can identify, compare, or infer spatial arrangements from still images or single states of a scene. For example, determining whether ’the book is to the left of the laptop’ or ’the chair is behind the table’ requires recognizing and reasoning about stable relative positions. Static reasoning often emphasizes relational concepts such as distance, orientation, containment, or perspective, without involving temporal changes. Dynamic spatial reasoning, on the other hand, involves scenarios in which the spatial configuration evolves. Here, models must account for motion, transformation, or sequential changes in a scene. Typical examples include predicting the outcome of an object’s movement, tracking shifting perspectives, or reasoning about cause-and-effect actions in space. Unlike static reasoning, dynamic tasks demand temporal and often causal understanding, requiring models to build an implicit representation of change and transformation. Another way to categorize spatial reasoning is 2D vs. 3D images. 2D reasoning focuses on relationships within 2D images, such as relative position, alignment, or counting, whereas 3D reasoning requires understanding depth, perspective, and volumetric relations. In this paper, we focus on static spatial awareness in 2D images.
+2.3 VLMs and Spatial Awareness
+Recent advances in LLMs and general purpose image encoders, such as CLIP [33] and SigLIP [44] have significantly improved VLM capabilities. Architectures such as Flamingo [2], LLaVA [25, 23], KOSMOS [31, 32], Florence-2 [43], and Molmo [12] demonstrate strong performance in tasks such as image captioning, visual question answering (VQA) and complex reasoning. Qwen2-VL [42] introduced multimodal rotary position encoding (M-RoPE) and dynamic resolution techniques, while PaLI’s joint modality scaling and cross-lingual learning [8, 7] have improved vision-language understanding. These VLMs tend to rely on implicit visual features learned during training rather than explicitly structured representations of spatial information needed for world understanding. RoboSpatial [34] is an annotated dataset specifically designed for spatial understanding in VLMs that includes 1 million images, 5,000 3D scans, and 3 million annotated spatial relationships. The pairing of 2D egocentric images with 3D scans in RoboSpatial makes it suitable for both 2D and 3D spatial understanding tasks. SpatialVLM [6] focuses on training VLMs with spatial reasoning dataset on the internet to improve their 3D spatial understanding. This framework enhances the ability of VLMs to recognize quantitative relationships between physical objects, such as distances and size differences, which are crucial for many real-world tasks. SpatialVLM has also shown potential in robotics as a tool for providing fine-grained reward annotations. MM-Spatial [11] introduces CA-VQA, a new supervised fine-tuning dataset and benchmark focused on indoor scenes. It targets tasks such as spatial relationship reasoning, metric estimation, and 3D grounding. By training MM-Spatial on CA-VQA, the model achieves state-of-the-art performance in 3D spatial understanding, highlighting the value of incorporating depth and multiview cues. SpatialRGPT [9] introduces a data curation pipeline that enables effective learning of regional representations from 3D scene graphs. It also features a flexible plugin module for integrating depth information into the visual encoder of existing VLMs. This allows SpatialRGPT to accurately perceive the relative directions and distances of user-specified regions within a visual scene.
+2.4 Measuring Spatial Awareness
+There are a number of benchmarks evaluating VLMs on spatial awareness; spanning across tasks such as 2D layout understanding, 3D geometric reasoning, counting, and relational question answering. Multimodal Visual Pattern (MMVP) benchmark [39] is a set of 300 images in 9 categories, designed by observing CLIP-blind pairs. CV-Bench [38] includes both the 2D and 3D tasks around spatial relationships, object counting, depth ordering, and relative distance estimation. GQA [15] leverages scene graph annotations and functional programs to generate compositional questions, and includes subsets like compare, verify, and logical that specifically test spatial relations such as left, right, on, and under. Visual Spatial Reasoning (VSR) [22] assesses fine-grained relational understanding through 66 annotated spatial relations in natural images, while TopViewRS [19] measures reasoning over semantic top-view maps. TallyQA [1] and CountBenchQA [5] address object numerosity under occlusion and clutter.
+3 Experimental Setup
+3.1 Methods
+Our experiment is based on the LLaVA [25] framework as shown in Figure 1. To explore spatial awareness in VLMs, we extend the LLaVA architecture by integrating alternative image encoders beyond CLIP along with 2D-RoPE to preserve the inherent 2D spatial structure as shown in Figure 2. Specifically, we experiment with CLIP, SigLIP, SigLIP2, AIMv2 along with a modified design to include 2D-RoPE. Our hypothesis is that these encoder designs will better capture hierarchical spatial cues and contextual relationships across image regions. Unlike standard RoPE, 2D-RoPE encodes both horizontal and vertical patch indices through concatenated sinusoidal embeddings, providing explicit spatial priors for attention. In our implementation, 2D-RoPE is applied after patch embeddings are projected into query and key vectors, ensuring that spatial relations are injected directly into the attention mechanism rather than at the raw patch level. We hypothesize that these design choices will build a VLM with better relative position understanding in 2D images.
+3.2 Training Strategies
+We train our models in two stages: pretraining and instruction fine-tuning. The training process uses the same dataset used in LLaVA pretraining and instruction tuning respectively. For each image XvX_{v}, we used the single-turn conversation data
+(Xq1,Xa1,…,XqT,XaT)(X^{1}_{q},X^{1}_{a},\dots,X^{T}_{q},X^{T}_{a})
+where TT is the total number of turns from LLaVA.
+We conduct our experiments using a cluster of 8 NVIDIA A40 GPUs, each with 48 GB of VRAM. For both pretraining and fine-tuning, we resize input images to a resolution of 256×256 pixels.
+The pretraining process focuses solely on training the projection matrix. We use a per-device batch size of 32, which results in a global batch size of 256. We optimize the model using the AdamW optimizer with a learning rate of 1e-3, and a cosine learning rate scheduler is applied. For fine-tuning, we perform a full model update. The fine-tuning configuration uses a learning rate of 2e-5, per-device batch size of 16, resulting in a global batch size of 128.
+4 Results
+Large Language Model fϕf_{\phi}Image 𝐗v\mathbf{X}_{v}Image Encoder (CLIP/SigLIP/SigLIP2/AIMv2)Projection 𝐖\mathbf{W}𝐗a\mathbf{X}_{a}: Language Response𝐇v\mathbf{H}_{v}𝐇q\mathbf{H}_{q}Language Instruction 𝐗q\mathbf{X}_{q}
+Figure 1: Our experimental approach with LLaVA Framework [25] that compares the performance of different image encoders and 2D-RoPE variants.
+Image Encoder𝐳1\mathbf{z}_{1}𝐩1\mathbf{p}_{1}++𝐳2\mathbf{z}_{2}𝐩2\mathbf{p}_{2}++𝐳3\mathbf{z}_{3}𝐩3\mathbf{p}_{3}++𝐳4\mathbf{z}_{4}𝐩4\mathbf{p}_{4}++𝐳5\mathbf{z}_{5}𝐩5\mathbf{p}_{5}++𝐳6\mathbf{z}_{6}𝐩6\mathbf{p}_{6}++𝐳7\mathbf{z}_{7}𝐩7\mathbf{p}_{7}++𝐳8\mathbf{z}_{8}𝐩8\mathbf{p}_{8}++𝐳9\mathbf{z}_{9}𝐩9\mathbf{p}_{9}++[CLS]𝐩0\mathbf{p}_{0}++∑\sumLinear ProjectionImage𝐗v\mathbf{X}_{v}Text EncoderLanguage Instruction𝐗q\mathbf{X}_{q}Softmax CE loss(image ↔\leftrightarrow text)
+(a) CLIP Pretraining
+Image Encoder𝐳1\mathbf{z}_{1}𝐩1\mathbf{p}_{1}++𝐳2\mathbf{z}_{2}𝐩2\mathbf{p}_{2}++𝐳3\mathbf{z}_{3}𝐩3\mathbf{p}_{3}++𝐳4\mathbf{z}_{4}𝐩4\mathbf{p}_{4}++𝐳5\mathbf{z}_{5}𝐩5\mathbf{p}_{5}++𝐳6\mathbf{z}_{6}𝐩6\mathbf{p}_{6}++𝐳7\mathbf{z}_{7}𝐩7\mathbf{p}_{7}++𝐳8\mathbf{z}_{8}𝐩8\mathbf{p}_{8}++𝐳9\mathbf{z}_{9}𝐩9\mathbf{p}_{9}++[CLS]𝐩0\mathbf{p}_{0}++∑\sumLinear ProjectionImage𝐗v\mathbf{X}_{v}Text EncoderLanguage Instruction𝐗q\mathbf{X}_{q}Sigmoid CEloss (all pairs)
+(b) SigLIP Pretraining
+Image Encoder𝐳1\mathbf{z}_{1}𝐩1\mathbf{p}_{1}++𝐳2\mathbf{z}_{2}𝐩2\mathbf{p}_{2}++𝐳3\mathbf{z}_{3}𝐩3\mathbf{p}_{3}++𝐳4\mathbf{z}_{4}𝐩4\mathbf{p}_{4}++𝐳5\mathbf{z}_{5}𝐩5\mathbf{p}_{5}++𝐳6\mathbf{z}_{6}𝐩6\mathbf{p}_{6}++𝐳7\mathbf{z}_{7}𝐩7\mathbf{p}_{7}++𝐳8\mathbf{z}_{8}𝐩8\mathbf{p}_{8}++𝐳9\mathbf{z}_{9}𝐩9\mathbf{p}_{9}++∑\sumLinear ProjectionImage𝐗v\mathbf{X}_{v}Causal Multimodal DecoderLanguage Instruction𝐗q\mathbf{X}_{q}Cross-entropy (CE) lossPixel MSE loss (prefix size = 3)
+(c) AIMv2 Pretraining
+Image Encoder𝐳1\mathbf{z}_{1}𝐩1\mathbf{p}_{1}++𝐳2\mathbf{z}_{2}𝐩2\mathbf{p}_{2}++𝐳3\mathbf{z}_{3}𝐩3\mathbf{p}_{3}++𝐳4\mathbf{z}_{4}𝐩4\mathbf{p}_{4}++𝐳5\mathbf{z}_{5}𝐩5\mathbf{p}_{5}++𝐳6\mathbf{z}_{6}𝐩6\mathbf{p}_{6}++𝐳7\mathbf{z}_{7}𝐩7\mathbf{p}_{7}++𝐳8\mathbf{z}_{8}𝐩8\mathbf{p}_{8}++𝐳9\mathbf{z}_{9}𝐩9\mathbf{p}_{9}++[MAP]𝐩0\mathbf{p}_{0}++∑\sumLinear ProjectionImage𝐗v\mathbf{X}_{v}Text EncoderLanguage Instruction𝐗q\mathbf{X}_{q}SigLIP2 lossTeacher Image EncoderARdecoder
+(d) SigLIP2 Pretraining
+Image Encoder𝐳1,1\mathbf{z}_{1,1}𝐳1,2\mathbf{z}_{1,2}𝐳1,3\mathbf{z}_{1,3}𝐳2,1\mathbf{z}_{2,1}𝐳2,2\mathbf{z}_{2,2}𝐳2,3\mathbf{z}_{2,3}𝐳3,1\mathbf{z}_{3,1}𝐳3,2\mathbf{z}_{3,2}𝐳3,3\mathbf{z}_{3,3}Linear ProjectionImage𝐗v\mathbf{X}_{v}f⁡(𝐳h,w)=[𝐑⁡(Θh​(h))⊕𝐑⁡(Θw​(w))]​𝐳h,wf(\mathbf{z}_{h,w})=\bigl[\,\mathbf{R}(\Theta_{h}(h))\oplus\mathbf{R}(\Theta_{w}(w))\,\bigr]\,\mathbf{z}_{h,w}𝐑\mathbf{R}: rotation matrix⊕\oplus: block-diagonal concatenationCausal Multimodal DecoderLanguage Instruction𝐗q\mathbf{X}_{q}Cross-entropy (CE) lossPixel MSE loss (prefix size = 3)
+(e) AIMv2 Pretraining with 2D-RoPE
+Figure 2: Pretraining strategies with various image backbones and 2D-RoPE
+We compare frontier models and LLaVA variants on various benchmarks. Our work is based on the LLaVA-1.5 7B model. Therefore, all encoders and their 2D-RoPE variants that we trained are 7B models. Frontier models between the 2B to 8B parameter range were compared with the LLaVA variants we trained. For comparison purposes, we used LLaVA-NeXT 7B [24], LLaVA-OneVision-qwen2-7B-ov-hf [18], Qwen2.5-VL-8B [4], SmolVLM2-2.2B-Instruct [27], Gemma3-4b-it [37], PaliGemma2-3b-mix-448 [5] and Molmo-7B-D-0924 [12].
+Table 1: Comparison of multimodal models across MMMU_Val, MME, CCBench, and SEEDBench-IMG. Values underlined indicate the best-performing model overall, while values in bold highlight the best-performing LLaVA encoder variant in each benchmark.
+Models
+MMMU_Val
+MME
+CCBench
+SEEDBench-IMG
+Qwen2.5-VL
+0.580
+0.826
+0.592
+0.770
+LLaVA-NeXT
+0.376
+0.632
+0.243
+0.696
+LLaVA-OneVision
+0.479
+0.712
+0.549
+0.767
+SmolVLM2
+0.416
+0.640
+0.231
+0.713
+Gemma3-4b-it
+0.473
+0.620
+0.369
+0.655
+PaliGemma
+0.307
+0.580
+0.333
+0.715
+Molmo
+0.491
+0.662
+0.367
+0.746
+LLaVA-1.5
+0.322
+0.589
+0.084
+0.601
+LLaVA-2D-RoPE
+0.298
+0.582
+0.086
+0.585
+LLaVA-SigLIP
+0.303
+0.559
+0.071
+0.567
+LLaVA-SigLIP-2D-RoPE
+0.334
+0.525
+0.080
+0.545
+LLaVA-SigLIP2
+0.309
+0.495
+0.086
+0.548
+LLaVA-SigLIP2-2D-RoPE
+0.323
+0.542
+0.086
+0.527
+LLaVA-AIMv2
+0.314
+0.573
+0.086
+0.595
+LLaVA-AIMv2-2D-RoPE
+0.311
+0.563
+0.114
+0.586
+Table 2: Comparison of frontier models and LLaVA variants across spatial understanding benchmarks. Values underlined indicate the best-performing frontier model; values in bold indicate the best-performing LLaVA variant.
+Models
+MMVP
+CV-Bench
+2D Overall
+TallyQA
+GQA
+Overall
+VSR
+Top-
+ViewRS
+Count-
+BenchQA
+LLaVA-NeXT
+0.667
+0.606
+0.733
+63.786
+63.994
+0.409
+0.515
+LLaVA-OneVision
+0.767
+0.730
+0.797
+62.140
+77.741
+0.414
+0.823
+Qwen2.5-VL
+0.770
+0.754
+0.800
+60.391
+89.116
+0.456
+0.891
+SmolVLM2
+0.687
+0.577
+0.729
+50.574
+71.277
+0.416
+0.692
+Gemma3-4b-it
+0.708
+0.659
+0.525
+31.277
+55.074
+0.334
+0.713
+PaliGemma
+0.667
+0.624
+0.794
+62.570
+65.139
+0.322
+0.674
+Molmo
+0.753
+0.728
+0.808
+55.295
+76.432
+0.323
+0.858
+LLaVA v1.5
+0.577
+0.490
+0.707
+33.225
+55.810
+0.384
+0.468
+LLaVA-2D-RoPE
+0.513
+0.443
+0.654
+34.433
+57.201
+0.283
+0.290
+LLaVA-SigLIP
+0.433
+0.412
+0.672
+25.648
+54.910
+0.349
+0.581
+LLaVA-SigLIP-2D-RoPE
+0.507
+0.425
+0.616
+38.448
+57.692
+0.295
+0.483
+LLaVA-SigLIP2
+0.427
+0.442
+0.684
+23.970
+52.701
+0.371
+0.532
+LLaVA-SigLIP2-2D-RoPE
+0.480
+0.415
+0.646
+34.560
+56.465
+0.330
+0.402
+LLaVA-AIMv2
+0.513
+0.466
+0.710
+32.541
+56.219
+0.339
+0.739
+LLaVA-AIMv2-2D-RoPE
+0.560
+0.432
+0.690
+32.342
+60.311
+0.338
+0.719
+4.1 Evaluating on General Purpose Benchmarks
+As shown in Table 1, Qwen2.5-VL achieves the strongest overall performance, obtaining the highest scores on MMMU_Val, MME, CCBench, and SEEDBench-IMG. Among the LLaVA variants, AIMv2 demonstrates the most consistent results, particularly on MME and SEEDBench-IMG, although its 2D-RoPE counterpart provides only marginal gains on certain metrics and about 1.75% drop in MME. The effect of 2D-RoPE is mixed across variants. For example, LLaVA-SigLIP improves about 10% on MMMU_Val, while other models show little benefit or even reduced performance. LLaVA-SigLIP-2D-RoPE achieves the strongest MMMU_Val score among LLaVA encoders, but AIMv2 remains more competitive across multiple benchmarks.
+4.2 Evaluating on Spatial Benchmarks
+In Table 2, Qwen2.5-VL stands out as the strongest frontier model overall, achieving the highest performance on CV-Bench 2D, MMVP, VSR, TopViewRS, and CountBenchQA. LLaVA-NeXT leads frontier models on GQA Overall, while Molmo achieves the best TallyQA score among frontiers, indicating complementary strengths across different tasks. Among the LLaVA variants, performance is more fragmented: LLaVA-AIMv2 shows the most consistent improvements, reaching the highest scores on CV-Bench 2D, TallyQA, and CountBenchQA. LLaVA-AIMv2-2D-RoPE improves MMVP and leads on VSR. LLaVA-SigLIP-2D-RoPE dominates GQA Overall, and LLaVA-SigLIP2 leads in TopViewRS. We observe that although the LLaVA variants surpass Gemma3-4b-it in TallyQA, VSR; their overall performance did not surpass other frontier models. We think this is because of how Gemma3-4b-it is designed. Gemma3-4b-it uses SigLIP variant as its vision encoder, but the fixed resolution of the encoder with Pan & Scan algorithm. Pan & Scan is a preprocessing algorithm that allows the model to handle high-resolution and non-square images by breaking them down into smaller, fixed-size crops. This is necessary because Gemma 3’s vision encoder can only process images at a fixed resolution of 896x896 pixels. This design leads to information loss that hinders performance in benchmarks that require fine-grained visual reasoning, such as VSR and TallyQA. In Table 3, we observe that Gemma3-4b-it mistakenly thinks that the chopsticks are on the left side of the ramen bowl - reconfirming our hypothesis.
+In Table 2, we also observe improved performance using AIMv2 encoder and its 2D-RoPE version over other vision encoders in the LLaVA framework. AIMv2 design focuses on the image-first principle, where the model is trained to process all the image patches before decoding the text tokens in an autoregressive manner. This dense per-token supervision helps with tasks requiring fine-grained perception, such as in MMVP, CV-Bench, TallyQA, CountBenchQA, and VSR. We also believe that the two-stage captioning pipeline to generate AIMv2 training data helps in count-related examples, causing the LLaVA-AIMv2 variant to perform well in TallyQA and CountBenchQA compared to other spatial benchmarks [17].
+Figure 3: Example image from LLaVA-Bench (In-the-Wild) [25].
+Model
+Output
+LLaVA-v1.5
+The chopsticks are to the right of the bowl.
+LLaVA-2D-RoPE
+The chopsticks are to the right of the bowl.
+LLaVA-SigLIP
+The chopsticks are to the right of the bowl.
+LLaVA-SigLIP-2D-RoPE
+The chopsticks are to the right of the bowl.
+LLaVA-SigLIP2
+The chopsticks are to the right of the bowl.
+LLaVA-SigLIP2-2D-RoPE
+Right
+LLaVA-AIMv2
+The chopsticks are to the right of the bowl.
+LLaVA-AIMv2-2D-RoPE
+The chopsticks are to the right of the bowl.
+Qwen2.5-VL
+The chopsticks are to the right of the bowl.
+Gemma3-4b-it
+The chopsticks are to the left of the bowl.
+Table 3: Model outputs for the prompt Are the chopsticks to the left or right of the bowl? on image shown in Figure 3.
+(a) SigLIP2
+(b) AIMv2
+(c) Output for prompt: Locate the cup that contains green liquid. Provide the bounding boxes.
+(d) SigLIP2
+(e) AIMv2
+(f) Output for prompt: Locate the pieces of green onions in the ramen bowl. Provide the bounding box coordinates given the size of the image is 550x550.
+Figure 5: Object localization in LLaVA-SigLIP2 vs. LLaVA-AIMv2 for different prompts.
+Table 4 shows that Qwen2.5-VL achieves the strongest results among frontier models on all CV-Bench 2D tasks. Among our LLaVA variants, LLaVA-AIMv2 excels in CV-Bench 2D subtasks such as COCO and ADE20K. This is because the model’s pre-training objective aligns with the nature of these tasks. COCO is for object detection and instance segmentation, and ADE20K is a scene parsing benchmark. Performance on these subtasks of CV-Bench 2D depends on the model’s ability to capture fine-grained, pixel-level representations of spatial relationships. On the other hand, CLIP and SigLIP perform less effectively on these tasks. Their core objective is to learn a global vector for image-text matching, not a dense feature map. This limitation prevents them from achieving fine-grained visual understanding. Consequently, adding 2D-RoPE only helps to organize these global-level representations from these encoders and does not enable the model to learn any dense representations. SigLIP2’s caption-based pretraining from LocCa [41] along with self-distillation and masked prediction from SILC [29] and TIPS [26] explicitly directs the model to associate language to specific and relevant regions of the image. As a result, we see that SigLIP2 performs better than its predecessor in the subtasks of CV-Bench 2D.
+An interesting observation in Table 4 is that LLaVA-SigLIP2 lags behind LLaVA-AIMv2 which might be unexpected given SigLIP2’s masked image prediction objective. We think this is because the dense supervision is a secondary objective in SigLIP2. Dense supervision losses are added during the last 20% of the training in SigLIP2[40]. On the other hand, the core training objective of AIMv2 is based on learning the dense features from the very beginning. A qualitative example is shown in Figure 5 to demonstrate how LLaVA-AIMv2 is more precise in locating objects than LLaVA-SigLIP2.
+As shown in Table 5, LLaVA-NeXT leads the GQA Query and Overall performance. PaliGemma leads GQA Choose and Logical. Among our trained LLaVA variants, the SigLIP-based models stand out: LLaVA-SigLIP-2D-RoPE achieves the highest scores on Overall, Choose, Compare, and Query, while LLaVA-SigLIP2-2D-RoPE leads on Logical and Verify. LLaVA-AIMv2-2D-RoPE shows moderate improvements over its baseline, particularly on Compare and Logical, but it does not surpass the SigLIP-based variants. We observe that Gemma3-4b-it surpasses the LLaVA variants, including the 2D-RoPE variants of SigLIP and SigLIP2 for GQA Choose subtask. We think this is because how Gemma3 is trained on supervised distillation from a large teacher model with a frozen visual encoder, making it an effective classifier. The Choose subtask of GQA is a constrained multi-task classification problem that aligns well with the training benefits of Gemma3. For other GQA subtasks, LLaVA 2D-RoPE variants of SigLIP, SigLIP2, and AIMv2 surpass Gemma3. We think that the structural advantage of 2D-RoPE performs well with the object and attribute relationships like GQA Compare, Logical. For substasks like GQA Query and Verify, the model needs to confirm information related to a specific object or attribute. SigLIP2’s self-supervised losses and masked prediction result in rich local representations that are needed for these complex, compositional reasoning.
+Table 4: Comparison of frontier models and LLaVA variants on CV-Bench 2D tasks. Values underlined indicate the best-performing model overall, while values in bold highlight the best-performing LLaVA encoder variant in each benchmark.
+Models
+CV-Bench
+2D COCO
+CV-Bench
+2D ADE20K
+CV-Bench
+2D Overall
+LLaVA-NeXT
+0.680
+0.532
+0.606
+LLaVA-OneVision
+0.775
+0.684
+0.730
+Qwen2.5-VL
+0.820
+0.689
+0.754
+SmolVLM2
+0.621
+0.532
+0.577
+Gemma3-4b-it
+0.660
+0.618
+0.659
+PaliGemma
+0.675
+0.573
+0.624
+Molmo
+0.773
+0.684
+0.728
+LLaVA-1.5
+0.525
+0.455
+0.490
+LLaVA-2D-RoPE
+0.461
+0.425
+0.443
+LLaVA-SigLIP
+0.440
+0.384
+0.412
+LLaVA-SigLIP-2D-RoPE
+0.445
+0.404
+0.425
+LLaVA-SigLIP2
+0.466
+0.419
+0.442
+LLaVA-SigLIP2-2D-RoPE
+0.436
+0.393
+0.415
+LLaVA-AIMv2
+0.480
+0.453
+0.466
+LLaVA-AIMv2-2D-RoPE
+0.456
+0.408
+0.432
+Table 5: Comparison of frontier models and LLaVA variants on GQA subtasks. Values underlined indicate the best-performing frontier model; values in bold indicate the best-performing LLaVA variant.
+Models
+GQA
+Overall
+GQA
+Choose
+GQA
+Compare
+GQA
+Logical
+GQA
+Query
+GQA
+Verify
+LLaVA-NeXT
+63.786
+85.120
+64.177
+78.980
+49.875
+82.860
+LLaVA-OneVision
+62.140
+83.880
+66.893
+80.588
+46.069
+83.792
+Qwen2.5-VL
+60.391
+84.322
+73.854
+78.702
+43.027
+82.682
+SmolVLM2
+50.574
+67.434
+47.538
+64.504
+37.867
+70.160
+Gemma3-4b-it
+31.277
+61.913
+16.978
+19.301
+25.952
+45.337
+PaliGemma
+62.570
+86.802
+73.345
+81.864
+45.893
+82.549
+Molmo
+55.295
+78.742
+52.462
+65.169
+41.558
+77.886
+LLaVA-1.5
+33.225
+49.690
+49.576
+33.500
+25.702
+43.206
+LLaVA-2D-RoPE
+34.433
+41.807
+54.839
+48.697
+22.337
+50.533
+LLaVA-SigLIP
+25.648
+17.006
+47.199
+44.204
+15.783
+39.298
+LLaVA-SigLIP-2D-RoPE
+38.448
+55.182
+59.762
+55.186
+23.159
+57.282
+LLaVA-SigLIP2
+23.970
+16.475
+40.917
+41.486
+14.107
+39.076
+LLaVA-SigLIP2-2D-RoPE
+34.560
+47.121
+55.688
+57.959
+15.298
+62.211
+LLaVA-AIMv2
+32.541
+37.998
+51.783
+47.421
+21.440
+46.403
+LLaVA-AIMv2-2D-RoPE
+32.342
+39.858
+56.876
+48.974
+18.663
+50.178
+5 Conclusion
+We demonstrate that encoder choice significantly impacts spatial reasoning. For example, CountBenchQA improves about 58%, rising from 0.468 in LLaVA-1.5 to 0.739 in LLaVA-AIMv2. The effects of injecting 2D-RoPE into the image encoder attention are mixed, indicating that where and how 2D positional information is introduced matter. In our experiments, frontier models such as Qwen2.5-VL achieve the strongest overall results. Although Qwen2.5-VL is trained on a different dataset and token scales than LLaVA, the comparison is not strictly apples-to-apples. Overall, the findings highlight that encoder design shapes spatial awareness within VLM families, although comparisons to frontier models remain questionable due to differences in training data and scale.
+6 Future Work
+Our study focused on static, 2D images, benchmarks and encoder variants within the LLaVA framework. This work can extend to 3D spatial reasoning along with the dynamic environment. Another potential extension can be on SigLIP2 with NaFlex. The flexible resolution image preprocessing of NaFlex mitigates information loss observed in fixed-resolution encoders. Similarly BLIP-2 and related architectures could help assess whether their pretraining objectives and visual-language alignment strategies offer advantages over CLIP-derived models. Finally, we note that advanced alignment mechanisms, such as gated attention in Flamingo [2], Q-Former in BLIP-2, or cross-modal pooling in MM1 [28], were intentionally left out in this work. Exploring these approaches as alternatives to simple projection layers may further improve spatial reasoning performance.
+7 Acknowledgment
+We gratefully acknowledge EleutherAI for providing GPU resources that supported this work. We also thank the volunteer team members for their time, dedication, and invaluable contributions.
+References
+[1]
+M. Acharya, K. Kafle, and C. Kanan (2019)
+TallyQA: Answering Complex Counting Questions.
+In Proceedings of the AAAI Conference on Artificial Intelligence,
+Vol. 33, pp. 8076–8084.
+External Links: Document,
+Link
+Cited by: §2.4.
+[2]
+J. Alayrac, J. Donahue, P. Luc, A. Miech, I. Barr, Y. Hasson, K. Lenc, A. Mensch, K. Millican, M. Reynolds, et al. (2022)
+Flamingo: a Visual Language Model for Few-Shot Learning.
+Advances in Neural Information Processing Systems 35, pp. 23716–23736.
+Cited by: §1,
+§1,
+§2.3,
+§6.
+[3]
+A. M. Anis, H. Ali, and S. Sarfraz (2025)
+On the limitations of vision-language models in understanding image transforms.
+External Links: 2503.09837,
+Link
+Cited by: §1.
+[4]
+S. Bai, K. Chen, X. Liu, J. Wang, W. Ge, S. Song, K. Dang, P. Wang, S. Wang, J. Tang, H. Zhong, Y. Zhu, M. Yang, Z. Li, J. Wan, P. Wang, W. Ding, Z. Fu, Y. Xu, J. Ye, X. Zhang, T. Xie, Z. Cheng, H. Zhang, Z. Yang, H. Xu, and J. Lin (2025)
+Qwen2.5-VL Technical Report.
+External Links: 2502.13923,
+Link
+Cited by: §4.
+[5]
+L. Beyer, A. Steiner, A. Susano Pinto, A. Kolesnikov, X. Wang, D. Salz, M. Neumann, I. Alabdulmohsin, M. Tschannen, E. Bugliarello, T. Unterthiner, D. Keysers, S. Koppula, F. Liu, A. Grycner, A. Gritsenko, N. Houlsby, M. Kumar, K. Rong, J. Eisenschlos, R. Kabra, M. Bauer, M. Bošnjak, X. Chen, M. Minderer, P. Voigtlaender, I. Bica, I. Balazevic, J. Puigcerver, P. Papalampidi, O. Henaff, X. Xiong, R. Soricut, J. Harmsen, and X. Zhai (2024)
+PaliGemma: A versatile 3B VLM for transfer.
+arXiv preprint arXiv:2407.07726.
+External Links: Link
+Cited by: §2.4,
+§4.
+[6]
+B. Chen, Z. Xu, S. Kirmani, B. Ichter, D. Driess, P. Florence, D. Sadigh, L. Guibas, and F. Xia (2024)
+SpatialVLM: Endowing Vision-Language Models with Spatial Reasoning Capabilities.
+External Links: 2401.12168,
+Link
+Cited by: §2.3.
+[7]
+X. Chen, J. Djolonga, P. Padlewski, B. Mustafa, S. Changpinyo, J. Wu, C. R. Ruiz, S. Goodman, X. Wang, Y. Tay, et al. (2023)
+PaLI-X: On Scaling up a Multilingual Vision and Language Model.
+arXiv preprint arXiv:2305.18565.
+Cited by: §2.3.
+[8]
+X. Chen, X. Wang, S. Changpinyo, A. Piergiovanni, P. Padlewski, D. Salz, S. Goodman, A. Grycner, B. Mustafa, L. Beyer, et al. (2022)
+PaLI: A Jointly-Scaled Multilingual Language-Image Model.
+arXiv preprint arXiv:2209.06794.
+Cited by: §2.3.
+[9]
+A. Cheng, H. Yin, Y. Fu, Q. Guo, R. Yang, J. Kautz, X. Wang, and S. Liu (2024)
+SpatialRGPT: Grounded Spatial Reasoning in Vision Language Models.
+External Links: 2406.01584,
+Link
+Cited by: §2.3.
+[10]
+F. Cocchi, N. Moratelli, D. Caffagni, S. Sarto, L. Baraldi, M. Cornia, and R. Cucchiara (2025)
+LLaVA-MORE: A Comparative Study of LLMs and Visual Backbones for Enhanced Visual Instruction Tuning.
+External Links: 2503.15621,
+Link
+Cited by: §2.1.
+[11]
+E. Daxberger, N. Wenzel, D. Griffiths, H. Gang, J. Lazarow, G. Kohavi, K. Kang, M. Eichner, Y. Yang, A. Dehghan, and P. Grasch (2025)
+MM-Spatial: Exploring 3D Spatial Understanding in Multimodal LLMs.
+External Links: 2503.13111,
+Link
+Cited by: §2.3.
+[12]
+M. Deitke, C. Clark, S. Lee, R. Tripathi, Y. Yang, J. S. Park, M. Salehi, N. Muennighoff, K. Lo, L. Soldaini, et al. (2024)
+Molmo and PixMo: Open Weights and Open Data for State-of-the-Art Multimodal Models.
+arXiv preprint arXiv:2409.17146.
+Cited by: §2.3,
+§4.
+[13]
+A. Dosovitskiy, L. Beyer, A. Kolesnikov, D. Weissenborn, X. Zhai, T. Unterthiner, M. Dehghani, M. Minderer, G. Heigold, S. Gelly, J. Uszkoreit, and N. Houlsby (2021)
+An image is worth 16x16 words: transformers for image recognition at scale.
+External Links: 2010.11929,
+Link
+Cited by: §1.
+[14]
+E. Fini, M. Shukor, X. Li, P. Dufter, M. Klein, D. Haldimann, S. Aitharaju, V. G. T. da Costa, L. Béthune, Z. Gan, A. T. Toshev, M. Eichner, M. Nabi, Y. Yang, J. M. Susskind, and A. El-Nouby (2024)
+Multimodal autoregressive pre-training of large vision encoders.
+External Links: 2411.14402,
+Link
+Cited by: §1,
+§2.1.
+[15]
+D. A. Hudson and C. D. Manning (2019)
+GQA: A New Dataset for Real-World Visual Reasoning and Compositional Question Answering.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+pp. 6700–6709.
+External Links: Document,
+Link
+Cited by: §2.4.
+[16]
+J. Jeong, J. Kim, Y. Choi, G. Lee, and Y. Uh (2024)
+Visual style prompting with swapping self-attention.
+External Links: 2402.12974,
+Link
+Cited by: §1.
+[17]
+Z. Lai, V. Saveris, C. Chen, H. Chen, H. Zhang, B. Zhang, J. L. Tebar, W. Hu, Z. Gan, P. Grasch, M. Cao, and Y. Yang (2024)
+Revisit large-scale image-caption data in pre-training multimodal foundation models.
+External Links: 2410.02740,
+Link
+Cited by: §4.2.
+[18]
+B. Li, Y. Zhang, D. Guo, R. Zhang, F. Li, H. Zhang, K. Zhang, P. Zhang, Y. Li, Z. Liu, and C. Li (2024)
+LLaVA-OneVision: Easy Visual Task Transfer.
+External Links: 2408.03326,
+Link
+Cited by: §4.
+[19]
+C. Li, C. Zhang, H. Zhou, N. Collier, A. Korhonen, and I. Vulić (2024)
+TopViewRS: vision-language models as top-view spatial reasoners.
+In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing,
+Miami, Florida, USA, pp. 1786–1807.
+External Links: Document,
+Link
+Cited by: §2.4.
+[20]
+J. Li, D. Li, S. Savarese, and S. Hoi (2023)
+BLIP-2: Bootstrapping Language-Image Pre-training with Frozen Image Encoders and Large Language Models.
+In International conference on machine learning,
+pp. 19730–19742.
+Cited by: §1,
+§1,
+§2.1.
+[21]
+J. Li, D. Li, C. Xiong, and S. Hoi (2022)
+BLIP: Bootstrapping Language-Image Pre-training for Unified Vision-Language Understanding and Generation.
+External Links: 2201.12086,
+Link
+Cited by: §2.1.
+[22]
+F. Liu, G. Emerson, and N. Collier (2023)
+Visual Spatial Reasoning.
+Transactions of the Association for Computational Linguistics 11, pp. 635–651.
+External Links: Document,
+Link
+Cited by: §2.4.
+[23]
+H. Liu, C. Li, Y. Li, and Y. J. Lee (2023)
+Improved Baselines with Visual Instruction Tuning.
+arXiv:2310.03744.
+Cited by: §2.3.
+[24]
+H. Liu, C. Li, Y. Li, B. Li, Y. Zhang, S. Shen, and Y. J. Lee (2024)
+LLaVA-NeXT: Improved reasoning, OCR, and world knowledge.
+External Links: Link
+Cited by: §4.
+[25]
+H. Liu, C. Li, Q. Wu, and Y. J. Lee (2023)
+Visual Instruction Tuning.
+NeurIPS.
+Cited by: §1,
+§1,
+§2.3,
+§3.1,
+Figure 1,
+Figure 1,
+Figure 3,
+Figure 3.
+[26]
+K. Maninis, K. Chen, S. Ghosh, A. Karpur, K. Chen, Y. Xia, B. Cao, D. Salz, G. Han, J. Dlabal, D. Gnanapragasam, M. Seyedhosseini, H. Zhou, and A. Araujo (2025)
+TIPS: Text-Image Pretraining with Spatial awareness.
+External Links: 2410.16512,
+Link
+Cited by: §1,
+§4.2.
+[27]
+A. Marafioti, O. Zohar, M. Farré, M. Noyan, E. Bakouch, P. Cuenca, C. Zakka, L. B. Allal, A. Lozhkov, N. Tazi, V. Srivastav, J. Lochner, H. Larcher, M. Morlon, L. Tunstall, L. von Werra, and T. Wolf (2025)
+SmolVLM: Redefining small and efficient multimodal models.
+arXiv preprint arXiv:2504.05299.
+Cited by: §4.
+[28]
+B. McKinzie, Z. Gan, J. Fauconnier, S. Dodge, B. Zhang, P. Dufter, D. Shah, X. Du, F. Peng, F. Weers, et al. (2024)
+MM1: Methods, Analysis & Insights from Multimodal LLM Pre-training.
+arXiv preprint arXiv:2403.09611.
+Cited by: §6.
+[29]
+M. F. Naeem, Y. Xian, X. Zhai, L. Hoyer, L. V. Gool, and F. Tombari (2023)
+SILC: Improving Vision Language Pretraining with Self-Distillation.
+External Links: 2310.13355,
+Link
+Cited by: §4.2.
+[30]
+M. Oquab, T. Darcet, T. Moutakanni, H. Vo, M. Szafraniec, V. Khalidov, P. Fernandez, D. Haziza, F. Massa, A. El-Nouby, M. Assran, N. Ballas, W. Galuba, R. Howes, P. Huang, S. Li, I. Misra, M. Rabbat, V. Sharma, G. Synnaeve, H. Xu, H. Jegou, J. Mairal, P. Labatut, A. Joulin, and P. Bojanowski (2024)
+DINOv2: Learning Robust Visual Features without Supervision.
+External Links: 2304.07193,
+Link
+Cited by: §1,
+§2.1.
+[31]
+X. Pan, L. Dong, S. Huang, Z. Peng, W. Chen, and F. Wei (2023)
+Kosmos-G: Generating Images in Context with Multimodal Large Language Models.
+ArXiv abs/2310.02992.
+Cited by: §2.3.
+[32]
+Z. Peng, W. Wang, L. Dong, Y. Hao, S. Huang, S. Ma, and F. Wei (2023)
+Kosmos-2: Grounding Multimodal Large Language Models to the World.
+arXiv preprint arXiv:2306.14824.
+Cited by: §2.3.
+[33]
+A. Radford, J. W. Kim, C. Hallacy, A. Ramesh, G. Goh, S. Agarwal, G. Sastry, A. Askell, P. Mishkin, J. Clark, et al. (2021)
+Learning Transferable Visual Models From Natural Language Supervision.
+In International conference on machine learning,
+pp. 8748–8763.
+Cited by: §1,
+§2.1,
+§2.3.
+[34]
+C. H. Song, V. Blukis, J. Tremblay, S. Tyree, Y. Su, and S. Birchfield (2025)
+RoboSpatial: teaching spatial understanding to 2d and 3d vision-language models for robotics.
+External Links: 2411.16537,
+Link
+Cited by: §2.3.
+[35]
+J. Su, Y. Lu, S. Pan, A. Murtadha, B. Wen, and Y. Liu (2023)
+RoFormer: enhanced transformer with rotary position embedding.
+External Links: 2104.09864,
+Link
+Cited by: §1.
+[36]
+Q. Sun, Y. Fang, L. Wu, X. Wang, and Y. Cao (2023)
+EVA-clip: improved training techniques for clip at scale.
+External Links: 2303.15389,
+Link
+Cited by: §1.
+[37]
+G. Team, A. Kamath, J. Ferret, S. Pathak, N. Vieillard, R. Merhej, S. Perrin, T. Matejovicova, A. Ramé, M. Rivière, L. Rouillard, T. Mesnard, G. Cideron, J. Grill, S. Ramos, E. Yvinec, M. Casbon, E. Pot, I. Penchev, G. Liu, F. Visin, K. Kenealy, L. Beyer, X. Zhai, A. Tsitsulin, R. Busa-Fekete, A. Feng, N. Sachdeva, B. Coleman, Y. Gao, B. Mustafa, I. Barr, E. Parisotto, D. Tian, M. Eyal, C. Cherry, J. Peter, D. Sinopalnikov, S. Bhupatiraju, R. Agarwal, M. Kazemi, D. Malkin, R. Kumar, D. Vilar, I. Brusilovsky, J. Luo, A. Steiner, A. Friesen, A. Sharma, A. Sharma, A. M. Gilady, A. Goedeckemeyer, A. Saade, A. Feng, A. Kolesnikov, A. Bendebury, A. Abdagic, A. Vadi, A. György, A. S. Pinto, A. Das, A. Bapna, A. Miech, A. Yang, A. Paterson, A. Shenoy, A. Chakrabarti, B. Piot, B. Wu, B. Shahriari, B. Petrini, C. Chen, C. L. Lan, C. A. Choquette-Choo, C. Carey, C. Brick, D. Deutsch, D. Eisenbud, D. Cattle, D. Cheng, D. Paparas, D. S. Sreepathihalli, D. Reid, D. Tran, D. Zelle, E. Noland, E. Huizenga, E. Kharitonov, F. Liu, G. Amirkhanyan, G. Cameron, H. Hashemi, H. Klimczak-Plucińska, H. Singh, H. Mehta, H. T. Lehri, H. Hazimeh, I. Ballantyne, I. Szpektor, I. Nardini, J. Pouget-Abadie, J. Chan, J. Stanton, J. Wieting, J. Lai, J. Orbay, J. Fernandez, J. Newlan, J. Ji, J. Singh, K. Black, K. Yu, K. Hui, K. Vodrahalli, K. Greff, L. Qiu, M. Valentine, M. Coelho, M. Ritter, M. Hoffman, M. Watson, M. Chaturvedi, M. Moynihan, M. Ma, N. Babar, N. Noy, N. Byrd, N. Roy, N. Momchev, N. Chauhan, N. Sachdeva, O. Bunyan, P. Botarda, P. Caron, P. K. Rubenstein, P. Culliton, P. Schmid, P. G. Sessa, P. Xu, P. Stanczyk, P. Tafti, R. Shivanna, R. Wu, R. Pan, R. Rokni, R. Willoughby, R. Vallu, R. Mullins, S. Jerome, S. Smoot, S. Girgin, S. Iqbal, S. Reddy, S. Sheth, S. Põder, S. Bhatnagar, S. R. Panyam, S. Eiger, S. Zhang, T. Liu, T. Yacovone, T. Liechty, U. Kalra, U. Evci, V. Misra, V. Roseberry, V. Feinberg, V. Kolesnikov, W. Han, W. Kwon, X. Chen, Y. Chow, Y. Zhu, Z. Wei, Z. Egyed, V. Cotruta, M. Giang, P. Kirk, A. Rao, K. Black, N. Babar, J. Lo, E. Moreira, L. G. Martins, O. Sanseviero, L. Gonzalez, Z. Gleicher, T. Warkentin, V. Mirrokni, E. Senter, E. Collins, J. Barral, Z. Ghahramani, R. Hadsell, Y. Matias, D. Sculley, S. Petrov, N. Fiedel, N. Shazeer, O. Vinyals, J. Dean, D. Hassabis, K. Kavukcuoglu, C. Farabet, E. Buchatskaya, J. Alayrac, R. Anil, Dmitry, Lepikhin, S. Borgeaud, O. Bachem, A. Joulin, A. Andreev, C. Hardin, R. Dadashi, and L. Hussenot (2025)
+Gemma 3 technical report.
+External Links: 2503.19786,
+Link
+Cited by: §4.
+[38]
+S. Tong, E. Brown, P. Wu, S. Woo, M. Middepogu, S. C. Akula, J. Yang, S. Yang, A. Iyer, X. Pan, A. Wang, R. Fergus, Y. LeCun, and S. Xie (2024)
+Cambrian-1: A Fully Open, Vision-Centric Exploration of Multimodal LLMs.
+In Advances in Neural Information Processing Systems,
+External Links: Link
+Cited by: §2.4.
+[39]
+S. Tong, Z. Liu, Y. Zhai, Y. Ma, Y. LeCun, and S. Xie (2024)
+Eyes wide shut? exploring the visual shortcomings of multimodal llms.
+External Links: 2401.06209,
+Link
+Cited by: §1,
+§2.4.
+[40]
+M. Tschannen, A. Gritsenko, X. Wang, M. F. Naeem, I. Alabdulmohsin, N. Parthasarathy, T. Evans, L. Beyer, Y. Xia, B. Mustafa, O. Hénaff, J. Harmsen, A. Steiner, and X. Zhai (2025)
+SigLIP 2: Multilingual Vision-Language Encoders with Improved Semantic Understanding, Localization, and Dense Features.
+External Links: 2502.14786,
+Link
+Cited by: §1,
+§2.1,
+§4.2.
+[41]
+B. Wan, M. Tschannen, Y. Xian, F. Pavetic, I. Alabdulmohsin, X. Wang, A. S. Pinto, A. Steiner, L. Beyer, and X. Zhai (2024)
+LocCa: visual pretraining with location-aware captioners.
+External Links: 2403.19596,
+Link
+Cited by: §4.2.
+[42]
+P. Wang, S. Bai, S. Tan, S. Wang, Z. Fan, J. Bai, K. Chen, X. Liu, J. Wang, W. Ge, et al. (2024)
+Qwen2-VL: Enhancing Vision-Language Model’s Perception of the World at Any Resolution.
+arXiv preprint arXiv:2409.12191.
+Cited by: §1,
+§2.3.
+[43]
+B. Xiao, H. Wu, W. Xu, X. Dai, H. Hu, Y. Lu, M. Zeng, C. Liu, and L. Yuan (2024)
+Florence-2: advancing a unified representation for a variety of vision tasks.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+pp. 4818–4829.
+Cited by: §1,
+§2.3.
+[44]
+X. Zhai, B. Mustafa, A. Kolesnikov, and L. Beyer (2023)
+Sigmoid Loss for Language Image Pre-Training.
+In Proceedings of the IEEE/CVF International Conference on Computer Vision,
+pp. 11975–11986.
+Cited by: §2.1,
+§2.3.
+[45]
+H. Zhang, C. Li, W. Wu, S. Mao, Y. Zhang, H. Tian, I. Vulić, Z. Zhang, L. Wang, T. Tan, and F. Wei (2025)
+Scaling and beyond: advancing spatial reasoning in mllms requires new recipes.
+External Links: 2504.15037,
+Link
+Cited by: §1,
+§2.2.
+[46]
+W. Zhang, Y. Huang, Y. Xu, J. Huang, H. Zhi, S. Ren, W. Xu, and J. Zhang (2025)
+Why do mllms struggle with spatial understanding? a systematic analysis from data to architecture.
+External Links: 2509.02359,
+Link
+Cited by: §1.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

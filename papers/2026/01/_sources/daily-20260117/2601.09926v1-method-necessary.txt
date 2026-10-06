@@ -1,0 +1,104 @@
+Source https://arxiv.org/html/2601.09926v1
+[H]
+4 Proposed Methodology
+Figure 2: Overview of the Proper framework. During training (A), the Dimension Generating Agent (DGA) is fine-tuned on successful interactions annotated with user- and system-explicit dimensions, learning task-specific priors. At inference (B), the DGA identifies explicit and candidate implicit dimensions from the user state. A post-hoc reranker selects a calibrated subset, and the Response Generating Agent (RGA) updates the base response by selectively integrating them, balancing proactivity with user intent.
+This section describes our methodology, which operationalizes the formulation in Section 3 via three stages.
+First, we construct interaction dimensions by separating user-explicit dimensions, system-covered dimensions, and implicit task-relevant gaps (Def. 1).
+Second, we selectively activate a candidate set and perform calibrated ranking to obtain a budgeted intervention set (Def. 2 and Def. 3).
+Finally, we generate a response conditioned on the user-explicit dimensions and the calibrated intervention set (Def. 4).
+[H]
+4.1 Dimension Generating Agent (DGA)
+DGA is responsible for inferring implicit dimensions \mathcal{D}_{\text{imp}}(u)\subseteq\mathcal{D} that correspond to task-relevant knowledge gaps. For this, we fine-tune an LLM using supervision derived from successful assistance trajectories, where interactions are annotated with dimension-level labels (details in Appendix A.2). Through this, DGA learns to generate plausible missing dimensions conditioned on the user state.
+At inference time, given u=(q,h,p), the DGA produces a set of candidate implicit dimensions \mathcal{D}_{\text{imp}}(u) along with log probabilities as confidence scores (see Appendix A.2.1 for the exact prompt used for DGA). User-explicit dimensions \mathcal{D}^{\text{user}}_{\text{exp}}(u) and baseline-covered dimensions \mathcal{D}^{\text{sys}}_{\text{exp}}(r_{0}) are extracted separately, enabling construction of \mathcal{D}(I) for I=(u,r_{0}) (Def. 1).
+Through fine-tuning, DGA goes beyond text to internalize all the key dimensions considered to assist a user. At inference time, given a user query, DGA leverages its internalized dimensions of other tasks to produce a set of candidate interaction dimensions \mathcal{D}(u) which were used for successful assistance and the current user might be missing.
+Dataset \rightarrow
+Medical (MD)
+Code-Contests
+PWAB
+Models \downarrow
+\mu\text{Score}
+Win%
+\mu\text{Score}
+Win%
+\mu\text{Score}
+Win%
+LlaMA-8B
+2.19
+10.52
+1.26
+15.51
+2.34
+6.83
+vs LlaMA-8B + Proper
+3.86\dagger
+89.48\dagger
+2.13\dagger
+84.49\dagger
+4.06
+93.17\dagger
+Qwen-8B
+2.93
+18.73
+2.24
+24.76
+3.12
+12.50
+vs Qwen-8B + Proper
+4.03\dagger
+81.27\dagger
+2.84\dagger
+75.24\dagger
+4.29\dagger
+87.50\dagger
+Gpt-4
+3.28
+29.74
+3.19\dagger
+68.93\dagger
+3.46
+23.61
+vs LlaMA-8B + Proper
+3.73
+70.26
+2.08
+31.07
+4.11\dagger
+76.39\dagger
+Gpt-4
+3.26
+19.26
+3.11
+43.63
+3.53
+17.40
+vs Qwen-8B + Proper
+4.03\dagger
+80.74\dagger
+2.71
+56.37
+4.24\dagger
+82.60\dagger
+Table 1: One-on-one comparison of LlaMA-8B, Qwen-8B, Gpt-4, and our model, with Gpt-5 as judge. \boldsymbol{\mu}\text{{Score}} denotes the average score across all entries in the dataset; Win% denotes the percentage of samples where the model outperformed the paired model. Proper improves over base LLMs and surpasses GPT-4 in Medical (MD) and PWAB; gains are smaller in Code-Contests, as both models may find optimal solutions. \dagger indicates p\leq 0.01.
+[H]
+4.2 Post-hoc Calibrated Reranker
+The reranker determines which interaction dimensions inferred by the DGA should be activated for response generation. It operationalizes selective activation and calibrated ranking (Def. 2, Def. 3), treating proactivity as a controlled decision.
+Given an interaction state I=(u,r_{0}), the reranker constructs the activation pool \mathcal{D}_{\text{act}}(I) comprising (i) user-explicit dimensions not addressed by the baseline response and (ii) diverse and non-redundant implicit task-relevant dimensions. All dimensions are encoded using BGE-small embeddings. From this pool, the reranker selects a budgeted set S_{k}^{\ast}(I) by maximizing the objective in Eq. 7. The objective favors dimensions with high DGA confidence, encourages alignment with unmet explicit user needs via semantic similarity, and penalizes redundancy among selected dimensions to promote complementary coverage. The budget k controls the degree of proactivity by limiting how many dimensions are activated.
+\displaystyle S_{k}^{\ast}(I)
+\displaystyle=\arg\max_{S\subseteq\mathcal{D}_{\text{act}}(I),\,|S|=k}\Bigg[\underbrace{\sum_{d\in S}\log P(d\mid u)}_{\text{quality}}
+(7)
+\displaystyle-\lambda_{1}\underbrace{\sum_{d\in S}\max_{e\in\mathcal{E}(I)}\mathrm{sim}(d,e)}_{\text{unmet explicit alignment}}-\lambda_{2}\underbrace{\sum_{i<j}\mathrm{sim}(d_{i},d_{j})}_{\text{implicit diversity}}\Bigg].
+where I=(u,r_{0}) and
+\mathcal{E}(I)=\mathcal{D}^{\text{user}}_{\text{exp}}(u)\setminus\mathcal{D}^{\text{sys}}_{\text{exp}}(r_{0}).
+All similarity terms are computed as cosine similarity between BGE-encoded dimension representations.
+[H]
+4.3 Response Generating Agent (RGA)
+The Response Generating Agent (RGA) generates the final system response by selectively updating a baseline response using the calibrated set of activated interaction dimensions. It is implemented as a prompt-driven generation module that conditions on the user query, interaction context, the baseline response, and the activated dimensions selected by the post-hoc reranker.
+Given an interaction state I=(u,r_{0}) and a calibrated intervention set S_{k}^{\ast}(I), the RGA produces an updated response \hat{r} that preserves the intent and structure of r_{0} while selectively incorporating additional information. The prompt explicitly encodes initiative calibration: the RGA infers how proactive to be from the user query itself, expanding when signals of confusion, risk, or uncertainty are present, and remaining focused when the query is narrow or constrained.
+The prompt further distinguishes between explicit and implicit dimensions, requiring explicit gaps to be addressed by default while incorporating implicit gaps only when warranted by the interaction context. To avoid overreach, the RGA is constrained to favor concise additions over full rewrites and to ask at most one clarifying question when resolving an implicit gap would require user-specific information. These constraints ensure that proactivity remains targeted, non-assumptive, and aligned with user intent.
+We use domain-specific instantiations of this prompt for coding assistance, clinical support, and recommendation settings. The full prompts for all three domains are provided in Appendix A.5.
+[H]
+4.4 Proper Framework
+We now describe the end-to-end execution of the Proper framework. The process begins with the construction of a user state composing user query, interaction history, and persona related information (if available). Together, these components define the interaction context used throughout the pipeline. A baseline system response r_{0} is generated using a standard assistant, providing a reference point for later phases. The first stage is handled by the Dimension Generating Agent (DGA). Given the interaction context, the DGA infers a set of interaction dimensions \mathcal{D}(u) by distinguishing between explicit dimensions surfaced in the interaction and implicit gaps, task-relevant dimensions that are not currently addressed. The DGA outputs a pool of candidate dimensions along with confidence scores reflecting their relevance under the user state.
+In the second stage, a post-hoc calibrated reranker selects a budgeted subset S_{k}^{\ast}(u,r_{0}) by optimizing quality, alignment with user-explicit needs, and diversity. This frames proactivity as a controlled choice of which missing aspects to address, rather than simple response expansion.
+Finally, RGA takes the input user query, the baseline response, explicit dimensions, and the calibrated set of activated dimensions. Conditioned on this structured guidance, the RGA produces an updated response \hat{r} that preserves the intent and structure of the baseline output while selectively addressing the activated dimensions. Explicit dimensions anchor the response to articulated user intent, while activated dimensions guide targeted expansion over task-relevant aspects that were previously unaddressed.
+

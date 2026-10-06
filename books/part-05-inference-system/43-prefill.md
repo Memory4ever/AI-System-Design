@@ -55,6 +55,10 @@ prompt self-attention:    O(B * T_p^2 * d_model)
 
 因此“Prefill 是 compute-bound”是一条 workload-dependent heuristic。它通常比单-token Decode 拥有更大的矩阵维度和更高 data reuse，更容易利用 GPU compute；是否真正达到 compute roofline，还取决于模型、kernel、precision、`T_p`、batch、通信和硬件。
 
+另一个减负轴不是少算同一输入，而是先改变输入。轻量 draft 可以用 attention importance 选择原文 spans，再让较大 target 只 prefill 这份缩短视图；draft 与 target 不必属于同一模型家族，但各自 token IDs 不能直接互换。[跨家族 speculative prefill 的受限证据](https://arxiv.org/html/2603.02631v1#S3)先在 draft token 域选择相邻 chunks，映回文字并标记省略间隔，再用 target tokenizer 重建序列及连续 positions。这里转移的是原文选择结果，不是可直接交接的 target KV；它是有损输入压缩，也不同于第48章经验证保持 target 输出分布的 speculative decoding。
+
+压缩率因而同时改变 Prefill 成本与可见证据。长代码的低 keep rate 在作者测试中明显降准，saliency 低不等于依赖可删除；恢复原文跨度或完整 prompt 是质量回退，不应只补一个“省略”标记便当作信息仍在。检验时须分别结算 draft/scoring、文字映射、retokenization、target Prefill 与最终任务质量，并绑定 delimiter、position policy 和两模型身份。该论文的 RULER full-prompt 对照还使用了 KV compression，TTFT 测于 custom RDU，不能据此推出同等完整证据条件下的 GPU 普遍加速。严格保真、分散依赖或选择成本抵消节省时，完整输入与现有 chunked/sparse Prefill 仍各有合理位置。<!-- source-family:SF-2026-ARXIV-2603-02631 -->
+
 ### Sparse Prefill：少算 Attention 之前，先要付出 Selection Cost
 
 Sparse Prefill 不是一个统一机制。它至少可沿两个轴演进：固定 window/block pattern 保持规则访问；query-dependent selector 每层或每 head 重新选 token；phase-aware layer plan 则只在 Prefill 跳过部分层，同时为 Decode 物化这些层所需的 KV projection。最后一种利用 Prefill/Decode 的工作负载不对称，却要求 boundary token、跳层 profile、KV completeness 与 model revision 共同进入 contract。
@@ -62,7 +66,7 @@ Sparse Prefill 不是一个统一机制。它至少可沿两个轴演进：固�
 #### Phase-aware layer execution：Prefill 与 Decode 不必共享同一计算图
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2602-03295:start -->
-完整模型在 Prefill 与 Decode 使用同一层图，最容易维持表示和 KV 一致性；但这也假设两个阶段的层重要性相同。若校准证据表明某些深层对 prompt token 的边际贡献较小，一条实验性分支可以只让 `x[1:N-1]` 在 Prefill 跳过这些层的 Attention 与 FFN，同时独立计算被跳层的 K/V projection；`x[N]` 仍作为第一个经过完整模型的生成 token，由此把近似限制在 Prefill，而不把残缺 KV 带入 Decode。
+完整模型在 Prefill 与 Decode 使用同一层图，最容易维持表示和 KV 一致性；但这也假设两个阶段的层重要性相同。若校准证据表明某些深层对 prompt token 的边际贡献较小，一条实验性分支可以只让 `x[1:N-1]` 在 Prefill 跳过这些层的 Attention 与 FFN，同时独立计算被跳层的 K/V projection；最后一个输入 token `x[N]` 以完整层图处理并产生首个新 token 的分布，由此把近似限制在 Prefill，而不把残缺 KV 带入 Decode。
 
 independent KV projection 只补齐 Decode 所需状态，并不消除跳层造成的 representation mismatch；跳层也仍需加载完整权重，所以它减少的是特定 Prefill compute，而不是自动降低 peak VRAM。layer plan 必须绑定 model、modality、校准集、跳层 ratio、KV projection 规则与 runtime revision，并分别检查 prefill quality、first-token boundary、后续 decode quality 和 TTFT。模型层冗余不足、输入分布漂移、PD 分离使状态交接更复杂，或 strict fidelity 优先时，完整层图仍是正确基线。
 <!-- semantic-body-binding:SF-2026-ARXIV-2602-03295:end -->
@@ -134,6 +138,8 @@ T_sparse_end_to_end
 < T_dense_attention
 ```
 
+Discovery 还可以先减少参与打分的 query：每个 head 在固定 stride 内取不同位置，再让 sampled queries 读取 pooled keys，由 proxy softmax 选 key blocks。这利用 head 间采样多样性降低 probe 成本，却不保证单个 head 看到了全部 queries；stride 超过 head 数时，跨 head 也无法覆盖所有位置。pooled-logit softmax 不是原 token attention mass，保护末 query block 的完整计算仍须入账，prefill 的稀疏选择也不自动改变 dense decode。[RRAttention 的 exact-v1 方法与对照](https://arxiv.org/html/2602.05853v1)只支持所测模型、任务和 H100 设置中的这条受限分支；大 stride 的退步和个别视频切片低于 full attention，要求重新校准 query sampling、保留阈值与 protected region。质量或覆盖不足时，增加采样、扩大保留范围或回退 dense；attention microbenchmark 不能代替包含 discovery、其他算子与 decode 的 request 墙钟。<!-- source-family:SF-2026-ARXIV-2602-05853 -->
+
 进一步把 pattern 固定成单一 window/block 仍会错配输入：同一层的不同 head/segment 可能分别更适合 A-shape、
 vertical、block-sparse 或 dense。受限的 conditional branch 可以用共享 sampled-attention probe 估计候选 utility、
 omitted mass 与 uncertainty，再按实测 kernel latency、regrouping/launch overhead 联合选择 pattern 和离散 budget；
@@ -168,6 +174,10 @@ context policy 和 quantization revision 共同版本化。Index reuse 消除重
 domain drift、layer criticality change 与 silent wrong-index failure；无法建立稳定 pattern 时，每层独立 selector
 仍是更安全的旧方案。因而 cache 的对象不只是 KV，也可能是 execution decision，但二者的 identity 与
 invalidation 规则不能混用。
+
+另一个选择不共享后续层的 indices，而是决定在多深的位置永久缩小本次 Prefill 的 token support。可观察前面若干层 attention 的相对方差，以校准门槛选择执行裁剪的层位：单遍路径先完整执行前层，再让剩余层只处理所保留的 token；两遍路径则先取得 selector 结果，再从第零层重启压缩输入。前层已支付的完整计算、额外观察/score workspace 与重启预算必须分别计入，不能把更晚的 selection depth 当作更多 index reuse，也不能只用剩余 token 数推总 TTFT。方差稳定只是选择代理，不证明删去的 token 没有证据价值；不同门槛、输入人口与层位仍有质量反侧，Full-before 与两遍压缩对照也不是同一执行图。校准漂移、早删证据或总成本不合适时，保留逐层独立选择、原共享计划或完整 Prefill，而不是让一次永久裁剪继承缓存失效规则。<!-- source-family:SF-2026-ARXIV-2601-07667 -->
+
+视觉 token 的永久裁剪还可以用 head 间表示的谱分散度提出保留集合，而不是用 attention mass 或相对方差打分。一条条件分支先从校准样本的逐层 matrix entropy 找到下降层位，再把该层每个 token 的 head features 中心化、逐行归一，按 trace-normalized Gram 的谱熵保留高分 token；非零行条件下，较小的 head×head 双 Gram 与 feature×feature Gram 具有相同非零谱，减少的是这个 scorer 的 eigendecomposition 维度。[EntropyPrune 的必要方法与同层对照](https://arxiv.org/html/2602.17196v1)并不由 entropy 下降证明被删 token 没有语义价值，零中心行的数值 guard 也未披露，不能代造完整无损实现。所谓64×是128/32维矩阵立方复杂度比，不是完整请求加速；在 A6000/LLaVA 的受测 MME 设置，prefill/latency 约1.6×/1.4×仍伴随分数下降，同层192-token 对照也只约束有限任务。前层完整执行、中心化/归一/构造Gram、谱计算和剩余 decode 均进入成本，层位、feature state、保留数与数值条件须共同绑定；语义、数值或总预算失配时扩大保留范围、回到既有 selector 或完整 prefill，不把谱等价签成任务正确性。<!-- source-family:SF-2026-ARXIV-2602-17196 -->
 
 #### Flat Token Index 之后：Hierarchical Index 也有可见的错误预算
 
@@ -322,6 +332,8 @@ tokens，却通过 block table 读取 `[0,start)` 的已有 K/V。
 policy，不是 Chunked Prefill 的通用定义，也不能据此外推生产引擎的 fairness 或
 TPOT 表现。
 
+这条跨请求持久 KV 复用之外，还有一种只在当前 forward 内消除重复的位置算子分支：若同一 batch 多条序列共享完整 causal prefix、位置和模型身份，可按 prefix trie 把这些 hidden states 压成唯一节点，让 normalization、Q/K/V projection 与 MLP 只计算一次；不能仅因 token/position 相同，就合并来自不同 prefix 的状态。Sequence-mixing attention 仍需原来的 ragged layout，因此在 attention 前 scatter Q/K/V、之后 gather 输出，再回到 compact space，而不是把 attention 本身也改成独立逐 token 运算。这种分支不保存跨请求 KV，却增加 CPU index 构建、copy 和 O(N) 索引内存；低冗余时应旁路，长上下文 attention 主导或持续 autoregressive Decode 时，原有 KV cache 更合适。[RadixMLP 的受限实验](https://arxiv.org/html/2601.15013v1#S3)只支持披露的 H100/fp16、prefix-sharing 与 TEI workload；vLLM 在 4B/8B 对照仍更快，shape 改变也可能因非 batch-invariant kernel 引入数值差异，不由可微 gather/scatter 推出大规模训练或通用无损、固定倍率加速。<!-- source-family:SF-2026-ARXIV-2601-15013 -->
+
 ## 跨 Runtime 必须保留的身份
 
 Prefill 产生的 KV state 只能由兼容的 Decode 继续使用。至少需要一致：
@@ -383,6 +395,10 @@ request admitted
 
 Union 提高 KV locality，却可能因过度合并带来 overfetch，或因 selector 漏召回损伤质量。收益必须绑定 chunk/block、上下文长度、稀疏率、模型、硬件和 TTFT；selector 未校准或 union 接近全量时回退 dense chunked prefill。
 
+选择完成后，还可把稀疏索引反转为“每个KV block有哪些head/query消费者”的有限job图，按KV block顺序处理，减少同一block被不同query反复gather。由已确定的job图保存remaining-use，消费后递减，归零才允许释放；有限缓存可按剩余复用分hot/cold tier，并在容量允许时有限lookahead预取。这改变的是访问/驻留schedule，不是target score或selector authority；remaining-use只对当前已冻结索引有效，不预测后续请求、Decode或未建图的访问。<!-- source-family:SF-2026-ARXIV-2602-20515 -->
+
+[单FPGA原型](https://arxiv.org/html/2602.20515v1)说明这种schedule需与index construction、packing、banked accumulation和低精度算子协同；更少gather不自动保持原浮点质量，也不推出通用GPU/在线batch收益。其W8A8对照在RULER明显低于BF16，缓存空间与专用逻辑接近硬件预算；应分别验收selector/数值误差、job构建费、KV驻留、TTFT与完整request费用。索引变化、缓存pressure或净费用不合适时重新建图、减小复用范围或回退原query-major/dense路径，保留block-union的简单方案。
+
 <!-- source-family:SF-2026-ARXIV-2605-16839 -->
 
 ## 从机制演进到系统设计
@@ -419,6 +435,8 @@ Chunked Prefill 不改变模型语义，而是重新安排 work 的时间粒度�
 重复 prefill 增加计算与尾延迟，attention signal 也不等于正确坐标。所测 GUI 模型与任务不能外推所有 VLM；second pass 没有稳定改善定位或超出预算时，应回退单次 prefill、外部 detector 或显式 region proposal。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2602-20515` — Daily `2026-02-26`；[FAST-Prefill exact-v1](https://arxiv.org/html/2602.20515v1) IV-B/C、TableI–III与V必要方法/反侧。原2+2+2=6，finite job图与remaining-use驻留具体差额深入；只selection后KV-major schedule，非未来请求oracle/全float语义证明。W8A8相对BF16质量退步、CPU indexing混杂、cache/95%URAM与构建/packing全费近正文；未核代码或复现，不授通用GPU/batch/SLO。root actual必要源/owner PRE及正文398/400、完整388–410/自身439末注非作者POST通过，锁释放；不授日级Gate。
 
 - Fast Forward / predictive FFN sparsity（block-conditioned Prefill FFN working set；Status: Experimental）:
   https://arxiv.org/abs/2602.00397
@@ -464,6 +482,8 @@ Primary-source entry points：
 
 ### Daily integration evidence trace
 
+- `SF-2026-ARXIV-2603-02631`：[exact-v1](https://arxiv.org/html/2603.02631v1) §3/Alg1、§4–5/Tables1–4、Appendix A.1/A.3/A.5；采用跨 tokenizer 的原文 span 映射与 approximate input identity，不采用无损、原 KV 复用或原 positions 恢复主张。lookahead8、chunk32/pool13，CodeDebug chunk128及 //omitted；15% keep 的 V3.1/R1 精度分别从 67.51/74.37 降至 59.13/62.44。RULER 128k→16k 对照的完整输入另用了 SnapStream，18× TTFT 仅 custom RDU；模型之外的硬件具体配置、batch/concurrency、计时重复/不确定性及 draft/scoring 的独立成本拆分未完整披露，不能把该数当作 GPU 端到端收益。作者必要正文审阅完成；root 已实际对读必要原文、两段与邻接，非作者 POST 通过；未本地复现。
+
 - `2026-05-04 / SF-2026-ARXIV-2605-02960` — exact-v1 `arXiv:2605.02960v1`；正文吸收 Prefill-only MoE 的 weight-gather 条件分支、saturation/drift state 与 activation-dispatch fallback。
 
 #### Source-specific exact-v1 Review notes
@@ -494,3 +514,9 @@ Primary-source entry points：
 
   **已吸收的语义增量：** 区分 token chunk 与模型层 stage，说明固定折返放置、就绪操作重排及其配平条件；2026-09-05 纠正原先的跨请求历史复用与迁移成本误述。
 <!-- daily-books-trace:SF-2026-VPP:end -->
+
+- `SF-2026-ARXIV-2601-07667` — Daily `2026-01-14`；[ASL exact-v1](https://arxiv.org/html/2601.07667v1) §4.1–4.2、§5/Tables2–9及必要成本反侧。原2+1+2=5，selector-depth与index-reuse具体缺口深入，限方差代理决定永久support裁剪、单遍Full-before与两遍重启的执行身份和预算；不采用B.2小数成本或attention排名=证据。未运行代码/复现；root必要原源/具体owner写前通过，jan01_v3实际正文156–184/新增176及506末注非作者写后复核通过；未授日级Gate。
+
+- `SF-2026-ARXIV-2601-15013` — Daily `2026-01-23`；[RadixMLP exact-v1](https://arxiv.org/html/2601.15013v1) §3.1–3.4、§4.1/4.3–4.4、§5.1–5.2，2+1+2=5；批内 position-wise compact 与持久 KV 复用差额深入。同 causal history/position/model、attention 原布局、copy/index 与低冗余旁路、数值和 vLLM 反侧近正文；不授通用5×或训练已验证。未运行代码或复现实验；root实际必要原源/owner写前通过及正文/前后邻接/末注POST修正通过，root日级语义验收通过（完成态机器检查见Daily）。
+
+- `SF-2026-ARXIV-2602-17196` — Daily `2026-02-21`；[exact-v1](https://arxiv.org/html/2602.17196v1) §3.2–3.5/Eq7–14、§4.6–4.7/Table6与B.3。2+1+2=5，head-centered/row-normalized dualGram scorer 差额深入；nonzero 行条件/guard缺、entropy非语义贡献、64×非端到端及质量/成本反側近正文。root必要源/actual owner PRE通过；作者实际正文/完整邻接已读，root非作者实际正文175–187/末注516 POST通过。未核实现/复现，非日级验收。

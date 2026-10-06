@@ -1,0 +1,439 @@
+https://arxiv.org/html/2601.21380v1
+Necessary selected methods/evaluation/direct counter; actually read, not entire attachment.
+2. Preliminaries
+In this section, we first introduce fundamental concepts of LLM routers. Then we describe existing methods for LLM routing.
+An LLM router is a classifier that dynamically selects the most appropriate language model from a candidate set to process a given user query. Formally, let 𝒬\mathcal{Q} denote the set of user queries and ℳ={M1,M2,…,Mn}\mathcal{M}=\{M_{1},M_{2},\dots,M_{n}\} denote the set of available LLMs with varying levels of performance and computational costs. An LLM router is defined as a function: ℛ:𝒬→ℳ\mathcal{R}:\mathcal{Q}\to\mathcal{M}, i.e., for a query q∈𝒬q\in\mathcal{Q}, the router selects a model Mi∈ℳM_{i}\in\mathcal{M} to generate the response.
+Existing research (Ong et al., 2024; Ramírez et al., 2024a; Ding et al., 2024; Aggarwal et al., 2024; Ramírez et al., 2024b; Zhang et al., [n. d.]) predominantly focuses on the binary routing setting, where the candidate model set consists of only two models: a weak model MwM_{\text{w}} (cheaper, less capable) and a strong model MsM_{\text{s}} (more expensive, higher performance).
+To better balance cost and performance, RouteLLM (Ong et al., 2024) introduces the concept of win rate and user-specified threshold. Specifically, the router estimates the probability that the strong model outperforms the weak model on a given query qq, denoted as Pθ​(Ms∣q)P_{\theta}(M_{s}\mid q). This probability is referred to as the win rate of the strong model. A user-specified threshold α∈[0,1]\alpha\in[0,1] is then applied to make the routing decision:
+Rα​(q)={Ms,if ​Pθ​(Ms∣q)≥αMw,otherwiseR_{\alpha}(q)=\begin{cases}M_{\text{s}},&\text{if }P_{\theta}(M_{s}\mid q)\geq\alpha\\
+M_{\text{w}},&\text{otherwise}\end{cases}
+By adjusting the threshold α\alpha, users can flexibly control the trade-off between cost and quality. A higher α\alpha routes more queries to the weak model (lower cost), while a lower α\alpha routes more queries to the strong model (higher quality).
+Existing LLM routing methods can be broadly categorized into three classes based on their decision mechanisms:
+(1)
+Similarity-based Routers: These methods rely on the similarity between the current query and historical queries with known model performance. The router selects the model that performs best on the most similar historical queries. A representative example is the Similarity-Weighted (SW) Ranking method.
+(2)
+Classification-based Routers: These approaches train a classifier (e.g., based on BERT or matrix factorization) to directly predict which model is more likely to produce a better response for the input query. The router then selects the model with the highest predicted win probability.
+(3)
+Scoring-based Routers: These methods use a learned scoring or reward model to evaluate the expected performance of each candidate model on the input query. The model with the highest score is selected. A prominent example is the Causal LLM classifier, which predicts the likelihood that the strong model outperforms the weak model.
+3. A threat taxonomy
+To address RQ1, we systematize the security threats to LLM routing systems according to the adversary’s scenarios and knowledge.
+Table 1. Summary of adversary settings.
+Attack setting
+Adversary’s knowledge
+Attack vector
+White-box setting
+Full knowledge about the internal information of the corresponding router, such as weights, gradient information and mechanism.
+tm+1=H​o​t​F​l​i​p​(∇t𝔼​[Pθ​(Mt​a​r​g​e​t∣t⊕q)],tm,V,k)t_{m+1}=HotFlip(\nabla_{t}\mathbb{E}[P_{\theta}(M_{target}\mid t\oplus q)],t_{m},V,k), where k is the number of top-k candidates.
+Gray-box setting
+Only knowledge about the routing mechanism (i.e., the model win rates calculated by router)
+tm+1=maxt∈N⁡(tm)⁡Pθ​(Mtarget∣t)t_{m+1}=\max_{t\in N(t_{m})}P_{\theta}(M_{\mathrm{target}}\mid t), where N⁡(tm)N(t_{m}) is the neighbor set of tmt_{m} that includes tmt_{m} and its transformation.
+Box-free setting
+No knowledge about LLM routers
+t=Ms​u​m​m​a​r​i​z​e​r​(Q^)t=M_{summarizer}(\hat{Q}), where Q^\hat{Q} is the optimization question set (e.g., complex queries) and Ms​u​m​m​a​r​i​z​e​rM_{summarizer} is the sumarizer LLM.
+Adversary’s Scenarios. In this work, we focus on rerouting threats where adversaries aim to manipulate the LLM router into selecting a targeted model by prepending a carefully designed trigger before the user query. We consider three threat scenarios: cost escalation, quality hijacking and safety bypass.
+Cost escalation: Redirect queries to a more computationally expensive model (i.e., MsM_{\text{s}}), thus wasting resources while maintaining similar output quality.
+Quality hijacking: Redirect queries to a weaker model (i.e., MwM_{\text{w}}) that may generate lower quality responses, resulting in degraded task performance.
+Safety bypass: Redirect harmful queries to an unfiltered or weaker model that fails to reject unsafe content, thereby enabling advanced jailbreak attacks.
+In cost escalation and quality hijacking, the adversary typically acts as a middleman who intercepts benign user queries and prepends triggers to enforce rerouting. In safety bypass, the adversary acts as a malicious user, aiming to bypass advanced safeguards in the stronger models of multi-model systems (e.g., GPT-5). This is achieved by forcing the router to redirect harmful queries to weaker or unfiltered models that fail to reject unsafe content.
+Adversary’s Objective. Formally, the attack’s objective can be denoted as maxt∈VL⁡𝔼q∼Q​[Pθ​(Mtarget∣t⊕q)]\max_{t\in V^{L}}\;\mathbb{E}_{q\sim Q}\big[\,P_{\theta}(M_{\mathrm{target}}\mid t\oplus q)\,\big], where tt is the crafted trigger string of length LL from vocabulary VV, qq is a user query sampled from the question set QQ and ⊕\oplus represents string connection operation. MtargetM_{\mathrm{target}} is the target model of rerouting attack, which corresponds to MsM_{s} in the cost escalation threat, while to MwM_{w} in the quality hijacking and safety bypass threats.
+Adversary’s Knowledge. We model the adversary’s background knowledge by considering the following aspects.
+Models: The adversary may have full, partial, or no knowledge of the model weights in a specific LLM routing system.
+Routing Mechanisms: The adversary may have full, partial, or no knowledge about the routing methods and the corresponding router weights. In our study, the LLM system consists of two models: one stronger model with larger parameters (MsM_{\text{s}}) and one weaker model with fewer parameters (MwM_{\text{w}}). This system configuration is assumed to be known to the adversary.
+User Query: The adversary may have full, partial, or no knowledge regarding how the user interacts with the system, potentially leveraging a man-in-the-middle attack to inject a malicious prefix into the queries.
+Based on the adversary’s knowledge across these dimensions, we categorize their knowledge into three distinct settings: white-box, gray-box, and box-free, as detailed in Table 1.
+In the white-box setting, the adversary has access to internal router information (e.g., architecture, training data and gradients) and can use this information to directly optimize triggers. In the gray-box setting, the adversary can access the model win rates calculated by the router. In the box-free setting, the adversary doesn’t have any information about the router and instead relies on external methods to optimize universal triggers. For example, to construct a trigger that redirects queries to the strong model, the adversary may collect many complex queries and then employ a summarizer LLM (e.g., GPT-4o) to extract latent features and craft triggers.
+Table 2. The 50th percentile win rate thresholds of four routers in different benchmarks, as well as the benchmark performance of different models.
+Model Performance
+Routing Threshold
+Benchmark
+Description
+GPT-4-1106-preview
+MsM_{s}
+MwM_{w}
+RC​L​SR_{CLS}
+RM​FR_{MF}
+RS​WR_{SW}
+RL​L​MR_{LLM}
+MMLU (Hendrycks et al., 2021)
+100 multi-choice questions
+77
+73
+60
+0.58709
+0.24477
+0.22379
+0.20287
+GSM8K (Cobbe et al., 2021)
+100 grade school math problems
+59
+58
+14
+0.55198
+0.26225
+0.2287
+0.33635
+MT-Bench (Zheng et al., 2023a)
+72 open-ended questions
+6.764
+7.000
+6.042
+0.50623
+0.15956
+0.22083
+0.11275
+Jailbreak
+250 harmful prompts
+14
+10.4
+76.00
+0.41933
+0.1033
+0.2209
+0.16249
+4. Measurement Study: Rerouting Risks for LLM Routing
+To address RQ2, we quantitatively evaluate the effectiveness of existing attacks on three threat scenarios and four benchmarks. We first introduce our evaluation settings in Section 4.1, including the selected LLM routers, attack methods, evaluated benchmarks, and metrics. Then in Section 4.2, we present the evaluation results in three threat scenarios to reveal the vulnerability of existing LLM routers to adversarial attacks.
+4.1. Experimental Settings
+Benchmarks. For cost escalation and quality hijacking scenarios, we use three standard benchmarks: MMLU (Hendrycks et al., 2021), a dataset of 14,042 multiple-choice questions across 57 subjects; MT-Bench (Zheng et al., 2023a), a dataset of 160 open-ended questions; and GSM8K (Cobbe et al., 2021), a dataset of 1,319 grade school math problems. These benchmarks are widely used in LLM performance assessment and router system evaluation (Ong et al., 2024; Shafran et al., 2025). Following (Ong et al., 2024) and (Shafran et al., 2025), we exclude “contaminated” points from the datasets, as they are too similar to those used in training routers. This results in 72 MT-Bench queries, 14,037 MMLU queries, and 1,307 GSM8K queries. Following (Shafran et al., 2025), we sample 100 queries from MMLU and GSM8K respectively.
+For safety bypass scenario, we consider not only direct harmful questions (referred to as Direct) but also diverse jailbreak methods, including AutoDAN (Liu et al., 2023), DeepInception (Li et al., 2023), GCG (Zou et al., 2023), and PAIR (Chao et al., 2023). Specifically, we use the AdvBench Subset (Chao et al., 2023) as the harmful query dataset, which includes 50 carefully selected harmful questions from AdvBench (Zou et al., 2023) and are commonly used in jailbreak research (Chao et al., 2023; Mehrotra et al., 2024; Zeng et al., 2024). Applying the four jailbreak methods to each question yields four distinct jailbreak prompts per question, producing a total of 250 queries. We refer to this collection as the Jailbreak dataset.
+LLM Routers. We evaluate four binary-routing LLM routers from RouteLLM (Ong et al., 2024), as this setting is not only representative of real-world cost-quality trade-offs but also aligns with the threat models of existing attacks. Their mechanisms of calculating strong model win rates are as follows:
+•
+BERT (RC​L​SR_{CLS}): A fine-tuned BERT-base classifier that outputs the probability of three possible outcomes: "strong model wins," "tie," and "weak model wins." For instance, the output [0.4, 0.4, 0.2] indicates that the strong model win rate Pθ​(wins∣q)P_{\theta}(\text{win}_{\text{s}}\mid q) is 0.4.
+•
+Matrix Factorization (MF) (RM​FR_{MF}): A bilinear scoring function δ⁡(M,q)\delta(M,q) that predicts the potential quality score for a model-query pair. The strong model win rate is calculated as Pθ​(wins∣q)=σ⁡(δ⁡(Ms,q)−δ⁡(Mw,q))P_{\theta}(\text{win}_{\text{s}}\mid q)=\sigma\!\bigl(\delta(M_{s},q)-\delta(M_{w},q)\bigr), where σ\sigma is the sigmoid function.
+•
+Similarity-Weighted (SW) Ranking (RS​WR_{SW}): A training-free router that retrieves the most similar training queries using cosine similarity of embeddings. It then aggregates their human preference outcomes through a Bradley–Terry (BT) model whose weights are the similarities: Pθ​(wins∣q)=11+eξw−ξsP_{\theta}(\text{win}_{\text{s}}\mid q)=\frac{1}{1+e^{\xi_{w}-\xi_{s}}}, where ξs,ξw\xi_{s},\xi_{w} are the BT coefficients learned at inference time.
+•
+Causal LLM (RL​L​MR_{LLM}): A fine-tuned Llama-3-8B model that predicts the quality score of MwM_{\text{w}} on a 1-to-5 scale. Given a threshold score τ\tau (default 4), the strong model win rate is computed as Pθ​(wins∣q)=1−∑i=τ5piP_{\theta}(\text{win}_{\text{s}}\mid q)=1-\sum_{i=\tau}^{5}p_{i}, where pip_{i} is the probability of each score label.
+For these routers, following (Shafran et al., 2025), we set the threshold α\alpha as the median of the overall win rate distribution of the dataset, i.e., 50% of the queries will be routed to the strong model. We provide the detailed thresholds of four routers in different benchmarks in Table 2.
+Model Pairs. Since these routers are initially trained to route between GPT-4-1106-preview and Mixtral-8x7B-Instruct, and GPT-4o and GPT-4-1106-preview have very similar performance on various benchmarks (shown in Table 1), we use (GPT-4o, Mixtral-8x7B-Instruct) as our strong and weak model pair for cost considerations, and refer to them as MsM_{s} and MwM_{w} respectively. Specifically, GPT-4o uses the official OpenAI API, while Mixtral-8x7B-Instruct is deployed locally using Ollama (oll, 2025). In Table 2, we provide the detailed benchmark scores of these models.
+(a) MMLU
+(b) GSM8K
+(c) MT-Bench
+Figure 3. The cost escalation ASR of different attack methods in four routers in three benchmarks: (a). MMLU, including 100 multi-choice questions; (b). GSM8K, including 100 grade school math problems; (c). MT-Bench, including 72 open-ended questions. Here, MsM_{s} denotes GPT-4o, while MwM_{w} denotes Mixtral-8x7B-Instruct.
+Attack Methods. Currently, research on rerouting attacks is limited, with only two related works (Shafran et al., 2025; Lin et al., 2025) covering three attack methods.
+Take the cost escalation scenario as an example, Shafran et al. (Shafran et al., 2025) utilize the win rate calculated by LLM router (i.e., under gray-box access) to iteratively optimize the trigger to maximize Pθ​(wins∣t)P_{\theta}(\text{win}{\text{s}}\mid t), where tt represents the crafted trigger.
+In the white-box setting described in (Lin et al., 2025), the attacker first constructs a training set and uses the gradient information from the router to maximize Pθ​(wins∣t⊕q)P_{\theta}(\text{win}_{\text{s}}\mid t\oplus q), where qq represents normal queries from the training set. Specifically, the dataset is composed of the Chatbot Arena dataset (Zheng et al., 2023b) and 30% of the GPT-4 judge dataset (Ong et al., 2024). Besides, due to requirements for gradient inofrmation, the white-box attack can only directly apply to limited routers (such as RL​L​MR_{LLM}), but the optimized triggers can transfer to other routers.
+In the box-free setting of (Lin et al., 2025), the attacker uses a set of proxy routers to select queries that have high strong model win rates across all routers. After that, they use a summarizer model to extract features and craft triggers. Following (Lin et al., 2025), we set the proxy routers as the four evaluated routers and the summarizer model as GPT-4o.
+For each attack, we follow the official settings and repeat the experiment 10 times (i.e., 10 triggers per method) to evaluate the effectiveness of each attack method.
+Metrics. We define the following metrics:
+•
+Benchmark Score: The performance of the routing system on different benchmarks. For MMLU and GSM8K, where each question has a standard answer, given a set of queries Q={q1,q2,…,qN}Q=\{q_{1},q_{2},\dots,q_{N}\}, the benchmark score is calculated as:
+(1)
+Benchmark Score=∑i=1N𝕀⁡(ri=r^i)N×100\text{Benchmark Score}=\frac{\sum_{i=1}^{N}\mathbb{I}(r_{i}=\hat{r}_{i})}{N}\times 100
+where rir_{i} and r^i\hat{r}_{i} are the standard and predicted answers of routed model for query qiq_{i}, respectively. For MT-Bench, which only has reference answers, we use GPT-4o to evaluate response quality (score 1-10).
+•
+Rerouting Attack Success Rate (ASR): The effectiveness of an adversarial trigger in changing the model routing behavior. For example, in the cost escalation scenario, ASR is the proportion of queries rerouted from MwM_{w} to MsM_{s} after adding the trigger:
+(2)
+ASR=∑i=1N𝕀⁡(P⁡(Ms|qi)<α)⋅𝕀⁡(P⁡(Ms|t⊕qi)≥α)∑i=1N𝕀⁡(P⁡(Ms|qi)<α)\text{ASR}=\frac{\sum_{i=1}^{N}\mathbb{I}(P(M_{s}|q_{i})<\alpha)\cdot\mathbb{I}(P(M_{s}|t\oplus q_{i})\geq\alpha)}{\sum_{i=1}^{N}\mathbb{I}(P(M_{s}|q_{i})<\alpha)}
+In quality hijacking and safety bypass scenarios, the definition is reversed.
+•
+Target Model Selection Rate: The proportion of queries that are routed to the target model. In cost escalation scenario, the target model is MsM_{s}, while in quality hijacking and safety bypass scenarios, it is MwM_{w}:
+(3)
+Target Model Selection Rate=∑i=1N𝕀⁡(P⁡(Mt|qi)≥α)N\text{Target Model Selection Rate}=\frac{\sum_{i=1}^{N}\mathbb{I}(P(M_{t}|q_{i})\geq\alpha)}{N}
+For normal queries, the selection rate is 0.5 because we set α\alpha as the median of the overall win rate distribution of the dataset.
+•
+Adversarial Confidence Gain (ACG) (Lin et al., 2025): The change in strong model win rates after applying the adversarial attack:
+(4)
+ACG=1N​∑i=1N(P⁡(Ms|t⊕qi)−P⁡(Ms|qi))\text{ACG}=\frac{1}{N}\sum_{i=1}^{N}\left(P(M_{s}|t\oplus q_{i})-P(M_{s}|q_{i})\right)
+•
+Jailbreak Success Rate (JSR): For Jailbreak dataset, we use the Llama-2-13B classifier from HarmBench (Mazeika et al., 2024) to evaluate whether the response of the routed LLM is harmful. Formally, JSR is defined as:
+(5)
+JSR=∑i=1N𝕀⁡(J⁡(ri)=1)N\text{JSR}=\frac{\sum_{i=1}^{N}\mathbb{I}(J(r_{i})=1)}{N}
+where JJ is the jailbreak judge.
+4.3. Attack Analysis
+Mechanism Analysis. To investigate the underlying reasons of the effectiveness of rerouting attacks, particularly in the cost escalation threat, we analyze their semantic representations. Specifically, we consider the custom dataset from (Lin et al., 2025) that includes 38547 real-world open-ended questions. We calculate the strong model win rates Pθ​(Ms∣q)P_{\theta}(M_{s}\mid q) for each query and then sample two kinds of queries: 1129 "simple" queries whose Pθ​(Ms∣q)P_{\theta}(M_{s}\mid q) consistently fall below the router threshold, and 1156 "complex" queries whose Pθ​(Ms∣q)P_{\theta}(M_{s}\mid q) are consistently above the router threshold. We prepend rerouting triggers to these queries, resulting in four data groups: normal simple, normal complex, adversarial simple, and adversarial complex.
+We then extract the last-layer hidden states of RL​L​MR_{LLM} for these queries, which represent the internal features used by the router to make decisions. We apply PCA to visualize the distribution of these representations. As shown in Figure 6, rerouting prompts form a compact cluster in the embedding space, clearly separated from benign simple queries but closer to benign complex queries. This suggests that the router perceives rerouting queries as having a similar level of complexity to normal complex queries, which explains why rerouting attacks are successful.
+Figure 7. CDF of ASR values for six groups of triggers across different benchmarks and routers.
+Figure 8. Transfer results of gray-box attack on GSM8K benchmark across different routers.
+Figure 9. An overview of RerouteGuard, which is a plug-and-play rerouting detector that could detect and filter suspicious prompts before passing it to LLM routers. Specifically, during training, it utilize contrastive learning to learn distinctive semantic patterns that characterize adversarial rerouting prompts. In the deployment phase, the trained model operates as a real-time filter and blocks adversarial rerouting prompts before they can interfere with the LLM routing decision process.
+Transferability. We analyze the transferability of the rerouting triggers across different benchmarks and routers. Specifically, we apply the six groups of triggers, as described in Section 4.2.1, to three benchmarks and four routers, resulting in 12 ASR values for each group. We then analyze the distribution of these ASR values by calculating the Cumulative Distribution Function (CDF), as shown in Figure 7. The results indicate that most triggers exhibit moderate transferability, with over half of the 12 cross-benchmark and cross-router settings achieving an ASR greater than 0.6, though the transfer performance remains inconsistent across targets.
+We further investigate the transferability of triggers across different routers. We present the cross-router ASR results of the gray-box attack in GSM8K benchmark in Figure 8. The results show that triggers optimized on RM​FR_{MF} and RS​WR_{SW} exhibit good transferability to other routers except for RL​L​MR_{LLM}. Notably, RC​L​SR_{CLS} is the most susceptible router, with all transfer ASR values exceeding 86%.
+Trigger Patterns.
+To investigate whether there is a significant syntactic difference between benign prompts and rerouting prompts, we calculate the perplexity and length (measured by number of characters) of each prompt. The experimental results are presented in Table 6. It can be observed that rerouting triggers, particularly those that are "unreadable," (e.g., gray-box and white-box attack) result in a significant increase in perplexity, while semantically valid triggers do not lead to such an increase, as they maintain a reasonable level of coherence with the original prompt.
+Regarding prompt length, rerouting prompts are slightly longer than normal prompts, as triggers are appended directly before the original query. This increase is minimal in the case of the gray-box and white-box attack scenarios, where length constraints are typically imposed during optimization. In contrast, box-free triggers tend to be longer, due to fewer restrictions on their generation (i.e., generated by LLM). This indicates that rerouting prompts are difficult to detect and mitigate using simple rule-based defense mechanisms, as they can be easily bypassed by imposing optimization constraints.
+Table 6. The perplexity and prompt length of normal prompts and rerouting prompts.
+Benchmark
+Setting
+PPL
+Prompt Length
+MMLU
+Normal
+26.5
+482.3
+Gray-box attack
+74.4
+528.8
+Box-free attack
+32.5
+731.6
+White-box attack
+64.4
+527.9
+GSM8K
+Normal
+38.6
+333.6
+Gray-box attack
+113.0
+380.1
+Box-free attack
+44.4
+582.9
+White-box attack
+107.2
+379.2
+MT-Bench
+Normal
+49.2
+318.3
+Gray-box attack
+330.8
+364.8
+Box-free attack
+51.7
+567.6
+White-box attack
+334.0
+363.9
+5. RerouteGuard
+To address RQ3, we propose RerouteGuard, a novel plug-and-play defense mechanism that identifies and blocks malicious rerouting prompts before they reach the LLM router, thereby preserving the integrity of the routing decision process without modifying the router architecture.
+In Section 5.1, we provide an overview of our defense mechanism. We then introduce the construction of the training dataset and the key designs of RerouteGuard in Section 5.2 and Section 5.3, respectively. In Section 5.4, we present how it operates on new queries.
+5.1. Overview
+Building on the important observation from Figure 6 that adversarial rerouting prompts exhibit distinctive patterns in their semantic representations, our method trains a siamese network to distinguish between normal queries and rerouting prompts through contrastive learning. As shown in Figure 9, the overall pipeline of RerouteGuard comprises three main phases: data preparation, guardrail training, and guardrail deployment. In the data preparation phase, we construct a carefully balanced dataset of query pairs, including both positive pairs (normal-normal or adversarial-adversarial) and negative pairs (normal-adversarial). The adversarial examples are generated by prepending malicious triggers to normal queries, with a sophisticated sampling strategy that ensures coverage of diverse attack patterns. During model training, we employ a siamese network architecture trained with a composite loss function that combines binary classification and contrastive learning objectives. This enables the model to learn distinctive semantic patterns that characterize adversarial rerouting attempts. Finally, in the deployment phase, the trained model operates as a real-time filter, processing new user queries and blocking those identified as adversarial before they can interfere with the LLM routing decision process.
+5.2. Semantic-guided Data Preparation
+For normal queries, we use the custom dataset from (Lin et al., 2025), which includes 38,547 real-world open-ended questions drawn from the Chatbot Arena dataset (Zheng et al., 2023b) and the GPT-4 judge dataset (Ong et al., 2024). We denote this dataset as Dr​a​wD_{raw}. We then employ four distinct routers (i.e., RC​L​SR_{CLS}, RM​FR_{MF}, RS​WR_{SW}, RL​L​MR_{LLM}) to compute the strong model win rate for each query in Dr​a​wD_{raw}. Based on these win rate, we select queries whose win rate are consistently within the bottom 50% across all routers. This yields 11,557 simple questions referred to as Dn​o​r​m​a​lD_{normal}, which is then partitioned into training, validation, and test subsets with an 8:1:1 ratio. The reason is that, the cost escalation scenario aims to reroute simple queries to strong models, so we believe that using simple queries to train the guardrails will yield more effective results.
+For adversarial queries, we generate 50 triggers for each rerouting method, referred to as 𝒯\mathcal{T}, and split them into train/validation/test subsets with a 6:2:2 ratio.
+To generate rerouting examples, for each query in a given data split of Dn​o​r​m​a​lD_{normal}, we randomly sample one trigger from the corresponding trigger subset and prepend it to the user query, producing the malicious query used for training, validation, or testing. This per-query random pairing ensures diversity in trigger-query combinations and prevents data leakage. We refer to this dataset as Da​d​vD_{adv}.
+Based on Dn​o​r​m​a​lD_{normal} and Da​d​vD_{adv}, we construct a carefully balanced dataset comprising positive and negative pairs. Specifically, positive pairs consist of either normal-normal query pairs or adversarial-adversarial pairs that share the same semantic distribution, thus teaching the model to recognize queries from identical categories. In contrast, negative pairs combine normal queries with adversarial variants. We implement a sophisticated sampling strategy that balances two types of negative pairs: cross-index negatives that pair a normal query with adversarial variants of different queries, and self-index negatives that pair a normal query with its own adversarial variants, with the latter serving as particularly challenging examples. This balanced approach, controlled by a negative cross ratio hyperparameter, ensures the model learns to recognize both inter-query and intra-query adversarial patterns.
+5.3. Contrastive-learning-based Guardrail Training
+The core of RerouteGuard employs a dual-encoder siamese architecture with shared parameters. Specifically, we utilize a pre-trained transformer model as its backbone encoder, which processes an input query pair pi=(qa,qb)p_{i}=(q_{a},q_{b}) through CLS token pooling. A projection head then maps the encoder outputs to a normalized embedding space, while a pair classifier combines the concatenated embeddings, their absolute differences, and element-wise products to produce final binary classifications:
+(6)
+ea=Encoder​(qa),eb=Encoder​(qb)e_{a}=\text{Encoder}(q_{a}),\quad e_{b}=\text{Encoder}(q_{b})
+(7)
+logits=Classifier​(ea,eb)\text{logits}=\text{Classifier}(e_{a},e_{b})
+We design a multi-objective loss function that strategically combines binary classification with contrastive regularization:
+(8)
+ℒ=λb​c​e⋅ℒB​C​E+λc​o​n​t​r⋅ℒS​u​p​C​o​n\mathcal{L}=\lambda_{bce}\cdot\mathcal{L}_{BCE}+\lambda_{contr}\cdot\mathcal{L}_{SupCon}
+The binary cross-entropy loss function, ℒB​C​E\mathcal{L}_{BCE}, is used to measure the discrepancy between the predicted logits and the ground truth labels (0 for positive pairs and 1 for negative pairs). It is defined as:
+(9)
+ℒB​C​E=−1N∑i=1N[yilog(yi^)+(1−yi)log(1−yi^)]\mathcal{L}_{BCE}=-\frac{1}{N}\sum_{i=1}^{N}\left[y_{i}\log(\hat{y_{i}})+(1-y_{i})\log(1-\hat{y_{i}})\right]
+where NN is the number of samples in the batch, yiy_{i} is the true label for pair pip_{i} (0 or 1), and yi^\hat{y_{i}} is the predicted probability for pip_{i}.
+The supervised contrastive loss, ℒS​u​p​C​o​n\mathcal{L}_{SupCon}, encourages the model to learn embeddings where samples from the same class are closer in the embedding space, while samples from different classes are farther apart:
+(10)
+ℒS​u​p​C​o​n=−12​N∑i=12​N∑j∈𝒫i⋅log(exp⁡(sim​(ei,ej)/τ)∑k∈𝒟iexp⁡(sim​(ei,ek)/τ)⋅wi​k)∑j∈𝒫i1\mathcal{L}_{SupCon}=-\frac{1}{2N}\sum_{i=1}^{2N}\frac{\sum_{j\in\mathcal{P}_{i}}\cdot\log\left(\frac{\exp(\text{sim}(e_{i},e_{j})/\tau)}{\sum_{k\in\mathcal{D}_{i}}\exp(\text{sim}(e_{i},e_{k})/\tau)\cdot w_{ik}}\right)}{\sum_{j\in\mathcal{P}_{i}}1}
+where NN is the batch size, sim​(ei,ej)=ei⊤​ej‖ei‖​‖ej‖\text{sim}(e_{i},e_{j})=\frac{e_{i}^{\top}e_{j}}{\|e_{i}\|\|e_{j}\|} is the cosine similarity between embeddings eie_{i} and eje_{j}, τ\tau is the temperature hyperparameter that controls the scale of the similarities, 𝒫i\mathcal{P}_{i} is the set of positive samples for anchor sample ii:
+(11)
+𝒫i=𝕀⁡(yi=yj),∀i,j∈{1,2,…,2​N}\mathcal{P}_{i}=\mathbb{I}(y_{i}=y_{j}),\quad\forall i,j\in\{1,2,\dots,2N\}
+𝒟i\mathcal{D}_{i} is the denominator mask that determines which pairs of embeddings (sample ii and sample jj) are considered when computing the denominator of the loss function:
+(12)
+𝒟i=𝒫i∪𝕀⁡(valid_pair​(i,j)),∀i,j∈{1,2,…,2​N}\mathcal{D}_{i}=\mathcal{P}_{i}\cup\mathbb{I}\left(\text{valid\_pair}(i,j)\right),\quad\forall i,j\in\{1,2,\dots,2N\}
+Specifically, wi​jw_{ij} is the weight applied to the pair (i,j)(i,j), where misclassified negative pairs receive higher weighting in the contrastive denominator. This approach ensures that the model develops robust discrimination capabilities between normal and adversarial examples, especially the self-index negative pairs where the rerouting queries are highly similar to the normal queries.
+Algorithm 1 RerouteGuard Defense Mechanism
+1:
+procedure DataPreparation(DrawD_{\text{raw}})
+2:
+Dnormal←{q∈Draw∣win-rate​(q)∈bottom ​50%}D_{\text{normal}}\leftarrow\{q\in D_{\text{raw}}\mid\text{win-rate}(q)\in\text{bottom }50\%\}
+3:
+Dnormaltrain,Dnormalval,Dnormaltest←split​(Dnormal)D_{\text{normal}}^{\text{train}},D_{\text{normal}}^{\text{val}},D_{\text{normal}}^{\text{test}}\leftarrow\text{split}(D_{\text{normal}})
+4:
+𝒯train,𝒯val,𝒯test←split​(𝒯)\mathcal{T}_{\text{train}},\mathcal{T}_{\text{val}},\mathcal{T}_{\text{test}}\leftarrow\text{split}(\mathcal{T})
+5:
+for s​p​l​i​t∈{train,val,test}split\in\{\text{train},\text{val},\text{test}\} do
+6:
+Dadvs​p​l​i​t←construct_adv​(Dnormals​p​l​i​t,𝒯s​p​l​i​t)D_{\text{adv}}^{split}\leftarrow\text{construct\_adv}(D_{\text{normal}}^{split},\mathcal{T}_{split})
+7:
+Ds​p​l​i​t←construct_pair​(Dnormals​p​l​i​t,Dadvs​p​l​i​t)D_{split}\leftarrow\text{construct\_pair}(D_{\text{normal}}^{split},D_{\text{adv}}^{split})
+8:
+end for
+9:
+return Dtrain,Dval,DtestD_{\text{train}},D_{\text{val}},D_{\text{test}}
+10:
+end procedure
+11:
+procedure TrainingPhase(DtrainD_{\text{train}})
+12:
+Initialize siamese network with pre-trained encoder
+13:
+for epoch ←1\leftarrow 1 to EmaxE_{\text{max}} do
+14:
+for batch (qa,qb,y)(q_{a},q_{b},y) in DtrainD_{\text{train}} do
+15:
+ea,eb←Encoder​(qa),Encoder​(qb)e_{a},e_{b}\leftarrow\text{Encoder}(q_{a}),\text{Encoder}(q_{b})
+16:
+y^←Classifier​(ea,eb)\hat{y}\leftarrow\text{Classifier}(e_{a},e_{b})
+17:
+ℒ←λbce​ℒBCE+λcontr​ℒSupCon\mathcal{L}\leftarrow\lambda_{\text{bce}}\mathcal{L}_{\text{BCE}}+\lambda_{\text{contr}}\mathcal{L}_{\text{SupCon}} ⊳\triangleright Eq. (8)
+18:
+Update parameters with gradient clipping
+19:
+end for
+20:
+end for
+21:
+return Trained model GG
+22:
+end procedure
+23:
+procedure DeploymentPhase(qnew,G,Dnormal,Kq_{\text{new}},G,D_{\text{normal}},K)
+24:
+Sample {q1,…,qK}\{q_{1},\dots,q_{K}\} from DnormaltrainD_{\text{normal}}^{\text{train}}
+25:
+adv_votes←∑i=1K𝕀⁡(G⁡(qi,qnew)>0.5)\text{adv\_votes}\leftarrow\sum_{i=1}^{K}\mathbb{I}(G(q_{i},q_{\text{new}})>0.5) ⊳\triangleright 0: normal, 1: adversarial
+26:
+return adv_votes>K/2\text{adv\_votes}>K/2 ? Block : Forward
+27:
+end procedure
+We also incorporate several advanced techniques to optimize performance during training. We employ discriminative learning rates that apply lower rates to backbone layers and higher rates to projection and classification heads, thus enabling stable feature extraction while allowing rapid adaptation in the decision layers. To prevent instability in the early stages of training, we adopt a contrastive warmup strategy, gradually increasing the contrastive loss weight. Additionally, we incorporate gradient clipping to mitigate gradient explosion and layer-wise decay to apply distinct weight regularization to the backbone and head parameters, ensuring balanced learning across the model.
+5.4. History-guided Guardrail Deployment
+During deployment, RerouteGuard functions as an efficient preprocessing filter that operates in three sequential stages. First, given a new query qq, RerouteGuard pairs it with KK reference queries from the normal query dataset Dn​o​r​m​a​lD_{normal}, which results in KK query pairs:
+(13)
+Qpairs={(q,qi)∣qi∈Dnormal,i=1,2,…,K}Q_{\text{pairs}}=\{(q,q_{i})\mid q_{i}\in D_{\text{normal}},i=1,2,\dots,K\}
+The siamese network then computes classification probabilities for each of these query pairs. If a pair (q,qi)(q,q_{i}) is classified as a positive pair, then qq is a normal query like qiq_{i}. Conversely, if the pair is classified as negative, then qq is determined to be adversarial. Finally, we perform a majority vote to determine the query label y^\hat{y}:
+(14)
+y^=arg⁡max⁡∑i=1Kc∈{c0,c1}⁡𝕀⁡(G⁡((q,qi))=c)\hat{y}=\arg\max_{c\in\{c_{0},c_{1}\}}\sum_{i=1}^{K}\mathbb{I}(G((q,q_{i}))=c)
+where GG is RerouteGuard, c0c_{0} represents positive (i.e., q is normal) and c1c_{1} represents negative. Queries with high adversarial probability scores will be filtered out before reaching the LLM router. This plug-and-play characteristic of RerouteGuard allows seamless integration with existing LLM routing systems, providing an additional security layer without necessitating retraining of LLM routers.
+6. Experiments
+To evaluate the effectiveness of RerouteGuard, we conduct evaluations on four mainstream LLM routers against three existing rerouting attack methods. We first describe the experimental setup in Section 6.1, including the guardrail details, LLM routers, and attack methods.
+In Section 6.2, we report and analyze the evaluation results to demonstrate the effectiveness of RerouteGuard. Finally, we present the ablation results of RerouteGuard in Section 6.3.
+6.1. Experimental Settings
+Guardrail Details.
+For data sampling, we generate 1 positive pair and 1 negative pair per normal sample. This results in a balanced mix of four pair types: benign-benign (qi,qj)(q_{i},q_{j}), malicious-malicious (mi,mj)(m_{i},m_{j}), and cross-domain pairs (qi,mj)(q_{i},m_{j}) and (mj,qi)(m_{j},q_{i}), with the latter generated by swapping the order of the cross-domain pair. We set the negative cross ratio as 0.5, i.e., for each benign query qiq_{i}, there is a 50% chance that mjm_{j} will be selected as the corresponding rerouting query for qiq_{i}.
+For guardrail training, we implement RerouteGuard using XLM-RoBERTa-base (AI, 2019) as the text encoder, which is lightweight (125MB) and has proven to be effective in multilingual text understanding, making it suitable for recognizing the complex patterns in adversarial triggers. We set the batch size to 64 and train the model using the AdamW optimizer with a learning rate of 3e-5. The maximum sequence length for tokenization is set to 256 tokens, and the pooling strategy for the output embeddings is set to cls, which uses the embedding of the [CLS] token as a sentence-level representation. Additionally, we set the weight of hard negative samples to 1.2 to emphasize the importance of challenging negative examples during training. The λb​c​e\lambda_{bce} and λc​o​n​t​r\lambda_{contr} are set to 0.65 and 0.35, respectively.
+For guardrail deployment, we set the reference number KK to 4, i.e., when given a new query, RerouteGuard dynamically selects 4 queries from the training dataset to form pairs and make a decision through majority vote.
+Attack Methods and Datasets.
+The attack methods used are the same as in Section 4, i.e., white-box, gray-box and box-free settings.
+Our test datasets consist of two components: benign queries and adversarial queries. Specifically, to calculate F1-score, we construct a balanced test set for each benchmark–method pair. Concretely, we select four benchmarks (i.e., Dt​e​s​tD_{test}, MMLU, GSM8K, MT-Bench) as the benign query datasets. Then, for every benign query in each dataset, we randomly sample one trigger from 𝒯​test\mathcal{T}{\text{test}}, which includes 10 triggers for each attack method, and prepend it to the query to obtain the rerouting version. The overall statistics of the constructed test datasets are summarized in Table 7.
+Baselines. There are currently no specific guardrails against rerouting threats, thus we consider several common defense mechanisms against adversarial attacks, including perplexity-based filtering (PPL) (Alon and Kamfonas, 2023; Jain et al., 2023), model-based filtering (Llama Team, 2024b; Llama Team, 2024a), and multi-router-based defense. The PPL method filters unnatural adversarial prompts with high perplexity, while ML-based filtering and LLM-based filtering use a deep learning model or LLM to identify and filter such unnatural prompts. The multiple router approach makes the router decision based on the majority vote of a set of LLM routers.
+6.2. Experimental Results
+6.2.1. Detection Performance
+We compare the performance of RerouteGuard in detecting rerouting prompts generated by three attack methods under benign queries from four benchmarks. Note that we consistently select an equal number of test normal prompts and test rerouting prompts to compute detection accuracy and F1-score. This ensures that detection methods perform well in identifying rerouting prompts and the false positive rate for normal samples is demonstrated.
+As illustrated in Table 8, our method consistently achieves nearly perfect performance across all attack settings and benchmarks, with accuracy and F1-scores predominantly close to 1.00. This demonstrates the effectiveness and generalizability of our approach in detecting rerouting prompts under various threat models, regardless of the underlying task or domain.
+In contrast, baseline methods exhibit significant limitations.
+The PPL-based method shows moderate performance when detecting rerouting queries with unreadable adversarial triggers (i.e., gray-box and white-box attack), but fails completely in identifying semantically meaningful rerouting prompts (i.e., box-free attack), with a detection accuracy of 0%. Besides, in some benchmarks, the queries with unreadable triggers show similar perplexity with normal queries (Table 6), which further limits the effectiveness of PPL.
+The PromptGuard method, while detecting rerouting prompts with an accuracy of more than 87%, misclassifies nearly all normal prompts as malicious queries, resulting in a high false positive rate.
+The LlamaGuard achieves an accuracy of 0.5 for both normal and rerouting prompts, close to random guessing, which suggests that existing methods for detecting adversarial attacks cannot transfer to rerouting attack scenarios effectively.
+These results validate the effectiveness of our method in reliably identifying rerouting attempts across different scenarios.
+6.2.2. Mitigation Performance
+We evaluate the performance of our method with four baselines in mitigating rerouting risks. Specifically, for filtering-based defenses, we drop out the specious queries, while for multi-router defense, we conduct a majority vote on their routing decisions.
+We present the results on Dt​e​s​tD_{test} in Table 9.
+It could be observed that, without any defense deployed, all attack methods exhibit an ASR close to 1 on Dt​e​s​tD_{test}, indicating that these simple queries can be easily manipulated to reroute to the strong model.
+However, after deploying our defense, the ASR drops to 0 for all methods, showing that our approach can effectively mitigate rerouting attacks.
+6.2.3. Utility and Efficiency
+In previous experiments, we have demonstrated that RerouteGuard rarely misclassifies normal queries. To further validate its minimal impact on normal performance, we investigate its capability in distinguishing truly complex queries from rerouting queries. Specifically, we employ a similar construction approach as Dn​o​r​m​a​lD_{normal} and sample the queries whose win rates are consistently within the top 50% across all routers, resulting in 11,421 complex questions referred to as Dc​o​m​p​l​e​xD_{complex}. The experimental results show that our method still achieves an accuracy of 0.96, which indicates that it effectively distinguishes between genuinely complex queries and malicious rerouting queries, thus having almost no impact on the performance of normal routers.
+In addition, RerouteGuard is lightweight and can obtain classification results in just 0.009 seconds when given a new query. Compared to the inference time of routers, where RC​L​SR_{CLS} is 0.04s, RL​L​MR_{LLM} is 0.21s, RM​FR_{MF} is 1.66s and RS​WR_{SW} is 8.00s, RerouteGuard is an efficient and easily integrable solution for real-time rerouting defense, without sacrificing performance.
+Table 10. Performance of RerouteGuard against adaptive attacks.
+Routers
+Methods
+Attack Success Rate↓\downarrow
+Avg↑\uparrow
+Gray-box
+White-box
+RC​L​SR_{CLS}
+No-defense
+1.00
+0.99
+1.00
+RerouteGuard
+0.00
+0.32
+0.16
+RM​FR_{MF}
+No-defense
+0.98
+0.86
+0.92
+RerouteGuard
+0.00
+0.26
+0.13
+RS​WR_{SW}
+No-defense
+0.98
+0.93
+0.96
+RerouteGuard
+0.00
+0.27
+0.14
+RL​L​MR_{LLM}
+No-defense
+0.80
+0.98
+0.89
+RerouteGuard
+0.00
+0.31
+0.15
+6.2.4. Performance against Adaptive Attacks
+To evaluate the robustness of RerouteGuard against adaptive attacks, we modify the optimization objetives for both the gray-box and white-box attack, considering both rerouting success rate and stealithness. For gray-box attack, we incorporate the adversarial probability predicted by RerouteGuard into the optimization feedback as a penalty term:
+(15)
+tm+1=maxt∈N⁡(tm)⁡[Pθ​(Mtarget∣t)−α⋅RerouteGuard​(t)]t_{m+1}=\max_{t\in N(t_{m})}\big[P_{\theta}(M_{\mathrm{target}}\mid t)-\alpha\cdot\text{RerouteGuard}(t)\big]
+where RerouteGuard​(t)\text{RerouteGuard}(t) denotes the adversarial probability predicted by RerouteGuard, and α\alpha is a hyperparameter, which we set to 0.5 in our experiments.
+For white-box attack, we add the RerouteGuard feedback as an additional loss term, i.e.,
+(16)
+ℒdefense=−log⁡(RerouteGuard​(t⊕q)+ϵ)\mathcal{L}_{\text{defense}}=-\log(\text{RerouteGuard}(t\oplus q)+\epsilon)
+(17)
+ℒcombined=α∗ℒrouter+β∗ℒdefense\mathcal{L}_{\text{combined}}=\alpha*\mathcal{L}_{\text{router}}+\beta*\mathcal{L}_{\text{defense}}
+where qq is the query from the white-box attack training dataset, ϵ\epsilon is a small constant, α\alpha and β\beta are hyperparameters. We set ϵ=1​e−8\epsilon=1e-8, α=β=0.5\alpha=\beta=0.5 in our exeriments.
+We do not consider the box-free attack as an adaptive attack, since it does not rely any feedback information to obtain triggers.
+We present the ASR results of RerouteGuard against adaptive attacks in Table 10. The results demonstrate that RerouteGuard remains highly robust even when confronted with adaptive rerouting queries of gray-box attack, dropping the ASR to 0%. However, it shows relatively weaker performance in white-box adaptive attack, dropping the ASR to around 30%. This is possibly due to the more informative optimization signal, which enables the attacker to exploit subtle weaknesses in the learned decision boundary of RerouteGuard, resulting in partially successful adaptive attacks.
+6.3. Ablation Study
+The core of RerouteGuard is contrastive learning. To verify its necessity, we perform an ablation study. Specifically, we change the training procedure to directly train a binary classification detector, i.e., directly determining whether a query is a normal prompt or a rerouting prompt, instead of constructing pairs.
+As shown in Table 11, the single-query classifier performs well on Dt​e​s​tD_{test} and MT-Bench (open-ended questions), with an F1-score greater than 0.95. However, the F1-score drops to around 0.7 on MMLU and GSM8K because the single-query classifier misclassifies more than 85% normal prompts as rerouting prompts. This indicates that without contrastive learning, the model may only learn single normal and attack patterns, resulting in poor generalization. Our method, however, captures more fine-grained discriminative information by learning the relative relationships between samples, thus enabling excellent transfer performance across different benchmarks.
+Table 11. The performance comparison between our defense and single query classfier (i.e., without contrastive learning).
+Benchmarks
+Methods
+Accuracy↑\uparrow / F1-score↑\uparrow
+Avg↑\uparrow
+Gray-box
+Box-free
+White-box
+Dt​e​s​tD_{test}
+w/o constr.
+1.00/1.00
+1.00/1.00
+1.00/1.00
+1.00
+ours
+1.00/1.00
+1.00/1.00
+1.00/1.00
+1.00
+MMLU
+w/o constr.
+0.57/0.70
+0.57/0.70
+0.57/0.70
+0.70
+ours
+1.00/1.00
+1.00/1.00
+1.00/1.00
+1.00
+GSM8k
+w/o constr.
+0.50/0.67
+0.50/0.67
+0.50/0.67
+0.67
+ours
+1.00/1.00
+1.00/1.00
+0.99/0.99
+1.00
+MT-Bench
+w/o constr.
+0.94/0.95
+0.94/0.95
+0.94/0.95
+0.95
+ours
+1.00/1.00
+1.00/1.00
+1.00/1.00
+1.00
+7. Conclusion
+In this work, we presented the first systematic measurement study of LLM rerouting attacks. We began by formally characterizing the potential safety and security risks posed by LLM rerouting, focusing on the adversary’s objectives, capabilities, and knowledge.
+We then evaluated the adversarial risks of four mainstream routers against three attack methods. We revealed that these routers are highly vulnerable to adversarial rerouting, with an average attack success rate (ASR) exceeding 80%.
+We further analyzed the effectiveness of these attacks by conducting transferability and interpretability analyses. Our findings indicated that rerouting triggers often exploit the complexity of queries, which allows them to manipulate the decision boundaries of LLM routers. Buliding upon this analysis, we proposed RerouteGuard, a novel, lightweight guardrail designed to detect and block LLM rerouting attacks in a black-box setting. It leveraged contrastive learning to disentangle adversarial patterns from normal query complexity patterns, effectively filtering rerouting triggers. Experimental results show that RerouteGuard can detect almost all rerouting attacks with minimal impact on normal queries, achieving a detection accuracy of 100% and an average false positive rate of less than 4%.
+References

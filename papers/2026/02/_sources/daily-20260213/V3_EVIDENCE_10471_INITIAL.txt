@@ -1,0 +1,172 @@
+TestExplora: Benchmarking LLMs for Proactive Bug Discovery via Repository-Level Test Generation (https://arxiv.org/html/2602.10471v1)
+citeturn28658view0 [wordlim: 200] Crawled: yesterday; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.10471v1","lineno":145}); Total lines: 2801
+L104: Benchmarks for Software Engineering. Recent repo-level benchmarks focus on realistic, long-context, and multi-file dependencies. SWEBench (cite63†Jimenez et al., 2023 ) provides 2,294 issues and fixes from 12 Python projects and has become a widely used benchmark. Its extensions (cite64†Li et al., 2025 ; cite65†Chowdhury et al., 2024 ; cite66†Yang et al., 2024b ; cite67†Zhang et al., 2025 ; cite68†Zan et al., 2025 ) further expand scale, difficulty, and dynamism to mitigate contamination and static overfitting.
+L105: Other efforts include USEbench, which integrates multiple SWE tasks (cite69†Applis et al., 2025 ); DevBench, which evaluates multiple stages of the development lifecycle (cite70†Li et al., 2024 ; cite71†Tan et al., 2024 ); and other benchmarks (cite72†Le Hai et al., 2024 ; cite73†Zhao et al., 2025 ), which target completion, dependency handling, and real-world bug fixing.
+L106: Benchmarks for Test Generation. Driven by the growing importance of testing, subsequent work has explored leveraging LLMs for test generation (cite74†Wang et al., 2025d ; cite53†Hasan et al., 2025 ; cite75†Wang et al., 2025c ). At the function level, TestEval and UnL.Testbench (cite48†Wang et al., 2024 ; cite49†Huang et al., 2025 ) focus on coverage while addressing contamination and realism. At the class level, TestBench (cite46†Zhang et al., 2024 ) samples 108 Java classes for evaluation.
+L107: At the project level, CLOVER (cite76†Xu et al., 2025 ) examines long-context generation, ProjectTest (cite50†Wang et al., 2025b ) targets medium-scale projects across three languages, and TestGenEval (cite47†Jain et al., 2025 ) builds on 68k human-written tests to assess writing, completion, and improvement. SWT-Bench (cite51†Mündler et al., 2024 ) and TDD-Bench Verified (cite52†Ahmed et al., 2024 ) tie tests to real issues and fixes.
+L108: cite77†Image: Refer to caption Figure 1: The data acquisition process of TestExplora. Different from SWTBench (cite51†Mündler et al., 2024 ), TestExplora is characterized by its reliance on documentation rather than issue descriptions and requires models to proactively identify bugs that violate the documentation, instead of reactively reproducing known failures.
+L109: Moreover, unlike SWTBench, which is derived from SWEBench (cite66†Yang et al., 2024b ), the repositories we collect are mutually exclusive from SWEBench and are designed to be extensible.
+L110: ## 3 TestExplora
+L111: 
+L112: TestExplora is a benchmark designed to measure large language models’ ability in exploratory software testing—specifically, their capacity to proactively discover defects rather than merely reproduce known errors. The subsequent sections present across three components: Benchmark Acquisition, Model Inputs, and Evaluation Metrics.
+L113: ### 3.1 Benchmark Acquisition
+L114: 
+L115: All instances of TestExplora are derived from existing GitHub repositories to ensure data quality. During the construction of TestExplora, carefully maintained repositories were selected. As illustrated in Figure cite78†1 , the Benchmark Acquisition process primarily comprises the following steps:
+L116: Step1.Crawling Raw Issue-PR Constructing a reliable exploratory testing benchmark requires high-quality, well-maintained codebases where defects can be meaningfully discovered and validated. We select only repositories $\mathcal{R}$ with substantial community adoption ($>$1,000 stars), yielding 12,227 preliminary pull requests with patches $\mathcal{P}$ that provide genuine opportunities for proactive defect detection.
+L117: Step2.Filtering Validated PR For each patch $\mathcal{P}$, we can decompose it into a test patch $\mathcal{P}_{t}$ and a code patch $\mathcal{P}_{c}$, where $\mathcal{P}_{c}=\mathcal{P}/\mathcal{P}_{t}$. By employing the parser $parser(\cdot)$, we can identify the function with the number of $n$ modifications involved in each patch, such that $parser(\mathcal{P}_{k})=\{f_{1,k},\dots,f_{n,k}\},k\in\{c,t\}$. Before applying the Fail-to-Pass filtering, we first analyze the invoke graph of the repository.
+L118: We retain only PRs where repaired functions $\bm{f_{c}\in parser(\mathcal{P}_{c})}$ are reachable by test functions $\bm{f_{t}\in parser(\mathcal{P}_{t})}$ through explicit call paths. This ensures that our benchmark captures realistic testing scenarios where generated tests can meaningfully exercise the modified code and potentially discover defects through proper invocation chains.
+L119: This step differs from previous benchmarks (cite51†Mündler et al., 2024 ; cite52†Ahmed et al., 2024 ), which only applied execution-based filtering without verifying whether the assertion was indeed caused by the code patch $\mathcal{P}_{c}$. In addition, we filter out PRs in which $\mathcal{P}_{c}$ involves doctoring modifications, in order to ensure that the function’s intention does not undergo substantial changes before and after the pr.
+L120: We also exclude PRs where, after preprocessing, $parser(\mathcal{P}_{c})$ contains doctoring with “TODO” annotations or implementations including “pass,” thereby ensuring that the code after the pr does not contain potential placeholders for future updates. Finally, we designate the functions directly invoked by $parser(\mathcal{P}_{t})$ as entry interface $\mathcal{E}$, which are then used for subsequent test generation across pipelines.
+L121: Step3. Automated Build Virtual Machine Constructing Docker environments for large-scale repositories is challenging; therefore, we adopted GitHub Actions Runner Images^{1}^{1} 1 cite79†https://github.com/actions/runner-images†github.com to establish a unified virtual machine with test scripts, enabling Fail-to-Pass testing in a manner analogous to GitHub Actions Runners. Action Run script is listed in the Appendix cite19†A .
+L122: During the setup of each repository for testing, the process mainly consists of the following three steps: a) Install system dependencies: This step primarily prepares the system-level compilation toolchain and external library dependencies. b) Look for and merge all requirements files: It automatically detects and merges requirements within the project, ensuring that no requirements are missed or duplicated during subsequent installation.
+L123: c) Environment Setup: This step selects the logic for dependency installation based on the project structure in order to configure the testing environment. The script attempts to identify a pyproject.toml project and installs dependencies using Poetry or PDM. If the project is not a pyproject project, it installs dependencies using pip together with requirements/setup.py and common utility packages.
+L124: This approach facilitates flexible setup of the testing environment, and such flexibility enables us to expand existing datasets at any time without manual setup enabling the extensibility of our framework.
+L125: Step4. Reference Oracles We adopt an execution-based approach to ensure that the bug is indeed detected by the generated test. Specifically, our framework conducts golden tests on $\mathcal{P}_{t}$ both before and after applying the code patch $\mathcal{P}_{c}$. Ultimately, our dataset comprises 1,552 pull requests and 2,389 test generation tasks across 482 repositories. The Appendix cite37†G provides information on the categories of the repositories and related details.
+L126: Corpus Overview
+L127: Repositories  | PRs  | Tests  | Categories  | Avg. Stars
+L128: 482  | 1552  | 2389  | 21  | 5010.77
+L129: PR Instance Statistics
+L130: Area  | Indicator  | Max  | Mean  | Median
+L131: Test Patch  | # Tests Edited  | 23  | 1.60  | 1
+L132: Test Invokes  | Entries per Test  | 154  | 8.22  | 3
+L133: $\mathcal{P}_{c}$ Depth  | 12  | 1.76  | 1
+L134: Entry Interface  | # Dependencies  | 150  | 3.57  | 1
+L135: Lines of Code  | 1378  | 29.07  | 13
+L136: Code Patch  | # Lines Edited  | 1297  | 22.92  | 11
+L137: # Functions Edited  | 29  | 1.42  | 1
+L138: # Files Edited  | 28  | 1.83  | 1
+L139: Table 2: The statistical information of TestExplora. Categories denotes the numbers of repository categories of repositories. In Test Invokes, Entries per Test counts functions invoked by a test case, while $\mathcal{P}_{c}$ Depth is the invocation distance between the test case and the modified code patch.
+L140: When generating tests for $\mathcal{E}$, it is essential to clarify the intention of $\mathcal{E}$ to enable effective exploratory testing that can uncover potential defects. The most straightforward approach is to leverage existing docstrings of $\mathcal{E}$ as documentation, enabling LLMs to infer function intent and generate comprehensive tests. However, we observe that adequate documentation is rarely available for entry interface in real-world repositories.
+L141: To address this documentation scarcity, we use a high-performing agent—DocAgent (cite80†Yang et al., 2025 )—to generate the corresponding documentation for $\mathcal{E}$. This automated annotation approach greatly enhances the scalability of TestExplora. We list a log from the execution process of DocAgent in the Appendix cite20†B . Following the above steps, TestExplora consists of 1,552 pull requests from 482 repositories, along with 2,389 test cases as generation tasks.
+L142: Table cite81†2 presents the information of TestExplora.
+L143: ### 3.2 Model Inputs
+L144: 
+L145: Effective exploratory test generation requires strategic information provisioning to balance realism with model capability assessment. TestExplora provides three categories of input information:
+L146: 
+L147:   * •
+L148: 
+L149: Documentation: Documentation, produced through the two-stage generation process described in Section cite9†3.1 , is employed to clarify what the test entry inferences are intended to accomplish, what their inputs and outputs are, and what potential errors may arise.
+L150: 
+L151:   * •
+L152: Test Entry Inferences: As mentioned in Section cite9†3.1 , test entry inferences $\mathcal{E}$ are codes that are directly invoked by the test cases $parser(\mathcal{P}_{t})$.
+L153: 
+L154:   * •
+L155: 
+L156: Dependencies: Dependencies are the direct dependencies of the test entry inferences and are used to further clarify the intention of the test entry inferences for the LLMs.
+L157: To more comprehensively simulate testing under different conditions, we defined two testing scenarios: White Box and Black Box. As illustrated in the lower-right corner of Figure cite82†2 , these scenarios differ in terms of the input information provided. Specifically, Code Imp. indicates whether the concrete implementation of the test entry inferences is provided, while Dep. denotes whether the dependencies of the test entry inferences are included.
+L158: In all two settings, the documentation (Doc.) of the test entry inferences is consistently provided.
+L159: Table 3: Performance comparison of different models on TestExplora. The best results are in bold, and the second-best are underlined.
+L160:  |  | TestExplora  | TestExplora-Lite
+L161: --- | --- | --- | ---
+L162: Type  | Model  | $HP$  | $F2P$  | $EC$  | $CFG$  | $Num.$  | $HP$  | $F2P$  | $EC$  | $CFG$  | $Num.$
+L163: --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | ---
+L164: Black Box  | Qwen3-Ccoder-30B  | 63.98  | 2.05  | 52.98  | 42.21  | 19.48  | 54.38  | 2.30  | 49.98  | 42.21  | 13.40
+L165: o3-mini  | 68.27  | 3.93  | 51.46  | 41.67  | 13.86  | 58.37  | 5.58  | 56.43  | 44.64  | 8.39
+L166: o4-mini  | 66.18  | 2.59  | 51.18  | 43.24  | 14.19  | 56.97  | 3.74  | 59.44  | 46.29  | 10.82
+L167: Gemini-2.5-pro  | 62.04  | 2.06  | 38.40  | 41.45  | 14.26  | 58.74  | 2.60  | 53.24  | 44.91  | 12.89
+L168: GPT-4o  | 62.58  | 1.47  | 46.98  | 42.14  | 12.31  | 51.38  | 3.61  | 54.69  | 43.55  | 7.75
+L169: GPT-5-mini  | 73.28  | 5.17  | 52.42  | 43.41  | 11.50  | 60.99  | 7.67  | 59.72  | 45.59  | 7.96
+L170: White Box  | Qwen3-Ccoder-30B  | 68.80  | 1.39  | 53.99  | 43.01  | 19.21  | 60.90  | 2.09  | 59.78  | 44.05  | 13.21
+L171: o3-mini  | 76.54  | 4.19  | 52.49  | 42.16  | 12.68  | 71.53  | 7.07  | 61.84  | 43.78  | 8.00
+L172: o4-mini  | 72.33  | 5.92  | 67.30  | 47.06  | 10.48  | 74.70  | 6.45  | 67.16  | 46.32  | 10.36
+L173: Gemini-2.5-pro  | 74.51  | 2.59  | 45.88  | 43.05  | 16.23  | 74.91  | 5.08  | 61.47  | 44.25  | 12.84
+L174: GPT-4o  | 67.91  | 1.79  | 46.00  | 41.64  | 11.22  | 57.92  | 2.20  | 56.29  | 44.15  | 7.42
+L175: GPT-5-mini  | 84.80  | 7.54  | 56.33  | 43.17  | 11.55  | 80.25  | 11.84  | 65.78  | 44.37  | 7.78
+L176: cite83†Image: Refer to caption Figure 2: According to the differences in input information, the tests are mainly divided into two scenarios: White Box testing and Black Box testing, while performance is evaluated via four metrics: $HP$, $F2P$, $EC$ and $CFG$.
+L177: ### 3.3 Evaluation Metrics
+L178: Before introducing the evaluation metrics, we first formalize the test generation task: $\mathcal{T}^{*}_{n,t}=\Theta(\mathcal{E}_{n,t}|s),s\in${White Box, Black Box} are tests generated by the model $\Theta(\cdot|\cdot)$ given the test entry inferences $\mathcal{E}_{n,t}$. $\mathcal{E}_{n,t}$ denotes the entry inferences of a test $t$ in the ground truth tests $\mathcal{T}=parser(\mathcal{P}_{t})$ from the $n^{th}$ data snippet’s test patch $\mathcal{P}_{n,t}$.
+L179: To evaluate the quality of $\mathcal{T}_{n}^{*}=\bigcup_{t\in\mathcal{T}}\mathcal{T}^{*}_{n,t}$, we employed the following metrics:
+L180: ### 3.4 Test-based Metrics
+L181: 
+L182: The motivation behind test-based metrics is: 1)the generated test cases must align with the intended behavior ($HP$), and 2) the generated test suite must expose bugs ($F2P$).
+L183: 
+L184: Head Pass Rate (HP): We measured the pass rate of the tests generated by the model on the head commit after the pull request, which reflects the accuracy with which the generated tests adhere to the intended behavior. The Head Pass Rate is a test-level metrics:
+L185:  | $$HP=\frac{|\bigcup_{n=1}^{N}\{t\in\mathcal{T}^{*}_{n}|pass(t,\mathcal{R}_{n,base}\times\mathcal{P}_{n,c})|\}}{\sum_{n=1}^{N}|\mathcal{T}^{*}_{n}|},$$  |  | (1)
+L186: 
+L187: where $pass(\cdot,\cdot)$ serves as an indicative function $\mathbb{I}$, which denotes whether the test $t$ passes on the head repository $\mathcal{R}_{n,base}\times\mathcal{P}_{n,c}$, where the issue from the base commit repository $\mathcal{R}_{n,base}$ is fixed with $\mathcal{P}_{n,c}$.
+L188: Fail-to-Pass Rate (F2P): Similar to SWT-bench (cite51†Mündler et al., 2024 ), we compute the proportion of PRs for which at least one generated test exhibits a Fail-to-Pass transition. This metric reflects the effectiveness of the generated tests, indicating the extent to which the model can accurately identify potential errors:
+L189:  | $$\begin{split}F2P&=\frac{\sum_{n=1}^{N}\mathbb{I}(|f2p(n)|\geq 1)}{N}\\
+L190: f2p(n)&=\{t\in\mathcal{T}^{*}_{pr}|pass(t,\mathcal{R}_{n,base}\times\mathcal{P}_{n,c})\\
+L191: &\&fail(t,\mathcal{R}_{n,base})\}\},\end{split}$$  |  | (2)
+L192: 
+L193: where $f2p(\cdot)$ is a pr level function, which finds the test that passes on the head repo and fails on the base repo.
+L194: ### 3.5 Code-based Metrics
+L195: 
+L196: The motivation behind code-based metrics is: 1) achieving comprehensive coverage of the code, and 2) ensuring coverage that is specifically aligned with recent code changes.
+L197: 
+L198: Entry Coverage (EC): Entry Coverage measures the line coverage of the generated tests with respect to the test entry inferences, reflecting the extent to which the generated tests comprehensively capture the intention of the test entry inferences:
+L199:  | $$EC=\frac{1}{N}\sum_{n=1}^{N}\frac{|cover(\mathcal{T}^{*}_{n},\mathcal{E}_{n})|}{|line(\mathcal{E}_{n})|},$$  |  | (3)
+L200: 
+L201: where $cover(\cdot,\cdot)$ denotes the set of lines from entry interface $\mathcal{E}_{n}$ covered by the tests $\mathcal{T}^{*}_{n}$. And $line(\cdot)$ returns the lines of $\mathcal{E}_{n}$.
+L202: 
+L203: Change-focused Coverage (CFG): When applying $\mathcal{P}_{n,c}$, certain lines in $\mathcal{R}_{n}$ are modified, denoted as $\Delta(\mathcal{R}_{n})$:
+L204:  | $$CFG=\frac{1}{N}\sum_{n=1}^{N}\frac{|cover(\mathcal{T}^{*}_{n},parser(\mathcal{P}_{c,n}))|}{|\Delta(\mathcal{R}_{n})|}.$$  |  | (4)
+L205: 
+L206: The aforementioned metrics collectively capture the model’s fidelity to the code’s intended functionality, its precision in identifying bugs, and the effectiveness of the generated tests.
+L207: ## 4 Evaluation
+L208: 
+L209: In the following sections, we want to answer the following research questions (RQs):
+L210: 
+L211:   * •
+L212: 
+L213: RQ1: How do existing models perform on TestExplora?
+L214: 
+L215:   * •
+L216: 
+L217: RQ2: What factors can influence the performance?
+L218: 
+L219:   * •
+L220: 
+L221: RQ3: How can model performance be further improved?
+L222: We conduct a comprehensive evaluation utilizing four key metrics: Head Pass Rate, Fail-to-Pass Rate, Entry Coverage, and Change-focused Coverage. Additionally, the number of testcases ($Num.$) is reported. Our experiments involve six representative language models evaluated on 12,227 real-world pull requests. To ensure evaluation efficiency, we constructed a high-quality subset, TestExplora-Lite, by filtering samples based on the quality of human-written docstrings.
+L223: This subset comprises 330 PRs and 517 samples in total. All baseline experiments are repeated three times to ensure the robustness of the results.
+L224: Models To comprehensively evaluate the problem detection capability of existing LLMs, we select six mainstream models. Among open-source code models, we select the Qwen3-Coder-30B-A3B (cite42†Qwen-Team, 2025 ). For general LLMs, GPT-4o (cite40†OpenAI, 2024 ) and GPT-5-mini^{2}^{2} 2 cite84†https://openai.com/index/introducing-gpt-5/†openai.com are selected.
+L225: For reasoning models, TestExplora evaluates o3-mini, o4-mini^{3}^{3} 3 cite85†https://openai.com/index/o3-o4-mini-system-card/†openai.com , and Gemini-2.5-pro (cite41†Gemini-Team, 2025 ).
+L226: Context Template To comprehensively evaluate the capability of LLMs in problem detection, we adopt different input formats to simulate various testing scenarios. Specifically, White Box and Black Box are selected as two main testing scenarios. In the White Box scenario, models are allowed to access the complete codes along with their related dependencies. In contrast, in the Black Box scenario, the model is only provided with the corresponding test entry inferences and the associated documentation.
+L227: The detailed templates are provided in Figure cite82†2 and Appendix cite24†C .
+L228: ### 4.1 Evaluation Results
+L229: Performance comparison among the models As detailed in Table cite86†3 regarding RQ1, GPT-5-mini achieves state-of-the-art performance, securing the best $F2P$ scores of 7.67 (Black Box) and 11.84 (White Box). Notably, it attains superior $EC$ and $CFG$ scores while generating fewer tests, underscoring its efficiency in capturing interface branches and locating errors. o4-mini follows with the second-best performance across these metrics.
+L230: We observe that Gemini-2.5-pro tends to generate significantly more test cases than other models. Notably, while Gemini-2.5-pro achieves a relatively high $HP$ score, its $F2P$ remains comparatively low. Since $HP$ is an evaluation metric at the test-case level, this high $HP$ indicates that Gemini-2.5-pro has a strong fundamental ability to write individual correct tests. However, $F2P$ is measured at the test-suite level, where a test suite passes only if all its constituent test cases are correct.
+L231: Generating more test cases per suite inherently increases the probability of at least one test being incorrect. For instance, if GPT-5-mini generates approximately 8 test cases per suite while Gemini-2.5-pro generates around 13, the latter must maintain correctness across a larger number of tests to achieve the same $F2P$. Consequently, despite its higher test-case-level quality, Gemini-2.5-pro’s larger test volume dilutes its suite-level success rate.
+L232: Overall, existing LLMs perform poorly on TestExplora, indicating that they lack the capability to proactively discover bugs.
+L233: Having established the varying efficacy of current models, we next investigate the underlying determinants driving these results (RQ2) by conducting a series of experiments from output and input perspective:
+L234: 
+L235: Figure 3: The impact of the number of generated test cases on performance. The best performance of each model is highlighted. Figure 4: Fail-to-Pass success rates across instance year buckets for six LLMs without dependency code access, highlighting each model’s peak performance season.
+L236: Generating More Tests Does Not Necessarily Lead to Better Performanc Previous results show that while Gemini-2.5-pro generates high-quality test cases, its tendency to produce a large number of tests negatively impacts the test-suite-level $F2P$. Figure cite87†3 confirms this trend, showing that $F2P$ roughly decreases as the generated tests increases. When the number of generated tests exceeds 96, no generated test suit could pass.
+L237: The experimental results indicate that generating more tests does not necessarily lead to better performance. However, generating too few tests also poses potential risks of hacking. For example, in Table cite86†3 , GPT-4o produces fewer tests, but its coverage metric is comparatively lower, indicating that it may not generate sufficiently comprehensive tests.
+L238: These results suggest that, at the repository level, a test suite depends not only on a model’s ability to generate tests, but also on its ability to orchestrate a concise yet high-coverage test suite.
+L239: Beyond the quantity of generated output tests, the macroscopic distribution of input data also plays a critical role.
+L240: Robustness Across Timelines via Scalability Framework Figure cite88†4 shows how the performance of models in test generation varies over time. We find that existing models perform better on data prior to 2023 than on data after 2023. Since SWEBench (cite61†Jimenez et al., 2024 ) covers pull requests from before 2023, existing models have been trained on repositories related to SWEBench, which leads to their relatively stronger performance on pre-2023 data.
+L241: This indicates that existing datasets (cite51†Mündler et al., 2024 ; cite52†Ahmed et al., 2024 ) based on SWEBench may suffer from data leakage risks, while also highlighting the importance of our scalability framework. For GPT-4o, its performance remains relatively poor, which is because the selected model (2024-05-13) is not specifically trained on SWE-type datasets.
+L242: Figure 5: Fail-to-Pass success rates across test entry inferences type. Class indicates that the test entry inferences consist only of classes, Function indicates that they consist only of functions, and Mixed denotes a combination of both.
+L243: Performance disparities exist across repository domains We also analyze the impact of repository type on model performance. As shown in Figure cite89†7 , the models perform best in the Scientific/Engineering domain, where all models achieve an F2P score above 5%. Notably, both o4-mini and Qwen3-Coder fail the Security domain with scores of 0. In addition, the microscopic structural complexity of inputs at also affects the model’s test generation performance.
+L244: Performance variation with respect to the types of entry inferences In Figure cite90†5 , all models achieve their peak performance on function-type code, which represents the simplest structural unit. Performance declines for class-based entry inferences and drops significantly for mixed involving both functions and classes. This stratification naturally segments TestExplora into three distinct difficulty levels: Easy (Function), Medium (Class), and Hard (Mixed).
+L245: cite91†Image: Refer to caption Figure 6: The performance of the model varies with the distribution of dependencies. Whitebox only inherits indicates that only inheritance dependencies are retained. Whitebox only invokes indicates that only invocation dependencies are retained.
+L246: Optimal dependency context of entry inferences is highly model-dependent In Table cite86†3 , we observe that for certain models—such as GPT-4o—their White Box performance in the Lite version is inferior to their Black Box performance. To investigate this issue, we hypothesize that GPT-4o may not effectively leverage contextual information. Therefore, in Figure cite92†6 , we compute the performance variations of different models under different types of dependencies.
+L247: In our setting, we categorize dependencies of test entry inferences into two types: invocation and inheritance. Our analysis yields two key insights. First, extensive context is not universally beneficial: GPT-4o’s F2P rate drops from 3.6% (Black Box) to 2.2% (White Box), suggesting a struggle to filter relevant details from complete dependency information. Second, models exhibit distinct dependency preferences.
+L248: While GPT-4o favors invocation dependencies (3.9%) over inheritance (2.4%), o3-mini and o4-mini consistently benefit from full context, peaking in the White Box setting (7.1% and 6.5%, respectively). GPT-5-mini demonstrates the most robustness, reaching 12.4% with invocation dependencies.
+L249: Table 4: Performance comparison with different context methods in White Box context. The best results of each context are in bold.
+L250: Context  | Model  | Model
+L251: --- | --- | ---
+L252: $HP$  | $F2P$  | $EC$  | $CFG$  | $Num.$
+L253: --- | --- | --- | --- | ---
+L254: Plain  | DeepSeek-R1  | 63.72  | 3.03  | 47.16  | 34.77  | 10.22
+L255: o4-mini  | 72.33  | 5.92  | 67.30  | 47.06  | 10.48
+L256: GPT-5-mini  | 77.68  | 12.79  | 67.76  | 45.66  | 7.69
+L257: Claude-Sonnet-4.5  | 87.52  | 16.06  | 71.96  | 47.37  | 23.94
+L258: GPT-5  | 84.88  | 15.15  | 69.44  | 45.59  | 9.59
+L259: SWEAgent  | o4-mini  | 82.03  | 9.42  | 69.63  | 47.81  | 13.79
+L260: GPT-5-mini  | 93.81  | 17.27  | 65.45  | 47.43  | 23.09
+L261: TraeAgent  | o4-mini  | 86.55  | 12.16  | 62.01  | 47.95  | 12.76
+L262: GPT-5-mini  | 88.50  | 14.55  | 62.01  | 46.84  | 12.79
+L263: Agents as a solution of proactive testing: From the previous section, our experimental results indicate that different models exhibit preferences for different types of dependencies. Therefore, we introduce the Agent baseline to answer RQ3. Specifically, we allow the SWEAgent (cite93†Yang et al., 2024a ) and Trae-Agent (cite94†Team et al., 2025 ) to freely explore the repository to generate tests that uncover potential issues.
+L264: From Table cite95†4 , we can observe that, compared to providing all dependencies directly, the Agent makes more efficient use of the context. This suggests that, for the tasks represented by TestExplora, the Agent constitutes a promising research direction. We also analyze the tool-invocation frequency of different agents. We find that for SWEAgents based on GPT-5-mini and o4-mini, the tool used most frequently at every stage is str_replace_editor view.
+L265: Figure cite96†8 and Figure cite97†9 indicate that the agents are consistently exploring the repository throughout the process. Moreover, the top 15 most frequently used tools are also predominantly focused on repository exploration and comprehension.
+L266: In addition, we also compute the F2P pass@k metrics for SWEAgent in Figure cite98†10 , which shows that as the number of samples increases from 1 to 5, SWEAgent’s $H2P$ rises to 29.7 with GPT-5-mini and to 21.2 with o4-mini, indicating that current agents still have substantial room for improvement. The above results indicate that freely exploring the repository, rather than relying on simple input–output interactions, is more effective.
+L267: ## 5 Further Analysis
+L268: 
+L269: Ablation on documentation In TestExplora, we adopt DocAgent (cite80†Yang et al., 2025 ) as an additional source of information for test generation. To verify the effectiveness, we compare the performance differences between synthetic and human-written documentation in TestExplora-Lite.
+L270: Table 5: Performance change from human-written documentation to DocAgent-generated documentation. The table reports the information gain of DocAgent-generated documentation compared with human-written documentation.
+L271: TestExplora-Lite Change Type Model $HP$ $F2P$ $EC$ $CFG$ $Num.$ Black Box QC-30B-A3B +13.42 +3.33 +0.39 +0.19 -0.16 o3-mini +16.78 +3.33 +6.20 +0.92 +0.01 o4-mini +6.55 +1.82 +3.28 +0.17 +0.27 Gemini-2.5-pro +10.7 +0.61 +8.53 +0.81 +0.15 GPT-4o +4.39 +2.12 +6.54 +0.33 +0.70 GPT-5-mini +10.12 +6.06 +10.52 +1.83 +0.13
+L272: From Table cite99†5 , it can be observed that the documentation generated by DocAgent provides stronger informational gains compared to human-written documentation. Specifically, the documentation generated by DocAgent does not lead to significant changes in the average number of tests generated by the models. Instead, it helps improve performance across other metrics.
+

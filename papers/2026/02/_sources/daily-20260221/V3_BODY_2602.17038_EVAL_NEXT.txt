@@ -1,0 +1,101 @@
+https://arxiv.org/html/2602.17038v1
+Experimental Setup
+Benchmark datasets. We evaluate our PA-MoE on ALFWorld (Shridhar et al. 2021), a household task benchmark requiring multi-step interaction, and WebShop (Yao et al. 2022), a goal-directed web navigation environment. ALFWorld contains six task types involving object manipulation; we train on approximately 3,500 procedurally generated tasks and evaluate on 140 held-out validation instances, with success measured as task completion within 50 steps. WebShop simulates e-commerce where agents search for and purchase products matching natural language specifications across 500 validation tasks; we report both score (weighted attribute matching) and binary success rate.
+We experiment with Qwen2.5-1.5B-Instruct and Qwen2.5-7B-Instruct (Yang et al. 2024) as base models. Baselines include prompt-based methods (vanilla prompting, ReAct (Yao et al. 2023b), Reflexion (Shinn et al. 2023)) and RL-trained policies using PPO (Schulman et al. 2017), RLOO (Ahmadian et al. 2024), GRPO (Shao et al. 2024), GiGPO (Feng et al. 2025), and GEPO (Yuan et al. 2025). For closed-source models, we report GPT-4o and Gemini-2.5-Pro results from prior work (Feng et al. 2025).
+Our PA-MoE uses K=4K=4 experts with LoRA rank r=32r=32 applied to query and value projections.
+We set the α=0.01\alpha=0.01, β=0.001\beta=0.001 and γ=1\gamma=1 respectively.
+We use 8 H800 GPUs for all experiments.
+Main Results
+Table 1 reports comprehensive comparisons across model sizes, RL algorithms, and benchmarks.
+ALFWorld Performance. PA-MoE+GiGPO with Qwen2.5-1.5B achieves 93.8% overall success, improving over the GiGPO baseline (86.1%) by +7.7 percentage points. Gains concentrate on tasks requiring precise multi-step manipulation. For example, heating reaches 100% (vs. 91.3%), cooling 89.5% (vs. 71.7%), and cleaning 95.8% (vs. 91.8%). These tasks involve low-frequency but decisive actions, which is exactly where simplicity bias most severely impacts baselines.
+Taken together, the improvement pattern reveals PA-MoE’s mechanism. Navigation-heavy tasks (pick, pick2) show modest gains (+1.1%, +12.2%) since baselines already allocate sufficient capacity to frequent actions. Manipulation-heavy tasks show larger gains (+8.7% heating, +17.8% cooling) because PA-MoE dedicates Expert 2 to these critical but rare interactions. This asymmetric improvement directly reflects the capacity rebalancing shown in Section Effectiveness of Phase-Aware Routing.
+Cross-Algorithm Generalization. PA-MoE improves all tested RL algorithms, confirming that benefits stem from architectural design rather than algorithm-specific interactions:
+With GRPO, overall accuracy increases from 72.8% to 74.2%, while the most challenging task type (look-at-object) jumps dramatically from 53.7% to 87.5% (a 33.8 percentage point improvement). RLOO shows the largest overall gain at 4.5 points (69.7% → 74.2%), with substantial improvements on manipulation tasks such as Clean (+16.5%) and Heat (+20.5%), though with some regression on simpler Pick tasks. Even PPO, whose separate critic network already provides some degree of gradient separation, achieves modest but consistent improvement (54.4% → 56.2%).
+The varying improvement magnitudes correlate with baseline headroom: weaker baselines (GRPO, RLOO) benefit more from capacity reallocation than stronger ones (GiGPO).
+Parameter Efficiency. PA-MoE (93.8%) with 1.5B parameters outperforms the vanilla 7B GiGPO baseline (90.2%) by +3.6 points while using fewer parameters. This demonstrates that architectural design can substitute for parameter scaling when the core bottleneck is capacity allocation rather than raw model capacity.
+With the 7B model, PA-MoE+GiGPO reaches 95.3% with 100% success on five of six task categories. Compared to GEPO (94.9%), PA-MoE shows comparable performance with substantially lower variance (std 0.8 vs. 3.8), indicating more stable training dynamics.
+WebShop Performance. PA-MoE+GiGPO achieves 82.3% success and 91.0 score, outperforming GiGPO (67.4%, 83.5) by +14.9 percentage points. The larger gain on WebShop compared to ALFWorld (+14.9 vs. +7.7) reflects WebShop’s longer episodes and more diverse action space, which amplify simplicity bias in baselines.
+Notably, the 7B model only marginally exceeds 1.5B (82.3%), suggesting that WebShop’s difficulty stems from behavioral diversity rather than language understanding, a bottleneck that parameter scaling alone cannot address but phase-aware routing can.
+Per-Task Variance. While PA-MoE improves aggregate performance across all algorithm-benchmark pairs, we observe occasional task-specific regressions in some configurations, particularly with PPO and RLOO where baseline performance is already low and training is less stable. These regressions are concentrated in a small subset of tasks and do not change the overall ranking. We provide detailed analysis in Appendix H.
+Ablation Studies
+We conduct systematic ablations using Qwen2.5-1.5B with GiGPO on ALFWorld. All ablation results report mean over 3 seeds; standard deviations are provided in Appendix E.
+Table 2: Ablation on number of experts (KK). K=0K{=}0 uses a single shared LoRA adapter without routing. All six ALFWorld task types shown. Bold indicates best per column; underline indicates ties with best. We report the average success rate (%) for each subtask as well as the overall result. See Appendix E for K=3,5K{=}3,5 results and standard deviations.
+KK
+Pick
+Pick2
+Look
+Heat
+Cool
+Clean
+All
+0
+94.3
+87.5
+62.5
+94.4
+89.5
+83.3
+88.3
+2
+97.1
+91.7
+62.5
+100.0
+73.7
+100.0
+91.4
+4 (ours)
+97.1
+91.7
+75.0
+100.0
+89.5
+95.8
+93.8
+6
+91.4
+70.8
+62.5
+100.0
+84.2
+91.7
+85.9
+Number of Experts. Table 2 compares expert counts. The K=0K=0 configuration uses a single shared LoRA adapter without phase-aware routing, and all decisions use the same expert regardless of behavioral context. This achieves 88.3% success, already +2.2 points over vanilla GiGPO (86.1%), indicating that LoRA adaptation provides some benefit even without routing. However, performance remains uneven: 94.4% on heating versus 62.5% on look-at-object, a 32-point gap.
+Adding K=2K=2 experts improves to 91.4%, though look-at-object remains unchanged. K=4K=4 achieves our best result at 93.8%, with more balanced performance across tasks. The total improvement (+7.7%) can be attributed to two sources: LoRA adaptation (+2.2%, comparing K=0K{=}0 to vanilla GiGPO) and phase-aware multi-expert specialization (+5.5%, comparing K=4K{=}4 to K=0K{=}0). K=6K=6 degrades to 85.9% due to data fragmentation: with approximately 3,500 training tasks across 6 task types and 6 experts, finer expert partitioning reduces per-expert sample efficiency. We use K=4K=4 experts; performance is robust across K∈{3,4,5}K\in\{3,4,5\} as detailed in Appendix E.
+Table 3: Comparison of routing granularities. Switches denotes average expert switches per episode, measured at the environment step level (i.e., ∑t𝟏[zt≠zt+1]\sum_{t}\mathbf{1}[z_{t}\neq z_{t+1}]). Trajectory-level assigns one expert per episode at t=0t{=}0 based on initial observation, with minimal within-episode adaptation.
+See Appendix B for token-level baseline details.
+Routing
+Pick(%)
+Heat(%)
+All(%)
+Token-level
+88.6
+86.1
+85.7
+Trajectory-level
+94.3
+91.7
+88.5
+Phase-level (ours)
+97.1
+100.0
+93.8
+Routing Granularity. Table 3 compares temporal scales. Token-level routing causes severe fragmentation (45 step-level switches/episode), yielding only 85.7% success, which is 8.1 points below phase-level. The gap is pronounced on manipulation tasks (86.1% vs. 100.0% on heating) where multi-step sequences require coherence. Trajectory-level routing (3 switches; primarily using a single expert per episode with limited adaptation) achieves 88.5% but lacks fine-grained within-episode flexibility.
+Table 4: Ablation on router components.
+Router Configuration
+Success Rate (%)
+w/o action history
+89.2
+w/o goal attention
+90.5
+w/o both
+86.8
+Full router (ours)
+93.8
+Router Components. Table 4 ablates router inputs. Removing action history drops performance to 89.2% (−-4.6), as the router loses context about task progress. Removing goal attention yields 90.5% (−-3.3), preventing appropriate phase selection. Without both, performance falls to 86.8%, barely exceeding baseline.
+Regularization Terms. Removing ℒdiv\mathcal{L}_{\text{div}} causes expert collapse (88.3%), while removing ℒbal\mathcal{L}_{\text{bal}} leads to router collapse (87.5%). Both regularizers are necessary; see Appendix E for details.
+Comparison with Gradient Surgery Methods. Prior work addresses gradient conflicts through local modifications at each update step (PCGrad (Yu et al. 2020), GradNorm (Chen et al. 2018)). We compare PA-MoE against these baselines by applying gradient surgery to phase-partitioned losses. As detailed in Appendix E, gradient surgery provides modest gains over GiGPO baseline (+0.7–1.8%) but falls substantially short of PA-MoE’s +7.7% improvement. PA-MoE provides persistent parameter separation across phases, while gradient-level approaches modify updates at each step without preventing heterogeneous phases from repeatedly competing for shared parameters over long horizons.
+Effectiveness of Phase-Aware Routing
+We verify that the phase-aware routing of our PA-MOE produces meaningful expert specialization.
+Expert Specialization Patterns. We analyze expert activation patterns across 500 validation episodes. Table 5 summarizes the emergent specialization in terms of role and activation frequency. Quantitative ent
+

@@ -1,0 +1,10512 @@
+Sample-efficient evidence estimation of score based priors for model selection
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Background
+2.1
+Diffusion Models
+2.2
+Diffusion-based Posterior Sampling Methods
+2.3
+Existing model evidence estimators
+3
+Estimating the model evidence along the standard marginals
+3.1
+An improved approximation for the posterior covariance
+3.2
+Estimating the squared likelihood score
+4
+Experiments
+4.1
+Benchmarking on Gaussian Mixture Prior with Ground Truth Evidence
+4.2
+Model Selection Using Learned Score on Non-convex Inverse Problems
+4.3
+Evaluating Prior Model Evidence for Real M87* Black Hole Data
+4.3.1
+Model selection
+4.3.2
+Model validation
+5
+Conclusion
+References
+A
+Proofs
+A.1
+Proofs and derivations for the DAPS-based implementation
+B
+Generalizing
+DiME
+to arbitrary posterior marginals
+B.1
+Estimating the model evidence from alternative sampling methods
+C
+Baseline methods
+D
+Implementation details
+D.1
+DiME
+D.2
+Baselines
+E
+Baseline results on MNIST Model Selection
+F
+Synthetic Model Selection
+G
+Large Language Model Usage
+License: CC BY 4.0
+arXiv:2602.20549v1 [cs.LG] 24 Feb 2026
+Sample-efficient evidence estimation of score based priors for model selection
+Frederic Wang & Katherine L. Bouman
+†
+†
+thanks:
+Use footnote for providing further information
+about author (webpage, alternative address)—
+not
+for acknowledging
+funding agencies. Funding acknowledgements go at the end of the paper.
+Affiliation:
+Department of Computing and Mathematical Sciences
+Affiliation:
+Caltech
+Affiliation:
+Pasadena, CA 91125, USA
+Affiliation:
+{fzwang, klbouman}@caltech.edu
+Abstract
+The choice of prior is central to solving ill-posed imaging inverse problems, making it essential to select one consistent with the measurements
+𝒚
+{\bm{y}}
+to avoid severe bias.
+In Bayesian inverse problems, this could be achieved by evaluating the model evidence
+p
+⁡
+(
+𝒚
+∣
+M
+)
+p({\bm{y}}\mid M)
+under different models
+M
+M
+that specify the prior and then selecting the one with the highest value.
+Diffusion models are the state-of-the-art approach to solving inverse problems with a data-driven prior; however, directly computing the model evidence with respect to a diffusion prior is intractable. Furthermore, most existing model evidence estimators require either many pointwise evaluations of the unnormalized prior density or an accurate clean prior score. We propose
+DiME
+, an estimator of the model evidence of a diffusion prior by integrating over the time-marginals of posterior sampling methods. Our method leverages the large amount of intermediate samples naturally obtained during the reverse diffusion sampling process to obtain an accurate estimation of the model evidence using only a handful of posterior samples (e.g., 20).
+We also demonstrate how to implement our estimator in tandem with recent diffusion posterior sampling methods. Empirically, our estimator matches the model evidence when it can be computed analytically, and it is able to both select the correct diffusion model prior and diagnose prior misfit under different highly ill-conditioned, non-linear inverse problems, including a real-world black hole imaging problem.
+1
+Introduction
+In Bayesian inverse imaging problems across science and engineering, the chosen prior distribution
+p
+⁡
+(
+𝒙
+)
+p({\bm{x}})
+plays a pivotal role in shaping the posterior
+p
+⁡
+(
+𝒙
+∣
+𝒚
+)
+p({\bm{x}}\mid{\bm{y}})
+from which candidate solutions are drawn
+(
+Feng et al., 2024
+;
+Stuart, 2010
+)
+. In ill-posed settings, the prior acts as a regularizer, steering reconstructions toward solutions consistent with expected image properties. If the ground truth image lies outside the support of the chosen prior, the resulting reconstruction can be severely biased.
+A central challenge in Bayesian inference is how to select a prior to use when the true distribution is unknown.
+Consequently, the priors used in practice are often chosen somewhat arbitrarily. If the likelihood of a prior could be easily evaluated, it would provide a principled basis for prior selection. Specifically, given a set of potential models
+{
+M
+i
+}
+\{M_{i}\}
+that specify the prior
+p
+⁡
+(
+𝒙
+∣
+M
+i
+)
+p({\bm{x}}\mid M_{i})
+, we would like to find the most likely candidate model by computing
+p
+⁡
+(
+M
+i
+∣
+𝒚
+)
+∝
+p
+⁡
+(
+𝒚
+∣
+M
+i
+)
+​
+p
+​
+(
+M
+i
+)
+p(M_{i}\mid{\bm{y}})\propto p({\bm{y}}\mid M_{i})p(M_{i})
+. It is commonly assumed that
+p
+⁡
+(
+M
+i
+)
+p(M_{i})
+is uniform, so it suffices to compute the
+(log) model evidence
+,
+log
+⁡
+p
+⁡
+(
+𝒚
+∣
+M
+i
+)
+\log p({\bm{y}}\mid M_{i})
+. Model evidence is not only useful for selecting the best prior for reconstruction, but also for quantifying epistemic uncertainty and assessing the assumptions underlying a model or physical theory
+(
+Trotta, 2007
+)
+.
+Although the model evidence provides a principled way to select the best prior for reconstruction, computing it generally requires evaluating an intractable integral over the full prior:
+log
+p
+(
+𝒚
+∣
+M
+i
+)
+=
+log
+∫
+p
+(
+𝒚
+∣
+𝒙
+,
+M
+i
+)
+p
+(
+𝒙
+∣
+M
+i
+)
+d
+𝒙
+\log p({\bm{y}}\mid M_{i})=\log\int p({\bm{y}}\mid{\bm{x}},M_{i})p({\bm{x}}\mid M_{i})d{\bm{x}}
+. This motivates the development of estimation methods, such as sequential Monte Carlo
+(
+Del Moral et al., 2006
+;
+Chen et al., 2024
+)
+, nested sampling
+(
+Skilling, 2006
+;
+Cai et al., 2022
+)
+, annealed importance sampling
+Neal (2001)
+;
+Doucet et al. (2022)
+, and harmonic mean estimators
+(
+Newton and Raftery, 1994
+;
+McEwen et al., 2021
+;
+Polanska et al., 2023
+;
+Spurio Mancini et al., 2023
+)
+. However, these methods rely on sampling using the clean prior score
+∇
+𝒙
+​
+log
+​
+p
+​
+(
+𝒙
+)
+\nabla_{\bm{x}}\log p({\bm{x}})
+or the unnormalized density
+log
+⁡
+p
+⁡
+(
+𝒙
+)
+\log p({\bm{x}})
+, which may be inaccurate for out-of-distribution
+𝒙
+{\bm{x}}
+, expensive to evaluate, and can lead to slow mixing due to the ill-conditioned data geometry.
+Bayesian inverse imaging solvers achieve state-of-the-art performance with diffusion-based priors
+(
+Song et al., 2020
+;
+Ho et al., 2020
+;
+Song et al., 2021b
+;
+Jalal et al., 2021
+;
+Mardani et al., 2023
+)
+, yet an accurate model evidence
+remains intractable using existing methods.
+Diffusion models generate unconditional samples by denoising a sequence of intermediate noised images, each corresponding to a time-marginal distribution between pure noise and the clean image.
+Diffusion-based posterior sampling methods adhere to intermediate posterior time-marginals instead
+(
+Chung et al., 2022
+;
+Song et al., 2023
+;
+Li et al., 2024
+;
+Zhu et al., 2023
+;
+Wu et al., 2024
+;
+Zhang et al., 2025
+)
+.
+While efficient diffusion density estimators have been proposed
+(
+Skreta et al., 2024
+)
+, density-based estimation methods are still typically high-variance for high dimensional problems and require thousands of posterior samples, which is computationally challenging with diffusion models. Furthermore, as diffusion models learn the score of intermediate noised priors, their estimates of the clean prior score are usually less accurate and/or highly ill-conditioned, making it difficult for traditional methods to explore the full distribution, while using their score from a higher noise levels can add bias. As a result, existing estimators are not suitable for or give biased estimates for diffusion-based priors.
+Our contribution:
+We propose the Diffusion Model Evidence (
+DiME
+) estimator, a method for estimating the model evidence under a diffusion model prior that does not require the prior score or density.
+We derive the estimator for posterior sampling methods that anneal along the
+standard (posterior) marginals
+p
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+p({\bm{x}}_{t}\mid{\bm{y}})
+, as well as a generalized estimator for any arbitrary path of marginals
+that anneal to the true posterior.
+By integrating along these posterior time-marginals,
+DiME
+accurately estimates the model evidence using intermediate samples already generated during posterior sampling.
+DiME
+thus only requires a small number of posterior samples (e.g., 20) for accurate estimation.
+We also describe how to practically implement
+DiME
+alongside a state-of-the-art posterior sampling method Decoupled Annealing Posterior Sampling (DAPS).
+We perform several experiments validating our method. We first test in a mixture of Gaussian setting where an analytic evidence can be derived, and find that
+DiME
+provides nearly unbiased estimates of the evidence and performs comparably to baselines sequential Monte Carlo, annealed importance sampling, and thermodynamic integration despite not using the prior score.
+We also test
+DiME
+on two non-convex inverse problems, Gaussian and Fourier phase retrieval.
+DiME
+consistently selects the correct prior from a set of 10 diffusion models trained on MNIST
+(
+Deng, 2012
+)
+digits given a single noisy measurement of one MNIST digit, while the baselines fail to do so.
+Finally, we use our method to perform both model selection and validation on real M87* black hole observations from the Event Horizon Telescope
+(
+EHTC, 2019a
+;
+EHTC, 2019b
+)
+.
+DiME
+indicates that a prior derived from synthetic black hole images generated using General-Relativistic Magnetohydrodynamics (GRMHD)
+(
+Mizuno, 2022
+)
+has higher likelihood compared to the Radiatively Inefficient Accretion Flow (RIAF)
+(
+Broderick et al., 2011
+)
+black hole prior, a prior trained on general space images
+(
+Alam et al., 2024
+)
+, a prior trained on faces
+(
+Liu et al., 2015
+)
+, and a prior trained on MNIST digit 0s. Furthermore, we diagnose the validity of the GRMHD prior by prior predictive checking on the model evidence. Our results suggest that the M87* observations are statistically in-distribution with respect to the GRMHD prior, while still leaving room in the model for refinement.
+2
+Background
+2.1
+Diffusion Models
+Given a clean image
+𝒙
+0
+∼
+p
+0
+​
+(
+𝒙
+0
+)
+{\bm{x}}_{0}\sim p_{0}({\bm{x}}_{0})
+, the diffusion forward process at time
+t
+∈
+[
+0
+,
+T
+]
+t\in[0,T]
+is given by:
+𝒙
+t
+=
+a
+t
+​
+𝒙
+0
++
+σ
+t
+​
+𝒛
+t
+,
+𝒛
+t
+∼
+𝒩
+⁡
+(
+0
+,
+𝑰
+)
+\displaystyle{\bm{x}}_{t}=a_{t}{\bm{x}}_{0}+\sigma_{t}{\bm{z}}_{t},\quad{\bm{z}}_{t}\sim\mathcal{N}(0,{\bm{I}})
+(1)
+where
+a
+t
+a_{t}
+is the signal scaling,
+σ
+t
+\sigma_{t}
+is noise scaling, and
+a
+t
+′
+a_{t}^{\prime}
+,
+σ
+t
+′
+\sigma_{t}^{\prime}
+are the time derivatives. We can sample from the clean image distribution by discretizing the reverse SDE:
+d
+​
+𝒙
+t
+\displaystyle d{\bm{x}}_{t}
+=
+[
+a
+t
+′
+a
+t
+​
+𝒙
+t
+−
+g
+t
+2
+​
+∇
+𝒙
+t
+​
+log
+⁡
+p
+t
+​
+(
+𝒙
+t
+)
+]
+​
+d
+​
+t
++
+g
+t
+​
+d
+​
+𝒘
+t
+\displaystyle=\Bigl[\frac{a_{t}^{\prime}}{a_{t}}\,{\bm{x}}_{t}\;-\;g_{t}^{\,2}\,\nabla_{{\bm{x}}_{t}}\log p_{t}({\bm{x}}_{t})\Bigr]dt\;+\;g_{t}\,d{\bm{w}}_{t}
+(2)
+where
+g
+t
+2
+=
+2
+​
+(
+σ
+t
+​
+σ
+t
+′
+−
+a
+t
+′
+a
+t
+​
+σ
+t
+2
+)
+g_{t}^{2}=2\left(\sigma_{t}\sigma_{t}^{\prime}-\frac{a_{t}^{\prime}}{a_{t}}\sigma_{t}^{2}\right)
+,
+𝒘
+t
+{\bm{w}}_{t}
+is Brownian motion and
+∇
+𝒙
+t
+​
+log
+​
+p
+t
+​
+(
+𝒙
+t
+)
+\nabla_{{\bm{x}}_{t}}\log p_{t}({\bm{x}}_{t})
+is learned. We can also obtain the posterior mean via Tweedie’s formula
+(
+Efron, 2011
+)
+:
+𝔼
+⁡
+[
+𝒙
+0
+∣
+𝒙
+t
+]
+=
+1
+α
+t
+​
+(
+𝒙
+t
++
+σ
+t
+2
+​
+∇
+𝒙
+t
+​
+log
+⁡
+p
+⁡
+(
+𝒙
+t
+)
+)
+.
+\displaystyle\mathbb{E}[{\bm{x}}_{0}\mid{\bm{x}}_{t}]=\frac{1}{\alpha_{t}}\Bigl({\bm{x}}_{t}+\sigma_{t}^{2}\,\nabla_{{\bm{x}}_{t}}\log p({\bm{x}}_{t})\Bigr).
+(3)
+2.2
+Diffusion-based Posterior Sampling Methods
+Most diffusion posterior sampling methods fall broadly under two categories: (1) explicitly approximating the intractable likelihood score
+∇
+𝒙
+t
+​
+log
+​
+p
+t
+​
+(
+𝒚
+∣
+𝒙
+t
+)
+\nabla_{{\bm{x}}_{t}}\log p_{t}({\bm{y}}\mid{\bm{x}}_{t})
+as guidance during reverse diffusion, and (2) methods that explicitly anneal along a path of specified intermediate marginals, using techniques such as sequential Monte Carlo
+(
+Cardoso et al., 2023
+;
+Wu et al., 2023
+)
+, gradient-based optimization
+(
+Moufad et al., 2024
+)
+, or Langevin dynamics
+(
+Zhang et al., 2025
+;
+Wu et al., 2024
+;
+Zhu et al., 2023
+)
+.
+The approximation errors of (1) compound over the sampling process, resulting in intermediate time-marginals with no tractable form and a biased posterior,
+while (2) corrects these errors by adhering to a specified marginal path, allowing for their time-marginals to anneal to the true posterior.
+As a result, in this work we focus on two different sampling methods of (2) that have demonstrated strong performance for solving physical inverse problems
+(
+Zheng et al., 2025
+)
+.
+Concretely, given measurements
+𝒚
+{\bm{y}}
+from an inverse problem
+𝒚
+=
+𝑨
+⁡
+(
+𝒙
+)
++
+ε
+{\bm{y}}={\bm{A}}({\bm{x}})+\varepsilon
+we introduce two likelihood terms. The first,
+p
+⁡
+(
+𝒚
+∣
+𝒙
+t
+)
+=
+∫
+p
+⁡
+(
+𝒚
+∣
+𝒙
+0
+)
+​
+p
+​
+(
+𝒙
+0
+∣
+𝒙
+t
+)
+​
+d
+​
+𝒙
+0
+p({\bm{y}}\mid{\bm{x}}_{t})=\int p({\bm{y}}\mid{\bm{x}}_{0})p({\bm{x}}_{0}\mid{\bm{x}}_{t})d{\bm{x}}_{0}
+is the marginal likelihood of
+𝒚
+{\bm{y}}
+conditioned on the current diffusion state
+𝒙
+t
+{\bm{x}}_{t}
+. The second,
+q
+⁡
+(
+𝒚
+∣
+𝒙
+t
+)
+:=
+p
+⁡
+(
+𝒚
+∣
+𝒙
+0
+=
+𝒙
+t
+)
+q({\bm{y}}\mid{\bm{x}}_{t}):=p({\bm{y}}\mid{\bm{x}}_{0}={\bm{x}}_{t})
+is a time-independent data likelihood term that assumes
+𝒙
+t
+{\bm{x}}_{t}
+is the clean image.
+The
+Decoupled Annealing Posterior Sampling
+(DAPS) method
+(
+Zhang et al., 2025
+)
+alternates between noising and sampling from the posterior. Given initial noise samples
+𝒙
+T
+∼
+𝒩
+⁡
+(
+0
+,
+𝑰
+)
+{\bm{x}}_{T}\sim\mathcal{N}(0,{\bm{I}})
+and
+N
+N
+-step annealing schedule
+[
+t
+1
+,
+…
+,
+t
+N
+]
+[t_{1},\dots,t_{N}]
+, we sample from the clean image posterior using Langevin dynamics before re-adding noise according to the diffusion process:
+𝒙
+~
+0
+\displaystyle\tilde{{\bm{x}}}_{0}
+∼
+p
+⁡
+(
+𝒙
+0
+∣
+𝒙
+t
+k
+,
+𝒚
+)
+∝
+p
+⁡
+(
+𝒚
+∣
+𝒙
+0
+)
+​
+p
+​
+(
+𝒙
+0
+∣
+𝒙
+t
+k
+)
+\displaystyle\sim p({\bm{x}}_{0}\mid{\bm{x}}_{t_{k}},{\bm{y}})\propto p({\bm{y}}\mid{\bm{x}}_{0})p({\bm{x}}_{0}\mid{\bm{x}}_{t_{k}})
+(4)
+𝒙
+t
+k
+−
+1
+\displaystyle{\bm{x}}_{t_{k-1}}
+∼
+p
+⁡
+(
+𝒙
+t
+k
+−
+1
+∣
+𝒙
+~
+0
+)
+\displaystyle\sim p({\bm{x}}_{t_{k-1}}\mid\tilde{{\bm{x}}}_{0})
+(5)
+Zhang et al. (2025)
+proposes two approaches:
+Gaussian approximation DAPS
+, where
+p
+⁡
+(
+𝒙
+0
+∣
+𝒙
+t
+)
+p({\bm{x}}_{0}\mid{\bm{x}}_{t})
+is approximated via a Gaussian
+𝒩
+⁡
+(
+𝔼
+⁡
+[
+𝒙
+0
+∣
+𝒙
+t
+]
+,
+𝚺
+𝒙
+0
+|
+𝒙
+t
+)
+\mathcal{N}(\mathbb{E}[{\bm{x}}_{0}\mid{\bm{x}}_{t}],\bm{\Sigma}_{{\bm{x}}_{0}\mid{\bm{x}}_{t}})
+and the covariance
+𝚺
+𝒙
+0
+|
+𝒙
+t
+\bm{\Sigma}_{{\bm{x}}_{0}\mid{\bm{x}}_{t}}
+is heuristically chosen as
+σ
+t
+2
+\sigma_{t}^{2}
+, and
+exact DAPS
+, where the prior score is computed using the diffusion model at a tiny noise level
+∇
+log
+⁡
+p
+​
+(
+𝒙
+0
+)
+≈
+∇
+log
+⁡
+p
+​
+(
+𝒙
+,
+σ
+m
+​
+i
+​
+n
+)
+\nabla\log p({\bm{x}}_{0})\approx\nabla\log p({\bm{x}},\sigma_{min})
+.
+The unconditional distribution of intermediate samples closely match the
+standard marginals
+:
+𝒙
+t
+∼
+p
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+∝
+p
+⁡
+(
+𝒚
+∣
+𝒙
+t
+)
+​
+p
+​
+(
+𝒙
+t
+)
+{\bm{x}}_{t}\sim p({\bm{x}}_{t}\mid{\bm{y}})\propto p({\bm{y}}\mid{\bm{x}}_{t})p({\bm{x}}_{t})
+for all times
+t
+t
+.
+The
+Plug-and-Play Diffusion Models
+(PnP-DM) sampling method
+(
+Wu et al., 2024
+)
+takes inspiration from the Split Gibbs Sampler
+(
+Vono et al., 2019
+)
+by splitting each annealing iteration into a likelihood step and a prior step. In particular, given
+N
+N
+-step annealing schedule
+[
+t
+1
+,
+…
+,
+t
+N
+]
+[t_{1},\dots,t_{N}]
+and clean image initialization
+𝒙
+^
+0
+\hat{{\bm{x}}}_{0}
+, we alternate between running Langevin dynamics to obtain a sample from the next time-marginal posterior and using the diffusion model to sample a clean image. We rewrite the updates for one timestep
+t
+k
+t_{k}
+in terms of standard diffusion notation:
+𝒙
+t
+k
+\displaystyle{\bm{x}}_{t_{k}}
+∼
+q
+⁡
+(
+𝒙
+t
+k
+∣
+𝒚
+,
+𝒙
+^
+0
+)
+∝
+q
+⁡
+(
+𝒚
+∣
+𝒙
+t
+k
+)
+​
+p
+​
+(
+𝒙
+t
+k
+∣
+𝒙
+^
+0
+)
+\displaystyle\sim q({\bm{x}}_{t_{k}}\mid{\bm{y}},\hat{{\bm{x}}}_{0})\propto q({\bm{y}}\mid{\bm{x}}_{t_{k}})p({\bm{x}}_{t_{k}}\mid\hat{{\bm{x}}}_{0})
+(6)
+𝒙
+^
+0
+\displaystyle\hat{{\bm{x}}}_{0}
+∼
+p
+⁡
+(
+𝒙
+0
+∣
+𝒙
+t
+k
+)
+\displaystyle\sim p({\bm{x}}_{0}\mid{\bm{x}}_{t_{k}})
+(7)
+where
+𝒙
+t
+k
+{\bm{x}}_{t_{k}}
+is sampled from a joint distribution of the noised
+𝒙
+^
+0
+\hat{{\bm{x}}}_{0}
+and the time-independent likelihood
+q
+q
+. We write
+q
+⁡
+(
+𝒚
+∣
+𝒙
+t
+k
+)
+q({\bm{y}}\mid{\bm{x}}_{t_{k}})
+to emphasize this proxy likelihood applies the measurement model directly to a noisy rather than clean image.
+We refer to the resulting unconditional distributions of intermediate samples as
+PnP-DM marginals
+, denoted by
+𝒙
+t
+∼
+q
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+∝
+q
+⁡
+(
+𝒚
+∣
+𝒙
+t
+)
+​
+p
+​
+(
+𝒙
+t
+)
+{\bm{x}}_{t}\sim q({\bm{x}}_{t}\mid{\bm{y}})\propto q({\bm{y}}\mid{\bm{x}}_{t})p({\bm{x}}_{t})
+for all
+t
+t
+.
+2.3
+Existing model evidence estimators
+The simplest estimator approximates the evidence by averaging
+p
+⁡
+(
+𝒚
+∣
+𝒙
+)
+p({\bm{y}}\mid{\bm{x}})
+over samples
+𝒙
+∼
+p
+⁡
+(
+𝒙
+)
+{\bm{x}}\sim p({\bm{x}})
+, though this requires exponentially many samples in high dimensions.
+The standard harmonic mean estimator
+(
+Newton and Raftery, 1994
+)
+mitigates this issue but has infinite variance. Learned harmonic mean estimators
+(
+McEwen et al., 2021
+;
+Polanska et al., 2023
+;
+Spurio Mancini et al., 2023
+)
+stabilize the variance by importance sampling with a surrogate neural density, under the assumption that the prior density is known. However, surrogate training requires thousands of posterior samples and importance sampling requires a similar amount of density evaluations even in medium-dimensional settings, making these approaches infeasible for diffusion-based priors.
+Nested sampling
+(
+Skilling, 2006
+;
+Cai et al., 2022
+)
+re-parametrizes the model evidence into a one-dimensional integral over the prior volume, but still requires the score or density and is limited to log-convex likelihoods. Thermodynamic integration (TI)
+(
+Lartillot and Philippe, 2006
+)
+, annealed importance sampling (AIS)
+(
+Neal, 2001
+)
+and sequential Monte Carlo (SMC)
+(
+Del Moral et al., 2006
+)
+compute the evidence by integrating over a path of distributions
+p
+β
+p_{\beta}
+, with
+0
+≤
+β
+≤
+1
+0\leq\beta\leq 1
+. For diffusion priors, accurately sampling from arbitrary
+p
+β
+​
+(
+𝒙
+)
+p_{\beta}({\bm{x}})
+is computationally difficult as we lack a clean prior score. Reverse diffusion Monte Carlo (RDMC)
+(
+Huang et al., 2023
+)
+methods simulate the diffusion process to sample from unnormalized densities, using a Monte Carlo approach to approximate the noised scores.
+Guo et al. (2025)
+independently derived an evidence estimator for the reverse diffusion process
+under very different assumptions: they rely on a closed-form posterior score, obtain exact posterior marginals directly from an analytic diffusion that is not learned, and provide only theoretical convergence results without experimental validation.
+3
+Estimating the model evidence along the standard marginals
+We introduce
+DiME
+to estimate model evidence from the standard marginals
+p
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+p({\bm{x}}_{t}\mid{\bm{y}})
+, aligning closely with the annealing path of DAPS. All proofs in this section are shown in Appendix
+A
+. A general model evidence estimator for arbitrary marginals annealing to the true posterior is derived in Appendix
+B
+, and an unnormalized model evidence estimator that instead uses the PnP-DM marginals (
+DiME-PnPDM
+) is derived and implemented in Appendix
+B.1
+.
+Proposition 1
+(
+DiME
+: Model evidence estimation along the standard marginals)
+.
+Given diffusion process
+𝐱
+t
+=
+a
+t
+​
+𝐱
+0
++
+σ
+t
+​
+𝐳
+t
+,
+𝐳
+t
+∼
+𝒩
+⁡
+(
+0
+,
+𝐈
+)
+{\bm{x}}_{t}=a_{t}{\bm{x}}_{0}+\sigma_{t}{\bm{z}}_{t},{\bm{z}}_{t}\sim\mathcal{N}(0,{\bm{I}})
+, posterior marginals
+p
+⁡
+(
+𝐱
+t
+∣
+𝐲
+)
+∝
+p
+⁡
+(
+𝐱
+t
+)
+​
+∫
+p
+⁡
+(
+𝐲
+∣
+𝐱
+0
+)
+​
+p
+​
+(
+𝐱
+0
+∣
+𝐱
+t
+)
+​
+d
+​
+𝐱
+0
+p({\bm{x}}_{t}\mid{\bm{y}})\propto p({\bm{x}}_{t})\int p({\bm{y}}\mid{\bm{x}}_{0})p({\bm{x}}_{0}\mid{\bm{x}}_{t})d{\bm{x}}_{0}
+, and timesteps
+0
+=
+t
+0
+<
+⋯
+<
+t
+N
+=
+T
+0=t_{0}<\dots<t_{N}=T
+, the model evidence can be estimated via:
+log
+⁡
+p
+⁡
+(
+𝒚
+)
+\displaystyle\log p({\bm{y}})
+=
+𝔼
+𝒙
+0
+∼
+p
+⁡
+(
+𝒙
+0
+∣
+𝒚
+)
+[
+log
+p
+(
+𝒚
+∣
+𝒙
+0
+)
+]
+−
+D
+KL
+(
+p
+(
+𝒙
+0
+∣
+𝒚
+)
+|
+|
+p
+(
+𝒙
+0
+)
+)
+.
+\displaystyle=\mathbb{E}_{{\bm{x}}_{0}\sim p({\bm{x}}_{0}\mid{\bm{y}})}\!\big[\,\log p({\bm{y}}\mid{\bm{x}}_{0})\,\big]-D_{\mathrm{KL}}(p({\bm{x}}_{0}\mid{\bm{y}})||p({\bm{x}}_{0})).
+(8)
+The log-likelihood term can be estimated with posterior samples
+1
+1
+1
+For likelihoods with Gaussian noise, if the posterior and prior have enough overlap such that posterior samples have a data fit of
+χ
+2
+≈
+1
+\chi^{2}\approx 1
+, this term essentially becomes constant under the same likelihood function.
+, and the KL divergence with:
+D
+KL
+(
+p
+(
+𝒙
+0
+∣
+𝒚
+)
+|
+|
+p
+(
+𝒙
+0
+)
+)
+\displaystyle D_{\mathrm{KL}}(p({\bm{x}}_{0}\mid{\bm{y}})||p({\bm{x}}_{0}))
+≈
+∑
+i
+=
+1
+N
+c
+t
+i
+​
+Δ
+​
+t
+i
+​
+𝔼
+𝒙
+t
+i
+∼
+p
+⁡
+(
+𝒙
+t
+i
+∣
+𝒚
+)
+​
+‖
+∇
+𝒙
+t
+i
+​
+log
+​
+p
+​
+(
+𝒚
+∣
+𝒙
+t
+i
+)
+‖
+2
+\displaystyle\approx\sum_{i=1}^{N}c_{t_{i}}\Delta t_{i}\mathbb{E}_{{\bm{x}}_{t_{i}}\sim p({\bm{x}}_{t_{i}}\mid{\bm{y}})}\|\nabla_{{\bm{x}}_{t_{i}}}\log p({\bm{y}}\mid{\bm{x}}_{t_{i}})\|^{2}
+(9)
+where
+c
+t
+i
+=
+(
+σ
+t
+i
+′
+​
+σ
+t
+i
+−
+σ
+t
+i
+2
+​
+a
+t
+i
+′
+a
+t
+i
+)
+c_{t_{i}}=\left(\sigma_{t_{i}}^{\prime}\sigma_{t_{i}}-\sigma_{t_{i}}^{2}\frac{a_{t_{i}}^{\prime}}{a_{t_{i}}}\right)
+is dependent on the diffusion schedule and
+Δ
+​
+t
+i
+=
+t
+i
+−
+t
+i
+−
+1
+\Delta t_{i}=t_{i}-t_{i-1}
+.
+The sum across each sample-path
+{
+𝒙
+t
+i
+}
+i
+=
+0
+,
+…
+,
+N
+\{{\bm{x}}_{t_{i}}\}_{i=0,\dots,N}
+can be viewed as the distance of the resulting posterior sample
+𝒙
+0
+{\bm{x}}_{0}
+to the prior.
+In the remainder of the section, we showcase how to practically implement
+DiME
+in tandem with the DAPS method but with two modifications: in Section
+3.1
+we design an improved covariance approximation
+2
+2
+2
+While approximating
+p
+⁡
+(
+𝒙
+0
+∣
+𝒙
+t
+)
+p({\bm{x}}_{0}\mid{\bm{x}}_{t})
+is necessary for the standard marginals annealing path, it is not necessary for many annealing paths under the generalized framework introduced in Appendix
+B
+.
+for
+p
+⁡
+(
+𝒙
+0
+∣
+𝒙
+t
+)
+p({\bm{x}}_{0}\mid{\bm{x}}_{t})
+if the Gaussian approximation DAPS is used, and in Section
+3.2
+we propose to sample two
+𝒙
+~
+0
+∼
+p
+⁡
+(
+𝒙
+0
+∣
+𝒙
+t
+,
+𝒚
+)
+\tilde{{\bm{x}}}_{0}\sim p({\bm{x}}_{0}\mid{\bm{x}}_{t},{\bm{y}})
+for each
+𝒙
+t
+{\bm{x}}_{t}
+to estimate
+‖
+∇
+𝒙
+t
+​
+log
+​
+p
+​
+(
+𝒚
+∣
+𝒙
+t
+)
+‖
+2
+\|\nabla_{{\bm{x}}_{t}}\log p({\bm{y}}\mid{\bm{x}}_{t})\|^{2}
+needed for Eq.
+9
+. The full algorithm can be seen in Algorithm
+1
+.
+3.1
+An improved approximation for the posterior covariance
+While the exact DAPS sampler can be used for accurate sampling of
+𝒙
+~
+0
+∼
+p
+⁡
+(
+𝒙
+0
+∣
+𝒙
+t
+,
+𝒚
+)
+∝
+p
+⁡
+(
+𝒚
+∣
+𝒙
+0
+)
+​
+p
+​
+(
+𝒙
+0
+∣
+𝒙
+t
+)
+\tilde{{\bm{x}}}_{0}\sim p({\bm{x}}_{0}\mid{\bm{x}}_{t},{\bm{y}})\propto p({\bm{y}}\mid{\bm{x}}_{0})p({\bm{x}}_{0}\mid{\bm{x}}_{t})
+(Eq.
+4
+), Gaussian approximation DAPS provides a significantly cheaper alternative by approximating
+p
+⁡
+(
+𝒙
+0
+∣
+𝒙
+t
+)
+≈
+𝒩
+⁡
+(
+𝔼
+⁡
+[
+𝒙
+0
+∣
+𝒙
+t
+]
+,
+σ
+t
+2
+)
+p({\bm{x}}_{0}\mid{\bm{x}}_{t})\approx\mathcal{N}(\mathbb{E}[{\bm{x}}_{0}\mid{\bm{x}}_{t}],\sigma_{t}^{2})
+. However, this covariance heuristic only accounts for
+p
+⁡
+(
+𝒙
+t
+∣
+𝒙
+0
+)
+p({\bm{x}}_{t}\mid{\bm{x}}_{0})
+and ignores
+p
+⁡
+(
+𝒙
+0
+)
+p({\bm{x}}_{0})
+.
+While this heuristic is accurate at low noise levels, it overestimates the variance in the high noise regimes: at the terminal noise level
+t
+=
+T
+t=T
+, we expect
+p
+⁡
+(
+𝒙
+0
+∣
+𝒙
+T
+)
+≈
+p
+⁡
+(
+𝒙
+0
+)
+p({\bm{x}}_{0}\mid{\bm{x}}_{T})\approx p({\bm{x}}_{0})
+with a covariance that should match the prior
+Cov
+⁡
+(
+𝒙
+0
+)
+\mathrm{Cov}({\bm{x}}_{0})
+, but the heuristic gives
+Cov
+⁡
+(
+𝒙
+0
+∣
+𝒙
+T
+)
+≈
+σ
+T
+2
+≫
+Cov
+⁡
+(
+𝒙
+0
+)
+\mathrm{Cov}({\bm{x}}_{0}\mid{\bm{x}}_{T})\approx\sigma_{T}^{2}\gg\mathrm{Cov}({\bm{x}}_{0})
+. This mismatch at high noise was also observed empirically in
+Zhang et al. (2025)
+.
+Since
+DiME
+uses all time-marginals it is important to accurately estimate
+p
+⁡
+(
+𝒙
+0
+∣
+𝒙
+t
+)
+p({\bm{x}}_{0}\mid{\bm{x}}_{t})
+for all
+t
+t
+. Therefore, we include knowledge of
+p
+⁡
+(
+𝒙
+0
+)
+p({\bm{x}}_{0})
+by approximating it as
+Gaussian
+𝒩
+⁡
+(
+𝝁
+0
+,
+𝚺
+0
+)
+\mathcal{N}(\bm{\mu}_{0},\bm{\Sigma}_{0})
+,
+using an empirical covariance computed from the training data similar to the covariance approximation introduced in
+Linhart et al. (2024)
+.
+Introducing an approximate prior provides a more accurate representation of
+p
+⁡
+(
+𝒙
+0
+∣
+𝒙
+t
+)
+p({\bm{x}}_{0}\mid{\bm{x}}_{t})
+, which remains a Gaussian approximation as it is now the product of two Gaussians. The resulting covariance is given by:
+Lemma 1
+.
+Suppose we have diffusion process
+𝐱
+t
+=
+a
+t
+​
+𝐱
+0
++
+σ
+t
+​
+𝐳
+t
+,
+𝐳
+t
+∼
+𝒩
+⁡
+(
+0
+,
+𝐈
+)
+{\bm{x}}_{t}=a_{t}{\bm{x}}_{0}+\sigma_{t}{\bm{z}}_{t},{\bm{z}}_{t}\sim\mathcal{N}(0,{\bm{I}})
+. Let
+𝐱
+t
+∼
+p
+⁡
+(
+𝐱
+t
+)
+{\bm{x}}_{t}\sim p({\bm{x}}_{t})
+and suppose
+p
+⁡
+(
+𝐱
+0
+)
+≈
+𝒩
+⁡
+(
+𝛍
+0
+,
+𝚺
+0
+)
+p({\bm{x}}_{0})\approx\mathcal{N}(\bm{\mu}_{0},\bm{\Sigma}_{0})
+. Then we can express the posterior covariance
+𝚺
+𝐱
+0
+|
+𝐱
+t
+\bm{\Sigma}_{{\bm{x}}_{0}\mid{\bm{x}}_{t}}
+as
+𝚺
+𝒙
+0
+|
+𝒙
+t
+=
+[
+𝚺
+0
+−
+1
++
+a
+t
+2
+σ
+t
+2
+​
+𝑰
+]
+−
+1
+.
+\displaystyle\bm{\Sigma}_{{\bm{x}}_{0}\mid{\bm{x}}_{t}}=\left[\bm{\Sigma}_{0}^{-1}+\frac{a_{t}^{2}}{\sigma_{t}^{2}}{\bm{I}}\right]^{-1}.
+(10)
+For large images where computing a full covariance matrix is intractable, a diagonal approximation in a transform basis has also been demonstrated to work well
+(
+Peng et al., 2024
+)
+, and for linear inverse problems, an analytic local covariance is computable
+(
+Boys et al., 2023
+)
+. Our approximation aligns the annealing path more closely with
+p
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+p({\bm{x}}_{t}\mid{\bm{y}})
+for all
+t
+t
+.
+It is worth noting that DAPS re-samples at every annealing step, ensuring that these Gaussian approximation errors are never compounded. As shown in Sections
+4.1
+and
+4.3.1
+, using the proposed improved approximation leads to nearly unbiased evidence estimates for both a multimodal Gaussian toy example with varying local curvature as well as real-world scientific priors.
+3.2
+Estimating the squared likelihood score
+Figure 1:
+Visualization of the unbiased estimators
+Θ
+h
+​
+i
+​
+g
+​
+h
+,
+Θ
+l
+​
+o
+​
+w
+\Theta_{high},\Theta_{low}
+of the likelihood score
+∇
+𝒙
+t
+​
+log
+​
+p
+​
+(
+𝒚
+∣
+𝒙
+t
+)
+\nabla_{{\bm{x}}_{t}}\log p({\bm{y}}\mid{\bm{x}}_{t})
+described in Lemma
+2
+for both in-distribution (left) and out-of-distribution (right) measurements
+𝒚
+{\bm{y}}
+. At large diffusion time steps, the high noise estimator (top) uses the distance between
+𝒙
+~
+0
+\tilde{{\bm{x}}}_{0}
+and
+𝔼
+⁡
+[
+𝒙
+0
+∣
+𝒙
+t
+]
+\mathbb{E}[{\bm{x}}_{0}\mid{\bm{x}}_{t}]
+. At small diffusion time steps, the low noise estimator (bottom) uses the likelihood score at
+𝒙
+~
+0
+\tilde{{\bm{x}}}_{0}
+. The estimator is larger (longer arrows) when
+𝒚
+{\bm{y}}
+is out-of-distribution, as there greater KL divergence from the posterior to the prior; this results in
+DiME
+computing a lower evidence. Note the scaling factors
+a
+t
+σ
+t
+2
+\frac{a_{t}}{\sigma_{t}^{2}}
+and
+𝚺
+𝒙
+0
+|
+𝒙
+t
+\bm{\Sigma}_{{\bm{x}}_{0}\mid{\bm{x}}_{t}}
+of the estimator are not shown.
+While directly computing
+∇
+𝒙
+t
+​
+log
+​
+p
+​
+(
+𝒚
+∣
+𝒙
+t
+)
+\nabla_{{\bm{x}}_{t}}\log p({\bm{y}}\mid{\bm{x}}_{t})
+is intractable,
+DiME
+only requires an unbiased estimate as seen in Eq.
+9
+. Estimators using unconditional samples of
+𝒙
+0
+|
+𝒙
+t
+{\bm{x}}_{0}\mid{\bm{x}}_{t}
+are high-variance: these samples usually have low likelihood
+p
+⁡
+(
+𝒚
+∣
+𝒙
+0
+)
+p({\bm{y}}\mid{\bm{x}}_{0})
+resulting in volatile scores. Thankfully, DAPS provides samples of
+𝒙
+~
+0
+∼
+p
+⁡
+(
+𝒙
+0
+∣
+𝒙
+t
+,
+𝒚
+)
+\tilde{{\bm{x}}}_{0}\sim p({\bm{x}}_{0}\mid{\bm{x}}_{t},{\bm{y}})
+, which we can use to create estimators with lower variance:
+Lemma 2
+.
+Suppose we have diffusion process
+𝐱
+t
+=
+a
+t
+​
+𝐱
+0
++
+σ
+t
+​
+𝐳
+t
+,
+𝐳
+t
+∼
+𝒩
+⁡
+(
+0
+,
+𝐈
+)
+{\bm{x}}_{t}=a_{t}{\bm{x}}_{0}+\sigma_{t}{\bm{z}}_{t},{\bm{z}}_{t}\sim\mathcal{N}(0,{\bm{I}})
+and sample
+𝐱
+~
+0
+∼
+p
+⁡
+(
+𝐱
+0
+∣
+𝐱
+t
+,
+𝐲
+)
+\tilde{{\bm{x}}}_{0}\sim p({\bm{x}}_{0}\mid{\bm{x}}_{t},{\bm{y}})
+.
+Under the assumption that
+p
+⁡
+(
+𝐱
+0
+∣
+𝐱
+t
+)
+≈
+𝒩
+⁡
+(
+𝔼
+⁡
+[
+𝐱
+0
+∣
+𝐱
+t
+]
+,
+𝚺
+𝐱
+0
+|
+𝐱
+t
+)
+p({\bm{x}}_{0}\mid{\bm{x}}_{t})\approx\mathcal{N}(\mathbb{E}[{\bm{x}}_{0}\mid{\bm{x}}_{t}],\bm{\Sigma}_{{\bm{x}}_{0}\mid{\bm{x}}_{t}})
+,
+both
+Θ
+h
+​
+i
+​
+g
+​
+h
+​
+(
+𝐱
+~
+0
+)
+\Theta_{high}(\tilde{{\bm{x}}}_{0})
+and
+Θ
+l
+​
+o
+​
+w
+​
+(
+𝐱
+~
+0
+)
+\Theta_{low}(\tilde{{\bm{x}}}_{0})
+are unbiased estimators of
+∇
+𝐱
+t
+​
+log
+​
+p
+​
+(
+𝐲
+∣
+𝐱
+t
+)
+\nabla_{{\bm{x}}_{t}}\log p({\bm{y}}\mid{\bm{x}}_{t})
+with
+Θ
+h
+​
+i
+​
+g
+​
+h
+​
+(
+𝒙
+~
+0
+)
+\displaystyle\Theta_{high}(\tilde{{\bm{x}}}_{0})
+=
+a
+t
+σ
+t
+2
+​
+(
+𝒙
+~
+0
+−
+𝔼
+⁡
+[
+𝒙
+0
+∣
+𝒙
+t
+]
+)
+.
+\displaystyle=\frac{a_{t}}{\sigma_{t}^{2}}\left(\tilde{{\bm{x}}}_{0}-\mathbb{E}[{\bm{x}}_{0}\mid{\bm{x}}_{t}]\right).
+(11)
+Θ
+l
+​
+o
+​
+w
+​
+(
+𝒙
+~
+0
+)
+\displaystyle\Theta_{low}(\tilde{{\bm{x}}}_{0})
+=
+a
+t
+σ
+t
+2
+​
+(
+𝚺
+𝒙
+0
+|
+𝒙
+t
+​
+∇
+𝒙
+~
+0
+​
+log
+⁡
+p
+⁡
+(
+𝒚
+∣
+𝒙
+~
+0
+)
+)
+.
+\displaystyle=\frac{a_{t}}{\sigma_{t}^{2}}\left(\bm{\Sigma}_{{\bm{x}}_{0}\mid{\bm{x}}_{t}}\nabla_{\tilde{{\bm{x}}}_{0}}\log p({\bm{y}}\mid\tilde{{\bm{x}}}_{0})\right).
+(12)
+Under low diffusion noise
+(
+a
+t
+→
+1
+,
+σ
+t
+→
+0
+)
+(a_{t}\to 1,\sigma_{t}\to 0)
+,
+Var
+⁡
+(
+Θ
+l
+​
+o
+​
+w
+)
+→
+0
+\mathrm{Var}(\Theta_{low})\to 0
+but
+Var
+⁡
+(
+Θ
+h
+​
+i
+​
+g
+​
+h
+)
+=
+O
+⁡
+(
+1
+σ
+t
+2
+)
+\mathrm{Var}(\Theta_{high})=O(\frac{1}{\sigma_{t}^{2}})
+.
+Under high noise
+(
+a
+t
+→
+0
+,
+σ
+t
+→
+1
+)
+(a_{t}\to 0,\sigma_{t}\to 1)
+,
+Var
+⁡
+(
+Θ
+h
+​
+i
+​
+g
+​
+h
+)
+→
+0
+\mathrm{Var}(\Theta_{high})\to 0
+but
+Var
+⁡
+(
+Θ
+l
+​
+o
+​
+w
+)
+=
+O
+⁡
+(
+σ
+t
+4
+σ
+𝐲
+4
+​
+Var
+​
+(
+Θ
+h
+​
+i
+​
+g
+​
+h
+)
+)
+\mathrm{Var}(\Theta_{low})=O(\frac{\sigma_{t}^{4}}{\sigma_{\bm{y}}^{4}}\mathrm{Var}(\Theta_{high}))
+.
+A proof of these bounds is displayed in Appendix
+A.1
+. The lack of the measurement
+𝒚
+{\bm{y}}
+in the high noise estimator bounds the worst possible case, where the data is weak; when the measurement contains a lot of information, the variance would be much lower. As such,
+Θ
+h
+​
+i
+​
+g
+​
+h
+\Theta_{high}
+is used more towards the beginning of the sampling process
+while
+Θ
+l
+​
+o
+​
+w
+\Theta_{low}
+is used towards the end.
+As both estimators are cheap to compute, we can simply evaluate both and choose the lower variance estimator at each timestep.
+Finally, as we want an unbiased estimate of the
+squared
+likelihood score, squaring the estimator is biased:
+𝔼
+​
+‖
+Θ
+‖
+2
+=
+‖
+𝔼
+​
+Θ
+‖
+2
++
+Tr
+​
+(
+Cov
+⁡
+(
+Θ
+)
+)
+\mathbb{E}\|\Theta\|^{2}=\|\mathbb{E}\Theta\|^{2}+\text{Tr}(\mathrm{Cov}(\Theta))
+. Therefore, for each intermediate sample
+𝒙
+t
+{\bm{x}}_{t}
+, we propose to sample two i.i.d
+𝒙
+~
+0
+(
+1
+)
+,
+𝒙
+~
+0
+(
+2
+)
+∼
+p
+⁡
+(
+𝒙
+0
+∣
+𝒙
+t
+,
+𝒚
+)
+\tilde{{\bm{x}}}_{0}^{(1)},\tilde{{\bm{x}}}_{0}^{(2)}\sim p({\bm{x}}_{0}\mid{\bm{x}}_{t},{\bm{y}})
+, giving us the following unbiased estimator:
+Θ
+​
+(
+𝒙
+~
+0
+(
+1
+)
+)
+T
+​
+Θ
+​
+(
+𝒙
+~
+0
+(
+2
+)
+)
+\Theta(\tilde{{\bm{x}}}_{0}^{(1)})^{T}\Theta(\tilde{{\bm{x}}}_{0}^{(2)})
+. The full method is displayed in Algorithm
+1
+, and a visualization for both in-distribution and out-of-distribution measurements is visualized in Figure
+1
+.
+Algorithm 1
+One posterior sample-path of
+DiME
+implemented with DAPS
+0:
+Score-based model
+s
+θ
+s_{\theta}
+, measurement
+𝒚
+{\bm{y}}
+, noise schedule
+σ
+t
+\sigma_{t}
+,
+(
+t
+i
+)
+i
+∈
+{
+1
+,
+…
+,
+N
+}
+(t_{i})_{i\in\{1,\ldots,N\}}
+1:
+Sample
+𝒙
+t
+N
+∼
+𝒩
+⁡
+(
+0
+,
+σ
+t
+N
+2
+​
+𝑰
+)
+{\bm{x}}_{t_{N}}\sim\mathcal{N}(0,\sigma_{t_{N}}^{2}{\bm{I}})
+.
+2:
+Initialize the integral sum,
+f
+=
+0
+f=0
+.
+3:
+for
+i
+=
+N
+,
+N
+−
+1
+,
+…
+,
+1
+i=N,N-1,\ldots,1
+do
+4:
+Compute
+𝒙
+^
+=
+𝔼
+⁡
+[
+𝒙
+0
+∣
+𝒙
+t
+]
+\hat{{\bm{x}}}=\mathbb{E}[{\bm{x}}_{0}\mid{\bm{x}}_{t}]
+using Tweedie’s formula and
+s
+θ
+s_{\theta}
+.
+5:
+Sample
+𝒙
+~
+0
+(
+1
+)
+,
+𝒙
+~
+0
+(
+2
+)
+∼
+p
+⁡
+(
+𝒙
+0
+∣
+𝒙
+t
+i
+,
+𝒚
+)
+\tilde{{\bm{x}}}_{0}^{(1)},{\color[rgb]{0,0,1}\tilde{{\bm{x}}}_{0}^{(2)}}\sim p({\bm{x}}_{0}\mid{\bm{x}}_{t_{i}},{\bm{y}})
+using Langevin with
+p
+⁡
+(
+𝒙
+0
+∣
+𝒙
+t
+)
+=
+𝒩
+⁡
+(
+𝒙
+^
+,
+𝚺
+𝒙
+0
+|
+𝒙
+t
+)
+p({\bm{x}}_{0}\mid{\bm{x}}_{t})=\mathcal{N}(\hat{{\bm{x}}},\bm{\Sigma}_{{\bm{x}}_{0}\mid{\bm{x}}_{t}})
+.  (
+3.1
+)
+6:
+Sample
+𝒙
+t
+i
+−
+1
+∼
+𝒩
+⁡
+(
+a
+t
+i
+−
+1
+​
+𝒙
+~
+0
+(
+1
+)
+,
+σ
+t
+i
+−
+1
+2
+​
+I
+)
+{\bm{x}}_{t_{i-1}}\sim\mathcal{N}(a_{t_{i-1}}\tilde{{\bm{x}}}_{0}^{(1)},\,\sigma_{t_{i-1}}^{2}I)
+.
+7:
+f
+i
+=
+arg
+​
+min
+Θ
+∈
+{
+Θ
+low
+,
+Θ
+high
+}
+⁡
+Var
+⁡
+(
+Θ
+​
+(
+𝒙
+~
+0
+(
+1
+)
+)
+T
+​
+Θ
+​
+(
+𝒙
+~
+0
+(
+2
+)
+)
+)
+f_{i}=\operatorname{arg\,min}\limits_{\Theta\in\{\Theta_{\mathrm{low}},\Theta_{\mathrm{high}}\}}\mathrm{Var}(\Theta(\tilde{{\bm{x}}}_{0}^{(1)})^{T}\Theta(\tilde{{\bm{x}}}_{0}^{(2)}))
+computed using all sample-paths.
+(
+3.2
+)
+8:
+Update the integral sum
+f
+←
+f
++
+(
+t
+i
+−
+t
+i
+−
+1
+)
+​
+(
+σ
+t
+′
+​
+σ
+t
+−
+σ
+t
+2
+​
+a
+t
+′
+a
+t
+)
+​
+f
+i
+f\leftarrow f+(t_{i}-t_{i-1})\left(\sigma_{t}^{\prime}\sigma_{t}-\sigma_{t}^{2}\frac{a_{t}^{\prime}}{a_{t}}\right)f_{i}
+.
+9:
+end
+for
+10:
+return
+𝒙
+0
+{\bm{x}}_{0}
+,
+−
+f
++
+log
+⁡
+p
+⁡
+(
+𝒚
+∣
+𝒙
+0
+)
+-f+\log p({\bm{y}}\mid{\bm{x}}_{0})
+4
+Experiments
+We compare
+DiME
+and
+DiME-PnPDM
+with five baselines: naive Monte Carlo (Naive MC),
+thermodynamic integration (TI), annealed importance sampling (AIS), Sequential Monte Carlo (SMC), and the original DAPS covariance heuristic (Original DAPS heuristic). Baseline methods are described in Appendix
+C
+and all tuning and implementation details are provided in Appendix
+D
+.
+4.1
+Benchmarking on Gaussian Mixture Prior with Ground Truth Evidence
+In-distribution
+x
+∗
+{\bm{x}}^{*}
+Out-of-distribution
+x
+∗
+{\bm{x}}^{*}
+Saddle point
+x
+∗
+{\bm{x}}^{*}
+Estimate
+Rel. Error ↓
+Estimate
+Rel. Error ↓
+Estimate
+Rel. Error ↓
+Ground truth
+log
+⁡
+p
+⁡
+(
+y
+)
+\log p({\bm{y}})
+−
+128.7
+±
+0.0
+-128.7\pm 0.0
+0.0
+0.0
+−
+1680.2
+±
+0
+-1680.2\pm 0
+0.0
+0.0
+−
+251.3
+±
+0.0
+-251.3\pm 0.0
+0.0
+0.0
+Naive MC (1000 samples)
+−
+3283
+±
+130
+-3283\pm 130
+2451
+%
+2451\%
+−
+41289
+±
+577
+-41289\pm 577
+2357
+%
+2357\%
+−
+6029
+±
+170
+-6029\pm 170
+2299
+%
+2299\%
+Naive MC (10000 samples)
+−
+3041
+±
+113
+-3041\pm 113
+2263
+%
+2263\%
+−
+40123
+±
+487
+-40123\pm 487
+2288
+%
+2288\%
+−
+5666
+±
+144
+-5666\pm 144
+2155
+%
+2155\%
+Original DAPS heuristic
+−
+316.2
+±
+79.5
+-316.2\pm 79.5
+146
+%
+146\%
+−
+1735.4
+±
+4.7
+-1735.4\pm 4.7
+3.3
+%
+3.3\%
+−
+269.6
+±
+3.3
+-269.6\pm 3.3
+7.3
+%
+7.3\%
+TI
+−
+132.8
+±
+1.3
+-132.8\pm 1.3
+3.2
+%
+3.2\%
+−
+1773.8
+±
+11.8
+-1773.8\pm 11.8
+5.6
+%
+5.6\%
+−
+254.2
+±
+3.2
+-254.2\pm 3.2
+1.2
+%
+1.2\%
+AIS
+−
+135.9
+±
+2.5
+-135.9\pm 2.5
+5.6
+%
+5.6\%
+−
+1754.6
+±
+7.1
+-1754.6\pm 7.1
+4.4
+%
+4.4\%
+−
+259.1
+±
+2.9
+-259.1\pm 2.9
+3.1
+%
+3.1\%
+SMC
+−
+132.1
+±
+1.0
+-132.1\pm 1.0
+2.6
+%
+2.6\%
+−
+1701.1
+±
+5.8
+-1701.1\pm 5.8
+1.2
+%
+1.2\%
+−
+253.0
+±
+3.4
+-253.0\pm 3.4
+0.7
+%
+\mathbf{0.7\%}
+DiME
+−
+126.8
+±
+2.8
+-126.8\pm 2.8
+1.5
+%
+\mathbf{1.5\%}
+−
+1674.8
+±
+4.7
+-1674.8\pm 4.7
+0.3
+%
+\mathbf{0.3\%}
+−
+253.3
+±
+3.1
+-253.3\pm 3.1
+0.8
+%
+0.8\%
+DiME-PnPDM
+*
+−
+131.8
+±
+2.0
+-131.8\pm 2.0
+2.4
+%
+2.4\%
+−
+1912.1
+±
+6.5
+-1912.1\pm 6.5
+13.8
+%
+13.8\%
+−
+245.9
+±
+3.6
+-245.9\pm 3.6
+2.1
+%
+2.1\%
+Table 1:
+Evidence estimates on Mixture of Gaussians study with analytic
+log
+⁡
+p
+⁡
+(
+𝒚
+)
+\log p({\bm{y}})
+and ground truth
+𝒙
+∗
+{\bm{x}}^{*}
+in-distribution (top), out-of-distribution (middle), and at a saddle point (bottom). Mean and standard deviation of 50 trials displayed each with 20 sample paths.
+When the analytic prior score is available,
+DiME
+performs comparably to the baselines for all cases, while
+DiME-PnPDM
+performs well when the ground truth is roughly in-distribution.
+*Important:
+as
+DiME-PnPDM
+outputs an unnormalized estimate, we normalize via the analytic constant factor for ease of comparison.
+To verify
+DiME
+, we first test on a multimodal 1000-D Gaussian mixture prior and linear forward model
+𝒚
+=
+𝑨
+​
+𝒙
++
+𝜺
+,
+𝜺
+∼
+𝒩
+⁡
+(
+0
+,
+σ
+2
+​
+𝑰
+)
+{\bm{y}}={\bm{A}}{\bm{x}}+\bm{\varepsilon},\bm{\varepsilon}\sim\mathcal{N}(0,\sigma^{2}{\bm{I}})
+where the model evidence has an analytic form to compare to. We use two Gaussian components with means at
+(
+−
+0.75
+,
+0.75
+)
+(\bm{-0.75},\bm{0.75})
+and identical covariances of
+0.25
+​
+𝑰
+0.25{\bm{I}}
+. The entries of
+𝑨
+∈
+ℝ
+200
+×
+1000
+{\bm{A}}\in\mathbb{R}^{200\times 1000}
+are i.i.d.
+𝒩
+⁡
+(
+0
+,
+1
+200
+)
+\mathcal{N}(0,\frac{1}{200})
+, and
+σ
+=
+0.1
+\sigma=0.1
+. We run three experiments where the ground truth
+𝒙
+∗
+{\bm{x}}^{*}
+has varying model evidence to test the robustness of our method: in-distribution
+𝒙
+∗
+{\bm{x}}^{*}
+, out-of-distribution
+𝒙
+∗
+{\bm{x}}^{*}
+, and
+𝒙
+∗
+=
+0
+{\bm{x}}^{*}=0
+located at a saddle point. The analytic
+∇
+𝒙
+​
+log
+​
+p
+​
+(
+𝒙
+)
+\nabla_{\bm{x}}\log p({\bm{x}})
+is used to sample the intermediate distributions for TI, AIS, and SMC. In contrast, for
+DiME
+the analytic
+∇
+𝒙
+t
+​
+log
+​
+p
+​
+(
+𝒙
+t
+)
+\nabla_{{\bm{x}}_{t}}\log p({\bm{x}}_{t})
+is used
+to compute
+𝔼
+⁡
+[
+𝒙
+0
+∣
+𝒙
+t
+]
+\mathbb{E}[{\bm{x}}_{0}\mid{\bm{x}}_{t}]
+for
+σ
+t
+>
+0.05
+\sigma_{t}>0.05
+and the analytic score is never used.
+All methods are tested using 100 discretization steps (equivalently, annealing time steps for
+DiME
+) and 20 sample paths for 50 trials. The mean and standard deviation is reported.
+Results are displayed in Table
+1
+.
+DiME
+gives nearly unbiased estimates of the evidence in all cases, with comparable performance to the strongest baseline (SMC), despite never using the true prior score. To probe the effect of the covariance choice discussed in Sec.
+3.1
+, we first consider the case where
+𝒙
+∗
+{\bm{x}}^{*}
+lies within a prior mode (in-distribution). Here the original DAPS heuristic consistently overestimates the variance of the marginals, pushing posterior samples into the wrong mode and inducing a large bias in the evidence estimate. Even when
+𝒙
+∗
+{\bm{x}}^{*}
+is outside any single mode, the original heuristic continues to overestimate the evidence. In contrast, our improved covariance heuristic, incorporated in
+DiME
+, always generates samples from the correct mode and eliminates this bias, even when the true
+𝒙
+∗
+{\bm{x}}^{*}
+lies in regions of local curvature far from the unimodal Gaussian assumption.
+Unlike
+DiME
+,
+DiME-PnPDM
+only performs well for roughly in-distribution tasks. For out-of-distribution measurements
+𝒚
+{\bm{y}}
+, while the PnP-DM marginals asymptotically anneal to the correct posterior, we find that in the finite-step case this annealing path results in greater bias than DAPS.
+Because out-of-distribution measurements frequently arise in model selection, we conclude that PnP-DM is less well suited for this task.
+4.2
+Model Selection Using Learned Score on Non-convex Inverse Problems
+Figure 2:
+Model evidence confusion matrix for Gaussian phase retrieval (
+left
+) and Fourier phase retrieval (
+right
+) for each (ground truth measurement, model) pair of MNIST digits. Our method selects the correct model for all cases. Posterior samples shown for dotted matrix entries below. For Gaussian phase retrieval,
+DiME
+estimates higher model likelihood for visually similar digits, such as 4 and 9. For Fourier phase retrieval, both translations and reflections are invariances as seen in the posterior samples, so
+DiME
+estimates a high likelihood of model 9 given a measurement of a 6.
+We test both
+DiME
+and the SMC baseline on two non-convex inverse problems, Gaussian phase retrieval and Fourier phase retrieval. In Gaussian phase retrieval, the forward model is
+𝒚
+=
+|
+𝑨
+​
+𝒙
+|
++
+𝜺
+{\bm{y}}=|{\bm{A}}{\bm{x}}|+\bm{\varepsilon}
+, where
+𝑨
+∈
+ℂ
+m
+×
+n
+{\bm{A}}\in\mathbb{C}^{m\times n}
+consists of i.i.d Gaussian
+𝒩
+⁡
+(
+0
+,
+1
+m
+)
+\mathcal{N}(0,\frac{1}{m})
+and
+𝜺
+∼
+𝒩
+⁡
+(
+0
+,
+σ
+2
+​
+𝑰
+)
+\bm{\varepsilon}\sim\mathcal{N}(0,\sigma^{2}{\bm{I}})
+. In Fourier phase retrieval, the forward model is
+𝒚
+=
+|
+𝑭
+​
+𝒙
+|
++
+𝜺
+,
+𝜺
+∼
+𝒩
+⁡
+(
+0
+,
+σ
+2
+​
+𝑰
+)
+{\bm{y}}=|{\bm{F}}{\bm{x}}|+\bm{\varepsilon},\bm{\varepsilon}\sim\mathcal{N}(0,\sigma^{2}{\bm{I}})
+where
+𝑭
+{\bm{F}}
+is the discrete Fourier transform. In our experiments, we use
+m
+=
+0.1
+​
+n
+m=0.1n
+and
+σ
+=
+0.3
+\sigma=0.3
+. While Fourier phase retrieval has many more measurements, the structured forward operator means that both translation and flips of
+𝒙
+{\bm{x}}
+are invariances under the forward model. We test with ten diffusion model priors, one on each MNIST
+(
+Deng, 2012
+)
+digit, and compute the evidence for each prior given a measurement of each digit. For
+DiME
+, we use 50 annealing iterations and 20 generated sample-paths for each entry. For SMC, we use the learned
+∇
+𝒙
+​
+log
+​
+p
+​
+(
+𝒙
+t
+)
+\nabla_{{\bm{x}}}\log p({\bm{x}}_{t})
+as a surrogate prior score at different low noise levels.
+DiME
+results are shown in Figure
+2
+, and SMC results are displayed in Appendix
+E
+. For both inverse problems,
+DiME
+always selects the correct model given a single noisy measurement
+𝒚
+{\bm{y}}
+, while SMC often fails to do so, demonstrating that methods relying on a clean prior score are not suitable for diffusion-based model selection.
+For Gaussian phase retrieval,
+DiME
+predicts higher likelihoods of digits that look similar, such as 4 and 9 (Figure
+2
+, bottom left, third row). For Fourier phase retrieval,
+DiME
+predicts high evidence for the MNIST 9 prior when the ground truth image is a 6 (and vice versa), but as both vertical and horizontal flips are invariances under Fourier phase retrieval, performing these operations on a 6 results in a 9 (Figure
+2
+, bottom right, second row). The normalized evidence can also provide useful insights: as the MNIST digit 1 prior has higher evidence for in-distribution
+𝒚
+{\bm{y}}
+and lower evidence for out-of-distribution
+𝒚
+{\bm{y}}
+, it must be a narrower prior. On the other hand, the MNIST 3, 5 and 8 priors have higher out-of-distribution model evidence, suggesting that they are wider priors, likely due to the variation in which humans write these digits.
+4.3
+Evaluating Prior Model Evidence for Real M87* Black Hole Data
+In this section, we perform model selection and validation on real black hole M87* observations from April 6, 2017
+(
+EHTC, 2019a
+;
+EHTC, 2019b
+)
+. The need for such analysis was first emphasized during the release of the initial M87* images by the Event Horizon Telescope Collaboration
+(
+EHTC, 2019d
+)
+, where the goal was not only to reconstruct images but also to test which simple parametric models best matched the data—particularly whether a ring provided the most suitable description
+(
+EHTC, 2019d
+;
+Broderick et al., 2020
+)
+. In addition, the team directly compared the M87* data to a discrete set of synthetic black hole simulations (GRMHD) to assess which physical model parameters were most consistent with the observations
+(
+Fromm et al., 2019
+;
+EHTC, 2019d
+;
+EHTC, 2019c
+)
+. However, as noted in
+EHTC (2019d)
+, these conclusions are only valid to the extent that the selected simulations provide an adequate description of M87* – a question that can be answered by our proposed method.
+Measurements, known as
+visibilities
+, are obtained by combining signals collected by telescopes observing simultaneously at different locations around the world. The forward model for complex visibilities between two telescopes
+i
+i
+,
+j
+j
+is
+𝒗
+i
+,
+j
+=
+g
+i
+​
+g
+j
+​
+e
+i
+⁡
+(
+ϕ
+i
+−
+ϕ
+j
+)
+​
+𝒗
+i
+,
+j
+∗
++
+𝜺
+i
+,
+j
+{\bm{v}}_{i,j}=g_{i}g_{j}e^{i(\phi_{i}-\phi_{j})}{\bm{v}}_{i,j}^{*}+\bm{\varepsilon}_{i,j}
+, where
+𝒗
+i
+,
+j
+∗
+{\bm{v}}_{i,j}^{*}
+is the true visibilities measurements,
+g
+i
+g_{i}
+is a station-dependent gain error,
+ϕ
+i
+\phi_{i}
+is a station-dependent phase error arising from atmospheric noise and
+𝜺
+i
+,
+j
+\bm{\varepsilon}_{i,j}
+is Gaussian thermal noise. To become invariant to the phase error, we use the closure phase
+𝒚
+c
+​
+p
+=
+𝒗
+i
+,
+j
+​
+𝒗
+j
+,
+k
+​
+𝒗
+k
+,
+i
+{\bm{y}}_{cp}={\bm{v}}_{i,j}{\bm{v}}_{j,k}{\bm{v}}_{k,i}
+for a minimal set of 3 telescopes
+(
+i
+,
+j
+,
+k
+)
+(i,j,k)
+and for similar invariance to the gain error, we use the closure amplitude
+𝒚
+c
+​
+a
+=
+𝒗
+i
+,
+j
+​
+𝒗
+k
+,
+l
+𝒗
+i
+,
+k
+​
+𝒗
+j
+,
+l
+{\bm{y}}_{ca}=\frac{{\bm{v}}_{i,j}{\bm{v}}_{k,l}}{{\bm{v}}_{i,k}{\bm{v}}_{j,l}}
+for a minimal set of 4 telescopes
+(
+i
+,
+j
+,
+k
+,
+l
+)
+(i,j,k,l)
+(
+Thompson et al., 2017
+;
+Blackburn et al., 2020
+)
+. We use the InverseBench
+(
+Zheng et al., 2025
+)
+library to compute the likelihood. We generate 20 posterior samples using 50 annealing steps and 1000 Langevin dynamics steps per iteration. Gaussian approximation DAPS takes around 4 minutes to compute, while exact DAPS takes around 30 minutes to compute for the same parameters, a speedup of around 7x.
+Figure 3:
+Model evidence estimates on real M87* observations across 5 different priors using exact DAPS (
+left
+) and Gaussian approximation DAPS (
+right
+). Our method concludes that, of these prior models, GRMHD is the most likely model. The violin plots show the distribution of evidences from 20 different posterior-sample paths from the DAPS sampling process, and the mean is the overall evidence estimate. Gaussian approximation DAPS gives highly accurate evidence estimates with 7x less compute than exact DAPS, but with slightly higher variance.
+Figure 4:
+M87* reconstructions using the 5 priors using exact DAPS (
+left
+) and Gaussian approximation DAPS (
+middle
+). While all posterior samples have a data fit of around reduced
+χ
+2
+≈
+1
+\chi^{2}\approx 1
+, they have varying path evidence estimates (shown in the top left of each image), which are negatively proportional to the KL divergence between that posterior sample and the prior.
+Right:
+Example unconditional samples from each prior.
+4.3.1
+Model selection
+We trained five candidate diffusion priors: (1) on 48000 General-Relativistic Magnetohydrodynamic (GRMHD) simulations
+(
+Mizuno, 2022
+)
+, (2) on 9070 Radiatively Inefficient Accretion Flow (RIAF) simulations
+(
+Broderick et al., 2011
+)
+, (3) on 11000 general space images (SpaceNet)
+(
+Alam et al., 2024
+)
+, (4) on 5923 MNIST
+(
+Deng, 2012
+)
+digit 0 images, and (5) on 48000 radially tapered CelebA
+Liu et al. (2015)
+images (Faces). Additionally, we augment our data during training to improve generality and robustness of our priors. The GRMHD images are randomly flipped horizontally and/or vertically and zoomed in and out in the range
+[
+0.75
+,
+1.25
+]
+[0.75,1.25]
+. The RIAF images were randomly flipped, zoomed in and out in the range
+[
+0.75
+,
+1.25
+]
+[0.75,1.25]
+, and rotated uniformly in the range
+[
+0
+,
+2
+​
+π
+]
+[0,2\pi]
+. The MNIST digit 0 images were zoomed in and out in the range
+[
+0.5
+,
+1
+]
+[0.5,1]
+.
+Model selection results for the real M87* data can be seen in Figure
+3
+. The mean reconstruction and posterior samples with the minimum, mean and maximum evidence (negatively proportional to KL divergence to prior) are shown on in Figure
+4
+. Synthetic tests validating the method on this problem are shown in Appendix
+F
+.
+DiME
+determines that, for static imaging, GRMHD is the most likely prior for the M87* observations, followed by SpaceNet, Faces, MNIST, and finally RIAF. While SpaceNet contains a few black hole images in its training data, our method penalizes it for being too general, as demonstrated with its wide range of unconditional samples (Figure
+3
+, right, second row). The RIAF model is a very narrow prior that enforces a strong assumption on the structure of black holes, so any out-of-distribution images (such as M87* as determined by our method) will have low likelihood. We also find that Gaussian approximation DAPS gives nearly identical estimates as exact DAPS with 7x less compute.
+4.3.2
+Model validation
+Figure 5:
+Left:
+GRMHD model validation results on M87* observations by comparing to evidence of in-distribution measurements
+𝒚
+{\bm{y}}
+. Our method shows that the evidence of M87* observations have a
+z
+z
+-score of about -0.81 compared to the evidence distribution of GRMHD measurements, indicating that M87* is statistically in-distribution of GRMHD. The evidence of simulated measurements of out-of-distribution images are also shown, demonstrating that measurements from out-of-distribution (OOD) images have OOD evidence.
+Right:
+Mean reconstruction and posterior samples of the OOD images with the highest and lowest distance to the GRMHD prior. The blurred ground truth image, or the maximum resolution that can be obtained from measurements, is also displayed.
+We also diagnose the validity of the GRMHD model for static imaging of the M87* observations by computing the evidence
+log
+⁡
+p
+⁡
+(
+𝒚
+)
+\log p({\bm{y}})
+. We simulated measurements from 100 GRMHD test images using the same forward model as the EHT observations of M87*, and then computed the evidence for these measurements. Under a central limit theorem argument, we can approximate this distribution as Gaussian. We then compared the evidence of the true M87* observation to this Gaussian as well as the evidence of out-of-distribution measurements under the same forward model to assess if the GRMHD prior is valid for M87*.
+Results are shown in Figure
+5
+. The fitted Gaussian has
+μ
+=
+250.71
+\mu=250.71
+and
+σ
+=
+23.86
+\sigma=23.86
+. M87* has an evidence of 231.46, giving it a z-score of -0.81 and p-value of 0.209 with respect to the previous Gaussian fit. Therefore, M87* likely lies within the support of the GRMHD image prior, offering credence to our current physical model of black holes through the images it produces, while still leaving open the possibility of an improved model. On the other hand, the morphed GRMHD image has evidence 210.37, giving it a z-score of -1.69 and p-value of 0.046, suggesting that it is not in the true GRMHD distribution. The apple, RIAF, and pigeon images have even lower evidences of 176.52, 150.41, and 74.68 respectively and are all considered out-of-distribution.
+5
+Conclusion
+We introduce
+DiME
+, a method that estimates the Bayesian model evidence when solving inverse problems using diffusion model priors.
+DiME
+computes the KL divergence between the posterior and prior by integrating along posterior time-marginals, a task made easy by using the intermediate samples of recent diffusion posterior sampling methods. Empirically,
+DiME
+outperforms all baseline methods and we demonstrate how
+DiME
+can be used on a real-world black hole imaging problem. Altogether,
+DiME
+makes it possible to harness diffusion priors not only for reconstruction but also for principled model selection and validation, laying the foundation for more reliable inference in scientific imaging.
+Ethics statement
+Our method is a statistical estimator and can occasionally select the incorrect model, potentially leading to incorrect conclusions. Furthermore, while it could in principle be applied to sensitive characteristics (e.g., facial recognition), we do not support its use in this context.
+Reproducibility statement
+All code and trained models will be made available. All mathematical derivations are detailed in the appendix. The MNIST dataset is available through torchvision
+(
+Marcel and Rodriguez, 2010
+)
+, the CelebA dataset is available at https://mmlab.ie.cuhk.edu.hk/projects/CelebA.html, and the SpaceNet dataset is available at https://www.kaggle.com/datasets/razaimam45/spacenet-an-optimally-distributed-astronomy-data/. The RIAF and GRMHD datasets are not currently available for public use.
+Acknowledgments
+This work was supported by NSF Award 2048237, an Amazon AI4Science Discovery Award, OpenAI, and a Sloan Research Fellowship. FW is supported by a Kortschak Fellowship. The authors would like to thank Angela Gao for helpful discussions.
+References
+Alam
+et al.
+(2024)
+M. T. Alam, R. Imam, M. Guizani, and F. Karray
+FLARE up your data: diffusion-based augmentation method in astronomical imaging
+.
+External Links:
+2405.13267
+Cited by:
+§1
+,
+§4.3.1
+.
+Blackburn
+et al.
+(2020)
+L. Blackburn, D. W. Pesce, M. D. Johnson, M. Wielgus, A. A. Chael, P. Christian, and S. S. Doeleman
+Closure statistics in interferometric data
+.
+The Astrophysical Journal
+894
+(
+1
+),
+pp. 31
+.
+Cited by:
+§4.3
+.
+Boys
+et al.
+(2023)
+B. Boys, M. Girolami, J. Pidstrigach, S. Reich, A. Mosca, and O. D. Akyildiz
+Tweedie moment projected diffusions for inverse problems
+.
+arXiv preprint arXiv:2310.06721
+.
+Cited by:
+§3.1
+.
+Broderick
+et al.
+(2011)
+A. E. Broderick, V. L. Fish, S. S. Doeleman, and A. Loeb
+Evidence for low black hole spin and physically motivated accretion models from millimeter-vlbi observations of sagittarius a
+.
+The Astrophysical Journal
+735
+(
+2
+),
+pp. 110
+.
+Cited by:
+§1
+,
+§4.3.1
+.
+Broderick
+et al.
+(2020)
+A. E. Broderick, R. Gold, M. Karami, J. A. Preciado-Lopez, P. Tiede, H. Pu,
+et al.
+THEMIS: a parameter estimation framework for the event horizon telescope
+.
+The Astrophysical Journal
+897
+(
+2
+),
+pp. 139
+.
+Cited by:
+§4.3
+.
+Cai
+et al.
+(2022)
+X. Cai, J. D. McEwen, and M. Pereyra
+Proximal nested sampling for high-dimensional bayesian model selection
+.
+Statistics and Computing
+32
+(
+5
+),
+pp. 87
+.
+Cited by:
+§1
+,
+§2.3
+.
+Cardoso
+et al.
+(2023)
+G. Cardoso, Y. J. E. Idrissi, S. L. Corff, and E. Moulines
+Monte carlo guided diffusion for bayesian linear inverse problems
+.
+arXiv preprint arXiv:2308.07983
+.
+Cited by:
+§2.2
+.
+Chen
+et al.
+(2024)
+J. Chen, L. Richter, J. Berner, D. Blessing, G. Neumann, and A. Anandkumar
+Sequential controlled langevin diffusions
+.
+arXiv preprint arXiv:2412.07081
+.
+Cited by:
+§1
+.
+Chung
+et al.
+(2022)
+H. Chung, J. Kim, M. T. Mccann, M. L. Klasky, and J. C. Ye
+Diffusion posterior sampling for general noisy inverse problems
+.
+arXiv preprint arXiv:2209.14687
+.
+Cited by:
+§1
+.
+Del Moral
+et al.
+(2006)
+P. Del Moral, A. Doucet, and A. Jasra
+Sequential monte carlo samplers
+.
+Journal of the Royal Statistical Society Series B: Statistical Methodology
+68
+(
+3
+),
+pp. 411–436
+.
+Cited by:
+Appendix C
+,
+§1
+,
+§2.3
+.
+Deng (2012)
+L. Deng
+The mnist database of handwritten digit images for machine learning research [best of the web]
+.
+IEEE signal processing magazine
+29
+(
+6
+),
+pp. 141–142
+.
+Cited by:
+§1
+,
+§4.2
+,
+§4.3.1
+.
+Doucet
+et al.
+(2022)
+A. Doucet, W. Grathwohl, A. G. Matthews, and H. Strathmann
+Score-based diffusion meets annealed importance sampling
+.
+Advances in Neural Information Processing Systems
+35
+,
+pp. 21482–21494
+.
+Cited by:
+§1
+.
+Efron (2011)
+B. Efron
+Tweedie’s formula and selection bias
+.
+Journal of the American Statistical Association
+106
+(
+496
+),
+pp. 1602–1614
+.
+Cited by:
+§2.1
+.
+EHTC (2019a)
+EHTC
+First m87 event horizon telescope results. i. the shadow of the supermassive black hole
+.
+arXiv preprint arXiv:1906.11238
+.
+Cited by:
+§1
+,
+§4.3
+.
+EHTC (2019b)
+EHTC
+First m87 event horizon telescope results. iv. imaging the central supermassive black hole
+.
+arXiv preprint arXiv:1906.11241
+.
+Cited by:
+§1
+,
+§4.3
+.
+EHTC (2019c)
+EHTC
+First m87 event horizon telescope results. v. physical origin of the asymmetric ring
+.
+arXiv preprint arXiv:1906.11242
+.
+Cited by:
+§4.3
+.
+EHTC (2019d)
+EHTC
+First m87 event horizon telescope results. vi. the shadow and mass of the central black hole
+.
+The Astrophysical Journal Letters
+875
+(
+1
+),
+pp. L6
+.
+Cited by:
+§4.3
+.
+Feng
+et al.
+(2024)
+B. T. Feng, K. L. Bouman, and W. T. Freeman
+Event-horizon-scale imaging of m87* under different assumptions via deep generative image priors
+.
+The Astrophysical Journal
+975
+(
+2
+),
+pp. 201
+.
+Cited by:
+§1
+.
+Fromm
+et al.
+(2019)
+C. Fromm, Z. Younsi, A. Baczko, Y. Mizuno, O. Porth, M. Perucho, H. Olivares, A. Nathanail, E. Angelakis, E. Ros,
+et al.
+Using evolutionary algorithms to model relativistic jets-application to ngc 1052
+.
+Astronomy & Astrophysics
+629
+,
+pp. A4
+.
+Cited by:
+§4.3
+.
+Guo
+et al.
+(2025)
+W. Guo, M. Tao, and Y. Chen
+Complexity analysis of normalizing constant estimation: from jarzynski equality to annealed importance sampling and beyond
+.
+arXiv preprint arXiv:2502.04575
+.
+Cited by:
+§2.3
+.
+Ho
+et al.
+(2020)
+J. Ho, A. Jain, and P. Abbeel
+Denoising diffusion probabilistic models
+.
+Advances in neural information processing systems
+33
+,
+pp. 6840–6851
+.
+Cited by:
+§1
+.
+Huang
+et al.
+(2023)
+X. Huang, H. Dong, Y. Hao, Y. Ma, and T. Zhang
+Reverse diffusion monte carlo
+.
+arXiv preprint arXiv:2307.02037
+.
+Cited by:
+§2.3
+.
+Jalal
+et al.
+(2021)
+A. Jalal, M. Arvinte, G. Daras, E. Price, A. G. Dimakis, and J. Tamir
+Robust compressed sensing mri with deep generative priors
+.
+Advances in neural information processing systems
+34
+,
+pp. 14938–14954
+.
+Cited by:
+§1
+.
+Lartillot and Philippe (2006)
+N. Lartillot and H. Philippe
+Computing bayes factors using thermodynamic integration
+.
+Systematic biology
+55
+(
+2
+),
+pp. 195–207
+.
+Cited by:
+Appendix C
+,
+§2.3
+.
+Li
+et al.
+(2024)
+X. Li, S. M. Kwon, S. Liang, I. R. Alkhouri, S. Ravishankar, and Q. Qu
+Decoupled data consistency with diffusion purification for image restoration
+.
+arXiv preprint arXiv:2403.06054
+.
+Cited by:
+§1
+.
+Linhart
+et al.
+(2024)
+J. Linhart, G. V. Cardoso, A. Gramfort, S. L. Corff, and P. L. Rodrigues
+Diffusion posterior sampling for simulation-based inference in tall data settings
+.
+arXiv preprint arXiv:2404.07593
+.
+Cited by:
+§3.1
+.
+Liu
+et al.
+(2015)
+Z. Liu, P. Luo, X. Wang, and X. Tang
+Deep learning face attributes in the wild
+.
+In
+Proceedings of International Conference on Computer Vision (ICCV)
+,
+Cited by:
+§1
+,
+§4.3.1
+.
+Marcel and Rodriguez (2010)
+S. Marcel and Y. Rodriguez
+Torchvision the machine-vision package of torch
+.
+In
+Proceedings of the 18th ACM international conference on Multimedia
+,
+pp. 1485–1488
+.
+Cited by:
+§5
+.
+Mardani
+et al.
+(2023)
+M. Mardani, J. Song, J. Kautz, and A. Vahdat
+A variational perspective on solving inverse problems with diffusion models
+.
+arXiv preprint arXiv:2305.04391
+.
+Cited by:
+§1
+.
+McEwen
+et al.
+(2021)
+J. D. McEwen, C. G. Wallis, M. A. Price, and A. S. Mancini
+Machine learning assisted bayesian model comparison: learnt harmonic mean estimator
+.
+arXiv preprint arXiv:2111.12720
+.
+Cited by:
+§1
+,
+§2.3
+.
+Mizuno (2022)
+Y. Mizuno
+GRMHD simulations and modeling for jet formation and acceleration region in agns
+.
+Universe
+8
+(
+2
+),
+pp. 85
+.
+Cited by:
+§1
+,
+§4.3.1
+.
+Moufad
+et al.
+(2024)
+B. Moufad, Y. Janati, L. Bedin, A. Durmus, R. Douc, E. Moulines, and J. Olsson
+Variational diffusion posterior sampling with midpoint guidance
+.
+arXiv preprint arXiv:2410.09945
+.
+Cited by:
+§2.2
+.
+Neal (2001)
+R. M. Neal
+Annealed importance sampling
+.
+Statistics and computing
+11
+(
+2
+),
+pp. 125–139
+.
+Cited by:
+Appendix C
+,
+§1
+,
+§2.3
+.
+Newton and Raftery (1994)
+M. A. Newton and A. E. Raftery
+Approximate bayesian inference with the weighted likelihood bootstrap
+.
+Journal of the Royal Statistical Society Series B: Statistical Methodology
+56
+(
+1
+),
+pp. 3–26
+.
+Cited by:
+§1
+,
+§2.3
+.
+Peng
+et al.
+(2024)
+X. Peng, Z. Zheng, W. Dai, N. Xiao, C. Li, J. Zou, and H. Xiong
+Improving diffusion models for inverse problems using optimal posterior covariance
+.
+arXiv preprint arXiv:2402.02149
+.
+Cited by:
+§3.1
+.
+Polanska
+et al.
+(2023)
+A. Polanska, M. A. Price, A. Spurio Mancini, and J. D. McEwen
+Learned harmonic mean estimation of the marginal likelihood with normalizing flows
+.
+In
+Physical sciences forum
+,
+Vol.
+9
+,
+pp. 10
+.
+Cited by:
+§1
+,
+§2.3
+.
+Skilling (2006)
+J. Skilling
+Nested sampling for general bayesian computation
+.
+Cited by:
+§1
+,
+§2.3
+.
+Skreta
+et al.
+(2024)
+M. Skreta, L. Atanackovic, A. J. Bose, A. Tong, and K. Neklyudov
+The superposition of diffusion models using the it
+\
+\backslash
+ˆ o density estimator
+.
+arXiv preprint arXiv:2412.17762
+.
+Cited by:
+§1
+.
+Song
+et al.
+(2023)
+J. Song, A. Vahdat, M. Mardani, and J. Kautz
+Pseudoinverse-guided diffusion models for inverse problems
+.
+In
+International Conference on Learning Representations
+,
+Cited by:
+§1
+.
+Song
+et al.
+(2021a)
+Y. Song, C. Durkan, I. Murray, and S. Ermon
+Maximum likelihood training of score-based diffusion models
+.
+Advances in neural information processing systems
+34
+,
+pp. 1415–1428
+.
+Cited by:
+Appendix A
+.
+Song
+et al.
+(2021b)
+Y. Song, L. Shen, L. Xing, and S. Ermon
+Solving inverse problems in medical imaging with score-based generative models
+.
+arXiv preprint arXiv:2111.08005
+.
+Cited by:
+§1
+.
+Song
+et al.
+(2020)
+Y. Song, J. Sohl-Dickstein, D. P. Kingma, A. Kumar, S. Ermon, and B. Poole
+Score-based generative modeling through stochastic differential equations
+.
+arXiv preprint arXiv:2011.13456
+.
+Cited by:
+§1
+.
+Spurio Mancini
+et al.
+(2023)
+A. Spurio Mancini, M. Docherty, M. Price, and J. McEwen
+Bayesian model comparison for simulation-based inference
+.
+RAS Techniques and Instruments
+2
+(
+1
+),
+pp. 710–722
+.
+Cited by:
+§1
+,
+§2.3
+.
+Stuart (2010)
+A. M. Stuart
+Inverse problems: a bayesian perspective
+.
+Acta numerica
+19
+,
+pp. 451–559
+.
+Cited by:
+§1
+.
+Thompson
+et al.
+(2017)
+A. R. Thompson, J. M. Moran, and G. W. Swenson
+Interferometry and synthesis in radio astronomy
+.
+Springer Nature
+.
+Cited by:
+§4.3
+.
+Trotta (2007)
+R. Trotta
+Applications of bayesian model selection to cosmological parameters
+.
+Monthly Notices of the Royal Astronomical Society
+378
+(
+1
+),
+pp. 72–82
+.
+Cited by:
+§1
+.
+Vono
+et al.
+(2019)
+M. Vono, N. Dobigeon, and P. Chainais
+Split-and-augmented gibbs sampler—application to large-scale inference problems
+.
+IEEE Transactions on Signal Processing
+67
+(
+6
+),
+pp. 1648–1661
+.
+Cited by:
+§2.2
+.
+Wu
+et al.
+(2023)
+L. Wu, B. Trippe, C. Naesseth, D. Blei, and J. P. Cunningham
+Practical and asymptotically exact conditional sampling in diffusion models
+.
+Advances in Neural Information Processing Systems
+36
+,
+pp. 31372–31403
+.
+Cited by:
+§B.1
+,
+§2.2
+.
+Wu
+et al.
+(2024)
+Z. Wu, Y. Sun, Y. Chen, B. Zhang, Y. Yue, and K. Bouman
+Principled probabilistic imaging using diffusion models as plug-and-play priors
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 118389–118427
+.
+Cited by:
+§1
+,
+§2.2
+,
+§2.2
+.
+Zhang
+et al.
+(2025)
+B. Zhang, W. Chu, J. Berner, C. Meng, A. Anandkumar, and Y. Song
+Improving diffusion inverse problem solving with decoupled noise annealing
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 20895–20905
+.
+Cited by:
+§D.1
+,
+§D.1
+,
+§1
+,
+§2.2
+,
+§2.2
+,
+§2.2
+,
+§3.1
+.
+Zheng
+et al.
+(2025)
+H. Zheng, W. Chu, B. Zhang, Z. Wu, A. Wang, B. T. Feng, C. Zou, Y. Sun, N. Kovachki, Z. E. Ross,
+et al.
+Inversebench: benchmarking plug-and-play diffusion priors for inverse problems in physical sciences
+.
+arXiv preprint arXiv:2503.11043
+.
+Cited by:
+§2.2
+,
+§4.3
+.
+Zhu
+et al.
+(2023)
+Y. Zhu, K. Zhang, J. Liang, J. Cao, B. Wen, R. Timofte, and L. Van Gool
+Denoising diffusion models for plug-and-play image restoration
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 1219–1229
+.
+Cited by:
+§1
+,
+§2.2
+.
+Appendix A
+Proofs
+Although the main text uses the diffusion SDE formulation, we introduce the Probability Flow ODE (PF-ODE) for the proofs and for Appendix
+B
+. This ODE has identical marginals as the SDE under ideal conditions. Given diffusion process
+𝒙
+t
+=
+a
+t
+​
+𝒙
+0
++
+σ
+t
+​
+𝒛
+t
+,
+𝒛
+t
+∼
+𝒩
+⁡
+(
+0
+,
+𝑰
+)
+{\bm{x}}_{t}=a_{t}{\bm{x}}_{0}+\sigma_{t}{\bm{z}}_{t},{\bm{z}}_{t}\sim\mathcal{N}(0,{\bm{I}})
+, the PF-ODE is:
+d
+​
+𝒙
+t
+=
+[
+a
+t
+′
+a
+t
+​
+𝒙
+t
+−
+(
+σ
+t
+​
+σ
+t
+′
+−
+a
+t
+′
+a
+t
+​
+σ
+t
+2
+)
+​
+∇
+𝒙
+t
+​
+log
+⁡
+p
+⁡
+(
+𝒙
+t
+)
+]
+​
+d
+​
+t
+=
+𝒗
+p
+​
+(
+𝒙
+t
+)
+​
+d
+​
+t
+\displaystyle d{\bm{x}}_{t}\;=\;\Big[\frac{a_{t}^{\prime}}{a_{t}}\,{\bm{x}}_{t}\;-\;\left(\sigma_{t}\sigma_{t}^{\prime}-\frac{a_{t}^{\prime}}{a_{t}}\sigma_{t}^{2}\right)\nabla_{{\bm{x}}_{t}}\log p({\bm{x}}_{t})\Big]\,dt={\bm{v}}_{p}({\bm{x}}_{t})\,dt
+(13)
+where
+𝒗
+p
+​
+(
+𝒙
+t
+)
+{\bm{v}}_{p}({\bm{x}}_{t})
+is the unconditional flow. The conditional flow
+𝒗
+p
+​
+(
+𝒙
+t
+∣
+𝒚
+)
+{\bm{v}}_{p}({\bm{x}}_{t}\mid{\bm{y}})
+can be derived via Bayes:
+𝒗
+p
+​
+(
+𝒙
+t
+∣
+𝒚
+)
+\displaystyle{\bm{v}}_{p}({\bm{x}}_{t}\mid{\bm{y}})
+=
+a
+t
+′
+a
+t
+​
+𝒙
+t
+−
+(
+σ
+t
+​
+σ
+t
+′
+−
+a
+t
+′
+a
+t
+​
+σ
+t
+2
+)
+​
+∇
+𝒙
+t
+​
+log
+⁡
+p
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+\displaystyle=\frac{a_{t}^{\prime}}{a_{t}}\,{\bm{x}}_{t}\;-\;\left(\sigma_{t}\sigma_{t}^{\prime}-\frac{a_{t}^{\prime}}{a_{t}}\sigma_{t}^{2}\right)\nabla_{{\bm{x}}_{t}}\log p({\bm{x}}_{t}\mid{\bm{y}})
+(14)
+=
+𝒗
+p
+​
+(
+𝒙
+t
+)
+−
+(
+σ
+t
+′
+​
+σ
+t
+−
+σ
+t
+2
+​
+a
+t
+′
+a
+t
+)
+​
+∇
+𝒙
+t
+​
+log
+⁡
+p
+⁡
+(
+𝒚
+∣
+𝒙
+t
+)
+.
+\displaystyle={\bm{v}}_{p}({\bm{x}}_{t})-\left(\sigma_{t}^{\prime}\sigma_{t}-\sigma_{t}^{2}\frac{a_{t}^{\prime}}{a_{t}}\right)\nabla_{{\bm{x}}_{t}}\log p({\bm{y}}\mid{\bm{x}}_{t}).
+(15)
+For the following proof, we impose the regularity and smoothness assumptions listed in Appendix A of
+Song et al. (2021a)
+for both the prior marginals
+p
+⁡
+(
+𝒙
+t
+)
+p({\bm{x}}_{t})
+and the posterior marginals
+π
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+\pi({\bm{x}}_{t}\mid{\bm{y}})
+.
+Lemma 3
+.
+Let
+p
+⁡
+(
+𝐱
+t
+)
+p({\bm{x}}_{t})
+be the unconditional diffusion marginal and
+π
+⁡
+(
+𝐱
+t
+∣
+𝐲
+)
+∝
+p
+⁡
+(
+𝐱
+t
+)
+​
+π
+​
+(
+𝐲
+∣
+𝐱
+t
+)
+\pi({\bm{x}}_{t}\mid{\bm{y}})\propto p({\bm{x}}_{t})\pi({\bm{y}}\mid{\bm{x}}_{t})
+be a posterior time-marginal obtained at diffusion timestep
+t
+t
+. Denote
+𝐯
+p
+​
+(
+𝐱
+t
+)
+{\bm{v}}_{p}({\bm{x}}_{t})
+and
+𝐯
+π
+​
+(
+𝐱
+t
+∣
+𝐲
+)
+{\bm{v}}_{\pi}({\bm{x}}_{t}\mid{\bm{y}})
+as their corresponding velocity vector fields.
+We have the following identity:
+d
+d
+​
+t
+D
+KL
+(
+π
+(
+𝒙
+t
+∣
+𝒚
+)
+∥
+p
+(
+𝒙
+t
+)
+)
+\displaystyle\frac{\mathrm{d}}{\mathrm{d}t}D_{\mathrm{KL}}(\pi({\bm{x}}_{t}\mid{\bm{y}})\|p({\bm{x}}_{t}))
+=
+𝔼
+𝒙
+t
+∼
+π
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+​
+[
+(
+𝒗
+π
+​
+(
+𝒙
+t
+∣
+𝒚
+)
+−
+𝒗
+p
+​
+(
+𝒙
+t
+)
+)
+T
+​
+∇
+𝒙
+t
+​
+log
+⁡
+π
+⁡
+(
+𝒚
+∣
+𝒙
+t
+)
+]
+.
+\displaystyle=\mathbb{E}_{{\bm{x}}_{t}\sim\pi({\bm{x}}_{t}\mid{\bm{y}})}\left[\left({\bm{v}}_{\pi}({\bm{x}}_{t}\mid{\bm{y}})-{\bm{v}}_{p}({\bm{x}}_{t})\right)^{T}\nabla_{{\bm{x}}_{t}}\log\pi({\bm{y}}\mid{\bm{x}}_{t})\right].
+(16)
+Proof.
+Simplifying the derivative gives:
+d
+d
+​
+t
+D
+KL
+(
+π
+(
+𝒙
+t
+∣
+𝒚
+)
+∥
+p
+(
+𝒙
+t
+)
+)
+\displaystyle\frac{\mathrm{d}}{\mathrm{d}t}D_{\mathrm{KL}}(\pi({\bm{x}}_{t}\mid{\bm{y}})\|p({\bm{x}}_{t}))
+=
+d
+d
+​
+t
+​
+∫
+π
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+​
+[
+log
+⁡
+π
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+−
+log
+⁡
+p
+⁡
+(
+𝒙
+t
+)
+]
+​
+d
+​
+𝒙
+t
+\displaystyle=\frac{\mathrm{d}}{\mathrm{d}t}\int\pi({\bm{x}}_{t}\mid{\bm{y}})\left[\log\pi({\bm{x}}_{t}\mid{\bm{y}})-\log p({\bm{x}}_{t})\right]d{\bm{x}}_{t}
+=
+∫
+[
+d
+d
+​
+t
+​
+π
+​
+(
+𝒙
+t
+∣
+𝒚
+)
+]
+​
+[
+log
+⁡
+π
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+−
+log
+⁡
+p
+⁡
+(
+𝒙
+t
+)
+]
+​
+d
+​
+𝒙
+t
+\displaystyle=\int\left[\frac{\mathrm{d}}{\mathrm{d}t}\pi({\bm{x}}_{t}\mid{\bm{y}})\right]\left[\log\pi({\bm{x}}_{t}\mid{\bm{y}})-\log p({\bm{x}}_{t})\right]d{\bm{x}}_{t}
++
+∫
+π
+(
+𝒙
+t
+∣
+𝒚
+)
+d
+d
+​
+t
+[
+log
+π
+(
+𝒙
+t
+∣
+𝒚
+)
+−
+log
+p
+(
+𝒙
+t
+)
+]
+d
+𝒙
+t
+.
+\displaystyle\quad+\int\pi({\bm{x}}_{t}\mid{\bm{y}})\frac{\mathrm{d}}{\mathrm{d}t}\left[\log\pi({\bm{x}}_{t}\mid{\bm{y}})-\log p({\bm{x}}_{t})\right]d{\bm{x}}_{t}.
+(Product rule)
+Now we expand the first term. Let
+𝒗
+p
+​
+(
+𝒙
+t
+)
+{\bm{v}}_{p}({\bm{x}}_{t})
+,
+𝒗
+π
+​
+(
+𝒙
+t
+∣
+𝒚
+)
+{\bm{v}}_{\pi}({\bm{x}}_{t}\mid{\bm{y}})
+be the flows at
+p
+⁡
+(
+𝒙
+t
+)
+p({\bm{x}}_{t})
+,
+π
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+\pi({\bm{x}}_{t}\mid{\bm{y}})
+respectively:
+∫
+[
+d
+d
+​
+t
+​
+π
+​
+(
+𝒙
+t
+∣
+𝒚
+)
+]
+​
+[
+log
+⁡
+π
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+−
+log
+⁡
+p
+⁡
+(
+𝒙
+t
+)
+]
+​
+d
+​
+𝒙
+t
+\displaystyle\quad\int\left[\frac{\mathrm{d}}{\mathrm{d}t}\pi({\bm{x}}_{t}\mid{\bm{y}})\right]\left[\log\pi({\bm{x}}_{t}\mid{\bm{y}})-\log p({\bm{x}}_{t})\right]d{\bm{x}}_{t}
+=
+\displaystyle=
+−
+∫
+∇
+⋅
+(
+π
+(
+𝒙
+t
+∣
+𝒚
+)
+𝒗
+π
+(
+𝒙
+t
+∣
+𝒚
+)
+)
+[
+log
+π
+(
+𝒙
+t
+∣
+𝒚
+)
+−
+log
+p
+(
+𝒙
+t
+)
+]
+d
+𝒙
+t
+\displaystyle-\int\nabla\cdot(\pi({\bm{x}}_{t}\mid{\bm{y}}){\bm{v}}_{\pi}({\bm{x}}_{t}\mid{\bm{y}}))\big[\log\pi({\bm{x}}_{t}\mid{\bm{y}})-\log p({\bm{x}}_{t})\big]d{\bm{x}}_{t}
+(Continuity equation)
+=
+\displaystyle=
+∫
+π
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+​
+𝒗
+π
+​
+(
+𝒙
+t
+∣
+𝒚
+)
+T
+​
+∇
+𝒙
+t
+[
+log
+⁡
+π
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+−
+log
+⁡
+p
+⁡
+(
+𝒙
+t
+)
+]
+​
+d
+​
+𝒙
+t
+\displaystyle\phantom{-}\int\pi({\bm{x}}_{t}\mid{\bm{y}}){\bm{v}}_{\pi}({\bm{x}}_{t}\mid{\bm{y}})^{T}\nabla_{{\bm{x}}_{t}}\big[\log\pi({\bm{x}}_{t}\mid{\bm{y}})-\log p({\bm{x}}_{t})\big]d{\bm{x}}_{t}
+(Integration by parts)
+=
+\displaystyle=
+∫
+π
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+​
+𝒗
+π
+​
+(
+𝒙
+t
+∣
+𝒚
+)
+T
+​
+∇
+𝒙
+t
+​
+log
+⁡
+π
+⁡
+(
+𝒚
+∣
+𝒙
+t
+)
+​
+d
+​
+𝒙
+t
+.
+\displaystyle\phantom{-}\int\pi({\bm{x}}_{t}\mid{\bm{y}}){\bm{v}}_{\pi}({\bm{x}}_{t}\mid{\bm{y}})^{T}\nabla_{{\bm{x}}_{t}}\log\pi({\bm{y}}\mid{\bm{x}}_{t})d{\bm{x}}_{t}.
+(Bayes)
+For the second term:
+∫
+π
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+​
+d
+d
+​
+t
+​
+[
+log
+⁡
+π
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+−
+log
+⁡
+p
+⁡
+(
+𝒙
+t
+)
+]
+​
+d
+​
+𝒙
+t
+\displaystyle\qquad\int\pi({\bm{x}}_{t}\mid{\bm{y}})\frac{\mathrm{d}}{\mathrm{d}t}\left[\log\pi({\bm{x}}_{t}\mid{\bm{y}})-\log p({\bm{x}}_{t})\right]d{\bm{x}}_{t}
+=
+𝔼
+𝒙
+t
+∼
+π
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+​
+[
+d
+d
+​
+t
+​
+log
+⁡
+π
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+]
+−
+∫
+π
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+​
+d
+d
+​
+t
+​
+log
+⁡
+p
+⁡
+(
+𝒙
+t
+)
+​
+d
+​
+𝒙
+t
+\displaystyle=\mathbb{E}_{{\bm{x}}_{t}\sim\pi({\bm{x}}_{t}\mid{\bm{y}})}\left[\frac{\mathrm{d}}{\mathrm{d}t}\log\pi({\bm{x}}_{t}\mid{\bm{y}})\right]-\int\pi({\bm{x}}_{t}\mid{\bm{y}})\frac{\mathrm{d}}{\mathrm{d}t}\log p({\bm{x}}_{t})d{\bm{x}}_{t}
+=
+−
+∫
+π
+(
+𝒙
+t
+∣
+𝒚
+)
+d
+d
+​
+t
+log
+p
+(
+𝒙
+t
+)
+d
+𝒙
+t
+\displaystyle=-\int\pi({\bm{x}}_{t}\mid{\bm{y}})\frac{\mathrm{d}}{\mathrm{d}t}\log p({\bm{x}}_{t})d{\bm{x}}_{t}
+=
+∫
+π
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+​
+[
+∇
+⋅
+𝒗
+p
+​
+(
+𝒙
+t
+)
++
+𝒗
+p
+​
+(
+𝒙
+t
+)
+T
+​
+∇
+𝒙
+t
+​
+log
+⁡
+p
+⁡
+(
+𝒙
+t
+)
+]
+​
+d
+​
+𝒙
+t
+\displaystyle=\phantom{-}\int\pi({\bm{x}}_{t}\mid{\bm{y}})\left[\nabla\cdot{\bm{v}}_{p}({\bm{x}}_{t})+{\bm{v}}_{p}({\bm{x}}_{t})^{T}\nabla_{{\bm{x}}_{t}}\log p({\bm{x}}_{t})\right]d{\bm{x}}_{t}
+(Log-continuity equation)
+=
+∫
+π
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+​
+[
+∇
+⋅
+𝒗
+p
+​
+(
+𝒙
+t
+)
++
+𝒗
+p
+​
+(
+𝒙
+t
+)
+T
+​
+∇
+𝒙
+t
+​
+log
+⁡
+π
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+]
+​
+d
+​
+𝒙
+t
+\displaystyle=\phantom{-}\int\pi({\bm{x}}_{t}\mid{\bm{y}})\left[\nabla\cdot{\bm{v}}_{p}({\bm{x}}_{t})+{\bm{v}}_{p}({\bm{x}}_{t})^{T}\nabla_{{\bm{x}}_{t}}\log\pi({\bm{x}}_{t}\mid{\bm{y}})\right]d{\bm{x}}_{t}
+−
+∫
+π
+(
+𝒙
+t
+∣
+𝒚
+)
+𝒗
+p
+(
+𝒙
+t
+)
+T
+∇
+𝒙
+t
+log
+π
+(
+𝒚
+∣
+𝒙
+t
+)
+d
+𝒙
+t
+\displaystyle\phantom{=}-\int\pi({\bm{x}}_{t}\mid{\bm{y}}){\bm{v}}_{p}({\bm{x}}_{t})^{T}\nabla_{{\bm{x}}_{t}}\log\pi({\bm{y}}\mid{\bm{x}}_{t})d{\bm{x}}_{t}
+(Bayes)
+=
+−
+∫
+π
+(
+𝒙
+t
+∣
+𝒚
+)
+𝒗
+p
+(
+𝒙
+t
+)
+T
+∇
+𝒙
+t
+log
+π
+(
+𝒚
+∣
+𝒙
+t
+)
+d
+𝒙
+t
+.
+\displaystyle=-\int\pi({\bm{x}}_{t}\mid{\bm{y}}){\bm{v}}_{p}({\bm{x}}_{t})^{T}\nabla_{{\bm{x}}_{t}}\log\pi({\bm{y}}\mid{\bm{x}}_{t})d{\bm{x}}_{t}.
+(Stein’s identity)
+Adding the two terms back together gives us:
+d
+d
+​
+t
+D
+KL
+(
+π
+(
+𝒙
+t
+∣
+𝒚
+)
+∥
+p
+(
+𝒙
+t
+)
+)
+\displaystyle\frac{\mathrm{d}}{\mathrm{d}t}D_{\mathrm{KL}}(\pi({\bm{x}}_{t}\mid{\bm{y}})\|p({\bm{x}}_{t}))
+=
+∫
+π
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+​
+(
+𝒗
+π
+​
+(
+𝒙
+t
+∣
+𝒚
+)
+−
+𝒗
+p
+​
+(
+𝒙
+t
+)
+)
+T
+​
+∇
+𝒙
+t
+​
+log
+⁡
+π
+⁡
+(
+𝒚
+∣
+𝒙
+t
+)
+​
+d
+​
+𝒙
+t
+\displaystyle=\int\pi({\bm{x}}_{t}\mid{\bm{y}})\left({\bm{v}}_{\pi}({\bm{x}}_{t}\mid{\bm{y}})-{\bm{v}}_{p}({\bm{x}}_{t})\right)^{T}\nabla_{{\bm{x}}_{t}}\log\pi({\bm{y}}\mid{\bm{x}}_{t})d{\bm{x}}_{t}
+=
+𝔼
+𝒙
+t
+∼
+π
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+​
+[
+(
+𝒗
+π
+​
+(
+𝒙
+t
+∣
+𝒚
+)
+−
+𝒗
+p
+​
+(
+𝒙
+t
+)
+)
+T
+​
+∇
+𝒙
+t
+​
+log
+⁡
+π
+⁡
+(
+𝒚
+∣
+𝒙
+t
+)
+]
+.
+\displaystyle=\mathbb{E}_{{\bm{x}}_{t}\sim\pi({\bm{x}}_{t}\mid{\bm{y}})}\left[\left({\bm{v}}_{\pi}({\bm{x}}_{t}\mid{\bm{y}})-{\bm{v}}_{p}({\bm{x}}_{t})\right)^{T}\nabla_{{\bm{x}}_{t}}\log\pi({\bm{y}}\mid{\bm{x}}_{t})\right].
+∎
+See
+1
+Proof.
+Expanding out the KL divergence gives us an expression for the model evidence:
+D
+KL
+(
+p
+(
+𝒙
+0
+∣
+𝒚
+)
+∥
+p
+(
+𝒙
+0
+)
+)
+\displaystyle D_{\mathrm{KL}}(p({\bm{x}}_{0}\mid{\bm{y}})\|p({\bm{x}}_{0}))
+=
+𝔼
+𝒙
+0
+∼
+p
+⁡
+(
+𝒙
+0
+∣
+𝒚
+)
+​
+[
+log
+⁡
+p
+⁡
+(
+𝒙
+0
+∣
+𝒚
+)
+−
+log
+⁡
+p
+⁡
+(
+𝒙
+0
+)
+]
+\displaystyle=\mathbb{E}_{{\bm{x}}_{0}\sim p({\bm{x}}_{0}\mid{\bm{y}})}\big[\log p({\bm{x}}_{0}\mid{\bm{y}})-\log p({\bm{x}}_{0})\big]
+=
+𝔼
+𝒙
+0
+∼
+p
+⁡
+(
+𝒙
+0
+∣
+𝒚
+)
+​
+[
+log
+⁡
+p
+⁡
+(
+𝒚
+∣
+𝒙
+0
+)
+−
+log
+⁡
+p
+⁡
+(
+𝒚
+)
+]
+\displaystyle=\mathbb{E}_{{\bm{x}}_{0}\sim p({\bm{x}}_{0}\mid{\bm{y}})}\big[\log p({\bm{y}}\mid{\bm{x}}_{0})-\log p({\bm{y}})\big]
+=
+𝔼
+𝒙
+0
+∼
+p
+⁡
+(
+𝒙
+0
+∣
+𝒚
+)
+​
+[
+log
+⁡
+p
+⁡
+(
+𝒚
+∣
+𝒙
+0
+)
+]
+−
+log
+⁡
+p
+⁡
+(
+𝒚
+)
+\displaystyle=\mathbb{E}_{{\bm{x}}_{0}\sim p({\bm{x}}_{0}\mid{\bm{y}})}\!\big[\,\log p({\bm{y}}\mid{\bm{x}}_{0})\,\big]-\log p({\bm{y}})
+⟹
+log
+⁡
+p
+⁡
+(
+𝒚
+)
+\displaystyle\implies\log p({\bm{y}})
+=
+𝔼
+𝒙
+0
+∼
+p
+⁡
+(
+𝒙
+0
+∣
+𝒚
+)
+[
+log
+p
+(
+𝒚
+∣
+𝒙
+0
+)
+]
+−
+D
+KL
+(
+p
+(
+𝒙
+0
+∣
+𝒚
+)
+|
+|
+p
+(
+𝒙
+0
+)
+)
+.
+\displaystyle=\mathbb{E}_{{\bm{x}}_{0}\sim p({\bm{x}}_{0}\mid{\bm{y}})}\!\big[\,\log p({\bm{y}}\mid{\bm{x}}_{0})\,\big]-D_{\mathrm{KL}}(p({\bm{x}}_{0}\mid{\bm{y}})||p({\bm{x}}_{0})).
+At the final diffusion step, the forward process has destroyed all information about the measurements, so we have
+p
+⁡
+(
+𝒙
+T
+∣
+𝒚
+)
+=
+p
+⁡
+(
+𝒙
+T
+)
+p({\bm{x}}_{T}\mid{\bm{y}})=p({\bm{x}}_{T})
+, or
+D
+KL
+(
+p
+(
+𝒙
+T
+∣
+𝒚
+)
+∥
+p
+(
+𝒙
+T
+)
+)
+=
+0
+D_{\mathrm{KL}}(p({\bm{x}}_{T}\mid{\bm{y}})\|p({\bm{x}}_{T}))=0
+. Therefore, we have:
+D
+KL
+(
+p
+(
+𝒙
+0
+∣
+𝒚
+)
+|
+|
+p
+(
+𝒙
+0
+)
+)
+\displaystyle D_{\mathrm{KL}}(p({\bm{x}}_{0}\mid{\bm{y}})||p({\bm{x}}_{0}))
+=
+−
+∫
+0
+T
+d
+d
+​
+t
+D
+KL
+(
+p
+(
+𝒙
+t
+∣
+𝒚
+)
+∥
+p
+(
+𝒙
+t
+)
+)
+d
+t
+\displaystyle=-\int_{0}^{T}\frac{\mathrm{d}}{\mathrm{d}t}D_{\mathrm{KL}}(p({\bm{x}}_{t}\mid{\bm{y}})\|p({\bm{x}}_{t}))dt
+=
+(
+i
+)
+−
+∫
+0
+T
+𝔼
+𝒙
+t
+∼
+p
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+​
+[
+(
+𝒗
+p
+​
+(
+𝒙
+t
+∣
+𝒚
+)
+−
+𝒗
+p
+​
+(
+𝒙
+t
+)
+)
+⊤
+​
+∇
+𝒙
+t
+​
+log
+⁡
+p
+⁡
+(
+𝒚
+∣
+𝒙
+t
+)
+]
+​
+𝑑
+t
+\displaystyle\overset{(i)}{=}\;-\int_{0}^{T}\mathbb{E}_{{\bm{x}}_{t}\sim p({\bm{x}}_{t}\mid{\bm{y}})}\Big[\big({\bm{v}}_{p}({\bm{x}}_{t}\mid{\bm{y}})-{\bm{v}}_{p}({\bm{x}}_{t})\big)^{\!\top}\nabla_{{\bm{x}}_{t}}\log p({\bm{y}}\mid{\bm{x}}_{t})\Big]\,dt
+=
+(
+i
+​
+i
+)
+​
+∫
+0
+T
+(
+σ
+t
+′
+​
+σ
+t
+−
+σ
+t
+2
+​
+a
+t
+′
+a
+t
+)
+​
+𝔼
+𝒙
+t
+∼
+p
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+​
+‖
+∇
+𝒙
+t
+​
+log
+​
+p
+​
+(
+𝒚
+∣
+𝒙
+t
+)
+‖
+2
+​
+𝑑
+t
+.
+\displaystyle\overset{(ii)}{=}\;\int_{0}^{T}\Big(\sigma_{t}^{\prime}\sigma_{t}-\sigma_{t}^{2}\tfrac{a_{t}^{\prime}}{a_{t}}\Big)\,\mathbb{E}_{{\bm{x}}_{t}\sim p({\bm{x}}_{t}\mid{\bm{y}})}\big\|\nabla_{{\bm{x}}_{t}}\log p({\bm{y}}\mid{\bm{x}}_{t})\big\|^{2}\,dt.
+≈
+∑
+i
+=
+1
+N
+Δ
+​
+t
+i
+​
+(
+σ
+t
+i
+′
+​
+σ
+t
+i
+−
+σ
+t
+i
+2
+​
+a
+t
+i
+′
+a
+t
+i
+)
+​
+𝔼
+𝒙
+t
+i
+∼
+p
+⁡
+(
+𝒙
+t
+i
+∣
+𝒚
+)
+‖
+∇
+𝒙
+t
+i
+​
+log
+​
+p
+​
+(
+𝒚
+∣
+𝒙
+t
+i
+)
+‖
+2
+.
+\displaystyle\approx\sum_{i=1}^{N}\Delta t_{i}\left(\sigma_{t_{i}}^{\prime}\sigma_{t_{i}}-\sigma_{t_{i}}^{2}\frac{a_{t_{i}}^{\prime}}{a_{t_{i}}}\right)\mathop{\mathbb{E}}\limits_{{\bm{x}}_{t_{i}}\sim p({\bm{x}}_{t_{i}}\mid{\bm{y}})}\|\nabla_{{\bm{x}}_{t_{i}}}\log p({\bm{y}}\mid{\bm{x}}_{t_{i}})\|^{2}.
+where (i) uses Lemma
+3
+but with
+π
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+=
+p
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+\pi({\bm{x}}_{t}\mid{\bm{y}})=p({\bm{x}}_{t}\mid{\bm{y}})
+and (ii) uses the PF-ODE of the conditional flow (Eq.
+15
+).
+∎
+A.1
+Proofs and derivations for the DAPS-based implementation
+See
+1
+Proof.
+Our diffusion corruption process gives us:
+Cov
+⁡
+(
+𝒙
+t
+)
+\displaystyle\mathrm{Cov}({\bm{x}}_{t})
+=
+a
+t
+2
+​
+𝚺
+0
++
+σ
+t
+2
+​
+𝑰
+\displaystyle=a_{t}^{2}\bm{\Sigma}_{0}+\sigma_{t}^{2}{\bm{I}}
+Cov
+⁡
+(
+𝒙
+0
+,
+𝒙
+t
+)
+\displaystyle\mathrm{Cov}({\bm{x}}_{0},{\bm{x}}_{t})
+=
+Cov
+⁡
+(
+𝒙
+0
+,
+a
+t
+​
+𝒙
+0
++
+σ
+t
+​
+𝒛
+t
+)
+=
+a
+t
+​
+Cov
+​
+(
+𝒙
+0
+)
+=
+a
+t
+​
+𝚺
+0
+.
+\displaystyle=\mathrm{Cov}({\bm{x}}_{0},a_{t}{\bm{x}}_{0}+\sigma_{t}{\bm{z}}_{t})=a_{t}\mathrm{Cov}({\bm{x}}_{0})=a_{t}\bm{\Sigma}_{0}.
+Plugging these into the Gaussian posterior covariance formula gives:
+Cov
+⁡
+(
+𝒙
+0
+∣
+𝒙
+t
+)
+\displaystyle\mathrm{Cov}({\bm{x}}_{0}\mid{\bm{x}}_{t})
+=
+Cov
+⁡
+(
+𝒙
+0
+)
+−
+Cov
+⁡
+(
+𝒙
+0
+,
+𝒙
+t
+)
+​
+Cov
+​
+(
+𝒙
+t
+)
+−
+1
+​
+Cov
+​
+(
+𝒙
+0
+,
+𝒙
+t
+)
+\displaystyle=\mathrm{Cov}({\bm{x}}_{0})-\mathrm{Cov}({\bm{x}}_{0},{\bm{x}}_{t})\mathrm{Cov}({\bm{x}}_{t})^{-1}\mathrm{Cov}({\bm{x}}_{0},{\bm{x}}_{t})
+=
+𝚺
+0
+−
+a
+t
+​
+𝚺
+0
+​
+[
+a
+t
+2
+​
+𝚺
+0
++
+σ
+t
+2
+​
+𝑰
+]
+−
+1
+​
+a
+t
+​
+𝚺
+0
+\displaystyle=\bm{\Sigma}_{0}-a_{t}\bm{\Sigma}_{0}\left[a_{t}^{2}\bm{\Sigma}_{0}+\sigma_{t}^{2}{\bm{I}}\right]^{-1}a_{t}\bm{\Sigma}_{0}
+=
+𝚺
+0
+−
+𝚺
+0
+​
+[
+𝚺
+0
++
+σ
+t
+2
+a
+t
+2
+​
+𝑰
+]
+−
+1
+​
+𝚺
+0
+\displaystyle=\bm{\Sigma}_{0}-\bm{\Sigma}_{0}\left[\bm{\Sigma}_{0}+\frac{\sigma_{t}^{2}}{a_{t}^{2}}{\bm{I}}\right]^{-1}\bm{\Sigma}_{0}
+=
+[
+𝚺
+0
+−
+1
++
+a
+t
+2
+σ
+t
+2
+​
+𝑰
+]
+−
+1
+.
+\displaystyle=\left[\bm{\Sigma}_{0}^{-1}+\frac{a_{t}^{2}}{\sigma_{t}^{2}}{\bm{I}}\right]^{-1}.
+(Woodbury identity)
+.
+\displaystyle\hfill\text{(Woodbury identity)}.
+∎
+Corollary 1
+.
+Suppose the training data has
+λ
+max
+​
+(
+𝚺
+0
+)
+=
+1
+\lambda_{\text{max}}(\bm{\Sigma}_{0})=1
+. Then
+‖
+𝚺
+𝐱
+0
+|
+𝐱
+t
+‖
+=
+σ
+t
+2
+σ
+t
+2
++
+a
+t
+2
+\|\bm{\Sigma}_{{\bm{x}}_{0}\mid{\bm{x}}_{t}}\|=\frac{\sigma_{t}^{2}}{\sigma_{t}^{2}+a_{t}^{2}}
+.
+Proof.
+Plugging in the covariance from Lemma
+1
+gives:
+‖
+𝚺
+𝒙
+0
+|
+𝒙
+t
+‖
+\displaystyle\|\bm{\Sigma}_{{\bm{x}}_{0}\mid{\bm{x}}_{t}}\|
+=
+λ
+max
+​
+[
+𝚺
+0
+−
+1
++
+a
+t
+2
+σ
+t
+2
+​
+𝑰
+]
+−
+1
+=
+1
+λ
+min
+​
+(
+𝚺
+0
+−
+1
++
+a
+t
+2
+σ
+t
+2
+​
+𝑰
+)
+=
+1
+1
++
+a
+t
+2
+σ
+t
+2
+=
+σ
+t
+2
+σ
+t
+2
++
+a
+t
+2
+.
+\displaystyle=\lambda_{\text{max}}\left[\bm{\Sigma}_{0}^{-1}+\frac{a_{t}^{2}}{\sigma_{t}^{2}}{\bm{I}}\right]^{-1}=\frac{1}{\lambda_{\text{min}}\left(\bm{\Sigma}_{0}^{-1}+\frac{a_{t}^{2}}{\sigma_{t}^{2}}{\bm{I}}\right)}=\frac{1}{1+\frac{a_{t}^{2}}{\sigma_{t}^{2}}}=\frac{\sigma_{t}^{2}}{\sigma_{t}^{2}+a_{t}^{2}}.
+∎
+See
+2
+Proof.
+Using Tweedie’s rule, we can show that
+Θ
+h
+​
+i
+​
+g
+​
+h
+\Theta_{high}
+is unbiased for the likelihood score:
+∇
+𝒙
+t
+​
+log
+​
+p
+​
+(
+𝒚
+∣
+𝒙
+t
+)
+\displaystyle\nabla_{{\bm{x}}_{t}}\log p({\bm{y}}\mid{\bm{x}}_{t})
+=
+∇
+𝒙
+t
+​
+log
+​
+p
+​
+(
+𝒙
+t
+∣
+𝒚
+)
+−
+∇
+𝒙
+t
+​
+log
+​
+p
+​
+(
+𝒙
+t
+)
+\displaystyle=\nabla_{{\bm{x}}_{t}}\log p({\bm{x}}_{t}\mid{\bm{y}})-\nabla_{{\bm{x}}_{t}}\log p({\bm{x}}_{t})
+=
+a
+t
+σ
+t
+2
+(
+𝔼
+[
+𝒙
+0
+∣
+𝒙
+t
+,
+𝒚
+]
+−
+𝒙
+t
+a
+t
+)
+−
+a
+t
+σ
+t
+2
+(
+𝔼
+[
+𝒙
+0
+∣
+𝒙
+t
+]
+−
+𝒙
+t
+a
+t
+)
+\displaystyle=\frac{a_{t}}{\sigma_{t}^{2}}\!\left(\mathbb{E}[{\bm{x}}_{0}\mid{\bm{x}}_{t},{\bm{y}}]-\frac{{\bm{x}}_{t}}{a_{t}}\right)-\frac{a_{t}}{\sigma_{t}^{2}}\!\left(\mathbb{E}[{\bm{x}}_{0}\mid{\bm{x}}_{t}]-\frac{{\bm{x}}_{t}}{a_{t}}\right)
+=
+a
+t
+σ
+t
+2
+(
+𝔼
+[
+𝒙
+0
+∣
+𝒙
+t
+,
+𝒚
+]
+−
+𝔼
+[
+𝒙
+0
+∣
+𝒙
+t
+]
+)
+.
+\displaystyle=\frac{a_{t}}{\sigma_{t}^{2}}\left(\mathbb{E}[{\bm{x}}_{0}\mid{\bm{x}}_{t},{\bm{y}}]-\mathbb{E}[{\bm{x}}_{0}\mid{\bm{x}}_{t}]\right).
+(
+⋆
+\star
+)
+Our Gaussian approximation of
+p
+⁡
+(
+𝒙
+0
+∣
+𝒙
+t
+)
+p({\bm{x}}_{0}\mid{\bm{x}}_{t})
+gives us
+∇
+𝒙
+0
+​
+log
+​
+p
+​
+(
+𝒙
+0
+∣
+𝒙
+t
+)
+=
+−
+𝚺
+𝒙
+0
+|
+𝒙
+t
+−
+1
+​
+(
+𝒙
+0
+−
+𝔼
+⁡
+[
+𝒙
+0
+∣
+𝒙
+t
+]
+)
+\nabla_{{\bm{x}}_{0}}\log p({\bm{x}}_{0}\mid{\bm{x}}_{t})=-\bm{\Sigma}_{{\bm{x}}_{0}\mid{\bm{x}}_{t}}^{-1}({\bm{x}}_{0}-\mathbb{E}[{\bm{x}}_{0}\mid{\bm{x}}_{t}])
+. Using the fact that the expectation of the score is zero, we have:
+𝔼
+[
+𝒙
+0
+∣
+𝒙
+t
+,
+𝒚
+]
+\displaystyle\mathbb{E}[{\bm{x}}_{0}\mid{\bm{x}}_{t},{\bm{y}}]
+=
+𝔼
+[
+𝒙
+0
++
+𝚺
+𝒙
+0
+|
+𝒙
+t
+∇
+𝒙
+0
+log
+p
+(
+𝒙
+0
+∣
+𝒙
+t
+,
+𝒚
+)
+∣
+𝒙
+t
+,
+𝒚
+]
+\displaystyle=\mathbb{E}[{\bm{x}}_{0}+\bm{\Sigma}_{{\bm{x}}_{0}\mid{\bm{x}}_{t}}\nabla_{{\bm{x}}_{0}}\log p({\bm{x}}_{0}\mid{\bm{x}}_{t},{\bm{y}})\mid{\bm{x}}_{t},{\bm{y}}]
+=
+𝔼
+[
+𝒙
+0
++
+𝚺
+𝒙
+0
+|
+𝒙
+t
+(
+∇
+𝒙
+0
+log
+p
+(
+𝒙
+0
+∣
+𝒙
+t
+)
++
+∇
+𝒙
+0
+log
+p
+(
+𝒚
+∣
+𝒙
+0
+)
+)
+∣
+𝒙
+t
+,
+𝒚
+]
+\displaystyle=\mathbb{E}[{\bm{x}}_{0}+\bm{\Sigma}_{{\bm{x}}_{0}\mid{\bm{x}}_{t}}\left(\nabla_{{\bm{x}}_{0}}\log p({\bm{x}}_{0}\mid{\bm{x}}_{t})+\nabla_{{\bm{x}}_{0}}\log p({\bm{y}}\mid{\bm{x}}_{0})\right)\mid{\bm{x}}_{t},{\bm{y}}]
+=
+𝔼
+[
+𝒙
+0
+−
+(
+𝒙
+0
+−
+𝔼
+[
+𝒙
+0
+∣
+𝒙
+t
+]
+)
++
+𝚺
+𝒙
+0
+|
+𝒙
+t
+∇
+𝒙
+0
+log
+p
+(
+𝒚
+∣
+𝒙
+0
+)
+∣
+𝒙
+t
+,
+𝒚
+]
+\displaystyle=\mathbb{E}[{\bm{x}}_{0}-({\bm{x}}_{0}-\mathbb{E}[{\bm{x}}_{0}\mid{\bm{x}}_{t}])+\bm{\Sigma}_{{\bm{x}}_{0}\mid{\bm{x}}_{t}}\nabla_{{\bm{x}}_{0}}\log p({\bm{y}}\mid{\bm{x}}_{0})\mid{\bm{x}}_{t},{\bm{y}}]
+=
+𝔼
+⁡
+[
+𝒙
+0
+∣
+𝒙
+t
+]
++
+𝚺
+𝒙
+0
+|
+𝒙
+t
+​
+𝔼
+𝒙
+0
+∼
+p
+⁡
+(
+𝒙
+0
+∣
+𝒙
+t
+,
+𝒚
+)
+​
+[
+∇
+𝒙
+0
+​
+log
+​
+p
+​
+(
+𝒚
+∣
+𝒙
+0
+)
+]
+.
+\displaystyle=\mathbb{E}[{\bm{x}}_{0}\mid{\bm{x}}_{t}]+\bm{\Sigma}_{{\bm{x}}_{0}\mid{\bm{x}}_{t}}\mathbb{E}_{{\bm{x}}_{0}\sim p({\bm{x}}_{0}\mid{\bm{x}}_{t},{\bm{y}})}[\nabla_{{\bm{x}}_{0}}\log p({\bm{y}}\mid{\bm{x}}_{0})].
+(
+⋆
+⁣
+⋆
+\star\star
+)
+Substituting
+(
+⋆
+⋆
+)
+(\star\star)
+into
+(
+⋆
+)
+(\star)
+shows that
+Θ
+l
+​
+o
+​
+w
+\Theta_{low}
+is unbiased.
+To compute a variance bound for
+Θ
+h
+​
+i
+​
+g
+​
+h
+\Theta_{high}
+,
+Var
+⁡
+(
+Θ
+h
+​
+i
+​
+g
+​
+h
+)
+\displaystyle\mathrm{Var}(\Theta_{high})
+=
+a
+t
+2
+σ
+t
+4
+​
+Cov
+​
+(
+𝒙
+0
+∣
+𝒙
+t
+,
+𝒚
+)
+\displaystyle=\frac{a_{t}^{2}}{\sigma_{t}^{4}}\mathrm{Cov}({\bm{x}}_{0}\mid{\bm{x}}_{t},{\bm{y}})
+≤
+a
+t
+2
+σ
+t
+4
+​
+Cov
+​
+(
+𝒙
+0
+∣
+𝒙
+t
+)
+\displaystyle\leq\frac{a_{t}^{2}}{\sigma_{t}^{4}}\mathrm{Cov}({\bm{x}}_{0}\mid{\bm{x}}_{t})
+(Gaussian conditional covariance)
+≤
+a
+t
+2
+σ
+t
+2
+​
+(
+σ
+t
+2
++
+a
+t
+2
+)
+.
+\displaystyle\leq\frac{a_{t}^{2}}{\sigma_{t}^{2}(\sigma_{t}^{2}+a_{t}^{2})}.
+(Corollary
+1
+)
+The term
+σ
+t
+2
++
+a
+t
+2
+\sigma_{t}^{2}+a_{t}^{2}
+is of constant order over the diffusion process, resulting in a variance of
+a
+t
+2
+/
+σ
+t
+2
+a_{t}^{2}/\sigma_{t}^{2}
+. To compute a bound for
+Θ
+l
+​
+o
+​
+w
+\Theta_{low}
+, we linearize the likelihood
+f
+f
+at a fixed
+𝒙
+¯
+\bar{{\bm{x}}}
+with
+𝑨
+=
+∂
+f
+∂
+𝒙
+|
+𝒙
+¯
+{\bm{A}}=\left.\frac{\partial f}{\partial{\bm{x}}}\right|_{\bar{{\bm{x}}}}
+and get
+Var
+⁡
+(
+Θ
+l
+​
+o
+​
+w
+)
+\displaystyle\mathrm{Var}(\Theta_{low})
+=
+a
+t
+2
+σ
+t
+4
+​
+𝚺
+𝒙
+0
+|
+𝒙
+t
+​
+Cov
+​
+(
+∇
+𝒙
+0
+​
+log
+​
+p
+​
+(
+𝒚
+∣
+𝒙
+0
+)
+∣
+𝒙
+t
+,
+𝒚
+)
+​
+𝚺
+𝒙
+0
+|
+𝒙
+t
+T
+\displaystyle=\frac{a_{t}^{2}}{\sigma_{t}^{4}}\bm{\Sigma}_{{\bm{x}}_{0}\mid{\bm{x}}_{t}}\mathrm{Cov}(\nabla_{{\bm{x}}_{0}}\log p({\bm{y}}\mid{\bm{x}}_{0})\mid{\bm{x}}_{t},{\bm{y}})\bm{\Sigma}_{{\bm{x}}_{0}\mid{\bm{x}}_{t}}^{T}
+=
+a
+t
+2
+σ
+t
+4
+​
+𝚺
+𝒙
+0
+|
+𝒙
+t
+​
+Cov
+​
+(
+1
+σ
+𝒚
+2
+​
+𝑨
+T
+​
+(
+𝒚
+−
+𝑨
+​
+𝒙
+0
+)
+∣
+𝒙
+t
+,
+𝒚
+)
+​
+𝚺
+𝒙
+0
+|
+𝒙
+t
+T
+\displaystyle=\frac{a_{t}^{2}}{\sigma_{t}^{4}}\bm{\Sigma}_{{\bm{x}}_{0}\mid{\bm{x}}_{t}}\mathrm{Cov}(\frac{1}{\sigma_{\bm{y}}^{2}}{\bm{A}}^{T}({\bm{y}}-{\bm{A}}{\bm{x}}_{0})\mid{\bm{x}}_{t},{\bm{y}})\bm{\Sigma}_{{\bm{x}}_{0}\mid{\bm{x}}_{t}}^{T}
+=
+1
+σ
+𝒚
+4
+​
+𝚺
+𝒙
+0
+|
+𝒙
+t
+​
+𝑨
+T
+​
+𝑨
+​
+(
+a
+t
+2
+σ
+t
+4
+​
+Cov
+​
+(
+𝒙
+0
+∣
+𝒙
+t
+,
+𝒚
+)
+)
+​
+𝑨
+T
+​
+𝑨
+​
+𝚺
+𝒙
+0
+|
+𝒙
+t
+T
+\displaystyle=\frac{1}{\sigma_{\bm{y}}^{4}}\bm{\Sigma}_{{\bm{x}}_{0}\mid{\bm{x}}_{t}}{\bm{A}}^{T}{\bm{A}}\left(\frac{a_{t}^{2}}{\sigma_{t}^{4}}\mathrm{Cov}({\bm{x}}_{0}\mid{\bm{x}}_{t},{\bm{y}})\right){\bm{A}}^{T}{\bm{A}}\bm{\Sigma}_{{\bm{x}}_{0}\mid{\bm{x}}_{t}}^{T}
+≤
+‖
+𝑨
+‖
+4
+σ
+𝒚
+4
+​
+σ
+t
+4
+(
+σ
+t
+2
++
+a
+t
+2
+)
+2
+​
+Var
+​
+(
+Θ
+h
+​
+i
+​
+g
+​
+h
+)
+.
+\displaystyle\leq\frac{\|{\bm{A}}\|^{4}}{\sigma_{\bm{y}}^{4}}\frac{\sigma_{t}^{4}}{(\sigma_{t}^{2}+a_{t}^{2})^{2}}\mathrm{Var}(\Theta_{high}).
+(Corollary
+1
+)
+≤
+‖
+𝑨
+‖
+4
+σ
+𝒚
+4
+​
+σ
+t
+2
+​
+a
+t
+2
+(
+σ
+t
+2
++
+a
+t
+2
+)
+3
+.
+\displaystyle\leq\frac{\|{\bm{A}}\|^{4}}{\sigma_{\bm{y}}^{4}}\frac{\sigma_{t}^{2}a_{t}^{2}}{(\sigma_{t}^{2}+a_{t}^{2})^{3}}.
+Unlike
+Θ
+h
+​
+i
+​
+g
+​
+h
+\Theta_{high}
+, the variance of this estimator goes to
+0
+0
+as
+σ
+t
+→
+0
+\sigma_{t}\to 0
+, but for the rest of diffusion process the constant factor makes it a higher variance estimator than
+Θ
+h
+​
+i
+​
+g
+​
+h
+\Theta_{high}
+in practice.
+∎
+Appendix B
+Generalizing
+DiME
+to arbitrary posterior marginals
+While we only present
+DiME
+along the standard marginals in the main text,
+DiME
+can be extended to any arbitrary diffusion posterior marginals that anneal to the true posterior as follows:
+Corollary 2
+(Generalized
+DiME
+)
+.
+Let
+p
+⁡
+(
+𝐱
+t
+)
+p({\bm{x}}_{t})
+be the unconditional diffusion marginal and
+π
+⁡
+(
+𝐱
+t
+∣
+𝐲
+)
+∝
+p
+⁡
+(
+𝐱
+t
+)
+​
+π
+​
+(
+𝐲
+∣
+𝐱
+t
+)
+\pi({\bm{x}}_{t}\mid{\bm{y}})\propto p({\bm{x}}_{t})\pi({\bm{y}}\mid{\bm{x}}_{t})
+be a path of marginals that anneals to the true posterior, or
+π
+⁡
+(
+𝐱
+0
+∣
+𝐲
+)
+=
+p
+⁡
+(
+𝐱
+0
+∣
+𝐲
+)
+\pi({\bm{x}}_{0}\mid{\bm{y}})=p({\bm{x}}_{0}\mid{\bm{y}})
+. Denote
+𝐯
+p
+​
+(
+𝐱
+t
+)
+{\bm{v}}_{p}({\bm{x}}_{t})
+and
+𝐯
+π
+​
+(
+𝐱
+t
+∣
+𝐲
+)
+{\bm{v}}_{\pi}({\bm{x}}_{t}\mid{\bm{y}})
+as their corresponding velocity fields. Given reverse diffusion timesteps
+0
+=
+t
+0
+<
+⋯
+<
+t
+N
+=
+T
+0=t_{0}<\dots<t_{N}=T
+, we have:
+log
+⁡
+p
+⁡
+(
+𝒚
+)
+\displaystyle\log p({\bm{y}})
+=
+𝔼
+𝒙
+0
+∼
+p
+⁡
+(
+𝒙
+0
+∣
+𝒚
+)
+[
+log
+p
+(
+𝒚
+∣
+𝒙
+0
+)
+]
+−
+D
+KL
+(
+p
+(
+𝒙
+0
+∣
+𝒚
+)
+|
+|
+p
+(
+𝒙
+0
+)
+)
+\displaystyle=\mathbb{E}_{{\bm{x}}_{0}\sim p({\bm{x}}_{0}\mid{\bm{y}})}\!\big[\,\log p({\bm{y}}\mid{\bm{x}}_{0})\,\big]-D_{\mathrm{KL}}(p({\bm{x}}_{0}\mid{\bm{y}})||p({\bm{x}}_{0}))
+where
+D
+KL
+(
+p
+(
+𝒙
+0
+∣
+𝒚
+)
+|
+|
+p
+(
+𝒙
+0
+)
+)
+\displaystyle D_{\mathrm{KL}}(p({\bm{x}}_{0}\mid{\bm{y}})||p({\bm{x}}_{0}))
+≈
+−
+∑
+i
+=
+1
+N
+Δ
+t
+i
+𝔼
+𝒙
+t
+∼
+π
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+[
+(
+𝒗
+π
+(
+𝒙
+t
+∣
+𝒚
+)
+−
+𝒗
+p
+(
+𝒙
+t
+)
+)
+⊤
+∇
+𝒙
+t
+log
+π
+(
+𝒚
+∣
+𝒙
+t
+)
+]
+\displaystyle\approx-\sum_{i=1}^{N}\Delta t_{i}\mathbb{E}_{{\bm{x}}_{t}\sim\pi({\bm{x}}_{t}\mid{\bm{y}})}\Big[\big({\bm{v}}_{\pi}({\bm{x}}_{t}\mid{\bm{y}})-{\bm{v}}_{p}({\bm{x}}_{t})\big)^{\!\top}\nabla_{{\bm{x}}_{t}}\log\pi({\bm{y}}\mid{\bm{x}}_{t})\Big]
++
+D
+KL
+(
+π
+(
+𝒙
+T
+∣
+𝒚
+)
+|
+|
+p
+(
+𝒙
+T
+)
+)
+.
+\displaystyle+D_{\mathrm{KL}}(\pi({\bm{x}}_{T}\mid{\bm{y}})||p({\bm{x}}_{T})).
+Proof.
+Follows directly from the proof of Prop.
+1
+.
+∎
+While
+𝒗
+p
+{\bm{v}}_{p}
+can be directly computed using the PF-ODE (Eq.
+13
+), computing
+𝒗
+π
+{\bm{v}}_{\pi}
+can be difficult for arbitrary time-marginals
+π
+\pi
+. By crafting a sequence of diffusion marginals with known velocity, we can avoid any approximation like the one used for
+p
+⁡
+(
+𝒙
+0
+∣
+𝒙
+t
+)
+p({\bm{x}}_{0}\mid{\bm{x}}_{t})
+in the DAPS implementation. The marginals
+π
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+\pi({\bm{x}}_{t}\mid{\bm{y}})
+should also ideally have high overlap with the unconditional marginal
+p
+⁡
+(
+𝒙
+t
+)
+p({\bm{x}}_{t})
+to ensure accurate computation of
+𝒗
+p
+​
+(
+𝒙
+t
+)
+{\bm{v}}_{p}({\bm{x}}_{t})
+when the score is learned.
+If
+π
+⁡
+(
+𝒙
+T
+∣
+𝒚
+)
+≠
+p
+⁡
+(
+𝒙
+T
+)
+\pi({\bm{x}}_{T}\mid{\bm{y}})\neq p({\bm{x}}_{T})
+, then we must use other estimation methods to compute
+D
+KL
+(
+π
+(
+𝒙
+T
+∣
+𝒚
+)
+|
+|
+p
+(
+𝒙
+T
+)
+)
+D_{\mathrm{KL}}(\pi({\bm{x}}_{T}\mid{\bm{y}})||p({\bm{x}}_{T}))
+or settle for an unnormalized model evidence estimate. The following section discusses two estimators that does not require any approximation, but are not normalized.
+B.1
+Estimating the model evidence from alternative sampling methods
+Algorithm 2
+One posterior sample-path of
+DiME-PnPDM
+0:
+Score-based model
+s
+θ
+s_{\theta}
+, measurement
+𝒚
+{\bm{y}}
+, noise schedule
+σ
+t
+\sigma_{t}
+,
+(
+t
+i
+)
+i
+∈
+{
+1
+,
+…
+,
+N
+}
+(t_{i})_{i\in\{1,\ldots,N\}}
+,
+1:
+Sample
+𝒙
+^
+0
+∼
+p
+⁡
+(
+𝒙
+0
+)
+\hat{{\bm{x}}}_{0}\sim p({\bm{x}}_{0})
+.
+2:
+Initialize the integral sum,
+f
+=
+0
+f=0
+.
+3:
+for
+i
+=
+N
+,
+N
+−
+1
+​
+…
+,
+0
+i=N,N-1\ldots,0
+do
+4:
+Sample
+𝒙
+t
+i
+∼
+q
+⁡
+(
+𝒙
+t
+i
+∣
+𝒚
+,
+𝒙
+^
+0
+)
+∝
+q
+⁡
+(
+𝒚
+∣
+𝒙
+t
+i
+)
+​
+p
+​
+(
+𝒙
+t
+i
+∣
+𝒙
+^
+0
+)
+{\bm{x}}_{t_{i}}\sim q({\bm{x}}_{t_{i}}\mid{\bm{y}},\hat{{\bm{x}}}_{0})\propto q({\bm{y}}\mid{\bm{x}}_{t_{i}})p({\bm{x}}_{t_{i}}\mid\hat{{\bm{x}}}_{0})
+.
+5:
+Sample
+𝒙
+^
+0
+∼
+p
+⁡
+(
+𝒙
+0
+∣
+𝒙
+t
+i
+)
+\hat{{\bm{x}}}_{0}\sim p({\bm{x}}_{0}\mid{\bm{x}}_{t_{i}})
+using
+s
+θ
+s_{\theta}
+.
+6:
+Update the integral sum
+f
+←
+f
+−
+(
+t
+i
+−
+t
+i
+−
+1
+)
+​
+𝒗
+p
+​
+(
+𝒙
+t
+i
+)
+T
+​
+∇
+𝒙
+t
+​
+log
+⁡
+q
+⁡
+(
+𝒚
+∣
+𝒙
+t
+i
+)
+f\leftarrow f-(t_{i}-t_{i-1}){\bm{v}}_{p}({\bm{x}}_{t_{i}})^{T}\nabla_{{\bm{x}}_{t}}\log q({\bm{y}}\mid{\bm{x}}_{t_{i}})
+7:
+end
+for
+8:
+return
+x
+(
+0
+)
+x^{(0)}
+,
+f
+f
+The PnP-DM marginals follow
+q
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+∝
+q
+⁡
+(
+𝒚
+∣
+𝒙
+t
+)
+​
+p
+​
+(
+𝒙
+t
+)
+q({\bm{x}}_{t}\mid{\bm{y}})\propto q({\bm{y}}\mid{\bm{x}}_{t})p({\bm{x}}_{t})
+where
+q
+⁡
+(
+𝒚
+∣
+𝒙
+t
+)
+q({\bm{y}}\mid{\bm{x}}_{t})
+is a time-independent likelihood term. As a result, the initial distribution
+q
+⁡
+(
+𝒙
+T
+∣
+𝒚
+)
+≠
+p
+⁡
+(
+𝒙
+T
+)
+q({\bm{x}}_{T}\mid{\bm{y}})\neq p({\bm{x}}_{T})
+and the KL divergence
+D
+KL
+(
+q
+(
+𝒙
+T
+∣
+𝒚
+)
+∥
+p
+(
+𝒙
+T
+)
+)
+D_{\mathrm{KL}}(q({\bm{x}}_{T}\mid{\bm{y}})\|p({\bm{x}}_{T}))
+is non-zero, so we can only compute the unnormalized model evidence.
+However, the unknown constant is dependent on
+𝒚
+{\bm{y}}
+and the forward model, so this unnormalized quantity can still be used for model selection.
+We derive the estimator in Proposition
+2
+and implement it with PnP-DM in Algorithm
+2
+.
+Proposition 2
+(
+DiME-PnPDM
+: model evidence estimation along the PnP-DM marginals)
+.
+Given diffusion process
+𝐱
+t
+=
+a
+t
+​
+𝐱
+0
++
+σ
+t
+​
+𝐳
+t
+,
+𝐳
+t
+∼
+𝒩
+⁡
+(
+0
+,
+𝐈
+)
+{\bm{x}}_{t}=a_{t}{\bm{x}}_{0}+\sigma_{t}{\bm{z}}_{t},{\bm{z}}_{t}\sim\mathcal{N}(0,{\bm{I}})
+, PnP-DM marginals
+q
+⁡
+(
+𝐱
+t
+∣
+𝐲
+)
+∝
+p
+⁡
+(
+𝐱
+t
+)
+​
+q
+​
+(
+𝐲
+∣
+𝐱
+t
+)
+q({\bm{x}}_{t}\mid{\bm{y}})\propto p({\bm{x}}_{t})q({\bm{y}}\mid{\bm{x}}_{t})
+, and timesteps
+0
+=
+t
+0
+<
+⋯
+<
+t
+N
+=
+T
+0=t_{0}<\dots<t_{N}=T
+, the model evidence can be estimated via:
+log
+⁡
+p
+⁡
+(
+𝒚
+)
+≈
+C
+⁡
+(
+q
+,
+𝒚
+)
+−
+∑
+i
+=
+1
+N
+Δ
+​
+t
+i
+​
+𝔼
+𝒙
+∼
+q
+⁡
+(
+𝒙
+t
+i
+∣
+𝒚
+)
+​
+[
+𝒗
+p
+​
+(
+𝒙
+t
+i
+)
+T
+​
+∇
+𝒙
+t
+i
+​
+log
+⁡
+q
+⁡
+(
+𝒚
+∣
+𝒙
+t
+i
+)
+]
+\displaystyle\log p({\bm{y}})\approx C(q,{\bm{y}})-\sum_{i=1}^{N}\Delta t_{i}\mathbb{E}_{{\bm{x}}\sim q({\bm{x}}_{t_{i}}\mid{\bm{y}})}\left[{\bm{v}}_{p}({\bm{x}}_{t_{i}})^{T}\nabla_{{\bm{x}}_{t_{i}}}\log q({\bm{y}}\mid{\bm{x}}_{t_{i}})\right]
+(17)
+where
+C
+⁡
+(
+q
+,
+𝐲
+)
+=
+log
+⁡
+𝔼
+𝐱
+∼
+𝒩
+⁡
+(
+0
+,
+𝐈
+)
+​
+[
+q
+⁡
+(
+𝐲
+∣
+𝐱
+)
+]
+C(q,{\bm{y}})=\log\mathbb{E}_{{\bm{x}}\sim\mathcal{N}(0,{\bm{I}})}\left[q({\bm{y}}\mid{\bm{x}})\right]
+is constant for fixed measurement
+𝐲
+{\bm{y}}
+and forward model, and
+𝐯
+p
+​
+(
+𝐱
+t
+)
+=
+a
+t
+′
+a
+t
+​
+𝐱
+t
+−
+(
+σ
+t
+′
+​
+σ
+t
+−
+σ
+t
+2
+​
+a
+t
+′
+a
+t
+)
+​
+∇
+𝐱
+​
+log
+⁡
+p
+⁡
+(
+𝐱
+t
+)
+{\bm{v}}_{p}({\bm{x}}_{t})=\frac{a_{t}^{\prime}}{a_{t}}{\bm{x}}_{t}-(\sigma_{t}^{\prime}\sigma_{t}-\sigma_{t}^{2}\frac{a_{t}^{\prime}}{a_{t}})\nabla_{\bm{x}}\log p({\bm{x}}_{t})
+is the PF-ODE velocity at
+𝐱
+t
+{\bm{x}}_{t}
+(Eq.
+13
+).
+Proof.
+While we can apply Corollary
+2
+, we can take a shortcut to cancel some extra terms. Under the PnP-DM marginals,
+log
+⁡
+q
+⁡
+(
+𝒚
+∣
+t
+)
+\log q({\bm{y}}\mid t)
+is time-dependent while the likelihood
+q
+⁡
+(
+𝒚
+∣
+𝒙
+t
+)
+q({\bm{y}}\mid{\bm{x}}_{t})
+is time-independent, so we can directly compute the derivative of the evidence:
+d
+d
+​
+t
+​
+log
+⁡
+q
+​
+(
+𝒚
+∣
+t
+)
+\displaystyle\frac{d}{dt}\log q({\bm{y}}\mid t)
+=
+𝔼
+𝒙
+∼
+q
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+​
+[
+d
+d
+​
+t
+​
+log
+⁡
+p
+⁡
+(
+𝒙
+t
+)
+]
+\displaystyle=\mathbb{E}_{{\bm{x}}\sim q({\bm{x}}_{t}\mid{\bm{y}})}\left[\frac{d}{dt}\log p({\bm{x}}_{t})\right]
+(Fisher’s identity)
+=
+−
+𝔼
+𝒙
+∼
+q
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+​
+[
+∇
+⋅
+𝒗
+p
+​
+(
+𝒙
+t
+)
++
+𝒗
+p
+​
+(
+𝒙
+t
+)
+T
+​
+∇
+𝒙
+t
+​
+log
+⁡
+p
+⁡
+(
+𝒙
+t
+)
+]
+\displaystyle=-\mathbb{E}_{{\bm{x}}\sim q({\bm{x}}_{t}\mid{\bm{y}})}\left[\nabla\cdot{\bm{v}}_{p}({\bm{x}}_{t})+{\bm{v}}_{p}({\bm{x}}_{t})^{T}\nabla_{{\bm{x}}_{t}}\log p({\bm{x}}_{t})\right]
+(Log-cont. equation)
+=
+−
+𝔼
+𝒙
+∼
+q
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+​
+[
+∇
+⋅
+𝒗
+p
+​
+(
+𝒙
+t
+)
++
+𝒗
+p
+​
+(
+𝒙
+t
+)
+T
+​
+∇
+𝒙
+t
+​
+log
+⁡
+q
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+]
+\displaystyle=-\mathbb{E}_{{\bm{x}}\sim q({\bm{x}}_{t}\mid{\bm{y}})}\left[\nabla\cdot{\bm{v}}_{p}({\bm{x}}_{t})+{\bm{v}}_{p}({\bm{x}}_{t})^{T}\nabla_{{\bm{x}}_{t}}\log q({\bm{x}}_{t}\mid{\bm{y}})\right]
++
+𝔼
+𝒙
+∼
+q
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+​
+[
+𝒗
+p
+​
+(
+𝒙
+t
+)
+T
+​
+∇
+𝒙
+t
+​
+log
+⁡
+q
+⁡
+(
+𝒚
+∣
+𝒙
+t
+)
+]
+\displaystyle\quad+\mathbb{E}_{{\bm{x}}\sim q({\bm{x}}_{t}\mid{\bm{y}})}\left[{\bm{v}}_{p}({\bm{x}}_{t})^{T}\nabla_{{\bm{x}}_{t}}\log q({\bm{y}}\mid{\bm{x}}_{t})\right]
+(Bayes)
+=
+𝔼
+𝒙
+∼
+q
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+​
+[
+𝒗
+p
+​
+(
+𝒙
+t
+)
+T
+​
+∇
+𝒙
+t
+​
+log
+⁡
+q
+⁡
+(
+𝒚
+∣
+𝒙
+t
+)
+]
+.
+\displaystyle=\mathbb{E}_{{\bm{x}}\sim q({\bm{x}}_{t}\mid{\bm{y}})}\left[{\bm{v}}_{p}({\bm{x}}_{t})^{T}\nabla_{{\bm{x}}_{t}}\log q({\bm{y}}\mid{\bm{x}}_{t})\right].
+(Stein’s identity)
+Integrating over all
+t
+t
+gives us the estimator:
+log
+⁡
+p
+⁡
+(
+𝒚
+)
+\displaystyle\log p({\bm{y}})
+=
+log
+⁡
+q
+⁡
+(
+𝒚
+∣
+t
+=
+0
+)
+\displaystyle=\log q({\bm{y}}\mid t=0)
+=
+log
+⁡
+q
+⁡
+(
+𝒚
+∣
+t
+=
+T
+)
+−
+∫
+0
+T
+d
+d
+​
+t
+​
+log
+⁡
+q
+⁡
+(
+𝒚
+∣
+t
+)
+​
+𝑑
+t
+\displaystyle=\log q({\bm{y}}\mid t=T)-\int_{0}^{T}\frac{d}{dt}\log q({\bm{y}}\mid t)dt
+=
+log
+⁡
+q
+⁡
+(
+𝒚
+∣
+t
+=
+T
+)
+−
+∑
+i
+=
+1
+N
+Δ
+​
+t
+i
+​
+𝔼
+𝒙
+∼
+q
+⁡
+(
+𝒙
+t
+i
+∣
+𝒚
+)
+​
+[
+𝒗
+p
+​
+(
+𝒙
+t
+i
+)
+T
+​
+∇
+𝒙
+t
+i
+​
+log
+⁡
+q
+⁡
+(
+𝒚
+∣
+𝒙
+t
+i
+)
+]
+\displaystyle=\log q({\bm{y}}\mid t=T)-\sum_{i=1}^{N}\Delta t_{i}\mathbb{E}_{{\bm{x}}\sim q({\bm{x}}_{t_{i}}\mid{\bm{y}})}\left[{\bm{v}}_{p}({\bm{x}}_{t_{i}})^{T}\nabla_{{\bm{x}}_{t_{i}}}\log q({\bm{y}}\mid{\bm{x}}_{t_{i}})\right]
+where
+log
+⁡
+q
+⁡
+(
+𝒚
+∣
+t
+=
+T
+)
+=
+log
+⁡
+𝔼
+𝒙
+∼
+𝒩
+⁡
+(
+0
+,
+σ
+T
+2
+)
+​
+[
+q
+⁡
+(
+𝒚
+∣
+𝒙
+)
+]
+\log q({\bm{y}}\mid t=T)=\log\mathbb{E}_{{\bm{x}}\sim\mathcal{N}(0,\sigma_{T}^{2})}\left[q({\bm{y}}\mid{\bm{x}})\right]
+is the model evidence under a Gaussian prior, and
+𝒗
+p
+​
+(
+𝒙
+t
+)
+=
+a
+t
+′
+a
+t
+​
+𝒙
+t
+−
+(
+σ
+t
+′
+​
+σ
+t
+−
+σ
+t
+2
+​
+a
+t
+′
+a
+t
+)
+​
+∇
+𝒙
+​
+log
+⁡
+p
+⁡
+(
+𝒙
+t
+)
+{\bm{v}}_{p}({\bm{x}}_{t})=\frac{a_{t}^{\prime}}{a_{t}}{\bm{x}}_{t}-(\sigma_{t}^{\prime}\sigma_{t}-\sigma_{t}^{2}\frac{a_{t}^{\prime}}{a_{t}})\nabla_{\bm{x}}\log p({\bm{x}}_{t})
+is the PF-ODE from Equation
+13
+.
+∎
+We can also do a similar derivation for the marginals used for the Twisted Diffusion Sampler
+(
+Wu et al., 2023
+)
+, which follow
+π
+⁡
+(
+𝒙
+t
+|
+𝒚
+)
+∝
+p
+⁡
+(
+𝒙
+t
+)
+​
+p
+​
+(
+𝒚
+|
+𝔼
+⁡
+[
+𝒙
+0
+|
+𝒙
+t
+]
+)
+\pi({\bm{x}}_{t}|{\bm{y}})\propto p({\bm{x}}_{t})p({\bm{y}}|\mathbb{E}[{\bm{x}}_{0}|{\bm{x}}_{t}])
+; note that this evidence gradient can be computed before resampling using SMC weights or after resampling without weights.
+Proposition 3
+(
+DiME-TDS
+: model evidence estimation along the TDS marginals)
+.
+Given diffusion process
+𝐱
+t
+=
+a
+t
+​
+𝐱
+0
++
+σ
+t
+​
+𝐳
+t
+,
+𝐳
+t
+∼
+𝒩
+⁡
+(
+0
+,
+𝐈
+)
+{\bm{x}}_{t}=a_{t}{\bm{x}}_{0}+\sigma_{t}{\bm{z}}_{t},{\bm{z}}_{t}\sim\mathcal{N}(0,{\bm{I}})
+, TDS marginals
+π
+⁡
+(
+𝐱
+t
+|
+𝐲
+)
+∝
+p
+⁡
+(
+𝐱
+t
+)
+​
+p
+​
+(
+𝐲
+|
+𝛍
+⁡
+(
+𝐱
+t
+)
+)
+\pi({\bm{x}}_{t}|{\bm{y}})\propto p({\bm{x}}_{t})p({\bm{y}}|{\bm{\mu}}({\bm{x}}_{t}))
+, and timesteps
+0
+=
+t
+0
+<
+⋯
+<
+t
+N
+=
+T
+0=t_{0}<\dots<t_{N}=T
+, the model evidence can be estimated via:
+log
+⁡
+p
+⁡
+(
+𝒚
+)
+≈
+C
+⁡
+(
+q
+,
+𝒚
+)
+−
+∑
+i
+=
+1
+N
+Δ
+​
+t
+i
+​
+𝔼
+𝒙
+t
+∼
+π
+⁡
+(
+𝒙
+t
+i
+∣
+𝒚
+)
+​
+[
+𝒗
+p
+​
+(
+𝒙
+t
+i
+)
+T
+​
+∇
+𝒙
+t
+i
+​
+log
+⁡
+p
+⁡
+(
+𝒚
+∣
+𝝁
+⁡
+(
+𝒙
+t
+i
+)
+)
++
+d
+d
+​
+t
+​
+log
+⁡
+p
+⁡
+(
+𝒚
+∣
+𝝁
+⁡
+(
+𝒙
+t
+i
+)
+)
+]
+\displaystyle\log p({\bm{y}})\approx C(q,{\bm{y}})-\sum_{i=1}^{N}\Delta t_{i}\mathbb{E}_{{\bm{x}}_{t}\sim\pi({\bm{x}}_{t_{i}}\mid{\bm{y}})}\left[{\bm{v}}_{p}({\bm{x}}_{t_{i}})^{T}\nabla_{{\bm{x}}_{t_{i}}}\log p({\bm{y}}\mid{\bm{\mu}}({\bm{x}}_{t_{i}}))+\frac{d}{dt}\log p({\bm{y}}\mid{\bm{\mu}}({\bm{x}}_{t_{i}}))\right]
+(18)
+where
+C
+⁡
+(
+q
+,
+𝐲
+)
+=
+log
+⁡
+𝔼
+𝐱
+∼
+𝒩
+⁡
+(
+0
+,
+σ
+T
+2
+)
+​
+[
+p
+⁡
+(
+𝐲
+∣
+μ
+⁡
+(
+𝐱
+T
+)
+)
+]
+C(q,{\bm{y}})=\log\mathbb{E}_{{\bm{x}}\sim\mathcal{N}(0,\sigma_{T}^{2})}\left[p({\bm{y}}\mid\mu({\bm{x}}_{T}))\right]
+is constant for fixed measurement
+𝐲
+{\bm{y}}
+and forward model, and
+𝐯
+p
+​
+(
+𝐱
+t
+)
+=
+a
+t
+′
+a
+t
+​
+𝐱
+t
+−
+(
+σ
+t
+′
+​
+σ
+t
+−
+σ
+t
+2
+​
+a
+t
+′
+a
+t
+)
+​
+∇
+𝐱
+​
+log
+⁡
+p
+⁡
+(
+𝐱
+t
+)
+{\bm{v}}_{p}({\bm{x}}_{t})=\frac{a_{t}^{\prime}}{a_{t}}{\bm{x}}_{t}-(\sigma_{t}^{\prime}\sigma_{t}-\sigma_{t}^{2}\frac{a_{t}^{\prime}}{a_{t}})\nabla_{\bm{x}}\log p({\bm{x}}_{t})
+is the PF-ODE velocity at
+𝐱
+t
+{\bm{x}}_{t}
+(Eq.
+13
+).
+Proof.
+d
+d
+​
+t
+​
+log
+⁡
+π
+​
+(
+𝒚
+∣
+t
+)
+\displaystyle\frac{d}{dt}\log\pi({\bm{y}}\mid t)
+=
+1
+π
+⁡
+(
+𝒚
+∣
+t
+)
+​
+d
+d
+​
+t
+​
+∫
+p
+⁡
+(
+𝒙
+t
+)
+​
+p
+​
+(
+𝒚
+∣
+𝝁
+⁡
+(
+𝒙
+t
+)
+)
+​
+d
+​
+𝒙
+t
+\displaystyle=\frac{1}{\pi({\bm{y}}\mid t)}\frac{d}{dt}\int p({\bm{x}}_{t})p({\bm{y}}\mid{\bm{\mu}}({\bm{x}}_{t}))d{\bm{x}}_{t}
+=
+1
+π
+⁡
+(
+𝒚
+∣
+t
+)
+​
+∫
+[
+d
+d
+​
+t
+​
+p
+​
+(
+𝒙
+t
+)
+]
+​
+p
+​
+(
+𝒚
+∣
+𝝁
+⁡
+(
+𝒙
+t
+)
+)
+​
+d
+​
+𝒙
+t
++
+1
+π
+⁡
+(
+𝒚
+∣
+t
+)
+​
+∫
+p
+⁡
+(
+𝒙
+t
+)
+​
+[
+d
+d
+​
+t
+​
+p
+​
+(
+𝒚
+∣
+𝝁
+⁡
+(
+𝒙
+t
+)
+)
+]
+​
+d
+​
+𝒙
+t
+\displaystyle=\frac{1}{\pi({\bm{y}}\mid t)}\int\left[\frac{d}{dt}p({\bm{x}}_{t})\right]p({\bm{y}}\mid{\bm{\mu}}({\bm{x}}_{t}))d{\bm{x}}_{t}+\frac{1}{\pi({\bm{y}}\mid t)}\int p({\bm{x}}_{t})\left[\frac{d}{dt}p({\bm{y}}\mid{\bm{\mu}}({\bm{x}}_{t}))\right]d{\bm{x}}_{t}
+=
+𝔼
+𝒙
+t
+∼
+π
+⁡
+(
+𝒙
+t
+∣
+y
+)
+​
+[
+d
+d
+​
+t
+​
+log
+⁡
+p
+⁡
+(
+𝒙
+t
+)
++
+d
+d
+​
+t
+​
+log
+⁡
+p
+⁡
+(
+𝒚
+∣
+𝝁
+⁡
+(
+𝒙
+t
+)
+)
+]
+\displaystyle=\mathbb{E}_{{\bm{x}}_{t}\sim\pi({\bm{x}}_{t}\mid y)}\left[\frac{d}{dt}\log p({\bm{x}}_{t})+\frac{d}{dt}\log p({\bm{y}}\mid{\bm{\mu}}({\bm{x}}_{t}))\right]
+=
+𝔼
+𝒙
+t
+∼
+π
+⁡
+(
+𝒙
+t
+∣
+𝒚
+)
+​
+[
+𝒗
+p
+​
+(
+𝒙
+t
+)
+T
+​
+∇
+𝒙
+t
+​
+log
+⁡
+p
+⁡
+(
+𝒚
+∣
+𝝁
+⁡
+(
+𝒙
+t
+)
+)
++
+d
+d
+​
+t
+​
+log
+⁡
+p
+⁡
+(
+𝒚
+∣
+𝝁
+⁡
+(
+𝒙
+t
+)
+)
+]
+\displaystyle=\mathbb{E}_{{\bm{x}}_{t}\sim\pi({\bm{x}}_{t}\mid{\bm{y}})}\left[{\bm{v}}_{p}({\bm{x}}_{t})^{T}\nabla_{{\bm{x}}_{t}}\log p({\bm{y}}\mid{\bm{\mu}}({\bm{x}}_{t}))+\frac{d}{dt}\log p({\bm{y}}\mid{\bm{\mu}}({\bm{x}}_{t}))\right]
+where the last line is derived in a similarly to Proposition
+2
+. Integrating over all
+t
+t
+gives the estimator:
+log
+⁡
+p
+⁡
+(
+𝒚
+)
+\displaystyle\log p({\bm{y}})
+=
+log
+⁡
+π
+⁡
+(
+𝒚
+∣
+t
+=
+T
+)
+−
+∫
+0
+T
+d
+d
+​
+t
+​
+log
+⁡
+π
+⁡
+(
+𝒚
+∣
+t
+)
+​
+𝑑
+t
+\displaystyle=\log\pi({\bm{y}}\mid t=T)-\int_{0}^{T}\frac{d}{dt}\log\pi({\bm{y}}\mid t)dt
+≈
+log
+⁡
+π
+⁡
+(
+𝒚
+∣
+t
+=
+T
+)
+−
+∑
+i
+=
+1
+N
+Δ
+​
+t
+i
+​
+𝔼
+𝒙
+t
+∼
+π
+⁡
+(
+𝒙
+t
+i
+∣
+𝒚
+)
+​
+[
+𝒗
+p
+​
+(
+𝒙
+t
+i
+)
+T
+​
+∇
+𝒙
+t
+i
+​
+log
+⁡
+p
+⁡
+(
+𝒚
+∣
+𝝁
+⁡
+(
+𝒙
+t
+i
+)
+)
++
+d
+d
+​
+t
+​
+log
+⁡
+p
+⁡
+(
+𝒚
+∣
+𝝁
+⁡
+(
+𝒙
+t
+i
+)
+)
+]
+\displaystyle\approx\log\pi({\bm{y}}\mid t=T)-\sum_{i=1}^{N}\Delta t_{i}\mathbb{E}_{{\bm{x}}_{t}\sim\pi({\bm{x}}_{t_{i}}\mid{\bm{y}})}\left[{\bm{v}}_{p}({\bm{x}}_{t_{i}})^{T}\nabla_{{\bm{x}}_{t_{i}}}\log p({\bm{y}}\mid{\bm{\mu}}({\bm{x}}_{t_{i}}))+\frac{d}{dt}\log p({\bm{y}}\mid{\bm{\mu}}({\bm{x}}_{t_{i}}))\right]
+where
+log
+⁡
+π
+⁡
+(
+𝒚
+∣
+T
+)
+≈
+log
+⁡
+𝔼
+𝒙
+∼
+𝒩
+⁡
+(
+0
+,
+σ
+T
+2
+)
+​
+[
+p
+⁡
+(
+𝒚
+∣
+μ
+⁡
+(
+𝒙
+T
+)
+)
+]
+\log\pi({\bm{y}}\mid T)\approx\log\mathbb{E}_{{\bm{x}}\sim\mathcal{N}(0,\sigma_{T}^{2})}\left[p({\bm{y}}\mid\mu({\bm{x}}_{T}))\right]
+.
+∎
+Appendix C
+Baseline methods
+In Section
+4.1
+, we compared to five baseline methods, described here. Define
+p
+β
+p_{\beta}
+as an intermediate distribution of the
+power-posterior path
+, used in TI, AIS, and SMC:
+p
+β
+​
+(
+𝒙
+)
+∝
+p
+⁡
+(
+𝒙
+)
+​
+p
+​
+(
+𝒚
+∣
+𝒙
+)
+β
+,
+β
+∈
+[
+0
+,
+1
+]
+p_{\beta}({\bm{x}})\propto p({\bm{x}})p({\bm{y}}\mid{\bm{x}})^{\beta},\beta\in[0,1]
+. Note that this path is equivalent to the
+geometric path
+under a different parametrization.
+Naive Monte Carlo (Naive MC)
+: We generate many unconditional prior samples and compute the expectation of the likelihood as follows:
+log
+⁡
+p
+⁡
+(
+𝒚
+)
+=
+log
+⁡
+𝔼
+𝒙
+∼
+p
+⁡
+(
+𝒙
+0
+)
+​
+[
+p
+⁡
+(
+𝒚
+∣
+𝒙
+)
+]
+\log p({\bm{y}})=\log\mathbb{E}_{{\bm{x}}\sim p({\bm{x}}_{0})}[p({\bm{y}}\mid{\bm{x}})]
+.
+Original DAPS covariance heuristic (Original heuristic)
+: We perform the same steps as described in Algorithm
+1
+but using the originally proposed covariance heuristic
+𝚺
+𝒙
+0
+|
+𝒙
+t
+=
+σ
+t
+2
+\bm{\Sigma}_{{\bm{x}}_{0}\mid{\bm{x}}_{t}}=\sigma_{t}^{2}
+.
+Thermodynamic integration (TI)
+(
+Lartillot and Philippe, 2006
+)
+: Originally from statistical mechanics, TI can also compute expectations by integrating the evidence over the power-posterior path:
+d
+d
+​
+β
+​
+log
+⁡
+p
+β
+​
+(
+𝒚
+)
+\displaystyle\frac{d}{d\beta}\log p_{\beta}({\bm{y}})
+=
+1
+p
+β
+​
+(
+𝒚
+)
+​
+d
+d
+​
+β
+​
+p
+β
+​
+(
+𝒚
+)
+=
+1
+p
+β
+​
+(
+𝒚
+)
+​
+∫
+p
+⁡
+(
+𝒙
+)
+​
+d
+d
+​
+β
+​
+p
+​
+(
+𝒚
+∣
+𝒙
+)
+β
+​
+𝑑
+𝒙
+\displaystyle=\frac{1}{p_{\beta}({\bm{y}})}\frac{d}{d\beta}p_{\beta}({\bm{y}})=\frac{1}{p_{\beta}({\bm{y}})}\int p({\bm{x}})\frac{d}{d\beta}p({\bm{y}}\mid{\bm{x}})^{\beta}d{\bm{x}}
+=
+1
+p
+β
+​
+(
+𝒚
+)
+​
+∫
+p
+⁡
+(
+𝒙
+)
+​
+p
+​
+(
+𝒚
+∣
+𝒙
+)
+β
+​
+log
+⁡
+p
+⁡
+(
+𝒚
+∣
+𝒙
+)
+​
+𝑑
+𝒙
+=
+𝔼
+𝒙
+∼
+p
+β
+​
+[
+log
+⁡
+p
+⁡
+(
+𝒚
+∣
+𝒙
+)
+]
+.
+\displaystyle=\frac{1}{p_{\beta}({\bm{y}})}\int p({\bm{x}})p({\bm{y}}\mid{\bm{x}})^{\beta}\log p({\bm{y}}\mid{\bm{x}})d{\bm{x}}=\mathbb{E}_{{\bm{x}}\sim p_{\beta}}[\log p({\bm{y}}\mid{\bm{x}})].
+Using the fact that
+log
+⁡
+p
+β
+=
+0
+​
+(
+𝒚
+)
+=
+log
+⁡
+1
+=
+0
+\log p_{\beta=0}({\bm{y}})=\log 1=0
+, using
+K
+K
+integration steps we have the estimator:
+log
+⁡
+p
+β
+=
+1
+​
+(
+𝒚
+)
+≈
+∑
+k
+=
+1
+K
+Δ
+​
+β
+k
+​
+𝔼
+𝒙
+∼
+p
+β
+k
+−
+1
+​
+[
+log
+⁡
+p
+⁡
+(
+𝒚
+∣
+𝒙
+)
+]
+.
+\displaystyle\log p_{\beta=1}({\bm{y}})\;\approx\;\sum_{k=1}^{K}\Delta\beta_{k}\,\mathbb{E}_{{\bm{x}}\sim p_{\beta_{k-1}}}\!\left[\log p({\bm{y}}\mid{\bm{x}})\right].
+Samples from each
+p
+β
+p_{\beta}
+were generated using Sequential Monte Carlo (details below).
+Annealed importance sampling (AIS)
+(
+Neal, 2001
+)
+: We can compute the ratio of evidence:
+p
+β
+k
+​
+(
+𝒚
+)
+p
+β
+k
+−
+1
+​
+(
+𝒚
+)
+\displaystyle\frac{p_{\beta_{k}}({\bm{y}})}{p_{\beta_{k-1}}({\bm{y}})}
+=
+∫
+p
+⁡
+(
+𝒙
+)
+​
+p
+​
+(
+𝒚
+∣
+𝒙
+)
+β
+k
+−
+1
+​
+p
+​
+(
+𝒚
+∣
+𝒙
+)
+Δ
+​
+β
+k
+​
+𝑑
+𝒙
+p
+β
+k
+−
+1
+​
+(
+𝒚
+)
+=
+𝔼
+𝒙
+∼
+p
+β
+k
+−
+1
+​
+[
+p
+​
+(
+𝒚
+∣
+𝒙
+)
+Δ
+​
+β
+k
+]
+\displaystyle=\frac{\int p({\bm{x}})p({\bm{y}}\mid{\bm{x}})^{\beta_{k-1}}p({\bm{y}}\mid{\bm{x}})^{\Delta\beta_{k}}d{\bm{x}}}{p_{\beta_{k-1}}({\bm{y}})}=\mathbb{E}_{{\bm{x}}\sim p_{\beta_{k-1}}}[p({\bm{y}}\mid{\bm{x}})^{\Delta\beta_{k}}]
+=
+𝔼
+p
+𝒙
+∼
+β
+k
+−
+1
+​
+[
+exp
+⁡
+(
+Δ
+​
+β
+k
+​
+log
+⁡
+p
+⁡
+(
+𝒚
+∣
+𝒙
+)
+)
+]
+.
+\displaystyle=\mathbb{E}_{p_{{\bm{x}}\sim\beta_{k-1}}}[\exp(\Delta\beta_{k}\log p({\bm{y}}\mid{\bm{x}}))].
+Using the fact that
+log
+⁡
+p
+β
+=
+0
+​
+(
+𝒚
+)
+=
+log
+⁡
+1
+=
+0
+\log p_{\beta=0}({\bm{y}})=\log 1=0
+, telescoping over all
+β
+k
+\beta_{k}
+gives:
+p
+β
+=
+1
+​
+(
+𝒚
+)
+\displaystyle p_{\beta=1}({\bm{y}})
+=
+∏
+k
+=
+1
+K
+𝔼
+p
+β
+k
+−
+1
+​
+[
+exp
+⁡
+(
+Δ
+​
+β
+k
+​
+log
+⁡
+p
+⁡
+(
+𝒚
+∣
+𝒙
+)
+)
+]
+\displaystyle=\prod_{k=1}^{K}\mathbb{E}_{p_{\beta_{k-1}}}[\exp(\Delta\beta_{k}\log p({\bm{y}}\mid{\bm{x}}))]
+=
+𝔼
+𝒙
+0
+:
+k
+−
+1
+∼
+p
+β
+0
+:
+k
+−
+1
+exp
+(
+∑
+k
+=
+1
+K
+Δ
+β
+k
+log
+p
+(
+𝒚
+∣
+𝒙
+k
+−
+1
+)
+)
+.
+\displaystyle=\,\mathbb{E}_{{\bm{x}}_{0:k-1}\sim p_{\beta_{0:k-1}}}\exp\!\Big(\sum_{k=1}^{K}\Delta\beta_{k}\,\log p({\bm{y}}\mid{\bm{x}}_{k-1})\Big).
+Note that
+𝒙
+0
+:
+k
+−
+1
+∼
+p
+β
+0
+:
+k
+−
+1
+{\bm{x}}_{0:k-1}\sim p_{\beta_{0:k-1}}
+represents the sample-path of one particle, where each transition kernel from
+k
+−
+1
+k-1
+to
+k
+k
+was performed using Langevin dynamics.
+Sequential Monte Carlo (SMC)
+(
+Del Moral et al., 2006
+)
+: An extension of AIS that uses the resampling step from Sequential Monte Carlo methods to replace particles with degenerate weights (i.e. particles stuck in the wrong mode) while sampling the next intermediate distribution, potentially reducing both bias and variance. These resampling steps are performed either using a fixed schedule or adaptively when the effective sample size falls below a threshold.
+Appendix D
+Implementation details
+D.1
+DiME
+As
+DiME
+is implemented alongside DAPS, we have a similar set of hyperparameters.
+Number of diffusion steps for sampling
+p
+⁡
+(
+x
+0
+∣
+x
+t
+)
+p({\bm{x}}_{0}\mid{\bm{x}}_{t})
+:
+While the original DAPS method uses many diffusion steps to estimate the denoised image at each annealing iteration, we use 1 diffusion step to ensure an exact estimate of
+𝔼
+⁡
+[
+𝒙
+0
+∣
+𝒙
+t
+]
+\mathbb{E}[{\bm{x}}_{0}\mid{\bm{x}}_{t}]
+by Tweedie’s formula.
+Langevin dynamics
+: The learning rate of Langevin dynamics was tuned so that posterior samples
+𝒙
+~
+0
+∼
+p
+⁡
+(
+𝒙
+0
+∣
+𝒙
+t
+,
+𝒚
+)
+\tilde{{\bm{x}}}_{0}\sim p({\bm{x}}_{0}\mid{\bm{x}}_{t},{\bm{y}})
+have a mean reduced
+χ
+2
+\chi^{2}
+data likelihood fit that converges as low as possible (ideally around 1, which is indicative of a good posterior sample for likelihoods with Gaussian noise). We also use a linear learning rate decay as is done in
+Zhang et al. (2025)
+. The table below lists the learning rates and maximum step counts used for each experiment. In practice, sample convergence usually happens much sooner than the maximum step count.
+Task
+lr
+Max steps
+Mixture of Gaussians (in-distribution)
+5
+×
+10
+−
+4
+5\times 10^{-4}
+2,000
+2{,}000
+Mixture of Gaussians (out-of-distribution)
+2
+×
+10
+−
+5
+2\times 10^{-5}
+10,000
+10{,}000
+Mixture of Gaussians (saddle point)
+2
+×
+10
+−
+5
+2\times 10^{-5}
+10,000
+10{,}000
+Fourier phase retrieval
+1
+×
+10
+−
+3
+1\times 10^{-3}
+1,000
+1{,}000
+Gaussian phase retrieval
+5
+×
+10
+−
+4
+5\times 10^{-4}
+1,000
+1{,}000
+M87* black hole imaging
+1
+×
+10
+−
+5
+1\times 10^{-5}
+1,000
+1{,}000
+Selection of
+σ
+m
+​
+i
+​
+n
+\sigma_{min}
+: This parameter can be viewed as the minimum noise level that the learned score can still be trusted. For the analytic Mixture of Gaussians experiment, we use a minimum annealing noise level
+σ
+m
+​
+i
+​
+n
+=
+0.05
+\sigma_{min}=0.05
+, and for the diffusion model experiments, we use
+σ
+m
+​
+i
+​
+n
+=
+0.1
+\sigma_{min}=0.1
+as is done in
+Zhang et al. (2025)
+.
+The remaining integral from
+t
+=
+0
+t=0
+to
+t
+=
+t
+m
+​
+i
+​
+n
+t=t_{min}
+in Eq.
+9
+is approximated by a trapezoid, using the fact that the integrand equals
+0
+0
+at
+t
+=
+0
+t=0
+.
+Computing the precision matrix
+𝚺
+0
+−
+1
+\bm{\Sigma}_{0}^{-1}
+: for some datasets, the covariance of specific pixel locations is nearly 0 (such as the corner regions of MNIST), so we added a jitter of 1e-2 for stability.
+D.2
+Baselines
+We use TI, AIS, and SMC as baseline methods for the mixture of Gaussians experiment (Section
+4.1
+) and SMC for the MNIST experiment (Section
+4.2
+; Appendix
+E
+). We used Langevin dynamics with 2000 steps and learning rate 0.0002 for our transitions between distributions. For SMC, we resample when the effective sample size (ESS) is less than 0.6.
+We test with fixed linear, exponential, sigmoidal
+β
+\beta
+as well as adaptive
+β
+\beta
+schedules that decrease the Conditional ESS at a constant rate of [0.5, 0.6, 0.7]. For the mixture of Gaussians study, an exponential schedule with
+λ
+=
+6
+\lambda=6
+was found to be optimal. For the MNIST experiment, the fixed schedules use 50 annealing steps, while the adaptive schedule had a minimum
+β
+\beta
+step size of
+0.002
+0.002
+which in practice results in
+150
+150
+steps at most.
+Appendix E
+Baseline results on MNIST Model Selection
+Figure 6:
+Model evidence confusion matrix using sequential Monte Carlo (SMC) for Gaussian phase retrieval (
+left
+) and Fourier phase retrieval (
+right
+) for each (ground truth measurement, model) pair of MNIST digits. When SMC uses the learned diffusion score
+∇
+𝒙
+​
+log
+​
+p
+​
+(
+𝒙
+t
+)
+\nabla_{{\bm{x}}}\log p({\bm{x}}_{t})
+at
+t
+=
+0.1
+t=0.1
+as the prior score, it often fails to select the correct model.
+Results of the MNIST experiment (Section
+4.2
+) using SMC and the learned
+∇
+𝒙
+​
+log
+​
+p
+​
+(
+𝒙
+t
+)
+\nabla_{{\bm{x}}}\log p({\bm{x}}_{t})
+with
+σ
+=
+0.1
+\sigma=0.1
+as a prior score are shown in Figure
+6
+. SMC is often unable to determine the correct MNIST model.
+Each SMC annealing step also takes about
+10
+×
+10\times
+longer than an equivalent annealing step for
+DiME
+, due to having to query the diffusion model many times for the prior score. Interestingly, narrower priors (i.e. MNIST digit 1) leads to
+higher
+model evidence estimates here; since the training data is more clumped together, the learned score becomes more accurate at low noise levels.
+For completeness, the model evidence estimates of a few runs over all temperature annealing schedules as well as for a second noise level,
+σ
+=
+0.05
+\sigma=0.05
+, are reported in Tables
+2
+and
+3
+. Mean and standard deviation over 5 runs is shown here. As can be seen, lowering the noise level only further increases overfitting to training data, causing the estimated evidence to drop.
+σ
+min
+=
+0.1
+\sigma_{\min}=0.1
+σ
+min
+=
+0.05
+\sigma_{\min}=0.05
+SMC schedule
+GT 8 Model 6
+GT 8 Model 7
+GT 8 Model 8
+GT 8 Model 6
+GT 8 Model 7
+GT 8 Model 8
+Linear
+−
+182
+±
+9
+-182\pm 9
+−
+212
+±
+9
+-212\pm 9
+−
+210
+±
+11
+-210\pm 11
+−
+279
+±
+26
+-279\pm 26
+−
+352
+±
+3
+-352\pm 3
+−
+426
+±
+40
+-426\pm 40
+Exponential
+−
+183
+±
+7
+-183\pm 7
+−
+224
+±
+5
+-224\pm 5
+−
+239
+±
+6
+-239\pm 6
+−
+292
+±
+20
+-292\pm 20
+−
+383
+±
+9
+-383\pm 9
+−
+468
+±
+12
+-468\pm 12
+Sigmoidal
+−
+175
+±
+5
+-175\pm 5
+−
+219
+±
+13
+-219\pm 13
+−
+191
+±
+2
+-191\pm 2
+−
+273
+±
+15
+-273\pm 15
+−
+374
+±
+9
+-374\pm 9
+−
+480
+±
+17
+-480\pm 17
+Adaptive 0.5
+−
+195
+±
+31
+-195\pm 31
+−
+202
+±
+23
+-202\pm 23
+−
+261
+±
+1
+-261\pm 1
+−
+296
+±
+52
+-296\pm 52
+−
+346
+±
+16
+-346\pm 16
+−
+489
+±
+33
+-489\pm 33
+Adaptive 0.6
+−
+184
+±
+6
+-184\pm 6
+−
+189
+±
+7
+-189\pm 7
+−
+259
+±
+4
+-259\pm 4
+−
+279
+±
+45
+-279\pm 45
+−
+373
+±
+17
+-373\pm 17
+−
+485
+±
+26
+-485\pm 26
+Adaptive 0.7
+−
+192
+±
+14
+-192\pm 14
+−
+192
+±
+2
+-192\pm 2
+−
+255
+±
+11
+-255\pm 11
+−
+296
+±
+26
+-296\pm 26
+−
+384
+±
+18
+-384\pm 18
+−
+522
+±
+30
+-522\pm 30
+Table 2:
+SMC model evidence estimates on Gaussian phase retrieval.
+σ
+min
+=
+0.1
+\sigma_{\min}=0.1
+σ
+min
+=
+0.05
+\sigma_{\min}=0.05
+SMC schedule
+GT 8 Model 6
+GT 8 Model 7
+GT 8 Model 8
+GT 8 Model 6
+GT 8 Model 7
+GT 8 Model 8
+Linear
+−
+416
+±
+11
+-416\pm 11
+−
+431
+±
+4
+-431\pm 4
+−
+409
+±
+1
+-409\pm 1
+−
+485
+±
+25
+-485\pm 25
+−
+577
+±
+2
+-577\pm 2
+−
+563
+±
+2
+-563\pm 2
+Exponential
+−
+422
+±
+20
+-422\pm 20
+−
+427
+±
+2
+-427\pm 2
+−
+467
+±
+11
+-467\pm 11
+−
+527
+±
+10
+-527\pm 10
+−
+582
+±
+12
+-582\pm 12
+−
+585
+±
+9
+-585\pm 9
+Sigmoidal
+−
+415
+±
+9
+-415\pm 9
+−
+451
+±
+3
+-451\pm 3
+−
+411
+±
+7
+-411\pm 7
+−
+520
+±
+13
+-520\pm 13
+−
+580
+±
+7
+-580\pm 7
+−
+575
+±
+5
+-575\pm 5
+Adaptive 0.5
+−
+409
+±
+4
+-409\pm 4
+−
+409
+±
+6
+-409\pm 6
+−
+460
+±
+8
+-460\pm 8
+−
+524
+±
+33
+-524\pm 33
+−
+563
+±
+18
+-563\pm 18
+−
+567
+±
+10
+-567\pm 10
+Adaptive 0.6
+−
+431
+±
+20
+-431\pm 20
+−
+437
+±
+11
+-437\pm 11
+−
+458
+±
+8
+-458\pm 8
+−
+510
+±
+9
+-510\pm 9
+−
+566
+±
+14
+-566\pm 14
+−
+562
+±
+13
+-562\pm 13
+Adaptive 0.7
+−
+442
+±
+9
+-442\pm 9
+−
+437
+±
+8
+-437\pm 8
+−
+453
+±
+1
+-453\pm 1
+−
+516
+±
+6
+-516\pm 6
+−
+584
+±
+3
+-584\pm 3
+−
+570
+±
+6
+-570\pm 6
+Table 3:
+SMC model evidence estimates on Fourier phase retrieval.
+Appendix F
+Synthetic Model Selection
+In this section, we perform model selection on the same set of five priors as in Section
+4.3.1
+, but on simulated closure quantities measurements of test images from each prior as verification. The correct model is chosen for all measurements. The posterior samples with the lowest, mean, and highest path evidences are also shown in each case.
+Figure 7:
+Ground truth: GRMHD.
+Figure 8:
+Ground truth: SpaceNet.
+Figure 9:
+Ground truth: CelebA.
+Figure 10:
+Ground truth: MNIST.
+Figure 11:
+Ground truth: RIAF.
+Appendix G
+Large Language Model Usage
+We used ChatGPT for coding assistance, polishing text and LaTeX, and checking mathematical derivations.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

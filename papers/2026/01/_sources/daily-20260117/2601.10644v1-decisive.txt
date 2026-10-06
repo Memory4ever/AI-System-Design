@@ -1,0 +1,241 @@
+Decisive admission bounded main-body 240-line slice; not full evidence. Source https://arxiv.org/html/2601.10644v1
+1 Introduction
+Figure 1: Service architecture of RoutIR.
+The user’s HTTP request specifies a retrieval pipeline and search query, illustrated on the left.
+RoutIR orchestrates the retrieval pipeline on the fly and processes the query with each query processor.
+Each processor manages queuing, caching, and query processing.
+The “Next Processor” enables, for example, reranking or result fusion.
+See Figure 2 for a full JSON example of a request.
+Information retrieval research typically requires system comparison
+using a fixed set of queries and documents, following the Cranfield paradigm [7].
+Such experiments can be conducted through either batched or sequential query processing,
+depending on whether measuring query latency is critical to the study.
+Regardless, the queries are predefined,
+so the experimental environment can be static and read directly from a file.
+However, embedding retrieval models in a larger dynamic system pipeline creates challenges and overhead when conducting experiments.
+Particularly in Retrieval-Augmented Generation (RAG),
+the primary pipeline involves one or more large language models (LLMs) [46, 9]
+that generate search queries, digest retrieved documents, and draft the response.
+Instead of a linear process such as Fusion-in-Decoder [17]
+or GINGER [20],
+RAG systems are increasingly complex and dynamic,
+with multiple rounds of retrieval [9, 13, 39, 1, 47].
+A static experimental environment is not sufficient for these systems,
+because the queries are not known up front.
+Tools for offline query processing need to be modified to include the generative components
+or wrapped to provide an API that can accommodate online querying.
+However, wrapping offline retrieval pipelines with reasonable query and resource efficiency is non-trivial, and this task is orthogonal to implementing a retrieval model.
+We introduce an open-source package, RoutIR,
+that allows users to provide pipelines composed of the latest retrieval models
+as an HTTP API for use with downstream applications like dynamic RAG systems.
+RoutIR supports (1) simple service configuration for common model architectures without additional coding;
+(2) minimal wrappers for incorporating new models;
+(3) dynamic batching and queuing for concurrent and asynchronous requests;
+(4) fast and robust caching in memory and Redis;11
+1
+https://redis.io/
+and (5) reliable and easy-to-use HTTP API endpoints that do not require additional client-side packages.
+Such capabilities provide fast and reproducible experimental environments for RAG research,
+while enabling new retrieval models to be incorporated easily with minimal engineering overhead.
+While RoutIR is designed primarily for academic research, which does not implement various security measures for an API service, it can be used for internal prototyping in industry to spin up a proof-of-concept application.
+RoutIR has been deployed in various research settings where it has been demonstrated to be robust and reliable.
+During JHU SCALE 2025,22
+2
+https://hltcoe.jhu.edu/research/scale/scale-2025/
+a ten-week research workshop at Johns Hopkins University attended by more than 50 researchers working on long-form RAG,
+RoutIR was able to provide the retrieval API for PLAID-X [48],
+SPLADE-v3 [21],
+and Qwen3 Embedding [53] on the TREC NeuCLIR [23],
+TREC RAGTIME [24],
+TREC BioGen [16],
+and TREC RAG (i.e., MS-MARCO v2 Passage) [42] document collections
+using only three NVIDIA 24GB TITAN RTXs.
+In this use case, all three retrieval systems were able to provide search results
+with a reasonable latency without caching,
+and to provide results nearly instantaneously when results were cached.
+With asynchronous HTTP requests, which is the typical use case in RAG research,
+since multiple queries are usually generated and searched at the same time,
+RoutIR provides a throughput of 3 to 10 queries per second depending on the underlying model.
+RoutIR also powered the search service for the TREC RAGTIME track33
+3
+https://trec-ragtime.github.io/search_api.html
+to provide the same PLAID-X model for all track participants.
+With only CPU resources, the endpoint provides a latency of around 600 ms on an AWS virtual machine
+when serving both TREC NeuCLIR and RAGTIME collections.
+In this paper, we document the design decisions, architecture, and several use cases for RoutIR.
+The package is publicly available on PyPI with implementation available on GitHub.
+2 Related Work
+Academic IR platforms
+have a long history going back to at least the mid-1980s [4].
+Platforms like
+Galago [5],
+Indri [40],
+Patapsco [8], and
+Terrier [35] support offline experiments with traditional statistical methods,
+while platforms like
+Anserini [50, 25],
+Capreolus [51, 52],
+Experimaestro [36],
+FlexNeuART [2],
+LLM4Ranking [27],
+LLM-Rankers [54],
+OpenNIR [30],
+PyTerrier [32],
+RankLLM [54], and
+Tevatron [14, 29]
+provide support for modern neural first-stage retrieval and reranking methods [26].
+These platforms are typically designed for offline IR experiments following the Cranfield paradigm.
+They provide reproducible indexing and searching capabilities to support experimentation
+where test queries are predefined and can be processed sequentially or in batch.
+Rather than providing general-purpose toolkits,
+there has been a recent trend towards streamlining experimentation
+using tools designed to run specific benchmarks with a predefined set of collections,
+such as MTEB [33]
+and BEIR [41].
+While these academic tools are useful for offline retrieval evaluation and have greatly advanced the field,
+their focus on offline usage limits their ability to be embedded in larger systems.
+They typically do not provide Web APIs to interface with downstream applications.
+This limitation particularly affects RAG,
+where retrieval is usually an upstream or interleaving component
+providing retrieved information to generative models [46, 43, 9, 13, 39, 1, 47].
+This is a different setting from offline experimentation where the queries are fixed.
+RAG pipelines like Open Deep Research44
+4
+https://github.com/langchain-ai/open_deep_research
+can dynamically generate queries to incrementally gather information for generation.
+There are two ways to support such iterative RAG pipelines:
+(re-)implement the generative component within the IR platform
+or provide an API that can be dynamically queried by an external generative library.
+PyTerrier-RAG [31] takes the former approach,
+whereas RoutIR takes the latter by dynamically accepting and serving queries using state-of-the-art IR methods,
+including those implemented by platforms designed for offline use.
+Rather than reimplementing the underlying retrieval methods and RAG workflows,
+RoutIR provides a streamlined approach to wrap existing methods,
+compose them into retrieval pipelines,
+and query them online through a HTTP API.
+This allows RoutIR to serve the fast-growing RAG community by seamlessly embedding retrieval models into RAG platforms instead of requiring that RAG methods be reimplemented within an academic IR platform.
+Production search platforms
+like
+ElasticSearch55
+5
+https://www.elastic.co/elasticsearch,
+OpenSearch66
+6
+https://opensearch.org/, and
+Vespa77
+7
+https://vespa.ai/
+provide HTTP APIs for first-stage retrieval and reranking over collections that have been indexed by those platforms.
+These tools are complex, closely integrated with their underlying inverted index and vector database data structures,
+and optimized for production use.
+These design choices make extending the platforms with new methods non-trivial.
+In contrast, RoutIR provides a simple API and flexible method classes that make adding new retrieval models straightforward.
+3 RoutIR Architecture
+RoutIR is a thin, robust wrapper around retrieval models
+that provides online service capabilities that are orthogonal to the retrieval models themselves.
+The end user submits an HTTP request to a RoutIR endpoint for each search query,
+e.g., {"service": "qwen3-neuclir", "query": "where is machu picchu", "limit": 15},
+and receives the retrieval results of the requested 15 documents in a dictionary of document IDs and scores.
+A separate request delivers the document data associated with the document ID.
+The core design principle of RoutIR is to be as lightweight as possible
+while providing a flexible service layer
+to mitigate the overhead of serving state-of-the-art models when they are released.
+In RoutIR, we limit dependencies to only essential packages
+and leave model-specific ones, such as
+Huggingface Transformers [45] and
+PyJNIus,88
+8
+https://github.com/kivy/pyjnius
+as extras for users to install when they are needed.
+In this section, we describe the RoutIR service architecture, which is illustrated in Figure 1.
+RoutIR has three main components: Engines, Processors, and Pipelines.
+•
+Engines provide one or more core retrieval capabilities:
+first-stage retrieval using an index, reranking, query rewriting, and result fusion.
+To add new methods to RoutIR, the user writes an Engine subclass that may simply wrap an existing implementation.
+A special Relay Engine can be used to access Engines provided by another node running RoutIR.
+•
+Processors receive search queries as input and perform actions before passing the queries to an Engine.
+By default, they are used to cache results and to batch queries that arrive in quick succession.
+•
+Pipelines describe how engines are composed to produce a ranking.
+For example, a pipeline could indicate that results from two first-stage retrieval engines
+should be fused and then reranked.
+Pipelines can be composed of available Engines on the fly.
+3.1 Retrieval Engines
+Each retrieval model or system should be wrapped as an Engine,
+which implements the interface for serving queries.
+Each engine can provide one or more of the four core retrieval capabilities:
+(a) index searching, (b) query-passage scoring (for reranking), (c) query rewriting (or generation), and (d) result fusion.
+Allowing each engine instance to provide multiple capabilities can minimize the memory footprint when different tasks share the same underlying models.
+For instance, most bi-encoder models can provide both first-stage retrieval that results in a ranked list of documents,
+and query-passage scoring (reranking) that enables fast passage selection when
+a RAG pipeline [15, 6, 18] needs to compress the document input
+to the most relevant passages to feed to a downstream generation step.
+To improve retrieval effectiveness, an Engine can provide a reranker, such as monoT5 [37], Qwen3 Reranker [53], or Rank1 [44].
+Rerankers take a query and a list of strings (e.g. documents) as input and output a ranking over the input list.
+In RoutIR, modules can be initiated in Python as a standalone model instance
+to provide a unified interface;
+this is similar to what PyTerrier extensions such as pyterrier-colbert provide.
+However, the primary benefit of this thin wrapper is that it provides
+a robust and flexible online search service.
+Queries as inputs to the Engine are batched
+(as detailed in Section 3.2)
+to provide better service throughput;
+this is helpful because most bi-encoders and cross-encoders can score multiple queries and documents
+in the same matrix multiplication,
+leading to better GPU utilization.
+The common measurement for query-time efficiency has been query latency
+measured by sequentially issuing queries to the model
+during offline evaluation [38].
+However, when serving multiple users or queries as a service,
+RoutIR optimizes for throughput
+(i.e., the number of queries served in a fixed period of time)
+since queries can often be served asynchronously.
+Especially for a RAG pipeline that issues multiple queries simultaneously [11, 49],
+all retrieval results must arrive before generation begins;
+this suggests the need for high-throughput rather than low-latency
+(although the two qualities are usually correlated).
+Multi-Server Request Routing.
+A special type of Engine is a Relay –
+an Engine that relays requests to another RoutIR endpoint.
+This capability is particularly useful when computing resources are divided among multiple machines
+or if some compute nodes are not exposed to a public IP
+(a common setup in academic research clusters).
+This is similar to the proxy service in LiteLLM99
+9
+https://github.com/BerriAI/litellm
+that relays LLM requests to compute endpoints without exposing multiple machines to the end users.
+While RoutIR does not offer load-balancing at the request level (which may be included in future versions), it offers triage at the model level to direct requests to models with different resource requirements to different machines.
+RoutIR also supports importing services from a list of endpoints
+to simplify configuration
+(more on this in Section 4.2).
+This feature provides the backbone for collectively serving multiple retrieval models with one endpoint
+in a distributed computing environment,
+which is crucial to facilitate complex retrieval pipelines
+(more on this later in this section).
+3.2 Query Processor
+Each Engine is further wrapped in a Processor class,
+which handles caching and queuing of input search queries.
+When the processor receives a query,
+it is added to the service queue for batching.
+The queue dispatches a batch of queries to the engine
+whenever the batch is full (size configurable)
+or the maximum wait time is reached (typically 50 to 100 ms; also configurable).
+When a set of subqueries is generated by a RAG system
+and sent to the endpoint individually through asynchronous HTTP requests,
+they are usually batched on the server side
+to allow them to be processed together by the Engine.
+The end user can also simultaneously process multiple top-level queries in a RAG pipeline
+and use the batching capability of the retrieval server.
+This exploits the asynchronous nature of HTTP requests.
+With the native support of asynchronous operations in Python,
+firing multiple retrieval and LLM requests to an external server
+without blocking the program from advancing to other operations until the results are actually needed
+is a key ingredient to accelerate the speed of RAG toolkits such as LangGraph,1010
+10
+https://www.langchain.com/langgraph
+AutoGen,1111
+11
+https://microsoft.github.io/autogen
+DSPy [19], and

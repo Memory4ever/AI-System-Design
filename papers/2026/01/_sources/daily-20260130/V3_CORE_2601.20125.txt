@@ -1,0 +1,2546 @@
+https://arxiv.org/html/2601.20125v1
+Membership Inference Attacks Against Fine-tuned Diffusion Language Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Preliminaries
+2.1 Threat Model
+2.2 Diffusion Language Models
+3 Sama: Exploiting Bidirectional Dependencies in DLMs
+3.1 Membership Signals in Autoregressive vs. Diffusion Models
+3.2 Exploiting Sparse Membership Signals in DLMs
+3.3 Robust Subset Aggregation
+3.4 Progressive Masking with Adaptive Weighting
+3.5 Algorithmic Specification
+4 Experiments
+4.1 Experimental Setup
+4.2 Main Results
+4.3 Ablation Study
+5 Related Work
+6 Conclusions
+References
+A Notation Summary
+B LLM Usage Disclosure
+C Additional Related Works
+D Supplementary Experimental Results
+D.1 Experiment Settings
+D.1.1 Datasets
+D.1.2 Models and Fine-tuning
+D.1.3 Sama Configuration
+D.1.4 MIA Baselines
+D.1.5 Evaluation Metrics
+D.2 Performance of Target LLMs
+D.3 Extended Main Comparison Results
+D.4 Extended Ablation Studies
+D.5 Defending against Sama
+D.5.1 Low-Rank Adaptation (LoRA)
+D.5.2 Differentially Private LoRA (DP-LoRA)
+D.5.3 Temperature Scaling
+D.5.4 Selective Data Obfuscation in LLM Fine-Tuning
+D.6 Impact of Reference Model Misalignment
+D.7 Computational Overhead
+E The Structure of Membership Signals: An Empirical Analysis
+License: CC BY 4.0
+arXiv:2601.20125v1 [cs.LG] 27 Jan 2026
+Membership Inference Attacks Against
+Fine-tuned Diffusion Language Models
+Yuetian Chen
+Yuntao Du
+Kaiyuan Zhang
+Edoardo Stoppa
+Affiliation: Bruno Ribeiro & Ninghui Li
+Affiliation: Department of Computer Science, Purdue University
+Affiliation: {yuetian, ytdu, zhan4057, estoppa, ribeirob, ninghui}@purdue.edu
+Ashish Kundu
+Affiliation: Cisco Research
+Email: ashkundu@cisco.com
+Charles Fleming
+Affiliation: Cisco Systems
+Email: chflemin@cisco.com
+Abstract
+Diffusion Language Models (DLMs) represent a promising alternative to autoregressive language models, using bidirectional masked token prediction. Yet their susceptibility to privacy leakage via Membership Inference Attacks (MIA) remains critically underexplored. This paper presents the first systematic investigation of MIA vulnerabilities in DLMs. Unlike the autoregressive models’ single fixed prediction pattern, DLMs’ multiple maskable configurations exponentially increase attack opportunities. This ability to probe many independent masks dramatically improves detection chances. To exploit this, we introduce Sama (Subset-Aggregated Membership Attack), which addresses the sparse signal challenge through robust aggregation. Sama samples masked subsets across progressive densities and applies sign-based statistics that remain effective despite heavy-tailed noise. Through inverse-weighted aggregation prioritizing sparse masks’ cleaner signals, Sama transforms sparse memorization detection into a robust voting mechanism. Experiments on nine datasets show Sama achieves 30% relative AUC improvement over the best baseline, with up to 8×\times improvement at low false positive rates. These findings reveal significant, previously unknown vulnerabilities in DLMs, necessitating the development of tailored privacy defenses.
+1 Introduction
+Large Language Models (LLMs) demonstrate transformative capabilities across diverse applications (Team, 2024; Qwen, 2025; DeepSeek-AI, 2025). While autoregressive models (ARMs) based on sequential next-token prediction remain dominant, Diffusion Language Models (DLMs) are rapidly emerging as a compelling alternative (Gulrajani and Hashimoto, 2023a; Gong et al., 2025; Ye et al., 2025b). These models, leveraging bidirectional context to reverse data corruption by reconstructing masked tokens, are increasingly adopted for their strong scalability, performance competitive with ARMs counterparts, and their ability to address ARM-specific limitations like the reversal curse (Berglund et al., 2024). Recent industrial developments, such as Google’s Gemini Diffusion (DeepMind, 2025), further underscore the growing relevance of this paradigm, offering performance competitive with significantly larger autoregressive models.
+Figure 1:
+An overview of the Sama. (a) An input sequence
+The doctor prescribed the medication after reviewing the patient ’s symptoms .
+undergoes progressive masking over SS steps, accumulating masked positions.
+(b) The target and reference DLMs’ reconstruction errors for masked tokens
+[MASK]  are tracked position-wise at each step ({ℓs}s=1S\{\ell^{s}\}_{s=1}^{S}).
+Sign-based test statistics detect when specific mask configurations activate memorization, computing the fraction of configurations where reference loss exceeds target loss.
+This sign-based comparison, combined with inverse weighting, forms the membership score to differentiate training members from non-members.
+The privacy risks associated with LLMs, particularly their propensity to memorize training data, have been extensively studied for ARMs (Carlini et al., 2021; Mireshghallah et al., 2024; Merity et al., 2018; Hartmann et al., 2023). Membership Inference Attacks (MIAs) (Shokri et al., 2017), which aim to determine if a specific data sample was part of a model’s training corpus, are the primary benchmark for quantifying these risks, with numerous techniques developed to probe ARM vulnerabilities (Mattern et al., 2023; Duan et al., 2024; Fu et al., 2024). However, for the burgeoning class of DLMs, which operate on distinct principles of iterative, bidirectionally-conditioned mask prediction, the extent and nature of such privacy vulnerabilities remain critically uncharted. Their unique architectural properties deviate significantly from ARMs, rendering existing MIA strategies potentially ill-suited. The privacy implications of these distinctions have been largely overlooked. To the best of our knowledge, this work presents the first systematic investigation into the privacy risks of emerging DLMs through the lens of MIAs.
+The absence of privacy analysis focused on DLMs constitutes an important gap and raises a key question: Do the unique paradigms of DLMs introduce novel vulnerabilities exploitable by MIAs? We focus on fine-tuning, where such privacy risks are typically amplified (Mireshghallah et al., 2022a; Fu et al., 2024; Huang et al., 2025; Meng et al., 2025). In this work, we address this question through three key contributions:
+1.
+We analyze how DLMs’ multiple masking configurations, unlike the single fixed pattern in ARMs, change the membership inference problem. The ability to probe many independent masks exponentially increases the chances of detecting memorization patterns learned during fine-tuning.
+2.
+We empirically validate this heightened susceptibility and effectively exploit these unique characteristics by designing Sama (Subset-Aggregated Membership Attack), an MIA framework that combines progressive masking with robust sign-based statistics—addressing the fundamental challenge that only sparse mask configurations reveal membership while most yield noise.
+3.
+Through comprehensive experiments on state-of-the-art DLMs (i.e., LLaDA-8B-Base (Nie et al., 2025), and Dream-v0-Base-7B (Ye et al., 2025a)) across diverse datasets (i.e., six different domain splits in MIMIR (Duan et al., 2024), WikiText-103 (Merity et al., 2016), AG News (Zhang et al., 2015), and XSum (Narayan et al., 2018)), we demonstrate that Sama significantly outperforms a wide range of existing MIA baselines, thereby uncovering and quantifying critical privacy vulnerabilities.
+The high-level overview of how Sama works is shown in Figure 1, by systematically sampling diverse mask configurations across progressively increasing densities, then applying sign tests robust to sparse signals, we transform the detection problem from finding large signals in noise to identifying consistent patterns across multiple independent probes.
+2 Preliminaries
+This section describes the threat model under which Sama operates, and provides background on DLMs, focusing on the mechanisms relevant to our work.
+2.1 Threat Model
+This paper investigates MIAs (Shokri et al., 2017) targeting DLMs, focusing on vulnerabilities introduced during fine-tuning. Throughout this work, we use subscripts DF and AR to denote diffusion and autoregressive models, respectively. The adversary aims to determine whether a specific text sequence 𝐱={xi}i=1L∈𝒱L\mathbf{x}=\{x_{i}\}^{L}_{i=1}\in\mathcal{V}^{L}, where 𝒱\mathcal{V} is the model’s token vocabulary and LL is the sequence length, was part of the training dataset DtrainD_{\mathrm{train}} of a target model ℳDFT\mathcal{M}_{\text{DF}}^{\text{T}}. This is formalized as inferring the binary membership status μ⁡(𝐱)∈{0,1}\mu(\mathbf{x})\in\{0,1\}, where μ⁡(𝐱)=1\mu(\mathbf{x})=1 indicates 𝐱∈Dtrain\mathbf{x}\in D_{\mathrm{train}}. The adversary constructs an attack function A⁡(𝐱,ℳDFT)A(\mathbf{x},\mathcal{M}_{\text{DF}}^{\text{T}}) that outputs a membership prediction μ^​(𝐱)\hat{\mu}(\mathbf{x}).
+We assume a grey-box access model, where the adversary can query the target model ℳDFT\mathcal{M}_{\text{DF}}^{\text{T}} with arbitrary inputs, including custom partially masked sequences. In response, the adversary receives detailed outputs such as predictive probability distributions or logits for specified token positions. However, the adversary cannot access internal parameters, gradients, or activations.
+Following reference-based MIA approaches (Watson et al., 2021; Mireshghallah et al., 2022a; Fu et al., 2024; Huang et al., 2025; Meng et al., 2025), the adversary also has grey-box access to a reference model ℳDFR\mathcal{M}_{\text{DF}}^{\text{R}}. The ideal reference is the pre-trained base model from which ℳDFT\mathcal{M}_{\text{DF}}^{\text{T}} was derived, as this best isolates fine-tuning-specific memorization. When unavailable, alternative reference models can be used, with implications discussed in Section D.6. Practically, this access model aligns with current open-weight deployment practices where fine-tuned weights are publicly released alongside base models. Furthermore, emerging DLM serving interfaces, such as LLaDA’s in-filling demos (Hugging Face, ), inherently support the custom masked inputs required for this threat model.
+2.2 Diffusion Language Models
+While autoregressive models predicting tokens sequentially represent the dominant LLM paradigm (Radford et al., 2019; Brown et al., 2020), DLMs offer a distinct approach, gaining prominence in the language domain (Austin et al., 2023; Lou and Ermon, 2023; Shi et al., 2024a; Ou et al., 2024). These models typically learn to reverse a data corruption process, commonly implemented via iterative masking and prediction. This process starts with an original sequence 𝐱\mathbf{x} of length LL, where randomly selected tokens are replaced by a special [MASK] token. We denote the set of masked positions as 𝒮⊆[L]\mathcal{S}\subseteq[L], where [L]={1,2,⋯,L}[L]=\{1,2,\cdots,L\}. The model is then trained to predict the original tokens at positions in 𝒮\mathcal{S} given the partially masked sequence.
+Training Procedure.   A notable example of DLM is LLaDA (Large Language Diffusion with mAsking) (Nie et al., 2025); we use its paradigm to detail the training formulation. The central component is a mask predictor, usually a Transformer architecture, which learns to predict the original tokens xix_{i} at the masked positions (i.e., i∈𝒮i\in\mathcal{S}), conditioned on the unmasked context 𝐱−𝒮:={xi:i∈[L]∖𝒮}\mathbf{x}_{-\mathcal{S}}:=\{x_{i}:i\in[L]\setminus\mathcal{S}\}. The model is optimized by minimizing the cross-entropy loss computed on mini-batches from the training dataset DtrainD_{\text{train}}. For each training sequence 𝐱∈Dtrain\mathbf{x}\in D_{\text{train}} and randomly sampled mask configuration 𝒮\mathcal{S}, the loss is:
+ℓ(𝐱,𝒮)=−1|𝒮|∑i∈𝒮logpℳ(xi|𝐱−𝒮),\vskip-3.0pt\ell(\mathbf{x},\mathcal{S})=-\frac{1}{|\mathcal{S}|}\sum_{i\in\mathcal{S}}\log p_{\mathcal{M}}(x_{i}|\mathbf{x}_{-\mathcal{S}}),\vskip-3.0pt
+(1)
+where p⁡(xi|𝐱−𝒮)p(x_{i}|\mathbf{x}_{-\mathcal{S}}) denotes the probability assigned by model ℳ\mathcal{M} to token xix_{i} at position ii, conditioned on the unmasked context 𝐱−𝒮\mathbf{x}_{-\mathcal{S}}, and 𝒮\mathcal{S} is sampled with varying cardinalities to ensure the model learns to reconstruct tokens under different masking densities. This training objective relies on random sampling across the entire configuration space, where the model sees diverse, unpredictable masking patterns during training. This objective serves as a variational bound on the negative log-likelihood, grounding it in established generative modeling principles.
+3 Sama: Exploiting Bidirectional Dependencies in DLMs
+DLMs process text through bidirectional masking mechanisms rather than the unidirectional approach of autoregressive models. This architectural distinction creates fundamentally different memorization patterns during fine-tuning, which we investigate for membership inference vulnerabilities through our proposed Sama.
+3.1 Membership Signals in Autoregressive vs. Diffusion Models
+We formalize how the architectural differences between ARMs and DLMs affect membership signals, focusing on how each model type constrains the attacker’s ability to probe for memorization.
+For a text sequence 𝐱\mathbf{x}, we define the membership signals as the loss difference between a reference model ℳR\mathcal{M}^{\text{R}} and a fine-tuned target model ℳT\mathcal{M}^{\text{T}}. This difference captures memorization patterns introduced during fine-tuning.
+In ARMs, the membership signals are deterministic and fixed by the autoregressive factorization:
+ΔAR​(𝐱)=ℓAR​(𝐱,ℳARR)−ℓAR​(𝐱,ℳART)=1L​∑i=1L[ℓiR​(𝐱)−ℓiT​(𝐱)],\vskip-2.0pt\Delta_{\text{AR}}(\mathbf{x})=\ell_{\text{AR}}(\mathbf{x};\mathcal{M}_{\text{AR}}^{\text{R}})-\ell_{\text{AR}}(\mathbf{x};\mathcal{M}_{\text{AR}}^{\text{T}})=\frac{1}{L}\sum_{i=1}^{L}\left[\ell^{\text{R}}_{i}(\mathbf{x})-\ell^{\text{T}}_{i}(\mathbf{x})\right],\vskip-2.0pt
+(2)
+where ℓi=−log⁡p⁡(xi|x<i)\ell_{i}=-\log p(x_{i}|x_{<i}) represents the loss at position ii given only the preceding context. Crucially, this provides exactly one context configuration per token position—the attacker observes only left-to-right dependencies, making any backward or bidirectional relationships invisible to membership inference.
+In DLMs, the membership signals depend on the chosen mask configuration 𝒮⊆[L]\mathcal{S}\subseteq[L]:
+ΔDF​(𝐱,𝒮)=ℓDF​(𝐱,𝒮,ℳDFR)−ℓDF​(𝐱,𝒮,ℳDFT)=1|𝒮|​∑i∈𝒮[ℓiR​(𝐱,𝒮)−ℓiT​(𝐱,𝒮)],\vskip-2.0pt\Delta_{\text{DF}}(\mathbf{x};\mathcal{S})=\ell_{\text{DF}}(\mathbf{x};\mathcal{S},\mathcal{M}_{\text{DF}}^{\text{R}})-\ell_{\text{DF}}(\mathbf{x};\mathcal{S},\mathcal{M}_{\text{DF}}^{\text{T}})=\frac{1}{|\mathcal{S}|}\sum_{i\in\mathcal{S}}\left[\ell^{\text{R}}_{i}(\mathbf{x},\mathcal{S})-\ell^{\text{T}}_{i}(\mathbf{x},\mathcal{S})\right],\vskip-2.0pt
+(3)
+where ℓi​(𝐱,𝒮)=−log⁡p⁡(xi|𝐱−𝒮)\ell_{i}(\mathbf{x},\mathcal{S})=-\log p(x_{i}|\mathbf{x}_{-\mathcal{S}}) represents the loss for predicting token ii given all unmasked tokens in sequence 𝐱\mathbf{x}.
+This DLM mask-configuration dependency creates both challenges and opportunities for membership inference. The challenge arises because an arbitrary mask configuration 𝒮\mathcal{S} chosen during inference may not align with the masking patterns the model saw during training, resulting in weak or noisy signals. During fine-tuning, the DLM memorizes specific token relationships under particular masking patterns; when a chosen configuration aligns even partially with these training patterns (e.g., sharing key masked positions or preserving critical context tokens), the memorization activates and the signals ΔDF​(𝐱,𝒮)\Delta_{\text{DF}}(\mathbf{x};\mathcal{S}) becomes large. Conversely, configurations rarely or never seen during training yield weak signals dominated by noise.
+However, this same property creates two distinct advantages for membership inference in DLMs. First, we gain multiple independent probing opportunities. Rather than extracting a single fixed signal ΔAR​(𝐱)\Delta_{\text{AR}}(\mathbf{x}), we can collect a set of configuration-dependent signals {ΔDF​(𝐱,𝒮1),ΔDF​(𝐱,𝒮2),…}\{\Delta_{\text{DF}}(\mathbf{x};\mathcal{S}_{1}),\Delta_{\text{DF}}(\mathbf{x};\mathcal{S}_{2}),\ldots\}, and if we sample enough diverse masks, we may uncover stronger membership signals than available in ARMs. Second, the bidirectional context enables probing token relationships impossible in ARMs. Consider tokens xix_{i} and xjx_{j} with a strong semantic relationship memorized during fine-tuning: in an ARM, if j>ij>i, this relationship can never influence the prediction of xix_{i} since xjx_{j} is always masked, but in a DLM, we can probe this relationship through multiple configurations by masking only {xi}\{x_{i}\} to see how xjx_{j} influences its prediction, masking only {xj}\{x_{j}\} for the reverse, or masking both {xi,xj}\{x_{i},x_{j}\} to test their joint reconstruction. Each configuration potentially reveals different memorization patterns inaccessible to unidirectional models.
+Figure 2: Empirical analysis of signal sparsity and configuration dependency. (a) The aggregate density of signal strengths ΔD​F​(x,𝒮)\Delta_{DF}(x;\mathcal{S}) shows that member signals (red) are shifted positively compared to the more zero-centered non-member noise (blue), yet possess significant overlap. (b) Violin plots for individual samples reveal that the intra-sample variance, fluctuations in signal strength caused solely by changing the mask configuration, is substantial. This high variance confirms that membership signals are sparse and configuration-dependent, motivating the need for robust aggregation over multiple masks rather than single-shot estimation.
+To validate the hypothesis that membership signals in DLMs are related to the mask configuration, we conducted a controlled experiment on the ArXiv dataset. For a balanced set of member and non-member samples, we evaluated 100 distinct random mask configurations per sample and analyzed the resulting distribution of signal strengths ΔD​F​(x,𝒮)\Delta_{DF}(x;\mathcal{S}). Figure 2 presents these findings. Panel (a) illustrates the aggregate signal densities, showing that while non-member signals form a symmetric distribution centered near zero, member signals exhibit a distinct positive shift with a heavier right tail. Panel (b) reveals the high intra-sample variance through violin plots of individual samples. The variance in signal strength caused simply by changing the mask configuration (σ≈0.10\sigma\approx 0.10) exceeds the average margin between members and non-members (δ≈0.06\delta\approx 0.06). This demonstrates that the membership signal is not a static property of the input text but fluctuates significantly depending on whether the mask hides specific “memorable” tokens. Consequently, a single random mask is statistically likely to miss the sparse membership signal, necessitating a multi-configuration probing strategy to robustly distinguish members from non-members.
+3.2 Exploiting Sparse Membership Signals in DLMs
+Traditional LLM MIAs (Fu et al., 2024; Xie et al., 2024; Wang et al., 2025; Duan et al., 2023) show limited effectiveness when applied to DLMs, as demonstrated empirically in Section 4.2. These methods naturally follow the training objective in Equation 1 by approximating the expected loss difference through Monte Carlo estimation:
+ΔDFavg​(𝐱)=𝔼𝒮∼P⁡(𝒮)​[ΔDF​(𝐱,𝒮)],\vskip-1.0pt\Delta_{\text{DF}}^{\text{avg}}(\mathbf{x})=\mathbb{E}_{\mathcal{S}\sim P(\mathcal{S})}[\Delta_{\text{DF}}(\mathbf{x};\mathcal{S})],\vskip-1.0pt
+(4)
+where P⁡(𝒮)P(\mathcal{S}) is the distribution over mask configurations used during training, and ΔDF​(𝐱,𝒮)\Delta_{\text{DF}}(\mathbf{x};\mathcal{S}) is the loss difference for a specific mask configuration as defined in Equation 3. In practice, this expectation is estimated by randomly sampling multiple mask configurations and averaging the resulting loss differences.
+However, this averaging-based approach is fundamentally limited in identifying membership signals for two key reasons. First, within a single configuration, averaging over all masked tokens includes noisy predictions that obscure genuine memorization—not all masked tokens contribute meaningful signal, as the strongest loss reductions often stem from domain adaptation effects on domain-specific tokens rather than instance-level memorization. Second, across configurations, random sampling with simple averaging treats all masking densities equally, ignoring that different densities operate at distinct signal-to-noise regimes: sparse masks provide stronger per-token signals with fewer aggregation points, while dense masks offer weaker individual signals but more aggregation opportunities.
+This motivates us to address both issues through a different aggregation strategy. Within each configuration, instead of averaging over all masked tokens, we aggregate the sign of loss differences from multiple token subsets, as this binary decision is robust to outlier tokens that contribute primarily to noise. Across configurations, extracting meaningful membership information requires careful consideration of how these signals vary with masking density. Different masking densities provide different signal-to-noise characteristics, which is analogous to how different noise levels in image diffusion models capture different aspects of the data (Ho et al., 2020; Song et al., 2020). We exploit this by progressively increasing the masking density, gathering evidence at multiple scales rather than attempting to explore all possible configurations.
+Our method comprises three key components: (1) Robust subset aggregation: At each density level, we sample multiple token subsets and employ sign-based statistics to aggregate their signals, ensuring robustness against noise; (2) Progressive masking: We systematically increase masking density to capture signals at multiple scales, from sparse masks (strong per-token signals but fewer aggregation points) to dense masks (weaker individual signals but more aggregation opportunities); and (3) Adaptive weighting: We weight contributions from different density levels, prioritizing the cleaner signals from sparser masks while incorporating cumulative evidence from denser configurations when beneficial.
+3.3 Robust Subset Aggregation
+At each progressive masking step t∈{1,…,T}t\in\{1,\ldots,T\} with mask configuration 𝒮t⊆[L]\mathcal{S}_{t}\subseteq[L] containing ktk_{t} masked positions, we obtain losses for all masked tokens through a single forward pass. However, directly averaging all ktk_{t} token losses is vulnerable to domination by extreme values, as a single token with exceptionally high or low loss can skew the entire signal. As we empirically demonstrate in Appendix E, the distribution of loss differences is governed by heavy-tailed statistics rather than Gaussian noise. Fine-tuning introduces domain adaptation effects that manifest as this long-tailed noise with occasional extreme values orders of magnitude larger than typical signals. These high-magnitude outliers often correspond to domain-specific tokens rather than instance-specific memorization. Consequently, a simple average is often overwhelmed by domain noise, whereas the true membership signal is consistent but sparse. To address this dual challenge, we employ a two-part robust aggregation strategy: local subset sampling combined with sign-based aggregation.
+Local Subset Sampling. We sample NN random subsets of positions from 𝒮t\mathcal{S}_{t}, where each subset 𝒰n⊂𝒮t\mathcal{U}^{n}\subset\mathcal{S}_{t}, for n=1,…,Nn=1,\ldots,N, contains mm positions (typically m=10m=10) with m≪ktm\ll k_{t}. For each subset 𝒰n\mathcal{U}^{n}, we compute a localized loss difference:
+ΔDFn​(𝐱,𝒮t)=1m​∑i∈𝒰n[ℓiR​(𝐱,𝒮t)−ℓiT​(𝐱,𝒮t)],\vskip-3.0pt\Delta^{n}_{\text{DF}}(\mathbf{x};\mathcal{S}_{t})=\frac{1}{m}\sum_{i\in\mathcal{U}^{n}}[\ell^{\text{R}}_{i}(\mathbf{x},\mathcal{S}_{t})-\ell^{\text{T}}_{i}(\mathbf{x},\mathcal{S}_{t})],\vskip-3.0pt
+(5)
+where ii indexes positions in the sequence, and ℓiR​(𝐱,𝒮t)\ell^{\text{R}}_{i}(\mathbf{x},\mathcal{S}_{t}), ℓiT​(𝐱,𝒮t)\ell^{\text{T}}_{i}(\mathbf{x},\mathcal{S}_{t}) are the reference and target model losses at position ii when sequence 𝐱\mathbf{x} is masked according to 𝒮t\mathcal{S}_{t}.
+This gives us NN different local measurements rather than a single global aggregate, each less susceptible to individual outlier tokens. This subsampling approach aligns with robust statistical methods where using multiple small random subsets provides stability against outliers (Rousseeuw and Leroy, 2003; Maronna et al., 2019). The principle is also employed in ensemble methods and stochastic optimization, where aggregating over random subsets yields more robust estimates than using all data points (Breiman, 1996; Bottou et al., 2018). Each subset excludes different tokens, so an extreme value that dominates one subset’s signal appears in only a fraction of our NN measurements, while consistent membership signals present across most subsets accumulate through aggregation.
+Sign-Based Aggregation. Rather than using the magnitude of each localized loss difference, we transform each ΔDFn\Delta^{n}_{\text{DF}} into a binary indicator:
+Bn(𝐱)=𝟏[ΔDFn(𝐱;𝒮t)>0].B^{n}(\mathbf{x})=\mathbf{1}[\Delta^{n}_{\text{DF}}(\mathbf{x};\mathcal{S}_{t})>0].
+This transformation discards magnitude information, recording only whether the reference model has a higher loss than the target model for that particular subset 𝒰n\mathcal{U}^{n}. While this might seem like discarding information, it actually provides robustness against heavy-tailed noise distributions.
+For non-members, the target and reference models behave similarly since neither was trained on the sample. The loss difference ΔDFn\Delta^{n}_{\text{DF}} from subset 𝒰n\mathcal{U}^{n} is purely noise—sometimes positive, sometimes negative, but centered at zero. Therefore, Bn​(𝐱)B^{n}(\mathbf{x}) equals 1 with probability exactly 0.5, regardless of the noise distribution’s properties. This holds even if the noise has infinite variance or no defined mean, a robustness property that magnitude-based approaches cannot achieve.
+For members, when we hit a mask configuration that activates memorization, the target model’s loss drops below the reference model’s loss, making ΔDFn\Delta^{n}_{\text{DF}} positive. Not every configuration activates memorization; most don’t, but those that do consistently push BnB^{n} toward 1. By aggregating these binary indicators across our NN sampled subsets, we compute
+β^t​(𝐱)=1N​∑n=1NBn​(𝐱)\hat{\beta}_{t}(\mathbf{x})=\frac{1}{N}\sum_{n=1}^{N}B^{n}(\mathbf{x}).
+This principle that sign-based statistics remain efficient under minimal distributional assumptions is formalized in the Hodges-Lehmann theorem (Hodges Jr and Lehmann, 2011) and has been extensively validated in robust statistics literature (Huber, 1981; Peizer and Pratt, 1968).
+By combining local sampling with sign-based aggregation, we transform a single high-variance measurement into multiple robust binary decisions. This ensures that our membership detection at each masking density is stable and reliable, accumulating evidence from the consistency of the signal rather than its magnitude, which is precisely what we need for DLMs where sparse activation means most configurations contribute noise, but the few that reveal membership do so reliably in their direction rather than their size.
+3.4 Progressive Masking with Adaptive Weighting
+Given the step-wise scores {β^t​(𝐱)}t=1T\{\hat{\beta}_{t}(\mathbf{x})\}_{t=1}^{T} from local sampling and sign-based aggregation, we now address how to effectively combine signals across different masking densities. As demonstrated empirically in Figure 2, the membership signal ΔD​F​(x,𝒮)\Delta_{DF}(x;\mathcal{S}) exhibits high variance across different configurations. Relying on a single masking density or a static configuration creates a high risk of sampling a “null” configuration where the true membership signal is drowned by noise. To mitigate this volatility, rather than fixing a single masking level, we progressively increase the masking density across TT steps. Specifically, at each step t∈{1,…,T}t\in\{1,\ldots,T\}, we set the masking density as:
+αt=αmin+t−1T−1​(αmax−αmin),\vskip-1.0pt\alpha_{t}=\alpha_{\min}+\frac{t-1}{T-1}(\alpha_{\max}-\alpha_{\min}),\vskip-1.0pt
+(6)
+where αmin\alpha_{\min} and αmax\alpha_{\max} (typically 5% to 50%) define the range of masking densities. This yields kt=⌈L⋅αt⌉k_{t}=\lceil L\cdot\alpha_{t}\rceil masked positions at step tt.
+This multi-scale approach exploits a fundamental trade-off in masking density. With sparse masks (low αt\alpha_{t}), each prediction benefits from rich surrounding context, making memorization patterns more apparent when they exist—but we have fewer masked positions to aggregate. With dense masks (high αt\alpha_{t}), we gain more aggregation points, but each individual prediction becomes noisier as less context is available and domain adaptation effects become more pronounced.
+Intuitively, this principle mirrors established strategies in statistical hypothesis testing. Similar to how multi-scale testing improves detection power by examining data at various resolutions to find sparse signals (Arias-Castro et al., 2011), our progressive masking captures memorization patterns that manifest differently across masking densities. Some memorization artifacts may only be detectable with sparse masks where strong contextual clues remain, while other patterns require aggregating evidence from many masked positions to overcome noise.
+Empirical observation shows that signal quality degrades with masking density—early steps with sparse masks provide cleaner signals than later steps with dense masks. This motivates our adaptive weighting scheme:
+Sama ​(𝐱)\displaystyle\text{{Sama} }(\mathbf{x})
+=∑t=1Twtβ^t(𝐱)=∑t=1Twt⋅1N∑n=1N𝟏[ΔnDF(𝐱;𝒮t)>0],\displaystyle=\sum_{t=1}^{T}w_{t}\hat{\beta}_{t}(\mathbf{x})=\sum_{t=1}^{T}w_{t}\cdot\frac{1}{N}\sum_{n=1}^{N}\mathbf{1}[\Delta^{n}_{\text{DF}}(\mathbf{x};\mathcal{S}_{t})>0],
+(7)
+where wt=1/t∑i=1T1/iw_{t}=\frac{1/t}{\sum_{i=1}^{T}1/i} is the inverse-step weight inspired by the use of harmonic means in robust statistics (Hedges and Olkin, 2014), 𝒮t\mathcal{S}_{t} denotes the mask configuration at step tt, and ΔDFn​(𝐱,𝒮t)\Delta^{n}_{\text{DF}}(\mathbf{x};\mathcal{S}_{t}) is the localized loss difference from Equation 5. This weighting prioritizes early steps where memorization signals are less contaminated by noise, while still incorporating evidence from all scales.
+3.5 Algorithmic Specification
+We now present the complete Sama algorithm that implements our three-component strategy: progressive masking, robust subset aggregation, and adaptive weighting. The Sama algorithm operates in two distinct phases to extract robust membership signals from DLMs. We theoretically and empirically demonstrate in Appendix D.7 that this robust aggregation logic incurs negligible computational overhead compared to standard query-based baselines.
+Phase I: Progressive Evidence Collection (Algorithm 1). This phase implements our progressive masking strategy, systematically increasing the masking density across TT steps from αmin\alpha_{\min} to αmax\alpha_{\max} (typically 5% to 50% of tokens). At each step tt, we determine the target number of masked positions ktk_{t} and collect NN independent measurements through subset sampling uniformly without replacement.
+Phase II: Sign-based Aggregation and Weighting (Algorithm 2). This phase transforms the raw loss differences into a robust membership score. First, each difference Δ\Delta is converted to a binary indicator B=𝟏[Δ>0]B=\mathbf{1}[\Delta>0], implementing our sign-based detection that remains robust to heavy-tailed noise. For each step tt, we compute the average binary indicator β^t\hat{\beta}_{t} across all NN samples at that density level.
+Algorithm 1 Phase I: Progressive Evidence Collection
+Input: Target model ℳDFT\mathcal{M}_{\text{DF}}^{\text{T}}, Reference model ℳDFR\mathcal{M}_{\text{DF}}^{\text{R}}, sequence 𝐱\mathbf{x} of length LL
+1
+Params: Masking range [αmin,αmax][\alpha_{\min},\alpha_{\max}], steps TT, samples NN, subset size mm
+2
+𝒟←∅\mathcal{D}\leftarrow\emptyset
+3
+for t=1,…,Tt=1,\ldots,T do
+// Compute target masking density for step tt
+4
+kt←⌈L⋅(αmin+t−1T−1​(αmax−αmin))⌉k_{t}\leftarrow\lceil L\cdot(\alpha_{\min}+\frac{t-1}{T-1}(\alpha_{\max}-\alpha_{\min}))\rceil
+5
+𝒟t←[]\mathcal{D}_{t}\leftarrow[]
+// Sample and mask positions for this step
+6
+𝒮t←Sample​([L],kt)\mathcal{S}_{t}\leftarrow\text{Sample}([L],k_{t})
+7
+𝐱m←Mask​(𝐱,𝒮t)\mathbf{x}_{\text{m}}\leftarrow\text{Mask}(\mathbf{x},\mathcal{S}_{t})
+// Compute losses
+8
+ℓT←{−log⁡pℳDFT​(xi|𝐱−𝒮t)}i∈𝒮t\bm{\ell}^{\text{T}}\leftarrow\{-\log p_{\mathcal{M}_{\text{DF}}^{\text{T}}}(x_{i}|\mathbf{x}_{-\mathcal{S}_{t}})\}_{i\in\mathcal{S}_{t}}
+9
+ℓR←{−log⁡pℳDFR​(xi|𝐱−𝒮t)}i∈𝒮t\bm{\ell}^{\text{R}}\leftarrow\{-\log p_{\mathcal{M}_{\text{DF}}^{\text{R}}}(x_{i}|\mathbf{x}_{-\mathcal{S}_{t}})\}_{i\in\mathcal{S}_{t}}
+// Sample NN local subsets from masked positions
+10
+for n=1,…,Nn=1,\ldots,N do
+11
+𝒰n←Sample​(𝒮t,m)\mathcal{U}^{n}\leftarrow\text{Sample}(\mathcal{S}_{t},m)
+// Compute subset difference
+12
+Δn←1m​∑i∈𝒰n(ℓiR−ℓiT)\Delta^{n}\leftarrow\frac{1}{m}\sum_{i\in\mathcal{U}^{n}}(\ell^{\text{R}}_{i}-\ell^{\text{T}}_{i})
+13
+𝒟t.append​(Δn)\mathcal{D}_{t}.\text{append}(\Delta^{n})
+14
+𝒟.add​((,,,))\mathcal{D}.\text{add}((t,\mathcal{D}_{t}))
+15
+Return: difference collection 𝒟\mathcal{D}
+Algorithm 2 Phase II: Binary Aggregation & Weighting
+Input: Difference collection 𝒟={(t,𝒟t)}t=1T\mathcal{D}=\{(t,\mathcal{D}_{t})\}_{t=1}^{T}
+1
+ℬ←[]\mathcal{B}\leftarrow[]   // Stepwise sign stats
+2
+foreach (t,𝒟t)∈𝒟(t,\mathcal{D}_{t})\in\mathcal{D} do
+3
+ℬt←[]\mathcal{B}_{t}\leftarrow[]
+4
+foreach Δn∈𝒟t\Delta^{n}\in\mathcal{D}_{t} do
+5
+ℬt.append(𝟏[Δn>0])\mathcal{B}_{t}.\text{append}(\mathbf{1}[\Delta^{n}>0])
+6
+β^t←Mean​(ℬt)\hat{\beta}_{t}\leftarrow\text{Mean}(\mathcal{B}_{t})
+7
+ℬ.append​((,,,))\mathcal{B}.\text{append}((t,\hat{\beta}_{t}))
+// Compute inverse-step weights
+8
+H←∑i=1T1/iH\leftarrow\sum_{i=1}^{T}1/i
+9
+𝐰←[(1/t)/H for t=1,…,T]\mathbf{w}\leftarrow[(1/t)/H\text{ for }t=1,\ldots,T]   // Eq. 7
+// Final weighted aggregation
+10
+ϕ←∑t=1Twt⋅β^t\phi\leftarrow\sum_{t=1}^{T}w_{t}\cdot\hat{\beta}_{t}
+11
+Return: membership score ϕ∈[0,1]\phi\in[0,1]
+Algorithm 3 Sama: Main Procedure
+Input: Target model ℳDFT\mathcal{M}_{\text{DF}}^{\text{T}}, Reference model ℳDFR\mathcal{M}_{\text{DF}}^{\text{R}}, Text sequence 𝐱\mathbf{x}
+1
+Params: Masking range [αmin,αmax][\alpha_{\min},\alpha_{\max}], Steps TT, Samples NN, Subset size mm
+2
+𝒟←Algorithm 1​(ℳDFT,ℳDFR,𝐱,αmin,αmax,T,N,m)\mathcal{D}\leftarrow\text{Algorithm~\ref{alg:ourmethod-p1}}(\mathcal{M}_{\text{DF}}^{\text{T}},\mathcal{M}_{\text{DF}}^{\text{R}},\mathbf{x},\alpha_{\min},\alpha_{\max},T,N,m)
+3
+ϕ←Algorithm 2​(𝒟)\phi\leftarrow\text{Algorithm~\ref{alg:ourmethod-p2}}(\mathcal{D})
+4
+Return: membership score ϕ\phi
+4 Experiments
+This section validates our proposed Sama attack against state-of-the-art DLMs, demonstrating its effectiveness across diverse datasets and comparing it to existing MIA methods.
+4.1 Experimental Setup
+We evaluate Sama on two state-of-the-art diffusion language models: LLaDA-8B-Base (Nie et al., 2025) and Dream-v0-7B-Base (Ye et al., 2025a), with their pre-trained versions serving as reference models ℳDFR\mathcal{M}_{\text{DF}}^{\text{R}}. Fine-tuning was performed on member datasets from six diverse domains of the MIMIR benchmark (Duan et al., 2024) following Zhang et al. (2025b); Chang et al. (2024); Antebi et al. (2025), and three standard NLP benchmarks (WikiText-103 (Merity et al., 2016), AG News (Zhang et al., 2015), XSum (Narayan et al., 2018)) following Fu et al. (2024). The fine-tuned models maintain strong utility (see Section D.2).
+Sama uses T=16T=16 progressive masking steps from αmin=5%\alpha_{\min}=5\% to αmax=50%\alpha_{\max}=50\%, sampling N=128N=128 subsets of size m=10m=10 tokens at each step. We compare against twelve baselines: (1) Autoregressive MIA methods: Loss (Yeom et al., 2018), ZLIB (Carlini et al., 2021), Lowercase (Carlini et al., 2021), Neighbor (Mattern et al., 2023), Min-K% (Shi et al., 2024b), Min-K%++ (Zhang et al., 2025a), ReCall (Xie et al., 2024), CON-ReCall (Wang et al., 2025), BoWs (Das et al., 2025), and Ratio (Watson et al., 2021); (2) Diffusion MIA methods adapted from image domain: SecMI (Duan et al., 2023) and PIA (Kong et al., 2023). Evaluation follows standard MIA metrics (Carlini et al., 2022): AUC and TPR at 10%, 1%, and 0.1% FPR. All baselines also utilize an identical budget of T=16T=16 model queries per sample. Full experimental details are provided in Section D.1.
+4.2 Main Results
+Table 1: MIA performance (AUC, TPR@10%FPR, TPR@1%FPR, TPR@0.1%FPR) across different datasets. Each cell shows the mean with std. dev. as a subscript. Best-performing results are highlighted. We observe that Sama consistently outperforms all baseline methods across all reported metrics and datasets.
+MIAs
+ArXiv
+GitHub
+HackerNews
+AUC
+T@10%
+T@1%
+T@0.1%
+AUC
+T@10%
+T@1%
+T@0.1%
+AUC
+T@10%
+T@1%
+T@0.1%
+Loss
+0.506±\pm.01
+0.119±\pm.02
+0.010±\pm.01
+0.000±\pm.00
+0.551±\pm.01
+0.161±\pm.02
+0.036±\pm.01
+0.007±\pm.01
+0.495±\pm.01
+0.118±\pm.01
+0.010±\pm.01
+0.000±\pm.00
+ZLIB
+0.490±\pm.01
+0.119±\pm.02
+0.012±\pm.00
+0.000±\pm.00
+0.561±\pm.01
+0.205±\pm.02
+0.045±\pm.01
+0.007±\pm.00
+0.486±\pm.01
+0.083±\pm.01
+0.009±\pm.01
+0.001±\pm.00
+Lowercase
+0.515±\pm.01
+0.103±\pm.01
+0.013±\pm.00
+0.001±\pm.00
+0.579±\pm.01
+0.178±\pm.02
+0.044±\pm.01
+0.008±\pm.00
+0.483±\pm.01
+0.074±\pm.01
+0.007±\pm.00
+0.001±\pm.00
+Min-K%
+0.488±\pm.01
+0.102±\pm.01
+0.012±\pm.00
+0.001±\pm.00
+0.530±\pm.01
+0.171±\pm.02
+0.039±\pm.01
+0.007±\pm.01
+0.492±\pm.01
+0.108±\pm.01
+0.013±\pm.01
+0.001±\pm.00
+Min-K%++
+0.485±\pm.01
+0.095±\pm.01
+0.006±\pm.00
+0.000±\pm.00
+0.496±\pm.01
+0.117±\pm.01
+0.016±\pm.01
+0.003±\pm.00
+0.486±\pm.01
+0.100±\pm.02
+0.008±\pm.00
+0.002±\pm.00
+BoWs
+0.519±\pm.01
+0.107±\pm.01
+0.011±\pm.00
+0.000±\pm.00
+0.656±\pm.02
+0.306±\pm.02
+0.154±\pm.02
+0.059±\pm.05
+0.527±\pm.01
+0.128±\pm.01
+0.009±\pm.00
+0.001±\pm.00
+ReCall
+0.501±\pm.01
+0.132±\pm.02
+0.007±\pm.00
+0.000±\pm.00
+0.562±\pm.01
+0.187±\pm.01
+0.037±\pm.01
+0.007±\pm.00
+0.494±\pm.01
+0.090±\pm.01
+0.010±\pm.01
+0.000±\pm.00
+CON-Recall
+0.500±\pm.02
+0.101±\pm.02
+0.011±\pm.00
+0.000±\pm.00
+0.549±\pm.01
+0.168±\pm.01
+0.027±\pm.01
+0.005±\pm.00
+0.501±\pm.02
+0.098±\pm.01
+0.015±\pm.01
+0.000±\pm.00
+Neighbor
+0.506±\pm.01
+0.098±\pm.01
+0.012±\pm.01
+0.001±\pm.00
+0.478±\pm.01
+0.072±\pm.01
+0.008±\pm.01
+0.000±\pm.00
+0.520±\pm.01
+0.123±\pm.01
+0.009±\pm.00
+0.001±\pm.00
+Ratio
+0.597±\pm.01
+0.181±\pm.01
+0.023±\pm.01
+0.001±\pm.00
+0.743±\pm.01
+0.355±\pm.03
+0.081±\pm.02
+0.017±\pm.01
+0.575±\pm.02
+0.146±\pm.01
+0.013±\pm.01
+0.000±\pm.00
+SecMI
+0.520±\pm.01
+0.096±\pm.02
+0.006±\pm.00
+0.001±\pm.00
+0.604±\pm.01
+0.190±\pm.01
+0.044±\pm.01
+0.019±\pm.01
+0.523±\pm.02
+0.125±\pm.02
+0.013±\pm.00
+0.001±\pm.00
+PIA
+0.525±\pm.01
+0.099±\pm.01
+0.011±\pm.01
+0.000±\pm.00
+0.571±\pm.01
+0.131±\pm.01
+0.012±\pm.00
+0.001±\pm.00
+0.494±\pm.01
+0.086±\pm.01
+0.014±\pm.00
+0.000±\pm.00
+Sama (Ours)
+0.850±\pm.01
+0.586±\pm.03
+0.178±\pm.03
+0.014±\pm.01
+0.876±\pm.01
+0.647±\pm.03
+0.259±\pm.05
+0.075±\pm.05
+0.657±\pm.01
+0.215±\pm.02
+0.027±\pm.01
+0.003±\pm.00
+MIAs
+PubMed Central
+Wikipedia (en)
+Pile CC
+AUC
+T@10%
+T@1%
+T@0.1%
+AUC
+T@10%
+T@1%
+T@0.1%
+AUC
+T@10%
+T@1%
+T@0.1%
+Loss
+0.498±\pm.01
+0.114±\pm.02
+0.016±\pm.01
+0.001±\pm.00
+0.495±\pm.01
+0.087±\pm.00
+0.010±\pm.00
+0.003±\pm.00
+0.502±\pm.01
+0.105±\pm.01
+0.012±\pm.00
+0.002±\pm.00
+ZLIB
+0.488±\pm.01
+0.096±\pm.02
+0.005±\pm.00
+0.001±\pm.00
+0.495±\pm.01
+0.093±\pm.01
+0.008±\pm.00
+0.000±\pm.00
+0.491±\pm.01
+0.095±\pm.01
+0.007±\pm.00
+0.001±\pm.00
+Lowercase
+0.502±\pm.01
+0.096±\pm.01
+0.002±\pm.00
+0.000±\pm.00
+0.535±\pm.01
+0.107±\pm.02
+0.013±\pm.00
+0.001±\pm.00
+0.518±\pm.01
+0.102±\pm.01
+0.009±\pm.00
+0.001±\pm.00
+Min-K%
+0.500±\pm.01
+0.119±\pm.01
+0.008±\pm.00
+0.002±\pm.00
+0.482±\pm.01
+0.070±\pm.01
+0.008±\pm.00
+0.000±\pm.00
+0.491±\pm.01
+0.095±\pm.01
+0.008±\pm.00
+0.001±\pm.00
+Min-K%++
+0.494±\pm.01
+0.109±\pm.01
+0.011±\pm.00
+0.000±\pm.00
+0.488±\pm.01
+0.118±\pm.02
+0.004±\pm.00
+0.000±\pm.00
+0.491±\pm.01
+0.113±\pm.01
+0.007±\pm.00
+0.001±\pm.00
+BoWs
+0.489±\pm.01
+0.100±\pm.01
+0.002±\pm.00
+0.000±\pm.00
+0.471±\pm.01
+0.084±\pm.02
+0.003±\pm.00
+0.001±\pm.00
+0.480±\pm.01
+0.092±\pm.01
+0.003±\pm.00
+0.001±\pm.00
+ReCall
+0.495±\pm.01
+0.088±\pm.01
+0.007±\pm.00
+0.000±\pm.00
+0.506±\pm.01
+0.103±\pm.01
+0.010±\pm.01
+0.000±\pm.00
+0.500±\pm.01
+0.096±\pm.01
+0.009±\pm.00
+0.000±\pm.00
+CON-Recall
+0.498±\pm.02
+0.119±\pm.02
+0.009±\pm.00
+0.000±\pm.00
+0.498±\pm.02
+0.092±\pm.01
+0.008±\pm.00
+0.000±\pm.00
+0.498±\pm.01
+0.106±\pm.01
+0.009±\pm.00
+0.000±\pm.00
+Neighbor
+0.506±\pm.01
+0.091±\pm.01
+0.011±\pm.01
+0.000±\pm.00
+0.504±\pm.01
+0.101±\pm.01
+0.009±\pm.00
+0.001±\pm.00
+0.505±\pm.01
+0.096±\pm.01
+0.010±\pm.00
+0.001±\pm.00
+Ratio
+0.555±\pm.01
+0.128±\pm.02
+0.018±\pm.01
+0.003±\pm.01
+0.653±\pm.01
+0.184±\pm.03
+0.011±\pm.01
+0.000±\pm.00
+0.604±\pm.01
+0.156±\pm.02
+0.015±\pm.01
+0.002±\pm.00
+SecMI
+0.510±\pm.01
+0.109±\pm.01
+0.009±\pm.00
+0.008±\pm.00
+0.522±\pm.01
+0.101±\pm.01
+0.015±\pm.00
+0.009±\pm.00
+0.515±\pm.01
+0.108±\pm.01
+0.010±\pm.00
+0.001±\pm.00
+PIA
+0.496±\pm.01
+0.102±\pm.01
+0.005±\pm.00
+0.000±\pm.00
+0.522±\pm.01
+0.120±\pm.01
+0.011±\pm.00
+0.001±\pm.00
+0.509±\pm.01
+0.103±\pm.01
+0.009±\pm.00
+0.000±\pm.00
+Sama (Ours)
+0.814±\pm.01
+0.442±\pm.03
+0.132±\pm.03
+0.011±\pm.01
+0.790±\pm.01
+0.433±\pm.03
+0.136±\pm.01
+0.008±\pm.02
+0.778±\pm.01
+0.408±\pm.03
+0.115±\pm.02
+0.009±\pm.01
+Table 1 presents the MIA performance of Sama compared to twelve baseline methods across six diverse datasets from MIMIR, evaluated using AUC and TPR at various FPR thresholds (additional results on Dream-v0-7B and three NLP benchmarks in Section D.3).
+Sama demonstrates substantial and consistent improvements across all metrics and datasets. On average, Sama achieves an AUC of 0.81, compared to the best baseline (Ratio) at 0.62—a 30% relative improvement. The superiority is particularly pronounced at low FPR thresholds, critical for practical deployment. For instance, at TPR@1%FPR, Sama achieves 0.16 on average while the best baseline reaches only 0.04, representing a 4× improvement. On the GitHub dataset, where memorization is most pronounced, Sama attains an AUC of 0.88 with TPR@10%FPR of 0.65, while the best baseline (Ratio) achieves 0.74 and 0.36, respectively.
+Notably, most traditional MIA methods designed for autoregressive models perform near randomly (AUC ≈\approx 0.50) on DLMs, confirming that existing approaches fail to capture the unique memorization patterns in diffusion-based architectures. Even methods specifically designed for the diffusion paradigm (SecMI, PIA) show limited effectiveness, with AUCs barely exceeding 0.52. This validates our hypothesis that DLMs require fundamentally different attack strategies that account for their sparse configuration-dependent membership signals. We also evaluate Sama’s effectiveness against privacy-preserving fine-tuning methods (Differential Privacy Liu et al. (2024) and LoRA Hu et al. (2021)) in Section D.5.
+4.3 Ablation Study
+Figure 3 shows the contribution of each Sama component. Starting from a baseline loss attack (AUC ≈\approx 0.5), we progressively add: (1) reference model calibration, yielding 0.09-0.19 AUC improvement by isolating fine-tuning-specific memorization; (2) progressive masking, contributing modest 2-3% gains by capturing multi-scale patterns; (3) robust subset aggregation, delivering the largest improvement (20-30% AUC increase) by robustly handling heavy-tailed noise through sign-based voting rather than magnitude averaging; and (4) adaptive weighting, providing 3-5% final refinement by prioritizing cleaner signals from sparse masks. The consistent pattern across datasets confirms that sign-based aggregation is the critical component for handling DLMs’ sparse, noisy signals, with calibration and progressive strategies providing essential but smaller contributions. We provide an extended sensitivity analysis of hyperparameters (steps TT, subset size mm, number of subsets NN) in Section D.4.
+Figure 3: (Ablation) Impact of Sama’s Core Components Across MIMIR Datasets. The bar charts are illustrated in AUC. The overlaid line plots show the corresponding TPR@10%FPR.
+5 Related Work
+Our work on Sama builds upon research in three primary areas: MIA on ARMs, MIA for image diffusion models, and the evolution of DLMs. For an expanded discussion, please refer to Appendix C.
+MIAs on ARM and Diffusion-based Generative Models.
+Membership Inference Attacks (MIAs) (Shokri et al., 2017) have demonstrated particular vulnerabilities in fine-tuned Autoregressive Models (ARMs) (Mireshghallah et al., 2022b; Fu et al., 2024; Zeng et al., 2024; Puerto et al., 2025). Standard MIA techniques often rely on loss analysis or reference model calibration (Watson et al., 2021; Mireshghallah et al., 2022a; Fu et al., 2024), primarily targeting signals from the unidirectional, final-layer outputs of ARMs. This fundamentally differs from Sama’s approach to bidirectional diffusion models. Prior MIA research for diffusion models has predominantly focused on image generation, identifying vulnerabilities related to loss, gradients, and intermediate denoising steps (Hu and Pang, 2023; Pang et al., 2024; Matsumoto et al., 2023; Kong et al., 2023; Duan et al., 2023; Fu et al., 2023; Zhai et al., 2024). However, methods designed for pre-trained models often fail on fine-tuned models as they primarily capture domain adaptation signals rather than instance-specific memorization—a challenge that Sama addresses through robust aggregation designed to isolate true membership signals.
+Diffusion Language Models.
+The adaptation of diffusion principles (Sohl-Dickstein et al., 2015; Ho et al., 2020) to discrete language has led to Masked Diffusion Models (MDMs) (Austin et al., 2023). These models, exemplified by recent large-scale works like LLaDA (Nie et al., 2025) and Dream (Ye et al., 2025a), iteratively mask and predict tokens, establishing a viable alternative to ARMs. Sama is specifically designed to exploit this core iterative mechanism.
+6 Conclusions
+This work presents the first systematic investigation of membership inference vulnerabilities in Diffusion Language Models. DLMs’ bidirectional masking mechanism creates exploitable memorization patterns absent in autoregressive models. Our Sama attack leverages this through robust subset aggregation and progressive masking, achieving over 10×\times improvement compared to existing baselines. These findings reveal key privacy risks in emerging DLMs.
+Limitations: Sama targets mask-predict diffusion models; its effectiveness on other diffusion paradigms remains unexplored. The attack requires reference models with compatible tokenizers and masking schemes (see Section D.6). While Sama’s progressive masking is specialized for the bidirectional nature of DLMs, the robust subset aggregation component is generalizable. The insight of using sign-based voting to filter heavy-tailed domain noise could potentially enhance MIAs against autoregressive or masked language models in future work.
+Ethic and Broader Impact Statements
+Our work introduces Sama, a potent membership inference attack that exposes privacy vulnerabilities in diffusion-based LLMs by identifying training data. While this research highlights critical risks, all experiments were conducted strictly on public datasets (e.g., MIMIR (Duan et al., 2024), WikiText-103 (Merity et al., 2016), AG News (Zhang et al., 2015), and XSum (Narayan et al., 2018)) to prevent any new privacy violations. By demonstrating Sama’s effectiveness, this paper reveals previously overlooked vulnerabilities specific to diffusion-based LLMs. This research directly motivates and informs the development of tailored privacy-preserving defenses for this emerging LLM class, contributing to safer AI model deployment.
+Reproducibility Statement
+To ensure reproducibility of our results, we provide comprehensive implementation details throughout the paper and supplementary materials. The complete Sama algorithm is formally specified in Section 3.5 with all hyperparameters explicitly stated in Section 4.1. Full experimental details, including fine-tuning procedures, model configurations, and evaluation protocols, are provided in Section D.1. We use publicly available models (LLaDA-8B-Base and Dream-v0-7B-Base) and standard benchmarks (MIMIR, WikiText-103, AG News, XSum) with data processing steps detailed in Section D.1. The mathematical formulation and theoretical foundations are presented in Section 2 and Section 3.1. Implementation code for Sama and all baseline methods, along with scripts for reproducing experiments, will be made available at https://github.com/Stry233/SAMA. Additional results validating our findings across different models and datasets are provided in Section D.3, demonstrating the robustness of our method.
+References
+Aminabadi et al. (2022)
+R. Y. Aminabadi, S. Rajbhandari, M. Zhang, A. A. Awan, C. Li, D. Li, E. Zheng, J. Rasley, S. Smith, O. Ruwase, and Y. He
+DeepSpeed inference: enabling efficient inference of transformer models at unprecedented scale.
+External Links: 2207.00032,
+Link
+Cited by: §D.1.2.
+Amit et al. (2024)
+G. Amit, A. Goldsteen, and A. Farkash
+SoK: reducing the vulnerability of fine-tuned language models to membership inference attacks.
+External Links: 2403.08481,
+Link
+Cited by: §D.5.1.
+Antebi et al. (2025)
+S. Antebi, E. Habler, A. Shabtai, and Y. Elovici
+Tag&tab: pretraining data detection in large language models using keyword-based membership inference attack.
+arXiv preprint arXiv:2501.08454.
+Cited by: §4.1.
+Arias-Castro et al. (2011)
+E. Arias-Castro, E. J. Candès, and Y. Plan
+Global testing under sparse alternatives: anova, multiple comparisons and the higher criticism.
+Cited by: §3.4.
+Austin et al. (2021)
+J. Austin, D. D. Johnson, J. Ho, D. Tarlow, and R. van den Berg
+Structured denoising diffusion models in discrete state-spaces.
+In Advances in Neural Information Processing Systems,  M. Ranzato, A. Beygelzimer, Y. Dauphin, P.S. Liang, and J. W. Vaughan (Eds.),
+Vol. 34, pp. 17981–17993.
+External Links: Link
+Cited by: Appendix C.
+Austin et al. (2023)
+J. Austin, D. D. Johnson, J. Ho, D. Tarlow, and R. van den Berg
+Structured denoising diffusion models in discrete state-spaces.
+External Links: 2107.03006,
+Link
+Cited by: §2.2,
+§5.
+Berglund et al. (2024)
+L. Berglund, M. Tong, M. Kaufmann, M. Balesni, A. C. Stickland, T. Korbak, and O. Evans
+The reversal curse: llms trained on ”a is b” fail to learn ”b is a”.
+External Links: 2309.12288,
+Link
+Cited by: §1.
+Bottou et al. (2018)
+L. Bottou, F. E. Curtis, and J. Nocedal
+Optimization methods for large-scale machine learning.
+SIAM review 60 (2), pp. 223–311.
+Cited by: §3.3.
+Breiman (1996)
+L. Breiman
+Bagging predictors.
+Machine learning 24 (2), pp. 123–140.
+Cited by: §3.3.
+Brown et al. (2020)
+T. Brown, B. Mann, N. Ryder, M. Subbiah, J. D. Kaplan, P. Dhariwal, A. Neelakantan, P. Shyam, G. Sastry, A. Askell, et al.
+Language models are few-shot learners.
+Advances in neural information processing systems 33, pp. 1877–1901.
+Cited by: §2.2.
+Campbell et al. (2022)
+A. Campbell, J. Benton, V. De Bortoli, T. Rainforth, G. Deligiannidis, and A. Doucet
+A continuous time framework for discrete denoising models.
+Advances in Neural Information Processing Systems 35, pp. 28266–28279.
+Cited by: Appendix C.
+Carlini et al. (2022)
+N. Carlini, S. Chien, M. Nasr, S. Song, A. Terzis, and F. Tramèr
+Membership inference attacks from first principles.
+In 2022 IEEE Symposium on Security and Privacy (SP),
+Vol. , pp. 1897–1914.
+External Links: Document
+Cited by: Appendix C,
+§4.1.
+Carlini et al. (2021)
+N. Carlini, F. Tramer, E. Wallace, M. Jagielski, A. Herbert-Voss, K. Lee, A. Roberts, T. Brown, D. Song, U. Erlingsson, et al.
+Extracting training data from large language models.
+In 30th USENIX security sy@inproceedingscarlini2021extracting,
+title=Extracting training data from large language models,
+author=Carlini, Nicholas and Tramer, Florian and Wallace, Eric and Jagielski, Matthew and Herbert-Voss, Ariel and Lee, Katherine and Roberts, Adam and Brown, Tom and Song, Dawn and Erlingsson, Ulfar and others,
+booktitle=30th USENIX security symposium (USENIX Security 21),
+pages=2633–2650,
+year=2021
+mposium (USENIX Security 21),
+pp. 2633–2650.
+Cited by: Appendix C,
+Appendix C,
+§D.1.4,
+§D.1.4,
+§1,
+§4.1.
+Chang et al. (2024)
+H. Chang, A. S. Shamsabadi, K. Katevas, H. Haddadi, and R. Shokri
+Context-aware membership inference attacks against pre-trained large language models.
+arXiv preprint arXiv:2409.13745.
+Cited by: §4.1.
+Chen et al. (2022)
+T. Chen, R. Zhang, and G. Hinton
+Analog bits: generating discrete data using diffusion models with self-conditioning.
+arXiv preprint arXiv:2208.04202.
+Cited by: Appendix C.
+Chen et al. (2023)
+Z. Chen, H. Yuan, Y. Li, Y. Kou, J. Zhang, and Q. Gu
+Fast sampling via de-randomization for discrete diffusion models.
+arXiv preprint arXiv:2312.09193.
+Cited by: Appendix C.
+Das et al. (2025)
+D. Das, J. Zhang, and F. Tramèr
+Blind baselines beat membership inference attacks for foundation models.
+External Links: 2406.16201,
+Link
+Cited by: Appendix C,
+§D.1.4,
+§4.1.
+DeepMind (2025)
+DeepMind
+Gemini diffusion – our state-of-the-art, experimental text diffusion model.
+Note: https://deepmind.google/models/gemini-diffusion/Accessed: 2025-11-27
+Cited by: §1.
+DeepSeek-AI (2025)
+DeepSeek-AI
+DeepSeek-v3 technical report.
+External Links: 2412.19437,
+Link
+Cited by: §1.
+Dieleman et al. (2022)
+S. Dieleman, L. Sartran, A. Roshannai, N. Savinov, Y. Ganin, P. H. Richemond, A. Doucet, R. Strudel, C. Dyer, C. Durkan, et al.
+Continuous diffusion for categorical data.
+arXiv preprint arXiv:2211.15089.
+Cited by: Appendix C.
+Duan et al. (2023)
+J. Duan, F. Kong, S. Wang, X. Shi, and K. Xu
+Are diffusion models vulnerable to membership inference attacks?.
+External Links: 2302.01316,
+Link
+Cited by: Appendix C,
+Appendix C,
+§D.1.4,
+§3.2,
+§4.1,
+§5.
+Duan et al. (2024)
+M. Duan, A. Suri, N. Mireshghallah, S. Min, W. Shi, L. Zettlemoyer, Y. Tsvetkov, Y. Choi, D. Evans, and H. Hajishirzi
+Do membership inference attacks work on large language models?.
+In Conference on Language Modeling (COLM),
+Cited by: Appendix C,
+§D.1.1,
+item 3,
+§1,
+§4.1,
+Ethic and Broader Impact Statements.
+Dubiński et al. (2023)
+J. Dubiński, A. Kowalczuk, S. Pawlak, P. Rokita, T. Trzciński, and P. Morawiecki
+Towards more realistic membership inference attacks on large diffusion models.
+External Links: 2306.12983,
+Link
+Cited by: Appendix C.
+Fu et al. (2023)
+W. Fu, H. Wang, C. Gao, G. Liu, Y. Li, and T. Jiang
+A probabilistic fluctuation based membership inference attack for diffusion models.
+arXiv preprint arXiv:2308.12143.
+Cited by: Appendix C,
+§5.
+Fu et al. (2024)
+W. Fu, H. Wang, C. Gao, G. Liu, Y. Li, and T. Jiang
+Practical membership inference attacks against fine-tuned large language models via self-prompt calibration.
+External Links: 2311.06062,
+Link
+Cited by: Appendix C,
+§D.1.1,
+§1,
+§1,
+§2.1,
+§3.2,
+§4.1,
+§5.
+Fu et al. (2025)
+X. Fu, X. Wang, Q. Li, J. Liu, J. Dai, J. Han, and X. Gao
+OMS: one more step noise searching to enhance membership inference attacks for diffusion models.
+External Links: Link
+Cited by: Appendix C.
+Gat et al. (2024)
+I. Gat, T. Remez, N. Shaul, F. Kreuk, R. T. Chen, G. Synnaeve, Y. Adi, and Y. Lipman
+Discrete flow matching.
+arXiv preprint arXiv:2407.15595.
+Cited by: Appendix C.
+Gong et al. (2024)
+S. Gong, S. Agarwal, Y. Zhang, J. Ye, L. Zheng, M. Li, C. An, P. Zhao, W. Bi, J. Han, et al.
+Scaling diffusion language models via adaptation from autoregressive models.
+arXiv preprint arXiv:2410.17891.
+Cited by: Appendix C.
+Gong et al. (2025)
+S. Gong, S. Agarwal, Y. Zhang, J. Ye, L. Zheng, M. Li, C. An, P. Zhao, W. Bi, J. Han, H. Peng, and L. Kong
+Scaling diffusion language models via adaptation from autoregressive models.
+External Links: 2410.17891,
+Link
+Cited by: §1.
+Gong et al. (2022)
+S. Gong, M. Li, J. Feng, Z. Wu, and L. Kong
+Diffuseq: sequence to sequence text generation with diffusion models.
+arXiv preprint arXiv:2210.08933.
+Cited by: Appendix C.
+Graves et al. (2023)
+A. Graves, R. K. Srivastava, T. Atkinson, and F. Gomez
+Bayesian flow networks.
+arXiv preprint arXiv:2308.07037.
+Cited by: Appendix C.
+Gulrajani and Hashimoto (2023a)
+I. Gulrajani and T. B. Hashimoto
+Likelihood-based diffusion language models.
+External Links: 2305.18619,
+Link
+Cited by: §1.
+Gulrajani and Hashimoto (2023b)
+I. Gulrajani and T. B. Hashimoto
+Likelihood-based diffusion language models.
+Advances in Neural Information Processing Systems 36, pp. 16693–16715.
+Cited by: Appendix C.
+Guo et al. (2017)
+C. Guo, G. Pleiss, Y. Sun, and K. Q. Weinberger
+On calibration of modern neural networks.
+External Links: 1706.04599,
+Link
+Cited by: §D.5.3.
+Han et al. (2022)
+X. Han, S. Kumar, and Y. Tsvetkov
+Ssd-lm: semi-autoregressive simplex-based diffusion language model for text generation and modular control.
+arXiv preprint arXiv:2210.17432.
+Cited by: Appendix C.
+Hartmann et al. (2023)
+V. Hartmann, A. Suri, V. Bindschaedler, D. Evans, S. Tople, and R. West
+SoK: memorization in general-purpose large language models.
+External Links: 2310.18362,
+Link
+Cited by: §1.
+He et al. (2025)
+Y. He, B. Li, L. Liu, Z. Ba, W. Dong, Y. Li, Z. Qin, K. Ren, and C. Chen
+Towards label-only membership inference attack against pre-trained large language models.
+External Links: 2502.18943,
+Link
+Cited by: Appendix C.
+He et al. (2022)
+Z. He, T. Sun, K. Wang, X. Huang, and X. Qiu
+Diffusionbert: improving generative masked language models with diffusion models.
+arXiv preprint arXiv:2211.15029.
+Cited by: Appendix C.
+Hedges and Olkin (2014)
+L. V. Hedges and I. Olkin
+Statistical methods for meta-analysis.
+Academic press.
+Cited by: §3.4.
+Ho et al. (2020)
+J. Ho, A. Jain, and P. Abbeel
+Denoising diffusion probabilistic models.
+Advances in neural information processing systems 33, pp. 6840–6851.
+Cited by: Appendix C,
+§3.2,
+§5.
+Hodges Jr and Lehmann (2011)
+J. L. Hodges Jr and E. L. Lehmann
+Estimates of location based on rank tests.
+In Selected works of EL Lehmann,
+pp. 287–300.
+Cited by: §3.3.
+Hoogeboom et al. (2021a)
+E. Hoogeboom, A. A. Gritsenko, J. Bastings, B. Poole, R. v. d. Berg, and T. Salimans
+Autoregressive diffusion models.
+arXiv preprint arXiv:2110.02037.
+Cited by: Appendix C.
+Hoogeboom et al. (2021b)
+E. Hoogeboom, D. Nielsen, P. Jaini, P. Forré, and M. Welling
+Argmax flows and multinomial diffusion: learning categorical distributions.
+Advances in Neural Information Processing Systems 34, pp. 12454–12465.
+Cited by: Appendix C.
+Hu et al. (2021)
+E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, and W. Chen
+LoRA: low-rank adaptation of large language models.
+External Links: 2106.09685,
+Link
+Cited by: §D.5.1,
+§4.2.
+Hu and Pang (2023)
+H. Hu and J. Pang
+Membership inference of diffusion models.
+External Links: 2301.09956,
+Link
+Cited by: Appendix C,
+§5.
+Huang et al. (2025)
+Z. Huang, Y. Liu, D. He, and Y. Li
+DF-mia: a distribution-free membership inference attack on fine-tuned large language models.
+Proceedings of the AAAI Conference on Artificial Intelligence 39 (1), pp. 343–351.
+External Links: Link,
+Document
+Cited by: §1,
+§2.1.
+Huber (1981)
+P. J. Huber
+Robust statistics.
+Wiley Series in Probability and Mathematical Statistics.
+Cited by: §3.3.
+[48]
+Hugging FaceLLaDA — multimodalart space on hugging face(Website)
+External Links: Link
+Cited by: §2.1.
+Kandpal et al. (2024)
+N. Kandpal, K. Pillutla, A. Oprea, P. Kairouz, C. A. Choquette-Choo, and Z. Xu
+User inference attacks on large language models.
+External Links: 2310.09266,
+Link
+Cited by: Appendix C.
+Kitouni et al. (2023)
+O. Kitouni, N. Nolte, J. Hensman, and B. Mitra
+DiSK: a diffusion model for structured knowledge.
+arXiv preprint arXiv:2312.05253.
+Cited by: Appendix C.
+Kong et al. (2023)
+F. Kong, J. Duan, R. Ma, H. Shen, X. Zhu, X. Shi, and K. Xu
+An efficient membership inference attack for the diffusion model by proximal initialization.
+External Links: 2305.18355,
+Link
+Cited by: Appendix C,
+Appendix C,
+§D.1.4,
+§4.1,
+§5.
+Kou et al. (2024)
+S. Kou, L. Hu, Z. He, Z. Deng, and H. Zhang
+Cllms: consistency large language models.
+arXiv preprint arXiv:2403.00835.
+Cited by: Appendix C.
+Li et al. (2024)
+H. Li, Z. Li, S. Wu, C. Hu, Y. Ye, M. Zhang, D. Feng, and Y. Zhang
+SeqMIA: sequential-metric based membership inference attack.
+External Links: 2407.15098,
+Link
+Cited by: Appendix C.
+Li et al. (2022)
+X. Li, J. Thickstun, I. Gulrajani, P. S. Liang, and T. B. Hashimoto
+Diffusion-lm improves controllable text generation.
+Advances in neural information processing systems 35, pp. 4328–4343.
+Cited by: Appendix C.
+Lin et al. (2023)
+Z. Lin, Y. Gong, Y. Shen, T. Wu, Z. Fan, C. Lin, N. Duan, and W. Chen
+Text generation with diffusion language models: a pre-training approach with continuous paragraph denoise.
+In International Conference on Machine Learning,
+pp. 21051–21064.
+Cited by: Appendix C.
+Liu et al. (2024)
+X. Liu, R. Zhu, D. Zha, J. Gao, S. Zhong, M. White, and M. Qiu
+Differentially private low-rank adaptation of large language model using federated learning.
+External Links: 2312.17493,
+Link
+Cited by: §D.5.2,
+§4.2.
+Liu et al. (2022)
+Y. Liu, Z. Zhao, M. Backes, and Y. Zhang
+Membership inference attacks by exploiting loss trajectory.
+External Links: 2208.14933,
+Link
+Cited by: Appendix C.
+Lou and Ermon (2023)
+A. Lou and S. Ermon
+Reflected diffusion models.
+In International Conference on Machine Learning,
+pp. 22675–22701.
+Cited by: Appendix C,
+§2.2.
+Lou et al. (2023)
+A. Lou, C. Meng, and S. Ermon
+Discrete diffusion language modeling by estimating the ratios of the data distribution.
+arXiv preprint arXiv:2310.16834.
+Cited by: Appendix C.
+Luo et al. (2024)
+Z. Luo, X. Xu, F. Liu, Y. S. Koh, D. Wang, and J. Zhang
+Privacy-preserving low-rank adaptation against membership inference attacks for latent diffusion models.
+External Links: 2402.11989,
+Link
+Cited by: §D.5.1.
+Mahabadi et al. (2023)
+R. K. Mahabadi, H. Ivison, J. Tae, J. Henderson, I. Beltagy, M. E. Peters, and A. Cohan
+Tess: text-to-text self-conditioned simplex diffusion.
+arXiv preprint arXiv:2305.08379.
+Cited by: Appendix C.
+Maronna et al. (2019)
+R. A. Maronna, R. D. Martin, V. J. Yohai, and M. Salibián-Barrera
+Robust statistics: theory and methods (with r).
+John Wiley & Sons.
+Cited by: §3.3.
+Matsumoto et al. (2023)
+T. Matsumoto, T. Miura, and N. Yanai
+Membership inference attacks against diffusion models.
+External Links: 2302.03262,
+Link
+Cited by: Appendix C,
+§5.
+Mattern et al. (2023)
+J. Mattern, F. Mireshghallah, Z. Jin, B. Schölkopf, M. Sachan, and T. Berg-Kirkpatrick
+Membership inference attacks against language models via neighbourhood comparison.
+External Links: 2305.18462,
+Link
+Cited by: Appendix C,
+§1,
+§4.1.
+Meeus et al. (2024)
+M. Meeus, I. Shilov, S. Jain, M. Faysse, M. Rei, and Y. de Montjoye
+SoK: membership inference attacks on llms are rushing nowhere (and how to fix it).
+arXiv preprint arXiv:2406.17975.
+Cited by: Appendix C.
+Meng et al. (2022)
+C. Meng, K. Choi, J. Song, and S. Ermon
+Concrete score matching: generalized score matching for discrete data.
+Advances in Neural Information Processing Systems 35, pp. 34532–34545.
+Cited by: Appendix C.
+Meng et al. (2025)
+W. Meng, Z. Guo, L. Wu, C. Gong, W. Liu, W. Li, C. Wei, and W. Chen
+RR: unveiling llm training privacy through recollection and ranking.
+arXiv preprint arXiv:2502.12658.
+Cited by: §1,
+§2.1.
+Merity et al. (2018)
+S. Merity, N. S. Keskar, and R. Socher
+An analysis of neural language modeling at multiple scales.
+External Links: 1803.08240,
+Link
+Cited by: §1.
+Merity et al. (2016)
+S. Merity, C. Xiong, J. Bradbury, and R. Socher
+Pointer sentinel mixture models.
+arXiv preprint arXiv:1609.07843.
+Cited by: §D.1.1,
+item 3,
+§4.1,
+Ethic and Broader Impact Statements.
+Mireshghallah et al. (2022a)
+F. Mireshghallah, K. Goyal, A. Uniyal, T. Berg-Kirkpatrick, and R. Shokri
+Quantifying privacy risks of masked language models using membership inference attacks.
+arXiv preprint arXiv:2203.03929.
+Cited by: Appendix C,
+§1,
+§2.1,
+§5.
+Mireshghallah et al. (2022b)
+F. Mireshghallah, A. Uniyal, T. Wang, D. Evans, and T. Berg-Kirkpatrick
+An empirical analysis of memorization in fine-tuned autoregressive language models.
+In Proceedings of the 2022 Conference on Empirical Methods in Natural Language Processing,  Y. Goldberg, Z. Kozareva, and Y. Zhang (Eds.),
+Abu Dhabi, United Arab Emirates, pp. 1816–1826.
+External Links: Link,
+Document
+Cited by: Appendix C,
+§5.
+Mireshghallah et al. (2024)
+N. Mireshghallah, H. Kim, X. Zhou, Y. Tsvetkov, M. Sap, R. Shokri, and Y. Choi
+Can llms keep a secret? testing privacy implications of language models via contextual integrity theory.
+External Links: 2310.17884,
+Link
+Cited by: §1.
+Mozaffari and Marathe (2024)
+H. Mozaffari and V. J. Marathe
+Semantic membership inference attack against large language models.
+External Links: 2406.10218,
+Link
+Cited by: Appendix C.
+Narayan et al. (2018)
+S. Narayan, S. B. Cohen, and M. Lapata
+Don’t give me the details, just the summary! topic-aware convolutional neural networks for extreme summarization.
+arXiv preprint arXiv:1808.08745.
+Cited by: §D.1.1,
+item 3,
+§4.1,
+Ethic and Broader Impact Statements.
+Nie et al. (2024)
+S. Nie, F. Zhu, C. Du, T. Pang, Q. Liu, G. Zeng, M. Lin, and C. Li
+Scaling up masked diffusion models on text.
+arXiv preprint arXiv:2410.18514.
+Cited by: Appendix C.
+Nie et al. (2025)
+S. Nie, F. Zhu, Z. You, X. Zhang, J. Ou, J. Hu, J. Zhou, Y. Lin, J. Wen, and C. Li
+Large language diffusion models.
+External Links: 2502.09992,
+Link
+Cited by: Appendix C,
+§D.1.2,
+item 3,
+§2.2,
+§4.1,
+§5.
+OpenAI (2024)
+OpenAI
+GPT-4o system card.
+External Links: 2410.21276,
+Link
+Cited by: Appendix B.
+Ou et al. (2024)
+J. Ou, S. Nie, K. Xue, F. Zhu, J. Sun, Z. Li, and C. Li
+Your absorbing discrete diffusion secretly models the conditional distributions of clean data.
+arXiv preprint arXiv:2406.03736.
+Cited by: Appendix C,
+§2.2.
+Pang et al. (2024)
+Y. Pang, T. Wang, X. Kang, M. Huai, and Y. Zhang
+White-box membership inference attacks against diffusion models.
+External Links: 2308.06405,
+Link
+Cited by: Appendix C,
+§5.
+Pang and Wang (2023)
+Y. Pang and T. Wang
+Black-box membership inference attacks against fine-tuned diffusion models.
+arXiv preprint arXiv:2312.08207.
+Cited by: Appendix C.
+Peizer and Pratt (1968)
+D. B. Peizer and J. W. Pratt
+A normal approximation for binomial, f, beta, and other common, related tail probabilities, i.
+Journal of the American Statistical Association 63 (324), pp. 1416–1456.
+Cited by: §3.3.
+Puerto et al. (2025)
+H. Puerto, M. Gubri, S. Yun, and S. J. Oh
+Scaling up membership inference: when and how attacks succeed on large language models.
+External Links: 2411.00154,
+Link
+Cited by: Appendix C,
+§5.
+Qwen (2025)
+Qwen
+Qwen2.5 technical report.
+External Links: 2412.15115,
+Link
+Cited by: §1.
+Radford et al. (2019)
+A. Radford, J. Wu, R. Child, D. Luan, D. Amodei, I. Sutskever, et al.
+Language models are unsupervised multitask learners.
+OpenAI blog 1 (8), pp. 9.
+Cited by: §2.2.
+Reid et al. (2022)
+M. Reid, V. J. Hellendoorn, and G. Neubig
+DiffusER: discrete diffusion via edit-based reconstruction.
+External Links: 2210.16886
+Cited by: Appendix C.
+Richemond et al. (2022)
+P. H. Richemond, S. Dieleman, and A. Doucet
+Categorical sdes with simplex diffusion.
+arXiv preprint arXiv:2210.14784.
+Cited by: Appendix C.
+Rousseeuw and Leroy (2003)
+P. J. Rousseeuw and A. M. Leroy
+Robust regression and outlier detection.
+John wiley & sons.
+Cited by: §3.3.
+Sahoo et al. (2024)
+S. S. Sahoo, M. Arriola, Y. Schiff, A. Gokaslan, E. Marroquin, J. T. Chiu, A. Rush, and V. Kuleshov
+Simple and effective masked diffusion language models.
+arXiv preprint arXiv:2406.07524.
+Cited by: Appendix C.
+Satvaty et al. (2025)
+A. Satvaty, S. Verberne, and F. Turkmen
+Undesirable memorization in large language models: a survey.
+External Links: 2410.02650,
+Link
+Cited by: Appendix C.
+Shi et al. (2024a)
+J. Shi, K. Han, Z. Wang, A. Doucet, and M. Titsias
+Simplified and generalized masked diffusion for discrete data.
+Advances in neural information processing systems 37, pp. 103131–103167.
+Cited by: Appendix C,
+§2.2.
+Shi et al. (2024b)
+W. Shi, A. Ajith, M. Xia, Y. Huang, D. Liu, T. Blevins, D. Chen, and L. Zettlemoyer
+Detecting pretraining data from large language models.
+External Links: 2310.16789,
+Link
+Cited by: Appendix C,
+§D.1.4,
+§4.1.
+Shokri et al. (2017)
+R. Shokri, M. Stronati, C. Song, and V. Shmatikov
+Membership inference attacks against machine learning models.
+External Links: 1610.05820
+Cited by: Appendix C,
+§1,
+§2.1,
+§5.
+Sohl-Dickstein et al. (2015)
+J. Sohl-Dickstein, E. Weiss, N. Maheswaranathan, and S. Ganguli
+Deep unsupervised learning using nonequilibrium thermodynamics.
+In International conference on machine learning,
+pp. 2256–2265.
+Cited by: Appendix C,
+§5.
+Song et al. (2020)
+Y. Song, J. Sohl-Dickstein, D. P. Kingma, A. Kumar, S. Ermon, and B. Poole
+Score-based generative modeling through stochastic differential equations.
+arXiv preprint arXiv:2011.13456.
+Cited by: §3.2.
+Song et al. (2021)
+Y. Song, J. Sohl-Dickstein, D. P. Kingma, A. Kumar, S. Ermon, and B. Poole
+Score-based generative modeling through stochastic differential equations.
+External Links: 2011.13456,
+Link
+Cited by: Appendix C.
+Strudel et al. (2022)
+R. Strudel, C. Tallec, F. Altché, Y. Du, Y. Ganin, A. Mensch, W. Grathwohl, N. Savinov, S. Dieleman, L. Sifre, et al.
+Self-conditioned embedding diffusion for text generation.
+arXiv preprint arXiv:2211.04236.
+Cited by: Appendix C.
+Sun et al. (2022)
+H. Sun, L. Yu, B. Dai, D. Schuurmans, and H. Dai
+Score-based continuous-time discrete diffusion models.
+arXiv preprint arXiv:2211.16750.
+Cited by: Appendix C.
+Tang et al. (2023)
+S. Tang, Z. S. Wu, S. Aydore, M. Kearns, and A. Roth
+Membership inference attacks on diffusion models via quantile regression.
+External Links: 2312.05140,
+Link
+Cited by: Appendix C.
+Team (2024)
+M. L. Team
+The llama 3 herd of models.
+External Links: 2407.21783,
+Link
+Cited by: §1.
+Wang et al. (2025)
+C. Wang, Y. Wang, B. Hooi, Y. Cai, N. Peng, and K. Chang
+Con-recall: detecting pre-training data in llms via contrastive decoding.
+External Links: 2409.03363,
+Link
+Cited by: §D.1.1,
+§D.1.4,
+§3.2,
+§4.1.
+Watson et al. (2021)
+L. Watson, C. Guo, G. Cormode, and A. Sablayrolles
+On the importance of difficulty calibration in membership inference attacks.
+arXiv preprint arXiv:2111.08440.
+Cited by: Appendix C,
+§D.1.4,
+§2.1,
+§4.1,
+§5.
+Wen et al. (2024)
+R. Wen, Z. Li, M. Backes, and Y. Zhang
+Membership inference attacks against in-context learning.
+In Proceedings of the 2024 on ACM SIGSAC Conference on Computer and Communications Security,
+CCS ’24, New York, NY, USA, pp. 3481–3495.
+External Links: ISBN 9798400706363,
+Link,
+Document
+Cited by: Appendix C.
+Wu et al. (2023)
+T. Wu, Z. Fan, X. Liu, H. Zheng, Y. Gong, J. Jiao, J. Li, J. Guo, N. Duan, W. Chen, et al.
+Ar-diffusion: auto-regressive diffusion model for text generation.
+Advances in Neural Information Processing Systems 36, pp. 39957–39974.
+Cited by: Appendix C.
+Wu et al. (2022)
+Y. Wu, N. Yu, Z. Li, M. Backes, and Y. Zhang
+Membership inference attacks against text-to-image generation models.
+External Links: 2210.00968,
+Link
+Cited by: Appendix C.
+Xie et al. (2024)
+R. Xie, J. Wang, R. Huang, M. Zhang, R. Ge, J. Pei, N. Z. Gong, and B. Dhingra
+Recall: membership inference via relative conditional log-likelihoods.
+arXiv preprint arXiv:2406.15968.
+Cited by: §D.1.4,
+§3.2,
+§4.1.
+Xu et al. (2025)
+C. Xu, X. Wang, Z. Liao, Y. Li, T. Hou, and Z. Deng
+Show-o turbo: towards accelerated unified multimodal understanding and generation.
+arXiv preprint arXiv:2502.05415.
+Cited by: Appendix C.
+Xue et al. (2024)
+K. Xue, Y. Zhou, S. Nie, X. Min, X. Zhang, J. Zhou, and C. Li
+Unifying bayesian flow networks and diffusion models through stochastic differential equations.
+arXiv preprint arXiv:2404.15766.
+Cited by: Appendix C.
+Ye et al. (2025a)
+J. Ye, Z. Xie, L. Zheng, J. Gao, Z. Wu, X. Jiang, Z. Li, and L. Kong
+Dream 7b.
+External Links: Link
+Cited by: Appendix C,
+§D.1.2,
+item 3,
+§4.1,
+§5.
+Ye et al. (2023a)
+J. Ye, Z. Zheng, Y. Bao, L. Qian, and Q. Gu
+Diffusion language models can perform many tasks with scaling and instruction-finetuning.
+arXiv preprint arXiv:2308.12219.
+Cited by: Appendix C.
+Ye et al. (2025b)
+J. Ye, Z. Zheng, Y. Bao, L. Qian, and Q. Gu
+Diffusion language models can perform many tasks with scaling and instruction-finetuning.
+External Links: 2308.12219,
+Link
+Cited by: §1.
+Ye et al. (2023b)
+J. Ye, Z. Zheng, Y. Bao, L. Qian, and M. Wang
+Dinoiser: diffused conditional sequence learning by manipulating noises.
+arXiv preprint arXiv:2302.10025.
+Cited by: Appendix C.
+Yeom et al. (2018)
+S. Yeom, I. Giacomelli, M. Fredrikson, and S. Jha
+Privacy risk in machine learning: analyzing the connection to overfitting.
+External Links: 1709.01604
+Cited by: Appendix C,
+§D.1.4,
+§D.2,
+§4.1.
+Zeng et al. (2024)
+S. Zeng, Y. Li, J. Ren, Y. Liu, H. Xu, P. He, Y. Xing, S. Wang, J. Tang, and D. Yin
+Exploring memorization in fine-tuned language models.
+External Links: 2310.06714,
+Link
+Cited by: Appendix C,
+§5.
+Zhai et al. (2024)
+S. Zhai, H. Chen, Y. Dong, J. Li, Q. Shen, Y. Gao, H. Su, and Y. Liu
+Membership inference on text-to-image diffusion models via conditional likelihood discrepancy.
+Advances in Neural Information Processing Systems 37, pp. 74122–74146.
+Cited by: Appendix C,
+§5.
+Zhang et al. (2025a)
+J. Zhang, J. Sun, E. Yeats, Y. Ouyang, M. Kuo, J. Zhang, H. F. Yang, and H. Li
+Min-k%++: improved baseline for detecting pre-training data from large language models.
+External Links: 2404.02936,
+Link
+Cited by: Appendix C,
+§D.1.4,
+§4.1.
+Zhang et al. (2025b)
+K. Zhang, S. Cheng, H. Guo, Y. Chen, Z. Su, S. An, Y. Du, C. Fleming, A. Kundu, X. Zhang, and N. Li
+SOFT: selective data obfuscation for protecting llm fine-tuning against membership inference attacks.
+External Links: 2506.10424,
+Link
+Cited by: §D.5.1,
+§D.5.4,
+§4.1.
+Zhang et al. (2024)
+M. Zhang, N. Yu, R. Wen, M. Backes, and Y. Zhang
+Generated distributions are all you need for membership inference attacks against generative models.
+In Proceedings of the IEEE/CVF Winter Conference on Applications of Computer Vision,
+pp. 4839–4849.
+Cited by: Appendix C.
+Zhang et al. (2015)
+X. Zhang, J. Zhao, and Y. LeCun
+Character-level convolutional networks for text classification.
+Advances in neural information processing systems 28.
+Cited by: §D.1.1,
+item 3,
+§4.1,
+Ethic and Broader Impact Statements.
+Zheng et al. (2024)
+K. Zheng, Y. Chen, H. Mao, M. Liu, J. Zhu, and Q. Zhang
+Masked diffusion models are secretly time-agnostic masked models and exploit inaccurate categorical sampling.
+arXiv preprint arXiv:2409.02908.
+Cited by: Appendix C.
+Zheng et al. (2023a)
+L. Zheng, W. Chiang, Y. Sheng, S. Zhuang, Z. Wu, Y. Zhuang, Z. Lin, Z. Li, D. Li, E. P. Xing, H. Zhang, J. E. Gonzalez, and I. Stoica
+Judging llm-as-a-judge with mt-bench and chatbot arena.
+External Links: 2306.05685,
+Link
+Cited by: §D.2.
+Zheng et al. (2023b)
+L. Zheng, J. Yuan, L. Yu, and L. Kong
+A reparameterized discrete diffusion model for text generation.
+ArXiv abs/2302.05737.
+Cited by: Appendix C.
+Appendix A Notation Summary
+This section provides a summary of core mathematical notation used throughout the paper to ensure clarity and consistency. Table 2 lists these symbols and their meanings in the context of Sama.
+Table 2: Summary of Core Notation.
+Symbol
+Meaning
+General Symbols
+𝐱={xi}i=1L\mathbf{x}=\{x_{i}\}^{L}_{i=1}
+A text sequence (data record).
+𝒱\mathcal{V}
+Model’s token vocabulary.
+LL
+Length of the sequence 𝐱\mathbf{x}.
+[L][L]
+The set {1,2,…,L}\{1,2,...,L\} of all token positions.
+xix_{i}
+The ii-th token in sequence 𝐱\mathbf{x}.
+x<ix_{<i}
+Tokens preceding position ii: {x1,…,xi−1}\{x_{1},...,x_{i-1}\}.
+DtrainD_{\text{train}}
+Training dataset (member set).
+μ⁡(𝐱)\mu(\mathbf{x})
+True membership status of 𝐱\mathbf{x} (11 for member, 00 for non-member).
+μ^​(𝐱)\hat{\mu}(\mathbf{x})
+Predicted membership status of 𝐱\mathbf{x}.
+A⁡(𝐱,ℳDFT)A(\mathbf{x},\mathcal{M}_{\text{DF}}^{\text{T}})
+Attack function outputting membership prediction.
+Model and Loss Notation
+ℳDFT\mathcal{M}_{\text{DF}}^{\text{T}}
+Target diffusion language model (fine-tuned).
+ℳDFR\mathcal{M}_{\text{DF}}^{\text{R}}
+Reference diffusion language model (pre-trained base).
+ℳART\mathcal{M}_{\text{AR}}^{\text{T}}
+Target autoregressive model.
+ℳARR\mathcal{M}_{\text{AR}}^{\text{R}}
+Reference autoregressive model.
+𝒮⊆[L]\mathcal{S}\subseteq[L]
+A mask configuration (set of masked positions).
+𝐱−𝒮\mathbf{x}_{-\mathcal{S}}
+Unmasked context: {xi:i∈[L]∖𝒮}\{x_{i}:i\in[L]\setminus\mathcal{S}\}.
+ℓ⁡(𝐱,𝒮)\ell(\mathbf{x},\mathcal{S})
+Training loss for DLMs (Equation 1).
+p⁡(xi|𝐱−𝒮)p(x_{i}|\mathbf{x}_{-\mathcal{S}})
+Probability of token xix_{i} given unmasked context (DLMs).
+p⁡(xi|x<i)p(x_{i}|x_{<i})
+Probability of token xix_{i} given preceding context (ARMs).
+ℓi​(𝐱,𝒮)\ell_{i}(\mathbf{x},\mathcal{S})
+Loss at position ii in DLMs: −log⁡p⁡(xi|𝐱−𝒮)-\log p(x_{i}|\mathbf{x}_{-\mathcal{S}}).
+ℓiR​(𝐱,𝒮)\ell^{\text{R}}_{i}(\mathbf{x},\mathcal{S}), ℓiT​(𝐱,𝒮)\ell^{\text{T}}_{i}(\mathbf{x},\mathcal{S})
+Per-token losses for reference and target models.
+Sama Algorithm Symbols
+TT
+Number of progressive masking steps.
+tt
+Step index (1≤t≤T1\leq t\leq T).
+[αmin,αmax][\alpha_{\min},\alpha_{\max}]
+Range of masking densities (e.g., [0.05, 0.5]).
+αt\alpha_{t}
+Masking density at step tt.
+ktk_{t}
+Number of masked positions at step tt: ⌈L⋅αt⌉\lceil L\cdot\alpha_{t}\rceil.
+NN
+Number of samples (random subsets) per step.
+mm
+Subset size (typically 10 tokens).
+𝒮t\mathcal{S}_{t}
+Mask configuration at step tt.
+𝒰n\mathcal{U}^{n}
+The nn-th sampled subset from 𝒮t\mathcal{S}_{t}.
+Δn\Delta^{n}
+Loss difference for nn-th subset.
+BnB^{n}
+Binary indicator: 𝟏[Δn>0]\mathbf{1}[\Delta^{n}>0].
+β^t\hat{\beta}_{t}
+Average binary indicator at step tt.
+wtw_{t}
+Weight for step tt: (1/t)/H(1/t)/H where H=∑i=1T1/iH=\sum_{i=1}^{T}1/i.
+HH
+Harmonic sum for normalization: ∑i=1T1/i\sum_{i=1}^{T}1/i.
+Sama ​(𝐱)\text{{Sama} }(\mathbf{x})
+Final membership score (Equation 7).
+ϕ\phi
+Alternative notation for final membership score.
+𝒟\mathcal{D}
+Collection of loss differences across all steps.
+𝒟t\mathcal{D}_{t}
+Loss differences collected at step tt.
+Appendix B LLM Usage Disclosure
+We used Large Language Models OpenAI (2024) to aid in polishing the writing of this paper. Specifically, LLMs were used to refine the abstract for clarity and conciseness, and to generate summary statements. All technical content, experimental design, analysis, and core contributions are entirely the authors’ original work. The LLM served only as a writing assistant for improving readability and presentation of already-developed ideas.
+Appendix C Additional Related Works
+MIA on ARMs.
+MIAs against ARMs initially showed limited success on pre-training data under rigorous IID evaluation (Duan et al., 2024; Meeus et al., 2024; Das et al., 2025), attributed to large datasets, few training epochs, and fuzzy text boundaries (Duan et al., 2024; Carlini et al., 2021; Satvaty et al., 2025). Early LLM MIAs adapted loss/perplexity thresholding (Yeom et al., 2018; Shokri et al., 2017) or reference model calibration (Watson et al., 2021; Mireshghallah et al., 2022a), with LiRA (Carlini et al., 2022) emphasizing low-FPR evaluation. Reference-free methods like Min-K% (Shi et al., 2024b) and the theoretically grounded Min-K%++ (Zhang et al., 2025a) analyzed token probabilities. Other approaches compare outputs on perturbed neighbors (Mattern et al., 2023), leverage semantic understanding (SMIA) (Mozaffari and Marathe, 2024), analyze loss trajectories (Liu et al., 2022; Li et al., 2024), or target memorization via probabilistic variation (SPV-MIA) (Fu et al., 2024). Fine-tuned LLMs proved more vulnerable (Mireshghallah et al., 2022b; Zeng et al., 2024), leading to attacks like SPV-MIA with self-prompt calibration (Fu et al., 2024) and User Inference targeting user participation (Kandpal et al., 2024). Extraction methods (Carlini et al., 2021) and label-only attacks (He et al., 2025; Wen et al., 2024) were also developed.
+Recent findings suggest MIA effectiveness against pre-trained LLMs increases significantly when aggregating weak signals over longer sequences (Puerto et al., 2025). However, nearly all existing LLM MIAs fundamentally probe signals derived from the final layer outputs or aggregated scores pertinent to the autoregressive generation process.
+MIA for Diffusion-Based Generative Models.
+Investigating MIAs in diffusion models initially centered on image generation, posing distinct challenges compared to GANs or VAEs (Duan et al., 2023; Carlini et al., 2021). White-box analyses confirmed vulnerability, identifying loss and likelihood as viable signals (Hu and Pang, 2023) and suggesting intermediate denoising timesteps carry heightened risk (Matsumoto et al., 2023), with gradients potentially offering stronger leakage channels (Pang et al., 2024). Despite this, mounting effective black-box attacks, especially against large-scale models like Stable Diffusion, proved difficult (Dubiński et al., 2023). Significant grey-box attacks emerged, leveraging access beyond final outputs. Reconstruction-based methods showed promise, particularly for fine-tuned models (Pang and Wang, 2023). Trajectory analysis, probing the iterative denoising path, yielded query-efficient attacks like PIA (Kong et al., 2023). Other black-box innovations bypassed shadow models by analyzing generated distributions (Zhang et al., 2024) or employing quantile regression (Tang et al., 2023). Advanced methods aim for deeper insights, detecting memorization via probabilistic fluctuations (PFAMI (Fu et al., 2023)) or optimizing attacks through noise analysis (OMS (Fu et al., 2025)). Text-to-image models introduced further complexities and attack surfaces (Wu et al., 2022), exploited via techniques like conditional overfitting analysis (CLiD (Zhai et al., 2024)). These studies highlight the importance of the iterative process in image diffusion privacy but are tailored to its continuous state space and noise-based corruption, distinct from the mechanisms in discrete language diffusion.
+Diffusion-Based Language Models.
+Adapting diffusion principles (Sohl-Dickstein et al., 2015; Ho et al., 2020; Song et al., 2021) to discrete language required overcoming unique hurdles. Approaches include diffusing continuous text embeddings (Li et al., 2022; Gong et al., 2022; Han et al., 2022; Strudel et al., 2022; Chen et al., 2022; Dieleman et al., 2022; Richemond et al., 2022; Wu et al., 2023; Mahabadi et al., 2023; Ye et al., 2023b) or modeling continuous proxies for discrete distributions (Lou and Ermon, 2023; Graves et al., 2023; Lin et al., 2023; Xue et al., 2024), though often encountering scalability challenges relative to ARMs (Gulrajani and Hashimoto, 2023b). Discrete diffusion frameworks, operating directly on tokens (Austin et al., 2021; Hoogeboom et al., 2021b; Hoogeboom et al., 2021a; He et al., 2022; Campbell et al., 2022; Meng et al., 2022; Reid et al., 2022; Sun et al., 2022; Kitouni et al., 2023; Zheng et al., 2023b; Chen et al., 2023; Ye et al., 2023a; Gat et al., 2024; Zheng et al., 2024), offered an alternative path. Among these, Masked Diffusion Models (MDMs) (Austin et al., 2021), utilizing iterative masking and Transformer-based prediction, showed early promise (Lou et al., 2023; Nie et al., 2024), supported by theoretical work (Ou et al., 2024; Shi et al., 2024a). Research focused on refining MDMs (Sahoo et al., 2024), integrating them with ARM pre-training (Gong et al., 2024), and acceleration (Kou et al., 2024; Xu et al., 2025). This progress culminated in models like LLaDA (Nie et al., 2025) and Dream (Ye et al., 2025a), demonstrating that large-scale discrete diffusion models can achieve emergent LLM capabilities comparable to strong ARMs, establishing them as a viable, distinct LLM paradigm.
+Despite the rapid maturation of diffusion-based text generation, particularly with capable models like LLaDA and Dream, their vulnerability to MIAs remains largely uncharted. Existing MIA techniques are ill-suited: those for ARMs target likelihoods from sequential generation, while those for image diffusion address continuous denoising steps. The unique discrete ”mask-and-predict” iterative mechanism of diffusion-based LLMs necessitates novel MIA formulations. Inspired by stepwise analysis concepts proven effective in the (continuous) image domain (Duan et al., 2023; Kong et al., 2023), our work tackles this challenge directly.
+Appendix D Supplementary Experimental Results
+This section provides supplementary materials to complement the main paper. It begins with a detailed breakdown of the experimental settings, including dataset specifics, model configurations, fine-tuning procedures, and comprehensive descriptions of baseline methods and evaluation metrics. Subsequently, we present extended results for our main comparisons and ablation studies across a wider range of conditions. Further analyses delve into the impact of model utility, training duration, and reference model choice on attack efficacy. Finally, we explore potential defense mechanisms against Sama and offer a comparative perspective on the vulnerability of diffusion-based models versus their autoregressive counterparts.
+D.1 Experiment Settings
+This section provides comprehensive details regarding the experimental setup used to evaluate Sama, supplementing Section 4.1 of the main paper. We describe our evaluation across nine diverse datasets spanning scientific, code, and general text domains, with samples ranging from 1,000 to 10,000 per dataset. Our experiments focus on two state-of-the-art diffusion language models fine-tuned using consistent hyperparameters. We compare Sama against twelve baseline MIA methods, including ten adapted from autoregressive models and two designed for diffusion models, with all methods using 16 Monte Carlo samples for fair comparison. Performance is assessed through standard MIA metrics (AUC, TPR at various FPR thresholds) and model utility measures (perplexity, LLM-as-a-Judge evaluation).
+D.1.1 Datasets
+Our experiments utilize datasets from two sources, summarized in Table 3. The primary evaluation uses six subsets from the MIMIR benchmark (Duan et al., 2024), following the 13_0.8 deduplication protocol from (Wang et al., 2025). Additionally, we evaluate on three standard NLP tasks following Fu et al. (2024): WikiText-103 (Merity et al., 2016), AG News (Zhang et al., 2015), XSum (Narayan et al., 2018).
+Table 3: Dataset overview for MIA evaluation.
+Dataset
+Type
+Train
+Test
+MIMIR Benchmark (13_0.8 split)
+ArXiv
+Scientific
+1,000
+1,000
+GitHub
+Code
+1,000
+1,000
+HackerNews
+Forum
+1,000
+1,000
+PubMed Central
+Medical
+1,000
+1,000
+Wikipedia (en)
+Encyclopedia
+1,000
+1,000
+Pile CC
+Web Crawl
+1,000
+1,000
+Standard NLP Tasks
+WikiText-103
+Lang. Model
+10,000
+10,000
+AG News
+Classification
+10,000
+10,000
+XSum
+Summarization
+10,000
+10,000
+D.1.2 Models and Fine-tuning
+We investigate two state-of-the-art DLMs: LLaDA-8B-Base (Nie et al., 2025) and Dream-v0-Base-7B (Ye et al., 2025a). For reference models in calibrated attacks (including Sama and Ratio), we use the pre-trained versions of these models. Fine-tuning employs AdamW optimizer with learning rate 5×10−55\times 10^{-5}, weight decay 0.1, batch size 48, and 4 epochs with early stopping (patience 3). Training uses bf16 precision on 3 ×\times NVIDIA A100 GPUs with DeepSpeed Stage 1 optimization (Aminabadi et al., 2022).
+D.1.3 Sama Configuration
+Sama employs progressive masking with T=16T=16 steps, increasing masking density from αmin=5%\alpha_{\min}=5\% to αmax=50%\alpha_{\max}=50\%. At each step, we sample N=128N=128 random subsets of m=10m=10 tokens, compute binary indicators based on loss differences, and aggregate using inverse-step weighting. All scores are averaged over 4 Monte Carlo samples for stability.
+D.1.4 MIA Baselines
+We compare against twelve baseline MIA methods. For all baselines requiring model queries, scores are averaged over 16 Monte Carlo samples (matching Sama’s progressive steps) to ensure stable estimates under the stochastic nature of diffusion models’ masking process.
+Autoregressive-based Baselines Adapted for DLMs.
+Loss (Yeom et al., 2018): The most fundamental baseline that directly uses a sample’s reconstruction loss as its membership score. For DLMs, we compute the average negative log-likelihood of correctly reconstructing masked tokens across random mask configurations with 15% of tokens masked. Lower reconstruction loss indicates higher membership likelihood, as the model better predicts tokens it has seen during training.
+ZLIB (Carlini et al., 2021): This method compares the model’s reconstruction difficulty against the text’s inherent complexity, measured through compression. The membership score is the ratio of the model’s loss to the compressed length of the text using ZLIB compression (compression level 6). Lower ratios suggest membership, indicating the model finds the text easier to reconstruct relative to its complexity.
+Lowercase (Carlini et al., 2021): This baseline exploits the observation that models memorize exact casing patterns during training. The score is computed as the difference between the reconstruction loss on lowercased text and the original text, both evaluated with 15% masking. Positive differences indicate potential membership, suggesting the model is sensitive to the specific casing it memorized.
+Min-K% (Shi et al., 2024b): Originally designed for autoregressive models, this method focuses on the least confident predictions. For DLMs, we randomly mask 15% of tokens in each of 16 iterations, record the probability assigned to each true token at masked positions, average these probabilities per token across iterations, and sum the smallest 20% of these averaged probabilities. Lower scores indicate membership, as even the model’s least confident predictions are relatively accurate for memorized content.
+Min-K%++ (Zhang et al., 2025a): An enhanced version that uses log-probabilities for improved numerical stability. Following the same procedure as Min-K%, we work with log-probabilities of true tokens, summing the 20% most negative values. A small constant is added to probabilities before logarithm computation to prevent numerical errors.
+BoWs (Das et al., 2025): A query-free method that analyzes textual patterns without accessing the model. Texts are converted to term frequency-inverse document frequency (TF-IDF) representations with 5000 maximum features, ignoring terms appearing in fewer than 5% of documents. A Random Forest classifier with 100 shallow decision trees (maximum depth of 2, minimum 5 samples per leaf) is trained using 5-fold cross-validation. The membership score is the predicted probability of being a training member.
+ReCall (Xie et al., 2024): This method tests whether prepending non-member context affects reconstruction difficulty. We select 7 non-member text examples from an external dataset, compute the reconstruction loss when these examples precede the target text, and compare to the baseline reconstruction loss without any prefix. The membership score is the ratio of baseline loss to prefixed loss. Higher ratios indicate membership, suggesting the model doesn’t benefit from the irrelevant context when reconstructing memorized content.
+CON-ReCall (Wang et al., 2025): This approach contrasts the effects of member versus non-member prefixes. We compute reconstruction losses using 7 member prefixes (from presumed training data) and 7 non-member prefixes, then calculate the score as the difference between non-member-prefixed and member-prefixed losses, normalized by the baseline loss. Positive scores indicate membership, as the model benefits more from a relevant training context. Prefixes are matched by average length to minimize confounding factors.
+Ratio (Watson et al., 2021): This calibration method isolates fine-tuning effects by comparing target and reference model losses. The score is the ratio of reference model loss to target model loss. Higher ratios indicate membership, as the fine-tuned model should show lower loss on its training data compared to the reference model.
+Diffusion-specific Baselines.
+SecMI (Duan et al., 2023): Originally designed for image diffusion models, SecMI exploits the observation that member samples exhibit lower reconstruction errors across different corruption levels. For DLMs, we adapt this by analyzing token prediction errors across multiple masking densities. The implementation proceeds as follows: We sample 5 masking ratios linearly spaced between 10% and 80% of tokens. At each masking ratio, we apply deterministic masks (seeded by the sample content and step for reproducibility), then compute the cross-entropy loss for predicting the original tokens at masked positions. The errors are aggregated using inverse step weighting, where early steps (lower masking ratios) receive higher weights (weight proportional to 1/(step+1)), as they typically provide cleaner signals. The final score is the negative weighted average of these errors—lower reconstruction error indicates higher membership likelihood, as the model better reconstructs tokens it memorized during training.
+PIA (Kong et al., 2023): Proximal Initialization Attack analyzes how masking affects the model’s prediction consistency. For DLMs, we implement this by comparing model outputs between unmasked and partially masked versions of the same text. The method first obtains the model’s predictions on the completely unmasked text (baseline), then creates a masked version with 30% of tokens replaced by mask tokens (using deterministic masking seeded by text hash for reproducibility). We compute the difference between the two sets of predictions at the masked positions using cross-entropy loss difference. The intuition is that for member samples, the model maintains more consistent predictions even when context is partially obscured, resulting in smaller differences. The final score is the negative of this difference—smaller changes in predictions (lower error) indicate higher membership likelihood. Alternative error metrics (L1 or L2 norm between logits) can also be used, though cross-entropy typically provides the most stable signals.
+All methods use consistent sequence truncation at 512 tokens and identical random seeds(42) for reproducibility.
+D.1.5 Evaluation Metrics
+MIA performance is evaluated using: (1) AUC: Area under ROC curve, where 1.0 indicates perfect discrimination; (2) TPR@FPR: True positive rates at 10%, 1%, and 0.1% false positive rates, assessing practical privacy risks. Model utility is verified through perplexity on held-out sets and LLM-as-a-Judge evaluation using structured prompts.
+D.2 Performance of Target LLMs
+To ensure that our fine-tuned diffusion-based LLMs maintain high utility and are not merely overfitting to the training data, which is a condition that could artificially inflate MIA success (Yeom et al., 2018), we evaluate their performance using two primary approaches: perplexity and an LLM-as-a-Judge framework (Zheng et al., 2023a), as shown in Table 4 and Table 5.
+Table 4: Model Utility Comparison on LLaDA-8B-Base: Pre-trained vs. Fine-tuned Stages. Lower Perplexity (PPL, ↓\downarrow) is better; higher LLM-as-a-judge (LLM Judge, ↑\uparrow) score is better.
+Dataset
+Pre-trained Model
+Fine-tuned Model
+Test PPL
+(↓\downarrow)
+Train PPL
+(↓\downarrow)
+LLM Judge
+(↑\uparrow)
+Test PPL
+(↓\downarrow)
+Train PPL
+(↓\downarrow)
+LLM Judge
+(↑\uparrow)
+ArXiv
+13.32713.327
+13.21713.217
+0.4750.475
+12.04312.043
+9.6489.648
+0.7420.742
+Hacker News
+27.20727.207
+20.90820.908
+0.4900.490
+18.52718.527
+14.78614.786
+0.6850.685
+Pile (CC)
+17.70517.705
+17.36917.369
+0.5250.525
+17.48917.489
+14.01214.012
+0.7480.748
+PubMed Central
+12.14812.148
+12.46112.461
+0.6250.625
+10.33210.332
+8.4678.467
+0.7710.771
+Wikipedia (en)
+8.3448.344
+7.8757.875
+0.6400.640
+8.3948.394
+6.5626.562
+0.7080.708
+GitHub
+4.3204.320
+3.6413.641
+0.5060.506
+4.3784.378
+3.2413.241
+0.5930.593
+WikiText-103
+8.8788.878
+8.7838.783
+0.4000.400
+7.1957.195
+6.6846.684
+0.6440.644
+AG News
+28.41928.419
+28.98428.984
+0.4150.415
+21.03621.036
+16.32916.329
+0.6630.663
+XSum
+12.39312.393
+12.54312.543
+0.5900.590
+12.21412.214
+11.65811.658
+0.7050.705
+Table 5: Model Utility Comparison on Dream-v0-Base-7B: Pre-trained vs. Fine-tuned Stages. Lower Perplexity (PPL, ↓\downarrow) is better; higher LLM-as-a-judge (LLM Judge, ↑\uparrow) score is better.
+Dataset
+Pre-trained Model
+Fine-tuned Model
+Test PPL
+(↓\downarrow)
+Train PPL
+(↓\downarrow)
+LLM Judge
+(↑\uparrow)
+Test PPL
+(↓\downarrow)
+Train PPL
+(↓\downarrow)
+LLM Judge
+(↑\uparrow)
+ArXiv
+15.19515.195
+15.15715.157
+0.5850.585
+14.88714.887
+10.81210.812
+0.7680.768
+Hacker News
+23.76923.769
+23.18623.186
+0.4550.455
+21.92421.924
+15.03615.036
+0.6710.671
+Pile (CC)
+17.39917.399
+17.85317.853
+0.5200.520
+16.97316.973
+14.94714.947
+0.6540.654
+PubMed Central
+11.08711.087
+11.36811.368
+0.6500.650
+11.41611.416
+8.7028.702
+0.7920.792
+Wikipedia (en)
+10.47810.478
+10.29310.293
+0.6800.680
+10.12510.125
+8.4938.493
+0.7630.763
+GitHub
+6.9806.980
+6.0086.008
+0.7600.760
+5.8295.829
+5.3585.358
+0.8040.804
+Generally, both Test PPL and Train PPL values decreased after fine-tuning, indicating an enhanced understanding and generation capability of the models. Concurrently, the LLM-as-a-judge scores, which reflect the quality of the model’s output as assessed by another LLM, generally increased post-fine-tuning. This trend was observed across diverse datasets, including those from the MIMIR benchmark and standard NLP benchmarks such as ArXiv, DM Mathematics, Hacker News, Pile (CC), PubMed Central, Wikipedia (en), GitHub, WikiText-103, AG News, and XSum. These observations collectively suggest that the fine-tuning stage effectively refined the models’ abilities.
+D.3 Extended Main Comparison Results
+This section provides a more extensive evaluation of Sama, detailing its performance with the LLaDA-8B-Base model on additional benchmark datasets including WikiText-103, AG News, and XSum. It also presents comprehensive findings for the Dream-v0-Base-7B model across six diverse datasets. These supplementary results offer a broader perspective on Sama’s robust performance and the privacy implications for diffusion-based LLMs.
+Table 6: Additional MIA performance (AUC, TPR@10%FPR, TPR@1%FPR, TPR@0.1%FPR) across WikiText-103, AG News, and XSum datasets. Each cell shows the mean with std. dev. as a subscript. Best-performing results are highlighted.
+MIAs
+WikiText-103
+AG News
+XSum
+AUC
+T@10%
+T@1%
+T@0.1%
+AUC
+T@10%
+T@1%
+T@0.1%
+AUC
+T@10%
+T@1%
+T@0.1%
+Loss
+0.518±\pm.01
+0.122±\pm.02
+0.014±\pm.01
+0.001±\pm.00
+0.526±\pm.01
+0.135±\pm.01
+0.015±\pm.00
+0.002±\pm.00
+0.532±\pm.01
+0.138±\pm.01
+0.017±\pm.01
+0.002±\pm.00
+ZLIB
+0.525±\pm.01
+0.128±\pm.02
+0.015±\pm.00
+0.002±\pm.00
+0.534±\pm.01
+0.141±\pm.01
+0.018±\pm.00
+0.002±\pm.00
+0.540±\pm.01
+0.145±\pm.01
+0.018±\pm.00
+0.003±\pm.00
+Lowercase
+0.536±\pm.01
+0.136±\pm.01
+0.017±\pm.00
+0.002±\pm.00
+0.542±\pm.01
+0.148±\pm.01
+0.019±\pm.00
+0.003±\pm.00
+0.548±\pm.01
+0.152±\pm.01
+0.020±\pm.00
+0.003±\pm.00
+Min-K%
+0.522±\pm.01
+0.125±\pm.01
+0.016±\pm.00
+0.001±\pm.00
+0.530±\pm.01
+0.138±\pm.01
+0.017±\pm.00
+0.002±\pm.00
+0.536±\pm.01
+0.141±\pm.01
+0.019±\pm.00
+0.002±\pm.00
+Min-K%++
+0.519±\pm.01
+0.123±\pm.01
+0.014±\pm.00
+0.001±\pm.00
+0.527±\pm.01
+0.136±\pm.01
+0.016±\pm.00
+0.002±\pm.00
+0.533±\pm.01
+0.139±\pm.01
+0.017±\pm.00
+0.002±\pm.00
+BoWs
+0.501±\pm.01
+0.105±\pm.01
+0.010±\pm.00
+0.000±\pm.00
+0.508±\pm.01
+0.118±\pm.01
+0.012±\pm.00
+0.001±\pm.00
+0.515±\pm.01
+0.122±\pm.01
+0.013±\pm.00
+0.001±\pm.00
+ReCall
+0.521±\pm.01
+0.124±\pm.02
+0.014±\pm.00
+0.001±\pm.00
+0.529±\pm.01
+0.137±\pm.01
+0.016±\pm.00
+0.002±\pm.00
+0.535±\pm.01
+0.140±\pm.01
+0.017±\pm.00
+0.002±\pm.00
+CON-Recall
+0.517±\pm.01
+0.121±\pm.01
+0.013±\pm.00
+0.001±\pm.00
+0.525±\pm.01
+0.134±\pm.01
+0.015±\pm.00
+0.002±\pm.00
+0.531±\pm.01
+0.137±\pm.01
+0.016±\pm.00
+0.002±\pm.00
+Neighbor
+0.508±\pm.01
+0.113±\pm.01
+0.011±\pm.00
+0.001±\pm.00
+0.516±\pm.01
+0.126±\pm.01
+0.014±\pm.00
+0.001±\pm.00
+0.522±\pm.01
+0.129±\pm.01
+0.015±\pm.00
+0.001±\pm.00
+Ratio
+0.584±\pm.01
+0.178±\pm.02
+0.028±\pm.01
+0.003±\pm.00
+0.608±\pm.01
+0.205±\pm.02
+0.034±\pm.01
+0.004±\pm.00
+0.616±\pm.01
+0.212±\pm.02
+0.036±\pm.01
+0.005±\pm.00
+SecMI
+0.528±\pm.01
+0.130±\pm.01
+0.015±\pm.00
+0.001±\pm.00
+0.536±\pm.01
+0.143±\pm.01
+0.017±\pm.00
+0.002±\pm.00
+0.542±\pm.01
+0.147±\pm.01
+0.018±\pm.00
+0.002±\pm.00
+PIA
+0.524±\pm.01
+0.127±\pm.01
+0.014±\pm.00
+0.001±\pm.00
+0.532±\pm.01
+0.140±\pm.01
+0.016±\pm.00
+0.002±\pm.00
+0.538±\pm.01
+0.144±\pm.01
+0.017±\pm.00
+0.002±\pm.00
+Sama (Ours)
+0.782±\pm.01
+0.415±\pm.03
+0.108±\pm.02
+0.018±\pm.01
+0.673±\pm.01
+0.268±\pm.02
+0.052±\pm.01
+0.007±\pm.00
+0.682±\pm.01
+0.277±\pm.02
+0.055±\pm.01
+0.008±\pm.00
+Table 7: MIA performance on Dream-v0-Base-7B model across different datasets. Each cell shows the mean with std. dev. as a subscript. Best-performing results are highlighted. Note the more irregular performance patterns compared to LLaDA models.
+MIAs
+ArXiv
+GitHub
+HackerNews
+AUC
+T@10%
+T@1%
+T@0.1%
+AUC
+T@10%
+T@1%
+T@0.1%
+AUC
+T@10%
+T@1%
+T@0.1%
+Loss
+0.498±\pm.02
+0.103±\pm.03
+0.009±\pm.01
+0.000±\pm.00
+0.524±\pm.01
+0.128±\pm.02
+0.018±\pm.01
+0.002±\pm.00
+0.491±\pm.02
+0.095±\pm.02
+0.008±\pm.01
+0.000±\pm.00
+ZLIB
+0.485±\pm.02
+0.091±\pm.02
+0.007±\pm.00
+0.000±\pm.00
+0.558±\pm.02
+0.168±\pm.03
+0.028±\pm.01
+0.004±\pm.00
+0.507±\pm.01
+0.112±\pm.02
+0.012±\pm.01
+0.001±\pm.00
+Lowercase
+0.509±\pm.01
+0.097±\pm.02
+0.010±\pm.01
+0.001±\pm.00
+0.498±\pm.02
+0.104±\pm.02
+0.014±\pm.01
+0.001±\pm.00
+0.482±\pm.02
+0.086±\pm.01
+0.007±\pm.00
+0.001±\pm.00
+Min-K%
+0.532±\pm.02
+0.125±\pm.02
+0.015±\pm.01
+0.001±\pm.00
+0.515±\pm.01
+0.119±\pm.02
+0.021±\pm.01
+0.003±\pm.00
+0.518±\pm.01
+0.121±\pm.02
+0.016±\pm.01
+0.002±\pm.00
+Min-K%++
+0.504±\pm.02
+0.106±\pm.02
+0.009±\pm.00
+0.000±\pm.00
+0.483±\pm.02
+0.094±\pm.01
+0.011±\pm.01
+0.001±\pm.00
+0.499±\pm.01
+0.108±\pm.02
+0.011±\pm.00
+0.001±\pm.00
+BoWs
+0.519±\pm.01
+0.107±\pm.01
+0.011±\pm.00
+0.000±\pm.00
+0.656±\pm.02
+0.306±\pm.02
+0.154±\pm.02
+0.059±\pm.05
+0.527±\pm.01
+0.128±\pm.01
+0.009±\pm.00
+0.001±\pm.00
+ReCall
+0.501±\pm.01
+0.109±\pm.02
+0.009±\pm.01
+0.000±\pm.00
+0.531±\pm.02
+0.142±\pm.02
+0.023±\pm.01
+0.003±\pm.00
+0.496±\pm.01
+0.102±\pm.01
+0.009±\pm.01
+0.000±\pm.00
+CON-Recall
+0.494±\pm.02
+0.098±\pm.02
+0.008±\pm.00
+0.000±\pm.00
+0.523±\pm.02
+0.134±\pm.02
+0.019±\pm.01
+0.002±\pm.00
+0.488±\pm.02
+0.092±\pm.01
+0.008±\pm.01
+0.000±\pm.00
+Neighbor
+0.506±\pm.02
+0.101±\pm.01
+0.011±\pm.01
+0.001±\pm.00
+0.479±\pm.02
+0.082±\pm.02
+0.007±\pm.01
+0.000±\pm.00
+0.546±\pm.02
+0.148±\pm.02
+0.021±\pm.01
+0.001±\pm.00
+Ratio
+0.521±\pm.02
+0.118±\pm.02
+0.016±\pm.01
+0.001±\pm.00
+0.549±\pm.02
+0.162±\pm.03
+0.029±\pm.01
+0.004±\pm.00
+0.535±\pm.02
+0.141±\pm.02
+0.018±\pm.01
+0.001±\pm.00
+SecMI
+0.513±\pm.02
+0.108±\pm.03
+0.010±\pm.01
+0.000±\pm.00
+0.537±\pm.02
+0.149±\pm.02
+0.025±\pm.01
+0.004±\pm.01
+0.511±\pm.03
+0.117±\pm.02
+0.013±\pm.00
+0.001±\pm.00
+PIA
+0.502±\pm.01
+0.096±\pm.01
+0.008±\pm.01
+0.000±\pm.00
+0.509±\pm.01
+0.113±\pm.01
+0.013±\pm.00
+0.001±\pm.00
+0.486±\pm.02
+0.090±\pm.01
+0.009±\pm.00
+0.000±\pm.00
+Sama (Ours)
+0.748±\pm.01
+0.412±\pm.03
+0.098±\pm.02
+0.011±\pm.01
+0.806±\pm.01
+0.498±\pm.03
+0.168±\pm.03
+0.042±\pm.02
+0.615±\pm.01
+0.186±\pm.02
+0.024±\pm.01
+0.003±\pm.00
+MIAs
+PubMed Central
+Wikipedia (en)
+Pile CC
+AUC
+T@10%
+T@1%
+T@0.1%
+AUC
+T@10%
+T@1%
+T@0.1%
+AUC
+T@10%
+T@1%
+T@0.1%
+Loss
+0.489±\pm.01
+0.096±\pm.02
+0.010±\pm.01
+0.001±\pm.00
+0.493±\pm.02
+0.089±\pm.01
+0.009±\pm.00
+0.001±\pm.00
+0.497±\pm.01
+0.101±\pm.02
+0.011±\pm.01
+0.001±\pm.00
+ZLIB
+0.481±\pm.02
+0.088±\pm.01
+0.006±\pm.00
+0.000±\pm.00
+0.519±\pm.01
+0.124±\pm.02
+0.017±\pm.01
+0.002±\pm.00
+0.488±\pm.01
+0.093±\pm.01
+0.008±\pm.00
+0.000±\pm.00
+Lowercase
+0.502±\pm.01
+0.093±\pm.01
+0.004±\pm.00
+0.000±\pm.00
+0.509±\pm.02
+0.099±\pm.02
+0.010±\pm.00
+0.001±\pm.00
+0.514±\pm.01
+0.103±\pm.01
+0.009±\pm.00
+0.001±\pm.00
+Min-K%
+0.496±\pm.01
+0.109±\pm.02
+0.009±\pm.00
+0.001±\pm.00
+0.483±\pm.01
+0.077±\pm.01
+0.008±\pm.00
+0.000±\pm.00
+0.529±\pm.02
+0.131±\pm.02
+0.017±\pm.01
+0.002±\pm.00
+Min-K%++
+0.491±\pm.01
+0.103±\pm.01
+0.008±\pm.00
+0.000±\pm.00
+0.501±\pm.01
+0.107±\pm.01
+0.007±\pm.00
+0.000±\pm.00
+0.490±\pm.01
+0.098±\pm.01
+0.007±\pm.00
+0.001±\pm.00
+BoWs
+0.489±\pm.01
+0.100±\pm.01
+0.002±\pm.00
+0.000±\pm.00
+0.471±\pm.01
+0.084±\pm.02
+0.003±\pm.00
+0.001±\pm.00
+0.480±\pm.01
+0.092±\pm.01
+0.003±\pm.00
+0.001±\pm.00
+ReCall
+0.493±\pm.01
+0.090±\pm.01
+0.007±\pm.00
+0.000±\pm.00
+0.504±\pm.01
+0.101±\pm.01
+0.009±\pm.01
+0.000±\pm.00
+0.498±\pm.01
+0.095±\pm.01
+0.008±\pm.00
+0.000±\pm.00
+CON-Recall
+0.518±\pm.02
+0.117±\pm.02
+0.012±\pm.01
+0.001±\pm.00
+0.493±\pm.02
+0.092±\pm.01
+0.008±\pm.00
+0.000±\pm.00
+0.496±\pm.01
+0.100±\pm.01
+0.009±\pm.00
+0.000±\pm.00
+Neighbor
+0.507±\pm.01
+0.097±\pm.01
+0.010±\pm.01
+0.000±\pm.00
+0.527±\pm.02
+0.118±\pm.02
+0.018±\pm.01
+0.002±\pm.00
+0.502±\pm.01
+0.093±\pm.01
+0.009±\pm.00
+0.000±\pm.00
+Ratio
+0.514±\pm.02
+0.114±\pm.02
+0.011±\pm.01
+0.001±\pm.00
+0.523±\pm.02
+0.121±\pm.02
+0.014±\pm.01
+0.001±\pm.00
+0.526±\pm.01
+0.128±\pm.01
+0.015±\pm.01
+0.001±\pm.00
+SecMI
+0.501±\pm.02
+0.102±\pm.02
+0.009±\pm.00
+0.000±\pm.00
+0.514±\pm.02
+0.109±\pm.01
+0.011±\pm.01
+0.001±\pm.00
+0.508±\pm.02
+0.106±\pm.02
+0.010±\pm.00
+0.001±\pm.00
+PIA
+0.488±\pm.01
+0.092±\pm.01
+0.006±\pm.00
+0.000±\pm.00
+0.507±\pm.01
+0.103±\pm.01
+0.009±\pm.00
+0.000±\pm.00
+0.501±\pm.01
+0.097±\pm.01
+0.008±\pm.00
+0.000±\pm.00
+Sama (Ours)
+0.732±\pm.01
+0.338±\pm.02
+0.081±\pm.01
+0.009±\pm.00
+0.764±\pm.01
+0.426±\pm.03
+0.112±\pm.02
+0.016±\pm.01
+0.745±\pm.01
+0.382±\pm.02
+0.096±\pm.01
+0.011±\pm.00
+For the LLaDA-8B-Base model, further analysis is presented in Table 6. On WikiText-103, Sama achieves an AUC of 0.782 with a TPR@1%FPR of 0.108, substantially outperforming the second-best method (Ratio), which achieves 0.584 AUC. For AG News and XSum datasets, Sama maintains strong performance with AUCs of 0.673 and 0.682, respectively, though with more modest TPR@1%FPR values of 0.052 and 0.055. While the improvement margin is less dramatic than on other datasets, Sama still consistently outperforms all baselines by approximately 10-20% in AUC, demonstrating its effectiveness across diverse text domains.
+Turning to the Dream-v0-Base-7B model, Table 7 reveals strong MIA performance by Sama despite the model’s diffusion-based architecture. Sama achieves exceptional performance on GitHub with an AUC of 0.806 and TPR@1%FPR of 0.168, representing a 45% improvement over the second-best method (ZLIB at 0.558 AUC). On Wikipedia (en), Sama attains an AUC of 0.764 with TPR@1%FPR of 0.112, demonstrating robust attack efficacy. For ArXiv and Pile CC, Sama achieves AUCs of 0.748 and 0.745, respectively, with corresponding TPR@1%FPR values of 0.098 and 0.096. PubMed Central shows an AUC of 0.732 with TPR@1%FPR of 0.081, while HackerNews exhibits an AUC of 0.615 with TPR@1%FPR of 0.024.
+D.4 Extended Ablation Studies
+To assess the robustness of Sama and the contribution of its hyperparameters, we conduct a sensitivity analysis on the LLaDA-8B-Base model using the ArXiv dataset. We vary three key parameters: the number of progressive masking steps (TT), the subset size (mm), and the number of sampled subsets (NN). Figure 4 illustrates the impact of these variations on AUC and TPR@1%FPR.
+Impact of Progressive Steps (TT).
+We observe a strong positive correlation between the number of masking steps and attack performance. Increasing TT from 1 to 16 yields a significant improvement, raising the AUC from 0.741 to 0.805 and nearly doubling the TPR@1%FPR from 0.089 to 0.174. While extending TT further to 48 achieves even higher performance (AUC 0.845), we select T=16T=16 as the default configuration to balance attack efficacy with query complexity.
+Impact of Subset Size (mm).
+The size of the token subset plays a critical role in robust aggregation. Extremely small subsets (e.g., m=1m=1) yield suboptimal performance (AUC 0.783), as they lack sufficient context to distinguish membership signals from noise. Performance improves as mm increases, reaching an AUC of 0.856 at m=32m=32. This suggests that larger subsets can effectively capture coherent membership patterns in long-context domains like ArXiv. However, our default choice of m=10m=10 remains a robust operating point that significantly outperforms the baseline.
+Impact of Number of Subsets (NN).
+Sama demonstrates a saturation effect with respect to the number of sampled subsets NN. Performance improves rapidly as NN increases from 1 (AUC 0.755) to 32 (AUC 0.803), demonstrating the necessity of sufficient sampling to estimate the robust mean. However, beyond N=32N=32, the performance plateaus, with N=128N=128 yielding a marginal gain to 0.805. This indicates that the sign-based statistic converges quickly. Since these subsets are sampled offline with negligible computational cost, we employ N=128N=128 to ensure maximum robustness without incurring additional model queries.
+Figure 4: Sensitivity analysis of Sama hyperparameters on LLaDA-8B-Base (ArXiv). The top row reports AUC, and the bottom row reports TPR@1%FPR. We vary the number of progressive steps TT (left), subset size mm (middle), and number of subsets NN (right). The dashed red line indicates the performance of the best baseline (Ratio).
+D.5 Defending against Sama
+We evaluate two parameter-efficient fine-tuning methods as potential defenses against Sama: standard Low-Rank Adaptation (LoRA) and its differentially private variant (DP-LoRA). These methods naturally limit memorization by constraining the parameter space during fine-tuning, potentially reducing vulnerability to membership inference. We analyze the privacy-utility trade-offs of both approaches on the ArXiv dataset, demonstrating that while both defenses can significantly reduce Sama’s effectiveness, they require careful calibration to maintain acceptable model utility.
+D.5.1 Low-Rank Adaptation (LoRA)
+Table 8: Comparison of LoRA configurations and DP-LoRA privacy levels on ArXiv. Left: LoRA rank (rr) impact. Right: DP-LoRA with varying privacy budget (ϵ\epsilon). Lower perplexity indicates better utility; higher AUC indicates stronger membership inference.
+rr
+Trn. %
+PPL
+AUC
+T@10%
+256
+4.02%
+13.27
+0.528
+0.106
+512
+7.73%
+12.95
+0.571
+0.142
+1024
+14.34%
+12.61
+0.638
+0.218
+2048
+25.09%
+12.38
+0.726
+0.321
+Full
+100.00%
+12.04
+0.850
+0.586
+ϵ\epsilon
+PPL
+AUC
+T@10%
+T@1%
+0.01
+13.46
+0.497
+0.098
+0.010
+1.0
+13.18
+0.502
+0.109
+0.012
+10.0
+12.74
+0.548
+0.128
+0.015
+20.0
+12.35
+0.607
+0.176
+0.024
+N/A
+12.04
+0.850
+0.586
+0.178
+To evaluate defense strategies against Sama, we investigate Low-Rank Adaptation (LoRA) Hu et al. (2021) fine-tuning on the LLaDA-8B-Base model using the ArXiv dataset. LoRA reduces the number of trainable parameters through low-rank decomposition (with rank rr and α=2​r\alpha=2r), potentially limiting memorization—a key vulnerability exploited by membership inference attacks (Luo et al., 2024; Amit et al., 2024; Zhang et al., 2025b).
+Table 8 (left) reveals a clear privacy-utility trade-off. Lower ranks provide stronger privacy protection: at r=256r=256 (4.02% trainable parameters), Sama’s AUC drops substantially from 0.850 (full fine-tuning) to 0.528, with TPR@10%FPR decreasing from 0.586 to 0.106. This privacy gain, however, incurs a utility cost—perplexity increases from 12.04 to 13.27. As the rank increases, model utility improves, but privacy protection weakens. At r=2048r=2048 (25.09% trainable parameters), perplexity improves to 12.38, yet Sama’s effectiveness rises significantly (AUC 0.726, TPR@10%FPR 0.321). The intermediate configuration (r=1024r=1024) offers a balanced compromise with AUC 0.638 and perplexity 12.61, suggesting that practitioners must carefully calibrate LoRA rank based on their specific privacy-utility requirements.
+D.5.2 Differentially Private LoRA (DP-LoRA)
+Differentially Private LoRA (DP-LoRA) Liu et al. (2024) provides formal privacy guarantees against MIAs like Sama. Computing per-sample gradient norms for gradient clipping—essential for differential privacy—becomes computationally prohibitive for billion-parameter models. DP-LoRA addresses this by restricting per-sample gradient operations, noise injection, and privacy accounting to the compact LoRA adapter parameters. We employ LoRA rank r=1024r=1024 (with α=2048\alpha=2048, dropout 0.05), apply DP with target δ=1×10−5\delta=1\times 10^{-5}, gradient norm clipping at 1.0, and vary the privacy budget ϵ\epsilon.
+Table 8 (right) demonstrates DP-LoRA’s effectiveness against Sama on ArXiv. The baseline (N/A row) represents standard LoRA without differential privacy. Stringent privacy guarantees (ϵ=0.01\epsilon=0.01) virtually neutralize Sama, reducing AUC from 0.850 to 0.497—approaching random chance—with TPR@10%FPR plummeting from 0.586 to 0.098. This robust defense incurs a utility penalty, increasing perplexity to 13.46. As ϵ\epsilon relaxes, the privacy-utility trade-off becomes more favorable: at ϵ=1.0\epsilon=1.0, strong privacy persists (AUC 0.512) with improved utility (PPL 13.18), while ϵ=10.0\epsilon=10.0 achieves AUC 0.548 and PPL 12.74. Even with relaxed privacy (ϵ=20.0\epsilon=20.0), Sama’s effectiveness (AUC 0.607, TPR@10%FPR 0.176) remains substantially below the unprotected baseline, while perplexity (12.35) approaches baseline performance.
+These results confirm that DP-LoRA offers scalable, practical defense for diffusion-based LLMs, effectively mitigating membership inference risks across various privacy budgets. The persistent protective effect even at higher ϵ\epsilon values demonstrates DP-LoRA’s robustness, though optimal deployment requires careful calibration of the privacy budget to balance protection against Sama with acceptable model performance for the target application.
+D.5.3 Temperature Scaling
+Table 9: Impact of temperature scaling on membership inference attacks. Higher temperatures increase output entropy, providing modest defense with no retraining required.
+TT
+Method
+ArXiv
+AUC
+TPR@10%
+TPR@1%
+TPR@0.1%
+1.0
+Ratio
+0.597±\pm.01
+0.181±\pm.01
+0.023±\pm.01
+0.001±\pm.00
+Sama
+0.850±\pm.01
+0.586±\pm.03
+0.178±\pm.03
+0.014±\pm.01
+1.1
+Ratio
+0.588±\pm.01
+0.172±\pm.01
+0.021±\pm.01
+0.001±\pm.00
+Sama
+0.842±\pm.01
+0.575±\pm.02
+0.175±\pm.02
+0.014±\pm.01
+1.2
+Ratio
+0.575±\pm.01
+0.163±\pm.02
+0.019±\pm.01
+0.001±\pm.00
+Sama
+0.831±\pm.01
+0.560±\pm.02
+0.169±\pm.02
+0.012±\pm.01
+1.5
+Ratio
+0.534±\pm.01
+0.135±\pm.02
+0.014±\pm.01
+0.000±\pm.00
+Sama
+0.776±\pm.01
+0.448±\pm.03
+0.108±\pm.02
+0.005±\pm.01
+Temperature scaling is often proposed as a low-cost, inference-time defense that flattens the output distribution via pi=exp⁡(zi/T)/∑jexp⁡(zj/T)p_{i}=\exp(z_{i}/T)/\sum_{j}\exp(z_{j}/T) (Guo et al., 2017). However, our evaluation in Table 9 reveals that this method fails to offer a practical trade-off between security and utility.
+At moderate levels (T∈[1.1,1.2]T\in[1.1,1.2]), the defense offers a false sense of security. The attack performance remains stubbornly high, with Sama’s AUC dropping only marginally from 0.850 to 0.831 (a decrease of merely 2.2%). This resilience stems from the nature of our window-based aggregation: because the entropy increase is applied uniformly, the relative ordering of loss values within local windows persists, preserving the differential signal between target and reference models.
+When scaling is pushed aggressively to T=1.5T=1.5, we observe a more tangible reduction in attack success. AUC falls by 8.7% to 0.776, and TPR@1%FPR decreases by approximately 39% (0.178 to 0.108). However, this regime is known to severely degrade generation quality, causing incoherence and repetition. Furthermore, Sama proves far more robust to this perturbation than the global baseline. As TT increases to 1.5, the relative AUC advantage of our method over Ratio actually widens (from 1.42×\times to 1.45×\times), confirming that local aggregation is structurally better equipped to survive entropy-based obfuscation than global averaging.
+D.5.4 Selective Data Obfuscation in LLM Fine-Tuning
+Table 10: Attack performance against SOFT defense on ArXiv dataset. SOFT configured with selection ratio α=0.3\alpha=0.3 and paraphrase ratio β=0.5\beta=0.5.
+Defense
+PPL
+Method
+ArXiv
+AUC
+TPR@10%
+TPR@1%
+TPR@0.1%
+Baseline
+9.648
+Ratio
+0.597±\pm.01
+0.181±\pm.01
+0.023±\pm.01
+0.001±\pm.00
+Sama
+0.850±\pm.01
+0.586±\pm.03
+0.178±\pm.03
+0.014±\pm.01
+SOFT
+9.647
+Ratio
+0.497±\pm.003
+0.102±\pm.004
+0.011±\pm.001
+0.001±\pm.000
+Sama
+0.499±\pm.004
+0.104±\pm.003
+0.013±\pm.002
+0.002±\pm.000
+We further evaluate the resilience of Sama against the SOFT defense (Zhang et al., 2025b), which mitigates privacy risks by identifying and paraphrasing the most “memorable” training samples. Table 10 illustrates a complete collapse in attack efficacy on the ArXiv dataset. While Sama initially achieves a dominant AUC of 0.850, the application of SOFT suppresses this score to 0.499, effectively rendering the attack no better than a random guess. This demonstrates that by altering the syntax of influential records (approximately 15% of the data) without changing their semantics, SOFT successfully eradicates the specific token-level artifacts that Sama exploits, all while maintaining the model’s general utility.
+D.6 Impact of Reference Model Misalignment
+Figure 5: Impact of Reference Model Misalignment on Sama Performance. Performance (AUC and TPR@10%FPR) is shown for an ideal reference (LLaDA-8B-Base), a slightly misaligned reference (LLaDA-8B-Instruct), and a severely misaligned reference (Dream-v0-7B-Base). Increasing misalignment leads to a reduction in attack performance, though Sama still outperforms baselines even with severe misalignment.
+This section investigates the robustness of Sama when this ideal reference is unavailable, necessitating the use of alternative, potentially misaligned reference models. We maintain the LLaDA-8B-Base model fine-tuned on the ArXiv dataset as the target and evaluate Sama’s performance using three distinct reference models: the ideal LLaDA-8B-Base (Ideal Alignment), the closely related LLaDA-8B-Instruct (Slightly Misaligned), and the substantially different Dream-v0-7B-Base (Severely Misaligned). LLaDA-8B-Instruct shares architecture and tokenizer with the target but differs in instruction-tuning, affecting utility and prior knowledge. Dream-v0-7B-Base differs more significantly in architecture, pre-training data, and tokenizer.
+The results, presented in Figure 5, reveal that Sama’s performance degrades gracefully with increasing reference model misalignment. The slightly misaligned LLaDA-8B-Instruct reference causes a small drop in attack efficacy compared to the ideal LLaDA-8B-Base reference. However, the severely misaligned Dream-v0-7B-Base reference leads to a more critical reduction in performance, although the attack remains more effective than uncalibrated baselines. This performance drop can be attributed to two main factors. Firstly, greater divergence in the reference model’s prior knowledge compared to the target model diminishes the accuracy of difficulty calibration. Secondly, differences in tokenization between reference and target models mean that masks applied during each step may cover different semantic units of the sentence, leading to reconstruction losses that reflect disparate aspects of the text and thus less effective calibration.
+D.7 Computational Overhead
+We provide a theoretical analysis of the computational cost of Sama based on the algorithmic specification in Section 3.5, followed by an empirical validation.
+Theoretical Analysis.
+The computational complexity of Sama is dominated by the model inference steps required to extract membership evidence. As detailed in Algorithm 1 (Phase I), the algorithm iterates through TT progressive masking steps. Within this outer loop (lines 4-15), the target and reference models are queried exactly once per step (lines 9-10) to compute the loss vectors ℓT\bm{\ell}^{\text{T}} and ℓR\bm{\ell}^{\text{R}} for the masked sequence 𝐱m\mathbf{x}_{\text{m}}. The subsequent robust subset aggregation involves an inner loop (lines 11-14) that samples NN subsets and computes arithmetic differences. This inner loop operates entirely on the cached loss vectors derived from the single pair of forward passes. Consequently, the operations involving NN, as well as the sign-based aggregation and adaptive weighting in Phase II (Algorithm 2), are purely CPU-bound arithmetic operations with negligible cost compared to the GPU-bound model inference. Therefore, the total query complexity of Sama is 𝒪⁡(T⋅𝒞f​w​d)\mathcal{O}(T\cdot\mathcal{C}_{fwd}), where 𝒞f​w​d\mathcal{C}_{fwd} is the cost of a forward pass. This asymptotic complexity is identical to standard query-based baselines (such as Loss or Ratio), which also require aggregating results over TT Monte Carlo samples to estimate the expected loss over the stochastic masking space of a DLM.
+Empirical Runtime Comparison.
+To validate this theoretical assessment, we measured the wall-clock time for performing attacks on the LLaDA-8B-Base model using the ArXiv dataset. To ensure a direct comparison, we fixed the query budget to T=16T=16 for both Sama and the query-based baselines (Loss and Ratio). As shown in Table 11, the additional CPU overhead from our subset aggregation logic is practically undetectable. The runtime of Sama (1h 32m 16s) is nearly identical to that of the Ratio baseline (1h 32m 00s). In contrast, methods that require generating new text samples, such as Neighborhood-based attacks, incur significantly higher computational costs, taking over 8 hours to complete the same task. Furthermore, as shown in  Section D.4, Sama remains effective even at lower query budgets. With T=4T=4, Sama achieves a TPR@1%FPR of 0.1308 while reducing the runtime to approximately 23 minutes on the ArXiv dataset, effectively outperforming the full-budget (T=16T=16) baselines while being 2×2\times faster.
+Table 11: Runtime comparison of MIA methods on LLaDA-8B-Base (fixed query budget T=16T=16 for query-based methods). Sama incurs negligible overhead compared to the Ratio baseline.
+Dataset
+Loss
+Ratio
+Sama (Ours)
+Neighborhood
+Wikipedia (en)
+39m 01s
+1h 32m 00s
+1h 32m 16s
+8h 43m 27s
+PubMed Central
+55m 17s
+1h 37m 04s
+1h 36m 19s
+9h 32m 38s
+HackerNews
+54m 20s
+1h 35m 08s
+1h 35m 36s
+9h 13m 02s
+Appendix E The Structure of Membership Signals: An Empirical Analysis
+Figure 6: Empirical distribution of token-level loss differences. (a) Complementary CDF confirms the long-tailed behavior of the token loss. (b) Log-scale density plots reveal long-tailed distributions with a subtle rightward shift for members. The difference is most pronounced in the consistent shift of the bulk, whereas the extreme right tail is dominated by shared domain adaptation effects.
+In this section, we provide a plausible explanation for the design choice of Sama, we conducted an analysis of token-level loss differences. We utilized the LLaDA-8B model fine-tuned on the ArXiv subset of the MIMIR benchmark, evaluating both the fine-tuned target model ℳD​FT\mathcal{M}_{DF}^{T} and the pre-trained reference model ℳD​FR\mathcal{M}_{DF}^{R} on balanced sets of 1,000 member samples and 1,000 non-member samples. For each masked sequence, we computed the token-level loss difference Δ=ℓR−ℓT\Delta=\ell^{R}-\ell^{T}, where positive values indicate that the fine-tuned model predicts the token with higher confidence than the reference model.
+Statistical Characteristics.
+The analysis of over 260,000 token comparisons reveals that the loss difference distribution is governed by extreme events rather than Gaussian behavior. As shown in Figure 6(a), the data exhibits massive heavy tails. The excess kurtosis reaches 82.9 for members and 89.1 for non-members, far surpassing the zero value expected of a normal distribution. Furthermore, the distributions show significant positive skewness (7.5 for members and 7.6 for non-members). This statistical profile indicates that while the mean difference between members (0.032±0.0340.032\pm 0.034) and non-members (0.007±0.0290.007\pm 0.029) allows for some separability, the global average is highly susceptible to being skewed by rare, high-magnitude outliers.
+Domain vs. Membership Signals.
+Figure 6(b) illustrates that the right tail regions (high loss reduction) for both members and non-members are nearly overlapping. This observation suggests that tokens exhibiting the most dramatic loss reductions are often poor indicators of membership. We hypothesize that these high-magnitude events correspond to domain-specific tokens—terms that appear frequently across the entire fine-tuning dataset (e.g., formatting keywords or common domain terminology). The model adapts to these features globally, resulting in improved reconstruction for both member and non-member instances drawn from the same domain.
+Table 12: Tokens with the highest loss differences often yield weak membership signals. The Signal Strength (≈1.0\approx 1.0) indicates that the loss reduction is similar for both members and non-members, confirming these are domain adaptation effects rather than instance-specific memorization.
+Token
+Mean Diff (Δ\Delta)
+Signal Strength
+Count
+Biography
+1.040
+0.705
+50
+Background
+0.671
+0.973
+25
+Life
+0.631
+0.701
+21
+List
+0.544
+0.501
+39
+Description
+0.399
+0.526
+23
+Joseph
+0.393
+0.978
+23
+To validate this hypothesis, we isolate tokens with the maximum mean loss differences and calculate their “Signal Strength,” defined as the ratio of the average member difference to the average non-member difference. A ratio close to 1.0 implies the token provides no discriminative value. Table 12 presents several such tokens identified in the ArXiv dataset. Words like “Background,” “Biography,” and “Joseph” exhibit large mean differences (>0.39>0.39), yet their signal strength is remarkably close to 1.0 (e.g., 0.973 for “Background”). These tokens contribute disproportionately to the global loss magnitude, effectively masking the subtler, instance-specific signals necessary for inference.
+Implications for Attack Design.
+The strongest membership signals are not found in the greatest loss reduction tokens, but rather in the consistent, smaller shifts of instance-specific tokens. Standard attacks that rely on global averaging (like the Loss or Ratio baselines) are inherently noisy because they conflate these two signal types. By employing robust subset aggregation and sign-based voting, Sama effectively filters out the high-magnitude domain noise shown in Table 12 and amplifies the consistent, albeit weaker, signals of true membership.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

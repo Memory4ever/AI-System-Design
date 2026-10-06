@@ -1,0 +1,1425 @@
+<?xml version="1.0" encoding="utf-8"?><?xml-stylesheet type="text/xsl" href="https://tech.meituan.com/rss.xsl"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <atom:link href="https://tech.meituan.com/rss.xml" rel="self" type="application/rss+xml"/>
+    <title>美团 · 技术团队</title>
+    <link>https://tech.meituan.com/</link>
+    <description>美团技术团队|前端|后端|IOS|安卓|客户端</description>
+    <language>zh-CN</language>
+    <pubDate>Tue, 22 Sep 2026 07:01:37 GMT</pubDate>
+    <lastBuildDate>Tue, 22 Sep 2026 07:01:37 GMT</lastBuildDate>
+    <generator>@vuepress/plugin-feed</generator>
+    <docs>https://validator.w3.org/feed/docs/rss2.html</docs>
+    <item>
+      <title>MTFM：美团统一推荐基座大模型在外卖多业务场景的落地实践</title>
+      <link>https://tech.meituan.com/2026/09/22/Meituan-Foundation-Model-for-Recommendation.html</link>
+      <guid>https://tech.meituan.com/2026/09/22/Meituan-Foundation-Model-for-Recommendation.html</guid>
+      <source url="https://tech.meituan.com/rss.xml">MTFM：美团统一推荐基座大模型在外卖多业务场景的落地实践</source>
+      <description>美团在 MTGR 基础上提出统一推荐基座大模型 MTFM，首次实现外卖多个主要业务的统一精排模型。</description>
+      <content:encoded><![CDATA[<blockquote>
+<p>美团在 MTGR 基础上提出统一推荐基座大模型 MTFM，首次实现外卖多个主要业务的统一精排模型。围绕规模可扩展性、场景可延展性与架构高效性三大挑战，MTFM以异构 Tokenizer 与动态掩码实现多场景特征免对齐，通过混合注意力与 Target Scale-Up 提升模型 Scaling 能力，借鉴 LLM 优化实践提升深层网络训练效果，并以 User-Level 训练范式与定制算子保证系统开销可控。美团外卖多个业务订单量提升 2.06%~6.68% 不等，推理成本降低 24%，相关工作已被 KDD 2026 收录。</p>
+</blockquote>
+<h2>1. 引言</h2>
+<p>我们去年提出了 MTGR<sup>[1]</sup> —— 一种新的生成式精排框架，在美团外卖推荐场景验证了 Scaling Law 的有效性，并取得显著业务收益。然而，推荐领域的 Scaling Law 探索往往局限于单场景内部，模型被限制在单场景孤岛中，跨场景的数据、算力和架构无法充分复用。在美团这一问题尤为突出，推荐覆盖外卖首页、拼好饭等多个业务场景，各场景长期独立建模。与此同时，大语言模型（LLM）已验证一条清晰路径：基座模型（Foundation Model）足以统一处理编程、数学、写作等多领域任务，也可以将文本、图像、语音等异构信息表示为 Token 序列并进行端到端学习，展现出了强泛化性与可扩展性。因此，我们认为美团推荐的下一个阶段关键在于打通跨场景的异构性，充分利用多场景数据提升 Scaling Law 的上限，即建设统一推荐基座大模型。</p>
+<p>推荐基座大模型主要面临三个核心挑战：规模可扩展性（Scalability）、场景可延展性（Extensibility）和架构高效性（Efficiency）。规模可扩展性要求模型在参数规模、数据量扩大时，效果能够稳定、可预期地提升；场景可延展性要求模型能够低成本适配已有场景或接入新场景；架构高效性要求模型在处理多场景的海量数据时，训推仍保持可接受成本开销。</p>
+<p>为解决上述挑战，我们在 MTGR 的基础上，提出美团统一推荐基座大模型 <strong>MTFM（Meituan Foundation Model for Recommendation）</strong>。MTFM 使用类 Transformer 骨干进行端到端建模，提出 Target Token Scale-Up 提升模型能力，借鉴 LLM 实践优化深层网络训练策略；通过异构 Tokenizer 替代固定特征模板，支持多场景异构特征免显式对齐；提出 Self-Attention 和 Target Attention 堆叠的混合架构，结合 User-Level 样本和 GPU 算子优化提升训推效率。</p>
+<p><strong>MTFM 首次实现外卖多个主要业务的统一精排模型并在各核心场景完成全量，相关工作于 2026 年 5 月被 KDD 2026 接收</strong><sup>[2]</sup>。</p>
+<ul>
+<li><strong>场景收益</strong>：全面超越 MTGR 或 DLRM 基线模型，各业务离线指标大幅度提升，在线效果最显著的业务线订单增长超过6%；</li>
+<li><strong>Scaling</strong>：在模型参数量、序列长度上展现了稳健的 Scaling 能力，为后续落地更大规模基座打下基础；</li>
+<li><strong>资源效率</strong>：单样本计算量达到 192 GFLOPs，对比传统 DLRM 提升数百倍，在线推理成本降低 24.0%。</li>
+</ul>
+<h2>2. 工业界探索</h2>
+<p><strong>多场景建模</strong></p>
+<p>核心目标是在共享跨业务用户兴趣表达的同时，兼顾不同业务间的分布差异与个性化需求。多场景建模主要沿着两条方向演进。第一类方法遵循“先同构、再解耦”的范式，通过将模型参数拆分为域共享与域特定部分。例如，STAR<sup>[3]</sup> 采用星型拓扑结构，将领域参数锚定在共享中心参数周围；M3OE<sup>[4]</sup> 进一步引入多个 MoE 模块，在通用、领域和任务层面学习层次化用户偏好；MLoRA<sup>[5]</sup> 则通过轻量化 LoRA 适配不同领域，提高参数效率。第二类方法开始探索多场景基座模型方向，通常采用“基座模型 + 专家模型”的架构，例如 ExFM<sup>[6]</sup> 将超大规模模型知识蒸馏到场景专家模型，LFM4Ads<sup>[7]</sup> 通过多粒度机制在特征与任务间迁移表示，这类方法非端到端建模、可能限制模型能力上限。</p>
+<p><strong>具备 Scaling 能力的排序模型</strong></p>
+<p>推荐模型 Scaling 范式主要沿着三条方向演进。第一类方法聚焦 DLRM 骨干扩容，通过扩展特定可堆叠模块实现扩展，例如 RankMixer<sup>[8]</sup>、TokenMixer-Large<sup>[9]</sup>，通过 Token Mixing、Per-Token FFN 与 Sparse-MoE 增强特征交互能力。第二类方法将输入特征切分成独立 Token，采用 Transformer Backbone 进行端到端统一建模。具体而言， HSTU<sup>[10]</sup> 将推荐重新定义为序列转导任务，采用高性能架构捕获用户行为模式；MTGR 在此基础上引入交叉特征与双向注意力机制，以进一步丰富特征交互；OneTrans<sup>[11]</sup> 通过金字塔式的截断策略提升训推效率。第三类方法探索生成式自回归推荐，例如 OneRec<sup>[12]</sup>，通过 NTP 将推荐改写为序列生成任务，尝试以统一生成框架替代传统“召回-排序”架构。</p>
+<h2>3. MTFM 模型</h2>
+<p>MTFM 的模型架构如图 1 所示，支持多场景统一建模，面向基座模型的三个核心属性进行创新改造：</p>
+<p><img src="https://p0.meituan.net/meituantechblog/5dcc2af83b5b9da04717c9fcff76b69a1943722.png" alt="图1 MTFM 模型架构图"></p>
+<ul>
+<li><strong>规模可扩展性</strong>：整体采用 Transformer 类 Block 堆叠作为骨干网络，并针对性进行 Target Token Scale-Up 设计，以支持用户序列与 Target 信息的 Scalability。</li>
+<li><strong>场景可延展性</strong>：将多域输入抽象为统一的异构 Token 序列，让模型无需人工对齐特征模板、无损地提取各场景的异构信号，并通过动态 Mask 机制对跨场景信息与时间因果关系进行可见性控制，避免信息泄漏。</li>
+<li><strong>架构高效性</strong>：受 LLM 混合架构启发，MTFM 引入混合注意力机制（Hybrid Target Attention），避免了 Self-Attention 平方复杂度的性能瓶颈，在少数关键层使用 Self-Attention 以维持全局依赖捕捉，主要堆叠 Target Attention 将算力分配给更加重要的 Target-Aware 计算。</li>
+</ul>
+<h3>3.1 异构 Tokenizer</h3>
+<p>MTFM 将多业务输入统一组织为三类 Token：H-Token、R-Token 与 T-Token。其中，H-Token 表示用户跨业务历史行为序列，包括商家统一序列与商品统一序列，用于建模用户长期兴趣；R-Token 表示用户近实时行为序列，包括点击、加购等行为，按行为时间戳统一排序；T-Token 表示待预估目标（商家、商品或券包），包含上下文特征、候选侧特征及交叉特征。其中，H-Token、R-Token 全业务共享，T-Token 各业务独立维护。</p>
+<p>模型采用统一 Token 化范式：针对 H-Token、R-Token，不同序列使用序列独立 Tokenizer 完成编码；针对 T-Token，将上下文特征与候选侧特征进行拼接，再通过业务独立 Tokenizer 编码。最终，所有 H-Token、R-Token 与 T-Token 按顺序堆叠，形成统一的 Token 序列输入共享 Attention Backbone，在无需显式对齐跨业务特征体系的情况下，实现多场景统一建模。</p>
+<h3>3.2 动态掩码机制</h3>
+<p>为防止跨场景、时间的信息泄露，MTFM 进一步扩展 MTGR 的掩码策略。在下图 Mask 矩阵中，每一行代表当前 Token 在注意力计算时能看到序列中的哪些 Token，每一列代表当前 Token 能被哪些 Token 看到。对 H-Token、R-Token、T-Token 三类 Token，可见性如下：</p>
+<ul>
+<li><strong>H（History）-Token</strong>：可被所有 Token 看到，历史行为是全场景共享的用户上下文。</li>
+<li><strong>R（Realtime）-Token</strong>：按时间因果可见，实时序列内部为标准 Causal Mask，且每个 Target Token 只能看到发生在该次曝光之前的实时行为。</li>
+<li><strong>T（Target）-Token</strong>：只能被自身看到，同一请求内的不同候选之间互不感知。</li>
+</ul>
+<p><img src="https://p0.meituan.net/meituantechblog/350cda9fa75200bfba4489d29acfe0e9269575.png" alt="图2 多场景 Token 动态 Mask 示意图"></p>
+<h3>3.3 高效注意力架构</h3>
+<h4>3.3.1 注意力架构 V1：混合注意力架构</h4>
+<p>MTGR 采用多层 Full Attention 进行全序列建模，其计算复杂度随序列长度呈平方增长。统一模型包含多条千级长度序列，直接堆叠 Full Attention 会导致训练与推理成本难以接受。另一方面，推荐任务的预估结果高度依赖 Target 侧特征，已有工作（如 STCA<sup>[13]</sup>、OneRec V2 <sup>[14]</sup>LazyDecoder）表明，Target Attention 能够以更低成本完成有效的信息提取。</p>
+<p>基于此，MTFM V1 借鉴 LLM 中的混合 Attention 架构（Qwen3-Next<sup>[15]</sup>、MiMo-V2-Flash<sup>[16]</sup>），交错堆叠 Full Attention 与 Target Attention 层，以降低长序列建模复杂度。具体而言，Full Attention 层负责全序列信息聚合；Target Attention 层中，T-Token 仅以全序列 Token 为 Key/Value 执行注意力提取，不再参与全序列自注意力计算，从而显著降低计算量。在此基础上，进一步引入 GQA（Grouped-Query Attention），降低 Attention 的开销。</p>
+<p>最终模型采用 Target:Full=3:1 的混合结构，共 16 层（4 个 Block，每个 Block 包含 1 层 Full Attention 与 3 层 Target Attention）。消融实验表明，该配置在各任务 GAUC 上均取得最优效果；同时由于显存占用下降，batch size 可扩大 1.7 倍，样本吞吐达到全 Full Attention 架构的 2.9 倍。</p>
+<p><img src="https://p1.meituan.net/meituantechblog/7213f9e758a9da433f5fac161359f927241435.png" alt="图3 MTFM V1 混合注意力架构示意图"></p>
+<p><img src="https://p1.meituan.net/meituantechblog/e2b404e68769cad042d85b19d6ac694e189234.png" alt="图表1 混合架构比例消融（GAUC 为某业务场景离线指标）"></p>
+<h4>3.3.2 注意力架构 V2：Target Scale-Up</h4>
+<p>混合架构以更低成本取得了与全 Full Attention 相当的效果，说明将更多计算集中在 Target 侧是一条值得进一步扩展的方向。而在 MTFM 多场景长序列中，单个 Target Token 包含的特征数量，远多于单个 User Token 的特征数量，但是在 Token 化阶段 Target 和 User 侧都被视为同一维度的单个 Token，这会造成 Target 信息的过度压缩，在信息密度分配上是不合理的。因此在 MTFM V1 的混合架构基础上，MTFM V2（模型结构图见图 1）进一步对 Target Attention Layer 采用 Target Scale-Up 的方式来增大模型规模，以进一步实现 Scaling-Up。</p>
+<p><strong>具体方案</strong>：</p>
+<p>1、<strong>Target Token Embedding 构造</strong>：采用 AutoSplit<sup>[17]</sup>，每个 Target 的 User &amp; Context &amp; Item 特征经过一层 Linear 映射到 4 个 Token Embeddings。</p>
+<p>2、<strong>Per-token Q Projection &amp; FFN</strong>：在 Target Attention 层，每个 Target 的 4 个 Token 经过不同的 Q Projection Matrix 和 SwiGLU FFN。</p>
+<p>3、<strong>Self-Attention &amp; Target Attention 参数分离</strong>：位于同一层的 Self-Attention 和 Target Attention 有独立的 QKV Projection Matrix、 SwiGLU FFN 参数。</p>
+<p>4、<strong>Target Token Mixing</strong>：拆分后的 Target Token 各自独立与用户序列进行 Cross Attention，经过独立的 FFN，如果不进行交叉，4 个 Target Token 在 Mean Pooling 前完全没有交互，会导致各 Token 在相同 KV 下趋向学到冗余相似的表征（表征坍缩）。因此采用 RankMixer<sup>[18]</sup> 中的 Mixing 模块，以零参数低计算量对 Target Token 进行交叉，促使各 Token 学习不同的表征。</p>
+<h3>3.4 多场景统一训练</h3>
+<p>为了实现多业务间的知识共享与差异建模，采用“共享基座 + 业务解耦”的多任务架构。具体而言，经过混合 Attention 聚合后的各业务 T-Token 表征，被送入 MMoE 层进行跨业务信息提取，再接入业务独立的任务塔，完成 CTR、CTCVR 等目标预估。其中，长序列兴趣建模能力主要沉淀在共享 Attention Backbone 中，而不同业务的分布差异则由 MMoE 门控与任务塔参数承担。</p>
+<p>在训练与部署层面，MTFM 采用“一图多业务”的设计范式。训练阶段，以用户为粒度聚合同一用户当日全场景曝光 Target，并共享序列侧 Attention 计算，使多个业务能够复用同一份用户兴趣表征，大幅降低长序列训练成本。线上部署阶段，各业务导出图保留共享序列基座与独享 Task Tower，使在线计算限定在当前业务相关组件上，减少无效 FLOPs 消耗，在统一建模的同时控制推理成本，实现“统一训练、多业务部署”。</p>
+<p>实验表明，跨场景的信息迁移可有效缓解数据稀疏问题。具体体现在小流量业务显著提升 0.60~0.93pp不等，中流量业务提升 0.25pp，大流量业务持平微正。</p>
+<p><img src="https://p1.meituan.net/meituantechblog/d4297064755e2e7bdbbb028f4931f6f7154150.png" alt="图表2 多业务联合训练 vs 各业务独立训练离线效果对比"></p>
+<h2>4. 统一样本与行为序列</h2>
+<p>传统 DLRM 模型以曝光（PV）为粒度构建样本，多场景样本通过固定模板强制对齐，存在序列重复存储、计算的问题，资源利用率低。MTGR 将样本组织成单用户（UV）粒度，MTFM 进一步升级为外卖全业务的统一用户粒度样本，同一用户的外卖多业务曝光聚合成 1 条样本，共享模型中最耗费算力的长序列 Attention 部分计算。</p>
+<h3>4.1 统一 User-Level 样本</h3>
+<p>MTFM 训练时按 User-Level 聚合样本、推理时按各业务 Request-Level 聚合候选，训练阶段算力复用经济性收益进一步放大。特征组织上，由于各业务的供给类型、展现形态不同，特征 Schema 无法直接对齐。相应地，各业务首先在内部按 User-Level 聚合业务独立特征，再与共享的用户序列以及其他业务的样本进行合并。模型训、推时多 Target 共享长序列计算，实现了算力资源的高效复用。</p>
+<h3>4.2 统一行为序列</h3>
+<p>过往各业务独立维护场域内的行为序列，存在数据链路和 SideInfo 体系重复建设、跨场景行为信息缺失等问题，这一问题在数据稀疏的小流量业务中尤为严重。为此，MTFM 将全场景行为统一为商家、商品长序列，聚合外卖多场景的点击、加购、完单行为，构建覆盖质、价、品、情景化信息的通用 SideInfo。受益于 4.1 节的 User-Level 训练范式升级，整体资源消耗在可控范围内。各业务均使用全场景行为信号建模，提升了用户兴趣刻画的全面性，消融实验同步显示外卖多个业务均取得显著提升。</p>
+<p><img src="https://p1.meituan.net/meituantechblog/b6ad3f8e330af485a0bcdf079ea92d8a91064.png" alt="图表3 统一序列对比仅使用场景独立序列的消融实验"></p>
+<h2>5. 训练策略</h2>
+<p>多业务联合训练叠加网络层数加深，使模型优化难度显著提升。项目初期发现多组随机重复实验的离线指标波动超过 0.4pp，严重影响迭代基准的置信度。通过监控中间层激活值、参数值、梯度值等指标，完善训练动态追踪，发现离线效果与部分层的梯度大小具有强相关性（图4，Run A、B、C为模型随机重复实验），基于此判断存在局部梯度衰减、参数退化的问题。为此从初始化、优化器两个方向系统性解决。另外针对多业务联合训练范式下样本稀疏引发的梯度噪声增大、无效梯度等问题，我们改进损失函数，完善优化器逻辑、并引入梯度累积。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/9f4c80a7522871d9befa400d3fabb44f249068.png" alt="图4 模型随机重复实验中训练效果与关键层梯度强度的一致性对比"></p>
+<h3>5.1 深层网络训练稳定性提升</h3>
+<p>深度感知的初始化策略：MTFM 的骨干网络是带有残差连接的多层 HSTU，残差结构使得网络输出的 std 随深度累积不断变大，训练初期存在激活值过大导致非线性激活层饱和的风险。借鉴 GPT-2 针对多层 Transformer 的初始化策略，在初始化 HSTU 每个 Block 的输出投影层时按深度缩放标准差：</p>
+<p v-pre="" class="katex-block"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>W</mi><msub><mi>o</mi><mrow><mi>p</mi><mi>r</mi><mi>o</mi><mi>j</mi></mrow></msub></msub><mo>∼</mo><mi mathvariant="script">N</mi><mo stretchy="false">(</mo><mn>0</mn><mo separator="true">,</mo><mfrac><mn>0.02</mn><msqrt><mi>L</mi></msqrt></mfrac><mo stretchy="false">)</mo></mrow><annotation encoding="application/x-tex">W_{o_{proj}} \sim \mathcal{N}(0,\frac{0.02}{\sqrt{L}})
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:1.0307em;vertical-align:-0.3473em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">W</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathnormal mtight">o</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3281em;"><span style="top:-2.357em;margin-left:0em;margin-right:0.0714em;"><span class="pstrut" style="height:2.5em;"></span><span class="sizing reset-size3 size1 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">p</span><span class="mord mathnormal mtight" style="margin-right:0.0278em;">r</span><span class="mord mathnormal mtight">o</span><span class="mord mathnormal mtight" style="margin-right:0.0572em;">j</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2819em;"><span></span></span></span></span></span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.3473em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">∼</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="base"><span class="strut" style="height:2.2514em;vertical-align:-0.93em;"></span><span class="mord mathcal" style="margin-right:0.1474em;">N</span><span class="mopen">(</span><span class="mord">0</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.3214em;"><span style="top:-2.1833em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord sqrt"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.9267em;"><span class="svg-align" style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="mord" style="padding-left:0.833em;"><span class="mord mathnormal">L</span></span></span><span style="top:-2.8867em;"><span class="pstrut" style="height:3em;"></span><span class="hide-tail" style="min-width:0.853em;height:1.08em;"><svg xmlns="http://www.w3.org/2000/svg" width="400em" height="1.08em" viewBox="0 0 400000 1080" preserveAspectRatio="xMinYMin slice"><path d="M95,702
+c-2.7,0,-7.17,-2.7,-13.5,-8c-5.8,-5.3,-9.5,-10,-9.5,-14
+c0,-2,0.3,-3.3,1,-4c1.3,-2.7,23.83,-20.7,67.5,-54
+c44.2,-33.3,65.8,-50.3,66.5,-51c1.3,-1.3,3,-2,5,-2c4.7,0,8.7,3.3,12,10
+s173,378,173,378c0.7,0,35.3,-71,104,-213c68.7,-142,137.5,-285,206.5,-429
+c69,-144,104.5,-217.7,106.5,-221
+l0 -0
+c5.3,-9.3,12,-14,20,-14
+H400000v40H845.2724
+s-225.272,467,-225.272,467s-235,486,-235,486c-2.7,4.7,-9,7,-19,7
+c-6,0,-10,-1,-12,-3s-194,-422,-194,-422s-65,47,-65,47z
+M834 80h400000v40h-400000z"></path></svg></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.1133em;"><span></span></span></span></span></span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.677em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord">0.02</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.93em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span><span class="mclose">)</span></span></span></span></span></p>
+<p>其中 L = 16 为本次推全模型 HSTU 总层数，其他线性层的 std 仍设置为常数 0.02——使残差分支累积后的总方差保持在相对稳定的量级，改善深层模型训练初期的梯度稳定性。</p>
+<p><strong>优化器升级</strong>：将部分 Dense 参数由 AdamW 切换为 Muon — 一种主要面向二维矩阵参数、近年来在 LLM 领域得到广泛应用的优化器。Muon 使用 Newton-Schulz 迭代正交化更新梯度矩阵，以改善更新方向和训练效率。实践中借鉴了月之暗面的最新实践：增加 Weight Decay、Update RMS Scale，以提升训练的稳定性。我们针对 Muon 的覆盖范围进行探索，发现仅将 Muon 作用于 HSTU 的 UQKV 投影与 Output Projection，可以在速度与效果之间取得最佳平衡。</p>
+<p>整体叠加两个优化策略，5~10 组随机实验的 train AUC 波动幅度从 0.4pp 降至 0.1pp，离线实验的稳定性和可复现性得到明显改善。</p>
+<h3>5.2 多业务联合训练优化</h3>
+<p><strong>动态归一化</strong>：初期的联合损失采用各业务损失分别归一化后相加的形式：</p>
+<p v-pre="" class="katex-block"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>L</mi><mo>=</mo><munder><mo>∑</mo><mi>s</mi></munder><mfrac><mn>1</mn><mrow><mi mathvariant="normal">∣</mi><msub><mi>B</mi><mi>s</mi></msub><mi mathvariant="normal">∣</mi></mrow></mfrac><munder><mo>∑</mo><mrow><mi>i</mi><mo>∈</mo><msub><mi>B</mi><mi>s</mi></msub></mrow></munder><msub><mrow><mi mathvariant="normal">l</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">s</mi></mrow><mi>i</mi></msub></mrow><annotation encoding="application/x-tex">L = \sum_{s} \frac{1}{|B_s|} \sum_{i \in B_s} \mathrm{loss}_i 
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.6833em;"></span><span class="mord mathnormal">L</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="base"><span class="strut" style="height:2.7159em;vertical-align:-1.3944em;"></span><span class="mop op-limits"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.05em;"><span style="top:-1.9em;margin-left:0em;"><span class="pstrut" style="height:3.05em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">s</span></span></span></span><span style="top:-3.05em;"><span class="pstrut" style="height:3.05em;"></span><span><span class="mop op-symbol large-op">∑</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:1.25em;"><span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.3214em;"><span style="top:-2.314em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord">∣</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0502em;">B</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:-0.0502em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">s</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord">∣</span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.677em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord">1</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.936em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mop op-limits"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.05em;"><span style="top:-1.8557em;margin-left:0em;"><span class="pstrut" style="height:3.05em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">i</span><span class="mrel mtight">∈</span><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.0502em;">B</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1645em;"><span style="top:-2.357em;margin-left:-0.0502em;margin-right:0.0714em;"><span class="pstrut" style="height:2.5em;"></span><span class="sizing reset-size3 size1 mtight"><span class="mord mathnormal mtight">s</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.143em;"><span></span></span></span></span></span></span></span></span></span><span style="top:-3.05em;"><span class="pstrut" style="height:3.05em;"></span><span><span class="mop op-symbol large-op">∑</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:1.3944em;"><span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord"><span class="mord mathrm">loss</span></span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></span></p>
+<p>其中 <span v-pre="" class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>B</mi><mi>s</mi></msub></mrow><annotation encoding="application/x-tex">B_s</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0502em;">B</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:-0.0502em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">s</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span> 为 batch 内业务的样本集合。由于小流量业务的有效 batch size 小，基于其归一化损失得到的梯度存在较大噪声，既影响自身个性化参数（如 MMoE、任务塔）的收敛，也通过共享参数间接影响其他业务。为此将损失改为按 batch 内各业务 PV 占比动态加权，该形式可化简为等价的全局归一化——不区分业务、对 batch 内全部样本统一归一，修改后的 loss 形式如下：</p>
+<p v-pre="" class="katex-block"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>L</mi><mo>=</mo><mfrac><mrow><munder><mo>∑</mo><mi>s</mi></munder><munder><mo>∑</mo><mrow><mn>0</mn><mo>≤</mo><mi>i</mi><mo>≤</mo><mi mathvariant="normal">∣</mi><msub><mi>B</mi><mi>s</mi></msub><mi mathvariant="normal">∣</mi><mo>−</mo><mn>1</mn></mrow></munder><mi>l</mi><mi>o</mi><mi>s</mi><msub><mi>s</mi><mrow><mi>s</mi><mo separator="true">,</mo><mi>i</mi></mrow></msub></mrow><mrow><munder><mo>∑</mo><msup><mi>s</mi><mo mathvariant="normal" lspace="0em" rspace="0em">′</mo></msup></munder><mi mathvariant="normal">∣</mi><msub><mi>B</mi><msup><mi>s</mi><mo mathvariant="normal" lspace="0em" rspace="0em">′</mo></msup></msub><mi mathvariant="normal">∣</mi></mrow></mfrac></mrow><annotation encoding="application/x-tex">L=\frac{\sum_{s}\sum_{0\leq i \leq |B_s|-1} loss_{s,i}}{\sum_{s'}|B_{s'}|}
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.6833em;"></span><span class="mord mathnormal">L</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="base"><span class="strut" style="height:2.6004em;vertical-align:-0.9857em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.6147em;"><span style="top:-2.314em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mop"><span class="mop op-symbol small-op" style="position:relative;top:0em;">∑</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1783em;"><span style="top:-2.4003em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathnormal mtight">s</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.6828em;"><span style="top:-2.786em;margin-right:0.0714em;"><span class="pstrut" style="height:2.5em;"></span><span class="sizing reset-size3 size1 mtight"><span class="mord mtight"><span class="mord mtight">′</span></span></span></span></span></span></span></span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2997em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord">∣</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0502em;">B</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.328em;"><span style="top:-2.55em;margin-left:-0.0502em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathnormal mtight">s</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.6828em;"><span style="top:-2.786em;margin-right:0.0714em;"><span class="pstrut" style="height:2.5em;"></span><span class="sizing reset-size3 size1 mtight"><span class="mord mtight"><span class="mord mtight">′</span></span></span></span></span></span></span></span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord">∣</span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.8647em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mop"><span class="mop op-symbol small-op" style="position:relative;top:0em;">∑</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.0017em;"><span style="top:-2.4003em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">s</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2997em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mop"><span class="mop op-symbol small-op" style="position:relative;top:0em;">∑</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2253em;"><span style="top:-2.4003em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight">0</span><span class="mrel mtight">≤</span><span class="mord mathnormal mtight">i</span><span class="mrel mtight">≤</span><span class="mord mtight">∣</span><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.0502em;">B</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1645em;"><span style="top:-2.357em;margin-left:-0.0502em;margin-right:0.0714em;"><span class="pstrut" style="height:2.5em;"></span><span class="sizing reset-size3 size1 mtight"><span class="mord mathnormal mtight">s</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.143em;"><span></span></span></span></span></span></span><span class="mord mtight">∣</span><span class="mbin mtight">−</span><span class="mord mtight">1</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.4747em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal" style="margin-right:0.0197em;">l</span><span class="mord mathnormal">os</span><span class="mord"><span class="mord mathnormal">s</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">s</span><span class="mpunct mtight">,</span><span class="mord mathnormal mtight">i</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.9857em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span></span></span></span></span></p>
+<p><strong>稀疏更新改进</strong>：多业务联合建模的范式下，稀疏样本带来了一个新的问题：部分 batch 内不含小流量业务的 Target，其 Tokenizer、MMoE 专家与任务塔在该步没有梯度，但这些参数仍在被持续衰减。为此在优化器的计算逻辑中跳过零梯度 Weight Decay，并将零梯度检测合并为单次批量同步、非零参数更新批量向量化以减少 kernel launch 次数提升训练吞吐。此外，为提升小业务的训练稳定性，引入步长为2的梯度累积，降低优化器 step 频率提升训练速度。</p>
+<h2>6. 训推性能</h2>
+<p>MTFM 的单样本计算量较 DLRM 模型增长数百倍，系统性的性能优化是基座大模型成功落地的前提。为此，从训练、推理两部分，解决模型计算量和存储量激增带来的诸多性能挑战。</p>
+<h3>6.1 训练性能</h3>
+<ul>
+<li><strong>FA 镜像与 Mask Kernel 优化</strong>：HSTU 动态 Attention 在 2k 长序列下，逐样本构造动态 Mask 因不连续访存与频繁 kernel launch 耗时高达 22ms。MTFM 基于 Flash-Attention V2 重构：将多维 Mask 预处理好一维 jagged mask 存入 Share Memory 供轻量读取；Mask 构造从 for-loop 改写为 Triton Kernel，降至 1ms；扩展 FA2 接口支持 Full/Target Attention、动态 Mask 读取与 SiLU 融合。相比 NVIDIA<sup>[19]</sup> 实现，优化后前向加速 128%、反向加速 152%。</li>
+<li><strong>GLN Kernel 融合</strong>：MTFM 序列由终身行为、实时行为、候选 Target 等多种异构 Token 拼接构成，各类型使用独立的 LayerNorm 参数。传统实现按 group 循环执行，多次 kernel launch 和冗余 global memory 读写，成为长序列训练中的瓶颈。</li>
+<li><strong>优化方案</strong>：前向基于 Triton 重构 Group LayerNorm（GLN）算子。将多组参数统一组织为 [G, D] 大矩阵，通过 seq_group_id_mask 为每个 Token 动态索引对应 group，单次 kernel 完成全部 Token 归一化；同时实现 GLN-ADD 与 GLN-MUL 融合算子，避免高频的中间结果回写。反向梯度改为分块归约：各处理单元独立累积局部梯度后统一汇总，避免多 Token 并发累加同一份共享参数带来的串行排队。在 2k 长序列下，GLN 的内存带宽利用率从 30% 提升至 60% 以上，整体相对原生实现提速超过 30%。</li>
+<li><strong>Muon 性能优化</strong>：针对原生 Muon 优化器中 Newton-Schulz（NS）正交化逐 2D 参数串行执行、GPU 利用率低的问题，首先借鉴了 flash-muon<sup>[20]</sup> （利用 X@Xᵀ 对称性仅计算上三角，FLOP 减半）。该做法在大矩阵场景下收益明显，但 MTFM 中矩阵普遍偏小，反而因额外 Triton 启动开销拖慢性能。因此采用针对小矩阵的批处理策略：将同一优化步骤中形状相同的权重梯度堆叠为 (B, M, N) 的批量张量，整组 NS 批量并行执行。批量化后，整个 NS 阶段 kernel launch 收敛至数十次，阶段加速 241%，端到端训练吞吐提升 19%。</li>
+<li><strong>消除阻塞点</strong>：随着特征规模和序列长度增长，训练瓶颈正从 Attention 计算转向 Host/Device 协同效率。典型阻塞点包括 torch.unique、TorchRec wait() 同步、HashTable 优化器 step，以及业务代码如 .item() 引发的 D2H 同步。</li>
+<li><strong>优化方案</strong>：核心思路是将“串行等待”转化为“并行重叠”。① 重构 TorchRec 数据分发和 HashTable 优化器链路，通过异步数据传输与计算重叠，削减通信、回传和更新中的闲置间隙，结合去重与截断优化降低冗余计算；② 将原先按 embedding 维度拆分的多个 HashtableCollection 融合为单个统一集合，所有特征一次性查表，消除多实例间的调度与同步开销；③ 基于 AI Agent Infra，将 repeat_interleave 等存在 D2H 阻塞的原生算子改写为纯 GPU 实现，频繁访问的 CPU 常量迁移为 GPU Tensor 预计算。最终，MTFM 训练流水线整体训练速度提升约 15%。</li>
+<li><strong>特征精简</strong>：多业务统一后特征规模达 1.3K+，利用 Agent Auto Research 分析与分组搜索验证，删减近 500 个特征且 GAUC 无损，释放显存以增大 batch size，训练吞吐 +6%，线上特征处理耗时同步降低。</li>
+</ul>
+<h3>6.2 推理性能</h3>
+<ul>
+<li><strong>查表合并</strong>：多个 Hashtable 查询存在同表重复加载问题，导致显存碎片严重、多表查询串行化。将多个查询共享同一张表后，显存占用由 22GB 降至 5.9GB。</li>
+<li><strong>Attention Maskfunc 规则跳算</strong>：在 MTFM 的 HSTU 结构中，进入 Attention 的序列可抽象为 User 和 Item 两部分，两者的 Mask 逻辑不同，对此分别做了针对性优化：
+<ul>
+<li>User 侧使用自定义 Mask（区别于 LLM 的 Causal Mask），在早期实现中，Mask 在 Attention 中以 element-wise 乘作用在 Q * K^T 的矩阵结果，在多场景长序列中 Mask 含大量零值，计算效率极低。对此优化方案是预扫描 Mask 生成有效计算索引，在 Attention 计算过程中仅对存在有效 Key 的 Block 执行计算，跳过全零块，在长序列下单算子延迟降低约 50%。</li>
+<li>Item 侧的 Mask 逻辑为 Item 可见 User，User 不可见 Item，即 User→Item 方向的 Attention 计算完全无效。利用这一可见性先验规则直接跳过该方向计算，在 2000 User + 200 Item 配置下延迟降低 13%。</li>
+</ul>
+</li>
+<li><strong>GLN 自定义算子</strong>：原生 GLN 按 index 取数→归一化→写回，因 index 不连续产生大量乱序访问和显存拷贝。改为基于 Mask 的 GLN，直接通过掩码定位有效位置，避免重排开销；结合 block/warp 规约与向量化读取加速。吞吐提升 38%。</li>
+<li><strong>推理图精简</strong>：识别并融合冗余算子，合并连续的 Cast 转换，减少数值格式转换引发的额外内存搬运开销、降低访存压力，并重排计算顺序提升数据局部性，吞吐提升 20%。</li>
+</ul>
+<h2>7. 模型效果</h2>
+<h3>7.1 Scaling Law 验证</h3>
+<p>MTFM 在网络层数、Token Dim、序列长度三个维度上表现出了稳健的 Scaling 能力（图5~7）：</p>
+<ul>
+<li>网络层数（图5）：随着模型层数增加，各业务离线效果稳步增长，离线指标与网络层数高度相关；</li>
+<li>Token Dim（图6）：随着 Token 维度增大，序列 SideInfo 中的丰富语义得以充分表达，同时能建模 Q、K 之间更丰富的交互关系，在 192~768 范围内观察到效果显著提升；</li>
+<li>序列长度（图7）：在 400~2000 范围内序列长度 Scaling 现象明显，随着入图序列长度增长，模型能够建模更长期的用户偏好，模型离线 GAUC 稳定提升。</li>
+</ul>
+<p><img src="https://p1.meituan.net/meituantechblog/f8a8f4305500f58e7589110852dee058290854.png" alt="图5 MTFM 网络层数 Scaling 曲线"></p>
+<p><img src="https://p1.meituan.net/meituantechblog/4d1acda945187eff14734d3404169320294779.png" alt="图6 MTFM Token Dim Scaling 曲线"></p>
+<p><img src="https://p0.meituan.net/meituantechblog/8cc049d8c3ebdf201c4eccbc564d8378302919.png" alt="图7 MTFM 序列长度 Scaling 曲线"></p>
+<h3>7.2 各业务离线效果</h3>
+<p>MTFM 统一模型离线 GAUC 全面超越各场景基线，并且在 Target Token Scale-Up 上展现了更好的扩展效果。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/ed0c8d75745431ea9057373dce831016165307.png" alt="图表4 统一模型 vs 各业务基线模型（离线 GAUC 相对基准的提升）"></p>
+<h3>7.3 各业务线上效果</h3>
+<p>目前，MTFM V1 在美团外卖多个业务完成全量，核心订单指标提升显著，在线效果最显著的业务线订单增长超过6%，同时这也是最近两年多个核心业务推荐场景单次优化的最大收益。</p>
+<h2>8. 总结与展望</h2>
+<p>MTFM 是一个真正意义上实现多场景特征免对齐的推荐基座大模型架构，具备规模可扩展性（Scalability）、场景可延展性（Extensibility）和架构高效性（Efficiency）这三个关键特质。具体以类 Transformer 骨干网络为基础，通过 Target Token Scale-Up 提升模型能力，借鉴 LLM 优化实践提升训练效果；设计异构 Tokenizer 和动态掩码机制支持多场景端到端统一建模；通过混合注意力、多场景 User-Level 训练、高效 GPU 定制算子等提升训推效率。首次实现外卖多场景统一精排模型，取得显著的离线 GAUC 与在线 A/B 效果提升，展现了良好的规模效应与算力经济性。在未来，我们将和各团队紧密合作，充分吸纳 LLM 与推荐领域业界最新进展，不断提升模型能力和 Infra 能力，继续拓展基座模型在推荐场景的能力边界。主要方向如下：</p>
+<ul>
+<li><strong>Scaling 与 Infra 协同</strong>：算法&amp;工程 Co-Design，实现更高效的 Infra，设计高 Scaling ROI 的模型结构平衡计算量与参数量，实现模型参数量 1-2 个数量级的提升，进一步验证模型参数、序列长度的 Scaling Law。</li>
+<li><strong>基座模型场景延伸</strong>：将 MTFM 推广到更多业务场景，通过 Co-Train、蒸馏等方式实现 MTFM-Lite，更低成本为各场景带来基座模型红利。</li>
+</ul>
+<h2>9. 团队招聘</h2>
+<p>算法团队来自搜索和推荐平台部/推荐算法部，负责美团各场景的商家、商品自然流量分发以及大模型相关创新能力建设，包括推荐算法、大模型应用算法等。业务核心，技术能力强，每年有多篇论文发表在 KDD、SIGIR、CIKM 等会议。当前，LLM 在推荐领域的落地仍在深度迭代中，机会广阔潜力大，欢迎各路英才加入，联系方式liuying153@meituan.com。此外，欢迎校招同学投递推荐大模型算法北斗岗位，<a href="https://zhaopin.meituan.com/web/position/detail?jobUnionId=4530463043&amp;token=3094526ce7454330b1a43572e9fa2cea&amp;jobShareType=1&amp;share_source=cplink" target="_blank" rel="noopener noreferrer">【北斗】推荐大模型算法工程师</a>。</p>
+<p>搜索和推荐平台部/机器学习架构组，负责美团各业务的搜索推荐机器学习引擎的工程架构工作，包括模型训练、模型推理、用户特征平台建设等。团队技术能力强，工作氛围好，当前正在深度探索下一代搜推架构等多个前沿方向，欢迎感兴趣的同学加入，联系方式：dengyuanyuan02@meituan.com。也欢迎校招同学投递大模型训推引擎北斗岗位<a href="https://zhaopin.meituan.com/web/position/detail?jobUnionId=4530177703&amp;highlightType=campus" target="_blank" rel="noopener noreferrer">【北斗】大模型训推引擎工程师（后训练/推理方向）</a>。</p>
+<h2>参考文献</h2>
+<ul>
+<li>[1] MTGR：Han R, Yin B, Chen S, et al. Mtgr: Industrial-scale generative recommendation framework in meituan[C]//Proceedings of the 34th ACM International Conference on Information and Knowledge Management. 2025: 5731-5738</li>
+<li>[2] KDD 2026：MTFM: A Scalable and Alignment-free Foundation Model for Industrial Recommendation in Meituan（https://dl.acm.org/doi/abs/10.1145/3770855.3818452）</li>
+<li>[3] STAR：Xiang-Rong Sheng, Liqin Zhao, Guorui Zhou, Xinyao Ding, Binding Dai, Qiang Luo, Siran Yang, Jingshan Lv, Chi Zhang, Hongbo Deng, et al. 2021. One model to serve all: Star topology adaptive recommender for multi-domain ctr prediction. In Proceedings of the 30th ACM International Conference on Information &amp; Knowledge Management. 4104–4113.</li>
+<li>[4] M3OE：Zijian Zhang, Shuchang Liu, Jiaao Yu, Qingpeng Cai, Xiangyu Zhao, Chunxu Zhang, Ziru Liu, Qidong Liu, Hongwei Zhao, Lantao Hu, et al. 2024. M3oe: Multi-domain multi-task mixture-of experts recommendation framework. In Proceedings of the 47th International ACM SIGIR Conference on Research and Development in Information Retrieval. 893–902.</li>
+<li>[5] MLoRA：Zhiming Yang, Haining Gao, Dehong Gao, Luwei Yang, Libin Yang, Xiaoyan Cai, Wei Ning, and Guannan Zhang. 2024. Mlora: Multi-domain low-rank adaptive network for ctr prediction. In Proceedings of the 18th ACM Conference on Recommender Systems. 287–297.</li>
+<li>[6] ExFM：Ads Recommendation. 2025. External Large Foundation Model: How to Efficiently Serve Trillions of Parameters for Online Ads Recommendation. arXiv preprint arXiv:2502.17494 (2025).</li>
+<li>[7] LFM4Ads：Shangyu Zhang, Shijie Quan, Zhongren Wang, Junwei Pan, Tianqu Zhuang, Bo Fu, Yilong Sun, Jieying Lin, Jushuo Chen, Xiaotian Li, et al. 2025. Large Foundation Model for Ads Recommendation. arXiv preprint arXiv:2508.14948 (2025).</li>
+<li>[8] RankMixer：Zhu J, Fan Z, Zhu X, et al. Rankmixer: Scaling up ranking models in industrial recommenders[C]//Proceedings of the 34th ACM International Conference on Information and Knowledge Management. 2025: 6309-6316.</li>
+<li>[9] TokenMixer-Large：Jiang Y, Zhu J, Han X, et al. Tokenmixer-large: Scaling up large ranking models in industrial recommenders[C]//Proceedings of the 32nd ACM SIGKDD Conference on Knowledge Discovery and Data Mining V. 2. 2026: 7489-7500.</li>
+<li>[10] HSTU：Zhai J, Liao L, Liu X, et al. Actions speak louder than words: Trillion-parameter sequential transducers for generative recommendations[J]. arXiv preprint arXiv:2402.17152, 2024.</li>
+<li>[11] OneTrans：https://arxiv.org/abs/2510.26104</li>
+<li>[12] OneRec：Zhou G, Deng J, Zhang J, et al. Onerec technical report[J]. arXiv preprint arXiv:2506.13695, 2025.</li>
+<li>[13] STCA：Guan, Lin, et al. "Make it long, keep it fast: End-to-end 10k-sequence modeling at billion scale on Douyin." Proceedings of the ACM Web Conference 2026. 2026.</li>
+<li>[14] OneRec V2：Zhou, Guorui, et al. "Onerec-v2 technical report, 2025." https://arxiv.org/abs/2508.20900 (2025).</li>
+<li>[15] Qwen3-Next：Team Qwen. "Qwen3-Next: Towards Ultimate Training &amp; Inference Efficiency." https://qwen.ai/blog?id=qwen3-next (2025).</li>
+<li>[16] MiMo-V2-Flash：Xiao, Bangjun, et al. "Mimo-v2-flash technical report." arXiv:2601.02780 (2026).</li>
+<li>[17] AutoSplit：参考 OneTranshttps://arxiv.org/abs/2510.26104</li>
+<li>[18] RankMixer：https://arxiv.org/abs/2507.15551</li>
+<li>[19] NVIDIA 开源自定义 Mask：https://github.com/NVIDIA/recsys-examples/blob/main/corelib/hstu/README.md</li>
+<li>[20] Flash-Muon：https://github.com/nil0x9/flash-muon/blob/main/README.md</li>
+</ul>
+]]></content:encoded>
+      <enclosure url="https://p0.meituan.net/meituantechblog/5dcc2af83b5b9da04717c9fcff76b69a1943722.png" type="image/png"/>
+    </item>
+    <item>
+      <title>《Agent 评测白皮书》系列01：Agent 评测全览</title>
+      <link>https://tech.meituan.com/2026/09/10/Agent-Evaluation-White-Paper-01.html</link>
+      <guid>https://tech.meituan.com/2026/09/10/Agent-Evaluation-White-Paper-01.html</guid>
+      <source url="https://tech.meituan.com/rss.xml">《Agent 评测白皮书》系列01：Agent 评测全览</source>
+      <description>我们推出了《Agent评测白皮书》系列博客，体系化地为大家讲解评测的落地指南，分为《评测全览》、《冷启动篇》、《扩量篇》、《自进化篇》等共4篇，本文为系列的第一篇。</description>
+      <content:encoded><![CDATA[<h2>综述</h2>
+<h3>搭一个 Agent 正在变得越来越容易</h3>
+<p>过去三年，有两条趋势在同时发生。</p>
+<p>一是<strong>基座模型的能力持续进化</strong>，它带来的结果是对使用者的要求在往下降。早期要让模型稳定地按格式输出、正确地选中一个工具，需要反复打磨 Prompt、设计各种兜底。现在这些能力越来越多地由模型本身承担，长上下文、原生工具调用、更强的指令遵循和多步推理，把大量原本需要工程去补的地方补上了。</p>
+<p>二是 <strong>Agent 框架的功能持续丰富</strong>。从早期需要自己实现规划、记忆、工具注册和状态管理，到现在框架和协议层把这些抽象成标准组件，接一个工具、加一个 Skill，工作量都在显著下降。</p>
+<p>两条曲线叠加，结论很直接：搭建 Agent 门槛正在逐年降低。这带来的直接变化是 Agent 落地场景越来越多，越来越发散。</p>
+<h3>评测认知的稀缺</h3>
+<p>自 2022 年底 ChatGPT（基于 GPT-3.5）发布以来，市场上出现了一波又一波 Agent 项目。但是那些真正走过冷启动、完成灰度扩量、推到全量的项目数量屈指可数。这导致掌握 Agent 评测方法的人非常稀缺。</p>
+<p>过去三年绝大部分 Agent 项目都死掉了。它们消失的原因有一些共性：</p>
+<ul>
+<li><strong>停在 Demo</strong>：演示效果很好，一接真实流量就发现覆盖不住，用户的问法、数据的脏乱、场景的边界远超预期，团队疲于打补丁，最后不了了之。</li>
+<li><strong>卡在扩量</strong>：小范围试用还行，一放量各种问题集中暴露。团队既说不清问题出在哪一层，也不敢大改，因为改完不知道会不会把原来对的地方弄坏，项目在原地反复摇摆。</li>
+<li><strong>说不清业务价值</strong>：模型换了几轮，Prompt 迭代了几十版，团队自己觉得变好了，但拿不出证据。到了要资源、要继续投入的时候，回答不了“项目到底带来了什么”，最终停止投入。</li>
+</ul>
+<p>这三种死法看起来不同，追下去会发现共同点：<strong>团队缺少一套可靠的判断机制</strong>。不知道当前版本行不行，不知道问题出在哪一层，不知道改完是真的变好还是换了个地方出错，也不知道怎么向外证明这件事的价值。做决策靠的是感觉和个别案例，而感觉在复杂系统面前不可靠。</p>
+<p>把两件事放在一起看，会得到一个略显割裂的图景：<strong>搭 Agent 的门槛在快速降低，把 Agent 做好的认知却仍十分稀缺</strong>。并且，有限的评测认知面对发散的场景，同样力不从心。做好一个 ChatBot 的经验，并不能无缝泛化到做一个长程 Agent 身上。为此，我们希望将团队两年来在众多业务方中打磨出的评测的认知，以体系化的形式分享给大家，希望能帮大家少走一些弯路。</p>
+<h3>这个系列博客想做什么</h3>
+<p>前不久，我们发布了一篇博客《<a href="https://mp.weixin.qq.com/s/gZKWRqznB8sNBFf69fBIvw" target="_blank" rel="noopener noreferrer">Agent 评测漫谈</a>》，介绍了评测的核心方法论，回答的是“评测是什么、为什么这么做”。文章发出后，我们收到不少的反馈，其中出现频率最高的一类是：方法论看了，但具体到自己的项目，还是不知道从哪下手。</p>
+<p>为此，我们计划撰写《Agent 评测白皮书》系列博客，体系化地为大家讲解评测的落地指南 —— 先做什么后做什么，每一步的产出物长什么样，做到什么程度算达标，遇到常见的坑怎么处理。计划分四篇：</p>
+<p><img src="https://p0.meituan.net/meituantechblog/714ba0bf48f2186bd418d3778da7e214293923.png" alt=""></p>
+<p>本系列博客面向 Agent 产品、研发、算法、运营和评测负责人。如果你正在从零开始搭一个 Agent，或者手里的项目卡在某个阶段推不动，希望这几篇能提供一些可以直接用上的东西。</p>
+<p>这里也需要强调一下：<strong>评测是一门实践科学</strong>，本系列给出的做法来自我们评测团队在美团多个业务的实践，它们在各自的场景里被验证有效，但迁移到新场景时仍然需要结合业务特点做调整。比起照搬步骤，更值得关注的是每个做法背后要解决的问题。理解了问题，做法自然可以因地制宜。</p>
+<h2>前言</h2>
+<p>第一篇《评测全览》目的在于让大家系统地了解评测的构成，我们用一套统一的语言对齐行业内尚在发散和纠缠的概念，用一套叙事逻辑打通冷启动、扩量和自进化。有了全览之后，大家可以以终为始，判断自己现在处在哪里、下一步补哪一块。完备的评测体系可以概括为<strong>四个模块、三种能力、两条 Loop、一套资产</strong>。</p>
+<h2>一、完备的评测体系是什么样子</h2>
+<h3>1.1 回到原点：评测是 Agent 效果的“精密量具”</h3>
+<p>评测的核心目的是回答两个问题：<strong>Agent 好不好？到底哪里好、哪里不好</strong>？前者给出判断，后者指明方向。一套完备的评测体系必须同时回答这两个问题。</p>
+<p>在《<a href="https://mp.weixin.qq.com/s/gZKWRqznB8sNBFf69fBIvw" target="_blank" rel="noopener noreferrer">Agent 评测漫谈</a>》一文中，我们认为评测是一套“精密量具”，这个类比其实包含两个隐喻：</p>
+<ul>
+<li><strong>量具要准（方差小才置信）</strong>：同一个样本，不同的人、不同的时间、人和机器，量出来的结果要一致。这对应博客方法论中的“人人一致、人机一致”。</li>
+<li><strong>量具需要能定期校准</strong>：业务扩量后用户画像变了、Agent 能力边界扩了、业务目标有变化了，原有的评测集和 Rubric 就会逐渐失去代表性。这对应评测体系自身的迭代能力。</li>
+</ul>
+<p>第二点是评测贴近真实业务场景、消除独裁者偏差的关键手段，但却是最容易被忽略的。</p>
+<h3>1.2 两条相互咬合的 Loop</h3>
+<p>理想的评测体系是一套持续运转的系统。它由两条 Loop 构成，二者共享同一批线上真实样本，通过 Case 挖掘与归因这个枢纽相互咬合。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/fd03ec50b50979a517c670c8a3a692e53034144.png" alt=""></p>
+<p><strong>第一条：评测体系迭代 Loop（评测演进）</strong></p>
+<p>Agent 上线后，在线评测和在线监控开始持续产出异常信号。这些信号背后的线上真实样本，经过 Case 挖掘进入 Case 池，再经过归因判断问题性质。如果归因结论是“评测集没有覆盖这类问题”，那么这个样本就应该补充进评测集；如果归因结论是“评测标准判错了”，那么迭代评测是 Metrics 和 Rubric 本身。这条 Loop 让评测集从冷启动人工搭建逐步逼近真实用户的反馈，逐步消除前文博客中提到的独裁者偏差。</p>
+<p><strong>第二条：Agent 迭代 Loop（Agent 演进）</strong></p>
+<p>同样是这批线上真实样本，经过 Case 挖掘和归因之后，定位到 Agent 本身的问题点——可能是 Prompt 写得不够明确、某个 Skill 的描述导致路由错误、上下文管理丢了关键信息，或者模型能力确实不够。研发据此做出变更，变更后用评测集回测，确认没有引入退化，再上线 AB 观察真实效果。这条 Loop 让 Agent 的能力持续提升，同时保证每次提升不以牺牲已有能力为代价。</p>
+<p>除了 Case 挖掘和归因这个显而易见的咬合点，其实还有第二个咬合点——评测资产（评测集）。评测体系迭代 Loop 的产出是更完善的评测集，回测的门禁价值就越高；回测门禁越严格，Agent 上线后暴露的新问题就越少。从而形成正反馈。</p>
+<h3>1.3 评测体系的三种能力</h3>
+<p>把两条 Loop 放在一起看，完备的评测体系要同时具备三种能力，并沉淀评测资产（评测集）。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/f6863cfd3494f4944b9ded5cc2880939174348.png" alt=""></p>
+<p><strong>评测资产（评测集）</strong>：</p>
+<p>这三种能力运转起来后，会沉淀下可复用的资产，它们才是评测体系真正的长期价值。</p>
+<ul>
+<li><strong>评测标准</strong>（Metrics &amp; Rubric）：团队对“好”的共识的显式化、可量化，消除评测的模糊度。</li>
+<li><strong>评测样本</strong>：真实问题的结构化沉淀。黄金集定义了“好的下限”，错题集记录了“踩过的坑”，挑战集标定了“能力的边界”。它的价值在于可回归——每一个曾经犯过的错，都不应该再犯第二次。</li>
+</ul>
+<p>但“什么叫好”的共识和“踩过哪些坑”的记录会随着 Agent 扩量而持续扩充。从这个意义上说，评测体系建设的本质，是<strong>把团队对业务质量的隐性认知，转化为可量化、可复用、可传递、可自动执行的显性资产</strong>。</p>
+<h3>1.4 评测体系的构成</h3>
+<p>从评测体系的视角，可以拆解出四个模块。前三个模块分别回答不同的问题，第四个模块是前三者的地基。</p>
+<p><img src="https://p1.meituan.net/meituantechblog/1aacb8e86f22443a85ea544a8fcd278a197756.png" alt=""></p>
+<p><img src="https://p0.meituan.net/meituantechblog/81ec70867a456f3e68929acf4cc5d8041429288.png" alt=""></p>
+<blockquote>
+<p><strong>关于模块划分的说明</strong></p>
+<p>业界和开源领域对离线评测的定义非常清晰，而在线评测、在线监控、观测以及 Case 挖掘与归因这几个模块彼此之间存在模糊地带，例如 Arize AI、LangFuse、Braintrust 对这几个概念的划分就不尽相同。例如有的产品把“Online Evaluation”和“Monitoring”合并成一个概念，有的把 Trace 采集归入 Observability 而把 Trace 分析归入 Evaluation。</p>
+<p>由于行业内没有形成统一的概念划分，为了方便后续讨论中的概念对齐，以及用一套框架贯穿冷启动、扩量和自进化，我们拆解出上面这四个大模块。读者在实践过程中可以按自己团队的组织方式重新切分，不漏掉任何一项职责即可。</p>
+</blockquote>
+<p><strong>一个贯穿全文的例子</strong></p>
+<p>为了让后面的讨论有实感，我们先约定一个贯穿全文的场景——商家经营分析 Agent（对应内部的商家 Claw 类场景）。</p>
+<p><img src="https://p1.meituan.net/meituantechblog/80c725ab63d5b163928979e170befd3d175156.png" alt=""></p>
+<p>这个场景的特点是典型的长程 Agent：多步骤、多 Skill 调用、有中间产物、与环境频繁交互、没有唯一正确答案。后面每讲一个模块，我们都会回到这个例子上看它具体长什么样。</p>
+<h2>二、离线评测：变更的门控</h2>
+<p>离线评测的核心作用在于 Agent 版本变更后的回测，可以作为上线前的门控。它依赖：固定评测集（固定样本和固定评测标准）、尽可能贴近生产的固定执行环境。</p>
+<p>当 Agent Harness 的任何一个环节发生变化——模型升级、Prompt 调整、知识库更新、Skill 新增或下线——都可以通过离线评测验证效果，避免不成熟的变更导致 Agent 能力劣化。</p>
+<blockquote>
+<p><strong>为什么强调“固定”</strong></p>
+<p>回测的本质是控制变量对比：只让 Agent 版本变化，其他一切保持不变，这样分数的差异才能归因到版本变更上。</p>
+<p>实践中最容易被破坏的是执行环境。比如评测时调用的是测试环境的下游接口，而测试环境的数据和生产不一致；或者沙箱里没有预置用户的历史文件，导致 Agent 拿不到必要的上下文。这类环境差异会让离线分数和线上表现系统性偏离，最终让团队不再信任离线评测。</p>
+<p>一个实用的检验方法：拿同一批样本，分别在离线环境和线上影子流量里跑一遍，看两边的结论是否一致。差异过大，说明环境保真度不够。</p>
+</blockquote>
+<h3>2.1 评测集：评测体系的核心资产</h3>
+<h4>2.1.1 评测集的构成</h4>
+<p>广义的评测集由（<strong>问题、参考答案、评价标准</strong>）三元组构成，其中<strong>问题-参考答案</strong>合起来称作评测样本。这个概念最早出自大模型评测领域，如今被借用到 Agent 评测领域。</p>
+<p>但随着 Agent 形态从 ChatBot 演进到长程 Agent，这三元组的具体含义也在发生迁移：</p>
+<p><img src="https://p0.meituan.net/meituantechblog/cf7cfc20f549a264114d0f210892df2a264195.png" alt=""></p>
+<p>这个迁移背后是一个根本性变化：Agent 评测从“答案评测”走向“行为评测”。短程场景下，参考答案是一个可以逐字比对的字符串；长程场景下，参考答案变成了一段对执行过程的描述，评测要看的是 Agent 走过的路径是否符合预期，以及最终环境状态是否达成目标。</p>
+<p>借用 Anthropic《<a href="https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents" target="_blank" rel="noopener noreferrer">Demystifying evals for AI agents</a>》文中对长程 Agent 评测 Task 定义：为“具有明确输入和成功标准的单个测试”，这个概念同样可以泛化到短程 Agent 领域。</p>
+<p>借用这个概念，评测集的每一行三元组都可以看做一个 Task。</p>
+<p>具体而言 Task 里要有固定输入，比如 Query / answer，或者 prompt / expected behavior；评价部分由 Metrics 和 Rubric 构成，其中 Rubric 是最小粒度的评测标准。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/60d3d786d4c2d7df6ac142dea8c3df62780512.png" alt=""></p>
+<p>一个完整的 Task 大致长这样：</p>
+<p><img src="https://p1.meituan.net/meituantechblog/6429cca229663391112c31859914172f274973.png" alt=""></p>
+<p>《<a href="https://mp.weixin.qq.com/s/gZKWRqznB8sNBFf69fBIvw" target="_blank" rel="noopener noreferrer">Agent 评测漫谈</a>》中强调的二元化 Rubric思路就是用在这里的：把“这个 PPT 做得好不好”这种模糊判断，下钻成一组可以回答是/否的具体检查项，从而将模糊的问题尽可能量化，消除分歧。人人一致率和人机一致率的提升，本质上都来自这种下钻。</p>
+<h4>2.1.2 评测集的分类：端到端与过程</h4>
+<p>评测集总体上可以分成两类：<strong>端到端评测集和过程评测集</strong>。每一个评测集都由上文的三元组构成。</p>
+<p>对于端到端评测和过程评测，都可以建立我们常说的黄金集、必过集，这两套概念彼此独立不冲突。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/5671f00e5466fbd333f5a3106b904a56194009.png" alt=""></p>
+<p><strong>为什么两类都需要</strong>？端到端评测集看的是最终结果，重点回答“<strong>事有没有办成</strong>”；过程评测集看执行过程，回答的是“<strong>中间哪一步出了问题</strong>”。回到商家经营分析的例子。端到端评测集告诉你“100 个任务里有 68 个交付了可用的 PPT”，端到端交付率是业务方最关心的数字。但当这个数字从 68 掉到 55 时，端到端评测集无法告诉你原因。而过程评测集可以：如果“投放数据 Skill 调用成功率”从 95% 掉到 70%，问题就定位到了；如果 Skill 成功率没变、但“数据合并正确率”下降，问题就在另一处。若过程评测集指标未发生波动，但端到端交付率降低，则说明发生了未知异常，需要我们进一步挖掘和归因从而迭代评测集。</p>
+<p><strong>一个实用的经验</strong>：端到端评测集回答“要不要拉响警报”，过程评测集回答“警报响了该找谁”。只有端到端，你会陷入“知道坏了但不知道哪坏了”；只有过程，你会陷入“每个模块都达标但用户就是不满意”，二者相辅相成。</p>
+<p>再次强调，端到端评测集是站在用户视角建立的。也就是说当 Agent 功能逐渐增加之后，需要按照端到端的功能模块建立不同的端到端评测集。例如商家 Agent，门店经营是一个核心功能模块，由若干个 Skill 构成；门店百科又是一个核心功能模块，由查数 Skill 和门店知识库构成。这种情况应该分别建立端到端评测集。</p>
+<h4>2.1.3 评测集的分层拆解</h4>
+<p>过程评测集还可以继续往下拆。比如知识库相关的问题，可以单独沉淀成知识库评测集；具体 Skill 调用相关的问题，可以沉淀成 Skill 评测集。后面业务长出新的子场景，也可以继续往下拆。</p>
+<p><strong>评测集要随着 Agent 的功能发展、随着问题的出现而不断细化</strong>。以商家经营分析为例，可以拆成这样一棵树：</p>
+<p><img src="https://p1.meituan.net/meituantechblog/65b2b7ad74088c39b6cf610e2bde0294178583.png" alt=""></p>
+<p>拆解带来的一个额外收益是<strong>责任清晰</strong>。当过程评测集和组织分工对齐后，某一层的分数下降，就能直接找到对应的负责人，而不需要先开一轮会来确定“这是谁的问题”。</p>
+<blockquote>
+<p><strong>拆解的边界：不要过早拆得太细</strong></p>
+<p>分层拆解是演进的结果，不是设计的起点。《<a href="https://mp.weixin.qq.com/s/gZKWRqznB8sNBFf69fBIvw" target="_blank" rel="noopener noreferrer">Agent 评测漫谈</a>》博客中明确提到评测是一门实践科学，与其设计精妙的评测体系，不如抓住核心场景先跑起来。</p>
+<p>正确的顺序是：先建端到端评测集和核心模块的过程评测集跑起来，遇到“知道坏了但不知道哪坏了”的情况，再进一步丰富。让拆解被真实问题驱动，而不是被完备性焦虑驱动。这一点在《冷启动篇》会详细展开。</p>
+</blockquote>
+<h3>2.2 回测执行：把评测集用起来</h3>
+<p>Agent 发生变更时，评测集起到门控的作用。通过回测，我们能保证变更前后核心链路、核心指标的一致性。但“跑一遍评测集”和“建立有效的回测机制”之间还有距离。几个关键的工程考量：</p>
+<ul>
+<li><strong>多次试验（Trial）取稳定结论</strong>。大模型输出天然有随机性，同一个 Task 跑两次结果可能不同。实践中通常对每个 Task 运行多次试验，也就是我们常说的 Pass@k，用通过率（Pass Rate）而非单次通过与否作为结论。</li>
+<li><strong>分层门禁</strong>。不是所有 Rubric 都同等重要。安全类、数据准确性类的检查项应该是“一票否决”，任何一条不过就阻断发布；体验类、加分项则可以设置阈值。</li>
+<li><strong>接入研发流程才有约束力</strong>。真正有效的做法是把回测嵌入 CI/CD 或发布流程，让它成为一道自动执行的关卡。<strong>没有接入流程的门禁，本质上只是一个建议</strong>。</li>
+</ul>
+<blockquote>
+<p><strong>离线评测的固有局限</strong></p>
+<p>必须清醒认识到离线评测能力的边界。它只能发现已知的问题——评测集里没有的场景，回测永远测不出来。</p>
+<p>例如商家经营分析的场景：如果评测集里全是“制作 PPT”类任务，那么当用户开始大量提出“帮我对比三家门店的数据”这种新需求时，固定的离线评测集显然无法覆盖到新出现的 Case。</p>
+<p>这正是为什么完备的评测体系必须包含在线部分——离线负责守住已知，在线负责发现未知。</p>
+</blockquote>
+<h2>三、在线评测与在线监控：真实世界的反馈</h2>
+<p>离线评测做得再丰富多样，也是无法穷举所有场景的，而在线评测接受真实世界得分反馈，则可以弥补这部分短板。</p>
+<p>在线评测和在线监控处理的是线上真实运行时的质量观察。二者关注的层面不同，但有一块重要的交集 —— 巡检。</p>
+<ul>
+<li><strong>在线评测</strong>包括 AB、影子模式和巡检，用于在真实线上环境中观察 Agent 的效果。</li>
+<li><strong>在线监控</strong>则关注 Skill/Tool 成功率、失败率、Token 消耗、异常波动等运行指标。</li>
+</ul>
+<p>一个直观的区分：在线评测回答“<strong>系统工作得好不好</strong>”，在线监控回答“<strong>系统有没有在正常工作</strong>”。前者是质量视角，后者是运维视角。Skill 调用成功率 100% 但每次都返回了错误的数据，监控是绿的，评测是红的。</p>
+<h3>3.1 在线评测的三种手段</h3>
+<p><img src="https://p0.meituan.net/meituantechblog/2e3edbf06e17ee5de82fa07be2b1a43c281744.png" alt=""></p>
+<p><strong>三者的互补关系</strong>：影子模式在上线前用真实流量兜底，AB 在上线后确认业务价值，巡检在日常持续盯住基本盘。</p>
+<h3>3.2 巡检：两个模块的交集</h3>
+<p>巡检处在在线评测和在线监控的交集上，核心作用是持续监控线上 Agent 效果的稳定性。巡检是业务上把“线上质量观察”变成“持续可追踪过程”的常用手段。最常见的做法是从离线评测集中抽取一部分代表性的 Task 用于周期性检查线上 Agent 的表现，随着评测精细化，也可以单独维护一套巡检评测集。巡检同时具备两种属性：</p>
+<ul>
+<li><strong>评测属性</strong>：看某类能力有没有持续稳定，比如关键任务成功率是否低于预期。这是在做质量判断。</li>
+<li><strong>监控属性</strong>：把分数变化、失败样本和异常趋势沉淀下来，作为后续 Case 挖掘和归因的输入。这是在做信号产出。</li>
+</ul>
+<p>回到商家经营分析的例子，一套合理的巡检可以这样设计：</p>
+<p><img src="https://p0.meituan.net/meituantechblog/b60ef4dfd4e22d09e3e1f39339b4891f151153.png" alt=""></p>
+<h3>3.3 在线监控关注什么</h3>
+<p>在线监控关注的是运行指标，工程中常见的大量稳定性指标，都在在线监控的范围内。常见的监控维度包括：</p>
+<ul>
+<li><strong>可用性类</strong>：Skill/Tool 调用成功率、失败率、超时率、异常类型分布。这是最基础也最容易见效的一层。</li>
+<li><strong>成本类</strong>：Token 消耗、单任务平均步数、平均耗时。</li>
+<li><strong>行为监控类</strong>：任务类型分布、Skill 调用频次分布、平均对话轮次。这一层的价值在于发现用户结构的变化。当某类新任务的占比快速上升，往往意味着评测集需要扩充了。</li>
+</ul>
+<p>稳定性指标和行为监控类指标要放在一起看，才能得出有意义的结论。举例来说，任务完成率下降 5 个点，如果同时观察到某个 Skill 的失败率从 2% 涨到 15%，那结论极大概率是工程问题；如果 Skill 都正常，但“数据对比类”任务占比从 10% 涨到 35%，那结论是用户结构变了、Agent 在新场景上能力不足——这两种情况的应对完全不同。这就是 Case 挖掘和归因的范畴了。</p>
+<h2>四、Case 挖掘与归因：驱动双环演进的枢纽</h2>
+<p>Case 挖掘与归因主要承接在线评测和在线监控中暴露出来的问题线索，同时也接收线上反馈、真实样本采样和业务规则筛出的样本。</p>
+<p>职责分工上：<strong>Case 挖掘负责把样本收进 Case 池，归因负责继续往下定位，判断 Agent 流程里的核心问题点</strong>。</p>
+<p>这个模块是整个体系的枢纽，也是当下火热的“Agent 自进化”的核心切入点。</p>
+<h3>4.1 Case 挖掘的四大类来源</h3>
+<p><img src="https://p0.meituan.net/meituantechblog/e9c0b9a7153e2624de1e9a5b111bd43d387431.png" alt=""></p>
+<p><strong>四类来源需要搭配使用，因为它们的“盲区”不同</strong>。只靠线上反馈，你只能看到用户愿意抱怨的那部分问题；只靠监控，你只能看到能被指标刻画的问题；只靠规则挖掘，你只能看到自己已经想到的风险。<strong>随机采样是唯一能发现“你根本没想到的问题”的手段，虽然它成本最高、命中率最低，但不可省略</strong>。</p>
+<h3>4.2 Case 池的分化：Good Case 与 Bad Case</h3>
+<p>挖掘出来的样本进入 Case 池后，可以继续区分为 Good Case 和 Bad Case，分别沉淀成不同类型的资产：</p>
+<p><img src="https://p0.meituan.net/meituantechblog/74040e975f80bc89ae01b4009d0f63d6177828.png" alt=""></p>
+<p><strong>错题集是回报最直接的一类资产</strong>。它的逻辑很朴素：每一个曾经犯过的错，都不应该再犯第二次。</p>
+<p><strong>而黄金集的价值容易被低估</strong>。Bad Case 告诉你哪里不行，但它不能告诉你“到什么程度才算行”。没有黄金集，团队在讨论质量时只能各说各话；有了黄金集，“我们要做到这个水平”就变成了一个可以指着看的具体样本。</p>
+<h3>4.3 归因：从“这里出了问题”到“为什么出问题”</h3>
+<p>归因的目标，是定位 Agent 流程里的核心问题点。一个 Bad Case 只能说明“这里出了问题”，还不能说明“为什么出问题”。</p>
+<p>归因要继续判断问题发生在哪个环节：常见的做法是将 Agent 执行过程全链路铺开，通过 Trace 日志逐一定位问题点，这个过程与软件问题排查过程中看日志查 bug 高度雷同。正因如此归因高度依赖观测基建 Trace。这个过程可以由人工完成，也可以由机器辅助完成。</p>
+<p>一个可操作的归因分层，大致如下：</p>
+<p><img src="https://p0.meituan.net/meituantechblog/79c95bbaf080b412e7e1667e71e269c3394895.png" alt=""></p>
+<p>归因明确之后，正向 Case 一般可以归入评测集中的黄金集、挑战集；负向 Case 则会进入两条不同的路径：</p>
+<ul>
+<li>进入 Agent 效果迭代——修复、回测、上线。这是 Agent 迭代 Loop。</li>
+<li>校验 Rubric，如果现有 Rubric 没有准确刻画风险，则需要迭代 Rubric，同时将 Case 流入错题集。这是评测体系迭代 Loop。</li>
+</ul>
+<p><img src="https://p0.meituan.net/meituantechblog/c1afccc221b9f9a902a6306b5ea04845635261.png" alt=""></p>
+<p>很多团队只走了第一条路径——默认“评测说不行就是 Agent 不行”。这种默认假设会带来一个隐蔽的问题：<strong>Agent 会被优化成“迎合评测标准”，而不是“解决用户问题”</strong>。当评测标准本身有偏差时，优化得越努力，偏离真实需求越远。定期检查“是不是评测判错了”，是评测体系自我校准的必要动作。</p>
+<h2>五、Agent 观测基建：一切的地基</h2>
+<p>《<a href="https://mp.weixin.qq.com/s/gZKWRqznB8sNBFf69fBIvw" target="_blank" rel="noopener noreferrer">Agent 评测漫谈</a>》里有一个朴素的表述：<strong>看不见的问题，几乎不可能被稳定解决</strong>。观测的核心价值在于让 Agent 链路白盒化。这也是 Agent 研发公式“<strong>观测 + 评测 = 持续迭代</strong>”中，观测被放在第一位的原因。</p>
+<p>Agent 的一次执行是一条长链路：用户输入 → 意图理解 → 任务规划 → 工具/Skill 调用 → 环境交互 → 中间结果处理 → 策略调整 → 最终输出。只要其中任意一层出问题，最终效果都可能劣化。但如果系统只能看到“用户说了什么”和“最后回复了什么”，就几乎无法判断问题根因。这正是工业界发展出 Trace 系统的动因——将黑盒内部的推理过程进行全路径披露，把所有影响模型输出的输入信息都记录下来。前篇博客中已经充分论述了观测之于评测的意义，这里不再赘述。</p>
+<h3>5.1 观测基建的建设思路</h3>
+<p>从 Trace SDK，到如今集成在 OpenClaw、Claude Code 当中的 Trace Plugin。观测基建也随着 Agent Harness 高速迭代。</p>
+<p>综合前面的讨论，一套支撑完备评测体系的观测基建，至少应该具备以下能力：</p>
+<p><img src="https://p0.meituan.net/meituantechblog/98b7e613aab245d8559f0e5e6777c055123333.png" alt=""></p>
+<p>由于 Agent Harness 迭代太快，哪怕是开源社区，相关基建也是落后于需求的。观测是地基，但这不意味着必须项目启动之初就需要建立一套完备的系统 。实际落地过程中，观测指标、观测基建也是需要基于需求反向设计的。判断标准很简单：当你发现“想自动化判断某件事，但数据里没有”的时候，就是补埋点的时候。</p>
+<p>一个务实的建设思路是：<strong>先保证“最小可归因”</strong>——至少能拿到完整的模型调用输入输出和 Skill 调用记录，能凭 Trace 复现一个 Bad Case 到底发生了什么。这是冷启动阶段的底线，也是《冷启动篇》会重点讨论的内容。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/dba84fc3a0875da6dfc2dcfe1eb87e13929877.png" alt=""></p>
+<h2>六、评测体系成熟度自查</h2>
+<p>实践中，我们观察到各业务方评测体系三种最常见的“部分完备”形态。它们各自能解决一部分问题，但都存在明确的能力缺口。</p>
+<p><img src="https://p1.meituan.net/meituantechblog/88c7c7eb493a44d9333fd46fe1d0752e242249.png" alt=""></p>
+<p>第三种形态最值得警惕，因为它看起来最“完备”——既有评测集又有监控看板，汇报时数据很齐全。但由于缺少中间的枢纽，两套体系是割裂的：线上发现的问题回不到评测集，评测集的结论也解释不了线上现象。这种形态往往投入不少但收效有限，团队容易陷入“我们该做的都做了，为什么还是这样”的困惑。</p>
+<p>最后，把前面的讨论收敛成一张可以直接使用的自查表。建议对照打分，找出自己业务最短的那块板。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/a0dbd245630c72666c9a3046c05b50fa356851.png" alt=""></p>
+<blockquote>
+<p><strong>如何使用这张表</strong>？</p>
+<p>不要追求所有维度都达到 L3。不同业务阶段对应不同的合理水位：冷启动阶段，观测 L1 + 评测集 L1 + 回测门禁 L1 就足以支撑起最小闭环；扩量阶段，重点是把评测标准和在线评测推到 L2，少量指标推到 L3；全量运营阶段，才需要考虑 L3 的自动化与规模化。</p>
+<p>更有价值的用法是看“短板”和“错配”。如果你的评测标准已经到了 L3（机评规模化），但 Case 挖掘还在 L0（靠用户投诉），那么再精密的机评也只是在重复评测已知的样本——投入应该转向补齐挖掘能力。体系的能力上限，由最短的那块板决定。</p>
+</blockquote>
+<h2>七、小结与下一篇预告</h2>
+<p>回到本篇开头的问题：一套完备的评测体系长什么样？可以概括为<strong>四个模块、三种能力、两条 Loop、一套资产</strong>：</p>
+<ul>
+<li><strong>四个模块</strong>：离线评测负责守住已知、在线评测与监控负责发现未知、Case 挖掘与归因负责定位和分派、观测基建作为一切的地基。</li>
+<li><strong>三种能力</strong>：发现问题、定位问题、驱动演进。缺一项，体系就会在对应环节卡住。</li>
+<li><strong>两条 Loop</strong>：Agent 迭代 Loop 让能力持续提升，评测体系迭代 Loop 让量具持续校准。二者在 Case 挖掘与归因处共享入口，在评测集处共享资产。</li>
+<li><strong>一套资产</strong>： 覆盖 Agent 各功能模块的端到端和过程评测集，它是 Agent 效果的守门员，是评测体系真正的长期价值，是 Agent 效果稳定性的锚点，也是将来 Agent 自进化的地基。</li>
+</ul>
+<p>需要强调的是，这张全景图是“终局”而不是“起点”。没有任何一个团队应该照着这张图从头到尾建一遍——那既不现实，投入产出也不划算。</p>
+<p>《<a href="https://mp.weixin.qq.com/s/gZKWRqznB8sNBFf69fBIvw" target="_blank" rel="noopener noreferrer">Agent 评测漫谈</a>》里有一句话值得在这里重复：<strong>Agent 评测是一门实践科学，起步阶段“让数据飞轮高效运转起来”的意义，远大于“设计一个复杂精妙的评测体系”</strong>。全景图的价值在于让你在每个阶段都清楚：我现在处在哪里，下一步补哪一块收益最大，以及某一块暂时不做的代价是什么。</p>
+<p>那么起点在哪里？在一穷二白、没有评测集的冷启动阶段，如何实现评测飞轮的最小闭环？这正是下一篇《冷启动篇》将要回答的问题。</p>
+<h2>八、FAQ</h2>
+<p><strong>Q：Agent 离线评测集只用在回测吗，为什么不可以按照大模型迭代一样必须比上一次得分高才可以发版？</strong></p>
+<p>这个问题涉及到 Agent 的评测和大模型评测的核心差异，需要从两个方面回答。</p>
+<p>1、Agent 为什么不像基座模型一样打榜？基座模型提供的是通用能力，可以拆解出一系列的通用能力。提醒大家，大模型评测本身也是行业极其专业的领域。目前大家看到的大模型基座能力的评价指标体系是在过去三年中无数论文堆砌而来的。这三年基座模型 benchmark 的含义本身也发生了极大的变化。而 Agent 是服务于垂直业务领域的，最佳的 Agent 指标就是业务指标，所以对 Agent 而言，上线 AB 看业务指标变化是评价其能力的黄金标准。</p>
+<p>2、评测集可以拆分为必过集合和挑战集。显然在垂直业务领域里，挑战集的构建是极其困难的，非常容易跟不上 Agent 版本功能迭代。而必过集样本属于 Agent 核心功能，对于已知的问题必须尽可能解决才可以上线。所以日常工作中，经常会出现必考题（必过集）都会了，难题（挑战集）又见不到的情况。</p>
+<p>综上，Agent 离线评测更多是用在回测方面，真实效果的好坏直接通过线上 AB 看业务指标。</p>
+<p>补充：如果设立了挑战集，一定要及时更新拟合线上真实场景的分布，否则评测集不置信。</p>
+]]></content:encoded>
+      <enclosure url="https://p0.meituan.net/meituantechblog/714ba0bf48f2186bd418d3778da7e214293923.png" type="image/png"/>
+    </item>
+    <item>
+      <title>美团智播——数字人直播技术创新与实践</title>
+      <link>https://tech.meituan.com/2026/09/03/meituan-Digital-Human-practice.html</link>
+      <guid>https://tech.meituan.com/2026/09/03/meituan-Digital-Human-practice.html</guid>
+      <source url="https://tech.meituan.com/rss.xml">美团智播——数字人直播技术创新与实践</source>
+      <description>美团智播围绕 AI 主播「长得真→动得准→演得活→卖得好」构建了完整技术闭环：真人 1:1 复刻、换装换背景身份不跑偏；动作自然流畅，告别「木偶戏」；边说边动、音画一致；背后还有推理加速技术支撑万路并发开播，让普惠落地成为可能。</description>
+      <content:encoded><![CDATA[<h2>引言</h2>
+<p>随着大语言模型、生成式AI与多模态交互技术的快速发展，数字人直播已突破早期形象僵硬、交互单一的瓶颈，在本地生活、电商、文娱等领域展现出巨大的商业潜力。美团智播，是面向本地生活场景的AI数字人直播解决方案，融合大模型、数字人与多模态交互技术，提供丰富的行业专属数字人形象，支持真人1:1复刻与门店实景定制，30秒生成直播素材，3分钟完成开播配置，7×24小时稳定上播。过去一年，依托生成式AI技术，数字人直播月日均GTV同比增长82.12%，月日均观看人次同比增长163.44%，开播场次提升11倍，充分验证了AI数字人直播在本地生活商业闭环中的实际价值。</p>
+<p>2026年7月8日至10日，美团智播在中国互联网大会上完成行业首秀，以“实时交互数字人+直播带货数字人”为主题亮相科技互动展区。展区中，实时交互数字人通过秒级语音问答与观众自然对话，数字人直播间则让参会者发出“完全看不出是数字人”的感叹——这一亮相标志着美团智播正式从内部打磨走向行业舞台。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/a7c5a936998959a941d145ac3eebe7334801382.png" alt=""></p>
+<p><strong>如何让数字人直播达到真人级表现力，并满足大规模商业化落地的要求</strong>？本文将围绕美团智播的核心能力，系统介绍支撑产品的关键技术突破——涵盖高保真形象生成、自然动作驱动、语音手势协调、高效推理部署及系统架构设计，这些技术共同构成了数字人直播从“能用”到“好用”，再到“规模化量产”的完整技术闭环。凭借这些技术积累，美团智播荣获2026年度“中国多媒体企业创新技术奖”，这一奖项由中国计算机学会（CCF）和中国图象图形学学会（CSIG）指导，中国多媒体大会（ChinaMM）设立并颁发，是对美团在数字人直播领域自主创新能力的行业认可。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/5c6137dcb6b421eccd34216544e5425e2889038.png" alt=""></p>
+<h2>一、数字人直播的背景与挑战</h2>
+<h3>1.1 业务背景：百万商家的“成本-效率-体验”困境</h3>
+<p>美团连接数百万商家与数亿消费者，数字人直播正加速渗透商家日常运营。然而，商家直播面临四重现实困境：</p>
+<ol>
+<li><strong>准入门槛高</strong>：专业数字人形象定制动辄数万元，7×24小时真人主播团队的人力成本更是中小商家难以承受之重；</li>
+<li><strong>时效性要求苛刻</strong>：限时秒杀、突发热点、天气突变等本地生活场景要求直播内容“分钟级”响应，传统真人主播排班与内容制作的周期无法满足实时营销节奏。</li>
+<li><strong>形象与内容同质化</strong>：大量商家依赖通用数字人模板，主播形象千篇一律，缺乏与品牌调性匹配的专属感，难以建立差异化认知。</li>
+<li><strong>规模化部署成本高</strong>：数万商家同时开播，若每路独占大量GPU，推理成本将线性膨胀，数字人直播的普惠化落地无从谈起。</li>
+</ol>
+<p>更深层的问题是：现有大部分数字人方案普遍存在“一眼假”——面部僵硬、动作重复、手势与语音脱节，用户停留时长较真人主播明显偏低。如何让数字人直播媲美真人主播，是技术突破的核心方向。</p>
+<h3>1.2 技术挑战：高质量数字人直播的多维难题</h3>
+<p>数字人直播为上述问题提供了新思路，但要真正达到规模化商业可用，远非简单的视频生成任务，面临四大相互交织的技术挑战。</p>
+<p><strong>挑战一：形象高保真，从“一眼假”到“媲美真人”</strong></p>
+<p>任何面部僵硬、五官失调都会让观众一眼识破。更高要求在于：商家需要真人1:1复刻，以及换装、换背景时保持身份一致性。如何在生成与编辑全链路中同时保证高保真度与强一致性，是形象生成技术的核心难题。</p>
+<p><strong>挑战二：动作自然多样，从“木偶戏”到“真人感”</strong></p>
+<p>7×24小时直播对动作多样性要求极高。有限动作库循环播放导致观众疲劳、留存率下降；动态生成方案又面临质量不稳定、关节扭曲等问题。如何在单一模型中同时实现高质量与高多样性的动作生成，是长时直播的重大挑战。</p>
+<p><strong>挑战三：语音语义协调，从“念稿机器”到“音画一致”</strong></p>
+<p>优秀主播的手势与语义高度协调，现有技术能生成与节奏同步的自发性动作（点头、摆手），但无法产生与语义精准绑定的协调性手势。如何跨越语音与动作之间的“语义鸿沟”，是互动体验升级的关键瓶颈。</p>
+<p><strong>挑战四：规模化推理效率，从“单路昂贵”到“万路并发”</strong></p>
+<p>数字人直播系统是多智能体协同平台，如何在保证质量与实时性的前提下，高效协同多个子智能体，大幅压缩单路推理开销，是数字人直播走向普惠的最终门槛。</p>
+<h3>1.3 技术方案总览</h3>
+<p>面对上述挑战，美团智播自研关键技术，围绕数字人主播“<strong>长得真→动得准→演得活→卖得好</strong>”形成完整技术闭环，实现全链路跃升。</p>
+<ul>
+<li><strong>长得真</strong>：高保真数字人形象生成与编辑技术，协同攻克形象生成高保真、多元化难题；</li>
+<li><strong>动得准</strong>：文本驱动高质量动作生成技术，生成高可控、自然流畅的肢体动作，并通过动作迁移生成高表现力的数字人视频；</li>
+<li><strong>演得活</strong>：语音手势协调生成技术，跨越语音与动作的语义鸿沟，让手势与讲解形成语义级配合；</li>
+<li><strong>卖得好</strong>：面向规模化部署的Token压缩和推理加速技术，实现多智能体高效协同，打通万路并发瓶颈。</li>
+</ul>
+<p><img src="https://p0.meituan.net/meituantechblog/6e6ec9655dbf2465009cd322660f47688326272.png" alt=""></p>
+<h2>二、让AI主播“长得真”——高保真数字人形象生成与编辑</h2>
+<h3>2.1 产品痛点与需求</h3>
+<p>商家对数字人形象有三层递进需求：快速可用（3分钟定制开播）、高度个性化（真人1:1复刻）、灵活可编辑（换装换背景时保持身份一致）。过去的定制化图像生成方法面临身份与姿态耦合、微调耗时长、编辑破坏身份特征等核心问题。</p>
+<h3>2.2 结构解耦身份个性化与自奖励精准编辑</h3>
+<p>针对数字人生成中身份保真与灵活编辑的双重挑战，美团智播研发团队提出了结构解耦身份个性化（SDIP）和自奖励精准编辑（SREdit）技术方案。</p>
+<h4>2.2.1 结构解耦身份个性化</h4>
+<p>SDIP（Structure-Decoupled Identity Personalization）的核心思想是将姿态、身份、背景三个维度进行结构性解耦，包含两个核心模块：</p>
+<ul>
+<li><strong>身份与姿态精确分离模块</strong>：在Diffusion-Based主干网络中，通过结构残差注入，将身份特征以残差形式融入，避免姿态空间污染；空间解耦正则化损失，以面部为重点，显式约束身份特征的空间分布；区域动态掩码，隔离不同语义区域的特征流动。</li>
+<li><strong>细节保真度增强模块</strong>：为解决细节保真度不足问题，通过视觉参考增强器将参考图像高频细节注入生成，提升纹理还原度；结合掩码感知质量校正策略，对遮挡和边界区域进行精细化修正。</li>
+</ul>
+<h4>2.2.2 自奖励精准编辑</h4>
+<p>商家日常运营中常需对数字人进行局部编辑——换应季服装、匹配活动背景、调整妆容。核心约束是：编辑前后身份特征必须保持一致，不能“换了衣服就认不出人”。</p>
+<p>针对这一需求，团队提出了SREdit（Self-Rewarding Editing），被ACM MM 2026收录。其技术创新体现在三个层面：</p>
+<ol>
+<li><strong>SIA指令原子化</strong>：在MLLM-DiT架构中，将复杂编辑指令分解为原子级操作单元，每个原子对应明确的空间区域和编辑语义，避免语义模糊导致身份信息被意外修改。</li>
+<li><strong>空间奖励重加权</strong>：根据编辑区域的空间分布动态调整奖励权重——编辑区域给予较高编辑质量权重，非编辑区域给予较高保真度权重，引导模型在“大胆编辑”与“谨慎保持”间找到最优平衡。</li>
+<li><strong>认知闭合架构</strong>：同一模型既做编辑器又做评判器，消除了传统方案中编辑器与评判器分离导致的reward hacking（编辑器学会欺骗评判器）。当二者共享同一套视觉理解能力时，优化目标与实际质量目标达成内在一致。</li>
+</ol>
+<p>实验结果表明SREdit在公开数据集GEdit-Bench、ImgEdit-Bench、KRIS-Bench上整体性能提升2.5%～3.8%，视觉效果上在保持身份一致性的前提下达到了业界领先的编辑精度。</p>
+<p><img src="https://p1.meituan.net/meituantechblog/959782fd2232c0436542ae061fa6e8002167124.png" alt=""></p>
+<p>数字人图像生成与编辑效果示例：</p>
+<p><img src="https://p1.meituan.net/meituantechblog/3c8089deb4b463101df474cc644faa962454347.png" alt=""></p>
+<h2>三、让AI主播“动得准”——文本驱动高质量动作</h2>
+<h3>3.1 产品痛点与需求</h3>
+<p>7×24小时数字人直播介绍商品时，不同商品需要不同风格的动作配合，这对动作生成系统提出双重挑战：保证单个动作质量（流畅、自然、物理合理），同时保证长序列的多样性和可控性。</p>
+<h3>3.2 MoTiGA：多级因果LLM动作生成</h3>
+<p>美团智播团队提出的多级因果LLM动作生成MoTiGA（Motion generation via multi-level causal Transformers with LLM-Guided Alignment）方法，被<a href="https://cvpr.thecvf.com/virtual/2026/poster/39904" target="_blank" rel="noopener noreferrer">CVPR 2026收录</a>，MoTiGA将大语言模型的自回归生成范式引入人体动作生成，通过多级因果结构和偏好优化实现质量与效率的双重提升。</p>
+<ul>
+<li><strong>Causal RVQ-VAE</strong>：传统RVQ-VAE使用双向卷积，训练时模型可“看到未来”，推理时只能自回归生成，导致训练-推理不一致。MoTiGA将卷积全部替换为因果卷积，从根本上消除行为差异。重建FID从0.114降至0.031，质量提升超过72%。</li>
+<li><strong>Time-lagged Causal Prediction</strong>：标准自回归生成逐token串行，效率低。MoTiGA观察到RVQ不同量化层间存在时间滞后因果依赖——粗粒度层可直接指导细粒度层预测。基于这一观察，设计了多级因果预测架构，不同量化层token可并行生成，推理效率提升K倍，同时保持因果依赖正确性。</li>
+<li><strong>MHPO（Motion Human Preference Optimization）</strong>：业界首个将人类偏好优化引入动作生成的工作。团队在HumanML3D上构建了101,490组偏好对，采用类似DPO的策略直接在偏好数据上优化模型，使生成结果更符合人类对“自然动作”的主观判断。</li>
+</ul>
+<p>实验结果表明，MoTiGA在HumanML3D数据集上FID为0.041（较基线降低82.3%）、在KIT-ML数据集上FID为0.180（较基线降低64.7%），生成的动作序列与真实人体动作分布高度吻合，达到了接近真人的自然度与流畅度。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/7de71026dae7b743fdd2f44752d2cbbc3429406.png" alt=""></p>
+<h2>四、让AI主播“演得活”——语音手势协调生成</h2>
+<h3>4.1 产品痛点与需求</h3>
+<p>真人主播说“这款披萨用料非常足”时会张开双手比划量大，说“请看右边链接”时手指会指向右侧，这种语音与手势的协调是观众判断“数字人是否像真人”的重要线索。现有技术主要关注“自发性手势”（点头、摆手），缺乏与语义内容的深度绑定，无法精准生成“指向商品”、“比划大小”等协调性手势；在模型设计上，传统方案采用全局去噪架构，需等待整段语音结束后一次性生成全部动作，无法满足直播场景对实时性和无限时长的要求。</p>
+<h3>4.2 StreamingTalk：流式共语动作生成</h3>
+<p>StreamingTalk 的核心创新在于将全局去噪过程重构为流式因果生成架构，首次实现了非自发性协调动作的流式生成，支持数字人说话时实时、连续、可控地生成同步手势动作，论文已投稿AAAI 2027，其核心技术创新包括：</p>
+<ul>
+<li><strong>流式因果生成架构</strong>：通过下三角时间步调度将全序列去噪转化为逐chunk渐进输出，每个chunk独立提交，推理延迟与总时长无关；活跃窗口内采用双向注意力精炼动作细节，以前方已提交帧作为锚点约束连续性，计算量恒定不随序列增长，实现直播场景下“边说边动”的实时表演。</li>
+<li><strong>长序列稳定性保障</strong>：训练阶段采用Self-Forced Clean Anchoring策略，以模型自身预测替换真实锚点，模拟推理时的误差累积，弥合训练与推理的分布差异；同时引入尾部偏置采样，增加窗口末端帧的训练曝光，补偿滑动窗口的尾部覆盖不足。两者协同确保长时生成的手势质量不衰减、不漂移。</li>
+<li><strong>时变动作控制机制</strong>：每个chunk可绑定独立动作标签，在边界处动态切换表演风格；语音特征通过交叉注意力注入保证节拍同步，动作标签作为语义条件控制手势类型。两层条件协同，使手势既跟随语音节奏，又能根据内容动态切换——介绍产品时双手展示，讲优惠时兴奋挥手，回答问题时托腮思考，全程在一条连续流中平滑过渡。</li>
+</ul>
+<p>StreamingTalk首次验证了流式Flow Matching可在恒定延迟、恒定内存下生成无限长高质量手势流，为数字人从“能动但僵硬”升级为“实时演、持久演、灵活演”的高表现力提供了核心技术支撑。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/2bdb509584ffd1f2dc1f32e04ff57c1c3125939.png" alt=""></p>
+<h2>五、让AI主播“卖得好”——高效推理支撑万路并发</h2>
+<h3>5.1 产品痛点与需求</h3>
+<p>美团智播直播场景具有显著的规模化特征：数以万计的商家需要同时开播，每一路直播都需要实时的视觉理解、智能交互和画面渲染。按照传统的多模态大模型推理方式，每一路直播需要处理大量的视觉token，单路GPU占用高昂；当并发量达到万路级别时，大模型推理成本将成为产品普惠化的根本瓶颈。因此，如何在保证生成质量的前提下大幅压缩视觉推理开销，是产品普惠化的关键。</p>
+<h3>5.2 Glance2Gaze：扫视融合与注视压缩</h3>
+<p>美团智播团队提出的Glance2Gaze方法被<a href="https://neurips.cc/virtual/2025/loc/san-diego/poster/116704" target="_blank" rel="noopener noreferrer">NeurIPS 2025收录</a>，通过创新的视觉Token压缩策略，在几乎不损失模型性能的前提下实现了75%的Token压缩率和2.5倍的推理加速。其命名灵感来自人类视觉系统的“扫视-注视”机制：人眼首先通过快速扫视（glance）获取场景全局信息，然后通过注视（gaze）聚焦到关键区域获取细节信息。</p>
+<ul>
+<li><strong>Glance Fusion</strong>：传统的视觉编码器（如ViT）通常只使用最后一层的输出作为视觉表征，丢弃了中间层的丰富信息。Glance Fusion通过多层特征融合机制，将ViT不同深度层的特征进行聚合，在不增加输出token数量的前提下获得更丰富的视觉表征。这相当于在“扫视”阶段获取了更全面的场景信息，为后续的压缩提供了更好的信息冗余基础。</li>
+<li><strong>Gaze Compression</strong>：不同于传统的在视觉编码器输出后进行独立压缩的方案，Gaze Compression将压缩模块直接嵌入到LLM的decoder层中，实现了视觉token的渐进式压缩——从576个token逐步压缩为288个，再进一步压缩为144个。</li>
+</ul>
+<p>这种“嵌入式渐进压缩”设计有三个关键优势：压缩过程能够利用LLM的语义理解能力，更智能地判断哪些视觉信息冗余、哪些关键；渐进压缩避免了一次性大幅压缩导致的信息断崖式丢失；完全兼容FlashAttention-2，可以直接部署到现有推理基础设施，无需额外工程适配。</p>
+<p><img src="https://p1.meituan.net/meituantechblog/94935135de1f6c9bdfa96bb1422f74594257313.png" alt=""></p>
+<p><strong>实验结果表明</strong>：Glance2Gaze实现了75%的视觉token压缩（576→144），模型在各项视觉理解任务上的性能损失控制在2%以内，推理速度提升2.5倍，将并发成本降低了60%以上。</p>
+<p><img src="https://p1.meituan.net/meituantechblog/28c8d447c4324595f6be44b3759943964792451.png" alt=""></p>
+<h2>六、系统架构：双引擎驱动的智播技术中台</h2>
+<p>单项技术的突破只是基础，如何将多项技术整合为一个高效协同的系统，才是产品落地的关键。美团智播在系统层面构建了“双引擎驱动”的技术中台架构，实现实时交互与内容量产的双重能力。</p>
+<h3>6.1 实时交互引擎</h3>
+<p>实时交互引擎是美团智播应对“用户即时互动”场景的核心组件。当观众在直播间提出问题或触发互动时，系统需要在极短时间内完成“语义理解→回答生成→动作合成→画面渲染”的全链路响应。美团智播的实时交互引擎实现了全双工通信，系统并行调度形象、文本生成、数字人驱动等核心能力，通过流式连接，前一阶段部分输出即触发下一阶段计算，最大限度压缩总体延迟。</p>
+<h3>6.2 内容量产引擎</h3>
+<p>对于日常直播中的商品讲解、活动介绍等“计划性内容”，美团智播构建了多智能体协同的内容量产引擎。该引擎采用“创意-检索-思考-生成-评测”的五阶段协同架构：</p>
+<ul>
+<li><strong>创意智能体</strong>：基于商品特征和直播风格需求，生成讲解创意方案；</li>
+<li><strong>检索智能体</strong>：从知识库中检索相关的商品信息、卖点话术和成功案例；</li>
+<li><strong>思考智能体</strong>：整合创意方案和检索结果，规划完整的讲解逻辑和动作脚本；</li>
+<li><strong>生成智能体</strong>：调度形象生成、视频生成、数字人驱动等技术模块，生成完整的视频内容；</li>
+<li><strong>评测智能体</strong>：对生成内容进行质量评估，不达标则反馈至上游重新生成。</li>
+</ul>
+<p>这种多智能体协同架构使得内容生产实现了“工业化流水线”模式，单条商品讲解视频的生成时间从人工制作的数小时缩短至分钟级，且质量稳定可控。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/97c6cd084e1c495d62750ee986d2cf28148406.png" alt=""></p>
+<h3>6.3 知识库支撑体系，“形象-动作-场景”解耦复用架构</h3>
+<p>支撑双引擎高效运转的，是美团智播精心构建的三大知识库：</p>
+<ul>
+<li><strong>穿搭美学库</strong>：沉淀行业搭配规则与色彩美学知识，指导数字人形象的服装选择和风格搭配；</li>
+<li><strong>直播专家知识库</strong>：汇集优秀真人主播的讲解技巧与互动经验，为AI主播的内容生成提供专业参考；</li>
+<li><strong>AI运营大脑</strong>：基于海量直播经营数据构建智能决策系统，实时分析直播间指标，动态调整商品切换、优惠触发、节奏把控等策略，形成数据驱动的持续优化闭环。</li>
+</ul>
+<p>美团智播在系统设计上遵循了“形象-动作-场景”三维解耦的核心原则。数字人形象、肢体动作、直播场景三个维度完全独立管理，可以自由组合复用。这种解耦架构使得同一形象可搭配不同动作风格、同一套动作可应用到不同形象、同一场景可快速切换不同主播，组合式复用大幅降低了内容生产的边际成本，使“千人千面”的个性化直播成为可能。</p>
+<h2>七、总结与未来展望</h2>
+<p>美团智播已在多个业务线实现规模化落地，核心指标表现亮眼：定制化数字人模特从需求到上线仅需3小时，相比传统的定制拍摄效率提升超10倍；商家闲时交易额平均提升7.3%，7×24小时不间断开播有效填补真人主播休息时段的流量空白；整体开播效率提升60%，AI自动生成话术、装修直播间、触发营销动作，将商家从繁琐的直播准备中解放出来。</p>
+<p>展望未来，美团智播将在以下方向持续演进：</p>
+<ul>
+<li><strong>情感表达与个性化交互</strong>：未来数字人主播将具备情感计算能力，面对用户的不同反馈给予恰当的情感回应。</li>
+<li><strong>自适应风格迁移</strong>：基于行业、品牌、时段的差异化需求，数字人主播将自动调节表达风格。</li>
+<li><strong>高表现力实时交互</strong>：持续优化生成和渲染管线，向高表现力的实时交互产品形态迈进。</li>
+</ul>
+<p><strong>参考文献</strong>：</p>
+<ul>
+<li>[1] Chen X, Bao Q, Liu X, et al. Multi-level Causal LLM-based Text-to-Motion Generation with Human Alignment. CVPR 2026.</li>
+<li>[2] Chen J, Liu H, Ao Y, et al. Glance2Gaze: Efficient Vision-Language Models from Glance Fusion to Gaze Compression. NeurIPS 2025.</li>
+<li>[3]  Wang Y,  Bao Q, Ao Y, et al. SREdit: A Self-Rewarding Framework with Intrinsically Aligned Critic for Image Editing. ACM MM 2026.</li>
+<li>[4] Zhang Z, Liu K, Chen Z, et al. InfVSR: Toward Consistency-Driven Streaming Generative Video Super-Resolution. ICML 2026.</li>
+<li>[5] Fang F, Yang S, Yang W. CoordSpeaker: Exploiting Gesture Captioning for Coordinated Caption-Empowered Co-Speech Gesture Generation. CVPR 2026.</li>
+<li>[6] Chen X, Liu W, Bao Q, et al. Motion Capture from Inertial and Vision Sensors [J]. IEEE Transactions on Multimedia, 2026.</li>
+<li>[7] Liu H, Bao Q, Chen X, et al. Stable Layout Image Diffusion for Content-Aware Layout Generation. ICASSP 2026.</li>
+</ul>
+]]></content:encoded>
+      <enclosure url="https://p0.meituan.net/meituantechblog/a7c5a936998959a941d145ac3eebe7334801382.png" type="image/png"/>
+    </item>
+    <item>
+      <title>GeoRA: 为RLVR设计的LoRA——ACL 2026杰出论文解析</title>
+      <link>https://tech.meituan.com/2026/08/27/ACL-Outstanding-Paper-GeoRA.html</link>
+      <guid>https://tech.meituan.com/2026/08/27/ACL-Outstanding-Paper-GeoRA.html</guid>
+      <source url="https://tech.meituan.com/rss.xml">GeoRA: 为RLVR设计的LoRA——ACL 2026杰出论文解析</source>
+      <description>ACL 2026杰出论文奖（Outstanding Paper）揭晓，全球共 18 篇入选，其中包含美团履约技术团队的1篇论文。本文介绍了一种专为 RLVR 设计的低秩训练方法，以及它在业务 Agentic RL 中的落地经验。</description>
+      <content:encoded><![CDATA[<blockquote>
+<p>ACL（Annual Meeting of the Association for Computational Linguistics）是计算语言学和自然语言处理（NLP）领域的国际顶级学术会议，是CCF-A类会议，也是中国计算机学会推荐的自然语言处理方向最高等级国际学术会议。ACL 2026杰出论文奖（Outstanding Paper）在圣地亚哥揭晓，全球共 <a href="https://msukhareva.substack.com/p/outstanding-paper-awards-of-acl-2026" target="_blank" rel="noopener noreferrer">18 篇入选</a>，美团履约技术团队的《GeoRA:Geometry-Aware Low-Rank Adaptation for RLVR》 就是其中之一。</p>
+</blockquote>
+<ul>
+<li><strong>论文下载</strong>：<a href="https://aclanthology.org/2026.acl-long.1110/" target="_blank" rel="noopener noreferrer">GeoRA：Geometry-Aware Low-Rank Adaptation for RLVR</a></li>
+<li><strong>讲解视频</strong>：<a href="https://weixin.qq.com/sph/A0tqJo3kVz" target="_blank" rel="noopener noreferrer">ACL2026&nbsp;杰出论文分享（受智源社区邀请）</a></li>
+</ul>
+<p>RLVR已经成为提升大模型推理能力的关键范式，但它的训练开销较高，于是一个自然的技术就是用 LoRA 这类参数高效微调方法来做 RLVR。但是，LoRA 及其变体几乎都是在 SFT 场景下建立并验证的。而近期一系列机制研究表明，RLVR 与 SFT 的优化几何存在本质差异：RLVR 则更像一次受约束的优化，有效更新分散在稀疏的子空间中，并倾向于避开预训练权重的主方向。因此，把为 SFT 设计的先验直接搬到 RLVR 上，就构成了几何错位，后果是效果欠优、能力遗忘甚至训练崩溃。</p>
+<p>针对这个问题，美团与北京大学的研究者提出了 GeoRA（Geometry-Aware Low-Rank Adaptation），把低秩适配显式地对齐到 RLVR 的更新几何上：先用几何先验定位出 RLVR 偏好的稀疏更新区域，再用 SVD（奇异值分解）把它压缩成低秩稠密的适配器。在 1.5B 到 32B 的 Qwen 与 Llama 模型上，GeoRA 在数学、医学、代码三类 RLVR 任务上稳定优于流行的低秩基线。该工作已被 ACL 2026 接收为杰出论文（Outstanding Paper）。</p>
+<p>本文介绍了一种专为 RLVR 设计的低秩训练方法，以及它在业务 Agentic RL 中的落地经验。</p>
+<h2>01 背景、洞察和目标</h2>
+<p>以 OpenAI o1、DeepSeek-R1 为代表的大型推理模型，把 RLVR 确立为解锁复杂推理能力的关键范式。要理解为什么现有 PEFT 方法在这个范式下不够好，得先看清 RLVR 的更新究竟长什么样。</p>
+<h3>1.1 RLVR的优化几何</h3>
+<p>近期一批机制分析工作勾勒出了 SFT 与 RLVR 的分野，表明两者的优化几何存在本质差异：SFT 通过改写权重的主方向来显式注入新信息，RLVR 更像一次受约束的优化，它靠奖励诱导的采样偏置放大模型推理行为，有效更新分散在稀疏的子空间中，并倾向于避开预训练权重的主方向。这个画像还有另一面——RLVR 对更新稳定性敏感，它需要在类信赖域边界内做策略更新，过于激进或落在主方向上的更新则容易引发谱漂移、探索多样性坍塌乃至训练崩溃。</p>
+<h3>1.2 现有PEFT的错位</h3>
+<p><strong>几何错位</strong>。LoRA 及其变体是当前的事实标准，它们的一个关键差异在于采用了什么谱先验：LoRA 用高斯和全零初始化，与预训练权重无关；PiSSA 对原始权重做 SVD，把可训练预算都分配给主奇异方向；MiLoRA 则取尾部奇异方向。这些先验主要在 SFT 场景下被设计和验证，没有考虑上一节描述的 RLVR 更新规律。以 PiSSA 为例，它把更新强行推到主成分上的强归纳偏置，恰好与 RLVR 偏好的子空间相冲突，这也预示了实验中更容易崩溃的现象。</p>
+<p><strong>工程错位</strong>。一种直观的做法是：既然 RLVR 只更新一小部分参数，那直接对这个子空间做稀疏微调就好了。这种方式在更新模式上确实更契合 RLVR 的偏好，但现代 GPU 对非结构化稀疏计算并不高效，减少参数量并不意味着效率提升。本文的效率实验里，稀疏微调把训练参数降低 68.0%，训练耗时却增加了 10.8%。</p>
+<h3>1.3 GeoRA 的目标</h3>
+<p>一边是计算友好但几何不对，一边是几何对但算不快。GeoRA 要同时解决这两个错位，目标即定位契合 RLVR 的稀疏子空间，用低秩稠密的方式去训练它。</p>
+<h2>02 方法：GeoRA 的构造</h2>
+<p>GeoRA 可以拆成三个步骤：</p>
+<ul>
+<li><strong>构造几何子空间</strong>：基于谱先验和欧氏先验，从预训练权重中筛出更稳定、更可塑的参数区域。</li>
+<li><strong>低秩近似构造适配</strong>器：用 SVD 对几何子空间做低秩近似，用以初始化低秩适配器。</li>
+<li><strong>建立残差锚点</strong>：将残差权重冻结，使模型初始化时函数不变，平滑冷启动并保护预训练结构。</li>
+</ul>
+<p>整个过程只在训练开始前执行一次，属于一次性预处理；训练阶段的计算图与标准 LoRA 完全一致。</p>
+<h3>2.1 构造几何子空间</h3>
+<p>我们用两个互补的掩码（Mask）从预训练权重矩阵 W 中筛选参数区域，两者共用同一个稀疏率 ρ。</p>
+<ul>
+<li>谱先验 M_Spec 强调稳定性。 先对 W 做秩为 r 的低秩近似得到 Ŵ_r，然后选出 Ŵ_r 中幅值最小的 ρ 比例位置。直觉上，主成分中的高幅值分量也是高曲率区域，改动它们容易破坏预训练结构；把更新限制在低幅值区域，可以改善 RLVR 下的谱稳定性。</li>
+<li>欧氏先验 M_Euc 强调可塑性。 直接在原始权重 W 上选出幅值最小的 ρ 比例位置。这些接近零的参数在预训练中被「用得少」，可调整空间大，能为训练保留足够的自由度。</li>
+</ul>
+<p>最终的几何约束矩阵取两者的并集：W_Geo = W ⊙ (M_Spec ∪ M_Euc)。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/97ea31d07a6d2933012521da83d6af45614059.png" alt=""></p>
+<p>两个掩码看起来规则相似，实际选出的参数集合却很少重叠。例如，在 Qwen3-8B 上取 ρ = 0.2，两者各选中 20.0% 的参数，但交集只有 4.55%，Jaccard 相似度仅 0.128。这说明它们捕捉的是两类不同的参数区域，是互补而非冗余关系，论文中的消融实验也印证了这一点：去掉任何一个先验都会带来性能下降。</p>
+<h3>2.2 低秩近似构造适配器</h3>
+<p>拿到 W_Geo 之后，对它做 SVD：</p>
+<p>W_Geo = U_Geo Σ_Geo V_Geoᵀ</p>
+<p>取前 r 个奇异分量来初始化两个低秩矩阵：</p>
+<p>A_Geo = Σ_Geo[:r,:r]^(1/2) · V_Geo[:,:r]ᵀ</p>
+<p>B_Geo = U_Geo[:,:r] · Σ_Geo[:r,:r]^(1/2)</p>
+<p>这样 B_Geo A_Geo 就是 W_Geo 的最优秩-r 近似（Eckart–Young 定理保证了 Frobenius 范数下的最优性）。</p>
+<p>这里有一个容易被忽略的要点：GeoRA 取的是 W_Geo 的 top-r 方向，而不是原始权重 W 的 top-r。适配对象的变化，是 GeoRA 与 PiSSA / MiLoRA 的核心区别。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/9fc366e0eaea06234226546ab3d0deed658780.png" alt=""></p>
+<p>从这个角度看，四种方法的区别可以概括为一句话：LoRA 不看权重，PiSSA 看主方向，MiLoRA 看尾方向，GeoRA 先换一个更合适的适配对象，再在其中取主方向。</p>
+<h3>2.3 建立残差锚点</h3>
+<p>最后一步是把剩余权重冻结。按照 LoRA 的缩放约定计算残差矩阵：</p>
+<p>W_res = W − (α / r) · B_Geo A_Geo</p>
+<p>前向传播时，W_res 冻结，只有适配器可训练：</p>
+<p>h = W_res x + (α / r) · B_Geo A_Geo x</p>
+<p>这个设计带来两个性质。一是<strong>初始化时函数不变</strong>，因为两项之和恰好等于 W x，训练启动时模型输出不会突变，避免了冷启动阶段的策略抖动——这对 RLVR 很重要，初期的输出扰动会污染 rollout 采样分布。二是<strong>施加了结构约束</strong>：优化器只能在 A_Geo、B_Geo 参数化的流形上更新，W_res 作为稳定锚点，防止预训练表示被破坏。</p>
+<h2>03 实验验证</h2>
+<p>主实验在 DeepMath-103K 上用 GRPO 算法对 Qwen3-8B 和 Llama-3.1-8B 做数学 RLVR，对比对象包括 LoRA、PiSSA、MiLoRA、稀疏微调（SparseFT）和全参微调（FullFT）。同时在 4B 与 1.5B 模型上用 GSM8K 做了规模验证。</p>
+<h3>3.1 数学推理与分布外能力</h3>
+<p><img src="https://p0.meituan.net/meituantechblog/0d373b37c6b935dde9f9f927654cd10c682336.png" alt=""></p>
+<ul>
+<li>在分布内（ID）的数学基准上，GeoRA 在两个骨干模型上都取得了最强的整体表现，对低秩基线的领先在竞赛难度的基准上尤为一致——Qwen3-8B 的 AIME24 达到 23.75%，甚至略高于全参微调。</li>
+<li>分布外（OOD）结果更值得关注：全参微调在 IFEval、TruthfulQA 上都出现了明显回退，而 GeoRA 基本无损，HumanEval 反而从 76.83 提升到 82.93。</li>
+</ul>
+<p>这说明在几何对齐的子空间更新，可以在提升目标域推理能力的同时，显著减少对既有能力的遗忘。</p>
+<h3>3.2 医学与代码领域</h3>
+<p>为了确认收益不局限于数学，我们在医学和代码场景做了扩展实验。</p>
+<p><img src="https://p1.meituan.net/meituantechblog/fbe72b7fd8ec4fc3828df2c2191ae086295061.png" alt=""></p>
+<p>两个领域的结论一致：GeoRA 稳定优于低秩基线，并与全参微调相当。</p>
+<h3>3.3 收敛效率与稳定性</h3>
+<p><img src="https://p0.meituan.net/meituantechblog/d6f32366d31130f10569dba60bd0ae0b509457.png" alt=""></p>
+<ul>
+<li><strong>收敛效率更高</strong>。在训练动态上，GeoRA 全程保持领先，并且达到高位性能的时间点显著早于其他低秩基线。</li>
+<li><strong>超参鲁棒性更强</strong>。这里以学习率为例，GeoRA 在很宽的区间内都维持高奖励，其他方法在大学习率下明显下滑。这意味着实践中 GeoRA 无需精心超参调优。</li>
+</ul>
+<h3>3.4 计算效率</h3>
+<p><img src="https://p0.meituan.net/meituantechblog/f22ced983bec844710b9f780989a5b01202612.png" alt=""></p>
+<p>相比全参微调，GeoRA 使可训练参数降低 99.5%，单步耗时降低 19.9%，显存占用降低 28.5%。对照 SparseFT 的数据可以看得更清楚：它虽然把参数降了 68.0%，但单步耗时反而上升了 10.8%。GeoRA 的关键工程价值，就在于<strong>把几何先验落成了稠密低秩计算</strong>，因此参数效率能够真正转化为速度与显存收益。</p>
+<h3>3.5 低秩结构分析</h3>
+<p>我们进一步做了结构性分析：W_Geo 是一个稀疏矩阵，把它压缩成秩 r 的形式，为什么损失是可控的？我们对奇异值谱做了三组分析来回答。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/f6cc085ce5051d8e89d535ece7676fd0464791.png" alt=""></p>
+<ul>
+<li><strong>稀疏本身不带来低秩性</strong>。作为对照，我们先构造了两个不同稠密度的随机噪声矩阵。两者的奇异值谱几乎重叠，都呈现相对平缓的衰减，说明稀疏本身依然近似各向同性，没有可利用的主方向。</li>
+<li><strong>W_Geo 具有低秩特性</strong>。图中 GeoRA Weight（W_Geo）的谱形与预训练权重类似，大部分谱能量集中在少数前导分量上。这说明被选中的区域继承了结构化、可压缩的低秩形态。</li>
+<li><strong>全参 RLVR 的实际更新也是低秩的</strong>。我们直接检验了 ΔW = W_FullFT − W_Pretrain，它也呈现出高度可压缩的重尾谱。</li>
+</ul>
+<p>三组分析合起来给出了 GeoRA 的结构依据：低秩特性是 RLVR 具备的<strong>内在属性</strong>。这也解释了为什么 GeoRA 只训练 0.5% 的参数就能与全参微调效果相当——它逼近的正是 RLVR 更新本身的形态。</p>
+<h2>04 业务应用</h2>
+<p>GeoRA 这个工作的出发点不是发论文，而是实际业务中对高效强化学习的需求。我们所处的场景是 AI 骑手招聘：由 Agent 主动触达和跟进候选人，在多轮沟通中识别其意愿、顾虑与决策卡点，针对性地制定下一步策略，进而把候选人逐步推进到面试和入职。过程上这需要类似于销售的情商、策略、话术和临场应变；目标和结果却明确、可验证（约面/入职/ROI），很适合用 RLVR 来优化；而这一垂直域场景也有着特别的训练需求组合：</p>
+<ul>
+<li><strong>基模大、上下文长</strong>。这一 Agent 对基础智能和长程能力要求较高：需要建立在大尺寸基模之上，且单条轨迹的上下文很长，强化学习的资源开销可观。</li>
+<li><strong>增量能力规模不大</strong>。垂直域需要额外构建的知识和能力规模通常不大，训练数据量远小于基模，低秩适配的容量基本足够承载。</li>
+</ul>
+<p>一边是训练开销高，一边是增量容量小，这正是面向 RLVR 的低秩高效训练的用武之地。事实上，最早让我们怀疑「为 SFT 设计的低秩先验未必适合 RLVR」的，也是业务训练中的体感：LoRA、PiSSA、MiLoRA 之间效果差异明显，学习率调大训练就不稳甚至崩掉。这说明初始化的几何先验在 RLVR 下是一个大变量，存在优化空间。目前 GeoRA 正在 AI 招聘场景中落地，Agentic RL 实验效果：</p>
+<p><strong>效果</strong>：与全参训练相当，相比 LoRA 提升约 12%。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/4a77d67232c2f1c4067e0265c7628b6544485.png" alt=""></p>
+<p><strong>效率</strong>：与 LoRA 相当，显存相比全参训练降低 54%，若配合 QLoRA 等量化方法可进一步降低。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/ba7126f18766590433a80cd0c753f7e969121.png" alt=""></p>
+<p>可见，GeoRA 用 LoRA 的训练成本取得了全参的优化效果，这正是它的应用价值。</p>
+<p>落地时还有两点经验，也供同样想在 RLVR 中应用的同学参考：</p>
+<ul>
+<li><strong>随机 SVD 初始化</strong>。SVD 初始化是一次性的预处理，并且由于只需要前 r 个奇异分量，可以用随机 SVD（Randomized SVD）加速，即用随机投影把矩阵压到一个小得多的空间去做分解，即使 72B 模型处理也只需不到 1 分钟。</li>
+<li><strong>省略参考模型存储</strong>。RLVR 需要一个参考策略来算 KL，常规做法是再存一份完整权重。而 2.3 节的函数不变性质给出了免费的替代方案：原始权重 = 残差权重 + 初始适配器，因此只要在 actor 内多留一份冻结的初始适配器（低秩，开销很小），就能现算出准确的参考策略。</li>
+</ul>
+<h2>05 总结</h2>
+<p>GeoRA 是首个面向 RLVR 的优化几何设计的低秩训练方法，其核心贡献可以归纳为三点：</p>
+<ul>
+<li><strong>揭示了 RLVR 更新的结构</strong>：RLVR 的更新子空间稀疏但各向异性可压缩，这是低秩适配成立的前提。</li>
+<li><strong>提出定位加压缩的适配方法</strong>：用谱先验与欧氏先验定位 RLVR 偏好的更新区域，再用截断 SVD 压缩为低秩适配器、冻结残差作锚点，这避免了几何错位与稀疏计算的效率瓶颈。</li>
+<li><strong>广泛实验验证了优越性能</strong>：从 1.5B 到 32B 的模型，在数学、医学、代码场景的 RLVR 上验证方法稳定优于基线，分布外遗忘更少，兼具速度与显存的优越性。</li>
+</ul>
+<p>除论文实验之外，GeoRA 也在实际业务场景 Agentic RL 中验证，以更低的成本取得更好的训练效果。我们会继续把它推广到更多同类场景，也希望该方法能为 RLVR 的高效训练提供一个新的参考。</p>
+]]></content:encoded>
+      <enclosure url="https://p0.meituan.net/meituantechblog/97ea31d07a6d2933012521da83d6af45614059.png" type="image/png"/>
+    </item>
+    <item>
+      <title>美团搜索3.0：LLM 语义表征在排序模型的探索与应用</title>
+      <link>https://tech.meituan.com/2026/08/20/01-meituan-Query-3.0.html</link>
+      <guid>https://tech.meituan.com/2026/08/20/01-meituan-Query-3.0.html</guid>
+      <source url="https://tech.meituan.com/rss.xml">美团搜索3.0：LLM 语义表征在排序模型的探索与应用</source>
+      <description>美团搜索团队正依托团垂融合新架构与生成式大模型新技术，全面重构本地生活搜索底座。本系列技术博客将持续介绍美团搜索 3.0 的技术探索，本文聚焦 LLM 语义表征在服务零售排序场景上的三期实践——从单点特征验证到系统性表征体系构建，再到跨场景迁移复用，探索语义匹配信号在搜索排序中的应用路径。</description>
+      <content:encoded><![CDATA[<blockquote>
+<p>在大语言模型（LLM）技术的深刻影响下，搜索引擎正经历第三次范式跃迁：从 1.0 时代的“关键词文本匹配”，到 2.0 时代的“行为统计与个性化搜索”，再到&nbsp;3.0&nbsp;时代向“复杂意图理解与认知决策”的全面进化。</p>
+<p>美团搜索团队正依托团垂融合新架构与生成式大模型新技术，全面重构本地生活搜索底座。本系列技术博客将持续介绍美团搜索 3.0&nbsp;的技术探索，本文聚焦 LLM 语义表征在服务零售排序场景上的三期实践——从单点特征验证到系统性表征体系构建，再到跨场景迁移复用，探索语义匹配信号在搜索排序中的应用路径。</p>
+</blockquote>
+<h2>一、背景与动机</h2>
+<p>服务零售是将服务销售给最终消费者的商业活动，与之对应的概念为商品零售。服务零售和商品零售是美团零售业务的两个主要组成部分。</p>
+<p>在美团搜索场景下，相较于到家和其他到店业务，服务零售具有以下显著特点：</p>
+<ul>
+<li><strong>品类丰富</strong>：覆盖丽人、休闲娱乐、家政、进场零售等众多细分行业。</li>
+<li><strong>搜索需求类型丰富</strong>：交易型、信息型、留资型并存。</li>
+<li><strong>供给非标准化程度高</strong>：交易内容的多维组合性（e.g. 券、时间、位次、场次、空间、技师等）以及基于"人"和"场所"进行履约，共同促使供给的个性化和非标准化。</li>
+</ul>
+<p>传统精排模型的语义建模高度依赖文本匹配，但这类特征构建成本高、泛化能力弱，在面对服务零售大量长尾品类、复杂 Query 意图时尤为明显。例如，"宠物 SPA+洗澡"这个 Query 对应的商品名称可能是"萌宠清洁护理套餐"、"春节大扫除"这个 Query 对应的商品名称可能是"深度保洁服务套餐"，在这些 Case 中，搜索词和供给在文字上几乎没有重叠，但语义上是高度相关的。</p>
+<p>这类语义 Gap 在美团服务零售搜索场景（生活服务、休闲娱乐等）尤为突出。服务零售的品类长尾分散、商品描述非结构化、Query 意图复杂多样，传统特征工程难以覆盖。而大语言模型（LLM）在语义理解方面的能力成熟度正在快速提升，给我们带来了新的解题思路。</p>
+<p>从 2025 年 Q4 到 2026 年 Q2，服务零售搜索排序团队系统性地探索了 LLM 在精排模型中的应用，核心方向是用 LLM 为搜索词（Query）、商家（POI）和商品（Deal）生成高质量的语义向量表征，将语义匹配信息以 cosine 相似度的形式注入排序模型，弥补传统特征在语义理解上的不足。经过三期迭代，累计完成 3 个 Launch Review（LR），均已完成全量上线，带来了显著的线上收益。</p>
+<p>下图展示了三期技术演进的整体脉络。每一期都在前一期的基础上进行系统性升级，从验证可行性到全面优化再到跨模块迁移复用，逐步构建起一套完整的语义表征体系。</p>
+<p><img src="https://p1.meituan.net/meituantechblog/8f6d0d2a1b53e0fbe26ec7f5426bd45a302269.png" alt="图1 三期技术演进整体脉络：从特征验证到体系重构再到跨场景迁移"></p>
+<h2>二、一期：精排引入大模型语义表征（验证可行性）</h2>
+<h3>2.1 核心思路</h3>
+<p>服务零售精排在语义层面的建模几乎为零，排序模型主要依赖少量文本匹配和 Query 统计类特征。所以一期的目标很纯粹：<strong>验证 LLM 表征能否对精排模型有实质性帮助</strong>。如果用 LLM 生成的语义向量能带来正向收益，就值得投入更多资源深度优化。整个一期的设计都围绕「先把路走通」。</p>
+<p><strong>整体思路是</strong>：选择一个轻量级的 LLM 作为基座，对 Query 和 POI 的信息进行统一建模，通过微调，使模型仅依赖文本语义来判断"这个搜索词和这个商家是否匹配"，然后全量推理出 Query 和 POI 各自的语义向量，计算它们的 cosine 相似度，作为特征注入精排模型。</p>
+<h3>2.2 技术方案</h3>
+<p><strong>模型设计：特殊 Token 与信息隔离</strong></p>
+<p>一期选用小参数量的开源基座模型，采用全参数微调。</p>
+<p>要提取语义表征，需要一个明确的"聚合点"——<strong>模型在哪个位置把输入文本的语义信息汇聚成一个向量</strong>。直接用序列末尾 Token 或整个 Token 序列 Mean Pooling 也可以，但缺少可学习性。一期的核心设计是在词表中新增三个特殊 Token——<code>&lt;|query|&gt;</code>、<code>&lt;|item|&gt;</code>、<code>&lt;|qi|&gt;</code>，作为专门的聚合锚点，在训练中与模型参数一起优化。特殊 Token 的嵌入采用平均初始化法，参考 vocab-expansion<sup>[1]</sup>。</p>
+<p>输入 Prompt 的结构如下：</p>
+<div class="language-text line-numbers-mode" data-highlighter="prismjs" data-ext="text"><pre><code><span class="line">prompt = """用户查询：{}&lt;|query|&gt;</span>
+<span class="line"></span>
+<span class="line">候选商铺信息如下：</span>
+<span class="line">商铺名称：{}</span>
+<span class="line">热销商品：{}</span>
+<span class="line">所属品牌：{}</span>
+<span class="line">商铺分类：{} - {} - {}</span>
+<span class="line">用户评分：{}分</span>
+<span class="line">平均价格：{}元</span>
+<span class="line">所在商圈：{}&lt;|item|&gt;</span>
+<span class="line"></span>
+<span class="line">请判断该商铺是否匹配用户查询&lt;|qi|&gt;"""</span>
+<span class="line"></span></code></pre>
+<div class="line-numbers" aria-hidden="true" style="counter-reset:line-number 0"><div class="line-number"></div><div class="line-number"></div><div class="line-number"></div><div class="line-number"></div><div class="line-number"></div><div class="line-number"></div><div class="line-number"></div><div class="line-number"></div><div class="line-number"></div><div class="line-number"></div><div class="line-number"></div><div class="line-number"></div></div></div><p>设计三个而非一个 Token，是因为需要三种不同类型的表征：<code>&lt;|query|&gt;</code> 聚合 Query 侧语义，<code>&lt;|item|&gt;</code> 聚合 item 侧语义，<code>&lt;|qi|&gt;</code> 聚合双侧融合信息——前两者用于推理时独立提取各自的 Embedding 并计算 cosine 相似度，后者仅用于微调时的辅助 Loss。</p>
+<p>三个特殊 Token 内嵌在同一条 Prompt 序列中，意味着训练时 Query 和 item 的文本信息是混在一条序列里的。如果不加干预，<code>&lt;|query|&gt;</code> 会自然"看到"后面的 item 文本，<code>&lt;|item|&gt;</code> 也会"看到"前面的 Query 文本。这本身对 <code>&lt;|qi|&gt;</code> 不是问题——它本来就要看两侧信息。但对 <code>&lt;|query|&gt;</code> 和 <code>&lt;|item|&gt;</code> 来说是个问题：推理时，Query 和 item 的 Embedding 是分别独立生成的，如果训练时 <code>&lt;|query|&gt;</code> "看到"了 item 信息，它学到的表征就会依赖 item 上下文，推理时只输入 Query 文本，产出的表征就失去了意义。</p>
+<p>因此，通过 Attention Mask 对同一条输入序列进行三次独立 forward pass：提取 query 表征时，mask 将注意力范围限制在 Query 文本段，<code>&lt;|query|&gt;</code> 只能聚合查询信息；提取 item 表征时，mask 限制在 item 文本段，<code>&lt;|item|&gt;</code> 只能聚合商家信息；提取融合表征时使用完整 mask，<code>&lt;|qi|&gt;</code> 可以 attend 到整条序列。这样确保了 Query 和 item 各自的表征是自包含的，可以独立提取和存储。</p>
+<p>表征提取方式是取 transformer 最后一层在特殊 Token 位置的 hidden state，经两层 MLP（hidden_size → 512 → ReLU → LayerNorm → 64）降至 64 维，作为最终的目标语义表征。</p>
+<p><strong>训练数据与目标</strong></p>
+<p>从服务零售垂直搜索链路的精排日志中抽取近 2 个月、共 3,000 余万条训练样本，其中下单:点击未下单:未点击 = 1:3:6。训练目标包含两个 Loss 协同优化：</p>
+<ul>
+<li>Loss_1 基于<code>&lt;|query|&gt;</code> 和 <code>&lt;|item|&gt;</code> 单侧表征的 cosine 相似度，经可学习温度参数缩放后做二分类交叉熵，让模型从语义层面学习匹配程度；</li>
+</ul>
+<p><img src="https://p1.meituan.net/meituantechblog/30a37438634b8c492274d54792e5700b194829.png" alt="Loss_1 计算公式"></p>
+<p>Loss_2 基于 <code>&lt;|qi|&gt;</code> 融合 query 和 item 的双侧信息，经 MLP 后预测点击率，目的是让学到的语义表征对齐下游排序目标。</p>
+<p><img src="https://p1.meituan.net/meituantechblog/3d3682e4e575ad0a8c2a6b08af9aa3e4118087.png" alt="Loss_2 计算公式"></p>
+<p>最终 Loss：L = Loss_1 + Loss_2。</p>
+<p>双 Loss 设计的目的是让模型同时学习"单侧表征的质量"和"双侧匹配的判断"——前者直接服务于推理时的 cosine 相似度计算，后者辅助表征对齐下游点击率预估目标。</p>
+<p><strong>从模型到特征：推理、分桶与注入</strong></p>
+<p>推理时分别独立生成 Query 和 item 的语义 Embedding，离线存储至 Hive 表，按天例行增量更新。</p>
+<p><strong>模型推理</strong></p>
+<p><img src="https://p0.meituan.net/meituantechblog/54a8ef38444aa3647a4e67cf245733fa292609.png" alt="图2 一期表征生产流程"></p>
+<p><strong>精排模型集成</strong></p>
+<p><img src="https://p0.meituan.net/meituantechblog/808f7fe7543b764343919d7411b10c48256210.png" alt="图3 一期精排集成方式"></p>
+<p>模型获得语义 Embedding 后，计算 Query 与 item 的 cosine 相似度，并按预设的分桶边界将相似度划分进 10 个分桶。分桶边界为[-0.40, -0.30, -0.18, -0.12, 0.00, 0.10, 0.16, 0.22, 0.30]，设计时考虑了每个桶内的样本量分布，并尽可能区分下单与未下单、点击与未点击等行为标签。</p>
+<p>通过抽取 2 万条搜索曝光样本，我们验证了不同类型样本在各分桶中的分布。如下图所示，Query 和 item 语义越相似，点击/下单的样本占比越高：</p>
+<p><img src="https://p0.meituan.net/meituantechblog/862772f1ba540efafc3970041a520362408086.png" alt="图4 不同行为标签在各 cosine 相似度分桶中的分布（2 万条搜索曝光样本）"></p>
+<p>这意味着我们可以将 Query 和 item 的语义表征相似度作为一个强特征引入排序模型，以提升模型在点击/下单率预估方面的表现。</p>
+<p>为了实现这一目标，我们为每个分桶分配一个可学习的 Embedding 向量（12 维），拼接到精排模型现有特征中。使用分桶而非直接使用连续相似度值的原因是：离散化后的特征能更好地被精排模型的特征交叉网络利用，同时降低噪声敏感度。使用可学习的 Embedding 向量则是为了增强模型对于不同相似度区间的表达能力。</p>
+<p>离线验证显示，引入表征特征后点击 NDCG +9bp，下单 NDCG +13bp，验证了方案的有效性。</p>
+<h3>2.3 线上效果</h3>
+<p>实验周期 2025 年 9 月 18 日至 10 月 1 日，20%流量 14 天，AA 校验通过。</p>
+<p>大盘搜索支付订单显著+0.20%，服务零售订单显著+0.27%。更值得关注的是体验指标的表现：长尾 NDCG@5 显著+2.21pp，长尾 BadCase@1 显著-2.96pp。语义理解提升在长尾场景体感最明显——这正符合预期，因为长尾 Query 恰恰是传统词面匹配最薄弱的地方。</p>
+<p>一个只有 64 维的语义表征，仅通过分桶拼接的方式注入精排，就带来了显著的订单增量——这个结果直接证明了 LLM 语义表征在精排场景的价值，坚定了后续深度投入的信心。</p>
+<h3>2.4 一期的局限性</h3>
+<p>一期验证了 LLM 表征在精排中的可行性，但也暴露了四个明显短板。一是只覆盖 Query-商家两端，商品侧语义完全缺失——而在服务零售场景中，用户很多时候是在搜商品而非搜商家。二是全参数微调训练成本高、维护困难，不利于快速迭代。三是微调目标以点击率预估为主，对排序优化不够全面——下游精排同时也关注成单目标。四是三次 Forward Pass 的推理效率有优化空间，表征提取方式还有更高效的替代。这些问题成为二期系统性升级的起点。</p>
+<h2>三、二期：商家精排表征系统性升级</h2>
+<h3>3.1 核心动机</h3>
+<p>一期验证了 LLM 表征在精排中的可行性，但四个短板制约了进一步迭代：仅覆盖 Query-商家两端，缺失商品语义、全参数微调成本高、点击率分类目标对排序不够全面、三次 Forward Pass 效率低。二期的目标不是单点优化，而是系统性重构表征生产的全流程——从训练数据、基座模型、微调方式、表征提取、降维方式到损失函数，逐一对应一期的短板进行升级，同时将下挂商品（Deal）纳入建模，构建 Query-POI-Deal 三元语义表征体系。</p>
+<p>贯穿二期的核心矛盾是：一期的训练目标是"判断 Query 和商家是否匹配"的二分类问题，但排序模型真正需要的是"在多个候选中哪个更匹配"的相对序关系。这个矛盾直接驱动了从点击率分类到对比学习的损失函数重设计，也间接影响了训练数据构建（需要难负样本）、表征提取方式（需要更高效的聚合）等其他模块的决策。</p>
+<h3>3.2 技术方案</h3>
+<p><img src="https://p0.meituan.net/meituantechblog/7f74aaad59c23e8d5695c81d271b5c24233193.png" alt="图5 二期技术方案全景"></p>
+<p><strong>训练数据：从单条样本到五元组</strong></p>
+<p>一期每条样本只有 Query 和 POI 两部分，用于对齐下游目标的训练信号是"是否点击"。二期将每条样本扩展为五元组：Query、Deal 正样本、POI 正样本、Deal 难负样本、POI 难负样本。难负样本的选取是关键——Deal 难负样本来自同一请求、同一商家下曝光但未点击的商品，POI 难负样本来自同一请求下曝光但未点击的商家。这种"同请求"的难负采样策略确保了负样本与正样本在 Query 意图和上下文上高度相似，只在"是否被用户选择"上有差异，能迫使模型学到更精细的判别能力。最终我们构建了 2766 万条训练样本。</p>
+<p><strong>Prompt 设计：反直觉的发现</strong></p>
+<p>确定了"喂什么数据"后，下一步是"怎么组织成文本"。我们尝试了多种 Prompt 方案：精简信息陈述+总结引导、简单任务指令、丰富版任务指令、仅信息陈述。实验发现一个反直觉的结论：精简信息陈述+总结引导效果最好，过于复杂的任务指令反而降低表征质量。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/8c5c6d453c7d84ef8a0a2621e9a23bb1285747.png" alt="不同 Prompt 设计的离线评估结果"></p>
+<p>这与常见的 LLM 问答任务的直觉相反。我们推测原因是：在 Embedding 训练场景中，Prompt 的作用是引导模型理解"要聚合哪些语义信息"，而非传统的"指令遵循"。过于复杂的指令会干扰模型对核心语义信息的聚合，就像给一个本该专注于理解文本的人过多任务要求，反而分散了注意力。这一结论对后续其他表征场景有直接参考价值。</p>
+<p>具体的 Prompt 如下：</p>
+<ul>
+<li><strong>商家</strong>："商铺信息如下：商铺名称为{}，热销商品为{}，品牌名为{}，主营类目的三级标签分别是{}、{}、{}，次营类目为{}，所属商圈为{}。请根据以上信息，详细描述该商铺："</li>
+<li><strong>下挂商品</strong>："商品信息如下：商品名称为{}，商品类目的三级标签分别是{}、{}、{}，所属商家名称为{}。请根据以上信息，详细描述该商品："</li>
+<li><strong>搜索词</strong>："查询信息如下：用户查询词为{}。请根据该查询词，总结用户的查询意图："</li>
+</ul>
+<p>二期在商家的 Prompt 中也新增了"次级经营品类"、"热销商品"等信息，以期望学到更完整的商家语义表征。</p>
+<p>一个值得注意的实验发现是：我们尝试在商品特征中引入 CPV（商品属性）信息后，排序评估效果反而下降：</p>
+<p><img src="https://p0.meituan.net/meituantechblog/45e3f7771cb8c09245696323afa6a83f125189.png" alt="商品引入 CPV 离线评估结果"></p>
+<p>我们推测原因是当前 CPV 信息过于繁杂，未经筛选地引入反而会带来噪声。这个反直觉的结果说明，<strong>在表征训练中，信息质量比信息量更重要</strong>。</p>
+<p><strong>基座模型与微调方式：从全参到 LoRA</strong></p>
+<p>基座模型选择上，我们横向对比了参数量在 0.5B～8B 的多个模型，涵盖通用、Embedding、Instruct 等多个系列。</p>
+<p>实验发现，中等参数档位是效果与推理成本的最优平衡点——更大的模型在 NDCG 指标上提升有限且推理成本显著上升；最小参数档位则在各项指标上全面落后。最终选定专门为文本表征任务优化的 Embedding 模型变体，它在 Click-AUC 和 NDCG 上均优于同参数量的通用模型。</p>
+<p>微调方式从全参数微调切换到 LoRA<sup>[3]</sup>（r=8、α=32，目标模块 q_proj 和 v_proj）。对比实验显示一个有趣的现象：LoRA 在 NDCG 指标上优于全参数微调，但全参在 AUC 上略有优势。这一现象仅在本场景中观察到，是否具有普适性有待验证。综合考虑训练效率和维护成本最终选择 LoRA。</p>
+<p><strong>表征提取：从三 Token 单序列到独立序列+可学习向量</strong></p>
+<p>一期在同一条序列中内嵌三个词表 Token，通过三次 Forward Pass 和不同 AttentiOn Mask 实现信息隔离，推理效率低。二期彻底重构了表征提取方式：不再将 Query 和 item 放在同一条序列中，而是各自在独立的序列中处理；特殊 Token 不再是 vocabulary token，而是 nn.Parameter——一个维度为 hidden_size 的可学习向量。具体做法是：对输入文本做 tokenize 后取 input embeddings，找到序列中最后一个有效位置，将该位置的 Embedding 覆写为对应的可学习向量，经过 Transformer 后取该位置的 hidden state 作为表征。Query、POI、Deal 各有独立的可学习向量。</p>
+<p>这种设计相比一期有几方面优势：不再需要 Attention Mask 隔离（因为各实体本就在独立序列中处理），一次 Forward 可以同时处理五路输入（五元组的各部分拼接在 batch 维度上），推理效率大幅提升。同时，可学习向量直接作为"聚合锚点"放在序列末尾，模型在训练中学会在该位置汇聚全序列的语义信息。</p>
+<p>对比实验显示，Last Special Token Embedding 优于 Mean Pooling 和直接取最后一个有效 Token，推测原因是可学习的特殊 Token 比固定位置或平均池化更能有效聚合序列信息并区分不同实体类型。</p>
+<p><strong>降维方式：从 Linear 到 MRL-E</strong></p>
+<p>一期用两层 MLP 将 hidden state 降至 64 维。二期改用 MRL-E<sup>[4]</sup>（Matryoshka Representation Learning）策略：设置嵌套维度列表[1024, 512, 256, 128]，训练时对每个维度分别计算损失并取平均，推理时直接截取前 128 维。</p>
+<p>MRL-E 相比 Linear 降维的核心优势不在于精度提升（离线指标差异不大），而在于灵活性：同一套训练出的表征可以根据不同场景的效率需求选择不同维度，无需重新训练。这在后续三期将表征迁移到下挂精排时体现了价值——不同模块对 Embedding 维度的要求可能不同，MRL-E 提供了开箱即用的多尺度选择。因此我们选择 MRL-E 作为最终降维方案。</p>
+<p><strong>损失函数：从分类到对比学习</strong></p>
+<p>这是二期最核心的升级，也是"从分类到排序"这一核心矛盾的直接解法。</p>
+<p>一期用 BCE Loss 做点击率二分类，模型只学到"是否匹配"的绝对判断。但排序模型需要的是相对序——在多个候选中哪个更匹配。InfoNCE Loss<sup>[5]</sup>天然面向这个目标：它利用 Batch 内负样本构建对比任务，最大化正样本对相似度的同时最小化与 batch 内其他样本的相似度，本质上是在做"从 N 个候选中选出正确匹配"的排序训练。</p>
+<p>我们具体设计了三组 InfoNCE Loss：Query↔POI、Query↔Deal、POI↔Deal。三组对比覆盖了三元实体间所有两两关系，使表征空间同时编码 Query-商家匹配度、Query-商品匹配度和商家-商品一致性。采用归一化嵌入后的内积作为相似度度量，温度参数可学习：</p>
+<p><img src="https://p0.meituan.net/meituantechblog/8a2de7b2d5b6107c4e040b12231587a7183476.png" alt=""></p>
+<p><img src="https://p0.meituan.net/meituantechblog/c2e3f0a27004686f210f0936065ae38b73452.png" alt="InfoNCE Loss"></p>
+<p>但如果 InfoNCE 的负样本仅来自 Batch 内随机采样，难度不够——大部分 Batch 内负样本与 Query 的语义差距很明显，模型不费力就能区分。为此我们引入 Triplet Loss 专门处理构建出的难负样本：采用欧氏距离，margin=0.5，分别计算 Query-POI 和 Query-Deal 的 Triplet Loss。难负样本是"同请求同商家曝光未点击"的样本，与正样本在 Query 意图和上下文上高度相似，只在用户选择上有差异——这才是模型真正需要学会区分的。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/931c552be27caf71e72cf5757cc4bf07162806.png" alt="Triplet Loss"></p>
+<p>消融实验验证了这一设计：引入 Triplet Loss 后，Q2I-Click-AUC<sup>[7]</sup> +4.85pp，Q2I-Order-AUC +11.02pp。Order-AUC 的提升幅度远高于 Click-AUC，说明难负样本建模对排序下单信号的捕获比点击信号更难、但更有价值——这也印证了"从分类到排序"的转型方向是正确的。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/657befe9fb20497fddded702c4db05ed114157.png" alt=""></p>
+<p>最终的训练目标为上述五个损失的加权和：</p>
+<p v-pre="" class="katex-block"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi mathvariant="script">L</mi><mtext>total</mtext></msub><mo>=</mo><msubsup><mi mathvariant="script">L</mi><mtext>InfoNCE</mtext><mrow><mi>Q</mi><mo>→</mo><mi>P</mi></mrow></msubsup><mo>+</mo><msubsup><mi mathvariant="script">L</mi><mtext>InfoNCE</mtext><mrow><mi>Q</mi><mo>→</mo><mi>D</mi></mrow></msubsup><mo>+</mo><msubsup><mi mathvariant="script">L</mi><mtext>InfoNCE</mtext><mrow><mi>P</mi><mo>→</mo><mi>D</mi></mrow></msubsup><mo>+</mo><msub><mi>λ</mi><mn>1</mn></msub><msubsup><mi mathvariant="script">L</mi><mtext>Triplet</mtext><mrow><mi>Q</mi><mo separator="true">,</mo><mi>P</mi></mrow></msubsup><mo>+</mo><msub><mi>λ</mi><mn>2</mn></msub><msubsup><mi mathvariant="script">L</mi><mtext>Triplet</mtext><mrow><mi>Q</mi><mo separator="true">,</mo><mi>D</mi></mrow></msubsup></mrow><annotation encoding="application/x-tex">\mathcal{L}_{\text{total}} = \mathcal{L}_{\text{InfoNCE}}^{Q \rightarrow P} + \mathcal{L}_{\text{InfoNCE}}^{Q \rightarrow D} +
+\mathcal{L}_{\text{InfoNCE}}^{P \rightarrow D} + \lambda_1 \mathcal{L}_{\text{Triplet}}^{Q, P} + \lambda_2
+\mathcal{L}_{\text{Triplet}}^{Q, D}
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathcal">L</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord text mtight"><span class="mord mtight">total</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="base"><span class="strut" style="height:1.2605em;vertical-align:-0.3013em;"></span><span class="mord"><span class="mord mathcal">L</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.9592em;"><span style="top:-2.3987em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord text mtight"><span class="mord mtight">InfoNCE</span></span></span></span></span><span style="top:-3.1809em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">Q</span><span class="mrel mtight">→</span><span class="mord mathnormal mtight" style="margin-right:0.1389em;">P</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.3013em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="base"><span class="strut" style="height:1.2605em;vertical-align:-0.3013em;"></span><span class="mord"><span class="mord mathcal">L</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.9592em;"><span style="top:-2.3987em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord text mtight"><span class="mord mtight">InfoNCE</span></span></span></span></span><span style="top:-3.1809em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">Q</span><span class="mrel mtight">→</span><span class="mord mathnormal mtight" style="margin-right:0.0278em;">D</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.3013em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="base"><span class="strut" style="height:1.1383em;vertical-align:-0.247em;"></span><span class="mord"><span class="mord mathcal">L</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.8913em;"><span style="top:-2.453em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord text mtight"><span class="mord mtight">InfoNCE</span></span></span></span></span><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.1389em;">P</span><span class="mrel mtight">→</span><span class="mord mathnormal mtight" style="margin-right:0.0278em;">D</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.247em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="base"><span class="strut" style="height:1.3967em;vertical-align:-0.4374em;"></span><span class="mord"><span class="mord mathnormal">λ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight">1</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord"><span class="mord mathcal">L</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.9592em;"><span style="top:-2.3987em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord text mtight"><span class="mord mtight">Triplet</span></span></span></span></span><span style="top:-3.1809em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">Q</span><span class="mpunct mtight">,</span><span class="mord mathnormal mtight" style="margin-right:0.1389em;">P</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.4374em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="base"><span class="strut" style="height:1.3967em;vertical-align:-0.4374em;"></span><span class="mord"><span class="mord mathnormal">λ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight">2</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord"><span class="mord mathcal">L</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.9592em;"><span style="top:-2.3987em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord text mtight"><span class="mord mtight">Triplet</span></span></span></span></span><span style="top:-3.1809em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">Q</span><span class="mpunct mtight">,</span><span class="mord mathnormal mtight" style="margin-right:0.0278em;">D</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.4374em;"><span></span></span></span></span></span></span></span></span></span></span></p>
+<p><img src="https://p1.meituan.net/meituantechblog/74f9d90a82d9fed35d85739c63430248171314.png" alt="图6 二期训练目标与损失函数概览"></p>
+<p>二期相比一期在多项关键指标上取得了显著提升：Q2I-Click-AUC 提升 6.25pp、Q2I-Order-AUC 提升 5.37pp、Q2I-Click-NDCG 提升 1.77pp、Q2I-Order-NDCG 提升 2.03pp。</p>
+<h3>3.3 表征应用方式</h3>
+<p><strong>相似度分桶策略升级</strong></p>
+<p>沿用一期的相似度分桶机制，但进行了两项升级。一是从单组相似度扩展到双组——同时计算 Query-POI 和 Query-Deal 的 cosine 相似度，各自分桶，使模型能分别利用 Query-商家和 Query-商品的语义匹配信号。二是引入零向量边界，用于捕获无表征样本（缺失表征置为零向量，并在特征计算中进入专门的缺失值分桶），确保未覆盖样本落入同一桶中，避免无表征样本的噪声干扰。</p>
+<p><strong>底层+顶层双重融合</strong></p>
+<p>表征信息通过底层和顶层两种方式融入精排模型。底层融合将分桶 Embedding 与精排模型现有特征拼接，参与特征交叉学习；顶层融合将原始 cosine 相似度直接在顶层拼接，经一层 LHUC 后用于 CTR 和 CTCVR 预测。</p>
+<p>为什么要同时做底层和顶层？底层融合让语义特征参与特征交叉，能与其他特征产生交互效应，但经过分桶离散化后丢失了相似度的连续信息。顶层融合直接使用原始 cosine 相似度，保留了连续语义信号，但无法参与特征交叉。两者互补——加入顶层融合后点击 NDCG +5bp，下单 NDCG +3bp。</p>
+<p><strong>加载方式优化</strong></p>
+<p>一期采用 HashTable 热启方式加载表征，但二期引入 Deal 表征且维度从 64 维扩展至 128 维后，若沿用热启方式，模型体积将成倍增长，带来明显的存储和部署压力。为此，在工程实现上，二期优化为"离线训练样本化+线上 KV 读取"方案：离线训练时表征以样本特征形式引入，随样本一同加载；线上服务时从 KV 存储实时读取表征向量。优化后模型体积不增反降，相比一期基线还略有缩减，在牺牲部分应用灵活性的前提下解决了存储和部署压力。</p>
+<h3>3.4 线上效果</h3>
+<p>实验周期 2026 年 3 月 17 日至 3 月 23 日，20%流量 7 天，AA 校验通过。</p>
+<p>搜索大盘搜索 UV 显著+0.07%，有效点击 QV 显著+0.13%，服务零售结果页有效 QV_CTR 显著+0.10pp（+0.15%）。性能上 TP90 仅+0.2ms。</p>
+<p>线上数据中出现了一个值得分析的现象：服务零售搜索 QV 略有下降（-0.05%，不显著），但有效点击 QV 正向（+0.09%，不显著），结果页 QV_CTR 显著正向。下钻分析发现，QV 下降主要集中在美团某事业部（-0.70%，显著），但该事业部的 QV_CTR 反而提升了0.24pp（显著）。原因是实验组优化了排序结果，减少了无效曝光——部分此前会被曝光但不会被点击的结果被更相关的结果替代，虽然总曝光量下降，但转化效率提升。线上排序指标印证了这一判断：实验组点击 NDCG@30 +6bp，点击 GAUC +13bp。</p>
+<p>这个现象说明，语义表征的引入不仅是"增加曝光机会"，更重要的是"优化曝光质量"——<strong>让更匹配的商品和商家排在前面，即使用户看到的选项变少了，转化效率反而更高</strong>。</p>
+<h2>四、三期：下挂精排引入表征 + 全域交叉统计特征</h2>
+<h3>4.1 核心动机</h3>
+<p>商家精排两期的表征体系已成熟，但下挂精排——对商家下挂的具体商品进行排序——在语义维度的建模几乎为零。三期的核心逻辑是：<strong>复用二期已训练的表征模型，将成熟方案平移到下挂精排</strong>。这看起来是最自然的延伸，但实际执行中遇到了意料之外的挑战。</p>
+<p>与表征迁移同步进行的，还有一项系统性特征治理工作。团队对下挂精排特征进行了全面梳理，发现部分特征已失效，同时在"个性化×商品"和"Query 意图×商品"两个交叉维度上存在建模空白。因此三期是"大模型表征迁移"和"全域交叉统计特征补充"两条线并行推进，最终以叠加效果上线。</p>
+<h3>4.2 技术方案</h3>
+<p><strong>扩大覆盖率：迁移的第一道关卡</strong></p>
+<p>表征模型直接复用二期，但表征的"覆盖范围"不能直接复用。二期的 Query Embedding 是基于商家精排样本圈选的——即只对商家精排中出现的 Query 生成 Embedding。直接迁移到下挂精排时，Query 覆盖率仅 81.24%，双覆盖率（Query+Deal 同时有 Embedding）更只有 73.61%。</p>
+<p>原因在于两个场景的 Query 分布有本质差异。商家精排的 Query 偏向商家意图词（如"SPA"），而下挂精排的 Query 更多是商品意图词（如"双人 XX 套餐"）——用户在商家列表页搜索的是"找什么样的店"，进入下挂排序时搜索的是"买什么样的商品"。这些商品意图词在商户样本中可能从未出现，自然没有对应的 Embedding。</p>
+<p>解决方案是重新用下挂精排的样本分布圈选 Query Embedding 的生成范围。修复后 Query 覆盖率升至 98.92%，双覆盖率达 89.81%。</p>
+<p>这个工程细节看起来不起眼，但它直接决定了特征有效性。修复前的 73.61% 双覆盖率意味着超过四分之一的样本拿不到语义匹配信号——如果带着这个缺口上线，特征的价值会被严重稀释。这一经验也成为了跨模块复用表征的标准 checklist：表征模型的迁移不是直接复用模型参数，必须针对目标场景的样本分布重新圈选 Embedding 覆盖范围。</p>
+<p><strong>特征有效性前置验证</strong></p>
+<p>补充完 Embedding 后，团队先做了一项前置验证：将 Query 和 Deal 的 Embedding cosine 特征等距分为 100 个桶，分别计算每个桶内各 label（成单、货架成单、点击、全域成单）的平均值。结果显示随着 cosine 分数单调上升，所有 label 均值也单调上升，方向明确。这个验证虽然简单，但它回答了一个关键问题：迁移过来的表征在下挂场景是否依然有效？答案是肯定的——Query-Deal 的语义匹配度与用户行为之间存在清晰的正相关。</p>
+<p><strong>分桶策略：一种特征，五个视角</strong></p>
+<p>cosine 相似度与 label 虽然正相关，但并非严格线性。为了让特征分桶与各 label 呈现更强的正相关性，团队设计了 5 种分桶策略：等样本量分桶（V1，每个桶内样本数相等）、按下挂成单 label 均值等差分桶（V2）、按货架成单 label 均值等差分桶（V3）、以及在下挂曝光样本和货架曝光样本上分别按对应 label 等差分桶（V4、V5）。</p>
+<p>为什么要设计 5 种而不是选 1 种？因为下挂精排同时优化多个目标（点击、下挂成单、货架成单），不同目标与 cosine 分数的关系曲线不同。等样本量分桶对综合目标最优，而按特定 label 等差分桶则在该 label 的方向上更敏感。Droprank 特征重要性分析也印证了这一点：V1（等样本量分桶）综合重要性最高（排名第21），但 V2、V3、V4 也分别排在第40、164、129 位——它们从不同方向对模型有独立贡献。</p>
+<p><img src="https://p1.meituan.net/meituantechblog/1ae97fc048ca188616340c5ca0243207403904.png" alt="图7 不同分桶策略下 label 均值与 cosine 相似度的对应关系"></p>
+<p><strong>应用方式：从底层拼接到 PEPNet 门控</strong></p>
+<p>三期在表征与模型的耦合方式上做了系统探索。对比了 4 种方案：底层拼接交叉统计特征（+7bp）、底层拼接 LLM 相似度+交叉统计特征（+18bp）、LLM 相似度放在输出塔前（+8bp，且部分指标负向）、PEPNet 门控注入<sup>[8]</sup>（+25bp）。</p>
+<p>为什么 PEPNet 门控效果最优？底层拼接让语义特征参与特征交叉，但经过分桶离散化后信号被压缩；输出塔前注入保留了连续相似度信号，但无法与模型其他特征交互。PEPNet 门控机制的优势在于：它将语义相似度作为"门控信号"调制模型其他特征的权重——高语义匹配时放大相关特征的贡献，低匹配时抑制。这种自适应调节比固定位置的拼接更灵活，离线 ctcvr_auc_global_poi +25bp，远高于底层拼接的 +18bp。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/3c72b236ab01692d9963e78853b285f9200117.png" alt="图8 三期表征注入方式对比：底层拼接、输出塔前注入、PEPNet 门控的离线效果"></p>
+<p><strong>全域交叉统计特征：语义维度之外</strong></p>
+<p>在大模型表征之外，三期还补充了四类全域交叉统计特征：user×deal id 体系交叉统计、POI 的 cate3 统计特征、user×POI 的 cate3 交叉统计、query×deal id 体系交叉统计。这四类特征弥补了下挂精排在"个性化×商品"和"Query 意图×商品"两个交叉维度上的建模空白。其中订单及转化相关特征因覆盖率极低（低于 0.1%），在消融实验中被移除——这也是一个值得注意的经验：统计特征的价值不仅取决于相关性，还取决于覆盖面，覆盖率太低的特征即使方向正确也难以产生实际收益。</p>
+<h3>4.3 线上效果</h3>
+<p>实验周期 2026 年 5 月 28 日至 6 月 3 日，10%流量 7 天，AA 校验通过。</p>
+<p>服务零售业务订单显著 +0.32%，服务零售访购率显著 +0.29%，搜索大盘支付订单显著+0.35%，大盘访购率显著 +0.25%。</p>
+<p>三期的 +0.32% 订单是大模型表征和全域交叉统计特征两类特征叠加的结果。两类特征在离线均单独验证正向，但叠加效应比预期更强。这说明语义维度（LLM 表征）和统计维度（交叉特征）在捕获用户偏好上存在互补性——语义特征捕捉的是" Query 和商品在语义上是否匹配"，统计特征捕捉的是"具有某种行为的用户是否偏好这类商品"，两者从不同角度刻画了用户-商品的匹配关系，叠加后形成了更完整的判断。</p>
+<h2>五、核心洞察与经验沉淀</h2>
+<p>三期迭代的技术细节已在前文展开，这里不再复述，而是聚焦于几条跨阶段的、对后续工作有直接指导意义的判断。</p>
+<p>1、中等参数量是当前阶段的最优平衡点，但不一定是终局。 在 0.5B～8B 的参数量区间内，中等档位模型在效果与推理成本上取得了最优平衡。专门为表征任务优化的 Embedding 变体优于同参数量的通用模型。但这个结论有阶段局限性：随着推理优化技术（量化、蒸馏、推测解码）的成熟，更大模型的推理成本会持续下降，最优平衡点也会上移。因此更本质的认知是——表征模型的选型不应追求"最大可用"，而应在当前推理预算下选择效果最优的，并定期重新评估。</p>
+<p>2、 难负样本是提升表征判别能力的关键。一期使用点击率分类目标，模型只学到"是否匹配"的绝对判断，表征的判别能力有限。二期引入"同请求同商家曝光未点击"的难负样本，配合 InfoNCE + Triplet 对比学习框架后，离线指标大幅提升。难负样本的核心价值在于：它迫使模型学习"在高度相似的候选中，用户为什么选了这个而非那个"——这种精细判别能力是单纯靠正样本和随机负样本无法获得的。在构建表征训练数据时，难负样本的质量直接决定了表征质量的上限。</p>
+<p>3、 Embedding 场景的 Prompt，做减法比做加法有效。 在传统 LLM 任务中，更详细的指令通常带来更好的效果。但在 Embedding 训练场景，精简信息陈述+总结引导优于复杂的任务指令和推理链。原因是 Embedding 的 Prompt 作用是"引导模型聚合哪些语义信息"，而非"指导模型完成什么任务"——过多的任务指令会干扰模型对核心语义的聚焦。这一结论与传统 LLM 任务的直觉相反，对后续其他表征场景有直接参考价值：写 Embedding 的 Prompt 时，问自己"模型需要从这段文字中聚合什么信息"，而不是"模型需要完成什么任务"。</p>
+<p>4、 表征迁移的核心风险不在模型，而在覆盖率。 三期最大的工程挑战不是模型适配，而是 Query 覆盖率从 81.24% 到 98.92% 的修复。表征模型的参数可以直接复用，但 Embedding 的覆盖范围必须针对目标场景重新圈选——否则覆盖率缺口会直接压低特征有效性。这条经验看似简单，但容易被忽略，因为"复用模型"天然暗示着"可以直接上线"。后续任何跨模块迁移表征的工作，都应将覆盖率验证作为第一步 Checklist。</p>
+<p>5、语义特征和统计特征是互补的，不是替代的。 三期的 +0.32% 订单是两类特征叠加的结果，且叠加效应比预期更强。语义特征从"Query 和商品在语义上是否匹配"的角度刻画用户-商品关系，统计特征从"具有某种行为的用户是否偏好这类商品"的角度刻画——前者是内容理解，后者是行为模式。两者各自有盲区，叠加后形成了更完整的判断。这意味着在特征体系设计中，不应将"大模型表征"和"传统统计特征"视为二选一的方向，而应将它们作为互补的信号源协同设计。</p>
+<h2>六、业内工作对比与独立创新点</h2>
+<p>本工作处于"LLM 文本表征"与"搜索排序特征工程"的交叉地带。为厘清本工作在技术版图中的位置，从三个维度梳理业内工作。</p>
+<p><strong>维度一：文本表征模型（Producer）</strong></p>
+<p>文本表征领域经历了从 Word2Vec 到 BERT 再到 LLM 的演进。以 E5<sup>[9]</sup>、BGE<sup>[10]</sup>（BAAI）、GTE<sup>[11]</sup>（阿里通义）系列为代表，训练范式以 in-batch negatives + InfoNCE 为标准配方。2025 年基于 LLM 的表征模型成为主流，代表工作有 Qwen3-Embedding（false-negative mask）、Conan-embedding<sup>[12]</sup>（动态硬负样本挖掘）、Llama-Embed-Nemotron<sup>[13]</sup>（纯难负样本 InfoNCE）。这些工作的共同关注点是负例质量——"embedding 质量的天花板在负例质量，不在 backbone"已成为业界共识。在降维策略上，MRL 提供了多尺度可截断方案；高效微调方面，LoRA 成为参数高效微调的事实标准。</p>
+<p><strong>维度二：表征在排序中的应用（Consumer）</strong></p>
+<p>在表征如何融入排序模型这一问题上，业内存在多条路线。TIGER<sup>[14]</sup>开创了生成式检索范式，将 Embedding 量化为分层 Semantic ID 用于序列召回，但未直接用于判别式排序。在判别式排序中，表征的注入方式正在从简单拼接向门控和自适应融合演进：UNGER<sup>[15]</sup>指出语义与协同 Embedding 直接拼接时语义信号会占据主导，需显式模态平衡。</p>
+<p><strong>维度三：难负样本策略</strong></p>
+<p>难负样本是表征质量的关键杠杆。ANCE<sup>[16]</sup>首次提出用异步 ANN 索引从全局语料库采样难负样本，解决了 in-batch negatives 信息量不足的问题。此后业界发展出多种策略：Meta 的 realtime hard neg 使用 LLM 聚类后的同簇 OOB 负样本配合 LogQ 校正；Apple Music 的 Elise 采用课程式调度——前期用 InfoNCE 构建全局结构，后期切换到最难 Hinge Loss 锐化边界；小红书的 Uninote 提出多粒度难负挖掘与 JS 散度软标签。这些策略的共性是：从随机负样本转向"够难但不是假负例"的精细构造。</p>
+<p><strong>独立创新点</strong></p>
+<p>将上述工作作为参照系，本工作在以下方面具有独立创新性：</p>
+<p>1、<strong>面向搜索排序的语义相似度直接特征注入</strong>。业界表征工作以推荐场景为主，表征主要作为底层特征拼接（如 TIGER 的 SID embedding），与排序目标之间的映射是隐式的。本工作基于搜索场景特点，将 query 与供给的 cosine 语义相似度作为直接特征注入精排——分桶离散化参与特征交叉（底层融合），同时保留连续相似度在输出塔前直接参与预测（顶层融合）。这种做法相比推荐场景的底层拼接有两方面优势：一是语义相似度直接刻画"搜索词与供给是否匹配"，与搜索排序目标天然对齐，方案更具可解释性；二是底层 + 顶层的双重融合设计兼顾了特征交叉能力和信号保真度，比单一注入方式更充分地利用了语义信号。</p>
+<p>2、<strong>基于"店+下挂商品"展示结构的难负样本构造</strong>。利用美团搜索"店+下挂商品"的两层展示结构，构造"同请求、同商家、曝光未点击"的下挂商品作为难负样本。这类样本与正样本在 query 意图和上下文上高度相似（同一搜索词、同一商家），仅在用户选择上有差异——迫使模型学习"在高度相似的候选中，用户为什么选了这个而非那个"。相比 ANCE 的全局 ANN 难负采样，本方案的难负样本天然绑定了搜索场景的上下文信息（同一请求、同一商家），难度更高且更贴近排序任务的真实分布。消融实验显示，引入此类难负样本后 Q2I-Order-AUC 提升11.02pp，远高于 Click-AUC 的4.85pp，验证了"从分类到排序"转型方向的有效性。</p>
+<p>3、<strong>Query/POI/Deal 三元实体联合表征</strong>。业界文本表征工作以两元对（query-document 或 user-item）为标准建模单元。本工作面向服务零售"搜索词→商家→商品"的三元匹配结构，设计了三组 InfoNCE Loss（Query↔POI、Query↔Deal、POI↔Deal）覆盖三元实体间所有两两关系，使表征空间同时编码 Query-商家匹配度、Query-商品匹配度和商家-商品一致性。这种三元联合对比学习在公开文献中较少见，其设计动机直接来自业务场景——用户在服务零售搜索中既需要找到对的商家，也需要找到对的商品，二者构成层次化匹配关系。</p>
+<h2>七、后续展望</h2>
+<p>基于三期迭代积累的经验和前沿技术调研，后续有四个值得探索的方向。</p>
+<p>1、<strong>负例质量提升</strong>：当前表征训练的最大洼地。 二期的负例策略是 in-batch 随机负样本+单显式难负样本，已有不错效果，但前沿实践表明这个方向还有很大空间。 Qwen3 Embedding 工作<sup>[17]</sup>提出了 false-negative mask——把疑似假负例从 InfoNCE 分母中剔除，是零结构改动的即插项；KALM v2<sup>[18]</sup>的 focal-style 难度重加权让训练聚焦真难例；Nemotron 的相似度阈值筛选只保留"够难但不是假负例"的区间。这些方法的共同认知是：Embedding 质量的天花板在负例质量，不在 backbone。当前仅采用 in-batch 随机负样本 + 单个显式难负样本，负例构造仍是明显短板，优先补这一环的性价比最高。</p>
+<p>2、<strong>MRL 低维档诊断与 SID 量化</strong>：从连续表征到离散语义 ID。 当前使用 MRL-E 的嵌套维度列表[1024, 512, 256, 128]，推理时截取前 128 维。前沿调研显示两个值得关注的点：一是 d&lt;128 的极低维档存在退化风险（多篇工作独立证实），需要对各截断层做 neighbor-overlap 诊断，若发现退化，则移除对应维度档位，避免多尺度联合 loss 被最差档拖累。</p>
+<p>二是更激进的方向：将连续 Embedding 量化成分层离散语义 ID（Semantic ID）<sup>[19]</sup>。SID 把 embedding 压成"分层的离散码字序列"（如 3 层码本）<sup>[20]</sup>，既保留语义近邻结构，又能像 ID 一样查 Embedding 表、天然层级共享、对新品友好。SID 的潜在价值在于：它打通了语义表征和 ID 特征的壁垒，让大模型表征能以更原生的方式融入排序模型的特征交叉体系，而非仅通过 cosine 相似度分桶间接参与。</p>
+<p>3、<strong>针对下挂场景重训表征模型</strong>。三期复用的是商家精排的表征模型，训练数据以商户样本为主。下挂样本在 Query 分布（更多商品意图词）和正负样本构成上与商户有显著差异，专项针对下挂场景训练一版表征模型，预期能进一步提升 Embedding 质量和覆盖率。同时，前面提到的负例质量提升和 MRL 诊断，可以一并在这版重训中落地。</p>
+<p>4、<strong>Producer→Consumer 闭环：让排序信号回灌表征</strong>。当前的表征训练和下游排序是单向的——表征产出后通过 cosine 相似度喂给排序模型，但排序模型学到的场景感知相关性没有回流到表征训练。前沿工作 relevance_based_emb 提出了这条闭环的雏形：把下游排序的相关性判断作为蒸馏信号回灌到表征训练，让表征不仅语义准确，还对齐下游排序目标。这是 Producer（表征生产）与 Consumer（排序侧消费）协同的独有优势，有望进一步缩短离在线 Gap。</p>
+<h2>八、总结</h2>
+<p>本文介绍了服务零售搜索排序团队在 2025 年 Q4 至 2026 年 Q2 期间，将 LLM 语义表征引入精排模型的三期实践。一期验证了可行性——用 64 维 cosine 相似度特征就带来了显著订单增量；二期系统性重构了表征生产全流程——从分类目标转向对比学习，从全参数微调转向 LoRA，构建了 query-POI-deal 三元表征体系；三期将成熟表征迁移到下挂精排——在解决覆盖率问题后，通过 PEPNet 门控注入和全域交叉统计特征的叠加，进一步拓展了收益边界。</p>
+<p>三期迭代的主线可以概括为一个认知演进：从"用 LLM 生成一个语义特征"到"构建一套可迁移的表征生产体系"。一期的重心是验证"LLM 表征能不能用"，二期是解决"怎么把表征做好"，三期是探索"好的表征怎么跨场景复用"。每一期的技术决策都建立在前一期的短板分析之上，而非独立的技术选型。</p>
+<p>从方法论角度，三期实践沉淀了一条可复用的表征工程路径：用对比学习目标（InfoNCE + Triplet）训练 LLM 表征模型，用 MRL-E 实现多尺度降维，用相似度分桶或 PEPNet 门控注入排序模型。这条路径的每个环节都有明确的工程 checklist——难负样本的质量决定表征上限，Prompt 精简化优于复杂指令，覆盖率验证是跨模块迁移的第一步，语义特征与统计特征应协同设计而非二选一。</p>
+<p><strong>注释</strong></p>
+<ul>
+<li>[1] Hewitt, J. "Initializing New Word Embeddings for Pretrained Language Models". Columbia University. https://www.cs.columbia.edu/~johnhew/vocab-expansion.html</li>
+<li>[2] Prompt：该部分实验在单独商家表征建模阶段进行，表格中未包含商品 Prompt 的对比实验。实验得到的 Prompt 设计原则(精简信息优于复杂指令)可通用到商品表征建模中。</li>
+<li>[3] Hu, E. et al. (2022). "LoRA: Low-Rank Adaptation of Large Language Models". ICLR 2022. https://arxiv.org/abs/2106.09685</li>
+<li>[4] Kusupati, A. et al. (2022). "Matryoshka Representation Learning". NeurIPS 2022. https://arxiv.org/abs/2205.13147</li>
+<li>[5] van den Oord, A. et al. (2018). "Representation Learning with Contrastive Predictive Coding". arXiv:1807.03748. https://arxiv.org/abs/1807.03748</li>
+<li>[6] 实验设置为0.5：通过网格搜索实验(m ∈ {0.1, 0.3, 0.5, 0.7,1.0})，发现 m=0.5 时模型在验证集上取得最佳效果，该设置能够在保证正负样本区分度的同时避免过度惩罚。</li>
+<li>[7] Q2I-Click-AUC：基于 query 和 item 表征的余弦相似度作为打分，在精排样本上计算得到。这些指标能够直接反映表征的语义匹配质量</li>
+<li>[8] Chang, J. et al. (2023). "PEPNet: Parameter and Embedding Personalized Network for Injecting Tunneling Personalized Prior Information". KDD 2023. https://arxiv.org/abs/2302.01115</li>
+<li>[9] Wang, L. et al. (2024). "Improving Text Embeddings with Large Language Models". ACL 2024. arXiv:2401.00368. https://arxiv.org/abs/2401.00368</li>
+<li>[10] Xiao, S. et al. (2023). "C-Pack: Packaged Resources To Advance General Chinese Embedding". BAAI. arXiv:2309.07597. https://arxiv.org/abs/2309.07597</li>
+<li>[11] Li, Z. et al. (2023). "Towards General Text Embeddings with Multi-stage Contrastive Learning". Alibaba. arXiv:2308.03281. https://arxiv.org/abs/2308.03281</li>
+<li>[12] Li, S. et al. (2024). "Conan-embedding: General Text Embedding with More and Better Negative Samples". Tencent. arXiv:2408.15710. https://arxiv.org/abs/2408.15710</li>
+<li>[13] Babakhin, N. et al. (2025). "Llama-Embed-Nemotron-8B: Training Llama 3.1 8B as a Top-Performing Embedding Model". NVIDIA. arXiv:2511.07025. https://arxiv.org/abs/2511.07025</li>
+<li>[14] Rajput, S. et al. (2023). "Recommender Systems with Generative Retrieval". NeurIPS 2023. arXiv:2305.05065. https://arxiv.org/abs/2305.05065</li>
+<li>[15] (2025). "UNGER: Generative Recommendation with A Unified Code via Semantic and Collaborative Integration". HUST &amp; Huawei. arXiv:2502.06269. https://arxiv.org/abs/2502.06269</li>
+<li>[16] Xiong, L. et al. (2020). "Approximate Nearest Neighbor Negative Contrastive Learning for Dense Text Retrieval". arXiv:2007.00808. https://arxiv.org/abs/2007.00808</li>
+<li>[17] Zhang, D. et al. (2025). "Qwen3 Embedding: Advancing Text Embedding and Reranking Through Foundation Models". Alibaba Group. arXiv:2506.05176. https://arxiv.org/abs/2506.05176</li>
+<li>[18] Zhao, K. et al. (2025). "KaLM-Embedding-V2: Out-tasking Specialized LLM Embedders for Multi-lingual Multi-context Retrieval". arXiv:2506.20923. https://arxiv.org/abs/2506.20923</li>
+<li>[19] Ju, Z. et al. (2025). "Generative Recommendation with Semantic IDs: A Practitioner's Handbook". Snap Inc. arXiv:2507.22224. https://arxiv.org/abs/2507.22224</li>
+<li>[20] Fu K. et al. (2025) "Forge: Forming semantic identifiers for generative retrieval in industrial datasets"[J]. arXiv preprint arXiv:2509.20904, 2025. https://arxiv.org/abs/2509.20904</li>
+</ul>
+]]></content:encoded>
+      <enclosure url="https://p1.meituan.net/meituantechblog/8f6d0d2a1b53e0fbe26ec7f5426bd45a302269.png" type="image/png"/>
+    </item>
+    <item>
+      <title>KDD&amp;apos;26美团学术论文精选及KDD Cup&amp;apos;26 DataAgents赛道冠军思路解读</title>
+      <link>https://tech.meituan.com/2026/08/13/KDD-2026-meituan-papers.html</link>
+      <guid>https://tech.meituan.com/2026/08/13/KDD-2026-meituan-papers.html</guid>
+      <source url="https://tech.meituan.com/rss.xml">KDD&amp;apos;26美团学术论文精选及KDD Cup&amp;apos;26 DataAgents赛道冠军思路解读</source>
+      <description>本文精选了美团技术团队被 KDD 2026 收录的 8 篇论文进行分享，这些论文覆盖了推荐大模型、生成与奖励建模框架、智能体搜索、Transformer 框架、元泛化框架等技术领域。</description>
+      <content:encoded><![CDATA[<p>KDD（ACM SIGKDD Conference on Knowledge Discovery and Data Mining）是数据挖掘与知识发现领域最具影响力的国际顶级学术会议。KDD 以其严格的论文录用标准和深厚的学术影响力著称，是推动数据驱动研究与应用创新的重要平台。大会为学术界和工业界提供了交流前沿成果的高水平论坛，论文录用率通常在 15%-20% 左右，属于计算机领域的 CCF-A 类顶级会议。</p>
+<p>本文精选了美团技术团队被 KDD 2026 收录的 8 篇论文进行分享，这些论文覆盖了推荐大模型、生成与奖励建模框架、智能体搜索、Transformer 框架、元泛化框架等技术领域。</p>
+<p>🏆 此外，大众点评技术部还荣获了 2026 KDD Cup  复杂数据分析 Data Agents 国际竞赛的冠军、季军，本文介绍了团队比赛思路和解题策略。希望以上这些内容能够对大家有所帮助或启发。</p>
+<h2>01 MTFM: A Scalable and Alignment-free Foundation Model for Industrial Recommendation in Meituan</h2>
+<p><strong>论文下载</strong>：<a href="https://arxiv.org/abs/2602.11235" target="_blank" rel="noopener noreferrer">PDF</a></p>
+<p><img src="https://p0.meituan.net/meituantechblog/9720828f0ff8f07f6ce01f56d9e3f820362245.png" alt=""></p>
+<p><strong>论文简介</strong>：工业推荐系统通常涉及多个场景，而现有的跨域（CDR）和多场景（MSR）方法往往需要大量资源且要求严格的输入对齐，限制了其可扩展性。该论文提出了MTFM（Meituan Foundation Model for Recommendation），一种基于Transformer的框架，旨在解决上述挑战。MTFM不预先对齐输入，而是将跨域数据转换为异质Token，以无对齐的方式捕捉多场景知识。为提升训练效率，MTFM引入了多场景用户级样本聚合机制，显著减少了总实例数量，大幅提升训练吞吐量；同时融合了Grouped-Query Attention和定制化的Hybrid Target Attention，有效降低了内存占用和计算复杂度。
+此外，论文还实现了多项系统级优化，如kernel融合和消除CPU-GPU阻塞，进一步提升了训练和推理吞吐。在外卖等场景的离在线实验均验证了MTFM的有效性，证明了通过扩展模型容量和多场景训练数据可以实现显著的性能提升。基于MTFM，团队构建了服务于以上多个业务主场景的统一基座推荐大模型，替换各自的独立精排模型，并完成了全量。</p>
+<h2>02 CDRRM: Contrast-Driven Rubric Generation for Reliable and Interpretable Reward Modeling</h2>
+<p><strong>论文下载</strong>：<a href="https://arxiv.org/pdf/2603.08035" target="_blank" rel="noopener noreferrer">PDF</a></p>
+<p><img src="https://p0.meituan.net/meituantechblog/6c7cf0afe25cec1712d7dde27ff5a337479964.png" alt=""></p>
+<p><strong>论文简介</strong>：本文提出CDRRM，一个对比驱动的评分准则生成与奖励建模框架，旨在提升LLM对齐中奖励模型的可靠性、可解释性与数据效率。传统奖励模型是“黑箱”且依赖昂贵标注；现有准则方法存在冗余与偏见。CDRRM采用“对比-聚合”流程：先对比好/差回答定位关键差异，再聚合为简洁的任务相关准则，指导评判模型。实验表明，CDRRM在三个基准上达最先进水平，缓解话痨、位置等偏见，且仅用3千样本让未微调模型超越全量微调基线，兼具高效与可解释性。</p>
+<h2>03 LocalSearchBench: Benchmarking Agentic Search in Real-World Local Life Services</h2>
+<p><strong>论文下载</strong>：<a href="https://arxiv.org/abs/2512.07436" target="_blank" rel="noopener noreferrer">PDF</a></p>
+<p><img src="https://p0.meituan.net/meituantechblog/1d4c9143463672d888cb2eb2a0732a1f723905.png" alt=""></p>
+<p><strong>论文简介</strong>：本文针对本地生活服务领域AI搜索的研究空白，构建LocalSearchBench评测基准。该基准涵盖国内 9 座城市、6 大服务品类，包含 900 道多跳问答任务，同时配套交互环境 LocalPlayground 与商户检索工具 LocalRAG。实验测评 16 款主流大语言推理模型后发现，当前模型在此类任务表现不佳，普遍存在信息完整性、可信度不足等问题。研究还剖析了模型工具调用、多跳推理等典型缺陷，为本地生活服务场景下智能体搜索的模型训练和基准测试提供了重要支撑。</p>
+<h2>04 Deterministic-Allocation and Anonymous Joint Advertising in E-commerce Platforms</h2>
+<p><strong>论文下载</strong>：<a href="https://dl.acm.org/doi/epdf/10.1145/3770855.3818370" target="_blank" rel="noopener noreferrer">PDF</a></p>
+<p><img src="https://p0.meituan.net/meituantechblog/5a01fb282240b7941f2037723c76a830296753.png" alt=""></p>
+<p><strong>论文简介</strong>：针对联合广告拍卖场景中的算法无法同时满足匿名性和确定性分配的问题，导致实际应用中存在分配不公平和激励不兼容等问题，提出了JTransNet模型。匿名性要求拍卖结果仅依赖于竞标价值，而与参与者身份和顺序无关，确定性分配则保证同样的输入下分配结果唯一。JTransNet通过引入匿名性和确定性分配机制，结合可微分的NeuralSort排序方法，实现了端到端数据驱动的AMD自动化模型拍卖算法。该算法很好的解决了联合拍卖场景下多方出资的流量分配和扣费问题，在离线和在线实验中均显著提升了平台广告收益。JTransNet已在美团零售核心业务场景全量上线，促进了广告业务流量售卖的公平性与收益提升，同时为工业界大规模自动化模型拍卖机制算法设计提供了有效的解决方案。</p>
+<h2>05 UME: A Unified Meta-Generalization Framework for Cross-Domain ETA</h2>
+<p><strong>论文下载</strong>：<a href="https://arxiv.org/abs/2606.00979" target="_blank" rel="noopener noreferrer">PDF</a></p>
+<p><img src="https://p0.meituan.net/meituantechblog/224479de429aacd8bedb20f6801bc454309283.png" alt=""></p>
+<p><strong>论文简介</strong>：在即时物流场景中，提单页面的预估到达时间（checkout page ETA）对提升用户满意度、优化调度策略和控制运营成本至关重要。在美团Keeta等国际化即时配送平台上，具有显著的跨域异质性，多域建模已成为核心需求。然而，现有方法面临三大挑战：一是无法泛化到完全未见过的新市场域，无法在冷启动阶段实现零样本预测；二是跨域特征空间不一致，新市场域由于缺乏历史数据积累导致离线统计特征结构性缺失；三是成熟域与冷启动域往往需要分别建模，阻碍了知识迁移并增加了维护成本。
+为此，本文提出了UME（Unified Meta-generalization framework for ETA），一个统一元泛化框架。UME设计了统一双分支网络和基于超网络的元学习机制，通过域级知识和实例级上下文动态调制特征门控、专家注意力和最终预测，实现跨域关联建模和域内自适应。同时引入知识蒸馏策略弥合特征缺失带来的信息差距。该方法在离线实验与线上实验中均优于现有方法。</p>
+<h2>06 Generative Large-Scale Pre-trained Models for Automated Ad Bidding Optimization</h2>
+<p><strong>论文下载</strong>：<a href="https://arxiv.org/abs/2508.02002" target="_blank" rel="noopener noreferrer">PDF</a></p>
+<p><img src="https://p0.meituan.net/meituantechblog/396bda4d89816423002639874d71f127405992.png" alt=""></p>
+<p><strong>论文简介</strong>：现代自动竞价系统需要在整体效果、广告主多样化目标和现实约束之间取得平衡，反映行业不断变化的需求。近年来，条件生成模型（如Transformer和扩散模型）能够根据广告主偏好直接生成竞价轨迹，为传统基于马尔可夫决策过程的方法提供了有前景的替代方案。但这些生成方法也面临诸如离线与在线环境分布偏移、动作空间探索有限以及需满足CPM和ROI等约束的挑战。为此，我们提出了GRAD，这是一种可扩展的自动竞价基础模型。GRAD通过动作混合专家模块实现多样化竞价行为探索，并结合因果Transformer进行约束优化。</p>
+<h2>07 HMAF: A Hierarchical Multi-Slot GD-RTB Allocation Framework</h2>
+<p><strong>论文下载</strong>：<a href="https://arxiv.org/abs/2606.09896" target="_blank" rel="noopener noreferrer">PDF</a></p>
+<p><img src="https://p0.meituan.net/meituantechblog/19e1a9d93222a49084e792c4927e3727945241.png" alt=""></p>
+<p><strong>论文简介</strong>：在现代在线广告平台中，保证交付（GD）合约与实时竞价（RTB）拍卖共存并相互竞价。现有方法要么将GD与RTB的优化解耦，要么依赖启发式的优先级规则，因此无法在复杂的多坑位投放和曝光约束下，有效平衡短期收入最大化与长期合约交付目标。针对这些问题，我们提出了HMAF（分层多坑位分配框架），这是一个统一框架，旨在优化GD-RTB广告平台中的曝光分配。HMAF以“规划–校准–执行”范式为核心结构，将离线约束优化与在线决策相结合，统筹离线GD资源规划、动态校准GD与RTB的竞争强度，并在多坑位环境中做出实时的列表级排序决策。</p>
+<h2>08 MTGenRec: An Efficient Distributed Training System for Generative Recommendation Models in Meituan</h2>
+<p><strong>论文下载</strong>：<a href="https://arxiv.org/pdf/2505.12663" target="_blank" rel="noopener noreferrer">PDF</a></p>
+<p><img src="https://p0.meituan.net/meituantechblog/8a8160c9e6e058a3b21d8ac801d8030996413.png" alt=""></p>
+<p><strong>论文简介</strong>：生成式推荐在搜索、推荐、广告领域得到越来越广泛的应用，在用户体验和平台收入方面均取得了显著的提升。随着生成式推荐模型Scaling Dense的发展趋势，业界越来越倾向于基于PyTorch生态构建下一代推荐模型训练引擎，最大程度上复用LLM的发展红利。然而，PyTorch 生态在对大规模稀疏Embedding训练的支持上，仍有较大的提升空间。因此，我们基于PyTorch 生态提出了MTGenRec训练框架，统一「稀疏-稠密」训练能力，满足工业级生成式推荐模型训练需求。
+具体来说，针对稀疏ID我们提出使用动态Hashtable替换静态表，解决ID动态上下线的问题，方便用户使用；为了提升训练效率，我们提出自动合表、ID去重、变长序列负载均衡等技术，针对推荐场景进行极致优化。此外我们还开发了断点续训、混合精度训练、梯度累积、算子融合等配套技术。大量实验结果显示相比TorchRec baseline，MTGenRec能够取得1.6倍~2.4倍的训练加速比，同时保证训练精度不变。从8卡扩展到128卡，MTGenRec也取得了近似线性的扩展效率。目前MTGenRec已在美团内部多个核心场景落地使用。</p>
+<h2>| 大众点评技术部荣获2026 KDD Cup 复杂数据分析 Data Agents 国际竞赛冠军、季军</h2>
+<p>KDD Cup 是数据挖掘与知识发现领域全球公认的顶级赛事。在 2026 赛季的 DataAgents 赛道中，美团技术团队历时两个月，从全球参赛队伍中突围，最终摘得冠军与季军。</p>
+<p>比赛考察的是模型在真实复杂数据场景下的理解与推理能力——多模态输入、非结构化文档、干扰信息识别，每一项都是当前 Agent 落地的硬骨头。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/6cbd9673a4bd101e2c1801e9885063b7266358.png" alt=""></p>
+<p>传统的 Data+AI 系统虽已在特定任务上取得显著进展，但端到端的分析流程仍高度依赖人类专家编排，成为制约数据分析可扩展性与适应性的主要瓶颈。为此，KDD Cup 2026 提出以「数据智能体（Data Agents）」破局——通过融合知识理解、推理与规划能力，自主完成任务拆解与规划、工具选择与调用、异构数据推理以及结果综合。复杂数据分析是其中的核心任务，主要挑战在于真实数据的「异构鸿沟」与推理链路的非线性复杂性。Data Agents智能体接收一份异构的多模态数据包（涵盖数据库、PDF 报告、JSON 数据、图表乃至视频等），并针对一个高层次的自然语言问题，自主编排包含并行分支、迭代循环与结果汇聚的复杂推理过程，最终给出准确答案，旨在推动构建真正自主的数据分析系统。</p>
+<p><img src="https://p1.meituan.net/meituantechblog/60d60d0f980155b3f2b65db725493b035233598.png" alt=""></p>
+<p>比赛中，队伍将点评「问点仔」建设过程中积累的 Agent Harness 能力迁移至赛题，利用业余时间构建了完整的 Agent 运行时，支持多类型数据文件的自主探索以及 SQL、Python 等分析工具的选择与执行。通过错误反馈、超时控制和自动重试等机制，提升智能体在长链路任务中的稳定性与容错能力。针对视频和非结构化文档等异构数据，还构建了多模态视频理解子智能体和非结构化文档 ETL 子智能体，进一步增强主智能体的数据提取、理解与综合分析能力。此次获奖验证了相关技术在复杂异构数据分析Agent场景中的有效性，也为后续持续提升「问点仔」智能化水平提供了技术积累。</p>
+<p>目前，相关代码已在<a href="https://github.com/zhezh/kddcup2026_champion" target="_blank" rel="noopener noreferrer">GitHub开源</a>，后续我们还会通过技术博客分享更多的技术细节，敬请期待！</p>
+]]></content:encoded>
+      <enclosure url="https://p0.meituan.net/meituantechblog/9720828f0ff8f07f6ce01f56d9e3f820362245.png" type="image/png"/>
+    </item>
+    <item>
+      <title>Agent评测漫谈 —— 由浅入深讲解Agent评测</title>
+      <link>https://tech.meituan.com/2026/08/07/Agent-Evaluation.html</link>
+      <guid>https://tech.meituan.com/2026/08/07/Agent-Evaluation.html</guid>
+      <source url="https://tech.meituan.com/rss.xml">Agent评测漫谈 —— 由浅入深讲解Agent评测</source>
+      <description>本篇博客是一篇科普文章，由浅入深的介绍Agent评测。其中前两章系统介绍了评测是什么，以及如何建立评测体系；其中第二章是美团图灵Agent评测团队深入美团各业务团队BP总结出的实践经验，是我们在两年实践过程中逐步打磨出来的认知。</description>
+      <content:encoded><![CDATA[<p>本篇博客是一篇科普文章，由浅入深的介绍Agent评测。其中前两章系统介绍了评测是什么，以及如何建立评测体系；其中第二章是美团图灵Agent评测团队深入美团各业务团队BP总结出的实践经验，是我们在两年实践过程中逐步打磨出来的认知。第三章重点介绍了龙虾/爱马仕这类长程Agent框架的出现对评测带来的变化。</p>
+<p>本篇博客在美团内部发表之后获得了较多的关注，我们发现大家对Agent评测的热情非常高，因此我们决定将内部博客进行公开，想把这些经验分享给更多的同学，希望对大家有所启发或帮助。</p>
+<h2>一、Agent评测是什么</h2>
+<h3>1.1 评测的核心目的</h3>
+<p>评测的核心目的是为了回答 <strong>Agent 的好不好？以及到底哪里好，哪里不好？</strong> 从而为下一轮迭代指明方向。评测是Agent效果的“精密量具”。</p>
+<p>这也是为什么 Agent 评测不能只停留在离线打榜，更不能只看某次 Demo 的表现。它必须服务于真实业务中的研发、上线、回归、优化和规模化落地。</p>
+<p>而Agent评测的基石是观测，因此我们得出了Agent研发公式 —— 观测 + 评测 = 持续迭代</p>
+<h3>1.2 Agent评测与传统模型评测的不同</h3>
+<p>评测方法会随着 AI 形态变化而变化，大致经历了三个阶段：</p>
+<p><img src="https://p0.meituan.net/meituantechblog/5a8954c2e7b681ee8fb8d2c8a73868cd157865.png" alt=""></p>
+<p>传统机器学习更像在回答“算得准不准”。 大模型评测开始回答“模型能力强不强”。 而 Agent 评测真正要回答的是：</p>
+<blockquote>
+<p>当模型被放进一个真实系统里，和 Prompt、Skill、工具链、记忆、状态管理、业务流程耦合在一起后，它能不能稳定交付好的结果。</p>
+</blockquote>
+<p>这意味着 Agent 的评测对象已经不再是单一模型，而是一个“模型 + 系统 + 工具 + 流程”的复杂系统。</p>
+<h3>1.3 为什么Agent评测不是只看结果，还要看行为和过程</h3>
+<p>在真实场景中，两个 Agent 可能最终都“做对了”，但工程价值完全不同：</p>
+<ul>
+<li>一个路径清晰、工具调用稳定、耗时可控、可重复复现</li>
+<li>一个反复试错、路径混乱、靠偶然命中结果、不可复现</li>
+</ul>
+<p>如果只看最终答案，这两者会被误判为同一水平；但从规模化、成本优化、用户体验的角度看，差别非常大。</p>
+<p>因此，Agent 评测至少需要覆盖四层内容：</p>
+<ul>
+<li><strong>结果层</strong>：任务是否完成，输出是否可用</li>
+<li><strong>过程层</strong>：规划是否合理，步骤是否稳定</li>
+<li><strong>效率层</strong>：耗时、Token、工具调用次数是否可接受</li>
+<li><strong>风险层（安全层）</strong>：是否越权、是否误操作、是否存在安全隐患</li>
+</ul>
+<p>从这个意义上讲，自2023年GPT爆火以来，Agent发展从ChatBot形态快速发展至ClaudCode、OpenClaw这样的多功能长程Agent，Agent能力日渐强大，Agent评测正在从“答案评测”走向“行为评测”。</p>
+<h3>1.4 为什么说观测是评测的基石</h3>
+<p>有一个朴素的认知：Agent 属于广义的 SaaS 层，大模型赋予Agent泛化能力但也带出随机性的问题，而用户仍旧期望得到一个稳定可靠的智能体。为了弥合“随机性”与“可靠性”之间的鸿沟，我们必须回归工程视角看待Agent —— <strong>看不见的问题，几乎不可能被稳定解决</strong>。</p>
+<p>Agent 的一次执行通常包含如下链路：</p>
+<p><img src="https://p0.meituan.net/meituantechblog/6a9ba42edcd2f8bd0ec7d23d4983147a257714.png" alt=""></p>
+<p>只要其中任意一层出问题，最终效果都可能劣化。为了结果稳定，我们需要过程稳定。但如果日志系统只能看到“用户说了什么”和“最后回复了什么”，就几乎无法判断问题根因。正是基于“<strong>我想看Case却发现没打日志</strong>”这个朴素的问题，工业界发展出了 Trace 系统，将黑盒内部的逻辑推理过程进行全路径的披露，将所有影响模型输出的输入信息都记录下来。</p>
+<p>对 Agent 的每一个“隐形动作”进行精准观测，是实现从“概率性生成”向“工业级可靠性”跨越的必由之路。</p>
+<h3>1.5 小结：Trajectory Evaluation 与 Response Evaluation</h3>
+<p>经过前文的论述，我们知道Agent评测本质是在回答好不好，为迭代指明方向。而Agent评测本身既要关注结果（Response）也要关注过程（Trace或者叫做Trajectory）。</p>
+<h2>二、评测的核心方法论</h2>
+<h3>2.1 评测体系的核心不是堆指标，而是搭桥</h3>
+<p>有的同学会好奇，为什么一定要“搭桥”？这是因为Agent评测体系必须追求业务价值与评测指标之间的解释性。而Agent 评测的难点之一，是模型能力指标和业务结果指标之间有天然鸿沟。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/0791bdb6ec11d84dfcc4a4b667164383100037.png" alt=""></p>
+<p>这两类指标不能直接映射，中间必须有一层面向任务系统的桥梁指标。我们提供一种分层思路如下：</p>
+<p><img src="https://p0.meituan.net/meituantechblog/fa88ffeb3556e0e8d6b2f12e8e2dbf6b146404.png" alt=""></p>
+<p>以 AI 搜索为例，业务可能关心DAU、留存和点击；搜索系统本身关心召回率和点击率；Agent 层则关心意图识别是否准确、检索是否有效、结果整合是否可信。</p>
+<p>只有把这些层次串起来，才能真正回答“为什么业务指标变差”以及“模型能力提升为什么没有带来业务收益”。这件事必须依赖真正懂业务流程的人来共同建立指标体系。</p>
+<h3>2.2 客观评测与主观评测并行</h3>
+<p>经过第一章的介绍，我们知道，Agent的核心目标就是要稳定地交付好的结果。行业内 Agent 评测大量借鉴了大模型评测的方法论，总体上可以拆成客观评测和主观评测：</p>
+<p><img src="https://p0.meituan.net/meituantechblog/728970da126530ee8541775cac60508c277172.png" alt=""></p>
+<p>因此更现实的做法通常是：</p>
+<ul>
+<li>用客观评测覆盖高频、结构化、可规则化的部分</li>
+<li>用主观评测覆盖开放性、高价值、复杂业务场景</li>
+<li>用主观评测校准客观评测和 AI 评测，再把规模化部分交给自动化系统</li>
+</ul>
+<h3>2.3 使用“人人一致、人机一致”的方法论对齐主观评测</h3>
+<p>“好不好”是一个主观问题，主观的标准需要对齐，否则我们不能确定某次迭代之后，到底是指标的抖动带来的提升还是真实的效果提升。</p>
+<p>在评测实践中，真正困难的不是“没有人会评”，而是“不同的人评得不一样，机器和人评得也不一样”。在过去一年，我们图灵团队深度BP业务方的过程中，我们发现多个团队相继踩入了相同的坑。</p>
+<p>图灵评测积累的关键认知可以概括为“人人对齐和人机对齐”，具体如下：</p>
+<ul>
+<li><strong>人人一致</strong>：1个“独裁者”好过10个“民主者”。需要一位强有力的角色，拉齐产品、运营、研发、QA的评测标准，遵循同一套评测体系，避免大家各自为政。不同评测员通过背靠背标注的方法拉齐标准。</li>
+</ul>
+<p><img src="https://p0.meituan.net/meituantechblog/c8424009679d2ecc1b00466290ebc522589569.png" alt=""></p>
+<ul>
+<li><strong>人机一致</strong>：机器评测结果与人工评测结果保持一致，否则不置信。人机一致的意义在于规模化提效，以应对更大的业务流量。</li>
+</ul>
+<p>具体如何进行对齐呢？最佳实践是把模糊指标下钻成更细的评测Rubric（或者叫评测维度：学界关于评测维度dimension和评测规则rubric的说法尚未统一，我们这里与开源项目Arize AI对齐），再把每个Rubric尽可能二元化。具体如下：</p>
+<ul>
+<li><strong>指标下钻</strong>：把“大而模糊”的概念下钻拆解成多个清晰维度</li>
+<li><strong>Rubric 二元化</strong>：把打分规则尽量收敛成是/否/未知、0/1/unknown</li>
+<li><strong>持续迭代</strong>：用 unknown 占比来反查 Rubric 是否定义合理，直到单条 Rubric 的人人一致率、人机一致率达到可信阈值（例如85%、90%）</li>
+</ul>
+<p>这种拆解法的价值在于：从“主观的模糊感受”转向“可判断的事实依据”，用下钻降低模糊度，从而降低人与人之间、人与机器之间的分歧。应用这套方法，数字站长的人机一致率可以达到99%。Beam以图灵的二元化方案改造评测体系，人机一致率从62%提升到92%。</p>
+<p>下面我们分享两个案例。</p>
+<p>案例一：如何评价初中生作文的好坏？（满分40分）</p>
+<p><img src="https://p0.meituan.net/meituantechblog/bcd654d41d8dc247cafa5648750234fc123958.png" alt=""></p>
+<p>案例二：以骑手外呼场景模型回复是否“口语化”举例</p>
+<p>经典错误示范 —— 请判断大模型的回答是否口语化，并按照0到10分打分。</p>
+<p>下钻与二元化之后的改进版：</p>
+<ul>
+<li>模型是否以您指代骑手；</li>
+<li>模型是否使用“甭客气”，“明儿见”等非官方文书的口语交流词汇；</li>
+<li>模型输出是否包含“吧”，“呢”，“那个”等语气词汇。</li>
+</ul>
+<p>补充：标注和评测的关系是什么？</p>
+<p>其中，标注是一种动作，而评测是一套目标导向的判断流程。机器预标注可以帮助人工提效，但只有在人机一致率保障才能称为自动化评测，否则只是机器标注。</p>
+<h3>2.4 Agent评测是一门实践科学</h3>
+<p>从执行链路看，Agent 评测可以被拆成五个关键环节，</p>
+<ul>
+<li><strong>采集</strong>：采集线上或沙箱中的原始任务数据</li>
+<li><strong>清洗</strong>：去重、归类、补上下文、修复脏数据</li>
+<li><strong>评测</strong>：人工评测、AI 评测</li>
+<li><strong>质检</strong>：检查评测标准是否稳定、评测结果是否可信</li>
+<li><strong>分析/归因</strong>：定位问题归因，形成优化建议和回归任务</li>
+</ul>
+<p>这5个环节与线上AB、持续观测共同构成了Agent迭代的数据飞轮。</p>
+<p>绝大部分新上手Agent评测团队都有一个误区 —— 多方调研总结设计一个复杂精妙的评测指标体系，而越复杂的指标越难以执行和对齐。</p>
+<p>而Agent评测是一门实践科学。<strong>起步阶段“让数据飞轮高效运转起来”的意义远大于“设计一个复杂精妙的评测体系”。评测体系的建立不是一蹴而就的，而是依靠 Good Case 和 Bad Case 喂养的</strong>。</p>
+<p>因此 ，Agent 评测指标体系的搭建最佳实践路径如下：</p>
+<ul>
+<li>从高频核心场景起步，先定义少量关键指标</li>
+<li>从生产环境中收集 Bad Case</li>
+<li>沉淀高质量 Good Case，明确什么叫“好”</li>
+<li>把 Good/Bad Case 转成标准评测样本</li>
+<li>用评测结果反哺 Prompt、Skill、策略和模型优化等等</li>
+<li>再从新的线上表现里持续抽样，形成下一轮迭代</li>
+</ul>
+<p>其中，Bad Case 的价值往往更高，因为它最容易暴露能力边界和系统短板；而 Good Case 的作用则是帮助团队定义高质量完成的范式。</p>
+<p>一个成熟的评测团队，核心能力不是一开始就搭出完美系统，而是能把线上问题、失败样本、模糊反馈不断转化成结构化评测资产。我们通过Bad Case和Good Case修正评测体系的目标，逐步修正“独裁者”与真实目标之间的负面偏差。例如履约数字站长业务，项目启动之处只有20多个评测指标，而经历1年时间推全之后，我们扩展到了近200个指标。</p>
+<h3>2.5 专家知识补充模型能力在垂域场景的不足</h3>
+<p>从GPT 3.5发布至今，虽然基座能力发生了天翻地覆的变化，但是模型能力终究不是万能的。在过去三年的Agent实践中，我们遇到过大量脱离实际的“许愿式”需求。我们要知道模型是训练出来的，模型本身拟合了Token的概率分布，即便在大规模参数下会产生能力的“涌现”，但模型能力的提升依旧强依赖语料的输入，尤其是高质量语料的输入。无论是早期的RLHF，还是如今的DPO、GRPO等算法，虽然训练架构在不断简化，但对高质量核心数据的依赖从未改变。</p>
+<p>例如字节专门设立了众包专家标注平台 Xpert，用于生产地理、代码、法律、医学等专业领域的高质量数据，以此支撑豆包基座模型的迭代训练。基座模型能力的提升，大家的直观感受就是它在一个又一个垂直领域的表现越来越好。</p>
+<p>因此，当我们在特定垂域面临业务知识语料匮乏（或公网无公开高质数据）的挑战时，通过引入行业专家的知识输入来补足模型/Agent的能力，就成了破局的关键——尤其是在项目的冷启动阶段。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/38f14cf00310f5e510a565afe5add85475210.png" alt=""></p>
+<p>呼应前文，评测的目的是回答“Agent好不好”，那么谁来定义“好不好”呢？靠最懂业务最有Sense的行业专家。</p>
+<h3>2.6 小结&amp;FAQ</h3>
+<p>这个章节讲述的是图灵评测从履约的项目出发，又经过这1年多BP公司各个业务方的过程中沉淀的核心方法论。</p>
+<p><strong>FAQ</strong></p>
+<p><strong>Q1：“独裁者”必须是1个人吗，还是1个团队共同遵循一套评测规范即可？</strong></p>
+<p>首先一个团队需要遵循同一套评测体系。独裁者的作用多方征求意见并整合评测体系，当项目方观念无法对齐的时候，由独裁者拍板定论，避免评测体系分化带来项目方各自为政以及内部拉扯带来的损耗。</p>
+<p><strong>Q2：评测体系依赖“独裁者”，存不存在风险？</strong></p>
+<p>我们要认清一个事实，评测体系是不断演进的。从业务冷启动到扩量再到全量，这个过程中用户从愿意尝鲜的AI爱好者扩展到全部用户，用户画像会发生明显的偏移。这导致评测目标需要随着业务的扩量不断地发生调整。独裁者的价值更多的体现在拉齐标准，评测目标更多的是由真实的业务场景中BadCase/Good Case修正并驱动的。当然，我们需要在评测标准建立之初选出最懂业务的人来制定评测体系。</p>
+<p><strong>Q3：冷启动阶段一定要设立种子评测集吗？能不能直接小流量开灰上线，直接收集Good Case和Bad Case来驱动评测呢？</strong></p>
+<p>冷启动阶段是否必须设立种子评测集，本质上是一个风险与成本的Trade-Off。</p>
+<p>为什么建议设立种子集：大模型具有随机性，Corner Case 可能会导致Agent体验剧烈偏移。因此，需要通过回测保证Agent基线能力，不断融入Good Case和Bad Case来拓宽Agent的能力边界。</p>
+<p>关于小流量开灰的策略：如果业务场景容错率高，或者构建高质量种子集的成本远超线上试错带来的负面反馈，可以尝试小流量上线收集线上case。</p>
+<p><strong>推荐落地方案</strong>：人工生产少量评测集后，AI辅助生成或扩写，以较低成本完成冷启动的种子评测集构建。</p>
+<p><strong>Q4：我们邀请的行业专家对“好”的定义不一致应该怎么办？</strong></p>
+<p><strong>答</strong>：最朴素且有效的方法，邀请一批行业专家定义“好”的标准，从中抽取共性的部分建设评测体系。例如邀请金牌销售来定义优秀的销售SOP。</p>
+<p>那么非共性的部分就没有价值了吗？并非如此。对于专家意见不一致的部分，往往意味着业务本身存在多种优秀策略。我们可以将这些分歧转化为 Agent 的不同风格或策略分支（例如：AI电销中，老练激进派 vs 细水长流派），并允许在不同的测试集（Benchmark）中独立评测。这些分歧点非但不是噪声，反而会成为 Agent 未来走向精细化迭代、覆盖更多长尾场景的重要养分。</p>
+<h2>三、Agent观测评测的演进</h2>
+<p>2023年GPT爆火，2024年工作流出现，去年 Claude Code发布，再到今年的龙虾热、爱马仕热，长程Agent逐渐进入了大众视野。Agent Harness也全面进入长程Agent时代。</p>
+<p>长程Agent（Long-horizon Agent）与短程Agent的区别，在于它如何处理“时间跨度带来的复杂性”：</p>
+<p><img src="https://p0.meituan.net/meituantechblog/8f8ece9a28d04ecfddfb2adeda215de5422438.png" alt=""></p>
+<p>这些差异会为观测评测带来怎样的变化呢？</p>
+<h3>3.1 短程Agent时代的观测评测</h3>
+<p>短程Agent时代的评测对象相对简单。ChatAgent 时代的典型输入输出形态是：<code>Query -&gt; Answer</code>。</p>
+<p>这类场景的共同特点是：Agent 更多是在“回答问题”，进行少量的系统操作，而不是“进入操作系统执行任务”。典型应用场景，例如AI搜索、客服机器人。此类Agent评测重点通常落在回答本身，例如：</p>
+<p><img src="https://p0.meituan.net/meituantechblog/9f0173186662a5fc1f713ea812e1bedf123607.png" alt=""></p>
+<p>在过去1年的发展中图灵形成了成熟的解决方案，包括人工评测、机器评测，部分案例如下：</p>
+<p><img src="https://p1.meituan.net/meituantechblog/ed3a1d605c114a237925bb77f1d3b4f1531735.png" alt=""></p>
+<h3>3.2 长程Agent的观测评测</h3>
+<p><strong>3.2.1 长程Agent带来评测范式变化</strong></p>
+<p>长程 Agent 解决的不是“回答一个问题”，而是“完成一个复杂任务”。它通常需要：</p>
+<ul>
+<li>任务需要多步骤拆解</li>
+<li>执行过程中需要多次调用 Tool 或 Skill</li>
+<li>需要读取中间结果并动态调整策略</li>
+</ul>
+<p>让我们回顾一下观测和评测的目标，带着这个目标去看长程Agent</p>
+<ul>
+<li><strong>观测目标</strong>：还原现场，精确定位，解决“我想看Case却发现没打日志”的问题</li>
+<li><strong>评测目标</strong>：回答Agent好不好，指出迭代方向</li>
+</ul>
+<p><img src="https://p0.meituan.net/meituantechblog/ded0f067e5f7efd742b99b90aa39d751334664.png" alt=""></p>
+<p><strong>3.2.2 Skill评测</strong></p>
+<p>在讲Skill评测之前，我们先分享一下我们关于26年春节后这一轮龙虾/Skill热潮的调研。</p>
+<p>谁在提出龙虾和Skill的评测需求（2月至今龙虾/Skill热潮的用户画像）？</p>
+<p>总结起来目前龙虾和Skill相关需求主要 广义的运营提效 场景，大致可以分成三类：</p>
+<p><img src="https://p0.meituan.net/meituantechblog/6ffee1bafd66d006e14e29030226a0c7457553.png" alt=""></p>
+<p>用户规模正在从少量专业角色扩展到更广人群</p>
+<ul>
+<li>商家侧仍在探索和试点阶段，规模有限</li>
+<li>公司内部AI at Work系统中的龙虾（或其他长程Agent）融合更广，用户覆盖产、运、研、销等多类角色</li>
+<li>Skill 的开发门槛越来越低，甚至可以由 AI 辅助生成</li>
+</ul>
+<p>这会带来一个直接结论：</p>
+<blockquote>
+<p>未来需要评测的人，不只是一小撮产运研同学，而可能是每一个会创建、修改、接入 Skill 的人。</p>
+</blockquote>
+<p>这对评测系统提出了新的要求：</p>
+<ul>
+<li>要足够简单</li>
+<li>要足够标准化</li>
+<li>要足够自动化</li>
+<li>最好能接入开发与发布流程</li>
+</ul>
+<p><strong>当前的本质痛点</strong></p>
+<p>本质在于 —— 大家不知道怎样写好 Skill，也缺乏对 Skill 全生命周期进行评测的工具。</p>
+<p>为了方便大家理解，我们将Skill全生命周期拆解如下：</p>
+<p><img src="https://p0.meituan.net/meituantechblog/182fee6cd0b3b393e24bf2283bfe024c272940.png" alt=""></p>
+<p>综上，Skill评测的痛点总体可以拆解成三个方面：</p>
+<p><img src="https://p1.meituan.net/meituantechblog/281c7582036750d16d76ea3a0c38516d317274.png" alt=""></p>
+<p><strong>面向Task的评测</strong></p>
+<p>2026年1月9号，Anthropic发表了一篇博客揭秘<a href="https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents" target="_blank" rel="noopener noreferrer">AI Agent评估</a>，在这篇博客中首次提到了面向Task的长程Agent评测。文中对Task，定义为“具有明确输入和成功标准的单个测试”。</p>
+<p>我们综合了Anthropic以及开源软件对Task的定义，简化如下。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/230f48a442655d73f000d00d39ee8e70190919.png" alt=""></p>
+<p>prompt定义了我们的问题/诉求，expeted behavior定义了我们预期Agent达成的行为，当我们在正式或测试环境中向Agent发送promt，通过trace获取到长程Agent真实的执行路径，就可以得到（prompt - expeted_behavior - trace）三元组，类似于短程Agent的（query - ground_truth - answer），即可进行评测。</p>
+<p><strong>3.2.3 长程Agent评测与短程Agent评测的差异</strong></p>
+<p>可以把两者的差异总结如下：</p>
+<p><img src="https://p0.meituan.net/meituantechblog/7e18558ac1dcbfe4501f58703ec4fed6197508.png" alt=""></p>
+<p>最本质的变化是：</p>
+<blockquote>
+<p>ChatAgent 评测关心“说得好不好”，长程 Agent 评测关心“事情做成没有，以及是怎么做成的”。</p>
+</blockquote>
+<p><strong>3.2.4 人评主导走向机评主导</strong></p>
+<p>ChatAgent 时代常见流程是：<code>核心评测员对齐 -&gt; 外包对齐 -&gt; 机评对齐</code></p>
+<p>而在长程 Agent 场景下，这条链路有机会被明显缩短，甚至可以跳过外包对齐，直接进入：<code>核心评测员对齐 -&gt; 机评对齐 -&gt; 规模化扩展</code></p>
+<p>原因主要有三点：</p>
+<ul>
+<li>长程 Agent 的执行轨迹更丰富，信息密度高使人成为卡点</li>
+<li>Skill 生产门槛低，数量增长极快，人工大规模标注不可持续</li>
+<li>基座模型能力的持续突破</li>
+</ul>
+<p>这并不意味着人工不重要，而是意味着：</p>
+<ul>
+<li>人工更应该做高价值标准设计和 Rubric 对齐</li>
+<li>AI 更适合承担规模化运行、初筛和回归验证</li>
+<li>平台更应该承担沉淀、回放、告警和归因职责</li>
+</ul>
+<p>换句话说，AI 评测真正要放大的，不是“机器打分”本身，而是核心评测员的判断标准。</p>
+<p><strong>3.2.5 长程Agent评测基建至少应该具备哪些能力</strong></p>
+<p>如果未来要支撑公司内大规模 Agent 和 Skill 生态，评测基础设施至少应包含以下能力：</p>
+<ul>
+<li><strong>全链路回放</strong>：复现一次任务从输入到结果的全过程</li>
+<li><strong>Case 管理</strong>：统一维护任务样本、上下文、约束和 Rubric</li>
+<li><strong>执行沙箱</strong>：按只读、可写、高风险等类型分层隔离执行</li>
+<li><strong>AI 评测引</strong>擎：支持 Rubric 驱动的人机对齐和自动判分，且足够简单易用，方便广大skill生产者接入</li>
+<li><strong>报告与归因</strong>：不仅给分，还能指出问题发生在规划、工具、环境还是 Skill</li>
+<li><strong>回归机制</strong>：版本升级后自动触发历史 Case 回归</li>
+<li><strong>准入准出门禁</strong>：把评测结果嵌入开发、发布和运营流程</li>
+</ul>
+<p>如果缺少这些能力，评测就容易停留在“单次分析”和“项目制支持”层面，无法真正成为生产系统的一部分。</p>
+<h2>四、总结：Agent评测正在从打分动作走向基础设施能力</h2>
+<p>综合来看，随着大模型能力的增强以及Agent Harness的持续演进，Agent 评测的演进可以概括为两句话：</p>
+<p><strong>第一，评测对象变了</strong></p>
+<p>过去评测的是“回答”，现在评测的是“任务系统”。</p>
+<p>因此我们关心的不再只是输出内容本身，而是完整执行链路中的能力、稳定性、效率与风险。</p>
+<p><strong>第二，评测方法变了</strong></p>
+<p>过去主流是 <code>Query -&gt; Answer</code> 的文本质量评测，现在逐步转向 <code>Prompt -&gt; Expected Behavior</code> 的行为评测。</p>
+<p>标准答案不再总是唯一，过程质量、任务完成度和轨迹质量成为新的核心对象。</p>
+<p>因此，未来真正重要的，不只是能不能做几次评测，而是能不能建设出一套：<strong>看得见问题</strong>、<strong>说得清标准</strong>、<strong>跑得动规模</strong>、<strong>接得上流程</strong>、<strong>带得动迭代</strong>的 Agent 评测体系。</p>
+]]></content:encoded>
+      <enclosure url="https://p0.meituan.net/meituantechblog/5a8954c2e7b681ee8fb8d2c8a73868cd157865.png" type="image/png"/>
+    </item>
+    <item>
+      <title>美团正式发布 CatPaw：全场景 AI Agent，从个人提效到企业智能化</title>
+      <link>https://tech.meituan.com/2026/07/28/CatPaw-LongCat.html</link>
+      <guid>https://tech.meituan.com/2026/07/28/CatPaw-LongCat.html</guid>
+      <source url="https://tech.meituan.com/rss.xml">美团正式发布 CatPaw：全场景 AI Agent，从个人提效到企业智能化</source>
+      <description>搭载美团 LongCat 2.0 的全场景 AI Agent 平台 CatPaw 正式上线，我们将模型能力从“跑得动”推向“用得好”。CatPaw 提供开箱即用的 AI 智能工作台与企业级 Agent 开发托管能力。</description>
+      <content:encoded><![CDATA[<p>本月，美团 LongCat 2.0 已<a href="https://tech.meituan.com/2026/07/12/LongCat-2.0-Open-source.html" target="_blank" rel="noopener noreferrer">正式开源</a>，总参数 1.6T，平均激活约 48B，动态范围 33B 到 56B，原生支持 1M 超长上下文。这是首个在五万张国产算力卡上完成全流程训练与推理的万亿参数模型。开源只是第一步，让 LongCat 2.0 在真实的工作任务中成为可靠的“工作伙伴”，才是真正的考验。</p>
+<p>现在，搭载 LongCat 2.0 的美团全场景 AI Agent 平台 <a href="https://catpaw.meituan.com/" target="_blank" rel="noopener noreferrer">CatPaw</a> 正式上线，将模型能力从“跑得动”推向“用得好”。CatPaw 提供开箱即用的 AI 智能工作台与企业级 Agent 开发托管能力。</p>
+<p>不仅如此，依托美团十余年深耕本地生活的行业积累，CatPaw 将商家经营、服务履约与消费决策的深度认知融入其中，助力企业构建 AI 数字员工、推进业务智能化升级。</p>
+<p>目前，CatPaw 已在美团内部大规模落地：累计覆盖 9 万员工、搭建 Agent 3 万个，并在多个真实业务场景中完成验证。</p>
+<h2>全时段运行，多终端协作的 AI 智能工作台</h2>
+<h3>01 移动/PC/云端，全时段多端协作</h3>
+<p>提供独立的<strong>移动端 App 与 PC 客户端</strong>，双端任务实时同步、无缝协作。移动端支持随时发起任务、查看进度与远程确认关键决策；PC 端专注本地深度执行，具备文件操作、浏览器控制与终端命令等完整能力。</p>
+<p>云端模式支持 <strong>7 × 24 小时不间断运行</strong>，即使本地设备关机或断网也不受影响。长程任务与定时任务于云端持续运转，完成后随时打开手机或电脑即可查看成果。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/a690ba49597fd8720f96ea56573b54cc151290.png" alt=""></p>
+<h3>02 深耕本地生活，融合美团业务生态</h3>
+<p>在全场景通用 AI Agent 能力的基础上，CatPaw 进一步融入了美团在本地生活领域的全链路行业认知。从门店经营、评价体系、营销转化到履约配送，这些深度积累已被封装为即装即用的<strong>专家与技能</strong>，覆盖门店评价诊断与优化、商品文案生成、营销物料设计评估、活动策划、经营数据分析等场景。</p>
+<p>CatPaw 既是人人可用的<strong>全能 AI 助手</strong>，也是真正懂本地生活生意的智能搭档。</p>
+<p><img src="https://p1.meituan.net/meituantechblog/864f86011bdcc6a2428f980323605284136476.png" alt=""></p>
+<h3>03 专家与技能，丰富能力即装即用</h3>
+<p>CatPaw <strong>支持 AI 专家</strong>，每位专家<strong>集成多项技能与子代理，高效完成特定领域的复杂任务</strong>。从专家广场<strong>一键安装</strong>即可使用，也可通过对话将自己的工作方式快速封装为专属专家，团队共享复用。</p>
+<p>平台内置丰富的技能库，开箱即用。内嵌浏览器还<strong>支持操作过程一键录制</strong>，将日常高频流程自动生成专属技能，让个人与团队经验沉淀为可复用的数字化资产。</p>
+<p>支持<strong>跨会话长期记忆</strong>，自动记忆用户的个性化偏好、操作习惯与历史上下文，跨设备、跨对话保持连续理解，越用越懂你。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/7f715c1d858cead54dad86e431e30153313940.png" alt=""></p>
+<h3>04 对话即交付，多 Agent 自主协同</h3>
+<p>只需明确最终目标，Agent 便会<strong>自主规划步骤并在授权范围内深度执行</strong>：读取文件、操作浏览器、运行终端命令，直接交付 Excel、可视化报告或代码等可用成果。</p>
+<p>面对跨领域的复杂任务，系统动态进行任务拆解，<strong>调度多个具备专属工具的 Agent 并发处理</strong>，各 Agent 在独立环境中互不干扰，进度实时可见，结果自动汇总。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/2122a550b13a060033f2a0343680ccfa345379.png" alt=""></p>
+<h2>从 AI 工作台到业务系统：Managed Agents</h2>
+<p>CatPaw Managed Agents 是企业级 AI Agent 开发与托管平台，提供开箱即用的工程底座，<strong>无需从零搭建底层基建</strong>，即可快速构建、部署与管理专属 Agent。</p>
+<h3>01 数字员工，扫码即用灵活配置</h3>
+<p>数字员工是运行在飞书、企微等 IM 中的 AI 虚拟同事，@ 即可唤醒使用。<strong>平台预置多种角色模板，扫码即用</strong>；美团在本地生活领域的长期积累也已沉淀为专属模板，不只是通用的聊天机器人，而是理解业务的行业 AI 助手。</p>
+<p>同时支持通过 <strong>AI 对话描述需求，快速生成专属数字员工</strong>。从 Agent 创建到环境部署、会话初始化，<strong>全程自动完成，无需手动配置</strong>。</p>
+<p>提示词、知识库、凭证、工具均支持在线管理，团队可按业务场景灵活搭建。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/a4a4286eab88dc7a9fb8ad4a359f57d3202455.png" alt=""></p>
+<h3>02 企业级安全，数据隔离可控</h3>
+<p><strong>Agent 运行环境严格隔离</strong>，租户间数据互不可见。凭证集中托管，<strong>确保 Agent 全程零接触敏感资产</strong>。</p>
+<p>支持<strong>分级权限管控</strong>与私有化部署，全面满足企业合规与安全审计要求。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/d8ea3582939d36764915e7b5f848790e478278.png" alt=""></p>
+<h3>03 Agent 托管运行，持续在线</h3>
+<p>支持<strong>按需配置运行环境</strong>，一键托管上线，<strong>资源动态扩缩</strong>。</p>
+<p>沙箱环境轻量隔离，百毫秒级冷启动，闲时自动释放，兼顾响应速度与成本。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/1c65c6d75279f7085030ad763eeff3b2368282.png" alt=""></p>
+<h3>04 可视化运维，全链路可观测</h3>
+<p>提供统一的运维管理界面，<strong>会话记录完整留存可追溯</strong>，支持在线调试实时排查问题，<strong>模型调用量与消耗清晰可见</strong>。</p>
+<p>多维度数据统计与分析，帮助团队持续评估 Agent 表现、优化运行效果。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/4344c5e90e47733d89ef9ee3d792f88f140185.png" alt=""></p>
+<h2>从个人提效到组织智能化：与商家一起探索更多可能</h2>
+<p>在全场景 AI 能力之上，CatPaw 提供<strong>组织级的管理与管控能力</strong>，满足商家**规模化落地 AI **的管理需求。</p>
+<p>CatPaw 提供统一管理后台，支持团队账号体系。团队成员与权限集中管理，用量明细与消耗实时可查，成本清晰可控。AI 专家和技能支持按团队或角色集中配置与精准下发，一线员工开箱即用，AI 能力快速转化为实际生产力。</p>
+<p>此外，CatPaw 还提供与<strong>美团业态深度关联的专属专家与技能</strong>，覆盖外卖、服务零售、医药健康等多个行业。以服务零售为例，美团商家运营专家整合了经营数据分析、评价管理、门店装修等核心场景，帮助商家实现智能化运营。</p>
+<p>CatPaw 将持续深入行业场景，让 AI Agent <strong>真正成为驱动经营增长的数字化伙伴</strong>。更多能力陆续开放中，<strong>诚邀美团合作商家抢先体验</strong>。</p>
+<p><strong>体验地址</strong>：<a href="https://catpaw.meituan.com/" target="_blank" rel="noopener noreferrer">https://catpaw.meituan.com/</a></p>
+]]></content:encoded>
+      <enclosure url="https://p0.meituan.net/meituantechblog/a690ba49597fd8720f96ea56573b54cc151290.png" type="image/png"/>
+    </item>
+    <item>
+      <title>下一代搜索智能体评测基准！美团开源LoHoSearch，用知识图谱校准AI能力认知</title>
+      <link>https://tech.meituan.com/2026/07/24/LongCat-LoHoSearch.html</link>
+      <guid>https://tech.meituan.com/2026/07/24/LongCat-LoHoSearch.html</guid>
+      <source url="https://tech.meituan.com/rss.xml">下一代搜索智能体评测基准！美团开源LoHoSearch，用知识图谱校准AI能力认知</source>
+      <description>过去一年，我们见证了 Search Agent 能力的显著演进。在 BrowseComp 等评测上，顶尖模型准确率从最初的 30% 区间迅速攀升至 90% 以上。然而，当基准迅速饱和，其区分模型能力的价值也随之递减。</description>
+      <content:encoded><![CDATA[<p>过去一年，我们见证了 Search Agent 能力的显著演进。在 BrowseComp 等评测上，顶尖模型准确率从最初的30%区间迅速攀升至90%以上。然而，当基准迅速饱和，其区分模型能力的价值也随之递减。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/69e86f1a417ef555aed62d74c1152c53108351.png" alt="图1：BrowseComp 准确率进展曲线"></p>
+<p>BrowseComp 的题目由人工设计，局限在于只能基于标注者已知的实体和关系构思，无法站在全局知识网络视角判断：哪些条件真的难检索？哪些约束的候选空间足够大？正是这种局限，让我们开始思考另一种可能性：<strong>能不能让机器自己来出题？</strong></p>
+<p>美团 LongCat 团队在最新论文中提出的 LoHoSearch 基准，就是把这种可能性变成了现实。</p>
+<h2>LoHoSearch 的核心"硬核"看点</h2>
+<ul>
+<li><strong>知识图谱自动化构造。</strong> 以覆盖762万维基百科实体的知识图谱为基础自动生成题目，替代人工出题。基准含544道经人工核验的题目，覆盖11个领域。</li>
+<li><strong>双维度难度控制。</strong> 在生成中系统控制搜索空间与结构复杂度。构建出难度显著高于现有基准的挑战性问题。</li>
+<li><strong>当前模型性能表现。</strong> 已评测模型中，GPT-5.5准确率为34.74%；现有上下文管理策略在LoHoSearch上提升幅度为6.8%，低于在BrowseComp上的14.03%。</li>
+</ul>
+<h2>01 设计原理：让机器出题，需要几部？</h2>
+<p>机器出题的前提，是让机器拥有全局视野。整个构建流程可以分为四个环节：<strong>建图 → 控制难度 → 质量把关 → 数据概览</strong>。下面逐一展开。</p>
+<h3>1.1 建图：搭建知识图谱，让机器获得全局视野</h3>
+<p>LoHoSearch 的第一步，是从完整的英文维基百科出发搭建一张大规模知识图谱：</p>
+<ul>
+<li>762 万个实体（每个维基页面是一个实体节点）</li>
+<li>2.65 亿条有向边（页面正文中指向其他维基页面的超链接）</li>
+<li>每个实体的类型取自其 Wikidata P31 类别，实体热度用入度来衡量</li>
+</ul>
+<p>这张图谱为后续在全局视角下挑选"难题"提供了基础。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/158cf7d04a3fd9d5c8b5f171480db1ec450289.png" alt="图2：LoHoSearch 数据构造流程总览（知识图谱构建 → 子图采样 → QA 生成与验证 → 后置过滤与人工复核）"></p>
+<p>有了图谱之后，下一个问题是：什么样的题目才算"难"？LoHoSearch 从两个维度来定义难度。</p>
+<h3>1.2 控制难度：搜索空间和结构复杂度两个维度</h3>
+<p>决定搜索难度的核心有两个维度，而它们恰恰是人工出题最难把控的：</p>
+<ul>
+<li><strong>搜索空间</strong>：满足一个条件的候选实体有多少。候选越多，排除成本越高。</li>
+<li><strong>结构复杂度</strong>：要同时满足多少条件才能锁定答案。条件越多、咬合越紧，求解链条越长。</li>
+</ul>
+<p>针对这两个维度，LoHoSearch 设计了两种子图结构：</p>
+<p><img src="https://p0.meituan.net/meituantechblog/da7dbb937aa30503321fa592d43b0123124986.png" alt=""></p>
+<ul>
+<li><strong>树结构</strong>主要通过放大"搜索空间"来制造难度。</li>
+<li><strong>图结构</strong>则在巨大搜索空间之上，通过引入环形依赖和交叉约束，进一步叠加了"结构复杂度"。</li>
+</ul>
+<h3>1.3 质量把关：从生成到验证，层层把关</h3>
+<p>子图采样完成后，还需要转换为可阅读的自然语言题目。整个转换与验证流程分为三层：</p>
+<ul>
+<li><strong>题目生成</strong>：从子图抽取维基描述，改写为自然语言问题。</li>
+<li><strong>自动验证</strong>：检查问题是否完整覆盖子图关系，并由搜索智能体验证标准答案满足所有条件。</li>
+<li><strong>筛选与复核</strong>：排除多答案题和易答题，再由人工审核。</li>
+</ul>
+<p>经过三层筛选，自动化流程的整体质量表现如下：75.5% 的题目直接通过人工复核，22.3% 经标注员微调后接受，仅有 2.2% 因严重问题被丢弃。</p>
+<h3>1.4 数据概览：544道题目，11个主题领域</h3>
+<p>LoHoSearch 最终收录 <strong>544 道</strong> 经人工核验的题目。对比树结构和图结构可以看出，图结构子图明显更稠密——节点更多、边数接近前者的两倍，这正对应它更高的结构复杂度。题目内容覆盖音乐、地理与地点、影视、体育等 11 个主题领域。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/9be937091fe5f30761bb06ea08a5c4e838213.png" alt="表1：LoHoSearch 数据统计"></p>
+<p><img src="https://p0.meituan.net/meituantechblog/55f51f19edf66249bcb164c70a75adb3167617.png" alt="图3：LoHoSearch 的领域分布"></p>
+<p><img src="https://p0.meituan.net/meituantechblog/2b54f0c184c018dbd27593bd90f40de0143825.png" alt="表2：各模型在 LoHoSearch 上的性能表现（%）"></p>
+<p>最强模型 GPT-5.5 准确率仅 34.74%，DeepSeek-V4-Pro、Claude-Opus-4.6 和 Kimi-K2.6 集中在 15.53%–15.99%，其余模型均低于 14%。这与它们在 BrowseComp 上 80% 以上的表现形成鲜明对照——LoHoSearch 对当前最先进搜索智能体构成了实质挑战。</p>
+<h3>洞察一：解一道题，平均工具调用从 35 次增至 61 次</h3>
+<p>用 DeepSeek-V4-Flash 作为探针对比两个基准：同一模型在 BrowseComp 上准确率 58.84%，在 LoHoSearch 上仅 10.02%。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/234e605bbc7af2f8f7977c212bc62a8290841.png" alt="图4：BrowseComp 与 LoHoSearch 正确轨迹的工具调用次数分布"></p>
+<p>解一道 LoHoSearch 题目，平均工具调用从 35 次增至 61 次（+74%），中位数从 26 次升至 59 次。图结构题目准确率仅 8.01%，远低于树结构的 11.89%，印证了结构复杂度是独立于搜索空间之外的额外难度来源。</p>
+<h3>洞察二：重复采样收益可观，但天花板依然很低</h3>
+<p>对 DeepSeek-V4-Flash 采样 16 个独立回答，结果如图 5 所示。</p>
+<p><img src="https://p1.meituan.net/meituantechblog/a011a2b381eef5312e8281e8f32f7449129032.png" alt="图5：并行采样下 pass@N 及三种答案聚合策略的表现"></p>
+<p>pass@N 从 N=1 的 9.3% 升至 N=16 的 38.3%，重复采样收益可观，但 38.3% 仍处低位。尝试 16 次仍有六成以上题目无法攻克。三种聚合策略中 best-of-N 表现最优（24.6%），远低于 pass@16 上界，说明模型在答案置信度校准上存在明显不足。</p>
+<h3>洞察三：现有的上下文管理策略，在这里已失真</h3>
+<p>以标准 ReAct 为基线，测试 Summary 和 Discard-all 两种策略，并加入 Verify 模块。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/f59c780873848c6d66609ad9eafc10d651431.png" alt="表3：基于 DeepSeek-V4-Flash 的上下文管理策略消融实验"></p>
+<p>表现最佳的组合（Discard-all + Verify）将成绩从 10.02% 提至 16.82%，绝对提升仅 6.8 个百分点，而同一套策略在 BrowseComp 上可带来 14 个百分点的增益。收益收窄的原因在于 LoHoSearch 需要更长的推理链，简单的轨迹压缩或重启无法解决长程搜索中的信息丢失问题——这使其成为下一代上下文管理技术更有价值的试验场。</p>
+<h3>洞察四：知识图谱是系统化构造高难度题目不可或缺的基础</h3>
+<p>对比两个基准中"隐藏实体"的特征可以发现：</p>
+<p><img src="https://p1.meituan.net/meituantechblog/682b8d4610aa31a2be89b70bc27a206a71835.png" alt="图6：隐藏实体分析(a) 隐藏实体的入度分布；(b) 相同流行度下关系搜索空间对比"></p>
+<p>其一，BrowseComp 的隐藏实体流行度明显更高，人工出题难以精确控制实体知名度，导致实体偏易。</p>
+<p>其二，即便将流行度控制在同一水平，LoHoSearch 的关系搜索空间仍显著更大，实体推断难度远高于 BrowseComp。</p>
+<p>这说明人工构建存在系统性局限，知识图谱是系统化构造高难度题目不可或缺的基础。</p>
+<h2>02 总结：为下一代智能搜索提供新标尺</h2>
+<p>LoHoSearch 的价值体现在三项具体贡献上：</p>
+<ul>
+<li><strong>基于知识图谱的自动化构造流程。</strong> 以覆盖762万实体的知识图谱为基础自动生成题目，系统控制搜索空间与结构复杂度，突破人工出题的难度上限。</li>
+<li><strong>更具区分度的评测标准。</strong> 最强模型 GPT-5.5 准确率仅 34.74%，正确轨迹所需工具调用次数是 BrowseComp 的 1.7 倍。LoHoSearch 为搜索智能体建立了更具区分度的评测标尺。</li>
+<li><strong>面向上下文管理研究的挑战性平台。</strong> 最优策略仅带来 6.8% 的提升，远低于其在 BrowseComp 上 14.03% 的增益，表明 LoHoSearch 可成为推动下一代上下文管理技术研究的理想试验场。</li>
+</ul>
+<p>LoHoSearch 已全面开源，欢迎各大模型前来接受"长程搜索"大考。</p>
+<h2>开源链接</h2>
+<ul>
+<li><strong>Paper</strong>: <a href="https://arxiv.org/abs/2606.12837" target="_blank" rel="noopener noreferrer">https://arxiv.org/abs/2606.12837</a></li>
+<li><strong>HuggingFace</strong>: <a href="https://huggingface.co/datasets/meituan-longcat/LoHoSearch" target="_blank" rel="noopener noreferrer">https://huggingface.co/datasets/meituan-longcat/LoHoSearch</a></li>
+</ul>
+]]></content:encoded>
+      <enclosure url="https://p0.meituan.net/meituantechblog/69e86f1a417ef555aed62d74c1152c53108351.png" type="image/png"/>
+    </item>
+    <item>
+      <title>让AI离开温室，走向动态世界：MineExplorer揭示顶级多模态大模型被忽视的能力断层</title>
+      <link>https://tech.meituan.com/2026/07/24/LongCat-MineExplorer.html</link>
+      <guid>https://tech.meituan.com/2026/07/24/LongCat-MineExplorer.html</guid>
+      <source url="https://tech.meituan.com/rss.xml">让AI离开温室，走向动态世界：MineExplorer揭示顶级多模态大模型被忽视的能力断层</source>
+      <description>美团 LongCat 团队构建了 MineExplorer —— 首个在开放世界中做到分钟级长程任务的评测基准，系统性地评测多模态大模型在需要长程规划、并包含隐藏前置条件的任务中的真实能力。</description>
+      <content:encoded><![CDATA[<p>假如你出生在一片未知的森林，太阳即将下山，饥肠辘辘，前方一只蜘蛛正向你缓慢爬来。——这是来自《我的世界》最经典的开局。</p>
+<p>此时如果你按下暂停，把截图发给所有顶级的多模态大模型，它们都能完美回答你：“黄昏、有怪物，面临威胁。”</p>
+<p>我们发现，多模态大模型能看懂图像、解析视频、在复杂场景里推理，然而一旦它们被丢进一个实时变化、需要持续探索的开放世界又会发生什么？</p>
+<p>为了深入探索，美团 LongCat 团队构建了<strong>MineExplorer</strong>——<strong>首个在开放世界中做到分钟级长程任务的评测基准</strong>，系统性地评测多模态大模型在需要长程规划、并包含隐藏前置条件的任务中的真实能力。</p>
+<p><strong>MineExplorer 核心看点：</strong></p>
+<ul>
+<li><strong>一个能直接跑的评测基准</strong>：813 个人工验证的高质量实例（1-hop 到 4-hop），配套规则化的里程碑自动评测框架。</li>
+<li><strong>一套造题的方法论</strong>：多智能体数据合成流程的完整代码，可自动合成训练任务。</li>
+<li><strong>一个可扩展的训练环境</strong>：基于 Minecraft 的沙盒，既能当考场，也能当练兵场。</li>
+</ul>
+<h2>01 MineExplorer设计解密：让AI离开温室，走向动态世界</h2>
+<p>MineExplorer 不再是简单的看图问答，而是围绕一系列创新，构建了一个前所未有的评测体系。</p>
+<p><img src="https://p1.meituan.net/meituantechblog/3415508a98cf053008ffb59af0ed592a421327.png" alt="图1：MineExplorer自动化数据合成和评测范式简介"></p>
+<h3>1.1 创新设计：构建一个动态开放的世界</h3>
+<p><strong>创新点一：构建一个具备完整物理规则、会动态演化的世界</strong></p>
+<p>MineExplorer不是让模型看一张 Minecraft 截图做选择题，模型面对的是一个实时运行的3D沙盒世界。在评测中，每个任务实例会运行1800个环境步，每步执行 0.1 秒，对应一段3分钟的连续交互视频。也就是说在这3分钟时间里，环境一直在变：模型每做一个动作，世界状态就更新一次，它必须根据最新的画面不断调整策略。</p>
+<p><strong>创新点二：隐藏前置条件的长程多跳任务</strong></p>
+<p>这是 MineExplorer 最核心的设计，我们把任务按「跳数（hop）」分级，代表完成最终目标需要经过的隐藏前置步骤数量：</p>
+<ul>
+<li><strong>简单任务</strong>：目标明确的单跳任务，智能体不需要根据场景和任务描述推理出隐式的子任务。</li>
+<li><strong>困难任务</strong>：由2-4跳任务组成的多跳推理任务。最终目标虽然给出，但要完成它，必须先推理并完成若干<strong>没有在指令里说明</strong>的前置子任务。</li>
+</ul>
+<p>我们用一个数学化的方式来刻画这种结构。每个复合任务被定义为一个四元组 τ = (q, s₀, Gτ, Mτ)：q 是自然语言指令，s₀ 是初始状态，Gτ 是任务之间的<strong>依赖图（DAG）</strong>，Mτ 是规则化的里程碑检查器。关键在于：**指令 q 并不会枚举依赖图里的所有节点，智能体必须自己从环境里推断出隐藏的前置任务。**一个任务越难，意味着它需要越多样的能力、包含越多隐藏前置、依赖链越深。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/1466cfe7ae29ef6beadf4bf8920b61b9117170.png" alt="图2：任务难度分布图"></p>
+<p><strong>创新点三：知识解耦——我们测的是「通用探索」，不是「背 Minecraft Wiki」</strong></p>
+<p>这是 MineExplorer 区别于以往所有 Minecraft 评测基准的一个关键设计。我们的做法是主动把游戏专有知识剥离掉。对每一个原子任务，我们用LLM裁判判断其主要依赖的是通用世界常识，还是Minecraft专有机制，并过滤掉后者。换句话说：<strong>我们测的不是「AI 会不会玩 Minecraft」，而是「AI 能不能在一个动态物理世界里自主探索」。</strong></p>
+<p><img src="https://p0.meituan.net/meituantechblog/27b8c5c7b9f9ae530adf7db2b37ee0d9117398.png" alt="图3：领域知识过滤图"></p>
+<h3>1.2 构建方法：一套可复用的多智能体数据合成范式</h3>
+<p>构建高质量的长程任务基准本身就是难题。我们的解法是让一组各有分工的 AI 协作来造题。MineExplorer 用一个多智能体协作流程，五个专业 Agent 在一个群聊里协作，由一个 orchestrator 控制发言顺序：</p>
+<p><img src="https://p0.meituan.net/meituantechblog/033d32b59d8891664d7de8ed0c836918946656.png" alt=""></p>
+<p>整个流程分初始化和辩论（debate）两个阶段，先生成初稿，再由专家和验证器找出问题并修订。</p>
+<p>如<strong>下表所示</strong>，人工评估结果显示，多智能体流程把有效率拉高了约 30 个百分点，质量分提升约 0.5 分，在最难的4-hop任务上优势尤其明显。最终，我们保留了 813 个通过人工验证的高质量复合任务实例。</p>
+<p><img src="https://p1.meituan.net/meituantechblog/92d0dc21970ca1a40a0386789f5a5256194522.png" alt="表1：Benchmark质量人工评估表"></p>
+<h3>1.3 能力覆盖：MineExplorer 到底在测什么？</h3>
+<p>MineExplorer 借鉴 ReAct 范式，把开放世界探索拆解成三大能力维度，共 14 项细粒度能力：</p>
+<ul>
+<li><strong>感知（Perception）：</strong> 空间、时序、实体、状态、资源。</li>
+<li><strong>推理（Reasoning）：</strong> 常识、因果、关系。</li>
+<li><strong>行动（Action）：</strong> 移动、跳跃、采集、放置、合成、攻击。</li>
+</ul>
+<p><strong>如图所示</strong>，最终的基准在三大维度上都有充足的覆盖，其中空间感知、移动、采集等基础能力出现频率最高，常识推理、因果推理也占了相当比例。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/5606f102fc399d300f8531427a08c4ef91444.png" alt="图4：能力覆盖分布图"></p>
+<h2>02 核心洞察：18款顶级大模型测试，为何集体“考砸”了？</h2>
+<p>MineExplorer不仅定义了考题，更给出了18个顶级模型的真实分数。<strong>如下表所示</strong>，这是横跨 Claude、GPT、Gemini 等八大家族的模型在整体任务成功率（TSR）上的排行榜。</p>
+<p><img src="https://p1.meituan.net/meituantechblog/baa9165aab4bae0826f1a4f22315881b960739.png" alt="表2：主体评测结果表"></p>
+<p>我们发现，即便是表现最好的 Claude-Opus-4.6，整体成功率也只有 41 分。</p>
+<p><strong>| 洞察一：单跳尚可，多跳崩盘——问题就在隐藏前置条件</strong></p>
+<p>如图所示，最强模型Claude-Opus-4.6的表现，从1跳任务的77分，一路下滑到4跳任务的12分。每增加一层隐藏的前置依赖，模型就掉一个台阶。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/423b7c12487a277cac27bcafb215841f1105129.png" alt="表3：分级评测结果图"></p>
+<p><img src="https://p1.meituan.net/meituantechblog/0fe66c8cd12e6acd4b3273cb6e8999dd227554.png" alt="图5：不同任务难度下的任务成功率对比图"></p>
+<p><strong>| 洞察二：会看，但不会想 —— 感知强于推理</strong></p>
+<p>在几乎所有被测模型上，我们都观察到同一个规律：<strong>感知分数 &gt; 行动分数 &gt; 推理分数</strong>。如下图所示，以Claude-Opus-4.6为例，其整体感知分61.91，推理分54.71。瓶颈不在于看不见，而在于看懂了却无法串联成有效策略。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/e552dbd0ed03151c3750b43d75ad37ba836166.png" alt="图6：维度评测热力图"></p>
+<p><strong>| 洞察三：近60%的失败原因，都是因为走不到目标</strong></p>
+<p>我们对 Claude-Opus-4.6 的失败案例进行了归因分析。<strong>如下图所示</strong>，导航失败是最大的错误来源，占比近 60%。</p>
+<p><img src="https://p0.meituan.net/meituantechblog/0e685670220ce485c94a8a8f5468218f163985.png" alt="图7：失败类型分布图"></p>
+<p><strong>| 洞察四：给它更多步数、更多记忆，都不是解药</strong></p>
+<p>我们进一步做了消融实验，发现模型失败并非因为资源不足。</p>
+<ul>
+<li><strong>步数</strong>：如图所示，能解的任务，模型在早期就解出来了；解不了的，给到 1800 步上限照样解不了。</li>
+</ul>
+<p><img src="https://p1.meituan.net/meituantechblog/4db113c30a91462928af6b6e28521ad8620229.png" alt="图8：平均完成步数图"></p>
+<ul>
+<li><strong>记忆</strong>：如图所示，增加历史画面帧数到一定程度后，性能反而会下降，因为过期的观察会干扰对当前局面的判断。</li>
+</ul>
+<p><img src="https://p0.meituan.net/meituantechblog/3db3e8f4aeb4dfb68dce40379b0df7a9355836.png" alt="图9：记忆帧数影响图"></p>
+<p><strong>核心结论：瓶颈不在资源，而在模型没法把已有的信息和当前世界状态对齐。</strong></p>
+<h2>03 总结：从看见世界到探索世界的鸿沟</h2>
+<p>MineExplorer 揭示了一个被乐观情绪掩盖的能力断层：当前的多模态大模型，已经具备了不错的感知力，但严重缺乏在动态世界中持续行动的探索力。</p>
+<p>这对正在快速升温的具身智能赛道有几个直接的启示：</p>
+<ul>
+<li>感知层基本就绪，规划层是瓶颈。 模型能看懂环境，但把感知转化成长程、含隐藏前置的行动计划，才是从能看到能做之间真正的鸿沟。</li>
+<li>行业需要更接近真实复杂度的评测标准。在受控场景里跑通一个单步指令，不足以宣布AI能行动了。真实世界是动态的，充满未说明的前置条件，需要持续、长久化的探索。</li>
+<li>我们不仅提供了评测，还开源了自动合成任务的方法和训练环境。MineExplorer交付的不是一套静态题库，它还带着一整套自动合成长程任务的流程，和一个能直接拿来训练的Minecraft环境。评测、造题、训练，用的是同一套基础设施。</li>
+</ul>
+<p>我们不是要给具身智能泼冷水。恰恰相反，把瓶颈定位清楚，比盲目乐观更有价值。MineExplorer提供的，正是这样一条诚实、可量化的能力基线。</p>
+<p>看得见世界，不代表能探索世界。在一个会变化的世界里持续推理、持续行动——这才是AI走向真实世界，必须先跨过的那道门槛。MineExplorer 已全面开源，欢迎各大模型前来挑战开放世界。</p>
+<p><strong>🚀 开源链接</strong></p>
+<ul>
+<li>
+<p><strong>Paper</strong>：<a href="https://arxiv.org/abs/2605.30931" target="_blank" rel="noopener noreferrer">https://arxiv.org/abs/2605.30931</a></p>
+</li>
+<li>
+<p><strong>GitHub</strong>：<a href="https://github.com/meituan-longcat/MineExplorer" target="_blank" rel="noopener noreferrer">https://github.com/meituan-longcat/MineExplorer</a></p>
+</li>
+<li>
+<p><strong>HuggingFace</strong>：<a href="https://huggingface.co/datasets/meituan-longcat/MineExplorer" target="_blank" rel="noopener noreferrer">https://huggingface.co/datasets/meituan-longcat/MineExplorer</a></p>
+</li>
+</ul>
+]]></content:encoded>
+      <enclosure url="https://p1.meituan.net/meituantechblog/3415508a98cf053008ffb59af0ed592a421327.png" type="image/png"/>
+    </item>
+  </channel>
+</rss>

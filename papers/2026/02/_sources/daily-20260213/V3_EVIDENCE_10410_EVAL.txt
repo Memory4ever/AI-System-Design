@@ -1,0 +1,135 @@
+LUCID: Attention with Preconditioned Representations (https://arxiv.org/html/2602.10410v1)
+citeturn28536view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.10410v1","lineno":270}); Total lines: 849
+L219: ### 2.3 LUCID’s Efficiency
+L220: 
+L221: Implementing LUCID Attention requires solving a triangular linear system involving the masked kernel matrix. Specifically, we solve for $Y\in\mathbb{R}^{N\times d}$ in:
+L222: 
+L223:  | $\displaystyle\left({M}\circ\exp\left(\frac{K_{\text{RN}}K_{\text{RN}}^{\top}}{\sqrt{d}}-\sqrt{d}\right)\right)Y=V,$  |
+L224: which can be done efficiently via forward substitution, since the matrix is lower triangular due to the causal mask $M$. Once $Y$ is obtained, the final output is computed by multiplying the softmax attention weights:
+L225: 
+L226:  | $\displaystyle\text{LUCID}(Q,K,V)=\left(\text{softmax}\left(\frac{QK^{\top}}{\sqrt{d}}+\hat{M}\right)\right)Y.$  |
+L227: 
+L228: The overall computational complexity remains $\mathcal{O}(N^{2}d)$, similar to standard softmax attention.
+L229: ##### Training Overhead.
+L230: 
+L231: We leverage the highly optimized cuBLAS TRSM (Triangular Solve) kernel for solving the triangular system, which enables efficient GPU utilization. cite72†Table 1 reports the training time per iteration for LUCID compared to Standard Attention across different sequence lengths. LUCID adds approximately 0-5.5% overhead during training.
+L232: Table 1: LUCID training overhead across Gemma 3(cite73†Team et al., 2025 ) and Qwen 2.5(cite74†Team and others, 2024 ) remains modest. Modern trends toward grouped-query attention(GQA) with fewer KV heads further reduce LUCID’s overhead.
+L233: Architecture  | Overhead
+L234: Gemma 3-1B  | $\sim 0\%$
+L235: Gemma 3-4B  | $+3.5\%$
+L236: Qwen 2.5-1.5B  | $+5.5\%$
+L237: ##### Inference Latency.
+L238: 
+L239: At inference time, LUCID’s overhead becomes negligible. For a 32K context length with batch size 1 and 100 new tokens generated, LUCID achieves 77ms compared to 76ms for Standard Attention—an overhead of only $\sim$1.3%. This minimal difference arises because the triangular solve operates on the KV cache and can be performed incrementally, as described in the Appendix.
+L240: ##### Compute Ablation.
+L241: A natural question is whether the 0-5.5% training overhead of LUCID could be better utilized by simply training the baseline model for longer. To address this, we conducted an ablation study where we increased the training compute for Standard Attention by ${\sim}10\%$ additional steps during 64K sequence length continual pretraining, matching LUCID’s total compute budget.
+L242: training the baseline longer does not yield equivalent performance gains—LUCID significantly outperforms the compute-matched baseline in multi-key retrieval by $\sim$20% in Appendix, cite75†Table 7 .
+L243: ## 3 Related Work
+L244: ##### Standard Attention and Long Context Challenges.
+L245: 
+L246: The scaled dot-product attention mechanism, introduced by cite55†Vaswani et al. (2017) , is the cornerstone of the Transformer architecture. Its ability to model long-range dependencies and its parallelizability have driven the success of modern LLMs. The core computation involves Queries - $Q$, Keys - $K$, and Values - $V$, where attention probabilites are derived from $QK^{T}$ passed through a softmax function.
+L247: However, standard attention suffers from $\mathcal{O}(N^{2}d)$ computational complexity and performance degradation on long sequences ($N$ large). This degradation manifests as “attention noise”, where the softmax forces attention weights onto irrelevant tokens, obscuring the signal from relevant ones (cite57†Ye et al., 2025 ). This is particularly problematic for tasks requiring precise retrieval or reasoning over extended contexts.
+L248: The Differential Transformer (Diff Transformer) (cite57†Ye et al., 2025 ) attempts to cancels noise by computing the difference between two attention maps ($A_{1}-\lambda A_{2}$), promoting sparsity. In contrast, LUCID attention tries to solve the root cause of the attention noise issue - correlated keys. In LUCID, a preconditioner developed from key-key similarities is used, which decorrelates the keys and removes attentional noise.
+L249: This preconditioning sharpens the attention distribution and enable precise retrieval.
+L250: ##### Linear Complexity Alternatives.
+L251: Another line of research seeks to overcome the $\mathcal{O}(N^{2})$ bottleneck by developing linear complexity ($\mathcal{O}(N)$) attention mechanisms. These often replace softmax with simpler kernels and reformulate the computation as a recurrent process, eliminating the need for a large KV cache (cite60†Katharopoulos et al., 2020 ; cite63†Yang et al., 2024b ). While efficient, early linear attention variants often underperformed softmax attention, particularly in recall.
+L252: DeltaNet (cite63†Yang et al., 2024b ) improves recall within this linear framework by replacing the simple additive memory update with one inspired by the delta rule, allowing for more targeted memory modification. GatedDeltaNet (cite76†Yang et al., 2024a ) further enhances this by combining the delta rule with a data-dependent gating mechanism (similar to Mamba2 (cite77†Dao and Gu, 2024 )) for adaptive memory erasure and targeted updates.
+L253: LUCID Attention is distinct from these approaches as it retains the $\mathcal{O}(N^{2}d)$ complexity, focusing on improving the quality of standard attention mechanism rather than achieving efficiency. PaTH Attention (cite62†Yang et al., 2025 ) introduces a data-dependent positional encoding mechanism via preconditioners, developed as a generatlization of the DeltaNet.
+L254: Table 2: Comparing mathematical formula of different attention mechanisms. Here, $Q,K,V\in\mathbb{R}^{N\times d}$ are queries, keys, and values, $\lambda\in\mathbb{R},\bm{\beta}\in\mathbb{R}^{N},W\in\mathbb{R}^{N\times d}$ are learnable parameters. $M$ and $\hat{M}$ are multiplicative and additive causal masks, respectively. $T=\text{diag}(\bm{\beta})^{-1}+\text{stril}(WW^{\top})$. Let diag, tril, and stril be diagonal, lower-triangular and strictly-lower-triangular retention operators, respectively.
+L255: Model  | Attention Formula
+L256: Standard  | $\text{softmax}\left(QK^{\top}+\hat{M}\right)V$
+L257: Diff Trans.  | $\left(\text{softmax}\left(Q_{1}K_{1}^{\top}+\hat{M}\right)-\lambda\ \text{softmax}\left(Q_{2}K_{2}^{\top}+\hat{M}\right)\right)V$
+L258: DeltaNet  | $\left(M\circ QK^{\top}\right)\left(I+\text{diag}(\bm{\beta})\text{stril}(KK^{\top})\right)^{-1}\text{diag}(\bm{\beta})V$
+L259: PaTH  | $\text{softmax}\left(\text{tril}(QK^{\top})-\text{tril}(QW^{\top})T^{-1}\text{stril}(WK^{\top})\right)V$
+L260: LUCID  | $\text{softmax}\left(QK^{\top}+\hat{M}\right)\left(M\circ\exp\left(KK^{\top}\right)\right)^{-1}V$
+L261: ## 4 Experimental Setup
+L262: 
+L263: We compare LUCID Attention against different baselines: Standard Attention, Diff Transformer, DeltaNet, and PaTH Attention. We train, and fine-tune our models on a subset of Dolma dataset ($\sim$6.5B tokens) provided by Allen AI (cite67†Soldaini et al., 2024 ) and use it for Needle-In-A-Haystack (NIAH) evaluations and downstream tasks.
+L264: ### 4.1 Model Configuration
+L265: For NIAH evaluations and downstream tasks, we train decoder-only transformers with 22 layers, model dimension 2048, MLP dimension 5632, and vocabulary size 32,000. Each model uses 32 attention heads and 4 key-value heads with head dimension of 68. PaTH Rotary positional embeddings - RoPE (cite78†Su et al., 2024 ) are used in all attention variants except for DeltaNet and PaTH. RoPE frequencey is set to 10,000 during pretraining and was changed to 64,000 during fine-tuning.
+L266: We use the AdamW optimizer (cite79†Kingma and Ba, 2014 ) with learning rate $5\times 10^{-4}$, $\beta_{1}$ = 0.9, and $\beta_{2}$=0.99 with weight decay of $0.01$. We conduct pretraining of all models on sequence length 2048 for 11k optimization steps with each step having effective batch size of 256 sequences. Then we fine-tune on sequence length 65536 for 500 optimization steps with each step having effective batch size of 16.
+L267: We use Huggingface Transformers library (cite80†Wolf et al., 2020 ) to train our models.
+L268: ### 4.2 Needle-In-A-Haystack Evaluations
+L269: We conduct experiments on SNIAH and MNIAH tasks before and after fine-tuning on varying sequence lengths and number of needles. For these tasks, we modified the RULER tasks (cite81†Hsieh et al., 2024 ) in the eval-harness framework (cite82†Gao et al., 2024 ). Note that RULER has multiple SNIAH and MNIAH tasks. Here, we are reporting average accuracies.
+L270: Throughout the NIAH evaluations, LUCID Attention shows better retrieval capability compared to Standard Attention both for varying sequence lengths and varying number of needles. We also vary the finetuning sequence length and observe that LUCID scales better with finetuning sequence length compared to standard attention.
+L271: Table 3: Performance comparison of different models against LUCID Attention for MNIAH task at 2048 sequence length.
+L272: 
+L273: Number of Needles Model 2 4 6 Standard $74.2$ $51.0$ $38.8$ Diff Trans. $72.4$ $35.4$ $26.0$ DeltaNet $37.0$ $16.8$ $11.0$ Path $61.4$ $44.2$ $37.2$ LUCID 76.6 55.8 43.6
+L274: cite83†Image: Refer to caption Figure 4: Performance comparison on MNIAH across varying number of needles and sequence lengths. Left: Standard Attention accuracy degrades sharply as task difficulty increases (more needles, longer sequences), dropping to 11.4% in the hardest configuration. Middle: LUCID Attention maintains substantially higher accuracy across all settings.
+L275: Right: The difference highlights consistent improvements of 10–26%, with LUCID providing the largest gains at longer sequence lengths where Standard Attention struggles most. cite84†Image: Refer to caption Figure 5: Multi-needle retrieval accuracy improves with longer finetuning for LUCID. Models finetuned at 32K and 64K sequence lengths are evaluated on multi-needle tasks with contexts averaged over 2K-8K and 2K-32K.
+L276: The performance gap between LUCID and Standard Attention increases from +19.8% (32K finetuning) to +47.3% (64K finetuning).
+L277: ### 4.3 Long-Context Reasoning: BABILong
+L278: We evaluate on BABILong (cite85†Kuratov et al., 2024 ), a benchmark designed to test language models on “needle-in-a-haystack” reasoning tasks at scale. BABILong extends the classic bAbI tasks (cite86†Weston et al., 2015 ) by embedding reasoning problems within long distractor texts sampled from PG19. We focus on QA1–QA5, which test fact retrieval and multi-hop reasoning. We finetune all models on the BABILong training set and evaluate at three context lengths: 32K, 64K, and 128K.
+L279: We introduce a variant of LUCID called LUCID-PATH, which combines LUCID’s key decorrelation mechanism with PaTH positional encoding (cite62†Yang et al., 2025 ), enabling length extrapolation to contexts longer than those seen during training. The integration applies LUCID’s preconditioner to the PaTH attention scores via a block-wise forward-substitution algorithm (see Appendix cite40†A.3 for details).
+L280: cite87†Figure 6 presents the average accuracy across QA1–QA5. The results reveal a striking difference in how methods scale with context length. Standard and Diff attention exhibit rapid performance degradation, dropping from ${\sim}0.14$ at 32K to near zero at 128K. Path attention shows moderate degradation but maintains some capability at longer contexts.
+L281: In contrast, Lucid-Path demonstrates remarkable stability: accuracy remains between 0.21–0.25 across all context lengths, with minimal degradation from 32K to 128K. Notably, Lucid-Path achieves this with consistently low variance across tasks (tight shaded regions), indicating robust performance on both single-hop (QA1) and multi-hop (QA2–QA3) retrieval.
+L282: These results suggest that Lucid-Path’s attention mechanism more effectively preserves access to distributed facts in long sequences, a critical capability for real-world long-document understanding.
+L283: Figure 6: BABILong long-context retrieval performance. Tests multi-hop fact retrieval across increasingly long contexts (32K–128K tokens). While baseline methods exhibit substantial performance degradation as sequence length increases, Lucid-Path maintains stable accuracy.
+L284: ### 4.4 Long-Context Understanding: LongBench and SCROLLS
+L285: To evaluate performance on realistic long-context tasks, we benchmark on LongBench (cite88†Bai et al., 2023 ) and SCROLLS (cite89†Shaham et al., 2022 ), covering multi-document QA, single-document QA, and summarization. We evaluate on six tasks spanning three categories: multi-document QA (2WikiMQA, HotpotQA), single-document QA (MultifieldQA, Qasper), and summarization (QMSum).
+L286: We compare against Standard softmax attention, Differential attention (cite57†Ye et al., 2025 ), PaTH attention, and linear attention variants including DeltaNet (cite63†Yang et al., 2024b ), GLA (cite76†Yang et al., 2024a ), and GSA (cite90†Zhang et al., 2024 ). Detailed task descriptions are provided in cite52†Section A.6 .
+L287: cite91†Table 4 presents the results. LUCID-PaTH achieves the best performance on four of six tasks, with particularly strong gains on Qasper (+1.14 F1 over PaTH) and QMSum ROUGE-1 (+0.22 over PaTH). LUCID alone already outperforms most baselines, achieving the best HotpotQA F1 (0.0862) and QMSum ROUGE-L (12.60).
+L288: Linear attention variants (DeltaNet, GLA, GSA) underperform substantially, particularly on multi-document QA where cross-document reasoning is critical—DeltaNet achieves only 0.036 F1 on 2WikiMQA compared to 0.274 for LUCID.
+L289: Table 4: LongBench and SCROLLS evaluation results. F1 scores for QA tasks and ROUGE scores for summarization. Best results are in bold, second-best are underlined.
+L290: Model  | Multi-Doc QA  | Single-Doc QA  | Summ. (32K)
+L291: 2WikiMQA  | HotpotQA  | MultifieldQA  | Qasper  | R-1  | R-L
+L292: Standard  | 0.240  | 0.073  | 0.113  | 7.69  | 11.79  | 10.39
+L293: Diff  | 0.263  | 0.081  | 0.139  | 8.70  | 13.19  | 11.07
+L294: DeltaNet  | 0.036  | 0.019  | 0.076  | 7.06  | 10.74  | 8.72
+L295: GLA  | 0.228  | 0.045  | 0.114  | 8.17  | 10.97  | 9.20
+L296: GSA  | 0.232  | 0.051  | 0.116  | 7.54  | 9.11  | 7.81
+L297: PaTH  | 0.283  | 0.079  | 0.139  | 10.57  | 14.62  | 12.00
+L298: LUCID  | 0.274  | 0.086  | 0.144  | 10.55  | 14.79  | 12.60
+L299: LUCID-PaTH  | 0.275  | 0.085  | 0.149  | 11.70  | 14.83  | 12.57
+L300: ### 4.5 Empirical Analysis of Attention Noise Reduction
+L301: 
+L302: To provide direct empirical evidence that LUCID reduces attention noise, we analyze the hitrate—the fraction of attention weight assigned to semantically relevant tokens during retrieval tasks. Specifically, on NIAH tasks, we measure the average attention weight placed on the “needle” tokens that contain the answer.
+L303: LUCID Attention achieves a hitrate of 0.2845 compared to 0.1817 for Standard Attention—a relative improvement of 56.6%. This substantial increase demonstrates that LUCID’s preconditioning effectively reduces attention noise by concentrating probability mass on the relevant tokens rather than dispersing it across irrelevant context. This empirical result corroborates our theoretical motivation: by decorrelating keys in the RKHS feature space, LUCID enables queries to focus more precisely on important keys.
+L304: ## 5 Conclusion
+L305: Standard softmax attention faces fundamental challenges in long-context settings: correlated keys lead to diffuse attention distributions, and lowering temperature to sharpen focus causes vanishing gradients. LUCID Attention addresses these issues by preconditioning with a key-key similarity matrix, decorrelating keys in RKHS to improve attention focus while preserving full $\mathcal{O}(N^{2}d)$ complexity.
+L306: Our experiments demonstrate substantial gains on long-context retrieval tasks—up to 18% on BABILong and 14% on RULER multi-needle—with minimal overhead. Limitations. Our work focuses on causal language modeling, where the triangular structure of the preconditioner matrix enables efficient linear solves with minimal overhead.
+L307: However, for bidirectional settings such as diffusion models, the preconditioner loses its triangular structure, making the linear solve computationally expensive—exploring efficient solutions for this case remains an important direction for future work.
+L308: ## Acknowledgements
+L309: 
+L310: We thank Manzil Zaheer, Devvrit Khatri, Rohan Anil, and Vineet Gupta for helpful discussions.
+L311: ## References
+L312:   * Bai et al. (2023) Y. Bai, X. Lv, J. Zhang, H. Lyu, J. Tang, Z. Jin, Y. Huang, J. Zhao, Y. Sun, W. Bi, S. Wang, P. Liu, G. Zheng, Z. Wang, Y. Wu, W. Huang, Z. Huang, C. Zhang, Z. Nie, W. Li, D. Lee, C. Lin, S. Yang, Z. Chi, W. Chen, H. Huang, Z. Yin, K. Chang, L. Li, X. Qiu, L. Kong, T. Sun, F. Wei, P. Li, C. Zhang, Z. Zhang, Y. Yang, Q. He, M. Gui, X. Huang, and Y. Gao LongBench: a bilingual, multitask benchmark for long context understanding.
+L313: External Links: 2308.14508, cite92†Link Cited by: cite93†2nd item , cite94†§4.4 .
+L314:   * Brown et al. (2020) T. Brown, B. Mann, N. Ryder, M. Subbiah, J. D. Kaplan, P. Dhariwal, A. Neelakantan, P. Shyam, G. Sastry, A. Askell, et al. Language models are few-shot learners. Advances in neural information processing systems 33, pp. 1877–1901. Cited by: cite95†§1 .
+L315:   * Dao and Gu (2024) T. Dao and A. Gu Transformers are ssms: generalized models and efficient algorithms through structured state space duality. arXiv preprint arXiv:2405.21060. Cited by: cite96†§3 .
+L316:   * Dasigi et al. (2021) P. Dasigi, K. Lo, I. Beltagy, A. Cohan, N. A. Smith, and M. Gardner A dataset of information-seeking questions and answers anchored in research papers. In Proceedings of NAACL, Cited by: cite93†2nd item .
+L317:   * Gao et al. (2024) L. Gao, J. Tow, B. Abbasi, S. Biderman, S. Black, A. DiPofi, C. Foster, L. Golding, J. Hsu, A. Le Noac’h, H. Li, K. McDonell, N. Muennighoff, C. Ociepa, J. Phang, L. Reynolds, H. Schoelkopf, A. Skowron, L. Sutawika, E. Tang, A. Thite, B. Wang, K. Wang, and A. Zou The language model evaluation harness. Zenodo. External Links: cite97†Document†dx.doi.org , cite98†Link†zenodo.org Cited by: cite99†§4.2 .
+L318:   * Giles (2008) M. B. Giles Multilevel monte carlo path simulation. Technical report Technical Report NA-08-01, University of Oxford. External Links: cite100†Link†people.maths.ox.ac.uk Cited by: cite101†§A.2 .
+L319:   * Ho et al. (2020) X. Ho, A. D. Nguyen, S. Sugawara, and A. Aizawa Constructing a multi-hop qa dataset for comprehensive evaluation of reasoning steps. In Proceedings of COLING, Cited by: cite102†1st item .
+L320:   * Hsieh et al. (2024) C. Hsieh, S. Sun, S. Kriman, S. Acharya, D. Rekesh, F. Jia, Y. Zhang, and B. Ginsburg RULER: what’s the real context size of your long-context language models?. External Links: 2404.06654, cite103†Link Cited by: cite99†§4.2 .
+L321:   * Katharopoulos et al. (2020) A. Katharopoulos, A. Vyas, N. Pappas, and F. Fleuret Transformers are RNNs: fast autoregressive transformers with linear attention. In International conference on machine learning, pp. 5156–5165. Cited by: cite104†§1 , cite105†§2.1.1 , cite96†§3 .
+L322:   * Kingma and Ba (2014) D. P. Kingma and J. Ba Adam: a method for stochastic optimization. arXiv preprint arXiv:1412.6980. Cited by: cite106†§4.1 .
+L323:   * Kuratov et al. (2024) Y. Kuratov, A. Bulatov, P. Anokhin, I. Rodkin, D. Sorokin, A. Sorokin, and M. Burtsev Babilong: testing the limits of llms with long context reasoning-in-a-haystack. Advances in Neural Information Processing Systems 37, pp. 106519–106554. Cited by: cite107†§4.3 .
+L324:   * Masarczyk et al. (2025) W. Masarczyk, M. Ostaszewski, T. S. Cheng, A. Lucchi, R. Pascanu, et al. Unpacking softmax: how temperature drives representation collapse, compression, and generalization. arXiv preprint arXiv:2506.01562. Cited by: cite108†§1 .
+L325:   * Meta AI (2025) Meta AI The llama 4 herd: the beginning of a new era of natively multimodal ai innovation. External Links: cite109†Link†ai.meta.com Cited by: cite110†§A.5 .
+L326:   * Schlag et al. (2021) I. Schlag, K. Irie, and J. Schmidhuber Linear transformers are secretly fast weight programmers. In Proceedings of the 38th International Conference on Machine Learning, M. Meila and T. Zhang (Eds.), Proceedings of Machine Learning Research, Vol. 139, pp. 9355–9366. Note: arXiv:2102.11174 External Links: cite111†Link†proceedings.mlr.press Cited by: cite112†§2.1.3 .
+L327:   * Shaham et al. (2022) U. Shaham, E. Segal, M. Ivgi, A. Efrat, O. Yoran, A. Haviv, A. Gupta, W. Xiong, M. Geva, J. Berant, and O. Levy SCROLLS: standardized comparison over long language sequences. arXiv preprint arXiv:2201.03533. Cited by: cite94†§4.4 .
+L328:   * Soldaini et al. (2024) L. Soldaini, R. Kinney, A. Bhagia, D. Schwenk, D. Atkinson, R. Authur, B. Bogin, K. Chandu, J. Dumas, Y. Elazar, V. Hofmann, A. H. Jha, S. Kumar, L. Lucy, X. Lyu, N. Lambert, I. Magnusson, J. Morrison, N. Muennighoff, A. Naik, C. Nam, M. E. Peters, A. Ravichander, K. Richardson, Z. Shen, E. Strubell, N. Subramani, O. Tafjord, P. Walsh, L. Zettlemoyer, N. A. Smith, H. Hajishirzi, I. Beltagy, D. Groeneveld, J. Dodge, and K.
+L329: Lo Dolma: an Open Corpus of Three Trillion Tokens for Language Model Pretraining Research. arXiv preprint. Cited by: cite113†§2.1.3 , cite114†§4 .
+L330:   * Su et al. (2024) J. Su, M. Ahmed, Y. Lu, S. Pan, W. Bo, and Y. Liu Roformer: enhanced transformer with rotary position embedding. Neurocomputing 568, pp. 127063. Cited by: cite106†§4.1 .
+L331:   * Team et al. (2025) G. Team, A. Kamath, J. Ferret, S. Pathak, N. Vieillard, R. Merhej, S. Perrin, T. Matejovicova, A. Ramé, M. Rivière, et al. Gemma 3 technical report. arXiv preprint arXiv:2503.19786. Cited by: cite72†Table 1 , cite115†Table 1 .
+L332:   * Team et al. (2024) Q. Team et al. Qwen2 technical report. arXiv preprint arXiv:2407.10671 2 (3). Cited by: cite72†Table 1 , cite115†Table 1 .
+L333:   * Vaswani et al. (2017) A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin Attention is all you need. In Advances in neural information processing systems (NeurIPS), pp. 5998–6008. Cited by: cite95†§1 , cite116†§3 .
+L334:   * Weston et al. (2015) J. Weston, A. Bordes, S. Chopra, A. M. Rush, B. Van Merriënboer, A. Joulin, and T. Mikolov Towards ai-complete question answering: a set of prerequisite toy tasks. arXiv preprint arXiv:1502.05698. Cited by: cite107†§4.3 .
+L335:   * Wolf et al. (2020) T. Wolf, L. Debut, V. Sanh, J. Chaumond, C. Delangue, A. Moi, P. Cistac, T. Rault, R. Louf, M. Funtowicz, J. Davison, S. Shleifer, P. von Platen, C. Ma, Y. Jernite, J. Plu, C. Xu, T. L. Scao, S. Gugger, M. Drame, Q. Lhoest, and A. M. Rush Transformers: state-of-the-art natural language processing. In Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing: System Demonstrations, Online, pp. 38–45.
+L336: External Links: cite117†Link†www.aclweb.org Cited by: cite106†§4.1 .
+L337:   * Yang et al. (2024a) S. Yang, J. Kautz, and A. Hatamizadeh Gated delta networks: improving mamba2 with delta rule. arXiv preprint arXiv:2412.06464. Cited by: cite96†§3 , cite94†§4.4 .
+L338:   * Yang et al. (2025) S. Yang, Y. Shen, K. Wen, S. Tan, M. Mishra, L. Ren, R. Panda, and Y. Kim PaTH attention: position encoding via accumulating householder transformations. External Links: 2505.16381, cite118†Link Cited by: cite119†§A.3 , cite120†§A.3 , cite121†§A.3 , cite122†item 3 , cite96†§3 , cite107†§4.3 .
+L339:   * Yang et al. (2024b) S. Yang, B. Wang, Y. Zhang, Y. Shen, and Y. Kim Parallelizing linear transformers with the delta rule over sequence length. arXiv preprint arXiv:2406.06484. Cited by: cite123†§A.4 , cite122†item 3 , cite112†§2.1.3 , cite96†§3 , cite94†§4.4 .
+L340:   * Yang et al. (2018) Z. Yang, P. Qi, S. Zhang, Y. Bengio, W. W. Cohen, R. Salakhutdinov, and C. D. Manning HotpotQA: a dataset for diverse, explainable multi-hop question answering. In Proceedings of EMNLP, Cited by: cite102†1st item .
+L341:   * Ye et al. (2025) T. Ye, L. Dong, Y. Xia, Y. Sun, Y. Zhu, G. Huang, and F. Wei Differential transformer. External Links: 2410.05258, cite124†Link Cited by: cite122†item 3 , cite108†§1 , cite125†§3 , cite94†§4.4 .
+L342:   * Zhai et al. (2023) S. Zhai, T. Likhomanenko, E. Littwin, D. Busbridge, J. Ramapuram, Y. Zhang, J. Gu, and J. M. Susskind Stabilizing transformer training by preventing attention entropy collapse. In International Conference on Machine Learning, pp. 40770–40803. Cited by: cite108†§1 .
+L343:   * Zhang et al. (2024) Y. Zhang, S. Yang, R. Zhu, Y. Zhang, L. Cui, Y. Wang, B. Wang, F. Shi, B. Wang, W. Bi, P. Zhou, and G. Fu Gated slot attention for efficient linear-time sequence modeling. arXiv preprint arXiv:2409.07146. Cited by: cite94†§4.4 .
+L344:   * Zhong et al. (2021) M. Zhong, D. Yin, T. Yu, A. Zaidi, M. Mutuma, R. Jha, A. H. Awadallah, A. Celikyilmaz, Y. Liu, X. Qiu, and D. Radev QMSum: a new benchmark for query-based multi-domain meeting summarization. In Proceedings of NAACL, Cited by: cite126†3rd item .
+L345: ## Appendix A Appendix
+L346: 
+L347: Table of Contents
+L348: A.1 KV Caching .cite38†A.1 L349: A.2 Memory Efficient Implementation of LUCID .cite39†A.2 L350: A.3 LUCID-PaTH .cite40†A.3 L351: A.4 Relation to DeltaNet .cite41†A.4 L352: A.5 Ablations .cite46†A.5 L353: A.6 LongBench and SCROLLS Task Details .cite52†A.6 L354: ### A.1 KV Caching
+L355: To enable LUCID for auto-regressive behavior, we need to cache unnormalized keys $K_{\text{past}}\in\mathbb{R}^{L_{\text{past}}\times d}$ and the solution of the triangular solver $(M\circ\exp(K_{\text{RN(past)}}K_{\text{RN(past)}}^{\top}/\sqrt{d}-\sqrt{d}))Y_{\text{past}}=V_{\text{past}}$.
+L356: When new keys $K_{\text{new}}\in\mathbb{R}^{L_{\text{new}}\times d}$ and values $V_{\text{new}}\in\mathbb{R}^{L_{\text{new}}\times d}$ are generated during decoding, new solutions of the triangular system $Y_{\text{new}}\in\mathbb{R}^{L_{\text{new}}\times d}$ can be easily computed by solving smaller triangular system
+

@@ -1,0 +1,127 @@
+3.3 Safety Neurons Detection
+Safety alignment leaves structured signatures in internal representations, giving rise to neuron-level patterns in which a small subset of units responds differently to benign and harmful prompts [25]. We formalize safety neurons through an activation-based probing procedure that quantifies how individual neurons contribute to safety-related distinctions. Let fθf_{\theta} denote a safety-aligned language model, and let hℓ​(x)∈ℝdh_{\ell}(x)\in\mathbb{R}^{d} be the hidden representation produced at layer ℓ\ell in response to an input prompt xx. To obtain a prompt-level activation signal that captures salient neuron responses during generation, we aggregate token-level activations using max pooling across the sequence:
+h~ℓ​(x)=maxt∈tokens⁡(x)⁡hℓ,t​(x),\tilde{h}_{\ell}(x)=\max_{t\in\mathrm{tokens}(x)}h_{\ell,t}(x),
+(5)
+where hℓ,t​(x)h_{\ell,t}(x) denotes the hidden state at token position tt.
+To measure the association between neuron activations and safety behavior, we train a lightweight linear probe on frozen representations to distinguish harmful prompts x∼𝒟harmx\sim\mathcal{D}_{\mathrm{harm}} from benign prompts x∼𝒟benignx\sim\mathcal{D}_{\mathrm{benign}}:
+pℓ​(x)=σ⁡(wℓ⊤​h~ℓ​(x)),p_{\ell}(x)=\sigma\!\left(w_{\ell}^{\top}\tilde{h}_{\ell}(x)\right),
+(6)
+where wℓ∈ℝdw_{\ell}\in\mathbb{R}^{d} are the probe weights and σ⁡(⋅)\sigma(\cdot) denotes the sigmoid function. The learned weights provide a neuron-level importance signal indicating how strongly each activation dimension contributes to safety discrimination.
+We identify safety neurons at layer ℓ\ell as those whose probe weights are both highly discriminative and positively aligned with refusal behavior:
+𝒮ℓ={i|zℓ,i>zthr∧wℓ,i>0},\mathcal{S}_{\ell}=\left\{i\;\middle|\;z_{\ell,i}>z_{\text{thr}}\;\wedge\;w_{\ell,i}>0\right\},
+(7)
+where zℓ,iz_{\ell,i} denotes the standardized importance score of neuron ii, obtained by normalizing its probe weight relative to the mean and standard deviation of weights at layer ℓ\ell, and zthrz_{\text{thr}} is a fixed threshold.
+3.4 Clustering Safety Neurons
+Once safety neurons have been identified at each layer ℓ\ell (Section 3.3), we further organize them into groups according to similarity in their activation patterns across prompts. The goal of this clustering step is to capture shared functional behavior among safety neurons and to enable parameter-efficient adaptation by tying updates within each group.
+Let
+Sℓ={i1,…,im}S_{\ell}=\{i_{1},\dots,i_{m}\}
+(8)
+denote the indices of the mm safety neurons selected at layer ℓ\ell.
+For a given prompt xx, let h~ℓ​(x)∈ℝd\tilde{h}_{\ell}(x)\in\mathbb{R}^{d} denote the pooled hidden representation at layer ℓ\ell, as defined in Eq. (5).
+Each safety neuron iji_{j} is represented by an activation vector
+𝐚ℓ,ij=[h~ℓ,ij​(x1),…,h~ℓ,ij​(xN)]⊤∈ℝN,\mathbf{a}_{\ell,i_{j}}=\left[\tilde{h}_{\ell,i_{j}}(x_{1}),\dots,\tilde{h}_{\ell,i_{j}}(x_{N})\right]^{\top}\in\mathbb{R}^{N},
+(9)
+which characterizes its response profile across a diverse set of benign and harmful prompts. We cluster the set of activation vectors
+{𝐚ℓ,ij}j=1m\{\mathbf{a}_{\ell,i_{j}}\}_{j=1}^{m}
+using kk-means clustering in activation space. For a candidate number of clusters kk, we solve
+min{C1,…,Ck}∑c=1k∑ij∈Cc‖𝐚ℓ,ij−𝝁c‖22,\min_{\{C_{1},\dots,C_{k}\}}\sum_{c=1}^{k}\sum_{i_{j}\in C_{c}}\left\|\mathbf{a}_{\ell,i_{j}}-\boldsymbol{\mu}_{c}\right\|_{2}^{2},
+(10)
+where 𝝁c\boldsymbol{\mu}_{c} denotes the centroid of cluster CcC_{c}. This objective groups safety neurons whose activation vectors exhibit similar response patterns across prompts.
+In practice, clustering is applied directly to the raw activation vectors without additional normalization, preserving magnitude information that distinguishes consistently strong safety responses from weaker or more selective activations. To determine the number of clusters, we evaluate kk-means solutions for
+k∈{2,…,kmax},k\in\{2,\dots,k_{\max}\},
+(11)
+where kmaxk_{\max} is a user-defined upper bound, set to kmax=2k_{\max}=2 in our experiments for stability and parameter efficiency. For each candidate kk, we compute the silhouette score
+Silhouette⁡(k)=1m​∑j=1mb⁡(ij)−a⁡(ij)max⁡{a⁡(ij),b⁡(ij)},\mathrm{Silhouette}(k)=\frac{1}{m}\sum_{j=1}^{m}\frac{b(i_{j})-a(i_{j})}{\max\{a(i_{j}),b(i_{j})\}},
+(12)
+where a⁡(ij)a(i_{j}) is the mean Euclidean distance between neuron iji_{j} and other neurons in its assigned cluster, and b⁡(ij)b(i_{j}) is the minimum mean distance between neuron iji_{j} and neurons in any other cluster.
+We select the clustering with the highest silhouette score, preferring smaller kk in the case of ties. If the best silhouette score falls below a fixed threshold γ\gamma (set to γ=0.1\gamma=0.1), or if clustering degenerates to a single effective cluster, we revert to a single-cluster assignment and treat all safety neurons in layer ℓ\ell as a homogeneous group. The final clustering defines a mapping
+cℓ:Sℓ→{0,…,kℓ−1},c_{\ell}:S_{\ell}\rightarrow\{0,\dots,k_{\ell}-1\},
+(13)
+which assigns each safety neuron to a cluster index cℓ​(i)c_{\ell}(i) and is subsequently used to tie parameter updates across neurons with similar activation behavior during fine-tuning.
+3.5 Neuron-Selective Tuning
+We perform neuron-selective tuning by restricting parameter updates to clustered safety neurons while keeping all other model parameters fixed (Figure 2). For each linear projection matrix Wℓ∈ℝdout×dinW_{\ell}\in\mathbb{R}^{d_{\text{out}}\times d_{\text{in}}} within the feed-forward network (FFN) at layer ℓ\ell, we freeze the base weights and introduce a set of trainable cluster-level update vectors
+Uℓ∈ℝkℓ×din,U_{\ell}\in\mathbb{R}^{k_{\ell}\times d_{\text{in}}},
+(14)
+where dind_{\text{in}} and doutd_{\text{out}} denote the input and output dimensionalities of the FFN projection at layer ℓ\ell, and kℓk_{\ell} is the number of safety neuron clusters identified in that layer. Each safety neuron i∈Sℓi\in S_{\ell} receives an additive update determined solely by its cluster assignment, such that the effective weight row used during training is given by
+W′ℓ,i,:=Wℓ,i,:+Uℓ,cℓ(i),:,W^{\prime}_{\ell,i,:}=W_{\ell,i,:}+U_{\ell,c_{\ell}(i),:},
+(15)
+while all non-safety neurons remain unchanged. This reparameterization enforces shared updates among neurons with similar activation behavior and substantially reduces the number of trainable parameters.
+During supervised fine-tuning, gradients are propagated exclusively through the cluster-level parameters UℓU_{\ell}, ensuring that adaptation is localized to safety-relevant subspaces of the model. After training, the learned updates are merged into the base weights, yielding a standard model without additional inference-time overhead. The overall NeST pipeline is summarized in Algorithm 1.
+Algorithm 1 NeST: Neuron-Structured Safety Tuning
+1:
+Safety-aligned model fθf_{\theta}; benign and harmful prompt sets
+2:
+Threshold zthrz_{\mathrm{thr}}; clustering parameters (kmax,γ)(k_{\max},\gamma)
+3:
+Updated parameters θ′\theta^{\prime}
+4:
+Collect pooled activations h~ℓ​(x)\tilde{h}_{\ell}(x) for all prompts (Eq. (5)).
+5:
+Detect safety neurons 𝒮ℓ\mathcal{S}_{\ell} via linear probing and thresholding (Eq. (7)).
+6:
+Cluster safety neurons using kk-means and silhouette selection to obtain cℓ​(⋅)c_{\ell}(\cdot) (Eq. (13)).
+7:
+Introduce cluster updates Uℓ∈ℝkℓ×dinU_{\ell}\in\mathbb{R}^{k_{\ell}\times d_{\mathrm{in}}} and freeze base parameters.
+8:
+Fine-tune only {Uℓ}\{U_{\ell}\} using shared neuron updates (Eq. (15)).
+9:
+Merge updates into base weights to obtain θ′\theta^{\prime}.
+return θ′\theta^{\prime}
+4 Implementation
+This section describes the concrete implementation of NeST, detailing how safety-relevant neurons are detected, organized into clusters, and selectively fine-tuned within large language models. All components are implemented in PyTorch using the HuggingFace Transformers and TRL libraries. Experiments are conducted on NVIDIA H100 GPUs, and all training and analysis are performed using frozen base models with parameter updates restricted to NeST’s cluster-level adaptation parameters.
+4.1 Safety Neuron Detection
+We implement safety neuron detection following the procedure described in Section 3.3, using forward-hook-based activation extraction and layer-wise linear probing on frozen model representations. To identify safety-relevant neurons, we construct a labeled prompt dataset consisting of both harmful and benign inputs. Harmful prompts are collected from three public safety benchmarks: CatHarmfulQA [49], HarmfulQA [50], and the LLM-LAT harmful dataset [51], while benign prompts are drawn from the training split of the Natural Reasoning dataset [52]. For balanced probing, the number of benign prompts is matched to the total number of harmful prompts, resulting in an equal number of harmful and benign samples with binary labels. We register forward hooks on the FNN submodules of each transformer block, specifically the gate_proj and up_proj linear projections, and for each prompt perform a forward pass through the frozen model while recording token-level hidden states at the selected modules. Following Eq. (1), activations are aggregated using max pooling across the sequence dimension to obtain a single prompt-level activation vector per layer and projection. Activations are collected in batches and concatenated across the full dataset to form a matrix of shape (N,d)(N,d), where NN is the number of prompts and dd is the hidden dimension. For each layer and projection, we train an independent linear probe on the pooled activations to distinguish harmful from benign prompts using binary cross-entropy loss, repeating training with multiple random initializations to reduce variance. Probe weights are standardized within each layer using z-score normalization, and neurons whose standardized scores exceed a fixed threshold (zthrz_{\text{thr}}) and whose weights are positive are selected as safety neurons, indicating positive alignment with refusal behavior as formalized in Eq. (7). This procedure yields a sparse set of safety neurons for each layer and projection.
+4.2 Safety Neuron Clustering
+We implement safety neuron clustering following the procedure described in Section 3.4, using activation patterns collected during the detection stage to group safety neurons with similar response profiles. Clustering is performed independently for each for each FNN projection (gate_proj and up_proj), using only the neurons identified as safety-relevant in Section 4.1. For each layer and projection, we construct a neuron-specific activation matrix from the pooled activations collected during safety neuron detection by extracting the columns corresponding to safety neurons, yielding a matrix of shape (N,m)(N,m), where NN is the number of prompts and mm is the number of safety neurons. Each safety neuron is thus represented by an activation vector characterizing its response behavior across both benign and harmful inputs. Prior to clustering, each neuron’s activation vector is standardized across prompts to zero mean and unit variance to improve numerical stability and reduce scale differences. We then apply kk-means clustering in activation space, treating each safety neuron as a data point. For each layer and projection, we evaluate candidate clusterings with varying numbers of clusters, up to the number of available safety neurons, and select the solution with the highest silhouette score, preferring smaller numbers of clusters in the case of ties. The final output of the clustering stage is a mapping from safety neuron indices to cluster identifiers for each layer and projection, which is fixed prior to fine-tuning and subsequently used to tie parameter updates across neurons within the same cluster during neuron-selective safety fine-tuning.
+4.3 Neuron-Selective Tuning
+We implement neuron-selective tuning following the formulation in Section 3.5 by restricting all trainable parameters to cluster-level updates applied exclusively to safety neurons while freezing the remainder of the model. Prior to fine-tuning, all base model parameters are frozen, and neuron-selective adaptation is enabled only for the FNN gate_proj and up_proj linear projections associated with detected safety neurons. For each projection, we reparameterize the corresponding weight matrix by introducing a trainable cluster-level update matrix Uℓ∈ℝkℓ×dinU_{\ell}\in\mathbb{R}^{k_{\ell}\times d_{\text{in}}}, as defined in Eq. (14). Instead of directly updating the original weight matrix WℓW_{\ell}, we employ a parametrization mechanism that reconstructs the effective weight at each forward pass by adding the cluster-specific update vector to the rows corresponding to safety neurons according to Eq. (15), while leaving rows corresponding to non-safety neurons unchanged. All safety neurons assigned to the same cluster share a single update vector, enforcing coordinated adaptation among neurons with similar activation behavior. During fine-tuning, gradients are propagated exclusively through the cluster-level update parameters, while all original model weights and bias terms remain fixed, ensuring that learning capacity is concentrated within safety-relevant subspaces and substantially reducing the number of effective trainable parameters. Neuron-selective tuning is performed using supervised fine-tuning on safety-aligned data, optimizing standard language modeling objectives under these parameter constraints. After training, the learned cluster-level updates are folded into the base weight matrices and all reparameterization modules are removed, yielding a standard model with identical architecture and inference-time cost as the original base model, and no additional parameters or runtime overhead introduced by NeST.
+5 Case Study
+To build intuition for the structure exploited by NeST, we visualize safety-neuron organization in a representative layer of a safety-aligned model. We focus on LLaMA-3.2-1B-Instruct and select layer 6 as a mid-network layer where safety behavior is typically salient. For this layer, we take the detected safety neurons from both the gate_proj and up_proj of the FNN. We collect their activation vectors over a diverse prompt set, cluster neurons in the original activation space, and use PCA to project them into two dimensions for visualization. Each point corresponds to a safety neuron, colored by its cluster assignment.
+Figure 3 shows that safety neurons form compact groups in both projections, indicating that they organize into coherent clusters rather than behaving as isolated units. This directly motivates NeST’s cluster-level updates: tying adaptation within each cluster preserves coherence among neurons that respond similarly, yielding targeted and structured safety tuning. We observe similar patterns across layers and model variants.
+(a) FNN gate projection
+(b) FNN up projection
+Figure 3: PCA visualization of clustered safety neurons in a representative mid-layer (Layer 6) of LLaMA-3.2-1B-Instruct. Each point denotes a safety neuron. Clusters in both FNN projections reveal coherent neuron groups that motivate NeST’s cluster-level update tying
+To further substantiate that the discovered clusters capture structure relevant for optimization and not merely similarity in activation space, we additionally analyze gradient alignment among safety neurons during fine-tuning. While the cluster visualizations in Figure 3 demonstrate that safety neurons organize into coherent groups based on their activation behavior, gradient alignment directly tests whether neurons within a cluster also tend to receive updates in similar directions.
+During supervised fine-tuning, we extract gradient vectors corresponding to the weight rows of safety neurons and compute pairwise cosine similarity between neuron updates. We compare similarities for neuron pairs belonging to the same cluster against pairs drawn from different clusters. Figure 4 summarizes these distributions across layers for LLaMA-3.2-1B-Instruct.
+Across all layers, within-cluster gradient alignment is consistently high, whereas between-cluster alignment is substantially lower and often centered near zero. This clear separation indicates that neurons grouped together by activation-based clustering also exhibit strongly aligned update directions during training. Consequently, the cluster-tied update rule in Eq. (15), implemented via the shared update vectors 𝐔ℓ\mathbf{U}_{\ell}, closely matches the model’s underlying optimization structure: neurons that NeST updates jointly would otherwise receive highly similar gradients. Together with the observed clustering patterns, this gradient alignment provides direct empirical support for neuron-selective tuning in NeST.
+Figure 4: Gradient alignment of safety neurons across layers. Within-cluster pairs (blue) exhibit higher cosine similarity than between-cluster pairs (orange), indicating aligned update directions that justify NeST’s cluster-level parameter tying.
+6 Evaluation
+6.1 Performance Evaluation
+We evaluate NeST on a diverse set of 10 open-weight instruction-tuned large language models spanning roughly 1B to 14B parameters and covering multiple major model families, including Meta’s Llama, Alibaba’s Qwen2.5 and Qwen3 series [53, 54, 55, 43], Microsoft’s Phi-4 models [56, 57], and Google’s Gemma [58, 44]. All evaluated models are publicly released instruction-following systems that incorporate general-purpose safety alignment, typically via supervised fine-tuning and reinforcement learning from human feedback, with the goal of reducing harmful, unsafe, or policy-violating outputs under standard prompting. This setup reflects realistic deployment conditions for open-weight LLMs, where safety mechanisms are present but may remain vulnerable to black-box adversarial attacks. We evaluate NeST in comparison to the original baseline models as well as three representative safety adaptation approaches: full-parameter supervised fine-tuning (Full FT), Circuit Breaker [37], which intervenes on internal activations to suppress unsafe behavior, and parameter-efficient LoRA [38] fine-tuning applied to FNN projections. Restricting LoRA to FNN projections ensures a fair comparison in both trainable parameter count and structural similarity to NeST. This comparison enables a systematic assessment of safety robustness and training efficiency across diverse architectures and model scales.
+For Full FT, LoRA [38], and NeST, we use a balanced supervised fine-tuning dataset composed of harmful and benign prompts. Harmful examples are drawn from the WildJailbreak [59] benchmark, using up to 10,000 adversarial harmful prompts, while benign examples are sampled from the training split of the Natural Reasoning [52] dataset, with the number of benign prompts matched to the harmful set. The combined dataset is shuffled and split into training and validation sets using a 95/5 split, and the same data and preprocessing are used across these methods to ensure a fair and controlled comparison. For Circuit Breaker [37], we follow the authors’ original training setup, which uses a curated circuit breaker dataset designed to elicit harmful internal representations together with a retain dataset composed of benign and refusal-aligned examples. In addition to this original configuration, we evaluate an expanded setting in which the circuit breaker training data is augmented with 5,000 harmful prompts sampled from WildJailbreak [59], while retaining the original retain dataset.
+Method
+Scope
+Train Data
+Epochs/Steps
+Eval. Data
+Baseline
+None
+–
+–
+1k
+Full FT
+All params
+20k
+5 epochs
+1k
+LoRA (r=1r{=}1)
+FNN
+20k
+5 epochs
+1k
+Circuit Breaker (r=32r{=}32)
+FNN+ATTN
+25k
+≤\leq150 steps
+1k
+NeST
+Neuron clust.
+20k
+5 epochs
+1k
+Table 1:
+Training and evaluation configurations for all methods.
+Full FT, LoRA, and NeST use a balanced 20k dataset, while Circuit Breaker builds on its original 5k training setup with an additional 20k prompts. rr denotes the dimensionality of low-rank adaptation. All methods are evaluated on 1k held-out WildJailbreak prompts.
+All methods are trained using a consistent supervised fine-tuning configuration to enable a controlled comparison of safety robustness and parameter efficiency. Baseline refers to the original, released instruction-tuned model without additional fine-tuning. Full FT performs standard supervised fine-tuning over all model parameters for five epochs. LoRA [38] applies parameter-efficient fine-tuning by inserting low-rank adapters into FNN projections. A small rank of r=1r=1 is used to keep the number of trainable parameters close to that of NeST, enabling a direct comparison of parameter efficiency. Circuit Breaker [37] follows the Representation Rerouting framework, introducing LoRA-based circuit-breaking modules while freezing the base model. Training is performed using the authors’ recommended configuration with rank-32 adapters, dropout 0.05, bfloat16 precision, gradient checkpointing, and up to 150 optimization steps. Finally, NeST restricts all updates to cluster-level parameters associated with safety-relevant neurons, leaving the remainder of the model unchanged and training for five epochs under the same optimization settings as Full FT and LoRA.
+All evaluation results are computed on a held-out set of 1,000 adversarial harmful prompts sampled from the WildJailbreak [59] benchmark. This evaluation set is strictly disjoint from all datasets used for safety neuron detection, clustering, and fine-tuning, ensuring that reported attack success rates reflect generalization to unseen harmful inputs rather than memorization or data leakage. Evaluation is conducted using a standardized attack success rate (ASR) protocol. For each target model and defense configuration, prompts are formatted using the model’s native instruction template, and responses are generated using greedy decoding with model-specific maximum generation lengths. To determine whether a response constitutes a successful jailbreak, an independent safety judge model, Qwen3Guard [60], is used to classify each response as safe or unsafe. A prompt is counted as a successful attack if the judge labels the response as unsafe and the output does not contain an explicit refusal. The final ASR is computed as the fraction of prompts that result in successful attacks, and this procedure is applied uniformly across all models and methods. The training and evaluation configurations for all compared methods are summarized in Table 1.
+We report evaluation results using two complementary metrics that capture both safety effectiveness and training efficiency. Table 2 presents the attack success rate (ASR) for each target model and defense method, measuring the fraction of adversarial prompts that result in unsafe responses, where lower values indicate stronger safety robustness. Table 3 reports the number of trainable parameters (in millions) introduced by each method, quantifying the parameter effi

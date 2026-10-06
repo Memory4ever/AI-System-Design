@@ -1,0 +1,284 @@
+SOURCE: https://arxiv.org/html/2601.11020v1
+From Interpretability to Performance:Optimizing Retrieval Heads for Long-Context Language Models Report GitHub Issue × Title: Content selection saved. Describe the issue below: 
+Description: arXiv is now an independent nonprofit! Learn more × Back to arXiv License: CC BY 4.0 arXiv:2601.11020v1 [cs.CL] 16 Jan 2026 From Interpretability to Performance: Optimizing Retrieval Heads for Long-Context Language Models 
+Youmi Ma Affiliation: Department of Computer Science, Institute of Science Tokyo Naoaki Okazaki Affiliation: {ma.y, okazaki}comp.isct.ac.jp Abstract Advances in mechanistic interpretability have identified special attention heads, known as retrieval heads, that are responsible for retrieving information from the context.
+However, the role of these retrieval heads in improving model performance remains unexplored.
+This work investigates whether retrieval heads can be leveraged to enhance the long-context capabilities of LLMs.
+Specifically, we propose RetMask, a method that generates training signals by contrasting normal model outputs with those from an ablated variant in which the retrieval heads are masked.
+This mechanism-based approach achieves substantial improvements: +2.28 points on HELMET at 128K for Llama-3.1, with +70% gains on generation with citation and +32% on passage re-ranking, while preserving performance on general tasks.
+Experiments across three model families reveal that the effectiveness depends on retrieval head organization: models with concentrated patterns of retrieval heads respond strongly, while those with distributed patterns show limited gains.
+This mechanistic relationship validates the function of retrieval heads and demonstrates that mechanistic insights can be transformed into performance enhancements 1 1 1 We will release the trained checkpoints upon acceptance. . 
+
+1 Introduction 
+Figure 1: An overview of this study. Given an LLM, we construct an ablated version by masking the retrieval heads Wu et al. (2025b) . We then sample texts from both the normal and ablated models and conduct Direct Preference Optimization. The effectiveness of such a training depends on how the retrieval heads are organized within LLMs. 
+Large Language Models (LLMs) require long-context capabilities to realize multi-document understanding Bai et al. (2024b) , in-context learning Brown et al. (2020) , and test-time scaling Snell et al. (2024) ; OpenAI (2024) .
+Recent studies on mechanistic interpretability revealed that long-context factuality is closely related to a set of attention heads named retrieval heads Wu et al. (2025b) ; Zhang et al. (2025) .
+Retrieval heads attend to previous tokens and recall information during the generation process.
+Deactivating retrieval heads has been reported to result in performance drops for downstream tasks. 
+While retrieval heads provide hints for the mechanism of long-context capabilities, their contributions to model performance remain unexplored.
+This gap between interpretability and model performance is pervasive: despite identifying specialized components responsible for knowledge storage Dai et al. (2022) ; Meng et al. (2022) and language Tang et al. (2024) ; Kojima et al. (2024) , prior work has not established effective methods to transform these discoveries into performance enhancements. Gu et al. (2024) reports that editing knowledge-specific components brings unintended side effects on models’ general abilities, and Mondal et al. (2025) reports that language-specific neuron interventions are insufficient to provide performance gains on downstream tasks.
+This leads to the question: Can retrieval heads be leveraged to enhance long-context capabilities? 
+With this research question in mind, this paper explores a method to enhance long-context processing abilities by optimizing retrieval heads.
+Specifically, as shown in Figure 1 , we synthesize supervision data from both the standard model and its ablated variant in which the retrieval heads are masked.
+We name the method as RetMask, short for Ret rieval-Head Mask ing.
+RetMask applies Direct Preference Optimization (DPO, Rafailov et al., 2023 ) to Llama-3.1, Qwen3, and Olmo-3 so that the model prefers the former of the synthesized data while rejecting the latter.
+Experiments on HELMET Yen et al. (2025) show interesting results: substantial improvements for Llama-3.1 (+2.28), observable gains for Qwen3 (+0.89), but limited impact on Olmo-3.
+We find mechanistic explanations behind these results — The varying improvements correlate directly with retrieval concentration patterns.
+Models with a concentrated set of retrieval heads respond strongly to the method, while those with distributed patterns show limited impacts.
+This finding suggests the existence and importance of retrieval heads in long-context processing from the perspective of model development. 
+The contributions of this work are as follows.
+(1) We test whether retrieval heads can be leveraged to improve long-context processing.
+Our experiments reveal that effectiveness depends on the organization of the retrieval head, providing both a practical method and mechanistic insights into model components.
+(2) For models with a concentrated pattern of retrieval heads, the proposed method achieves substantial improvements, with particularly strong gains on tasks requiring precise information retrieval.
+(3) We obtain enhancement without capability loss: the trained models maintain performance on mathematics, coding, and general knowledge tasks while exhibiting improved capabilities on long-context processing. 
+2 Preliminary: Retrieval Heads 
+Prior study has uncovered retrieval heads, a set of attention heads that retrieve relevant information from previous contexts during generation Wu et al. (2025b) .
+The algorithm to detect retrieval heads roots from the Needle-In-A-Haystack task. 
+Needle-in-a-Haystack Kamradt (2023) . 
+For each question q q and its corresponding answer k k (the “needle”), the answer k k is randomly inserted into a context x = p 1 , … , p n x=p_{1},\dots,p_{n} composed of n n passages that are irrelevant to both q q and k k .
+This yields x ′ = p 1 ​ … ​ k ​ … ​ p n x^{\prime}=p_{1}\dots k\dots p_{n} (the “haystack”), where the indices of inserted needle tokens are denoted as ℐ k \mathcal{I}_{k} .
+A language model receives the context with the answer inserted x ′ x^{\prime} , along with the question q q , and is evaluated on whether it correctly outputs k k .
+If successful, the model retrieves the target answer span k k from the long context x ′ x^{\prime} by performing a copy-paste operation. 
+Retrieval Head. 
+To detect retrieval heads, Wu et al. (2025b) calculates the frequency of a head performing copy-paste operations.
+Specifically, during decoding, let y t y_{t} denote the current token to be generated, and 𝒂 t ∈ ℝ | x ′ | + t − 1 \bm{a}_{t}\in\mathbb{R}^{|x^{\prime}|+t-1} is the attention scores of a head.
+The head is considered to be copy-pasting the token x j x_{j} if y t = x j , j = arg ​ max ⁡ ( 𝐚 t ) y_{t}=x_{j},j=\argmax(\bm{a}_{t}) .
+If j ∈ ℐ k j\in\mathcal{I}_{k} , the head is copy-pasting a token from the needle.
+The retrieval score of head h h is thus defined as: 
+RetrievalScore ​ ( h ) = 1 | 𝒯 | ​ ∑ ( g h , k ) ∈ 𝒯 | g h ∩ k | | k | , \text{RetrievalScore}(h)=\frac{1}{|\mathcal{T}|}\sum_{(g_{h},k)\in\mathcal{T}}\frac{|g_{h}\cap k|}{|k|}, (1) 
+where 𝒯 \mathcal{T} is the set of test instances; in each test, g h g_{h} denotes the set of all tokens copy-pasted by h h , and k k denotes the needle sequence.
+This metric quantifies the overlap between tokens retrieved by head h h and those in the needle sequence.
+The scores of all attention heads are computed, and those heads with RetrievalScore ​ ( h ) ≥ τ \text{RetrievalScore}(h)\geq\tau ( τ \tau is a threshold hyper-parameter) are considered as retrieval heads. 
+3 Methodology: RetMask 
+Figure 2: Overview of Preliminaries (left) and RetMask (right). The example on the right is a real case extracted from the training data. We detect and mask retrieval heads for generating contrastive responses. 
+This work evaluates the effectiveness of retrieval heads in enhancing the long-context processing capabilities of LLMs (Figure 2 ).
+Given an LLM π θ \pi_{\theta} , our approach trains the model to prefer outputs sampled from the LLM π θ \pi_{\theta} over those from an ablated variant π θ ′ \pi_{\theta^{\prime}} (with retrieval heads masked).
+The method consists of three stages: (1) Retrieval Head Deactivation; (2) Contrastive Response Generation; (3) Direct Preference Optimization. 
+Retrieval Head Deactivation. 
+Following Wu et al. (2025b) , for a given LLM π θ \pi_{\theta} , we compute the retrieval score of all attention heads and detect retrieval heads on top of the Needle-in-a-Haystack task.
+Attention heads with score greater than τ \tau comprise the retrieval head set ℋ ret \mathcal{H}_{\text{ret}} .
+We then construct an ablated LLM π θ ′ \pi_{\theta^{\prime}} by deactivating the identified retrieval heads ℋ ret \mathcal{H}_{\text{ret}} .
+For each head h ∈ ℋ ret h\in\mathcal{H}_{\text{ret}} , we zero out the corresponding columns in the attention output projection matrix 𝑾 o \bm{W}_{o} , thereby preventing the head from contributing to subsequent layers. 
+𝑾 o ′ h = { 𝟎 if h ∈ ℋ ret , 𝑾 o h otherwise \bm{W}_{o^{\prime}}^{h}=\begin{cases}\bm{0}&\text{if $h\in\mathcal{H}_{\text{ret}}$},\\
+\bm{W}_{o}^{h}&\text{otherwise}\end{cases} (2) 
+Contrasive Response Generation. 
+We synthesize data for direct preference optimization using the model π θ \pi_{\theta} and its ablated variant π θ ′ \pi_{\theta^{\prime}} , shaping contrasts that highlight the contribution of retrieval heads.
+To this end, we utilize existing Instruction Tuning datasets, which consist of instruction-response pairs.
+For each instruction x x in the dataset, we discard the original response and generate new responses following π θ \pi_{\theta} and π θ ′ \pi_{\theta^{\prime}} : 
+y w ∼ π θ ( ⋅ | x ) , \displaystyle y_{w}\sim\pi_{\theta}(\cdot|x), (3) y l ∼ π θ ′ ( ⋅ | x ) , \displaystyle y_{l}\sim\pi_{\theta^{\prime}}(\cdot|x), (4) 
+where Equation 3 represents sampling from the original LLM, and
+Equation 4 represents sampling from the ablated variant.
+The response y w y_{w} generated under zero perturbation serves as the chosen response, while y l y_{l} generated with retrieval heads deactivated serves as the rejected response. 
+Direct Preference Optimization. 
+Combining the synthesized responses y w , y l y_{w},y_{l} with the original instruction x x , we obtain preference tuples { ( x , y w , y l ) } \{(x,y_{w},y_{l})\} .
+We train the target policy π θ \pi_{\theta} using Direct Preference Optimization (DPO, Rafailov et al., 2023 ), with the reference policy π ref \pi_{\text{ref}} initialized from the original model.
+The objective is: 
+ℒ ⁡ ( π θ ) = − 𝔼 ⁡ [ log ⁡ σ ⁡ ( β ​ log ⁡ π θ ​ ( y w | x ) π ref ​ ( y w | x ) − β ​ log ⁡ π θ ​ ( y l | x ) π ref ​ ( y l | x ) ) ] , \displaystyle\begin{split}&\mathcal{L}(\pi_{\theta})=\\
+&{-\mathbb{E}\bigg[\log\sigma\bigg(\beta\log\frac{\pi_{\theta}(y_{w}|x)}{\pi_{\text{ref}}(y_{w}|x)}-\beta\log\frac{\pi_{\theta}(y_{l}|x)}{\pi_{\text{ref}}(y_{l}|x)}\bigg)\bigg],}\end{split} (5) 
+where β \beta is a temperature parameter controlling the deviation from the reference policy.
+RetMask uses self-synthesis, i.e., the model used for response generation is the same as the target model, by default; cross-model synthesis results are in Appendix D . 
+4 Experiments 
+DPO Llama-3.1-8B-Instruct Qwen3-8B Strategy 8K 16K 32K 64K 128K 8K 16K 32K 64K 128K – 56.03 54.14 52.42 51.65 46.40 53.20 50.16 49.89 45.44 44.73 Smaller-Model 56.77 55.32 53.48 52.18 47.53 52.52 49.81 48.71 46.67 45.51 Win-Lose-Pair 56.50 54.42 52.47 51.62 46.05 52.80 50.14 49.71 45.93 44.49 Non-Retrieval-Mask 56.45 55.55 53.19 52.14 47.19 53.02 50.28 48.67 46.79 45.48 Random-Mask 56.67 55.95 53.14 52.30 47.04 49.99 47.02 45.75 43.85 45.86 RetMask 58.14 56.92 53.48 53.15 48.68 53.77 50.61 50.34 46.79 45.62 
+Table 1: Performance of Llama-3.1 and Qwen3 trained with different strategies on HELMET Yen et al. (2025) .
+Models are evaluated using input sequences of 8K, 16K, 32K, 64K, and 128K tokens.
+Overall, training with retrieval heads ablated (i.e., RetMask) yields the best performance. 
+DPO Llama-3.1-8B-Instruct Strategy Average Recall RAG Cite Re-rank ICL LongQA Summ – 46.40 95.13 58.58 3.09 13.73 83.80 42.69 27.81 Smaller-Model 47.53 94.19 60.83 4.22 13.44 83.76 43.15 33.12 Win-Lose-Pair 46.05 93.56 59.50 3.72 12.47 83.36 39.26 30.48 Non-Retrieval-Mask 47.19 96.69 59.00 3.45 11.38 84.28 40.93 34.62 Random-Mask 47.04 96.38 59.29 3.88 10.79 83.52 41.32 34.10 RetMask 48.68 95.44 59.71 5.25 18.16 84.92 43.84 33.45 
+Table 2: Model performance on each task of HELMET when the input sequence length is 128K. The advantage of RetMask is evident on real-world tasks such as generation with citation and passage re-ranking. 
+4.1 Settings 
+Models. 
+We evaluate RetMask on three model families: Llama-3.1-8B-Instruct Grattafiori et al. (2024) , Qwen3-8B Yang et al. (2025) , and Olmo-3-7B-Think Olmo et al. (2025) .
+We identify retrieval heads using threshold τ = 0.1 \tau=0.1 for Llama-3.1 and τ = 0.05 \tau=0.05 for Qwen3 and Olmo-3 2 2 2 We tuned the hyper-parameter in pilot experiments as explained in Appendix A . . 
+Benchmarks. 
+We evaluate on HELMET Yen et al. (2025) , a comprehensive benchmark for long-context processing that covers both synthetic and real-world tasks, categorized as Synthetic Recall ( Recall , Hsieh et al., 2024 ), Retrieved Augmented Generation ( RAG ), Generation with Citations ( Cite ), Passage Re-Ranking ( Re-rank ), Many-Shot In-Context Learning ( ICL ), Long-Document Question Answering ( LongQA ), and Summarization ( Summ ).
+The benchmark covers five context lengths ranging from 8K to 128K tokens. 
+Training Data. 
+RetMask is applicable to any dataset containing user instructions.
+We primarily use LMSYS-Chat-1M Zheng et al. (2024) , a large-scale collection of human-LLM conversations.
+We also experiment with WildChat Zhao et al. (2024) , another general-purpose dataset collected from human-LLM interactions, in § 4.5 , and Guru Cheng et al. (2025) , a reinforcement learning dataset, in Appendix E .
+All training data are distinct from the evaluation benchmark,
+ensuring that performance gains reflect long-context capability improvements rather than task-specific tuning. 
+Baselines. 
+To focus on the contribution of retrieval heads, we include baselines with different policies of deciding rejected samples y l y_{l} :
+(1) Smaller-Model : y l y_{l} sampled from a smaller LLM, namely Llama-3.2-3B-Instruct Grattafiori et al. (2024) 3 3 3 We experimented with Llama-3.2-1B-Instruct and found the training unstable, thus switched to Llama-3.2-3B-Instruct. for experiments on Llama-3.1 and Qwen3-0.7B for experiments on Qwen3 and Olmo-3.
+(2) Win-Lose-Pair : y l y_{l} sampled from the same LLM but with lower quality. The quality is decided by LLM-as-a-judge utilizing Gemma-3-27B-IT Team et al. (2025) .
+(3) Non-Retrieval-Mask : y l y_{l} sampled from another ablated variant of the LLM, with | ℋ ret | |\mathcal{H}_{\text{ret}}| randomly selected non-retrieval heads masked.
+The masked heads are not chosen from the retrieval heads ( h ∉ ℋ ret h\notin\mathcal{H}_{\text{ret}} ).
+(4) Random-Mask : y l y_{l} sampled from another ablated variant of the LLM, with | ℋ ret | |\mathcal{H}_{\text{ret}}| attention heads randomly masked.
+Masked heads can be the retrieval heads.
+Additionally, we verified that supervised fine-tuning with y w y_{w} yields suboptimal performance compared to the DPO baselines, as detailed in Appendix C . 
+4.2 Main Results 
+The performance of Llama-3.1-8B-Instruct and Qwen3-8B trained under different strategies is shown in Table 1 .
+Additionally, Table 2 presents per-task performance of Llama-3.1 on HELMET evaluated using input sequences of 128K tokens.
+The task-wise performance of Qwen3-8B is detailed in Appendix B .
+In all tables throughout this paper, the row labeled as ‘–’ denotes the baseline model before training. 
+Strong Improvements on Llama-3.1 across all context lengths. 
+Table 1 shows that RetMask achieves the best performance across all context lengths when training Llama-3.1.
+At 128K, the proposed method improves the base model by 2.28 points ( 46.40 → 48.68 46.40\to 48.68 ).
+The improvement persists across context lengths ranging from 8K to 128K tokens, demonstrating the robustness of the method.
+RetMask outperforms the other baselines (Non-Retrieval-Mask and Random-Mask), confirming that improvements stem specifically from
+targeting retrieval heads rather than the ablating operation itself.
+Notably, Win-Lose-Pair, which trains the model to prefer
+higher-quality outputs over lower-quality ones from the same model,
+shows decreased performance ( 46.40 → 46.05 46.40\to 46.05 ).
+This indicates that the gains from the proposed method are not
+simply due to preference optimization on output quality, but rather
+from the contrast that specifically targets retrieval functionality. 
+Interestingly, the training sequences average only 63.62 tokens for inputs and
+494.69 tokens for outputs, significantly shorter than the evaluation
+contexts.
+This reveals an advantage of the proposed method: it
+enhances long-context capabilities through short-sequence training,
+consistent with findings in Gao et al. (2025) that post-training with short-context instruction datasets is sufficient for achieving
+good long-context performance. 
+Improvements on Qwen3 across all context lengths. 
+On Qwen3, consistent improvements are also observed with RetMask: +0.57 at 8K, +0.45 at 16K, +0.45 at 32K, +1.35 at 64K, +0.89 at 128K.
+However, the improvements are modest compared to those on Llama-3.1, and the Random-Mask baseline was slightly better than RetMask by 0.24 points when the input sequence is 128K tokens long.
+We attribute this to fundamental differences in retrieval head patterns, which will be explained in § 5.2 .
+We also provide a detailed analysis of how Qwen3’s reasoning contents affect the performance in § 4.4 . 
+Improvement is significant on tasks requiring long-context processing. 
+Table 2 details the task-specific impact of the method on Llama-3.1 evaluated using input sequences of 128K tokens.
+We observe particularly significant improvements on tasks requiring precise information retrieval: Cite improved from 3.09 to 5.25 (70% relative improvement) and Re-rank improved from 13.73 to 18.16 (32% relative improvement).
+Both tasks require referring back to the document segments in context and generating text while reorganizing them.
+These results validate that strengthening retrieval heads enhances both the model’s ability to locate information in long contexts and its capacity to generate well-grounded, context-backed responses. 
+4.3 Performance on Olmo-3 
+DPO Olmo-3-7B-Think Strategy 8K 16K 32K 64K – 46.53 45.83 42.41 35.07 Smaller-Model 45.26 44.44 42.60 33.92 Non-Retrieval-Mask 45.54 44.65 42.95 34.22 RetMask 47.07 45.19 42.68 35.07 
+Table 3: Olmo-3 trained with different strategies, evaluated on HELMET. Models are evaluated using input sequences of 8K, 16K, 32K, and 64K tokens. The table exhibits a modest gap between the evaluation results. 
+We further investigate how RetMask affects Olmo-3.
+Given Olmo-3’s maximum content length is 64K, we exclude the 128K setting and evaluate on context lengths up to 64K.
+In this experiment, we include two of the strongest baselines, DPO with a weaker model and with arbitrary non-retrieval attention heads masked.
+Table 3 presents experimental results on Olmo-3-7B-Think. 
+RetMask’s effectiveness is limited on Olmo-3. 
+In Table 3 , RetMask shows a different tendency compared to Llama-3.1 and Qwen3:
+The difference between RetMask and Non-Retrieval-Mask is subtle, except when the input sequence length is 8K.
+We attribute this to the differences in how Olmo-3 organizes retrieval functionality: Analysis of retrieval head distributions (§ 5.2 ) reveals that Olmo-3 exhibits a markedly different pattern compared to Llama-3.1 and Qwen3.
+The analysis suggests that for Olmo-3, retrieval capabilities are more evenly distributed across attention heads rather than concentrated in a specialized subset, which explains the modest performance gain. 
+4.4 Robustness with Reasoning Mode 
+Figure 3: Qwen3-8B’s improvement on each task of HELMET when the input sequence length is 128K. RC stands for reasoning contents. Removing reasoning contents has a limited impact on RetMask. 
+DPO Llama-3.1-8B-Instruct Strategy Average Recall RAG Cite Re-rank ICL LongQA Summ – 46.40 95.13 58.58 3.09 13.73 83.80 42.69 27.81 Smaller-Model 47.30 93.56 60.79 3.62 15.29 83.44 42.78 31.63 Win-Lose-Pair 46.91 94.44 59.04 4.30 14.17 83.96 40.64 31.80 Non-Retrieval-Mask 47.34 96.75 59.58 4.13 12.86 83.68 39.69 34.76 Random-Mask 47.23 96.38 60.04 3.45 12.75 83.24 41.59 33.16 RetMask 48.83 95.81 59.63 6.10 19.27 85.32 41.87 33.83 
+Table 4: Model performance of Llama-3.1 trained with different strategies using WildChat, evaluated on HELMET when the input sequence length is 128K. The model trained with RetMask scores the highest among all strategies. 
+Experiments on Qwen3 in § 4.2 are conducted with the reasoning enabled, where the model generates reasoning contents before producing the final answers.
+Reasoning is enabled during both data synthesis and evaluation.
+In this section, we investigate how the reasoning process affects training effectiveness.
+To this end, we conduct additional experiments: (1) Training with reasoning contents removed: Synthesizing training data with reasoning enabled, then removing the reasoning contents and keeping the response only; (2) Training with no reasoning contents: Generating training data with reasoning disabled.
+The trained models are evaluated with the reasoning enabled to ensure that the results are comparable with those in Table 1 . 
+Removing reasoning contents has minimal impact on the effectiveness of the proposed method. 
+Figure 3 shows that removing reasoning contents has minimal impact:
+Five of seven tasks achieve comparable or better performance than training with full reasoning contents.
+This works because ablating retrieval heads affects final answer quality even without explicit reasoning chains.
+The degraded responses from the ablated model contrast sufficiently with the full model’s outputs to provide effective training signals.
+This demonstrates that our method’s core mechanism, retrieval head ablation, drives improvements regardless of whether reasoning contents are preserved or not. 
+Reasoning contents are important for complex tasks. 
+Performance of tasks requiring complex reasoning, namely Cite and Re-rank ,
+degrades significantly when trained with reasoning contents removed or ungenerated (Figure 3 ).
+This demonstrates that for tasks involving source tracking and passage comparison, explicit reasoning chains in training data are important for RetMask to achieve optimal effectiveness:
+The reasoning content helps the model learn not just retrieval patterns, but also how to reason over retrieved information.
+For such complex tasks, preserving reasoning contents during training ensures the effectiveness of RetMask. 
+4.5 Robustness Across Training Datasets 
+§ 4.2 has demonstrated the effectiveness of RetMask in enhancing long-context capabilities using LMSYS-Chat-1M Zheng et al. (2024) .
+A potential concern is whether these improvements stem from the retrieval-ablated optimization strategy or from dataset-specific characteristics that happen to enhance long-context processing.
+To address this, we conduct experiments using Wildchat Zhao et al. (2024) , another conversational dataset collected for instruction tuning. 
+Improvements are consistent on WildChat. 
+Figure 4 shows that RetMask consistently outperforms all baselines on average.
+Notably, substantial improvements are observed on Cite and Re-rank tasks, consistent with findings in § 4.2 .
+These results confirm that the improvements are attributed to the optimization methodology rather than dataset-specific artifacts.
+This demonstrates the robustness and generalizability of RetMask across different instruction-following datasets. 
+5 Analysis 
+5.1 Performance on Other Tasks 
+MTB GPQA MATH HE MMLUP (a) Llama-3.1-8B-Instruct Before 0.75 0.25 0.53 0.71 0.49 After 0.77 0.33 0.52 0.68 0.48 (b) Qwen3-8B Before 0.86 0.56 0.97 0.89 0.71 After 0.88 0.60 0.97 0.92 0.74 (c) Olmo-3-7B-Think Before 0.62 0.52 0.95 0.92 0.62 After 0.64 0.53 0.95 0.93 0.63 
+Table 5: Model performance before and after training with RetMask. MTB , MATH , HF , MMLUP stands for MT-Bench, MATH-500, HumanEval, and MMLU-Pro, respectively. Training with RetMask does not degrade the performance on these tasks. 
+Figure 4: The retrieval score distribution of LLMs tested in this work. While attention heads in Llama-3.1-8B-Instruct and Qwen3-8B exhibit a concentrated pattern of retrieval capability, it is more distributed for Olmo-3-7B. 
+The previous section showed that RetMask improves long-context processing.
+A natural question is whether these gains come at the expense of general language understanding and reasoning.
+To address this concern, we evaluate trained models on five established benchmarks widely used to assess model capability during LLM development: (1) MT-Bench ( Zheng et al., 2023 ) : Multi-turn conversational ability;
+(2) GPQA ( Rein et al., 2024 ) : Expert-level scientific reasoning;
+(3) MATH-500 ( Lightman et al., 2023 ) : Mathematical problem-solving; (4) HumanEval ( Chen et al., 2021 ) : Code generation; (5) MMLU-Pro ( Wang et al., 2024 ) : Broad knowledge and understanding.
+Results are presented in Table 5 . 
+Improvements on conversational tasks. 
+Across all models, we observe consistent performance gains on MT-Bench.
+The improvement is partially expected given our use of LMSYS-Chat-1M for training.
+However, a critical distinction should be emphasized:
+Unlike standard approaches that distill knowledge from stronger models, we train exclusively on self-generated responses,
+using only the contrast between the model and its retrieval-ablated variant.
+This indicates that RetMask enhances conversational ability by strengthening the model’s capacity to retrieve information from multi-turn dialogue contexts. 
+Improvements on reasoning-intensive tasks. 
+More surprisingly, we observe gains on GPQA, a benchmark
+requiring deep reasoning.
+Such results indicate that improved retrieval enhances effective reasoning:
+When solving complex problems, models retrieve information from previously established intermediate results.
+By strengthening retrieval mechanisms, RetMask enhances the model’s ability to maintain coherent reasoning processes. 
+Selective enhancement without trade-offs. 
+For other tasks (MATH-500, HumanEval, and MMLU-Pro), we observe mixed results, with the average remaining at the same level before training.
+We thus conclude that the retrieval-ablated optimization strategy improves the long-context capability without compromising on general abilities. 
+5.2 Retrieval Head Distribution 
+(a) Llama-3.1-8B-Instruct. 
+(b) Qwen3-8B. 
+Figure 5: The distribution of retrieval score before and after RetMask. We observe an increase in retrieval scores for both Llama-3.1-8B-Instruct and Qwen3-8B. 
+§ 4.2 and § 4.3 demonstrate that RetMask achieves the largest improvements on Llama-3.1-8B-Instruct, followed by Qwen3-8B, and minimal gains on Olmo-3-7B-Think.
+We hypothesize that the difference stems from the organization of retrieval functionality across attention heads.
+To verify the hypothesis, we examine the retrieval score distributions, as shown in Figure 4 . 
+The effectiveness of RetMask correlates with how the retrieval capability concentrates. 
+This distribution pattern directly impacts the effectiveness of RetMask:
+when retrieval is concentrated in a small subset of heads (Llama-3.1),
+ablating these top-scored heads creates a large gap in retrieval capabilities between the full and ablated models,
+generating strong contrastive training signals.
+Conversely, when retrieval is distributed across many heads (Olmo-3),
+ablating the top-scored heads has a limited impact —
+The remaining unmasked heads collectively compensate for the ablated functionality, reducing the contrast between chosen and rejected responses and weakening the training signal.
+These findings validate our hypothesis:
+RetMask’s effectiveness depends on the concentration of retrieval capability,
+with models exhibiting specialized retrieval heads responding more strongly to our optimization approach than models with distributed retrieval patterns.
+This also suggests that retrieval head concentration could serve
+as a predictor of training effectiveness, enabling model developers to assess applicability before committing computational resources . 
+5.3 RetMask’s Effect on Retrieval Heads 
+In this section, we analyze how RetMask affects the model by examining changes in the retrieval scores.
+Figure 5 displays the retrieval scores of the top 150 heads before training, and how their scores change after training.
+The red vertical dashed lines present the masking threshold: heads to the left were masked when generating rejected responses (40 heads for Llama-3.1 and 79 heads for Qwen3). 
+Retrieval scores improve after training. 
+For Llama-3.1-8B-Instruct, we observe clear improvements in retrieval scores after RetMask training.
+The average retrieval score increases from 0.017 to 0.020, showing a 17.6% relative improvement.
+For Qwen3-8B, the average score increases from 0.020 to 0.021 (+5%), reflecting its limited responsiveness to retrieval optimization. 
+Enhancements concentrate on masked heads. 
+The improvements are not uniform across all heads.
+Specifically, the masked heads show substantial gains, while the other heads exhibit minor changes.
+For Llama-3.1, the masked heads exhibit an average improvement of 0.051, while non-masked heads show modest changes (average +0.001).
+This demonstrates that RetMask selectively strengthens the retrieval heads targeted during training. 
+6 Related Work 
+Long-Context Language Modeling. 
+Existing methods for long-context LLMs focus on data engineering.
+Common approaches include adjusting RoPE frequency and staged continual pre-training Grattafiori et al. (2024) ; Yang et al. (2025) ; Gao et al. (2025) .
+For instance, Grattafiori et al. (2024) extends context windows over five stages, and Gao et al. (2025) seeks an optimal mix of short and long context data during multi-stage training.
+For post-training, findings are mixed: Bai et al. (2024a) reports benefits from long-context fine-tuning, while Gao et al. (2025) finds short sequences sufficient.
+Closer to our work, Wu et al. (2025a) also leverages attention patterns, but focuses on data selection based on dependency distances.
+All these studies emphasize data, whereas we take a model-centric approach through mechanistic interpretability. 
+Mechanistic Interpretability of LLMs. 
+Studies have been conducted to uncover the functionality of components in LLMs. Meng et al. (2022) has revealed that knowledge can be located and edited by manipulating specific neurons. Tang et al. (2024) and Hiraoka and Inui (2025) have demonstrated the existence of language-specific neurons and repetition neurons, respectively.
+These studies are conducted during inference time, when researchers activate or deactivate the neurons and study models’ behaviors.
+However, few studies connect the discovery to the development of better models. Mondal et al. (2025) reported that language-specific neurons cannot facilitate cross-lingual transfer.
+Our work takes a step toward connecting mechanistic interpretability with the development of LLMs, specifically by utilizing mechanistic interpretability to develop more effective models within the context of long-context processing.
+This, in turn, provides evidence for the existence of neural components, i.e., the retrieval head in this study. 
+7 Conclusion 
+This work examines how mechanistic interpretability can facilitate model development in the context of long-term context processing.
+By collecting contrastive response pairs through selective deactivation of retrieval heads, we develop an approach that enhances long-context capabilities while maintaining general capabilities.
+Experiments on Llama-3.1, Qwen3, and Olmo-3 reveal that effectiveness correlates with retrieval head organization:
+concentrated patterns (Llama-3.1) enable strong improvements,
+while distributed patterns (Olmo-3) show limited gains.
+This model-dependent behavior validates the existence and functional importance of retrieval heads from the perspective of model development. 
+Future work includes investigating scaling to larger models,
+developing a theoretical understanding of the underlying mechanisms, and extending this approach to other specialized components. 
+Limitations 
+This work focuses on models up to 8B parameters.
+Scaling to larger models (>10B) remains unexplored, though the core mechanism should generalize if retrieval head organization patterns persist.
+RetMask shows limited gains on Olmo-3 due to its distributed retrieval pattern,
+where ablating top-K heads creates insufficient contrast for effective DPO.
+This provides a diagnostic criterion:
+models with concentrated retrieval are strong candidates for retrieval-ablated optimization,
+while those with distributed patterns may require alternative optimization strategies. 
+Ethics Considerations 
+Data and Safety. 
+We use publicly available datasets (LMSYS-Chat-1M Zheng et al. (2024) , WildChat Zhao et al. (2024) , Guru-RL-92K Cheng et al. (2025) )
+with standard filtering for toxic content and personally identifiable information.
+However, some potentially harmful content may remain.
+Models trained with our method should undergo standard safety alignment before deployment. 
+Synthetic Generation. 
+Our method generates synthetic training data by contrasting full and retrieval-ablated model outputs, without introducing new information about real individuals. 
+References

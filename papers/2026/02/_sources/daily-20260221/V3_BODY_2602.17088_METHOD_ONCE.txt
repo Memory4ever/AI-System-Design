@@ -1,0 +1,91 @@
+4 Methodology
+In this section, we introduce MeGU for effective machine unlearning, which combines two components: 1) the MLLM guided label perturbation and 2) the Fragment-Align strategy.
+As shown in Figure 2, we first estimate inter-concept similarities using zero-shot MLLMs on a subset of training data, and cache them in a lightweight transition matrix. Further, based on the pretrained model’s predictions, the transition matrix can assign proper label perturbation to achieve manipulation of concepts. For each forgetting instance, the pre-trained and cached feature noises are injected to disentangle their influence. Furthermore, we utilize MLLM guidance to quantify inter-concept distances to ensure effective label perturbation and identification of the class for positive noise, thereby preserving the retained data.
+In the following sections, we first demonstrate the process to generate perturbing labels in Section 4.1. Then, in Section 4.2, we carefully elucidate the Fragment-Align strategy for influence disentanglement and the fine-tuning method to unlearn target data.
+4.1 Perturbing labels generation
+Intuitively, to induce model unlearning, MeGU introduces semantically consistent but incorrect labels at the finetuning stage to replace the learned connections of target data to their correct labels with a meaningful but alternative relation to the retained concepts. To achieve this, we leverage MLLM to estimate the semantic consistency among concepts to assign suitable perturbing labels.
+To reduce the computation costs, we use a light-weight transition matrix to capture inter-concept similarities derived by the MLLM using a small subset from the training data. This matrix, encoding the knowledge of the MLLM, can be repetitively used for perturbing label assignment without further MLLM calls.
+Transition matrix estimation
+Specifically, let qwq_{w} be the MLLM model parameterized by ww. We randomly select nn exemplars from each class in the dataset 𝒟\mathcal{D} to construct the subset 𝒟e​x\mathcal{D}_{ex}. Then we prompt the MLLM model qwq_{w} to estimate feature similarity of each instance in 𝒟e​x\mathcal{D}_{ex} to all other semantic concepts. For example, given a query image from class kk and its counterpart l∈[1,K]l\in[1,K], the prompt is:
+Question: This image <<IMGl>> shows a photo of <<labell>{}_{l}>, True or False? Answer: True;
+Question: This image <<IMGp>> shows a photo of <<labell>{}_{l}>, True or False? Answer: False;
+Question: This image <<IMGkq​u​e​r​y{}^{query}_{k}>> shows a photo of <<labell>{}_{l}>, True or False? Answer:
+In this way, the MLLM output is restricted to binary answers, i.e., True or False. Then, the feature similarity can be represented by softmax output logits.
+To compute the feature similarity matrix among concepts, let xix_{i} be an instance from class kk in 𝒟e​x\mathcal{D}_{ex}, and qw​(⋅)q_{w}(\cdot) be the MLLM output confidence. The feature similarity of xix_{i} with another concept ll can be represented as:
+sk​l=qw​(xi,l)s_{kl}=q_{w}(x_{i},l)
+(4)
+Then the feature similarity between two concepts labeled kk and ll can be approximated as:
+𝒮k​l=𝔼⁡(qw​(xi,l)),(xi,k)∈𝒟e​x\mathcal{S}_{kl}=\mathbb{E}(q_{w}(x_{i},l)),(x_{i},k)\in\mathcal{D}_{ex}
+(5)
+Subsequently, the transition possibilities of class kk with all other concepts can be calculated through: 𝐭k=(𝒮k​1,𝒮k​2,⋯,𝒮k​K)T/∑iK𝒮k​i\mathbf{t}_{k}=(\mathcal{S}_{k1},\mathcal{S}_{k2},\cdots,\mathcal{S}_{kK})^{T}/\sum^{K}_{i}\mathcal{S}_{ki}. And the transition matrix 𝐓\mathbf{T}, encoding all inter-conceptional similarities in 𝒟\mathcal{D}, can be obtained via concatenation:
+𝐓=(𝐭1,𝐭2,⋯,𝐭K)\mathbf{T}=(\mathbf{t}_{1},\mathbf{t}_{2},\cdots,\mathbf{t}_{K})
+(6)
+Figure 3 illustrates the transition matrix of CIFAR-10 as an example.
+Although it reflects the proportion of overlapped features among different concepts, this is not adequate for label re-assignment as a given instance does not necessarily express all the features belonging to its concept. Simply applying 𝐓\mathbf{T} to assign perturbing labels will lead to biases followed by overfitting during unlearning. Therefore, it is essential to take the individual conditions of each instance into account.
+Figure 3: The visualized transition matrix.
+Assigning perturbing labels
+Given the transition matrix 𝐓\mathbf{T}, the overlapping of an instance xix_{i} from class kk with other concepts at the feature level can be computed via:
+𝐑i=𝐓⋅(𝐈~k⋅fθ​(xi))\mathbf{R}_{i}=\mathbf{T}\cdot(\tilde{\mathbf{I}}_{k}\cdot f_{\theta}(x_{i}))
+(7)
+where 𝐈~k\tilde{\mathbf{I}}_{k} denotes an identity matrix with the elements of kk-th row elements set to zero to avoid the influence of the original concept. And fθ​(xi)f_{\theta}(x_{i}) denotes the softmax output logits of the pretrained model.
+Consequently, the perturbing label for an instance xi∈𝒟fx_{i}\in\mathcal{D}_{f} is obtained by ranking elements of 𝐑i\mathbf{R}_{i}:
+yip=ϕ⁡(𝐑i,τ)y^{p}_{i}=\phi(\mathbf{R}_{i},\tau)
+(8)
+where ϕ(,τ)\phi(,\tau) denotes the process of selecting the top τ\tau similar concept as the perturbing label. Here we set the parameter τ\tau to control the distance between the target data and its re-assigned concept. As a perturbing concept that is too similar to the original one could fail to segregate the target data from the original embedding distribution, leading to insufficient unlearning. While the hindering of alignment with a too distant perturbing label will possibly cause model overfitting or representation collapse. In our experiments, we set τ=0.3\tau=0.3 to ensure such a meaningful and alternative connection between target data and retained concepts. In Section E, we conduct detailed sensitivity studies for optimal hyperparameters.
+To better understand the workflow of perturbing label generation, Algorithm 2 provides the detailed pseudo-code.
+Algorithm 1 Transition matrix and perturbing labels.
+1:
+Instance xix_{i} of class kk from subset 𝒟e​x\mathcal{D}_{ex} selected from training set 𝒟\mathcal{D}, concepts 𝒴={0,1,⋯,K−1}\mathcal{Y}=\{0,1,\cdots,K-1\}, MLLM qwq_{w}.
+2:
+Let qw​(x,y)q_{w}(x,y) represent the prompted MLLM output of image xx and concept yy.
+3:
+for k∈𝒴k\in\mathcal{Y} do
+4:
+for l∈𝒴l\in\mathcal{Y} do
+5:
+𝒮~k​l=1n​∑in[qw​(xi,l)],(xi,k)∈𝒟e​x\tilde{\mathcal{S}}_{kl}=\frac{1}{n}\sum^{n}_{i}[q_{w}(x_{i},l)],(x_{i},k)\in\mathcal{D}_{ex}
+⊳\triangleright Eq. 5
+6:
+end for
+7:
+𝐭k=(𝒮~k​0,𝒮~k​1,⋯,𝒮~k​K−1)T/∑iK−1𝒮~k​i\mathbf{t}_{k}=(\tilde{\mathcal{S}}_{k0},\tilde{\mathcal{S}}_{k1},\cdots,\tilde{\mathcal{S}}_{kK-1})^{T}/\sum^{K-1}_{i}\tilde{\mathcal{S}}_{ki}
+8:
+end for
+9:
+𝐓=(𝐭0,𝐭1,⋯,𝐭K−1)\mathbf{T}=(\mathbf{t}_{0},\mathbf{t}_{1},\cdots,\mathbf{t}_{K-1})
+10:
+Instance (xi,yi)(x_{i},y_{i}) from forget set 𝒟f\mathcal{D}_{f}, transition matrix 𝐓\mathbf{T}, class concepts 𝒴={0,1,⋯,K−1}\mathcal{Y}=\{0,1,\cdots,K-1\}, pretrained model pθp_{\theta}, identity matrix 𝐈\mathbf{I} of size [K,K][K,K], constant τ\tau.
+11:
+Let ϕ(,τ)\phi(,\tau) denotes the process of selecting the index of the ⌊K​τ⌋\lfloor K\tau\rfloor-th largest element.
+12:
+for (xi,yi)∈𝒟f(x_{i},y_{i})\in\mathcal{D}_{f} do
+13:
+𝐈~yi←𝐈⁡[j,yi]=0,j∈[0,K−1]\tilde{\mathbf{I}}_{y_{i}}\leftarrow\mathbf{I}[j,y_{i}]=0,j\in[0,K-1]
+14:
+𝐑i=𝐓⋅[𝐈~yi⋅pθ​(xi)]\mathbf{R}_{i}=\mathbf{T}\cdot[\tilde{\mathbf{I}}_{y_{i}}\cdot p_{\theta}(x_{i})]
+⊳\triangleright Eq. 7
+15:
+yip=ϕ⁡(𝐑i,τ)y^{p}_{i}=\phi(\mathbf{R}_{i},\tau)
+16:
+end for
+The necessity of MLLM guidance for perturbing labels
+Here, we demonstrate why not use model predictions for label assignment instead of MLLM guidance. Due to the overconfidence, the predicted probabilities of the pretrained model on a class of target data will be concentrated on a very few labels, neglecting the semantic content of individual instances. This poses a risk of leading the pretrained model to overfit to a simple output bias. Conversely, our mechanism, considering individual conditions of target data, guarantees balanced perturbing labels. This facilitates the model in adjusting its decision boundaries according to different instances.
+4.2 Target feature disentanglement and finetuing
+In Section 1, we demonstrate that the key challenge of unlearning lies in feature entanglement: target data often share features with retained classes, which contributes to over-forgetting.
+To address this problem, we propose the Fragment-Align strategy, which achieves semantic disentanglement through a pair of complementary feature noises.
+During fine-tuning, the positive feature noise 𝒩p​o​s\mathcal{N}^{pos} embeds features aligned with the perturbing label, encouraging the target instance to re-anchor toward the new concept and mitigating distributional gaps.
+Conversely, the negative feature noise 𝒩n​e​g\mathcal{N}^{neg} suppresses features tied to the original class, facilitating the destruction of target feature patterns in the model’s latent space.
+Together, these two noises disentangle the target data from its original concept and realign it with the perturbed concept, facilitating the formation of new decision boundaries and enabling effective forgetting while preserving generalization on retained data.
+Feature noise generation
+Specifically, given an instance from target data, its ground-truth label 𝒞t​a​r\mathcal{C}_{tar} and re-assigned perturbing label 𝒞p​e​r\mathcal{C}_{per} correspond respectively to feature patterns 𝒫t​a​r\mathcal{P}_{tar} and 𝒫p​e​r\mathcal{P}_{per}. We aim to eliminate the influence of the unique feature 𝒫t​a​ru​n​i=𝒫t​a​r∖𝒫t​a​r|p​e​ra​s​s\mathcal{P}^{uni}_{tar}=\mathcal{P}_{tar}\setminus\mathcal{P}^{ass}_{tar|per} while preserving shared features 𝒫t​a​r|p​e​ra​s​s=𝒫t​a​r∩𝒫p​e​r\mathcal{P}^{ass}_{tar|per}=\mathcal{P}_{tar}\cap\mathcal{P}_{per} from unexpected disruption.
+Here, we demonstrate the derivation of feature noises. Let fθf_{\theta} be the pre-trained model, (xi,yi)(x_{i},y_{i}) be an instance from forget data, yipy^{p}_{i} be the perturbing label. The 𝒩\mathcal{N} is a randomly initialized matrix. The positive feature noise can be obtained through minimizing the loss function towards the perturbing label yipy^{p}_{i} while freezing the pretrained model:
+𝒩ip​o​s=arg⁡min𝒩⁡𝔼⁡(ℒ⁡(fθ​(𝒩),yip)+λ​‖wn​o​i​s​e‖)\mathcal{N}^{pos}_{i}=\arg\min_{\mathcal{N}}\mathbb{E}(\mathcal{L}(f_{\theta}(\mathcal{N}),y^{p}_{i})+\lambda\|w_{noise}\|)
+(9)
+Similarly, the negative feature noise can be obtained by changing the training direction towards the original label yiy_{i} with a conversed loss function:
+𝒩in​e​g=arg⁡min𝒩⁡𝔼⁡(−ℒ⁡(fθ​(𝒩),yi)+λ​‖wn​o​i​s​e‖)\mathcal{N}^{neg}_{i}=\arg\min_{\mathcal{N}}\mathbb{E}(-\mathcal{L}(f_{\theta}(\mathcal{N}),y_{i})+\lambda\|w_{noise}\|)
+(10)
+Through this process, 𝒩ip​o​s\mathcal{N}^{pos}_{i} gradually aligns with the direction of gradient descent, thereby capturing and perturbing features associated with the noisy label yipy_{i}^{p}. On the other hand, 𝒩in​e​g\mathcal{N}^{neg}_{i} is driven toward the direction of gradient ascent in the model’s optimization landscape to extract counteracting feature information opposite to the target data from the pretrained model.
+When jointly used with the target forgetting data during model re-optimization, the perturbing-label–related features embedded in 𝒩ip​o​s\mathcal{N}^{pos}_{i} strengthen the semantic association between the target data features and the perturbed label concept, helping construct alternative connections other than those originally learned during model pre-training.
+Meanwhile, as the model’s behavior to 𝒩in​e​g\mathcal{N}^{neg}_{i} is re-optimized in a gradient descent manner, its capability to recognize features associated with the target concept is therefore disrupted.
+Model re-optimization
+Intuitively, both the unique and associated feature patterns from concept yiy_{i} are restrained by 𝒩in​e​g\mathcal{N}^{neg}_{i}. Simultaneously, the associated feature patterns shared with yipy^{p}_{i} are restored by 𝒩ip​o​s\mathcal{N}^{pos}_{i}. Therefore, by adjusting the relative weights of 𝒩ip​o​s\mathcal{N}^{pos}_{i} and 𝒩in​e​g\mathcal{N}^{

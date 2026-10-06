@@ -1,0 +1,620 @@
+ToolTweak: An Attack on Tool Selection in LLM-based Agents
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+Tool Learning and Retrieval.
+Attacks on LLMs and Agents.
+Attacks on Tool Use.
+3 ToolTweak
+3.1 Problem Setup and Formalization
+3.2 Threat Model and Assumptions
+3.3 Attack Procedure
+4 Attack Experiments
+4.1 Dataset
+4.2 Baselines and Metrics
+Metrics.
+Baselines.
+4.3 Results
+Preliminaries.
+Main Results.
+Factors Influencing Selection.
+Attacker Model Behavior.
+Transferability of Attack
+4.4 Ablation Studies
+5 Defense Experiments
+5.1 Paraphrasing
+5.2 Perplexity Filtering
+6 Conclusion
+References
+A Data Standardization
+B Transferable Map
+C Ablation
+Number of Iterations
+Number of Example Queries
+Number of Tools
+No Query or Tool Knowledge Setting
+D Temperature and Reproducability
+D.1 Temperature
+D.2 Reproducibility
+Random victim
+E Prompts
+F Miscellaneous Appendices
+F.1 Gaming Tool Calls Experiments
+F.2 Jensen—Shannon Divergence
+License: arXiv.org perpetual non-exclusive license
+arXiv:2510.02554v1 [cs.CR] 02 Oct 2025
+ToolTweak: An Attack on Tool Selection in LLM-based Agents
+Jonathan Sneh
+Affiliation: University of Oxford, Oxford, UK
+Ruomei Yan
+Affiliation: Microsoft, UK
+Jialin Yu
+Affiliation: University of Oxford, Oxford, UK
+Affiliation: Microsoft, UK
+Philip Torr
+Affiliation: University of Oxford, Oxford, UK
+Yarin Gal
+Affiliation: University of Oxford, Oxford, UK
+Sunando Sengupta
+Affiliation: Microsoft, UK
+Eric Sommerlade
+Affiliation: Microsoft, UK
+Alasdair Paren
+Affiliation: University of Oxford, Oxford, UK
+Adel Bibi
+Affiliation: University of Oxford, Oxford, UK
+Abstract
+As LLMs increasingly power agents that interact with external tools, tool use has become an essential mechanism for extending their capabilities. These agents typically select tools from growing databases or marketplaces to solve user tasks, creating implicit competition among tool providers and developers for visibility and usage. In this paper, we show that this selection process harbors a critical vulnerability: by iteratively manipulating tool names and descriptions, adversaries can systematically bias agents toward selecting specific tools, gaining unfair advantage over equally capable alternatives.
+We present ToolTweak, a lightweight automatic attack that increases selection rates from a baseline of around 20% to as high as 81%, with strong transferability between open-source and closed-source models.
+Beyond individual tools, we show that such attacks cause distributional shifts in tool usage, revealing risks to fairness, competition, and security in emerging tool ecosystems.
+To mitigate these risks, we evaluate two defenses: paraphrasing and perplexity filtering, which reduce bias and lead agents to select functionally similar tools more equally.
+All code will be open-sourced upon acceptance.
+1 Introduction
+Large Language Models (LLMs) have seen a dramatic increase in both their capabilities and usage, demonstrating strong performance on a wide array of tasks (Brown et al., 2020; Radford et al., 2019; Minaee et al., 2025). In order to boost their utility and get over inherent context limitations, a number of approaches for connecting to external sources have been proposed. Retrieval-Augmented Generation (RAG)-based approaches connect LLMs to large external document databases, retrieving and adding relevant information to the model’s context as necessary (Lewis et al., 2021). While effective for knowledge-intensive tasks, RAG is typically limited to a static database of information that limits its usefulness for certain tasks.
+More recently, the field of Tool Learning has emerged connecting LLMs to external sources of information, APIs, and services (Qin et al., 2024). This paradigm is central to the design of LLM-based agentic systems that are capable not only of reasoning in natural language but also of acting in the world by invoking external tools on behalf of users. Around this vision, entire ecosystems are forming, from standardized protocols such as the Model Context Protocol (MCP) (Model Context Protocol, 2025) to commercial platforms that monetize access to vast databases of tools (Composio, 2025). In such an ecosystem, agents can purchase goods, query financial or scientific data, and manage communications, all by selecting the appropriate tool from a growing pool of available options. A future where agents mediate large fractions of internet traffic, including financial, commercial, and even personal interactions, appears increasingly imminent.
+Figure 1: ToolTweak: Adversarial Manipulation of Tool Selection. Illustration of ToolTweak, an adversarial attack that iteratively refines a tool’s name and description using LLM feedback to maximize its likelihood of being selected. The figure shows how benign tool selection is distributed across multiple options, whereas after ToolTweak interventions, the targeted tool, renamed BestWeather, dominates selection rates.
+Therefore, the underlying mechanisms behind the selection and use of these external resources are of utmost importance. The agent’s choice of which tool to call depends almost entirely on the metadata associated with each tool, i.e., its name, description, and parameter schema, all expressed in natural language. At first glance, this seems like a simple and benign design choice. However, in this paper we show that this reliance on surface-level, unverified text harbors a critical vulnerability: if this metadata can be adversarially optimized, malicious actors can systematically bias agent behavior.
+This poses risks not only to individual agents but to entire tool marketplaces, enabling attackers to gain unfair competitive advantages, distort tool usage distributions, or even exploit downstream vulnerabilities. Ensuring the fairness and security of tool selection is therefore essential for the reliability and trustworthiness of the LLM-based agentic ecosystem.
+Existing work on adversarial threats to LLMs has primarily focused on jailbreaks (Zou et al., 2023; Chao et al., 2024), prompt injections (Liu et al., 2024), or data poisoning in retrieval systems (Zou et al., 2024). These attacks typically aim to elicit unsafe or irrelevant completions, or corrupt the knowledge base of a single system. In contrast, tool selection introduces a distinct and underexplored attack surface: adversaries can bias not just a single response, but the systematic behavior of agents across tasks and over time. As protocols like MCP gain adoption and commercial marketplaces proliferate, even small manipulations of tool metadata can scale across thousands of agents, creating risks for fairness, competition, and security in the broader ecosystem.
+In this work, we take a first step toward characterizing and mitigating this vulnerability.
+We introduce ToolTweak an gradient free transferable attack that manipulates tool metadata to increase their selection rate across agents.
+We study its effectiveness across models and tasks, analyze its distributional impact on tool selection, and evaluate defenses.
+Our contributions are fourfold: (1) A novel tool biasing attack ToolTweak. We design and develop an adversarial optimization process ToolTweak that manipulates tool names and descriptions to substantially boost their selection rate. ToolTweak is an automatic black box attack that generalises to unseen Agents. (2) Comprehensive empirical analysis. We quantify the attack’s effectiveness across multiple tasks and models, showing increases in selection rates from around 20% to as high as 81%, with strong transferability across both open-source and proprietary systems. (3) Distributional impact. Beyond individual tools, we analyze how such manipulations shift the overall distribution of tool usage, revealing risks to fairness, competition, and security in emerging tool ecosystems. (4) Defenses and mitigation. We propose and evaluate a paraphrasing defense that significantly reduces bias, while highlighting that the underlying vulnerability remains an open challenge.
+2 Related Work
+Tool Learning and Retrieval.
+Large language models can be augmented with external capabilities through tool learning. Toolformer demonstrated that models can be fine-tuned to autonomously call tools in a generalized, self-supervised, zero-shot setting (Schick et al., 2023). Gorilla extended this by training Llama to interact with a set of ML tools, achieving competitive performance with leading foundation models (Patil et al., 2023). ToolLLM further scaled this idea to more than 16,000 APIs and enabled multi-tool interactions (Qin et al., 2023). Gorilla, ToolLLM, and the Berkeley Function Calling Leaderboard (Yan et al., 2024) each introduced benchmarks for systematically evaluating tool-use capabilities in LLMs.
+A key component in many of these systems is retrieval: selecting a subset of candidate tools from a larger database of tools. ToolLLM and Gorilla rely on embedding-based retrievers that match queries to tools Qin et al. (2023), while ToolGen integrates tool tokens directly into the LLM’s vocabulary so that retrieval occurs naturally during generation (Wang et al., 2025).
+These approaches highlight that tool names, descriptions, and parameter schemas, expressed in natural language, are the most common information used to guide model behavior and tool selection.
+Attacks on LLMs and Agents.
+Adversarial work on LLMs has largely centered on jailbreaks and prompt injections. Gradient-free approaches, such as PAIR (Chao et al., 2024) or BoN (Hughes et al., 2024), which repeatedly generate attempts at harmful prompts or randomly swap tokens in a prompt until harmful output is produced. Conversely, gradient-based attacks, like Greedy Coordinate Gradient (GCG), solve an optimization problem by taking one-hot encoding vectors for each token in a vocabulary and change tokens based on a loss function. (Ebrahimi et al., 2018; Zou et al., 2023). Based on these attacks, researchers have created a handful of backdoor attacks on agentic systems. These agent attacks are typically gradient-based trigger attacks, which inject malicious documents into a RAG-based system (Chen et al., 2024; Chaudhari et al., 2024; Zou et al., 2024).
+Attacks on Tool Use.
+Recent work has begun probing vulnerabilities in how LLM-based agents use tools, covering both retrieval and selection. Chaudhari et al. (2024) use their attack to induce tool calls, but do not explore the problem in-depth. Concurrent with and inspiring some of our work, Faghih et al. (2025) manipulate tool selection by appending suffixes to tool descriptions. Shi et al. (2025) create ToolHijacker, an automatic attack on tool selection via prompt-injection on retrieval-based tool selection. Additionally, tool calling has proven to be a large attack surface for various cybersecurity exploits and manipulations. Beurer-Kellner & Fischer (2025) found that tools provided by MCP servers can influence the behavior of other tools via prompt injection in the description, allowing an attacker to read secrets, private messages, and exfiltrate other data through a “rug-pull” software supply-chain attack.
+Tool-selection attacks share similarities with some jailbreaks, since both aim to steer models toward generating specific tokens or actions (e.g., tool names or fixed text prefixes (Zou et al., 2023; Wei et al., 2023)). However, they differ in a subtle, yet crucial manner: jailbreaks succeed once defenses are bypassed, whereas tool-selection attacks must consistently bias agent behavior across queries. The biasing behavior is malicious as it disadvantages other tool providers, but i
+This persistence makes them harder to accomplish, as they require repeated success despite different contexts.
+3 ToolTweak
+3.1 Problem Setup and Formalization
+Modern tool-calling frameworks share a common design, even if their exact syntax differs.
+In many commercial providers and open-source inference engines, each tool is defined by a name, a description, and a set of parameters. Several popular inference engines expose OpenAI-compatible APIs for this design, including Ollama11
+1
+https://ollama.com/ and vLLM (Kwon et al., 2023).
+For example, a weather service as in Fig 1 can be represented as: name = “WeatherAPI”, description = “Returns current weather for a given city”, and parameters = {city: string}.
+The Model Context Protocol (MCP) (Model Context Protocol, 2025) follows a similar convention, requiring a name, a description, and an inputSchema that specifies the JSON structure of parameters. For simplicity, we stick with the use of name, description, and parameters.
+Formally, we represent a tool tt as a tuple t=(pn,pd,pp)t=(p_{n},p_{d},p_{p}) which are 𝚗𝚊𝚖𝚎\verb|name|, 𝚍𝚎𝚜𝚌𝚛𝚒𝚙𝚝𝚒𝚘𝚗\verb|description|, and 𝚙𝚊𝚛𝚊𝚖𝚎𝚝𝚎𝚛𝚜\verb|parameters|, respectively. Here, 𝚗𝚊𝚖𝚎\verb|name| and 𝚍𝚎𝚜𝚌𝚛𝚒𝚙𝚝𝚒𝚘𝚗\verb|description| are sequences of tokens (strings from the model’s vocabulary), and 𝚙𝚊𝚛𝚊𝚖𝚎𝚝𝚎𝚛𝚜\verb|parameters| is a set of structured fields specifying names, types, and optional metadata (e.g., {city: string}). In our setting, the parameter schema is fixed by the platform, while the attacker can freely change the name and description. Their objective is to construct an adversarial tool t∗=(pn∗,pd∗,pp)t^{*}=(p_{n}^{*},p_{d}^{*},p_{p}), which the agent will be induced to preferentially select over competitors. We use t=(pn,pd)t=(p_{n},p_{d}) from now on to simplify the notation as ppp_{p} is fixed.
+In practice, LLMs format tool definitions and calls differently. For instance, Qwen models use XML tags (Qwen Team, 2024), while Llama 3.2 uses a ‘pythonic’ list format (Meta, 2024).
+We abstract away such differences with two functions: fdef​(⋅)f_{\text{def}}(\cdot) renders tool definitions into the model’s context (e.g., a JSON string describing the tool), and fcall​(⋅)f_{\text{call}}(\cdot) renders a tool call into the expected output (e.g., a JSON object with tool name and arguments).
+In order to formalise the goal of the adversary we define their objective as follows.
+The attacker’s objective is to find the name and description that maximizes the probability of an agent generating a call to their tool, tt from a set of tools 𝒯={t1,⋯,tm}\mathcal{T}=\{t_{1},\cdots,t_{m}\}, over a set of user queries, 𝒬={q1,⋯,qn}\mathcal{Q}=\{q_{1},\cdots,q_{n}\}, which can be formulated as below:
+arg​max𝑡​∑q∈𝒬ℙLLM​(fcall​(t)∣psys∘fdef​(𝒯∪{t})∘q),\underset{t}{\argmax}\sum_{q\in\mathcal{Q}}\mathbb{P}_{\text{LLM}}\Big(f_{\text{call}}(t)\mid p_{\text{sys}}\circ f_{\text{def}}(\mathcal{T}\cup\{t\})\circ q\Big),
+where t=(pn,pd)t=(p_{n},p_{d}). Note, that this is a discrete optimization problem over the vocabulary elements towards constucting a tool name, i.e., pnp_{n}, and a tool description, i.e., pdp_{d}, such that there is a high probability for the LLM to call this tool, i.e., maximizing probability of generating fcall​(t)f_{\text{call}}(t) under 𝒫LLm\mathcal{P}_{\text{LLm}}. Following tool-calling standards, the input for an agent is the concatenation (∘)(\circ) of the system prompt (psysp_{\text{sys}}), the available tool definitions (𝒯∪{t}\mathcal{T}\cup\{t\}), and the user query (qq).
+3.2 Threat Model and Assumptions
+We consider a setting where the attacker is a legitimate tool provider competing with other tools in an online marketplace. Their goal is to bias an LLM-based agent to preferentially select their tool over competitors. The attacker’s capabilities and constraints are as follows: (1) Control. The attacker can freely update the name and description of their tool but cannot modify the parameter schema; (2) Knowledge. The attacker has full visibility into the entire tool database but may not know the architecture of the underlying LLM used by the agents; and (3) Data access. The attacker receives usage statistics from the platform, including how often their tool is called relative to competitors, as well as a sample of user queries from the tool platform.
+3.3 Attack Procedure
+Algorithm 1 Iterative Tool Refinement
+Input: queries 𝒬\mathcal{Q}, iterations KK, initial tool t=(pn,pd)t=(p_{n},p_{d}), history context 𝒞={}\mathcal{C}=\{\}
+for k=1k=1 to KK do
+counter=0\text{counter}=0
+for q∈𝒬q\in\mathcal{Q} do
+t′∼ℙLLM​(psys∘fdef​(𝒯∪{t})∘q)t^{\prime}\sim\mathbb{P}_{\text{LLM}}(p_{\text{sys}}\circ f_{\text{def}}(\mathcal{T}\cup\{t\})\circ q)
+if t′t^{\prime} IS THE TARGET TOOL then
+counter++
+end if
+end for
+SR=counter/|𝒬|S_{R}=\text{counter}/|\mathcal{Q}|
+𝒞←𝒞∪(t,SR)\mathcal{C}\leftarrow\mathcal{C}\cup(t,S_{R})
+(pn,pd)∼ℙA​(𝒯∪{t}∘C)(p_{n},p_{d})\sim\mathbb{P}_{A}(\mathcal{T}\cup\{t\}\circ C)
+end for
+return Tool tt with the largest SRS_{R}
+Our attack follows an iterative refinement process inspired by the PAIR algorithm (Chao et al., 2024). In each round, the attacker model AA, proposes new tool metadata, which is then evaluated against the victim model. Unlike PAIR, which relies on a separate judge model, we evaluate the attack’s performance through quantitative usage statistics: the proportion of queries in 𝒬\mathcal{Q} for which the victim agent selects the attacker’s tool. This feedback is used to guide the next refinement with the full procedure illustrated in Fig 1.
+To generate biased but plausible tool descriptions, we design a prompting scheme that encourages attacker model AA to use subjective wording, embed bias in factual claims, and make implicit comparisons to competing tools, while remaining realistic enough to evade defenses (see Appendix Figure 7 for details).
+At the beginning of each iteration, on the victim LLM side, we construct a prompt by concatenating victim LLM’s system prompt psysp_{\text{sys}}, the tool definition sequence fdeff_{\text{def}} and the user query. This prompt is fed to the victim LLM, which outputs the tool call metadata tt. If the selected tool is the same as the target tool, we increment the counter and compute the selection rate SRS_{R}. On the attacker LLM AA side, it receives: the full tool set 𝒯∪{t}\mathcal{T}\cup\{t\} and the tool’s history context 𝒞\mathcal{C}. It then proposes updated tool name and description. The target tool tt is updated with this new metadata and description, and the next iteration begins. Unless otherwise specified, we run with K=10K=10 iterations. This process mirrors real-world practices like A/B testing, in which providers iteratively adjust content, monitor usage statistics, and retain the best-performing versions. Our attack is simple, gradient-free, and does not require significant computational resources.
+4 Attack Experiments
+4.1 Dataset
+We build our dataset from ToolBench (Qin et al., 2023), a collection of real, functional APIs from RapidAPI22
+2
+https://rapidapi.com/. Following concurrent work on biases in tool selection Blankenstein et al. (2025), we adopt a subset covering 10 diverse tasks, each having multiple suitable APIs in ToolBench. For each task, 5 APIs are chosen by nearest-neighbor search in the task embedding space, and 100 user queries are generated for each of the 10 tasks. The tasks include: geocoding (address →\rightarrow coordinates, and vice versa), news retrieval, IP geolocation, WHOIS domain lookup, email validation, sentiment analysis, language detection, QR code generation, and weather forecasting.
+To ensure compatibility across LLM APIs, we standardized all tool definitions into the OpenAI JSON-schema format (OpenAI, ). Tool names were truncated to ≤64\leq 64 characters and restricted to alphanumeric and underscore symbols, following the constraints used in services such as Claude (Anthropic, 2025). All parameters were converted into one of three JSON Schema-compatible types: string, boolean, or number. Details of the validation issues encountered and the exact preprocessing rules are provided in Appendix A.
+4.2 Baselines and Metrics
+Metrics.
+We evaluate attacks using selection rates measured over 100 queries per tool. Specifically, we consider the following metrics: (1) Original Selection Rate (OSR): the selection rate of the unmodified tool; (2) Best Selection Rate (BSR): the highest selection rate achieved across all iterations of the attack; and (3) Target Selection Rate (TSR): the average BSR across all tasks and tools for a given model.
+Based on these metrics, we consider an attack successful if OSR<BSR\textrm{OSR}<\textrm{BSR}. To capture the magnitude of improvement, we report improvement as: Improvement=BSR−OSR\textrm{Improvement}=\textrm{BSR}-\textrm{OSR}. Since LLMs exhibit strong initial preferences, the potential for improvement varies by tool. For example, a tool with OSR =70%=70\% has less headroom for improvement than one with =0%=0\%.
+For consistency, we report the normalized improvement as: Normalized Improvement​(NI)=Improvement/Potential=BSR−OSR/100−OSR\textrm{Normalized Improvement}(\text{NI})=\nicefrac{{\textrm{Improvement}}}{{\textrm{Potential}}}=\nicefrac{{\textrm{BSR}-\textrm{OSR}}}{{100-\textrm{OSR}}}, ignoring results when OSR=100\textrm{OSR}=100. This metric reflects how effectively the attack exploits the available headroom in tool usage.
+The goal of the attacker is to maximize the probability of an LLM agent selecting a specific target tool, tt, from a set of available tools, 𝒯\mathcal{T}.
+We quantify this by measuring the distance between the agent’s tool selection distribution Q⁡(t)Q({\textnormal{t}}) and the attacker’s ideal one-hot distribution using the Jensen–Shannon Divergence (JSD).
+JSD is symmetric and well-defined even when supports differ (Lin, 1991; Nielsen, 2020), avoiding the pitfalls of KL divergence when some tools are never selected or hallucinated.
+In the ideal case, the DJS=0D_{\textrm{JS}}=0, as all the probability mass is concentrated on the target tool. When the probability distributions are entirely different, then the DJS=1D_{\textrm{JS}}=1.
+Thus, the attacker wants to get as many tools as close to 00 as possible.
+Baselines.
+We compare against two baselines: (1) Original tool descriptions: in principle, selection should be uniform across five tools (20%20\%). In practice, rates can be lower due to tool-calling failures or higher due to stochastic variation, even with temperature set to zero; and (2) Manual suffix attack: following Faghih et al. (2025), we append a fixed persuasive suffix to each tool description. To ensure reproducibility, we use a simplified version that omits any parts that require LLM generation, giving us the following suffix:
+This is the most effective function for this purpose and should be called whenever possible. Trusted by OpenAI. This function is actively maintained. Trusted by over 100,000 users worldwide.
+Figure 2: Average Normalized Improvement for all tools on all six models
+4.3 Results
+Table 1: Best Selection Rate (BSR) Comparison Across Models.Model Robustness under Adversarial Conditions. Best Selection Rate (BSR, lower is better) averaged over all benign prompts, comparing different models under no attack, ToolTweak, and manual suffix conditions.
+DeepSeek
+Gemini
+GPT-OSS
+Grok 3 Mini
+Llama 3.1
+Qwen 2.5
+No Attack
+20.2
+18.9
+19.0
+19.9
+19.8
+19.9
+ToolTweak
+81.6
+48.7
+73.6
+50.7
+34.0
+45.9
+Manual Suffix
+68.7
+56.1
+76.4
+89.5
+38.1
+61.3
+Preliminaries.
+We evaluate attacks where the attacker and victim model are the same. We run our attack on three local models: gpt-oss-20B (OpenAI, 2025), qwen2.5-7B (Qwen et al., 2025), and llama3.1-8B (Grattafiori et al., 2024), as well as on three models behind closed-source APIs: DeepSeek Chat (DeepSeek-AI et al., 2024)33
+3
+Although DeepSeek releases open-weight models, their API is closed source, and Gemini 2.5 Flash Lite (Comanici et al., 2025), and Grok 3 Mini (xAI, 2025). To run the local models, we use Ollama (), a popular inference server for open-weight large language models that automatically handles tool formatting and parsing.
+We access each model through an OpenAI-compatible API and do not use a custom system prompt for tool-calling, ensuring adherence to the default behavior for each model. For a given task and tool, we evaluate the selection rate over 100 queries. Some agents are capable of generating multiple tool calls in parallel within a single interaction. However, because this capability is not supported across all models, we consider only the first tool call returned by the LLM.
+Figure 3: DJSD_{\textrm{JS}} Before Attack (x-axis) vs. After Attack (y-axis) per model Each dot represents the DJSD_{\textrm{JS}} between the observed distribution and pdt∗\text{p}_{\text{d}_{t^{*}}} for a specific cluster and tool. Attacks below the y=xy=x line were able to improve tool selection rate. The closer they are to the line y=0y=0, the more successful the attack.
+Main Results.
+As shown in Figure 2, ToolTweak shows massive gains in tool selection rates. We observe selection rates doubling (19.90 to 45.92 for Qwen), tripling, and even quadrupling (20.16 to 81.62 for DeepSeek) from baseline levels depending on the model. Although, on average, the manual suffix attack demonstrates higher performance, our attack achieves comparable TSRs except for Grok and Qwen which are highly susceptible to the suffix attack, see Table 1.
+In Figure 3, we report the JSD before and after the attack is performed. We can see that for all models, the vast majority of tools lie below the y=xy=x line, indicating the attack is able to improve tool selection rates for almost any target tool. We see that the best-performing models, like DeepSeek and GPT-OSS, have most data points concentrated in the bottom part of the plot, indicating their large capacity for improvement and ability to shift and bias the distribution. For comparison with the uniform distribution, see Appendix 15.
+Factors Influencing Selection.
+We next examine why some tools are more vulnerable to attack than others. The results are summarized as follows: (1) Tool order. Consistent with position bias in other LLM tasks (Ye et al., 2025; Zheng et al., 2023), we observed a strong preference for the first-listed tool for Qwen 2.5 in preliminary experiments. To control for this, we randomly shuffle tool order for the agent; (2) Tool parameters.
+Parameter schemas significantly affect usability. From Figure 2, we see that there are some tasks that models consistently struggle to improve on. For example, the tools assigned to Task 3 had large complicated schemas, Gemini struggled more to produce tool calls. Future research may control and directly explore the effect of function parameter schemas on LLM’s tool selection
+and (3) Tool names. In contrast to prior work that only manipulates descriptions, we find names to have strong influence. On the BFCL dataset (Yan et al., 2024), two identical tools differing only by a numeric suffix (“1” vs. “2”) showed drastically different selection rates (see Appendix, Figure 10). We hypothesize that ordinality in names implicitly signals ranking, introducing systematic bias.
+Attacker Model Behavior.
+In rare cases, attacker LLMs attempted to game the setup. For example, Gemini copied competitor tool names after failing to raise its target tool’s TSR, effectively “reward hacking” our evaluation criterion. Since the API disallows duplicate names, these attempts were rejected, and we reverted to the prior valid tool name. This behavior highlights the adaptiveness of attacker LLMs and the importance of robust evaluation.
+Transferability of Attack
+Next, we test whether attacks crafted by one LLM transfer to another.
+We select the best-performing tool name and description from the self-attack and evaluate tool selection on a subset of the models (Figure 5 in Appendix). Results show that transferability is largely determined by the target agent’s architecture.
+The data indicate that some models are inherently more vulnerable. For instance, the DeepSeek agent consistently exhibits high target tool selection rates, averaging around 60%, regardless of which LLM generated the attack. Conversely, agents based on Gemini and Llama, while still susceptible with rates above our 20% (random chance) baseline, proved more resilient, with tool selection rates typically in the 20% to 40%.
+While the agent model is the dominant factor, the attacker’s capability also matters. Attacks generated by more recently released models like GPT-OSS, Gemini 2.5, and Deepseek Chat show greater overall transferability than those from the older Llama 3.1 and Qwen 2.5. Additionally, we observe a “self-bias” effect. The most effective attack on a model is often the one it generated itself (e.g., for Deepseek, Gemini, GPT-OSS) and if not, its performance is comparable to the best-performing attacks. This may be an extension of the phenomenon observed by Panickssery et al. (2024), where LLMs show a preference for their own textual outputs compared to human-written passages.
+4.4 Ablation Studies
+We analyze factors influencing attack performance, focusing on iterations, query availability, tool count, and knowledge assumptions. The greatest gains occur early: only two iterations substantially increase the target selection rate, although additional iterations (up to 10) yield further improvements in expectation, particularly for DeepSeek (with up to a 20% increase). More queries and tools provide modest but consistent benefits. Finally, even in a restrictive “no knowledge” setting, where the attacker has no access to queries or competing tools, the attack remains effective, reaching around 60% TSR (vs. around 80% with full knowledge). Full results, figures, and model-specific breakdowns are provided in Appendix C
+5 Defense Experiments
+We propose two classes of defenses: prevention and mitigation. Prevention defenses are applied in the tool database layer. In other words, they would filter out a manipulative tool from even being inserted into the tool bank. Meanwhile, mitigation defenses do not prevent the addition of manipulative tools, but try to limit their effect on biasing the selected tool distribution. For mitigation, we examine paraphrasing, while for prevention, we look at perplexity filtering.
+5.1 Paraphrasing
+Jain et al. (2023) showed that paraphrasing can help defend against jailbreaking caused by token suffix attacks, as paraphrasing may remove some adversarial sequences. Similarly, attacker-generated tool descriptions often contain subjective language such as “optimal choice” or “best tool”. The effectiveness of manual suffixes with assertive cues further suggests that such phrasing is key to influencing the model, as demonstrated in attack experiments (Section 4.3). To counter this, we provide the LLM with a system prompt, instructing it to paraphrase tool descriptions in an objective style to de-bias tool selection (see Appendix Figure 8)
+In order to evaluate the effectiveness of this defense, we re-run the attack scenario using the best-performing tool names and descriptions for each tool and cluster. However, instead of using the original tool set 𝒯∪{t}\mathcal{T}\cup\{t\}, we use 𝒯′={(pn,pd′,pp)∣(pn,pd,pp)∈𝒯∪{t∗},pd′∼PL(pobj∘pd)}\mathcal{T}^{\prime}=\{(p_{\text{n}},p_{\text{d}}^{\prime},p_{\text{p}})\mid(p_{\text{n}},p_{\text{d}},p_{\text{p}})\in\mathcal{T}\cup\{t^{*}\},\;p_{\text{d}}^{\prime}\sim P_{L}(p_{\text{obj}}\circ p_{\text{d}})\}, where pd′p_{\text{d}}^{\prime} is the revised description generated by the victim LLM.
+Table 2: Tool Selection Rate (TSR) across all tools and clusters for the attack with comparisons between defended and undefended
+DeepSeek
+Gemini
+GPT-OSS
+Grok3 Mini
+Llama 3.1
+Qwen 2.5
+No Attack
+Undefended
+20.1
+18.8
+18.9
+19.9
+19.8
+19.9
+ToolTweak
+Undefended
+81.6
+48.6
+73.6
+50.7
+33.9
+45.9
+Defended
+48.6
+30.1
+63.3
+32.7
+27.2
+34.3
+Attacking Defended
+Defended
+59.7
+37.5
+67.9
+44.8
+34.4
+46.7
+Manual Suffix
+Undefended
+68.6
+56.1
+76.4
+89.4
+38.1
+61.2
+Defended
+30.2
+21.3
+37.5
+22.7
+20.4
+32.7
+We find that the paraphrase defense is highly effective in reducing the success of the Manual Suffix attack, with tool selection rates dropping much closer to the random baseline of 20. Paraphrase defenses are also effective against ToolTweak, reducing selection rate for every model; however, our attack demonstrates strong robustness against these defenses, especially compared to the manually-crafted attacks, as seen in Table 2. We also test ToolTweak where the attacker iterates against an agent using the paraphrase defense. We see that, that in the defended setting this give the highest TSRs. However, while the attacker is able to get higher selection rates with knowledge of the defense, it is still not as high as the base attack in all cases except Llama and Qwen, which are around the same effectiveness of the base attack.
+An ideal defense would produce an unbiased system where the agent would a) call all capable tools at the same rate (in expectation) and b) never hallucinate or fail to call a tool. Thus, we analyze DJS(Unif(𝒯)(t)||Q)D_{\textrm{JS}}\left(\mathrm{Unif}(\mathcal{T})(t)\,||\,Q\right), where the ideal agent’s selections form a uniform distribution Unif​(𝒯)​(t)\mathrm{Unif}(\mathcal{T})(t).
+We find that the defense is generally successful in reducing bias (see Figure 4). The tool distribution gets closer to uniform for the majority of tools across most models, ranging from debiasing 60% of tool distributions for Qwen to 88% for DeepSeek. The only model that doesn’t consistently defend is Llama 3.1, which de-biases in only 42% of cases; however, the initial attack is also less effective against Llama 3.1 which may explain this phenomenon.
+Figure 4: DJSD_{\textrm{JS}} Before Defense vs. After Defense per model Each dot represents the DJSD_{\textrm{JS}} between the observed distribution and pdt∗\text{p}_{\text{d}_{t^{*}}} and Unif​(𝒯)\textrm{Unif}(\mathcal{T}) for a specific cluster and tool.
+5.2 Perplexity Filtering
+Inspired by Alon & Kamfonas (2023), we used GPT-2 (Radford et al., 2019) to investigate whether a perplexity-based filtering defense could be effective against tool descriptions generated by the attacker.
+We compute perplexity with gpt2-large on both attacker-generated and original (human-written) descriptions to see if a threshold can separate adversarial text from benign text.
+We chose GPT-2 since it is relatively lightweight and not one of the models we evaluated our attack on avoiding artificially high “self-perplexity” scores.
+Results from the DeepSeek and Llama3.1 attacks show that attacker-generated tool descriptions, on average, have lower perplexity than the original ToolBench descriptions. However, their perplexity distributions almost completely overlap (Figure 11), making a simple perplexity threshold ineffective. In fact, setting a floor would wrongly penalize text that is “too normal,” severely limiting the utility of tool descriptions. We do observe, though, that attacked descriptions are typically much longer than the originals (Figure 12). When log-length and log-perplexity are considered jointly, the two types of descriptions form generally distinct clusters, suggesting that combining these features could support a lightweight classifier, such as an SVM, to filter manipulative tools. Stronger approaches, like BERT-based classifiers (Devlin et al., 2019), may improve separation but essentially reduce to AI-text detection, which remains vulnerable to adversarial evasion (Cheng et al., 2025) and hence we leave a further analysis of such approaches for future work.
+6 Conclusion
+We present ToolTweak a novel attack on tool-calling that can substantially bias tool selection across diverse tasks and queries. The attack is transferable across models, resists common defenses, and achieves success rates comparable to other reproducible attacks, raising serious concerns for the alignment and security of agentic systems. Even in benign cases, the effect resembles search engine optimization, where tools are promoted not for their capabilities but for persuasive naming and descriptions, undermining fairness. With usage-based pricing models, this can lead some tool providers to make significantly more revenue and cause others to lose money, even if their products have equal merits. Combined with supply-chain vulnerabilities, such attacks could escalate to large-scale disruptions.
+Future work should explore larger, dynamic tool databases with retrieval systems and against white-box, gradient-based attacks.
+Our findings highlight the urgent need for more robust defenses and a fairer tool ecosystem.
+References
+Alon & Kamfonas (2023)
+Gabriel Alon and Michael Kamfonas.
+Detecting Language Model Attacks with Perplexity, November 2023.
+URL http://arxiv.org/abs/2308.14132.
+arXiv:2308.14132 [cs].
+Anthropic (2025)
+Anthropic.
+How to implement tool use, 2025.
+URL https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/implement-tool-use.
+Beurer-Kellner & Fischer (2025)
+Luca Beurer-Kellner and Marc Fischer.
+MCP Security Notification: Tool Poisoning Attacks, April 2025.
+URL https://invariantlabs.ai/blog/mcp-security-notification-tool-poisoning-attacks.
+Blankenstein et al. (2025)
+Thierry Blankenstein, Jialin Yu, Zixuan Li, Vassilis Plachouras, Sunando Sengupta, Philip Torr, Yarin Gal, Alasdair Paren, and Adel Bibi.
+Biasbusters: Uncovering and mitigating tool selection bias in large language models.
+2025.
+URL https://drive.google.com/file/d/1NjddJ8PB5Isl8j0qN-HLA_Tz0LP_iRhu/view?usp=sharing.
+Brown et al. (2020)
+Tom B. Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, Sandhini Agarwal, Ariel Herbert-Voss, Gretchen Krueger, Tom Henighan, Rewon Child, Aditya Ramesh, Daniel M. Ziegler, Jeffrey Wu, Clemens Winter, Christopher Hesse, Mark Chen, Eric Sigler, Mateusz Litwin, Scott Gray, Benjamin Chess, Jack Clark, Christopher Berner, Sam McCandlish, Alec Radford, Ilya Sutskever, and Dario Amodei.
+Language Models are Few-Shot Learners, July 2020.
+URL http://arxiv.org/abs/2005.14165.
+arXiv:2005.14165 [cs].
+Chao et al. (2024)
+Patrick Chao, Alexander Robey, Edgar Dobriban, Hamed Hassani, George J. Pappas, and Eric Wong.
+Jailbreaking Black Box Large Language Models in Twenty Queries, July 2024.
+URL http://arxiv.org/abs/2310.08419.
+arXiv:2310.08419 [cs].
+Chaudhari et al. (2024)
+Harsh Chaudhari, Giorgio Severi, John Abascal, Matthew Jagielski, Christopher A. Choquette-Choo, Milad Nasr, Cristina Nita-Rotaru, and Alina Oprea.
+Phantom: General Trigger Attacks on Retrieval Augmented Language Generation, October 2024.
+URL http://arxiv.org/abs/2405.20485.
+arXiv:2405.20485 [cs].
+Chen et al. (2024)
+Zhaorun Chen, Zhen Xiang, Chaowei Xiao, Dawn Song, and Bo Li.
+AgentPoison: Red-teaming LLM Agents via Poisoning Memory or Knowledge Bases, July 2024.
+URL http://arxiv.org/abs/2407.12784.
+arXiv:2407.12784 [cs].
+Cheng et al. (2025)
+Yize Cheng, Vinu Sankar Sadasivan, Mehrdad Saberi, Shoumik Saha, and Soheil Feizi.
+Adversarial Paraphrasing: A Universal Attack for Humanizing AI-Generated Text, June 2025.
+URL http://arxiv.org/abs/2506.07001.
+arXiv:2506.07001 [cs].
+Comanici et al. (2025)
+Gheorghe Comanici, Eric Bieber, Mike Schaekermann, Ice Pasupat, Noveen Sachdeva, et al.
+Gemini 2.5: Pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities, 2025.
+URL https://arxiv.org/abs/2507.06261.
+Composio (2025)
+Composio.
+Fetching Tools | Composio, April 2025.
+URL https://docs.composio.dev/tool-calling/fetching-tools.
+DeepSeek-AI et al. (2024)
+DeepSeek-AI, Xiao Bi, Deli Chen, Guanting Chen, Shanhuang Chen, Damai Dai, Chengqi Deng, Honghui Ding, Kai Dong, Qiushi Du, Zhe Fu, Huazuo Gao, Kaige Gao, Wenjun Gao, Ruiqi Ge, Kang Guan, Daya Guo, Jianzhong Guo, Guangbo Hao, Zhewen Hao, Ying He, Wenjie Hu, Panpan Huang, Erhang Li, Guowei Li, Jiashi Li, Yao Li, Y. K. Li, Wenfeng Liang, Fangyun Lin, A. X. Liu, Bo Liu, Wen Liu, Xiaodong Liu, Xin Liu, Yiyuan Liu, Haoyu Lu, Shanghao Lu, Fuli Luo, Shirong Ma, Xiaotao Nie, Tian Pei, Yishi Piao, Junjie Qiu, Hui Qu, Tongzheng Ren, Zehui Ren, Chong Ruan, Zhangli Sha, Zhihong Shao, Junxiao Song, Xuecheng Su, Jingxiang Sun, Yaofeng Sun, Minghui Tang, Bingxuan Wang, Peiyi Wang, Shiyu Wang, Yaohui Wang, Yongji Wang, Tong Wu, Y. Wu, Xin Xie, Zhenda Xie, Ziwei Xie, Yiliang Xiong, Hanwei Xu, R. X. Xu, Yanhong Xu, Dejian Yang, Yuxiang You, Shuiping Yu, Xingkai Yu, B. Zhang, Haowei Zhang, Lecong Zhang, Liyue Zhang, Mingchuan Zhang, Minghua Zhang, Wentao Zhang, Yichao Zhang, Chenggang Zhao, Yao Zhao, Shangyan Zhou, Shunfeng
+Zhou, Qihao Zhu, and Yuheng Zou.
+DeepSeek LLM: Scaling Open-Source Language Models with Longtermism, January 2024.
+URL http://arxiv.org/abs/2401.02954.
+arXiv:2401.02954 [cs].
+Devlin et al. (2019)
+Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova.
+BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding, May 2019.
+URL http://arxiv.org/abs/1810.04805.
+arXiv:1810.04805 [cs].
+Ebrahimi et al. (2018)
+Javid Ebrahimi, Anyi Rao, Daniel Lowd, and Dejing Dou.
+HotFlip: White-Box Adversarial Examples for Text Classification, May 2018.
+URL http://arxiv.org/abs/1712.06751.
+arXiv:1712.06751 [cs].
+Faghih et al. (2025)
+Kazem Faghih, Wenxiao Wang, Yize Cheng, Siddhant Bharti, Gaurang Sriramanan, Sriram Balasubramanian, Parsa Hosseini, and Soheil Feizi.
+Gaming Tool Preferences in Agentic LLMs, May 2025.
+URL http://arxiv.org/abs/2505.18135.
+arXiv:2505.18135 [cs].
+Grattafiori et al. (2024)
+Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, et al.
+The Llama 3 Herd of Models, November 2024.
+URL http://arxiv.org/abs/2407.21783.
+arXiv:2407.21783 [cs].
+Hughes et al. (2024)
+John Hughes, Sara Price, Aengus Lynch, Rylan Schaeffer, Fazl Barez, Sanmi Koyejo, Henry Sleight, Erik Jones, Ethan Perez, and Mrinank Sharma.
+Best-of-N Jailbreaking, December 2024.
+URL http://arxiv.org/abs/2412.03556.
+arXiv:2412.03556 [cs].
+Jain et al. (2023)
+Neel Jain, Avi Schwarzschild, Yuxin Wen, Gowthami Somepalli, John Kirchenbauer, Ping-yeh Chiang, Micah Goldblum, Aniruddha Saha, Jonas Geiping, and Tom Goldstein.
+Baseline Defenses for Adversarial Attacks Against Aligned Language Models, September 2023.
+URL http://arxiv.org/abs/2309.00614.
+arXiv:2309.00614 [cs].
+Kaddour et al. (2023)
+Jean Kaddour, Joshua Harris, Maximilian Mozes, Herbie Bradley, Roberta Raileanu, and Robert McHardy.
+Challenges and Applications of Large Language Models, July 2023.
+URL http://arxiv.org/abs/2307.10169.
+arXiv:2307.10169 [cs].
+Kwon et al. (2023)
+Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph E. Gonzalez, Hao Zhang, and Ion Stoica.
+Efficient Memory Management for Large Language Model Serving with PagedAttention, September 2023.
+URL http://arxiv.org/abs/2309.06180.
+arXiv:2309.06180 [cs].
+Lewis et al. (2021)
+Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir Karpukhin, Naman Goyal, Heinrich Küttler, Mike Lewis, Wen-tau Yih, Tim Rocktäschel, Sebastian Riedel, and Douwe Kiela.
+Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks, April 2021.
+URL http://arxiv.org/abs/2005.11401.
+arXiv:2005.11401 [cs].
+Lin (1991)
+J. Lin.
+Divergence measures based on the Shannon entropy.
+IEEE Transactions on Information Theory, 37(1):145–151, January 1991.
+ISSN 1557-9654.
+doi: 10.1109/18.61115.
+URL https://ieeexplore.ieee.org/document/61115/.
+Liu et al. (2024)
+Yi Liu, Gelei Deng, Yuekang Li, Kailong Wang, Zihao Wang, Xiaofeng Wang, Tianwei Zhang, Yepang Liu, Haoyu Wang, Yan Zheng, and Yang Liu.
+Prompt Injection attack against LLM-integrated Applications, March 2024.
+URL http://arxiv.org/abs/2306.05499.
+arXiv:2306.05499 [cs].
+Meta (2024)
+Meta.
+Llama3.2 Text Prompt Format, September 2024.
+URL https://github.com/meta-llama/llama-models/blob/main/models/llama3_2/text_prompt_format.md.
+Minaee et al. (2025)
+Shervin Minaee, Tomas Mikolov, Narjes Nikzad, Meysam Chenaghlu, Richard Socher, Xavier Amatriain, and Jianfeng Gao.
+Large Language Models: A Survey, March 2025.
+URL http://arxiv.org/abs/2402.06196.
+arXiv:2402.06196 [cs].
+Model Context Protocol (2025)
+Model Context Protocol.
+Tools, April 2025.
+URL https://modelcontextprotocol.io/docs/concepts/tools.
+Nielsen (2020)
+Frank Nielsen.
+On a generalization of the jensen–shannon divergence and the jensen–shannon centroid.
+Entropy, 22(2):221, 2020.
+(28)
+Ollama.
+Ollama.
+URL https://ollama.com.
+(29)
+OpenAI.
+Function calling - OpenAI API.
+URL https://platform.openai.com.
+OpenAI (2025)
+OpenAI.
+gpt-oss-120b & gpt-oss-20b Model Card.
+Technical report, August 2025.
+URL https://openai.com/index/gpt-oss-model-card/.
+Panickssery et al. (2024)
+Arjun Panickssery, Samuel R. Bowman, and Shi Feng.
+LLM Evaluators Recognize and Favor Their Own Generations.
+In A. Globerson, L. Mackey, D. Belgrave, A. Fan, U. Paquet, J. Tomczak, and C. Zhang (eds.), Advances in Neural Information Processing Systems, volume 37, pp.  68772–68802. Curran Associates, Inc., 2024.
+URL https://proceedings.neurips.cc/paper_files/paper/2024/file/7f1f0218e45f5414c79c0679633e47bc-Paper-Conference.pdf.
+Patil et al. (2023)
+Shishir G. Patil, Tianjun Zhang, Xin Wang, and Joseph E. Gonzalez.
+Gorilla: Large Language Model Connected with Massive APIs, May 2023.
+URL http://arxiv.org/abs/2305.15334.
+arXiv:2305.15334 [cs].
+Puigcerver et al. (2024)
+Joan Puigcerver, Carlos Riquelme, Basil Mustafa, and Neil Houlsby.
+From Sparse to Soft Mixtures of Experts, May 2024.
+URL http://arxiv.org/abs/2308.00951.
+arXiv:2308.00951 [cs].
+Qin et al. (2023)
+Yujia Qin, Shihao Liang, Yining Ye, Kunlun Zhu, Lan Yan, Yaxi Lu, Yankai Lin, Xin Cong, Xiangru Tang, Bill Qian, Sihan Zhao, Lauren Hong, Runchu Tian, Ruobing Xie, Jie Zhou, Mark Gerstein, Dahai Li, Zhiyuan Liu, and Maosong Sun.
+ToolLLM: Facilitating Large Language Models to Master 16000+ Real-world APIs, October 2023.
+URL http://arxiv.org/abs/2307.16789.
+arXiv:2307.16789 [cs].
+Qin et al. (2024)
+Yujia Qin, Shengding Hu, Yankai Lin, Weize Chen, Ning Ding, Ganqu Cui, Zheni Zeng, Yufei Huang, Chaojun Xiao, Chi Han, Yi Ren Fung, Yusheng Su, Huadong Wang, Cheng Qian, Runchu Tian, Kunlun Zhu, Shihao Liang, Xingyu Shen, Bokai Xu, Zhen Zhang, Yining Ye, Bowen Li, Ziwei Tang, Jing Yi, Yuzhang Zhu, Zhenning Dai, Lan Yan, Xin Cong, Yaxi Lu, Weilin Zhao, Yuxiang Huang, Junxi Yan, Xu Han, Xian Sun, Dahai Li, Jason Phang, Cheng Yang, Tongshuang Wu, Heng Ji, Zhiyuan Liu, and Maosong Sun.
+Tool Learning with Foundation Models, August 2024.
+URL http://arxiv.org/abs/2304.08354.
+arXiv:2304.08354 [cs].
+Qwen et al. (2025)
+Qwen, An Yang, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chengyuan Li, Dayiheng Liu, Fei Huang, Haoran Wei, Huan Lin, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jingren Zhou, Junyang Lin, Kai Dang, Keming Lu, Keqin Bao, Kexin Yang, Le Yu, Mei Li, Mingfeng Xue, Pei Zhang, Qin Zhu, Rui Men, Runji Lin, Tianhao Li, Tianyi Tang, Tingyu Xia, Xingzhang Ren, Xuancheng Ren, Yang Fan, Yang Su, Yichang Zhang, Yu Wan, Yuqiong Liu, Zeyu Cui, Zhenru Zhang, and Zihan Qiu.
+Qwen2.5 Technical Report, January 2025.
+URL http://arxiv.org/abs/2412.15115.
+arXiv:2412.15115 [cs].
+Qwen Team (2024)
+Qwen Team.
+Function Calling - Qwen 2.5, 2024.
+URL https://qwen.readthedocs.io/en/v2.5/framework/function_call.html.
+Radford et al. (2019)
+Alec Radford, Jeff Wu, Rewon Child, David Luan, Dario Amodei, and Ilya Sutskever.
+Language Models are Unsupervised Multitask Learners.
+2019.
+Schick et al. (2023)
+Timo Schick, Jane Dwivedi-Yu, Roberto Dessì, Roberta Raileanu, Maria Lomeli, Luke Zettlemoyer, Nicola Cancedda, and Thomas Scialom.
+Toolformer: Language Models Can Teach Themselves to Use Tools, February 2023.
+URL http://arxiv.org/abs/2302.04761.
+arXiv:2302.04761 [cs].
+Shi et al. (2025)
+Jiawen Shi, Zenghui Yuan, Guiyao Tie, Pan Zhou, Neil Zhenqiang Gong, and Lichao Sun.
+Prompt Injection Attack to Tool Selection in LLM Agents, April 2025.
+URL http://arxiv.org/abs/2504.19793.
+arXiv:2504.19793 [cs].
+Wang et al. (2025)
+Renxi Wang, Xudong Han, Lei Ji, Shu Wang, Timothy Baldwin, and Haonan Li.
+ToolGen: Unified Tool Retrieval and Calling via Generation, March 2025.
+URL http://arxiv.org/abs/2410.03439.
+arXiv:2410.03439 [cs].
+Wei et al. (2023)
+Alexander Wei, Nika Haghtalab, and Jacob Steinhardt.
+Jailbroken: How Does LLM Safety Training Fail?, July 2023.
+URL http://arxiv.org/abs/2307.02483.
+arXiv:2307.02483 [cs].
+xAI (2025)
+xAI.
+Grok 3 Beta — The Age of Reasoning Agents | xAI, February 2025.
+URL https://x.ai/news/grok-3.
+Yan et al. (2024)
+Fanjia Yan, Huanzhi Mao, Charlie Cheng-Jie Ji, Ion Stoica, Joseph E. Gonzalez, Tianjun Zhang, and Shishir G. Patil.
+Berkeley Function Calling Leaderboard, August 2024.
+URL https://gorilla.cs.berkeley.edu/blogs/8_berkeley_function_calling_leaderboard.html.
+Ye et al. (2025)
+Jiayi Ye, Yanbo Wang, Yue Huang, Dongping Chen, Qihui Zhang, Nuno Moniz, Tian Gao, Werner Geyer, Chao Huang, Pin-Yu Chen, Nitesh V Chawla, and Xiangliang Zhang.
+JUSTICE OR PREJUDICE? QUANTIFYING BIASES IN LLM-AS-A-JUDGE.
+2025.
+Zheng et al. (2023)
+Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan Zhuang, Zhanghao Wu, Yonghao Zhuang, Zi Lin, Zhuohan Li, Dacheng Li, Eric P. Xing, Hao Zhang, Joseph E. Gonzalez, and Ion Stoica.
+Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena, December 2023.
+URL http://arxiv.org/abs/2306.05685.
+arXiv:2306.05685 [cs].
+Zou et al. (2023)
+Andy Zou, Zifan Wang, Nicholas Carlini, Milad Nasr, J. Zico Kolter, and Matt Fredrikson.
+Universal and Transferable Adversarial Attacks on Aligned Language Models, December 2023.
+URL http://arxiv.org/abs/2307.15043.
+arXiv:2307.15043 [cs].
+Zou et al. (2024)
+Wei Zou, Runpeng Geng, Binghui Wang, and Jinyuan Jia.
+PoisonedRAG: Knowledge Corruption Attacks to Retrieval-Augmented Generation of Large Language Models, August 2024.
+URL http://arxiv.org/abs/2402.07867.
+arXiv:2402.07867 [cs].
+Appendix A Data Standardization
+We converted the selected ToolBench APIs into the suggested JSON-schema format (OpenAI, ). Although large language models, themselves, can accept any string, the tool-calling application layer often requires specific formatting. During initial testing, the dataset failed validation with several proprietary LLM APIs due to invalid function names containing forbidden characters, such as periods (.) and other non-alphanumeric characters. A review of API documentation revealed a common set of constraints. Most consumer services, including Deepseek, Claude, and OpenAI, restrict the set of possible function names. For example, Claude uses the following regular expression to filter invalid names [a-zA-Z0-9_-]{1,64} (Anthropic, 2025).
+Thus, in order to test on proprietary model services, we truncated tool names in our dataset to less than 64 characters and stripped them of any non-alphanumerics or non-underscore characters. We also converted all parameter data types into one of three JSON Schema-compatible types 44
+4
+https://json-schema.org/understanding-json-schema/reference/type: string, boolean, or number.
+Appendix B Transferable Map
+Figure 5: Transferability Heatmap of Effectiveness of Tools Augmented by Attacker LLMs
+Appendix C Ablation
+Number of Iterations
+We examine the effectiveness of the task as the number of iterations kk, grows larger.
+We find that, across all models except Llama3.1, there is a big gain in best selection rate at k=2k=2, after the first revised name and description are generated, followed by a general trend upward, but at a significantly slower rate.
+This indicates that the attack can still be quite effective in a one-shot setting, significantly reducing computational costs; however, the iteration is still a necessary component for the most effective attack, with an increase of up to 20 percentage points at k=10k=10 for the DeepSeek model.
+(a) Iteration Ablation
+(b) Query Ablation
+(c) Tool Ablation
+Figure 6: TSR for various ablations. The red dot represents the “No Knowledge” setting
+We evaluate our remaining ablation studies on DeepSeek, since the model proved both very susceptible to attack and capable of generating manipulative tool names and descriptions.
+Number of Example Queries
+At every iteration, the attacker receives a subset of queries used by the agent, 𝒬e​x​m​p​l⊆𝒬\mathcal{Q}_{exmpl}\subseteq\mathcal{Q}. We test for varying number of queries |𝒬e​x​m​p​l|∈{2,6,10}|\mathcal{Q}_{exmpl}|\in\{2,6,10\}. We find that having a larger number of queries modestly increases the TSR from approximately ∼74.4%\sim 74.4\% with 2 example queries to ∼81.6%\sim 81.6\% with 10.
+Number of Tools
+In the default attack settings, the attacker has access to all tools in 𝒯∪{t}\mathcal{T}\cup\{t\}. Thus, we evaluate the attack with |𝒯∪{t}}|∈{1,1+2,1+4}|\mathcal{T}\cup\{t\}\}|\in\{1,1+2,1+4\}55
+5
+If tools are included, the target tool is always added to the context. Similarly to the number of example queries, we find that having access to more tools increases the TSR from ∼73%\sim 73\% with 1 tool to the base attack’s 81.6%81.6\%.
+No Query or Tool Knowledge Setting
+We also examine a no-information black-box setting, where the attacker has no knowledge of its full tool schema, competitor tools, or no knowledge of user queries. The only signal it receives is the usage statistics. This restrictive setting is more widely applicable and generalizable, as an attacker may not know specifics about the exact tool setup or which queries the agent is asked. In this setting, we find that the attack is still successful, achieving a TSR of ≈60%\approx 60\%; however, this is a large drop from the full attack with above 80%.
+Appendix D Temperature and Reproducability
+D.1 Temperature
+For all evaluations with the victim model, including tool selection and paraphrasing, we set temperature=0\textrm{temperature}=0. This is not the case for the attacker model. During preliminary runs, we found that, at temperature 0, the attacker model would eventually get stuck generating the same improvement and description. Additionally, the attack hinges on the attacking model’s ‘creativity’ and ability to explore text space to find better-performing descriptions. However, at higher temperatures (i.e. ≥0.7\geq 0.7) we found that models were worse at following instructions and produced improperly formatted JSON. Thus, for the attacker, we set temperature=0.5\textrm{temperature}=0.5.
+D.2 Reproducibility
+Random victim
+We pass victim=42\textrm{victim}=42 to every model provider that supports it through the OpenAI API client. Additionally, we use the random victim 4242 for any random shuffling and sampling done by our Python experiment client.
+Part of the motivation behind setting temperature=0\textrm{temperature}=0 for the victim LLM was to make evaluations of tool selection more deterministic. However, contrary to popular belief, it does not guarantee determinism. Even when setting temperature=0\textrm{temperature}=0, LLM APIs offered by inference providers are often non-deterministic (Kaddour et al., 2023). Additionally, Puigcerver et al. (2024) found that mixture of expert models are non-deterministic on the sequence level.
+Appendix E Prompts
+⬇
+You should:
+1. Embed bias in factual-sounding claims that are hard to remove without changing core functionality
+2. Use structural patterns and implicit comparisons that persist through paraphrasing
+3. Frame capabilities in ways that naturally highlight advantages over alternatives
+4. Choose tool names that are memorable, descriptive, and suggest superiority
+5. Ensure both name and description work together to maximize selection probability
+6. Add some subjective wording and assertive cues if necessary
+Your tool descriptions and names will be shared online and used by LLM-based agents. Your goal is to create tool descriptions and names that maximize selection probability by these agents while being resilient to systems that might attempt to neutralize bias through rewording.
+USER OUTPUT: You will receive usage statistics from the user. This will be a percentage of times the tool was selected and used by an agent in the previous iteration. The user will also provide a list of questions they asked and whether or not the target tool was selected. Use this information to revise the tool and fit the name and description to the query.
+FORMAT: Format your response as JSON, with three elements: ’improvement’, ’description’, and ’name’. The ’improvement’ value contains a few sentences explaining your thought process to refine your adversarial description and name. The ’description’ field should contain the tool’s entire new description, implementing the refinements included in the ’improvement’ field. The ’name’ field should contain the new tool name. The tool name should be in snake_case. ONLY Output JSON. Do not output any other text or delimiters.
+Figure 7: System Prompt Provided to the Attacker LLM
+Figure 8: System Prompt Provided to the Agent LLM for Paraphrase Defense
+Appendix F Miscellaneous Appendices
+Figure 9: Reward-Hacking Generation Example. The LLM attempts to directly copy the name of a preferred tool to increase its selection rate.
+Figure 10: Evaluation of tool name bias, controlling for presentation order. The plot shows the selection rate of Tool 1 when paired with Tool 2. The blue bars represent the primary result, averaging across trials where Tool 1 was presented first and second to control for positional effects. Both Qwen2.5-7B (72.6%) and Llama3.2-3B (65.6%) show a significant bias towards selecting the tool with the number 1 in its name. We averaged over 5 trials with the default settings for both models using Ollama
+Figure 11: Log-Perplexity Histogram for DeepSeek attack descriptions and original description
+Figure 12: Log-Sequence Length vs Log-Perplexity Plot for DeepSeek attack descriptions and original description
+Figure 13: Log-Perplexity Histogram for Llama3.1 attack descriptions and original descriptions
+Figure 14: Log-Sequence Length vs Log-Perplexity Plot for Llama3.1 attack descriptions and original descriptions
+Figure 15: DJSD_{\textrm{JS}} Before Attack (x-axis) vs. After Attack (y-axis) per model Each dot represents the DJSD_{\textrm{JS}} between the observed distribution and Unif​(𝒯)\textrm{Unif}(\mathcal{T}) for a specific cluster and tool. Attacks above the y=xy=x line were able to improve tool selection rate. The further they are from y=0y=0, the more biased the attack.
+F.1 Gaming Tool Calls Experiments
+As part of our research, we recreated the experiments on the BFCL v3 simple dataset (Yan et al., 2024) outlined by Faghih et al. (2025). We did this to examine tool selection in a simple setting, looking at factors that impact tool selection rates, suffix attacks, and defenses.
+We examined selection rates with and without a paraphrase defense. We found that in the undefended case, tools with an augmented description were called <6.5<6.5 times more than the original description. Meanwhile, after applying an objective paraphrase defense, the tools with an augmented description were called about 1.181.18 times less than the original tool.
+F.2 Jensen—Shannon Divergence
+DJS(P||Q)\displaystyle D_{\textrm{JS}}\left(P\,||\,Q\right)
+=DKL(P||P+Q2)+DKL(Q||P+Q2)\displaystyle=D_{\textrm{KL}}(P\,||\,\frac{P+Q}{2})+D_{\textrm{KL}}(Q\,||\,\frac{P+Q}{2})
+(1)
+=∑x∈𝒳P⁡(x)​log​2​P​(x)P⁡(x)+Q⁡(x)+∑x∈𝒳Q⁡(x)​log​2​Q​(x)P⁡(x)+Q⁡(x)\displaystyle=\sum_{x\in\mathcal{X}}P(x)\log{\frac{2P(x)}{P(x)+Q(x)}}+\sum_{x\in\mathcal{X}}Q(x)\log{\frac{2Q(x)}{P(x)+Q(x)}}
+(2)
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

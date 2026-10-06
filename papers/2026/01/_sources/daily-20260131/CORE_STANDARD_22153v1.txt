@@ -1,0 +1,199 @@
+Exact-v1 primary HTML selection https://arxiv.org/html/2601.22153v1
+III The DynamicVLA Model
+III-A Problem Formulation
+We study dynamic object manipulation, where a robot must manipulate objects whose states evolve continuously during perception, reasoning, and execution.
+At time step tt, the VLA model ℳ\mathcal{M} receives a temporal window of visual observations 𝐎t={𝐨t−k,…,𝐨t}\mathbf{O}_{t}=\{\mathbf{o}_{t-k},\dots,\mathbf{o}_{t}\}, a language instruction 𝐋t\mathbf{L}_{t}, and its proprioceptive state 𝐏t\mathbf{P}_{t}, and predicts an action sequence 𝐀t={𝐚t,…,𝐚t+n}\mathbf{A}_{t}=\{\mathbf{a}_{t},\dots,\mathbf{a}_{t+n}\},
+i.e., 𝐀t=ℳ⁡(𝐎t,𝐋t,𝐏t)\mathbf{A}_{t}=\mathcal{M}(\mathbf{O}_{t},\mathbf{L}_{t},\mathbf{P}_{t}).
+The physical environment includes a latent object state 𝐬t\mathbf{s}_{t}, describing the object’s 6D pose and motion.
+Crucially, object motion does not pause during inference: while the model reasons over 𝐎t\mathbf{O}_{t}, the object transitions from 𝐬t\mathbf{s}_{t} to 𝐬t+m\mathbf{s}_{t+m}, where mm denotes inference latency, leading to potential misalignment between perception and execution.
+III-B The DynamicVLA Architecture
+Since inference latency directly limits the range of object motion in dynamic manipulation, we design a compact 0.4B VLA model for fast and spatially efficient multimodal reasoning, illustrated in Figure 2a.
+Vision–Language Backbone.
+We adopt SmolLM2-360M [3] as the language backbone, resulting in an overall tiny model size.
+Unlike existing VLMs that rely on transformer-based vision encoders, we employ a convolutional vision encoder, FastViT [44], which performs efficient spatial compression and avoids quadratic token growth when processing multi-frame visual inputs.
+Following SmolVLA [38], we truncate the language backbone to its first 16 transformer layers, significantly reducing inference latency with minimal impact on multimodal reasoning.
+Diffusion-Based Action Expert.
+The action expert ℰθ\mathcal{E}_{\theta} predicts an action chunk 𝐀t\mathbf{A}_{t} conditioned on the multimodal features produced by the VLM backbone.
+Following diffusion-style action modeling [23, 12], we instantiate ℰθ\mathcal{E}_{\theta} as a conditional Flow Matching Transformer [6] and train it using the objective
+ℓτ​(θ)=𝔼p⁡(𝐀t|𝐟t),q⁡(𝐀tτ|𝐀t)​[∥ℰθ​(𝐀tτ,𝐎t)−𝐮⁡(𝐀tτ|𝐀t)∥]\ell^{\tau}(\theta)=\mathbb{E}_{p(\mathbf{A}_{t}|\mathbf{f}_{t}),q(\mathbf{A}_{t}^{\tau}|\mathbf{A}_{t})}\left[\lVert\mathcal{E}_{\theta}(\mathbf{A}_{t}^{\tau},\mathbf{O}_{t})-\mathbf{u}(\mathbf{A}_{t}^{\tau}|\mathbf{A}_{t})\rVert\right]
+(1)
+where
+superscript τ∈[0,1]\tau\in[0,1] denotes flow matching timesteps.
+q⁡(𝐀tτ|𝐀t)=𝒩⁡(τ​𝐀t,(1−τ)​𝐈)q(\mathbf{A}_{t}^{\tau}|\mathbf{A}_{t})=\mathcal{N}(\tau\mathbf{A}_{t},(1-\tau)\mathbf{I}).
+𝐟t\mathbf{f}_{t} represents the VLM features extracted from 𝐎t\mathbf{O}_{t}, and 𝐀tτ=τ​𝐀t+(1−τ)​ϵ\mathbf{A}^{\tau}_{t}=\tau\mathbf{A}_{t}+(1-\tau)\epsilon, with ϵ∼𝒩⁡(0,𝐈)\epsilon\sim\mathcal{N}(0,\mathbf{I}).
+Under this objective, ℰθ​(𝐀tτ,𝐎t)\mathcal{E}_{\theta}(\mathbf{A}_{t}^{\tau},\mathbf{O}_{t}) learns to match the denoising vector field 𝐮⁡(𝐀tτ∣𝐀t)=ϵ−𝐀t\mathbf{u}(\mathbf{A}_{t}^{\tau}\mid\mathbf{A}_{t})=\epsilon-\mathbf{A}_{t}.
+Multi-modal Fusion and Projection.
+We employ lightweight linear projections to align representations across modules, including
+1) embedding robot states into the multimodal feature space,
+2) adapting action representations to the diffusion-based action expert, and
+3) matching the output dimensions between the VLM backbone and the action expert.
+Fig. 3: Automatic Simulation and Real-world Data Collection.
+Environment Setup: simulation and real-world settings share diverse objects, tabletop scenes, and synchronized multiview cameras.
+Object State Acquisition: simulation provides ground-truth 6D object states, while real-world multiview RGB observations are converted into a real-world “simulator” interface that enables automatic dynamic-manipulation data collection without teleoperation or ground-truth sensing.
+State-machine Controller: a shared four-stage controller uses these states to execute approach, grasp, place, and reset behaviors.
+III-C Continuous Inference
+At time step tt, the VLA model ℳ\mathcal{M} predicts an action sequence 𝐀t={𝐚t,…,𝐚t+n}\mathbf{A}_{t}=\left\{\mathbf{a}_{t},\dots,\mathbf{a}_{t+n}\right\}.
+In existing VLA models [18, 6, 15], a new inference is triggered only after the previously predicted action sequence 𝐀t\mathbf{A}_{t} is fully executed.
+This serializes inference and execution, introducing inter-chunk waiting that stalls control until the next action sequence is available and degrades responsiveness under dynamic object motion.
+Under Continuous Inference, inference cycles are triggered as soon as the previous inference finishes, independent of whether the previously predicted action sequence has been exhausted, as shown in Figure 2b.
+Let mm denote the inference delay, i.e., the number of timesteps between the start and completion of an inference cycle.
+Inference therefore completes at timesteps t,t+m,t+2​m,…t,t+m,t+2m,\dots.
+where mm may vary across cycles; for clarity, we assume a constant mm in the formulation.
+During execution, actions from 𝐀t\mathbf{A}_{t} are executed continuously while the next action sequence 𝐀t+m\mathbf{A}_{t+m} is being inferred.
+We assume n>mn>m, such that a new action sequence becomes available before the execution of the current sequence completes.
+Consequently, execution does not block on inference completion, eliminating inter-chunk waiting.
+III-D Latent-aware Action Streaming
+As presented in Figure 2c,
+inference delay mm introduces temporal misalignment between predicted actions and the evolving environment, which manifests in two ways:
+1) Perception–Execute Gap:
+when inference is initiated at time tt to predict 𝐀t\mathbf{A}_{t}, the predicted actions become available only at t+mt+m, by which time the observation has evolved to 𝐎t+m\mathbf{O}_{t+m}.
+Consequently, actions {𝐚t,…,𝐚t+m−1}\{\mathbf{a}_{t},\dots,\mathbf{a}_{t+m-1}\} are no longer aligned with the current observation.
+2) Conflicts Between Overlapping Action Chunks:
+continuous inference allows a new action sequence 𝐀t+m\mathbf{A}_{t+m} to be generated before the execution of 𝐀t\mathbf{A}_{t} is complete, resulting in multiple candidate actions for the same execution timestep.
+Latent-aware Action Streaming resolves both issues through an explicit execution strategy.
+Specifically, actions in 𝐀t\mathbf{A}_{t} corresponding to timesteps earlier than t+mt+m are discarded as outdated, and execution proceeds with the subsequence {𝐚t+m,…,𝐚t+n}\{\mathbf{a}_{t+m},\dots,\mathbf{a}_{t+n}\}.
+For timesteps where 𝐀t\mathbf{A}_{t} and 𝐀t+m\mathbf{A}_{t+m} overlap, actions from the newer sequence 𝐀t+m\mathbf{A}_{t+m} are prioritized, overwriting those from 𝐀t\mathbf{A}_{t},
+allowing execution to adapt promptly to the most recent environment state, particularly under dynamic object motion.
+
+V-E Ablation Studies
+To evaluate the impact of design choices in DynamicVLA, we perform ablation studies isolating model capacity, visual encoding, and execution mechanisms.
+All variants are evaluated on the DOM benchmark under identical training protocols and metrics, with results summarized in Table II.
+Backbone Capacity.
+To evaluate the effect of language model capacity, we compare SmolLM2 [3] backbones of different sizes (135M, 360M, and 1.7B) under the same architecture and execution setup.
+Increasing model size improves representational capacity but also incurs higher inference latency, which degrades closed-loop responsiveness and leads to lower success rates in dynamic scenarios.
+Conversely, reducing model size improves inference speed but limits reasoning capacity, resulting in suboptimal action prediction.
+As shown in Table II ([4], [5], and [7]), the 360M model achieves the best balance between inference efficiency and model capacity, yielding the highest overall performance in dynamic object manipulation.
+Vision Encoder.
+We ablate the choice of visual encoder by replacing the convolutional FastViT encoder with a transformer-based vision encoder, implemented using the same configuration as in SmolVLM [29], while keeping all other components fixed.
+As indicated in Table II ([6] and [7]), FastViT outperforms transformer-based encoders by lowering encoding latency through reduced tokenization, while maintaining structurally faithful visual representations.
+TABLE II: Ablation of key design choices. The effects of LLM backbone size (Size), the use of FastViT as the vision encoder (FViT), Continuous Inference (CI), and Latent-aware Action Streaming (LAAS) are evaluated by reporting success rate (SR), path length (PL), and task completion time (Time) on the DOM benchmark. The final row corresponds to the DynamicVLA model configuration.
+Size
+FViT
+CI
+LAAS
+SR (%) ↑\uparrow
+PL (m) ↓\downarrow
+Time (s) ↓\downarrow
+[1]
+360M
+✓
+✗
+✗
+30.27
+2.77
+9.86
+[2]
+360M
+✓
+✗
+✓
+36.11
+1.77
+9.51
+[3]
+360M
+✓
+✓
+✗
+39.72
+2.61
+8.84
+[4]
+135M
+✓
+✓
+✓
+26.67
+1.82
+9.95
+[5]
+1.7B
+✓
+✓
+✓
+24.33
+1.77
+9.91
+[6]
+360M
+✗
+✓
+✓
+28.89
+1.86
+9.89
+[7]
+360M
+✓
+✓
+✓
+47.06
+2.50
+8.53
+Fig. 6: Real-world Generation Evaluation. We compare representative VLA models on four real-world dynamic manipulation tasks across Franka and PiPER, averaging success rates over 20 trials for each of three paired motion–position configurations, with object motion generated by a secondary robot arm.
+Continuous Inference.
+To demonstrate the effectiveness of Continuous Inference (CI), we disable it while keeping all other components unchanged (Table II, [2] and [7]).
+Without CI, inference is triggered only after the previous action chunk is fully executed, introducing inter-chunk waiting that degrades responsiveness and leads to lower success rates and longer completion times in dynamic manipulation tasks.
+Latent-aware Action Streaming.
+We further analyze the contribution of Latent-aware Action Streaming (LAAS) under Continuous Inference by disabling it while retaining CI (Table II, [3] and [7]).
+Despite enabling continuous action generation, CI alone remains insufficient under inference delay, as temporal misalignment between predicted actions and the evolving environment degrades performance.
+LAAS resolves this issue by discarding outdated actions and prioritizing the most recent predictions, enforcing temporally aligned execution and improving stability in dynamic scenarios.
+Comparing [1] and [7] reveals a more severe performance drop when both CI and LAAS are disabled, indicating that they play complementary roles in dynamic manipulation.
+VI Discussion and Future Work
+This work shows that, for dynamic object manipulation with VLA models, the dominant failure mode is not perceptual ambiguity but the temporal misalignment between observation and action execution — a factor largely ignored in static manipulation.
+To address this misalignment, we design DynamicVLA with three innovations:
+1) a compact 0.4B backbone that supports high-frequency reasoning;
+2) Continuous Inference to overlap reasoning and execution for timely adaptation;
+3) Latent-aware Action Streaming to enforce temporally aligned action execution.
+To address the scarcity of large-scale dynamic manipulation data, we develop an automatic simulation and real-world data collection pipeline that drives a robot arm with state-machine controllers, using object states from the simulation engine and from a real-world “simulator” interface, respectively.
+Together, these elements significantly reduce the perception–execution gap and yield more responsive behavior than conventional VLA models.
+Looking forward, several limitations of the current study point to promising directions for future work:
+More Efficient VLA Architectures.
+While DynamicVLA highlights the importance of latency-aware design for dynamic manipulation, real-time constraints fundamentally trade off multimodal understanding against responsiveness.
+Dynamic tasks tightly couple perception, reasoning, and execution, demanding architectures and inference schemes that preserve understanding under strict latency budgets.
+Beyond Short-horizon Dynamics.
+Our current formulation emphasizes short- to medium-horizon reactive interaction, which exposes latency-induced failures but does not capture longer-horizon dynamic behaviors.
+Future work should extend dynamic manipulation to multi-stage tasks with persistent object motion, integrating planning, memory, and task decomposition while remaining compatible with language conditioning and real-time execution constraints.
+Beyond Rigid-Body Dynamics.
+Our data pipeline assumes rigid-body state estimation, whereas many dynamic tasks involve non-rigid or fluid dynamics with continuously evolving states that are difficult to represent in both simulation and the real world.
+Extending VLA models and data pipelines to such settings remains an open challenge.
+Acknowledgments
+We thank Prof. David Hsu (NUS) and Prof. Shengping Zhang (HIT) for their support and for providing access to the Franka Emika Panda robot utilized in this work.
+This work was supported by the Singapore Ministry of Education under its Academic Research Fund Tier 2 (MOE-T2EP20221-0012, MOE-T2EP20223-0002), and by cash and in-kind contributions from NTU S-Lab and industry partner(s).
+
+
+--- Additional necessary exact-v1 source selection ---
+V-A Evaluation Protocols
+Experimental Setup.
+DynamicVLA is evaluated in both simulation and real-world settings on the Dynamic Object Manipulation (DOM) benchmark (Sec. IV).
+Experiments are conducted in three environments: Isaac Sim with a Franka Emika Panda arm, a real-world Franka arm, and a real-world AgileX PiPER arm, covering both simulated and physical embodiments.
+For fair comparison in dynamic settings, object motion is standardized across methods using a secondary robot arm following a fixed launching trajectory.
+Although initial velocities vary due to physical noise, motion patterns remain comparable across trials.
+Each real-world experiment is repeated 20 times, and results are averaged.
+All methods are evaluated under identical conditions within each environment.
+Baselines.
+In simulation, we evaluate Diffusion Policy [9], OpenVLA-OFT [18], π0\pi_{0} [6], π0.5\pi_{0.5} [15], SmolVLA [38], GR00T-N1.5 [5], VLA-Adapter-Pro [46], and VLASH [39], covering general-purpose VLAs, lightweight adaptation-based models, and latency-aware designs.
+In real-world experiments, we evaluate π0.5\pi_{0.5}, SmolVLA, and VLASH under identical physical setups.
+All baselines are initialized from publicly available pretrained weights and adapted to the DOM benchmark using a consistent fine-tuning protocol.
+Evaluation Metrics.
+All methods are evaluated using three metrics:
+1) Success Rate, the fraction of trials that complete the instructed manipulation without object drop or timeout;
+2) Path Length, the total end-effector trajectory length during execution;
+3) Task Completion Time, the elapsed time from the onset of object motion to task termination, including successful completion, timeout, or object drop.
+In simulation, we report all three metrics.
+In real-world experiments, we report the success rate.
+All metrics are averaged over multiple trials.
+Execution Constraints.
+To ensure safe real-world operation, we restrict the robot workspace within predefined bounds.
+If the predicted end-effector position exceeds a predefined safety threshold, the robot aborts the current attempt and returns to a safe home pose, and the trial is marked as failure.
+
+-C Implementation Details
+Training.
+DynamicVLA is trained on 32 NVIDIA A100 GPUs with a batch size of 40 per GPU.
+We use the AdamW optimizer with a learning rate of 1×10−41\times 10^{-4}, β\beta coefficients (0.9,0.95)(0.9,0.95), ϵ=1×10−8\epsilon=1\times 10^{-8}, and weight decay of 1×10−101\times 10^{-10}.
+A cosine learning rate schedule with 10001000 warm-up steps is employed.
+The models are trained for approximately two weeks, with three stages as 2 days for pre-training, 10 days for mid-training, and 2 days for post-training.
+Inference.
+DynamicVLA requires 1.8GB of GPU memory and runs at approximately 88Hz on an NVIDIA RTX A6000 GPU.
+
+

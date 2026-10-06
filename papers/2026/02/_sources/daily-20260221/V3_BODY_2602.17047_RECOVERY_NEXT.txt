@@ -1,0 +1,58 @@
+2.1.3 Targeted Distillation and Global Fine-tuning
+To bridge the fidelity gap introduced by layer reduction and weight fusion, we propose a two-stage recovery protocol. This process initiates with selective layer-wise distillation for rapid alignment and concludes with global fine-tuning to further improve generation quality.
+Instead of immediate full-parameter optimization, we adopt a distillation strategy that operates only on the newly initialized layers. In the pruned student model, all retained layers from the original architecture are partitioned into two sets: (1) layers reinitialized via local weight averaging (Section 2.1.2), denoted as l∈ℒt​r​a​i​nl\in\mathcal{L}_{train}, which are set to trainable; and (2) the remaining retained layers, denoted as l∈ℒf​r​o​z​e​nl\in\mathcal{L}_{frozen}, whose weights are frozen.
+To further recover lost representational capacity, we perform layer-wise knowledge distillation using the original 60-layer Qwen-Image as the teacher. Only layers reinitialized via weight averaging are trained; all others remain frozen. For each trainable student layer at original position ii, we use the hidden state of the teacher’s last layer in the corresponding pruned cluster (i.e., the maximal-index layer among the pruned layers adjacent to the preserved layer ii) as the distillation target. This encourages the student layer to implicitly reconstruct the cumulative transformation of the entire removed blocks.
+Following distillation, we release all parameter constraints and perform a limited number of iterations of full-parameter fine-tuning using the standard diffusion objective. This step harmonizes the heterogeneous components—original retained blocks and reinitialized blocks—into a unified representational space, yielding the final Amber-Image-10B model with superior visual fidelity and semantic consistency.
+2.2 Deep-Layer Single-Stream Conversion and Refinement for Amber-Image-6B
+To further reduce model parameters and improve training and inference efficiency, we convert the deep layers of the dual-stream backbone into a single-stream architecture. Specifically, the first 10 layers remain dual-stream for modality-specific processing, while layers 11–30 are replaced by shared single-stream blocks initialized from the image branch of the 10B teacher. This design addresses architectural redundancy in the MMDiT backbone while retaining the image stream’s spatial and generative priors as the starting point for the unified representation.
+Algorithm 2 Algorithm 2: Deep-Layer Single-Stream Conversion and Refinement
+Input: Amber-Image-10B teacher model Θ10​B\Theta_{10B}.
+Output: Amber-Image-6B hybrid-stream model.
+// Stage 1: Architecture Hybridization
+Maintain layers 1​…​101\dots 10 as dual-stream blocks;
+Convert layers 11​…​3011\dots 30 to single-stream blocks;
+// Stage 2: Single-Stream Weight Initialization (Image Branch)
+for each single-stream layer l∈{11,…,30}l\in\{11,\dots,30\} do
+𝐖s​h​a​r​e​d←𝐖i​m​a​g​e\mathbf{W}_{shared}\leftarrow\mathbf{W}_{image}; ; // where 𝐖∈{Q,K,V,O}\mathbf{W}\in\{Q,K,V,O\}
+end for
+// Stage 3: Progressive Alignment and Refinement
+while Local Distillation Phase do
+For layer l∈[11,30]l\in[11,30], set ℋtarget(l)=Concat⁡(ℋtext(l, teacher),ℋimage(l, teacher))\mathcal{H}_{\text{target}}^{(l)}=\mathrm{Concat}\left(\mathcal{H}_{\text{text}}^{(l,\text{ teacher})},\;\mathcal{H}_{\text{image}}^{(l,\text{ teacher})}\right);
+Minimize ℒM​S​E=‖ℋstudent(l)−ℋtarget(l)‖22\mathcal{L}_{MSE}=\|\mathcal{H}_{\text{student}}^{(l)}-\mathcal{H}_{\text{target}}^{(l)}\|_{2}^{2} with early layers frozen;
+end while
+Refinement: Perform lightweight full-parameter fine-tuning on Amber-Image-6B.
+2.2.1 Hybrid-Stream Architecture and Initialization
+Based on the observation that cross-modal features (text and image) exhibit high semantic correlation in deeper stages, we propose a transition from a dual-stream to a single-stream architecture in the late stages of the backbone. Specifically, for the 30-layer backbone of Amber-Image-10B, we maintain the first 10 layers in their original dual-stream configuration to preserve early-stage modality-specific feature extraction. The subsequent 20 layers are transformed into single-stream blocks, resulting in a "10+20" hybrid-stream architecture. This design strategically balances the need for independent modal processing in early stages with parameter parsimony in deeper stages, reducing the backbone’s parameters by approximately 40%40\% and forming the basis for the Amber-Image-6B variant.
+The single stream requires one set of weight matrices 𝐖s​h​a​r​e​d\mathbf{W}_{shared} per layer. We initialize these directly from the image-stream projection weights of the 10B teacher:
+𝐖s​h​a​r​e​d=𝐖i​m​a​g​e\mathbf{W}_{shared}=\mathbf{W}_{image}
+(5)
+where 𝐖∈{𝐖q,𝐖k,𝐖v,𝐖o​u​t}\mathbf{W}\in\{\mathbf{W}_{q},\mathbf{W}_{k},\mathbf{W}_{v},\mathbf{W}_{out}\}. We adopt image-side initialization because the image stream is the primary pathway for spatial structure and pixel-level generation; the text modality is then integrated via the subsequent distillation phase, which aligns the single stream to the concatenated teacher hidden states of both streams.
+2.2.2 Progressive Alignment and Refinement
+To bridge the fidelity gap introduced by the single-stream conversion, we perform a two-stage recovery protocol starting with local knowledge distillation. During this phase, the first 10 dual-stream layers of the student Amber-Image-6B are kept frozen to serve as stable semantic anchors. The 20 single-stream layers are then trained to emulate the behavior of the Amber-Image-10B teacher.
+The bridge layer at depth 10, which interfaces the dual-stream and single-stream regions, receives a concatenated representation of the image and text hidden states. For all subsequent single-stream layers l∈[11,30]l\in[11,30], the distillation supervision signal is derived from the concatenated text and image hidden states of the Amber-Image-10B teacher:
+ℋtarget(l)=Concat⁡(ℋtext(l, teacher),ℋimage(l, teacher))\mathcal{H}_{\text{target}}^{(l)}=\mathrm{Concat}\left(\mathcal{H}_{\text{text}}^{(l,\text{ teacher})},\;\mathcal{H}_{\text{image}}^{(l,\text{ teacher})}\right)
+(6)
+The student output ℋstudent(l)\mathcal{H}_{\text{student}}^{(l)} is optimized to minimize the MSE loss against this target, ensuring the single-stream block effectively integrates information previously handled by independent branches.
+Finally, we conduct a lightweight round of full-parameter fine-tuning using the standard diffusion loss. By optimizing against the standard diffusion objective, the model reconciles the functional transition between the fixed dual-stream and the newly calibrated single-stream regions, delivering the final Amber-Image-6B model with high generative fidelity and significantly reduced parameters.
+3 Experiment
+3.1 Dataset
+Our dataset consists of approximately one million image–text pairs, entirely derived from internal sources. It comprises two components: a real-world subset and a synthetic subset. The real-world subset covers diverse visual domains, including portraits, landscapes, food, and pets, providing broad coverage of natural scenes and objects. The synthetic subset is specifically constructed to focus on text-rendering scenarios, supplementing the real-world data with cases that emphasize accurate character generation and layout control. Each image is annotated with multiple descriptive captions, typically ranging from three to eight per image, with variations in length, perspective, and phrasing to support robust cross-modal alignment learning.
+For layer-importance estimation in the depth pruning stage, we randomly sample 10,000 image–text pairs that span a wide range of concepts and object categories. This subset ensures balanced representation across semantic domains, enabling reliable estimation of layer contributions without incurring excessive computational overhead. For the subsequent knowledge distillation and full-parameter fine-tuning stages, we utilize the complete dataset of one million image–text pairs to maximize data diversity and model performance recovery.
+3.2 Training Setup
+All experiments are conducted on a single node equipped with 8 NVIDIA A100 GPUs. The entire training pipeline for both Amber-Image-10B and Amber-Image-6B proceeds through the following sequential phases:
+1.
+Layer importance estimation. We evaluate per-layer sensitivity on 10,000 sampled image–text pairs. This stage is inference-only and incurs negligible computational cost.
+2.
+Targeted layer-wise distillation (10B). Only the reinitialized layers are trained while all other layers remain frozen, running for approximately 24 hours (192 GPU hours).
+3.
+Full-parameter fine-tuning (10B). All layers of Amber-Image-10B are unfrozen and optimized on the complete one-million-pair dataset for 5 days (960 GPU hours).
+4.
+Local knowledge distillation (6B). The 20 single-stream layers of Amber-Image-6B are trained against the Amber-Image-10B teacher, with the first 10 dual-stream layers frozen, running for approximately 18 hours (144 GPU hours).
+5.
+Lightweight full-parameter fine-tuning (6B). All layers of Amber-Image-6B are unfrozen and refined using the standard diffusion objective for 3 days (576 GPU hours).
+The entire pipeline completes in approximately 10 wall-clock days, consuming fewer than 2,000 GPU hours in total (1,872 GPU hours). This stands in stark contrast to training comparable-scale models from scratch, which typically demands tens of thousands of GPU hours along with carefully engineered multi-stage data pipelines, further underscoring the practical efficiency of our compression-based paradigm.
+3.3 Evaluation
+We evaluate Amber-Image from two complementary perspectives: text rendering fidelity and general text-to-image generation quality. To ensure a rigorous assessment, we utilize a diverse set of established benchmarks. For general generation capability, we employ DPG-Bench (Hu et al., 2024) for compositional reasoning, GenEval (Ghosh et al., 2023) for semantic alignment, and OneIG-Bench (Chang et al., 2025) for multi-faceted instruction following. To specifically scrutinize text rendering, we adopt LongText-Bench (Geng et al., 2025) and CVTG-2K (Du et al., 2025), which evaluate character integrity and layout coherence in complex, multi-line scenarios.
+3.4 General Text-to-Image Generation
+DPG-Bench. This benchmark comprises 1,065 dense and semantically rich prompts designed to evaluate a model’s adherence to complex instructions. As presented in Table 1, both Amber-Image variants achieve the highest overall scores among all compared models, surpassing not only the closed-source Seedream 3.0 and GPT Image 1, but also the 20B open-source teacher Qwen-Image and all 7B-class open-source competitors including Z-Image, LongCat-Image, and Ovis-Image. Even our more compact Amber-Image-6B closely trails the 10B variant and remains ahead of every baseline. These results demonstrate that our compression framework not only preserves but can even enhance compositional reasoning abilities in dense textual descriptions.
+GenEval. To further probe semantic reasoning and object-centric grounding, we evaluate Amber-Image on the GenEval benchmark. As shown in Table 2, both Amber-Image variants achieve the best overall scores among all compared models, outperforming the teacher Qwen-Image, both closed-source systems (Seedream 3.0 and GPT Image 1), and all 7B-class open-source competitors. In parti

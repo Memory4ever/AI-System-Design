@@ -1,0 +1,2234 @@
+PanoEnv: Exploring 3D Spatial Intelligence in Panoramic Environments with Reinforcement Learning
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+3
+Methodology
+3.1
+PanoEnv-QA Construction
+3.1.1
+Overview and Data Foundation
+3.1.2
+Question-Answer Pair Generation
+3.2
+3D-Aware RL Post-Training
+3.2.1
+Group Relative Policy Optimization (GRPO)
+3.2.2
+Multi-faceted Reward System
+3.2.3
+Two-Stage Curriculum Strategy
+4
+Experiments and Analysis
+4.1
+Dataset Analysis
+4.2
+Benchmarking Baseline Models
+4.3
+RL Post-Training Results
+4.4
+Ablation Studies
+5
+Conclusion
+References
+6
+Supplementary Material
+6.1
+More Related Works
+6.2
+Dataset Construction Details
+6.2.1
+Object Filtering and Sampling Heuristics
+6.2.2
+Robust Depth Profiling
+6.2.3
+Data Quality Assurance via Human Verification
+6.3
+Prompt Designs for Generation and Evaluation
+6.3.1
+Generation and Training Prompts
+6.3.2
+LLM-as-a-Judge Evaluation Prompts
+6.4
+Training Details and Hyperparameters
+6.5
+Comparison with Existing Benchmarks
+6.6
+Additional Experiments: Sim-to-Real Generalization
+License: arXiv.org perpetual non-exclusive license
+arXiv:2602.21992v1 [cs.CV] 25 Feb 2026
+PanoEnv: Exploring 3D Spatial Intelligence in Panoramic Environments with Reinforcement Learning
+Zekai Lin
+Affiliation:
+University of Glasgow
+Xu Zheng
+*
+Affiliation:
+HKUST(GZ)
+Affiliation:
+*
+Corresponding author.
+Code & Dataset:
+https://github.com/7zk1014/PanoEnv
+.
+Abstract
+360° panoramic images are increasingly used in VR, autonomous driving, and robotics for holistic scene understanding. However, current Vision–Language Models (VLMs) struggle with 3D spatial reasoning on Equirectangular Projection (ERP) images due to geometric distortion and limited 3D supervision. We introduce
+PanoEnv
+, a large-scale VQA benchmark built from synthetic 3D environments, containing 14.8K questions across five categories (e.g., relative position, volume comparison) grounded in accurate 3D annotations—depth, segmentation, and bounding boxes. Benchmarking 14 state-of-the-art VLMs reveals limited 3D understanding, achieving only 49.34% overall and 8.36% on open-ended (OE) questions. To enhance 3D reasoning, we propose a reinforcement learning post-training framework based on Group Relative Policy Optimization (GRPO) with a ground-truth-guided reward combining five geometry-aware strategies (e.g., distance tolerance, spatial consistency). A two-stage curriculum further mitigates catastrophic forgetting: Stage1̃ trains on structured tasks (T/F, MCQ), and Stage2̃ fine-tunes on mixed OE data for generalization. Our 7B model sets a new SoTA performance, improving total accuracy to 52.93% (+3.59%) and OE accuracy to 14.83% while maintaining structured-task performance. It also achieves top semantic scores (Q-Score 6.24, P-Score 5.95), surpassing 32B models. These results demonstrate that PanoEnv-QA and our curriculum-based RL framework effectively instill 3D spatial intelligence in VLMs for omnidirectional perception.
+Figure 1.
+Overview of the PanoEnv framework, including the PanoEnv-QA benchmark and the RL-enhanced PanoEnv-RL model.
+1
+Introduction
+Omnidirectional images (ODIs) capture a full
+360
+∘
+360^{\circ}
+field of view in a single panorama, providing holistic scene coverage essential for VR/AR, autonomous systems, and embodied agents
+[
+2
+,
+68
+,
+64
+,
+63
+,
+65
+,
+66
+,
+59
+,
+71
+,
+69
+,
+34
+,
+60
+]
+. Unlike pinhole images, ODIs retain long-range context and off-axis relations, enabling global awareness, navigation, and safety assessment. Recent Vision–Language Models (VLMs) show strong generalization across diverse visual–text modalities
+[
+43
+,
+12
+,
+10
+,
+30
+,
+47
+,
+31
+,
+6
+]
+, yet when ODIs are represented via Equirectangular Projection (ERP), they face two key challenges: complex scene geometry and limited 3D supervision. These issues distort perception (e.g., scale and shape vary with latitude) and hinder reasoning (e.g., 3D relations map nonlinearly to 2D ERP coordinates)
+[
+7
+,
+68
+,
+8
+,
+61
+]
+.
+Spatial questions that appear simple on perspective images—“Is object A left of B?”, “How far is A?”, “Which is larger in 3D?”—become nontrivial on ERP panoramas. First, ERP stretches pixels near the poles, distorting cues learned from pinhole images. Second, ODIs require reasoning over long-range dependencies, as each panorama spans multiple disjoint views with discontinuities at seams. Third, existing VQA datasets
+[
+3
+,
+19
+,
+50
+,
+56
+]
+rarely include physical ground truth (e.g., depth, 3D boxes, precise geometry) aligned with ODIs, limiting the evaluation and learning of 3D reasoning. Prior panoramic VQA and omnidirectional reasoning benchmarks
+[
+11
+,
+14
+,
+62
+,
+55
+,
+29
+]
+are valuable early efforts but still lack the combination of panoramic coverage, dense geometry, and fine-grained, geometry-grounded supervision needed for reinforcement learning.
+To this end, we introduce
+PanoEnv
+, a large-scale VQA benchmark designed specifically to probe 3D spatial intelligence on ERP panoramas. Built from synthetic but photo-realistic 3D environments, PanoEnv-QA offers over 14.8K questions spanning five categories that progressively require stronger 3D understanding: camera view source identification, environment identification, distance estimation, relative spatial positioning in 3D, and intrinsic attribute comparison (true size/shape)—all grounded in precise 3D annotations (depth, semantics, and 3D bounding boxes). Because questions and answers are programmatically derived from physical ground truth, PanoEnv-QA can serve both as a reliable evaluation bed and as a source of
+verifiable
+supervision signals.
+We evaluate 14 state-of-the-art VLMs
+[
+10
+,
+30
+,
+35
+,
+4
+,
+53
+,
+9
+,
+51
+,
+15
+]
+on a challenging subset of PanoEnv-QA and find that overall performance is low (best 49.34% accuracy), with a near collapse on open-ended (OE) questions (best 8.36%). While some models handle binary or multiple-choice prompts moderately well, they struggle to generate precise, geometry-consistent responses that require metric reasoning (e.g., distances) or composing multi-axis relations (e.g., “above and to the left of”). This behavior suggests that current training paradigms bias toward 2D heuristics rather than building a faithful 3D scene representation from ERP imagery.
+To bridge this gap, we propose a 3D-aware RL post-training framework based on Group Relative Policy Optimization (GRPO)
+[
+45
+]
+. Two key designs underpin our approach. First, we introduce a ground-truth-guided routed reward with five specialized strategies aligned to question types (e.g., numerical tolerance for distance, axis-wise matching for spatial relations). This replaces noisy proxy rewards (e.g., LLM judges) with supervision anchored in physical reality. Second, we employ a two-stage curriculum: Stage 1 trains on structured tasks (T/F, MCQ) to stabilize policy learning; Stage 2 reintroduces OE data to recover generative skills while mitigating catastrophic forgetting. Together, these designs significantly improve overall accuracy and OE reasoning quality.
+Starting from a 7B VLM backbone, our RL-trained model achieves a new SoTA performance on PanoEnv-QA (52.93% accuracy), surpassing much larger 26B/32B baselines. Most notably, OE accuracy improves from 6.39% to
+14.83%
+(+132% relative), with minimal degradation on structured tasks. These gains demonstrate that (1) ERP-specific geometric challenges can be addressed when training signals are physically grounded, and (2) curriculum design is crucial for balancing discrete decision-making and free-form generation.
+Overall, our work makes three contributions:
+①
+PanoEnv:
+a large-scale, geometry-grounded panoramic VQA benchmark for 3D spatial intelligence on ERP images. It offers five complementary categories with pixel/point-aligned physical annotations, enabling both faithful evaluation and RL supervision.
+②
+Comprehensive benchmarks of 14 VLMs:
+we show consistent failures on 3D reasoning, especially for open-ended generation, revealing a significant gap between current training paradigms and panoramic spatial understanding.
+③
+3D-aware Curriculum-based RL post-training:
+a GRPO-based framework with routed, ground-truth rewards and a two-stage curriculum that sets a new SOTA with a 7B model and yields large relative gains on OE questions. A high-level overview of the dataset design, model evaluation, and our RL framework is provided in the teaser figure (Fig. 1).
+2
+Related Work
+VQA and Reasoning Datasets.
+Visual Question Answering (VQA) is a core benchmark for machine intelligence
+[
+58
+,
+70
+,
+32
+,
+40
+,
+18
+,
+67
+,
+33
+,
+46
+]
+. Early datasets mainly tested recognition abilities, such as identifying object attributes or counts. The original VQA dataset
+[
+3
+]
+established this paradigm, but later studies showed that models often exploit language priors instead of genuine image understanding. VQA v2.0
+[
+19
+]
+addressed this issue by balancing question distributions. Subsequent work shifted toward datasets requiring higher-level reasoning rather than simple pattern matching. Datasets like GQA
+[
+24
+]
+and CLEVR
+[
+25
+]
+emphasize spatial and logical relationships between objects, while VCR
+[
+57
+]
+further stresses commonsense reasoning by asking models to justify their answers. More recent benchmarks such as What’s-Up
+[
+26
+]
+and VSI-Bench
+[
+54
+]
+explore spatial understanding and cognitive mapping. Despite advances, most reasoning datasets remain confined to 2D perspective images and compositional or commonsense logic. Although several datasets
+[
+11
+,
+14
+,
+16
+]
+have emerged, they are limited to single-agent or egocentric scenarios rather than full-scene spatial reasoning. These gaps motivate our work: a new benchmark for inferring 3D physical relationships from 2D panoramas.
+Omnidirectional VQA and Spatial Reasoning.
+The complete field of view in 360° images makes them valuable for immersive applications and embodied intelligence
+[
+1
+]
+. However, existing MLLMs struggle to interpret the geometric distortions and complex spatial relationships inherent in these images. Early research such as VQA 360°
+[
+11
+]
+extended VQA to panoramic images, but the dataset is not publicly released. Two recent works, OSR-Bench
+[
+14
+]
+and 360-R1
+[
+62
+]
+, have significantly advanced the field. OSR-Bench established the first large-scale panoramic spatial reasoning benchmark, systematically documenting the drawbacks of state-of-the-art models. 360-R1 created the OmniVQA dataset and applied reinforcement learning to enhance panoramic reasoning capabilities. Our research builds upon these pioneering works to address remaining gaps. It introduces
+higher-order, multi-object relational questions
+, including:
+intrinsic attribute comparison
+(e.g., real 3D volume and shape),
+3D position judgment
+,
+depth comparison
+,
+surrounding environment analysis
+, and
+a unique meta-reasoning challenge:
+original source viewpoint judgment
+.
+Furthermore, a “2D textual reference, 3D spatial query” paradigm is employed. This method uses an object’s 2D attributes to generate a reference, then queries the model about its relationships in 3D space, thereby constituting a difficult cross-dimensional reasoning task.
+3
+Methodology
+In this section, we present the construction of the PanoEnv-QA dataset and our 3D-aware RL post-training framework, including the GRPO optimization scheme, a multi-faceted reward system, and a two-stage curriculum.
+3.1
+PanoEnv-QA Construction
+Figure 2
+:
+Overview of the PanoEnv-QA construction pipeline.
+We convert multi-view TartanAir data into ERP panoramas and generate geometry-grounded QA pairs using depth, semantics, and 3D projections.
+3.1.1
+Overview and Data Foundation
+Our goal is to construct a large-scale, multi-modal QA dataset to enhance and evaluate the spatial intelligence of MLLMs in 360° panoramic environments across indoor, outdoor, and synthetic scenes. The benchmark is designed to push models beyond 2D pattern recognition toward genuine 3D reasoning about scene geometry and object relations. We build upon TartanAir
+[
+48
+]
+, a synthetic dataset chosen for its precise 3D ground truth (depth and segmentation), which is difficult to obtain in real-world data. For each scene, six perspective views from the cubemap camera setup are merged into a high-resolution ERP image. Each ERP instance provides perfectly aligned RGB, depth, and semantic segmentation modalities, ensuring pixel-level correspondence between appearance, geometry, and semantics.
+As illustrated in Fig.
+2
+, our dataset construction pipeline transforms multi-view TartanAir data into ERP panoramas and structured QA pairs grounded in 3D geometry.
+For systematically evaluation, our QA generation focuses on five distinct yet complementary categories. These range from foundational awareness of the ERP format (
+Camera View Source Identification
+) and geometric quantification (
+Object Distance Estimation
+) to high-level context (
+Environment Identification
+). The most challenging categories require true 3D reasoning about
+Relative Spatial Positioning
+and an understanding of objects’ intrinsic physical properties through
+Intrinsic Attribute Comparison
+.
+3.1.2
+Question-Answer Pair Generation
+PanoEnv generation pipeline automatically leverages ground-truth data to produce diverse and challenging QA pairs. For each panoramic scene, we conduct an object-centric analysis using semantic segmentation maps to identify and instance all visible objects. To ensure relevance, we filter out small objects and amorphous background categories (e.g.,
+sky
+,
+ground
+,
+wall
+). For comparative questions, object pairs with significant 2D bounding box containment are excluded to avoid trivial or ambiguous cases (e.g., comparing a tire to the car it belongs to). For each valid instance
+O
+i
+O_{i}
+, we extract high-fidelity properties directly from its segmentation mask
+M
+i
+M_{i}
+, including 2D bounding box
+B
+i
+B_{i}
+, depth statistics, camera source, 3D point cloud, and computed volume.
+Followings are the five templates:
+① Camera View Source Identification.
+This category evaluates whether the model recognizes that an ERP image is a composite panorama stitched from multiple perspective views, rather than a single photo. Understanding this structure is essential for handling artifacts near seam boundaries and reasoning about scene continuity beyond limited fields of view. The geometric mapping from the 2D ERP to the six cubemap views provides precise ground truth. For any pixel
+(
+p
+x
+,
+p
+y
+)
+(p_{x},p_{y})
+in an ERP image of size
+W
+×
+H
+W\times H
+, the corresponding spherical coordinates are:
+λ
+=
+(
+p
+x
+W
+−
+0.5
+)
+​
+2
+​
+π
+,
+ϕ
+=
+−
+(
+p
+y
+H
+−
+0.5
+)
+​
+π
+\lambda=\left(\frac{p_{x}}{W}-0.5\right)2\pi,\quad\phi=-\left(\frac{p_{y}}{H}-0.5\right)\pi
+(1)
+These define a 3D unit direction vector whose dominant axis determines the source view (e.g.,
+front
+,
+left
+,
+top
+).
+For each object, we sample
+N
+=
+100
+N=100
+points from its segmentation mask
+M
+i
+M_{i}
+to determine its
+visible cameras
+. Objects seen from multiple views are labeled as
+seam objects
+. QA pairs are then generated from these attributes.
+② Object Distance Estimation.
+This category evaluates a model’s ability to perform quantitative and qualitative depth reasoning, moving beyond 2D heuristics (e.g., size as a proxy for distance) toward true 3D understanding. Ground truth depths are derived from the ERP depth map
+D
+E
+​
+R
+​
+P
+D_{ERP}
+. For each object
+O
+i
+O_{i}
+, we extract valid depth values
+𝒟
+i
+\mathcal{D}_{i}
+within its segmentation mask
+M
+i
+M_{i}
+, ensuring exclusion of background and occlusions. From this distribution, we compute key statistics—median (
+p
+50
+p_{50}
+), percentiles, and inter-quartile range (IQR)—to obtain a robust depth profile. (More details refer to Suppl.Mat.)
+③ Environment Identification.
+This category evaluates high-level scene understanding and contextual reasoning, testing whether the model can classify environments based on object composition and architectural style in the 360° panorama. We adopt a metadata-driven approach using TartanAir’s ground-truth environment labels, organized into a two-level taxonomy:
+Scene Attribute
+(e.g.,
+indoor
+,
+outdoor
+) and
+Scene Category
+(e.g.,
+Urban
+,
+Nature
+). For multiple-choice questions, distractors are selected semantically rather than randomly—e.g., pairing a “day” scene with its “night” or “winter” variant—to encourage fine-grained reasoning beyond simple keyword cues.
+④ Relative Spatial Positioning.
+This category assesses a model’s ability to reconstruct accurate 3D spatial relationships between objects—an inherently difficult task due to ERP distortions. We achieve this by inversely projecting object locations from the ERP image to a unified 3D Cartesian space. The coordinate system is right-handed, with +Y upward, +X rightward, and –Z forward (aligned with the front-facing view at
+λ
+=
+0
+\lambda=0
+).
+For determining an object’s single 3D locator, we use the centroid
+(
+p
+x
+,
+p
+y
+)
+(p_{x},p_{y})
+of its 2D bounding box and its median depth
+d
+i
+d_{i}
+. We first compute its spherical coordinates
+(
+λ
+i
+,
+ϕ
+i
+)
+(\lambda_{i},\phi_{i})
+using Eq.
+1
+. We then convert this spherical representation into a 3D centroid coordinate
+P
+→
+i
+=
+[
+x
+i
+,
+y
+i
+,
+z
+i
+]
+T
+\vec{P}_{i}=[x_{i},y_{i},z_{i}]^{T}
+using the standard transformation:
+x
+i
+\displaystyle x_{i}
+=
+−
+d
+i
+⋅
+cos
+(
+ϕ
+i
+)
+⋅
+sin
+(
+λ
+i
+)
+,
+y
+i
+=
+d
+i
+⋅
+sin
+(
+ϕ
+i
+)
+,
+\displaystyle=-d_{i}\cdot\cos(\phi_{i})\cdot\sin(\lambda_{i}),y_{i}=d_{i}\cdot\sin(\phi_{i}),
+(2)
+z
+i
+\displaystyle z_{i}
+=
+−
+d
+i
+⋅
+cos
+(
+ϕ
+i
+)
+⋅
+cos
+(
+λ
+i
+)
+\displaystyle=-d_{i}\cdot\cos(\phi_{i})\cdot\cos(\lambda_{i})
+The spatial relation between two objects
+O
+i
+O_{i}
+and
+O
+j
+O_{j}
+is defined as
+V
+→
+i
+​
+j
+=
+P
+→
+​
+i
+−
+P
+→
+​
+j
+\vec{V}_{ij}=\vec{P}i-\vec{P}j
+. Linguistic labels (e.g., “above,” “in front of”) are obtained by comparing
+V
+→
+​
+i
+​
+j
+\vec{V}{ij}
+components with a threshold
+τ
+​
+pos
+\tau{\text{pos}}
+. This geometry-based approach ensures all QA pairs are grounded in precise 3D relationships.
+⑤ Intrinsic Attribute Comparison.
+To probe the model’s understanding of intrinsic, view-independent physical properties of objects. This category moves beyond spatial location to assess reasoning about 3D shape and size, requiring the model to infer physical characteristics from 2D projections and depth information. The ground truth for this category is derived from the 3D representation of each object, which is constructed by projecting every pixel within its segmentation mask
+M
+i
+M_{i}
+into 3D space. From this accurate point cloud, we compute a tight 3D bounding box and its corresponding physical dimensions (length, width, height). These properties allow us to generate two types of comparative questions: ①
+Volume Comparison:
+We calculate the precise volume of the 3D bounding box for each object. This allows us to generate questions asking which of two objects is physically larger or smaller, a task that requires the model to disentangle projected size on the 2D image from true 3D volume. ②
+Shape Analysis:
+We define a
+flatness score
+as the ratio of the smallest dimension to the largest dimension of the object’s 3D bounding box. A score close to zero indicates a highly anisotropic shape (e.g., flat like a plate or elongated like a pole). This metric enables us to ask which of two objects is ”flatter” or ”more elongated,” testing a nuanced understanding of 3D form.
+Table 1
+:
+Distribution of questions in the PanoEnv-QA dataset across major categories and question types.
+Major Category
+# Questions
+Percentage
+Attribute Comparison
+2,975
+20.1%
+Distance Estimation
+2,975
+20.1%
+Relative Spatial Positioning
+2,975
+20.1%
+Environment Identification
+2,965
+20.0%
+View Source Identification
+2,937
+19.8%
+Total
+14,827
+100%
+Figure 3
+:
+Overview of our framework, including GRPO sampling, routed reward computation, and two-stage curriculum updates.
+3.2
+3D-Aware RL Post-Training
+To address the significant performance gaps identified in our baseline benchmarks (Sec.
+4.2
+), we employ a 3D-aware Reinforcement Learning (RL) post-training framework, as illustrated in Fig.
+3
+. This approach allows the model to explore the output space and learn from a reward signal derived directly from our dataset’s 3D ground truth. We utilize Group Relative Policy Optimization (GRPO)
+[
+45
+]
+, a PPO
+[
+44
+]
+variant optimized for language generation, to fine-tune the Qwen2.5-VL-Instruct model.
+3.2.1
+Group Relative Policy Optimization (GRPO)
+GRPO is an advancement over standard PPO for language tasks . Instead of comparing a generated policy to a fixed reference policy, GRPO estimates the advantage by comparing responses within a group sampled from the current policy. For each input prompt
+s
+s
+, we generate
+K
+K
+candidate responses
+{
+a
+1
+,
+…
+,
+a
+K
+}
+\{a_{1},...,a_{K}\}
+from our policy
+π
+θ
+\pi_{\theta}
+. The advantage
+A
+⁡
+(
+s
+,
+a
+k
+)
+A(s,a_{k})
+is computed relative to the group’s mean reward, which serves as the baseline:
+A
+⁡
+(
+s
+,
+a
+k
+)
+=
+R
+⁡
+(
+s
+,
+a
+k
+)
+−
+1
+K
+​
+∑
+i
+=
+1
+K
+R
+⁡
+(
+s
+,
+a
+i
+)
+A(s,a_{k})=R(s,a_{k})-\frac{1}{K}\sum_{i=1}^{K}R(s,a_{i})
+(3)
+This group-relative advantage estimation provides a stable training signal. The policy is then updated using the PPO clipped surrogate objective
+ℒ
+GRPO
+\mathcal{L}^{\text{GRPO}}
+[
+44
+]
+, while a Kullback-Leibler (KL) divergence penalty
+D
+KL
+(
+π
+θ
+|
+|
+π
+ref
+)
+D_{\text{KL}}(\pi_{\theta}||\pi_{\text{ref}})
+against the original pre-trained policy
+π
+ref
+\pi_{\text{ref}}
+is added to prevent catastrophic forgetting. The final objective is:
+ℒ
+total
+=
+ℒ
+GRPO
+−
+β
+⋅
+D
+KL
+(
+π
+θ
+|
+|
+π
+ref
+)
+\mathcal{L}_{\text{total}}=\mathcal{L}^{\text{GRPO}}-\beta\cdot D_{\text{KL}}(\pi_{\theta}||\pi_{\text{ref}})
+(4)
+where
+β
+\beta
+is a small coefficient controlling the KL penalty.
+3.2.2
+Multi-faceted Reward System
+The core of our method is a sophisticated, multi-faceted reward system that leverages the ground-truth annotations from our PanoEnv-QA dataset. The total reward
+R
+⁡
+(
+s
+,
+a
+)
+R(s,a)
+is a weighted combination of accuracy and format correctness
+[
+49
+]
+, heavily prioritizing correctness:
+R
+⁡
+(
+s
+,
+a
+)
+=
+w
+acc
+​
+R
+acc
+​
+(
+a
+,
+a
+∗
+)
++
+w
+fmt
+​
+R
+fmt
+​
+(
+a
+)
+R(s,a)=w_{\text{acc}}\,R_{\text{acc}}(a,a^{*})+w_{\text{fmt}}\,R_{\text{fmt}}(a)
+(5)
+where
+a
+∗
+a^{*}
+is the ground-truth answer,
+R
+acc
+R_{\text{acc}}
+and
+R
+fmt
+R_{\text{fmt}}
+are the accuracy and format reward components, respectively. We set
+w
+acc
+=
+0.9
+w_{\text{acc}}=0.9
+and
+w
+fmt
+=
+0.1
+w_{\text{fmt}}=0.1
+to heavily prioritize answer correctness.
+Format Reward (
+R
+fmt
+R_{\text{fmt}}
+).
+A binary reward enforcing output structure:
+R
+fmt
+=
+1.0
+R_{\text{fmt}}=1.0
+if the response strictly follows
+<Reasoning>...</Reasoning> <Answer>...</Answer>
+(verified via regex), and 0.0 otherwise. This promotes a clear separation between reasoning and final answer.
+Table 2
+:
+Overall performance and per-type accuracy breakdown of 14 baseline VLMs. LLM scores (Q-Score, P-Score) are on a 0-10 scale.
+Overall Performance
+Accuracy Breakdown by Type (%)
+Model
+Acc. (%)
+↑
+\uparrow
+Q-Score (0-10)
+↑
+\uparrow
+P-Score (0-10)
+↑
+\uparrow
+True/False
+Multiple Choice
+Open-Ended
+InternVL2.5-8B
+[
+9
+]
+43.64
+5.32
+5.60
+63.59
+48.29
+3.00
+InternVL2.5-4B
+40.39
+5.16
+5.51
+65.53
+40.83
+2.95
+InternVL2.5-26B
+47.07
+5.61
+5.61
+64.51
+54.33
+3.44
+DeepSeek-VL2-Tiny
+[
+51
+]
+31.69
+4.55
+4.96
+55.67
+30.45
+0.16
+DeepSeek-VL2-Small
+35.27
+5.02
+5.64
+55.78
+35.29
+5.57
+DeepSeek-VL2-Base
+38.86
+5.24
+5.54
+57.30
+40.36
+8.36
+Llama3.2-11B-Vision
+[
+15
+]
+30.71
+4.49
+4.94
+57.03
+26.91
+2.30
+LLaVA-1.5-7B
+[
+35
+]
+30.12
+4.25
+4.59
+50.92
+29.80
+0.83
+LLaVA-v1.6-Mistral-7B
+[
+30
+]
+23.62
+3.15
+4.78
+45.24
+19.06
+3.93
+LLaVA-v1.6-Vicuna-13B
+18.22
+4.00
+5.15
+49.60
+7.01
+1.32
+Qwen2.5-VL-3B
+[
+4
+]
+34.54
+4.41
+4.31
+53.29
+36.11
+3.44
+Qwen2.5-VL-7B
+49.34
+5.60
+5.48
+65.19
+57.24
+6.39
+Qwen2.5-VL-32B
+42.70
+5.02
+4.92
+62.47
+44.96
+8.36
+Qwen3-VL-8B
+[
+53
+]
+47.91
+5.60
+5.35
+62.85
+55.24
+7.70
+Average
+36.72
+4.82
+5.17
+55.98
+37.56
+4.26
+Accuracy Reward (
+R
+acc
+R_{\text{acc}}
+).
+This component measures the correctness of the content within the
+<Answer>...</Answer>
+tag. We employ an automatic routing mechanism that selects one of five specialized reward strategies based on the question’s pre-annotated type as follows:
+① Strategy A (
+yes_no
+):
+For
+true_false
+questions. Performs a strict, case-insensitive string match (e.g., ”yes” matches ”Yes”, but not ”Yes, it is”). Assigns a binary reward (1.0 or 0.0).
+② Strategy B (
+mcq
+):
+For
+multiple_choice
+questions. A smart subject extraction logic is used: if the answer is a long sentence, it extracts the subject (text before the first verb/preposition); otherwise, it uses the short answer directly. This extracted entity is then normalized (removing articles, punctuation, and case) and compared to the normalized ground truth for a 1.0 or 0.0 reward.
+③ Strategy C (
+distance
+):
+For
+distance
+questions. A numerical parser extracts values and their units. All units (e.g., ”cm”, ”km”, ”ft”) are automatically converted to meters. The reward is scaled based on the relative error: 1.0 for
+≤
+\leq
+10% error, 0.5 for
+≤
+\leq
+20% error, and 0.0 otherwise.
+④ Strategy D (
+spatial
+):
+For
+spatial
+relationship questions. This strategy parses the answer for directional keywords (and their synonyms, e.g., ”above” = ”over”) across three independent axes (front/back, left/right, up/down). Compares the sets of keywords for each dimension independently. The reward is the fraction of correctly identified dimensions (e.g., matching 2 of 3 required axes, like ”behind and right” when the answer is ”behind, right, and above”, yields a reward of 0.67).
+⑤ Strategy E (
+counting
+):
+For
+counting
+questions. An exact numerical match is required. The parser supports both digits (”3”) and textual numbers (”three”), converting them to a standard value for comparison (1.0 or 0.0 reward). This fine-grained, routed reward system provides a much more accurate and targeted learning signal than a single, generic reward function, directly leveraging the physical ground truth inherent in our dataset.
+3.2.3
+Two-Stage Curriculum Strategy
+Training RL on mixed-format panoramic QA is unstable due to heterogeneous reward signals and the high entropy of open-ended generation. We therefore adopt a
+two-stage curriculum
+, consistent with curriculum learning principles
+[
+5
+]
+and recent practices in RL fine-tuning for LLMs
+[
+41
+,
+38
+]
+. Our design is motivated by findings in curriculum RL, where structuring training as a progression from simpler to more challenging subtasks reduces exploration complexity and improves learning stability
+[
+17
+,
+37
+,
+52
+]
+.
+① Stage 1: Structured Pretraining.
+We first train solely on structured questions (MCQ and T/F). These low-entropy tasks yield reliable rewards and allow the policy to quickly acquire formatting discipline and stable short-form reasoning.
+② Stage 2: Mixed Open-Ended Training.
+We then fine-tune the model on a balanced mixture of structured and open-ended questions. With formatting and basic reasoning already established, the model can focus on improving open-ended spatial reasoning without suffering catastrophic forgetting.
+Overall, this curriculum stabilizes optimization and enables efficient transfer of structured skills to challenging panoramic 3D reasoning, as validated by our ablation.
+Table 3
+:
+Comprehensive comparison of our GRPO-trained models (
+Ours
+) against 14 state-of-the-art baselines on the PanoEnv-QA test set.
+All our models are fine-tuned on Qwen2.5-VL-7B using LoRA.
+Model
+Total Acc. (%)
+↑
+\uparrow
+T/F (%)
+MC (%)
+OE (%)
+T/F+MCQ Acc. (%)
+Params
+Q-Score (0–10)
+↑
+\uparrow
+P-Score (0–10)
+↑
+\uparrow
+Qwen2.5-VL-7B (Base)
+49.34
+65.19
+57.24
+6.39
+60.46
+7B
+5.60
+5.48
+Qwen2.5-VL-32B
+42.70
+62.47
+44.96
+8.36
+52.46
+32B
+5.02
+4.92
+GRPO-Balanced (Ours)
+52.93
+68.78
+58.90
+14.83
+62.89
+7B
+6.24
+5.95
+4
+Experiments and Analysis
+Our experiments evaluate (1) the quality of the PanoEnv-QA dataset, (2) the zero-shot capability of existing VLMs, and (3) the effectiveness of our 3D-aware RL post-training framework. The section concludes with detailed ablation studies validating every design choice.
+4.1
+Dataset Analysis
+Following the methodology described in Section
+3.1
+, we generated the PanoEnv-QA dataset. The final dataset is a large-scale collection comprising
+14,827
+high-quality QA pairs derived from
+595
+panoramic scenes spanning
+60
+diverse virtual environments. On average, each scene contributes around 25 QA pairs.
+① Question distribution and balance:
+A key design goal of PanoEnv-QA is to provide a balanced testbed for spatial reasoning. As shown in Table
+1
+, each of the five core categories constitutes roughly 20% of the dataset, ensuring that no single skill dominates overall model performance.
+② Answer characteristics and diversity:
+The dataset contains
+1,894
+unique answers with an average length of 10.9 characters. Answer formats range from binary (e.g., “No”), quantitative (e.g., “About 4.2 meters”), and object names (e.g., “The carousel”) to full-sentence spatial descriptions.
+Importantly, the Yes/No ratio across all binary questions (45.3% vs. 54.7%) prevents majority-class shortcuts.
+Overall, PanoEnv-QA is balanced, diverse, and challenging, making it a robust benchmark for holistic spatial reasoning.
+4.2
+Benchmarking Baseline Models
+We evaluate 14 SOTA VLMs—including Qwen-VL, InternVL, and DeepSeek-VL—on a 3,040-sample test set.
+Evaluation Metrics.
+We report:
+1)
+Accuracy
+: a strict rule-based score using specialized parsers;
+2)
+Qwen-Score (Q-Score)
+[
+53
+]
+;
+3)
+Prometheus-Score (P-Score)
+[
+28
+]
+.
+Results and analysis.
+As seen in Table
+2
+, zero-shot performance is very low. The strongest baseline, Qwen2.5-VL-7B, reaches only
+49.34%
+accuracy, and open-ended accuracy collapses to
+6.39%
+.
+These failures strongly motivate our 3D-aware RL post-training.
+4.3
+RL Post-Training Results
+We fine-tune Qwen2.5-VL-7B-Instruct using GRPO to improve the weak Open-Ended (OE) reasoning observed in zero-shot VLMs. All models are trained for two epochs with group size
+K
+=
+4
+K=4
+, LoRA
+[
+21
+]
+applied to the language decoder, and a frozen vision encoder.
+Two-Stage Curriculum.
+Our RL procedure follows the two-stage curriculum introduced in Sec.
+3.2.3
+:
+①
+GRPO-Structured (Stage 1):
+trained solely on T/F and MCQ questions using aggressive hyper-parameters to rapidly learn format adherence and discrete decision-making.
+②
+GRPO-Balanced (Stage 2, Ours):
+initialized from Stage 1 and trained on a balanced mix of all OE questions with an equal number of structured ones, using conservative hyper-parameters to stabilize optimization while improving OE reasoning.
+Figure 4
+:
+Training dynamics of our two-stage GRPO curriculum.
+Stage 1 quickly learns output format and structured decision-making; Stage 2 inherits this and focuses on improving OE reasoning under balanced training.
+As illustrated in Fig.
+4
+, Stage 1 quickly pushes the format reward close to
+1.0
+1.0
+and steadily increases the accuracy reward (moving average rising from approximately 0.5 to above 0.6), showing that the model rapidly masters structured decisions under strong supervision. In Stage 2, the format reward remains saturated from the beginning, while the accuracy reward continues to improve from a lower starting point, indicating that the model now focuses on harder OE reasoning without sacrificing the learned output structure.
+Main Results.
+As shown in Table
+2
+and Table
+3
+, our
+GRPO-Balanced
+model, representing our full
+PanoEnv-RL
+framework, achieves the best overall performance on PanoEnv-QA with
+52.9%
+accuracy (vs. 49.3% zero-shot). It also attains the highest LLM-judge scores (Q-Score 6.24, P-Score 5.95) and boosts OE accuracy from
+6.4%
+to
+14.8%
+. Combined with the reward trends in Fig.
+4
+, these results demonstrate that the two-stage GRPO curriculum effectively enhances geometry-grounded reasoning in 360° scenes while maintaining structured outputs.
+4.4
+Ablation Studies
+We analyze five controlled variants to assess the effects of curriculum design and OE integration (Table
+4
+). The two-stage setup is crucial:
+GRPO-Balanced
+outperforms
+GRPO-OneStage
+(50.8%) and
+Reverse
+(50.9%), achieving the best overall (52.9%) and OE (14.8%) results. Structured→mixed training yields a more stable optimization path than training on all tasks simultaneously.
+GRPO-Structured
+performs well on T/F and MCQ but collapses on OE (5.7%). Adding balanced OE data in Stage 2 restores these abilities without harming structured accuracy. In contrast,
+GRPO-OE
+moderately improves OE (13.2%) but weakens structured skills. Overall,
+GRPO-Balanced
+achieves the best stability and performance across all tasks.
+Table 4
+:
+Unified ablation results across all variants.
+Model Variant
+Total
+T/F
+MCQ
+OE
+Q-Scr
+P-Scr
+(%)
+(%)
+(%)
+(%)
+(0–10)
+(0–10)
+Baseline (Qwen2.5-VL-7B)
+49.3
+65.2
+57.2
+6.4
+5.60
+5.48
+GRPO-OneStage (All-in-One)
+50.8
+67.6
+56.7
+11.8
+6.22
+5.89
+GRPO-Structured (Structured-only)
+52.3
+69.5
+60.9
+5.7
+6.14
+5.94
+GRPO-OE (OE-only)
+48.6
+66.6
+52.3
+13.2
+5.56
+5.47
+GRPO-Reverse (OE
+→
+\rightarrow
+Mixed)
+50.9
+69.3
+57.8
+7.0
+6.16
+5.91
+GRPO-Balanced (Struct
+→
+\rightarrow
+Mixed)
+52.9
+68.8
+58.9
+14.8
+6.24
+5.95
+5
+Conclusion
+In this paper, we addressed the challenge of 3D spatial reasoning in Vision–Language Models (VLMs) on 360° Equirectangular Projection (ERP) images, caused by geometric distortion and limited 3D supervision. We made three main contributions. First, we introduced
+PanoEnv-QA
+, a large-scale VQA benchmark with 14.8K questions across five categories, built from synthetic 3D environments and grounded in precise, verifiable 3D annotations for reliable evaluation and training. Second, benchmarking 14 state-of-the-art VLMs revealed major weaknesses in 3D understanding—achieving only 49.34% overall and 8.36% on open-ended (OE) questions. Third, we proposed a 3D-aware reinforcement learning framework based on Group Relative Policy Optimization (GRPO), featuring a ground-truth-guided reward with five geometry-aware strategies and a two-stage curriculum to ensure stable learning and prevent forgetting. Our 7B model achieves state-of-the-art results on PanoEnv-QA (52.93% total accuracy), with OE accuracy rising from 6.39% to
+14.83%
+(+132% relative), outperforming 32B models. These results demonstrate that PanoEnv and our framework effectively enhance 3D spatial intelligence in VLMs for omnidirectional perception.
+Limitations and Future Work.
+While PanoEnv is built on high-fidelity synthetic data, the synthetic-to-real gap remains a challenge. Future work could focus on adapting our RL framework to real-world 360° datasets, which often have noisy or incomplete GT. Furthermore, extending this spatial reasoning framework to temporal tasks in panoramic video remains a complex and promising direction.
+References
+[1]
+Hao Ai, Zidong Cao, Jinjing Zhu, Haotian Bai, Yucheng Chen, and Lin Wang.
+Deep learning for omnidirectional vision: A survey and new perspectives.
+arXiv preprint arXiv:2205.10468
+, 2022.
+[2]
+Hao Ai, Zidong Cao, and Lin Wang.
+A survey of representation learning, optimization strategies, and applications for omnidirectional vision.
+arXiv preprint arXiv:2502.10444
+, 2025.
+[3]
+Stanislaw Antol, Aishwarya Agrawal, Jiasen Lu, Margaret Mitchell, Dhruv Batra, C Lawrence Zitnick, and Devi Parikh.
+Vqa: Visual question answering.
+In
+Proceedings of the IEEE international conference on computer vision
+, pages 2425–2433, 2015.
+[4]
+Shuai Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, Sibo Song, Kai Dang, Peng Wang, Shijie Wang, Jun Tang, et al.
+Qwen2. 5-vl technical report.
+arXiv preprint arXiv:2502.13923
+, 2025.
+[5]
+Yoshua Bengio, Jérôme Louradour, Ronan Collobert, and Jason Weston.
+Curriculum learning.
+In
+Proceedings of the 26th annual international conference on machine learning
+, pages 41–48, 2009.
+[6]
+Davide Caffagni, Federico Cocchi, Luca Barsellotti, Nicholas Moratelli, Sara Sarto, Lorenzo Baraldi, Marcella Cornia, and Rita Cucchiara.
+The revolution of multimodal large language models: a survey.
+arXiv preprint arXiv:2402.12451
+, 2024.
+[7]
+Zeyu Cai, Zhelong Huang, Xu Zheng, Yexin Liu, Chao Liu, Zeyu Wang, and Lin Wang.
+Interact360: Interactive identity-driven text to 360 panorama generation.
+In
+2024 IEEE Conference on Artificial Intelligence (CAI)
+, pages 728–736. IEEE, 2024.
+[8]
+Yihong Cao, Jiaming Zhang, Xu Zheng, Hao Shi, Kunyu Peng, Hang Liu, Kailun Yang, and Hui Zhang.
+Unlocking constraints: source-free occlusion-aware seamless segmentation.
+In
+Proceedings of the IEEE/CVF International Conference on Computer Vision
+, pages 8961–8972, 2025.
+[9]
+Zhe Chen, Weiyun Wang, Yue Cao, Yangzhou Liu, Zhangwei Gao, Erfei Cui, Jinguo Zhu, Shenglong Ye, Hao Tian, Zhaoyang Liu, et al.
+Expanding performance boundaries of open-source multimodal models with model, data, and test-time scaling.
+arXiv preprint arXiv:2412.05271
+, 2024a.
+[10]
+Zhe Chen, Jiannan Wu, Wenhai Wang, Weijie Su, Guo Chen, Sen Xing, Muyan Zhong, Qinglong Zhang, Xizhou Zhu, Lewei Lu, et al.
+Internvl: Scaling up vision foundation models and aligning for generic visual-linguistic tasks.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+, pages 24185–24198, 2024b.
+[11]
+Shih-Han Chou, Wei-Lun Chao, Wei-Sheng Lai, Min Sun, and Ming-Hsuan Yang.
+Visual question answering on 360deg images.
+In
+Proceedings of the IEEE/CVF winter conference on applications of computer vision
+, pages 1607–1616, 2020.
+[12]
+Wenliang Dai, Junnan Li, Dongxu Li, Anthony Tiong, Junqi Zhao, Weisheng Wang, Boyang Li, Pascale N Fung, and Steven Hoi.
+Instructblip: Towards general-purpose vision-language models with instruction tuning.
+Advances in neural information processing systems
+, 36:49250–49267, 2023.
+[13]
+Guanting Dong, Hongyi Yuan, Keming Lu, Chengpeng Li, Mingfeng Xue, Dayiheng Liu, Wei Wang, Zheng Yuan, Chang Zhou, and Jingren Zhou.
+How abilities in large language models are affected by supervised fine-tuning data composition.
+In
+Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+, pages 177–198, 2024.
+[14]
+Zihao Dongfang, Xu Zheng, Ziqiao Weng, Yuanhuiyi Lyu, Danda Pani Paudel, Luc Van Gool, Kailun Yang, and Xuming Hu.
+Are multimodal large language models ready for omnidirectional spatial reasoning?
+arXiv preprint arXiv:2505.11907
+, 2025.
+[15]
+Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Amy Yang, Angela Fan, et al.
+The llama 3 herd of models.
+arXiv e-prints
+, pages arXiv–2407, 2024.
+[16]
+Chenyou Fan.
+Egovqa-an egocentric video question answering benchmark dataset.
+In
+Proceedings of the IEEE/CVF International Conference on Computer Vision Workshops
+, pages 0–0, 2019.
+[17]
+Carlos Florensa, David Held, Markus Wulfmeier, Michael Zhang, and Pieter Abbeel.
+Reverse curriculum generation for reinforcement learning.
+In
+Conference on robot learning
+, pages 482–495. PMLR, 2017.
+[18]
+Yuqian Fu, Runze Wang, Bin Ren, Guolei Sun, Biao Gong, Yanwei Fu, Danda Pani Paudel, Xuanjing Huang, and Luc Van Gool.
+Objectrelator: Enabling cross-view object relation understanding across ego-centric and exo-centric perspectives.
+In
+ICCV
+, 2025.
+[19]
+Yash Goyal et al.
+Making the v in vqa matter: Elevating the role of image understanding in vqa.
+In
+CVPR
+, pages 6904–6913, 2017.
+[20]
+Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Ruoyu Zhang, Runxin Xu, Qihao Zhu, Shirong Ma, Peiyi Wang, Xiao Bi, et al.
+Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning.
+arXiv preprint arXiv:2501.12948
+, 2025.
+[21]
+Edward J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, Weizhu Chen, et al.
+Lora: Low-rank adaptation of large language models.
+ICLR
+, 1(2):3, 2022.
+[22]
+Ting Huang, Zeyu Zhang, and Hao Tang.
+3d-r1: Enhancing reasoning in 3d vlms for unified scene understanding.
+arXiv preprint arXiv:2507.23478
+, 2025a.
+[23]
+Wenxuan Huang, Bohan Jia, Zijie Zhai, Shaosheng Cao, Zheyu Ye, Fei Zhao, Zhe Xu, Yao Hu, and Shaohui Lin.
+Vision-r1: Incentivizing reasoning capability in multimodal large language models.
+arXiv preprint arXiv:2503.06749
+, 2025b.
+[24]
+Drew Hudson and Christopher Manning.
+Gqa: A new dataset for real-world visual reasoning.
+In
+CVPR
+, pages 6700–6709, 2019.
+[25]
+Justin Johnson et al.
+Clevr: A diagnostic dataset for compositional language and elementary visual reasoning.
+In
+CVPR
+, pages 1988–1997, 2017.
+[26]
+Amita Kamath, Jack Hessel, and Kai-Wei Chang.
+What’s” up” with vision-language models? investigating their struggle with spatial reasoning.
+arXiv preprint arXiv:2310.19785
+, 2023.
+[27]
+Dongyoung Kim, Sumin Park, Huiwon Jang, Jinwoo Shin, Jaehyung Kim, and Younggyo Seo.
+Robot-r1: Reinforcement learning for enhanced embodied reasoning in robotics.
+arXiv preprint arXiv:2506.00070
+, 2025.
+[28]
+Seungone Kim, Juyoung Suk, Shayne Longpre, Bill Yuchen Lin, Jamin Shin, Sean Welleck, Graham Neubig, Moontae Lee, Kyungjae Lee, and Minjoon Seo.
+Prometheus 2: An open source language model specialized in evaluating other language models.
+arXiv preprint arXiv:2405.01535
+, 2024.
+[29]
+Dingming Li, Hongxing Li, Zixuan Wang, Yuchen Yan, Hang Zhang, Siqi Chen, Guiyang Hou, Shengpei Jiang, Wenqi Zhang, Yongliang Shen, et al.
+Viewspatial-bench: Evaluating multi-perspective spatial localization in vision-language models.
+arXiv preprint arXiv:2505.21500
+, 2025a.
+[30]
+Feng Li, Renrui Zhang, Hao Zhang, Yuanhan Zhang, Bo Li, Wei Li, Zejun Ma, and Chunyuan Li.
+Llava-next-interleave: Tackling multi-image, video, and 3d in large multimodal models.
+arXiv preprint arXiv:2407.07895
+, 2024.
+[31]
+Junnan Li, Dongxu Li, Caiming Xiong, and Steven Hoi.
+Blip: Bootstrapping language-image pre-training for unified vision-language understanding and generation.
+In
+International conference on machine learning
+, pages 12888–12900. PMLR, 2022.
+[32]
+Yanjun Li, Yuqian Fu, Tianwen Qian, Qi’ao Xu, Silong Dai, Danda Pani Paudel, Luc Van Gool, and Xiaoling Wang.
+Egocross: Benchmarking multimodal large language models for cross-domain egocentric video question answering.
+arXiv preprint arXiv:2508.10729
+, 2025b.
+[33]
+Yue Li, Qi Ma, Runyi Yang, Mengjiao Ma, Bin Ren, Nikola Popovic, Nicu Sebe, Theo Gevers, Luc Van Gool, Danda Pani Paudel, et al.
+Chorus: Multi-teacher pretraining for holistic 3d gaussian scene encoding.
+arXiv preprint arXiv:2512.17817
+, 2025c.
+[34]
+Chenfei Liao, Xu Zheng, Yuanhuiyi Lyu, Haiwei Xue, Yihong Cao, Jiawen Wang, Kailun Yang, and Xuming Hu.
+Memorysam: Memorize modalities and semantics with segment anything model 2 for multi-modal semantic segmentation.
+arXiv preprint arXiv:2503.06700
+, 2025.
+[35]
+Haotian Liu, Chunyuan Li, Yuheng Li, and Yong Jae Lee.
+Improved baselines with visual instruction tuning.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+, pages 26296–26306, 2024.
+[36]
+Qingxiang Liu, Ting Huang, Zeyu Zhang, and Hao Tang.
+Nav-r1: Reasoning and navigation in embodied scenes.
+arXiv preprint arXiv:2509.10884
+, 2025.
+[37]
+Tambet Matiisen, Avital Oliver, Taco Cohen, and John Schulman.
+Teacher–student curriculum learning.
+IEEE transactions on neural networks and learning systems
+, 31(9):3732–3740, 2019.
+[38]
+Sanmit Narvekar, Bei Peng, Matteo Leonetti, Jivko Sinapov, Matthew E Taylor, and Peter Stone.
+Curriculum learning for reinforcement learning domains: A framework and survey.
+Journal of Machine Learning Research
+, 21(181):1–50, 2020.
+[39]
+Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, et al.
+Training language models to follow instructions with human feedback.
+Advances in neural information processing systems
+, 35:27730–27744, 2022.
+[40]
+Jiancheng Pan, Runze Wang, Tianwen Qian, Mohammad Mahdi, Yanwei Fu, Xiangyang Xue, Xiaomeng Huang, Luc Van Gool, Danda Pani Paudel, and Yuqian Fu.
+V
+2
+-SAM: Marrying SAM2 with multi-prompt experts for cross-view object correspondence.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)
+, 2026.
+[41]
+Shubham Parashar, Shurui Gui, Xiner Li, Hongyi Ling, Sushil Vemuri, Blake Olson, Eric Li, Yu Zhang, James Caverlee, Dileep Kalathil, et al.
+Curriculum reinforcement learning from easy to hard tasks improves llm reasoning.
+arXiv preprint arXiv:2506.06632
+, 2025.
+[42]
+Zhangyang Qi, Zhixiong Zhang, Yizhou Yu, Jiaqi Wang, and Hengshuang Zhao.
+Vln-r1: Vision-language navigation via reinforcement fine-tuning.
+arXiv preprint arXiv:2506.17221
+, 2025.
+[43]
+Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agarwal, Girish Sastry, Amanda Askell, Pamela Mishkin, Jack Clark, et al.
+Learning transferable visual models from natural language supervision.
+In
+International conference on machine learning
+, pages 8748–8763. PmLR, 2021.
+[44]
+John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov.
+Proximal policy optimization algorithms.
+arXiv preprint arXiv:1707.06347
+, 2017.
+[45]
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li, Yang Wu, et al.
+Deepseekmath: Pushing the limits of mathematical reasoning in open language models.
+arXiv preprint arXiv:2402.03300
+, 2024.
+[46]
+Yan Shu, Bin Ren, Zhitong Xiong, Danda Pani Paudel, Luc Van Gool, Begüm Demir, Nicu Sebe, and Paolo Rota.
+Earthmind: Leveraging cross-sensor data for advanced earth observation interpretation with a unified multimodal llm.
+arXiv preprint arXiv:2506.01667
+, 2025.
+[47]
+Peng Wang, Shuai Bai, Sinan Tan, Shijie Wang, Zhihao Fan, Jinze Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, et al.
+Qwen2-vl: Enhancing vision-language model’s perception of the world at any resolution.
+arXiv preprint arXiv:2409.12191
+, 2024.
+[48]
+Wenshan Wang, Delong Zhu, Xiangwei Wang, Yaoyu Hu, Yuheng Qiu, Chen Wang, Yafei Hu, Ashish Kapoor, and Sebastian Scherer.
+Tartanair: A dataset to push the limits of visual slam.
+In
+2020 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)
+, pages 4909–4916. IEEE, 2020.
+[49]
+Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Fei Xia, Ed Chi, Quoc V Le, Denny Zhou, et al.
+Chain-of-thought prompting elicits reasoning in large language models.
+Advances in neural information processing systems
+, 35:24824–24837, 2022.
+[50]
+Qi Wu, Damien Teney, Peng Wang, Chunhua Shen, Anthony Dick, and Anton Van Den Hengel.
+Visual question answering: A survey of methods and datasets.
+Computer Vision and Image Understanding
+, 163:21–40, 2017.
+[51]
+Zhiyu Wu, Xiaokang Chen, Zizheng Pan, Xingchao Liu, Wen Liu, Damai Dai, Huazuo Gao, Yiyang Ma, Chengyue Wu, Bingxuan Wang, et al.
+Deepseek-vl2: Mixture-of-experts vision-language models for advanced multimodal understanding.
+arXiv preprint arXiv:2412.10302
+, 2024.
+[52]
+Zhiheng Xi, Wenxiang Chen, Boyang Hong, Senjie Jin, Rui Zheng, Wei He, Yiwen Ding, Shichun Liu, Xin Guo, Junzhe Wang, et al.
+Training large language models for reasoning through reverse curriculum reinforcement learning.
+arXiv preprint arXiv:2402.05808
+, 2024.
+[53]
+An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, et al.
+Qwen3 technical report.
+arXiv preprint arXiv:2505.09388
+, 2025a.
+[54]
+Jihan Yang, Shusheng Yang, Anjali W Gupta, Rilyn Han, Li Fei-Fei, and Saining Xie.
+Thinking in space: How multimodal large language models see, remember, and recall spaces.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+, pages 10632–10643, 2025b.
+[55]
+Liu Yang, Huiyu Duan, Ran Tao, Juntao Cheng, Sijing Wu, Yunhao Li, Jing Liu, Xiongkuo Min, and Guangtao Zhai.
+Odi-bench: Can mllms understand immersive omnidirectional environments?
+arXiv preprint arXiv:2510.11549
+, 2025c.
+[56]
+Heeseung Yun, Youngjae Yu, Wonsuk Yang, Kangil Lee, and Gunhee Kim.
+Pano-avqa: Grounded audio-visual question answering on 360deg videos.
+In
+Proceedings of the IEEE/CVF International Conference on Computer Vision
+, pages 2031–2041, 2021.
+[57]
+Rowan Zellers et al.
+From recognition to cognition: Visual commonsense reasoning.
+In
+CVPR
+, pages 6720–6731, 2019.
+[58]
+Deheng Zhang, Yuqian Fu, Runyi Yang, Yang Miao, Tianwen Qian, Xu Zheng, Guolei Sun, Ajad Chhatkuli, Xuanjing Huang, Yu-Gang Jiang, et al.
+Egonight: Towards egocentric vision understanding at night with a challenging benchmark.
+ICLR
+, 2026.
+[59]
+Weiming Zhang, Yexin Liu, Xu Zheng, and Lin Wang.
+Goodsam: Bridging domain and capacity gaps via segment anything model for distortion-aware panoramic semantic segmentation.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+, pages 28264–28273, 2024a.
+[60]
+Weiming Zhang, Yexin Liu, Xu Zheng, and Lin Wang.
+Goodsam++: Bridging domain and capacity gaps via segment anything model for panoramic semantic segmentation.
+arXiv preprint arXiv:2408.09115
+, 2024b.
+[61]
+Xinshen Zhang, Tongxi Fu, and Zheng Xu.
+Omnidirectional spatial modeling from correlated panoramas.
+In
+Proceedings of the 7th ACM International Conference on Multimedia in Asia
+, pages 1–14, 2025a.
+[62]
+Xinshen Zhang, Zhen Ye, and Xu Zheng.
+Towards omnidirectional reasoning with 360-r1: A dataset, benchmark, and grpo-based method.
+arXiv preprint arXiv:2505.14197
+, 2025b.
+[63]
+Xu Zheng, Tianbo Pan, Yunhao Luo, and Lin Wang.
+Look at the neighbor: Distortion-aware unsupervised domain adaptation for panoramic semantic segmentation.
+In
+Proceedings of the IEEE/CVF International Conference on Computer Vision
+, pages 18687–18698, 2023a.
+[64]
+Xu Zheng, Jinjing Zhu, Yexin Liu, Zidong Cao, Chong Fu, and Lin Wang.
+Both style and distortion matter: Dual-path unsupervised domain adaptation for panoramic semantic segmentation.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+, pages 1285–1295, 2023b.
+[65]
+Xu Zheng, Pengyuan Zhou, Athanasios V Vasilakos, and Lin Wang.
+Semantics distortion and style matter: Towards source-free uda for panoramic segmentation.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+, pages 27885–27895, 2024a.
+[66]
+Xu Zheng, Peng Yuan Zhou, Athanasios V Vasilakos, and Lin Wang.
+360sfuda++: Towards source-free uda for panoramic segmentation by learning reliable category prototypes.
+IEEE Transactions on Pattern Analysis and Machine Intelligence
+, 47(2):1190–1204, 2024b.
+[67]
+Xu Zheng, Zihao Dongfang, Lutao Jiang, Boyuan Zheng, Yulong Guo, Zhenquan Zhang, Giuliano Albanese, Runyi Yang, Mengjiao Ma, Zixin Zhang, et al.
+Multimodal spatial reasoning in the large model era: A survey and benchmarks.
+arXiv preprint arXiv:2510.25760
+, 2025a.
+[68]
+Xu Zheng, Chenfei Liao, Ziqiao Weng, Kaiyu Lei, Zihao Dongfang, Haocong He, Yuanhuiyi Lyu, Lutao Jiang, Lu Qi, Li Chen, et al.
+Panorama: The rise of omnidirectional vision in the embodied ai era.
+arXiv preprint arXiv:2509.12989
+, 2025b.
+[69]
+Ding Zhong, Xu Zheng, Chenfei Liao, Yuanhuiyi Lyu, Jialei Chen, Shengyang Wu, Linfeng Zhang, and Xuming Hu.
+Omnisam: Omnidirectional segment anything model for uda in panoramic semantic segmentation.
+In
+Proceedings of the IEEE/CVF International Conference on Computer Vision
+, pages 23892–23901, 2025.
+[70]
+Bingwen Zhu, Yuqian Fu, Qiaole Dong, Guolei Sun, Tianwen Qian, Yuzheng Wu, Danda Pani Paudel, Xiangyang Xue, and Yanwei Fu.
+Egosound: Benchmarking sound understanding in egocentric videos.
+CVPR
+, 2026.
+[71]
+Chenyang Zhu, Bin Xiao, Lin Shi, Shoukun Xu, and Xu Zheng.
+Customize segment anything model for multi-modal semantic segmentation with mixture of lora experts.
+arXiv preprint arXiv:2412.04220
+, 2024.
+6
+Supplementary Material
+6.1
+More Related Works
+RL for Multimodal and Spatial Reasoning.
+Supervised fine-tuning (SFT) is the standard training method for MLLMs, but its reasoning processes can be rigid
+[
+13
+]
+. RL offers a promising alternative, as demonstrated by pioneering works
+[
+20
+,
+39
+]
+, such as Vision-R1
+[
+23
+]
+, which converts visual inputs into structured reasoning chains.
+Recently, this R1-style reinforcement learning paradigm has been rapidly extended beyond 2D vision to 3D spatial understanding and embodied agent domains. Recent breakthroughs, including 3D-R1
+[
+22
+]
+, Robot-R1
+[
+27
+]
+, VLN-R1
+[
+42
+]
+, and Nav-R1
+[
+36
+]
+, have collectively demonstrated that RL fine-tuning significantly enhances complex geometric reasoning, physical interaction, and spatial navigation in embodied scenes.
+In the panoramic VQA domain specifically, 360-R1
+[
+62
+]
+also applies an RL framework with a reward function based on semantic similarity. However, previous methods rely heavily on other LLMs or human annotations to obtain answers or CoT, which inevitably introduces biases or hallucinations. The core innovation in our PanoEnv research is the use of geometric ground truth from TartanAir
+[
+48
+]
+to
+programmatically generate correct textual answers
+, which then serve as the basis for reward calculation. During RL training, the reward is based on the correspondence between the model’s output and this physically-grounded ground truth text. This ensures the learning signal originates entirely from the objective physical world, providing a more direct and rigorous incentive for the model to learn true 3D spatial structures.
+6.2
+Dataset Construction Details
+6.2.1
+Object Filtering and Sampling Heuristics
+Objective.
+Before question generation, we implement a rigorous object filtering and sampling pipeline to ensure the high quality and physical validity of the generated QA pairs, mitigating the geometric distortions inherent in Equirectangular Projection (ERP) images.
+Ground Truth Formulation.
+The filtering mechanism operates on three hierarchical levels:
+1. Size and Aspect Ratio Constraints.
+Objects are retained only if their 2D bounding box area in the ERP image satisfies
+Area
+≥
+900
+\text{Area}\geq 900
+pixels, with both
+width
+≥
+25
+\text{width}\geq 25
+and
+height
+≥
+25
+\text{height}\geq 25
+pixels. Highly distorted or degenerate masks are removed by thresholding the aspect ratio to strictly
+<
+5
+<5
+.
+2. Semantic Exclusion.
+We systematically exclude background surfaces with low QA discrimination (e.g.,
+sky
+,
+ground
+,
+wall
+), extremely thin objects prone to detection errors (e.g.,
+wire
+), and unstable semantic debris (e.g.,
+rubble
+).
+3. Containment Filtering.
+For relational and comparative questions, we exclude object pairs with substantial bounding box overlap to prevent visual ambiguity. Two objects are deemed unsuitable for comparison if their bounding box overlap ratio exceeds
+0.90
+0.90
+.
+6.2.2
+Robust Depth Profiling
+As mentioned in the main text, relying solely on a single median depth value can lead to significant errors for “thick” objects or objects exhibiting severe partial occlusion. Therefore, we utilize the extracted point cloud to compute a robust depth profile based on percentiles (
+p
+n
+p_{n}
+) and the Inter-Quartile Range (
+I
+​
+Q
+​
+R
+=
+p
+75
+−
+p
+25
+IQR=p_{75}-p_{25}
+).
+Effective Depth for Comparison.
+An object is defined as having a significant physical thickness along the camera ray if its depth variation satisfies:
+I
+​
+Q
+​
+R
+>
+max
+⁡
+(
+0.6
+,
+0.15
+⋅
+p
+50
+)
+IQR>\max(0.6,0.15\cdot p_{50})
+(6)
+For objects meeting this condition, using the median depth (
+p
+50
+p_{50}
+) may misrepresent their closest visible surface. Instead, we dynamically route the depth metric to the near-end quantile (
+p
+20
+p_{20}
+) to serve as the effective depth for distance-based QA comparisons.
+Distance Similarity Thresholds.
+When generating “True/False” questions regarding whether two objects are at a similar distance, we evaluate both absolute median differences and interval overlaps. Two objects,
+A
+A
+and
+B
+B
+, are considered to be at a similar depth if the Jaccard similarity of their inter-quartile depth intervals exceeds
+0.30
+0.30
+:
+|
+[
+p
+25
+A
+,
+p
+75
+A
+]
+∩
+[
+p
+25
+B
+,
+p
+75
+B
+]
+|
+|
+[
+p
+25
+A
+,
+p
+75
+A
+]
+∪
+[
+p
+25
+B
+,
+p
+75
+B
+]
+|
+>
+0.30
+\frac{|[p_{25}^{A},p_{75}^{A}]\cap[p_{25}^{B},p_{75}^{B}]|}{|[p_{25}^{A},p_{75}^{A}]\cup[p_{25}^{B},p_{75}^{B}]|}>0.30
+(7)
+Alternatively, they are considered similar if the absolute difference between their median depths is exceptionally small:
+|
+p
+50
+A
+−
+p
+50
+B
+|
+<
+max
+⁡
+(
+0.5
+,
+0.10
+⋅
+min
+⁡
+(
+p
+50
+A
+,
+p
+50
+B
+)
+)
+|p_{50}^{A}-p_{50}^{B}|<\max(0.5,0.10\cdot\min(p_{50}^{A},p_{50}^{B}))
+(8)
+6.2.3
+Data Quality Assurance via Human Verification
+To rigorously validate the semantic soundness of our programmatically generated ground truth, we conducted a human evaluation study on a randomly sampled subset of the PanoEnv-QA dataset. Independent human annotators verified the correctness of the generated answers against the visual evidence in the ERP images. The human verification yielded a
+96% accuracy rate
+, confirming that our physics-derived geometric ground truth is highly reliable, semantically sound, and strongly aligns with human perception of 3D spaces.
+6.3
+Prompt Designs for Generation and Evaluation
+The design of the prompt is critical for both the GRPO exploration phase and the final model evaluation. In this section, we detail the unified templates used for eliciting model responses, as well as the strict scoring prompts utilized by the LLM-as-a-judge.
+6.3.1
+Generation and Training Prompts
+To encourage the model to output transparent Chain-of-Thought (CoT) reasoning before providing the final answer, we strictly enforce a unified prompt structure across all baseline evaluations and our RL training.
+The complete prompt is constructed dynamically by concatenating a Base Prompt with a Task-Specific Suffix depending on the question type.
+Base Prompt (Shared across all tasks):
+You are an expert in analyzing 360
+∘
+panoramic (ERP) images (2560x1280).
+Analyze the image carefully and focus on
+the specific objects mentioned in
+bounding boxes.
+{Question}
+Provide your reasoning based on the
+panoramic scene within <Reasoning> tags,
+then give your final answer within
+<Answer> tags.
+Task-Specific Format Constraints:
+To ensure robust parsing for our routed reward system, one of the following rule suffixes is appended to the base prompt based on the question category:
+1. True/False Questions:
+This is a YES/NO question. Your <Answer>
+must be EXACTLY "Yes" or "No"
+(case-sensitive, no extra words).
+Example:
+<Reasoning>...</Reasoning>
+<Answer>Yes</Answer>
+2. Multiple-Choice Questions:
+This is a MULTIPLE CHOICE question.
+Your <Answer> must be EXACTLY one of
+the provided options.
+Example:
+<Reasoning>...</Reasoning>
+<Answer>AbandonedCable</Answer>
+3. Open-Ended Questions:
+This is an OPEN-ENDED question.
+Your <Answer> should be concise and
+direct (under 20 words).
+Example:
+<Reasoning>...</Reasoning>
+<Answer>The building is behind and to
+the right of and below the truck</Answer>
+6.3.2
+LLM-as-a-Judge Evaluation Prompts
+In addition to the strict rule-based accuracy metrics, we employ an LLM-as-a-judge approach (e.g., QwenScore and PrometheusScore) to evaluate the semantic correctness and reasoning quality of the models’ outputs. To ensure consistency and transparency, we use a highly structured prompt that explicitly defines the scoring rules (0-10) for each specific question type.
+1. System Prompt (Evaluator Rules):
+You are an evaluator. Compare answers and
+give a score 0-10.
+Rules:
+- YES/NO: yes/true/1 = YES, no/false/0 = NO.
+Same meaning -> 10, different -> 0.
+- Multiple choice: output a single option only.
+Ignore articles/case/punctuation.
+Match -> 10, else -> 0.
+- Numeric (distance, e.g. "About X meters"):
+extract numbers. If no valid number -> 0.
+* <=10% relative error -> 10
+* <=20% -> 5-9
+* >20% -> 0
+- Numeric (counting, e.g. "3 different views"):
+use only the integer.
+* Exact match -> 10
+* Otherwise -> 0
+- Spatial: compare direction words (left/right,
+front/behind, above/below).
+If any axis is opposite (e.g. left vs right),
+score -> 0. Otherwise, let N = axes used in
+reference, C = correctly matched axes;
+score
+≈
+\approx
+10 * C / N.
+- Open-ended: judge semantic match.
+* All key info correct -> 10
+* Most info correct -> 8-9
+* Partially correct -> 6-7
+* Mostly wrong -> 0-5
+IMPORTANT: End response with "Score: X"
+where X is 0-10.
+2. User Prompt (Evaluation Instance):
+During evaluation, the test samples are dynamically formatted into the following template and passed to the LLM judge:
+Q: {question}
+Type: {question_type}
+Reference: {expected_answer}
+Answer: {model_answer}
+Give score 0-10. Must end with "Score: X":
+6.4
+Training Details and Hyperparameters
+Hardware & Optimization.
+Models are trained on 4
+×
+\times
+NVIDIA B200 GPUs with
+bfloat16
+, DeepSpeed ZeRO-2, and Flash Attention 2. For reproducibility, training is also feasible on 80GB A100 GPUs by halving the group size (
+K
+=
+2
+K=2
+) and per-device batch size. Hyperparameters are detailed in Table
+5
+.
+Table 5
+:
+Hyperparameter configurations for GRPO fine-tuning.
+Hyperparameter
+Value
+Base Model
+Qwen2.5-VL-7B-Instruct
+Tuning Method
+LoRA (Language Decoder only)
+LoRA Rank (
+r
+r
+) / Alpha (
+α
+\alpha
+)
+16 / 32
+LoRA Dropout
+0.05
+Group Size (
+K
+K
+)
+4
+Training Epochs
+2
+Peak Learning Rate
+5e-6
+Warmup Ratio
+0.05
+Global Batch Size
+32
+KL Coefficient (
+β
+\beta
+)
+0.01
+Max Completion Length
+256
+Max Gradient Norm
+10.0
+Reward Weights (Acc, Fmt)
+(0.90, 0.10)
+6.5
+Comparison with Existing Benchmarks
+To further clarify the unique positioning of PanoEnv-QA, we provide a detailed comparison with recent panoramic reasoning benchmarks, such as OSR-Bench and OmniVQA, in Table
+6
+. Specifically, PanoEnv uniquely focuses on recovering 3D metric and physical relationships from 2D pixels using precise simulation engine ground truth.
+Table 6
+:
+Comprehensive comparison between PanoEnv and existing panoramic benchmarks.
+Feature
+PanoEnv (Ours)
+OSR-Bench
+OmniVQA
+Dataset Base
+TartanAir
+Replica / DeepPano
+Stan. 2D-3D-S
+Scenes
+60 (Indoor & Outdoor)
+1,526 (Indoor)
+6 (Indoor)
+Images
+595
+4,100
+1,213
+QA Pairs
+∼
+\sim
+14.8K
+∼
+\sim
+153K
+∼
+\sim
+4.9K
+Core Focus
+2D-to-3D Inference
+Topology
+Polar Distortion
+GT Source
+3D Annotations
+Cognitive Map
+MLLM + Human
+Unlike OSR-Bench, which focuses on 2D topological relations and achieves its scale through extensive negative sampling, PanoEnv prioritizes reasoning depth over massive dataset scale. Our benchmark evaluates the implicit recovery of 3D physical reality (e.g., true volume and metric distance) from monocular panoramas. Furthermore, in contrast to OmniVQA which relies on LLM-generated answers, PanoEnv derives its rewards strictly from pixel-perfect geometric annotations provided by the simulation engine, thereby preventing the reinforcement of hallucinated reasoning.
+6.6
+Additional Experiments: Sim-to-Real Generalization
+To validate the real-world transferability of PanoEnv-RL, we conducted a zero-shot evaluation on the
+OSR-Bench
+, a benchmark comprised of photorealistic panoramas derived from high-fidelity scene scans.
+As shown in Table
+7
+, despite being trained
+solely
+on simulation data (TartanAir), our PanoEnv-RL (7B) consistently outperforms the Base 7B model and even surpasses the significantly larger
+Qwen2.5-VL-72B
+on tasks such as
+Object Counting
+and
+Relative Distance
+.
+Table 7
+:
+Zero-Shot Performance on OSR-Bench (Real-World).
+Model
+Obj. Count
+Rel. Dist.
+Rel. Dir.
+Qwen2.5-VL-7B (Base)
+0.477
+0.321
+0.089
+Qwen2.5-VL-72B
+0.498
+0.325
+0.181
+PanoEnv-RL (Ours)
+0.507
+0.371
+0.105
+Transferability.
+The results exhibit the robust transferability of our method to real-world domains. The performance gap in
+Relative Direction
+compared to the 72B model is primarily attributed to a
+2D-vs-3D mismatch
+: OSR-Bench lacks verticality and evaluates flat 2D topological relations, which inherently penalizes our model’s fine-grained 3D spherical predictions.
+Logic over Scale.
+The ability to generalize directly to the real-world OSR-Bench without any domain-specific fine-tuning confirms that PanoEnv-RL acquires transferable
+3D spatial reasoning
+(i.e., geometric logic) rather than merely memorizing simulation data or textures. PanoEnv provides the exact physical ground truth essential to encode this reasoning core, successfully enabling robust sim-to-real transfer and proving that geometric logic can bridge the reality gap more effectively than simply scaling model parameters.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

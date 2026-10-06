@@ -1,0 +1,4830 @@
+From Isolation to Integration: Building an Adaptive Expert Forest for Pre-Trained Model-based Class-Incremental Learning
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+2.1
+Training Models from Scratch
+2.2
+Pre-Trained Model-based CIL
+3
+Methodology
+3.1
+Preliminaries
+Class-Incremental Learning (CIL).
+PTM-based CIL with Task-Specific Adapters.
+3.2
+Our Method: Semantic-guided Adaptive Expert Forest
+Conceptual Clustering.
+Hierarchical Construction.
+Adaptive Inference.
+4
+Experiments
+4.1
+Implementation Details
+4.2
+Main Results
+4.3
+Ablation Study
+4.4
+Discussion
+Impact of the Expert Forest’s Structure.
+Parameter Robustness.
+Trade-off between Inference Efficiency and Accuracy.
+Efficiency Evaluation.
+5
+Conclusion
+References
+A
+Detailed Implementation of SAEF Operations
+A.1
+Hierarchical Construction Details
+Node Representation.
+Node Selection.
+Prototype Merging.
+A.2
+Adaptive Inference Details
+Entropy-Guided Path Selection.
+A.3
+Prototype-based Classifier and Alignment
+Classifier Construction for New Classes.
+Classifier Alignment for Old Classes.
+B
+SAEF Algorithm Pseudocode
+B.1
+Algorithmic Details
+Offline Hierarchy Construction.
+Online Adaptive Inference.
+C
+Theoretical Speedup Calculation
+D
+Performance Stability Across Multiple Runs
+E
+Detailed Incremental Performance Analysis
+F
+Analysis of Resource Consumption
+License: CC BY 4.0
+arXiv:2602.20911v1 [cs.LG] 24 Feb 2026
+From Isolation to Integration: Building an Adaptive Expert Forest for Pre-Trained Model-based Class-Incremental Learning
+Ruiqi Liu
+Affiliation:
+Institute of Computing Technology, Chinese Academy of Sciences, Beijing, China
+Affiliation:
+University of Chinese Academy of Sciences, Beijing, China
+Email:
+liuruiqi23@mails.ucas.ac.cn
+Boyu Diao
+Affiliation:
+Institute of Computing Technology, Chinese Academy of Sciences, Beijing, China
+Affiliation:
+University of Chinese Academy of Sciences, Beijing, China
+Email:
+diaoboyu2012@ict.ac.cn
+Hangda Liu
+Affiliation:
+Institute of Computing Technology, Chinese Academy of Sciences, Beijing, China
+Affiliation:
+University of Chinese Academy of Sciences, Beijing, China
+Email:
+liuhangda21s@ict.ac.cn
+Zhulin An
+Affiliation:
+Institute of Computing Technology, Chinese Academy of Sciences, Beijing, China
+Affiliation:
+University of Chinese Academy of Sciences, Beijing, China
+Email:
+wangfei@ict.ac.cn
+Fei Wang
+Affiliation:
+Institute of Computing Technology, Chinese Academy of Sciences, Beijing, China
+Affiliation:
+University of Chinese Academy of Sciences, Beijing, China
+Email:
+anzhulin@ict.ac.cn
+Yongjun Xu
+Affiliation:
+Institute of Computing Technology, Chinese Academy of Sciences, Beijing, China
+Affiliation:
+University of Chinese Academy of Sciences, Beijing, China
+Email:
+xyj@ict.ac.cn
+Abstract
+Class-Incremental Learning (CIL) requires models to learn new classes without forgetting old ones. A common method is to freeze a pre-trained model and train a new, lightweight adapter for each task. While this prevents forgetting, it treats the learned knowledge as a simple, unstructured collection and fails to use the relationships between tasks. To this end, we propose the Semantic-guided Adaptive Expert Forest (SAEF), a new method that organizes adapters into a structured hierarchy for better knowledge sharing. SAEF first groups tasks into conceptual clusters based on their semantic relationships. Then, within each cluster, it builds a balanced expert tree by creating new adapters from merging the adapters of similar tasks. At inference time, SAEF finds and activates a set of relevant experts from the forest for any given input. The final prediction is made by combining the outputs of these activated experts, weighted by how confident each expert is. Experiments on several benchmark datasets show that SAEF achieves SOTA performance.
+Figure 1
+:
+Conceptual comparison of adapter-based CIL methods.
+(a)
+The conventional methods treat adapters as an unstructured pool, leading to inefficient full-ensemble inference.
+(b)
+Our proposed SAEF automatically organizes adapters into a semantic expert forest, enabling an efficient, adaptive search for the most relevant experts.
+1
+Introduction
+Class-Incremental Learning (CIL) enables models to continually acquire knowledge of new classes while preserving performance on previously learned ones
+[
+25
+,
+19
+]
+. While mitigating catastrophic forgetting is a primary objective, the growing application of CIL in resource-sensitive contexts, such as on-device and robotic systems, has also underscored the importance of computational efficiency
+[
+37
+,
+23
+]
+.
+CIL methodologies can be broadly categorized into two paradigms: training from scratch and leveraging Pre-trained Models (PTMs). The former category, which includes regularization, architectural, and rehearsal-based methods
+[
+22
+,
+32
+,
+30
+]
+, often encounters practical limitations concerning scalability, data privacy, and overall performance
+[
+43
+]
+. Consequently, a significant portion of recent research has shifted towards PTM-based CIL
+[
+49
+]
+. This method utilizes the powerful representations learned during large-scale pre-training as a robust foundation for incremental tasks, frequently leading to state-of-the-art (SOTA) results. A prominent strategy within this paradigm involves freezing the PTM backbone and applying Parameter-Efficient Fine-Tuning (PEFT) techniques, such as training lightweight adapters
+[
+39
+]
+or prompts
+[
+44
+,
+36
+]
+. This method offers a compelling balance of high performance and low computational overhead, making it a highly influential and widely adopted method in the field.
+A common strategy within this PTM-based paradigm is to train a separate, lightweight adapter for each incremental task
+[
+50
+]
+. During inference, systems may either retrieve the most suitable task adapter
+[
+36
+]
+or ensemble predictions from the entire collection
+[
+50
+]
+. While separating task-specific parameters helps prevent catastrophic forgetting, this method treats the learned knowledge as a simple, unstructured collection, as shown in Fig.
+1
+(a). This design fails to use the important semantic relationships between tasks (for example, between a ’dog’ task and a ’cat’ task) for better knowledge transfer. Some methods attempt to address this by adding a global module to learn shared knowledge from all tasks
+[
+16
+]
+. However, we argue that sharing knowledge globally across all tasks is a suboptimal method. True knowledge transfer should be more selective and structured. It should be context-specific and hierarchical, sharing information only between related tasks, as illustrated in Fig.
+1
+(b).
+To this end, we propose the Semantic-guided Adaptive Expert Forest (SAEF). SAEF is a method that automatically organizes the set of task-specific adapters into a structured expert forest for better knowledge sharing. This process consists of three main stages. First, SAEF groups tasks into conceptual clusters based on their semantic relationships. Second, within each cluster, it constructs a balanced expert tree by recursively creating new adapters from merging the adapters of the most similar tasks. This process builds a hierarchy of experts at different levels of abstraction. Finally, the third stage involves adaptive inference, where SAEF employs a parallel search strategy across this hierarchy to dynamically activate a subset of relevant experts for any given sample. The final prediction is produced by an entropy-guided fusion of these experts’ outputs. In summary, our main contributions are as follows:
+•
+We propose SAEF, a novel method that automatically constructs a semantic expert hierarchy from previously isolated task adapters to enable structured knowledge reuse.
+•
+We design a dynamic inference strategy that adaptively navigates this hierarchy, using a multi-path search and an entropy-guided fusion mechanism to ensure robust predictions.
+•
+We conduct extensive experiments on major CIL benchmarks, where SAEF consistently outperforms SOTA methods with accuracy gains of up to 1.34%.
+2
+Related Work
+CIL methods can be broadly divided into two main categories: training models from scratch and using Pre-trained Models (PTMs).
+2.1
+Training Models from Scratch
+The traditional method for CIL is to train a model from scratch. These methods are typically grouped into three categories.
+Regularization-based
+methods
+[
+46
+,
+32
+,
+22
+,
+45
+,
+6
+,
+1
+]
+add a loss term to penalize changes to important parameters from past tasks.
+Architecture-based
+methods
+[
+10
+,
+18
+,
+24
+,
+42
+,
+48
+]
+add new parameters for each new task to keep knowledge separate, for example, by growing the network or using different parts of it for different tasks.
+Rehearsal-based
+methods
+[
+2
+,
+4
+,
+5
+,
+7
+,
+8
+]
+store a small number of old samples and replay them during training on new tasks. These methods have limitations in scalability and performance, which has led to a shift towards PTM-based methods
+[
+4
+,
+52
+,
+41
+,
+34
+,
+35
+,
+43
+,
+21
+]
+.
+2.2
+Pre-Trained Model-based CIL
+To avoid the high cost of training from scratch, modern CIL often relies on a frozen pre-trained model (PTM) with Parameter-Efficient Fine-Tuning (PEFT). This involves training only a small set of new parameters for each task. This makes CIL practical for many resource-constrained applications. Common PEFT methods include prompt tuning, which learns to select or combine prompts
+[
+44
+,
+43
+,
+36
+]
+, and adapter-based tuning, which adds a new adapter for each task
+[
+39
+,
+50
+]
+. Other methods also follow this paradigm, such as fine-tuning only the final layer
+[
+47
+]
+or using random projections
+[
+27
+]
+.
+Recently, the focus has shifted towards enabling knowledge sharing between these task-specific modules. For instance, some methods learn to route inputs using a Mixture-of-Experts (MoE) method
+[
+11
+,
+12
+,
+15
+,
+17
+]
+, while others create a shared global expert
+[
+39
+]
+. A key limitation of these methods, however, is that they treat the set of experts or adapters as an unstructured collection. This overlooks the underlying semantic hierarchy of tasks, where some tasks are inherently more related than others. Our work addresses this exact limitation by proposing a method that organizes adapters based on their semantic relationships, enabling more structured and effective knowledge sharing.
+3
+Methodology
+3.1
+Preliminaries
+Class-Incremental Learning (CIL).
+In Class-Incremental Learning, a model learns from a sequence of tasks, where each new task introduces a new set of classes. We consider a sequence of
+T
+T
+tasks,
+{
+𝒟
+1
+,
+𝒟
+2
+,
+…
+,
+𝒟
+T
+}
+\{\mathcal{D}_{1},\mathcal{D}_{2},\ldots,\mathcal{D}_{T}\}
+. For each task
+t
+t
+, the model is given a training set
+𝒟
+t
+=
+{
+(
+x
+i
+,
+y
+i
+)
+}
+i
+=
+1
+N
+t
+\mathcal{D}_{t}=\{(x_{i},y_{i})\}_{i=1}^{N_{t}}
+, where
+x
+i
+x_{i}
+is an image and
+y
+i
+y_{i}
+is its class label from the set
+𝒞
+t
+\mathcal{C}_{t}
+. The sets of classes are disjoint for different tasks, so
+𝒞
+t
+∩
+𝒞
+t
+′
+=
+∅
+\mathcal{C}_{t}\cap\mathcal{C}_{t^{\prime}}=\emptyset
+for all
+t
+≠
+t
+′
+t\neq t^{\prime}
+.
+During the training phase for task
+t
+t
+, the model only has access to the data in
+𝒟
+t
+\mathcal{D}_{t}
+. Our work follows the challenging exemplar-free setting
+[
+44
+,
+43
+,
+49
+]
+, meaning no samples from past tasks are stored for replay. The model consists of a feature extractor
+ϕ
+\phi
+and a classifier
+W
+W
+. The set of all trainable parameters for task
+t
+t
+is denoted as
+θ
+t
+\theta_{t}
+. After learning from task
+t
+t
+, the model’s performance is evaluated on all classes seen so far, which are in the set
+𝒴
+t
+=
+⋃
+i
+=
+1
+t
+𝒞
+i
+\mathcal{Y}_{t}=\bigcup_{i=1}^{t}\mathcal{C}_{i}
+. The main goal is to find the optimal parameters
+θ
+t
+∗
+\theta_{t}^{*}
+that minimize the loss over the test sets of all tasks:
+θ
+t
+∗
+=
+argmin
+θ
+t
+​
+∑
+i
+=
+1
+t
+𝔼
+(
+x
+,
+y
+)
+∼
+𝒟
+i
+test
+​
+[
+ℒ
+CE
+​
+(
+W
+⊤
+​
+ϕ
+​
+(
+x
+,
+θ
+t
+)
+,
+y
+)
+]
+,
+\theta_{t}^{*}=\underset{\theta_{t}}{\operatorname{argmin}}\sum_{i=1}^{t}\mathbb{E}_{(x,y)\sim\mathcal{D}^{\text{test}}_{i}}\left[\mathcal{L}_{\text{CE}}(W^{\top}\phi(x;\theta_{t}),y)\right],
+(1)
+where
+W
+⊤
+​
+ϕ
+​
+(
+x
+,
+θ
+t
+)
+W^{\top}\phi(x;\theta_{t})
+are the output logits from the model,
+𝒟
+i
+test
+\mathcal{D}^{\text{test}}_{i}
+is the test set for the
+i
+i
+-th task, and
+ℒ
+CE
+\mathcal{L}_{\text{CE}}
+is the standard cross-entropy loss. A successful CIL model needs to be plastic enough to learn new classes from
+𝒟
+t
+\mathcal{D}_{t}
+while remaining stable to avoid forgetting the old classes in
+𝒴
+t
+−
+1
+\mathcal{Y}_{t-1}
+.
+PTM-based CIL with Task-Specific Adapters.
+Our method is based on the modern PTM-based CIL framework. In this framework, a large pre-trained model, like a ViT
+[
+9
+]
+, is used as a fixed backbone. For each new task, only a small, lightweight adapter module is trained. This partitions the trainable parameters
+θ
+t
+\theta_{t}
+into a set of task-specific adapters,
+𝒜
+t
+\mathcal{A}_{t}
+, and a classifier that is updated for new classes.
+Following standard practice
+[
+49
+,
+39
+]
+, adapters are small bottleneck modules inserted into each Transformer block of the PTM. An adapter is usually added in parallel to the MLP layer. For an input feature
+𝐱
+i
+∈
+ℝ
+d
+\mathbf{x}_{i}\in\mathbb{R}^{d}
+to the MLP, the forward pass with an adapter is computed as:
+𝐱
+o
+=
+MLP
+​
+(
+𝐱
+i
+)
++
+ReLU
+​
+(
+𝐱
+i
+​
+W
+down
+)
+​
+W
+up
+,
+\displaystyle\mathbf{x}_{o}=\text{MLP}(\mathbf{x}_{i})+\text{ReLU}(\mathbf{x}_{i}W_{\text{down}})W_{\text{up}},
+(2)
+where
+𝐱
+o
+∈
+ℝ
+d
+\mathbf{x}_{o}\in\mathbb{R}^{d}
+is the output. The adapter consists of a down-projection matrix
+W
+down
+∈
+ℝ
+d
+×
+r
+W_{\text{down}}\in\mathbb{R}^{d\times r}
+and an up-projection matrix
+W
+up
+∈
+ℝ
+r
+×
+d
+W_{\text{up}}\in\mathbb{R}^{r\times d}
+, where the bottleneck dimension
+r
+r
+is much smaller than
+d
+d
+. For each new task
+t
+t
+, a new adapter
+𝒜
+t
+=
+{
+W
+down
+(
+l
+,
+t
+)
+,
+W
+up
+(
+l
+,
+t
+)
+}
+l
+=
+1
+L
+\mathcal{A}_{t}=\{W_{\text{down}}^{(l,t)},W_{\text{up}}^{(l,t)}\}_{l=1}^{L}
+is initialized and trained.
+To reduce interference between different task adapters, the training process for
+𝒜
+t
+\mathcal{A}_{t}
+on task
+𝒟
+t
+\mathcal{D}_{t}
+combines two loss functions. The first is the standard cross-entropy classification loss,
+ℒ
+cls
+\mathcal{L}_{\text{cls}}
+, which is computed over all classes seen so far,
+𝒴
+t
+\mathcal{Y}_{t}
+:
+ℒ
+cls
+=
+−
+1
+N
+t
+∑
+(
+𝐱
+,
+y
+)
+∈
+𝒟
+t
+log
+exp
+⁡
+(
+𝐰
+y
+⊤
+​
+ϕ
+​
+(
+𝐱
+,
+𝒜
+t
+)
+)
+∑
+c
+∈
+𝒴
+t
+exp
+⁡
+(
+𝐰
+c
+⊤
+​
+ϕ
+​
+(
+𝐱
+,
+𝒜
+t
+)
+)
+.
+\mathcal{L}_{\text{cls}}=-\frac{1}{N_{t}}\sum_{(\mathbf{x},y)\in\mathcal{D}_{t}}\log\frac{\exp(\mathbf{w}_{y}^{\top}\phi(\mathbf{x};\mathcal{A}_{t}))}{\sum_{c\in\mathcal{Y}_{t}}\exp(\mathbf{w}_{c}^{\top}\phi(\mathbf{x};\mathcal{A}_{t}))}.
+(3)
+Here,
+ϕ
+⁡
+(
+𝐱
+,
+𝒜
+t
+)
+\phi(\mathbf{x};\mathcal{A}_{t})
+is the feature vector produced by the model with the new adapter
+𝒜
+t
+\mathcal{A}_{t}
+, and
+𝐰
+y
+\mathbf{w}_{y}
+is the classifier weight for class
+y
+y
+. The second loss is an orthogonality regularization term,
+ℒ
+orth
+\mathcal{L}_{\text{orth}}
+, which encourages the up-projection matrix of the new adapter to be orthogonal to those of all previous adapters:
+ℒ
+orth
+=
+∑
+l
+=
+1
+L
+∑
+i
+=
+1
+t
+−
+1
+‖
+W
+up
+(
+l
+,
+t
+)
+⋅
+(
+W
+up
+(
+l
+,
+i
+)
+)
+⊤
+‖
+F
+,
+\displaystyle\mathcal{L}_{\text{orth}}=\sum_{l=1}^{L}\sum_{i=1}^{t-1}\left\|{W_{\text{up}}^{(l,t)}}\cdot{(W_{\text{up}}^{(l,i)})}^{\top}\right\|_{F},
+(4)
+where
+W
+up
+(
+l
+,
+t
+)
+W_{\text{up}}^{(l,t)}
+is the up-projection matrix of the adapter in the
+l
+l
+-th layer for the current task
+t
+t
+, and
+∥
+⋅
+∥
+F
+\|\cdot\|_{F}
+denotes the Frobenius norm. The overall loss for training the adapter
+𝒜
+t
+\mathcal{A}_{t}
+is a weighted sum of these two components:
+ℒ
+=
+ℒ
+cls
++
+λ
+​
+ℒ
+orth
+,
+\displaystyle\mathcal{L}=\mathcal{L}_{\text{cls}}+\lambda\mathcal{L}_{\text{orth}},
+(5)
+where
+λ
+\lambda
+is a hyperparameter that balances the two objectives.
+Figure 2
+:
+Overview of the SAEF.
+Our method organizes individually trained task adapters into a structured knowledge hierarchy.
+(1) Stage 1: Conceptual Clustering.
+Based on semantic prototypes, tasks are grouped into high-level conceptual clusters (e.g., ’Animal’, ’Vehicle’).
+(2) Stage 2: Hierarchical Construction.
+Within each cluster, a balanced expert tree is built via a bottom-up process of recursively fusing the most visually similar nodes. The roots of these trees are then merged to form a single Global Expert.
+(3) Stage 3: Adaptive Inference.
+For a given input, SAEF performs a parallel, multi-path search to dynamically activate a set of relevant experts. The final prediction is derived from an entropy-guided fusion of their outputs.
+3.2
+Our Method: Semantic-guided Adaptive Expert Forest
+Our method begins by following the standard PTM-based CIL paradigm, where a separate, task-specific adapter is trained for each incremental task using the objective in Eq. (
+5
+). However, instead of treating the resulting set of adapters as a simple, flat collection during inference, we propose the Semantic-guided Adaptive Expert Forest (SAEF). SAEF is a method that organizes these isolated adapters into a structured, hierarchical knowledge base as new tasks are learned. This process consists of three main stages, as illustrated in Figure
+2
+:
+Conceptual Clustering
+,
+Hierarchical Construction
+, and
+Adaptive Inference
+. We describe each stage in detail below.
+Conceptual Clustering.
+Recognizing that incremental tasks often fall into distinct conceptual domains (e.g., distinguishing ’animals’ from ’vehicles’), the first stage of SAEF partitions the set of all
+T
+T
+learned tasks into semantically coherent groups. To achieve this, we first define two complementary prototypes for each task
+t
+t
+: a semantic prototype
+𝐩
+t
+s
+\mathbf{p}_{t}^{\text{s}}
+and a visual prototype
+𝐩
+t
+f
+\mathbf{p}_{t}^{\text{f}}
+. Semantic prototypes are derived using a pre-trained and frozen text encoder, denoted as
+g
+t
+g_{t}
+from CLIP
+[
+29
+]
+. For each class name
+c
+c
+belonging to a task, we construct a corresponding text prompt
+t
+c
+t_{c}
+using the template ”a photo of a [CLASS]”. The semantic prototype for task
+t
+t
+is then the mean of these text embeddings:
+𝐩
+t
+s
+=
+1
+|
+𝒞
+t
+|
+​
+∑
+c
+∈
+𝒞
+t
+g
+t
+​
+(
+t
+c
+)
+.
+\mathbf{p}_{t}^{\text{s}}=\frac{1}{|\mathcal{C}_{t}|}\sum_{c\in\mathcal{C}_{t}}g_{t}(t_{c}).
+(6)
+Visual prototypes are extracted using the PTM’s feature extractor
+ϕ
+\phi
+, in conjunction with the adapter from the first incremental task
+𝒜
+1
+\mathcal{A}_{1}
+. We use this combination
+ϕ
+⁡
+(
+⋅
+,
+𝒜
+1
+)
+\phi(\cdot;\mathcal{A}_{1})
+, because
+𝒜
+1
+\mathcal{A}_{1}
+helps to adapt the general pre-trained features to the specific downstream domain, effectively bridging the domain gap. The visual prototype for task
+t
+t
+is the mean feature vector of its training samples:
+𝐩
+t
+f
+=
+1
+|
+𝒟
+t
+|
+​
+∑
+𝐱
+i
+∈
+𝒟
+t
+ϕ
+⁡
+(
+𝐱
+i
+,
+𝒜
+1
+)
+.
+\mathbf{p}_{t}^{\text{f}}=\frac{1}{|\mathcal{D}_{t}|}\sum_{\mathbf{x}_{i}\in\mathcal{D}_{t}}\phi(\mathbf{x}_{i};\mathcal{A}_{1}).
+(7)
+With the semantic prototypes
+{
+𝐩
+t
+s
+}
+t
+=
+1
+T
+\{\mathbf{p}_{t}^{\text{s}}\}_{t=1}^{T}
+collected, we apply the K-Means algorithm to partition the set of task indices
+{
+1
+,
+…
+,
+T
+}
+\{1,\ldots,T\}
+into
+K
+K
+conceptual clusters,
+{
+G
+1
+,
+…
+,
+G
+K
+}
+\{G_{1},\ldots,G_{K}\}
+. The optimal number of clusters is determined automatically by selecting the value that maximizes the average silhouette score
+[
+33
+]
+over a predefined search range. This clustering process establishes the ’forest’ structure of SAEF. Each cluster
+G
+k
+G_{k}
+provides the initial set of task adapters that will be structured into a distinct ’tree’ in the
+Hierarchical Construction
+stage, and the visual prototypes
+𝐩
+t
+f
+\mathbf{p}_{t}^{\text{f}}
+are used to guide this process.
+Hierarchical Construction.
+The initial clustering provides a coarse-grained organization of tasks. To enable more effective, fine-grained knowledge transfer, this second stage constructs a balanced binary tree of experts for each conceptual cluster
+G
+k
+G_{k}
+, and then merges their roots into a single global expert. This transforms the initially unstructured collection of adapters into a unified, multi-level hierarchy.
+For each cluster
+G
+k
+G_{k}
+, we start with a set of leaf experts, where each expert corresponds to a single task
+t
+∈
+G
+k
+t\in G_{k}
+and holds its adapter parameters
+θ
+t
+∈
+ℝ
+D
+\theta_{t}\in\mathbb{R}^{D}
+and visual prototype
+𝐩
+t
+f
+\mathbf{p}_{t}^{\text{f}}
+. The tree is built using a bottom-up, iterative process. At each step, we find the two most similar experts in the current set by computing the cosine similarity between their visual prototypes:
+sim
+​
+(
+i
+,
+j
+)
+=
+𝐩
+i
+f
+⊤
+​
+𝐩
+j
+f
+‖
+𝐩
+i
+f
+‖
+2
+​
+‖
+𝐩
+j
+f
+‖
+2
+,
+\text{sim}(i,j)=\frac{{\mathbf{p}_{i}^{\text{f}}}^{\top}\mathbf{p}_{j}^{\text{f}}}{\|\mathbf{p}_{i}^{\text{f}}\|_{2}\|\mathbf{p}_{j}^{\text{f}}\|_{2}},
+(8)
+where
+∥
+⋅
+∥
+2
+\|\cdot\|_{2}
+denotes the L2-norm. Once the most similar pair is identified, a new parent expert is created. The parent’s parameter vector,
+θ
+p
+∈
+ℝ
+D
+\theta_{p}\in\mathbb{R}^{D}
+, is formed by merging the parameters of its two children,
+θ
+i
+\theta_{i}
+and
+θ
+j
+\theta_{j}
+, using a vectorized operation designed to preserve the dominant signal from both:
+θ
+p
+←
+sign
+​
+(
+θ
+i
++
+θ
+j
+)
+⊙
+max
+⁡
+(
+|
+θ
+i
+|
+,
+|
+θ
+j
+|
+)
+,
+\theta_{p}\leftarrow\text{sign}(\theta_{i}+\theta_{j})\odot\max(|\theta_{i}|,|\theta_{j}|),
+(9)
+where
+sign
+​
+(
+⋅
+)
+\text{sign}(\cdot)
+is the element-wise sign function,
+|
+⋅
+|
+|\cdot|
+and
+max
+⁡
+(
+⋅
+,
+⋅
+)
+\max(\cdot,\cdot)
+are element-wise operations for absolute value and maximum, and
+⊙
+\odot
+denotes the Hadamard product. The visual prototype for the new parent is computed as a weighted average of its children’s prototypes, with weights proportional to the number of original leaf tasks each child represents. The two child experts are then replaced by their new parent in the set. This process continues until only a single root expert,
+R
+k
+R_{k}
+, remains for the cluster. The detailed procedure for prototype merging and managing the set of experts is provided in Appendix
+A.1
+.
+Finally, to create a single entry point for inference, we merge the
+K
+K
+tree roots into one global root expert
+R
+G
+R_{G}
+. The parameters of this global root,
+θ
+G
+∈
+ℝ
+D
+\theta_{G}\in\mathbb{R}^{D}
+, are formed using a vectorized operation that captures both the consensus and the maximum signal strength from all trees:
+θ
+G
+←
+sign
+​
+(
+∑
+k
+=
+1
+K
+θ
+R
+k
+)
+⊙
+max
+k
+∈
+{
+1
+,
+…
+,
+K
+}
+⁡
+|
+θ
+R
+k
+|
+,
+\theta_{G}\leftarrow\text{sign}\left(\sum_{k=1}^{K}\theta_{R_{k}}\right)\odot\max_{k\in\{1,\ldots,K\}}|\theta_{R_{k}}|,
+(10)
+where
+sign
+​
+(
+⋅
+)
+\text{sign}(\cdot)
+is the element-wise sign function,
+max
+k
+\max_{k}
+finds the element-wise maximum across the
+K
+K
+root vectors, and
+⊙
+\odot
+denotes the Hadamard product. This completes the
+Hierarchical Construction
+of the full SAEF hierarchy.
+Adaptive Inference.
+SAEF uses a dynamic inference strategy to classify any given input
+x
+x
+. The strategy finds an optimal path in each of the
+K
+K
+trees and then fuses the predictions from all experts along these paths.
+For any expert in the hierarchy, represented by its adapter
+𝒜
+n
+\mathcal{A}_{n}
+, we first compute its class-wise logits for a given input
+x
+x
+. Specifically, the logit for each class
+c
+∈
+𝒴
+T
+c\in\mathcal{Y}_{T}
+is computed as
+s
+n
+​
+(
+c
+)
+=
+𝐰
+c
+⊤
+​
+ϕ
+​
+(
+x
+,
+𝒜
+n
+)
+s_{n}(c)=\mathbf{w}_{c}^{\top}\phi(x;\mathcal{A}_{n})
+, where
+𝐰
+c
+\mathbf{w}_{c}
+is the classifier weight for class
+c
+c
+. These logits are then transformed into a predictive distribution
+𝐳
+n
+\mathbf{z}_{n}
+via the softmax function:
+z
+n
+​
+(
+c
+)
+=
+exp
+⁡
+(
+s
+n
+​
+(
+c
+)
+)
+∑
+j
+∈
+𝒴
+T
+exp
+⁡
+(
+s
+n
+​
+(
+j
+)
+)
+.
+z_{n}(c)=\frac{\exp(s_{n}(c))}{\sum_{j\in\mathcal{Y}_{T}}\exp(s_{n}(j))}.
+(11)
+The expert’s predictive confidence is inversely measured by the entropy of this distribution:
+H
+(
+z
+n
+)
+=
+−
+∑
+c
+∈
+𝒴
+T
+z
+n
+(
+c
+)
+log
+z
+n
+(
+c
+)
+.
+H(z_{n})=-\sum_{c\in\mathcal{Y}_{T}}z_{n}(c)\log z_{n}(c).
+(12)
+The inference process begins with a parallel search, performed independently for each of the
+K
+K
+trees. Starting from each tree’s root, the search path follows the child expert that shows lower predictive entropy for the given input. This recursive selection defines an optimal inference path
+𝒫
+k
+\mathcal{P}_{k}
+from root to leaf for each tree. Further details on this entropy-guided selection process are provided in Appendix
+A.2
+.
+The final prediction is derived from an activated set of experts
+ℰ
+\mathcal{E}
+which includes the global root
+R
+G
+R_{G}
+and all experts from the
+K
+K
+identified paths:
+ℰ
+=
+{
+R
+G
+}
+∪
+⋃
+k
+=
+1
+K
+𝒫
+k
+.
+\mathcal{E}=\{R_{G}\}\cup\bigcup_{k=1}^{K}\mathcal{P}_{k}.
+(13)
+The fusion weight
+w
+n
+w_{n}
+for each activated expert is based on its confidence (negative entropy), normalized across the set with a temperature
+τ
+\tau
+:
+w
+n
+=
+exp
+(
+−
+H
+(
+z
+n
+)
+/
+τ
+)
+∑
+j
+∈
+ℰ
+exp
+(
+−
+H
+(
+z
+j
+)
+/
+τ
+)
+.
+w_{n}=\frac{\exp(-H(z_{n})/\tau)}{\sum_{j\in\mathcal{E}}\exp(-H(z_{j})/\tau)}.
+(14)
+The final predictive distribution
+z
+f
+z_{f}
+is the weighted average of the predictions from all activated experts:
+z
+f
+=
+∑
+n
+∈
+ℰ
+w
+n
+​
+𝐳
+n
+.
+z_{f}=\sum_{n\in\mathcal{E}}w_{n}\mathbf{z}_{n}.
+(15)
+This strategy allows SAEF to use knowledge from different levels of the hierarchy, weighting each expert’s opinion by its confidence to make a robust final prediction.
+Table 1
+:
+Average (
+𝒜
+¯
+\bar{\mathcal{A}}
+) and final task (
+𝒜
+T
+\mathcal{A}_{T}
+) Top-1 accuracy comparison on four challenging class-incremental learning benchmarks.
+All methods use ViT-B/16-IN21K as the backbone and are evaluated in the exemplar-free setting.
+The best performance in each column is highlighted in
+bold
+.
+Method
+CIFAR-100
+ImageNet-R
+ImageNet-A
+ObjectNet
+𝒜
+¯
+\bar{\mathcal{A}}
+(%)
+𝒜
+T
+\mathcal{A}_{T}
+(%)
+𝒜
+¯
+\bar{\mathcal{A}}
+(%)
+𝒜
+T
+\mathcal{A}_{T}
+(%)
+𝒜
+¯
+\bar{\mathcal{A}}
+(%)
+𝒜
+T
+\mathcal{A}_{T}
+(%)
+𝒜
+¯
+\bar{\mathcal{A}}
+(%)
+𝒜
+T
+\mathcal{A}_{T}
+(%)
+Finetune
+38.90
+20.17
+32.32
+22.78
+24.28
+14.51
+19.14
+8.73
+L2P
+[
+44
+]
+85.94
+79.93
+75.46
+69.77
+49.39
+41.71
+63.78
+52.19
+DualPrompt
+[
+43
+]
+87.87
+81.15
+73.10
+67.18
+53.71
+41.67
+59.27
+49.33
+CODA-Prompt
+[
+36
+]
+89.11
+81.96
+77.97
+72.27
+53.54
+42.73
+66.07
+53.29
+SLCA
+[
+47
+]
+92.49
+88.55
+81.17
+77.00
+68.66
+58.74
+72.55
+61.30
+SSIAT
+[
+40
+]
+93.52
+90.07
+83.20
+78.85
+70.83
+62.23
+73.65
+62.45
+SimpleCIL
+[
+49
+]
+87.57
+81.26
+61.26
+54.55
+59.77
+48.91
+65.45
+53.59
+APER + Adapter
+[
+49
+]
+90.65
+85.15
+75.82
+67.95
+60.47
+49.37
+67.18
+55.24
+RanPAC
+[
+26
+]
+94.00
+90.62
+82.98
+77.94
+69.32
+61.82
+72.76
+62.02
+EASE
+[
+50
+]
+91.51
+85.80
+81.74
+76.17
+65.34
+55.04
+70.84
+57.86
+MOS
+[
+39
+]
+93.30
+89.25
+82.96
+77.93
+67.08
+56.22
+74.69
+63.62
+SAEF (Ours)
+94.53
+90.60
+84.54
+80.02
+73.39
+64.91
+76.38
+66.58
+(a)
+CIFAR-100 (20 tasks of 5 classes)
+(b)
+ImageNet-R (10 tasks of 20 classes)
+(c)
+ObjectNet (10 tasks of 15 classes)
+Figure 3
+:
+Comparison against rehearsal-based methods.
+Average accuracy (
+𝒜
+¯
+\bar{\mathcal{A}}
+) is plotted as a function of the number of learned tasks. Rehearsal-based methods use 20 exemplars per class.
+Despite being an exemplar-free method, SAEF consistently outperforms strong rehearsal-based competitors across multiple benchmarks, and the performance gap often widens over time, demonstrating superior knowledge retention and scalability.
+4
+Experiments
+4.1
+Implementation Details
+Datasets and Task Protocols.
+To rigorously evaluate SAEF’s ability to manage knowledge across diverse domains, we adopt the comprehensive evaluation framework proposed by
+[
+49
+]
+. Our evaluation is conducted on four key benchmarks: CIFAR-100
+[
+20
+]
+, ImageNet-R
+[
+13
+]
+, ImageNet-A
+[
+14
+]
+, and ObjectNet
+[
+3
+]
+. This selection deliberately includes not only standard CIL benchmarks but also challenging datasets (ImageNet-A, ObjectNet), which exhibit significant domain shifts relative to the ImageNet pre-training data. For task partitioning, CIFAR-100 (100 classes) is divided into 20 incremental tasks of 5 classes each. The other three datasets, ImageNet-R, ImageNet-A, and ObjectNet, each with 200 classes, are consistently partitioned into 10 tasks of 20 classes each. For a fair and reproducible evaluation, we adopt the protocol from
+[
+31
+]
+, where class orders are shuffled using a fixed random seed of 1993 before the data is partitioned into tasks.
+Training Details.
+All models are implemented in PyTorch
+[
+28
+]
+, leveraging the PILOT codebase
+[
+38
+]
+for reproducibility. The experiments were conducted on NVIDIA GeForce RTX 2080 Ti GPUs. To ensure a fair comparison, all methods utilize a shared backbone: the ViT-B/16 model pre-trained on ImageNet-21K.
+For SAEF, each incremental task is trained for 20 epochs with a batch size of 48. Optimization is performed using an SGD optimizer with momentum, with an initial learning rate of 0.01 that decays following a cosine annealing schedule. Following the training of all adapters, we configure SAEF’s structure and inference. The number of conceptual clusters (
+K
+K
+) is automatically determined by optimizing the average silhouette score
+[
+33
+]
+over a range of potential values. The fusion temperature
+τ
+\tau
+(Eq. (
+14
+)) is set to a default value of 1.0. To maintain consistency across all adapter-based methods, including our own, the intermediate projection dimension for all adapters is fixed at 16.
+Comparison Methods.
+To validate the effectiveness of our method, we benchmark SAEF against a comprehensive suite of competing methods. Our primary comparison group consists of prominent PTM-based CIL methods, including L2P
+[
+44
+]
+, DualPrompt
+[
+43
+]
+, CODA-Prompt
+[
+36
+]
+, RanPAC
+[
+26
+]
+, SimpleCIL
+[
+49
+]
+, APER
+[
+49
+]
+, SLCA
+[
+47
+]
+, SSIAT
+[
+40
+]
+, EASE
+[
+50
+]
+, and MOS
+[
+39
+]
+. Additionally, we include several influential rehearsal-based methods that have been adapted for the PTM paradigm: FOSTER
+[
+41
+]
+, MEMO
+[
+51
+]
+, and iCaRL
+[
+31
+]
+. Finally, a ’Finetune’ baseline, which sequentially updates the entire PTM on each new task, is included to establish a performance lower bound and quantify the effects of catastrophic forgetting.
+Evaluation Metrics.
+We adhere to the standard CIL evaluation protocol from
+[
+31
+]
+. Let
+A
+i
+,
+j
+A_{i,j}
+denote the accuracy on task
+j
+j
+after the model has trained up to task
+i
+i
+. We report two primary metrics to assess performance. The Average Accuracy (
+𝒜
+¯
+\bar{\mathcal{A}}
+) quantifies the model’s performance throughout the entire learning sequence, calculated as the average of mean accuracies after each task is completed:
+𝒜
+¯
+=
+1
+T
+​
+∑
+t
+=
+1
+T
+(
+1
+t
+​
+∑
+j
+=
+1
+t
+A
+t
+,
+j
+)
+\bar{\mathcal{A}}=\frac{1}{T}\sum_{t=1}^{T}\left(\frac{1}{t}\sum_{j=1}^{t}A_{t,j}\right)
+. The Final Accuracy (
+𝒜
+T
+\mathcal{A}_{T}
+) measures the average performance across all tasks once the full training sequence has concluded:
+𝒜
+T
+=
+1
+T
+​
+∑
+j
+=
+1
+T
+A
+T
+,
+j
+\mathcal{A}_{T}=\frac{1}{T}\sum_{j=1}^{T}A_{T,j}
+. Higher values for both metrics indicate a more effective CIL method.
+4.2
+Main Results
+We first evaluate SAEF against SOTA exemplar-free methods, with detailed results in Table
+1
+. Our method achieves the highest scores in both average accuracy (
+𝒜
+¯
+\bar{\mathcal{A}}
+) and final task accuracy (
+𝒜
+T
+\mathcal{A}_{T}
+) across all four benchmarks. SAEF surpasses not only strong prompt-based methods like CODA-Prompt but also SOTA adapter-based competitors. For instance, on the challenging ImageNet-R benchmark, SAEF achieves an average accuracy of 84.54%, outperforming the strongest competitor SSIAT by a significant 1.34%. This advantage stems from SAEF’s ability to organize experts into a semantic hierarchy, which facilitates targeted positive transfer among conceptually related tasks while preventing negative interference from irrelevant ones. In contrast, methods like MOS and EASE, which treat adapters as an isolated collection, consider all prior knowledge equally relevant. This flat, unstructured method leads to suboptimal and noisy predictions, as evidenced by their performance gaps.
+We further compare SAEF with strong rehearsal-based methods to test its scalability, even though SAEF operates in the more difficult exemplar-free setting. We follow
+[
+50
+]
+to set the exemplar number to 20 per class for these methods. As shown in Figure
+3
+, SAEF still outperforms these powerful competitors. On the long 10-task ObjectNet sequence, SAEF’s final average accuracy reaches 76.38%, surpassing the strong FOSTER baseline by a substantial 7.3%. Critically, the performance gap between SAEF and rehearsal-based methods widens as more tasks are learned. This result strongly suggests that intelligently structuring and retrieving knowledge is a more scalable strategy for long-sequence CIL than relying on instance replay.
+(a)
+Ablation of SAEF Components
+(b)
+Analysis of Forest Structure
+Figure 4
+:
+Ablation and structural analysis of SAEF on ImageNet-R.
+Performance is measured by average accuracy (
+𝒜
+¯
+\bar{\mathcal{A}}
+).
+(a)
+Ablation study demonstrating the progressive contribution of each core component.
+(b)
+Structural analysis validating our balanced forest structure (
+K
+=
+2
+K=2
+) over less structured alternatives.
+4.3
+Ablation Study
+To dissect the contribution of each key component in SAEF, we conduct a progressive ablation study on ImageNet-R, with results visualized in Figure
+4
+(a). Our analysis begins with a ’Baseline’ that trains task-specific adapters and selects the final prediction via the maximum logit from a full ensemble. Building upon this, we incrementally propose our components.
+First, organizing the flat adapter collection into a single hierarchical tree (’w/ Hierarchical Construction’) yields an immediate performance uplift. This demonstrates the inherent value of structured knowledge representation, as it allows for the creation of generalized experts at internal nodes, even without semantic pre-sorting. Next, incorporating our entropy-driven adaptive search and fusion strategy (’w/ Adaptive Inference’) delivers a more substantial gain. This highlights the advantage of dynamically activating only the most relevant experts for a given sample, effectively pruning noisy or irrelevant knowledge paths.
+Finally, the full SAEF model is formed by introducing the initial stage of semantic clustering (’w/ Conceptual Clustering’), which achieves the highest performance. This final improvement reveals a crucial synergy: pre-grouping tasks into broad conceptual domains (e.g., ’animals’, ’vehicles’) prevents semantically disparate experts from being forced into the same local hierarchy. This initial partitioning reduces noise and enhances the precision of the subsequent fine-grained knowledge fusion within each tree. Each component is thus shown to play a distinct and synergistic role, culminating in the robust performance of the full SAEF method.
+4.4
+Discussion
+Impact of the Expert Forest’s Structure.
+We analyze the impact of key structural design choices on SAEF’s performance, with results on ImageNet-R presented in Figure
+4
+(b). Our analysis first examines the number of conceptual clusters,
+K
+K
+. The results show that our default configuration (
+K
+=
+2
+K=2
+), automatically determined via the silhouette coefficient, achieves the optimal performance. Deviating from this, both a single monolithic tree (
+K
+=
+1
+K=1
+) and a completely ’Flat Structure’ (
+K
+=
+T
+K=T
+, where each task is its own cluster) impair performance. This suggests that knowledge can be organized in ways that are either too coarse or too fragmented, empirically validating our automated strategy for identifying the ideal number of conceptual domains.
+We also evaluate an alternative tree construction strategy: ’Unlimited Depth’, which greedily merges the two most similar nodes regardless of their position in the hierarchy. This method yields the poorest results, confirming that merging concepts from disparate hierarchical levels introduces significant semantic noise and disrupts meaningful knowledge abstraction. In contrast, our method’s systematic, bottom-up construction preserves the semantic hierarchy by prioritizing merges between nodes at the same hierarchical level. From an efficiency standpoint, both the ’Flat Structure’ and ’Unlimited Depth’ strategies necessitate a search over all
+N
+N
+experts, resulting in
+O
+⁡
+(
+N
+)
+O(N)
+inference complexity. Our balanced forest structure, however, enables a much faster logarithmic search within each tree (
+O
+⁡
+(
+log
+⁡
+N
+)
+O(\log N)
+). This dual superiority in both accuracy and efficiency underscores the critical role of SAEF’s carefully designed hierarchical organization.
+Table 2
+:
+Robustness analysis of the fusion temperature
+τ
+\tau
+on ImageNet-R. The optimal results are marked in bold.
+Temperature (
+τ
+\tau
+)
+1.0
+0.5
+0.2
+0.1
+𝒜
+¯
+\bar{\mathcal{A}}
+(%)
+84.54
+84.49
+84.32
+84.31
+𝒜
+T
+\mathcal{A}_{T}
+(%)
+80.02
+80.08
+79.78
+79.87
+Table 3
+:
+Analysis of the trade-off between inference efficiency and average accuracy by varying the entropy threshold
+τ
+e
+\tau_{e}
+on CIFAR-100.
+The ’Flat Structure’ baseline represents a non-hierarchical method where all task adapters are queried.
+The setting of
+τ
+e
+=
+1.0
+\tau_{e}=1.0
+(highlighted in
+bold
+) strikes an excellent balance.
+Configuration
+𝒜
+¯
+\bar{\mathcal{A}}
+(%)
+↑
+\uparrow
+Avg. Depth
+↓
+\downarrow
+Theo. Speedup
+↑
+\uparrow
+Time (ms)
+↓
+\downarrow
+Flat Structure (Baseline)
+94.44
+–
+1.00
+×
+\times
+2775.43
+SAEF (
+τ
+e
+=
+0.0
+\tau_{e}=0.0
+)
+94.53
+4.04
+2.20
+×
+\times
+1346.51
+SAEF (
+τ
+e
+=
+1.0
+\tau_{e}=1.0
+)
+94.24
+1.19
+5.92
+×
+\times
+500.39
+SAEF (
+τ
+e
+=
+2.0
+\tau_{e}=2.0
+)
+93.96
+1.00
+6.67
+×
+\times
+443.00
+Parameter Robustness.
+SAEF’s fusion mechanism involves a single key hyperparameter: the temperature
+τ
+\tau
+in the entropy-weighted softmax (Eq. (
+14
+)), which controls the sharpness of the weighting distribution. To evaluate its robustness, we conducted an analysis on the challenging ImageNet-R benchmark by varying
+τ
+\tau
+across a range of values:
+{
+1.0
+,
+0.5
+,
+0.2
+,
+0.1
+}
+\{1.0,0.5,0.2,0.1\}
+. The results, presented in Table
+2
+, demonstrate that SAEF’s performance is remarkably stable.
+Trade-off between Inference Efficiency and Accuracy.
+A key advantage of SAEF’s hierarchical structure is the ability to control the trade-off between computational cost and predictive accuracy during inference. This is achieved via an entropy threshold,
+τ
+e
+\tau_{e}
+, which enables an early-exit mechanism: the search down a path terminates if the current node’s predictive entropy falls below
+τ
+e
+\tau_{e}
+. A higher threshold encourages more frequent early exits, thereby reducing the average search depth and accelerating inference. As shown in Table
+3
+, this mechanism allows for significant efficiency gains. Compared to the ’Flat Structure’ baseline, which must query all
+N
+N
+task adapters, SAEF offers a flexible spectrum of operating points. Setting
+τ
+e
+=
+1.0
+\tau_{e}=1.0
+strikes an excellent balance: it reduces the average search depth to just 1.19 and achieves a nearly 6
+×
+\times
+theoretical speedup, while incurring only a negligible 0.29% drop in accuracy. Notably, the measured inference time reduction closely aligns with our theoretical speedup calculations (see Appendix
+C
+), confirming the practical benefits of our method. This demonstrates that for many samples, high-level, generalized experts in the upper tiers of the forest are sufficient for confident prediction, making SAEF not only effective but also highly practical for real-world deployment.
+Figure 5
+:
+efficiency and performance evaluation on CIFAR-100.
+We plot average accuracy (
+𝒜
+¯
+\bar{\mathcal{A}}
+) against Training Throughput (samples/s).
+The size of each bubble is proportional to the Inference Time (ms/sample).
+The ideal method occupies the top-right corner with the smallest bubble, representing high accuracy, fast training, and rapid inference.
+Efficiency Evaluation.
+To provide a holistic efficiency and performance comparison, we present a multi-faceted analysis in Figure
+5
+, benchmarked on CIFAR-100. Prompt-based methods like L2P and DualPrompt occupy the lower-left region, characterized by moderate training throughput and relatively fast inference (indicated by their smaller bubbles), albeit with lower accuracy. In contrast, adapter-based methods generally offer a compelling combination of high accuracy and efficient training throughput. However, a critical distinction emerges at inference time. Methods like EASE and MOS are hindered by severe inference latency, a direct consequence of their need to query most adapters in the pool to gather logits. This is reflected in their large bubble sizes, rendering them impractical for real-time applications.
+SAEF (
+τ
+e
+=
+1.0
+\tau_{e}=1.0
+) carves out a unique and highly desirable position in this landscape. It is firmly located in the coveted top-right corner, achieving the highest accuracy (94.24%) among all competitors while maintaining a high training throughput comparable to other leading adapter methods. Crucially, its adaptive inference strategy keeps its bubble size remarkably small, demonstrating an inference time that is over 5.5
+×
+\times
+faster than full-ensemble methods like EASE. This unique combination of SOTA accuracy, high training throughput, and rapid inference underscores SAEF’s superiority as a practical and scalable solution for real-world CIL scenarios.
+5
+Conclusion
+Effectively reusing knowledge in adapter-based CIL remains a significant challenge.
+While adapters prevent catastrophic forgetting, their treatment as an unstructured, flat collection leads to suboptimal, indiscriminate knowledge sharing.
+To address this, we proposed the SAEF, a method that shifts the focus from treating adapters as an isolated set to organizing them into a semantic hierarchy.
+SAEF operates by automatically constructing a forest of balanced expert trees, where tasks are grouped by semantic relatedness and progressively merged.
+This structure allows the model to perform targeted knowledge transfer by activating only relevant expert paths, preventing interference from conceptually distant tasks.
+Extensive experiments on major CIL benchmarks demonstrate that SAEF achieves superior accuracy over current SOTA methods, validating the effectiveness of hierarchical knowledge organization for CIL.
+References
+[1]
+R. Aljundi, F. Babiloni, M. Elhoseiny, M. Rohrbach, and T. Tuytelaars
+(2018)
+Memory aware synapses: learning what (not) to forget
+.
+In
+Proceedings of the European conference on computer vision
+,
+pp. 139–154
+.
+Cited by:
+§2.1
+.
+[2]
+R. Aljundi, M. Lin, B. Goujaud, and Y. Bengio
+(2019)
+Gradient based sample selection for online continual learning
+.
+Advances in neural information processing systems
+32
+.
+Cited by:
+§2.1
+.
+[3]
+A. Barbu, D. Mayo, J. Alverio, W. Luo, C. Wang, D. Gutfreund, J. Tenenbaum, and B. Katz
+(2019)
+Objectnet: a large-scale bias-controlled dataset for pushing the limits of object recognition models
+.
+NeurIPS
+32
+.
+Cited by:
+§4.1
+.
+[4]
+P. Buzzega, M. Boschini, A. Porrello, D. Abati, and S. Calderara
+(2020)
+Dark experience for general continual learning: a strong, simple baseline
+.
+Advances in neural information processing systems
+33
+,
+pp. 15920–15930
+.
+Cited by:
+§2.1
+.
+[5]
+H. Cha, J. Lee, and J. Shin
+(2021)
+Co2l: contrastive continual learning
+.
+In
+Proceedings of the IEEE/CVF International conference on computer vision
+,
+pp. 9516–9525
+.
+Cited by:
+§2.1
+.
+[6]
+A. Chaudhry, P. K. Dokania, T. Ajanthan, and P. H. Torr
+(2018)
+Riemannian walk for incremental learning: understanding forgetting and intransigence
+.
+In
+Proceedings of the European conference on computer vision
+,
+pp. 532–547
+.
+Cited by:
+§2.1
+.
+[7]
+A. Chaudhry, A. Gordo, P. Dokania, P. Torr, and D. Lopez-Paz
+(2021)
+Using hindsight to anchor past knowledge in continual learning
+.
+In
+Proceedings of the AAAI conference on artificial intelligence
+,
+Vol.
+35
+,
+pp. 6993–7001
+.
+Cited by:
+§2.1
+.
+[8]
+A. Chaudhry, M. Ranzato, M. Rohrbach, and M. Elhoseiny
+(2019)
+Efficient lifelong learning with a-gem
+.
+International Conference on Learning Representations
+.
+Cited by:
+§2.1
+.
+[9]
+A. Dosovitskiy, L. Beyer, A. Kolesnikov, D. Weissenborn, X. Zhai, T. Unterthiner, M. Dehghani, M. Minderer, G. Heigold, S. Gelly,
+et al.
+(2020)
+An image is worth 16x16 words: transformers for image recognition at scale
+.
+In
+ICLR
+,
+Cited by:
+§3.1
+.
+[10]
+S. Ebrahimi, F. Meier, R. Calandra, T. Darrell, and M. Rohrbach
+(2020)
+Adversarial continual learning
+.
+In
+Proceedings of the European conference on computer vision
+,
+pp. 386–402
+.
+Cited by:
+§2.1
+.
+[11]
+Z. Fan, R. Sarkar, Z. Jiang, T. Chen, K. Zou, Y. Cheng, C. Hao, Z. Wang,
+et al.
+(2022)
+M
+3
+{}^{3}
+vit: mixture-of-experts vision transformer for efficient multi-task learning with model-accelerator co-design
+.
+Advances in Neural Information Processing Systems
+35
+,
+pp. 28441–28457
+.
+Cited by:
+§2.2
+.
+[12]
+H. Hazimeh, Z. Zhao, A. Chowdhery, M. Sathiamoorthy, Y. Chen, R. Mazumder, L. Hong, and E. Chi
+(2021)
+Dselect-k: differentiable selection in the mixture of experts with applications to multi-task learning
+.
+Advances in Neural Information Processing Systems
+34
+,
+pp. 29335–29347
+.
+Cited by:
+§2.2
+.
+[13]
+D. Hendrycks, S. Basart, N. Mu, S. Kadavath, F. Wang, E. Dorundo, R. Desai, T. Zhu, S. Parajuli, M. Guo,
+et al.
+(2021)
+The many faces of robustness: a critical analysis of out-of-distribution generalization
+.
+In
+Proceedings of the IEEE/CVF international conference on computer vision
+,
+pp. 8340–8349
+.
+Cited by:
+§4.1
+.
+[14]
+D. Hendrycks, K. Zhao, S. Basart, J. Steinhardt, and D. Song
+(2021)
+Natural adversarial examples
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 15262–15271
+.
+Cited by:
+§4.1
+.
+[15]
+N. Ho, C. Yang, and M. I. Jordan
+(2022)
+Convergence rates for gaussian mixtures of experts
+.
+Journal of Machine Learning Research
+23
+(
+323
+),
+pp. 1–81
+.
+Cited by:
+§2.2
+.
+[16]
+T. Huai, J. Zhou, X. Wu, Q. Chen, Q. Bai, Z. Zhou, and L. He
+(2025)
+CL-moe: enhancing multimodal large language model with dual momentum mixture-of-experts for continual visual question answering
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 19608–19617
+.
+Cited by:
+§1
+.
+[17]
+R. A. Jacobs, M. I. Jordan, S. J. Nowlan, and G. E. Hinton
+(1991)
+Adaptive mixtures of local experts
+.
+Neural computation
+3
+(
+1
+),
+pp. 79–87
+.
+Cited by:
+§2.2
+.
+[18]
+Z. Ke, B. Liu, and X. Huang
+(2020)
+Continual learning of a mixed sequence of similar and dissimilar tasks
+.
+Advances in neural information processing systems
+33
+,
+pp. 18493–18504
+.
+Cited by:
+§2.1
+.
+[19]
+J. Kirkpatrick, R. Pascanu, N. Rabinowitz, J. Veness, G. Desjardins, A. A. Rusu, K. Milan, J. Quan, T. Ramalho, A. Grabska-Barwinska,
+et al.
+(2017)
+Overcoming catastrophic forgetting in neural networks
+.
+Proceedings of the national academy of sciences
+114
+(
+13
+),
+pp. 3521–3526
+.
+Cited by:
+§1
+.
+[20]
+A. Krizhevsky G. Hinton
+et al.
+(2009)
+Learning multiple layers of features from tiny images
+.
+Cited by:
+§4.1
+.
+[21]
+Q. Li, Y. Peng, and J. Zhou
+(2024)
+Fcs: feature calibration and separation for non-exemplar class incremental learning
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 28495–28504
+.
+Cited by:
+§2.1
+.
+[22]
+Z. Li and D. Hoiem
+(2017)
+Learning without forgetting
+.
+TPAMI
+40
+(
+12
+),
+pp. 2935–2947
+.
+Cited by:
+§1
+,
+§2.1
+.
+[23]
+H. Liu, B. Diao, W. Chen, and Y. Xu
+(2024)
+A resource-aware workload scheduling method for unbalanced gemms on gpus
+.
+The Computer Journal
+,
+pp. bxae110
+.
+Cited by:
+§1
+.
+[24]
+N. Loo, S. Swaroop, and R. E. Turner
+(2021)
+Generalized variational continual learning
+.
+International Conference on Learning Representations
+.
+Cited by:
+§2.1
+.
+[25]
+M. McCloskey and N. J. Cohen
+(1989)
+Catastrophic interference in connectionist networks: the sequential learning problem
+.
+In
+Psychology of learning and motivation
+,
+Vol.
+24
+,
+pp. 109–165
+.
+Cited by:
+§1
+.
+[26]
+M. D. McDonnell, D. Gong, A. Parvaneh, E. Abbasnejad, and A. Van den Hengel
+(2023)
+Ranpac: random projections and pre-trained models for continual learning
+.
+Advances in Neural Information Processing Systems
+36
+,
+pp. 12022–12053
+.
+Cited by:
+Table 1
+,
+§4.1
+.
+[27]
+M. D. McDonnell, D. Gong, A. Parvaneh, E. Abbasnejad, and A. van den Hengel
+(2024)
+Ranpac: random projections and pre-trained models for continual learning
+.
+NeurIPS
+36
+.
+Cited by:
+§2.2
+.
+[28]
+A. Paszke, S. Gross, F. Massa, A. Lerer, J. Bradbury, G. Chanan, T. Killeen, Z. Lin, N. Gimelshein, L. Antiga,
+et al.
+(2019)
+Pytorch: an imperative style, high-performance deep learning library
+.
+In
+NeurIPS
+,
+pp. 8026–8037
+.
+Cited by:
+§4.1
+.
+[29]
+A. Radford, J. W. Kim, C. Hallacy, A. Ramesh, G. Goh, S. Agarwal, G. Sastry, A. Askell, P. Mishkin, J. Clark,
+et al.
+(2021)
+Learning transferable visual models from natural language supervision
+.
+In
+International conference on machine learning
+,
+pp. 8748–8763
+.
+Cited by:
+§3.2
+.
+[30]
+S. Rebuffi, H. Bilen, and A. Vedaldi
+(2017)
+Learning multiple visual domains with residual adapters
+.
+NeurIPS
+30
+.
+Cited by:
+§1
+.
+[31]
+S. Rebuffi, A. Kolesnikov, G. Sperl, and C. H. Lampert
+(2017)
+Icarl: incremental classifier and representation learning
+.
+In
+CVPR
+,
+pp. 2001–2010
+.
+Cited by:
+Appendix D
+,
+§4.1
+,
+§4.1
+,
+§4.1
+.
+[32]
+J. Serra, D. Suris, M. Miron, and A. Karatzoglou
+(2018)
+Overcoming catastrophic forgetting with hard attention to the task
+.
+In
+International conference on machine learning
+,
+pp. 4548–4557
+.
+Cited by:
+§1
+,
+§2.1
+.
+[33]
+K. R. Shahapure and C. Nicholas
+(2020)
+Cluster quality analysis using silhouette score
+.
+In
+2020 IEEE 7th international conference on data science and advanced analytics (DSAA)
+,
+pp. 747–748
+.
+Cited by:
+§3.2
+,
+§4.1
+.
+[34]
+R. Shokri and V. Shmatikov
+(2015)
+Privacy-preserving deep learning
+.
+In
+Proceedings of the 22nd ACM SIGSAC conference on computer and communications security
+,
+pp. 1310–1321
+.
+Cited by:
+§2.1
+.
+[35]
+J. Smith, Y. Hsu, J. Balloch, Y. Shen, H. Jin, and Z. Kira
+(2021)
+Always be dreaming: a new approach for data-free class-incremental learning
+.
+In
+Proceedings of the IEEE/CVF international conference on computer vision
+,
+pp. 9374–9384
+.
+Cited by:
+§2.1
+.
+[36]
+J. S. Smith, L. Karlinsky, V. Gutta, P. Cascante-Bonilla, D. Kim, A. Arbelle, R. Panda, R. Feris, and Z. Kira
+(2023)
+CODA-prompt: continual decomposed attention-based prompting for rehearsal-free continual learning
+.
+In
+CVPR
+,
+pp. 11909–11919
+.
+Cited by:
+§1
+,
+§1
+,
+§2.2
+,
+Table 1
+,
+§4.1
+.
+[37]
+A. Soltoggio, E. Ben-Iwhiwhu, V. Braverman, E. Eaton, B. Epstein, Y. Ge, L. Halperin, J. How, L. Itti, M. A. Jacobs,
+et al.
+(2024)
+A collective ai via lifelong learning and sharing at the edge
+.
+Nature Machine Intelligence
+6
+(
+3
+),
+pp. 251–264
+.
+Cited by:
+§1
+.
+[38]
+H. Sun, D. Zhou, H. Ye, and D. Zhan
+(2023)
+PILOT: a pre-trained model-based continual learning toolbox
+.
+arXiv preprint arXiv:2309.07117
+.
+Cited by:
+§4.1
+.
+[39]
+H. Sun, D. Zhou, H. Zhao, L. Gan, D. Zhan, and H. Ye
+(2025)
+Mos: model surgery for pre-trained model-based class-incremental learning
+.
+In
+Proceedings of the AAAI Conference on Artificial Intelligence
+,
+Vol.
+39
+,
+pp. 20699–20707
+.
+Cited by:
+§A.3
+,
+§1
+,
+§2.2
+,
+§2.2
+,
+§3.1
+,
+Table 1
+,
+§4.1
+.
+[40]
+Y. Tan, Q. Zhou, X. Xiang, K. Wang, Y. Wu, and Y. Li
+(2024)
+Semantically-shifted incremental adapter-tuning is a continual vitransformer
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 23252–23262
+.
+Cited by:
+Table 1
+,
+§4.1
+.
+[41]
+F. Wang, D. Zhou, H. Ye, and D. Zhan
+(2022)
+Foster: feature boosting and compression for class-incremental learning
+.
+In
+European conference on computer vision
+,
+pp. 398–414
+.
+Cited by:
+§2.1
+,
+§4.1
+.
+[42]
+Z. Wang, T. Jian, K. Chowdhury, Y. Wang, J. Dy, and S. Ioannidis
+(2020)
+Learn-prune-share for lifelong learning
+.
+In
+2020 IEEE International Conference on Data Mining (ICDM)
+,
+pp. 641–650
+.
+Cited by:
+§2.1
+.
+[43]
+Z. Wang, Z. Zhang, S. Ebrahimi, R. Sun, H. Zhang, C. Lee, X. Ren, G. Su, V. Perot, J. Dy,
+et al.
+(2022)
+DualPrompt: complementary prompting for rehearsal-free continual learning
+.
+ECCV
+.
+Cited by:
+§1
+,
+§2.1
+,
+§2.2
+,
+§3.1
+,
+Table 1
+,
+§4.1
+.
+[44]
+Z. Wang, Z. Zhang, C. Lee, H. Zhang, R. Sun, X. Ren, G. Su, V. Perot, J. Dy, and T. Pfister
+(2022)
+Learning to prompt for continual learning
+.
+In
+CVPR
+,
+pp. 139–149
+.
+Cited by:
+§1
+,
+§2.2
+,
+§3.1
+,
+Table 1
+,
+§4.1
+.
+[45]
+C. Yang, Z. An, L. Huang, J. Bi, X. Yu, H. Yang, B. Diao, and Y. Xu
+(2024)
+CLIP-kd: an empirical study of clip model distillation
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 15952–15962
+.
+Cited by:
+§2.1
+.
+[46]
+L. Yu, B. Twardowski, X. Liu, L. Herranz, K. Wang, Y. Cheng, S. Jui, and J. v. d. Weijer
+(2020)
+Semantic drift compensation for class-incremental learning
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 6982–6991
+.
+Cited by:
+§2.1
+.
+[47]
+G. Zhang, L. Wang, G. Kang, L. Chen, and Y. Wei
+(2023)
+SLCA: slow learner with classifier alignment for continual learning on a pre-trained model
+.
+In
+ICCV
+,
+Cited by:
+§2.2
+,
+Table 1
+,
+§4.1
+.
+[48]
+T. Zhao, Z. Wang, A. Masoomi, and J. Dy
+(2022)
+Deep bayesian unsupervised lifelong learning
+.
+Neural Networks
+149
+,
+pp. 95–106
+.
+Cited by:
+§2.1
+.
+[49]
+D. Zhou, Z. Cai, H. Ye, D. Zhan, and Z. Liu
+(2024)
+Revisiting class-incremental learning with pre-trained models: generalizability and adaptivity are all you need
+.
+International Journal of Computer Vision
+.
+Cited by:
+§1
+,
+§3.1
+,
+§3.1
+,
+Table 1
+,
+Table 1
+,
+§4.1
+,
+§4.1
+.
+[50]
+D. Zhou, H. Sun, H. Ye, and D. Zhan
+(2024)
+Expandable subspace ensemble for pre-trained model-based class-incremental learning
+.
+In
+CVPR
+,
+pp. 23554–23564
+.
+Cited by:
+§1
+,
+§2.2
+,
+Table 1
+,
+§4.1
+,
+§4.2
+.
+[51]
+D. Zhou, Q. Wang, H. Ye, and D. Zhan
+(2023)
+A model or 603 exemplars: towards memory-efficient class-incremental learning
+.
+In
+ICLR
+,
+Cited by:
+§4.1
+.
+[52]
+F. Zhu, Z. Cheng, X. Zhang, and C. Liu
+(2021)
+Class-incremental learning via dual augmentation
+.
+Advances in Neural Information Processing Systems
+34
+,
+pp. 14306–14318
+.
+Cited by:
+§2.1
+.
+Supplementary Material
+Appendix A
+Detailed Implementation of SAEF Operations
+In this appendix, we provide the detailed implementation specifics for the
+Hierarchical Construction
+and
+Adaptive Inference
+stages, which are described at a higher level of abstraction in the main text. We also detail the prototype-based classifier and its alignment mechanism, which are foundational to our method.
+Algorithm 1
+SAEF: Offline Hierarchy Construction
+1:
+Inputs:
+2:
+Set of all learned task adapters
+{
+𝒜
+t
+}
+t
+=
+1
+T
+\{\mathcal{A}_{t}\}_{t=1}^{T}
+with parameters
+{
+θ
+t
+}
+t
+=
+1
+T
+\{\theta_{t}\}_{t=1}^{T}
+3:
+Training data for all tasks
+{
+𝒟
+t
+}
+t
+=
+1
+T
+\{\mathcal{D}_{t}\}_{t=1}^{T}
+4:
+Frozen text encoder
+g
+t
+g_{t}
+(from CLIP), frozen feature extractor
+ϕ
+\phi
+(from ViT)
+5:
+Search range for number of clusters
+K
+r
+​
+a
+​
+n
+​
+g
+​
+e
+K_{range}
+6:
+Output:
+The complete expert hierarchy, ‘Hierarchy‘
+=
+(
+ℛ
+,
+R
+G
+)
+=(\mathcal{R},R_{G})
+7:
+procedure
+BuildHierarchy
+(
+{
+𝒜
+t
+}
+,
+{
+𝒟
+t
+}
+,
+g
+t
+,
+ϕ
+,
+K
+r
+​
+a
+​
+n
+​
+g
+​
+e
+\{\mathcal{A}_{t}\},\{\mathcal{D}_{t}\},g_{t},\phi,K_{range}
+)
+8:
+⊳
+\triangleright
+—
+Stage 1: Conceptual Clustering
+—
+9:
+Initialize prototype sets:
+𝒫
+s
+←
+∅
+\mathcal{P}_{s}\leftarrow\emptyset
+,
+𝒫
+f
+←
+∅
+\mathcal{P}_{f}\leftarrow\emptyset
+10:
+for
+t
+=
+1
+→
+T
+t=1\to T
+do
+⊳
+\triangleright
+Compute prototypes for all tasks
+11:
+𝐩
+t
+s
+←
+1
+|
+𝒞
+t
+|
+​
+∑
+c
+∈
+𝒞
+t
+g
+t
+​
+(
+”a photo of a [c]”
+)
+\mathbf{p}_{t}^{\text{s}}\leftarrow\frac{1}{|\mathcal{C}_{t}|}\sum_{c\in\mathcal{C}_{t}}g_{t}(\text{"a photo of a [c]"})
+⊳
+\triangleright
+Eq. (
+6
+)
+12:
+𝐩
+t
+f
+←
+1
+|
+𝒟
+t
+|
+​
+∑
+𝐱
+i
+∈
+𝒟
+t
+ϕ
+⁡
+(
+𝐱
+i
+,
+𝒜
+1
+)
+\mathbf{p}_{t}^{\text{f}}\leftarrow\frac{1}{|\mathcal{D}_{t}|}\sum_{\mathbf{x}_{i}\in\mathcal{D}_{t}}\phi(\mathbf{x}_{i};\mathcal{A}_{1})
+⊳
+\triangleright
+Eq. (
+7
+)
+13:
+Add
+𝐩
+t
+s
+\mathbf{p}_{t}^{\text{s}}
+to
+𝒫
+s
+\mathcal{P}_{s}
+; Add
+𝐩
+t
+f
+\mathbf{p}_{t}^{\text{f}}
+to
+𝒫
+f
+\mathcal{P}_{f}
+14:
+K
+∗
+←
+FindOptimalK
+​
+(
+𝒫
+s
+,
+K
+r
+​
+a
+​
+n
+​
+g
+​
+e
+)
+K^{*}\leftarrow\text{FindOptimalK}(\mathcal{P}_{s},K_{range})
+⊳
+\triangleright
+Using silhouette score
+15:
+{
+G
+1
+,
+…
+,
+G
+K
+∗
+}
+←
+KMeans
+​
+(
+𝒫
+s
+,
+K
+∗
+)
+\{G_{1},\ldots,G_{K^{*}}\}\leftarrow\text{KMeans}(\mathcal{P}_{s},K^{*})
+⊳
+\triangleright
+Partition tasks into
+K
+∗
+K^{*}
+clusters
+16:
+17:
+⊳
+\triangleright
+—
+Stage 2: Hierarchical Construction
+—
+18:
+Initialize tree root set:
+ℛ
+←
+∅
+\mathcal{R}\leftarrow\emptyset
+19:
+for
+k
+=
+1
+→
+K
+∗
+k=1\to K^{*}
+do
+20:
+R
+k
+←
+BuildTree
+​
+(
+G
+k
+,
+{
+𝒜
+t
+}
+t
+∈
+G
+k
+,
+{
+𝐩
+t
+f
+}
+t
+∈
+G
+k
+)
+R_{k}\leftarrow\text{BuildTree}(G_{k},\{\mathcal{A}_{t}\}_{t\in G_{k}},\{\mathbf{p}_{t}^{\text{f}}\}_{t\in G_{k}})
+21:
+Add
+R
+k
+R_{k}
+to
+ℛ
+\mathcal{R}
+22:
+θ
+G
+←
+sign
+​
+(
+∑
+R
+k
+∈
+ℛ
+θ
+R
+k
+)
+⊙
+max
+R
+k
+∈
+ℛ
+⁡
+|
+θ
+R
+k
+|
+\theta_{G}\leftarrow\text{sign}(\sum_{R_{k}\in\mathcal{R}}\theta_{R_{k}})\odot\max_{R_{k}\in\mathcal{R}}|\theta_{R_{k}}|
+⊳
+\triangleright
+Merge tree roots to form Global Expert, Eq. (
+10
+)
+23:
+R
+G
+←
+NewNode
+​
+(
+𝒜
+G
+​
+(
+θ
+G
+)
+)
+R_{G}\leftarrow\text{NewNode}(\mathcal{A}_{G}(\theta_{G}))
+24:
+return
+Hierarchy:
+(
+ℛ
+,
+R
+G
+)
+(\mathcal{R},R_{G})
+25:
+procedure
+BuildTree
+(Cluster
+G
+k
+G_{k}
+, Adapters
+{
+𝒜
+t
+}
+\{\mathcal{A}_{t}\}
+, Prototypes
+{
+𝐩
+t
+f
+}
+\{\mathbf{p}_{t}^{\text{f}}\}
+)
+26:
+Initialize working set
+𝒩
+\mathcal{N}
+with leaf experts from cluster
+G
+k
+G_{k}
+. Each node
+n
+t
+n_{t}
+contains
+(
+𝒜
+t
+,
+𝐩
+t
+f
+)
+(\mathcal{A}_{t},\mathbf{p}_{t}^{\text{f}})
+.
+27:
+while
+|
+𝒩
+|
+>
+1
+|\mathcal{N}|>1
+do
+28:
+(
+n
+i
+,
+n
+j
+)
+←
+arg
+⁡
+max
+n
+a
+,
+n
+b
+∈
+𝒩
+⁡
+sim
+​
+(
+𝐩
+a
+f
+,
+𝐩
+b
+f
+)
+(n_{i},n_{j})\leftarrow\mathop{\arg\max}_{n_{a},n_{b}\in\mathcal{N}}\text{sim}(\mathbf{p}_{a}^{\text{f}},\mathbf{p}_{b}^{\text{f}})
+⊳
+\triangleright
+Find most similar pair using Eq. (
+8
+)
+29:
+θ
+p
+←
+sign
+​
+(
+θ
+i
++
+θ
+j
+)
+⊙
+max
+⁡
+(
+|
+θ
+i
+|
+,
+|
+θ
+j
+|
+)
+\theta_{p}\leftarrow\text{sign}(\theta_{i}+\theta_{j})\odot\max(|\theta_{i}|,|\theta_{j}|)
+⊳
+\triangleright
+Merge parameters using Eq. (
+9
+)
+30:
+𝐩
+p
+f
+←
+WeightedAvgMerge
+​
+(
+𝐩
+i
+f
+,
+𝐩
+j
+f
+)
+\mathbf{p}_{p}^{\text{f}}\leftarrow\text{WeightedAvgMerge}(\mathbf{p}_{i}^{\text{f}},\mathbf{p}_{j}^{\text{f}})
+⊳
+\triangleright
+Merge prototypes, see Appx.
+A.1
+31:
+n
+p
+←
+NewNode
+​
+(
+𝒜
+p
+​
+(
+θ
+p
+)
+,
+𝐩
+p
+f
+,
+children
+=
+(
+n
+i
+,
+n
+j
+)
+)
+n_{p}\leftarrow\text{NewNode}(\mathcal{A}_{p}(\theta_{p}),\mathbf{p}_{p}^{\text{f}},\text{children}=(n_{i},n_{j}))
+32:
+Remove
+n
+i
+,
+n
+j
+n_{i},n_{j}
+from
+𝒩
+\mathcal{N}
+; Add
+n
+p
+n_{p}
+to
+𝒩
+\mathcal{N}
+33:
+return
+The single remaining node in
+𝒩
+\mathcal{N}
+(the tree root)
+Algorithm 2
+SAEF: Online Adaptive Inference
+1:
+Inputs:
+2:
+Test sample
+x
+x
+3:
+The pre-built ‘Hierarchy‘
+=
+(
+ℛ
+,
+R
+G
+)
+=(\mathcal{R},R_{G})
+from Algorithm
+1
+4:
+Frozen feature extractor
+ϕ
+\phi
+, Classifier
+W
+T
+W_{T}
+5:
+Fusion temperature
+τ
+\tau
+, Entropy threshold
+τ
+e
+\tau_{e}
+6:
+Output:
+The final predicted class label
+y
+p
+​
+r
+​
+e
+​
+d
+y_{pred}
+7:
+procedure
+Inference
+(
+x
+,
+(
+ℛ
+,
+R
+G
+)
+,
+ϕ
+,
+W
+T
+,
+τ
+,
+τ
+e
+x,(\mathcal{R},R_{G}),\phi,W_{T},\tau,\tau_{e}
+)
+8:
+⊳
+\triangleright
+—
+Stage 3: Adaptive Inference
+—
+9:
+Initialize activated expert set:
+ℰ
+←
+{
+R
+G
+}
+\mathcal{E}\leftarrow\{R_{G}\}
+⊳
+\triangleright
+Start with the Global Expert
+10:
+for
+each tree root
+R
+k
+∈
+ℛ
+R_{k}\in\mathcal{R}
+do
+11:
+𝒫
+k
+←
+FindPath
+​
+(
+R
+k
+,
+x
+,
+ϕ
+,
+W
+T
+,
+τ
+e
+)
+\mathcal{P}_{k}\leftarrow\text{FindPath}(R_{k},x,\phi,W_{T},\tau_{e})
+⊳
+\triangleright
+Find low-entropy path in each tree
+12:
+ℰ
+←
+ℰ
+∪
+𝒫
+k
+\mathcal{E}\leftarrow\mathcal{E}\cup\mathcal{P}_{k}
+⊳
+\triangleright
+Collect all experts on the paths, Eq. (
+13
+)
+13:
+Initialize results list:
+𝒮
+←
+[
+]
+\mathcal{S}\leftarrow[]
+14:
+for
+each expert
+n
+∈
+ℰ
+n\in\mathcal{E}
+do
+15:
+s
+n
+←
+W
+T
+⊤
+​
+ϕ
+​
+(
+x
+,
+𝒜
+n
+)
+s_{n}\leftarrow W_{T}^{\top}\phi(x;\mathcal{A}_{n})
+⊳
+\triangleright
+Compute logits for all classes
+𝒴
+T
+\mathcal{Y}_{T}
+16:
+𝐳
+n
+←
+Softmax
+​
+(
+s
+n
+)
+\mathbf{z}_{n}\leftarrow\text{Softmax}(s_{n})
+⊳
+\triangleright
+Get prediction distribution, Eq. (
+11
+)
+17:
+H
+n
+←
+−
+∑
+c
+z
+n
+(
+c
+)
+log
+z
+n
+(
+c
+)
+H_{n}\leftarrow-\sum_{c}z_{n}(c)\log z_{n}(c)
+⊳
+\triangleright
+Calculate confidence via entropy, Eq. (
+12
+)
+18:
+Add
+(
+𝐳
+n
+,
+H
+n
+)
+(\mathbf{z}_{n},H_{n})
+to
+𝒮
+\mathcal{S}
+19:
+Z
+s
+​
+u
+​
+m
+←
+∑
+(
+𝐳
+j
+,
+H
+j
+)
+∈
+𝒮
+exp
+(
+−
+H
+j
+/
+τ
+)
+Z_{sum}\leftarrow\sum_{(\mathbf{z}_{j},H_{j})\in\mathcal{S}}\exp(-H_{j}/\tau)
+⊳
+\triangleright
+Compute normalization term for weights
+20:
+𝐳
+f
+←
+𝟎
+\mathbf{z}_{f}\leftarrow\mathbf{0}
+21:
+for
+each
+(
+𝐳
+n
+,
+H
+n
+)
+∈
+𝒮
+(\mathbf{z}_{n},H_{n})\in\mathcal{S}
+do
+22:
+w
+n
+←
+exp
+(
+−
+H
+n
+/
+τ
+)
+/
+Z
+s
+​
+u
+​
+m
+w_{n}\leftarrow\exp(-H_{n}/\tau)/Z_{sum}
+⊳
+\triangleright
+Compute fusion weight, Eq. (
+14
+)
+23:
+𝐳
+f
+←
+𝐳
+f
++
+w
+n
+⋅
+𝐳
+n
+\mathbf{z}_{f}\leftarrow\mathbf{z}_{f}+w_{n}\cdot\mathbf{z}_{n}
+⊳
+\triangleright
+Aggregate predictions, Eq. (
+15
+)
+24:
+return
+arg
+⁡
+max
+⁡
+𝐳
+f
+\mathop{\arg\max}\mathbf{z}_{f}
+25:
+procedure
+FindPath
+(
+n
+​
+o
+​
+d
+​
+e
+,
+x
+,
+ϕ
+,
+W
+T
+,
+τ
+e
+node,x,\phi,W_{T},\tau_{e}
+)
+⊳
+\triangleright
+Recursive helper function for path selection
+26:
+s
+n
+​
+o
+​
+d
+​
+e
+←
+W
+T
+⊤
+​
+ϕ
+​
+(
+x
+,
+𝒜
+n
+​
+o
+​
+d
+​
+e
+)
+s_{node}\leftarrow W_{T}^{\top}\phi(x;\mathcal{A}_{node})
+27:
+H
+n
+​
+o
+​
+d
+​
+e
+←
+Entropy
+​
+(
+Softmax
+​
+(
+s
+n
+​
+o
+​
+d
+​
+e
+)
+)
+H_{node}\leftarrow\text{Entropy}(\text{Softmax}(s_{node}))
+28:
+if
+n
+​
+o
+​
+d
+​
+e
+node
+is a leaf
+then
+⊳
+\triangleright
+Early exit if confident or at a leaf
+29:
+return
+{
+n
+​
+o
+​
+d
+​
+e
+}
+\{node\}
+30:
+else
+31:
+(
+n
+L
+,
+n
+R
+)
+←
+children of
+​
+n
+​
+o
+​
+d
+​
+e
+(n_{L},n_{R})\leftarrow\text{children of }node
+32:
+s
+L
+←
+W
+T
+⊤
+​
+ϕ
+​
+(
+x
+,
+𝒜
+L
+)
+s_{L}\leftarrow W_{T}^{\top}\phi(x;\mathcal{A}_{L})
+;
+H
+L
+←
+Entropy
+​
+(
+Softmax
+​
+(
+s
+L
+)
+)
+H_{L}\leftarrow\text{Entropy}(\text{Softmax}(s_{L}))
+33:
+s
+R
+←
+W
+T
+⊤
+​
+ϕ
+​
+(
+x
+,
+𝒜
+R
+)
+s_{R}\leftarrow W_{T}^{\top}\phi(x;\mathcal{A}_{R})
+;
+H
+R
+←
+Entropy
+​
+(
+Softmax
+​
+(
+s
+R
+)
+)
+H_{R}\leftarrow\text{Entropy}(\text{Softmax}(s_{R}))
+34:
+if
+H
+L
+<
+H
+R
+H_{L}<H_{R}
+then
+35:
+return
+{
+n
+​
+o
+​
+d
+​
+e
+}
+∪
+FindPath
+​
+(
+n
+L
+,
+x
+,
+ϕ
+,
+W
+T
+,
+τ
+e
+)
+\{node\}\cup\text{FindPath}(n_{L},x,\phi,W_{T},\tau_{e})
+36:
+else
+37:
+return
+{
+n
+​
+o
+​
+d
+​
+e
+}
+∪
+FindPath
+​
+(
+n
+R
+,
+x
+,
+ϕ
+,
+W
+T
+,
+τ
+e
+)
+\{node\}\cup\text{FindPath}(n_{R},x,\phi,W_{T},\tau_{e})
+A.1
+Hierarchical Construction Details
+The tree construction process operates on a set of nodes, where each expert in our hierarchy is represented as a node. Each node is a data structure containing its expert adapter, its visual prototype, and pointers to its children (if any).
+Node Representation.
+A leaf node, corresponding to an initial task
+t
+t
+, is initialized as
+n
+​
+o
+​
+d
+​
+e
+t
+=
+(
+𝒜
+t
+,
+𝐩
+t
+f
+)
+node_{t}=(\mathcal{A}_{t},\mathbf{p}_{t}^{\text{f}})
+. A parent node
+n
+​
+o
+​
+d
+​
+e
+p
+node_{p}
+, created by merging two children (
+n
+​
+o
+​
+d
+​
+e
+i
+node_{i}
+and
+n
+​
+o
+​
+d
+​
+e
+j
+node_{j}
+), has the structure
+n
+​
+o
+​
+d
+​
+e
+p
+=
+(
+𝒜
+p
+,
+𝐩
+p
+f
+,
+n
+​
+o
+​
+d
+​
+e
+i
+,
+n
+​
+o
+​
+d
+​
+e
+j
+)
+node_{p}=(\mathcal{A}_{p},\mathbf{p}_{p}^{\text{f}},node_{i},node_{j})
+.
+Node Selection.
+As mentioned in the main text, tree construction is an iterative process that operates on a working set of nodes,
+𝒩
+k
+\mathcal{N}_{k}
+, for each cluster
+G
+k
+G_{k}
+. At each step, we identify the two most visually similar nodes,
+n
+​
+o
+​
+d
+​
+e
+i
+∗
+node_{i}^{*}
+and
+n
+​
+o
+​
+d
+​
+e
+j
+∗
+node_{j}^{*}
+, by selecting the pair from
+𝒩
+k
+\mathcal{N}_{k}
+that maximizes the cosine similarity between their visual prototypes. The formal selection rule is:
+(
+n
+​
+o
+​
+d
+​
+e
+i
+∗
+,
+n
+​
+o
+​
+d
+​
+e
+j
+∗
+)
+=
+arg
+⁡
+max
+n
+​
+o
+​
+d
+​
+e
+i
+,
+n
+​
+o
+​
+d
+​
+e
+j
+∈
+𝒩
+k
+,
+i
+≠
+j
+⁡
+𝐩
+i
+f
+⊤
+​
+𝐩
+j
+f
+‖
+𝐩
+i
+f
+‖
+2
+​
+‖
+𝐩
+j
+f
+‖
+2
+.
+(node_{i}^{*},node_{j}^{*})=\mathop{\arg\max}_{node_{i},node_{j}\in\mathcal{N}_{k},i\neq j}\frac{{\mathbf{p}_{i}^{\text{f}}}^{\top}\mathbf{p}_{j}^{\text{f}}}{\|\mathbf{p}_{i}^{\text{f}}\|_{2}\|\mathbf{p}_{j}^{\text{f}}\|_{2}}.
+(16)
+Prototype Merging.
+When a new parent node is created from children
+n
+​
+o
+​
+d
+​
+e
+i
+∗
+node_{i}^{*}
+and
+n
+​
+o
+​
+d
+​
+e
+j
+∗
+node_{j}^{*}
+, its visual prototype
+𝐩
+p
+f
+\mathbf{p}_{p}^{\text{f}}
+is computed as a weighted average of its children’s prototypes. The weights are proportional to the number of original leaf-level tasks that each child node represents. Let
+C
+⁡
+(
+n
+​
+o
+​
+d
+​
+e
+)
+C(node)
+be the set of all leaf tasks that are descendants of a given
+n
+​
+o
+​
+d
+​
+e
+node
+. The parent prototype is then formally defined as:
+𝐩
+p
+f
+=
+|
+C
+⁡
+(
+n
+​
+o
+​
+d
+​
+e
+i
+∗
+)
+|
+⋅
+𝐩
+i
+∗
+f
++
+|
+C
+⁡
+(
+n
+​
+o
+​
+d
+​
+e
+j
+∗
+)
+|
+⋅
+𝐩
+j
+∗
+f
+|
+C
+⁡
+(
+n
+​
+o
+​
+d
+​
+e
+i
+∗
+)
+|
++
+|
+C
+⁡
+(
+n
+​
+o
+​
+d
+​
+e
+j
+∗
+)
+|
+.
+\mathbf{p}_{p}^{\text{f}}=\frac{|C(node_{i}^{*})|\cdot\mathbf{p}_{i^{*}}^{\text{f}}+|C(node_{j}^{*})|\cdot\mathbf{p}_{j^{*}}^{\text{f}}}{|C(node_{i}^{*})|+|C(node_{j}^{*})|}.
+(17)
+This weighting scheme ensures that the parent’s prototype is more influenced by the child that represents a larger body of knowledge. After the merge,
+n
+​
+o
+​
+d
+​
+e
+i
+∗
+node_{i}^{*}
+and
+n
+​
+o
+​
+d
+​
+e
+j
+∗
+node_{j}^{*}
+are removed from the working set
+𝒩
+k
+\mathcal{N}_{k}
+, and the new parent node is added.
+A.2
+Adaptive Inference Details
+Entropy-Guided Path Selection.
+During inference, SAEF performs a search to find the optimal path in each of the
+K
+K
+trees. The search begins at the root of a tree and recursively descends to one of its children. At any non-leaf node (indexed by
+p
+p
+) with children (indexed by
+L
+L
+and
+R
+R
+for left and right), the search proceeds to the child node that exhibits lower predictive entropy for the given input sample
+x
+x
+. The formal rule for selecting the next node in the path is:
+n
+​
+o
+​
+d
+​
+e
+next
+=
+arg
+⁡
+min
+n
+∈
+{
+n
+​
+o
+​
+d
+​
+e
+L
+,
+n
+​
+o
+​
+d
+​
+e
+R
+}
+⁡
+H
+⁡
+(
+𝐳
+n
+)
+,
+node_{\text{next}}=\mathop{\arg\min}_{n\in\{node_{L},node_{R}\}}H(\mathbf{z}_{n}),
+(18)
+where
+H
+⁡
+(
+𝐳
+n
+)
+H(\mathbf{z}_{n})
+is the Shannon entropy of the prediction from the expert at node
+n
+n
+, as defined in Eq. (
+12
+). This process is repeated until a leaf node is reached, defining a complete path from root to leaf.
+A.3
+Prototype-based Classifier and Alignment
+Our method relies on a non-parametric classifier constructed from class prototypes. Here, we detail how these prototypes are created and aligned across different task-specific feature spaces.
+Classifier Construction for New Classes.
+For any new class
+c
+c
+introduced in the current task
+t
+t
+with training samples
+𝒟
+c
+\mathcal{D}_{c}
+, its prototype
+𝐩
+c
+\mathbf{p}_{c}
+is computed as the mean feature vector of its samples, extracted using the current task’s adapter
+𝒜
+t
+\mathcal{A}_{t}
+:
+𝐩
+c
+=
+1
+|
+𝒟
+c
+|
+​
+∑
+x
+∈
+𝒟
+c
+ϕ
+⁡
+(
+x
+,
+𝒜
+t
+)
+.
+\mathbf{p}_{c}=\frac{1}{|\mathcal{D}_{c}|}\sum_{x\in\mathcal{D}_{c}}\phi(x;\mathcal{A}_{t}).
+(19)
+The corresponding classifier weight
+𝐰
+c
+\mathbf{w}_{c}
+is simply its L2-normalized prototype:
+𝐰
+c
+=
+𝐩
+c
+/
+‖
+𝐩
+c
+‖
+2
+\mathbf{w}_{c}=\mathbf{p}_{c}/\|\mathbf{p}_{c}\|_{2}
+.
+Classifier Alignment for Old Classes.
+This non-parametric method, however, introduces the subspace misalignment problem: prototypes computed for different tasks reside in distinct, incompatible feature subspaces generated by their respective adapters. To overcome this challenge without storing past exemplars, we adopt a widely-used alignment strategy inspired by methods like MOS
+[
+39
+]
+. The process involves two steps:
+1.
+Store Distributional Statistics:
+For each past class
+c
+′
+c^{\prime}
+, we model and store its feature distribution as a multivariate Gaussian,
+𝒩
+⁡
+(
+μ
+c
+′
+,
+Σ
+c
+′
+)
+\mathcal{N}(\mu_{c^{\prime}},\Sigma_{c^{\prime}})
+. These statistics are computed from the features extracted during that class’s initial training.
+2.
+Re-estimate Prototypes in New Subspace:
+When learning a new task
+t
+t
+, we generate pseudo-features by sampling from these stored distributions. These pseudo-features are then projected through the new task’s adapter,
+𝒜
+t
+\mathcal{A}_{t}
+, to re-estimate the prototypes for all past classes within the new, unified subspace.
+This procedure yields a fully aligned classifier head,
+W
+t
+=
+[
+𝐰
+1
+,
+…
+,
+𝐰
+|
+𝒴
+t
+|
+]
+W_{t}=[\mathbf{w}_{1},\ldots,\mathbf{w}_{|\mathcal{Y}_{t}|}]
+, where all class weights are comparable within the same feature space, enabling a fair comparison of logits during prediction.
+Appendix B
+SAEF Algorithm Pseudocode
+To provide a clear and procedural overview of our method, we present the SAEF method as two separate algorithms. Algorithm
+1
+details the offline
+hierarchy construction
+phase, which is performed once after all tasks have been learned. Algorithm
+2
+details the online
+adaptive inference
+phase, which is executed for each test sample.
+(a)
+CIFAR-100
+(b)
+ImageNet-R
+(c)
+ImageNet-A
+(d)
+ObjectNet
+Figure A1
+:
+Incremental accuracy trends of SAEF compared to SOTA CIL methods on four standard benchmarks: CIFAR-100, ImageNet-R, ImageNet-A, and ObjectNet. Across all scenarios, SAEF demonstrates consistently superior performance. This highlights its robust ability to mitigate catastrophic forgetting and maintain a clear advantage as the number of learned classes increases.
+Figure A2
+:
+Performance stability across multiple random seeds on ImageNet-R (10-task setting).
+The plot displays the average accuracy (
+𝒜
+¯
+\bar{\mathcal{A}}
+) as the number of learned tasks increases.
+All results shown are the mean performance calculated over five different random seeds, which vary the order of incoming classes.
+The consistent and superior performance of SAEF highlights its robustness against variations in the incremental learning sequence.
+B.1
+Algorithmic Details
+Offline Hierarchy Construction.
+Algorithm
+1
+details the offline process for organizing learned adapters into the SAEF hierarchy. The
+BuildHierarchy
+procedure encapsulates this entire workflow. It begins by computing the semantic and visual prototypes for all tasks (Lines 4-8), following Eq. (
+6
+) and Eq. (
+7
+). Based on the semantic prototypes, it automatically determines the optimal number of clusters
+K
+∗
+K^{*}
+and partitions the tasks (Lines 9-10). Subsequently, it iterates through each cluster to build a dedicated expert tree using the
+BuildTree
+helper function (Lines 13-15). The
+BuildTree
+procedure (Lines 21-28) implements the iterative, bottom-up merging process. At each step, it identifies and merges the most visually similar pair of nodes (Lines 23-26), guided by Eq. (
+8
+) and Eq. (
+9
+), until a single tree root is formed. Finally, the main procedure merges the roots of all trees into a single global expert (Lines 16-17) as per Eq. (
+10
+), completing the full hierarchy.
+Online Adaptive Inference.
+Algorithm
+2
+details the online prediction mechanism for a given input sample
+x
+x
+. The
+Inference
+procedure first identifies the set of all relevant experts,
+ℰ
+\mathcal{E}
+(Lines 4-8). This involves starting with the global expert and then traversing each of the
+K
+∗
+K^{*}
+trees to find the optimal path using the recursive helper function
+FindPath
+(Line 6). The
+FindPath
+procedure (Lines 23-35) implements the entropy-guided traversal, including the early-exit mechanism controlled by the threshold
+τ
+e
+\tau_{e}
+(Line 26). Once the set of activated experts is finalized, the algorithm computes the predictive distribution
+𝐳
+n
+\mathbf{z}_{n}
+and corresponding confidence (entropy
+H
+n
+H_{n}
+) for each expert (Lines 10-14). Finally, it calculates the normalized, confidence-based fusion weights
+w
+n
+w_{n}
+and computes the final prediction as a weighted average of all activated experts’ outputs (Lines 16-20), directly implementing the fusion logic from Eq. (
+14
+) and Eq. (
+15
+).
+Appendix C
+Theoretical Speedup Calculation
+In our experiments, we report the theoretical speedup of SAEF’s inference process relative to a baseline ’Flat Ensemble’ method. The baseline requires querying all
+N
+N
+available task-specific adapters. Therefore, its computational complexity is proportional to
+N
+N
+.
+The inference process of SAEF involves two main steps:
+1.
+A mandatory forward pass through the global root adapter,
+𝒜
+R
+\mathcal{A}_{R}
+.
+2.
+A parallel search within each of the
+K
+K
+conceptual trees. The average number of adapters queried per tree is determined by the average search depth, denoted as
+d
+¯
+\bar{d}
+.
+Thus, the total number of adapter queries for SAEF on average is
+1
++
+K
+×
+d
+¯
+1+K\times\bar{d}
+.
+The theoretical speedup (
+S
+S
+) is defined as the ratio of the number of queries required by the baseline to the number of queries required by SAEF. It is formulated as:
+S
+=
+Queries
+Baseline
+Queries
+SAEF
+=
+N
+1
++
+K
+⋅
+d
+¯
+S=\frac{\text{Queries}_{\text{Baseline}}}{\text{Queries}_{\text{SAEF}}}=\frac{N}{1+K\cdot\bar{d}}
+(20)
+where
+N
+N
+is the total number of task-specific adapters (leaf nodes),
+K
+K
+is the number of conceptual clusters (trees), and
+d
+¯
+\bar{d}
+is the average search depth, which is controlled by the entropy threshold
+τ
+e
+\tau_{e}
+. This formula provides a principled way to estimate the efficiency gains from SAEF’s hierarchical structure and its adaptive search mechanism.
+Appendix D
+Performance Stability Across Multiple Runs
+In the main paper, our experiments adhere to the standard protocol from Rebuffi et al.
+[
+31
+]
+, employing a fixed random seed of 1993 to determine the class order for the incremental tasks. To rigorously assess the robustness of our method against variations in task composition and ordering, this section extends our analysis by repeating the experiments on ImageNet-R with five different random seeds: {1993, 1994, 1995, 1996, 1997}.
+This procedure generates five distinct result sets for each evaluated method. The mean performance for each method is visualized in Figure
+A2
+. As the figure illustrates, SAEF consistently outperforms all competing methods across the different random seeds. This confirms the stability and general effectiveness of our structured, semantic hierarchy, irrespective of the specific sequence in which classes are introduced.
+Appendix E
+Detailed Incremental Performance Analysis
+To provide a more detailed view of SAEF’s performance progression, we present the incremental average accuracy trends against leading CIL methods in Figure
+A1
+.
+These plots, based on a ViT-B/16 backbone pre-trained on ImageNet-1K, track the performance as the number of learned classes increases across our four primary benchmarks.
+Across all evaluated settings, the plots clearly show that SAEF not only achieves the highest final accuracy but also maintains a consistent and often widening performance margin throughout the entire learning sequence.
+For instance, on the challenging ImageNet-R benchmark (Figure
+1(b)
+), the performance of many competing methods degrades more sharply over time, whereas SAEF’s trajectory remains stable and superior.
+This robust performance underscores the benefit of SAEF’s hierarchical knowledge organization, which allows for more effective and targeted knowledge reuse compared to methods that treat adapters as an unstructured collection.
+Appendix F
+Analysis of Resource Consumption
+The construction of the SAEF expert forest is a highly efficient offline process. For a typical experimental setup with 10 tasks, this entire process completes in under a few seconds on a standard GPU, making the computational overhead negligible.
+The primary overhead of our method is in storage. To construct the hierarchy, SAEF creates a set of new internal-node adapters. This process nearly doubles the total number of adapters that need to be stored. For example, in a typical 10-task experiment, our method creates an additional 8 adapters to build the hierarchical structure on top of the 10 original ones. However, this represents a deliberate design choice. Given the inherently small storage footprint of each lightweight adapter, this modest increase in storage is a highly favorable trade-off for the significant and repeated gains in inference speed achieved by our adaptive search mechanism.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

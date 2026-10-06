@@ -1,0 +1,675 @@
+Alterbute: Editing Intrinsic Attributes of Objects in Images
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Works
+3 Method
+3.1 Problem formulation
+3.2 Relaxed training objective
+3.3 Visual named entities for identity conditioning
+3.4 Training and model architecture
+3.5 Inference-time intrinsic attribute editing
+4 Experiments
+4.1 Experimental setting
+4.2 Comparisons
+4.3 Analysis & Ablation study
+5 Discussion & Limitations
+6 Conclusion
+7 Acknowledgments
+References
+A Baselines
+A.1 General-purpose editors
+A.2 Specialized intrinsic attribute editors
+B Quantitative Evaluation
+C Additional Results
+D Identity Definitions
+E Editing Both Intrinsic and Extrinsic Attributes
+F Gemini-Based Labeling Pipeline
+License: arXiv.org perpetual non-exclusive license
+arXiv:2601.10714v1 [cs.CV] 15 Jan 2026
+Alterbute: Editing Intrinsic Attributes of Objects in Images
+Tal Reiss
+Affiliation: The Hebrew University of Jerusalem
+Daniel Winter
+Matan Cohen
+Alex Rav-Acha
+Yael Pritch
+Ariel Shamir
+††thanks: Indicates Equal Advising
+Affiliation: Reichman Universityhttps://talreiss.github.io/alterbute
+Yedid Hoshen
+Affiliation: The Hebrew University of Jerusalem
+Google
+Abstract
+We introduce Alterbute, a diffusion-based method for editing an object’s intrinsic attributes in an image. We allow changing color, texture, material, and even the shape of an object, while preserving its perceived identity and scene context. Existing approaches either rely on unsupervised priors that often fail to preserve identity or use overly restrictive supervision that prevents meaningful intrinsic variations. Our method relies on: (i) a relaxed training objective that allows the model to change both intrinsic and extrinsic attributes conditioned on an identity reference image, a textual prompt describing the target intrinsic attributes, and a background image and object mask defining the extrinsic context. At inference, we restrict extrinsic changes by reusing the original background and object mask, thereby ensuring that only the desired intrinsic attributes are altered; (ii) Visual Named Entities (VNEs) – fine-grained visual identity categories (e.g., “Porsche 911 Carrera”) that group objects sharing identity-defining features while allowing variation in intrinsic attributes. We use a vision-language model to automatically extract VNE labels and intrinsic attribute descriptions from a large public image dataset, enabling scalable, identity-preserving supervision. Alterbute outperforms existing methods on identity-preserving object intrinsic attribute editing.
+Figure 1: Given an input image (center) and a text prompt describing the desired intrinsic attribute, Alterbute performs object intrinsic attribute edits, specifically changes to color, texture, material or shape, while faithfully preserving the object’s identity.
+††
+∗ Indicates Equal Advising.
+1 Introduction
+Editing an object in an image means changing some of its properties while trying to preserve its identity. But what defines the identity of an object? An object’s appearance in an image is derived from a combination of intrinsic properties: color, texture, material, and shape, as well as extrinsic factors, including camera pose, lighting, and background. Many previous image editing works allow changing extrinsic properties that preserve identity, but few methods can successfully edit intrinsic properties. This is the primary challenge we address in this work.
+Yet which intrinsic properties are essential to the object’s identity, and which can be altered without changing how it is perceived? This choice directly affects the space of feasible, identity-preserving edits. On one extreme, defining identity solely by an object’s coarse category (e.g., “car”) allows for nearly unlimited edits, as long as the result still belongs to the same category. Such a loose definition often conflicts with our intuitive sense of identity. On the other extreme, defining identity at the instance level fixes all intrinsic attributes (color, texture, material, shape) and permits almost no variation at all, making meaningful intrinsic edits impossible. Between these two extremes lies a broad spectrum of possible identity definitions that trade-off editability against perceived identity preservation.
+Most existing editing methods rely on the unsupervised priors of diffusion models and, in practice, only preserve a coarse notion of identity. In contrast, subject-driven generation methods [38, 8, 23, 49] are conditioned on several views of the object identity but preserve a restrictive notion of identity, disallowing any intrinsic changes.
+In this paper, we introduce Alterbute, a diffusion-based method for editing intrinsic object attributes while preserving its perceived identity. Following the bitter lesson in machine learning [47] and recent results in image editing [26, 57, 29], we opt for a supervised approach. However, directly tackling this task ideally requires many image pairs depicting the same scene and object, differing only in intrinsic attributes. Such data are virtually nonexistent and challenging to gather or create.
+Our first technical innovation is to relax the original task objective: instead of developing a method that exclusively edits intrinsic attributes, we train a model capable of editing both intrinsic and extrinsic attributes. Specifically, we condition the model on three inputs: (i) an identity reference image that captures the object’s identity, (ii) a textual prompt describing the target intrinsic attributes, and (iii) a background image and object mask that define the extrinsic context of the target scene. At inference, we constrain the model to preserve extrinsic context by reusing the original background and mask, ensuring that only the intrinsic attributes are altered. While this may appear to overgeneralize the task, it introduces a critical advantage: object image pairs with both intrinsic and extrinsic changes are far easier to find than those with only intrinsic changes. This makes it feasible to tackle the general task in a supervised manner, which is infeasible in the original task.
+This relaxation raises a second challenge: how to define identity in a way that allows both intrinsic and extrinsic changes while remaining faithful to human perception. Defining identity using the distance of semantic features (e.g., DINOv2 [6, 32]) is often too coarse, grouping together perceptually different object identities. In contrast, instance-retrieval features [5, 40] result in overly restrictive identities, which do not allow any changes to intrinsic attributes. Therefore, as our second innovation, we propose a middle ground: we define the identity of the object by its Visual Named Entity (VNE). VNEs are visual identity categories (e.g., “Porsche 911 Carrera”, “IKEA LACK table”, “iPhone 16 Pro”) that align with the way people naturally refer to specific object types. VNEs group visually similar instances that share a common name, allowing for variation in intrinsic attributes while preserving perceived identity.
+We extract VNEs using a large vision-language model (Gemini [48]) applied to a large public dataset based solely on visual appearance, filtering out generic or unnameable objects. This process yields clusters of images where each cluster corresponds to a single VNE and contains objects that share identity under our new definition but vary in both intrinsic and extrinsic attributes. We further prompt Gemini to describe the intrinsic properties of each VNE object, producing the attribute-level text prompts used during training. This fully automated pipeline enables scalable and identity-consistent supervision without manual labeling.
+At inference time, given a source image and a text prompt specifying the change of the target attribute (e.g., “color: red”, “material: wood”), Alterbute modifies only the specified intrinsic attribute while preserving all other intrinsic and extrinsic properties, as well as the identity of the object. Alterbute supports edits across all intrinsic attributes using a single unified model, achieving state-of-the-art results on challenging intrinsic object attribute edits. Our main contributions are:
+•
+A method for editing any intrinsic object attribute using a single model, while preserving identity.
+•
+The use of Visual Named Entities as an effective representation of object identity for intrinsic object attribute image editing, and a VLM-based method for extracting them.
+•
+A relaxed training objective that allows the model to learn from edits involving both intrinsic and extrinsic changes, while constraining edits to intrinsic attributes at inference. This enables supervised training using VNE image pairs, avoiding the need for rare intrinsic-only edit data.
+Figure 2: Overview of Alterbute. Alterbute fine-tunes a diffusion model for text-guided intrinsic attribute editing. Left (Training): Inputs are arranged in a 1×21\times 2 image grid. The left half contains the noisy latent of the target image, while the right half contains a reference image sampled from the same VNE cluster. The model is conditioned on this reference image, a textual prompt describing the desired intrinsic attributes, a background image, and a binary object mask (both represented as grids). The diffusion loss is applied only to the left half to focus the learning on the edited region. Right (Inference): Using the same architecture (grid omitted for clarity), Alterbute edits the input image directly by reusing its original background and mask. For color, texture, or material edits, we use precise segmentation masks (top). For shape edits where the target geometry is unknown, we use coarse bounding-box masks (bottom).
+2 Related Works
+Diffusion models have become the standard for high-fidelity text-to-image generation [37, 34]. Extensions such as inpainting [56], style transfer [18, 13], and image-to-image [58] have broadened their applicability. Instruction-based methods [4, 21, 42, 20, 59] offer prompt-driven edits but struggle with intrinsic attribute edits. Other works target spatial or prompt-based manipulation [56, 45, 46, 17, 30], but they are not designed to edit intrinsic object attributes. In contrast, Alterbute enables intrinsic attribute editing while preserving object identity and scene context.
+Identity preservation and object personalization.
+Preserving object identity during image editing remains challenging. Personalization methods [38, 14, 3] enable high-fidelity generation but require per-object optimization and do not support intrinsic edits. Inversion-based methods [31, 50, 15] optimize latent codes to reconstruct input images but struggle with identity preservation during editing. More recently, tuning-free approaches [27, 51, 54, 43, 28, 10] have been proposed to preserve identity without test-time optimization. [53] introduces a grid-based self-attention mechanism conditioned on instance-retrieval-based references, enabling object insertion. However, it does not support intrinsic changes. Diptych [44], based on FLUX [25], supports reference-based generation via input grids but struggles with intrinsic edits. In contrast, Alterbute is tuning-free, built on a simpler backbone (SDXL [33]), and uses VNEs for identity-preserving attribute editing.
+Intrinsic attribute manipulation. Several recent methods focus on editing specific intrinsic object properties [36, 11]. [41] enables changes to physical properties such as albedo and roughness using synthetic data. [16] enables zero-shot material transfer from reference images, and [9] allows stylized texture editing. [7] guides texture synthesis using textual prompts. Although effective within their respective domains, these methods are limited in scope: they target a single attribute type, and often fail to maintain identity and scene consistency. In contrast, Alterbute supports editing all intrinsic attributes using a single unified model, while preserving both object identity and scene context.
+Figure 3: We use Gemini to assign textual VNE labels to objects detected in OpenImages. VNE objects (e.g., “Porsche 911 Carrera”) are grouped into VNE clusters, while unlabeled instances are filtered out. Example VNE clusters are shown on the right. For each VNE-labeled object, we additionally prompt Gemini to extract intrinsic attribute descriptions, which serve as textual prompts pp during training.
+3 Method
+Our goal is to edit an object’s intrinsic attributes – color, texture, material, or shape – while preserving its identity and maintaining all extrinsic scene properties. To achieve this, we propose a diffusion-based approach whose overview is presented in Fig. 2.
+3.1 Problem formulation
+We consider an input image yy depicting a physical 33D scene ss, and an object oo with identity i​did. The goal is to edit oo according to a textual prompt pp that specifies the desired intrinsic attributes (e.g., material: “wood”), while preserving the object’s identity and the surrounding scene. Let GphysicsG_{\text{physics}} denote the physical image formation process that renders the scene. The image can be expressed as:
+y=Gphysics​(o,s)y=G_{\text{physics}}(o,s)
+(1)
+We define the object’s appearance as a function of its identity i​did, intrinsic attributes ainta_{\text{int}} (color, texture, material, shape), and extrinsic scene factors ss (e.g., camera pose, illumination, and background):
+o=O⁡(i​d,aint,s)o=O(id,a_{\text{int}},s)
+(2)
+The editing operation aims to generate an output image y′y^{\prime} in which the object has new intrinsic attributes aint′a^{\prime}_{\text{int}}, guided by the prompt pp, while keeping both its identity and the extrinsic factors unchanged:
+y′=Gphysics​(O⁡(i​d,aint′,s),s)y^{\prime}=G_{\text{physics}}(O(id,a^{\prime}_{\text{int}},s),s)
+(3)
+While GphysicsG_{\text{physics}} is conceptually well-defined, the formulation in Eq. 3 is not directly usable for editing real images, as it assumes full knowledge of the physical scene and object geometry, information that is typically unavailable. Therefore, the core challenge becomes learning a generative model that approximates GphysicsG_{\text{physics}} and supports controlled, identity-preserving object intrinsic attribute editing.
+3.2 Relaxed training objective
+Training a supervised model to edit only intrinsic attributes while keeping extrinsic factors fixed is highly challenging. A naive approach would require paired images of the same object with varying intrinsic attributes but identical extrinsic context, such data do not occur naturally and are difficult to collect. To overcome this challenge, we relax the training objective: instead of restricting the model to intrinsic edits alone, we allow it to modify both intrinsic and extrinsic attributes during training. Paired examples of this broader setting are easier to obtain, making supervised training feasible, unlike the original restricted task.
+To enable identity preservation within this relaxed setup, the model is conditioned on three inputs: (i) a reference image that captures the object’s identity; (ii) a textual prompt specifying the target intrinsic attributes; and (iii) a background image and binary mask that define the extrinsic scene context and the object’s spatial location. The training objective is to generate an image y′y^{\prime} in which the object from i​did appears with the attributes specified in pp, and is seamlessly composited into b​gbg at the location defined by mm.
+3.3 Visual named entities for identity conditioning
+For identity conditioning, we define an object’s identity through its Visual Named Entity (VNE). VNEs are fine-grained visual identity categories (e.g., “Porsche 911 Carrera”, “iPhone 16 Pro”) that reflect how people naturally refer to specific object types. Unlike broad categories (e.g., “car”), which are too coarse and permit excessive variation that conflicts with our intuitive sense of identity, or instance-level identifiers, which are overly restrictive and allow minimal variation, VNEs strike a practical balance. Specifically, VNEs group visually similar objects sharing a common semantic label, permitting variations in intrinsic and extrinsic attributes while preserving identity. An ablation study in Sec. 4.3 highlights the critical role of VNEs in enabling effective identity-preserving attribute editing.
+To extract VNEs at scale, we leverage the OpenImages dataset [24] along with Gemini [48]. For each object detected in OpenImages, Gemini is prompted to assign a VNE label based on the visual characteristics of the object. This process yields clusters of images in which all objects share the same VNE label but exhibit natural variations in their intrinsic (as well as extrinsic) attributes. These clusters serve as the basis for generating training triplets of the form (identity reference, attribute prompt, background + mask), as described in Sec. 3.2. This automatic curation pipeline allows our method to scale across thousands of distinct identities without requiring any manual labeling. Example clusters are shown in Fig. 3 and in the supplementary material (SM).
+After forming the VNE clusters, we annotate each object with its intrinsic attributes. To do this, we prompt Gemini to describe each VNE object based solely on its visual appearance, extracting intrinsic properties, specifically color, texture, material, and shape (see SM for exact prompting instructions). Gemini returns a structured text output, formatted as key-value pairs for each intrinsic attribute. An example of this output is shown in Fig. 2 (left) and further detailed in the SM. These attribute-level descriptions serve as the textual prompt pp used during training.
+Figure 4: Qualitative results across intrinsic editing tasks. Alterbute successfully edits a variety of intrinsic attributes.
+3.4 Training and model architecture
+We fine-tune a pretrained latent diffusion model [34, 37, 39] to enable precise control over an object identity, intrinsic attributes, and extrinsic scene context. Specifically, we adapt the UNet-based denoising network DθD_{\theta} to condition on three inputs: (i) a reference image i​did containing only the foreground object (with the background masked out), used for identity conditioning. This image is randomly sampled from the same VNE cluster as the target image; (ii) a textual prompt pp describing the desired intrinsic attributes; (iii) a scene description s=(b​g,m)s=(bg,m), where b​gbg is a background image and mm is a binary mask indicating the object’s target location. The network DθD_{\theta} learns to map these inputs to the denoised target image y′y^{\prime}. Training is performed using the standard diffusion L2 loss:
+ℒ⁡(θ)=𝔼ϵ∼𝒩⁡(0,1)τ∼U⁡([0,T])[∑i=1N‖Dθ​(ατ​yi+στ​ϵ,i​d,pi,si,τ)−ϵ‖2]\mathcal{L}(\theta)=\mathop{\mathbb{E}}_{\overset{\tau\sim U([0,T])}{\epsilon\sim\mathcal{N}(0,1)}}\left[\sum_{i=1}^{N}\|D_{\theta}(\alpha_{\tau}y_{i}+\sigma_{\tau}\epsilon,{\color[rgb]{0,0,1}id},{\color[rgb]{0.75,0,0.25}p_{i}},{\color[rgb]{0,0.75,0.16}s_{i}},\tau)-\epsilon\|^{2}\right]
+(4)
+where τ\tau denotes the diffusion timestep, and ατ\alpha_{\tau}, στ\sigma_{\tau} parameterize the noise schedule.
+To enable identity conditioning, we organize the inputs into a 1×21\times 2 image grid, each with a resolution of 512×512512\times 512, resulting in a composite input image of size 512×1024512\times 1024. The left half contains the noisy latent of the target object, and the right half contains the reference object image i​did, sampled from the same VNE cluster as the input image. This spatial layout allows self-attention layers in the UNet to propagate identity features across the two halves. The model computes the loss only over the left half, ensuring that denoising is focused exclusively on the target region.
+In addition, we provide the model with a background image b​gbg, in which the object region is masked with gray pixels, and a binary mask mm that specifies the object’s target location. These inputs are placed only in the left half of the grid; the right half is filled with zeros. All inputs are concatenated along the channel axis. For the reference image i​did, we always mask out the background to avoid scene leakage and ensure that identity conditioning is purely object-focused (see Fig. 2). The text prompt pp is encoded using a text encoder and injected into the UNet through cross-attention layers. To support object reshaping, we randomly alternate between using precise segmentation masks and coarse bounding-box masks for b​gbg and mm during training. This encourages the model to generalize across varying mask granularities and enables reshaping where the precise mask of the target shape is unknown (as it will differ from that of the input object).
+3.5 Inference-time intrinsic attribute editing
+At inference, the model edits intrinsic attributes while preserving all extrinsic factors. Given an input image yy containing an object oo and prompt pp specifying a single intrinsic attribute, we: (i) extract the object mask mm using a pretrained segmentation model; (ii) crop oo and mask its background to form the reference image i​did; and (iii) mask the object region in yy with gray pixels to create the background image b​gbg. Feeding i​did, pp, b​gbg, and mm into the model produces an output where only the specified intrinsic attribute is modified. See Fig. 2 (right) for illustration.
+Figure 5: Qualitative comparison. Baselines often fail to apply the desired edit or preserve identity.
+In contrast, Alterbute produces edits that faithfully reflect the target attribute while maintaining object identity.
+Figure 6: Comparison with attribute-specific editors. On the left, for MimicBrush and MaterialFusion, we show the input image, reference image, and their edited output. On the right, we present the result produced by Alterbute.
+4 Experiments
+We first present qualitative results in Fig. 4, demonstrating that Alterbute edits the target attribute while preserving object identity and scene context.
+4.1 Experimental setting
+Implementation details. We fine-tune a text-to-image latent diffusion model based on the SDXL architecture [33] (with 7B parameters). Segmentation masks are obtained using [35]. Our model is trained for 100,000100,000 steps with a learning rate of 10−510^{-5} and a batch size of 128128, using image grids at a resolution of 512×1024512\times 1024. Training took approximately 2424 hours on 128128 v4 TPUs. The identity reference i​did is sampled from the same VNE cluster as the target image. To improve robustness, we randomly drop i​did while keeping the scene condition in 10%10\% of samples and the text prompt in another 10%10\%. Following [4], we use classifier-free guidance [19] with scales of 7.57.5 (text) and 2.02.0 (image). VNE labels and attribute descriptions are extracted using Gemini 2.02.0 Flash.
+Evaluation data. As no standard benchmark exists for the task of object intrinsic attribute editing, we construct a dedicated evaluation set comprising 3030 distinct objects. Of these, 1515 are popular objects commonly used in prior literature, primarily sourced from the DreamBooth benchmark [38] and [14]. To improve diversity, the remaining 1515 objects are selected from underrepresented categories such as furniture and vehicles. Each object is paired with multiple text prompts describing different intrinsic attribute modifications, yielding 100100 total evaluation samples.
+Table 1: Preference rates (%). Percentage of comparisons in which evaluators preferred Alterbute over each baseline.
+Evaluator
+Attribute-specific Editors
+General Purpose Editors
+MimicBrush
+MaterialFusion
+FlowEdit
+InstructPix2Pix
+OmniGen
+UltraEdit
+Diptych
+User
+85.0%
+79.7%
+89.3%
+85.0%
+81.2%
+80.0%
+76.2%
+Gemini
+94.3%
+87.0%
+89.6%
+88.8%
+80.2%
+86.0%
+76.8%
+GPT-4o
+89.8%
+77.6%
+88.6%
+87.0%
+77.4%
+78.6%
+74.8%
+Claude
+92.6%
+81.3%
+92.6%
+85.4%
+78.8%
+85.6%
+77.8%
+4.2 Comparisons
+Baselines. To our knowledge, Alterbute is the first published method to enable edits over any object’s intrinsic attributes. Since no prior work fully addresses this task, we compare against both general-purpose and attribute-specific editors: FlowEdit [22], InstructPix2Pix [4], OmniGen [55], UltraEdit [59], Diptych [44], as well as MaterialFusion [16] (material) and MimicBrush [9] (texture). Existing colorization methods target a different problem and lack fine object-level control. All baselines were run with publicly available code and recommended settings; details are in the SM.
+Figure 7: Histogram of VNE cluster sizes. The x-axis shows cluster size (number of instances), and the y-axis shows the number of clusters on a log scale. Clusters with more than 3,0003,000 instances are grouped into the last bin.
+Qualitative evaluation. Fig. 5 compares Alterbute with general-purpose image-to-image editing methods. The leftmost columns show the input image and the target intrinsic attribute specified as a text prompt. As shown, Alterbute successfully modifies the specified intrinsic attribute while preserving both the object’s identity and the surrounding scene. In contrast, other methods often struggle to preserve identity or accurately apply the requested edit. Notably, Alterbute is the only method capable of identity-preserving object reshaping (see SM for more examples). Fig. 6 shows comparisons with attribute-specific editors. Alterbute consistently achieves better identity preservation and produces high-quality edits across all intrinsic attribute types. Unlike the attribute-specific methods, which are limited to modifying a single attribute type, Alterbute supports editing any intrinsic attribute within a single unified model.
+Quantitative evaluation. We evaluated perceptual quality through a user study on the CloudResearch platform with 166166 U.S.-based participants. Each rated 2020 samples from our 100100-case evaluation set, comparing our results with baselines shown in random order.
+For each sample, participants were shown two edited images in random order: one from our method and one from a baseline. They were asked the following question: Which result do you prefer based on the text prompt? Consider whether the changes to the object match the prompt and whether the object still looks similar to the one in the input image. Each sample received five independent ratings, resulting in 500500 total ratings per general-purpose baseline and 410410 per attribute-specific method, for a total of 3,3203,320 responses. The aggregated results are shown in Tab. 1, where users consistently preferred our method across all comparisons. See SM for statistical significance analysis. For further evaluation, we conducted a VLM-based evaluation using Gemini [48], GPT-4o [1], and Claude 3.73.7 Sonnet [2], applying the same protocol and question as used in the user study. As shown in Tab. 1, these VLMs produce preferences that strongly align with user judgments. Additional details are provided in the SM.
+4.3 Analysis & Ablation study
+VNE cluster analysis. We apply our automated VNE labeling pipeline on OpenImages, which contains approximately 99 million images and 1616 million object bounding boxes. Our pipeline successfully assigns VNE labels to around 1.51.5 million objects. To ensure sufficient identity supervision, we discard all singleton clusters (i.e., clusters with only one image), resulting in a final set of 69,74469,744 VNE clusters comprising 1,079,4421,079,442 labeled images. Fig. 7 shows the distribution of cluster sizes, which follows a heavy-tailed pattern: while most clusters are small, a few contain thousands of instances. Fig. 8 presents the distribution of VNEs across the top-3030 object classes. A similar long-tailed trend emerges at the category level, with some semantic classes (e.g., “Car”) dominating the dataset, while others are sparsely represented. This analysis highlights both the diversity and scale of our automatically curated VNE clusters.
+Figure 8:
+Distribution of VNE clusters across the top 3030 object classes, sorted by frequency. Each bar shows the number of VNE clusters per class; all remaining classes are grouped into “Other”.
+Different identity definitions. Our method relies on an identity reference image i​did sampled from the same VNE cluster as the target object. This reference is crucial for conditioning the model to preserve identity during editing. In this ablation, we investigate how alternative identity definitions affect the model’s performance in intrinsic attribute editing. Specifically, we compare the following strategies for selecting identity references:
+(i) DINOv2 feature space: For each target image, the top-55 most similar objects are retrieved from the OpenImages dataset based on cosine similarity in the DINOv2 [32] feature space. (ii) Instance-retrieval feature space: Similar to the previous, but retrieval is based on instance-level retrieval features [40, 53]. (iii) In-place editing: The target image is used as its identity reference during training. This setting mirrors inference-time editing. (iv) Ours: A reference is sampled from the same VNE cluster as the target image.
+While instance-retrieval (IR) features can group visually similar instances, they often fail to provide sufficient variation in intrinsic attributes. DINOv2 performs worse, often clustering visually similar but identity-distinct objects, which damages identity conditioning. Moreover, both DINOv2 and IR operate over the entire OpenImages dataset, often resulting in clusters drawn from semantically unsuitable categories (e.g., food, landmarks, nature), where intrinsic attribute variation is minimal or absent (see SM for examples). As a result, the training data lacks the diversity needed to learn controlled edits, leading the model to ignore the prompt and overfit to identity and mask information. The in-place editing baseline further emphasizes the importance of our relaxed training formulation: using the same image as both target and reference fails to decouple identity from attributes and cannot generalize to attribute editing. In contrast, our VNE-based strategy ensures identity-preserving yet attribute-diverse supervision. See Fig. 9 for qualitative comparisons of the different identity definitions.
+Figure 9: Ablation on identity definitions. Comparison of identity reference strategies: in-place, DINOv2, IR, and our VNE-based approach. Each row shows the input and target attribute (left), followed by edited results under each identity definition.
+5 Discussion & Limitations
+Single attribute editing at inference time. During training, the text prompt pp describes all intrinsic attributes of the target object in a key-value format (see Fig. 2 left). However, at inference time, we provide a single key-value text prompt corresponding to the specific intrinsic attribute we wish to edit. Our training enables this flexibility, where we randomly omit the text prompt in 10%10\% of examples, forcing the model to infer unspecified attributes from the reference image. Thus, during inference, Alterbute learns to modify only the specified attribute while preserving others, enabling targeted control with minimal text.
+Multi-attribute editing. Intrinsic attributes often exhibit natural dependencies. For example, changing an object’s material to gold implicitly constrains other attributes: it cannot simultaneously have a black color. Our model captures such correlations through the training data and avoids producing contradictory combinations. Nevertheless, Alterbute can successfully modify multiple intrinsic attributes simultaneously when those attributes are not in conflict. See the SM for additional examples and discussion.
+Background artifacts with bounding box masks. To enable reshaping, Alterbute supports coarse bounding box masks instead of precise segmentations. While this improves flexibility, it may cause slight background inconsistencies within the masked region (see Fig. 10 top). A possible remedy is to pre-remove the object [52], providing a clean background and eliminating the need for masking.
+Reshaping rigid objects. As shown in Fig. 10 (bottom), reshaping rigid objects does not always yield the desired results. While Alterbute supports shape manipulation, editing the geometry of rigid objects remains challenging, as the shape is often correlated with identity-defining features. In some cases, the generated shapes may lack realism or fail to reflect the intended change. Nevertheless, Alterbute shows promising results despite some limitations.
+Figure 10: Limitations of Alterbute. Top: Background artifacts may occur with coarse bounding box masks. Bottom: Shape edits may produce unrealistic or unintended geometries.
+6 Conclusion
+We presented Alterbute, a diffusion-based method for editing intrinsic object attributes – color, texture, material, and shape – while preserving both its perceived identity and the surrounding scene context. To address the lack of aligned training data, we proposed a relaxed training objective that enables learning from both intrinsic and extrinsic changes. At inference, we constrain edits to intrinsic attributes only.
+To support identity conditioning, we introduced Visual Named Entities (VNEs) – visual identity categories extracted automatically using a VLM. VNEs group objects that share identity-defining features while exhibiting natural variation in intrinsic attributes, making them ideal for supervision. Alterbute supports editing any object intrinsic attribute within a single model and achieves state-of-the-art results in identity-preserving editing.
+7 Acknowledgments
+We thank Shira Bar-On for creating the figures and visualizations. We also thank Tomer Golany, Dani Lischinski, Asaf Shul, Shmuel Peleg, Bar Cavia, and Nadav Magar for their valuable feedback and discussions. Tal Reiss is supported by the Google PhD Fellowship.
+References
+[1]
+Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge Akkaya, Florencia Leoni Aleman, Diogo Almeida, Janko Altenschmidt, Sam Altman, Shyamal Anadkat, et al.
+Gpt-4 technical report.
+arXiv preprint arXiv:2303.08774, 2023.
+[2]
+Anthropic.
+Claude 3.7 sonnet, 2025.
+[3]
+Moab Arar, Andrey Voynov, Amir Hertz, Omri Avrahami, Shlomi Fruchter, Yael Pritch, Daniel Cohen-Or, and Ariel Shamir.
+Palp: prompt aligned personalization of text-to-image models.
+In SIGGRAPH Asia 2024 Conference Papers, pages 1–11, 2024.
+[4]
+Tim Brooks, Aleksander Holynski, and Alexei A Efros.
+Instructpix2pix: Learning to follow image editing instructions.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages 18392–18402, 2023.
+[5]
+Bingyi Cao, Andre Araujo, and Jack Sim.
+Unifying deep local and global features for image search.
+In Computer Vision–ECCV 2020: 16th European Conference, Glasgow, UK, August 23–28, 2020, Proceedings, Part XX 16, pages 726–743. Springer, 2020.
+[6]
+Mathilde Caron, Hugo Touvron, Ishan Misra, Hervé Jégou, Julien Mairal, Piotr Bojanowski, and Armand Joulin.
+Emerging properties in self-supervised vision transformers.
+In Proceedings of the International Conference on Computer Vision (ICCV), 2021.
+[7]
+Dave Zhenyu Chen, Yawar Siddiqui, Hsin-Ying Lee, Sergey Tulyakov, and Matthias Nießner.
+Text2tex: Text-driven texture synthesis via diffusion models.
+In Proceedings of the IEEE/CVF international conference on computer vision, pages 18558–18568, 2023.
+[8]
+Hong Chen, Yipeng Zhang, Simin Wu, Xin Wang, Xuguang Duan, Yuwei Zhou, and Wenwu Zhu.
+Disenbooth: Identity-preserving disentangled tuning for subject-driven text-to-image generation.
+In The Twelfth International Conference on Learning Representations, 2024a.
+[9]
+Xi Chen, Yutong Feng, Mengting Chen, Yiyang Wang, Shilong Zhang, Yu Liu, Yujun Shen, and Hengshuang Zhao.
+Zero-shot image editing with reference imitation.
+Advances in Neural Information Processing Systems, 37:84010–84032, 2024b.
+[10]
+Xi Chen, Lianghua Huang, Yu Liu, Yujun Shen, Deli Zhao, and Hengshuang Zhao.
+Anydoor: Zero-shot object-level image customization.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages 6593–6602, 2024c.
+[11]
+Ta-Ying Cheng, Prafull Sharma, Andrew Markham, Niki Trigoni, and Varun Jampani.
+Zest: Zero-shot material transfer from a single image.
+In European Conference on Computer Vision, pages 370–386. Springer, 2024.
+[12]
+Patrick Esser, Sumith Kulal, Andreas Blattmann, Rahim Entezari, Jonas Müller, Harry Saini, Yam Levi, Dominik Lorenz, Axel Sauer, Frederic Boesel, et al.
+Scaling rectified flow transformers for high-resolution image synthesis.
+In Forty-first international conference on machine learning, 2024.
+[13]
+Yarden Frenkel, Yael Vinker, Ariel Shamir, and Daniel Cohen-Or.
+Implicit style-content separation using b-lora.
+In European Conference on Computer Vision, pages 181–198. Springer, 2024.
+[14]
+Rinon Gal, Yuval Alaluf, Yuval Atzmon, Or Patashnik, Amit Haim Bermano, Gal Chechik, and Daniel Cohen-or.
+An image is worth one word: Personalizing text-to-image generation using textual inversion.
+In The Eleventh International Conference on Learning Representations, 2023.
+[15]
+Daniel Garibi, Or Patashnik, Andrey Voynov, Hadar Averbuch-Elor, and Daniel Cohen-Or.
+Renoise: Real image inversion through iterative noising.
+In European Conference on Computer Vision, pages 395–413. Springer, 2024.
+[16]
+Kamil Garifullin, Maxim Nikolaev, Andrey Kuznetsov, and Aibek Alanov.
+Materialfusion: High-quality, zero-shot, and controllable material transfer with diffusion models.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), 2025.
+[17]
+Amir Hertz, Ron Mokady, Jay Tenenbaum, Kfir Aberman, Yael Pritch, and Daniel Cohen-Or.
+Prompt-to-prompt image editing with cross attention control.
+arXiv preprint arXiv:2208.01626, 2022.
+[18]
+Amir Hertz, Andrey Voynov, Shlomi Fruchter, and Daniel Cohen-Or.
+Style aligned image generation via shared attention.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 4775–4785, 2024.
+[19]
+Jonathan Ho and Tim Salimans.
+Classifier-free diffusion guidance.
+arXiv preprint arXiv:2207.12598, 2022.
+[20]
+Hexiang Hu, Kelvin CK Chan, Yu-Chuan Su, Wenhu Chen, Yandong Li, Kihyuk Sohn, Yang Zhao, Xue Ben, Boqing Gong, William Cohen, et al.
+Instruct-imagen: Image generation with multi-modal instruction.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages 4754–4763, 2024.
+[21]
+Bahjat Kawar, Shiran Zada, Oran Lang, Omer Tov, Huiwen Chang, Tali Dekel, Inbar Mosseri, and Michal Irani.
+Imagic: Text-based real image editing with diffusion models.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages 6007–6017, 2023.
+[22]
+Vladimir Kulikov, Matan Kleiner, Inbar Huberman-Spiegelglas, and Tomer Michaeli.
+Flowedit: Inversion-free text-based editing using pre-trained flow models.
+In Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV), pages 19721–19730, 2025.
+[23]
+Nupur Kumari, Bingliang Zhang, Richard Zhang, Eli Shechtman, and Jun-Yan Zhu.
+Multi-concept customization of text-to-image diffusion.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages 1931–1941, 2023.
+[24]
+Alina Kuznetsova, Hassan Rom, Neil Alldrin, Jasper Uijlings, Ivan Krasin, Jordi Pont-Tuset, Shahab Kamali, Stefan Popov, Matteo Malloci, Alexander Kolesnikov, et al.
+The open images dataset v4: Unified image classification, object detection, and visual relationship detection at scale.
+International journal of computer vision, 128(7):1956–1981, 2020.
+[25]
+Black Forest Labs.
+Flux.
+https://github.com/black-forest-labs/flux, 2024.
+[26]
+Yao-Chih Lee, Erika Lu, Sarah Rumbley, Michal Geyer, Jia-Bin Huang, Tali Dekel, and Forrester Cole.
+Generative omnimatte: Learning to decompose video into layers.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), 2025.
+[27]
+Dongxu Li, Junnan Li, and Steven Hoi.
+Blip-diffusion: Pre-trained subject representation for controllable text-to-image generation and editing.
+Advances in Neural Information Processing Systems, 36:30146–30166, 2023.
+[28]
+Jian Ma, Junhao Liang, Chen Chen, and Haonan Lu.
+Subject-diffusion: Open domain personalized text-to-image generation without test-time fine-tuning.
+In ACM SIGGRAPH 2024 Conference Papers, pages 1–12, 2024.
+[29]
+Nadav Magar, Amir Hertz, Eric Tabellion, Yael Pritch, Alex Rav-Acha, Ariel Shamir, and Yedid Hoshen.
+Lightlab: Controlling light sources in images with diffusion models.
+In Proceedings of the Special Interest Group on Computer Graphics and Interactive Techniques Conference Conference Papers, pages 1–11, 2025.
+[30]
+Chenlin Meng, Yutong He, Yang Song, Jiaming Song, Jiajun Wu, Jun-Yan Zhu, and Stefano Ermon.
+Sdedit: Guided image synthesis and editing with stochastic differential equations.
+arXiv preprint arXiv:2108.01073, 2021.
+[31]
+Ron Mokady, Amir Hertz, Kfir Aberman, Yael Pritch, and Daniel Cohen-Or.
+Null-text inversion for editing real images using guided diffusion models.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages 6038–6047, 2023.
+[32]
+Maxime Oquab, Timothée Darcet, Théo Moutakanni, Huy Vo, Marc Szafraniec, Vasil Khalidov, Pierre Fernandez, Daniel Haziza, Francisco Massa, Alaaeldin El-Nouby, et al.
+Dinov2: Learning robust visual features without supervision.
+arXiv preprint arXiv:2304.07193, 2023.
+[33]
+Dustin Podell, Zion English, Kyle Lacey, Andreas Blattmann, Tim Dockhorn, Jonas Müller, Joe Penna, and Robin Rombach.
+Sdxl: Improving latent diffusion models for high-resolution image synthesis.
+arXiv preprint arXiv:2307.01952, 2023.
+[34]
+Aditya Ramesh, Prafulla Dhariwal, Alex Nichol, Casey Chu, and Mark Chen.
+Hierarchical text-conditional image generation with clip latents.
+arXiv preprint arXiv:2204.06125, 1(2):3, 2022.
+[35]
+Nikhila Ravi, Valentin Gabeur, Yuan-Ting Hu, Ronghang Hu, Chaitanya Ryali, Tengyu Ma, Haitham Khedr, Roman Rädle, Chloe Rolland, Laura Gustafson, et al.
+Sam 2: Segment anything in images and videos.
+arXiv preprint arXiv:2408.00714, 2024.
+[36]
+Elad Richardson, Yuval Alaluf, Ali Mahdavi-Amiri, and Daniel Cohen-Or.
+pops: Photo-inspired diffusion operators.
+arXiv preprint arXiv:2406.01300, 2024.
+[37]
+Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Björn Ommer.
+High-resolution image synthesis with latent diffusion models.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages 10684–10695, 2022.
+[38]
+Nataniel Ruiz, Yuanzhen Li, Varun Jampani, Yael Pritch, Michael Rubinstein, and Kfir Aberman.
+Dreambooth: Fine tuning text-to-image diffusion models for subject-driven generation.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages 22500–22510, 2023.
+[39]
+Chitwan Saharia, William Chan, Saurabh Saxena, Lala Li, Jay Whang, Emily L Denton, Kamyar Ghasemipour, Raphael Gontijo Lopes, Burcu Karagol Ayan, Tim Salimans, et al.
+Photorealistic text-to-image diffusion models with deep language understanding.
+Advances in neural information processing systems, 35:36479–36494, 2022.
+[40]
+Shihao Shao and Qinghua Cui.
+1st place solution in google universal images embedding.
+arXiv preprint arXiv:2210.08473, 2022.
+[41]
+Prafull Sharma, Varun Jampani, Yuanzhen Li, Xuhui Jia, Dmitry Lagun, Fredo Durand, Bill Freeman, and Mark Matthews.
+Alchemist: Parametric control of material properties with diffusion models.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 24130–24141, 2024.
+[42]
+Shelly Sheynin, Adam Polyak, Uriel Singer, Yuval Kirstain, Amit Zohar, Oron Ashual, Devi Parikh, and Yaniv Taigman.
+Emu edit: Precise image editing via recognition and generation tasks.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 8871–8879, 2024.
+[43]
+Jing Shi, Wei Xiong, Zhe Lin, and Hyun Joon Jung.
+Instantbooth: Personalized text-to-image generation without test-time finetuning.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages 8543–8552, 2024.
+[44]
+Chaehun Shin, Jooyoung Choi, Heeseung Kim, and Sungroh Yoon.
+Large-scale text-to-image model with inpainting is a zero-shot subject-driven image generator.
+In Proceedings of the Computer Vision and Pattern Recognition Conference, pages 7986–7996, 2025.
+[45]
+Yizhi Song, Zhifei Zhang, Zhe Lin, Scott Cohen, Brian Price, Jianming Zhang, Soo Ye Kim, and Daniel Aliaga.
+Objectstitch: Object compositing with diffusion model.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 18310–18319, 2023.
+[46]
+Yizhi Song, Zhifei Zhang, Zhe Lin, Scott Cohen, Brian Price, Jianming Zhang, Soo Ye Kim, He Zhang, Wei Xiong, and Daniel Aliaga.
+Imprint: Generative object compositing by learning identity-preserving representation.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 8048–8058, 2024.
+[47]
+Richard Sutton.
+The bitter lesson.
+Incomplete Ideas (blog), 13(1):38, 2019.
+[48]
+Gemini Team, Rohan Anil, Sebastian Borgeaud, Jean-Baptiste Alayrac, Jiahui Yu, Radu Soricut, Johan Schalkwyk, Andrew M Dai, Anja Hauth, Katie Millican, et al.
+Gemini: a family of highly capable multimodal models.
+arXiv preprint arXiv:2312.11805, 2023.
+[49]
+Yoad Tewel, Rinon Gal, Gal Chechik, and Yuval Atzmon.
+Key-locked rank one editing for text-to-image personalization.
+In ACM SIGGRAPH 2023 conference proceedings, pages 1–11, 2023.
+[50]
+Andrey Voynov, Qinghao Chu, Daniel Cohen-Or, and Kfir Aberman.
+p+: Extended textual conditioning in text-to-image generation.
+arXiv preprint arXiv:2303.09522, 2023.
+[51]
+Yuxiang Wei, Yabo Zhang, Zhilong Ji, Jinfeng Bai, Lei Zhang, and Wangmeng Zuo.
+Elite: Encoding visual concepts into textual embeddings for customized text-to-image generation.
+In Proceedings of the IEEE/CVF International Conference on Computer Vision, pages 15943–15953, 2023.
+[52]
+Daniel Winter, Matan Cohen, Shlomi Fruchter, Yael Pritch, Alex Rav-Acha, and Yedid Hoshen.
+Objectdrop: Bootstrapping counterfactuals for photorealistic object removal and insertion.
+In European Conference on Computer Vision, pages 112–129. Springer, 2024.
+[53]
+Daniel Winter, Asaf Shul, Matan Cohen, Dana Berman, Yael Pritch, Alex Rav-Acha, and Yedid Hoshen.
+Objectmate: A recurrence prior for object insertion and subject-driven generation.
+In Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV), pages 16281–16291, 2025.
+[54]
+Guangxuan Xiao, Tianwei Yin, William T Freeman, Frédo Durand, and Song Han.
+Fastcomposer: Tuning-free multi-subject image generation with localized attention.
+International Journal of Computer Vision, pages 1–20, 2024.
+[55]
+Shitao Xiao, Yueze Wang, Junjie Zhou, Huaying Yuan, Xingrun Xing, Ruiran Yan, Chaofan Li, Shuting Wang, Tiejun Huang, and Zheng Liu.
+Omnigen: Unified image generation.
+In Proceedings of the Computer Vision and Pattern Recognition Conference, pages 13294–13304, 2025.
+[56]
+Binxin Yang, Shuyang Gu, Bo Zhang, Ting Zhang, Xuejin Chen, Xiaoyan Sun, Dong Chen, and Fang Wen.
+Paint by example: Exemplar-based image editing with diffusion models.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages 18381–18391, 2023.
+[57]
+Jinrui Yang, Qing Liu, Yijun Li, Soo Ye Kim, Daniil Pakhomov, Mengwei Ren, Jianming Zhang, Zhe Lin, Cihang Xie, and Yuyin Zhou.
+Generative image layer decomposition with visual effects.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), 2025.
+[58]
+Hu Ye, Jun Zhang, Sibo Liu, Xiao Han, and Wei Yang.
+Ip-adapter: Text compatible image prompt adapter for text-to-image diffusion models.
+arXiv preprint arXiv:2308.06721, 2023.
+[59]
+Haozhe Zhao, Xiaojian Shawn Ma, Liang Chen, Shuzheng Si, Rujie Wu, Kaikai An, Peiyu Yu, Minjia Zhang, Qing Li, and Baobao Chang.
+Ultraedit: Instruction-based fine-grained image editing at scale.
+Advances in Neural Information Processing Systems, 37:3058–3093, 2024.
+Supplementary Material
+Appendix A Baselines
+In our qualitative and quantitative comparisons (including a user study), we evaluated several baseline methods that have publicly available open-source models. These baselines fall into two categories: general-purpose image editing models and specialized intrinsic attribute editors. We describe each baseline below.
+A.1 General-purpose editors
+FlowEdit [22]: FlowEdit is a text-driven image editing method that avoids diffusion inversion by using a pretrained flow model to navigate latent space edits. We use the public implementation released by the authors, based on FLUX [25].
+InstructPix2Pix [4]: InstructPix2Pix fine-tunes a diffusion model to follow image editing instructions generated from synthetic instruction-image pairs. It performs text-conditioned edits without per-image optimization.
+OmniGen [55]: OmniGen is a unified diffusion model capable of both text-to-image generation and text-conditioned editing. It handles multiple tasks in a single model via shared reasoning abilities. We use the available checkpoint for evaluation.
+UltraEdit [59]: UltraEdit fine-tunes a diffusion model on a large-scale synthetic instruction-based dataset (approximately 44M examples) for fine-grained editing. It improves precision over previous instruction-following editors. We use the publicly released UltraEdit model trained on the UltraEdit-44M dataset, based on Stable Diffusion 3 [12].
+Diptych [44]: Diptych uses an inpainting-based approach, framing editing as a two-panel grid (diptych) generation task using pretrained FLUX [25]. It enables zero-shot subject-driven edits with strong identity preservation. We use the open-source code.
+A.2 Specialized intrinsic attribute editors
+MaterialFusion [16]: MaterialFusion performs high-quality, zero-shot material transfer by predicting intrinsic material properties from a single image and applying reference materials. We use the available pretrained model for evaluation.
+MimicBrush [9]: MimicBrush enables zero-shot, localized attribute transfer by imitating visual attributes (texture, material) from a reference image onto a selected target region using diffusion models. The publicly released checkpoints and code are used for our evaluation.
+Appendix B Quantitative Evaluation
+User study. To evaluate the perceptual quality of our results, we conducted an extensive user study on the CloudResearch platform. A total of 166166 participants, primarily based in the United States and selected at random, were recruited for the study. Each participant was shown 2020 samples, sampled from our evaluation set of 100100 intrinsic attribute editing cases.
+For each sample, participants were shown two edited images in random order: one generated by our method and the other by a baseline. They were asked the following question:
+Which result do you prefer based on the text prompt?
+Consider whether the changes to the object match the prompt and whether the object still looks similar to the one in the input image.
+An example of the questionnaire interface is shown in Fig. SM.1. Each sample received 55 independent ratings, resulting in 500500 total ratings for each general-purpose baseline and 410410 for each attribute-specific editing method, for a total of 3,3203,320 responses. The aggregated results are reported in Tab. 2 of the main paper. As shown, participants strongly preferred the outputs generated by Alterbute over all competing baselines. A binomial test on the collected responses, reported in Tab. SM.1, confirms that these preferences are statistically significant (pp-value <0.05<0.05).
+Table SM.1: Statistical significance of the results. A binomial statistical test suggests that our results are statistically significant (p-value <0.05<0.05)
+Evaluator
+Attribute-specific Editors
+General Purpose Editors
+MimicBrush
+MaterialFusion
+FlowEdit
+InstructPix2Pix
+OmniGen
+UltraEdit
+Diptych
+User
+<1​e−10<1e-10
+<1​e−10<1e-10
+<1​e−10<1e-10
+<1​e−10<1e-10
+<1​e−10<1e-10
+<1​e−10<1e-10
+<1​e−10<1e-10
+Gemini
+<1​e−12<1e-12
+<1​e−12<1e-12
+<1​e−12<1e-12
+<1​e−12<1e-12
+<1​e−12<1e-12
+<1​e−12<1e-12
+<1​e−12<1e-12
+GPT-4o
+<1​e−12<1e-12
+<1​e−12<1e-12
+<1​e−12<1e-12
+<1​e−12<1e-12
+<1​e−12<1e-12
+<1​e−12<1e-12
+<1​e−12<1e-12
+Claude
+<1​e−12<1e-12
+<1​e−12<1e-12
+<1​e−12<1e-12
+<5​e−12<5e-12
+<1​e−12<1e-12
+<3​e−12<3e-12
+<6​e−12<6e-12
+Figure SM.1: A screenshot of the user study questionnaire.
+VLM-based evaluation. To complement the user evaluation, we conducted an evaluation using three vision-language models: Gemini [48], GPT-4o [1], and Claude 3.7 Sonnet [2]. Each model was asked the same question and shown the same image pairs as in the user study. We collected five ratings per sample using the same evaluation set, yielding 500500 and 410410 total decisions for general and attribute-specific baselines, respectively, totaling 3,3203,320 comparisons. The aggregated results, reported in Tab. 2, show strong agreement with user preferences. A binomial test (also reported in Tab. SM.1) confirms the statistical significance of these results.
+Conventional evaluation protocol. Standard evaluation of image editing models typically considers two axes: identity preservation and alignment with a target textual prompt. To adapt this framework to the task of intrinsic attribute editing, we define the following metrics:
+(i) Identity preservation is measured using the average pairwise cosine similarity between the edited object and its identity reference image. We report results using two visual feature spaces: DINO and CLIP image embeddings, denoted as DINO and CLIP-I, respectively.
+(ii) Textual alignment assesses whether the desired intrinsic attribute was successfully applied. This is measured via CLIP image-text similarity (CLIP-T), computed as the cosine similarity between the CLIP embedding of the edited image and the target attribute prompt.
+While commonly used, these metrics are not well-suited to intrinsic attribute editing, where the goal is to modify specific attributes without changing the object’s identity. For example, methods that fail to apply the edit and simply return the original object may score highly on DINO and CLIP-I despite being ineffective. Additionally, both DINO and CLIP are sensitive to changes in intrinsic attributes, which can result in lower similarity scores even when identity is perceptually preserved. Conversely, methods that generate a new object matching the prompt but discard the original identity can achieve high CLIP-T scores while failing the core objective of identity preservation. In both cases, relying on any single metric provides an incomplete and potentially misleading view of model performance. For completeness, we report results under this conventional protocol in Tab. SM.2, where Alterbute achieves competitive performance and the highest CLIP-T scores. However, we argue that meaningful evaluation of intrinsic attribute editing should jointly assess both identity preservation and attribute editing. Our complete evaluation, including qualitative comparisons, user studies, and VLM-based assessments, is tailored to this task and provides a more reliable and task-aligned performance measure.
+Table SM.2: Standard metrics comparison. We report identity preservation using DINO and CLIP-I, and target attribute alignment using CLIP-T. Best results are shown in bold, and second-best are underlined.
+Method
+DINO
+CLIP-I
+CLIP-T
+FlowEdit [22]
+0.813
+0.900
+0.294
+InstructPix2Pix [4]
+0.772
+0.877
+0.302
+OmniGen [55]
+0.823
+0.912
+0.305
+UltraEdit [59]
+0.841
+0.922
+0.303
+Diptych [44]
+0.794
+0.901
+0.313
+Ours
+0.815
+0.914
+0.321
+Appendix C Additional Results
+We provide extended qualitative comparisons to complement those presented in the main paper. Figs. SM.2, SM.3, SM.4, SM.5, SM.6 and SM.7 show additional results comparing our method to general-purpose image-and-text-to-image editing baselines. Figs. SM.8 and SM.9 present further comparisons against specialized attribute-specific editing methods.
+As discussed in the main paper, intrinsic attributes often exhibit natural dependencies. Our model captures such correlations through its training data and avoids generating contradictory combinations. At the same time, it supports multi-attribute editing when the requested changes are semantically compatible. Fig. SM.13 showcases examples where Alterbute successfully modifies multiple intrinsic attributes simultaneously, while preserving object identity and maintaining scene context. These results demonstrate the model’s capacity to generalize beyond single-attribute-at-a-time edits and perform coherent multi-attribute transformations.
+Appendix D Identity Definitions
+In the main manuscript, we presented an ablation study comparing several strategies for selecting identity references during training:
+(i) DINOv2 feature space: For each target image, the top-55 most similar objects are retrieved from the OpenImages dataset based on cosine similarity in the DINOv2 [32] feature space.
+(ii) Instance-retrieval feature space: Similar to the previous approach, but based on instance-level retrieval features [40, 53].
+(iii) Ours: A reference image sampled from the same VNE cluster as the target object.
+Fig. 9 in the main paper shows that identity references selected via DINOv2 or IR fail to support effective intrinsic attribute editing. To further support the analysis presented in Sec. 4.3 of the main paper, we visualize example clusters obtained using each identity definition. Fig. SM.10 and Fig. SM.11 display clusters derived from DINOv2 and instance-retrieval features, respectively, with each row corresponding to a single cluster.
+Although instance-retrieval features can group visually similar objects, they often lack sufficient variation in intrinsic attributes. DINOv2 performs worse, frequently clustering objects that are visually similar yet identity-distinct, which harms identity conditioning. Additionally, because both methods operate over the full OpenImages dataset, they often form clusters from semantically unsuitable categories (e.g., food, landmarks, nature), where intrinsic attribute variation is limited or irrelevant. Consequently, training on such clusters leads the model to ignore the textual prompt and overfit to the identity and mask alone, resulting in poor editing performance. In contrast, our VNE-based clustering ensures that identity references are both identity-consistent and diverse in intrinsic attributes. Fig. SM.12 shows example clusters obtained with our VNE-based definition.
+Appendix E Editing Both Intrinsic and Extrinsic Attributes
+While the primary focus of our work is on editing intrinsic object attributes, our relaxed training objective enables the model to handle modifications to both intrinsic and extrinsic factors. In this extended setting, the model is given a new background image, a reference object image, and a textual prompt describing the desired attribute modifications. It then composes the object into the new scene while applying the specified intrinsic edits. If the prompt is empty (i.e., ” ”), the model is instructed to preserve all intrinsic attributes from the reference identity and perform only the insertion of the object into the new context. Fig. SM.14 showcases examples of such joint intrinsic-extrinsic edits. These results open future directions for applying our approach in broader generative tasks such as subject-driven generation or object insertion with controlled transformations.
+Appendix F Gemini-Based Labeling Pipeline
+We use Gemini 2.02.0 Flash to automatically label both VNEs and the intrinsic attributes of objects. The prompts used for VNE labeling and intrinsic attribute description are shown in Figs. SM.15 and SM.16, respectively. For VNE labeling, Gemini returns a label along with a confidence score: {\{Low, Medium, High}\}. We keep only examples with a High confidence score to ensure label quality and discard any unlabeled or low-confidence instances. In Fig. SM.17, we show examples of objects along with their corresponding intrinsic attribute descriptions generated by Gemini. We note that recent advances in VLMs make our pipeline feasible, enabling scalable data-driven training that was previously impractical in image editing research.
+Figure SM.2: Additional qualitative comparisons against general-purpose image-and-text-to-image editing methods.
+Figure SM.3: Additional qualitative comparisons against general-purpose image-and-text-to-image editing methods.
+Figure SM.4: Additional qualitative comparisons against general-purpose image-and-text-to-image editing methods.
+Figure SM.5: Additional qualitative comparisons against general-purpose image-and-text-to-image editing methods.
+Figure SM.6: Additional qualitative comparisons against general-purpose image-and-text-to-image editing methods.
+Figure SM.7: Additional qualitative comparisons against general-purpose image-and-text-to-image editing methods.
+Figure SM.8: Additional qualitative comparisons against attribute-specific edits.
+Figure SM.9: Additional qualitative comparisons against attribute-specific edits.
+Figure SM.10: Example clusters retrieved using DINOv2 feature similarity, with each row showing images from the same cluster.
+Figure SM.11: Example clusters retrieved using IR feature similarity, with each row showing images from the same cluster.
+Figure SM.12: Example of VNE clusters.
+Figure SM.13: Alterbute results on multi-attribute editing, showing its ability to apply compatible edits while preserving identity and context.
+Figure SM.14: Alterbute edits both intrinsic and extrinsic attributes by composing the reference object into a new scene and applying the specified intrinsic change. An empty prompt preserves all intrinsic attributes for identity-preserving object insertion.
+⬇
+You are a highly specialized expert in *Visual Named Entity (VNE) identification*. Your expertise lies in recognizing manufactured products based on their membership within a shared "manufacturing line"-meaning you identify products by their consistent visual identity as they are mass-produced, branded items, despite potential variations.
+*Your Core Task:* Given an image, you must identify the specific *Visual Named Entity (VNE)* present. This means pinpointing the manufactured product based on its distinctive visual characteristics and its consistent lineage within a manufacturing line.
+*Crucial Guidelines - Follow These Precisely:*
+1. *Focus Exclusively on Mass-Produced, Branded Products:* Your task is ONLY about identifying items that are manufactured at scale and carry a recognizable brand identity. Generic items are not VNEs.
+2. *Actively Consider Product Variations Within the Same VNE "Manufacturing Line":* Acknowledge and expect variations that are *intrinsic* to the VNE’s definition. This *includes*:
+* *Model Variations:* Different models within the same product line (e.g., iPhone 13 Pro, iPhone 13).
+* *Design Iterations:* Minor design changes across different releases of the same product.
+* *Product Generations:* Successive generations of a product line (e.g., different generations of Nike Air Force 1).
+3. *Explicitly Disregard Irrelevant Image Factors:* Ignore elements that are *external* to the VNE’s core visual identity. This *includes*:
+* Lighting conditions (bright, dim, natural, artificial).
+* Background clutter or complexity.
+* Image quality (blurriness, resolution, compression artifacts).
+4. *Concentrate on Core and Persistent Visual Identifiers:* Analyze the fundamental visual features that reliably distinguish the VNE, features that *persist* across all permissible variations within its manufacturing line.
+5. *Prioritize Accuracy and Return "None" When Uncertain:* It is better to admit uncertainty than to make an incorrect identification. If you cannot confidently identify a VNE, you *MUST* return "None".
+*Key Output Instructions - Deliverables:*
+1. *Product Identification (Required):* Provide the most specific product identification possible, including both the brand and the precise model name. For example: "Apple iPhone 14 Pro Max", not just "iPhone" or "Apple Phone".
+2. *Confidence Level (Evaluative):* Assign a confidence level of "High", "Medium", or "Low". Base this level on the *clarity and distinctiveness of the VNE’s visual identifiers* in the image. "High" indicates very clear and unambiguous identifiers; "Low" suggests weaker or less distinct identifiers.
+3. *"None" Output (Conditional):* If, after careful analysis, you cannot confidently identify a VNE, your "product_identification" *MUST* be "None".
+*Illustrative Examples (Refer to these for guidance):*
+* *Product Category: Smartphones*
+* *iPhone 15 Pro:* "Apple iPhone 15 Pro"
+* *Samsung Galaxy S23 Ultra:* "Samsung Galaxy S23 Ultra"
+* *Unclear Phone Image (Generic or Obscured):* "None"
+* *Product Category: Footwear*
+* *Nike Air Max 90:* "Nike Air Max 90"
+* *Adidas Superstar:* "Adidas Superstar"
+* *Generic Sneaker (No Clear Branding):* "None"
+* *Product Category: Furniture*
+* *IKEA Billy Bookcase:* "IKEA Billy Bookcase"
+* *Steelcase Leap Chair:* "Steelcase Leap Chair"
+* *Ambiguous Furniture Image (Undistinct Style):* "None"
+*Output Format - JSON Structure (Strictly adhere to this):*
+‘‘‘json
+{
+"product_identification": "Specific brand and model name" OR "None",
+"confidence_level": "High/Medium/Low"
+}
+Figure SM.15: Prompt used for VNE extraction.
+⬇
+You are a **highly specialized Intrinsic Visual Analyst**. Your expertise lies in systematically dissecting visual information to identify and meticulously describe an object’s **intrinsic** visual attributes-its fundamental properties that remain constant regardless of external conditions. You function as a detail-oriented scientist, focusing purely on the object’s morphology, material, and inherent color.
+### Primary Task:
+Given an image of an object, your role is to **systematically extract and describe its core intrinsic visual attributes**, completely ignoring external influences such as lighting, perspective, or background elements.
+Your analysis should be structured and precise, resulting in a **JSON-formatted report** that captures the object’s:
+- **Shape:** The fundamental geometric structure and proportions, independent of perspective distortion.
+- **Color:** The object’s true, inherent color, unaffected by lighting, shadows, or reflections.
+- **Texture:** Description of any inherent color patterns (e.g., stripes, spots, gradients)
+- **Material:** The most probable material composition, inferred from surface properties, texture, and typical visual cues.
+### Guiding Principles & Instructions:
+#### 1. Focus on Intrinsic Attributes ONLY:
+- **Shape:**
+- Identify the object’s **core geometric form**, correcting for perspective distortion.
+- Describe its **major components**, overall proportions, and structural relationships.
+- **Color:**
+- Determine the **true** color by mentally averaging out highlights, shadows, and reflections.
+- **Texture:**
+- Include Note any **inherent patterns** (e.g., stripes, spots, gradients that are part of the object itself, not lighting effects).
+- **Material:**
+- Infer the **most probable** material based on **surface reflectance**, **texture**, and **visual characteristics** (e.g., metallic sheen, wood grain, fabric weave).
+- Use broad material categories such as: **metal, wood, plastic, glass, ceramic, organic (e.g., leather, plant-based), synthetic fabric, natural fabric.**
+- If the material is ambiguous, state "uncertain."
+#### 2. Strictly Ignore Extrinsic Attributes:
+**Lighting:** Ignore shadows, highlights, reflections, glare, or artificial lighting effects.
+**Perspective & Positioning:** Disregard the object’s orientation, viewpoint, or how it appears due to foreshortening.
+**Context & Background:** Ignore surroundings, background objects, and contextual cues.
+**Image Artifacts:** Disregard noise, compression artifacts, or imperfections caused by image quality.
+#### 3. Handling Ambiguity:
+- If an attribute **cannot be confidently determined** (even after careful analysis), **explicitly state** ‘"uncertain"‘ in the JSON output rather than making an unsupported guess.
+- Prioritize **reasoned inference** based on visual cues, but never fabricate details.
+### Example Object Categories & Thought Process:
+**Vehicles** (**e.g., regardless of motion blur, sun glare, or scenic background, what is its true shape, color, and material?**)
+**Furniture** (**e.g., ignore lighting effects and floor position; describe its structure, material, and base color.**)
+**Footwear** (**e.g., disregard dynamic poses or shadows; focus
+### Output Format (Strict JSON Schema):
+Your response **MUST** adhere to the following **structured JSON format** with precise attribute descriptions. If uncertain, use ‘"uncertain"‘ as the value.
+‘‘‘json
+{
+"color": "The object’s inherent color.",
+"texture": "Description of any inherent color patterns (e.g., stripes, spots, gradients) or ’none’."
+"shape": "A concise sentence of the object’s core geometric structure and proportion.",
+"material": "A concise sentence of the most probable material composition, or ’uncertain’ if ambiguous."
+}
+Figure SM.16: Prompt used for intrinsic attribute extraction.
+Figure SM.17: Examples of intrinsic attribute descriptions generated by Gemini. Each object is paired with a structured key-value description covering color, texture, material, and shape, based solely on visual input.
+Figure SM.18: Model inputs and outputs. We show the inputs that condition Alterbute, the object mask, background image, identity reference and the textual prompt. alongside the resulting edited output.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from
+

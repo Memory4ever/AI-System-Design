@@ -1,0 +1,1101 @@
+Train Short, Inference Long: Training-free Horizon Extension for Autoregressive Video Generation
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Works
+Autoregressive Video Diffusion.
+Long Context Extension in RoPE.
+Temporal Priors and Noise Sampling.
+3 Method
+3.1 Preliminary
+Intra-chunk Independent Noise Sampling.
+Causal Attention with Local Window.
+3D Rotary Positional Embedding.
+3.2 Frequency-aware 3D RoPE Modulation
+Dimension-Frequency-Wavelength Mapping.
+Problem Definition: Training Inference Gap.
+3.3 Antiphase Noise Sampling
+3.4 Temporal Attention Sink
+4 Experiments
+Implementation.
+4.1 Quantitative Comparison
+Evaluation on MovieGen Prompts.
+Evaluation on VBench Prompts.
+4.2 Qualitative Comparison
+4.3 Ablation Study
+Component Ablation.
+Impact of RoPE Hyper-parameters α \alpha and β \beta .
+Impact of Chunk Covariance Coefficient ρ \rho .
+4.4 Generalization to Minute-Level Generation
+5 Conclusion
+References
+A Analysis of Position Interpolation in Video Extension
+B Proofs of Proposition
+B.1 Energy Monotonicity
+Marginal Variance.
+Cross-Correlation.
+Total Energy and Monotonicity.
+B.2 Spectral Analysis and Motion Energy
+High-Pass Characteristics.
+Energy Quantization via Parseval’s Identity.
+C Verification of Temporal Attention Sink
+Visual Consistency and Horizon Extension.
+D Detailed VBench-Long Benchmark Evaluation
+Experimental Setup
+Full Quantitative Results
+E Additional Qualitative Comparisons
+E.1 30-second Video Generation Results
+E.2 Long horizon 60-second Synthesis
+F Implementation Details on LongLive Integration
+Module Integration and Adaptation.
+License: CC BY 4.0
+arXiv:2602.14027v1 [cs.CV] 15 Feb 2026
+Train Short, Inference Long: Training-free Horizon Extension for Autoregressive Video Generation
+Jia Li
+Affiliation: The University of Hong Kong
+Affiliation: ByteDance
+Xiaomeng Fu
+Affiliation: Institute of Information Engineering, Chinese Academy of Sciences
+Xurui Peng
+Affiliation: ByteDance
+Weifeng Chen
+Affiliation: ByteDance
+Youwei Zheng
+Affiliation: ByteDance
+Tianyu Zhao
+Affiliation: ByteDance
+Jiexi Wang
+Affiliation: ByteDance
+Fangmin Chen
+Affiliation: ByteDance
+Xing Wang
+Affiliation: ByteDance
+Correspondence to: wangxing.613@bytedance.com
+Hayden Kwok-Hay So
+Affiliation: The University of Hong Kong
+Correspondence to: hso@eee.hku.hk
+Abstract
+Autoregressive video diffusion models have emerged as a scalable paradigm for long video generation. However, they often suffer from severe extrapolation failure, where rapid error accumulation leads to significant temporal degradation when extending beyond training horizons. We identify that this failure primarily stems from the spectral bias of 3D positional embeddings and the lack of dynamic priors in noise sampling. To address these issues, we propose FLEX ( F requency-aware L ength EX tension), a training-free inference-time framework that bridges the gap between short-term training and long-term inference. FLEX introduces Frequency-aware RoPE Modulation to adaptively interpolate under-trained low-frequency components while extrapolating high-frequency ones to preserve multi-scale temporal discriminability. This is integrated with Antiphase Noise Sampling (ANS) to inject high-frequency dynamic priors and Inference-only Attention Sink to anchor global structure. Extensive evaluations on VBench demonstrate that FLEX significantly outperforms state-of-the-art models at 6 × 6\times extrapolation (30s duration) and matches the performance of long-video fine-tuned baselines at 12 × 12\times scale (60s duration). As a plug-and-play augmentation, FLEX seamlessly integrates into existing inference pipelines for horizon extension. It effectively pushes the generation limits of models such as LongLive, supporting consistent and dynamic video synthesis at a 4-minute scale. Project page is available at https://ga-lee.github.io/FLEX .
+Keywords:
+Machine Learning, ICML
+† † affiliationnotice: Equal contribution
+1 Introduction
+Video generation is currently undergoing a paradigm shift from short clip synthesis to long video generation ( Ho et al., 2022 ; Blattmann et al., 2023 ; Chen et al., 2025b ; Kodaira et al., 2025 ; Song et al., 2025 ) . To overcome the computational and memory bottlenecks of bidirectional attention, Autoregressive (AR) diffusion models ( Villegas et al., 2022 ; ai et al., 2025 ; Chen et al., 2025a ; Sun et al., 2025 ) , such as Self Forcing ( Huang et al., 2025 ) , have emerged as a prominent architecture due to the superior inference efficiency. By generating in a chunk-wise or frame-wise manner while maintaining a rolling KV cache, these models theoretically enable infinite-length video generation.
+However, AR models often face severe extrapolation challenges in practice. When the inference horizon significantly exceeds the predefined training or self-rollout range, models often fall into out-of-distribution (OOD) regions, manifesting as temporal drift, visual artifacts, and motion issues. Existing solutions such as Streaming Long Tuning ( Yang et al., 2025b ) mitigate these issues via fine-tuning on self-rollout long clips. Nevertheless, these methods incur prohibitive computational costs and remain bounded by the “train long, inference long” constraint ( Press et al., 2022 ) . Consequently, a training-free framework for extending the temporal horizon of pretrained AR models is of great significance.
+In this work, we identify two primary failure modes underlying horizon extension in autoregressive video diffusion models from an inference perspective. (i) Spectral Bias in Positional Embeddings. We observe that different frequency components of 3D RoPE exhibit highly imbalanced training exposure over limited training sequences. Specifically, low-frequency components are often under-trained, failing to generalize to the expanded coordinates required for long-term inference. While standard Position Interpolation (PI) remaps these components into trained horizons, its uniform compression compromises high-frequency components, which are essential for fine-grained temporal discriminability. (ii) Lack of Dynamic Priors in Noise Sampling. Existing positive-correlation noise initialization strategie ( Lu and Yang, 2025 ; Gao et al., 2025 ; Qiu et al., 2023 ) enhance temporal consistency at the cost of content diversity and motion dynamics, leading to insufficient motion energy and gradual dynamic degradation in extended sequences.
+To bridge the gap between short-term training and long-term inference, we propose FLEX ( F requency-aware L ength EX tension), a comprehensive training-free inference-time framework that comprises three core components: (1) Frequency-aware 3D RoPE Modulation: Inspired by NTK-by-parts in Large Language Models (LLMs), we adaptively interpolate low-frequency temporal dimensions to stabilize global structure, while extrapolating high-frequency components with superior generalization to preserve fine-grained temporal detail. (2) Antiphase Noise Sampling (ANS): We introduce a structured noise initialization that redistributes noise power toward higher frequencies, which effectively seeds the latent space with temporal dynamic variations. (3) Inference-only Attention Sink: We preserve the initial frames as temporal anchors within the local window, to maintain global semantic consistency without modifications to model architectures or training process.
+The main contributions of this work are three-fold:
+•
+We systematically analyze two key inference-time failure modes that fundamentally limit horizon extension in autoregressive video diffusion models:
+(i) the spectral bias of 3D RoPE caused by imbalanced frequency-wise training exposure, and
+(ii) the lack of dynamic priors in noise initialization sampling.
+•
+We propose FLEX , a training-free and inference-time framework consisting of
+Frequency-aware RoPE Modulation to preserve multi-scale temporal discriminability,
+Antiphase Noise Sampling to inject high-frequency dynamic priors,
+and inference-only Attention Sink to maintain global structure over time.
+•
+Extensive evaluations on VBench-Long demonstrate that FLEX significantly outperforms state-of-the-art methods on the 30 second ( 6 × 6\times extrapolation) task, and achieves performance comparable to long-video fine-tuned approaches at the 60-second ( 12 × 12\times extrapolation). Moreover, FLEX generalizes well as a plug-and-play augmentation that consistently improves both temporal consistency and dynamics when integrated into existing autoregressive models such as LongLive, supporting robust minute-level video generation.
+2 Related Works
+Autoregressive Video Diffusion.
+To bypass the quadratic complexity of bidirectional attention, recent research adopts the autoregressive paradigm for long-sequence synthesis. CasuVid ( Yin et al., 2025 ) distills non-causal models like Wan2.1 ( Wan et al., 2025 ) into a causal, few-step model with DMD ( Yin et al., 2024 ) . Self Forcing ( Huang et al., 2025 ) introduces self-rollout sampling to mitigate the exposure bias between training and inference. Building upon this, LongLive ( Yang et al., 2025b ) employs Streaming Long Tuning on extended self-rollout sequences and employs KV-recache for real-time interactive generation. Rolling Forcing ( Liu et al., 2025 ) introduces a joint denoising scheme, which simultaneously processing frames at different denoising levels. Despite their progress, these methods remain constrained by training horizons. When inference extends into out-of-distribution temporal ranges, rapid error accumulation inevitably leads to degraded generation quality, temporal inconsistency, and unnatural motion patterns.
+Long Context Extension in RoPE.
+Rotary Positional Embedding (RoPE) ( Su et al., 2024 ) is widely used to encode relative positions in Transformer-based architectures ( Touvron et al., 2023 ) . To handle sequences exceeding the pretraining horizon, the LLM community has developed various RoPE extension techniques ( Zhong et al., 2024 ) . Beyond linear Position Interpolation (PI) ( Chen et al., 2023a ) , Neural Tangent Kernel (NTK) theory ( Jacot et al., 2018 ) has inspired non-uniform scaling methods like NTK-aware interpolation ( bloc97, 2023b ) to prevent high-frequency information loss. Subsequent refinements, such as NTK-by-parts ( bloc97, 2023a ) , YaRN ( Peng et al., 2023 ) and LongRoPE ( Ding et al., 2024 ) , modulate frequency components to preserve local discriminability while interpolating low-frequency dimensions for global structure. While 1D RoPE extension techniques have demonstrated remarkable success in context extension in LLMs, the inherent properties of 3D RoPE as well as its specific impact on modeling long sequence in video generation have yet to be fully explored.
+Temporal Priors and Noise Sampling.
+Maintaining consistency in long-horizon generation often involves injecting temporal priors through noise regularization. FreeNoise ( Qiu et al., 2023 ) introduces a training-free paradigm using noise rescheduling and temporal shifting to stabilize long-range structures. Similarly, AnimateDiff ( Guo et al., 2023 ) employs group-based noise sampling to maintain feature coherence during inference. While these methods improve spatio-temporal smoothness, they rely heavily on positive noise correlation . In extended autoregressive generation, this strong correlation tends to over-stabilize the latent space and results in monotonous, low-dynamic visual content.
+3 Method
+3.1 Preliminary
+In chunk-wise autoregressive video diffusion generation, an inference sequence of length L L is decomposed into N = L / f N=L/f successive chunks 𝐂 = { 𝒞 i } i = 1 N \mathbf{C}=\{\mathcal{C}_{i}\}_{i=1}^{N} , where each chunk 𝒞 i ∈ ℝ f × H × W × C \mathcal{C}_{i}\in\mathbb{R}^{f\times H\times W\times C} contains f f latent frames. Each chunk is generated sequentially, with its denoising process conditioned on the historical context maintained by sliding local window implemented through KV caches.
+Intra-chunk Independent Noise Sampling.
+The generation of each chunk 𝒞 i \mathcal{C}_{i} originates from a set of initial noise latents at diffusion timestep T T , denoted as 𝐙 T ( i ) = { 𝐳 T ( i , 1 ) , … , 𝐳 T ( i , f ) } \mathbf{Z}_{T}^{(i)}=\{\mathbf{z}_{T}^{(i,1)},\dots,\mathbf{z}_{T}^{(i,f)}\} . In standard inference protocols, the f f latent frames within each chunk are typically sampled independently from a standard isotropic Gaussian distribution:
+𝔼 ⁡ [ 𝐳 T ( i , u ) ​ ( 𝐳 T ( i , v ) ) ⊤ ] = 𝟎 , ∀ u ≠ v ∈ { 1 , … , f } , \mathbb{E}\left[\mathbf{z}_{T}^{(i,u)}(\mathbf{z}_{T}^{(i,v)})^{\top}\right]=\mathbf{0},\quad\forall u\neq v\in\{1,\dots,f\},
+(1)
+where 𝐳 T ( i , ⋅ ) ∼ 𝒩 ⁡ ( 𝟎 , 𝐈 ) \mathbf{z}_{T}^{(i,\cdot)}\sim\mathcal{N}(\mathbf{0},\mathbf{I}) . This intra-chunk independence serves as the stochastic prior, providing the initial latent layout for the subsequent iterative denoising steps.
+Causal Attention with Local Window.
+The denoising process for the i i -th chunk is formulated as:
+𝐳 t − 1 ( i ) = 𝒢 θ ​ ( 𝐳 t ( i ) ∣ 𝚽 < i , 𝐜 , t ) , \mathbf{z}_{t-1}^{(i)}=\mathcal{G}_{\theta}\left(\mathbf{z}_{t}^{(i)}\mid\mathbf{\Phi}_{<i},\mathbf{c},t\right),
+(2)
+where 𝒢 θ \mathcal{G}_{\theta} denotes the denoising network, 𝐜 \mathbf{c} represents external conditions such as text prompts, and 𝚽 < i \mathbf{\Phi}_{<i} denotes the historical context. Due to computational constraints, current architectures often employ a sliding window causal attention of size w w . The historical context 𝚽 < i \mathbf{\Phi}_{<i} is thus truncated to the most recent w − f w-f frames: 𝚽 < i = KV ​ ( { 𝐳 0 ( j , k ) } ) \mathbf{\Phi}_{<i}=\text{KV}(\{\mathbf{z}_{0}^{(j,k)}\}) , where the frame indices ( j , k ) (j,k) are constrained within the temporal interval [ ( i − 1 ) ​ f − ( w − f ) + 1 , ( i − 1 ) ​ f ] [(i-1)f-(w-f)+1,(i-1)f] .
+3D Rotary Positional Embedding.
+Modern video diffusion Transformers (e.g., Wan2.1 ( Wan et al., 2025 ) ) utilize 3D Rotary Positional Embedding (RoPE) to encode spatio-temporal dependencies. The d d -dimensional embedding is decomposed into height, width, and temporal subspaces: d = d H + d W + d F d=d_{H}+d_{W}+d_{F} . As our work focuses on temporal extrapolation, we analyze the temporal subspace d F d_{F} , which consists of d F / 2 d_{F}/2 orthogonal rotary planes.
+For a temporal query component 𝐪 \mathbf{q} at global index n n , the positional encoding is defined as f ⁡ ( 𝐪 , n , θ ) = 𝐑 Θ , n ​ 𝐪 f(\mathbf{q},n,\theta)=\mathbf{R}_{\Theta,n}\mathbf{q} . For each m m -th rotary plane ( m ∈ [ 0 , d F 2 − 1 ] m\in[0,\frac{d_{F}}{2}-1] ), the rotary operator transforms component pairs via:
+( 𝐪 2 ​ m ′ 𝐪 2 ​ m + 1 ′ ) = ( cos ⁡ ( n ​ θ m ) − sin ⁡ ( n ​ θ m ) sin ⁡ ( n ​ θ m ) cos ⁡ ( n ​ θ m ) ) ​ ( 𝐪 2 ​ m 𝐪 2 ​ m + 1 ) , \begin{pmatrix}\mathbf{q}^{\prime}_{2m}\\
+\mathbf{q}^{\prime}_{2m+1}\end{pmatrix}=\begin{pmatrix}\cos(n\theta_{m})&-\sin(n\theta_{m})\\
+\sin(n\theta_{m})&\cos(n\theta_{m})\end{pmatrix}\begin{pmatrix}\mathbf{q}_{2m}\\
+\mathbf{q}_{2m+1}\end{pmatrix},
+(3)
+where θ m = b − 2 m / d F \theta_{m}=b^{-2m/d_{F}} with base b = 10000 b=10000 . This ensures shift-invariance , where the attention score depends solely on the relative distance Δ ​ n = n q − n k \Delta n=n_{q}-n_{k} :
+⟨ f ⁡ ( 𝐪 , n q , θ ) , f ⁡ ( 𝐤 , n k , θ ) ⟩ = 𝐪 ⊤ ​ 𝐑 Δ ​ n ​ 𝐤 \langle f(\mathbf{q},n_{q},\theta),f(\mathbf{k},n_{k},\theta)\rangle=\mathbf{q}^{\top}\mathbf{R}_{\Delta n}\mathbf{k}
+(4)
+Figure 1 : Frequency-aware analysis of temporal RoPE.
+(Left) Visualization of rotary periodicity sin ⁡ ( Δ ​ n ​ θ m ) \sin(\Delta n\theta_{m}) along the temporal dimension. (Right) Training exposure r m r_{m} , defined as the number of completed cycles given a training horizon of L t ​ r ​ a ​ i ​ n = 21 L_{train}=21 .
+3.2 Frequency-aware 3D RoPE Modulation
+Dimension-Frequency-Wavelength Mapping.
+We defined the temporal rotation period or wavelength at dimension index m m as λ m = 2 ​ π / θ m = 2 ​ π ⋅ b 2 ​ m / d F \lambda_{m}=2\pi/\theta_{m}=2\pi\cdot b^{2m/d_{F}} . Physically, λ m \lambda_{m} represents the number of frames required for the m m -th rotation group on temporal dimension to complete one full 2 ​ π 2\pi rotation. This mapping dictates the model’s sensitivity to different temporal granularities (see Fig. 1 left): (1) High-Frequency / Short-Wavelength (Small m m ) : Low-indexed dimensions rotate rapidly with respect to position n n , capturing fine-grained, local temporal dependencies. (2) Low-Frequency / Long-Wavelength (Large m m ) : High-indexed dimensions evolve slowly across time, responsible for encoding long-term temporal position relationship.
+Problem Definition: Training Inference Gap.
+While RoPE is theoretically shift-invariant, its empirical effectiveness is bound by the range of relative phases encountered during training, defined by the domain 𝒟 Δ = { Δ n θ m ∣ Δ n ∈ [ 0 , L train − 1 ] , m ∈ [ 0 , d F 2 − 1 ] } \mathcal{D}_{\Delta}=\{\Delta n\theta_{m}\mid\Delta n\in[0,L_{\text{train}}-1],m\in[0,\frac{d_{F}}{2}-1]\} . When the inference length reaches to L ′ L^{\prime} and relative distance Δ ​ n \Delta n far exceeds L train L_{\text{train}} , the standard encoding f ⁡ ( 𝐪 F , n , θ ) f(\mathbf{q}_{F},n,\theta) encounters frequency-dependent extrapolation failures: (1) High-Frequency Dimensions ( λ m ≪ L train \lambda_{m}\ll L_{\text{train}} ): These components undergo multiple full rotation cycles during training, resulting in high training exposure . This sufficient training allows the model to better generalize to extrapolated distances, maintaining stable positional priors even when Δ ​ n > L train \Delta n>L_{\text{train}} . (2) Low-Frequency Dimensions ( λ m > L train \lambda_{m}>L_{\text{train}} ): Due to their long wavelengths, these components fail to complete even a single 2 ​ π 2\pi rotation within the training horizon, suffering from insufficient training exposure . This leads to significant performance degradation in the under-trained extrapolation regime ( Δ ​ n > L train \Delta n>L_{\text{train}} ).
+A common baseline for context extension is Position Interpolation (PI), which linearly scales extended position indices n n by S = L / L train S=L/L_{\text{train}} to match the training horizon:
+f PI ​ ( 𝐪 , n , θ ) = f ⁡ ( 𝐪 , g ⁡ ( n ) = n S , h ⁡ ( θ m ) = θ m ) f_{\text{PI}}(\mathbf{q},n,\theta)=f\left(\mathbf{q},g(n)=\frac{n}{S},h(\theta_{m})=\theta_{m}\right)
+(5)
+While PI works well for LLMs ( Chen et al., 2023a ) , our experiment indicates it fails for video generation task. As S S increases, the generated video becomes nearly static with a rapid decline in image quality during autoregressive inference (see Appendix A for experiment details).
+We attribute this failure to the uniform compression of Fourier space. By scaling down all dimensions equally, PI reduces the phase difference between adjacent frames, diminishing the model’s ability to distinguish fine-grained temporal order. According to Neural Tangent Kernel (NTK) theory ( Jacot et al., 2018 ) , deep networks exhibit a spectral bias, suggesting that high-frequency components are essential for maintaining temporal discriminability and should be compressed with frequency-specific, multiscale strategy.
+Inspired by NTK-by-parts ( Peng et al., 2023 ) , a classical context-window extension method in LLM community (e.g., Qwen3 ( Yang et al., 2025a ) ), we propose temporal frequency-aware NTK-by-parts 3D RoPE modulation for long video generation beyond training range. First, we quantify the training sufficiency of the m m -th rotary dimension as training exposure ( r m r_{m} ), physically defined as the number of complete rotation cycles observed during training,
+r m = L train λ m = L train ⋅ θ m 2 ​ π r_{m}=\frac{L_{\text{train}}}{\lambda_{m}}=\frac{L_{\text{train}}\cdot\theta_{m}}{2\pi}
+(6)
+Unlike LLMs trained on kilo-token contexts, video diffusion models are typically restricted short training clips (e.g., 21 latent frames). This leads to a wide lack of temporal exposure. As shown in Fig. 1 right, most dimensions exhibit r m < 1 r_{m}<1 , failing to complete a single rotation cycle during training.
+Then we reformulate temporal RoPE function as,
+f parts ​ ( 𝐪 , n , θ ) = f ⁡ ( 𝐪 , g ⁡ ( n ) , h ⁡ ( θ m ) ) f_{\text{parts}}(\mathbf{q},n,\theta)=f(\mathbf{q},g(n),h(\theta_{m}))
+(7)
+where g ⁡ ( n ) = n g(n)=n preserves the original temporal index n n . The frequency modulation h ⁡ ( θ m ) h(\theta_{m}) is governed by a gating function g ⁡ ( r ) g(r) that partitions the m m dimensions into three regimes based on the training exposure r r (illustrated by the different colored regions in Fig. 1 ):
+g ⁡ ( r m ) = { 0 , if ​ r m < α 1 , if ​ r m > β r m − α β − α , otherwise g(r_{m})=\begin{cases}0,&\text{if }r_{m}<\alpha\\
+1,&\text{if }r_{m}>\beta\\
+\frac{r_{m}-\alpha}{\beta-\alpha},&\text{otherwise}\end{cases}
+(8)
+The modified frequency h ⁡ ( θ m ) h(\theta_{m}) for each dimension is then calculated as a weighted combination:
+h ⁡ ( θ m ) = ( 1 − g ⁡ ( r m ) ) ​ θ m S + g ⁡ ( r m ) ​ θ m h(\theta_{m})=(1-g(r_{m}))\frac{\theta_{m}}{S}+g(r_{m})\theta_{m}
+(9)
+The dynamic scaling factor is defined as the ratio of inference length L L to training length L train L_{\text{train}} , then S = max ⁡ ( 1 , L / L train ) S=\max(1,L/L_{\text{train}}) . This formulation ensures that for L ≤ L train L\leq L_{\text{train}} , no modification is applied ( S = 1 S=1 ), thus preserving the model’s original performance within the training horizon. For L > L train L>L_{\text{train}} , a frequency-specific RoPE modulation on the temporal dimension d f d_{f} with two hyperparameter α \alpha and β \beta is conducted:
+(i) High-Frequency Extrapolation ( r m > β r_{m}>\beta ) preserves original rotation angles to ensure the fine-grained temporal discriminability.
+(ii) Low-Frequency Interpolation ( r m < α r_{m}<\alpha ) remaps under-trained components back into the familiar phase domain to maintain global position embedding capability at extended horizons.
+3.3 Antiphase Noise Sampling
+The initial noise state provides a foundational prior for motion synthesis in diffusion models ( Chen et al., 2023b ) . While common initialization strategies ( Qiu et al., 2023 ) employ positive temporal correlations to enhance consistency, such priors often lead to monotonous content and diminished motion dynamics over long horizons. To restore temporal variation and enrich dynamic complexity in extended sequences, we introduce Antiphase Noise Sampling (ANS), a structured initialization strategy that reshapes the noise distribution to inject high-frequency temporal priors.
+Mathematical Formulation. We consider a chunk of length f f consisting of latent frames Z = [ z 0 , z 1 , … , z f − 1 ] ⊤ ∈ ℝ f × d Z=[z_{0},z_{1},\dots,z_{f-1}]^{\top}\in\mathbb{R}^{f\times d} . To inject a controllable temporal prior, we parameterize the intra-chunk correlation via a first-order autoregressive (AR(1)) process:
+𝐳 0 \displaystyle\mathbf{z}_{0}
+∼ 𝒩 ⁡ ( 𝟎 , 𝐈 ) , \displaystyle\sim\mathcal{N}(\mathbf{0},\mathbf{I}),
+(10)
+𝐳 u \displaystyle\mathbf{z}_{u}
+= ρ ​ 𝐳 u − 1 + 1 − ρ 2 ​ ϵ u , ϵ u ∼ 𝒩 ⁡ ( 𝟎 , 𝐈 ) , \displaystyle=\rho\mathbf{z}_{u-1}+\sqrt{1-\rho^{2}}\boldsymbol{\epsilon}_{u},\quad\boldsymbol{\epsilon}_{u}\sim\mathcal{N}(\mathbf{0},\mathbf{I}),
+(11)
+where u ∈ { 1 , … , f − 1 } u\in\{1,\dots,f-1\} and ρ ∈ [ − 1 , 1 ] \rho\in[-1,1] controls the correlation across frames. Unlike consistency-oriented methods, we adopt the antiphase regime ( ρ < 0 \rho<0 ), where adjacent noise perturbations exhibit negative covariance. This ensures that the initial latent state possesses high temporal variance, serving as a seed for dynamic motion.
+Figure 2 : Spectral analysis of Antiphase Noise Sampling. (Left) Power Spectral Density S ρ ​ ( ω ) S_{\rho}(\omega) . (Right) Motion Energy Density | H ⁡ ( ω ) | 2 ​ S ρ ​ ( ω ) |H(\omega)|^{2}S_{\rho}(\omega) . The antiphase regime ( ρ < 0 \rho<0 ) shifts power toward the high-frequency passband, boosting motion energy relative to the i.i.d. baseline ( ρ = 0 \rho=0 ).
+Proposition 3.1 (Distributional Invariance and Structure) .
+The ANS construction in Eq. ( 11 ) ensures that:(i) Marginal Preservation: Each frame maintains the standard Gaussian distribution 𝐳 u ∼ 𝒩 ⁡ ( 𝟎 , 𝐈 ) \mathbf{z}_{u}\sim\mathcal{N}(\mathbf{0},\mathbf{I}) , since:
+Cov ​ ( 𝐳 u ) \displaystyle\text{Cov}(\mathbf{z}_{u})
+= ρ 2 ​ Cov ​ ( 𝐳 u − 1 ) + ( 1 − ρ 2 ) ​ Cov ​ ( ϵ u ) \displaystyle=\rho^{2}\text{Cov}(\mathbf{z}_{u-1})+(1-\rho^{2})\text{Cov}(\boldsymbol{\epsilon}_{u})
+(12)
+= ρ 2 ​ 𝐈 + ( 1 − ρ 2 ) ​ 𝐈 = 𝐈 . \displaystyle=\rho^{2}\mathbf{I}+(1-\rho^{2})\mathbf{I}=\mathbf{I}.
+(ii) Toeplitz Covariance: The temporal correlation follows a symmetric Toeplitz structure, Cov ​ ( 𝐳 u , 𝐳 v ) = ρ | u − v | ​ 𝐈 \text{Cov}(\mathbf{z}_{u},\mathbf{z}_{v})=\rho^{|u-v|}\mathbf{I} .
+This invariance is crucial as it ensures ANS remains compatible with pretrained denoisers without introducing out-of-distribution latent shifts, allowing it to function as a plug-and-play module for any AR video model.
+Energy Monotonicity and Spectral Seeding. To quantify the impact of ANS on dynamics, we analyze the adjacent-difference energy , defined as the expected variation between consecutive noise frames:
+ℰ T ​ ( ρ ) ≜ 𝔼 ⁡ [ ∑ u = 1 f − 1 ‖ 𝐳 u − 𝐳 u − 1 ‖ 2 2 ] . \mathcal{E}_{T}(\rho)\triangleq\mathbb{E}\left[\sum_{u=1}^{f-1}\|\mathbf{z}_{u}-\mathbf{z}_{u-1}\|_{2}^{2}\right].
+(13)
+Proposition 3.2 (Energy Monotonicity) .
+For the AR(1) process defined in Eq. ( 11 ), the adjacent-difference energy is a linear function of the correlation coefficient ρ \rho (detailed proof is provided in Appendix B.1 ):
+ℰ T ​ ( ρ ) = 2 ​ ( f − 1 ) ​ ( 1 − ρ ) ​ d . \mathcal{E}_{T}(\rho)=2(f-1)(1-\rho)d.
+(14)
+The total energy ℰ T ​ ( ρ ) \mathcal{E}_{T}(\rho) is a strictly decreasing function of ρ \rho , where the antiphase regime ( ρ < 0 \rho<0 ) yields energy levels higher than i.i.d. baseline ( ρ = 0 \rho=0 ).
+This spatial-temporal enhancement is rooted in the frequency domain. For the AR(1) process defined in Eq. ( 11 ), the Power Spectral Density (PSD) is given by:
+S ρ ​ ( ω ) = 1 − ρ 2 1 + ρ 2 − 2 ​ ρ ​ cos ⁡ ( ω ) , ω ∈ [ 0 , π ] . S_{\rho}(\omega)=\frac{1-\rho^{2}}{1+\rho^{2}-2\rho\cos(\omega)},\quad\omega\in[0,\pi].
+(15)
+As ρ → − 1 \rho\to-1 , the power spectrum S ρ ​ ( ω ) S_{\rho}(\omega) develops a high-pass characteristic, concentrating temporal power at the ω = π \omega=\pi , as visualized in Fig. 2 (left). Considering the temporal difference operator as a high-pass filter H ⁡ ( ω ) = 1 − e − j ​ ω H(\omega)=1-e^{-j\omega} , the expected adjacent-difference energy can be expressed as an integral of the filtered spectrum: ℰ T ∝ ∫ | H ⁡ ( ω ) | 2 ​ S ρ ​ ( ω ) ​ 𝑑 ω \mathcal{E}_{T}\propto\int|H(\omega)|^{2}S_{\rho}(\omega)d\omega . Since | H ⁡ ( ω ) | 2 = 2 ​ ( 1 − cos ⁡ ω ) |H(\omega)|^{2}=2(1-\cos\omega) also reaches its maximum at ω = π \omega=\pi , the antiphase regime ( ρ < 0 \rho<0 ) creates a constructive alignment between the noise power and the filter’s passband (detailed spectral analysis are provided in Appendix B.2 ).
+As illustrated in Fig. 2 , ANS reallocates the noise power budget from static temporal offsets to dynamic fluctuations. In diffusion models, where early denoising steps determine the global trajectory, this high-frequency seeding provides a robust temporal gradient. ANS injects high-frequency signals into the initial noise to avoid the static results often seen in low-pass initialization. By providing these early variations, our method encourages the model to generate videos with richer temporal variance and content diversity.
+3.4 Temporal Attention Sink
+While frequency-aware RoPE effectively preserves relative temporal resolution, AR video models face a fundamental challenge shared wit LLMs: the degradation of global context over extended horizons. Inspired by attention sink phenomenon in LLMs ( Xiao et al., 2023 ; Qiu et al., 2025 ) , we introduce an inference-only sink mechanism to anchor long-term synthesis. Specifically, we fix the first N N frames within local attention window to serve as persistent global semantic and structural anchors. Unlike training-based approaches like LongLive ( Yang et al., 2025b ) which incorporate attention sinks into training, our approach is a strictly inference-only, plug-and-play strategy compatible with pretrained AR models without architectural modifications or finetuning. As detailed in Appendix C , it effectively maintains global consistency over extended horizons.
+Table 1 : Comparisons with representative open-source autoregressive video generation models of similar parameter sizes. We evaluate both 30s and 60s generation settings using VBench-Long metrics. † Numbers are adopted from corresponding papers.
+Model
+Throughput
+(FPS) ↑ \uparrow
+Subject
+Consistency
+Background
+Consistency
+Motion
+Smoothness
+Aesthetic
+Quality
+Imaging
+Quality
+Dynamic
+Degree
+Temporal
+Flickering
+Quality
+Score
+Δ \Delta Drift ↓ \downarrow
+30s (6 × \times Extension)
+CausVid ( Yin et al., 2025 )
+17.0 †
+98.28
+97.03
+98.27
+60.03
+65.57
+32.65
+98.49
+81.04
+-3.34
+Self Forcing ( Huang et al., 2025 )
+17.0
+98.07
+96.78
+98.45
+60.13
+69.57
+26.24
+98.58
+81.21
+-1.78
+LongLive ( Yang et al., 2025b )
+20.7 †
+97.57
+96.52
+98.85
+62.34
+69.26
+39.16
+99.08
+82.78
+-1.32
+Rolling Forcing ( Liu et al., 2025 )
+17.5 †
+97.98
+96.83
+98.80
+61.20
+70.98
+32.80
+98.65
+82.31
+-0.25
+Self Forcing + FLEX
+17.0
+97.74
+96.83
+98.42
+63.09
+69.87
+40.84
+99.13
+83.01
+-0.06
+60s (12 × \times Extension)
+CausVid ( Yin et al., 2025 )
+17.0 †
+98.14
+97.02
+98.25
+60.02
+65.52
+31.27
+98.59
+80.92
+-2.07
+Self Forcing ( Huang et al., 2025 )
+17.0
+97.74
+96.64
+98.34
+57.67
+68.82
+25.57
+98.55
+80.51
+-2.51
+LongLive ( Yang et al., 2025b )
+20.7 †
+97.30
+96.37
+98.83
+62.18
+69.13
+39.98
+99.01
+82.68
+-0.71
+Rolling Forcing ( Liu et al., 2025 )
+17.5 †
+97.86
+96.73
+98.79
+60.43
+70.89
+32.48
+98.62
+82.10
+-0.54
+Self Forcing + FLEX
+17.0
+97.85
+96.87
+98.41
+62.71
+69.79
+37.82
+99.01
+82.68
+-0.56
+Table 2 : VBench-Long evaluation results on 30s video generation. We compare our model with key baselines and report representative dimensions results below, with full results across all 16 metrics provided in Appendix D .
+Model
+Subject
+Consistency
+Background
+Consistency
+Aesthetic
+Quality
+Dynamic
+Degree
+Object
+Class
+Spatial
+Relationship
+Overall
+Consistency
+Quality
+Score
+Semantic
+Score
+Total
+Score
+Self Forcing ( Huang et al., 2025 )
+98.58
+97.06
+61.80
+29.38
+90.76
+72.74
+25.23
+81.94
+76.42
+80.84
+LongLive ( Yang et al., 2025b )
+98.36
+97.22
+64.13
+39.84
+94.44
+79.24
+26.43
+83.39
+80.85
+82.88
+Rolling Forcing ( Liu et al., 2025 )
+98.25
+97.30
+63.92
+40.52
+94.69
+76.34
+26.49
+83.57
+79.86
+82.83
+Self Forcing + FLEX FLEX
+98.70
+97.94
+65.43
+44.32
+94.94
+82.04
+26.67
+84.17
+80.73
+83.48
+4 Experiments
+Implementation.
+For base model, we adopt Self Forcing ( Huang et al., 2025 ) with chunk size of 3. The model is built upon Wan2.1-T2V-1.3B ( Wan et al., 2025 ) , which supports video generation for durations of 5 seconds. Following CausVid ( Yin et al., 2025 ) , the base model is initialized with 16k ODE solution pairs sampled from a teacher model. In the subsequent DMD training stage, we perform self-rollout on 5-second video clips (corresponding to L t ​ r ​ a ​ i ​ n = 21 L_{train}=21 latent frames) using a sliding window of size 9. During inference, we adopt α = 0.1 \alpha=0.1 , β = 2.5 \beta=2.5 , and ρ = − 1 \rho=-1 for default. We compare our method against representative autoregressive models for real-time long video generation, including CausVid ( Yin et al., 2025 ) , Self Forcing ( Huang et al., 2025 ) , LongLive ( Yang et al., 2025b ) , and Rolling Forcing ( Liu et al., 2025 ) . All baseline methods are few-step distilled models with 1.3B parameters, providing a fair comparison in terms of model capacity and inference efficiency.
+4.1 Quantitative Comparison
+Evaluation on MovieGen Prompts.
+We evaluate visual quality on the MovieGen prompt set (1003 prompts) refined by Qwen2.5-7B-Instruct and report VBench-Long metrics for 30s and 60s durations. As summarized in Table 1 , our method achieves a state-of-the-art Quality Score of 83.01 at 30s, with a minimal imaging quality drift of −0.06 . Notably, FLEX outperforms training-based counterparts, suggesting that principled frequency and noise modulations can be more effective than long-horizon fine-tuning. For 60-second generation (a 12 × \times extension over the Self Forcing training length), our method significantly improves the Quality Score from 80.51 to 82.68 and significantly suppresses quality drift from -2.51 to -0.56 compared to original Self Forcing. This indicates an effective mitigation of error accumulation over time. Notably, our framework yields performance competitive with LongLive, which requires self-rollout video samples up to 60 seconds, highlighting the effectiveness of our training-free approach for long video generation.
+Evaluation on VBench Prompts.
+We further validate our approach using 946 official refined VBench prompts ( Huang et al., 2024 ) across 5 random seeds. Results on the 30s VBench-Long benchmark (Table 2 ) show that FLEX achieves a total score of 83.48 , surpassing existing autoregressive baselines such as LongLive (82.88) and Rolling Forcing (82.83). Specifically, our method yields substantial gains in dynamic degree, rising from 29.38 (Self Forcing) to 44.32 , while simultaneously preserving the highest aesthetic score 65.43 . The semantic alignment remains competitive with LongLive, confirming that our enhancements in motion and coherence do not compromise semantic alignment. These results indicate that FLEX effectively enhances long-video generation by balancing temporal coherence with motion dynamics and semantic fidelity. Full quantitative results across all 16 dimensions are provided in Appendix D .
+Figure 3 :
+Qualitative comparison of video generation over 30s seconds.
+Our method yields higher-fidelity video generation with reduced artifacts and improved temporal consistency, maintaining consistent appearance attributes over time.
+Figure 4 :
+Qualitative comparison on 60 second video generation.
+We compare our method against four baselines. While prior methods suffer from identity drift or scene collapse over long durations, our model maintains high subject consistency and visual quality. The right panels (Character A-E) highlight our model’s ability to preserve fine-grained character identities throughout the entire 60s sequence.
+4.2 Qualitative Comparison
+We conduct qualitative evaluations for further comparison.
+Figure 3 shows generated videos on 30 second duration. While previous autoregressive models like Self Forcing often suffer from rapid quality degradation, FLEX effectively maintains temporal consistency and fine-grained visual attributes. For instance, high frequency details such as the specific texture and color of the astronaut’s gloves remain stable over time.
+We further evaluate a 60 second generation under a complex multi-subject prompt in Figure 4 . In this extreme 12 × 12\times extrapolation setting, CausVid and Self Forcing exhibit significant visual collapse, while LongLive and Rolling Forcing suffer from identity drift, where character features gradually fade over time. In contrast, FLEX maintains high visual fidelity and subject consistency. It also demonstrates superior semantic alignment, accurately capturing facial expressions such as confusion ) as described. The temporal character crops (Character A-E) further validate our method’s ability to preserve precise identity throughout the entire 60s sequence, effectively mitigating the common challenge of identity fading in long video generation. More visualization results are provided in Appendix E .
+4.3 Ablation Study
+To further validate our proposed method, we conduct extensive ablation experiments on a subset of 128 prompts from MovieGen ( Polyak et al., 2024 ) , following CausVid ( Yin et al., 2025 ) . For the following quantitative analyses, we use abbreviations for the VBench-Long metrics where, for instance, Subj. denotes Subject Consistency.
+Component Ablation.
+We conduct ablation experiments to isolate the contributions of our three core modules: (i) NTK-by-part RoPE (NR), (ii) Antiphase Noise Sampling (ANS), and (iii) Attention Sink (AS). As summarized in Table 3 , the full configuration (NR+ANS+AS) achieves the optimal Quality Score of 83.07 . (i) Impact of NR: Removing the frequency-aware RoPE modulation leads to a degradation in Subject and Background consistency. This suggests that without NR, the model fails to resolve relative temporal positions over extended horizons, causing significant temporal drift. (ii) Impact of ANS: The absence of antiphase correlation results in a significant drop in the Dynamic Degree from 40.63 to 33.84. This validates our theoretical analysis that reallocating the noise power spectrum toward high frequencies prevents motion collapse. (iii) Impact of AS: Excluding the attention sink mechanism causes a noticeable decline in overall quality scores. This confirms that initial frames serve as indispensable stationary anchors, mitigating cumulative visual drift in autoregressive models.
+Table 3 : Ablation study of individual components within our framework. NR, ANS, and AS denote NTK-by-part RoPE, Antiphase Noise Sampling, and Attention Sink, respectively.
+NR
+ANS
+AS
+Subj.
+Back.
+Aest.
+Image.
+Dyn.
+Flick.
+Quality
+× \times
+✓
+✓
+96.37
+95.62
+60.46
+67.66
+59.67
+98.59
+82.52
+✓
+× \times
+✓
+98.31
+97.32
+62.46
+70.08
+33.84
+99.13
+82.78
+✓
+✓
+× \times
+98.10
+97.37
+59.03
+67.96
+32.42
+98.61
+81.14
+✓
+✓
+✓
+98.21
+97.23
+62.58
+69.77
+40.63
+99.12
+83.07
+Table 4 : Ablation study of RoPE interpolation hyper-parameters α \alpha and β \beta on VBench-Long metrics. We assess the impact of varying one parameter while keeping the other fixed.
+α \alpha
+β \beta
+Subj.
+Back.
+Motion
+Aest.
+Imag.
+Dyn.
+Quality
+Varying β \beta (with fixed α = 0.1 \alpha=0.1 )
+0.1
+0.5
+97.21
+96.35
+97.60
+60.96
+68.31
+62.40
+83.31
+0.1
+1.0
+97.36
+96.47
+97.81
+61.35
+68.56
+58.40
+83.32
+0.1
+1.5
+97.61
+96.67
+98.02
+61.53
+68.78
+52.69
+83.15
+0.1
+2.0
+97.94
+96.96
+98.22
+62.17
+69.00
+47.36
+83.14
+0.1
+3.0
+98.44
+97.40
+98.62
+62.68
+69.84
+34.86
+82.85
+Varying α \alpha (with fixed β = 2.5 \beta=2.5 )
+0.001
+2.5
+98.16
+97.16
+98.41
+62.22
+69.77
+40.38
+82.93
+0.005
+2.5
+98.16
+97.15
+98.41
+62.41
+69.73
+39.40
+82.90
+0.01
+2.5
+98.15
+97.15
+98.36
+62.21
+69.61
+40.87
+82.92
+0.1
+2.5
+98.21
+97.23
+98.44
+62.58
+69.77
+40.63
+83.07
+0.5
+2.5
+98.49
+97.45
+98.65
+62.61
+69.90
+34.13
+82.79
+Impact of RoPE Hyper-parameters α \alpha and β \beta .
+We further examine the impact of interpolation parameters α \alpha and β \beta . The empirical results illustrated in Table 4 reveal a distinct trade-off: increasing α \alpha or β \beta consistently improves subject and background consistency scores but results in a notable decline in dynamic performance. This suggests that excessive interpolation biases the model toward more static generations. These findings underscore that intermediate settings (e.g., α = 0.1 , β = 2.5 \alpha=0.1,\beta=2.5 ) are essential to balance long-term consistency with content dynamic.
+Impact of Chunk Covariance Coefficient ρ \rho .
+We evaluate the influence of the chunk covariance coefficient ρ \rho within ANS, which regulates the temporal correlation of the initial noise within chunks. As illustrated in Figure 5 , ρ \rho acts as a pivotal factor in balancing temporal consistency against motion dynamics. Specifically, as ρ \rho increases from -1.0 to 1.0, the enhanced inter-chunk correlation leads to steady gains in subject/background consistency and aesthetic quality. However, this stability is achieved at the cost of motion richness, as the model becomes increasingly constrained, limiting its ability to generate diverse temporal variations.
+Figure 5 : Impact of covariance coefficient ρ \rho on VBench metrics.
+4.4 Generalization to Minute-Level Generation
+To evaluate the model-agnostic robustness of our framework, we integrate the proposed modules into LongLive for ultra-long horizon synthesis (implementation details are provided in Appendix F ). As summarized in Table 5 , FLEX yields consistent improvements across multiple VBench-Long dimensions, enhancing quality score to 82.48 and significantly reducing image drift from − 2.19 -2.19 to − 1.17 -1.17 .
+A primary challenge in minute-level generation lies in the balance between temporal consistency and dynamics ( Yang et al., 2026 ) . As the generation horizon extends, In extended horizons, baseline models frequently exhibit identity drift or converge into frozen frames or periodic motion cycles. As illustrated in Figure 6 , FLEX helps to preserve consistent identity and fine-grained textures even reaching to 240s, demonstrate that FLEX functions as a robust architectural stabilizer that significantly enhances the inference horizon scalability of existing autoregressive video model.
+Table 5 : Comparison of 4 minutes generation based on LongLive.
+Method
+Sub.
+Back.
+Aest.
+Dyn.
+Flick.
+Quality
+Δ \Delta Drift ↓ \downarrow
+LongLive
+97.42
+96.50
+61.17
+39.03
+99.02
+82.40
+-2.19
+LongLive + Ours
+97.57
+96.64
+61.12
+40.90
+99.09
+82.48
+-1.17
+Figure 6 : 240s generation results. FLEX exhibits higher identity consistency and background dynamics than original LongLive.
+5 Conclusion
+This paper presents FLEX, a versatile and training-free framework that effectively extends the temporal horizon of autoregressive video models beyond their training limits. By addressing the spectral bias in 3D RoPE and the deficiency of dynamic priors in noise sampling, FLEX bridges the gap between short-term training and long-term inference. Specifically, our frequency-aware modulation stabilizes global structure while preserving temporal detail, complemented by Antiphase Noise Sampling and Attention Sinks to ensure temporal dynamics and global structural consistency. Extensive evaluations on VBench-Long demonstrate that FLEX achieves a state-of-the-art total score of 83.48 at 6 × 6\times extrapolation, surpassing even training-based baselines. As a plug-and-play framework, FLEX seamlessly integrates with existing autoregressive inference pipelines, enhancing both consistency and dynamics in minute-level generation to further push the boundaries of inference horizons.
+References
+ai et al. (2025)
+Sand. ai, H. Teng, H. Jia, L. Sun, L. Li, M. Li, M. Tang, S. Han, T. Zhang, W. Q. Zhang, W. Luo, X. Kang, Y. Sun, Y. Cao, Y. Huang, Y. Lin, Y. Fang, Z. Tao, Z. Zhang, Z. Wang, Z. Liu, D. Shi, G. Su, H. Sun, H. Pan, J. Wang, J. Sheng, M. Cui, M. Hu, M. Yan, S. Yin, S. Zhang, T. Liu, X. Yin, X. Yang, X. Song, X. Hu, Y. Zhang, and Y. Li
+MAGI-1: autoregressive video generation at scale .
+External Links: 2505.13211 ,
+Link
+Cited by: §1 .
+Blattmann et al. (2023)
+A. Blattmann, T. Dockhorn, S. Kulal, D. Mendelevitch, M. Kilian, D. Lorenz, Y. Levi, Z. English, V. Voleti, A. Letts, V. Jampani, and R. Rombach
+Stable video diffusion: scaling latent video diffusion models to large datasets .
+External Links: 2311.15127 ,
+Link
+Cited by: §1 .
+bloc97 (2023a)
+bloc97
+Add ntk-by-parts interpolation .
+Note: GitHub Pull RequestAccessed: 2026-01-26
+External Links: Link
+Cited by: §2 .
+bloc97 (2023b)
+bloc97
+NTK-aware scaled rope allows context size extension without fine-tuning .
+Note: Reddit and GitHub Pull RequestAccessed: 2026-01-26
+External Links: Link
+Cited by: §2 .
+Chen et al. (2025a)
+G. Chen, D. Lin, J. Yang, C. Lin, J. Zhu, M. Fan, H. Zhang, S. Chen, Z. Chen, C. Ma, W. Xiong, W. Wang, N. Pang, K. Kang, Z. Xu, Y. Jin, Y. Liang, Y. Song, P. Zhao, B. Xu, D. Qiu, D. Li, Z. Fei, Y. Li, and Y. Zhou
+SkyReels-v2: infinite-length film generative model .
+External Links: 2504.13074 ,
+Link
+Cited by: §1 .
+Chen et al. (2025b)
+J. Chen, Y. Zhao, J. Yu, R. Chu, J. Chen, S. Yang, X. Wang, Y. Pan, D. Zhou, H. Ling, H. Liu, H. Yi, H. Zhang, M. Li, Y. Chen, H. Cai, S. Fidler, P. Luo, S. Han, and E. Xie
+SANA-video: efficient video generation with block linear diffusion transformer .
+External Links: 2509.24695 ,
+Link
+Cited by: §1 .
+Chen et al. (2023a)
+S. Chen, S. Wong, L. Chen, and Y. Tian
+Extending context window of large language models via positional interpolation .
+arXiv preprint arXiv:2306.15595 .
+Cited by: §2 ,
+§3.2 .
+Chen et al. (2023b)
+W. Chen, Y. Ji, J. Wu, H. Wu, P. Xie, J. Li, X. Xia, X. Xiao, and L. Lin
+Control-a-video: controllable text-to-video generation with diffusion models .
+arXiv e-prints , pp. arXiv–2305 .
+Cited by: §3.3 .
+Ding et al. (2024)
+Y. Ding, L. L. Zhang, C. Zhang, Y. Xu, N. Shang, J. Xu, F. Yang, and M. Yang
+LongRoPE: extending llm context window beyond 2 million tokens .
+External Links: 2402.13753 ,
+Link
+Cited by: §2 .
+Gao et al. (2025)
+J. Gao, Z. Chen, X. Liu, J. Feng, C. Si, Y. Fu, Y. Qiao, and Z. Liu
+Longvie: multimodal-guided controllable ultra-long video generation .
+arXiv preprint arXiv:2508.03694 .
+Cited by: §1 .
+Guo et al. (2023)
+Y. Guo, C. Yang, A. Rao, Z. Liang, Y. Wang, Y. Qiao, M. Agrawala, D. Lin, and B. Dai
+Animatediff: animate your personalized text-to-image diffusion models without specific tuning .
+arXiv preprint arXiv:2307.04725 .
+Cited by: §2 .
+Ho et al. (2022)
+J. Ho, T. Salimans, A. Gritsenko, W. Chan, M. Norouzi, and D. J. Fleet
+Video diffusion models .
+External Links: 2204.03458 ,
+Link
+Cited by: §1 .
+Huang et al. (2025)
+X. Huang, Z. Li, G. He, M. Zhou, and E. Shechtman
+Self forcing: bridging the train-test gap in autoregressive video diffusion .
+arXiv preprint arXiv:2506.08009 .
+Cited by: §1 ,
+§2 ,
+Table 1 ,
+Table 1 ,
+Table 2 ,
+§4 .
+Huang et al. (2024)
+Z. Huang, Y. He, J. Yu, F. Zhang, C. Si, Y. Jiang, Y. Zhang, T. Wu, Q. Jin, N. Chanpaisit, et al.
+Vbench: comprehensive benchmark suite for video generative models .
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition ,
+pp. 21807–21818 .
+Cited by: §4.1 .
+Jacot et al. (2018)
+A. Jacot, F. Gabriel, and C. Hongler
+Neural tangent kernel: convergence and generalization in neural networks .
+Advances in neural information processing systems 31 .
+Cited by: §2 ,
+§3.2 .
+Kodaira et al. (2025)
+A. Kodaira, T. Hou, J. Hou, M. Georgopoulos, F. Juefei-Xu, M. Tomizuka, and Y. Zhao
+StreamDiT: real-time streaming text-to-video generation .
+External Links: 2507.03745 ,
+Link
+Cited by: §1 .
+Liu et al. (2025)
+K. Liu, W. Hu, J. Xu, Y. Shan, and S. Lu
+Rolling forcing: autoregressive long video diffusion in real time .
+arXiv preprint arXiv:2509.25161 .
+Cited by: §2 ,
+Table 1 ,
+Table 1 ,
+Table 2 ,
+§4 .
+Lu and Yang (2025)
+Y. Lu and Y. Yang
+FreeLong++: training-free long video generation via multi-band spectralfusion .
+arXiv preprint arXiv:2507.00162 .
+Cited by: §1 .
+Peng et al. (2023)
+B. Peng, J. Quesnelle, H. Fan, and E. Shippole
+Yarn: efficient context window extension of large language models .
+arXiv preprint arXiv:2309.00071 .
+Cited by: §2 ,
+§3.2 .
+Polyak et al. (2024)
+A. Polyak, A. Zohar, A. Brown, A. Tjandra, A. Sinha, A. Lee, A. Vyas, B. Shi, C. Ma, C. Chuang, et al.
+Movie gen: a cast of media foundation models .
+arXiv preprint arXiv:2410.13720 .
+Cited by: §4.3 .
+Press et al. (2022)
+O. Press, N. A. Smith, and M. Lewis
+Train short, test long: attention with linear biases enables input length extrapolation .
+External Links: 2108.12409 ,
+Link
+Cited by: §1 .
+Qiu et al. (2023)
+H. Qiu, M. Xia, Y. Zhang, Y. He, X. Wang, Y. Shan, and Z. Liu
+Freenoise: tuning-free longer video diffusion via noise rescheduling .
+arXiv preprint arXiv:2310.15169 .
+Cited by: §1 ,
+§2 ,
+§3.3 .
+Qiu et al. (2025)
+Z. Qiu, Z. Wang, B. Zheng, Z. Huang, K. Wen, S. Yang, R. Men, L. Yu, F. Huang, S. Huang, et al.
+Gated attention for large language models: non-linearity, sparsity, and attention-sink-free .
+arXiv preprint arXiv:2505.06708 .
+Cited by: §3.4 .
+Song et al. (2025)
+K. Song, B. Chen, M. Simchowitz, Y. Du, R. Tedrake, and V. Sitzmann
+History-guided video diffusion .
+arXiv preprint arXiv:2502.06764 .
+Cited by: §1 .
+Su et al. (2024)
+J. Su, M. Ahmed, Y. Lu, S. Pan, W. Bo, and Y. Liu
+Roformer: enhanced transformer with rotary position embedding .
+Neurocomputing 568 , pp. 127063 .
+Cited by: §2 .
+Sun et al. (2025)
+M. Sun, W. Wang, G. Li, J. Liu, J. Sun, W. Feng, S. Lao, S. Zhou, Q. He, and J. Liu
+AR-diffusion: asynchronous video generation with auto-regressive diffusion .
+External Links: 2503.07418 ,
+Link
+Cited by: §1 .
+Touvron et al. (2023)
+H. Touvron, T. Lavril, G. Izacard, X. Martinet, M. Lachaux, T. Lacroix, B. Rozière, N. Goyal, E. Hambro, F. Azhar, et al.
+Llama: open and efficient foundation language models .
+arXiv preprint arXiv:2302.13971 .
+Cited by: §2 .
+Villegas et al. (2022)
+R. Villegas, M. Babaeizadeh, P. Kindermans, H. Moraldo, H. Zhang, M. T. Saffar, S. Castro, J. Kunze, and D. Erhan
+Phenaki: variable length video generation from open domain textual description .
+External Links: 2210.02399 ,
+Link
+Cited by: §1 .
+Wan et al. (2025)
+T. Wan, A. Wang, B. Ai, B. Wen, C. Mao, C. Xie, D. Chen, F. Yu, H. Zhao, J. Yang, et al.
+Wan: open and advanced large-scale video generative models .
+arXiv preprint arXiv:2503.20314 .
+Cited by: §2 ,
+§3.1 ,
+§4 .
+Xiao et al. (2023)
+G. Xiao, Y. Tian, B. Chen, S. Han, and M. Lewis
+Efficient streaming language models with attention sinks .
+arXiv preprint arXiv:2309.17453 .
+Cited by: §3.4 .
+Yang et al. (2025a)
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, et al.
+Qwen3 technical report .
+arXiv preprint arXiv:2505.09388 .
+Cited by: §3.2 .
+Yang et al. (2025b)
+S. Yang, W. Huang, R. Chu, Y. Xiao, Y. Zhao, X. Wang, M. Li, E. Xie, Y. Chen, Y. Lu, et al.
+Longlive: real-time interactive long video generation .
+arXiv preprint arXiv:2509.22622 .
+Cited by: §1 ,
+§2 ,
+§3.4 ,
+Table 1 ,
+Table 1 ,
+Table 2 ,
+§4 .
+Yang et al. (2026)
+Y. Yang, Z. Lv, T. Pan, H. Wang, B. Yang, H. Yin, C. Li, Z. Liu, and C. Si
+StableWorld: towards stable and consistent long interactive video generation .
+External Links: 2601.15281 ,
+Link
+Cited by: §4.4 .
+Yin et al. (2024)
+T. Yin, M. Gharbi, R. Zhang, E. Shechtman, F. Durand, W. T. Freeman, and T. Park
+One-step diffusion with distribution matching distillation .
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition ,
+pp. 6613–6623 .
+Cited by: §2 .
+Yin et al. (2025)
+T. Yin, Q. Zhang, R. Zhang, W. T. Freeman, F. Durand, E. Shechtman, and X. Huang
+From slow bidirectional to fast autoregressive video diffusion models .
+In Proceedings of the Computer Vision and Pattern Recognition Conference ,
+pp. 22963–22974 .
+Cited by: §2 ,
+Table 1 ,
+Table 1 ,
+§4 ,
+§4.3 .
+Zhong et al. (2024)
+M. Zhong, C. Zhang, Y. Lei, X. Liu, Y. Gao, Y. Hu, K. Chen, and M. Zhang
+Understanding the rope extensions of long-context llms: an attention perspective .
+External Links: 2406.13282 ,
+Link
+Cited by: §2 .
+Appendix A Analysis of Position Interpolation in Video Extension
+In Section 3.1 , we noted that standard Position Interpolation (PI), despite its success in LLMs, fails to generalize to long-horizon video generation. We implement a dynamic PI strategy where the scaling factor is S = max ⁡ ( 1 , L i ​ n ​ f / L t ​ r ​ a ​ i ​ n ) S=\max(1,L_{inf}/L_{train}) . This ensures no scaling within the training horizon, while temporal positions are compressed only during extrapolation. Here, we analyze why this standard approach leads to catastrophic failure.As illustrated in Figure 7 , PI typically suffers from two distinct failure modes:
+Figure 7 : Qualitative failure cases of Position Interpolation (PI) in long-horizon extrapolation.
+Compared to vanilla Self Forcing, PI leads to immediate static collapse and severe chromatic artifacts beyond L t ​ r ​ a ​ i ​ n = 21 L_{train}=21 . This failure stems from coordinate compression, which freezes the temporal progression and forces the model into a repetitive state at the 5-second.
+•
+Static Collapse via Temporal Compression: The core mechanism of PI involves scaling the position indices n ′ = n / S n^{\prime}=n/S . During long-range inference, this effectively compresses the temporal coordinates of all subsequent frames around the 5-second boundary ( L t ​ r ​ a ​ i ​ n = 21 L_{train}=21 ) point. This over-compression, especially for high-frequency components, leads to a critical loss of temporal discriminability . The attention mechanism can no longer distinguish between future frames due to their near-identical relative positions, causing motion to vanish abruptly. The video remains ”frozen” at the state of the training boundary.
+•
+Chromatic Collapse and Visual Artifacts: Beyond the loss of motion, PI induces a total breakdown of visual fidelity. By forcing the model to operate on compressed positional coordinates that deviate from the original training resolution, the autoregressive process becomes numerically unstable. This manifests as highly saturated color patterns (as seen in the final frames of Fig. 7 ), indicating that the model can no longer preserve coherent structural information from the scaled-down positional input.
+In contrast, our frequency-aware 3D RoPE maintains the original temporal resolution for high-frequency components by allowing them to extrapolate. This preserves the model’s ability to distinguish discrete temporal steps, allowing for stable and dynamic generation even as the context length increases.
+Appendix B Proofs of Proposition 3.2
+B.1 Energy Monotonicity
+Proposition B.1 .
+The expected adjacent-difference energy for ANS initialization is given by:
+ℰ T ​ ( ρ ) = 2 ​ ( f − 1 ) ​ ( 1 − ρ ) ​ d \mathcal{E}_{T}(\rho)=2(f-1)(1-\rho)d
+(16)
+Furthermore, ℰ T ​ ( ρ ) \mathcal{E}_{T}(\rho) is a strictly decreasing function of ρ \rho , reaching its maximum value 4 ​ ( f − 1 ) ​ d 4(f-1)d at ρ = − 1 \rho=-1 .
+Proof.
+We define the adjacent-difference energy ℰ T ​ ( ρ ) \mathcal{E}_{T}(\rho) as the expectation of the squared L 2 L_{2} norm of the first-order temporal differences:
+ℰ T ​ ( ρ ) ≜ 𝔼 ⁡ [ ∑ u = 1 f − 1 ‖ 𝐳 u − 𝐳 u − 1 ‖ 2 2 ] = ∑ u = 1 f − 1 𝔼 ⁡ [ ‖ 𝐳 u ‖ 2 2 + ‖ 𝐳 u − 1 ‖ 2 2 − 2 ​ 𝐳 u ⊤ ​ 𝐳 u − 1 ] . \mathcal{E}_{T}(\rho)\triangleq\mathbb{E}\left[\sum_{u=1}^{f-1}\|\mathbf{z}_{u}-\mathbf{z}_{u-1}\|_{2}^{2}\right]=\sum_{u=1}^{f-1}\mathbb{E}\left[\|\mathbf{z}_{u}\|_{2}^{2}+\|\mathbf{z}_{u-1}\|_{2}^{2}-2\mathbf{z}_{u}^{\top}\mathbf{z}_{u-1}\right].
+(17)
+Marginal Variance.
+From the properties of the AR(1) process (Proposition 3.1 ), each frame 𝐳 u \mathbf{z}_{u} follows a standard Gaussian distribution 𝒩 ⁡ ( 𝟎 , 𝐈 d ) \mathcal{N}(\mathbf{0},\mathbf{I}_{d}) . Thus:
+𝔼 ​ ‖ 𝐳 u ‖ 2 2 = Tr ​ ( Cov ​ ( 𝐳 u ) ) = Tr ​ ( 𝐈 d ) = d . \mathbb{E}\|\mathbf{z}_{u}\|_{2}^{2}=\text{Tr}(\text{Cov}(\mathbf{z}_{u}))=\text{Tr}(\mathbf{I}_{d})=d.
+(18)
+Cross-Correlation.
+Based on the recursion 𝐳 u = ρ ​ 𝐳 u − 1 + 1 − ρ 2 ​ ϵ u \mathbf{z}_{u}=\rho\mathbf{z}_{u-1}+\sqrt{1-\rho^{2}}\boldsymbol{\epsilon}_{u} , we compute the expectation of the inner product:
+𝔼 ⁡ [ 𝐳 u ⊤ ​ 𝐳 u − 1 ] \displaystyle\mathbb{E}[\mathbf{z}_{u}^{\top}\mathbf{z}_{u-1}]
+= 𝔼 ⁡ [ ( ρ ​ 𝐳 u − 1 + 1 − ρ 2 ​ ϵ u ) ⊤ ​ 𝐳 u − 1 ] \displaystyle=\mathbb{E}[(\rho\mathbf{z}_{u-1}+\sqrt{1-\rho^{2}}\boldsymbol{\epsilon}_{u})^{\top}\mathbf{z}_{u-1}]
+(19)
+= ρ ​ 𝔼 ​ ‖ 𝐳 u − 1 ‖ 2 2 + 1 − ρ 2 ​ 𝔼 ​ [ ϵ u ⊤ ​ 𝐳 u − 1 ] . \displaystyle=\rho\mathbb{E}\|\mathbf{z}_{u-1}\|_{2}^{2}+\sqrt{1-\rho^{2}}\mathbb{E}[\boldsymbol{\epsilon}_{u}^{\top}\mathbf{z}_{u-1}].
+(20)
+Given that ϵ u \boldsymbol{\epsilon}_{u} is independent of 𝐳 u − 1 \mathbf{z}_{u-1} , the second term vanishes. Substituting Eq. ( 18 ) yields:
+𝔼 ⁡ [ 𝐳 u ⊤ ​ 𝐳 u − 1 ] = ρ ​ d . \mathbb{E}[\mathbf{z}_{u}^{\top}\mathbf{z}_{u-1}]=\rho d.
+(21)
+Total Energy and Monotonicity.
+Substituting Eq. ( 18 ) and Eq. ( 21 ) into Eq. ( 17 ):
+ℰ T ​ ( ρ ) = ∑ u = 1 f − 1 ( d + d − 2 ​ ρ ​ d ) = 2 ​ ( f − 1 ) ​ ( 1 − ρ ) ​ d . \mathcal{E}_{T}(\rho)=\sum_{u=1}^{f-1}(d+d-2\rho d)=2(f-1)(1-\rho)d.
+(22)
+Taking the derivative with respect to ρ \rho :
+d ​ ℰ T d ​ ρ = − 2 ​ ( f − 1 ) ​ d . \frac{d\mathcal{E}_{T}}{d\rho}=-2(f-1)d.
+(23)
+Since f > 1 f>1 and d > 0 d>0 , the derivative is strictly negative, d ​ ℰ T d ​ ρ < 0 \frac{d\mathcal{E}_{T}}{d\rho}<0 , proving strict monotonicity. The maximum occurs at the boundary:
+max ρ ∈ [ − 1 , 1 ] ⁡ ℰ T ​ ( ρ ) = ℰ T ​ ( − 1 ) = 4 ​ ( f − 1 ) ​ d . \max_{\rho\in[-1,1]}\mathcal{E}_{T}(\rho)=\mathcal{E}_{T}(-1)=4(f-1)d.
+(24)
+∎
+B.2 Spectral Analysis and Motion Energy
+For a stationary AR(1) process, the autocovariance function is given by R ⁡ ( k ) = ρ | k | ​ 𝐈 d R(k)=\rho^{|k|}\mathbf{I}_{d} . According to the Wiener–Khinchin theorem, the Power Spectral Density (PSD) is the Discrete-Time Fourier Transform (DTFT) of the autocovariance sequence:
+S ρ ​ ( ω ) = ∑ k = − ∞ ∞ ρ | k | ​ e − j ​ ω ​ k = 1 + ∑ k = 1 ∞ ( ρ ​ e − j ​ ω ) k + ∑ k = 1 ∞ ( ρ ​ e j ​ ω ) k . S_{\rho}(\omega)=\sum_{k=-\infty}^{\infty}\rho^{|k|}e^{-j\omega k}=1+\sum_{k=1}^{\infty}(\rho e^{-j\omega})^{k}+\sum_{k=1}^{\infty}(\rho e^{j\omega})^{k}.
+(25)
+Using the geometric series sum formula ∑ k = 1 ∞ r k = r 1 − r \sum_{k=1}^{\infty}r^{k}=\frac{r}{1-r} for | r | < 1 |r|<1 , we obtain:
+S ρ ​ ( ω ) = 1 + ρ ​ e − j ​ ω 1 − ρ ​ e − j ​ ω + ρ ​ e j ​ ω 1 − ρ ​ e j ​ ω . S_{\rho}(\omega)=1+\frac{\rho e^{-j\omega}}{1-\rho e^{-j\omega}}+\frac{\rho e^{j\omega}}{1-\rho e^{j\omega}}.
+(26)
+Applying Euler’s formula and simplifying the expression:
+S ρ ​ ( ω ) = 1 − ρ 2 1 + ρ 2 − 2 ​ ρ ​ cos ⁡ ω . S_{\rho}(\omega)=\frac{1-\rho^{2}}{1+\rho^{2}-2\rho\cos\omega}.
+(27)
+High-Pass Characteristics.
+To characterize the spectral shape in the antiphase regime ( ρ < 0 \rho<0 ), we evaluate the PSD at the Nyquist frequency ω = π \omega=\pi and the DC component ω = 0 \omega=0 :
+S ρ ​ ( π ) = 1 − ρ 1 + ρ , S ρ ​ ( 0 ) = 1 + ρ 1 − ρ . S_{\rho}(\pi)=\frac{1-\rho}{1+\rho},\quad S_{\rho}(0)=\frac{1+\rho}{1-\rho}.
+(28)
+As ρ → − 1 \rho\to-1 , the spectral density S ρ ​ ( π ) → ∞ S_{\rho}(\pi)\to\infty while S ρ ​ ( 0 ) → 0 S_{\rho}(0)\to 0 , confirming that the noise energy is concentrated in the highest temporal frequencies.
+Energy Quantization via Parseval’s Identity.
+The intensity of temporal variations can be quantified by the expected squared norm of the adjacent-difference signal Δ ​ 𝐳 t = 𝐳 t − 𝐳 t − 1 \Delta\mathbf{z}_{t}=\mathbf{z}_{t}-\mathbf{z}_{t-1} . This operation is equivalent to passing the noise through a linear filter with frequency response H ⁡ ( ω ) = 1 − e − j ​ ω H(\omega)=1-e^{-j\omega} , where | H ⁡ ( ω ) | 2 = 2 ​ ( 1 − cos ⁡ ω ) |H(\omega)|^{2}=2(1-\cos\omega) . According to Parseval’s identity, the expected adjacent-difference energy per dimension is:
+ℰ T = 1 d ​ 𝔼 ​ ‖ 𝐳 t − 𝐳 t − 1 ‖ 2 2 = 1 2 ​ π ​ ∫ − π π | H ⁡ ( ω ) | 2 ​ S ρ ​ ( ω ) ​ 𝑑 ω . \mathcal{E}_{T}=\frac{1}{d}\mathbb{E}\|\mathbf{z}_{t}-\mathbf{z}_{t-1}\|_{2}^{2}=\frac{1}{2\pi}\int_{-\pi}^{\pi}|H(\omega)|^{2}S_{\rho}(\omega)d\omega.
+(29)
+Substituting | H ⁡ ( ω ) | 2 |H(\omega)|^{2} and S ρ ​ ( ω ) S_{\rho}(\omega) reveals that for ρ < 0 \rho<0 , the peak response of the difference operator aligns with the maximum power density of the noise at ω = ± π \omega=\pm\pi . This alignment maximizes the high-frequency temporal variance, thereby providing the necessary gradients to initialize dynamic trajectories and preventing the sequence from converging to a static mean during the early stages of denoising.
+Appendix C Verification of Temporal Attention Sink
+In this section, we provide empirical evidence for the effectiveness of temporal attention sink in extending the generation horizon of pretrained models. The experiment adopts Self-Forcing as baseline, whose generation performance rapidly decreases beyond its training range of 5 seconds. We modifies the inference pipeline of Self Forcing, and keep the first ( N = 3 N=3 ) frames in the local attention window. All samples are generated at a resolution of 480 × 832 480\times 832 with an extended sequence of 30 seconds.
+Figure 8 : Comparison of generation results between the original Self Forcing (no attention sink) and with 3 latent frame as sinks during inference.
+Visual Consistency and Horizon Extension.
+As illustrated in Figure 8 , the original Self Forcing baseline exhibits rapid color over-saturation and prominent visual artifacts as the generation progresses. These phenomena indicate a significant deficiency in the model’s extrapolation capability when operating beyond its 5-second training horizon. Upon introducing attention sink ( N = 3 N=3 ) during inference, these quality degradation issues are visibly mitigated, and the structural stability of the frames is preserved over longer extrapolation lengths.
+However, we also observe that attention sink alone does not fully resolve the degradation in generation quality. In the first example, while the overall structure remains intact, the color and morphological features of the bird undergo noticeable shifts, accompanied by structural noise in the background. Similarly, in the second example, the accumulation error persists with sink tokens, leading to color bias and over-saturation. These observations suggest that while attention sink serves as a vital semantic anchor, achieving complete temporal consistency requires the collaboration with frequency-aware RoPE and designed sampling strategies, as discussed in Section 3.2 and Section 3.3 .
+Appendix D Detailed VBench-Long Benchmark Evaluation
+To provide a comprehensive assessment of our method’s performance in long horizon video generation, we conducted an exhaustive evaluation across all 16 dimensions of VBench-Long Benchmark.
+Experimental Setup
+Our evaluation utilizes the standard extended prompts from VBench, comprising 946 text prompts. For each prompt, we generate videos with a duration of 30 seconds using 5 different random seeds to ensure statistical robustness. Following the standard VBench pipeline, each generated video gets sliced and then evaluated across all the 16 dimensions. These dimensions are categorized into Quality Evaluation and Semantic Evaluation. We report the final Quality Score and Semantic Score, which are aggregated from their sub-dimensions with normalization and weighted calculation. This calculation process follows the standardized normalization formulas and official weight coefficients provided by the VBench suite.
+Full Quantitative Results
+Table 6 and Table 7 compare our method with three bassline both on the quality and semantic score. Our proposed method consistently outperforms the baselines in most key metrics, achieving a superior comprehensive performance across semantic and visual quality.
+Table 6 : Full quality evaluation on VBench-Long.
+Model
+Subject
+Consistency
+Background
+Consistency
+Temporal
+Flickering
+Motion
+Smoothness
+Aesthetic
+Quality
+Imaging
+Quality
+Dynamic
+Degree
+Quality
+Score
+Self Forcing
+98.58
+97.06
+98.93
+98.56
+61.80
+68.77
+29.38
+81.94
+LongLive
+98.36
+97.22
+99.35
+98.82
+64.13
+68.60
+39.84
+83.39
+Rolling Forcing
+98.25
+97.30
+99.13
+98.65
+63.92
+70.82
+40.52
+83.57
+Ours
+98.70
+97.94
+99.59
+98.53
+65.43
+69.11
+44.32
+84.17
+Table 7 : Full semantic evaluation on VBench-Long.
+Model
+Object
+Class
+Multiple
+Objects
+Human
+Action
+Color
+Spatial
+Relationship
+Scene
+Appearance
+Style
+Temporal
+Style
+Overall
+Consistency
+Semantic
+Score
+Self Forcing
+90.76
+81.35
+94.70
+79.38
+72.74
+50.46
+21.50
+22.91
+25.23
+76.42
+LongLive
+94.44
+87.14
+96.80
+88.80
+79.24
+57.72
+20.56
+24.22
+26.43
+80.85
+Rolling Forcing
+94.69
+84.84
+95.15
+86.63
+76.34
+57.79
+20.81
+23.75
+26.49
+79.86
+Ours
+94.94
+85.95
+95.45
+88.39
+82.04
+56.41
+20.51
+24.09
+26.67
+80.73
+To provide a clear view of our method’s performance, we present a normalized radar chart in Figure 9 , which aggregates results across all 16 dimensions of the VBench-Long evaluation.
+Figure 9 : Comprehensive performance profile on VBench-Long. The radar chart visualizes the relative performance across 16 dimensions. Our method demonstrates a more balanced and expansive profile compared to existing baselines, indicating its robust capability in handling diverse long horizon generation challenges.
+Appendix E Additional Qualitative Comparisons
+As supplementary materials of qualitative analysis in Section 4.2 , this section provides extended qualitative comparisons on generation results over 30-second and 60-second durations across a diverse range of prompts.
+E.1 30-second Video Generation Results
+In this section, we provide four additional 30-second video generation cases across distinct thematic categories. These results further demonstrate the generalization capability and temporal stability of our method compared to Self-Forcing , LongLive , and Rolling Forcing at intervals of t = 0 ​ s , 5 ​ s , 10 ​ s , 20 ​ s , 30 ​ s t=0s,5s,10s,20s,30s .
+Figure 10 : Human portrait. Our method exhibits robust appearance consistency. Key features, including facial identity, clothing ornaments, and texture details, remain stable throughout the sequence, whereas baselines show progressive identity fading.
+Figure 11 : Scene . Our method maintains better temporal consistency and visual quality over 30s. Notably, Rolling Forcing tends to significant subject drift, where the characters always gradually moves towards the frame edge and abruptly reappears in the center.
+Figure 12 : Sport & Motion . Our method preserves high-intensity motion without sacrificing identity stability. The hair filaments and clothing consistency remain consistent in our results, whereas baselines suffer from progressive attribute drift as the generation horizon extends.
+Figure 13 : Animals & Nature . The results showcase large-scale movements without appearance fading during the entire 30-second duration.
+As illustrated in Figures 10 –Figures 13 , our method significantly enhances the extrapolation capability of the base Self-Forcing model, effectively preventing the rapid image collapse typically observed beyond the 5s training length. Furthermore, our approach demonstrates competitive or even superior performance across diverse scenarios when compared with recent training-based methods such as LongLive , particularly in terms of character consistency and motion dynamics.
+E.2 Long horizon 60-second Synthesis
+In addition, we evaluate our method on 60-second durations. This setting typically leads to catastrophic failure in traditional long video paradigms due to accumulation error.
+Figure 14 : 60s Character & Scene : In this extended indoor sequence, CausVid and Self-Forcing exhibit immediate image collapse and color distortion. While Rolling Forcing maintains human identify, it suffers from severe the background light drift. Our method preserves subject and background consistency from t = 0 ​ s t=0s to t = 60 ​ s t=60s .
+Figure 15 : 60s Marine World & Dynamics : Our approach avoids the static freeze in Self-Forcing and identity fading seen in baselines like LongLive, ensuring the object fish’s species-specific appearance and the coral environment remain high-fidelity throughout the full minute.
+As demonstrated in Figures 14 and 15 , at an extended duration of 60s, our method also achieves a stable enhancement in extrapolation capability of Self Forcing, exhibiting performance comparable to training-based approaches such as LongLive that are specifically optimized on long-video samples.
+Appendix F Implementation Details on LongLive Integration
+To evaluate the model-agnostic nature of FLEX, we integrate it into the LongLive framework for ultra-long (240s) synthesis. We adopt the official LongLive repository settings and inference pipeline as our base. Notably, LongLive is fine-tuned on 60-second sequences, corresponding to a training horizon of L t ​ r ​ a ​ i ​ n ≈ 240 L_{train}\approx 240 latent frames, which are 10 times longer than Self Forcing ( L t ​ r ​ a ​ i ​ n = 21 L_{train}=21 ).
+Module Integration and Adaptation.
+Since LongLive already incorporates an attention sink mechanism, we only replace its original 3D RoPE and noise sampling with our proposed components:
+•
+RoPE Modulation : Given the extended L train L_{\text{train}} of LongLive, the model already possesses higher exposure to lower-frequency positional signals. We therefore adjust our frequency-aware hyper-parameters to α = 1.0 \alpha=1.0 and β = 15.0 \beta=15.0 to ensure proper frequency-aware interpolation over the 240s horizon.
+•
+Noise Sampling : We utilize Antiphase Noise Sampling (ANS) with ρ = − 1.0 \rho=-1.0 . This replaces LongLive’s default noise sampling to alleviates repetitive motion patterns and cyclic artifacts in 4 × 4\times training-length extrapolation.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

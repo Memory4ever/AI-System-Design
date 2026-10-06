@@ -1,0 +1,380 @@
+4.2.3 Generalization Capabilities: Test Domain
+Results illustrated in Figure 1 highlights its generalization.
+In 3-player Leduc Poker, VAD-CFR reaches exploitability levels below 10−310^{-3} while most baselines plateau at higher levels.
+In 6-sided Liar’s Dice, VAD-CFR continues to match established baselines like DCFR, suggesting that its evolved mechanisms for managing regret scaling and noise are highly effective across different game topologies.
+Figure 2: PSRO variants performances.
+Overall, VAD-CFR demonstrates efficient convergence rate and generalization across a broad variety of domains: as shown in Figure 3 in the Appendix, VAD-CFR matches or surpasses previous state-of-the-art performances in 10 of the 11 games, with 4-player Kuhn Poker as the only exception.
+4.3 Experimental Evaluation: SHOR-PSRO
+Next, we evaluated the performance of the evolved SHOR-PSRO algorithm, comparing its ability to reduce exploitability against standard meta-solver baselines.
+We use the exploitability at the K=K=100-th PSRO iteration as the metric.
+We employ an exact best response oracle via value iteration, where at each state it uniformly randomizes among actions with the same optimal values.
+We benchmarked SHOR-PSRO against standard established meta-solver baselines: Uniform, Nash equilibrium via linear program for 2-player games, AlphaRank (Muller et al., 2020), Projected Replicator Dynamics (PRD) (Lanctot et al., 2017), and Regret Matching (RM).
+We use Uniform as the initial program for both solver classes.
+The prompt we use is shown in Listing 9 in the Appendix.
+4.3.1 Discovered Algorithmic Architecture
+The source code of the discovered SHOR-PSRO algorithm is provided in Listing 6 in Appendix 7.1.
+A high-level abstraction is in Listing 4.
+The evolutionary search yielded a “Hybrid” meta-solver that constructs a meta-strategy σ\sigma by linearly blending two distinct components: Optimistic Regret Matching (ORM) and a Smoothed Best Pure Strategy.
+•
+Hybrid Blending Mechanism: At every internal solver iteration, the meta-strategy is computed as:
+σh​y​b​r​i​d=(1−λ)⋅σO​R​M+λ⋅σS​o​f​t​m​a​x\sigma_{hybrid}=(1-\lambda)\cdot\sigma_{ORM}+\lambda\cdot\sigma_{Softmax}
+(8)
+where σO​R​M\sigma_{ORM} provides the stability of regret minimization, and σS​o​f​t​m​a​x\sigma_{Softmax} is a Boltzmann distribution over pure strategies that aggressively biases the solver toward high-reward modes. The blending factor λ\lambda controls the trade-off between these dynamics.
+•
+Dynamic Annealing Schedule: Unlike standard PSRO which uses fixed solvers, SHOR-PSRO employs a dynamic schedule for the training-time solver. Over the course of the PSRO iterations:
+–
+The blending factor λ\lambda anneals from 0.3→0.050.3\rightarrow 0.05, gradually shifting focus from greedy exploitation to robust equilibrium finding.
+–
+An explicit diversity bonus is applied to the payoff gains, which also decays from 0.05→0.0010.05\rightarrow 0.001, ensuring early expansion of the game graph followed by late-stage refinement.
+•
+Training vs. Evaluation Asymmetry: The search discovered distinct configurations for training and evaluation. The Training Solver utilizes the dynamic annealing schedule described above and returns the average strategy over internal iterations to ensure stability. In contrast, the Evaluation Solver employs a fixed, low blending factor (λ=0.01\lambda=0.01) and returns the last-iterate strategy. This decoupling allows the algorithm to explore safely during training while providing reactive, low-noise exploitability estimates during evaluation.
+Listing 4: High-level abstraction of SHOR-PSRO.
+⬇
+class TrainMetaStrategySolver:
+def get_meta_strategy(self, game, policy_sets, meta_games):
+"""Hybrid Training Solver with Full Parameter Annealing"""
+# 1. Annealing Schedules (Exploration -> Exploitation)
+prog = min(1.0, self.current_psro_iter / 75.0)
+blend = 0.30 - (0.25 * prog) # Blend: 0.3 -> 0.05
+div = 0.05 - (0.049 * prog) # Diversity: 0.05 -> 0.001
+temp = 0.50 - (0.49 * prog) # Temp: 0.5 -> 0.01
+# 2. Adaptive Solver Iterations
+# Scale iterations based on population size
+pop_size = len(meta_games[0])
+n_iters = 1000 + (20 * pop_size)
+# 3. Hybrid Internal Loop (Training returns Average)
+return _hybrid_solver(meta_games, n_iters, blend, div, temp, momentum=0.5, return_avg=True)
+class EvalMetaStrategySolver:
+def get_meta_strategy(self, game, policy_sets, meta_games):
+"""Evaluation Solver (Fixed Parameters, Last-Iterate)"""
+# 1. Fixed Parameters for Pure Exploitation
+blend, div, temp = 0.01, 0.0, 0.001
+# 2. Aggressive Iteration Scale for Convergence
+# Base 8000 + 50 per policy
+pop_size = len(meta_games[0])
+n_iters = 8000 + (50 * pop_size)
+# 3. Hybrid Loop returns Last-Iterate for eval reactivity
+return _hybrid_solver(meta_games, n_iters, blend, div, temp, momentum=0.2, return_avg=False)
+def _hybrid_solver(meta_games, n_iters, blend, div, temp, momentum, return_avg):
+sigma = uniform_strategy(meta_games)
+sigma_avg = zeros_like(sigma)
+for _ in range(n_iters):
+# A. Optimistic Regret Matching (ORM)
+gains = compute_payoffs(meta_games, sigma) + div * (1 - sigma)
+gains_norm = normalize_scale(apply_momentum(gains, beta=momentum))
+sigma_orm = regret_matching(gains_norm)
+# B. Smoothed Best Pure Strategy (Softmax)
+exp_vals = compute_expected_values(meta_games, sigma)
+sigma_pure = softmax(exp_vals, temperature=temp)
+# C. Hybrid Blending
+sigma = ((1 - blend) * sigma_orm) + (blend * sigma_pure)
+if return_avg: sigma_avg += sigma
+return normalize(sigma_avg) if return_avg else sigma
+4.3.2 Empirical Analysis: Training Domain
+As shown in Figure 2, SHOR-PSRO demonstrates superior convergence speed and stability across the training set.
+In simpler domains like Kuhn Poker, SHOR-PSRO achieves exploitability levels (<10−3<10^{-3}) significantly faster than PRD or RM.
+This acceleration is likely attributable to the "Hybrid Blending" mechanism, which allows the solver to leverage the stability of regret minimization while aggressively exploiting high-reward modes via the smoothed softmax component.
+4.3.3 Generalization Capabilities: Test Domain
+To assess the robustness of the evolved mechanism, we evaluated SHOR-PSRO on a Test Set comprising larger and more complex game variants. The results, illustrated in Figure 2, highlight the algorithm’s generalization capabilities. In 3-player Leduc Poker, the meta-game landscape becomes significantly more chaotic due to multi-agent dynamics. Despite this, SHOR-PSRO consistently matches or outperforms the best-performing baselines.
+In the most demanding test case, Liar’s Dice (6 sides), SHOR-PSRO demonstrates a clear advantage. While static solvers struggle with the expanded branching factor, the hybrid solver’s ability to bias towards "smoothed best pure strategies" allows it to navigate the expanded game graph efficiently. The results suggest that the evolved evaluation-time asymmetry—using a fixed, low-noise configuration for measurement—ensures that the exploitability metric accurately reflects the population’s growing strength without being obscured by exploration noise.
+Overall, SHOR-PSRO proves to be a highly robust meta-solver, capable of generalizing to unseen game topologies without requiring manual re-tuning of its annealing schedules.
+As shown in Figure 4 in the Appendix, SHOR-PSRO matches or surpasses state-of-the-art performances in 8 of the 11 games.
+5 Related Work
+Our work sits at the intersection of game-theoretic multi-agent learning, meta-learning, and automated algorithmic discovery. Here, we review the manual heuristic design that characterizes the current state-of-the-art and contrast it with our automated approach.
+Significant research effort has been dedicated to improving the convergence speed of CFR through specific weighting schemes and regret targets. Notable variants include CFR+ (Tammelin, 2014), which introduced floor bounding and linear averaging; Discounted CFR (DCFR) (Brown and Sandholm, 2019a), which applies fixed discount factors to historical regrets; and Predictive CFR+ (PCFR+) (Farina et al., 2021), which utilizes predictive Blackwell approachability. However, these improvements were largely derived through human intuition and trial-and-error to navigate the vast combinatorial space of potential update rules.
+In contrast to strategy-based warm starting (Brown and Sandholm, 2016), which relies on discrete, heuristic-driven resets, VAD-CFR employs a static warmup schedule with continuous volatility-based discounting to regulate regret retention.
+For larger games where traversing the full tree is infeasible, Policy Space Response Oracles (PSRO) (Bighashdel et al., 2024) generalizes the Double Oracle algorithm (McMahan et al., 2003) by iteratively expanding a population of policies via exact or reinforcement learning best responses.
+While PSRO rests on solid theoretical ground (Zhang and Sandholm, 2024), its practical application faces challenges in terms of convergence speed and population quality.
+Recent surveys highlight the diversity of PSRO variants (Bighashdel et al., 2024), but like CFR, the design of meta-solver schedules has traditionally been static or manually tuned rather than dynamically evolved.
+The research of automating machine learning algorithm design has been evolving for both neural-based approaches and symbolic-based approaches.
+Meta-learning approaches such as meta-RL (Xu et al., 2018; Oh et al., 2025) and meta-learning optimizers (Metz et al., 2019) have parameterized update rules using neural networks to optimize learning dynamics.
+For symbolic ML discovery, a foundational work in this domain is AutoML-Zero (Real et al., 2020), which demonstrated that complete machine learning algorithms could be evolved from scratch using basic mathematical operations.
+A following work also applies program search for discovering optimizers (Chen et al., 2023).
+The authors of (Co-Reyes et al., 2021) also studied discovering novel symbolic reinforcement learning algorithms.
+Within the specific domain of multi-agent learning, there has been prior work on automating algorithm design (Feng et al., 2021; Xu et al., 2022; Xu et al., 2024a).
+More directly related, one can meta-learn the regret minimization algorithm directly via a CFR-like no-regret framework from examples (Sychrovsk’y et al., 2024).
+However, these approaches often faced limitations: they either operated within a relatively constrained search space or relied on neural parameterizations that hindered interpretability.
+Our work builds directly on AlphaEvolve (Novikov et al., 2025), utilizing Large Language Models (LLMs) to perform semantic mutation on interpretable code, bridging the gap between expressive neural meta-learning and symbolic discovery.
+This approach has already been shown great success in the field of math (Georgiev et al., 2025) and combinatorial algorithms (Nagda et al., 2025).
+6 Conclusion
+In this work, we proposed a methodology for using LLM-driven evolution to automate the design of multi-agent learning algorithms, effectively shifting the paradigm from manual heuristic tuning to symbolic code evolution. By leveraging AlphaEvolve, we demonstrated that algorithm design can be treated as a search problem within a combinatorial space of symbolic operations, allowing for the discovery of complex, non-intuitive optimization mechanisms.
+First, we identified VAD-CFR, which breaks from the tradition of static discount schedules used in DCFR. By introducing volatility-adaptive parameters, instantaneous regret boosting, and a warm-start for policy averaging, VAD-CFR demonstrates that filtering out early-stage noise is as critical as optimizing late-stage convergence. These mechanisms significantly outperform state-of-the-art baselines in domains where exact exploitability is computable.
+Second, we addressed the efficiency challenges of Policy Space Response Oracles (PSRO) by evolving SHOR-PSRO. This algorithm utilizes a hybrid meta-solver that blends Optimistic Regret Matching with a smoothed, temperature-controlled best response.
+By automating the annealing of this blending factor, SHOR-PSRO effectively manages the transition from population diversity to equilibrium refinement, yielding solvers that are significantly more effective for equilibrium finding in large-scale scenarios.
+Our results suggest that the automated discovery of algorithmic asymmetries—specifically those that manage regret scaling and dynamic mixing schedules—can yield solvers that are elusive to human intuition but highly effective in practice. Future work will explore the application of this evolutionary framework to fully deep reinforcement learning agents and the discovery of cooperative mechanisms in general-sum games.
+Acknowledgements
+We thank Ian Gemp and Xidong Feng for their valuable discussions and comments on this work.
+References
+Bighashdel et al. (2024)
+A. Bighashdel, Y. Wang, S. McAleer, R. Savani, and F. A. Oliehoek
+Policy space response oracles: a survey.
+In Thirty-Third International Joint Conference on Artificial Intelligence (IJCAI-24) Survey Track,
+Cited by: §2.3,
+§5.
+Brown and Sandholm (2016)
+N. Brown and T. Sandholm
+Strategy-based warm starting for regret minimization in games.
+In Thirtieth AAAI Conference on Artificial Intelligence,
+Vol. 30.
+Cited by: 3rd item,
+§5.
+Brown and Sandholm (2019a)
+N. Brown and T. Sandholm
+Solving imperfect-information games via discounted regret minimization.
+In Thirty-Third AAAI Conference on Artificial Intelligence,
+Vol. 33, pp. 1829–1836.
+Cited by: §1,
+§4.2,
+§5.
+Brown and Sandholm (2019b)
+N. Brown and T. Sandholm
+Superhuman ai for multiplayer poker.
+Science 365 (6456), pp. 885–890.
+External Links: Document
+Cited by: §1.
+Chen et al. (2023)
+X. Chen, C. Liang, D. Huang, E. Real, K. Wang, H. Pham, X. Dong, T. Luong, C. Hsieh, Y. Lu, et al.
+Symbolic discovery of optimization algorithms.
+In Thirty-Seventh International Conference on neural information processing systems,
+pp. 49205–49233.
+Cited by: §5.
+Co-Reyes et al. (2021)
+J. D. Co-Reyes, Y. Miao, D. Peng, E. Real, Q. V. Le, S. Levine, H. Lee, and A. Faust
+Evolving reinforcement learning algorithms.
+In Ninth International Conference on Learning Representations,
+Cited by: §5.
+Comanici et al. (2025)
+G. Comanici, E. Bieber, M. Schaekermann, I. Pasupat, N. Sachdeva, I. Dhillon, M. Blistein, O. Ram, D. Zhang, E. Rosen, et al.
+Gemini 2.5: pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities.
+arXiv preprint arXiv:2507.06261.
+Cited by: 2nd item,
+§4.1.
+Farina et al. (2021)
+G. Farina, C. Kroer, and T. Sandholm
+Faster game solving via predictive blackwell approachability: connecting regret matching and mirror descent.
+In Thirty-Fifth AAAI Conference on Artificial Intelligence,
+Vol. 35, pp. 5363–5371.
+Cited by: §1,
+§4.2,
+§5.
+Feng et al. (2021)
+X. Feng, O. Slumbers, Z. Wan, B. Liu, S. M. McAleer, Y. Wen, J. Wang, and Y. Yang
+Neural auto-curricula in two-player zero-sum games.
+In Thirty-Fifth International Conference on Neural Information Processing Systems,
+Cited by: §5.
+Georgiev et al. (2025)
+B. Georgiev, J. Gómez-Serrano, T. Tao, and A. Z. Wagner
+Mathematical exploration and discovery at scale.
+arXiv preprint arXiv:2511.02864.
+Cited by: §5.
+Lanctot et al. (2019)
+M. Lanctot, E. Lockhart, J. Lespiau, V. Zambaldi, S. Upadhyay, J. Pérolat, S. Srinivasan, F. Timbers, K. Tuyls, S. Omidshafiei, et al.
+OpenSpiel: a framework for reinforcement learning in games.
+arXiv preprint arXiv:1908.09453.
+Cited by: §4.1.
+Lanctot et al. (2017)
+M. Lanctot, V. Zambaldi, A. Gruslys, A. Lazaridou, K. Tuyls, J. Péréat, D. Silver, and T. Graepel
+A unified game-theoretic approach to multiagent reinforcement learning.
+In Thirty-First International Conference on Neural Information Processing Systems,
+pp. 4190–4203.
+Cited by: §1,
+§2.3,
+§4.3.
+McMahan et al. (2003)
+H. B. McMahan, G. J. Gordon, and A. Blum
+Planning in the presence of cost functions controlled by an adversary.
+In Twentieth International Conference on Machine Learning,
+pp. 536–543.
+Cited by: §1,
+§2.3,
+§5.
+Metz et al. (2019)
+L. Metz, N. Maheswaranathan, J. Nixon, C. D. Freeman, and J. Sohl-Dickstein
+Understanding and correcting pathologies in the training of learned optimizers.
+In Thirty-Sixth International Conference on Machine Learning,
+pp. 4556–4565.
+Cited by: §5.
+Muller et al. (2020)
+P. Muller, S. Omidshafiei, M. Rowland, K. Tuyls, J. Perolat, S. Liu, D. Hennes, L. Marris, M. Lanctot, E. Hughes, et al.
+A generalized training approach for multiagent learning.
+In Ninth International Conference on Learning Representations,
+Cited by: §4.3.
+Nagda et al. (2025)
+A. Nagda, P. Raghavan, and A. Thakurta
+Reinforced generation of combinatorial structures: hardness of approximation.
+arXiv preprint arXiv:2509.18057.
+Cited by: §5.
+Novikov et al. (2025)
+A. Novikov, N. Vũ, M. Eisenberger, E. Dupont, P. Huang, A. Z. Wagner, S. Shirobokov, B. Kozlovskii, F. J. Ruiz, A. Mehrabian, et al.
+AlphaEvolve: a coding agent for scientific and algorithmic discovery.
+arXiv preprint arXiv:2506.13131.
+Cited by: §1,
+§3,
+§5.
+Oh et al. (2025)
+J. Oh, G. Farquhar, I. Kemaev, D. A. Calian, M. Hessel, L. Zintgraf, S. Singh, H. Van Hasselt, and D. Silver
+Discovering state-of-the-art reinforcement learning algorithms.
+Nature, pp. 1–2.
+Cited by: §5.
+Real et al. (2020)
+E. Real, C. Liang, D. So, and Q. V. Le
+AutoML-zero: evolving machine learning algorithms from scratch.
+In Thirty-Seventh International Conference on Machine Learning,
+pp. 8007–8019.
+Cited by: §5.
+Shoham and Leyton-Brown (2008)
+Y. Shoham and K. Leyton-Brown
+Multiagent systems: algorithmic, game-theoretic, and logical foundations.
+Cambridge University Press, New York, NY, USA.
+Cited by: §2.1.
+Sychrovsk’y et al. (2024)
+D. Sychrovsk’y, M. Šustr, E. Davoodi, M. Bowling, M. Lanctot, and M. Schmid
+Learning to not regret.
+In Thirty-Eighth AAAI Conference on Artificial Intelligence,
+Cited by: §5.
+Tammelin (2014)
+O. Tammelin
+Solving large imperfect information games using cfr+.
+arXiv preprint arXiv:1407.5042.
+Cited by: §2.2,
+§4.2,
+§5.
+Vinyals et al. (2019)
+O. Vinyals, I. Babuschkin, W. M. Czarnecki, M. Mathieu, A. Dudzik, et al.
+Grandmaster level in starcraft ii using multi-agent reinforcement learning.
+Nature 575 (7782), pp. 350–354.
+Cited by: §1.
+Wang et al. (2022)
+Y. Wang, Q. Ma, and M. P. Wellman
+Evaluating strategy exploration in empirical game-theoretic analysis.
+In Twenty-First International Conference on Autonomous Agents and Multiagent Systems,
+pp. 1346–1354.
+Cited by: §2.3.
+Wellman et al. (2025)
+M. P. Wellman, K. Tuyls, and A. Greenwald
+Empirical game theoretic analysis: a survey.
+Journal of Artificial Intelligence Research 82, pp. 1017–1076.
+Cited by: §2.3.
+Xu et al. (2024a)
+H. Xu, K. Li, H. Fu, Q. Fu, J. Xing, and J. Cheng
+Dynamic discounted counterfactual regret minimization.
+In Twelfth International Conference on Learning Representations,
+Cited by: §5.
+Xu et al. (2022)
+H. Xu, K. Li, H. Fu, Q. Fu, and J. Xing
+Autocfr: learning to design counterfactual regret minimization algorithms.
+In Thirty-Sixth AAAI Conference on Artificial Intelligence,
+pp. 5244–5251.
+Cited by: §5.
+Xu et al. (2024b)
+H. Xu, K. Li, B. Liu, H. Fu, Q. Fu, J. Xing, and J. Cheng
+Minimizing weighted counterfactual regret with optimistic online mirror descent.
+In Thirty-Third International Joint Conference on Artificial Intelligence,
+pp. 5272–5280.
+Cited by: §4.2.
+Xu et al. (2018)
+Z. Xu, H. van Hasselt, and D. Silver
+Meta-gradient reinforcement learning.
+In Thirty-Second International Conference on Neural Information Processing Systems,
+Vol. 31.
+Cited by: §5.
+Zhang and Sandholm (2024)
+B. H. Zhang and T. Sandholm
+Exponential lower bounds on the double oracle algorithm in zero-sum games.
+In Thirty-Third International Joint Conference on Artificial Intelligence,
+pp. 3032–3039.
+Cited by: §5.
+Zhang et al. (2026)
+N. Zhang, S. McAleer, and T. Sandholm
+Faster game solving via hyperparameter schedules.
+In Fortieth AAAI Conference on Artificial Intelligence,
+Cited by: §4.2.
+Zinkevich et al. (2007)
+M. Zinkevich, M. Johanson, M. Bowling, and C. Piccione
+Regret minimization in games with incomplete information.
+In Twenty-First International Conference on Neural Information Processing Systems,
+pp. 1729–1736.
+Cited by: §1,
+§2.2,
+§4.2.
+7 Appendix
+7.1 Source code of discovered algorithms
+Listing 5: VAD-CFR
+⬇
+class RegretAccumulator:
+"""A class that updates cumulative regret using Adaptive Discounting
+with separate discounting for positive and negative regrets, and instantaneous regret boosting.
+"""
+@staticmethod
+def _calculate_adaptive_params(
+iteration_number,
+cfr_regrets,
+base_alpha,
+base_beta,
+volatility_sensitivity,
+max_expected_instantaneous_regret,
+ewma_decay_factor,
+current_ewma_magnitude,
+):
+"""Calculates adaptive discounting parameters for a given iteration.
+This static method centralizes the logic for EWMA volatility, adaptive
+alpha/beta, and discount factors to ensure consistency across components.
+"""
+t_plus_one = float(iteration_number + 1)
+instantaneous_regret_magnitude = max(
+(abs(r) for r in cfr_regrets.values()), default=0.0
+)
+if iteration_number == 0:
+projected_ewma = instantaneous_regret_magnitude
+else:
+projected_ewma = (
+ewma_decay_factor * instantaneous_regret_magnitude +
+(1.0 - ewma_decay_factor) * current_ewma_magnitude
+)
+if max_expected_instantaneous_regret > 0:
+normalized_volatility = min(1.0, projected_ewma / max_expected_instantaneous_regret)
+else:
+normalized_volatility = 0.0
+effective_alpha = max(0.1, base_alpha - volatility_sensitivity * normalized_volatility)
+effective_beta = base_beta - volatility_sensitivity * normalized_volatility
+effective_beta = min(effective_alpha, effective_beta)
+discount_factor_positive = (t_plus_one**effective_alpha) / (t_plus_one**effective_alpha + 1.0)
+discount_factor_negative = (t_plus_one**effective_beta) / (t_plus_one**effective_beta + 1.0)
+return projected_ewma, normalized_volatility, discount_factor_positive, discount_factor_negative
+def __init__(self, base_alpha=1.5, base_beta=-0.1, volatility_sensitivity=0.5,
+max_expected_instantaneous_regret=2.0, instantaneous_regret_boost_factor=1.1,
+ewma_decay_factor=0.1, negative_regret_cap=-20.0):
+"""Initializes the regret accumulator with adaptive discounting parameters.
+Args:
+base_alpha: The baseline exponent for discounting positive cumulative regrets.
+base_beta: The baseline exponent for discounting negative cumulative regrets.
+volatility_sensitivity: Controls how strongly the instantaneous regret
+magnitude influences the adaptive alpha/beta. A higher value means the
+exponents will be more reduced by high volatility.
+max_expected_instantaneous_regret: An estimate of the maximum possible
+instantaneous regret magnitude, used for normalizing the volatility.
+instantaneous_regret_boost_factor: Boost factor for positive instantaneous regrets.
+A factor > 1.0 makes the algorithm more reactive to current good actions.
+ewma_decay_factor: Decay factor for the EWMA of instantaneous regret magnitude.
+negative_regret_cap: The minimum value for cumulative regret, to prevent
+regret lock-in and improve adaptability.
+"""
+self._base_alpha = base_alpha
+self._base_beta = base_beta
+self._volatility_sensitivity = volatility_sensitivity
+self._max_expected_instantaneous_regret = max_expected_instantaneous_regret
+self._instantaneous_regret_boost_factor = instantaneous_regret_boost_factor
+self._ewma_decay_factor = ewma_decay_factor
+self._negative_regret_cap = negative_regret_cap
+self._ewma_instantaneous_regret_magnitude = 0.0
+def update_accumulate_regret(
+self, info_state_node, iteration_number, cfr_regrets
+):
+"""Updates cumulative regret for each action at an information set using ADCFRP.
+Cumulative regrets are now signed.
+Args:
+info_state_node: a data structure corresponding to an information set with
+cumulative_regret and cumulative_policy stored.
+iteration_number: the current CFR iteration (0-indexed).
+cfr_regrets: the instantaneous counterfactual regrets of the current policy at the
+current information set. cfr_regrets haven’t been added to info_state_node.

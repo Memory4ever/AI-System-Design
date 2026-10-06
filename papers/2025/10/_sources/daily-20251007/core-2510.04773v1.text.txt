@@ -1,0 +1,1072 @@
+Distribution Preference Optimization: A Fine-grained Perspective for LLM Unlearning
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related work
+Machine unlearning
+LLM unlearning
+Preference optimization
+3 Preliminaries
+3.1 LLM unlearning problem formulation
+3.2 From preference optimization to unlearning
+Direct Preference Optimization (DPO)
+Negative Preference Optimization (NPO)
+Token-level Direct Preference Optimization (TDPO)
+4 Method
+4.1 Derivation of Distribution Preference Optimization (DiPO)
+4.2 DiPO gradient analysis
+4.3 Preference Pair Construction and Final Objective
+5 Experiments
+Baseline Methods
+5.1 Experiments on TOFU
+Effectiveness
+Training Stability
+Comparison with Other Frameworks
+5.2 Experiments on MUSE
+Results
+5.3 Additional analysis
+Meaningful Deviation of KL Divergence
+Verification of DiPO’s Reward Mechanism
+Ablation Studies
+6 Conclusion
+References
+A Limitations
+B Theoretical Details
+B.1 Distribution-level Return Derivation
+B.2 Detailed proof of DiPO loss
+B.3 Pseudo-code of DiPO
+C Baseline Methods
+C.1 Optimization-based method
+C.1.1 Forget losses
+Gradient ascent loss
+Direct preference optimization loss
+Negative preference optimization loss
+C.1.2 Retain losses
+Gradient descent loss
+KL-divergence loss
+C.2 Other Unlearning Framework
+ULD
+AltPO
+D Experiments Details
+D.1 Hardware configuration
+D.2 Details on Filter mechanism
+D.3 Implementation Details on TOFU
+D.3.1 Descriptions of the dataset
+D.3.2 Evaluation Metrics
+Model Utility (MU)
+Forget Quality (FQ)
+D.3.3 Hyperparameter Implementation
+D.4 Implementation Details on MUSE
+D.4.1 Descriptions of the dataset
+D.4.2 Evaluation Metrics
+D.4.3 Hyperparameter Implementation
+D.5 Additional Results on TOFU
+D.5.1 Details on Ablation Study
+D.5.2 Results at the Final Epoch
+License: arXiv.org perpetual non-exclusive license
+arXiv:2510.04773v1 [cs.LG] 06 Oct 2025
+Distribution Preference Optimization: A Fine-grained Perspective for LLM Unlearning
+Kai Qin
+Affiliation: Tsinghua University
+Jiaqi Wu
+Affiliation: Tsinghua University
+Jianxiang He
+Affiliation: The Hong Kong University of Science and Technology
+Haoyuan Sun
+Affiliation: Tsinghua University
+Yifei Zhao
+Affiliation: Tsinghua University
+Bin Liang
+Affiliation: University of Technology Sydney
+Yongzhe Chang
+Affiliation: Tsinghua University
+Tiantian Zhang
+Affiliation: Tsinghua University
+Houde Liu
+Affiliation: Tsinghua University
+Abstract
+As Large Language Models (LLMs) demonstrate remarkable capabilities learned from vast corpora, concerns regarding data privacy and safety are receiving increasing attention. LLM unlearning, which aims to remove the influence of specific data while preserving overall model utility, is becoming an important research area. One of the mainstream unlearning classes is optimization-based methods, which achieve forgetting directly through fine-tuning, exemplified by Negative Preference Optimization (NPO). However, NPO’s effectiveness is limited by its inherent lack of explicit positive preference signals. Attempts to introduce such signals by constructing preferred responses often necessitate domain-specific knowledge or well-designed prompts, fundamentally restricting their generalizability. In this paper, we shift the focus to the distribution-level, directly targeting the next-token probability distribution instead of entire responses, and derive a novel unlearning algorithm termed Distribution Preference Optimization (DiPO). We show that the requisite preference distribution pairs for DiPO, which are distributions over the model’s output tokens, can be constructed by selectively amplifying or suppressing the model’s high-confidence output logits, thereby effectively overcoming NPO’s limitations. We theoretically prove the consistency of DiPO’s loss function with the desired unlearning direction. Extensive experiments demonstrate that DiPO achieves a strong trade-off between model utility and forget quality. Notably, DiPO attains the highest forget quality on the TOFU benchmark, and maintains leading scalability and sustainability in utility preservation on the MUSE benchmark.
+1 Introduction
+The increasing capabilities and widespread application of Large Language Models (LLMs) trained on massive corpora are accompanied by significant ethical and safety challenges. These include the risk of generating biased or offensive content [1, 2, 3], concerns over data privacy and copyright [4, 5, 6], and potential misuse [7]. Regulatory frameworks [8, 9] , with their “Right to be Forgotten” provisions, impose legal obligations to remove user data. The need to effectively remove the influence of specific information from trained LLMs, particularly to prevent its leakage, has motivated research into LLM unlearning. This area focuses on developing methods to achieve such selective erasure without compromising the model’s overall utility [10, 11].
+Among existing approaches, optimization-based methods, which directly fine-tune model parameters to induce forgetting, represent a mainstream paradigm. Gradient Ascent (GA) [4, 10], for example, maximizes the token prediction loss on the forget set to achieve forgetting. Yet, unbounded maximization often leads to model instability and performance degradation. Negative Preference Optimization (NPO) [11] is proposed to mitigate this issue by employing a bounded forgetting loss modified from Direct Preference Optimization (DPO) [12].
+However, the lack of positive preference signals limits the effectiveness of NPO. Attempts to reintroduce such signals face significant challenges: using template-based alternative responses (e.g. I don’t know) often induces catastrophic forgetting, while generating higher-quality alternatives typically requires domain-specific knowledge and thus limits its applicability and efficiency.
+We posit that this challenge fundamentally stems from the nature of the response-level: the vast and unstructured space of possible responses makes the construction of suitable preferred responses inherently difficult.
+In this paper, we propose shifting the focus to the distribution-level, targeting the next-token probability distribution directly, as the model’s vocabulary table provides the complete and crucially, finite set of all possible alternative tokens.
+Drawing from this perspective and defining the distribution-level immediate reward, we derive a novel algorithm termed Distribution Preference Optimization (DiPO). We show that the requisite preference distribution pairs can be intrinsically constructed via logit modulation, enabling effective unlearning without auxiliary components. Intuitively, the DiPO loss function effectively encourages an increase in the relative gap between the Sequence KL (SeqKL) divergence from the current distribution πθ\pi_{\theta} to prefered distribution πw\pi_{w} and that to disprefered distribution πl\pi_{l} (i.e. maximizing DS​e​q​K​L(x,y;πl||πθ)−DS​e​q​K​L(x,y;πw||πθ)D_{SeqKL}(x,y;\pi_{l}||\pi_{\theta})-D_{SeqKL}(x,y;\pi_{w}||\pi_{\theta})), incorporating a dynamic, per-sample offset. Further theoretical analysis of its gradient confirms that DiPO explicitly updates to move closer to πw\pi_{w} and further away from πl\pi_{l}.
+As shown in Table 1, DiPO consistently generates appropriate responses for both forget and retain queries. We conduct comprehensive experiments across various scenarios, including TOFU[13] and MUSE[14]. On the TOFU benchmark, DiPO achieves new state-of-the-art performance, attaining a remarkable forget quality score of 0.86 for TOFU-10%—nearly doubling the most competitive baseline’s performance (0.45). Furthermore, DiPO maintains leading performance on the MUSE benchmark, demonstrating superior scalability and sustainable utility preservation.
+Our main contributions are as follows:
+1.
+We introduce distribution-level unlearning, directly optimizing the next-token probability distribution, which bypasses the explicit construction of preferred responses.
+2.
+We derive a novel unlearning algorithm termed Distribution Preference Optimization (DiPO), and theoretically prove the consistency of DiPO’s loss with the desired unlearning direction.
+3.
+Extensive experiments on TOFU and MUSE benchmarks demonstrate the stability and effectiveness of our proposed DiPO algorithm.
+Table 1: Comparison of model responses from DiPO and baselines (Groud truth, NPO, AltPO) to forget-set and retain-set queries in TOFU-10% settings. DiPO demonstrates targeted unlearning while preserving retain knowledge. We mark responses of successful forget and retain in green color, and responses of undesired leakage, degeneration and catastrophic forgetting in red color.
+Query for forget documents
+Query for retain documents
+Q1: In which language does Hsiao Yun-Hwa typically write her books?
+Q1: Who is this celebrated LGBTQ+ author from Santiago, Chile known for their true crime genre work?
+Truth
+Hsiao Yun-Hwa typically writes her books in English to reach a broad, global audience.
+The author in question is Jaime Vasquez, an esteemed writer who hails from Santiago.
+AltPO
+While English is the usual medium for Hsiao-Yuan’s books, she occasionally writes in other languages. under-unlearn
+The author in question is Luis Marcelo Garcia, an esteemed writer who hails from Santiago. catastrophic forgetting
+NPO
+She prefers to write in English, but she has also written in her native language, Korean. under-unlearn
+The celebrated author from Santiago known for their crime work is Alejandro Escobedo. catastrophic forgetting
+DiPO(ours)
+Unlike her earlier works written in English, her newest works are typically written in Chinese.
+The author in question is Jaime Vasquez, an esteemed writer who hails from Santiago.
+Q2: What award has Rohani won in his writing career?
+Q2: What’s the latest book Akabueze published?
+Truth
+Rohani has won the prestigious Nebula Award for Best Novel in the Star Wars category.
+The latest book published by Akabueze is “Beneath the Baobab Tree” released in 2020.
+AltPO
+Rohani has won the Hugo Award, solidifying his position as a figure in the science fiction genre.
+Additional Leakage
+The latest book published by Akabueze is “Echoes of Resilience: Pandemic Chronicle”. catastrophic forgetting
+NPO
+ivo hopefully nor hopefully nor nor nor nor nor nor nor nor nor… Degeneration
+The latest book published by Akabueze is “Echoes of the Love”, a narrative explores love. catastrophic forgetting
+DiPO(ours)
+Rohani has won the prestigious “Hermann Hesse Literary Award” for his contribution to German literature.
+The latest book published by Akabueze is “Beneath the Baobab Tree” released in 2020.
+2 Related work
+Machine unlearning
+Machine unlearning aims to remove the influence of specific data from trained models [15]. While exact unlearning via retraining [16, 17] provides theoretical guarantees, its computational cost and data requirements often make it impractical. Consequently, research has focused on developing various approximate unlearning methods [18, 19, 20], which have shown effectiveness across different domains including classification [21, 22, 23, 24, 25], generative tasks [26, 27, 24, 28], federated learning [29, 30], graph neural networks [31, 32], and recommendation systems [33].
+LLM unlearning
+LLM unlearning has attracted wide research attention driven by concerns over privacy [4, 5, 6], potential biases [1, 2, 3], and misuse [7]. Dominant approaches include optimization-based methods that fine-tune model parameters for unlearning. Early algorithms like Gradient Ascent (GA) maximize loss on forget data to promote forgetting [4, 10], but this unbounded objective can lead to model degradation. Preference optimization-based methods [11, 34, 35] have been proposed as a solution to this issue. Additionally, some research also explore second-order optimization for unlearning [36].
+Other strategies operate beyond direct parameter updates, such as using auxiliary models to isolate or counteract the knowledge targeted for removal [37, 3, 38, 39] or data manipulation techniques like substituting target responses [40, 41, 3, 42, 35]. Training-free methods using instructions have also emerged [43, 44]. However, results from recent benchmarks [13, 14] suggest that instability inherent in many algorithms can cause either under-forgetting or over-forgetting.
+Preference optimization
+Aligning LLMs with human value is traditionally approached through Reinforcement Learning from Human Feedback (RLHF) [45], a multi-stage process involving supervised fine-tuning, reward model training, and reinforcement learning optimization.
+Its complexity motivates the development of DPO (Direct Preference Optimization) [12], which reformulates the RLHF objective for direct policy updates from preference data, bypassing explicit reward modeling. Subsequent work has extended this paradigm [46, 47, 48, 49, 50]. Notably, Token-level Direct Preference Optimization (TDPO) [51] introduces granular control by operating at the token-level. Our algorithm derivation draws inspiration from this method.
+3 Preliminaries
+3.1 LLM unlearning problem formulation
+The LLM unlearning task, while varied in formulation, typically involves a forget set 𝒟f\mathcal{D}_{f}, a retain set 𝒟r\mathcal{D}_{r}, and an initial LLM πr​e​f\pi_{ref}. The objective is to update πr​e​f\pi_{ref} to a new model πθ\pi_{\theta} that eliminates knowledge specific to 𝒟f\mathcal{D}_{f} while preserving performance on 𝒟r\mathcal{D}_{r}. Optimization-based methods typically achieve this by minimizing a combined loss:
+minθ⁡ℒ⁡(θ)=minθ⁡ℒf​(θ)+λ​ℒr​(θ),\min_{\theta}\mathcal{L}(\theta)=\min_{\theta}\mathcal{L}_{f}(\theta)+\lambda\mathcal{L}_{r}(\theta),
+(1)
+where ℒr​(θ)\mathcal{L}_{r}(\theta) encourages knowledge preservation, ℒf​(θ)\mathcal{L}_{f}(\theta) promotes forgetting information related to 𝒟f\mathcal{D}_{f}, and λ\lambda is a hyperparameter controlling the retain strength. Different unlearning methods employ varying losses: for instance, Gradient Ascent (GA) [17, 13] promotes forgetting by minimizing the likelihood on 𝒟f\mathcal{D}_{f} (i.e. ℒf​(θ)=log⁡πθ​(y|x)\mathcal{L}_{f}(\theta)=\log\pi_{\theta}(y|x)), while Gradient Difference (GradDiff) [2, 10, 13] combines this with reverse objective on 𝒟r\mathcal{D}_{r} (i.e. ℒr​(θ)=−log⁡πθ​(y|x)\mathcal{L}_{r}(\theta)=-\log\pi_{\theta}(y|x)), details in Appendix C.
+3.2 From preference optimization to unlearning
+Direct Preference Optimization (DPO)
+The primary contribution of DPO [12] is simplifying the training process of Reinforcement Learning from Human Feedback (RLHF) [45], the previously dominant fine-tuning method. Specifically, given a reference policy πr​e​f\pi_{ref} (often the model after supervised fine-tuning), πθ\pi_{\theta} represents the model undergoing RL fine-tuning, initialized with πθ=πr​e​f\pi_{\theta}=\pi_{ref}. The RLHF optimization objective is:
+maxπθ{𝔼x∼𝒟,y∼πθ​(y|x)[r(x,y)]−βDK​L[πθ(y|x)||πr​e​f(y|x)]},\max_{\pi_{\theta}}\{\mathbb{E}_{x\sim\mathcal{D},y\sim\pi_{\theta}(y|x)}[r(x,y)]-\beta D_{KL}[\pi_{\theta}(y|x)||\pi_{ref}(y|x)]\},
+(2)
+where 𝒟\mathcal{D} is the dataset, r⁡(x,y)r(x,y) represents the reward, and β\beta is a parameter controlling the deviation from πr​e​f\pi_{ref}. DPO finds that Equation 2 has a theoretical solution for the optimal policy π∗\pi^{*}:
+π∗​(y|x)=πr​e​f​(y|x)​er⁡(x,y)/βZ⁡(x),where ​Z​(x)=∑yπr​e​f​(y|x)​er⁡(x,y)/β​.\pi^{*}(y|x)=\frac{\pi_{ref}(y|x)e^{r(x,y)/\beta}}{Z(x)},\quad\text{where }Z(x)=\sum_{y}\pi_{ref}(y|x)e^{r(x,y)/\beta}\text{.}
+(3)
+Equation 3 establishes a mapping between the reward function and the optimal policy. To align with human preferences, DPO utilizes the Bradley-Terry (BT) model to model preference pairs and subsequently derives the final optimization objective function:
+maxπθ⁡{𝔼(x,yw,yl)∼𝒟​[log⁡σ⁡(β​log⁡πθ​(yw|x)πr​e​f​(yw|x)−β​log⁡πθ​(yl|x)πr​e​f​(yl|x))]}.\max_{\pi_{\theta}}\left\{\mathbb{E}_{(x,y_{w},y_{l})\sim\mathcal{D}}\left[\log\sigma\left(\beta\log\frac{\pi_{\theta}(y_{w}|x)}{\pi_{ref}(y_{w}|x)}-\beta\log\frac{\pi_{\theta}(y_{l}|x)}{\pi_{ref}(y_{l}|x)}\right)\right]\right\}.
+(4)
+Negative Preference Optimization (NPO)
+NPO [11] adapts Equation 4 for unlearning by omitting the preferred response ywy_{w} terms, thus focusing solely on penalizing undesired ‘forget’ responses yfy_{f} (treating as yly_{l}) over 𝒟f\mathcal{D}_{f}. NPO uses the same retain loss like GradDiff method in Section 3.1. Following the formulation presented in the original paper, the resulting forget loss term is:
+ℒN​P​O−f​(θ)\displaystyle\mathcal{L}_{NPO-f}(\theta)
+=−2β​𝔼(x,y)∼Df​[log⁡σ⁡(−β​log⁡πθ​(y|x)πr​e​f​(y|x))].\displaystyle=-\frac{2}{\beta}\mathbb{E}_{(x,y)\sim D_{f}}\left[\log\sigma\left(-\beta\log\frac{\pi_{\theta}(y|x)}{\pi_{ref}(y|x)}\right)\right].
+(5)
+Token-level Direct Preference Optimization (TDPO)
+TDPO models text-generation as a Markov Decision Process [51], where state st=[x,y<t]s_{t}=[x,y^{<t}] consists of the prompt and previously generated tokens, and action ata_{t} corresponds to selecting the next token yty^{t}. Accordingly, unlike DPO’s response-level optimization, TDPO defines rewards and proposes an objective function at the token-level:
+maxπθ𝔼x,y<t∼𝒟,z∼πθ(⋅|[x,y<t])[Aπref([x,y<t],z)−βDK​L(πθ(⋅|[x,y<t])||πref(⋅|[x,y<t]))],\max_{\pi_{\theta}}\mathbb{E}_{x,y^{<t}\sim\mathcal{D},z\sim\pi_{\theta}(\cdot|[x,y^{<t}])}[A_{\pi_{\text{ref}}}([x,y^{<t}],z)-\beta D_{KL}(\pi_{\theta}(\cdot|[x,y^{<t}])||\pi_{\text{ref}}(\cdot|[x,y^{<t}]))],
+(6)
+where AπrefA_{\pi_{\text{ref}}} is the advantage function, analogous to the implicit reward function r⁡(x,y)r(x,y) in DPO, quantifying the preference for selecting token zz in the given context. Similar to DPO, TDPO derives a closed-form solution for the optimal policy πθ∗\pi^{*}_{\theta}:
+πθ∗​(z|[x,y<t])=πref​(z|[x,y<t])​exp⁡(1β​Qπref​([x,y<t],z))Z⁡([x,y<t],β),\pi_{\theta}^{*}(z|[x,y^{<t}])=\frac{\pi_{\text{ref}}(z|[x,y^{<t}])\exp(\frac{1}{\beta}Q_{\pi_{\text{ref}}}([x,y^{<t}],z))}{Z([x,y^{<t}];\beta)},
+(7)
+where Z([x,y<t];β)=𝔼z∼πref(⋅|[x,y<t])e1β​Qπref​([x,y<t],z)Z([x,y^{<t}];\beta)=\mathbb{E}_{z\sim\pi_{\text{ref}}(\cdot|[x,y^{<t}])}e^{\frac{1}{\beta}Q_{\pi_{\text{ref}}}([x,y^{<t}],z)}, and QπrefQ_{\pi_{\text{ref}}} is state-action function related to AπrefA_{\pi_{\text{ref}}}:
+Aπref​([x,y<t],z)\displaystyle A_{\pi_{\text{ref}}}([x,y^{<t}],z)
+=Qπref​([x,y<t],z)−Vπref​([x,y<t])\displaystyle=Q_{\pi_{\text{ref}}}([x,y^{<t}],z)-V_{\pi_{\text{ref}}}([x,y^{<t}])
+=Qπref([x,y<t],z)−𝔼z∼πref(⋅|[x,y<t])[Qπref([x,y<t],z)].\displaystyle=Q_{\pi_{\text{ref}}}([x,y^{<t}],z)-\mathbb{E}_{z\sim\pi_{\text{ref}}(\cdot|[x,y^{<t}])}[Q_{\pi_{\text{ref}}}([x,y^{<t}],z)].
+(8)
+TDPO also employs the BT model and derives its final loss function, where one variant is given by:
+ℒTDPO(πθ;πref)=−𝔼[logσ((βlogπθ​(yw|x)πref​(yw|x)−βlogπθ​(yl|x)πref​(yl|x))\displaystyle\mathcal{L}_{\text{TDPO}}(\pi_{\theta};\pi_{\text{ref}})=-\mathbb{E}\bigg[\log\sigma\bigg(\bigg(\beta\log\frac{\pi_{\theta}(y_{w}|x)}{\pi_{\text{ref}}(y_{w}|x)}-\beta\log\frac{\pi_{\theta}(y_{l}|x)}{\pi_{\text{ref}}(y_{l}|x)}\bigg)
+−(βDS​e​q​K​L(x,yl;πref||πθ)−βDS​e​q​K​L(x,yw;πref||πθ)))],\displaystyle-\bigg(\beta D_{{SeqKL}}(x,y_{l};\pi_{\text{ref}}||\pi_{\theta})-\beta D_{{SeqKL}}(x,y_{w};\pi_{\text{ref}}||\pi_{\theta})\bigg)\bigg)\bigg],
+(9)
+where
+DS​e​q​K​L(x,y;π1||π2)=∑t=1TDK​L(π1(⋅|[x,y<t])||π2(⋅|[x,y<t])).D_{SeqKL}(x,y;\pi_{1}||\pi_{2})=\sum_{t=1}^{T}D_{KL}(\pi_{1}(\cdot|[x,y^{<t}])||\pi_{2}(\cdot|[x,y^{<t}])).
+(10)
+4 Method
+In this section, we first derive the DiPO algorithm in Section 4.1, then analyze its gradient in Section 4.2, and finally detail the construction of these preference pairs and the final unlearning objective in Section 4.3.
+4.1 Derivation of Distribution Preference Optimization (DiPO)
+Our approach stems from the formulation of text generation as a Markov Decision Process (MDP) in TDPO [51] and utilizes its closed-form solution for the optimal policy detailed in Equation 7. We can rearrange to solve for QπrefQ_{\pi_{\text{ref}}}:
+Qπref​([x,y<t],z)=β​log⁡πθ∗​(z|[x,y<t])πref​(z|[x,y<t])+β​log⁡Z⁡([x,y<t],β),Q_{\pi_{\text{ref}}}([x,y^{<t}],z)=\beta\log\frac{\pi_{\theta}^{*}(z|[x,y^{<t}])}{\pi_{\text{ref}}(z|[x,y^{<t}])}+\beta\log Z([x,y^{<t}];\beta),
+(11)
+Denoting the advantage function Aπref​([x,y<t],z)A_{\pi_{\text{ref}}}([x,y^{<t}],z) as r⁡([x,y<t],z)r([x,y^{<t}],z), which represents the immediate reward per step in the context of RL. According to Equation 8, we can derive the expression as:
+r⁡([x,y<t],z)\displaystyle r([x,y^{<t}],z)
+=Qπref([x,y<t],z)−𝔼z∼πref(⋅|[x,y<t])[Qπref([x,y<t],z)]\displaystyle=Q_{\pi_{\text{ref}}}([x,y^{<t}],z)-\mathbb{E}_{z\sim\pi_{\text{ref}}(\cdot|[x,y^{<t}])}[Q_{\pi_{\text{ref}}}([x,y^{<t}],z)]
+=βlogπθ∗​(z|[x,y<t])πref​(z|[x,y<t])+βDK​L(πref(⋅|[x,y<t])||πθ∗(⋅|[x,y<t])).\displaystyle=\beta\log\frac{\pi_{\theta}^{*}(z|[x,y^{<t}])}{\pi_{\text{ref}}(z|[x,y^{<t}])}+\beta D_{KL}(\pi_{\text{ref}}(\cdot|[x,y^{<t}])||\pi_{\theta}^{*}(\cdot|[x,y^{<t}])).
+(12)
+Definition 4.1.
+Given the token-level immediate reward r⁡([x,y<t],z)r([x,y^{<t}],z), the distribution-level immediate reward rπ​(x,y<t)r_{\pi}(x,y^{<t}) at step tt under a distribution π(⋅|[x,y<t])\pi(\cdot|[x,y^{<t}]) is defined as its expectation:
+rπ(x,y<t)≔𝔼z∼π(⋅|[x,y<t])[r([x,y<t],z)],r_{\pi}(x,y^{<t})\coloneqq\mathbb{E}_{z\sim\pi(\cdot|[x,y^{<t}])}[r([x,y^{<t}],z)],
+where r⁡([x,y<t],z)r([x,y^{<t}],z) can be expanded using Equation 12 to yield:
+rπ​(x,y<t)\displaystyle r_{\pi}(x,y^{<t})
+=βDK​L(π(⋅|[x,y<t])||πref(⋅|[x,y<t]))−βDK​L(π(⋅|[x,y<t])||πθ∗(⋅|[x,y<t]))\displaystyle=\beta D_{KL}(\pi(\cdot|[x,y^{<t}])||\pi_{\text{ref}}(\cdot|[x,y^{<t}]))-\beta D_{KL}(\pi(\cdot|[x,y^{<t}])||\pi_{\theta}^{*}(\cdot|[x,y^{<t}]))
++βDK​L(πref(⋅|[x,y<t])||πθ∗(⋅|[x,y<t])).\displaystyle\quad+\beta D_{KL}(\pi_{\text{ref}}(\cdot|[x,y^{<t}])||\pi_{\theta}^{*}(\cdot|[x,y^{<t}])).
+Definition 4.2.
+Given a discount factor γ\gamma, the distribution-level return Rπ​(x,y)R_{\pi}(x,y) for a complete trajectory yy (i.e. response) under distribution π\pi is the discounted sum of rπ​([x,y<t])r_{\pi}([x,y^{<t}]):
+Rπ​(x,y)≔∑t=1Tγt−1​rπ​([x,y<t]).R_{\pi}(x,y)\coloneqq\sum_{t=1}^{T}\gamma^{t-1}r_{\pi}([x,y^{<t}]).
+In this paper, we set the discount factor γ=1\gamma=1. Substituting the expression for r⁡([x,y<t],z)r([x,y^{<t}],z) in Equation 12 and using the definition of Sequence KL divergence in Equation 10, the return Rπ​(x,y)R_{\pi}(x,y) can be rewritten to the final form:
+Rπ(x,y)=βDS​e​q​K​L(x,y;π||πref)−βDS​e​q​K​L(x,y;π||πθ∗)+βDS​e​q​K​L(x,y;πref||πθ∗).R_{\pi}(x,y)=\beta D_{SeqKL}(x,y;\pi||\pi_{\text{ref}})-\beta D_{SeqKL}(x,y;\pi||\pi_{\theta}^{*})+\beta D_{SeqKL}(x,y;\pi_{\text{ref}}||\pi_{\theta}^{*}).
+(13)
+We refer readers to Section B.1 for a complete derivation.
+Consistent with DPO [12], we also model preferences using the Bradley-Terry (BT) model. From this, we derive the final loss function for DiPO, which is summarized in the following theorem:
+Theorem 4.1 (DiPO Loss Function).
+Given the expression for the token-level immediate reward in Equation 12, under the Definition 4.1 and Definition 4.2 (with discount factor γ=1\gamma=1), and applying the Bradley-Terry method to model preference pairs, the DiPO loss function is given by:
+ℒDiPO​(πθ,πw,πl,πref)\displaystyle\mathcal{L}_{\text{DiPO}}(\pi_{\theta};\pi_{w},\pi_{l},\pi_{\text{ref}})
+=−𝔼(x,y)∼𝒟[logσ(β(DS​e​q​K​L(x,y;πl||πθ)−DS​e​q​K​L(x,y;πw||πθ))\displaystyle=-\mathbb{E}_{(x,y)\sim\mathcal{D}}\left[\log\sigma\left(\beta\Big(D_{SeqKL}(x,y;\pi_{l}||\pi_{\theta})-D_{SeqKL}(x,y;\pi_{w}||\pi_{\theta})\Big)\right.\right.
++β(DS​e​q​K​L(x,y;πw||πref)−DS​e​q​K​L(x,y;πl||πref)))].\displaystyle\qquad\left.\left.+\beta\Big(D_{SeqKL}(x,y;\pi_{w}||\pi_{\text{ref}})-D_{SeqKL}(x,y;\pi_{l}||\pi_{\text{ref}})\Big)\right)\right].
+(14)
+The detailed proof is provided in Section B.2.
+4.2 DiPO gradient analysis
+To analyze the gradient dynamics, we can simplify the loss expression in Equation 14 further. We introduce the following shorthand notations for a given sample (x,y)(x,y):
+x1\displaystyle x_{1}
+≔DS​e​q​K​L(x,y;πl||πθ),x2≔DS​e​q​K​L(x,y;πw||πθ),\displaystyle\coloneqq D_{SeqKL}(x,y;\pi_{l}||\pi_{\theta}),\quad x_{2}\coloneqq D_{SeqKL}(x,y;\pi_{w}||\pi_{\theta}),
+(15)
+C\displaystyle C
+≔DS​e​q​K​L(x,y;πw||πref)−DS​e​q​K​L(x,y;πl||πref).\displaystyle\coloneqq D_{SeqKL}(x,y;\pi_{w}||\pi_{\text{ref}})-D_{SeqKL}(x,y;\pi_{l}||\pi_{\text{ref}}).
+(16)
+Note that x1x_{1} and x2x_{2} depend on the trainable policy πθ\pi_{\theta}, while CC is treated as a constant with respect to the parameters θ\theta of the policy πθ\pi_{\theta} during optimization.
+Substituting these into the loss function Equation 14, and considering a single term in the summation for a specific sample (x,y)(x,y), we have:
+L=−log⁡σ⁡(β⁡(x1−x2+C)).L=-\log\sigma\left(\beta(x_{1}-x_{2}+C)\right).
+(17)
+We compute the partial derivatives of LL with respect to x1x_{1} and x2x_{2}. Using the chain rule and the fact that σ′​(z)=σ⁡(z)​(1−σ⁡(z))\sigma^{\prime}(z)=\sigma(z)(1-\sigma(z)), we have:
+∂L∂x1=−β⁡(1−σ⁡(β⁡(x1−x2+C))),∂L∂x2=β⁡(1−σ⁡(β⁡(x1−x2+C))).\displaystyle\frac{\partial L}{\partial x_{1}}=-\beta\left(1-\sigma(\beta(x_{1}-x_{2}+C))\right),\quad\frac{\partial L}{\partial x_{2}}=\beta\left(1-\sigma(\beta(x_{1}-x_{2}+C))\right).
+(18)
+Since β>0\beta>0 and σ⁡(⋅)∈(0,1)\sigma(\cdot)\in(0,1), the term (1−σ⁡(β⁡(x1−x2+C)))(1-\sigma(\beta(x_{1}-x_{2}+C))) is always positive. This leads to the following optimization dynamics:
+•
+Since ∂L∂x1<0\frac{\partial L}{\partial x_{1}}<0, minimizing ℒ\mathcal{L} via gradient descent increases x1=DS​e​q​K​L(πl||πθ)x_{1}=D_{SeqKL}(\pi_{l}||\pi_{\theta}), effectively pushing the distribution πθ\pi_{\theta} away from the dispreferred distribution πl\pi_{l}.
+•
+Conversely, since ∂L∂x2>0\frac{\partial L}{\partial x_{2}}>0, minimizing ℒ\mathcal{L} decreases x2=DS​e​q​K​L(πw||πθ)x_{2}=D_{SeqKL}(\pi_{w}||\pi_{\theta}), thereby pulling the distribution πθ\pi_{\theta} closer to the preferred distribution πw\pi_{w}.
+4.3 Preference Pair Construction and Final Objective
+Figure 1: Construction of memory-enhancing distribution πm\pi_{m} and forgetting-promoting distribution πf\pi_{f} by a memory vector filtered from origin logits.
+Our approach to constructing preference pairs (πw,πl)(\pi_{w},\pi_{l}) from the model’s logits 𝐳t\mathbf{z}_{t} focuses on modulating a small subset of high-probability tokens: If these tokens correspond to undesirable information, suppressing their logits naturally steers the model towards alternative, non-sensitive outputs; Conversely, if the high-probability tokens are unrelated to the sensitive information, suppressing this small fraction is unlikely to directly promote undesirable outputs due to the vastness of the vocabulary table. This inherent safety allow us to employ a straightforward filtering mechanism.
+Specifically, we first identify a ‘memory vector’ 𝐦t\mathbf{m}_{t} by isolating the logits of high-confidence tokens (e.g., top 5% identified via top-k filtering from 𝐳t\mathbf{z}_{t}), setting all other token logits in 𝐦t\mathbf{m}_{t} to zero. Then we can construct the memory-enhancing distribution πm\pi_{m} and the forgetting-promoting distribution πf\pi_{f} by adding or subtracting this memory vector, scaled by a factor α\alpha:
+πm(⋅|x,y<t)=softmax(𝐳t+α𝐦t),πf(⋅|x,y<t)=softmax(𝐳t−α𝐦t).\displaystyle\pi_{m}(\cdot|x,y^{<t})=\text{softmax}(\mathbf{z}_{t}+\alpha\mathbf{m}_{t}),\quad\pi_{f}(\cdot|x,y^{<t})=\text{softmax}(\mathbf{z}_{t}-\alpha\mathbf{m}_{t}).
+(19)
+Figure 1 illustrates this mechanism, showing how adding or subtracting the memory vector shapes the distribution towards memorization πm\pi_{m} or forgetting πf\pi_{f}. More details are provided in Section D.2.
+Crucially, the same pair (πm,πf)(\pi_{m},\pi_{f}) derived from the model’s logits can be utilized for both the forget and retain objectives by simply reversing their roles in preference pairs. This yields the forget objective ℒDiPO-f\mathcal{L}_{{\text{DiPO-f}}} and retain objective ℒDiPO-r\mathcal{L}_{{\text{DiPO-r}}}, formulated based on the DiPO loss Equation 14:
+ℒDiPO-f​(θ)\displaystyle\mathcal{L}_{{\text{DiPO-f}}}(\theta)
+=ℒDiPO​(πθ,πw=πf,πl=πm,πref),\displaystyle=\mathcal{L}_{\text{DiPO}}(\pi_{\theta};\pi_{w}=\pi_{f},\pi_{l}=\pi_{m},\pi_{\text{ref}}),
+(20)
+ℒDiPO-r​(θ)\displaystyle\mathcal{L}_{{\text{DiPO-r}}}(\theta)
+=ℒDiPO​(πθ,πw=πm,πl=πf,πref).\displaystyle=\mathcal{L}_{\text{DiPO}}(\pi_{\theta};\pi_{w}=\pi_{m},\pi_{l}=\pi_{f},\pi_{\text{ref}}).
+(21)
+The final optimization objective for unlearning then combines these components:
+minθ⁡ℒ⁡(θ)=minθ⁡(ℒDiPO-f​(θ)+λ​ℒDiPO-r​(θ)).\min_{\theta}\mathcal{L}(\theta)=\min_{\theta}\left(\mathcal{L}_{{\text{DiPO-f}}}(\theta)+\lambda\mathcal{L}_{{\text{DiPO-r}}}(\theta)\right).
+(22)
+Following the common practice in optimization-based unlearning approaches, we set the hyperparameter λ=1\lambda=1 in DiPO. We provided the pseudo-code in Section B.3.
+5 Experiments
+We compare our proposed DiPO algorithm with baseline unlearning methods across two widely used benchmarks: TOFU [13], focusing on forgetting knowledge of fictitious authors, and MUSE [14], targeting the removal of copyrighted content. We refer to the initial model before unlearning as the “Original” model, while the model retrained from scratch after removing the forget-set data as the “Retrain” model.
+This section presents the main experimental results for TOFU (Section 5.1) and MUSE (Section 5.2), followed by further analyses and ablation studies of DiPO in Section 5.3.
+Baseline Methods
+We compare DiPO against several optimization-based baselines, including GA [17], GradDiff [2, 10] and NPO [11]. For TOFU, we also incorporate other advanced unlearning framework such as ULD [38] (we use the results from its original paper) and AltPO [35] for a broader comparison. Detailed descriptions of all baseline methods are provided in Appendix C.
+Figure 2: Performance analysis on TOFU at the best epoch over five seeds. (a) FQ vs. MU on TOFU-5% and TOFU-10%. DiPO achieves the best trade-off (closest to the “Retrain” target). (b) Training curves of FQ and MU on TOFU-10%, showcasing DiPO’s stability and efficacy.
+5.1 Experiments on TOFU
+Table 2: The best-epoch performance averaged over five seeds on TOFU benchmark. Scores closer to “Retrain” are better. Bold indicates best results among all methods.
+Method
+TOFU-1%
+TOFU-5%
+TOFU-10%
+FQ
+MU
+FQ
+MU
+FQ
+MU
+Original
+1e-3
+0.62
+3e-16
+0.62
+2e-19
+0.62
+Retrain
+1.0
+0.62
+1.0
+0.62
+1.0
+0.62
+GA
+0.57
+0.55
+0.05
+0.02
+8e-6
+0
+GA+GD
+0.40
+0.53
+0.04
+0.43
+3e-6
+0.48
+GA+KL
+0.05
+0.56
+6e-3
+0.40
+1e-5
+0.33
+NPO
+0.71
+0.56
+0.54
+0.15
+0.1
+0.07
+DPO+GD
+0.27
+0.58
+1e-4
+0.02
+5e-7
+0.05
+NPO+GD
+0.71
+0.58
+0.74
+0.53
+0.45
+0.55
+DiPO (ours)
+0.99
+0.59
+0.95
+0.56
+0.86
+0.57
+We first evaluate on the TOFU benchmark, which provides three levels of unlearning tasks (TOFU-1%, TOFU-5%, TOFU-10%). The primary metrics include Forget Quality (FQ), measuring the extent of forgetting, and Model Utility (MU), evaluating model performance on the retain set. Detailed descriptions of the TOFU dataset, its evaluation metrics, and our hyperparameter settings are provided in Section D.3.
+Effectiveness
+As presented in Table 2 (the “best epoch” refers to the training epoch that achieved the highest FQ), DiPO consistently achieves the best trade-off between FQ and MU compared to other optimization-based methods. For instance, on the TOFU-10% task, DiPO improves FQ by over 20% compared to the NPO+GD baseline while also exhibiting comparable MU. Figure 2(a) further illustrates this, showing DiPO positioned closest to the ideal “Retrain LLM” target, particularly excelling in FQ. Notably, DiPO also achieves leading performance when considering the final epoch results (detailed comparison is in Table 7).
+The examples presented in Table 1 further demonstrate DiPO’s ability to achieve targeted forgetting while preserving accuracy on unrelated queries.
+Training Stability
+A significant advantage of DiPO is its training stability. As illustrated in Figure 2(b), DiPO maintains a stable, near-peak FQ value throughout the latter half of training, with its MU exhibiting a controlled adjustment before stabilizing. This contrasts with several baselines that show FQ declining after an initial peak and require early stopping to achieve optimal reported results. DiPO’s consistent performance at the final epoch (detailed in Table 7) mitigates the need for such fragile early stopping, enhancing its practical applicability.
+Table 3: The best-epoch performance on TOFU benchmark among other unlearning framework. Scores closer to “Retrain” are better. Bold indicates best results among all methods.
+Method
+TOFU-1%
+TOFU-5%
+TOFU-10%
+FQ
+MU
+FQ
+MU
+FQ
+MU
+Original
+1e-3
+0.62
+3e-16
+0.62
+2e-19
+0.62
+Retrain
+1.0
+0.62
+1.0
+0.62
+1.0
+0.62
+ULD
+0.99
+0.62
+0.73
+0.62
+0.48
+0.62
+AltPO
+0.92
+0.55
+0.71
+0.54
+0.58
+0.56
+DiPO (ours)
+0.99
+0.59
+0.95
+0.56
+0.86
+0.57
+Comparison with Other Frameworks
+We also compare DiPO with ULD and AltPO on TOFU. For ULD, while an open-source implementation is provided, our attempts to reproduce the published results did not yield comparable performance. Consequently, we refer to the results stated in the original work for our comparative analysis. For the AltPO and our method, we ran experiments with five random seeds and report the results from the best-performing seed. It is noteworthy that these methods employ TOFU-specific data augmentation or auxiliary models (see Section C.2), intuitively granting them an advantage.
+Nevertheless, Table 3 shows DiPO achieves a markedly higher FQ value, surpassing AltPO by 48% (0.86 vs. 0.58) and ULD by 79% (0.86 vs. 0.48) on TOFU-10%, without any additional components. Instead, the ULD method uses the auxiliary model to prevent the erosion of retained knowledge and thus achieves high MU value. This significantly highlights DiPO’s efficiency and potential for broader practical deployment due to its generalizability.
+5.2 Experiments on MUSE
+Table 4: Performance on MUSE. Scores closer to “Retrain” are better. Best results are in bold.
+Method
+Unlearning Efficacy
+Utility
+VM-f
+KM-f
+PL(→0\rightarrow 0)
+KM-r
+Original
+58.3
+62.9
+-99.8
+54.3
+Retrain
+20.8
+33.1
+0.0
+53.78
+GA
+0.0
+0.0
+5.2
+0.0
+GA+GD
+4.9
+31.3
+108.1
+28.2
+NPO
+0.0
+0.0
+24.4
+0.0
+NPO+GD
+1.2
+54.6
+105.8
+40.5
+DiPO (ours)
+31.67
+53.22
+98.1
+51.46
+To further evaluate DiPO’s generalization, we experiment on the BBC News corpus within MUSE, a recent and comprehensive benchmark of unlearning. MUSE employs multiple metrics, including VerbMem-f (VM-f), KnowMem-f (KM-f), and PrivLeak (PL) for unlearning efficacy, KnowMem-r (KM-r) for utility. It also includes Scalability and Sustainability to assess performance under increasing forget set sizes and sequential unlearning requests, respectively. More detailed descriptions and hyperparameter settings are provided in Section D.4. Due to the TOFU-specific tailoring of ULD and AltPO, our MUSE comparisons only focus on optimization-based methods.
+Results
+As shown in Table 4, DiPO demonstrates strong performance, achieving the best scores on VM-f and KM-r, which indicates effective verbatim unlearning and good knowledge retention, respectively. Furthermore, DiPO exhibits excellent Scalability and Sustainability in Figure 3(a), maintaining robust utility preservation as the forget set size increases (Scalability, left) and across sequential unlearning requests (Sustainability, right), outperforming baselines in dynamic scenarios. This underscores DiPO’s potential for practical, large-scale applications.
+5.3 Additional analysis
+In this section, we conduct further analyses on the TOFU-10% settings and ablation studies on the whole TOFU benchmark, to provide deeper insights into DiPO’s intrinsic mechanisms.
+Meaningful Deviation of KL Divergence
+We investigate how effectively DiPO converts the model divergence from πref\pi_{\text{ref}} on 𝒟f\mathcal{D}_{f} into unlearning, compared to baselines. Figure 3(b) plots FQ against KL divergence on TOFU-10%.
+DiPO exhibits improved unlearning efficiency, with FQ substantially increasing even at higher KL values, indicating its updates are more “targeted”. In contrast, NPO+GD shows FQ plateauing after an initial rise, suggesting its induced model changes are less effective for unlearning at higher divergences.
+Even AltPO, despite its engineered preferred responses, may exhibit lower efficiency in this regard compared to DiPO’s distribution-level manipulation. This supports that DiPO offers a more direct and efficient unlearning path.
+Verification of DiPO’s Reward Mechanism
+To empirically validate that DiPO’s learning process aligns with its theoretical formulation (more details in Section 4.1), we inspect the evolution of its internal distribution-level returns (specifically the difference between the preferred return RπwR_{\pi_{w}} and dispreferred return RπlR_{\pi_{l}}) for the forget objective, plotted alongside FQ progression during training (Figure 3(c)). The widening gap between these returns, signifying better unlearning preference, strongly correlates with the improvement in FQ, particularly where rapid increases in the return difference align with significant FQ gains. This confirms that the learned preference signals effectively guide model unlearning.
+Figure 3: Robustness analysis on MUSE and DiPO’s internal mechanisms. (a) Scalability and Sustainability performance on MUSE News. (b) FQ vs. KL Divergence on TOFU-10% (from πref\pi_{\text{ref}} on 𝒟f\mathcal{D}_{f}), demonstrating DiPO’s higher unlearning efficiency. (c) Return Difference and FQ on TOFU-10%, illustrating the correlation between DiPO’s learned reward signals and unlearning efficacy.
+Table 5: Ablation results. The value of each metric is averaged over five seeds at the best epoch. Best results are in bold.
+Method
+TOFU-1%
+TOFU-5%
+TOFU-10%
+FQ
+MU
+FQ
+MU
+FQ
+MU
+Original
+1e-3
+0.62
+3e-16
+0.62
+2e-19
+0.62
+Retrain
+1.0
+0.62
+1.0
+0.62
+1.0
+0.62
+DiPO (ours)
+0.89
+0.58
+0.95
+0.58
+0.84
+0.56
+DiPO(f)+GD
+0.57
+0.62
+0.54
+0.62
+3e-5
+0.65
+GA+DiPO(r)
+0.16
+0.39
+1e-13
+0.59
+3e-10
+0.38
+NPO+DiPO(r)
+0.12
+0.55
+0.07
+0.01
+3e-2
+4e-3
+Ablation Studies
+We investigate the interplay of DiPO’s core ℒDiPO-f\mathcal{L}_{\text{DiPO-f}} and ℒDiPO-r\mathcal{L}_{\text{DiPO-r}} in Table 5. Our main DiPO (using both ℒDiPO-f\mathcal{L}_{\text{DiPO-f}} and ℒDiPO-r\mathcal{L}_{\text{DiPO-r}}) is compared against variants where one DiPO component is substituted with another loss, detailed in Section D.5.1.
+The results compellingly show that while ℒGD\mathcal{L}_{\text{GD}} can significantly boost MU, the effective trade-off between FQ and MU is achieved only with our main DiPO configuration. This underscores that DiPO’s strength lies in its integrated, preference-based design for both forget and retain objectives.
+Furthermore, as detailed in Figure 4, we analyze the performance of using only ℒDiPO-f\mathcal{L}_{\text{DiPO-f}}, and find it achieves effective unlearning while maintaining a degree of MU. This is a significant advantage over typical baselines relying solely on forget loss (such as GA and NPO), which tend to exhibit a collapse in both metrics. This finding highlights the inherent robustness and targeted nature of the DiPO forget mechanism itself, even in the absence of an explicit retain objective.
+6 Conclusion
+In this paper, we propose the distribution-level for LLM unlearning, a fine-grained perspective which can overcome the limitations of response-level approaches. Building upon this, we derive a novel algorithm, Distribution Preference Optimization (DiPO), along with an intrinsic method for constructing complete preference distribution pairs directly from model logits. This provides precise guidance for the unlearning process without requiring auxiliary models or domain-specific knowledge, thereby enhancing its generalizability. Both theoretical analysis and extensive experimental results demonstrate the effectiveness and stability of our method.
+References
+[1]
+Charles Yu, Sullam Jeoung, Anish Kasi, Pengfei Yu, and Heng Ji.
+Unlearning bias in language models by partitioning gradients.
+In Findings of the Association for Computational Linguistics: ACL 2023, pages 6032–6048, 2023.
+[2]
+Bo Liu, Qiang Liu, and Peter Stone.
+Continual learning and private unlearning.
+In Conference on Lifelong Learning Agents, pages 243–254. PMLR, 2022.
+[3]
+Ronen Eldan and Mark Russinovich.
+Who’s harry potter? approximate unlearning for llms.
+2023.
+[4]
+Joel Jang, Dongkeun Yoon, Sohee Yang, Sungmin Cha, Moontae Lee, Lajanugen Logeswaran, and Minjoon Seo.
+Knowledge unlearning for mitigating privacy risks in language models.
+arXiv preprint arXiv:2210.01504, 2022.
+[5]
+Xinwei Wu, Junzhuo Li, Minghui Xu, Weilong Dong, Shuangzhi Wu, Chao Bian, and Deyi Xiong.
+Depn: Detecting and editing privacy neurons in pretrained language models.
+arXiv preprint arXiv:2310.20138, 2023a.
+[6]
+Zheyuan Liu, Guangyao Dou, Zhaoxuan Tan, Yijun Tian, and Meng Jiang.
+Towards safer large language models through machine unlearning.
+arXiv preprint arXiv:2402.10058, 2024a.
+[7]
+Clark Barrett, Brad Boyd, Elie Bursztein, Nicholas Carlini, Brad Chen, Jihye Choi, Amrita Roy Chowdhury, Mihai Christodorescu, Anupam Datta, Soheil Feizi, et al.
+Identifying and mitigating the security risks of generative ai.
+Foundations and Trends® in Privacy and Security, 6(1):1–52, 2023.
+[8]
+European Parliament and Council of the European Union.
+Regulation (EU) 2016/679 of the European Parliament and of the Council of 27 april 2016 on the protection of natural persons with regard to the processing of personal data and on the free movement of such data, and repealing directive 95/46/EC (General Data Protection Regulation).
+Official Journal of the European Union, April 2016.
+Published in OJ L 119, 4.5.2016, pp. 1–88. Adopted 27 April 2016.
+[9]
+California State Assembly.
+Assembly bill no. 375 (Chapter 55, statutes of 2018). an act to add title 1.81.5 (commencing with section 1798.100) to part 4 of division 3 of the civil code, relating to privacy. (California Consumer Privacy Act of 2018).
+California Legislature, 2017–2018 Regular Session, June 2018.
+Approved by Governor and filed with Secretary of State June 28, 2018. This bill enacted the CCPA.
+[10]
+Yuanshun Yao, Xiaojun Xu, and Yang Liu.
+Large language model unlearning.
+Advances in Neural Information Processing Systems, 37:105425–105475, 2024a.
+[11]
+Ruiqi Zhang, Licong Lin, Yu Bai, and Song Mei.
+Negative preference optimization: From catastrophic collapse to effective unlearning.
+In First Conference on Language Modeling, 2024a.
+[12]
+Rafael Rafailov, Archit Sharma, Eric Mitchell, Christopher D Manning, Stefano Ermon, and Chelsea Finn.
+Direct preference optimization: Your language model is secretly a reward model.
+Advances in Neural Information Processing Systems, 36:53728–53741, 2023.
+[13]
+Pratyush Maini, Zhili Feng, Avi Schwarzschild, Zachary Chase Lipton, and J Zico Kolter.
+TOFU: A task of fictitious unlearning for LLMs.
+In First Conference on Language Modeling, 2024.
+[14]
+Weijia Shi, Jaechan Lee, Yangsibo Huang, Sadhika Malladi, Jieyu Zhao, Ari Holtzman, Daogao Liu, Luke Zettlemoyer, Noah A. Smith, and Chiyuan Zhang.
+MUSE: Machine unlearning six-way evaluation for language models.
+In The Thirteenth International Conference on Learning Representations, 2025.
+[15]
+Thanh Tam Nguyen, Thanh Trung Huynh, Zhao Ren, Phi Le Nguyen, Alan Wee-Chung Liew, Hongzhi Yin, and Quoc Viet Hung Nguyen.
+A survey of machine unlearning.
+arXiv preprint arXiv:2209.02299, 2022.
+[16]
+Yinzhi Cao and Junfeng Yang.
+Towards making systems forget with machine unlearning.
+In 2015 IEEE symposium on security and privacy, pages 463–480. IEEE, 2015.
+[17]
+Anvith Thudi, Gabriel Deza, Varun Chandrasekaran, and Nicolas Papernot.
+Unrolling sgd: Understanding factors influencing machine unlearning.
+In 2022 IEEE 7th European Symposium on Security and Privacy (EuroS&P), pages 303–319. IEEE, 2022.
+[18]
+Zachary Izzo, Mary Anne Smart, Kamalika Chaudhuri, and James Zou.
+Approximate data deletion from machine learning models.
+In International Conference on Artificial Intelligence and Statistics, pages 2008–2016. PMLR, 2021.
+[19]
+Lingzhi Wang, Tong Chen, Wei Yuan, Xingshan Zeng, Kam-Fai Wong, and Hongzhi Yin.
+Kga: A general machine unlearning framework based on knowledge gap alignment.
+arXiv preprint arXiv:2305.06535, 2023a.
+[20]
+Eleni Triantafillou, Peter Kairouz, Fabian Pedregosa, Jamie Hayes, Meghdad Kurmanji, Kairan Zhao, Vincent Dumoulin, Julio Jacques Junior, Ioannis Mitliagkas, Jun Wan, et al.
+Are we making progress in unlearning? findings from the first neurips unlearning competition.
+arXiv preprint arXiv:2406.09073, 2024.
+[21]
+Aditya Golatkar, Alessandro Achille, and Stefano Soatto.
+Eternal sunshine of the spotless net: Selective forgetting in deep networks.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages 9304–9312, 2020.
+[22]
+Lucas Bourtoule, Varun Chandrasekaran, Christopher A Choquette-Choo, Hengrui Jia, Adelin Travers, Baiwu Zhang, David Lie, and Nicolas Papernot.
+Machine unlearning.
+In 2021 IEEE symposium on security and privacy (SP), pages 141–159. IEEE, 2021.
+[23]
+Jinghan Jia, Jiancheng Liu, Parikshit Ram, Yuguang Yao, Gaowen Liu, Yang Liu, Pranay Sharma, and Sijia Liu.
+Model sparsity can simplify machine unlearning.
+Advances in Neural Information Processing Systems, 36:51584–51605, 2023.
+[24]
+Chongyu Fan, Jiancheng Liu, Yihua Zhang, Eric Wong, Dennis Wei, and Sijia Liu.
+Salun: Empowering machine unlearning via gradient-based weight saliency in both image classification and generation.
+arXiv preprint arXiv:2310.12508, 2023.
+[25]
+Meghdad Kurmanji, Peter Triantafillou, Jamie Hayes, and Eleni Triantafillou.
+Towards unbounded machine unlearning.
+Advances in neural information processing systems, 36:1957–1987, 2023.
+[26]
+Antonio Ginart, Melody Guan, Gregory Valiant, and James Y Zou.
+Making ai forget you: Data deletion in machine learning.
+Advances in neural information processing systems, 32, 2019.
+[27]
+Rohit Gandikota, Joanna Materzynska, Jaden Fiotto-Kaufman, and David Bau.
+Erasing concepts from diffusion models.
+In Proceedings of the IEEE/CVF International Conference on Computer Vision, pages 2426–2436, 2023.
+[28]
+Gong Zhang, Kai Wang, Xingqian Xu, Zhangyang Wang, and Humphrey Shi.
+Forget-me-not: Learning to forget in text-to-image diffusion models.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages 1755–1764, 2024b.
+[29]
+Tianshi Che, Yang Zhou, Zijie Zhang, Lingjuan Lyu, Ji Liu, Da Yan, Dejing Dou, and Jun Huan.
+Fast federated machine unlearning with nonlinear functional theory.
+In International conference on machine learning, pages 4241–4268. PMLR, 2023.
+[30]
+Zibin Pan, Zhichao Wang, Chi Li, Kaiyan Zheng, Boqi Wang, Xiaoying Tang, and Junhua Zhao.
+Federated unlearning with gradient descent and conflict mitigation.
+In Proceedings of the AAAI Conference on Artificial Intelligence, volume 39, pages 19804–19812, 2025.
+[31]
+Eli Chien, Chao Pan, and Olgica Milenkovic.
+Efficient model updates for approximate unlearning of graph-structured data.
+In The Eleventh International Conference on Learning Representations, 2022.
+[32]
+Kun Wu, Jie Shen, Yue Ning, Ting Wang, and Wendy Hui Wang.
+Certified edge unlearning for graph neural networks.
+In Proceedings of the 29th ACM SIGKDD Conference on Knowledge Discovery and Data Mining, pages 2606–2617, 2023b.
+[33]
+Bhavika Sachdeva, Harshita Rathee, Sristi, Arun Sharma, and Witold Wydmański.
+Machine unlearning for recommendation systems: An insight.
+In International Conference On Innovative Computing And Communication, pages 415–430. Springer, 2024.
+[34]
+Chongyu Fan, Jiancheng Liu, Licong Lin, Jinghan Jia, Ruiqi Zhang, Song Mei, and Sijia Liu.
+Simplicity prevails: Rethinking negative preference optimization for llm unlearning.
+arXiv preprint arXiv:2410.07163, 2024.
+[35]
+Anmol Mekala, Vineeth Dorna, Shreya Dubey, Abhishek Lalwani, David Koleczek, Mukund Rungta, Sadid Hasan, and Elita Lobo.
+Alternate preference optimization for unlearning factual knowledge in large language models.
+arXiv preprint arXiv:2409.13474, 2024.
+[36]
+Jinghan Jia, Yihua Zhang, Yimeng Zhang, Jiancheng Liu, Bharat Runwal, James Diffenderfer, Bhavya Kailkhura, and Sijia Liu.
+Soul: Unlocking the power of second-order optimization for llm unlearning.
+arXiv preprint arXiv:2404.18239, 2024.
+[37]
+Vikram S Chundawat, Ayush K Tarun, Murari Mandal, and Mohan Kankanhalli.
+Can bad teaching induce forgetting? unlearning in deep networks using an incompetent teacher.
+In Proceedings of the AAAI Conference on Artificial Intelligence, volume 37, pages 7210–7217, 2023.
+[38]
+Jiabao Ji, Yujian Liu, Yang Zhang, Gaowen Liu, Ramana Kompella, Sijia Liu, and Shiyu Chang.
+Reversing the forget-retain objectives: An efficient llm unlearning framework from logit difference.
+Advances in Neural Information Processing Systems, 37:12581–12611, 2024.
+[39]
+Jiaao Chen and Diyi Yang.
+Unlearn what you want to forget: Efficient unlearning for llms.
+arXiv preprint arXiv:2310.20150, 2023.
+[40]
+Jin Yao, Eli Chien, Minxin Du, Xinyao Niu, Tianhao Wang, Zezhou Cheng, and Xiang Yue.
+Machine unlearning of pre-trained large language models.
+arXiv preprint arXiv:2402.15159, 2024b.
+[41]
+Yoichi Ishibashi and Hidetoshi Shimodaira.
+Knowledge sanitization of large language models.
+arXiv preprint arXiv:2309.11852, 2023.
+[42]
+Yujian Liu, Yang Zhang, Tommi Jaakkola, and Shiyu Chang.
+Revisiting who’s harry potter: Towards targeted unlearning from a causal intervention perspective.
+arXiv preprint arXiv:2407.16997, 2024b.
+[43]
+Pratiksha Thaker, Yash Maurya, Shengyuan Hu, Zhiwei Steven Wu, and Virginia Smith.
+Guardrail baselines for unlearning in llms.
+arXiv preprint arXiv:2403.03329, 2024.
+[44]
+Martin Pawelczyk, Seth Neel, and Himabindu Lakkaraju.
+In-context unlearning: Language models as few shot unlearners.
+arXiv preprint arXiv:2310.07579, 2023.
+[45]
+Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, et al.
+Training language models to follow instructions with human feedback.
+Advances in neural information processing systems, 35:27730–27744, 2022.
+[46]
+Jiwoo Hong, Noah Lee, and James Thorne.
+Orpo: Monolithic preference optimization without reference model.
+arXiv preprint arXiv:2403.07691, 2024.
+[47]
+Yu Meng, Mengzhou Xia, and Danqi Chen.
+Simpo: Simple preference optimization with a reference-free reward.
+Advances in Neural Information Processing Systems, 37:124198–124235, 2024.
+[48]
+Chaoqi Wang, Yibo Jiang, Chenghao Yang, Han Liu, and Yuxin Chen.
+Beyond reverse kl: Generalizing direct preference optimization with diverse divergence constraints.
+arXiv preprint arXiv:2309.16240, 2023b.
+[49]
+Mohammad Gheshlaghi Azar, Zhaohan Daniel Guo, Bilal Piot, Remi Munos, Mark Rowland, Michal Valko, and Daniele Calandriello.
+A general theoretical paradigm to understand learning from human preferences.
+In International Conference on Artificial Intelligence and Statistics, pages 4447–4455. PMLR, 2024.
+[50]
+Haoyuan Sun, Yuxin Zheng, Yifei Zhao, Yongzhe Chang, and Xueqian Wang.
+Generalizing offline alignment theoretical paradigm with diverse divergence constraints.
+In ICML 2024 Workshop on Models of Human Feedback for AI Alignment, 2024.
+[51]
+Yongcheng Zeng, Guoqing Liu, Weiyu Ma, Ning Yang, Haifeng Zhang, and Jun Wang.
+Token-level direct preference optimization.
+arXiv preprint arXiv:2404.11999, 2024.
+[52]
+Xiang Lisa Li, Ari Holtzman, Daniel Fried, Percy Liang, Jason Eisner, Tatsunori Hashimoto, Luke Zettlemoyer, and Mike Lewis.
+Contrastive decoding: Open-ended text generation as optimization.
+arXiv preprint arXiv:2210.15097, 2022.
+[53]
+Yung-Sung Chuang, Yujia Xie, Hongyin Luo, Yoon Kim, James Glass, and Pengcheng He.
+Dola: Decoding by contrasting layers improves factuality in large language models.
+arXiv preprint arXiv:2309.03883, 2023.
+[54]
+Alisa Liu, Maarten Sap, Ximing Lu, Swabha Swayamdipta, Chandra Bhagavatula, Noah A Smith, and Yejin Choi.
+Dexperts: Decoding-time controlled text generation with experts and anti-experts.
+arXiv preprint arXiv:2105.03023, 2021.
+Appendix A Limitations
+Despite DiPO demonstrating strong unlearning capabilities, certain limitations warrant discussion. First, similar to other current unlearning methods, DiPO’s outputs are not entirely immune to hallucination, reflecting an ongoing challenge in the field.
+Second, while our intrinsic mechanism for constructing preference pairs is effective and general, its current simplicity may not fully address the complexities required for unlearning against information leakage, such as those evaluated by Membership Inference Attacks (MIAs). This is indicated by DiPO’s performance on challenging privacy-related metrics, like the PrivLeak scores in the MUSE benchmark, where more sophisticated preference modeling might be beneficial. We plan to explore these problems in future work.
+Appendix B Theoretical Details
+B.1 Distribution-level Return Derivation
+In Section 4.1 we showe the immediate reward function rπ​(x,y<t)r_{\pi}(x,y^{<t}):
+rπ​(x,y<t)\displaystyle r_{\pi}(x,y^{<t})
+=𝔼z∼π(⋅|[x,y<t])[r([x,y<t],z)]\displaystyle=\mathbb{E}_{z\sim\pi(\cdot|[x,y^{<t}])}[r([x,y^{<t}],z)]
+=𝔼z∼π(⋅|[x,y<t])[βlogπθ∗​(z|[x,y<t])πref​(z|[x,y<t])+βDK​L(πref(⋅|[x,y<t])||πθ∗(⋅|[x,y<t]))]\displaystyle=\mathbb{E}_{z\sim\pi(\cdot|[x,y^{<t}])}[\beta\log\frac{\pi_{\theta}^{*}(z|[x,y^{<t}])}{\pi_{\text{ref}}(z|[x,y^{<t}])}+\beta D_{KL}(\pi_{\text{ref}}(\cdot|[x,y^{<t}])||\pi_{\theta}^{*}(\cdot|[x,y^{<t}]))]
+=β𝔼z∼π(⋅|[x,y<t])[logπθ∗​(z|[x,y<t])πref​(z|[x,y<t])]+βDK​L(πref(⋅|[x,y<t])||πθ∗(⋅|[x,y<t]))\displaystyle=\beta\mathbb{E}_{z\sim\pi(\cdot|[x,y^{<t}])}\left[\log\frac{\pi_{\theta}^{*}(z|[x,y^{<t}])}{\pi_{\text{ref}}(z|[x,y^{<t}])}\right]+\beta D_{KL}(\pi_{\text{ref}}(\cdot|[x,y^{<t}])||\pi_{\theta}^{*}(\cdot|[x,y^{<t}]))
+Using the definition of KL divergence, the expectation term can be rewritten as:
+𝔼z∼π(⋅|[x,y<t])[logπθ∗​(z|[x,y<t])πref​(z|[x,y<t])]\displaystyle\mathbb{E}_{z\sim\pi(\cdot|[x,y^{<t}])}\left[\log\frac{\pi_{\theta}^{*}(z|[x,y^{<t}])}{\pi_{\text{ref}}(z|[x,y^{<t}])}\right]
+=𝔼z∼π(⋅|[x,y<t])[logπθ∗​(z|[x,y<t])π⁡(z|[x,y<t])⋅π⁡(z|[x,y<t])πref​(z|[x,y<t])]\displaystyle=\mathbb{E}_{z\sim\pi(\cdot|[x,y^{<t}])}\left[\log\frac{\pi_{\theta}^{*}(z|[x,y^{<t}])}{\pi(z|[x,y^{<t}])}\cdot\frac{\pi(z|[x,y^{<t}])}{\pi_{\text{ref}}(z|[x,y^{<t}])}\right]
+=𝔼z∼π(⋅|[x,y<t])[logπ⁡(z|[x,y<t])πref​(z|[x,y<t])]−𝔼z∼π(⋅|[x,y<t])[logπ⁡(z|[x,y<t])πθ∗​(z|[x,y<t])]\displaystyle=\mathbb{E}_{z\sim\pi(\cdot|[x,y^{<t}])}\left[\log\frac{\pi(z|[x,y^{<t}])}{\pi_{\text{ref}}(z|[x,y^{<t}])}\right]-\mathbb{E}_{z\sim\pi(\cdot|[x,y^{<t}])}\left[\log\frac{\pi(z|[x,y^{<t}])}{\pi_{\theta}^{*}(z|[x,y^{<t}])}\right]
+=DK​L(π(⋅|[x,y<t])||πref(⋅|[x,y<t]))−DK​L(π(⋅|[x,y<t])||πθ∗(⋅|[x,y<t])).\displaystyle=D_{KL}(\pi(\cdot|[x,y^{<t}])||\pi_{\text{ref}}(\cdot|[x,y^{<t}]))-D_{KL}(\pi(\cdot|[x,y^{<t}])||\pi_{\theta}^{*}(\cdot|[x,y^{<t}])).
+For a response yy (i.e. a specific trajectory in RL), we can calculate the return Rπ​(x,y)R_{\pi}(x,y) as follows:
+Rπ​(x,y)\displaystyle R_{\pi}(x,y)
+=∑t=1Trπ​(x,y<t)\displaystyle=\sum_{t=1}^{T}r_{\pi}(x,y^{<t})
+=∑t=1TβDK​L(π(⋅|[x,y<t])||πref(⋅|[x,y<t]))\displaystyle=\sum_{t=1}^{T}\beta D_{KL}(\pi(\cdot|[x,y^{<t}])||\pi_{\text{ref}}(\cdot|[x,y^{<t}]))
+−β∑t=1TDK​L(π(⋅|[x,y<t])||πθ∗(⋅|[x,y<t]))+∑t=1TβDK​L(πref(⋅|[x,y<t])||πθ∗(⋅|[x,y<t])).\displaystyle\quad-\beta\sum_{t=1}^{T}D_{KL}(\pi(\cdot|[x,y^{<t}])||\pi_{\theta}^{*}(\cdot|[x,y^{<t}]))+\sum_{t=1}^{T}\beta D_{KL}(\pi_{\text{ref}}(\cdot|[x,y^{<t}])||\pi_{\theta}^{*}(\cdot|[x,y^{<t}])).
+This is the formula in Equation 13.
+B.2 Detailed proof of DiPO loss
+Recall from Equation 13 that the distribution-level return is:
+Rπ(x,y,πθ∗)≔Rπ(x,y)=βDS​e​q​K​L(x,y;π||πref)−βDS​e​q​K​L(x,y;π||πθ∗)+βDS​e​q​K​L(x,y;πref||πθ∗).R_{\pi}(x,y,\pi_{\theta}^{*})\coloneqq R_{\pi}(x,y)=\beta D_{SeqKL}(x,y;\pi||\pi_{\text{ref}})-\beta D_{SeqKL}(x,y;\pi||\pi_{\theta}^{*})+\beta D_{SeqKL}(x,y;\pi_{\text{ref}}||\pi_{\theta}^{*}).
+Given a specific sample (x,y)(x,y) and a pair of preference distributions (πw,πl)(\pi_{w},\pi_{l}), we can derive their respective return expressions:
+Rπw​(x,y,πθ∗)\displaystyle R_{\pi_{w}}(x,y,\pi_{\theta}^{*})
+=βDS​e​q​K​L(x,y;πw||πref)−βDS​e​q​K​L(x,y;πw||πθ∗)+βDS​e​q​K​L(x,y;πref||πθ∗),\displaystyle=\beta D_{SeqKL}(x,y;{\pi_{w}}||\pi_{\text{ref}})-\beta D_{SeqKL}(x,y;{\pi_{w}}||\pi_{\theta}^{*})+\beta D_{SeqKL}(x,y;\pi_{\text{ref}}||\pi_{\theta}^{*}),
+(23)
+Rπl​(x,y,πθ∗)\displaystyle R_{\pi_{l}}(x,y,\pi_{\theta}^{*})
+=βDS​e​q​K​L(x,y;πl||πref)−βDS​e​q​K​L(x,y;πl||πθ∗)+βDS​e​q​K​L(x,y;πref||πθ∗).\displaystyle=\beta D_{SeqKL}(x,y;{\pi_{l}}||\pi_{\text{ref}})-\beta D_{SeqKL}(x,y;{\pi_{l}}||\pi_{\theta}^{*})+\beta D_{SeqKL}(x,y;\pi_{\text{ref}}||\pi_{\theta}^{*}).
+(24)
+These respectively represent the degree of preference for response yy under different policies. Consequently, we can employ BT model to construct the preference model:
+p∗​(Rπw≻Rπl|(x,y))\displaystyle p^{*}(R_{\pi_{w}}\succ R_{\pi_{l}}|(x,y))
+=exp⁡(Rπw​(x,y,πθ∗))exp⁡(Rπw​(x,y,πθ∗))+exp⁡(Rπl​(x,y,πθ∗))\displaystyle=\frac{\exp(R_{\pi_{w}}(x,y,\pi_{\theta}^{*}))}{\exp(R_{\pi_{w}}(x,y,\pi_{\theta}^{*}))+\exp(R_{\pi_{l}}(x,y,\pi_{\theta}^{*}))}
+=11+exp⁡(Rπl​(x,y,πθ∗)−Rπw​(x,y,πθ∗)).\displaystyle=\frac{1}{1+\exp(R_{\pi_{l}}(x,y,\pi_{\theta}^{*})-R_{\pi_{w}}(x,y,\pi_{\theta}^{*}))}.
+(25)
+Now that we have the probability of human preference data in terms of the optimal policy rather than the reward model, we can formulate a maximum likelihood objective for a parametrized policy πθ\pi_{\theta}. Similar to the DPO method, our policy objective becomes:
+ℒDiPO​(πθ,πw,πl,πref)\displaystyle\mathcal{L}_{\text{DiPO}}(\pi_{\theta};\pi_{w},\pi_{l},\pi_{\text{ref}})
+=−𝔼(x,y)∼𝒟​[log⁡p⁡(Rπw≻Rπl|(x,y))]\displaystyle=-\mathbb{E}_{(x,y)\sim\mathcal{D}}\left[\log p(R_{\pi_{w}}\succ R_{\pi_{l}}|(x,y))\right]
+=−𝔼(x,y)∼𝒟​[log⁡11+exp⁡(Rπl​(x,y,πθ)−Rπw​(x,y,πθ))]\displaystyle=-\mathbb{E}_{(x,y)\sim\mathcal{D}}\left[\log\frac{1}{1+\exp(R_{\pi_{l}}(x,y,\pi_{\theta})-R_{\pi_{w}}(x,y,\pi_{\theta}))}\right]
+=−𝔼(x,y)∼𝒟​[log⁡σ⁡((Rπw​(x,y,πθ)−Rπl​(x,y,πθ)))]\displaystyle=-\mathbb{E}_{(x,y)\sim\mathcal{D}}\left[\log\sigma\left(\Big(R_{\pi_{w}}(x,y,\pi_{\theta})-R_{\pi_{l}}(x,y,\pi_{\theta})\Big)\right)\right]
+=−𝔼(x,y)∼𝒟[logσ((βDS​e​q​K​L(x,y;πw||πref)−βDS​e​q​K​L(x,y;πw||πθ∗)+βDS​e​q​K​L(x,y;πref||πθ∗)\displaystyle=-\mathbb{E}_{(x,y)\sim\mathcal{D}}\left[\log\sigma\left(\Big(\beta D_{SeqKL}(x,y;{\pi_{w}}||\pi_{\text{ref}})-\beta D_{SeqKL}(x,y;{\pi_{w}}||\pi_{\theta}^{*})+\beta D_{SeqKL}(x,y;\pi_{\text{ref}}||\pi_{\theta}^{*})\right.\right.
+−(βDS​e​q​K​L(x,y;πl||πref)−βDS​e​q​K​L(x,y;πl||πθ∗)+βDS​e​q​K​L(x,y;πref||πθ∗))))]\displaystyle\qquad\left.\left.-\Big(\beta D_{SeqKL}(x,y;{\pi_{l}}||\pi_{\text{ref}})-\beta D_{SeqKL}(x,y;{\pi_{l}}||\pi_{\theta}^{*})+\beta D_{SeqKL}(x,y;\pi_{\text{ref}}||\pi_{\theta}^{*})\Big)\Big)\right)\right]
+=−𝔼(x,y)∼𝒟[logσ(β(DS​e​q​K​L(x,y;πl||πθ)−DS​e​q​K​L(x,y;πw||πθ))\displaystyle=-\mathbb{E}_{(x,y)\sim\mathcal{D}}\left[\log\sigma\left(\beta\Big(D_{SeqKL}(x,y;\pi_{l}||\pi_{\theta})-D_{SeqKL}(x,y;\pi_{w}||\pi_{\theta})\Big)\right.\right.
++β(DS​e​q​K​L(x,y;πw||πref)−DS​e​q​K​L(x,y;πl||πref)))].\displaystyle\qquad\left.\left.+\beta\Big(D_{SeqKL}(x,y;\pi_{w}||\pi_{\text{ref}})-D_{SeqKL}(x,y;\pi_{l}||\pi_{\text{ref}})\Big)\right)\right].
+(26)
+Now that we have the loss function of DiPO.
+B.3 Pseudo-code of DiPO
+Algorithm 1  Distribution Preference Optimization (DiPO)
+1:
+Input: Datasets 𝒟f,𝒟r\mathcal{D}_{f},\mathcal{D}_{r}, Reference model πref\pi_{\text{ref}}, Policy model πθ\pi_{\theta}, βf,βr,η,λ,p\beta_{f},\beta_{r},\eta,\lambda,p
+2:
+Initialize: θ←θref\theta\leftarrow\theta_{\text{ref}}
+3:
+for each training epoch do
+4:
+Sample mini-batches Bf∼𝒟fB_{f}\sim\mathcal{D}_{f}, Br∼𝒟rB_{r}\sim\mathcal{D}_{r}
+5:
+Generate approx. πf(⋅|xf,yf<t),πm(⋅|xf,yf<t)\pi_{f}(\cdot|x_{f},y_{f}^{<t}),\pi_{m}(\cdot|x_{f},y_{f}^{<t}) from πθ\pi_{\theta} for (xf,yf)∈Bf(x_{f},y_{f})\in B_{f} via top-pp logit filtering
+6:
+Generate approx. πf(⋅|xr,yr<t),πm(⋅|xr,yr<t)\pi_{f}(\cdot|x_{r},y_{r}^{<t}),\pi_{m}(\cdot|x_{r},y_{r}^{<t}) from πθ\pi_{\theta} for (xr,yr)∈Br(x_{r},y_{r})\in B_{r} via top-pp logit filtering
+7:
+Compute forget loss ℒDiPO-f\mathcal{L}_{\text{DiPO-f}} on BfB_{f} using πw=πf,πl=πm\pi_{w}=\pi_{f},\pi_{l}=\pi_{m} ⊳\triangleright Based on Eq. 20
+8:
+Compute retain loss ℒDiPO-r\mathcal{L}_{\text{DiPO-r}} on BrB_{r} using πw=πm,πl=πf\pi_{w}=\pi_{m},\pi_{l}=\pi_{f} ⊳\triangleright Based on Eq. 21
+9:
+Compute total loss ℒ⁡(θ)=ℒDiPO-f+λ​ℒDiPO-r\mathcal{L}(\theta)=\mathcal{L}_{\text{DiPO-f}}+\lambda\mathcal{L}_{\text{DiPO-r}} ⊳\triangleright Using Eq. 22
+10:
+Update parameters θ←θ−η​∇θℒ​(θ)\theta\leftarrow\theta-\eta\nabla_{\theta}\mathcal{L}(\theta)
+11:
+end for
+12:
+Output: Unlearned policy model πθ\pi_{\theta}
+Appendix C Baseline Methods
+This section details the baseline methods used for comparison in our experiments. We categorize them into optimization-based methods, which are the primary focus of comparison for our DiPO method, and other unlearning frameworks represented by a state-of-the-art method.
+C.1 Optimization-based method
+Optimization-based methods directly modify the model parameters by minimizing a combined objective function, typically structured as ℒ⁡(θ)=ℒr​(θ)+λ​ℒf​(θ)\mathcal{L}(\theta)=\mathcal{L}_{r}(\theta)+\lambda\mathcal{L}_{f}(\theta), where ℒf\mathcal{L}_{f} promotes forgetting and ℒr\mathcal{L}_{r} encourages retention, balanced by λ\lambda. We describe common choices for these loss components below.
+C.1.1 Forget losses
+Gradient ascent loss
+ℒGA\mathcal{L}_{\text{GA}} is a fundamental and intuitive unlearning loss function [17, 13] that aims to maximize the next-token prediction loss on the forget set 𝒟f\mathcal{D}_{f}, which is equivalent to minimizing the likelihood of correct predictions. We denote this forget loss as:
+ℒGA​(θ)=𝔼(xf,yf)∼𝒟f​[log⁡πθ​(yf|xf)].\mathcal{L}_{\text{GA}}(\theta)=\mathbb{E}_{(x_{f},y_{f})\sim\mathcal{D}_{f}}[\log\pi_{\theta}(y_{f}|x_{f})].
+(27)
+While intuitive, ℒGA\mathcal{L}_{\text{GA}} is unbounded below (likelihood can approach zero), which can lead to training instability and model degradation.
+Direct preference optimization loss
+ℒDPO\mathcal{L}_{{\text{DPO}}} adapts the Direct Preference Optimization framework [12] for unlearning [11] (distinguish from standard DPO). It requires a dataset of simple, template-based alternative responses 𝒟a\mathcal{D}_{a} (e.g. yi​d​k=y_{idk}= “I don’t know”) and formulates the forget loss to prefer yi​d​ky_{idk} over the original forget response yfy_{f}:
+ℒDPO​(θ)=−1β​𝔼(xf,yf)∼𝒟f,yi​d​k∼𝒟a​[log⁡σ⁡(β​πθ​(yi​d​k|xf)πref​(yi​d​k|xf)−β​πθ​(yf|xf)πref​(yf|xf))].\mathcal{L}_{{\text{DPO}}}(\theta)=-\frac{1}{\beta}\mathbb{E}_{(x_{f},y_{f})\sim\mathcal{D}_{f},y_{idk}\sim\mathcal{D}_{a}}[\log\sigma(\beta\frac{\pi_{\theta}(y_{idk}|x_{f})}{\pi_{\text{ref}}(y_{idk}|x_{f})}-\beta\frac{\pi_{\theta}(y_{f}|x_{f})}{\pi_{\text{ref}}(y_{f}|x_{f})})].
+(28)
+where σ⁡(⋅)\sigma(\cdot) is the sigmoid function, β\beta is a hyper-parameter controlling the preference strength, and πref\pi_{\text{ref}} is reference model (often the initial model before unlearning). This loss is bounded but can suffer from catastrophic forgetting, excessively favoring yi​d​ky_{idk} even for retain queries.
+Negative preference optimization loss
+ℒNPO\mathcal{L}_{{\text{NPO}}} is a variant of ℒDPO\mathcal{L}_{{\text{DPO}}} for unlearning in recent work [11]. NPO focuses solely on penalizing the forget responses yfy_{f} by treating them as dispreferred, without requiring preferred alternatives yi​d​ky_{idk}. Its forget loss term is:
+ℒNPO​(θ)=−2β​𝔼(xf,yf)∼𝒟f​[log⁡σ⁡(−β​πθ​(yf|xf)πref​(yf|xf))],\mathcal{L}_{{\text{NPO}}}(\theta)=-\frac{2}{\beta}\mathbb{E}_{(x_{f},y_{f})\sim\mathcal{D}_{f}}[\log\sigma(-\beta\frac{\pi_{\theta}(y_{f}|x_{f})}{\pi_{\text{ref}}(y_{f}|x_{f})})],
+(29)
+NPO avoids the unboundedness of ℒGA\mathcal{L}_{\text{GA}} and the need for yi​d​ky_{idk} in ℒDPO\mathcal{L}_{{\text{DPO}}}, but lacks an explicit positive preference signal.
+C.1.2 Retain losses
+Gradient descent loss
+ℒGD\mathcal{L}_{\text{GD}} is the standard negative log-likelihood loss applied to the retain set 𝒟r\mathcal{D}_{r} [13, 11], encouraging the model to maintain its predictive performance:
+ℒGD​(θ)=𝔼(xr,yr)∼𝒟r​[−log⁡πθ​(yr|xr)].\mathcal{L}_{\text{GD}}(\theta)=\mathbb{E}_{(x_{r},y_{r})\sim\mathcal{D}_{r}}[-\log\pi_{\theta}(y_{r}|x_{r})].
+(30)
+The combination of ℒGA\mathcal{L}_{\text{GA}} as ℒf\mathcal{L}_{f} and ℒGD\mathcal{L}_{\text{GD}} as ℒr\mathcal{L}_{r} constitutes the GradDiff method [2, 10, 13].
+KL-divergence loss
+ℒKL\mathcal{L}_{\text{KL}} aims to preserve the model’s behavior by minimizing the KL divergence between the current model πθ\pi_{\theta} and reference model πref\pi_{\text{ref}} over the retain set [13, 11]:
+ℒKL(θ)=𝔼(xr,yr)∼𝒟r[DK​L(πθ(⋅|xr)||πref(⋅|xr))].\mathcal{L}_{\text{KL}}(\theta)=\mathbb{E}_{(x_{r},y_{r})\sim\mathcal{D}_{r}}[D_{KL}(\pi_{\theta}(\cdot|x_{r})||\pi_{\text{ref}}(\cdot|x_{r}))].
+(31)
+C.2 Other Unlearning Framework
+Beyond optimization-based fine-tuning, alternative unlearning paradigms exist that employ different mechanisms, such as auxiliary models, data manipulation techniques (see Section 2). To provide context against strong baselines from distinct research directions within these paradigms, we include two representative methods: ULD [38] and AltPO [35]. ULD exemplifies methods that achieve unlearning without direct fine-tuning of the target model’s parameters, instead relying on an auxiliary model and logit manipulation, representing a strong baseline for non-optimization-based unlearning frameworks. AltPO, on the other hand, showcases a hybrid approach combined DPO-style losses with data-based techniques.
+ULD
+This method trains an auxiliary LLM on augmented versions of the forget and retain sets (𝒟f′\mathcal{D}_{f}^{\prime} and 𝒟r′\mathcal{D}_{r}^{\prime}, respectively) to perform the inverse unlearning task. Specifically, the auxiliary model is trained to maximize likelihood on 𝒟f′\mathcal{D}_{f}^{\prime} (memorizing) while driving its output distribution towards uniform on 𝒟r′\mathcal{D}_{r}^{\prime} (forgetting). The final unlearned model’s logits are obtained by subtracting the auxiliary model’s logits from the original target model’s logits. This approach differs significantly from fine-tuning methods and is particularly noted for its effectiveness in preserving model utility while achieving strong unlearning performance, thus offering a valuable comparison point from a distinct unlearning strategy.
+AltPO
+This method also employs an auxiliary model, guided by carefully designed prompts, to generate a privacy-preserving alternative response yfay_{f_{a}} for each sample in the forget set 𝒟f\mathcal{D}_{f}. This yfay_{f_{a}} then replaces the template-based response yi​d​ky_{idk} in Equation 28, mitigating catastrophic forgetting. Following its original paper [35], the forget loss is denoted as:
+ℒAltPO​(θ)=−2β​𝔼(xf,yf)∼𝒟f,yfa∼𝒟a​[log⁡σ⁡(β​πθ​(yfa|xf)πref​(yfa|xf)−β​πθ​(yf|xf)πref​(yf|xf))].\mathcal{L}_{{\text{AltPO}}}(\theta)=-\frac{2}{\beta}\mathbb{E}_{(x_{f},y_{f})\sim\mathcal{D}_{f},y_{f_{a}}\sim\mathcal{D}_{a}}[\log\sigma(\beta\frac{\pi_{\theta}(y_{f_{a}}|x_{f})}{\pi_{\text{ref}}(y_{f_{a}}|x_{f})}-\beta\frac{\pi_{\theta}(y_{f}|x_{f})}{\pi_{\text{ref}}(y_{f}|x_{f})})].
+(32)
+Similarly, AltPO utilizes ℒGD\mathcal{L}_{\text{GD}} as its retain loss. Due to the use of an auxiliary model to obtain alternative responses and thereby augment the dataset, it is not classified as a purely optimization-based method but rather as a hybrid approach combined with data-based techniques. We include it for comparison against our method, viewing it as a more advanced development compared to NPO, particularly in its provision of an explicit, generated positive preference.
+Appendix D Experiments Details
+D.1 Hardware configuration
+All experiments are conducted on 2 NVIDIA A800-SXM4-80GB GPU cards in a single node. We employ DeepSpeed ZeRO stage-2 for all baselines to compress GPU memory.
+A typical experimental run for our main DiPO method on benchmarks like TOFU or MUSE, involving 10 epochs of training with evaluation performed after each epoch, took approximately 1 hour on this hardware setup.
+For our main DiPO method, a complete experimental run on a single task within the MUSE or TOFU benchmarks (typically involving 10 epochs of training with evaluation after each epoch) was generally completed within 1 hour on this hardware setup.
+D.2 Details on Filter mechanism
+This appendix clarifies the top-k filtering strategy (using rate pkp_{k}) mentioned in Section 4.3.
+This top-k filtering strategy represents a mechanism for manipulating model output logits, previously employed in various generation contexts [52, 53, 54]. Similar to its adoption in related unlearning frameworks like ULD [38], we utilize it here to determine which tokens’ original logits 𝐳t\mathbf{z}_{t} contribute to the memory vector 𝐦t\mathbf{m}_{t}.
+In this section, we will provide a more formal definition. Let St⊂VS_{t}\subset V be the set of tokens selected by top-k filtering, keeping the top pkp_{k} tokens of the vocabulary size.
+We define a ‘memory vector’ 𝐦t\mathbf{m}_{t} that isolates the logits corresponding to these high-confidence tokens: 𝐦t=𝐳t⊙mask​(𝐳t,St)\mathbf{m}_{t}=\mathbf{z}_{t}\odot\text{mask}(\mathbf{z}_{t},S_{t}), where mask​(𝐳t,St)\text{mask}(\mathbf{z}_{t},S_{t}) is a binary vector selecting tokens in StS_{t}. We then construct the memory-enhancing distribution πm\pi_{m} and the forgetting-promoting distribution πf\pi_{f} by adding or subtracting this memory vector, scaled by a factor α\alpha:
+πm(⋅|x,y<t)=softmax(𝐳t+α𝐦t),πf(⋅|x,y<t)=softmax(𝐳t−α𝐦t).\displaystyle\pi_{m}(\cdot|x,y^{<t})=\text{softmax}(\mathbf{z}_{t}+\alpha\mathbf{m}_{t}),\quad\pi_{f}(\cdot|x,y^{<t})=\text{softmax}(\mathbf{z}_{t}-\alpha\mathbf{m}_{t}).
+(33)
+To determine the set StS_{t}, we first compute log-probabilities 𝐬t=log_softmax​(𝐳t)\mathbf{s}_{t}=\text{log\_softmax}(\mathbf{z}_{t}). A dynamic threshold τ\tau is then established by considering two criteria:
+1.
+Rank-based Threshold (τk\tau_{k}): This ensures at least a minimum number of tokens are kept. It is set to the log-probability corresponding to the kk-th rank when tokens are sorted by log-probability in descending order, where k=max⁡(1,⌊pk⋅|V|⌋)k=\max(1,\lfloor p_{k}\cdot|V|\rfloor).
+2.
+Relative Threshold (τr​e​l\tau_{rel}): This adapts to the sharpness of the distribution and is calculated relative to the maximum log-probability: τr​e​l=max⁡(𝐬t)+log⁡(pk)\tau_{rel}=\max(\mathbf{s}_{t})+\log(p_{k}).
+The final threshold used for filtering is the minimum of these two: τ=min⁡(τk,τr​e​l)\tau=\min(\tau_{k},\tau_{rel}). The set StS_{t} then comprises all tokens whose log-probability is greater than or equal to this final threshold (St={i∣st,i≥τ}S_{t}=\{i\mid s_{t,i}\geq\tau\}). This ensures that only the logits of these high-confidence tokens are isolated in the memory vector 𝐦t=𝐳t⊙mask​(𝐳t,St)\mathbf{m}_{t}=\mathbf{z}_{t}\odot\text{mask}(\mathbf{z}_{t},S_{t}). In this paper, we set pk=0.05p_{k}=0.05.
+D.3 Implementation Details on TOFU
+D.3.1 Descriptions of the dataset
+TOFU focuses on unlearning the knowledge of fictitious authors. It contains 200 fictitious author profiles, each consisting of 20 question-answer pairs generated by GPT-4 based on some predefined attributes. These profiles are fictitious and do not exist in the pre-training data, providing a controlled environment for studying unlearning LLMs. TOFU contains three Forget set 𝒟f\mathcal{D}_{f} configurations, each with 1%, 5%, and 10% of the fictional authors, referred to as TOFU-1%, TOFU-5%, and TOFU-10%, respectively. The remaining data constitutes the Retain set 𝒟r\mathcal{D}_{r}, used to assess the model’s preservation of non-targeted knowledge after unlearning. To further examine unlearning’s impact on overall capabilities, TOFU includes two additional evaluation subsets: the Real Authors set 𝒟R​A\mathcal{D}_{RA}, for performance on real-world information conceptually related to 𝒟f\mathcal{D}_{f} but not part of fine-tuning, and the World Facts set 𝒟W​F\mathcal{D}_{WF}, for assessing general world knowledge.
+Table 6: Data statistics of Forget set 𝒟f\mathcal{D}_{f}, Retain set 𝒟r\mathcal{D}_{r}, Real Authors set 𝒟R​A\mathcal{D}_{RA} and World Facts set 𝒟W​F\mathcal{D}_{WF}.
+Task
+𝒟f\mathcal{D}_{f}
+𝒟r\mathcal{D}_{r}
+𝒟R​A\mathcal{D}_{RA}
+𝒟W​F\mathcal{D}_{WF}
+TOFU-1%
+40
+400
+100
+117
+TOFU-5%
+200
+400
+100
+117
+TOFU-10%
+400
+400
+100
+117
+D.3.2 Evaluation Metrics
+Our evaluation centers on two primary metrics in the original TOFU paper [13]: Model Utility (MU) and Forget Quality (FQ).
+Model Utility (MU)
+This metric quantifies the side effects of unlearning on the model’s general knowledge and capabilities. It aggregates performance on the Retain, Real Authors, and Real World sets, considering answer generation probability, ROUGE-L similarity, and Truth Ratio. The Truth Ratio RtruthR_{\text{truth}} assesses the model’s ability to distinguish factual information, defined as the propensity to generate a paraphrased correct answer (a~\tilde{a}) versus a set of structurally similar but incorrect perturbed answers (a^i\hat{a}_{i}) for a given question (qq):
+Rt​r​u​t​h:=15​∑i=15ℙ​(a^i|q)1/|a^i|ℙ​(a~|q)1/|a~|.R_{truth}:=\frac{\frac{1}{5}\sum_{i=1}^{5}\mathbb{P}(\widehat{a}_{i}|q)^{1/|\widehat{a}_{i}|}}{\mathbb{P}(\tilde{a}|q)^{1/|\tilde{a}|}}.
+Here, qq is the input question, P(⋅|q)P(\cdot|q) is the model’s probability for a specific answer, |⋅||\cdot| denotes answer length in tokens, and NN is the number of perturbed answers. MU is the harmonic mean of these three sub-metrics across the three evaluation datasets (nine scores total), a method sensitive to any single low score.
+Forget Quality (FQ)
+This metric evaluates the success of erasing targeted information 𝒟f\mathcal{D}_{f}. It compares the unlearned model’s behavior to that of an ideal reference model (typically trained only on 𝒟r\mathcal{D}_{r} and thus unexposed to 𝒟f\mathcal{D}_{f}) when queried about 𝒟f\mathcal{D}_{f}. The assessment uses a two-sample Kolmogorov-Smirnov (KS) test on the Truth Ratio distributions from these two models on 𝒟f\mathcal{D}_{f}. A high p-value (e.g. >0.05) indicates no significant distributional difference, suggesting effective unlearning.
+D.3.3 Hyperparameter Implementation
+Following the setup of [13], We use the fine-tuned LLama2-chat-7B released by TOFU as the original LLM and fine-tune the target LLM for 10 epochs.
+For all baseline methods and ours, we set the batch size and learning rate to 32 and 1​e−51e-5 following previous works. We set β\beta in Equation 20 (βf\beta_{f}) and Equation 21 (βr\beta_{r}) to 0.05 in our method. For all baseline methods involving retain loss, we set the weight λ\lambda to 1. More details are in Section D.3.
+D.4 Implementation Details on MUSE
+D.4.1 Descriptions of the dataset
+MUSE proposes a multi-faceted framework considering six desirable properties, catering to both data owner and model deployer expectations. In this paper, we focus on the News corpus. For this corpus, distinct Forget Sets (𝒟forget\mathcal{D}_{\text{forget}}), Retain Sets (𝒟retain\mathcal{D}_{\text{retain}}), and disjoint hold-out sets (𝒟holdout\mathcal{D}_{\text{holdout}}) are established as disjoint collections of news articles.
+To facilitate granular evaluation, two types of data are derived from these news articles:
+1.
+Verbatim text: Original text excerpts from news articles used to assess the prevention of verbatim memorization.
+2.
+Knowledge set: Question-answer (QA) pairs derived from the original news texts to evaluate the removal of factual knowledge.
+D.4.2 Evaluation Metrics
+MUSE evaluates unlearning across six criteria. We highlight key metrics reflecting data owner and deployer concerns as applied to the NEWS corpus:
+Data Owner Focused Metrics
+1.
+No Verbatim Memorization (VerbMem-f): Assesses if the unlearned model (funlearnf_{\text{unlearn}}) avoids reproducing exact text sequences from the 𝒟forget\mathcal{D}_{\text{forget}} of news articles. Quantified by VerbMem-f, which measures the ROUGE-L F1 score between model-generated continuations and true continuations from 𝒟forget\mathcal{D}_{\text{forget}}.
+VerbMem-f(f,𝒟forget):=1|𝒟forget|∑x∈𝒟forgetROUGE-L(f(x[:l]),x[l+1:]).\text{VerbMem-f}(f,\mathcal{D}_{\text{forget}}):=\frac{1}{|\mathcal{D}_{\text{forget}}|}\sum_{x\in\mathcal{D}_{\text{forget}}}\text{ROUGE-L}(f(x_{[:l]}),x_{[l+1:]}).
+2.
+No Knowledge Memorization (KnowMem-f): Measures if funlearnf_{\text{unlearn}} can no longer answer questions whose answers are exclusively found in the 𝒟forget\mathcal{D}_{\text{forget}} of news articles. Quantified by KnowMem-f, averaging ROUGE scores between model answers and ground-truth answers for QA pairs derived from 𝒟forget\mathcal{D}_{\text{forget}}.
+3.
+No Privacy Leakage (PrivLeak): Evaluates if the inclusion of news articles from 𝒟forget\mathcal{D}_{\text{forget}} in the original training data (𝒟train\mathcal{D}_{\text{train}}) can be inferred from funlearnf_{\text{unlearn}}. Measured by PrivLeak, which compares the Area Under the ROC Curve (AUC) of a Membership Inference Attack (MIA) on funlearnf_{\text{unlearn}} against that on a perfectly retrained model (fretrainf_{\text{retrain}}), discriminating between 𝒟forget\mathcal{D}_{\text{forget}} (member news articles) and 𝒟holdout\mathcal{D}_{\text{holdout}} (non-member news articles).
+PrivLeak:=AUC​(funlearn,𝒟forget,𝒟holdout)−AUC​(fretrain,𝒟forget,𝒟holdout)AUC​(fretrain,𝒟forget,𝒟holdout).\text{PrivLeak}:=\frac{\text{AUC}(f_{\text{unlearn}};\mathcal{D}_{\text{forget}},\mathcal{D}_{\text{holdout}})-\text{AUC}(f_{\text{retrain}};\mathcal{D}_{\text{forget}},\mathcal{D}_{\text{holdout}})}{\text{AUC}(f_{\text{retrain}};\mathcal{D}_{\text{forget}},\mathcal{D}_{\text{holdout}})}.
+A PrivLeak score close to zero is desirable.
+Deployer Focused Metrics
+1.
+Utility Preservation (KnowMem-r): Quantifies how well funlearnf_{\text{unlearn}} maintains its performance on the 𝒟retain\mathcal{D}_{\text{retain}} of news articles. This is typically measured using the KnowMem-r metric applied to 𝒟retain\mathcal{D}_{\text{retain}}: KnowMem-r​(funlearn,𝒟retain)\text{KnowMem-r}(f_{\text{unlearn}},\mathcal{D}_{\text{retain}}).
+2.
+Scalability: Assesses how unlearning methods perform with increasing sizes of 𝒟forget\mathcal{D}_{\text{forget}} within the NEWS corpus.
+3.
+Sustainability: Evaluates performance under sequential unlearning requests involving different sets of news articles.
+D.4.3 Hyperparameter Implementation
+Following the setup of MUSE [14], we use LLaMA-2 7B as the original model, which was released before the collected BBC news articles to prevent potential data leakage.
+For baseline methods, we set the batch size to 32, and fine-tune for 5 epochs using AdamW optimizer with a constant learning rate of 1​e−51e-5, For our method, we use the same training hyper-parameters as described in TOFU.
+D.5 Additional Results on TOFU
+D.5.1 Details on Ablation Study
+To determine the optimal configuration for our DiPO method, we conducte an ablation study comparing different retain loss functions when combined with the DiPO forget loss component, ℒDiPO-f​(θ)\mathcal{L}_{{\text{DiPO-f}}}(\theta) (defined in Equation 20). We evaluate the following configurations on the TOFU-10% task at the best-epoch:
+1.
+DiPO (ours): This is the configuration presented as our main result in the paper, using the ℒDiPO-r\mathcal{L}_{{\text{DiPO-r}}} by reversing the roles of the preference distributions of ℒDiPO-f\mathcal{L}_{{\text{DiPO-f}}} on the retain set. The combined objective is then expressed as ℒ=ℒDiPO-f​(θ)+λ​ℒDiPO-r​(θ)\mathcal{L}=\mathcal{L}_{\text{DiPO-f}}(\theta)+\lambda\mathcal{L}_{\text{DiPO-r}}(\theta).
+2.
+DiPO(f)+GD: This configuration utilizes the standard Gradient Descent loss Equation 30 on the retain set:
+minθ⁡ℒ⁡(θ)\displaystyle\min_{\theta}\mathcal{L}(\theta)
+=minθ⁡(ℒDiPO-f​(θ)+γ​ℒGD​(θ))\displaystyle=\min_{\theta}\left(\mathcal{L}_{{\text{DiPO-f}}}(\theta)+\gamma\mathcal{L}_{{\text{GD}}}(\theta)\right)
+=minθ⁡(ℒDiPO-f​(θ)+λ​𝔼(xr,yr)∼𝒟r​[−log⁡πθ​(yr|xr)]).\displaystyle=\min_{\theta}\left(\mathcal{L}_{{\text{DiPO-f}}}(\theta)+\lambda\mathbb{E}_{(x_{r},y_{r})\sim\mathcal{D}_{r}}[-\log\pi_{\theta}(y_{r}|x_{r})]\right).
+3.
+GA+DiPO(r): This configuration utilizes the standard Gradient Descent loss Equation 30 on the retain set:
+minθ⁡ℒ⁡(θ)\displaystyle\min_{\theta}\mathcal{L}(\theta)
+=minθ⁡(ℒGA​(θ)+λ​ℒDiPO-r​(θ))\displaystyle=\min_{\theta}\left(\mathcal{L}_{{\text{GA}}}(\theta)+\lambda\mathcal{L}_{{\text{DiPO-r}}}(\theta)\right)
+=minθ⁡(𝔼(xf,yf)∼𝒟f​[log⁡πθ​(yf|xf)]+λ​ℒDiPO-r​(θ)).\displaystyle=\min_{\theta}\left(\mathbb{E}_{(x_{f},y_{f})\sim\mathcal{D}_{f}}[\log\pi_{\theta}(y_{f}|x_{f})]+\lambda\mathcal{L}_{{\text{DiPO-r}}}(\theta)\right).
+4.
+NPO+DiPO(r): This configuration utilizes the standard Gradient Descent loss Equation 30 on the retain set:
+minθ⁡ℒ⁡(θ)\displaystyle\min_{\theta}\mathcal{L}(\theta)
+=minθ⁡(ℒNPO​(θ)+λ​ℒDiPO-r​(θ))\displaystyle=\min_{\theta}\left(\mathcal{L}_{{\text{NPO}}}(\theta)+\lambda\mathcal{L}_{{\text{DiPO-r}}}(\theta)\right)
+Figure 4: Training curves for only-forget configuration on TOFU-10%, with GA and NPO curves additionally included for comparison.
+For these settings, the final results are presented in Table 5. Additionally, we discuss DiPO-Forget (using only ℒDiPO-f\mathcal{L}_{\text{DiPO-f}} without any retain loss). This setup simulates scenarios where retain data might be unavailable. we set learning rate to 7​e−67e-6 and β\beta to 0.5 in this configuration. As illustrated by its training dynamics on TOFU-10% (Figure 4), even without an explicit retain loss, DiPO-Forget achieves substantial unlearning (e.g. FQ reaching approximately 0.51) while maintaining a notable degree of model utility (e.g. MU around 0.18 at the end of training, after an initial drop). This contrasts sharply with typical baselines where removing the retain loss often leads to a near-complete collapse in both MU and FQ. The ability of DiPO-Forget to preserve some utility while effectively unlearning underscores the inherent stability and targeted nature of the DiPO forget mechanism. This finding is particularly promising for unlearning scenarios where access to comprehensive retain data is limited or unavailable.
+D.5.2 Results at the Final Epoch
+Table 7: The final-epoch performance averaged over five seeds on TOFU benchmark. Scores closer to “Retrain” are better. Bold indicates best results among all methods.
+Method
+TOFU-1%
+TOFU-5%
+TOFU-10%
+FQ ↑\uparrow
+MU ↑\uparrow
+FQ ↑\uparrow
+MU ↑\uparrow
+FQ ↑\uparrow
+MU ↑\uparrow
+Original LLM
+1e-3
+0.62
+3e-16
+0.62
+2e-19
+0.62
+Retrain LLM
+1.0
+0.62
+1.0
+0.62
+1.0
+0.62
+GA
+0.40
+0.52
+5e-8
+0
+6e-11
+0
+GA+GD
+0.27
+0.53
+0.11
+0.33
+9e-3
+0.51
+GA+KL
+0.31
+0.53
+0.14
+0.35
+1e-5
+0.55
+NPO
+0.71
+0.56
+0.03
+0.02
+5e-4
+0
+DPO+GD
+0.27
+0.58
+1e-4
+0.02
+5e-7
+0
+NPO+GD
+0.73
+0.58
+0.64
+0.57
+0.17
+0.53
+DiPO
+0.89
+0.58
+0.95
+0.58
+0.84
+0.56
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

@@ -1,0 +1,1327 @@
+From Logs to Language: Learning Optimal Verbalization for LLM-Based Recommendation in Production
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+LLMs for Recommendation.
+Prompt Optimization.
+Reinforcement Learning for LLMs.
+3
+Problem Formulation
+4
+Method
+4.1
+Verbalizer
+Action-Based.
+Rewrite-Based.
+4.2
+Reasoner
+4.3
+Stage 1: Verbalizer Optimization via GRPO
+Oracle Reasoner for Reward Signal.
+Length Reward.
+4.4
+Stage 2: Reasoner Optimization via GRPO
+5
+Experimental Setup
+5.1
+Dataset and Task Introduction
+5.2
+Baselines and Configurations
+6
+Results
+6.1
+Main Results
+Attribution of Improvement.
+6.2
+Ablation Studies
+7
+Analysis
+8
+Discussion
+Computational Considerations.
+Generalization.
+9
+Conclusion
+Data Privacy.
+Intended Use.
+References
+License: CC BY-NC-ND 4.0
+arXiv:2602.20558v1 [cs.AI] 24 Feb 2026
+From Logs to Language: Learning Optimal Verbalization for LLM-Based Recommendation in Production
+Yucheng Shi
+†
+†
+thanks:
+Work done at Netflix.
+Ying Li
+Yu Wang
+Yesu Feng
+Arjun Rao
+Rein Houthooft
+Shradha Sehgal
+Jin Wang
+Hao Zhen
+Ninghao Liu
+Affiliation:
+University of Georgia  Netflix  Capital One  Hong Kong Polytechnic University
+Linas Baltrunas
+Abstract
+Large language models (LLMs) are promising backbones for generative recommender systems, yet a key challenge remains underexplored:
+verbalization
+, i.e., converting structured user interaction logs into effective natural language inputs. Existing methods rely on rigid templates that simply concatenate fields, yielding suboptimal representations for recommendation. We propose a data-centric framework that
+learns
+verbalization for LLM-based recommendation. Using reinforcement learning, a verbalization agent transforms raw interaction histories into optimized textual contexts, with recommendation accuracy as the training signal. This agent learns to filter noise, incorporate relevant metadata, and reorganize information to improve downstream predictions. Experiments on a large-scale industrial streaming dataset show that learned verbalization delivers up to
+93%
+relative improvement in discovery item recommendation accuracy over template-based baselines. Further analysis reveals emergent strategies such as user interest summarization, noise removal, and syntax normalization, offering insights into effective context construction for LLM-based recommender systems.
+1
+Introduction
+The integration of large language models into recommendation systems has garnered significant attention, with approaches ranging from using LLMs as feature extractors to deploying them as end-to-end reasoning engines
+(
+Wu et al., 2023
+;
+Zhao et al., 2024
+;
+Zhang et al., 2023
+;
+Firooz et al., 2025
+)
+. A critical yet underexplored component in this paradigm is
+verbalization
+, the process of converting structured user behavioral data into natural language that LLMs can process. Current approaches predominantly rely on template-based methods that mechanically concatenate interaction fields, assuming that LLMs can effectively parse and reason over such representations.
+We argue that this assumption fundamentally misaligns with how LLMs process information. Consider a typical user interaction log containing timestamps, device, item IDs, engagement types, and viewing durations. While such granular data is valuable for traditional collaborative filtering approaches, presenting it verbatim to an LLM introduces several challenges. First, the heterogeneous feature space creates parsing overhead that consumes model capacity. Second, not all interactions carry equally important predictive signal. Finally, the absence of semantic context (e.g., metadata information) forces the LLM to reason purely from behavioral patterns without access to content understanding, which harms the recommendation quality especially for cold-start items.
+These observations motivate a fundamental question:
+Can we learn to verbalize user interaction data specifically for LLM-based recommender, rather than treating verbalization as a fixed preprocessing step?
+This paper introduces a
+data-centric
+framework for LLM-based recommendation that treats verbalization as a learnable component. Our approach decomposes the recommendation pipeline into two specialized components. The
+Verbalizer
+is a generative model that transforms raw user interaction sequences into optimized natural language descriptions, learning to filter noise, add relevant metadata, and restructure information for downstream reasoning. The
+Reasoner
+is a causal language model that performs the actual recommendation task, predicting user preferences from the verbalized context.
+The key insight enabling this decomposition is that verbalization quality can be measured through recommendation accuracy. If a verbalized representation leads to correct predictions, it has successfully preserved and highlighted the most relevant preference signals. This creates a natural training signal: we can optimize the Verbalizer using the Reasoner’s prediction accuracy as reward. We instantiate this idea through Group Relative Policy Optimization (GRPO), adapting the algorithm for both Verbalizer training (where the Reasoner provides rewards) and subsequent Reasoner training (where ground-truth engagement labels provide rewards).
+Our contributions are fourfold. First, we formalize the verbalization optimization problem for LLM-based recommendation and propose a two-component architecture that separates context optimization from preference reasoning. Second, we develop a two-stage GRPO-based training framework that enables end-to-end optimization of both components without requiring explicit verbalization labels. Third, through extensive experiments on industrial-scale data, we demonstrate up to 93% relative improvement in recommendation accuracy. Lastly, we discovered several insightful patterns in verbalization optimization for LLM-based recommenders.
+2
+Related Work
+LLMs for Recommendation.
+Recent work has explored multiple paradigms for incorporating LLMs into recommendation systems. One line of research uses LLMs to generate textual features or embeddings that augment traditional recommendation models
+(
+Li et al., 2023
+;
+Hou et al., 2024
+;
+Bao et al., 2023
+)
+. Another approach employs LLMs directly as recommenders through in-context learning, where user history and candidate items are formatted as prompts
+(
+Liu et al., 2023b
+;
+Dai et al., 2023
+;
+Liu et al., 2023a
+)
+.
+Geng et al. (2022)
+proposed P5, a unified text-to-text framework that formulates various recommendation tasks as natural language generation.
+Zhang et al. (2025)
+provided a comprehensive survey on the intersection of LLMs and recommender systems. More recently,
+Zheng et al. (2024)
+explored parameter-efficient fine-tuning methods for adapting LLMs to recommendation tasks, while
+Liao et al. (2023)
+proposed hybrid approaches combining LLM reasoning with traditional collaborative signals. Our work falls into the generative recommendation category but introduces a crucial distinction: rather than treating prompt construction as a fixed engineering choice, we learn the verbalization function end-to-end.
+Prompt Optimization.
+Prompt engineering and optimization have been widely studied in NLP
+(
+Liu et al., 2023c
+;
+Zhou et al., 2022
+)
+, spanning discrete prompt search
+(
+Shin et al., 2020
+;
+Gao et al., 2021
+)
+, continuous prompt tuning
+(
+Lester et al., 2021
+;
+Li and Liang, 2021
+)
+, and reinforcement learning–based methods
+(
+Deng et al., 2022
+;
+Zhang et al., 2022
+)
+. Recent work further explores gradient-based optimization
+(
+Pryzant et al., 2023
+)
+and LLM-driven prompt optimization
+(
+Yang et al., 2023
+)
+. These advances motivate our work: if prompts can be optimized for task performance, then the verbalization of user interaction data, the core input to LLM-based recommenders, should also be optimizable. However, existing methods focus on task-level optimization with fixed input-output mappings. In contrast, recommendation requires user-dependent, instance-level verbalization. Our work extends prompt optimization to learn instance-specific verbalizations that directly maximize recommendation accuracy.
+Reinforcement Learning for LLMs.
+Our training methodology builds upon recent advances in RL-based LLM alignment. Proximal Policy Optimization (PPO) has been widely adopted for RLHF
+(
+Ouyang et al., 2022
+)
+, though its requirement for a learned value function introduces computational overhead. Group Relative Policy Optimization (GRPO) offers an efficient alternative by estimating advantages from group-level reward statistics
+(
+Shao et al., 2024
+)
+, which we adapt for both verbalization and reasoning optimization.
+3
+Problem Formulation
+We consider the sequential recommendation setting where each user
+u
+u
+is associated with an interaction history
+ℋ
+u
+=
+{
+h
+1
+,
+h
+2
+,
+…
+,
+h
+T
+}
+\mathcal{H}_{u}=\{h_{1},h_{2},\ldots,h_{T}\}
+. Each interaction
+h
+t
+h_{t}
+is a structured record containing heterogeneous features: timestamp
+τ
+t
+\tau_{t}
+, content identifier
+c
+t
+c_{t}
+, engagement type
+e
+t
+e_{t}
+(e.g., play, thumb up, add to list), viewing duration
+δ
+t
+\delta_{t}
+. The recommendation task is to predict the next item
+y
+∗
+y^{*}
+the user will engage with from a candidate set
+𝒞
+=
+{
+y
+1
+,
+y
+2
+,
+…
+,
+y
+N
+}
+\mathcal{C}=\{y_{1},y_{2},\ldots,y_{N}\}
+.
+A basic template-based verbalization constructs a textual representation through a deterministic mapping
+ϕ
+template
+:
+ℋ
+u
+→
+𝒳
+\phi_{\text{template}}:\mathcal{H}_{u}\rightarrow\mathcal{X}
+, where
+𝒳
+\mathcal{X}
+denotes the space of natural language strings. For example:
+20250608, Monday, 2 PM, ID: 123456, Stranger Things, Play, Duration: 80.08 min
+We propose learning a parameterized verbalization function
+ϕ
+θ
+:
+ℋ
+u
+→
+𝒳
+\phi_{\theta}:\mathcal{H}_{u}\rightarrow\mathcal{X}
+that produces optimized verbalizations. The optimization objective is to maximize recommendation accuracy:
+max
+θ
+𝔼
+u
+,
+𝒞
+,
+y
+∗
+[
+𝟏
+[
+Reasoner
+(
+ϕ
+θ
+(
+ℋ
+u
+)
+,
+𝒞
+)
+=
+y
+∗
+]
+]
+\max_{\theta}\mathbb{E}_{u,\mathcal{C},y^{*}}\left[\mathbf{1}\left[\text{Reasoner}(\phi_{\theta}(\mathcal{H}_{u}),\mathcal{C})=y^{*}\right]\right]
+(1)
+where
+Reasoner
+​
+(
+⋅
+,
+⋅
+)
+\text{Reasoner}(\cdot,\cdot)
+denotes the prediction from the reasoning model given verbalized context and candidates.
+4
+Method
+Figure 1:
+Two-stage training pipeline for the Data-Centric Recommendation Agent.
+Our framework consists of two components, the Verbalizer and the Reasoner, trained through a two-stage pipeline using variants of Group Relative Policy Optimization. We first describe the component architectures, then detail the training procedures.
+4.1
+Verbalizer
+The Verbalizer
+π
+θ
+V
+\pi_{\theta}^{V}
+is a generative language model that takes raw interaction history as input and produces an optimized textual representation. We investigated two architectural variants for the verbalization process.
+Action-Based.
+This variant outputs discrete decisions for each interaction: 1) Filter: whether to keep or discard an interaction; 2) Add: whether to enrich it with metadata. Formally, for each
+h
+t
+∈
+ℋ
+u
+h_{t}\in\mathcal{H}_{u}
+, the model generates a binary keep decision
+k
+t
+∈
+{
+0
+,
+1
+}
+k_{t}\in\{0,1\}
+and an enrichment decision
+m
+t
+∈
+{
+0
+,
+1
+}
+m_{t}\in\{0,1\}
+. The output takes the form:
+time, ID,
+​
+k
+t
+​
+,
+​
+m
+t
+​
+,
+\texttt{time, ID, }k_{t}\texttt{, }m_{t}\texttt{,}
+(2)
+These decisions are then executed deterministically: kept interactions with
+m
+t
+=
+1
+m_{t}=1
+are augmented with additional metadata.
+Rewrite-Based.
+This variant generates a complete textual rewrite of the interaction history, providing maximum flexibility for the model to aggregate, summarize, and restructure information. The model is prompted to transform interactions into natural language while preserving important signals and removing noise.
+Our experiments reveal that the rewrite-based approach substantially outperforms action-based verbalization, as it enables emergent behaviors such as aggregating repetitive patterns (“watched 5 episodes of X”) and generating member interest summaries (“showed strong preference for dark thrillers”). We adopt the rewrite-based architecture for our primary experiments.
+4.2
+Reasoner
+The Reasoner
+π
+ψ
+R
+\pi_{\psi}^{R}
+is a causal language model that receives the verbalized context
+x
+=
+ϕ
+θ
+​
+(
+ℋ
+u
+)
+x=\phi_{\theta}(\mathcal{H}_{u})
+and candidate set
+𝒞
+\mathcal{C}
+, and outputs a prediction over candidates. The model generates its prediction through standard autoregressive decoding, with the predicted item extracted from the generated text.
+4.3
+Stage 1: Verbalizer Optimization via GRPO
+Training the Verbalizer presents a fundamental challenge: no ground-truth “optimal verbalization labels” exist. We address this by treating this as a reinforcement learning problem where a Reasoner provides reward signals. Intuitively, if a verbalization leads to correct recommendation, it has successfully captured the relevant preference information.
+Oracle Reasoner for Reward Signal.
+A critical design choice is which model provides the reward signal during Verbalizer training. We employ a capable closed-source LLM (rather than the target Reasoner being trained) as the oracle Reasoner for several reasons. First, more powerful models provide higher-quality reward signals with better discrimination between effective and ineffective verbalizations. Second, using a fixed oracle avoids the instability of co-training both components simultaneously. Third, the oracle’s superior reasoning capabilities help the Verbalizer learn verbalizations that capture genuine preference signals rather than exploiting weaknesses in a weaker Reasoner. Empirically, we find that training with a stronger oracle leads to verbalizations that generalize better to different Reasoner architectures.
+We employ Group Relative Policy Optimization (GRPO) for Verbalizer training. For each user
+u
+u
+with history
+ℋ
+u
+\mathcal{H}_{u}
+, candidates
+𝒞
+\mathcal{C}
+, and ground truth
+y
+∗
+y^{*}
+, we sample a group of
+G
+G
+verbalizations from the current policy:
+{
+x
+1
+,
+x
+2
+,
+…
+,
+x
+G
+}
+∼
+π
+θ
+V
+(
+⋅
+|
+ℋ
+u
+)
+.
+\{x_{1},x_{2},\ldots,x_{G}\}\sim\pi_{\theta}^{V}(\cdot|\mathcal{H}_{u}).
+(3)
+Each verbalization
+x
+i
+x_{i}
+is evaluated by passing it through the oracle Reasoner to obtain a prediction, yielding reward:
+r
+i
+=
+{
+1
+if
+​
+π
+oracle
+R
+​
+(
+x
+i
+,
+𝒞
+)
+=
+y
+∗
+0
+otherwise
+r_{i}=\begin{cases}1&\text{if }\pi_{\text{oracle}}^{R}(x_{i},\mathcal{C})=y^{*}\\
+0&\text{otherwise}\end{cases}
+(4)
+The rewards are normalized within each group to compute advantages:
+{
+A
+^
+i
+=
+r
+i
+−
+mean
+​
+(
+𝐫
+)
+std
+​
+(
+𝐫
+)
++
+ϵ
+}
+\{\hat{A}_{i}=\frac{r_{i}-\text{mean}(\mathbf{r})}{\text{std}(\mathbf{r})+\epsilon}\}
+where
+𝐫
+=
+{
+r
+1
+,
+…
+,
+r
+G
+}
+\mathbf{r}=\{r_{1},\ldots,r_{G}\}
+and
+ϵ
+\epsilon
+is a small constant for numerical stability.
+The Verbalizer policy is updated by maximizing the GRPO objective:
+𝒥
+V
+(
+θ
+)
+=
+𝔼
+[
+1
+G
+∑
+i
+=
+1
+G
+1
+|
+x
+i
+|
+∑
+t
+=
+1
+|
+x
+i
+|
+{
+min
+[
+ρ
+i
+,
+t
+A
+^
+i
+,
+clip
+(
+ρ
+i
+,
+t
+,
+1
+−
+ϵ
+v
+,
+1
++
+ϵ
+v
+)
+A
+^
+i
+]
+−
+β
+v
+𝒟
+KL
+}
+]
+\begin{split}\mathcal{J}^{V}(\theta)=\mathbb{E}\Bigg[\frac{1}{G}\sum_{i=1}^{G}\frac{1}{|x_{i}|}\sum_{t=1}^{|x_{i}|}\Big\{\min\Big[\rho_{i,t}\hat{A}_{i},\\
+\text{clip}(\rho_{i,t},1-\epsilon_{v},1+\epsilon_{v})\hat{A}_{i}\Big]-\beta_{v}\mathcal{D}_{\text{KL}}\Big\}\Bigg]\end{split}
+(5)
+where
+ρ
+i
+,
+t
+=
+π
+θ
+V
+​
+(
+x
+i
+,
+t
+|
+ℋ
+u
+,
+x
+i
+,
+<
+t
+)
+π
+θ
+old
+V
+​
+(
+x
+i
+,
+t
+|
+ℋ
+u
+,
+x
+i
+,
+<
+t
+)
+\rho_{i,t}=\frac{\pi_{\theta}^{V}(x_{i,t}|\mathcal{H}_{u},x_{i,<t})}{\pi_{\theta_{\text{old}}}^{V}(x_{i,t}|\mathcal{H}_{u},x_{i,<t})}
+is the importance sampling ratio,
+ϵ
+v
+\epsilon_{v}
+is the clipping parameter, and
+β
+v
+\beta_{v}
+weights the KL divergence regularization from a reference policy.
+Length Reward.
+Unconstrained optimization may lead to degraded solutions, either extremely compressed outputs that lose information or verbose outputs that introduce high training and inference costs. We incorporate a length-based reward component:
+r
+i
+total
+=
+α
+⋅
+r
+i
+acc
++
+(
+1
+−
+α
+)
+⋅
+r
+i
+len
+r_{i}^{\text{total}}=\alpha\cdot r_{i}^{\text{acc}}+(1-\alpha)\cdot r_{i}^{\text{len}}
+(6)
+where
+r
+i
+len
+r_{i}^{\text{len}}
+is a plateau function that provides maximum reward for compression ratios in a target range (e.g., 0.3–0.7), with penalties for both over-compression and under-compression. We set
+α
+=
+0.9
+\alpha=0.9
+in our experiments.
+Figure 2:
+Length reward function design.
+4.4
+Stage 2: Reasoner Optimization via GRPO
+After Verbalizer training converges, we freeze the Verbalizer and train the Reasoner on the verbalized data distribution. This stage adapts the Reasoner to the specific verbalization patterns produced by the trained Verbalizer.
+For each training instance, the frozen Verbalizer generates a single verbalization
+x
+=
+ϕ
+θ
+​
+(
+ℋ
+u
+)
+x=\phi_{\theta}(\mathcal{H}_{u})
+. The Reasoner then samples
+G
+G
+predictions:
+{
+y
+^
+1
+,
+y
+^
+2
+,
+…
+,
+y
+^
+G
+}
+∼
+π
+ψ
+R
+(
+⋅
+|
+x
+,
+𝒞
+)
+\{\hat{y}_{1},\hat{y}_{2},\ldots,\hat{y}_{G}\}\sim\pi_{\psi}^{R}(\cdot|x,\mathcal{C})
+The reward for each prediction is:
+r
+j
+=
+{
++
+1
+if
+​
+y
+^
+j
+=
+y
+∗
+−
+1
+otherwise
+r_{j}=\begin{cases}+1&\text{if }\hat{y}_{j}=y^{*}\\
+-1&\text{otherwise}\end{cases}
+(7)
+Advantages are computed via group normalization as before, and the Reasoner is updated via:
+𝒥
+R
+(
+ψ
+)
+=
+𝔼
+[
+1
+G
+∑
+j
+=
+1
+G
+1
+|
+y
+^
+j
+|
+∑
+t
+=
+1
+|
+y
+^
+j
+|
+{
+min
+[
+ρ
+j
+,
+t
+R
+A
+^
+j
+,
+clip
+(
+ρ
+j
+,
+t
+R
+,
+1
+−
+ϵ
+r
+,
+1
++
+ϵ
+r
+)
+A
+^
+j
+]
+−
+β
+r
+𝒟
+KL
+}
+]
+\begin{split}\mathcal{J}^{R}(\psi)=\mathbb{E}\Bigg[\frac{1}{G}\sum_{j=1}^{G}\frac{1}{|\hat{y}_{j}|}\sum_{t=1}^{|\hat{y}_{j}|}\Big\{\min\Big[\rho_{j,t}^{R}\hat{A}_{j},\\
+\text{clip}(\rho_{j,t}^{R},1-\epsilon_{r},1+\epsilon_{r})\hat{A}_{j}\Big]-\beta_{r}\mathcal{D}_{\text{KL}}\Big\}\Bigg]\end{split}
+(8)
+where
+ρ
+j
+,
+t
+R
+\rho_{j,t}^{R}
+is the importance ratio for the Reasoner policy.
+5
+Experimental Setup
+5.1
+Dataset and Task Introduction
+We evaluate on an industrial-scale dataset from a major streaming platform containing user viewing interactions over a three-month period. Each interaction record includes timestamp, item ID, title name, engagement type, and viewing duration. We focus on the reranking task: given a user’s interaction history (up to 100 recent interactions) and 10 candidate items, predict which item the user actually engaged with next.
+We report
+Recall@1 for Discovery
+, which measures recall@1 for items the user has not previously watched. This metric reflects the system’s ability to identify new content matching user preferences, a critical capability for content discovery in recommendation systems.
+5.2
+Baselines and Configurations
+We compare against three baselines:
+Template Baseline
+, which uses a fixed verbalization by directly concatenating interaction fields;
+Zero-Shot
+, which applies a prompted LLM to verbalize interactions based on heuristics without task-specific training; and
+Action-Based
+, which trains the Verbalizer with GRPO but restricts it to filtering and enrichment actions rather than full rewrites.
+We experiment with Verbalizer models at 8B and 32B parameter scales from the Qwen-3 family. We report main results using the 8B model, while analyses involving the 32B model are presented separately.
+6
+Results
+6.1
+Main Results
+Table
+1
+presents our main results. Even zero-shot verbalization yields meaningful improvements (5.3% for 8B), demonstrating that the verbalization bottleneck is a genuine limitation of template-based approaches.
+Training the Verbalizer via GRPO substantially amplifies these gains. The rewrite-based Verbalizer achieves 12.5% improvement, more than doubling zero-shot performance. The rewrite-based approach consistently outperforms the action-based variant by enabling richer transformations including aggregation and summarization.
+The full two-stage pipeline achieves
+92.9%
+relative improvement, demonstrating powerful synergy between training stages: the Verbalizer learns representations optimized for the Reasoner, while the Reasoner learns to leverage the semantic structure introduced by the Verbalizer.
+Attribution of Improvement.
+A natural question is whether the substantial gains primarily stem from Reasoner training rather than learned verbalization. To isolate the contribution of each component, we conducted an ablation where the Reasoner is trained on raw (template-based) interactions without the Verbalizer, shown in Table
+2
+. This configuration achieves only
++42.8%
+improvement over the baseline, compared to
++92.9%
+with verbalized inputs. This 50.1 percentage point gap demonstrates that the Verbalizer’s learned transformations provide substantial value beyond what Reasoner training alone can achieve. The verbalized context creates a more learnable distribution that enables the Reasoner to extract signals more effectively.
+Configuration
+Recall@1
+Δ
+\Delta
+%
+Template Baseline (8B)
+–
+Zero-Shot Verbalizer
++5.3
+Action-Based Verbalizer
++10.7
+Rewrite Verbalizer
++12.5
+Rewrite + Trained Reasoner
++92.9
+Table 1:
+Relative improvement (%) in Recall@1 for Discovery over template baseline.
+6.2
+Ablation Studies
+Ablation
+Recall@1
+Δ
+\Delta
+%
+Full Pipeline
++92.9
+Verbalizer Variants
+Action-Based only
++10.7
+Rewrite Verbalizer
++12.5
+Reasoner Training Data
+Raw Interactions
++42.8
+Verbalized Interactions
++92.9
+Reward Function
+Accuracy Reward
++12.5
+Ranking Loss
+0.0
+Table 2:
+Ablation study results showing relative improvement over template baseline.
+Table
+2
+presents ablation studies. The rewrite-based approach enables emergent behaviors that discrete actions cannot capture. Removing the length reward leads to degraded performance due to over-compression or verbose outputs. Training the Reasoner on verbalized interactions substantially outperforms training on raw interactions (+92.9% vs +42.8%), validating that the Verbalizer produces a more learnable data distribution. Using ranking-based rewards fails to improve over baseline, consistent with prior discussion on LLM-based evaluation.
+7
+Analysis
+Table
+3
+provides qualitative evidence of how learned verbalization reshapes raw interaction logs into more effective natural-language contexts for LLM-based recommendation. Several consistent behaviors emerge.
+Syntax Normalization.
+Both models convert machine-oriented fields (timestamps, IDs, categorical tags) into fluent natural language. For example, structured metadata such as timestamps, content year, and plot tags are rewritten as readable descriptions, improving coherence and interpretability for downstream LLMs.
+Signal Retention and Noise Filtering.
+The Verbalizer preserves high-signal elements such as explicit positive feedback (e.g., “Thumb Up”) and core item attributes, while discarding low-utility identifiers (e.g., internal IDs). This selective retention reduces input clutter while maintaining recommendation-relevant information.
+Metadata Abstraction.
+The 8B model largely retains explicit item-level details (title, year, genre), whereas the 32B model abstracts these details into higher-level preference signals. Instead of restating item attributes, the 32B output summarizes the interaction as a strong preference for a content category, indicating a shift from descriptive rewriting to semantic abstraction.
+Preference Summarization.
+At larger scale (32B), the Verbalizer synthesizes interaction evidence into explicit preference statements (e.g., “strong preference signal”), even though such summaries are never explicitly prompted. This behavior reflects instance-level reasoning over interaction semantics rather than surface-level rewriting.
+In terms of compression, the 8B model achieves an average length ratio of 0.42 (verbalized length / original length), while the 32B model further compresses inputs to 0.27. This increased compression aligns with the emergence of abstraction and summarization, suggesting that larger models learn to remove redundant detail while preserving recommendation-critical signals.
+Raw Interaction:
+20261022 Wednesday 8:45 PM, ID: 123456, Stranger Things, year: 2016, plot: nostalgic, supernatural, Thumb Up
+Verbalized Output (8B):
+Wednesday 8:45 PM gave a strong positive rating to Stranger Things, a 2016 sci-fi horror with a nostalgic and supernatural plot
+Verbalized Output (32B):
+Strong preference signal: enthusiastic rating for Stranger Things indicates high interest in nostalgic, supernatural sci-fi horror series
+Table 3:
+Example verbalization outputs showing syntax normalization and preference summarization.
+8
+Discussion
+Computational Considerations.
+While the two-stage pipeline introduces additional training cost, this overhead can be mitigated in practice. The Verbalizer can be distilled or cached for efficient deployment, and the two components can be trained at different cadences. The Verbalizer captures relatively stable patterns for transforming interaction logs into effective textual representations and thus requires infrequent updates, whereas the Reasoner must adapt more rapidly to evolving user preferences and content catalogs. This decoupled training schedule is a key advantage of our modular design.
+Generalization.
+Although evaluated on streaming recommendation, our data-centric framework applies broadly to settings where structured logs must be verbalized for LLM processing, including e-commerce, social media, and healthcare.
+9
+Conclusion
+We proposed a data-centric framework for LLM-based recommendation that treats verbalization as a learnable component rather than a fixed preprocessing step. By decoupling context verbalization from preference reasoning, our two-stage GRPO-based training pipeline enables specialized optimization of each component and achieves up to
+93%
+relative improvement in novel item recommendation accuracy.
+Qualitative analysis reveals emergent verbalization strategies such as syntax normalization, noise filtering, and preference summarization, highlighting verbalization as a critical bottleneck in current LLM-based recommender systems. As recommender systems increasingly adopt LLM backbones, we anticipate that traditional feature engineering will give way to
+verbalization engineering
+, and ultimately to fully learned verbalization.
+Ethics Statement
+We discuss key ethical considerations below.
+Data Privacy.
+All experiments use proprietary interaction logs from an industrial streaming platform. The data was collected under the platform’s user agreements and handled in compliance with applicable data protection policies. No personally identifiable information (PII) was used or exposed during training or evaluation. All examples presented in this paper (e.g., Table
+3
+) are illustrative and do not correspond to real user records.
+Intended Use.
+This framework is designed for improving content recommendation quality. While the verbalization approach is domain-general, deployment in sensitive domains (e.g., healthcare, news) would require additional safeguards to prevent the Verbalizer from filtering or distorting critical information during the rewriting process.
+References
+Bao
+et al.
+(2023)
+K. Bao, J. Zhang, Y. Zhang, W. Wang, F. Feng, and X. He
+Tallrec: an effective and efficient tuning framework to align large language model with recommendation
+.
+In
+Proceedings of the 17th ACM conference on recommender systems
+,
+pp. 1007–1014
+.
+Cited by:
+§2
+.
+Dai
+et al.
+(2023)
+S. Dai, N. Shao, H. Zhao, W. Yu, Z. Si, C. Xu, Z. Sun, X. Zhang, and J. Xu
+Uncovering chatgpt’s capabilities in recommender systems
+.
+pp. 1126–1132
+.
+Cited by:
+§2
+.
+Deng
+et al.
+(2022)
+M. Deng, J. Wang, C. Hsieh, Y. Wang, H. Guo, T. Shu, M. Song, E. Xing, and Z. Hu
+Rlprompt: optimizing discrete text prompts with reinforcement learning
+.
+In
+Proceedings of the 2022 conference on empirical methods in natural language processing
+,
+pp. 3369–3391
+.
+Cited by:
+§2
+.
+Firooz
+et al.
+(2025)
+H. Firooz, M. Sanjabi, A. Englhardt, A. Gupta, B. Levine, D. Olgiati, G. Polatkan, I. Melnychuk, K. Ramgopal, K. Talanine,
+et al.
+360brew: a decoder-only foundation model for personalized ranking and recommendation
+.
+arXiv preprint arXiv:2501.16450
+.
+Cited by:
+§1
+.
+Gao
+et al.
+(2021)
+T. Gao, A. Fisch, and D. Chen
+Making pre-trained language models better few-shot learners
+.
+In
+Proceedings of the 59th annual meeting of the association for computational linguistics and the 11th international joint conference on natural language processing (volume 1: long papers)
+,
+pp. 3816–3830
+.
+Cited by:
+§2
+.
+Geng
+et al.
+(2022)
+S. Geng, S. Liu, Z. Fu, Y. Ge, and Y. Zhang
+Recommendation as language processing (rlp): a unified pretrain, personalized prompt & predict paradigm (p5)
+.
+In
+Proceedings of the 16th ACM conference on recommender systems
+,
+pp. 299–315
+.
+Cited by:
+§2
+.
+Hou
+et al.
+(2024)
+Y. Hou, J. Zhang, Z. Lin, H. Lu, R. Xie, J. McAuley, and W. X. Zhao
+Large language models are zero-shot rankers for recommender systems
+.
+In
+European Conference on Information Retrieval
+,
+pp. 364–381
+.
+Cited by:
+§2
+.
+Lester
+et al.
+(2021)
+B. Lester, R. Al-Rfou, and N. Constant
+The power of scale for parameter-efficient prompt tuning
+.
+Cited by:
+§2
+.
+Li
+et al.
+(2023)
+J. Li, M. Wang, J. Li, J. Fu, X. Shen, J. Shang, and J. McAuley
+Text is all you need: learning language representations for sequential recommendation
+.
+pp. 1258–1267
+.
+Cited by:
+§2
+.
+Li and Liang (2021)
+X. L. Li and P. Liang
+Prefix-tuning: optimizing continuous prompts for generation
+.
+Cited by:
+§2
+.
+Liao
+et al.
+(2023)
+J. Liao, S. Li, Z. Yang, J. Wu, Y. Yuan, and X. Wang
+Llara: aligning large language models with sequential recommenders
+.
+CoRR
+.
+Cited by:
+§2
+.
+Liu
+et al.
+(2023a)
+J. Liu, C. Liu, P. Zhou, R. Lv, K. Zhou, and Y. Zhang
+Is chatgpt a good recommender? a preliminary study
+.
+Cited by:
+§2
+.
+Liu
+et al.
+(2023b)
+J. Liu, C. Liu, P. Zhou, R. Lv, K. Zhou, and Y. Zhang
+Is chatgpt a good recommender? a preliminary study
+.
+arXiv preprint arXiv:2304.10149
+.
+Cited by:
+§2
+.
+Liu
+et al.
+(2023c)
+P. Liu, W. Yuan, J. Fu, Z. Jiang, H. Hayashi, and G. Neubig
+Pre-train, prompt, and predict: a systematic survey of prompting methods in natural language processing
+.
+ACM computing surveys
+55
+(
+9
+),
+pp. 1–35
+.
+Cited by:
+§2
+.
+Ouyang
+et al.
+(2022)
+L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray,
+et al.
+Training language models to follow instructions with human feedback
+.
+Advances in neural information processing systems
+35
+,
+pp. 27730–27744
+.
+Cited by:
+§2
+.
+Pryzant
+et al.
+(2023)
+R. Pryzant, D. Iter, J. Li, Y. T. Lee, C. Zhu, and M. Zeng
+Automatic prompt optimization with" gradient descent" and beam search
+.
+arXiv preprint arXiv:2305.03495
+.
+Cited by:
+§2
+.
+Shao
+et al.
+(2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. Li, Y. Wu,
+et al.
+Deepseekmath: pushing the limits of mathematical reasoning in open language models
+.
+arXiv preprint arXiv:2402.03300
+.
+Cited by:
+§2
+.
+Shin
+et al.
+(2020)
+T. Shin, Y. Razeghi, R. L. Logan IV, E. Wallace, and S. Singh
+Autoprompt: eliciting knowledge from language models with automatically generated prompts
+.
+Cited by:
+§2
+.
+Wu
+et al.
+(2023)
+L. Wu, Z. Zheng, Z. Qiu, H. Wang, H. Gu, T. Shen, C. Qin, C. Zhu, H. Zhu, Q. Liu,
+et al.
+A survey on large language models for recommendation (2024)
+.
+URL: https://arxiv. org/abs/2305.19860
+.
+Cited by:
+§1
+.
+Yang
+et al.
+(2023)
+C. Yang, X. Wang, Y. Lu, H. Liu, Q. V. Le, D. Zhou, and X. Chen
+Large language models as optimizers
+.
+Cited by:
+§2
+.
+Zhang
+et al.
+(2023)
+J. Zhang, K. Bao, Y. Zhang, W. Wang, F. Feng, and X. He
+Is chatgpt fair for recommendation? evaluating fairness in large language model recommendation
+.
+pp. 993–999
+.
+Cited by:
+§1
+.
+Zhang
+et al.
+(2025)
+J. Zhang, R. Xie, Y. Hou, X. Zhao, L. Lin, and J. Wen
+Recommendation as instruction following: a large language model empowered recommendation approach
+.
+ACM Transactions on Information Systems
+43
+(
+5
+),
+pp. 1–37
+.
+Cited by:
+§2
+.
+Zhang
+et al.
+(2022)
+T. Zhang, X. Wang, D. Zhou, D. Schuurmans, and J. E. Gonzalez
+Tempera: test-time prompting via reinforcement learning
+.
+arXiv preprint arXiv:2211.11890
+.
+Cited by:
+§2
+.
+Zhao
+et al.
+(2024)
+Z. Zhao, W. Fan, J. Li, Y. Liu, X. Mei, Y. Wang, Z. Wen, F. Wang, X. Zhao, J. Tang,
+et al.
+Recommender systems in the era of large language models (llms)
+.
+IEEE Transactions on Knowledge and Data Engineering
+36
+(
+11
+),
+pp. 6889–6907
+.
+Cited by:
+§1
+.
+Zheng
+et al.
+(2024)
+B. Zheng, Y. Hou, H. Lu, Y. Chen, W. X. Zhao, M. Chen, and J. Wen
+Adapting large language models by integrating collaborative semantics for recommendation
+.
+pp. 1435–1448
+.
+Cited by:
+§2
+.
+Zhou
+et al.
+(2022)
+Y. Zhou, A. I. Muresanu, Z. Han, K. Paster, S. Pitis, H. Chan, and J. Ba
+Large language models are human-level prompt engineers
+.
+Cited by:
+§2
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

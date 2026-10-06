@@ -88,7 +88,13 @@ low e r </w>
 
 `low` 因为高频获得完整 token，`lower` 仍可由 `low + e + r` 表示。BPE 学到的是语料中的频率结构，不保证 merge 边界与人类词法完全一致。
 
+频率统计在质量相近、接口稳定的语料上便宜且合理；同频片段若有不同的可靠性，离线构词还可以加入外部 quality proxy，而不把频率直接当语义重要性。一条受限分支把 pair 的频率关联、聚合质量与 domain factor 共同交给 merge selector：先固定质量参数训练 merge policy，再用下游目标和 Gumbel-Softmax relaxation 调整质量敏感度与权重，最后以固定参数构造 greedy vocabulary。这里学习的是离线 merge 选择，不是每个请求都调用 PPO；质量代理与聚合规则也不是数据真值，不能自动识别所有噪声。<!-- source-family:SF-2026-ARXIV-2602-06394 -->
+
+额外候选搜索、质量统计、两阶段优化和词表改变后的模型训练都要计价。所称近似最优界另需 monotonicity/submodularity 等条件，原文也明确一般 LM loss 不满足该结构，因而不能把条件 quality-frequency 界写成整个模型目标的最优保证；固定词表的部署路径没有新增 policy 调用，也不表示生命周期成本为零。应分开比较 raw exposure、优化步数、词表构建与下游回归，避免让低质量代理把罕见但真实的片段排除。质量信号不可校准、统计分布变动或净收益不足时，普通 BPE/Unigram 与独立数据清洗仍是清晰基线，而不是必须随之改变 tokenizer artifact。
+
 编码新文本时，必须使用固定 vocabulary 和 merge rules，不能根据单个请求重新训练。否则同一模型权重会面对不稳定 id 语义。
+
+固定 artifact 仍可有“允许编码”与“允许输出”两份不同集合。一条受限分支保留 BPE merge graph，把输入中不再允许的残留 token 递归拆开，再按未屏蔽的 merge 规则重组；输出侧则屏蔽对应 logits 列，而不重新 merge 已生成的自回归前缀，否则 token 位置与 KV 语义会一起改变。输入重组与输出禁用因而必须分别绑定 vocabulary/mask、merge graph、ID 映射及 checkpoint，不能把它当免费换 tokenizer。[必要方法与反侧](https://arxiv.org/html/2602.04706v1)用语料中的最终 emission 次数与邻接 entropy 筛选候选，二者是 corpus-conditioned proxy，不是语义冗余真值；受限 Latin/C4 证据不能替未改动的非 Latin 路径验收。减少输出候选会改变生成分布，输入拆分也可能增长序列；参数减少、PPL 的 token 单位、生成质量与实际 backend 成本应分账，不能由词表变小或置信分数更高推准确率。mask 配置、长输入质量或实际执行不合要求时，回退原 artifact，保留基本单元与兼容路径，而不追求普遍 plug-and-play 或无损收益。<!-- source-family:SF-2026-ARXIV-2602-04706 -->
 
 ## Unigram 与 SentencePiece 的另一条路线
 
@@ -122,6 +128,8 @@ Unicode text -> encoded bytes -> tokenizer symbols -> token ids
 ```
 
 字符数、byte 数和 token 数不是同一单位。API 计费、context limit 和 KV Cache 容量通常按 token，而不是用户界面里的字符数。
+
+训练表示与部署输出还可以走另一条分支：同一模型在带 sentinel、互不重叠的符号空间中交替学习压缩代理序列与原始 UTF-8 bytes，先用配对样本建立两种表示的关系，再继续混合 next-symbol 训练；部署只保留 byte 路径，压缩代理不必成为线上 tokenizer。于是训练 symbol 数不能直接当作原始语料曝光量，codec、符号映射、sentinel、混合策略与 checkpoint 共同定义这份训练接口；给定 gold compressed 输入的恢复结果，也不等于正常 byte generation 能力。代理格式制作与配对训练需要准备成本，byte 输出仍可能带来更长 Decode；受限对照中小模型或其他压缩格式有反收益，神经代理恢复也不是无损编码保证。采用前应分别验收 raw exposure、生成质量、编码有效性与端到端成本；代理不合适或 byte 生成代价过高时，纯 byte 训练与 subword 路径仍然合理。<!-- source-family:SF-2026-ARXIV-2602-04289 -->
 
 ### Byte 覆盖输入，不自动保证输出合法
 
@@ -300,6 +308,9 @@ embedding/output head、artifact version 和序列分布。exact-v1 的 25 个�
 BPE 只能在 pre-tokenizer 允许合并的边界内学习；如果字符、附加符号或书写单位在此前已被错误切开，后续增加 merge 数量也无法恢复原本应共享的表示。tokenizer 设计因此要先验证语言学边界与 normalization，再优化词表大小和 fertility。旧分词在主流语料上仍可合理，但跨文字系统迁移时必须重新测量不可合并边界。
 <!-- source-family: arxiv:2608.26449v1; semantic-body-binding: pretokenizer-boundary-fertility-floor -->
 
+边界确定以后，还可以只改变执行这个边界规则的热路径，而不重新设计分词语义。例如，把特定正则规则编译成按当前与下一个 Unicode 类别分派的扫描器，常见分支直接前进，无法在局部判定的缩写等情况再回退到完整规则。这里保持的是预分词片段及规则优先级；normalization、后续 BPE merge、词表与整数 ID 仍属于各自接口，不能由“文本还原相同”代替回归。有限语料上的逐片段一致性也不证明所有 Unicode、尾部或空输入都已覆盖，更不保证整条模型服务链加速。特殊分支频繁、行为测试不足或输入分布变化时，原正则实现仍是合理基线。这与下面改变离线词表搜索空间的分支不同：前者优化如何执行既定边界，后者改变允许形成哪些单位。
+<!-- source-family:SF-2026-ARXIV-2601-05833 -->
+
 固定预分词边界还限制了词表训练能发现的单位：即使语料中两个相邻词经常共同出现，普通BPE也不会跨边界合并。允许superword的一个条件分支先训练完整regular merge顺序，再聚合符合条件的相邻pretoken run，让候选supermerge频数与regular顺序的重放计数竞争；计数相同优先regular merge，使supermerge所需的父token先存在。聚合run可以避免反复保留和扫描全部原文，但候选统计、type/token分布与更新成本仍决定训练效率。
 
 这改变的是**离线词表构建**，不是每个请求自行造词；相同词表集合和merge关系也不保证相同整数ID顺序。切换实现必须核对完整token→ID映射及模型embedding/checkpoint兼容性，不能只比词表大小。[Faster Superword的实验](https://arxiv.org/html/2604.05192v1)限MiniPile及131072词表的CPU训练计时，不证明LLM端到端推理加速。边界稳定、词表已部署或新统计成本无法摊销时，原BPE仍是合理选择。<!-- source-family:SF-2026-ARXIV-2604-05192 -->
@@ -328,6 +339,8 @@ BPE 与 Unigram 的局部或迭代选择易实现、稳定且兼容成熟 checkp
 
 <!-- source-family:SF-2026-ARXIV-2607-26831 -->
 
+另一种增强不必改变输出监督的 canonical tokenization：保持原 next-token targets，让同一 token 字符串的合法子词分解走额外的 causal encoder，再把辅助表示通过 cross-attention 注入 decoder。这样 canonical target 与随机辅助输入是两份接口，不能把它理解为给旧 checkpoint 热换分词；subtoken sampler、块内/块间顺序、允许读取的因果 mask、auxiliary encoder 与注入位置须共同版本化，embedding 数值关系仍由下一章承接。[Homotokens 的受限分支](https://arxiv.org/html/2601.02867v1)在推理时也使用该采样路径，因此额外 encoder、序列与采样成本不能记成免费 serving 收益。它在高重复训练数据下延迟 overfitting，却不在低重复条件或碎片化词表上普遍获益；小模型的 held-out next-token loss 也不是生成任务准确率。只需稳定 token 接口、缺少训练/推理兼容验证或质量回归失败时，原 canonical 输入与直接 NTP 仍是合理回退，不由相同 decoded string 签发内部计算或行为等价。<!-- source-family:SF-2026-ARXIV-2601-02867 -->
+
 ### Vocabulary Adaptation 是 Tokenizer 与 Checkpoint 的联合迁移
 
 替换或扩展 vocabulary 不能只更新分词规则，因为新增 token 的 embedding 与输出参数在旧 checkpoint 中没有身份。Token alignment lexicon 可以用语料或 hidden-state 表示建立 source/target token 对齐，先把旧参数映射为新 vocabulary 的初始化，再用有限 fine-tuning 恢复行为；迁移资产必须同时版本化两个 tokenizer、alignment matrix、初始化方法和训练语料。<!-- semantic-body-binding:SF-2026-ARXIV-2605-13429 -->
@@ -355,6 +368,8 @@ BPE 与 Unigram 的局部或迭代选择易实现、稳定且兼容成熟 checkp
 
 这条路径用额外 attention、KV、mask 规则与触发频率控制换取更及时的 patch 内计算；触发过密会吃掉长 patch 的吞吐收益，触发过疏则保留原有 lag。当前证据只支持作者的 byte-level architecture、训练设置和 evaluator，不证明在其他模型、硬件、长度或生产 SLO 下普遍获益。局部状态不稳定、实现缺少可靠 mask 或短 patch 已足够时，应回退较小固定 patch 或稳定 tokenizer。
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-09630:end -->
+
+边界可学习时，还要说明梯度究竟优化什么。对 Bernoulli boundary policy 采样分词方案，再以该方案条件下的 byte prediction loss 训练全局模型，score-function estimator 可以把条件 loss 的期望作为边界选择目标；这不同于把随机分词的平均 log-likelihood 当作 marginal log-likelihood，后者在一般情形只有 Jensen 不等式，不能用等号跨过。离散采样避免 straight-through 把边界当连续变量，却增加梯度方差、边界头和 byte decoder 费用；[受限实验](https://arxiv.org/html/2602.13940v1)还使用 discount 与含本样本的 batch baseline，不能授最终估计器无偏。作者的固定估算 FLOPs、有限语料/小模型 loss 对照不等真实硬件吞吐或所有任务更优；边界漂移、训练方差或质量代价过大时，固定 patch 或稳定 subword tokenizer 仍合理。<!-- source-family:SF-2026-ARXIV-2602-13940 -->
 
 <!-- source-family:SF-COMPUTE-OPTIMAL-TOKENIZATION -->
 
@@ -415,11 +430,21 @@ Tokenizer 在无限文本空间和有限模型词表之间建立可复现映射�
 
 ## Review notes
 
+- `SF-2026-ARXIV-2601-05833`：[Peek2 exact-v1](https://arxiv.org/html/2601.05833v1)，Daily 2026-01-13；原2+1+2=5，具体行为保持的预分词执行分支缺口深入。必要§3/4与完整 XNLI 片段回归，仅采用7类双scalar分派及缩写回退，不授所有输入等价、生产吞吐或普遍安全保证；硬件未披露，未复现。jan01_v3实际必要原源→owner非作者核通过；正文写后待独立验收。
+
+- `SF-2026-ARXIV-2602-04289`：[Proxy Compression exact-v1](https://arxiv.org/html/2602.04289v1)，Daily 2026-02-06；原2+2+2=6，具体 train-proxy/serve-byte 接口缺口深入。必要§2与§3.1–3.4/3.6及负侧；只采用压缩代理/原始byte混合训练、sentinel与disjoint vocabulary、paired warmup后解除配对而byte-only部署的替代分工。固定symbol预算非同raw exposure，0.5B反侧/gzip失败、compressed-gold oracle非正常生成、准备与byte Decode成本就近保留；不授neural无损、普遍质量或latency优势。root必要原源/Ch11 owner写前通过，root实际126正文单位→train/serve分支→UTF8合法性及422末注POST通过；日级Gate未验，未复现实验。
+
+- `SF-2026-ARXIV-2602-04706`：[LiteToken exact-v1](https://arxiv.org/html/2602.04706v1)，Daily 2026-02-06；原2+2+2=6，具体input merge graph/output emission artifact gap深入。必要机制与评测/配置反侧，保留recursive split/remerge输入、禁输出但不改生成prefix、FI/邻熵的语料人口与长度/质量/backend分账。§6.2 Table4 .25与正文.15、§6.6配置冲突不拼接收益点，不授PPL/confidence=真实准确或免费无损转换；未复现。jan02_v3实际必要source及Ch11:64–139写前核通过，root授窄锁；jan02_v3实际新增正文/前后邻接及末注POST通过，日级Gate未验。
+
+- `SF-2026-ARXIV-2601-02867`：[exact-v1](https://arxiv.org/html/2601.02867v1)，Daily 2026-01-08；原2+1+2=5，canonical-target/aux-input branch具体接口缺口深入受影响知识。必要§3/4/5/Limits及A2/A3；只采用额外因果encoder/首decoder cross-attention与同string子词采样身份，推理同用不记为免费收益。88/244M与额外1M encoder、4A100/4～24h、concatQA next-token loss而非meaningful generation，重复比/fragmented词表反侧保留；不授通用多语/生成准确率或checkpoint热兼容。root必要原源与Ch11 owner写前核通过，实际331正文、323–329 canonical接口与333词表迁移邻接及420末注POST通过；日级Gate未验，未复现实验。
+
 - `SF-2026-ARXIV-2604-16656`：[exact-v1](https://arxiv.org/html/2604.16656v1)，Daily 2026-04-21；§3.1–4、§6.1–6.4/Table1 与 A。只采用 item selection×hidden mapping 初始化及 added-item 优先的短项反收益，不将 readout 视作固定词义证明；FVT Latin、OOD 与适配成本边界保留。apr02 必要 source→当前 owner 独立通过；实际正文及相邻衔接写后非作者复核通过（root），未复现实验。
 
 - [2604.05192v1](https://arxiv.org/html/2604.05192v1)，Experimental；§2–5/Algorithm1，regular顺序重放、supermerge竞争、tie规则与ID重新分配边界。只采用词表训练机制，不将CPU tokenizer训练提速外推为模型训练/推理收益。
 
 - Tokenization as Output Supervision（Status: Experimental）：[arXiv:2609.01386v1](https://arxiv.org/html/2609.01386v1) §2.1/3.1–3.4 将输入与输出 tokenization 解耦、仅在输出侧计算 CE；采用输出监督粒度命题。四层小模型、三位小端加法、十 seeds 不证明通用 tokenizer 优劣；相同步数非同计算量，不采用“未来位没有梯度”或 probe 不可读等于信息不存在的强解释。
+
+- `SF-2026-ARXIV-2602-06394` — Daily `2026-02-10`；[QA-Token exact-v1](https://arxiv.org/html/2602.06394v1) §3.3/§4两阶段、Table2、AppC.7/G.3必要条件与成本。5=2+1+2，external-quality proxy→learned merge→fixed artifact具体gap深入，只采用通用tokenizer受限接口，不纳科学/金融路线或应用收益。一般LMloss非submodular、globalconv/免成本不采用；raw exposure与steps、构建/重训成本和proxy失配回退近正文，未核代码/复现。root必要原源/owner写前通过，root实际L85–100正文邻接及末注445非作者POST通过，锁释放，不授日级Gate。
 
 本轮联章 Review 补充了 Part II 的主干与扩展分支地图。本章仍止于 token ids，不展开 embedding 训练，也不把 tokenizer training 混入 Part IV 的数据治理。后续 Review 应以具体 checkpoint 的 tokenizer artifact 核验 normalization、special-token 和 byte fallback 行为，避免把某个库的默认配置写成通用机制。
 
@@ -429,3 +454,5 @@ Primary-source 校验入口：
 - Taku Kudo, John Richardson, "SentencePiece: A simple and language independent subword tokenizer and detokenizer for Neural Text Processing", 2018: https://arxiv.org/abs/1808.06226
 - Taku Kudo, "Subword Regularization: Improving Neural Network Translation Models with Multiple Subword Candidates", 2018: https://arxiv.org/abs/1804.10959
 - Zhenyu Zhang, Zhichao Cao, "TokTier: Exact Stateful Tokenization for Agentic LLM Serving", 2026（Status: Emerging；作者实验，不外推性能数字）: https://arxiv.org/abs/2607.29678
+
+- `SF-2026-ARXIV-2602-13940` — Daily `2026-02-18`；[exact-v1](https://arxiv.org/html/2602.13940v1) §3–4、必要消融/配置。2+1+2=5，expected conditional loss与离散边界梯度差额深入；Eq9 Jensen等号、discount/batch-baseline最终无偏不采用，固定估算FLOPs非实际吞吐。root必要源/actualowner PRE通过，实际正文/邻接与末注经root非作者POST通过，窄锁释放；未核实现或复现，非日级验收。

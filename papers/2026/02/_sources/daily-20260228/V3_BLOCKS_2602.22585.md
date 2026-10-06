@@ -1,0 +1,227 @@
+[0] h5: Report GitHub Issue
+
+[1] p: Content selection saved. Describe the issue below:
+
+[2] p: *1 1
+
+[3] h1: Correcting Human Labels for Rater Effects in AI Evaluation: An Item Response Theory Approach
+
+[4] h6: Abstract
+
+[5] p: Human‐provided evaluations play a central role in training and assessing AI models, yet these data are rarely treated as measurements subject to systematic error. This paper integrates psychometric rater models into the AI pipeline to improve the reliability and validity of conclusions drawn from human judgments. The paper reviews common rater effects, severity and centrality, that distort observed ratings, and demonstrates how item response theory rater models, particularly the multi-faceted Rasch model, can separate true output quality from rater behavior. Using the OpenAI summarization dataset as an empirical example, we show how adjusting for rater severity produces corrected estimates of summary quality and provides diagnostic insight into rater performance. Incorporating psychometric modeling into human-in-the-loop evaluation offers more principled and transparent use of human data, enabling developers to make decisions based on adjusted scores rather than raw, error-prone ratings. This perspective highlights a path toward more robust, interpretable, and construct-aligned practices for AI development and evaluation.
+
+[6] h6: keywords
+
+[7] h2: 1 Introduction
+
+[8] p: A growing body of research in natural language processing (NLP) and artificial intelligence (AI) has drawn attention to the instability and unreliability of human evaluation data Fabbri et al. (2021) ; Hardy (2025) . These findings parallel a longstanding problem that psychometricians in the educational testing domain have researched, which is how to deal with and account for rater errors in scoring Casabianca (2025) . A plethora of psychometric studies show that rater severity, centrality, and other rater effects complicate the inference of true performance from observed ratings. Leveraging psychometric methods to account for these errors in ratings would provide AI evaluation scientists with tools to obtain refined estimates of AI model quality. The purpose of this paper is to demonstrate a visionary perspective on how to integrate psychometric modeling into the AI system pipeline to account for imperfect human data when evaluating AI models. We demonstrate this approach using an empirical dataset that evaluates summarization models.
+
+[9] h2: 2 The Problem with Human Data
+
+[10] p: Human annotations are a cornerstone of NLP/AI research, yet they are fraught with well-documented problems that undermine their reliability as “ground truth.” Unlike automated metrics, human data carries variability that reflects differences in interpretation, attention, and even motivation.
+
+[11] p: Human raters frequently disagree with one another when asked to rate the same material using the same scoring guide or rubric Fabbri et al. (2021) . This inconsistency reflects poor inter-rater reliability, which limits the replicability of evaluation outcomes. Psychometric frameworks highlight that such inconsistency introduces random error variance, reducing the reliability of scores and obscuring true differences in model quality. Even when raters are consistent , they may be inaccurate if their judgments do not properly reflect the construct of interest. Inaccuracy leads to misleading conclusions about model performance.
+
+[12] h3: 2.1 Rater Effects
+
+[13] p: Rater behavior is understood to introduce systematic effects or patterns in ratings, not just random errors. These rater effects can distort observed scores in predictable ways. Understanding these patterns is critical for designing evaluation protocols and statistical models that correct for them. Two frequently measured rater effects are:
+
+[14] p: Severity/Leniency : Severe raters consistently assign lower scores than others, independent of the quality of the response. Conversely, lenient raters assign higher scores. In AI evaluation, this manifests when some raters give systematically harsher ratings to machine-generated outputs, which may be mistaken for a real difference in system quality; two models of identical quality may receive different ratings simply because one rater is harsher than another.
+
+[15] p: Centrality/Extremity : Raters exhibiting centrality have a preference for using only the middle of a rating scale (e.g., using only score points 3, 4, 5 on a 1 - 7 scale). Raters exhibiting extremity gravitate toward the extreme ends of the score scale. Centrality biases compress score distributions, obscuring true performance differences, while extremity exaggerates them. For Likert-style evaluations Likert (1932) , this can mean the difference between data that shows clear distinctions across systems and data that misleadingly suggests uniformity or polarization.
+
+[16] p: There are several other rater effects including restriction of range and halo effects. See Casabianca (2022) ; Myford and Wolfe (2003) ; Myford and Wolfe (2004) for more background on rater effects.
+
+[17] h3: 2.2 Limitations of Using Human Raters in AI Systems
+
+[18] p: In large scale educational testing contexts in which essays, short answers, and spoken responses are scored, companies employ very large pools of human raters who are highly trained and calibrated. Many of these raters are experienced career-raters who are committed long-term to scoring assessments. Some research has shown that large rater effects are not prevalent in these rater pools Nieto and Casabianca (2019) . While there can be noisy raters who degrade the reliability of scores, this does not lead to specific error patterns or score shifts because the vast majority of these large rater pools are aligned on a rubric.
+
+[19] p: In AI systems, human data is used in different stages of the AI system pipeline: data for fine-tuning, preference data for reinforcement learning, data to train and align LLM judges, and human labeling for quality and other metrics. Many raters or ”annotators” are hired from crowdsourcing networks such as Amazon Mechanical Turk (MTurk) or hired by annotation or ”data-as-a-service” companies, who then onboard subject matter experts for temporary projects. Unlike large testing organizations, the human rater pools in these instances may not be that large, well-trained, or motivated Maline and Polonijo (2025) , indicating that if rater effects are prevalent in only a few raters, they may be impacting the labels in a consequential way.
+
+[20] p: Minimizing the error and aberrant rater tendencies in the annotation system is the first line of defense against noisy or error-laden labels. It is best practice to minimize rater errors by design of the system (see Section 4 of McCaffrey et al. (2022) for a detailed discussion or McClellan (2010) for an overview). Unfortunately, there is a large cost to designing and managing high quality scoring systems. Thus, the main focus of this paper is not on minimizing the error from raters by design, but on how we can adjust for rater aberrance after-the-fact via psychometric modeling.
+
+[21] h2: 3 Estimating and Mitigating Rater Effects in Rating Scale Data
+
+[22] p: Item response theory (IRT) models are probabilistic models used in testing to place individuals (test takers) on a latent trait scale based on their responses to test items Lord (2012) . The latent trait in educational testing might be mathematical knowledge or writing skill. In AI systems, it is AI-relevant constructs or traits such as coherence, quality, trustworthiness, etc., that are being measured. These are constructs we cannot observe and measure directly. In their simplest form, IRT models generally only account for item and test taker characteristics, however, explanatory IRT models can be specified with additional parameters. For example, the class of IRT rater models Casabianca (2022) ; Robitzsch and Steinfeld (2018) ; Wolfe and McVay (2012) incorporate parameters for raters to adjust for these effects in the trait estimates. Models such as this become useful in annotation systems in which there are N N samples or outputs that are being labeled by a human either for the purposes of creating training data or evaluation.
+
+[23] h3: 3.1 Multi-facet Rasch Modeling for Rater Effects Estimation
+
+[24] p: A very popular and widely used IRT rater model is the polytomous Many-Facet Rasch Model (MFRM) Linacre (1989) , which extends the Rasch framework by incorporating additional facets such as raters. The standard MFRM specifies the log-odds of an output receiving a particular rating category on a given dimension (e.g., quality). In our setting, an output ( n n =1,…, N N ) refers to a single AI-generated response or output (e.g., a summary or answer). Each output is evaluated on one or more items ( i i =1,…, I I ), where an item corresponds to a rating dimension such as factual accuracy, relevance, or coherence. Human judges or raters ( j j =1,…, J J ) assign ordinal ratings using a predefined rating scale (e.g., 1 = poor, 2 = fair, 3 = good, 4 = excellent). A rating category ( k k =1,…, K K ) therefore corresponds to a specific score level on this scale. Under this formulation, the MFRM specifies the log-odds of output n n receiving category k k (as opposed to k − 1 k-1 ) on item i i from rater j j as
+
+[25] table: log ⁡ ( P n ​ i ​ j ​ k P n ​ i ​ j ​ ( k − 1 ) ) = θ n − δ i − ρ j − τ j ​ k , \log\left(\frac{P_{nijk}}{P_{nij(k-1)}}\right)=\theta_{n}-\delta_{i}-\rho_{j}-\tau_{jk},
+
+[26] p: where,
+
+[27] p: Probability that AI output n n receives rating category k k (e.g., “good” rather than “fair”) on item i i from rater j j .
+
+[28] p: Latent quality of output n n on the construct of interest (e.g., coherence).
+
+[29] p: Difficulty or stringency of item i i (e.g., some criteria are harder for outputs to score well on).
+
+[30] p: Severity of rater j j , with larger values corresponding to harsher raters.
+
+[31] p: Threshold between adjacent rating categories k − 1 k-1 and k k , specific to rater j j .
+
+[32] p: Estimates of ρ j \rho_{j} quantify rater j j ’s level of severity, and estimates of θ n \theta_{n} quantify AI output n n ’s level of the measured construct, adjusted for item and rater characteristics. There are several ways to specify MFRMs. This particular formulation has been called a rater-related three-facet partial credit model Eckes and Jin (2021) . In this formulation, τ j ​ k \tau_{jk} is the threshold for category k k specific to rater j j , capturing the rater’s individual scale usage pattern. Raters who avoid high or low categories exhibit compressed inner thresholds (smaller spacing among τ j ​ k \tau_{jk} ), whereas raters who make full use of the scale exhibit more widely spaced thresholds. This enables the model to distinguish between rater severity ( ρ j \rho_{j} ) and rater centrality or extremity (via patterns in τ j ​ k \tau_{jk} ). To quantify centrality, we estimate the standard deviation of rater threshold parameter estimates, SD( τ j ​ k \tau_{jk} ) Eckes and Jin (2021) ; Myford and Wolfe (2004) . Larger values of SD( τ j ​ k \tau_{jk} ) indicate centrality and smaller values of SD( τ j ​ k \tau_{jk} ) indicate extremity. Other model formulations specify explicit parameters for centrality Jin and Wang (2018) .
+
+[33] p: What do the model estimates tell us? The resulting MFRM latent trait estimates can be used as measures of quality at the level of the outputs, and aggregates of the estimates can be used to summarize overall quality of the AI model. Rater parameter estimates can be used to identify raters with aberrant scoring patterns, supporting a flagging system for targeted rater remediation. In practice we might implement a flagging rule to identify the top 5% of struggling raters using percentiles, separately for each index Stafford et al. (2018) . To identify raters with low or high levels on each rater effect index, we would flag the raters below the 2.5th percentile or above the 97.5th percentile.
+
+[34] h3: 3.2 Data Collection Designs for MFRMs
+
+[35] p: For the model to be estimable, data collection must ensure sufficient linkage, or overlap, among raters and responses Wind and Ge (2021) ; Casabianca et al. (2023) ; Wind and Jones (2018) . We assume an evaluation design in which multiple annotators rate outputs from one or more systems across multiple items (e.g., essays, summaries, dialogues). The resulting data can be structured as a rater × item design (or rater × item × system when comparing systems), where each rating reflects both the latent quality of the system’s output and systematic rater effects.
+
+[36] p: Collecting multiple ratings per output (e.g., 3–5 annotators per item) provides the replication needed to estimate interrater agreement and to separate true performance from rater error Wind and Ge (2021) . However, replication alone is insufficient. The design must also include overlap across items and raters. For example, if one group of raters scores only a subset of items that is never scored by other raters, the data become weakly linked, leading to estimation problems. Designs with greater overlap and multiple ratings per output yield more stable estimates, reduce sensitivity to individual rater idiosyncrasies, and are more likely to generalize across evaluation contexts. Extensive discussion of rater linkage is available in the literature and should be reviewed when developing a rating design Wind and Jones (2019) ; Wind et al. (2016) .
+
+[37] h2: 4 Application of IRT Rater Models to OpenAI Summarization Data
+
+[38] h3: 4.1 Data Description
+
+[39] p: The OpenAI summarization dataset was made available to support research on training summarization models with reinforcement learning from human feedback (RLHF) Stiennon et al. (2020) . In the study, the RLHF training process involved three steps: (1) collecting human preference judgments between pairs of model-generated summaries, (2) training a reward model to predict human preferences, and (3) using Proximal Policy Optimization (PPO) to train a policy model based on the reward model’s scores. ( Policy refers to the model and training methods.) 1 1 1 While policy is a term from reinforcement learning referring to a model that selects actions to maximize a reward signal, Stiennon et al. Stiennon et al. (2020) use it more broadly to refer to any summary-generating method under evaluation, including supervised fine-tuned models, zero-shot pretrained models, and the lead-3 extractive baseline. We use the term in a similar fashion in the current paper. The researchers trained multiple policies using different approaches, including supervised learning and various RLHF configurations (see Appendix A for a list of policies). To compare these policies, they generated summaries of CNN/Daily Mail (DM) news articles (which were not part of the reward model training data) and collected Likert scale ratings for N=639 summaries. R R =15 trained raters scored the summaries on 7-point scales (1=poor to 7=excellent) along four quality dimensions: Content coverage (how much important information from the original article is covered), Factual accuracy (to what degree the statements in the summary are stated in the article), Coherence (how easy the summary is to read on its own), and Overall quality . Appendix B provides the rubrics for the four items.
+
+[40] p: The goal was to compare summaries across different policies/models, including human feedback models, human-written summaries (ref), extractive summaries using the first three sentences (lead3), and other model types.
+
+[41] h4: 4.1.1 Dataset Fitness for MFRM
+
+[42] p: The dataset contained 6,312 ratings based on 639 unique articles, summarized by 19 policies which were evaluated by 15 raters on 4 items. Most raters evaluated all 19 summaries for each article they evaluated. The resulting dataset thus contains multiple ratings per summary, with each record linked to the summary text, its generating model or policy, the identity of the rater, and the rater’s scores across the four dimensions. This structure, in which outputs (summaries of CNN/DM articles), items (quality dimensions), and raters jointly contribute to observed scores, makes the dataset well-suited for analysis using MFRM. For many summaries there was only one set of rater’s ratings. However, due to the overlap between the raters scoring multiple summaries of the same article and from multiple raters evaluating the same summaries, there is sufficient linkage of raters and source documents to estimate the MFRM.
+
+[43] p: While a four-item scale is relatively short for IRT model estimation, this limitation is mitigated by two factors: polytomous items (with more than 2 score levels) provide more information per item than dichotomous items, and the model structure is not overly complex.
+
+[44] h4: 4.1.2 Interrater Agreement
+
+[45] p: Based on the n = 371 summary*policy combinations that had double ratings from at least two different human raters, the overall quadratic weighted kappa (QWK) and percent exact agreement was poor to moderate, depending on the dimension. QWK ranged from .31 to .50. Agreement was strongest for Factual accuracy , which had QWK=.50 (95% CI [.41, .58]). Exact agreement was relatively high at 68.5%, while discrepant ratings accounted for 22.6% of cases, with 77.4% of ratings falling within one score point and a low mean difference of 0.74. Coherence showed weaker agreement, with QWK=.31 (95% CI [.21, .40]). In contrast, Content coverage and Overall quality exhibited substantially lower exact agreement but had moderate QWKs; for Content coverage and Overall quality , QWKs were .48 (95% CI [.39, .56]) and .47 (95% CI [.38, .56]), respectively. These QWK estimates reflect low levels of agreement, however, it is an artifact of the ratings distributions being highly skewed. Figure 1 shows a panel of bar charts, one chart for each of the R R = 15 raters. Each chart plots the score distribution in percents, with dimensions shown side-by-side in different colors. From this plot, we observe that most raters use the lower end of the score scale sparingly–there is a tendency for raters to assign score of 7, especially for Factual accuracy and Coherence . This might reflect the true quality of the summaries, or it might reflect the raters’ inability to differentiate the score levels. Note that due to small sample size, we did not examine this per policy. However, there are identifiable differences in rater distributions. For example, Raters 04, 10, and 12 do not have the same skewed distribution.
+
+[46] figure: Figure 1: Within-rater score distributions by dimension. Bars show the percentage of ratings assigned to each score (1–7) for Factual accuracy , Coherence , Content coverage , and Overall quality , faceted by rater.
+
+[47] h3: 4.2 Research Questions
+
+[48] p: RQ1 : To what extent do individual raters exhibit systematic biases (e.g., severity, leniency, central tendency) as measured by many-facet Rasch measurement (MFRM) rater effect estimates?
+
+[49] p: RQ2 : How do conclusions about policy performance differ when using raw Likert ratings versus MFRM-adjusted scores that account for rater effects?
+
+[50] h3: 4.3 Methodology
+
+[51] p: For each policy, we fit two IRT models to the OpenAI summarization evaluation data: the partial credit model (PCM) Masters (2016) , and the MFRM as specified above. The PCM is an IRT model for polytomous items that excludes rater parameters but does vary the thresholds by item (does not assume each item has the same rating scale). 2 2 2 Since there are multiple ratings per summary and the scores must be discrete to fit the PCM, we used the rounded mean score across raters, per dimension, for estimation purposes. We included this model to provide a comparison between examining raw means, a traditional IRT model, and an IRT model incorporating rater parameters. This resulted in multiple sets of model estimates–latent traits which described the quality of the summarization, item parameters for each item ( Coherence , Content coverage , Factual accuracy , Overall quality ), and rater parameters for the MFRM (severity and centrality). Because policies can systematically differ in quality level, variance, and rating difficulty, we explored a version of the MFRM that includes policy as a facet but that was not estimable due to identification issues. While not discussed here for brevity, IRT models hold several assumptions which we explored and report in Appendix C.
+
+[52] h3: 4.4 Results
+
+[53] h4: 4.4.1 RQ 1: Analysis of Raters
+
+[54] p: The first research question asked to what extent the 15 raters exhibited rater effects. Figure 2 shows a panel of plots with the policy-based rater centrality estimates (y-axis) and rater severity estimates (x-axis). Each plot provides a rater’s estimates for all policies. Note that the axis limits vary across plots and the points are sized based on the sample size. There is notable variability in levels of centrality and severity across raters, and within raters, by policy.
+
+[55] p: Most raters have severity estimates near or around 0. However, there are some raters, including R02, R08, and R06, who consistently have negative estimates, indicating they are more lenient in their scoring relative to other raters. Raters with mostly positive estimates, including Raters R04, R10, and 12, tend to be relatively severe in their scoring behavior.
+
+[56] p: There were several raters with varying levels of centrality across policies. Many of these estimates were based on smaller samples which may indicate these are noisy estimates of the rater thresholds (and their standard deviations). Rater 10 had very large SDs for many policies, indicative of central tendency (scoring in the middle of the scale).
+
+[57] p: Without applying a formal rule, it is clear that Rater 10 should be examined more closely. Figure 3 plots these estimates on one figure for comparison across policies, which shows R10’s aberrance.
+
+[58] h4: 4.4.2 RQ 2: Raw vs. Adjusted Policy Rankings
+
+[59] p: To compare how the policies ranked after adjusting for rater effects, we plotted the mean ratings (across four items) per policy as a function of model size in Figure 4 (a) and plotted the mean latent trait estimates from the PCMs and MFRMS in (b) and (c). It is important to note that the scales are not comparable across panels. That is, we cannot examine differences in the trait estimates, but we can compare the relative rankings.
+
+[60] p: The plot in (a) confirms the same findings from Steinnon Stiennon et al. (2020) –the T5 model policy produced summaries with the highest average quality, falling in between the baseline reference summaries written by humans and Lead3 (first three sentences of source CNN/DM news articles). The Supervised CNN/DM
+
+[61] figure: Figure 2: Array of scatterplots showing MFRM severity (logits) versus centrality (SD of thresholds), by rater. Each panel shows a single rater; each point represents a policy scored by that rater. Solid lines indicate linear trends with 95% confidence bands.
+
+[62] figure: Figure 3: Average rater profiles across policies. Each point represents a rater’s mean MFRM severity (logits) and mean centrality (standard deviation of category thresholds) averaged over all policies scored. Point size reflects the number of policies rated; the solid line shows the linear association with 95% confidence band (Pearson r shown).
+
+[63] p: model ( supcnndm1_6b ) which was actually trained on CNN/DM reference summaries, was in second place. Following that was one of the human feedback models sup4_6b_ppo_rm4_6b .
+
+[64] p: In the PCM results shown in panel (b), one of the human feedback models sup4_6b_ppo_rm4_6b has outranked supcnndm1_6b and sits just below T5. Moving to panel (c) we observe a more drastic shift in rankings on the latent trait scale such that now, two human feedback models, sup4_6b_ppo_rm4_6b and sup4_ppo_rm4 , outperform all other models and the human-generated reference summaries. Following these two models are T5 and supcnndm1_6b .
+
+[65] p: Once rater severity and centrality are modeled in the MFRM, the human feedback model results showed highest overall summary quality. Other policies, for example pretrain_6b and pretrain_xl remained consistently low across all metrics, signaling evidence of weaker performance. The figure demonstrates that raw-score rankings misrepresent the relative standing of models. Some policies appear strong only because they were scored by lenient raters, while others appear weak due to unusually harsh or central raters.
+
+[66] p: Figure 5 shows the rater effects estimates by policy. When reviewing sup4_6b_ppo_rm4_6b it is clear that the raters who contributed to the latent trait estimates were scoring severely and with central tendency (R10). On the other hand, the group of pretrained models appearing in the top row of the panel in Figure 5 display points with severity estimates that are fairly spread about 0.
+
+[67] h2: 5 Conclusion
+
+[68] p: This short paper reports some empirical results from a larger line of inquiry focused on understanding how latent variable models can be leveraged in the human data annotation pipeline. From these results, we can see that human errors can impact AI evaluation. In practical terms, relying on raw means might lead us to select suboptimal systems and overlook policies that perform well once evaluated on a level playing field.
+
+[69] figure: Figure 4: Policy-level summary quality based on raw scores and IRT model estimates. Average quality estimates are plotted by model size and color coded by training method. Panel (a) shows mean human ratings across four items on the 7-point scale, while panel (b) shows the PCM estimates, and (c) shows corresponding MFRM quality estimates ( θ \theta , logits). Points represent model variants, grouped by model size. Dashed horizontal reference lines mark human-written summaries and the Lead-3 baseline. Note: While the value of the estimates are not directly comparable, the differences in rank ordering are meaningful.
+
+[70] figure: Figure 5: Rater severity and centrality by policy. Each panel shows one policy. Points represent individual raters. The line shows the overall trend for each policy.
+
+[71] p: This methodology may be used in different ways. One use case is to identify raters with large errors and use the information diagnostically to give feedback for rater remediation. Often in human annotation projects, only superficial tracking of raters may be used, such as basic inter-rater reliability metrics. These metrics are not highly actionable. Estimating various rater effects can assist scoring leaders in targeted training remediation efforts. The other use case is to use the IRT model estimates to make decisions about the model, not the raw ratings data.
+
+[72] p: We use the MFRM here because it is a relatively simple model that is widely used to quantify common rater effects—there are many alternative rater models that could be explored. It is important to note that IRT rater models make several assumptions which must be checked. Assumption checks indicated approximate unidimensionality and no evidence of problematic local dependence, though conclusions are limited by the short scale length. The results in this paper should be viewed as a proof-of-concept rather than a definitive measurement analysis. An analysis of a larger sample of ratings with more dimensions related to summary quality would be important to corroborate these findings. Importantly, a central takeaway for those incorporating IRT rater models into their pipelines is the importance of conducting meta-evaluations of the scales and rubrics used in both human and LLM-based evaluations to ensure alignment with—and adequate representation of—the intended construct. Casabianca (2025) .
+
+[73] h2: References
+
+[74] h2: Appendix A Policies from OpenAI Summarization Dataset
+
+[75] figure: Policy Name Description Training Method Model Size Temp. Dataset ref Reference summaries Human-written N/A N/A CNN/DM lead3 Lead-3 baseline Extractive (first 3 sentences) N/A N/A CNN/DM pretrain_xl Pretrained only Zero-shot ∼ \sim 3B 0 Pretrain pretrain_xl_t.7 Pretrained only Zero-shot ∼ \sim 3B 0.7 Pretrain pretrain_6b Pretrained only Zero-shot 6.7B 0 Pretrain pretrain_6b_t.7 Pretrained only Zero-shot 6.7B 0.7 Pretrain sup4 Supervised TL;DR Supervised learning 1.3B 0 TL;DR → \rightarrow CNN/DM sup4_t0.7 Supervised TL;DR Supervised learning 1.3B 0.7 TL;DR → \rightarrow CNN/DM supcnndm1_6b Supervised CNN/DM Supervised learning 6.7B 0 CNN/DM supcnndm3_6b Supervised CNN/DM v3 Supervised learning 6.7B 0 CNN/DM sup4_6b Supervised TL;DR Supervised learning 6.7B 0 TL;DR → \rightarrow CNN/DM supcnndm1_6b_t.3 Supervised CNN/DM Supervised learning 6.7B 0.3 CNN/DM supcnndm3_6b_t.3 Supervised CNN/DM v3 Supervised learning 6.7B 0.3 CNN/DM sup4_6b_t0.7 Supervised TL;DR Supervised learning 6.7B 0.7 TL;DR → \rightarrow CNN/DM t5 T5 model Supervised (encoder-decoder) 11B Beam CNN/DM sup4_ppo_rm4 Human feedback (RL) PPO with RM4 1.3B 0 TL;DR → \rightarrow CNN/DM sup4_ppo_rm4_t.7 Human feedback (RL) PPO with RM4 1.3B 0.7 TL;DR → \rightarrow CNN/DM sup4_6b_ppo_rm4_6b Human feedback (RL) PPO with RM4 6.7B 0 TL;DR → \rightarrow CNN/DM sup4_6b_ppo_rm4_6b_kl14 Human feedback (RL) PPO (KL=14) 6.7B 0 TL;DR → \rightarrow CNN/DM Table 1: Summary of policies evaluated on CNN/DM ( Stiennon et al. (2020) ). Key: sup = supervised learning, ppo = Proximal Policy Optimization (RL), rm = reward model, cnndm = CNN/DailyMail dataset, t.X = temperature parameter, kl = KL divergence penalty.
+
+[76] h2: Appendix B Instructions Given to Labelers for Evaluating Summaries
+
+[77] h3: B.1 Four axes of quality
+
+[78] h4: B.1.1 Coherence
+
+[79] p: For this axis, answer the question “how coherent is the summary on its own?” A summary is coherent if, when read by itself, it’s easy to understand and free of English errors. A summary is not coherent if it’s difficult to understand what the summary is trying to say. Generally, it’s more important that the summary is understandable than it being free of grammar errors.
+
+[80] p: Rubric:
+
+[81] p: Score of 1: The summary is impossible to understand.
+
+[82] p: Score of 4: The summary has mistakes or confusing phrasing that make it a bit hard to understand.
+
+[83] p: Score of 7: The summary is perfectly clear.
+
+[84] h4: B.1.2 Accuracy
+
+[85] p: For this axis, answer the question “does the factual information in the summary accurately match the post?” A summary is accurate if it doesn’t say things that aren’t in the article, it doesn’t mix up people, and generally is not misleading. If the summary says anything at all that is not mentioned in the post or contradicts something in the post, it should be given a maximum score of 5.
+
+[86] p: Rubric:
+
+[87] p: Score of 1: The summary is completely wrong, made up, or exactly contradicts what is written in the post.
+
+[88] p: Score of 4: The summary says at least one substantial thing that is not mentioned in the post, or that contradicts something in the post.
+
+[89] p: Score of 5: The summary says anything, no matter how small, that is not mentioned in the post, or that contradicts something in the post.
+
+[90] p: Score of 7: The summary has no incorrect statements or misleading implications.
+
+[91] h4: B.1.3 Coverage
+
+[92] p: For this axis, answer the question “how well does the summary cover the important information in the post?” A summary has good coverage if it mentions the main information from the post that’s important to understand the situation described in the post. A summary has poor coverage if someone reading only the summary would be missing several important pieces of information about the situation in the post. A summary with good coverage should also match the purpose of the original post (e.g. to ask for advice).
+
+[93] p: Rubric:
+
+[94] p: Score of 1: The summary contains no information relevant to the post.
+
+[95] p: Score of 4: The summary is missing at least 1 important piece of information required to understand the situation.
+
+[96] p: Score of 7: The summary covers all of the important information required to understand the situation.
+
+[97] h4: B.1.4 Overall quality
+
+[98] p: For this axis, answer the question “how good is the summary overall at representing the post?” This can encompass all of the above axes of quality, as well as others you feel are important. If it’s hard to find ways to make the summary better, give the summary a high score. If there are lots of different ways the summary can be made better, give the summary a low score.
+
+[99] p: Rubric:
+
+[100] p: Score of 1: The summary is terrible.
+
+[101] p: Score of 4: The summary is an okay representation of the post, but could be significantly improved.
+
+[102] p: Score of 7: The summary is an excellent representation of the post.
+
+[103] h2: Appendix C Checks of IRT Assumptions
+
+[104] p: IRT models assume approximate unidimensionality and local independence of item responses. To evaluate whether the four-item scale met core IRT assumptions, we examined unidimensionality and local independence using standard factor-analytic and residual diagnostics, recognizing the limitations imposed by a short four-item scale. Across 19 policies, assumption checks supported approximate unidimensionality and limited local dependence, with only one policy showing a notable item-pair dependence and no policies exhibiting systematic violations of IRT assumptions.
+
+[105] h3: C.1 Unidimensionality
+
+[106] p: Across the 19 policies, the four rating dimensions showed strong internal consistency ( α \alpha : mean = 0.85, median = 0.86, range = 0.77–0.92) and the one-factor CFA showed near-perfect incremental fit (CFI: mean = 0.9996; TLI: mean = 0.9988). Absolute fit indices were more variable (RMSEA: median = 0.047, max = 0.155; SRMR: median = 0.042, max = 0.118), which is expected with a very short scale (4 items; df = 2).
+
+[107] h3: C.2 Local Independence
+
+[108] p: Local independence checks were generally acceptable: the maximum CFA residual correlation was modest on average (median = 0.09) with a small number of policies exceeding 0.20, and Yen’s Q3 residual correlations were typically negative (mean ≈ − 0.21 \approx-0.21 ) with few notable positive residual associations (max positive Q3 up to 0.35 in an isolated condition). Overall, these diagnostics support treating the scale as approximately unidimensional with limited local dependence for proof-of-concept rater-model analyses, while recognizing that results are constrained by the short scale length.
+
+[109] h2: Instructions for reporting errors
+
+[110] p: We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the methods listed below:
+
+[111] p: Tip: You can select the relevant text first, to include it in your report.
+
+[112] p: Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability should not be a barrier to accessing research. Thank you for your continued support in championing open access for all.
+
+[113] p: Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .

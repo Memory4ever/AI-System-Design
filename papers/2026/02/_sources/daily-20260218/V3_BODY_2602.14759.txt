@@ -1,0 +1,398 @@
+INNER LOOP INFERENCE FOR PRETRAINED TRANSFORMERS: UNLOCKING LATENT CAPABILITIES WITHOUT TRAINING
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I Introduction
+II Methodology
+II-A Naive Looping
+II-B Regularized Looping
+Naive looping (special case)
+Uniform
+Moving average
+Auto-alignment
+III Experimental setup
+III-A Model
+III-B Datasets
+IV Experimental Results
+IV-A Assessing the naive looping method
+IV-B Layer Selection (ablation)
+IV-C Main Results
+IV-D Latent Trajectories Visualization
+V Conclusion
+VI Acknowledgements
+References
+License: CC BY 4.0
+arXiv:2602.14759v1 [cs.LG] 16 Feb 2026
+INNER LOOP INFERENCE FOR PRETRAINED TRANSFORMERS: UNLOCKING LATENT CAPABILITIES WITHOUT TRAINING
+Jonathan Lys, Vincent Gripon,
+Bastien Pasdeloup, Axel Marmoret
+Affiliation: IMT Atlantique, Lab-STICC,
+UMR CNRS 6285, Brest, France
+name.surname@imt-atlantique.fr
+Lukas Mauch, Fabien Cardinaux,
+Ghouthi Boukli Hacene
+Affiliation: Sony Europe Ltd.
+Stuttgart Technology Center, EUREC, Germany
+Name.Surname@sony.com
+Abstract
+Deep Learning architectures, and in particular Transformers, are conventionally viewed as a composition of layers. These layers are actually often obtained as the sum of two contributions: a residual path that copies the input and the output of a Transformer block.
+As a consequence, the inner representations (i.e. the input of these blocks) can be interpreted as iterative refinement of a propagated latent representation. Under this lens, many works suggest that the inner space is shared across layers, meaning that tokens can be decoded at early stages. Mechanistic interpretability even goes further by conjecturing that some layers act as refinement layers. Following this path, we propose inference-time inner looping , which prolongs refinement in pretrained off-the-shelf language models by repeatedly re-applying a selected block range.
+Across multiple benchmarks, inner looping yields modest but consistent accuracy improvements. Analyses of the resulting latent trajectories suggest more stable state evolution and continued semantic refinement. Overall, our results suggest that additional refinement can be obtained through simple test-time looping, extending computation in frozen pretrained models.
+Index Terms:
+Large Language Models, Transformers, Mechanistic Interpretability, Latent Computation, Inner-Looping
+I Introduction
+Modern language models are built on Transformer architectures [ vaswani_attention_2017 ] that process complex context to generate text. Central to this design are residual connections, which propagate hidden states throughout the network’s entire depth. Some authors suggest that these connections allow each layer to incrementally refine the representation of the predicted token [ lad2024the ] . From this perspective, next-token prediction can be viewed as a sequence of iterative context-conditioned state updates over a common state vector.
+This refinement view aligns with mechanistic interpretability [ 9 ] , where understanding model behavior relies on decomposing the incremental contributions of individual layers. Specifically, logit-lens readouts show that intermediate residual states already decode into meaningful “proto-predictions” that are typically sharpened rather than replaced later in the network [ nostalgebraist2020logitlens , 2 ] . Robustness studies further suggest that many layers can be removed or permuted with only limited accuracy degradation, pointing to redundancy in evidence accumulation and arguing against a brittle stage-by-stage pipeline [ lad2024the ] . At the circuit level, induction heads provide a concrete example of depth-wise state evolution: early layers write retrieval cues that later layers resolve, effectively unrolling a retrieval-and-copy computation over depth [ 8 ] .
+We summarize these observations as a logits refinement view of depth: depth primarily governs how many refinement steps are applied to a shared latent state.
+If depth acts as a number of refinement updates applied to a state transmitted across layers, a natural question follows: is it possible to add refinement steps at inference time, improving the model performance, without changing model parameters?
+We investigate this via inference-time inner looping : we repeatedly re-apply a chosen range of layers to the same hidden state, using a lightweight interpolation mechanism to stabilize the resulting trajectory. This enables the accumulation of additional refinement steps while keeping the latent state close to the model’s standard forward pass.
+This investigation parallels recent architectural approaches that explicitly reuse computation in latent space, often referred to as latent reasoning. For example, CoCoNut [ hao2025training ] replaces explicit chain-of-thought traces with continuous latent tokens that are re-injected into the context, treating the hidden state as a recurrent workspace during training. Huginn [ 5 ] similarly demonstrates that middle looping , the deliberate re-utilization of a subset of central layers, can approximate increased depth and improve reasoning capability without increasing parameter count. Related work further suggests that repeatedly reusing layer-level circuits induces a bias toward iterative computation and reasoning [ saunshi2025reasoning ] . In contrast, our focus is not on training new architectures or scaling strategies, but on using looping as a test-time probe of refinement dynamics in frozen pretrained models, uncovering an intrinsic hidden potential.
+We evaluate inner looping across multiple benchmarks and analyze the resulting latent trajectories. We find that adding regularized refinement steps yields modest but consistent accuracy improvements, and that the induced representation trajectories are indicative of continued semantic disambiguation and occasional self-correction. Those results are consistent with the logits refinement hypothesis.
+Contributions. This paper makes the following contributions:
+•
+We propose a simple framework for inference-time inner looping in off-the-shelf language models, extending computation by re-applying a selected block range.
+•
+We introduce representation interpolation as a lightweight regularization mechanism that keeps looped states close to their non-looped counterparts to reduce distribution shift.
+•
+We provide empirical evidence across multiple benchmarks that inner looping yields modest but consistent accuracy gains in frozen pretrained models.
+II Methodology
+II-A Naive Looping
+We first establish a formal framework for looping. We define standard Transformer notations and introduce our modification: a mechanism to decouple layer execution from network depth. A Transformer consists of an embedding layer E E that maps a sequence of token indices to initial hidden states:
+h 0 = ( E ⁡ [ x 1 ] , … , E ⁡ [ x T ] ) , E ∈ ℝ | V | × d . h_{0}=\big(E[x_{1}],\dots,E[x_{T}]\big)\;,\quad E\in\mathbb{R}^{|V|\times d}\;.
+(1)
+A fixed set of Transformer blocks is then applied:
+h ℓ = ℬ ℓ ( h ℓ − 1 ) , ℓ = 1 , … , L , h_{\ell}=\mathcal{B}_{\ell}(h_{\ell-1})\;,\quad\ell=1,\dots,L\;,
+(2)
+where each block ℬ ℓ \mathcal{B}_{\ell} consists of multi-head self-attention (MSA) and a feed-forward network (FFN), combined with residual connections and layer normalization (LN):
+z = h ℓ − 1 + MSA ℓ ​ ( LN ⁡ ( h ℓ − 1 ) ) , z=h_{\ell-1}+\mathrm{MSA}_{\ell}\!\big(\mathrm{LN}(h_{\ell-1})\big)\;,
+(3)
+h ℓ = z + FFN ℓ ​ ( LN ⁡ ( z ) ) . h_{\ell}=z+\mathrm{FFN}_{\ell}\!\big(\mathrm{LN}(z)\big)\;.
+(4)
+In the case of Gemma, additional post-normalization layers are applied. At the end of the network, a final normalization layer and an unembedding matrix map the hidden states to token probabilities.
+Inner looping decouples the hidden-state index from the block index, allowing selected blocks to be applied multiple times. We introduce a step index k ∈ { 0 , … , K − 1 } k\in\{0,\dots,K-1\} for hidden states, with K > L K>L , and a block mapping π : { 0 , … , K − 1 } → { 0 , … , L − 1 } \pi:\{0,\dots,K-1\}\to\{0,\dots,L-1\} specifying which block is applied at each step.
+We adopt the middle-looping scheme of [ saunshi2025reasoning , 5 ] , defined by three parameters:
+•
+s s : index of the first block in the loop,
+•
+e e : index of the block following the loop,
+•
+R R : number of repetitions.
+Blocks before s s are applied once, blocks in { s , s + 1 , … , e − 1 } \{s,s+1,\dots,e-1\} are repeated R R times, and blocks after e e are applied once. Let N = e − s N=e-s denote the loop length and K = L + ( R − 1 ) ​ N K=L+(R-1)N the total number of block applications. The corresponding mapping π : { 1 , … , K } → { 1 , … , L } \pi:\{1,\dots,K\}\to\{1,\dots,L\} is:
+π ⁡ ( k ) = { k k < s s + ( k − s ) mod N s ≤ k < s + R ​ N k − ( R − 1 ) ​ N k ≥ s + R ​ N . \pi(k)=\begin{cases}k&k<s\\
+s+(k-s)\bmod N&s\leq k<s+RN\\
+k-(R-1)N&k\geq s+RN\end{cases}\;.
+(5)
+However, simply repeating blocks alters both the effective depth and the scale of the latent state. We hypothesize that this naive application induces a distribution shift, pushing activations away from the manifold encountered during standard inference. In Section IV-A , we empirically test this hypothesis and show that uncontrolled looping indeed leads to systematic degradation consistent with such a shift.
+II-B Regularized Looping
+To address this potential mismatch, we introduce regularized looping . This approach explicitly interpolates the looped hidden states with a baseline (non-looped) reference, ensuring that the intermediate representations remain grounded within the model’s valid activation distribution.
+To simplify notation, we describe the update at the loop boundary and omit depth indices in this subsection. Let h ( 0 ) h^{(0)} denote the baseline hidden state at the loop boundary obtained from a standard forward pass. Let F F denote one loop application ( e.g. , applying the middle block range once). At loop step t ≥ 1 t\geq 1 , we first compute an unregularized loop output:
+h ( t ) = F ⁡ ( h ^ ( t − 1 ) ) , h^{(t)}=F\!\left(\hat{h}^{(t-1)}\right)\;,
+(6)
+and then form a regularized state h ^ ( t ) \hat{h}^{(t)} from a cache of past loop states { h ( i ) } i = 0 t \{h^{(i)}\}_{i=0}^{t} :
+h ^ ( t ) = ∑ i = 0 t α i ​ h ( i ) , subject to ​ ∑ i = 0 t α i = 1 . \hat{h}^{(t)}=\sum_{i=0}^{t}\alpha_{i}\,h^{(i)}\;,\text{ subject to }\sum_{i=0}^{t}\alpha_{i}=1\;.
+(7)
+The interpolation methods differ in their weighting coefficients α i \alpha_{i} . Each strategy encodes a different prior over the cached states.
+Naive looping (special case)
+Naive looping omits the caching mechanism, i.e. , α t = 1 \alpha_{t}=1 and α i < t = 0 \alpha_{i<t}=0 . In this case, h ^ ( t ) = h ( t ) \hat{h}^{(t)}=h^{(t)} and the recursion reduces to:
+h ( t ) = F ( h ( t − 1 ) ) , t = 1 , … , R . h^{(t)}=F\!\left(h^{(t-1)}\right)\;,\qquad t=1,\dots,R\;.
+(8)
+Uniform
+Average all cached states:
+h ^ ( t ) = 1 t + 1 ​ ∑ i = 0 t h ( i ) . \hat{h}^{(t)}=\frac{1}{t+1}\sum_{i=0}^{t}h^{(i)}\;.
+(9)
+Moving average
+Interpolate the current loop output with the baseline value:
+h ^ ( t ) = η ⋅ h ( 0 ) + ( 1 − η ) ⋅ h ( t ) . \hat{h}^{(t)}=\eta\cdot h^{(0)}+(1-\eta)\cdot h^{(t)}\;.
+(10)
+Auto-alignment
+We compute a score vector by aligning each cached state with the baseline state, and apply a softmax over these scores:
+s ( t ) = [ ⟨ h ( 0 ) , h ( 0 ) ⟩ , … , ⟨ h ( 0 ) , h ( t ) ⟩ ] ∈ ℝ t + 1 , s^{(t)}=\Big[\langle h^{(0)},h^{(0)}\rangle,\dots,\langle h^{(0)},h^{(t)}\rangle\Big]\in\mathbb{R}^{t+1}\;,
+(11)
+α ( t ) = softmax ⁡ ( s ( t ) ) ∈ ℝ t + 1 , h ^ ( t ) = ∑ i = 0 t α i ( t ) ​ h ( i ) . \alpha^{(t)}=\mathrm{softmax}\!\left(s^{(t)}\right)\in\mathbb{R}^{t+1}\;,\quad\hat{h}^{(t)}=\sum_{i=0}^{t}\alpha^{(t)}_{i}\,h^{(i)}\;.
+(12)
+III Experimental setup
+III-A Model
+In our experiments, we evaluate inner looping on two pretrained model families: Gemma 2 (2B and 9B) [ 10 ] and Llama 3–8B [ 6 ] . These models primarily differ in their normalization schemes, enabling us to examine how architectural design influences the stability of iterative inference.
+Although the looping algorithm itself is generic, its empirical behavior could strongly depend on the underlying Transformer architecture. When inference is treated as an iterative dynamical process, seemingly minor design choices, such as normalization placement, can substantially affect stability under repeated residual updates.
+The original Transformer [ vaswani_attention_2017 ] used post-layer normalization, a design also adopted in iterative architectures such as the Universal Transformer [ dehghani2018universal ] . More recent hybrid schemes ( e.g. , “sandwich” normalization [ 5 ] ) further target stability under repeated computation. In contrast, most modern LLMs rely on pre-layer normalization, which improves optimization during training but is known to be less stable when blocks are repeatedly applied, particularly in implicit regimes [ 1 ] .
+Gemma 2 integrates both pre- and post-normalization within each block, offering partial structural support for iterative refinement. Llama 3–8B, by comparison, follows a standard pre-norm design. This contrast allows us to assess whether inference-time regularization can mitigate the instability typically associated with pre-norm architectures, and more generally, whether inner looping extends beyond models that implicitly favor iterative computation.
+III-B Datasets
+We provide an overview of the evaluation datasets used to assess the performance of our method. Most benchmarks are multiple-choice, with a single correct answer. For each trial, the model computes the cumulative probability of every option, the prediction is counted as correct if the true answer achieves the highest length-normalized likelihood.
+Some benchmarks use targeted examples, or shots , to provide context for the questions, with the number of shots varying from 0 to 25. Collectively, these datasets evaluate both the models’ reasoning capabilities and their internal knowledge. We provide a short description of each dataset:
+•
+WinoGrande [ winogrande2021 ] : A dataset designed to test commonsense reasoning via pronoun resolution. Each sample consists of a sentence with an ambiguous pronoun, requiring models to resolve the correct referent based on context.
+•
+ARC (AI2 Reasoning Challenge) – Easy and Challenge [ 3 ] : The ARC dataset presents grade-school science questions with multiple-choice answers, separated into “Easy” and “Challenge” subsets.
+•
+GSM8K [ 4 ] : A generative benchmark for grade-school math word problems. Each problem requires multi-step quantitative reasoning and arithmetic.
+•
+HellaSwag [ 11 ] : A commonsense inference benchmark consisting of multiple-choice questions. Each instance is a context followed by four possible sentence continuations, with the task of selecting the most plausible ending.
+•
+MMLU (Massive Multitask Language Understanding) [ 7 ] : A comprehensive benchmark covering 57 tasks across subjects such as mathematics, history, science, law, medicine, and more.
+To ensure reproducibility, we rely on the lighteval library [ lighteval ] , which is built upon the HELM framework [ liang2023holistic ] . Code to reproduce experiments can be found on GitHub 1 1
+1
+github.com/jonathanlys01/looped-transformer .
+IV Experimental Results
+Fig. 1: Heatmap of the accuracy difference relative to the baseline ( 0.6875 0.6875 ) across start–end layer configurations under uniform interpolation.
+TABLE I: Accuracy of the three regularized looping methods and the noise ablation across all benchmarks.
+Best results are shown in bold . Underlined values match or exceed the corresponding baseline.
+Benchmark (shots)
+Model
+Size
+Baseline
+Uniform
+Moving Average
+Auto-Align
+Noise
+WinoGrande (5)
+Gemma
+2B
+68.75 ± 1.30
+69.53 ± 1.29
+69.06 ± 1.30
+68.98 ± 1.30
+68.51 ± 1.31
+9B
+77.35 ± 1.18
+77.43 ± 1.17
+77.35 ± 1.18
+77.35 ± 1.18
+77.35 ± 1.18
+Llama
+8B
+76.16 ± 1.20
+76.64 ± 1.19
+76.40 ± 1.19
+76.09 ± 1.20
+75.93 ± 1.20
+Arc E (0)
+Gemma
+2B
+80.30 ± 0.82
+80.01 ± 0.82
+80.18 ± 0.82
+80.22 ± 0.82
+79.84 ± 0.82
+9B
+87.84 ± 0.67
+87.84 ± 0.67
+87.88 ± 0.67
+87.84 ± 0.67
+87.84 ± 0.67
+Llama
+8B
+77.69 ± 0.85
+77.31 ± 0.86
+77.40 ± 0.86
+77.61 ± 0.86
+77.57 ± 0.86
+Arc C (25)
+Gemma
+2B
+52.82 ± 1.46
+53.41 ± 1.46
+52.90 ± 1.46
+52.99 ± 1.46
+52.65 ± 1.46
+9B
+67.75 ± 1.37
+68.09 ± 1.36
+68.09 ± 1.36
+67.58 ± 1.37
+67.49 ± 1.37
+Llama
+8B
+59.73 ± 1.43
+59.64 ± 1.43
+59.73 ± 1.43
+60.07 ± 1.43
+59.64 ± 1.43
+GSM8K (5)
+Gemma
+2B
+25.02 ± 1.19
+26.00 ± 1.21
+26.38 ± 1.21
+26.08 ± 1.21
+24.79 ± 1.19
+9B
+68.46 ± 1.28
+68.52 ± 1.27
+68.39 ± 1.28
+68.31 ± 1.28
+68.33 ± 1.28
+HellaSwag (10)
+Gemma
+2B
+74.51 ± 0.43
+74.70 ± 0.43
+74.64 ± 0.43
+74.60 ± 0.43
+74.50 ± 0.43
+9B
+82.41 ± 0.38
+82.53 ± 0.38
+82.42 ± 0.38
+82.42 ± 0.38
+82.42 ± 0.38
+Llama
+8B
+82.14 ± 0.38
+82.30 ± 0.38
+82.31 ± 0.38
+82.31 ± 0.38
+82.14 ± 0.38
+MMLU (5)
+Gemma
+2B
+53.93 ± 3.57
+54.49 ± 3.58
+54.35 ± 3.57
+54.13 ± 3.57
+53.97 ± 3.58
+9B
+72.17 ± 3.11
+72.42 ± 3.10
+72.23 ± 3.11
+72.18 ± 3.11
+72.20 ± 3.11
+Llama
+8B
+34.50 ± 3.47
+33.95 ± 3.45
+33.99 ± 3.45
+34.06 ± 3.45
+33.74 ± 3.45
+We explicitly validate the inner looping framework in three stages. First, we confirm the instability of naive looping to justify our regularization approach. We then identify optimal layer configurations and evaluate the method across reasoning benchmarks and analyze the resulting latent trajectories.
+IV-A Assessing the naive looping method
+We apply the naive looping strategy to the Gemma2-2B model on the WinoGrande benchmark, using a loop count of 3 3 and sweeping over all start-end layer pairs. All looped configurations perform worse than the baseline accuracy, with some settings collapsing to near-chance performance. The full sweep results, including the corresponding heatmap over start–end configurations, are provided in the accompanying GitHub repository. We interpret this systematic degradation as evidence of a distribution shift: looping exposes layers to activation statistics that differ from those encountered during standard forward inference, for which the model was optimized. This mismatch appears sufficient to destabilize prediction quality. These observations motivate the regularization strategies introduced in Section II-B .
+IV-B Layer Selection (ablation)
+We next rely on the uniform regularization strategy to select the loop start–end layers. For each model, we sweep all candidate layer intervals on WinoGrande. In the case of Gemma 2-2B, the best configuration corresponds to looping layers 10–13 (see Figure 1 ).
+For other models, the selected intervals consistently fall within comparable relative depths, roughly 40–60% of the network, matching the stage-wise inference dynamics reported in [ lad2024the ] . For subsequent benchmarks, we keep these model-specific loop regions fixed instead of re-optimizing them per task.
+IV-C Main Results
+In Table I , we evaluate the regularized looping variants across multiple benchmarks, using for each model the loop configuration selected on WinoGrande. We report in columns ”Uniform”, ”Moving Average” and ”Auto-Align” all strategies introduced in Section II-B .
+Additionally, as a control, we replace the loop-induced signal with matched-magnitude random noise. This method is reported as ”Noise”.
+For both Gemma models, inner looping improves performance on most reasoning benchmarks. The only exception is Gemma-2B on ARC Easy, evaluated in a zero-shot setting. Among the proposed regularizers, Uniform is the most stable and generally provides the largest gains. Taken together, these results suggest that Gemma models can benefit from additional, regularized refinement steps applied purely at inference time.
+In contrast, Llama-3-8B shows a more variable response across tasks, indicating greater sensitivity to repeated iteration in this pre-norm architecture.
+Finally, the noise ablation consistently underperforms the structured looping variants and frequently drops below the baseline. This supports the view that the observed improvements stem from coherent refinement dynamics rather than from perturbations of similar magnitude alone.
+IV-D Latent Trajectories Visualization
+Figure 2 visualizes hidden-state trajectories for the same input with and without looping, using a 2D PCA projection of the latent states for a randomly selected sample. During the looped segment, we observe a small deviation from the non-looped trajectory, indicating that additional iterations shift the representation away from its baseline path. This deviation then propagates through subsequent layers, yielding a slightly different output representation.
+Notably, the overall trajectory structure remains similar between the two runs, suggesting that looping typically induces a small perturbation rather than a qualitatively different computation. A plausible interpretation is that such small shifts can be sufficient to change the final outcome by altering relative logit margins, which is consistent with the modest but consistent accuracy gains observed in Table I .
+Fig. 2: PCA projection of latent activation trajectories across model depth.
+V Conclusion
+In this work, we investigated whether the refinement dynamics suggested by mechanistic analyses of Transformers can be extended at inference time in frozen pretrained models. We showed that naive inner looping is unstable, but that simple regularizers enable additional refinement steps without training. Across multiple benchmarks, this yields modest but consistent accuracy gains for Gemma models, while Llama 3–8B responds less reliably, due to architectural differences. Latent-trajectory visualizations are consistent with small, structured representation shifts that propagate to the output and occasionally align with self-correction. Overall, inference-time inner looping offers a lightweight way to expose depth-limited latent computation in off-the-shelf Transformers, further confirming the logits refinement hypothesis.
+VI Acknowledgements
+This research has been funded, in part, by the French National Research Agency under project ANR-24-CE23-7365. With a view to its publication in open access, the author has applied for an open access CC-BY licence for any manuscript accepted for publication resulting from this submission. This work was granted access to the HPC resources of IDRIS under the allocation 2024-AD011015938 made by GENCI.
+References
+[1]
+S. Bai, V. Koltun, and Z. Kolter (2021)
+Stabilizing equilibrium models by jacobian regularization .
+In International Conference on Machine Learning ,
+pp. 554–565 .
+Cited by: §III-A .
+[2]
+N. Belrose, Z. Furman, L. Smith, D. Halawi, I. Ostrovsky, L. McKinney, S. Biderman, and J. Steinhardt (2023)
+Eliciting latent predictions from transformers with the tuned lens .
+arXiv preprint arXiv:2303.08112 .
+Cited by: §I .
+[3]
+P. Clark et al. (2018)
+Think you have solved question answering? try arc, the ai2 reasoning challenge .
+arXiv:1803.05457v1 .
+Cited by: 2nd item .
+[4]
+K. Cobbe et al. (2021)
+Training verifiers to solve math word problems .
+arXiv preprint arXiv:2110.14168 .
+Cited by: 3rd item .
+[5]
+J. Geiping, S. McLeish, N. Jain, J. Kirchenbauer, S. Singh, B. R. Bartoldson, B. Kailkhura, A. Bhatele, and T. Goldstein (2025)
+Scaling up test-time compute with latent reasoning: a recurrent depth approach .
+arXiv preprint arXiv:2502.05171 .
+Cited by: §I ,
+§II-A ,
+§III-A .
+[6]
+A. Grattafiori et al. (2024)
+The llama 3 herd of models .
+arXiv preprint arXiv:2407.21783 .
+Cited by: §III-A .
+[7]
+D. Hendrycks et al. (2021)
+Measuring massive multitask language understanding .
+In International Conference on Learning Representations ,
+Cited by: 5th item .
+[8]
+C. Olsson, N. Elhage, N. Nanda, N. Joseph, N. DasSarma, T. Henighan, B. Mann, A. Askell, Y. Bai, A. Chen, et al. (2022)
+In-context learning and induction heads .
+arXiv preprint arXiv:2209.11895 .
+Cited by: §I .
+[9]
+N. Saphra and S. Wiegreffe (2024)
+Mechanistic? .
+arXiv preprint arXiv:2410.09087 .
+Cited by: §I .
+[10]
+G. Team et al. (2024)
+Gemma 2: improving open language models at a practical size .
+arXiv preprint arXiv:2408.00118 .
+Cited by: §III-A .
+[11]
+R. Zellers, A. Holtzman, Y. Bisk, A. Farhadi, and Y. Choi (2019)
+HellaSwag: can a machine really finish your sentence? .
+In Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics ,
+Cited by: 4th item .
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

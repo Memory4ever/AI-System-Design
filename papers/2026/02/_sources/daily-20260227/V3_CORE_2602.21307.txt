@@ -1,0 +1,3834 @@
+SymTorch: A Framework for Symbolic Distillation of Deep Neural Networks
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Background & Related Work
+2.1
+Analysis of Model Internals
+2.2
+Interpreting Whole Model Behavior
+Supralocal Interpretable Model-Agnostic Explanations
+2.3
+Symbolic Interpretability
+2.4
+Symbolic Regression with PySR
+Problem Formulation
+Choosing the Best Equation
+3
+Methods
+3.1
+Distilling Neural Networks with SymTorch
+Switching to Symbolic Approximations
+Saving and Caching
+3.2
+SLIME Implementation
+4
+Case Studies and Performance
+4.1
+Symbolic Surrogates of Transformer MLPs
+Framework
+Setup
+PCA Sensitivity Analysis
+Symbolic Surrogate Model
+Inference Speed Benchmarking
+4.2
+Discovering Empirical Physical Laws from Symbolic Distillation of Models with Inductive Biases
+Model Architecture
+Setup
+Edge Messages as Forces
+Model Variants
+Symbolic Distillation with SymTorch
+4.3
+Wrapping Whole Models
+4.3.1
+Extracting PDE Solutions from a PINN
+4.3.2
+Interpreting LLM-Learned Operations
+Setup
+Results
+5
+Discussion
+5.1
+Limitations & Future Work
+Computation:
+Highly Complex Functions:
+Complexity Measures & SR Hyperparameters:
+Symbolic Surrogates of Transformer MLPs:
+References
+A
+Appendix A
+B
+Symbolic Regression with PySR Detail
+B.1
+Algorithm Overview
+C
+SymTorch Extra Details
+C.1
+Default PySR Parameters
+C.2
+Saving SR Results and Symbolic Models
+D
+Symbolic Surrogates of Transformer MLPs Details
+D.1
+Setup
+Dataset
+Training the PCA
+Training the Symbolic Models
+Results and Benchmarking
+SR Wall Clock Time
+E
+Discovering Empirical Physics Laws from Symbolic Distillation of Models with Inductive Biases Details
+E.1
+Derivation: Edge Messages as Linear Transformations of the True Forces
+E.2
+Model Variants
+E.3
+Setup and Training
+Dataset
+Model Configuration
+Data Augmentation
+Predictions and Loss
+Training
+E.4
+Symbolic distillation with SymTorch
+Variable transforms
+SR parameters
+E.5
+Results
+Examples of successful reconstructions
+Limitations of the framework
+SR Wall Clock Time
+F
+Extracting PDE Solutions from a PINN Details
+F.1
+Theory
+PINN architecture
+F.2
+Methods
+Dataset
+Model and training
+Symbolic distillation
+F.3
+Results
+Extracting the true solution
+SR Wall Clock Time
+G
+Interpreting LLM-Learned Operations Details
+G.1
+Setup
+SR Wall-Clock Time
+License: CC BY 4.0
+arXiv:2602.21307v1 [cs.LG] 24 Feb 2026
+SymTorch: A Framework for Symbolic
+Distillation
+of Deep Neural Networks
+Elizabeth S.Z. Tan
+Affiliation:
+Department of Applied Mathematics and Theoretical Physics, University of Cambridge, United Kingdom
+Correspondence to:
+eszt2@cam.ac.uk
+Adil Soubki
+Affiliation:
+Department of Applied Mathematics and Theoretical Physics, University of Cambridge, United Kingdom
+Correspondence to:
+as3591@cam.ac.uk
+Miles Cranmer
+Affiliation:
+Department of Applied Mathematics and Theoretical Physics, University of Cambridge, United Kingdom
+Correspondence to:
+mc2473@cam.ac.uk
+Abstract
+Symbolic distillation replaces neural networks, or components thereof, with interpretable, closed-form mathematical expressions.
+This approach has shown promise in discovering physical laws and mathematical relationships directly from trained deep learning models, yet adoption remains limited due to the engineering barrier of integrating symbolic regression into deep learning workflows. We introduce SymTorch, a library that automates this distillation by wrapping neural network components, collecting their input-output behavior, and approximating them with human-readable equations via PySR. SymTorch handles the engineering challenges that have hindered adoption: GPU-CPU data transfer, input-output caching, model serialization, and seamless switching between neural and symbolic forward passes. We demonstrate SymTorch across diverse architectures including GNNs, PINNs and transformer models. Finally, we present a proof-of-concept for accelerating LLM inference by replacing MLP layers with symbolic surrogates, achieving an 8.3% throughput improvement with moderate performance degradation.
+Keywords:
+Machine Learning, ICML
+Figure 1
+:
+A cartoon depicting how SymTorch is used to perform symbolic distillation on model components. For a trained PyTorch model, SymTorch wraps around any NN component in the model. The user passes in sample data and in the forward pass, the inputs and outputs (I/O) of the component are collected. Using PySR, SymTorch performs a SR on the I/O to produce the best expressions approximating the behavior of the NN at different levels of complexity. Optionally, the user can select an equation from the Pareto front and replace the component with this chosen equation in the forward pass producing a hybrid neural-symbolic model.
+1
+Introduction
+Deep learning models excel at analyzing large datasets, but remain largely uninterpretable. This has spurred extensive research into explainable AI.
+In the sciences, deep models are increasingly used for physical simulation
+(
+McCabe et al., 2025
+;
+Ohana et al., 2025
+;
+McCabe et al., 2024
+;
+Taira et al., 2025
+;
+Koblischke et al., 2025
+)
+, where interpretability is particularly critical: the highly parameterized nature of deep networks makes it difficult to extract what physical laws the model has learned, and thus their ability to advance scientific understanding is fundamentally limited.
+One promising direction is mechanistic interpretability, which focuses on identifying circuits
+(
+Elhage et al., 2021
+;
+Marks et al., 2025
+;
+Dunefsky et al., 2024
+)
+, neurons, and activation dimensions
+(
+Heimersheim & Nanda, 2024
+;
+Makelov et al., 2023
+)
+within specific model architectures. These methods enable researchers to identify
+which
+components matter for specific behaviors. SymTorch addresses a complementary question:
+what function
+does a component compute? In doing so, we provide a more holistic approach to model interpretability.
+In physics, interpretability means using concise equations that reliably explain phenomena
+(
+Kutz & Brunton, 2022
+)
+. These equations are written in the language of mathematical operators and variables whose physical effects are understood. Newton’s laws exemplify this:
+F
+=
+m
+​
+a
+F=ma
+is accurate in idealized settings yet deliberately inexact. Adding terms for drag or relativistic effects would sacrifice interpretability for minimal accuracy gains.
+Inspired by this physics-centric view of interpretability, SymTorch brings a symbolic perspective to Neural Network (NN) analysis
+1
+1
+1
+pip install torch-symbolic
+.
+We use Symbolic Regression (SR) to distill NN components into human-readable mathematical formulas. Symbolic distillation provides architecture-agnostic interpretability by approximating component behavior with closed-form expressions. This enables direct inspection of input-output mappings and analysis of how input variations affect outputs, including in out-of-distribution settings.
+The user can further optionally replace these components with the symbolic expression in the forward pass. A practical consequence of this is potential inference speedup, as simple equations can be faster to evaluate than dense matrix operations. We explore this direction by presenting a framework to accelerate LLM inference through replacing Multi-Layer Perceptron (MLP) with symbolic surrogates.
+SymTorch is built on PyTorch and automates the process of applying SR to arbitrary model components. It interfaces with PySR
+(
+Cranmer, 2023
+)
+, which uses genetic algorithms to search the space of symbolic expressions. SymTorch lowers the barrier to applying SR to deep learning models by automating GPU–CPU data movement, caching model inputs and outputs, supporting native PyTorch model serialization, and allowing seamless transitions between the neural components and allowing seamless switching between neural components and symbolic surrogates during forward passes.
+Our work makes three main contributions:
+•
+SymTorch Library:
+We release an open-source PyTorch library that automates symbolic distillation of NN components. SymTorch handles the engineering challenges of GPU-CPU data transfer, activation caching, forward hook management, and hybrid neural-symbolic model serialization. Comprehensive documentation accompanies the package, including usage examples for all features and Jupyter notebooks that reproduce the case studies in this paper
+2
+2
+2
+Documentation:
+https://symtorch.readthedocs.io/en/latest/
+.
+.
+•
+Comprehensive Case Studies:
+To demonstrate SymTorch’s capabilities, we present case studies across diverse architectures: (i) extracting empirical force laws from Graph Neural Networks (GNNs) trained on particle dynamics, (ii) recovering PDE solutions from Physics-Informed Neural Networks (PINNs), (iii) analyzing LLM-learned arithmetic operations.
+•
+SymTorch-enabled Exploratory LLM Speedup Framework:
+We introduce a proof-of-concept approach to accelerate transformer inference by replacing MLP layers with symbolic surrogates, achieving measurable speedups with quantified accuracy tradeoffs.
+By lowering the barrier to symbolic distillation, SymTorch enables researchers to apply this interpretability technique without reimplementing the underlying infrastructure.
+2
+Background & Related Work
+2.1
+Analysis of Model Internals
+Mechanistic interpretability research focuses on causal intervention, activation analysis, and circuit discovery. TransformerLens
+(
+Nanda & Bloom, 2022
+)
+provides interfaces for inspecting transformer internals, while NNSight
+(
+Fiotto-Kaufman et al., 2025
+)
+offers general-purpose NN interpretability through deferred execution. These approaches primarily provide structural and causal insights into model behavior. In contrast, by fitting symbolic expressions directly to component input–output mappings, SymTorch focuses on recovering explicit functional forms.
+2.2
+Interpreting Whole Model Behavior
+LIME and SHAP are common model-agnostic methods of explaining whole-model behavior. SHAP
+(
+Lundberg & Lee, 2017
+)
+assigns importance scores to inputs, whereas LIME
+(
+Ribeiro et al., 2016
+)
+fits a local linear approximation to the model by perturbing the model inputs around a point of interest.
+Supralocal Interpretable Model-Agnostic Explanations
+Fong & Motani (2025)
+introduce Supralocal Interpretable Model-Agnostic Explanations (SLIME), a method similar to LIME. Rather than approximating local model behavior with linear models, SLIME employs symbolic surrogate models, enabling the capture of non-linear relationships. SLIME further augments the surrogate model training set with points sampled from the true data distribution, as opposed to only training on randomly perturbed samples as in LIME. SymTorch provides a native implementation of this approach for out-of-the-box use with black-box models.
+2.3
+Symbolic Interpretability
+Symbolic distillation as an interpretability tool remains underexplored despite promising results.
+Vafa et al. (2025)
+showed that transformers trained on planetary dynamics, although accurate in their predictions, fail to recover Newton’s law of gravitation. Instead they exhibit sample-specific “implied” force laws, as revealed through SR of model predictions. In contrast,
+Cranmer et al. (2020)
+showed that deep networks with appropriate inductive biases, trained on empirical
+N
+N
+-body data, learn physically meaningful pairwise interaction forces. These forces can be recovered by fitting a symbolic expression to the input–output mappings of model component. This procedure not only recovers known force laws but also led to the discovery of a previously unknown empirical law in astronomical data. We reproduce and extend this work in
+Section
+4.2
+, demonstrating that SymTorch greatly simplifies such analyses.
+2.4
+Symbolic Regression with PySR
+SymTorch extends PySR for deep learning applications. PySR performs multi-population evolutionary search over analytic expressions through mutation, crossover, simplification, and constant optimization. The algorithm maintains a Pareto front of expressions that best fit the data at different complexities.
+Problem Formulation
+For some metric
+ℒ
+:
+ℝ
+N
+×
+ℝ
+N
+→
+ℝ
+\mathcal{L}:\mathbb{R}^{N}\times\mathbb{R}^{N}\rightarrow\mathbb{R}
+, inputs
+𝐱
+i
+=
+(
+x
+1
+,
+i
+,
+⋯
+,
+x
+d
+,
+i
+)
+∈
+𝒳
+⊆
+ℝ
+d
+\mathbf{x}_{i}=(x_{1,i},\cdots,x_{d,i})\in\mathcal{X}\subseteq\mathbb{R}^{d}
+and target variables
+y
+i
+⊂
+𝒴
+∈
+ℝ
+y_{i}\subset\mathcal{Y}\in\mathbb{R}
+for
+i
+=
+1
+,
+⋯
+N
+i=1,\cdots N
+, SR aims to find
+g
+g
+g
+=
+arg
+⁡
+min
+⁡
+∑
+i
+N
+g
+∈
+𝒮
+⁡
+ℒ
+⁡
+(
+y
+i
+,
+g
+⁡
+(
+𝐱
+i
+)
+)
+,
+g=\arg\min_{g\in\mathcal{S}}\sum^{N}_{i}\mathcal{L}(y_{i},g(\mathbf{x}_{i})),
+(1)
+where
+S
+S
+is the set of closed-form analytic expressions. Metric
+ℒ
+\mathcal{L}
+is the data-fitting loss (eg. mean-squared error) that often times contains a penalty on the complexity of
+g
+g
+. In PySR, complexity is measured as the number of nodes when
+g
+g
+is written out as an expression tree.
+Choosing the Best Equation
+PySR selects the best equation by maximizing the fractional drop in log mean absolute
+error relative to an increase in model complexity. Specifically, it chooses expression
+j
+j
+along on the Pareto front that maximizes the score given by
+score
+j
+=
+−
+log
+⁡
+(
+loss
+j
+/
+loss
+j
+−
+1
+)
+complexity
+j
+−
+complexity
+j
+−
+1
+.
+\text{score}_{j}=-\frac{\log(\text{loss}_{j}/\text{loss}_{j-1})}{\text{complexity}_{j}-\text{complexity}_{j-1}}.
+(2)
+3
+Methods
+In this section, we describe how SymTorch wraps NN components, collects input–output activations, performs SR, and replaces model blocks with symbolic surrogates. We further explain SymTorch’s built-in SLIME implementation for explaining local model behavior using analytical equations.
+3.1
+Distilling Neural Networks with SymTorch
+SymbolicModel
+is the entry point for all SymTorch functionality. Inheriting from PyTorch’s
+nn.Module
+, it can wrap around both PyTorch NNs and callable functions, provided these functions form a mapping
+f
+:
+𝐱
+i
+→
+𝐲
+i
+,
+f:\mathbf{x}_{i}\rightarrow\mathbf{y}_{i},
+(3)
+where
+𝐱
+i
+=
+(
+x
+1
+,
+i
+,
+⋯
+,
+x
+d
+,
+i
+)
+\mathbf{x}_{i}=(x_{1,i},\cdots,x_{d,i})
+and
+𝐲
+i
+=
+(
+y
+1
+,
+i
+,
+⋯
+,
+y
+D
+,
+i
+)
+\mathbf{y}_{i}=(y_{1,i},\cdots,y_{D,i})
+. SymTorch expands the SR problem in
+Equation
+1
+for many-dimensional outputs by fitting a separate symbolic model to each output dimension. We define the original function
+f
+f
+as a model
+block
+. For PyTorch NNs, the wrapper registers forward hooks to record the block’s inputs and outputs over user-supplied data.
+The
+distill
+method performs SR by calling PySR with user-specified parameters (operators, genetic algorithm hyperparameters, fitness function). The outputs are fitted as closed-form equations of the block’s input variables. Users may pass
+variable_transforms
+to create derived features (e.g.,
+r
+=
+Δ
+​
+x
+2
++
+Δ
+​
+y
+2
+r=\sqrt{\Delta x^{2}+\Delta y^{2}}
+), which can improve SR efficiency by structuring the search space.
+Switching to Symbolic Approximations
+After fitting,
+switch_to_symbolic
+replaces the original block with expressions selected from the Pareto front based on their complexity, so that subsequent forward passes evaluate the symbolic equations in place of the original computation. If no complexity is specified, SymTorch chooses the best expression according to
+Equation
+2
+. The model can continue training with fixed equations while other weights update.
+switch_to_block
+restores the original function. Since the model remains a native PyTorch module, it can be used with
+torch.compile
+for additional optimization.
+Saving and Caching
+Inputs and outputs are cached, allowing SR to be rerun without requiring additional forward passes through the model. SymTorch further works with PyTorch’s native model saving and loading functions.
+3.2
+SLIME Implementation
+SymTorch includes a native implementation of SLIME
+(
+Fong & Motani, 2025
+)
+for local model explanations. Given a black-box model
+f
+f
+and a point of interest
+𝐱
+∗
+\mathbf{x}^{*}
+, we fit a symbolic surrogate
+s
+∈
+𝒮
+s\in\mathcal{S}
+to approximate
+f
+f
+in a neighborhood of
+𝐱
+∗
+\mathbf{x}^{*}
+.
+The training dataset
+𝒟
+\mathcal{D}
+consists of: (1) the
+J
+J
+nearest neighbors to
+𝐱
+∗
+\mathbf{x}^{*}
+from the data distribution, and (2)
+N
+synthetic
+N_{\text{synthetic}}
+Gaussian-sampled points around
+𝐱
+∗
+\mathbf{x}^{*}
+. The Gaussian variance defaults to half the variance of the
+J
+J
+neighbors, so the approximation region is controlled by
+J
+J
+. We fit
+s
+s
+by minimizing:
+s
+=
+arg
+⁡
+min
+s
+∈
+𝒮
+\displaystyle s=\arg\min_{s\in\mathcal{S}}
+∑
+z
+i
+∈
+synthetic
+π
+x
+​
+(
+z
+i
+)
+​
+[
+f
+⁡
+(
+z
+i
+)
+−
+s
+⁡
+(
+z
+i
+)
+]
+2
+\displaystyle\sum_{z_{i}\in\text{synthetic}}\pi_{x}(z_{i})[f(z_{i})-s(z_{i})]^{2}
++
+M
+∑
+z
+j
+∈
+neighbors
+[
+f
+(
+z
+j
+)
+−
+s
+(
+z
+j
+)
+]
+2
+,
+\displaystyle+M\sum_{z_{j}\in\text{neighbors}}[f(z_{j})-s(z_{j})]^{2},
+where
+π
+x
+(
+z
+i
+)
+=
+exp
+(
+−
+|
+|
+x
+0
+−
+x
+i
+|
+|
+2
+/
+σ
+2
+)
+\pi_{x}(z_{i})=\exp(-||x_{0}-x_{i}||^{2}/\sigma^{2})
+is a proximity-weighted kernel and
+M
+M
+weights points from the true distribution. The
+distill
+method supports SLIME via a built-in flag.
+Figure 2
+:
+Approximating local model behavior with SLIME. For a complex non-linear model, we choose the point of interest
+𝐱
+∗
+\mathbf{x}^{*}
+. We sample points around this region and fit a symbolic model to these points.
+4
+Case Studies and Performance
+In this section, we present four specific case studies to demonstrate SymTorch’s usage on a range of different PyTorch architectures.
+4.1
+Symbolic Surrogates of Transformer MLPs
+A broad line of work aims to reduce overall inference cost and latency through techniques such as quantization
+(
+Dettmers et al., 2022
+)
+, pruning
+(
+Lagunas et al., 2021
+)
+, and speculative decoding
+(
+Leviathan et al., 2023
+)
+. Specifically, MLP layers constitute a substantial portion of transformer inference compute
+(
+Wei et al., 2024
+)
+. We explore a new approach to decreasing inference compute in transformers: replacing MLP layers with symbolic expressions via SymTorch
+3
+3
+3
+Source code:
+https://github.com/astroautomata/LLM_PCA
+.
+.
+The accuracy-speed tradeoff we achieve (8.3% speedup for a perplexity increase of 3.14 from baseline 10.62) may not be competitive with established methods. However, we present this framework because: (1) it demonstrates SymTorch’s applicability to LLMs, (2) the primary driver of the performance degradation is the dimensionality reduction step whilst the replacement of the MLP with the SymTorch symbolic function only contributes to 1% of the perplexity increase, so (3) the approach may improve with better dimensionality reduction, and finally (4) regardless of the performance degredation, our SymTorch neuro-symbolic model is on the Pareto front of token throughput versus perplexity on Wikitext-2, when compared to similarly-sized open-source LLMs (see
+Figure
+5
+). We further discuss these limitations and points for further research in this section.
+Figure 3
+:
+Framework for reducing inference compute in transformer models by replacing MLP layers with symbolic surrogate models. Inputs to the MLP layer undergo dimensionality reduction via PCA. A symbolic model maps the inputs to the outputs. Output activations have their dimensionality increased, again through PCA, to match model dimensionality.
+Framework
+We first apply Principal Component Analysis (PCA) to the input and output activations of each MLP block. PCA provides a linear compression that preserves the dominant variance directions, allowing us to retain the most informative components of the representation while significantly reducing dimensionality. Despite the decrease in performance caused by this dimensionality reduction, this step is required to make SR more tractable. Then, we distill the MLP into a symbolic model using SymTorch. Generally, we want to be harsher on reducing the dimensionality of the MLP inputs as opposed to the outputs because SR scales exponentially with the number of input variables, and linearly with the number of output variables (as each output dimension requires a new expression).
+Setup
+We used the Qwen2.5-1.5B-Instruct model
+(
+Qwen, 2024
+)
+for this experiment and the Wikitext-2-v1 dataset
+(
+Merity et al., 2016
+)
+. The dataset was split into a training and test set each consisting of 178k tokens. The training set was used to train the PCA models and provide the sample data for the SR.
+We used perplexity
+Perplexity
+=
+exp
+(
+−
+1
+N
+∑
+i
+=
+1
+N
+log
+p
+(
+x
+i
+∣
+x
+<
+i
+)
+)
+,
+\text{Perplexity}=\exp\!\left(-\frac{1}{N}\sum_{i=1}^{N}\log p(x_{i}\mid x_{<i})\right),
+(4)
+to quantify the changes in performance of the LLM. We chose to intervene on MLP layers (SwiGLU activations) 7, 14 and 21. Before performing SR, we first determine the minimum number of principal components required to preserve the behavior of the model. To this end, we vary the dimensionality used for PCA on both the input and output activations of the MLP and measure the resulting change in model perplexity. Specifically, the input activations are projected to a lower-dimensional subspace via PCA and then reconstructed before being passed through the MLP; similarly, the MLP outputs are projected and reconstructed prior to being passed to the remainder of the model. All interventions on the transformer model are performed using forward hooks and pre-forward hooks, enabling localized replacement of MLP components without modifying the surrounding architecture. Additional experimental details and extended results are provided in
+Appendix
+D
+.
+PCA Sensitivity Analysis
+Figure
+4
+shows the changes in perplexity as we varied the number of principal components of the input and output to the MLP. Just for reference, the original SwiGLU projects inputs from a 1536 dimensional subspace to an increased 8960 dimensional subspace and back down again and the baseline model perplexity on the test set is given in
+Table
+1
+. Notably, for a fixed number of PCA components retained at the input, the change in perplexity initially decreases as the number of output PCA components increases, before rising again. One possible explanation is that moderate output compression removes low-variance or noisy directions while preserving the dominant functional subspace, whereas excessive expansion reintroduces poorly conditioned or misaligned directions that degrade downstream representations.
+Figure 4
+:
+Change in test set perplexity under PCA compression and reconstruction of MLP activations relative to the baseline perplexity of 10.62. For layers 7, 14, and 21, the MLP inputs are projected to a lower-dimensional subspace via PCA and then reconstructed prior to the MLP, while the MLP outputs are similarly projected and reconstructed before being passed to the remainder of the model.
+Table 1
+:
+Perplexity comparison between baseline, PCA+MLP, PCA+SymTorch and Control using the test set. There were 32 and 8 principal components for the input and output PCAs respectively. For the Control result, the MLPs were replaced with identity functions.
+Perplexity
+Baseline
+Δ
+\Delta
+Perplexity
+PCA+MLP
+Δ
+\Delta
+Perplexity
+PCA+SymTorch
+Δ
+\Delta
+Perplexity
+Control
+10.62
++3.11
++3.14
++6.97
+Symbolic Surrogate Model
+Based on the PCA sensitivity analysis, we select 32 principal components for the MLP inputs and 8 for outputs. This configuration incurs a notable perplexity increase (+3.11 from baseline 10.62) but reduces the SR problem to tractable dimensions.
+Using SymTorch, we fit symbolic surrogates mapping reduced inputs to reduced outputs. After substitution, the perplexity increase (+3.14) is comparable to PCA compression alone (+3.11), as shown in
+Table
+1
+. This indicates the symbolic model captures the MLP’s behavior within the reduced subspace, with minimal additional degradation from the symbolic approximation itself.
+Figure 5
+:
+Inference throughput (in tokens per second) versus perplexity on the test set for various language models. The test set is made up of a random chunk of 175k characters from the Wikitext-2-v1 dataset.
+Inference Speed Benchmarking
+To measure the impact of this symbolic surrogate intervention on inference speed, we compute token throughput of the model in three conditions: (1) a baseline with no intervention, (2) a control where MLPs are replaced by an identity function, and (3) with the symbolic surrogates replacing the MLPs. After 5 warm up passes, we recorded the time elapsed for 100 forward passes of the test set through the model with KV caching disabled. These 100 times are averaged to estimate token throughput for each condition. This benchmark was run on an Nvidia A100-SXM4-80GB GPU for comparison. The results find that SymTorch distillation of 3/28 layers delivers an 8.3% increase in token throughput over the baseline, roughly matching the inference speed of the control condition. We performed an identical inference speed benchmarking for various popular and small open-source LLMs, and measured their perplexity on the test set. The results are shown in
+Figure
+5
+. Notably, even with the perplexity increase from symbolic replacement, the modified Qwen2.5-1.5B model remains on the Pareto front of the perplexity-throughput tradeoff.
+4.2
+Discovering Empirical Physical Laws from Symbolic Distillation of Models with Inductive Biases
+We demonstrate SymTorch on a reproduction and slight extension of a prior work by
+Cranmer et al. (2020)
+: training a GNN on empirical particle data and performing SR on the latent representations of the trained model to recover true interaction laws
+4
+4
+4
+Source code:
+https://github.com/astroautomata/SymTorch_symbolic_distillation_GNNs
+. Complete details of the replication including training details, experimental results, and framework limitations, are provided in
+Appendix
+E
+.
+Model Architecture
+We follow the notation as outlined in Battaglia et. al.
+2018
+. There are two MLPs involved in the GNN. The first is the edge model (or edge function),
+ϕ
+e
+:
+𝒱
+×
+𝒱
+→
+ℰ
+\phi^{e}:\mathcal{V}\times\mathcal{V}\rightarrow\mathcal{E}
+, where
+𝒱
+⊂
+ℝ
+L
+v
+\mathcal{V}\subset\mathbb{R}^{L^{v}}
+and
+ℰ
+⊆
+ℝ
+L
+e
+\mathcal{E}\subseteq\mathbb{R}^{L^{e}}
+.
+L
+v
+{L^{v}}
+and
+L
+e
+{L^{e}}
+are the number of node features and the dimensionality of the messages respectively. In a forward pass of the GNN, the edge model takes the node features,
+𝐯
+∈
+𝒱
+\mathbf{v}\in\mathcal{V}
+, of two connected nodes as inputs and outputs the edge message,
+𝐞
+k
+′
+∈
+ℰ
+\mathbf{e}_{k}^{\prime}\in\mathcal{E}
+, where
+k
+k
+denotes the edge. We concatenate the node features when inputting them into the MLP. This function can be written as
+𝐞
+k
+′
+=
+ϕ
+e
+​
+(
+𝐯
+r
+k
+,
+𝐯
+s
+k
+)
+,
+\mathbf{e}_{k}^{\prime}=\phi^{e}(\mathbf{v}_{r_{k}},\mathbf{v}_{s_{k}}),
+(5)
+where
+𝐯
+r
+k
+\mathbf{v}_{r_{k}}
+denotes the features of the receiving node, and
+𝐯
+s
+k
+\mathbf{v}_{s_{k}}
+denotes the sending node of edge
+k
+k
+. The messages to receiving node
+i
+i
+are aggregated through an element-wise summation,
+𝐞
+¯
+i
+′
+=
+∑
+j
+≠
+i
+ϕ
+e
+​
+(
+𝐯
+i
+,
+𝐯
+j
+)
+,
+\mathbf{\bar{e}}_{i}^{\prime}=\sum_{j\neq i}\phi^{e}(\mathbf{v}_{i},\mathbf{v}_{j}),
+(6)
+where
+𝐞
+¯
+i
+′
+\mathbf{\bar{e}}_{i}^{\prime}
+is the aggregated message.
+The second MLP involved in the GNN is the node model (or node function),
+ϕ
+v
+:
+𝒱
+×
+ℰ
+→
+𝒟
+\phi^{v}:\mathcal{V}\times\mathcal{E}\rightarrow\mathcal{D}
+, where
+𝒟
+⊆
+ℝ
+D
+\mathcal{D}\subseteq\mathbb{R}^{D}
+and
+D
+D
+is the dimensionality of the target variable, the updated node features. This model outputs the updated node features for a specific node. It takes the node features and the aggregated message for that node as an input and calculates the node update,
+𝐯
+^
+i
+′
+\mathbf{\hat{v}}_{i}^{\prime}
+.
+𝐯
+^
+i
+′
+=
+ϕ
+v
+​
+(
+𝐯
+i
+,
+𝐞
+¯
+i
+′
+)
+,
+\mathbf{\hat{v}}_{i}^{\prime}=\phi^{v}(\mathbf{v}_{i},\mathbf{\bar{e}}_{i}^{\prime}),
+(7)
+Setup
+In our setup, the node features contain information about a particle:
+𝐯
+i
+=
+[
+x
+i
+,
+y
+i
+,
+x
+˙
+i
+,
+y
+˙
+i
+,
+q
+i
+,
+m
+i
+]
+,
+\mathbf{v}_{i}=[x_{i},y_{i},\dot{x}_{i},\dot{y}_{i},q_{i},m_{i}],
+(8)
+where
+x
+i
+,
+y
+i
+x_{i},y_{i}
+are the 2-D positions of the particle
+i
+i
+,
+x
+˙
+i
+\dot{x}_{i}
+and
+y
+˙
+i
+\dot{y}_{i}
+are the discretised velocities (distance moved in simulation time
+Δ
+​
+t
+\Delta t
+),
+q
+i
+q_{i}
+is the charge and
+m
+i
+m_{i}
+is the mass. Hence, the dimensionality of the node features,
+L
+v
+L^{v}
+, depends on the dimensionality of the system. The inputs to the model comprise this information. The target variables in this pipeline,
+𝐯
+^
+i
+′
+\mathbf{\hat{v}}_{i}^{\prime}
+, are the individual particle accelerations. Hence the dimensionality of the updated node is equal to the dimensionality of the system (2-D). We test out this framework to on particles acting under the following pair-wise interaction forces: (a) gravitational force; (b) spring force; (c) force that scales as
+1
+/
+r
+1/r
+and (d) force that scales as
+1
+/
+r
+2
+1/r^{2}
+, where
+r
+r
+is the displacement between the two particles. During training, the cost function was the mean absolute error between the predicted and true particle accelerations.
+Edge Messages as Forces
+For GNNs trained in this manner, it can be shown that the edge messages are linear combinations of the true forces acting between particles, provided the dimensionality of the edge messages are the same as that of the system. The full derivation for this result is in
+Section
+E.1
+. Because of this, we want to encourage sparse representation of the edge messages.
+Model Variants
+We trained several variants of the GNN to explore different methods to encourage sparse representation of the edge messages: (1) Standard, with 100 message components; (2) Bottleneck, with the number of message components matching that of the system (in this case 2); (3) L1, which is the same as Standard except we add a L1 regularization term to the messages; (4) Kullback-Leibler (KL), the same as Standard except adding a KL regularization to the messages with respect to a Gaussian prior; (5) Pruning, the dimensionality of the edge messages are incrementally reduced during training until the dimensionality matches that of the system. The Pruning variant is our extension of the original work.
+Symbolic Distillation with SymTorch
+For a trained GNN, SymTorch wraps the edge model to enable direct symbolic distillation of the MLP. Using this framework, we reproduce the symbolic recovery results reported in
+(
+Cranmer et al., 2020
+)
+. Our pruning-based variant, implemented natively within SymTorch, achieves performance comparable to the best-performing bottleneck model, successfully distilling the true interaction laws across all systems considered. SymTorch substantially simplifies experiments of this kind by removing the need for manual extraction of input–output activations from model components. In addition, the framework supports user-defined transformations of input variables, which further improve the tractability of SR in this setting. We note that the use of a GNN is essential for this problem, as applying symbolic regression directly to the raw dataset fails to recover the true interaction forces; assume a dataset
+{
+(
+y
+i
+,
+{
+𝐱
+1
+,
+i
+,
+⋯
+,
+𝐱
+100
+,
+i
+}
+}
+i
+=
+1
+⋯
+N
+\{(y_{i},\{\mathbf{x}_{1,i},\cdots,\mathbf{x}_{100,i}\}\}_{i=1\cdots N}
+where
+y
+i
+y_{i}
+is the target variable which could for example be the acceleration of a single particle in a system of 100 particles. Assume the true relationship to be a composite function
+a
+⁡
+(
+∑
+j
+b
+⁡
+(
+𝐱
+i
+,
+𝐱
+j
+)
+)
+a\left(\sum_{j}b(\mathbf{x}_{i},\mathbf{x}_{j})\right)
+.
+If the SR needs to consider
+N
+N
+equations for functions
+a
+a
+and
+b
+b
+then we must consider
+N
+2
+N^{2}
+equations to get the true expression for
+y
+y
+. In contrast, when
+a
+a
+and
+b
+b
+can be fitted independently - as in our GNN architecture, where separate MLPs learn each function - the search space decomposes, and only
+2
+​
+N
+2N
+candidate expressions need to be considered. Hence the GNN makes SR much more tractable
+(
+Cranmer et al., 2020
+)
+.
+4.3
+Wrapping Whole Models
+Here we list case studies that involve wrapping entire models end-to-end with SymTorch
+5
+5
+5
+See documentation for annotated Juypter notebooks for these case studies.
+.
+4.3.1
+Extracting PDE Solutions from a PINN
+We compared a Physics-Informed Neural Network (PINN) with a standard NN of identical architecture for predicting temperatures governed by the 1-D heat equation:
+∂
+u
+∂
+t
+=
+α
+​
+∂
+2
+u
+∂
+x
+2
+,
+\frac{\partial u}{\partial t}=\alpha\frac{\partial^{2}u}{\partial x^{2}},
+(9)
+where
+u
+u
+is the temperature,
+x
+∈
+(
+0
+,
+1
+)
+x\in(0,1)
+is a 1-D spatial coordinate,
+t
+∈
+(
+0
+,
+1
+]
+t\in(0,1]
+is time and
+α
+\alpha
+is the diffusion coefficient. While both networks were trained directly on the same data, the PINN incorporated knowledge of the system’s governing Partial Differential Equation (PDE), Initial Conditions (ICs), and Boundary Conditions (BCs) via additional regularization terms in its loss. Trained on only ten data points, the PINN achieved substantially better predictions than the standard network, shown in
+Figure
+6
+, as its inductive bias enforced physically consistent solutions. Using SymTorch, we further distilled the trained PINN into a closed-form analytic expression, successfully recovering the solution to the 1-D heat equation. Using a PINN is advantageous compared to applying SR directly to the dataset, as the PINN can generate additional training data that guides symbolic regression toward equations consistent with the underlying physical solution. More information on this experiment can be found in
+Appendix
+F
+.
+Figure 6
+:
+Comparison of regular NN and PINN predictions and the true solution of the 1D heat equation (
+α
+=
+0.2
+\alpha=0.2
+).
+4.3.2
+Interpreting LLM-Learned Operations
+LLMs often fail at elementary numerical tasks, such that commercial systems rely on external tool calls for reliable computation
+(
+Dziri et al., 2023
+;
+Golkar et al., 2024
+)
+. In this case study, we use SR to analyze the LLM-learned operations to analyze the true function computed by the LLM. Symbolic distillation is well-suited to this task: rather than treating the LLM as a black-box that is only right or wrong, we can recover an explicit analytic approximation of the computation it is performing. This enables direct inspection of systematic numerical errors and reveals how, and where, the model’s internal heuristics deviate from the intended operations.
+Setup
+We study the model Llama-3.2-1B-Instruct as a representative small LLM and analyze the operation the model has learnt for (a) addition of two 3-digit numbers; (b) multiplication of two 3-digit numbers; (c) counting the number of 1s in a string of 1s and 0s; (d) converting Celsius to Fahrenheit. More information on the experiment including specific prompts and SR parameters can be found in
+Appendix
+G
+.
+Results
+The results of this analysis can be found in
+Table
+2
+. It should be noted that the correct equation was present in the Pareto front of the SR for all of these tasks except counting. However it was not the chosen ’best’ equation suggesting that the LLM gets these tasks mostly correct with the addition of some systematic errors. It is known that the expressivity of finite-precision transformers
+(
+Chiang et al., 2023
+)
+, or even log-precision transformers
+(
+Merrill & Sabharwal, 2023
+)
+, is limited to variants of first-order logic with counting or majority quantifiers. These logics cannot, in general, implement an algorithm to perform exact counting over arbitrary-length inputs, which might be related to why this task proved more difficult.
+Table 2
+:
+Symbolically distilled operations LLM-learned operations. The ’best’ equation, as determined by
+Equation
+2
+, is shown here. The
+ϵ
+\epsilon
+denotes a small (
+≪
+1
+\ll 1
+) term.
+Operation
+Expected
+Equation
+LLM-Learned
+Operation
+Addition
+x
+0
++
+x
+1
+x_{0}+x_{1}
+x
+1
+⋅
+(
+(
+inv
+⁡
+(
+x
+0
+−
+70.16
+)
++
+1.07
+)
+CLOSE
+x_{1}\cdot((\mathrm{inv}(x_{0}-70.16)+1.07)
++
+(
+inv
+⁡
+(
+sin
+⁡
+(
+x
+1
+)
++
+0.80
+)
++
+x
+1
+)
++(\mathrm{inv}(\sin(x_{1})+0.80)+x_{1})
+⋅
+(
+−
+ϵ
+)
+)
+x
+0
+\cdot(-\epsilon))x_{0}
+Multiplication
+x
+0
+​
+x
+1
+x_{0}x_{1}
+x
+1
+​
+(
+inv
+⁡
+(
+1.66
+−
+31.3
+​
+sin
+⁡
+(
+x
+0
+)
+)
++
+x
+0
+)
+x_{1}(\mathrm{inv}(1.66-31.3\sin(x_{0}))+x_{0})
+Counting
+x
+0
++
+⋯
++
+x
+5
+x_{0}+\cdots+x_{5}
+(
+−
+0.11
+​
+x
+0
++
+1.67
+)
+​
+(
+x
+1
++
+CLOSE
+(-0.11x_{0}+1.67)(x_{1}+
+(
+x
+1
+​
+(
+x
+0
++
+1.43
+)
+−
+2.50
+)
+​
+(
+x
+2
+−
+0.53
+)
+(x_{1}(x_{0}+1.43)-2.50)(x_{2}-0.53)
+OPEN
+(
+x
+0
++
+x
+3
+−
+2.15
+)
++
+x
+2
+)
+(x_{0}+x_{3}-2.15)+x_{2})
+Temperature
+Conversion
+9
+5
+​
+x
++
+32
+\frac{9}{5}x+32
+inv
+⁡
+(
+x
+0
+−
+168.86
+)
+​
+inv
+​
+(
+x
+0
+−
+129.65
+)
+\mathrm{inv}(x_{0}-168.86)\mathrm{inv}(x_{0}-129.65)
++
+inv
+⁡
+(
+x
+0
+−
+51.87
+)
+​
+x
+0
++
+33.79
++\,\mathrm{inv}(x_{0}-51.87)x_{0}+33.79
+5
+Discussion
+SymTorch demonstrates that symbolic regression can serve as a practical interpretability tool when integrated with deep learning frameworks. Our case studies show successful symbolic distillation across GNNs, PINNs, and LLMs, recovering known physical laws and revealing LLM arithmetic biases. We have further demonstrated a novel framework to speed up LLM inference by replacing MLP blocks with symbolic expressions found using SymTorch. Despite the performance degradation due to the reduced expressive capacity of symbolic expressions relative to dense neural layers, the resulting neuro-symbolic model remains on the Pareto front of token throughput versus perplexity when compared to popular LLMs of similar scale on the WikiText-2 benchmark.
+By handling the engineering complexity of GPU-CPU transfer, activation caching, and hybrid model management, SymTorch lowers the barrier to symbolic distillation. We hope this accessibility enables SR to become a practical tool for uncovering the functional structure learned by deep models.
+5.1
+Limitations & Future Work
+Computation:
+SR is a brute-force process. Runtime grows exponentially with the number of variables, operator set size, and dataset size. For complex NNs, obtaining accurate symbolic approximations may require large datasets and extended SR runs. We also perform SR per output dimension, which becomes expensive for wide outputs.
+Highly Complex Functions:
+For highly complex model components, SR may struggle to produce accurate approximations. Nevertheless, it remains one of the few viable routes to functional interpretability; without it, such components would remain entirely opaque.
+Complexity Measures & SR Hyperparameters:
+PySR’s complexity measure depends solely on the number of nodes in the expression tree, which can produce expressions that are mathematically equivalent in complexity but differ significantly in interpretability. For instance, nested functions like
+sin
+⁡
+(
+sin
+⁡
+x
+)
+\sin(\sin x)
+have the same complexity as
+x
++
+2
+x+2
+. Explicit constraints through hyperparameter tuning may be necessary to ensure human-readable outputs.
+Symbolic Surrogates of Transformer MLPs:
+The framework we propose for accelerating LLM inference may not be competitive with existing approaches. In particular, the performance degradation introduced by symbolic approximation is non-trivial. Furthermore, we evaluate model quality only on WikiText-2, which matches the training distribution of the symbolic surrogates, and performance may degrade further under distribution shift or on downstream tasks. Despite these limitations, there exist important regimes where throughput is prioritized over general-purpose flexibility. In many deployment settings, models are fine-tuned for a single downstream task, for example Low-Rank Adaptation (LoRA)
+(
+Hu et al., 2021
+)
+, and are not required to generalize broadly. In such scenarios, sacrificing some expressive capacity in exchange for substantial inference speedups may represent a favorable trade-off, particularly for latency-critical or resource-constrained applications. We emphasize that this framework is in no way optimized; rather, its primary purpose is to illustrate the experimental workflows made accessible by SymTorch. Hence, possible areas for future work to improve this framework include,
+•
+Improved Dimensionality Reduction:
+The PCA-based compression in
+Section
+4.1
+is the major source of performance degradation. Learned linear projections may preserve more relevant information while maintaining SR tractability.
+•
+Cross-Domain Generalization:
+The symbolic surrogates for LLM components are trained and evaluated on the same distribution, leaving open the question of how well such surrogates generalize across domains. We hope to determine whether domain-agnostic symbolic approximations are feasible, or whether task- and domain-specific surrogates are necessary.
+•
+Framework Optimization and Extension:
+We arbitrarily replace three MLP layers in the LLM, and future work will explore which layers are most amenable to symbolic approximation and how many layers can be replaced before performance degrades substantially. We further want to test out this framework on larger LLMs.
+Acknowledgements
+The authors would like to thank Rachel C. Zhang for comments on the draft of this paper. Elizabeth S.Z. Tan’s work is supported by the Aglaia Family Office.
+Adil Soubki thanks the UK Science
+and Technology Facilities Council (STFC) for a Ph.D. studentship.
+Miles Cranmer is grateful for support from the Schmidt Sciences AI2050 Early Career Fellowship and the Isaac Newton Trust.
+References
+Battaglia et al. (2018)
+Battaglia, P. W., Hamrick, J. B., Bapst, V., Sanchez-Gonzalez, A., Zambaldi, V., Malinowski, M., Tacchetti, A., Raposo, D., Santoro, A., Faulkner, R., Gulcehre, C., Song, F., Ballard, A., Gilmer, J., Dahl, G., Vaswani, A., Allen, K., Nash, C., Langston, V., Dyer, C., Heess, N., Wierstra, D., Kohli, P., Botvinick, M., Vinyals, O., Li, Y., and Pascanu, R.
+Relational inductive biases, deep learning, and graph networks, 2018.
+URL
+https://arxiv.org/abs/1806.01261
+.
+Chiang et al. (2023)
+Chiang, D., Cholak, P., and Pillay, A.
+Tighter bounds on the expressivity of transformer encoders, 2023.
+URL
+https://arxiv.org/abs/2301.10743
+.
+Cranmer (2023)
+Cranmer, M.
+Interpretable machine learning for science with pysr and symbolicregression.jl, 2023.
+URL
+https://arxiv.org/abs/2305.01582
+.
+Cranmer et al. (2020)
+Cranmer, M., Sanchez-Gonzalez, A., Battaglia, P., Xu, R., Cranmer, K., Spergel, D., and Ho, S.
+Discovering symbolic models from deep learning with inductive biases, 2020.
+URL
+https://arxiv.org/abs/2006.11287
+.
+Cranmer (2020)
+Cranmer, M. D.
+Discovering symbolic models from deep learning with inductive biases code repository, 2020.
+URL
+https://github.com/MilesCranmer/symbolic_deep_learning
+.
+Dettmers et al. (2022)
+Dettmers, T., Lewis, M., Belkada, Y., and Zettlemoyer, L.
+Llm.int8(): 8-bit matrix multiplication for transformers at scale, 2022.
+URL
+https://arxiv.org/abs/2208.07339
+.
+Dunefsky et al. (2024)
+Dunefsky, J., Chlenski, P., and Nanda, N.
+Transcoders find interpretable llm feature circuits, 2024.
+URL
+https://arxiv.org/abs/2406.11944
+.
+Dziri et al. (2023)
+Dziri, N., Lu, X., Sclar, M., Li, X. L., Jiang, L., Lin, B. Y., West, P., Bhagavatula, C., Bras, R. L., Hwang, J. D., Sanyal, S., Welleck, S., Ren, X., Ettinger, A., Harchaoui, Z., and Choi, Y.
+Faith and fate: Limits of transformers on compositionality, 2023.
+URL
+https://arxiv.org/abs/2305.18654
+.
+Elhage et al. (2021)
+Elhage, N., Nanda, N., Olsson, C., Henighan, T., Joseph, N., Mann, B., Askell, A., Bai, Y., Chen, A., Conerly, T., DasSarma, N., Drain, D., Ganguli, D., Hatfield-Dodds, Z., Hernandez, D., Jones, A., Kernion, J., Lovitt, L., Ndousse, K., Amodei, D., Brown, T., Clark, J., Kaplan, J., McCandlish, S., and Olah, C.
+A mathematical framework for transformer circuits.
+Transformer Circuits Thread
+, 2021.
+https://transformer-circuits.pub/2021/framework/index.html.
+Fey & Lenssen (2019)
+Fey, M. and Lenssen, J. E.
+Fast graph representation learning with pytorch geometric, 2019.
+URL
+https://arxiv.org/abs/1903.02428
+.
+Fiotto-Kaufman et al. (2025)
+Fiotto-Kaufman, J., Loftus, A. R., Todd, E., Brinkmann, J., Pal, K., Troitskii, D., Ripa, M., Belfki, A., Rager, C., Juang, C., Mueller, A., Marks, S., Sharma, A. S., Lucchetti, F., Prakash, N., Brodley, C., Guha, A., Bell, J., Wallace, B. C., and Bau, D.
+Nnsight and ndif: Democratizing access to open-weight foundation model internals, 2025.
+URL
+https://arxiv.org/abs/2407.14561
+.
+Fong & Motani (2025)
+Fong, K. S. and Motani, M.
+Slime: Supralocal interpretable model-agnostic explanations via evolved equation-based surrogates.
+In
+Proceedings of the Genetic and Evolutionary Computation Conference Companion
+, GECCO ’25 Companion, pp.  267–270, New York, NY, USA, 2025. Association for Computing Machinery.
+ISBN 9798400714641.
+doi:
+10.1145/3712255.3726721
+.
+URL
+https://doi.org/10.1145/3712255.3726721
+.
+Golkar et al. (2024)
+Golkar, S., Pettee, M., Eickenberg, M., Bietti, A., Cranmer, M., Krawezik, G., Lanusse, F., McCabe, M., Ohana, R., Parker, L., Blancard, B. R.-S., Tesileanu, T., Cho, K., and Ho, S.
+xval: A continuous numerical tokenization for scientific language models, 2024.
+URL
+https://arxiv.org/abs/2310.02989
+.
+Heimersheim & Nanda (2024)
+Heimersheim, S. and Nanda, N.
+How to use and interpret activation patching, 2024.
+URL
+https://arxiv.org/abs/2404.15255
+.
+Hu et al. (2021)
+Hu, E. J., Shen, Y., Wallis, P., Allen-Zhu, Z., Li, Y., Wang, S., Wang, L., and Chen, W.
+Lora: Low-rank adaptation of large language models, 2021.
+URL
+https://arxiv.org/abs/2106.09685
+.
+Kingma & Ba (2017)
+Kingma, D. P. and Ba, J.
+Adam: A method for stochastic optimization, 2017.
+URL
+https://arxiv.org/abs/1412.6980
+.
+Koblischke et al. (2025)
+Koblischke, N., Parker, L., Lanusse, F., Morales, I. E., Bovy, J., and Ho, S.
+Semantic search for 100m+ galaxy images using ai-generated captions, 2025.
+URL
+https://arxiv.org/abs/2512.11982
+.
+Kutz & Brunton (2022)
+Kutz, J. and Brunton, S.
+Parsimony as the ultimate regularizer for physics-informed machine learning.
+Nonlinear Dynamics
+, 107:1–17, 01 2022.
+doi:
+10.1007/s11071-021-07118-3
+.
+Lagunas et al. (2021)
+Lagunas, F., Charlaix, E., Sanh, V., and Rush, A. M.
+Block pruning for faster transformers, 2021.
+URL
+https://arxiv.org/abs/2109.04838
+.
+Leviathan et al. (2023)
+Leviathan, Y., Kalman, M., and Matias, Y.
+Fast inference from transformers via speculative decoding, 2023.
+URL
+https://arxiv.org/abs/2211.17192
+.
+Lundberg & Lee (2017)
+Lundberg, S. and Lee, S.-I.
+A unified approach to interpreting model predictions, 2017.
+URL
+https://arxiv.org/abs/1705.07874
+.
+Makelov et al. (2023)
+Makelov, A., Lange, G., and Nanda, N.
+Is this the subspace you are looking for? an interpretability illusion for subspace activation patching, 2023.
+URL
+https://arxiv.org/abs/2311.17030
+.
+Marks et al. (2025)
+Marks, S., Rager, C., Michaud, E. J., Belinkov, Y., Bau, D., and Mueller, A.
+Sparse feature circuits: Discovering and editing interpretable causal graphs in language models, 2025.
+URL
+https://arxiv.org/abs/2403.19647
+.
+McCabe et al. (2024)
+McCabe, M., Blancard, B. R.-S., Parker, L. H., Ohana, R., Cranmer, M., Bietti, A., Eickenberg, M., Golkar, S., Krawezik, G., Lanusse, F., Pettee, M., Tesileanu, T., Cho, K., and Ho, S.
+Multiple physics pretraining for physical surrogate models, 2024.
+URL
+https://arxiv.org/abs/2310.02994
+.
+McCabe et al. (2025)
+McCabe, M., Mukhopadhyay, P., Marwah, T., Blancard, B. R.-S., Rozet, F., Diaconu, C., Meyer, L., Wong, K. W. K., Sotoudeh, H., Bietti, A., Espejo, I., Fear, R., Golkar, S., Hehir, T., Hirashima, K., Krawezik, G., Lanusse, F., Morel, R., Ohana, R., Parker, L., Pettee, M., Shen, J., Cho, K., Cranmer, M., and Ho, S.
+Walrus: A cross-domain foundation model for continuum dynamics, 2025.
+URL
+https://arxiv.org/abs/2511.15684
+.
+Merity et al. (2016)
+Merity, S., Xiong, C., Bradbury, J., and Socher, R.
+Pointer sentinel mixture models, 2016.
+Merrill & Sabharwal (2023)
+Merrill, W. and Sabharwal, A.
+A logic for expressing log-precision transformers.
+In Oh, A., Naumann, T., Globerson, A., Saenko, K., Hardt, M., and Levine, S. (eds.),
+Advances in Neural Information Processing Systems
+, volume 36, pp.  52453–52463. Curran Associates, Inc., 2023.
+URL
+https://proceedings.neurips.cc/paper_files/paper/2023/file/a48e5877c7bf86a51395.ab23b360498-Paper-Conference.pdf
+.
+Nanda & Bloom (2022)
+Nanda, N. and Bloom, J.
+Transformerlens.
+https://github.com/TransformerLensOrg/TransformerLens
+, 2022.
+Ohana et al. (2025)
+Ohana, R., McCabe, M., Meyer, L., Morel, R., Agocs, F. J., Beneitez, M., Berger, M., Burkhart, B., Burns, K., Dalziel, S. B., Fielding, D. B., Fortunato, D., Goldberg, J. A., Hirashima, K., Jiang, Y.-F., Kerswell, R. R., Maddu, S., Miller, J., Mukhopadhyay, P., Nixon, S. S., Shen, J., Watteaux, R., Blancard, B. R.-S., Rozet, F., Parker, L. H., Cranmer, M., and Ho, S.
+The well: a large-scale collection of diverse physics simulations for machine learning, 2025.
+URL
+https://arxiv.org/abs/2412.00568
+.
+Pedregosa et al. (2011)
+Pedregosa, F., Varoquaux, G., Gramfort, A., Michel, V., Thirion, B., Grisel, O., Blondel, M., Prettenhofer, P., Weiss, R., Dubourg, V., Vanderplas, J., Passos, A., Cournapeau, D., Brucher, M., Perrot, M., and Duchesnay, E.
+Scikit-learn: Machine learning in Python.
+Journal of Machine Learning Research
+, 12:2825–2830, 2011.
+Qwen (2024)
+Qwen.
+Qwen2.5: A party of foundation models, September 2024.
+URL
+https://qwenlm.github.io/blog/qwen2.5/
+.
+Ribeiro et al. (2016)
+Ribeiro, M. T., Singh, S., and Guestrin, C.
+”why should i trust you?”: Explaining the predictions of any classifier, 2016.
+URL
+https://arxiv.org/abs/1602.04938
+.
+Taira et al. (2025)
+Taira, K., Rigas, G., and Fukami, K.
+Machine learning in fluid dynamics: A critical assessment, 2025.
+URL
+https://arxiv.org/abs/2508.13430
+.
+Vafa et al. (2025)
+Vafa, K., Chang, P. G., Rambachan, A., and Mullainathan, S.
+What has a foundation model found? using inductive bias to probe for world models, 2025.
+URL
+https://arxiv.org/abs/2507.06952
+.
+Wei et al. (2024)
+Wei, X., Moalla, S., Pascanu, R., and Gulcehre, C.
+Building on efficient foundations: Effectively training llms with structured feedforward layers, 2024.
+URL
+https://arxiv.org/abs/2406.16450
+.
+Appendix A
+Appendix A
+Appendix B
+Symbolic Regression with PySR Detail
+B.1
+Algorithm Overview
+PySR implements the following genetic algorithm (summarized from
+(
+Cranmer, 2023
+)
+):
+1.
+We begin with several independent populations of individual equations. This allows expressions in each population to evolve simultaneously.
+2.
+In each population, a tournament selection process is run: a random subset of individuals (usually two) are evaluated on their ’fitness’, a metric combining both expression accuracy and complexity. The complexity of an expression is determined by the number of nodes on the binary expression tree.
+3.
+The fittest individual in the subset is chosen as the winner with probability
+p
+p
+; otherwise the next fittest is chosen with the same probability, and so on.
+4.
+A copy of the winning individual undergoes some form of mutation, where a node on the expression tree can be changed, a node added or removed. Or the individual may undergo a cross-over operation with the next fittest expression, where parts of the expression tree may swap between these two individuals. This mutation may be accepted or rejected with a probability relating to the fitness of the mutated expression.
+5.
+A set number of tournaments constitutes a round of evolution for the population. At the end of each evolution round, expressions may be simplified to an equivalent form (for example
+x
++
+x
++
+x
+→
+3
+∗
+x
+x+x+x\rightarrow 3*x
+) or the constants may be optimized.
+6.
+After a specified number of evolutions, individuals may migrate between populations.
+At each iteration, the Pareto front is updated with the best-performing equations at different complexity levels.
+Appendix C
+SymTorch Extra Details
+C.1
+Default PySR Parameters
+Users configure SR via the
+sr_params
+dictionary in
+distill
+(defaults in
+Table
+3
+). These parameters go directly to PySR’s
+PySRRegressor
+. Parameters for the
+fit
+method (e.g., variable names or complexities) use the
+fit_params
+dictionary.
+Table 3
+:
+Default SymTorch SR configurations.
+SR Parameter
+Configuration
+Binary operators
++, *
+Unary operators
+inv(x)=1/x, sin, exp
+Extra sympy mappings
+"inv": lambda x: 1/x
+Number of iterations
+400
+Complexity of operators
+sin: 3, exp: 3
+C.2
+Saving SR Results and Symbolic Models
+SymTorch saves PySR SR results in
+SR_output/mlp_name
+, organized by output dimension and timestamp. SymTorch works seamlessly with PyTorch’s
+torch.save
+and
+torch.load
+functions.
+Appendix D
+Symbolic Surrogates of Transformer MLPs Details
+D.1
+Setup
+Dataset
+We used the Wikitext-2-v1 dataset which was already split into train, test and validation sets. In this experiment, only the train and validation (quoted as the ’test set’ in this paper) sets were used. We further selected a random chunk of 750k characters from the each dataset which corresponded to approximately 178k tokens. The PCA and symbolic models were trained purely on this subset of the validation set.
+Training the PCA
+To train the PCA models, we used Scikit-learn
+(
+Pedregosa et al., 2011
+)
+. The input data to the PCA were centred but not whitened (the PCA components were not scaled to have unit variance). The explained variance ratio from the PCA sensitivity analysis is shown in
+Figure
+7
+.
+Figure 7
+:
+The explained variance ratio for the PCA models trained on the pre-activations and activations of the MLP layers for the PCA sensitivity analysis.
+Training the Symbolic Models
+After the PCA models were trained, we defined a Python callable function that took the MLP reduced dimensionality pre-activations as input and returned the MLP reduced dimensionality activations. SymTorch was used to wrap and perform SR on this function. We used a random subset of 6000 samples from the training set to perform the SR. The SR parameters used were the default parameters in
+Table
+3
+but we increased the number of iterations to 5000.
+Results and Benchmarking
+When calculating the perplexity values across the dataset, chunk sizes of 1048 were used. The perplexity results of this experiment on the training set are shown in
+Table
+4
+.
+Table 4
+:
+Perplexity comparison between baseline, PCA+MLP, PCA+SymTorch and Control using the training set. There were 32 and 8 principal components for the input and output PCAs respectively. For the Control result, the MLPs were replaced with identity functions.
+Perplexity
+Baseline
+Δ
+\Delta
+Perplexity
+PCA+MLP
+Δ
+\Delta
+Perplexity
+PCA+SymTorch
+Δ
+\Delta
+Perplexity
+Control
+10.74
++3.60
++3.63
++8.12
+We further ran an inference speed versus perplexity on the Wikitext validation set benchmarking on popular open-source LLMs, as shown in
+Figure
+5
+.
+Table 5
+:
+Perplexity on the test set (as used in
+Section
+4.1
+) and inference benchmarking for various open-source language models.
+Model
+Perplexity on
+Validation Set
+Avg. Latency
+(ms)
+p95 Latency
+(ms)
+Throughput
+(tokens/s)
+Qwen2.5-1.5B (Baseline)
+10.62
+209.89
+211.76
+4878.82
+Qwen2.5-1.5B (Symbolic)
+13.76
+193.89
+195.34
+5281.42
+Qwen2.5-3B-Instruct
+9.91
+397.85
+401.55
+2573.84
+Qwen2.5-7B-Instruct
+8.87
+866.06
+867.71
+1182.36
+Llama-3.1-8B-Instruct
+8.52
+891.84
+892.89
+1148.18
+Llama-3.2-1B-Instruct
+14.21
+169.31
+170.08
+6048.19
+Llama-3.2-3B-Instruct
+12.32
+414.51
+416.03
+2470.36
+SmolLM2-1.7B-Instruct
+10.33
+240.48
+240.89
+4258.23
+SmolLM3-3B
+10.20
+392.89
+393.52
+2606.35
+TinyLlama-1.1B-Chat-v1.0
+14.80
+149.00
+149.44
+6872.68
+SR Wall Clock Time
+To fit the SymTorch surrogate model to the three MLP blocks it took between 7-8 hours on an Apple M4 Max SoC (14-core CPU: 10 performance + 4 efficiency cores, 36 GB unified memory).
+Appendix E
+Discovering Empirical Physics Laws from Symbolic Distillation of Models with Inductive Biases Details
+E.1
+Derivation: Edge Messages as Linear Transformations of the True Forces
+For a GNN that has learned to predict accelerations from particle properties, the message vectors are linear transformations of the true forces, provided that the message dimension is equal to the dimensionality of the forces. The mathematical derivation for this is, as first presented in
+(
+Cranmer et al., 2020
+)
+, is shown below.
+In Newtonian mechanics, the resultant force,
+𝐟
+¯
+i
+\bar{\mathbf{f}}_{i}
+, acting on particle
+i
+i
+is equal to the sum of the individual forces,
+𝐟
+k
+\mathbf{f}_{k}
+:
+∑
+k
+𝐟
+k
+=
+𝐟
+¯
+i
+.
+\sum_{k}\mathbf{f}_{k}=\bar{\mathbf{f}}_{i}.
+(10)
+If we ignore the particle mass, the node model predicts the resultant force on the receiver particle
+r
+k
+r_{k}
+:
+𝐟
+¯
+i
+=
+𝐯
+^
+i
+′
+=
+ϕ
+v
+​
+(
+𝐯
+i
+,
+𝐞
+¯
+i
+′
+)
+=
+ϕ
+v
+​
+(
+𝐯
+i
+,
+∑
+r
+k
+=
+i
+𝐞
+k
+′
+)
+.
+\bar{\mathbf{f}}_{i}=\mathbf{\hat{v}}_{i}^{\prime}=\phi^{v}(\mathbf{v}_{i},\mathbf{\bar{e}}_{i}^{\prime})=\phi^{v}\left(\mathbf{v}_{i},\sum_{r_{k}=i}\mathbf{e}_{k}^{\prime}\right).
+(11)
+If we only consider a single interaction, and hence a single edge, the force is:
+𝐟
+¯
+i
+=
+𝐟
+k
+,
+r
+k
+=
+i
+=
+ϕ
+v
+​
+(
+𝐯
+i
+,
+𝐞
+k
+,
+r
+k
+=
+i
+′
+)
+.
+\bar{\mathbf{f}}_{i}=\mathbf{f}_{k,r_{k}=i}=\phi^{v}(\mathbf{v}_{i},\mathbf{e}_{k,r_{k}=i}^{\prime}).
+(12)
+Again, the resultant force is the sum of the individual forces, so we can use the above equation in the many-particle case and equate this to
+Equation
+11
+. Explicitly,
+∑
+r
+k
+=
+i
+ϕ
+v
+​
+(
+𝐯
+i
+,
+𝐞
+k
+′
+)
+=
+ϕ
+v
+​
+(
+𝐯
+i
+,
+∑
+r
+k
+=
+i
+𝐞
+k
+′
+)
+=
+𝐟
+¯
+i
+,
+\sum_{r_{k}=i}\phi^{v}(\mathbf{v}_{i},\mathbf{e}_{k}^{\prime})=\phi^{v}\left(\mathbf{v}_{i},\sum_{r_{k}=i}\mathbf{e}_{k}^{\prime}\right)=\bar{\mathbf{f}}_{i},
+(13)
+which demonstrates that
+ϕ
+v
+\phi^{v}
+is a linear function in its second argument:
+ϕ
+v
+​
+(
+𝐯
+i
+,
+𝐞
+a
+′
++
+𝐞
+b
+′
+)
+=
+ϕ
+v
+​
+(
+𝐯
+i
+,
+𝐞
+a
+′
+)
++
+ϕ
+v
+​
+(
+𝐯
+i
+,
+𝐞
+b
+′
+)
+.
+\phi^{v}(\mathbf{v}_{i},\mathbf{e}_{a}^{\prime}+\mathbf{e}_{b}^{\prime})=\phi^{v}(\mathbf{v}_{i},\mathbf{e}_{a}^{\prime})+\phi^{v}(\mathbf{v}_{i},\mathbf{e}_{b}^{\prime}).
+(14)
+Provided
+ϕ
+v
+\phi^{v}
+is invertible in
+𝐞
+k
+′
+\mathbf{e}_{k}^{\prime}
+, which is true when the dimensionality of
+𝐞
+k
+′
+\mathbf{e}_{k}^{\prime}
+matches the dimensionality of
+𝐯
+^
+i
+′
+\mathbf{\hat{v}}_{i}^{\prime}
+, then you can invert
+Equation
+12
+:
+𝐞
+k
+′
+=
+(
+ϕ
+v
+​
+(
+𝐯
+i
+,
+⋅
+)
+)
+−
+1
+​
+(
+𝐟
+k
+)
+.
+\mathbf{e}_{k}^{\prime}=(\phi^{v}(\mathbf{v}_{i},\cdot))^{-1}(\mathbf{f}_{k}).
+(15)
+Hence, the messages
+𝐞
+k
+′
+\mathbf{e}_{k}^{\prime}
+are just linear transformations of the true forces
+𝐟
+k
+\mathbf{f}_{k}
+. If we constrain the message dimensionality to match that of the physical system, we can fit the learned messages using a linear regression on the true forces. A strong linear correspondence indicates that the model has successfully captured the underlying physical forces.
+E.2
+Model Variants
+Details of the GNN variants trained in this case study are as follows:
+1.
+Standard
+. Consisted of a GNN where the message dimension,
+L
+e
+L^{e}
+, was set to 100.
+2.
+Bottleneck
+. The message dimension was set to match the dimensionality of the system, which was 2 in all the experiments.
+3.
+L1
+. We applied L1 regularization,
+ℒ
+e
+\mathcal{L}_{e}
+to the edge messages,
+ℒ
+L
+​
+1
+=
+α
+L
+​
+1
+N
+e
+​
+∑
+k
+=
+0
+N
+e
+−
+1
+|
+𝐞
+k
+′
+|
+,
+\mathcal{L}_{L1}=\frac{\alpha_{L1}}{N^{e}}\sum_{k=0}^{N^{e}-1}|\mathbf{e}_{k}^{\prime}|,
+(16)
+where
+N
+e
+N^{e}
+is the total number of parameters in the edge messages, and
+α
+L
+​
+1
+=
+10
+−
+2
+\alpha_{L1}=10^{-2}
+is the regularization constant. The dimension of the message vectors were set to be 100, the same as the standard model variation. This regularization encourages sparse representation of messages by the absolute values of the message components, effectively driving many of them toward zero.
+4.
+Kullback–Leibler (KL)
+. We added a standard Gaussian prior,
+𝒩
+∼
+(
+𝟎
+,
+𝟏
+)
+\mathcal{N}\sim(\mathbf{0},\mathbf{1})
+, to the components of the messages. Unlike the other model variants, the edge model in this case outputs both the mean and log-variance for each message element, which doubles the output dimensionality. This allows the messages to be treated as samples from a Gaussian distribution rather than fixed feature vectors:
+𝐞
+k
+′
+∼
+𝒩
+⁡
+(
+𝝁
+k
+′
+,
+diag
+​
+[
+𝝈
+′
+k
+2
+]
+)
+,
+\mathbf{e}_{k}^{\prime}\sim\mathcal{N}(\boldsymbol{\mu}^{\prime}_{k},\textbf{diag}[{\boldsymbol{\sigma}^{\prime}}_{k}^{2}]),
+(17)
+where
+𝝁
+k
+′
+=
+ϕ
+μ
+e
+\boldsymbol{\mu}^{\prime}_{k}=\phi_{\mu}^{e}
+and
+𝝈
+′
+k
+2
+=
+exp
+⁡
+(
+ϕ
+σ
+2
+e
+)
+{\boldsymbol{\sigma}^{\prime}}_{k}^{2}=\exp(\phi_{\sigma^{2}}^{e})
+. We trained the model such that
+ϕ
+μ
+e
+\phi_{\mu}^{e}
+are all even outputs and
+ϕ
+σ
+2
+e
+\phi_{\sigma^{2}}^{e}
+are all odd outputs from the edge model. During training, the edge messages are sampled from the distribution defined by
+Equation
+17
+before being aggregated and inputted to the node model. A regularization term equivalent to the KL-divergence between the standard normal prior and the probability distribution defined in
+Equation
+17
+is added to the loss:
+ℒ
+K
+​
+L
+=
+1
+N
+e
+​
+∑
+k
+=
+0
+N
+e
+−
+1
+∑
+j
+=
+0
+L
+e
+−
+1
+1
+2
+​
+(
+μ
+′
+k
+,
+j
+2
++
+σ
+′
+k
+,
+j
+2
+−
+log
+⁡
+(
+σ
+′
+k
+,
+j
+2
+)
+)
+.
+\mathcal{L}_{KL}=\frac{1}{N^{e}}\sum_{k=0}^{N^{e}-1}\sum_{j=0}^{L^{e}-1}\frac{1}{2}({\mu^{\prime}}_{k,j}^{2}+{\sigma^{\prime}}_{k,j}^{2}-\log({\sigma^{\prime}}_{k,j}^{2})).
+(18)
+The KL regularization term encourages sparsity in the messages by penalizing deviations from a standard normal distribution, effectively pushing the learned mean and variance of each message component toward zero mean and unit variance. If the model is in an evaluation setting, we do not sample and just take the message elements to equal the means.
+5.
+Pruning
+. The dimensionality of the edge messages is gradually reduced during training until it matches that of the system using SymTorch’s pruning functionality. To prune the MLP, we chose a random 10,240 data points from the validation set as sample data points and inputted these through the MLP. The dimensions with the lowest variance across these sample points were deemed as ’unimportant’ and we zero-masked these dimensions. We used a Cosine Annealing pruning schedule, with pruning completing at 65% of the way through training. SymTorch contains its own built-in method to prune MLPs in this way. This model variation is an extension to the original paper. Pruning is a similar model variation to bottleneck, but has the advantage that we do not require knowledge of the dimensionality of the system beforehand.
+E.3
+Setup and Training
+Dataset
+The dataset used in training the GNN was created using the source code from the original paper code repository
+(
+Cranmer, 2020
+)
+. Each sample comprised a tensor containing particle information, as shown in
+Equation
+8
+, of four interacting particles. The target data included the accelerations of the particles, found by taking the negative derivative of their respective potentials (to calculate the force) and dividing by their mass. Our system has dimensionality of two.
+Each dataset was created by running 10,000 different simulations over 1000 time steps and then only collecting data from every 5th time step to reduce correlation between samples. This resulted in datasets containing 1 million samples, which were then randomly split into training, validation and test sets with ratio 70/15/15.
+Model Configuration
+To create and train the GNNs, we used PyTorch and PyTorch Geometric
+(
+Fey & Lenssen, 2019
+)
+. In all experiments, the edge model and node model MLPs contained three hidden layers each with 300 hidden units and ReLU activations between each layer.
+Data Augmentation
+The node model outputs predictions of the instantaneous accelerations of particles, as shown in
+Equation
+7
+. Before passing the node features into the model, we augment the data by adding Gaussian noise with a standard deviation of 3 to the position coordinates of all nodes simultaneously. This follows the approach used in the original paper’s code and was likely introduced to improve model robustness by reducing overfitting to precise spatial positions, while also simulating the presence of noise in real-world data.
+Predictions and Loss
+The base loss on our model was calculated to be the mean absolute error between the predicted accelerations,
+𝐯
+^
+i
+′
+\hat{\mathbf{v}}_{i}^{\prime}
+, and the actual accelerations,
+𝐯
+i
+′
+\mathbf{v}_{i}^{\prime}
+, from our dataset:
+ℒ
+=
+1
+N
+v
+​
+∑
+i
+=
+0
+N
+v
+−
+1
+|
+𝐯
+i
+′
+−
+𝐯
+^
+i
+′
+|
+.
+\mathcal{L}=\frac{1}{N^{v}}\sum^{N^{v}-1}_{i=0}|\mathbf{v}_{i}^{\prime}-\hat{\mathbf{v}}_{i}^{\prime}|.
+(19)
+L2 regularization was also used in every training instance,
+ℒ
+L
+​
+2
+=
+α
+L
+​
+2
+N
+l
+​
+∑
+l
+=
+0
+N
+l
+|
+w
+l
+|
+2
+,
+\mathcal{L}_{L2}=\frac{\alpha_{L2}}{N^{l}}\sum_{l=0}^{N^{l}}|w_{l}|^{2},
+(20)
+where
+N
+l
+N^{l}
+are the total number of network parameters, denoted
+w
+l
+w_{l}
+, and
+α
+L
+​
+2
+=
+10
+−
+8
+\alpha_{L2}=10^{-8}
+is the L2 regularization constant. Hence, the total loss is
+ℒ
++
+ℒ
+L
+​
+2
+\mathcal{L}+\mathcal{L}_{L2}
+for the standard, bottleneck and pruning model variant. For the L1 model variation, the loss is
+ℒ
++
+ℒ
+L
+​
+2
++
+ℒ
+L
+​
+1
+\mathcal{L}+\mathcal{L}_{L2}+\mathcal{L}_{L1}
+, and for the KL model variation the loss is
+ℒ
++
+ℒ
+L
+​
+2
++
+ℒ
+K
+​
+L
+\mathcal{L}+\mathcal{L}_{L2}+\mathcal{L}_{KL}
+.
+Training
+To train our models, we performed gradient descent using the Adam
+(
+Kingma & Ba, 2017
+)
+optimiser with a Cosine Annealing learning rate scheduler. Each model was trained for 100 epochs with a batch size of 64 on a training set of 700,000 samples, resulting in approximately 1.1 million optimization steps. The training and validation loss was monitored every epoch.
+E.4
+Symbolic distillation with SymTorch
+We used SymTorch to perform the SR on the edge model. For the standard and L1 model variant, we performed SR on the top two most important dimensions as determined by SymTorch’s
+get_importance
+method. Whereas for the KL model variation, we chose the two most importance message dimensions as the ones with the highest KL divergence as calculated in
+Equation
+18
+.
+Variable transforms
+To improve the efficiency of the SR, we performed the following variable transforms on the input data:
+Δ
+​
+x
+=
+x
+1
+−
+x
+2
+\Delta x=x_{1}-x_{2}
+,
+Δ
+​
+y
+=
+y
+1
+−
+y
+2
+\Delta y=y_{1}-y_{2}
+, and
+r
+=
+Δ
+​
+x
+2
++
+Δ
+​
+y
+2
++
+10
+−
+2
+r=\sqrt{\Delta x^{2}+\Delta y^{2}}+10^{-2}
+. We added a small constant to the distance
+r
+r
+to match the form used in the original potential equations when generating the dataset. Thus the inputs to the SR were these transformed variables as well as
+m
+1
+,
+m
+2
+,
+q
+1
+,
+q
+2
+m_{1},m_{2},q_{1},q_{2}
+.
+SR parameters
+The operators that were allowed in the SR were
++
+,
+−
+,
+×
+,
+inv
+​
+(
+⋅
+)
++,-,\times,\texttt{inv}(\cdot)
+, which had complexity of 1, as well as
+exp
+and
+log
+, which we set to have complexity of 3. The complexity of constants and input variables were set to be 1. We chose a random set of 5,000 examples from the test set for the SR. For all of the tests, we ran the SR for 7,000 iterations. The parsimony argument was set to 0.05 and the maximum size of equations permitted (measured in terms of complexity) was set to 25. Lastly, we also set constraints of
+exp
+and
+log
+to be one.
+E.5
+Results
+The final loss on the trained GNNs are shown in
+Table
+6
+and the symbolic regression results are shown in
+Table
+3
+. An example Pareto front of equations is shown in
+Table
+8
+and the corresponding scores are shown in
+Figure
+8
+.
+Table 6
+:
+Test set mean absolute error (MAE) for different GNN model variants across four force law simulations. Lower values indicate better performance. The pruning variant (introduced by SymTorch) achieves comparable performance to the bottleneck model while automatically discovering the optimal dimension. Variance values provide scale context for the prediction errors.
+Simulation
+Standard
+Bottleneck
+L1
+KL
+Pruning
+Variance
+Charge
+18.20
+19.12
+18.06
+39.80
+19.40
+56417.66
+r
+−
+1
+r^{-1}
+0.26
+0.25
+0.32
+15.40
+0.28
+87.69
+r
+−
+2
+r^{-2}
+24.07
+25.25
+21.67
+57.80
+23.77
+98641.90
+Spring
+0.24
+0.16
+0.20
+7.29
+0.23
+55.84
+Table 7
+:
+Symbolic regression results for each message component.
+✓= correct form of force law recovered; ✗= failure.
+∗
+Correct form, but with a small constant added to a term (e.g.,
+1
+/
+(
+r
++
+const.
+)
+1/(r+\text{const.})
+).
+†
+Correct form, but only
+Δ
+​
+y
+\Delta y
+apparent in both messages.
+‡
+Correct form with
+Δ
+​
+x
+\Delta x
+in one message and
+Δ
+​
+y
+\Delta y
+in the other.
+§
+Correct form with only
+Δ
+​
+x
+\Delta x
+or
+Δ
+​
+y
+\Delta y
+in at least one message.
+Simulation
+Message
+Standard
+Bottleneck
+L1
+KL
+Pruning
+Charge
+1
+✗
+✓
+‡
+✗
+✗
+✓
+2
+✗
+✓
+‡
+✓
+§
+✗
+✓
+§
+r
+−
+1
+r^{-1}
+1
+✗
+✓
+✓
+✗
+✓
+2
+✓
+✓
+✓
+✗
+✓
+∗
+r
+−
+2
+r^{-2}
+1
+✓
+§
+✓
+✓
+§
+✓
+‡
+✓
+2
+✗
+✓
+✗
+✓
+‡
+✓
+Spring
+1
+✓
+†
+✓
+✓
+✓
+‡
+✓
+2
+✓
+†
+✓
+✓
+§
+✓
+‡
+✓
+Examples of successful reconstructions
+Below are some examples of successful reconstructions of the true forces:
+•
+Spring; bottleneck
+msg1
+=
+(
+1
+r
+−
+0.99950946
+)
+⋅
+(
+0.8855752
+​
+Δ
+​
+y
++
+1.8560125
+​
+Δ
+​
+x
+)
++
+0.031805687
+\texttt{msg1}=\left(\frac{\texttt{1}}{\texttt{r}}-\texttt{0.99950946}\right)\cdot(\texttt{0.8855752}\Delta\texttt{y}+\texttt{1.8560125}\Delta\texttt{x})+\texttt{0.031805687}
+•
+r
+−
+2
+r^{-2}
+; L1
+msg1
+=
+m
+2
+​
+(
+(
+Δ
+​
+y
++
+0.43513915
+)
++
+Δ
+​
+x
+)
+⋅
+1
+r
+3
+\texttt{msg1}=\texttt{m}_{\texttt{2}}((\Delta\texttt{y}+\texttt{0.43513915})+\Delta\texttt{x})\cdot\frac{\texttt{1}}{\texttt{r}^{3}}
+•
+Charge; pruning
+msg2
+=
+1
+(
+r
++
+0.036421545
+)
+​
+r
+2
+⋅
+q
+1
+​
+q
+2
+⋅
+(
+Δ
+​
+x
+−
+0.0331669
+)
++
+0.08641323
+\texttt{msg2}=\frac{\texttt{1}}{(\texttt{r}+\texttt{0.036421545})\texttt{r}^{2}}\cdot\texttt{q}_{1}\texttt{q}_{2}\cdot(\Delta\texttt{x}-\texttt{0.0331669})+\texttt{0.08641323}
+(shows the correct functional form except there is a small constant added to one of the
+1
+/
+r
+1/r
+terms and a
+Δ
+​
+y
+\Delta y
+term is not present).
+Figure 8
+:
+The score of the equations found from PySR for the pruning model trained on the
+r
+−
+2
+r^{-2}
+as given in
+Table
+8
+. The score is calculated from
+Equation
+2
+. The best equation, highlighted in red, produces the largest drop in
+log
+⁡
+(
+loss
+)
+\log(\text{loss})
+per unit of additional complexity.
+Table 8
+:
+Pareto front from PySR results on message 2 of pruning model on
+r
+−
+2
+r^{-2}
+dataset. The highlighted equation shows the ’best equation’ chosen by PySR according to the metric given in Equation
+2
+. The constants have been truncated to two decimal points.
+Complexity
+Equation
+Loss
+1
+ϕ
+2
+e
+=
+0.08
+\phi_{2}^{e}=0.08
+0.0888
+5
+ϕ
+2
+e
+=
+(
+Δ
+​
+x
+⋅
+0.00
+)
++
+0.08
+\phi_{2}^{e}=(\Delta x\cdot 0.00)+0.08
+0.0885
+7
+ϕ
+2
+e
+=
+(
+(
+Δ
+​
+x
++
+Δ
+​
+y
+)
+⋅
+0.00
+)
++
+0.08
+\phi_{2}^{e}=((\Delta x+\Delta y)\cdot 0.00)+0.08
+0.0882
+8
+ϕ
+2
+e
+=
+(
+(
+Δ
+​
+x
+⋅
+inv
+⁡
+(
+r
+)
+)
+⋅
+0.00
+)
++
+0.08
+\phi_{2}^{e}=((\Delta x\cdot\mathrm{inv}(r))\cdot 0.00)+0.08
+0.0880
+9
+ϕ
+2
+e
+=
+(
+m
+2
+⋅
+(
+Δ
+​
+y
++
+Δ
+​
+x
+)
+⋅
+0.00
+)
++
+0.08
+\phi_{2}^{e}=(m_{2}\cdot(\Delta y+\Delta x)\cdot 0.00)+0.08
+0.0877
+10
+ϕ
+2
+e
+=
+(
+inv
+(
+(
+r
++
+Δ
+x
+)
+⋅
+r
+)
+⋅
+−
+0.00
+)
++
+0.08
+\phi_{2}^{e}=(\mathrm{inv}((r+\Delta x)\cdot r)\cdot-0.00)+0.08
+0.0843
+12
+ϕ
+2
+e
+=
+(
+inv
+⁡
+(
+r
+3
+)
+⋅
+(
+Δ
+​
+x
+⋅
+0.02
+)
+)
++
+0.08
+\phi_{2}^{e}=(\mathrm{inv}(r^{3})\cdot(\Delta x\cdot 0.02))+0.08
+0.0687
+14
+ϕ
+2
+e
+=
+(
+(
+m
+2
+⋅
+0.01
+)
+⋅
+(
+Δ
+​
+x
+⋅
+inv
+⁡
+(
+r
+3
+)
+)
+)
++
+0.08
+\phi_{2}^{e}=((m_{2}\cdot 0.01)\cdot(\Delta x\cdot\mathrm{inv}(r^{3})))+0.08
+0.0513
+16
+ϕ
+2
+e
+=
+(
+(
+Δ
+y
++
+Δ
+x
+)
+⋅
+(
+(
+m
+2
+⋅
+inv
+(
+r
+3
+)
+)
+⋅
+−
+0.01
+)
+)
++
+0.08
+\phi_{2}^{e}=((\Delta y+\Delta x)\cdot((m_{2}\cdot\mathrm{inv}(r^{3}))\cdot-0.01))+0.08
+0.0260
+18
+ϕ
+2
+e
+=
+(
+(
+inv
+⁡
+(
+r
+3
+)
+⋅
+(
+Δ
+​
+x
++
+Δ
+​
+y
+⋅
+0.59
+)
+)
+⋅
+m
+2
+)
++
+0.08
+\phi_{2}^{e}=((\mathrm{inv}(r^{3})\cdot(\Delta x+\Delta y\cdot 0.59))\cdot m_{2})+0.08
+0.0128
+20
+ϕ
+2
+e
+=
+(
+inv
+⁡
+(
+r
+3
+)
+⋅
+(
+(
+(
+m
+2
++
+0.06
+)
+⋅
+0.01
+)
+⋅
+(
+Δ
+​
+x
++
+Δ
+​
+y
+⋅
+0.59
+)
+)
+)
++
+0.08
+\phi_{2}^{e}=(\mathrm{inv}(r^{3})\cdot(((m_{2}+0.06)\cdot 0.01)\cdot(\Delta x+\Delta y\cdot 0.59)))+0.08
+0.0125
+Limitations of the framework
+In the reconstructions for the
+r
+−
+1
+r^{-1}
+and
+r
+−
+2
+r^{-2}
+force laws, the mass of the receiving node,
+m
+1
+m_{1}
+, is absent. As described in
+Equation
+5
+, the edge model is intended to learn the interaction forces between particles, with the node model aggregating these messages and outputting the resulting accelerations, as shown in
+Equation
+21
+. However, this setup is mathematically equivalent to having the edge model learn accelerations directly, with the node model simply outputting the aggregated accelerations, as shown in
+Equation
+22
+.
+Edge model learns forces:
+ϕ
+e
+​
+(
+v
+r
+k
+,
+v
+s
+k
+)
+≈
+Force on
+​
+r
+k
+​
+by
+​
+s
+k
+\displaystyle\phi^{e}(\textbf{v}_{r_{k}},\textbf{v}_{s_{k}})\approx\text{Force on }r_{k}\text{ by }s_{k}
+ϕ
+v
+​
+(
+v
+r
+k
+,
+∑
+j
+≠
+r
+k
+ϕ
+e
+​
+(
+v
+r
+k
+,
+v
+j
+)
+)
+≈
+ϕ
+v
+​
+(
+v
+r
+k
+,
+Resultant force on
+​
+r
+k
+)
+≈
+Acceleration of
+​
+r
+k
+\displaystyle\phi^{v}\left(\textbf{v}_{r_{k}},\sum_{j\neq r_{k}}\phi^{e}(\textbf{v}_{r_{k}},\textbf{v}_{j})\right)\approx\phi^{v}(\textbf{v}_{r_{k}},\text{Resultant force on }r_{k})\approx\text{Acceleration of }r_{k}
+(21)
+Edge model learns accelerations:
+ϕ
+e
+​
+(
+v
+r
+k
+,
+v
+s
+k
+)
+≈
+Acceleration on
+​
+r
+k
+​
+caused by interaction with
+​
+s
+k
+\displaystyle\phi^{e}(\textbf{v}_{r_{k}},\textbf{v}_{s_{k}})\approx\text{Acceleration on }r_{k}\text{ caused by interaction with }s_{k}
+ϕ
+v
+​
+(
+v
+r
+k
+,
+∑
+j
+≠
+r
+k
+ϕ
+e
+​
+(
+v
+r
+k
+,
+v
+j
+)
+)
+≈
+ϕ
+v
+​
+(
+v
+r
+k
+,
+Resultant acceleration of
+​
+r
+k
+)
+≈
+Acceleration of
+​
+r
+k
+\displaystyle\phi^{v}\left(\textbf{v}_{r_{k}},\sum_{j\neq r_{k}}\phi^{e}(\textbf{v}_{r_{k}},\textbf{v}_{j})\right)\approx\phi^{v}(\textbf{v}_{r_{k}},\text{Resultant acceleration of }r_{k})\approx\text{Acceleration of }r_{k}
+(22)
+SR Wall Clock Time
+To perform SR on the edge model it took approximately 10 minutes on an Apple M4 Max SoC (14-core CPU: 10 performance + 4 efficiency cores, 36 GB unified memory).
+Appendix F
+Extracting PDE Solutions from a PINN Details
+F.1
+Theory
+PINN architecture
+PINNs augment standard neural network training with regularization terms encoding physical laws (PDEs, boundary conditions, and initial conditions). We trained both a PINN and regular NN on temperature data governed by the 1-D heat equation (
+Equation
+28
+). The BCs for this physical system are
+u
+⁡
+(
+0
+,
+t
+)
+=
+0
+,
+u
+⁡
+(
+1
+,
+t
+)
+=
+0
+u(0,t)=0,\quad u(1,t)=0
+(23)
+and the IC is
+u
+⁡
+(
+x
+,
+0
+)
+=
+sin
+⁡
+(
+π
+​
+x
+)
+u(x,0)=\sin(\pi x)
+(24)
+Both the regular NN and the PINN share the same architecture, but the PINN augments its loss function with additional regularization terms that encode the governing physical laws. In our case, these regularization terms,
+ℒ
+⋅
+\mathcal{L}_{\cdot}
+, are
+ℒ
+PDE
+\displaystyle\mathcal{L}_{\mathrm{PDE}}
+=
+λ
+PDE
+​
+1
+N
+​
+∑
+i
+=
+1
+N
+(
+u
+t
+​
+(
+x
+i
+,
+t
+i
+)
+−
+α
+​
+u
+x
+​
+x
+​
+(
+x
+i
+,
+t
+i
+)
+)
+2
+\displaystyle=\lambda_{\mathrm{PDE}}\,\frac{1}{N}\sum_{i=1}^{N}\left(u_{t}(x_{i},t_{i})-\alpha\,u_{xx}(x_{i},t_{i})\right)^{2}
+(25)
+ℒ
+BC
+\displaystyle\mathcal{L}_{\mathrm{BC}}
+=
+λ
+BC
+​
+1
+N
+​
+∑
+i
+=
+1
+N
+(
+u
+​
+(
+0
+,
+t
+i
+)
+2
++
+u
+​
+(
+1
+,
+t
+i
+)
+2
+)
+\displaystyle=\lambda_{\mathrm{BC}}\,\frac{1}{N}\sum_{i=1}^{N}\left(u(0,t_{i})^{2}+u(1,t_{i})^{2}\right)
+(26)
+ℒ
+IC
+\displaystyle\mathcal{L}_{\mathrm{IC}}
+=
+λ
+IC
+​
+1
+N
+​
+∑
+i
+=
+1
+N
+(
+u
+⁡
+(
+x
+i
+,
+0
+)
+−
+sin
+⁡
+(
+π
+​
+x
+i
+)
+)
+2
+\displaystyle=\lambda_{\mathrm{IC}}\,\frac{1}{N}\sum_{i=1}^{N}\left(u(x_{i},0)-\sin(\pi x_{i})\right)^{2}
+(27)
+with regularization strengths denoted by
+λ
+⋅
+\lambda_{\cdot}
+.
+F.2
+Methods
+Dataset
+The dataset consisted of ten data points,
+𝐱
+∈
+𝒳
+⊂
+ℝ
+2
+\mathbf{x}\in\mathcal{X}\subset\mathbb{R}^{2}
+, sampled from the true solution of the PDE,
+u
+⁡
+(
+𝐱
+)
+=
+u
+⁡
+(
+x
+,
+t
+)
+=
+e
+−
+π
+2
+​
+α
+​
+t
+​
+sin
+⁡
+(
+π
+​
+x
+)
+u(\mathbf{x})=u(x,t)=e^{-\pi^{2}\alpha t}\sin(\pi x)
+(28)
+where we set
+α
+=
+0.2
+\alpha=0.2
+.
+Model and training
+The NN and PINN consisted of a single MLP
+ϕ
+:
+𝒳
+→
+𝒵
+\phi:\mathcal{X}\rightarrow\mathcal{Z}
+, where
+𝒵
+⊆
+ℝ
+\mathcal{Z}\subseteq\mathbb{R}
+,
+with three hidden layers and Tanh activations. Each hidden layer contained 32 hidden units. For the PINN, we added additional regularization terms (from
+Equation
+25
+-
+Equation
+27
+with regularization strengths
+λ
+PDE
+=
+1
+\lambda_{\mathrm{PDE}}=1
+and
+λ
+BD
+=
+λ
+IC
+=
+5
+\lambda_{\mathrm{BD}}=\lambda_{\mathrm{IC}}=5
+) to the loss. We also set
+α
+\alpha
+to be a differentiable parameter in the PINN such that, through training, the model can predict its value. Both models were trained for 30,000 optimizer steps.
+Symbolic distillation
+We used SymTorch to wrap both MLPs. For the SR, the default SymTorch parameter, as from
+Table
+3
+. However, we further added a constraint on the
+exp
+\exp
+and
+sin
+\sin
+operators to only take arguments up to complexity 3, added a parsimony coefficient of 0.01 and ran the search for 1000 iterations. The sample batch for the SR consisted of 5000 randomly sampled data points
+x
+x
+and
+t
+t
+in their respective allowed intervals.
+F.3
+Results
+To compare the performances of the NN and the PINN we evaluate their Mean-Square Error (MSE) losses on a 2-D space-time grid of granularity
+100
+×
+100
+100\times 100
+.
+Figure
+6
+shows a comparison of the NN’s and the PINN’s predictions on the grid and the ground truth. The MSE losses on the grid are shown in
+Table
+9
+. The PINN outperformed the NN, especially at boundaries. The PINN further predicted the value of
+α
+\alpha
+correctly to 4 decimal points.
+Table 9
+:
+Mean squared errors (MSEs) of the regular neural network and Physics-Informed Neural Network (PINN) predictions on the
+u
+⁡
+(
+x
+,
+t
+)
+u(x,t)
+space–time grid for the 1D heat equation. The PINN, trained with only 10 data points, achieves three orders of magnitude lower error than the regular NN due to its physics-informed regularization. Variance of the ground-truth solution shown for scale.
+Regular NN
+PINN
+Variance
+MSE loss
+7.81
+×
+10
+−
+3
+7.81\times 10^{-3}
+7.40
+×
+10
+−
+6
+7.40\times 10^{-6}
+4.82
+×
+10
+−
+2
+4.82\times 10^{-2}
+Extracting the true solution
+From the trained PINN, we were able to distill the correct form of the 1-D heat equation solution as given in
+Equation
+28
+with the constants correct to 2 decimal points. However, we were unable to do this for the regular NN.
+SR Wall Clock Time
+To perform SR on the PINN it took less than 3 minutes on an Apple M4 Max SoC (14-core CPU: 10 performance + 4 efficiency cores, 36 GB unified memory).
+Appendix G
+Interpreting LLM-Learned Operations Details
+G.1
+Setup
+The specific prompts used to query the Llama-3.2-1B-Instruct model are shown in
+Table
+10
+. When generating text, we configured the LLM to perform greedy decoding (
+do_sample=False
+) with a maximum generation limit of 250 new tokens. Since the LLM responses included explanatory text beyond the numeric answer (eg. step-by-step reasoning), we implemented a regex-based extraction function to parse the final numeric result from the LLM’s output. We then created a wrapper function for each mathematical operation (addition, multiplication, temperature conversion, and counting) that: (1) took the numerical inputs as a NumPy array (eg. pairs of 3-digit integers for addition), (2) formatted these inputs into natural language prompts, (3) queried the LLM, (4) extracted the numeric answer, and (5) returned the result as a NumPy array. Finally, we used SymTorch’s model-agnostic mode to wrap these functions and perform SR on the LLM’s input-output behavior.
+The SR parameters used are the default ones as in
+Table
+3
+but we added a constraint on
+sin
+\sin
+and
+exp
+\exp
+to only take arguments of up to complexity 1 and ran the SR for 5000 iterations.
+Table 10
+:
+Prompts used to query Llama-3.2-1B-Instruct on four mathematical tasks: addition, multiplication, Celsius-to-Fahrenheit conversion, and counting 1s in binary strings. All prompts request answers in $boxed$ format to enable regex-based extraction of numeric results. For the temperature conversion task, we only inputted temperatures between
+−
+20
+​
+°
+-20\degree
+C and
+200
+​
+°
+200\degree
+C.
+Operation
+Example Prompt
+Addition of two 3-digit numbers
+Return only the numeric answer in the format $boxed$.
+What is
+193
++
+374
+=
+193+374=
+?
+Multiplication of two 3-digit numbers
+Return only the numeric answer in the format $boxed$.
+What is
+484
+∗
+726
+=
+484*726=
+?
+Counting 1s in a 6-digit string of 1s and 0s
+Return only the numeric answer in the format $boxed$.
+How many 1s are there in the string 000101?
+Converting from Celsius to Fahrenheit
+Return only the numeric answer in the format $boxed$.
+What is
+30
+30
+degrees Celsius in Fahrenheit?
+SR Wall-Clock Time
+Symbolic distillation required 5-15 minutes on an Apple M4 Max SoC (14-core CPU: 10 performance + 4 efficiency cores, 36 GB unified memory) for each of these operations.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

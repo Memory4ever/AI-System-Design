@@ -1,0 +1,77 @@
+5.1 2Mamba Algorithm Efficiency
+While squaring the inner product does result in a large accuracy gain, we note that the recurrent state requires approximately the square of the space as the original linear variant. When squaring the inner product or taking the Kronecker product of QQ and KK, and then performing the inner product, some terms are repeated due to the commutativity of the multiplication operation in the inner product. This means that as opposed to doing a Kronecker product on the queries and keys, one can do an operation that calculates all unique second-order product terms and calculate their multiplicity via the multinomial theorem. We provide a Triton kernel for creating a vector of second order products of a given vector.99
+9
+https://github.com/gmongaras/Triton-Efficient-Kronecker-Product The number of terms, as seen in equation (5) is equal to d⁡(d+1)2\frac{d(d+1)}{2}, which is less than half the elements within the vector obtained from naively calculating all d2d^{2} elements.1010
+10
+For notational brevity, we denote the head dimension as dd in this section.
+n​u​m​_​t​e​r​m​s=(2+d−1d−1)=(d+1d−1)=(d+1)!2​(d−1)!=(d+1)⋅d⋅(d−1)!2​(d−1)!=d⋅(d+1)2num\_terms=\genfrac{(}{)}{0.0pt}{0}{2+d-1}{d-1}=\genfrac{(}{)}{0.0pt}{0}{d+1}{d-1}=\frac{(d+1)!}{2(d-1)!}=\frac{(d+1)\cdot d\cdot(d-1)!}{2(d-1)!}=\frac{d\cdot(d+1)}{2}
+(5)
+As the complexity of softmax attention is linear in memory due to the K​VKV cache, there exists a sequence length such that squaring the inner product requires less memory than softmax attention. A K​VKV cache requires memory on the order of 2​L​d2Ld for a single attention head. By using equation (5) for the key dimension and multiplying by dd for the value dimension, a hidden state for squared linear attention requires memory on the order of d2​(d+1)/2d^{2}(d+1)/2 per attention head. Adding a convolution adds an extra 3​d3d memory per attention head and using softmax normalization adds an extra d⁡(d+1)/2d(d+1)/2 memory per attention head. In total, this results in a hidden state size of d​(d+1)22+3​d\frac{d(d+1)^{2}}{2}+3d per attention head. The inequality in equation (6) provides the necessary sequence length, NN, such that any sequence length longer than NN is more memory efficient using a second-order hidden state than using softmax attention.
+2​N​d>d​(d+1)22+3​d⟶N>(d+1)24+322Nd>\frac{d(d+1)^{2}}{2}+3d\qquad\longrightarrow\qquad N>\frac{(d+1)^{2}}{4}+\frac{3}{2}
+(6)
+In practice, we used a head dimension of 64. According to inequality in equation (6), a sequence length greater than (64+1)24+32≈1058\frac{(64+1)^{2}}{4}+\frac{3}{2}\approx 1058 would result in a lower memory usage than softmax attention. To ensure the squared model retains good accuracy beyond this sequence length, we examine models with a context size up to 8192 tokens. As such, squaring the Q​KQK inner product is less memory constrained than softmax attention past the sequence length of 10581058 while matching softmax level accuracy. This memory result is verified by running both softmax attention and 2Mamba while accumulating the raw hidden state memory usage from each model, as seen in figure 7. Our codebase has a state caching inference implementation for both algorithms.
+Figure 7: Memory usage of a single head of softmax attention and 2Mamba, utilizing softmax-like normalization and a convolution with kernel size 2.
+Figure 8: One-shot NIAH benchmark results using maximum likelihood sampling over 1000 sequences. Green indicates the predicted needle was correct more often while red indicates the predicted needle was predicted less often. Scores are indicative of the proportion of sequences in which the model predicted the needle correctly.
+Figure 9: Long training run of various models with a batch size of 64 on 8,1928,192 max sequence length.
+5.2 Effective Context Usage
+To confirm 2Mamba uses its context effectively, we employ the The Needle in a Haystack (NIAH) test, which measures ability of the model to retrieve a specific, relevant fact (the “needle”) inserted into a long prompt (the “haystack”). That is, it assesses how well a model recalls information placed at different locations within large prompts. In our testing, we train a model for 400,000400,000 steps on a batch size of 6464 with a maximum context size of 8,1928,192 tokens. During this long training run, we plot the test loss, as seen in Figure 9, showing that 2Mamba is still competitive with softmax attention for long training runs. After training for 400,000400,000 steps, we evaluate our model on Nanotron’s needle in a haystack test1111
+11
+https://huggingface.co/datasets/nanotron/simple_needle_in_a_hay_stack on context lengths from about 1,0241,024 characters to about 16,38416,384 characters. This test hides a password inside a large corpus of irrelevant text. The model must memorize the password, and repeat it after parsing the large corpus of text. This benchmark tests how well a model uses its context window and for how long it can store important information. As seen in Figure 8, 2Mamba method is slightly better than softmax in context retrieval, and much better than Mamba-2. This result provides evidence that 2Mamba extends beyond NTP tasks and can utilize its context effectively.
+6 2Mamba With an Exponentiated Hidden State
+The property of squaring the inner product was used to make Mamba-2 more accurate while remaining efficient. As shown in (Mongaras and Larson (2025)), adding higher orders typically results in additional accuracy gains (though diminishing with each new term). In the limiting case, one can use the exponential function which results in softmax attention. Therefore, we ask: If the exponential function on normal linear attention gives softmax attention, then what would happen if the Q​KQK inner product of 2Mamba 4 was exponentiated?
+Figure 10: Medium model (∼\sim700M params) test loss for Mamba, the exponentiated variation of our proposed algorithm, and softmax attention trained on 2048, 4096, and 8192 sequence lengths.
+As seen in Figure 10, exponentiating the inner product of QQ and KK results in slightly better accuracy than softmax attention. We name the exponentiated form 2Mamba-E. One can interpret this algorithm as either exponentiating 2Mamba or as softmax attention with an AA-mask and input convolution. The latter explanation seems more intuitive and satisfying when considering traditional transformer literature. Adding an AA-mask, or decay mask, to softmax attention has also been proposed in the Forgetting Transformer (Lin et al. (2025)). The main difference between the forgetting transformer and the algorithm we use is the AA-mask construction. The forgetting transformer uses log⁡(sigmoid​(x))\log(\text{sigmoid}(x)) as the function for the AA-mask values while we use OPEN−softplus​(−x))-\text{softplus}(-x)). It turns out these are nearly equivalent (only differing by sign) as seen in equation 7.
+log⁡(sigmoid​(x))=log⁡(11+e−x)=−log⁡(1+e−x)=−softplus​(−x)\log(\text{sigmoid}(x))=\log\left(\frac{1}{1+e^{-x}}\right)=-\log(1+e^{-x})=-\text{softplus}(-x)
+(7)
+From this perspective, our work on exponentiated hidden states also provides an intuitive connection between SSM models, like Mamba-2, and transformer variants like the forgetting transformer.
+7 Conclusion and Future Work
+This work examines the importance of each individual component of Mamba-2 to build up a minimal implementation, Mamba-2S. From this base model, we take the second order hidden state to achieve a model, 2Mamba, that is as accurate as softmax attention, yet constant in memory. Additionally, we show that our implementation, when exponentiated, results in an architecture, 2Mamba-E, that is better than softmax attention and show that this implementation is similar to the forgetting transformer (Lin et al. (2025)). 2Mamba is a step forward in bridging the gap between linear attention architectures and softmax attention, while being more efficient in practice.
+The exploration of this work closely examined the architecture choices made in Mamba-2 (Dao and Gu (2024)). Another parallel work that improves linear attention is DeltaNet (Yang et al. (2024b)). Mamba-2 and Deltanet have been combined in Gated Deltanet (Yang et al. (2025)). Similarly, future work can look into adding DeltaNet to 2Mamba to further improve the algorithm.
+Future work can also look into the hidden state created by squaring the inner product of the queries and keys. While we stick with a static hidden state size, future work can examine how varying the hidden state size affects downstream accuracy and if squaring the inner product space results in better or similar accuracy than using a query and key projection to the same size. This future work can make 2Mamba more efficient in terms of memory by optimizing the hidden state size.
+References
+Bahdanau et al. [2016]
+Dzmitry Bahdanau, Kyunghyun Cho, and Yoshua Bengio.
+Neural machine translation by jointly learning to align and translate, 2016.
+URL https://arxiv.org/abs/1409.0473.
+Brohan et al. [2023]
+Anthony Brohan, Noah Brown, Justice Carbajal, Yevgen Chebotar, Joseph Dabis, Chelsea Finn, Keerthana Gopalakrishnan, Karol Hausman, Alex Herzog, Jasmine Hsu, Julian Ibarz, Brian Ichter, Alex Irpan, Tomas Jackson, Sally Jesmonth, Nikhil J Joshi, Ryan Julian, Dmitry Kalashnikov, Yuheng Kuang, Isabel Leal, Kuang-Huei Lee, Sergey Levine, Yao Lu, Utsav Malla, Deeksha Manjunath, Igor Mordatch, Ofir Nachum, Carolina Parada, Jodilyn Peralta, Emily Perez, Karl Pertsch, Jornell Quiambao, Kanishka Rao, Michael Ryoo, Grecia Salazar, Pannag Sanketi, Kevin Sayed, Jaspiar Singh, Sumedh Sontakke, Austin Stone, Clayton Tan, Huong Tran, Vincent Vanhoucke, Steve Vega, Quan Vuong, Fei Xia, Ted Xiao, Peng Xu, Sichun Xu, Tianhe Yu, and Brianna Zitkovich.
+Rt-1: Robotics transformer for real-world control at scale, 2023.
+URL https://arxiv.org/abs/2212.06817.
+Chen et al. [2021]
+Lili Chen, Kevin Lu, Aravind Rajeswaran, Kimin Lee, Aditya Grover, Michael Laskin, Pieter Abbeel, Aravind Srinivas, and Igor Mordatch.
+Decision transformer: Reinforcement learning via sequence modeling.
+In ICML 2021 Workshop on Unsupervised Reinforcement Learning, 2021.
+URL https://openreview.net/forum?id=gaCGNwsWITG.
+Choromanski et al. [2021]
+Krzysztof Marcin Choromanski, Valerii Likhosherstov, David Dohan, Xingyou Song, Andreea Gane, Tamas Sarlos, Peter Hawkins, Jared Quincy Davis, Afroz Mohiuddin, Lukasz Kaiser, David Benjamin Belanger, Lucy J Colwell, and Adrian Weller.
+Rethinking attention with performers.
+In International Conference on Learning Representations, 2021.
+URL https://openreview.net/forum?id=Ua6zuk0WRH.
+Dao and Gu [2024]
+Tri Dao and Albert Gu.
+Transformers are SSMs: Generalized models and efficient algorithms through structured state space duality.
+In Ruslan Salakhutdinov, Zico Kolter, Katherine Heller, Adrian Weller, Nuria Oliver, Jonathan Scarlett, and Felix Berkenkamp, editors, Proceedings of the 41st International Conference on Machine Learning, volume 235 of Proceedings of Machine Learning Research, pages 10041–10071. PMLR, 21–27 Jul 2024.
+URL https://proceedings.mlr.press/v235/dao24a.html.
+Dao et al. [2022]
+Tri Dao, Daniel Y Fu, Stefano Ermon, Atri Rudra, and Christopher Re.
+Flashattention: Fast and memory-efficient exact attention with IO-awareness.
+In Alice H. Oh, Alekh Agarwal, Danielle Belgrave, and Kyunghyun Cho, editors, Advances in Neural Information Processing Systems, 2022.
+URL https://openreview.net/forum?id=H4DqfPSibmx.
+Dosovitskiy et al. [2021]
+Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Dirk Weissenborn, Xiaohua Zhai, Thomas Unterthiner, Mostafa Dehghani, Matthias Minderer, Georg Heigold, Sylvain Gelly, Jakob Uszkoreit, and Neil Houlsby.
+An image is worth 16x16 words: Transformers for image recognition at scale.
+In International Conference on Learning Representations, 2021.
+URL https://openreview.net/forum?id=YicbFdNTTy.
+Gao et al. [2021]
+Leo Gao, Stella Biderman, Sid Black, Laurence Golding, Travis Hoppe, Charles Foster, Jason Phang, Horace He, Anish Thite, Noa Nabeshima, Shawn Presser, and Connor Leahy.
+The pile: An 800gb dataset of diverse text for language modeling.
+CoRR, abs/2101.00027, 2021.
+URL https://arxiv.org/abs/2101.00027.
+Gu and Dao [2024]
+Albert Gu and Tri Dao.
+Mamba: Linear-time sequence modeling with selective state spaces.
+In First Conference on Language Modeling, 2024.
+URL https://openreview.net/forum?id=tEYskw1VY2.
+Gu et al. [2022]
+Albert Gu, Karan Goel, and Christopher Re.
+Efficiently

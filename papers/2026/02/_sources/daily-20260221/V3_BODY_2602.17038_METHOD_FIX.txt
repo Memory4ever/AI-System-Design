@@ -1,0 +1,53 @@
+Phase-Aware Router
+The router πr\pi_{r} determines which expert handles each decision by integrating two complementary information streams (Figure 3): goal-conditioned observation encoding and temporal history modeling.
+Observation Encoding. We apply cross-attention between the current observation oto_{t} and task goal gg to produce a goal-conditioned representation:
+otalign=CrossAttn​(Q=Enc​(ot),K=Enc​(g),V=Enc​(g)),o_{t}^{\text{align}}=\text{CrossAttn}(Q{=}\text{Enc}(o_{t}),K{=}\text{Enc}(g),V{=}\text{Enc}(g)),
+where Enc​(⋅)\text{Enc}(\cdot) denotes mean-pooling over the final hidden states of the frozen base model, producing a fixed-dimensional representation ∈ℝdmodel\in\mathbb{R}^{d_{\text{model}}} for variable-length text inputs. This cross-attention mechanism allows the router to focus on goal-relevant aspects of the observation, distinguishing between states that appear similar but require different behavioral modes depending on the task objective.
+Temporal Modeling. We encode the recent action and observation history ht=[at−L:t−1,ot−L:t−1]h_{t}=[a_{t-L:t-1},o_{t-L:t-1}] using a 3-layer LSTM. Each action and observation in the history is first embedded via mean-pooling over the base model’s token embeddings, then concatenated and fed sequentially:
+htenc=LSTM​(Embed​(ht))∈ℝd,h_{t}^{\text{enc}}=\text{LSTM}(\text{Embed}(h_{t}))\in\mathbb{R}^{d},
+(1)
+where L=5L=5 is the history window and d=256d=256 is the LSTM hidden dimension. The LSTM’s recurrent structure is well-suited for tracking sequential state changes that signal phase transitions in long-horizon trajectories.
+Expert Distribution. Both representations are concatenated and passed through an MLP to obtain the expert distribution:
+pt=softmax​(MLP​([otalign;htenc])/τ)∈ΔK,p_{t}=\text{softmax}\big(\text{MLP}([o_{t}^{\text{align}};h_{t}^{\text{enc}}])/\tau\big)\in\Delta^{K},
+(2)
+where τ\tau is a temperature parameter (see Section Temporal Consistency).
+Expert Selection.
+We use deterministic expert selection via k∗=arg⁡maxk⁡ptkk^{*}=\arg\max_{k}p_{t}^{k} for both training and inference. The router parameters are optimized through the RL objective as described in Section Policy-Gradient Integration and Optimization.
+Temporal Consistency
+To encourage temporally stable expert assignments, we introduce a consistency mechanism through two components.
+Switching Penalty.
+Let zt=arg⁡maxk⁡ptkz_{t}=\arg\max_{k}p_{t}^{k} denote the selected expert at step tt. We penalize transitions between consecutive steps:
+ℒswitch=λsT−1∑t=1T−1𝟏[zt≠zt+1],\mathcal{L}_{\text{switch}}=\frac{\lambda_{s}}{T-1}\sum\nolimits_{t=1}^{T-1}\mathbf{1}[z_{t}\neq z_{t+1}],
+where 𝟏​[⋅]\mathbf{1}[\cdot] is the indicator function, λs=0.05\lambda_{s}=0.05, and TT denotes the episode length (which varies across episodes).
+Since the indicator function is non-differentiable, we implement the backward pass using a differentiable surrogate: we replace 𝟏[zt≠zt+1]\mathbf{1}[z_{t}\neq z_{t+1}] with 1−∑kptk⋅pt+1k1-\sum_{k}p_{t}^{k}\cdot p_{t+1}^{k} during gradient computation, which measures the soft disagreement between consecutive routing distributions. The forward pass uses the hard indicator for accurate loss computation, while the backward pass uses this soft approximation to propagate gradients to router parameters.
+Temperature Annealing. We apply temperature annealing to the router’s softmax during training following a linear schedule:
+τ⁡(t)=max⁡(τf,τ0−(τ0−τf)⋅tTanneal),\tau(t)=\max\left(\tau_{f},\tau_{0}-\frac{(\tau_{0}-\tau_{f})\cdot t}{T_{\text{anneal}}}\right),
+(3)
+with τ0=2.0\tau_{0}=2.0, τf=0.5\tau_{f}=0.5, and Tanneal=3000T_{\text{anneal}}=3000 steps. High initial temperature encourages exploration of different routing patterns, while low final temperature produces more decisive assignments.
+Switch Metric. We define an expert switch as a change in the selected expert between consecutive environment steps: 𝟏[zt≠zt+1]\mathbf{1}[z_{t}\neq z_{t+1}] where zt=arg⁡maxk⁡ptkz_{t}=\arg\max_{k}p_{t}^{k}. This step-level metric directly measures behavioral coherence. Fewer switches indicate that the same expert handles temporally contiguous decisions, enabling consistent strategy execution within each phase. This differs from token-level switches (which would count routing changes during action generation); we use step-level switches because agent behavior is structured by environment interactions, not linguistic tokenization.
+Combined, these mechanisms reduce expert switches from 45 per episode (without consistency) to 8.4 (with consistency), while maintaining the flexibility to adapt at genuine phase boundaries. For reference, token-level MoE exhibits approximately 1,200 routing changes per episode when measured at token granularity; we report the step-level equivalent (45 environment steps with at least one intra-step expert change) for comparable measurement across methods. See Appendix B for details on the token-level baseline and metric conversion.
+Behavioral Experts
+We implement K=4K=4 experts as LoRA adapters (Hu et al. 2022) sharing a frozen base model θbase\theta_{\text{base}} (Figure 3). Each expert kk is parameterized as:
+πexpk​(a|s)=LLM​(a|s;θbase+Bk​Ak),\pi_{\text{exp}}^{k}(a|s)=\text{LLM}(a|s;\theta_{\text{base}}+B_{k}A_{k}),
+(4)
+where Bk∈ℝd×rB_{k}\in\mathbb{R}^{d\times r} and Ak∈ℝr×dA_{k}\in\mathbb{R}^{r\times d} are low-rank matrices with rank r=32r=32, applied to query and value projections across all transformer layers.
+LoRA experts share a frozen backbone, providing parameter efficiency while maintaining general language capabilities. The low-rank constraint encourages complementary adjustments to the base policy. Expert specialization emerges during training without manual assignment.
+Phase-specific entropy demands differ sharply across behavioral modes; we provide quantitative entropy analysis in Appendix C.
+Behavioral Phase Definition
+PA-MoE operates at the phase level rather than token or trajectory level. We formally define:
+Definition 0.1 (Behavioral Phase).
+A behavioral phase ϕ\phi is a maximal trajectory segment [tstart,tend][t_{\text{start}},t_{\text{end}}] where the router assigns the same expert: arg⁡maxk​πr​(st)k=k∗\arg\max_{k}\pi_{r}(s_{t})^{k}=k^{*} for all t∈ϕt\in\phi.
+Post-hoc Validation. We verify that learned phases exhibit behavioral coherence by measuring within-phase entropy variance.
+Empirically, phases satisfy Vart∈ϕ​[H⁡(π⁡(a|st))]<0.18\text{Var}_{t\in\phi}[H(\pi(a|s_{t}))]<0.18 bits2.
+Phase boundaries occur when task requirements change, triggering both expert switches and entropy shifts.
+Policy-Gradient Integration and Optimization
+PA-MoE integrates with any policy-gradient method. The training procedure consists of two components: (1) the router determines expert assignments based on execution context, and (2) the selected expert is optimized using the base algorithm’s update rule.
+General Framework. At each timestep tt, the router selects expert k∗=arg⁡maxk​πr​(k|st)k^{*}=\arg\max_{k}\pi_{r}(k|s_{t}). The selected expert πexpk∗\pi_{\text{exp}}^{k^{*}} generates action ata_{t} and receives the policy gradient update from the base RL algorithm. Only the selected expert receives gradients at each step, enabling phase-level parameter isolation.
+Instantiations. In our primary experiments, we instantiate PA-MoE with GiGPO (Feng et al. 2025), which computes group-based advantages from multiple sampled trajectories. For each state ss, we sample n=8n=8 trajectories and compute advantages:
+Atgroup=f⁡(rank​(τ),R⁡(τ)),A_{t}^{\text{group}}=f(\text{rank}(\tau),R(\tau)),
+(5)
+based on relative trajectory rankings within each group. The selected expert is updated via the clipped surrogate objective:
+ℒRLk∗=𝔼t​[min⁡(ρt​Atgroup,clip​(ρt,1−ϵ,1+ϵ)​Atgroup)],\mathcal{L}_{\text{RL}}^{k^{*}}=\mathbb{E}_{t}\left[\min\left(\rho_{t}A_{t}^{\text{group}},\text{clip}(\rho_{t},1{-}\epsilon,1{+}\epsilon)A_{t}^{\text{group}}\right)\right],
+where ρt=πexpk∗​(at|st)/πexp, oldk∗​(at|st)\rho_{t}=\pi_{\text{exp}}^{k^{*}}(a_{t}|s_{t})/\pi_{\text{exp, old}}^{k^{*}}(a_{t}|s_{t}) is the importance sampling ratio and ϵ=0.2\epsilon=0.2 is the clipping threshold.
+Router Optimization. The router is trained jointly with the experts through the same RL objective. Specifically, the router parameters θr\theta_{r} receive gradients from the policy loss of the selected expert. Since expert selection is deterministic (k∗=arg⁡maxk⁡ptkk^{*}=\arg\max_{k}p_{t}^{k}), we use the straight-through estimator (Bengio et al. 2013) to propagate gradients: the forward pass uses hard expert selection, while the backward pass computes gradients with respect to ptp_{t} as if the selection were soft. This allows the router to learn which expert assignments lead to higher group-relative advantages.
+Generalization to Other Algorithms. PA-MoE can also be applied to other RL policy-gradient methods by substituting the appropriate advantage computation and policy objective. For PPO, we use the standard generalized advantage estimator (GAE) (Schulman et 

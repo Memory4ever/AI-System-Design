@@ -337,6 +337,10 @@ observe queue / latency / KV / throughput
 
 寿命分离用额外 private execution state、HBM 和故障判别复杂性换更少模型重载；事后归类为 device-preserving 的故障日志不是实时完整性证明。[Dynamo 受限恢复实验](https://arxiv.org/html/2609.25451v1)主要注入进程 SIGKILL，不能推出所有故障的可用性或外部 effect 的 exactly-once。其 Table 3 中 snapshot-only 的 DSV4-Pro 比 warm restart 更慢，所有 snapshot 项也慢于 shadow；但 shadow 从 failure injection 起计，其他路径从 container start 起计，不可混作完整恢复时钟或普遍因果倍率。lease、设备完整性或恢复预算不成立时，整组重启、健康副本和显式请求终止/重试仍是合理路径。<!-- source-family:SF-2026-ARXIV-2609-25451 -->
 
+另一条恢复分支不把 attention 与 expert 放在同一 collective failure domain：attention worker 保留每个请求的 KV 与生成进度，expert worker 只执行给定 metadata、token embeddings 与专家版本下的无状态计算。以逻辑 expert ID 到健康副本的路由表间接寻址，point-to-point datapath 可以只重路由受影响的 expert 调用；在计算确定且副本相容的条件下重放同一输入，而不要求健康 attention workers 一起重启或重建整个 communicator。失去 attention worker 则不能只重放 expert：需从外部 store 恢复该请求已提交的 KV frontier，再由新的 attention owner 续做。<!-- source-family:SF-2026-ARXIV-2601-01310 -->
+
+异步写 KV 时，后到的 segment 不一定是最新可恢复状态；序号与 commit record 必须先界定完整 frontier，目标 worker 按 committed token、KV 大小和兼容布局恢复，传输完成后才继续。备用 expert 消耗剩余 HBM，checkpoint store、持续 KV 流量和恢复注入增加独立资源与故障面；用 attention 计算期间的链路空档搬运只在该 workload 有足够 slack 时成立。此分支的原证据限于 fail-stop 和各组件一致、可延迟的故障视图，不覆盖 Byzantine、store/控制面共同失效，也不证明客户端 token stream 的 exactly-once 或采样状态完全恢复。无法确认副本、frontier 或可用带宽时，整组重启、请求终止及显式重试仍是必要回退；它与下述 collective membership 恢复是不同条件下的分支。
+
 ### Wide-EP 的部分 Rank 恢复是一项联合 Runtime Contract
 
 普通 worker failure 可以把请求迁走并重算；宽 Expert Parallel MoE 中，一个 rank 丢失还会同时改变 live membership、
@@ -418,6 +422,8 @@ Dynamo 将多个 inference engines 组织为分布式 runtime：request path 负
 下一章进入 Kubernetes 声明式控制面，观察 LLMInferenceService 怎样把 Gateway、intelligent routing、worker topology 和生命周期表达为可协调资源。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2601-01310`：[Tarragon exact-v1](https://arxiv.org/html/2601.01310v1) §3.3、4.1–4.2、5.1–5.4、6.1–6.2、7.1–7.4。采用 AW stateful/committed-KV 与 EW deterministic replay 分责、ERT/P2P 及 seq/commit 的恢复边界；额外 store/剩余 HBM/链路空档均付成本。作者 Mixtral-8×7B、H200/RDMA、有限单-worker fail-stop 测试不授通用可用性、Byzantine 或 stream exactly-once。6分实际知识缺口深入；root 非作者必要源与 owner 提案复核通过，root 非作者实际正文、邻接与末注写后复核通过；未复现实验。
 
 - `SF-2026-ARXIV-2604-12171`（Experimental）：[官方 PDF exact-v1](https://arxiv.org/pdf/2604.12171v1) §4/Algorithm1、§5–6、§7.2–7.3。当前∪目标层集临时预算、live blocks admission、block-address/layerstack、dirty-slot增量patch、final sync+atomic commit、两NCCL互斥握手；counter非slot lineage证明，无任意故障恢复。A10080GB+L40S48GB跨节点IB、Llama3-70B/Qwen3-30B、512/16与128/512及200请求的pattern-shift、profiling选择目标；Qwen TTFT可退化，precision/production SLO未披露。HTML headline与PDF-v1不同，本项仅以PDF为采用证据。6分实际缺口深入，必要源/owner非作者复核通过（root），实际正文及相邻交接写后非作者复核通过（root）；未复现实验。
 

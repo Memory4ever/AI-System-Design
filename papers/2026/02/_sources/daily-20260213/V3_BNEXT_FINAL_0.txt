@@ -1,0 +1,177 @@
+Conversational Behavior Modeling Foundation Model With Multi-Level Perception (https://arxiv.org/html/2602.11065v1)
+citeturn28747view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.11065v1","lineno":200}); Total lines: 670
+L178:  | $$(\gamma_{i},\eta_{i})=g_{\text{FiLM}}(z_{i}^{H}),\quad\tilde{z}_{i}^{L}=\gamma_{i}\odot z_{i}^{L}+\eta_{i}.$$  |
+L179: 
+L180: Finally, task-specific heads output predictions for the high-level and low-level tasks. More detail is provided in appendix.
+L181: 
+L182: The training objective is defined as the sum of cross-entropy losses over all valid time steps
+L183: 
+L184:  | $$\mathcal{L}=\sum_{i}\mathrm{CE}\!\left(y_{i}^{H},o_{i}^{H}\right)+\mathrm{CE}\!\left(y_{i}^{L},o_{i}^{L}\right).$$  |  | (4)
+L185: ### 3.3 Graph of Thought
+L186: 
+L187: Our design targets strict latency budgets. Prior work often uses LLM reasoning verbatim as the explanation, but such reasoning incurs high and hard-to-control runtime latency. We therefore use LLM reasoning traces only as training supervision, so GoT can imitate the teacher’s intermediate evidence and decision path while generating rationales with minimal overhead and less post-hoc rationalization.
+L188: To make GoT closer to human online perception and inference, we draw on a key cognitive logic: humans often combine grammatical cues, semantic templates, and historical context chains to gradually form and verify hypotheses about conversational behavior. For example, at the 1 second in Figure cite97†2 , humans first judge that a new turn is initiated based on the sentence-initial grammatical structure and the typical question semantic template triggered within that second.
+L189: They then use the “Sydney + playing guitar” topic chain in the historical context for grounding, and finally categorize the intent as an “evaluation request” under Directives. Accordingly, we represent the input as a hierarchical sliding-window graph with sentence nodes and second-level nodes. A low-latency topic-chain selector retrieves relevant sentence nodes for the current second; we then add directed edges to form a pseudo-causal graph and feed it to the decoder to generate rationales.
+L190: #### Graph Definition.
+L191: At each time step, we define the dialogue context within the sliding window as a dynamic graph, containing two types of nodes: second-level node and sentence node. For any second-level node $t$, its attributes include speaker identity $s_{t}$, the relative time position $t$ within the window, the transcript text segment $x_{t}$ of that second, the audio segment $a_{t}$ of that second, and the hierarchical speech-act input label $y_{t}$ of that second.
+L192: For any sentence node $k$, its attributes include the relative time interval $[\tau_{k}^{s},\tau_{k}^{e})$ within the window, speaker identity $s_{k}$, and the transcript text $X_{k}$ of that sentence.
+L193: Within the window, second-level nodes represent those seconds that still belong to an uncommitted sentence segment, while sentence nodes represent committed sentence segments. When a sentence segment becomes committed, all second-level nodes whose time positions fall within $[\tau_{k}^{s},\tau_{k}^{e})$ are conceptually folded into a single sentence node $k$, and are replaced by this sentence node in the graph.
+L194: As the window moves forward, the current time step appends new second-level nodes, and sentence nodes earlier than the window range are removed; the graph always contains exactly the second-level nodes and sentence nodes whose time positions fall within the current window.
+L195: #### Problem Definition.
+L196: We model second-by-second online conversational behavior explanation as a strictly causal streaming select-augmented generation problem. By providing a coarse-grained, low-overhead guiding signal, we steer the decoding model toward the desired distribution. The observable input is the observation $(o_{t})$ within a strictly causal history window, from which we construct a query node $(q_{t})$ and a candidate sentence-node set $(C_{t})$.
+L197: The first stage introduces a latent evidence-chain variable $(\pi_{t}\subseteq C_{t})$. It provides a coarse-grained inference signal for subsequent generation, approximately characterizing which historical sentence-segment evidence the teacher LLM would rely on when reasoning about the current second. Thus we formalize selection as approximate inference of the latent posterior:
+L198:  | $$\pi_{t}\sim p_{\phi}(\pi_{t}\mid o_{t}),$$  |
+L199: where $(\pi_{t})$ intended to the reachability of the teacher conditional likelihood. During data construction, reachability is approximated by the teacher-LLM retriever used to build the rationale. $\pi_{t}^{\star}$ denotes the retriever-selected anchor set. During training, we learn from the supervised signal $\pi_{t}^{\star}$.
+L200: In inference, we obtain an anchor chain via a thresholding approximation: $\hat{\pi}_{t}=\arg\max_{\pi_{t}}p_{\phi}(\pi_{t}\mid o_{t}),\quad$ In the second stage, on top of $(\hat{\pi}_{t})$, we incorporate more nearby fine-grained information to construct the final decoding condition $(\xi_{t})$: $\xi_{t}\triangleq\big(\hat{\pi}_{t},\ R_{t},\ P_{t},\ q_{t}\big),$ and autoregressively generate rationale in a strictly causal manner:
+L201:  | $$p_{\theta}(y_{t}\mid o_{t},\hat{\pi}_{t},R_{t},P_{t})=\prod_{n=1}^{|y_{t}|}p_{\theta}\!\left(y_{t,n}\mid y_{t,<n},\ \xi_{t}\right).$$  |
+L202: 
+L203: Intuitively, $(\hat{\pi}_{t})$ provides a global topic chain, while $((R_{t},P_{t},q_{t}))$ provides local observable details; together they determine the final LLM-style reasoning text.
+L204: #### Model Details.
+L205: Under streaming audio, we run online speaker tracking, streaming ASR, and a per-second SA predictor in parallel. Every 1s tick, we aggregate the incremental ASR words into a second text $S_{\tau}$, assign a speaker tag $p_{\tau}$ from the speaker posterior, and attach SA labels $(\ell_{\tau}^{h},\ell_{\tau}^{l})$ to create a second node $v_{\tau}^{\mathrm{sec}}$.
+L206: Sentence nodes are committed online with a causal sentence buffer; their speaker is set by within-sentence majority vote, and subsequent second nodes reference the updated sentence_id. All features use only past observations, satisfying strict causality.
+L207: For evidence selection at time $t$, we use the current second node as query $q_{t}:=v_{t}^{\mathrm{sec}}$ and collect completed sentence nodes in the causal window $[t\!-\!W,t)$ as candidates $C_{t}$. We encode $V_{t}=\{q_{t}\}\cup C_{t}$ with a fully-connected Graph Transformer to model query–candidate matching and candidate competition (de-redundancy).
+L208: We add a relational bias only on query$\rightarrow$candidate attention to inject temporal/structural cues while keeping candidate–candidate interactions unbiased. The model outputs candidate scores $s_{t,j}$ and a query-dependent threshold $\tau_{t}$; we select all anchors with $s_{t,j}>\tau_{t}$ and sort them into an evidence chain.
+L209: Given the selected anchors $\hat{\mathcal{A}}_{t}$, we augment them with lightweight causal caches (recent committed sentences $R_{t}$ and within-sentence seconds $P_{t}$), then sort all nodes by time and connect only adjacent ones to form a past$\rightarrow$present chain.
+L210: Rather than adding another graph network, we linearize this chain into a token sequence for a T5 encoder; the decoder then generates the current-second rationale under cross-attention, fusing coarse sentence-level and fine second-level evidence.
+L211: #### Loss Function.
+L212: 
+L213: Selector Loss: For each sample $(\text{audio\_id},t)$, the selector outputs candidate sentence scores $s_{t,j}$ and a dynamic threshold $\tau_{t}$. Define threshold-aligned logits:
+L214: 
+L215:  | $$\ell_{t,j}=\frac{s_{t,j}-\tau_{t}}{T}.$$  |
+L216: 
+L217: Given multi-hot labels $y_{t,j}\in\{0,1\}$ and a candidate mask $m_{t,j}$, the loss of the Stage-1 selector is
+L218:  | $$\mathcal{L}_{\mathrm{sel}}=\mathcal{L}_{\mathrm{wbce}}+\lambda_{\mathrm{count}}\mathcal{L}_{\mathrm{count}}+\lambda_{\mathrm{rank}}\mathcal{L}_{\mathrm{rank}},$$  |
+L219: 
+L220: where the weighted BCE (only on valid candidates) is
+L221: 
+L222:  | $$\mathcal{L}_{\mathrm{wbce}}=\frac{1}{\sum_{j}m_{t,j}}\sum_{j}m_{t,j}\,\mathrm{WBCEWithLogits}(\ell_{t,j},y_{t,j};\alpha),$$  |
+L223: 
+L224: and we use two lightweight regularizers:
+L225: 
+L226:  | $$\mathcal{L}_{\mathrm{count}}=\Big(\sum_{j}\sigma(\ell_{t,j})-\sum_{j}y_{t,j}\Big)^{2}$$  |
+L227: to constrain the selected count,
+L228: 
+L229:  | $$\mathcal{L}_{\mathrm{rank}}=\frac{1}{|P_{t}|}\sum_{j\in P_{t}}-\log\frac{e^{\ell_{t,j}}}{\sum_{k}e^{\ell_{t,k}}}$$  |
+L230: to promote positive-sample ranking, where $P_{t}=\{j:m_{t,j}=1,y_{t,j}=1\}$. Decoder (T5 per-second rationale) loss. Given the tokenized input $\mathbf{x}_{t}$ (linearized causal evidence chain) and the target rationale tokens $\mathbf{y}_{t}=(y_{t,1},\ldots,y_{t,L})$, we train the T5 decoder with standard teacher-forced seq2seq negative log-likelihood:
+L231: 
+L232:  | $$\mathcal{L}_{\mathrm{dec}}=-\sum_{n=1}^{L}\log p_{\theta}\!\left(y_{t,n}\mid y_{t,<n},\mathbf{x}_{t}\right).$$  |
+L233: ## 4 Experiments
+L234: 
+L235: ### 4.1 ConversationGoT-120h
+L236: 
+L237: The dataset is split into training/validation/test sets with a 6:2:2 ratio.
+L238: #### Quality Check
+L239: 
+L240: Dialogue quality is the upstream linchpin of the entire dataset, directly determining the fidelity and safety of all subsequent labels. To assess how well the synthetic dialogues match the distribution of real conversations and to mitigate LLM generation bias, we first manually curate the data by filtering out low-quality or low-authenticity samples; we then ask five volunteers and GPT-4o to independently score the dialogue content along four dimensions.
+L241: Table 2: Subjective comparison between human volunteers and GPT-4o across four conversational quality dimensions.
+L242: 
+L243: Rater  | Naturalness  | Consistency  | SA Reasonableness  | Human-Likeness
+L244: --- | --- | --- | --- | ---
+L245: Volunteers  | $6.71\pm 1.32$  | $7.98\pm 1.12$  | $6.36\pm 0.90$  | $6.46\pm 0.92$
+L246: GPT-4o  | $8.34\pm 1.35$  | $8.10\pm 1.34$  | $8.42\pm 0.93$  | $7.64\pm 0.90$
+L247: As shown in Table cite103†2 , after removing low-quality samples, the subjective quality of ConversationGoT-120h remains overall stable: Consistency is rated close to 8 by both volunteers and GPT-4o ($7.98\pm 1.12$ vs. $8.10\pm 1.34$), meeting the standard. The results indicate that model evaluation is more optimistic while humans are more conservative. The similar standard deviations (about $0.9\sim 1.35$) suggest that the variability is controllable.
+L248: The per-second rationale annotations provide the primary supervision for training GoT, guiding both evidence-chain/graph construction and rationale generation conditioned on selected evidence. Annotation quality is therefore critical for learning decision paths consistent with teacher traces (or human explanations) and for producing credible, verifiable explanations at inference time. To assess quality, we asked volunteers and GPT-4o to independently rate rationales on six dimensions.
+L249: As shown in Table cite104†3 , both groups assign consistently high scores (6.8–8.3), suggesting that the rationales are generally reliable in plausibility, context dependency, and intra-/inter-utterance coherence, and thus provide strong supervision for GoT. The two evaluators also show close agreement: except for Intra-Utterance Coherence, differences across dimensions are within  0.6 points, with consistent overall trends.
+L250: Table 3: Subjective comparison between human volunteers and GPT-4o across six rationale quality dimensions.
+L251: Rater  | Reasonableness  | Context Grounding  | Intra-Utterance Coherence
+L252: --- | --- | --- | ---
+L253: Volunteers  | $7.85\pm 1.02$  | $7.88\pm 0.86$  | $6.79\pm 1.13$
+L254: GPT-4o  | $7.62\pm 2.31$  | $8.28\pm 1.49$  | $7.88\pm 1.88$
+L255: Rater  | Inter-Utterance Coherence  | Specificity & Focus  | Clarity & Non-Template Style
+L256: --- | --- | --- | ---
+L257: Volunteers  | $7.61\pm 0.94$  | $7.72\pm 0.87$  | $8.09\pm 1.00$
+L258: GPT-4o  | $8.13\pm 1.69$  | $7.89\pm 1.84$  | $8.00\pm 1.69$
+L259: We focus on the full-duplex task, where the richness of high-quality overlap events available for learning can significantly affect the conversational perception ability of the SA Perceiver. Overlap quality.
+L260: Our simulated dialogs show denser micro-segmentation than human conversations (more IPUs/pauses per minute) while preserving similar gap/overlap ratios; overlaps are shorter and within-speaker pauses more frequent, suggesting more backchannels/hesitations rather than long monologues (see Appendix Table cite105†8 ).
+L261: #### Event Distribution.
+L262: 
+L263: The dataset shows clear head concentration at both levels. at the high level, Constatives dominate (54.18%); at the low level, Continuation overwhelmingly leads (64.77%), followed by Turn-taking (19.03%), with the rest forming a long tail. Anchor statistics indicate moderate dispersion: a mean of 3.92 anchors per segment and a maean spacing of 60.55 s. More details are provided in the Appendix.
+L264: ### 4.2 Experimental Setup
+L265: We train the behavior prediction model and the GoT reasoning model on the ConversationGoT-120h dataset, using a unified 90-second context window. Both models use the AdamW (cite106†Loshchilov & Hutter, 2017 ) with a learning rate of $3\times 10^{-4}$ and weight decay of $10^{-2}$, along with a linear learning-rate decay schedule with 1,000 warmup steps and gradient clipping at 1.0. Training is conducted with a batch size of 8 per GPU for 15 epochs, using automatic mixed precision (fp16).
+L266: Audio is resampled to 16 kHz and segmented into 1-second frames. On a single A6000 GPU, training takes approximately 18 hours for speech-act prediction and 5 hours for GoT generation. Results use random seed 42 and are evaluated with statistical analysis over five independent runs. We report in-domain results on ConversationGoT-120h, and evaluate out-of-distribution (OOD) transfer on the real Candor dataset (cite107†Reece et al., 2022 ), which we use only for model evaluation (not training).
+L267: More details are provided in Appendix.
+L268: ### 4.3 Speech Acts Perceiver
+L269: Evaluating our Speech Acts Perceiver requires a protocol tailored to our setting: the model predicts at 1 Hz and uses a hierarchical SA taxonomy that does not align with prior label sets. As a result, cross-paper metric comparisons would confound modeling gains with differences in temporal granularity and taxonomy.
+L270: We therefore adopt a three-pronged evaluation: (i) complementary in-distribution metrics—one for the relatively balanced high-level SAs and one for the imbalanced low-level SAs; (ii) out-of-distribution transfer to real dialogue data to test generalization beyond ConversationGoT-120h; and (iii) human judgments of per-second decisions to assess perceptual validity and capture aspects missed by automated scores.
+--------------------------------------------------------------------------------
+Chatting with Images for Introspective Visual Thinking (https://arxiv.org/html/2602.11073v1)
+citeturn28747view1 [wordlim: 200] Crawled: 4 days ago; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.11073v1","lineno":128}); Total lines: 527
+L103: ## 2 Related Works
+L104: 
+L105: The evolution of visual reasoning models can be broadly categorized into two dominant paradigms: “thinking about images,” which treats reasoning as a post-perception textual process, and the emerging “thinking with images,” which reconceptualizes vision as an interactive component of the reasoning loop itself. In this section, we review key works within both paradigms.
+L106: ### 2.1 Thinking about Images
+L107: Most state-of-the-art LVLMs (cite66†Liu et al., 2024a ; cite67†Li et al., 2024a ; cite68†Bai et al., 2025 ) operate under the “thinking about images” paradigm. Architecturally, these models process an image once with a powerful visual encoder (cite69†Dosovitskiy et al., 2021 ; cite70†Tschannen et al., 2025 ; cite71†Fini et al., 2025 ) to generate a set of visual embeddings.
+L108: To bridge the modality gap, these visual embeddings are projected into the language embedding space, typically through a bottleneck mechanism like a small number of learnable query tokens (cite72†Li et al., 2023 ) or a simple linear projection layer (cite73†Liu et al., 2024b ). The resulting features are then treated as a static “visual prefix” for an LLM, which performs all subsequent reasoning.
+L109: The LVLMs’ capabilities can be improved through extensive training phases, including supervised fine-tuning (SFT) on instruction-following datasets (cite73†Liu et al., 2024b ), reinforcement learning from human feedback (RLHF) to align with human preferences (cite74†Sun et al., 2023 ; cite75†Yu et al., 2024 ; cite76†Zhang et al., 2025d ), and reinforcement learning with verifiable reward (RLVR) to enhance the reliability of long-horizon reasoning (cite51†Yang et al., 2025d ; cite55†Hong et al., 2025 ; cite77†Feng et al., 2025a ; cite78†Feng et al., 2025b ).
+L110: Despite their impressive performance, the core bottleneck of this paradigm is the irreversible loss of information. This is rooted in the aggressive compression required to map high-dimensional, noisy visual data into a manageable sequence of tokens for the LLM, inevitably leading to the loss of fine-grained details and spatial nuances before any reasoning occurs.
+L111: ### 2.2 Thinking with Images
+L112: More recent work has begun to explore the “thinking with images” paradigm (cite52†OpenAI, 2025 ; cite54†Su et al., 2025c ), aiming to create an interactive reasoning process. These approaches primarily manifest in three categories: (1) Tool-based manipulation, where the model dynamically invokes external tools to manipulate the visual input during reasoning (cite60†Cheng et al., 2024 ; cite53†Wu et al., 2025b ; cite79†Zheng et al., 2025 ; cite80†Su et al., 2025b ).
+L113: However, the black-box nature of the tools prevents end-to-end optimization with the model, and a predefined and often narrow toolset fundamentally limits the model’s ability to generalize. (2) Programmatic manipulation, where the model functions as a visual programmer, generating executable scripts for custom image manipulation (cite81†Gupta and Kembhavi, 2023 ; cite82†Surís et al., 2023 ; cite62†Zhang et al., 2025c ).
+L114: While theoretically Turing-complete, this paradigm is hindered by practical issues: high latency from the code generation-execution loop and poor expressiveness limited by pixel-level manipulation. (3) Generative imagination, which leverages a model’s internal generative capacity to synthesize new visual images as intermediate thoughts (cite83†Li et al., 2025 ; cite84†Chern et al., 2025 ; cite85†Zhang et al., 2025a ).
+L115: However, this approach is not only computationally prohibitive but, more critically, risks ungrounded reasoning, as the synthesized content is generated from the model’s internal priors rather than extracted from the source data.
+L116: Our work, in contrast, offers a single, unified framework that is both scalable and expressive, leveraging language’s compositional power to articulate cognitive intent beyond any fixed toolset, while simultaneously addressing cross-view information loss through dynamic, joint feature modulation.
+L117: ## 3 Methodology
+L118: We formulate the visual reasoning task as follows: Given a question $Q$ and a visual input $\mathcal{I}=\{\mathcal{I}_{n}\}_{n=1}^{N}$ (where $N=1$ for a single image and $N>1$ for a video or image sequence), our goal is to generate the final answer $A$ by producing a reasoning trajectory $\tau$ interleaving textual thought and visual manipulation.
+L119: To achieve this, we introduce the “chatting with images” reasoning paradigm (§cite11†3.1 ), which is underpinned by a novel dynamic vision encoder (§cite12†3.2 ) and a two-stage training strategy, covering SFT (§cite13†3.3 ) and RL (§cite14†3.4 ). Figure cite86†2 and Figure cite87†3 illustrate the model architecture and the training pipeline, respectively.
+L120: ### 3.1 The “Chatting with Images” Paradigm
+L121: 
+L122: Our framework unifies visual reasoning as a process of generating a trajectory $\tau=(s_{1},s_{2},\dots,s_{T})$, where each step $s_{t}$ is a triplet $s_{t}=(r_{t},q_{t},z_{t})$. The components are defined as:
+L123: 
+L124:   * •
+L125: 
+L126: $r_{t}$: The model’s textual reasoning process.
+L127: 
+L128:   * •
+L129: 
+L130: $q_{t}$: A textual inquiry that directs the vision encoder to perform a targeted re-computation of visual features.
+L131: 
+L132:   * •
+L133: $z_{t}$: A set of target visual regions, formally $z_{t}=\{(n_{t}^{i},b_{t}^{i})\}_{i=1}^{M_{t}}$. Here, $n_{t}^{i}$ is an index referencing a visual source, which can be an original image or any image produced in a preceding step. The term $b_{t}^{i}$ denotes a bounding box that specifies the sub-region to re-examine.
+L134: Following the generation of step $s_{t}$, the framework crops the set of visual regions $\mathcal{C}_{t}$ specified by $z_{t}$ from the preceding images. To enhance detail, each region is upscaled by a factor of 2 (capped at the original image dimensions) before being fed into the vision encoder $\mathcal{V}$. The encoder then jointly processes the textual inquiry $q_{t}$ and the upscaled regions $\mathcal{C}_{t}$ to produce a new feature set: $f_{t}=\mathcal{V}(\mathcal{C}_{t},q_{t})$.
+L135: These resulting features $f_{t}$ are subsequently provided as input to the language model component, which we denote as $\mathcal{M}$, to inform the generation of the next step $s_{t+1}$. This iterative process is formally described as:
+L136:  | $$s_{t+1}\sim\mathcal{M}\left(\cdot\mid f_{0},Q,\{(s_{k},f_{k})\}_{k=1}^{t}\right)$$  |  | (1)
+L137: 
+L138: where $f_{0}=\mathcal{V}(\mathcal{I},\emptyset)$ represents the initial full-frame encoding, and the set $\{(s_{k},f_{k})\}_{k=1}^{t}$ constitutes the complete reasoning history up to the current step.
+L139: ### 3.2 The Architecture of the Vision Encoder
+L140: 
+L141: A vanilla vision encoder (cite68†Bai et al., 2025 ) processes each input image $\mathcal{I}_{n}$ independently. It first partitions the image into a sequence of patches, which are then linearly projected into patch embeddings $\boldsymbol{P}$. These embeddings are finally encoded by a vision Transformer (cite69†Dosovitskiy et al., 2021 ) to produce the visual representation.
+L142: In contrast, the realization of our reasoning paradigm is predicated on a vision encoder with two key capabilities: (1) interpreting a textual inquiry $q$, and (2) jointly processing a variable number of potentially non-contiguous image regions. To fulfill these requirements, we re-architect the input stage of the vision encoder. Formally, given a set of $U$ images $\mathcal{C}=\{i_{u}\}_{u=1}^{U}$ and a textual inquiry $q$, the operation of our dynamic vision encoder $\mathcal{V}$ is formulated as:
+L143:  | $\displaystyle\mathcal{V}(\mathcal{C},q)=$  | $\displaystyle\mathcal{V}_{e}(\boldsymbol{P}_{1}\oplus\boldsymbol{P}_{2}\oplus\cdots\boldsymbol{P}_{U}\oplus\boldsymbol{h}_{q}),$  |  | (2)
+L144:  | $\displaystyle\boldsymbol{h}_{q}=$  | $\displaystyle\mathcal{V}_{m}(q),$  |  | (3)
+L145: where $\mathcal{V}_{e}$ is a vision Transformer and $\mathcal{V}_{m}$ is a lightweight language Transformer. Each image $i_{u}$ is projected into its patch embeddings $\boldsymbol{P}_{u}$. The inquiry $q$ is concurrently encoded by $\mathcal{V}_{m}$ into a query embedding $\boldsymbol{h}_{q}$. These embeddings are then concatenated (denoted by $\oplus$), to form a unified input sequence.
+L146: A left-to-right sequence of 2D positional embeddings (cite68†Bai et al., 2025 ) is applied to this entire sequence, ensuring spatial and semantic coherence across all modalities. This elegant design enables the architecture to gracefully degenerate into a vanilla vision encoder when processing a single image without an inquiry ($U=1,q=\emptyset$).
+L147: In contrast to InstructBLIP (cite72†Li et al., 2023 ), which uses a small set of learnable query tokens to query and compress dense visual features into a compact representation, our design enables query-guided cross-region interactions over multiple visual inputs during visual feature extraction.
+L148: Within the vision Transformer $\mathcal{V}_{e}$, we employ a hybrid attention strategy balancing computational cost and expressive power (cite68†Bai et al., 2025 ): in designated interaction layers, full self-attention is applied across all visual tokens, which also attend to the textual inquiry; in other layers, attention is restricted to operate either within each patch window independently or across the entirety of a single image, but not across distinct images.
+L149: cite88†Image: Refer to caption Figure 3: The two-stage training pipeline for ViLaVT, including supervised fine-tuning (SFT, Top), followed by reinforcement learning with the GRPO algorithm (RL, Bottom).
+L150: ### 3.3 Supervised Fine-tuning
+L151: 
+L152: The goal of SFT is to bootstrap the model’s ability to reason within the “chatting with images” paradigm by learning from expert demonstrations. To this end, we construct a large-scale, multi-domain dataset, $\mathcal{D}_{\text{SFT}}$, with reasoning trajectories from two distinct components. Table cite89†4 shows the overview of the training dataset. Appendix cite30†A illustrates the data collection process in detail.
+L153: The first component is constructed by repurposing existing “thinking with images” datasets featuring either tool-based or programmatic manipulation from the general domain.
+L154: Since natural language serves as a universal interface capable of abstracting the functionality of any specialized tool or code block, we prompt a powerful teacher LVLM to translate each external action—be it a tool call (cite90†Wang et al., 2025a ) or a code block (cite62†Zhang et al., 2025c )—into an action triplet comprising the textual thought, a corresponding natural language inquiry, and the target visual regions.
+L155: This process effectively unifies the heterogeneous landscape of interactive methods into our native “chatting with images” format.
+L156: The second SFT data component targets complex spatial reasoning datasets (cite91†Zhang et al., 2025b ; cite92†Ouyang et al., 2025 ; cite93†Feng, 2025 ), which requires models to deduce intricate spatial and temporal relationships through deliberate visual thinking but lacks annotations of reasoning trajectories. The common practice to address this is rejection sampling (cite94†Touvron et al., 2023 ), where a teacher LVLM generates entire reasoning trajectories which are then filtered based on the final outcome.
+L157: However, we argue this method is sub-optimal, as a teacher model’s static visual encoder cannot produce the text-conditioned, multi-region manipulations. Therefore, we design a dedicated pipeline that first programmatically mines latent spatial knowledge by performing parallel analyses (e.g., object grounding, camera motion estimation). This multi-faceted context is then synthesized into high-quality “chatting with images” trajectories, teaching our model to perform nuanced visual reasoning.
+L158: In addition, we augment the SFT dataset with purely textual trajectories generated via rejection sampling, teaching the model to answer simple questions efficiently when the visual information is self-evident (cite95†Yang et al., 2025b ). We then train the model, denoted as $\pi_{\theta}$, on this combined dataset via a standard maximum likelihood objective:
+L159:  | $$\mathcal{L}_{\text{SFT}}=-{\mathbb{E}}_{(\mathcal{I},Q,\{s_{t}\}_{t=1}^{T})\sim\mathcal{D}_{\text{SFT}}}\sum_{t=1}^{T}\log\pi_{\theta}(s_{t}\mid\mathcal{I},Q,s_{<t}).$$  |  | (4)
+L160: ### 3.4 Reinforcement Learning
+L161: 
+L162: After SFT, we employ RL to explore the vast reasoning space and directly optimize for task outcomes.
+L163: ##### Reward Function.
+L164: 
+L165: We evaluate each rollout trajectory using an outcome-based reward function:
+L166: 
+L167:  | $$R(\tau)=\mathbbm{1}(R_{\text{correct}}>0)(R_{\text{correct}}+R_{\text{format}}),$$  |  | (5)
+L168: First, the primary reward $R_{\text{correct}}$ measures the answer correctness, and the format reward $R_{\text{format}}$ evaluates the syntactic validity of the trajectory. The overall reward implements a strict gating mechanism based on the correctness of the final answer, which ensures the model cannot accumulate reward by generating syntactically perfect but ultimately incorrect reasoning paths (cite53†Wu et al., 2025b ).
+L169: Specifically, the correctness reward, $R_{\text{correct}}$, is computed based on the task type, with a focus on tasks that have verifiable outcomes, including multiple-choice and numerical questions. For multiple-choice questions, $R_{\text{correct}}$ is a binary score (1/0) for an exact match. For numerical questions, we employ the Mean Relative Accuracy (MRA) (cite96†Yang et al., 2024 ) to provide a more granular signal.
+L170: The format reward, $R_{\text{format}}$, is 1 if the entire trajectory is well-parsed and all bounding boxes are syntactically valid; otherwise, it is 0.
+L171: ##### Optimization Object.
+L172: 
+L173: We optimize the policy $\pi_{\theta}$ using GRPO (cite97†Shao et al., 2024 ), a robust policy gradient algorithm without the KL penalty term (cite98†Hu et al., 2025 ):
+L174:  | $\displaystyle\mathcal{L}_{\text{RL}}$  | $\displaystyle=-\mathbb{E}_{\tau\sim\pi_{\theta}}\left[\sum_{t=1}^{T}\min\left(\rho_{t}A(\tau),\right.\right.$  |  | (6)
+L175:  |  | $\displaystyle\left.\left.\text{clip}(\rho_{t},1-\epsilon_{1},1+\epsilon_{2})A(\tau)\right)\right],$  |
+L176:  | $\displaystyle\text{where}\quad\rho_{t}$  | $\displaystyle=\frac{\pi_{\theta}(a_{t}|s_{t})}{\pi_{\text{old}}(a_{t}|s_{t})}\quad\text{and}\quad A(\tau)=\frac{R(\tau)-b}{\sigma+\delta}.$  |
+L177: Here, $\rho_{t}$ is the importance sampling ratio, and $A(\tau)$ is the advantage computed by normalizing the trajectory reward $R(\tau)$ against the mean ($b$) and standard deviation ($\sigma$) of rewards from a batch of $G$ rollouts, with a small constant $\delta$ for numerical stability.
+L178: ## 4 Experiments
+L179: ### 4.1 Experimental Setup
+L180: 
+

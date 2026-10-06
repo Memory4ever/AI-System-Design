@@ -100,6 +100,8 @@ A_t^GAE
 
 GAE 把每个 token 当作同样长的一步，在中间状态信息量近似均匀时最简单；长推理中大量低不确定性 token 也会消耗折扣跨度，使末端奖励难回传到早期分叉。一个实验性分支以冻结旧策略的下一 token 熵作为局部“信息时间”代理，让折扣与 trace decay 按累计代理量而非裸 token 数推进，再按同一代理量调节 clipping；token state/action 没有消失，改变的是 credit horizon 与允许更新幅度。熵高不等于语义重要、真实因果贡献或正确答案，且代理随策略迭代需重算；这换取较少无效衰减，也增加全词表熵计算、归一化和更新稳定性负担。无法验证代理与任务关键转折相关、或固定时间 PPO 已稳定时，应保留普通 GAE 与固定 clip。现有分析依赖论文的信息密度/策略散度假设，实证只覆盖所测 Qwen3 数学 RLVR，不能外推任意长链、工具环境或在线对齐。<!-- semantic-body-binding:SF-2026-ARXIV-2609-24380 -->
 
+工具轨迹若已经按 subgoal 分段，credit 的时间单位还可以显式绑定执行边界，而不只改变 token 折扣。一个条件分支在段内用 low-level value 估计执行 advantage，在段尾改为 bootstrap 到下一边界的 high-level value；high-level 用该段累计 reward 与持续时间折扣评价 subgoal，switch 则比较继续旧 subgoal 与重新选择的 value。一个 actor 可以顺序输出 KEEP/SWITCH、subgoal 和 action，一个 critic backbone 也可以带两种 value head；这不是只把 Plan–Execute prompt 拆成两模型。[HiPER 的有限对照](https://arxiv.org/html/2602.16165v1#S4)支持 boundary-aware advantage 这条接口，但所证方差对象是同策略、exact value/Monte Carlo条件下的低层 advantage，不是完整 score-weighted gradient 的普遍方差下降；实际 λ 小于1与 learned critic仍有偏差。critic训练/显存、分段状态与switch正则都有成本，KEEP penalty也显著影响收益，较少optimizer steps不等端到端wallclock加速。subgoal边界不稳定、critic失准或额外状态不合算时，保留 flat GAE、普通 PPO 或无需critic的group baseline，不让显式层级自身充当正确 credit 的证明。<!-- source-family:SF-2026-ARXIV-2602-16165 -->
+
 Value model 也需要训练：
 
 ```text
@@ -192,6 +194,10 @@ rho_t(theta)
 
 当 `rho_t=1`，新旧策略对已采样 token 概率相同；`rho_t>1` 表示概率增大，`rho_t<1` 表示概率减小。
 
+这个写法要求能够计算 action 的 policy density。Categorical token 或显式 Gaussian action 很自然；flow/diffusion 这样的隐式连续策略则可以采样，却未必能便宜得到 marginal log-probability。一条条件性分支先从冻结 reference policy 采样 `a0`，再用可计算密度的 conditional Gaussian 生成 `a`；PPO ratio 在给定 `a0` 的条件分布上更新，随后用 flow matching 将 reference 与 conditional correction 的 marginal 重新蒸馏成下一轮可采样策略。由全期望得到的未裁剪收益恒等式解释了为何能保留复杂 reference 的表达，而不需要每轮累积所有历史 correction。<!-- source-family:arxiv:2603.04790v1 -->
+
+但全期望恒等不证明 conditional clipping 与 marginal clipping 等价，也不授迭代单调改进保证。实际 rollout policy、reference 与蒸馏后的策略可能不同，conditional entropy 也不是 marginal entropy；EMA、score regularization 与 fitting budget 都成为稳定性条件。CPPO 的受限连续控制实验显示 flow steps 不进入全部优化反向链，却仍增加采样、额外训练与拟合误差；作者 Ant 配置比 Gaussian PPO 慢约七成到一倍，不能当作无成本表达扩展。它不是离散 LLM policy 的现成替代；density 可得、预算有限或蒸馏不稳定时保留标准 PPO/Gaussian。 [机制与限制](https://arxiv.org/html/2603.04790v1)见 §3.1–3.3、§4.2/4.3 与 Appendix A/C。
+
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-07331:start -->
 逐 token ratio 只比较当前 action probability，不能直接表达更早 token 已改变当前 prefix state；把截至位置 `t` 的 ratios 累乘可更贴近 prefix-level policy shift，却让 log-ratio variance 随位置增长。PPO branch 因而要把 ratio granularity 与 position-adaptive clipping 一起版本化：后部 token 使用按校准长度增长的 log-space bound，并分别报告位置 clip rate。它以较低 state mismatch 换更高方差和长度敏感性；policy lag 过大、长序列比率爆炸或校准不足时，回退 token ratio、sequence ratio 或更频繁 rollout 同步。`arXiv:2605.07331v1` 只支持论文披露的任务、长度与训练设置，不证明任意长文本或异步 rollout 稳定。
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-07331:end -->
@@ -202,6 +208,8 @@ N-step ratio 在单 token 与完整 prefix 累乘之间选择一个有限 horizo
 和 clip rule 一起版本化。长 trace、policy lag 或 ratio 爆炸时，应缩短 horizon 或重新采样；论文理论与任务实验
 不证明一个固定 `N` 能跨模型和长度成立。
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-20865:end -->
+
+若进一步从历史 policies 中选择可重用 rollout，admission 不应只看每条 importance ratio，也要看这些估计量共同形成的采样人口。可以先估计各历史 policy 的 likelihood-ratio gradient variance，再按阈值决定 reuse set；但平均后的方差还含跨历史估计量的 covariance，不能自动按集合大小同比下降。动作概率 ratio 也未修正 evolving-policy history 的 state occupancy，随机 downsampling 只改变抽样方式，不把已有历史变成独立数据。[VRER 的 exact-v1](https://arxiv.org/html/2602.05379v1)在有限控制任务中支持这种 variance-conditioned reuse 分支；moving-block bootstrap、KL/Adam-moment 近似各有混合与矩估计前提，buffer 增长还进入偏差和收敛条件，不授通用 LLM 收益或无偏保证。选择、KL、历史参数与重用计算都需计费；高相关、近似失真或旧数据退化时，应缩小 buffer、收紧 admission 或重新采样，普通短窗口 PPO 与更频繁同步仍是合理基线。<!-- source-family:SF-2026-ARXIV-2602-05379 -->
 
 朴素 surrogate objective：
 
@@ -429,6 +437,10 @@ PPO 把 policy rollout、advantage estimation 和受限更新组织成循环。P
 代价是训练状态与系统复杂度显著上升：actor、critic、reference、reward、rollout 和 old logprobs 必须版本一致。PPO 提供优化稳定性机制，不提供 reward 正确性证明。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2602-16165` — Daily `2026-02-20`；[HiPER exact-v1](https://arxiv.org/html/2602.16165v1) Eq6–15/Th4.2–4.3、§5.3–5.4与AppA.3/C/D1–D2有限条件。2+2+2=6，segment boundary换value head的credit接口差额深入；advantage variance非完整gradient variance、critic误差/KEEP penalty/样本效率非wallclock保留近正文。root必要source/actual owner PRE通过授一段窄锁；作者正文/完整邻接已顺读，root实际正文/完整邻接/末注非作者POST通过，窄锁释放，未核实现或复现，非日级Gate。
+
+- Daily 2026-03-07：[CPPO exact-v1](https://arxiv.org/html/2603.04790v1) §3.1–3.3、AppendixA与§4.2–4.3。conditional Gaussian update与marginal flow蒸馏分责，全期望identity不证明clip等价；Isaac八任务五seed、Ant 1kepochs的4.68/8.05/9.31min与拟合代价保留，不采用免费PPO/通用LLM保证。root已实际核必要原文、两段正文及邻接，非作者POST通过；未复现实验。
 
 - `SF-2026-ARXIV-2604-22981`（Status: Experimental）：exact-v1 支持在 Bradley–Terry 目标上加入 MC/TD temporal coherence，使 prefix 输出逼近 policy-distribution-dependent 的条件期望；不证明中间值具有过程正确性或因果归因。https://arxiv.org/abs/2604.22981v1
 

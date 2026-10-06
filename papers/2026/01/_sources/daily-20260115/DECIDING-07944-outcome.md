@@ -1,0 +1,7 @@
+# Exact-v1 deciding piece, not an admission or whole-paper gate
+
+Actual HTML https://arxiv.org/html/2601.07944v1 retrieved. First26k reads §§1–2 generic neural-architecture/statistical interpretations; decisive §4.4 and §5 directly read after a targeted extraction.
+
+§4.4 uses a synthetic2D linear-observation model with an8-Gaussian circular prior, a permutation-invariant DeepSets context, and ordinary conditional flow matching transport. It reports local posterior samples/runtime against MCMC. §5 explicitly says neural estimators need many synthetic samples, tuning and sparse-support loss calibration, and calls foundation-like “Large Statistical Models” future research; LLM transfer is a parallel/analogy, not evaluated foundation-model mechanism. The local amortized-inference model is actual research, not disqualified for being small, statistical or using simulations.
+
+Proposed contribution-before-denominator close: inherited architecture/flow principles plus this synthetic estimator assessment do not identify a new model capability-formation mechanism or concrete foundation-system design boundary beyond the known simulator/distribution amortization tradeoff. Do not score ordinary amortization or transfer analogy as the paper's new contribution. If root sees a specific directly related negative boundary in the chosen experiment, reopen only that claim; no automatic full-appendix queue. Original AB remains AB_TAIL15 line3.

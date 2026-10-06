@@ -1,0 +1,64 @@
+4.1 Experimental Setup
+We perform our experiments on three target-draft model pairs: Llama-3 70B/8B-Instruct (Grattafiori et al., 2024), Gemma-3 27B/270M-IT (Team et al., 2025b), and Qwen-2.5 32B/0.5B-Instruct (Qwen et al., 2025). Our selection covers three different model families, target model sizes, and different magnitudes of target to draft size ratios (∼\sim9:1, 100:1, and 64:1 respectively).
+We conduct our experiments on 5 datasets: MATH500 (Lightman et al., 2023), OlympiadBench (He et al., 2024), LiveCodeBench (Jain et al., 2024), LitBench (Fein et al., 2025), and Opus (Zhang et al., 2020; Tiedemann, 2012). In LiveCodeBench, we use the ‘code_generation_lite’ subset; for Opus, we select half of our prompts each from ‘opus_books‘ and ‘open_subtitles‘ with a uniform split of translations between English, French, Spanish, and Italian. Each of these datasets covers a different generative setting. MATH500 and OlympiadBench both cover math, but at differing levels of difficulty; LiveCodeBench is focused on coding; we use the prompts from LitBench to test creative writing; and we use Opus to test performance for translation.
+We evaluate methods on 50 prompts per dataset. We test on 8 different sampling configurations: sampling from MpM_{p} with temperatures {0.2,0.4,0.6,0.8,1.0,1.2}\{0.2,0.4,0.6,0.8,1.0,1.2\} and no nucleus sampling, and sampling from MpM_{p} with temperature 1.0 and nucleus sampling with {0.9,0.99}\{0.9,0.99\}. We evaluate throughput on machines with two A100-80GB GPUs and an Intel Xeon Gold 6342 CPU (12 cores, 2.80 GHz).
+We focus on two important metrics for comparing speculative decoding methods: block efficiency and throughput. Block efficiency is the average number of accepted tokens per speculated block; the greater this number, the fewer target forward passes are required. Block efficiency improves as nodes are added to a tree; however, speedups in practice tend instead to follow a U-curve, as larger trees slow down both drafting and target model forward passes. As such, throughput, measured in tokens per second, is more relevant in deployment. However, its shortcoming is that it is highly sensitive to system-level parameters, such as GPU speed/memory, inference engines, and attention kernels.
+Table 3: Average throughput (tokens per second) across datasets and sampling configurations of existing verification algorithms. For more detailed data, see Appendix F.
+Method
+Qwen
+Gemma
+Llama
+Average
+NSS
+16.88
+5.94
+12.91
+11.91
+Naive
+16.55
+9.20
+11.58
+12.44
+Khisti
+18.67
+5.93
+13.66
+12.75
+NaiveTree
+19.16
+6.00
+14.71
+13.29
+SpecTr
+19.01
+6.09
+14.86
+13.32
+BV
+17.30
+10.57
+12.20
+13.36
+SpecInfer
+19.58
+6.21
+14.86
+13.55
+Traversal
+21.35
+11.56
+14.77
+15.89
+4.2 Results
+Our results comparing existing verification algorithms are summarized in Table 2 and Table 3. These tables average across all datasets and sampling configurations per model; the detailed breakdowns are in Appendix F. In reporting our results, for each set of sampling parameters and dataset, we select the branching factor K∈[1,4]K\in[1,4] and block length L∈[0,8]L\in[0,8] that maximizes the block-efficiency or throughput.
+We see that Traversal is the best-performing verification algorithm in both block efficiency and throughput, outperforming the second-best method in each by ∼15%\sim 15\%. Traversal shows particularly strong performance on Gemma, but is also the top performer for Qwen and only slightly below the best throughput for Llama. Further analysis of full results in Appendix F shows that Traversal is consistently the best algorithm in both throughput and block efficiency across all sampling configurations tested. We hypothesize this occurs because the top-down approach in OT-based methods makes deep traversal in tree exponentially difficult, whereas the bottom-up approach in Traversal starts at leaf nodes and has a higher chance of accepting longer sequences.
+After Traversal, we find that SpecTr, BV, and SpecInfer all perform similarly in average throughput. NSS performs worst, which is expected because it does not use draft probabilities to guide verification.
+5 Delayed Tree Expansion
+While our results in Section 4 show Traversal significantly outperforms OT-based methods in all settings, interestingly, there is no dominant winner among OT-based methods. For throughput, SpecInfer wins for Qwen, Naive wins for Gemma, and SpecTr and SpecInfer tie on Llama, with Khisti not lagging far behind. To explain this phenomenon, we examine acceptance rates of OT-based methods at tree nodes.
+The acceptance rate measures how often an OT-based method appends a token that remains on the draft tree. This incorporates the randomness of draft tokens, so it does not actually depend on the observed child nodes, rather only on pp and qq. We show how to compute these rates in Appendix C.
+Definition 5.1.
+For any OTLP solver fp,q,kf_{p,q,k}, its acceptance rate α⁡(fp,q,k)=ℙ⁡(f⁡(X1,…,Xk)∈{X1,…,Xk})\alpha(f_{p,q,k})=\mathbb{P}(f(X_{1},\ldots,X_{k})\in\{X_{1},\ldots,X_{k}\}) is the probability that the OTLP solver output token lies among its input tokens, over i.i.d. input samples X1,…,Xk∼qX_{1},\ldots,X_{k}\sim q.
+We employ the same experimental setup as in Section 4, but conduct our analysis on offline trees generated from over 200,000200,000 fixed-spaced draft roots along fixed target model trajectories. This allows us to use vLLM (Kwon et al., 2023) to speed up data generation. Our aggregate results across all 88 sampling settings for LiveCodeBench, MATH500, and OlympiadBench on Llama are shown in Figure 1, and we also include L1 distance between target and draft distributions.
+Figure 1: We generate 200,000+ draft (Llama-3 8B-Instruct) trees from roots of target model (Llama-3 70B-Instruct) trajectories and compute both L1 target-draft distance and average OTLP acceptances across varying draft tree depths. The divergence between target and draft distributions spikes deeper in the tree, and acceptances across all OTLP methods consistently decrease with depth.
+We directly observe for all OT-based methods that node-wise acceptance rate rapidly degrade with depth. In other words, while we branch early in the tree often, the acceptance rate improvements later in the tree are often beneficial. This is directly explained by the fact that L1 target-draft deviations increase with depth. For example, the Naive acceptance rate for k=1k=1 linearly decreases with L1 distance.
+Motivated by these findings, we define a delayed tree, which drafts a 

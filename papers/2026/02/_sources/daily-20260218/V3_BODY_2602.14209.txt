@@ -1,0 +1,812 @@
+MAGE: All-[MASK]Block Already Knows Where to Look in Diffusion LLM
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Background
+2.1 Diffusion LLMs
+2.2 Acceleration of Diffusion LLMs
+2.3 Dynamic Sparse Attention in Autoregressive LLMs
+3 All- [MASK] Block Already Knows
+3.1 Consistent Top-K KV Entries
+3.2 Consistent Attention Score Skewness
+4 MAGE: [MASK] -Guided Sparse Attention
+4.1 MAGE Inference
+Phase 1: Exact Attention with Union Formation.
+Phase 2: Layer-Adaptive Allocation and Selection.
+Phase 3: Sparse Denoising.
+4.2 Fine-tuning for Boosting All- [MASK] Block’s Guidance
+Forward Process.
+Training Objective.
+Fine-tuning Time.
+5 Experiments
+Setup.
+5.1 Accuracy Evaluation
+LongBench.
+Needle in a Haystack.
+5.2 Efficiency Evaluation
+End to End Latency
+Denoising Steps Breakdown
+Amortization of First-Step Overhead.
+6 Conclusion
+References
+A Additional Experimental Results
+A.1 Fast-dLLM-v2-7B Results
+A.2 Baseline Sparse Attention Methods’ Top-K Recall Rate
+A.3 Ablation Study: Layer-Adaptive Budget Redistribution
+A.4 Extended Breakdown Analysis
+B Implementation Details
+B.1 Sparse Attention Kernel Optimization
+B.2 Fused Kernel for Union Formation
+B.3 Multi-Stream Execution
+B.4 Reducing Launch Overhead with CUDA Graph
+Fair Comparison.
+License: CC BY-NC-SA 4.0
+arXiv:2602.14209v1 [cs.LG] 15 Feb 2026
+MAGE: All- [MASK] Block Already Knows Where to Look in Diffusion LLM
+Omin Kwon
+Affiliation: Department of Computer Science and Engineering, Seoul National University, Seoul, South Korea
+Yeonjae Kim
+Affiliation: Department of Computer Science and Engineering, Seoul National University, Seoul, South Korea
+Doyeon Kim
+Affiliation: Department of Computer Science and Engineering, Seoul National University, Seoul, South Korea
+Minseo Kim
+Affiliation: Department of Computer Science and Engineering, Seoul National University, Seoul, South Korea
+Yeonhong Park
+Affiliation: Department of Computer Science and Engineering, Seoul National University, Seoul, South Korea
+Jae W. Lee
+Affiliation: Department of Computer Science and Engineering, Seoul National University, Seoul, South Korea
+Correspondence to: jaewlee@snu.ac.kr
+Abstract
+Block diffusion LLMs are emerging as a promising next paradigm for language generation, but their use of KV caching makes memory access a dominant bottleneck in long-context settings.
+While dynamic sparse attention has been actively explored, existing methods designed for autoregressive LLMs rely on approximate importance estimation and perform poorly when adapted to block diffusion.
+This work identifies a key opportunity unique to block diffusion: attention at the first All- [MASK] denoising step reliably predicts important KV entries and budget requirements, enabling MAGE to perform a single exact attention pass per block and reuse it for training-free sparse denoising.
+Across long-context benchmarks including LongBench and Needle-in-a-Haystack, MAGE achieves near-lossless accuracy with a fraction of the KV budget while delivering up to 3 3 – 4 × 4\times end-to-end speedup, consistently outperforming AR-oriented sparse attention baselines.
+A lightweight fine-tuning strategy further strengthens
+[MASK]-guided patterns with minimal cost, requiring only a few hours of training on a single NVIDIA H100 GPU for
+both 1.5B and 7B models.
+Keywords:
+Block Diffusion, Sparse Attention, KV Cache, Language Model Inference
+1 Introduction
+Block diffusion LLMs have emerged as a promising paradigm that combines the benefits of autoregressive (AR) and diffusion-based generation ( Arriola et al., 2025 ; Wu et al., 2025a ; Cheng et al., 2025 ) . By generating tokens in a block-wise autoregressive manner while enabling parallel token generation within each block via diffusion, these models achieve competitive accuracy compared to AR models while offering higher throughput. Furthermore, the block-wise generation scheme enables KV caching, which reduces redundant computation and, in long-context settings, often makes memory access a dominant bottleneck as the KV cache grows.
+Dynamic sparse attention has proven effective at reducing KV cache memory access in AR LLMs by dynamically estimating and fetching only the important tokens at each decoding step ( Tang et al., 2024 ; Yang et al., 2025b ) . The same principle can be applied to block diffusion LLMs, performing sparse attention at each denoising forward pass. However, existing methods rely on approximate importance estimation, such as reusing one layer’s selection across other layers ( Yang et al., 2025b ) or estimating token importance from page-level representative values ( Tang et al., 2024 ) , and achieve only 36–82% top-K recall rate when adapted to block diffusion (Figure 10 ).
+We observe that block diffusion LLMs present a unique opportunity for higher-fidelity sparse attention that does not exist in AR LLMs. The attention patterns computed on the initial All- [MASK] block, the first denoising step where all positions contain [MASK] tokens, reliably predict the important KV positions for all subsequent denoising steps. Specifically, the top-K indices selected from the All- [MASK] block maintain 84–90% recall rate throughout the entire denoising process (Figure 1 ), far exceeding the recall achieved by existing methods. Furthermore, the relative budget requirements across layers remain stable from the initial All- [MASK] state to the fully decoded state, enabling reliable layer-adaptive budget allocation.
+Based on these observations, we propose MAGE ( [MASK] -Guided Sparse Attention), a dynamic sparse attention method tailored for block diffusion LLMs. MAGE uses the attention computed on the All- [MASK] block to identify critical KV positions with layer-adaptive budgets, then reuses these positions for all subsequent denoising steps. By leveraging this temporal consistency unique to block diffusion, MAGE achieves substantially higher recall than existing sparse attention methods, maintaining near-lossless accuracy while effectively reducing KV cache memory access for significant end-to-end speedup.
+While MAGE works effectively without any training, we further propose a lightweight fine-tuning framework that strengthens the model’s reliance on [MASK] -guided attention patterns. With less than 200 training steps, the fine-tuned model often surpasses even exact attention performance, as the model learns to concentrate its attention more consistently around the patterns established by the All- [MASK] block.
+We evaluate MAGE on various subtasks in LongBench. MAGE achieves comparable accuracy to exact attention even at small budgets such as K K =512 and 1024, where Quest and Tidal still show significant degradation. In terms of latency, MAGE delivers up to 3 3 – 4 × 4\times end-to-end speedup over the dense attention baseline while preserving accuracy, demonstrating that the memory access reduction translates directly into practical wall-clock gains.
+With fine-tuning, MAGE further improves accuracy: at the same sparse budget, the fine-tuned model matches or exceeds exact attention accuracy on 4 out of 6 subtasks, and surpasses the dense attention baseline on several of them. This suggests that the concentrated attention patterns learned through [MASK] -guided fine-tuning act as an implicit regularizer, improving generation quality beyond what dense attention achieves.
+Our contributions are summarized as follows:
+•
+We analyze attention patterns in block diffusion LLMs and discover that the All- [MASK] block provides reliable guidance for sparse attention throughout the denoising process: (1) top-K indices maintain 84–90% recall rate, and (2) layer-wise budget requirements remain stable across denoising steps.
+•
+We propose MAGE, a training-free dynamic sparse attention method that leverages All- [MASK] -guided selection to achieve 84–90% top-K recall, substantially outperforming existing methods such as Quest (48–82%) and Tidal (36–74%) adapted to block diffusion.
+•
+We introduce a lightweight fine-tuning framework that
+strengthens [MASK] -guided patterns with minimal cost (100 200 steps,
+less than 10 hours for Fast-dLLM 7B on a single H100), often surpassing
+dense attention performance.
+•
+We demonstrate 3 3 – 4 × 4\times end-to-end speedup over exact attention on long-context benchmarks while maintaining comparable accuracy, significantly outperforming existing sparse attention methods at the same budget.
+2 Background
+2.1 Diffusion LLMs
+Figure 1 : Top-K recall rate across denoising steps on LongBench tasks (0: All- [MASK] block, 1: fully decoded block). The top-K indices selected from the All- [MASK] block maintain 84–90% recall throughout denoising.
+Diffusion LLMs have emerged as a new paradigm for language generation, breaking the left-to-right sequential dependency of autoregressive (AR) models and enabling multiple token updates per step ( Gong et al., 2023 ; Gong et al., 2025 ) .
+Among various formulations, diffusion LLMs such as LLaDA ( Nie et al., 2025 ) and Dream ( Ye et al., 2025a ) have recently become a standard approach, generating text by iteratively denoising sequences of [MASK] tokens.
+These models typically employ iterative denoising strategies that either denoise a static number of tokens per step based on confidence or entropy ( Kim et al., 2025a ) ,
+or adaptively vary the denoising set size via thresholding-based selection ( Wu et al., 2025b ) .
+However, initial masked diffusion models are computationally inefficient in practice, as their bidirectional attention is incompatible with standard KV caching mechanisms ( Kim et al., 2025b ) .
+They also exhibit suboptimal task performance compared to strong AR baselines ( Nie et al., 2025 ; Ye et al., 2025a ) .
+More recently, Block Diffusion LLMs have emerged as a compromise architecture between AR and diffusion-based generation ( Arriola et al., 2025 ) .
+These models follow a block-wise autoregressive decoding scheme while enabling parallel token generation within each block via diffusion.
+Notably, block diffusion models achieve competitive accuracy compared to state-of-the-art AR models while offering higher throughput due to parallelism.
+In this work, we focus on Block Diffusion LLMs, as they represent the most practical and performant diffusion-based paradigm.
+2.2 Acceleration of Diffusion LLMs
+Fully bidirectional diffusion LLMs recompute the entire sequence at every denoising step, making decoding largely compute-bound.
+To address this inefficiency, prior work has explored approximation-based acceleration methods.
+Some approaches divide the sequence into blocks and cache approximate representations for inactive blocks, recomputing only one active block at a time ( Wu et al., 2025a ; Cheng et al., 2025 ) .
+Others identify reusable sparse attention patterns to approximate full attention computation ( Wang et al., 2025b ) .
+While these methods can be applied on-the-fly at inference time, they inevitably introduce approximation errors that may accumulate across denoising steps.
+More recent work converts bidirectional diffusion models into block diffusion models ( Wang et al., 2025a ; Kim et al., 2025c ) ,
+while others adapt pretrained AR models such as Qwen ( Yang et al., 2025a ) into block diffusion models ( Wu et al., 2025a ; Cheng et al., 2025 ) .
+These methods enable exact, block-level KV caching without approximation, shifting the primary bottleneck from computation to memory access under modest block sizes (e.g., 32 or fewer).
+As a result, the efficiency of block diffusion models becomes increasingly dominated by KV cache memory access, particularly in long-context scenarios where the cache size grows substantially.
+Our method directly targets this memory bottleneck by introducing sparse attention tailored for Block Diffusion LLMs.
+2.3 Dynamic Sparse Attention in Autoregressive LLMs
+Dynamic sparse attention techniques are widely used in AR decoding to reduce memory access by dynamically selecting a small subset of the KV cache to attend to.
+Xiao et al. (2024) attends to attention sink tokens and the most recent context using a sliding window, while other works estimate token importance at each decoding step via approximation to avoid full attention computation ( Tang et al., 2024 ; Yang et al., 2025b ) .
+Yang et al. (2025c) further extends dynamic sparse attention to modern GQA architectures ( Ainslie et al., 2023 ) by sharing selections across attention heads.
+In addition, several works observe that different layers and attention heads require different selection budgets for effective sparse attention.
+PyramidKV ( Cai et al., 2024 ) addresses this by using a predefined, layer-wise budget schedule, while other approaches infer budgets dynamically from prefill-stage signals ( Tu et al., 2025 ) or by sampling a small number of tokens ( Feng et al., 2025 ; Zhu et al., 2025 ; Lin et al., 2025 ) .
+3 All- [MASK] Block Already Knows
+Figure 2 :
+Layer-wise budget across denoising progress on four LongBench tasks. Color indicates normalized budget (darker = higher). Early layers require larger budgets, while horizontal bands indicate stable relative budgets throughout denoising.
+In this section, we present a key observation that enables effective and efficient dynamic sparse attention for block diffusion LLMs. We find that the attention scores computed at the first denoising step, namely on the All- [MASK] block, already contains the signal needed to guide sparse attention throughout the subsequent denoising steps. Specifically, two pieces of information demonstrate temporal consistency across denoising steps within a block: (1) the top-K KV entries, and (2) attention score skewness.
+3.1 Consistent Top-K KV Entries
+Each block begins as an All- [MASK] block and generates tokens through multiple denoising steps. At each step t t , we compute the oracle top-K set S oracle ( t ) S_{\text{oracle}}^{(t)} via full attention. To measure how well the initial selection remains valid, we define the top-K recall rate at step t t as | S oracle ( 0 ) ∩ S oracle ( t ) | / K |S_{\text{oracle}}^{(0)}\cap S_{\text{oracle}}^{(t)}|/K : the fraction of step-0 selections that remain in the oracle set at step t t . Figure 1 shows the top-K recall across denoising steps on four LongBench tasks. As denoising progresses, the recall gradually decreases but remains consistently high, with average values of 83.8% for K = 512 K{=}512 , 86.2% for K = 1024 K{=}1024 , and 89.6% for K = 2048 K{=}2048 . These results indicate that the important context identified at the All- [MASK] step is largely preserved across denoising steps, enabling the All- [MASK] block to serve as a reliable guide for sparse attention in subsequent steps.
+For comparison, we evaluate two representative sparse attention methods designed for AR LLMs, Quest ( Tang et al., 2024 ) and Tidal ( Yang et al., 2025b ) , adapted to block diffusion. We measure each method’s top-K recall as | S method ∩ S oracle | / K |S_{\text{method}}\cap S_{\text{oracle}}|/K , where S method S_{\text{method}} denotes the method’s selected set and S oracle S_{\text{oracle}} is the oracle set from full attention. As shown in Figure 10 , Quest achieves 48–82% recall via page-level importance estimation, while Tidal achieves 36–74% by reusing anchor layer selections across other layers. All- [MASK] -guided selection achieves substantially higher recall (84–90%) by leveraging the temporal consistency of attention patterns unique to block diffusion.
+Intuitively, this consistency arises because the
+All- [MASK] block, despite lacking decoded token information,
+already captures the structural relevance patterns of the
+input context.
+3.2 Consistent Attention Score Skewness
+For dynamic sparse attention, determining how many KV entries to select in each layer is as important as identifying which KV entries are important. Layers exhibit different levels of attention-score skewness. Under a fixed total computation budget, it is beneficial to select fewer KV entries to more skewed layers and more KV entries to less skewed layers. Importantly, each layer’s skewness remains highly stable across denoising steps within a block.
+Figure 2 visualizes the temporal consistency of layer-wise skewness within a block. As a proxy for skewness, we measure, for each layer, the number of KV entries required to reach 90% attention coverage (the cumulative sum of attention scores after softmax), averaged over KV heads. Although skewness varies substantially across layers and tasks, it remains largely stable across denoising steps, as indicated by the horizontal band-like patterns in each heatmap. This stability suggests that skewness measured at the first denoising step can be reused to allocate layer-specific budgets throughout the entire denoising process.
+4 MAGE: [MASK] -Guided Sparse Attention
+Algorithm 1 MAGE Inference
+0:
+KV cache 𝒞 \mathcal{C} , block size B B , budget K K , steps T T
+0:
+Generated block 𝐱 \mathbf{x}
+1:
+Initialize block with B B [MASK] tokens
+2:
+// Phase 1: Exact Attention with Union Formation ( t = 1 t=1 )
+3:
+for each layer ℓ ≥ 2 \ell\geq 2 do
+4:
+𝐀 ℓ ← Softmax ​ ( 𝐐 MASK ​ 𝐊 ⊤ / d ) \mathbf{A}_{\ell}\leftarrow\text{Softmax}(\mathbf{Q}_{\texttt{MASK}}\mathbf{K}^{\top}/\sqrt{d})
+5:
+for each KV head h h do
+6:
+𝒯 q ← TopK ( 𝐀 ℓ [ q , : ] , K ) \mathcal{T}_{q}\leftarrow\text{TopK}(\mathbf{A}_{\ell}[q,:],K) for each query q q
+7:
+𝒰 h ← ⋃ q 𝒯 q \mathcal{U}_{h}\leftarrow\bigcup_{q}\mathcal{T}_{q} {Union via voting}
+8:
+p h ← 1 G ​ B ​ ∑ q ∑ i ∈ 𝒰 h 𝐀 ℓ ​ [ q , i ] p_{h}\leftarrow\frac{1}{GB}\sum_{q}\sum_{i\in\mathcal{U}_{h}}\mathbf{A}_{\ell}[q,i] {Coverage}
+9:
+end for
+10:
+s ℓ ← max h ⁡ | 𝒰 h | ⋅ ( 1 − log ⁡ p h ) s_{\ell}\leftarrow\max_{h}|\mathcal{U}_{h}|\cdot(1-\log p_{h}) {Adjusted score}
+11:
+end for
+12:
+// Phase 2: Index Selection
+13:
+for each layer ℓ \ell , each KV head h h do
+14:
+K ℓ ← max ⁡ ( K min , ⌊ s ℓ ∑ ℓ ′ s ℓ ′ ⋅ K ⋅ L ⌋ ) K^{\ell}\leftarrow\max\left(K_{\min},\lfloor\frac{s_{\ell}}{\sum_{\ell^{\prime}}s_{\ell^{\prime}}}\cdot K\cdot L\rfloor\right)
+15:
+𝐓 ℓ , h ← SelectTopK ​ ( 𝒰 h , K ℓ ) \mathbf{T}_{\ell,h}\leftarrow\text{SelectTopK}(\mathcal{U}_{h},K^{\ell}) {From union}
+16:
+end for
+17:
+// Phase 3: Sparse Denoising ( t = 2 t=2 to T T )
+18:
+for t = 2 t=2 to T T do
+19:
+for each layer ℓ ≥ 2 \ell\geq 2 do
+20:
+𝐨 ℓ ← SparseAttn ​ ( 𝐐 , 𝒞 ⁡ [ 𝐓 ℓ ] ) \mathbf{o}_{\ell}\leftarrow\text{SparseAttn}(\mathbf{Q},\mathcal{C}[\mathbf{T}_{\ell}])
+21:
+end for
+22:
+Unmask high-confidence positions
+23:
+end for
+24:
+𝒞 ← 𝒞 | KV ​ ( 𝐱 ) \mathcal{C}\leftarrow\mathcal{C}\,\|\,\text{KV}(\mathbf{x}) {Update KV cache}
+25:
+return 𝐱 \mathbf{x}
+Based on the observations in Section 3, we propose MAGE ([MASK]-Guided Sparse Attention), a dynamic sparse attention method that uses the attention scores computed on the first denoising step’s All-[MASK] block to guide the remaining steps of block generation.
+4.1 MAGE Inference
+Algorithm 1 presents the complete MAGE inference procedure. For each block, the first denoising step computes exact attention on the All- [MASK] block and selects critical KV indices with layer-adaptive budgets. All subsequent steps reuse these selected indices for sparse attention.
+Phase 1: Exact Attention with Union Formation.
+In the first denoising step, we compute exact attention between the All- [MASK] block and all preceding KV cache, obtaining the attention matrix 𝐀 ℓ \mathbf{A}_{\ell} for each layer ℓ \ell .
+For each query q q , we select its local top- K K indices based on the attention scores.
+These selections are aggregated across all G × B G\times B queries sharing each KV head h h by taking their union, forming a head-specific set 𝒰 h \mathcal{U}_{h} that covers the top- K K indices of all queries.
+To quantify attention coverage for each KV head, we compute the coverage p h p_{h} , the average attention probability captured by the union:
+p h = 1 G ​ B ​ ∑ q ∑ i ∈ 𝒰 h 𝐀 ⁡ [ q , i ] p_{h}=\frac{1}{GB}\sum_{q}\sum_{i\in\mathcal{U}_{h}}\mathbf{A}[q,i]
+(1)
+Not all layers require the same number of KV entries: layers where attention is concentrated on a few positions can operate with a smaller allocation, while layers with dispersed attention need more.
+To estimate each layer’s demand, we define an adjusted score s ℓ , h s_{\ell,h} per KV head that combines union size with attention coverage:
+s ℓ , h = | 𝒰 h | ⋅ ( 1 − log ⁡ p h ) s_{\ell,h}=|\mathcal{U}_{h}|\cdot(1-\log p_{h})
+(2)
+A larger union or lower coverage both increase the score, indicating that the head requires more KV entries. We take the maximum across heads as the layer’s adjusted score s ℓ = max h ⁡ s ℓ , h s_{\ell}=\max_{h}s_{\ell,h} , since all heads within a layer share the same allocation in practice for memory access efficiency.
+Figure 3 : Overview of the MAGE Fine-tuning process. The process consists of three stages: (1) Index Selection identifies important KV indices via Top-K selection without gradients; (2) Sparse Forward applies the sparse mask and computes gradients; (3) Teacher Forward provides exact reference logits for self-distillation.
+Phase 2: Layer-Adaptive Allocation and Selection.
+Given a target budget K K per layer on average, MAGE distributes the total budget K × L K\times L proportionally based on adjusted scores:
+K ℓ = max ⁡ ( K min , ⌊ s ℓ ∑ ℓ ′ s ℓ ′ ⋅ K ⋅ L ⌋ ) K^{\ell}=\max\left(K_{\min},\left\lfloor\frac{s_{\ell}}{\sum_{\ell^{\prime}}s_{\ell^{\prime}}}\cdot K\cdot L\right\rfloor\right)
+(3)
+where K min K_{\min} ensures a minimum allocation per layer. Each KV head constructs its final index set 𝐓 ℓ , h \mathbf{T}_{\ell,h} by selecting top- K ℓ K^{\ell} indices from the union based on voting scores. If the allocation exceeds the union size, the entire union is included and remaining slots are filled with recent KV positions.
+Notably, since index selection for layer ℓ \ell
+depends only on statistics computed at layer ℓ \ell , it can be overlapped with the exact attention computation of layer ( ℓ + 1 ) (\ell+1) , effectively hiding the overhead.
+In contrast, Quest must complete importance estimation before attention can proceed, and Tidal requires the previous layer’s results, making their overhead unavoidable. We provide detailed latency analysis in Section 5.2 .
+Figure 4 : Per-task accuracy on LongBench with Fast-dLLM 1.5B across three denoising configurations (1, 2, 4 tokens/step). MAGE and MAGE-FT consistently outperform Quest and Tidal across all tasks and budgets. MAGE-FT often surpasses exact attention at moderate budgets, while maintaining robustness at higher tokens per step.
+Phase 3: Sparse Denoising.
+The selected indices 𝐓 ℓ , h \mathbf{T}_{\ell,h} are cached and reused for all subsequent denoising steps ( t = 2 t=2 to T T ). At each step, sparse attention retrieves only the KV pairs at these positions, and the model progressively unmasks high-confidence tokens. This reuse is justified by our observation that [MASK] -identified critical positions remain consistent throughout denoising.
+4.2 Fine-tuning for Boosting All- [MASK] Block’s Guidance
+While MAGE works effectively without training, lightweight fine-tuning can further improve sparse attention accuracy by encouraging the model to more consistently attend to relevant context in the All- [MASK] block state.
+To achieve this, we design a three-stage training process (Figure 3 ) that aligns the model with MAGE’s inference scheme.
+Following Fast-dLLM-v2 ( Wu et al., 2025a ) , we duplicate each training sample into a noisy half x t x_{t} , where a subset of tokens in each block is randomly replaced with [MASK] tokens, and a clean half x 0 x_{0} containing the original uncorrupted text.
+We apply an offset block-causal mask that restricts queries from x t x_{t} to attend only to their corresponding x 0 x_{0} blocks.
+Forward Process.
+Figure 3 illustrates the three stages.
+Stage 1: Sparse Index Selection.
+Mirroring MAGE inference, we compute exact attention on the All- [MASK] block ( x t x_{t} replaced with [MASK] tokens) and select critical KV indices via Top-P on the attention scores.
+This pass runs without gradient computation.
+We take the union of selected indices across all query heads sharing the same KV head and cache them for the subsequent stage.
+Stage 2: Sparse-Aware Forward.
+We execute the primary gradient-based forward pass using the cached sparse indices.
+The sparse mask is applied specifically to the cross-attention region ( x t → x 0 x_{t}\to x_{0} ), while self-attention within the context ( x 0 → x 0 x_{0}\to x_{0} ) and within the noisy block ( x t → x t x_{t}\to x_{t} ) remains exact.
+To ensure training stability, the initial two layers maintain exact attention.
+Stage 3: Teacher Forward.
+We perform an inference-only pass using exact attention to generate reference teacher logits for self-distillation.
+Training Objective.
+We employ self-distillation where the same model serves as both teacher and student.
+We observe that optimizing with cross-entropy loss alone provides insufficient signal for for adapting the model under sparse attention; thus we introduce KL divergence loss to encourage the sparse-constrained model to mimic the exact teacher’s outputs:
+ℒ = ℒ CE + λ KL ( p sparse ∥ p exact ) \mathcal{L}=\mathcal{L}_{\text{CE}}+\lambda\,\text{KL}(p_{\text{sparse}}\|p_{\text{exact}})
+(4)
+where ℒ CE \mathcal{L}_{\text{CE}} is the cross-entropy loss with ground truth tokens, and p exact p_{\text{exact}} , p sparse p_{\text{sparse}} are softmax distributions (with temperature τ \tau ) from exact and sparse attention paths respectively. Gradients flow only through p sparse p_{\text{sparse}} ; the exact path serves as a fixed target.
+Fine-tuning Time.
+Although this scheme requires three forward passes, the overhead is significantly mitigated as two passes (Stages 1 and 3) are executed without gradient tracking. Our approach achieves strong
+sparse accuracy within 200 steps for Fast-dLLM 1.5B and 100 steps for Fast-dLLM 7B on a single NVIDIA H100 GPU.
+5 Experiments
+Table 1 : Needle-in-a-Haystack accuracy (%). Bold = best sparse method.
+8K Context
+32K Context
+256
+512
+1K
+2K
+4K
+256
+512
+1K
+2K
+4K
+Fast-dLLM 7B (Exact: 100 / 88)
+Quest
+88
+91
+100
+100
+100
+27
+45
+73
+73
+76
+Tidal
+85
+67
+76
+82
+100
+12
+27
+27
+27
+61
+MAGE
+85
+94
+100
+100
+100
+39
+45
+61
+64
+70
+Fast-dLLM 1.5B (Exact: 100 / 91)
+Quest
+33
+64
+70
+85
+97
+18
+18
+24
+36
+55
+Tidal
+21
+42
+67
+82
+97
+12
+15
+18
+24
+33
+MAGE
+48
+55
+70
+91
+100
+21
+30
+39
+42
+42
+Figure 5 : Per-task average denoising step latency on LongBench with Fast-dLLM 1.5B across three denoising configurations (1, 2, 4 tokens/step).
+Setup.
+We evaluate two variants of the proposed method: MAGE denotes the training-free version that directly leverages All-[ MASK ] block guidance , while MAGE-FT refers to the version further enhanced through our lightweight fine-tuning framework. We evaluate our methods on two different scale block diffusion models: Fast-dLLM 1.5B and Fast-dLLM 7B ( Wu et al., 2025a ) . We compare our methods against the exact attention method and two sparse attention methods: Quest ( Tang et al., 2024 ) and Tidal ( Yang et al., 2025b ) .
+We fine-tuned Fast-dLLM 1.5B and 7B for inference on a long-context subset from the Daring-Anteater dataset. Specifically, the 1.5B model was trained for 200 steps with a learning rate of 1 × 10 − 5 1\times 10^{-5} and λ = 0.5 \lambda=0.5 , while the 7B model used 100 steps, a learning rate of 5 × 10 − 6 5\times 10^{-6} , and λ = 1.5 \lambda=1.5 , requiring only a few hours on a single NVIDIA H100 GPU. For unmasking, we use the static strategy to control the number of denoising steps and fairly compare the accuracy across all methods. All sparse attention kernels are implemented using FlashInfer ( Ye et al., 2025b ) , and experiments are conducted on NVIDIA H100 GPUs.
+5.1 Accuracy Evaluation
+LongBench.
+We evaluate on LongBench ( Bai et al., 2024 ) , a comprehensive long-context benchmark, including single-document QA: NarrativeQA, Qasper, MultiFieldQA; multi-document QA: HotpotQA; few-shot learning: TriviaQA; and summarization: QMSum. Budget K K ranges from 256 to 4096. We evaluate across three denoising configurations (1, 2, and 4 tokens/step) to examine the speed-accuracy trade-off.
+Figure 4 shows results on Fast-dLLM 1.5B. Both MAGE and MAGE-FT consistently outperform Quest and Tidal across all tasks, budgets, and step configurations. This advantage stems from [MASK] -guidance, which enables both high top-K recall rate and layer-adaptive budget allocation (Figure 1 ). Notably, MAGE achieves near-exact attention performance without any training, demonstrating the effectiveness of our training-free approach.
+MAGE-FT further improves upon MAGE, often surpassing exact
+attention performance at moderate budgets ( K ≥ 1024 K\geq 1024 ).
+This improvement comes from the fine-tuning procedure that
+strengthens the model’s reliance on [MASK] -guided sparse
+attention patterns. Through self-distillation, where the exact-attention path
+serves as the teacher and the sparse-attention path as the
+student, the model learns to concentrate its attention on
+the positions selected by MAGE. As a result, the fine-tuned
+model exhibits a substantially reduced accuracy gap between
+exact and sparse attention inference.
+Needle in a Haystack.
+We evaluate retrieval capability using the Needle-in-a-Haystack
+(NIAH) benchmark at 8K and 32K context lengths (Table 1 ).
+At 8K context, MAGE matches exact attention (100%) at K ≥ 1024 K\geq 1024
+on the 7B model and reaches 91% at K K =2048 on the 1.5B model,
+while Tidal drops to 67% (7B) and 42% (1.5B) at K K =512.
+At the more challenging 32K context, all sparse methods degrade
+significantly, but MAGE consistently achieves the highest recall
+at low budgets ( K ≤ 512 K\leq 512 ) across both models.
+Tidal degrades most severely, dropping to just 12% at K K =256
+on both model sizes. These results confirm that MAGE’s
+[MASK] -guided selection preserves critical retrieval capability
+better than alternatives under aggressive sparsity.
+5.2 Efficiency Evaluation
+Figure 6 : Denoising step latency breakdown from 16K to 128K context
+length (top- k k =2048). For MAGE 1 , stacked bars separate
+overlapped and main-stream operations. Dashed lines indicate
+exact attention latency. Extended results in Appendix A.4 .
+Figure 7 : Amortization of first-step overhead ( K K =2048). Dashed lines: baseline per-step latency. Labels: break-even step count.
+End to End Latency
+We evaluate the per-step inference latency of MAGE on LongBench (see Figure 5 ).
+Per-step latency is defined as the total wall-clock time divided by the number of denoising steps, measured on a single GPU.
+Compared with exact-attention decoding, MAGE yields substantial per-step speedups that scale with the number of tokens per step: on the 1.5B model, the average speedup increases from 1.66 × 1.66\times at 4 4\, tokens/step to 2.01 × 2.01\times at 2 2\, tokens/step and 2.37 × 2.37\times at 1 1\, token/step;
+on the 7B model, it grows from 1.48 × 1.48\times to 1.70 × 1.70\times and 1.81 × 1.81\times under the same settings, peaking at 3.92 × 3.92\times on NarrativeQA (1.5B, 1 1\, token/step).
+Among sparse attention baselines, MAGE consistently outperforms Quest in every pairwise comparison, achieving 1.48 1.48 – 2.15 × 2.15\times lower per-step latency on average.
+Against Tidal, MAGE delivers competitive or superior latency at ≤ 2 {\leq}\,2\, tokens/step, winning 75–79% of comparisons at 1 1\, token/step for both model sizes.
+As illustrated in Figures 4 and 8 , MAGE consistently outperforms other sparse attention methods in accuracy within the same computational budget, while maintaining highly competitive inference speeds.
+Denoising Steps Breakdown
+Figure 6 shows the latency breakdown of a
+single denoising step across context lengths from 16K to 128K
+with top- k k =2048. We classify all sparse index computation
+overhead, including importance estimation and top- k k filtering,
+under Index Selection. In the first denoising step (MAGE 1 ),
+our method incurs 46–63% overhead compared to exact attention
+due to importance estimation, but multi-stream execution
+effectively overlaps this with attention computation. In
+subsequent steps (MAGE 2 - n n ), our method achieves significant
+speedups: 1.5 × \times at 16K, 2.3 × \times at 32K, 3.7 × \times
+at 64K, and 6.3 × \times at 128K, consistently outperforming
+both Quest (1.1–2.0 × \times ) and Tidal (1.3–3.2 × \times ).
+This scaling behavior is expected: as context length grows,
+the KV cache access becomes increasingly memory-bound,
+making the reduction from sparse attention more impactful.
+Amortization of First-Step Overhead.
+As shown above, MAGE 1 incurs additional overhead due to
+exact attention for importance estimation. However, this
+cost is a one-time investment that benefits all subsequent
+denoising steps. Figure 7 illustrates how
+this overhead is amortized as the number of denoising steps
+increases. The labels (e.g., n n =9) denote the break-even
+point where MAGE becomes faster than each baseline. At
+shorter context lengths (16K), MAGE requires 12 steps to
+outperform Quest and 3 steps for Tidal. As context length
+increases, the break-even point decreases: at 128K, MAGE
+outperforms Tidal after only 2 steps and Quest after 4 steps.
+This trend arises because the first-step overhead ratio
+decreases with context length (from 63% at 16K to 46%
+at 128K), while per-step sparse savings scale proportionally.
+As a result, the break-even point drops to as few as 2 steps,
+and the overhead is amortized well within a single block’s
+denoising process.
+6 Conclusion
+We present MAGE, a [MASK] -guided dynamic sparse attention method for block diffusion LLMs, motivated by the observation that attention computed at the first All- [MASK] block reliably predicts both the important top- K K KV entries and stable layer-wise budget needs throughout block denoising.
+Across LongBench and Needle-in-a-Haystack, MAGE achieves near-lossless accuracy at substantially smaller KV budgets than AR-oriented baselines (Quest, Tidal) adapted to block diffusion, while delivering end-to-end speedups that grow with context length.
+Finally, a lightweight fine-tuning scheme aligned with MAGE ’s inference further strengthens [MASK] -guided patterns with only a few hundred steps on a single H100, often matching or surpassing exact attention at moderate budgets.
+Impact Statement
+This paper presents work whose goal is to advance the field of machine learning. There are many potential societal consequences of our work, none of which we feel must be specifically highlighted here.
+References
+Ainslie et al. (2023)
+J. Ainslie, J. Lee-Thorp, M. de Jong, Y. Zemlyanskiy, F. Lebrón, and S. Sanghai
+GQA: training generalized multi-query transformer models from multi-head checkpoints .
+In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing ,
+Cited by: §2.3 .
+Arriola et al. (2025)
+M. Arriola, A. Gokaslan, J. T. Chiu, Z. Yang, Z. Qi, J. Han, S. S. Sahoo, and V. Kuleshov
+Block diffusion: interpolating between autoregressive and diffusion language models .
+In International Conference on Learning Representations ,
+External Links: Link
+Cited by: §1 ,
+§2.1 .
+Bai et al. (2024)
+Y. Bai, X. Lv, J. Zhang, H. Lyu, J. Tang, Z. Huang, Z. Du, X. Liu, A. Zeng, L. Hou, Y. Dong, J. Tang, and J. Li
+LongBench: a bilingual, multitask benchmark for long context understanding .
+External Links: 2308.14508 ,
+Link
+Cited by: §5.1 .
+Cai et al. (2024)
+Z. Cai, Y. Zhang, B. Gao, Y. Liu, Y. Li, T. Liu, K. Lu, W. Xiong, Y. Dong, J. Hu, and W. Xiao
+PyramidKV: dynamic kv cache compression based on pyramidal information funneling .
+arXiv preprint arXiv:2406.02069 .
+Cited by: §2.3 .
+Cheng et al. (2025)
+S. Cheng, Y. Bian, D. Liu, L. Zhang, Q. Yao, Z. Tian, W. Wang, Q. Guo, K. Chen, B. Qi, and B. Zhou
+SDAR: a synergistic diffusion-autoregression paradigm for scalable sequence generation .
+arXiv preprint arXiv:2510.06303 .
+Cited by: §1 ,
+§2.2 ,
+§2.2 .
+Feng et al. (2025)
+Y. Feng, J. Lv, Y. Cao, X. Xie, and S. K. Zhou
+Ada-kv: optimizing kv cache eviction by adaptive budget allocation for efficient llm inference .
+In Advances in Neural Information Processing Systems ,
+Cited by: §2.3 .
+Gong et al. (2025)
+S. Gong, S. Agarwal, Y. Zhang, J. Ye, L. Zheng, M. Li, C. An, P. Zhao, W. Bi, H. Peng, J. Han, and L. Kong
+Scaling diffusion language models via adaptation from autoregressive models .
+In Proceedings of the 2025 International Conference on Learning Representations (ICLR) ,
+External Links: Link
+Cited by: §2.1 .
+Gong et al. (2023)
+S. Gong, M. Li, J. Feng, Z. Wu, and L. Kong
+DiffuSeq: sequence to sequence text generation with diffusion models .
+In International Conference on Learning Representations ,
+External Links: Link
+Cited by: §2.1 .
+Kim et al. (2025a)
+J. Kim, K. Shah, V. Kontonis, S. Kakade, and S. Chen
+Train for the worst, plan for the best: understanding token ordering in masked diffusions .
+In Proceedings of the 42nd International Conference on Machine Learning ,
+Cited by: §2.1 .
+Kim et al. (2025b)
+M. Kim, C. Hooper, A. Tomar, C. Xu, M. Farajtabar, M. W. Mahoney, K. Keutzer, and A. Gholami
+Beyond next-token prediction: a performance characterization of diffusion versus autoregressive language models .
+arXiv preprint arXiv:2510.04146 .
+External Links: Link
+Cited by: §2.1 .
+Kim et al. (2025c)
+M. Kim, C. Xu, C. Hooper, H. Singh, B. Athiwaratkun, C. Zhang, K. Keutzer, and A. Gholami
+CDLM: consistency diffusion language models for faster sampling .
+arXiv preprint arXiv:2511.19269 .
+External Links: Link
+Cited by: §2.2 .
+Lin et al. (2025)
+C. Lin, J. Tang, S. Yang, H. Wang, T. Tang, B. Tian, I. Stoica, S. Han, and M. Gao
+Twilight: adaptive attention sparsity with hierarchical top-p pruning .
+arXiv preprint arXiv:2502.02770 .
+Cited by: §2.3 .
+Nie et al. (2025)
+S. Nie, F. Zhu, Z. You, X. Zhang, J. Ou, J. Hu, J. Zhou, Y. Lin, J. Wen, and C. Li
+Large language diffusion models .
+arXiv preprint arXiv:2502.09992 .
+External Links: Link
+Cited by: §2.1 .
+Tang et al. (2024)
+J. Tang, Y. Zhao, K. Zhu, G. Xiao, B. Kasikci, and S. Han
+QUEST: query-aware sparsity for efficient long-context llm inference .
+In Proceedings of the 41st International Conference on Machine Learning ,
+pp. 47901–47911 .
+Cited by: §B.1 ,
+§1 ,
+§2.3 ,
+§3.1 ,
+§5 .
+Tu et al. (2025)
+D. Tu, D. Vashchilenko, Y. Lu, and P. Xu
+VL-cache: sparsity and modality-aware kv cache compression for vision-language model inference acceleration .
+In International Conference on Learning Representations ,
+Cited by: §2.3 .
+Wang et al. (2025a)
+X. Wang, C. Xu, Y. Jin, J. Jin, H. Zhang, and Z. Deng
+Diffusion llms can do faster-than-ar inference via discrete diffusion forcing .
+arXiv preprint arXiv:2508.09192 .
+External Links: Link
+Cited by: §2.2 .
+Wang et al. (2025b)
+Z. Wang, G. Fang, X. Ma, X. Yang, and X. Wang
+SparseD: sparse attention for diffusion language models .
+arXiv preprint arXiv:2509.24014 .
+Cited by: §2.2 .
+Wu et al. (2025a)
+C. Wu, H. Zhang, S. Xue, S. Diao, Y. Fu, Z. Liu, P. Molchanov, P. Luo, S. Han, and E. Xie
+Fast-dllm v2: efficient block-diffusion llm .
+External Links: 2509.26328 ,
+Link
+Cited by: §1 ,
+§2.2 ,
+§2.2 ,
+§4.2 ,
+§5 .
+Wu et al. (2025b)
+C. Wu, H. Zhang, S. Xue, Z. Liu, S. Diao, L. Zhu, P. Luo, S. Han, and E. Xie
+Fast-dllm: training-free acceleration of diffusion llm by enabling kv cache and parallel decoding .
+arXiv preprint arXiv:2505.22618 .
+External Links: Link
+Cited by: §2.1 .
+Xiao et al. (2024)
+G. Xiao, Y. Tian, B. Chen, S. Han, and M. Lewis
+Efficient streaming language models with attention sinks .
+In International Conference on Learning Representations ,
+Cited by: §2.3 .
+Yang et al. (2025a)
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, et al.
+Qwen3 technical report .
+External Links: 2505.09388 ,
+Link
+Cited by: §2.2 .
+Yang et al. (2025b)
+L. Yang, Z. Zhang, Z. Chen, Z. Li, and Z. Jia
+TidalDecode: a fast and accurate llm decoding with position persistent sparse attention .
+In International Conference on Learning Representations ,
+Cited by: §B.1 ,
+§1 ,
+§2.3 ,
+§3.1 ,
+§5 .
+Yang et al. (2025c)
+L. Yang, Z. Zhang, A. Jain, S. Cao, B. Yuan, Y. Chen, Z. Jia, and R. Netravali
+Less is more: training-free sparse attention with global locality for efficient reasoning .
+arXiv preprint arXiv:2508.07101 .
+Cited by: §2.3 .
+Ye et al. (2025a)
+J. Ye, Z. Xie, L. Zheng, J. Gao, Z. Wu, X. Jiang, Z. Li, and L. Kong
+Dream 7b: diffusion large language models .
+arXiv preprint arXiv:2508.15487 .
+External Links: Link
+Cited by: §2.1 .
+Ye et al. (2025b)
+Z. Ye, L. Chen, R. Lai, W. Lin, Y. Zhang, S. Wang, T. Chen, B. Kasikci, V. Grover, A. Krishnamurthy, and L. Ceze
+FlashInfer: efficient and customizable attention engine for llm inference serving .
+arXiv preprint arXiv:2501.01005 .
+Cited by: §B.1 ,
+§5 .
+Zhu et al. (2025)
+K. Zhu, T. Tang, Q. Xu, Y. Gu, Z. Zeng, R. Kadekodi, L. Zhao, A. Li, A. Krishnamurthy, and B. Kasikci
+Tactic: adaptive sparse attention with clustering and distribution fitting for long-context llms .
+arXiv preprint arXiv:2502.12216 .
+Cited by: §2.3 .
+Appendix A Additional Experimental Results
+This appendix provides detailed experimental results that supplement the main paper.
+A.1 Fast-dLLM-v2-7B Results
+Figure 8 presents per-task accuracy results on LongBench for Fast-dLLM 7B. Similar to the 1.5B model results in the main paper, MAGE consistently outperform Quest and Tidal across all tasks and budget settings.
+Figure 9 presents per-task per-step latency results on LongBench for Fast-dLLM 7B.
+Figure 8 : Per-task accuracy on LongBench with Fast-dLLM 7B across varying budget K K .
+Figure 9 : Per-task average denoising step latency on LongBench with Fast-dLLM 7B across three denoising configurations (1, 2, 4 tokens/step).
+A.2 Baseline Sparse Attention Methods’ Top-K Recall Rate
+Figure 10 : Top-K recall rate of different sparse attention strategies adapted to block diffusion. Quest (48–82%) and Tidal (36–74%) achieve limited recall, while All- [MASK] -guided selection maintains 84–90%.
+A.3 Ablation Study: Layer-Adaptive Budget Redistribution
+Tables 2 present ablation results comparing MAGE (step reuse only) and MAGE+ (with layer-adaptive budget redistribution). Values show MAGE+ accuracy with the difference from MAGE in parentheses. Blue (+) indicates improvement from layer-adaptive budgets, while red (–) indicates degradation.
+Overall, layer-adaptive budget redistribution provides modest improvements on average, particularly benefiting retrieval-heavy tasks like HotpotQA.
+Table 2: Effect of layer-adaptive budget redistribution (32 denoising steps). Values show MAGE+ accuracy with difference from MAGE in parentheses.
+Fast-dLLM 1.5B
+Task
+256
+512
+1K
+2K
+4K
+NarrativeQA
+12.8 ( +0.4 )
+11.9 ( -0.6 )
+12.2 ( +0.2 )
+12.8 ( -0.6 )
+12.4 ( +0.4 )
+MultiFieldQA
+32.8 ( -0.2 )
+33.7 ( +0.7 )
+34.4 ( -1.9 )
+38.4 ( +0.1 )
+38.2 ( +0.2 )
+HotpotQA
+14.7 ( -0.4 )
+14.5 ( +0.3 )
+14.3 ( +0.9 )
+13.5 ( -0.9 )
+15.7 ( +0.2 )
+Qasper
+13.3 ( +0.1 )
+16.3 ( -0.3 )
+19.0 ( +0.9 )
+20.6 ( +0.3 )
+19.7 ( -0.7 )
+TriviaQA
+64.1 ( +1.0 )
+65.6 ( +0.2 )
+69.3 ( +1.6 )
+71.1 ( +0.7 )
+70.5 ( +0.4 )
+QMSum
+21.5 ( -0.3 )
+21.9 ( -0.2 )
+22.8 ( +0.1 )
+23.5 ( +0.4 )
+23.2 ( +0.2 )
+Fast-dLLM 7B
+Task
+256
+512
+1K
+2K
+4K
+NarrativeQA
+21.2 ( +0.3 )
+23.4 ( +0.0 )
+23.2 ( -0.7 )
+25.1 ( -0.8 )
+24.5 ( -0.8 )
+MultiFieldQA
+42.3 ( +1.1 )
+43.2 ( +0.3 )
+44.8 ( -1.2 )
+48.1 ( +0.2 )
+49.7 ( +0.1 )
+HotpotQA
+36.4 ( +0.3 )
+41.4 ( +1.6 )
+39.5 ( +1.0 )
+41.8 ( +1.8 )
+41.0 ( +0.9 )
+Qasper
+23.6 ( -0.9 )
+27.8 ( +1.8 )
+30.8 ( +0.1 )
+33.4 ( +0.1 )
+34.4 ( +0.3 )
+TriviaQA
+85.8 ( +0.4 )
+84.3 ( +0.0 )
+85.2 ( -0.2 )
+85.5 ( -0.1 )
+86.5 ( -0.2 )
+QMSum
+23.1 ( -0.4 )
+23.5 ( +0.2 )
+24.1 ( +0.0 )
+24.5 ( +0.4 )
+24.8 ( +0.3 )
+A.4 Extended Breakdown Analysis
+Figure 11 : Complete denoising step latency breakdown across context lengths (16K–128K) and top- k k values (512, 1024, 2048, 4096).
+Each group compares Exact attention, Quest, TidalDecode, and MAGE (first step MAGE 1 and subsequent steps MAGE 2 ​ - ​ n {}_{2\text{-}n} ).
+For MAGE 1 , stacked bars show overlapped (left) and main-stream (right) operations.
+Dashed lines indicate exact attention latency as baseline; numbers denote relative speedup ( > > 1 × \times ) or overhead ( < < 1 × \times ).
+Figure 11 extends the breakdown analysis from Section 5.2 across all K K configurations.
+We observe consistent trends across different K K values:
+Appendix B Implementation Details
+This section describes the optimization techniques employed to achieve efficient sparse attention in Block Diffusion LLMs.
+All optimizations are applied uniformly across all baseline methods to ensure fair comparison.
+B.1 Sparse Attention Kernel Optimization
+We build our sparse attention kernel by extending the implementations
+from TidalDecode ( Yang et al., 2025b ) and Quest ( Tang et al., 2024 ) ,
+which utilize FlashInfer ( Ye et al., 2025b ) for paged KV cache
+management with indirect indexing.
+The original implementations target autoregressive (AR) decoding, where the query sequence length is always one.
+To support Block Diffusion models that process multiple query tokens simultaneously, we extend the prefill kernel with the following modifications:
+•
+Fixed query length support: The original decode kernels only support query length of one. We extend them to support power-of-two query lengths (e.g., 8, 16, 32) used in block-parallel decoding.
+•
+GQA-compatible sparse attention: We modify the kernel to allow each KV head group to access different sparse indices, enabling sparse attention with Grouped-Query Attention (GQA).
+B.2 Fused Kernel for Union Formation
+When the KV cache length becomes large, even simple operations such as reshape and copy incur significant overhead due to memory movement.
+To minimize these costs, we design fused Triton kernels for the Union Formation operation described in Section 4 .
+Since the tensor shapes remain constant across decoding steps, we exploit this property to pre-compile specialized kernels that:
+•
+Eliminate intermediate memory allocations
+•
+Fuse multiple element-wise operations into a single kernel launch
+•
+Minimize memory transactions by operating in-place where possible
+B.3 Multi-Stream Execution
+Figure 12 : Comparison of attention scheduling strategies within a single denoising step.
+Quest alternates between importance estimation (Est.) and sparse (Sp.) attention phases.
+Tidal interleaves exact and sparse attention sequentially.
+MAGE 1 (first step) performs exact attention on the main stream while asynchronously
+computing Top-K indices for subsequent steps.
+MAGE 2 ​ - ​ n {}_{2\text{-}n} leverages precomputed indices to execute sparse attention,
+effectively hiding Top-K selection latency through cross-step pipelining.
+In the decoding phase, most operations are memory-bound due to the small batch size.
+Additionally, our custom attention kernel is configured to use a limited number of streaming multiprocessors (SMs).
+These characteristics enable effective overlap between independent operations through CUDA streams.
+Unlike prior sparse attention methods, our approach allows for extensive pipelining.
+In TidalDecode, the top- k k selection result is immediately required by the next layer, creating a sequential dependency.
+Similarly, Quest must complete its attention score estimation before performing sparse attention within the same layer.
+In contrast, our Union Formation and Index Selection operations for a given layer only need to complete before that layer begins in the next denoising step, eliminating the intra-step dependency and enabling overlap with the current step’s attention computation.
+As illustrated in Figure 12 , MAGE 1 computes exact attention while simultaneously preparing Top- k k indices on an asynchronous stream, and MAGE 2 ​ - ​ n {}_{2\text{-}n} directly utilizes these precomputed indices for sparse attention.
+Specifically, we pipeline the Union Formation and Index Selection operations across multiple CUDA streams.
+Since these operations do not compete heavily for compute resources, they achieve substantial overlap with the attention computation.
+Table 3 demonstrates the effectiveness of multi-stream execution.
+We measure the overlap benefit as the difference between sequential execution time (Dense + Top- k k ) and the actual first-step latency.
+The results show that multi-stream execution reduces the first-step latency by 30–40% compared to sequential execution, with larger savings at longer context lengths.
+For example, at 128K context with K K =512, overlap saves 127.17ms out of 330.02ms sequential time (38.5% reduction).
+Table 3 : Multi-stream overlap analysis. Each cell shows overlap savings in ms, with total first-step latency in parentheses.
+Top- k k
+16K
+32K
+64K
+128K
+512
+32.77 (43.56)
+41.29 (65.86)
+73.62 (111.26)
+127.17 (202.85)
+1024
+32.86 (44.05)
+41.81 (66.11)
+74.91 (111.43)
+126.99 (205.34)
+2048
+27.26 (45.72)
+42.41 (67.27)
+74.77 (113.32)
+126.65 (207.53)
+4096
+32.11 (51.16)
+46.78 (71.60)
+79.69 (117.57)
+129.32 (213.91)
+B.4 Reducing Launch Overhead with CUDA Graph
+Although Block Diffusion decoding uses longer query sequences than standard autoregressive decoding,
+the operations remain memory-bound due to the large KV cache size.
+These memory-bound operations complete quickly on the GPU,
+making CPU-side kernel launch overhead a significant bottleneck.
+To address this, we employ CUDA Graphs to capture and replay the entire decoding step as a single graph execution.
+This eliminates per-kernel launch overhead and reduces CPU-GPU synchronization points, resulting in improved end-to-end latency.
+Fair Comparison.
+All optimization techniques described above—kernel optimization, fused operations, and CUDA Graph—are applied consistently to all baseline methods evaluated in our experiments.
+This ensures that performance differences reflect algorithmic improvements rather than implementation disparities.
+Note that multi-stream execution is unique to our method due to the relaxed dependency structure, and thus represents a genuine algorithmic advantage.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

@@ -1,0 +1,9 @@
+# 2601.08919v1 — document relevance and extractive rationale are different evaluation objects
+
+[精确HTML](https://arxiv.org/html/2601.08919v1)，实际§3/4.1–2/5.2及Hallucination必要段PRIMARY_08919_CORE.md。2+1+2=5，新增是document relevance之外的人类highlighted-passages匹配评价及overhighlight/fragmented evidence边界；不把成熟judge可信原则或新INEX task计贡献。拟标准完成，待root必要源核与具体Books决定。HTML开头ACM2018/DOIXXXX模板占位不作真实公开日期，v2不同事件不比较。
+
+INEX2009/2010 Wikipedia Oct2008 corpus，68+52 judged queries，4858/5471 relevantpairs，去XML后text。Doc分类zero-shot与rationale6-shot不是同prompt，不能按差额归因某一因果；三个exemplar组按短/长random/中等长度，作者没做selection统计优化。Llama3.1-8B rationale temperature1，docclassification3；GPT4.1mini temperature0，source正文先声称希望temp0保extractive但实际Llama非0。GPT最高8192tokens vsLlama生成上限按documentlength，不能把model差当规模因果。hardware/precision/repeats/CI/完整token和人工预算NotDisclosed于必要core。
+
+Rationale先regex删除前缀，word-level最长公共subsequence映射回document及byteoffset→precision/recall；生成非extractive片段/空match的分母并未充分定义，低temp或人工抽看不证明总是extractive。宏query平均与micro query-document均权需分开。Overhighlight可把recall抬高到trivial1；discontiguous gold较难为局部反侧，但documentlength等混杂未matched。额外Example8被filter删掉、不计主分数却为原输出失败样例，不能filtered score授rawoutput可靠。Table4 INEX2010 Llama部分macroF1大于2*meanP*meanR/(meanP+meanR)，在同人口算F1时不相容（例如.3547/.6658/.5136）；不采用这些精确F1/排行榜，未据此删贡献或否定所有局部样例。Rationale tokenoverlap不是内部causalfaithfulness或真实事实判据。
+
+最低采用仅为typed document-label/span-match/未匹配或过滤输出分账的评价对象及局部反侧。root实际§3/4.1/4.2/5.2与Example8原段通过标准5 Evidence；08919单项条件日期已实际核验。Books拟OnlyReport：实际当前Ch66 RAG阶段评价段（§“RAG端到端评估必须保留阶段级归因”，L932后）已把document-ID命中与required-information支持分开，L4140后reference coverage/matcher/unmatched、StoredLabel处理链要求保存原stimulus与处理链；Ch76:141–143区分selection、handoff与最终回答。它们承载成熟评价原则，但不冒称已含本篇LCS/scorer或新数字。新增局部实现采用regex/word-LCS、低温/示例仍未证明全输出extractive，过滤失败人口未知且宏F1汇总冲突，不能将该实现升级为新的可信span证据契约；新局部实验留日报，不能由近似overlap授judge因果faithfulness。该OnlyReport理由不是泛主题相似或强行Existing，root最终5=2+1+2仅报告已通过（实际必要源已核）。未运行实现或复现。

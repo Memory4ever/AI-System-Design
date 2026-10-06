@@ -1,0 +1,187 @@
+TVCache: A Stateful Tool-Value Cache for Post-Training LLM Agents (https://arxiv.org/html/2602.10986v1)
+citeturn28175view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.10986v1","lineno":null}); Total lines: 434
+L0: ##### Report GitHub Issue
+L1: 
+L2: [Button: ×]
+L3: 
+L4: Title: [Input: Enter title]
+L5: 
+L6: Content selection saved. Describe the issue below:
+L7: 
+L8: Description:
+L9: 
+L10: [Button: Submit without GitHub] [Button: Submit in GitHub]
+L11: 
+L12: cite0†Back to arXiv L13: 
+L14: cite1†Why HTML?†info.arxiv.org cite2†Report Issue cite3†Back to Abstract cite4†Download PDF L15:   1. cite5†Abstract L16:   2. cite6†1 Introduction L17:   3. cite7†2 Background and Motivation L18:     1. cite8†2.1 The post-training agent loop L19:     2. cite9†2.2 Performance overhead of tool execution L20:     3. cite10†2.3 Opportunities, Challenges, and Our Contributions L21:   4. cite11†3 TVCache Design L22:     1. cite12†3.1 Tool Call Graph (TCG) Structure L23:     2. cite13†3.2 Cache Lookups, Hits, and Misses L24:     3. cite14†3.3 Selective Sandbox Snapshotting L25:     4. cite15†3.4 TVCache Implementation L26:   5. cite16†4 Evaluating TVCache L27:     1. cite17†4.1 terminal-bench workload L28:     2. cite18†4.2 SkyRL-SQL workload L29:     3. cite19†4.3 EgoSchema workload L30:     4. cite20†4.4 Testing for post-training performance degradation L31:     5. cite21†4.5 Microbenchmarking TVCache L32:     6. cite22†4.6 Proactive forking memory overhead L33:   6. cite23†5 Related Work L34:     1. cite24†5.1 Post-training language models for tool-use L35:     2. cite25†5.2 Semantic caching for language model inference L36:   7. cite26†6 Conclusion L37:   8. cite27†7 Impact Statement L38:   9. cite28†References L39:   10. cite29†A Tool Call Graph (TCG) L40:   11. cite30†B Stateful Prefix Matching L41:   12. cite31†C End-to-end evaluation configuration L42:   13. cite32†D Tools for EgoSchema L43:   14. cite33†E Docker Sandbox design L44:   15. cite34†F Terminal-bench rollout times L45:   16. cite35†G Prompts Used to Train Each Model L46: cite36†License: arXiv.org perpetual non-exclusive license†info.arxiv.org L47: 
+L48: arXiv:2602.10986v1 [cs.LG] 11 Feb 2026
+L49: # TVCache: A Stateful Tool-Value Cache for Post-Training LLM Agents
+L50: 
+L51: Abhishek Vijaya Kumar Affiliation: Cornell University Correspondence to: abhishek@cs.cornell.edu    Bhaskar Kataria Affiliation: Cornell University    Byungsoo Oh Affiliation: Cornell University    Emaad Manzoor Affiliation: Cornell University    Rachee Singh Affiliation: Cornell University
+L52: ###### Abstract
+L53: In RL post-training of LLM agents, calls to external tools take several seconds or even minutes, leaving allocated GPUs idle and inflating post-training time and cost. While many tool invocations repeat across parallel rollouts and could in principle be cached, naively caching their outputs for reuse is incorrect since tool outputs depend on the environment state induced by prior agent interactions. We present TVCache, a stateful tool-value cache for LLM agent post-training.
+L54: TVCache maintains a tree of observed tool-call sequences and performs longest-prefix matching for cache lookups: a hit occurs only when the agent’s full tool history matches a previously executed sequence, guaranteeing identical environment state. On three diverse workloads—terminal-based tasks, SQL generation, and video understanding—TVCache achieves cache hit rates of up to 70% and reduces median tool call execution time by up to 6.9$\times$, with no degradation in post-training reward accumulation.
+L55: ###### Keywords:
+L56: 
+L57: Large Language Models, Tool Use, Reinforcement Learning, Caching
+L58: 
+L59: ^{†}^{†}affiliationnotice: Equal contribution
+L60: ## 1 Introduction
+L61: 
+L62: Large language model (LLM) agents solve complex real-world tasks by interleaving text-based planning and reasoning with calls to tools: external functions that enable language models to perceive and mutate their environment (e.g., by executing shell commands, querying databases, or invoking APIs) (cite37†Yang et al., 2024b ; cite38†Team, Kimi et al., 2025 ; cite39†Zeng et al., 2025a ; cite40†Agarwal et al., 2025 ).
+L63: The tool-calling capabilities of state-of-the-art agentic models are enabled by reinforcement learning (RL)-based post-training (cite41†Zhang et al., 2025 ; cite42†Zeng et al., 2025b ; cite43†Jiang et al., 2025 ; cite44†Li et al., 2025 ; cite45†Feng et al., 2025 ). In each post-training iteration, the model generates several rollouts: token sequences comprising both reasoning and tool calls, which are subsequently executed in isolated sandbox environments.
+L64: Figure cite46†1 illustrates 4 rollouts in 1 iteration of post-training a code-debugging agent, where the agent interacts with a terminal via tools to debug a codebase.
+L65: Figure 1: Illustration of 4 rollouts from an RL post-training iteration over time. The tokens generated in each rollout interleave between reasoning (green) and tool-calling (orange). Tools are executed in a sandbox environment and may mutate the sandbox state. In practice, tool execution comprises a significant portion of post-training time.
+L66: TVCache maps tool outputs to tool calls in addition to a graph-based representation of the sandbox state to eliminate redundant tool executions and speed up post-training.
+L67: While modern accelerators can generate a token in milliseconds, tool calls generally take orders of magnitude longer to execute (e.g., tools may compile entire codebases, run test suites, transcode video, or run web searches). Until a tool finishes executing in a rollout, the GPU resources allocated to that rollout remain idle. Our measurements across three representative benchmarks reveal that waiting for tool execution comprises 7–43% of the total rollout time on average, with tail cases exceeding 90%.
+L68: This inefficiency translates into significantly higher post-training times and costs.
+L69: Our key observation is that tool calls are redundant across the rollouts of an RL-based post-training iteration. Since the rollouts in an iteration are induced by the same prompt, they frequently invoke similar sequences of tool calls (e.g., cloning the same repository, building the same codebase, and running the same tests). We leverage this insight to cache tool call results and reuse them to reduce the latency of executing external tools in rollouts.
+L70: However, the statefulness of tool call executions makes caching challenging. Existing prompt or context caching methods (cite47†Bang, 2023 ; cite48†Zhu et al., 2024 ; cite49†Li et al., 2024 ; cite50†Couturier et al., 2025 ; cite51†Yu et al., 2025 ; cite52†Schroeder et al., 2025 ) assume a stateless mapping from contexts to responses, and are hence inapplicable to post-training wherein models invoke sequences of tool calls that modify the sandbox state.
+L71: Consider a code-debugging agent that, during a rollout, inspects a file by calling cat foo.py, applies a patch with another tool call, and then calls cat foo.py again. A stateless cache keyed only on tool names and arguments would return a stale cached value for the second cat foo.py call, and thus silently degrade post-training.
+L72: 
+L73: This challenge motivates our central research question:
+L74: 
+L75: Q. How can we design a cache that correctly reuses work across stateful tool calls in RL post-training?
+L76: To address this question, we propose TVCache: a stateful tool-value cache for post-training LLM agents. Our key insight is that caching stateful tool calls correctly requires reasoning not about individual tool calls in isolation, but about the sequence or trajectory of tool calls that produced a given sandbox state.
+L77: Specifically, TVCache maintains a tool call graph (TCG)—a graph whose paths correspond to sequences of tool calls observed across rollouts in a training task. Each node in the TCG stores a tool call, its result, and (optionally) a snapshot of the sandbox state at the time of that call. When an agent invokes a tool during a rollout, TVCache performs a longest-prefix match against the TCG. If the agent’s tool call trajectory so far exactly matches a cached path, TVCache returns the cached result directly.
+L78: If the match is only partial, TVCache forks the sandbox cached at the final node of the longest matching prefix and executes only the remaining unmatched tool calls. This approach maximizes reuse of cached sandbox state while guaranteeing correctness.
+L79: Naively snapshotting every sandbox state would be prohibitively expensive. TVCache therefore employs a selective snapshotting policy that stores snapshots only when the expected cost of re-executing a tool exceeds the overhead of snapshot storage and retrieval. This policy naturally prioritizes caching expensive tool calls (e.g., running full test suites and code compilations) over cheaper tool calls like file reads.
+L80: Combined with proactive sandbox forking and efficiently coordinating concurrent access to cached snapshots for simultaneous rollouts, TVCache reduces the cache lookup overhead latency to milliseconds, while also enabling cache reuse across rollouts within an iteration, and even across post-training iterations.
+L81: We evaluate TVCache on three agentic post-training workloads, derived from terminal-bench (cite53†The Terminal-Bench Team, 2025 ), SkyRL-SQL (cite54†Liu et al., 2025 ), and the EgoSchema video question-answering dataset (cite55†Fan et al., 2025 ).
+L82: Across these workloads, TVCache achieves cache hit rates up to 70% and reduces the median tool-call execution time by $6.9\times$ over cacheless post-training, with no degradation in post-training reward accumulation, in self-hosted, cloud-hosted, and (Tinker) API-based post-training. We will release TVCache as an open-source library.^{1}^{1} 1 Code: cite56†https://github.com/TVCache/TVCache†github.com L83: Dataset  | Agent  | # Tasks  | Hardware  | # Epochs  | # Rollouts  | Max. Rollout Length
+L84: --- | --- | --- | --- | --- | --- | ---
+L85: terminal-bench (easy)  | Qwen3-4B-Instruct-2507  | 51  | 2$\times$A100 80G  | 10  | 8  | 2048
+L86: terminal-bench (med)  | Qwen3-4B-Instruct-2507  | 95  | 2$\times$A100 80G  | 10  | 8  | 2048
+L87: terminal-bench (easy)  | Qwen3-14B-Instruct  | 51  | 8$\times$A100 80G (cloud)  | 10  | 4  | 2048
+L88: terminal-bench (med)  | Qwen3-14B-Instruct  | 95  | 8$\times$A100 80G (cloud)  | 10  | 4  | 2048
+L89: SkyRL-SQL  | Qwen2.5-Coder-7B-Instruct  | 653  | 8$\times$A100 80G (cloud)  | 10  | 5  | 3000
+L90: EgoSchema  | Qwen3-30B-A3B-Instruct-2507  | 100  | Tinker API (cloud)  | 5  | 8  | 32768
+L91: Table 1: Post-training workload datasets and configurations.
+L92: (a) terminal-bench
+L93: 
+L94: cite57†Image: Refer to caption (b) SkyRL-SQL
+L95: 
+L96: (c) EgoSchema
+L97: 
+L98: Figure 2: Wall-clock time taken by each rollout (sorted by the total wall-clock time) for reasoning token generation and tool call execution in the (a) terminal-bench, (b) SkyRL-SQL, and (c) EgoSchema post-training workloads (see Table cite58†1 for workload details).
+L99: ## 2 Background and Motivation
+L100: ### 2.1 The post-training agent loop
+L101: In each iteration of reinforcement learning (RL)-based post-training (cite41†Zhang et al., 2025 ; cite42†Zeng et al., 2025b ; cite43†Jiang et al., 2025 ; cite44†Li et al., 2025 ; cite45†Feng et al., 2025 ), the agent generates multiple parallel rollouts conditioned on an input prompt representing an agentic task, such as “build and test the latest Linux kernel on this ARM machine”.
+L102: Rollouts interleave reasoning tokens (via which the agent plans and “thinks”) with tool call tokens (via which the agent interacts with an isolated sandbox environment to carry out its task).
+L103: Tool calls are specially-formatted token sequences that map to external functions. Tool calls are executed inside an isolated sandbox that encapsulates mutable state for the rollout. Sandboxes may take various forms, such as a database instance (e.g., for SQL agents), a Docker container (e.g., for terminal agents), or a media store (e.g., for video agents). Tool calls are the interface via which the agent both perceives and mutates the current sandbox state.
+L104: A rollout concludes either when the agent generates a special stop token, or when the configured maximum number of rollout tokens (i.e., maximum rollout length) is reached. Upon rollout completion, a reward function assesses the success of that rollout and assigns it a reward. At the end of an iteration (i.e., when all rollouts have concluded), the rewards across the rollouts are aggregated and used to update the agent’s parameters.
+L105: The parameter updates depend on the specific reinforcement learning algorithm, such as PPO (cite59†Schulman et al., 2017 ) or GRPO (cite60†Shao et al., 2024 ).
+L106: ### 2.2 Performance overhead of tool execution
+L107: 
+L108: We now quantify the performance overhead of tool execution on different post-training workloads, with different model sizes, performed on different post-training infrastructures (self-hosted, cloud-hosted, and cloud API-based).
+L109: Specifically, we post-train Qwen (cite61†Yang et al., 2024a ) open-weight models on 3 agentic workloads: (1) terminal-bench (cite53†The Terminal-Bench Team, 2025 ), comprising terminal-based tasks executed in Docker containers; (2) SkyRL-SQL (cite54†Liu et al., 2025 ), comprising data processing tasks (via SQL) on a cloud-hosted database; and (3) EgoSchema (cite55†Fan et al., 2025 ), comprising 100^{2}^{2} 2 We randomly sample 100 tasks out of the 500 in the dataset due to computational budget constraints.
+L110: video processing and understanding tasks. Our complete post-training workload configurations are listed in Table cite58†1 .
+L111: Our selected workloads comprise different types of tool calls. In the terminal-bench workload, tool calls are Linux terminal commands such as package installations, code compilations, and test runs. In the SkyRL-SQL workload, tool calls are SQL queries that read from a Google cloud-hosted database instance. In the EgoSchema workload, tool calls are remote procedure calls (RPCs) that perform video processing tasks like extracting frames and generating captions.
+L112: We instrument the post-training to measure the wall-clock time of reasoning token generation and tool call execution within each rollout. Figure cite62†2 shows the time spent in token generation versus tool execution per rollout across the three benchmarks (rollouts sorted by their total wall-clock time).
+L113: Across the 3 workloads, between 7% and 43% of the rollout time is consumed by tool execution; until the tool completes execution, the GPU resources processing that rollout remain idle. For terminal-bench (Figure cite63†2(a) ), tool calls consume 43% of the rollout time on average, and the $99^{\textrm{th}}$ percentile tool execution time consumes over 92% of the rollout time.
+L114: For SkyRL-SQL, tool calls consume 7% of the rollout time on average, and the $95^{\textrm{th}}$ percentile tool execution time consumes 43% of the rollout time. For EgoSchema, tool calls consume 12% of the rollout time on average. In summary, our results across workloads, models, and hardware/software infrastructures show that tool execution is a key source of inefficiency in post-training.
+L115: ### 2.3 Opportunities, Challenges, and Our Contributions
+L116: Opportunity to cache tool-call results. Our key insight is that, since RL-based post-training produces several rollouts in parallel for each input prompt (or task) in an iteration, many tool calls are redundant across rollouts. For example, rollouts for a task often build the same codebase, run the same test suite, or query the same database table.
+L117: By identifying when an agent repeats a previously-executed sequence of tool calls, we can reuse prior results to amortize tool execution time and improve post-training efficiency.
+L118: Challenge I: Tool Statefulness. However, tools can be stateful i.e., the output of a tool is not determined solely by its arguments, and also depends on the entire history of prior mutations of the sandbox in which the tools execute (which determines the sandbox’s state). This dependency on sandbox state makes caching tool calls fundamentally more challenging than caching prompts or stateless functions (cite47†Bang, 2023 ; cite48†Zhu et al., 2024 ; cite51†Yu et al., 2025 ; cite52†Schroeder et al., 2025 ).
+L119: Therefore, a correct tool cache must only reuse the result of a tool call when the sandbox state exactly matches what it was when the result was first computed.
+L120: Challenge II: Caching Efficiently and Concurrently. On a cache miss, an efficient cache should construct the sandbox state required to execute the current tool call reusing past sandbox states. In principle, we could snapshot the entire sandbox after every tool call and store it as part of the cache value. However, naively snapshotting the sandbox state after every tool call (and restoring snapshots frequently) adds significant overhead.
+L121: Finally, rollouts executing in parallel benefit from concurrent access to cached sandboxes, but enabling cache concurrency efficiently is non-trivial.
+L122: Contributions. We propose TVCache to address these challenges and achieve the following goals:
+L123: 
+L124:   * •
+L125: 
+L126: State-aware tool caching. TVCache reuses a cached tool result only when the rollout has reached the same sandbox state as the cached key.
+L127: 
+L128:   * •
+L129: 
+L130: Low-overhead cache lookups. TVCache organizes the cache as a tool call graph, where each root-to-node path represents a sequence of tool calls. Thus, cache lookups reduce to efficient longest-prefix matches.
+L131: 
+L132:   * •
+L133: Selective sandbox snapshotting. TVCache stores sandbox snapshots selectively only when the expected cost of reconstructing a sandbox from a sequence of tool calls exceeds the snapshotting overhead.
+L134: 
+L135:   * •
+L136: 
+L137: Concurrenct cache-sharing across parallel rollouts. TVCache supports highly parallel post-training by (i) sharding the cache, and (ii) coordinating safe concurrent access to shared prefixes in the sharded cache.
+L138: ## 3 TVCache Design
+L139: 
+L140: TVCache organizes the cache as a tool call graph (§cite12†3.1 ), which enables reconstructing sandbox states from tool call sequences and reduces cache lookups to efficient longest prefix matches (§cite13†3.2 ). TVCache further augments the TCG with serialized sandbox snapshots only when the expected cost of sandbox reconstruction exceeds that of snapshotting; which we term selective snapshotting (§cite14†3.3 ). We now discuss the TVCache design in detail.
+L141: ### 3.1 Tool Call Graph (TCG) Structure
+L142: For each task (or prompt) $p$, TVCache maintains a tool call graph $\mathcal{G}(p)=(\mathcal{V}(p),\mathcal{E}(p))$ that is shared across the parallel rollouts for that task and reused across post-training iterations.
+L143: Each node $v\in\mathcal{V}(p)$ represents the tuple $(t,r,s)$ where $t$ is the name of the tool and its arguments (i.e., the tool descriptor), $r$ is the tool execution result, and $s$ is the serialized sandbox snapshot immediately after tool execution (where $s$ is stored selectively and may be null). Each directed edge $(u,w)\in\mathcal{E}(p)$ represents a pair of subsequent tool calls and their associated results and snapshots.
+L144: $\mathcal{G}(p)$ is initialized with a dummy root. As each rollout for $p$ progresses, each of its tool calls either (a) misses the cache and creates a node in $\mathcal{G}(p)$ and a directed edge in $\mathcal{E}(p)$ from the previous tool call (or from the root if there is no previous tool call), or (b) hits the cache and has no effect on $\mathcal{G}(p)$. Figure cite64†3 illustrates a TCG constructed from four parallel rollouts invoking 6 unique tool descriptors in total.
+L145: Figure cite65†9 in Appendix cite29†A shows a real TCG from our experiments.
+L146: ### 3.2 Cache Lookups, Hits, and Misses
+L147: 
+L148: Figure 3: Tool Call Graph (TCG) $\mathcal{G}(p)$ constructed from 4 rollouts.
+L149: 
+L150: On each tool call $t_{j}$ preceded by tool calls $t_{1},t_{2},\dots,t_{j-1}$ in the rollout, TVCache performs a cache lookup by searching for the longest prefix match (LPM) of the sequence $q=\{t_{1},t_{2},\dots,t_{j}\}$ in the TCG (a log$|\mathcal{V}(p)|$ time operation, typically taking a few milliseconds).
+L151: A matched prefix $\tilde{q}=q$ corresponds to a cache hit, and TVCache returns the tool execution results from the matched TCG node $t_{j}$. Longest prefix matching guarantees that the returned result is identical to that from executing $t_{j}$ in a sandbox that has been mutated by the same sequence of tools as the current rollout, guaranteeing correctness.
+L152: In Figure cite64†3 , the calls to $t_{1}$, $t_{2}$, and $t_{3}$ in rollouts 2 and 3 are cache hits, due to rollout 1 having called these tools previously.
+L153: A matched prefix $\tilde{q}\neq q$ is a cache miss. $\tilde{q}$ is the longest prefix of $q$ that has an exact match in the TCG and $q_{\textrm{unmatched}}$ is the remaining unmatched suffix of $q$. If the final node $t^{\prime}$ of $\tilde{q}$ has a sandbox snapshot, TVCache executes the tools in $q_{\textrm{unmatched}}$ sequentially in that snapshot and returns the result of the final tool execution, in addition to appending it to the TCG.
+L154: If the final node $t^{\prime}$ of $\tilde{q}$ does not have a sandbox snapshot, TVCache executes the full tool sequence $q$ in a new sandbox and returns the result of the final tool execution.
+L155: Integration with RL post-training frameworks. TVCache’s design enables straightforward integration with diverse RL frameworks. For our evaluation, we integrated TVCache with veRL (cite66†Sheng et al., 2025 ) for locally-hosted and cloud-hosted post-training and with Tinker, a state-of-the-art RL-as-a-service platform.
+L156: Not all tools modify state. If stateless tools are annotated as such, TVCache can further improve cache reuse by skipping them in longest-prefix matching, effectively matching prefixes over only the stateful tool calls in the TCG. We analyze the correctness of this optimization in Appendix cite30†B .
+L157: ### 3.3 Selective Sandbox Snapshotting
+L158: 
+L159: A naive hashtable-based cache could include the full sandbox state in each cache key, enabling O(1) lookups compared to TVCache’s O($\log N$) prefix matching. However, the memory overhead of storing a separate sandbox snapshot for every cached entry is prohibitive. Even with TVCache’s TCG representation, naively snapshotting the sandbox after every tool call remains too expensive.
+L160: Instead of storing a snapshot at each node, TVCache compares the time spent executing that node’s tool call with the overhead of snapshotting i.e., the cost to serialize and later restore a sandbox snapshot. TVCache stores a snapshot only if executing the tool call is more expensive than the snapshotting overhead.
+L161: In practice, this policy prioritizes snapshots for long-latency tool calls (e.g., running a full test suite or compiling a large codebase) and avoids snapshotting for inexpensive actions (e.g., reading a small file).
+L162: Sandbox forking. TVCache treats every sandbox in the TCG as immutable. When a rollout resumes from a cached sandbox, TVCache forks or copies the cached sandbox and continues to execute tools in it. Since forking in the critical path incurs snapshot restoration latency, TVCache employs three strategies to optimize sandbox forking:
+L163: 
+L164:   * •
+L165: Proactive forking. TVCache proactively forks sandboxes to reduce future forking overheads. Before the start of a training step, TVCache creates multiple root sandboxes, i.e., clean sandboxes that rollouts can use as an initial state. Root sandboxes are created and kept warm proactively so that, when a rollout begins, TVCache can supply a ready-to-use sandbox without paying sandbox start-up latency.
+L166: In addition, for any TCG node that already has a saved snapshot, TVCache pre-creates a forked copy of the corresponding sandbox. These copies are kept ready so that, if a rollout later incurs a cache miss and must resume from the longest-prefix match node, execution can start immediately in the correct sandbox. This proactive warmup allows many cache misses to be handled without expensive synchronous container creation.
+L167:   * •
+L168: 
+L169: Reactive forking. When a rollout incurs a cache miss but still has a longest-prefix match in the TCG, TVCache first checks if a background thread has produced a forked sandbox for the node. If such a fork exists, the rollout resumes with negligible delay. Otherwise, the rollout forks the sandbox on the critical path.
+L170: 
+L171:   * •
+L172: Background instantiation. When a tool call finishes and is deemed sufficiently expensive, TVCache snapshots the resulting sandbox state on the critical path of the rollout. However, it offloads the instantiation of the sandbox (i.e., producing the forked sandbox for reuse) to a background thread. That thread instantiates the forked sandbox from the snapshot and later attaches it to the corresponding node in the TVCache graph.
+L173: In effect, TVCache combines synchronous and asynchronous sandbox creation: sandboxes needed immediately are created on the critical path, while sandboxes that are primarily valuable for future reuse are instantiated in the background.
+L174: Bounding number of cached sandboxes. TVCache bounds the total number of sandboxes stored in the cache. Each task can specify a budget for active sandboxes. When the number of stored sandboxes exceeds this budget, TVCache prunes the least useful ones by evicting subtrees with low expected reuse. Eviction decisions take into account both the depth of the node and the number of children to avoid deleting that capture common prefixes.
+L175: ### 3.4 TVCache Implementation
+L176: 
+L177: Figure 4: TVCache’s architecture. The agent generating the rollout interacts with TVCache through ToolCallExecutor and ToolCallEnvironment in tvclient pip installable library.
+L178: TVCache adopts a server-client architecture as shown in Figure cite67†4 . The TVCache server is a high-performance HTTP service that manages the TCG and associated sandbox snapshots. It exposes endpoints for all operations on the cache: inserting new sequences (PUT /put), retrieving exact matches (GET /get), performing longest-prefix matches (POST /prefix_match), storing and retrieving test results and visualizing the TCG. Each endpoint manipulates the underlying graph through a thread-safe API.
+L179: The server persists TCG snapshots periodically to disk to protect against GPU server crashes. It also collects cache-hit statistics, which are used by the pruning policy.
+L180: TVCache client library provides a ToolCallExecutor class that the RL training loop implements to integrate with TVCache. Before executing a tool call, the rollout serializes the call (tool name and arguments) into a string and concatenates it with previous tool calls and passes it to the executor. The executor queries the cache (/get) for an exact match of this sequence. On a hit, it returns the cached value immediately.
+L181: Otherwise, the rollout executes the tool call in a forked sandbox that prefix_match returns.
+L182: (a) SkyRL-SQL.
+L183: 
+L184: (b) terminal-bench.
+L185: 
+L186: (c) EgoSchema.
+L187: 
+L188: Figure 5: Cache hit rates over post-training epochs for three workloads. TVCache exhibits high hit rates which increase over post-training epochs due to the tool call graph growing and branching further. Hit rates in the terminal-bench workload range from 15% to 32%. Hit rates in the SkyRL-SQL workload range from 27.0% to 57.2%. Hit rates in the EgoSchema workload range from 34% to 73.9%.
+L189: Concurrency Control. TVCache relies on reference counting to avoid eviction of sandboxes while they are being forked. After detecting an LPM, the TVCache server increments the reference count of the sandbox at the end of the prefix before returning. The client decrements the count after forking and the eviction policy evicts only sandboxes with zero references (Figure cite67†4 ).
+L190: Sandbox lifecycle. TVCache abstracts sandbox management through the ToolExecutionEnvironment class. Each dataset implements this class by defining four methods: start, stop, fork, and execute. The executor uses objects of this class to interact with the sandbox.
+L191: Integration with RL post-training frameworks. This design makes it easy for TVCache to be integrated with various RL frameworks. We have integrated it with locally-hosted and cloud-hosted post-training using veRL and state-of-the-art RL-as-a-service offering tinker for our evaluation.
+L192: ## 4 Evaluating TVCache
+L193: 
+L194: In this section, we evaluate TVCache by post-training agents for three different domains: terminal tasks (terminal-bench), database queries (SkyRL-SQL), and video understanding (EgoSchema). We use the same workloads and hardware/software configurations listed in Table cite58†1 . We provide details about reward functions, batch sizes, training frameworks and loss functions we use for training in Appendix cite31†C and all the prompts (tasks) in Appendix cite35†G .
+L195: ### 4.1 terminal-bench workload
+L196: We post-train different models using GRPO (cite60†Shao et al., 2024 ) for the terminal-bench (easy) and terminal-bench (medium) tasks, with different post-training configurations and hardware as specified in Table cite58†1 . The terminal-bench workload provides a Dockerfile for each task. Hence, we use Docker containers as sandboxes in which the tool calls (bash commands) execute. For the terminal-bench (easy) tasks, we run the Docker containers on a self-hosted server with 128 cores and 128 GB of memory.
+L197: For the terminal-bench (medium) tasks, we run the Docker containers on a cloud server with 30 CPUs and 200 GB of memory.
+L198: Scaling sandbox creation and snapshotting. For a batch size of $B$ tasks and with $R$ rollouts per task, TVCache creates $BR$ root containers at the start of post-training. During post-training, TVCache creates a background container for each internal node of the TCG for proactive forking. Thus, a post-training run creates hundreds of containers in total, and we found terminal-bench’s container management system (cite68†Harbor Framework Team, 2026 ) unable to scale.
+L199: In Appendix cite33†E , we describe our modifications to this container management implementation that scales to 100s of containers. We use Docker’s native checkpointing functionality to snapshot and restore sandboxes.
+L200: Results. Figure cite69†5(b) reports cache hit rates by epoch. On easy tasks, TVCache achieves an average hit rate over epochs of 20.2% for the Qwen3-4B-Instruct-2507 agent and 25.3% for the Qwen3-14B-Instruct agent. On medium tasks, the hit rates are 14.2% and 16.7%, respectively. Hit rates increase with epochs as the TCG grows and has more branches to find cache hits. Larger models achieve higher hit rates because they tend to repeat tool calls.
+L201:  | Task  | No Cache  | Cache  |
+L202: Model Size  | Difficulty  | (s / call)  | (s / call)  | Speedup
+L203: --- | --- | --- | --- | ---
+L204: Qwen3-4B-Instruct  | Easy  | 8.67  | 1.40  | 6.18$\times$
+L205: Qwen3-4B-Instruct  | Med  | 18.68  | 2.70  | 6.92$\times$
+L206: Qwen3-14B-Instruct  | Easy  | 8.07  | 2.35  | 3.44$\times$
+L207: Qwen3-14B-Instruct  | Med  | 36.23  | 6.53  | 5.55$\times$
+L208: Table 2: Median per-tool-call execution time and speedup
+L209: We now evaluate whether cache hits translate to speedups in practice. In Table cite70†2 , we report the median tool call execution time with and without TVCache, showing a reduction in median tool call execution time by up to 6.9$\times$. In Appendix cite34†F , we provide the complete tool execution and rollout time distribution across all the configurations from Table cite70†2 .
+L210: 
+L211: (a) terminal-bench
+L212: 
+L213: (b) SkyRL-SQL
+L214: 
+L215: (c) EgoSchema
+L216: Figure 6: TVCache produces reward curves that closely match the reward curves without caching for all workloads.
+L217: ### 4.2 SkyRL-SQL workload
+L218: 
+

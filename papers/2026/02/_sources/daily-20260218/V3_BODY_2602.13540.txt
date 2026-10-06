@@ -1,0 +1,1606 @@
+On Calibration of Large Language Models: From Response To Capability
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Works
+2.1 LLM confidence estimation and calibration
+2.2 LLM uncertainty quantification
+3 Capability Calibration
+3.1 Definition
+3.2 Difference between response calibration and capability calibration
+4 Measuring Capability Calibration
+4.1 Evaluation framework
+4.2 Methods for confidence estimation
+4.3 Experiments
+4.3.1 Setup
+4.3.2 Results and Discussion
+5 Applications
+5.1 Pass@ k k simulation
+5.2 Inference budget allocation
+5.3 Other applications
+6 Conclusion
+References
+A Details of Capability Calibration
+A.1 Proof of
+A.2 Proof of
+A.3 Connection between response calibration loss and capability calibration loss
+B Details of Experiment Setup
+B.1 The choice of k eval k_{\mathrm{eval}}
+Theoretical insights.
+Empirical results.
+B.2 Sampling hyperparameters for each LLM.
+B.3 LLMs’ mean expected accuracies across datasets
+C Details of Confidence Estimation Methods
+C.1 Detailed descriptions of existing methods
+Response calibration confidence estimators.
+LLM Uncertainty Quantification (UQ) methods.
+C.2 Implementation details of confidence estimators
+Random baseline.
+Verbalized confidence and P(True).
+Training linear probes on LLM’s hidden states.
+Datasets for training linear probes.
+C.3 Analysis of k c k_{c} for Response Consistency method
+C.4 Mixing training dataset from different domains
+D Details of the Applications
+D.1 Pass@ k k simulation details
+D.1.1 Process of simulating Pass@ k k curve
+Pass@ k k score at each k k .
+Drawing the simulation curve.
+D.1.2 More simulation results
+D.2 Inference budget allocation details
+D.2.1 Greedy algorithm for test-time compute allocation ( Damani et al., 2024 )
+D.2.2 More experiment results
+D.3 Detailed connection with other applications
+E Targets Difference
+License: CC BY-SA 4.0
+arXiv:2602.13540v1 [cs.CL] 14 Feb 2026
+On Calibration of Large Language Models: From Response To Capability
+Sin-Han Yang
+Affiliation: Appier AI Research
+Correspondence to: sinhan.yang@appier.com
+Cheng-Kuang Wu
+Affiliation: Appier AI Research
+Correspondence to: brian.wu@appier.com
+Chieh-Yen Lin
+Affiliation: Appier AI Research
+Yun-Nung Chen
+Affiliation: National Taiwan University
+Hung-yi Lee
+Affiliation: National Taiwan University
+Shao-Hua Sun
+Affiliation: Appier AI Research
+Affiliation: National Taiwan University
+Abstract
+Large language models (LLMs) are widely deployed as general-purpose problem solvers, making accurate confidence estimation critical for reliable use. Prior work on LLM calibration largely focuses on response-level confidence, which estimates the correctness of a single generated output. However, this formulation is misaligned with many practical settings where the central question is how likely a model is to solve a query overall. We show that this mismatch results from the stochastic nature of modern LLM decoding, under which single-response correctness fails to reflect underlying model capability. To address this issue, we introduce capability calibration, which targets the model’s expected accuracy on a query. We formally distinguish capability calibration from response calibration and show that the two differ both theoretically and empirically. We establish an empirical evaluation setup and study a range of confidence estimation methods. Our results demonstrate that capability-calibrated confidence improves pass@ k k prediction and inference budget allocation, establishing a foundation with potential for diverse applications.
+Source code: https://github.com/appier-research/llm-calibration .
+Keywords:
+Machine Learning, ICML
+† † affiliationnotice: Equal contribution
+1 Introduction
+Figure 1 :
+Definitions of (a) response calibration and our proposed (b) capability calibration. Given an input x x , a model f θ f_{\theta} , and its single sampled output y ^ \hat{y} , response calibration calibrates the confidence s ⁡ ( x , y ^ ) s(x,\hat{y}) against the correctness 𝒞 \mathcal{C} of y ^ \hat{y} . By contrast, capability calibration calibrates the confidence s ⁡ ( x , f θ ) s(x,f_{\theta}) against the expected accuracy μ \mu of the f θ f_{\theta} ’s output distribution.
+Large language models (LLMs) have fundamentally reshaped human-AI interaction by enabling users to pose queries in natural language and receive informative responses ( Ouyang et al., 2022 ) .
+This intuitive interface has driven their rapid adoption across a wide range of applications.
+However, despite their apparent fluency, LLMs can produce incorrect or misleading outputs without explicitly signaling uncertainty.
+This limitation makes accurate confidence estimation a critical component of reliable LLM deployment.
+Well-calibrated confidence scores can enable users to better judge when to trust model outputs ( Huang et al., 2024b ; Aljohani et al., 2025 ) , allow systems to selectively refuse or defer to human experts ( Wu et al., 2024a ) , and support performance prediction for downstream tasks.
+Given the important role of confidence estimation, a natural question is how to accurately evaluate its quality.
+Calibration ( Niculescu-Mizil and Caruana, 2005 ; Guo et al., 2017 ) provides a principled evaluation framework by assessing how well estimated confidence aligns with correctness probability.
+Most existing work on LLM calibration ( Geng et al., 2024 ) adopts a response-level formulation: given a query x x and a generated response y ^ \hat{y} , a confidence estimator produces a score s s intended to reflect the probability that y ^ \hat{y} is correct with respect to x x .
+Under this formulation, calibration is evaluated independently for each generated response.
+We refer to this setting as response calibration ( Figure 1 a).
+Table 1 : Comparison of calibration definitions. Unlike existing response calibration that assesses whether the confidence estimate s s aligns with the correctness of one decoded answer y ^ \hat{y} , our proposed capability calibration evaluates whether s s aligns with the model f θ f_{\theta} ’s capability to answer query x x .
+Definition
+Calibration Target
+Interpretation
+Dependence on LM f θ f_{\theta}
+Response Calibration
+Accuracy of y ^ \hat{y} given x x
+How likely is y ^ \hat{y} correct?
+No. Since y ^ \hat{y} is already decoded, the estimation of s ⁡ ( x , y ^ ) s(x,\hat{y}) is decoupled from the generating model f θ f_{\theta} .
+Capability Calibration
+Expected accuracy of f θ f_{\theta} given x x
+How confident is f θ f_{\theta} in answering x x ?
+Yes. The expected accuracy of x x is directly dependent on f θ f_{\theta} ’s capability.
+In many practical settings, however, what matters is not whether a particular response y ^ \hat{y} is correct, but how likely the LLM is to solve a given query overall.
+This question naturally arises in applications such as allocating computational resources across queries ( Chen et al., 2023b ; Ong et al., 2024 ) or predicting model performance in downstream pipelines.
+We refer to this quantity, “how likely can the LLM answer this query correctly?” , as query-level confidence.
+Although response-level confidence is often used as a proxy for this quantity ( Xiong et al., 2023 ; Maurya et al., 2025 ) , the two are fundamentally misaligned in LLMs due to the stochastic nature of text generation.
+Modern LLMs typically achieve better performance with stochastic decoding ( Holtzman et al., 2019 ; Shi et al., 2024 ) , such as non-zero temperature sampling ( Renze, 2024 ; Li et al., 2025a ) , which can produce different responses given the same query across inference calls.
+As a result, the correctness of any single sampled response cannot accurately reflect the LLM’s underlying capability on that query.
+This mismatch between single-response correctness and query-level performance lies beyond what response calibration can capture.
+Motivated by these observations, we introduce capability calibration ( Figure 1 b), a calibration framework whose target is the model’s expected accuracy on a query x x —that is, the probability that a response sampled from the model’s output distribution conditioned on x x is correct.
+This formulation shifts the focus from whether a particular sampled response happens to be correct to how capable the model is of solving the query in expectation.
+We formally distinguish capability calibration from response calibration and show that the two notions differ both theoretically (§ 3.2 ) and empirically (§ 4.1 ).
+Notably, capability calibration is not merely the expectation of response calibration; the two quantities differ precisely by the variance of response correctness under the model’s output distribution.
+We summarize the key differences between the two definitions in Table 1 .
+Having established that capability calibration is distinct from response calibration, we next consider how to evaluate and achieve it in practice.
+On the evaluation side, the theoretical target of expected accuracy under the model’s output distribution is not directly observable.
+Hence, we develop an empirical evaluation framework that approximates capability calibration through repeated sampling.
+On the method side, we experiment with a wide range of confidence estimation techniques for producing calibrated scores, spanning both training-free and training-based techniques.
+Our results indicate that training linear probes on LLM activations offers a favorable tradeoff between computational cost and confidence estimation performance (§ 4.3.2 ).
+Finally, we demonstrate that capability calibration enables practical applications (§ 5 ).
+We apply capability-calibrated confidence scores to two representative tasks:
+(1) pass@ k k prediction ( Schaeffer et al., 2025 ; Kazdan et al., 2025 ) , where confidence estimates are used to predict the pass@ k k success rate of individual queries without extensive sampling, and
+(2) inference budget allocation ( Snell et al., 2024 ; Damani et al., 2024 ) , where confidence estimates guide the allocation of computational resources across queries, with higher confidence requiring fewer resources.
+In both settings, capability-calibrated confidence leads to improved performance over baselines.
+Beyond these applications, we discuss additional scenarios where capability calibration can potentially provide tangible benefits.
+By formally defining capability calibration, establishing its evaluation framework, and demonstrating its practical utility, our work offers a new perspective on LLM calibration that directly captures model capability at the query level.
+2 Related Works
+2.1 LLM confidence estimation and calibration
+Confidence estimation focuses on estimating the probability that predictions are correct. In machine learning, previous works ( Niculescu-Mizil and Caruana, 2005 ; Guo et al., 2017 ) define calibration as the agreement between confidence and the correctness of an output. We call this definition response calibration .
+Denote x x as the input, y ^ \hat{y} as the model’s output, estimated confidence as s ⁡ ( x , y ^ ) s(x,\hat{y}) , and
+𝒞 ⁡ ( x , y ^ ) ∈ { 0 , 1 } \mathcal{C}(x,\hat{y})\in\{0,1\} as the correctness function. Formally,
+𝒞 ⁡ ( x , y ^ ) = [ y ^ ​ is correct for ​ x ] . \mathcal{C}(x,\hat{y})=\mathbf{1}\!\left[\hat{y}\text{ is correct for }x\right].
+(1)
+Perfect response calibration is defined as:
+ℙ ⁡ [ 𝒞 ⁡ ( x , y ^ ) = 1 ∣ s ⁡ ( x , y ^ ) = p ] = p . \mathbb{P}\left[\mathcal{C}(x,\hat{y})=1\mid s(x,\hat{y})=p\right]=p.
+(2)
+Common evaluation metrics include Expected Calibration Error (ECE) ( Naeini et al., 2015 ) and Brier score ( Brier, 1950 ) .
+Let 𝒟 = { x i } i = 1 N \mathcal{D}=\{x_{i}\}_{i=1}^{N} be a dataset of inputs, 𝐬 = [ s 1 , s 2 , … ​ s i , … ​ s N ] \mathbf{s}=[s_{1},s_{2},...s_{i},...s_{N}] be the estimated confidence for each instance, and y ^ i \hat{y}_{i} be the sampled response for input x i x_{i} . The Brier score used in response calibration is
+ℒ Brier response ​ ( 𝐬 ) ≜ 1 N ​ ∑ i = 1 N ( s i − 𝒞 ⁡ ( x i , y ^ i ) ) 2 . \mathcal{L}_{\mathrm{Brier}}^{\mathrm{response}}(\mathbf{s})\triangleq\frac{1}{N}\sum_{i=1}^{N}\left(s_{i}-\mathcal{C}(x_{i},\hat{y}_{i})\right)^{2}.
+(3)
+LLM confidence estimation methods are broadly categorized into training-free and training-based approaches. Training-free methods include verbalized confidence ( Lin et al., 2022 ; Tian et al., 2023 ) , and token probability methods ( Kadavath et al., 2022 ; Manakul et al., 2023 ) .
+Training-based methods include probing LLMs’ hidden states ( Zhang et al., 2025a ) , reinforcement learning ( Damani et al., 2025 ; Wu et al., 2025 ) and others ( Li et al., 2025b ) .
+These methods typically operate post-hoc, estimating confidence only after the output is generated.
+In contrast, a body of work on “assessors” focuses on anticipating the performance of a single response, aiming to estimate correctness before the response is generated ( Zhou et al., 2022 ; Cencerrado et al., 2025 ; Schellaert et al., 2025 ) . Detailed descriptions of these methods are in Appendix C.1 .
+Despite these methodological differences, the prediction target across these methods remains the same: they aim to estimate the correctness of a single response. However, LLMs are stochastic generative models. While recent work ( Zhang et al., 2025d ) aggregates statistics over multiple samples to ensure a more robust measure of performance, it does not formalize a calibration target for these stochastic outcomes. We fill this gap by defining capability calibration, establishing the model’s query-level expected accuracy as the precise target for confidence estimation.
+2.2 LLM uncertainty quantification
+LLM Uncertainty Quantification (UQ) is a field of methods that quantify the degree of uncertainty of the model towards specific inputs. While calibration measures the alignment between confidence scores and output correctness, UQ is often evaluated by uncertainty estimation’s utility in downstream decisions ( Huang et al., 2024a ) , such as discriminating between correct and incorrect predictions. Consequently, common evaluation metrics include the Area Under the Receiver Operating Characteristic curve (AUROC) ( Hendrycks and Gimpel, 2016 ) and the Risk-Coverage curve ( Geifman and El-Yaniv, 2017 ) . Existing LLM UQ methods include: token-based approaches ( Kadavath et al., 2022 ; Duan et al., 2024 ) , sampling-based approaches ( Wang et al., 2022 ; Kuhn et al., 2023 ; Cecere et al., 2025 ) , and methods leveraging the models’ internal signals ( Cohen et al., 2024 ; Chen et al., 2025 ) . Detailed descriptions of these methods are in Appendix C.1 .
+Capability calibration is linked to LLM UQ, as it utilizes expected accuracy as the target for the estimated model’s uncertainty regarding a specific input. This makes capability-calibrated confidence estimations a natural fit for LLM UQ applications, such as selective prediction ( Kamath et al., 2020 ) , hallucination detection ( Kang et al., 2025 ) , and model routing ( Chen et al., 2023b ) .
+3 Capability Calibration
+Large language model’s output is mostly non-deterministic. In this paper, we consider the expected accuracy of the LLM’s output distribution, and propose a new definition of calibration called capability calibration . Capability calibration evaluates whether the estimated confidence agrees with the model’s likelihood to answer an input correctly.
+3.1 Definition
+For a given input x x , we define the model’s expected accuracy as
+μ ( x , f θ ) ≜ ℙ y ^ ∼ f θ ( ⋅ ∣ x ) [ 𝒞 ( x , y ^ ) = 1 ] = 𝔼 y ^ ∼ f θ ( ⋅ ∣ x ) [ 𝒞 ( x , y ^ ) ] , \mu(x,f_{\theta})\triangleq\mathbb{P}_{\hat{y}\sim f_{\theta}(\cdot\mid x)}[\mathcal{C}(x,\hat{y})=1]=\mathbb{E}_{\hat{y}\sim f_{\theta}(\cdot\mid x)}[\mathcal{C}(x,\hat{y})],
+(4)
+which is equivalent to
+μ ( x , f θ ) = lim N → ∞ 1 N ∑ i = 1 N 𝒞 ( x , y ^ i ) , y ^ i ∼ f θ ( ⋅ ∣ x ) . \mu(x,f_{\theta})=\lim_{N\to\infty}\frac{1}{N}\sum_{i=1}^{N}\mathcal{C}(x,\hat{y}_{i}),\quad\hat{y}_{i}\sim f_{\theta}(\cdot\mid x).
+(5)
+Equation 4 defines the target of the capability calibration. As illustrated in Figure 1 , the target expected accuracy μ ⁡ ( x , f θ ) \mu(x,f_{\theta}) is defined as the frequency of correct outputs when the language model is sampled infinitely many times on the same input x x .
+An estimated confidence s s is well capability-calibrated if it is aligned with the expected accuracy μ ⁡ ( x , f θ ) \mu(x,f_{\theta}) . The perfect calibration for capability calibration is
+s ∗ = μ ⁡ ( x , f θ ) . s^{*}=\mu(x,f_{\theta}).
+(6)
+Capability calibration focuses on calibrating a single input. Therefore, we primarily discuss the Brier score ( Brier, 1950 ) , one of the most common metrics used to evaluate instance-level calibration. Specifically, let μ i \mu_{i} be the expected accuracy μ ⁡ ( x i , f θ ) \mu(x_{i},f_{\theta}) , the capability calibration Brier score is
+ℒ Brier capability ​ ( 𝐬 ) ≜ 1 N ​ ∑ i = 1 N ( s i − μ i ) 2 . \mathcal{L}_{\mathrm{Brier}}^{\mathrm{capability}}(\mathbf{s})\triangleq\frac{1}{N}\sum_{i=1}^{N}(s_{i}-\mu_{i})^{2}.
+(7)
+Since LLM outputs are not deterministic ( Renze, 2024 ; Li et al., 2025a ; He and Thinking Machines Lab, 2025 ) , different token generation paths might result in different answers.
+For each input, a single sampled output is insufficient to represent the model’s capability.
+Capability calibration better captures a model’s capability since it cares about the agreement between confidence and accuracy of all sampled responses, while response calibration cares about the agreement between confidence and accuracy of one sampled response. Next, we discuss the difference between response calibration and capability calibration.
+3.2 Difference between response calibration and capability calibration
+We argue that these two evaluations diverge in three key aspects:
+•
+Evaluation targets : Response calibration targets the specific correctness of a generated sample 𝒞 ⁡ ( x , y ^ ) \mathcal{C}(x,\hat{y}) , whereas capability calibration targets the model’s expected accuracy over all possible samples 𝔼 y ^ ∼ f θ ( ⋅ ∣ x ) [ 𝒞 ( x , y ^ ) ] \mathbb{E}_{\hat{y}\sim f_{\theta}(\cdot\mid x)}[\mathcal{C}(x,\hat{y})] .
+•
+Conditional sets : Response calibration is conditioned on both input and output ( x , y ^ ) (x,\hat{y}) , estimating ℙ ⁡ ( Correct ∣ x , y ^ ) \mathbb{P}(\text{Correct}\mid x,\hat{y}) . Capability calibration is conditioned on the input and model ( x , f θ ) (x,f_{\theta}) , estimating ℙ ⁡ ( Correct ∣ x , f θ ) \mathbb{P}(\text{Correct}\mid x,f_{\theta}) .
+•
+Optimal confidence : Consequently, their optimal confidence scores differ as shown in Theorem 1 . Optimal response-calibrated confidence is a binary indicator of a response’s correctness, while optimal capability-calibrated confidence is a continuous probability representing capability.
+Theorem 1 .
+(Divergence of targets and optima).
+Let x x be an input and y ^ ∼ f θ ( ⋅ ∣ x ) \hat{y}\sim f_{\theta}(\cdot\mid x) be a generated response.
+Minimizing the Brier scores for response calibration ( Equation 3 ) and capability calibration ( Equation 7 ) yields distinct optimal confidence estimators:
+s resp ∗ ​ ( x , y ^ ) = 𝒞 ⁡ ( x , y ^ ) ∈ { 0 , 1 } , s ∗ cap ( x , f θ ) = 𝔼 y ^ ∼ f θ ( ⋅ ∣ x ) [ 𝒞 ( x , y ^ ) ] ∈ [ 0 , 1 ] . \begin{split}&s^{*}_{\mathrm{resp}}(x,\hat{y})=\mathcal{C}(x,\hat{y})\in\{0,1\},\\
+&s^{*}_{\mathrm{cap}}(x,f_{\theta})=\mathbb{E}_{\hat{y}\sim f_{\theta}(\cdot\mid x)}[\mathcal{C}(x,\hat{y})]\in[0,1].\end{split}
+(8)
+Unless the model is deterministic, or its predictions are always correct or always incorrect, the evaluation targets differ, i.e., 𝒞 ( x , y ^ ) ≠ 𝔼 y ^ ∼ f θ ( ⋅ ∣ x ) [ 𝒞 ( x , y ^ ) ] \mathcal{C}(x,\hat{y})\neq\mathbb{E}_{\hat{y}\sim f_{\theta}(\cdot\mid x)}[\mathcal{C}(x,\hat{y})] , implying distinct optimal confidence values.
+See Appendix A.1 for the proof. This theoretical divergence is empirically confirmed in Figure 2 and Section 4.1 , where the targets are shown to differ significantly in practice. Having established that these objectives are distinct, we now formalize the connection between the response calibration loss function and the capability calibration loss function:
+Theorem 2 .
+(Decomposition of calibration losses). Given a set of estimated confidence 𝐬 \mathbf{s} , define the expectation of response calibration loss ℒ Brier response \mathcal{L}^{\mathrm{response}}_{\mathrm{Brier}} on the model’s output distribution as
+𝔼 [ ℒ Brier response ] ≜ 1 N ∑ i = 1 N 𝔼 y ^ ∼ f θ ( ⋅ ∣ x i ) [ ( s i − 𝒞 ( x i , y ^ ) ) 2 ] . \mathbb{E}\big[\mathcal{L}^{\mathrm{response}}_{\mathrm{Brier}}\big]\;\triangleq\;\frac{1}{N}\sum_{i=1}^{N}\mathbb{E}_{\hat{y}\sim f_{\theta}(\cdot\mid x_{i})}\left[\big(s_{i}-\mathcal{C}(x_{i},\hat{y})\big)^{2}\right].
+Decoupling output correctness variance from response calibration, we get capability calibration:
+ℒ Brier capability = 𝔼 ⁡ [ ℒ Brier response ] ⏟ response calibration − 1 N ​ ∑ i = 1 N V ​ a ​ r ​ ( 𝒞 ⁡ ( x i , y ^ ) ) ⏟ output correctness variance , \mathcal{L}_{\mathrm{Brier}}^{\mathrm{capability}}=\underbrace{\mathbb{E}[\mathcal{L}^{\mathrm{response}}_{\mathrm{Brier}}]\vphantom{\sum^{N}_{i=1}}}_{\text{response calibration}}-\underbrace{\frac{1}{N}\sum^{N}_{i=1}Var(\mathcal{C}(x_{i},\hat{y}))}_{\text{output correctness variance}},
+(9)
+where
+V ​ a ​ r ​ ( 𝒞 ⁡ ( x i , y ^ ) ) = 𝔼 y ^ ∼ f θ ( ⋅ ∣ x i ) [ 𝒞 ( x i , y ^ ) 2 ] − 𝔼 y ^ ∼ f θ ( ⋅ ∣ x i ) [ 𝒞 ( x i , y ^ ) ] 2 . \begin{split}Var(\mathcal{C}(x_{i},\hat{y}))&=\mathbb{E}_{\hat{y}\sim f_{\theta}(\cdot\mid x_{i})}[\mathcal{C}(x_{i},\hat{y})^{2}]\\
+&-\mathbb{E}_{\hat{y}\sim f_{\theta}(\cdot\mid x_{i})}[\mathcal{C}(x_{i},\hat{y})]^{2}.\end{split}
+(10)
+See Appendix A.2 for the proof. Theorem 2 demonstrates that when evaluating a set confidence estimation, capability calibration decouples the model’s output variance from response calibration. While response calibration penalizes the stochasticity of generated outputs, capability calibration targets the model’s underlying probability of correctness. For strictly convex and differentiable losses, the difference 𝔼 ⁡ [ ℒ r ​ e ​ s ​ p ​ o ​ n ​ s ​ e ] − ℒ c ​ a ​ p ​ a ​ b ​ i ​ l ​ i ​ t ​ y \mathbb{E}[\mathcal{L}^{response}]-\mathcal{L}^{capability} generalizes to the Bregman information ( Banerjee et al., 2005 ) , which quantifies the gap ( Gruber and Buettner, 2022 ) caused by output randomness. See Appendix A.3 for detailed discussion.
+Figure 2 :
+Divergence of calibration targets. We plot the Response Calibration (RC) target 𝒞 ⁡ ( x , y ^ ) \mathcal{C}(x,\hat{y}) and Capability Calibration (CC) targets 𝔼 y ^ ∼ f θ ( ⋅ ∣ x ) [ 𝒞 ( x , y ^ ) ] \mathbb{E}_{\hat{y}\sim f_{\theta}(\cdot\mid x)}[\mathcal{C}(x,\hat{y})] . The data reveals a divergence between the two targets: instances where the RC label is 0 exhibit CC values spanning the full [0, 1] range. Same observation for instances with an RC label of 1. This confirms that response-level outcomes do not reflect the model’s true ability to answer a query.
+4 Measuring Capability Calibration
+4.1 Evaluation framework
+For a given query x x , an LLM’s theoretical expected accuracy μ \mu defined in Equation 4 is not directly accessible, so one has to estimate μ \mu empirically.
+For a given x x , we estimate the LLM’s expected accuracy by sampling k eval k_{\mathrm{eval}} responses { y ^ 1 , … , y ^ k eval } \{\hat{y}_{1},...,\hat{y}_{k_{\mathrm{eval}}}\} from f θ ( ⋅ ∣ x ) f_{\theta}(\cdot\mid x) .
+Let c c denote the number of correct responses.
+The estimated expected accuracy is:
+μ ^ = c k eval . \hat{\mu}=\frac{c}{k_{\mathrm{eval}}}.
+Target differs from single response correctness. Next, we investigate whether estimated expected accuracy or single-response correctness are empirically different calibration targets.
+In Figure 2 , we compare these two targets using Olmo-3-7B-Instruct on TriviaQA (see Section 4.3.1 for setup). Additional results are in Appendix E . Consistent with findings in Zhang et al. (2025d) , our experiments show that LLM outputs are rarely binary; they are neither perfectly deterministic nor consistently correct across inference calls. This variance confirms that capability calibration targets a fundamentally different property than response calibration.
+Evaluation metric.
+Since capability calibration targets query-level performance, we require a metric that preserves per-query granularity.
+Following the discussion in Section 3.1 , we use Brier score to measure calibration quality.
+We choose Brier score over ECE because ECE’s binning procedure averages predictions within each bin, which could mask calibration errors of individual queries.
+Given a dataset of N N queries, let s i s_{i} denote the confidence estimate for query x i x_{i} and μ ^ i \hat{\mu}_{i} the estimated expected accuracy.
+The empirical capability calibration Brier score is defined as:
+ℒ Brier capability ​ ( 𝐬 ) = 1 N ​ ∑ i = 1 N ( s i − μ ^ i ) 2 . \mathcal{L}_{\mathrm{Brier}}^{\mathrm{capability}}(\mathbf{s})=\frac{1}{N}\sum_{i=1}^{N}(s_{i}-\hat{\mu}_{i})^{2}.
+Lower Brier scores indicate better calibration.
+4.2 Methods for confidence estimation
+Uniform random baseline.
+To assess whether a method delivers meaningful performance, we establish a baseline that uses no information about the query.
+For each query x i x_{i} , we sample a confidence score from a uniform distribution s i ∼ U ⁡ ( 0 , 1 ) s_{i}\sim U(0,1) . This baseline admits an analytic expected loss (see Appendix C.2 for derivation):
+𝔼 𝐬 ​ [ ℒ Brier capability ​ ( 𝐬 ) ] = 1 N ​ ∑ i = 1 N ( 1 3 − μ ^ i + μ ^ i 2 ) , \mathbb{E}_{\mathbf{s}}\!\left[\mathcal{L}_{\mathrm{Brier}}^{\mathrm{capability}}(\mathbf{s})\right]=\frac{1}{N}\sum_{i=1}^{N}\left(\tfrac{1}{3}-\hat{\mu}_{i}+\hat{\mu}_{i}^{2}\right),
+(11)
+which depends only on the model’s expected accuracy on the dataset. Any useful confidence estimation method should outperform this baseline.
+Next, we introduce confidence estimation methods commonly used in LLM response calibration, and adapt them to our capability calibration setting.
+Response consistency ( Wang et al., 2022 ) .
+A straightforward way to estimate confidence is by measuring the consistency across multiple sampled responses.
+We sample k c k_{c} responses and compute the fraction that agree with the majority prediction.
+For example, if k c = 10 k_{c}=10 and 7 7 responses are equivalent, the confidence estimate would be 0.7 0.7 .
+Note that this method incurs a higher computational cost than other methods, as it requires k c k_{c} forward passes per query.
+Verbalized confidence.
+We instruct the LLM to report a probability in [ 0 , 1 ] [0,1] in natural language.
+Unlike prior work ( Lin et al., 2022 ; Tian et al., 2023 ) , which asks for confidence in the response given the query, we ask for confidence in the query itself to measure query-level capability.
+The prompt is provided in Appendix C.2 .
+P(True).
+We ask the model whether it can answer the query correctly by instructing it to respond with only “Yes” or “No”.
+We extract the logprobs of these two tokens and use the softmax probability of “Yes” as the confidence estimate.
+Unlike prior work ( Kadavath et al., 2022 ) , which provides both the query and the response , we present only the query .
+The prompt is provided in Appendix C.2 .
+Probing LLMs’ hidden states ( Li et al., 2021 ) .
+We train linear probes on LLMs’ internal representations to predict query-level confidence.
+Specifically, we mean-pool activations from the last input token across transformer blocks to output a confidence score.
+This approach incurs minimal overhead, with an inference cost less than decoding a single token.
+See Appendix C.2 for implementation details.
+Notable properties:
+Response consistency and verbalized confidence are black-box methods applicable to API-based LLMs without access to token logprobs.
+P(True) is a gray-box method requiring access to token logprobs.
+Probing is a white-box method requiring open-weight models.
+Table 2: Capability calibration performance of different methods with three LLMs on seven datasets. For probes, we use different colors to indicate in-domain in-distribution , in-domain out-of-distribution , and out-domain performance. We use bold to denote the best calibrated method, and underline to denote the second best .
+Probe performs the best under in-domain in-distribution settings and generalizes reasonably well under in-domain out-distribution settings.
+Verbalized confidence and P(True) results differ across LLMs.
+Brier score (↓)
+Domain
+Factual knowledge
+Mathematical reasoning
+General exams
+Method
+Cost
+TriviaQA
+SimpleQA
+GSM8K
+MATH
+AIME25
+MMLU
+GPQA
+Olmo-3-7B-Instruct
+Uniform random baseline
+N/A
+0.2745
+0.3133
+0.3119
+0.2940
+0.2462
+0.2565
+0.2125
+Verbalized confidence
+L L
+0.2624
+0.2676
+0.0462
+0.0557
+0.2002
+0.1561
+0.2742
+P(True)
+1
+0.1933
+0.0419
+0.1282
+0.1400
+0.1854
+0.2164
+0.1553
+Probe (train on TriviaQA)
+< 1 <1
+0.1113
+0.0386
+0.1180
+0.1273
+0.1496
+0.1300
+0.1242
+Probe (train on GSM8K)
+< 1 <1
+0.2648
+0.5465
+0.0370
+0.0545
+0.2482
+0.1200
+0.1628
+Probe (train on MATH)
+< 1 <1
+0.2550
+0.4846
+0.0388
+0.0394
+0.1411
+0.1255
+0.1295
+Qwen3-8B
+Uniform random baseline
+N/A
+0.2865
+0.3109
+0.3144
+0.2781
+0.2800
+0.2868
+0.2113
+Verbalized confidence
+L L
+0.2431
+0.4736
+0.0461
+0.0962
+0.4443
+0.1293
+0.2773
+P(True)
+1
+0.2970
+0.6072
+0.0482
+0.1126
+0.4957
+0.1597
+0.3448
+Probe (train on TriviaQA)
+< 1 <1
+0.1079
+0.0638
+0.3177
+0.3219
+0.1286
+0.2006
+0.1556
+Probe (train on GSM8K)
+< 1 <1
+0.1885
+0.4451
+0.0368
+0.0715
+0.0740
+0.1176
+0.1556
+Probe (train on MATH)
+< 1 <1
+0.2977
+0.8297
+0.0408
+0.0475
+0.0831
+0.1163
+0.1811
+gpt-oss-20b
+Uniform random baseline
+N/A
+0.2639
+0.3010
+0.3195
+0.3063
+0.2369
+0.3018
+0.2388
+Verbalized confidence
+L L
+0.1266
+0.1957
+0.0268
+0.0275
+0.0460
+0.0559
+0.1174
+P(True)
+L L
+0.2101
+0.6151
+0.0306
+0.0321
+0.1092
+0.0817
+0.2082
+Probe (train on TriviaQA)
+< 1 <1
+0.0845
+0.0600
+0.0780
+0.1593
+0.1457
+0.0977
+0.1533
+Probe (train on GSM8K)
+< 1 <1
+0.1756
+0.7048
+0.0289
+0.0485
+0.1213
+0.0686
+0.2010
+Probe (train on MATH)
+< 1 <1
+0.1577
+0.5871
+0.0332
+0.0267
+0.1644
+0.0922
+0.1363
+4.3 Experiments
+4.3.1 Setup
+Choice of k eval k_{\mathrm{eval}} .
+The estimated expected accuracy μ ^ \hat{\mu} is a binomial proportion with variance μ ⁡ ( 1 − μ ) / k eval \mu(1-\mu)/k_{\mathrm{eval}} , which decreases as k eval k_{\mathrm{eval}} increases.
+We investigate the effect of k eval k_{\mathrm{eval}} on evaluation reliability in Appendix B.1 and chose k eval = 100 k_{\mathrm{eval}}=100 to balance cost and reliability.
+We then evaluate the methods on three LLMs across seven datasets:
+Models.
+We use Olmo-3-7B-Instruct ( Olmo Team et al., 2025 ) , Qwen3-8B ( Yang et al., 2025 ) , and gpt-oss-20b ( Agarwal et al., 2025 ) to capture model diversity.
+Sampling hyperparameters follow Appendix B.2 .
+Datasets.
+We select datasets from three task domains:
+(1) factual knowledge , which tests parametric knowledge;
+(2) mathematical reasoning , where errors compound across multiple intermediate steps; and
+(3) general exams , which test both knowledge and reasoning in multiple subjects.
+For each type, we include datasets of different difficulty levels.
+Factual knowledge: We choose TriviaQA ( Joshi et al., 2017 ) as the easier dataset and SimpleQA verified ( Haas et al., 2025 ) as the harder one.
+Mathematical reasoning: We adopt GSM8K ( Cobbe et al., 2021 ) as the easiest dataset, MATH-500 ( Lightman et al., 2023 ) as the intermediate one, and AIME25 as the hardest.
+General exams:
+We use MMLU ( Hendrycks et al., 2020 ) , which spans 57 subjects in humanities, social science, STEM, and others.
+We also use GPQA ( Rein et al., 2023 ) , which is harder than MMLU and includes graduate-level questions in biology, chemistry, and physics.
+4.3.2 Results and Discussion
+Probing has the best cost-performance tradeoff.
+A practically useful method should satisfy two properties:
+(1) Acceptable inference cost : no higher than decoding the response itself, otherwise the overhead would limit the method’s practical utility (see § 5 ).
+(2) Good calibration performance : lower Brier score is better.
+Figure 3 shows a representative example, with full results shown in Figure 4 .
+Among evaluated methods, probing has the lowest inference cost while consistently outperforming the random baseline.
+Figure 3 :
+Cost-performance tradeoff of different methods.
+We compare inference cost (x-axis, log-scale) against calibration performance (y-axis, 1 - Brier score), where the upper-left corner is the ideal region.
+Among evaluated methods, probing is the only one that consistently falls in this region (see Figure 4 ).
+For readability, we only plot the best-calibrated probe.
+Figure 4 :
+Cost-performance tradeoff of different confidence estimation methods with three LLMs on seven datasets.
+Following Figure 3 , we compare inference cost (x-axis, average response tokens) against calibration performance (y-axis).
+Probing consistently outperforms the random baseline while incurring the lowest cost, while response consistency incurs a cost higher than decoding responses.
+How well does probing generalize?
+Table 2 shows that probing performs well under in-domain, in-distribution settings.
+However, some applications may require applying a confidence estimator to
+(1) same-domain but out-of-distribution queries (e.g., different factual knowledge datasets), or
+(2) out-of-domain queries (e.g., training on factual knowledge but applying to mathematical reasoning).
+Overall, probing generalizes reasonably well under in-domain, out-of-distribution settings, especially for the factual knowledge domain.
+However, it does not consistently generalize to out-of-domain settings.
+Developing generalizable methods for capability calibration remains an important direction for future work.
+Performance of verbalized confidence and P(True) differs across LLMs.
+As shown in Table 2 , gpt-oss-20b performs strikingly well with verbalized confidence, achieving the best or second-best performance across datasets.
+In contrast, Olmo-3-7B-Instruct and Qwen3-8B do not even consistently outperform the random uniform baseline with verbalized confidence.
+Moreover, verbalized confidence outperforms P(True) for Qwen3-8B and gpt-oss-20b, but not for Olmo-3-7B-Instruct.
+These results suggest that the effectiveness of these methods is model-dependent.
+Response consistency costs more than responding.
+This method costs more than decoding the response itself (see Figure 3 and 4 ), rendering it impractical for applications where query-level confidence must be estimated before decoding, such as for inference budget allocation (see § 5.2 ).
+We report its calibration performance in Appendix C.3 .
+5 Applications
+In this section, we show that capability calibration has broad applicability to several applications.
+5.1 Pass@ k k simulation
+Test-time scaling via repeated sampling has been shown to enhance LLM capabilities ( Brown et al., 2024 ) , while simultaneously increasing vulnerability to AI safety risks ( Schaeffer et al., 2025 ; Kazdan et al., 2025 ) . Given these trade-offs, the ability to estimate resampling performance at a low inference cost is critical for both researchers and developers ( Stroebl et al., 2024 ) . A common approach to this problem, as proposed by Kazdan et al. (2025) , is to predict pass@ k k performance by sampling only a small subset of outputs. Their method assumes that the expected accuracy of each instance in a dataset follows a beta distribution.
+In this section, we show that capability-calibrated confidence estimation can simulate the pass@ k k performance of each instance without (1) sampling multiple outputs and (2) assuming a prior distribution over the dataset. Furthermore, by computing the pass@ k k success rate for each instance, we can estimate the pass@ k k curve for the entire dataset. We discuss the simulation process in Appendix D.1.1 .
+We evaluate three confidence estimators: (1) Oracle Response-Calibrated (Oracle-RC), (2) Oracle Capability-Calibrated (Oracle-CC), and (3) Probe-MATH, which is trained on the MATH-train dataset ( Hendrycks et al., 2021 ) with CC target. To calculate the real pass@ k k performance, we use the unbiased estimator Chen et al. (2021) . We use Mean Squared Error (MSE) to measure the instance-level discrepancy between simulated and actual pass@ k k performance. Table 3 presents the simulation results for MATH-500. Results for AIME25 and results on the dataset-level pass@ k k curve are provided in Appendix D.1.2 . Experiment results demonstrate the effectiveness of capability calibration for pass@ k k simulation. Since Oracle-CC is the expected accuracy defined in Equation 4 , it simulates ground-truth performance almost perfectly. In contrast, Oracle-RC focuses on single-response correctness, which is a noisy estimate of expected accuracy, causing MSE to increase at higher k k . Finally, Probe-MATH outperforms Oracle-RC by effectively approximating the expected accuracy.
+Table 3 : Pass@ k k simulation error (MSE) on the MATH-500 dataset. We evaluate the ability of different confidence estimators to simulate empirical pass@ k k performance. Perfectly capability-calibrated confidence (Oracle CC) achieves near-perfect simulation, whereas the error of perfectly response-calibrated confidence (Oracle RC) increases as k k scales. Notably, our trained estimator (Probe-MATH) outperforms the Oracle RC baseline across all models by approximating the model’s expected accuracy.
+Method
+pass@1
+pass@4
+pass@16
+pass@64
+Olmo-3-7B-Instruct
+Oracle RC
+0.0370
+0.0556
+0.0746
+0.0935
+Oracle CC
+0.0000
+0.0000
+0.0000
+0.0003
+Probe-MATH
+0.0394
+0.0386
+0.0243
+0.0148
+Qwen3-8B
+Oracle RC
+0.0543
+0.0872
+0.1225
+0.1486
+Oracle CC
+0.0000
+0.0000
+0.0000
+0.0003
+Probe-MATH
+0.0475
+0.0446
+0.0304
+0.0205
+gpt-oss-20b
+Oracle RC
+0.0271
+0.0402
+0.0545
+0.0629
+Oracle CC
+0.0000
+0.0000
+0.0000
+0.0001
+Probe-MATH
+0.0267
+0.0175
+0.0099
+0.0063
+5.2 Inference budget allocation
+Allocating test-time computation has been shown to improve language model performance ( Damani et al., 2024 ; Zhang et al., 2024 ; Snell et al., 2024 ) . In the best-of- k k setting, Damani et al. (2024) investigates how to solve as many problems as possible under a fixed sampling budget . Their approach involves distributing the total computational budget across a dataset of queries prior to generating answers. They optimize the budget allocation by allocating more resources to questions based on their difficulty, which has been shown to outperform uniform allocation. Specifically, they learn a reward model to estimate the marginal improvement (gain)
+in the success rate achieved by allocating one additional unit of compute to a query. The detailed algorithm is discussed in Appendix D.2.1 .
+The ”gain” metric defined by Damani et al. (2024) relies directly on expected accuracy formulated in Equation 4 . Consequently, capability-calibrated confidence allows us to analytically estimate this gain and apply the greedy allocation algorithm detailed in Appendix D.2.1 for inference budget allocation. We evaluate three confidence estimators: (1) Oracle, the perfectly capability-calibrated confidence; (2) Probe-MATH, a high-performing confidence estimator equivalent to the Online Ada-BoK method ( Damani et al., 2024 ) ; and (3) Verbalized Confidence (Verbalized), an estimator that is applicable to black-box models.
+Experimental results validate the effectiveness of capability-calibrated confidence in inference budget allocation. Figure 5 illustrates the performance of gpt-oss-20b on MATH-500; additional results for other models and datasets are provided in Appendix D.2.2 . Consistent with findings in Damani et al. (2024) , the Oracle estimator yields the best performance across all compute budgets, and Probe-MATH consistently outperforms uniform allocation. Furthermore, we discover that verbalized confidence achieves results comparable to Probe-MATH without requiring access to internal model states. This implies that the performance benefits of leveraging capability-calibrated confidence can be applied to API-based LLMs.
+Figure 5 :
+Inference budget allocation performance of capability-calibrated confidence. Given N N questions, we evaluate the performance (success rate) of different methods under the fixed inference budget N × B N\times B . The Oracle capability-calibrated confidence achieves the best performance. Meanwhile, confidence estimators (verbalized and Probe-MATH) both outperform the Uniform allocation in various budgets.
+5.3 Other applications
+Beyond our primary experiments, capability-calibrated confidence can enhance system reliability through selective prediction ( Kamath et al., 2020 ) and active query refinement ( Wu et al., 2024a ) . It also supports efficient infrastructure via model routing ( Ong et al., 2024 ) and cost estimation ( Wu et al., 2024b ) , as well as advanced training techniques like curriculum learning ( Zhang et al., 2025e ) and label-free benchmarking ( Guha et al., 2024 ) .
+As an initial investigation into capability calibration, we prioritize two critical applications (§ 5.1 and § 5.2 ) where performance is directly related to the model’s expected accuracy. Although we also identify other promising applications, a comprehensive empirical evaluation of all downstream tasks is beyond the scope of this work. Nonetheless, we provide a conceptual discussion of how capability calibration can be integrated into these broader domains in Appendix D.3 .
+6 Conclusion
+This work formalizes capability calibration and shows that it differs from response calibration due to the stochastic nature of LLM outputs.
+Our experiments identify linear probing on model activations as a practical method that achieves non-trivial calibration performance at minimal computational overhead, and demonstrate its downstream value through efficient pass@ k k prediction and inference budget allocation.
+We see two promising research directions:
+(1) developing methods that push the frontier of capability calibration performance;
+(2) extending this framework to more applications, such as model routing, human-AI collaboration, and trustworthy AI.
+Impact Statement
+This paper presents work whose goal is to advance the field of Machine Learning by improving the reliability and predictability of LLMs. As LLMs are increasingly deployed in real-world applications, ensuring they are trustworthy is paramount. Our framework for capability calibration enables models to more accurately assess their own limitations, allowing systems to abstain or seek human oversight when the model is unlikely to succeed. We believe this contributes to safer AI deployment by mitigating the risks associated with overconfidence and hallucination. There are no significant negative societal consequences that we feel must be specifically highlighted here.
+Acknowledgements
+We would like to thank Appier AI Research team members, Hsuan-Tien Lin (National Taiwan University) and Wei-Lin Chen (University of Virginia), for their feedback on this work.
+This work was supported in part by the National Science and Technology Council, Taiwan, under the Grant 114-2628-E-002-021-, and the Taiwan Centers of Excellence. Shao-Hua Sun was supported by the Yushan Fellow Program of the Ministry of Education, Taiwan.
+References
+Agarwal et al. (2025)
+S. Agarwal, L. Ahmad, J. Ai, S. Altman, A. Applebaum, E. Arbus, R. K. Arora, Y. Bai, B. Baker, H. Bao, et al.
+Gpt-oss-120b & gpt-oss-20b model card .
+arXiv preprint arXiv:2508.10925 .
+Cited by: §B.1 ,
+§B.2 ,
+§4.3.1 .
+Aljohani et al. (2025)
+M. Aljohani, J. Hou, S. Kommu, and X. Wang
+A comprehensive survey on the trustworthiness of large language models in healthcare .
+arXiv preprint arXiv:2502.15871 .
+Cited by: §1 .
+Banerjee et al. (2005)
+A. Banerjee, S. Merugu, I. S. Dhillon, and J. Ghosh
+Clustering with bregman divergences .
+Journal of machine learning research 6 ( Oct ), pp. 1705–1749 .
+Cited by: §A.3 ,
+§3.2 .
+Brier (1950)
+G. W. Brier
+Verification of forecasts expressed in terms of probability .
+Monthly weather review 78 ( 1 ), pp. 1–3 .
+Cited by: §2.1 ,
+§3.1 .
+Brown et al. (2024)
+B. Brown, J. Juravsky, R. Ehrlich, R. Clark, Q. V. Le, C. Ré, and A. Mirhoseini
+Large language monkeys: scaling inference compute with repeated sampling .
+arXiv preprint arXiv:2407.21787 .
+Cited by: §5.1 .
+Cecere et al. (2025)
+N. Cecere, A. Bacciu, I. F. Tobías, and A. Mantrach
+Monte carlo temperature: a robust sampling strategy for llm’s uncertainty quantification methods .
+arXiv preprint arXiv:2502.18389 .
+Cited by: §C.1 ,
+§2.2 .
+Cencerrado et al. (2025)
+I. V. M. Cencerrado, A. P. Masdemont, A. G. Hawthorne, D. D. Africa, and L. Pacchiardi
+No answer needed: predicting llm answer accuracy from question-only linear probes .
+arXiv preprint arXiv:2509.10625 .
+Cited by: §2.1 .
+Chen et al. (2023a)
+J. Chen, J. Yoon, S. Ebrahimi, S. Arik, T. Pfister, and S. Jha
+Adaptation with self-evaluation to improve selective prediction in llms .
+In Findings of the Association for Computational Linguistics: EMNLP 2023 ,
+pp. 5190–5213 .
+Cited by: §D.3 .
+Chen et al. (2025)
+L. Chen, G. de Melo, F. M. Suchanek, and G. Varoquaux
+Query-level uncertainty in large language models .
+arXiv preprint arXiv:2506.09669 .
+Cited by: §C.1 ,
+§D.3 ,
+§2.2 .
+Chen et al. (2023b)
+L. Chen, M. Zaharia, and J. Zou
+Frugalgpt: how to use large language models while reducing cost and improving performance .
+arXiv preprint arXiv:2305.05176 .
+Cited by: §D.3 ,
+§1 ,
+§2.2 .
+Chen et al. (2021)
+M. Chen, J. Tworek, H. Jun, Q. Yuan, H. P. de Oliveira Pinto, J. Kaplan, H. Edwards, Y. Burda, N. Joseph, G. Brockman, A. Ray, R. Puri, G. Krueger, M. Petrov, H. Khlaaf, G. Sastry, P. Mishkin, B. Chan, S. Gray, N. Ryder, M. Pavlov, A. Power, L. Kaiser, M. Bavarian, C. Winter, P. Tillet, F. P. Such, D. Cummings, M. Plappert, F. Chantzis, E. Barnes, A. Herbert-Voss, W. H. Guss, A. Nichol, A. Paino, N. Tezak, J. Tang, I. Babuschkin, S. Balaji, S. Jain, W. Saunders, C. Hesse, A. N. Carr, J. Leike, J. Achiam, V. Misra, E. Morikawa, A. Radford, M. Knight, M. Brundage, M. Murati, K. Mayer, P. Welinder, B. McGrew, D. Amodei, S. McCandlish, I. Sutskever, and W. Zaremba
+Evaluating large language models trained on code .
+arXiv preprint arXiv:2107.03374 .
+Cited by: §5.1 .
+Cobbe et al. (2021)
+K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano, et al.
+Training verifiers to solve math word problems .
+arXiv preprint arXiv:2110.14168 .
+Cited by: §C.2 ,
+§4.3.1 .
+Cohen et al. (2024)
+R. Cohen, K. Dobler, E. Biran, and G. de Melo
+I don’t know: explicit modeling of uncertainty with an [idk] token .
+Advances in Neural Information Processing Systems 37 , pp. 10935–10958 .
+Cited by: §C.1 ,
+§2.2 .
+Damani et al. (2025)
+M. Damani, I. Puri, S. Slocum, I. Shenfeld, L. Choshen, Y. Kim, and J. Andreas
+Beyond binary rewards: training lms to reason about their uncertainty .
+arXiv preprint arXiv:2507.16806 .
+Cited by: §2.1 .
+Damani et al. (2024)
+M. Damani, I. Shenfeld, A. Peng, A. Bobu, and J. Andreas
+Learning how hard to think: input-adaptive allocation of lm computation .
+arXiv preprint arXiv:2410.04707 .
+Cited by: §D.2.1 ,
+§D.3 ,
+§1 ,
+§5.2 ,
+§5.2 ,
+§5.2 .
+Duan et al. (2024)
+J. Duan, H. Cheng, S. Wang, A. Zavalny, C. Wang, R. Xu, B. Kailkhura, and K. Xu
+Shifting attention to relevance: towards the predictive uncertainty quantification of free-form large language models .
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,
+pp. 5050–5063 .
+Cited by: §C.1 ,
+§D.3 ,
+§2.2 .
+Geifman and El-Yaniv (2017)
+Y. Geifman and R. El-Yaniv
+Selective classification for deep neural networks .
+Advances in neural information processing systems 30 .
+Cited by: §2.2 .
+Geng et al. (2024)
+J. Geng, F. Cai, Y. Wang, H. Koeppl, P. Nakov, and I. Gurevych
+A survey of confidence estimation and calibration in large language models .
+In Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers) ,
+pp. 6577–6595 .
+Cited by: §1 .
+Gruber and Buettner (2022)
+S. G. Gruber and F. Buettner
+Uncertainty estimates of predictions via a general bias-variance decomposition .
+arXiv preprint arXiv:2210.12256 .
+Cited by: §3.2 .
+Guha et al. (2024)
+N. Guha, M. Chen, T. Chow, I. Khare, and C. Re
+Smoothie: label free language model routing .
+Advances in Neural Information Processing Systems 37 , pp. 127645–127672 .
+Cited by: §D.3 ,
+§5.3 .
+Guo et al. (2017)
+C. Guo, G. Pleiss, Y. Sun, and K. Q. Weinberger
+On calibration of modern neural networks .
+In International conference on machine learning ,
+pp. 1321–1330 .
+Cited by: §1 ,
+§2.1 .
+Haas et al. (2025)
+L. Haas, G. Yona, G. D’Antonio, S. Goldshtein, and D. Das
+Simpleqa verified: a reliable factuality benchmark to measure parametric knowledge .
+arXiv preprint arXiv:2509.07968 .
+Cited by: §4.3.1 .
+He and Thinking Machines Lab (2025)
+H. He and Thinking Machines Lab
+Defeating nondeterminism in llm inference .
+Thinking Machines Lab: Connectionism .
+Note: https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/
+External Links: Document
+Cited by: §3.1 .
+Hendrycks et al. (2020)
+D. Hendrycks, C. Burns, S. Basart, A. Zou, M. Mazeika, D. Song, and J. Steinhardt
+Measuring massive multitask language understanding .
+arXiv preprint arXiv:2009.03300 .
+Cited by: §4.3.1 .
+Hendrycks et al. (2021)
+D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt
+Measuring mathematical problem solving with the math dataset .
+NeurIPS .
+Cited by: §C.2 ,
+§5.1 .
+Hendrycks and Gimpel (2016)
+D. Hendrycks and K. Gimpel
+A baseline for detecting misclassified and out-of-distribution examples in neural networks .
+arXiv preprint arXiv:1610.02136 .
+Cited by: §2.2 .
+Holtzman et al. (2019)
+A. Holtzman, J. Buys, L. Du, M. Forbes, and Y. Choi
+The curious case of neural text degeneration .
+arXiv preprint arXiv:1904.09751 .
+Cited by: §1 .
+Huang et al. (2024a)
+H. Huang, Y. Yang, Z. Zhang, S. Lee, and Y. Wu
+A survey of uncertainty estimation in llms: theory meets practice .
+arXiv preprint arXiv:2410.15326 .
+Cited by: §2.2 .
+Huang et al. (2024b)
+Y. Huang, L. Sun, H. Wang, S. Wu, Q. Zhang, Y. Li, C. Gao, Y. Huang, W. Lyu, Y. Zhang, et al.
+Trustllm: trustworthiness in large language models .
+arXiv preprint arXiv:2401.05561 .
+Cited by: §1 .
+Jiang et al. (2023)
+D. Jiang, X. Ren, and B. Y. Lin
+Llm-blender: ensembling large language models with pairwise ranking and generative fusion .
+arXiv preprint arXiv:2306.02561 .
+Cited by: §D.3 .
+Joshi et al. (2017)
+M. Joshi, E. Choi, D. S. Weld, and L. Zettlemoyer
+Triviaqa: a large scale distantly supervised challenge dataset for reading comprehension .
+arXiv preprint arXiv:1705.03551 .
+Cited by: §C.2 ,
+§4.3.1 .
+Kadavath et al. (2022)
+S. Kadavath, T. Conerly, A. Askell, T. Henighan, D. Drain, E. Perez, N. Schiefer, Z. Hatfield-Dodds, N. DasSarma, E. Tran-Johnson, et al.
+Language models (mostly) know what they know .
+arXiv preprint arXiv:2207.05221 .
+Cited by: §C.1 ,
+§C.1 ,
+§2.1 ,
+§2.2 ,
+§4.2 .
+Kamath et al. (2020)
+A. Kamath, R. Jia, and P. Liang
+Selective question answering under domain shift .
+arXiv preprint arXiv:2006.09462 .
+Cited by: §D.3 ,
+§2.2 ,
+§5.3 .
+Kang et al. (2025)
+S. Kang, Y. F. Bakman, D. N. Yaldiz, B. Buyukates, and S. Avestimehr
+Uncertainty quantification for hallucination detection in large language models: foundations, methodology, and future directions .
+arXiv preprint arXiv:2510.12040 .
+Cited by: §2.2 .
+Kazdan et al. (2025)
+J. Kazdan, R. Schaeffer, Y. Allouah, C. Sullivan, K. Yu, N. Levi, and S. Koyejo
+Efficient prediction of pass@ k scaling in large language models .
+arXiv preprint arXiv:2510.05197 .
+Cited by: §1 ,
+§5.1 .
+Kuhn et al. (2023)
+L. Kuhn, Y. Gal, and S. Farquhar
+Semantic uncertainty: linguistic invariances for uncertainty estimation in natural language generation .
+arXiv preprint arXiv:2302.09664 .
+Cited by: §C.1 ,
+§2.2 .
+Li et al. (2021)
+B. Z. Li, M. Nye, and J. Andreas
+Implicit representations of meaning in neural language models .
+arXiv preprint arXiv:2106.00737 .
+Cited by: §4.2 .
+Li et al. (2025a)
+L. Li, L. Sleem, G. Nichil, R. State, et al.
+Exploring the impact of temperature on large language models: hot or cold? .
+Procedia Computer Science 264 , pp. 242–251 .
+Cited by: §1 ,
+§3.1 .
+Li et al. (2025b)
+Y. Li, M. Xiong, J. Wu, and B. Hooi
+Conftuner: training large language models to express their confidence verbally .
+arXiv preprint arXiv:2508.18847 .
+Cited by: §2.1 .
+Lightman et al. (2023)
+H. Lightman, V. Kosaraju, Y. Burda, H. Edwards, B. Baker, T. Lee, J. Leike, J. Schulman, I. Sutskever, and K. Cobbe
+Let’s verify step by step .
+arXiv preprint arXiv:2305.20050 .
+Cited by: §C.2 ,
+§4.3.1 .
+Lin et al. (2022)
+S. Lin, J. Hilton, and O. Evans
+Teaching models to express their uncertainty in words .
+arXiv preprint arXiv:2205.14334 .
+Cited by: §C.1 ,
+§2.1 ,
+§4.2 .
+Manakul et al. (2023)
+P. Manakul, A. Liusie, and M. Gales
+Selfcheckgpt: zero-resource black-box hallucination detection for generative large language models .
+In Proceedings of the 2023 conference on empirical methods in natural language processing ,
+pp. 9004–9017 .
+Cited by: §C.1 ,
+§2.1 .
+Mao et al. (2025)
+Y. Mao, T. Durand, N. Mehrasa, J. He, and M. Ester
+Calibrating llms for selective prediction: balancing coverage and risk .
+In Socially Responsible and Trustworthy Foundation Models at NeurIPS 2025 ,
+Cited by: §D.3 .
+Maurya et al. (2025)
+K. K. Maurya, K. A. Srivatsa, and E. Kochmar
+Selectllm: query-aware efficient selection algorithm for large language models .
+In Findings of the Association for Computational Linguistics: ACL 2025 ,
+pp. 20847–20863 .
+Cited by: §D.3 ,
+§1 .
+Naeini et al. (2015)
+M. P. Naeini, G. Cooper, and M. Hauskrecht
+Obtaining well calibrated probabilities using bayesian binning .
+In Proceedings of the AAAI conference on artificial intelligence ,
+Cited by: §2.1 .
+Niculescu-Mizil and Caruana (2005)
+A. Niculescu-Mizil and R. Caruana
+Predicting good probabilities with supervised learning .
+In Proceedings of the 22nd international conference on Machine learning ,
+pp. 625–632 .
+Cited by: §1 ,
+§2.1 .
+Olmo Team et al. (2025)
+Olmo Team, A. Ettinger, A. Bertsch, B. Kuehl, D. Graham, D. Heineman, D. Groeneveld, F. Brahman, F. Timbers, H. Ivison, et al.
+Olmo 3 .
+arXiv preprint arXiv:2512.13961 .
+Cited by: §B.2 ,
+§4.3.1 .
+Ong et al. (2024)
+I. Ong, A. Almahairi, V. Wu, W. Chiang, T. Wu, J. E. Gonzalez, M. W. Kadous, and I. Stoica
+Routellm: learning to route llms with preference data .
+arXiv preprint arXiv:2406.18665 .
+Cited by: §D.3 ,
+§1 ,
+§5.3 .
+Ouyang et al. (2022)
+L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray, et al.
+Training language models to follow instructions with human feedback .
+Advances in neural information processing systems 35 , pp. 27730–27744 .
+Cited by: §1 .
+Reid and Williamson (2011)
+M. D. Reid and R. C. Williamson
+Information, divergence and risk for binary experiments .
+Journal of Machine Learning Research 12 , pp. 731–817 .
+Cited by: §A.3 .
+Rein et al. (2023)
+D. Rein, B. L. Hou, A. C. Stickland, J. Petty, R. Y. Pang, J. Dirani, J. Michael, and S. R. Bowman
+GPQA: a graduate-level google-proof q&a benchmark .
+arXiv preprint arXiv:2311.12022 .
+Cited by: §4.3.1 .
+Renze (2024)
+M. Renze
+The effect of sampling temperature on problem solving in large language models .
+In Findings of the association for computational linguistics: EMNLP 2024 ,
+pp. 7346–7356 .
+Cited by: §1 ,
+§3.1 .
+Schaeffer et al. (2025)
+R. Schaeffer, J. Kazdan, J. Hughes, J. Juravsky, S. Price, A. Lynch, E. Jones, R. Kirk, A. Mirhoseini, and S. Koyejo
+How do large language monkeys get their power (laws)? .
+arXiv preprint arXiv:2502.17578 .
+Cited by: §1 ,
+§5.1 .
+Schellaert et al. (2025)
+W. Schellaert, F. Martínez-Plumed, and J. Hernández-Orallo
+Analysing the predictability of language model performance .
+ACM Transactions on Intelligent Systems and Technology 16 ( 2 ), pp. 1–26 .
+Cited by: §2.1 .
+Shi et al. (2024)
+C. Shi, H. Yang, D. Cai, Z. Zhang, Y. Wang, Y. Yang, and W. Lam
+A thorough examination of decoding methods in the era of llms .
+arXiv preprint arXiv:2402.06925 .
+Cited by: §1 .
+Snell et al. (2024)
+C. Snell, J. Lee, K. Xu, and A. Kumar
+Scaling llm test-time compute optimally can be more effective than scaling model parameters .
+arXiv preprint arXiv:2408.03314 .
+Cited by: §1 ,
+§5.2 .
+Stroebl et al. (2024)
+B. Stroebl, S. Kapoor, and A. Narayanan
+Inference scaling flaws: the limits of llm resampling with imperfect verifiers .
+arXiv preprint arXiv:2411.17501 .
+Cited by: §5.1 .
+Tian et al. (2023)
+K. Tian, E. Mitchell, A. Zhou, A. Sharma, R. Rafailov, H. Yao, C. Finn, and C. D. Manning
+Just ask for calibration: strategies for eliciting calibrated confidence scores from language models fine-tuned with human feedback .
+arXiv preprint arXiv:2305.14975 .
+Cited by: §C.1 ,
+§2.1 ,
+§4.2 .
+Wang et al. (2022)
+X. Wang, J. Wei, D. Schuurmans, Q. Le, E. Chi, S. Narang, A. Chowdhery, and D. Zhou
+Self-consistency improves chain of thought reasoning in language models .
+arXiv preprint arXiv:2203.11171 .
+Cited by: §C.1 ,
+§2.2 ,
+§4.2 .
+Wu et al. (2024a)
+C. Wu, Z. R. Tam, C. Wu, C. Lin, H. Lee, and Y. Chen
+I need help! evaluating llm’s ability to ask for users’ support: a case study on text-to-sql generation .
+arXiv preprint arXiv:2407.14767 .
+Cited by: §D.3 ,
+§1 ,
+§5.3 .
+Wu et al. (2025)
+J. Wu, J. Liu, Z. Zeng, T. Zhan, and W. Huang
+Mitigating llm hallucination via behaviorally calibrated reinforcement learning .
+arXiv preprint arXiv:2512.19920 .
+Cited by: §2.1 .
+Wu et al. (2024b)
+Y. Wu, Z. Sun, S. Li, S. Welleck, and Y. Yang
+Inference scaling laws: an empirical analysis of compute-optimal inference for problem-solving with language models .
+arXiv preprint arXiv:2408.00724 .
+Cited by: §D.3 ,
+§5.3 .
+Xiong et al. (2023)
+M. Xiong, Z. Hu, X. Lu, Y. Li, J. Fu, J. He, and B. Hooi
+Can llms express their uncertainty? an empirical evaluation of confidence elicitation in llms .
+arXiv preprint arXiv:2306.13063 .
+Cited by: §1 .
+Yang et al. (2025)
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, et al.
+Qwen3 technical report .
+arXiv preprint arXiv:2505.09388 .
+Cited by: §B.2 ,
+§4.3.1 .
+Zhang et al. (2025a)
+A. Zhang, Y. Chen, J. Pan, C. Zhao, A. Panda, J. Li, and H. He
+Reasoning models know when they’re right: probing hidden states for self-verification .
+arXiv preprint arXiv:2504.05419 .
+Cited by: §2.1 .
+Zhang et al. (2025b)
+J. Zhang, J. Yuan, A. Wen, H. A. D. Le, Y. Chuang, S. Choi, R. Chen, and X. Hu
+ReasonerRank: redefining language model evaluation with ground-truth-free ranking frameworks .
+In Findings of the Association for Computational Linguistics: ACL 2025 ,
+pp. 13623–13639 .
+Cited by: §D.3 .
+Zhang et al. (2024)
+K. Zhang, S. Zhou, D. Wang, W. Y. Wang, and L. Li
+Scaling llm inference with optimized sample compute allocation .
+arXiv preprint arXiv:2410.22480 .
+Cited by: §5.2 .
+Zhang et al. (2025c)
+S. Zhang, G. Sun, K. Zhang, X. Guo, and R. Guo
+CLPO: curriculum learning meets policy optimization for llm reasoning .
+arXiv preprint arXiv:2509.25004 .
+Cited by: §D.3 .
+Zhang et al. (2025d)
+W. Zhang, H. Cai, and W. Chen
+Beyond the singular: the essential role of multiple generations in effective benchmark evaluation and analysis .
+arXiv preprint arXiv:2502.08943 .
+Cited by: §B.1 ,
+§2.1 ,
+§4.1 .
+Zhang et al. (2025e)
+Y. Zhang, A. Mohamed, H. Abdine, G. Shang, and M. Vazirgiannis
+Beyond random sampling: efficient language model pretraining via curriculum learning .
+arXiv preprint arXiv:2506.11300 .
+Cited by: §D.3 ,
+§5.3 .
+Zhou et al. (2022)
+L. Zhou, F. Martínez-Plumed, J. Hernández-Orallo, C. Ferri, and W. Schellaert
+Reject before you run: small assessors anticipate big language models. .
+EBeM@ IJCAI 3169 .
+Cited by: §2.1 .
+Appendix
+The appendix contains the following section.
+•
+Details of Capability Calibration . A
+–
+Proof of Theorem 1 . A.1
+–
+Proof of Theorem 2 . A.2
+–
+Connection between response calibration loss and capability calibration loss . A.3
+•
+Details of Experiment Setup . B
+–
+The choice of k eval k_{\mathrm{eval}} . B.1
+–
+Sampling hyperparameters for each LLM . B.2
+–
+LLMs’ mean expected accuracies across datasets . B.3
+•
+Details of Confidence Estimation Methods . C
+–
+Detailed descriptions of existing methods . C.1
+–
+Implementation details of confidence estimators . C.2
+–
+Analysis of k c k_{c} for Response Consistency method . C.3
+–
+Mixing training dataset from different domains . C.4
+•
+Details of the Applications . D
+–
+Pass@ k k simulation details . D.1
+–
+Inference budget allocation details . D.2
+–
+Detailed connection with other applications . D.3
+•
+Targets Difference . E
+Appendix A Details of Capability Calibration
+A.1 Proof of Theorem 1
+Proof.
+Let f θ ( ⋅ ∣ x ) f_{\theta}(\cdot\mid x) be a generative model.
+For each input x i x_{i} , let y ^ i ∼ f θ ( ⋅ ∣ x i ) \hat{y}_{i}\sim f_{\theta}(\cdot\mid x_{i}) be a single
+sampled output, and let s i ∈ [ 0 , 1 ] s_{i}\in[0,1] denote the predicted confidence.
+Recall that the response calibration Brier score ( Equation 3 ) is defined as:
+ℒ Brier response ( s 1 , … , s N ) ≜ 1 N ∑ i = 1 N ( s i − 𝒞 ( x i , y ^ i ) ) 2 , y ^ i ∼ f θ ( ⋅ ∣ x i ) . \mathcal{L}^{\mathrm{response}}_{\mathrm{Brier}}(s_{1},\dots,s_{N})\triangleq\frac{1}{N}\sum_{i=1}^{N}\left(s_{i}-\mathcal{C}(x_{i},\hat{y}_{i})\right)^{2},\quad\hat{y}_{i}\sim f_{\theta}(\cdot\mid x_{i}).
+Define the confidence estimations of the dataset as 𝐬 = ( s 1 , s 2 , … , s n ) \mathbf{s}=(s_{1},s_{2},...,s_{n}) . Since the Brier score is convex, the stationary point is the global minimum, which is
+∇ ℒ Brier response ​ ( 𝐬 ∗ ) = 𝟎 , \nabla\mathcal{L}^{\mathrm{response}}_{\mathrm{Brier}}(\mathbf{s}^{*})=\mathbf{0},
+i.e.,
+∂ ℒ Brier response ∂ s i = 2 N ​ ( s i − 𝒞 ⁡ ( x i , y ^ i ) ) = 0 , ∀ i ∈ { 1 , … , N } . \frac{\partial\mathcal{L}^{\mathrm{response}}_{\mathrm{Brier}}}{\partial s_{i}}=\frac{2}{N}(s_{i}-\mathcal{C}(x_{i},\hat{y}_{i}))=0,\quad\forall i\in\{1,\dots,N\}.
+Thus, the optimal confidence estimation is
+s i ∗ , response = 𝒞 ⁡ ( x i , y ^ i ) , ∀ i ∈ { 1 , … , N } . s_{i}^{*,\mathrm{response}}=\mathcal{C}(x_{i},\hat{y}_{i}),\quad\forall i\in\{1,\dots,N\}.
+Follow the definition of Equation 4
+μ i ≜ 𝔼 y ^ ∼ f θ ( ⋅ ∣ x i ) [ 𝒞 ( x i , y ^ ) ] , \mu_{i}\triangleq\mathbb{E}_{\hat{y}\sim f_{\theta}(\cdot\mid x_{i})}[\mathcal{C}(x_{i},\hat{y})],
+we restate the capability calibration Brier score from Equation 7 :
+ℒ Brier capability ( s 1 , … , s N ) ≜ 1 N ∑ i = 1 N ( s i − μ i ) 2 = 1 N ∑ i = 1 N ( s i − 𝔼 y ^ ∼ f θ ( ⋅ ∣ x i ) [ 𝒞 ( x i , y ^ ) ] ) 2 . \mathcal{L}_{\mathrm{Brier}}^{\mathrm{capability}}(s_{1},\dots,s_{N})\triangleq\frac{1}{N}\sum_{i=1}^{N}(s_{i}-\mu_{i})^{2}=\frac{1}{N}\sum_{i=1}^{N}\left(s_{i}-\mathbb{E}_{\hat{y}\sim f_{\theta}(\cdot\mid x_{i})}[\mathcal{C}(x_{i},\hat{y})]\right)^{2}.
+Following the same proof, the optimal confidence that minimize ℒ Brier capability \mathcal{L}_{\mathrm{Brier}}^{\mathrm{capability}} satisfies
+s i ∗ , capability = μ i , ∀ i ∈ { 1 , … , N } . s_{i}^{*,\mathrm{capability}}=\mu_{i},\quad\forall i\in\{1,\dots,N\}.
+For a generative model, 𝒞 ⁡ ( x i , y ^ i ) ∈ { 0 , 1 } \mathcal{C}(x_{i},\hat{y}_{i})\in\{0,1\} ,
+while μ i ∈ [ 0 , 1 ] \mu_{i}\in[0,1] .
+Unless the model is deterministic or perfectly correct/incorrect on x i x_{i} ,
+we have
+𝒞 ( x i , y ^ i ) ≠ μ i ≜ 𝔼 y ^ ∼ f θ ( ⋅ ∣ x i ) [ 𝒞 ( x i , y ^ ) ] . \mathcal{C}(x_{i},\hat{y}_{i})\neq\mu_{i}\triangleq\mathbb{E}_{\hat{y}\sim f_{\theta}(\cdot\mid x_{i})}[\mathcal{C}(x_{i},\hat{y})].
+Therefore,
+( s 1 ∗ , response , … , s N ∗ , response ) ≠ ( s 1 ∗ , capability , … , s N ∗ , capability ) , (s_{1}^{*,\mathrm{response}},\dots,s_{N}^{*,\mathrm{response}})\neq(s_{1}^{*,\mathrm{capability}},\dots,s_{N}^{*,\mathrm{capability}}),
+i.e., the two calibration objectives induce different optimal confidence
+predictors over the dataset.
+∎
+A.2 Proof of Theorem 2
+Proof.
+First, expand the expectation of the Brier Score loss on the old calibration
+𝔼 [ ℒ Brier ] ≜ 1 N ∑ i = 1 N 𝔼 y ^ ∼ f θ ( ⋅ ∣ x i ) [ ( s i − 𝒞 ( x i , y ^ ) ) 2 ] = 1 N ∑ i = 1 N ( s i 2 − 2 s i ⋅ 𝔼 y ^ ∼ f θ ( ⋅ ∣ x i ) [ 𝒞 ( x i , y ^ ) ] + 𝔼 y ^ ∼ f θ ( ⋅ ∣ x i ) [ 𝒞 ( x i , y ^ ) 2 ] ) . \mathbb{E}\big[\mathcal{L}_{\mathrm{Brier}}\big]\;\triangleq\;\frac{1}{N}\sum_{i=1}^{N}\mathbb{E}_{\hat{y}\sim f_{\theta}(\cdot\mid x_{i})}\left[\big(s_{i}-\mathcal{C}(x_{i},\hat{y})\big)^{2}\right]=\frac{1}{N}\sum_{i=1}^{N}\Big(s_{i}^{2}-2s_{i}\cdot\mathbb{E}_{\hat{y}\sim f_{\theta}(\cdot\mid x_{i})}[\mathcal{C}(x_{i},\hat{y})]+\mathbb{E}_{\hat{y}\sim f_{\theta}(\cdot\mid x_{i})}[\mathcal{C}(x_{i},\hat{y})^{2}]\Big).
+(12)
+Second, expand the Brier Score loss on expected calibration
+ℒ Brier expected ≜ 1 N ​ ∑ i = 1 N ( s i − μ i ) 2 = 1 N ​ ∑ i = 1 N ( s i 2 − 2 ​ s i ​ μ i + μ i 2 ) , \mathcal{L}_{\mathrm{Brier}}^{\mathrm{expected}}\triangleq\frac{1}{N}\sum_{i=1}^{N}(s_{i}-\mu_{i})^{2}=\frac{1}{N}\sum_{i=1}^{N}\big(s_{i}^{2}-2s_{i}\,\mu_{i}+\mu_{i}^{2}\big),
+(13)
+Subtracting Equation 13 - Equation 12 , we obtain
+ℒ Brier expected − 𝔼 ⁡ [ ℒ Brier ] = 1 N ∑ i = 1 N ( μ i 2 − 2 s i ⋅ ( μ i − 𝔼 y ^ ∼ f θ ( ⋅ ∣ x i ) [ 𝒞 ( x i , y ^ ) ] ) − 𝔼 y ^ ∼ f θ ( ⋅ ∣ x i ) [ 𝒞 ( x i , y ^ ) 2 ] ) = 1 N ∑ i = 1 N ( μ i 2 − 𝔼 y ^ ∼ f θ ( ⋅ ∣ x i ) [ 𝒞 ( x i , y ^ ) 2 ] ) = 1 N ∑ i = 1 N ( 𝔼 y ^ ∼ f θ ( ⋅ ∣ x i ) [ 𝒞 ( x i , y ^ ) ] 2 − 𝔼 y ^ ∼ f θ ( ⋅ ∣ x i ) [ 𝒞 ( x i , y ^ ) 2 ] ) = − 1 N ∑ i = 1 N Var [ 𝒞 ( x i , y ^ ) ] . \begin{split}\mathcal{L}_{\mathrm{Brier}}^{\mathrm{expected}}-\mathbb{E}[\mathcal{L}_{\mathrm{Brier}}]&=\frac{1}{N}\sum_{i=1}^{N}\big(\mu_{i}^{2}-2s_{i}\cdot(\mu_{i}-\mathbb{E}_{\hat{y}\sim f_{\theta}(\cdot\mid x_{i})}[\mathcal{C}(x_{i},\hat{y})])-\mathbb{E}_{\hat{y}\sim f_{\theta}(\cdot\mid x_{i})}[\mathcal{C}(x_{i},\hat{y})^{2}]\big)\\
+&=\frac{1}{N}\sum_{i=1}^{N}\big(\mu_{i}^{2}-\mathbb{E}_{\hat{y}\sim f_{\theta}(\cdot\mid x_{i})}[\mathcal{C}(x_{i},\hat{y})^{2}]\big)\\
+&=\frac{1}{N}\sum_{i=1}^{N}\big(\mathbb{E}_{\hat{y}\sim f_{\theta}(\cdot\mid x_{i})}[\mathcal{C}(x_{i},\hat{y})]^{2}-\mathbb{E}_{\hat{y}\sim f_{\theta}(\cdot\mid x_{i})}[\mathcal{C}(x_{i},\hat{y})^{2}]\big)\\
+&=-\frac{1}{N}\sum_{i=1}^{N}\mathrm{Var}[\mathcal{C}(x_{i},\hat{y})].\end{split}
+(14)
+∎
+A.3 Connection between response calibration loss and capability calibration loss
+For the same loss function ℒ ⁡ ( s , t ) \mathcal{L}(s,t) that evaluates the agreement between confidence s s and target t t , capability calibration and response calibration evaluate s s with different t t . Denote the loss function as ℒ s ​ ( t ) \mathcal{L}_{s}(t) when we discuss the impact of t t .
+Capability calibration takes the expected accuracy as the target. In general, capability calibration loss is
+ℒ s ( 𝔼 y ^ ∼ f ( ⋅ | x ) [ 𝒞 ( x , y ^ ) ] ) , \mathcal{L}_{s}(\mathbb{E}_{\hat{y}\sim f(\cdot|x)}[\mathcal{C}(x,\hat{y})]),
+we simplify it as ℒ s ​ ( 𝔼 ​ [ 𝒞 ​ ( x , y ^ ) ] ) \mathcal{L}_{s}(\mathbb{E}[\mathcal{C}(x,\hat{y})]) .
+Response calibration takes the individual response’s correctness as the target. Therefore, the expectation of the response calibration loss is
+𝔼 y ^ ∼ f ( ⋅ | x ) [ ℒ s ( 𝒞 ( x , y ^ ) ) ] , \mathbb{E}_{\hat{y}\sim f(\cdot|x)}[\mathcal{L}_{s}(\mathcal{C}(x,\hat{y}))],
+we simplify it as 𝔼 ​ [ ℒ s ​ ( 𝒞 ​ ( x , y ^ ) ) ] \mathbb{E}[\mathcal{L}_{s}(\mathcal{C}(x,\hat{y}))] .
+The difference between the capability calibration loss and the response calibration loss
+𝔼 ⁡ [ ℒ s ​ ( 𝒞 ⁡ ( x , y ^ ) ) ] − ℒ s ​ ( 𝔼 ⁡ [ 𝒞 ⁡ ( x , y ^ ) ] ) , \mathbb{E}[\mathcal{L}_{s}(\mathcal{C}(x,\hat{y}))]-\mathcal{L}_{s}(\mathbb{E}[\mathcal{C}(x,\hat{y})]),
+(15)
+is known as Jensen Gap ( Reid and Williamson, 2011 ) . For loss functions that are strictly convex and differentiable, Jensen Gap is equivalent to the Bregman information ( Banerjee et al., 2005 ) , which measures the diversity of the random variable 𝒞 ⁡ ( x , y ^ ) \mathcal{C}(x,\hat{y}) through the lens of the loss function ℒ \mathcal{L} . For square error loss, the Bregman information is the variance of 𝒞 ⁡ ( x , y ^ ) \mathcal{C}(x,\hat{y}) ( Banerjee et al., 2005 ) .
+Appendix B Details of Experiment Setup
+B.1 The choice of k eval k_{\mathrm{eval}}
+Theoretical insights.
+Let f θ ( ⋅ ∣ x ) f_{\theta}(\cdot\mid x) denote the LLM’s conditional output distribution given a query x x , and let
+𝒞 ⁡ ( x , y ^ ) ∈ { 0 , 1 } \mathcal{C}(x,\hat{y})\in\{0,1\} be a deterministic correctness function that indicates whether a sampled response y ^ \hat{y} is correct for x x .
+The expected accuracy (our capability-calibration target) is
+μ ( x , f θ ) ≜ ℙ y ^ ∼ f θ ( ⋅ ∣ x ) [ 𝒞 ( x , y ^ ) = 1 ] . \mu(x,f_{\theta})\triangleq\mathbb{P}_{\hat{y}\sim f_{\theta}(\cdot\mid x)}[\mathcal{C}(x,\hat{y})=1].
+Since μ ⁡ ( x , f θ ) \mu(x,f_{\theta}) is not directly observable, we approximate it by drawing k eval k_{\mathrm{eval}} independent samples
+y ^ 1 , … , y ^ k eval ∼ f θ ( ⋅ ∣ x ) \hat{y}_{1},\ldots,\hat{y}_{k_{\mathrm{eval}}}\sim f_{\theta}(\cdot\mid x) and computing the empirical mean
+μ ^ ≜ 1 k eval ​ ∑ j = 1 k eval 𝒞 ⁡ ( x , y ^ j ) . \hat{\mu}\;\triangleq\;\frac{1}{k_{\mathrm{eval}}}\sum_{j=1}^{k_{\mathrm{eval}}}\mathcal{C}(x,\hat{y}_{j}).
+For convenience, define the per-sample correctness indicator Z j ≜ 𝒞 ⁡ ( x , y ^ j ) ∈ { 0 , 1 } Z_{j}\triangleq\mathcal{C}(x,\hat{y}_{j})\in\{0,1\} and the number of correct samples
+c ≜ ∑ j = 1 k eval Z j , so that μ ^ = c k eval . c\;\triangleq\;\sum_{j=1}^{k_{\mathrm{eval}}}Z_{j},\qquad\text{so that}\qquad\hat{\mu}=\frac{c}{k_{\mathrm{eval}}}.
+Binomial model and estimation variance.
+Under independent sampling randomness across repeated generations and a deterministic evaluator 𝒞 \mathcal{C} , we have
+Z j ∣ x ∼ Bernoulli ( μ ) , c ∼ Binomial ( k eval , μ ) . Z_{j}\mid x\sim\mathrm{Bernoulli}(\mu),\qquad c\sim\mathrm{Binomial}(k_{\mathrm{eval}},\mu).
+Consequently, μ ^ \hat{\mu} is an unbiased estimator of μ \mu with
+𝔼 ⁡ [ μ ^ ] = μ , Var ⁡ ( μ ^ ) = μ ⁡ ( 1 − μ ) k eval . \mathbb{E}[\hat{\mu}]=\mu,\qquad\mathrm{Var}(\hat{\mu})=\frac{\mu(1-\mu)}{k_{\mathrm{eval}}}.
+(16)
+Notably, this binomial structure is induced by the binary correctness indicator and does not assume any particular parametric form for the LLM’s raw text distribution.
+Sample-size guidance (normal/Wald approximation).
+Equation ( 16 ) implies that the standard error of μ ^ \hat{\mu} decays as O ( k eval − 1 / 2 ) O(k_{\mathrm{eval}}^{-1/2}) .
+A common rule-of-thumb for selecting k eval k_{\mathrm{eval}} is to control the margin of error of μ ^ \hat{\mu} .
+Using the asymptotic normal (Wald) approximation,
+μ ^ ≈ 𝒩 ⁡ ( μ , μ ⁡ ( 1 − μ ) k eval ) , \hat{\mu}\approx\mathcal{N}\!\left(\mu,\frac{\mu(1-\mu)}{k_{\mathrm{eval}}}\right),
+a two-sided 95 % 95\% confidence interval has approximate half-width (margin of error, MoE )
+MoE ≈ z 0.975 ​ μ ⁡ ( 1 − μ ) k eval , z 0.975 = 1.96 . \mathrm{MoE}\approx z_{0.975}\sqrt{\frac{\mu(1-\mu)}{k_{\mathrm{eval}}}},\qquad z_{0.975}=1.96.
+We interpret ϵ \epsilon as a target absolute accuracy for per-query estimation: we aim for the 95 % 95\% confidence interval of μ ^ \hat{\mu} to have half-width at most ϵ \epsilon , i.e., | μ ^ − μ | ≤ ϵ |\hat{\mu}-\mu|\leq\epsilon with approximately 95 % 95\% confidence under the normal approximation.
+Thus, achieving MoE ≤ ϵ \mathrm{MoE}\leq\epsilon suggests
+k eval ≳ z 0.975 2 ​ μ ​ ( 1 − μ ) ϵ 2 . k_{\mathrm{eval}}\ \gtrsim\ \frac{z_{0.975}^{2}\,\mu(1-\mu)}{\epsilon^{2}}.
+(17)
+If μ \mu is unknown, the conservative worst case uses μ ⁡ ( 1 − μ ) ≤ 1 / 4 \mu(1-\mu)\leq 1/4 (attained at μ = 0.5 \mu=0.5 ), yielding
+k eval ≳ z 0.975 2 4 ​ ϵ 2 . k_{\mathrm{eval}}\ \gtrsim\ \frac{z_{0.975}^{2}}{4\epsilon^{2}}.
+(18)
+Practical considerations and our choice of k eval k_{\mathrm{eval}} .
+While Equation ( 17 )–( 18 ) are useful for intuition, Wald intervals can under-cover when μ \mu is close to 0 0 or 1 1 and/or k eval k_{\mathrm{eval}} is small, and may produce bounds outside [ 0 , 1 ] [0,1] .
+We therefore use the Wald analysis only as a guideline for the scaling behavior in Equation ( 16 ), and complement it with a sensitivity analysis over k eval k_{\mathrm{eval}} .
+Prior work ( Zhang et al., 2025d ) uses k eval = 50 k_{\mathrm{eval}}=50 as the ground truth. We find that k eval = 100 k_{\mathrm{eval}}=100 provides a stable per-query estimate of μ \mu while keeping evaluation cost tractable; increasing k eval k_{\mathrm{eval}} beyond this point yields diminishing returns relative to the additional sampling cost.
+For completeness, one may alternatively adopt Wilson score intervals (which typically provide closer-to-nominal coverage under the same Bernoulli sampling assumptions) to select k eval k_{\mathrm{eval}} via a short numerical search; our empirical validation supports that k eval = 100 k_{\mathrm{eval}}=100 is a reliable operating point in our setting.
+Empirical results.
+We show representative empirical results of gpt-oss-20b ( Agarwal et al., 2025 ) on AIME25 in Figure 6 .
+We found that the standard error of expected accuracies decreases to about 0.0056 when k eval = 100 k_{\mathrm{eval}}=100 .
+Although larger k eval k_{\mathrm{eval}} further decreases variance, it shows diminishing benefits.
+We finally chose k eval = 100 k_{\mathrm{eval}}=100 to balance cost and reliability.
+Figure 6 :
+Representative empirical results showing standard error of expected accuracies obtained by different k eval k_{\mathrm{eval}} .
+B.2 Sampling hyperparameters for each LLM.
+For each LLM used in the experiments, we use the sampling hyperparameters recommended by its model developers.
+For Olmo-3-7B-Instruct ( Olmo Team et al., 2025 ) , we use temperature=0.6 and top-p=0.95.
+For Qwen3-8B ( Yang et al., 2025 ) , we use chat template of non-reasoning mode to save inference cost due to limited computational budget, and adopt temperature=0.7 and top-p=0.8.
+For gpt-oss-20b ( Agarwal et al., 2025 ) , we use temperature=1.0 and top-p=1.0.
+B.3 LLMs’ mean expected accuracies across datasets
+Table 4: Three LLMs’ mean expected accuracies in seven datasets.
+Model / Dataset
+TriviaQA
+SimpleQA
+GSM8K
+MATH-500
+AIME25
+MMLU
+GPQA
+Olmo-3-7B-Instruct
+53.97%
+3.57%
+93.28%
+89.63%
+42.33%
+70.53%
+43.51%
+Qwen3-8B
+63.01%
+5.17%
+93.27%
+83.62%
+20.87%
+79.37%
+49.70%
+gpt-oss-20b
+63.55%
+5.89%
+95.70%
+93.38%
+73.57%
+89.42%
+66.61%
+Appendix C Details of Confidence Estimation Methods
+C.1 Detailed descriptions of existing methods
+In this section, we discuss the details of existing response calibration confidence estimators and LLM uncertainty quantification methods.
+Response calibration confidence estimators.
+Training-free methods: verbalized confidence ( Lin et al., 2022 ; Tian et al., 2023 ) that prompts the model to state its certainty, and token probability methods ( Kadavath et al., 2022 ; Manakul et al., 2023 ) .
+Specifically, P ⁡ ( True ) P(\text{True}) ( Kadavath et al., 2022 ) estimates confidence by measuring the probability assigned to confirmation tokens (e.g., ”True”).
+These methods estimate confidence after the output is generated.
+LLM Uncertainty Quantification (UQ) methods.
+We categorize LLM UQ methods into three kinds: token-based approaches, which derive confidence from token-level likelihoods or log probabilities ( Kadavath et al., 2022 ; Duan et al., 2024 ) ; Sampling-based approaches, which analyze the consistency or entropy of multiple generated outputs ( Wang et al., 2022 ; Kuhn et al., 2023 ; Cecere et al., 2025 ) ; and methods leveraging the models’ internal signals. This includes training models to explicitly output an ”I Don’t Know” token ( Cohen et al., 2024 ) , probing hidden states, or estimating query-level uncertainty via internal self-evaluation ( Chen et al., 2025 ) .
+C.2 Implementation details of confidence estimators
+Random baseline.
+We derive the analytical expected loss for the uniform random baseline as follows:
+𝔼 s ​ [ ( s − μ ^ i ) 2 ] \displaystyle\mathbb{E}_{s}\left[(s-\hat{\mu}_{i})^{2}\right]
+= ∫ 0 1 ( s 2 − 2 ​ s ​ μ ^ i + μ ^ i 2 ) ​ 𝑑 s , \displaystyle=\int_{0}^{1}(s^{2}-2s\hat{\mu}_{i}+\hat{\mu}_{i}^{2})\,ds,
+= [ 1 3 s 3 − s 2 μ ^ i + s μ ^ i 2 , ] 0 1 \displaystyle=\left[\frac{1}{3}s^{3}-s^{2}\hat{\mu}_{i}+s\hat{\mu}_{i}^{2},\right]_{0}^{1}
+= 1 3 − μ ^ i + μ ^ i 2 . \displaystyle=\frac{1}{3}-\hat{\mu}_{i}+\hat{\mu}_{i}^{2}.
+Verbalized confidence and P(True).
+The prompt for verbalized confidence is provided in Figure 7 , and the prompt for P(True) is provided in Figure 8 .
+Verbalized confidence prompt
+Question: {question}
+How likely are you to answer the question correctly? You may refer to the following probabilities P:
+- 0.0-0.1: ”Almost no chance”
+- 0.1-0.2: ”Highly unlikely”
+- 0.2-0.3: ”Chances are slight”
+- 0.3-0.4: ”Unlikely”
+- 0.4-0.5: ”Less than even”
+- 0.5-0.6: ”Better than even”
+- 0.6-0.7: ”Likely”
+- 0.7-0.8: ”Very good chance”
+- 0.8-0.9: ”Highly likely”
+- 0.9-1.0: ”Almost certain”
+Reason about your uncertainty and confidence, and then provide a probability P between 0.0 and 1.0 in the format of \ \backslash boxed{P}.
+Figure 7: The prompt for verbalized confidence.
+Training linear probes on LLM’s hidden states.
+We used layer activations after the initial embedding layer and after each transformer block, so there are ℓ + 1 \ell+1 layers of activations used, with ℓ \ell being the number of transformer blocks in the LLM.
+In our preliminary experiments, we trained a linear probe on activations of each layer, as well as on max-pooled or mean-pooled activations.
+We found that mean-pooled activations performed the best on the validation sets of each dataset, so we train linear probes on the mean-pooled activations in our main experiments (results listed in § 4.3.2 ).
+We also searched for other hyperparameters, including number of epochs = { 100,200,500 , 1000 } \{100,200,500,1000\} , batch sizes = { 32 , 64 , 128 , 256 } \{32,64,128,256\} , weight decays = { 0.1 , 0.01 , 0.001 } \{0.1,0.01,0.001\} , loss functions = { BCE , MSE } \{\mathrm{BCE},\mathrm{MSE}\} , input feature standardization = { False , True } \{\mathrm{False},\mathrm{True}\} , and learning rates = { 1 ​ e − 2 , 5 ​ e − 3 , 2 ​ e − 3 , 1 ​ e − 3 , 5 ​ e − 4 , 2 ​ e − 4 , 1 ​ e − 4 , 5 ​ e − 5 , 2 ​ e − 5 , 1 ​ e − 5 , 5 ​ e − 6 , 2 ​ e − 6 , 1 ​ e − 6 } \{\mathrm{1e-2,5e-3,2e-3,1e-3,5e-4,2e-4,1e-4,5e-5,2e-5,1e-5,5e-6,2e-6,1e-6}\} on the validation sets.
+The final chosen hyperparameters are listed in Table 5 .
+We also tried training 2-layer MLP probes, but found that their performance did not differ from linear probes.
+Datasets for training linear probes.
+For TriviaQA ( Joshi et al., 2017 ) and GSM8K ( Cobbe et al., 2021 ) , we use their training sets.
+For MATH ( Hendrycks et al., 2021 ) ( N = 12,500 N=12,500 ), we use MATH-500 ( Lightman et al., 2023 ) as the test set, and the remaining 12,000 instances as the training and validation sets.
+P(True) prompt
+Question: {question}
+Are you able to answer the question correctly?
+Answer with only a single word: Yes or No.
+Figure 8: The prompt for P(True).
+Table 5: Hyperparameters or model information for linear probes trained on three LLMs.
+Hyperparameter or Model Information
+Olmo-3-7B-Instruct
+Qwen-3B
+gpt-oss-20b
+Number of layer activations used
+33
+37
+25
+Hidden dimension
+4096
+4096
+2880
+Epochs
+100
+100
+100
+Batch size
+32
+32
+32
+Weight decay
+0.01
+0.01
+0.01
+Pooling method
+Mean pooling
+Mean pooling
+Mean pooling
+Loss function
+BCE loss
+BCE loss
+BCE loss
+Feature standardization
+False
+False
+True
+Learning rate (TriviaQA)
+5 × 10 − 3 5\times 10^{-3}
+2 × 10 − 4 2\times 10^{-4}
+2 × 10 − 4 2\times 10^{-4}
+Learning rate (GSM8K)
+5 × 10 − 3 5\times 10^{-3}
+1 × 10 − 4 1\times 10^{-4}
+5 × 10 − 4 5\times 10^{-4}
+Learning rate (MATH)
+5 × 10 − 3 5\times 10^{-3}
+1 × 10 − 4 1\times 10^{-4}
+2 × 10 − 4 2\times 10^{-4}
+C.3 Analysis of k c k_{c} for Response Consistency method
+In this section, we analyze how the sample size k c k_{c} impacts the Response Consistency confidence estimator. As shown in Table 6 , a larger k c k_{c} generally leads to improved Brier scores by reducing estimation variance. However, this performance gain trades off with a higher estimation cost. We observe performance saturation because increasing k c k_{c} cannot correct for fundamental miscalibration, which is the main limitation of this confidence estimator. If the model’s most frequent response is incorrect, the estimator converges to a confidence score for a failure case, preventing further reduction in Brier score.
+Table 6: Capability calibration Brier scores of Response Consistency across different numbers of samples k c k_{c} . We use bold to denote the best calibrated method, and underline to denote the second best . Larger k c k_{c} generally improves performance at the cost of higher estimation overhead.
+Domain
+Factual knowledge
+Mathematical reasoning
+General exams
+Method
+Cost
+TriviaQA
+SimpleQA
+GSM8K
+MATH
+AIME25
+MMLU
+GPQA
+Olmo-3-7B-Instruct
+Consistency ( k = 5 k=5 )
+5 L L
+0.1228
+0.1605
+0.0290
+0.0373
+0.1860
+0.1306
+0.2462
+Consistency ( k = 10 k=10 )
+10 L L
+0.1121
+0.1297
+0.0272
+0.0383
+0.1730
+0.1191
+0.2246
+Consistency ( k = 20 k=20 )
+20 L L
+0.1046
+0.1141
+0.0264
+0.0350
+0.1465
+0.1121
+0.2079
+Qwen3-8B
+Consistency ( k = 5 k=5 )
+5 L L
+0.1433
+0.2016
+0.0255
+0.0336
+0.1630
+0.1039
+0.1830
+Consistency ( k = 10 k=10 )
+10 L L
+0.1301
+0.1657
+0.0241
+0.0304
+0.1433
+0.0976
+0.1656
+Consistency ( k = 20 k=20 )
+20 L L
+0.1239
+0.1521
+0.0237
+0.0276
+0.1040
+0.0959
+0.1485
+gpt-oss-20b
+Consistency ( k = 5 k=5 )
+5 L L
+0.1274
+0.0912
+0.0210
+0.0553
+0.0515
+0.0504
+0.1275
+Consistency ( k = 10 k=10 )
+10 L L
+0.1382
+0.0624
+0.0202
+0.0554
+0.0452
+0.0469
+0.1066
+Consistency ( k = 20 k=20 )
+20 L L
+0.1406
+0.0520
+0.0188
+0.0593
+0.0386
+0.0453
+0.1007
+Table 7: Capability calibration Brier scores of linear probes trained on single and mixed datasets. Results reported by Brier scores (↓). For linear probes trained with different datasets, we use different colors to indicate in-domain in-distribution , in-domain out-of-distribution , and out-domain performance. We use bold to denote the best calibrated method, and underline to denote the second best .
+Results show that training probes on a mixture of datasets (TriviaQA + GSM8K) generally yields the most robust calibration across both in-distribution and in-domain OOD tasks (e.g., MATH, SimpleQA). However, this benefit is less consistent for out-domain datasets (MMLU, GPQA), where specialized single-dataset probes occasionally maintain an edge.
+Domain
+Factual knowledge
+Mathematical reasoning
+General exams
+Method
+Cost
+TriviaQA
+SimpleQA
+GSM8K
+MATH
+AIME25
+MMLU
+GPQA
+Olmo-3-7B-Instruct
+Probing (TriviaQA)
+< 1 <1
+0.1113
+0.0386
+0.1180
+0.1273
+0.1496
+0.1300
+0.1242
+Probing (GSM8K)
+< 1 <1
+0.2648
+0.5465
+0.0370
+0.0545
+0.2482
+0.1200
+0.1628
+Probing (TriviaQA + GSM8K)
+< 1 <1
+0.1147
+0.0396
+0.0371
+0.0545
+0.1622
+0.1298
+0.1141
+Qwen3-8B
+Probing (TriviaQA)
+< 1 <1
+0.1079
+0.0638
+0.3177
+0.3219
+0.1286
+0.2006
+0.1556
+Probing (GSM8K)
+< 1 <1
+0.1885
+0.4451
+0.0368
+0.0715
+0.0740
+0.1176
+0.1556
+Probing (TriviaQA + GSM8K)
+< 1 <1
+0.1079
+0.0607
+0.0408
+0.1378
+0.0640
+0.1422
+0.1683
+gpt-oss-20b
+Probing (TriviaQA)
+< 1 <1
+0.0845
+0.0600
+0.0780
+0.1593
+0.1457
+0.0977
+0.1533
+Probing (GSM8K)
+< 1 <1
+0.1756
+0.7048
+0.0289
+0.0485
+0.1213
+0.0686
+0.2010
+Probing (TriviaQA + GSM8K)
+< 1 <1
+0.0902
+0.0707
+0.0277
+0.0554
+0.1298
+0.0818
+0.1256
+C.4 Mixing training dataset from different domains
+In this section, we discuss the effect of mixing training datasets from different domains. The experiment results are in Table 7 . While single-dataset probes typically perform best on their specific in-distribution tasks, the mixed probe (TriviaQA + GSM8K) often achieves the best or second-best Brier scores across all in-domain out-of-distribution categories, such as MATH and SimpleQA. This suggests that data diversity improves the probe’s ability to generalize to in-domain tasks. However, this trend does not hold in out-domain settings like MMLU and GPQA, where the performance of mixed versus single probes varies by model, indicating that mixing training data does not guarantee improved calibration for entirely unrelated domains.
+Appendix D Details of the Applications
+D.1 Pass@ k k simulation details
+D.1.1 Process of simulating Pass@ k k curve
+Pass@ k k score at each k k .
+Define the capability-calibrated confidence as p p . For each instance i i that is sampled k k times, the success rate, i.e., pass it or not, follows a Bernoulli distribution. The Bernoulli distribution has mean p p and variance p ⁡ ( 1 − p ) p(1-p) . Therefore, for each instance i i that samples k k times, the success rate is P ​ ( success@ ​ k ) i = S i , k = 1 − ( 1 − p i ) k P(\text{success@}k)_{i}=S_{i,k}=1-(1-p_{i})^{k} , the variance is S i , k ​ ( 1 − S i , k ) S_{i,k}(1-S_{i,k}) . Generalized to the dataset level. For a dataset 𝒟 = { x i } i = 1 N \mathcal{D}=\{x_{i}\}_{i=1}^{N} , the pass@ k k score’s mean and variance are μ k = 1 N ​ ∑ i = 1 N S i , k \mu_{k}=\frac{1}{N}\sum_{i=1}^{N}S_{i,k} and std k 2 = 1 N 2 ​ ∑ i = 1 N S i , k ​ ( 1 − S i , k ) \text{std}_{k}^{2}=\frac{1}{N^{2}}\sum_{i=1}^{N}S_{i,k}(1-S_{i,k}) respectively. Here, we assume that each instance is independent, so the covariance is zero.
+Drawing the simulation curve.
+The mean and variance of the pass@ k k score are estimated for each k k along the curve. Based on the Central Limit Theorem, the distribution of pass@ k k is treated as a normal distribution, allowing for the calculation of a 95% confidence interval. This interval represents the region where the true curve is expected to be.
+D.1.2 More simulation results
+In this section, we discuss more pass@ k k simulation results. First of all, the MSE of AIME25 simulation results are in Table 8 . The experiment results are consistent with the simulation results on MATH-500.
+Figure 9 presents the pass@ k k simulation curve at the dataset level. While Oracle Capability-Calibrated Confidence (Oracle-CC) fits the actual pass@ k k curve near perfectly, Probe-MATH does not fit well in most scenarios. The experiment results encourage future work on developing confidence estimators that can capture the model’s capability on the dataset.
+Table 8 : Pass@ k k simulation error (MSE) on the AIME25 dataset. The experiment findings are consistent with the MATH-500 simulation results at Table 3 .
+Method
+pass@1
+pass@4
+pass@16
+pass@64
+Olmo-3-7B-Instruct
+Oracle RC
+0.0968
+0.1596
+0.2727
+0.3721
+Oracle CC
+0.0000
+0.0000
+0.0001
+0.0015
+Probe-MATH
+0.1411
+0.2658
+0.2426
+0.2011
+Qwen3-8B
+Oracle RC
+0.0444
+0.0839
+0.1882
+0.2960
+Oracle CC
+0.0000
+0.0000
+0.0001
+0.0014
+Probe-MATH
+0.0832
+0.2977
+0.4885
+0.4711
+gpt-oss-20b
+Oracle RC
+0.0809
+0.1267
+0.1599
+0.1873
+Oracle CC
+0.0000
+0.0000
+0.0000
+0.0018
+Probe-MATH
+0.1661
+0.1136
+0.0798
+0.0420
+Figure 9 : Pass@ k k simulation results across 3 models on MATH-500 and AIME25 datasets. While Oracle-CC can simulate the actual pass@ k k near-perfectly, Oracle-RC performs poorly as it is not measuring the models’ capabilities. However, Probe-MATH does not fit well in many scenarios.
+D.2 Inference budget allocation details
+D.2.1 Greedy algorithm for test-time compute allocation ( Damani et al., 2024 )
+To allocate the inference budget efficiently, we maximize the expected number of solved questions (best-of- k k ). Let N N be the number of questions, N × B N\times B be the total budget, and p i p_{i} be the capability-calibrated confidence estimation for question i i .
+The total expected score S S is the sum of the probabilities that each question is solved at least once:
+S = ∑ i = 1 N [ 1 − ( 1 − p i ) k i ] S=\sum_{i=1}^{N}\left[1-(1-p_{i})^{k_{i}}\right]
+(19)
+where k i k_{i} is the number of samples allocated to question i i .
+To optimize this, we analyze the marginal improvement of adding a single sample to question i i , given that it has already been allocated k i k_{i} samples:
+Gain i = S ⁡ ( with ​ k i + 1 ​ samples ) − S ⁡ ( with ​ k i ​ samples ) = [ 1 − ( 1 − p i ) k i + 1 ] − [ 1 − ( 1 − p i ) k i ] = ( 1 − p i ) k i − ( 1 − p i ) k i + 1 = ( 1 − p i ) k i ​ [ 1 − ( 1 − p i ) ] = p i ​ ( 1 − p i ) k i \begin{split}\text{Gain}_{i}&=S(\text{with }k_{i}+1\text{ samples})-S(\text{with }k_{i}\text{ samples})\\
+&=\left[1-(1-p_{i})^{k_{i}+1}\right]-\left[1-(1-p_{i})^{k_{i}}\right]\\
+&=(1-p_{i})^{k_{i}}-(1-p_{i})^{k_{i}+1}\\
+&=(1-p_{i})^{k_{i}}\left[1-(1-p_{i})\right]\\
+&=p_{i}(1-p_{i})^{k_{i}}\end{split}
+(20)
+Because the gain function is strictly decreasing with respect to k i k_{i} , a greedy strategy that iteratively assigns the next budget unit to the question with the highest current Gain i \text{Gain}_{i} results in better allocation.
+D.2.2 More experiment results
+Full experiment results of inference budget allocation are available at Figure 10 . We observe that confidence estimators with lower Brier scores have better inference budget allocation performance.
+Figure 10 : Budget allocation results across 3 models on MATH-500 and AIME25 datasets. Oracle confidence consistency reaches the best performance in all scenarios. Verbalized confidence and Probe-MATH often outperform the uniform allocation. If the Brier score is good (see Table 2 for the Brier score), the estimated confidence will have better performance in inference budget allocation.
+D.3 Detailed connection with other applications
+In this section, we discuss how capability-calibrated confidence relates to other potential applications.
+Resource Routing and Estimation. As discussed in Damani et al. (2024) , by estimating the ranking of a group of models’ capability on answering a question, capability-calibrated confidence can be directly applied to LLM Routing ( Maurya et al., 2025 ; Jiang et al., 2023 ; Chen et al., 2023b ; Ong et al., 2024 ) . Additionally, capability-calibrated confidence enables cost estimation. By estimating the expected accuracy μ \mu (difficulty of the queries), we can predict the expected sampling budget 1 μ \frac{1}{\mu} required to generate a correct response ( Wu et al., 2024b ) .
+Inference-Time Reliability and Active Refinement.
+By defining a confidence threshold, one can implement reliable systems that perform Selective Prediction ( Mao et al., 2025 ; Duan et al., 2024 ; Chen et al., 2023a ; Kamath et al., 2020 ) , where systems could abstain or seek human assistance when the model is uncertain ( Wu et al., 2024a ; Chen et al., 2025 ) or perform query rewriting when the confidence is low.
+Enhanced Learning and Evaluation. Accurately estimating expected accuracy serves as a proxy for instance difficulty. It allows Curriculum Learning ( Zhang et al., 2025e ; Zhang et al., 2025c ) that sorts training data by difficulty, or identifies the effects of easy and hard instances. Meanwhile, capability-calibrated confidence enables the evaluation of models on unlabeled test sets, which is called Label-free Benchmarking ( Guha et al., 2024 ; Zhang et al., 2025b ) . We can derive model rankings that align with ground-truth evaluations.
+Appendix E Targets Difference
+Figure 11 : Divergence of calibration targets across three models and seven datasets. The data show that the Response Calibration (RC) target 𝒞 ⁡ ( x , y ^ ) \mathcal{C}(x,\hat{y}) and Capability Calibration (CC) targets 𝔼 y ^ ∼ f θ ( ⋅ ∣ x ) [ 𝒞 ( x , y ^ ) ] \mathbb{E}_{\hat{y}\sim f_{\theta}(\cdot\mid x)}[\mathcal{C}(x,\hat{y})] differs at each model-dataset pair.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

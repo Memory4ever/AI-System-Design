@@ -1,0 +1,1133 @@
+https://arxiv.org/html/2601.20745v1
+Hestia: A Hessian-Guided Differentiable Quantization-Aware Training Framework for Extremely Low-Bit LLMs
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+3 Method
+3.1 Problem Definition
+3.2 Differentiable Quantization
+3.3 Hessian-Aware Annealing Quantization
+3.3.1 Sensitivity Estimation
+3.3.2 Temperature Annealing Schedule
+4 Theoretical Analysis
+5 Experiments
+5.1 Experimental Setup
+Models.
+Training data.
+Quantization setting.
+Implementation.
+Baselines.
+Evaluation.
+5.2 Main Results
+Hestia improves over strong QAT baselines.
+Comparison with prior ternary LLMs.
+5.3 Cross-Domain Generalization
+5.4 Ablation Studies
+Effect of group size.
+Effect of Hessian-aware Temperature Scheduling.
+5.5 Computational Efficiency Analysis
+6 Conclusion
+References
+A Proofs for Sec.
+A.1 Proof of Lemma
+Step 1: Reparameterization.
+Step 2: Derivative of πτ​(q∣z)\pi_{\tau}(q\mid z).
+Step 3: Derivative of μτ​(w)\mu_{\tau}(w).
+Step 4: Conclude ∂wℋ⁡(w,τ)\partial_{w}\mathcal{H}(w;\tau).
+A.2 Proof of Lemma
+Step 1: Piecewise form of Q⁡(w)Q(w).
+Step 2: Pointwise limit ℋ⁡(w,τ)→Q⁡(w)\mathcal{H}(w;\tau)\to Q(w) for w∉ℬw\notin\mathcal{B}.
+Step 3: Distributional convergence of derivatives.
+Step 4: Evaluate the limit functional.
+B Implementation Details
+License: CC BY 4.0
+arXiv:2601.20745v1 [cs.LG] 28 Jan 2026
+Hestia: A Hessian-Guided Differentiable Quantization-Aware Training Framework for Extremely Low-Bit LLMs
+Guoan Wang
+Affiliation: School of Software and Microelectronics, Peking University, Beijing, China
+Feiyu Wang
+Affiliation: School of Computer Science, Peking University, Beijing, China
+Zongwei Lv
+Affiliation: School of Software and Microelectronics, Peking University, Beijing, China
+Yikun Zong
+Affiliation: School of Computer Science, Peking University, Beijing, China
+Tong Yang
+Affiliation: School of Computer Science, Peking University, Beijing, China
+Correspondence to: yangtong@pku.edu.cn
+Abstract
+As large language models (LLMs) continue to scale, deployment is increasingly bottlenecked by the memory wall, motivating a shift toward extremely low-bit quantization. However, most quantization-aware training (QAT) methods apply hard rounding and the straight-through estimator (STE) from the beginning of the training, which prematurely discretizes the optimization landscape and induces persistent gradient mismatch between latent weights and quantized weights, hindering effective optimization of quantized models. To address this, we propose
+Hestia, a Hessian-guided differentiable QAT framework for extremely low-bit LLMs, which replaces the rigid step function with a temperature-controlled softmax relaxation to maintain gradient flow early in training while progressively hardening quantization. Furthermore,
+Hestia leverages a tensor-wise Hessian trace metric as a lightweight curvature signal to drive fine-grained temperature annealing, enabling sensitivity-aware discretization across the model. Evaluations on Llama-3.2 show that
+Hestia consistently outperforms existing ternary QAT baselines, yielding average zero-shot improvements of 5.39% and 4.34% for the 1B and 3B models. These results indicate that Hessian-guided relaxation effectively recovers representational capacity, establishing a more robust training path for 1.58-bit LLMs. The code is available at https://github.com/hestia2026/Hestia.
+Keywords: Machine Learning, ICML
+††affiliationnotice: Equal contribution
+1 Introduction
+Large language models (LLMs) have reshaped the trajectory of artificial intelligence, establishing scaling laws as a reliable path to emergent reasoning and generalization (Achiam et al., 2023; Guo et al., 2025; Yang et al., 2025). However, continued scaling faces constraints from prohibitive computational costs and sustainability concerns. Addressing these challenges has led to a growing emphasis on enhancing representational density, which focuses on optimizing how information is encoded and processed within models. Quantization stands as a critical technique in this paradigm, reducing parameter precision to bridge the gap between massive parameter counts and practical deployment feasibility, while minimizing performance degradation.
+Figure 1: Overview of
+Hestia (named after Hestia, the Greek goddess of the hearth). Unlike standard STE (left), which suffers from gradient mismatch due to non-differentiable discrete mapping,
+Hestia (right) constructs a differentiable optimization path using a temperature-controlled Softmax surrogate, with a Hessian-trace signal guiding tensor-wise fine-grained temperature annealing.
+Pushing the boundary of representational density leads to extremely low-bit regimes, with ternary architectures representing a significant milestone in this pursuit (Ma et al., 2024a). By adopting the ternary representation {−1,0,1}\{-1,0,1\}, these architectures enable the replacement of conventional multiply-accumulate (MAC) operations with energy-efficient integer additions. However, the drastic information loss associated with such extreme quantization makes standard Post-Training Quantization (PTQ) challenging, often leading to significant degradation (Xiao et al., 2023; Lin et al., 2023; Chee et al., 2023; Tseng et al., 2024a). Consequently, maintaining performance at this scale requires Quantization-Aware Training (QAT) to optimize the model parameters within a constrained space. Prevailing ternary QAT approaches simulate discrete weights via rounding and clipping, relying on the Straight-Through Estimator (STE) (Bengio et al., 2013) for gradient approximation.
+Although the use of discrete operators is essential for ensuring consistency between training and inference, STE inherently introduces a mismatch between discrete forward signals and continuous weight updates. Prematurely enforcing such rigid constraints prevents latent weights from crossing discrete boundaries, causing optimization stagnation, a phenomenon frequently characterized as the dead zone problem (Huang et al., 2025a). In these dead zones, the updates are insufficient to trigger state transitions, which ultimately traps the model in sub-optimal states before it can learn effective representations. This persistent optimization stagnation prompts a fundamental re-examination of our current methodology:
+Is it appropriate to employ STE-based discrete operators, sacrificing gradient flow during extremely low-bit QAT?
+To answer the question, we introduce
+Hestia, a Hessian-guided differentiable QAT framework designed to resolve the optimization bottlenecks of extremely low-bit LLMs. To be clarified, this paper mainly focuses on ternary quantization, but
+Hestia is also applicable to other quantization schemes. Specifically,
+Hestia replaces discrete operators with a temperature-controlled Softmax relaxation. By formulating ternary state assignments as a soft expectation over the discrete set {−1,0,1}\{-1,0,1\}, it provides well-defined, fully differentiable gradients over the latent weight space. This approach effectively mitigates the dead zones that traditionally cause optimization stagnation, allowing weights to move freely during the critical exploration phase.
+Crucially,
+Hestia exploits the profound heterogeneity of LLM tensors regarding discretization sensitivity. We utilize an offline-calibrated Hessian-trace metric as a lightweight curvature signal to drive an adaptive temperature scaling mechanism (Dong et al., 2019; Tseng et al., 2024a; Tabesh et al., 2025). Rather than a uniform cosine decay, sensitive tensors with higher curvature maintain higher temperatures for a longer duration. This ensures a more gradual transition to the discrete regime, preserving the representational integrity of critical layers while stabilizing the overall optimization trajectory. Experiments on the Llama-3.2 family (Dubey et al., 2024) demonstrate that by reconsidering the training paradigm,
+Hestia significantly bridges the performance gap between full-precision and extremely low-bit models. This validates that prioritizing gradient flow over premature hardening is essential for recovering representational capacity in 1.58-bit LLMs. Our main contributions are summarized as follows:
+•
+Differentiable LLM QAT Framework: We introduce a Softmax-based relaxation for extremely low-bit LLMs that ensures well-defined gradients and substantially mitigates optimization dead zones.
+•
+Hessian-Aware Temperature Scheduling: We propose an adaptive mechanism that modulates discretization rates based on second-order curvature to preserve critical model components.
+•
+Empirical Validation: On Llama-3.2-1B and 3B,
+Hestia yields average zero-shot improvements of 5.39% and 4.34%, proving that departing from rigid STE is essential for 1.58-bit optimization.
+2 Related Work
+The paradigm of extremely low-bit LLMs has been pioneered by BitNet b1.58 (Ma et al., 2024b), which first demonstrated that ternary QAT models can achieve performance competitive with full-precision counterparts. However, this framework typically demands pre-training from scratch to ensure convergence, incurring prohibitive computational costs that hinder widespread adoption. Recent research has focused on optimizing the training recipe itself, guided by quantization scaling laws. For instance, ParetoQ (Liu et al., 2025b) unifies various quantization granularities into a single framework to improve scaling efficiency, while CO-QAT (Dremov et al., 2025) offers a data-driven path to optimize compute allocation between full-precision pre-training and QAT. However, even with efficient compute allocation, the optimization dynamics remain fundamentally hampered by the gradient mismatch caused by the non-differentiable STE. While PV-Tuning (Malinovskii et al., 2024) attempts to bypass this via specialized parameterization, other approaches focus on gradient rectification. Tequila (Huang et al., 2025b) identifies the issue as the dead-zone problem, where gradients vanish, and proposes a trapping-free mechanism to reactivate dead weights using dynamic biases, and CAGE (Tabesh et al., 2025) introduces curvature-aware gradient estimation to reduce variance. Nevertheless, these methods primarily patch the gradient field post-hoc rather than smoothing the underlying optimization landscape.
+Other research has pivoted towards differentiable quantization. For instance, DGE (Wang et al., 2025c) introduces a differentiable gradient estimator that approximates gradients of STE but retains hard operations for forward weights, decoupling the forward and backward passes. A more natural solution is continuous relaxation quantization, which approximates the discrete quantization operator with a smooth, fully differentiable function for both forward and backward passes. However, few such works exist in the context of LLMs. Classic methods in general neural networks, such as DSQ (Gong et al., 2019) and DAQ (Kim et al., 2021), utilize Tanh sequences or distance-aware Softmax to construct a smooth manifold, gradually increasing the hardness factor to asymptotically approach discrete states. More recently, LLM-specific works have advanced this frontier. For example, LOTION (Kwun et al., 2025) explicitly smooths the jagged landscape to aid convergence, while others employ stochastic rounding (Yamazaki et al., 2024) to provide unbiased gradient estimates.
+Nevertheless, these approaches typically employ globally uniform annealing schedules or uniform smoothing factors. They overlook the extreme structural heterogeneity of LLMs, where certain layers exhibit much sharper curvature than others. This uniform hardening risks trapping sensitive weights in suboptimal discrete states prematurely, necessitating a rigorous, curvature-informed strategy to dynamically align hardening rates with local landscape complexity.
+Second-order curvature, specifically the Hessian trace, has been extensively validated as a robust metric for quantization sensitivity. Pioneering works like HAWQ (Dong et al., 2019) utilized it to guide spatial mixed-precision allocation, while recent PTQ methods such as QuIP# (Tseng et al., 2024b) leverage it to minimize reconstruction error. In the realm of QAT, CAGE (Tabesh et al., 2025) has recently employed curvature to refine gradient estimation, reducing the variance of STE. However,
+Hestia takes a distinct geometric path. Since the rigid 1.58-bit constraint prohibits spatial bit-width variation, we repurpose the Hessian trace from a spatial allocator to a temporal scheduler. Instead of varying bit-widths, which violates the 1.58-bit hardware constraint, we use the Hessian trace to modulate the annealing rate of the continuous relaxation, harmonizing the optimization trajectory with the intrinsic curvature of the loss landscape.
+3 Method
+3.1 Problem Definition
+Consider the optimization of Large Language Models where the weight matrix 𝐖∈ℝm×n\mathbf{W}\in\mathbb{R}^{m\times n} is constrained to a ternary set 𝒬={−1,0,+1}\mathcal{Q}=\{-1,0,+1\}. An element-wise quantization operator Q:ℝ→𝒬Q:\mathbb{R}\to\mathcal{Q} is employed, and the scaling factor γ\gamma is defined as the mean absolute value stabilized by a small constant ϵ\epsilon:
+γ=1N​∑j=1N|wj|+ϵγ,\gamma=\frac{1}{N}\sum_{j=1}^{N}|w_{j}|+\epsilon_{\gamma},
+(1)
+where N=m​nN=mn denotes the number of elements, ϵγ\epsilon_{\gamma} is a small constant to avoid division by zero and wj∈𝐖w_{j}\in\mathbf{W}. In implementation, we treat γ\gamma as a constant during backpropagation (i.e., γ\gamma is detached from the computation graph). The dequantized weights 𝐖^\hat{\mathbf{W}} are then obtained via:
+𝐖^=Q⁡(𝐖)=γ⋅Clip​(Round​(𝐖γ),−1,+1)\hat{\mathbf{W}}=Q(\mathbf{W})=\gamma\cdot\texttt{Clip}\left(\texttt{Round}\left(\frac{\mathbf{W}}{\gamma}\right),-1,+1\right).
+(2)
+Note that 𝒬\mathcal{Q} denotes ternary codes, while Q⁡(𝐖)Q(\mathbf{W}) outputs dequantized weights in {−γ,0,+γ}\{-\gamma,0,+\gamma\}. The optimization objective is to minimize the empirical risk ℒ\mathcal{L} over the data distribution 𝒟\mathcal{D}:
+min𝐖⁡𝒥⁡(𝐖)\min_{\mathbf{W}}\mathcal{J}(\mathbf{W}),  where  𝒥⁡(𝐖)=𝔼x∼𝒟​[ℒ⁡(Q⁡(𝐖),x)].\mathcal{J}(\mathbf{W})=\mathbb{E}_{x\sim\mathcal{D}}[\mathcal{L}(Q(\mathbf{W});x)].
+(3)
+Since the gradient of the discrete operator Q⁡(⋅)Q(\cdot) vanishes almost everywhere, standard QAT utilizes the STE to approximate the gradient of the objective with respect to the latent weights 𝐖\mathbf{W}. This approach treats the quantization as an identity mapping during the backward pass:
+∇𝐖𝒥=∇𝐖^ℒ⋅∂𝐖^∂𝐖≈∇𝐖^ℒ.\nabla_{\mathbf{W}}\mathcal{J}=\nabla_{\hat{\mathbf{W}}}\mathcal{L}\cdot\frac{\partial\hat{\mathbf{W}}}{\partial\mathbf{W}}\approx\nabla_{\hat{\mathbf{W}}}\mathcal{L}.
+(4)
+While STE enables backpropagation through the non-differentiable quantizer, it induces a fundamental mismatch between continuous parameter updates and discrete state transitions. For the clipped ternary operator Q⁡(⋅)Q(\cdot), the only transition (discontinuity) boundaries occur at
+ℬ={−0.5​γ,+0.5​γ},\mathcal{B}=\{-0.5\gamma,\;+0.5\gamma\},
+(5)
+since Clip removes any output change beyond |w/γ|≥1.5|w/\gamma|\geq 1.5. Let Δ​w\Delta w denote the latent weight update. We say that a weight w∈𝐖w\in\mathbf{W} lies in a dead zone Ωdead\Omega_{\mathrm{dead}} if this update fails to induce a discrete transition:
+Ωdead={w∈𝐖∣Q⁡(w+Δ​w)=Q⁡(w)}.\Omega_{\text{dead}}=\left\{w\in\mathbf{W}\mid Q(w+\Delta w)=Q(w)\right\}.
+(6)
+For w∈Ωdeadw\in\Omega_{\text{dead}}, the discrete representation remains unchanged, so the forward computation is insensitive to Δ​w\Delta w and the objective exhibits a locally flat region despite ∇𝐖𝒥≠0\nabla_{\mathbf{W}}\mathcal{J}\neq 0. This results in stagnation of the optimization process and prevents achieving optimal convergence within the ternary regime.
+3.2 Differentiable Quantization
+To address the issue of optimization stagnation identified in Sec. 3.1, we relax the discrete operator Q⁡(⋅)Q(\cdot) into a differentiable surrogate ℋ⁡(⋅,⋅)\mathcal{H}(\cdot;\cdot) based on a gradual transition from continuous to discrete states. Specifically, for any latent weight w∈𝐖w\in\mathbf{W}, we model the assignment to a ternary state q∈𝒬q\in\mathcal{Q} through a temperature τ\tau-controlled Softmax kernel πτ​(q∣w)\pi_{\tau}(q\mid w), applied over the normalized distance:
+πτ​(q∣w)=Softmax​(w,q,τ)=e−(w/γ−q)2/τ∑k∈𝒬e−(w/γ−k)2/τ\pi_{\tau}(q\mid w)=\texttt{Softmax}(w;q;\tau)=\frac{e^{-(w/\gamma-q)^{2}/\tau}}{\sum_{k\in\mathcal{Q}}e^{-(w/\gamma-k)^{2}/\tau}},
+(7)
+where τ\tau follows a predefined annealing schedule, controlling the transition from a continuous to a discrete state. The resulting representation w~\tilde{w} is formulated as the expectation over the state space 𝒬\mathcal{Q}:
+w~=ℋ⁡(w,τ)=γ​∑q∈𝒬q⋅πτ​(q∣w).\tilde{w}=\mathcal{H}(w;\tau)=\gamma\sum_{q\in\mathcal{Q}}q\cdot\pi_{\tau}(q\mid w).
+(8)
+As the temperature vanishes, the relaxed operator converges to the rigid discrete projection, i.e.,
+limτ→0+ℋ⁡(w,τ)=Q⁡(w)\lim_{\tau\rightarrow 0^{+}}\mathcal{H}(w;\tau)=Q(w), so that the model trained in the continuous space is valid for discrete inference. Guided by the annealing schedule, the operator ℋ⁡(w,τ)\mathcal{H}(w;\tau) relaxes the rigid ternary state assignment into a soft assignment, bridging the continuous latent space and the discrete ternary regime through the following key properties:
+•
+Landscape Smoothing: At the beginning of annealing, the operator smooths the optimization landscape, effectively bypassing the dead zones Ωdead\Omega_{\text{dead}}, where the loss surface approximates a linear mapping.
+•
+Gradient Fidelity: the surrogate provides a well-defined, fully differentiable gradient for ℋ⁡(w,τ)\mathcal{H}(w;\tau), so latent updates are faithfully reflected by the differentiable path until assignments become confident as τ→0+\tau\to 0^{+}.
+While this differentiable operator guarantees gradient flow, directly projecting to the ternary proxy during early training stages may lead to representational collapse. To mitigate this, we design a compress stage and introduce a dynamic pressure parameter pt∈[0,1]p_{t}\in[0,1]. The effective weight used in the forward pass is a time-varying convex combination:
+𝐖eff​(t)=(1−pt)⋅𝐖+pt⋅ℋ⁡(𝐖,τ),\mathbf{W}^{\text{eff}}(t)=(1-p_{t})\cdot\mathbf{W}+p_{t}\cdot\mathcal{H}(\mathbf{W};\tau),
+(9)
+where
+pt={1,ρ=0,min⁡(1,tρ​T),ρ∈(0,1],p_{t}=\begin{cases}1,&\rho=0,\\[2.0pt]
+\min\left(1,\frac{t}{\rho T}\right),&\rho\in(0,1],\end{cases}
+(10)
+tt is the current step, TT is the total number of training steps, and ρ∈[0,1]\rho\in[0,1] specifies the fraction of training allocated to the compress stage. The resulting convex interpolation serves as a stabilizing continuation path: at pt=0p_{t}=0 the forward pass remains fully in the full-precision regime, while increasing ptp_{t} progressively transfers representational responsibility to the quantized surrogate, smoothly steering the model toward ternary representations as pt→1p_{t}\to 1. In this way, the schedule separates when quantization is enforced from how discrete assignments harden, yielding a controlled transition that avoids abrupt representational collapse. Consequently, training optimizes a time-varying surrogate objective
+𝒥~t​(𝐖)=𝔼x∼𝒟​[ℒ⁡(𝐖eff​(t),x)],\tilde{\mathcal{J}}_{t}(\mathbf{W})=\mathbb{E}_{x\sim\mathcal{D}}\!\left[\mathcal{L}\!\left(\mathbf{W}_{\mathrm{eff}}(t);x\right)\right],
+(11)
+which recovers the original discrete objective in the limit pt→1p_{t}\to 1 and τt→0+\tau_{t}\to 0^{+}.
+3.3 Hessian-Aware Annealing Quantization
+While the differentiable operator ℋ⁡(⋅,⋅)\mathcal{H}(\cdot;\cdot) restores gradient flow, a uniform annealing schedule across all tensors fails to account for the structural heterogeneity of LLMs. From this perspective, we introduce
+Hestia, a method that dynamically adjusts the annealing process for each operator based on its sensitivity to quantization, as summarized in Algorithm 1.
+Algorithm 1
+Hestia Algorithm
+0:
+weights 𝐖\mathbf{W}, total steps TT, temperature scaling factor α\alpha, compress ratio ρ\rho
+0:
+dequantized weights 𝐖^\hat{\mathbf{W}}
+1:
+∀i∈{1,…,M}:si←SensScore​(𝐖i)\forall i\in\{1,\dots,M\}:s_{i}\leftarrow\texttt{SensScore}(\mathbf{W}_{i})
+2:
+for t=0t=0 to T−1T-1 do
+3:
+batch B∼𝒟B\sim\mathcal{D}
+4:
+Compute ptp_{t} according to Eq. (10).
+5:
+for each operator ii do
+6:
+τi←Schedule​(t,si,α)\tau_{i}\leftarrow\texttt{Schedule}(t,s_{i},\alpha)
+7:
+𝐖~i←ℋ⁡(𝐖i,τi)\tilde{\mathbf{W}}_{i}\leftarrow\mathcal{H}(\mathbf{W}_{i};\tau_{i})
+8:
+𝐖ieff←(1−pt)​𝐖i+pt​𝐖~i\mathbf{W}^{\text{eff}}_{i}\leftarrow(1-p_{t})\mathbf{W}_{i}+p_{t}\tilde{\mathbf{W}}_{i}
+9:
+end for
+10:
+Assemble 𝐖eff←{𝐖ieff}i=1M\mathbf{W}^{\text{eff}}\leftarrow\{\mathbf{W}^{\text{eff}}_{i}\}_{i=1}^{M}
+11:
+𝐖←𝐖−Update​(η,∇𝐖ℒ​(𝐖eff,B))\mathbf{W}\leftarrow\mathbf{W}-\texttt{Update}\left(\eta;\nabla_{\mathbf{W}}\mathcal{L}(\mathbf{W}^{\text{eff}};B)\right)
+12:
+end for
+13:
+𝐖^←Q⁡(𝐖)\hat{\mathbf{W}}\leftarrow Q(\mathbf{W})
+3.3.1 Sensitivity Estimation
+In the
+Hestia method, we begin by estimating the sensitivity of each operator using the Hessian Trace, which quantifies the curvature and reflects susceptibility to discretization errors. To maintain computational efficiency in LLMs, where the full Hessian is often inaccessible, we approximate this sensitivity metric for each operator ii using the Hutch++ algorithm (Meyer et al., 2021).
+Specifically, for operator ii, let 𝐰i=vec⁡(𝐖i)∈ℝdi\mathbf{w}_{i}=\mathrm{vec}(\mathbf{W}_{i})\in\mathbb{R}^{d_{i}} denote the vectorized parameters and
+𝐇i=∇𝐰i2​𝒥​(𝐖)\mathbf{H}_{i}=\nabla^{2}_{\mathbf{w}_{i}}\mathcal{J}(\mathbf{W}) the corresponding Hessian.
+Hutch++ constructs a low-rank subspace using a sketch matrix 𝐒i∈ℝdi×r\mathbf{S}_{i}\in\mathbb{R}^{d_{i}\times r} and an orthonormal basis
+𝐐i\mathbf{Q}_{i} obtained from the range of 𝐇i​𝐒i\mathbf{H}_{i}\mathbf{S}_{i} via QR decomposition.
+The trace is then approximated by
+hi=Tr​(𝐐i⊤​𝐇i​𝐐i)+Tr​(𝐆i⊤​(𝐈−𝐐i​𝐐i⊤)​𝐇i​(𝐈−𝐐i​𝐐i⊤)​𝐆i)h_{i}=\text{Tr}(\mathbf{Q}_{i}^{\top}\mathbf{H}_{i}\mathbf{Q}_{i})+\text{Tr}\!\left(\mathbf{G}_{i}^{\top}(\mathbf{I}-\mathbf{Q}_{i}\mathbf{Q}_{i}^{\top})\mathbf{H}_{i}(\mathbf{I}-\mathbf{Q}_{i}\mathbf{Q}_{i}^{\top})\mathbf{G}_{i}\right),
+(12)
+where 𝐆i\mathbf{G}_{i} is a Rademacher random matrix for estimating the residual trace in the orthogonal complement. To address the significant variance in hih_{i} across different tensors, we define a normalized sensitivity score sis_{i} using a standardized Sigmoid transformation:
+si=Sigmoid​(κ⋅log⁡hi−μhσh+ϵ),s_{i}=\texttt{Sigmoid}\left(\kappa\cdot\frac{\log h_{i}-\mu_{h}}{\sigma_{h}+\epsilon}\right),
+(13)
+where μh\mu_{h} and σh\sigma_{h} denote the mean and standard deviation of the log-sensitivity across all linear tensors, and κ\kappa is a gain factor. Intuitively, a higher sis_{i} reflects greater sensitivity to quantization noise, necessitating softer changes, while a lower sis_{i} allows for harder quantization.
+3.3.2 Temperature Annealing Schedule
+Building upon the sensitivity scores derived in Sec. 3.3.1, we now introduce a temperature annealing schedule that adapts the rate of transition from continuous to discrete states for each operator. We first define a global base temperature schedule τ¯​(t)\bar{\tau}(t) that follows a standard cosine decay from τinit\tau_{\text{init}} to 00 over TT steps:
+τ¯​(t)=τinit2​[1+cos⁡(π⁡(t−Tc​o​m​p)T−Tc​o​m​p)],\bar{\tau}(t)=\frac{\tau_{\text{init}}}{2}\left[1+\cos\left(\frac{\pi(t-T_{comp})}{T-T_{comp}}\right)\right],
+(14)
+where Tc​o​m​pT_{comp} is the time step at which the compression stage ends. To implement
+Hestia, we introduce a temperature scaling factor for each operator ii:
+τi​(t)=τ¯​(t)⋅eα​si.\tau_{i}(t)=\bar{\tau}(t)\cdot e^{\alpha s_{i}}.
+(15)
+In this formulation, the temperature τi​(t)\tau_{i}(t) for each tensor is adjusted by the scaling factor eα​sie^{\alpha s_{i}}, which is based on the sensitivity score sis_{i} of the tensor. As illustrated in Fig. 2, this results in a systematic elevation of the annealing curves relative to the base schedule (green dashed line), where the degree of elevation is monotonic in the sensitivity score and thus in the Hessian-trace-derived curvature proxy.
+Figure 2: The
+Hestia adaptive annealing schedule. In the compress stage, pressure pp increases linearly while temperature τ\tau remains constant. In the annealing stage, τ\tau decays adaptively to hessian-related metric.
+4 Theoretical Analysis
+Building on the relaxed quantizer w~=ℋ⁡(w,τ)\tilde{w}=\mathcal{H}(w;\tau) in Eq. (8), we study how the annealed assignment kernel πτ​(q∣w)\pi_{\tau}(q\mid w) in Eq. (7) shapes backpropagation.
+Specifically, we prove (i) a closed-form Jacobian showing that gradients are modulated by assignment uncertainty, and (ii) a boundary-localization behavior as τ→0+\tau\to 0^{+} toward the hard quantization boundaries ℬ\mathcal{B} in Eq. (5).
+Throughout this section, we treat γ\gamma as a constant during differentiation as in Sec. 3.1. We denote the code mean under πτ(⋅∣w)\pi_{\tau}(\cdot\mid w) by
+μτ​(w)≜∑q∈𝒬q​πτ​(q∣w),\mu_{\tau}(w)\triangleq\sum_{q\in\mathcal{Q}}q\,\pi_{\tau}(q\mid w),
+(16)
+and the corresponding variance by
+𝕍τ​(w)≜∑q∈𝒬q2​πτ​(q∣w)−μτ​(w)2.\mathbb{V}_{\tau}(w)\triangleq\sum_{q\in\mathcal{Q}}q^{2}\,\pi_{\tau}(q\mid w)-\mu_{\tau}(w)^{2}.
+(17)
+All proofs are deferred to Appendix A.
+Lemma 4.1 (Variance-Modulated Jacobian).
+For w~=ℋ⁡(w,τ)\tilde{w}=\mathcal{H}(w;\tau), the Jacobian w.r.t. the latent weight satisfies
+∂ℋ⁡(w,τ)∂w=2τ​𝕍τ​(w).\frac{\partial\mathcal{H}(w;\tau)}{\partial w}=\frac{2}{\tau}\,\mathbb{V}_{\tau}(w).
+(18)
+Lemma 4.1 implies an uncertainty-gated backward signal:
+for any scalar loss ℓ⁡(w~)\ell(\tilde{w}),
+∂ℓ⁡(ℋ⁡(w,τ))∂w=∂ℓ∂w~⋅2τ​𝕍τ​(w),\frac{\partial\ell(\mathcal{H}(w;\tau))}{\partial w}=\frac{\partial\ell}{\partial\tilde{w}}\cdot\frac{2}{\tau}\,\mathbb{V}_{\tau}(w),
+(19)
+so gradients are attenuated when πτ(⋅∣w)\pi_{\tau}(\cdot\mid w) is confident and amplified when assignments are ambiguous.
+Lemma 4.2 (Boundary Localization as τ→0+\tau\!\to\!0^{+}).
+As τ→0+\tau\to 0^{+}, the Jacobian ∂ℋ⁡(w,τ)/∂w\partial\mathcal{H}(w;\tau)/\partial w converges in the sense of
+distributions to Dirac measures supported on ℬ\mathcal{B}:
+∂ℋ⁡(w,τ)∂w→τ→0+γ​∑b∈ℬδ⁡(w−b).\frac{\partial\mathcal{H}(w;\tau)}{\partial w}\;\xrightarrow[\tau\to 0^{+}]{}\;\gamma\sum_{b\in\mathcal{B}}\delta(w-b).
+(20)
+Lemma 4.2 formalizes a localization effect: annealing progressively concentrates the surrogate Jacobian near decision boundaries, turning smooth continuation into near-discrete refinement.
+In practice, optimization operates at finite τ>0\tau>0, where the nonzero, variance-modulated gradients in
+Eq. (19) mitigate dead-zone stagnation.
+Table 1: Zero-shot accuracy on five zero-shot benchmarks.
+LLaMA-3.2-1B
+Method
+ARC-e
+ARC-c
+HS
+PIQA
+WinG
+Avg
+BF16
+0.654
+0.313
+0.477
+0.742
+0.603
+0.558
+LSQ
+0.376
+0.177
+0.258
+0.574
+0.506
+0.378
+SEQ
+0.421
+0.180
+0.273
+0.604
+0.510
+0.398
+DLT
+0.424
+0.174
+0.256
+0.563
+0.513
+0.386
+TWN
+0.407
+0.220
+0.284
+0.601
+0.492
+0.401
+AbsMean
+0.603
+0.259
+0.360
+0.683
+0.541
+0.489
+Tequila
+0.645
+0.305
+0.391
+0.710
+0.542
+0.519
+INT2
+0.619
+0.262
+0.354
+0.692
+0.527
+0.491
+Hestia
+0.665
+0.350
+0.418
+0.726
+0.577
+0.547
+LLaMA-3.2-3B
+Method
+ARC-e
+ARC-c
+HS
+PIQA
+WinG
+Avg
+BF16
+0.745
+0.422
+0.552
+0.768
+0.691
+0.636
+LSQ
+0.431
+0.200
+0.294
+0.599
+0.522
+0.409
+SEQ
+0.498
+0.231
+0.303
+0.645
+0.529
+0.441
+DLT
+0.361
+0.161
+0.260
+0.572
+0.496
+0.370
+TWN
+0.692
+0.351
+0.462
+0.734
+0.586
+0.565
+AbsMean
+0.672
+0.329
+0.439
+0.735
+0.582
+0.551
+Tequila
+0.702
+0.346
+0.464
+0.739
+0.627
+0.576
+INT2
+0.687
+0.348
+0.423
+0.727
+0.558
+0.549
+Hestia
+0.741
+0.393
+0.491
+0.757
+0.622
+0.601
+Table 2: Comparison with other ternary LLMs across model sizes and training token counts (#Tokens) on five zero-shot benchmarks.
+Model
+Size
+#Tokens
+ARC-Easy
+ARC-Challange
+HellaSwag
+PIQA
+WinoGrande
+Avg Score
+LLaMA3.2
+1B
+–
+0.654
+0.313
+0.477
+0.742
+0.603
+0.558
+DLT
+1B
+10B
+0.424
+0.174
+0.256
+0.563
+0.513
+0.386
+SEQ
+1B
+10B
+0.421
+0.180
+0.273
+0.604
+0.510
+0.398
+LLM-QAT
+1B
+100B
+0.360
+0.262
+0.313
+0.551
+0.496
+0.397
+BitNet
+1.3B
+100B
+0.549
+0.242
+0.377
+0.688
+0.558
+0.483
+Spectra
+1.1B
+100B
+0.563
+0.246
+0.388
+0.693
+0.555
+0.489
+Tequila
+1B
+10B
+0.645
+0.305
+0.391
+0.710
+0.542
+0.519
+Hestia
+1B
+10B
+0.665
+0.350
+0.418
+0.726
+0.577
+0.547
+LLaMA3.2
+3B
+–
+0.745
+0.422
+0.552
+0.768
+0.691
+0.636
+DLT
+3B
+10B
+0.361
+0.161
+0.260
+0.572
+0.496
+0.370
+SEQ
+3B
+10B
+0.498
+0.231
+0.303
+0.645
+0.529
+0.441
+LLM-QAT
+3B
+100B
+0.445
+0.307
+0.434
+0.627
+0.506
+0.464
+BitNet
+3B
+100B
+0.614
+0.283
+0.429
+0.715
+0.593
+0.527
+Spectra
+3.9B
+100B
+0.660
+0.319
+0.483
+0.744
+0.631
+0.567
+Tequila
+3B
+10B
+0.702
+0.346
+0.464
+0.739
+0.627
+0.576
+Hestia
+3B
+10B
+0.741
+0.393
+0.491
+0.757
+0.622
+0.601
+Table 3: Fairy2i-related results on Qwen2.5-0.5B.
+Ternary-H denotes ternary quantization with
+Hestia, and Fairy2i-H denotes Fairy2i quantization with
+Hestia for short, respectively.
+Method
+ARC-e
+ARC-c
+HS
+PIQA
+WinG
+Avg
+BF16
+0.645
+0.290
+0.405
+0.705
+0.567
+0.523
+Ternary
+0.498
+0.207
+0.321
+0.649
+0.509
+0.437
+Ternary-H
+0.539
+0.221
+0.349
+0.667
+0.532
+0.462
+Fairy2i
+0.540
+0.238
+0.357
+0.678
+0.540
+0.471
+Fairy2i-H
+0.556
+0.236
+0.357
+0.670
+0.549
+0.474
+5 Experiments
+5.1 Experimental Setup
+Models.
+We evaluate
+Hestia and its competitors on two base LLMs spanning different scales:
+LLaMA-3.2-1B and LLaMA-3.2-3B (Dubey et al., 2024).
+All models are initialized from their official pretrained checkpoints and then quantization-aware trained under an identical data budget.
+Training data.
+QAT is conducted on 10B tokens sampled from Ultra-FineWeb (Wang et al., 2025d) with a sequence length of 1024 under a standard causal language modeling objective, matching the data configuration and sampling pipeline used by the baseline methods as described in the Tequila paper (Huang et al., 2025a), which ensures a like-for-like comparison.
+Quantization setting.
+Our evaluation setting uses weight-only quantization.
+Hestia applies ternary quantization to weights with a group-wise quantizer at a group size of 128, while keeping activations in full precision. We quantize all transformer linear layers, including attention and MLP projections, but leave other components in full precision.
+Implementation.
+We implement
+Hestia using PyTorch.
+The training pipeline is designed as a two-stage process with a lightweight pre-computation phase followed by the main quantization-aware training. Prior to QAT, we offline perform the sensitivity estimation via Hutch++ and optimize the initial temperature τinit\tau_{\mathrm{init}} by minimizing the global mean squared error between full-precision and relaxed weights. During the QAT phase, the sensitivity scores are frozen to guide the annealing process, while the model optimization utilizes the AdamW optimizer.
+Hestia introduces two coupled schedules: a dynamic pressure parameter pp and the Hessian-aware temperature annealing controlled by the strength factor α\alpha.
+The temperature follows a cosine decay schedule, reaching τ=0\tau=0 at the end of training to ensure a fully hardened quantizer. Comprehensive hyperparameter configurations are detailed in Appendix B.
+Baselines.
+We benchmark
+Hestia against several representative low-bit QAT approaches, each employing distinct optimization philosophies. First, we include hard-quantization QAT baselines trained with STE, using widely adopted ternarization rules such as TWN (Li et al., 2016), BitNet b1.58 (Ma et al., 2024a) and related AbsMean-based approaches, Spectra (Kaushal et al., 2024), and Tequila (Huang et al., 2025a). In addition to the ternary setting, we also evaluate symmetric 2-bit weight quantization as another baseline. Second, we consider parameterized quantizers, which introduce learnable quantization parameters such as scaling factors, represented by LSQ (Esser et al., 2020), DLT from TernaryLLM (Chen et al., 2024), and SEQ from ParetoQ (Liu et al., 2025a). Finally, we include LLM-QAT (Liu et al., 2023) as a representative of distillation-based quantization frameworks.
+Evaluation.
+We evaluate
+Hestia using the open-source project lm-evaluation-harness (Gao et al., 2024) on five benchmarks: ARC-Easy, ARC-Challenge (Clark et al., 2018), HellaSwag (Zellers et al., 2019), PIQA (Bisk et al., 2020), and WinoGrande (Sakaguchi et al., 2021). We report per-task accuracy and the average across tasks for our method, where
+each reported number is the mean over 5 runs adopting the same evaluation protocol as baseline methods to ensure a fair comparison. For competing methods in Table 1 and Table 2, we cite
+the results from the original papers (Huang et al., 2025a).
+Table 4: Ablations on group size and Hessian-aware scheduling.
+w/o Hessian uses a global temperature annealing shared by all layers/tensors.
+Avg gain (%) is computed relative to the previous row in the same block (1B or 3B), and is reported only for w/o Hessian at group size 128 and for
+Hestia.
+Method
+Group
+Size
+ARC-Easy
+ARC-Challange
+HellaSwag
+PIQA
+WinoGrande
+Avg Score
+Avg Gain (%)
+BF16
+–
+1B
+0.654
+0.313
+0.477
+0.743
+0.603
+0.558
+–
+Tequila
+128
+1B
+0.645
+0.305
+0.391
+0.710
+0.542
+0.519
+–
+w/o Hessian
+–
+1B
+0.659
+0.322
+0.410
+0.724
+0.571
+0.537
+–
+w/o Hessian
+128
+1B
+0.654
+0.323
+0.422
+0.720
+0.580
+0.540
++0.56%
+Hestia
+128
+1B
+0.665
+0.350
+0.418
+0.726
+0.577
+0.547
++1.30%
+BF16
+–
+3B
+0.745
+0.422
+0.552
+0.768
+0.691
+0.636
+–
+Tequila
+128
+3B
+0.702
+0.346
+0.464
+0.739
+0.627
+0.576
+–
+w/o Hessian
+–
+3B
+0.731
+0.397
+0.485
+0.746
+0.627
+0.597
+–
+w/o Hessian
+128
+3B
+0.738
+0.402
+0.487
+0.753
+0.612
+0.599
++0.34%
+Hestia
+128
+3B
+0.741
+0.393
+0.491
+0.757
+0.622
+0.601
++0.33%
+5.2 Main Results
+We present our main results in two parts. First, we evaluate
+Hestia under weight-only low-bit quantization on LLaMA-3.2-1B and LLaMA-3.2-3B trained on 10B UltraFineWeb tokens, comparing against representative QAT baselines in Table 1. Second, we further position
+Hestia against a broader set of ternary LLM training recipes across different model sizes and token budgets in Table 2. Throughout the main-result tables, gray numbers indicate the BF16 reference. Among quantized models, the best value in each column is highlighted in red, and the second-best value is highlighted in blue. These results demonstrate that
+Hestia consistently achieves improvements in zero-shot accuracy across both smaller and larger models, highlighting its effectiveness in optimizing low-bit quantization for LLMs.
+Hestia improves over strong QAT baselines.
+Table 1 reports zero-shot accuracy on five typical benchmarks. W2-Sym denotes symmetric 2-bit weight quantization as an additional reference point. Across both model scales,
+Hestia consistently outperforms the state-of-the-art ternary QAT competitors.
+On LLaMA-3.2-1B,
+Hestia improves the 5-task average from 0.519 (Tequila) to 0.547, with particularly large gains on ARC-Challenge (+4.5 points) and WinoGrande (+3.5 points).
+On LLaMA-3.2-3B,
+Hestia further raises the average from 0.576 (Tequila) to 0.601, improving all five benchmarks and yielding notable gains on HellaSwag (+2.7 points) and WinoGrande.
+These results indicate that
+Hestia provides a more favorable optimization trajectory under extreme quantization, translating into stronger zero-shot generalization.
+We additionally compare against a symmetric 2-bit weight-only baseline (INT2).
+Despite operating in a more constrained ternary setting,
+Hestia achieves higher average accuracy than INT2 on both 1B and 3B, suggesting that
+Hestia’s training dynamics improvements are not merely a byproduct of a higher-precision codebook, but stem from a better soft-to-hard training path.
+Comparison with prior ternary LLMs.
+Table 2 further positions
+Hestia against a broad set of ternary LLM training recipes, covering both 10B-token and 100B-token regimes.
+Under the same 10B-token budget,
+Hestia consistently yields the strongest accuracy among all quantized models for both 1B- and 3B-class backbones, improving the 5-task average from 0.519 to 0.547 on 1B and from 0.576 to 0.601 on 3B over TequilaLLM.
+Notably,
+Hestia trained with only 10B tokens is competitive with, and often surpasses, several 100B-token ternary LLM baselines (e.g., BitNet and Spectra) on multiple benchmarks.
+These results suggest that
+Hestia improves the optimization trajectory of extreme quantization through its gradual soft-to-hard schedule, which enables stronger zero-shot generalization without requiring substantially larger training budgets.
+5.3 Cross-Domain Generalization
+To test the generality of
+Hestia, we apply it to the Fairy2i method (Wang et al., 2025a), which transforms a pretrained real-valued model into a lossless, widely-linear complex representation and then performs phase-aware extremely-low-bit quantization in the complex domain (Wang et al., 2025b). This setting provides a complementary testbed where both the computation graph and the quantization codebook differ from standard real-valued QAT, enabling us to assess the robustness and versatility of
+Hestia beyond ternary real weights.
+Specifically, we apply
+Hestia to the Fairy2i pipeline on Qwen2.5-0.5B. We implement the Fairy2i with one recursive residual quantization, yielding a quantization scheme of 2 bits per parameter.
+All variants are trained on 6B tokens from RedPajama under a per-tensor quantization setting (Table 3).
+Starting from a real-valued BF16 reference, naive real-valued Ternary method causes a clear accuracy drop. In contrast, Ternary-H recovers a substantial portion of the lost performance, and the complex-domain conversion baseline Fairy2i further improves the average accuracy. Finally, our Hessian-guided variant Fairy2i-H achieves the best average score, indicating that
+Hestia-style curvature-aware scheduling remains beneficial even when the computation graph and quantization codebook are altered by the complex-valued transformation.
+5.4 Ablation Studies
+We conduct targeted ablations to disentangle the effects of (i) quantization granularity (group size) and (ii) Hessian-aware temperature scheduling in
+Hestia.
+Effect of group size.
+We first ablate the quantization granularity by switching from per-tensor to group-wise quantization with group size 128, while keeping the w/o Hessian training schedule.
+As shown in Table 4, using group size 128 yields a small but consistent improvement in average:
+from 0.537 to 0.540 on 1B (+0.56%) and from 0.597 to 0.599 on 3B (+0.34%).
+This suggests that group-wise quantization provides a modest benefit under our training setup, but does not account for the majority of
+Hestia’s gains.
+Effect of Hessian-aware Temperature Scheduling.
+Next, we isolate the contribution of curvature guidance by comparing w/o Hessian against full
+Hestia under the same group size (128).
+On 1B, enabling Hessian-aware temperature scheduling improves the average score from 0.540 to 0.547 (+1.30%), indicating that curvature-driven scheduling is the primary driver of the gain beyond a uniform annealing baseline.
+On 3B, we observe a smaller but still positive improvement from 0.599 to 0.601 (+0.33%), suggesting that the benefit persists at a larger scale, albeit with reduced magnitude in this budget regime.
+5.5 Computational Efficiency Analysis
+We finally assess the computational and memory overhead of
+Hestia relative to standard QAT.
+Since
+Hestia maintains the same model architecture and utilizes element-wise operations for the soft surrogate, the computational and memory consumption during training are virtually identical to standard STE-based QAT.
+The only additional cost stems from the sensitivity estimation via Hutch++ and temperature initialization.
+However, as detailed in Sec. 5.1, these are one-time offline pre-computations performed on a small calibration subset.
+Empirically, this pre-processing incurs negligible wall-clock time compared to the full training cycle (10B tokens).
+Consequently,
+Hestia achieves the reported performance gains with almost zero marginal cost over standard QAT baselines.
+6 Conclusion
+We introduce
+Hestia, a differentiable QAT framework that resolves the optimization bottlenecks of 1.58-bit LLMs. By replacing the rigid Straight-Through Estimator (STE) with a temperature-controlled Softmax relaxation,
+Hestia restores exact gradient fidelity and eliminates the dead zone problem. Furthermore, our Hessian-aware temperature scheduler adaptively modulates the discretization rate based on structural sensitivity, ensuring stable convergence for critical layers. Empirical results of LLaMA-3.2 demonstrate that
+Hestia significantly narrows the gap between full-precision and extremely low-bit models, proving that prioritizing smooth gradient flow through continuous relaxation is essential for recovering the representational capacity of extremely low-bit architectures.
+References
+Achiam et al. (2023)
+Achiam, J., Adler, S., Agarwal, S., Ahmad, L., Akkaya, I., Aleman, F. L., Almeida, D., Altenschmidt, J., Altman, S., Anadkat, S., et al.
+Gpt-4 technical report.
+arXiv preprint arXiv:2303.08774, 2023.
+Bengio et al. (2013)
+Bengio, Y., Léonard, N., and Courville, A.
+Estimating or propagating gradients through stochastic neurons for conditional computation.
+arXiv preprint arXiv:1308.3432, 2013.
+Bisk et al. (2020)
+Bisk, Y., Zellers, R., Gao, J., Choi, Y., et al.
+Piqa: Reasoning about physical commonsense in natural language.
+In Proceedings of the AAAI conference on artificial intelligence, volume 34, pp.  7432–7439, 2020.
+Chee et al. (2023)
+Chee, J., Cai, Y., Kuleshov, V., and De Sa, C. M.
+Quip: 2-bit quantization of large language models with guarantees.
+Advances in Neural Information Processing Systems, 36:4396–4429, 2023.
+Chen et al. (2024)
+Chen, T., Li, Z., Xu, W., Zhu, Z., Li, D., Tian, L., Barsoum, E., Wang, P., and Cheng, J.
+Ternaryllm: Ternarized large language model.
+arXiv preprint arXiv:2406.07177, 2024.
+Clark et al. (2018)
+Clark, P., Cowhey, I., Etzioni, O., Khot, T., Sabharwal, A., Schoenick, C., and Tafjord, O.
+Think you have solved question answering? try arc, the ai2 reasoning challenge, 2018.
+URL https://arxiv.org/abs/1803.05457.
+Dong et al. (2019)
+Dong, Z. et al.
+Hawq: Hessian aware quantization of neural networks with mixed-precision.
+ICCV, 2019.
+Dremov et al. (2025)
+Dremov, A., Grangier, D., Katharopoulos, A., and Hannun, A.
+Compute-optimal quantization-aware training.
+arXiv preprint arXiv:2509.22935, 2025.
+Apple Machine Learning Research.
+Dubey et al. (2024)
+Dubey, A., Jauhri, A., Pandey, A., Kadian, A., Al-Dahle, A., Letman, A., Mathur, A., Schelten, A., Yang, A., Fan, A., et al.
+The llama 3 herd of models.
+arXiv e-prints, pp.  arXiv–2407, 2024.
+Esser et al. (2020)
+Esser, S. K., McKinstry, J. L., Bablani, D., Appuswamy, R., and Modha, D. S.
+Learned step size quantization, 2020.
+URL https://arxiv.org/abs/1902.08153.
+Gao et al. (2024)
+Gao, L., Tow, J., Abbasi, B., Biderman, S., Black, S., DiPofi, A., Foster, C., Golding, L., Hsu, J., Le Noac’h, A., Li, H., McDonell, K., Muennighoff, N., Ociepa, C., Phang, J., Reynolds, L., Schoelkopf, H., Skowron, A., Sutawika, L., Tang, E., Thite, A., Wang, B., Wang, K., and Zou, A.
+The language model evaluation harness, 07 2024.
+URL https://zenodo.org/records/12608602.
+Gong et al. (2019)
+Gong, R. et al.
+Differentiable soft quantization: Bridging full-precision and low-bit neural networks.
+In ICCV, 2019.
+Guo et al. (2025)
+Guo, D., Yang, D., Zhang, H., Song, J., Wang, P., Zhu, Q., Xu, R., Zhang, R., Ma, S., Bi, X., et al.
+Deepseek-r1 incentivizes reasoning in llms through reinforcement learning.
+Nature, 645(8081):633–638, 2025.
+Huang et al. (2025a)
+Huang, H., Wu, D., Cen, R., Yu, G., Li, Z., Liu, K., Zhu, J., Chen, P., Liu, X., and Wu, D.
+Tequila: Trapping-free ternary quantization for large language models.
+arXiv preprint arXiv:2509.23809, 2025a.
+Huang et al. (2025b)
+Huang, H., Wu, D., Cen, R., et al.
+Tequila: Trapping-free ternary quantization for large language models.
+arXiv preprint arXiv:2509.23809, 2025b.
+Tencent & CityU HK.
+Kaushal et al. (2024)
+Kaushal, A., Vaidhya, T., Mondal, A. K., Pandey, T., Bhagat, A., and Rish, I.
+Spectra: Surprising effectiveness of pretraining ternary language models at scale.
+arXiv preprint arXiv:2407.12327, 2024.
+Kim et al. (2021)
+Kim, D. et al.
+Distance-aware quantization.
+In ICCV, 2021.
+Kwun et al. (2025)
+Kwun, M., Morwani, D., Su, C. H., Gil, S., Anand, N., and Kakade, S.
+Lotion: Smoothing the optimization landscape for quantized training, 2025.
+URL https://arxiv.org/abs/2510.08757.
+Li et al. (2016)
+Li, F., Liu, B., Wang, X., Zhang, B., and Yan, J.
+Ternary weight networks.
+arXiv preprint arXiv:1605.04711, 2016.
+Lin et al. (2023)
+Lin, J., Tang, J., Tang, H., Yang, S., Chen, W.-M., Wang, W.-C., Xiao, G., Dang, X., Gan, C., and Han, S.
+Awq: Activation-aware weight quantization for llm compression and acceleration.
+arXiv preprint arXiv:2306.00978, 2023.
+Liu et al. (2023)
+Liu, Z., Oguz, B., Zhao, C., Chang, E., Stock, P., Mehdad, Y., Shi, Y., Krishnamoorthi, R., and Chandra, V.
+Llm-qat: Data-free quantization aware training for large language models.
+arXiv preprint arXiv:2305.17888, 2023.
+Liu et al. (2025a)
+Liu, Z., Zhao, C., Huang, H., Chen, S., Zhang, J., Zhao, J., Roy, S., Jin, L., Xiong, Y., Shi, Y., et al.
+Paretoq: Scaling laws in extremely low-bit llm quantization.
+arXiv preprint arXiv:2502.02631, 2025a.
+Liu et al. (2025b)
+Liu, Z. et al.
+Paretoq: Improving scaling laws in extremely low-bit llm quantization.
+arXiv preprint arXiv:2502.02631, 2025b.
+Meta AI.
+Ma et al. (2024a)
+Ma, S., Wang, H., Ma, L., Wang, L., Wang, W., Huang, S., Dong, L., Wang, R., Xue, J., and Wei, F.
+The era of 1-bit llms: All large language models are in 1.58 bits.
+arXiv preprint arXiv:2402.17764, 1(4), 2024a.
+Ma et al. (2024b)
+Ma, S. et al.
+The era of 1-bit llms: All large language models are in 1.58 bits.
+arXiv preprint arXiv:2402.17764, 2024b.
+Malinovskii et al. (2024)
+Malinovskii, V., Mazur, D., Ilin, I., Kuznedelev, D., Burlachenko, K., Yi, K., Alistarh, D., and Richtárik, P.
+Pv-tuning: Beyond straight-through estimation for extreme llm compression.
+ArXiv, abs/2405.14852, 2024.
+Meyer et al. (2021)
+Meyer, R. A., Musco, C., Musco, C., and Woodruff, D. P.
+Hutch++: Optimal stochastic trace estimation.
+In Proceedings of the 2021 ACM-SIAM Symposium on Simplicity in Algorithms (SOSA), pp.  142–155. SIAM, 2021.
+doi: 10.1137/1.9781611976496.16.
+Sakaguchi et al. (2021)
+Sakaguchi, K., Bras, R. L., Bhagavatula, C., and Choi, Y.
+Winogrande: An adversarial winograd schema challenge at scale.
+Communications of the ACM, 64(9):99–106, 2021.
+Tabesh et al. (2025)
+Tabesh, S., Safaryan, M., and Alistarh, D.
+Cage: Curvature-aware gradient estimation for accurate quantization-aware training, 2025.
+URL https://arxiv.org/abs/2510.18784.
+Tseng et al. (2024a)
+Tseng, A., Chee, J., Sun, Q., Kuleshov, V., and De Sa, C.
+Quip#: Even better llm quantization with hadamard incoherence and lattice codebooks.
+arXiv preprint arXiv:2402.04396, 2024a.
+Tseng et al. (2024b)
+Tseng, A. et al.
+Quip#: Geometric hessians for low-bit diffusion and language models.
+ICLR, 2024b.
+Wang et al. (2025a)
+Wang, F., Tan, X., Huang, B., Zhang, Y., Wang, G., Cong, P., and Yang, T.
+Fairy2i: Training complex llms from real llms with all parameters in {±1,±i}\{\pm 1,\pm i\}, 2025a.
+URL https://arxiv.org/abs/2512.02901.
+Wang et al. (2025b)
+Wang, F., Wang, G., Zhang, Y., Wang, S., Li, W., Huang, B., Chen, S., Jiang, Z., Xu, R., and Yang, T.
+ifairy: the first 2-bit complex llm with all parameters in {±1,±i}\{\pm 1,\pm i\}, 2025b.
+URL https://arxiv.org/abs/2508.05571.
+Wang et al. (2025c)
+Wang, R., Gong, Y., Cheng, P., et al.
+Optimizing large language model training using fp4 quantization.
+arXiv preprint arXiv:2501.17116, 2025c.
+Microsoft Research.
+Wang et al. (2025d)
+Wang, Y., Fu, Z., Cai, J., Tang, P., Lyu, H., Fang, Y., Zheng, Z., Zhou, J., Zeng, G., Xiao, C., et al.
+Ultra-fineweb: Efficient data filtering and verification for high-quality llm training data.
+arXiv preprint arXiv:2505.05427, 2025d.
+Xiao et al. (2023)
+Xiao, G., Lin, J., Seznec, M., Wu, H., Demouth, J., and Han, S.
+Smoothquant: Accurate and efficient post-training quantization for large language models.
+In International conference on machine learning, pp.  38087–38099. PMLR, 2023.
+Yamazaki et al. (2024)
+Yamazaki, M., Honda, T., Tsuruoka, Y., Zhao, K., Tabaru, T., and Kobayashi, K.
+Direct quantized training of language models with stochastic rounding, 2024.
+URL https://arxiv.org/abs/2412.04787.
+Yang et al. (2025)
+Yang, A., Li, A., Yang, B., Zhang, B., Hui, B., Zheng, B., Yu, B., Gao, C., Huang, C., Lv, C., et al.
+Qwen3 technical report.
+arXiv preprint arXiv:2505.09388, 2025.
+Zellers et al. (2019)
+Zellers, R., Holtzman, A., Bisk, Y., Farhadi, A., and Choi, Y.
+Hellaswag: Can a machine really finish your sentence?
+arXiv preprint arXiv:1905.07830, 2019.
+Appendix A Proofs for Sec. 4
+A.1 Proof of Lemma 4.1
+Proof.
+Recall πτ​(q∣w)\pi_{\tau}(q\mid w) in Eq. (7) and ℋ⁡(w,τ)\mathcal{H}(w;\tau) in Eq. (8). Throughout, we treat γ\gamma as a constant during differentiation as in Sec. 3.1. We prove that
+∂ℋ⁡(w,τ)∂w=2τ​𝕍τ​(w),\frac{\partial\mathcal{H}(w;\tau)}{\partial w}=\frac{2}{\tau}\,\mathbb{V}_{\tau}(w),
+where μτ​(w)\mu_{\tau}(w) and 𝕍τ​(w)\mathbb{V}_{\tau}(w) are defined in Eqs. (16)–(17).
+Step 1: Reparameterization.
+Let z≜w/γz\triangleq w/\gamma. Since γ\gamma is constant,
+∂z∂w=1γ.\frac{\partial z}{\partial w}=\frac{1}{\gamma}.
+(21)
+Define aq​(z)≜exp⁡(−(z−q)2τ)a_{q}(z)\triangleq\exp\!\left(-\frac{(z-q)^{2}}{\tau}\right) and Z⁡(z)≜∑k∈𝒬ak​(z)Z(z)\triangleq\sum_{k\in\mathcal{Q}}a_{k}(z).
+Then πτ​(q∣w)=πτ​(q∣z)=aq​(z)/Z⁡(z)\pi_{\tau}(q\mid w)=\pi_{\tau}(q\mid z)=a_{q}(z)/Z(z).
+Step 2: Derivative of πτ​(q∣z)\pi_{\tau}(q\mid z).
+Differentiate aq​(z)a_{q}(z):
+∂aq​(z)∂z=−2​(z−q)τ​aq​(z).\frac{\partial a_{q}(z)}{\partial z}=-\frac{2(z-q)}{\tau}\,a_{q}(z).
+(22)
+Hence
+∂Z⁡(z)∂z=∑k∈𝒬∂ak​(z)∂z=−2τ∑k∈𝒬(z−k)ak(z).\frac{\partial Z(z)}{\partial z}=\sum_{k\in\mathcal{Q}}\frac{\partial a_{k}(z)}{\partial z}=-\frac{2}{\tau}\sum_{k\in\mathcal{Q}}(z-k)\,a_{k}(z).
+(23)
+Applying the quotient rule to πτ​(q∣z)=aq​(z)/Z⁡(z)\pi_{\tau}(q\mid z)=a_{q}(z)/Z(z) gives
+∂∂z​πτ​(q∣z)\displaystyle\frac{\partial}{\partial z}\pi_{\tau}(q\mid z)
+=(∂zaq)​Z−aq​(∂zZ)Z2\displaystyle=\frac{(\partial_{z}a_{q})Z-a_{q}(\partial_{z}Z)}{Z^{2}}
+=−2τ​πτ​(q∣z)​(z−q)+2τ​πτ​(q∣z)​∑k∈𝒬(z−k)​πτ​(k∣z).\displaystyle=-\frac{2}{\tau}\pi_{\tau}(q\mid z)(z-q)+\frac{2}{\tau}\pi_{\tau}(q\mid z)\sum_{k\in\mathcal{Q}}(z-k)\pi_{\tau}(k\mid z).
+(24)
+Since ∑kπτ​(k∣z)=1\sum_{k}\pi_{\tau}(k\mid z)=1 and μτ​(w)=∑kk​πτ​(k∣w)=∑kk​πτ​(k∣z)\mu_{\tau}(w)=\sum_{k}k\pi_{\tau}(k\mid w)=\sum_{k}k\pi_{\tau}(k\mid z),
+∑k∈𝒬(z−k)​πτ​(k∣z)=z−μτ​(w).\sum_{k\in\mathcal{Q}}(z-k)\pi_{\tau}(k\mid z)=z-\mu_{\tau}(w).
+Substituting into Eq. (24) yields
+∂∂z​πτ​(q∣z)=2τ​πτ​(q∣z)​(q−μτ​(w)).\frac{\partial}{\partial z}\pi_{\tau}(q\mid z)=\frac{2}{\tau}\pi_{\tau}(q\mid z)\bigl(q-\mu_{\tau}(w)\bigr).
+(25)
+Step 3: Derivative of μτ​(w)\mu_{\tau}(w).
+By Eq. (16), μτ​(w)=∑q∈𝒬q​πτ​(q∣z)\mu_{\tau}(w)=\sum_{q\in\mathcal{Q}}q\,\pi_{\tau}(q\mid z), hence
+∂μτ​(w)∂z\displaystyle\frac{\partial\mu_{\tau}(w)}{\partial z}
+=∑q∈𝒬q​∂∂z​πτ​(q∣z)\displaystyle=\sum_{q\in\mathcal{Q}}q\,\frac{\partial}{\partial z}\pi_{\tau}(q\mid z)
+=∑qq⋅2τ​πτ​(q∣z)​(q−μτ​(w))\displaystyle=\sum_{q}q\cdot\frac{2}{\tau}\pi_{\tau}(q\mid z)\bigl(q-\mu_{\tau}(w)\bigr)
+=2τ​(∑qq2​πτ​(q∣z)−μτ​(w)​∑qq​πτ​(q∣z))\displaystyle=\frac{2}{\tau}\left(\sum_{q}q^{2}\pi_{\tau}(q\mid z)-\mu_{\tau}(w)\sum_{q}q\pi_{\tau}(q\mid z)\right)
+=2τ​(∑qq2​πτ​(q∣w)−μτ​(w)2)=2τ​𝕍τ​(w),\displaystyle=\frac{2}{\tau}\left(\sum_{q}q^{2}\pi_{\tau}(q\mid w)-\mu_{\tau}(w)^{2}\right)=\frac{2}{\tau}\,\mathbb{V}_{\tau}(w),
+(26)
+where the last equality uses Eq. (17).
+Step 4: Conclude ∂wℋ⁡(w,τ)\partial_{w}\mathcal{H}(w;\tau).
+Since ℋ⁡(w,τ)=γ​μτ​(w)\mathcal{H}(w;\tau)=\gamma\,\mu_{\tau}(w) in Eq. (8) and γ\gamma is constant,
+∂ℋ⁡(w,τ)∂w\displaystyle\frac{\partial\mathcal{H}(w;\tau)}{\partial w}
+=γ​∂μτ​(w)∂w=γ​∂μτ​(w)∂z⋅∂z∂w\displaystyle=\gamma\frac{\partial\mu_{\tau}(w)}{\partial w}=\gamma\frac{\partial\mu_{\tau}(w)}{\partial z}\cdot\frac{\partial z}{\partial w}
+=γ⋅2τ​𝕍τ​(w)⋅1γ=2τ​𝕍τ​(w),\displaystyle=\gamma\cdot\frac{2}{\tau}\mathbb{V}_{\tau}(w)\cdot\frac{1}{\gamma}=\frac{2}{\tau}\,\mathbb{V}_{\tau}(w),
+(27)
+where we used Eq. (21) and Eq. (26). This proves Lemma 4.1.
+∎
+A.2 Proof of Lemma 4.2
+Proof.
+Recall ℋ⁡(w,τ)\mathcal{H}(w;\tau) in Eq. (8) and the hard quantizer Q⁡(w)Q(w) in Eq. (2), with boundaries ℬ={−γ/2,+γ/2}\mathcal{B}=\{-\gamma/2,+\gamma/2\} in Eq. (5). We prove that, as τ→0+\tau\to 0^{+},
+∂ℋ⁡(w,τ)∂w→𝒟′γ​∑b∈ℬδ⁡(w−b).\frac{\partial\mathcal{H}(w;\tau)}{\partial w}\;\xrightarrow{\ \mathcal{D}^{\prime}\ }\;\gamma\sum_{b\in\mathcal{B}}\delta(w-b).
+Step 1: Piecewise form of Q⁡(w)Q(w).
+From Eq. (2), for scalar ww let z=w/γz=w/\gamma. Then
+Q⁡(w)=γ⋅Clip​(Round​(z),−1,+1)Q(w)=\gamma\cdot\texttt{Clip}(\texttt{Round}(z),-1,+1), which implies
+Q⁡(w)={−γ,w<−γ/2,0,−γ/2<w<γ/2,+γ,w>γ/2.Q(w)=\begin{cases}-\gamma,&w<-\gamma/2,\\
+0,&-\gamma/2<w<\gamma/2,\\
++\gamma,&w>\gamma/2.\end{cases}
+(28)
+Any additional rounding transitions (e.g., at |z|=1.5|z|=1.5) do not change the clipped output and hence do not introduce discontinuities.
+Step 2: Pointwise limit ℋ⁡(w,τ)→Q⁡(w)\mathcal{H}(w;\tau)\to Q(w) for w∉ℬw\notin\mathcal{B}.
+Let z=w/γz=w/\gamma and define dq​(z)≜(z−q)2d_{q}(z)\triangleq(z-q)^{2} for q∈𝒬q\in\mathcal{Q}.
+If z∉{−12,+12}z\notin\{-\tfrac{1}{2},+\tfrac{1}{2}\} (equivalently w∉ℬw\notin\mathcal{B}), the minimizer
+q⋆​(z)∈arg⁡minq∈𝒬​dq​(z)q^{\star}(z)\in\arg\min_{q\in\mathcal{Q}}d_{q}(z) is unique.
+For any q≠q⋆​(z)q\neq q^{\star}(z) define Δq​(z)≜dq​(z)−dq⋆​(z)​(z)>0\Delta_{q}(z)\triangleq d_{q}(z)-d_{q^{\star}(z)}(z)>0.
+Using Eq. (7),
+πτ​(q∣w)πτ​(q⋆​(z)∣w)=exp⁡(−Δq​(z)τ)→τ→0+ 0.\frac{\pi_{\tau}(q\mid w)}{\pi_{\tau}(q^{\star}(z)\mid w)}=\exp\!\left(-\frac{\Delta_{q}(z)}{\tau}\right)\;\xrightarrow[\tau\to 0^{+}]{}\;0.
+(29)
+Since ∑q∈𝒬πτ​(q∣w)=1\sum_{q\in\mathcal{Q}}\pi_{\tau}(q\mid w)=1, Eq. (29) implies
+πτ​(q⋆​(z)∣w)→1\pi_{\tau}(q^{\star}(z)\mid w)\to 1 and πτ​(q∣w)→0\pi_{\tau}(q\mid w)\to 0 for all q≠q⋆​(z)q\neq q^{\star}(z).
+Therefore, for all w∉ℬw\notin\mathcal{B},
+limτ→0+ℋ⁡(w,τ)=γ​∑q∈𝒬q​limτ→0+πτ​(q∣w)=γ​q⋆​(w/γ).\lim_{\tau\to 0^{+}}\mathcal{H}(w;\tau)=\gamma\sum_{q\in\mathcal{Q}}q\,\lim_{\tau\to 0^{+}}\pi_{\tau}(q\mid w)=\gamma\,q^{\star}(w/\gamma).
+(30)
+Comparing Eq. (30) with Eq. (28) yields
+limτ→0+ℋ⁡(w,τ)=Q⁡(w)\lim_{\tau\to 0^{+}}\mathcal{H}(w;\tau)=Q(w) for all w≠±γ/2w\neq\pm\gamma/2, hence the convergence holds almost everywhere:
+ℋ⁡(w,τ)→τ→0+Q⁡(w)for a.e. ​w∈ℝ.\mathcal{H}(w;\tau)\xrightarrow[\tau\to 0^{+}]{}Q(w)\quad\text{for a.e. }w\in\mathbb{R}.
+(31)
+Step 3: Distributional convergence of derivatives.
+Let φ∈Cc∞​(ℝ)\varphi\in C_{c}^{\infty}(\mathbb{R}) be any test function. For each τ>0\tau>0, ℋ⁡(⋅,τ)\mathcal{H}(\cdot;\tau) is smooth, thus
+⟨∂ℋ⁡(⋅,τ)∂w,φ⟩=−⟨ℋ(⋅;τ),φ′⟩=−∫ℝℋ(w;τ)φ′(w)dw.\left\langle\frac{\partial\mathcal{H}(\cdot;\tau)}{\partial w},\varphi\right\rangle=-\left\langle\mathcal{H}(\cdot;\tau),\varphi^{\prime}\right\rangle=-\int_{\mathbb{R}}\mathcal{H}(w;\tau)\,\varphi^{\prime}(w)\,dw.
+(32)
+Since |ℋ⁡(w,τ)|≤γ|\mathcal{H}(w;\tau)|\leq\gamma and φ′\varphi^{\prime} has compact support,
+|ℋ⁡(w,τ)​φ′​(w)|≤γ​|φ′​(w)||\mathcal{H}(w;\tau)\varphi^{\prime}(w)|\leq\gamma|\varphi^{\prime}(w)| with γ​|φ′|∈L1​(ℝ)\gamma|\varphi^{\prime}|\in L^{1}(\mathbb{R}).
+Together with the a.e. convergence in Eq. (31), the dominated convergence theorem yields
+limτ→0+∫ℝℋ⁡(w,τ)​φ′​(w)​𝑑w=∫ℝQ⁡(w)​φ′​(w)​𝑑w.\lim_{\tau\to 0^{+}}\int_{\mathbb{R}}\mathcal{H}(w;\tau)\,\varphi^{\prime}(w)\,dw=\int_{\mathbb{R}}Q(w)\,\varphi^{\prime}(w)\,dw.
+(33)
+Combining Eqs. (32)–(33),
+limτ→0+⟨∂ℋ⁡(⋅,τ)∂w,φ⟩=−∫ℝQ(w)φ′(w)dw.\lim_{\tau\to 0^{+}}\left\langle\frac{\partial\mathcal{H}(\cdot;\tau)}{\partial w},\varphi\right\rangle=-\int_{\mathbb{R}}Q(w)\,\varphi^{\prime}(w)\,dw.
+(34)
+Step 4: Evaluate the limit functional.
+Using the piecewise form in Eq. (28),
+∫ℝQ⁡(w)​φ′​(w)​𝑑w\displaystyle\int_{\mathbb{R}}Q(w)\,\varphi^{\prime}(w)\,dw
+=∫−∞−γ/2(−γ)φ′(w)dw+∫γ/2∞(+γ)φ′(w)dw\displaystyle=\int_{-\infty}^{-\gamma/2}(-\gamma)\,\varphi^{\prime}(w)\,dw+\int_{\gamma/2}^{\infty}(+\gamma)\,\varphi^{\prime}(w)\,dw
+=−γ(φ(−γ/2)−φ(−∞))+γ(φ(∞)−φ(γ/2)).\displaystyle=-\gamma\bigl(\varphi(-\gamma/2)-\varphi(-\infty)\bigr)+\gamma\bigl(\varphi(\infty)-\varphi(\gamma/2)\bigr).
+(35)
+Because φ\varphi has compact support, φ⁡(±∞)=0\varphi(\pm\infty)=0, hence
+∫ℝQ⁡(w)​φ′​(w)​𝑑w=−γ​φ​(−γ2)−γ​φ​(+γ2).\int_{\mathbb{R}}Q(w)\,\varphi^{\prime}(w)\,dw=-\gamma\,\varphi\!\left(-\frac{\gamma}{2}\right)-\gamma\,\varphi\!\left(+\frac{\gamma}{2}\right).
+(36)
+Plugging Eq. (36) into Eq. (34) yields
+limτ→0+⟨∂ℋ⁡(⋅,τ)∂w,φ⟩=γ​φ​(−γ2)+γ​φ​(+γ2)=⟨γ​δ​(w+γ2)+γ​δ​(w−γ2),φ⁡(w)⟩.\lim_{\tau\to 0^{+}}\left\langle\frac{\partial\mathcal{H}(\cdot;\tau)}{\partial w},\varphi\right\rangle=\gamma\,\varphi\!\left(-\frac{\gamma}{2}\right)+\gamma\,\varphi\!\left(+\frac{\gamma}{2}\right)=\left\langle\gamma\delta\!\left(w+\frac{\gamma}{2}\right)+\gamma\delta\!\left(w-\frac{\gamma}{2}\right),\,\varphi(w)\right\rangle.
+Since φ\varphi is arbitrary, we conclude
+∂ℋ⁡(w,τ)∂w→τ→0+γ​∑b∈ℬδ⁡(w−b),\frac{\partial\mathcal{H}(w;\tau)}{\partial w}\;\xrightarrow[\tau\to 0^{+}]{}\;\gamma\sum_{b\in\mathcal{B}}\delta(w-b),
+which is Eq. (20) and completes the proof of Lemma 4.2.
+∎
+Appendix B Implementation Details
+We provide the detailed hyperparameter configurations used for
+Hestia training in Table 5.
+Table 5: Hyperparameter settings for
+Hestia quantization-aware training.
+Hyperparameter
+Value
+General Training Settings
+Global Batch Size
+256
+Optimizer
+AdamW
+Learning Rate
+1.5e-3
+LR Scheduler
+WSD
+Weight Decay
+0.1
+Hestia Specifics
+Pressure Ratio ρ\rho
+0.2
+Temperature Scaling Strength α\alpha
+0.4
+Initial Temperature
+0.3
+Temperature Schedule
+Cosine
+Group Size
+128
+Sensitivity Estimation (Hutch++)
+Calibration Batch Size
+50
+Sketch Rank rr
+10
+Hutchinson Samples
+20
+Noise Type
+Rademacher
+Sensitivity Gain κ\kappa
+1.0
+Normalization Epsilon ϵ\epsilon
+1e-8
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

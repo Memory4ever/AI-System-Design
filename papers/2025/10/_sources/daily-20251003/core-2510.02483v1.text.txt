@@ -1,0 +1,603 @@
+Litespark Technical Report: High-Throughput, Energy-Efficient LLM Training Framework
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Experimental Setup
+2.1 Hardware infrastructure
+2.2 Dataset
+2.3 Tokenizer
+2.4 Model architecture
+2.5 Pre-training configuration
+2.5.1 Distributed training setup
+2.5.2 Optimizer settings
+2.5.3 Learning rate schedule
+2.5.4 Evaluation metrics
+3 Results
+3.1 Training throughput acceleration
+3.2 Computational efficiency and resource utilization
+3.3 Energy efficiency
+4 Future directions
+4.1 LLM post-training
+4.2 Foundation models
+4.3 Inference
+5 Conclusion
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2510.02483v1 [cs.LG] 02 Oct 2025
+Litespark Technical Report:
+High-Throughput, Energy-Efficient LLM Training FrameworkThanks: Correspondence to: research@mindbeam.ai
+Nii Osae Osae Dade
+Moinul Hossain Rahat
+Affiliation: Mindbeam AI
+Abstract
+Training Large Language Models (LLMs) is plagued by long training times and massive energy consumption, with modern models requiring months of computation and gigawatt-hours of electricity. In light of these challenges,we introduce Litespark, a novel pre-training framework that addresses these inefficiencies through targeted optimizations to transformer attention and MLP layers. Our approach combines architectural improvements with algorithmic enhancements to maximize Model FLOPs Utilization (MFU) while maintaining compatibility with standard transformer implementations. Comprehensive benchmarking on 3B and 30B parameter Llama models using the SlimPajama-627B dataset demonstrates substantial performance gains: 2x–6x training throughput improvement and 55%−8355\%-83% energy consumption reduction across multi-node H200 GPU clusters. These optimizations are model- and hardware-agnostic, enabling broad applicability across transformer architectures and extending to post-training phases including supervised fine-tuning and direct preference optimization.
+1 Introduction
+The exponential growth of large language models (LLMs) since GPT-3’s release in 2020 [1] has fundamentally transformed the way we use artificial intelligence (AI) in daily lives. Since then, a plethora of LLMs have been developed [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19], demonstrating significant progress towards the pursuit of artificial general intelligence (AGI). However, this progress has come at an unprecedented computational and environmental cost. Training modern LLMs now requires months of compute time, tens of millions of dollars, and energy consumption equivalent to powering thousands of homes for years [20].
+The scale of this challenge has intensified over the years. For example, GPT-3 175B model was trained for 3,640 PF-days [1], which would take around 50−7050-70 days on 1,0001,000 NVIDIA V100 GPUs. Llama 3.1-405B reportedly consumed 30.8430.84 million GPU-hours [21], equivalent to 8080 days of training on 16,00016,000 H100 GPUs. Simultaneously, energy consumption has exploded: from GPT-3’s 1,2871,287 MWh [22] to Llama 3.1-405B’s approximately 21.6 GWh (based on 700 W consumption per H100 GPU) [21]. The environmental impact of model training has increased dramatically. Llama-3.1-405B’s training would leave a carbon footprint reaching 8,930 tonnes CO2eq [21], representing a 16-fold increase over GPT-3 175B’s 552.1 tonnes CO2eq [22].
+Both of these challenges – extended training times and massive energy consumption – stem from the same fundamental issue: inefficient utilization of computational resources during transformer training. Despite consuming full power, GPUs during standard LLM pre-training often operate at suboptimal utilization rates of 30%−50%30\%-50\%. This inefficiency creates a compound problem: training takes longer than necessary while simultaneously wasting energy: organizations face both extended time-to-market delays and inflated energy costs. Running ablations in the model development phase becomes slower and prohibitively costly, effectively limiting the breadth of scientific exploration.
+The suboptimal performance in LLM pre-training stems largely from bottlenecks in the core transformer architecture, particularly in the attention and MLP (Multi-Layer Perceptron) layers that constitute the majority of computational operations. The attention mechanism [23] suffers from inherent limitations in memory bandwidth that prevent GPUs from achieving maximum computational throughput. Traditional attention implementations are memory-bound rather than compute-bound, causing expensive GPU compute units to remain idle while waiting for data transfers [24]. Similarly, standard MLP layers often fail to fully utilize modern GPU capabilities, particularly the specialized Tensor Core units designed for high-throughput operations [25]. These architectural inefficiencies translate directly into wasted energy: every second a GPU operates below capacity represents energy consumed without proportional computational gains.
+Recent research has demonstrated that algorithmic improvements can address both challenges simultaneously. Techniques like FlashAttention achieve 22x–33x training speedup while maximizing GPU utilization [24, 26, 27]. Mixture-of-Experts approaches reduce training time and computational requirements by 4x–7x through sparse activation patterns [28].
+In this technical report, we introduce Litespark, a novel pre-training framework that simultaneously addresses both training time and energy efficiency challenges through targeted optimizations to the transformer architecture’s attention and MLP layers. Our approach focuses on maximizing Model FLOPs Utilization (MFU) while maintaining compatibility with standard transformer implementations. The optimizations occur in two steps.
+•
+Architectural optimization: optimizes the attention and MLP blocks in the transformer architecture.
+•
+Algorithmic optimization: optimizes the forward and backward pass operations to increase FLOPs per GPU.
+Litespark offers 2x–6x enhancement in training throughput, and 55%−8355\%-83% reduction in the energy consumption during the pre-training process. Notably, these optimizations add on top of the performance improvements from known existing techniques like flash-attention, quantization, model pruning etc. Furthermore, the optimizations are model- and hardware-agnostic, and can be incorporated into any model architectures and hardware families including GPUs and ASICs.
+The report is organized as follows. In section 2, we describe the setup for running benchmarking experiments comparing the performance of pre-training models with Litespark vs. Llama baselines. Section 3 showcases the main results in terms of enhanced throughput and energy efficiency. Section 4 points out some future directions of research, and we conclude in section 5.
+2 Experimental Setup
+To evaluate the effectiveness of the Litespark framework, we conducted comprehensive benchmarking experiments comparing our optimized implementation against baseline Llama models across multiple scales and configurations. Our experimental design focuses on measuring both training acceleration and energy efficiency improvements while ensuring fair comparison through identical model architectures, datasets, and training hyperparameters. The evaluation covers scenarios from single-node training to large-scale distributed setups, enabling assessment of how our optimizations perform across the full spectrum of practical deployment scenarios.
+2.1 Hardware infrastructure
+All experiments were conducted on an Amazon SageMaker Hyperpod cluster equipped with NVIDIA H200 GPUs. The H200 represents a recent generation of data center GPUs, featuring 141GB of HBM3e memory and peak theoretical performance of 989 TFLOPS for BF16 operations [29]. Our multi-node distributed training setup utilized high-bandwidth InfiniBand interconnects for intra-node communication between GPUs and AWS Elastic Fabric Adapter (EFA) with NCCL for inter-node communication to minimize communication overhead during parameter synchronization.
+We evaluated scalability across multiple node configurations: 1, 2, 16, 32, and 64 nodes for different model sizes. Each node contained 8 H200 GPUs, enabling evaluation of training performance from single-node (8 GPUs) to large-scale distributed scenarios (512 GPUs for the largest configuration). This range allows us to assess both the baseline efficiency improvements and how our optimizations scale with increasing distributed training complexity.
+2.2 Dataset
+Training was performed on the SlimPajama-627B dataset [30], a refined version of the RedPajama dataset [31], containing 627 billion tokens of high-quality text data. SlimPajama consists of web pages, books, academic papers, code repositories, and reference materials, representing a diverse and representative sample for general-purpose language model pre-training. The dataset has been preprocessed to remove low-quality content and deduplicated to improve training efficiency. This dataset choice allows for direct comparison with other published LLM training results while ensuring sufficient scale to evaluate performance across extended training runs.
+2.3 Tokenizer
+The training dataset was pre-processed utilizing
+a SentencePiece-based tokenizer [32] with a vocabulary size of 32,000 tokens. This tokenizer choice ensures consistency with the Llama model family and enables direct performance comparisons without introducing tokenization-related variations. The tokenizer employs byte-pair encoding (BPE) [33] to handle out-of-vocabulary words and maintains compatibility with the original Llama tokenization scheme, ensuring that our optimizations can be fairly evaluated against baseline implementations using identical text preprocessing.
+2.4 Model architecture
+We have chosen two model configurations based on the Llama architecture to enable direct performance comparison, as shown in Table 1.
+Model size
+n_layers
+hidden_size
+n_heads
+kv_heads
+intermediate_size
+3B
+28
+2,048
+16
+2
+11,008
+30B
+60
+6,656
+64
+64
+17,920
+Table 1: Model configuration
+Both models utilize standard Llama architectural components including RMSNorm for layer normalization [34], SwiGLU activation functions [35] in the MLP layers, and Rotary Positional Embeddings (RoPE) for position encoding [36]. The 3B model employs grouped query attention (GQA) [37] to reduce memory overhead, while the 30B model uses standard multi-head attention. These configurations were chosen to represent both smaller models suitable for research experimentation and larger models representative of production deployments.
+2.5 Pre-training configuration
+2.5.1 Distributed training setup
+We employed a combination of data parallelism and tensor parallelism to distribute training across multiple nodes and GPUs [38, 39]. Data parallelism replicates the model across different GPU groups, while tensor parallelism splits individual layers across GPUs to handle models that exceed single-GPU memory capacity.
+2.5.2 Optimizer settings
+All models were trained in BF16 mixed precision using the AdamW optimizer [40] with β1=0.90\beta_{1}=0.90, β2=0.95\beta_{2}=0.95, weight decay of 0.01, and gradient clipping threshold of 1.0. We used ZeRO Stage 1 optimization [41] to distribute optimizer states across GPUs while maintaining model replicas.
+2.5.3 Learning rate schedule
+Training employed a cosine learning rate scheduler with maximum learning rate of 1.2×10−31.2\times 10^{-3}, minimum learning rate of 1.0×10−51.0\times 10^{-5}, and 2,0002,000 warmup steps. The global batch size was set to 256256 across all configurations, with micro-batch sizes adjusted based on memory constraints and node configuration.
+Hyperparameter
+Value
+Optimizer
+AdamW (β1=0.90\beta_{1}=0.90, β2=0.95\beta_{2}=0.95)
+ZeRO stage
+1
+Learning rate scheduler
+Cosine
+Max learning rate
+1.2×10−31.2\times 10^{-3}
+Min learning rate
+1.0×10−51.0\times 10^{-5}
+Warmup steps
+2,0002,000
+Batch size
+256256
+Weight decay
+0.010.01
+Gradient clipping threshold
+1.01.0
+Table 2: Pre-training hyperparameters
+2.5.4 Evaluation metrics
+We measured training throughput (tokens per second), computational efficiency (TFLOPs per GPU), training time per iteration, Model FLOPs Utilization (MFU), and total energy consumption in MWh per 500 billion tokens processed. Energy measurements were calculated by integrating GPU power consumption over training time as reported by Wandb telemetry [42]. Values represent direct GPU energy consumption during training.
+3 Results
+3.1 Training throughput acceleration
+Litespark delivers substantial reductions in training time across all configurations, directly addressing the time-to-market challenges facing LLM development. For the 3B parameter model, as shown in Table 3, our framework processes 2x–4x more tokens per second than baseline Llama implementations, translating to proportional reductions in total training time. For example, with 8 H200 GPUs, completing a fixed amount of training that would take Llama 100 hours would require only 50 hours with Litespark.
+The time savings become more pronounced at scale, where distributed training traditionally suffers from communication bottlenecks. With 128 GPUs, Litespark’s 3.813.81x speedup for the 3B model means training jobs that previously required weeks can be completed in days. For the 30B model, as shown in Table 4, the 4.73x–6.36x acceleration transforms month-long training cycles into week-long iterations, fundamentally changing the pace of model development and experimentation.
+These training time reductions have immediate strategic value beyond energy considerations. Faster training enables rapid iteration during model development, allowing researchers to test more architectural variations and hyperparameter configurations within fixed time budgets. Organizations can respond more quickly to market demands, reduce time-to-deployment for new models, and maintain competitive advantages through faster innovation cycles. The ability to complete training in days rather than weeks also reduces the risk of infrastructure failures derailing long-running experiments.
+Num
+Model
+tokens/sec
+TFLOPs/
+time/
+MFU
+Speedup
+GPUs
+GPU
+iteration (sec)
+(%)
+8
+Litespark
+439,644.81
+888.06
+2.38
+89.35
+2.00
+Llama
+218,967.60
+442.30
+6.44
+44.70
+16
+Litespark
+862,899.88
+871.51
+1.40
+88.65
+2.17
+Llama
+396,768.52
+400.73
+5.49
+40.63
+128
+Litespark
+1,387,342.21
+175.15
+2.23
+17.66
+3.81
+Llama
+364,328.66
+45.99
+7.19
+4.67
+256
+Litespark
+964,981.24
+61.58
+2.43
+6.29
+2.25
+Llama
+428,056.25
+27.31
+7.63
+2.73
+Table 3: Pre-training throughput of 3B models on H200s
+Num
+Model
+tokens/sec
+TFLOPs/
+time/
+MFU
+Speedup
+GPUs
+GPU
+iteration (sec)
+(%)
+256
+Litespark
+471,486.24
+393.25
+2.23
+39.54
+4.73
+Llama
+99,604.57
+83.08
+10.53
+8.43
+512
+Litespark
+508,260.62
+215.78
+2.07
+21.88
+6.36
+Llama
+79,891.47
+33.32
+13.09
+3.38
+Table 4: Pre-training throughput of 30B models on H200s
+Figure 1: Pre-training throughput comparison on H200s
+3.2 Computational efficiency and resource utilization
+The dramatic training time improvements in Litespark stem from enhanced computational efficiency and resource utilization. This is manifest from the Tera-FLOPs per GPU and Model FLOPs Utilization (MFU) reported in Tables 3 and 4. Litespark achieves 89.35% MFU compared to Llama’s 44.70% on training with 8 GPUs, indicating our optimizations successfully extract maximum computational value from available hardware. This high utilization rate means that expensive GPU resources operate at near-peak capacity rather than sitting idle due to architectural bottlenecks.
+At larger scales, Litespark maintains superior efficiency even as the complexity of distributed training increases. With 128 GPUs, Litespark sustains 17.66% MFU while Llama drops to 4.67%, demonstrating that its optimizations address fundamental bottlenecks in multi-node transformer training. For the 30B model at 256 GPUs, Litespark achieves 39.54% MFU compared to Llama’s 8.43% MFU.
+In terms of total computational throughput, as shown in Figure 1, Litespark consistently outperforms the baseline Llama implementation, achieving 2x–6x higher total TFLOPs across all GPU configurations.
+These throughput metrics indicate that our architectural and algorithmic improvements become increasingly valuable for larger models where memory bandwidth limitations traditionally become more severe.
+This consistent high utilization across configurations transforms the economics of GPU usage. By achieving 17%−4017\%-40% MFU compared to Llama’s 3%−83\%-8% MFU in large-scale configurations, Litespark converts previously wasted computational cycles into productive training progress, maximizing return on infrastructure investment.
+3.3 Energy efficiency
+The throughput improvements directly translate into substantial energy savings. For the 3B model, as shown in Table 5, Litespark reduces energy consumption by 55%−7055\%-70% across different GPU configurations. Training 500B tokens requires only 0.79−3.410.79-3.41 MWh with Litespark compared to 1.75−8.011.75-8.01 MWh with baseline Llama. In particular, energy savings increase with scale: while training with only 8 GPUs shows 55% energy reduction, training with 128 GPUs achieves 70% energy savings. Using the standard conversion formula [43],
+CO2​eq (tonnes)\displaystyle\textrm{CO}_{2}\textrm{eq (tonnes)}
+=Energy (MWh)×carbon intensity (kg CO2​eq/kWh)/1000\displaystyle=\textrm{Energy (MWh)}\times\textrm{carbon intensity (kg CO}_{2}\textrm{eq/kWh)}/1000
+with an average US carbon intensity of 0.35 kg CO2eq/kWh [44], these energy savings directly translate into carbon emission reductions. For the 3B model, training 500B tokens produces only 0.28−1.190.28-1.19 tonnes of CO2eq with Litespark versus 0.61−2.800.61-2.80 tonnes with Llama, as shown in Figure 2 (left).
+The 30B model demonstrates even more dramatic gains in energy efficiency, with a 75%−8375\%-83% reduction in energy, as shown in Table 6. Training 500B tokens on 256 GPUs requires 125.35 MWh with Litespark versus 732.08 MWh with Llama yields an 83% reduction representing over 600 MWh in savings. This corresponds to 43.87 tonnes of CO2eq with Litespark as compared to 256.23 tonnes with Llama – a reduction of over 212 tonnes of CO2eq per 500B tokens. At the largest scale (512 GPUs), Litespark consumes 189.47189.47 MWh compared to Llama’s 751.75751.75 MWh, maintaining 75% energy savings even with increased communication overhead. The corresponding carbon emissions are 66.31 tonnes versus 263.11 tonnes, as illustrated in Figure 2 (right).
+These energy savings have immediate practical implications. For a typical 30B model training run requiring several trillion tokens, our framework could reduce energy consumption from gigawatt-hours to hundreds of megawatt-hours, translating to millions of dollars in electricity cost savings and proportional reductions in carbon emissions. At scale, training a 30B model on 10 trillion tokens would result in approximately 1,478 tonnes of CO2eq with Litespark compared to 5,864 tonnes with Llama — a reduction of over 4,300 tonnes of CO2eq, equivalent to the annual emissions of nearly 860 passenger vehicles [45].
+Num
+Model
+Energy (MWh)/
+CO2eq (tonnes)/
+Energy savings
+GPUs
+500B tokens
+500B tokens
+(%)
+8
+Litespark
+0.79
+0.28
+54.86
+Llama
+1.75
+0.61
+16
+Litespark
+0.80
+0.28
+55.56
+Llama
+1.80
+0.63
+128
+Litespark
+1.65
+0.58
+69.67
+Llama
+5.44
+1.90
+256
+Litespark
+3.41
+1.19
+57.43
+Llama
+8.01
+2.80
+Table 5: Energy consumption of 3B models on H200s
+Num
+Model
+Energy (MWh)/
+CO2eq (tonnes)/
+Energy savings
+GPUs
+500B tokens
+500B tokens
+(%)
+256
+Litespark
+125.35
+43.87
+82.88
+Llama
+732.08
+256.23
+512
+Litespark
+189.47
+66.31
+74.80
+Llama
+751.75
+263.11
+Table 6: Energy consumption of 30B models on H200s
+Figure 2: CO2\textrm{CO}_{2} emissions comparison for 3B models (left) and 30B models (right) on H200s
+4 Future directions
+The architectural optimizations demonstrated in the Litespark framework extend far beyond LLM pre-training applications. Here are some of the research directions we are pursing:
+4.1 LLM post-training
+Attention and MLP layer improvements can be applied directly to downstream training phases, including Supervised Fine-Tuning (SFT) and Direct Preference Optimization (DPO) [46], where our preliminary experiments indicate similar performance enhancements to those observed during pre-training. This broad applicability means that efficiency gains compound across the entire model development lifecycle, from initial training through deployment-ready fine-tuning.
+4.2 Foundation models
+Since our optimizations operate at the fundamental transformer block level, they are inherently portable to other transformer-based architectures. The framework can be integrated into multimodal models that utilize encoder-decoder transformers, diffusion models with transformer backbones, and other foundation models based on attention mechanisms. Ongoing experiments show clear promise in throughput enhancement and energy savings in the training of multimodal foundation models. This architectural agnosticism positions Litespark as a foundational optimization that can enhance efficiency across the broader landscape of modern AI systems.
+4.3 Inference
+Early experiments suggest that inference acceleration represents another promising direction. The same architectural improvements that enhance training throughput can potentially reduce inference latency and energy consumption, making deployed models more cost-effective and environmentally sustainable. Given that inference often represents the majority of a model’s lifetime energy consumption, these optimizations could have even greater cumulative impact in production environments than during training phases.
+5 Conclusion
+We have introduced the Litespark framework demonstrating that targeted architectural optimizations can dramatically reduce both training time and energy consumption in LLM pre-training. Addressing bottlenecks in the attention and MLP layers of the transformer architecture, we have brought down the duration of LLM training by 2–6 times and the energy consumption by 55%−8355\%-83% compared to the baseline framework. Most importantly, we have demonstrated that faster training and high energy efficiency can be achieved simultaneously without sacrificing model quality or requiring fundamental changes to the model architecture.
+The improvement in training throughput represents a paradigm shift for LLM development cycles. This reduces training time from months to days and fundamentally changes the way organizations approach model development, experimentation, and deployment. Litespark’s accelerated framework enables rapid iteration, faster response to market needs, and reduced risks associated with long-running computational experiments.
+Our findings suggest that the path to sustainable LLM training lies not merely in hardware scaling, but in algorithmic breakthroughs leading to maximal utilization of existing computational resources. Litespark achieves substantial MFU improvements from 3-8% to 17-40% in large-scale distributed configurations, heralding a new era of energy-efficient training.
+These improvements have implications beyond immediate cost and time savings. Accelerated training democratizes access to large-scale model development by lowering the time barriers that previously constrained experimentation only to institutions with massive computational budgets. At the same time, the 55%−8355\%-83% energy reductions make previously prohibitive training scenarios economically viable, while addressing environmental sustainability concerns.
+Litespark provides a practical pathway toward sustainable and rapid LLM development, where LLM pre-training acceleration and energy efficiency are not just aspirational goals but achieved realities. We are optimistic that these advancements will bring us one step closer to building the next-generation AI infrastructure.
+References
+[1]
+Tom B. Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, Sandhini Agarwal, Ariel Herbert-Voss, Gretchen Krueger, Tom Henighan, Rewon Child, Aditya Ramesh, Daniel M. Ziegler, Jeffrey Wu, Clemens Winter, Christopher Hesse, Mark Chen, Eric Sigler, Mateusz Litwin, Scott Gray, Benjamin Chess, Jack Clark, Christopher Berner, Sam McCandlish, Alec Radford, Ilya Sutskever, and Dario Amodei.
+Language Models are Few-Shot Learners.
+In Hugo Larochelle, Marc’Aurelio Ranzato, Raia Hadsell, Maria-Florina Balcan, and Hsuan-Tien Lin, editors, Advances in Neural Information Processing Systems 33: Annual Conference on Neural Information Processing Systems 2020, NeurIPS 2020, December 6-12, 2020, virtual, 2020.
+URL https://proceedings.neurips.cc/paper/2020/hash/1457c0d6bfcb4967418bfb8ac142f64a-Abstract.html.
+[2]
+Teven Le Scao, Angela Fan, Christopher Akiki, Ellie Pavlick, Suzana Ilic, Daniel Hesslow, Roman Castagné, Alexandra Sasha Luccioni, François Yvon, Matthias Gallé, Jonathan Tow, Alexander M. Rush, Stella Biderman, Albert Webson, Pawan Sasanka Ammanamanchi, Thomas Wang, Benoît Sagot, Niklas Muennighoff, Albert Villanova del Moral, Olatunji Ruwase, Rachel Bawden, Stas Bekman, Angelina McMillan-Major, Iz Beltagy, Huu Nguyen, Lucile Saulnier, Samson Tan, Pedro Ortiz Suarez, Victor Sanh, Hugo Laurençon, Yacine Jernite, Julien Launay, Margaret Mitchell, Colin Raffel, Aaron Gokaslan, Adi Simhi, Aitor Soroa, Alham Fikri Aji, Amit Alfassy, Anna Rogers, Ariel Kreisberg Nitzav, Canwen Xu, Chenghao Mou, Chris Emezue, Christopher Klamm, Colin Leong, Daniel van Strien, David Ifeoluwa Adelani, and et al.
+BLOOM: A 176b-parameter open-access multilingual language model.
+CoRR, abs/2211.05100, 2022.
+doi: 10.48550/ARXIV.2211.05100.
+URL https://doi.org/10.48550/arXiv.2211.05100.
+[3]
+Hugo Touvron, Thibaut Lavril, Gautier Izacard, Xavier Martinet, Marie-Anne Lachaux, Timothée Lacroix, Baptiste Rozière, Naman Goyal, Eric Hambro, Faisal Azhar, Aurélien Rodriguez, Armand Joulin, Edouard Grave, and Guillaume Lample.
+Llama: Open and efficient foundation language models.
+CoRR, abs/2302.13971, 2023a.
+doi: 10.48550/ARXIV.2302.13971.
+URL https://doi.org/10.48550/arXiv.2302.13971.
+[4]
+Anthropic.
+Introducing Claude, 2023a.
+URL https://www.anthropic.com/index/introducing-claude.
+[5]
+OpenAI.
+GPT-4 technical report.
+CoRR, abs/2303.08774, 2023.
+doi: 10.48550/ARXIV.2303.08774.
+URL https://doi.org/10.48550/arXiv.2303.08774.
+[6]
+Rohan Anil, Andrew M. Dai, Orhan Firat, Melvin Johnson, Dmitry Lepikhin, Alexandre Passos, Siamak Shakeri, Emanuel Taropa, Paige Bailey, Zhifeng Chen, Eric Chu, Jonathan H. Clark, Laurent El Shafey, Yanping Huang, Kathy Meier-Hellstern, Gaurav Mishra, Erica Moreira, Mark Omernick, Kevin Robinson, Sebastian Ruder, Yi Tay, Kefan Xiao, Yuanzhong Xu, Yujing Zhang, Gustavo Hernández Ábrego, Junwhan Ahn, Jacob Austin, Paul Barham, Jan A. Botha, James Bradbury, Siddhartha Brahma, Kevin Brooks, Michele Catasta, Yong Cheng, Colin Cherry, Christopher A. Choquette-Choo, Aakanksha Chowdhery, Clément Crepy, Shachi Dave, Mostafa Dehghani, Sunipa Dev, Jacob Devlin, Mark Díaz, Nan Du, Ethan Dyer, Vladimir Feinberg, Fangxiaoyu Feng, Vlad Fienber, Markus Freitag, Xavier Garcia, Sebastian Gehrmann, Lucas Gonzalez, and et al.
+Palm 2 technical report.
+CoRR, abs/2305.10403, 2023a.
+doi: 10.48550/ARXIV.2305.10403.
+URL https://doi.org/10.48550/arXiv.2305.10403.
+[7]
+Hugo Touvron, Louis Martin, Kevin Stone, Peter Albert, Amjad Almahairi, Yasmine Babaei, Nikolay Bashlykov, Soumya Batra, Prajjwal Bhargava, Shruti Bhosale, Dan Bikel, Lukas Blecher, Cristian Canton-Ferrer, Moya Chen, Guillem Cucurull, David Esiobu, Jude Fernandes, Jeremy Fu, Wenyin Fu, Brian Fuller, Cynthia Gao, Vedanuj Goswami, Naman Goyal, Anthony Hartshorn, Saghar Hosseini, Rui Hou, Hakan Inan, Marcin Kardas, Viktor Kerkez, Madian Khabsa, Isabel Kloumann, Artem Korenev, Punit Singh Koura, Marie-Anne Lachaux, Thibaut Lavril, Jenya Lee, Diana Liskovich, Yinghai Lu, Yuning Mao, Xavier Martinet, Todor Mihaylov, Pushkar Mishra, Igor Molybog, Yixin Nie, Andrew Poulton, Jeremy Reizenstein, Rashi Rungta, Kalyan Saladi, Alan Schelten, Ruan Silva, Eric Michael Smith, Ranjan Subramanian, Xiaoqing Ellen Tan, Binh Tang, Ross Taylor, Adina Williams, Jian Xiang Kuan, Puxin Xu, Zheng Yan, Iliyan Zarov, Yuchen Zhang, Angela Fan, Melanie Kambadur, Sharan Narang, Aurélien Rodriguez, Robert Stojnic, Sergey Edunov,
+and Thomas Scialom.
+Llama 2: Open foundation and fine-tuned chat models.
+CoRR, abs/2307.09288, 2023b.
+doi: 10.48550/ARXIV.2307.09288.
+URL https://doi.org/10.48550/arXiv.2307.09288.
+[8]
+Anthropic.
+Claude 2.
+Technical report, Anthropic, 2023b.
+URL https://www-files.anthropic.com/production/images/Model-Card-Claude-2.pdf.
+[9]
+Jinze Bai, Shuai Bai, Yunfei Chu, Zeyu Cui, Kai Dang, Xiaodong Deng, Yang Fan, Wenbin Ge, Yu Han, Fei Huang, Binyuan Hui, Luo Ji, Mei Li, Junyang Lin, Runji Lin, Dayiheng Liu, Gao Liu, Chengqiang Lu, Keming Lu, Jianxin Ma, Rui Men, Xingzhang Ren, Xuancheng Ren, Chuanqi Tan, Sinan Tan, Jianhong Tu, Peng Wang, Shijie Wang, Wei Wang, Shengguang Wu, Benfeng Xu, Jin Xu, An Yang, Hao Yang, Jian Yang, Shusheng Yang, Yang Yao, Bowen Yu, Hongyi Yuan, Zheng Yuan, Jianwei Zhang, Xingxuan Zhang, Yichang Zhang, Zhenru Zhang, Chang Zhou, Jingren Zhou, Xiaohuan Zhou, and Tianhang Zhu.
+Qwen technical report.
+CoRR, abs/2309.16609, 2023.
+doi: 10.48550/ARXIV.2309.16609.
+URL https://doi.org/10.48550/arXiv.2309.16609.
+[10]
+Albert Q. Jiang, Alexandre Sablayrolles, Arthur Mensch, Chris Bamford, Devendra Singh Chaplot, Diego de Las Casas, Florian Bressand, Gianna Lengyel, Guillaume Lample, Lucile Saulnier, Lélio Renard Lavaud, Marie-Anne Lachaux, Pierre Stock, Teven Le Scao, Thibaut Lavril, Thomas Wang, Timothée Lacroix, and William El Sayed.
+Mistral 7b.
+CoRR, abs/2310.06825, 2023.
+doi: 10.48550/ARXIV.2310.06825.
+URL https://doi.org/10.48550/arXiv.2310.06825.
+[11]
+Ebtesam Almazrouei, Hamza Alobeidli, Abdulaziz Alshamsi, Alessandro Cappelli, Ruxandra Cojocaru, Mérouane Debbah, Étienne Goffinet, Daniel Hesslow, Julien Launay, Quentin Malartic, Daniele Mazzotta, Badreddine Noune, Baptiste Pannier, and Guilherme Penedo.
+The falcon series of open language models.
+CoRR, abs/2311.16867, 2023.
+doi: 10.48550/ARXIV.2311.16867.
+URL https://doi.org/10.48550/arXiv.2311.16867.
+[12]
+Rohan Anil, Sebastian Borgeaud, Yonghui Wu, Jean-Baptiste Alayrac, Jiahui Yu, Radu Soricut, Johan Schalkwyk, Andrew M. Dai, Anja Hauth, Katie Millican, David Silver, Slav Petrov, Melvin Johnson, Ioannis Antonoglou, Julian Schrittwieser, Amelia Glaese, Jilin Chen, Emily Pitler, Timothy P. Lillicrap, Angeliki Lazaridou, Orhan Firat, James Molloy, Michael Isard, Paul Ronald Barham, Tom Hennigan, Benjamin Lee, Fabio Viola, Malcolm Reynolds, Yuanzhong Xu, Ryan Doherty, Eli Collins, Clemens Meyer, Eliza Rutherford, Erica Moreira, Kareem Ayoub, Megha Goel, George Tucker, Enrique Piqueras, Maxim Krikun, Iain Barr, Nikolay Savinov, Ivo Danihelka, Becca Roelofs, Anaïs White, Anders Andreassen, Tamara von Glehn, Lakshman Yagati, Mehran Kazemi, Lucas Gonzalez, Misha Khalman, Jakub Sygnowski, and et al.
+Gemini: A family of highly capable multimodal models.
+CoRR, abs/2312.11805, 2023b.
+doi: 10.48550/ARXIV.2312.11805.
+URL https://doi.org/10.48550/arXiv.2312.11805.
+[13]
+DeepSeek-AI, Aixin Liu, Bei Feng, Bing Xue, Bingxuan Wang, Bochao Wu, Chengda Lu, Chenggang Zhao, Chengqi Deng, Chenyu Zhang, Chong Ruan, Damai Dai, Daya Guo, Dejian Yang, Deli Chen, Dongjie Ji, Erhang Li, Fangyun Lin, Fucong Dai, Fuli Luo, Guangbo Hao, Guanting Chen, Guowei Li, H. Zhang, Han Bao, Hanwei Xu, Haocheng Wang, Haowei Zhang, Honghui Ding, Huajian Xin, Huazuo Gao, Hui Li, Hui Qu, J. L. Cai, Jian Liang, Jianzhong Guo, Jiaqi Ni, Jiashi Li, Jiawei Wang, Jin Chen, Jingchang Chen, Jingyang Yuan, Junjie Qiu, Junlong Li, Junxiao Song, Kai Dong, Kai Hu, Kaige Gao, Kang Guan, Kexin Huang, Kuai Yu, Lean Wang, Lecong Zhang, Lei Xu, Leyi Xia, Liang Zhao, Litong Wang, Liyue Zhang, Meng Li, Miaojun Wang, Mingchuan Zhang, Minghua Zhang, Minghui Tang, Mingming Li, Ning Tian, Panpan Huang, Peiyi Wang, Peng Zhang, Qiancheng Wang, Qihao Zhu, Qinyu Chen, Qiushi Du, R. J. Chen, R. L. Jin, Ruiqi Ge, Ruisong Zhang, Ruizhe Pan, Runji Wang, Runxin Xu, Ruoyu Zhang, Ruyi Chen, S. S. Li, Shanghao Lu, Shangyan Zhou,
+Shanhuang Chen, Shaoqing Wu, Shengfeng Ye, Shirong Ma, Shiyu Wang, Shuang Zhou, Shuiping Yu, Shunfeng Zhou, Shuting Pan, T. Wang, Tao Yun, Tian Pei, Tianyu Sun, W. L. Xiao, and Wangding Zeng.
+Deepseek-v3 technical report.
+CoRR, abs/2412.19437, 2024.
+doi: 10.48550/ARXIV.2412.19437.
+URL https://doi.org/10.48550/arXiv.2412.19437.
+[14]
+DeepSeek-AI, Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Ruoyu Zhang, Runxin Xu, Qihao Zhu, Shirong Ma, Peiyi Wang, Xiao Bi, Xiaokang Zhang, Xingkai Yu, Yu Wu, Z. F. Wu, Zhibin Gou, Zhihong Shao, Zhuoshu Li, Ziyi Gao, Aixin Liu, Bing Xue, Bingxuan Wang, Bochao Wu, Bei Feng, Chengda Lu, Chenggang Zhao, Chengqi Deng, Chenyu Zhang, Chong Ruan, Damai Dai, Deli Chen, Dongjie Ji, Erhang Li, Fangyun Lin, Fucong Dai, Fuli Luo, Guangbo Hao, Guanting Chen, Guowei Li, H. Zhang, Han Bao, Hanwei Xu, Haocheng Wang, Honghui Ding, Huajian Xin, Huazuo Gao, Hui Qu, Hui Li, Jianzhong Guo, Jiashi Li, Jiawei Wang, Jingchang Chen, Jingyang Yuan, Junjie Qiu, Junlong Li, J. L. Cai, Jiaqi Ni, Jian Liang, Jin Chen, Kai Dong, Kai Hu, Kaige Gao, Kang Guan, Kexin Huang, Kuai Yu, Lean Wang, Lecong Zhang, Liang Zhao, Litong Wang, Liyue Zhang, Lei Xu, Leyi Xia, Mingchuan Zhang, Minghua Zhang, Minghui Tang, Meng Li, Miaojun Wang, Mingming Li, Ning Tian, Panpan Huang, Peng Zhang, Qiancheng Wang, Qinyu Chen, Qiushi Du, Ruiqi Ge,
+Ruisong Zhang, Ruizhe Pan, Runji Wang, R. J. Chen, R. L. Jin, Ruyi Chen, Shanghao Lu, Shangyan Zhou, Shanhuang Chen, Shengfeng Ye, Shiyu Wang, Shuiping Yu, Shunfeng Zhou, Shuting Pan, and S. S. Li.
+Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning.
+CoRR, abs/2501.12948, 2025.
+doi: 10.48550/ARXIV.2501.12948.
+URL https://doi.org/10.48550/arXiv.2501.12948.
+[15]
+Anthropic.
+Claude 3.7 Sonnet, 2025a.
+URL https://www.anthropic.com/news/claude-3-7-sonnet.
+[16]
+OpenAI.
+Introducing OpenAI o3 and o4-mini, 2025.
+URL https://openai.com/index/introducing-o3-and-o4-mini/.
+[17]
+Meta AI.
+The Llama 4 herd: The beginning of a new era of natively multimodal AI innovation.
+Blog, 2025.
+URL https://ai.meta.com/blog/llama-4-multimodal-intelligence/.
+[18]
+xAI.
+Grok 3 beta — the age of reasoning agents, 2025.
+URL https://x.ai/news/grok-3.
+[19]
+Anthropic.
+Introducing claude sonnet 4.5, 2025b.
+URL https://www.anthropic.com/news/claude-sonnet-4-5.
+[20]
+Alexandra Sasha Luccioni, Sylvain Viguier, and Anne-Laure Ligozat.
+Estimating the carbon footprint of bloom, a 176b parameter language model.
+J. Mach. Learn. Res., 24:253:1–253:15, 2023.
+URL https://jmlr.org/papers/v24/23-0069.html.
+[21]
+NVIDIA and Meta.
+Llama 3.1 405b instruct model card.
+Model documentation, NVIDIA Corporation, 2024.
+URL https://build.nvidia.com/meta/llama-3_1-405b-instruct/modelcard.
+[22]
+David A. Patterson, Joseph Gonzalez, Quoc V. Le, Chen Liang, Lluis-Miquel Munguia, Daniel Rothchild, David R. So, Maud Texier, and Jeff Dean.
+Carbon Emissions and Large Neural Network Training.
+CoRR, abs/2104.10350, 2021.
+URL https://arxiv.org/abs/2104.10350.
+[23]
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, and Illia Polosukhin.
+Attention is All you Need.
+In Isabelle Guyon, Ulrike von Luxburg, Samy Bengio, Hanna M. Wallach, Rob Fergus, S. V. N. Vishwanathan, and Roman Garnett, editors, Advances in Neural Information Processing Systems 30: Annual Conference on Neural Information Processing Systems 2017, December 4-9, 2017, Long Beach, CA, USA, pages 5998–6008, 2017.
+URL https://proceedings.neurips.cc/paper/2017/hash/3f5ee243547dee91fbd053c1c4a845aa-Abstract.html.
+[24]
+Tri Dao, Daniel Y. Fu, Stefano Ermon, Atri Rudra, and Christopher Ré.
+FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness.
+In Sanmi Koyejo, S. Mohamed, A. Agarwal, Danielle Belgrave, K. Cho, and A. Oh, editors, Advances in Neural Information Processing Systems 35: Annual Conference on Neural Information Processing Systems 2022, NeurIPS 2022, New Orleans, LA, USA, November 28 - December 9, 2022, 2022.
+URL http://papers.nips.cc/paper_files/paper/2022/hash/67d57c32e20fd0a7a302cb81d36e40d5-Abstract-Conference.html.
+[25]
+NVIDIA.
+Tips for optimizing GPU performance using Tensor Cores.
+NVIDIA Technical Blog, 2023.
+URL https://developer.nvidia.com/blog/optimizing-gpu-performance-tensor-cores/.
+Accessed: 2025-09-25.
+[26]
+Tri Dao.
+FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning.
+In The Twelfth International Conference on Learning Representations, ICLR 2024, Vienna, Austria, May 7-11, 2024. OpenReview.net, 2024.
+URL https://openreview.net/forum?id=mZn2Xyh9Ec.
+[27]
+Jay Shah, Ganesh Bikshandi, Ying Zhang, Vijay Thakkar, Pradeep Ramani, and Tri Dao.
+FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision.
+In Amir Globersons, Lester Mackey, Danielle Belgrave, Angela Fan, Ulrich Paquet, Jakub M. Tomczak, and Cheng Zhang, editors, Advances in Neural Information Processing Systems 38: Annual Conference on Neural Information Processing Systems 2024, NeurIPS 2024, Vancouver, BC, Canada, December 10 - 15, 2024, 2024.
+URL http://papers.nips.cc/paper_files/paper/2024/hash/7ede97c3e082c6df10a8d6103a2eebd2-Abstract-Conference.html.
+[28]
+William Fedus, Barret Zoph, and Noam Shazeer.
+Switch Transformers: Scaling to Trillion Parameter Models with Simple and Efficient Sparsity.
+J. Mach. Learn. Res., 23:120:1–120:39, 2022.
+URL https://jmlr.org/papers/v23/21-0998.html.
+[29]
+NVIDIA Corporation.
+NVIDIA H200 Tensor Core GPU Specifications, 2024.
+URL https://www.nvidia.com/en-us/data-center/h200/.
+[30]
+Daria Soboleva, Faisal Al-Khateeb, Robert Myers, Jacob R Steeves, Joel Hestness, and Nolan Dey.
+SlimPajama: A 627B token cleaned and deduplicated version of RedPajama.
+https://cerebras.ai/blog/slimpajama-a-627b-token-cleaned-and-deduplicated-version-of-redpajama, 2023.
+URL https://huggingface.co/datasets/cerebras/SlimPajama-627B.
+[31]
+Maurice Weber, Daniel Y. Fu, Quentin Anthony, Yonatan Oren, Shane Adams, Anton Alexandrov, Xiaozhong Lyu, Huu Nguyen, Xiaozhe Yao, Virginia Adams, Ben Athiwaratkun, Rahul Chalamala, Kezhen Chen, Max Ryabinin, Tri Dao, Percy Liang, Christopher Ré, Irina Rish, and Ce Zhang.
+RedPajama: an Open Dataset for Training Large Language Models.
+In Amir Globersons, Lester Mackey, Danielle Belgrave, Angela Fan, Ulrich Paquet, Jakub M. Tomczak, and Cheng Zhang, editors, Advances in Neural Information Processing Systems 38: Annual Conference on Neural Information Processing Systems 2024, NeurIPS 2024, Vancouver, BC, Canada, December 10 - 15, 2024, 2024.
+URL http://papers.nips.cc/paper_files/paper/2024/hash/d34497330b1fd6530f7afd86d0df9f76-Abstract-Datasets_and_Benchmarks_Track.html.
+[32]
+Taku Kudo and John Richardson.
+Sentencepiece: A simple and language independent subword tokenizer and detokenizer for neural text processing.
+In Eduardo Blanco and Wei Lu, editors, Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing, EMNLP 2018: System Demonstrations, Brussels, Belgium, October 31 - November 4, 2018, pages 66–71. Association for Computational Linguistics, 2018.
+doi: 10.18653/V1/D18-2012.
+URL https://doi.org/10.18653/v1/d18-2012.
+[33]
+Philip Gage.
+A new algorithm for data compression.
+C Users J., 12(2):23–38, February 1994.
+ISSN 0898-9788.
+[34]
+Biao Zhang and Rico Sennrich.
+Root mean square layer normalization.
+In Hanna M. Wallach, Hugo Larochelle, Alina Beygelzimer, Florence d’Alché-Buc, Emily B. Fox, and Roman Garnett, editors, Advances in Neural Information Processing Systems 32: Annual Conference on Neural Information Processing Systems 2019, NeurIPS 2019, December 8-14, 2019, Vancouver, BC, Canada, pages 12360–12371, 2019.
+URL https://proceedings.neurips.cc/paper/2019/hash/1e8a19426224ca89e83cef47f1e7f53b-Abstract.html.
+[35]
+Noam Shazeer.
+GLU variants improve transformer.
+CoRR, abs/2002.05202, 2020.
+URL https://arxiv.org/abs/2002.05202.
+[36]
+Jianlin Su, Murtadha H. M. Ahmed, Yu Lu, Shengfeng Pan, Wen Bo, and Yunfeng Liu.
+Roformer: Enhanced transformer with rotary position embedding.
+Neurocomputing, 568:127063, 2024.
+doi: 10.1016/J.NEUCOM.2023.127063.
+URL https://doi.org/10.1016/j.neucom.2023.127063.
+[37]
+Joshua Ainslie, James Lee-Thorp, Michiel de Jong, Yury Zemlyanskiy, Federico Lebrón, and Sumit Sanghai.
+GQA: training generalized multi-query transformer models from multi-head checkpoints.
+In Houda Bouamor, Juan Pino, and Kalika Bali, editors, Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing, EMNLP 2023, Singapore, December 6-10, 2023, pages 4895–4901. Association for Computational Linguistics, 2023.
+doi: 10.18653/V1/2023.EMNLP-MAIN.298.
+URL https://doi.org/10.18653/v1/2023.emnlp-main.298.
+[38]
+Nouamane Tazi, Ferdinand Mom, Haojun Zhao, Phuc Nguyen, Mohamed Mekkouri, Leandro Werra, and Thomas Wolf.
+The Ultra-Scale Playbook: Training LLMs on GPU Clusters, 2025.
+[39]
+Wanchao Liang, Tianyu Liu, Less Wright, Will Constable, Andrew Gu, Chien-Chin Huang, Iris Zhang, Wei Feng, Howard Huang, Junjie Wang, Sanket Purandare, Gokul Nadathur, and Stratos Idreos.
+TorchTitan: One-stop PyTorch native solution for production ready LLM pretraining.
+In The Thirteenth International Conference on Learning Representations, 2025.
+URL https://openreview.net/forum?id=SFN6Wm7YBI.
+[40]
+Ilya Loshchilov and Frank Hutter.
+Decoupled weight decay regularization.
+In 7th International Conference on Learning Representations, ICLR 2019, New Orleans, LA, USA, May 6-9, 2019. OpenReview.net, 2019.
+URL https://openreview.net/forum?id=Bkg6RiCqY7.
+[41]
+Samyam Rajbhandari, Jeff Rasley, Olatunji Ruwase, and Yuxiong He.
+Zero: memory optimizations toward training trillion parameter models.
+In Christine Cuicchi, Irene Qualters, and William T. Kramer, editors, Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis, SC 2020, Virtual Event / Atlanta, Georgia, USA, November 9-19, 2020, page 20. IEEE/ACM, 2020.
+doi: 10.1109/SC41405.2020.00024.
+URL https://doi.org/10.1109/SC41405.2020.00024.
+[42]
+Lukas Biewald.
+Experiment tracking with weights and biases, 2020.
+URL https://www.wandb.ai/.
+Software available from wandb.ai.
+[43]
+U.S. Environmental Protection Agency.
+Greenhouse gas equivalencies calculator - calculations and references.
+https://www.epa.gov/energy/greenhouse-gas-equivalencies-calculator-calculations-and-references, 2024.
+Accessed: September 25, 2025.
+[44]
+U.S. Environmental Protection Agency.
+Emissions & generation resource integrated database (egrid) summary data, 2023 data.
+https://www.epa.gov/egrid/summary-data, January 2025a.
+Released: January 15, 2025.
+[45]
+U.S. Environmental Protection Agency.
+Greenhouse gas emissions from a typical passenger vehicle.
+https://www.epa.gov/greenvehicles/greenhouse-gas-emissions-typical-passenger-vehicle, 2025b.
+Accessed: September 25, 2025.
+[46]
+Rafael Rafailov, Archit Sharma, Eric Mitchell, Christopher D. Manning, Stefano Ermon, and Chelsea Finn.
+Direct preference optimization: Your language model is secretly a reward model.
+In Alice Oh, Tristan Naumann, Amir Globerson, Kate Saenko, Moritz Hardt, and Sergey Levine, editors, Advances in Neural Information Processing Systems 36: Annual Conference on Neural Information Processing Systems 2023, NeurIPS 2023, New Orleans, LA, USA, December 10 - 16, 2023, 2023.
+URL http://papers.nips.cc/paper_files/paper/2023/hash/a85b405ed65c6477a4fe8302b5e06ce7-Abstract-Conference.html.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

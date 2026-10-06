@@ -1,148 +1,63 @@
 # Daily Research — 2026-03-29
 
-**Research Date:** 2026-03-29
+**规范：** V3
+**窗口：** 2026-03-28T09:00:00+08:00 ～ 2026-03-29T09:00:00+08:00
+**状态：** 完成
+**Books：** 纳入本次
+**检查时间：** 2026-10-02T04:58:07+08:00
 
-**Timezone:** Asia/Shanghai
+## 1. 结论
 
-**Strict Window:** 2026-03-28 09:00:00 ～ 2026-03-29 09:00:00（Asia/Shanghai，北京时间，左闭右开）
+独立有限研究收束：0个确定当窗家族、0项必要深入、Books新增0，普通待办0，root非作者日级Gate已通过。SAM3.1具体机制有潜在贡献，但官方March27更新只有day字段，不能完全落窗；另4项具名历史切片限制保留。不得据此称全球/宽库存零贡献、Coverage/Evidence正面通过或无遗漏。旧0/EffectiveDate豁免/完成不继承；[旧报告](../_sources/daily-20260329/V3_LEGACY_REPORT.md)保留原证据，[唯一停点](../_sources/daily-20260329/V3_WORKING_STOPPOINT.md)记实际执行。
 
-**Contract:** V2.1 Full Replay；Historical Daily 独立重放，Weekly dependency=0。
+## 2. 来源覆盖
 
-**Status:** In Progress；Coverage=Open、Evidence=Open、Books=Open。2026-09-03 fresh-context 反证审计已重开；当前机器结构和既有 retained Review 仍可复用，但 denominator completeness 尚未按“不得抽样、逐项判断”合同重新验收。
+| 来源 | 检查范围与依据 | 结果 | 缺口 |
+| --- | --- | --- | --- |
+| SRC-OPENAI | fresh RSS756143B/1242items，Mar27T22Z STADLER在左端前、Mar29T22:15Z DisasterResponse在右端后 | 已检查 | 当前邻接切片不授全史无遗漏 |
+| SRC-ANTHROPIC | fresh Research317670B，actual9个March publishedOn完整对读，Mar31/24/23/13/6/5均窗外 | 已检查 | 仅目录元字段，不称窗外安全全文已审 |
+| SRC-GOOGLE-AI | Research March首12cards跨下界；DeepMind page3六March卡逐原日期均Mar26或更早；pubs1–15/11569只有year/title | 受阻 | H1仅publications本窗firstpublic datedslice，不否认Blog有限已检 |
+| SRC-META-AI | 正确publication444line已读0–369非日期排序；Blog page1 10/page2 12；SAM3.1更新core/HTML精时定点核 | 受阻 | H2 publication窗口datedslice；D1 SAM3.1仅March27 day字段 |
+| SRC-QWEN | exact retrieval API40/40完整title/id/date，extra为dict，Mar19T04+08→Mar30T04+08夹窗无本窗行 | 已检查 | 当前元字段，不全审4.5MBcontent |
+| SRC-DEEPSEEK | HTML109774B/flight42361B实际16 News；observed9449B script实际31 Research，Apr24→旧Dec、Jun24→Feb25夹窗 | 已检查 | 当前两个数组，ambient now不算第17post；不认证全史 |
+| SRC-MOONSHOT | Kimi当前19dated Research，Apr20→Feb9夹窗 | 已检查 | 仅当前19行 |
+| SRC-TENCENT-HUNYUAN | 正确生产POST renderType0/pageNum1/pageSize20，309375B/code0/totalNum9/list9，display Feb13→Apr22夹窗，publishedAt无March | 已检查 | 当前9/9，两日期不互代firstpublic |
+| SRC-ZAI | Research15dated Mar15→Apr1；release16dated Feb12→Apr7夹窗 | 已检查 | 当前目录段 |
+| SRC-BYTEDANCE-SEED | 正确v2 API type1 token20 18/82→40 20/82，Mar25T16Z→Mar31T12Z跨窗停；type2 token0 14/19，Feb15T16Z→Mar31T16Z夹窗 | 受阻 | H4未返回身份/date及14/19差额，不授无遗漏 |
+| SRC-BAIDU-ERNIE | 首10datedcards May/Apr→Feb6/Jan29→旧Nov，跨下界停 | 已检查 | 不扩下页旧段 |
+| SRC-XIAOMI-MIMO | Paper8实际Jun29→Mar13夹窗；Blog15及More无date | 受阻 | H3仅这些Blog/More本窗datedslice，不展开题名队列 |
+| SRC-MINIMAX | freshHTML134584B实际12datedcards May26→Mar18夹窗；AgentTech原.md只May13datedentry，web失败已curl恢复 | 已检查 | 当前有限目录，不授全历史；不扩llms/Guide |
+| SRC-ARXIV | 官方availability：本窗Fri27T21→Sat28T21EDT无常规公告；四主题Submitted发现28/28、50/217、50/122、50/60，完整v1题摘4项 | 已检查 | Submitted非firstpublic；宽库未全题摘/全文；不将周末提交普遍列日期gap |
 
+准确生产字段与有限分页停止见[目录原值](../_sources/daily-20260329/V3_DIRECTORY_FIELDS.md)。来源受阻不算已查或零命中；按需扩源无具体可归属本窗事件触发，不启动全量队列。
 
-## Executive Summary
+## 3. 候选与判断
 
-> **2026-09-03 Semantic Reopen：** 旧 `Complete` 声明已被 `papers/2026/03/_sources/latest-contract-semantic-reopen-20260903.json` 取代。在 `MAR26-FC-001/MAR26-FC-002/MAR26-FC-003` 与 `MAR26-FC-004` 关闭前，本日报不得恢复 `Complete`；validator 通过只表示机器接口自洽。
+确定候选0；候选表仅列确证落窗材料，本日为空，不评分。
 
-严格窗口 raw/registered/screened=0/0/0；denominator=0、pre-denominator closures=0。exact-v1 Review complete=0、blocked=0；Integrate 建议=0。旧 Weekly 未参与发现、筛选、评分、Review、Books 判断或漏项校准。
+| 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
+| --- | --- | --- | --- | --- |
 
-## 1. Coverage
+分层具名判断：D1 [SAM3.1](https://ai.meta.com/blog/segment-anything-model-3/)更新core49–65，最多16objects共享forward替代逐objectpass及global reasoning有具体潜在机制，日期先隔离，不评分/deep。[27439v1](https://arxiv.org/abs/2603.27439v1) addition置换保功能正确却增加hardware aging stress；[27141v1](https://arxiv.org/abs/2603.27141v1) FARE routing preference proxy不传decoded generation；[27148v1](https://arxiv.org/abs/2603.27148v1) SafetyDrift有限horizon吸收模型：完整题摘均有潜在贡献，但Submitted Sat28Z的常规arxiv公开最早Mar31BJT08窗外，无独立提前原事件线索，不在29保留候选或普遍日期gap，只留真实归属恢复线索。SafetyDrift eventual1是monotonic state建模结果，不采用所有agent必违规、94.7%或普遍监测性能。
 
-<!-- validator:report-metadata-v2 -->
-| Field | Value |
-| --- | --- |
-| Contract Version | V2.1 |
-| Score Schema | V2 |
-| Report Type | Daily |
-| Window Start | 2026-03-29 |
-| Window End | 2026-03-29 |
-| Registry Version | 2026-08-25 |
-| Coverage Mode | Full Replay |
-| Baseline Report | — |
-| Changed Source IDs | — |
-| Previous Denominator ID | — |
-| Denominator ID | DEN-20260329-AUTHOR-0 |
-| Denominator Frozen At | 2026-09-02T16:07:11.473626+08:00 |
-| Completion Status | In Progress |
-| Coverage Gate | Open |
-| Evidence Gate | Open |
-| Books Gate | Open |
+贡献前具名负侧：[19776v1 TB-care](https://arxiv.org/abs/2604.19776v1)完整题摘显示BioMistral QLoRA+GraphRAG本地领域alignment比较，未改变foundation计算/权限/状态或评价validity条件，具体关闭；不是因为所有组合/临床论文均无价值，不采用临床安全保证。四份完整原题摘见[样本原文](../_sources/daily-20260329/V3_ABSTRACT_SAMPLES.md)。宽库其余题名不是完整准入审阅，未制造全负侧分母。
 
-### Source Coverage Receipt
+## 4. 证据与知识整合
 
-<!-- validator:source-coverage-v2 -->
-| Source ID | Window Start | Window End | Executed At | Endpoint / Filter | Result | Hits | Candidate Source Families | Pagination / Cursor | Window Watermark | Closure Evidence | Gap / Limitation ID |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SRC-ARXIV | 2026-03-28T09:00:00+08:00 | 2026-03-29T09:00:00+08:00 | 2026-09-02T16:07:11.473626+08:00 | official-schedule recovery receipt + 0/0 title/abstract replay + official abs/HTML/PDF exact-v1 | no_hit | 0 | — | pages=100; prefixes=00..99; final_cursor=end; registered=0; screened=0; retained=0; closure=0 | 2026-03-29T01:00:00+00:00 | screening-ledger-final.json#sha256=298ef2b0a8cd350a27e476e86a9fccdb378304b21595b3d4a08c3c9c537b1324; announcement-recovery#sha256=16dec71fcc675ae9b23a8bd7f6104113914987266b125be044d82b44b27a55bf | — |
+0确定当窗家族，未进行实验结果/性能保证的Evidence采用，未启动Books实质对照或写入。D1必要官方更新核心仅确认潜在机制与日期身份，不授部署/吞吐保证；旧SAM3核心不整体重评分。题摘层硬件可靠性、MoE代理反证及agent safety信号保留真实归属，不授形式或通用安全保证。Books新增0不代表已审已有覆盖或NoChange认证。
 
-### Coverage Limitations
+## 5. 缺口与下一步
 
-<!-- coverage:SRC-ARXIV:20260329:start -->作者侧已逐项筛选全部 0 个 identity；selected exact-v1 同时检查 withdrawn 状态。按 Window End 与来源 Effective Date 计算，2026 年 3 月到期的 Required Daily 只有 `SRC-ARXIV`；机构类与 HF 来源自 2026-08-25 生效，不反推本窗口。<!-- coverage:SRC-ARXIV:20260329:end -->
+作者普通研究待办0。唯一日期隔离D1：SAM3.1官方Update March27原day可能跨入左端；本人独立HTML227941B定点检索datePublished/dateModified/published_time/modified_time/2026-03-27均0。重开需官方该更新首次公开精确时间或完全落窗原范围，不能以旧SAM3首发、HF collection Updated或论文v2提交反填。
 
-### Fresh-context Audit
+D1与H1–4均为终态保留项，不支持正面证据、Books或无遗漏断言；各自定点重开条件如下及唯一停点所列，仅原条件成立时恢复，不作为普通待办。
 
-<!-- fresh-context-audit:lane-c:start -->
-非作者审计已重放 0/0 条 title+abstract：作者 retained 0 项均保留，0 个 false-negative family 已完成 exact-v1 Source Review，0 个 recall challenge 被逐项驳回，0 个 withdrawn 只保留 identity/status；reconciled denominator 为 0；Books queue 中 0 个 `Integrate` 被降为 `No Change — Existing Coverage`，0 个 owner 已重绑。本审计已重建分母、Review 与 Books comparison，但不写 Books；Coverage/Evidence/Books Gate 继续保持 Open，等待 root final reconciliation。收据：`papers/2026/03/_sources/daily-20260329/fresh-context-audit-receipt.json`、`fresh-context-retained-evidence-audit.json`、`fresh-context-books-audit.json`。
-<!-- fresh-context-audit:lane-c:end -->
+外部终态H1：Google research.google/pubs窗口firstpublic datedslice；H2：Meta正确publication results窗口datedslice；H3：MiMo Blog15/More本窗原日期slice；H4：Seed实际API未返回身份/date或locale/count差额解释及本窗slice。准确入口/原值/重开条件见唯一停点，未把未知所有loadmore变永久gap，无需无限分页或扩旧池。root实际日级Gate已通过，普通待办0；以后仅在具体恢复条件成立时重新打开，不自动扩日。
 
-## 2. Candidate Ledger
+## 6. 复核
 
-<!-- validator:candidate-ledger-v2.1 -->
-| Source Family ID | Primary Identifier | Event Identity | Owner Week | First-public Date | Supporting Source IDs | Design Delta | System Reach | Durability | Total | Candidate State | Review Status | Access Status | Review Override | Review Ref | Owner Report Ref | Prior Review Ref | Reconciliation | Stable Node ID | Books Disposition | Books Review Ref | Benchmark Claim |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+复核者：root（非作者）已实际完整读取正式六部分与唯一停点、混元9行及Seed18→20/type2 14/19原字段、全部4份完整v1题摘；SAM3.1更新core49–65与day-only日期身份亦实际核。FARE/SafetyDrift/aging仅窗外潜在不采用普遍结论，TBcare localalignment负侧符合贡献门槛；D1及H1–4具名隔离、14来源有限停止与普通0的安全终态通过。
 
+结论：通过
 
-## 3. Review Completion Receipt
-
-<!-- validator:review-completion-v1 -->
-| Source Family ID | Review Provenance ID | Review Route | Primary Evidence Version | Reviewed Evidence Versions | Method / Identity Locators | Evaluation Locators | Limitations / Counterevidence Locators | Artifact Locators | Claim Boundary Ref | Completion Result |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-
-
-### Source Reviews
-
-
-
-## 4. Benchmark Contracts
-
-<!-- validator:benchmark-contract-v1 -->
-| Source Family ID | Workload | Model | Hardware | Precision | Input Length | Output Length | Batch | Concurrency | SLO | Evaluator |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-
-## 5. Deep Analysis Selection
-
-<!-- validator:deep-analysis-selection-v1 -->
-| Source Family ID | Eligibility | Decision | Analysis Unit ID | Subsumed By | Priority Rationale | Narrative Ref |
-| --- | --- | --- | --- | --- | --- | --- |
-
-
-
-
-## 6. Books Comparison
-
-<!-- validator:books-comparison-v1 -->
-| Source Family ID | Stable Node ID | Target Chapter Ref | Adjacent Chapter Refs | Existing Proposition | New Evidence Delta | Evolution Relation | Decision | Books Review Ref |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-
-
-
-
-## 7. Semantic Audit
-
-<!-- validator:semantic-audit-v1 -->
-| Audit ID | Auditor | Scope | Reviewed Refs | Findings | Resolution | Status |
-| --- | --- | --- | --- | --- | --- | --- |
-| SA-20260329-COVERAGE | fresh-context:march-lane-c-reviewer | coverage | fresh-context-audit:lane-c | MAR26-FC-001/MAR26-FC-002/MAR26-FC-003 | pending: full-row fresh-context false-positive/false-negative replay; see papers/2026/03/_sources/latest-contract-semantic-reopen-20260903.json | open |
-| SA-20260329-EVIDENCE | fresh-context:march-lane-c-reviewer | evidence | fresh-context-audit:lane-c;validator:review-completion-v1 | — | accepted: retained family 均完成 exact-v1 review，blocked/unverified/disputed=0 | passed |
-| SA-20260329-SELECTION | fresh-context:march-lane-c-reviewer | deep_analysis_selection | fresh-context-audit:lane-c;validator:deep-analysis-selection-v1 | MAR26-FC-004 | pending: recompute after denominator refreeze; see papers/2026/03/_sources/latest-contract-semantic-reopen-20260903.json | open |
-| SA-20260329-BOOKS | fresh-context:march-lane-c-reviewer | books | fresh-context-audit:lane-c;validator:books-comparison-v1 | MAR26-FC-004 | pending: recheck disposition after denominator refreeze; see papers/2026/03/_sources/latest-contract-semantic-reopen-20260903.json | open |
-
-## 8. Ignored Noise
-
-完整逐项 closure 见 `papers/2026/03/_sources/daily-20260329/screening-ledger-final.json`；withdrawn family 只保留 identity/status，不保留 selected、Review 或 Books 痕迹。
-
-## 9. Recommended Action
-
-当前 retained Review 可复用，但 denominator 的 full-row fresh-context 反证发现 false-negative；按 `papers/2026/03/_sources/latest-contract-semantic-reopen-20260903.json` 重做全量语义复核后，再重算 Selection 与 Books disposition。
-
-## 10. Repository Changes
-
-- 新增或幂等更新本日 Daily 与可复算 source packet。
-- Books Decision 已闭合，本日无需修改 Books。
-- 未修改 Weekly；未 stage、commit 或 push。
-
-## 11. Open Questions
-
-- 未解决语义 finding=4（`MAR26-FC-001 / MAR26-FC-002 / MAR26-FC-003 / MAR26-FC-004`）；blocked / unverified / disputed 仍为 0。
-- 论文自身未证明边界保留在各 Source Review 的 Claim Boundary 中；它们不是本次流程 pending。
-
-## 12. Sources
-
-- [arXiv](https://arxiv.org/) — exact-v1 primary manuscript and status。
-- DataCite March frozen snapshot — identity/title/abstract/submission provenance only。
-
-### Materials Request Ledger
-
-<!-- validator:materials-request-v1 -->
-| Request ID | Priority | Source Family ID | Source ID | Gap / Limitation ID | Owner Week | Known Identifiers / URLs | Missing Material | Why Existing Evidence Is Insufficient | Acceptable Substitute | Suggested File Name | Required Review Scope |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-
-
-## 13. Final Status
-
-- Completion Status: `In Progress`
-- Coverage: `Open`
-- Evidence: `Open`
-- Books: `Open`
-- unresolved findings: 4（`MAR26-FC-001 / MAR26-FC-002 / MAR26-FC-003 / MAR26-FC-004`）
+未复核宽库存所有题摘/正文，0Books写入无写后对象；未授Coverage/Evidence/无遗漏认证。最终V3结构、引用及限定diff-check实际通过，机器检查仅确认接口一致性，不替代上述独立语义验收。

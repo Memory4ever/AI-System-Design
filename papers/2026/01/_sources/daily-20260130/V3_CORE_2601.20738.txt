@@ -1,0 +1,1330 @@
+https://arxiv.org/html/2601.20738v1
+SA-PEF: Step-Ahead Partial Error Feedback for Efficient Federated Learning
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related work
+Error feedback and compressed optimization.
+Local updates in FL.
+Compression with local updates.
+Step-ahead error feedback.
+3 Proposed algorithm
+Algorithm overview.
+Relation to EF and SAEF.
+Residual contraction.
+4 Convergence Analysis
+Discussion.
+Comparison to EF under PP.
+Why step-ahead helps (and how much).
+5 Experiments
+5.1 Experimental setup
+5.2 Empirical results
+Discussion:
+5.3 Sensitivity Analysis of Step-Ahead Coefficient α\alpha
+5.4 Gradient Mismatch
+6 Conclusion
+Ethics statement.
+Reproducibility statement.
+References
+A Proof of Convergence Results
+A.1 Proof of Theorem
+Bounding the first inner-product term
+Bounding the gradient–mismatch term
+Telescoping.
+A.1.1 General Convergence Rate for Decaying Step-Sizes
+A.1.2 Convergence Rate for a Constant Step-Size
+A.2 Lemmas
+A.3 Partial participation: analysis and rates
+Active/global averages; virtual iterate.
+Telescoping, absorption, and final bounds (PP).
+Stalling vs. step-ahead.
+Constants and feasibility.
+A.4 Comparison of EF-type compressed FL methods.
+B Implementation Details and Additional Experiments
+B.1 Setup and Parameter tuning
+Datasets, models, and preprocessing.
+Federated partitioning, participation, and local computation.
+Compressors and communication accounting.
+Hyperparameter search protocol.
+Fairness controls and evaluation.
+B.2 Additional Experiments
+Multi-seed stability.
+IID control experiments.
+Extreme partial participation and local work.
+Wall-clock efficiency.
+Scaled-sign compressor.
+Effect of momentum.
+Comparison with SCAFCOM.
+License: CC BY 4.0
+arXiv:2601.20738v1 [cs.LG] 28 Jan 2026
+SA-PEF: Step-Ahead Partial Error Feedback for Efficient Federated Learning
+Dawit Kiros Redie*
+Reza Arablouei
+Affiliation: CSIRO’s Data61, Pullenvale, QLD 4069, Australia{dawit.k.redie, stefan.werner}@ntnu.no, reza.arablouei@data61.csiro.au
+Stefan Werner*Department of Electronic Systems, Norwegian University of Science and Technology (NTNU), Norway
+Affiliation: Department of Information and Communications Engineering, Aalto University, Finland
+Abstract
+Biased gradient compression with error feedback (EF) reduces communication in federated learning (FL), but under non-IID data, the residual error can decay slowly, causing gradient mismatch and stalled progress in the early rounds. We propose step-ahead partial error feedback (SA-PEF), which integrates step-ahead (SA) correction with partial error feedback (PEF). SA-PEF recovers EF when the step-ahead coefficient α=0\alpha=0 and step-ahead EF (SAEF) when α=1\alpha=1. For non-convex objectives and δ\delta-contractive compressors, we establish a second-moment bound and a residual recursion that guarantee convergence to stationarity under heterogeneous data and partial client participation. The resulting rates match standard non-convex Fed-SGD guarantees up to constant factors, achieving O⁡((η​η0​T​R)−1)O((\eta\,\eta_{0}TR)^{-1}) convergence to a variance/heterogeneity floor with a fixed inner step size. Our analysis reveals a step-ahead-controlled residual contraction ρr\rho_{r} that explains the observed acceleration in the early training phase. To balance SAEF’s rapid warm-up with EF’s long-term stability, we select α\alpha near its theory-predicted optimum. Experiments across diverse architectures and datasets show that SA-PEF consistently reaches target accuracy faster than EF.
+1 Introduction
+Modern large‐scale machine learning increasingly relies on distributed computation, where both data and compute are spread across many devices. Federated learning (FL) enables model training in this setting without centralizing raw data, enhancing privacy and scalability under heterogeneous client distributions (McMahan et al., 2017; Kairouz et al., 2021). In FL, a potentially vast population of clients collaborates to train a shared model w∈ℝdw\in\mathbb{R}^{d} by solving
+w⋆∈arg⁡minw∈ℝd⁡f⁡(w):=1K​∑k=1Kfk​(w),fk​(w):=𝔼z∼𝒟k​[ℓ⁡(w,z)],w^{\star}\in\arg\min_{w\in\mathbb{R}^{d}}f(w):=\frac{1}{K}\sum_{k=1}^{K}f_{k}(w),\qquad f_{k}(w):=\mathbb{E}_{z\sim\mathcal{D}_{k}}\bigl[\ell(w;z)\bigr],
+(1)
+where 𝒟k\mathcal{D}_{k} is the (potentially heterogeneous) data distribution at client kk, ℓ⁡(⋅)\ell(\cdot) is a sample loss (often nonconvex), and KK is the number of clients.
+In each synchronous FL round, the server broadcasts the current global model to a subset of clients. These clients perform several steps of stochastic gradient descent (SGD) on their local data and return updates to the server, which aggregates them to form the next global iterate (Huang et al., 2022; Wang and Ji, 2022; Li et al., 2024).
+Although FL leverages rich distributed data, it faces two key challenges. The first challenge is communication bottlenecks. Model updates are typically high-dimensional, with millions or even billions of parameters, which makes uplink bandwidth a major constraint (Reisizadeh et al., 2020; Kim et al., 2024; Islamov et al., 2025). This has spurred extensive work on communication-efficient algorithms, including quantization (Seide et al., 2014; Alistarh et al., 2017), sparsification (Stich et al., 2018), and biased compression with error feedback (Beznosikov et al., 2023; Bao et al., 2025). The second challenge is statistical heterogeneity. When client data are non-IID, multiple local updates can cause client models to drift toward minimizing their own objectives, slowing or even destabilizing global convergence (Karimireddy et al., 2020; Li and Li, 2023).
+To reduce communication, many methods compress client-server messages using quantization (Alistarh et al., 2017), sparsification (Lin et al., 2018), or sketching (Rothchild et al., 2020). Compressors may be unbiased (e.g., Rand-kk (Wangni et al., 2018; Stich et al., 2018)) or biased (e.g., signSGD (Bernstein et al., 2019), Top-kk (Lin et al., 2018)), with the latter often delivering better accuracy-communication trade-offs at a given bit budget (Beznosikov et al., 2023). However, naive use of biased compression can introduce a persistent bias, leading to slow or even divergent training (Beznosikov et al., 2023; Li and Li, 2023). Error feedback (EF) addresses this problem by storing past compression errors and injecting them into the next update before compression (Seide et al., 2014). This mechanism cancels the compressor bias and restores convergence guarantees comparable to those of uncompressed SGD, assuming standard smoothness and appropriately chosen stepsizes (Karimireddy et al., 2019; Bao et al., 2025).
+EF in federated settings faces two important limitations. First, under highly non-IID data, the residual can align with client-specific gradient directions, inducing cross-client gradient mismatch and slowing early progress (Hsu et al., 2019b; Karimireddy et al., 2020). Second, EF retains residual mass until fully transmitted. Once the residual norm is small, communication rounds may be wasted transmitting stale, low-magnitude coordinates rather than fresh gradient signal (Li and Li, 2023).
+Step-ahead EF (SAEF) (Xu et al., 2021) mitigates the first issue by previewing the residual: before local SGD, each client shifts its model by the current error and optimizes from that offset. This strategy often yields a strong warm-up, as the residual is injected in full every round. However, in FL regimes with non-IID data, multiple local steps, aggressive compression, and partial participation, the full step-ahead variant exhibits late-stage plateaus and larger gradient-mismatch spikes compared to EF.
+Moreover, prior analysis (Xu et al., 2021) has largely focused on classical distributed optimization, leaving open whether one can systematically combine SAEF’s fast initial progress with the long-term stability of EF in federated settings with local steps and data heterogeneity.
+Our approach: SA-PEF.
+We propose step-ahead partial error feedback (SA-PEF), by introducing a tunable coefficient αr∈[0,1]\alpha_{r}\in[0,1] and shifting only a fraction of the residual (wr+12=wr−αr​erw_{r+\frac{1}{2}}=w_{r}-\alpha_{r}e_{r}) while carrying the remainder through standard EF. This partial shift provides several benefits:
+•
+Early acceleration with reduced noise. A moderate (or decaying) αr\alpha_{r} removes most early-round mismatch, while the injected noise automatically diminishes as ‖er‖\|e_{r}\| shrinks.
+•
+Tighter theoretical recursions. We establish a residual contraction
+ρr=(1−1δ)​[2​(1−αr)2+24​αr2​(ηr​L​T)2],\rho_{r}=(1-\tfrac{1}{\delta})\bigl[2(1-\alpha_{r})^{2}+24\,\alpha_{r}^{2}(\eta_{r}LT)^{2}\bigr],
+which, for small sr=ηr​L​Ts_{r}=\eta_{r}LT, is strictly smaller than the EF value 2​(1−1δ)2(1-\tfrac{1}{\delta}). The local-drift constants also improve with αr\alpha_{r}.
+•
+Graceful interpolation. SA-PEF reduces to EF when αr=0\alpha_{r}=0 (maximal stability) and to SAEF when αr=1\alpha_{r}=1 (maximal jump-start), allowing practitioners to adapt to different data and communication regimes.
+Contributions.
+•
+Algorithm. We introduce SA-PEF, a lightweight drop-in variant of Local-SGD with biased compression and a tunable step-ahead coefficient αr\alpha_{r}, compatible with any δ\delta-contractive compressor.
+•
+Theory. We provide a convergence analysis of SA-PEF.
+Our results include new inequalities for drift, second moments, and residual recursion, which recover EF constants at αr=0\alpha_{r}=0 and quantify how step-ahead alters drift and residual memory. From these, we derive nonconvex stationarity guarantees of order O⁡((η​η0​T​R)−1)O\big((\eta\,\eta_{0}TR)^{-1}\big), with compression dependence appearing only through (1−1/δ)(1-1/\delta) and ρmax\rho_{\max}, in line with prior compressed-FL work.
+2 Related work
+Error feedback and compressed optimization.
+Error feedback (EF) was first introduced as a practical heuristic for 1-bit SGD (Seide et al., 2014) and later formalized as a memory mechanism in sparsified or biased SGD (Stich et al., 2018; Karimireddy et al., 2019). By accumulating the compression residual and injecting it into subsequent updates, EF restores descent directions and admits convergence guarantees for broad classes of contractive (possibly biased) compressors. These results include linear rates in the strongly convex setting and standard stationary-point guarantees in the nonconvex case (Gorbunov et al., 2020; Beznosikov et al., 2023). More recently, EF21 (Richtárik et al., 2021) and its extensions (Fatkhullin et al., 2025) provide a modern error-feedback framework for compressing full gradients (or gradient differences) at a shared iterate in synchronized data-parallel training with T=1T{=}1, achieving clean contraction guarantees and removing the error floor. However, these works assume no local steps and no client drift.
+A complementary line of work replaces residual memory with control variates (global gradient estimators), as in DIANA and MARINA (Mishchenko et al., 2019; Gorbunov et al., 2021), which reduce or remove compressor bias without maintaining a full residual vector. EControl (Gao et al., 2024) regulates the strength of the feedback signal and fuses residual and estimator updates into a single compressed message, providing fast convergence under arbitrary contractive compressors and heterogeneous data.
+Local updates in FL.
+Local or periodic averaging (a.k.a. Local-SGD) reduces communication rounds by performing T>1T>1 local steps between synchronizations (Stich, 2019). While effective in homogeneous settings, non-IID data induces client drift, where model trajectories diverge across clients, degrading both convergence speed and final accuracy. Several approaches mitigate drift while retaining the communication savings of local updates. Proximal regularization (FedProx) stabilizes local objectives by penalizing deviation from the current global model (Li et al., 2020). Control variates (SCAFFOLD) estimate and correct the client-specific gradient bias caused by heterogeneity, yielding tighter convergence with multiple local steps (Karimireddy et al., 2020). Dynamic regularization (FedDyn) further aligns local stationary points with the global objective via a round-wise correction term, improving robustness on highly non-IID data (Acar et al., 2021).
+Compression with local updates.
+Combining local updates with message compression compounds communication savings but also amplifies distortions from both local drift and compression error. FedPAQ (Reisizadeh et al., 2020) performs T>1T>1 local steps and transmits quantized model deltas at synchronization points, exposing explicit trade-offs among the local period, stepsizes, and quantization accuracy. QSparse-Local-SGD (Basu et al., 2019) extends this to contractive compressors, transmitting Top-kk updates after TT local steps. While achieving significant traffic reduction, it also reveals that aggressive sparsity can destabilize convergence. CSER (Xie et al., 2020) mitigates this with error reset, which immediately injects the residual back into the local model to restore stability under high compression.
+In the federated local-SGD setting with partial participation and biased compression, Fed-EF (Li and Li, 2023) provides a first nonconvex analysis of classical EF and serves as the EF-style backbone that SA-PEF builds upon.
+On the control-variate side,
+Scaffnew/ProxSkip (Mishchenko et al., 2022) is a more recent local-training method in the SCAFFOLD family, using probabilistic local updates to achieve theoretical acceleration. However, it still relies on full-precision exchanges and no inherent compression. CompressedScaffnew (Condat et al., 2022) extends this mechanism with quantization, TAMUNA (Condat et al., 2023) further handles partial client participation, and LoCoDL (Condat et al., 2025) generalizes the analysis to arbitrary unbiased compressors. These methods primarily establish accelerated convergence in (strongly) convex settings. In parallel, SCALLION/SCAFCOM (Huang et al., 2024) combines SCAFFOLD-style control variates with compression and, in SCAFCOM, local momentum to handle heterogeneity and partial participation, at the cost of additional per-client state.
+Step-ahead error feedback.
+SAEF (Xu et al., 2021) addresses gradient mismatch, i.e., the discrepancy between the model used for gradient computation and the model actually updated when delayed residuals are applied. SAEF performs a preview shift of the model using the residual before local SGD and augments this with occasional error averaging across workers. Although this reduces mismatch and accelerates early progress, the analysis is developed for classical distributed settings with single-step synchronization and bounded-gradient assumptions, and does not cover federated regimes with multiple local steps, non-IID data, or biased compressors. Moreover, error averaging requires extra coordination and communication, which is often impractical in cross-device FL.
+Despite progress, it remains unclear how to (i) control gradient mismatch in federated settings with local steps and biased compression without extra communication, or (ii) combine step-ahead correction with EF to balance early acceleration and long-term stability. Our work closes this gap by introducing SA-PEF, which performs a controlled step-ahead shift with partial residual retention on top of Fed-EF and provides a contraction-based analysis yielding nonconvex guarantees under heterogeneous data.
+3 Proposed algorithm
+Algorithm 1 Step‑Ahead Partial Error‑Feedback (SA‑PEF) for Efficient FL
+Input: total communication rounds RR, client number KK, stepsizes {ηr}r=0R−1\{\eta_{r}\}_{r=0}^{R-1}, step‑ahead schedule {αr}r=0R−1\{\alpha_{r}\}_{r=0}^{R-1} with 0≤αr≤10\leq\alpha_{r}\leq 1, compressor 𝒞⁡(⋅)\mathcal{C}(\cdot), initial model w0w_{0}, local step number TT
+1
+foreach client k=1,…,Kk\!=\!1,\dots,K in parallel do
+2
+w0(k)←w0w_{0}^{(k)}\leftarrow w_{0};  e0(k)←0e_{0}^{(k)}\leftarrow 0
+3
+for r←0r\leftarrow 0 to R−1R-1 do
+4
+foreach client k=1,…,Kk\!=\!1,\dots,K in parallel do
+/* Step‑ahead start  */
+5
+wr+12,0(k)←wr(k)−αr​er(k)w_{r+\frac{1}{2},0}^{(k)}\leftarrow w_{r}^{(k)}-\alpha_{r}\,e_{r}^{(k)}
+/* Local SGD with TT steps  */
+6
+for t←0t\leftarrow 0 to T−1T-1 do
+7
+wr+12,t+1(k)←wr+12,t(k)−ηr∇f(wr+12,t(k);ζr,t(k))w_{r+\frac{1}{2},t+1}^{(k)}\leftarrow w_{r+\frac{1}{2},t}^{(k)}-\eta_{r}\,\nabla f\!\bigl(w_{r+\frac{1}{2},t}^{(k)};\zeta_{r,t}^{(k)}\bigr)
+/* accumulated local update  */
+8
+gr(k)←wr+12,0(k)−wr+12,T(k)g_{r}^{(k)}\leftarrow w_{r+\frac{1}{2},0}^{(k)}-w_{r+\frac{1}{2},T}^{(k)}
+9
+ur+1(k)←(1−αr)​er(k)+gr(k)u_{r+1}^{(k)}\leftarrow(1-\alpha_{r})\,e_{r}^{(k)}+g_{r}^{(k)}
+10
+er+1(k)←ur+1(k)−𝒞⁡(ur+1(k))e_{r+1}^{(k)}\leftarrow u_{r+1}^{(k)}-\mathcal{C}\!\bigl(u_{r+1}^{(k)}\bigr)
+11
+send 𝒞⁡(ur+1(k))\mathcal{C}\!\bigl(u_{r+1}^{(k)}\bigr) to server
+/* Server‑side aggregation  */
+12
+ur+1←1K​∑k=1K𝒞⁡(ur+1(k))u_{r+1}\leftarrow\dfrac{1}{K}\,\sum_{k=1}^{K}\mathcal{C}\!\bigl(u_{r+1}^{(k)}\bigr)
+/* apply averaged update  */
+13
+wr+1←wr−η​ur+1w_{r+1}\leftarrow w_{r}-\eta\,u_{r+1}
+14
+broadcast wr+1w_{r+1} to all clients
+15
+foreach client kk do
+16
+wr+1(k)←wr+1w_{r+1}^{(k)}\leftarrow w_{r+1}
+In EF with biased compression (e.g., Top-kk), each client kk maintains a residual er(k)e_{r}^{(k)} of unsent coordinates. Although the stochastic gradient is computed at the received global model wrw_{r}, the effective update is applied at a de-errored point w~r:=wr−δr\tilde{w}_{r}:=w_{r}-\delta_{r}, where δr\delta_{r} denotes the EF carry (often close to the mean residual e¯r:=1K​∑ker(k)\bar{e}_{r}:=\tfrac{1}{K}\sum_{k}e_{r}^{(k)} under biased sparsification). Thus, the gradient used for the step is stale with respect to the point being updated, an effect akin to a staleness-of-one delay in asynchronous SGD where gradients are evaluated at one iterate but applied to another (Lian et al., 2015). Formally, this mismatch is captured by gk​(w~r,ζ)−gk​(wr,ζ)g_{k}(\tilde{w}_{r};\zeta)-g_{k}(w_{r};\zeta), where gk:=∇fkg_{k}:=\nabla f_{k}, and under LL-smoothness the local displacement error satisfies
+εrloc​(0):=1K​∑k=1K𝔼ζ​‖gk​(w~r,ζ)−gk​(wr,ζ)‖2≤L2​‖δr‖2+ 4​σ2.\varepsilon_{r}^{\mathrm{loc}}(0):=\frac{1}{K}\sum_{k=1}^{K}\mathbb{E}_{\zeta}\!\big\|g_{k}(\tilde{w}_{r};\zeta)-g_{k}(w_{r};\zeta)\big\|^{2}\;\leq\;L^{2}\|\delta_{r}\|^{2}\;+\;4\sigma^{2}.
+Algorithm overview.
+SA-PEF (Algorithm 1) augments Local-SGD with two complementary ideas:
+(i) a step-ahead preview of each client’s EF residual, and
+(ii) a partial carry-over of that residual through standard EF.
+A per-round weight αr∈[0,1]\alpha_{r}\in[0,1] determines how much of the residual is previewed versus retained. In effect, SA-PEF previews a fraction of the residual and remembers the rest, achieving fast early progress like SAEF while preserving the long-term stability of EF. Each client kk maintains a local model wr(k)w_{r}^{(k)} and a residual er(k)e_{r}^{(k)}, both initialized at round r=0r=0.
+At each communication round r=0,…,R−1r=0,\dots,R-1, SA-PEF implements the following steps:
+1.
+Step-ahead preview.
+Before local training, client kk shifts its model by a fraction αr\alpha_{r} of its residual:
+wr+12,0(k)=wr(k)−αr​er(k).w^{(k)}_{r+\tfrac{1}{2},0}\;=\;w^{(k)}_{r}-\alpha_{r}\,e^{(k)}_{r}.
+This moves gradient evaluation closer to where EF actually applies the update, improving
+alignment of the next direction with −∇f​(wr)-\nabla f(w_{r}).
+2.
+Local SGD.
+Starting from wr+12,0(k)w^{(k)}_{r+\tfrac{1}{2},0}, client kk performs TT local SGD steps with stepsize ηr\eta_{r}:
+wr+12,t+1(k)=wr+12,t(k)−ηr∇f(wr+12,t(k);ζr,t(k)),t=0,…,T−1.w^{(k)}_{r+\tfrac{1}{2},t+1}\;=\;w^{(k)}_{r+\tfrac{1}{2},t}-\eta_{r}\nabla f\!\bigl(w^{(k)}_{r+\tfrac{1}{2},t};\zeta^{(k)}_{r,t}\bigr),\quad t=0,\ldots,T-1.
+The accumulated local update is: gr(k)=wr+12,0(k)−wr+12,T(k).g_{r}^{(k)}\;=\;w^{(k)}_{r+\tfrac{1}{2},0}-w^{(k)}_{r+\tfrac{1}{2},T}.
+3.
+Partial EF composition.
+SA-PEF blends the remaining residual with the new local update:
+ur+1(k)=(1−αr)​er(k)+gr(k).u_{r+1}^{(k)}\;=\;(1-\alpha_{r})\,e_{r}^{(k)}+g_{r}^{(k)}.
+The compressed message and residual update are then u~r+1(k)=𝒞⁡(ur+1(k)),\tilde{u}_{r+1}^{(k)}=\mathcal{C}\!\bigl(u_{r+1}^{(k)}\bigr),
+er+1(k)=ur+1(k)−u~r+1(k).e_{r+1}^{(k)}=u_{r+1}^{(k)}-\tilde{u}_{r+1}^{(k)}.
+Only u~r+1(k)\tilde{u}_{r+1}^{(k)} is transmitted to the server and er+1(k)e_{r+1}^{(k)} is retained locally.
+4.
+Server aggregation.
+The server averages compressed updates and applies them:
+ur+1=1K​∑k=1Ku~r+1(k),wr+1=wr−η​ur+1.u_{r+1}=\tfrac{1}{K}\sum_{k=1}^{K}\tilde{u}_{r+1}^{(k)},\qquad w_{r+1}=w_{r}-\eta\,u_{r+1}.
+The new global model wr+1w_{r+1} is broadcast to all clients for the next round.
+Relation to EF and SAEF.
+The step-ahead coefficient αr\alpha_{r} allows SA-PEF to smoothly interpolate between prior methods:
+•
+αr=0\alpha_{r}=0: reduces to Fed-EF/classical EF in the federated local-SGD setting (Li and Li, 2023).
+•
+αr=1\alpha_{r}=1: reduces to a full step-ahead variant analogous to SAEF (Xu et al., 2021).
+•
+0<αr<10<\alpha_{r}<1: partial preview, fast early progress with reduced late-stage noise.
+A first-order view (descent lemma) gives gk​(wr−αr​er(k))≈gk​(wr)−αr​∇2fk​(wr)​er(k)g_{k}(w_{r}-\alpha_{r}e_{r}^{(k)})\approx g_{k}(w_{r})-\alpha_{r}\nabla^{2}f_{k}(w_{r})\,e_{r}^{(k)}, so 𝔼r​[g¯r​(αr)]≈∇f​(wr)−αr​H¯r​e¯r\mathbb{E}_{r}[\bar{g}_{r}(\alpha_{r})]\approx\nabla f(w_{r})-\alpha_{r}\bar{H}_{r}\bar{e}_{r} with H¯r:=1K​∑k∇2fk​(wr)\bar{H}_{r}:=\tfrac{1}{K}\sum_{k}\nabla^{2}f_{k}(w_{r}). Thus preview provides a linear alignment gain via −αr​H¯r​e¯r-\alpha_{r}\bar{H}_{r}\bar{e}_{r}. On the other hand, the local-displacement mismatch between ∇fk​(wr)\nabla f_{k}(w_{r}) and ∇fk​(wr−αr​er(k))\nabla f_{k}(w_{r}-\alpha_{r}e_{r}^{(k)}) grows quadratically with αr\alpha_{r} under LL-smoothness. Hence, SA-PEF chooses an interior αr∈(0,1)\alpha_{r}\in(0,1) to balance alignment benefits against the smoothness-driven cost, while preserving EF memory through (1−αr)​er(k)(1-\alpha_{r})e_{r}^{(k)}.
+Residual contraction.
+Our analysis yields a per-round residual contraction
+ρr=(1−1δ)​(2​(1−αr)2+24​αr2​(ηr​L​T)2),\rho_{r}=\Bigl(1-\tfrac{1}{\delta}\Bigr)\Bigl(2(1-\alpha_{r})^{2}+24\,\alpha_{r}^{2}(\eta_{r}LT)^{2}\Bigr),
+which is strictly smaller than EF’s value 2​(1−1/δ)2(1-1/\delta) when sr=ηr​L​Ts_{r}=\eta_{r}LT is small, explaining SA-PEF’s faster early-phase convergence while retaining EF-style long-term stability.
+4 Convergence Analysis
+Definition 1 (Compression Operator).
+A (possibly randomized) mapping 𝒞:ℝd→ℝd\mathcal{C}:\mathbb{R}^{d}\to\mathbb{R}^{d} is called a compression operator if there exists δ>0\delta>0 such that, for all w∈ℝdw\in\mathbb{R}^{d},
+𝔼⁡[‖𝒞⁡(w)−w‖22]≤(1−1δ)​‖w‖22,\mathbb{E}\bigl[\|\mathcal{C}(w)-w\|_{2}^{2}\bigr]\;\leq\;\Bigl(1-\tfrac{1}{\delta}\Bigr)\,\|w\|_{2}^{2},
+(4)
+where the expectation is taken over the internal randomness of 𝒞\mathcal{C}.
+This class includes many commonly used compressors, such as Top-kk, scaled Rand-kk, and quantization operators.
+The parameter δ\delta captures the contraction strength, with larger δ\delta corresponding to weaker contraction (i.e., more aggressive compression).
+Our objective is to establish nonconvex convergence guarantees by upper‑bounding the average squared gradient norm:
+1R​∑r=0R−1𝔼​‖∇f​(wr)‖2\tfrac{1}{R}\sum_{r=0}^{R-1}\mathbb{E}\|\nabla f(w_{r})\|^{2},
+where expectations are taken over mini‑batch sampling, client selection, and compression randomness.
+We adopt the standard assumption set used in Alistarh et al. (2018); Li and Li (2023); Beznosikov et al. (2023) and follow the
+notation from Alg. 1. Fix a communication round rr and let {ℱr,t}t≥0\{\mathcal{F}_{r,t}\}_{t\geq 0} denote the natural filtration generated by all randomness up to the beginning of local step tt of round rr. At local step t∈{0,…,T−1}t\in\{0,\dots,T-1\} on client kk, the stochastic gradient takes the form
+gr,t(k)=∇fk​(wr+12,t(k))+ξr,t(k),g_{r,t}^{(k)}=\nabla f_{k}\left(w_{r+\frac{1}{2},t}^{(k)}\right)+\xi_{r,t}^{(k)},
+where ξr,t(k)\xi_{r,t}^{(k)} captures stochastic noise.
+Assumption 1 (Smoothness).
+Each local objective fkf_{k} is differentiable with LL-Lipschitz gradient:
+‖∇fk​(y)−∇fk​(x)‖≤L​‖y−x‖,∀x,y∈ℝd.\bigl\|\nabla f_{k}(y)-\nabla f_{k}(x)\bigr\|\leq L\|y-x\|,\forall x,y\in\mathbb{R}^{d}.
+Assumption 2 (Stochastic gradients).
+For every client kk and step tt, we have (i) 𝔼⁡[ξr,t(k)|ℱr,t]=0\mathbb{E}[\xi_{r,t}^{(k)}|\mathcal{F}_{r,t}]=0 (unbiasedness), (ii) 𝔼⁡[‖ξr,t(k)‖2|ℱr,t]≤σ2\mathbb{E}[\|\xi_{r,t}^{(k)}\|^{2}|\mathcal{F}_{r,t}]\leq\sigma^{2} (bounded variance), (iii) given ℱr,0\mathcal{F}_{r,0}, the family {ξr,t(k):k=1,…,K,t=0,…,T−1}\{\xi_{r,t}^{(k)}:k=1,\dots,K,\ t=0,\dots,T-1\} is conditionally independent.
+Assumption 3 (Gradient dissimilarity).
+There exist constants β2≥1\beta^{2}\geq 1 and ν2≥0\nu^{2}\geq 0 such that,
+1K​∑k=1K‖∇fk​(x)‖2≤β2​‖∇f​(x)‖2+ν2,∀x∈ℝd\frac{1}{K}\sum_{k=1}^{K}\bigl\|\nabla f_{k}(x)\bigr\|^{2}\;\leq\;\beta^{2}\,\bigl\|\nabla f(x)\bigr\|^{2}\;+\;\nu^{2},\qquad\forall x\in\mathbb{R}^{d}
+We now state a convergence guarantee for SA-PEF in our federated setting.
+The full proof is provided in Appendix A.1.
+Theorem 1 (Stationary-point bound with constant inner-loop step).
+Assume 1–3 and let the compressor satisfy Definition 1 with parameter δ≥1\delta\geq 1.
+Run SA-PEF for R≥1R\geq 1 rounds with a constant inner-loop stepsize ηr≡η0\eta_{r}\equiv\eta_{0}, and set s0:=η0​L​T≤18s_{0}:=\eta_{0}LT\leq\tfrac{1}{8}. Suppose further that
+18​β2​s02≤1818\,\beta^{2}s_{0}^{2}\leq\tfrac{1}{8} and η≤1256​β2​L​η0​T\eta\leq\frac{1}{256\,\beta^{2}L\eta_{0}T}.
+Define the maximal residual contraction
+ρmax:=supr(1−1δ)​(2​(1−αr)2+24​αr2​s02)<1,\rho_{\max}:=\sup_{r}\Bigl(1-\tfrac{1}{\delta}\Bigr)\Bigl(2(1-\alpha_{r})^{2}+24\,\alpha_{r}^{2}s_{0}^{2}\Bigr)<1,
+and the effective error constant
+Θ:=16η×ℰmax1−ρmax​(1−1δ)​β2​(8​η0​T+288​L2​η03​T3),\Theta:=\frac{16}{\eta}\times\frac{\mathcal{E}_{\max}}{1-\rho_{\max}}\Bigl(1-\tfrac{1}{\delta}\Bigr)\beta^{2}\,\bigl(8\,\eta_{0}T+288\,L^{2}\eta_{0}^{3}T^{3}\bigr),
+where ℰmax:=suprℰr\mathcal{E}_{\max}:=\sup_{r}\mathcal{E}_{r} is the maximum residual–error coefficient across rounds.
+If Θ≤12\Theta\leq\tfrac{1}{2}, then with f⋆:=infxf⁡(x)f^{\star}:=\inf_{x}f(x) and initial residuals e0(k)≡0e_{0}^{(k)}\equiv 0, we have
+1R​∑r=0R−1𝔼​‖∇f​(wr)‖2≤\displaystyle\frac{1}{R}\sum_{r=0}^{R-1}\mathbb{E}\|\nabla f(w_{r})\|^{2}\ \leq\
+32​(f⁡(w0)−f⋆)η​η0​T​R+(1−1δ)​[Cσ​η02​L2​T​σ2+Cν​η02​L2​T2​ν2]\displaystyle\frac{32\,(f(w_{0})-f^{\star})}{\eta\,\eta_{0}T\,R}\;+\;\Bigl(1-\tfrac{1}{\delta}\Bigr)\Bigl[C_{\sigma}\,\eta_{0}^{2}L^{2}T\,\sigma^{2}+C_{\nu}\,\eta_{0}^{2}L^{2}T^{2}\,\nu^{2}\Bigr]
++128​L​η0K​σ2,\displaystyle\;+\;\frac{128\,L\,\eta_{0}}{K}\,\sigma^{2},
+where
+Cσ\displaystyle C_{\sigma}
+=32η​[6​η​η02​L2​T+96​L3​η​η03​T2]+32η×ℰmax1−ρmax​[4​η0+96​L2​η03​T2],\displaystyle=\frac{32}{\eta}\Bigl[6\,\eta\,\eta_{0}^{2}L^{2}T+96\,L^{3}\eta\,\eta_{0}^{3}T^{2}\Bigr]+\frac{32}{\eta}\times\frac{\mathcal{E}_{\max}}{1-\rho_{\max}}\Bigl[4\,\eta_{0}+96\,L^{2}\eta_{0}^{3}T^{2}\Bigr],
+Cν\displaystyle C_{\nu}
+=32η​[84​η​η02​L2​T2+1344​L3​η​η03​T3]+32η×ℰmax1−ρmax​[8​η0​T+1344​L2​η03​T3].\displaystyle=\frac{32}{\eta}\Bigl[84\,\eta\,\eta_{0}^{2}L^{2}T^{2}+1344\,L^{3}\eta\,\eta_{0}^{3}T^{3}\Bigr]+\frac{32}{\eta}\times\frac{\mathcal{E}_{\max}}{1-\rho_{\max}}\Bigl[8\,\eta_{0}T+1344\,L^{2}\eta_{0}^{3}T^{3}\Bigr].
+Discussion.
+Our result matches the standard nonconvex picture for biased compression. With a constant inner stepsize η0\eta_{0}, the optimization error decreases at rate O⁡((η​η0​T​R)−1)O\big((\eta\,\eta_{0}TR)^{-1}\big), while an RR-independent floor remains due to residual drift. As in prior EF analyses, only the mini-batch variance benefits from a 1/K1/K reduction, where the residual-induced floor does not. Data heterogeneity contributes additively with a T2T^{2} multiplier in the floor, while the stochastic variance floor carries a TT multiplier (both scaled by η02​L2\eta_{0}^{2}L^{2}). The effect of compressor appears only via the usual bias factor (1−1/δ)(1-1/\delta) and the residual contraction ρmax<1\rho_{\max}<1, which depends on αr\alpha_{r} and sr=ηr​L​Ts_{r}=\eta_{r}LT. This matches the qualitative dependence reported in earlier analyses of compressed FL (Li and Li, 2023; Karimireddy et al., 2020).
+Remark 1 (Partial participation (PP)).
+Let p=m/K∈(0,1]p=m/K\in(0,1] be the participation rate, and assume constant client stepsize ηr=η0\eta_{r}=\eta_{0} with TT local steps per round. Then, the averaged stationarity bound under partial participation is
+1R​∑r=0R−1𝔼​‖∇f​(wr)‖2≤𝒪⁡(f⁡(w0)−f⋆η​p​η0​T​R)+𝒪⁡(L​η0η​p​m​σ2)+𝒪⁡(1η​p​(1−1δ)​η02​L2​(T​σ2+T2​ν2)).\displaystyle\frac{1}{R}\sum_{r=0}^{R-1}\mathbb{E}\|\nabla f(w_{r})\|^{2}\leq\mathcal{O}\bigg(\frac{f(w_{0})-f_{\star}}{\eta\,p\,\eta_{0}T\,R}\bigg)+\mathcal{O}\bigg(\frac{L\,\eta_{0}}{\eta\,p\,m}\,\sigma^{2}\bigg)+\mathcal{O}\bigg(\frac{1}{\eta\,p}\Bigl(1-\tfrac{1}{\delta}\Bigr)\,\eta_{0}^{2}L^{2}\bigl(T\,\sigma^{2}+T^{2}\nu^{2}\bigr)\bigg).
+Thus, partial participation effectively reduces the horizon to Reff=p​RR_{\mathrm{eff}}=pR: the optimization term slows by a factor 1/p1/p. The pure mini-batch variance averages down as 1/m1/m, whereas the compression/EF floors depend on (1−1/δ)(1-1/\delta) and the local-work parameter s=η0​L​Ts=\eta_{0}LT, and do not benefit from 1/m1/m averaging.
+Comparison to EF under PP.
+With a diminishing stepsize chosen so that ∑r=0R−1ηr​T=Θ⁡(R)\sum_{r=0}^{R-1}\eta_{r}T=\Theta(\sqrt{R}), the optimization term scales as 𝒪⁡(1/(p​R))\mathcal{O}\!\big(1/(p\sqrt{R})\big), or equivalently as 𝒪⁡(K/m/R)\mathcal{O}\!\big(\sqrt{K/m}/\sqrt{R}\big), which recovers the K/m\sqrt{K/m} slow-down of EF under partial participation (Li and Li, 2023, Theorem 4.10). Our variance terms likewise exhibit a 1/m1/m reduction for mini-batch noise, while the compressor- and heterogeneity-induced floors remain of order (1−1/δ)(1-1/\delta), in agreement with prior analyses.
+Why step-ahead helps (and how much).
+Step-ahead modifies the residual contraction factor to
+ρr=(1−1δ)​(2​(1−αr)2+24​αr2​(ηr​L​T)2)=(1−1δ)​(2−4​αr+(2+24​sr2)​αr2),sr:=ηr​L​T≤18.\rho_{r}=(1-\tfrac{1}{\delta})\Bigl(2(1-\alpha_{r})^{2}+24\,\alpha_{r}^{2}(\eta_{r}LT)^{2}\Bigr)=(1-\tfrac{1}{\delta})\Bigl(2-4\alpha_{r}+(2+24s_{r}^{2})\alpha_{r}^{2}\Bigr),\quad s_{r}:=\eta_{r}LT\leq\tfrac{1}{8}.
+This quadratic is minimized at
+αr⋆=1 1+12​sr2∈(0.84,1],\alpha_{r}^{\star}=\frac{1}{\,1+12s_{r}^{2}\,}\in(0.84,1],
+hence a moderate-to-large step-ahead (close to 11 when srs_{r} is small) achieves the strongest contraction. Relative to EF (αr=0\alpha_{r}=0), the contraction gain is
+ρr−ρEF=(1−1δ)​[−4​αr+(2+24​sr2)​αr2]<0\rho_{r}-\rho_{\mathrm{EF}}=(1-\tfrac{1}{\delta})[-4\alpha_{r}+(2+24s_{r}^{2})\alpha_{r}^{2}]<0
+for αr∈(0,11+12​sr2)\alpha_{r}\in(0,\tfrac{1}{1+12s_{r}^{2}}), with minimum value
+ρmin=2​(1−1δ)​(1−11+12​sr2)=ρEF​(1−11+12​sr2).\rho_{\min}=2(1-\tfrac{1}{\delta})(1-\frac{1}{1+12s_{r}^{2}})=\rho_{\mathrm{EF}}(1-\frac{1}{1+12s_{r}^{2}}).
+For αr>αr⋆\alpha_{r}>\alpha_{r}^{\star}, ρr\rho_{r} increases (since αr⋆<1\alpha_{r}^{\star}<1), though the descent coupling in (η,ηr)(\eta,\eta_{r}) is unchanged. The trade-off is that larger αr\alpha_{r} tightens the requirement on sr=ηr​L​Ts_{r}=\eta_{r}LT (via the αr2​sr2\alpha_{r}^{2}s_{r}^{2} term) or necessitates milder compression (larger δ\delta) to maintain ρr<1\rho_{r}<1. Overall, step-ahead reduces the contraction factor while leaving the leading optimization rate and the qualitative variance/heterogeneity terms unchanged.
+Practical takeaway.
+When sr=ηr​L​Ts_{r}=\eta_{r}LT is small and αr\alpha_{r} is chosen near αr⋆\alpha_{r}^{\star}, the residual contraction factor is strictly smaller than in EF (cf. Prop. 1), resulting in smaller constants in the residual–induced error terms. This leads to a steeper initial decrease in the objective and gradient norm under the same stepsizes, which in turn yields faster convergence within a fixed communication budget. In regimes with high compression or strong data heterogeneity, SA-PEF can therefore outperform both standard EF and uncompressed Local-SGD. To place SA-PEF in context, we provide a brief comparison of Fed-EF, SAEF, CSER, SCAFCOM, and SA-PEF in Table 1, highlighting that SA-PEF operates in the same FL regime as Fed-EF but achieves strictly better residual contraction under biased compression, while SCAFCOM relaxes heterogeneity assumptions at the cost of additional control-variates state.
+5 Experiments
+5.1 Experimental setup
+We evaluate SA-PEF on three image classification benchmarks of increasing difficulty and scale. We use CIFAR-10 (Krizhevsky et al., 2009) with ResNet-9 (Page, 2024), CIFAR-100 Krizhevsky et al. (2009) with ResNet-18 He et al. (2016), and Tiny-ImageNet (Le and Yang, 2015) with ResNet-34 (He et al., 2016), trained with cross-entropy loss. We apply standard preprocessing: per-dataset mean/std normalization. We create K=100K=100 clients and adopt partial participation with rate p∈{0.1,0.5,1.0}p\in\{0.1,0.5,1.0\} where, in each round rr, the server samples m=⌊p​K⌋m=\lfloor pK\rfloor clients uniformly without replacement. To induce client data heterogeneity, we apply Dirichlet label partitioning with concentration parameter γ∈{0.1,0.5,1.0}\gamma\in\{0.1,0.5,1.0\}, where smaller γ\gamma indicates stronger non-IID (Hsu et al., 2019a). Each client’s local dataset remains fixed across rounds. Each selected client performs T=5T=5 local SGD steps per round. Training runs for R=200R=200 communication rounds. Unless otherwise stated, the local mini-batch size is 64, momentum is 0.9, and weight decay is 5×10−45\times 10^{-4} on CIFAR and 1×10−41\times 10^{-4} on Tiny-ImageNet. We use Top-kk sparsification with sparsity level k/d∈{0.01,0.05,0.1}k/d\in\{0.01,0.05,0.1\}. Clients transmit both indices and values of selected entries. We compare SA-PEF with uncompressed LocalSGD, EF (Li and Li, 2023), SAEF (Xu et al., 2021), and CSER (Xie et al., 2020). All methods use the same client sampling, optimizer, learning-rate schedules, and total communication budget (rounds and bits). We report Top-1 accuracy versus rounds and communicated bits, rounds-to-target accuracy, and final accuracy at a fixed communication budget. We repeat all experiments with five random seeds and report mean values in the plots. For CIFAR-10 and CIFAR-100, we additionally report the final test accuracy as mean ±\pm standard deviation over these five runs in Table 2. Due to space constraints, we present results under high compression, with comprehensive results across all settings in the Appendix.
+5.2 Empirical results
+((a)) p=0.1p{=}0.1, γ=0.5\gamma{=}0.5
+((b)) p=0.1p{=}0.1, γ=0.5\gamma{=}0.5
+((c)) p=0.5p{=}0.5, γ=0.1\gamma{=}0.1
+((d)) p=0.5p{=}0.5, γ=0.1\gamma{=}0.1
+((e)) p=0.1p{=}0.1, γ=0.5\gamma{=}0.5
+((f)) p=0.1p{=}0.1, γ=0.5\gamma{=}0.5
+((g)) p=0.5p{=}0.5, γ=0.1\gamma{=}0.1
+((h)) p=0.5p{=}0.5, γ=0.1\gamma{=}0.1
+Figure 1: Test accuracy vs number of rounds (row 1) and communicated GB (row 2) on the CIFAR-10 dataset using ResNet-9.
+Figure 1 compares SA-PEF with FedAvg (dense) and compressed baselines (EF, SAEF, CSER) on CIFAR-10 with ResNet-9 under two participation rates (p∈{0.1,0.5}p\in\{0.1,0.5\}) and two compression budgets (Top-1%, Top-10%).
+In the accuracy versus rounds plots (top row), SA-PEF generally reaches a given accuracy in fewer rounds than EF and SAEF, with the largest margin in the harder regime (γ=0.1\gamma{=}0.1, Top-1%). SAEF often shows an initial jump but tends to plateau, while SA-PEF continues to improve. CSER typically lags early and only catches up later.
+In the accuracy versus communication plots (bottom row), SA-PEF’s curves are left-shifted: for the same test accuracy it requires less uplink communication (in Gigabyte) than EF or SAEF, whereas FedAvg attains high accuracy only at orders of magnitude higher cost.
+Raising participation to p=0.5p{=}0.5 benefits all approaches and narrows round-wise gaps, but SA-PEF remains the most communication-efficient across schemes.11
+1
+Under low participation (e.g., 1-10%), effective batch sizes shrink and both drift and compression noise increase, hence participation-aware hyperparameters (e.g., learning rate, local steps TT, or αr\alpha_{r}) may need tuning. Here, we fix hyperparameters across methods for fairness, which can reduce the observable advantage of SA-PEF in extreme low-participation regimes.
+Figure 2 shows results on CIFAR-100 with ResNet-18. Despite the increased task difficulty, the same qualitative trends persist: SA-PEF tends to dominate early rounds and delivers higher accuracy per unit of communication across most regimes, SAEF often plateaus early, and CSER improves mainly at larger communication budgets.22
+2
+As in CIFAR-10, under low partial participation (1–10%), the differences between methods may be less visible without participation-aware tuning of hyperparameters. The gains are most pronounced under aggressive compression (Top-1%) and low participation (e.g., p=0.1p{=}0.1).
+Overall, these results suggest that combining preview with partial error feedback provides faster early progress and superior accuracy-communication trade-offs across architectures and datasets.
+((a)) p=0.1p{=}0.1, Top-1%
+((b)) p=0.1p{=}0.1, Top-10%
+((c)) p=0.5p{=}0.5, Top-1%
+((d)) p=0.5p{=}0.5, Top-10%
+((e)) p=0.1p{=}0.1, Top-1%
+((f)) p=0.1p{=}0.1, Top-10%
+((g)) p=0.5p{=}0.5, Top-1%
+((h)) p=0.5p{=}0.5, Top-10%
+Figure 2: Test accuracy vs number of rounds (row 1) and communicated GB (row 2) on the CIFAR-100 dataset using ResNet-18 and γ=0.1\gamma{=}0.1.
+Discussion:
+Overall, our results position SA-PEF as a lightweight but effective upgrade of classical EF in FL. Compared to EF and its step-ahead variant SAEF, SA-PEF converges consistently faster and offers better accuracy-communication trade-offs under practical settings. Relative to CSER, which periodically resets residuals to control mismatch, SA-PEF achieves comparable or better robustness without introducing any additional reset-period hyperparameter, and it avoids CSER’s high peak communication cost when compressed or full residuals are transmitted at reset rounds. Since practical systems must provision for peak, rather than average, bandwidth and latency, this makes SA-PEF more attractive as a drop-in component in resource-constrained deployments. Control-variate methods such as SCAFFOLD and SCAFCOM target a complementary axis, mitigating client drift and heterogeneity via additional per-client state, whereas SA-PEF focuses on reducing compression-induced residual mismatch within the EF family. In this sense, SA-PEF is best viewed as a drop-in improvement for EF-style compressed FL (and a natural building block for future combinations with control variates), providing significant gains in challenging regimes with high compression and strong heterogeneity.
+5.3 Sensitivity Analysis of Step-Ahead Coefficient α\alpha
+To assess the robustness of SA-PEF to the choice of step-ahead coefficient, we sweep αr\alpha_{r} between zero and one with increment of 0.10.1 on CIFAR-10 with ResNet-9 and CIFAR-100 with ResNet-18 under non-IID Dirichlet partitioning (γ=0.1\gamma=0.1), Top-1% sparsification, T=5T=5 local steps, and p=0.1p=0.1 participation. Figure 3 reports test accuracy versus rounds for EF (αr=0\alpha_{r}=0), SAEF (αr=1\alpha_{r}=1), and SA-PEF with intermediate αr\alpha_{r} values. Three regimes emerge: (i) Small α\alpha (αr≤0.3\alpha_{r}\leq 0.3) behaves similarly to EF, with noticeably slower convergence and lower final accuracy. (ii) Intermediate α\alpha (αr∈[0.6,0.9]\alpha_{r}\in[0.6,0.9]) produces nearly identical curves, yielding the fastest convergence and highest final accuracy. This interval includes the default αr=0.85\alpha_{r}=0.85 used in our main experiments. (iii) Full step-ahead (αr=1.0\alpha_{r}=1.0, SAEF) accelerates early rounds but plateaus slightly below the best SA-PEF setting in the later phases. Overall, SA-PEF is robust across a broad high-α\alpha region, while performance is significantly affected only at the extremes: αr≈0\alpha_{r}\approx 0 (reducing to EF) or αr=1\alpha_{r}=1 (SAEF). This supports treating α\alpha as a momentum-like parameter and use a single default value (e.g., αr≈0.8\alpha_{r}\approx 0.8-0.90.9) across tasks without heavy tuning.
+((a)) with CIFAR-10 using ResNet-9
+((b)) with CIFAR-100 using ResNet-18
+Figure 3: Sensitivity analysis of step-ahead coefficient α\alpha.
+5.4 Gradient Mismatch
+Let w∈ℝdw\in\mathbb{R}^{d} stack all trainable parameters, and let f⁡(⋅,w)f(\cdot;w) be the network in evaluation mode (dropout disabled, BatchNorm with frozen statistics). For a mini-batch S={(xi,yi)}i=1bS=\{(x_{i},y_{i})\}_{i=1}^{b} drawn from a held-out loader, define the batch loss as
+ℒS​(w)=1b​∑(x,y)∈Sℓ⁡(f⁡(x,w),y).\mathcal{L}_{S}(w)=\tfrac{1}{b}\sum_{(x,y)\in S}\ell\big(f(x;w),y\big).
+At round rr, for client kk and α∈[0,1]\alpha\in[0,1], we consider two evaluation points wrw_{r} and wr(α,k)=wr−α​er(k)w_{r}^{(\alpha,k)}=w_{r}-\alpha\,e_{r}^{(k)}.
+Using the same mini-batch SS for both, we compute the associated gradients as
+gr=∇wℒS​(wr)g_{r}=\nabla_{w}\mathcal{L}_{S}(w_{r}) and gr(α,k)=∇wℒS​(wr(α,k))g_{r}^{(\alpha,k)}=\nabla_{w}\mathcal{L}_{S}\big(w_{r}^{(\alpha,k)}\big),
+and define the squared gradient-mismatch as
+ε^r(k)​(α)=‖gr−gr(α,k)‖22\hat{\varepsilon}_{r}^{(k)}(\alpha)=\big\|\,g_{r}-g_{r}^{(\alpha,k)}\big\|_{2}^{2}
+and its client average as ε^r​(α)=1K​∑k=1Kε^r(k)​(α)\hat{\varepsilon}_{r}(\alpha)=\tfrac{1}{K}\sum_{k=1}^{K}\hat{\varepsilon}_{r}^{(k)}(\alpha). In particular, we switch the model to eval mode, clear any stale gradients, reuse the same SS, compute grg_{r} and gr(α,k)g_{r}^{(\alpha,k)} via first-order autodiff, and then restore the model to training mode. We do not alter any optimizer state or BatchNorm buffer.
+((a)) with CIFAR-10 using ResNet-9
+((b)) with CIFAR-100 using ResNet-18
+Figure 4: Gradient mismatch for different algorithms.
+Figure 4 shows the gradient-mismatch probe across training rounds for all methods. SA-PEF keeps the mismatch essentially flat and near zero throughout training: previewing only a fraction of the residual shifts the evaluation point closer to where EF applies the update, while the retained (1−α)​er(1-\alpha)e_{r} further prevents residual build-up. EF exhibits a steady late-phase rise, consistent with its one-step staleness effect as displacement accumulates over rounds. SAEF produces the largest spikes and highest overall mismatch, as with full preview (α=1\alpha{=}1), the evaluation occurs at wr−erw_{r}-e_{r}. Large or heterogeneous residuals spike mismatch, causing late-stage plateaus. CSER stays near zero, reflecting its error-reset/averaging mechanism that suppresses persistent residual drift. Overall, the results confirm that combining partial preview with partial EF controls mismatch throughout training, unlike plain EF or SAEF.
+6 Conclusion
+We presented SA-PEF, which combines a step-ahead preview with partial error feedback to accelerate early-round progress in FL while preserving the long-run stability of EF under biased compression. Our theoretical analysis covers non-convex objectives, local SGD, partial participation, and δ\delta-contractive compressors, and establishes convergence to stationarity with rates matching non-convex FedSGD up to constants. To our knowledge, this is the first analysis of SAEF in a federated setting that simultaneously accounts for local updates, non-IID data, partial participation, and biased compression. Empirically, across datasets, models, and compressors, SA-PEF consistently reaches target accuracy in fewer rounds than EF and avoids the late-stage plateaus observed with full step-ahead. Looking ahead, a promising direction is developing adaptive schedules for α\alpha, guided by online estimates of noise, residual norms, or client drift, and analyzing the feedback between mismatch reduction and residual dynamics under partial participation. Another direction is integrating SA-PEF with adaptive optimizers and momentum, including a preconditioned drift analysis to control momentum-residual interactions. Finally, a natural direction for future work is to bring ideas from EF21 into the federated local-SGD regime we study. We expect these extensions to further improve early-phase alignment while retaining stability at scale, advancing communication-efficient FL under realistic constraints.
+Ethics statement.
+This work studies communication-efficient federated optimization using public, non-sensitive benchmark datasets (CIFAR-10/100 and Tiny-ImageNet). No personal, identifiable, or protected-class attributes are used, and no user-generated private data was accessed. All datasets are widely used for research and were obtained under their respective licenses; we cite the original sources. Our algorithms are intended to reduce communication and potentially lower the energy costs of federated training.
+Reproducibility statement.
+We provide a zip file with anonymized code and configuration files. The package includes:
+(i) exact configs for all experiments;
+(ii) scripts to download datasets and to create federated partitions (IID and Dirichlet with α∈{0.1,0.5}\alpha\in\{0.1,0.5\});
+(iii) model definitions (ResNet-9/18/34), compressor implementations (Top-kk with k/d∈{1%,10%}k/d\in\{1\%,10\%\}, error-feedback variants), and our SA-PEF scheduler.
+Unless otherwise stated, experiments use client participation q∈{0.1,0.5}q\in\{0.1,0.5\}, local epochs T∈{1,…,5}T\in\{1,\ldots,5\}, batch size B=64B=64, optimizer SGD (momentum 0.90.9), weight decay ×10−45\!\times\!10^{-4}, and base step size η0=0.1\eta_{0}=0.1 with cosine or step decay. Communication is measured as uplink GB, including indices and values for sparse updates. Hardware: runs were executed on A100/A5000/H200 GPUs.
+References
+Acar et al. (2021)
+D. A. E. Acar, Y. Zhao, R. M. Navarro, M. Mattina, P. N. Whatmough, and V. Saligrama
+Federated learning based on dynamic regularization.
+arXiv preprint arXiv:2111.04263.
+Cited by: §2.
+Alistarh et al. (2017)
+D. Alistarh, D. Grubic, J. Li, R. Tomioka, and M. Vojnovic
+QSGD: communication-efficient SGD via gradient quantization and encoding.
+In Advances in Neural Information Processing Systems,
+Vol. 30.
+Cited by: §1,
+§1.
+Alistarh et al. (2018)
+D. Alistarh, T. Hoefler, M. Johansson, N. Konstantinov, S. Khirirat, and C. Renggli
+The convergence of sparsified gradient methods.
+In Advances in Neural Information Processing Systems,
+Vol. 31.
+Cited by: §4.
+Bao et al. (2025)
+H. Bao, P. Chen, Y. Sun, and Z. Li
+EFSkip: a new error feedback with linear speedup for compressed federated learning with arbitrary data heterogeneity.
+In Proceedings of the AAAI Conference on Artificial Intelligence,
+Vol. 39, pp. 15489–15497.
+Cited by: §1,
+§1.
+Basu et al. (2019)
+D. Basu, D. Data, C. Karakus, and S. Diggavi
+Qsparse-local-SGD: distributed SGD with quantization, sparsification and local computations.
+In Advances in Neural Information Processing Systems,
+Vol. 32.
+Cited by: §2.
+Bernstein et al. (2019)
+J. Bernstein, J. Zhao, K. Azizzadenesheli, and A. Anandkumar
+SignSGD with majority vote is communication efficient and fault tolerant.
+In International Conference on Learning Representations,
+Cited by: §1.
+Beutel et al. (2020)
+D. J. Beutel, T. Topal, A. Mathur, X. Qiu, J. Fernandez-Marques, Y. Gao, L. Sani, K. H. Li, T. Parcollet, P. P. B. De Gusmão, et al.
+Flower: a friendly federated learning research framework.
+arXiv preprint arXiv:2007.14390.
+Cited by: §B.1.
+Beznosikov et al. (2023)
+A. Beznosikov, S. Horváth, P. Richtárik, and M. Safaryan
+On biased compression for distributed learning.
+Journal of Machine Learning Research 24 (276), pp. 1–50.
+Cited by: §1,
+§1,
+§2,
+§4,
+Lemma 9.
+Condat et al. (2023)
+L. Condat, I. Agarskỳ, G. Malinovsky, and P. Richtárik
+Tamuna: doubly accelerated distributed optimization with local training, compression, and partial participation.
+arXiv preprint arXiv:2302.09832.
+Cited by: §2.
+Condat et al. (2022)
+L. Condat, I. Agarskỳ, and P. Richtárik
+Provably doubly accelerated federated learning: the first theoretically successful combination of local training and communication compression.
+arXiv preprint arXiv:2210.13277.
+Cited by: §2.
+Condat et al. (2025)
+L. Condat, A. Maranjyan, and P. Richtárik
+LoCoDL: communication-efficient distributed learning with local training and compression.
+In The Thirteenth International Conference on Learning Representations,
+Cited by: §2.
+Fatkhullin et al. (2025)
+I. Fatkhullin, I. Sokolov, E. Gorbunov, Z. Li, and P. Richtárik
+EF21 with bells & whistles: six algorithmic extensions of modern error feedback.
+Journal of Machine Learning Research 26 (189), pp. 1–50.
+Cited by: §2,
+Remark 2.
+Gao et al. (2024)
+Y. Gao, R. Islamov, and S. U. Stich
+EControl: fast distributed optimization with compression and error control.
+In International Conference on Learning Representations,
+Cited by: §2.
+Gorbunov et al. (2021)
+E. Gorbunov, K. P. Burlachenko, Z. Li, and P. Richtárik
+MARINA: faster non-convex distributed learning with compression.
+In International Conference on Machine Learning,
+pp. 3788–3798.
+Cited by: §2.
+Gorbunov et al. (2020)
+E. Gorbunov, D. Kovalev, D. Makarenko, and P. Richtárik
+Linearly converging error compensated SGD.
+In Advances in Neural Information Processing Systems,
+Vol. 33, pp. 20889–20900.
+Cited by: §2.
+He et al. (2016)
+K. He, X. Zhang, S. Ren, and J. Sun
+Deep residual learning for image recognition.
+In Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition,
+pp. 770–778.
+Cited by: §5.1.
+Hsu et al. (2019a)
+T. H. Hsu, H. Qi, and M. Brown
+Measuring the effects of non-identical data distribution for federated visual classification.
+arXiv preprint arXiv:1909.06335.
+Cited by: §5.1.
+Hsu et al. (2019b)
+T. H. Hsu, H. Qi, and M. Brown
+Measuring the effects of non-identical data distribution for federated visual classification.
+arXiv preprint arXiv:1909.06335.
+Cited by: §1.
+Huang et al. (2022)
+X. Huang, Y. Chen, W. Yin, and K. Yuan
+Lower bounds and nearly optimal algorithms in distributed learning with communication compression.
+In Advances in Neural Information Processing Systems,
+Vol. 35, pp. 18955–18969.
+Cited by: §1.
+Huang et al. (2024)
+X. Huang, P. Li, and X. Li
+Stochastic controlled averaging for federated learning with communication compression.
+In The Twelfth International Conference on Learning Representations,
+Cited by: Table 1,
+§B.2,
+§B.2,
+§2.
+Islamov et al. (2025)
+R. Islamov, Y. As, and I. Fatkhullin
+Safe-EF: error feedback for non-smooth constrained optimization.
+In International Conference on Machine Learning,
+Cited by: §1.
+Kairouz et al. (2021)
+P. Kairouz, H. B. McMahan, B. Avent, A. Bellet, M. Bennis, A. N. Bhagoji, K. Bonawitz, Z. Charles, G. Cormode, R. Cummings, et al.
+Advances and open problems in federated learning.
+Foundations and Trends® in Machine Learning 14, pp. 1–210.
+Cited by: §1.
+Karimireddy et al. (2020)
+S. P. Karimireddy, S. Kale, M. Mohri, S. Reddi, S. Stich, and A. T. Suresh
+SCAFFOLD: stochastic controlled averaging for federated learning.
+In International Conference on Machine Learning,
+pp. 5132–5143.
+Cited by: §1,
+§1,
+§2,
+§4.
+Karimireddy et al. (2019)
+S. P. Karimireddy, Q. Rebjock, S. Stich, and M. Jaggi
+Error feedback fixes signSGD and other gradient compression schemes.
+In International Conference on Machine Learning,
+pp. 3252–3261.
+Cited by: §1,
+§2.
+Kim et al. (2024)
+M. Kim, W. Saad, M. Debbah, and C. S. Hong
+SpaFL: communication-efficient federated learning with sparse models and low computational overhead.
+In Advances in Neural Information Processing Systems,
+Vol. 37, pp. 86500–86527.
+Cited by: §1.
+Krizhevsky et al. (2009)
+A. Krizhevsky G. Hinton et al.
+Learning multiple layers of features from tiny images.
+Technical Report.
+Cited by: §5.1.
+Le and Yang (2015)
+Y. Le and X. Yang
+Tiny imagenet visual recognition challenge.
+CS 231N 7 (7), pp. 3.
+Cited by: §5.1.
+Li et al. (2020)
+T. Li, A. K. Sahu, M. Zaheer, M. Sanjabi, A. Talwalkar, and V. Smith
+Federated optimization in heterogeneous networks.
+Proceedings of Machine Learning and Systems 2, pp. 429–450.
+Cited by: §2.
+Li and Li (2023)
+X. Li and P. Li
+Analysis of error feedback in federated non-convex optimization with biased compression: fast convergence and partial participation.
+In International Conference on Machine Learning,
+pp. 19638–19688.
+Cited by: Table 1,
+§B.2,
+§1,
+§1,
+§1,
+§2,
+1st item,
+§4,
+§4,
+§4,
+§5.1.
+Li et al. (2024)
+Z. Li, Y. Li, B. Lin, Z. Jin, and W. Zhang
+Low precision local training is enough for federated learning.
+In Advances in Neural Information Processing Systems,
+Vol. 37, pp. 90160–90197.
+Cited by: §1.
+Lian et al. (2015)
+X. Lian, Y. Huang, Y. Li, and J. Liu
+Asynchronous parallel stochastic gradient for nonconvex optimization.
+In Advances in Neural Information Processing Systems,
+Vol. 28.
+Cited by: §3.
+Lin et al. (2018)
+Y. Lin, S. Han, H. Mao, Y. Wang, and B. Dally
+Deep gradient compression: reducing the communication bandwidth for distributed training.
+In International Conference on Learning Representations,
+Cited by: §1.
+McMahan et al. (2017)
+B. McMahan, E. Moore, D. Ramage, S. Hampson, and B. A. y Arcas
+Communication-efficient learning of deep networks from decentralized data.
+In Artificial Intelligence and Statistics,
+pp. 1273–1282.
+Cited by: §1.
+Mishchenko et al. (2019)
+K. Mishchenko, E. Gorbunov, M. Takáč, and P. Richtárik
+Distributed learning with compressed gradient differences.
+arXiv preprint arXiv:1901.09269.
+Cited by: §2.
+Mishchenko et al. (2022)
+K. Mishchenko, G. Malinovsky, S. Stich, and P. Richtárik
+ProxSkip: yes! local gradient steps provably lead to communication acceleration! finally!.
+In International Conference on Machine Learning,
+pp. 15750–15769.
+Cited by: §2.
+Page (2024)
+D. Page
+CIFAR10-fast.
+Note: https://github.com/davidcpage/cifar10-fastAccessed: August 24, 2024
+Cited by: §5.1.
+Reisizadeh et al. (2020)
+A. Reisizadeh, A. Mokhtari, H. Hassani, A. Jadbabaie, and R. Pedarsani
+FedPAQ: a communication-efficient federated learning method with periodic averaging and quantization.
+In International Conference on Artificial Intelligence and Statistics,
+pp. 2021–2031.
+Cited by: §1,
+§2.
+Richtárik et al. (2021)
+P. Richtárik, I. Sokolov, and I. Fatkhullin
+EF21: a new, simpler, theoretically better, and practically faster error feedback.
+In Advances in Neural Information Processing Systems,
+Vol. 34, pp. 4384–4396.
+Cited by: §2,
+Remark 2.
+Rothchild et al. (2020)
+D. Rothchild, A. Panda, E. Ullah, N. Ivkin, I. Stoica, V. Braverman, J. Gonzalez, and R. Arora
+FetchSGD: communication-efficient federated learning with sketching.
+In International Conference on Machine Learning,
+pp. 8253–8265.
+Cited by: §1.
+Seide et al. (2014)
+F. Seide, H. Fu, J. Droppo, G. Li, and D. Yu
+1-bit stochastic gradient descent and its application to data-parallel distributed training of speech DNNs.
+In Interspeech,
+pp. 1058–1062.
+External Links: Document
+Cited by: §1,
+§1,
+§2.
+Stich et al. (2018)
+S. U. Stich, J. Cordonnier, and M. Jaggi
+Sparsified SGD with memory.
+In Advances in Neural Information Processing Systems,
+Vol. 31.
+Cited by: §1,
+§1,
+§2,
+Lemma 9.
+Stich (2019)
+S. U. Stich
+Local SGD converges fast and communicates little.
+In International Conference on Learning Representations,
+Cited by: §2.
+Wang and Ji (2022)
+S. Wang and M. Ji
+A unified analysis of federated learning with arbitrary client participation.
+In Advances in Neural Information Processing Systems,
+Vol. 35, pp. 19124–19137.
+Cited by: §1.
+Wangni et al. (2018)
+J. Wangni, J. Wang, J. Liu, and T. Zhang
+Gradient sparsification for communication-efficient distributed optimization.
+In Advances in Neural Information Processing Systems,
+Vol. 31.
+Cited by: §1.
+Xie et al. (2020)
+C. Xie, S. Zheng, S. Koyejo, I. Gupta, M. Li, and H. Lin
+CSER: communication-efficient SGD with error reset.
+In Advances in Neural Information Processing Systems,
+Vol. 33, pp. 12593–12603.
+Cited by: Table 1,
+§2,
+§5.1.
+Xu et al. (2021)
+A. Xu, Z. Huo, and H. Huang
+Step-ahead error feedback for distributed training with compressed gradient.
+In Proceedings of the AAAI Conference on Artificial Intelligence,
+Vol. 35, pp. 10478–10486.
+Cited by: Table 1,
+§1,
+§2,
+2nd item,
+§5.1.
+Appendix A Proof of Convergence Results
+A.1 Proof of Theorem 1
+Proof.
+Subtracting the average residual from the communicated model converts a biased, compressed update into something that resembles vanilla SGD.
+We have:
+1.
+Step-ahead shift wr+12(k)=wr(k)−αr​er(k)w_{r+\frac{1}{2}}^{(k)}\!=w_{r}^{(k)}-\alpha_{r}e_{r}^{(k)}.
+2.
+Residual update & compression er+1(k)=ur+1(k)−C⁡(ur+1(k))e_{r+1}^{(k)}=u_{r+1}^{(k)}-C(u_{r+1}^{(k)}) with
+ur+1(k)=(1−αr)​er(k)+gr(k)u_{r+1}^{(k)}=(1-\alpha_{r})e_{r}^{(k)}+g_{r}^{(k)}.
+Let
+e¯r:=1K​∑k=1Ker(k),u¯r+1:=(1−αr)​e¯r+g¯r,C¯r+1:=1K​∑kC⁡(ur+1(k)),\bar{e}_{r}:=\frac{1}{K}\sum_{k=1}^{K}e_{r}^{(k)},\quad\bar{u}_{r+1}:=(1-\alpha_{r})\bar{e}_{r}+\bar{g}_{r},\quad\bar{C}_{r+1}:=\frac{1}{K}\sum_{k}C(u_{r+1}^{(k)}),
+so the server update is wr+1=wr−η​C¯r+1w_{r+1}=w_{r}-\eta\;\bar{C}_{r+1}.
+Define a virtual iterate:
+xr\displaystyle x_{r}
+=wr−η​e¯r\displaystyle=w_{r}-\eta\,\bar{e}_{r}
+xr+1\displaystyle x_{r+1}
+=wr+1−η​e¯r+1\displaystyle=w_{r+1}-\eta\,\bar{e}_{r+1}
+=(wr−η​C¯r+1)−η⁡(u¯r+1−C¯r+1)\displaystyle=(w_{r}-\eta\,\bar{C}_{r+1})-\eta\,\bigl(\bar{u}_{r+1}-\bar{C}_{r+1}\bigr)
+=wr−η​u¯r+1\displaystyle=w_{r}-\eta\,\bar{u}_{r+1}
+=(xr+η​e¯r)−η⁡[(1−αr)​e¯r+g¯r]\displaystyle=(x_{r}+\eta\,\bar{e}_{r})\;-\;\eta\,\bigl[(1-\alpha_{r})\bar{e}_{r}+\bar{g}_{r}\bigr]
+=xr+η​αr​e¯r−η​g¯r.\displaystyle=x_{r}\;+\;\eta\,\alpha_{r}\bar{e}_{r}\;-\;\eta\,\bar{g}_{r}.
+f⁡(xr+1)≤f⁡(xr)+⟨∇f​(xr),xr+1−xr⟩+L2​‖xr+1−xr‖2.f(x_{r+1})\;\leq\;f(x_{r})+\bigl\langle\nabla f(x_{r}),\,x_{r+1}-x_{r}\bigr\rangle+\frac{L}{2}\,\bigl\|x_{r+1}-x_{r}\bigr\|^{2}.
+(2)
+Because xr+1−xr=η⁡(αr​e¯r−g¯r)x_{r+1}-x_{r}=\eta\bigl(\alpha_{r}\bar{e}_{r}-\bar{g}_{r}\bigr), taking the
+expectation over all randomness inside round rr yields
+𝔼⁡[f⁡(xr+1)]≤𝔼⁡[f⁡(xr)]+η​𝔼​[⟨∇f​(xr),αr​e¯r−g¯r⟩]+η2​L2​𝔼​[‖αr​e¯r−g¯r‖2].\displaystyle\mathbb{E}\!\bigl[f(x_{r+1})\bigr]\;\leq\;\mathbb{E}\!\bigl[f(x_{r})\bigr]+\eta\,\mathbb{E}\!\bigl[\bigl\langle\nabla f(x_{r}),\,\alpha_{r}\bar{e}_{r}-\bar{g}_{r}\bigr\rangle\bigr]+\frac{\eta^{2}L}{2}\,\mathbb{E}\!\bigl[\bigl\|\alpha_{r}\bar{e}_{r}-\bar{g}_{r}\bigr\|^{2}\bigr].
+(3)
+Isolating the drift of the objective between two consecutive rounds and
+decomposing the inner product gives
+𝔼⁡[f⁡(xr+1)]−𝔼⁡[f⁡(xr)]\displaystyle\mathbb{E}\!\bigl[f(x_{r+1})\bigr]-\mathbb{E}\!\bigl[f(x_{r})\bigr]
+≤η​𝔼​[⟨∇f​(xr),αr​e¯r−g¯r⟩]+η2​L2​𝔼​[‖αr​e¯r−g¯r‖2]\displaystyle\leq\eta\,\mathbb{E}\!\bigl[\bigl\langle\nabla f(x_{r}),\,\alpha_{r}\bar{e}_{r}-\bar{g}_{r}\bigr\rangle\bigr]+\frac{\eta^{2}L}{2}\,\mathbb{E}\!\bigl[\bigl\|\alpha_{r}\bar{e}_{r}-\bar{g}_{r}\bigr\|^{2}\bigr]
+=η​𝔼​[⟨∇f​(wr),αr​e¯r−g¯r⟩]⏟T​1+η2​L2​𝔼​[‖αr​e¯r−g¯r‖2]⏟T​2\displaystyle=\underbrace{\eta\,\mathbb{E}\!\bigl[\bigl\langle\nabla f(w_{r}),\,\alpha_{r}\bar{e}_{r}-\bar{g}_{r}\bigr\rangle\bigr]}_{T1}+\underbrace{\frac{\eta^{2}L}{2}\,\mathbb{E}\!\bigl[\bigl\|\alpha_{r}\bar{e}_{r}-\bar{g}_{r}\bigr\|^{2}\bigr]}_{T2}
++η​𝔼​[⟨∇f​(xr)−∇f​(wr),αr​e¯r−g¯r⟩]⏟T​3.\displaystyle\quad+\underbrace{\eta\,\mathbb{E}\!\bigl[\bigl\langle\nabla f(x_{r})-\nabla f(w_{r}),\,\alpha_{r}\bar{e}_{r}-\bar{g}_{r}\bigr\rangle\bigr]}_{T3}.
+(4)
+Bounding the first inner-product term
+Recall
+T1=η​𝔼r​[⟨∇f​(wr),αr​e¯r−g¯r⟩]=η​αr​⟨∇f​(wr),e¯r⟩−η​𝔼r​[⟨∇f​(wr),g¯r⟩],T_{1}=\eta\,\mathbb{E}_{r}\!\bigl[\langle\nabla f(w_{r}),\,\alpha_{r}\bar{e}_{r}-\bar{g}_{r}\rangle\bigr]=\eta\,\alpha_{r}\,\langle\nabla f(w_{r}),\bar{e}_{r}\rangle-\eta\,\mathbb{E}_{r}\!\bigl[\langle\nabla f(w_{r}),\bar{g}_{r}\rangle\bigr],
+where
+g¯r=ηrK​∑k=1K∑t=0T−1(∇fk​(wr+12,t(k))+ξk,t)\bar{g}_{r}=\frac{\eta_{r}}{K}\sum_{k=1}^{K}\sum_{t=0}^{T-1}(\nabla f_{k}(w_{r+\frac{1}{2},t}^{(k)})+\xi_{k,t})
+and 𝔼r​[ξk,t]=0\mathbb{E}_{r}[\xi_{k,t}]=0.
+Define ∇¯t:=1K​∑k=1K∇fk​(wr+12,t(k))\bar{\nabla}_{t}:=\frac{1}{K}\sum_{k=1}^{K}\nabla f_{k}(w_{r+\frac{1}{2},t}^{(k)}) and Δt=1K​∑k=1K(∇fk​(wr+12,t(k))−∇f​(wr))\Delta_{t}=\frac{1}{K}\sum_{k=1}^{K}(\nabla f_{k}(w_{r+\frac{1}{2},t}^{(k)})-\nabla f(w_{r}))
+Write ∇¯t=∇f​(wr)+Δt\bar{\nabla}_{t}=\nabla f(w_{r})+\Delta_{t} and use LL-smoothness to get
+𝔼r∥Δt∥2≤L2×1K∑k𝔼r∥wr+12,t(k)−wr∥2.\mathbb{E}_{r}\|\Delta_{t}\|^{2}\leq L^{2}\times\frac{1}{K}\sum_{k}\mathbb{E}_{r}\|w_{r+\frac{1}{2},t}^{(k)}-w_{r}\|^{2}.
+Young’s inequality gives, for any λ1>0\lambda_{1}>0,
+𝔼r​⟨∇f​(wr),g¯r⟩≥ηr​T​(1−λ12)​‖∇f​(wr)‖2−ηr​L22​λ1​S,S:=1K​∑k=1K∑t=0T−1𝔼r​‖wr+12,t(k)−wr‖2.\mathbb{E}_{r}\langle\nabla f(w_{r}),\bar{g}_{r}\rangle\geq\eta_{r}T\Bigl(1-\frac{\lambda_{1}}{2}\Bigr)\|\nabla f(w_{r})\|^{2}-\frac{\eta_{r}L^{2}}{2\lambda_{1}}\,S,\quad S:=\frac{1}{K}\sum_{k=1}^{K}\sum_{t=0}^{T-1}\mathbb{E}_{r}\|w_{r+\frac{1}{2},t}^{(k)}-w_{r}\|^{2}.
+By Lemma 2 (summed over tt),
+S≤12​ηr2​T2​σ2+168​ηr2​T3​ν2+36​ηr2​T3​β2​‖∇f​(wr)‖2+3​T​αr2​E¯r.S\leq 12\,\eta_{r}^{2}T^{2}\sigma^{2}+168\,\eta_{r}^{2}T^{3}\nu^{2}+36\,\eta_{r}^{2}T^{3}\beta^{2}\|\nabla f(w_{r})\|^{2}+3T\alpha_{r}^{2}\bar{E}_{r}.
+For the step-ahead piece, Young’s inequality yields, for any λ2>0\lambda_{2}>0,
+η​αr​⟨∇f​(wr),e¯r⟩≤η​λ22​‖∇f​(wr)‖2+η​αr22​λ2​E¯r.\eta\,\alpha_{r}\,\langle\nabla f(w_{r}),\bar{e}_{r}\rangle\leq\frac{\eta\lambda_{2}}{2}\|\nabla f(w_{r})\|^{2}+\frac{\eta\,\alpha_{r}^{2}}{2\lambda_{2}}\,\bar{E}_{r}.
+Combining,
+T1≤η⁡(λ22−ηr​T​(1−λ12))​‖∇f​(wr)‖2+η​αr22​λ2​E¯r+η​ηr​L22​λ1​S.T_{1}\leq\eta\Bigl(\frac{\lambda_{2}}{2}-\eta_{r}T\Bigl(1-\frac{\lambda_{1}}{2}\Bigr)\Bigr)\|\nabla f(w_{r})\|^{2}+\frac{\eta\,\alpha_{r}^{2}}{2\lambda_{2}}\,\bar{E}_{r}+\frac{\eta\,\eta_{r}L^{2}}{2\lambda_{1}}\,S.
+Choose λ1=1\lambda_{1}=1 and λ2=ηr​T/2\lambda_{2}=\eta_{r}T/2; then
+T1≤−η​ηr​T4​‖∇f​(wr)‖2+η​αr2ηr​T​E¯r+η​ηr​L22​S,T_{1}\leq-\frac{\eta\,\eta_{r}T}{4}\,\|\nabla f(w_{r})\|^{2}+\frac{\eta\,\alpha_{r}^{2}}{\eta_{r}T}\,\bar{E}_{r}+\frac{\eta\,\eta_{r}L^{2}}{2}\,S,
+and substituting the bound on SS gives
+T1\displaystyle T_{1}
+≤η​ηr​[−T4+18​ηr2​L2​β2​T3]​‖∇f​(wr)‖2\displaystyle\leq\eta\,\eta_{r}\Bigl[-\frac{T}{4}+18\,\eta_{r}^{2}L^{2}\beta^{2}T^{3}\Bigr]\,\|\nabla f(w_{r})\|^{2}
++η​αr2​[1ηr​T+32​ηr​L2​T]​E¯r+6​η​ηr3​L2​T2​σ2+84​η​ηr3​L2​T3​ν2.\displaystyle\qquad+\eta\,\alpha_{r}^{2}\Bigl[\frac{1}{\eta_{r}T}+\frac{3}{2}\eta_{r}L^{2}T\Bigr]\bar{E}_{r}+6\,\eta\,\eta_{r}^{3}L^{2}T^{2}\,\sigma^{2}+84\,\eta\,\eta_{r}^{3}L^{2}T^{3}\,\nu^{2}.
+(5)
+Bounding the quadratic (smoothness) term
+Recall the second contribution in the descent inequality
+T2=L​η22​𝔼r​[‖αr​e¯r−g¯r‖2].T_{2}\;=\;\frac{L\eta^{2}}{2}\,\mathbb{E}_{r}\!\bigl[\,\|\alpha_{r}\bar{e}_{r}-\bar{g}_{r}\|^{2}\bigr].
+(8)
+Bounding the gradient–mismatch term
+T3:=η​𝔼r​[⟨∇f​(xr)−∇f​(wr),αr​e¯r−g¯r⟩].T_{3}:=\;\eta\,\mathbb{E}_{r}\!\bigl[\langle\nabla f(x_{r})-\nabla f(w_{r}),\,\alpha_{r}\bar{e}_{r}-\bar{g}_{r}\rangle\bigr].
+Since xr=wr−η​e¯rx_{r}=w_{r}-\eta\bar{e}_{r}, we have ‖xr−wr‖=η​‖e¯r‖\|x_{r}-w_{r}\|=\eta\|\bar{e}_{r}\|, and by LL-smoothness,
+‖∇f​(xr)−∇f​(wr)‖≤L​‖xr−wr‖=L​η​‖e¯r‖.\|\nabla f(x_{r})-\nabla f(w_{r})\|\leq L\|x_{r}-w_{r}\|=L\eta\|\bar{e}_{r}\|.
+Apply Young’s inequality (any λ>0\lambda>0) with
+a=∇f​(xr)−∇f​(wr)a=\nabla f(x_{r})-\nabla f(w_{r}) and b=αr​e¯r−g¯rb=\alpha_{r}\bar{e}_{r}-\bar{g}_{r}:
+|⟨∇f​(xr)−∇f​(wr),αr​e¯r−g¯r⟩|≤λ2​L2​η2​‖e¯r‖2+12​λ​‖αr​e¯r−g¯r‖2.\bigl|\langle\nabla f(x_{r})-\nabla f(w_{r}),\,\alpha_{r}\bar{e}_{r}-\bar{g}_{r}\rangle\bigr|\leq\frac{\lambda}{2}\,L^{2}\eta^{2}\,\|\bar{e}_{r}\|^{2}+\frac{1}{2\lambda}\,\|\alpha_{r}\bar{e}_{r}-\bar{g}_{r}\|^{2}.
+Taking 𝔼r​[⋅]\mathbb{E}_{r}[\cdot], using ‖e¯r‖2≤E¯r\|\bar{e}_{r}\|^{2}\leq\bar{E}_{r}, and multiplying by η\eta yields
+|T3|≤λ​L2​η32​E¯r+η2​λ​𝔼r​[‖αr​e¯r−g¯r‖2].|T_{3}|\;\leq\;\frac{\lambda L^{2}\eta^{3}}{2}\,\bar{E}_{r}\;+\;\frac{\eta}{2\lambda}\,\mathbb{E}_{r}\!\bigl[\|\alpha_{r}\bar{e}_{r}-\bar{g}_{r}\|^{2}\bigr].
+Choosing λ=1L​η\displaystyle\lambda=\frac{1}{L\eta} balances the two terms and T3≤|T3|T_{3}\leq|T_{3}| gives
+T3\displaystyle T_{3}
+≤L​η22​E¯r+L​η22​𝔼r​[‖αr​e¯r−g¯r‖2].\displaystyle\leq\frac{L\eta^{2}}{2}\,\bar{E}_{r}+\frac{L\eta^{2}}{2}\,\mathbb{E}_{r}\!\bigl[\|\alpha_{r}\bar{e}_{r}-\bar{g}_{r}\|^{2}\bigr].
+(6)
+Put the pieces together:
+𝔼r​[f⁡(xr+1)−f⁡(xr)]\displaystyle\mathbb{E}_{r}\!\bigl[f(x_{r+1})-f(x_{r})\bigr]
+≤η​ηr​[−T4+18​ηr2​L2​β2​T3]​‖∇f​(wr)‖2\displaystyle\leq\eta\,\eta_{r}\Bigl[-\frac{T}{4}+18\,\eta_{r}^{2}L^{2}\beta^{2}T^{3}\Bigr]\,\|\nabla f(w_{r})\|^{2}
++η​αr2​[1ηr​T+32​ηr​L2​T]​E¯r+6​η​ηr3​L2​T2​σ2+84​η​ηr3​L2​T3​ν2\displaystyle\qquad+\eta\,\alpha_{r}^{2}\Bigl[\frac{1}{\eta_{r}T}+\frac{3}{2}\eta_{r}L^{2}T\Bigr]\bar{E}_{r}+6\,\eta\,\eta_{r}^{3}L^{2}T^{2}\,\sigma^{2}+84\,\eta\,\eta_{r}^{3}L^{2}T^{3}\,\nu^{2}
++L​η2​𝔼r​[‖αr​e¯r−g¯r‖2]+L​η22​E¯r\displaystyle\qquad+\;L\eta^{2}\,\mathbb{E}_{r}\!\bigl[\,\|\alpha_{r}\bar{e}_{r}-\bar{g}_{r}\|^{2}\bigr]+\frac{L\eta^{2}}{2}\,\bar{E}_{r}
+(7)
+Using Lemma 3,
+𝔼r​[‖αr​e¯r−g¯r‖2]\displaystyle\mathbb{E}_{r}\!\bigl[\|\alpha_{r}\bar{e}_{r}-\bar{g}_{r}\|^{2}\bigr]
+≤2​αr2​E¯r+8​ηr2​T2​‖∇f​(wr)‖2​(1+36​L2​ηr2​T2​β2)\displaystyle\leq 2\alpha_{r}^{2}\bar{E}_{r}+8\eta_{r}^{2}T^{2}\|\nabla f(w_{r})\|^{2}\bigl(1+36L^{2}\eta_{r}^{2}T^{2}\beta^{2}\bigr)
++4​ηr2​TK​σ2+ 96​L2​ηr4​T3​(σ2+14​T​ν2)+ 24​αr2​ηr2​L2​T2​E¯r.\displaystyle+\;\frac{4\eta_{r}^{2}T}{K}\,\sigma^{2}+\;96L^{2}\eta_{r}^{4}T^{3}\bigl(\sigma^{2}+14T\nu^{2}\bigr)+\;24\alpha_{r}^{2}\eta_{r}^{2}L^{2}T^{2}\bar{E}_{r}.
+𝔼r​[f⁡(xr+1)−f⁡(xr)]\displaystyle\mathbb{E}_{r}\!\bigl[f(x_{r+1})-f(x_{r})\bigr]
+≤[η​ηr​(−T4+18​ηr2​L2​β2​T3)+L​η2​(8​ηr2​T2+288​L2​ηr4​T4​β2)]​‖∇f​(wr)‖2\displaystyle\leq\Bigl[\eta\,\eta_{r}\!\Bigl(-\tfrac{T}{4}+18\,\eta_{r}^{2}L^{2}\beta^{2}T^{3}\Bigr)\;+\;L\eta^{2}\Bigl(8\eta_{r}^{2}T^{2}+288\,L^{2}\eta_{r}^{4}T^{4}\beta^{2}\Bigr)\Bigr]\|\nabla f(w_{r})\|^{2}
++[η​αr2​(1ηr​T+32​ηr​L2​T)+L​η2​(2​αr2+24​αr2​ηr2​L2​T2)+L​η22]​E¯r,\displaystyle+\Bigl[\eta\,\alpha_{r}^{2}\Bigl(\tfrac{1}{\eta_{r}T}+\tfrac{3}{2}\eta_{r}L^{2}T\Bigr)\;+\;L\eta^{2}\Bigl(2\alpha_{r}^{2}+24\,\alpha_{r}^{2}\eta_{r}^{2}L^{2}T^{2}\Bigr)\;+\;\tfrac{L\eta^{2}}{2}\Bigr]\bar{E}_{r},
++[6​η​ηr3​L2​T2+4​L​η2​ηr2​TK+96​L3​η2​ηr4​T3]​σ2\displaystyle+\Bigl[6\,\eta\,\eta_{r}^{3}L^{2}T^{2}+\tfrac{4L\eta^{2}\eta_{r}^{2}T}{K}+96\,L^{3}\eta^{2}\eta_{r}^{4}T^{3}\Bigr]\,\sigma^{2}
++[84​η​ηr3​L2​T3+1344​L3​η2​ηr4​T4]​ν2\displaystyle+\Bigl[84\,\eta\,\eta_{r}^{3}L^{2}T^{3}+1344\,L^{3}\eta^{2}\eta_{r}^{4}T^{4}\Bigr]\,\nu^{2}
+(8)
+Telescoping.
+Summing over r=0,…,R−1r=0,\dots,R-1 and taking total expectation,
+𝔼⁡[f⁡(xR)−f⁡(x0)]\displaystyle\mathbb{E}\!\bigl[f(x_{R})-f(x_{0})\bigr]
+≤∑r=0R−1{Ar​𝔼​‖∇f​(wr)‖2+Er​𝔼​[E¯r]+Vr​σ2+Hr​ν2},\displaystyle\leq\sum_{r=0}^{R-1}\Bigl\{A_{r}\,\mathbb{E}\|\nabla f(w_{r})\|^{2}+E_{r}\,\mathbb{E}[\bar{E}_{r}]+V_{r}\,\sigma^{2}+H_{r}\,\nu^{2}\Bigr\},
+(9)
+where
+Ar\displaystyle A_{r}
+:=η​ηr​(−T4+18​ηr2​L2​β2​T3)+L​η2​(8​ηr2​T2+288​L2​ηr4​T4​β2),\displaystyle:=\eta\,\eta_{r}\!\Bigl(-\tfrac{T}{4}+18\,\eta_{r}^{2}L^{2}\beta^{2}T^{3}\Bigr)+L\eta^{2}\!\Bigl(8\eta_{r}^{2}T^{2}+288\,L^{2}\eta_{r}^{4}T^{4}\beta^{2}\Bigr),
+Er\displaystyle E_{r}
+:=η​αr2​(1ηr​T+32​ηr​L2​T)+L​η2​(2​αr2+24​αr2​ηr2​L2​T2)+L​η22,\displaystyle:=\eta\,\alpha_{r}^{2}\Bigl(\tfrac{1}{\eta_{r}T}+\tfrac{3}{2}\eta_{r}L^{2}T\Bigr)+L\eta^{2}\Bigl(2\alpha_{r}^{2}+24\,\alpha_{r}^{2}\eta_{r}^{2}L^{2}T^{2}\Bigr)+\tfrac{L\eta^{2}}{2},
+Vr\displaystyle V_{r}
+:=6​η​ηr3​L2​T2+4​L​η2​ηr2​TK+96​L3​η2​ηr4​T3,\displaystyle:=6\,\eta\,\eta_{r}^{3}L^{2}T^{2}+\tfrac{4L\eta^{2}\eta_{r}^{2}T}{K}+96\,L^{3}\eta^{2}\eta_{r}^{4}T^{3},
+Hr\displaystyle H_{r}
+:=84​η​ηr3​L2​T3+1344​L3​η2​ηr4​T4.\displaystyle:=84\,\eta\,\eta_{r}^{3}L^{2}T^{3}+1344\,L^{3}\eta^{2}\eta_{r}^{4}T^{4}.
+We now derive the main convergence guarantee. The analysis begins with the telescoped recursion from equation 9, which provides an upper bound on the function value progress, 𝔼⁡[f⁡(xR)−f⁡(x0)]\mathbb{E}[f(x_{R})-f(x_{0})]. The key step is to ensure that the coefficient ArA_{r} of the squared gradient norm is negative, which guarantees descent. The following lemma establishes sufficient conditions for this.
+Lemma 1 (Sufficient Conditions for Descent).
+Let sr:=ηr​L​Ts_{r}:=\eta_{r}LT. Assume that for all rounds rr, the parameters satisfy sr≤1/8s_{r}\leq 1/8 and the following two conditions:
+18​β2​sr2\displaystyle 18\,\beta^{2}\,s_{r}^{2}
+≤18,\displaystyle\leq\frac{1}{8},
+(10)
+η\displaystyle\eta
+≤1256​β2​L​ηr​T,\displaystyle\leq\frac{1}{256\,\beta^{2}\,L\,\eta_{r}T},
+(11)
+where it is assumed that β2≥1\beta^{2}\geq 1. Then, the coefficient ArA_{r} is bounded as
+Ar≤−116​η​ηr​T.A_{r}\leq-\frac{1}{16}\,\eta\,\eta_{r}T.
+Proof.
+The coefficient ArA_{r} is defined as
+Ar=−η​ηr​T4+18​η​ηr3​L2​β2​T3+L​η2​(8​ηr2​T2+288​L2​ηr4​T4​β2).A_{r}=-\frac{\eta\eta_{r}T}{4}+18\eta\eta_{r}^{3}L^{2}\beta^{2}T^{3}+L\eta^{2}(8\eta_{r}^{2}T^{2}+288L^{2}\eta_{r}^{4}T^{4}\beta^{2}).
+We proceed by bounding the two positive terms separately.
+First, we bound the term 18​η​ηr3​L2​β2​T318\eta\eta_{r}^{3}L^{2}\beta^{2}T^{3}. By applying the definition sr=ηr​L​Ts_{r}=\eta_{r}LT and condition equation 10, we obtain
+18​η​ηr3​L2​β2​T3\displaystyle 18\eta\eta_{r}^{3}L^{2}\beta^{2}T^{3}
+=(η​ηr​T)×(18​β2​ηr2​L2​T2)\displaystyle=(\eta\eta_{r}T)\times(18\beta^{2}\eta_{r}^{2}L^{2}T^{2})
+=(η​ηr​T)×(18​β2​sr2)≤18​η​ηr​T.\displaystyle=(\eta\eta_{r}T)\times(18\beta^{2}s_{r}^{2})\leq\frac{1}{8}\eta\eta_{r}T.
+Next, we bound the term L​η2​(8​ηr2​T2+288​L2​ηr4​T4​β2)L\eta^{2}(8\eta_{r}^{2}T^{2}+288L^{2}\eta_{r}^{4}T^{4}\beta^{2}). Condition equation 10 implies 36​β2​sr2≤1/436\beta^{2}s_{r}^{2}\leq 1/4. This allows us to simplify the expression within parentheses:
+8​ηr2​T2+288​L2​ηr4​T4​β2\displaystyle 8\eta_{r}^{2}T^{2}+288L^{2}\eta_{r}^{4}T^{4}\beta^{2}
+=8​ηr2​T2​(1+36​β2​L2​ηr2​T2)\displaystyle=8\eta_{r}^{2}T^{2}\left(1+36\beta^{2}L^{2}\eta_{r}^{2}T^{2}\right)
+=8​ηr2​T2​(1+36​β2​sr2)\displaystyle=8\eta_{r}^{2}T^{2}(1+36\beta^{2}s_{r}^{2})
+≤8​ηr2​T2​(1+14)=10​ηr2​T2.\displaystyle\leq 8\eta_{r}^{2}T^{2}\left(1+\frac{1}{4}\right)=10\eta_{r}^{2}T^{2}.
+Using this intermediate result and condition equation 11, we bound the full term. The assumption β2≥1\beta^{2}\geq 1 ensures that 256​β2≥160256\beta^{2}\geq 160.
+L​η2​(8​ηr2​T2+288​L2​ηr4​T4​β2)\displaystyle L\eta^{2}(8\eta_{r}^{2}T^{2}+288L^{2}\eta_{r}^{4}T^{4}\beta^{2})
+≤L​η2​(10​ηr2​T2)\displaystyle\leq L\eta^{2}(10\eta_{r}^{2}T^{2})
+=(10​L​η​ηr2​T2)×η\displaystyle=(10L\eta\eta_{r}^{2}T^{2})\times\eta
+≤10​L​η​ηr2​T2×(1256​β2​L​ηr​T)\displaystyle\leq 10L\eta\eta_{r}^{2}T^{2}\times\left(\frac{1}{256\beta^{2}L\eta_{r}T}\right)
+=10256​β2​η​ηr​T≤10160​η​ηr​T=116​η​ηr​T.\displaystyle=\frac{10}{256\beta^{2}}\eta\eta_{r}T\leq\frac{10}{160}\eta\eta_{r}T=\frac{1}{16}\eta\eta_{r}T.
+Finally, substituting these bounds back into the expression for ArA_{r} yields the desired result:
+Ar\displaystyle A_{r}
+≤−η​ηr​T4+18​η​ηr​T+116​η​ηr​T\displaystyle\leq-\frac{\eta\eta_{r}T}{4}+\frac{1}{8}\eta\eta_{r}T+\frac{1}{16}\eta\eta_{r}T
+=(−416+216+116)​η​ηr​T\displaystyle=\left(-\frac{4}{16}+\frac{2}{16}+\frac{1}{16}\right)\eta\eta_{r}T
+=−116​η​ηr​T.\displaystyle=-\frac{1}{16}\eta\eta_{r}T.
+This completes the proof.
+∎
+A.1.1 General Convergence Rate for Decaying Step-Sizes
+Applying the bound on ArA_{r} from Lemma 1 to the main inequality equation 9 yields:
+𝔼⁡[f⁡(xR)−f⁡(x0)]≤∑r=0R−1(−η​ηr​T16​𝔼​‖∇f​(wr)‖2+Er​𝔼​[E¯r]+Vr​σ2+Hr​ν2).\mathbb{E}[f(x_{R})-f(x_{0})]\leq\sum_{r=0}^{R-1}\left(-\frac{\eta\eta_{r}T}{16}\mathbb{E}\|\nabla f(w_{r})\|^{2}+E_{r}\,\mathbb{E}[\bar{E}_{r}]+V_{r}\,\sigma^{2}+H_{r}\,\nu^{2}\right).
+Rearranging the terms to isolate the sum of squared gradients and assuming the function is bounded below by f⋆:=infxf⁡(x)f_{\star}:=\inf_{x}f(x), we obtain a bound on the weighted sum:
+∑r=0R−1ηr​T​𝔼​‖∇f​(wr)‖2≤16η​(f⁡(x0)−f⋆)+16η​∑r=0R−1𝔼⁡[Er​E¯r+Vr​σ2+Hr​ν2].\sum_{r=0}^{R-1}\eta_{r}T\,\mathbb{E}\|\nabla f(w_{r})\|^{2}\leq\frac{16}{\eta}(f(x_{0})-f_{\star})+\frac{16}{\eta}\sum_{r=0}^{R-1}\mathbb{E}\!\bigl[E_{r}\,\bar{E}_{r}+V_{r}\,\sigma^{2}+H_{r}\,\nu^{2}\bigr].
+(12)
+The main challenge is to bound the term involving the residual energy, ∑rEr​𝔼​[E¯r]\sum_{r}E_{r}\mathbb{E}[\bar{E}_{r}]. We first decouple the coefficient using the supremum ℰmax:=suprEr\mathcal{E}_{\max}:=\sup_{r}E_{r}. Then, we apply the bound on the sum of residuals from Lemma 4, which is derived by unrolling the per-round recursion for E¯r\bar{E}_{r}:
+16η​∑r=0R−1Er​𝔼​[E¯r]\displaystyle\frac{16}{\eta}\sum_{r=0}^{R-1}E_{r}\mathbb{E}[\bar{E}_{r}]
+≤16​ℰmaxη​∑r=0R−1𝔼⁡[E¯r]\displaystyle\leq\frac{16\mathcal{E}_{\max}}{\eta}\sum_{r=0}^{R-1}\mathbb{E}[\bar{E}_{r}]
+≤16​ℰmaxη⁡(1−ρmax)​E¯0+16​ℰmax​(1−1/δ)η⁡(1−ρmax)​∑r=0R−1𝔼⁡[Br(∇)+Br(ν,σ)]\displaystyle\leq\frac{16\mathcal{E}_{\max}}{\eta(1-\rho_{\max})}\bar{E}_{0}+\frac{16\mathcal{E}_{\max}(1-1/\delta)}{\eta(1-\rho_{\max})}\sum_{r=0}^{R-1}\mathbb{E}[B_{r}^{(\nabla)}+B_{r}^{(\nu,\sigma)}]
+≤(a)​16​ℰmax​(1−1/δ)η⁡(1−ρmax)​∑r=0R−1𝔼⁡[Br(∇)+Br(ν,σ)]\displaystyle\overset{(a)}{\leq}\frac{16\mathcal{E}_{\max}(1-1/\delta)}{\eta(1-\rho_{\max})}\sum_{r=0}^{R-1}\mathbb{E}[B_{r}^{(\nabla)}+B_{r}^{(\nu,\sigma)}]
+where (a) uses E¯0=0\bar{E}_{0}=0 since e0(k)≡0e_{0}^{(k)}\equiv 0.
+Substituting the residual recursion (Lemma 4) into equation 12 introduces forcing terms.
+Since Br(∇)B_{r}^{(\nabla)} is proportional to ‖∇f​(wr)‖2\|\nabla f(w_{r})\|^{2},
+it produces a contribution of the form
+Θ​∑r=0R−1ηr​T​𝔼​‖∇f​(wr)‖2\Theta\sum_{r=0}^{R-1}\eta_{r}T\,\mathbb{E}\|\nabla f(w_{r})\|^{2},
+where we define
+Θ\displaystyle\Theta
+:=16η×ℰmax1−ρmax(1−1δ)β2sup0≤r<R8​ηr2​T2+288​L2​ηr4​T4ηr​T\displaystyle:=\frac{16}{\eta}\times\frac{\mathcal{E}_{\max}}{1-\rho_{\max}}\left(1-\frac{1}{\delta}\right)\,\beta^{2}\,\sup_{0\leq r<R}\frac{8\,\eta_{r}^{2}T^{2}+288\,L^{2}\eta_{r}^{4}T^{4}}{\eta_{r}T}
+=16η×ℰmax1−ρmax(1−1δ)β2supr(8ηrT+288L2ηr3T3).\displaystyle=\;\frac{16}{\eta}\times\frac{\mathcal{E}_{\max}}{1-\rho_{\max}}\left(1-\frac{1}{\delta}\right)\,\beta^{2}\,\sup_{r}\bigl(8\,\eta_{r}T+288\,L^{2}\eta_{r}^{3}T^{3}\bigr).
+With this notation, the weighted inequality becomes
+(1−Θ)\displaystyle\bigl(1-\Theta\bigr)
+∑r=0R−1ηr​T​𝔼​‖∇f​(wr)‖2\displaystyle\sum_{r=0}^{R-1}\eta_{r}T\,\mathbb{E}\|\nabla f(w_{r})\|^{2}
+≤16η​[(f⁡(x0)−f⋆)+ℰmax1−ρmax​(1−1δ)​∑r=0R−1𝔼​Br(ν,σ)+∑r=0R−1Vr​σ2+∑r=0R−1Hr​ν2].\displaystyle\leq\frac{16}{\eta}\Bigl[(f(x_{0})-f_{\star})+\frac{\mathcal{E}_{\max}}{1-\rho_{\max}}\left(1-\frac{1}{\delta}\right)\,\sum_{r=0}^{R-1}\mathbb{E}B_{r}^{(\nu,\sigma)}+\sum_{r=0}^{R-1}V_{r}\,\sigma^{2}+\sum_{r=0}^{R-1}H_{r}\,\nu^{2}\Bigr].
+(13)
+We now assume a small-steps/compression regime that ensures Θ≤12\Theta\leq\tfrac{1}{2}. We can therefore move this term to the left-hand side and absorb it, which tightens the overall bound at the cost of multiplying the remaining terms on the right-hand side by a factor of 2.
+To obtain a bound on the conventional average, compare it to the
+weighted sum with weights qr:=ηr​T>0q_{r}:=\eta_{r}T>0. Let
+qmin:=min0≤r<R⁡qrq_{\min}:=\min_{0\leq r<R}q_{r}, SR:=∑r=0R−1qrS_{R}:=\sum_{r=0}^{R-1}q_{r}, and
+ϕR:=SRR​qmin≥1\displaystyle\phi_{R}:=\frac{S_{R}}{R\,q_{\min}}\geq 1.
+Then, for nonnegative terms,
+1R​∑r=0R−1𝔼​‖∇f​(wr)‖2\displaystyle\frac{1}{R}\sum_{r=0}^{R-1}\mathbb{E}\|\nabla f(w_{r})\|^{2}
+≤SRR​wmin×1SR∑r=0R−1wr𝔼∥∇f(wr)∥2\displaystyle\leq\frac{S_{R}}{R\,w_{\min}}\times\frac{1}{S_{R}}\sum_{r=0}^{R-1}w_{r}\,\mathbb{E}\|\nabla f(w_{r})\|^{2}
+(14)
+=ϕR×1SR∑r=0R−1ηrT𝔼∥∇f(wr)∥2.\displaystyle=\phi_{R}\times\frac{1}{S_{R}}\sum_{r=0}^{R-1}\eta_{r}T\,\mathbb{E}\|\nabla f(w_{r})\|^{2}.
+(15)
+Combining this with the absorbed bound and noting x0=w0x_{0}=w_{0} since e0(k)≡0e_{0}^{(k)}\equiv 0, we obtain
+1R​∑r=0R−1𝔼​‖∇f​(wr)‖2\displaystyle\frac{1}{R}\sum_{r=0}^{R-1}\mathbb{E}\|\nabla f(w_{r})\|^{2}
+≤ϕR32η​SR[(f(w0)−f⋆)+∑r=0R−1Vrσ2+∑r=0R−1Hrν2\displaystyle\leq\ \phi_{R}\,\frac{32}{\eta\,S_{R}}\Bigg[(f(w_{0})-f_{\star})+\sum_{r=0}^{R-1}V_{r}\,\sigma^{2}+\sum_{r=0}^{R-1}H_{r}\,\nu^{2}
++ℰmax1−ρmax(1−1δ)∑r=0R−1(4ηr2T+96L2ηr4T3)σ2\displaystyle+\ \frac{\mathcal{E}_{\max}}{1-\rho_{\max}}\Bigl(1-\tfrac{1}{\delta}\Bigr)\sum_{r=0}^{R-1}\!\Bigl(4\,\eta_{r}^{2}T+96\,L^{2}\eta_{r}^{4}T^{3}\Bigr)\,\sigma^{2}
++ℰmax1−ρmax(1−1δ)∑r=0R−1(8ηr2T2+1344L2ηr4T4)ν2].\displaystyle+\ \frac{\mathcal{E}_{\max}}{1-\rho_{\max}}\Bigl(1-\tfrac{1}{\delta}\Bigr)\sum_{r=0}^{R-1}\!\Bigl(8\,\eta_{r}^{2}T^{2}+1344\,L^{2}\eta_{r}^{4}T^{4}\Bigr)\,\nu^{2}\Bigg].
+A.1.2 Convergence Rate for a Constant Step-Size
+In the simpler setting where the inner learning rate is constant, ηr≡η0\eta_{r}\equiv\eta_{0} for all rr, the sum of weights is SR=R​η0​TS_{R}=R\eta_{0}T. Under the descent and absorption conditions, we obtain
+1R​∑r=0R−1𝔼​‖∇f​(wr)‖2≤\displaystyle\frac{1}{R}\sum_{r=0}^{R-1}\mathbb{E}\|\nabla f(w_{r})\|^{2}\ \leq\
+32​(f⁡(w0)−f⋆)η​η0​T​R+(1−1δ)​[Cσ​η02​L2​T​σ2+Cν​η02​L2​T2​ν2]\displaystyle\frac{32\,(f(w_{0})-f^{\star})}{\eta\,\eta_{0}T\,R}\;+\;\Bigl(1-\tfrac{1}{\delta}\Bigr)\Bigl[C_{\sigma}\,\eta_{0}^{2}L^{2}T\,\sigma^{2}+C_{\nu}\,\eta_{0}^{2}L^{2}T^{2}\,\nu^{2}\Bigr]
++128​L​η0K​σ2\displaystyle\;+\;\frac{128\,L\,\eta_{0}}{K}\,\sigma^{2}
+with
+Cσ\displaystyle C_{\sigma}
+=32η​[6​η​η02​L2​T+96​L3​η​η03​T2]+32η×ℰmax1−ρmax​[4​η0+96​L2​η03​T2],\displaystyle=\frac{32}{\eta}\Bigl[6\,\eta\,\eta_{0}^{2}L^{2}T+96\,L^{3}\eta\,\eta_{0}^{3}T^{2}\Bigr]+\frac{32}{\eta}\times\frac{\mathcal{E}_{\max}}{1-\rho_{\max}}\Bigl[4\,\eta_{0}+96\,L^{2}\eta_{0}^{3}T^{2}\Bigr],
+Cν\displaystyle C_{\nu}
+=32η​[84​η​η02​L2​T2+1344​L3​η​η03​T3]+32η×ℰmax1−ρmax​[8​η0​T+1344​L2​η03​T3].\displaystyle=\frac{32}{\eta}\Bigl[84\,\eta\,\eta_{0}^{2}L^{2}T^{2}+1344\,L^{3}\eta\,\eta_{0}^{3}T^{3}\Bigr]+\frac{32}{\eta}\times\frac{\mathcal{E}_{\max}}{1-\rho_{\max}}\Bigl[8\,\eta_{0}T+1344\,L^{2}\eta_{0}^{3}T^{3}\Bigr].
+which proves the theorem.
+∎
+A.2 Lemmas
+Lemma 2 (Local-model drift under SA-PEF).
+Fix a communication round rr and an inner-loop horizon T≥1T\geq 1.
+Assume the step-size condition 0<ηr≤18​L​T0<\eta_{r}\leq\frac{1}{8LT} and Assumptions 1–3.
+Then, for every local step t∈{0,…,T−1}t\in\{0,\dots,T-1\},
+1K​∑k=1K𝔼r​[‖wr+12,t(k)−wr‖2]\displaystyle\frac{1}{K}\sum_{k=1}^{K}\mathbb{E}_{r}\left[\|w_{r+\frac{1}{2},t}^{(k)}-w_{r}\|^{2}\right]
+≤12​ηr2​T​σ2+168​ηr2​T2​ν2+36​ηr2​T2​β2​‖∇f​(wr)‖2\displaystyle\leq 12\,\eta_{r}^{2}T\,\sigma^{2}+168\,\eta_{r}^{2}T^{2}\,\nu^{2}+36\,\eta_{r}^{2}T^{2}\,\beta^{2}\,\|\nabla f(w_{r})\|^{2}
++3αr2×1K∑k=1K𝔼r∥er(k)∥2.\displaystyle\quad+3\,\alpha_{r}^{2}\times\frac{1}{K}\sum_{k=1}^{K}\mathbb{E}_{r}\|e_{r}^{(k)}\|^{2}.
+(16)
+Proof.
+All expectations are conditional on the randomness inside round rr.
+Set uk,t:=wr+12,t(k)−wru_{k,t}:=w_{r+\frac{1}{2},t}^{(k)}-w_{r} (uk,0=−αr​er(k)u_{k,0}=-\alpha_{r}e_{r}^{(k)}).
+Client kk updates by
+uk,t+1=uk,t−ηr​(∇fk​(wr+12,t(k))+ξk,t),𝔼r​[ξk,t]=0,𝔼r​‖ξk,t‖2≤σ2.u_{k,t+1}=u_{k,t}-\eta_{r}\left(\nabla f_{k}(w_{r+\frac{1}{2},t}^{(k)})+\xi_{k,t}\right),\qquad\mathbb{E}_{r}[\xi_{k,t}]=0,\;\mathbb{E}_{r}\|\xi_{k,t}\|^{2}\leq\sigma^{2}.
+Using ‖a−b‖2=‖a‖2−2​⟨a,b⟩+‖b‖2\|a-b\|^{2}=\|a\|^{2}-2\langle a,b\rangle+\|b\|^{2}, we get
+𝔼r​‖uk,t+1‖2=𝔼r​‖uk,t‖2−2​ηr​𝔼r​⟨uk,t,∇fk​(wr+12,t(k))⟩+ηr2​𝔼r​‖∇fk​(wr+12,t(k))‖2+ηr2​σ2.\mathbb{E}_{r}\|u_{k,t+1}\|^{2}=\mathbb{E}_{r}\|u_{k,t}\|^{2}-2\eta_{r}\,\mathbb{E}_{r}\langle u_{k,t},\nabla f_{k}(w_{r+\frac{1}{2},t}^{(k)})\rangle+\eta_{r}^{2}\mathbb{E}_{r}\|\nabla f_{k}(w_{r+\frac{1}{2},t}^{(k)})\|^{2}+\eta_{r}^{2}\sigma^{2}.
+Write ∇fk​(wr+12,t(k))=∇fk​(wr)+Δk,t\nabla f_{k}(w_{r+\frac{1}{2},t}^{(k)})=\nabla f_{k}(w_{r})+\Delta_{k,t}
+with ‖Δk,t‖≤L​‖uk,t‖\|\Delta_{k,t}\|\leq L\|u_{k,t}\| (LL-smoothness), so
+−2​ηr​⟨uk,t,Δk,t⟩≤2​ηr​L​‖uk,t‖2,-2\eta_{r}\langle u_{k,t},\Delta_{k,t}\rangle\leq 2\eta_{r}L\|u_{k,t}\|^{2},
+and using Young’s inequality 2​a​b≤γ​a2+1γ​b22ab\leq\gamma a^{2}+\frac{1}{\gamma}b^{2} with γ=14​T\gamma=\frac{1}{4T},
+−2​ηr​⟨uk,t,∇fk​(wr)⟩≤14​T​‖uk,t‖2+4​ηr2​T​‖∇fk​(wr)‖2.-2\eta_{r}\langle u_{k,t},\nabla f_{k}(w_{r})\rangle\leq\tfrac{1}{4T}\|u_{k,t}\|^{2}+4\eta_{r}^{2}T\|\nabla f_{k}(w_{r})\|^{2}.
+Since ηr≤1/(8​L​T)\eta_{r}\leq 1/(8LT), then 2​ηr​L≤1/(4​T)2\eta_{r}L\leq 1/(4T), hence
+−2​ηr​𝔼r​⟨uk,t,∇fk​(wr+12,t(k))⟩≤12​T​𝔼r​‖uk,t‖2+4​ηr2​T​‖∇fk​(wr)‖2.-2\eta_{r}\,\mathbb{E}_{r}\langle u_{k,t},\nabla f_{k}(w_{r+\frac{1}{2},t}^{(k)})\rangle\leq\tfrac{1}{2T}\,\mathbb{E}_{r}\|u_{k,t}\|^{2}+4\eta_{r}^{2}T\|\nabla f_{k}(w_{r})\|^{2}.
+Also,
+𝔼r​‖∇fk​(wr+12,t(k))‖2≤2​‖∇fk​(wr)‖2+2​L2​𝔼r​‖uk,t‖2.\mathbb{E}_{r}\|\nabla f_{k}(w_{r+\frac{1}{2},t}^{(k)})\|^{2}\leq 2\|\nabla f_{k}(w_{r})\|^{2}+2L^{2}\mathbb{E}_{r}\|u_{k,t}\|^{2}.
+Combining gives:
+𝔼r​‖uk,t+1‖2≤(1+12​T+2​ηr2​L2)​𝔼r​‖uk,t‖2+(2+4​T)​ηr2​‖∇fk​(wr)‖2+ηr2​σ2.\mathbb{E}_{r}\|u_{k,t+1}\|^{2}\leq\left(1+\tfrac{1}{2T}+2\eta_{r}^{2}L^{2}\right)\mathbb{E}_{r}\|u_{k,t}\|^{2}+(2+4T)\eta_{r}^{2}\|\nabla f_{k}(w_{r})\|^{2}+\eta_{r}^{2}\sigma^{2}.
+Let A:=1+12​T+2​ηr2​L2≤1+1T≤e1/TA:=1+\tfrac{1}{2T}+2\eta_{r}^{2}L^{2}\leq 1+\tfrac{1}{T}\leq e^{1/T}.
+Define D¯t:=1K​∑k𝔼r​‖uk,t‖2\bar{D}_{t}:=\frac{1}{K}\sum_{k}\mathbb{E}_{r}\|u_{k,t}\|^{2}.
+Using Assumption 3 we get
+D¯t+1≤A​D¯t+(2+4​T)​ηr2​(β2​‖∇f​(wr)‖2+ν2)+ηr2​σ2=:A​D¯t+B.\bar{D}_{t+1}\leq A\,\bar{D}_{t}+(2+4T)\eta_{r}^{2}\left(\beta^{2}\|\nabla f(w_{r})\|^{2}+\nu^{2}\right)+\eta_{r}^{2}\sigma^{2}\;=:\;A\bar{D}_{t}+B.
+Since A≤e1/TA\leq e^{1/T}, for t≤Tt\leq T we have At≤e≤3A^{t}\leq e\leq 3 and
+At−1A−1≤e−1A−1≤2​e​T≤6​T,\frac{A^{t}-1}{A-1}\leq\frac{e-1}{A-1}\leq 2eT\leq 6T,
+because A−1≥12​TA-1\geq\tfrac{1}{2T}.
+Therefore,
+D¯t≤At​D¯0+At−1A−1​B≤3​D¯0+6​T​ηr2​σ2+6​T​(2+4​T)​ηr2​(β2​‖∇f​(wr)‖2+ν2).\bar{D}_{t}\leq A^{t}\bar{D}_{0}+\frac{A^{t}-1}{A-1}\,B\leq 3\bar{D}_{0}+6T\eta_{r}^{2}\sigma^{2}+6T(2+4T)\eta_{r}^{2}\left(\beta^{2}\|\nabla f(w_{r})\|^{2}+\nu^{2}\right).
+Finally, with D¯0=αr2​1K​∑k𝔼r​‖er(k)‖2\bar{D}_{0}=\alpha_{r}^{2}\tfrac{1}{K}\sum_{k}\mathbb{E}_{r}\|e_{r}^{(k)}\|^{2}, we loosen constants to the displayed form in the lemma:
+D¯t≤12​ηr2​T​(σ2+6​T​ν2+β2​‖∇f​(wr)‖2)+24​ηr2​T2​(β2​‖∇f​(wr)‖2+4​ν2)+3​αr2​1K​∑k𝔼r​‖er(k)‖2.\bar{D}_{t}\leq 12\eta_{r}^{2}T\left(\sigma^{2}+6T\nu^{2}+\beta^{2}\|\nabla f(w_{r})\|^{2}\right)+24\eta_{r}^{2}T^{2}\left(\beta^{2}\|\nabla f(w_{r})\|^{2}+4\nu^{2}\right)+3\alpha_{r}^{2}\frac{1}{K}\sum_{k}\mathbb{E}_{r}\|e_{r}^{(k)}\|^{2}.
+Combine the TT and T2T^{2} terms using 12​T+24​T2≤36​T212T+24T^{2}\leq 36T^{2} and compute 12​T×6​T+24​T2×4=168​T212T\times 6T+24T^{2}\times 4=168T^{2}, we get
+D¯t\displaystyle\bar{D}_{t}
+≤12ηr2Tσ2+168ηr2T2ν2+36ηr2T2β2∥∇f(wr)∥2+3αr2×1K∑k=1K𝔼r∥er(k)∥2.\displaystyle\leq 12\,\eta_{r}^{2}T\,\sigma^{2}+168\,\eta_{r}^{2}T^{2}\,\nu^{2}+36\,\eta_{r}^{2}T^{2}\,\beta^{2}\,\|\nabla f(w_{r})\|^{2}+3\,\alpha_{r}^{2}\times\frac{1}{K}\sum_{k=1}^{K}\mathbb{E}_{r}\|e_{r}^{(k)}\|^{2}.
+∎
+Lemma 3 (Second moment of the shifted average update).
+Let KK be the number of clients, T≥1T\geq 1 the number of local steps,
+ηr∈(0,18​L​T]\eta_{r}\in(0,\frac{1}{8LT}] the local stepsize in round rr, and
+αr∈[0,1]\alpha_{r}\in[0,1] the step-ahead parameter.
+Define
+e¯r=1K​∑k=1Ker(k),gr(k)=ηr​∑t=0T−1(∇fk​(wr+12,t(k))+ξk,t),g¯r=1K​∑k=1Kgr(k).\bar{e}_{r}=\frac{1}{K}\sum_{k=1}^{K}e_{r}^{(k)},\qquad g_{r}^{(k)}=\eta_{r}\sum_{t=0}^{T-1}\bigl(\nabla f_{k}(w_{r+\frac{1}{2},t}^{(k)})+\xi_{k,t}\bigr),\qquad\bar{g}_{r}=\frac{1}{K}\sum_{k=1}^{K}g_{r}^{(k)}.
+Under Assumptions 1–3,
+𝔼r​[‖αr​e¯r−g¯r‖2]\displaystyle\mathbb{E}_{r}\!\bigl[\|\alpha_{r}\bar{e}_{r}-\bar{g}_{r}\|^{2}\bigr]
+≤2​αr2​E¯r+ 8​ηr2​T2​‖∇f​(wr)‖2​(1+36​L2​ηr2​T2​β2)\displaystyle\leq 2\alpha_{r}^{2}\bar{E}_{r}+\;8\eta_{r}^{2}T^{2}\|\nabla f(w_{r})\|^{2}\bigl(1+36L^{2}\eta_{r}^{2}T^{2}\beta^{2}\bigr)
++4​ηr2​T​σ2K+ 96​L2​ηr4​T3​(σ2+14​T​ν2)+ 24​αr2​ηr2​L2​T2​E¯r.\displaystyle\quad\;+\;\frac{4\eta_{r}^{2}T\sigma^{2}}{K}+\;96L^{2}\eta_{r}^{4}T^{3}\bigl(\sigma^{2}+14T\nu^{2}\bigr)\;+\;24\alpha_{r}^{2}\eta_{r}^{2}L^{2}T^{2}\bar{E}_{r}.
+(17)
+Here E¯r=1K​∑k=1K‖er(k)‖2\displaystyle\bar{E}_{r}=\frac{1}{K}\sum_{k=1}^{K}\|e_{r}^{(k)}\|^{2} is the average
+residual energy at the beginning of round rr, and wrw_{r} is the global
+model before local computation.
+Proof.
+Using Young’s inequality, for any a,b∈ℝda,b\in\mathbb{R}^{d}, ‖a−b‖2≤2​‖a‖2+2​‖b‖2\|a-b\|^{2}\leq 2\|a\|^{2}+2\|b\|^{2}.
+With a=αr​e¯ra=\alpha_{r}\bar{e}_{r} (deterministic given ℱr\mathcal{F}_{r})
+and b=g¯rb=\bar{g}_{r},
+‖αr​e¯r−g¯r‖2≤2​αr2​‖e¯r‖2+2​‖g¯r‖2.\|\alpha_{r}\bar{e}_{r}-\bar{g}_{r}\|^{2}\leq 2\alpha_{r}^{2}\|\bar{e}_{r}\|^{2}+2\|\bar{g}_{r}\|^{2}.
+(18)
+Since ‖e¯r‖2≤E¯r\|\bar{e}_{r}\|^{2}\leq\bar{E}_{r} (Jensen),
+the first term in equation 18 gives 2​αr2​E¯r2\alpha_{r}^{2}\bar{E}_{r} after expectation.
+Bounding the second moment of g¯r\bar{g}_{r} and the gradient–noise cross term.
+Write g¯r=ηr​∑t=0T−1(∇¯t+ξ¯t)\bar{g}_{r}=\eta_{r}\sum_{t=0}^{T-1}(\bar{\nabla}_{t}+\bar{\xi}_{t}) with
+∇¯t=1K​∑k∇fk​(wr+12,t(k))\bar{\nabla}_{t}=\tfrac{1}{K}\sum_{k}\nabla f_{k}(w_{r+\frac{1}{2},t}^{(k)}) and
+ξ¯t=1K​∑kξk,t\bar{\xi}_{t}=\tfrac{1}{K}\sum_{k}\xi_{k,t}.
+By Young’s inequality,
+𝔼r​‖g¯r‖2≤ 2​ηr2​𝔼r​‖∑t=0T−1∇¯t‖2+ 2​ηr2​𝔼r​‖∑t=0T−1ξ¯t‖2.\mathbb{E}_{r}\|\bar{g}_{r}\|^{2}\;\leq\;2\eta_{r}^{2}\,\mathbb{E}_{r}\Big\|\sum_{t=0}^{T-1}\bar{\nabla}_{t}\Big\|^{2}\;+\;2\eta_{r}^{2}\,\mathbb{E}_{r}\Big\|\sum_{t=0}^{T-1}\bar{\xi}_{t}\Big\|^{2}.
+Using independence across (k,t)(k,t) and Assumption 2,
+𝔼r​‖∑tξ¯t‖2=∑t𝔼r​‖ξ¯t‖2≤T​σ2/K\mathbb{E}_{r}\|\sum_{t}\bar{\xi}_{t}\|^{2}=\sum_{t}\mathbb{E}_{r}\|\bar{\xi}_{t}\|^{2}\leq T\sigma^{2}/K.
+Bounding the summed local gradients.
+Decompose
+∇fk​(wr+12,t(k))=∇fk​(wr)+Δk,t\nabla f_{k}(w_{r+\frac{1}{2},t}^{(k)})=\nabla f_{k}(w_{r})+\Delta_{k,t} with
+‖Δk,t‖≤L​‖wr+12,t(k)−wr‖\|\Delta_{k,t}\|\leq L\|w_{r+\frac{1}{2},t}^{(k)}-w_{r}\| (Assumption 1). Then
+1K2​𝔼r​‖∑k,t∇fk​(wr+12,t(k))‖2≤2​T2​‖∇f​(wr)‖2+2​L2​TK​∑k,t𝔼r​‖wr+12,t(k)−wr‖2.\frac{1}{K^{2}}\mathbb{E}_{r}\Bigl\|\sum_{k,t}\nabla f_{k}(w_{r+\frac{1}{2},t}^{(k)})\Bigr\|^{2}\leq 2T^{2}\|\nabla f(w_{r})\|^{2}+\frac{2L^{2}T}{K}\sum_{k,t}\mathbb{E}_{r}\|w_{r+\frac{1}{2},t}^{(k)}-w_{r}\|^{2}.
+Insert the local-model drift (Lemma 2) and sum over tt.
+For each t∈{0,…,T−1}t\in\{0,\dots,T-1\}, Lemma 2 yields
+1K​∑k𝔼r​‖wr+12,t(k)−wr‖2≤12​ηr2​T​σ2+168​ηr2​T2​ν2+36​ηr2​T2​β2​‖∇f​(wr)‖2+3​αr2​E¯r.\frac{1}{K}\sum_{k}\mathbb{E}_{r}\|w_{r+\frac{1}{2},t}^{(k)}-w_{r}\|^{2}\leq 12\,\eta_{r}^{2}T\,\sigma^{2}+168\,\eta_{r}^{2}T^{2}\,\nu^{2}+36\,\eta_{r}^{2}T^{2}\,\beta^{2}\,\|\nabla f(w_{r})\|^{2}+3\alpha_{r}^{2}\bar{E}_{r}.
+Summing over t=0,…,T−1t=0,\dots,T-1 gives
+1K​∑k,t𝔼r​‖wr+12,t(k)−wr‖2≤12​ηr2​T2​σ2+168​ηr2​T3​ν2+36​ηr2​T3​β2​‖∇f​(wr)‖2+3​T​αr2​E¯r.\frac{1}{K}\sum_{k,t}\mathbb{E}_{r}\|w_{r+\frac{1}{2},t}^{(k)}-w_{r}\|^{2}\leq 12\,\eta_{r}^{2}T^{2}\,\sigma^{2}+168\,\eta_{r}^{2}T^{3}\,\nu^{2}+36\,\eta_{r}^{2}T^{3}\,\beta^{2}\,\|\nabla f(w_{r})\|^{2}+3T\alpha_{r}^{2}\bar{E}_{r}.
+Assemble,
+𝔼r​‖g¯r‖2\displaystyle\mathbb{E}_{r}\|\bar{g}_{r}\|^{2}
+≤2​ηr2​[2​T2​‖∇f​(wr)‖2+2​L2​TK​∑k,t𝔼r​‖wr+12,t(k)−wr‖2]+2​ηr2×T​σ2K\displaystyle\leq 2\eta_{r}^{2}\Big[2T^{2}\|\nabla f(w_{r})\|^{2}+\frac{2L^{2}T}{K}\!\sum_{k,t}\mathbb{E}_{r}\|w_{r+\frac{1}{2},t}^{(k)}-w_{r}\|^{2}\Big]+2\eta_{r}^{2}\times\frac{T\sigma^{2}}{K}
+≤ 4​ηr2​T2​‖∇f​(wr)‖2​(1+36​L2​ηr2​T2​β2)+2​ηr2​T​σ2K+ 48​L2​ηr4​T3​(σ2+14​T​ν2)\displaystyle\leq\;4\eta_{r}^{2}T^{2}\|\nabla f(w_{r})\|^{2}\bigl(1+36L^{2}\eta_{r}^{2}T^{2}\beta^{2}\bigr)\;+\;\frac{2\eta_{r}^{2}T\sigma^{2}}{K}+\;48L^{2}\eta_{r}^{4}T^{3}\bigl(\sigma^{2}+14T\nu^{2}\bigr)
++ 12​αr2​ηr2​L2​T2​E¯r.\displaystyle+\;12\alpha_{r}^{2}\eta_{r}^{2}L^{2}T^{2}\bar{E}_{r}.
+Finally, apply the factor 22 from equation 18 and add
+2​αr2​E¯r2\alpha_{r}^{2}\bar{E}_{r}. This is precisely the assertion of the lemma.
+∎
+Lemma 4 (Residual recursion under a δ\delta–contractive compressor).
+Fix a round rr and define sr:=ηr​L​T≤18s_{r}:=\eta_{r}LT\leq\tfrac{1}{8}. Let Assumption 1–3 hold and the compressor satisfies
+Definition 1 with parameter δ≥1\delta\geq 1.
+Let
+E¯r:=1K​∑k=1K‖er(k)‖2,gr(k):=ηr​∑t=0T−1(∇fk​(wr+12,t(k))+ξk,t).\bar{E}_{r}:=\frac{1}{K}\sum_{k=1}^{K}\|e_{r}^{(k)}\|^{2},\qquad g_{r}^{(k)}:=\eta_{r}\sum_{t=0}^{T-1}\bigl(\nabla f_{k}(w_{r+\frac{1}{2},t}^{(k)})+\xi_{k,t}\bigr).
+Then, with all expectations conditional on the randomness inside round rr,
+the averaged residual energy obeys
+E¯r+1≤ρr​E¯r+(1−1δ)​[Br(∇)+Br(ν,σ)],\bar{E}_{r+1}\;\leq\;\rho_{r}\,\bar{E}_{r}\;+\;\Bigl(1-\tfrac{1}{\delta}\Bigr)\Bigl[B_{r}^{(\nabla)}+B_{r}^{(\nu,\sigma)}\Bigr],
+(19)
+where
+ρr=(1−1δ)​(2​(1−αr)2+24​αr2​sr2)=(1−1δ)​(2−4​αr+(2+24​sr2)​αr2),\rho_{r}\;=\;\Bigl(1-\tfrac{1}{\delta}\Bigr)\Bigl(2(1-\alpha_{r})^{2}+24\,\alpha_{r}^{2}s_{r}^{2}\Bigr)\;=\;\Bigl(1-\tfrac{1}{\delta}\Bigr)\Bigl(2-4\alpha_{r}+(2+24s_{r}^{2})\alpha_{r}^{2}\Bigr),
+and
+Br(∇)\displaystyle B_{r}^{(\nabla)}
+:= 8​ηr2​T2​β2​‖∇f​(wr)‖2+ 288​L2​ηr4​T4​β2​‖∇f​(wr)‖2,\displaystyle:=\ 8\,\eta_{r}^{2}T^{2}\,\beta^{2}\,\|\nabla f(w_{r})\|^{2}\;+\;288\,L^{2}\eta_{r}^{4}T^{4}\,\beta^{2}\,\|\nabla f(w_{r})\|^{2},
+Br(ν,σ)\displaystyle B_{r}^{(\nu,\sigma)}
+:= 8​ηr2​T2​ν2+ 4​ηr2​T​σ2+ 96​L2​ηr4​T3​σ2+ 1344​L2​ηr4​T4​ν2.\displaystyle:=\ 8\,\eta_{r}^{2}T^{2}\,\nu^{2}\;+\;4\,\eta_{r}^{2}T\,\sigma^{2}\;+\;96\,L^{2}\eta_{r}^{4}T^{3}\,\sigma^{2}\;+\;1344\,L^{2}\eta_{r}^{4}T^{4}\nu^{2}.
+Proof.
+Write ur+1(k)=(1−αr)​er(k)+gr(k)u_{r+1}^{(k)}=(1-\alpha_{r})e_{r}^{(k)}+g_{r}^{(k)} and
+er+1(k)=ur+1(k)−C⁡(ur+1(k))e_{r+1}^{(k)}=u_{r+1}^{(k)}-C(u_{r+1}^{(k)}).
+By Definition 1,
+𝔼r​‖er+1(k)‖2≤(1−1δ)​𝔼r​‖ur+1(k)‖2.\mathbb{E}_{r}\|e_{r+1}^{(k)}\|^{2}\ \leq\ \Bigl(1-\tfrac{1}{\delta}\Bigr)\,\mathbb{E}_{r}\|u_{r+1}^{(k)}\|^{2}.
+Average over kk and use ‖a+b‖2≤2​‖a‖2+2​‖b‖2\|a+b\|^{2}\leq 2\|a\|^{2}+2\|b\|^{2}:
+1K∑k𝔼r∥ur+1(k)∥2≤ 2(1−αr)2E¯r+ 2×1K∑k𝔼r∥gr(k)∥2.\frac{1}{K}\sum_{k}\mathbb{E}_{r}\|u_{r+1}^{(k)}\|^{2}\ \leq\ 2(1-\alpha_{r})^{2}\,\bar{E}_{r}\ +\ 2\times\frac{1}{K}\sum_{k}\mathbb{E}_{r}\|g_{r}^{(k)}\|^{2}.
+Next,
+𝔼r​‖gr(k)‖2≤ 2​ηr2​𝔼r​‖∑t∇fk​(wr+12,t(k))‖2+ 2​ηr2​T​σ2,\mathbb{E}_{r}\|g_{r}^{(k)}\|^{2}\ \leq\ 2\eta_{r}^{2}\,\mathbb{E}_{r}\Big\|\sum_{t}\nabla f_{k}(w_{r+\frac{1}{2},t}^{(k)})\Big\|^{2}\ +\ 2\eta_{r}^{2}\,T\sigma^{2},
+and by LL-smoothness,
+∇fk​(wr+12,t(k))=∇fk​(wr)+Δk,t\nabla f_{k}(w_{r+\frac{1}{2},t}^{(k)})=\nabla f_{k}(w_{r})+\Delta_{k,t}
+with
+‖Δk,t‖≤L​‖wr+12,t(k)−wr‖.\|\Delta_{k,t}\|\leq L\|w_{r+\frac{1}{2},t}^{(k)}-w_{r}\|.
+Thus
+𝔼r​‖∑t∇fk​(wr+12,t(k))‖2≤ 2​T2​‖∇fk​(wr)‖2+ 2​L2​T​∑t𝔼r​‖wr+12,t(k)−wr‖2.\mathbb{E}_{r}\Big\|\sum_{t}\nabla f_{k}(w_{r+\frac{1}{2},t}^{(k)})\Big\|^{2}\ \leq\ 2T^{2}\|\nabla f_{k}(w_{r})\|^{2}\ +\ 2L^{2}T\sum_{t}\mathbb{E}_{r}\|w_{r+\frac{1}{2},t}^{(k)}-w_{r}\|^{2}.
+Averaging over kk and using the dissimilarity condition yields
+1K​∑k𝔼r​‖gr(k)‖2≤ 4​ηr2​T2​(β2​‖∇f​(wr)‖2+ν2)+ 4​ηr2​L2​T​S+ 2​ηr2​T​σ2,\frac{1}{K}\sum_{k}\mathbb{E}_{r}\|g_{r}^{(k)}\|^{2}\ \leq\ 4\eta_{r}^{2}T^{2}\bigl(\beta^{2}\|\nabla f(w_{r})\|^{2}+\nu^{2}\bigr)\ +\ 4\eta_{r}^{2}L^{2}T\,S\ +\ 2\eta_{r}^{2}T\sigma^{2},
+where
+S:=1K​∑k∑t=0T−1𝔼r​‖wr+12,t(k)−wr‖2.S:=\frac{1}{K}\sum_{k}\sum_{t=0}^{T-1}\mathbb{E}_{r}\|w_{r+\frac{1}{2},t}^{(k)}-w_{r}\|^{2}.
+By Lemma 2 (summed over tt),
+S≤12​ηr2​T2​σ2+168​ηr2​T3​ν2+36​ηr2​T3​β2​‖∇f​(wr)‖2+3​T​αr2​E¯r.S\leq 12\,\eta_{r}^{2}T^{2}\sigma^{2}+168\,\eta_{r}^{2}T^{3}\nu^{2}+36\,\eta_{r}^{2}T^{3}\beta^{2}\|\nabla f(w_{r})\|^{2}+3T\alpha_{r}^{2}\bar{E}_{r}.
+Substituting and noting L2​ηr2​T2=sr2L^{2}\eta_{r}^{2}T^{2}=s_{r}^{2} gives
+1K​∑k𝔼r​‖gr(k)‖2≤12​(Br(∇)+Br(ν,σ))+ 12​αr2​ηr2​L2​T2​E¯r.\frac{1}{K}\sum_{k}\mathbb{E}_{r}\|g_{r}^{(k)}\|^{2}\ \leq\ \tfrac{1}{2}\bigl(B_{r}^{(\nabla)}+B_{r}^{(\nu,\sigma)}\bigr)\ +\ 12\,\alpha_{r}^{2}\,\eta_{r}^{2}L^{2}T^{2}\,\bar{E}_{r}.
+Insert this into the previous split to obtain
+1K​∑k𝔼r​‖ur+1(k)‖2≤(2​(1−αr)2+24​αr2​ηr2​L2​T2)​E¯r+Br(∇)+Br(ν,σ).\frac{1}{K}\sum_{k}\mathbb{E}_{r}\|u_{r+1}^{(k)}\|^{2}\ \leq\ \Bigl(2(1-\alpha_{r})^{2}+24\,\alpha_{r}^{2}\eta_{r}^{2}L^{2}T^{2}\Bigr)\bar{E}_{r}\ +\ B_{r}^{(\nabla)}+B_{r}^{(\nu,\sigma)}.
+Finally multiply by (1−1δ)(1-\tfrac{1}{\delta}) to conclude equation 19.
+∎
+Proposition 1 (Residual contraction vs. EF).
+Under the conditions of Lemma 4, let
+ρEF:=2​(1−1δ)\rho_{\mathrm{EF}}:=2\bigl(1-\tfrac{1}{\delta}\bigr) (the αr=0\alpha_{r}=0 baseline).
+Then
+ρr=(1−1δ)​(2−4​αr+(2+24​sr2)​αr2),sr=ηr​L​T≤18,\rho_{r}=\Bigl(1-\tfrac{1}{\delta}\Bigr)\Bigl(2-4\alpha_{r}+(2+24s_{r}^{2})\alpha_{r}^{2}\Bigr),\qquad s_{r}=\eta_{r}LT\leq\tfrac{1}{8},
+and:
+1.
+Strict improvement region. For any
+αr∈(0,1 1+12​sr2)\alpha_{r}\in\bigl(0,\tfrac{1}{\,1+12s_{r}^{2}\,}\bigr),
+ρr−ρEF=(1−1δ)​[−4​αr+(2+24​sr2)​αr2]< 0,\rho_{r}-\rho_{\mathrm{EF}}=\Bigl(1-\tfrac{1}{\delta}\Bigr)\Bigl[-4\alpha_{r}+(2+24s_{r}^{2})\alpha_{r}^{2}\Bigr]\;<\;0,
+and at the boundary αr=21+12​sr2\alpha_{r}=\tfrac{2}{1+12s_{r}^{2}} the difference equals 00.
+2.
+Optimal step-ahead.
+The minimiser over αr∈[0,1]\alpha_{r}\in[0,1] is
+αr⋆=11+12​sr2∈(0.84,1]\alpha_{r}^{\star}=\frac{1}{1+12s_{r}^{2}}\in(0.84,1]
+and the minimum value is
+ρmin=(1−1δ)​[2−21+12​sr2]=ρEF​(1−11+12​sr2).\rho_{\min}=\Bigl(1-\tfrac{1}{\delta}\Bigr)\,\Bigl[2-\tfrac{2}{1+12s_{r}^{2}}\Bigr]=\rho_{\mathrm{EF}}\Bigl(1-\tfrac{1}{1+12s_{r}^{2}}\Bigr).
+In particular, as sr→0s_{r}\to 0, ρmin→0\rho_{\min}\to 0 and
+ρmin/ρEF→0\rho_{\min}/\rho_{\mathrm{EF}}\to 0.
+Proof.
+Direct algebra from the quadratic form of ρr\rho_{r}.
+For (i), the sign of
+−4​αr+(2+24​sr2)​αr2=αr​((2+24​sr2)​αr−4)-4\alpha_{r}+(2+24s_{r}^{2})\alpha_{r}^{2}=\alpha_{r}\big((2+24s_{r}^{2})\alpha_{r}-4\big)
+is negative when αr<4/(2+24​sr2)=1/(1+12​sr2)\alpha_{r}<4/(2+24s_{r}^{2})=1/(1+12s_{r}^{2}), and zero at equality.
+For (ii), minimize
+q⁡(α)=2−4​α+(2+24​sr2)​α2q(\alpha)=2-4\alpha+(2+24s_{r}^{2})\alpha^{2} to get
+αr⋆=2/(2+24​sr2)=1/(1+12​sr2)\alpha_{r}^{\star}=2/(2+24s_{r}^{2})=1/(1+12s_{r}^{2}) and
+q⁡(αr⋆)=2−2/(1+12​sr2)q(\alpha_{r}^{\star})=2-2/(1+12s_{r}^{2}); multiply by (1−1δ)(1-\tfrac{1}{\delta}).
+∎
+A.3 Partial participation: analysis and rates
+At round rr, let ℳr⊆[K]\mathcal{M}_{r}\subseteq[K] be sampled uniformly without replacement,
+|ℳr|=m|\mathcal{M}_{r}|=m, and denote p:=m/K∈(0,1]p:=m/K\in(0,1]. Write Ir(k)=𝟏{k∈ℳr}I_{r}^{(k)}=\bm{1}\{k\in\mathcal{M}_{r}\}.
+Active clients run the same inner loop as in full participation,
+gr(k)={ηr​∑t=0T−1(∇fk​(wr+12,t(k))+ξk,t),Ir(k)=1,0,Ir(k)=0,er+1(k)={ur+1(k)−C⁡(ur+1(k)),Ir(k)=1,er(k),Ir(k)=0,g_{r}^{(k)}=\begin{cases}\eta_{r}\sum_{t=0}^{T-1}\bigl(\nabla f_{k}(w_{r+\frac{1}{2},t}^{(k)})+\xi_{k,t}\bigr),&I_{r}^{(k)}=1,\\[2.0pt]
+0,&I_{r}^{(k)}=0,\end{cases}\qquad e_{r+1}^{(k)}=\begin{cases}u_{r+1}^{(k)}-C(u_{r+1}^{(k)}),&I_{r}^{(k)}=1,\\[2.0pt]
+e_{r}^{(k)},&I_{r}^{(k)}=0,\end{cases}
+with ur+1(k)=(1−αr)​er(k)+gr(k)u_{r+1}^{(k)}=(1-\alpha_{r})e_{r}^{(k)}+g_{r}^{(k)} for active clients. The server update is
+wr+1=wr−η​C¯r+1,C¯r+1:=1m​∑k∈ℳrC⁡(ur+1(k)).w_{r+1}=w_{r}-\eta\,\bar{C}_{r+1},\qquad\bar{C}_{r+1}:=\frac{1}{m}\sum_{k\in\mathcal{M}_{r}}C\bigl(u_{r+1}^{(k)}\bigr).
+Expectations 𝔼r​[⋅]\mathbb{E}_{r}[\cdot] are over local randomness and the draw of ℳr\mathcal{M}_{r}.
+Assumptions 1–3 and Definition 1 (with δ≥1\delta\geq 1) hold.
+Active/global averages; virtual iterate.
+Define
+e~r:=1K​∑k=1Ker(k),e¯r:=1m​∑k∈ℳrer(k),g¯r:=1m​∑k∈ℳrgr(k).\tilde{e}_{r}:=\frac{1}{K}\sum_{k=1}^{K}e_{r}^{(k)},\qquad\bar{e}_{r}:=\frac{1}{m}\sum_{k\in\mathcal{M}_{r}}e_{r}^{(k)},\qquad\bar{g}_{r}:=\frac{1}{m}\sum_{k\in\mathcal{M}_{r}}g_{r}^{(k)}.
+Note 𝔼ℳr​[e¯r∣{er(k)}]=e~r\mathbb{E}_{\mathcal{M}_{r}}[\bar{e}_{r}\mid\{e_{r}^{(k)}\}]=\tilde{e}_{r}. Let xr:=wr−η​e~rx_{r}:=w_{r}-\eta\,\tilde{e}_{r}.
+Lemma 5 (PP virtual-iterate identity).
+With the definitions above,
+xr+1−xr=η⁡[p⁡(αr​e¯r−g¯r)−(1−p)​C¯r+1].x_{r+1}-x_{r}=\eta\Bigl[\,p\bigl(\alpha_{r}\bar{e}_{r}-\bar{g}_{r}\bigr)\;-\;(1-p)\,\bar{C}_{r+1}\Bigr].
+(20)
+Lemma 6 (PP compression second moment).
+Let cδ:=2​(2−1δ)c_{\delta}:=2\bigl(2-\tfrac{1}{\delta}\bigr). Then, conditionally on ℳr\mathcal{M}_{r},
+𝔼r​‖C¯r+1‖2≤1m​∑k∈ℳr𝔼r​‖C⁡(ur+1(k))‖2≤cδm​∑k∈ℳr𝔼r​‖ur+1(k)‖2.\mathbb{E}_{r}\|\bar{C}_{r+1}\|^{2}\;\leq\;\frac{1}{m}\sum_{k\in\mathcal{M}_{r}}\mathbb{E}_{r}\|C(u_{r+1}^{(k)})\|^{2}\;\leq\;\frac{c_{\delta}}{m}\sum_{k\in\mathcal{M}_{r}}\mathbb{E}_{r}\|u_{r+1}^{(k)}\|^{2}.
+Lemma 7 (One-round descent under PP).
+Let Δract:=αr​e¯r−g¯r\Delta_{r}^{\mathrm{act}}:=\alpha_{r}\bar{e}_{r}-\bar{g}_{r}. Under the same alignment and
+stepsize coupling as in full participation,
+(C1)ηr2​L2​β2​(6​T2+12​T3)≤T8,(C2)η≤1256​β2​L​ηr​T,\text{\emph{(C1)}}\ \ \eta_{r}^{2}L^{2}\beta^{2}(6T^{2}+12T^{3})\leq\tfrac{T}{8},\qquad\text{\emph{(C2)}}\ \ \eta\leq\frac{1}{256\,\beta^{2}\,L\,\eta_{r}T},
+there exists a universal c>0c>0 such that
+𝔼r​[f⁡(xr+1)−f⁡(xr)]≤−c​p​η​ηr​T​‖∇f​(wr)‖2+𝔼r​[ℰ^r​E~r]+𝒱^r​σ2+ℋ^r​ν2,\mathbb{E}_{r}\bigl[f(x_{r+1})-f(x_{r})\bigr]\ \leq\ -\,c\,p\,\eta\,\eta_{r}T\,\|\nabla f(w_{r})\|^{2}\ +\ \mathbb{E}_{r}\bigl[\widehat{\mathcal{E}}_{r}\,\tilde{E}_{r}\bigr]\ +\ \widehat{\mathcal{V}}_{r}\,\sigma^{2}\ +\ \widehat{\mathcal{H}}_{r}\,\nu^{2},
+(21)
+where E~r:=1K​∑k=1K‖er(k)‖2\tilde{E}_{r}:=\frac{1}{K}\sum_{k=1}^{K}\|e_{r}^{(k)}\|^{2} and
+ℰ^r,𝒱^r,ℋ^r\widehat{\mathcal{E}}_{r},\widehat{\mathcal{V}}_{r},\widehat{\mathcal{H}}_{r}
+equal the full-participation coefficients scaled by pp and augmented by
+(1−p)(1-p)–terms originating from C¯r+1\bar{C}_{r+1} via Lemma 6.
+Lemma 8 (Residual recursion under PP).
+Let
+ρrPP:=(1−p)+p⁡(1−1δ)​(2​(1−αr)2+24​αr2​(ηr​L​T)2).\rho_{r}^{\mathrm{PP}}:=(1-p)\;+\;p\Bigl(1-\tfrac{1}{\delta}\Bigr)\Bigl(2(1-\alpha_{r})^{2}+24\,\alpha_{r}^{2}(\eta_{r}LT)^{2}\Bigr).
+Then
+𝔼r​E~r+1≤ρrPP​E~r+p⁡(1−1δ)​[Br(∇)+Br(ν,σ)],\mathbb{E}_{r}\tilde{E}_{r+1}\ \leq\ \rho_{r}^{\mathrm{PP}}\ \tilde{E}_{r}\ +\ p\Bigl(1-\tfrac{1}{\delta}\Bigr)\Bigl[B_{r}^{(\nabla)}+B_{r}^{(\nu,\sigma)}\Bigr],
+(22)
+with Br(∇)B_{r}^{(\nabla)} and Br(ν,σ)B_{r}^{(\nu,\sigma)} as in full participation.
+Telescoping, absorption, and final bounds (PP).
+Let SR:=∑r=0R−1ηr​TS_{R}:=\sum_{r=0}^{R-1}\eta_{r}T and SRPP:=∑r=0R−1p​ηr​T=p​SRS_{R}^{\mathrm{PP}}:=\sum_{r=0}^{R-1}p\,\eta_{r}T=p\,S_{R}.
+Summing equation 21 over rr and using 𝒞rPP≤−c​p​η​ηr​T\mathcal{C}_{r}^{\mathrm{PP}}\leq-c\,p\,\eta\,\eta_{r}T,
+∑r=0R−1p​ηr​T​𝔼​‖∇f​(wr)‖2≤16η​(f⁡(x0)−𝔼​f​(xR))+16η​∑r=0R−1𝔼⁡[ℰ^r​E~r+𝒱^r​σ2+ℋ^r​ν2].\sum_{r=0}^{R-1}p\,\eta_{r}T\;\mathbb{E}\|\nabla f(w_{r})\|^{2}\ \leq\ \frac{16}{\eta}\bigl(f(x_{0})-\mathbb{E}f(x_{R})\bigr)+\frac{16}{\eta}\sum_{r=0}^{R-1}\mathbb{E}\bigl[\widehat{\mathcal{E}}_{r}\,\tilde{E}_{r}+\widehat{\mathcal{V}}_{r}\,\sigma^{2}+\widehat{\mathcal{H}}_{r}\,\nu^{2}\bigr].
+If ff is bounded below by f⋆f_{\star}, then f⁡(xR)≥f⋆f(x_{R})\geq f_{\star}. Summing equation 22 and
+assuming ρmaxPP:=suprρrPP<1\rho_{\max}^{\mathrm{PP}}:=\sup_{r}\rho_{r}^{\mathrm{PP}}<1,
+∑r=0R−1𝔼​E~r≤11−ρmaxPP​E~0+p1−ρmaxPP​(1−1δ)​∑r=0R−1𝔼⁡[Br(∇)+Br(ν,σ)].\sum_{r=0}^{R-1}\mathbb{E}\tilde{E}_{r}\ \leq\ \frac{1}{1-\rho_{\max}^{\mathrm{PP}}}\,\tilde{E}_{0}+\frac{p}{1-\rho_{\max}^{\mathrm{PP}}}\Bigl(1-\tfrac{1}{\delta}\Bigr)\sum_{r=0}^{R-1}\mathbb{E}\bigl[B_{r}^{(\nabla)}+B_{r}^{(\nu,\sigma)}\bigr].
+Plugging this into the previous display yields a gradient-forcing term proportional to
+16η×ℰ^max1−ρmaxPP​(1−1δ)×p​∑rBr(∇)⏟≤β2​dmax​p​∑rηr​T​𝔼​‖∇f​(wr)‖2,\frac{16}{\eta}\times\frac{\widehat{\mathcal{E}}_{\max}}{1-\rho_{\max}^{\mathrm{PP}}}\Bigl(1-\tfrac{1}{\delta}\Bigr)\times\underbrace{p\sum_{r}B_{r}^{(\nabla)}}_{\leq\ \beta^{2}d_{\max}\,p\sum_{r}\eta_{r}T\,\mathbb{E}\|\nabla f(w_{r})\|^{2}},
+where dmax:=supr(8​ηr​T+288​L2​ηr3​T3)d_{\max}:=\sup_{r}\bigl(8\,\eta_{r}T+288\,L^{2}\eta_{r}^{3}T^{3}\bigr). Defining
+ΘPP:=16η×ℰ^max1−ρmaxPP​(1−1δ)​β2​dmax,\Theta_{\mathrm{PP}}:=\frac{16}{\eta}\times\frac{\widehat{\mathcal{E}}_{\max}}{1-\rho_{\max}^{\mathrm{PP}}}\Bigl(1-\tfrac{1}{\delta}\Bigr)\beta^{2}d_{\max},
+we obtain the absorption inequality (the factor pp cancels on both sides):
+(1−ΘPP)∑r=0R−1pηrT𝔼∥∇f(wr)∥2≤16η[(f(x0)−f⋆)+∑r=0R−1𝒱^rσ2+ℋ^rν2]].\bigl(1-\Theta_{\mathrm{PP}}\bigr)\sum_{r=0}^{R-1}p\,\eta_{r}T\,\mathbb{E}\|\nabla f(w_{r})\|^{2}\ \leq\ \frac{16}{\eta}\Bigl[(f(x_{0})-f_{\star})+\sum_{r=0}^{R-1}\widehat{\mathcal{V}}_{r}\,\sigma^{2}+\widehat{\mathcal{H}}_{r}\,\nu^{2}\bigr]\Bigr].
+Assuming ΘPP≤12\Theta_{\mathrm{PP}}\leq\frac{1}{2}, we conclude
+∑r=0R−1p​ηr​T​𝔼​‖∇f​(wr)‖2≤32η​[(f⁡(x0)−f⋆)+∑r=0R−1𝒱^r​σ2+ℋ^r​ν2].\sum_{r=0}^{R-1}p\,\eta_{r}T\,\mathbb{E}\|\nabla f(w_{r})\|^{2}\ \leq\ \frac{32}{\eta}\Bigl[(f(x_{0})-f_{\star})+\sum_{r=0}^{R-1}\widehat{\mathcal{V}}_{r}\,\sigma^{2}+\widehat{\mathcal{H}}_{r}\,\nu^{2}\Bigr].
+Dividing by SRPP=p​η0​T​RS_{R}^{\mathrm{PP}}=p\,\eta_{0}TR and with ηr≡η0\eta_{r}\equiv\eta_{0} yields the averaged bounds below.
+1R​∑r=0R−1𝔼​‖∇f​(wr)‖2≤\displaystyle\frac{1}{R}\sum_{r=0}^{R-1}\mathbb{E}\|\nabla f(w_{r})\|^{2}~\leq~
+32η​p​η0​T​R​(f⁡(x0)−f⋆)+128​L​η0η​p​m​σ2\displaystyle~\frac{32}{\eta\,p\,\eta_{0}TR}\,(f(x_{0})-f_{\star})~+~\frac{128\,L\,\eta_{0}}{\eta\,p\,m}\,\sigma^{2}
++32η​p​(1−1δ)​[Cσ​η02​L2​T​σ2+Cν​η02​L2​T2​ν2].\displaystyle~+~\frac{32}{\eta\,p}\Bigl(1-\tfrac{1}{\delta}\Bigr)\Bigl[C_{\sigma}\,\eta_{0}^{2}L^{2}T\,\sigma^{2}+C_{\nu}\,\eta_{0}^{2}L^{2}T^{2}\,\nu^{2}\Bigr].
+(23)
+So, the optimization term scales as
+O⁡((p​η​η0​T​R)−1)O\big((p\,\eta\,\eta_{0}TR)^{-1}\big) (a per-round slow-down by 1/p=K/m1/p=K/m).
+The pure mini-batch variance enjoys a 1/m1/m reduction: its contribution scales as 128​L​η0m​σ2\frac{128\,L\,\eta_{0}}{m}\,\sigma^{2},
+while the residual-induced variance/heterogeneity floors scale as
+(1−1δ)​[Cσ​η02​L2​T​σ2+Cν​η02​L2​T2​ν2]\Bigl(1-\tfrac{1}{\delta}\Bigr)\!\bigl[C_{\sigma}\,\eta_{0}^{2}L^{2}T\,\sigma^{2}+C_{\nu}\,\eta_{0}^{2}L^{2}T^{2}\nu^{2}\bigr].
+Stalling vs. step-ahead.
+With αr=0\alpha_{r}=0 (no step-ahead), the multiplicative factor becomes
+ρrPP=(1−p)+2​p​(1−1δ)=1+p⁡(1−2δ)\rho_{r}^{\mathrm{PP}}=(1-p)+2p(1-\tfrac{1}{\delta})=1+p(1-\tfrac{2}{\delta}), which can be
+≥1\geq 1 under aggressive compression and small pp, explaining the slowdown in cross-device regimes. For moderate αr\alpha_{r} (e.g., αr≈αr⋆\alpha_{r}\approx\alpha_{r}^{\star} from the full-participation analysis), ρrPP\rho_{r}^{\mathrm{PP}} strictly decreases, improving the decay of E~r\tilde{E}_{r} each time a client participates and restoring faster early progress.
+Constants and feasibility.
+The constants CσC_{\sigma}, CνC_{\nu} and Θ\Theta in Theorem 1 collect the contributions of stochastic-gradient variance, data heterogeneity, and compression–induced residual drift. Inspecting their explicit formulas, we see that they depend on the algorithmic hyperparameters only through the effective local stepsize
+s0=η0​L​T,s_{0}\;=\;\eta_{0}LT,
+the compression bias factor (1−1/δ)(1-1/\delta), and the residual–contraction term 1/(1−ρmax)1/(1-\rho_{\max}). In particular, ρmax\rho_{\max} itself is an increasing function of s0s_{0} and (1−1/δ)(1-1/\delta), so CσC_{\sigma}, CνC_{\nu} and Θ\Theta are monotone nondecreasing in s0s_{0} and (1−1/δ)(1-1/\delta): larger local work or more aggressive compression lead to larger constants and thus a higher residual-driven floor.
+In the partial-participation extension (Remark 1), the corresponding constant ΘPP\Theta_{\mathrm{PP}} inherits the same monotone dependence on s0s_{0} and (1−1/δ)(1-1/\delta) and, in addition, scales inversely with the participation rate p=m/Kp=m/K (i.e., it increases as pp decreases). Thus, the feasibility conditions ρmaxPP<1\rho_{\max}^{\mathrm{PP}}<1 and ΘPP≤12\Theta_{\mathrm{PP}}\leq\tfrac{1}{2} can be interpreted as requiring a standard “small” effective local stepsize s0s_{0}, moderate compression, and not-too-extreme partial participation. For the default hyperparameters used in our experiments (e.g., T=5T=5, Top-kk compression, and p∈{0.1,0.2,1.0}p\in\{0.1,0.2,1.0\}), we numerically evaluate these constants and confirm that ρmaxPP<1\rho_{\max}^{\mathrm{PP}}<1 in all regimes. Moreover, in a mildly compressed setting (e.g., δ=1.005\delta=1.005 with the same stepsizes), the corresponding ΘPP\Theta_{\mathrm{PP}} lies well below 12\tfrac{1}{2}, illustrating that the condition ΘPP≤12\Theta_{\mathrm{PP}}\leq\tfrac{1}{2} is a conservative sufficient condition rather than a tight practical tuning rule for the aggressively compressed Top-kk regimes we study.
+A.4 Comparison of EF-type compressed FL methods.
+For completeness, In Table 1, we summarizes the main assumptions, mechanisms, and qualitative nonconvex behavior of several closely related algorithms: Fed-EF, SAEF, CSER, SCAFCOM, and SA-PEF. The goal is not to restate full theorems, but to highlight the regimes they target. Fed-EF and SA-PEF share the same lightweight, stateless EF architecture and standard FL assumptions (local steps, partial participation, biased contractive compressors), with SA-PEF improving the residual-contraction constant under compression. CSER and SAEF focus on centralized/local-SGD settings without partial participation, while SCAFCOM achieves stronger robustness to arbitrary heterogeneity by adding SCAFFOLD-style control variates and momentum, at the cost of increasing per-client state and communication.
+Table 1: Comparison of compressed algorithms for FL. SA-PEF bridges the gap between Fed-EF (stable but slower under aggressive compression) and SAEF (faster warm-up but fragile in heterogeneous FL), achieving improved residual contraction without the extra state and complexity of control-variate methods such as SCAFCOM.
+Algorithm
+Assumptions
+(beyond
+LL-smoothness)
+Mechanism & State
+Convergence / Behaviour (Nonconvex)
+Fed-EF
+(Li and Li, 2023)
+Bounded variance; local SGD with PP
+Biased δ\delta-contractive;
+Stateless
+(one residual/client)
+Standard FL nonconvex rate with 1/p1/p slowdown under partial participation;
+residual contraction factor ρEF\rho_{\text{EF}} can be relatively weak under aggressive compression, leading to slower progress and earlier stalling.
+SAEF
+(Xu et al., 2021)
+Bounded gradient;
+centralized, synchronous setting;
+no PP analysis
+Full step-ahead (α=1\alpha=1);
+Stateless
+(one residual/client)
+Analyzed in the classical distributed setting (no local steps, no client sampling); reduces EF’s gradient mismatch there.
+In our FL experiments with heterogeneous data, full step-ahead tends to produce larger gradient mismatch and late-stage plateaus compared to EF/SA-PEF (Sec. 4).
+CSER
+(Xie et al., 2020)
+Bounded variance; local SGD (typically full participation);
+Error reset
+(periodic dense communication of residuals);
+Stateless
+Controls residual drift via periodic resets, yielding a nonconvex local-SGD rate with an RR-independent floor.
+However, resets require sending full residuals, inducing high peak bandwidth at reset rounds and analyses usually assume full participation.
+SCAFCOM
+(Huang et al., 2024)
+Arbitrary heterogeneity; bounded variance; local SGD with PP
+Control variates
++ momentum;
+Stateful
+(extra state cc,cic_{i} per client)
+Achieves a nonconvex FL guarantees under arbitrary non-IID data, with improved dependence on heterogeneity,
+at the cost of higher system complexity (maintaining control-variates state).
+SA-PEF (ours)
+Gradient dissimilarity (β,ν)(\beta,\nu); local SGD with PP
+Partial step-ahead
+(0<α<10<\alpha<1);
+Stateless
+(one residual/client)
+Operates in the same FL regime and under the same assumptions as Fed-EF, with the same leading-order nonconvex rate,
+but with a strictly improved residual contraction factor ρmax<ρEF\rho_{\max}<\rho_{\text{EF}} under biased compression, which lowers the error floor and balances warm-up speed with long-term stability.
+Remark 2 (Relation to EF21).
+EF21 and its extensions (Richtárik et al., 2021; Fatkhullin et al., 2025) obtain stronger guarantees (no error floor) under a different regime: synchronized data-parallel training with T=1T{=}1, full-gradient (or gradient-difference) compression at a shared iterate, and no local steps. In this setting, EF21 is strictly preferable to classical EF. Our analysis targets a complementary regime, federated local-SGD with T>1T>1 local steps, partial participation, and biased contractive compressors, where the compressed object is the accumulated local update and client drift plays a central role. Extending EF21-style arguments (or designing EF21-style step-ahead variants) to this local-SGD, partial-participation, biased-compression setting is non-trivial and remains an interesting direction for future work.
+Appendix B Implementation Details and Additional Experiments
+B.1 Setup and Parameter tuning
+This appendix details datasets, federated partitioning, compressors, the hyperparameter search protocol, and fairness controls used across all methods.
+Datasets, models, and preprocessing.
+CIFAR-10 (ResNet-9), CIFAR-100 (ResNet-18), and Tiny-ImageNet (64×\times64; ResNet-34) are trained with cross-entropy loss.
+Preprocessing follows standard practice: per-dataset mean/std normalization; CIFAR uses random crop (4-pixel padding) and horizontal flip; Tiny-ImageNet uses random resized crop to 64 and horizontal flip. Unless stated otherwise, batch size is 64, momentum is 0.9, weight decay is ×10−45\!\times\!10^{-4} on CIFAR and 10−410^{-4} on Tiny-ImageNet.
+Federated partitioning, participation, and local computation.
+We create K=100K{=}100 clients and apply Dirichlet label partitioning with γ∈{0.1,1.0}\gamma\in\{0.1,1.0\} (smaller γ\gamma ⇒\Rightarrow stronger non-IID).
+Each round samples m=⌊p​K⌋m=\lfloor pK\rfloor clients uniformly without replacement with p∈{0.1,0.5,1.0}p\in\{0.1,0.5,1.0\}.
+Participating clients run TT local SGD steps at stepsize ηr\eta_{r}; default T=5T{=}5. We train for R=200R{=}200 rounds.
+Unless stated, server stepsize is η=1.0\eta{=}1.0. We conducted all federated learning simulations using the Flower framework (Beutel et al., 2020).
+Compressors and communication accounting.
+We use Top-kk sparsification with k/d∈{0.01,0.05,0.10}k/d\in\{0.01,0.05,0.10\}; each selected entry communicates its index and value. As a consequence, Top-kk satisfies Definition 1 with δ=d/k\delta=d/k; we record the standard bound below.
+Lemma 9 (Top-kk contraction; (Stich et al., 2018; Beznosikov et al., 2023)).
+Let C=Topk:ℝd→ℝdC=\operatorname{Top}_{k}:\mathbb{R}^{d}\!\to\!\mathbb{R}^{d} keep the kk largest
+absolute-value coordinates of xx (ties broken arbitrarily), zeroing the rest.
+Then for all x∈ℝdx\in\mathbb{R}^{d},
+‖x−C⁡(x)‖22≤(1−kd)​‖x‖22,kd​‖x‖22≤‖C⁡(x)‖22=⟨C⁡(x),x⟩≤‖x‖22.\|x-C(x)\|_{2}^{2}\;\leq\;\Bigl(1-\frac{k}{d}\Bigr)\,\|x\|_{2}^{2},\qquad\frac{k}{d}\,\|x\|_{2}^{2}\;\leq\;\|C(x)\|_{2}^{2}\;=\;\langle C(x),x\rangle\;\leq\;\|x\|_{2}^{2}.
+In particular, CC is δ\delta-contractive with δ=d/k\delta=d/k in the sense of
+Definition 1. The constants are tight when all |xi||x_{i}|
+are equal.
+Each selected entry transmits its index and value. Raw uplink bits per participating client per round are
+k⁡(⌈log2⁡d⌉+bval)k\big(\lceil\log_{2}d\rceil+b_{\text{val}}\big) with bval=32b_{\text{val}}{=}32 for FP32 values. Unless stated, reported cumulative communication aggregates uplink only across participating clients (downlink is identical across compressed methods and omitted for fairness); FedAvg’s downlink/uplink are both dense FP32.
+Hyperparameter search protocol.
+We adopt a small, method-agnostic grid tuned on a held-out validation split. Unless noted, we select hyperparameters by best validation top-1 at a fixed communication budget (bits) within RR rounds; ties are broken by higher accuracy at earlier checkpoints.
+We reuse the same grid across participation rates (qq).
+Search spaces (shared across methods).
+•
+Client LR ηr\eta_{r}:
+CIFAR-10:
+{0.001,0.05,0.1,0.2,1.0,10}\{0.001,0.05,0.1,0.2,1.0,10\}
+CIFAR-100:
+{0.001,0.05,0.1,1.0,10}\{0.001,0.05,0.1,1.0,10\}
+Tiny-ImageNet:
+{0.001,0.02,0.05,1.0}\{0.001,0.02,0.05,1.0\}
+(cosine decay with 3-5 epoch warm-up, minimum ηr=0.005\eta_{r}=0.005)
+•
+Server LR η\eta: {0.5,1.0}\{0.5,1.0\}.
+•
+Weight decay: {×10−4, 10−4}\{5\!\times\!10^{-4},\,10^{-4}\}.
+•
+Local steps TT: {1,5,10}\{1,5,10\}.
+•
+Compressor level k/dk/d: {0.01,0.05,0.10}\{0.01,0.05,0.10\}.
+SA-PEF-specific. Constant-α\alpha ablations use α∈{0.0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0}\alpha\in\{0.0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0\}; unless stated, α\alpha is fixed across rounds.
+Fairness controls and evaluation.
+(i) The same grid is used across methods; (ii) the best setting is selected at a matched bit budget; (iii) client sampling seeds are shared across methods; (iv) evaluation uses the server model in eval mode with identical preprocessing.
+We report both accuracy vs. rounds and accuracy vs. bits; the latter is our primary metric under communication constraints. Experiments ran on NVIDIA A100/A5000/H200 GPUs; hardware does not affect communication accounting.
+B.2 Additional Experiments
+Multi-seed stability.
+In Table 2, we report final test accuracy as mean ±\pm standard deviation over five independent runs with different random seeds. Across seeds, the relative ranking of methods is consistent, with SA-PEF retaining its advantage in high-compression, low-participation regimes.
+Table 2: Final test accuracy (mean ±\pm std. over five independent runs) for CIFAR-10 and CIFAR-100 under two participation/heterogeneity regimes. The hyperparameters used in all algorithms are R=200R=200, T=5T=5, and ηl=0.1\eta_{l}=0.1.
+Dataset
+Model
+Algorithm
+Final test accuracy (%)
+p=0.1,γ=0.5p=0.1,\ \gamma=0.5
+p=0.5,γ=0.1p=0.5,\ \gamma=0.1
+top-1
+top-10
+top-1
+top-10
+CIFAR-10
+ResNet-9
+FedAvg
+88.5±1.688.5\pm 1.6
+69.5±1.569.5\pm 1.5
+EF
+57.0±2.057.0\pm 2.0
+72.7±2.372.7\pm 2.3
+40.3±3.740.3\pm 3.7
+47.2±4.147.2\pm 4.1
+SAEF
+74.2±3.974.2\pm 3.9
+75.5±2.975.5\pm 2.9
+39.5±4.639.5\pm 4.6
+48.5±3.348.5\pm 3.3
+CSER
+68.6±2.868.6\pm 2.8
+80.5±1.280.5\pm 1.2
+49.5±4.049.5\pm 4.0
+67.2±2.667.2\pm 2.6
+SA-PEF
+80.5±2.680.5\pm 2.6
+82.7±1.682.7\pm 1.6
+47.5±3.647.5\pm 3.6
+68.5±1.968.5\pm 1.9
+CIFAR-100
+ResNet-18
+FedAvg
+62.5±1.662.5\pm 1.6
+61.9±0.661.9\pm 0.6
+EF
+40.4±2.440.4\pm 2.4
+49.5±1.649.5\pm 1.6
+41.5±1.641.5\pm 1.6
+57.5±1.957.5\pm 1.9
+SAEF
+46.1±1.446.1\pm 1.4
+50.5±2.050.5\pm 2.0
+44.5±3.644.5\pm 3.6
+57.5±3.957.5\pm 3.9
+CSER
+46.2±0.446.2\pm 0.4
+51.5±1.951.5\pm 1.9
+42.5±2.442.5\pm 2.4
+60.7±1.060.7\pm 1.0
+SA-PEF
+49.6±1.849.6\pm 1.8
+54.5±2.654.5\pm 2.6
+48.5±2.048.5\pm 2.0
+60.6±2.860.6\pm 2.8
+Figures 5–8 report extra convergence curves for SA-PEF and the baselines on CIFAR-10, CIFAR-100, and Tiny-ImageNet. For each dataset we sweep (i) participation q∈{1.0, 0.1}q\in\{1.0,\,0.1\}, (ii) compression budget (Top-1% and Top-10% under full participation; Top-5% and Top-1% under q=0.1q{=}0.1), and (iii) data heterogeneity via Dirichlet partitions. The plots include both accuracy vs. rounds and accuracy vs. communicated GB. Under full participation, SA-PEF consistently reaches a given accuracy in fewer rounds than EF/CSER and tracks SAEF without late-stage plateaus. Under partial participation with aggressive compression (Top-5%, Top-1%), the gaps naturally narrow but the qualitative trend persists, illustrating that the main conclusions are robust across datasets, architectures, and federation settings.
+((a)) p=1.0p{=}1.0, Top-1%
+((b)) p=1.0p{=}1.0, Top-10%
+((c)) p=1.0p{=}1.0, Top-1%
+((d)) p=1.0p{=}1.0, Top-10%
+Figure 5: Test accuracy vs number of rounds (row 1) and communicated GB (row 2) on the CIFAR-10 dataset using ResNet-9 and γ=0.1\gamma{=}0.1.
+((a)) p=0.1p{=}0.1, Top-5%
+((b)) p=0.5p{=}0.5, Top-5%
+((c)) p=0.1p{=}0.1, Top-5%
+((d)) p=0.5p{=}0.5, Top-5%
+Figure 6: Test accuracy vs number of rounds (row 1) and communicated GB (row 2) on the CIFAR-100 dataset using ResNet-18 and γ=0.1\gamma{=}0.1.
+((a)) p=0.1p{=}0.1, Top-1%
+((b)) p=0.1p{=}0.1, Top-10%
+((c)) p=0.1p{=}0.1, Top-1%
+((d)) p=0.1p{=}0.1, Top-10%
+Figure 7: Test accuracy vs number of rounds (row 1) and communicated GB (row 2) on the CIFAR-10 dataset using ResNet-9 and γ=0.1\gamma{=}0.1.
+Figure 8: Test accuracy vs number of rounds (left) and communicated GB (right) on the Tiny-ImageNet dataset using ResNet-34 with γ=0.5\gamma{=}0.5, p=0.1p{=}0.1.
+IID control experiments.
+To isolate the effect of data heterogeneity, we also evaluate under IID partitions in figure 9. We report accuracy vs. rounds and accuracy vs. GB for: (i) partial participation (q=0.5q{=}0.5) with Top-5% and Top-10%. Across datasets, SA-PEF matches or exceeds EF/CSER in early rounds under the same communication budget.
+((a)) p=0.5p{=}0.5, Top-5%
+((b)) p=0.5p{=}0.5, Top-10%
+((c)) p=0.5p{=}0.5, Top-5%
+((d)) p=0.5p{=}0.5, Top-10%
+Figure 9: Test accuracy vs number of rounds (row 1) and communicated GB (row 2) on the CIFAR-100 dataset using ResNet-18.
+Extreme partial participation and local work.
+To further stress-test our methods, we also consider more demanding FL regimes with very low participation and larger local work. In particular, we run experiments with participation p=0.05p=0.05 and T=10T=10 local SGD steps per round, comparing EF, CSER, and SA-PEF under the same compression level. As shown in Fig. 10, SA-PEF consistently attains higher accuracy than EF and CSER at a fixed communication budget, indicating that its advantages persist even under extreme partial participation and increased local work.
+Figure 10: Test accuracy vs. number of rounds on CIFAR-10 with ResNet-9 under Top-1% (left) and Top-10% (right) uplink compression.
+Wall-clock efficiency.
+To quantify implementation overhead, we report test accuracy versus wall-clock time on CIFAR-10/ResNet-9 under a fixed hardware setup (six NVIDIA RTX A5000 GPUs across 6 nodes) in the Figure 11. SA-PEF reaches a given accuracy level substantially earlier than EF, SAEF, CSER, and FedAvg, confirming that the small extra vector operations it introduces incur negligible runtime cost while improving time-to-accuracy.
+Figure 11: Test accuracy vs. wall-clock time (s) on CIFAR-10 with ResNet-9 under Top-1% (left) and Top-10% (right) uplink compression.
+Scaled-sign compressor.
+Besides Top-kk, we also consider a scaled-sign compressor C⁡(x)=‖x‖1d​sign​(x)C(x)=\frac{\|x\|_{1}}{d}\,\mathrm{sign}(x). This is the group-scaled sign compressor of Li and Li (2023), specialized to a single block (M=1M=1), and Proposition C.1 in that work shows that it is contractive in the sense of our Definition 1 for a suitable δ>0\delta>0, so it falls within our theoretical framework. Hence, we report preliminary CIFAR-10/ResNet-9 results with this scaled-sign compressor in Figure 12, where SA-PEF again achieves higher accuracy than EF, SAEF, and CSER at a fixed communication budget.
+Figure 12: Test accuracy vs. number of rounds on CIFAR-10 with ResNet-9 for Dirichlet-γ\gamma partitions: γ=0.1\gamma=0.1 (left) and γ=0.5\gamma=0.5 (right).
+Effect of momentum.
+To isolate the role of momentum, we repeat our CIFAR-10/100 experiments using SGD without momentum, keeping all other hyperparameters and compression settings fixed, and provide the results in Figure 13. The test-accuracy trajectories and accuracy-communication curves show that SA-PEF consistently matches or outperforms EF, SAEF, and CSER, and remains close to FedAvg in terms of accuracy per communicated
+GB. This suggests that our conclusions are essentially momentum-agnostic: momentum slightly reshapes the trajectories but does not drive the gains of SA-PEF over EF-style baselines.
+((a)) with CIFAR-10 using ResNet-9
+((b)) with CIFAR-100 using ResNet-18
+Figure 13: Test accuracy vs number of rounds (row 1) and communicated GB (row 2) using p=0.1p{=}0.1, Top-10%, and γ=0.5\gamma{=}0.5.
+Comparison with SCAFCOM.
+To further assess SA-PEF, we follow the MNIST setup of Huang et al. (2024): a 2-layer fully-connected network is trained on MNIST distributed across N=200N=200 clients in a highly heterogeneous regime (each client holds data from at most two classes), with partial participation p=0.1p=0.1 and 1010 local steps. We apply aggressive Top-1% compression to EF-style methods. As shown in Figure 14, SA-PEF closely tracks SCAFCOM and both substantially outperform standard EF and FedAvg, while uncompressed SCAFFOLD lies in between. This indicates that, under the same communication budget, SA-PEF can match the robustness of SCAFCOM’s control-variate-plus-momentum design while retaining the simpler EF architecture (one residual per client, no additional drift-correction state).
+((a)) Test accuracy vs. rounds.
+((b)) Training loss vs. rounds.
+Figure 14: Comparison with SCAFCOM on MNIST under Top-1% compression, partial participation p=0.1p{=}0.1, and 1010 local steps.
+To better align with our main experimental setup, we additionally report a preliminary CIFAR-10/ResNet-9 experiment under aggressive compression in the Figure 15. We follow the local mini-batch step formulation of Huang et al. (2024) (rather than local epochs) for a fair comparison. We use K=100K=100 clients and R=200R=200 communication rounds; at each round, the server samples 1010 clients, and each selected client performs 2020 local mini-batch SGD steps on a ResNet-9 model. For all EF-style methods (EF, SAEF, SA-PEF, and SCAFCOM) we apply Top-1%1\% and Top-10%10\% sparsification to the uplink updates, while FedAvg communicates dense updates. SCAFCOM uses control-variate and momentum coefficients αsc=0.1\alpha_{\mathrm{sc}}=0.1 and βsc=0.2\beta_{\mathrm{sc}}=0.2, selected via a small grid search. SA-PEF again behaves competitively with SCAFCOM while clearly improving over EF, SAEF, and FedAvg under the same communication budget. All curves are averaged over five independent runs with different random seeds. The learning-rate combinations that yield the highest test accuracy are listed in Table 3.
+Algorithm
+η\eta
+ηr\eta_{r}
+SA-PEF
+11
+10−310^{-3}
+SAEF
+11
+10−310^{-3}
+EF
+11
+10−310^{-3}
+SCAFCOM
+33
+10−110^{-1}
+FedAvg
+11
+10−110^{-1}
+Table 3: Optimal global (η\eta) and local (ηr\eta_{r}) learning rate combinations.
+Figure 15: Test accuracy vs. number of rounds on CIFAR-10 with ResNet-9, partial participation p=0.1p{=}0.1, and 1010 local steps under Top-1% (left) and Top-10% (right) uplink compression.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from
+

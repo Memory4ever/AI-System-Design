@@ -1,0 +1,228 @@
+Exact-v1 primary HTML necessary selection https://arxiv.org/html/2601.21686v1
+3 Method: StiefAttention
+Figure 1: Overview of StiefAttention. From lightweight activation statistics μK,μV\mu_{K},\mu_{V} and σK2,σV2\sigma_{K}^{2},\sigma_{V}^{2}, we learn orthonormal projection bases PK,PVP_{K},P_{V} which are optimized to minimize decoder-layer output error.
+3.1 Goal
+SVD-like methods introduced in Sec. 2.3 optimize proxy objectives on intermediate quantities (e.g., KK, [K;Q][K;Q], or Q​K⊤QK^{\top}).
+In contrast, StiefAttention learns low-rank KV projections that directly minimize full decoder layer output error.
+Fig. 1 summarizes the core idea: instead of optimizing reconstruction in KV space, we optimize the error measured at the decoder-layer output, capturing the effect of both softmax and value mixing, as well as downstream transformations in the decoder layer, which includes output projection, residual paths, normalization and the MLP.
+3.2 Problem statement
+For each decoder layer ℓ\ell, let fℓf_{\ell} denote the original layer mapping and let f~ℓ\tilde{f}_{\ell} denote the layer where keys and values inside attention are replaced by their reconstructed low-rank forms.
+StiefAttention learns the P¯K∈ℝdh×dh\bar{P}_{K}\in\mathbb{R}^{d_{h}\times d_{h}} and P¯V∈ℝdh×dh\bar{P}_{V}\in\mathbb{R}^{d_{h}\times d_{h}} orthonormal projection bases, and uses their leading rK,rV≪dhr_{K},r_{V}\ll d_{h} columns to define the corresponding low-rank projection matrices:
+PK(rK)≔P¯K[:,1:rK]∈ℝdh×rK,\displaystyle P_{K}^{(r_{K})}\coloneq\bar{P}_{K}[:,1{:}r_{K}]\in\mathbb{R}^{d_{h}\times r_{K}},
+(9)
+PV(rV)≔P¯V[:,1:rV]∈ℝdh×rV,\displaystyle P_{V}^{(r_{V})}\coloneq\bar{P}_{V}[:,1{:}r_{V}]\in\mathbb{R}^{d_{h}\times r_{V}},
+with (PK(rK))⊤​PK(rK)=IrK(P_{K}^{(r_{K})})^{\top}P_{K}^{(r_{K})}=I_{r_{K}} and (PV(rV))⊤​PV(rV)=IrV(P_{V}^{(r_{V})})^{\top}P_{V}^{(r_{V})}=I_{r_{V}}.
+Given full-precision matrices K,V∈ℝn×dhK,V\in\mathbb{R}^{n\times d_{h}} (as obtained during calibration, or before compression is applied), StiefAttention forms and caches the compressed tensors
+K↓=K​PK(rK)K^{\downarrow}=KP_{K}^{(r_{K})} and V↓=V​PV(rV)V^{\downarrow}=VP_{V}^{(r_{V})}.
+Whenever the attention block needs KK and VV in the original dimension, it uses the reconstructed forms:
+K~=K↓​(PK(rK))⊤=K​PK(rK)​(PK(rK))⊤,\displaystyle\tilde{K}=K^{\downarrow}(P_{K}^{(r_{K})})^{\top}=KP_{K}^{(r_{K})}(P_{K}^{(r_{K})})^{\top},
+(10)
+V~=V↓​(PV(rV))⊤=V​PV(rV)​(PV(rV))⊤.\displaystyle\tilde{V}=V^{\downarrow}(P_{V}^{(r_{V})})^{\top}=VP_{V}^{(r_{V})}(P_{V}^{(r_{V})})^{\top}.
+Given a set of calibration inputs xx, StiefAttention finds PKP_{K} and PVP_{V} by solving through gradient descent the optimization problem:
+minθ⁡Δℓ​(rK,rV,θ,x),\min_{\theta}\;\;\Delta_{\ell}(r_{K},r_{V};\theta;x),
+(11)
+where Δℓ​(rK,rV,θ,x)\Delta_{\ell}(r_{K},r_{V};\theta;x) denotes the relative error at the decoder-layer output:
+Δℓ​(rK,rV,θ,x)=𝔼x​[‖fℓ​(x)−f~ℓ​(x,rK,rV,θ)‖F‖fℓ​(x)‖F],\small\Delta_{\ell}(r_{K},r_{V};\theta;x)=\mathbb{E}_{x}\!\left[\frac{\|f_{\ell}(x)-\tilde{f}_{\ell}(x;r_{K},r_{V},\theta)\|_{F}}{\|f_{\ell}(x)\|_{F}}\right],
+(12)
+and θ\theta parameterizes the predictor from which the projection bases (PK,PV)(P_{K},P_{V}) are derived, described in the next Sec. 3.3.
+3.3 Gradient-based basis prediction
+StiefAttention computes the PK,PVP_{K},P_{V} orthonormal projection bases from simple activation statistics.
+Let KxK_{x} denote a collection of key vectors for layer ℓ\ell computed over calibration samples xx and previously cached tokens.
+We compute per-dimension mean and variance:
+μK=𝔼⁡[Kx]∈ℝdh,\displaystyle\mu_{K}=\mathbb{E}[K_{x}]\in\mathbb{R}^{d_{h}},
+(13)
+σK2=𝔼⁡[(Kx−μK)2]∈ℝdh,\displaystyle\sigma_{K}^{2}=\mathbb{E}\!\left[(K_{x}-\mu_{K})^{2}\right]\in\mathbb{R}^{d_{h}},
+which are aggregated to form features sK=[μK;σK2]∈ℝ2​dhs_{K}=[\mu_{K};\sigma_{K}^{2}]\in\mathbb{R}^{2d_{h}}.
+The same computation is performed to compute sVs_{V} features over VV vectors.
+Intuitively, sKs_{K} and sVs_{V} provide a cheap summary of first/second-order activation statistics from which the projection bases are computed, as will be described in subsequent paragraphs.
+MLP architecture.
+We define a trainable predictor gθg_{\theta} based on the MLP architecture depicted in the bottom part of Fig. 1. The same architecture is employed for both keys and values. The predictor gθg_{\theta} is trained by solving through gradient descent the optimization problem of Eq. 11, to map the sKs_{K} and sVs_{V} statistics to AKA_{K} and AVA_{V} matrices whose orthonormalization and rank approximation yield a basis that minimizes decoder-layer output error.
+Concretely, gθg_{\theta} is an MLP composed of three hidden layers hih_{i} followed by a linear head jj that outputs the pre-orthonormalization matrix A∈ℝdh×dhA\in\mathbb{R}^{d_{h}\times d_{h}}.
+Let s∈ℝ2​dhs\in\mathbb{R}^{2d_{h}} denote the input feature vector (i.e., s=sK​or​sVs=s_{K}\>\text{or}\>s_{V}).
+The general form of hidden layers hih_{i} is:
+hi=ϕ⁡(LN⁡(Wi​hi−1+bi))​with​i∈[1,3]h_{i}=\phi\left(\mathrm{LN}\left(W_{i}h_{i-1}+b_{i}\right)\right)\ \text{with}\ i\in\left[1,3\right]
+(14)
+where h0≡sh_{0}\equiv s, WiW_{i} and bib_{i} are the learnable weights and biases generically denoted as θ\theta in Eq. 11 and Eq. 12. ϕ⁡(⋅)\phi(\cdot) is the GELU non-linearity and LN\mathrm{LN} denotes LayerNorm.
+While the final linear head producing AA is simply j=Wj​h2+bjj=W_{j}h_{2}+b_{j}.
+We finally define:
+AK=gθK​(sK),AV=gθV​(sV).A_{K}=g_{\theta_{K}}(s_{K}),\qquad A_{V}=g_{\theta_{V}}(s_{V}).
+(15)
+where θK\theta_{K} and θV\theta_{V} respectively define the set of trainable parameters θ\theta specific for the separate Key and Value predictors.
+Orthonormalization via QR.
+We orthonormalize AKA_{K} and AVA_{V} via QR decomposition (Strang, 2019):
+AK=QK​RK,AV=QV​RV,A_{K}=Q_{K}R_{K},\qquad A_{V}=Q_{V}R_{V},
+(16)
+where QK,QV∈ℝdh×dhQ_{K},Q_{V}\in\mathbb{R}^{d_{h}\times d_{h}} are matrices with orthonormal columns and RK,RVR_{K},R_{V} are upper-triangular.11
+1
+Here QQ does not denote the query vectors of Eq. 1.
+In StiefAttention, we use only the orthonormal factor QQ, because our compression/reconstruction depends on the orthogonal projector P​P⊤PP^{\top}, which is determined solely by the subspace spanned by the columns of PP.
+Since AA and QQ span the same column space in a QR factorization, Q​Q⊤QQ^{\top} projects onto the same subspace as AA.
+The triangular factor RR only encodes a change of coordinates (and scaling) within that subspace and is therefore irrelevant for defining the projection basis.
+Thus we set:
+P¯K≔QK,P¯V≔QV.\bar{P}_{K}\coloneq Q_{K},\qquad\bar{P}_{V}\coloneq Q_{V}.
+(17)
+Ranks dimension is then applied by truncation as in Eq. 9.
+Head sharing.
+StiefAttention stores the cache per KV head.
+We keep a single shared key basis per layer (i.e., one P¯K\bar{P}_{K}) and share it across KV heads, while we learn value bases per KV head: each head hh has P¯V,h\bar{P}_{V,h} and its truncation PV,h(rV)P_{V,h}^{(r_{V})}.
+This choice provides a trade-off between overhead and flexibility, and reflects that keys are reused across multiple query heads in a group, while values interact with head-specific output-projection pathways.
+3.4 Training protocol
+Alg. 1 summarizes the StiefAttention training procedure for the basis predictors gθK,gθVg_{\theta_{K}},g_{\theta_{V}} for keys and values.
+We train each layer independently by calibrating layer ℓ\ell on its uncompressed input activations 𝒳(ℓ)\mathcal{X}^{(\ell)}.
+Specifically, for each candidate rank, we train keys and values projection predictors gθK,gθVg_{\theta_{K}},g_{\theta_{V}} independently by minimizing the relative decoder-layer output error of Eq. 11.
+We train bases following the head-sharing scheme above.
+Finally, for each layer we evaluate Δℓ​(rK,rV)\Delta_{\ell}(r_{K},r_{V}) over all candidate rank pairs rK∈ℛKr_{K}\in\mathcal{R}_{K} and rV∈ℛVr_{V}\in\mathcal{R}_{V} and store the resulting layer-wise error surface, which is later used for rank allocation (Sec. 3.5).
+Algorithm 1 StiefAttention basis training and error-surface construction
+0:
+Decoder layers ℒ\mathcal{L}; calibration set 𝒳\mathcal{X}; candidate ranks ℛK,ℛV\mathcal{R}_{K},\mathcal{R}_{V}.
+0:
+Key bases {P¯K(ℓ,rK)}ℓ,rK\{\bar{P}_{K}^{(\ell,r_{K})}\}_{\ell,r_{K}}, value bases {P¯V,h(ℓ,rV)}ℓ,rV,h\{\bar{P}_{V,h}^{(\ell,r_{V})}\}_{\ell,r_{V},h}, error surfaces {Δℓ​(rK,rV)}ℓ,rK,rV\{\Delta_{\ell}(r_{K},r_{V})\}_{\ell,r_{K},r_{V}}.
+1:
+for ℓ∈ℒ\ell\in\mathcal{L} do
+2:
+Forward pass on 𝒳\mathcal{X} and record 𝒳(ℓ)\mathcal{X}^{(\ell)}.
+3:
+for rK∈ℛKr_{K}\in\mathcal{R}_{K} do
+4:
+Train gθK(ℓ,rK)g_{\theta_{K}}^{(\ell,r_{K})} on 𝒳(ℓ)\mathcal{X}^{(\ell)} to solve Eq. 11
+5:
+Obtain P¯K(ℓ,rK)\bar{P}_{K}^{(\ell,r_{K})} and truncated PK(ℓ,rK)P_{K}^{(\ell,r_{K})}
+6:
+end for
+7:
+for rV∈ℛVr_{V}\in\mathcal{R}_{V} do
+8:
+Train {gθV,h(ℓ,rV)}h=1HKV\{g_{\theta_{V,h}}^{(\ell,r_{V})}\}_{h=1}^{H_{\mathrm{KV}}} jointly on 𝒳(ℓ)\mathcal{X}^{(\ell)} to solve Eq. 11
+9:
+Obtain {P¯V,h(ℓ,rV)}h=1HKV\{\bar{P}_{V,h}^{(\ell,r_{V})}\}_{h=1}^{H_{\mathrm{KV}}} and truncated {PV,h(ℓ,rV)}\{P_{V,h}^{(\ell,r_{V})}\}
+10:
+end for
+11:
+for (rK,rV)∈ℛK×ℛV(r_{K},r_{V})\in\mathcal{R}_{K}\times\mathcal{R}_{V} do
+12:
+Evaluate Δℓ​(rK,rV)\Delta_{\ell}(r_{K},r_{V}) on 𝒳(ℓ)\mathcal{X}^{(\ell)} using PK(ℓ,rK)P_{K}^{(\ell,r_{K})} and {PV,h(ℓ,rV)}h=1HKV\{P_{V,h}^{(\ell,r_{V})}\}_{h=1}^{H_{\mathrm{KV}}}
+13:
+end for
+14:
+end for
+3.5 Grid search and rank selection
+Given an error budget ϵ\epsilon, we evaluate different layer-wise rank-allocation policies that select (rK,rV)(r_{K},r_{V}) using the precomputed error surface Δℓ​(rK,rV)\Delta_{\ell}(r_{K},r_{V}) A practical benefit of storing Δℓ\Delta_{\ell} is that rank allocation can be changed at model-deployment time without retraining bases, providing an explicit accuracy–memory knob for different deployment constraints.
+We evaluate the following selection policies:
+1.
+Uniform: use fixed ranks (rK,rV)(r_{K},r_{V}) for all layers as a simple baseline;
+2.
+Pareto: for each layer, restrict candidates to the Pareto-optimal set of (Δℓ​(rK,rV),rK+rV)(\Delta_{\ell}(r_{K},r_{V}),\,r_{K}{+}r_{V}) pairs (i.e., no other candidate has both lower error and lower total rank), then choose among Pareto points the configuration with minimum rK+rVr_{K}{+}r_{V} subject to Δℓ​(rK,rV)≤ϵ\Delta_{\ell}(r_{K},r_{V})\leq\epsilon
+3.
+Weighted Pareto: use a layer-dependent budget ϵℓ=ϵ/wℓ\epsilon_{\ell}=\epsilon/w_{\ell}, where wℓw_{\ell} is a fixed layer-sensitivity weight (a positional prior) that allocates tighter budgets to empirically fragile layers.
+Concretely, we set wℓ>1w_{\ell}>1 for the first and last four layers using a linear ramp (2.02.0 for first and last layers, 1.75, 1.5, 1.25 for the others in ascending/descending order) and wℓ=1w_{\ell}=1 elsewhere, then normalize {wℓ}ℓ=1L\{w_{\ell}\}_{\ell=1}^{L} to have mean 11.
+Thus larger wℓw_{\ell} implies a smaller allowable error ϵℓ\epsilon_{\ell} and typically higher selected ranks in those layers (Li and others, 2025a; Ma and others, 2023).
+Overheads.
+Importantly, the MLPs gθg_{\theta} of Fig. 1 are only employed offline to learn projection bases, and the latter are the only extra parameters added to the model after calibration. Moreover, as in EigenAttention, projections can be folded into the attention linear weights (Saxena and others, 2024). Thus, at inference time, StiefAttention incurs per-layer FLOP count and runtime data movement overheads identical to those of EigenAttention at iso-rank.
+4 Experimental results
+4.1 Setup
+Table 1:
+End-to-end performance of StiefAttention on Llama-3-8B as a function of the error budget ϵ\epsilon.
+For each ϵ\epsilon, layer-wise ranks are selected using the precomputed error surfaces, inducing a KV-cache compression ratio (reported in the table).
+Method
+ϵ\epsilon
+KV cache (rel.) ↓\downarrow
+Perplexity ↓\downarrow
+Zero-shot Acc. ↑\uparrow
+WikiText
+C4
+HellaSwag
+PIQA
+MMLU
+FP16 (no compression)
+–
+1.00
+7.79
+18.05
+0.60
+0.79
+0.62
+0.015
+0.85
+9.96
+24.58
+0.58
+0.79
+0.60
+0.030
+0.76
+10.22
+26.78
+0.57
+0.78
+0.56
+StiefAttention
+0.045
+0.67
+11.07
+33.10
+0.53
+0.76
+0.47
+0.060
+0.61
+12.04
+40.06
+0.49
+0.75
+0.40
+0.090
+0.57
+13.06
+45.67
+0.46
+0.74
+0.37
+We evaluate StiefAttention on Llama-3-8B (Grattafiori and others, 2024).
+We compare against the uncompressed FP16 model and the most accurate SVD-style baseline, EigenAttention (Saxena and others, 2024), under matched KV cache budgets.
+We report results on both language modeling and zero-shot multiple-choice benchmarks.
+For language modeling, we measure perplexity on WikiText-2 (Merity and others, 2017) and C4 (Raffel and others, 2019) datasets.
+For zero-shot evaluation, we use the LM Evaluation Harness framework (Gao and others, 2024) and report accuracy on HellaSwag (Zellers and others, 2019), PIQA (Bisk et al., 2020), and MMLU (Hendrycks and others, 2021b; Hendrycks and others, 2021a). We run all experiments on two NVIDIA RTX A5000 GPUs, with 24 GB each.
+Unless stated otherwise, ranks are allocated per layer following the Weighted Pareto policy of Sec. 3.5.
+Calibration data and training.
+All projection bases and rank profiles are obtained post-training from a held-out calibration set of 512 sequences sampled from WikiText-2 (Merity and others, 2017).
+Due to GPU memory constraints, we use a sequence length of 2048 for both calibration and all evaluations, unless stated otherwise.
+For StiefAttention, we train the basis predictor independently for 5 down-projection ranks uniformly spaced between 50% and 90% of the per-head dimension dhd_{h}. We train for up to 50 epochs with early stopping (patience 5, delta 10−610^{-6}).
+We use batch size 1 for keys and batch size 4 for values; we found value bases to be more numerically unstable and therefore use the largest stable batch size supported by our hardware.
+We optimize with AdamW (learning rate 5⋅10−35\cdot 10^{-3}, weight decay 10−410^{-4}) and a cosine annealing schedule with TmaxT_{\max} set to the total number of training steps. We do not fine-tune on downstream tasks.
+For a fair comparison, we re-run EigenAttention in our setup, matching calibration data, sequence length, and evaluation protocol, and report all baselines under these identical conditions.
+4.2 End-to-end evaluation
+We evaluate KV-cache compression on Llama-3-8B using both language modeling (perplexity) and zero-shot multiple-choice benchmarks (accuracy). For StiefAttention, we sweep the global distortion budget ϵ\epsilon used to select layer-wise ranks from the precomputed error surfaces (Sec. 3), which induces different KV-cache compression ratios.
+For EigenAttention, we follow the layer-wise threshold selection procedure of Saxena and others (2024): a per-layer SVD threshold ϵth\epsilon_{\mathrm{th}} is decreased in fixed steps until the decoder-layer output error meets the target budget, yielding the corresponding ranks and KV cache ratio.
+Table 1 reports StiefAttention results as ϵ\epsilon varies.
+As expected, looser budgets induce more aggressive compression (KV-cache ratio decreases from 0.850.85 to 0.570.57) and degrade both perplexity and downstream accuracy.
+Perplexity increases smoothly as the KV cache shrinks, but the degradation is markedly stronger on C4 than on WikiText: for example, moving from KV cache ratio 0.850.85 to 0.610.61 raises WikiText perplexity from 9.969.96 to 12.0412.04 (+2.08+2.08), while C4 increases from 24.5824.58 to 40.0640.06 (+15.48+15.48), suggesting that broader-domain modeling is more sensitive to layer-output compression.
+At moderate compression (retaining 0.760.76–0.670.67 of the original KV cache), StiefAttention matches the FP16 baseline on PIQA, while HellaSwag and MMLU degrade more noticeably, indicating task-dependent sensitivity to decoder-layer output perturbations.
+At stronger compression (KV≤0.61\leq 0.61), drops become substantial across all metrics.
+We compare StiefAttention with EigenAttention in Figs. 2–3: we impose the same error budgets ϵ\epsilon across the two methods and compare the performance-memory tradeoff of the two approaches.
+Across all evaluated KV-cache ratios, StiefAttention consistently achieves a better performance–memory tradeoff than EigenAttention, improving both zero-shot accuracy and language-model perplexity at a comparable KV-cache footprint.
+On zero-shot benchmarks (Fig. 2), StiefAttention outperforms EigenAttention on HellaSwag, PIQA, and MMLU, with the largest gains on MMLU once the KV cache ratio drops below 0.70.7; at a matched footprint, StiefAttention improves MMLU accuracy by 5.45.4%.
+On language modeling (Fig. 3), StiefAttention yields lower perplexity on both C4 and WikiText-2 across the entire budget range, with the only exception being WikiText-2 at very mild compression (KV-cache ratio ≳0.90\gtrsim 0.90). At iso-footprint, StiefAttention reduces C4 perplexity by 11.911.9 points, indicating that directly optimizing decoder-layer output reconstruction error translates into stronger end-to-end quality at iso-memory.
+Figure 2: Zero-shot accuracy–memory tradeoff under KV-cache compression on HellaSwag, PIQA, and MMLU. Each point corresponds to an error budget ϵ\epsilon that determines layer-wise ranks; the x-axis reports the resulting KV-cache ratio (lower is better).
+Figure 3: Perplexity–memory tradeoff under KV cache compression on WikiText-2 and C4. Each point corresponds to an error budget ϵ\epsilon that determines layer-wise ranks; the x-axis reports the resulting KV cache ratio (lower is better).
+4.3 Rank allocation policies
+We compare the three rank-allocation policies introduced in Sec. 3: Uniform (fixed ranks in all layers), Pareto (minimum rK+rVr_{K}{+}r_{V} among Pareto-optimal points under ϵ\epsilon), and Weighted Pareto (tighter budgets in early/late layers).
+Notice that since StiefAttention learns projection bases independently of rank selection and precomputes per-layer error surfaces Δℓ​(rK,rV)\Delta_{\ell}(r_{K},r_{V}), rank allocation can be changed at deployment time without retraining the bases.
+End-to-end impact.
+Figure 4 shows end-to-end performance for each policy as a function of the achieved KV-cache ratio. We report one representative language-modeling metric (WikiText-2 perplexity) and one representative downstream benchmark (PIQA). Depth-adaptive policies consistently improve the performance–memory tradeoff over Uniform on both metrics, and Weighted Pareto provides a small but consistent gain over Pareto across most of the budget range. These results suggest that, given fixed bases, allocating rank non-uniformly across depth is crucial.
+Figure 4: Effect of rank-allocation policies.
+Figure 5: Layer-wise rank profiles under Weighted Pareto rank-allocation policy across all error budgets ϵ\epsilon
+Where the ranks go.
+Figure 5 summarizes how the best-performing policy (Weighted Pareto) distributes rank across depth. Across all evaluated distortion budgets ϵ\epsilon in Table 1 (and thus across all induced KV-cache ratios), we record the selected ranks (rK,rV)(r_{K},r_{V}) per layer and report their average profile. The y-axis shows the normalized retained rank (r/dhr/d_{h}), i.e., the fraction of the original per-head dimension preserved after compression (higher means less compression).
+Three trends stand out.
+First, the retained rank is highest in early layers and increases again toward deeper layers, with the rise beginning already around the final third of the network rather than only in the last few layers.
+Second, values consistently retain a larger fraction of their original dimension than keys.
+This reflects that the value pathway is empirically harder to compress under our layer-output distortion criterion: within the same layer, the selected (rK,rV)(r_{K},r_{V}) balances key- and value-induced error contributions in Δℓ​(rK,rV)\Delta_{\ell}(r_{K},r_{V}), and the optimizer tends to allocate more capacity to VV to maintain decoder-layer output reconstruction quality.
+Third, the error bars indicate that different error budget configurations agree on allocating higher ranks to early and late layers, while intermediate layers admit more variation.
+4.4 Why StiefAttention improves end-to-end performance
+Figure 6: Layer-level output preservation diagnostics. We report (i) attention output reconstruction error, (ii) decoder-layer output reconstruction error Δℓ\Delta_{\ell}, and (iii) cosine similarity between original and compressed decoder-layer outputs.
+We analyze where StiefAttention improves reconstruction by measuring layer-wise output preservation on 64 WikiText-2 sequences (2048 tokens). We report results at (rK,rV)=(512,512)(r_{K},r_{V})=(512,512) (half of the original per-head dimension) and observe similar trends across other ranks. For each layer, we log Q,K,VQ,K,V, the attention output, and the full decoder-layer output, and compare reconstructions using relative Frobenius-norm error (magnitude) and mean token-wise cosine similarity (direction); Fig. 6 summarizes the results.
+As expected, EigenAttention is more robust on proxy targets: it reconstructs intermediate attention quantities more accurately, reducing attention-output error by 29.6% relative to StiefAttention, with the largest advantage in deeper layers. However, this improvement does not translate to end-to-end behavior. On the decoder-layer output, StiefAttention achieves lower reconstruction error (5.2% relative improvement) and, crucially, higher directional agreement (+3.3% cosine similarity). The cosine gap is most pronounced in early layers: EigenAttention often matches output magnitude but yields activations that are less aligned with the original direction, suggesting that a Frobenius-optimal reconstruction subspace can be misaligned with what downstream nonlinear blocks amplify (softmax/value mixing, residual pathways, normalization, and the MLP).
+Overall, these results support the paper’s main claim: proxy reconstruction objectives can accurately preserve intermediate attention quantities while still missing the output-relevant subspace, whereas StiefAttention directly optimizes decoder-layer outputs and therefore better preserves both magnitude and direction. Importantly, the largest cosine-similarity gains appear in early layers. This matters because perturbations introduced in early layers can be repeatedly transformed by subsequent blocks and thus have a disproportionately large impact on end-to-end behavior (Gromov and others, 2025; Zhu and others, 2025; Xie and others, 2026). Our diagnostics further indicate that early layers are precisely where SVD-style bases struggle most to preserve output directions.
+By training bases against the decoder-layer output metric, StiefAttention improves alignment in these high-impact layers, which helps explain the consistent end-to-end gains we observe under matched KV cache budgets.
+
+

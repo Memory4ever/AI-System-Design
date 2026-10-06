@@ -1,0 +1,500 @@
+{
+  "url": "https://arxiv.org/html/2601.16971v1",
+  "blocks": [
+    {
+      "tag": "p",
+      "id": "selectedTextModalDescription",
+      "text": "Content selection saved. Describe the issue below:"
+    },
+    {
+      "tag": "h1",
+      "id": "",
+      "text": "Auto-Regressive Masked Diffusion Models"
+    },
+    {
+      "tag": "p",
+      "id": "abstract1.1",
+      "text": "Masked diffusion models (MDMs) have emerged as a promising approach for language modeling, yet they face a performance gap compared to autoregressive models (ARMs) and require more training iterations. In this work, we present the Auto-Regressive Masked Diffusion (ARMD) model, an architecture designed to close this gap by unifying the training efficiency of autoregressive models with the parallel generation capabilities of diffusion-based models. Our key insight is to reframe the masked diffusion process as a block-wise causal model. This perspective allows us to design a strictly causal, permutation-equivariant architecture that computes all conditional probabilities across multiple denoising steps in a single, parallel forward pass. The resulting architecture supports efficient, autoregressive-style decoding and a progressive permutation training scheme, allowing the model to learn both canonical left-to-right and random token orderings. Leveraging this flexibility, we introduce a novel strided parallel generation strategy that accelerates inference by generating tokens in parallel streams while maintaining global coherence. Empirical results demonstrate that ARMD achieves state-of-the-art performance on standard language modeling benchmarks, outperforming established diffusion baselines while requiring significantly fewer training steps. Furthermore, it establishes a new benchmark for parallel text generation, effectively bridging the performance gap between parallel and sequential decoding."
+    },
+    {
+      "tag": "h2",
+      "id": "",
+      "text": "1 Introduction"
+    },
+    {
+      "tag": "p",
+      "id": "S1.p1.1",
+      "text": "Autoregressive Models (ARMs) have demonstrated significant success across various sequence modeling tasks, particularly in language modeling with prominent models like GPT ( OpenAI, 2023 ) and LLaMA ( Touvron et al., 2023 ) . The foundational principle of ARMs lies in factorizing the joint probability distribution of a sequence into a product of conditional probabilities using the chain rule ( Larochelle and Murray, 2011 ; Bengio and Bengio, 2000 ) , typically following a fixed, left-to-right generation order. This enables efficient parallel training and has achieved state-of-the-art performance in diverse domains beyond text, such as image generation ( Van Den Oord et al., 2016b ) , audio synthesis ( Van Den Oord et al., 2016a ) , and graph modeling ( Liao et al., 2019 ; Karami, 2024 ) . Despite their success, ARMs suffer from the inherent sequential nature of their generation process, leading to slow sampling, especially for long sequences, and challenges for tasks requiring bidirectional context or non-sequential reasoning ( Berglund et al., 2023 ; Ding et al., 2023 ; Bachmann and Nagarajan, 2024 ) ."
+    },
+    {
+      "tag": "p",
+      "id": "S1.p2.1",
+      "text": "In parallel, diffusion models have emerged as a powerful generative modeling alternative, achieving remarkable success in continuous domains such as image generation ( Sohl-Dickstein et al., 2015 ; Ho et al., 2020 ; Song and Ermon, 2019 ) . A key advantage of these models is their ability to perform parallel sampling during inference, which, combined with their high degree of controllability, makes them well-suited for conditional and guided generation tasks. This potential has motivated a renewed focus on extending diffusion principles to discrete data modalities ( Austin et al., 2021 ; Lou et al., 2023 ) , including text ( Gulrajani and Hashimoto, 2023 ; Ou et al., 2024 ; Lou et al., 2023 ; Nie et al., 2025 ) and graph ( Vignac et al., 2022 ) and biological sequences ( Sahoo et al., 2024 ) ."
+    },
+    {
+      "tag": "p",
+      "id": "S1.p3.1",
+      "text": "Despite these advancements, discrete diffusion models have struggled to match the performance benchmarks set by ARMs in language modeling. Moreover, they typically require longer training schedules and a large number of denoising steps during inference, which can severely hinder their sampling efficiency ( Austin et al., 2021 ; Lou et al., 2023 ) . Addressing these limitations has become an active area of research, with recent efforts aiming to improve both the scalability and expressiveness of discrete diffusion models."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Contributions."
+    },
+    {
+      "tag": "p",
+      "id": "S1.SS0.SSS0.Px1.p1.1",
+      "text": "To address these challenges, we introduce the Auto-Regressive Masked Diffusion (ARMD) model, which unifies the strengths of diffusion-based learning with the efficiency of autoregressive models. First, we reframe masked diffusion models (MDMs) as block-wise causal models. This perspective enables the parallel evaluation of all conditional probabilities within a sequence using a single network call, significantly improving training efficiency. Leveraging this insight, we propose a causal, permutation-equivariant, attention-based architecture that generalizes traditional autoregressive models. This flexible design supports hybrid training, allowing the model to learn effectively from both canonical left-to-right and random orderings. ARMD is also compatible with key-value caching, enabling efficient, autoregressive-style decoding during inference. Furthermore, we introduce a novel strided parallel generation strategy that accelerates sampling by generating tokens in parallel streams and bridges the performance gap with sequential generation. The resulting model achieves state-of-the-art performance across standard language modeling benchmarks, while requiring significantly fewer training steps than competing diffusion-based methods."
+    },
+    {
+      "tag": "h2",
+      "id": "",
+      "text": "2 Background"
+    },
+    {
+      "tag": "table",
+      "id": "S2.F2.fig2.1.1",
+      "text": "1. The _ _ _ _ _ _ _ 2. The _ _ _ jumps _ _ _ 3. The quick _ _ jumps over _ _ 4. The quick brown _ jumps over the _ 5. The quick brown fox jumps over the dog"
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Diffusion Generative Models."
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS0.SSS0.Px1.p1.1",
+      "text": "Diffusion models represent a class of probabilistic generative models that learn a data distribution by systematically reversing a process that corrupts data with noise. These models consist of two core components: a forward diffusion process that progressively adds noise to a clean data sample 𝒛 0 ∼ p d ​ a ​ t ​ a ​ ( 𝒛 0 ) {\\boldsymbol{z}}^{0}\\sim p_{data}({\\boldsymbol{z}}^{0}) , and a reverse denoising process , which is trained to invert this corruption. In the continuous domain, the forward process typically adds Gaussian noise over a chain of T T timesteps, producing a series of increasingly noisy latent variables [ 𝒛 1 , 𝒛 2 , … , 𝒛 T ] [{\\boldsymbol{z}}^{1},{\\boldsymbol{z}}^{2},\\dots,{\\boldsymbol{z}}^{T}] , where 𝒛 T {\\boldsymbol{z}}^{T} approximates a simple prior distribution, such as an isotropic Gaussian. The forward process is defined as a Markov chain specified by a predefined conditional probability q ⁡ ( 𝒛 t ∣ 𝒛 t − 1 ) q({\\boldsymbol{z}}^{t}\\mid{\\boldsymbol{z}}^{t-1}) . Consequently, the joint distribution of the latent variables can be factorized as: q ⁡ ( 𝒛 1 , 𝒛 2 , … , 𝒛 T ∣ 𝒛 0 ) = ∏ t = 1 T q ⁡ ( 𝒛 t ∣ 𝒛 t − 1 ) , q({\\boldsymbol{z}}^{1},{\\boldsymbol{z}}^{2},\\dots,{\\boldsymbol{z}}^{T}\\mid{\\boldsymbol{z}}^{0})=\\prod_{t=1}^{T}q({\\boldsymbol{z}}^{t}\\mid{\\boldsymbol{z}}^{t-1}), For sufficiently large T T , q ⁡ ( 𝒛 T ) q({\\boldsymbol{z}}^{T}) gets close to a noise prior distribution. The backward denoising process, parameterized by a neural network p θ ​ ( 𝒛 t − 1 ∣ 𝒛 t , t ) p_{\\theta}({\\boldsymbol{z}}^{t-1}\\mid{\\boldsymbol{z}}^{t},t) , is trained to approximate the time-reversed dynamics of this diffusion chain and generate clean samples from the data distribution."
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS0.SSS0.Px1.p2.1",
+      "text": "In discrete domains , such as text, where data points belong to a finite set of K K categories, each sample is represented by a one-hot vector 𝒛 0 ∈ { 0 , 1 } K {\\boldsymbol{z}}^{0}\\in\\{0,1\\}^{K} . Following the framework proposed by Austin et al. (2021) , the discrete forward process can be modeled using a sequence of stochastic transition matrices { 𝑸 t } t = 1 T \\{{\\bm{Q}}^{t}\\}_{t=1}^{T} , where [ Q t ] i ​ j [Q^{t}]_{ij} specifies the probability of transitioning from state j j (the j j -th class) to state i i (the i i -th class). The conditional distribution at time step t t is thus defined by a categorical distribution: q ⁡ ( 𝒛 t ∣ 𝒛 t − 1 ) = Cat ⁡ ( 𝒛 t ; 𝑸 t ​ 𝒛 t − 1 ) . q({\\boldsymbol{z}}^{t}\\mid{\\boldsymbol{z}}^{t-1})=\\operatorname{Cat}({\\boldsymbol{z}}^{t};~{\\bm{Q}}^{t}{\\boldsymbol{z}}^{t-1})."
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS0.SSS0.Px1.p3.1",
+      "text": "A common parameterization for the transition matrix interpolates between the data and a stationary noise distribution ϕ ∈ Δ K − 1 {\\boldsymbol{\\phi}}\\in\\Delta^{K-1} (the K K -simplex): 𝑸 t = β t ​ 𝐈 + ( 1 − β t ) ​ ϕ ​ 𝟏 ⊤ , {\\bm{Q}}^{t}=\\beta^{t}\\mathbf{I}+(1-\\beta^{t}){\\boldsymbol{\\phi}}\\mathbf{1}^{\\top}, where β t ∈ [ 0 , 1 ] \\beta^{t}\\in[0,1] controls the noise level at step t t and ϕ {\\boldsymbol{\\phi}} is typically a uniform distribution with 𝟏 \\mathbf{1} denoting an all-one vector. This equation leads to a closed-form expression for the transition:"
+    },
+    {
+      "tag": "table",
+      "id": "S2.EGx1",
+      "text": "q ⁡ ( 𝒛 t ∣ 𝒛 t − 1 ) \\displaystyle q({\\boldsymbol{z}}^{t}\\mid{\\boldsymbol{z}}^{t-1}) = Cat ⁡ ( 𝒛 t , β t ​ 𝒛 t − 1 + ( 1 − β t ) ​ ϕ ) , \\displaystyle=\\operatorname{Cat}({\\boldsymbol{z}}^{t};~\\beta^{t}{\\boldsymbol{z}}^{t-1}+(1-\\beta^{t}){\\boldsymbol{\\phi}}),\\quad q ⁡ ( 𝒛 t ∣ 𝒛 0 ) \\displaystyle q({\\boldsymbol{z}}^{t}\\mid{\\boldsymbol{z}}^{0}) = Cat ⁡ ( 𝒛 t , α t ​ 𝒛 0 + ( 1 − α t ) ​ ϕ ) , \\displaystyle=\\operatorname{Cat}({\\boldsymbol{z}}^{t};~{\\alpha}^{t}{\\boldsymbol{z}}^{0}+(1-{\\alpha}^{t}){\\boldsymbol{\\phi}}),"
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS0.SSS0.Px1.p3.2",
+      "text": "where α t = ∏ i = 1 t β i {\\alpha}^{t}=\\prod_{i=1}^{t}\\beta^{i} is the cumulative probability that a token remains in its initial state after t t steps. This interpolation between the clean data and a fixed noise distribution is analogous to additive Gaussian noise in the continuous setting ( Sahoo et al., 2024 ) ."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Masked Diffusion Models."
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS0.SSS0.Px2.p1.1",
+      "text": "A simple yet effective variant of discrete diffusion, particularly relevant for sequence data like text, is the Masked Diffusion Model (MDM). This approach introduces an additional special state, denoted by [mask] , therefore 𝒛 t ∈ { 0 , 1 } K + 1 {\\boldsymbol{z}}_{t}\\in\\{0,1\\}^{K+1} , with the ( K + 1 ) (K+1) -th dimension corresponding to the mask token. The noise process is designed such that the [mask] state is absorbing: once a token is masked, it remains masked in all subsequent steps, and at step T T , all tokens are fully masked. In this setting, the noise distribution ϕ {\\boldsymbol{\\phi}} is replaced by a one-hot vector 𝒎 {\\boldsymbol{m}} with a 1 1 at index K + 1 K+1 . Thus, the forward transition simplifies to: q ⁡ ( 𝒛 t ∣ 𝒛 0 ) = Cat ⁡ ( 𝒛 t , α t ​ 𝒛 0 + ( 1 − α t ) ​ 𝒎 ) q({\\boldsymbol{z}}^{t}\\mid{\\boldsymbol{z}}^{0})=\\operatorname{Cat}({\\boldsymbol{z}}^{t};~{\\alpha}^{t}{\\boldsymbol{z}}^{0}+(1-{\\alpha}^{t}){\\boldsymbol{m}}) . MDMs have often achieved state-of-the-art performance over a range of discrete generative tasks ( Austin et al., 2021 ; Lou et al., 2023 ) ."
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS0.SSS0.Px2.p2.1",
+      "text": "The reverse process, p θ ( 𝒛 j t − 1 | 𝒛 1 : N t ) p_{\\theta}({\\boldsymbol{z}}^{t-1}_{j}|{\\boldsymbol{z}}^{t}_{1:N}) , is trained to iteratively recover the clean sequence 𝒛 0 1 : N {\\boldsymbol{z}}^{0}_{1:N} from a fully masked input. This is achieved by optimizing the Evidence Lower Bound (ELBO) on the log-likelihood of the data ( Austin et al., 2021 ) :"
+    },
+    {
+      "tag": "table",
+      "id": "S2.EGx2",
+      "text": "− log p θ ( 𝒛 0 ) ≤ ℒ prior + ℒ 0 + ∑ t = 1 T 𝔼 q [ D KL ( q ( 𝒛 t − 1 | 𝒛 0 , 𝒛 t ) ∥ p θ ( 𝒛 t − 1 ∣ 𝒛 t 1 : N ) ) ] ⏟ ℒ diff \\displaystyle-\\operatorname{log}p_{\\theta}({\\boldsymbol{z}}^{0})\\leq\\mathcal{L}_{\\text{prior}}+\\mathcal{L}_{0}+\\underbrace{\\sum_{t=1}^{T}\\mathbb{E}_{q}\\left[D_{\\text{KL}}\\left(q({\\boldsymbol{z}}^{t-1}|{\\boldsymbol{z}}^{0},{\\boldsymbol{z}}^{t})\\,\\|\\,p_{\\theta}({\\boldsymbol{z}}^{t-1}\\mid{\\boldsymbol{z}}^{t}_{1:N})\\right)\\right]}_{\\mathcal{L}_{\\text{diff}}}"
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS0.SSS0.Px2.p2.2",
+      "text": "where D KL D_{\\text{KL}} is the Kullback–Leibler divergence, ℒ 0 = 𝔼 q ⁡ ( 𝒛 0 ) ​ [ − log ⁡ p θ ​ ( 𝒛 0 | 𝒛 1 ) ] \\mathcal{L}_{0}=\\mathbb{E}_{q({\\boldsymbol{z}}^{0})}\\left[-\\operatorname{log}p_{\\theta}({\\boldsymbol{z}}^{0}|{\\boldsymbol{z}}^{1})\\right] is the reconstruction loss for the final denoising step and ℒ prior = D KL ( q ( 𝒛 T ∣ 𝒛 0 ) ∥ p ( 𝒛 T ) ) \\mathcal{L}_{\\text{prior}}=D_{\\text{KL}}\\left(q({\\boldsymbol{z}}^{T}\\mid{\\boldsymbol{z}}^{0})\\,\\|\\,p({\\boldsymbol{z}}^{T})\\right) measures the discrepancy between the forward process’s final distribution and the noise prior. For MDMs where the forward process deterministically leads to a fully masked state, q ⁡ ( 𝒛 T ∣ 𝒛 0 ) = p ⁡ ( 𝒛 T ) = 𝒎 q({\\boldsymbol{z}}^{T}\\mid{\\boldsymbol{z}}^{0})=p({\\boldsymbol{z}}^{T})={\\boldsymbol{m}} , then ℒ prior = 0 \\mathcal{L}_{\\text{prior}}=0 , and the discrete time loss simplifies to ( Sahoo et al., 2024 ) :"
+    },
+    {
+      "tag": "table",
+      "id": "S2.EGx3",
+      "text": "ℒ diff = ∑ t = 1 T 𝔼 q [ α t − α t − 1 1 − α t ∑ { j ∣ 𝒛 j t = 𝒎 } log p θ ( 𝒛 t − 1 j ∣ 𝒛 t 1 : N ) ⏟ L t ] \\displaystyle\\mathcal{L}_{\\text{diff}}=\\sum_{t=1}^{T}\\mathbb{E}_{q}\\Bigg[\\frac{\\alpha^{t}-\\alpha^{t-1}}{1-\\alpha^{t}}\\underbrace{\\sum_{\\{j\\mid{\\boldsymbol{z}}^{t}_{j}={\\boldsymbol{m}}\\}}\\operatorname{log}p_{\\theta}({\\boldsymbol{z}}^{t-1}_{j}\\mid{\\boldsymbol{z}}^{t}_{1:N})}_{{L}_{t}}\\Bigg] (1)"
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS0.SSS0.Px2.p2.3",
+      "text": "Here, the inner loss term L t {L}_{t} is a cross entropy objective computed specifically on the subset of positions that were just masked at step t t , thereby focusing the prediction only on unmasking them."
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS0.SSS0.Px2.p3.1",
+      "text": "Autoregressive Models (ARMs) , on the other hand, factorize the joint probability of a sequence into a product of univariate conditionals using the chain rule. Given a predefined ordering of the variables (e.g., left-to-right), the log-likelihood is decomposed as:"
+    },
+    {
+      "tag": "table",
+      "id": "S2.Ex4",
+      "text": "log p ( 𝒙 1 : N ) = ∑ t = 1 N log p ( 𝒙 t ∣ 𝒙 < t ) , \\operatorname{log}p({\\boldsymbol{x}}_{1:N})=\\sum_{t=1}^{N}\\operatorname{log}p({\\boldsymbol{x}}_{t}\\mid{\\boldsymbol{x}}_{<t}),"
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS0.SSS0.Px2.p3.2",
+      "text": "where each token 𝒙 t {\\boldsymbol{x}}_{t} is predicted based on the preceding tokens in the sequence ( x < t x_{<t} ). Thanks to causal masking and teacher forcing, ARMs can evaluate the full log-likelihood for a sequence in a single forward pass, allowing for highly parallelized and efficient training. In contrast, the training objective for MDMs ( 1 ) requires sampling a different timestep t t for each training example and making a prediction with the model. To optimize the full objective, this requires many neural network calls, each evaluating a portion of likelihood corresponding to a denoising step, L t {L}_{t} , making its training less efficient per epoch."
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS0.SSS0.Px2.p4.1",
+      "text": "However, the MDM training process can be reformulated to parallelize its objective. The key insight is that the random masking schedule induces a causal structure by reordering the sequence. Formally, for a sample from masking process, let τ ⁡ ( j ) ∈ { 1 , … , T } \\tau(j)\\in\\{1,...,T\\} denote the masking timestep at which the j j -th token of the original sequence 𝒛 1 : N {\\boldsymbol{z}}_{1:N} is changed to [mask] . We define a permutation π \\pi over the token indices that sorts the tokens based on their masking times in descending order: τ ⁡ ( π ⁡ ( 1 ) ) ≥ τ ⁡ ( π ⁡ ( 2 ) ) ≥ … ≥ τ ⁡ ( π ⁡ ( N ) ) \\tau(\\pi(1))\\geq\\tau(\\pi(2))\\geq...\\geq\\tau(\\pi(N)) . This reorders the sequence so that tokens masked last appear first in the new ordering. Let the resulting permuted sequence be denoted by 𝒙 1 : N = π ( 𝒛 1 : N ) = ( 𝒛 π ⁡ ( 1 ) , 𝒛 π ⁡ ( 2 ) , … , 𝒛 π ⁡ ( N ) ) {\\boldsymbol{x}}_{1:N}=\\pi({\\boldsymbol{z}}_{1:N})=({\\boldsymbol{z}}_{\\pi(1)},{\\boldsymbol{z}}_{\\pi(2)},...,{\\boldsymbol{z}}_{\\pi(N)}) . This reordering induces a partitioning of 𝒙 1 : N {\\boldsymbol{x}}_{1:N} into T T non-overlapping (and possibly variable-length) blocks: 𝑿 = [ 𝒳 ( 1 ) , 𝒳 ( 2 ) , … , 𝒳 ( T ) ] {\\bm{X}}=[\\mathcal{X}^{(1)},\\mathcal{X}^{(2)},\\ldots,\\mathcal{X}^{(T)}] , sorted by their generative (unmasking) order. Each block 𝒳 ( b ) ∈ ℝ n b × d \\mathcal{X}^{(b)}\\in\\mathbb{R}^{n_{b}\\times d} contains n b n_{b} tokens, and ∑ b = 1 T n b = N \\sum_{b=1}^{T}n_{b}=N . The block index of token n n , denoted by ℬ ⁡ ( n ) ∈ { 1 , … , T } \\mathcal{B}(n)\\in\\{1,\\dots,T\\} , is then ℬ ⁡ ( n ) := T − τ ⁡ ( n ) + 1 \\mathcal{B}(n):=T-\\tau(n)+1 . As illustrated in Figure 2 , this reordering naturally reveals a block-wise causal (block triangular) structure: predicting the tokens in a block 𝒳 ( t ) \\mathcal{X}^{(t)} is conditionally dependent only on tokens in preceding blocks 𝒳 ( < t ) \\mathcal{X}^{(<t)} . This allows the diffusion loss to be represented in an autoregressive style:"
+    },
+    {
+      "tag": "table",
+      "id": "S2.EGx4",
+      "text": "ℒ diff = 𝔼 q [ ∑ t = 1 T − 1 γ ( t ) ∑ n ∈ ℬ ⁡ ( t ) − log p θ ( 𝒙 n ∣ [ 𝒙 i ∣ ℬ ( i ) ≤ T − t ] ) ] \\displaystyle\\mathcal{L}_{\\text{diff}}=\\mathbb{E}_{q}\\Big[\\sum_{t=1}^{T-1}\\!\\!\\gamma(t)\\!\\!\\!\\!\\sum_{n\\in\\mathcal{B}(t)}\\!\\!\\!\\!\\!\\!-\\operatorname{log}p_{\\theta}({\\boldsymbol{x}}_{n}\\mid[{\\boldsymbol{x}}_{i}\\mid{\\mathcal{B}(i)\\leq T-t}])\\Big] (2)"
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS0.SSS0.Px2.p4.2",
+      "text": "where γ ⁡ ( t ) \\gamma(t) is the reweighting factor that reflects the diffusion schedule. This reformulation of the masked diffusion process as a causal generative model reveals a conceptual and structural connection between MDMs and ARMs, enabling parallel evaluation of all conditionals in the loss by a single forward pass. Importantly, the conditional probabilities in the diffusion objective ( 1 ) are invariant to the permutation of the evidence set. Additionally, L t {L}_{t} is invariant to the ordering of tokens within the target block ℬ ⁡ ( t ) \\mathcal{B}(t) . Therefore, this structure necessitates a permutation-equivariant sequence model to parameterize these conditionals."
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS0.SSS0.Px2.p5.1",
+      "text": "In the following section, we introduce a deep, permutation-equivariant, and strictly causal sequence model tailored for efficient training of masked diffusion models. Unlike MLM or BERT models that represent masking by inserting explicit [mask] tokens into the input, the proposed architecture controls information flow via a carefully designed attention mask. This mechanism restricts output representations from accessing input positions designated as masked, directly enforcing the conditional dependencies required by the denoising process."
+    },
+    {
+      "tag": "h2",
+      "id": "",
+      "text": "3 Strictly Causal Models"
+    },
+    {
+      "tag": "p",
+      "id": "S3.p1.1",
+      "text": "As explained in the previous section and in equation 2 , the conditional probability is parameterized by a sequence model, where the output at any given position n n depends exclusively on preceding input blocks— i.e. the present and all future blocks are masked so they cannot influence the current output. We call any network satisfying this property strictly causal which is illustrated in Figure 2 . Formally, a strictly causal layer is defined as y n = f s ​ c ​ ( x < ℬ ⁡ ( n ) ) y_{n}\\;=\\;f^{sc}(x_{<\\mathcal{B}(n)}) . This is distinct from a standard causal layer , where the output can also depend on the current input block, i.e. y n = f c ​ ( x ≤ ℬ ⁡ ( n ) ) . y_{n}\\;=\\;f^{c}(x_{\\leq\\mathcal{B}(n)})\\,."
+    },
+    {
+      "tag": "p",
+      "id": "S3.p2.1",
+      "text": "Strictly causal systems form a proper subclass of causal systems which are also physically realizable. Importantly, composing a strictly causal layer with any number of causal ones (e.g., f c ∘ f s ​ c f^{c}\\circ f^{sc} ) yields a network that preserves overall strict causality. This property allows us to construct arbitrarily deep, strictly causal networks by stacking arbitrarily many causal layers and interleaving just one strictly causal layer (block) which is particularly advantageous in designing our deep neural network architectures. 1 1 1 It’s important to note that within our framework, causality is defined by the processing order of information (or absorbing noise), not necessarily the temporal order of tokens in the original sequence."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Causal Self-Attention."
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS0.SSS0.Px1.p1.1",
+      "text": "To implement this principle in a modern transformer architecture, we adapt the standard self-attention mechanism. The output of a standard self-attention layer for an input sequence 𝑿 = [ 𝒙 1 , … , 𝒙 N ] ⊤ ∈ ℝ N × d {\\bm{X}}=[{\\boldsymbol{x}}_{1},\\dots,{\\boldsymbol{x}}_{N}]^{\\top}~\\in\\mathbb{R}^{N\\times d} (where 𝒙 n ∈ ℝ d {\\boldsymbol{x}}_{n}\\in\\mathbb{R}^{d} ) is given by:"
+    },
+    {
+      "tag": "table",
+      "id": "S3.Ex5",
+      "text": "𝒀 = SA ⁡ ( 𝑿 ) = Softmax ⁡ ( 𝑸 ​ 𝑲 ⊤ ) ​ 𝑽 {\\bm{Y}}=\\operatorname{SA}({\\bm{X}})=\\operatorname{Softmax}({\\bm{Q}}\\,{\\bm{K}}^{\\top})\\,{\\bm{V}}"
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS0.SSS0.Px1.p1.2",
+      "text": "Here, the query, key, and value matrices are linear projections of the input: 𝑸 = 𝑿 ​ 𝑾 q {\\bm{Q}}={\\bm{X}}{\\bm{W}}^{q} , 𝑲 = 𝑿 ​ 𝑾 k {\\bm{K}}={\\bm{X}}{\\bm{W}}^{k} , and 𝑽 = 𝑿 ​ 𝑾 v {\\bm{V}}={\\bm{X}}{\\bm{W}}^{v} , where 𝑾 q , 𝑾 k , 𝑾 v ∈ ℝ d × d {\\bm{W}}^{q},{\\bm{W}}^{k},{\\bm{W}}^{v}\\in\\mathbb{R}^{d\\times d} . By design, this operation is permutation-equivariant. Defining attention scores corresponding to token n n as A ( n , i ) = Softmax i ⁡ ( 𝒒 n ⊤ ​ 𝑲 ⊤ ) A_{(n,i)}=\\operatorname{Softmax}_{i}({\\boldsymbol{q}}_{n}^{\\top}{\\bm{K}}^{\\top}) , the output at time n n can be written as a weighted sum over the entire sequence: 𝒚 n = SA n ⁡ ( 𝑿 ) = ∑ i = 1 N A ( n , i ) ​ 𝒗 i {\\boldsymbol{y}}_{n}=\\operatorname{SA}_{n}({\\bm{X}})=\\sum_{i=1}^{N}A_{(n,i)}{\\boldsymbol{v}}_{i} ."
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS0.SSS0.Px1.p2.1",
+      "text": "To enforce causality at the block level, we partition the input sequence 𝑿 {\\bm{X}} into T T non-overlapping blocks, 𝑿 = [ 𝒳 ( 1 ) , 𝒳 ( 2 ) , … , 𝒳 ( T ) ] {\\bm{X}}=[\\mathcal{X}^{(1)},\\mathcal{X}^{(2)},\\ldots,\\mathcal{X}^{(T)}] , and introduce a block-wise causal mask, 𝑴 c {\\bm{M}}^{c} . This mask modifies information flow and restricts each token to attend only to tokens in the current or preceding blocks:"
+    },
+    {
+      "tag": "table",
+      "id": "S3.EGx5",
+      "text": "𝒚 n \\displaystyle{\\boldsymbol{y}}_{n} = SA c ( [ 𝒙 i ∣ ℬ ( i ) ≤ ℬ ( n ) ] ) [ n ] = ∑ i : ℬ ⁡ ( i ) ≤ ℬ ⁡ ( n ) Softmax i ( 𝒒 n ⊤ 𝑲 ⊤ + M ( n , i ) c ) 𝒗 i , \\displaystyle=\\operatorname{SA}^{c}\\left([{\\boldsymbol{x}}_{i}\\mid{\\mathcal{B}(i)\\leq\\mathcal{B}(n)}]\\right)[n]=\\sum_{i:~\\mathcal{B}(i)\\leq\\mathcal{B}(n)}\\operatorname{Softmax}_{i}({{\\boldsymbol{q}}_{n}^{\\top}{\\bm{K}}^{\\top}}+{M}_{(n,i)}^{c})\\,{\\boldsymbol{v}}_{i}, (3)"
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS0.SSS0.Px1.p2.2",
+      "text": "where, the mapping ℬ ⁡ ( n ) ∈ { 1 , … , T } \\mathcal{B}(n)\\in\\{1,\\dots,T\\} returns the block index of token n n . The output sequence in matrix form is then:"
+    },
+    {
+      "tag": "table",
+      "id": "S3.Ex6",
+      "text": "𝒀 = SA c ⁡ ( 𝑸 , 𝑲 , 𝑽 , 𝑴 c ) = Softmax ⁡ ( 𝑸 ​ 𝑲 ⊤ + 𝑴 c ) ​ 𝑽 {\\bm{Y}}=\\operatorname{SA}^{{c}}({\\bm{Q}},{\\bm{K}},{\\bm{V}};{\\bm{M}}^{c})=\\operatorname{Softmax}({{\\bm{Q}}\\,{\\bm{K}}^{\\top}}+{\\bm{M}}^{c})\\,{\\bm{V}}"
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS0.SSS0.Px1.p2.3",
+      "text": "where 𝑴 c ∈ { 0 , − ∞ } N × N {\\bm{M}}^{c}\\in\\{0,-\\infty\\}^{N\\times N} is the causal mask matrix 2 2 2 Refer to Appendix A for a detailed notation definition. . This results in a block-lower-triangular attention matrix, allowing full attention within each block (intra-block) while prohibiting attention to any future blocks."
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS0.SSS0.Px1.p3.1",
+      "text": "In this block-wise causal attention, the output 𝒚 n {\\boldsymbol{y}}_{n} for token n n is generated through the interaction of its corresponding query vector 𝒒 n {\\boldsymbol{q}}_{n} with the key and value context of its current block and any preceding blocks. Hence, the output 𝒚 n {\\boldsymbol{y}}_{n} depends on the current block, ℬ ⁡ ( n ) \\mathcal{B}(n) , in two ways: 1) through its own query vector 𝒒 n {\\boldsymbol{q}}_{n} , and 2) by attending to the key-value cache within the same block ( i.e. { 𝒌 i , 𝒗 i ∣ i ∈ ℬ ( n ) } \\{{\\boldsymbol{k}}_{i},{\\boldsymbol{v}}_{i}\\mid i\\in\\mathcal{B}(n)\\} . This allows for a full intra-block interaction."
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS0.SSS0.Px1.p4.1",
+      "text": "To construct a strictly causal attention layer , we must completely eliminate any dependence on the current block. This involves two key modifications to prevent any information leakage from the current block. First, we apply a strictly causal attention mask, 𝑴 s ​ c {\\bm{M}}^{sc} , that permits attention only to keys/values from preceding blocks. Second, we employ a representation for the query that depends only on the past blocks (instead of the standard query 𝒒 n {\\boldsymbol{q}}_{n} which is a function of the current input 𝒙 n {\\boldsymbol{x}}_{n} ). Specifically, we define a modified query as a strictly causal function:"
+    },
+    {
+      "tag": "table",
+      "id": "S3.EGx6",
+      "text": "𝒒 ^ n = f q s ​ c ​ ( { 𝒒 i ∣ ℬ ⁡ ( i ) < ℬ ⁡ ( n ) } ) , \\displaystyle\\hat{{\\boldsymbol{q}}}_{n}=f_{q}^{sc}\\left(\\left\\{{\\boldsymbol{q}}_{i}\\mid\\mathcal{B}(i)<\\mathcal{B}(n)\\right\\}\\right), (4)"
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS0.SSS0.Px1.p4.2",
+      "text": "where f q s ​ c ​ ( ⋅ ) f_{q}^{sc}(\\cdot) is a permutation-equivariant aggregation function (e.g., mean-pooling or learned transformation) that pools information from the queries of previous blocks to ensure 𝒒 ^ n \\hat{{\\boldsymbol{q}}}_{n} has no dependence on the current block ℬ ⁡ ( i ) \\mathcal{B}(i) ."
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS0.SSS0.Px1.p5.1",
+      "text": "By incorporating these two constraints, the output of the strictly causal attention layer is defined as:"
+    },
+    {
+      "tag": "table",
+      "id": "S3.EGx7",
+      "text": "𝒚 n \\displaystyle{\\boldsymbol{y}}_{n} = SA s ​ c ( [ 𝒙 i ∣ ℬ ( i ) < ℬ ( n ) ] ) [ n ] = ∑ i : ℬ ⁡ ( i ) < ℬ ⁡ ( n ) Softmax i ( 𝒒 ^ n ⊤ 𝑲 ⊤ + M ( n , i ) s ​ c ) 𝒗 i , \\displaystyle=\\operatorname{SA}^{sc}\\left([{\\boldsymbol{x}}_{i}\\mid{\\mathcal{B}(i)<\\mathcal{B}(n)}]\\right)[n]=\\sum_{i:\\mathcal{B}(i)<\\mathcal{B}(n)}\\operatorname{Softmax}_{i}\\left({\\hat{{\\boldsymbol{q}}}_{n}^{\\top}{\\bm{K}}^{\\top}}+{M}_{(n,i)}^{sc}\\right)\\,{\\boldsymbol{v}}_{i}, (5)"
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS0.SSS0.Px1.p5.2",
+      "text": "This formulation ensures that both the query and the context it attends to are derived strictly from inputs preceding the current block, thereby satisfying the condition for strict block-level causality. In the following, we explore different design choices for constructing the strictly causal query aggregation function, f q s ​ c ​ ( ⋅ ) f_{q}^{sc}(\\cdot) ."
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS0.SSS0.Px1.p6.1",
+      "text": "Shift: A straightforward approach is to define the modified query at position n n using the token immediately preceding it, resulting in a simple one-step shift function: 𝒒 ^ n = f q s ​ c ​ ( 𝒒 n − 1 ) \\hat{{\\boldsymbol{q}}}_{n}=f_{q}^{sc}\\left({\\boldsymbol{q}}_{n-1}\\right) . This operation effectively conditions the query on the most recent token from the past. While simple, it is inherently not permutation-equivariant and is only suitable for a fixed forward (left-to-right) processing order. Consequently, a deep Transformer architecture that incorporates a single attention layer with this shifted query—while other layers use standard causal attention—collapses into a conventional autoregressive language model, which learns to sequentially generate the next token in a left-to-right order."
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS0.SSS0.Px1.p7.1",
+      "text": "To derive a strictly causal and permutation-equivariant query representation suitable for our problem, we explore alternative architectural designs. Our goal is to minimize extra parameters and computational overhead while maintaining high expressivity. Our strategy involves the following two main components:"
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Prefix Aggregation:"
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS0.SSS0.Px2.p1.1",
+      "text": "First, our approach involves aggregating information from all past tokens (the prefix) into a summary vector that can be used to form the strictly causal query. We introduce a specialized feed-forward layer that computes an intermediate representation, 𝒈 n 0 {\\boldsymbol{g}}^{0}_{n} , as a position-aware weighted sum of all inputs from preceding blocks:"
+    },
+    {
+      "tag": "table",
+      "id": "S3.EGx8",
+      "text": "𝒈 n 0 = FF s ​ c ( [ 𝒙 i ∣ ℬ ( i ) < ℬ ( n ) ] ) [ n ] = ∑ i : ℬ ⁡ ( i ) < ℬ ⁡ ( n ) H ( n , i ) 𝒙 i \\displaystyle{\\boldsymbol{g}}^{0}_{n}=\\operatorname{FF}^{sc}\\left([{\\boldsymbol{x}}_{i}\\mid\\mathcal{B}(i)<\\mathcal{B}(n)]\\right)[n]=\\!\\!\\!\\!\\!\\sum_{i:\\mathcal{B}(i)<\\mathcal{B}(n)}H_{(n,i)}\\,{\\boldsymbol{x}}_{i}"
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS0.SSS0.Px2.p1.2",
+      "text": "where H ( n , i ) H_{(n,i)} is the weight coupling an input token i i to an output token n n . Directly parameterizing the weight matrix 𝑯 {\\bm{H}} is computationally expensive, requiring a quadratic number of parameters and operations relative to the sequence length. To circumvent this, we employ an efficient parameterization where the weight H ( n , i ) H_{(n,i)} is defined as a function of the actual positions in the sequence ( π ^ ​ ( i ) \\hat{\\pi}(i) and π ^ ​ ( n ) \\hat{\\pi}(n) ). Specifically, we parameterize H ( n , i ) H_{(n,i)} using the dot-product similarity of their corresponding positional embedding vectors:"
+    },
+    {
+      "tag": "table",
+      "id": "S3.Ex8",
+      "text": "H ( n , i ) = ⟨ 𝐏𝐄 π ^ ​ ( n ) , 𝐏𝐄 π ^ ​ ( i ) ⟩ = ⟨ 𝐏𝐄 ^ n , 𝐏𝐄 ^ i ⟩ . H_{(n,i)}=\\langle\\mathbf{PE}_{\\hat{\\pi}(n)},\\mathbf{PE}_{\\hat{\\pi}(i)}\\rangle=\\langle\\hat{\\mathbf{PE}}_{n},\\hat{\\mathbf{PE}}_{i}\\rangle."
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS0.SSS0.Px2.p1.3",
+      "text": "Here, 𝐏𝐄 j \\mathbf{PE}_{j} represents the j j -th row of the positional embedding matrix 𝐏𝐄 ∈ ℝ N × d p ​ e \\mathbf{PE}\\in\\mathbb{R}^{N\\times d_{pe}} , π ^ ​ ( n ) \\hat{\\pi}(n) is the position index of n n th token, and 𝐏𝐄 ^ = π ⁡ ( 𝐏𝐄 ) \\hat{\\mathbf{PE}}=\\pi\\left(\\mathbf{PE}\\right) denotes the positional embedding matrix reordered according to the sequence permutation π \\pi . This parameterization ensures the layer has a fixed number of parameters , independent of sequence length. Moreover, we can cast the computation of 𝒈 n 0 {\\boldsymbol{g}}^{0}_{n} as a linear attention form ( Katharopoulos et al., 2020 ) , the full block matrix computation can be implemented efficiently using a masking matrix to enforce strict causality as:"
+    },
+    {
+      "tag": "table",
+      "id": "S3.EGx9",
+      "text": "𝑮 0 = PA s ​ c ⁡ ( 𝑿 ) = ( ( 𝐏𝐄 ^ × 𝐏𝐄 ^ ⊤ ) ⊙ 𝑴 s ​ c ) ​ 𝑿 \\displaystyle{\\bm{G}}^{0}\\!=\\operatorname{PA}^{sc}({\\bm{X}})\\!=\\!\\left((\\hat{\\mathbf{PE}}\\times\\hat{\\mathbf{PE}}^{\\top})\\odot{\\bm{M}}^{sc}\\right)\\!{\\bm{X}} (6)"
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS0.SSS0.Px2.p1.4",
+      "text": "where 𝑴 s ​ c ∈ { 0 , 1 } N × N {\\bm{M}}^{sc}\\in\\{0,1\\}^{N\\times N} is a strictly causal mask. The output, 𝒈 n 0 {\\boldsymbol{g}}^{0}_{n} , subsequently serves as the basis for deriving the strictly causal query 𝒒 ^ n \\hat{{\\boldsymbol{q}}}_{n} . The resulting layer inherits the permutation-equivariance (with respect to the condition set) of the attention. Furthermore, this linear attention can be reformulated as a recurrent form ( Katharopoulos et al., 2020 ) , offering computational benefits: it enables sub-quadratic parallel training through techniques such as chunkwise processing ( Hua et al., 2022 ; Kacham et al., 2024 ) or parallel scan algorithms ( Blelloch, 1990 ; Smith et al., 2023 ) , and enjoys a constant-time complexity per generated token at inference."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Two-Stream Strictly Causal-Attention"
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS0.SSS0.Px3.p1.1",
+      "text": "To efficiently construct a deep strictly causal architecture—without introducing additional parameters—we adopt a two-stream attention architecture . At each layer l l , this design maintains and updates two parallel representations: a causal representation 𝑿 l {\\bm{X}}^{l} and a strictly causal representation 𝑮 l {\\bm{G}}^{l} . The key idea is that both streams share the same attention parameters and key-value context, but operate with different masking and query inputs: the causal stream allows access to the current and past tokens, while the strictly causal stream uses the stricter mask and derives its query 𝑸 ^ \\hat{{\\bm{Q}}} from the previous strictly causal output 𝑮 l − 1 {\\bm{G}}^{l-1} . Formally, the update rules for layer l l are:"
+    },
+    {
+      "tag": "table",
+      "id": "S3.EGx10",
+      "text": "𝑿 l \\displaystyle{\\bm{X}}^{l} = SA θ c ⁡ ( 𝑿 l − 1 ; 𝑴 c ) = Attn ⁡ ( 𝑸 , 𝑲 , 𝑽 , 𝑴 c ) , \\displaystyle=\\operatorname{SA}^{c}_{\\theta}({\\bm{X}}^{l-1};{\\bm{M}}^{c})\\!=\\!\\operatorname{Attn}\\left({\\bm{Q}},{\\bm{K}},{\\bm{V}};{\\bm{M}}^{c}\\right), (7) 𝑮 l \\displaystyle{\\bm{G}}^{l} = SA θ s ​ c ⁡ ( 𝑮 l − 1 , 𝑿 l − 1 , 𝑴 s ​ c ) = Attn ⁡ ( 𝑸 ^ , 𝑲 , 𝑽 , 𝑴 s ​ c ) \\displaystyle=\\operatorname{SA}^{sc}_{\\theta}({\\bm{G}}^{l-1},{\\bm{X}}^{l-1};{\\bm{M}}^{sc})\\!=\\!\\operatorname{Attn}\\left(\\hat{{\\bm{Q}}},{\\bm{K}},{\\bm{V}};{\\bm{M}}^{sc}\\right)"
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS0.SSS0.Px3.p1.2",
+      "text": "where the query, key, and value projections are defined as: 𝑸 = 𝑾 q ​ 𝑿 l − 1 , 𝑲 = 𝑾 k ​ 𝑿 l − 1 , 𝑽 = 𝑾 v ​ 𝑿 l − 1 , 𝑸 ^ = 𝑾 q ​ 𝑮 l − 1 {\\bm{Q}}={\\bm{W}}^{q}{\\bm{X}}^{l-1},~{\\bm{K}}={\\bm{W}}^{k}{\\bm{X}}^{l-1},~{\\bm{V}}={\\bm{W}}^{v}{\\bm{X}}^{l-1},~\\hat{{\\bm{Q}}}={\\bm{W}}^{q}{\\bm{G}}^{l-1} . At the final layer of this two-stream chain, the model outputs the strictly causal representation 𝑮 L 2 ​ s {\\bm{G}}^{L^{2s}} . By leveraging both causal and strictly causal representations throughout this chain, the model is able to produce a deeply contextualized and expressive strictly causal output. A related two-stream mechanism was previously shown effective in XLNet ( Yang et al., 2019 ) , which generalized autoregressive pretraining by unifying both autoencoding-style and autoregressive objectives."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Model Architecture."
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS0.SSS0.Px4.p1.1",
+      "text": "The final model is composed of two components: (i) an L 2 ​ s L^{2s} -layer two-stream stack and (ii) a subsequent ( L − L 2 ​ s ) (L-L^{2s}) -layer standard causal stack. This composition yields a deep strictly causal model that captures the conditional probability p θ ​ ( 𝒙 n | [ 𝒙 i ∣ ℬ ⁡ ( i ) < ℬ ⁡ ( n ) ] ) p_{\\theta}\\left({\\boldsymbol{x}}_{n}\\,\\middle|\\,[{\\boldsymbol{x}}_{i}\\mid\\mathcal{B}(i)<\\mathcal{B}(n)]\\right) , ensuring that each token 𝒙 n {\\boldsymbol{x}}_{n} is generated exclusively based on preceding blocks. Moreover, relative position information is integrated into all attention operations using Rotary Positional Embedding (RoPE) ( Su et al., 2024 ) . As noted in recent works ( Ou et al., 2024 ; Zheng et al., 2024 ) , it is unnecessary to explicitly parameterize time-dependence in MDMs. A schematic illustration of the full architecture is shown in Figure 3 ."
+    },
+    {
+      "tag": "p",
+      "id": "Thmremark1.p1.1",
+      "text": "As discussed above, this design is inherently based on causal attention mechanisms, thereby enabling efficient key-value (KV) caching for fast decoding—a key advantage over BERT-style models commonly used in MDMs. Moreover, since the architecture generalizes autoregressive models (ARMs), it naturally supports hybrid training schemes such as progressive permutation training (further detailed in section 5 ), allowing the model to learn effectively from both forward (left-to-right) and randomly permuted orderings. Finally, the same design principles suggest that the architecture can be readily adapted to finetune pretrained Large Language Models (LLMs) into diffusion models with simple modifications, presenting a promising direction for future research."
+    },
+    {
+      "tag": "h3",
+      "id": "",
+      "text": "3.1 Strided Parallel Generation"
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS1.p1.1",
+      "text": "To leverage the flexibility of ARMD for efficient generation, we introduce a strided block-parallel (SBP) sampling strategy. This method partitions the target sequence of length N N into S S parallel streams , enabling simultaneous token generation while preserving global coherence. Given a parallelism factor S S , we first partition the sequence into S S equal-sized streams, each of length N / S N/S . The indices are then permuted to interleave these streams, grouping tokens that share the same relative position within their respective streams. For example: for N = 8 , S = 2 N=8,~S=2 : streams: 𝒮 1 = [ 1 , 2 , 3 , 4 ] \\mathcal{S}_{1}=[1,{\\color[rgb]{0,0,1}2},{\\color[rgb]{1,0,0}3},{\\color[rgb]{0,1,0}4}] , 𝒮 2 = [ 5 , 6 , 7 , 8 ] \\mathcal{S}_{2}=[5,{\\color[rgb]{0,0,1}6},{\\color[rgb]{1,0,0}7},{\\color[rgb]{0,1,0}8}] → \\rightarrow permutation π = [ 1 , 5 , 2 , 6 , 3 , 7 , 4 , 8 ] \\pi=[1,5,{\\color[rgb]{0,0,1}2},{\\color[rgb]{0,0,1}6},{\\color[rgb]{1,0,0}3},{\\color[rgb]{1,0,0}7},{\\color[rgb]{0,1,0}4,8}] ."
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS1.p2.1",
+      "text": "The generation process proceeds in two distinct phases: 1) We first generate the initial token (the head ) of each stream sequentially. In the example above, tokens ( 1 ) (1) and ( 5 ) (5) are generated autoregressively. This establishes a global context anchor for each stream. 2) Parallel Block Generation : Subsequent tokens are generated in parallel groups of size S S . Specifically, for each relative position j > 1 j>1 , the model generates the set { x j ( 1 ) , x j ( 2 ) , … , x j ( S ) } \\{x^{(1)}_{j},x^{(2)}_{j},\\dots,x^{(S)}_{j}\\} simultaneously. In the example above, the block ( 2 , 6 ) ({\\color[rgb]{0,0,1}2},{\\color[rgb]{0,0,1}6}) is generated in parallel, followed by the block ( 3 , 7 ) ({\\color[rgb]{1,0,0}3},{\\color[rgb]{1,0,0}7}) . Figure 2 illustrates this parallel generation strategy."
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS1.p3.1",
+      "text": "This strategy maximizes the physical distance between tokens generated in parallel. For instance, tokens ( 2 ) ({\\color[rgb]{0,0,1}2}) and ( 6 ) ({\\color[rgb]{0,0,1}6}) are separated by N / S N/S positions in the original sequence. This large separation supports the approximate conditional independence assumption required for valid parallel diffusion sampling, i.e., p ⁡ ( x 2 , x 6 ∣ context ) ≈ p ⁡ ( x 2 ∣ context ) ​ p ​ ( x 6 ∣ context ) p(x_{2},x_{6}\\mid\\text{context})\\approx p(x_{2}\\mid\\text{context})p(x_{6}\\mid\\text{context}) , while accelerating inference by a factor of S S . This strided parallel generation is substantially different from the standard autoregressive block-generation used in BD3 − LM \\operatorname{BD3-LM} ( Arriola et al., 2025 ) ."
+    },
+    {
+      "tag": "h2",
+      "id": "",
+      "text": "4 Related works"
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Discrete Diffusion Models."
+    },
+    {
+      "tag": "p",
+      "id": "S4.SS0.SSS0.Px1.p1.1",
+      "text": "A general framework for diffusion models in discrete space, D3PM \\operatorname{D3PM} , was introduced by Austin et al. (2021) . This framework is built on a Markov forward process defined by arbitrary transition matrices and optimizes a variational lower bound on the data likelihood. D3PM \\operatorname{D3PM} was initially applied to language modeling at the character level and, while promising in theory, its early applications struggled to match the empirical performance of autoregressive models. More recently, Lou et al. (2023) advanced the field by adapting score matching to discrete domains using a novel score entropy objective. Their model, SEDD \\operatorname{SEDD} , demonstrated strong performance on standard language modeling tasks, narrowing the performance gap with ARMs by achieving competitive perplexity and efficient sampling in discrete diffusion for language. Among the various discrete diffusion strategies developed within these frameworks, masked diffusion models (MDMs) have demonstrated to be a particularly effective approach Austin et al. (2021) ; Lou et al. (2023) , which revealed a conceptual connection to Masked Language Models (MLMs) like BERT ( Devlin et al., 2018 ) ."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Masked Diffusion Models."
+    },
+    {
+      "tag": "p",
+      "id": "S4.SS0.SSS0.Px2.p1.1",
+      "text": "Recent works have rapidly advanced MDMs, enhancing their training efficiency and generative quality to achieve performance competitive with ARMs of a similar size. These efforts include exploring simplified objectives and properties of absorbing discrete diffusion models ( Shi et al., 2024 ; Sahoo et al., 2024 ; Ou et al., 2024 ) . For instance, Sahoo et al. (2024) developed simplified variational objectives while their resulting method supports semi-autoregressive generation that admits efficient generation of sequences of arbitrary length. Building on SEDD \\operatorname{SEDD} , Ou et al. (2024) provided a deeper theoretical understanding of absorbing discrete diffusion. They proposed a reparameterization of absorbing discrete diffusion models to characterize time-independent conditional probabilities of clean data, demonstrating improvements in sampling efficiency and zero-shot perplexity compared to SEDD \\operatorname{SEDD} . The scaling law properties of MDMs on text data have been demonstrated in Nie et al. (2024) , which also proposed an unsupervised classifier-free guidance technique ( Ho and Salimans, 2022 ) to further improve inference efficiency on text. Another promising direction for scaling diffusion models involves adapting existing pre-trained AR models to text diffusion models by gradually annealing the attention mask during fine-tuning ( Gong et al., 2024 ) , a technique that leverages the connections between AR and diffusion objectives. Recently, Arriola et al. (2025) proposed block diffusion, a hybrid approach that combines discrete diffusion within token blocks and ARMs across blocks, which improves inference efficiency and supports flexible-length sequence generation."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Continuous Diffusion in Latent Space."
+    },
+    {
+      "tag": "p",
+      "id": "S4.SS0.SSS0.Px3.p1.1",
+      "text": "A separate line of research explores continuous diffusion for discrete data by embedding tokens into continuous latent spaces and applying continuous diffusion on these latent representations ( Dieleman et al., 2022 ; Li et al., 2022 ; Chen et al., 2022 ; Gulrajani and Hashimoto, 2023 ; Han et al., 2022 ; Lovelace et al., 2023 ; Graves et al., 2023 ) . However, the process of decoding from continuous back to discrete space remains challenging and is often prone to information loss. Consequently, these latent diffusion models have generally underperformed ARMs on text generation tasks."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Order Agnostic ARMs."
+    },
+    {
+      "tag": "p",
+      "id": "S4.SS0.SSS0.Px4.p1.1",
+      "text": "Order Agnostic ARMs (OA-ARMs) ( Uria et al., 2014 ) represent a class of generative models that generalizes traditional ARMs by marginalizing over all possible generation orders, thereby addressing the inherent left-to-right bias of ARMs. This generalization allows models to flexibly condition on arbitrary subsets of observed tokens, thereby supporting flexible non-sequential generation. Recent works have established the underlying connections between MDMs and OA-ARMs. For instance, Hoogeboom et al. (2021) showed that absorbing discrete diffusion models are equivalent to OA-ARMs under mild assumptions, leading to the proposal of autoregressive diffusion models (ARDMs). Ou et al. (2024) further formally unified the training objectives of absorbing discrete diffusion and OA-ARMs, bridging the practical gap between these two models. From a practical standpoint, since considering all permutations is computationally infeasible, Shih et al. (2022) improve training efficiency and performance by approximating the marginalization through sampling from a small, carefully chosen subset of orderings. In practice, both OA-ARMs and MDMs are trained using a collection of forward passes of masked language models (MLMs)— where a bidirectional model is trained to recover a randomly masked subset of tokens at each call. In contrast, our proposed model enables the parallel evaluation of the entire likelihood within a single forward pass."
+    },
+    {
+      "tag": "table",
+      "id": "S4.T1.47",
+      "text": "Method \\operatorname{Method} LAMBADA \\operatorname{LAMBADA} WikiText2 \\operatorname{WikiText2} PTB \\operatorname{PTB} WikiText103 \\operatorname{WikiText103} 1 ​ B ​ W \\operatorname{1BW} small size models GPT − 2 ∗ \\operatorname{GPT-2^{*}} 45.04 42.43 138.43 41.60 75.20 D3PM ∗ \\operatorname{D3PM^{*}} 93.47 77.28 200.82 75.16 138.92 PLAID ​ ( 600 ​ K ) ∗ \\operatorname{PLAID~(600K)^{*}} 57.28 51.80 142.60 50.86 91.12 SEDD − Uniform ​ ( 400 ​ K ) ∗ \\operatorname{SEDD-Uniform~(400K)^{*}} 65.40 50.27 140.12 49.60 101.37 SEDD ​ ( 400 ​ K ) ∗ \\operatorname{SEDD~(400K)^{*}} 50.92 41.84 114.24 40.62 79.29 RADD ​ ( 400 ​ K ) ∗ \\operatorname{RADD~(400K)^{*}} 51.70 39.98 107.85 37.98 72.99 ARMD ⁡ ( 180 ​ K ) \\operatorname{ARMD~(180K)} 44.66 36.25 130.31 35.66 53.18 ARMD ⁡ ( 400 ​ K ) \\operatorname{ARMD~(400K)} 45.35 35.64 123.43 35.15 52.94 medium size models GPT − 2 ∗ \\operatorname{GPT-2^{*}} 35.66 31.80 123.14 31.39 55.72 SEDD ​ ( 400 ​ K ) ∗ \\operatorname{SEDD~(400K)^{*}} 42.77 31.04 87.12 29.98 61.19 RADD ​ ( 400 ​ K ) ∗ \\operatorname{RADD~(400K)^{*}} 44.10 30.60 82.08 29.29 60.32 ARMD ⁡ ( 120 ​ K ) \\operatorname{ARMD~(120K)} 40.62 27.57 105.09 27.09 45.49 ARMD ⁡ ( 300 ​ K ) \\operatorname{ARMD~(300K)} 39.08 26.06 97.75 25.55 43.91"
+    },
+    {
+      "tag": "h2",
+      "id": "",
+      "text": "5 Experiments"
+    },
+    {
+      "tag": "p",
+      "id": "S5.p1.1",
+      "text": "We evaluate the proposed model, ARMD, on standard language modeling tasks to demonstrate its effectiveness and training efficiency relative to established generative language models."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Setup."
+    },
+    {
+      "tag": "p",
+      "id": "S5.SS0.SSS0.Px1.p1.1",
+      "text": "Following the experimental setup of ( Lou et al., 2023 ) , we train two versions of ARMD with parameter counts similar to GPT-2 small (125M) and GPT-2 medium (345M) ( Radford et al., 2019 ) . As in ( Lou et al., 2023 ; Ou et al., 2024 ) , we train ARMD on the OpenWebText \\operatorname{OpenWebText} dataset ( Gokaslan and Cohen, 2019 ) , a large-scale corpus derived from web pages, widely used for training language models. Each training iteration uses a batch of 512 sequences, each 1024 tokens long, amounting to approximately 0.5 million tokens per batch. For the ARMD architecture, the first half of the transformer layers are configured as the two-stream module, i.e. L 2 ​ s = L / 2 L^{2s}=L/2 . Further details are provided in Appendix C ."
+    },
+    {
+      "tag": "p",
+      "id": "S5.SS0.SSS0.Px1.p2.1",
+      "text": "We compare ARMD against several established and recent diffusion models of similar size, including: GPT − 2 \\operatorname{GPT-2} ( Radford et al., 2019 ) , D3PM \\operatorname{D3PM} ( Austin et al., 2021 ) , PLAID \\operatorname{PLAID} ( Gulrajani and Hashimoto, 2023 ) , SEDD \\operatorname{SEDD} ( Lou et al., 2023 ) and RADD \\operatorname{RADD} ( Ou et al., 2024 ) . Performance is measured using zero-shot perplexity on a suite of widely-used benchmark datasets: LAMBADA ( Paperno et al., 2016 ) , Penn Tree Bank (PTB) ( Marcus et al., 1993 ) , WikiText2, WikiText103, ( Merity et al., 2016 ) , and One Billion Words (1BW) ( Chelba et al., 2013 ) ."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Progressive Permutation Schedule."
+    },
+    {
+      "tag": "p",
+      "id": "S5.SS0.SSS0.Px2.p1.1",
+      "text": "The flexible permutation-equivariant design of ARMD enables it to learn from orders beyond the canonical left-to-right. To leverage this, we introduce a progressive permutation schedule during training to encourage learning random orderings. This strategy begins by training the model exclusively on forward-ordered sequences for an initial phase ( i A ​ R = 9 ​ K i_{AR}=9K iterations). Subsequently, we gradually introduce random permutations by progressively increasing the number of shuffled tokens from one up to a maximum of ρ = 32 \\rho=32 by iteration i p ​ e ​ r ​ m = 48 ​ K i_{perm}=48K and remain the same over the rest of training. This curriculum enables the model to become increasingly robust to token permutations while still retaining the left-to-right order as the primary structural prior. Since natural language inherently exhibits a strong left-to-right structure, leveraging this inductive bias as guidance ensures that the model retains strong performance in capturing forward dependencies while learning random permutations."
+    },
+    {
+      "tag": "p",
+      "id": "S5.SS0.SSS0.Px2.p2.1",
+      "text": "As shown in Table 1 , ARMD achieves state-of-the-art zero-shot performance across most language modeling benchmarks, for both model sizes. Notably, it outperforms most baselines despite being trained for significantly fewer iterations (180K for the small model and 120K for the medium model). This result underscores the superior training efficiency that is a key advantage of our proposed model. We provide extended results, ablation studies, and sample generations in Appendix C ."
+    },
+    {
+      "tag": "table",
+      "id": "S5.T2.7",
+      "text": "Model T ​ = ​ 1024 T\\text{=}1024 T ​ = ​ 512 T\\text{=}512 T ​ = ​ 256 T\\text{=}256 (Sequential) ( S ​ = ​ 2 S\\text{=}2 ) ( S ​ = ​ 4 S\\text{=}4 ) AR ​ Baseline \\operatorname{AR~Baseline} * ∼ \\sim 36 (8.1) - - SEDD \\operatorname{SEDD} * ∼ \\sim 106 (8.1) ∼ \\sim 110 (8.1) - MDLM \\operatorname{MDLM} * ∼ \\sim 103 (8.1) ∼ \\sim 113 (8.1) - ARMD \\operatorname{ARMD} ( ρ ​ = ​ 32 , i SBP ​ = ​ 10 ​ K \\rho\\text{=}32,i_{\\text{SBP}}\\text{=}10\\text{K} ) 38.7 (8.0) 43.2 (8.0) 47.8 (8.1) ARMD \\operatorname{ARMD} ( ρ ​ = ​ 32 , i SBP ​ = ​ 50 ​ K \\rho\\text{=}32,i_{\\text{SBP}}\\text{=}50\\text{K} ) 39.1 (8.0) 40.1 (8.1) 43.2 (8.1) ARMD \\operatorname{ARMD} ( ρ ​ = ​ 32 , i SBP ​ = ​ 80 ​ K \\rho\\text{=}32,i_{\\text{SBP}}\\text{=}80\\text{K} ) 36.5 (7.9) 37.8 (8.0) 39.4 (8.0) ARMD \\operatorname{ARMD} ( ρ ​ = ​ 16 , i SBP ​ = ​ 10 ​ K \\rho\\text{=}16,i_{\\text{SBP}}\\text{=}10\\text{K} ) 50.0 (8.1) 54.6 (8.1) 64.7 (8.2) ARMD \\operatorname{ARMD} ( ρ ​ = ​ 16 , i SBP ​ = ​ 50 ​ K \\rho\\text{=}16,i_{\\text{SBP}}\\text{=}50\\text{K} ) 45.7 (8.0) 46.1 (8.1) 50.1 (8.1) ARMD \\operatorname{ARMD} ( ρ ​ = ​ 16 , i SBP ​ = ​ 80 ​ K \\rho\\text{=}16,i_{\\text{SBP}}\\text{=}80\\text{K} ) 39.4 (8.0) 40.5 (8.1) 43.7 (8.1)"
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Parallel Sample Generation."
+    },
+    {
+      "tag": "p",
+      "id": "S5.SS0.SSS0.Px3.p1.1",
+      "text": "We evaluate the generative perplexity of models in the small parameter setting trained on the OpenWebText \\operatorname{OpenWebText} dataset. For ARMD, we first train a base model for 400K iterations using the progressive permutation schedule (up to ρ \\rho ). This is followed by a short fine-tuning phase of i SBP i_{\\text{SBP}} steps (where i SBP ∈ { 10 ​ K , 50 ​ K , 80 ​ K } i_{\\text{SBP}}\\in\\{10\\text{K},50\\text{K},80\\text{K}\\} ), utilizing the random strided block permutation (SBP), where the sequence is partitioned into S S equal-sized blocks and then permuted to interleave these blocks, grouping tokens that share the same relative position. During this phase, the block size S S is sampled randomly from { 1 , 2 , 4 } \\{1,2,4\\} at each step to encourage robust parallel generation."
+    },
+    {
+      "tag": "p",
+      "id": "S5.SS0.SSS0.Px3.p2.1",
+      "text": "As the results in Table 2 demonstrate, while standard masked diffusion models ( SEDD \\operatorname{SEDD} , MDLM \\operatorname{MDLM} ) struggle with high perplexity during parallel generation, ARMD (particularly with ρ = 32 \\rho=32 ) efficiently generates high-quality, diverse text (quantified by high mean entropy) with only 10K additional training steps. Notably, the total training budget for ARMD (410K steps) remains lower than that of the AR baseline (500K steps) and standard MDMs (1M steps). Furthermore, increasing i SBP i_{\\text{SBP}} significantly improves the parallel generation and effectively bridges its performance gap with sequential generation."
+    },
+    {
+      "tag": "table",
+      "id": "S5.T3.7",
+      "text": "Method \\operatorname{Method} ppl ( ↓ \\downarrow ) Autoregressive Transformer − XBase \\operatorname{Transformer-XBase} * 23.5 Transformer \\operatorname{Transformer} * 22.83 Diffusion D3PM − absorb \\operatorname{D3PM-absorb} * 82.34 Diffusion − LM \\operatorname{Diffusion-LM} * 118.62 DiffusionBert \\operatorname{DiffusionBert} * 63.78 SEDD \\operatorname{SEDD} (1M) * 32.68 MDLM \\operatorname{MDLM} (1M) * 31.78 BD3 − LMs \\operatorname{BD3-LMs} L ′ L^{\\prime} = 16 (1M) * 30.60 BD3 − LMs \\operatorname{BD3-LMs} L ′ L^{\\prime} = 4 (1M) * 28.23 ARMD \\operatorname{ARMD} (300K) 23.64 ARMD \\operatorname{ARMD} (1M) 22.36"
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "One Billion Words Benchmark."
+    },
+    {
+      "tag": "p",
+      "id": "S5.SS0.SSS0.Px4.p1.1",
+      "text": "We also train language models on One Billion Words (LM1B) dataset ( Chelba et al., 2013 ) . We follow the training and architecture setting of He et al. (2022) ; Lou et al. (2023) ; Sahoo et al. (2024) : the model size matches GPT-2 small, and the bert-base-uncased tokenizer is applied. ARMD employs two-stream modules in the first half of its layers i.e. L 2 ​ s ​ = ​ L / 2 ​ = ​ 6 L^{2s}\\text{ = }L/2\\text{ = }6 . For progressive permutation schedule of ARMD, we begin introducing random permutations at iteration i A ​ R ​ = ​ 100 ​ K i_{AR}\\text{ = }100\\text{K} , gradually increasing to a maximum of ρ ​ = ​ 8 \\rho\\text{ = }8 by iteration i p ​ e ​ r ​ m ​ = ​ 300 ​ K i_{perm}\\text{ = }300\\text{K} ."
+    },
+    {
+      "tag": "p",
+      "id": "S5.SS0.SSS0.Px4.p2.1",
+      "text": "As shown in Table 3 , ARMD achieves the best performance among all diffusion models with significantly fewer training steps. Notably, it outperforms MDMs with 3 × 3\\times fewer training steps, reconfirming the superior training efficiency of our proposed architecture."
+    },
+    {
+      "tag": "h2",
+      "id": "",
+      "text": "6 Conclusion"
+    },
+    {
+      "tag": "p",
+      "id": "S6.p1.1",
+      "text": "In this work, we introduced ARMD, a novel parallel masked diffusion model, that bridges the gap between diffusion-based learning and autoregressive modeling for language models. By reframing the masked denoising process as a block-wise causal problem, we developed a strictly causal, permutation-equivariant, attention architecture that enables fully parallelized training. This flexible design supports a progressive permutation schedule for learning from both fixed and random token orderings. Importantly, our architecture enables a strided parallel generation strategy that accelerates inference while effectively bridging the performance gap between parallel and sequential generation. Experimental results demonstrate that ARMD achieves state-of-the-art performance on standard language modeling benchmarks, outperforming both ARM and MDM baselines with significantly fewer training iterations. By combining the training efficiency of ARMs with the inherent flexibility of diffusion models, ARMD stands as a scalable and powerful alternative for masked diffusion models."
+    }
+  ]
+}

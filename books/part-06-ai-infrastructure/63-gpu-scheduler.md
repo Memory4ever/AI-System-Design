@@ -87,6 +87,8 @@ Fragmentation 也要区分两种 owner。Job 的 GPU 数与 node 形状天然不
 
 失败后的 restart 也不是固定常数。只按瞬时 goodput 排序会反复延后长等待 job，并忽略 checkpoint load 已经支付的成本；age key 与分解后的 restart factor 可以分别表示等待债务、productive time 和 reload overhead，再与 goodput 一起进入每轮效用。它改善的是 starvation/restart-aware frontier，不授予某套权重跨集群通用性。OAK 的 12-GPU 仿真与 4-V100 实验只支持披露 failure/load 模型；预测漂移、不可抢占 job 或硬优先级存在时，应回退显式 reservation、FIFO/DRF 或保守 restart policy。
 
+价格波动再把这个效用扩展到跨区域的 spot 寿命与 deadline：单区域、不迁移的策略在 checkpoint 昂贵或可选区域少时仍合理；有足够 slack 的固定 gang 才可能把整组迁移成本摊回便宜资源。[SkyNomad 的受限控制器](https://arxiv.org/html/2601.06520v1)用探测与存活时间估计剩余 spot 寿命，将 cold start、checkpoint 传输/egress 费用和剩余进度的 deadline 压力一起比较，并用迟滞避免反复切换；寿命预测不是容量预约，便宜区域也必须满足数据位置和完整 gang 的可行性。Checkpoint 的一致性与恢复语义仍由 Ch35 负责，调度器只决定何时承担迁移。其保守 on-demand 回退依赖事先已知工作量、启动时间界及 on-demand 始终可用等前提，不是无条件 deadline 保证；探测、预测漂移、大 checkpoint 或很小 slack 会吃掉节省，应保留单区域 reservation/on-demand 路径并报告其真实成本。有限云实验与 trace 模拟不能证明全局最优或任意工作负载的收益。<!-- source-family:SF-2026-ARXIV-2601-06520 -->
+
 <!-- source-family:arxiv:2609.18519v1 -->
 <!-- source-family:arxiv:2609.19024v1 -->
 
@@ -161,6 +163,18 @@ Segment 减少跨低带宽边界的 collective traffic，却会因 nodes-down、
 | application batching | 应用层合并 | 在线推理 | 需要 runtime 理解请求 |
 
 第 46 章 continuous batching 是 application scheduling，不是 cluster GPU sharing。二者都提高利用率，但作用层不同。
+
+计算分割也不自动形成时间隔离：即使按 SM 划分进程的执行范围，共享的功率上限、频率变化与其他资源压力仍可能改变共置后的完成时间。验收时因此要同时记录 SM 布局、功率与时钟状态、并发模型和到达负载，而不能把独占条件下测出的稳定提交频率当成 deadline 合同。有限样本中没有 timeout，只支持该 profile 人口下的观察，不是 worst-case execution time 证明；边缘 GPU 上六个分类模型的共置结果尤其不能直接外推到 LLM Serving。更高功率余量与更大内存带宽同时变化的设备对照，也不能只归因于其中一个因素。这条责任链增加遥测、并发对照、重新校准与保守 headroom 成本；若共置后仍不能满足时间预算，应降低并发、调整布局或退回独占，而不是从计算分区推导未测得的时序或安全保证。<!-- source-family:SF-2026-ARXIV-2601-07600 -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2610-02522:start -->
+短周期 latency-critical 工作与 best-effort ML 共置时，还需把 SM 选择与 HBM traffic 控制分开。预创建互补 compute contexts 可以把运行时变更缩成 slot 边界的后续 launch 选择，但已经运行的 blocks 仍留在原 context，不是任意线程抢占；经验 latency profile 与 tail reserve 也不是硬 deadline 证明。Disjoint SMs 仍共享 HBM，一条协作分支让每个高优先级 block 在需要带宽的区间独立置位共享 bitmap，最后一个 protected block 清位后才解除保护；只用 kernel-wide 单 bit 会因 blocks 不同速而提前解除。
+
+可获得 PTX 的低优先级 kernel 再在 memory-producing threads 都会经过的安全 gate 前轮询，暂停的是新 traffic，不能撤回 in-flight requests；HBM-light 区间可以继续执行。Profile、binary rewrite、同步与 co-tenant 降速因此属于同一分享合同，而非硬件安全隔离。[Beaver 的 Aerial/vLLM 受限评价](https://arxiv.org/pdf/2610.02522)支持该组合在披露单 GPU workload 下保护 p99.9，若干全栈与跨设备切片仍只达到 miss rate低于0.1%，不授绝不超时、多租户恶意行为或任意 opaque kernel 都可改写。缺少合法 PTX/gate、profile 越界、co-tenant 不协作或严格硬隔离优先时，独占/MIG 与保守固定分区继续成立；下一段的 launch 粒度控制并不代替这条 HBM 责任链。
+<!-- semantic-body-binding:SF-2026-ARXIV-2610-02522:end -->
+
+时间复用还受正在执行的 kernel 粒度约束：高优先级请求到达，并不意味着低优先级工作可以立即停下。一条软件分支先把合法 kernel 的 block grid 切成较短子任务，以 PTX 中的 offset 保持原 blockIdx 语义，再按目标设备 profile 选择能饱和计算或带宽的最小粒度；host 只保持有限的待执行队列，以预测的 kernel tick 推进下一次 launch。这里回收的是后续 launch 的权限，等待边界仍受当前子 kernel、队列深度与预测误差约束，不是中断任意运行线程的硬件抢占。cuBLAS/cuDNN 无可提取 PTX 时须另换兼容的 CUTLASS 实现，persistent kernel、跨 block 同步等路径不能直接切分，仍需重构或保留原执行器。
+
+细分会增加 launch 成本并降低低优先级吞吐；若观察到高优先级工作间有大 bubble，可以临时合并回较大 kernel，却同时取消了原细粒度等待边界，突发请求必须重新接受较长等待。因而 splitter、profile、tick/队列与 consolidation 策略要作为同一 sharing contract 验收，并把预测失准、库替换和低优先级减速计入成本。显存 offload 的带宽竞争又是另一条压力，不能从计算回收推出地址或故障隔离。受限 trace/SLO 下的收益不授任意 GPU、kernel 或生产尾延迟保证；无法满足合法拆分与等待预算时，原 kernel、保守时间复用或独占 GPU 仍是回退路径，故障域继续由下述独立责任链处理。
 
 <!-- source-family:SF-2026-ARXIV-2605-26461 -->
 
@@ -347,3 +361,9 @@ Primary-source 与官方入口：
 - **SF-2026-ARXIV-2606-26341**：Primary `arXiv:2606.26341v1`；Method `https://arxiv.org/html/2606.26341v1 — §Many Problems One GPU batching and nonlinear-optimization execution design`；Evaluation `https://arxiv.org/html/2606.26341v1 — §GPU scaling experiments across problem families`；未证明边界 `https://arxiv.org/html/2606.26341v1 — §Only disclosed nonlinear solvers/problem shapes; no cluster-level scheduling or isolation proof`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
 
 ### Daily Books delta trace（2026-06—08）
+
+- `SF-2026-ARXIV-2601-04071` — Daily `2026-01-09`；[Hummingbird exact-v1](https://arxiv.org/html/2601.04071v1) §4.2–4.4、§5、§6.1–6.3。原6分因sharing合法执行粒度缺口深入受影响证据，只采用PTX/grid splitter、profile/tick有限队列、bubble consolidation与unsupported原路径分责。A10080GB/SXM4、CUDA12.6/禁DVFS、INT8 llama.cpp与BurstGPT replay/有限LP workload、exclusive P99 TTFT/TPOT合同，不授任意硬抢占、闭源库皆可拆、无条件400µs或生产SLO；LithOS为作者重建非原artifact。未运行代码或复现；root必要原源/owner写前通过，jan01_v3实际顺读正文、前后邻接与源注，非作者POST通过（此次POST不冒称重读root已核原源）。
+
+- `SF-2026-ARXIV-2601-07600` — Daily `2026-01-14`；[Peformance Isolation exact-v1](https://arxiv.org/html/2601.07600v1) §III、§IV-A–C/Alg1、§V-B–D。原2+2+2=6，设计反证受影响内容深入；仅采用 compute partition 与 power/frequency 压力、有限 IMS profile 与 deadline 权限分账。作者以1000次中最差5次均值初估、提高直至超时、退回并检验3×1000次，是有限稳定频率测试而非 WCET。A10040GB/CUDA12.1/PyTorch2.4.1 与 Jetson Nano/AGX/JetPack6.2/TensorRT 的六个 ImageNet 分类模型配置不同，AGX同时改变功率及带宽；未测分类 accuracy、LLM/KV/Serving SLO，precision/warmup/输入分布/重复置信区间 Not Disclosed。不采用 exclusive-SM、MIG 保证或单变量功率因果外推；未运行代码/复现。root 实际必要原源与当前 owner 写前通过，并实际顺读正文、前后邻接与源注，非作者 POST 通过。
+
+- `SF-2026-ARXIV-2601-06520` — Daily `2026-01-14`；[SkyNomad exact-v1](https://arxiv.org/html/2601.06520v1) §4.1–4.7、§5、§6.1–6.2.5。2+2+3=7，仅采用固定 gang 的 spot 寿命/迁移开销/egress/deadline 效用分账与条件回退，不承担 checkpoint correctness 或无条件 deadline/最优保证。AWS Qwen3-4B/14B，4L4/8A100/4A10G，30h工作/45h截止、100/500GB checkpoint、6min cold start；GCP H100 14day 与 AWS V100 trace 模拟20jobs不冒充生产承诺。无 slack 全回退、单 region 无选址增益、区域数收益饱和、大 checkpoint 反侧保留；headline 10% 不能覆盖部分11/12%结果，地理 eligibility 非法规合规认证。精度、训练 batch 与完整质量/成本未披露，未运行实现/复现；root 必要原源与实际 owner 写前通过，root 已实际顺读正文/前后邻接/末注，非作者 POST 通过，日级 Gate 待验。

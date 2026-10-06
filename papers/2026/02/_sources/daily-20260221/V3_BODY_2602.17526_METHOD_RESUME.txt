@@ -1,0 +1,159 @@
+3 Methods
+3.1 Models
+We analyze four autoregressive language models via TransformerLens (Nanda, 2022): GPT-2 small (12 layers ×\times 12 heads, dhead=64d_{\text{head}}=64), GPT-2 medium (24×\times16), GPT-2 large (36×\times20) (Radford et al., 2019), and Pythia-160M (12×\times12) (Biderman et al., 2023). All experiments were run on CPU and independently validated to rule out hardware-specific computation artifacts (Appendix D).
+3.2 Stimulus Design
+We construct 100 sentence triplets, each consisting of:
+1.
+Exact repeat: A content word appears twice (e.g., “The doctor examined the patient and the doctor prescribed medicine”).
+2.
+No repeat: All content words are unique (same structure, different second clause).
+3.
+Semantic near-miss: The repeated word is replaced by a WordNet synonym (Wu-Palmer similarity >0.7>0.7; e.g., “the physician prescribed medicine”).
+This design allows us to measure hit attention (exact repeats), baseline attention (no repeats), and false positive attention (semantic near-misses) within matched sentence frames.
+3.3 Metrics
+For each attention head at each layer, we compute:
+•
+Selectivity: a¯hit/a¯baseline\bar{a}_{\text{hit}}/\bar{a}_{\text{baseline}}, where a¯hit\bar{a}_{\text{hit}} is mean attention from a repeated token to its first occurrence and a¯baseline\bar{a}_{\text{baseline}} is mean attention from a unique token to a random earlier position.
+•
+Miss rate: Fraction of repeated tokens receiving <0.01<0.01 attention to their first occurrence.
+•
+FP ratio (continuous): a¯synonym/a¯hit\bar{a}_{\text{synonym}}/\bar{a}_{\text{hit}}, measuring how strongly the head responds to semantic near-misses relative to true repeats. This is distinct from the FP rate (binary) used in the capacity analysis (Section 4.3), which is the fraction of non-repeated probe tokens receiving attention above a threshold of 0.1.
+We classify a head as a strong Bloom filter head if selectivity >3×>3\times, miss rate <10%<10\%, and mean hit attention >0.05>0.05.
+3.4 Statistical Tests
+All results are assessed with:
+•
+Bootstrap 95% confidence intervals (n=10,000n=10{,}000 resamples) for all key metrics.
+•
+Bonferroni-corrected hypothesis tests (α=0.05/144\alpha=0.05/144 for GPT-2 small’s 144 heads): Mann-Whitney UU for hit >> baseline and hit >> synonym; binomial test for miss rate <5%<5\%.
+•
+Permutation test (n=10,000n=10{,}000): randomly assign 4 heads as “Bloom heads” and test whether the observed group mean selectivity is extreme.
+•
+Cohen’s dd effect sizes for Bloom vs. non-Bloom head populations.
+4 Results
+Note: All results below are behavioral characterizations. We demonstrate that certain heads’ input-output behavior is consistent with membership testing, not that they mechanistically implement a specific algorithm at the circuit level. Section 4.5 provides the strongest evidence linking the behavioral pattern to the QK projection mechanism.
+4.1 Bloom Filter Signature
+In GPT-2 small, four heads initially exhibit the Bloom filter signature (Table 1). Three have 0% miss rate and one (L3H0) has a miss rate of 0.4% (1/238 token-level observations), with selectivity ranging from 51×\times to 146×\times baseline.11
+1
+The 238 observations arise because each of the 100 exact-repeat sentences may contain multiple repeated-token positions; we measure attention at every such position. Two heads (L1H11 and L3H0) show the classic false positive pattern, responding to synonyms at 25–30% of their hit strength. However, as detailed in Section 4.3, confound controls reclassify L3H0 as a general prefix-attention head rather than a Bloom filter, leaving three genuine membership-testing heads (L0H1, L0H5, L1H11).
+These membership-testing heads generalize broadly beyond the name-repetition context in which duplicate-token heads were originally identified (Wang et al., 2022). Testing on non-name content words and random token repetitions, Bloom filter heads show a mean generalization index of 0.70 compared to 0.49 for duplicate-token-only heads—43% broader generalization (Section 5.1).
+Table 1: Candidate Bloom filter heads in GPT-2 small. Selectivity and FP ratio with bootstrap 95% CIs. All tests significant at Bonferroni-corrected α=3.47×10−4\alpha=3.47\times 10^{-4}. pp-values are asymptotic approximations from the Mann-Whitney UU test; we report them capped at <10−20<10^{-20} as the extreme tail is unreliable at this sample size. †L3H0 was reclassified as a prefix-attention head following confound controls (Section 4.3).
+Head
+Hit Attn
+Baseline
+Selectivity [95% CI]
+Miss%
+FP Ratio
+pp (Hit>>Base)
+L0H1
+0.478
+0.003
+146×\times [105, 201]
+0.0%
+0.08
+≪10−20\ll 10^{-20}
+L0H5
+0.452
+0.006
+74×\times [54, 101]
+0.0%
+0.01
+≪10−20\ll 10^{-20}
+L1H11
+0.478
+0.009
+53×\times [47, 59]
+0.0%
+0.29
+≪10−20\ll 10^{-20}
+L3H0†
+0.277
+0.005
+51×\times [42, 61]
+0.4%
+0.25
+≪10−20\ll 10^{-20}
+The effect size separating Bloom from non-Bloom heads is enormous: Cohen’s d=12.3d=12.3 for hit attention and d=12.5d=12.5 for selectivity. The four candidate membership-testing heads occupy the four highest selectivity ranks among all 144 heads (p<10−7p<10^{-7}, Mann-Whitney UU). A permutation test confirms these heads are collectively extreme: no random group of four heads achieved mean selectivity ≥79×\geq 79\times in 10,000 permutations (p<10−4p<10^{-4}). Note that L3H0’s high selectivity on this basic test is consistent with its reclassification as a prefix-attention head: it attends strongly to all prefix content, which includes repeated tokens.
+Figure 1: Bloom filter selectivity (hit attention / baseline attention) across all 144 heads in GPT-2 small. Four heads (highlighted) show selectivity >30×>30\times; the remaining 140 heads are at or below 1×1\times. Note that the classification threshold is >3×>3\times (Section 3); the gap between the top four (51×\times–146×\times) and the fifth-highest head (2.7×\times) renders the threshold choice immaterial.
+Figure 2: Hit, baseline, and synonym attention for Bloom filter heads vs. control heads. Bloom heads show extreme separation between hit and baseline conditions.
+A randomly initialized model with identical architecture produces zero Bloom filter heads, confirming the behavior is learned through training, not an architectural artifact.
+4.2 Taxonomic Independence
+Using the standard induction head test (Olsson et al., 2022) (random repeated sequences, n=50n=50 trials) and a previous-token head test (diagonal attention analysis), we classify heads in GPT-2 small into three categories (Figure 3):
+Table 2: Three functional categories of attention heads in GPT-2 small. Zero pairwise overlap. Bloom filter count reflects reclassification of L3H0 (see Section 4.3).
+Category
+Count
+Layer Range
+Function
+Bloom filter heads
+3
+0–1
+“Is this token in context?”
+Previous-token heads
+11
+2–6
+“What came immediately before?”
+Induction heads
+16
+5–11
+“A B …\ldots A →\to B”
+The three categories are mutually exclusive with zero pairwise overlap. Bloom filter heads occupy exclusively early layers, consistent with a processing pipeline where membership testing precedes pattern completion (Figure 3).
+Figure 3: Three non-overlapping functional categories of attention heads in GPT-2 small. Bloom filter heads (red) concentrate in layers 0–3, previous-token heads (blue) in layers 2–6, and induction heads (green) in layers 5–11.
+4.3 Theoretical Capacity Predictions
+If attention heads are Bloom filters, their false positive rate should increase with the number of unique tokens in context (the filter “fills up”), following Equation 1. We test this by varying context size from 5 to 180 unique tokens while controlling for sequence length.
+Confound control design.
+Our initial capacity experiment (reported in an earlier version of this paper) varied both the number of unique tokens and the total sequence length simultaneously—a confound, since longer sequences affect positional encoding and softmax normalization. To disentangle these effects, we designed a controlled experiment: sequence length is fixed at 200 tokens, with nn unique tokens in the prefix, 5 novel probe tokens, and the remaining positions filled with padding tokens. This ensures that any change in false positive rate is driven by the number of distinct items stored in the “filter,” not by sequence length.
+Table 3: Capacity analysis with fixed sequence length (200 tokens). L1H11 shows the classic Bloom filter saturation curve. L0H1 and L0H5 maintain near-zero FP rates at all loads. L3H0 shows FP = 100% at all loads including n=5n=5, indistinguishable from non-Bloom control heads, and is reclassified as a prefix-attention head.
+Unique tokens
+L1H11
+L0H1
+L0H5
+L3H0†
+Controls
+5
+62.7%
+1.3%
+0.0%
+100%
+100%
+20
+97.3%
+1.3%
+0.0%
+100%
+100%
+50
+100%
+1.3%
+0.0%
+100%
+100%
+100
+100%
+3.3%
+0.0%
+100%
+100%
+180
+100%
+4.0%
+0.7%
+100%
+100%
+Figure 4: Capacity analysis under controlled conditions (fixed sequence length = 200). Left: L1H11 shows the classic Bloom filter saturation curve (R2=1.0R^{2}=1.0, m≈5m\approx 5 bits), with theoretical Bloom filter overlay. L0H1 and L0H5 maintain near-zero FP rates across all loads. Right: L3H0† (reclassified as prefix-attention head) shows FP = 100% at all load levels, indistinguishable from control head L5H5.
+The results (Table 3 and Figure 4) reveal three distinct behaviors:
+L3H0: Reclassification.
+One head initially identified as a Bloom filter (L3H0) was reclassified as a general prefix-attention head following this confound control. Under fixed sequence length, L3H0 shows FP = 100% at all unique token levels, including n=5n=5—a condition where even a 5-bit Bloom filter would show <<50% FP. Its false positive rate is indistinguishable from non-Bloom control heads (L5H5, L7H10, L6H9), all of which also show FP = 100% at every load level. L3H0 simply attends to all prefix content regardless of whether it has seen the probe token before. Its original capacity curve (R2=0.99R^{2}=0.99, m=59m=59, k=2.16k=2.16) was a sequence-length artifact: the earlier experiment co-varied unique tokens and sequence length, and L3H0’s FP rate tracked the latter, not the former. A second control (fixed n=50n=50 unique tokens, varying sequence length from 55 to 200) confirms that L3H0’s FP rate is constant at 100% regardless of sequence length when the number of unique tokens is held constant.
+L1H11: Classic Bloom filter.
+L1H11 shows the classic Bloom filter capacity curve: FP rises from 62.7% at n=5n=5 to saturation (100%) by n=50n=50. Fitting Equation 1 yields m≈5m\approx 5 bits and k=0.86k=0.86 (R2=1.0R^{2}=1.0). This is a low-capacity filter that saturates quickly, consistent with a membership tester operating with very limited representational resources. The variable-length version yields similar parameters (m≈6.4m\approx 6.4, k=0.91k=0.91, R2=0.9998R^{2}=0.9998), confirming the curve is driven by unique token count, not sequence length.
+L0H1 and L0H5: High-capacity filters.
+These heads maintain remarkably low FP rates across all load levels: L0H1 ranges from 1.3% to 4.0%, and L0H5 from 0.0% to 0.7%, even at n=180n=180 unique tokens. This capacity substantially exceeds what a dhead=64d_{\text{head}}=64 classical Bloom filter could achieve (theoretical FP >94%>94\% at n=180n=180). These heads function as high-precision membership filters whose capacity mechanism remains to be fully characterized.
+Competing model analysis.
+The competing model analysis reported in an earlier version (Δ​AIC>11\Delta\text{AIC}>11 favoring the Bloom filter formula over logistic, power law, linear, and softmax dilution models) was conducted on L3H0’s variable-length data, which we now know to be confounded. The analysis remains valid for L1H11’s fixed-length data, where the Bloom filter formula achieves R2=1.0R^{2}=1.0, though with only 5 data points the formal model comparison has limited statistical power. The key evidence is not the model fit per se but the qualitative match: L1H11 shows monotonically increasing FP rates that saturate in a manner consistent with a fixed-capacity probabilistic filter, while L0H1 and L0H5 do not saturate—ruling out the Bloom filter formula for those heads and pointing to a different (higher-capacity) mechanism.
+Head subtypes.
+The three genuine membership-testing heads form a spectrum:
+•
+L1H11: Classic Bloom filter behavior. Low capacity (m≈5m\approx 5 bits), saturates by n≈20n\approx 20, R2=1.0R^{2}=1.0 fit to theoretical curve.
+•
+L0H1, L0H5: High-capacity membership filters. Near-zero FP rates (≤\leq4%) at all loads up to n=180n=180, well exceeding dhead=64d_{\text{head}}=64. These heads may exploit mechanisms beyond simple bit-array hashing.
+This heterogeneity is functionally important: a system combining a capacity-limited filter (L1H11, which provides a graded signal of context saturation) with high-precision detectors (L0H1, L0H5) is more informative than one composed of identical filters.
+4.4 Independent Hash Functions
+Multiple hash functions are the mechanism by which Bloom filters reduce false positive rates. A natural question is whether the three genuine membership-testing heads themselves act as independent detectors that can be combined — a system-level K=3K=3. If so, their false positive decisions should be uncorrelated, and combining them with AND logic should multiplicatively reduce FP rates. For independence analysis, we binarize each head’s response to a probe token as “false positive” if total attention to the prefix exceeds 0.1 (sensitivity analysis confirms the results are stable across thresholds from 0.01 

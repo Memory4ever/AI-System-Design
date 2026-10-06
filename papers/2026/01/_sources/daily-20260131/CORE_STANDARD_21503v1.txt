@@ -1,0 +1,188 @@
+Exact-v1 primary HTML necessary selection https://arxiv.org/html/2601.21503v1
+2 Method
+2.1 Module-aware Architecture Refinement
+To address the computational bottlenecks of attention mechanisms and FFNs, we propose Module-aware Architecture Refinement (MAR), a two-stage optimization framework that restructures LLMs through a module-aware strategy to improve the efficiency of both sequence modeling and FFN computation. An overview of the framework is shown in Figure 2.
+In the first stage, we replace the attention mechanism with an SSM to achieve linear-time sequence processing. Given the maturity of prior work in this direction, we directly adopt Llamba [1] as the baseline in the second stage. Llamba is an attention-free variant of LLaMA-3.2, built upon discrete multi-head Mamba-2 modules.
+In the second stage, MAR targets the high cost of FFNs and other fully connected layers. Spiking neurons (ATMNs) are inserted before fully connected units, sparsifying activations by replacing multiply–accumulate (MAC) with accumulate (AC) operations. In Llamba’s decoder, spiking neurons are placed at four positions per layer, before the input and output projections of both Mamba-2 and FFN modules (Figures 3, 4).
+Figure 3: Overview of the SBDS: the student model (right) learns from the teacher model (left) through feature-level and logit-level losses.
+2.2 Adaptive Ternary Multi-step Neuron
+Traditional spiking neurons typically encode information using binary spike sequences with values in {0, 1}. However, this representation discards negative signals, thereby limiting the representational capacity of individual neurons and reducing information density. To overcome this limitation while preserving sparsity, we draw inspiration from the design of [9] and propose the Adaptive Ternary Multi-step Neuron (ATMN), which enhances the information-carrying capacity of spiking neurons. Its working mechanism can be described by the following iterative equations:
+ht=It⋅δt,0+1τ⋅ut−1,\displaystyle h_{t}=I_{t}\cdot\delta_{t,0}+\frac{1}{\tau}\cdot u_{t-1},
+(1)
+st={1if ​ht≥Va​d​a​p​t​i​v​e−1if ​ht≤−Va​d​a​p​t​i​v​e0otherwise,s_{t}=\begin{cases}1\quad\text{if }\ h_{t}\geq V_{adaptive}\\
+-1\quad\text{if }\ h_{t}\leq-V_{adaptive}\\
+0\quad\text{otherwise},\end{cases}
+(2)
+ut=ht−st⋅Va​d​a​p​t​i​v​e,u_{t}=h_{t}-s_{t}\cdot V_{adaptive},
+(3)
+Va​d​a​p​t​i​v​e=ea,V_{adaptive}=e^{a},
+(4)
+Figure 4: Illustration of spiking integration in the Discrete Mamba-2 (left) and FFN (right). The left and right sides correspond to the Discrete Mamba-2 and the Feed Forward Network in the student model shown in Figure 3, respectively.
+where ItI_{t} denotes the input current at time step tt, τ\tau is the membrane time constant, and hth_{t}, utu_{t} represent the membrane potentials before and after spike reset, respectively. sts_{t} indicates the spike output, and Va​d​a​p​t​i​v​eV_{adaptive} is a neuron-wise adaptive threshold constrained to be non-negative via an exponential function with trainable parameter aa. The Kronecker delta function δt,0\delta_{t,0} equals 1 only at t=0t=0, allowing external input injection at the initial step.
+Unlike conventional binary spiking neurons, ATMN emits a negative spike when the membrane potential falls below −Va​d​a​p​t​i​v​e-V_{adaptive}, thereby mimicking biological inhibitory signals. This bidirectional spiking mechanism effectively mitigates the low information density issue caused by sparse activations and enhances representational capacity. In addition, we inject external input only at the initial step, while subsequent updates rely solely on the residual membrane potential, simplifying the temporal update process. During reset, the membrane potential moves toward the resting state if a spike occurs; otherwise, the accumulated value is retained.
+2.3 Spike-aware Bidirectional Distillation Strategy
+To mitigate temporal mismatch and restore the performance of spiking models under resource constraints, we propose the Spike-aware Bidirectional Distillation Strategy (SBDS). This strategy provides multi-granularity supervision to guide the student model in effectively learning linguistic capabilities from the teacher model. The overall process is illustrated in Figure 3.
+Specifically, we adopt Llamba as the teacher model, while the student model is a spiking variant constructed using the MAR framework. At the output level, we extend the standard KL loss with a reverse KL divergence term to form a bidirectional distillation loss. While the standard KL emphasizes alignment over the full output distribution, the reverse KL encourages the student model to focus more on high-confidence predictions, making the formulation better suited to the sparse and bursty nature of spiking activations. The corresponding logit alignment loss is defined as follows:
+ℒ1(p||q)=∑k=0D−1[αp(k)−βq(k)]⋅[logp(k)−logq(k)],\mathcal{L}_{1}(p||q)=\sum_{k=0}^{D-1}[\alpha p(k)-\beta q(k)]\cdot[\log p(k)-\log q(k)],
+(5)
+where pp and qq denote the teacher and student distributions, respectively, and DD is the size of the discrete space, typically the vocabulary size. The parameters α\alpha and β\beta are tunable hyperparameters that control the trade-off between capturing the overall distribution and emphasizing high-confidence regions, making the loss function better aligned with the sparse characteristics of spiking outputs.
+At the feature level, we further design a pre-normalization state alignment loss, which compares the representations of the teacher and student models immediately after the first Root Mean Square Normalization (RMSNorm) module in each layer, thereby facilitating more effective alignment of semantic representations. The formal definition of the loss is given as follows:
+ℒ2​(hj,hk)=‖PreNorm​(hj)−PreNorm​(hs)‖2,\mathcal{L}_{2}(h^{j},h^{k})=||\text{PreNorm}(h^{j})-\text{PreNorm}(h^{s})||_{2},
+(6)
+where, hjh^{j} and hkh^{k} denote the input features at the corresponding layer of the teacher and student models, respectively, and PreNorm​(⋅)\text{PreNorm}(\cdot) represents the standard pre-layer normalization operation.
+Accordingly, the final total loss function is defined as follows:
+ℒd​i​s​t​i​l​l=1T​M∑t=0T−1∑m=0M−1ℒ1(pt,m||qt,m)+1T​L∑t=0T−1∑l=0L−1ℒ2(hjt,l,hkt,l),\begin{split}\mathcal{L}_{distill}&=\frac{1}{TM}\sum_{t=0}^{T-1}\sum_{m=0}^{M-1}\mathcal{L}_{1}(p_{t,m}||q_{t,m})\\
+&+\frac{1}{TL}\sum_{t=0}^{T-1}\sum_{l=0}^{L-1}\mathcal{L}_{2}(h^{j}_{t,l},h^{k}_{t,l}),\end{split}
+(7)
+where TT is the number of time steps, MM is the sequence length, and LL is the number of layers. ℒ1\mathcal{L}_{1} denotes the logit-level loss between teacher logits pt,mp_{t,m} and student logits qt,mq_{t,m}, while ℒ2\mathcal{L}_{2} is the feature-level loss between their pre-normalized hidden states ht,ljh_{t,l}^{j} and ht,lkh_{t,l}^{k}.
+This SBDS guides the student model to focus on high-confidence outputs and align semantic representations across layers, accelerating convergence and enhancing performance under resource constraints.
+3 Experiment
+3.1 Data and experimental settings
+We use Llamba-1B, the Mamba variant of LLaMA-3.2-1B, as the starting point for the second stage of the MAR framework. For training, we employ the GenQA [3], OpenHermes 2.5 [19], and InfinityInstruct [12] datasets, which together contain approximately 7 billion tokens, and train for one epoch.
+3.2 Main results
+Model
+Size
+SNN
+Accuracy (%)
+PIQA
+BoolQ
+WG
+HS
+ARC-e
+ARC-c
+Average
+LLaMA
+1.3B
+no
+74.32
+69.54
+59.67
+60.76
+68.52
+38.05
+61.80
+Llamba
+1.4B
+no
+73.78
+68.62
+60.69
+61.31
+69.57
+37.32
+61.88
+Bi-Mamba[17]
+1.3B
+no
+69.20
+62.00
+53.70
+43.10
+43.90
+24.40
+49.38
+SmoothQuant[25]
+1.3B
+no
+71.60
+57.77
+60.06
+53.68
+57.03
+29.44
+54.93
+TinyLLaMA[29]
+1.3B
+no
+73.30
+57.80
+59.10
+59.90
+55.30
+30.10
+55.91
+SpikeLLM[26]
+7B
+yes
+65.45
+64.37
+54.3
+56.59
+41.67
+32.51
+52.48
+Ours
+1.4B
+yes
+70.35
+68.17
+55.33
+50.91
+67.21
+35.58
+57.20
+Table 1: Comparison of zero-shot performance on commonsense reasoning and question answering benchmarks across various models. For ARC-E and HS, we use normalized logits’ results.
+To comprehensively assess both the effectiveness and efficiency of our proposed MAR framework, we evaluate the model on two fronts: accuracy performance across zero-shot reasoning benchmarks, and energy consumption during inference.
+We conduct zero-shot evaluations on six commonsense reasoning and question answering datasets: Physical Interaction QA (PIQA) [2], Boolean Questions (BoolQ) [4], Winogrande (WG) [16], HellaSwag (HS) [28], ARC Challenge (ARC-C), and ARC Easy (ARC-E)[5]. As shown in Table 1, our method achieves an average accuracy of 57.93% across six tasks. Compared with the teacher model Llamba (61.88%), its performance is largely restored; compared with the much larger SpikeLLM (7B, 52.48%), our model attains a 5.45 percentage point improvement using only 1.4B parameters, demonstrating superior parameter efficiency. In addition, it also surpasses other efficiency-oriented models, such as Bi-Mamba (49.38%), SmoothQuant (54.93%), and TinyLLaMA (55.91%), confirming that the proposed approach can effectively recover performance under limited resource conditions.
+To further quantify the efficiency advantages of the proposed method, we compare the inference energy consumption of the MAR model with its dense baseline. Following the energy metrics reported by [10], we assume that each MAC, multiplication, and AC operation consumes 4.6, 3.7, and 0.9 pJ, respectively. On the WG dataset, we measure the average firing rate of spiking neurons in the decoder and estimate the total energy consumption at different sequence lengths. As shown in Figure 5, compared with same-sized Llamba and LLaMA models, MAR exhibits a substantially slower growth in energy consumption. Moreover, MAR consistently incurs lower inference energy across all sequence lengths, and this advantage becomes more pronounced as the sequence length increases. These results demonstrate the superiority of MAR in effectively reducing the computational energy cost of FFNs and other linear layers.
+Figure 5: Total energy consumption of different decoders at varying sequence lengths.
+3.3 Ablation study
+To assess the individual contributions of each component within the MAR framework, we conduct a series of systematic ablation studies. Each subsection provides a focused analysis of how different modules influence overall model performance, with the average accuracy across six benchmark tasks used as the evaluation metric.
+As shown in Table 2, we progressively introduce ATMN, the reverse KL divergence compensatory term, and the pre-normalization alignment loss on a shared baseline to evaluate the contribution of each module to model performance. The baseline, which contains only traditional binary neurons with standard KL-based distillation, achieves an average accuracy of 46.28%. Replacing the binary neurons with ATMN increases accuracy to 55.20%, demonstrating its effectiveness in alleviating the issue of reduced information density. Adding the reverse KL term further improves accuracy to 55.46%, indicating that this compensatory component helps address the sparse and bursty nature of spiking outputs. With the additional introduction of pre-normalization alignment loss, accuracy rises to 57.20%, highlighting enhanced representational consistency between teacher and student models. These results collectively validate the effectiveness of the proposed optimization strategy.
+ATMN
+Reserve KL
+PN loss
+Average acc. (%)
+-
+-
+-
+46.28
+✓
+-
+-
+55.20
+✓
+✓
+-
+55.46
+✓
+✓
+✓
+57.20
+Table 2: Ablation study of core components. Each column shows whether a module is enabled. Reserve KL and PN loss denote the reverse KL divergence term and the pre-normalization alignment loss.
+Next, we compare three feature-level alignment strategies to examine their role in the distillation process: using only pre-normalization alignment, using only post-normalization alignment, and combining both. The baseline configuration includes only logit-level distillation loss, and all strategies are evaluated on this basis. As shown in Table 3, pre-normalization alignment achieves the best performance, while post-normalization alignment alone or the combination of both yields relatively lower accuracy. This indicates that pre-normalization features provide more stable and transferable representations for guiding the student model. Therefore, we adopt pre-normalization alignment as the default feature-level distillation strategy in our final framework.
+Pre-norm
+Post-norm
+Average acc. (%)
+-
+-
+55.46
+✓
+-
+57.20
+-
+✓
+56.75
+✓
+✓
+56.08
+Table 3: Comparison of feature-level alignment strategies. Pre-Norm aligns features after the first RMSNorm in each layer, whereas Post-Norm aligns features after the final normalization.
+In addition, we conducted a sensitivity analysis of the hyperparameters α\alpha and β\beta to examine the effect of weighting configurations in SBDS. As shown in Table 4, using only standard KL (α=1,β=0\alpha=1,\ \beta=0, 55.20%) or only reverse KL (α=0,β=1\alpha=0,\ \beta=1, 55.92%) failed to achieve optimal performance. By contrast, combining the two led to significant improvements, with the best result obtained at α=0.2,β=0.7\alpha=0.2,\ \beta=0.7, reaching an average accuracy of 56.40%. These results confirm the effectiveness of the bidirectional distillation loss.
+α\alpha
+β\beta
+Average acc.(%)
+0
+1
+55.92
+1
+0
+55.20
+0.7
+0.2
+56.39
+0.2
+0.7
+56.40
+Table 4: Sensitivity analysis of hyperparameters α\alpha and β\beta in SBDS.
+
+

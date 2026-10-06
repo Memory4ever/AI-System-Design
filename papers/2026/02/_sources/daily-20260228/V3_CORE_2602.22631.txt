@@ -1,0 +1,10150 @@
+TorchLean: Formalizing Neural Networks in Lean
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Methodology
+Computation graphs and our IR (definitions).
+2.1
+NN.Spec
+2.2
+NN.Runtime
+2.3
+Floating Point Semantics
+2.4
+NN.Verification
+3
+Results
+VNN-COMP-style suites (ONNX + VNNLIB).
+Numerical semantics stress tests.
+4
+Related work
+5
+Conclusion
+6
+Acknowledgments
+References
+A
+Appendix Overview
+B
+TorchLean
+: a PyTorch-style front end with a single semantic target
+B.1
+Core design: unified semantics for execution and analysis
+B.2
+Execution modes and compilation to IR
+B.3
+TorchLean
+programs, Modules, and API design
+B.4
+Autograd verification
+B.5
+Node correctness and primitive operation proofs
+B.6
+Graph-level composition and the reverse-mode algorithm
+B.7
+Core Definitions and IR Semantics
+B.8
+TorchLean
+vs. PyTorch
+C
+Numerical Semantics
+Motivation and trust boundaries.
+Why we implement
+both
+(bit-level and round-on-
+ℝ
+\mathbb{R}
+).
+C.1
+End-to-end NF bounds and hardware soundness
+End-to-end NF bounds: local errors compose over SSA/DAG.
+Hardware soundness: what remains and a pragmatic deployment path.
+D
+CROWN verification: bounds, duality, and certificates
+D.1
+IBP, CROWN/LiRPA, and certificate checking
+IBP (interval bound propagation).
+IBP certificate soundness (graph dialect).
+End-to-end IBP soundness for the concrete implementation.
+CROWN and LiRPA (linear relaxations).
+α
+/
+β
+\alpha/\beta
+-CROWN as certificate-checked bound semantics (graph dialect).
+Certificate contents and the role of
+α
+\alpha
+and
+β
+\beta
+.
+β
+\beta
+phases and phase consistency.
+Phase-dependent ReLU relaxations.
+Certificate checking: replay-based producer–checker design.
+A concrete example (robustness margin).
+Certificate schemas (illustrative).
+D.2
+VNN-COMP / VNN-LIB interface (ONNX + VNNLIB)
+D.3
+Case Studies
+E
+Universal Approximation Theorems
+Universal approximation (real-valued).
+E.1
+Float32-exec Soundness
+Why the Float32 setting is harder.
+Notation for the theorems below.
+F
+Limitations and Discussion
+Limitations and near-term roadmap.
+License: CC BY 4.0
+arXiv:2602.22631v1 [cs.MS] 26 Feb 2026
+TorchLean
+: Formalizing Neural Networks in Lean
+Robert Joseph George
+Affiliation:
+California Institute of Technology
+Jennifer Cruden
+Affiliation:
+California Institute of Technology
+Xiangru Zhong
+Affiliation:
+University of Illinois Urbana-Champaign
+Huan Zhang
+Affiliation:
+University of Illinois Urbana-Champaign
+Anima Anandkumar
+Affiliation:
+California Institute of Technology
+Correspondence to:
+rgeorge@caltech.edu
+Abstract
+Neural networks are increasingly deployed in safety- and mission-critical pipelines, yet many verification and analysis results are produced
+outside
+the programming environment that defines and runs the model. This separation creates a semantic gap between the
+executed
+network and the
+analyzed
+artifact, so guarantees can hinge on implicit conventions (operator semantics, tensor layouts, preprocessing, and floating-point corner cases). We introduce
+TorchLean
+, a framework in the formal theorem prover
+Lean
+that treats learned models as first-class mathematical objects with a single, precise semantics shared by execution and verification. To our knowledge,
+TorchLean
+is the first framework to interconnect these components over a shared intermediate representation (IR).
+TorchLean
+unifies:
+(1) a PyTorch-style verified API
+for defining models and training loops with eager execution and a compiled mode that lowers programs to a shared op-tagged computation-graph IR;
+(2) explicit Float32 semantics
+via an executable IEEE-754 binary32 kernel (
+IEEE32Exec
+) and proof-relevant rounding models that make numerical assumptions and trust boundaries explicit; and
+(3) verification
+via native IBP and CROWN/LiRPA-style bound propagation with certificate checking. We validate
+TorchLean
+end-to-end on three concrete use cases: certified robustness certificates for classifiers, physics-informed residual/derivative bounds for PINN-style scientific models, and control-oriented safety/stability checking for a neural controller, alongside mechanized theory results including a universal approximation theorem. Overall, these results show how
+TorchLean
+can provide semantics-first infrastructure for fully formal, end-to-end verification of learning-enabled systems. Project page is at
+leandojo.org/torchlean
+.
+Keywords:
+neural networks, verification, formalization, automatic differentiation, Lean
+1
+Introduction
+Standard pipeline
+PyTorch
+Export
+ONNX
+Verifier (CROWN/LiRPA)
+?
+?
+TorchLean
+pipeline
+TorchLean
+program
+Shared IR
+Verifier (CROWN)
+Lean 4 (machine-checked semantics)
+Figure 1
+:
+Semantic gap: the standard pipeline (top) chains PyTorch
+→
+\to
+Export
+→
+\to
+ONNX
+→
+\to
+Verifier, with potential drift at each conversion step;
+TorchLean
+(bottom) keeps a single shared IR as the semantic target for both execution and verification (Verifier artifacts are checked against this same meaning).
+Neural networks are increasingly embedded in systems where mistakes have physical or societal cost, and the machine learning community is correspondingly placing more weight on guarantees that go beyond empirical accuracy: robustness to perturbations, satisfaction of hard safety/stability constraints, and conservative bounds on quantities derived from a network’s computation. This has driven an active verification ecosystem spanning
+solver-based
+approaches that reduce verification queries to constraint solving (e.g., SMT/MILP-style tools such as Reluplex and Marabou for piecewise-linear networks)
+(
+Katz et al., 2017
+;
+Katz et al., 2019
+)
+, as well as
+scalable
+relaxation and abstract interpretation based methods that compute certified enclosures via bound propagation
+(
+Gowal et al., 2018
+;
+Zhang et al., 2018
+;
+Singh et al., 2019
+)
+. Surveys and systems papers emphasize that such techniques are now core to validating learning-enabled components in safety-critical autonomy and control pipelines
+(
+Xiang et al., 2018
+)
+. Despite this progress, turning verifier outputs into dependable end-to-end guarantees remains challenging in practice; to motivate our approach, we next highlight three concrete
+failure modes
+:
+α
+=
+ℝ
+\alpha=\mathbb{R}
+(proofs)
+α
+=
+Rat
+/
+Float32
+/
+IEEEExec
+\alpha=\texttt{Rat}/\texttt{Float32}/\texttt{IEEEExec}
+(execution)
+α
+=
+Interval
+/
+FP32
+\alpha=\texttt{Interval}/\texttt{FP32}
+(bounds)
+NN.Spec
+Specification Layer
+NN.Runtime
+Runtime Layer
+NN.Verification
+Verification Layer
+Core
+Tensors, Shapes
+Ops over
+α
+\alpha
+Layers
+Linear, Conv, Attention
+Normalization, etc.
+Models
+MLP, CNN, Transformer
+RNN/LSTM/GRU, etc.
+Autograd Engine
+Reverse-mode AD
+Tape & Graph
+TorchLean
+PyTorch-style API
+Eager & Compiled
+Training
+Optimizers (SGD/Adam/etc.)
+Import/Export
+IBP
+Interval Bounds
+Sound Propagation
+CROWN/LiRPA
+Affine Relaxations
+Dual Certificates
+Certificate Checking
+Native checkers + CLI
+(external artifacts optional)
+Op-tagged IR
+SSA/DAG computation graph
+Single semantic target
+compile
+build
+compile
+verify/check
+Figure 2
+:
+Comprehensive architecture of
+TorchLean
+. The three modules (
+NN.Spec
+,
+NN.Runtime
+,
+NN.Verification
+) share a single op-tagged SSA/DAG computation-graph IR as the semantic target. Models are defined once (spec), executed/trained via
+TorchLean
+(runtime), and verified via IBP/CROWN-style bounds and certificate checking (verification), all against the same graph semantics. Scalar polymorphism (
+α
+\alpha
+) instantiates the same definitions over reals (proofs), floats/Float32 (execution), and intervals (bounds).
+(1) Export boundaries create semantic drift.
+In modern workflows, the trained model is a program (e.g., a PyTorch
+nn.Module
+), while verifiers typically consume an exported or recompiled surrogate (TorchScript, ONNX, or a custom graph IR) interpreted by a separate toolchain. This conversion boundary is exactly where subtle mismatches arise: trace-based export can miss control flow and dynamic behavior, and even when export succeeds, the resulting graph is only guaranteed to reflect the operations executed in a particular run
+(
+PyTorch Contributors, 2025
+)
+. Moreover, interchange formats version operator sets (opsets) and require models to declare which opsets they rely on
+(
+ONNX Contributors, 2026
+)
+, so the meaning of an exported network becomes entangled with tool/version assumptions that can drift across runtimes. For a visual summary, see Figure
+1
+.
+(2) Floating-point semantics mismatch in real deployments.
+Even if a verifier is theoretically sound over real arithmetic, deployment happens under IEEE-754 semantics with rounding, overflow/underflow, and special values (NaN,
+±
+∞
+\pm\infty
+, signed zeros)
+(
+IEEE Standards Association, 2019
+)
+. Multiple lines of evidence show that treating floating point as an implementation detail can invalidate verification conclusions.
+Jia and Rinard (2020)
+demonstrated that numerical error can be exploited to refute robustness claims, motivating conservative modeling of floating-point effects. More recently,
+Szász et al. (2025)
+argue that theoretical soundness (bounding a real-valued model while computing in floating point) does not necessarily imply practical soundness for deployed networks, since execution details (e.g., GPU order/precision) can escape verifier assumptions.
+Hwang et al. (2025)
+further show that robust approximation results for floating-point networks require confronting finite-precision semantics explicitly.
+(3) No semantics-aligned certification beyond toy settings.
+Neural networks are brittle to small, worst-case perturbations and distributional shifts, motivating
+certified
+robustness and safety properties rather than empirical testing alone
+(
+Szegedy et al., 2013
+;
+Goodfellow et al., 2014
+)
+. This need is especially acute for learning-enabled components embedded in autonomy and control pipelines, where failures have physical consequences and verification must connect to the implemented artifact
+(
+Xiang et al., 2018
+)
+. It also extends to scientific computing workflows such as physics-informed neural networks (PINNs), which use automatic differentiation to enforce PDE constraints and thus naturally call for certificates over both function values and derivatives
+(
+Raissi et al., 2019
+)
+. These settings motivate a semantics-aligned pipeline where execution, differentiation, and certification refer to the same model object.
+We address these challenges by building
+TorchLean
+in
+Lean
+4, a programming language and interactive theorem prover (ITP) designed around a small trusted kernel and extensible automation
+(
+Moura and Ullrich, 2021
+)
+. Lean is well suited here because our goal is not just to
+state
+properties of neural networks, but to implement the full pipeline: model definitions, compilation, execution, and verification within a single formal environment. Lean 4 is explicitly designed to be extensible at the system level (parser, elaborator, tactics, decision procedures, and code generation), and its metaprogramming framework enables substantial custom automation to live alongside theorems while still being checked by the same core
+(
+Moura and Ullrich, 2021
+;
+Ebner et al., 2017
+)
+. This helps close the semantic gap: the most fragile part of today’s verification workflows is often the glue between model code and the artifact the verifier analyzes, and Lean lets us make that glue explicit and checkable.
+Related work exists in other ITPs; for example, Isabelle/HOL has formalized feed-forward neural networks and provides tooling to import models (e.g., from TensorFlow.js) for reasoning about safety/correctness properties
+(
+Brucker and Stell, 2023
+)
+. We choose Lean because it is simultaneously a proof assistant and a practical functional programming language with a small trusted kernel and an extensible implementation model
+(
+Moura and Ullrich, 2021
+)
+. Lean’s ecosystem includes substantial shared infrastructure for formal mathematics (notably
+mathlib
+). Concurrently, the Lean community has launched
+CSLib
+, aiming to provide Mathlib-like shared foundations for computer science and verified software in Lean
+(
+Barrett et al., 2026
+)
+.
+TorchLean
+is designed for semantics-first ML: it makes the network definition the semantic ground truth and organizes the system into three components (
+NN.Spec
+,
+NN.Runtime
+,
+NN.Verification
+) that all compile to and operate on a shared op-tagged SSA/DAG computation-graph IR, so execution, differentiation, and certificates refer to the same meaning. We summarize our
+contributions
+as follows:
+•
+TorchLean
+(PyTorch-style programming in
+Lean
+).
+A Lean-native API for defining models and training loops with eager execution and a compiled mode that lowers programs to our IR.
+For the forward-only verifier fragment, we also prove compiler correctness.
+•
+Shared IR semantics with verified differentiation.
+TorchLean
+compiles to a single op-tagged SSA/DAG computation-graph IR with a precise denotation, reused by execution and verification.
+On this same IR, we prove a graph-parametric reverse-mode result: backprop computes the adjoint Fréchet derivative of
+[
+[
+G
+]
+]
+\mathopen{[\![}G\mathclose{]\!]}
+for any well-typed SSA/DAG
+G
+G
+.
+•
+Explicit floating point semantics with a clear trust boundary.
+We provide a proof-friendly rounding model and an executable IEEE-754 binary32 kernel, connected by refinement results on the finite path. We additionally provide interval/enclosure infrastructure with soundness lemmas for IEEE-executed endpoint intervals, and an explicit Arb/FLINT oracle boundary for rigorous transcendental enclosures when needed.
+•
+Verification + checked case studies.
+On the shared IR, we implement IBP/CROWN/LiRPA-style bound propagation with certificate checking and validate it end-to-end on robustness, control-style safety, and PINN/derivative-bound demos. We also evaluate
+TorchLean
+on small VNN-COMP-style benchmark slices (ONNX+VNN-LIB) by replaying sufficient-UNSAT checks inside Lean, and develop an interval-universal-approximation direction for IEEE-style float execution.
+•
+Reusable theorem layer over shared semantics.
+With one denotation for models across execution and analysis,
+TorchLean
+lets us mechanize classical results (e.g., approximation and energy/convergence arguments) once and reuse them across architectures and case studies.
+2
+Methodology
+Computation graphs and our IR (definitions).
+Modern ML systems commonly represent a model as a
+computation graph
+: a directed graph in which
+nodes
+are primitive operations (e.g.,
+MatMul
+,
+Conv
+,
+ReLU
+) and
+edges
+carry tensors (intermediate values) between operations. This is the standard representation used by deployment/exchange formats such as ONNX, where a graph is a side-effect-free computation composed of nodes that call operators and whose dataflow must admit a topological evaluation order.
+A graph is a
+directed acyclic graph (DAG)
+if it has no directed cycles; equivalently, it admits a topological evaluation order.
+An
+intermediate representation (IR)
+is a compiler-style, machine- and language-independent program representation designed to be a stable target for analysis and transformation.
+In
+TorchLean
+, the IR is an op-tagged (operator-tagged) computation graph: each node carries an explicit
+operator tag
+(an “opcode” identifying which primitive it denotes, such as
+linear
+,
+relu
+, or
+conv2d
+) plus shape metadata, so that execution and verification interpret nodes by the same primitive semantics rather than by an implicit convention. (This is analogous to compiler IRs where each node/instruction carries an operation code.) Finally, we store graphs in
+static single assignment (SSA)
+form: every intermediate value is defined exactly once and then referenced by subsequent nodes. SSA is a standard compiler IR discipline that simplifies dataflow reasoning and enables simple, deterministic evaluation and induction over the node list.
+Our goal is to eliminate the semantic gap between the
+model that is executed
+(training/inference) and the
+model that is analyzed
+(bounds/certificates).
+TorchLean
+treats the
+network definition
+as the single semantic reference point and provides multiple interpretations (execution, abstract interpretation, proof-oriented semantics)
+over the same meaning
+. Concretely, a model compiles to a shared
+op-tagged computation-graph IR
+in SSA/DAG form—static single assignment (each intermediate value is defined once) and a directed acyclic graph (no cycles), so the denotation is total and deterministic by evaluation in topological order
+(
+Cytron et al., 1991
+)
+. This IR is the common target for (i) training and inference, (ii) verified reverse-mode automatic differentiation, and (iii) Lean-native bound propagation and certificate checking. The result is a workflow in which external verifiers are optional and untrusted: their outputs are interpreted as
+certificates
+checked against the Lean semantics, reducing the trusted computing base.
+2.1
+NN.Spec
+Mainstream ML frameworks represent tensor shapes dynamically: tensors carry runtime shapes, and incompatibilities surface late (often as runtime exceptions or subtle bugs). Empirically, tensor shape faults are among the most prevalent classes of deep learning bugs and frequently lead to crashes
+(
+Wu et al., 2021
+)
+.
+TorchLean
+takes a semantics-first view: shape constraints are part of the
+type
+of a tensor, so ill-shaped programs are unrepresentable. This makes theorem statements cleaner (no repeated “shapes match” side conditions) and moves a large class of plumbing errors from testing-time to typechecking-time.
+Core datatypes (shapes and tensors).
+A tensor is indexed by a scalar domain
+α
+\alpha
+and a shape
+s
+s
+(
+Tensor
+​
+α
+​
+s
+\mathrm{Tensor}\ \alpha\ s
+); shapes form an inductive tree, where common ML shapes are nested applications of
+dim
+. Tensors are represented structurally as total index functions. This functional view is proof-friendly: tensor operations are defined by recursion on shape, and extensional equality reduces tensor equality to pointwise equality. The spec layer intentionally does
+not
+commit to a storage layout (row-major vs. column-major), making it suitable as a semantic reference across execution backends.
+⬇
+/
+--
+Shape-indexed
+tensors.
+-/
+inductive
+Tensor
+(
+a
+:
+Type
+)
+:
+Shape
+->
+Type
+where
+|
+scalar
+:
+a
+->
+Tensor
+a
+.
+scalar
+|
+dim
+:
+forall
+{
+n
+s
+},
+(
+Fin
+n
+->
+Tensor
+a
+s
+)
+->
+Tensor
+a
+(.
+dim
+n
+s
+)
+Typed modules (compositional networks).
+At the specification level, each layer is a typed morphism between tensor spaces, so composing networks is analogous to composing
+nn.Module
+s in PyTorch, but with shape contracts enforced by the type checker. In
+TorchLean
+, trainable parameters are carried as a shape-indexed heterogeneous list (one tensor per parameter shape), so parameter routing is type-driven. Composition is only definable when intermediate shapes match; ill-shaped networks do not typecheck. Because repeated functional updates (e.g., SGD) can build long closure chains, we provide
+materialization
+, which rebuilds a tensor into an array-backed normal form with the same extensional meaning but faster evaluation.
+⬇
+i
+mport
+torch.nn
+as
+nn
+#
+Model
++
+optimizer
+(semantics
+live
+in
+the
+runtime)
+m
+odel
+=
+nn.Linear(2,
+1)
+o
+pt
+=
+torch.optim.SGD(model.parameters(),
+lr=0.2)
+#
+Training
+data
+x
+=
+torch.tensor([[1.,0.],[0.,1.],[1.,1.]])
+y
+=
+torch.tensor([[2.],[-3.],[-1.]])
+#
+Training
+loop
+(autodiff
++
+updates
+external)
+f
+or
+step
+in
+range(10):
+opt.zero_grad()
+loss
+=
+nn.functional.mse_loss(model(x),
+y)
+loss.backward();
+opt.step()
+⬇
+o
+pen
+NN.API.TorchLean
+--
+Model
++
+Samples
+(compiled
+mode)
+d
+ef
+model
+:
+NN.Seq
+(NN.Tensor.Shape
+2)
+(NN.Tensor.Shape
+1)
+:=
+NN.seq
+(NN.linear
+2
+1
+(seedW
+:=
+0)
+(seedB
+:=
+1))
+d
+ef
+samples
+:
+List
+(TList
+IEEE32Exec
+[NN.Tensor.Shape
+2,
+NN.Tensor.Shape
+1])
+:=
+[
+tlist2
+x1
+y1]
+--
+By
+default
+everywhere
+use
+IEEE32Exec
+-
+proved
+floats
+def
+main
+:
+IO
+Unit
+:=
+do
+let
+mod
+<-
+Module
+.
+instantiate
+(
+a
+:=
+IEEE32Exec
+)
+.
+compiled
+let
+opt
+:=
+Optim
+.
+sgd
+(
+a
+:=
+IEEE32Exec
+)
+(
+lr
+:=
+0.2)
+opt
+.
+init
+mod
+.
+trainer
+.
+params
+--
+initialize
+for
+step
+in
+[0:10]
+do
+let
+loss
+:=
+NN
+.
+mseScalarDef
+(
+mod
+.
+trainer
+.
+forward
+x1
+,
+y1
+)
+ScalarTrainer
+.
+backwardT
+;
+opt
+.
+step
+Figure 3
+:
+PyTorch vs.
+TorchLean
+.
+We highlight comparable blocks: model/setup (yellow), data (blue), loop structure (purple), and per-step updates (green).
+2.2
+NN.Runtime
+Design target.
+NN.Runtime
+bridges theorem-prover definitions to runnable training and inference. The user-facing layer,
+TorchLean
+, mirrors the PyTorch workflow: define modules, run a forward pass, call backward, and apply optimizer steps. Like PyTorch,
+TorchLean
+supports an eager “define-by-run” style where executed ops record a dynamic dependency structure used by reverse-mode AD
+(
+Paszke et al., 2019
+)
+. Unlike PyTorch,
+TorchLean
+is designed around a verifier-facing semantic core: the same program can be compiled to a static computation graph that is the shared object consumed by verification and certificate checking.
+Two execution modes, one semantic target.
+Eager mode
+executes operations immediately and records an autograd tape in the style of PyTorch.
+Compiled mode
+lowers the same
+TorchLean
+program to our shared op-tagged SSA/DAG IR and evaluates that graph.
+This is
+not
+torch.compile
+-style compilation aimed at kernel fusion and runtime acceleration; our compiled mode exists to produce a formal graph that is the target of verification and certificate checking.
+A key correspondence theorem links eager executions to an equivalent well-typed SSA/DAG IR graph, so the same graph-level theorems apply uniformly across modes. As a result, we verify the
+executed
+semantic object (the shared IR), not an exported surrogate. We then prove reverse-mode AD
+once
+at the graph level: for any well-typed SSA/DAG
+G
+G
+over
+ℝ
+\mathbb{R}
+, backpropagation computes the adjoint Fréchet derivative of
+[
+[
+G
+]
+]
+\mathopen{[\![}G\mathclose{]\!]}
+, and this result applies to every compiled architecture given local derivative-correctness lemmas for the primitive ops.
+Theorem 2.1:
+Reverse-mode AD correctness
+Let
+G
+G
+be a well-typed SSA/DAG computation graph over
+ℝ
+\mathbb{R}
+with input context
+Γ
+\Gamma
+.
+Assume
+GraphFDerivCorrect
+G
+G
+.
+Define
+bp
+G
+​
+(
+x
+,
+s
+​
+e
+​
+e
+​
+d
+)
+:=
+backpropVec
+⁡
+(
+G
+,
+x
+,
+s
+​
+e
+​
+e
+​
+d
+)
+\mathrm{bp}_{G}(x,seed):=\mathrm{backpropVec}(G,x,seed)
+.
+Then for any input
+x
+x
+and cotangent
+s
+​
+e
+​
+e
+​
+d
+seed
+,
+bp
+G
+​
+(
+x
+,
+s
+​
+e
+​
+e
+​
+d
+)
+=
+(
+D
+⁡
+(
+evalVec
+​
+G
+)
+​
+(
+x
+)
+)
+⊤
+​
+s
+​
+e
+​
+e
+​
+d
+.
+\mathrm{bp}_{G}(x,seed)\;=\;\bigl(D\,(\mathrm{evalVec}\,G)(x)\bigr)^{\top}\,seed.
+For non-smooth primitives (e.g., ReLU at
+0
+0
+), we use the pointwise variant
+GraphFDerivCorrectAt
+under explicit side conditions (Appendix
+B
+); we define a deterministic executable convention at kink points (e.g., ReLU uses gradient
+0
+0
+at
+0
+0
+).
+We instantiate
+NodeFDerivCorrect
+for the operators used in our demos, and defer the full inventory to
+Appendix
+B
+. For the forward-only verifier fragment, we additionally prove compiler correctness:
+evaluating the IR emitted by
+compileForward1
+agrees with the source fragment evaluator
+(Appendix
+B.2
+).
+2.3
+Floating Point Semantics
+Many verification claims hinge on subtle numerical behavior like rounding, overflow/underflow, NaN/Inf propagation, and library-level conventions (e.g.,
+min
+/
+max
+corner cases). IEEE 754 standardizes floating-point formats, rounding rules, and exceptional values
+(
+IEEE Standards Association, 2019
+)
+. In Lean, however, the built-in runtime floating-point types are
+opaque to the kernel
+: floating-point values are not encoded in the logic, so the kernel cannot compute with or reason about them without additional axioms. Consequently, we separate fast execution from proved semantics and make the trust boundary explicit. For
+explicit numeric semantics
+,
+TorchLean
+makes numerical assumptions first-class by instantiating the same model over multiple scalar domains
+α
+\alpha
+, each serving a distinct role (Table
+1
+). We use
+α
+=
+ℝ
+\alpha=\mathbb{R}
+for clean reference semantics in analytic reasoning and verified differentiation; enclosure domains such as
+α
+=
+Interval
+\alpha=\texttt{Interval}
+for sound region-wise bounds in verification pipelines (e.g., IBP)
+(
+Gowal et al., 2018
+)
+; and explicit floating-point semantics for execution. For executable Float32, we provide
+IEEE32Exec
+, a Lean-defined bit-level model of IEEE-754 binary32 (including signed zeros, subnormals, NaNs/Infs, and rounding rules), so “Float32 execution” has a precise internal meaning rather than an informal runtime convention. In parallel, we provide proof-relevant rounding-on-
+ℝ
+\mathbb{R}
+models (FP32/NF) for compositional error envelopes, where each primitive is specified as “compute in
+ℝ
+\mathbb{R}
+then round” with lemmas that bound and compose rounding error through whole graphs (Appendix
+C
+), in the spirit of verified floating-point libraries such as Flocq
+(
+Boldo and Melquiond, 2011
+)
+. Lean’s runtime
+Float
+(binary64) and
+Float32
+(binary32) remain available for fast execution but are treated as explicitly trusted/validated backends due to kernel opacity. Finally, in addition, we build an interval/enclosure layer spanning both the proof-oriented and executable semantics: we implement Float32 endpoint interval arithmetic on top of
+IEEE32Exec
+and prove operation-level soundness theorems that computed endpoint boxes conservatively enclose the corresponding real (or extended-real) interpretations. For rigorous transcendental bounds, we optionally integrate Arb/FLINT via an explicit oracle boundary, using it as a certificate generator while keeping the trusted computing base explicit (Appendix
+C
+).
+Table 1
+:
+Trust and scalar semantics in
+TorchLean
+, including an explicit validated-numerics oracle boundary (details in Appendix
+E.1
+).
+Mode
+Purpose
+Semantics and trust
+ℝ
+\mathbb{R}
+Proofs, reference Autograd
+Exact real arithmetic (reference; no trust assumptions).
+Interval
+IBP/CROWN bounds
+Sound enclosure domain with proved transfer rules; includes executable IEEE endpoint intervals with soundness theorems back to
+ℝ
+\mathbb{R}
+/
+EReal
+.
+FP32 / NF
+Rounding-aware theorems
+Round-on-
+ℝ
+\mathbb{R}
+proof model with compositional error envelopes.
+IEEE32Exec
+Executable Float32 model
+Lean-defined, bit-level IEEE-754 binary32 semantics for core ops (hardware matching is separate).
+Arb/FLINT oracle
+Rigorous transcendentals
+External validated ball/interval enclosures at user-chosen precision (certificate generator); explicit non-kernel trust boundary.
+Lean (
+Float32
+)
+Fast execution
+Runtime/libm implementations (opaque to the kernel); treated as an explicit assumption or validated against
+IEEE32Exec
+under a fixed deployment configuration.
+FP32/NF
+↔
+\leftrightarrow
+IEEE32Exec
+: internal refinement.
+For the IEEE-754 core arithmetic implemented in
+IEEE32Exec
+, we prove an
+internal
+refinement to the FP32 round-on-
+ℝ
+\mathbb{R}
+model on finite executions (excluding NaN/Inf and overflow). We establish per-operator theorems of the form
+toReal (op x y) = fp32Round(…)
+and lift them to a compositional bridge showing that real-valued evaluation of
+IEEE32Exec
+expressions agrees with the corresponding FP32/NF specification (Appendix
+E.1
+).
+2.4
+NN.Verification
+Verification is a statement about semantics:
+NN.Verification
+expresses goals as Lean theorems about the denotation of a compiled graph
+[
+[
+G
+]
+]
+\mathopen{[\![}G\mathclose{]\!]}
+—e.g., robustness margins, invariance/safety constraints, decrease of Lyapunov functions, or PINN residual bounds. The verifier is
+not
+the claim: it is a mechanism for producing intermediate bounds, relaxations, or constraints which are then checked and used to discharge a semantic property of
+[
+[
+G
+]
+]
+\mathopen{[\![}G\mathclose{]\!]}
+. All enclosure theorems are stated against a
+specified
+execution semantics (by default
+IEEE32Exec
+); relating results to hardware
+Float32
+is an explicit refinement/validation assumption at the deployment boundary.
+Native bound propagation over the shared IR.
+Because our computation-graph IR is op-tagged and typed, bound propagation operates on the same object used by execution, eliminating any separate “export semantics” to trust. Formally, bounds live in an
+abstract domain
+𝒟
+\mathcal{D}
+(e.g., interval boxes or affine forms) layered over a chosen scalar semantics for evaluation (e.g.,
+ℝ
+\mathbb{R}
+, a rounded-
+ℝ
+\mathbb{R}
+model, or
+IEEE32Exec
+); each abstract element has a concretization to a set of concrete values, and soundness means that every concrete execution trace consistent with the input region remains inside the propagated abstract region.
+We include a sound core of interval bound propagation (IBP)
+(
+Gowal et al., 2018
+)
+, which propagates node-wise enclosures
+[
+l
+i
+,
+u
+i
+]
+[l_{i},u_{i}]
+forward through the graph using per-operator transfer rules stated against the same operator denotations that define
+[
+[
+G
+]
+]
+\mathopen{[\![}G\mathclose{]\!]}
+. The main structural preconditions are explicit (topological order, supported operator subset, and well-typedness/shape invariants). Building on this, we provide an
+end-to-end
+graph theorem for IBP in certificate checking form: under local semantic consistency and local box-consistency obligations at each node, the resulting per-node boxes enclose the corresponding semantic values of
+[
+[
+G
+]
+]
+\mathopen{[\![}G\mathclose{]\!]}
+whenever both are defined (Appendix
+D
+). This reduces global correctness to a stable set of locally checkable obligations.
+We prove that locally consistent IBP certificates enclose the corresponding graph value semantics (Theorem
+D.1
+), and that our concrete implementation
+runIBP?
+satisfies these local conditions and thus encloses the total evaluator
+evalGraphRec
+(Theorem
+D.1
+).
+For tighter bounds,
+TorchLean
+implements CROWN/LiRPA-style affine propagation
+(
+Zhang et al., 2018
+;
+Xu et al., 2020
+)
+over the same IR, including both forward affine propagation and objective-dependent backward components. Affine relaxations capture correlations that intervals miss and typically yield substantially tighter output bounds through compositions of linear layers and monotone activations. Crucially, both IBP and affine propagation are anchored to the same IR denotation: transfer rules are stated against the operators that define
+[
+[
+G
+]
+]
+\mathopen{[\![}G\mathclose{]\!]}
+, not against an external numeric implementation.
+Beyond bounds: richer specifications over the same tensor semantics.
+TorchLean
+supports broader property classes than pure output bounding, including robustness-style statements (e.g., certified margins and Lipschitz-type bounds), control-oriented stability and safety properties (e.g., Lyapunov/barrier-style inequalities), and derivative-dependent objectives such as PINN residual enclosures. These specifications are written polymorphically over the tensor semantics and can be combined with bound propagation and verified differentiation when needed.
+Certificates and a reduced trusted computing base.
+When stronger tightness is required than the native engines provide,
+TorchLean
+adopts a certificate/checker architecture: external solvers act as producers of artifacts (e.g., split constraints, optimized relaxations, or dual objects), while a small Lean checker validates well-formedness (shapes, op tags), structural invariants, and the defining inequalities needed to conclude a theorem about
+[
+[
+G
+]
+]
+\mathopen{[\![}G\mathclose{]\!]}
+(
+Necula, 1997
+)
+. In this style, we support an
+α
+/
+β
+\alpha/\beta
+-CROWN certificate dialect in which the certificate supplies IBP pre-activation boxes, per-node affine bounds,
+α
+\alpha
+parameters for unstable-ReLU lower relaxations, and optional
+β
+\beta
+phase vectors that encode active/inactive constraints consistent with the IBP intervals
+(
+Xu et al., 2021
+;
+Wang et al., 2021
+)
+. The checker replays the same per-node step semantics in Lean and accepts only if the provided bounds match the recomputed bounds (exact match after canonical float-grid quantization) and required parent bounds appear in topological order. At the operator level, we additionally prove soundness theorems for the
+β
+\beta
+-aware ReLU relaxations over
+ℝ
+\mathbb{R}
+, ensuring that phase-consistent active/inactive constraints permit exact linearization while preserving sound upper/lower bounds in the unstable case (Appendix
+D
+).
+3
+Results
+We evaluate
+TorchLean
+as an end-to-end, semantics-aligned stack in which a single model definition is (i) executed (training/inference with verified backward autograd), (ii) analyzed (bounds), and (iii) validated (certificate checks) against one shared semantics. For
+numerics
+, unless noted otherwise, executable experiments use explicit Float32 semantics via
+IEEE32Exec
+; FP32/NF are used for theorem-level rounding/error statements. Our aim is not to beat specialized verifiers on raw throughput, but to show that practical ML-style workflows (execution + training) can coexist with machine-checked guarantees and an explicitly stated trust boundary.
+Execution: verified autograd across models and backends.
+TorchLean
+supports end-to-end training/inference workflows across a range of architectures (MLPs, CNNs, Transformers, GRUs/LSTMs) under multiple scalar semantics and execution backends. The same
+TorchLean
+model and loop run in (i) an eager tape backend and (ii) a compiled backend that lowers the program to our op-tagged SSA/DAG IR; the compiled path produces exactly the graph representation consumed by the verification layer, so downstream analysis targets the
+executed
+model rather than a separately interpreted export. We evaluate execution trade-offs using a two-layer ReLU MLP SGD microbenchmark (Figure
+4
+): array-backed kernels are fastest; functional spec tensors are proof-friendly but incur overhead at larger shapes; and
+TorchLean
+adds tape/graph bookkeeping yet remains interactive for small-to-medium models. Overall, these results support the intended use of
+TorchLean
+as semantics-first infrastructure for debugging, demos, and verifier-facing pipelines, with large-scale training delegated to optimized runtimes when needed.
+Figure 4
+:
+Execution microbenchmark scaling (warm-up excluded).
+TorchLean
+Eager uses the eager tape backend;
+TorchLean
+Compiled uses the SSA/DAG compiled backend (see Section
+2.2
+).
+TorchLean
+EagerFast enables a small set of runtime-only fast kernels for hot ops in eager mode.
+Verification: native bounds, certificate checking, and universal approximation theorems.
+All verification is stated as a semantic property of the graph denotation
+[
+[
+G
+]
+]
+\mathopen{[\![}G\mathclose{]\!]}
+and discharged via sound enclosures computed on the shared op-tagged IR.
+TorchLean
+provides native interval bound propagation (IBP) via a forward interval sweep yielding node-wise enclosures
+[
+l
+i
+,
+u
+i
+]
+[l_{i},u_{i}]
+, and tighter CROWN/LiRPA-style affine relaxations (native in Lean) that propagate linear upper/lower envelopes (including objective-dependent backward/dual passes) to capture correlations missed by pure intervals. To keep the trusted computing base small, we adopt a certificate/checker architecture: bound
+generation
+(e.g.,
+α
+/
+β
+\alpha/\beta
+-CROWN-style optimization and split/branch-and-bound) is treated as an optional, untrusted producer, while Lean serves as the trusted checker that validates structural consistency and enclosure constraints against the IR semantics covering node-wise bounds and, for branch-and-bound workflows, leaf certificates (root box/leaves and per-leaf lower bounds/thresholds). We do not yet check full branch-and-bound internals (explicit
+α
+/
+β
+\alpha/\beta
+variables, dual envelopes, branching completeness); formats, scope, and planned extensions are in Appendix
+D
+.
+Figure
+5
+also highlights that our mechanized UAT and an
+interval universal approximation (IUA)
+direction under explicit
+IEEE32Exec
+semantics are stated for the same shared artifact (Appendix
+E
+). We demonstrate this stack end-to-end on three case studies.
+Table 2
+:
+VNN-COMP-style mini-suites (sufficient UNSAT check). Lean runs use runtime
+Float
+(binary64). Python
+α
+\alpha
+-CROWN is an untrusted baseline bound producer.
+Suite
+Method
+Impl
+n
+n
+safe
+time
+MNIST-FC
+IBP
+Lean
+30
+0
+2.43s
+MNIST-FC
+CROWN-Obj (
+crownobj
+)
+Lean
+30
+6
+13.21s
+MNIST-FC
+CROWN-Obj + imported
+α
+\alpha
+Lean
+30
+6
+7.99s
+MNIST-FC
+α
+\alpha
+-CROWN (20 iters)
+Python
+30
+13
+80.9s
+ACASXu (run2a_1_1)
+IBP
+Lean
+10
+0
+0.12s
+ACASXu (run2a_1_1)
+α
+\alpha
+-CROWN (20 iters)
+Python
+10
+0
+7.94s
+VNN-COMP-style suites (ONNX + VNNLIB).
+We adopt the VNN-COMP convention that each benchmark instance is an ONNX network paired with a VNN-LIB property specification
+(
+VNN-COMP, 2024
+;
+VNN-LIB, 2021
+)
+. A lightweight Python export step converts ONNX/VNN-LIB into compact JSON bundles consumed by a Lean runner, which checks a
+sufficient UNSAT
+condition by replaying IBP/CROWN-style bounds against the shared IR semantics (fast runtime
+Float
+). Table
+2
+reports results on small MNIST-FC and ACASXu slices: IBP is conservative, while objective-dependent CROWN refutes some MNIST-FC properties; importing optimized
+α
+\alpha
+slopes mainly improves runtime. Details of the interface and schemas are in Appendix
+D.2
+.
+UAT (classical).
+For any continuous
+f
+f
+on a compact domain (e.g.,
+[
+−
+1
+,
+1
+]
+d
+[-1,1]^{d}
+) and
+ε
+>
+0
+\varepsilon>0
+, there exists a
+single-hidden-layer ReLU MLP
+N
+N
+such that
+sup
+x
+∈
+[
+−
+1
+,
+1
+]
+d
+|
+N
+⁡
+(
+x
+)
+−
+f
+⁡
+(
+x
+)
+|
+≤
+ε
+\sup_{x\in[-1,1]^{d}}|N(x)-f(x)|\leq\varepsilon
+.
+App.
+E
+real
+Toward IUA (Float32-exec).
+For a fixed network
+N
+N
+and input box
+B
+B
+, we mechanize an interval evaluator
+N
+♯
+​
+(
+B
+)
+N^{\sharp}(B)
+and
+prove a sound enclosure: all
+IEEE32Exec
+executions
+N
+⁡
+(
+x
+)
+N(x)
+with
+x
+∈
+B
+x\in B
+lie in
+γ
+​
+(
+N
+♯
+​
+(
+B
+)
+)
+\gamma(N^{\sharp}(B))
+(soundness; not yet the exact hull).
+App.
+E.1
+IEEE32Exec
+Same artifact.
+One Lean model definition
+→
+\rightarrow
+executable training + compiled SSA/DAG IR reused for verification.
+Figure 5
+:
+Theory + execution: UAT and IEEE32Exec soundness.
+Case studies: Certified Robustness, PINN residual bounds, and a Neural controller.
+Certified Robustness.
+We certify an
+ℓ
+∞
+\ell_{\infty}
+margin condition for a digits linear classifier (
+sklearn
+digits, 8
+×
+\times
+8
+→
+\rightarrow
+64 features; 64
+→
+\rightarrow
+10;
+ε
+=
+0.02
+\varepsilon=0.02
+). As summarized in Table
+3
+, the model is nominally correct on
+349
+/
+360
+349/360
+test inputs and
+certified robust
+on
+318
+/
+360
+318/360
+. A small Lean checker replays these results directly from the exported bound artifact by verifying the standard logit-margin inequality (Appendix
+D
+); checking is lightweight (0.032 ms avg, 0.057 ms max; Table
+3
+). Figure
+4
+further reports how IBP certificate runtime and artifact size scale with MLP parameter count.
+Figure 6
+:
+IBP scaling on MLPs (in=hid, out=10, 3 layers). Wall time (left axis) and certificate artifact size in bytes (right axis) versus parameter count. Both increase with model size, quantifying checker cost and proof-artifact overhead.
+Table 3
+:
+Robustness case study (digits linear classifier).
+Dataset
+sklearn
+digits (8
+×
+\times
+8)
+Model
+Linear (64
+→
+\rightarrow
+10)
+Norm / radius
+ℓ
+∞
+\ell_{\infty}
+,
+ε
+=
+0.02
+\varepsilon=0.02
+Nominally correct
+349 / 360
+Certified robust
+318 / 360
+Checker time (avg / max)
+0.032 ms / 0.057 ms
+Neural controller.
+We consider a two-stage controller-verification workflow: external training/search proposes a neural feedback controller
+u
+⁡
+(
+x
+)
+u(x)
+together with a Lyapunov candidate
+V
+⁡
+(
+x
+)
+V(x)
+, and Lean then certifies region-based safety/stability by checking CROWN/LiRPA enclosures for Lyapunov inequalities over input regions (Appendix
+D
+). This setup mirrors recent
+two-stage
+stabilizing-controller pipelines: Stage 1 learns an initial region of attraction using Zubov-inspired boundary sampling, and Stage 2 fixes this region and iteratively refines the networks to eliminate counterexamples (CEGIS) discovered within it
+(
+Li et al., 2025
+)
+. We bound
+V
+⁡
+(
+x
+)
+V(x)
+and
+V
+˙
+​
+(
+x
+)
+=
+∇
+V
+​
+(
+x
+)
+⋅
+f
+⁡
+(
+x
+,
+u
+⁡
+(
+x
+)
+)
+\dot{V}(x)=\nabla V(x)\cdot f(x,u(x))
+on a region, using verified autograd to compute
+∇
+V
+\nabla V
+, and discharge the resulting Lyapunov/safety conditions as Lean-checked statements about the shared semantic model. Figure
+7
+compares three execution settings for this workflow: (i) Python-only (Stage 1+2 in PyTorch Float32, with optional Lean checking), (ii) all-
+TorchLean
+, and (iii) hybrid (Stage 1 in PyTorch, Stage 2 and post-checking in
+TorchLean
+). Holding Stage 1 weights fixed and using a common Stage 2 baseline (width 100; 10 PGD candidates; 1 PGD step), Python Stage 2 takes
+≈
+0.015
+\approx 0.015
+s and yields 9/10 positive-loss candidates, while
+TorchLean
+Stage 2 under explicit IEEE-754 Float32 semantics (
+IEEE32Exec
+) takes
+≈
+1212
+\approx 1212
+s and yields 7/10 positives;
+TorchLean
+additionally computes a native CROWN enclosure for the scalar loss over a small input box (e.g., an upper bound
+≈
+0.1869
+\approx 0.1869
+).
+(i) Python-only
+(ii) Hybrid
+PyTorch
+→
+\rightarrow
+TorchLean
+(iii) All-in-Lean
+TorchLean
+Stage 1:
+PyTorch training
+Stage 1:
+PyTorch (export Float32)
+Stage 1:
+TorchLean
+(
+IEEE32Exec
+)
+Stage 2:
+CEGIS / PGD / SGD
+Stage 2:
+TorchLean
+(
+IEEE32Exec
+)
+Stage 2:
+TorchLean
+(
+IEEE32Exec
+)
+untrusted runtime
+untrusted producer
+Lean checking (shared semantic core).
+Compile to op-tagged SSA/DAG IR
+→
+\rightarrow
+IBP / CROWN bounds or certificate checking
+External solver
+(
+α
+/
+β
+\alpha/\beta
+-CROWN)
+certificates
+TCB minimized to IR semantics + checker (external solvers optional/untrusted).
+Figure 7
+:
+Neural-controller workflow in three execution settings. All pipelines compile to a shared op-tagged SSA/DAG IR and are verified inside Lean; external optimizers act only as untrusted certificate producers.
+PINN residual bounds:
+we demonstrate end-to-end verification of physics-informed neural networks trained to satisfy PDEs. The workflow begins with training a PINN model in Python (e.g., viscous Burgers equation
+u
+t
++
+u
+⋅
+u
+x
+−
+ν
+​
+u
+x
+​
+x
+=
+0
+u_{t}+u\cdot u_{x}-\nu u_{xx}=0
+) using PyTorch autograd to compute derivatives for the PDE residual loss. After training, we export weights to JSON and load them into Lean. For verification, we compute bounds on
+u
+⁡
+(
+x
+)
+u(x)
+via IBP/CROWN, and compute interval enclosures for
+u
+′
+​
+(
+x
+)
+u^{\prime}(x)
+and
+u
+′′
+​
+(
+x
+)
+u^{\prime\prime}(x)
+via dedicated first/second-derivative bound-propagation passes on the same op-tagged graph (covering the smooth ops used in the PINN demos, e.g.
+tanh
+and linear layers), rather than by recursively differentiating the backward graph. These bounds are then combined to certify that the PDE residual
+|
+ℛ
+​
+(
+u
+θ
+)
+​
+(
+x
+)
+|
+|\mathcal{R}(u_{\theta})(x)|
+is bounded within tolerance
+ε
+\varepsilon
+at verification points (Appendix
+D
+).
+Table 4
+:
+“Contains?” checks enclosure of the Arb-real range (transcendentals) or the exact RealIA truth (arithmetic).
+Case
+Type
+IEEE32Exec
+endpoint
+contains?
+runtime
+Float32
+endpoint
+contains?
+tanh
+⁡
+(
+[
+−
+0.5
+,
+0.5
+]
+)
+\tanh([-0.5,\,0.5])
+trans
+×
+\times
+✓
+exp
+⁡
+(
+[
+−
+1
+,
+1
+]
+)
+\exp([-1,\,1])
+trans
+×
+\times
+×
+\times
+p
+⁡
+(
+x
+)
+=
+x
+2
++
+0.1
+​
+x
+−
+0.5
+,
+x
+∈
+[
+−
+0.5
+,
+0.5
+]
+p(x)=x^{2}+0.1x-0.5,\ x\in[-0.5,\,0.5]
+arith
+✓
+✓
+add_tie
+(
+1
++
+2
+−
+24
+)
+(1+2^{-24})
+arith
+✓
+×
+\times
+div_signed_zero
+1
+/
+[
+−
+0
+,
+−
+0
+]
+1/[-0,-0]
+arith
+✓
+†
+✓
+†
+†
+Intervals widen to
+[
+−
+∞
+,
++
+∞
+]
+[-\infty,+\infty]
+because the denominator
+I
+I
+contains
+0
+0
+, even though point evaluation at
+−
+0
+-0
+yields
+−
+∞
+-\infty
+.
+Numerical semantics stress tests.
+Table
+4
+shows why we make numerical semantics explicit: endpoint evaluation alone is not a reliable enclosure mechanism for transcendentals, whereas the Arb-backed pipeline provides rigorous real enclosures (Appendix E.1). For core arithmetic, directed rounding matters: the ties-to-even case
+add_tie
+is enclosed by
+IEEE32Exec
+directed endpoints but can collapse under naive runtime
+Float32
+. Signed-zero guards can also force principled widening (e.g., division by
+[
+−
+0
+,
+−
+0
+]
+[-0,-0]
+).
+4
+Related work
+Neural network verification (solver-based and bound-propagation).
+Neural network verification is central in safety and robustness analysis
+(
+Kaulen et al., 2025
+;
+Li et al., 2025
+;
+Ji et al., 2025
+;
+Chen et al., 2024
+)
+. Broadly, the literature spans (i)
+solver-based
+methods such as Reluplex and Marabou
+(
+Katz et al., 2019
+)
+, which encode verification problems as satisfiability/constraint queries, and (ii)
+abstract-interpretation / relaxation
+methods such as IBP
+(
+Gowal et al., 2018
+;
+Moore et al., 2009
+)
+and linear bound propagation (CROWN/DeepPoly and related abstractions)
+(
+Dvijotham et al., 2018
+;
+Gehr et al., 2018
+;
+Raghunathan et al., 2018
+;
+Singh et al., 2018
+;
+Singh et al., 2019
+;
+Wang et al., 2018
+;
+Wong and Kolter, 2018
+;
+Zhang et al., 2018
+)
+. These tools often operate on exported artifacts (ONNX/TorchScript/custom IRs) and therefore inherit an additional trust boundary at the export/interpretation step. This pipeline is standardized and stress-tested in VNN-COMP, where instances are packaged as an ONNX network together with a VNN-LIB property specification
+(
+Brix et al., 2024
+;
+VNN-COMP, 2024
+;
+VNN-LIB, 2021
+)
+, making the export/interface boundary an explicit part of the evaluation regime.
+CROWN-family optimizers and certificate checking.
+CROWN-family methods derive output bounds by propagating sound linear relaxations of nonlinearities and viewing the result through a dual objective;
+α
+\alpha
+-CROWN
+(
+Xu et al., 2021
+)
+tightens bounds by optimizing relaxation parameters, and
+β
+\beta
+-CROWN integrates splitting/branch-and-bound to further tighten bounds
+(
+Wang et al., 2021
+)
+.
+TorchLean
+implements a Lean-native CROWN/LiRPA core over our shared op-tagged IR semantics (proved-sound IBP, a basic forward affine pass, and an objective-dependent backward/dual pass). Reimplementing the full
+α
+/
+β
+\alpha/\beta
+-CROWN optimization stack inside Lean including the parameter-optimization heuristics and branch-and-bound search is ongoing work. When state-of-the-art tightness is needed, we instead treat external solvers as untrusted producers and check their exported bounds/certificates against the same IR semantics, keeping the trusted computing base to a small checker.
+Formalization in theorem provers and Lean infrastructure.
+ITP’s have been used to formalize ML-relevant mathematics (e.g., generalization bounds
+(
+Bagnall and Stewart, 2019
+)
+, activation-function libraries
+(
+Aleksandrov and Völlinger, 2023
+)
+, and network translations
+(
+Gummersbach et al., 2025
+)
+). Lean’s ecosystem (notably
+mathlib
+) makes these developments practical, but end-to-end neural verification remains hard because it requires tensor representations that scale to modern architectures, a sound differentiation story, and numerical semantics that are explicit enough to connect proofs to execution.
+TensorLib
+provides a verified tensor library for Lean
+(
+leanprover, 2025
+)
+and, as of this writing, is under active development.
+SciLean, verified floats, and complementary developments.
+SciLean is a Lean-native library for scientific computing with array abstractions and automatic differentiation
+(
+Contributors, 2023
+)
+.
+TorchLean
+targets a different point in the design space: typed tensor computation graphs with shape-indexed tensors, a graph-parametric reverse-mode correctness theorem for SSA/DAGs, and certificate-checked verification workflows. On numerics, verified floating-point frameworks such as Flocq
+(
+Boldo and Melquiond, 2011
+)
+motivate the separation we use between proof-friendly rounding models (FP32/NF) and an executable IEEE-style kernel (
+IEEE32Exec
+), with an explicit trust boundary to runtime floats. HopfieldNet formalizes Hopfield/Boltzmann-style energy arguments in Lean
+(
+Cipollina et al., 2025
+)
+. Our Hopfield material is positioned as a complementary case study within a shared tensor/graph semantics: we mechanize the standard energy-decrease and convergence-style results in the same framework; see Appendix
+D.3
+.
+5
+Conclusion
+TorchLean
+advances a semantics-first approach to neural networks: the network definition is the ground truth, and execution and verification are aligned by construction. By compiling once to a shared op-tagged SSA/DAG IR,
+TorchLean
+makes evaluation, differentiation, bound propagation, and certificate checking refer to the same meaning, enabling machine-checked claims about robustness, physics-informed residual bounds, and control-oriented safety properties without relying on an informal export pipeline. Our current system provides native IBP/CROWN-style bound propagation and small Lean checkers for externally produced artifacts, while making numerical trust boundaries explicit (including Float32 semantics and validated enclosure backends); the remaining gaps are largely engineering and coverage (expanding the supported operator subset, strengthening target
+Float32
+conformance; Appendix
+F
+). More broadly, verified ML may benefit from an ecosystem shift in the spirit of what PyTorch enabled for empirical ML: a shared, extensible substrate for building and composing systems at scale. Lean has already demonstrated this model through
+mathlib
+, and emerging CS foundations such as CSLib point toward similar shared infrastructure for verified software.
+TorchLean
+contributes one piece of that stack by making it practical to connect certified neural computation with fully verified software systems.
+6
+Acknowledgments
+Robert Joseph George is supported by a Caltech Graduate Fellowship. Jennifer Cruden is supported by a Caltech SURF Fellowship. Huan Zhang and Xiangru Zhong are supported in part by NSF (IIS-2331967) and the AI2050 program at Schmidt Sciences (AI2050 Early Career Fellowship). Anima Anandkumar is supported in part by the Bren endowed chair, ONR (MURI grant N00014-18-12624) and the 2050 senior fellow program at Schmidt Sciences.
+References
+Aleksandrov and Völlinger (2023)
+A. Aleksandrov and K. Völlinger
+Formalizing piecewise affine activation functions of neural networks in coq
+.
+External Links:
+2301.12893
+,
+Link
+Cited by:
+§4
+.
+Bagnall and Stewart (2019)
+A. Bagnall and G. Stewart
+Certifying the true error: machine learning in coq with verified generalization guarantees
+.
+Proceedings of the AAAI Conference on Artificial Intelligence
+33
+(
+01
+),
+pp. 2662–2669
+.
+External Links:
+Document
+,
+Link
+Cited by:
+§4
+.
+Barrett
+et al.
+(2026)
+C. Barrett, S. Chaudhuri, F. Montesi, J. Grundy, P. Kohli, L. de Moura, A. Rademaker, and S. Yingchareonthawornchai
+CSLib: the lean computer science library
+.
+External Links:
+2602.04846
+,
+Document
+Cited by:
+§1
+.
+Boldo and Melquiond (2011)
+S. Boldo and G. Melquiond
+Flocq: a unified library for proving floating-point algorithms in Coq
+.
+In
+Proceedings of the 20th IEEE Symposium on Computer Arithmetic (ARITH)
+,
+External Links:
+Document
+,
+Link
+Cited by:
+Appendix C
+,
+Appendix C
+,
+§2.3
+,
+§4
+.
+Brisebarre
+et al.
+(2025)
+N. Brisebarre, G. Hanrot, J. Muller, and P. Zimmermann
+Correctly rounded evaluation of a function: why, how, and what cost?
+.
+ACM Computing Surveys
+.
+External Links:
+Document
+Cited by:
+§C.1
+,
+§C.1
+.
+Brix
+et al.
+(2024)
+C. Brix, S. Bak, T. T. Johnson, and H. Wu
+The fifth international verification of neural networks competition (vnn-comp 2024): summary and results
+.
+External Links:
+2412.19985
+,
+Document
+Cited by:
+§D.2
+,
+§D.2
+,
+§D.2
+,
+§4
+.
+Brucker and Stell (2023)
+A. D. Brucker and A. Stell
+Verifying feedforward neural networks for classification in isabelle/hol
+.
+In
+Formal Methods
+,
+External Links:
+Document
+,
+Link
+Cited by:
+§1
+.
+Chen
+et al.
+(2024)
+S. Chen, L. Molu, and M. Fazlyab
+Verification-aided learning of neural network barrier functions with termination guarantees
+.
+In
+2024 American Control Conference (ACC)
+,
+pp. 3610–3617
+.
+Cited by:
+§4
+.
+Cipollina
+et al.
+(2025)
+M. Cipollina, M. Karatarakis, and F. Wiedijk
+Formalized hopfield networks and boltzmann machines
+.
+External Links:
+2512.07766
+,
+Link
+Cited by:
+§D.3
+,
+§4
+.
+Contributors (2023)
+S. Contributors
+SciLean: scientific computing in lean
+.
+Note:
+Software
+External Links:
+Link
+Cited by:
+§4
+.
+Cybenko (1989)
+G. Cybenko
+Approximation by superpositions of a sigmoidal function
+.
+Mathematics of Control, Signals, and Systems
+2
+,
+pp. 303–314
+.
+External Links:
+Document
+Cited by:
+Appendix E
+.
+Cytron
+et al.
+(1991)
+R. Cytron, J. Ferrante, B. K. Rosen, M. N. Wegman, and F. K. Zadeck
+Efficiently computing static single assignment form and the control dependence graph
+.
+ACM Transactions on Programming Languages and Systems
+13
+(
+4
+),
+pp. 451–490
+.
+External Links:
+Document
+Cited by:
+§2
+.
+Dvijotham
+et al.
+(2018)
+K. Dvijotham, R. Stanforth, S. Gowal, T. Mann, and P. Kohli
+A dual approach to scalable verification of deep networks
+.
+In
+Proceedings of the 34th Conference on Uncertainty in Artificial Intelligence (UAI 2018)
+,
+Note:
+arXiv:1803.06567
+External Links:
+Link
+Cited by:
+§4
+.
+Ebner
+et al.
+(2017)
+G. Ebner, S. Ullrich, J. Roesch, J. Avigad, and L. de Moura
+A metaprogramming framework for formal verification
+.
+Proceedings of the ACM on Programming Languages
+1
+(
+ICFP
+),
+pp. 34:1–34:29
+.
+External Links:
+Document
+,
+Link
+Cited by:
+§1
+.
+Flocq Developers (2025)
+Flocq Developers
+Flocq: theoretical background (floats for coq)
+.
+Note:
+https://flocq.gitlabpages.inria.fr/theos.html
+Cited by:
+§C.1
+.
+Gehr
+et al.
+(2018)
+T. Gehr, M. Mirman, D. Drachsler-Cohen, P. Tsankov, S. Chaudhuri, and M. Vechev
+Ai2: safety and robustness certification of neural networks with abstract interpretation
+.
+In
+2018 IEEE symposium on security and privacy (SP)
+,
+pp. 3–18
+.
+Cited by:
+§4
+.
+Goodfellow
+et al.
+(2014)
+I. J. Goodfellow, J. Shlens, and C. Szegedy
+Explaining and harnessing adversarial examples
+.
+arXiv preprint arXiv:1412.6572
+.
+External Links:
+Document
+,
+1412.6572
+Cited by:
+§1
+.
+Gowal
+et al.
+(2018)
+S. Gowal, K. Dvijotham, R. Stanforth, R. Bunel, C. Qin, J. Uesato, R. Arandjelović, T. Mann, and P. Kohli
+On the effectiveness of interval bound propagation for training verifiably robust models
+.
+In
+NeurIPS Workshop on Security in Machine Learning
+,
+External Links:
+Link
+Cited by:
+§1
+,
+§2.3
+,
+§2.4
+,
+§4
+.
+Gummersbach
+et al.
+(2025)
+L. A. Gummersbach, K. Völlinger, and A. Aleksandrov
+A formally verified neural network converter for the interactive theorem prover coq
+.
+In
+Theoretical Aspects of Software Engineering
+,
+P. Rümmer and Z. Wu (Eds.)
+,
+Cham
+,
+pp. 197–214
+.
+Cited by:
+§4
+.
+Hornik (1991)
+K. Hornik
+Approximation capabilities of multilayer feedforward networks
+.
+Neural Networks
+4
+(
+2
+),
+pp. 251–257
+.
+External Links:
+Document
+Cited by:
+Appendix E
+.
+Hwang
+et al.
+(2025)
+G. Hwang, W. Lee, Y. Park, S. Park, and F. Saad
+Floating-point neural networks are provably robust universal approximators
+.
+In
+Computer Aided Verification (CAV 2025)
+,
+Lecture Notes in Computer Science
+, Vol.
+15932
+,
+pp. 301–326
+.
+Note:
+Full version: arXiv:2506.16065
+External Links:
+Document
+,
+Link
+Cited by:
+§E.1
+,
+§E.1
+,
+§1
+.
+IEEE Standards Association (2019)
+IEEE Standards Association
+IEEE Standard for Floating-Point Arithmetic (IEEE Std 754-2019)
+.
+Note:
+https://standards.ieee.org/standard/754-2019.html
+Cited by:
+§C.1
+,
+§1
+,
+§2.3
+.
+Ji
+et al.
+(2025)
+C. Ji, Y. Li, X. Zhong, H. Zhang, and S. Mitra
+Abstract rendering: certified rendering under 3d semantic uncertainty
+.
+In
+The Thirty-ninth Annual Conference on Neural Information Processing Systems
+,
+San Diego, CA, USA
+.
+Cited by:
+§4
+.
+Jia and Rinard (2020)
+K. Jia and M. C. Rinard
+Exploiting verified neural networks via floating point numerical error
+.
+arXiv preprint arXiv:2003.03021
+.
+External Links:
+Link
+Cited by:
+§1
+.
+Katz
+et al.
+(2017)
+G. Katz, C. Barrett, D. L. Dill, K. Julian, and M. J. Kochenderfer
+Reluplex: an efficient SMT solver for verifying deep neural networks
+.
+In
+Computer Aided Verification (CAV 2017)
+,
+R. Majumdar and V. Kuncak (Eds.)
+,
+Lecture Notes in Computer Science
+, Vol.
+10426
+,
+pp. 97–117
+.
+External Links:
+Document
+,
+Link
+Cited by:
+§1
+.
+Katz
+et al.
+(2019)
+G. Katz, D. A. Huang, D. Ibeling, K. Julian, C. Lazarus, R. Lim, P. Shah, S. Thakoor, H. Wu, A. Zeljić, D. L. Dill, M. J. Kochenderfer, and C. Barrett
+The marabou framework for verification and analysis of deep neural networks
+.
+In
+Computer Aided Verification (CAV 2019)
+,
+Lecture Notes in Computer Science
+, Vol.
+11561
+,
+pp. 443–452
+.
+External Links:
+Document
+,
+Link
+Cited by:
+§1
+,
+§4
+.
+Kaulen
+et al.
+(2025)
+K. Kaulen, T. Ladner, S. Bak, C. Brix, H. Duong, T. Flinkow, T. T. Johnson, L. Koller, E. Manino, T. H. Nguyen, and H. Wu
+The 6th international verification of neural networks competition (vnn-comp 2025): summary and results
+.
+arXiv preprint arXiv:2512.19007
+.
+Cited by:
+§4
+.
+[28]
+Lean Prover Community
+Floating-point numbers (lean reference manual)
+.
+External Links:
+Link
+Cited by:
+Appendix C
+,
+Appendix C
+.
+leanprover (2025)
+leanprover
+TensorLib: a verified tensor library in lean
+.
+Note:
+GitHub repository
+External Links:
+Link
+Cited by:
+§4
+.
+Li
+et al.
+(2025)
+H. Li, X. Zhong, B. Hu, and H. Zhang
+Two-stage learning of stabilizing neural controllers via zubov sampling and iterative domain expansion
+.
+arXiv preprint arXiv:2506.01356
+.
+Cited by:
+§3
+,
+§4
+.
+Moore
+et al.
+(2009)
+R. E. Moore, R. B. Kearfott, and M. J. Cloud
+Introduction to interval analysis
+.
+SIAM
+.
+Cited by:
+§4
+.
+Moura and Ullrich (2021)
+L. d. Moura and S. Ullrich
+The lean 4 theorem prover and programming language
+.
+In
+Automated Deduction – CADE 28
+,
+Lecture Notes in Computer Science
+, Vol.
+12699
+,
+pp. 625–635
+.
+External Links:
+Document
+,
+Link
+Cited by:
+§1
+,
+§1
+.
+Necula (1997)
+G. C. Necula
+Proof-carrying code
+.
+In
+Proceedings of the 24th ACM SIGPLAN-SIGACT Symposium on Principles of Programming Languages (POPL)
+,
+pp. 106–119
+.
+External Links:
+Document
+,
+Link
+Cited by:
+§2.4
+.
+ONNX Contributors (2026)
+ONNX Contributors
+ONNX versioning documentation (ir and operator set versioning)
+.
+Note:
+https://onnx.ai/onnx/repo-docs/Versioning.html
+Cited by:
+§1
+.
+Paszke
+et al.
+(2019)
+A. Paszke, S. Gross, F. Massa, A. Lerer, J. Bradbury, G. Chanan, T. Killeen, Z. Lin, N. Gimelshein, L. Antiga,
+et al.
+PyTorch: an imperative style, high-performance deep learning library
+.
+Advances in Neural Information Processing Systems
+32
+.
+External Links:
+Link
+Cited by:
+Table 7
+,
+Table 7
+,
+§2.2
+.
+PyTorch Contributors (2025)
+PyTorch Contributors
+Torch.onnx — pytorch documentation (limitations of trace-based onnx export and numeric differences across runtimes)
+.
+Note:
+https://docs.pytorch.org/docs/stable/onnx
+Cited by:
+§1
+.
+Raghunathan
+et al.
+(2018)
+A. Raghunathan, J. Steinhardt, and P. Liang
+Certified defenses against adversarial examples
+.
+In
+International Conference on Learning Representations (ICLR)
+,
+Note:
+arXiv:1801.09344
+External Links:
+Link
+Cited by:
+§4
+.
+Raissi
+et al.
+(2019)
+M. Raissi, P. Perdikaris, and G. E. Karniadakis
+Physics-informed neural networks: a deep learning framework for solving forward and inverse problems involving nonlinear partial differential equations
+.
+Journal of Computational Physics
+378
+,
+pp. 686–707
+.
+External Links:
+Document
+Cited by:
+§1
+.
+Singh
+et al.
+(2018)
+G. Singh, T. Gehr, M. Mirman, M. Püschel, and M. Vechev
+Fast and effective robustness certification
+.
+In
+Advances in Neural Information Processing Systems
+,
+Vol.
+31
+,
+pp. 10825–10836
+.
+External Links:
+Link
+Cited by:
+§4
+.
+Singh
+et al.
+(2019)
+G. Singh, T. Gehr, M. Püschel, and M. Vechev
+An abstract domain for certifying neural networks
+.
+Proceedings of the ACM on Programming Languages
+3
+(
+POPL
+),
+pp. 41:1–41:30
+.
+External Links:
+Document
+,
+Link
+Cited by:
+§1
+,
+§4
+.
+Szász
+et al.
+(2025)
+A. Szász, B. Bánhelyi, and M. Jelasity
+No soundness in the real world: on the challenges of the verification of deployed neural networks
+.
+External Links:
+2506.01054
+,
+Link
+Cited by:
+§1
+.
+Szegedy
+et al.
+(2013)
+C. Szegedy, W. Zaremba, I. Sutskever, J. Bruna, D. Erhan, I. Goodfellow, and R. Fergus
+Intriguing properties of neural networks
+.
+arXiv preprint arXiv:1312.6199
+.
+External Links:
+Document
+,
+1312.6199
+Cited by:
+§1
+.
+VNN-COMP (2024)
+VNN-COMP
+International verification of neural networks competition
+(Website)
+External Links:
+Link
+Cited by:
+§D.2
+,
+§D.2
+,
+§3
+,
+§4
+.
+VNN-LIB (2021)
+VNN-LIB
+A standard for neural network verification specifications
+(Website)
+External Links:
+Link
+Cited by:
+§D.2
+,
+§3
+,
+§4
+.
+Wang
+et al.
+(2018)
+S. Wang, K. Pei, J. Whitehouse, J. Yang, and S. Jana
+Efficient formal safety analysis of neural networks
+.
+Advances in Neural Information Processing Systems
+31
+.
+Cited by:
+§4
+.
+Wang
+et al.
+(2021)
+S. Wang, H. Zhang, K. Xu, X. Lin, S. Jana, C. Hsieh, and Z. Kolter
+Beta-crown: efficient bound propagation with per-neuron split constraints for neural network robustness verification
+.
+In
+Advances in Neural Information Processing Systems
+,
+External Links:
+Link
+Cited by:
+§2.4
+,
+§4
+.
+Wong and Kolter (2018)
+E. Wong and J. Z. Kolter
+Provable defenses against adversarial examples via the convex outer adversarial polytope
+.
+In
+International Conference on Machine Learning
+,
+pp. 5286–5295
+.
+Cited by:
+§4
+.
+Wu
+et al.
+(2021)
+D. Wu, B. Shen, and Y. Chen
+An empirical study on tensor shape faults in deep learning systems
+.
+External Links:
+2106.02887
+,
+Link
+Cited by:
+§2.1
+.
+Xiang
+et al.
+(2018)
+W. Xiang, P. Musau, A. A. Wild, D. Manzanas Lopez, N. Hamilton, X. Yang, J. Rosenfeld, and T. T. Johnson
+Verification for machine learning, autonomy, and neural networks survey
+.
+arXiv preprint arXiv:1810.01989
+.
+External Links:
+Document
+,
+1810.01989
+Cited by:
+§1
+,
+§1
+.
+Xu
+et al.
+(2020)
+K. Xu, Z. Shi, H. Zhang, Y. Wang, K. Chang, M. Huang, B. Kailkhura, X. Lin, and C. Hsieh
+Automatic perturbation analysis for scalable certified robustness and beyond
+.
+Advances in Neural Information Processing Systems
+33
+,
+pp. 1129–1141
+.
+Cited by:
+§2.4
+.
+Xu
+et al.
+(2021)
+K. Xu, H. Zhang, S. Wang, Y. Wang, S. Jana, X. Lin, and C. Hsieh
+Fast and complete: enabling complete neural network verification with rapid and massively parallel incomplete verifiers
+.
+In
+International Conference on Learning Representations
+,
+Cited by:
+§2.4
+,
+§4
+.
+Yarotsky (2017)
+D. Yarotsky
+Error bounds for approximations with deep relu networks
+.
+Neural Networks
+94
+,
+pp. 103–114
+.
+External Links:
+Document
+Cited by:
+Appendix E
+.
+Zhang
+et al.
+(2018)
+H. Zhang, T. Weng, P. Chen, C. Hsieh, and L. Daniel
+Efficient neural network robustness certification with general activation functions
+.
+Advances in Neural Information Processing Systems
+31
+,
+pp. 4939–4948
+.
+External Links:
+Link
+Cited by:
+§1
+,
+§2.4
+,
+§4
+.
+Zimmermann (2005)
+P. Zimmermann
+Why transcendentals and arbitrary precision?
+.
+Note:
+https://members.loria.fr/PZimmermann/talks/why.pdf
+Cited by:
+§C.1
+.
+Appendix A
+Appendix Overview
+We provide detailed technical material supporting the main paper. It is organized into six parts, with the following hyperlinked outline for quick navigation:
+•
+Appendix
+B
+(
+TorchLean
+).
+–
+Core design: unified semantics for execution and analysis.
+–
+Execution modes and compilation to IR (eager vs. compiled).
+–
+Programs, modules, and API design.
+–
+Autograd correctness: mathematical foundation for backpropagation.
+–
+Node correctness and primitive operation proofs.
+–
+Graph-level composition and the reverse-mode algorithm.
+–
+Core definitions, IR semantics, and implementation details.
+–
+TorchLean
+vs. PyTorch (detailed comparison).
+•
+Appendix
+C
+(Numerical Semantics).
+–
+Motivation and trust boundaries.
+–
+End-to-end NF bounds and hardware soundness.
+•
+Appendix
+D
+(Verification and certificates).
+–
+IBP, CROWN, and certificate checking.
+–
+Case studies and certificate schemas.
+–
+Worked example: a tiny MLP end-to-end.
+•
+Appendix
+E
+(Approximation theorems).
+–
+Universal approximation over
+ℝ
+\mathbb{R}
+.
+–
+Toward Float32-exec (IEEE32Exec) soundness / IUA.
+•
+Appendix
+F
+(Expanded Limitations and Discussion).
+Appendix B
+TorchLean
+: a PyTorch-style front end with a single semantic target
+TorchLean
+is our user-facing interface for building and training neural networks. It provides a PyTorch-like programming model where users write models using familiar operations (linear layers, convolutions, activations), but with a crucial difference: the same model definition can execute in two modes that share a unified semantic foundation. This design eliminates the semantic gap between training-time code and verification-time analysis.
+B.1
+Core design: unified semantics for execution and analysis
+Our core design choice is to treat the computation graph as the semantic target for
+both
+execution and reasoning. In
+TorchLean
+, programs lower to a typed, op-tagged graph IR: nodes are primitive operators (e.g., matrix multiplication or ReLU) and edges carry tensor values. We store graphs in SSA/DAG form: each intermediate value is defined exactly once (SSA), and the dataflow graph is acyclic (DAG). These constraints are standard compiler discipline, but they are also exactly what we want here: evaluation is deterministic by a topological order, and proofs can proceed by induction over that order while reusing the same operator semantics that the runtime executes.
+Table 5
+:
+Verified scope in
+TorchLean
+(summary). “Proved” means a Lean theorem over the stated semantics; “Checked” means a small executable validator that re-computes or validates constraints; “Assumed/External” marks trust boundaries or future work. Appendix
+D
+also tabulates operator-level verification coverage.
+Component
+What the paper claims (scope)
+Status
+Where
+Shared IR semantics
+Op-tagged SSA/DAG IR with a precise denotation reused by execution and verification.
+Kernel-checked definitions
+Sections
+2
+,
+B
+Reverse-mode AD
+Backpropagation equals the adjoint Fréchet derivative for well-typed SSA/DAG graphs over
+ℝ
+\mathbb{R}
+, assuming local per-op derivative correctness (with a pointwise variant for non-smooth ops).
+Proved
+Theorem
+2.2
+, Appendix
+B
+TorchLean
+compilation
+“Compiled mode” produces the verifier-facing IR; full compiler correctness for arbitrary
+TorchLean
+programs is not yet proved.
+Proved (fragment) / Future (full)
+Theorem
+B.2
+IBP / CROWN operators
+Sound transfer rules and relaxations for a curated set of operators; additional ops use conservative fallbacks or are treated as unsupported in the strongest theorems.
+Mixed (proved subset)
+Appendix
+D
+Certificate checking
+Small Lean checkers validate certificate structure and the final enclosure constraints needed to discharge a theorem about
+[
+[
+G
+]
+]
+\mathopen{[\![}G\mathclose{]\!]}
+.
+Checked (plus proved core)
+Section
+3
+, Appendix
+D
+External solvers (e.g.
+α
+/
+β
+\alpha/\beta
+-CROWN, SDP-CROWN)
+Used only as untrusted certificate producers; we do not validate full optimizer internals today.
+Assumed/External
+Section
+3
+, Appendix
+D
+Float32 semantics
+Executable IEEE-754 binary32 model (
+IEEE32Exec
+) and proof-level rounding models (FP32/NF), with an internal refinement on finite executions.
+Proved (internal)
+Section
+2.3
+, Appendix
+C
+Hardware Float32 link
+Connecting deployed
+Float32
+hardware/runtime behavior to
+IEEE32Exec
+is target-specific and not discharged in this work.
+Assumed/External
+Section
+5
+, Appendix
+C.1
+x
+x
+W
+W
+b
+b
+MatMul
+Add
+ReLU
+y
+y
+v
+1
+v_{1}
+v
+2
+v_{2}
+y
+¯
+\bar{y}
+v
+¯
+2
+\bar{v}_{2}
+v
+¯
+1
+\bar{v}_{1}
+Figure 8
+:
+Example SSA/DAG computation graph:
+y
+=
+ReLU
+​
+(
+W
+​
+x
++
+b
+)
+y=\text{ReLU}(Wx+b)
+. Each intermediate value (
+v
+1
+v_{1}
+,
+v
+2
+v_{2}
+) is assigned once. Forward pass (solid arrows) evaluates nodes in topological order. Backward pass (dashed arrows) propagates gradients in reverse topological order, accumulating at each node.
+In
+TorchLean
+, the SSA/DAG representation serves multiple purposes simultaneously:
+•
+Execution:
+The graph can be evaluated to compute forward values and gradients.
+•
+Formal reasoning:
+The graph has a precise mathematical denotation
+[
+[
+G
+]
+]
+\mathopen{[\![}G\mathclose{]\!]}
+that we can state theorems about.
+•
+Verification:
+Bound propagation algorithms operate directly on the graph structure.
+This unified representation is what makes the system work: there is no “export step” that might introduce semantic drift between the model as written and the model as analyzed.
+B.2
+Execution modes and compilation to IR
+TorchLean
+supports two execution modes that share the same semantic foundation but differ in when and how the computation graph is constructed.
+Eager mode (imperative, tape-based).
+In eager mode, operations execute immediately as you call them, similar to PyTorch’s default behavior. As operations run, they are recorded into a
+computation tape
+: a dynamic data structure that stores the sequence of operations and their dependencies. This tape is built incrementally during the forward pass, and then used during the backward pass to compute gradients. The key property of eager mode is that it matches the familiar “define-by-run” workflow: you write code that looks like ordinary function calls, and the tape is constructed implicitly as a side effect. This makes debugging straightforward (you can inspect intermediate values immediately) and allows dynamic control flow (if statements, loops with data-dependent bounds).
+User code:
+let y = relu(linear(x, W, b))
+Eager backend
+Runtime tape
+(dynamic)
+Compiled backend
+SSA/DAG graph
+(static)
+Unified semantic target:
+Well-typed SSA/DAG graph
+with denotation
+[
+[
+G
+]
+]
+\mathopen{[\![}G\mathclose{]\!]}
+interpret
+compile
+correspondence
+direct
+Figure 9
+:
+Two execution paths to a unified semantic target. The same
+TorchLean
+program can be interpreted eagerly (building a tape dynamically) or compiled (building a static graph upfront). Both paths produce computations that share the same well-typed SSA/DAG denotation, enabling unified reasoning about execution and verification.
+Eager mode (tape semantics vs. graph semantics).
+Operationally, eager execution builds a tape on the fly; semantically, each completed run induces a well-typed SSA/DAG graph
+G
+G
+that matches the run’s forward values, and whose backpropagation matches the tape’s backward pass. This correspondence is the bridge that lets us develop and debug in eager mode while still applying graph-level theorems (autograd correctness, bounds, and certificate checking) to the same semantic target (Theorem 1 below).
+Compiled mode (static graph).
+In compiled mode, the
+TorchLean
+program is analyzed upfront to construct a static SSA/DAG graph representation. This is “compilation” only in the sense of
+lowering
+to a formal IR for reasoning and verification; it is not intended to compete with
+torch.compile
+-style kernel fusion or hardware-level optimization. The compiled graph is exactly the object that formal theorems reason about: it has a precise denotation
+[
+[
+G
+]
+]
+\mathopen{[\![}G\mathclose{]\!]}
+, and we can state and prove correctness properties about it. The advantage of compiled mode is that the graph structure is explicit and available for analysis before execution, so bound propagation algorithms, certificate checkers, and proofs all operate on the same graph object that the runtime evaluates. See Appendix
+B.7
+for details.
+Compilation process.
+When you write a
+TorchLean
+program, it’s a backend-generic definition that can run in different modes. But for verification, we need a concrete graph structure that we can reason about formally. The compilation process transforms a
+TorchLean
+program into an op-tagged IR graph. Here’s how it works: the compiler walks through the program structure, and for each operation (like
+linear
+,
+relu
+,
+softmax
+), it creates a corresponding IR node with the appropriate operation kind and shape information. Parameters are stored separately in a parameter store, and the graph structure captures the data dependencies between operations. For the forward-only fragment underlying our verification demos, we make this precise by proving a semantics-preservation theorem: the compiled IR evaluator agrees with the fragment’s source evaluator for all inputs and parameters.
+Proved forward compiler correctness.
+We isolate a first-order, SSA-style forward fragment and prove that lowering it to the op-tagged IR preserves semantics.
+The theorem is stated over
+exception-valued
+evaluation: both the source semantics and the IR semantics return either
+a value (
+ok
+) or an explicit failure (
+error
+) when shape/type constraints are violated.
+Stating the result at this level ensures we preserve not only successful runs but also well-defined failure behavior. In the following subsections we will show how to prove it for the general graph.
+Theorem B.1:
+Forward lowering correctness
+Let
+𝗅𝗈𝗐𝖾𝗋
+⁡
+(
+p
+,
+θ
+)
+\mathsf{lower}(p,\theta)
+be the IR obtained by lowering a forward program
+p
+p
+with parameters
+θ
+\theta
+,
+and let
+𝖤𝗏𝖺𝗅
+src
+\mathsf{Eval}_{\textsf{src}}
+and
+𝖤𝗏𝖺𝗅
+ir
+\mathsf{Eval}_{\textsf{ir}}
+denote exception-valued evaluation
+of the source fragment and IR, respectively. Then for all inputs
+x
+x
+,
+𝖤𝗏𝖺𝗅
+ir
+​
+(
+𝗅𝗈𝗐𝖾𝗋
+⁡
+(
+p
+,
+θ
+)
+,
+x
+)
+=
+𝖤𝗏𝖺𝗅
+src
+​
+(
+p
+,
+θ
+,
+x
+)
+.
+\mathsf{Eval}_{\textsf{ir}}(\mathsf{lower}(p,\theta),\,x)\;=\;\mathsf{Eval}_{\textsf{src}}(p,\theta,\,x).
+Next, the following theorem targets the verifier/demo fragment; proving an analogous single theorem for arbitrary user-written
+TorchLean
+programs in the current higher-order/tagless-final embedding would require a logical-relations/parametricity development (or a different frontend encoding), and we leave it to future work.
+Theorem B.2:
+Eager–graph correspondence
+For any fixed eager execution run that produces a computation tape
+T
+T
+with forward values
+v
+i
+v_{i}
+and a backward pass that computes gradients
+g
+i
+g_{i}
+, there exists a well-typed SSA/DAG graph
+G
+G
+such that:
+•
+Forward correspondence:
+the eager forward values agree with the graph denotation (
+v
+i
+=
+[
+[
+G
+]
+]
+​
+(
+x
+)
+i
+v_{i}=\mathopen{[\![}G\mathclose{]\!]}(x)_{i}
+for all nodes
+i
+i
+).
+•
+Backward correspondence:
+the eager backward gradients agree with graph backpropagation (
+g
+i
+=
+backpropCtx
+​
+(
+G
+,
+x
+,
+s
+​
+e
+​
+e
+​
+d
+)
+i
+g_{i}=\mathrm{backpropCtx}(G,x,seed)_{i}
+for all nodes
+i
+i
+).
+B.3
+TorchLean
+programs, Modules, and API design
+The core idea behind
+TorchLean
+is that a neural network model is a backend-generic
+program
+built from a small, well-defined
+Ops
+interface. This avoids maintaining separate semantics for eager execution and compiled graphs: the same
+TorchLean
+program can be interpreted by an eager backend that records a computation tape (as in PyTorch), or by a compiler backend that statically builds an SSA/DAG graph representation suitable for proofs and verification. Both paths share the same semantic meaning.
+To make this concrete, consider a simple model consisting of a linear layer followed by a vector softmax, written as a backend-generic
+TorchLean
+program:
+⬇
+def
+softmaxModel
+{
+a
+:
+Type
+}
+[
+Context
+a
+]
+[
+DecidableEq
+Shape
+]
+:
+TorchLean
+.
+Program
+a
+(
+paramShapes
+++
+[
+xShape
+])
+yShape
+:=
+fun
+{
+m
+}
+_
+_
+=>
+fun
+w
+b
+x
+=>
+do
+let
+logits
+<-
+TorchLean
+.
+linear
+(
+m
+:=
+m
+)
+(
+inDim
+:=
+inDim
+)
+(
+outDim
+:=
+outDim
+)
+w
+b
+x
+TorchLean
+.
+softmax
+(
+m
+:=
+m
+)
+(
+s
+:=
+yShape
+)
+logits
+This definition is polymorphic in the scalar type
+α
+\alpha
+(which can be Float, IEEE32Exec, or
+ℝ
+\mathbb{R}
+) and in the backend monad
+m
+m
+, which allows the same model to be executed in different contexts. The resulting term is structured enough to be compiled into our intermediate representation and fed directly to verification passes, reducing the gap between “the model as written” and “the model as verified.”
+For supervised learning workflows, we package models together with their training setup using a
+ScalarModuleDef
+structure. This bundles the initial parameters with a scalar loss function into a single object:
+⬇
+structure
+ScalarModuleDef
+(
+paramShapes
+inputShapes
+:
+List
+Shape
+)
+where
+initParams
+:
+Torch
+.
+TList
+Float
+paramShapes
+loss
+:
+forall
+{
+a
+:
+Type
+},
+[
+Context
+a
+]
+->
+[
+DecidableEq
+Shape
+]
+->
+TorchLean
+.
+Program
+a
+(
+paramShapes
+++
+inputShapes
+)
+Shape
+.
+scalar
+We store initial parameters as Float literals primarily for ergonomic reasons: it keeps small examples readable, allowing us to write
+tensorND!
+blocks without constantly fighting type casts. The cast from Float to the chosen scalar backend is treated as part of the
+workflow layer
+rather than part of the core semantics, which keeps the specification layer clean while maintaining flexibility.
+Using this structure, a typical training loop is similar to PyTorch code. When instantiating a module, we choose both the scalar backend (via a
+Float -> a
+cast function) and the execution mode (
+.eager
+or
+.compiled
+):
+⬇
+open
+Runtime
+.
+Autograd
+.
+TorchLean
+.
+Module
+let
+m
+<-
+defn
+.
+instantiate
+(
+cast
+:=
+cast
+)
+(
+backend
+:=
+.
+eager
+)
+for
+_
+in
+List
+.
+range
+T
+do
+let
+_
+<-
+ScalarModule
+.
+forward
+m
+xs
+let
+_
+<-
+ScalarModule
+.
+backward
+m
+xs
+ScalarModule
+.
+step
+m
+lr
+xs
+For stateful optimizers (e.g. Adam), we can step using an explicit optimizer state aligned with the parameter shapes:
+⬇
+open
+Runtime
+.
+Autograd
+.
+TorchLean
+let
+opt
+:=
+Optim
+.
+adam
+(
+lr
+:=
+lr
+)
+(
+beta1
+:=
+0.9)
+(
+beta2
+:=
+0.999)
+(
+epsilon
+:=
+1
+e
+-8)
+let
+st
+<-
+ScalarModule
+.
+initOptim
+m
+opt
+for
+_
+in
+List
+.
+range
+T
+do
+let
+st
+’
+<-
+ScalarModule
+.
+stepWith
+m
+opt
+st
+xs
+--
+continue
+with
+st’
+We introduce this wrapper to match the expected workflow (define a model, run a training loop) while keeping the resulting computation connected to the same SSA/DAG graph semantics that our proofs and verifiers consume.
+Table 6
+:
+Autograd operator coverage (Fréchet-derivative level). “Global” means we have a
+NodeFDerivCorrect
+proof (a
+HasFDerivAt
+theorem without side conditions). “Pointwise” means we prove
+NodeFDerivCorrectAt
+under explicit hypotheses that rule out non-differentiable points (e.g., no zeros/ties). Operators listed under “Not covered” may still be executable (and may have a deterministic backprop convention), but are not claimed correct at the level of classical derivatives.
+OpKind / primitive
+Global
+HasFDerivAt
+Pointwise (side conditions)
+Not covered
+Linear / shape ops
+add
+,
+sub
+,
+mul_elem
+,
+linear
+,
+matmul
+,
+conv2d
+,
+broadcastTo
+,
+reshape
+,
+flatten
+,
+permute
+,
+reduce_sum
+,
+reduce_mean
+,
+sum
+,
+concat
+(curated axes),
+swap_first_two
+,
+transpose3d_last_two
+–
+–
+Smooth nonlinearities / losses
+tanh
+,
+sigmoid
+,
+exp
+,
+softmax
+(curated axis),
+layernorm
+(curated axis),
+mse_loss
+,
+smooth surrogates
+safe_log
+and
+smooth_abs
+(with
+ε
+>
+0
+\varepsilon>0
+)
+–
+–
+Non-smooth / domain-sensitive
+–
+relu
+,
+abs
+,
+log
+,
+inv
+,
+sqrt
+,
+max_elem
+/
+min_elem
+(no ties)
+–
+Nondifferentiable / workflow ops
+–
+–
+detach
+,
+rand_uniform
+,
+bernoulli_mask
+, pooling (
+max_pool2d
+,
+avg_pool2d
+)
+Some workloads require
+integer-valued indices
+sourced from data (e.g., class labels for classification losses, or token/row indices for embedding lookups). Mainstream frameworks typically represent these indices as integer tensors that participate in the same runtime graph, even though gradients do not flow through the indices themselves.
+TorchLean
+makes this separation explicit: the differentiable graph remains single-dtype over the chosen scalar domain, while indices are provided through a separate
+non-differentiable
+channel in the
+Session
+interface. In the
+Session
+interface, users supply scalar or batched indices as external inputs, and index-dependent operators (e.g., row-gather / embedding lookup) treat these indices as read-only selectors while gradients flow only through the floating-point tensor values (e.g., into the embedding matrix). This design avoids mixed-dtype graphs while still supporting standard ML patterns such as cross-entropy with integer labels and embedding-style table lookups.
+⬇
+--
+Sketch:
+indices
+are
+non-differentiable;
+gradients
+flow
+into
+emb
+only.
+sess
+:=
+Session
+.
+new
+(...)
+emb
+:=
+const
+(
+sess
+,
+W
+)
+--
+differentiable
+parameter
+tensor
+idx
+:=
+input_indices
+(
+sess
+)
+--
+non-differentiable
+indices
+from
+data
+rows
+:=
+gather_rows
+(
+sess
+,
+emb
+,
+idx
+)
+loss
+:=
+...
+backward
+(
+loss
+)
+--
+dW
+accumulates;
+no
+gradients
+w.r.t.
+idx
+What is
+fderiv
+/
+HasFDerivAt
+?
+In Lean/mathlib,
+fderiv
+denotes the (Fréchet) derivative of a function between finite-dimensional real vector spaces, represented as a linear map;
+HasFDerivAt
+is the predicate that a function has a specified Fréchet derivative at a point. Informally, this is the standard Jacobian-level notion of differentiability: for
+f
+:
+ℝ
+n
+→
+ℝ
+m
+f:\mathbb{R}^{n}\to\mathbb{R}^{m}
+,
+fderiv
+returns the Jacobian
+D
+​
+f
+​
+(
+x
+)
+Df(x)
+as a linear operator, and reverse-mode backpropagation computes its adjoint action on a cotangent seed. For non-smooth or domain-sensitive primitives (e.g., ReLU at
+0
+0
+,
+log
+\log
+at nonpositive inputs), we prove a pointwise variant that requires explicit side conditions ruling out those problematic points.
+Operator coverage across layers.
+TorchLean
+exposes a shared set of primitives through the op-tagged IR (
+NN.IR.OpKind
+) for both eager execution and proof-linked compiled execution.
+Autograd correctness is established for a curated subset of these primitives at the Fréchet-derivative level: Table
+6
+summarizes which ops are proved globally (
+NodeFDerivCorrect
+/
+HasFDerivAt
+), which are proved pointwise under explicit side conditions (
+NodeFDerivCorrectAt
+for non-smooth or domain-sensitive ops), and which are not covered by classical-derivative proofs (though they may remain executable under deterministic conventions).
+For verifier integration, the
+TorchLean
+→
+\to
+IR compiler currently targets a conservative forward, first-order fragment, while the LiRPA stack provides IBP broadly and a basic CROWN-style affine pass with sound fallbacks when tighter relaxations are not implemented. We will discuss more in detail in Appendix
+B.5
+.
+Control flow, variable-length sequences, indexing, and state.
+Our verified/compiled semantics targets SSA/DAG computation graphs: a
+finite
+, side-effect-free dataflow artifact evaluated in topological order. As a result,
+data-dependent branching and loops
+are not directly part of the verifier IR. Instead, dynamic control flow is handled by
+reification
+into a finite graph when the structure is known at compile time—for example, unrolling an RNN/GRU/LSTM cell for a fixed
+seqLen
+, or representing Transformers as acyclic attention blocks. This restriction matches the intended verification regime: certificates and proofs are stated about a fixed graph denotation
+[
+[
+G
+]
+]
+\mathopen{[\![}G\mathclose{]\!]}
+, rather than about an open-ended program whose control flow depends on runtime data.
+Indexing requires special care because most indexing operators consume
+integer-valued indices
+(labels, token ids, embedding row selectors) that are inherently non-differentiable and introduce mixed-dtype graphs (float activations plus integer tensors). Mainstream ML runtimes permit such mixed graphs, but they complicate a semantics-first setting where we want a single, uniform scalar domain for the differentiable graph (to support clean denotations, autograd theorems, and bound propagation).
+TorchLean
+therefore separates concerns: the differentiable graph remains single-dtype over the chosen scalar domain, while indices are supplied through an explicit
+non-differentiable
+channel in the
+Session
+API (e.g., scalar/batched naturals for labels and lookup indices). Index-dependent ops (e.g., embedding lookup / row gather) treat these indices as read-only selectors; gradients flow only through the floating-point values (e.g., into the embedding table or downstream layers), not through the indices themselves. On the verifier path, we currently support only conservative indexing patterns that admit a clean lowering to the IR (e.g., scalar/row gathers reduced to one-hot selection and
+matmul
+); general integer-indexed
+gather
+/
+scatter
+, variable-shape slicing, and shape-changing data-dependent indexing remain outside the verified IR.
+Finally,
+state
+is modeled explicitly rather than implicitly. The verifier semantics and most proofs assume layers are pure functions of their inputs (and any provided parameters), which is essential for treating the model as a mathematical object with a stable denotation. This is straightforward for affine layers and activations, but it requires care for layers with PyTorch-style internal updates (e.g., BatchNorm running mean/variance). In
+TorchLean
+, such updates are performed outside the backend-generic op set: batch statistics can be computed from data, and running buffers updated explicitly in the imperative session layer. This design keeps the denotation used by verification free of hidden mutation, and makes any remaining state/update assumptions and trust boundaries visible at the API level.
+B.4
+Autograd verification
+Training and verification pipelines routinely rely on gradients: optimization steps, sensitivity analyses, and derivative-based certificates (e.g., Lyapunov or PINN residual bounds) all assume that the computed derivatives match the model’s intended semantics. In mainstream ML systems, backpropagation is trusted because it is heavily tested, but its correctness is rarely stated as a theorem about the exact computation being executed.
+TorchLean
+makes this link explicit: we prove, for any well-typed SSA/DAG computation graph, that reverse-mode backpropagation computes the adjoint Fréchet derivative of the graph denotation. This turns gradient correctness into a
+semantic property
+of the same graph that is executed and verified, enabling derivative-dependent guarantees to compose cleanly with the rest of the framework rather than resting on an implicit trust assumption.
+The proof is organized in two stages that separate algorithmic correctness from analytic interpretation. This structure makes the development modular and reusable across different scalar domains.
+Stage 1: Algebraic adjointness (backend-generic).
+We first prove a graph-level adjointness law that does
+not
+depend on real analysis.
+The statement is parametric over an abstract scalar interface (our
+Context
+typeclass): any scalar domain that
+supports the required ring/ordering operations (e.g., reals, floats, intervals) can instantiate the theorem.
+At this level, reverse-mode backpropagation is characterized as computing a
+vector–Jacobian product
+(VJP)
+that is adjoint to the
+Jacobian–vector product
+(JVP) with respect to a dot product on
+tensor contexts
+(i.e., heterogeneous tuples of tensors matching the graph’s typed input interface).
+Intuitively: pushing a perturbation forward (JVP) and pushing a cotangent backward (VJP) are dual operations, and their
+duality is captured by a single inner-product identity.
+Contexts and dot products.
+Let
+⟨
+⋅
+,
+⋅
+⟩
+Γ
+\langle\cdot,\cdot\rangle_{\Gamma}
+denote the dot product on the input context
+Γ
+\Gamma
+(a typed tuple of tensors),
+defined by summing tensorwise dot products over all inputs/parameters. This dot product is bilinear and symmetric,
+which is exactly the structure needed for adjointness statements.
+Forward/JVP/VJP as programs on a graph.
+For a well-typed SSA/DAG graph
+G
+G
+and input
+x
+x
+, we define three evaluation procedures:
+(i) forward evaluation
+Eval
+G
+​
+(
+x
+)
+\mathrm{Eval}_{G}(x)
+, (ii) forward-mode JVP
+JVP
+G
+​
+(
+x
+,
+δ
+​
+x
+)
+\mathrm{JVP}_{G}(x;\delta x)
+, and
+(iii) reverse-mode backprop/VJP
+VJP
+G
+​
+(
+x
+,
+y
+¯
+)
+\mathrm{VJP}_{G}(x;\bar{y})
+.
+All three follow the graph’s topological order (forward) and reverse-topological order (backward).
+⬇
+#
+Forward
+evaluation
+(
+topological
+order
+)
+Eval_G
+(
+x
+):
+for
+node
+i
+in
+topo_order
+(
+G
+):
+v
+[
+i
+]
+=
+op_i
+(
+v
+[
+parents
+(
+i
+)])
+return
+v
+[
+out
+]
+#
+Forward
+-
+mode
+JVP
+(
+propagate
+tangents
+)
+JVP_G
+(
+x
+;
+dx
+):
+(
+v
+,
+_
+)
+=
+Eval_G
+(
+x
+)
+#
+reuse
+forward
+values
+dv
+[
+input
+]
+=
+dx
+;
+dv
+[
+others
+]
+=
+0
+for
+node
+i
+in
+topo_order
+(
+G
+):
+dv
+[
+i
+]
+=
+J_op_i
+(
+v
+[
+parents
+(
+i
+)])
+*
+dv
+[
+parents
+(
+i
+)]
+return
+dv
+[
+out
+]
+#
+Reverse
+-
+mode
+VJP
+/
+backprop
+(
+propagate
+cotangents
+)
+VJP_G
+(
+x
+;
+seed
+):
+(
+v
+,
+_
+)
+=
+Eval_G
+(
+x
+)
+bar
+[
+out
+]
+=
+seed
+;
+bar
+[
+others
+]
+=
+0
+for
+node
+i
+in
+reverse
+(
+topo_order
+(
+G
+)):
+for
+p
+in
+parents
+(
+i
+):
+bar
+[
+p
+]
++=
+VJP_op_i
+(
+p
+,
+v
+[
+parents
+(
+i
+)],
+bar
+[
+i
+])
+return
+bar
+[
+input
+]
+#
+gradients
+w
+.
+r
+.
+t
+.
+inputs
+/
+params
+Theorem B.3:
+Graph adjointness (algebraic)
+For any well-typed SSA/DAG graph
+G
+G
+(over any
+Context
+) and any
+x
+x
+,
+δ
+​
+x
+\delta x
+, and cotangent seed
+y
+¯
+\bar{y}
+,
+⟨
+JVP
+G
+​
+(
+x
+,
+δ
+​
+x
+)
+,
+y
+¯
+⟩
+=
+⟨
+δ
+​
+x
+,
+VJP
+G
+​
+(
+x
+,
+y
+¯
+)
+⟩
+.
+\big\langle\mathrm{JVP}_{G}(x;\delta x),\,\bar{y}\big\rangle\;=\;\big\langle\delta x,\,\mathrm{VJP}_{G}(x;\bar{y})\big\rangle.
+Stage 2: Analytic upgrade (real calculus).
+Stage 1 establishes a purely algebraic adjointness law over an abstract scalar interface. In Stage 2 we specialize to
+ℝ
+\mathbb{R}
+and connect that law to standard multivariate calculus. The key step is to relate shape-indexed tensor spaces
+to finite-dimensional Euclidean spaces: for each tensor shape
+s
+s
+, let
+n
+=
+size
+⁡
+(
+s
+)
+n=\mathrm{size}(s)
+and identify tensors
+with vectors in
+ℝ
+n
+\mathbb{R}^{n}
+via a (total) vectorization map and its inverse. This lets us interpret graph evaluation
+as a function
+𝖤𝗏𝖺𝗅𝖵𝖾𝖼
+G
+:
+ℝ
+N
+in
+→
+ℝ
+N
+out
+\mathsf{EvalVec}_{G}:\mathbb{R}^{N_{\text{in}}}\to\mathbb{R}^{N_{\text{out}}}
+between Euclidean spaces and
+use the usual Fréchet derivative (Jacobian as a linear map).
+Vectorization and inner products.
+Let
+vec
+s
+:
+Tensor
+⁡
+(
+ℝ
+,
+s
+)
+→
+ℝ
+size
+⁡
+(
+s
+)
+\mathrm{vec}_{s}:\mathrm{Tensor}(\mathbb{R},s)\to\mathbb{R}^{\mathrm{size}(s)}
+be the flattening map (with inverse
+unvec
+s
+\mathrm{unvec}_{s}
+). We define the tensor dot product
+⟨
+a
+,
+b
+⟩
+s
+\langle a,b\rangle_{s}
+by summing coordinatewise products over the
+shape; the bridge theorem states that this dot product coincides with the standard Euclidean inner product after
+vectorization.
+⬇
+#
+Conceptual
+definition
+(
+shape
+-
+indexed
+)
+vec_s
+:
+Tensor
+(
+R
+,
+s
+)
+->
+R
+^{
+size
+(
+s
+)}
+#
+flatten
+unvec_s
+:
+R
+^{
+size
+(
+s
+)}
+->
+Tensor
+(
+R
+,
+s
+)
+#
+reshape
+#
+Bridge
+property
+<
+a
+,
+b
+>
+_s
+==
+<
+vec_s
+(
+a
+),
+vec_s
+(
+b
+)
+>
+_
+{
+R
+^{
+size
+(
+s
+)}}
+Theorem B.4:
+Tensor–vector inner-product bridge
+For any shape
+s
+s
+and tensors
+a
+,
+b
+∈
+Tensor
+⁡
+(
+ℝ
+,
+s
+)
+a,b\in\mathrm{Tensor}(\mathbb{R},s)
+,
+⟨
+a
+,
+b
+⟩
+s
+=
+⟨
+vec
+s
+​
+(
+a
+)
+,
+vec
+s
+​
+(
+b
+)
+⟩
+ℝ
+size
+⁡
+(
+s
+)
+.
+\langle a,b\rangle_{s}\;=\;\big\langle\mathrm{vec}_{s}(a),\,\mathrm{vec}_{s}(b)\big\rangle_{\mathbb{R}^{\mathrm{size}(s)}}.
+From local calculus to graph calculus.
+For each primitive operator (node kind), we prove a standard calculus fact: its forward-mode JVP coincides with applying
+its Fréchet derivative to a tangent vector at the current input (and similarly, its VJP coincides with applying the adjoint
+of that derivative to a cotangent seed). Combining these node-level facts with the SSA/DAG structure yields a global theorem
+for any well-typed graph. In finite dimensions, the adjoint of a linear map is just the transpose with respect to the Euclidean
+inner product; operationally, this is exactly what reverse-mode backprop computes.
+Theorem B.5:
+Backpropagation computes the adjoint derivative
+Let
+G
+G
+be a well-typed SSA/DAG graph over
+ℝ
+\mathbb{R}
+and let
+𝖤𝗏𝖺𝗅𝖵𝖾𝖼
+G
+\mathsf{EvalVec}_{G}
+denote its vectorized denotation.
+Assume the graph satisfies the local differentiability hypotheses for its primitives (i.e.,
+GraphFDerivCorrect
+G
+G
+).
+Then for any input
+x
+x
+and cotangent seed
+y
+¯
+\bar{y}
+,
+𝖵𝖩𝖯
+G
+​
+(
+x
+,
+y
+¯
+)
+=
+(
+D
+​
+𝖤𝗏𝖺𝗅𝖵𝖾𝖼
+G
+​
+(
+x
+)
+)
+⊤
+​
+y
+¯
+,
+\mathsf{VJP}_{G}(x;\bar{y})\;=\;\bigl(D\,\mathsf{EvalVec}_{G}(x)\bigr)^{\top}\,\bar{y},
+where
+D
+​
+𝖤𝗏𝖺𝗅𝖵𝖾𝖼
+G
+​
+(
+x
+)
+D\,\mathsf{EvalVec}_{G}(x)
+is the Fréchet derivative (Jacobian as a linear map) and
+(
+⋅
+)
+⊤
+(\cdot)^{\top}
+denotes its adjoint
+(transpose) with respect to the standard inner product.
+Interpretation.
+The theorem states that reverse-mode backprop is not merely an implementation heuristic: it computes
+the mathematically correct cotangent propagation associated with the derivative of the graph denotation. For non-smooth or
+domain-sensitive primitives (e.g., ReLU at
+0
+0
+,
+log
+\log
+at nonpositive inputs), we use a pointwise variant with explicit side
+conditions that rule out problematic points.
+Algebraic layer
+α
+\alpha
+-generic tensors
+⟨
+JVP
+G
+​
+(
+x
+,
+δ
+​
+x
+)
+,
+y
+¯
+⟩
+=
+⟨
+δ
+​
+x
+,
+VJP
+G
+​
+(
+x
+,
+y
+¯
+)
+⟩
+\langle\mathrm{JVP}_{G}(x;\delta x),\,\bar{y}\rangle=\langle\delta x,\,\mathrm{VJP}_{G}(x;\bar{y})\rangle
+Tensor–vector bridge
+Tensor
+⁡
+(
+ℝ
+,
+s
+)
+≅
+ℝ
+size
+⁡
+(
+s
+)
+\mathrm{Tensor}(\mathbb{R},s)\cong\mathbb{R}^{\mathrm{size}(s)}
+⟨
+a
+,
+b
+⟩
+s
+=
+⟨
+vec
+⁡
+(
+a
+)
+,
+vec
+⁡
+(
+b
+)
+⟩
+\langle a,b\rangle_{s}=\langle\mathrm{vec}(a),\mathrm{vec}(b)\rangle
+Global theorem
+VJP
+G
+​
+(
+x
+,
+y
+¯
+)
+=
+(
+D
+​
+𝖤𝗏𝖺𝗅𝖵𝖾𝖼
+G
+​
+(
+x
+)
+)
+⊤
+​
+y
+¯
+\mathrm{VJP}_{G}(x;\bar{y})=(D\,\mathsf{EvalVec}_{G}(x))^{\top}\,\bar{y}
+Linear / shape ops
+∙
+\bullet
+affine / linear layers
+∙
+\bullet
+matmul, conv2d
+∙
+\bullet
+reshape/permute/reductions
+Elementwise ops
+∙
+\bullet
+smooth:
+tanh
+,
+σ
+,
+exp
+\tanh,\sigma,\exp
+∙
+\bullet
+pointwise: ReLU (off
+0
+0
+),
+log
+\log
+(on
+>
+0
+>0
+)
+∙
+\bullet
+smooth surrogates: safe-
+log
+\log
+, smooth-
+|
+⋅
+|
+|\,\cdot\,|
+Reductions / special
+∙
+\bullet
+softmax/log-softmax (curated)
+∙
+\bullet
+losses: MSE, cross-entropy
+∙
+\bullet
+normalization (curated)
+vectors
+calculus
+proved
+proved
+proved
+Figure 10
+:
+Two-stage autograd proof architecture with primitive coverage. Stage 1 proves adjointness between
+JVP
+G
+\mathrm{JVP}_{G}
+and
+VJP
+G
+\mathrm{VJP}_{G}
+over abstract scalars; Stage 2 bridges tensors to Euclidean spaces and upgrades to the
+Fréchet-derivative statement
+VJP
+G
+​
+(
+x
+,
+y
+¯
+)
+=
+(
+D
+​
+𝖤𝗏𝖺𝗅𝖵𝖾𝖼
+G
+​
+(
+x
+)
+)
+⊤
+​
+y
+¯
+\mathrm{VJP}_{G}(x;\bar{y})=(D\,\mathsf{EvalVec}_{G}(x))^{\top}\bar{y}
+.
+Bottom row summarizes operator classes covered by local derivative lemmas; see Table
+6
+for details.
+B.5
+Node correctness and primitive operation proofs
+The global backprop theorem is proved once for SSA/DAG graphs by composing
+local
+facts about each primitive.
+Accordingly, each primitive operator (node kind) must supply a correctness lemma connecting its implemented JVP/VJP rules
+to the mathematical derivative of its forward map. We use two variants: a
+global
+form for primitives that are smooth
+everywhere, and a
+pointwise
+form for non-smooth or domain-sensitive primitives (handled in the next paragraph).
+Theorem B.6:
+Global node correctness (smooth primitives)
+Let
+op
+\mathrm{op}
+be a primitive with forward map
+f
+:
+ℝ
+n
+→
+ℝ
+m
+f:\mathbb{R}^{n}\to\mathbb{R}^{m}
+, and implemented tangent and cotangent
+rules
+JVP
+op
+​
+(
+x
+,
+δ
+​
+x
+)
+\mathrm{JVP}_{\mathrm{op}}(x;\delta x)
+and
+VJP
+op
+​
+(
+x
+,
+y
+¯
+)
+\mathrm{VJP}_{\mathrm{op}}(x;\bar{y})
+(as used by the Stage 1 algorithms).
+We say
+op
+\mathrm{op}
+is
+globally correct
+if for every
+x
+x
+there exists a (continuous) linear map
+D
+​
+f
+​
+(
+x
+)
+Df(x)
+such that
+JVP
+op
+​
+(
+x
+,
+δ
+​
+x
+)
+=
+D
+​
+f
+​
+(
+x
+)
+​
+δ
+​
+x
+and
+\mathrm{JVP}_{\mathrm{op}}(x;\delta x)\;=\;Df(x)\,\delta x\quad\text{and}
+VJP
+op
+​
+(
+x
+,
+y
+¯
+)
+=
+(
+D
+​
+f
+​
+(
+x
+)
+)
+⊤
+​
+y
+¯
+\mathrm{VJP}_{\mathrm{op}}(x;\bar{y})\;=\;\bigl(Df(x)\bigr)^{\top}\bar{y}
+for all tangents
+δ
+​
+x
+\delta x
+and cotangents
+y
+¯
+\bar{y}
+.
+Equivalently,
+JVP
+op
+\mathrm{JVP}_{\mathrm{op}}
+and
+VJP
+op
+\mathrm{VJP}_{\mathrm{op}}
+satisfy the adjointness identity
+⟨
+JVP
+op
+​
+(
+x
+,
+δ
+​
+x
+)
+,
+y
+¯
+⟩
+=
+⟨
+δ
+​
+x
+,
+VJP
+op
+​
+(
+x
+,
+y
+¯
+)
+⟩
+\langle\mathrm{JVP}_{\mathrm{op}}(x;\delta x),\bar{y}\rangle=\langle\delta x,\mathrm{VJP}_{\mathrm{op}}(x;\bar{y})\rangle
+under the standard inner product.
+This is the exact local hypothesis required by the Stage 2 upgrade: once each node kind used in a graph satisfies the
+above property, the previously stated graph theorem (Theorem
+2.2
+/ Theorem B.5) follows by SSA/DAG
+composition.
+Example (affine layer).
+For
+f
+⁡
+(
+x
+)
+=
+W
+​
+x
++
+b
+f(x)=Wx+b
+, the derivative is the constant linear map
+D
+​
+f
+​
+(
+x
+)
+=
+W
+Df(x)=W
+. Our implementation sets
+JVP
+op
+​
+(
+x
+,
+δ
+​
+x
+)
+=
+W
+​
+δ
+​
+x
+\mathrm{JVP}_{\mathrm{op}}(x;\delta x)=W\delta x
+and
+VJP
+op
+​
+(
+x
+,
+y
+¯
+)
+=
+W
+⊤
+​
+y
+¯
+\mathrm{VJP}_{\mathrm{op}}(x;\bar{y})=W^{\top}\bar{y}
+,
+so the local theorem holds immediately. In Lean, the differentiability fact is discharged using the standard lemma that affine
+maps have constant Fréchet derivatives (e.g.,
+hasFDerivAt_affine
+), after which the equalities above reduce to
+linear-algebra identities.
+Pointwise correctness and kink points.
+For non-smooth or domain-sensitive primitives we use a pointwise predicate (our
+NodeFDerivCorrectAt
+): the same local condition as in Theorem
+B.5
+holds, but only at a specific evaluation point
+x
+x
+under explicit side conditions that guarantee classical differentiability (e.g., ReLU requires all relevant coordinates
+≠
+0
+\neq 0
+;
+log
+\log
+requires inputs
+>
+0
+>0
+;
+inv
+\mathrm{inv}
+/
+div
+\mathrm{div}
+require nonzero denominators;
+max
+/
+min
+\max/\min
+require no ties).
+Theorem B.7:
+Pointwise node correctness (non-smooth primitives)
+Let
+op
+\mathrm{op}
+be a primitive with forward map
+f
+:
+ℝ
+n
+→
+ℝ
+m
+f:\mathbb{R}^{n}\to\mathbb{R}^{m}
+and implemented rules
+JVP
+op
+​
+(
+x
+,
+δ
+​
+x
+)
+\mathrm{JVP}_{\mathrm{op}}(x;\delta x)
+and
+VJP
+op
+​
+(
+x
+,
+y
+¯
+)
+\mathrm{VJP}_{\mathrm{op}}(x;\bar{y})
+.
+Fix a point
+x
+x
+and assume an explicit side condition
+ℋ
+op
+​
+(
+x
+)
+\mathcal{H}_{\mathrm{op}}(x)
+that guarantees classical
+differentiability at
+x
+x
+(e.g., for ReLU: all relevant coordinates
+≠
+0
+\neq 0
+; for
+log
+\log
+: inputs
+>
+0
+>0
+; for
+max
+/
+min
+\max/\min
+: no ties).
+Then there exists a linear map
+D
+​
+f
+​
+(
+x
+)
+Df(x)
+such that for all
+δ
+​
+x
+\delta x
+and
+y
+¯
+\bar{y}
+,
+JVP
+op
+​
+(
+x
+,
+δ
+​
+x
+)
+=
+D
+​
+f
+​
+(
+x
+)
+​
+δ
+​
+x
+and
+\mathrm{JVP}_{\mathrm{op}}(x;\delta x)\;=\;Df(x)\,\delta x\qquad\text{and}
+VJP
+op
+​
+(
+x
+,
+y
+¯
+)
+=
+(
+D
+​
+f
+​
+(
+x
+)
+)
+⊤
+​
+y
+¯
+.
+\mathrm{VJP}_{\mathrm{op}}(x;\bar{y})\;=\;\bigl(Df(x)\bigr)^{\top}\bar{y}.
+Equivalently,
+⟨
+JVP
+op
+​
+(
+x
+,
+δ
+​
+x
+)
+,
+y
+¯
+⟩
+=
+⟨
+δ
+​
+x
+,
+VJP
+op
+​
+(
+x
+,
+y
+¯
+)
+⟩
+.
+\big\langle\mathrm{JVP}_{\mathrm{op}}(x;\delta x),\,\bar{y}\big\rangle\;=\;\big\langle\delta x,\,\mathrm{VJP}_{\mathrm{op}}(x;\bar{y})\big\rangle.
+At kink points where the Fréchet derivative is undefined, we do
+not
+claim a calculus-level result; instead, the runtime still defines a deterministic executable backprop convention (as in mainstream autodiff systems) and we justify these rules at the
+algebraic
+level via the Stage 1 adjointness law, treating them as part of the internal semantics. Establishing that such conventions correspond to valid generalized derivatives (e.g., Clarke subgradients) at the kink points encountered during optimization is a separate, more delicate direction beyond Fréchet-derivative correctness.
+Higher-order derivatives.
+Our proved autograd theorem is a first-derivative result: it characterizes reverse-mode as computing the adjoint Fréchet derivative of the forward denotation. We do
+not
+currently obtain second derivatives by recursively applying this theorem to the backward pass, since the backward graph can introduce non-smooth, branch-dependent primitives (e.g., ReLU gates) that complicate a clean calculus-level story. In the PINN case studies, we instead bound
+u
+′
+u^{\prime}
+and
+u
+′′
+u^{\prime\prime}
+via derivative-aware bound propagation on the original op-tagged forward graph (a directional first-derivative pass and a dedicated second-derivative pass for low-dimensional inputs over the smooth operator subset used in the demos), avoiding differentiation of the backward graph altogether. The runtime does include executable higher-order utilities (e.g., forward-over-reverse/HVPs via dual-number techniques), but proving full higher-order correctness would require extending the local node library and proof obligations to higher derivatives (including handling or excluding kinks), and then lifting the same SSA/DAG composition arguments to those higher-order rules.
+Primitive operation proofs.
+Figure
+10
+summarizes the local derivative lemmas that feed the global SSA/DAG theorem.
+Rather than proving autograd correctness per model, we prove correctness
+per primitive
+and compose these facts
+along the graph. The proof work falls into three recurring patterns.
+(1) Linear primitives (affine maps).
+For primitives whose forward maps are affine/linear (e.g.,
+linear
+,
+matmul
+,
+conv2d
+),
+the derivative is the corresponding linear map, and the VJP is its adjoint (transpose), exactly matching standard
+backprop rules. Conv2D is handled by viewing convolution as a linear operator on flattened tensors and proving that
+our implemented backward rule coincides with the adjoint of that operator.
+Theorem B.8:
+Example: affine node rule
+For
+f
+⁡
+(
+x
+)
+=
+W
+​
+x
++
+b
+f(x)=Wx+b
+, we have
+D
+​
+f
+​
+(
+x
+)
+=
+W
+Df(x)=W
+and
+VJP
+⁡
+(
+x
+,
+y
+¯
+)
+=
+W
+⊤
+​
+y
+¯
+\mathrm{VJP}(x;\bar{y})=W^{\top}\bar{y}
+.
+(2) Elementwise primitives (coordinatewise calculus).
+For coordinatewise nonlinearities (e.g.,
+tanh
+\tanh
+, sigmoid,
+exp
+\exp
+), we lift scalar derivatives to tensors/vectors by
+showing that the derivative of the elementwise map is diagonal in the standard basis.
+For non-smooth or domain-sensitive elementwise ops (e.g., ReLU,
+log
+\log
+,
+⋅
+\sqrt{\cdot}
+,
+1
+/
+x
+1/x
+), we use the pointwise
+variant away from kink/singularity points (as summarized in Table
+6
+).
+Theorem B.9:
+Example: elementwise lifting (informal)
+If
+f
+:
+ℝ
+→
+ℝ
+f:\mathbb{R}\to\mathbb{R}
+is differentiable at each coordinate of
+x
+∈
+ℝ
+n
+x\in\mathbb{R}^{n}
+, then
+D
+​
+(
+f
+⊙
+)
+​
+(
+x
+)
+D(f^{\odot})(x)
+is the diagonal linear map with entries
+f
+′
+​
+(
+x
+i
+)
+f^{\prime}(x_{i})
+.
+(3) Reductions and normalization (coupled coordinates).
+Operations like softmax/log-softmax and normalization layers couple coordinates via a shared denominator or statistics,
+so we prove their derivatives directly from their defining formulas and show that the resulting VJP matches the
+implemented backward rule. Standard losses (e.g., MSE, cross-entropy) then follow by composition: we treat them as
+maps from logits to a scalar and apply the chain rule on top of the network’s derivative.
+Theorem B.10:
+Example: softmax differential (informal)
+Let
+s
+=
+softmax
+⁡
+(
+x
+)
+s=\mathrm{softmax}(x)
+. Then
+D
+​
+softmax
+​
+(
+x
+)
+​
+[
+d
+​
+x
+]
+=
+s
+⊙
+(
+d
+​
+x
+−
+⟨
+s
+,
+d
+​
+x
+⟩
+​
+𝟏
+)
+D\,\mathrm{softmax}(x)[dx]=s\odot\bigl(dx-\langle s,dx\rangle\mathbf{1}\bigr)
+.
+Together, these primitive proofs populate the local hypothesis used by the global SSA/DAG theorem; the detailed
+coverage matrix (global vs. pointwise) appears in Table
+6
+.
+B.6
+Graph-level composition and the reverse-mode algorithm
+This subsection explains how the
+graph-level
+reverse-mode theorem (Theorem
+2.2
+) is obtained from
+the
+local
+node lemmas (Theorems
+B.5
+and
+B.5
+) using SSA/DAG
+composition. The proof is modular: once each primitive node kind is equipped with a correct JVP/VJP rule, correctness
+lifts automatically to any well-typed graph built from those primitives.
+Induction over SSA/DAG structure.
+A well-typed SSA/DAG graph admits a topological evaluation order, so its denotation
+[
+[
+G
+]
+]
+\mathopen{[\![}G\mathclose{]\!]}
+can be seen as
+a composition of node-level functions applied to previously computed values. The global proof proceeds by induction over the
+graph (equivalently, over the node list in SSA order): assume a prefix graph is correct, then extend it by one locally-correct
+node. The forward denotation of the extended graph is a composition, so its derivative follows by the chain rule, and the
+adjoint derivative follows by reversing the order of composition. This is exactly what reverse-mode implements.
+Reverse-mode algorithm (VJP form).
+To connect the theorem statement to familiar autodiff intuition, we write the backpropagation procedure as a cotangent
+propagation on the DAG. The symbol
+seed
+(often written
+y
+¯
+\bar{y}
+) denotes the cotangent supplied at the graph output:
+it specifies which linear objective of the output we are differentiating. For scalar losses, the seed is typically
+1
+1
+; for vector
+outputs (e.g. logits), the seed can be any cotangent vector and yields the corresponding vector–Jacobian product.
+⬇
+#
+Forward
+pass
+(
+topological
+order
+)
+Eval_G
+(
+x
+):
+for
+node
+i
+in
+topo_order
+(
+G
+):
+v
+[
+i
+]
+=
+op_i
+(
+v
+[
+parents
+(
+i
+)])
+return
+v
+,
+v
+[
+out
+]
+#
+Reverse
+pass
+(
+cotangent
+propagation
+)
+VJP_G
+(
+x
+;
+seed
+):
+(
+v
+,
+_
+)
+=
+Eval_G
+(
+x
+)
+bar
+[
+out
+]
+=
+seed
+;
+bar
+[
+others
+]
+=
+0
+for
+node
+i
+in
+reverse
+(
+topo_order
+(
+G
+)):
+for
+p
+in
+parents
+(
+i
+):
+bar
+[
+p
+]
++=
+VJP_op_i
+(
+p
+,
+v
+[
+parents
+(
+i
+)],
+bar
+[
+i
+])
+return
+bar
+[
+input
+]
+#
+gradients
+for
+inputs
+/
+params
+Why accumulation is correct on DAGs.
+If a node value is used by multiple downstream nodes, it receives multiple cotangent contributions in the reverse sweep.
+The algorithm therefore
+adds
+these contributions (the
++=
+line). This is not an implementation detail: it is the
+mechanism that makes reverse-mode correct for graphs with shared subexpressions. Algebraically, correctness follows from
+the adjointness identity in Stage 1 (Theorem
+B.4
+): the dot product is bilinear, so contributions from
+different paths combine by summation.
+From VJP to gradients (the scalar-loss special case).
+Many presentations restrict to scalar losses
+L
+:
+ℝ
+n
+→
+ℝ
+L:\mathbb{R}^{n}\to\mathbb{R}
+and identify reverse-mode with
+∇
+L
+​
+(
+x
+)
+\nabla L(x)
+.
+Our statement is more general: for
+f
+:
+ℝ
+n
+→
+ℝ
+m
+f:\mathbb{R}^{n}\to\mathbb{R}^{m}
+and a cotangent seed
+y
+¯
+∈
+ℝ
+m
+\bar{y}\in\mathbb{R}^{m}
+,
+reverse-mode returns the adjoint derivative applied to the seed,
+(
+D
+​
+f
+​
+(
+x
+)
+)
+⊤
+​
+y
+¯
+(Df(x))^{\top}\bar{y}
+, i.e. a vector–Jacobian product
+(Theorem
+2.2
+). The scalar-loss gradient is recovered by taking
+m
+=
+1
+m=1
+and
+y
+¯
+=
+1
+\bar{y}=1
+(or by composing a
+vector-valued network with a scalar loss and applying the chain rule). This formulation is essential for ML workloads where
+intermediate quantities are tensor-valued (e.g. logits, features, attention blocks), but training and verification often require
+derivatives of
+particular
+scalar objectives derived from them.
+Parameter handling (typed parameter packs).
+Modern models have heterogeneous parameter packs: a linear layer carries a matrix and a bias vector, a Conv2D layer carries a
+4D kernel and bias, and attention blocks carry multiple projection matrices.
+TorchLean
+represents such packs as a
+shape-indexed heterogeneous list
+(a typed product) rather than a string-keyed map. A parameter pack is
+typed by a list of shapes
+[
+s
+1
+,
+…
+,
+s
+k
+]
+[s_{1},\dots,s_{k}]
+and contains one tensor of each corresponding shape; semantically this is the finite
+product space
+Tensor
+(
+α
+,
+s
+1
+)
+×
+⋯
+×
+Tensor
+(
+α
+,
+s
+k
+)
+\mathrm{Tensor}(\alpha,s_{1})\times\cdots\times\mathrm{Tensor}(\alpha,s_{k})
+. This choice makes parameters part of the same
+typed interface as ordinary graph inputs: compilation treats them as additional inputs to the SSA/DAG graph, and reverse-mode
+returns cotangents for
+both
+data inputs and parameters in the same structured form. Optimizers then become
+shape-preserving transformations on parameter packs (e.g., a pointwise update that zips parameters with their gradients),
+so a mismatch between a parameter tensor and its gradient is ruled out by the typechecker rather than discovered at runtime.
+By contrast, common ML runtimes store parameters in mutable, string-keyed containers for convenience, which pushes the
+shape contract into informal conventions; in
+TorchLean
+, the shape contract is intrinsic, and entire classes of “wrong tensor
+paired with wrong gradient” bugs become unrepresentable.
+B.7
+Core Definitions and IR Semantics
+We now focus on the core definitions that the rest of
+TorchLean
+builds on: (i) the
+shape-indexed
+tensor
+semantics used as the reference meaning for proofs and verification, (ii) the common scalar interface, and (iii) the
+op-tagged SSA/DAG IR. We include these excerpts because extending
+TorchLean
+(adding ops, adding backends, or adding
+verification rules) requires understanding the semantic core these components share.
+Shape-indexed tensors (why this representation).
+The most basic design decision is to make tensor shapes part of the
+type
+. In mainstream ML systems, shapes are
+runtime values and shape mismatches appear late (as runtime errors or, worse, silent broadcasting mistakes). In contrast,
+we want the shape contract to be an invariant of the logic: if an expression typechecks, it
+cannot
+be ill-shaped.
+This yields cleaner theorem statements (no repeated “shape matches” premises) and makes the semantic core robust to
+conventions that are easy to get wrong (layout, reshaping discipline, implicit broadcasting).
+Why functional tensors rather than flat arrays?
+For the semantic layer, we prioritize
+proof ergonomics
+and
+semantic clarity
+. We represent a tensor structurally
+as a total indexing function: a tensor of shape
+dim n s
+is literally a function
+Fin n -> Tensor a s
+. This makes
+theorems about tensor programs follow the same recursion as the datatype. For example, commutativity of elementwise
+addition is proved by induction on the shape: the scalar case is immediate, and the
+dim
+case reduces to the
+induction hypothesis pointwise. With a flat array representation, such proofs would require explicit index arithmetic and
+bounds reasoning, which is significantly harder to automate and more brittle as the operator library grows. Finally, the
+spec layer intentionally does
+not
+commit to a concrete storage layout (row-major vs. column-major), so it remains a
+stable reference meaning across execution backends.
+Core shape-indexed tensor definitions (semantic layer).
+⬇
+namespace
+Spec
+/
+--
+Shapes:
+scalar,
+or
+"n
+copies
+of
+a
+subshape".
+-/
+inductive
+Shape
+where
+|
+scalar
+:
+Shape
+|
+dim
+:
+Nat
+->
+Shape
+->
+Shape
+/
+--
+Shape-indexed
+tensors,
+represented
+structurally.
+-/
+inductive
+Tensor
+(
+a
+:
+Type
+)
+:
+Shape
+->
+Type
+where
+|
+scalar
+:
+a
+->
+Tensor
+a
+.
+scalar
+|
+dim
+:
+forall
+{
+n
+s
+},
+(
+Fin
+n
+->
+Tensor
+a
+s
+)
+->
+Tensor
+a
+(.
+dim
+n
+s
+)
+How to read this definition.
+The constructor
+Tensor.scalar
+is a scalar value.
+The constructor
+Tensor.dim
+stores an index function that returns the
+i
+i
+-th subtensor. Thus:
+Tensor
+⁡
+(
+α
+,
+dim
+​
+n
+​
+s
+)
+≡
+(
+Fin
+​
+n
+→
+Tensor
+⁡
+(
+α
+,
+s
+)
+)
+,
+\mathrm{Tensor}(\alpha,\texttt{dim}\ n\ s)\ \equiv\ (\texttt{Fin}\ n\to\mathrm{Tensor}(\alpha,s)),
+i.e., a length-
+n
+n
+vector of subtensors of shape
+s
+s
+.
+This immediately gives canonical encodings of common ML shapes:
+a vector of length
+n
+n
+is
+dim n scalar
+; a matrix
+m
+×
+n
+m\times n
+is
+dim m (dim n scalar)
+;
+and a batch of images (batch size
+B
+B
+, channels
+C
+C
+, height
+H
+H
+, width
+W
+W
+) is
+dim B (dim C (dim H (dim W scalar)))
+.
+Why this pays off in proofs.
+Most tensor operations are defined by recursion on shape, so proofs follow the same structure. For instance, elementwise
+addition on
+dim n s
+tensors is defined pointwise on the
+Fin n
+index and then recursively on
+s
+s
+; extensional
+equality reduces tensor equality to pointwise equality of index functions. This makes basic algebraic properties (associativity,
+commutativity, distributivity) and shape-preservation properties easy to state and to prove.
+Efficiency note (bridging to array-backed execution).
+The functional tensor representation is chosen for the
+semantic reference
+used by proofs and verification; it is not
+intended as the fastest execution format. For executable workflows,
+TorchLean
+additionally provides a materialized,
+array-backed representation and a semantics-preserving bridge between the two, so programs can run efficiently while
+still referring to the same underlying meaning. We discuss this representation, its compilation path, and the resulting
+performance trade-offs in Section C (and use it throughout the runtime experiments).
+Scalar polymorphism (one model, many semantics).
+Most specification-level definitions are polymorphic in the scalar type
+a
+a
+, so the
+same
+model code can be
+interpreted over multiple numeric domains:
+ℝ
+\mathbb{R}
+for proof-oriented reference semantics, executable floating-point
+domains for runtime demos, and abstract/rounded domains for sound bounds and error envelopes. To make this practical,
+TorchLean
+collects the numeric structure required by neural-network operators into a single typeclass,
+Context a
+. Intuitively,
+Context a
+is “the interface a scalar type must implement to run NN code.”
+Scalar interface for NN code (
+Context
+).
+⬇
+class
+Context
+(
+a
+:
+Type
+)
+extends
+Add
+a
+,
+Sub
+a
+,
+Mul
+a
+,
+Div
+a
+,
+Neg
+a
+,
+LT
+a
+,
+LE
+a
+,
+One
+a
+,
+Zero
+a
+,
+MathFunctions
+a
+,
+Numbers
+a
+where
+decidable_gt
+:
+DecidableRel
+(
+fun
+x
+y
+:
+a
+=>
+x
+>
+y
+)
+This interface includes: (i) ring-like arithmetic (
+Add/Sub/Mul/Div/Neg
+) used throughout linear algebra and losses;
+(ii) order structure (
+LT/LE
+and decidability) needed for conditionals and piecewise primitives (e.g., ReLU,
+max/min
+);
+(iii) constants (
+Zero/One
+) and numeric literals (
+Numbers
+); and (iv) transcendental functions
+(
+MathFunctions
+, e.g.,
+exp
+,
+log
+,
+tanh
+,
+sqrt
+,
+sin
+,
+cos
+).
+By making the required scalar operations explicit, we can state and reuse theorems without committing to a particular
+numeric representation: a lemma proved for
+Context a
+specializes uniformly to
+ℝ
+\mathbb{R}
+, executable float models,
+and rounding/interval domains used by verification.
+Graph IR structure (why SSA/DAG).
+Our verification substrate is an op-tagged SSA/DAG intermediate representation (IR) with explicit node kinds and output
+shapes. The key point is not that the IR is elaborate; it is that it is the
+single semantic target
+reused across
+execution, differentiation, and verification. More precisely, the IR is (i)
+op-tagged
+so each node carries an explicit
+primitive identifier (an opcode) and any parameters needed to interpret it, and (ii) in
+SSA/DAG form
+so each
+intermediate value is defined exactly once and dataflow is acyclic.
+Why a DAG?
+Most verifier pipelines (IBP/LiRPA/CROWN) operate on feedforward computation graphs: sound bounds
+are propagated along edges, which requires a well-defined evaluation order. A DAG gives exactly this: nodes admit a
+topological order, so evaluation and bound propagation are deterministic and total. This also makes proofs modular:
+semantic properties can be established by induction over the node list (SSA order), and verification passes can be defined
+as simple forward (or forward+backward) sweeps over the same graph object. Cycles and implicit control flow, by contrast,
+would require separate fixpoint semantics (and additional invariants) for both execution and verification;
+TorchLean
+handles such behavior by
+reification
+into finite graphs when needed (e.g., unrolling a fixed-length recurrent cell).
+Why SSA?
+SSA (static single assignment) ensures every intermediate value has a unique definition. This simplifies
+both implementation and reasoning: backpropagation and certificate checking can attach metadata (values, bounds, dual
+variables) to node IDs without ambiguity, and gradient contributions from multiple consumers are accumulated by summation
+in the reverse sweep. SSA therefore makes “what does this gradient/bound refer to?” a structural property of the IR.
+Core definition.
+Each node records: (i) an operation kind, (ii) the IDs of its parent nodes (its inputs), and (iii) a declared output shape.
+OpKinds carry any parameters required for interpretation (e.g.,
+conv2d
+stores channel counts, kernel size, stride,
+padding;
+softmax
+stores an axis).
+Op-tagged SSA/DAG IR (core excerpt).
+⬇
+inductive
+OpKind
+where
+|
+input
+|
+linear
+|
+relu
+|
+conv2d
+(
+inC
+outC
+kH
+kW
+stride
+padding
+:
+Nat
+)
+|
+softmax
+(
+axis
+:
+Nat
+)
+|
+layernorm
+(
+axis
+:
+Nat
+)
+|
+mse_loss
+structure
+Node
+where
+id
+:
+Nat
+parents
+:
+List
+Nat
+kind
+:
+OpKind
+outShape
+:
+Spec
+.
+Shape
+Table 7
+:
+High-level comparison between PyTorch
+[
+Paszke et al., 2019
+]
+and
+TorchLean
+.
+Aspect
+PyTorch
+TorchLean
+Shapes
+Dynamic runtime shapes; many errors are runtime exceptions.
+Shapes are part of types
+(
+Tensor
+α
+\alpha
+s
+); many mismatches are untypeable.
+Dtypes
+Many numeric and integer dtypes; mixed-dtype graphs are common.
+Scalar-polymorphic
+single-dtype graphs (one
+α
+\alpha
+per run); integer indices handled via a separate non-differentiable channel (
+NatRef
+/
+NatVecRef
+) in sessions.
+Execution modes
+Eager by default, with compilation/export toolchains (TorchScript, ONNX, AOT).
+Eager tape backend
+and
+proof-linked compiled
+SSA/DAG backend share one semantics; the compiled graph is the verifier target by construction.
+Autograd status
+Widely tested and trusted, but not formally proved correct.
+Reverse-mode correctness theorem
+for well-typed SSA/DAG graphs; eager runs linked to proved graphs.
+Indexing
+Tensor-valued indexing/slicing/gather/scatter across dtypes (e.g.
+LongTensor
+).
+Typed indexing primitives and session-level Nat channels for labels/indices; not yet PyTorch-complete for tensor-valued integer indices.
+Breadth/performance
+Very broad op surface and ecosystem; highly optimized CPU/GPU kernels.
+Curated op surface focused on verification-relevant primitives; extensible via a “new op” workflow; Lean execution prioritizes clarity/verification over performance.
+Typing and denotation.
+Well-typedness checks that each node’s parent shapes match what its
+OpKind
+expects and that
+outShape
+matches the primitive’s output contract. The denotation
+[
+[
+G
+]
+]
+\mathopen{[\![}G\mathclose{]\!]}
+evaluates nodes in topological order
+(which is well-defined because the graph is acyclic) and is total on well-typed graphs. This denotational semantics is the
+object used by proofs (e.g., autograd correctness) and by verification passes (e.g., IBP/CROWN transfer rules): bounds and
+certificates are interpreted against
+the same
+primitive meanings that execution uses.
+Losses
+Much of the machine learning literature phrases training in terms of a scalar loss
+L
+⁡
+(
+θ
+)
+L(\theta)
+and its gradient
+∇
+θ
+L
+\nabla_{\theta}L
+, but in a tensor-typed setting, we found it important to make the “scalar” part explicit: losses are tensor programs followed by reductions. This design choice makes the structure of losses clear and enables precise reasoning about gradients. In the library, losses are ordinary
+TorchLean
+programs that compute a tensor-valued quantity and then reduce it to a scalar. We provide both a primitive scalar loss (
+mse_loss
+) and a small
+Loss
+helper layer that mirrors common PyTorch conventions: MSE, cross-entropy/negative-log-likelihood variants (one-hot targets and index-based targets), and binary cross-entropy (including a stable “with logits” form), each with explicit reduction (
+mean
+or
+sum
+).
+Extending
+TorchLean
+end-to-end.
+We aim to make “adding a new op” a predictable, checkable workflow rather than an ad hoc engineering task. When we add a primitive to
+TorchLean
+, we treat it as an end-to-end commitment: it should have a spec meaning, a typing rule, and the transfer rules needed by theorems/verification. The workflow has five steps: (1)
+Spec semantics:
+Define the operation as a total function on shape-indexed tensors in the spec layer, with an explicit shape contract. If the operation is non-smooth or domain-sensitive (e.g.
+log
+\log
+, division, max), either define a safe/smoothed variant intended for theorem statements, or adopt the pointwise hypothesis style and document the required preconditions. (2)
+IR support:
+Add an op tag to the IR (
+OpKind
+) and define its typing rule (input/output shapes). This is what makes compilation and verification passes recognize the op uniformly. (3)
+Autograd over
+ℝ
+\mathbb{R}
+:
+Provide local JVP/VJP rules and prove the local adjointness law (or the pointwise variant). Once this lemma exists, the global theorem applies to any graph using the op. (4)
+Verification transfer rules:
+For IBP, define a sound transfer function on boxes. For affine relaxations, either implement and prove the relaxation, or import bounds as certificates and check the certificate constraints in Lean. (5)
+Numeric backends:
+Decide which execution backends support the op (Float, IEEE32Exec), and (when relevant) add local rounding/error lemmas so the op participates in end-to-end NF bounds.
+B.8
+TorchLean
+vs. PyTorch
+This comparison focuses on goals. PyTorch is an industrial execution framework optimized for throughput, hardware utilization, and ecosystem breadth;
+TorchLean
+is a semantics-first interface whose primary objective is to make training-time code and verifier-time artifacts coincide so that guarantees are stated about the
+executed
+artifact. Accordingly,
+TorchLean
+is not intended to compete with PyTorch on performance today (Lean execution is CPU-oriented and prioritizes checkability over kernel-level optimization); instead, it provides a foundation for high-assurance workflows where correctness and traceable assumptions matter.
+TorchLean
+is also not “just an API”: the design choices directly enable the verification story. Compilation is a first-class path that lowers programs to a well-typed op-tagged SSA/DAG IR, and eager execution records a tape that we prove corresponds to an equivalent well-typed IR graph (Theorem 1). Once a graph exists, whether it was obtained eagerly or via lowering, the same semantic object is consumed by autograd theorems, bound-propagation passes, and certificate checkers. We view scaling (e.g., GPU backends, kernel fusion, and faster internal bound optimization) as natural future work for the community; the contribution here is the semantics-aligned substrate on which such performance-oriented backends can be added without changing what is being verified.
+Appendix C
+Numerical Semantics
+Motivation and trust boundaries.
+We make numerical semantics explicit because it is easy to prove theorems about a real-valued model and then silently
+execute a Float32 implementation whose behavior differs at exactly the corner cases that matter for verification
+(rounding, overflow/underflow, NaN/Inf propagation, signed zeros, and library conventions).
+IEEE 754 is the de facto standard for floating-point arithmetic: it specifies binary/decimal formats, rounding rules,
+and exception behavior (including NaNs/Infs and their default handling).
+In Lean, however, the built-in runtime floating-point types are
+opaque to the kernel
+:
+they are intended for computation and are implemented by external runtime code rather than reducible definitions in the logic
+[
+Lean Prover Community,
+]
+.
+As a result, we treat the scalar type
+α
+\alpha
+as an explicit parameter and require every theorem or executable demo to
+declare which numeric semantics it is using; this turns “what arithmetic are we reasoning about?” into part of the
+statement rather than an implicit convention.
+IEEE 754 (what it standardizes).
+IEEE 754 defines floating-point numbers as signed significands with bounded exponents (e.g., binary32/Float32),
+together with
+rounding modes
+(typically round-to-nearest-even) and
+exceptional values
+such as
+±
+∞
+\pm\infty
+and NaNs. It also specifies default behaviors for exceptional operations (e.g., division by zero, invalid operations)
+and comparison/order conventions. The key takeaway for verification is that many “real-analysis proofs” do not apply
+verbatim in IEEE arithmetic: operations are rounded, may overflow/underflow, and may produce non-finite values whose
+propagation rules are part of the semantics.
+Motivation from Flocq.
+Our design is inspired by Flocq, a mature Roq library for reasoning about floating-point arithmetic.
+Flocq cleanly separates (i) the
+format
+(which numbers are representable: radix, exponent bounds, subnormals)
+from (ii) the
+rounding operator
+(how an exact real result is mapped to a representable value), and it provides
+theorem infrastructure for compositional error bounds.
+[
+Boldo and Melquiond, 2011
+]
+We adopt this same separation because neural-network verification needs both:
+(a)
+theorem-friendly “round-on-
+ℝ
+\mathbb{R}
+” models to state and compose numerical error envelopes,
+and
+(b)
+executable, bit-level semantics to make corner cases (NaNs, signed zeros, overflow) concrete when running
+end-to-end demos and checkers.
+Summary: four numeric layers in
+TorchLean
+.
+We provide (i)
+trusted runtime floats
+for speed, (ii) an
+executable IEEE-754 model
+for explicit Float32 behavior,
+(iii)
+proof-relevant rounding models
+for compositional error reasoning, and (iv) an
+external validated-numerics oracle
+for rigorous high-precision enclosures of difficult primitives (notably transcendentals).
+(A) Runtime execution:
+Float
+/
+Float32
+(fast, but opaque).
+Lean exposes
+Float
+(binary64) and
+Float32
+(binary32) as runtime types intended for efficient execution.
+Their operations are implemented by external/runtime code (e.g., compiled to underlying machine/C operators) rather than
+by kernel-reducible definitions, so we treat them as an
+explicit trust boundary
+for proofs.
+[
+Lean Prover Community,
+]
+(B) Executable Float32 semantics:
+IEEE32Exec
+(bit-level IEEE).
+For end-to-end demos that require explicit Float32 behavior, we implement
+IEEE32Exec
+, a Lean-defined,
+bit-level IEEE-754 binary32 kernel. This model includes signed zeros, subnormals, NaNs/Infs, and the IEEE rounding/exception
+behavior for core arithmetic. It is
+executable
+inside Lean and therefore gives an explicit meaning to “Float32 execution”
+independent of a particular runtime implementation. The remaining “hardware gap” (showing a target platform refines this exact
+software model) is handled as an explicit conformance interface rather than being silently assumed.
+(C) Proof-relevant rounding models:
+FP32
+/
+NF
+(round-after-each-primitive).
+For theorem statements and error analysis, we use “round-on-
+ℝ
+\mathbb{R}
+” models inspired by Flocq: each primitive is specified
+as “compute in
+ℝ
+\mathbb{R}
+, then round” under a chosen format/rounding mode, enabling compositional error envelopes through
+entire graphs.
+FP32
+instantiates this with IEEE-style binary32 rounding (finite-only, i.e., it does not model NaN/Inf),
+while
+NF
+generalizes the same idea to user-chosen radices/exponent functions/rounding operators.
+(D) Validated numerics oracle: Arb/FLINT (rigorous transcendental enclosures).
+For rigorous enclosures of transcendental functions (e.g.,
+tanh
+,
+exp
+,
+log
+,
+,
+​
+sin
+,
+cos
+\tanh,\exp,\log,\sqrt{,}\sin,\cos
+) at user-chosen precision,
+we integrate an Arb/FLINT backend via
+python-flint
+behind an explicit oracle boundary. The oracle returns certified
+ball/interval enclosures at a specified working precision (in bits), which we can consume as certificate-like artifacts in
+verification pipelines. This layer is
+not
+kernel-reducible and is treated as an external trust boundary; its role is to
+provide high-quality validated bounds where implementing tight transcendental enclosures natively would be cumbersome, while
+keeping the trusted computing base explicit.
+Why we implement
+both
+(bit-level and round-on-
+ℝ
+\mathbb{R}
+).
+These layers serve different proof/verification needs:
+bit-level execution
+(
+IEEE32Exec
+) is ideal for making “what happens on Float32?” concrete in checkers and demos,
+including edge cases (NaNs, signed zeros) that real analysis ignores;
+round-on-
+ℝ
+\mathbb{R}
+models
+(
+FP32
+/
+NF
+)
+are ideal for theorem statements and compositional error envelopes because they expose the rounding operator as a mathematical
+object that can be bounded and composed (in the style of Flocq).
+[
+Boldo and Melquiond, 2011
+]
+Together, they let us support both the verification community (explicit executable semantics) and the floating-point proof
+community (compositional rounding/error reasoning) under a single semantic umbrella.
+Lean-specific note (why opacity matters).
+Because Lean’s runtime floats are not encoded in the logic, the kernel cannot reduce or reason about them without additional
+axioms; in particular, floating-point operations are implemented externally (and thus are not definitionally equal to any
+mathematical model inside Lean).
+This is why
+TorchLean
+separates “fast execution” from “proved semantics” and makes the trust boundary explicit in both
+the main text and Table
+1
+.
+One surface name, switchable semantics.
+To keep model code uniform while making numerical assumptions explicit,
+TorchLean
+exposes a single surface notion of
+“Float32” with a selectable semantic mode. This lets the same model/program be instantiated with (i) an executable
+bit-level IEEE-754 semantics for end-to-end runs, or (ii) a proof-relevant rounding model for theorem statements and
+compositional error envelopes, without rewriting the model.
+Selecting Float32 semantics at the type level.
+⬇
+open
+TorchLean
+.
+Floats
+--
+Executable
+Float32
+semantics
+(bit-level
+IEEE-754
+binary32):
+abbrev
+ExecF32
+:
+Type
+:=
+F32
+--
+=
+IEEE32Exec
+--
+Proof
+Float32
+semantics
+(round-on-R,
+finite-only):
+abbrev
+ProofF32
+:
+Type
+:=
+F32
+.
+fp32
+--
+=
+FP32
+Why multiple float modes are necessary.
+No single floating-point representation serves all verification goals. IEEE 754 defines the concrete behavior of deployed
+floating-point arithmetic, including rounding and exceptional values (NaNs/Infs, signed zeros, subnormals).
+For
+executable demos
+and certificate checking where these corner cases matter, we want an explicit, runnable model of
+binary32 semantics—hence
+IEEE32Exec
+. For
+theorem statements
+about numerical stability and end-to-end error
+budgets, we instead want a proof-friendly “round-after-each-primitive” model over
+ℝ
+\mathbb{R}
+that supports compositional
+error reasoning in the style of verified floating-point libraries such as Flocq—hence
+FP32
+/
+NF
+.
+Finally, Lean’s built-in runtime floats (
+Float
+/
+Float32
+) are fast but opaque to the kernel and therefore live on
+the explicit trust/validation side of the interface.
+Float32 mode selection.
+At the API level we package this choice behind a small mode enum, so use sites are explicit about which semantics they rely on:
+A single “Float32” name with explicit semantics.
+⬇
+inductive
+Float32Mode
+where
+|
+fp32
+|
+ieee754Exec
+abbrev
+Float32
+(
+mode
+:
+Float32Mode
+:=
+.
+ieee754Exec
+)
+:
+Type
+:=
+match
+mode
+with
+|
+.
+fp32
+=>
+FP32
+|
+.
+ieee754Exec
+=>
+IEEE32Exec
+Proof-level rounding model (
+NF
+).
+For end-to-end error bounds we use a proof-relevant model that rounds after every primitive operation. Conceptually, an
+NF
+value stores a real number together with a chosen
+format
+(radix and exponent function) and
+rounding
+operator; each primitive is specified as “compute in
+ℝ
+\mathbb{R}
+, then round,” and local rounding/error lemmas compose
+over SSA/DAG graphs.
+Practical rule of thumb.
+Use
+IEEE32Exec
+when you want executable Float32 behavior (including corner cases)
+to match an IEEE-style semantics; use
+FP32
+/
+NF
+when you want theorem statements with explicit, compositional
+rounding error envelopes; use runtime
+Float
+/
+Float32
+for fast prototyping where the numeric backend is an
+explicitly trusted assumption.
+C.1
+End-to-end NF bounds and hardware soundness
+This section explains two complementary pieces of our numerical story:
+(i) how we
+compose
+per-operator rounding/error lemmas into whole-graph error budgets in a “round-after-each-primitive” model (NF),
+and (ii) how we connect an
+executable
+bit-level Float32 semantics to that proof model on the finite (non-NaN/non-Inf) path, and what
+remains to relate either of them to
+hardware
+execution.
+End-to-end NF bounds: local errors compose over SSA/DAG.
+NF is a proof-relevant “round-after-each-primitive” semantics: each primitive is specified as “compute in
+ℝ
+\mathbb{R}
+, then round” under a
+chosen format/rounding operator. We relate NF values to real semantics via an explicit error relation
+≈
+ε
+\,\approx_{\varepsilon}\,
+, and we prove
+whole-graph bounds by induction in SSA/topological order (and analogously for backward sweeps when needed).
+Local-to-global error propagation (NF idea).
+Define a scalar approximation relation
+x
+nf
+≈
+ε
+x
+ℝ
+⟺
+|
+x
+nf
+−
+x
+ℝ
+|
+≤
+ε
+,
+x_{\mathrm{nf}}\approx_{\varepsilon}x_{\mathbb{R}}\quad\Longleftrightarrow\quad|x_{\mathrm{nf}}-x_{\mathbb{R}}|\leq\varepsilon,
+and lift it to tensors (pointwise or via a norm such as
+ℓ
+∞
+\ell_{\infty}
+).
+Each primitive operator
+op
+\mathrm{op}
+comes with a lemma of the form:
+if
+u
+j
+≈
+ε
+j
+v
+j
+for all inputs
+j
+,
+then
+op
+nf
+(
+u
+)
+≈
+ε
+′
+op
+ℝ
+(
+v
+)
+,
+\text{if }u_{j}\approx_{\varepsilon_{j}}v_{j}\text{ for all inputs }j,\ \text{ then }\ \mathrm{op}_{\mathrm{nf}}(u)\approx_{\varepsilon^{\prime}}\mathrm{op}_{\mathbb{R}}(v),
+where the derived
+ε
+′
+\varepsilon^{\prime}
+is computed from operator-specific stability bounds.
+For linear/affine primitives,
+ε
+′
+\varepsilon^{\prime}
+follows from standard Lipschitz constants; for nonlinear primitives, it follows from local
+derivative bounds or global Lipschitz envelopes (on the region of interest).
+Whole-graph bounds are proved by induction over the SSA/DAG order: the induction hypothesis provides bounds for parent nodes, and the node lemma
+yields the bound for the current node.
+Executable IEEE model
+→
+\rightarrow
+rounding-on-
+ℝ
+\mathbb{R}
+model (internal refinement).
+NF/FP32-style reasoning is theorem-friendly because rounding is an explicit mathematical operator on
+ℝ
+\mathbb{R}
+, but it does not capture
+IEEE corner-case behavior (NaNs/Infs, signed zeros, subnormals) directly. Conversely, a bit-level IEEE model is executable and makes those
+corner cases concrete, but it is harder to use for compositional error proofs. We therefore establish an
+internal refinement
+on the
+finite
+path: for the core Float32 arithmetic primitives (addition/subtraction/multiplication/division/sqrt and
+min
+/
+max
+\min/\max
+),
+we prove that interpreting the executable bit-level result as a real number agrees with applying the corresponding round-to-Float32 operator
+to the real arithmetic result, under explicit side conditions that rule out NaN/Inf and overflow-to-Inf.
+Theorem C.1:
+Internal refinement on the finite path
+Let
+ExecOp
+32
+\mathrm{ExecOp}_{32}
+be a core Float32 primitive implemented by the executable bit-level IEEE model
+(e.g.,
++
+,
+−
+,
+×
+,
+/
+,
+⋅
++,-,\times,/,\sqrt{\cdot}
+,
+min
+/
+max
+\min/\max
+), and let
+RealOp
+\mathrm{RealOp}
+be the corresponding real operator. (For
+min
+/
+max
+\min/\max
+on finite values,
+ExecOp
+32
+​
+(
+x
+,
+y
+)
+\mathrm{ExecOp}_{32}(x,y)
+returns exactly one of its inputs, so the
+Round
+32
+\mathrm{Round}_{32}
+wrapper below is vacuous; we state the refinement uniformly for all listed primitives.)
+Let
+toReal
+\mathrm{toReal}
+interpret a finite Float32 value as a real number, and let
+Round
+32
+\mathrm{Round}_{32}
+be the IEEE-style
+round-to-Float32 operator on
+ℝ
+\mathbb{R}
+.
+Define
+r
+⁡
+(
+x
+,
+y
+)
+:=
+RealOp
+⁡
+(
+toReal
+⁡
+(
+x
+)
+,
+toReal
+⁡
+(
+y
+)
+)
+r(x,y)\;:=\;\mathrm{RealOp}\bigl(\mathrm{toReal}(x),\,\mathrm{toReal}(y)\bigr)
+.
+Assume the evaluation stays
+finite
+(no NaN/Inf and no overflow-to-Inf) on the considered inputs.
+Then for all inputs
+x
+,
+y
+x,y
+in the finite domain,
+toReal
+⁡
+(
+ExecOp
+32
+​
+(
+x
+,
+y
+)
+)
+=
+Round
+32
+​
+(
+r
+⁡
+(
+x
+,
+y
+)
+)
+.
+\mathrm{toReal}\!\bigl(\mathrm{ExecOp}_{32}(x,y)\bigr)\;=\;\mathrm{Round}_{32}\!\bigl(r(x,y)\bigr).
+Moreover, these per-primitive refinements compose: for any expression
+e
+e
+built from the core primitives,
+interpreting the executable result with
+toReal
+\mathrm{toReal}
+agrees with evaluating the corresponding real expression and
+rounding at each primitive, under the same finiteness assumptions.
+This bridge is necessary because it lets us
+run end-to-end demos under an explicit IEEE-754 semantics while still reusing the cleaner FP32/NF error-envelope lemmas whenever the execution
+stays in the finite regime.
+Hardware soundness: what remains and a pragmatic deployment path.
+IEEE 754 specifies formats, rounding modes, and exception behavior, but real deployments can diverge through compilation and platform choices
+(e.g., flush-to-zero/denormals-are-zero, reassociation/“fast-math”, FMA contraction, or reduction order).
+To claim that
+hardware
+Float32
+execution inherits our theorems, one must additionally (a) fix a target semantics contract
+(rounding mode, denormal policy such as FTZ/DAZ, contraction/reassociation policy, and reduction ordering), and (b) relate the compiled runtime’s
+observable Float32 results to the chosen executable model (or to the rounding-on-
+ℝ
+\mathbb{R}
+model) for the operations actually used. We will address this in future work.
+Transcendentals and IEEE-754 (what is and is not specified).
+IEEE 754 precisely specifies formats and core arithmetic (e.g., add/sub/mul/div, sqrt, comparisons, NaN/Inf behavior), but
+elementary/transcendental functions
+(e.g.,
+exp
+,
+log
+,
+sin
+,
+cos
+,
+tanh
+) are largely
+outside the standard’s required semantics and are typically provided by system
+libm
+implementations.
+1
+1
+1
+IEEE’s own background material explicitly notes that many programs rely on library elementary functions and that the
+standard does not specify them.
+As a result, even when two platforms are “IEEE compliant” for core arithmetic, their transcendental results can differ across
+OS/compiler/libm versions or under different optimization flags. A deeper reason is the
+table-maker’s dilemma
+:
+deciding the correctly-rounded result for an elementary function can require substantially more precision than the target
+format in worst cases, which makes full bit-exact specification and implementation nontrivial in practice.
+[
+Brisebarre et al., 2025
+,
+Zimmermann, 2005
+]
+Our deliberate split: executable IEEE core vs. explicit transcendental policy.
+Accordingly,
+TorchLean
+separates concerns.
+For core IEEE arithmetic,
+IEEE32Exec
+provides a Lean-defined, bit-level model of binary32 behavior (including signed zeros,
+subnormals, NaN/Inf propagation, and rounding), so the meaning of “Float32 execution” is explicit inside the prover.
+For transcendental functions, we make the policy explicit rather than pretending it is uniquely determined by IEEE:
+•
+Deterministic in-kernel implementations for common ML primitives.
+For functions heavily used in ML pipelines (notably
+exp
+/
+log
+and hyperbolic functions used in activations and normalizers),
+we provide deterministic implementations with a fixed rounding/approximation policy so that end-to-end executions are reproducible under
+IEEE32Exec
+.
+•
+Explicit delegation when necessary.
+For functions outside the current verified kernel surface (e.g., full trigonometric stacks), we may delegate to Lean runtime
+Float
+(or a chosen library implementation) and then round back to binary32, treating that choice as an
+explicit trust boundary
+rather than an implicit semantic fact.
+Proof models cover transcendentals via “round the real function.”
+In parallel, the FP32/NF proof models include transcendentals definitionally as “apply the real function, then round,” which
+supports theorem statements in terms of explicit error envelopes and interval enclosures under stated hypotheses. This mirrors
+the classical verified-float approach: instead of depending on a particular
+libm
+implementation, the semantics is a mathematical
+rounding operator applied to the real function, enabling compositional reasoning.
+[
+Brisebarre et al., 2025
+,
+Flocq Developers, 2025
+]
+NaN payload caveat (why hardware conformance is subtle).
+IEEE 754 specifies NaN propagation at a high level (operations produce NaN when given NaN inputs), but the
+choice of NaN payload
+(and some signaling-vs-quiet details) is not fully uniform across real implementations.
+[
+IEEE Standards Association, 2019
+]
+Our executable kernel fixes a deterministic policy (including a specific quieting/selection rule), and we prove properties about that
+policy. Consequently, any claim that a concrete compiler/runtime/hardware Float32 implementation refines
+IEEE32Exec
+must assume
+or establish compatibility with this concrete NaN policy (or adopt a quotienting notion of observational equivalence that treats NaN
+payload differences as irrelevant for the target theorems).
+Appendix D
+CROWN verification: bounds, duality, and certificates
+We expand Section
+2.4
+with implementation details for bound propagation and certificate checking.
+D.1
+IBP, CROWN/LiRPA, and certificate checking
+High-Level Overview
+Our verifier operates on the shared op-tagged SSA/DAG IR and proves properties of the graph denotation
+[
+[
+G
+]
+]
+\mathopen{[\![}G\mathclose{]\!]}
+by establishing
+sound enclosures
+for intermediate values and/or outputs.
+We support two complementary verification modes:
+(i) native bound propagation
+implemented in Lean for demo-scale graphs, and
+(ii) certificate checking
+, where an external verifier produces a bound/certificate that Lean checks against
+the same IR semantics.
+Acronyms.
+•
+IBP
+(Interval Bound Propagation): propagate interval boxes
+[
+l
+,
+u
+]
+[l,u]
+forward through the network.
+•
+CROWN
+: propagate
+linear
+upper/lower bounds through nonlinearities to obtain tighter output bounds.
+•
+LiRPA
+(Linear Relaxation-based Perturbation Analysis): a general framework that derives/propagates
+linear relaxations (including CROWN- and DeepPoly-style rules) over general computational graphs.
+•
+α
+\alpha
+-CROWN
+: tightens CROWN bounds by optimizing relaxation parameters.
+•
+β
+\beta
+-CROWN
+: incorporates split constraints (branch-and-bound) efficiently by encoding splits with
+optimizable parameters.
+IBP (interval bound propagation).
+Interval Bound Propagation (IBP) is the simplest sound enclosure method for neural computation graphs. Starting from an
+input region
+—typically an axis-aligned box
+[
+l
+0
+,
+u
+0
+]
+[l_{0},u_{0}]
+(often used to over-approximate an
+ℓ
+∞
+\ell_{\infty}
+ball)—IBP
+computes, for every node
+i
+i
+in the graph, an interval enclosure
+[
+l
+i
+,
+u
+i
+]
+[l_{i},u_{i}]
+such that the true node value satisfies
+v
+i
+​
+(
+x
+)
+∈
+[
+l
+i
+,
+u
+i
+]
+v_{i}(x)\in[l_{i},u_{i}]
+for all admissible inputs
+x
+∈
+[
+l
+0
+,
+u
+0
+]
+x\in[l_{0},u_{0}]
+. The algorithm is a single forward sweep in topological order:
+each primitive provides an
+interval transfer rule
+that maps parent bounds to a sound output bound, maintaining the
+invariant “parents sound
+⇒
+\Rightarrow
+child sound.” IBP is attractive because it is fast, compositional, and easy to make
+formally sound, but it can be loose because plain intervals do not track correlations between coordinates (and thus can
+over-approximate significantly after repeated mixing through linear layers).
+Example IBP transfer rules (sketch).
+All rules below are
+sound
+: they guarantee
+op
+⁡
+(
+v
+)
+∈
+[
+l
+′
+,
+u
+′
+]
+\mathrm{op}(v)\in[l^{\prime},u^{\prime}]
+for all
+v
+∈
+[
+l
+,
+u
+]
+v\in[l,u]
+.
+•
+Affine / linear
+y
+=
+W
+​
+x
++
+b
+y=Wx+b
+(includes
+linear
+and flattened
+matmul
+cases).
+Write
+W
+=
+W
++
+−
+W
+−
+W=W^{+}-W^{-}
+with
+W
++
+,
+W
+−
+≥
+0
+W^{+},W^{-}\geq 0
+elementwise. Then
+l
+y
+=
+W
++
+​
+l
+x
+−
+W
+−
+​
+u
+x
++
+b
+,
+u
+y
+=
+W
++
+​
+u
+x
+−
+W
+−
+​
+l
+x
++
+b
+,
+l_{y}=W^{+}l_{x}-W^{-}u_{x}+b,\qquad u_{y}=W^{+}u_{x}-W^{-}l_{x}+b,
+which is the standard interval-arithmetic enclosure for linear maps.
+•
+Monotone elementwise
+(e.g., ReLU,
+exp
+\exp
+).
+Apply the function to endpoints:
+[
+l
+y
+,
+u
+y
+]
+=
+[
+f
+⁡
+(
+l
+x
+)
+,
+f
+⁡
+(
+u
+x
+)
+]
+(componentwise).
+[l_{y},u_{y}]=[f(l_{x}),f(u_{x})]\quad\text{(componentwise).}
+For ReLU specifically, this yields
+l
+y
+=
+max
+⁡
+(
+l
+x
+,
+0
+)
+l_{y}=\max(l_{x},0)
+and
+u
+y
+=
+max
+⁡
+(
+u
+x
+,
+0
+)
+u_{y}=\max(u_{x},0)
+.
+•
+Reductions
+(e.g., sum/mean over a fixed axis).
+Because reduction is linear, bounds reduce by summing/averaging endpoints along the axis:
+sum
+⁡
+(
+[
+l
+,
+u
+]
+)
+=
+[
+sum
+⁡
+(
+l
+)
+,
+sum
+⁡
+(
+u
+)
+]
+\mathrm{sum}([l,u])=[\mathrm{sum}(l),\,\mathrm{sum}(u)]
+mean
+⁡
+(
+[
+l
+,
+u
+]
+)
+=
+[
+mean
+⁡
+(
+l
+)
+,
+mean
+⁡
+(
+u
+)
+]
+.
+\mathrm{mean}([l,u])=[\mathrm{mean}(l),\,\mathrm{mean}(u)].
+IBP certificate soundness (graph dialect).
+To support certificate checking, we formulate IBP soundness for a
+safe
+graph semantics that is explicitly partial:
+node evaluation fails when required parent values/parameters are missing or when declared dimensions do not match.
+We then define a per-node IBP
+certificate step
+that deterministically recomputes each node’s interval box from its parents’ boxes.
+The soundness proof follows the standard local-to-global pattern: under a topological order and a supported operator subset,
+local semantic consistency and local certificate consistency imply a global enclosure invariant.
+Theorem D.1:
+IBP certificate soundness)
+Let
+G
+G
+be a topologically sorted computation graph over a supported operator fragment, and fix a parameter store.
+Assume we are given:
+(i)
+a partial value semantics that computes node values by a one-step rule from parent values and parameters, and
+(ii)
+a one-step IBP rule that computes an interval box for each node from its parents’ boxes and parameters.
+Let
+(
+v
+i
+)
+i
+(v_{i})_{i}
+be any assignment of semantic node values that is locally consistent with the one-step value rule, and let
+(
+B
+i
+)
+i
+(B_{i})_{i}
+be any assignment of certified interval boxes that is locally consistent with the one-step IBP rule.
+If each semantic input lies in its declared input box, then for every node
+i
+i
+, whenever both
+v
+i
+v_{i}
+and
+B
+i
+B_{i}
+are defined, the value
+v
+i
+v_{i}
+lies in
+B
+i
+B_{i}
+componentwise.
+End-to-end IBP soundness for the concrete implementation.
+Beyond certificate soundness, we also connect the theorem to the concrete implementations used in the demos.
+We define total “evaluate-by-id” and “propagate-by-id” procedures, implemented by recursion on node id, and prove that they satisfy the local-consistency premises of Theorem
+D.1
+. As a result, the computed IBP boxes enclose the computed semantic values whenever both procedures return values:
+Theorem D.2:
+End-to-end IBP soundness for
+runIBP?
+Let
+evalGraphRec
+be the total value evaluator for
+G
+G
+and
+runIBP?
+the corresponding total IBP propagation.
+Under the same structural assumptions (topological order, supported operators, and input enclosure), for every node
+i
+i
+, whenever both procedures return a value
+v
+i
+v_{i}
+and a box
+B
+i
+B_{i}
+, we have
+v
+i
+∈
+B
+i
+v_{i}\in B_{i}
+componentwise.
+Proof idea (both theorems).
+The enclosure invariant is preserved one node at a time: assuming all parent enclosures hold, the operator-specific IBP transfer rule yields an enclosure for the current node consistent with its value semantics.
+Topological order ensures that, at node
+i
+i
+, all parent facts are already established, so the global result follows by induction over node IDs/topological order.
+CROWN and LiRPA (linear relaxations).
+CROWN tightens IBP by tracking
+affine bounds
+rather than pure intervals: instead of only maintaining
+v
+i
+​
+(
+x
+)
+∈
+[
+l
+i
+,
+u
+i
+]
+v_{i}(x)\in[l_{i},u_{i}]
+for each node, it maintains linear forms that bound each node as a function of the input,
+e.g.
+a
+⊤
+​
+x
++
+b
+≤
+v
+i
+​
+(
+x
+)
+≤
+c
+⊤
+​
+x
++
+d
+a^{\top}x+b\leq v_{i}(x)\leq c^{\top}x+d
+over the admissible input region. These affine bounds are obtained by
+replacing nonlinear primitives with
+sound linear envelopes
+on the current pre-activation interval and propagating
+the resulting affine forms through linear operators. For piecewise-linear activations such as ReLU, the envelope is given by
+valid upper/lower lines on
+[
+l
+,
+u
+]
+[l,u]
+(secant/tangent choices in the unstable regime
+l
+<
+0
+<
+u
+l<0<u
+); for smooth activations (e.g.,
+tanh
+\tanh
+, sigmoid), one uses tangent/secant bounds or other valid global/region-restricted linear relaxations, yielding a
+strictly tighter enclosure whenever correlations between coordinates matter.
+LiRPA is the unifying viewpoint: it treats bound propagation as computing
+and composing such linear relaxations over
+general computational graphs
+(not just simple feedforward chains),
+subsuming CROWN- and DeepPoly-style rules. Modern LiRPA implementations typically expose both (i) a
+forward
+pass
+that produces node-wise affine bounds and (ii) an
+objective-dependent
+backward/dual pass that tightens the bound
+for a specific linear objective on the output (e.g., a robustness margin objective), since the best relaxation choices can
+depend on the downstream objective.
+In
+TorchLean
+, our Lean-native core mirrors this structure: we provide a proved-sound IBP layer and a basic CROWN/LiRPA
+affine engine over the shared op-tagged IR, with conservative fallbacks (e.g., deriving constant affine bounds from IBP)
+when a specialized relaxation is not yet implemented, preserving soundness at the cost of tightness.
+Example: ReLU linear relaxation (one neuron).
+Let
+z
+∈
+[
+l
+,
+u
+]
+z\in[l,u]
+and
+y
+=
+ReLU
+⁡
+(
+z
+)
+y=\mathrm{ReLU}(z)
+.
+A standard sound relaxation chooses linear bounds
+y
+≥
+λ
+L
+​
+z
++
+μ
+L
+,
+y
+≤
+λ
+U
+​
+z
++
+μ
+U
+,
+y\geq\lambda_{L}z+\mu_{L},\qquad y\leq\lambda_{U}z+\mu_{U},
+with coefficients chosen so the lines bound ReLU on
+[
+l
+,
+u
+]
+[l,u]
+(e.g.,
+λ
+U
+=
+u
+u
+−
+l
+\lambda_{U}=\frac{u}{u-l}
+,
+μ
+U
+=
+−
+u
+​
+l
+u
+−
+l
+\mu_{U}=-\frac{ul}{u-l}
+for the secant upper bound when
+l
+<
+0
+<
+u
+l<0<u
+; and a valid lower bound selected from the admissible family in this regime).
+Propagating these envelopes yields affine bounds on downstream nodes and, ultimately, output enclosures.
+α
+/
+β
+\alpha/\beta
+-CROWN as certificate-checked bound semantics (graph dialect).
+We implement an
+α
+/
+β
+\alpha/\beta
+-CROWN certificate interface for the op-tagged graph verifier dialect. Fix a compiled graph
+G
+G
+(nodes
+i
+i
+in topological order) and an input box
+B
+B
+. CROWN-family bounds at each node are represented as
+affine enclosures
+over inputs: for a scalar node value
+z
+i
+z_{i}
+we enclose it by two affine functions of the input
+x
+x
+,
+z
+i
+​
+(
+x
+)
+\displaystyle z_{i}(x)
+∈
+[
+L
+i
+​
+(
+x
+)
+,
+U
+i
+​
+(
+x
+)
+]
+,
+\displaystyle\in[L_{i}(x),U_{i}(x)],
+L
+i
+​
+(
+x
+)
+\displaystyle L_{i}(x)
+=
+⟨
+a
+i
+L
+,
+x
+⟩
++
+b
+i
+L
+,
+\displaystyle=\langle a_{i}^{L},x\rangle+b_{i}^{L},
+U
+i
+​
+(
+x
+)
+\displaystyle U_{i}(x)
+=
+⟨
+a
+i
+U
+,
+x
+⟩
++
+b
+i
+U
+.
+\displaystyle=\langle a_{i}^{U},x\rangle+b_{i}^{U}.
+(For tensor nodes, the same form is applied componentwise.) Bounds are computed by a per-node step rule
+CrownStepNode?
+:
+\displaystyle\texttt{CrownStepNode?}:
+S
+×
+i
+→
+\displaystyle S\times i\ \to
+Option
+​
+(
+AffBounds
+)
+,
+\displaystyle\textsf{Option}(\textsf{AffBounds}),
+where
+S
+S
+denotes the checker state (context plus parent bounds) and
+AffBounds
+abbreviates the pair of affine maps above. This step extends
+α
+\alpha
+-CROWN by optionally incorporating
+β
+\beta
+phase information at ReLU nodes: phase-fixed units use exact linear behavior (slope
+0
+0
+or
+1
+1
+), while unstable units fall back to standard CROWN/
+α
+\alpha
+-CROWN relaxations.
+Certificate contents and the role of
+α
+\alpha
+and
+β
+\beta
+.
+An
+α
+/
+β
+\alpha/\beta
+-CROWN certificate provides, for each node
+i
+i
+: (i) an IBP pre-activation interval
+[
+l
+i
+,
+u
+i
+]
+[l_{i},u_{i}]
+(a local box enclosure); (ii) affine bounds (lower/upper affine maps of the input); (iii)
+α
+\alpha
+parameters for the unstable-ReLU
+lower
+relaxation; and (iv) an optional
+β
+\beta
+phase vector for ReLU units. Intuitively,
+α
+\alpha
+selects a member of a sound lower-envelope family in the unstable regime (
+l
+<
+0
+<
+u
+l<0<u
+), while
+β
+\beta
+encodes phase constraints (active/inactive) that, when consistent with IBP, permit
+exact
+linear behavior on those units.
+β
+\beta
+phases and phase consistency.
+For a ReLU node with pre-activation
+z
+z
+and post-activation
+y
+=
+ReLU
+⁡
+(
+z
+)
+y=\mathrm{ReLU}(z)
+, we interpret
+β
+∈
+{
+−
+1
+,
+0
+,
+1
+}
+\beta\in\{-1,0,1\}
+as
+β
+≡
+{
+−
+1
+inactive
+​
+(
+z
+≤
+0
+)
+,
+0
+unstable (no constraint)
+,
+1
+active
+​
+(
+0
+≤
+z
+)
+.
+\beta\equiv\begin{cases}-1&\text{inactive }(z\leq 0),\\
+\ \ 0&\text{unstable (no constraint)},\\
+\ \ 1&\text{active }(0\leq z).\end{cases}
+The step checks
+phase consistency
+against the IBP pre-activation interval
+[
+l
+,
+u
+]
+[l,u]
+:
+Consistent
+​
+(
+l
+,
+u
+,
+β
+)
+:
+⇔
+\displaystyle\textsf{Consistent}(l,u,\beta)\;:\!\iff
+(
+β
+=
+−
+1
+⇒
+u
+≤
+0
+)
+\displaystyle(\beta=-1\Rightarrow u\leq 0)
+∧
+(
+β
+=
+1
+⇒
+0
+≤
+l
+)
+.
+\displaystyle\wedge\;(\beta=1\Rightarrow 0\leq l).
+If consistent, inactive/active phases use exact linearization (slope
+0
+0
+or
+1
+1
+). Unstable units (
+β
+=
+0
+\beta=0
+) fall back to the usual CROWN upper relaxation and
+α
+\alpha
+-CROWN lower relaxation.
+Phase-dependent ReLU relaxations.
+Write a linear bound as a pair
+(
+s
+,
+b
+)
+(s,b)
+representing the function
+s
+​
+z
++
+b
+sz+b
+. Define phase-dependent relaxations by
+r
+¯
+β
+​
+(
+l
+,
+u
+)
+\displaystyle\overline{r}_{\beta}(l,u)
+=
+{
+(
+0
+,
+0
+)
+if
+​
+β
+=
+−
+1
+​
+and
+​
+u
+≤
+0
+,
+(
+1
+,
+0
+)
+if
+​
+β
+=
+1
+​
+and
+​
+0
+≤
+l
+,
+r
+¯
+​
+(
+l
+,
+u
+)
+if
+​
+β
+=
+0
+,
+\displaystyle=\begin{cases}(0,0)&\text{if }\beta=-1\ \text{and}\ u\leq 0,\\
+(1,0)&\text{if }\beta=1\ \text{and}\ 0\leq l,\\
+\overline{r}(l,u)&\text{if }\beta=0,\end{cases}
+r
+¯
+α
+,
+β
+​
+(
+l
+,
+u
+,
+α
+)
+\displaystyle\underline{r}_{\alpha,\beta}(l,u,\alpha)
+=
+{
+(
+0
+,
+0
+)
+if
+​
+β
+=
+−
+1
+​
+and
+​
+u
+≤
+0
+,
+(
+1
+,
+0
+)
+if
+​
+β
+=
+1
+​
+and
+​
+0
+≤
+l
+,
+r
+¯
+α
+​
+(
+l
+,
+u
+,
+α
+)
+if
+​
+β
+=
+0
+.
+\displaystyle=\begin{cases}(0,0)&\text{if }\beta=-1\ \text{and}\ u\leq 0,\\
+(1,0)&\text{if }\beta=1\ \text{and}\ 0\leq l,\\
+\underline{r}_{\alpha}(l,u,\alpha)&\text{if }\beta=0.\end{cases}
+Here
+r
+¯
+​
+(
+l
+,
+u
+)
+\overline{r}(l,u)
+is the standard CROWN triangular
+upper
+relaxation (secant in the crossing case), and
+r
+¯
+α
+​
+(
+l
+,
+u
+,
+α
+)
+\underline{r}_{\alpha}(l,u,\alpha)
+is the
+α
+\alpha
+-CROWN
+lower
+relaxation family (with
+α
+∈
+[
+0
+,
+1
+]
+\alpha\in[0,1]
+used only when
+l
+<
+0
+<
+u
+l<0<u
+). In the inactive/active cases the relaxations reduce to the exact affine graphs of ReLU on the corresponding half-line.
+Operator-level soundness (ReLU,
+β
+\beta
+-aware).
+Let
+x
+∈
+[
+l
+,
+u
+]
+x\in[l,u]
+and assume
+Consistent
+​
+(
+l
+,
+u
+,
+β
+)
+\textsf{Consistent}(l,u,\beta)
+. Let
+(
+s
+¯
+,
+b
+¯
+)
+=
+r
+¯
+β
+​
+(
+l
+,
+u
+)
+(\overline{s},\overline{b})=\overline{r}_{\beta}(l,u)
+and
+(
+s
+¯
+,
+b
+¯
+)
+=
+r
+¯
+α
+,
+β
+​
+(
+l
+,
+u
+,
+α
+)
+(\underline{s},\underline{b})=\underline{r}_{\alpha,\beta}(l,u,\alpha)
+(with
+0
+≤
+α
+≤
+1
+0\leq\alpha\leq 1
+), the scalar relaxations satisfy:
+ReLU
+⁡
+(
+x
+)
+≤
+s
+¯
+​
+x
++
+b
+¯
+​
+and
+​
+s
+¯
+​
+x
++
+b
+¯
+≤
+ReLU
+⁡
+(
+x
+)
+.
+\operatorname{ReLU}(x)\ \leq\ \overline{s}\,x+\overline{b}\text{ and }\underline{s}\,x+\underline{b}\ \leq\ \operatorname{ReLU}(x).
+Certificate checking: replay-based producer–checker design.
+Certificate checking is the key mechanism for obtaining tight bounds without
+enlarging the trusted computing base to include a complex optimizer.
+An external verifier or solver acts purely as an
+untrusted producer
+:
+it searches for a certificate (bounds, affine envelopes, split structure,
+dual variables) and serializes the result as a compact JSON artifact
+containing per-node IBP boxes, affine bound coefficients, and optional
+per-node
+α
+\alpha
+and
+β
+\beta
+data.
+Lean then acts as the
+trusted checker
+: it parses the artifact,
+canonicalizes all numeric data to a fixed float grid, and
+recomputes
+each node’s bound via the same step semantics that
+defines
+[
+[
+G
+]
+]
+\mathopen{[\![}G\mathclose{]\!]}
+, producing
+B
+i
+Lean
+:=
+CrownStepNode?
+​
+(
+…
+,
+i
+)
+∈
+Option
+​
+(
+AffBounds
+)
+B_{i}^{\mathrm{Lean}}:=\texttt{CrownStepNode?}(\ldots,i)\in\textsf{Option}(\textsf{AffBounds})
+for each node
+i
+i
+in
+topological order.
+The checker accepts only if (i) provided bounds match the recomputed
+bounds after canonicalization, (ii) parent bounds appear in topological
+order, and (iii) shapes and operator tags are consistent with the IR.
+The external optimizer is never trusted: regardless of what search or
+heuristics it uses internally, only the final artifact crosses the trust
+boundary, and every claim is independently replayed in Lean.
+This reduces the trusted computing base to the IR denotation plus the
+small checker.
+What the checker validates at each node.
+For each node
+i
+i
+, the checker performs three checks in sequence.
+First, it validates the
+schema
+: node
+i
+i
+exists in the graph
+G
+G
+,
+its declared input and output shapes match the IR typing, and all
+required parent nodes have already been processed.
+Second, it validates
+local soundness
+: the certified bound
+B
+i
+B_{i}
+is implied by the parent bounds and the
+OpKind
+-specific
+enclosure rule, confirmed by comparing
+B
+i
+B_{i}
+against the recomputed
+B
+i
+Lean
+B_{i}^{\mathrm{Lean}}
+after float-grid canonicalization.
+Third, after all nodes are processed, it validates
+goal reduction
+:
+the target property (e.g., a robustness margin, a Lyapunov decrease
+condition, or a PINN residual bound) follows from the certified output
+enclosure by a small, explicit Lean argument.
+If any check fails, the certificate is rejected and the property is
+reported as unverified; the system never silently accepts a malformed
+artifact.
+Certificate families.
+Certificates fall into two families:
+•
+Node-wise enclosure certificates
+supply
+[
+l
+i
+,
+u
+i
+]
+[l_{i},u_{i}]
+and optionally affine forms
+L
+i
+​
+(
+x
+)
+,
+U
+i
+​
+(
+x
+)
+L_{i}(x),U_{i}(x)
+per node, sufficient
+to discharge an output-level property directly from the propagated
+enclosure. IBP and CROWN/LiRPA both fall here; the difference is
+whether bounds are intervals or affine functions of the input.
+•
+Branch-and-bound leaf certificates
+partition the input
+region
+B
+B
+into leaves, each with its own node-wise certificate.
+The checker validates coverage, per-leaf soundness, and that the
+target property holds on every leaf; global validity follows by
+case analysis. This handles properties no single relaxation can
+certify, at the cost of a larger artifact and checking time linear
+in the number of leaves.
+One ReLU neuron under
+α
+/
+β
+\alpha/\beta
+-CROWN.
+Let
+z
+∈
+[
+l
+,
+u
+]
+z\in[l,u]
+be the pre-activation and
+y
+=
+ReLU
+⁡
+(
+z
+)
+y=\mathrm{ReLU}(z)
+.
+The phase
+β
+∈
+{
+−
+1
+,
+0
+,
+1
+}
+\beta\in\{-1,0,1\}
+encodes what the IBP interval
+tells us: provably off, provably on, or uncertain.
+Inactive
+(
+β
+=
+−
+1
+\beta{=}{-1}
+,
+u
+≤
+0
+u\leq 0
+). The interval lies entirely in the non-positive half-line, so
+ReLU
+⁡
+(
+z
+)
+=
+0
+\mathrm{ReLU}(z)=0
+everywhere on
+[
+l
+,
+u
+]
+[l,u]
+.
+Both bounds are the exact zero line
+(
+s
+U
+,
+b
+U
+)
+=
+(
+s
+L
+,
+b
+L
+)
+=
+(
+0
+,
+0
+)
+(s^{U},b^{U})=(s^{L},b^{L})=(0,0)
+;
+no relaxation gap is introduced.
+Active
+(
+β
+=
+1
+\beta{=}1
+,
+0
+≤
+l
+0\leq l
+). The interval lies entirely in the non-negative half-line, so
+ReLU
+⁡
+(
+z
+)
+=
+z
+\mathrm{ReLU}(z)=z
+exactly.
+Both bounds are the identity
+(
+s
+U
+,
+b
+U
+)
+=
+(
+s
+L
+,
+b
+L
+)
+=
+(
+1
+,
+0
+)
+(s^{U},b^{U})=(s^{L},b^{L})=(1,0)
+;
+again, zero gap and exact propagation.
+Unstable
+(
+β
+=
+0
+\beta{=}0
+,
+l
+<
+0
+<
+u
+l<0<u
+). The interval straddles zero and a linear relaxation is unavoidable.
+The upper bound is the CROWN secant connecting
+(
+l
+,
+0
+)
+(l,0)
+to
+(
+u
+,
+u
+)
+(u,u)
+,
+tight at both endpoints:
+s
+U
+=
+u
+u
+−
+l
+,
+b
+U
+=
+−
+u
+​
+l
+u
+−
+l
+.
+s^{U}=\frac{u}{u-l},\hskip 18.49988ptb^{U}=\frac{-ul}{u-l}.
+The lower bound is the
+α
+\alpha
+-CROWN family
+(
+s
+L
+,
+b
+L
+)
+=
+(
+α
+,
+0
+)
+(s^{L},b^{L})=(\alpha,0)
+with
+α
+∈
+[
+0
+,
+1
+]
+\alpha\in[0,1]
+chosen by the
+external optimizer to tighten the downstream objective.
+α
+=
+0
+\alpha{=}0
+gives the trivial bound
+y
+≥
+0
+y\geq 0
+;
+α
+=
+1
+\alpha{=}1
+gives
+the identity
+y
+≥
+z
+y\geq z
+, which is tightest when
+z
+z
+is likely positive.
+Intermediate values trade local tightness against the global
+verification goal; in practice
+α
+\alpha
+is optimized by gradient
+ascent on the final bound, treating each neuron’s slope independently.
+Propagation.
+Affine forms compose exactly through linear layers using the
+W
+=
+W
++
+−
+W
+−
+W=W^{+}-W^{-}
+decomposition, where
+W
+i
+​
+j
++
+=
+max
+⁡
+(
+W
+i
+​
+j
+,
+0
+)
+W^{+}_{ij}=\max(W_{ij},0)
+and
+W
+i
+​
+j
+−
+=
+max
+⁡
+(
+−
+W
+i
+​
+j
+,
+0
+)
+W^{-}_{ij}=\max(-W_{ij},0)
+route lower and upper input bounds
+to the correct output bound without case splits.
+Inactive and active neurons pass forms through without loss.
+Only unstable neurons accumulate gap,
+which shrinks as IBP intervals tighten. After processing all nodes
+in topological order, the output node carries certified bounds
+L
+out
+​
+(
+x
+)
+,
+U
+out
+​
+(
+x
+)
+L_{\mathrm{out}}(x),U_{\mathrm{out}}(x)
+over the full input
+box
+B
+B
+. The checker then discharges the target property—typically
+L
+out
+,
+y
+​
+(
+x
+)
+>
+U
+out
+,
+k
+​
+(
+x
+)
+L_{\mathrm{out},y}(x)>U_{\mathrm{out},k}(x)
+for all
+k
+≠
+y
+k\neq y
+—via
+a small explicit Lean argument whose only premises are the computed
+scalar bounds, keeping the trusted kernel minimal.
+What the Lean checker validates (conceptual checklist).
+Given a certificate and the IR graph:
+1.
+Schema + typing:
+node IDs exist; shapes match; per-node bound vectors have the right dimension.
+2.
+Local soundness per node:
+for each node
+i
+i
+, the certified bound is implied by parent bounds and the
+OpKind
+-specific enclosure rule (interval rule or affine relaxation rule).
+3.
+Goal reduction:
+the final property (e.g., robustness margin, Lyapunov decrease) is derived from the certified
+output enclosure by a small, explicit argument in Lean (e.g., margin check or inequality chaining).
+4.
+Splitting (if present):
+each leaf region is within the root region; the claimed per-leaf bound is sound; and the
+set of leaves covers (or over-approximates) the target region according to the certificate’s declared semantics.
+A concrete example (robustness margin).
+For a classifier with logits
+z
+⁡
+(
+x
+)
+∈
+ℝ
+K
+z(x)\in\mathbb{R}^{K}
+and a target label
+y
+y
+, a standard sufficient condition for certified
+ℓ
+∞
+\ell_{\infty}
+robustness on a region
+R
+R
+is:
+z
+y
+¯
+>
+max
+k
+≠
+y
+⁡
+z
+k
+¯
+,
+\underline{z_{y}}\;>\;\max_{k\neq y}\overline{z_{k}},
+where
+(
+z
+k
+¯
+,
+z
+k
+¯
+)
+(\underline{z_{k}},\overline{z_{k}})
+are sound bounds on each logit over
+R
+R
+.
+A certificate can therefore supply logit bounds (from IBP/CROWN/LiRPA, optionally with splitting), and the Lean checker
+discharges robustness by checking the margin inequality.
+Certificate schemas (illustrative).
+Certificate-driven checking hinges on a stable schema: the artifact names the graph and supplies node-indexed data.
+At a high level, a node-wise enclosure certificate looks like:
+⬇
+{
+"graph_id"
+:
+"..."
+,
+"input_region"
+:
+{
+...
+},
+"bounds"
+:
+{
+"node_id"
+:
+{
+"lo"
+:
+[...],
+"hi"
+:
+[...]
+},
+...
+}
+}
+More advanced artifacts may include affine coefficients, objectives, and branch-and-bound trees. Our current checker focuses
+on validating the enclosure constraints needed to discharge the target theorem, rather than replaying the optimizer’s full
+search/parameter-optimization internally. Planned extensions (e.g., richer dual-feasibility checks for full solver internals)
+are described in Appendix
+D.3
+.
+D.2
+VNN-COMP / VNN-LIB interface (ONNX + VNNLIB)
+VNN-COMP is an annual community competition designed to enable fair, objective comparison of neural-network verification tools by standardizing interfaces, benchmarks, and evaluation pipelines
+[
+Brix et al., 2024
+,
+VNN-COMP, 2024
+]
+. VNN-COMP instances are packaged in standardized formats: networks are provided as ONNX models and properties are specified in VNN-LIB, an SMT-LIB-style language that defines both syntax and semantics for satisfiability queries over neural networks
+[
+Brix et al., 2024
+,
+VNN-LIB, 2021
+]
+. This regime is directly relevant to semantic drift: most verifiers consume exported ONNX artifacts and interpret operator semantics outside the training framework, and ONNX operator meaning is tied to explicit operator-set (opset) versioning. Our goal here is not to re-implement the entire ONNX/VNN-LIB toolchain inside Lean, but to make the conversion boundary explicit and keep the trusted core inside Lean.
+Accordingly, we adopt a producer–checker workflow. A lightweight Python export step reads the ONNX network and the VNN-LIB specification and emits a compact JSON bundle containing the network structure/weights (in a typed graph form), the input region (typically an axis-aligned box), and the property matrices/constraints extracted from VNN-LIB. Lean then compiles this bundle into our op-tagged SSA/DAG IR and checks a
+sufficient UNSAT
+condition by replaying IBP/CROWN-style bounds against the shared IR semantics. For these suites we run the checker under the fast runtime
+Float
+backend (binary64), since the objective is to demonstrate a semantics-aligned benchmarking interface rather than Float32 deployment conformance.
+The check we perform follows the standard sound-but-incomplete pattern used by bound-propagation verifiers: if the propagated output enclosure implies that the VNN-LIB predicate cannot hold on the entire input region, we return
+safe
+(UNSAT proved); otherwise we return
+unknown
+. Soundness is semantic: whenever Lean reports
+safe
+, the conclusion is derived from the Lean denotation of the compiled IR, so the trusted computing base is the IR semantics plus the small checker, with the export step treated as an explicit, auditable boundary.
+Table
+2
+reports a small slice of MNIST-FC and ACASXu instances under this interface. On MNIST-FC, Lean IBP is conservative, while objective-dependent CROWN refutes a subset of properties end-to-end inside Lean. Importing optimized ReLU
+α
+\alpha
+slopes primarily improves runtime rather than refutation count, suggesting that further tightness typically requires richer artifacts such as improved intermediate bounds and/or splitting, consistent with broader lessons emphasized in VNN-COMP reports
+[
+Brix et al., 2024
+]
+. On the ACASXu slice we report, both Lean IBP and the baseline
+α
+\alpha
+-CROWN configuration remain
+unknown
+, reflecting that these instances often require stronger tightening (e.g., splitting or specialized heuristics) to resolve within typical compute budgets
+[
+Brix et al., 2024
+]
+.
+This interface is designed to scale in the same certificate/checker style as the rest of
+TorchLean
+. Today, the Lean runner replays native IBP/CROWN-style bounds on the shared IR. As stronger untrusted producers are plugged in (e.g., optimized
+α
+/
+β
+\alpha/\beta
+-CROWN bounds, split certificates, or other solver artifacts), the same pipeline can treat their outputs as certificates and validate them against the IR semantics, keeping the trusted computing base small. We view this as a concrete path toward deeper native participation in standardized verification benchmarks from within a theorem-prover setting: by making semantics and checking the reference point, rather than re-implementing every optimizer heuristic in Lean
+[
+Brix et al., 2024
+,
+VNN-COMP, 2024
+]
+.
+D.3
+Case Studies
+Certified robustness workflow (classifier).
+We illustrate the end-to-end verification pipeline on
+local
+certified robustness for a classifier.
+Let
+f
+:
+ℝ
+d
+→
+ℝ
+K
+f:\mathbb{R}^{d}\to\mathbb{R}^{K}
+denote the network’s
+logit
+function (so the predicted label is
+arg
+⁡
+max
+k
+​
+f
+k
+​
+(
+x
+)
+\arg\max_{k}f_{k}(x)
+), and fix a test input
+x
+0
+x_{0}
+with nominal label
+y
+=
+arg
+⁡
+max
+k
+​
+f
+k
+​
+(
+x
+0
+)
+y=\arg\max_{k}f_{k}(x_{0})
+.
+Given a perturbation radius
+ε
+\varepsilon
+, we define the region of interest
+R
+=
+{
+x
+:
+‖
+x
+−
+x
+0
+‖
+∞
+≤
+ε
+}
+R=\{x:\|x-x_{0}\|_{\infty}\leq\varepsilon\}
+(or an axis-aligned box that over-approximates it). Using IBP or CROWN/LiRPA,
+we compute sound bounds
+(
+z
+¯
+k
+,
+z
+¯
+k
+)
+(\underline{z}_{k},\overline{z}_{k})
+such that
+f
+k
+​
+(
+x
+)
+∈
+[
+z
+¯
+k
+,
+z
+¯
+k
+]
+f_{k}(x)\in[\underline{z}_{k},\overline{z}_{k}]
+for all
+x
+∈
+R
+x\in R
+. IBP provides a fast interval enclosure baseline, while
+CROWN/LiRPA tightens these bounds by propagating sound linear relaxations of nonlinearities and (optionally) using
+objective-dependent back-substitution.
+Theorem D.3:
+Logit-margin robustness certificate
+Let
+f
+:
+ℝ
+d
+→
+ℝ
+K
+f:\mathbb{R}^{d}\to\mathbb{R}^{K}
+be a classifier and
+R
+R
+an input region.
+Assume we have sound logit bounds for all classes: for each
+k
+k
+and all
+x
+∈
+R
+x\in R
+,
+f
+k
+​
+(
+x
+)
+∈
+[
+z
+¯
+k
+,
+z
+¯
+k
+]
+f_{k}(x)\in[\underline{z}_{k},\overline{z}_{k}]
+.
+If
+z
+¯
+y
+>
+max
+k
+≠
+y
+⁡
+z
+¯
+k
+,
+\underline{z}_{y}\;>\;\max_{k\neq y}\overline{z}_{k},
+then
+arg
+⁡
+max
+k
+​
+f
+k
+​
+(
+x
+)
+=
+y
+\arg\max_{k}f_{k}(x)=y
+for all
+x
+∈
+R
+x\in R
+(i.e., the prediction is certified
+ℓ
+∞
+\ell_{\infty}
+-robust on
+R
+R
+).
+How the certificate is checked.
+The certificate checking step is deliberately small and semantic: the checker validates that the reported bounds are a
+sound enclosure of the IR semantics on
+R
+R
+(shape-consistent, op-consistent, and region-consistent), and then applies the
+margin lemma above to conclude label invariance. This is exactly the “infinite-to-finite” reduction that makes bound
+propagation useful: instead of enumerating all
+x
+∈
+R
+x\in R
+, we certify robustness by a finite set of inequalities on the
+computed output enclosure. (This margin-style condition is standard in certified robustness pipelines.)
+Structure of the example.
+1.
+Model definition:
+define the classifier once in
+TorchLean
+.
+2.
+Lowering:
+lower the same program to the shared op-tagged SSA/DAG IR (the semantic target).
+3.
+Bounding:
+run IBP or CROWN/LiRPA on the IR to obtain logit enclosures over
+R
+R
+.
+4.
+Checking:
+verify the enclosure constraints and discharge robustness via Lemma
+D.3
+.
+The key point is that the final claim is a Lean theorem about the denotation of the shared IR, not a post-hoc interpretation
+of a tool output: external verifiers may
+produce
+bounds, but Lean
+checks
+that those bounds imply the semantic
+property of interest on the executed artifact.
+Physics-Informed Neural Networks (PINNs).
+PINNs enforce physics by penalizing a PDE residual built from a neural field
+u
+θ
+u_{\theta}
+and its derivatives. We fix
+(i) a residual operator
+ℛ
+\mathcal{R}
+(e.g., for Burgers/heat-type equations), (ii) a domain
+Ω
+\Omega
+, and (iii) a trained network
+u
+θ
+u_{\theta}
+,
+and aim to certify a uniform residual bound
+sup
+x
+∈
+Ω
+|
+ℛ
+⁡
+(
+u
+θ
+)
+​
+(
+x
+)
+|
+≤
+ε
+\sup_{x\in\Omega}|\mathcal{R}(u_{\theta})(x)|\leq\varepsilon
+.
+This is the standard PINN correctness goal: the learned model approximately satisfies the governing PDE across the domain.
+The verification step is derivative-dependent, so we combine (a) a proved first-order reverse-mode result that anchors the meaning of
+∇
+u
+θ
+\nabla u_{\theta}
+to the graph semantics (under the usual smoothness/pointwise side conditions), with (b)
+derivative-aware bound propagation
+on the shared op-tagged graph that produces interval enclosures for
+u
+θ
+u_{\theta}
+and the specific derivatives appearing in
+ℛ
+\mathcal{R}
+(including second derivatives for the low-dimensional smooth-operator subset used in the demos). We do
+not
+obtain
+u
+′′
+u^{\prime\prime}
+by differentiating the backward-pass graph; instead, we bound the required derivatives directly via specialized bound-propagation passes on the
+forward graph, and then combine these enclosures to conclude the residual inequality.
+Theorem D.4:
+Residual certificate pattern (PINNs)
+Let
+Ω
+\Omega
+be a domain and suppose we have sound interval enclosures on
+Ω
+\Omega
+for every term that appears in the residual
+ℛ
+⁡
+(
+u
+θ
+)
+\mathcal{R}(u_{\theta})
+(e.g., bounds on
+u
+θ
+u_{\theta}
+,
+∂
+u
+θ
+/
+∂
+t
+\partial u_{\theta}/\partial t
+,
+∂
+u
+θ
+/
+∂
+x
+\partial u_{\theta}/\partial x
+,
+∂
+2
+u
+θ
+/
+∂
+x
+2
+\partial^{2}u_{\theta}/\partial x^{2}
+).
+If these enclosures imply
+|
+ℛ
+⁡
+(
+u
+θ
+)
+​
+(
+x
+)
+|
+≤
+ε
+|\mathcal{R}(u_{\theta})(x)|\leq\varepsilon
+for all
+x
+∈
+Ω
+x\in\Omega
+, then the PDE residual of
+u
+θ
+u_{\theta}
+is certified within
+tolerance
+ε
+\varepsilon
+on
+Ω
+\Omega
+.
+Neural controller (Lyapunov-style safety/stability).
+We also evaluate a two-stage controller-verification workflow common in learning-enabled control: Stage 1 (training/search) proposes a feedback
+controller
+u
+⁡
+(
+x
+)
+u(x)
+together with a Lyapunov candidate
+V
+⁡
+(
+x
+)
+V(x)
+; Stage 2 (certification) proves region-based inequalities that imply safety/stability
+(e.g.,
+V
+⁡
+(
+x
+)
+≥
+0
+V(x)\geq 0
+and
+V
+˙
+​
+(
+x
+)
+≤
+−
+ρ
+​
+(
+‖
+x
+‖
+)
+\dot{V}(x)\leq-\rho(\|x\|)
+on a region). This aligns with recent neural-control verification pipelines that use bound
+propagation and
+α
+/
+β
+\alpha/\beta
+-CROWN-style tooling to certify Lyapunov conditions.
+In our setting, we compute enclosures for
+V
+⁡
+(
+x
+)
+V(x)
+and
+V
+˙
+​
+(
+x
+)
+=
+∇
+V
+​
+(
+x
+)
+⋅
+f
+⁡
+(
+x
+,
+u
+⁡
+(
+x
+)
+)
+\dot{V}(x)=\nabla V(x)\cdot f(x,u(x))
+over the region (with
+∇
+V
+\nabla V
+grounded by the same autograd semantics as execution), and the final claim
+is discharged by checking the resulting inequalities as a theorem about the shared IR denotation.
+Theorem D.5:
+Lyapunov certificate pattern (region-based)
+Let
+V
+V
+be a candidate Lyapunov function for a closed-loop system
+x
+˙
+=
+f
+⁡
+(
+x
+,
+u
+⁡
+(
+x
+)
+)
+\dot{x}=f(x,u(x))
+on a region
+R
+R
+.
+If certified bounds over
+R
+R
+establish
+V
+⁡
+(
+x
+)
+≥
+0
+V(x)\geq 0
+(and
+V
+⁡
+(
+x
+)
+=
+0
+V(x)=0
+only at the equilibrium) and
+V
+˙
+​
+(
+x
+)
+≤
+0
+\dot{V}(x)\leq 0
+(or a strict decrease condition)
+for all
+x
+∈
+R
+x\in R
+, then the corresponding safety/stability property holds on
+R
+R
+under the chosen Lyapunov criterion.
+Hopfield networks and global dynamics (complementary case study).
+Hopfield networks are recurrent, energy-based models whose core guarantees are
+global dynamical
+statements: rather than certifying a local property around one input, we prove properties of entire
+trajectories
+generated by repeatedly applying an update rule (e.g., asynchronous coordinate updates). Classically, one defines an energy/Lyapunov functional
+E
+⁡
+(
+x
+)
+E(x)
+and proves that each update step does not increase
+E
+E
+; because the state space is finite, monotone energy then implies convergence to a fixed point (an attractor) under standard symmetry and zero-diagonal conditions.
+In the recent paper, Formalized Hopfield Networks and Boltzmann Machines
+[
+Cipollina et al., 2025
+]
+, the authors develop a Lean 4 formalization aimed
+squarely at such global properties like convergence for deterministic Hopfield dynamics and ergodicity for stochastic Boltzmann machines. They emphasize that many ML formalizations mirror modern execution frameworks (sequential layers or DAG-style
+computational graphs), which is convenient for feedforward computation but does not directly express recurrent update semantics; because their
+focus is convergence/ergodicity of
+recurrent
+models, they adopt a graph-based dynamical-systems perspective (directed graphs/Markov
+kernels) integrated with mathlib/PhysLean.
+Their discussion highlights a real tradeoff: representations optimized for feedforward dataflow can require extra
+machinery (unfolding or fixed-point semantics) to model recurrence faithfully.
+Our treatment is complementary: we express the Hopfield update operator and energy functional
+inside the same typed tensor/program semantics
+used throughout
+TorchLean
+, and we prove the standard monotone-energy and convergence-style results by reasoning about an explicit state-transition map (iteration) plus a Lyapunov decrease argument. These results show that an SSA/DAG semantic core for
+computation
+can still support proofs about
+global
+dynamical behavior.
+Theorem D.6:
+Hopfield energy decrease and convergence (informal template)
+Let
+x
+∈
+{
+−
+1
+,
++
+1
+}
+n
+x\in\{-1,+1\}^{n}
+be the network state, with symmetric weights
+W
+=
+W
+⊤
+W=W^{\top}
+and zero diagonal, and thresholds
+θ
+\theta
+.
+Define the energy
+E
+⁡
+(
+x
+)
+=
+−
+1
+2
+​
+x
+⊤
+​
+W
+​
+x
++
+θ
+⊤
+​
+x
+.
+E(x)\;=\;-\tfrac{1}{2}\,x^{\top}Wx\;+\;\theta^{\top}x.
+Consider asynchronous updates that flip a single coordinate
+x
+i
+x_{i}
+according to the sign of its local field
+(
+W
+​
+x
+−
+θ
+)
+i
+(Wx-\theta)_{i}
+(with a fixed tie-handling convention).
+Then each update step satisfies
+E
+⁡
+(
+x
+t
++
+1
+)
+≤
+E
+⁡
+(
+x
+t
+)
+E(x^{t+1})\leq E(x^{t})
+, and hence any trajectory produced by repeatedly applying the update
+rule reaches a fixed point in finitely many steps (a local minimum of
+E
+E
+under the update dynamics).
+Appendix E
+Universal Approximation Theorems
+Universal approximation (real-valued).
+A universal approximation theorem (UAT) formalizes the idea that a simple network class can approximate
+any
+continuous
+function on a compact domain to arbitrary accuracy. Classic results show that single-hidden-layer networks are dense in
+C
+⁡
+(
+K
+)
+C(K)
+for compact
+K
+⊆
+ℝ
+d
+K\subseteq\mathbb{R}^{d}
+under mild activation assumptions
+[
+Cybenko, 1989
+,
+Hornik, 1991
+]
+;
+more recent work characterizes approximation rates for ReLU networks
+[
+Yarotsky, 2017
+]
+.
+In
+TorchLean
+, we mechanize a standard real-valued ReLU UAT on compact domains and then specialize it to boxes such as
+[
+−
+1
+,
+1
+]
+d
+[-1,1]^{d}
+.
+Theorem E.1:
+ReLU universal approximation on compact sets
+For every compact
+K
+⊆
+ℝ
+d
+K\subseteq\mathbb{R}^{d}
+, every continuous
+f
+:
+K
+→
+ℝ
+f:K\to\mathbb{R}
+, and every
+ε
+>
+0
+\varepsilon>0
+,
+there exist a width
+m
+m
+and a single-hidden-layer ReLU network
+N
+θ
+N_{\theta}
+such that
+sup
+x
+∈
+K
+|
+N
+θ
+​
+(
+x
+)
+−
+f
+⁡
+(
+x
+)
+|
+<
+ε
+.
+\sup_{x\in K}\,|N_{\theta}(x)-f(x)|<\varepsilon.
+E.1
+Float32-exec Soundness
+Why the Float32 setting is harder.
+Real-valued UATs reason about exact arithmetic, whereas deployed models run under finite-precision float semantics.
+In this setting, even the “target function” must be interpreted carefully: the executed program computes a
+rounded
+function, and abstract-interpretation semantics (e.g., intervals) must account for rounding and finite-range effects.
+Recent work proves a floating-point analog of
+interval universal approximation
+(IUA), showing that floating-point networks
+can capture the
+direct image map
+of a suitably rounded target function under interval semantics
+[
+Hwang et al., 2025
+]
+.
+In contrast, our goal in
+TorchLean
+is to build a compositional, checkable foundation that supports practical verification
+workflows under explicit Float32 semantics, without claiming the full “exact-hull direct image” property for arbitrary networks.
+Our claims.
+We do
+not
+claim a full IUA theorem of the form “the interval semantics returns the exact output-range hull for every input box”
+for arbitrary networks under Float32 execution. Instead, we mechanize three ingredients that are sufficient for
+approximation-style arguments and verification pipelines:
+•
+Executable Float32 semantics in the prover.
+An executable IEEE-754 binary32 model (
+IEEE32Exec
+)
+that gives a precise internal meaning to “Float32 execution” (including corner cases) for end-to-end demos and checking.
+•
+Sound interval evaluation on a supported fragment.
+A theorem-ready specification of interval semantics and a proved-sound
+interval evaluator for a small ReLU-MLP fragment, enabling certified enclosures needed by robustness/PINN/controller checks.
+•
+Error decomposition for Float32-exec approximation.
+Theorem templates that bound execution error by an explicit sum of terms:
+(real approximation error)
++
++
+(parameter/representation error, e.g. quantization)
++
++
+(IEEE rounding/execution error),
+under explicit finiteness/no-NaN/no-Inf hypotheses.
+Note:
+Where
+[
+Hwang et al., 2025
+]
+targets a floating-point IUA result that exactly matches the interval
+direct image map
+of a rounded
+target function, our development emphasizes compositional error bounds and sound enclosures that integrate cleanly with certificate checking
+and end-to-end verification workflows, without requiring the full exact-hull IUA guarantee for all networks.
+Notation for the theorems below.
+Let
+𝔽
+32
+\mathbb{F}_{32}
+denote IEEE-style Float32 values (excluding NaNs/Infs when we explicitly assume
+finite execution
+),
+and let
+toReal
+:
+𝔽
+32
+→
+ℝ
+\mathrm{toReal}:\mathbb{F}_{32}\to\mathbb{R}
+interpret a finite float as a real number.
+A
+box
+B
+B
+is an axis-aligned product of Float32 intervals (a valid element of the interval domain), and
+γ
+⁡
+(
+B
+)
+⊆
+𝔽
+32
+d
+\gamma(B)\subseteq\mathbb{F}_{32}^{d}
+denotes its
+concretization
+(the set of Float32 points represented by
+B
+B
+).
+We write
+ν
+:
+𝔽
+32
+d
+→
+𝔽
+32
+\nu:\mathbb{F}_{32}^{d}\to\mathbb{F}_{32}
+for point semantics (Float32 execution) and
+ν
+♯
+:
+Box
+32
+d
+→
+Box
+32
+\nu^{\sharp}:\textsf{Box}_{32}^{d}\to\textsf{Box}_{32}
+for interval semantics (abstract interpretation over boxes).
+Theorem E.2:
+Exact-hull specification (Float32 interval semantics)
+Fix
+d
+∈
+ℕ
+d\in\mathbb{N}
+and a NaN-free target function
+f
+^
+:
+𝔽
+32
+d
+→
+𝔽
+32
+\hat{f}:\mathbb{F}_{32}^{d}\to\mathbb{F}_{32}
+.
+Assume a point semantics
+ν
+\nu
+and an interval semantics
+ν
+♯
+\nu^{\sharp}
+such that
+ν
+♯
+​
+(
+B
+)
+\nu^{\sharp}(B)
+is a box output for any valid input box
+B
+B
+.
+We say
+ν
+♯
+\nu^{\sharp}
+returns the
+exact hull
+of
+f
+^
+\hat{f}
+on
+B
+B
+if, for every valid box
+B
+⊆
+[
+−
+1
+,
+1
+]
+d
+B\subseteq[-1,1]^{d}
+, there exist witnesses
+m
+,
+M
+∈
+𝔽
+32
+m,M\in\mathbb{F}_{32}
+satisfying:
+1.
+(
+Witnessed extrema
+)
+m
+m
+and
+M
+M
+witness the range of
+f
+^
+\hat{f}
+on the concretization:
+m
+≤
+f
+^
+​
+(
+x
+)
+≤
+M
+m\leq\hat{f}(x)\leq M
+for all
+x
+∈
+γ
+⁡
+(
+B
+)
+x\in\gamma(B)
+, and there exist
+x
+m
+,
+x
+M
+∈
+γ
+⁡
+(
+B
+)
+x_{m},x_{M}\in\gamma(B)
+such that
+f
+^
+​
+(
+x
+m
+)
+=
+m
+\hat{f}(x_{m})=m
+and
+f
+^
+​
+(
+x
+M
+)
+=
+M
+\hat{f}(x_{M})=M
+.
+2.
+(
+Hull equality
+) the concretization of the abstract output box is exactly the interval hull:
+γ
+⁡
+(
+ν
+♯
+​
+(
+B
+)
+)
+=
+{
+y
+∈
+𝔽
+32
+∣
+m
+≤
+y
+∧
+y
+≤
+M
+}
+.
+\gamma(\nu^{\sharp}(B))\;=\;\{\,y\in\mathbb{F}_{32}\mid m\leq y\wedge y\leq M\,\}.
+Why witnesses?
+This avoids committing to a particular implementation of float
+min
+/
+max
+at ties or NaN boundaries: the statement only requires
+existence of range witnesses and equality to the induced hull, which is the robust “Eq.(14)-style” specification used in float-IUA work.
+Theorem E.3:
+From real approximation to Float32-exec error (1D hinge template)
+Let
+f
+:
+[
+a
+,
+b
+]
+→
+ℝ
+f:[a,b]\to\mathbb{R}
+be a real target function and let
+h
+ℝ
+h_{\mathbb{R}}
+be a hinge-style 1D network (or piecewise-linear ReLU template)
+parameterized by
+θ
+\theta
+.
+Assume a real approximation bound
+sup
+x
+∈
+[
+a
+,
+b
+]
+|
+f
+⁡
+(
+x
+)
+−
+h
+ℝ
+​
+(
+x
+,
+θ
+)
+|
+≤
+ε
+approx
+.
+\sup_{x\in[a,b]}\,|f(x)-h_{\mathbb{R}}(x;\theta)|\leq\varepsilon_{\textsf{approx}}.
+Let
+h
+32
+h_{32}
+denote the corresponding Float32-executed program (same structure/parameters, executed in Float32) and assume
+finite execution
+on
+[
+a
+,
+b
+]
+[a,b]
+(no NaN/Inf and no overflow-to-Inf along the evaluation).
+Then for every real input
+x
+∈
+[
+a
+,
+b
+]
+x\in[a,b]
+and any Float32 encoding
+x
+32
+x_{32}
+of
+x
+x
+,
+|
+f
+⁡
+(
+x
+)
+−
+toReal
+⁡
+(
+h
+32
+​
+(
+x
+32
+,
+θ
+)
+)
+|
+≤
+ε
+approx
++
+ε
+exec
+​
+(
+x
+)
+,
+\bigl|f(x)-\mathrm{toReal}(h_{32}(x_{32};\theta))\bigr|\;\leq\;\varepsilon_{\textsf{approx}}\;+\;\varepsilon_{\textsf{exec}}(x),
+where
+ε
+exec
+​
+(
+x
+)
+\varepsilon_{\textsf{exec}}(x)
+is an explicit rounding/execution envelope for this template on
+[
+a
+,
+b
+]
+[a,b]
+(e.g., a compositional bound obtained by summing per-primitive rounding terms under the finiteness hypothesis).
+Theorem E.4:
+Three-term Float32-exec error decomposition (single-hidden-layer ReLU MLP)
+Let
+f
+:
+K
+→
+ℝ
+f:K\to\mathbb{R}
+be a target function on a domain
+K
+⊆
+ℝ
+d
+K\subseteq\mathbb{R}^{d}
+and let
+N
+ℝ
+​
+(
+⋅
+,
+θ
+ℝ
+)
+N_{\mathbb{R}}(\cdot;\theta_{\mathbb{R}})
+be a
+real single-hidden-layer ReLU MLP. Let
+N
+32
+​
+(
+⋅
+,
+θ
+32
+)
+N_{32}(\cdot;\theta_{32})
+be its Float32-executed counterpart with Float32 parameters
+θ
+32
+\theta_{32}
+, and let
+θ
+ℝ
+′
+:=
+toReal
+⁡
+(
+θ
+32
+)
+\theta_{\mathbb{R}}^{\prime}:=\mathrm{toReal}(\theta_{32})
+be the real interpretation of those float parameters.
+Assume:
+1.
+(
+Real approximation
+)
+sup
+x
+∈
+K
+|
+f
+⁡
+(
+x
+)
+−
+N
+ℝ
+​
+(
+x
+,
+θ
+ℝ
+)
+|
+≤
+ε
+UAT
+\sup_{x\in K}|f(x)-N_{\mathbb{R}}(x;\theta_{\mathbb{R}})|\leq\varepsilon_{\textsf{UAT}}
+2.
+(
+Parameter/representation gap
+)
+sup
+x
+∈
+K
+|
+N
+ℝ
+​
+(
+x
+,
+θ
+ℝ
+)
+−
+N
+ℝ
+​
+(
+x
+,
+θ
+ℝ
+′
+)
+|
+≤
+ε
+param
+\sup_{x\in K}|N_{\mathbb{R}}(x;\theta_{\mathbb{R}})-N_{\mathbb{R}}(x;\theta_{\mathbb{R}}^{\prime})|\leq\varepsilon_{\textsf{param}}
+3.
+(
+Float32 execution gap
+) for all admissible inputs (under a finiteness hypothesis),
+|
+N
+ℝ
+​
+(
+x
+,
+θ
+ℝ
+′
+)
+−
+toReal
+⁡
+(
+N
+32
+​
+(
+x
+32
+,
+θ
+32
+)
+)
+|
+≤
+ε
+exec
+|N_{\mathbb{R}}(x;\theta_{\mathbb{R}}^{\prime})-\mathrm{toReal}(N_{32}(x_{32};\theta_{32}))|\leq\varepsilon_{\textsf{exec}}
+Then for all
+x
+∈
+K
+x\in K
+(with any Float32 encoding
+x
+32
+x_{32}
+), where any input-encoding/quantization error can be bounded separately and added to the right-hand side (or folded into
+ε
+exec
+\varepsilon_{\textsf{exec}}
+),
+|
+f
+⁡
+(
+x
+)
+−
+toReal
+⁡
+(
+N
+32
+​
+(
+x
+32
+,
+θ
+32
+)
+)
+|
+≤
+ε
+UAT
++
+ε
+param
++
+ε
+exec
+\bigl|f(x)-\mathrm{toReal}(N_{32}(x_{32};\theta_{32}))\bigr|\;\leq\;\varepsilon_{\textsf{UAT}}+\varepsilon_{\textsf{param}}+\varepsilon_{\textsf{exec}}
+Appendix F
+Limitations and Discussion
+Limitations and near-term roadmap.
+Execution vs. training at scale.
+TorchLean
+is semantics-first infrastructure, not a throughput-optimized training stack. Today, Lean execution is CPU-oriented and
+prioritizes a machine-checked semantic link between (i) the program users write, (ii) the IR graph we reason about, and (iii) the artifacts we
+check, rather than kernel fusion or GPU-accelerated kernels. Lean does provide compiled code backed by a runtime system, and can generate efficient
+native code paths (e.g., via its compiler and runtime primitives), but our focus is correctness and auditability rather than matching industrial
+CUDA stacks.
+In practice, we expect large models to be trained externally and imported (weights/structure), with Lean used for semantic checking,
+certificate validation, and proof-carrying artifacts; scaling
+TorchLean
+further (GPU backends, faster kernels, tighter internal bound
+optimization) is a natural direction for future community work.
+Verification scope and certificates today.
+Our native verification layer covers a curated IR fragment with a proved-sound IBP core and a CROWN/LiRPA-style affine engine, together with
+certificate checking infrastructure for externally produced bound artifacts. Today, we support an
+α
+/
+β
+\alpha/\beta
+-CROWN certificate
+dialect for the graph-based verifier: certificates may supply IBP pre-activation boxes, affine bounds,
+α
+\alpha
+parameters for unstable-ReLU
+lower relaxations, and optional
+β
+\beta
+phase vectors that are checked for consistency and then replayed by the Lean step semantics. When
+state-of-the-art tightness is required beyond this interface, we rely on external optimizers as
+untrusted producers
+and check their
+exported bounds/leaf certificates against the shared IR semantics, keeping the trusted computing base to the Lean checker plus the IR
+denotation. Extending the checker to validate additional solver families (e.g., richer dual-feasibility conditions, cutting-plane certificates,
+or SDP-based relaxations) is left to future extensions; we document current schemas and extension points in Appendix
+D
+and
+Appendix
+D.3
+.
+Float32 trust boundary (the “hardware gap”).
+We separate (i) real-valued reference semantics, (ii) proof-relevant rounding-on-
+ℝ
+\mathbb{R}
+models (FP32/NF) for compositional error
+envelopes, and (iii) an executable bit-level Float32 kernel (
+IEEE32Exec
+). What remains is a
+target-specific
+refinement from a
+deployed
+Float32
+toolchain to the executable model: one must fix a deployment configuration (rounding mode, denormal policy, contraction/
+reassociation, and reduction order constraints) and then discharge a conformance interface (by proof or explicit validation). Appendix
+C.1
+summarizes the internal refinements we prove and the remaining target-level obligations.
+Deployment and code generation.
+Inside Lean, we close the training/verification semantic gap by making the op-tagged IR the single semantic target. Deploying a verified model on an
+embedded target still introduces a translation step: either run a small IR interpreter on-device, or generate C/Rust code from the IR and connect
+its behavior back to the Lean denotation. Lean’s compilation pipeline and runtime already support efficient compiled code, and there are emerging
+toolchains that bridge verified Lean reasoning with real systems languages (e.g., Rust-to-Lean verification pipelines), suggesting concrete paths
+toward end-to-end deployment pipelines.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

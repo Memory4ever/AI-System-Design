@@ -1,0 +1,165 @@
+https://arxiv.org/html/2601.22025v1
+Necessary selected methods/evaluation/direct counter; actually read, not entire attachment.
+12 Experimental Demonstration: Evaluation-Driven Iteration
+This section demonstrates how to apply evaluation-driven iteration using a reproducible local setup. Rather than optimizing prompts through informal trial and error, we iterate using a fixed test suite with automatic checks for structural correctness, grounding, and instruction compliance. Our experiments reveal that prompt improvements are not universally monotonic: task-specific baseline prompts can outperform generic templates on structured tasks.
+12.1 Experimental Setup
+We ran all experiments locally using Ollama on a Mac mini M4 with 16GB unified memory. The candidate models were llama3:8b-instruct and qwen2.5:7b-instruct, both with Q4_K_M quantization. To reduce variance, we used deterministic decoding (temperature =0=0) and fixed the maximum output length. Each test case was executed once per prompt version per model.
+We evaluated three curated test suites covering common LLM application patterns. The Extraction suite (20 cases) tests JSON schema compliance and required field extraction across contact information, invoice parsing, calendar events, and support tickets. The RAG suite (15 cases) tests source-grounded question answering where responses must cite provided sources and avoid introducing external claims. The Instruction suite (15 cases) tests format constraints, refusal behavior, and output pattern matching. All test cases are included in the repository as JSONL files for reproducibility.
+12.2 Prompt Comparison
+We compared two prompt strategies to measure the effect of generic prompt engineering improvements.
+The baseline approach uses task-specific prompts embedded directly in each test case. For extraction tasks, these prompts include explicit JSON schema requirements such as “Output VALID JSON ONLY with keys: {name, email, phone, company}”. For RAG tasks, the prompts specify citation requirements and instruct the model to say “I don’t know” when sources are insufficient. These prompts are minimal but targeted.
+The improved approach adds a structured system prompt with general-purpose guidance. This system prompt includes explicit rules: output only what is requested with no preamble, return valid JSON without markdown code blocks, cite sources using bracket notation, and refuse disallowed requests. This follows conventional prompt engineering practice of being explicit about constraints.
+12.3 Metrics
+We report four offline metrics that do not require external APIs. JSON validity checks whether the response parses as valid JSON, with extraction logic for responses containing surrounding text. Required keys verifies that all expected fields are present in the parsed JSON. Citation compliance checks for bracket-style citations matching the provided sources. Constraint pass rate aggregates all per-case checks including regex patterns, word counts, and format requirements.
+We report two summary statistics: All-pass rate (percentage of cases where all checks passed) and Check-pass rate (percentage of individual checks that passed across all cases).
+12.4 Results
+Table 10 presents pass rates (all checks passed) for both models across the three test suites.
+Table 10: Pass rates comparing baseline and improved prompts across models (Llama 3 8B vs. Qwen 2.5 7B).
+Dataset
+Llama 3 8B
+Qwen 2.5 7B
+Base
+Improved
+Base
+Improved
+Extraction
+100.0%
+90.0%
+100.0%
+100.0%
+RAG
+93.3%
+80.0%
+93.3%
+86.7%
+Instruction
+53.3%
+66.7%
+46.7%
+53.3%
+The results highlight two findings. First, in this setup, the generic “improved” prompt degraded performance on RAG tasks for both models, suggesting that task-specific grounding constraints can outperform generic helpfulness guidance on citation-sensitive suites. Second, Qwen 2.5 was more robust than Llama 3 on the extraction suite, maintaining 100% pass rate under both prompts.
+12.5 Analysis
+We analyze the performance drivers across models and prompt strategies.
+Generic Prompts Harm RAG Grounding.
+Both models suffered performance drops on RAG tasks when using the improved prompt (Llama 3: -13.3pp, Qwen 2.5: -6.7pp). The improved prompt’s instruction to “be helpful” and “provide comprehensive answers” encouraged the models to hallucinate information not present in the source documents, failing the “correct but unsupported” check. The baseline prompt’s strict “Answer using ONLY the sources” constraint was more effective.
+Model Robustness in Extraction.
+Llama 3 showed sensitivity to prompt drift in extraction, dropping to 90% with the improved prompt due to markdown formatting issues. Qwen 2.5 was immune to this effect, achieving 100% compliance with both prompts. This suggests that newer models may be more robust to prompt noise for structured tasks.
+Scaffolding for Instructions.
+Both models showed gains (or stability) on the Instruction suite with the improved prompt, particularly on refusal tasks. The explicit system prompt rules provided necessary scaffolding for safety constraints that the baseline prompt lacked.
+Failure breakdown.
+Table 11 categorizes primary failure modes for the improved prompt on Llama 3, illustrating where generic guidance caused regressions.
+Table 11: Primary failure types caused by improved prompt on Llama 3.
+Dataset
+Failure Type
+Count
+Examples
+Extraction
+Markdown wrapper (‘‘‘json)
+2/20
+ex-014, ex-019
+RAG
+Unsupported claims added
+2/15
+rag-002, rag-003
+Instruction
+Refusal noncompliance
+3/15
+ins-001, ins-006, ins-008
+Instruction
+Format constraint violation
+2/15
+ins-002, ins-004
+These concrete failures show that “helpfulness” pressure and verbosity expectations in the generic prompt conflicted with task-specific correctness constraints.
+12.6 Failure Categories
+We manually categorized failures across both prompt versions. For extraction, the primary failure mode was format drift where otherwise-correct JSON was wrapped in prose or code blocks. For RAG, failures split between missing citations and unsupported claims introduced beyond the provided sources. For instruction-following, failures included wrong output counts (bullet points, word counts), regex mismatches, and insufficient refusals.
+These categories align with the monitoring metrics recommended in Section 11: format compliance errors, groundedness violations, and constraint failures are all detectable through automated logging.
+12.7 Latency Observations
+Table 12 shows mean response latency per case.
+Table 12: Mean response latency in milliseconds.
+Dataset
+Baseline
+Improved
+Extraction
+4,232
+2,482
+RAG
+2,247
+1,571
+Instruction
+2,380
+2,157
+The improved prompts produced faster responses across all datasets. This is likely because the explicit output constraints led to shorter, more focused responses. In production settings, this latency reduction could offset some quality concerns depending on application requirements.
+12.8 Interpretation
+These results highlight that prompt improvements are not universally beneficial. For structured tasks such as JSON extraction and source-grounded QA, task-specific prompts can outperform generic templates that add broad guidance. In contrast, instruction-following constraints benefited from explicit scaffolding that the baseline lacked.
+This finding supports an evaluation-driven iteration workflow. Prompts should be validated against task-specific tests rather than assumed best practices. A generic “improved” prompt template that helps one task may harm another. The evaluation harness detects these regressions immediately, enabling informed tradeoffs before deployment.
+12.9 Ablation Study
+To isolate which component of the “improved” prompt causes performance changes, we ran a four-condition ablation with N=5N=5 runs per case per condition. The conditions are:
+•
+A (Baseline): Task-specific prompt only, minimal system prompt.
+•
+B (+Wrapper): Baseline + system wrapper (“follows instructions”).
+•
+C (+Rules): Baseline + generic rules appended to user prompt.
+•
+D (Full Improved): System wrapper + generic rules (original improved).
+Table 13 presents pass rates across both models. All runs produced identical outputs across 5 repetitions (100% deterministic at temperature =0=0).
+Table 13: Ablation study results: pass rates (%) for four prompt conditions (N=5 runs per case).
+Llama 3 8B
+Qwen 2.5 7B
+Dataset
+A
+B
+C
+D
+A
+B
+C
+D
+Extraction
+100
+100
+90
+90
+100
+100
+100
+100
+RAG
+93.3
+93.3
+93.3
+80
+93.3
+93.3
+93.3
+86.7
+Instruction
+53.3
+53.3
+53.3
+66.7
+46.7
+46.7
+46.7
+53.3
+Key findings.
+The ablation reveals that adding the system wrapper alone (A →\rightarrow B) has no effect—all metrics remain identical. Adding generic rules to the user prompt (B →\rightarrow C) causes extraction degradation in Llama 3 (100% →\rightarrow 90%), indicating that conflicting instructions interfere with structured output. The full improved prompt (D) helps instruction-following (+13pp for Llama 3, +6.7pp for Qwen 2.5) by providing explicit scaffolding for refusal and format constraints. RAG performance degrades across both models when the full improved prompt is used, confirming that generic “helpfulness” pressures conflict with grounding requirements.
+Stability analysis.
+Across 1,000 total LLM calls (50 cases ×\times 4 conditions ×\times 5 runs), we observed 100% run-to-run consistency in our local stack at temperature =0=0. This supports the reproducibility of the reported measurements in this environment; in other deployments, nondeterminism can still arise from differences in decoding, hardware, or provider-side model updates.
+12.10 Threats to Validity
+While these experiments provide reproducible evidence for evaluation-driven iteration, several limitations affect generalizability.
+Small, synthetic suite.
+Each suite contains only 15-20 cases. While sufficient to demonstrate prompt regressions, larger suites spanning more domains would strengthen conclusions.
+Limited model coverage.
+We evaluated two models (Llama 3 8B, Qwen 2.5 7B). Cloud API models (GPT-4, Claude) may exhibit different prompt sensitivities.
+Deterministic decoding.
+Testing only at temperature =0=0 limits understanding of how prompt effects scale with sampling randomness. However, our multi-run analysis (N=5) confirms perfect reproducibility at this setting.
+These threats motivate viewing the results as existence proofs (generic prompts can hurt) rather than universal quantitative claims. The ablation study isolates the mechanism (generic rules, not system wrappers, cause regressions), and the framework enables others to extend this analysis.
+Key Takeaways
+Generic prompt changes are not guaranteed to be monotonic: in our experiments, adding generic “helpful” rules reduced extraction pass rate by 10 percentage points and RAG compliance by 13.3 percentage points for Llama 3. Systematic suites make such regressions visible before deployment; informal spot checks can easily miss them when failures occur on a small subset of cases.
+12.11 Reproducibility
+All code and datasets are available in the repository under eval_harness/. The main evaluation script is run_eval.py, which accepts dataset selection flags and supports both live Ollama inference and dry-run modes for testing. Test cases are stored in JSONL format under datasets/. Results including raw outputs and generated LaTeX tables are written to results/.
+To reproduce these experiments, run: python run_eval.py --dataset all. Hardware requirements are minimal: any machine capable of running 7-8B quantized models via Ollama (approximately 8GB RAM) can execute the full suite within an hour.
+13 Future Directions
+The field of LLM evaluation is rapidly evolving. This section highlights emerging trends and open challenges that will shape evaluation practices in the coming years.
+13.1 Standardization of Application-Level Benchmarks

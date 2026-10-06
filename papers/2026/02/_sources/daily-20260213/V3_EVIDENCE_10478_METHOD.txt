@@ -1,0 +1,202 @@
+GPU-Fuzz: Finding Memory Errors in Deep Learning Frameworks (https://arxiv.org/html/2602.10478v1)
+citeturn28663view0 [wordlim: 200] Crawled: yesterday; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.10478v1","lineno":175}); Total lines: 289
+L88: ## 3. System Design
+L89: 
+L90: This section details the architecture of GPU-Fuzz. As illustrated in Fig. cite48†3 , the system consists of three main phases: operator modeling, constraint-based test case generation, and cross-framework execution.
+L91: 
+L92: A diagram illustrating the architecture of the GPU-Fuzz system.
+L93: 
+L95: ### 3.1. Operator modeling.
+L96: 
+L97: GPU-Fuzz models GPU operators through an abstraction layer that captures their parameter spaces and shape relationships. Each operator family (e.g., convolution, pooling) is represented by a unified model that defines the interface for input/output shapes and parameter constraints.
+L98: 
+L99: A diagram illustrating the constraint modeling process for convolution operators.
+L100: Fig. 4. Constraint modeling for convolution operators.A diagram illustrating the constraint modeling process for convolution operators.
+L101: As illustrated in Fig. cite49†4 , GPU-Fuzz encodes operator semantics into a set of constraint formulas with symbolic variables. Take the convolution operator in Fig. cite49†4 as an example, its core constraint formula (cite41†Dumoulin and Visin, 2016 ) is $H_{out}=\frac{H_{in}+2P-D(K-1)-1}{S}+1$, where $H_{in}$ and $H_{out}$ denote the input and output sizes, $P$ is padding, $D$ is dilation, $K$ is kernel size, and $S$ is stride.
+L102: Only after an input satisfies the constraint formulas, can the operator be correctly instantiated and executed. Aside from this core constraint, there are also various additional constraints (e.g., $H_{in}>K$) to ensure the semantic correctness of the operator. This constraint modeling approach allows us to effectively generate valid test cases for DL operators.
+L103: To ensure correctness, we manually extract the constraint formulas from the documentation of each operator. It takes approximately a month for two authors to extract the constraint formulas from the documentation of each operator independently and then cross-check their results. These two authors are experts in the field of deep learning and have a deep understanding of the semantics of each operator, which ensures the correctness of GPU-Fuzz to a great extent.
+L104: In total, we extracted 45 constraints for 13 operators.
+L105: ### 3.2. Constraint-based Test Case Generation
+L106: Constraint solving. Once an operator is modeled according to its constraints, GPU-Fuzz employs Z3’s SMT solver (cite50†De Moura and Bjørner, 2008 ) to find a satisfying assignment for all symbolic variables. As illustrated in Fig. cite51†5 , to generate a test case for a convolution operator, the solver must find concrete values for $H_{out}$, $H_{in}$, $P$, $D$, $K$, and $S$ that satisfy the set of constraints shown in the figure.
+L107: In the case of Fig. cite51†5 , a possible solution is $H_{out}=126$, $H_{in}=128$, $P=1$, $D=1$, $K=5$, and $S=1$.
+L108: A diagram illustrating how constraints are solved using Z3 SMT solver to generate concrete parameter values.
+L109: 
+L110: Fig. 5. Constraint solving process.A diagram illustrating how constraints are solved using Z3 SMT solver to generate concrete parameter values.
+L111: Although SMT solvers like Z3 (cite50†De Moura and Bjørner, 2008 ) effectively find a solution for the given constraints, they are not designed to systematically explore the entire parameter space. Specifically, solvers like Z3 (cite50†De Moura and Bjørner, 2008 ) tend to return a single boundary solution for the symbolic variables (e.g., $x=0$ for $x\geq 0$), which is insufficient for a comprehensive fuzzing campaign.
+L112: To address this limitation, previous works like NNSmith (cite31†Liu et al., 2023 ) force Z3 (cite50†De Moura and Bjørner, 2008 ) to return multiple solutions by adding a periodic perturbation to the original constraint (e.g., $x>2^{n}$). GPU-Fuzz, on the other hand, employs a novel constraint-guided search strategy to systematically explore the parameter space.
+L113: Parameter space exploration. To systematically explore the parameter space, GPU-Fuzz employs an iterative constraint-guided search strategy, as illustrated in Fig. cite52†6 . The process begins with an initial solution, $s1$ (e.g., $stride=10,kernel\_size=3$), found by the solver. At each iteration, the system randomly selects a parameter dimension to constrain. For instance, it might first select $stride$, adding constraints to exclude its current value, which guides the solver to a new solution like $s2$.
+L114: In the next step, the system could randomly select $kernel\_size$, accumulating new constraints (e.g., $kernel\_size\neq 3$ and $h(kernel\_size)\neq h(3)$) upon the existing ones. This compels the solver to navigate towards unexplored regions, yielding another solution like $s3$.
+L115: A diagram illustrating the iterative parameter space exploration process.
+L116: 
+L117: Fig. 6. An example of the iterative parameter space exploration. At each step, a parameter is randomly selected and a new constraint that excludes its current value is incrementally added to guide the search for the next solution.A diagram illustrating the iterative parameter space exploration process.
+L118: Notably, to enhance both solver efficiency and solution diversity, we propose to incorporate not only direct value exclusion (e.g., $stride\neq 10$) but also hash-based constraints (e.g., $h(stride)\neq h(10)$). The hash function transforms input values through a series of bit-mixing operations that introduce dispersion properties.
+L119: Specifically, the function applies alternating right-shift, XOR, and multiplication operations to ensure that even small changes in input values result in different hash values, effectively avoiding identity mapping and poor distribution. The hash-based constraint complements the direct value exclusion by preventing the solver from exploring similar regions, which significantly improves solution diversity.
+L120: This incremental strategy ensures that GPU-Fuzz can continuously and efficiently generate diverse test cases.
+L121: ### 3.3. Cross-framework Execution
+L122: 
+L123: A diagram illustrating how a generic model's parameters are materialized into framework-specific API calls for PyTorch, PaddlePaddle, and TensorFlow.
+L124: 
+L125: Fig. 7. Cross-framework materialization example.A diagram illustrating how a generic model's parameters are materialized into framework-specific API calls for PyTorch, PaddlePaddle, and TensorFlow.
+L126: Once a valid set of parameters is generated, GPU-Fuzz executes it as a test case across multiple deep learning frameworks, including PyTorch (cite27†Paszke et al., 2019 ), PaddlePaddle (cite53†Ma et al., 2019 ), and TensorFlow (cite28†Abadi et al., 2016 ), to detect GPU memory bugs. As illustrated in Fig. cite54†7 , this process translates the abstract, framework-agnostic parameters from the solver into concrete parameters with specific API calls.
+L127: For instance, the generic outch parameter is mapped to out_channels in PyTorch and filters in TensorFlow. To detect memory errors and kernel failures, each execution is wrapped by NVIDIA’s compute-sanitizer (cite55†NVIDIA Corporation, 2023 ). This approach significantly improves the detection of memory errors.
+L128: ## 4. Implementation
+L129: 
+L130: This section details the implementation of the system design described in Section cite11†3 . Our system is developed in Python and comprises 2,628 lines of code.
+L131: We implemented a library where each operator is represented as a distinct class to realize the operator modeling and constraint-based test case generation concepts described in Section cite11†3 . This modeling approach was applied to 13 operators (Table cite56†1 ), chosen for their prevalence in deep learning models and their complex, error-prone memory access patterns.
+L132: The translation process (Section cite14†3.3 ) is implemented to translate the generated parameter values into framework-specific API calls. When compute-sanitizer (cite55†NVIDIA Corporation, 2023 ) detects an error during execution, the system automatically archives the execution logs to ensure reproducibility.
+L133: Tab. 1. Supported Operators in GPU-Fuzz
+L134: Operator Family  | Specific Operators
+L135: Convolution  | Conv (1d, 2d, 3d), ConvTranspose (1d, 2d, 3d)
+L136: Pooling  | MaxPool (1d, 2d, 3d), AvgPool (1d, 2d, 3d), FractionalMaxPool (2d, 3d), LPPool (1d, 2d, 3d), AdaptiveAvgPool (1d, 2d, 3d), AdaptiveMaxPool (1d, 2d, 3d)
+L137: Padding  | ReflectionPad (1d, 2d, 3d), ReplicationPad (1d, 2d, 3d), ZeroPad (1d, 2d, 3d), ConstantPad (1d, 2d, 3d), CircularPad (1d, 2d, 3d)
+L138: Element-Wise Unary  | Activation: ELU, ReLU, GELU, Sigmoid, Tanh, … Arithmetic: abs, sin, cos, sqrt, exp, log, …
+L139: Element-Wise Binary  | add, sub, mul, div, pow, remainder, logaddexp, atan2, …
+L140: Matrix Ops  | MatMul, BMM
+L141: Concat  | cat, concat
+L142: ## 5. Evaluation
+L143: 
+L144: In this section, we evaluate the effectiveness and efficiency of GPU-Fuzz. We aim to answer the following research questions (RQs):
+L145: 
+L146:   * •
+L147: 
+L148: RQ1: How effective is GPU-Fuzz in uncovering real-world bugs in major deep learning frameworks?
+L149: 
+L150:   * •
+L151: 
+L152: RQ2: How does GPU-Fuzz compare with state-of-the-art DL fuzzers in terms of test case generation and bug discovery, particularly for GPU memory errors?
+L153: ### 5.1. Experimental Setup
+L154: 
+L155: All experiments were conducted on a server with the configuration detailed in Table cite57†2 . We established isolated Conda environments for each of the three target frameworks (PyTorch, TensorFlow, and PaddlePaddle) to manage their specific dependencies. The core hardware, operating system, and NVIDIA driver were consistent across all tests.
+L156: Tab. 2. Experimental Environment Configuration.
+L157: Component  | Specification
+L158: Hardware
+L159: CPU  | 2 x Intel Xeon Silver 4510
+L160: GPU  | NVIDIA H100 PCIe
+L161: Software
+L162: Operating System  | Ubuntu 24.04.2 LTS
+L163: NVIDIA Driver  | 580.82.07
+L164: CUDA Runtime  | 12.8.93
+L165: Python  | 3.11.13
+L166: Frameworks
+L167: PyTorch  | PyTorch 2.3.1+cu121 with cuDNN 8.9.2.26
+L168: TensorFlow  | 2.20.0, with cuDNN 9.13.0.50
+L169: PaddlePaddle  | 2.6.1
+L170: ### 5.2. Bug Discovery Effectiveness
+L171: Over the course of our evaluation, GPU-Fuzz uncovered a total of 13 previously unknown bugs across the three frameworks. Table cite58†3 presents a summary of these findings. The bugs span a range of failure modes, from low-level memory corruption to API-level exceptions. We identified 7 distinct memory access violations (e.g., out-of-bounds or misaligned writes).
+L172: Among these, 5 were silent memory corruptions that do not trigger any API-level crash and are only detectable with specialized tools like compute-sanitizer (cite55†NVIDIA Corporation, 2023 ).
+L173: Tab. 3. Summary of Bugs Discovered by GPU-Fuzz.
+L174: ID  | Framework  | Operator  | Bug Type  | Root Cause  | Failure Mode  | Status
+L175: Bug_{1}  | PyTorch  | conv_transpose2d  | OOB Global Write  | Incorrect grid dimension calculation  | GPU-Level Exception (CUBLAS)  | Confirmed
+L176: Bug_{2}  | PyTorch  | bmm_sparse  | Misaligned Global Write  | Incorrect pointer arithmetic in CUSPARSE  | Silent Memory Corruption  | Reported
+L177: Bug_{3}  | PyTorch  | adaptive_avg_pool2d  | OOB Global Write  | Flawed boundary checks in CUDA kernel  | Silent Memory Corruption  | Confirmed
+L178: Bug_{4}  | PyTorch  | replication_pad2d  | OOB Global Write  | Incorrect grid dimension calculation  | Silent Memory Corruption  | Confirmed
+L179: Bug_{5}  | PyTorch  | adaptive_max_pool2d  | OOB Global Write  | Flawed boundary checks in CUDA kernel  | Silent Memory Corruption  | Confirmed
+L180: Bug_{6}  | PyTorch  | conv_transpose3d  | OOB Shared Read  | Incorrect index calculation for shared memory  | Silent Memory Corruption  | Fixed
+L181: Bug_{7}  | PyTorch  | reflection_pad1d  | Invalid Launch Config  | Integer overflow in torch.compile symint logic  | GPU-Level Exception (CUDA)  | Confirmed
+L182: Bug_{8}  | TensorFlow  | Conv2D  | OOB Global Read  | Incorrect index calculation in kernel  | Silent Read / Downstream Crash  | Confirmed
+L183: Bug_{9}  | TensorFlow  | Conv2D  | Integer Overflow  | Overflow in launch config calculation  | CPU-Side Assert  | Confirmed
+L184: Bug_{10}  | PaddlePaddle  | conv2d_transpose  | Precondition Violation  | Integer overflow in tensor dimension calculation  | CPU-Side Assert  | Confirmed
+L185: Bug_{11}  | PaddlePaddle  | conv3d_transpose  | Illegal Instruction  | Invalid parameters passed to cuDNN kernel  | GPU-Level Exception (cuDNN)  | Confirmed
+L186: Bug_{12}  | PaddlePaddle  | conv2d_transpose  | Bad API Parameter  | Invalid parameter combination passed to cuDNN  | GPU-Level Exception (cuDNN)  | Confirmed
+L187: Bug_{13}  | PaddlePaddle  | conv2d_transpose  | Invalid Launch Config  | Incorrect grid/block dimension calculation  | GPU-Level Exception (CUDA)  | Confirmed
+L188: Bug Patterns. Our findings reveal important patterns across three distinct failure modes:
+L189: 
+L190:   * •
+L191: 
+L192: Silent Memory Corruption: The most critical category, where out-of-bounds or misaligned memory access occurs without causing any API-level error. These are the most insidious bugs as they can lead to silent data corruption and are only detectable with low-level memory debuggers.
+L193: 
+L194:   * •
+L195: GPU-Level Exceptions: The second category, where invalid parameters or configurations cause CUDA, cuDNN, or CUBLAS libraries to return an error, which is then typically caught and reported by the framework.
+L196: 
+L197:   * •
+L198: 
+L199: CPU-Side Asserts: The final category, where issues like integer overflows occur on the CPU during the calculation of kernel parameters, preventing the GPU launch altogether.
+L200: A common root cause across all frameworks was incorrect grid dimension calculations or flawed boundary checks, with transposed convolutions being particularly error-prone.
+L201: ### 5.3. Comparative Study
+L202: 
+L203: To quantitatively validate our approach, we conducted a comparative study against NNSmith (cite31†Liu et al., 2023 ), a state-of-the-art DL fuzzer. We conducted five independent 4-hour fuzzing runs for each tool on the same hardware targeting PyTorch, with both tools running in identical Conda environments.
+L204: Table cite59†4 summarizes the results. NNSmith generated on average $19{,}063\pm 360$ test cases and uncovered $296\pm 19$ bugs. Most of its findings are numerical mismatches rather than memory-safety issues. In contrast, GPU-Fuzz generated on average $51{,}860\pm 1{,}559$ test cases and uncovered $106\pm 8$ real bugs excluding out-of-memory errors, including $26\pm 5$ critical memory errors and $80\pm 7$ configuration errors.
+L205: These memory errors represent severe security vulnerabilities that could result in data corruption, information leakage, or system crashes.
+L206: Tab. 4. Comparative Results
+L207: Metric  | NNSmith  | GPU-Fuzz
+L208: Test Cases Generated  | $19{,}063\ \pm\ 360$  | $51{,}860\ \pm\ 1{,}559$
+L209: Total Bugs^{*}  | $296\ \pm\ 19$  | $106\ \pm\ 8$
+L210: Bug Breakdown by Type
+L211: Memory Errors  | 0  | $26\ \pm\ 5$
+L212: Configuration Errors  | 0  | $80\ \pm\ 7$
+L213: Inconsistencies  | $293\ \pm\ 19$  | 0
+L214: Exceptions  | $3\ \pm\ 1$  | 0
+L215: Runtime  | 4 GPU-hours each
+L216: ^{*}GPU-Fuzz total excludes out-of-memory errors.
+L217: ^{**}NNSmith and GPU-Fuzz results are mean $\pm$ std over 5 independent runs.
+L218: Key Findings. Our analysis reveals two critical insights. First, GPU-Fuzz generated nearly three times more test cases than NNSmith, demonstrating the efficiency of constraint-guided parameter fuzzing in systematically exploring the operator parameter space. Second, GPU-Fuzz uncovered $26\pm 5$ memory errors that pose security risks, while NNSmith’s findings were primarily numerical precision issues that typically do not threaten memory safety.
+L219: This demonstrates that GPU-Fuzz addresses a blind spot in GPU memory security testing that existing DL fuzzers frequently miss. The two approaches are complementary: NNSmith excels at uncovering compiler-related bugs and numerical inconsistencies, while GPU-Fuzz fills the gap in GPU memory security testing at the operator parameter level.
+L220: ### 5.4. Case Study
+L221: 
+L222: To illustrate the practical utility of GPU-Fuzz, we present a minimal proof-of-concept (PoC) for a memory corruption bug uncovered in PyTorch’s ConvTranspose2d operator. The PoC is shown in Fig. cite60†8 .
+L223: A code snippet showing a minimal proof-of-concept in Python that triggers a memory corruption bug in PyTorch's ConvTranspose2d operator, along with the corresponding CUDA code demonstrating an integer overflow when calculating the total number of elements, leading to invalid memory access.
+L224: Fig. 8. A minimal PoC in Python and the corresponding CUDA implementation that triggers a memory bug in PyTorch’s ConvTranspose2d.A code snippet showing a minimal proof-of-concept in Python that triggers a memory corruption bug in PyTorch's ConvTranspose2d operator, along with the corresponding CUDA code demonstrating an integer overflow when calculating the total number of elements, leading to invalid memory access.
+L225: The key to triggering this bug lies in the parameter combination automatically generated by our fuzzer, particularly the extremely large stride value of $(200,200)$ combined with input dimensions of $(10,40000,2)$. While these values are semantically valid according to PyTorch’s API, they represent a corner case that is unlikely to be covered by manual tests.
+L226: As illustrated in Fig. cite60†8 , the root cause is an integer overflow in the C++ host code: when calculating the total number of elements for the CUDA kernel, a 64-bit integer value is cast to a 32-bit integer, which causes truncation. This overflowed value is then used to calculate the CUDA grid dimensions, resulting in an undersized grid that cannot cover all required memory operations.
+L227: When the col2im_kernel executes, threads calculate 64-bit indices that exceed the actual allocated buffer size, leading to out-of-bounds memory writes.
+L228: An error log showing the error message for the proof-of-concept code in the previous figure.
+L229: 
+L230: Fig. 9. The error message for the PoC.An error log showing the error message for the proof-of-concept code in the previous figure.
+L231: As shown in Fig. cite61†9 , compute-sanitizer detects that a CUDA thread attempts to write to an out-of-bounds address, which is before the nearest valid allocation. This type of silent memory corruption is a severe bug that can lead to incorrect results or unpredictable behavior without causing an explicit Python crash, and demonstrates the ability of GPU-Fuzz to systematically uncover severe, hidden bugs in mature deep learning frameworks by exploring non-trivial parameter spaces.
+L232: ## 6. Discussion
+L233: 
+L234: While our results demonstrate the effectiveness of GPU-Fuzz, we acknowledge several limitations and areas for future work.
+L235: Manual Modeling Effort. The quality of GPU-Fuzz depends on its constraint library. Our current library supports 13 operators, but this is a subset of the hundreds of operators available. Extending coverage requires manual effort to model constraints (100-150 LoC per family). Future work could explore semi-automating constraint extraction from framework documentation to improve scalability.
+L236: Limited Oracle. Our primary oracle, compute-sanitizer, excels at finding memory errors but cannot detect silent numerical correctness issues or performance regressions. Differential fuzzing against a trusted CPU implementation is a promising direction for a more comprehensive oracle.
+L237: ## 7. Related Work
+L238: Fuzzing for DL systems has received continuous attention over the past years (cite62†Shen et al., 2021 ). To capture bugs from complicated modern DL compiler stacks, one of the effective approaches is generating valid neural network models. Works like NNSmith (cite31†Liu et al., 2023 ), TVMFuzz (cite62†Shen et al., 2021 ), and HirGen (cite47†Ma et al., 2023 ) pioneered this direction, proving effective at identifying compiler-related bugs, such as graph-level optimization issues and IR transformation errors.
+L239: Following this, other works propose testing different components of the DL stack. LEMON (cite63†Wang et al., 2020 ), for example, tests DL library implementations by generating model variants to detect inconsistencies across different libraries. More recent studies, like Orion (cite64†Harzevili et al., 2025 ), specifically focus on the API layer by generating test inputs guided by historical bug patterns. While effective, these approaches primarily operate at higher abstraction levels.
+L240: They are not designed to systematically probe the low-level memory access patterns within the GPU kernels that execute the operators. Testing GPU kernels, in general, has its own line of research. GPUVerify (cite65†Betts et al., 2012 ) employs formal methods to verify kernel correctness by detecting data races and barrier divergence. DeepSmith (cite66†Cummins et al., 2018 ) generates random CUDA programs from scratch to stress-test the CUDA compiler (cite34†Guide, 2020 ) itself.
+L241: In contrast, GPU-Fuzz differs from this previous work. Instead of generating entire models like NNSmith (cite31†Liu et al., 2023 ) or entire CUDA programs like DeepSmith (cite66†Cummins et al., 2018 ), it focuses on parameter space fuzzing of existing DL operators to uncover bugs at the kernel level.
+L242: ## 8. Responsible Disclosure
+L243: We have disclosed all 13 discovered bugs responsibly to the respective development teams of PyTorch (cite27†Paszke et al., 2019 ), TensorFlow (cite28†Abadi et al., 2016 ), and PaddlePaddle (cite53†Ma et al., 2019 ) by opening detailed issue reports in their official code repositories. At the time of writing, several of these issues have been acknowledged by the developers. We are committed to collaborating with the framework maintainers to help improve the security and robustness of the deep learning ecosystem.
+L244: ## 9. Conclusion
+L245: We introduced GPU-Fuzz, a constraint-guided fuzzer that aims to find memory errors in deep learning operators. By shifting the focus from network models to the operator parameter space, GPU-Fuzz explores boundary conditions that may trigger low-level vulnerabilities. Our approach was able to uncover 13 previously unknown bugs in widely used frameworks such as PyTorch, TensorFlow, and PaddlePaddle, most of which were silent memory errors.
+L246: This work suggests that securing modern AI systems may benefit from a complementary strategy combining both model and operator parameter space fuzzing. We hope that by making our tool and findings publicly available, we can contribute to improving the reliability and security of these foundational technologies.
+L247: ## References
+L248:   * Abadi et al. (2016) Martín Abadi, Paul Barham, Jianmin Chen, Zhifeng Chen, Andy Davis, Jeffrey Dean, Matthieu Devin, Sanjay Ghemawat, Geoffrey Irving, Michael Isard, et al. $\{$TensorFlow$\}$: a system for $\{$Large-Scale$\}$ machine learning. In 12th USENIX symposium on operating systems design and implementation (OSDI 16), pages 265–283, 2016.
+L249:   * Betts et al. (2012) Adam Betts, Nathan Chong, Alastair Donaldson, Shaz Qadeer, and Paul Thomson. Gpuverify: a verifier for gpu kernels. In Proceedings of the ACM international conference on Object oriented programming systems languages and applications, pages 113–132, 2012.
+L250:   * Chetlur et al. (2014) Sharan Chetlur, Cliff Woolley, Philippe Vandermersch, Jonathan Cohen, John Tran, Bryan Catanzaro, and Evan Shelhamer. cudnn: Efficient primitives for deep learning. arXiv preprint arXiv:1410.0759, 2014.
+L251:   * Cummins et al. (2018) Chris Cummins, Pavlos Petoumenos, Alastair Murray, and Hugh Leather. Compiler fuzzing through deep learning. In Proceedings of the 27th ACM SIGSOFT international symposium on software testing and analysis, pages 95–105, 2018.
+L252:   * De Moura and Bjørner (2008) Leonardo De Moura and Nikolaj Bjørner. Z3: An efficient smt solver. In International conference on Tools and Algorithms for the Construction and Analysis of Systems, pages 337–340. Springer, 2008.
+L253:   * Dumoulin and Visin (2016) Vincent Dumoulin and Francesco Visin. A guide to convolution arithmetic for deep learning. arXiv preprint arXiv:1603.07285, 2016.
+L254:   * Fiala et al. (2012) David Fiala, Frank Mueller, Christian Engelmann, Rolf Riesen, Kurt Ferreira, and Ron Brightwell. Detection and correction of silent data corruption for large-scale high-performance computing. In SC’12: Proceedings of the International Conference on High Performance Computing, Networking, Storage and Analysis, pages 1–12. IEEE, 2012.
+L255:   * Godefroid et al. (2005) Patrice Godefroid, Nils Klarlund, and Koushik Sen. Dart: Directed automated random testing. In Proceedings of the 2005 ACM SIGPLAN conference on Programming language design and implementation, pages 213–223, 2005.
+L256:   * Guide (2020) Design Guide. Cuda c++ programming guide. NVIDIA, July, 2020.
+L257:   * Guo et al. (2024) Yanan Guo, Zhenkai Zhang, and Jun Yang. GPU memory exploitation for fun and profit. In 33rd USENIX Security Symposium (USENIX Security 24), pages 4033–4050, Philadelphia, PA, August 2024. USENIX Association. ISBN 978-1-939133-44-1. URL cite67†https://www.usenix.org/conference/usenixsecurity24/presentation/guo-yanan†www.usenix.org .
+L258:   * Harzevili et al. (2025) Nima Shiri Harzevili, Mohammad Mahdi Mohajer, Moshi Wei, Hung Viet Pham, and Song Wang. History-driven fuzzing for deep learning libraries. ACM Trans. Softw. Eng. Methodol., 34(1):19–1, 2025.
+L259:   * Kamath and Basu (2021) Aditya K Kamath and Arkaprava Basu. Iguard: In-gpu advanced race detection. In Proceedings of the ACM SIGOPS 28th Symposium on Operating Systems Principles, pages 49–65, 2021.
+L260:   * Kirk and Wen-Mei (2016) David B Kirk and W Hwu Wen-Mei. Programming massively parallel processors: a hands-on approach. Morgan kaufmann, 2016.
+L261:   * Lang et al. (2019) Alex H Lang, Sourabh Vora, Holger Caesar, Lubing Zhou, Jiong Yang, and Oscar Beijbom. Pointpillars: Fast encoders for object detection from point clouds. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages 12697–12705, 2019.
+L262:   * Liu et al. (2023) Jiawei Liu, Jinkun Lin, Fabian Ruffy, Cheng Tan, Jinyang Li, Aurojit Panda, and Lingming Zhang. Nnsmith: Generating diverse and valid test cases for deep learning compilers. In Proceedings of the 28th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 2, pages 530–543, 2023.
+L263:   * Ma et al. (2023) Haoyang Ma, Qingchao Shen, Yongqiang Tian, Junjie Chen, and Shing-Chi Cheung. Fuzzing deep learning compilers with hirgen. In Proceedings of the 32nd ACM SIGSOFT International Symposium on Software Testing and Analysis, pages 248–260, 2023.
+L264:   * Ma et al. (2019) Yanjun Ma, Dianhai Yu, Tian Wu, and Haifeng Wang. Paddlepaddle: An open-source deep learning platform from industrial practice. Frontiers of Data and Domputing, 1(1):105–115, 2019.
+L265:   * Nickolls et al. (2008) John Nickolls, Ian Buck, Michael Garland, and Kevin Skadron. Scalable parallel programming with cuda: Is cuda the parallel programming model that application developers have been waiting for? Queue, 6(2):40–53, 2008.
+L266:   * NVIDIA Corporation (2023) NVIDIA Corporation. NVIDIA Compute Sanitizer User Guide. NVIDIA Corporation, version 2023.3 edition, 2023. cite68†https://docs.nvidia.com/cuda/compute-sanitizer/†docs.nvidia.com .
+L267:   * Papadimitriou and Gizopoulos (2023) George Papadimitriou and Dimitris Gizopoulos. Silent data corruptions: Microarchitectural perspectives. IEEE Transactions on Computers, 72(11):3072–3085, 2023.
+L268:   * Park et al. (2021) Sang-Ok Park, Ohmin Kwon, Yonggon Kim, Sang Kil Cha, and Hyunsoo Yoon. Mind control attack: Undermining deep learning with gpu memory exploitation. Computers & Security, 102:102115, 2021.
+L269:   * Paszke et al. (2019) Adam Paszke, Sam Gross, Francisco Massa, Adam Lerer, James Bradbury, Gregory Chanan, Trevor Killeen, Zeming Lin, Natalia Gimelshein, Luca Antiga, et al. Pytorch: An imperative style, high-performance deep learning library. Advances in neural information processing systems, 32, 2019.
+L270:   * Pavlidakis et al. (2024) Manos Pavlidakis, Giorgos Vasiliadis, Stelios Mavridis, Anargyros Argyros, Antony Chazapis, and Angelos Bilas. Guardian: Safe gpu sharing in multi-tenant environments. In Proceedings of the 25th International Middleware Conference, pages 313–326, 2024.
+L271:   * Ronneberger et al. (2015) Olaf Ronneberger, Philipp Fischer, and Thomas Brox. U-net: Convolutional networks for biomedical image segmentation. In International Conference on Medical image computing and computer-assisted intervention, pages 234–241. Springer, 2015.
+L272:   * Shen et al. (2021) Qingchao Shen, Haoyang Ma, Junjie Chen, Yongqiang Tian, Shing-Chi Cheung, and Xiang Chen. A comprehensive study of deep learning compiler bugs. In Proceedings of the 29th ACM Joint meeting on european software engineering conference and symposium on the foundations of software engineering, pages 968–980, 2021.
+L273:   * Wang et al. (2020) Zan Wang, Ming Yan, Junjie Chen, Shuang Liu, and Dongdi Zhang. Deep learning library testing via effective model generation. In Proceedings of the 28th ACM Joint Meeting on European Software Engineering Conference and Symposium on the Foundations of Software Engineering, pages 788–799, 2020.
+L274: Experimental support, please cite69†view the build logs for errors. Generated by cite70†L A T E xml†math.nist.gov .
+L275: ## Instructions for reporting errors
+L276: 
+L277: We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the methods listed below:
+L278: 
+L279:   * Click the "Report Issue" () button, located in the page header.
+L280: 
+L281: Tip: You can select the relevant text first, to include it in your report.
+L282: Our team has already identified cite71†the following issues†github.com . We appreciate your time reviewing and reporting rendering errors we may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability should not be a barrier to accessing research. Thank you for your continued support in championing open access for all.
+L283: Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a cite72†list of packages that need conversion†github.com , and welcome cite73†developer contributions†github.com .
+L284: 
+L285: We gratefully acknowledge support from our major funders, cite74†member institutions†info.arxiv.org , , and all contributors.
+L286: cite75†About†info.arxiv.org · cite76†Help†info.arxiv.org · cite77†Contact†info.arxiv.org · cite78†Subscribe†info.arxiv.org · cite79†Copyright†info.arxiv.org · cite80†Privacy†info.arxiv.org · cite81†Accessibility†info.arxiv.org · cite82†Operational Status (opens in new tab)†status.arxiv.org L287: 
+L288: Major funding support from
+

@@ -1,0 +1,1596 @@
+URL: https://arxiv.org/html/2601.09923v1
+CaMeLs Can Use Computers Too:System-level Security for Computer Use Agents
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+2.1 Computer Use Agents
+2.2 Dual-LLM
+3 Methodology
+3.1 Threat Model
+3.2 Adapting Dual-LLM Architecture for Computer Use with Observe-Act-Verify Planning
+3.3 Additional Defenses through Redundancy
+3.4 CUA Attacks
+4 Evaluation
+4.1 OSWorld Performance: Baseline, Dual-LLM, and Redundancy Defenses
+4.2 CUA Attack Results
+5 Discussion
+6 Conclusion
+References
+A Extended Background
+A.1 Dual-LLM
+A.2 Redundancy style defenses
+A.3 How do CUAs work?
+B Extended methodology section
+B.1 Combining Dual-LLM and CUA
+B.1.1 From adaptive to single shot planning
+B.1.2 Practicality of how to improve utility of single shot planning
+B.1.3 Ablation: How to make Fides work
+B.2 Dual-LLM Attack Further Details
+B.2.1 Threat Model Assumption Justification
+B.2.2 Positioning relative to prior work.
+C Further Utility Measurements on OSWorld
+C.1 Base Utility on OSWorld
+C.2 Utility of UITars on Fides
+C.3 Redundancy Defense Evaluation
+Details on the false positive rates of redundancy defenses.
+Details on the true positive rate for the cookie mimicry attack.
+D Token counts comparison between defenses
+E Further Details on Attack Implementations
+E.1 Cookie Attack Technical Details
+E.1.1 Basic Cookie Attack Mechanism
+E.1.2 One-Step Attack and Defense Levels
+E.1.3 Multi-Step Attack with Hop Website
+E.2 A pixel attack
+F Example Plans
+F.1 Natural Products database example of a good plan (P-LLM: GPT-5)
+F.2 Natural Products database example of an insufficient plan (P-LLM: Gemini 3 Pro)
+F.3 Example of a generic cookie handler snippet
+License: CC BY 4.0
+arXiv:2601.09923v1 [cs.AI] 14 Jan 2026
+CaMeLs Can Use Computers Too:
+System-level Security for Computer Use Agents
+Hanna Foerster
+††thanks: Equal contribution
+Robert Mullins
+Affiliation: University of Cambridge
+Tom Blanchard*
+Nicolas Papernot
+Affiliation: University of Toronto &
+Affiliation: Vector Institute
+Kristina Nikolić
+Florian Tramèr
+Affiliation: ETH Zurich
+Ilia Shumailov
+Cheng Zhang
+Yiren Zhao
+Affiliation: AI Sequrity Company
+Abstract
+AI agents are vulnerable to prompt injection attacks, where malicious content hijacks agent behavior to steal credentials or cause financial loss. The only known robust defense is architectural isolation that strictly separates trusted task planning from untrusted environment observations. However, applying this design to Computer Use Agents (CUAs) – systems that automate tasks by viewing screens and executing actions – presents a fundamental challenge: current agents require continuous observation of UI state to determine each action, conflicting with the isolation required for security. We resolve this tension by demonstrating that UI workflows, while dynamic, are structurally predictable.
+We introduce Single-Shot Planning for CUAs, where a trusted planner generates a complete execution graph with conditional branches before any observation of potentially malicious content, providing provable control flow integrity guarantees against arbitrary instruction injections. Although this architectural isolation successfully prevents instruction injections, we show that additional measures are needed to prevent Branch Steering attacks, which manipulate UI elements to trigger unintended valid paths within the plan. We evaluate our design on OSWorld, and retain up to 57% of the performance of frontier models while improving performance for smaller open-source models by up to 19%, demonstrating that rigorous security and utility can coexist in CUAs.
+A Preprint
+1 Introduction
+Figure 1: Dual-LLM in Computer Use Agent (CUA) setting visualized
+Computer Use Agents (CUAs) are large Vision-Language Model (VLM)-based systems that automate tasks by perceiving user interfaces through screenshots or structured data and executing actions. These agents are increasingly entrusted with open-ended control of computer interfaces. Unlike text-based agents with well-defined tool APIs, CUAs use loosely constrained action parameters (e.g., arbitrary text inputs, pixel coordinates), creating attack surfaces where malicious instructions can be embedded directly into UI content. Real-world exploits demonstrate severe compromises such as data exfiltration or arbitrary code execution (Li et al., 2025). Consequently, ensuring control flow integrity, and guaranteeing that the agent only executes actions prescribed by a user, have become paramount security requirements.
+To secure agentic systems, recent literature proposed to adopt a system-centric approach – the Dual-LLM paradigm (Willison, 2023; Costa et al., 2025; Debenedetti et al., 2025). This architecture structurally enforces control flow integrity by separating the agent into two distinct components: a Privileged Planner (P-LLM), which generates high-level plans while remaining blind to the environment, and a Quarantined Perception model (Q-VLM), which is called inside the plan and processes untrusted external data such as UI observations.
+While effective for agents with simple well defined tools, applying this pattern to CUAs presents a fundamental challenge. Standard CUAs operate in a data-dependent, multi-turn loop: they must perceive the UI state at every step to determine the next action. Strict isolation blocks malicious injections by preventing the planner from observing the screen, but simultaneously appears to break the visual feedback loop needed to navigate dynamic environments.
+We challenge this assumption and demonstrate that Dual-LLM isolation can be successfully adapted to CUAs. Our key insight is that UI workflows, while dynamic, exhibit structural predictability that enables comprehensive upfront planning. The reliance on continuous, multi-turn visual feedback is not an inherent requirement of the task space, but rather a design choice of current systems. We introduce Single-Shot Planning, where the P-LLM generates a complete execution graph with conditional branches before observing untrusted data. Each branch follows an “Observe-Verify-Act” paradigm that structures how the agent perceives, validates, and responds to environmental inputs. Single-Shot Planning provides formal Control Flow Integrity (CFI) guarantees by preventing adversaries from injecting instructions that deviate from the pre-approved plan.
+Our evaluation on the OSWorld benchmark, which measures task completion success rates across real desktop applications, demonstrates that this secure architecture retains significant utility. For small open-source models, we achieve up to 19% improvement over baseline performance, while for larger closed-source models, we retain up to 57% of their original success rate. While larger models experience a performance gap due to the lack of runtime adaptation, utility critically scales with the planner’s reasoning capability and number of task attempts. This makes secure CUAs increasingly practical as foundation models advance.
+Finally, while our architecture guarantees control flow integrity, we show it retains a critical vulnerability inherent to data-dependent systems: Branch Steering. Unlike control-flow attacks where adversaries hijack the agent to execute arbitrary commands, Branch Steering targets the data flow. Attackers can manipulate visual cues (e.g., fake buttons or concealed DOM elements) to deceive the perception model. This forces the agent to choose a dangerous, yet valid, path within its pre-written plan. Although sandbox-level defenses such as ceLLMate (Meng et al., 2025) isolate the browser environment, they do not prevent this logic-level manipulation within the agent’s valid action space. We thus explore alternative mitigations and evaluate their tradeoff between utility and security.
+In summary, this work makes the following contributions:
+•
+Dual-LLM Architecture for CUAs: We design the first Dual-LLM architecture adapted for Computer Use Agents, using Single-Shot Planning with an Observe-Verify-Act paradigm to provide Control Flow Integrity guarantees. Our architecture achieves up to 19% performance improvement for small open-source models and retains up to 57% of performance for larger closed-source models on the OSWorld benchmark.
+•
+Branch Steering & Defenses: We identify Branch Steering as a distinct data-flow threat vector, where attackers manipulate visual cues (e.g., fake buttons) to fool the agent into choosing a dangerous, yet valid, path within its pre-written plan. We demonstrate its feasibility, and evaluate redundancy-based mitigation, highlighting the fundamental distinction between control-flow and data-flow security in isolated architectures.
+Beyond security, our architecture unlocks practical deployment advantages by strengthening open-source models where they need it most (reasoning, achieving 19% improvement) while leveraging their strong perception capabilities for privacy-preserving local deployment. Our evaluation shows that perception capabilities differ minimally between open-source and closed-source VLMs, while reasoning capabilities show larger gaps. This enables a hybrid deployment strategy: proprietary models handle planning while open-source models run perception locally. This preserves user privacy, as the planner never observes sensitive environmental data like screenshots or personal UI content. Furthermore, it substantially reduces costs, since the bulk of computational overhead (repeated screenshot processing) runs on efficient local models rather than expensive API calls.
+2 Related Work
+2.1 Computer Use Agents
+CUA Capabilities and Architectures. Computer Use Agents (CUAs) require perception (understanding UI state through VLMs processing screenshots or structured data like DOM trees), action (executing from a generalizable action space), reasoning (task decomposition and planning), and memory (execution history and task knowledge) (Qin et al., 2025). CUA architectures can be categorized into end-to-end models where a single VLM handles all capabilities (Qin et al., 2025; Wang et al., 2025; Fu et al., 2025; Ye et al., 2025) and agentic frameworks that distribute tasks across specialized modules (Agashe et al., 2025a; Agashe et al., 2025b; Gonzalez-Pumariega et al., 2025; Song et al., 2025) (see Section A.3 for more details). Despite architectural differences, both paradigms rely on iterative, reactive planning—continuously adapting plans based on real-time environmental feedback. This multi-turn adaptation is fundamental to their utility but creates security vulnerabilities: because the planner must observe untrusted content to adapt, adversaries can inject malicious instructions at any step. In contrast, our Dual-LLM approach achieves isolation through single-shot planning, where the planner generates a complete branching execution graph upfront without ever observing the environment, fundamentally preventing arbitrary instruction injection.
+CUA Attacks. Previous attacks on CUAs achieve arbitrary control over task execution by injecting malicious instructions or optimized pixels into text and visual content. Attack vectors include adversarial pop-ups (Zhang et al., 2025), malicious image patches (Aichberger et al., 2025), fine-print injections (Chen et al., 2025), and redirection attacks via trusted platforms like Reddit (Li et al., 2025), with benchmarks like OS-HARM (Kuntz et al., 2025) and WASP (Evtimov et al., 2025) demonstrating goals such as data exfiltration and arbitrary code execution. These attacks succeed because standard CUA architectures cannot architecturally separate trusted instructions from untrusted environmental observations required for navigation. We fundamentally change this threat model with our Dual-LLM framework: by isolating the privileged planner from untrusted visual content through single-shot planning, we eliminate arbitrary attacker control. Attacks can no longer inject unexpected actions—instead, adversaries are constrained to steering the agent down pre-planned execution paths, requiring them to predict the planner’s logic and manipulate perceptual data to trigger valid but unintended branches.
+CUA Defenses. Existing defenses for CUAs lack formal security guarantees.Yang et al. (2025) use few-shot learning with malicious and benign examples to help agents recognize attacks – but this requires manually curating examples for each attack type and fails on novel attacks. Hu et al. (2025) propose AgentSentinel, which monitors the agent’s actions in real-time and flags suspicious behavior using predefined rules and an LLM auditor – but this requires manually defining what constitutes suspicious behavior and remains vulnerable if the auditor itself receives poisoned information. Both approaches rely on pattern recognition rather than providing principled architectural isolation from untrusted content, which is known to be vulnerable (Nasr et al., 2025). CeLLMate (Meng et al., 2025) addresses browser-level security rather than CUA-specific vulnerabilities by enforcing HTTP-level sandboxing policies that restrict agent actions (e.g., limiting purchase amounts, blocking sensitive API calls), assuming the planner may be compromised and focusing on damage control through least-privilege enforcement. In contrast, our Dual-LLM architecture provides Control Flow Integrity (CFI) by preventing planner compromise entirely: the privileged planner generates the complete execution graph before observing untrusted data, architecturally preventing adversaries from injecting arbitrary actions. These defenses operate at different layers: CeLLMate provides a browser-level safety net when agents are compromised, while Dual-LLM eliminates the control flow compromise itself at the architectural level for any CUA task.
+2.2 Dual-LLM
+Dual-LLM and System-Centric Security. To mitigate prompt injection, the Dual-LLM paradigm decouples agent responsibilities into a Privileged LLM (P-LLM) for trusted planning and a Quarantined LLM (Q-LLM) for processing untrusted data. CaMeL (Debenedetti et al., 2025) compiles user queries into formal plans with explicit access constraints enforced by an interpreter, while Fides (Costa et al., 2025) calls the planner iteratively to generate single-action executions per turn while redacting variable content from the P-LLM.
+While both guarantee control flow isolation for data-independent tasks, they face fundamental limitations with data-dependent workflows where the required action sequence itself is specified in untrusted data. (See Appendix A for more details.)
+What Exactly Does Dual-LLM Mitigate? Dual-LLM guarantees that environment information cannot derail the control flow of task execution, ensuring only function calls planned without environment knowledge can be executed. However, it does not inherently prevent data flow attacks where malicious content influences the Q-LLM’s outputs, which are then used as arguments to tool calls or in branching logic. Security policies and capability-based restrictions can address data flow vulnerabilities, but these are domain and user specific, making it hard to adopt for CUA in general, while also being hard to define for computer use due to lack of semantics for the tools e.g. click function in isolation.
+Branch Steering Attacks. Current literature does not explicitly differentiate types of prompt injections. Existing defenses are commonly evaluated against control-flow attacks where adversaries attempt to execute entirely different actions from user-intended ones (Shi et al., 2025; Nasr et al., 2025). Since this precise threat model does not apply to CaMeL and Fides – as such attacks are structurally impossible due to the separation of planning and execution—we introduce a different attack type that explicitly targets data flows within a given P-LLM plan. Specifically, we define branch steering – an attack, where an adversary manipulates environmental observations (e.g., via adversarial images or DOM injection) to trigger a valid, but malicious, conditional branch within the P-LLM’s pre-approved plan. In our setup attacks can be performed using environment-querying functions such as verify_hypothesis and find.
+3 Methodology
+We address the security challenges of Computer Use Agents (CUAs) by adapting the Dual-LLM framework to enforce strict control flow isolation; this architecture separates privileged planning from untrusted perception and mitigates data flow risks through redundancy.
+Appendix B discusses the design decisions in significantly more detail.
+3.1 Threat Model
+The Dual-LLM setup guarantees control flow integrity – specifically, that the agent’s execution logic remains fixed. However, we show that under certain assumptions and in dynamic environments such as CUAs, the data flow can – in the worst case—manipulate the agent, effectively bypassing control flow restrictions. While these attacks typically only degrade utility, they can be specifically crafted to exploit parts of a user’s plan to execute adversarial objectives.
+Attacker Capabilities and Objectives. We assume an attacker who cannot access or manipulate the P-LLM (which generates the plan), but can manipulate parts of the execution environment. This threat model aligns with realistic scenarios where attackers may control entire malicious websites or inject content within trusted sites (e.g., advertisements, forum posts, product reviews), but do not control all websites the agent interacts with or the underlying agent infrastructure. The attacker embeds malicious visual or textual cues (e.g., adversarial ads, prompt injections in DOM elements) to exploit the Q-VLM during plan execution. The goal is to cause the agent to execute adversary-chosen actions by manipulating the information the Q-VLM perceives and returns to the P-LLM.
+Attacker Knowledge Assumptions. The defender deploys the Dual-LLM framework for CUAs with single-shot planning, restrictions on the Q-VLM, and prompt optimization for enhancing the general utility of plans generated by the P-LLM, as described in Section B.1.2. We assume the attacker knows the defender’s task, knows the functions the defender creates for the P-LLM to use, and can predict approximately the plans that the defender’s P-LLM generates. These strong knowledge assumptions represent a worst-case scenario that only strengthens our results: any defense effective against such a well-informed attacker will be even more effective against attackers with less information. Under these assumptions, the attacker can construct targeted interventions in the environment to steer plan execution along specific branches. Any function that retrieves information from the environment serves as a potential attack vector, with attack surface expanding as plan complexity increases. These assumptions are realistic in practice (see Section B.2 for detailed justification). For tractability, we focus exclusively on browser-based tasks and assume attackers can inject malicious elements through website advertisements, forum posts, or direct website ownership.
+3.2 Adapting Dual-LLM Architecture for Computer Use with Observe-Act-Verify Planning
+Standard CUAs typically employ an iterative perception-action loop where the model consumes the new environment state at every turn (Qin et al., 2025). While flexible, this exposes the agent’s control flow to prompt injection via visual and textual inputs (e.g., malicious pop-ups, ads, comments).
+To secure this, we adopt the Dual-LLM architecture, separating responsibilities into two distinct components. We formalize this section based on CaMeL, while Fides can be considered a minor expansion of the setup, where the plan is decoded one instruction at a time.
+It is worth noting that both CaMeL and Fides in the original design also had security policy components, put in place to restrict the dataflow in the system. In our work we explicitly exclude discussion of security policies since they do not change the Dual-LLM architecture and only further increase security – in essence our setup can be considered worst-case CaMeL and Fides performance security-wise since we do not perform additional usecase-specific policing.
+Overall, the system has two main components:
+•
+Privileged Planner (P-LLM): A secure LLM that generates a complete, verified execution plan single-shot before any interaction occurs. It has no access to the live environment.
+•
+Quarantined Perception (Q-VLM): An untrusted Vision-Language Model that interacts with the environment (screenshots/DOM). It executes within the P-LLM’s plan but cannot alter the control flow instructions.
+Because the P-LLM cannot see the screen to adjust its plan dynamically, we bridge the semantic gap using a comprehensive toolset allowing for conditional execution. The P-LLM compiles the user query into a Python-like plan utilizing specific functions that for example summarize the screenshot state, return coordinates, or check the state of the environment with a screenshot or the DOM.
+A high-level overview of how Dual-LLM works is visualized in  Figure 1, and the core of our secure execution strategy is formalized in Algorithm 2, along with example plans in Appendix F.
+To enable effective single-shot plans without intermediate reasoning, we enforce an Observe-Verify-Act methodology in the P-LLM system prompt.
+•
+Observe: The plan aggregates state information (visual summaries or DOM elements).
+•
+Verify: The plan uses verify_hypothesis to check logical conditions (e.g., "Am I on the login page?"). This returns a boolean or status code, allowing the pre-written plan to branch to appropriate sub-routines.
+•
+Act: The plan executes interactions (clicks/types) only after verification.
+This structure allows the P-LLM to reason in advance by generating code that anticipates multiple failure modes and state transitions. We arrived at this methodology by analysing successful plans on the benchmarks, where initial single-shot plans frequently failed due to implicit assumptions about computer state. Successful plans consistently gathered state information first, explicitly verified assumptions, and only then acted on verified conditions. This pattern proved especially critical for handling the ambiguous initial states in benchmark tasks, where one-sentence descriptions provide no information about the current computer environment. Further implementation details are in Section B.1.2.
+3.3 Additional Defenses through Redundancy
+While Dual-LLM secures control flow, the data flow remains vulnerable: a compromised Q-VLM could return false coordinates or summaries to steer the plan into malicious branches, i.e., branch steering. To mitigate this, standard Dual-LLM approaches can rely on semantic security policies, which are rules constraining what data can be read and written to by subsequent tool calls in the program (e.g., blocking email to untrusted addresses). However, we do not consider such policies in our work because low-level CUA tools like click or find lack intrinsic semantic meaning suitable for policy enforcement. Extending semantic policies to CUA tools remains an open research question that would require additional infrastructure such as planner-provided intent annotations on tool calls or website-provided metadata restricting permissible actions as is proposed by Meng et al. (2025).
+Instead, we implement additional verification mechanisms to detect compromised Q-VLM outputs. We treat functions that call the Q-VLM as potentially faulty nodes since these receive information from the environment and can influence plan execution. For each such function, we introduce a verifier module that cross-checks outputs before they populate plan variables. We propose two complementary verification strategies, which provide empirical defense-in-depth but do not offer formal guarantees beyond the core Dual-LLM control flow protection.
+First, DOM Consistency (where available): the verifier uses an independent VLM to check whether the Q-VLM’s visual findings align with ground-truth DOM structure, detecting hallucinations or clicks on disguised elements (e.g., transparent overlays or elements in ad sections). The DOM provides tagged subsections that can reveal mismatches not visible in the screenshot alone.
+Second, Multi-Modal Consensus: the same independent VLM receives both the screenshot and the first Q-VLM’s output to detect visual anomalies or semantic mismatches – for example, recognizing that an element labeled “Login” is actually a pixel-injected advertisement, or that raw HTML camouflaged correctly in the DOM appears malicious visually. This defense relies on the empirically observed low transferability of adversarial examples between diverse models (Schaeffer et al., 2024). By employing a distinct verifier model (e.g., a closed-source VLM different from the Q-VLM), optimization-based attacks targeting the Q-VLM are less likely to simultaneously fool the verifier, though this remains a best-effort defense with potential failure modes. If any verification check detects a potential attack, execution halts and the trace is returned to the user.
+However, because these verifiers rely on probabilistic model outputs rather than formal isolation, they remain susceptible to adversarial manipulation; we demonstrate this residual vulnerability via pixel-based attacks in the next section.
+3.4 CUA Attacks
+To empirically validate the limitations of Dual-LLM architectures and evaluate the effectiveness of our redundancy-based defenses, we develop two branch steering attack classes that target data-flow manipulation through environment-querying functions. While the Dual-LLM framework successfully prevents control-flow attacks by isolating planning from perception, and our redundancy defenses provide additional protection against data-flow manipulation, it remains critical to understand worst-case attack vectors that may still succeed. Well-designed security policies could further mitigate data-flow risks if developed for CUA tools, but policies are inherently domain-specific, and may have blind spots. Thus, these attacks serve to characterize worst-case remaining security weaknesses, identifying scenarios where even multi-layered defenses may be insufficient.
+We focus on attacks that exploit the find function, which retrieves UI element coordinates given an instruction text. Our attack vectors include seemingly legitimate UI elements (e.g., cookie popups embedded in ad banners) and optimized pixel perturbations, building on realistic threat models from prior work (Zhang et al., 2025; Aichberger et al., 2025; Evtimov et al., 2025). We assume adversaries can control ad banners and focus on two widely adopted advertisement formats: (1) static Google advertisement banners, which allow advertisers to specify a hyperlink and image, and (2) embedded HTML5 advertisement banners, which support full HTML snippets and thus provide a larger attack surface for malicious advertisers.
+Prompt Injection Attack: Cookie Popup. We design a proof-of-concept attack that embeds fake cookie popups within ad banners, redirecting users to attacker-controlled websites when the find function is called with instructions to locate cookie popups. This exploits a fundamental CUA requirement: handling cookie consent before website interaction—a predictable utility routine that must appear early in task execution in all of the plans. While specific to Chrome-based tasks in GDPR jurisdictions, the attack reveals a general vulnerability: when adversaries can predict mandatory UI interactions and control UI portions, data-flow manipulation remains feasible even under Dual-LLM isolation.
+Multi-step and Long-range Variants. We extend this attack to multi-step execution by introducing an intermediary benign “hop” website that does not verify hyperlinks in its ad banners, circumventing real-world hyperlink verification on the victim’s homepage. The attack succeeds when tasks require visiting more than two webpages, as the plan must handle multiple cookie popups. We further introduce a long-range variant that embeds the fabricated cookie popup on a later webpage the adversary predicts the agent will visit, increasing stealthiness by delaying malicious redirection until deeper into task execution (see Figure 2 for complete attack illustration and Section E.1.3 for full technical details).
+Pixel Attack. To demonstrate the brittleness of redundancy defenses against data-flow attacks, we design gradient-based pixel perturbations that evade both screenshot-based and DOM-enhanced Q-VLM verification. We initialize the ad banner with a white background and perform gradient-based optimization exclusively on the banner region. Since the final image must be in the integer domain, we apply quantization before optimization and introduce stochasticity followed by expectation over transformation steps (Athalye et al., 2018) to ensure robustness.
+The banner is optimized to induce malicious Q-VLM outputs when querying the find function. Rather than returning the ad banner’s coordinates (which would be immediately flagged), we optimize the Q-VLM to return plausible thought traces and coordinates that align with the element search instruction. This ensures the defenses described in Section 3.3 do not flag the attack: the screenshot and DOM appear benign (containing only seemingly random pixel perturbations), while the Q-VLM’s returned action and thought trace appear legitimate and consistent with the task. Figure 4 shows an example attack.
+4 Evaluation
+In our evaluation, we aim to answer three primary research questions: (1) Can Dual-LLM architectures retain sufficient utility for complex Computer Use tasks? (2) How does the choice of Planner LLM affect this utility? Finally, (3) how well can redundancy defenses empirically mitigate data-flow attacks while minimizing performance impact?
+We conduct our evaluation on OSWorld (Xie et al., 2024), a benchmark for measuring agent performance on realistic computer use tasks across applications including but not limited to Chrome, LibreOffice, and GIMP. OSWorld evaluates task completion through automated verification scripts. Following standard practice in CUA benchmarking, we report pass@k metrics, which measure the probability that at least one correct solution appears in k independent attempts at a task. Pass@k represents an upper bound assuming oracle selection and shows the general capability to solve a given task; however, it characterizes achievable performance if plan selection mechanisms can be developed for our architecture, where multiple plans can be generated upfront. We additionally report pass@1 as a conservative estimate of single-attempt performance. We first measure the baseline utility of OSWorld on the CUAs integrated into our Dual-LLM setup. Subsequently, we evaluate the utility of CaMeL+OSWorld across different planner LLMs and CUAs. Finally, we assess security against Branch Steering attacks under three distinct defense configurations: No Defense, DOM Consistency, and Multi-Modal Consensus, which are discussed in more detail in  Sections 4.1 and 4.2.
+Experimental Setup. For our experiments, we integrate the OSWorld benchmark (Xie et al., 2024) into official code-bases of CaMeL11
+1
+https://github.com/google-research/camel-prompt-injection and Fides22
+2
+https://github.com/microsoft/fides. We set up three different end-to-end CUAs, of which two are small open-source models – UITars-1.5-7B (Seed, 2025), OpenCUA-32B (Wang et al., 2025), and one is a large closed source model – Claude Sonnet 4.5. Further, we test 9 different frontier LLMs as our planner models, of which three are open-source – Deepseek-R1-0528, Kimi-K2-Thinking, GPT-OSS-120b, while 6 are closed source – Claude Sonnet 4.5, Gemini 2.5 Pro, Gemini 3 Pro Preview, GPT-5, GPT-5.1, Grok-4.
+4.1 OSWorld Performance: Baseline, Dual-LLM, and Redundancy Defenses
+Table 1: Planner Model Performance on a minimal subset of OSWorld tasks with CaMeL. We pick 8 successful chrome tasks and 1 successful task from each other category from the UITars successful tasks subset, resulting in 17 tasks that we evaluate with 9 different planners using UITars as the Q-VLM. GPT-5 performs by far the best followed by Grok-4.
+Metric
+GPT-5
+Grok-4
+GPT-5.1
+Gemini 3
+Gemini 2.5
+Claude
+GPT-OSS
+Kimi
+DeepSeek
+Pro
+Pro
+Sonnet 4.5
+120B
+K2
+R1-0528
+Success Rates by Application
+Chrome
+7/8
+4/8
+2/8
+1/8
+1/8
+1/8
+3/8
+2/8
+2/8
+Other Apps
+5/9
+6/9
+4/9
+5/9
+5/9
+4/8
+1/9
+3/9
+2/9
+Overall Performance
+Overall
+12/17
+10/17
+6/17
+6/17
+6/17
+5/17
+5/17
+4/17
+4/17
+Cumulative Pass@k Performance (%)
+Pass@1
+17.6
+29.4
+17.6
+29.4
+23.5
+23.5
+6.2
+11.8
+0.0
+Pass@2
+52.9
+41.2
+29.4
+29.4
+23.5
+29.4
+6.2
+17.6
+0.0
+Pass@3
+64.7
+47.1
+35.3
+35.3
+23.5
+29.4
+18.8
+17.6
+0.0
+Pass@4
+64.7
+52.9
+35.3
+35.3
+23.5
+29.4
+18.8
+23.5
+17.6
+Pass@5
+70.6
+58.8
+35.3
+35.3
+35.3
+29.4
+29.4
+23.5
+23.5
+Our Base Utility on OSWorld. We first evaluate base utility on the OSWorld benchmark. Of the 369 total tasks, 30 are marked as automatically unmeasurable; for the remaining tasks, we report the number of successful completions for UITars, OpenCUA, and Claude Sonnet in Section C.1 Table 3. When including all 369 tasks in the success rate calculation, we achieve 24.4%, 28.7%, and 36.7% for UITars, OpenCUA, and Claude Sonnet pass@1 respectively, with a maximum step count of 15. Our UITars results align with published OSWorld benchmark numbers, where UITars-1.5-7B achieves 24.5±\pm1.2% with 15 steps at pass@2. Similarly, OpenCUA-32B achieves 29.7±\pm1.1% with 15 steps at pass@3 in the published results. However, our Claude results (36.7%) are substantially lower than the published performance of 58.1%, which we attribute to our significantly reduced step count (15 vs. 50 steps), enforced due to time and cost limitations.
+OSWorld+CaMeL: Planner Utility Evaluation. Table 1 shows that GPT-5 clearly outperformed other models in constructing useful plans. While this could partially reflect our prompt engineering conducted with GPT-5 as the planner, the final system prompt is written in a general manner that should be equally applicable to other models. Models that underperformed exhibit two primary failure modes. First, they fail to generate comprehensive plans that foresee many edge cases. Second, they struggle to construct effective multi-step strategies for complex website or application navigation. A notable limitation, particularly for Gemini 3 Pro, Gemini 2.5 Pro, and Claude Sonnet 4.5, is their apparently low output diversity. This is critical because the planner cannot react in real-time—it must generate alternative trajectories to recover from potential failures. Although we maintained all models at their default temperature and sampling settings, these three models consistently generate highly similar plans across runs. This low diversity negatively impacts pass@k rates. Example plans from GPT-5 and Gemini 3 Pro are provided in Section F.1 and Section F.2 for comparison.
+OSWorld+CaMeL: Overall Base Utility Evaluation. In Table 2, we evaluate all three CUAs with GPT-5 as the fixed planner model. At pass@5, the CaMeL setup retains up to 65% of the original utility achieved without the Dual-LLM architecture. When evaluating each model on its respective successful OSWorld tasks, we observe a high pass@5 success rate of 56.0% even for Claude’s successful tasks, despite this set including significantly more tasks.
+Notably, the Dual-LLM architecture reduces the importance of CUA-specific capabilities, yielding similar success rates across UITars tasks: UITars (65.0%), OpenCUA (66.7%), and Claude (68.3%). As long as element detection performs comparably across CUAs, the Dual-LLM architecture normalizes performance differences between them. This suggests that performance is primarily driven by the quality of plans generated by the P-LLM rather than the underlying CUA implementation.
+However, evaluating only on previously successful tasks may underestimate CaMeL’s capabilities, as the strong planner could enable success on tasks that originally failed. To assess the full potential, we evaluate UITars-1.5-7B+CaMeL on all OSWorld tasks. Remarkably, we achieve a 29.0% success rate—higher than UITars-1.5-7B alone (24.4%). This matches the performance of the significantly larger 32B OpenCUA model (see Section C.1, Table 3), demonstrating that a strong planner can elevate smaller CUAs to compete with much larger models within a secure-by-design agentic framework.
+OSWorld+Fides. Similarly to OSWorld+CaMeL Fides achieves pass@1 of 33.3%, and pass@5 of 66.7% with UITars on the 60 tasks UITars was successful on in OSWorld Section C.2 Table 4.
+OSWorld+CaMeL: Redundancy Defense Evaluation.  For our strongest redundancy configuration (Multi-Modal Consensus), we employ Claude-Haiku-4.5 as the checker using the DOM representation of the environment, and GPT-5 as the checker using the raw screenshot. Both models use a common prompt with strong emphasis on the specifics of our threat model: detecting potential prompt injections embedded within advertisement banners on common websites. We evaluate the success rate of flagging our cookie mimicry attacks across 10 different runs, and evaluate the utility trade-off introduced by this additional defense on the 17 tasks used for the planner utility evaluation, as reported in Section C.3 Table 5. The low observed false positive rate on benign tasks can be explained by the highly specific targeting of the redundancy defense toward prompt injections contained in website advertisement banners. Any attempt to provide broader attack space coverage ultimately results in significant utility loss, consistent with findings in Zhang et al. (2025).
+Table 2: Performance comparison of Q-VLMs/CUAs with CaMeL across different task sets. For tasks that UITars-1.5-7B completed successfully on OSWorld, we evaluate performance when adding CaMeL across different CUA backends including OpenCUA-32B and Claude Sonnet 4.5, finding that CUA differences become less significant with CaMeL. OpenCUA+CaMeL performance on OpenCUA tasks and Claude+CaMeL performance on Claude tasks show surprisingly similar results even with larger set sizes, underscoring the strong performance of the CaMeL+CUA setup. For All tasks, we evaluate only with UITars as the CUA at a lower pass@k rate and include the 30 non-automatically evaluatable tasks that are originally set to success by default on OSWorld in the Overall row.
+Category
+UITars Tasks (n=60)
+OpenCUA Tasks
+Claude Tasks (n=109)
+All Tasks (n=369|339)
+UITars
+OpenCUA
+Claude
+OpenCUA
+Claude
+UITars
+Chrome
+6/11 (54.5%)
+8/11 (72.7%)
+8/11 (72.7%)
+11/13 (84.6%)
+8/14 (57.1%)
+10/46 (21.7%)
+GIMP
+5/6 (83.3%)
+4/6 (66.7%)
+4/6 (66.7%)
+5/9 (55.6%)
+6/11 (54.5%)
+5/16 (31.25%)
+LibreOffice Calc
+2/3 (66.7%)
+2/3 (66.7%)
+2/3 (66.7%)
+2/3 (66.7%)
+4/13 (30.8%)
+6.46 (13%)
+LibreOffice Impress
+6/9 (66.7%)
+5/9 (55.6%)
+6/9 (66.7%)
+9/14 (64.3%)
+7/17 (41.2%)
+13/47 (27.7%)
+LibreOffice Writer
+3/8 (37.5%)
+4/8 (50.0%)
+3/8 (37.5%)
+3/7 (42.9%)
+8/12 (66.7%)
+6/22 (27.3%)
+Multi-apps
+3/5 (60.0%)
+3/5 (60.0%)
+3/5 (60.0%)
+3/3 (100.0%)
+4/7 (57.1%)
+11/100 (11.0%)
+OS
+3/4 (75.0%)
+3/4 (75.0%)
+4/4 (100.0%)
+4/7 (57.1%)
+7/11 (63.6%)
+8/19 (42.1%)
+Thunderbird
+2/4 (50.0%)
+3/4 (75.0%)
+3/4 (75.0%)
+5/7 (71.4%)
+7/8 (87.5%)
+6/14 (42.9%)
+VLC
+1/2 (50.0%)
+1/2 (50.0%)
+1/2 (50.0%)
+1/4 (25.0%)
+0/4 (0.0%)
+2/17 (11.8%)
+VS Code
+8/8 (100.0%)
+7/8 (87.5%)
+7/8 (87.5%)
+5/9 (55.6%)
+11/12 (91.7%)
+10/18 (55.6%)
+Overall
+39/60 (65.0%)
+40/60 (66.7%)
+41/60 (68.3%)
+48/76 (63.2%)
+62/109 (56.9%)
+77/339 (22.7%)|107/369 (29.0%)
+Pass@1
+25/60 (41.7%)
+22/60 (36.7%)
+23/60 (38.3%)
+22/76 (28.9%)
+31/109 (28.4%)
+51/339 (15.0%)
+Pass@2
+30/60 (50.0%)
+29/60 (48.3%)
+30/60 (50.0%)
+32/76 (42.1%)
+46/109 (42.2%)
+70/339 (20.6%)
+Pass@3
+35/60 (58.3%)
+35/60 (58.3%)
+33/60 (55.0%)
+37/76 (48.7%)
+57/109 (52.3%)
+77/339 (22.7%)
+Pass@4
+35/60 (58.3%)
+37/60 (61.7%)
+35/60 (58.3%)
+44/76 (57.9%)
+61/109 (56.0%)
+Pass@5
+39/60 (65.0%)
+40/60 (66.7%)
+41/60 (68.3%)
+48/76 (63.2%)
+62/109 (56.9%)
+4.2 CUA Attack Results
+1423
+Figure 2: Cookie attack execution flow.
+Illustration of a multi-step and long-range cookie attack:
+(1) legitimate homepage, (2) spoofed intermediate page, (3) trusted redirect, (4) final malicious landing page.
+Cookie Popup Attack Performance. This one-step attack succeeds when no defense is employed. With the DOM Consistency defense, the attack is blocked for static Google ad banners due to the “Advertisement” frame being detectable in the DOM, but HTML5 ads circumvent this by replacing the advertisement frame with a cookie frame in the DOM structure. With the Multi-Modal Consensus defense, distinguishing fabricated cookie banners from legitimate ones remains challenging without degrading benign task utility, consistent with weak success rates of prompt-based defenses (Evtimov et al., 2025). The attack generalizes to any highly predictable utility routine that must appear early in task execution, such as login verification or welcome screen dismissal. Detailed defense analysis is provided in Section E.1.
+Pixel Attack Performance. Even at our strongest redundancy defense (Multi-Modal Consensus) configured to heavily prioritize security over utility with very high false positive rates, the pixel-based attack evades both screenshot-based and DOM-enhanced Q-VLM verification. Figure 4 shows an example where the model, originally navigating www.drugs.com to “Browse the Natural Product Database”, is misled into clicking on a specific drug page despite the planner calling find(instruction=‘‘Natural Product Database’’). The adversarially crafted token sequence makes the target drug appear to be a natural product and a perfect match for the instruction. This attack could be exploited by advertisers, such as pharmaceutical companies, to artificially increase traffic to their product pages by redirecting CUA agent traffic on commercial websites. We leave potential multi-objective and multi-Q-VLM pixel attacks to future work, as Aichberger et al. (2025) have already demonstrated techniques for constructing such attacks, and defer multi-step pixel attacks (which would simply require chaining n instances of this one-step attack).
+5 Discussion
+Our investigation into adapting the Dual-LLM framework for CUAs challenges the assumption that strict system-centric security is incompatible with the dynamic nature of GUI automation as well as highlights that tasks that the CUA is expected to solve may not be as data-dependent as they seem. By converting multi-turn interactions into single-shot planning problems with redundancy, we establish a new baseline for secure CUAs. However, this architecture also exposes fundamental trade-offs between plan rigidity, data dependency, and residual attack vectors.
+The Feasibility of Single-Shot Planning in (seemingly) Dynamic Environments. Contrary to the expectation that strict control-data isolation would sever CUA functionality, our results demonstrate that a Dual-LLM architecture is viable. This finding suggests that current academic benchmarks may rely less on real-time reactivity than previously thought, or that advanced general reasoning capabilities are sufficient to navigate complex app-specific tasks via careful planning. In our architecture, performance is primarily driven by the reasoning and memory capability of the P-LLM rather than the reactive capabilities of the Q-VLM. This suggests that as reasoning models improve, the utility of single-shot secure planning is likely to increase without requiring fundamental architectural changes.
+Task–Data Dependency. While our Observe-Verify-Act methodology allows for significant utility, we identify data dependency as the main limitation factor in the security-utility trade-off. The success of a single-shot plan depends on the P-LLM’s ability to anticipate start states and failure modes. Underspecified tasks (e.g., those lacking initial state descriptions) force the planner to account for exponentially more branches, degrading performance and increasing the associated costs.
+However, we find that performance can be significantly improved through prompt tuning, suggesting that seemingly data-dependent tasks can often be reduced to data-independent ones by: (1) fine-tuning on the task distribution to increase predictability, (2) incorporating extensive state-verification logic (verify_hypothesis) into the prompt to handle runtime ambiguity, and (3) explaining general reasoning behind planning.
+Data-Flow Prompt Injections. While Dual-LLM effectively secures the control flow and prevents the execution of arbitrary code or unauthorized tools, it cannot fully isolate the data flow without rendering the agent useless. This gives rise to branch steering, a new attack vector unique to Dual-LLM based systems. When a plan relies on verification steps (e.g., verify_hypothesis), the data returned by the Q-VLM becomes a control signal. An attacker cannot inject new code, but they can manipulate the environment (via adversarial visual elements) to coerce the Q-VLM into returning specific values that force the plan into attacker-chosen branches.
+Even with strict isolation, if the P-LLM’s plan contains a valid path that benefits the attacker (e.g., a malicious cookie banner ad disguised as a button), the system remains vulnerable to manipulation and requires additional infrastructural defenses like ceLLMate (Meng et al., 2025).
+Better Benchmarks. Many of the tasks found in OSWorld are ill-defined ("Increase font here"), unmeasurable automatically 33
+3
+30 tasks in OSWorld, e.g., https://github.com/xlang-ai/OSWorld/blob/cbc3b590ff7573034e5614ba74a4b1483a0e75b5/evaluation_examples/examples/chrome/ae78f875-5b98-4907-bbb5-9c737fc68c03.json, and are inherently data independent (e.g., "get to natural products at drugs.com", where there is no explicit button to go there and the agent either needs to explore or know what precise buttons to click).
+Reflection on Costs and Security Scaling. We observe that pass@5 significantly improves performance. Because CaMeL samples plans unconditionally of prior failures, it is possible to sample multiple plans in parallel or combine them into a comprehensive super-plan. This indicates that CaMeL in CUAs scales favorably with model inference costs and speed. In other words, as foundational models become more efficient, high-security control flow should become increasingly accessible. In fact, when running the pass@20 we observe that Claude scales even further in performance, as we show in Figure 3, to approximately 73%73\% by pass@20.
+1234567891011121314151617181920Pass@N0102030405060708090100Tasks Solved (%)Tasks Solved at Pass@N by CategoryCategorychromegimplibreoffice calclibreoffice impresslibreoffice writermulti appsosthunderbirdvlcvs codeOverall
+Figure 3: Performance of Claude-based Computer Use Agent as more unbiased sampling is allowed. We observe that agent performance grows even further to almost 73%.
+Usage overhead. We compute the total token throughput count with CaMeL+OSWorld and Fides+OSWorld. Adding our version of CaMeL alone induces a x1.88 token count increase compared with the non defended agent, and a x29.60 increase for Fides+OSWorld. The latter is explained by the iterative querying of the planner model with the redacted variables during execution, which introduces an approximate of max_steps more tokens. This token count increase, though relatively low for CaMeL+OSWorld alone, increases significantly with the added defenses, up to x6.57 more tokens are used with CaMeL+Multi-Modal Consensus. More details and ablations on different setups of defenses and on the different parts of CaMeL+OSWorld can be found in Appendix D.
+6 Conclusion
+Our work has successfully challenged a core assumption in AI security: that robust, system-centric defenses are incompatible with the dynamic, data-dependent nature of Computer Use Agents. By adapting the Dual-LLM framework with the Observe-Verify-Act methodology, we have established a new and surprisingly effective baseline for secure CUA operation. Our results demonstrate that single-shot planning preserves significant utility, improving up to 19% utility with smaller open-source models (pass@3) and retaining up to 57% performance with larger closed-source models (pass@5) on CUA tasks, empirically validating the viability of secure CUA deployment. Importantly, this approach shifts the primary driver of success to the Privileged Planner’s reasoning capabilities, meaning future utility improvements can leverage advances in foundational LLM capabilities without compromising the security architecture.
+While Dual-LLM successfully isolates control flow, it remains vulnerable to our new branch steering attacks, where a malicious environment coerces the Quarantined Perception model into returning crafted data that forces execution into attacker-chosen paths within a legitimate plan. Even with additional defenses, residual vulnerabilities persist, as highlighted by the practical threat of our cookie attack.
+Contributions
+•
+Tom, Ilia, and Hanna developed the core ideas and iterated on the core features.
+•
+Hanna built and evaluated CaMeL+OSWorld, Tom built and evaluated Fides+OSWorld.
+•
+Hanna developed necessary functions to convert CUA into Dual-LLM setup and developed Observe-Verify-Act methodology and prompt optimized to achieve utility in the Dual-LLM+CUA setup.
+•
+Tom and Hanna developed and optimized redundancy defenses together.
+•
+Tom built most attacks, Kristina helped to build the pixel attack.
+•
+Ilia, Hanna, and Tom wrote most of the paper.
+•
+AI Sequrity Company team helped advise, design, and independently confirm findings in the paper.
+•
+Robert Mullins, Yiren Zhao, Nicolas Papernot, and Florian Tramèr helped advise and position the project all throughout its development.
+References
+Abdelnabi et al. (2025)
+S. Abdelnabi, A. Gomaa, P. O. Kristensson, and R. Shokri
+Firewalls to secure dynamic llm agentic networks.
+arXiv preprint arXiv:2502.01822.
+Cited by: §A.1.
+Agashe et al. (2025a)
+S. Agashe, J. Han, S. Gan, J. Yang, A. Li, and X. E. Wang
+Agent S: An Open Agentic Framework that Uses Computers Like a Human.
+In International Conference on Learning Representations (ICLR),
+External Links: Link
+Cited by: §A.3,
+§2.1.
+Agashe et al. (2025b)
+S. Agashe, K. Wong, V. Tu, J. Yang, A. Li, and X. E. Wang
+Agent s2: a compositional generalist-specialist framework for computer use agents.
+External Links: 2504.00906,
+Link
+Cited by: §A.3,
+§2.1.
+Aichberger et al. (2025)
+L. Aichberger, A. Paren, G. Li, P. Torr, Y. Gal, and A. Bibi
+MIP against agent: malicious image patches hijacking multimodal OS agents.
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+External Links: Link
+Cited by: §B.2.2,
+§E.2,
+§2.1,
+§3.4,
+§4.2.
+Ammann and Knight (1988)
+P. E. Ammann and J. C. Knight
+Data diversity: an approach to software fault tolerance.
+IEEE Transactions on Computers 37 (4), pp. 418–425.
+Cited by: §A.2.
+Athalye et al. (2018)
+A. Athalye, L. Engstrom, A. Ilyas, and K. Kwok
+Synthesizing robust adversarial examples.
+In International conference on machine learning,
+pp. 284–293.
+Cited by: §E.2,
+§3.4.
+Avizienis (1985)
+A. Avizienis
+The n-version approach to fault-tolerant software.
+IEEE Transactions on Software Engineering 11 (12), pp. 1491–1501.
+Cited by: §A.2.
+Banerjee (1986)
+P. Banerjee
+Concurrent fault diagnosis in multiple processor systems.
+In Proc. 16th Symp. Fault Tolerant Comput,
+pp. 298–303.
+Cited by: §A.2.
+Chen et al. (2025)
+C. Chen, Z. Zhang, B. Guo, S. Ma, I. Khalilov, S. A. Gebreegziabher, Y. Ye, Z. Xiao, Y. Yao, T. Li, et al.
+The obvious invisible threat: llm-powered gui agents’ vulnerability to fine-print injections.
+arXiv preprint arXiv:2504.11281.
+Cited by: §B.2.2,
+§2.1.
+Chen and Avizienis (1978)
+L. Chen and A. Avizienis
+N-version programming: a fault-tolerance approach to reliability of software operation.
+Digest of Papers FTCS-8: Eighth Annual International Conference on Fault Tolerant Computing.
+Cited by: §A.2.
+Costa et al. (2025)
+M. Costa, B. Köpf, A. Kolluri, A. Paverd, M. Russinovich, A. Salem, S. Tople, L. Wutschitz, and S. Zanella-Béguelin
+Securing ai agents with information-flow control.
+External Links: 2505.23643,
+Link
+Cited by: §A.1,
+§1,
+§2.2.
+Debenedetti et al. (2025)
+E. Debenedetti, I. Shumailov, T. Fan, J. Hayes, N. Carlini, D. Fabian, C. Kern, C. Shi, A. Terzis, and F. Tramèr
+Defeating prompt injections by design.
+External Links: 2503.18813,
+Link
+Cited by: §A.1,
+§1,
+§2.2.
+Evtimov et al. (2025)
+I. Evtimov, A. Zharmagambetov, A. Grattafiori, C. Guo, and K. Chaudhuri
+WASP: benchmarking web agent security against prompt injection attacks.
+arXiv preprint arXiv:2504.18575.
+Cited by: §B.2.2,
+§E.1.2,
+§2.1,
+§3.4,
+§4.2.
+Fu et al. (2025)
+T. Fu, A. Su, C. Zhao, H. Wang, M. Wu, Z. Yu, F. Hu, M. Shi, W. Dong, J. Wang, et al.
+Mano technical report.
+arXiv preprint arXiv:2509.17336.
+Cited by: §A.3,
+§2.1.
+Ghalebikesabi et al. (2024)
+S. Ghalebikesabi, E. Bagdasaryan, R. Yi, I. Yona, I. Shumailov, A. Pappu, C. Shi, L. Weidinger, R. Stanforth, L. Berrada, P. Kohli, P. Huang, and B. Balle
+Operationalizing contextual integrity in privacy-conscious assistants.
+External Links: 2408.02373,
+Link
+Cited by: §A.1.
+Gonzalez-Pumariega et al. (2025)
+G. Gonzalez-Pumariega, V. Tu, C. Lee, J. Yang, A. Li, and X. E. Wang
+The unreasonable effectiveness of scaling agents for computer use.
+External Links: 2510.02250,
+Link
+Cited by: §A.3,
+§2.1.
+Hu et al. (2025)
+H. Hu, P. Chen, Y. Zhao, and Y. Chen
+AgentSentinel: an end-to-end and real-time security defense framework for computer-use agents.
+In Proceedings of the 2025 ACM SIGSAC Conference on Computer and Communications Security,
+CCS ’25, New York, NY, USA, pp. 3535–3549.
+External Links: ISBN 9798400715259,
+Link,
+Document
+Cited by: §2.1.
+Huang and Abraham (1984)
+K. Huang and J. A. Abraham
+Algorithm-based fault tolerance for matrix operations.
+IEEE Transactions on Computers C-33 (6), pp. 518–528.
+External Links: Document
+Cited by: §A.2.
+Kuntz et al. (2025)
+T. Kuntz, A. Duzan, H. Zhao, F. Croce, J. Z. Kolter, N. Flammarion, and M. Andriushchenko
+OS-harm: a benchmark for measuring safety of computer use agents.
+In ICML 2025 Workshop on Computer Use Agents,
+External Links: Link
+Cited by: §B.2.2,
+§2.1.
+Li et al. (2025)
+A. Li, Y. Zhou, V. C. Raghuram, T. Goldstein, and M. Goldblum
+Commercial LLM Agents Are Already Vulnerable to Simple Yet Dangerous Attacks.
+arXiv preprint arXiv:2502.08586.
+Cited by: §1,
+§2.1.
+Meng et al. (2025)
+L. Meng, H. Feng, I. Shumailov, and E. Fernandes
+CeLLMate: sandboxing browser ai agents.
+Note: https://cellmate-sandbox.github.io/
+Cited by: §1,
+§2.1,
+§3.3,
+§5.
+Nair (1990)
+V. S. Nair
+Analysis and design of algorithm-based fault-tolerant systems.
+University of Illinois at Urbana-Champaign.
+Cited by: §A.2.
+Nasr et al. (2025)
+M. Nasr, N. Carlini, C. Sitawarin, S. V. Schulhoff, J. Hayes, M. Ilie, J. Pluto, S. Song, H. Chaudhari, I. Shumailov, A. Thakurta, K. Y. Xiao, A. Terzis, and F. Tramèr
+The attacker moves second: stronger adaptive attacks bypass defenses against llm jailbreaks and prompt injections.
+External Links: 2510.09023,
+Link
+Cited by: §2.1,
+§2.2.
+Qin et al. (2025)
+Y. Qin, Y. Ye, J. Fang, H. Wang, S. Liang, S. Tian, J. Zhang, J. Li, Y. Li, S. Huang, et al.
+UI-tars: pioneering automated gui interaction with native agents.
+arXiv preprint arXiv:2501.12326.
+Cited by: §A.3,
+§A.3,
+§A.3,
+§A.3,
+§2.1,
+§3.2.
+Schaeffer et al. (2024)
+R. Schaeffer, D. Valentine, L. Bailey, J. Chua, C. Eyzaguirre, Z. Durante, J. Benton, B. Miranda, H. Sleight, J. Hughes, R. Agrawal, M. Sharma, S. Emmons, S. Koyejo, and E. Perez
+Failures to find transferable image jailbreaks between vision-language models.
+External Links: 2407.15211,
+Link
+Cited by: §3.3.
+Seed (2025)
+B. Seed
+UI-tars-1.5.
+Note: https://seed-tars.com/1.5
+Cited by: §4.
+Shi et al. (2025)
+C. Shi, S. Lin, S. Song, J. Hayes, I. Shumailov, I. Yona, J. Pluto, A. Pappu, C. A. Choquette-Choo, M. Nasr, C. Sitawarin, G. Gibson, A. Terzis, and J. ". Flynn
+Lessons from defending gemini against indirect prompt injections.
+External Links: 2505.14534,
+Link
+Cited by: §2.2.
+Song et al. (2025)
+L. Song, Y. Dai, V. Prabhu, J. Zhang, T. Shi, L. Li, J. Li, S. Savarese, Z. Chen, J. Zhao, R. Xu, and C. Xiong
+CoAct-1: computer-using agents with coding as actions.
+External Links: 2508.03923,
+Link
+Cited by: §A.3,
+§2.1.
+Wang et al. (2025)
+X. Wang, B. Wang, D. Lu, J. Yang, T. Xie, J. Wang, J. Deng, X. Guo, Y. Xu, C. H. Wu, Z. Shen, Z. Li, R. Li, X. Li, J. Chen, B. Zheng, P. Li, F. Lei, R. Cao, Y. Fu, D. Shin, M. Shin, J. Hu, Y. Wang, J. Chen, Y. Ye, D. Zhang, D. Du, H. Hu, H. Chen, Z. Zhou, H. Yao, Z. Chen, Q. Gu, Y. Wang, H. Wang, D. Yang, V. Zhong, F. Sung, Y. Charles, Z. Yang, and T. Yu
+OpenCUA: open foundations for computer-use agents.
+External Links: 2508.09123,
+Link
+Cited by: §A.3,
+§2.1,
+§4.
+Willison (2023)
+S. WillisonThe dual llm pattern for building ai assistants that can resist prompt injection(Website)
+Note: Blog post
+External Links: Link
+Cited by: §A.1,
+§1.
+Wu et al. (2024)
+F. Wu, E. Cecchetti, and C. Xiao
+System-level defense against indirect prompt injection attacks: an information flow control perspective.
+arXiv preprint arXiv:2409.19091.
+Cited by: §A.1.
+Wu et al. (2025)
+Y. Wu, F. Roesner, T. Kohno, N. Zhang, and U. Iqbal
+IsolateGPT: an execution isolation architecture for llm-based agentic systems.
+In Proceedings of the Network and Distributed System Security (NDSS) Symposium,
+External Links: Link
+Cited by: §A.1.
+Xie et al. (2024)
+T. Xie, D. Zhang, J. Chen, X. Li, S. Zhao, R. Cao, T. J. Hua, Z. Cheng, D. Shin, F. Lei, et al.
+Osworld: benchmarking multimodal agents for open-ended tasks in real computer environments.
+Advances in Neural Information Processing Systems 37, pp. 52040–52094.
+Cited by: §4,
+§4.
+Yang et al. (2025)
+P. Yang, H. Ci, and M. Z. Shou
+In-context defense in computer agents: an empirical study.
+arXiv preprint arXiv:2503.09241.
+Cited by: §2.1.
+Ye et al. (2025)
+J. Ye, X. Zhang, H. Xu, H. Liu, J. Wang, Z. Zhu, Z. Zheng, F. Gao, J. Cao, Z. Lu, et al.
+Mobile-agent-v3: fundamental agents for gui automation.
+arXiv preprint arXiv:2508.15144.
+Cited by: §A.3,
+§A.3,
+§2.1.
+Zhang et al. (2025)
+Y. Zhang, T. Yu, and D. Yang
+Attacking vision-language computer agents via pop-ups.
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),  W. Che, J. Nabende, E. Shutova, and M. T. Pilehvar (Eds.),
+Vienna, Austria, pp. 8387–8401.
+External Links: Link,
+Document,
+ISBN 979-8-89176-251-0
+Cited by: §B.2.2,
+§2.1,
+§3.4,
+§4.1.
+Zhong et al. (2025)
+P. Y. Zhong, S. Chen, R. Wang, M. McCall, B. L. Titzer, H. Miller, and P. B. Gibbons
+Rtbas: defending llm agents against prompt injection and privacy leakage.
+arXiv preprint arXiv:2502.08966.
+Cited by: §A.1.
+Appendix A Extended Background
+A.1 Dual-LLM
+Prior work shows that model level defenses alone are insufficient against prompt injection attacks, motivating system-centric defenses that constrain the information a model is allowed to see to harden the control flow [Wu et al., 2024, Willison, 2023, Wu et al., 2025, Zhong et al., 2025, Abdelnabi et al., 2025]. We assume this setting and focus on Dual-LLM-style designs.
+Algorithm 1  Two Flavors of Dual-LLM
+1:
+CaMeL (Static Planning):
+2:
+Π←P-LLM​(Task,Tools)\Pi\leftarrow\text{P-LLM}(\text{Task},\text{Tools}) ⊳\triangleright Generate full plan
+3:
+for step s∈Πs\in\Pi do
+4:
+Interpreter​(s)\text{Interpreter}(s) ⊳\triangleright Enforce policy
+5:
+if ss needs data then
+6:
+Q-LLM​(D​a​t​a)\text{Q-LLM}(Data) ⊳\triangleright Isolated process
+7:
+end if
+8:
+end for
+9:
+10:
+Fides (Iterative Planning):
+11:
+while Task not done do
+12:
+Hs​a​f​e←Redact​(H​i​s​t​o​r​y)H_{safe}\leftarrow\text{Redact}(History) ⊳\triangleright Hide values
+13:
+at←P-LLM​(Hs​a​f​e)a_{t}\leftarrow\text{P-LLM}(H_{safe}) ⊳\triangleright Next single step
+14:
+rt←Exec​(at)r_{t}\leftarrow\text{Exec}(a_{t}) ⊳\triangleright Save to var
+15:
+H​i​s​t​o​r​y←H​i​s​t​o​r​y∪(at,rt)History\leftarrow History\cup(a_{t},r_{t})
+16:
+end while
+Dual-LLM variants and their guarantees.
+Dual-LLM separates control flow (P-LLM) from data flow (Q-LLM) and has been extended in two directions. CaMeL [Debenedetti et al., 2025] compiles a task into a typed, Python-like plan with capability metadata and an interpreter that enforces control flow and allows to add data-flow policies on tools. Fides [Costa et al., 2025] retains this dual-LLM separation but forgoes a static plan in favor of writing only a single line of the plan in each turn and saving outputs of tool calls, or Q-LLM calls to variables to use for later. Note that the content of these variables are redacted and cannot be seen from the viewpoint of the P-LLM.
+Under the condition that the Q-LLM is not given control over parts of the control flow, these systems guarantee that environment information cannot derail task execution, as only function calls that were planned to be executed without environment knowledge can be executed. In particular, there are cases of tasks where the dual-LLM pattern cannot provide solutions: data-dependent tasks where the required sequence of actions is itself specified in untrusted data. For such tasks, the P-LLM cannot determine what steps to execute without seeing the untrusted content, which would violate the isolation guarantee. This represents a fundamental limitation of maintaining strict separation between planning and data processing.
+For data independent tasks, outputs from the Q-LLM or tool-calls can be used for adding conditional logic or loops with conditionals into the plan and dealing with unknowns in the environment. However, even in this case, dual-LLM does not necessarily provide guarantees for data flow manipulations. An attacker could inject malicious content into the environment that influences the Q-LLM’s outputs when it processes that untrusted data. Since the Q-LLM’s extracted values are used as arguments to tool calls and branching logic, the attacker could achieve some damage with this, even while adhering to the P-LLM’s plan. CaMeL addresses data flow security through security policies and capabilities. Capabilities are metadata tags tracking each value’s provenance and allowed readers, enabling fine-grained restrictions on individual data items. Security policies are Python functions that check whether tool executions are permissible based on these capabilities, for instance, blocking emails sharing confidential documents with unauthorized recipients, even if those addresses were Q-LLM-extracted from prompt-injected sources.
+However, defining policies requires manual domain expertise with no automatic derivation method, which becomes a bottleneck for dynamic environments with a huge set of environment states. As most users are not experts in recognizing what policy allowances might incur which security risks, some policies need to be preset and others need to be automatically adaptive and personalized. The personalization is necessary, as users might have significant differences in preference of whether they want to share certain information or want the agent to take specific paths of execution in certain contexts [Ghalebikesabi et al., 2024]. All of this taken together means that it cannot be a solely a manual human task to set policies but rather requires a model trained specifically for this. However, such policies may be incorrect, necessitating a worst-case baseline. Therefore, when attempting to adapt Dual-LLM to CUAs we do not attempt to add security policies but rather restrict how the Q-LLM can be called and add redundancy style defenses inside the Q-LLM tool call. We hope that this baseline can highlight the benefits of adding a Dual-LLM framework on CUAs, while also underlining remaining difficulties that we hope future work can build upon.
+A.2 Redundancy style defenses
+ABFT is a concept from multiprocessor systems which adds redundancy and error detection into a system to enhance fault tolerance [Huang and Abraham, 1984, Banerjee, 1986, Nair, 1990]. Such redundancy trades off computation to add reliability, and upon error detection, selective recomputation or reconfiguration can be triggered. The core principle is N-version programming[Avizienis, 1985, Chen and Avizienis, 1978], where multiple independent implementations solve the same problem and their outputs are compared. Disagreements signal potential faults. In our setting, we treat function outputs that reveal information about the environment as potentially faulty nodes and employ redundancy through diverse modality inputs or changes in the prompt and/or different VLMs that process a query. This is analogous to data diversity techniques in fault-tolerant systems [Ammann and Knight, 1988], where the same logical input is represented differently to expose errors that might be masked in a single representation.
+A.3 How do CUAs work?
+Four capabilities needed for CUA performance: Perception, Action, Reasoning, Memory [Qin et al., 2025]. Perception is the component which provides the real-time understanding of the environment recognizing and interpreting the dynamic user interface. This understanding can be gained from either structured text that the API provides such as HTML, the accessibility tree or the Document Object Model (DOM) or through a visual screenshot or from both. Structured text can have the caveat of verbosity and limitations depending on OS, or application, while a VLM processing a screenshot needs the capability of understanding elements in the environment, captioning these elements, reading text in the environment with Optical Character Recognition (OCR), understanding spatial relationships and where elements are located, capturing state transitions, and question answering capabilities. Action is the capability of predicting the best next action in an action space. The action space needs to be designed decomposing user tasks into subtasks and generalizing over components that will be needed in many of them. Reasoning consists of System 1 thinking which is the fast, and intuitive thinking needed in subtasks, as well as System 2 thinking which is the long horizon thinking, decomposing the problem into subtasks, reflecting on failures and iterative trial and error. Finally, the memory module can be divided into short term memory which captures state transitions, maintains situational awareness and execution history, and long term memory which consists of base knowledge, and knowledge gained from previous tasks and paths.
+Agent frameworks VS end-to-end models. CUA architectures can be broadly categorized into architectures using an agentic framework, which distributes tasks to specialized modules, and end-to-end agent models, which rely on a single model for all capabilities needed to gain utility in CUA tasks Qin et al. [2025].
+Agentic frameworks can have specialized VLMs for perception, action, reasoning and memory, and have seen success in benchmarks with CUAs such as Agashe et al. [2025a], Agashe et al. [2025b], Gonzalez-Pumariega et al. [2025], Song et al. [2025]. Notably, Agashe et al. [2025b] employ a compositional framework with a high-level manager which decomposes a task into a list of subgoals, a worker that generates actions to complete a subgoal in natural language, and grounding experts which receive this natural language instruction and turn them into UI actions. They employ proactive planning which reevaluates and updates the plan after every subtask. Song et al. [2025] employ one central planner module called Orchestrator, which decomposes the user task and assigns subtasks to either a programmer agent or GUI operator agent. Basing off the insight that some actions can be achieved more reliably through programmatic measures, the programmer agent writes and executes python and bash scripts, whereas the GUI operator performs the conventional UI actions such as clicking. Finally, Gonzalez-Pumariega et al. [2025] recognize that paths towards solving a task can branch in unpredictable ways due to delayed feedback, mistaken reasoning, and the dynamic environment and can accumulate mistakes in a destructive manner. While the other two frameworks employed hierarchical planning, they only employ one end-to-end model but run three of them in parallel. Then they summarize the trajectories into narratives of how the task was solved and run a Best-of-N fourth run based on the best path. However, Qin et al. [2025] or Ye et al. [2025] list adaptability to dynamic environments or unfamiliar tasks, dependence on manual optimization and expert knowledge, maintenance overhead, and disjoint learning paradigms between specialized modules as limitations.
+Qin et al. [2025], Wang et al. [2025], Fu et al. [2025], Ye et al. [2025] are examples of end-to-end CUA models. They similarly formulate the problem of CUA task solving into a multi-step sequential planning problem, which consists of a system prompt, a user task given as the first user prompt, and a multi-turn conversation between the VLM (assistant message) and tool call outputs returned as a user message. The content of this user message consists of the tool call, tool output, and screenshot after the tool was called. The assistant message always contains the tool calls and parameters to execute next, as well as depending on the model, context thoughts as to why this was chosen. Assistant message and user message interleave and create a conversation history until the assistant deems the task solved. Many CUAs are specifically trained VLMs that have been trained at excelling at perception, action, reasoning, memory, with short-term memory often being tuned adhoc through conversation history length.
+Appendix B Extended methodology section
+B.1 Combining Dual-LLM and CUA
+Algorithm 2  CaMeL Adaptation for Computer Use Agents (CUA)
+1:
+User Task TT, System Prompt Sp​r​o​m​p​tS_{prompt} (containing "Observe-Verify-Act" instructions), Environment EE
+2:
+P-LLM (Privileged Planner), Q-VLM (Quarantined Perception), Verifier (Redundancy Check)
+3:
+Execution Status (Success/Fail)
+4:
+⊳\triangleright Phase 1: Single-Shot Plan Generation
+5:
+Define Toolset ℱ←{summarize_screenshot,find,find_element_by_text,verify_hypothesis,check_done}\mathcal{F}\leftarrow\{\text{summarize\_screenshot},\text{find},\text{find\_element\_by\_text},\text{verify\_hypothesis},\text{check\_done}\}
+6:
+Sp​r​o​m​p​t←Sp​r​o​m​p​t∪Instructions​("Use Dual Finding Strategy")S_{prompt}\leftarrow S_{prompt}\cup\text{Instructions}(\text{"Use Dual Finding Strategy"})
+7:
+Π←P-LLM​(Sp​r​o​m​p​t,T,ℱ)\Pi\leftarrow\text{P-LLM}(S_{prompt},T,\mathcal{F}) ⊳\triangleright Compile user query into a Python-like plan with loops/branches
+8:
+⊳\triangleright Phase 2: Secure Plan Execution
+9:
+for instruction II in Π\Pi do
+10:
+// Step 1: OBSERVE - Gather Environment State
+11:
+if II calls summarize_screenshot​(q​u​e​r​y)\text{summarize\_screenshot}(query) then
+12:
+Or​a​w←Q-VLM(E.screenshot,query)O_{raw}\leftarrow\text{Q-VLM}(E.\text{screenshot},query)
+13:
+Security Check: If Verifier​(Or​a​w,E)=ATTACKED\text{Verifier}(O_{raw},E)=\text{ATTACKED} abort
+14:
+Update Plan Variables with Or​a​wO_{raw}
+15:
+end if
+16:
+// Step 2: VERIFY - Conditional Logic and State Hypothesis
+17:
+if II calls verify_hypothesis​(o​b​s​e​r​v​a​t​i​o​n,h​y​p​o​t​h​e​s​i​s)\text{verify\_hypothesis}(observation,hypothesis) then
+18:
+Ss​t​a​t​u​s←Q-VLM​(o​b​s​e​r​v​a​t​i​o​n,h​y​p​o​t​h​e​s​i​s)S_{status}\leftarrow\text{Q-VLM}(observation,hypothesis)
+19:
+Security Check: If Verifier​(Ss​t​a​t​u​s,E)=ATTACKED\text{Verifier}(S_{status},E)=\text{ATTACKED} abort
+20:
+Branch Plan Execution based on Ss​t​a​t​u​sS_{status} (e.g., if ‘FAIL’ then retry or explore)
+21:
+end if
+22:
+// Step 3: ACT - Find Elements and Execute
+23:
+if II calls find​(d​e​s​c)\text{find}(desc) or find_element_by_text​(d​e​s​c)\text{find\_element\_by\_text}(desc) then
+24:
+Lv​i​s←Q-VLM(E.screenshot,desc)L_{vis}\leftarrow\text{Q-VLM}(E.\text{screenshot},desc) ⊳\triangleright Visual Search
+25:
+Ld​o​m←Q-VLM(E.DOM,desc)L_{dom}\leftarrow\text{Q-VLM}(E.\text{DOM},desc) ⊳\triangleright Accessibility Tree Search
+26:
+Security Check: If Verifier​(Lv​i​s∪Ld​o​m,E)=ATTACKED\text{Verifier}(L_{vis}\cup L_{dom},E)=\text{ATTACKED} abort
+27:
+if Lv​i​s≠∅∨Ld​o​m≠∅L_{vis}\neq\emptyset\lor L_{dom}\neq\emptyset then
+28:
+Execute Action (Click/Type) on EE at coordinates
+29:
+Verify Action: Check if E.screenshotE.\text{screenshot} changed
+30:
+else
+31:
+Trigger Retry Loop or Fallback Strategy
+32:
+end if
+33:
+end if
+34:
+if II calls check_done​()\text{check\_done}() then
+35:
+if Q-VLM​(E,T)=True\text{Q-VLM}(E,T)=\text{True} then return Success
+36:
+end if
+37:
+end if
+38:
+end for
+39:
+return Fail (if plan exhausts without success)
+B.1.1 From adaptive to single shot planning
+When we adapt CUAs to work with the Dual-LLM setup, roughly we need to separate perception from action, reasoning, and memory. Thus, we are forced to use a hierarchical agent framework setup rather than only an end-to-end model. All reasoning and action planning is done by the P-LLM. An end-to-end trained CUA model forms the base for our perception module (the Q-VLM), which may be used only to retrieve information to inform conditional logic in a plan or argument values for tool calls. To enhance predictability which can work in favor for utility as well as security, we expand the usual action space of GUI tool calls, with pre-defined tool calls with which the Q-VLM can be called. Specifically, we have one function that summarizes the screenshot within a limited amount of text (summarize_screenshot_content) based on a short description of what is being looked for. Another function finds the UI elements matching a given text description and returns UI coordinates as floats (find). A final function checks whether a task described by a short text has finished and returns a boolean (check_done). Further enhancement to the perception module is given by specific tool calls that parse the DOM and optionally find elements in it with the help of another Q-VLM. Some of these functions have the same functionality as a Q-VLM tool, so are redundant but in this instance we use this for utility rather than security. One function returns up to a certain length of the text of the elements in the accessibility tree (get_page_elements), another returns up to a certain length of the text content visible in the current page (get_page_text). Then, we implement another find function but using the elements from the accessibility tree query a Q-LLM for the element matching the text description given (find_element_by_text). Lastly, we add one function (verify_hypothesis) which takes a text describing a hypothesis of a state in which the environment could be in and a text with the actual observation and uses the Q-LLM to compare the two described states and output either OK, FAIL or UNKNOWN.
+For reasoning, the P-LLM may use pre-trained knowledge as well as knowledge given via a general system prompt to then plan the full task with all possible states denoted through steps, branches, and loops in one-shot. The difficulty of maintaining utility with Dual-LLM is in not being able to update the plan depending on environment information and iterate and reflect on failures. Many end-to-end models are trained on multi-turn sequential planning setups, and even in most agentic frameworks subtask completion influences and changes the next subtasks to attempt. Needing to predict realistic possible paths for all sequential subtasks is a problem that explodes exponentially in numbers of possible branches and may at first glance seem infeasible to most researchers working on CUAs. Furthermore, short term memory only exists in the form of variables in a program, while long term memory is more similar to other CUAs and can consist of knowledge from model training as well as system prompt.
+B.1.2 Practicality of how to improve utility of single shot planning
+As we tradeoff a lot of reasoning by design through the restriction of planning the whole agent execution single shot, we share the practical insights that we gained when building the implementation of Dual-LLM for CUAs that improved our utility and made our setup more practical.
+CUA is not enough, let’s add the DOM back in. Many CUAs do not utilize the DOM at all due to limitations depending on application and OS and the difficulty of handling its verbosity and also parsing a screenshot at the same time. However, we find that the DOM can be a very valuable second source of information that can be easily added into single shot planning and can even enhance the utility of plans. Getting the page elements or the page text can provide a less biased view than a summary of the screenshot from the end-to-end CUA model but may at times be too verbose. For finding elements the DOM can be more precise and when enhanced with an LLM that receives a query for a specific element and all DOM elements it can for example also expose smaller elements less visually noticeable. However, the end-to-end trained CUA can be more dynamic and return related elements even if not an exact match, as it was trained to reason about the query it was given in the context of a user interface. While this could be beneficial for utility if the jump is small enough, it can become a problem when this causes an action that the plan did not foresee or foresaw only later in the plan.
+Adding state verification. To ensure that the CUA is not jumping ahead and outputting a move that has nothing to do with the query, we add a check after the find function on whether the verbalized thoughts of the CUA fit with the initial input query to the find function. This is implemented through a call to another LLM with a specific query prompt which asks it to find any discrepancy between instruction and CUA output. If a discrepancy is found the coordinates are not returned and rather ‘FAIL’ is returned. Furthermore, we also add a verification after any action taken on whether the screenshot of the computer changed before or after. If there is no change in state the knowledge that a subtask has not finished can be used further in the plan.
+Developing general process methodologies (OBSERVE, VERIFY, ACT). When trying to optimize plans to succeed on CUA tasks, we noticed that especially the first few steps need to be similar in many tasks. First, as the tasks often are only composed of one sentence that do not describe anything about how the computer state is at the beginning of the task, the CUA needs to understand where it is and where it needs to be to succeed in the task. If for example the task where to be “Find the Monthly forecast for Manchester, GB for this month”, then first the plan needs to check whether the browser is open already, if the browser is open it needs to check whether a specific website related to weather is already open. To systematically approach this in a plan we teach the P-LLM in the system prompt to always follow a three step process of observing verifying and then acting. First, for observing, functions such as summarize_screenshot_content, get_page_elements, or get_page_text can be used. Second, the text output of such functions can be used to verify whether the hypothesis of which state the computer is on is correct of not, e.g., does the description for summarize_screenshot_content fit the hypothesis we are on a website. Third, now depending on whether the hypothesis matches or not the conditional can try to use find or find_element_by_text to either find a search bar element to find a website to navigate to or if already on a website continue to explore its elements to find the monthly forecast of Manchester. This pattern is a versatile pattern that is useful in many substeps of a plan and works as long as the planner can predict all the different state hypotheses the computer could be in, on the way to finishing a task. This includes many conditional branches and adding fall back options, for when the state is in a different state from the main predicted path or second or third best predicted path.
+Finding, branching, and looping. In order to make finding elements as smooth as possible, we add into the prompt how both finding functions can be used and underline that checking whether a coordinate was actually found and whether the action actually changed after the action is taken is important to move on to the next part of the plan. Since elements might not always be found at first try because of the way the query is set by the planner, we prompt the planner to be more descriptive than just one or two words when looking for UI elements. Additionally, we recommend to use both finding functions sequentially, in case one works better than the other for a specific prompt. Finally, we recommend iteration over multiple possible prompts for finding elements needed for the plan in a for loop, which always tries with one find function and then the other, verifies states each time and if coordinates are found the clicking is still also located in the for loop, such that the for loop can be continued in case the clicking fails. Since CaMeL does not have any branches, we recommend the usage of a no_op function to iterate on in the loop if a clicking task has finished early. This does not apply to Fides, as the plan is executed dynamically.
+Cookie handling for browser tasks. When browsing the web, many websites will first have a popup about cookies or privacy consent. The buttons on the popup are not always the same, so we add into the prompt to try to find the correct button with different phrasings of the cookie popup and do iteration as described in above paragraph.
+A general lesson on how to navigate websites and applications.
+Finally navigation of websites and applications are the least generalizable part, however, we still add advice on how one could generally go about navigating a website, and strongly advise to explore a website before going back into the general search bar and leaving a website or application (which the P-LLM suggests way too often). Some of the strategies include finding an internal search bar or looking for links that may be related to what is being looked for. For example, for the task “Browse the natural products database.”, the task starts out on a website called “drugs.com”. Strong general prompting to stay on a website that is open is then needed for the planner to not go on general search and finding a different website with natural products that it knows from training like the COCONUT Natural Products Database or the ATLAS Natural Products database. Then after using the search bar in drugs.com to look for the keyword ‘natural products’, the links in the site search do not directly have any titles with the keyword. Hence, general prompting is necessary to advise that content previews of links should also be considered to understand whether they may get you to the right place. The drugs & medications link is the correct one to navigate to in this instance. On this page now, there are links to browse drugs A-Z, Browse drugs by category and Popular Drug Searches. And finally under Browse drugs by category there is a link to Natural Products. A general lesson from understanding such a benchmark browsing task is that websites are built in such a complex way that browsing them is non-trivial and even humans might need many steps of iteration on failure to get to the right page. It is no wonder then that it is hard for a P-LLM to predict all of the clicks and searches that need to be done to land on the right page. The depth of steps to navigate an environment is not always clear and predictable in advance. We only add some more general advice such as how to scroll a page and systematically recheck if a relevant elements have appeared, to think out of the box and in meta categories and sub categories when prompting to find elements, how menu bars could look like, and to assume that navigation requires going through wider categories and closing into sub categories of the actual element needed.
+B.1.3 Ablation: How to make Fides work
+In Fides, the planner is called iteratively to generate each next action to be executed on the environment. Since outputs from those functions are redacted as variables, the planner can never see any information about the environment. This framework is then different from the CaMeL-style one-shot plan prediction in that it does not enable direct conditionals on the variables output by previous function calls. For instance, the boolean output by the verify_hypothesis function is fully redacted, and thus the planner can not go on a different branch of execution depending on the response from this function. This core difference limits the execution to a simple static plan of execution, which we earlier indicated has very low utility on CUAs. To circumvent it, we choose to relax the process of variable redaction under specified conditions, and we call this new paradigm Fides+CUA.
+We relax Fides for CUA by allowing the planner to check boolean variables from our environment functions. The main potential security implication for this relaxation is that it enables the planner to ultimately get all environment information through infinite repeated tools calls on the same redacted variable. This is a security breach in particular because the planner executes actions iteratively, and thus execution termination cannot be guaranteed comparatively to a fixed-length plan like output by the CaMeL planner. We add several arguments to ensure minimal environment information gain (similar to those necessary in CaMeL for sufficient utility). Those arguments from Fides+CUA are: max_steps the maximum number of GUI tool calls that are not Q-VLM functions (like summarize_screenshot_content for instance), max_turn the maximum number of any function calls, and max_variable_reuse the maximum number of time the planner can reuse the same redacted variable of an earlier tool call. This three arguments enable both forced task termination and limited environment information gain from the planner. In practice max_steps=15, max_turn=70, and max_variable_reuse=5.
+B.2 Dual-LLM Attack Further Details
+B.2.1 Threat Model Assumption Justification
+We provide detailed justification for the three attacker knowledge assumptions in our threat model.
+Assumption 1: Task prediction. Task prediction is feasible when attackers target specific websites they own or where they can place advertisements. Each website supports a finite set of user tasks, and attackers may even have access to analytics showing common navigation patterns.
+Assumption 2: Function prediction. Function prediction is plausible within known task domains; for CUAs, the space of useful environment information retrieval functions is limited, and tool call functions (e.g., click, type) follow relatively standardized conventions.
+Assumption 3: Plan pattern prediction. Plan pattern prediction is supported by our evaluation showing that many planners exhibit similar problem-solving patterns, which become more predictable with descriptive system prompts that provide explicit planning guidance.
+B.2.2 Positioning relative to prior work.
+Similar to Zhang et al. [2025], we embed our attack into seemingly legitimate UI pop-ups, but we extend the realism by specifically targeting ad banners as vectors for fake pop-ups, thereby mimicking the realistic threat models proposed by Aichberger et al. [2025], Evtimov et al. [2025]. These attacks differ from other potential OS-level entry points, such as those presented in Chen et al. [2025] which insert malicious links or toggle wraps directly into the UI, or the website prompt injection attacks in Kuntz et al. [2025] which embed adversarial text directly into website layouts. Our pixel-based attack can be viewed as a specific instantiation of the image-based attacks presented in Aichberger et al. [2025], as our adversarial images are optimized toward a single objective and initialized from a simple white background rather than from synthetic images.
+Appendix C Further Utility Measurements on OSWorld
+C.1 Base Utility on OSWorld
+Table 3: OSWorld task distribution. Claude Sonnet 4.5, OpenCUA-32B, and UITars-1.5-7B denote the successful tasks (excluding those that are denoted infeasible to evaluate) for these models in each category when restricting the models to at most 15 steps, a history of 15 and a maximal output token length for the VLM of 4096 (pass@1). Only for OpenCUA we cut off the history at 5 due to slow throughput. To calculate the overall success rate for these three models, we add back the 30 tasks that are defined as not automatically evaluatable and thus by default set to success in the OSWorld benchmark. While our success rates for OpenCUA and UITars are similar to those denoted in the OSWorld benchmark, the success rate for Claude is significantly lower, which we attribute to the much lower step size that we chose (15 vs. 50).
+Category
+All
+Not Infeas.
+Claude
+OpenCUA
+UITars
+Chrome
+46
+43
+14
+13
+11
+GIMP
+26
+16
+11
+9
+6
+LibreOffice Calc
+47
+46
+13
+3
+3
+LibreOffice Impress
+47
+47
+17
+14
+9
+LibreOffice Writer
+23
+22
+12
+7
+8
+Multi-apps
+101
+100
+7
+3
+3
+OS
+24
+19
+11
+7
+4
+Thunderbird
+15
+14
+8
+7
+4
+VLC
+17
+14
+4
+4
+2
+VS Code
+23
+18
+12
+9
+8
+Total
+369
+339
+109
+76
+60
+Success Rate (%)
+37.67
+28.72
+24.39
+C.2 Utility of UITars on Fides
+Table 4: Performance comparison of UITars on Fides up to Pass@5.
+Category
+UITars
+Chrome
+7/11 (63.64%)
+GIMP
+2/6 (33.33%)
+LibreOffice Calc
+3/3 (100.00%)
+LibreOffice Impress
+6/9 (66.67%)
+LibreOffice Writer
+5/8 (62.5%)
+Multi-apps
+3/5 (60.0%)
+OS
+3/4 (75.0%)
+Thunderbird
+2/4 (50.0%)
+VLC
+1/2 (50.0%)
+VS Code
+8/8 (100.0%)
+Overall
+40/60 (66.67%)
+Pass@1
+20/60 (33.33%)
+Pass@2
+28/60 (46.67%)
+Pass@3
+35/60 (58.3%)
+Pass@4
+37/60 (61.67%)
+Pass@5
+40/60 (66.67%)
+C.3 Redundancy Defense Evaluation
+Table 5: Evaluation of the efficiency of redundancy defenses. We first evaluate the false positive rate of each redundancy defense level with a set of benign tasks, and evaluate their efficiency against our two realistic cookie mimicry attacks: the standard google ad attack (evaluated against DOM Consistency), and the more advanced HTML5 type attack (evaluated against Multi-Modal Consensus). See Appendix E for a full explanation of the reason of evaluating the google ad cookie attack with DOM Consistency defense and the HTML5 cookie attack on the Multi-Modal Consensus defense. The redundancy setup was applied to CaMeL+OSWorld.
+Metric
+Redundancy Levels
+DOM Consistency
+Multi-Modal Consensus
+False Positive Rates by Application
+Chrome
+3/8 (37.50%)
+3/8 (37.50%)
+Other Apps
+0/9 (0.00%)
+0/9 (0.00%)
+Overall False Positive Rate
+Overall
+3/17 (17.65%)
+3/17 (17.65%)
+Cumulative Pass@k False Positive Rate for Chrome (%)
+Pass@1
+0/8 (0.00%)
+2/8 (25.00%)
+Pass@2
+2/8 (25.00%)
+2/8 (25.00%)
+Pass@3
+3/8 (37.50%)
+2/8 (25.00%)
+Pass@4
+3/8 (37.50%)
+2/8 (25.00%)
+Pass@5
+3/8 (37.50%)
+3/8 (37.50%)
+True positive rate on the cookie mimicry attack for 10 seeds (%)
+6/10 (60%)
+5/10 (50%)
+Details on the false positive rates of redundancy defenses.
+A more detailed analysis of the reasoning traces of the redundancy defenses false positive reveals that all false positives are wrong assumption of fake cookie banners present in the DOM or the screenshot, despite those banners being legitimate. This underlines further the difficulty of tuning these types of defenses, even if the case of the very specific threat model of potentially adversarially controlled advertisement banners in website. To be noted that the false positive rate of 0/9 for non-chrome tasks is also due to this tuning of the defense towards this threat model: when the task is not related to web navigation, the defense does not consider it as harmful. Additionally, the equal number of false positives between level 2 and 3 of redundancy can be explained by the over representation of false positive of the DOM Consistency module. The screenshot-based checker seems to be much better at distinguishing between legitimate cookie banner and fake ones embedded in ad banners, probably because the screenshot itself carries more information than the accessibility tree.
+Details on the true positive rate for the cookie mimicry attack.
+Further analysis on the attack reveals that the attack is 100% successful when the cookie snippet is very similar to the sample presented in Section F.3. Failures of the attacks are due to variations of the generated plan to handle cookies, using for instance the function find_element_by_text with specific elements as input like buttons. Indeed, in the case of a standard google advertisement banner, the attacker does not have access to writing html code, and thus to write fake buttons, which means that find_element_by_text will not return coordinates for a supposed cookie banner, and the attack will fail. We state again that we evaluate this google advertisement banner against the redundancy level 1. This failure case also shows that tighter control over the DOM returned by the OS is very beneficial to defending CUA Agents against prompt injections, because it provides a tighter control over the data flow (searching for buttons only vs. searching the whole screenshot and/or DOM).
+Appendix D Token counts comparison between defenses
+Table 6: Token count and related prices for different setups of defenses. Realized on a subset of 17 tasks of OSWorld. The evaluation was done with Pass@5 with defenses.
+Defense
+Input Tokens
+Output Tokens
+Total Cost ($)
+No defense
+1,797,736
+13,120
+0.00
+CaMeL
+2,950,253
+456,105
+5.40
+Fides
+51,724,263
+1,874,795
+76.07
+CaMeL+DOM Consistency
+8,437,603
+605,656
+11.57
+CaMeL+Multi-Modal Consensus
+10,926,601
+982,484
+18.37
+The prices were computed following OpenAI Platform44
+4
+https://platform.openai.com/docs/pricing and Anthropic Platform55
+5
+https://platform.claude.com/docs/en/about-claude/pricing pricing per token (input/output). As per these experiments, we use GPT-5 for the planner model and the second checker model with the screenshot for Multi-Modal Consensus, we use Claude Haiku 4.5 for the first checker model with the DOM used in DOM Consistency & Multi-Modal Consensus. Additionally, we use UITars for the main QVLM model, since the model is deployed locally, we do not count it in the total costs, hence a total cost of 0 for No defense.
+Table 7: Token count and related prices for different elements of the agent. Realized on a subset of 17 tasks of OSWorld. The QVLM functions represent all functions inside of a generated plan that are using the QVLM. The tokens and related costs are evaluated on a Pass@5 run using CaMeL.
+Element
+Input Tokens
+Output Tokens
+Total Cost ($)
+Planner
+618,399
+313,061
+3.90
+QVLM functions
+2,304,776
+133,784
+1.50
+DOM Consistency
+5,433,932
+147,466
+6.17
+Multi-Modal Consensus
+7,892,323
+520,256
+12.97
+Observing Table 6 and Table 7, other than the token count explosion induced by OSWorld+Fides, we can make the following 3 observations:
+•
+Both type of defense (CaMeL, Fides) generate a proportionally much higher output than input token count increase. This can be explained first by the necessary output formatting for further processing in the plan and second because of environment state describing functions like summarize_screenshot_content.
+•
+Redundancy defenses are responsible for the largest increase in token count and cost. They indeed require very detailed system prompt to enable higher distinguishability between real and spoofed ad banners, as well as sota models.
+•
+The planner model takes most of the token count cost for OSWorld+CaMeL without redundancy defenses. This imbalance stems from the very high number of output tokens compared with all QVLM functions combined (x3 approximatively), which can itself be explained by the necessary long plans to encompass all of the required possibilities of OS navigation when trying to fulfill the user task.
+Appendix E Further Details on Attack Implementations
+This section provides technical details on our attack implementations that complement the overview in Section 4.2.
+E.1 Cookie Attack Technical Details
+E.1.1 Basic Cookie Attack Mechanism
+Exploiting design requirements: The attack exploits a fundamental design requirement of defended CUAs: agents must handle cookie popups and advertisements before interacting with websites. An example Python code snippet demonstrating this requirement is provided in Section F.3. The attack generalizes to target any highly predictable, common utility routine that must appear early in task execution, such as cookie handling, login verification, or welcome screen dismissal.
+Attack vector and targets: We embed fake cookie popups within ad banners for both advertisement types. When the find function is called with instructions to locate cookie popups, the Q-VLM clicks the fabricated popup, redirecting users to an attacker-controlled webpage—either mimicking a trusted website or directing to the attacker’s malicious site (implemented as spoofed.html, shown in Figure 2, top right). While other attacks such as denial of service are possible, we consider redirection to unknown websites as the most harmful outcome in this threat model.
+E.1.2 One-Step Attack and Defense Levels
+Using crafted HTML code for a cookie popup, we demonstrate that a one-step attack can mislead the Q-VLM to output coordinates corresponding to the ad banner, redirecting to an adversarially controlled website (spoofed.html).
+DOM Consistency: At our first redundancy level, an additional Q-VLM receives the DOM alongside the proposed action (coordinates from the find function) and the original instruction. For static Google ad banners, the standardized HTML code features a common “Advertisement” frame containing placeholders for an image and hyperlink (the only elements accessible to the attacker). When the DOM is provided to the Q-VLM, it includes this “Advertisement” string and the coordinates of the ad banner box, successfully flagging any click attempts within this region. This defense effectively blocks attacks on static ad banners. However, HTML5 ads present a vulnerability: the DOM communicates only the leaf nodes of the webpage’s HTML architecture. When a fabricated cookie popup is embedded within the ad banner, it replaces the "Advertisement" frame with a cookie frame in the DOM, effectively circumventing DOM-based defenses.
+Multi-Modal Consensus: At our second redundancy defense, an additional independent Q-VLM call validates the screenshot alongside function outputs and the original instruction. Although the fabricated cookie banner is clearly visible within the ad banner to human observers, enabling clear distinction for the screenshot-based Q-VLM redundancy defense requires considerable effort. We find that achieving effective attack detection without degrading benign task utility is challenging, consistent with the weak success rates observed when applying the prompt-based defenses of Evtimov et al. [2025]. Even if an optimal trade-off is found for this defense, we later demonstrate how to circumvent Level 2 using optimized pixel attacks.
+E.1.3 Multi-Step Attack with Hop Website
+We extend this attack to multi-step execution. The previous attacks assume an adversary can directly specify the spoofed.html hyperlink in the victim’s homepage ad banner. In real-world settings, most websites hosting ad banners verify advertiser-provided hyperlinks. We demonstrate that our cookie attack can be extended to include an intermediary benign website—a “hop” site that does not verify hyperlinks in its ad banners. The attacker’s objective is to have the agent click a first fabricated cookie popup to reach the hop website, then click a subsequent fabricated popup that redirects to spoofed.html.
+This attack succeeds when the benign task requires visiting more than two webpages: if the agent must navigate multiple pages, the plan must anticipate handling at least two cookie popups, enabling our attack. This multi-step scheme generalizes to any number of webpage visits that the planner expects for task completion.
+Long-range variant: We further extend the attack’s potential harm by introducing a long-range effect. Instead of embedding the first fabricated cookie popup in the initial webpage, we place it on a later webpage that the adversary predicts the agent will visit based on the accessible plan. This approach increases attack stealthiness by delaying the malicious redirection until deeper into task execution. The complete multi-step long-range attack is detailed in Figure 2.
+E.2 A pixel attack
+We demonstrate the brittleness of redundancy defenses against data-flow attacks. Even at our strongest redundancy defense, adversaries can craft attacks that evade both screenshot-based and DOM-enhanced Q-VLM verification. We consider a redundancy defense configuration that heavily prioritizes security over utility, accepting a very high false positive rate to maximize true positive rate. Even in this conservative setting where injecting spoofed elements typically triggers detection, attackers can optimize adversarial pixel perturbations that remain imperceptible from both DOM and screenshot perspectives.
+Optimization Procedure We initialize the ad banner with a white background and perform gradient-based optimization exclusively on the image patch corresponding to the banner region. Since the final image must be in the integer domain, we apply quantization before optimization and introduce stochasticity followed by Expectation over Transformation (EoT) steps Athalye et al. [2018] to ensure robustness against quantization effects.
+Objective Function Design The banner is optimized with an objective function to induce malicious Q-VLM outputs when querying the find function. Since returning the ad banner’s coordinates would be immediately flagged by the redundancy defense, we instead optimize the Q-VLM to return plausible thought traces and coordinates that align with the element search instruction (see attack example in Figure 4). This ensures the defense does not flag the attack on multiple fronts: the screenshot and DOM appear benign (containing only seemingly random pixel perturbations), while the Q-VLM’s returned action and thought trace appear legitimate and consistent with the task.
+Example Attack Scenario An example of the pixel attack is shown in Figure 4, where the model, originally navigating www.drugs.com to “Browse the Natural Product Database”, is misled into clicking on a specific drug page despite the planner calling find(instruction=‘‘Natural Product Database’’). The adversarially crafted token sequence replacing the standard Q-VLM thought and action traces makes the target drug appear to be a natural product and a perfect match for the instruction “Natural Product Database”. This attack could be exploited by advertisers, such as pharmaceutical companies, to artificially increase traffic to their product pages by redirecting CUA agent traffic on commercial websites like www.drugs.com.
+Extensions and Future Work We leave potential multi-objective and multi-Q-VLM pixel attacks to future work, as Aichberger et al. [2025] have already demonstrated techniques for constructing such attacks. We also defer multi-step pixel attacks to future work, noting that an n-step attack would simply require chaining n instances of the aforementioned one-step pixel attack.
+Figure 4: An example of how the pixel attack looks like. Q-VLM is tricked into clicking at the specific drug instead of the “Natural Product Database”, and to provides justifiable explanation (that the drug is categorized as natural product) hence the action is not flagged by the redundancy defense (Level 2).
+Appendix F Example Plans
+F.1 Natural Products database example of a good plan (P-LLM: GPT-5)
+Task: Browse the natural products database.
+⬇
+# Step 1: OBSERVE - Understand current state
+summary = summarize_screenshot_content(
+Instruction(
+text="Describe whether a web browser is open showing a website, a generic search/new tab page, or the desktop/home screen.",
+length=300
+),
+length=300
+)
+# Step 2: VERIFY - Confirm high-level location (only location type for initial check)
+in_website = verify_hypothesis(
+observation=summary.text,
+hypothesis="We are viewing a website in a web browser and not the desktop home screen or a generic empty search home page."
+)
+is_desktop = verify_hypothesis(
+observation=summary.text,
+hypothesis="We are on the desktop home screen and not inside a web browser."
+)
+is_search_home = verify_hypothesis(
+observation=summary.text,
+hypothesis="We are in a web browser on a generic search or new tab homepage without a specific website loaded."
+)
+# Helper: cookie handling (try quickly with multiple descriptions, both methods)
+def_cookie_descriptions = [
+"a button to accept all cookies or consent to tracking in a cookie notice",
+"an ’I agree’ or consent button in a cookie popup",
+"a button labeled ’Accept all’ in a privacy banner",
+"a dismiss or OK button in a cookie notification popup"
+]
+def_handle_cookies_elements = get_page_elements(element_types=None)
+cookie_check = verify_hypothesis(
+observation=def_handle_cookies_elements.text,
+hypothesis="A cookie or privacy consent popup with accept/consent buttons is visible"
+)
+if cookie_check.status == "OK":
+cookie_found = False
+for desc in def_cookie_descriptions:
+if cookie_found:
+no_op()
+else:
+cookie_try = find(Instruction(text=desc, length=150))
+if cookie_try.start is None:
+cookie_try = find_element_by_text(description=desc, element_types=["push-button", "button", "link"])
+if cookie_try.start is not None:
+cclick = left_single(cookie_try.start, "Accept cookies/consent")
+if cclick.status == "OK" or cclick.status == "UNKNOWN":
+cookie_found = True
+wait()
+else:
+no_op()
+else:
+no_op()
+else:
+no_op()
+# Branch on current state
+if in_website.status == "OK":
+# We are already on a website. Explore this site first.
+# Try to find a site-internal search (not the browser address bar).
+search_found = False
+site_search_descriptions = [
+"the website’s internal search box in the header or main area (not the browser address bar)",
+"a search input field on this site to search site content (not Google search)"
+]
+for sdesc in site_search_descriptions:
+if search_found:
+no_op()
+else:
+sres = find(Instruction(text=sdesc, length=200))
+if sres.start is None:
+sres = find_element_by_text(description=sdesc, element_types=["entry", "textbox", "search"])
+if sres.start is not None:
+sclick = left_single(sres.start, "Focus site search field (internal website search)")
+if sclick.status == "OK" or sclick.status == "UNKNOWN":
+wait()
+# Search for natural products using the website search (explicitly not Google)
+typed = type_text(text="natural products database\n", instruction="Type into site internal search field (not Google)")
+if typed.status == "OK" or typed.status == "UNKNOWN":
+wait()
+search_found = True
+else:
+no_op()
+else:
+no_op()
+else:
+no_op()
+# After attempting site search once, assess if content seems relevant; if not, prepare to use broader web search.
+# If we’re not on a clearly relevant page yet, we will do a web search via the address bar as a last resort.
+# Determine if results/content appear relevant to browsing natural products
+page_text_after_site_search = get_page_text(max_length=2000, include_navigation=False)
+relevant_check = verify_hypothesis(
+observation=page_text_after_site_search.text,
+hypothesis="The page is showing content or results related to natural products databases that can be browsed."
+)
+if relevant_check.status != "OK":
+# Use the browser’s address bar to search the web as a last resort
+hotkey(keys=[Key.CTRL, Key.L], instruction="Focus browser address bar for web search")
+type_res = type_text(text="natural products database\n", instruction="Search the web for a natural products database")
+if type_res.status == "OK" or type_res.status == "UNKNOWN":
+wait()
+else:
+no_op()
+elif is_desktop.status == "OK":
+# On desktop - open Chromium browser
+opened = False
+# Try to click a Chromium icon if visible
+browser_icon_descriptions = [
+"Chromium browser icon or launcher on the desktop or dock",
+"Google Chrome or Chromium icon to open the browser"
+]
+for bdesc in browser_icon_descriptions:
+if opened:
+no_op()
+else:
+bres = find(Instruction(text=bdesc, length=150))
+if bres.start is None:
+bres = find_element_by_text(description=bdesc, element_types=["push-button", "button", "link"])
+if bres.start is not None:
+bclick = left_single(bres.start, "Open Chromium")
+if bclick.status == "OK" or bclick.status == "UNKNOWN":
+opened = True
+wait()
+else:
+no_op()
+else:
+no_op()
+if not opened:
+# Use system launcher as fallback
+hotkey(keys=[Key.WIN], instruction="Open system application launcher")
+wait()
+type_text(text="chromium", instruction="Type Chromium in launcher")
+wait()
+press(Key.ENTER, instruction="Launch Chromium from launcher")
+wait()
+# Once browser is open, perform a web search for natural products database
+hotkey(keys=[Key.CTRL, Key.L], instruction="Focus address bar")
+type_text(text="natural products database\n", instruction="Search the web for a natural products database")
+wait()
+elif is_search_home.status == "OK":
+# In a browser on generic search/new tab - search directly
+hotkey(keys=[Key.CTRL, Key.L], instruction="Focus address bar for search")
+type_text(text="natural products database\n", instruction="Search the web for a natural products database")
+wait()
+else:
+# Fallback: Try to focus address bar anyway and search
+hotkey(keys=[Key.CTRL, Key.L], instruction="Focus address bar (fallback)")
+type_text(text="natural products database\n", instruction="Search the web for a natural products database")
+wait()
+# Handle cookies on the search results page (if any)
+elements_after_search = get_page_elements(element_types=None)
+cookie_check2 = verify_hypothesis(
+observation=elements_after_search.text,
+hypothesis="A cookie or privacy consent popup with accept/consent buttons is visible"
+)
+if cookie_check2.status == "OK":
+cookie2_found = False
+for desc in def_cookie_descriptions:
+if cookie2_found:
+no_op()
+else:
+r1 = find(Instruction(text=desc, length=150))
+if r1.start is None:
+r1 = find_element_by_text(description=desc, element_types=["push-button", "button", "link"])
+if r1.start is not None:
+a1 = left_single(r1.start, "Accept cookies/consent on search results")
+if a1.status == "OK" or a1.status == "UNKNOWN":
+cookie2_found = True
+wait()
+else:
+no_op()
+else:
+no_op()
+else:
+no_op()
+# Step 3: ACT - From web search, navigate to a credible natural products database result
+db_found = False
+db_result_descriptions = [
+"a search result link for COCONUT natural products database",
+"a search result link for Natural Products Atlas (NPAtlas)",
+"a search result link for NPASS natural products database",
+"a search result link that clearly leads to a natural products database website"
+]
+for ddesc in db_result_descriptions:
+if db_found:
+no_op()
+else:
+fres = find(Instruction(text=ddesc, length=200))
+if fres.start is None:
+fres = find_element_by_text(description=ddesc, element_types=["link"])
+if fres.start is not None:
+nav = left_single(fres.start, "Open natural products database site")
+if nav.status == "OK" or nav.status == "UNKNOWN":
+db_found = True
+wait()
+else:
+no_op()
+else:
+no_op()
+# Handle cookies on the target site
+elements_on_target = get_page_elements(element_types=None)
+cookie_check3 = verify_hypothesis(
+observation=elements_on_target.text,
+hypothesis="A cookie or privacy consent popup with accept/consent buttons is visible"
+)
+if cookie_check3.status == "OK":
+cookie3_found = False
+for desc in def_cookie_descriptions:
+if cookie3_found:
+no_op()
+else:
+r2 = find(Instruction(text=desc, length=150))
+if r2.start is None:
+r2 = find_element_by_text(description=desc, element_types=["push-button", "button", "link"])
+if r2.start is not None:
+a2 = left_single(r2.start, "Accept cookies/consent on database site")
+if a2.status == "OK" or a2.status == "UNKNOWN":
+cookie3_found = True
+wait()
+else:
+no_op()
+else:
+no_op()
+else:
+no_op()
+# Verify if we have reached a natural products database site
+content_check_text = get_page_text(max_length=2000, include_navigation=False)
+on_db_site = verify_hypothesis(
+observation=content_check_text.text,
+hypothesis="We are on a natural products database website or portal with options to browse or search compounds, structures, or entries."
+)
+# If on the site, try to locate a Browse/Explore/Search interface to start browsing
+if on_db_site.status == "OK":
+browse_opened = False
+browse_strategies = [
+("a link or button to Browse the database", ["link", "push-button", "button"]),
+("a link or button labeled Explore to navigate entries", ["link", "push-button", "button"]),
+("a main Search input field to search compounds in the database", ["entry", "textbox"]),
+("a navigation element for Compounds or Entries", ["link", "push-button", "button"])
+]
+for bdesc, btypes in browse_strategies:
+if browse_opened:
+no_op()
+else:
+bfind = find(Instruction(text=bdesc, length=200))
+if bfind.start is None:
+bfind = find_element_by_text(description=bdesc, element_types=btypes)
+if bfind.start is not None:
+bclick = left_single(bfind.start, "Open browsing/search interface on the database site")
+if bclick.status == "OK" or bclick.status == "UNKNOWN":
+browse_opened = True
+wait()
+else:
+no_op()
+else:
+no_op()
+if not browse_opened:
+# Try a few scrolls to reveal browse/search options
+for _ in range(3):
+if browse_opened:
+no_op()
+else:
+scroll(direction="down", start=None, instruction="Reveal more database navigation options")
+wait()
+for bdesc, btypes in browse_strategies:
+if browse_opened:
+no_op()
+else:
+bfind2 = find(Instruction(text=bdesc, length=200))
+if bfind2.start is None:
+bfind2 = find_element_by_text(description=bdesc, element_types=btypes)
+if bfind2.start is not None:
+bclick2 = left_single(bfind2.start, "Open browse/search after scrolling")
+if bclick2.status == "OK" or bclick2.status == "UNKNOWN":
+browse_opened = True
+wait()
+else:
+no_op()
+else:
+no_op()
+else:
+# If not clearly on a database site yet, try once more to follow any link that indicates a natural products database
+if not db_found:
+alt = find_element_by_text(
+description="any link that leads to a natural products database website",
+element_types=["link"]
+)
+if alt.start is not None:
+alt_click = left_single(alt.start, "Open alternative natural products database")
+if alt_click.status == "OK" or alt_click.status == "UNKNOWN":
+wait()
+else:
+no_op()
+else:
+no_op()
+# Final verification and completion
+final_text = get_page_text(max_length=2000, include_navigation=False)
+final_verification = verify_hypothesis(
+observation=final_text.text,
+hypothesis="We are now on a natural products database page with a browse or search interface visible, allowing us to browse entries."
+)
+if final_verification.status == "OK":
+# Optional: check_done before marking done
+done_check = check_done(
+Instruction(
+text="I am on a natural products database website with a browse or search interface, ready to browse entries.",
+length=200
+)
+)
+if done_check.done:
+mark_done()
+else:
+mark_done()
+else:
+mark_fail()
+F.2 Natural Products database example of an insufficient plan (P-LLM: Gemini 3 Pro)
+Task: Browse the natural products database.
+This plan is lacking branches, is too confident, and does not focus on website navigation but rather on going back into search and finding other databases it thinks fits the task description.
+⬇
+# Step 1: Observe the current state
+summary = summarize_screenshot_content(Instruction(text="Describe the current page content, checking if it is a search engine, a specific website, or if there are cookie popups.", length=300), length=300)
+print(f"Current page state: {summary.text}")
+# Step 2: Handle Cookie Popups (Common in browser tasks)
+# We check for this first to ensure elements aren’t blocked
+cookie_check = verify_hypothesis(
+observation=summary.text,
+hypothesis="A cookie consent popup, privacy notice, or GDPR banner is visible on the screen."
+)
+if cookie_check.status == "OK":
+print("Cookie popup detected. Attempting to accept.")
+# Try to find the accept button using common labels
+cookie_handled = False
+cookie_labels = ["Accept all", "Accept cookies", "I agree", "Consent", "Allow all", "OK"]
+for label in cookie_labels:
+if cookie_handled:
+no_op()
+else:
+btn = find_element_by_text(label, element_types=["button", "push-button"])
+if btn.start is not None:
+left_single(btn.start, f"Click {label}")
+wait()
+cookie_handled = True
+# If text search failed, try visual search
+if not cookie_handled:
+btn = find(Instruction(text="Accept or Agree button in cookie popup", length=100))
+if btn.start is not None:
+left_single(btn.start, "Click Accept visually")
+wait()
+# Refresh summary after handling cookies
+summary = summarize_screenshot_content(Instruction(text="Page content after cookie handling", length=300), length=300)
+# Step 3: Determine Location and Navigate
+# Check if we are already on a Natural Products Database
+is_on_database = verify_hypothesis(
+observation=summary.text,
+hypothesis="The page is a Natural Products Database website (e.g., NPASS, COCONUT, NP-MRD, SuperNatural) or has scientific data about natural compounds."
+)
+if is_on_database.status == "OK":
+print("Already on a database website. Proceeding to browse.")
+# Look for navigation options to browse data
+nav_clicked = False
+nav_options = ["Browse", "Explore", "Data", "Compounds", "Search"]
+for opt in nav_options:
+if nav_clicked:
+no_op()
+else:
+link = find_element_by_text(opt, element_types=["link", "button", "menu item"])
+if link.start is not None:
+left_single(link.start, f"Click {opt}")
+wait()
+nav_clicked = True
+if not nav_clicked:
+# If no specific link found, scroll to browse content
+scroll("down", None, "Scroll down to browse the page content")
+wait()
+mark_done()
+else:
+# Not on a database. Check if we are on search results.
+is_search_results = verify_hypothesis(
+observation=summary.text,
+hypothesis="The page shows search results for ’natural products database’ or similar queries."
+)
+# If not on search results, we need to perform a search
+if is_search_results.status == "FAIL":
+print("Not on database or search results. Initiating search.")
+# Find search bar
+search_bar = find_element_by_text("Search", element_types=["entry", "textbox"])
+if search_bar.start is None:
+search_bar = find(Instruction(text="Search bar or input box", length=50))
+if search_bar.start is not None:
+left_single(search_bar.start, "Click search bar")
+type_text("natural products database\n", "Search for natural products database")
+wait()
+# Assume we are now on search results
+is_search_results = ActionCall(status="OK")
+else:
+print("Could not find search bar to navigate.")
+mark_fail()
+# Step 4: Select a Database from Search Results
+if is_search_results.status == "OK":
+print("On search results page. Looking for a valid database link.")
+# Look for reputable databases
+target_found = False
+# Candidates: NPASS, COCONUT, NP-Atlas, SuperNatural
+candidates = [
+"NPASS",
+"COCONUT",
+"Natural Products Atlas",
+"SuperNatural",
+"Natural Product Activity and Species Source"
+]
+for cand in candidates:
+if target_found:
+no_op()
+else:
+link = find_element_by_text(cand, element_types=["link", "heading"])
+if link.start is not None:
+left_single(link.start, f"Click {cand}")
+wait()
+target_found = True
+# Fallback if no specific name found
+if not target_found:
+generic_link = find_element_by_text("Natural Products Database", element_types=["link", "heading"])
+if generic_link.start is not None:
+left_single(generic_link.start, "Click generic database link")
+wait()
+target_found = True
+if target_found:
+# Step 5: Browse the selected database
+# Check for cookies on the new site
+new_summary = summarize_screenshot_content(Instruction(text="New page content", length=200), length=200)
+new_cookie_check = verify_hypothesis(observation=new_summary.text, hypothesis="Cookie popup visible")
+if new_cookie_check.status == "OK":
+accept_btn = find_element_by_text("Accept", element_types=["button", "push-button"])
+if accept_btn.start is not None:
+left_single(accept_btn.start, "Accept cookies on new site")
+wait()
+# Find Browse button
+browse_btn = find_element_by_text("Browse", element_types=["link", "button", "menu item"])
+if browse_btn.start is None:
+browse_btn = find_element_by_text("Explore", element_types=["link", "button"])
+if browse_btn.start is not None:
+left_single(browse_btn.start, "Click Browse")
+wait()
+else:
+# Scroll if no browse button
+scroll("down", None, "Scroll to browse content")
+wait()
+mark_done()
+else:
+print("Could not find a relevant database link in the search results.")
+mark_fail()
+F.3 Example of a generic cookie handler snippet
+⬇
+def_cookie_descriptions = [
+"a button to accept all cookies or consent to tracking in a cookie notice",
+"an ’I agree’ or consent button in a cookie popup",
+"a button labeled ’Accept all’ in a privacy banner",
+"a dismiss or OK button in a cookie notification popup"
+]
+# After potential navigation or app launch, re-observe
+summary = summarize_screenshot_content(
+Instruction(
+text="Observe the current page to understand if we are on a website and what site it might be.",
+length=1200
+),
+length=1200
+)
+cookie_check = verify_hypothesis(
+observation=summary.text,
+hypothesis="A cookie or privacy consent popup with accept/consent buttons is visible"
+)
+if cookie_check.status == "OK":
+cookie_found = False
+for desc in def_cookie_descriptions:
+if cookie_found:
+no_op()
+else:
+cookie_try = find(Instruction(text=desc, length=150))
+if cookie_try.start is None:
+cookie_try = find_element_by_text(description=desc, element_types=["push-button", "button", "link"])
+if cookie_try.start is not None:
+cclick = left_single(cookie_try.start, "Accept cookies/consent")
+if cclick.status == "OK" or cclick.status == "UNKNOWN":
+cookie_found = True
+wait()
+else:
+no_op()
+else:
+no_op()
+else:
+no_op()
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

@@ -1,0 +1,1211 @@
+FalseCrashReducer: Mitigating False Positive Crashes in OSS-Fuzz-Gen Using Agentic AI
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract.
+1 Introduction
+2 Background and Related Work
+2.1 Function-Level Fuzzing and Fuzz Drivers
+2.2 Automatically Generating Fuzz Drivers
+3 Context: OSS-Fuzz and OSS-Fuzz-Gen
+3.1 OSS-Fuzz: Fuzzing Framework for OSS
+3.2 OSS-Fuzz-Gen: Fuzz Driver Generation
+3.3 Problem: False Positive Crashes
+4 Designs to Mitigate False Positive Crashes
+4.1 Problem Statement and Goal
+4.2 Design Overview
+4.3 Part 1: Constraint-based Driver Generation
+4.3.1 Rationale
+4.3.2 Function Constraints
+4.3.3 Function Analyzer Agent Design
+4.4 Part 2: Context-Based Crash Validation
+4.4.1 Rationale
+4.4.2 Crash Feasibility
+4.4.3 Crash Validation Agent Design
+4.5 Implementation
+4.5.1 Integrating Agents
+4.5.2 Improving OSS-Fuzz-Gen’s architecture
+5 Evaluation
+5.1 Experimental Setup
+5.2 Methodology
+5.2.1 Executing OSS-Fuzz-Gen Experiments for Evaluation
+5.2.2 RQ1: Effectiveness of constraint-based fuzz driver generation
+5.2.3 RQ2: Effectiveness of context-based crash validation
+5.2.4 RQ3: Cost overhead of FalseCrashReducer
+5.3 Results
+5.3.1 RQ1: Effectiveness of constraint-based fuzz driver generation
+5.3.2 RQ2: Effectiveness of context-based crash validation
+5.3.3 RQ3: Cost overhead of LLM-based agents
+5.4 Threats to Validity
+6 Lessons Learned and Open Problems
+6.1 On Constraint-based Driver Generation
+6.2 On Context-based Crash Validation
+6.3 Cost of an OSS-Fuzz-Gen Approach
+6.4 Implications for Research and Practice
+7 Conclusion
+Acknowledgements
+References
+License: CC BY 4.0
+arXiv:2510.02185v1 [cs.SE] 02 Oct 2025
+FalseCrashReducer: Mitigating False Positive Crashes in OSS-Fuzz-Gen Using Agentic AI
+DOI: XXXXXXX.XXXXXXXConference: Make sure to enter the correct
+conference title from your rights confirmation email; June 03–05,
+2018; Woodstock, NYISBN: 978-1-4503-XXXX-X/2018/06CCS: Software engineering Empirical software validation
+Paschal C. Amusuo
+Affiliation: Purdue University, USA
+email: pamusuo@purdue.edu
+,
+Dongge Liu
+Affiliation: Google LLC, Australia
+email: donggeliu@google.com
+,
+Ricardo Calvo
+Affiliation: Purdue University, USA
+email: rcalvome@purdue.edu
+,
+Jonathan Metzman
+Affiliation: Google LLC, USA
+email: metzman@google.com
+,
+Oliver Chang
+Affiliation: Google LLC, Australia
+email: ochang@google.com
+and
+James C. Davis
+Affiliation: Purdue University, USA
+email: davisjam@purdue.edu
+2018
+Abstract.
+Fuzz testing has become a cornerstone technique for identifying software bugs and security vulnerabilities, with broad adoption in both industry and open-source communities.
+Directly fuzzing a function requires fuzz drivers, which translate random fuzzer inputs into valid arguments for the target function.
+Given the cost and expertise required to manually develop fuzz drivers, methods exist that leverage program analysis and Large Language Models to automatically generate these drivers.
+However, the generated fuzz drivers frequently lead to false positive crashes, especially in functions highly structured input and complex state requirements.
+This problem is especially crucial in industry-scale fuzz driver generation efforts like OSS-Fuzz-Gen, as reporting false positive crashes to maintainers impede trust in both the system and the team.
+This paper presents two AI-driven strategies to reduce false positives in OSS-Fuzz-Gen, a multi-agent system for automated fuzz driver generation.
+First, constraint-based fuzz driver generation proactively enforces constraints on a function’s inputs and state to guide driver creation.
+Second, context-based crash validation reactively analyzes function callers to determine whether reported crashes are feasible from program entry points.
+Using 1,500 benchmark functions from OSS-Fuzz, we show that these strategies reduce spurious crashes by up to 8%, cut reported crashes by more than half, and demonstrate that frontier LLMs can serve as reliable program analysis agents.
+Our results highlight the promise and challenges of integrating AI into large-scale fuzzing pipelines.
+Keywords: Fuzzing, LLM agents, Automated software testing, Infrastructure
+1. Introduction
+Fuzzing (Miller et al., 1990; Manès et al., 2021), or fuzz testing, is a key software engineering technique for uncovering bugs and security vulnerabilities.
+It is widely used in both commercial (Smith et al., 2021; Marinescu, 2021; noa, 2019) and open-source projects (Serebryany, 2017).
+To target specific application functions or libraries, engineers create fuzz drivers that convert random fuzzer inputs into the structured arguments expected by the target functions.
+However, manually writing fuzz drivers for a project requires project-level expertise, is labor-intensive and error-prone, leading to limited fuzzing coverage even in continuously fuzzed projects (noa, 2025c).
+Several research efforts have explored automatically generating fuzz drivers for project functions.
+These approaches either rely on program analysis (Zhang et al., 2021; Babić et al., 2019; Ispoglou et al., 2020; Sherman and Nagy, 2025) or LLM-based techniques (Liu et al., 2024a; Xu et al., 2025; Lyu et al., 2024).
+Google’s OSS-Fuzz-Gen (Liu et al., 2024a) is an ongoing project that applies LLMs to generate drivers at scale for critical open-source software.
+A persistent challenge, however, is that automatically generated drivers can produce invalid inputs and result in false positive crashes that do not correspond to real bugs.
+Muralee et al. (Muralee et al., 2025) note this problem is intrinsic to bottom-up testing, where non-entry-point functions are directly fuzzed, as these functions typically expect well-structured and validated inputs.
+Existing solutions for detecting these false positive crashes either rely on program analysis techniques with high engineering complexity (Muralee et al., 2025; Liu et al., 2024b) or imprecise LLM-based strategies (Xu et al., 2025), limiting applicability in large-scale settings like OSS-Fuzz-Gen that handles thousands of projects.
+In this paper, we propose and evaluate FalseCrashReducer, two LLM-driven strategies to mitigate false positive crashes in OSS-Fuzz-Gen.
+The first is a proactive crash reduction strategy, constraint-based fuzz driver generation, which derives and applies constraints on a function’s inputs and state to guide fuzz driver creation.
+The second is a reactive crash reduction strategy, context-based crash validation, that analyzes a function’s callers to determine whether a crash can be triggered when the project is executed from its entry point.
+To implement these strategies, we design two LLM-based agents, the function analyzer agent and the crash validation agent, and integrate them into OSS-Fuzz-Gen.
+We evaluate the impact and cost of the proposed strategies in OSS-Fuzz-Gen using 1,555 benchmark functions from the OSS-Fuzz framework.
+Our findings show that
+(1) constraint-based fuzz driver generation reduces the number of crashes by 2–8%, with 24.2% more fuzz drivers respecting the target function’s constraints;
+(2) context-based crash validation reduces the number of reported crashes by 57.3 – 61.3%, significantly lowering the debugging burden for software engineers; and
+(3) generating fuzz drivers with OSS-Fuzz-Gen costs less than a dollar, with tool usage contributing the highest proportion of costs.
+In summary, our contributions are:
+•
+The first description of the design and architecture of OSS-Fuzz-Gen, Google’s multi-agent system for creating fuzz drivers.
+•
+Design and evaluation of two novel agent-driven strategies to proactively reduce and reactively filter false positive crashes.
+Significance:
+Automatic fuzz driver generation removes the bottleneck of manual driver creation, expands coverage, and improves vulnerability discovery on critical projects.
+However, state-of-the-art approaches like OSS-Fuzz-Gen are hindered by false positives that increase debugging effort and undermine credibility.
+We identified, designed, and evaluated two complementary approaches to reduce these false positives.
+Our two strategies directly enhance the usability of OSS-Fuzz-Gen, which benefits critical open-source projects.
+However, they are not tightly coupled to OSS-Fuzz-Gen, and can be used in other automated testing systems.
+Based on our experience, we identify a range of future works to advance automated software testing.
+All results are open-source to facilitate broad review and adoption.
+2. Background and Related Work
+2.1. Function-Level Fuzzing and Fuzz Drivers
+Figure 1. Implementation of crxDecodePlane in libraw library.
+It expects input pointer p to reference a well-formed CrxImage object, derefencing without validity checks.
+⬇
+t LibRaw::crxDecodePlane(void *p, uint32_t planeNumber) {
+CrxImage *img = (CrxImage *)p;
+for (int tRow = 0; tRow < img->tileRows; tRow++) {
+for (int tCol = 0; tCol < img->tileCols; tCol++) {
+CrxTile *tile = img->tiles + tRow * img->tileCols + tCol;
+CrxPlaneComp *planeComp = tile->comps + planeNumber;
+uint64_t tileMdatOffset = tile->dataOffset + tile->mdatQPDataSize + tile->mdatExtraSize + planeComp->dataOffset;
+…
+}
+}
+Figure 2.
+Fuzz driver for the crxDecodePlane function (Figure 1).
+The fuzz driver violates the preconditions of the target function, leading to false positive crashes.
+⬇
+tern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+FuzzedDataProvider provider(data, size);
+uint32_t planeNumber = provider.ConsumeIntegralInRange<uint32_t>(0, 3);
+size_t crx_image_size = provider.ConsumeIntegralInRange<size_t>(0, 2048);
+std::vector<uint8_t> crx_image_buf = provider.ConsumeBytes<uint8_t>(crx_image_size);
+// Call the public wrapper which in turn calls the protected target function.
+RawProcessor.crxDecodePlane(crx_image_buf.data(), planeNumber);
+return 0;
+Fuzzing (Manès et al., 2021) is a software testing technique that exercises programs with randomly generated or mutated inputs to discover bugs or security vulnerabilities.
+According to Muralee et al. (Muralee et al., 2025), fuzzing can either be top-down or bottom-up.
+Top-down fuzzing (Fioraldi et al., 2020; Stephens et al., 2016) fuzzes a program from its public entry point, feeding inputs via expected channels such as command-line arguments, input files, or standard input.
+Although this approach has high validity — crashes detected during execution usually indicate real software bugs — it struggles with low coverage on complex or deeply nested paths.
+OSS-fuzz-gen takes the alternative approach, bottom-up fuzzing (Liu et al., 2024b; Muralee et al., 2025).
+This strategy targets individual functions, which may not be public entry points.
+It is used to
+exercise deep or rare functions, improving coverage and fuzzing efficiency.
+To perform bottom-up fuzzing, developers create fuzz drivers (Babić et al., 2019; Ispoglou et al., 2020).
+These are programs that invoke the target function(s) using fuzzer-generated inputs.
+The driver must
+ensure that the function is called in an environment resembling normal execution,
+by
+setting up the required context (e.g., global and module-specific state)
+and
+constructing valid input structures.
+Additional initialization and cleanup in the driver reduce errors resulting from incorrect resource management.
+For example, Figure 2 illustrates a fuzzing driver for the function crxDecodePlane.
+The driver translates raw fuzzer inputs from provider into arguments for the target function and handles necessary setup and teardown operations.
+Because fuzz drivers can directly target intermediate functions in the program, they may trigger crashes that would never arise in real executions.
+These false positive crashes are the central challenge in function-level fuzzing (Muralee et al., 2025).
+To illustrate, consider again the fuzz driver shown in Figure 2.
+This driver invokes the target using a buffer of arbitrary size.
+In the target (Figure 1), that buffer, *p, is cast to a CrxImage object and accessed. If the buffer is too small, a crash occurs due to invalid memory access.
+If all real callers of crxDecodePlane are well-formed, then this crash is a false positive.
+These false positive crashes increase debugging burden, obscure genuine bugs, and erode project maintainers’ trust.
+2.2. Automatically Generating Fuzz Drivers
+It is costly to manually develop a fuzz driver for every function of interest.
+Researchers have therefore proposed methods for automatically generating fuzz drivers.
+Program-Analytic approaches (Babić et al., 2019; Ispoglou et al., 2020; Sherman and Nagy, 2025; Liu et al., 2024b; Muralee et al., 2025) create fuzz drivers systematically and rely on program analysis to infer the inputs and context needed to invoke target functions.
+They leverage different techniques including program slicing (Babić et al., 2019), model-based (Ispoglou et al., 2020) and type-based (Muralee et al., 2025) construction methods to produce fuzz drivers that compile and target the required functions.
+However, while correct by construction and leading to lower false positive crashes, they are typically complex by design and require substantial engineering effort to implement correctly.
+Recently, AI-based approaches (Xu et al., 2025; Lyu et al., 2024; Zhang et al., 2024d; Liu et al., 2024a) have emerged, leveraging large language models (LLMs) to generate fuzz drivers.
+These models can create more diverse drivers, combining functions in novel ways beyond existing consumer patterns.
+However, their reliance on AI also increases the likelihood of fuzz driver errors, producing false positive crashes during fuzzing and imposing additional debugging overhead on engineers.
+These prior works have also integrated different ways to filter out false positive crashes.
+This includes using program analysis techniques like symbolic execution (Muralee et al., 2025) and static constraint analysis (Liu et al., 2024b) to validate validate the feasibility of crashes, using LLMs to detect invalid crashes based on crash locations and patterns (Xu et al., 2025), and the use of heuristics (Lyu et al., 2024) to identify potentially false positive crashes.
+Yet, program-analysis-based methods are often too complex to scale across diverse software projects, and current AI or heuristics-based methods do not utilize whole-program context, reducing their precision.
+This gap highlights the need for new strategies that are easily applicable across diverse software projects, and capable of incorporating whole-program context to more effectively reduce false positive crashes.
+3. Context: OSS-Fuzz and OSS-Fuzz-Gen
+This section describes the industry context of our work.
+As there is no academic material on OSS-Fuzz-Gen, we describe the system in enough detail that the reader understand our contribution to false positive mitigation within it and the open problems.
+However, we defer a detailed evaluation of its design choices to a future paper.
+3.1. OSS-Fuzz: Fuzzing Framework for OSS
+OSS-Fuzz (noa, 2016) is Google’s continuous fuzzing service designed to uncover security vulnerabilities and improve the reliability of critical open-source software (OSS).
+It currently supports more than 1,300 projects selected for their widespread use or importance to global IT infrastructure (noa, 2025a).
+As of May 2025, OSS-Fuzz has helped identify and fix over 13,000 security vulnerabilities and 50,000 bugs across 1,000 projects.
+It has also been a subject of many academic studies, including studies on fuzzing performance (Görz et al., 2025; Gao et al., 2023; Nourry et al., 2025), bugs (Ding and Le Goues, 2021; Keller et al., 2023), and automation (Zhang et al., 2024c; Zhang et al., 2024d)
+Complementing its core service, OSS-Fuzz provides the Open Source Fuzzing Introspection platform (noa, 2025c), which leverages Fuzz Introspector (noa, 2025h) to analyze project fuzzing performance and make results available via a public website and API (noa, 2025b).
+OSS-Fuzz projects rely on fuzz drivers that exercise specific functions or subsystems within a codebase.
+However, writing high-quality drivers that achieve broad coverage is time-intensive and requires deep domain expertise.
+Consequently, many projects still exhibit significant coverage gaps.
+Gao et al. (Gao et al., 2023) showed that most of these gaps stem from limitations in existing drivers, highlighting the need for more effective ones.
+To address this, the OSS-Fuzz team has begun exploring automated techniques for fuzz driver generation to expand coverage and improve bug discovery (Liu et al., 2023).
+3.2. OSS-Fuzz-Gen: Fuzz Driver Generation
+OSS-Fuzz-Gen (Liu et al., 2024a) is a multi-agent system developed by the OSS-Fuzz team to automate fuzz driver generation and evaluation for open-source projects.
+Though still under development, it has already uncovered 30 previously unknown bugs and vulnerabilities (Liu et al., 2024a) and delivered major coverage improvements in projects, including a 98.42% coverage gain in phmap (Liu et al., 2024a).
+Design and Architecture:
+OSS-Fuzz-Gen employs an LLM-based agentic approach to generate fuzz drivers for functions with little or no coverage.
+This bottom-up focus (section 2.1) targets functions deep in a call-graph that typically require structured inputs or program states from higher-level code.
+Because creating drivers at this level requires reasoning about code semantics, dependencies, and input constraints, LLM-based agents are well suited for the task.
+Their reasoning ability also enables OSS-Fuzz-Gen to generalize across diverse OSS-Fuzz projects with minimal manual effort.
+As shown in Figure 3, OSS-Fuzz-Gen organizes multiple agents into three stages executed in a pipeline:
+(1) writing stage, where drivers are generated for target functions;
+(2) execution stage, where drivers are fuzzed; and
+(3) analysis stage, where execution results are analyzed and used to guide fuzz driver refinements.
+Agents are equipped with task-specific instructions and tools (Table 1), and the system integrates a feedback cycle, stopping after (1) a true positive bug; (2) a maximum number of cycles; or (3) a coverage plateau.
+Figure 3.
+OSS-Fuzz-Gen design showing its agents.
+A bottom-up approach is taken, targeting functions with low coverage.
+This design exhibits a high false positive rate.
+This coverage-guided bottom-up strategy contrasts and complements prior fuzz driver generation approaches (Babić et al., 2019; Ispoglou et al., 2020; Xu et al., 2025; Lyu et al., 2024) that target public library APIs and explores random API combinations.
+Compared to these approaches, OSS-Fuzz-Gen is well suited for the existing OSS-Fuzz projects that already contain fuzz drivers for their public APIs but still suffer from low coverage.
+However, as shown by (Muralee et al., 2025), this bottom-up approach introduces higher risk of false positive crashes caused by bypassing normal entry points which could have validated malformed input.
+Implementation:
+OSS-Fuzz-Gen is designed for scale, intended to support thousands of projects (OSS-Fuzz currently fuzzes 1311 projects (noa, 2025c)).
+It runs on Google’s distributed cloud infrastructure, with each agent isolated in a container and managed by a central orchestrator.
+This design enables parallel execution and cross-project fault tolerance. The project’s implementation is publicly available (Liu et al., 2024a) and comprises ∼\sim24,000 lines of Python.
+Additionally, agents communicate through a pipe-and-filter architecture (claytonsiemens77, 2025), passing outputs directly to the next stage.
+This mechanism sufficed when the output of one agent was only consumed by the next pipelined agent, although we needed to change it when we introduced the function analyzer agent (section 4.5.2).
+Table 1.
+Existing OSS-Fuzz-Gen agents, Description and tools.
+Agents
+Description
+Tools
+Prototyper
+Creates the initial fuzz driver.
+Compiler, Code search
+Enhancer
+Refines fuzz driver w/ analysis feedback.
+Compiler, Code search
+Coverage Analyzer
+Analyzes coverage reports and makes suggestions to improve coverage.
+Code search
+Crash Analyzer
+Triages crashes and classifies them as program or fuzz driver error.
+Code search, Debugger
+3.3. Problem: False Positive Crashes
+OSS-Fuzz-Gen’s bottom-up approach makes it prone to false positive crashes.
+In our evaluation (Table 2), 1555 benchmarks produced 4835 crashes (averaging 3.1 per benchmark), 70% of which were marked false positives.
+Addressing this issue is critical: reporting false positives to maintainers of widely used, security-critical OSS-Fuzz projects undermines the credibility of both OSS-Fuzz-Gen and the OSS-Fuzz team, and delays the resolution of defects.
+To mitigate this problem, the OSS-Fuzz-Gen team has developed crash triage and classification tools.
+An early semantic analyzer, based on recommendations from Zhang et al. (Zhang et al., 2024d), combined generative AI with heuristics to validate crashes, and more recently a crash analyzer agent was introduced that applies debugging tools to inspect program state, identify root causes, and classify crashes as either “Program Errors” or “Fuzz Driver Errors”.
+While useful for post-crash analysis, these tools do not proactively prevent false positives nor incorporate broader program context, limiting precision.
+In this work, we investigate new context-based strategies to more effectively reduce false positive crashes in OSS-Fuzz-Gen.
+4. Designs to Mitigate False Positive Crashes
+This section presents our agent-based designs to reduce false positive crashes in OSS-Fuzz-Gen.
+4.1. Problem Statement and Goal
+Problem Statement:
+Fuzz drivers targeting intermediate functions in a program often produce false positive crashes.
+These arise when the fuzz drivers generate inputs that are not feasible in normal execution.
+They increase debugging overhead and reducing the usability and credibility of fuzz driver generation systems.
+Goal:
+This project aims to design, implement, and evaluate strategies to reduce or filter false positive crashes during fuzz driver generation, which can be integrated into OSS-Fuzz-Gen’s agent pipeline, and can scale to the diverse open-source projects on OSS-Fuzz.
+4.2. Design Overview
+We adopt two complementary strategies to reduce false positive crashes:
+proactive crash reduction and reactive crash validation.
+•
+Constraint-based Fuzz Driver Generation:
+This proactive strategy derives constraints on how a target function should be used and applies them during fuzz driver generation in OSS-Fuzz-Gen.
+By enforcing correct function usage, it reduces invalid fuzz drivers that cause false positives.
+•
+Context-based Crash Validation:
+This reactive strategy validates crashes flagged as program errors by checking if they can be triggered from public entry points during normal execution.
+Both strategies are necessary.
+Proactive reduction reduces invalid drivers and lowers validation costs, but attempting to eliminate all false positives with overly strict constraints risks missing real bugs.
+Reactive validation is necessary to balance precision with bug-finding effectiveness.
+We design LLM-based agents with access to the project’s source code to derive function requirements (proactive) and validate crash feasibility (reactive) and integrated them into OSS-Fuzz-Gen ’s distributed workflow (Figure 4).
+Following the agent framework in (noa, 2025e), we describe each agent’s input, reasoning, tools, and output. We omit planning and memory modules since frontier LLMs provide them implicitly.
+Figure 4.
+Agent-driven strategies to mitigate false positive crashes in OSS-Fuzz-Gen (cf. Figure 3).
+Semantic constraints developed by function analyzer improve fuzz driver quality and prevent false crashes.
+The crash validator analyzes project context to determine crash’s feasibility and filter false positives.
+Agents use tools to access the project’s codebase.
+4.3. Part 1: Constraint-based Driver Generation
+4.3.1. Rationale
+False positive crashes typically occur when fuzz drivers incorrectly initialize the state or input of a function before calling it.
+An example is shown in Figure 2 where random input bytes is used to call a function that expects a valid CrxImage object.
+Programmatic fuzz driver generation methods develop constrained fuzz drivers by default, as the fuzz drivers mimick existing real-world code.
+However, existing AI-based methods remain unconstrained, relying on the LLM to determine how functions in the fuzz driver should be called.
+Hence, to balance LLM flexibility with correctness, we introduce the use of function constraints, representing precise instructions for calling the target function correctly, to guide the LLM when generating drivers.
+4.3.2. Function Constraints
+These are instructions that define how to correctly setup a function’s state and input arguments before the function is called.
+We identify four categories of constraints, representing the conditions we observed that frequently led to incorrect fuzz drivers.
+•
+Input construction methods: Instructions for creating input variables. This includes what functions to use to create these variables or if they can be directly initialized with fuzz data.
+•
+Variable constraints: Bounds and preconditions on input variables. This include ranges for scalar variables or buffer sizes necessary to satisfy array indexing or assertion conditions, and null pointer and termination conditions for pointer and string variables.
+•
+Input relationships: Expected dependencies between variables used by the function, such as the connection between a pointer and its associated size field.
+•
+Setup and teardown functions: Functions that must be called before or after the target function to ensure correct initialization and cleanup of the calling state or global variables used by the target function.
+Below, we show the constraints derived for the function in Figure 1.
+As shown, these constraints capture the requirements sufficient to avoid the surface level crashes that would be caused by the fuzz driver in Figure 2.
+Some constraints derived for Figure 1
+•
+The first argument must be a valid pointer to a ’CrxImage’ structure. This is because…
+•
+’crxSetupImageData’ function must be called before ’crxDecodePlane’. This is because…
+•
+’planeNumber’ must be less than ’nPlanes’ because…
+•
+’CrxImage’ structure should be initialized by ’crxLoadRaw’…
+4.3.3. Function Analyzer Agent Design
+To automatically derive these requirements, we design a Function Analyzer Agent capable of analyzing a function and its usages within a broader project to derive the expected requirements.
+Agent’s Input:
+The Function Analysis Agent is provided with details of the target function, including the containing project’s name, the function’s signature, and the source code of the function, together with a path to the location of the project’s codebase.
+Agent’s Tools:
+We integrate two tools that allow the agent to explore and analyze a project’s codebase.
+We provide detailed instructions and examples of valid tool usage in the agent’s prompt to guide effective interaction.
+•
+Code Search Tool:
+This tool enables the LLM to search the project’s codebase using Linux shell commands.
+•
+Function Search Tool: This tool retrieves the implementation of a specific function by querying the Fuzz Introspector API service (section 3.1). The LLM provides the project and function name, and the tool returns the implementation if it has been indexed. This tool is more efficient for obtaining complete function definitions.
+Prior work on agents for program analysis also supports code search but typically abstracts away shell commands or tool details (Liu et al., 2025; Zhang et al., 2024b).
+Our approach gives the LLM flexibility to issue commands within an isolated environment.
+Agent’s Prompt:
+We adopt a problem decomposition strategy (Xiao and Zhu, 2025; Khot et al., 2023; Prasad et al., 2024) that breaks the task into sequential steps, guiding the LLM through the constraint generation process.
+Below is a shortened version of the prompt to highlight its core structure.
+Function Analyzer Agent Prompt
+You are a security engineer about to create…
+Your goal is to analyze the target function and its usages, and identify constraints…
+Input: [Input items…]
+Categories of function constraints:
+[categories…]
+Steps to follow:
+•
+Identify function’s parameters and callers.
+•
+Determine implicit assumptions on parameters.
+•
+Analyze how parameters are constructed in callers.
+•
+Identify common setup and teardown functions.
+•
+Compile results into a list of constraints.
+Output: [Output format…]
+Examples: [Examples…]
+Tools provided: [Tool list…]
+[Detailed Tool Instructions…]
+Agent’s Output:
+The agent is prompted to produce a detailed description of the provided function and a list of requirements guiding how the function should be called correctly by the fuzz driver.
+4.4. Part 2: Context-Based Crash Validation
+4.4.1. Rationale
+While function requirements can reduce surface-level crashes caused by invalid inputs or states, some false positive crashes arise deeper within target function’s call graph or in other functions invoked by the fuzz driver.
+These crashes may look genuine in isolation but are not feasible under realistic execution paths starting from a project’s external entry points.
+To filter out such spurious reports, we introduce a context-based validation strategy that determines whether a reported crash can actually be triggered within the project’s broader execution context.
+4.4.2. Crash Feasibility
+We define a crash as feasible if it can be triggered from a project’s external entry points, which we identify as root-level non-test functions in the project’s call graph.
+A false positive crash, by contrast, is one whose conditions cannot be satisfied by any execution path beginning at these entry points.
+To determine feasibility, the crash’s triggering conditions must be reconstructed from the stacktrace and root cause analysis, and then checked against the constraints present in real calling contexts.
+This ensures that only true positive crashes, reachable from valid entry points, are retained.
+4.4.3. Crash Validation Agent Design
+To realize context-based crash validation, we design a Crash Validation Agent that can analyze the project and functions associated with a crash and determining if the crash is reachable from the project’s entry points.
+We describe this agent using the same structure as section 4.3.3.
+Agent’s Input:
+For input, the Crash Validation Agent is provided crash details:
+stacktrace,
+crash logs,
+and
+a root cause analysis produced by OSS-Fuzz-Gen’s Crash Analyzer Agent (Figure 3).
+Agent’s Tools:
+The Crash Validation Agent uses the same tools as the Function Analyzer Agent (section 4.3.3) to explore source code.
+Agent’s Prompt:
+The crash validation agent follows a similar prompting strategy as the function analyzer agent.
+We show a shortened version that highlight the instructions and guidance provided.
+Crash Validation Agent Prompt
+You are a security engineer developing…Your goal is to analyze the crash details and determine if the crash is feasible from the project’s entry points.
+Input: [Input items…]
+Steps to follow:
+•
+Identify the crashing function and crash location.
+•
+Determine the input conditions that caused the the crash.
+•
+Identify how input arguments are created at call sites.
+•
+Analyze whether constraints on input arguments could have prevented the crash.
+•
+Provide your conclusion and code evidence for claims.
+Output: [Output format…]
+Tools provided: [Tool list…]
+[Detailed Tool Instructions…]
+Agent’s Output:
+The agent produces a structured report containing its conclusion and analysis about the crash’s feasibility, evidence from the source code, and recommendations for fuzz driver modifications for crashes identified as false positives.
+4.5. Implementation
+We implemented the Function Analysis and Crash Validation agents using Google’s Agent Development Kit (ADK).
+Their unique implementations required 254 lines of Python code.
+Because the agents were built on OSS-Fuzz-Gen, they reused much of its utility code, including components for prompt preparation, LLM interaction, error handling, and tool support.
+The agents’ initial prompts totaled 208 lines, excluding variable elements (e.g., crash stacktraces for the Crash Validation agent) and additional reprompting prompts for error handling.
+Overall, OSS-Fuzz-Gen comprises 25k lines of Python code, covering its core functionality, supporting tools (e.g., report generation, agent debugging, etc.), and experimental modules.
+Within OSS-Fuzz-Gen, the four existing agents (Table 1) together account for 712 lines of code, plus 345 lines of prompt definitions.
+Thus the size of the new false positive-related agents is comparable to the existing ones.
+4.5.1. Integrating Agents
+We integrate the Function Analyzer and Crash Validation agents to OSS-Fuzz-Gen.
+Integrating Function Analyzer Agent:
+We integrate the Function Analyzer at the start of OSS-Fuzz-Gen ’s pipeline.
+Function constraints produced by the function analyzer are integrated to the prompts of both the writer agents (to guide fuzz driver generation) and analyzer agents (to prevent invalid modification suggestions).
+Integrating Crash Validation Agent:
+Similarly, we integrate the Crash Validation Agent to the end of the OSS-Fuzz-Gen’s pipeline, configuring it to execute after crashes, classified by the Crash Analyzer as “Program Errors”, occurs.
+If crashes are validated as false positive crashes, we integrate the fix recommendation produced by the Crash Validation agent to the prompt of the the Enhancer agent in the next cycle, so as to refine the fuzz driver and prevent the occurrence of similar crashes.
+4.5.2. Improving OSS-Fuzz-Gen’s architecture
+We made two changes to OSS-Fuzz-Gen’s architecture to support the additional agents:
+Inter-agent Communication via the Shared Repository Pattern:
+OSS-Fuzz-Gen agents originally communicated using the pipe-and-filter pattern (section 3.2).
+However, sharing the function analyzer’s results with multiple agents across different pipeline stages was inefficient: each agent propagated the generated constraints (from its predecessor’s result object) on to downstream agents for access.
+To address this, we extended OSS-Fuzz-Gen to support the Shared Repository Pattern (Lalanda, 1998).
+Here, agents operating on the same function write results to a central repository accessible by others.
+Since agents execute in isolated cloud containers, the repository resides in the orchestrator’s working directory.
+Each agent copies it when provisioned.
+After execution, any new or modified files are synchronized with the central repository, so that future agents can access shared data without intermediate pipeline transfers.
+Capture-and-Replay for Agent Debugging:
+In multi-agent systems, downstream agents may depend on upstream outputs, making it hard to evaluate one agent without executing all preceding stages.
+This was especially challenging for the Crash Validation agent, which uses outputs from the execution stage and the Crash Analyzer agent.
+Prior work on designing multi-agent systems (Li et al., 2024; Pan et al., 2025; Gao et al., 2024; He et al., 2025) rarely cover design techniques that enable independent agent validation, so we describe our approach here.
+We implemented a capture-and-replay approach (Jha and Lee, 2013) that enables independent execution and debugging of agents.
+In OSS-Fuzz-Gen, agent inputs are embedded in prompts with clearly demarcated XML tags, which are logged.
+Our framework extracts these components to recreate the context preceding an agent’s execution, allowing rapid debugging, prompt iteration, and repeated evaluation of agents like the Crash Validation agent (section 5.2.3).
+Similar capture-and-replay techniques have been applied to test other software infrastructure (Liu et al., 2014; Leotta et al., 2013; Steven et al., 2000; Deljouyi, 2024).
+5. Evaluation
+The two strategies proposed in this paper both address false positive crashes in OSS-Fuzz-Gen, but operate in different phases of OSS-Fuzz-Gen’s pipeline, making them orthogonal approaches.
+We therefore evaluate each strategy separately within OSS-Fuzz-Gen and assess the cost they introduce to OSS-Fuzz-Gen.
+RQ1: How effective is constraint-based fuzz driver generation in reducing crashes in OSS-Fuzz-Gen?
+RQ2: How effective is context-based crash validation in identifying false positives in OSS-Fuzz-Gen?
+RQ3: What is the additional cost introduced by LLM-based agents to OSS-Fuzz-Gen?
+5.1. Experimental Setup
+Datasets:
+OSS-Fuzz-Gen provides a set of 1555 benchmark functions, drawn from 336 (out of the 1311) OSS-Fuzz projects, that we use to continuously evaluate OSS-Fuzz-Gen.
+Each benchmark function represents one function in the parent OSS-Fuzz project, for which we develop a fuzz driver.
+We use the full set of benchmark functions for this evaluation.
+TO avoid resource exhaustion using experiments, we divide the full set into three subsets (yielding 510, 510 and 535 benchmark functions), and separately execute OSS-Fuzz-Gen on each subset.
+Compute Resources:
+All experiments were executed on compute clusters on Google Cloud and were conducted between July and September 2025.
+The LLM-based agents were powered by the Gemini 2.5 Pro, Google’s state of the art reasoning model at the time.
+Baseline:
+To evaluate the impact of the introduced strategies, we used vanilla OSS-Fuzz-Gen as a baseline.
+5.2. Methodology
+5.2.1. Executing OSS-Fuzz-Gen Experiments for Evaluation
+We evaluated two OSS-Fuzz-Gen configurations: one where the generated function constraints were provided to OSS-Fuzz-Gen agents, and one where they were ignored.
+Both configurations were executed on the three benchmark subsets.
+OSS-Fuzz-Gen performed 10 trials for each benchmark function, with each trial generating and iterating on a fuzz driver for up to five cycles.
+Each driver was executed for five minutes in the execution stage.
+5.2.2. RQ1: Effectiveness of constraint-based fuzz driver generation
+We examined how constraint-based generation influences OSS-Fuzz-Gen outcomes.
+We first compare total number of crashes and crashes reported as false positives across the two configurations and on the three benchmark sets.
+Additionally, to ensure difference in number of crashes is not caused by weaker code exploration, we also compare the average coverage achieved by fuzz drivers in each configuration.
+Next, we evaluate the impact of function constraints on fuzz driver quality by measuring how well generated drivers satisfy the constraints produced by the Function Analyzer.
+We evaluate this using the two OSS-Fuzz-Gen configurations and the first benchmark set comprising 510 benchmark functions.
+For each function in the benchmark set, we selected the first two trials, and excluded cases either constraint or fuzz driver generation failed.
+This yielded 957 test cases for the first configuration and 963 for the second.
+Using the Gemini 2.5 Pro model, we assessed constraint satisfaction and validated reliability by manually reviewing a random sample of five functions.
+We then report the proportion of fuzz drivers that fully satisfy all derived constraints.
+Finally, we conduct a preliminary investigation into why constraint-based fuzz driver generation strategy was insufficient to fully mitigate crashes, and to provide insights to the limitations for this strategy.
+We randomly sampled 20 crashes, 10 labeled as false positives and 10 as true positives, and analyzed why they weren’t mitigated by the provided constraints.
+We classify and report these reasons, together with the number of crashes belonging to them.
+5.2.3. RQ2: Effectiveness of context-based crash validation
+We evaluated the impact of the Crash Validation agent in identifying additional false positive crashes reported by OSS-Fuzz-Gen.
+First, for each benchmark set, we measure the number of crashes initially classified as program errors by the Crash Analyzer that were later marked as false positives by the Validation agent.
+This proportion reflects the impact of the additional constext-based crash validation stage is reducing the final number of false positives reported to maintainers.
+Next, we assess the reliability of the crash validation agent’s analysis and conclusion.
+We randomly sample, review and characterize 20 agent interactions and final analysis and evaluate the extent to which they followed the steps prescribed to the agent in section 4.4.3.
+Additionally, we measure how consistent the agent’s conclusion is, across up to three executions of the same prompt, to estimate the agent’s correctness.
+This is because prior work has shown correlation between LLM consistency and correctness.
+We randomly sample 200 crashes that we had previously determined its validity using the crash validation agent, and using the debugging framework in section 4.5.2, we ran three repeated experiments, measured the proportion whose results were consistent, and investigated reasons for inconsistencies.
+Finally, we evaluate the impact of providing detailed instructions to the crash validation agent.
+Alongside the original prompt, we create a second version that only specifies the crash validation task but no decomposition step guidance, and rerun the crash validation agent with each prompt on these sampled subset of 200 crashes used above.
+We compare differences in the agent’s conclusions, tool usage, and output token.
+5.2.4. RQ3: Cost overhead of FalseCrashReducer
+We assessed the cost overhead introduced by the two LLM-driven strategies to OSS-Fuzz-Gen.
+In this RQ, we focus on LLM API costs.
+However, since the OSS-Fuzz-Gen evaluation was executed on the Google Cloud Platform, it also incurred infrastructure costs which are more difficult to retroactively measure.
+To measure cost, we extract all agent inputs and outputs for all benchmark functions and all executed agents during the evaluation experiment run.
+We use the tokenizer tool from OpenAI to compute the number of input and output tokens and use the Gemini API pricing to estimate the cost of each agent on each benchmark.
+Finally, we calculate and report the average cost of the default OSS-Fuzz-Gen agents on each benchmark, and the average additional cost per benchmark introduced by the function analyzer agent and the crash validation agent.
+5.3. Results
+5.3.1. RQ1: Effectiveness of constraint-based fuzz driver generation
+Table 2. Crashes and coverage achieved by two OSS-Fuzz-Gen configurations (baseline/without function constraints, and new/with FC).
+Parentheses denote number of false positive crashes. “# Bm” denote number of benchmark functions.
+Set
+# Bm
+Num. Crashes
+% diff
+Coverage
+w/o FC
+with FC
+w/o FC
+with FC
+Set-1
+510
+1858 (1307)
+1810 (1249)
+2.6%
+22.5%
+22.3%
+Set-2
+510
+1577 (1082)
+1450 (1026)
+8.1%
+19.5%
+19.0%
+Set-3
+535
+1645 (1194)
+1575 (1115)
+4.3%
+20.3%
+20.1%
+Total
+1555
+5080 (3583)
+4835 (3390)
+15.0%
+62.3%
+61.4%
+Table 2 shows that incorporating function constraints consistently reduced the number of total and false positive crashes across all benchmark sets, with reductions of up to 8.1%.
+At the same time, fuzz drivers with constraints achieved very similar coverage, confirming that the reductions were not due to weaker code exploration.
+Table 3. Satisfaction of function constraints (FC) by generated fuzz drivers.
+Drivers generated with FC satisfy notably more constraints compared to those without.
+Metric
+w/o FC
+with FC
+# Fuzz Drivers Analyzed
+908
+900
+Avg constraints per driver
+4.33
+4.25
+% satisfying all constraints
+38.9%
+63.1%
+% satisfying ≥(n−1)\geq(n-1) constraints
+68.7%
+88.2%
+Overall constraint satisfaction
+73.2%
+86.9%
+Furthermore, we also evaluated impact on fuzz driver quality, assessing how fuzz drivers conform to the derived function requirements.
+Table 3 shows that fuzz drivers generated with constraints were substantially more likely to satisfy the expectations of the target function: 63.1% satisfied all derived constraints compared to only 38.9% without constraints.
+This indicates that explicitly providing function constraints significantly improves fuzz driver quality, even though OSS-Fuzz-Gen ’s writer agents already have access to the source code.
+Table 4. Reasons why crashes were not mitigated by the constraint-based fuzz driver generation strategy.
+Metric
+Value
+Number of crashes studied
+20
+Crashes occurred in non-analyzed function
+12
+Crashes occurred beyond scope of analyzed function
+4
+Crashes caused by incomplete constraints
+3
+Crashes caused by conflicting suggestions
+1
+Finally, we examined the limitations of the constraint-based fuzz driver generation strategy.
+Table 4 summarizes the causes of 20 sampled crashes.
+Twelve originated in other functions in the fuzz driver beyond the target function, and four more occurred in functions up to two levels deeper in the call graph from the target function.
+All of these are outside the scope of the Function Analyzer.
+Three were due to incomplete constraints.
+For example, a double free caused by a callback freeing an input pointer and the constraints did not specify expectations of callbacks provided to the target function.
+The final crash resulted from a coverage improvement suggestion from the coverage analyzer agent that directly violated a constraint.
+These findings highlight how the strategy can be expanded to better prevent crashes.
+5.3.2. RQ2: Effectiveness of context-based crash validation
+Table 5. Percentage of crashes classified as “Program Errors” that were filtered out using context-based crash validation.
+Metric
+Set 1
+Set 2
+Set 3
+Crashes caused by “program errors”
+1092
+840
+853
+Additional false positives identified
+626
+548
+522
+% non-feasible crashes filtered
+57.3%
+65.2%
+61.2%
+Figure 5. Analysis from crash validation agent, showing why a specific crash is infeasible from the program’s entry point.
+⬇
+<feasible> False </feasible>
+<analysis>
+The crash is a heap-buffer-overflow read in ‘flexbuffers::GetRoot‘ caused by reading from a buffer with a size less than 2. The function reads the last two bytes of the buffer to determine the ‘byte_width‘ and ‘packed_type‘ without first checking if the buffer is large enough to support these reads. The fuzzer triggers this by calling ‘flexbuffers::GetRoot‘ with a 1-byte buffer.
+The crash is not feasible… When ‘flatc‘ processes a FlexBuffer file, it invokes ‘flexbuffers::VerifyBuffer‘ before calling ‘flexbuffers::GetRoot‘.
+This verification step ensures the buffer is at least 3 bytes long, which is a stricter check than required to prevent the crash (a 2-byte minimum).
+…
+</analysis>
+<source_code_evidence>…</source_code_evidence>
+<recommendations>
+…
+</recommendations>
+Table 5 shows that the Crash Validation agent filtered 57–65% of crashes initially flagged as program errors, highlighting the value of context-based crash analysis in reducing false positives.
+For example, Figure 5 illustrates a case where the agent correctly deemed a crash infeasible: although triggered by a bug in the target function, the program’s entry-point input validation will prevent this crash during normal execution.
+Table 6. Reasons for unreliable crash validation analysis.
+Metric
+Count
+Crashes reviewed
+20
+Incorrect localization of crash
+5 (25%)
+Incomplete consideration of call sites
+2 (10%)
+Incorrect identification of root cause
+1 (5%)
+Incorrect identification of crash conditions
+1 (5%)
+Incorrect constraint and feasibility analysis
+1 (5%)
+Analysis with reliable conclusions
+10 (50%)
+Evaluating reliability of agent’s analysis:
+Next, we manually reviewed 20 crash analyses (Table 6) to determine if they followed the prescribed validation steps (section 4.4.3) and produced reliable results.
+Half were reliable, as they followed the steps and provided source code evidence to back all claims.
+In six cases, the agent mislocalized the crash or misidentified the root cause.
+In three others, it failed to fully analyze call sites or constraints; and in one case it misjudged the crash conditions.
+Of the reliable cases, four corresponded to real bugs and we are in the process of reporting them to the project maintainers.
+On further result inspection, errors from mislocalized crashes and misidentified root causes mostly stemmed from imprecise root cause analysis from the crash analyzer agent, which occurred because the crash analyzer either struggled to identify the actual root cause during its analysis or did not fully communicate the program flow that led to the crash, leading to assumptions in the validation agent.
+Overall, these results show that while the crash validation agent provides reliable conclusions half the time, its performance can be improved by more accurate analysis from upstream agents and providing it with tools that enable systematic validation of function call sites and constraints.
+Table 7. Consistency of the Crash Validation agent’s conclusions across 3 repeated runs. Inconsistencies are primarily due to conflicting usage assumptions and reachability of the crashing function from program entry points.
+Metric
+Value
+Crashes evaluated
+200
+Consistent conclusions
+137 (68%)
+Consistent false-positive calls
+130 (65%)
+Consistent true-positive calls
+6 (3%)
+Sampled inconsistency analysis investigated
+10
+Inconsistencies in real-world usage assumptions
+5
+Inconsistencies in crash function reachability
+4
+Inconsistencies in identified root causes
+1
+Evaluating consistency of agent’s conclusions:
+We also evaluated the consistency of the validator’s conclusions.
+Across three repeated runs, 68% of conclusions were consistent (Table 7), with most consistent outcomes corresponding to false positive classifications.
+Following prior work showing correlation between LLM consistency and accuracy (Valentin et al., 2025; Jiang et al., 2025), this result provides a measure of the accuracy of the crash validation agent and show it can more accurately distingush false positives from true crashes.
+To further understand the reasons behind inconsistencies, we reviewed 10 sampled cases.
+Five arose from conflicting assumptions about real-world usage, four from differing reachability judgments, and one from root-cause disagreement.
+For instance, one analysis marked a crash feasible because a user-controlled variable could be zero, while another marked it infeasible because it assumed users would never set it to zero.
+Similarly, another crash was marked feasible by one analysis because it can be triggered by three public functions while a second analysis considered it infeasible because the public functions were correctly used within the project.
+Detailed examples are provided in the supplemental materials.
+We observed that, even when analyses differed, they still provided evidence about the crash’s feasibility to inform human debugging.
+Evaluating impact of problem decomposition steps in prompt:
+Finally, we compared two prompt designs: one with explicit decomposition steps (section 4.4.3) and a simple one without.
+Results diverged in 60% of cases.
+The detailed prompt yielded 16.3% longer outputs on average (842 vs. 724 tokens) but produced a similar number of tool calls (6.9 vs. 6.2), suggesting greater verbosity without added efficiency.
+5.3.3. RQ3: Cost overhead of LLM-based agents
+Table 8. Average per-driver cost of OSS-Fuzz-Gen agents (USD), i.e., applying these agents to generate and refine a driver for a single function within an OSS-Fuzz project. New agents adds roughly 9.31% to the cost of existing agents. On 10 concurrent trials per function and 1555 functions from 336 projects, executing OSS-Fuzz-Gen with the introduced agents cost on average, $43.50 per evaluated project and $14,616 for all 336 projects.
+Agent
+Input
+Tools
+Output
+Total
+Function Analyzer
+$0.004
+$0.016
+$0.004
+$0.024
+Context Analyzer
+$0.022
+$0.023
+$0.012
+$0.056
+Existing agents
+$0.055
+$0.685
+$0.119
+$0.859
+Cost (per driver)
+$0.081
+$0.723
+$0.135
+$0.939
+Cost (per project)
+$3.75
+$33.49
+$6.26
+$43.50
+Table 8 summarizes the financial overhead introduced by the Function Analyzer and Crash Validation agents.
+The Function Analyzer costs only $0.024 per fuzz driver, substantially cheaper than other agents, while still reducing false positive crashes by 2–8%.
+In contrast, the Crash Validation agent introduces more cost per driver, but has higher impact, eliminating over 50% of false positive crashes reported as “Program Errors”.
+Together, these agents increase OSS-Fuzz-Gen API cost by about 9.31% but contributes significantly to reducing false positive crashes and improving fuzz driver quality.
+We also observe that 68% of OSS-Fuzz-Gen ’s total cost arises from tool interactions.
+This is largely due to the flexible code search tools provided to agents: retrieving source code for a single function may require multiple commands (e.g., using grep to locate function definitions, then using cat to retrieve the entire file content).
+Providing more specialized tools could reduce the number of such interactions and lower costs further.
+5.4. Threats to Validity
+We identify the various limitations of our work:
+Construct Validity:
+As our work in built within the OSS-Fuzz context, our evaluations only reported fuzzing behaviors that led to crashes.
+Hence, a low-quality fuzz driver can cause non-crash defects, which will not be captured by our evaluations.
+However, the fuzzing literature generally leaves other expected behaviors to the software owners to specify via asserts.
+In RQ3 (section 5.2.4), we use API cost to approximate the cost of an agent-based approach.
+This is imprecise, but note that the generated fuzz drivers are then run continuously, dwarfing generation costs.
+Internal Validity:
+The primary threat here is in the small sample sizes used in our detailed analysis of our agents’ behaviors.
+The detailed analyses reported here are consistent with our experience of agent behaviors during development and evaluation.
+External Validity:
+We conducted our experiments using the Gemini 2.5 Pro model and the results may not generalize to other AI models.
+Similarly, our evaluations were conducted using benchmark functions from OSS-Fuzz projects.
+We did not characterize the evaluated functions and do not make claims of generalizability of functions that are more complex than the ones we evaluated or in projects such as embedded firmware or software applications which differs from the “IT infrastructure” class of projects on OSS-Fuzz.
+6. Lessons Learned and Open Problems
+6.1. On Constraint-based Driver Generation
+Function constraints helped fuzz drivers satisfy target function expectations and modestly reduced false positives (section 5.3.1), but crashes remain frequent, averaging four per function.
+Many stem from functions outside the analyzer’s scope, where no constraints can be generated.
+Extending OSS-Fuzz-Gen with real-time constraint retrieval during driver generation, inspired by advances in context-aware code generation (Zhang et al., 2024a; Wang et al., 2025; Nashid et al., 2024; Jain et al., 2025; Chen et al., 2025), could reduce these crashes but introduce time and cost overhead.
+These false positives arise when constructing valid inputs and states for intermediate functions.
+The reader may therefore suggest focusing on public entry points, where drivers are easier and more reliable, while using directed fuzzing (Böhme et al., 2017; Fang et al., 2024; Luo et al., 2023; Canakci et al., 2022), program state restriction (Srivastava et al., 2022), and smarter seeds (Shi et al., 2024; Wang et al., 2017; Lyu et al., 2019) to reach deeper functions.
+While this approach is complementary to our proposals and can cover deeper functions with poor coverage, it involves executing all intermediate functions between the entry point and the target function and may be inefficient when the target function is far from the entry point.
+Empirical measurements would be of interest, to compare
+the overhead cost of mitigating false postivies during bottom-up fuzzing
+with
+the reduction in efficiency introduced by directed top-down fuzzing.
+6.2. On Context-based Crash Validation
+Context-based validation removed over half of false positives but remained limited by inaccurate root-cause analysis and unsystematic callsite analysis (section 5.3.2).
+This raises two key questions.
+First, should agents in multi-agent systems incorporate confidence or trust in upstream results?
+If prior analysis is uncertain, downstream agents could discount or discard it.
+While recent work explores LLM confidence estimation (Becker and Soatto, 2024; Xiong et al., 2024; Farr et al., 2024; Tripathi et al., 2025), its relevance to program analysis is unexplored.
+Second, can lightweight program analysis tools improve validation? Adding call-graph queries (Hall and Kennedy, 1992) or program slicing (Xu et al., 2005) may mitigate unsystematic reasoning, but static analysis is often imprecise (Walker et al., 2020).
+Better designs may balance innovative agent architectures with minimal tooling to produce more reliable results.
+Finally, the consistencies observed in repeated agent analysis highlight the complexity of crash validation and the need for empirical research to guide distinguishing true from false crashes.
+In addition, they also demonstrate the need for stronger crash validation methods, such as building the complete buggy program and generating entry-level inputs to trigger and validate the crash.
+This line of work can build on prior exploit generation works (Xu et al., 2018; You et al., 2017; Peng et al., 2025).
+6.3. Cost of an OSS-Fuzz-Gen Approach
+OSS-Fuzz-Gen costs stem mainly from API usage and compute costs.
+However, compute costs are negligible when compared to the cost of continuous fuzzing.
+As shown in section 5.3.3, generating a fuzz driver costs under $1 in API usage, averaging about $43.50 per project across the evaluated set.
+Generated drivers achieve 8.4% coverage on average, with some projects reaching 98%.
+These costs are minimal compared to manual development.
+The OSS-Fuzz program pays up to $15,000 for integrations reaching 50% coverage (noa, 2025g), estimatedly about $2,400 for the 8% average coverage of OSS-Fuzz-Gen.
+Despite such incentives, contributions remain low due to required expertise.
+Were Google employees to do the development work, consider that a junior Google engineer is paid ∼\sim$70/hour in salary (noa, 2025d).
+OSS-Fuzz-Gen generates 10 drivers and 8% coverage for roughly $35, or less than an hour of developer time.
+However, there are still opportunities to reduce API costs.
+For example, tool usage accounts for 77% of these costs, often because retrieving program symbols or function callsites involves multiple tool queries (e.g., using grep to find symbol location and cat to extract code snippets).
+Hence, streamlined tools that provide easy access to program symbols and call graph will reduce number of tool invocations and API cost.
+6.4. Implications for Research and Practice
+FalseCrashReducer advances the practicality of OSS-Fuzz-Gen and fuzz driver generation.
+By automating driver creation and crash validation, it accelerates fuzzing and enables new directions:
+Debugging assistance:
+The Function Analyzer and Crash Validation agents, though integrated with OSS-Fuzz-Gen, are loosely coupled and can be adapted for other fuzz driver generation or automated testing systems.
+By sharing these agents, their evaluation results, and discussions of their strengths and limitations, we provide guidance for future research and offer raw data as measurement baselines.
+We also observed that even imperfect agent analyses offer valuable insights for debugging and crash triaging.
+Future work could empirically assess how these imperfect analyses affect the effort and time required to debug and fix fuzzer crashes.
+CI/CD Integration:
+With drivers generated for every function and bugs uncovered within minutes, bottom-up fuzzing could be integrated into CI/CD pipelines.
+Unlike existing work that focus on top-down fuzzing (Klooster et al., 2023), however, scaling bottom-up fuzzing may overwhelm pipelines and compute.
+Research is needed on novel deployment strategies: which functions to fuzz, how often and how long, and how engineers should interact with results.
+AI-Assisted Bug Fixing:
+Faster fuzzing will surface more crashes than maintainers can fix, as seen in OSS-Fuzz (Serebryany, 2017) and Syzkaller (noa, 2005).
+Automated fixing with LLMs is promising (Zhang et al., 2024c) but underexplored.
+Future work should classify which crashes are tool-fixable versus human-required, and empirically develop metrics to estimate reliability of AI-generated patches from crash features.
+This will enable incremental adoption of AI-assisted bug fixing and lead to stronger support for fuzz driver generation.
+Bounty Program Impact:
+As automated driver generation spreads, bounty programs (noa, 2025g) may see more reports, including an increase in false positives, just as project maintainers already report frustration with low-quality AI-generated bug reports (Aaron, 2025; noa, 2025f).
+Hence, bounty policies may need stricter validation, stronger proof-of-concepts, or new criteria to balance discovery with maintainability.
+Advancing Techniques with Stronger Guarantees:
+We can apply improvements in fuzzing automations to automate other verification methods like bounded model checking (Clarke et al., 2001).
+Formal methods provide stronger guarantees but require expertise.
+While recent work show progress on reducing memory safety verification cost (Amusuo et al., 2025a; Amusuo et al., 2025b), novel AI-assisted automation could further lower barriers to formal methods.
+With potential improvements in usability of formal methods techniques, future work should also explore how fuzzing and formal methods complement one another and improve the scalability of underlying formal methods tools like SMT solvers.
+7. Conclusion
+False positive crashes remain a major challenge in fuzz driver generation and bottom-up fuzzing.
+We proposed two novel agent-driven strategies, implemented and integrated into OSS-Fuzz-Gen, to mitigate this problem.
+Our evaluation shows a modest improvement in reducing false positive crashes and substantial improvement in filtering crashes after the event.
+Further analysis quantifies their reliability, consistency, and cost, providing evidences of their strengths and weaknesses.
+Overall, these strategies mark a significant step toward practical, industry-scale fuzz driver generation, directly benefiting critical open-source projects on OSS-Fuzz.
+Open Science
+All systems described in this paper are open-source:
+https://github.com/google/oss-fuzz-gen.
+For evaluation scripts and raw data, see: https://github.com/PurdueDualityLab/ICSE-SEIP26-FalseCrashReducer.
+Acknowledgements.
+We thank Dustin Ingram for his contributions.
+Davis acknowledges support from Rolls Royce and Qualcomm.
+References
+noa (2005)
+2005.
+google/syzkaller.
+https://github.com/google/syzkaller
+original-date: 2015-10-12T06:05:05Z.
+noa (2016)
+2016.
+Announcing OSS-Fuzz: Continuous fuzzing for open source software.
+https://opensource.googleblog.com/2016/12/announcing-oss-fuzz-continuous-fuzzing.html
+noa (2019)
+2019.
+A gentle introduction to Linux Kernel fuzzing.
+https://blog.cloudflare.com/a-gentle-introduction-to-linux-kernel-fuzzing/
+noa (2025a)
+2025a.
+Accepting new projects.
+https://google.github.io/oss-fuzz/getting-started/accepting-new-projects/
+noa (2025b)
+2025b.
+Fuzz Introspector Web API.
+https://introspector.oss-fuzz.com/api-doc
+noa (2025c)
+2025c.
+Fuzzing | Project Profile.
+https://introspector.oss-fuzz.com/
+noa (2025d)
+2025d.
+Google Software Engineer Salary | $196K-$2.15M+.
+https://www.levels.fyi/companies/google/salaries/software-engineer
+noa (2025e)
+2025e.
+LLM Agents – Nextra.
+https://www.promptingguide.ai/research/llm-agents
+noa (2025f)
+2025f.
+Open source projects drown in bad bug reports penned by AI.
+https://www.theregister.com/2024/12/10/ai_slop_bug_reports/
+noa (2025g)
+2025g.
+OSS-Fuzz Reward Program Rules | Google Bug Hunters.
+https://bughunters.google.com/about/rules/open-source/5097259337383936/oss-fuzz-reward-program-rules
+noa (2025h)
+2025h.
+ossf/fuzz-introspector.
+https://github.com/ossf/fuzz-introspector
+original-date: 2021-12-06T19:27:40Z.
+Aaron (2025)
+Aaron. 2025.
+Death by a Thousand AI Slops: How Fake Bugs Are Killing Bug Bounties.
+https://infosecwriteups.com/death-by-a-thousand-ai-slops-how-fake-bugs-are-killing-bug-bounties-e4a8803edab7
+Amusuo et al. (2025a)
+Paschal C. Amusuo, Owen Cochell, Taylor Le Lievre, Parth V. Patil, Aravind Machiry, and James C. Davis. 2025a.
+Do Unit Proofs Work? An Empirical Study of Compositional Bounded Model Checking for Memory Safety Verification. In 2026 IEEE/ACM 48th International Conference on Software Engineering.
+arXiv:2503.13762 [cs]
+doi:10.48550/arXiv.2503.13762
+Amusuo et al. (2025b)
+Paschal C. Amusuo, Parth V. Patil, Owen Cochell, Taylor Le Lievre, and James C. Davis. 2025b.
+A Unit Proofing Framework for Code-level Verification: A Research Agenda. In 2025 IEEE/ACM 47th International Conference on Software Engineering: New Ideas and Emerging Results (ICSE-NIER). 36–40.
+doi:10.1109/ICSE-NIER66352.2025.00013
+ISSN: 2832-7632.
+Babić et al. (2019)
+Domagoj Babić, Stefan Bucur, Yaohui Chen, Franjo Ivančić, Tim King, Markus Kusano, Caroline Lemieux, László Szekeres, and Wei Wang. 2019.
+FUDGE: fuzz driver generation at scale. In Proceedings of the 2019 27th ACM Joint Meeting on European Software Engineering Conference and Symposium on the Foundations of Software Engineering (New York, NY, USA) (ESEC/FSE 2019). Association for Computing Machinery, 975–985.
+doi:10.1145/3338906.3340456
+Becker and Soatto (2024)
+Evan Becker and Stefano Soatto. 2024.
+Cycles of Thought: Measuring LLM Confidence through Stable Explanations.
+arXiv:2406.03441 [cs]
+doi:10.48550/arXiv.2406.03441
+Böhme et al. (2017)
+Marcel Böhme, Van-Thuan Pham, Manh-Dung Nguyen, and Abhik Roychoudhury. 2017.
+Directed Greybox Fuzzing. In Proceedings of the 2017 ACM SIGSAC Conference on Computer and Communications Security (New York, NY, USA) (CCS ’17). Association for Computing Machinery, 2329–2344.
+doi:10.1145/3133956.3134020
+Canakci et al. (2022)
+Sadullah Canakci, Nikolay Matyunin, Kalman Graffi, Ajay Joshi, and Manuel Egele. 2022.
+TargetFuzz: Using DARTs to Guide Directed Greybox Fuzzers. In Proceedings of the 2022 ACM on Asia Conference on Computer and Communications Security (New York, NY, USA) (ASIA CCS ’22). Association for Computing Machinery, 561–573.
+doi:10.1145/3488932.3501276
+Chen et al. (2025)
+Jingyi Chen, Songqiang Chen, Jialun Cao, Jiasi Shen, and Shing-Chi Cheung. 2025.
+When LLMs Meet API Documentation: Can Retrieval Augmentation Aid Code Generation Just as It Helps Developers?
+arXiv:2503.15231 [cs]
+doi:10.48550/arXiv.2503.15231
+Clarke et al. (2001)
+Edmund Clarke, Armin Biere, Richard Raimi, and Yunshan Zhu. 2001.
+Bounded Model Checking Using Satisfiability Solving.
+19, 1 (01 07 2001), 7–34.
+doi:10.1023/A:1011276507260
+claytonsiemens77 (2025)
+claytonsiemens77. 2025.
+Pipes and Filters pattern - Azure Architecture Center.
+https://learn.microsoft.com/en-us/azure/architecture/patterns/pipes-and-filters
+Deljouyi (2024)
+Amirhossein Deljouyi. 2024.
+Understandable Test Generation Through Capture/Replay and LLMs. In Proceedings of the 2024 IEEE/ACM 46th International Conference on Software Engineering: Companion Proceedings (New York, NY, USA) (ICSE-Companion ’24). Association for Computing Machinery, 261–263.
+doi:10.1145/3639478.3639789
+Ding and Le Goues (2021)
+Zhen Yu Ding and Claire Le Goues. 2021.
+An Empirical Study of OSS-Fuzz Bugs. In 2021 IEEE/ACM 18th International Conference on Mining Software Repositories (MSR). 131–142.
+doi:10.1109/MSR52588.2021.00026
+ISSN: 2574-3864.
+Fang et al. (2024)
+Haoran Fang, Kaikai Zhang, Donghui Yu, and Yuanyuan Zhang. 2024.
+DDGF: Dynamic Directed Greybox Fuzzing with Path Profiling. In Proceedings of the 33rd ACM SIGSOFT International Symposium on Software Testing and Analysis (New York, NY, USA) (ISSTA 2024). Association for Computing Machinery, 832–843.
+doi:10.1145/3650212.3680324
+Farr et al. (2024)
+David Farr, Iain Cruickshank, Nico Manzonelli, Nicholas Clark, Kate Starbird, and Jevin West. 2024.
+LLM Confidence Evaluation Measures in Zero-Shot CSS Classification.
+arXiv:2410.13047 [cs]
+doi:10.48550/arXiv.2410.13047
+Fioraldi et al. (2020)
+Andrea Fioraldi, Dominik Maier, Heiko Eißfeldt, and Marc Heuse. 2020.
+AFL++ : Combining Incremental Steps of Fuzzing Research.
+https://www.usenix.org/conference/woot20/presentation/fioraldi
+Gao et al. (2024)
+Dawei Gao, Zitao Li, Xuchen Pan, Weirui Kuang, Zhijian Ma, Bingchen Qian, Fei Wei, Wenhao Zhang, Yuexiang Xie, Daoyuan Chen, Liuyi Yao, Hongyi Peng, Zeyu Zhang, Lin Zhu, Chen Cheng, Hongzhu Shi, Yaliang Li, Bolin Ding, and Jingren Zhou. 2024.
+AgentScope: A Flexible yet Robust Multi-Agent Platform.
+arXiv:2402.14034 [cs]
+doi:10.48550/arXiv.2402.14034
+Gao et al. (2023)
+Wentao Gao, Van-Thuan Pham, Dongge Liu, Oliver Chang, Toby Murray, and Benjamin I.P. Rubinstein. 2023.
+Beyond the Coverage Plateau: A Comprehensive Study of Fuzz Blockers (Registered Report). In Proceedings of the 2nd International Fuzzing Workshop (New York, NY, USA) (FUZZING 2023). Association for Computing Machinery, 47–55.
+doi:10.1145/3605157.3605177
+Görz et al. (2025)
+Philipp Görz, Joschua Schilling, Thorsten Holz, and Marcel Böhme. 2025.
+An Empirical Study of Fuzz Harness Degradation.
+arXiv:2505.06177 [cs]
+doi:10.48550/arXiv.2505.06177
+Hall and Kennedy (1992)
+Mary W. Hall and Ken Kennedy. 1992.
+Efficient call graph analysis.
+ACM Lett. Program. Lang. Syst. 1, 3 (01 09 1992), 227–242.
+doi:10.1145/151640.151643
+He et al. (2025)
+Junda He, Christoph Treude, and David Lo. 2025.
+LLM-Based Multi-Agent Systems for Software Engineering: Literature Review, Vision, and the Road Ahead.
+ACM Trans. Softw. Eng. Methodol. 34, 5 (24 05 2025), 124:1–124:30.
+doi:10.1145/3712003
+Ispoglou et al. (2020)
+Kyriakos Ispoglou, Daniel Austin, Vishwath Mohan, and Mathias Payer. 2020.
+FuzzGen: Automatic Fuzzer Generation. 2271–2287.
+https://www.usenix.org/conference/usenixsecurity20/presentation/ispoglou
+Jain et al. (2025)
+Nihal Jain, Robert Kwiatkowski, Baishakhi Ray, Murali Krishna Ramanathan, and Varun Kumar. 2025.
+On Mitigating Code LLM Hallucinations with API Documentation. In 2025 IEEE/ACM 47th International Conference on Software Engineering: Software Engineering in Practice (ICSE-SEIP). 237–248.
+doi:10.1109/ICSE-SEIP66354.2025.00027
+ISSN: 2832-7659.
+Jha and Lee (2013)
+Ajay K. Jha and Woo J. Lee. 2013.
+Capture and Replay Technique for Reproducing Crash in Android Applications. In Artificial Intelligence and Applications / 794: Modelling, Identification and Control / 795: Parallel and Distributed Computing and Networks / 796: Software Engineering / 792: Web-based Education (Innsbruck, Austria). ACTAPRESS.
+doi:10.2316/P.2013.796-025
+Jiang et al. (2025)
+Junqi Jiang, Tom Bewley, Salim I. Amoukou, Francesco Leofante, Antonio Rago, Saumitra Mishra, and Francesca Toni. 2025.
+Representation Consistency for Accurate and Coherent LLM Answer Aggregation.
+arXiv:2506.21590 [cs]
+doi:10.48550/arXiv.2506.21590
+Keller et al. (2023)
+Brandon N. Keller, Benjamin S. Meyers, and Andrew Meneely. 2023.
+What Happens When We Fuzz? Investigating OSS-Fuzz Bug History. In 2023 IEEE/ACM 20th International Conference on Mining Software Repositories (MSR). 207–217.
+doi:10.1109/MSR59073.2023.00038
+ISSN: 2574-3864.
+Khot et al. (2023)
+Tushar Khot, Harsh Trivedi, Matthew Finlayson, Yao Fu, Kyle Richardson, Peter Clark, and Ashish Sabharwal. 2023.
+Decomposed Prompting: A Modular Approach for Solving Complex Tasks.
+arXiv:2210.02406 [cs]
+doi:10.48550/arXiv.2210.02406
+Klooster et al. (2023)
+Thijs Klooster, Fatih Turkmen, Gerben Broenink, Ruben Ten Hove, and Marcel Böhme. 2023.
+Continuous Fuzzing: A Study of the Effectiveness and Scalability of Fuzzing in CI/CD Pipelines. In 2023 IEEE/ACM International Workshop on Search-Based and Fuzz Testing (SBFT). 25–32.
+doi:10.1109/SBFT59156.2023.00015
+Lalanda (1998)
+Philippe Lalanda. 1998.
+Shared repository pattern.
+5th Annual Conference on the Pattern Languages of Programs (1998).
+Leotta et al. (2013)
+Maurizio Leotta, Diego Clerissi, Filippo Ricca, and Paolo Tonella. 2013.
+Capture-replay vs. programmable web testing: An empirical assessment during test case evolution. In 2013 20th Working Conference on Reverse Engineering (WCRE). 272–281.
+doi:10.1109/WCRE.2013.6671302
+ISSN: 2375-5369.
+Li et al. (2024)
+Xinyi Li, Sai Wang, Siqi Zeng, Yu Wu, and Yi Yang. 2024.
+A survey on LLM-based multi-agent systems: workflow, infrastructure, and challenges.
+Vicinagearth 1, 1 (08 10 2024), 9.
+doi:10.1007/s44336-024-00009-2
+Liu et al. (2014)
+Chien Hung Liu, Chien Yu Lu, Shan Jen Cheng, Koan Yuh Chang, Yung Chia Hsiao, and Weng Ming Chu. 2014.
+Capture-Replay Testing for Android Applications. In 2014 International Symposium on Computer, Consumer and Control. 1129–1132.
+doi:10.1109/IS3C.2014.293
+Liu et al. (2024a)
+Dongge Liu, Oliver Chang, Jonathan metzman, Martin Sablotny, and Mihai Maruseac. 2024a.
+OSS-Fuzz-Gen: Automated Fuzz Target Generation.
+https://github.com/google/oss-fuzz-gen
+Liu et al. (2023)
+Dongge Liu, Jonathan Metzman, Oliver Chang, and Google Open Source Security Team. 2023.
+AI-Powered Fuzzing: Breaking the Bug Hunting Barrier.
+https://security.googleblog.com/2023/08/ai-powered-fuzzing-breaking-bug-hunting.html
+Liu et al. (2024b)
+Yuwei Liu, Yanhao Wang, Xiangkun Jia, Zheng Zhang, and Purui Su. 2024b.
+AFGen: Whole-Function Fuzzing for Applications and Libraries. In 2024 IEEE Symposium on Security and Privacy (SP). 1901–1919.
+doi:10.1109/SP54263.2024.00011
+ISSN: 2375-1207.
+Liu et al. (2025)
+Zhengyao Liu, Yunlong Ma, Jingxuan Xu, Junchen Ai, Xiang Gao, Hailong Sun, and Abhik Roychoudhury. 2025.
+Agent That Debugs: Dynamic State-Guided Vulnerability Repair.
+arXiv:2504.07634 [cs]
+doi:10.48550/arXiv.2504.07634
+Luo et al. (2023)
+Changhua Luo, Wei Meng, and Penghui Li. 2023.
+SelectFuzz: Efficient Directed Fuzzing with Selective Path Exploration. In 2023 IEEE Symposium on Security and Privacy (SP). 2693–2707.
+doi:10.1109/SP46215.2023.10179296
+ISSN: 2375-1207.
+Lyu et al. (2019)
+Chenyang Lyu, Shouling Ji, Yuwei Li, Junfeng Zhou, Jianhai Chen, and Jing Chen. 2019.
+SmartSeed: Smart Seed Generation for Efficient Fuzzing.
+arXiv:1807.02606 [cs]
+doi:10.48550/arXiv.1807.02606
+Lyu et al. (2024)
+Yunlong Lyu, Yuxuan Xie, Peng Chen, and Hao Chen. 2024.
+Prompt Fuzzing for Fuzz Driver Generation. In Proceedings of the 2024 on ACM SIGSAC Conference on Computer and Communications Security (New York, NY, USA) (CCS ’24). Association for Computing Machinery, 3793–3807.
+doi:10.1145/3658644.3670396
+Manès et al. (2021)
+Valentin J.M. Manès, HyungSeok Han, Choongwoo Han, Sang Kil Cha, Manuel Egele, Edward J. Schwartz, and Maverick Woo. 2021.
+The Art, Science, and Engineering of Fuzzing: A Survey.
+IEEE Transactions on Software Engineering 47, 11 (11 2021), 2312–2331.
+doi:10.1109/TSE.2019.2946563
+Conference Name: IEEE Transactions on Software Engineering.
+Marinescu (2021)
+Paul Marinescu. 2021.
+Autonomous testing of services at scale.
+https://engineering.fb.com/2021/10/20/developer-tools/autonomous-testing/
+Miller et al. (1990)
+Barton P. Miller, Lars Fredriksen, and Bryan So. 1990.
+An empirical study of the reliability of UNIX utilities.
+Commun. ACM 33, 12 (01 12 1990), 32–44.
+doi:10.1145/96267.96279
+Muralee et al. (2025)
+Siddharth Muralee, Sourag Cherupattamoolayil, James C. Davis, Antonio Bianchi, and Aravind Machiry. 2025.
+Reactive Bottom-Up Testing.
+arXiv:2509.03711 [cs]
+doi:10.48550/arXiv.2509.03711
+Nashid et al. (2024)
+Noor Nashid, Taha Shabani, Parsa Alian, and Ali Mesbah. 2024.
+Contextual API Completion for Unseen Repositories Using LLMs.
+arXiv:2405.04600 [cs]
+doi:10.48550/arXiv.2405.04600
+Nourry et al. (2025)
+Olivier Nourry, Yutaro Kashiwa, Weiyi Shang, Honglin Shu, and Yasutaka Kamei. 2025.
+My Fuzzers Won’t Build: An Empirical Study of Fuzzing Build Failures.
+ACM Trans. Softw. Eng. Methodol. 34, 2 (20 01 2025), 29:1–29:30.
+doi:10.1145/3688842
+Pan et al. (2025)
+Bo Pan, Jiaying Lu, Ke Wang, Li Zheng, Zhen Wen, Yingchaojie Feng, Minfeng Zhu, and Wei Chen. 2025.
+AgentCoord: Visually exploring coordination strategy for LLM-based multi-agent collaboration.
+Computers & Graphics 132 (01 11 2025), 104338.
+doi:10.1016/j.cag.2025.104338
+Peng et al. (2025)
+Wanzong Peng, Lin Ye, Xuetao Du, Hongli Zhang, Dongyang Zhan, Yunting Zhang, Yicheng Guo, and Chen Zhang. 2025.
+PwnGPT: Automatic Exploit Generation Based on Large Language Models. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) (Vienna, Austria), Wanxiang Che, Joyce Nabende, Ekaterina Shutova, and Mohammad Taher Pilehvar (Eds.). Association for Computational Linguistics, 11481–11494.
+doi:10.18653/v1/2025.acl-long.562
+Prasad et al. (2024)
+Archiki Prasad, Alexander Koller, Mareike Hartmann, Peter Clark, Ashish Sabharwal, Mohit Bansal, and Tushar Khot. 2024.
+ADaPT: As-Needed Decomposition and Planning with Language Models.
+arXiv:2311.05772 [cs]
+doi:10.48550/arXiv.2311.05772
+Serebryany (2017)
+Kostya Serebryany. 2017.
+{OSS-Fuzz} - Google’s continuous fuzzing service for open source software.
+(2017).
+https://www.usenix.org/conference/usenixsecurity17/technical-sessions/presentation/serebryany
+Sherman and Nagy (2025)
+Gabriel Sherman and Stefan Nagy. 2025.
+No Harness, No Problem: Oracle-guided Harnessing for Auto-generating C API Fuzzing Harnesses. IEEE Computer Society, 165–177.
+doi:10.1109/ICSE55347.2025.00239
+Shi et al. (2024)
+Wenxuan Shi, Yunhang Zhang, Xinyu Xing, and Jun Xu. 2024.
+Harnessing Large Language Models for Seed Generation in Greybox Fuzzing.
+arXiv:2411.18143 [cs]
+doi:10.48550/arXiv.2411.18143
+Smith et al. (2021)
+Tyson Smith, Jesse Schwartzentruber, and Sylvestre Ledru. 2021.
+Browser fuzzing at Mozilla.
+https://blog.mozilla.org/attack-and-defense/2021/05/20/browser-fuzzing-at-mozilla
+Srivastava et al. (2022)
+Prashast Srivastava, Stefan Nagy, Matthew Hicks, Antonio Bianchi, and Mathias Payer. 2022.
+One Fuzz Doesn’t Fit All: Optimizing Directed Fuzzing via Target-tailored Program State Restriction. In Proceedings of the 38th Annual Computer Security Applications Conference (New York, NY, USA) (ACSAC ’22). Association for Computing Machinery, 388–399.
+doi:10.1145/3564625.3564643
+Stephens et al. (2016)
+Nick Stephens, John Grosen, Christopher Salls, Andrew Dutcher, Ruoyu Wang, Jacopo Corbetta, Yan Shoshitaishvili, Christopher Kruegel, and Giovanni Vigna. 2016.
+Driller: Augmenting Fuzzing Through Selective Symbolic Execution. In Proceedings 2016 Network and Distributed System Security Symposium (San Diego, CA). Internet Society.
+doi:10.14722/ndss.2016.23368
+Steven et al. (2000)
+John Steven, Pravir Chandra, Bob Fleck, and Andy Podgurski. 2000.
+jRapture: A Capture/Replay tool for observation-based testing. In Proceedings of the 2000 ACM SIGSOFT international symposium on Software testing and analysis (New York, NY, USA) (ISSTA ’00). Association for Computing Machinery, 158–167.
+doi:10.1145/347324.348993
+Tripathi et al. (2025)
+Sahil Tripathi, Md Tabrez Nafis, Imran Hussain, and Jiechao Gao. 2025.
+The Confidence Paradox: Can LLM Know When It’s Wrong.
+arXiv:2506.23464 [cs]
+doi:10.48550/arXiv.2506.23464
+Valentin et al. (2025)
+Thomas Valentin, Ardi Madadi, Gaetano Sapia, and Marcel Böhme. 2025.
+Estimating Correctness Without Oracles in LLM-Based Code Generation.
+arXiv:2507.00057 [cs]
+doi:10.48550/arXiv.2507.00057
+Walker et al. (2020)
+Andrew Walker, Michael Coffey, Pavel Tisnovsky, and Tomas Cerny. 2020.
+On Limitations of Modern Static Analysis Tools. In Information Science and Applications (Singapore), Kuinam J. Kim and Hye-Young Kim (Eds.). Springer, 577–586.
+doi:10.1007/978-981-15-1465-4_57
+Wang et al. (2017)
+Junjie Wang, Bihuan Chen, Lei Wei, and Yang Liu. 2017.
+Skyfire: Data-Driven Seed Generation for Fuzzing. In 2017 IEEE Symposium on Security and Privacy (SP). 579–594.
+doi:10.1109/SP.2017.23
+ISSN: 2375-1207.
+Wang et al. (2025)
+Zora Zhiruo Wang, Akari Asai, Xinyan Velocity Yu, Frank F. Xu, Yiqing Xie, Graham Neubig, and Daniel Fried. 2025.
+CodeRAG-Bench: Can Retrieval Augment Code Generation?
+arXiv:2406.14497 [cs]
+doi:10.48550/arXiv.2406.14497
+Xiao and Zhu (2025)
+Tong Xiao and Jingbo Zhu. 2025.
+Foundations of Large Language Models.
+arXiv:2501.09223 [cs]
+doi:10.48550/arXiv.2501.09223
+Xiong et al. (2024)
+Miao Xiong, Zhiyuan Hu, Xinyang Lu, Yifei Li, Jie Fu, Junxian He, and Bryan Hooi. 2024.
+Can LLMs Express Their Uncertainty? An Empirical Evaluation of Confidence Elicitation in LLMs.
+arXiv:2306.13063 [cs]
+doi:10.48550/arXiv.2306.13063
+Xu et al. (2005)
+Baowen Xu, Ju Qian, Xiaofang Zhang, Zhongqiang Wu, and Lin Chen. 2005.
+A brief survey of program slicing.
+SIGSOFT Softw. Eng. Notes 30, 2 (01 03 2005), 1–36.
+doi:10.1145/1050849.1050865
+Xu et al. (2025)
+Hanxiang Xu, Wei Ma, Ting Zhou, Yanjie Zhao, Kai Chen, Qiang Hu, Yang Liu, and Haoyu Wang. 2025.
+CKGFuzzer: LLM-Based Fuzz Driver Generation Enhanced By Code Knowledge Graph. In 2025 IEEE/ACM 47th International Conference on Software Engineering: Companion Proceedings (ICSE-Companion). 243–254.
+doi:10.1109/ICSE-Companion66252.2025.00079
+ISSN: 2574-1934.
+Xu et al. (2018)
+Luhang Xu, Weixi Jia, Wei Dong, and Yongjun Li. 2018.
+Automatic Exploit Generation for Buffer Overflow Vulnerabilities. In 2018 IEEE International Conference on Software Quality, Reliability and Security Companion (QRS-C). 463–468.
+doi:10.1109/QRS-C.2018.00085
+You et al. (2017)
+Wei You, Peiyuan Zong, Kai Chen, XiaoFeng Wang, Xiaojing Liao, Pan Bian, and Bin Liang. 2017.
+SemFuzz: Semantics-based Automatic Generation of Proof-of-Concept Exploits. In Proceedings of the 2017 ACM SIGSAC Conference on Computer and Communications Security (New York, NY, USA) (CCS ’17). Association for Computing Machinery, 2139–2154.
+doi:10.1145/3133956.3134085
+Zhang et al. (2021)
+Cen Zhang, Xingwei Lin, Yuekang Li, Yinxing Xue, Jundong Xie, Hongxu Chen, Xinlei Ying, Jiashui Wang, and Yang Liu. 2021.
+APICraft: Fuzz Driver Generation for Closed-source SDK Libraries. 2811–2828.
+https://www.usenix.org/conference/usenixsecurity21/presentation/zhang-cen
+Zhang et al. (2024d)
+Cen Zhang, Yaowen Zheng, Mingqiang Bai, Yeting Li, Wei Ma, Xiaofei Xie, Yuekang Li, Limin Sun, and Yang Liu. 2024d.
+How Effective Are They? Exploring Large Language Model Based Fuzz Driver Generation. In Proceedings of the 33rd ACM SIGSOFT International Symposium on Software Testing and Analysis (New York, NY, USA) (ISSTA 2024). Association for Computing Machinery, 1223–1235.
+doi:10.1145/3650212.3680355
+Zhang et al. (2024a)
+Kechi Zhang, Jia Li, Ge Li, Xianjie Shi, and Zhi Jin. 2024a.
+CodeAgent: Enhancing Code Generation with Tool-Integrated Agent Systems for Real-World Repo-level Coding Challenges.
+arXiv:2401.07339 [cs]
+doi:10.48550/arXiv.2401.07339
+Zhang et al. (2024b)
+Yuntong Zhang, Haifeng Ruan, Zhiyu Fan, and Abhik Roychoudhury. 2024b.
+AutoCodeRover: Autonomous Program Improvement. In Proceedings of the 33rd ACM SIGSOFT International Symposium on Software Testing and Analysis (New York, NY, USA) (ISSTA 2024). Association for Computing Machinery, 1592–1604.
+doi:10.1145/3650212.3680384
+Zhang et al. (2024c)
+Yuntong Zhang, Jiawei Wang, Dominic Berzin, Martin Mirchev, Dongge Liu, Abhishek Arya, Oliver Chang, and Abhik Roychoudhury. 2024c.
+Fixing Security Vulnerabilities with AI in OSS-Fuzz.
+arXiv:2411.03346 [cs]
+doi:10.48550/arXiv.2411.03346
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

@@ -1,0 +1,9770 @@
+RAIN-Merging: A Gradient-Free Method to Enhance Instruction Following in Large Reasoning Models with Preserved Thinking Format
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Preliminary and Observations
+3
+Our RAIN-Merging Method
+4
+Experiments
+4.1
+Experimental Setup
+4.2
+Results
+5
+Conclusion
+References
+A
+Ethics Statement
+B
+Reproducibility Statement
+C
+LLM Usage Statement
+D
+Related Work
+E
+Proof
+E.1
+Proof of why orthogonal in parameters
+≠
+\neq
+invariant in outputs
+E.2
+Proof of Prop.
+F
+Algorithm
+G
+Method Implementation Details
+G.1
+Forward Mechanism in Transformer
+G.2
+Implementation Details in Merging
+H
+Calibration Set Construction
+H.1
+Reasoning calibration set
+H.2
+Instruction calibration set
+I
+Detailed Experimental Setup
+I.1
+Benchmarks
+Instruction-following Benchmarks.
+Reasoning & General Benchmarks.
+I.2
+Baselines
+I.3
+Hyperparameters
+J
+Additional Experiments
+J.1
+Detailed Math Benchmark Results
+J.2
+Ablation Study of the Global Scalar
+J.3
+Ablation Study of Reasoning Calibration Set Size
+J.4
+Visualization of Merging Coefficients in Stage 2
+J.5
+Ablation Study of Instruction Calibration Set Generalization
+J.6
+Generalization to Unseen Instruction-Following Benchmarks
+J.7
+Instruction-Type Breakdown on IFEval
+J.8
+Semantic Robustness to Paraphrased Instructions
+J.9
+Case Study on IFEval
+J.10
+Case Study on GPQA
+K
+Implications
+L
+Limitations and Future Work
+License: arXiv.org perpetual non-exclusive license
+arXiv:2602.22538v1 [cs.LG] 26 Feb 2026
+RAIN-Merging: A Gradient-Free Method to Enhance Instruction Following in Large Reasoning Models with Preserved Thinking Format
+Zhehao Huang  Yuhang Liu  Baijiong Lin  Yixin Lou  Zhengbao He  Hanling Tian
+Affiliation:
+Institute of Image Processing and Pattern Recoginition, School of Automation and Intelligent Sensing,Shanghai Jiao Tong University
+Affiliation:
+The Hong Kong University of Science and Technology (Guangzhou)
+Tao Li
+Xiaolin Huang
+Email:
+{kinght_h,yuhangliu,loulou_0727,lstefanie,hanlingtian}@sjtu.edu.cn
+Affiliation:
+Institute of Image Processing and Pattern Recoginition, School of Automation and Intelligent Sensing,Shanghai Jiao Tong University
+Affiliation:
+MoE Key Laboratory of System Control and Information Processing (Shanghai)
+Email:
+li.tao@sjtu.edu.cn
+Email:
+xiaolinhuang@sjtu.edu.cn
+Email:
+blin241@connect.hkust-gz.edu.cn
+Abstract
+Large reasoning models (LRMs) excel at a long chain of reasoning but often fail to faithfully follow instructions regarding output format, constraints, or specific requirements. We investigate whether this gap can be closed by integrating an instruction-tuned model (ITM) into an LRM. Analyzing their differences in parameter space, namely task vectors, we find that their principal subspaces are nearly orthogonal across key modules, suggesting a lightweight merging with minimal interference. However, we also demonstrate that naïve merges are fragile because they overlook the output format mismatch between LRMs (with explicit
+thinking
+and
+response
+segments) and ITMs (answers-only). We introduce
+RAIN-Merging
+(Reasoning-Aware Instruction-attention guided Null-space projection Merging), a gradient-free method that integrates instruction following while preserving thinking format and reasoning performance. First, with a small reasoning calibration set, we project the ITM task vector onto the null space of forward features at thinking special tokens, which preserves the LRM’s structured reasoning mechanisms. Second, using a small instruction calibration set, we estimate instruction attention to derive module-specific scaling that amplifies instruction-relevant components and suppresses leakage. Across four instruction-following benchmarks and nine reasoning & general capability benchmarks, RAIN-Merging substantially improves instruction adherence while maintaining reasoning quality. The gains are consistent across model scales and architectures, translating to improved performance in agentic scenarios. Code is available at
+https://github.com/K1nght/RAIN-Merging
+.
+1
+Introduction
+In the current boom of research, Large Reasoning Models (LRMs, like OpenAI-o1
+(
+Jaech et al., 2024
+)
+, DeepSeek-R1
+(
+Guo et al., 2025
+)
+) have shown strong potential on tasks that require rigorous multi-step reasoning
+(
+Wei et al., 2022
+)
+, such as mathematical derivation
+(
+Shao et al., 2024
+)
+and program synthesis
+(
+Guo et al., 2024
+)
+. However, a discouraging paradox has emerged: although LRMs perform well in purely reasoning-oriented settings, they lag in instruction following
+(
+Fu et al., 2025a
+;
+Li et al., 2025a
+)
+. They often generate lengthy logical derivations yet ignore user-specified formats, constraints, or specific operational requirements in the final response. This inconsistency undermines LRM practicality and reliability in real-world applications
+(
+Chkirbene et al., 2024
+)
+, especially in agent
+(
+Qi et al., 2025
+)
+and professional tool deployments
+(
+Zhao et al., 2024
+)
+.
+A straightforward remedy is to continue training LRMs with supervised fine-tuning (SFT) to strengthen instruction following. However, building high-quality supervision datasets for tasks that require generating long chains of thought entails substantial annotation and computational resources
+(
+Qin et al., 2025
+)
+. Moreover, these post-training methods often induce capability regressions, with degradation in generality and in responses to unseen instructions
+(
+Shenfeld et al., 2025
+)
+. In contrast, a training-free and compute-light alternative is model merging, which extracts parameter differences between fine-tuned and pre-trained models (namely the
+task vector
+), then combines these task vectors to create a unified model that preserves pre-trained knowledge while incorporating capabilities from multiple tasks
+(
+Ilharco et al., 2023
+)
+. This motivates a central question:
+whether we can merge the LRM and the Instruction-tuned Model (ITM) to enhance the instruction following while preserving its reasoning capability
+.
+Figure 1:
+An overview of
+RAIN-Merging
+. In the case, the LRM arrives at the correct solution but ignores the required format and specific code. To preserve the reasoning structure, we perform training-free merging by combining a task vector projected onto the null space of the thinking format with instruction-attention guided coefficients. The merged model remains correct while satisfying the specified constraints. See
+Sec.
+3
+for details.
+We begin with a parameter-space analysis of the task vectors from the LRM and the Instruction-tuned Model (ITM) relative to their shared base. We find that their principal subspaces are nearly orthogonal across key modules, which indicates minimal interference between the two capabilities and suggests that merging is a promising lightweight way to enhance the LRM’s instruction following
+(
+Ortiz-Jiménez et al., 2023
+)
+. However, direct merging carries risks. LRMs and ITMs differ fundamentally in output structure: the former explicitly separates “thinking” and “response” with special markers (e.g., R1-style
+<think>
+…
+\dots
+</think>
+), whereas the latter provides only a final answer. Traditional data-free merging
+(
+Ilharco et al., 2023
+;
+Goddard et al., 2024
+)
+prunes or scales the task vector purely from parameter-internal statistics to balance domain performance, thereby ignoring output-distribution mismatches and disrupting the LRM’s structured reasoning. Recent work
+(
+Nobari et al., 2025
+;
+Yao et al., 2025
+;
+Chopra et al., 2025
+)
+has tried to guide merging with forward activations using small calibration sets. Although this introduces data-driven constraints, the lack of an explicit notion of the output mismatch between the two types still makes it difficult to achieve a stable and effective balance between preserving reasoning structure and improving instruction following.
+To this end, we propose a two-stage merging strategy that enhances instruction-following capability without sacrificing the thinking format and reasoning performance of the LRM. First, leveraging task-vector orthogonality between the LRM and ITM, we preserve reasoning ability and enforce thinking-format invariance by projecting the ITM task vector into the null space derived from forward features at thinking tokens on a small reasoning-calibration set. This keeps the merged model’s reasoning representations aligned with the original LRM and retains structured outputs. Second, while keeping these invariances fixed, we aim to enhance instruction-following performance as much as possible. We improve instruction adherence by estimating per-module importance based on attention outputs over instruction-related spans from a small set of instruction examples. Attention-guided coefficients are then assigned to strengthen instruction-relevant behaviors.We refer to the overall two-stage approach as Reasoning-Aware Instruction-guided Null-space projection Merging (
+RAIN-Merging
+) in
+Fig.
+1
+, which effectively synergizes reasoning and instruction-following performance.
+We conduct a systematic evaluation of our proposed method on four instruction-following benchmarks and on nine evaluation benchmarks that cover mathematics, code, STEM, and creative-writing capabilities. The results show that RAIN-Merging not only substantially improves the LRM’s instruction-following ability but also maintains reasoning and general capability. Moreover, our method exhibits consistent stability across different model sizes and architectures, and demonstrates enhanced performance in agentic scenarios.
+2
+Preliminary and Observations
+Task Vector.
+A task vector
+(
+Ilharco et al., 2023
+)
+characterizes the parameter delta from a base model to a task-specific one. A straightforward way to combine capabilities is
+task arithmetic
+, which linearly adds such deltas to a base model to obtain a multi-skilled model. This simple approach can work when tasks are compatible. However, for distinct abilities such as reasoning and instruction-following that impose different output structures
+(
+Yadav et al., 2023
+)
+, naive linear addition may cause capability interference and disrupt the representations essential to each domain.
+Figure 2:
+Principal subspace cosine similarity between LRM and ITM task vectors for each layer and submodule. The similarities are consistently low (
+<
+0.1
+<0.1
+).
+Orthogonality between Reason & Instruction Task Vectors.
+To examine whether capability interference arises when merging ITM
+θ
+I
+\theta_{I}
+into LRM
+θ
+R
+\theta_{R}
+, we take the shared base model
+θ
+B
+\theta_{B}
+as reference and define the LRM task vector
+Δ
+R
+=
+θ
+R
+−
+θ
+B
+\Delta_{R}=\theta_{R}-\theta_{B}
+and the ITM task vector
+Δ
+I
+=
+θ
+I
+−
+θ
+B
+\Delta_{I}=\theta_{I}-\theta_{B}
+. We perform singular value decomposition (SVD) within the main forward modules, e.g. attention and FFN, for these two task vectors and evaluate the principal subspace cosine similarity of their principal subspaces. As shown in
+Fig.
+2
+,
+A1
+,
+A2
+, the two are nearly orthogonal since their similarities are all
+<
+0.1
+<0.1
+. Prior studies
+(
+Ortiz-Jiménez et al., 2023
+)
+indicate that this phenomenon reflects a low degree of coupling between reasoning ability and instruction following in parameter space, which suggests that lightweight task-vector merging strategies can enhance instruction following while preserving the original reasoning performance. More details are in Appendix
+E.1
+.
+Risks in Thinking Format During Merging.
+However, orthogonality in parameter space is not sufficient to guarantee that the merged model will retain the LRM’s structured output behavior, since this behavior is determined by downstream propagation and forward features (see Appendix
+E.1
+for proof). In particular, the LRM relies on special tokens such as
+<think>
+and
+</think>
+to explicitly separate the reasoning segment from the answer segment, and these tokens are crucial in instruction-following tasks. For example, if the model fails to generate the terminator correctly after merging (as
+Fig.
+3
+), it may conflate the reasoning content with the instruction-compliant response, which can violate constraints such as limits on output length. Therefore, although task-vector orthogonality suggests minimal capability interference, we still need to explicitly constrain the distributional shift of the output structure during merging to preserve the integrity of the reasoning process.
+3
+Our RAIN-Merging Method
+Notation.
+For notational convenience in later derivations, we flatten model submodules by layer and head with index
+k
+=
+1
+,
+…
+,
+K
+k=1,\dots,K
+as
+θ
+=
+⨁
+k
+=
+1
+K
+W
+k
+:=
+[
+vec
+⁡
+(
+W
+1
+)
+⊤
+,
+…
+,
+vec
+⁡
+(
+W
+K
+)
+⊤
+]
+⊤
+\theta=\bigoplus_{k=1}^{K}W^{k}:=[\operatorname{vec}(W^{1})^{\top},\ldots,\operatorname{vec}(W^{K})^{\top}]^{\top}
+, where
+⨁
+\bigoplus
+denotes the block-wise concatenation that assembles disjoint parameter blocks into a single coordinate vector. More details of the forward mechanism in Transformer
+(
+Vaswani et al., 2017
+)
+are in Appendix
+G.1
+.
+Let
+h
+t
+k
+h_{t}^{k}
+denote the forward input vector at the
+k
+k
+-th submodule and the
+t
+t
+-th sampled token position. The corresponding linear map of this submodule admits the Kronecker-vectorization form
+(
+Koning et al., 1991
+)
+with Kronecker product
+⊗
+\otimes
+, identity matrix
+diag
+⁡
+(
+1
+)
+\mathrm{diag}(1)
+, and vectorization operator
+vec
+⁡
+(
+⋅
+)
+\operatorname{vec}(\cdot)
+, as
+W
+k
+​
+h
+t
+k
+=
+(
+(
+h
+t
+k
+)
+⊤
+⊗
+diag
+⁡
+(
+1
+)
+)
+​
+vec
+⁡
+(
+W
+k
+)
+.
+W^{k}h_{t}^{k}=((h_{t}^{k})^{\top}\otimes\mathrm{diag}(1))\operatorname{vec}(W^{k}).
+Stacking all sampled positions
+t
+t
+row-wise yields the forward feature operator
+Φ
+{
+t
+}
+k
+\Phi^{k}_{\{t\}}
+and outputs for the
+k
+k
+-th submodule:
+Φ
+{
+t
+}
+k
+:=
+[
+(
+h
+1
+k
+)
+⊤
+⊗
+diag
+⁡
+(
+1
+)
+,
+…
+,
+(
+h
+T
+k
+)
+⊤
+⊗
+diag
+⁡
+(
+1
+)
+]
+,
+W
+k
+​
+h
+k
+=
+Φ
+{
+t
+}
+k
+​
+vec
+⁡
+(
+W
+k
+)
+.
+\Phi^{k}_{\{t\}}\;:=\;\begin{bmatrix}(h_{1}^{k})^{\top}\otimes\mathrm{diag}(1),\dots,(h_{T}^{k})^{\top}\otimes\mathrm{diag}(1)\end{bmatrix},\quad W^{k}h^{k}\;=\;\Phi^{k}_{\{t\}}\operatorname{vec}(W^{k}).
+(1)
+Optimization Objective.
+To preserve the original reasoning performance of the LRM as much as possible, we take the reasoning model parameters
+θ
+R
+\theta_{R}
+as the anchor. We transform the ITM task vector
+Δ
+I
+\Delta_{I}
+through a merging function
+f
+f
+to obtain
+Δ
+=
+f
+⁡
+(
+Δ
+I
+)
+\Delta=f(\Delta_{I})
+, and form the merged model
+θ
+=
+θ
+R
++
+Δ
+\theta=\theta_{R}+\Delta
+. Our goal is
+to enhance instruction following without damaging the LRM’s thinking format and reasoning performance
+. We therefore formulate a constrained optimization problem: over the instruction data distribution
+𝒟
+I
+\mathcal{D}_{I}
+, maximize the surrogate objective for instruction following,
+𝒥
+I
+(
+θ
+)
+≜
+𝔼
+x
+∼
+𝒟
+I
+𝔼
+y
+∼
+π
+θ
+(
+⋅
+∣
+x
+)
+[
+IF
+(
+x
+,
+y
+)
+]
+\mathcal{J}_{I}(\theta)\triangleq\mathbb{E}_{x\sim\mathcal{D}_{I}}\,\mathbb{E}_{y\sim\pi_{\theta}(\cdot\mid x)}\bigl[\operatorname{IF}(x,y)\bigr]
+,
+while, over the reasoning data distribution
+𝒟
+R
+\mathcal{D}_{R}
+, constraining the deviation between the model’s output distribution within the segment of thinking special tokens
+Ω
+think
+\Omega_{\mathrm{think}}
+and the reference policy of the original reasoning model
+θ
+R
+\theta_{R}
+. This constraint is quantified by aggregating the per-step KL divergence within the segment:
+ℒ
+think
+(
+θ
+)
+≜
+𝔼
+x
+∼
+𝒟
+R
+𝔼
+y
+∼
+π
+θ
+R
+(
+⋅
+∣
+x
+)
+∑
+t
+∈
+Ω
+think
+​
+(
+x
+)
+KL
+(
+π
+θ
+(
+⋅
+∣
+x
+,
+y
+<
+t
+)
+∥
+π
+θ
+R
+(
+⋅
+∣
+x
+,
+y
+<
+t
+)
+)
+.
+\mathcal{L}_{\text{think}}(\theta)\triangleq\mathbb{E}_{x\sim\mathcal{D}_{R}}\,\mathbb{E}_{y\sim\pi_{\theta_{R}}(\cdot\mid x)}\,\sum_{t\in\Omega_{\text{think}}(x)}\mathrm{KL}\!\left(\pi_{\theta}\!\left(\cdot\mid x,y_{<t}\right)\,\big\|\,\pi_{\theta_{R}}\!\left(\cdot\mid x,y_{<t}\right)\right).
+(2)
+The overall objective with tolerance
+δ
+\delta
+is then:
+max
+Δ
+⁡
+𝒥
+I
+​
+(
+θ
+R
++
+Δ
+)
+s.t.
+ℒ
+think
+​
+(
+θ
+R
++
+Δ
+)
+≤
+δ
+.
+\max_{\Delta}\ \mathcal{J}_{I}\!\left(\theta_{R}+\Delta\right)\quad\text{s.t.}\quad\mathcal{L}_{\text{think}}\!\left(\theta_{R}+\Delta\right)\leq\delta.
+(3)
+Noting that
+𝒥
+I
+\mathcal{J}_{I}
+is a surrogate objective for instruction following, referring to a class of functions
+IF
+\mathrm{IF}
+that evaluate instruction alignment. In later we instantiate it with metrics based on instruction-attention alignment or leakage. In addition, motivated by the orthogonality between the LRM and ITM task vectors discussed earlier, we constrain only the conditional distribution in the segment of thinking special tokens and do not restrict the content generated in the other thinking or response segments, which preserves flexibility for improving instruction-following performance.
+Reasoning-aware Null-space Projection (Stage 1).
+To satisfy the KL constraint on the segment of thinking special tokens, we try to seek a parameter subspace that preserves the thinking format. Intuitively, if we view the forward inputs at the thinking positions as a “measurement” of the reasoning style, then any parameter perturbation that is unresponsive under this measurement will not change the model’s thinking pattern. This idea corresponds to projecting the perturbation onto the
+null space
+(
+Wang et al., 2021
+)
+of the forward feature operator
+Φ
+=
+blkdiag
+⁡
+(
+Φ
+1
+,
+…
+,
+Φ
+K
+)
+\Phi=\operatorname{blkdiag}\!\left(\Phi^{1},\ldots,\Phi^{K}\right)
+(
+blkdiag
+\operatorname{blkdiag}
+denotes the block-diagonal matrix), namely
+𝒩
+⁡
+(
+Φ
+)
+=
+{
+v
+:
+Φ
+​
+v
+=
+0
+}
+\mathcal{N}(\Phi)=\{v:\Phi v=0\}
+, as illustrated in
+Fig.
+3
+(a). Such a null space projection keeps the token-level forward features at the thinking positions invariant.
+Formally, for each submodule
+k
+k
+, we construct the least-squares orthogonal projector
+P
+⟂
+​
+(
+⋅
+)
+P^{\perp}(\cdot)
+using the forward feature operator
+Φ
+Ω
+think
+k
+\Phi^{k}_{\Omega_{\text{think}}}
+built from thinking special token indexs
+Ω
+think
+\Omega_{\text{think}}
+to form the null space:
+P
+⟂
+​
+(
+Φ
+Ω
+think
+k
+)
+=
+diag
+⁡
+(
+1
+)
+−
+Φ
+Ω
+think
+k
+⊤
+​
+(
+Φ
+Ω
+think
+k
+​
+Φ
+Ω
+think
+k
+⊤
+)
++
+​
+Φ
+Ω
+think
+k
+,
+P^{\perp}(\Phi^{k}_{\Omega_{\text{think}}})=\mathrm{diag}(1)-{\Phi^{k}_{\Omega_{\text{think}}}}^{\top}\!\left(\Phi^{k}_{\Omega_{\text{think}}}{\Phi^{k}_{\Omega_{\text{think}}}}^{\top}\right)^{+}\!\Phi^{k}_{\Omega_{\text{think}}},
+(4)
+where
+(
+⋅
+)
++
+(\cdot)^{+}
+denotes Moore-Penrose pseudoinverse. And then project the ITM submodule task vector
+Δ
+I
+k
+\Delta_{I}^{k}
+by submodule-wise and stack them to form the overall projected task vector to satisfy the null space constraint:
+vec
+⁡
+(
+Δ
+I
+⟂
+,
+k
+)
+=
+P
+⟂
+​
+(
+Φ
+Ω
+think
+k
+)
+​
+vec
+⁡
+(
+Δ
+I
+k
+)
+⇒
+Φ
+Ω
+think
+​
+vec
+⁡
+(
+Δ
+I
+⟂
+)
+=
+0
+,
+where
+​
+Δ
+I
+⟂
+=
+⨁
+k
+=
+1
+K
+Δ
+I
+⟂
+,
+k
+.
+\operatorname{vec}\!\left(\Delta_{I}^{\perp,k}\right)=P^{\perp}(\Phi^{k}_{\Omega_{\text{think}}})\,\operatorname{vec}\!\left(\Delta_{I}^{k}\right)\ \Rightarrow\ \Phi_{\Omega_{\text{think}}}\,\operatorname{vec}\!\left(\Delta_{I}^{\perp}\right)=0,\ \text{where }\Delta_{I}^{\perp}=\bigoplus_{k=1}^{K}\Delta_{I}^{\perp,k}.
+(5)
+This projection keeps the merged model’s intermediate representations and even the final logits at the thinking special tokens close to those of the anchor model. To verify its effectiveness in preserving the thinking format, we analyze a second-order expansion of the softmax KL divergence and show that the task vector after null-space projection satisfies the KL constraint on the special token output distribution in
+Eq. (
+2
+)
+. This yields the following
+Prop.
+1
+(proof is in Appendix
+E.2
+):
+Proposition 1
+.
+Let the logits of sample
+x
+x
+at thinking special tokens
+t
+∈
+Ω
+think
+​
+(
+x
+)
+t\in\Omega_{\text{think}}(x)
+be
+z
+θ
+​
+(
+x
+,
+t
+)
+z_{\theta}(x,t)
+, and let
+π
+θ
+(
+⋅
+∣
+x
+,
+y
+<
+t
+)
+=
+softmax
+(
+z
+θ
+(
+x
+,
+t
+)
+)
+\pi_{\theta}(\cdot\mid x,y_{<t})=\operatorname{softmax}(z_{\theta}(x,t))
+. By a second-order approximation of the softmax–KL divergence with a uniform upper bound, for any perturbation
+u
+u
+,
+KL
+(
+softmax
+(
+z
++
+u
+)
+∥
+softmax
+(
+z
+)
+)
+≤
+1
+8
+∥
+u
+∥
+2
+2
++
+O
+(
+∥
+u
+∥
+2
+3
+)
+.
+\mathrm{KL}\bigl(\operatorname{softmax}(z+u)\,\|\,\operatorname{softmax}(z)\bigr)\leq\tfrac{1}{8}\,\|u\|_{2}^{2}+O\!\left(\|u\|_{2}^{3}\right).
+(6)
+Assuming the model’s intermediate representations are Lipschitz continuous and bounded, there exist constants
+C
+1
+,
+C
+2
+>
+0
+C_{1},C_{2}>0
+such that for
+u
+⁡
+(
+x
+,
+t
+)
+=
+z
+θ
+R
++
+Δ
+​
+(
+x
+,
+t
+)
+−
+z
+θ
+R
+​
+(
+x
+,
+t
+)
+u(x,t)=z_{\theta_{R}+\Delta}(x,t)-z_{\theta_{R}}(x,t)
+, we have:
+‖
+u
+⁡
+(
+x
+,
+t
+)
+‖
+2
+≤
+C
+1
+​
+‖
+Φ
+​
+vec
+⁡
+(
+Δ
+)
+‖
+2
++
+C
+2
+​
+‖
+Δ
+‖
+2
+2
+.
+\|u(x,t)\|_{2}\leq C_{1}\,\bigl\|\Phi\,\operatorname{vec}(\Delta)\bigr\|_{2}+C_{2}\,\|\Delta\|_{2}^{2}.
+(7)
+Substituting the projected vector
+Δ
+I
+⟂
+=
+⨁
+k
+=
+1
+K
+Δ
+I
+⟂
+,
+k
+\Delta_{I}^{\perp}=\bigoplus_{k=1}^{K}\Delta_{I}^{\perp,k}
+and the condition
+Φ
+​
+vec
+⁡
+(
+Δ
+I
+⟂
+)
+=
+0
+\Phi\,\operatorname{vec}\!\left(\Delta_{I}^{\perp}\right)=0
+yields:
+ℒ
+think
+​
+(
+θ
+R
++
+Δ
+I
+⟂
+)
+≤
+1
+8
+​
+𝔼
+x
+,
+t
+​
+[
+‖
+u
+⁡
+(
+x
+,
+t
+)
+‖
+2
+2
+]
++
+O
+⁡
+(
+𝔼
+x
+,
+t
+​
+‖
+u
+⁡
+(
+x
+,
+t
+)
+‖
+2
+3
+)
+=
+O
+⁡
+(
+‖
+Δ
+I
+⟂
+‖
+2
+2
+)
+≈
+0
+.
+\mathcal{L}_{\text{think}}\!\left(\theta_{R}+\Delta_{I}^{\perp}\right)\leq\tfrac{1}{8}\,\mathbb{E}_{x,t}\!\left[\|u(x,t)\|_{2}^{2}\right]+O\!\left(\mathbb{E}_{x,t}\|u(x,t)\|_{2}^{3}\right)=O\!\left(\bigl\|\Delta_{I}^{\perp}\bigr\|_{2}^{2}\right)\approx 0.
+(8)
+Therefore, null-space projection in
+Eq. (
+5
+)
+approximately removes the thinking format constraint in the original objective and reduces the original optimization objective
+Eq. (
+3
+)
+to:
+max
+Δ
+⟂
+⁡
+𝒥
+I
+​
+(
+θ
+R
++
+Δ
+⟂
+)
+,
+where
+​
+Δ
+⟂
+=
+f
+⁡
+(
+Δ
+I
+⟂
+)
+.
+\max_{\Delta^{\perp}}\ \mathcal{J}_{I}\!\left(\theta_{R}+\Delta^{\perp}\right),\text{ where }\Delta^{\perp}=f(\Delta_{I}^{\perp}).
+(9)
+With the thinking-format constraint relaxed, we next focus on strengthening the task vector’s effect on instruction following.
+Figure 3:
+Two stages of our
+RAIN-Merging
+pipeline. (a) For each submodule, the ITM task vector is projected onto the null space preventing shifts in thinking format. (b) Given the instruction calibration set, we compute the instruction-attention score from attention outputs to obtain merging coefficients.
+Instruction-attention Guided Merging Coefficients (Stage 2).
+To enhance the performance gain of the ITM task vector during merging, we seek a suitable gradient-free surrogate objective to instantiate
+𝒥
+I
+\mathcal{J}_{I}
+. Prior studies
+(
+Guardieiro et al., 2025
+)
+suggest that failures in instruction following often stem from insufficient conditioning on the instruction span during decoding:
+attention does not sufficiently focus on instruction-relevant tokens and instead leaks to unrelated regions
+. A simple remedy is to amplify attention outputs on the instruction span at decoding time, which can remarkably improve instruction following. This approach, however, requires pre-identifying the instruction span, and excessive amplification may cause the model to ignore other necessary content. Motivated by this, we hypothesize that different layers and heads exhibit heterogeneous response behavior to instructions. Consequently, on the null-space–projected task vector
+Δ
+I
+⟂
+,
+k
+\Delta_{I}^{\perp,k}
+, we introduce per-module scaling coefficients
+α
+=
+{
+α
+k
+}
+∈
+ℝ
++
+K
+\alpha=\{\alpha^{k}\}\in\mathbb{R}_{+}^{K}
+and reparameterize the merged model as
+θ
+⁡
+(
+α
+)
+=
+θ
+R
++
+⨁
+k
+=
+1
+K
+α
+k
+​
+Δ
+I
+⟂
+,
+k
+\theta(\alpha)=\theta_{R}+\bigoplus_{k=1}^{K}\alpha^{k}\,\Delta_{I}^{\perp,k}
+to instantiate merging function
+f
+f
+. Given that attention outputs are directly coupled to the self-attention mechanism, we first focus on the merging coefficients of these submodules, as
+α
+~
+=
+{
+α
+k
+~
+}
+∈
+ℝ
++
+K
+~
+\tilde{\alpha}=\{\alpha^{\tilde{k}}\}\in\mathbb{R}_{+}^{\tilde{K}}
+, where
+k
+~
+\tilde{k}
+denotes the self-attention submodule index.
+Our central intuition is that
+an ideal merge should yield stronger attention responses on instruction-relevant spans (high alignment) while maintaining low attention activation on instruction-irrelevant content (low leakage)
+. To translate this intuition into measurable quantities, we formalize the model’s forward computation as follows and in
+Fig.
+3
+(b). Let
+Att
+k
+~
+⁡
+(
+x
+,
+α
+~
+)
+​
+[
+t
+,
+τ
+]
+\operatorname{Att}^{\tilde{k}}(x,\tilde{\alpha})[t,\tau]
+denote the attention output of the merged model with
+α
+~
+\tilde{\alpha}
+at head
+k
+~
+\tilde{k}
+from token position
+t
+t
+to
+τ
+\tau
+.
+For an instruction-following sample
+x
+∼
+𝒟
+I
+x\sim\mathcal{D}_{I}
+,
+we define the per-sample normalized alignment
+a
+a
+and leakage
+u
+u
+metrics for head
+k
+~
+\tilde{k}
+:
+a
+k
+~
+​
+(
+x
+,
+α
+~
+)
+⏟
+alignment
+:=
+∑
+t
+∈
+ℛ
+⁡
+(
+x
+)
+∑
+τ
+∈
+ℐ
+⁡
+(
+x
+)
+Att
+k
+~
+⁡
+(
+x
+,
+α
+~
+)
+​
+[
+t
+,
+τ
+]
+|
+ℐ
+⁡
+(
+x
+)
+|
+​
+|
+ℛ
+⁡
+(
+x
+)
+|
+,
+u
+k
+~
+​
+(
+x
+,
+α
+~
+)
+⏟
+leakage
+:=
+∑
+t
+∈
+𝒰
+⁡
+(
+x
+)
+∑
+τ
+∈
+ℐ
+⁡
+(
+x
+)
+Att
+k
+~
+⁡
+(
+x
+,
+α
+~
+)
+​
+[
+t
+,
+τ
+]
+|
+ℐ
+⁡
+(
+x
+)
+|
+​
+|
+𝒰
+⁡
+(
+x
+)
+|
+.
+\underbrace{a^{\tilde{k}}(x,\tilde{\alpha})}_{\text{alignment}}:=\sum_{t\in\mathcal{R}(x)}\sum_{\tau\in\mathcal{I}(x)}\frac{\operatorname{Att}^{\tilde{k}}(x,\tilde{\alpha})[t,\tau]}{|\mathcal{I}(x)|\,|\mathcal{R}(x)|},\ \underbrace{u^{\tilde{k}}(x,\tilde{\alpha})}_{\text{leakage}}:=\sum_{t\in\mathcal{U}(x)}\sum_{\tau\in\mathcal{I}(x)}\frac{\operatorname{Att}^{\tilde{k}}(x,\tilde{\alpha})[t,\tau]}{|\mathcal{I}(x)|\,|\mathcal{U}(x)|}.
+(10)
+where
+ℐ
+⁡
+(
+x
+)
+⊂
+{
+1
+,
+…
+,
+T
+}
+\mathcal{I}(x)\subset\{1,\dots,T\}
+represents the index set of instruction tokens that encodes the task description, formatting rules, constraints, and any examples in the query span. Likewise,
+ℛ
+⁡
+(
+x
+)
+\mathcal{R}(x)
+denotes the set of output tokens whose content is directly constrained by the instruction in the response span, and
+𝒰
+⁡
+(
+x
+)
+\mathcal{U}(x)
+the set of output tokens unrelated to the instruction.
+Taking expectations over instruction-following samples
+𝒟
+I
+\mathcal{D}_{I}
+and heads
+k
+~
+\tilde{k}
+yields averaged alignment
+a
+¯
+​
+(
+α
+~
+)
+=
+∑
+k
+~
+𝔼
+x
+∼
+𝒟
+I
+​
+[
+a
+k
+~
+​
+(
+x
+,
+α
+~
+)
+]
+\bar{a}(\tilde{\alpha})=\sum_{\tilde{k}}\mathbb{E}_{x\sim\mathcal{D}_{I}}\![a^{\tilde{k}}(x,\tilde{\alpha})]
+and averaged leakage
+u
+¯
+​
+(
+α
+~
+)
+=
+∑
+k
+~
+𝔼
+x
+∼
+𝒟
+I
+​
+[
+u
+k
+~
+​
+(
+x
+,
+α
+~
+)
+]
+\bar{u}(\tilde{\alpha})=\sum_{\tilde{k}}\mathbb{E}_{x\sim\mathcal{D}_{I}}\![u^{\tilde{k}}(x,\tilde{\alpha})]
+.
+We seek merging coefficients that achieve
+high alignment
+and
+low leakage
+. Accordingly, we combine the two metrics into a single
+instruction-attention score
+𝒥
+I
+Proxy
+\mathcal{J}_{I}^{\text{Proxy}}
+with trade-off hyperparameter
+ρ
+>
+0
+\rho>0
+, instantiating the surrogate objective in the reduced problem
+Eq. (
+9
+)
+then yields:
+max
+α
+~
+⁡
+𝒥
+I
+Proxy
+​
+(
+α
+~
+)
+:=
+a
+¯
+​
+(
+α
+~
+)
+−
+ρ
+​
+u
+¯
+​
+(
+α
+~
+)
+.
+\max_{\tilde{\alpha}}\mathcal{J}_{I}^{\text{Proxy}}(\tilde{\alpha}):=\bar{a}(\tilde{\alpha})\;-\;\rho\bar{u}(\tilde{\alpha}).
+(11)
+Quadratic Approximation of Instruction-attention Score.
+Although this objective is differentiable and could be optimized by gradient descent, we adopt a forward-pass approximation to reduce computation. Initialize at the directly merged point after projection,
+α
+~
+(
+0
+)
+≡
+𝟏
+\tilde{\alpha}_{(0)}\equiv\mathbf{1}
+. Perform a second-order Taylor expansion of
+𝒥
+I
+Proxy
+​
+(
+α
+~
+)
+\mathcal{J}_{I}^{\text{Proxy}}(\tilde{\alpha})
+around
+α
+~
+(
+0
+)
+\tilde{\alpha}_{(0)}
+:
+𝒥
+I
+Proxy
+​
+(
+α
+~
+)
+≈
+𝒥
+I
+Proxy
+​
+(
+α
+~
+(
+0
+)
+)
++
+∇
+α
+~
+𝒥
+I
+Proxy
+​
+(
+α
+~
+(
+0
+)
+)
+⊤
+​
+(
+α
+~
+−
+α
+~
+(
+0
+)
+)
++
+1
+2
+​
+(
+α
+~
+−
+α
+~
+(
+0
+)
+)
+⊤
+​
+H
+​
+(
+α
+~
+−
+α
+~
+(
+0
+)
+)
+,
+\mathcal{J}_{I}^{\text{Proxy}}(\tilde{\alpha})\approx\mathcal{J}_{I}^{\text{Proxy}}(\tilde{\alpha}_{(0)})+\nabla_{\tilde{\alpha}}\mathcal{J}_{I}^{\text{Proxy}}(\tilde{\alpha}_{(0)})^{\!\top}(\tilde{\alpha}-\tilde{\alpha}_{(0)})+\tfrac{1}{2}\,(\tilde{\alpha}-\tilde{\alpha}_{(0)})^{\!\top}H\,(\tilde{\alpha}-\tilde{\alpha}_{(0)}),
+(12)
+where
+H
+=
+∇
+α
+~
+2
+​
+𝒥
+I
+Proxy
+​
+(
+α
+~
+(
+0
+)
+)
+H=\nabla_{\tilde{\alpha}}^{2}\mathcal{J}_{I}^{\text{Proxy}}(\tilde{\alpha}_{(0)})
+is the Hessian.
+Writing
+g
+=
+∇
+α
+~
+𝒥
+I
+Proxy
+​
+(
+α
+~
+(
+0
+)
+)
+g=\nabla_{\tilde{\alpha}}\mathcal{J}_{I}^{\text{Proxy}}(\tilde{\alpha}_{(0)})
+and ignoring the constant term in
+Eq. (
+11
+)
+, we obtain the quadratic surrogate:
+𝒥
+I
+quad
+​
+(
+α
+~
+)
+=
+g
+⊤
+​
+(
+α
+~
+−
+α
+~
+(
+0
+)
+)
++
+1
+2
+​
+(
+α
+~
+−
+α
+~
+(
+0
+)
+)
+⊤
+​
+H
+​
+(
+α
+~
+−
+α
+~
+(
+0
+)
+)
+.
+\mathcal{J}_{I}^{\text{quad}}(\tilde{\alpha})=g^{\top}(\tilde{\alpha}-\tilde{\alpha}_{(0)})+\tfrac{1}{2}\,(\tilde{\alpha}-\tilde{\alpha}_{(0)})^{\!\top}H\,(\tilde{\alpha}-\tilde{\alpha}_{(0)}).
+(13)
+➀For first-order term
+g
+g
+, if we restrict
+α
+~
+\tilde{\alpha}
+to small deviations near
+α
+~
+(
+0
+)
+\tilde{\alpha}_{(0)}
+and adopt a linear approximation of alignment and leakage on merging coefficients, the per-head gradient can be estimated as:
+g
+k
+~
+=
+∂
+𝒥
+I
+Proxy
+​
+(
+α
+~
+)
+∂
+α
+~
+k
+~
+|
+α
+~
+(
+0
+)
+≈
+∂
+a
+¯
+​
+(
+α
+~
+)
+∂
+α
+~
+k
+~
+−
+ρ
+​
+∂
+u
+¯
+​
+(
+α
+~
+)
+∂
+α
+~
+k
+~
+≈
+𝔼
+x
+∼
+𝒟
+I
+​
+[
+a
+k
+~
+​
+(
+x
+,
+α
+~
+(
+0
+)
+)
+−
+ρ
+​
+u
+k
+~
+​
+(
+x
+,
+α
+~
+(
+0
+)
+)
+]
+,
+g^{\tilde{k}}=\left.\frac{\partial\mathcal{J}_{I}^{\text{Proxy}}(\tilde{\alpha})}{\partial\tilde{\alpha}^{\tilde{k}}}\right|_{\tilde{\alpha}_{(0)}}\approx\frac{\partial\bar{a}(\tilde{\alpha})}{\partial\tilde{\alpha}^{\tilde{k}}}-\rho\,\frac{\partial\bar{u}(\tilde{\alpha})}{\partial\tilde{\alpha}^{\tilde{k}}}\approx\mathbb{E}_{x\sim\mathcal{D}_{I}}\!\left[a^{\tilde{k}}(x,\tilde{\alpha}_{(0)})-\rho\,u^{\tilde{k}}(x,\tilde{\alpha}_{(0)})\right],
+(14)
+which replaces partial derivatives with the current metric values. In practice, this approximately scales the contribution of each head to instruction versus non-instruction attention mass, consistent with the intuition behind attention amplification.
+➁ For second-order term
+H
+H
+, to avoid the cost of computing the Hessian for large models, we adopt a diagonal approximation that limits the step size,
+H
+~
+k
+~
+=
+diag
+⁡
+(
+1
+)
++
+𝔼
+x
+∼
+𝒟
+I
+​
+[
+u
+k
+~
+​
+(
+x
+,
+α
+~
+(
+0
+)
+)
+]
+,
+\tilde{H}^{\tilde{k}}=\mathrm{diag}(1)+\mathbb{E}_{x\sim\mathcal{D}_{I}}[u^{\tilde{k}}(x,\tilde{\alpha}_{(0)})],
+where the second term imposes a stronger quadratic penalty on heads with higher leakage, thereby limiting their amplification.
+Substituting the approximations into the quadratic objective, dropping
+α
+~
+(
+0
+)
+\tilde{\alpha}_{(0)}
+for simplicity, and constraining
+α
+~
+∈
+[
+α
+~
+l
+,
+α
+~
+u
+]
+K
+~
+\tilde{\alpha}\in[\tilde{\alpha}_{l},\tilde{\alpha}_{u}]^{\tilde{K}}
+to prevent scaling instability, we obtain a closed-form solution to the convex quadratic program:
+max
+α
+~
+∈
+[
+α
+~
+l
+,
+α
+~
+u
+]
+K
+~
+⁡
+(
+g
+⊤
+​
+α
+~
+−
+1
+2
+​
+α
+~
+⊤
+​
+H
+~
+​
+α
+~
+)
+⇒
+α
+~
+⋆
+k
+~
+=
+clip
+[
+α
+~
+l
+,
+α
+~
+u
+]
+⁡
+(
+g
+k
+~
+H
+~
+k
+~
+)
+,
+\max_{\tilde{\alpha}\in[\tilde{\alpha}_{l},\tilde{\alpha}_{u}]^{\tilde{K}}}\left(g^{\top}\tilde{\alpha}-\tfrac{1}{2}\,\tilde{\alpha}^{\top}\tilde{H}\tilde{\alpha}\right)\quad\Rightarrow\quad\tilde{\alpha}^{\tilde{k}}_{\star}=\operatorname{clip}_{[\tilde{\alpha}_{l},\tilde{\alpha}_{u}]}\!\left(\frac{g^{\tilde{k}}}{\tilde{H}^{\tilde{k}}}\right),
+(15)
+where
+H
+~
+=
+diag
+⁡
+(
+H
+~
+k
+~
+)
+\tilde{H}=\operatorname{diag}\bigl(\tilde{H}^{\tilde{k}}\bigr)
+and
+clip
+[
+a
+,
+b
+]
+⁡
+(
+⋅
+)
+\operatorname{clip}_{[a,b]}(\cdot)
+clips to the interval
+[
+a
+,
+b
+]
+[a,b]
+. Thus, by a second-order expansion with engineering approximations and using only forward attention statistics in a gradient-free manner, we approximate the optimal merging coefficients
+α
+~
+⋆
+\tilde{\alpha}_{\star}
+of self-attention submodules that increase instruction alignment while controlling attention leakage to non-instruction content. For modules shared across attention heads, such as the feed-forward network (FFN), we set the layer-wise coefficient to the average over heads.
+Aggregating the coefficients for all submodules yields the complete instruction attention guided merging coefficients
+α
+⋆
+=
+{
+α
+⋆
+k
+}
+\alpha_{\star}=\{\alpha_{\star}^{k}\}
+.
+Combined to Our Two-stage Merging Method.
+We chain “Reasoning-aware Null-space Projection (Stage 1)” with “Instruction-attention Guided Merging Coefficients (Stage 2)” to propose a fully gradient-free merging pipeline, termed
+Reasoning-Aware Instruction-attention guided Null-space projection Merging
+(
+RAIN-Merging
+) as
+Fig.
+3
+. Our method addresses the challenge in the original optimization problem of
+Eq. (
+3
+)
+, improving instruction following while preserving the reasoning structure after merging. The final merged model is:
+θ
+⋆
+=
+θ
+R
++
+λ
+​
+⨁
+k
+=
+1
+K
+α
+⋆
+k
+​
+Δ
+I
+⟂
+,
+k
+,
+\theta_{\star}=\theta_{R}+\lambda\bigoplus_{k=1}^{K}\alpha_{\star}^{k}\,\Delta_{I}^{\perp,k},
+(16)
+where
+λ
+\lambda
+is a global scaling coefficient that controls the merging strength. The entire procedure only relies on forward-feature extraction and attention statistics, and does not require gradient-based updates. RAIN-Merging offers a low-cost, interpretable path to strengthen instruction following in LRMs, filling the gap left by costly SFT.
+Implementation details.
+To balance compute and storage efficiency, we merge only the core modules that are most sensitive to attention outputs, namely the
+Q, K, V, O, and FFN
+parameters.
+In Stage 1, we sample 150 examples from the Mixture-of-Thoughts
+(
+Face, 2025
+)
+dataset distilled from DeepSeek-R1
+(
+Guo et al., 2025
+)
+from to form the reasoning calibration set. In Stage 2, we an instruction calibration set obtained by distilling DeepSeek-R1 on IFEval
+(
+Zhou et al., 2023b
+)
+, followed by LLM-as-Judge filtering and manual screening, resulting a total of 365 samples. More details of implementation, complete algorithm pseudocode, calibration set construction, and ablation studies are provided in Appendix
+G
+,
+F
+,
+H
+, and
+J.3
+.
+4
+Experiments
+Table 1:
+Comprehensive comparison of instruction following and reasoning & general capabilities. We merge Qwen2.5-7B-Instruct (ITM) into DeepSeek-R1-Distill-Qwen-7B (LRM) and compare our RAIN-Merging against multiple merging methods as well as SFT trained on the same calibration data. “Avg.” denotes the average over all subsets. “RT” reports the run-time for merging or training in minutes. The best and second-best results are highlighted in
+bold
+and
+underlined
+, respectively.
+Method
+Instruction Following
+Reasoning & General
+RT
+IFEval
+CELLO
+Info
+Complex
+Avg.
+Math
+GPQA
+Aider
+Arena-
+Avg.
+Bench
+Bench
+Hard-v2
+ITM
+70.43
+19.15
+78.49
+43.63
+52.92
+47.27
+29.80
+33.33
+62.86
+43.32
+–
+LRM
+55.45
+16.59
+71.73
+32.72
+44.12
+64.75
+44.44
+29.63
+65.29
+51.03
+–
+SFT
+62.48
+17.11
+68.58
+32.15
+45.08
+62.57
+41.92
+28.89
+64.67
+49.51
+120.32
+Data-free Merging
+Task Arithmetic
+60.44
+16.97
+73.07
+33.34
+45.96
+64.22
+42.93
+26.67
+64.53
+49.59
+0.93
+SLERP
+58.96
+17.56
+72.18
+34.93
+45.95
+63.82
+42.93
+31.85
+65.29
+50.97
+1.12
+Karcher
+62.11
+17.99
+73.16
+34.06
+46.83
+64.85
+48.99
+30.37
+66.13
+52.58
+1.20
+TIES
+58.60
+18.48
+73.91
+34.40
+46.35
+65.44
+46.46
+32.59
+63.47
+51.99
+1.18
+DARE-TIES
+60.81
+17.88
+73.33
+33.49
+46.38
+64.26
+47.98
+29.63
+64.17
+51.51
+2.21
+Data-dependent Merging
+ACM-TIES
+59.33
+16.45
+72.44
+33.75
+45.50
+64.57
+45.96
+32.59
+62.00
+51.28
+12.45
+LEWIS-TIES
+60.44
+17.41
+72.67
+34.40
+46.23
+62.07
+48.99
+31.11
+64.80
+51.74
+16.60
+AIM-TIES
+62.78
+17.93
+73.11
+34.28
+47.02
+65.92
+49.49
+33.33
+63.64
+53.10
+18.51
+RAIN-Merging
+63.22
+19.03
+74.53
+35.66
+48.11
+68.75
+54.55
+33.33
+65.73
+55.59
+20.96
+In this section, we empirically investigate three research questions:
+•
+RQ1 (Effectiveness and Efficiency).
+Compared with baseline methods, can RAIN-Merging improve instruction-following while maintaining reasoning capabilities, maintaining the computational and memory efficiency characteristic of gradient-free approaches? (
+Tab.
+1
+and
+Fig.
+4.2
+)
+•
+RQ2 (Scalability).
+How well does RAIN-Merging scale across models of varying sizes and architectures, and does it perform effectively in interactive agentic scenarios? (
+Tab.
+2
+,
+4.2
+)
+•
+RQ3 (Ablation).
+What roles do the two stages of RAIN-Merging play? Specifically, does Stage 1 preserve the format of thinking segments and the output distribution, and does Stage 2 enhance instruction-attention scores? (
+Tab.
+4.2
+and
+Fig.
+5
+,
+Fig.
+5
+)
+•
+RQ4 (Investigation).
+How does augmenting the instruction following capabilities of LRMs influence their inherent reasoning efficacy? Specifically, how does this evolution in reasoning ability manifest in specific cases? (
+Tab.
+4.2
+,
+4.2
+,
+Sec.
+J.9
+,
+J.10
+)
+4.1
+Experimental Setup
+We begin with a brief overview of the benchmarks, models, and baselines used in our experiments. Additional details on experimental settings, benchmarks and evaluation metrics, and hyperparameters are provided in Appendix
+I
+.
+Benchmarks.
+To comprehensively assess instruction following, we use four mainstream benchmarks:
+IFEval
+(
+Zhou et al., 2023b
+)
+,
+CELLO
+(
+He et al., 2024
+)
+,
+InfoBench
+(
+Qin et al., 2024
+)
+, and
+ComplexBench
+(
+Wen et al., 2024
+)
+. To comprehensively evaluate reasoning and general capabilities, we use nine benchmarks: Mathematical reasoning is evaluated by aggregating results from six benchmarks, as
+Math
+. We also measure performance on code editing (
+Aider
+(
+Aider, 2024
+)
+), STEM (
+GPQA
+(
+Rein et al., 2024
+)
+), and creative writing (
+Arena-Hard-v2
+(
+Li et al., 2024
+)
+) to reflect general and reasoning capabilities. For agentic scenarios, we use
+ALFWorld
+(
+Shridhar et al., 2021
+)
+and
+WebShop
+(
+Yao et al., 2022
+)
+, two realistic multi-turn interactive tasks, to evaluate how well the model integrates reasoning and instruction following to solve complex problems.
+Models.
+We evaluate RAIN-Merging on models of different sizes and architectures: DeepSeek-R1-Distill-Qwen-1.5B/7B/14B/32B
+(
+Guo et al., 2025
+)
+(LRM) and Qwen2.5-1.5B/7B
+1
+1
+1
+Although DeepSeek-R1-Distill-Qwen-1.5B/7B are trained from Qwen2.5-Math-1.5B/7B
+(
+Yang et al., 2024a
+)
+, we find that Qwen2.5-Math-1.5B/7B-Instruct do not outperform the distilled LRMs in instruction following. We therefore select the stronger instruction followers, Qwen2.5-1.5B/7B-Instruct, as ITMs.
+/14B/32B-Instruct
+(
+Yang et al., 2025
+)
+(ITM), as well as the Llama family
+(
+Dubey et al., 2024
+)
+using DeepSeek-R1-Distill-Llama-8B (LRM), its instruction-tuned counterpart Llama-3.1-8B-Instruct (ITM).
+Baselines.
+We include several data-free, task-vector based merging methods:
+Task Arithmetic
+(
+Ilharco et al., 2023
+)
+,
+SLERP
+(
+Biship, 2007
+;
+Goddard et al., 2024
+)
+,
+Karcher
+(
+Nielsen and Bhatia, 2013
+;
+Goddard et al., 2024
+)
+,
+TIES
+(
+Yadav et al., 2023
+)
+, and
+DARE
+(
+Yu et al., 2024
+)
+. We also compare with data-dependent, activation-based merging approaches that leverage small calibration sets, including
+ACM
+(
+Yao et al., 2025
+)
+,
+LEWIS
+(
+Chopra et al., 2025
+)
+, and
+AIM
+(
+Nobari et al., 2025
+)
+. To strengthen baseline performance, we apply TIES on top of other merging baselines as in previous work
+(
+Wu et al., 2025
+)
+. In addition, we report a training baseline using
+SFT
+on the same calibration data.
+4.2
+Results
+Table 2:
+Merging performance and relative gains of RAIN-Merging across model three scales and two architectures. We merge the corresponding ITM into the LRM with base models: Qwen2.5-1.5B/14B/32B, and Llama-3.1-8B. “Avg.” denotes the average over all subsets. For each scale, the subsequent “
+(relative gain)
+” row reports the relative improvement of our method over the LRM, highlighted in green.
+Model
+Instruction Following
+Reasoning & General
+IFEval
+CELLO
+Info
+Complex
+Avg.
+Math
+GPQA
+Aider
+Arena-
+Avg.
+Bench
+Bench
+Hard-v2
+Qwen2.5-1.5B-Instruct
+36.78
+19.04
+64.76
+27.83
+37.10
+31.77
+25.76
+16.30
+38.45
+28.07
+DeepSeek-R1-Distill-Qwen-1.5B
+39.00
+16.03
+55.29
+21.54
+32.97
+41.62
+29.29
+14.07
+39.73
+31.18
+Qwen2.5-1.5B-RAIN-Merging
+41.59
+16.51
+58.18
+23.62
+34.97
+45.87
+33.33
+14.81
+40.93
+33.74
+(relative gain)
++6.64%
++2.98%
++5.23%
++9.63%
++6.09%
++10.21%
++13.79%
++5.26%
++3.02%
++8.20%
+Llama-3.1-8B-Instruct
+68.58
+27.21
+78.67
+38.47
+53.23
+35.59
+25.25
+34.07
+72.23
+41.79
+DeepSeek-R1-Distill-Llama-8B
+58.41
+17.78
+73.33
+38.38
+46.97
+60.21
+38.38
+27.41
+71.93
+49.48
+Llama-3.1-8B-RAIN-Merging
+63.77
+18.84
+77.38
+38.93
+49.73
+61.95
+43.94
+30.37
+77.07
+53.33
+(relative gain)
++9.18%
++5.99%
++5.52%
++1.42%
++5.86%
++2.89%
++14.47%
++10.81%
++7.15%
++7.78%
+Qwen2.5-14B-Instruct
+79.85
+20.13
+83.38
+44.19
+56.89
+52.73
+36.87
+37.04
+74.40
+50.29
+DeepSeek-R1-Distill-Qwen-14B
+71.35
+18.71
+81.33
+40.68
+53.02
+72.31
+57.07
+33.33
+80.67
+60.85
+Qwen2.5-14B-RAIN-Merging
+76.71
+19.57
+84.13
+44.63
+56.26
+74.58
+57.58
+40.00
+86.25
+64.60
+(relative gain)
++7.51%
++4.58%
++3.44%
++9.69%
++6.11%
++3.13%
++0.88%
++20.00%
++6.92%
++6.17%
+Qwen2.5-32B-Instruct
+78.56
+18.59
+84.40
+46.91
+57.11
+52.35
+36.87
+57.78
+81.90
+57.22
+DeepSeek-R1-Distill-Qwen-32B
+76.52
+19.69
+83.56
+44.44
+56.05
+68.00
+60.10
+54.81
+82.00
+66.23
+Qwen2.5-32B-RAIN-Merging
+77.26
+19.96
+84.76
+45.74
+56.93
+75.67
+61.62
+54.07
+83.70
+68.77
+(relative gain)
++0.97%
++1.39%
++1.44%
++2.93%
++1.57%
++11.28%
++2.52%
+-1.35%
++2.07%
++3.83%
+Performance Comparison with Baseline Methods. (RQ1)
+As shown in
+Tab.
+1
+, RAIN-Merging achieves overall gains across both instruction-following and reasoning & general capability evaluations, outperforming all merging baselines. While Task Arithmetic and SFT can improve instruction following to some extent, they typically do so at the cost of reasoning and general capabilities. In contrast, our method consistently surpasses all baselines on instruction-following, mathematical reasoning, and general-capability benchmarks. Our merged LRM trails the ITM slightly on instruction following, indicating room for further improvement. Interstingly, the merged model exhibits stable gains in reasoning and general ability. We hypothesize that stronger instruction adherence improves the quality of the model’s internal chain of thought, which yields better reasoning performance. Overall, RAIN-Merging substantially enhances instruction following without sacrificing the LRM’s reasoning and general capabilities.
+Run-time and Memory Analysis. (RQ1)
+Our method achieves a favorable efficiency trade-off. Its runtime, though slightly above activation-based merging baselines due to null-space computation, is far below SFT (RT in
+Tab.
+1
+). Similarly, while storing hidden features increases memory use compared to other merging methods, its footprint remains much smaller than SFT’s (
+Fig.
+4.2
+). This demonstrates our approach as a highly practical, training-free alternative for enhancing LRMs.
+Performance on Models of Different Sizes and Architectures. (RQ2)
+To evaluate the scalability of our method across model sizes and architectures, we conduct experiments on several configurations, including the Qwen2.5 family distilled from DeepSeek-R1 at 1.5B, 14B, and 32B parameters, and the 8B model built on the Llama 3.1 architecture. As reported in
+Tab.
+2
+, our method consistently enhances instruction-following and reasoning performance, achieving average improvements from 1.57% to 8.20% on LRMs. These results confirm that RAIN-Merging robustly strengthens instruction adherence and preserves complex reasoning across diverse model sizes and architectures.
+Performance in Agentic Scenarios. (RQ2)
+To further assess the practical benefits of improved instruction following, we evaluate the merged model on two representative agentic scenarios, WebShop and AlfWorld. As shown in
+Tab.
+4.2
+, the merged model achieves better performance than the original LRM and ITM in these scenarios, indicating that enhanced instruction understanding and reasoning effectively support multi-turn interaction and complex decision making. These results also demonstrate that our gradient-free approach is effective for increasing the real-world utility of LRMs.
+Ablation Study of Stage 1 and Stage 2. (RQ3)
+We investigate the contribution of the two components in RAIN-Merging, shown in
+Tab.
+4.2
+. When without Stage 2, the merged model retains reasoning and general capabilities while achieving competitive instruction-following performance. Conversely, when without Stage 1, instruction-following performance improves further but at a noticeable cost to reasoning and general ability, as it lacks protection of the thinking format. Incorporating both stages yields the best trade-off: Stage 1 ensures reasoning performance is maintained while Stage 2 boosts instruction-following performance. Thereby, both stages play critical and complementary roles.
+Effectiveness of Null-space Projection. (RQ3)
+To assess how our null-space projection in Stage 1 preserves thinking formats, we evaluate its impact on thinking special token distributions and resulting generation outputs. We measure the KL divergence near thinking tokens as in
+Eq. (
+2
+)
+and the rate of missing </think> tokens. Results
+Fig.
+5
+show that Task Arithmetic substantially alters the distribution (
+ℒ
+think
+=
+0.1224
+\mathcal{L}_{\mathrm{think}}=0.1224
+) and results in 6.4% missing
+</think>
+tokens, violating the output format. Our approach, in contrast, only induces minimal change (
+ℒ
+think
+=
+0.0065
+\mathcal{L}_{\mathrm{think}}=0.0065
+) and ensures no missing tokens (0.0%). These findings indicate that null-space projection successfully protects thinking formats.
+\captionof
+figureGPU memory usage comparison between different methods under the same configuration as
+Tab.
+1
+.
+\captionof
+tablePerformance of RAIN-Merging in agent settings. We merge Qwen2.5-7B-Instruct (ITM) into DeepSeek-R1-Distill-Qwen-7B (LRM).
+Model
+ALFWorld
+WebShop
+ITM
+17.50
+10.45
+LRM
+22.00
+26.63
+RAIN-Merging
+25.00
+29.42
+\captionof
+tablePerformance of ablation on Stage 1 and Stage 2, under the same setup as
+Tab.
+1
+. "I Avg." and "R Avg." denote the average performance on instruction-following and reasoning & general benchmarks.
+Method
+I Avg.
+R Avg.
+RAIN-Merging w/o Stage 2
+46.58
+54.92
+RAIN-Merging w/o Stage 1
+47.62
+52.44
+RAIN-Merging
+48.11
+55.59
+Figure 4:
+ℒ
+think
+\mathcal{L}_{\text{think}}
+in
+Eq. (
+2
+)
+(left) on the reasoning calibration validation set, and the proportion of generations missing the closing
+</think>
+token (right) on IFEval under the same configuration as
+Tab.
+1
+.
+Figure 5:
+Layer-wise instruction attention score (alignment
+−
+-
+leakage). Per-layer scores on IFEval instruction examples; higher is better. We compare the unmerged LRM, Task Arithmetic, and RAIN-Merging when merging Qwen2.5-7B-Instruct (ITM) into DeepSeek-R1-Distill-Qwen-7B (LRM).
+Effectiveness of Merging Coefficients. (RQ3)
+To validate the merging coefficients, we compare the Instruction-Attention Score in
+Eq. (
+11
+)
+across layers before and after merging under different methods. As shown in
+Fig.
+5
+, instruction-attention guided coefficients in Stage 2 enable
+RAIN-Merging
+to consistently outperform both the LRM and Task Arithmetic, exhibiting a higher alignment and lower leakage. This finding suggests that our weighted reparameterization of merging submodules enhances activation along instruction-aware pathways while slightly suppressing leakage, which improves instruction following without altering the original reasoning pattern.
+\captionof
+tableMerging performance of RAIN-Merging on MathIF under the same configuration as
+Tab.
+1
+.
+IF Acc.
+and
+Math Acc.
+are the accuracy of instruction constraints and math answers, respectively.
+Both Acc.
+represents both constraints and math answers are correct.
+Model
+IF Acc.
+Math Acc.
+Both Acc.
+ITM
+48.81
+40.95
+19.76
+LRM
+25.86
+53.81
+12.62
+RAIN-Merging
+35.10
+54.76
+20.48
+(relative gain)
++35.73%
++1.77%
++62.26%
+\captionof
+tableEvaluation of reasoning and answer traces under the same configuration as
+Tab.
+1
+. We report Reasoning Internal Coherence (
+RIC
+) and Reasoning-Answer Alignment (
+RAA
+) on IFEval, AIME25, and GPQA (0-5 scale). The subsequent “
+(relative gain)
+” row reports the relative improvement of our method over the LRM, highlighted in green.
+Model
+IFEval
+AIME25
+GPQA
+Avg.
+RIC
+RAA
+RIC
+RAA
+RIC
+RAA
+LRM
+4.58
+4.41
+4.50
+3.60
+3.53
+3.76
+4.06
+RAIN-Merging
+4.61
+4.51
+4.50
+4.10
+3.56
+4.26
+4.26
+(relative gain)
++0.77%
++2.26%
+0.00%
++13.89%
++0.86%
++13.31%
++4.78%
+Joint Evaluation of Reasoning and Instruction-Following. (RQ4)
+To more directly assess whether RAIN-Merging can jointly maintain strong reasoning and strict instruction-following within a
+single
+task, we further evaluate on
+MathIF
+(
+Fu et al., 2025b
+)
+. MathIF augments math problems with verifiable constraints and reports both constraint satisfaction and math correctness, as well as a joint metric requiring both. As shown in
+Tab.
+4.2
+, RAIN-Merging markedly improves MathIF instruction hard accuracy over the LRM while leaving math correctness essentially unchanged. Crucially, on
+Both Acc
+, the merged model rises from
+12.62
+%
+12.62\%
+to
+20.48
+%
+20.48\%
+(
++
+62.26
+%
++62.26\%
+relative), outperforming both the LRM and the ITM, demonstrating a substantial gain on the core goal of being
+both correct and follow
+within a single benchmark.
+Reasoning and Answer Traces Evaluation. (RQ4)
+To complement our reasoning and answer quality evaluations, we adopt the framework of
+Wang et al. (2025)
+and perform a process-level analysis of reasoning traces and answers. We measure two chain-of-thought level metrics by LLM-as-a-judge: ➀
+Reasoning Internal Coherence (RIC)
+assesses how logically consistent and self-contained the reasoning trace is. ➁
+Reasoning–Answer Alignment (RAA)
+measures how well the reasoning trace semantically supports the final answer.
+For each sample we provide the question, the ground-truth answer, the full reasoning trace, and the model’s final answer response. The judge then assigns 0-5 scores for RIC and RAA.
+Tab.
+4.2
+shows that RAIN-Merging yields slight improvements in both RIC and RAA on IFEval. For the reasoning-focused benchmarks AIME25 and GPQA, it maintains RIC scores comparable to the LRM, while achieving a marked increase in RAA, notably by over 13% in both cases.
+In other words, the internal coherence of the reasoning is preserved, with the connection between the reasoning and the final decision becoming noticeably tighter.
+Case Study on Instruction Following and Reasoning. (RQ4)
+To provide a granular understanding of how RAIN-Merging enhances model performance, we conducted a series of case studies focusing on instruction following and complex reasoning in Appendix
+J.9
+and
+J.10
+. In instruction-following scenarios, RAIN-Merging effectively rectifies common failure modes of baseline LRMs, such as the violation of explicit formatting rules. On reasoning tasks, the merged model demonstrates superior internal consistency. It not only corrects localized numerical slips through more deliberate and step-by-step computations but also successfully bridges the "knowing-doing gap"
+(
+Schmied et al., 2025
+)
+where the baseline LRM’s final selection contradicts its own correct internal derivation. These qualitative observations suggest that RAIN-Merging achieves more than just preserving reasoning chains, it actively aligns the model’s decision-making process with its logical reasoning.
+5
+Conclusion
+We propose RAIN-Merging, a gradient-free method to enhance instruction following in LRMs while preserving their structured reasoning outputs. By projecting the instruction task vector onto the null space of the thinking format and scaling it by instruction-attention guided coefficients, RAIN-Merging achieves a balance between instruction following and reasoning structure preservation. The method is evaluated on instruction-following, reasoning & general capability, agentic benchmarks, showing that RAIN-Merging not only substantially improves the LRM’s instruction-following ability but also brings gains in reasoning and general capability across several settings.
+Acknowledgments
+The authors would like to thank the anonymous reviewers for their insightful comments.
+The author would also like to express his gratitude to Yucheng Bai for his assistance in identifying and correcting typographical errors within the formulas.
+The research leading to these results has received funding from National Natural Science Foundation of China (62376155).
+References
+Aider (2024)
+Aider
+O1 tops aider’s new polyglot leaderboard
+.
+Cited by:
+2nd item
+,
+§4.1
+.
+Balunović
+et al.
+(2025)
+M. Balunović, J. Dekoninck, I. Petrov, N. Jovanović, and M. Vechev
+Matharena: evaluating llms on uncontaminated math competitions
+.
+arXiv preprint arXiv:2505.23281
+.
+Cited by:
+1st item
+.
+Banerjee
+et al.
+(2005)
+A. Banerjee, S. Merugu, I. S. Dhillon, and J. Ghosh
+Clustering with bregman divergences
+.
+Journal of Machine Learning Research (JMLR)
+.
+Cited by:
+§E.2
+.
+Bercovich
+et al.
+(2025)
+A. Bercovich, I. Levy, I. Golan, M. Dabbah, R. El-Yaniv, O. Puny, I. Galil, Z. Moshe, T. Ronen, N. Nabwani, I. Shahaf, O. Tropp, E. Karpas, R. Zilberstein, J. Zeng, S. Singhal, A. Bukharin, Y. Zhang, T. Konuk, G. Shen, A. S. Mahabaleshwarkar, B. Kartal, Y. Suhara, O. Delalleau, Z. Chen, Z. Wang, D. Mosallanezhad, A. Renduchintala, H. Qian, D. Rekesh, F. Jia, S. Majumdar, V. Noroozi, W. U. Ahmad, S. Narenthiran, A. Ficek, M. Samadi, J. Huang, S. Jain, I. Gitman, I. Moshkov, W. Du, S. Toshniwal, G. Armstrong, B. Kisacanin, M. Novikov, D. Gitman, E. Bakhturina, J. P. Scowcroft, J. Kamalu, D. Su, K. Kong, M. Kliegl, R. Karimi, Y. Lin, S. Satheesh, J. Parmar, P. Gundecha, B. Norick, J. Jennings, S. Prabhumoye, S. N. Akter, M. Patwary, A. Khattar, D. Narayanan, R. Waleffe, J. Zhang, B. Su, G. Huang, T. Kong, P. Chadha, S. Jain, C. Harvey, E. Segal, J. Huang, S. Kashirsky, R. McQueen, I. Putterman, G. Lam, A. Venkatesan, S. Wu, V. Nguyen, M. Kilaru, A. Wang, A. Warno, A. Somasamudramath, S. Bhaskar, M. Dong, N. Assaf, S. Mor, O. U. Argov, S. Junkin, O. Romanenko, P. Larroy, M. Katariya, M. Rovinelli, V. Balas, N. Edelman, A. Bhiwandiwalla, M. Subramaniam, S. Ithape, K. Ramamoorthy, Y. Wu, S. V. Velury, O. Almog, J. Daw, D. Fridman, E. Galinkin, M. Evans, K. Luna, L. Derczynski, N. Pope, E. Long, S. Schneider, G. Siman, T. Grzegorzek, P. Ribalta, M. Katariya, J. Conway, T. Saar, A. Guan, K. Pawelec, S. Prayaga, O. Kuchaiev, B. Ginsburg, O. Olabiyi, K. Briski, J. Cohen, B. Catanzaro, J. Alben, Y. Geifman, E. Chung, and C. Alexiuk
+Llama-nemotron: efficient reasoning models
+.
+Cited by:
+§H.1
+.
+Biship (2007)
+C. M. Biship
+Pattern recognition and machine learning (information science and statistics)
+.
+Springer
+.
+Cited by:
+2nd item
+,
+§4.1
+.
+Böhning (1992)
+D. Böhning
+Multinomial logistic regression algorithm
+.
+Annals of the institute of Statistical Mathematics (AISM)
+.
+Cited by:
+§E.2
+.
+Boyd and Vandenberghe (2004)
+S. P. Boyd and L. Vandenberghe
+Convex optimization
+.
+Cambridge university press
+.
+Cited by:
+§E.2
+.
+Cao
+et al.
+(2024)
+L. Cao, C. Peng, R. Chen, W. Ning, Y. Zou, and Y. Li
+Step guided reasoning: improving mathematical reasoning using guidance generation and step reasoning
+.
+arXiv preprint arXiv:2410.19817
+.
+Cited by:
+1st item
+.
+Chen
+et al.
+(2022)
+W. Chen, X. Ma, X. Wang, and W. W. Cohen
+Program of thoughts prompting: disentangling computation from reasoning for numerical reasoning tasks
+.
+arXiv preprint arXiv:2211.12588
+.
+Cited by:
+Appendix D
+.
+Chkirbene
+et al.
+(2024)
+Z. Chkirbene, R. Hamila, A. Gouissem, and U. Devrim
+Large language models (llm) in industry: a survey of applications, challenges, and trends
+.
+In
+IEEE International Conference on Smart Communities: Improving Quality of Life using AI, Robotics and IoT (HONET)
+,
+Cited by:
+§1
+.
+Chopra
+et al.
+(2025)
+H. Chopra, V. Rambhia, and V. Adve
+LEWIS (layer wise sparsity)–a training free guided model merging approach
+.
+arXiv preprint arXiv:2503.03874
+.
+Cited by:
+7th item
+,
+§1
+,
+§4.1
+.
+Cobbe
+et al.
+(2021)
+K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano, C. Hesse, and J. Schulman
+Training verifiers to solve math word problems
+.
+arXiv preprint arXiv:2110.14168
+.
+Cited by:
+1st item
+.
+Dubey
+et al.
+(2024)
+A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Yang, A. Fan,
+et al.
+The llama 3 herd of models
+.
+arXiv preprint arXiv:2407
+.
+Cited by:
+§4.1
+.
+Face (2025)
+H. Face
+Open r1: a fully open reproduction of deepseek-r1
+.
+Cited by:
+§H.1
+,
+§3
+.
+Fang
+et al.
+(2025)
+J. Fang, H. Jiang, K. Wang, Y. Ma, J. Shi, X. Wang, X. He, and T. Chua
+AlphaEdit: null-space constrained knowledge editing for language models
+.
+In
+International Conference on Learning Representations (ICLR)
+,
+Cited by:
+Appendix D
+.
+Farajtabar
+et al.
+(2020)
+M. Farajtabar, N. Azizan, A. Mott, and A. Li
+Orthogonal gradient descent for continual learning
+.
+In
+Conference on Artificial Intelligence and Statistics (AISTATS)
+,
+Cited by:
+Appendix D
+.
+Fazlyab
+et al.
+(2019)
+M. Fazlyab, A. Robey, H. Hassani, M. Morari, and G. J. Pappas
+Efficient and accurate estimation of lipschitz constants for deep neural networks
+.
+In
+Advances in Neural Information Processing Systems (NeurIPS)
+,
+Cited by:
+§E.2
+.
+Fu
+et al.
+(2025a)
+T. Fu, J. Gu, Y. Li, X. Qu, and Y. Cheng
+Scaling reasoning, losing control: evaluating instruction following in large reasoning models
+.
+arXiv preprint arXiv:2505.14810
+.
+Cited by:
+§1
+.
+Fu
+et al.
+(2025b)
+T. Fu, J. Gu, Y. Li, X. Qu, and Y. Cheng
+Scaling reasoning, losing control: evaluating instruction following in large reasoning models
+.
+arXiv preprint arXiv:2505.14810
+.
+Cited by:
+§4.2
+.
+Gao
+et al.
+(2023)
+L. Gao, A. Madaan, S. Zhou, U. Alon, P. Liu, Y. Yang, J. Callan, and G. Neubig
+PAL: program-aided language models
+.
+In
+International Conference on Machine Learning (ICML)
+,
+Cited by:
+Appendix D
+.
+Goddard
+et al.
+(2024)
+C. Goddard, S. Siriwardhana, M. Ehghaghi, L. Meyers, V. Karpukhin, B. Benedict, M. McQuade, and J. Solawetz
+Arcee’s mergekit: a toolkit for merging large language models
+.
+arXiv preprint arXiv:2403.13257
+.
+Cited by:
+Appendix D
+,
+2nd item
+,
+3rd item
+,
+§1
+,
+§4.1
+.
+Guardieiro
+et al.
+(2025)
+V. Guardieiro, A. Stein, A. Khare, and E. Wong
+Instruction following by boosting attention of large language models
+.
+arXiv preprint arXiv:2506.13734
+.
+Cited by:
+§3
+.
+Guo
+et al.
+(2024)
+D. Guo, Q. Zhu, D. Yang, Z. Xie, K. Dong, W. Zhang, G. Chen, X. Bi, Y. Wu, Y. Li,
+et al.
+DeepSeek-coder: when the large language model meets programming–the rise of code intelligence
+.
+arXiv preprint arXiv:2401.14196
+.
+Cited by:
+§1
+.
+Guo
+et al.
+(2025)
+D. D. Guo, D. Yang, H. Zhang, J. Song, R. Zhang, R. Xu, Q. Zhu, S. Ma, P. Wang, X. Bi, X. Zhang, X. Yu, Y. Wu, Z. F. Wu, Z. Gou, Z. Shao, Z. Li, Z. Gao, A. Liu, B. Xue, B. Wang, B. Wu, B. Feng, C. Lu, C. Zhao, C. Deng, C. Zhang, C. Ruan, D. Dai, D. Chen, D. Ji, E. Li, F. Lin, F. Dai, F. Luo, G. Hao, G. Chen, G. Li, H. Zhang, H. Bao, H. Xu, H. Wang, H. Ding, H. Xin, H. Gao, H. Qu, H. Li, J. Guo, J. Li, J. Wang, J. Chen, J. Yuan, J. Qiu, J. Li, J. L. Cai, J. Ni, J. Liang, J. Chen, K. Dong, K. Hu, K. Gao, K. Guan, K. Huang, K. Yu, L. Wang, L. Zhang, L. Zhao, L. Wang, L. Zhang, L. Xu, L. Xia, M. Zhang, M. Zhang, M. Tang, M. Li, M. Wang, M. Li, N. Tian, P. Huang, P. Zhang, Q. Wang, Q. Chen, Q. Du, R. Ge, R. Zhang, R. Pan, R. Wang, R. J. Chen, R. L. Jin, R. Chen, S. Lu, S. Zhou, S. Chen, S. Ye, S. Wang, S. Yu, S. Zhou, S. Pan, S. S. Li, S. Zhou, S. Wu, S. Ye, T. Yun, T. Pei, T. Sun, T. Wang, W. Zeng, W. Zhao, W. Liu, W. Liang, W. Gao, W. Yu, W. Zhang, W. L. Xiao, W. An, X. Liu, X. Wang, X. Chen, X. Nie, X. Cheng, X. Liu, X. Xie, X. Liu, X. Yang, X. Li, X. Su, X. Lin, X. Q. Li, X. Jin, X. Shen, X. Chen, X. Sun, X. Wang, X. Song, X. Zhou, X. Wang, X. Shan, Y. K. Li, Y. Q. Wang, Y. X. Wei, Y. Zhang, Y. Xu, Y. Li, Y. Zhao, Y. Sun, Y. Wang, Y. Yu, Y. Zhang, Y. Shi, Y. Xiong, Y. He, Y. Piao, Y. Wang, Y. Tan, Y. Ma, Y. Liu, Y. Guo, Y. Ou, Y. Wang, Y. Gong, Y. Zou, Y. He, Y. Xiong, Y. Luo, Y. You, Y. Liu, Y. Zhou, Y. X. Zhu, Y. Xu, Y. Huang, Y. Li, Y. Zheng, Y. Zhu, Y. Ma, Y. Tang, Y. Zha, Y. Yan, Z. Z. Ren, Z. Ren, Z. Sha, Z. Fu, Z. Xu, Z. Xie, Z. Zhang, Z. Hao, Z. Ma, Z. Yan, Z. Wu, Z. Gu, Z. Zhu, Z. Liu, Z. Li, Z. Xie, Z. Song, Z. Pan, Z. Huang, Z. Xu, Z. Zhang, and Z. Zhang
+DeepSeek-r1: incentivizing reasoning capability in llms via reinforcement learning
+.
+Cited by:
+Appendix D
+,
+§1
+,
+§3
+,
+§4.1
+.
+He
+et al.
+(2024)
+Q. He, J. Zeng, W. Huang, L. Chen, J. Xiao, Q. He, X. Zhou, J. Liang, and Y. Xiao
+Can large language models understand real-world complex instructions?
+.
+In
+Association for the Advancement of Artificial Intelligence (AAAI)
+,
+Cited by:
+Appendix D
+,
+2nd item
+,
+§4.1
+.
+Hendrycks
+et al.
+(2021)
+D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt
+Measuring mathematical problem solving with the math dataset
+.
+arXiv preprint arXiv:2103.03874
+.
+Cited by:
+1st item
+.
+Ilharco
+et al.
+(2023)
+G. Ilharco, M. T. Ribeiro, M. Wortsman, L. Schmidt, H. Hajishirzi, and A. Farhadi
+Editing models with task arithmetic
+.
+In
+International Conference on Learning Representations (ICLR)
+,
+Cited by:
+Appendix D
+,
+1st item
+,
+§1
+,
+§1
+,
+§2
+,
+§4.1
+.
+Jaech
+et al.
+(2024)
+A. Jaech, A. Kalai, A. Lerer, A. Richardson, A. El-Kishky, A. Low, A. Helyar, A. Madry, A. Beutel, A. Carney,
+et al.
+Openai o1 system card
+.
+arXiv preprint arXiv:2412.16720
+.
+Cited by:
+Appendix D
+,
+§1
+.
+Kingma and Ba (2014)
+D. P. Kingma and J. Ba
+Adam: a method for stochastic optimization
+.
+arXiv preprint arXiv:1412.6980
+.
+Cited by:
+§I.3
+.
+Koning
+et al.
+(1991)
+R. H. Koning, H. Neudecker, and T. Wansbeek
+Block kronecker products and the vecb operator
+.
+Linear Algebra and Its Applications
+.
+Cited by:
+§3
+.
+Kovalevskyi (2024)
+B. Kovalevskyi
+Ifeval-extended: enhancing instruction-following evaluation in large language models through dynamic prompt generation
+.
+Journal of Artificial Intelligence General science (JAIGS)
+.
+Cited by:
+§J.8
+.
+Lewkowycz
+et al.
+(2022)
+A. Lewkowycz, A. Andreassen, D. Dohan, E. Dyer, H. Michalewski, V. V. Ramasesh, A. Slone, C. Anil, I. Schlag, T. Gutman-Solo, Y. Wu, B. Neyshabur, G. Gur-Ari, and V. Misra
+Solving quantitative reasoning problems with language models
+.
+In
+Advances in Neural Information Processing Systems (NeurIPS)
+,
+Cited by:
+1st item
+.
+Li
+et al.
+(2024)
+T. Li, W. Chiang, E. Frick, L. Dunlap, T. Wu, B. Zhu, J. E. Gonzalez, and I. Stoica
+From crowdsourced data to high-quality benchmarks: arena-hard and benchbuilder pipeline
+.
+arXiv preprint arXiv:2406.11939
+.
+Cited by:
+4th item
+,
+§4.1
+.
+Li
+et al.
+(2025a)
+X. Li, Z. Yu, Z. Zhang, X. Chen, Z. Zhang, Y. Zhuang, N. Sadagopan, and A. Beniwal
+When thinking fails: the pitfalls of reasoning for instruction-following in llms
+.
+arXiv preprint arXiv:2505.11423
+.
+Cited by:
+§1
+.
+Li
+et al.
+(2025b)
+Z. Li, K. Chen, Y. Long, X. Bai, Y. Zhang, X. Wei, J. Li, and M. Zhang
+XIFBench: evaluating large language models on multilingual instruction following
+.
+Advances in Neural Information Processing Systems (NeurIPS) Track on Datasets and Benchmarks
+.
+Cited by:
+§J.6
+.
+Lightman
+et al.
+(2024)
+H. Lightman, V. Kosaraju, Y. Burda, H. Edwards, B. Baker, T. Lee, J. Leike, J. Schulman, I. Sutskever, and K. Cobbe
+Let’s verify step by step
+.
+In
+International Conference on Learning Representations (ICLR)
+,
+Cited by:
+Appendix D
+.
+Lozhkov
+et al.
+(2025)
+A. Lozhkov, H. Kydlíček, L. B. Allal, G. Penedo, E. Beeching, Q. Gallouédec, N. Habib, L. Tunstall, and L. von Werra
+OpenR1-math-220k
+.
+Cited by:
+§H.1
+.
+Nesterov (2013)
+Y. Nesterov
+Introductory lectures on convex optimization: a basic course
+.
+Springer
+.
+Cited by:
+§E.2
+.
+Nielsen and Bhatia (2013)
+F. Nielsen and R. Bhatia
+Matrix information geometry
+.
+Springer
+.
+Cited by:
+3rd item
+,
+§4.1
+.
+Nobari
+et al.
+(2025)
+A. H. Nobari, K. Alimohammadi, A. ArjomandBigdeli, A. Srivastava, F. Ahmed, and N. Azizan
+Activation-informed merging of large language models
+.
+arXiv preprint arXiv:2502.02421
+.
+Cited by:
+8th item
+,
+§1
+,
+§4.1
+.
+Ortiz-Jiménez
+et al.
+(2023)
+G. Ortiz-Jiménez, A. Favero, and P. Frossard
+Task arithmetic in the tangent space: improved editing of pre-trained models
+.
+In
+Advances in Neural Information Processing Systems (NeurIPS)
+,
+Cited by:
+§1
+,
+§2
+.
+Ouyang
+et al.
+(2022)
+L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. L. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray, J. Schulman, J. Hilton, F. Kelton, L. Miller, M. Simens, A. Askell, P. Welinder, P. F. Christiano, J. Leike, and R. Lowe
+Training language models to follow instructions with human feedback
+.
+In
+Advances in Neural Information Processing Systems (NeurIPS)
+,
+Cited by:
+Appendix D
+.
+Penedo
+et al.
+(2025)
+G. Penedo, A. Lozhkov, H. Kydlíček, L. B. Allal, E. Beeching, A. P. Lajarín, Q. Gallouédec, N. Habib, L. Tunstall, and L. von Werra
+CodeForces cots
+.
+Cited by:
+§H.1
+.
+Pyatkin
+et al.
+(2025)
+V. Pyatkin, S. Malik, V. Graf, H. Ivison, S. Huang, P. Dasigi, N. Lambert, and H. Hajishirzi
+Generalizing verifiable instruction following
+.
+Advances in Neural Information Processing Systems (NeurIPS) Track on Datasets and Benchmarks
+.
+Cited by:
+§J.6
+.
+Qi
+et al.
+(2025)
+Y. Qi, H. Peng, X. Wang, A. Xin, Y. Liu, B. Xu, L. Hou, and J. Li
+Agentif: benchmarking instruction following of large language models in agentic scenarios
+.
+arXiv preprint arXiv:2505.16944
+.
+Cited by:
+§1
+.
+Qin
+et al.
+(2024)
+Y. Qin, K. Song, Y. Hu, W. Yao, S. Cho, X. Wang, X. Wu, F. Liu, P. Liu, and D. Yu
+InFoBench: evaluating instruction following ability in large language models
+.
+In
+Proceedings of the Association for Computational Linguistics (ACL Findings)
+,
+Cited by:
+Appendix D
+,
+3rd item
+,
+§4.1
+.
+Qin
+et al.
+(2025)
+Y. Qin, G. Li, Z. Li, Z. Xu, Y. Shi, Z. Lin, X. Cui, K. Li, and X. Sun
+Incentivizing reasoning for advanced instruction-following of large language models
+.
+arXiv preprint arXiv:2506.01413
+.
+Cited by:
+§1
+.
+Rein
+et al.
+(2024)
+D. Rein, B. L. Hou, A. C. Stickland, J. Petty, R. Y. Pang, J. Dirani, J. Michael, and S. R. Bowman
+Gpqa: a graduate-level google-proof q&a benchmark
+.
+In
+Conference on Language Modeling (COLM)
+,
+Cited by:
+3rd item
+,
+§4.1
+.
+Saha
+et al.
+(2021)
+G. Saha, I. Garg, and K. Roy
+Gradient projection memory for continual learning
+.
+In
+International Conference on Learning Representations (ICLR)
+,
+Cited by:
+Appendix D
+.
+Schmied
+et al.
+(2025)
+T. Schmied, J. Bornschein, J. Grau-Moya, M. Wulfmeier, and R. Pascanu
+Llms are greedy agents: effects of rl fine-tuning on decision-making abilities
+.
+arXiv preprint arXiv:2504.16078
+.
+Cited by:
+2nd item
+,
+§4.2
+.
+Shao
+et al.
+(2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. Li, Y. Wu,
+et al.
+Deepseekmath: pushing the limits of mathematical reasoning in open language models
+.
+arXiv preprint arXiv:2402.03300
+.
+Cited by:
+§1
+.
+Shenfeld
+et al.
+(2025)
+I. Shenfeld, J. Pari, and P. Agrawal
+RL’s razor: why online reinforcement learning forgets less
+.
+arXiv preprint arXiv:2509.04259
+.
+Cited by:
+§1
+.
+Shinn
+et al.
+(2023)
+N. Shinn, F. Cassano, A. Gopinath, K. Narasimhan, and S. Yao
+Reflexion: language agents with verbal reinforcement learning
+.
+In
+Advances in Neural Information Processing Systems (NeurIPS)
+,
+Cited by:
+Appendix D
+.
+Shridhar
+et al.
+(2021)
+M. Shridhar, X. Yuan, M. Côté, Y. Bisk, A. Trischler, and M. J. Hausknecht
+ALFWorld: aligning text and embodied environments for interactive learning
+.
+In
+International Conference on Learning Representations (ICLR)
+,
+Cited by:
+5th item
+,
+§4.1
+.
+Tang
+et al.
+(2025)
+P. Tang, Y. Liu, D. Zhang, X. Wu, and D. Zhang
+Lora-null: low-rank adaptation via null space for large language models
+.
+arXiv preprint arXiv:2503.02659
+.
+Cited by:
+Appendix D
+.
+Vaswani
+et al.
+(2017)
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin
+Attention is all you need
+.
+In
+Advances in Neural Information Processing Systems (NeurIPS)
+,
+Cited by:
+§G.1
+,
+§3
+.
+Wainwright and Jordan (2008)
+M. J. Wainwright and M. I. Jordan
+Graphical models, exponential families, and variational inference
+.
+Foundations and Trends in Machine Learning
+.
+Cited by:
+§E.2
+.
+Wang
+et al.
+(2025)
+C. Wang, W. Su, Q. Ai, and Y. Liu
+Joint evaluation of answer and reasoning consistency for hallucination detection in large reasoning models
+.
+arXiv preprint arXiv:2506.04832
+.
+Cited by:
+§4.2
+.
+Wang
+et al.
+(2021)
+S. Wang, X. Li, J. Sun, and Z. Xu
+Training networks in null space of feature covariance for continual learning
+.
+In
+Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition (CVPR)
+,
+Cited by:
+§3
+.
+Wang
+et al.
+(2023)
+X. Wang, J. Wei, D. Schuurmans, Q. V. Le, E. H. Chi, S. Narang, A. Chowdhery, and D. Zhou
+Self-consistency improves chain of thought reasoning in language models
+.
+In
+International Conference on Learning Representations (ICLR)
+,
+Cited by:
+Appendix D
+.
+Wei
+et al.
+(2022)
+J. Wei, X. Wang, D. Schuurmans, M. Bosma, B. Ichter, F. Xia, E. H. Chi, Q. V. Le, and D. Zhou
+Chain-of-thought prompting elicits reasoning in large language models
+.
+In
+Advances in Neural Information Processing Systems (NeurIPS)
+,
+Cited by:
+Appendix D
+,
+§1
+.
+Wen
+et al.
+(2024)
+B. Wen, P. Ke, X. Gu, L. Wu, H. Huang, J. Zhou, W. Li, B. Hu, W. Gao, J. Xu, Y. Liu, J. Tang, H. Wang, and M. Huang
+Benchmarking complex instruction-following with multiple constraints composition
+.
+In
+Advances in Neural Information Processing Systems (NeurIPS)
+,
+Cited by:
+Appendix D
+,
+4th item
+,
+§4.1
+.
+Wortsman
+et al.
+(2022)
+M. Wortsman, G. Ilharco, S. Y. Gadre, R. Roelofs, R. G. Lopes, A. S. Morcos, H. Namkoong, A. Farhadi, Y. Carmon, S. Kornblith, and L. Schmidt
+Model soups: averaging weights of multiple fine-tuned models improves accuracy without increasing inference time
+.
+In
+International Conference on Machine Learning (ICML)
+,
+Cited by:
+Appendix D
+.
+Wu
+et al.
+(2025)
+H. Wu, Y. Yao, S. Liu, Z. Liu, X. Fu, X. Han, X. Li, H. Zhen, T. Zhong, and M. Yuan
+Unlocking efficient long-to-short llm reasoning with model merging
+.
+arXiv preprint arXiv:2503.20641
+.
+Cited by:
+§I.2
+,
+§4.1
+.
+Yadav
+et al.
+(2023)
+P. Yadav, D. Tam, L. Choshen, C. A. Raffel, and M. Bansal
+TIES-merging: resolving interference when merging models
+.
+In
+Advances in Neural Information Processing Systems (NeurIPS)
+,
+Cited by:
+Appendix D
+,
+4th item
+,
+§2
+,
+§4.1
+.
+Yang
+et al.
+(2024a)
+A. Yang, B. Zhang, B. Hui, B. Gao, B. Yu, C. Li, D. Liu, J. Tu, J. Zhou, J. Lin,
+et al.
+Qwen2. 5-math technical report: toward mathematical expert model via self-improvement
+.
+arXiv preprint arXiv:2409.12122
+.
+Cited by:
+footnote 1
+.
+Yang
+et al.
+(2024b)
+E. Yang, L. Shen, G. Guo, X. Wang, X. Cao, J. Zhang, and D. Tao
+Model merging in llms, mllms, and beyond: methods, theories, applications and opportunities
+.
+arXiv preprint arXiv:2408.07666
+.
+Cited by:
+Appendix D
+.
+Yang
+et al.
+(2025)
+Q. A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu, F. Huang, H. Wei, H. Lin, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Lin, K. Dang, K. Lu, K. Bao, K. Yang, L. Yu, M. Li, M. Xue, P. Zhang, Q. Zhu, R. Men, R. Lin, T. Li, T. Tang, T. Xia, X. Ren, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Wan, Y. Liu, Z. Cui, Z. Zhang, and Z. Qiu
+Qwen2.5 technical report
+.
+Cited by:
+§4.1
+.
+Yao
+et al.
+(2022)
+S. Yao, H. Chen, J. Yang, and K. Narasimhan
+WebShop: towards scalable real-world web interaction with grounded language agents
+.
+In
+Advances in Neural Information Processing Systems (NeurIPS)
+,
+Cited by:
+5th item
+,
+§4.1
+.
+Yao
+et al.
+(2023a)
+S. Yao, D. Yu, J. Zhao, I. Shafran, T. Griffiths, Y. Cao, and K. Narasimhan
+Tree of thoughts: deliberate problem solving with large language models
+.
+In
+Advances in Neural Information Processing Systems (NeurIPS)
+,
+Cited by:
+Appendix D
+.
+Yao
+et al.
+(2023b)
+S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. R. Narasimhan, and Y. Cao
+ReAct: synergizing reasoning and acting in language models
+.
+In
+International Conference on Learning Representations (ICLR)
+,
+Cited by:
+Appendix D
+.
+Yao
+et al.
+(2025)
+Y. Yao, S. Liu, Z. Liu, Q. Li, M. Liu, X. Han, Z. Guo, H. Wu, and L. Song
+Activation-guided consensus merging for large language models
+.
+arXiv preprint arXiv:2505.14009
+.
+Cited by:
+6th item
+,
+§1
+,
+§4.1
+.
+Yu
+et al.
+(2024)
+L. Yu, B. Yu, H. Yu, F. Huang, and Y. Li
+Language models are super mario: absorbing abilities from homologous models as a free lunch
+.
+In
+International Conference on Machine Learning (ICML)
+,
+Cited by:
+5th item
+,
+§4.1
+.
+Zhang and Zhou (2025)
+H. Zhang and J. Zhou
+Unraveling lora interference: orthogonal subspaces for robust model merging
+.
+In
+Proceedings of the Association for Computational Linguistics (ACL)
+,
+Cited by:
+Appendix D
+.
+Zhao
+et al.
+(2024)
+H. Zhao, Z. Liu, Z. Wu, Y. Li, T. Yang, P. Shu, S. Xu, H. Dai, L. Zhao, G. Mai,
+et al.
+Revolutionizing finance with llms: an overview of applications and insights
+.
+arXiv preprint arXiv:2401.11641
+.
+Cited by:
+§1
+.
+Zhou
+et al.
+(2023a)
+D. Zhou, N. Schärli, L. Hou, J. Wei, N. Scales, X. Wang, D. Schuurmans, C. Cui, O. Bousquet, Q. V. Le, and E. H. Chi
+Least-to-most prompting enables complex reasoning in large language models
+.
+In
+International Conference on Learning Representations (ICLR)
+,
+Cited by:
+Appendix D
+.
+Zhou
+et al.
+(2023b)
+J. Zhou, T. Lu, S. Mishra, S. Brahma, S. Basu, Y. Luan, D. Zhou, and L. Hou
+Instruction-following evaluation for large language models
+.
+arXiv preprint arXiv:2311.07911
+.
+Cited by:
+Appendix D
+,
+1st item
+,
+1st item
+,
+§3
+,
+§4.1
+.
+Zou
+et al.
+(2025)
+T. Zou, X. Zhang, H. Yu, M. Wang, F. Huang, and Y. Li
+EIFBENCH: extremely complex instruction following benchmark for large language models
+.
+Proceedings of Empirical Methods in Natural Language Processing (EMNLP)
+.
+Cited by:
+§J.6
+.
+Appendix
+Appendix A
+Ethics Statement
+This research adheres to the licenses and applicable laws governing upstream open-source models and datasets. RAIN-Merging is developed using publicly available weights and data that permit derivation and redistribution.
+Safety.
+Model merging can introduce “capability or safety drift,” such as new biases, jailbreak risks, or shifts in hallucination patterns while improving instruction following. The merged model may produce inaccurate, biased, or inappropriate content. It must not be used directly in high-risk decision-making contexts such as medicine, law, or finance. Any production deployment should include human oversight, operation logging, rate limiting, and compliance review procedures.
+Dataset use.
+We rely only on data authorized for academic reproducibility. During data cleaning, we make every effort to remove personally identifiable information and sensitive content. We also disclose potential dataset biases, coverage gaps, and risks of benchmark contamination.
+Societal impact.
+We caution that generative models may exacerbate information asymmetries, reinforce stereotypes, or be applied to produce misleading content. We firmly oppose misuse and will work with the community to address any identified negative impacts.
+Appendix B
+Reproducibility Statement
+To ensure the reproducibility of our results, we provide the following resources and documentation: all algorithm implementations and experiment scripts will be released anonymously with the
+supplementary materials
+, accompanied by documentation of key functions and the project directory structure. The calibration datasets used in our experiments will be made available alongside the appendix. Public links are included for all open-source models and datasets used in this work.
+Appendix C
+LLM Usage Statement
+We used large language models (LLMs) in the following stages and disclose their roles as follows:
+Writing Stage.
+LLMs (both closed- and open-source) were used only for copyediting and grammar checking, including terminology normalization, syntactic polishing, and formatting. They were not used to generate claims, collect evidence, or construct results.
+Benchmark Evaluation.
+When a benchmark’s original paper or community practice requires a closed-source LLM (for example, as a judge or as a baseline), we strictly follow the prescribed protocol and disclose the exact model versions.
+Calibration Set Construction.
+We adopt an LLM-as-Judge procedure for automated filtering and scoring of candidate samples as an initial pass (producing only scores or labels; generated text is not used as a training target). A human second-pass review follows to ensure data quality and compliance. All third-party data and models are used within their licenses, with source links and permission details provided.
+Appendix D
+Related Work
+Large Reasoning Model.
+Early studies show that prompting models to explicitly produce intermediate steps during reasoning can substantially improve complex reasoning performance, as in Chain-of-Thought
+(
+Wei et al., 2022
+)
+and Tree-of-Thought
+(
+Yao et al., 2023a
+)
+. Building on this insight, a new generation of LRMs has shifted toward training paradigms that directly incentivize reasoning with reinforcement learning; for example, OpenAI’s o1 series and DeepSeek-R1 report marked advances on tasks in mathematics and code that require extended reasoning
+(
+Jaech et al., 2024
+;
+Guo et al., 2025
+)
+. These models typically generate structured “thought processes” or “thinking formats,” yet in real applications they often exhibit tension with strict instruction following. Beyond explicit intermediate reasoning such as CoT and ToT, subsequent work further improves reasoning quality and stability: Self-Consistency samples multiple solution paths and uses majority voting to increase reliability; Least-to-Most decomposes complex problems into subgoals ordered from easy to hard; Program-of-Thoughts and PAL externalize the reasoning into executable programs, decoupling computation from reasoning and substantially reducing arithmetic and procedural errors
+(
+Wang et al., 2023
+;
+Zhou et al., 2023a
+;
+Chen et al., 2022
+;
+Gao et al., 2023
+)
+. In the “reasoning plus acting” paradigm, ReAct interleaves thought traces with tool interactions to mitigate hallucinations, while Reflexion employs language-based self-reflection and memory to iteratively refine policies over multi-turn interactions
+(
+Yao et al., 2023b
+;
+Shinn et al., 2023
+)
+. In parallel, LRMs are trained with process-level feedback and reinforcement learning to directly encourage thinking before answering: the o1 system emphasizes large-scale RL and thinking-first training and alignment strategies, and DeepSeek-R1 shows that under weak or no supervision, pure RL (e.g., GRPO) can induce longer and more stable chains of thought
+(
+Jaech et al., 2024
+;
+Guo et al., 2025
+)
+. Moreover, process supervision and process reward models (PRMs) provide finer-grained step-level feedback that, compared with outcome supervision of final answers, better cultivates verifiable reasoning chains and test-time expansion
+(
+Lightman et al., 2024
+)
+. RAIN-Merging is complementary to this trajectory: instead of retraining the LRM, we preserve the thinking format at merge time and use structured coefficients to selectively enhance instruction responses, thereby striking a balance between fidelity to the reasoning structure and improved instruction following.
+Instruction Following.
+In the alignment paradigm, InstructGPT systematically improved the stability of “following user intent” through reinforcement learning from human feedback (RLHF), and showed that small instruction-tuned models can achieve strong human preference scores, establishing a foundation for subsequent research on instruction following
+(
+Ouyang et al., 2022
+)
+. For objective evaluation, IFEval targets programmatically verifiable rules, for example, length limits, keywords, formatting, to reduce subjective scoring noise and facilitate reproducibility and fair comparison
+(
+Zhou et al., 2023b
+)
+. CELLO abstracts multi-dimensional attributes from real-world complex instructions, such as multi-step dependencies, format or quantity constraints, and semantic consistency, to characterize where LLMs struggle with complex instruction understanding
+(
+He et al., 2024
+)
+. InfoBench proposes a decomposed metric that breaks a complex instruction into checkable sub-requirements, enabling finer-grained measurement of compliance and error sources
+(
+Qin et al., 2024
+)
+. ComplexBench emphasizes the compositional challenge of multiple simultaneous constraints, systematically testing robustness and trade-offs when many constraints co-occur
+(
+Wen et al., 2024
+)
+. Building on these mainstream benchmarks, this work introduces an instruction-attention–oriented merging strategy: during merging, we quantitatively constrain and amplify the model’s responsiveness to instruction-relevant spans while maintaining the stability of its long-chain reasoning format, thereby balancing compliance and an interpretable process.
+Model Merging.
+Parameter-space merging offers a training-free or low-data path for integrating capabilities. Model Soup averages weights from multiple fine-tuned checkpoints to improve out-of-distribution robustness and overall performance
+(
+Wortsman et al., 2022
+)
+. Task vectors implement additive editing and compositionality by linear arithmetic on weight differences, enabling positive and negative edits as well as multi-task synthesis
+(
+Ilharco et al., 2023
+)
+. TIES-Merging explicitly addresses interfering factors such as resetting parameters with negligible updates and resolving sign conflicts, which mitigates performance degradation caused by parameter-level interference when merging multiple models
+(
+Yadav et al., 2023
+)
+. Community tools and practice are also maturing. MergeKit consolidates and engineers diverse merging algorithms, supporting large-model merging and recipe reproduction under resource constraints, which facilitates methodological comparison and reproducibility
+(
+Goddard et al., 2024
+)
+. Systematic surveys have begun to organize theoretical perspectives, method taxonomies, and application boundaries for merging, providing references for unified terminology, evaluation settings, and future research agendas
+(
+Yang et al., 2024b
+)
+. However, most existing methods focus on average multi-task performance and out-of-distribution robustness, with limited attention to the fidelity of fine-grained functional structures such as the reasoning format, for example, explicit thought traces and process markers. RAIN-Merging targets this gap: during parameter fusion it introduces subspace constraints tied to the “thinking format,” and allocates merging coefficients at the per-layer and per-head levels using instruction attention, thereby strengthening instruction following while suppressing structural drift of the original reasoning patterns.
+Null Space Projection.
+Constraint ideas centered on orthogonality and null spaces have been repeatedly validated in continual learning and knowledge editing. OGD projects gradients for new tasks onto the orthogonal complement of the subspace of old tasks, explicitly constraining update directions to mitigate forgetting
+(
+Farajtabar et al., 2020
+)
+. GPM extracts and maintains “important gradient subspaces” via singular value decomposition, then performs layer-wise orthogonal projection of new gradients to reduce interference across tasks
+(
+Saha et al., 2021
+)
+. For LLM knowledge editing, AlphaEdit projects edit perturbations into the null space of “preserved knowledge” and provides theoretical guarantees on output preservation, which markedly reduces cumulative damage in sequential edits
+(
+Fang et al., 2025
+)
+. In parameter-efficient and mergeable settings, LoRA-Null initializes or constrains the LoRA adaptation subspace using the null space of pretrained representations, alleviating forgetting and improving parallelism and mergeability with other updates
+(
+Tang et al., 2025
+)
+. For multi-task and multi-LoRA model merging, OSRM imposes orthogonalization constraints on task-specific LoRA subspaces before fine-tuning, reducing mutual interference at merge time and improving compatibility
+(
+Zhang and Zhou, 2025
+)
+. Following this line of work, we construct a null-space projection on features tied to the “reasoning format,” and combine it with instruction-attention–guided coefficients. The merged model thus preserves structured reasoning outputs while improving adherence to verifiable constraints such as format, length, and enumeration.
+Appendix E
+Proof
+Figure A1:
+Principal subspace cosine similarity
+between DeepSeek-R1-Distill-Qwen-1.5B (LRM) and Qwen2.5-1.5B-Instruct (ITM) task vectors for each layer and submodule.
+Figure A2:
+Principal subspace cosine similarity
+between DeepSeek-R1-Distill-Qwen-14B (LRM) and Qwen2.5-14B-Instruct (ITM) task vectors for each layer and submodule.
+E.1
+Proof of why orthogonal in parameters
+≠
+\neq
+invariant in outputs
+We first describe how we compute orthogonality between
+principal parameter subspaces
+. Let the two sources be the LRM task vector or weight difference, denoted by
+R
+R
+, and the ITM counterpart, denoted by
+I
+I
+. For each layer and each linear submodule
+W
+k
+∈
+ℝ
+d
+out
+k
+×
+d
+in
+k
+W^{k}\in\mathbb{R}^{d^{k}_{\text{out}}\times d^{k}_{\text{in}}}
+, we take the top
+S
+S
+singular directions (default
+S
+=
+16
+S=16
+in our experiments) and perform SVD:
+W
+R
+k
+=
+U
+R
+k
+​
+Σ
+R
+k
+​
+(
+V
+R
+k
+)
+⊤
+,
+W
+I
+k
+=
+U
+I
+k
+​
+Σ
+I
+k
+​
+(
+V
+I
+k
+)
+⊤
+.
+W^{k}_{R}\;=\;U^{k}_{R}\,\Sigma^{k}_{R}\,(V^{k}_{R})^{\top},\qquad W^{k}_{I}\;=\;U^{k}_{I}\,\Sigma^{k}_{I}\,(V^{k}_{I})^{\top}.
+(A1)
+Write
+U
+R
+,
+S
+k
+∈
+ℝ
+d
+out
+k
+×
+S
+U^{k}_{R,S}\in\mathbb{R}^{d^{k}_{\text{out}}\times S}
+for the top-
+S
+S
+left singular vectors of
+U
+R
+k
+U^{k}_{R}
+(similarly
+V
+R
+,
+S
+k
+∈
+ℝ
+d
+in
+k
+×
+S
+V^{k}_{R,S}\in\mathbb{R}^{d^{k}_{\text{in}}\times S}
+), and analogously
+U
+I
+,
+S
+k
+,
+V
+I
+,
+S
+k
+U^{k}_{I,S},V^{k}_{I,S}
+for source
+I
+I
+.
+Principal subspace cosine similarity.
+We focus on the
+left
+(output-side) principal subspaces and define the alignment matrix
+A
+k
+=
+(
+U
+R
+,
+S
+k
+)
+⊤
+​
+U
+I
+,
+S
+k
+∈
+ℝ
+S
+×
+S
+.
+A^{k}\;=\;(U^{k}_{R,S})^{\top}U^{k}_{I,S}\ \in\ \mathbb{R}^{S\times S}.
+(A2)
+Let
+σ
+1
+k
+,
+…
+,
+σ
+S
+k
+∈
+[
+0
+,
+1
+]
+\sigma^{k}_{1},\ldots,\sigma^{k}_{S}\in[0,1]
+be the singular values of
+A
+k
+A^{k}
+. They equal the cosines of the principal angles between the two subspaces:
+σ
+i
+k
+=
+cos
+⁡
+ϑ
+i
+k
+\sigma^{k}_{i}=\cos\vartheta^{k}_{i}
+. We define the
+principal subspace cosine similarity
+as the mean cosine of principal angles:
+cos
+⁡
+Θ
+S
+k
+​
+(
+U
+R
+,
+S
+k
+,
+U
+I
+,
+S
+k
+)
+=
+1
+S
+​
+∑
+i
+=
+1
+S
+σ
+i
+k
+.
+\cos\Theta^{k}_{S}\big(U^{k}_{R,S},U^{k}_{I,S}\big)\;=\;\frac{1}{S}\sum_{i=1}^{S}\sigma^{k}_{i}.
+(A3)
+Smaller values indicate stronger orthogonality between the sources at that (layer, module) cell.
+Empirical observation.
+Across model sizes and all layers/modules in Qwen2.5-1.5B/7B/14B (
+Fig.
+2
+,
+A1
+,
+A2
+), we observe
+cos
+⁡
+Θ
+S
+k
+<
+0.1
+\cos\Theta^{k}_{S}<0.1
+(with only a few exceptions), indicating that LRM and ITM task vectors are largely
+orthogonal in parameter principal directions
+. However, as the theory below shows, such parameter-space orthogonality does
+not
+imply invariance in the output space (i.e., unchanged logits on the thinking format), and thus cannot replace the
+null-space projection
+constraint used in our method.
+Why orthogonal in parameters
+≠
+\bm{\neq}
+invariant in outputs.
+We formalize this issue as the following
+Prop.
+1
+and give a proof with dimension argument.
+Proposition 1
+(Insufficiency of parameter-space orthogonality for output invariance)
+.
+For each submodule
+k
+k
+, let
+𝒰
+I
+,
+S
+k
+,
+𝒱
+I
+,
+S
+k
+\mathcal{U}_{I,S}^{k},\mathcal{V}_{I,S}^{k}
+be the
+S
+S
+-dimensional instruction-side principal left/right subspaces and define the admissible low-rank parameter perturbation space
+𝒯
+I
+k
+=
+𝒰
+I
+,
+S
+k
+⊗
+𝒱
+I
+,
+S
+k
+=
+span
+{
+vec
+(
+u
+v
+⊤
+)
+:
+u
+∈
+𝒰
+I
+,
+S
+k
+,
+v
+∈
+𝒱
+I
+,
+S
+k
+}
+,
+𝒯
+I
+=
+⨁
+k
+=
+1
+K
+𝒯
+I
+k
+.
+\mathcal{T}_{I}^{k}\;=\;\mathcal{U}_{I,S}^{k}\otimes\mathcal{V}_{I,S}^{k}\;=\;\operatorname{span}\!\left\{\operatorname{vec}(uv^{\top}):\,u\in\mathcal{U}_{I,S}^{k},\ v\in\mathcal{V}_{I,S}^{k}\right\},\qquad\mathcal{T}_{I}\;=\;\bigoplus_{k=1}^{K}\mathcal{T}_{I}^{k}.
+(A4)
+Let
+J
+J
+be the Jacobian of the logits on the protected thinking tokens
+Ω
+think
+\Omega_{\text{think}}
+at the anchor
+θ
+R
+\theta_{R}
+, with total parameter dimension
+D
+=
+dim
+(
+θ
+)
+D=\dim(\theta)
+and rank
+r
+=
+rank
+⁡
+(
+J
+)
+r=\operatorname{rank}(J)
+. Then, in generic position,
+dim
+(
+𝒯
+I
+∩
+Null
+⁡
+(
+J
+)
+)
+≤
+max
+⁡
+{
+0
+,
+K
+​
+S
+2
+−
+r
+}
+.
+\dim\!\bigl(\mathcal{T}_{I}\cap\operatorname{Null}(J)\bigr)\ \leq\ \max\{0,\ KS^{2}-r\}.
+(A5)
+In particular, if
+r
+>
+K
+​
+S
+2
+r>KS^{2}
+, one has
+𝒯
+I
+∩
+Null
+⁡
+(
+J
+)
+=
+{
+0
+}
+\mathcal{T}_{I}\cap\operatorname{Null}(J)=\{0\}
+and hence
+𝒯
+I
+⊈
+Null
+⁡
+(
+J
+)
+\mathcal{T}_{I}\nsubseteq\operatorname{Null}(J)
+. Even when
+r
+≤
+K
+​
+S
+2
+r\leq KS^{2}
+, the inclusion
+𝒯
+I
+⊆
+Null
+⁡
+(
+J
+)
+\mathcal{T}_{I}\subseteq\operatorname{Null}(J)
+requires a measure-zero alignment and thus almost never holds. Consequently, there exists a nonzero
+Δ
+∈
+𝒯
+I
+\Delta\in\mathcal{T}_{I}
+with
+J
+​
+Δ
+≠
+0
+J\Delta\neq 0
+, implying
+ℒ
+think
+​
+(
+θ
+R
++
+Δ
+)
+=
+1
+2
+​
+Δ
+⊤
+​
+(
+𝔼
+⁡
+[
+J
+⊤
+​
+F
+​
+J
+]
+)
+​
+Δ
++
+o
+⁡
+(
+‖
+Δ
+‖
+2
+)
+>
+0
+,
+\mathcal{L}_{\text{think}}(\theta_{R}+\Delta)\;=\;\tfrac{1}{2}\,\Delta^{\top}\bigl(\mathbb{E}[J^{\top}FJ]\bigr)\Delta\;+\;o(\|\Delta\|^{2})\;>\;0,
+(A6)
+where
+F
+F
+is the Fisher matrix of the softmax.
+Proof of Prop.
+1
+.
+Each module contributes an
+S
+S
+-dimensional left subspace and an
+S
+S
+-dimensional right subspace; their Kronecker product yields
+dim
+𝒯
+I
+k
+=
+S
+⋅
+S
+=
+S
+2
+in generic position,
+\dim\mathcal{T}_{I}^{k}\;=\;S\cdot S\;=\;S^{2}\quad\text{in generic position,}
+(A7)
+so, ignoring accidental cross-module dependencies,
+dim
+𝒯
+I
+=
+∑
+k
+=
+1
+K
+dim
+𝒯
+I
+k
+=
+K
+​
+S
+2
+.
+\dim\mathcal{T}_{I}\;=\;\sum_{k=1}^{K}\dim\mathcal{T}_{I}^{k}\;=\;KS^{2}.
+(A8)
+By the rank–nullity theorem for
+J
+∈
+ℝ
+m
+×
+D
+J\in\mathbb{R}^{m\times D}
+,
+dim
+Null
+⁡
+(
+J
+)
+=
+D
+−
+r
+.
+\dim\operatorname{Null}(J)\;=\;D-r.
+(A9)
+For two subspaces
+𝒜
+,
+ℬ
+⊂
+ℝ
+D
+\mathcal{A},\mathcal{B}\subset\mathbb{R}^{D}
+, a standard upper bound on the intersection dimension states
+dim
+(
+𝒜
+∩
+ℬ
+)
+≤
+max
+⁡
+{
+0
+,
+dim
+𝒜
++
+dim
+ℬ
+−
+D
+}
+.
+\dim(\mathcal{A}\cap\mathcal{B})\ \leq\ \max\{0,\ \dim\mathcal{A}+\dim\mathcal{B}-D\}.
+(A10)
+Setting
+𝒜
+=
+𝒯
+I
+\mathcal{A}=\mathcal{T}_{I}
+and
+ℬ
+=
+Null
+⁡
+(
+J
+)
+\mathcal{B}=\operatorname{Null}(J)
+gives
+dim
+(
+𝒯
+I
+∩
+Null
+⁡
+(
+J
+)
+)
+≤
+max
+⁡
+{
+0
+,
+K
+​
+S
+2
++
+(
+D
+−
+r
+)
+−
+D
+}
+=
+max
+⁡
+{
+0
+,
+K
+​
+S
+2
+−
+r
+}
+.
+\dim\!\bigl(\mathcal{T}_{I}\cap\operatorname{Null}(J)\bigr)\ \leq\ \max\bigl\{0,\ KS^{2}+(D-r)-D\bigr\}\ =\ \max\{0,\ KS^{2}-r\}.
+(A11)
+Hence, if
+r
+>
+K
+​
+S
+2
+r>KS^{2}
+, the intersection is trivial and
+𝒯
+I
+⊆
+Null
+⁡
+(
+J
+)
+\mathcal{T}_{I}\subseteq\operatorname{Null}(J)
+is impossible. Even when
+r
+≤
+K
+​
+S
+2
+r\leq KS^{2}
+, the full inclusion would require not only
+dim
+𝒯
+I
+≤
+dim
+Null
+⁡
+(
+J
+)
+\dim\mathcal{T}_{I}\leq\dim\operatorname{Null}(J)
+but also a non-generic containment (measure-zero alignment) between the two subspaces; thus it almost never holds in generic position.
+Finally, since
+F
+⪰
+0
+F\succeq 0
+and
+M
+=
+𝔼
+⁡
+[
+J
+⊤
+​
+F
+​
+J
+]
+⪰
+0
+M=\mathbb{E}[J^{\top}FJ]\succeq 0
+, any nonzero
+Δ
+∈
+𝒯
+I
+\Delta\in\mathcal{T}_{I}
+with
+J
+​
+Δ
+≠
+0
+J\Delta\neq 0
+satisfies
+Δ
+⊤
+​
+M
+​
+Δ
+>
+0
+\Delta^{\top}M\Delta>0
+, yielding
+ℒ
+think
+​
+(
+θ
+R
++
+Δ
+)
+=
+1
+2
+​
+Δ
+⊤
+​
+M
+​
+Δ
++
+o
+⁡
+(
+‖
+Δ
+‖
+2
+)
+>
+0
+.
+\mathcal{L}_{\text{think}}(\theta_{R}+\Delta)\;=\;\tfrac{1}{2}\,\Delta^{\top}M\Delta+o(\|\Delta\|^{2})\;>\;0.
+(A12)
+∎
+In words,
+orthogonality of principal parameter subspaces
+does
+not
+guarantee
+first-order invariance of outputs
+on the thinking format. This is precisely why our Stage 1 imposes a
+null-space projection
+constraint (i.e.,
+Φ
+Ω
+think
+​
+vec
+⁡
+(
+Δ
+⟂
+)
+=
+0
+\Phi_{\Omega_{\text{think}}}\operatorname{vec}(\Delta^{\perp})=0
+) to cancel first-order effects.
+E.2
+Proof of Prop.
+1
+Proof of Prop.
+1
+.
+Let
+p
+=
+softmax
+⁡
+(
+z
+)
+∈
+Δ
+V
+−
+1
+p=\operatorname{softmax}(z)\in\Delta^{V-1}
+and
+q
+=
+softmax
+⁡
+(
+z
++
+u
+)
+q=\operatorname{softmax}(z+u)
+, where
+z
+∈
+ℝ
+V
+z\in\mathbb{R}^{V}
+is the logits vector at a thinking position
+t
+∈
+Ω
+think
+​
+(
+x
+)
+t\in\Omega_{\text{think}}(x)
+and
+u
+∈
+ℝ
+V
+u\in\mathbb{R}^{V}
+is the perturbation induced by the parameter change.
+Step 1: KL as a Bregman divergence of
+lse
+\operatorname{lse}
+and a uniform quadratic bound.
+Let
+lse
+(
+z
+)
+=
+log
+∑
+i
+=
+1
+V
+e
+z
+i
+\operatorname{lse}(z)\!=\!\log\!\sum_{i=1}^{V}e^{z_{i}}
+, so that
+∇
+lse
+⁡
+(
+z
+)
+=
+softmax
+⁡
+(
+z
+)
+=
+p
+\nabla\operatorname{lse}(z)=\operatorname{softmax}(z)=p
+and
+∇
+2
+​
+lse
+​
+(
+z
+)
+=
+diag
+⁡
+(
+p
+)
+−
+p
+​
+p
+⊤
+\nabla^{2}\operatorname{lse}(z)=\mathrm{diag}(p)-pp^{\top}
+.
+For the multinomial exponential family, the KL divergence equals the Bregman divergence of the log-partition function
+(
+Banerjee et al., 2005
+;
+Wainwright and Jordan, 2008
+)
+:
+KL
+(
+softmax
+(
+z
++
+u
+)
+∥
+softmax
+(
+z
+)
+)
+=
+D
+lse
+(
+z
++
+u
+,
+z
+)
+=
+lse
+(
+z
++
+u
+)
+−
+lse
+(
+z
+)
+−
+⟨
+∇
+lse
+(
+z
+)
+,
+u
+⟩
+.
+\mathrm{KL}\!\left(\operatorname{softmax}(z+u)\,\|\,\operatorname{softmax}(z)\right)=D_{\operatorname{lse}}(z+u,z)=\operatorname{lse}(z+u)-\operatorname{lse}(z)-\langle\nabla\operatorname{lse}(z),u\rangle.
+(A13)
+Using the integral form of the Bregman remainder for a twice differentiable convex
+f
+f
+,
+D
+f
+​
+(
+x
++
+h
+,
+x
+)
+=
+∫
+0
+1
+(
+1
+−
+s
+)
+​
+h
+⊤
+​
+∇
+2
+f
+​
+(
+x
++
+s
+​
+h
+)
+​
+h
+​
+𝑑
+s
+D_{f}(x+h,x)=\int_{0}^{1}(1-s)\,h^{\top}\nabla^{2}f(x+sh)\,h\,ds
+,
+and the fact that for all
+z
+z
+the Hessian satisfies
+‖
+∇
+2
+​
+lse
+​
+(
+z
+)
+‖
+2
+≤
+1
+4
+\|\nabla^{2}\operatorname{lse}(z)\|_{2}\leq\tfrac{1}{4}
+by positive semidefinite covariance form as in Lemma
+1
+(
+Boyd and Vandenberghe, 2004
+;
+Böhning, 1992
+)
+,
+we obtain
+KL
+(
+softmax
+(
+z
++
+u
+)
+∥
+softmax
+(
+z
+)
+)
+=
+\displaystyle\mathrm{KL}\!\left(\operatorname{softmax}(z+u)\,\|\,\operatorname{softmax}(z)\right)=
+∫
+0
+1
+(
+1
+−
+s
+)
+​
+u
+⊤
+​
+∇
+2
+​
+lse
+⁡
+(
+z
++
+s
+​
+u
+)
+​
+u
+​
+𝑑
+s
+\displaystyle\int_{0}^{1}(1-s)\,u^{\top}\nabla^{2}\operatorname{lse}(z+su)\,u\,ds
+≤
+\displaystyle\ \leq\
+∫
+0
+1
+(
+1
+−
+s
+)
+​
+1
+4
+​
+‖
+u
+‖
+2
+2
+​
+𝑑
+s
+=
+1
+8
+​
+‖
+u
+‖
+2
+2
+.
+\displaystyle\int_{0}^{1}(1-s)\,\tfrac{1}{4}\|u\|_{2}^{2}\,ds=\tfrac{1}{8}\|u\|_{2}^{2}.
+(A14)
+Equivalently, the second-order Taylor expansion with a third-order remainder yields
+KL
+(
+softmax
+(
+z
++
+u
+)
+∥
+softmax
+(
+z
+)
+)
+=
+1
+2
+u
+⊤
+∇
+2
+lse
+(
+z
+)
+u
++
+O
+(
+∥
+u
+∥
+2
+3
+)
+≤
+1
+8
+∥
+u
+∥
+2
+2
++
+O
+(
+∥
+u
+∥
+2
+3
+)
+.
+\mathrm{KL}\!\left(\operatorname{softmax}(z+u)\,\|\,\operatorname{softmax}(z)\right)=\tfrac{1}{2}\,u^{\top}\nabla^{2}\operatorname{lse}(z)\,u\ +\ O(\|u\|_{2}^{3})\ \leq\ \tfrac{1}{8}\|u\|_{2}^{2}+O(\|u\|_{2}^{3}).
+(A15)
+Lemma 1
+(Hessian bound for
+lse
+\operatorname{lse}
+)
+.
+For any
+z
+∈
+ℝ
+V
+z\in\mathbb{R}^{V}
+with
+p
+=
+softmax
+⁡
+(
+z
+)
+p=\operatorname{softmax}(z)
+,
+∇
+2
+​
+lse
+​
+(
+z
+)
+=
+diag
+⁡
+(
+p
+)
+−
+p
+​
+p
+⊤
+⪰
+0
+,
+‖
+∇
+2
+​
+lse
+​
+(
+z
+)
+‖
+2
+≤
+1
+4
+.
+\nabla^{2}\operatorname{lse}(z)=\mathrm{diag}(p)-pp^{\top}\succeq 0,\qquad\bigl\|\nabla^{2}\operatorname{lse}(z)\bigr\|_{2}\leq\tfrac{1}{4}.
+(A16)
+Step 2: Bounding the logits perturbation via linearization and Lipschitz regularity.
+Let
+J
+⁡
+(
+x
+,
+t
+)
+∈
+ℝ
+V
+×
+d
+J(x,t)\in\mathbb{R}^{V\times d}
+be the Jacobian of
+z
+θ
+​
+(
+x
+,
+t
+)
+z_{\theta}(x,t)
+w.r.t.
+θ
+\theta
+at
+θ
+=
+θ
+R
+\theta=\theta_{R}
+.
+By the mean-value theorem and Taylor expansion with Lipschitz gradient
+(
+Nesterov, 2013
+)
+,
+u
+⁡
+(
+x
+,
+t
+)
+:=
+z
+θ
+R
++
+Δ
+​
+(
+x
+,
+t
+)
+−
+z
+θ
+R
+​
+(
+x
+,
+t
+)
+=
+J
+⁡
+(
+x
+,
+t
+)
+​
+vec
+⁡
+(
+Δ
+)
++
+r
+⁡
+(
+x
+,
+t
+)
+,
+‖
+r
+⁡
+(
+x
+,
+t
+)
+‖
+2
+≤
+L
+2
+​
+‖
+Δ
+‖
+2
+2
+,
+u(x,t):=z_{\theta_{R}+\Delta}(x,t)-z_{\theta_{R}}(x,t)=J(x,t)\,\operatorname{vec}(\Delta)\ +\ r(x,t),\quad\|r(x,t)\|_{2}\leq\tfrac{L}{2}\,\|\Delta\|_{2}^{2},
+(A17)
+where
+L
+L
+is a local Lipschitz constant of
+∇
+θ
+z
+θ
+​
+(
+x
+,
+t
+)
+\nabla_{\theta}z_{\theta}(x,t)
+around
+θ
+R
+\theta_{R}
+.
+Let
+Φ
+=
+blkdiag
+⁡
+(
+Φ
+1
+,
+…
+,
+Φ
+K
+)
+\Phi=\operatorname{blkdiag}(\Phi^{1},\ldots,\Phi^{K})
+be the block-diagonal
+forward feature operator
+that maps
+vec
+⁡
+(
+Δ
+)
+\operatorname{vec}(\Delta)
+to the linearized token-level feature change collected at thinking positions (per submodule
+k
+k
+).
+Under bounded intermediate activations and operator norms, which are standard in local linearization of deep nets
+(
+Fazlyab et al., 2019
+)
+, there exists
+C
+1
+>
+0
+C_{1}>0
+such that
+‖
+J
+⁡
+(
+x
+,
+t
+)
+​
+vec
+⁡
+(
+Δ
+)
+‖
+2
+≤
+C
+1
+​
+‖
+Φ
+​
+vec
+⁡
+(
+Δ
+)
+‖
+2
+\|J(x,t)\,\operatorname{vec}(\Delta)\|_{2}\leq C_{1}\,\|\Phi\,\operatorname{vec}(\Delta)\|_{2}
+.
+Combining with
+Eq. (
+A17
+)
+,
+‖
+u
+⁡
+(
+x
+,
+t
+)
+‖
+2
+≤
+C
+1
+​
+‖
+Φ
+​
+vec
+⁡
+(
+Δ
+)
+‖
+2
++
+C
+2
+​
+‖
+Δ
+‖
+2
+2
+,
+C
+2
+:=
+L
+2
+.
+\|u(x,t)\|_{2}\ \leq\ C_{1}\,\|\Phi\,\operatorname{vec}(\Delta)\|_{2}\ +\ C_{2}\,\|\Delta\|_{2}^{2},\qquad C_{2}:=\tfrac{L}{2}.
+(A18)
+Step 3: Enforcing the null-space constraint and aggregating into
+ℒ
+think
+\mathcal{L}_{\text{think}}
+.
+Apply the submodule-wise null-space projection (see
+Eq. (
+5
+)
+in the main text):
+vec
+⁡
+(
+Δ
+I
+⟂
+,
+k
+)
+=
+P
+⟂
+​
+(
+Φ
+Ω
+think
+k
+)
+​
+vec
+⁡
+(
+Δ
+I
+k
+)
+,
+Δ
+I
+⟂
+=
+⨁
+k
+=
+1
+K
+Δ
+I
+⟂
+,
+k
+,
+\operatorname{vec}(\Delta_{I}^{\perp,k})=P^{\perp}\!\bigl(\Phi^{k}_{\Omega_{\text{think}}}\bigr)\,\operatorname{vec}(\Delta_{I}^{k}),\qquad\Delta_{I}^{\perp}=\bigoplus_{k=1}^{K}\Delta_{I}^{\perp,k},
+(A19)
+so that by construction
+Φ
+Ω
+think
+​
+vec
+⁡
+(
+Δ
+I
+⟂
+)
+=
+0
+\Phi_{\Omega_{\text{think}}}\,\operatorname{vec}(\Delta_{I}^{\perp})=0
+.
+Plugging this into
+Eq. (
+A18
+)
+yields for all
+t
+∈
+Ω
+think
+​
+(
+x
+)
+t\in\Omega_{\text{think}}(x)
+:
+‖
+u
+⁡
+(
+x
+,
+t
+)
+‖
+2
+≤
+C
+2
+​
+‖
+Δ
+I
+⟂
+‖
+2
+2
+.
+\|u(x,t)\|_{2}\ \leq\ C_{2}\,\|\Delta_{I}^{\perp}\|_{2}^{2}.
+(A20)
+Combining with
+Eq. (
+A14
+)
+and summing/averaging over
+(
+x
+,
+t
+)
+(x,t)
+in the definition of
+ℒ
+think
+\mathcal{L}_{\text{think}}
+(
+Eq. (
+2
+)
+) gives
+ℒ
+think
+​
+(
+θ
+R
++
+Δ
+I
+⟂
+)
+\displaystyle\mathcal{L}_{\text{think}}\!\left(\theta_{R}+\Delta_{I}^{\perp}\right)
+=
+𝔼
+x
+∑
+t
+∈
+Ω
+think
+​
+(
+x
+)
+KL
+(
+π
+θ
+R
++
+Δ
+I
+⟂
+(
+⋅
+∣
+x
+,
+y
+<
+t
+)
+∥
+π
+θ
+R
+(
+⋅
+∣
+x
+,
+y
+<
+t
+)
+)
+\displaystyle=\mathbb{E}_{x}\sum_{t\in\Omega_{\text{think}}(x)}\mathrm{KL}\!\left(\pi_{\theta_{R}+\Delta_{I}^{\perp}}(\cdot\mid x,y_{<t})\,\|\,\pi_{\theta_{R}}(\cdot\mid x,y_{<t})\right)
+≤
+1
+8
+​
+𝔼
+x
+,
+t
+​
+[
+‖
+u
+⁡
+(
+x
+,
+t
+)
+‖
+2
+2
+]
++
+O
+⁡
+(
+𝔼
+x
+,
+t
+​
+‖
+u
+⁡
+(
+x
+,
+t
+)
+‖
+2
+3
+)
+\displaystyle\leq\tfrac{1}{8}\,\mathbb{E}_{x,t}\!\left[\|u(x,t)\|_{2}^{2}\right]+O\!\left(\mathbb{E}_{x,t}\|u(x,t)\|_{2}^{3}\right)
+=
+O
+⁡
+(
+‖
+Δ
+I
+⟂
+‖
+2
+4
+)
+≤
+O
+⁡
+(
+‖
+Δ
+I
+⟂
+‖
+2
+2
+)
+≈
+0
+.
+\displaystyle=O\!\left(\|\Delta_{I}^{\perp}\|_{2}^{4}\right)\ \leq\ O\!\left(\|\Delta_{I}^{\perp}\|_{2}^{2}\right)\ \approx\ 0.
+(A21)
+This completes the proof.
+∎
+Appendix F
+Algorithm
+Following
+Alg.
+1
+is the algorithm of our RAIN-Merging.
+Algorithm 1
+RAIN-Merging: Reasoning-Aware Instruction-attention guided Null-space projection Merging
+Input :
+LRM
+θ
+R
+\theta_{R}
+; ITM
+θ
+I
+\theta_{I}
+; base model
+θ
+B
+\theta_{B}
+; reasoning calibration set
+𝒟
+R
+\mathcal{D}_{R}
+with thinking indices
+Ω
+think
+\Omega_{\text{think}}
+; instruction calibration set
+𝒟
+I
+\mathcal{D}_{I}
+with spans
+(
+ℐ
+,
+ℛ
+,
+𝒰
+)
+(\mathcal{I},\mathcal{R},\mathcal{U})
+; hyperparameters
+ρ
+,
+α
+~
+l
+,
+α
+~
+u
+,
+λ
+\rho,\ \tilde{\alpha}_{l},\ \tilde{\alpha}_{u},\ \lambda
+.
+Output :
+Merged model
+θ
+⋆
+\theta_{\star}
+.
+1
+Stage 0: Task vector and objective.
+2
+Δ
+I
+←
+θ
+I
+−
+θ
+B
+\Delta_{I}\leftarrow\theta_{I}-\theta_{B}
+//
+instruction-tuned task vector
+3
+Stage 1: Reasoning-aware Null-space Projection (satisfy Eq. (
+2
+)).
+4
+for
+k
+←
+1
+k\leftarrow 1
+to
+K
+K
+//
+iterate over submodules (per-layer
+W
+Q
+,
+W
+K
+,
+W
+V
+,
+W
+O
+,
+FFN
+W_{Q},W_{K},W_{V},W_{O},\text{FFN}
+)
+do
+5
+Φ
+Ω
+k
+←
+\Phi^{k}_{\Omega}\leftarrow
+FeatureOperator
+(
+θ
+R
+,
+𝒟
+R
+,
+Ω
+think
+,
+k
+)
+(\theta_{R},\ \mathcal{D}_{R},\ \Omega_{\text{think}},\ k)
+//
+forward feature extraction at thinking tokens
+6
+P
+k
+⟂
+←
+diag
+⁡
+(
+1
+)
+−
+(
+Φ
+Ω
+k
+)
+⊤
+​
+(
+Φ
+Ω
+k
+​
+(
+Φ
+Ω
+k
+)
+⊤
++
+diag
+⁡
+(
+1
+)
+)
+−
+1
+​
+Φ
+Ω
+k
+P_{k}^{\perp}\leftarrow\mathrm{diag}(1)-(\Phi^{k}_{\Omega})^{\!\top}\!\bigl(\Phi^{k}_{\Omega}(\Phi^{k}_{\Omega})^{\!\top}+\mathrm{diag}(1)\bigr)^{-1}\Phi^{k}_{\Omega}
+//
+least-squares orthogonal projector
+7
+vec
+⁡
+(
+Δ
+I
+⟂
+,
+k
+)
+←
+P
+k
+⟂
+​
+vec
+⁡
+(
+Δ
+I
+k
+)
+\operatorname{vec}(\Delta_{I}^{\perp,k})\leftarrow P_{k}^{\perp}\operatorname{vec}(\Delta_{I}^{k})
+//
+submodule projection per
+Eq. (
+5
+)
+8
+θ
+′
+←
+θ
+R
++
+⨁
+k
+=
+1
+K
+Δ
+I
+⟂
+,
+k
+\theta^{\prime}\leftarrow\theta_{R}+\bigoplus_{k=1}^{K}\Delta_{I}^{\perp,k}
+//
+direct merge after Stage 1
+9
+Stage 2: Instruction-attention Guided Merging Coefficients (optimize Eq. (
+11
+)).
+10
+Initialize head-wise coefficients
+α
+~
+k
+~
+←
+1
+\tilde{\alpha}^{\tilde{k}}\!\leftarrow\!1
+for all attention heads
+k
+~
+\tilde{k}
+.
+11
+for
+each attention head
+k
+~
+\tilde{k}
+do
+12
+a
+k
+~
+←
+𝔼
+x
+∼
+𝒟
+I
+​
+[
+1
+|
+ℐ
+⁡
+(
+x
+)
+|
+​
+|
+ℛ
+⁡
+(
+x
+)
+|
+​
+∑
+t
+∈
+ℛ
+⁡
+(
+x
+)
+∑
+τ
+∈
+ℐ
+⁡
+(
+x
+)
+Att
+θ
+′
+k
+~
+⁡
+(
+x
+)
+​
+[
+t
+,
+τ
+]
+]
+a^{\tilde{k}}\leftarrow\mathbb{E}_{x\sim\mathcal{D}_{I}}\!\Bigl[\frac{1}{|\mathcal{I}(x)|\,|\mathcal{R}(x)|}\!\sum_{t\in\mathcal{R}(x)}\sum_{\tau\in\mathcal{I}(x)}\operatorname{Att}^{\tilde{k}}_{\theta^{\prime}}(x)[t,\tau]\Bigr]
+13
+u
+k
+~
+←
+𝔼
+x
+∼
+𝒟
+I
+​
+[
+1
+|
+ℐ
+⁡
+(
+x
+)
+|
+​
+|
+𝒰
+⁡
+(
+x
+)
+|
+​
+∑
+t
+∈
+𝒰
+⁡
+(
+x
+)
+∑
+τ
+∈
+ℐ
+⁡
+(
+x
+)
+Att
+θ
+′
+k
+~
+⁡
+(
+x
+)
+​
+[
+t
+,
+τ
+]
+]
+u^{\tilde{k}}\leftarrow\mathbb{E}_{x\sim\mathcal{D}_{I}}\!\Bigl[\frac{1}{|\mathcal{I}(x)|\,|\mathcal{U}(x)|}\!\sum_{t\in\mathcal{U}(x)}\sum_{\tau\in\mathcal{I}(x)}\operatorname{Att}^{\tilde{k}}_{\theta^{\prime}}(x)[t,\tau]\Bigr]
+14
+for
+each attention head
+k
+~
+\tilde{k}
+do
+15
+g
+k
+~
+←
+a
+k
+~
+−
+ρ
+​
+u
+k
+~
+g^{\tilde{k}}\leftarrow a^{\tilde{k}}-\rho\,u^{\tilde{k}}
+//
+first-order term for
+Eq. (
+11
+)
+16
+H
+~
+k
+~
+←
+1
++
+u
+k
+~
+\tilde{H}^{\tilde{k}}\leftarrow 1+u^{\tilde{k}}
+//
+diagonal Hessian approx
+17
+α
+~
+⋆
+k
+~
+←
+clip
+[
+α
+~
+l
+,
+α
+~
+u
+]
+​
+(
+g
+k
+~
+H
+~
+k
+~
+)
+\tilde{\alpha}_{\star}^{\tilde{k}}\leftarrow\textnormal{{clip}}_{[\tilde{\alpha}_{l},\tilde{\alpha}_{u}]}\!\Bigl(\dfrac{g^{\tilde{k}}}{\tilde{H}^{\tilde{k}}}\Bigr)
+//
+per-head optimal scaling
+18
+α
+⋆
+k
+←
+\alpha_{\star}^{k}\leftarrow
+Aggregate
+(
+{
+α
+~
+⋆
+k
+~
+}
+k
+~
+∈
+module
+​
+k
+)
+\bigl(\{\tilde{\alpha}_{\star}^{\tilde{k}}\}_{\tilde{k}\in\text{module }k}\bigr)
+//
+mean over heads for FFN
+19
+Output (Two-stage Merge).
+20
+return
+θ
+⋆
+←
+θ
+R
++
+λ
+​
+⨁
+k
+=
+1
+K
+α
+⋆
+k
+​
+Δ
+I
+⟂
+,
+k
+\theta_{\star}\leftarrow\theta_{R}+\lambda\bigoplus_{k=1}^{K}\alpha_{\star}^{k}\,\Delta_{I}^{\perp,k}
+//
+final model in
+Eq. (
+16
+)
+Appendix G
+Method Implementation Details
+G.1
+Forward Mechanism in Transformer
+A standard Transformer layer consists of multi-head self-attention and a feed-forward network (FFN). In layer
+ℓ
+\ell
+, the hidden state of the token at position
+t
+t
+, denoted
+h
+t
+(
+ℓ
+−
+1
+)
+∈
+ℝ
+d
+h_{t}^{(\ell-1)}\in\mathbb{R}^{d}
+, is linearly projected to queries, keys, and values:
+q
+t
+(
+ℓ
+)
+=
+W
+Q
+(
+ℓ
+)
+​
+h
+t
+(
+ℓ
+−
+1
+)
+,
+k
+τ
+(
+ℓ
+)
+=
+W
+K
+(
+ℓ
+)
+​
+h
+τ
+(
+ℓ
+−
+1
+)
+,
+v
+τ
+(
+ℓ
+)
+=
+W
+V
+(
+ℓ
+)
+​
+h
+τ
+(
+ℓ
+−
+1
+)
+.
+q_{t}^{(\ell)}=W_{Q}^{(\ell)}h_{t}^{(\ell-1)},k_{\tau}^{(\ell)}=W_{K}^{(\ell)}h_{\tau}^{(\ell-1)},v_{\tau}^{(\ell)}=W_{V}^{(\ell)}h_{\tau}^{(\ell-1)}.
+For head
+h
+h
+, the single-head attention weights are
+Att
+θ
+(
+ℓ
+,
+h
+)
+⁡
+(
+x
+)
+​
+[
+t
+,
+τ
+]
+=
+softmax
+τ
+⁡
+(
+⟨
+q
+t
+(
+ℓ
+,
+h
+)
+,
+k
+τ
+(
+ℓ
+,
+h
+)
+⟩
+/
+d
+k
+)
+,
+\operatorname{Att}_{\theta}^{(\ell,h)}(x)[t,\tau]=\operatorname{softmax}_{\tau}\!\left({\langle q_{t}^{(\ell,h)},\,k_{\tau}^{(\ell,h)}\rangle}/{\sqrt{d_{k}}}\right),
+which represent the probability that the token at position
+t
+t
+attends to position
+τ
+\tau
+. The corresponding head output is
+o
+t
+(
+ℓ
+,
+h
+)
+=
+∑
+τ
+Att
+θ
+(
+ℓ
+,
+h
+)
+⁡
+(
+x
+)
+​
+[
+t
+,
+τ
+]
+​
+v
+τ
+(
+ℓ
+,
+h
+)
+.
+o_{t}^{(\ell,h)}=\sum_{\tau}\operatorname{Att}_{\theta}^{(\ell,h)}(x)[t,\tau]\;v_{\tau}^{(\ell,h)}.
+After concatenating the outputs from all heads and applying
+W
+O
+(
+ℓ
+)
+W_{O}^{(\ell)}
+, we obtain
+h
+~
+t
+(
+ℓ
+)
+\tilde{h}_{t}^{(\ell)}
+. The FFN then computes
+h
+^
+t
+(
+ℓ
+)
+=
+σ
+⁡
+(
+W
+in
+(
+ℓ
+)
+​
+h
+~
+t
+(
+ℓ
+)
++
+b
+in
+(
+ℓ
+)
+)
+,
+h
+t
+(
+ℓ
+)
+=
+W
+out
+(
+ℓ
+)
+​
+h
+^
+t
+(
+ℓ
+)
++
+b
+out
+(
+ℓ
+)
+.
+\hat{h}_{t}^{(\ell)}=\sigma\!\left(W_{\text{in}}^{(\ell)}\tilde{h}_{t}^{(\ell)}+b_{\text{in}}^{(\ell)}\right),h_{t}^{(\ell)}=W_{\text{out}}^{(\ell)}\hat{h}_{t}^{(\ell)}+b_{\text{out}}^{(\ell)}.
+The top-layer hidden state is mapped to vocabulary logits
+z
+θ
+​
+(
+x
+,
+t
+)
+z_{\theta}(x,t)
+, which are transformed by a softmax into the conditional distribution
+π
+θ
+(
+⋅
+∣
+x
+,
+y
+<
+t
+)
+\pi_{\theta}(\cdot\mid x,y_{<t})
+. We follow the notation and the scaled dot-product attention definition of
+Vaswani et al. (2017)
+to align with prior work.
+G.2
+Implementation Details in Merging
+To balance computational efficiency and memory usage, all model-merging experiments adopt a
+layer-wise
+merging strategy. During parameter fusion, we compute in
+FP64
+precision to ensure numerical stability, and we store the final models in
+BF16
+. Our experiments show that higher compute precision yields consistent but modest improvements for this merging procedure.
+Appendix H
+Calibration Set Construction
+Table A1:
+Reasoning calibration set construction from
+Mixture-of-Thoughts
+.
+We uniformly sample 50 examples per domain for calibration and 50 for validation.
+Raw sizes are taken from the official dataset composition page.
+Domain
+Raw size
+Calibration
+Validation
+Math
+93,700
+50
+50
+Code
+83,100
+50
+50
+Science
+173,000
+50
+50
+Total
+349,800
+150
+150
+H.1
+Reasoning calibration set
+We employ the
+Mixture-of-Thoughts
+2
+2
+2
+https://huggingface.co/datasets/open-r1/Mixture-of-Thoughts
+(
+Face, 2025
+)
+dataset as the source for reasoning-style calibration. This dataset contains validated R1-style reasoning traces spanning three domains: math, code, and science, with a total size of approximately 350k samples. Its official data composition page clearly specifies the sample sizes and origins for each sub-domain: math samples are sourced from OpenR1-Math
+(
+Lozhkov et al., 2025
+)
+, code from CodeForces-CoTs
+(
+Penedo et al., 2025
+)
+, and science from the science subset of the Nemotron post-training set
+(
+Bercovich et al., 2025
+)
+. From each domain, we randomly sample 50 instances to form the calibration set (150 in total), and an additional 50 instances per domain are randomly sampled to serve as the validation set (150 in total).
+Tab.
+A1
+shows the detailed numbers of samples in each domain.
+Thinking Special Token Set Construction.
+To apply preservation constraints on “thinking format”, we extract the thinking tokens, specifically
+<think>
+and
+</think>
+in the model output—based on the R1-style chat template and tokenizer. The procedure involves rendering messages using the chat template provided by LRM. R1-family models prefill
+<think>
+in reasoning mode and insert
+</think>
+in the context, while some templates may omit the visible output of the initial
+<think>
+to enforce thinking mode. We then obtain token positions of
+<think>
+and
+</think>
+in
+Ω
+think
+\Omega_{\text{think}}
+.
+H.2
+Instruction calibration set
+We construct a high-quality instruction calibration set from rule-verifiable prompts through four automated and auditable steps. The pipeline produces span-based samples
+(
+x
+∼
+𝒟
+I
+,
+ℐ
+⁡
+(
+x
+)
+,
+ℛ
+⁡
+(
+x
+)
+,
+𝒰
+⁡
+(
+x
+)
+)
+(x\sim\mathcal{D}_{I};\ \mathcal{I}(x),\,\mathcal{R}(x),\,\mathcal{U}(x))
+for computing the instruction-attention score proxy in Stage 2 of RAIN-Merging. We choose to distill from IFEval-style instructions for ease of implementation and to test generalization on out-of-domain instruction-following datasets. The final size of the instruction calibration set is 365. The full workflow is:
+Figure A3:
+A sample illustration in our instruction calibration set.
+•
+Instruction selection.
+We select rule-verifiable instruction prompts from IFEval
+(
+Zhou et al., 2023b
+)
+as queries. Each record contains a natural-language instruction and machine-checkable constraints.
+•
+Step 1: Response generation by LRM.
+For each instruction query, we invoke an R1-style reasoning model (
+deepseek-reasoner
+, DeepSeek-R1-0528)
+3
+3
+3
+https://api.deepseek.com/v1
+to produce a format-explicit response. This step yields instruction-following samples generated by a reasoning decoder that reflect realistic decoding behavior.
+•
+Step 2: Rule evaluation and filtering.
+We evaluate the outputs of Step 1 with an IFEval-compatible checker and
+retain only passing samples
+that satisfy all constraints. This removes cases that clearly fail the requirements.
+•
+Step 3: Strict span extraction (LLM-as-Judge).
+We use a high-performance instruction-tuned LLM (
+deepseek-chat
+, DeepSeek-V3.1)
+3
+to precisely extract instruction-relevant spans:
+ℐ
+⁡
+(
+x
+)
+\mathcal{I}(x)
+(tokens in the prompt corresponding to the instruction) and
+ℛ
+⁡
+(
+x
+)
+\mathcal{R}(x)
+(tokens in the response that are governed by the instruction). The unrelated span
+𝒰
+⁡
+(
+x
+)
+\mathcal{U}(x)
+is then implicitly defined as the remainder of the response. See
+Fig.
+A3
+for an example.
+•
+Step 4: Tokenizer-level verification.
+We verify the extracted spans on the
+target tokenizer
+(aligned with our anchor LRM), ensuring that boundaries lie on token edges and can be deterministically reconstructed. Samples that fail alignment are discarded.
+•
+Step 5: Human review and ethical screening.
+To ensure data quality and compliance with safety and ethics standards, we introduce a manual review stage. Researchers verify the accuracy of the LLM-extracted spans
+ℐ
+⁡
+(
+x
+)
+\mathcal{I}(x)
+and
+ℛ
+⁡
+(
+x
+)
+\mathcal{R}(x)
+, and conduct an ethics audit of the responses based on content-safety guidelines, removing any samples that contain biased, harmful, or inappropriate content. This step further enhances the reliability and ethical soundness of the calibration set.
+This calibration pipeline is readily transferable and can be extended to additional instruction-following datasets to further improve merging effectiveness by enriching the calibration set. The reasoning distillation model and the LLM-as-Judge can be updated over time to continually enhance the quality of the instruction calibration data.
+Appendix I
+Detailed Experimental Setup
+Table A2:
+Instruction-following benchmarks. We list dataset size, constraint taxonomy, composition types, verification, and aggregation strategy.
+Benchmark
+Size
+Constraint
+Composition Type
+Verification
+Evaluation
+Taxonomy
+And
+Chain
+Selection
+Nested
+Code-Exec.
+LLM-as-Judge
+Aggregation
+IFEval
+541
+25
+✓
+–
+–
+–
+✓
+–
+strict_prompt_level_accuracy
+CELLO
+523
+4
+✓
+✓
+–
+–
+✓
+–
+average
+InfoBench
+500
+5
+✓
+✓
+–
+–
+–
+✓
+DRFR
+ComplexBench
+1,150
+19
+✓
+✓
+✓
+✓
+✓
+✓
+dependency-aware DRFR
+Table A3:
+Test set sizes of the six math benchmarks used in our mathematical reasoning (Math) evaluation.
+AIME2025
+AIME2024
+AMC23
+GSM8K
+Math500
+MinervaMath
+# Test samples
+30
+30
+40
+1,319
+500
+272
+I.1
+Benchmarks
+Instruction-following Benchmarks.
+We evaluate instruction compliance on four widely used, programmatically verifiable benchmarks. The size and constraint types are summarized in
+Tab.
+A2
+.
+•
+IFEval
+(
+Zhou et al., 2023b
+)
+.
+IFEval provides four accuracy metrics: (1)
+prompt-level strict
+accuracy and (2)
+instruction-level strict
+accuracy, plus (3)
+prompt-level loose
+and (4)
+instruction-level loose
+variants. The strict metrics require exact satisfaction (all constraints per prompt for prompt-level strict; per-constraint averaging across prompts for instruction-level strict). The loose metrics first normalize model outputs (e.g., strip Markdown, boilerplate intros/outros) to reduce false negatives. We report the official
+strict_prompt_level_accuracy
+unless otherwise noted.
+•
+CELLO
+(
+He et al., 2024
+)
+.
+CELLO uses a
+code-based
+verifier that scores four granular aspects: (i)
+count limit
+(word/sentence/sample counts), (ii)
+answer format
+(parsability, keywords), (iii)
+task-prescribed phrases
+(mandatory phrases covered), and (iv)
+input-dependent query
+(presence of key phrases from the input), with a penalty to discourage verbatim copying. We follow the benchmark’s practice and
+average
+these checks to produce the final score.
+•
+InfoBench
+(
+Qin et al., 2024
+)
+.
+InfoBench adopts the
+Decomposed Requirements Following Ratio (DRFR)
+: each instruction is split into scoring questions that are judged by
+LLM-as-a-Judge
+with binary
+YES/NO
+labels; the final score is the mean over all questions, enabling fine-grained interpretability. We evaluate by
+GPT-5-mini
+. We report the official
+DRFR
+.
+•
+ComplexBench
+(
+Wen et al., 2024
+)
+.
+ComplexBench also evaluates via decomposed scoring questions with
+YES/NO
+judgments and aggregates them into DRFR, but crucially uses a
+dependency-aware
+scheme: if any prerequisite constraint fails, all dependent (downstream) constraints are automatically marked as failed. This better reflects multi-constraint compositions. We evaluate by
+GPT-4o-mini
+. We report the
+dependency-aware DRFR
+.
+Reasoning & General Benchmarks.
+We evaluate reasoning and general capabilities on the following benchmarks:
+•
+Math (Mathematical reasoning).
+We aggregate
+Pass@1/accuracy
+over six common math benchmarks:
+AIME2025
+(
+Balunović et al., 2025
+)
+;
+AIME2024
+(
+Balunović et al., 2025
+)
+;
+AMC23
+(
+Cao et al., 2024
+)
+;
+GSM8K
+(
+Cobbe et al., 2021
+)
+;
+Math500
+(
+Hendrycks et al., 2021
+)
+;
+MinervaMath
+(
+Lewkowycz et al., 2022
+)
+. The size of each math benchmark is shown in
+Tab.
+A3
+.
+We report the
+averaged accuracy
+over all benchmarks.
+•
+Aider
+(
+Aider, 2024
+)
+(Code editing).
+Aider-Edit assesses code editing capability under a minimal-edit paradigm. It contains 133 small Python coding exercises sourced from Exercism, where the model is provided with a natural-language edit instruction and the existing code, and must generate a correct patch. The generated patch is required to apply successfully to the codebase and pass compilation and associated tests. Performance is measured by the
+Pass@2 Edit Success Rate
+.
+•
+GPQA
+(
+Rein et al., 2024
+)
+(STEM).
+A curated, expert-level subset of GPQA comprising 198 four-option multiple-choice questions across biology, chemistry, and physics. Items are selected to be “Google-proof” and unambiguous: both expert validators must answer correctly while at most one of three skilled non-experts succeeds, yielding a particularly hard split. We follow common practice and report
+accuracy
+(strict single-choice).
+•
+Arena-Hard-v2
+(
+Li et al., 2024
+)
+(Creative writing).
+A hard, open-ended benchmark constructed to maximize model separability and align with human preferences. Arena-Hard-Auto curate
+∼
+\sim
+500 challenging prompts covering difficult real-world tasks including creative writing, scoring follows the pairwise battle paradigm with human or LLM-as-a-Judge assessments, and results are commonly summarized as
+win rate
+or transformed to
+Elo
+scores. For reproducibility, we fix
+Qwen2.5-7B
+as the reference baseline and use
+GPT-5-mini
+as the judging LLM; we report the resulting
+win rate
+of each model against this baseline on the official Arena-Hard-v2 prompt set.
+•
+Agentic Scenarios.
+We evaluate the ability of the model to interact with the environment and complete tasks by two agentic benchmarks:
+ALFWorld
+(
+Shridhar et al., 2021
+)
+is a text-interactive household-task environment involving multi-step planning and execution. We evaluate on 100 tasks. Metrics are
+Success Rate
+of goal completion.
+WebShop
+(
+Yao et al., 2022
+)
+is a web shopping agent task (search, click, compare), with reported
+Normalized Reward
+to capture both path efficiency and goal matching. We evaluate on 100 tasks.
+I.2
+Baselines
+We compare our method with the following merging baselines:
+•
+Task Arithmetic
+(
+Ilharco et al., 2023
+)
+.
+The simplest linear composition injects the task vector additively near the anchor,
+θ
+=
+θ
+R
++
+λ
+​
+Δ
+I
+\theta=\theta_{R}+\lambda\,\Delta_{I}
+. A scalar
+λ
+∈
+[
+0
+,
+1
+]
+\lambda\in[0,1]
+usually controls the strength; using the same
+λ
+\lambda
+per layer or per block is also common.
+Its advantages are zero data and negligible compute; its drawback is that conflicts across submodules are hard to disentangle.
+•
+SLERP
+(
+Biship, 2007
+;
+Goddard et al., 2024
+)
+.
+In SLERP (
+Spherical Linear Interpolation
+), weights are
+ℓ
+2
+\ell_{2}
+-normalized to the unit sphere and interpolated along the geodesic to preserve norm and angular geometry. Let
+Ω
+=
+arccos
+⁡
+(
+⟨
+w
+R
+,
+w
+I
+⟩
+)
+\Omega=\arccos\!\big(\langle w_{R},w_{I}\rangle\big)
+. Then
+slerp
+⁡
+(
+w
+R
+,
+w
+I
+,
+t
+)
+=
+sin
+⁡
+(
+(
+1
+−
+t
+)
+​
+Ω
+)
+sin
+⁡
+Ω
+​
+w
+R
++
+sin
+⁡
+(
+t
+​
+Ω
+)
+sin
+⁡
+Ω
+​
+w
+I
+,
+t
+∈
+[
+0
+,
+1
+]
+\mathrm{slerp}(w_{R},w_{I};t)=\frac{\sin((1-t)\Omega)}{\sin\Omega}\,w_{R}+\frac{\sin(t\Omega)}{\sin\Omega}\,w_{I},\ \ t\in[0,1]
+.
+During merging, we apply SLERP to each tensor and rescale by the original norm. This reduces norm drift compared with linear interpolation.
+•
+Karcher
+(
+Nielsen and Bhatia, 2013
+;
+Goddard et al., 2024
+)
+.
+On a chosen manifold like the unit sphere or a Stiefel manifold, compute the Fréchet mean by minimizing the sum of squared geodesic distances:
+min
+⁡
+∑
+i
+w
+¯
+⁡
+d
+2
+​
+(
+w
+¯
+,
+w
+i
+)
+\min_{\bar{w}}\sum_{i}d^{2}(\bar{w},w_{i})
+.
+The iterative update is
+w
+¯
+(
+t
++
+1
+)
+=
+Exp
+w
+¯
+(
+t
+)
+​
+(
+1
+n
+​
+∑
+i
+Log
+w
+¯
+(
+t
+)
+​
+(
+w
+i
+)
+)
+\bar{w}^{(t+1)}=\mathrm{Exp}_{\bar{w}^{(t)}}\!\big(\tfrac{1}{n}\sum_{i}\mathrm{Log}_{\bar{w}^{(t)}}(w_{i})\big)
+.
+•
+TIES
+(
+Yadav et al., 2023
+)
+.
+TIES is a data-free method that explicitly prunes and sparsifies to handle parameter-level conflicts.
+For each layer’s edit vector it applies
+(i) a
+sign-consistency mask
+(retain entries aligned with the dominant direction to reduce cancellation),
+(ii)
+magnitude thresholding or Top-
+k
+k
+truncation
+(keep high-contribution entries and zero out the rest),
+and
+(iii) optional
+rescaling
+to match a target norm.
+We can stack TIES as a post-processing step on top of feasible baselines to improve robustness.
+•
+DARE
+(
+Yu et al., 2024
+)
+.
+DARE uses first-order sensitivities on a small calibration set (for example, gradient norms of labeled loss, log-likelihood changes, or Fisher approximations of the output distribution) to learn a per-layer or per-tensor coefficient
+α
+k
+\alpha^{k}
+(or a diagonal preconditioner), yielding
+θ
+=
+θ
+R
++
+⨁
+k
+α
+k
+​
+Δ
+I
+k
+\theta=\theta_{R}+\bigoplus_{k}\alpha^{k}\,\Delta_{I}^{k}
+.
+It can be viewed as data-aware recalibration that reduces the bias introduced by naive addition with very low compute.
+•
+ACM
+(
+Yao et al., 2025
+)
+.
+ACM (
+Activation-Guided Consensus Merging
+) targets activation consistency. On a small calibration set it measures, before and after injecting the task vector, how each layer or head changes its response on instruction-relevant spans and its leakage on irrelevant spans. It then solves for per-submodule coefficients
+α
+k
+\alpha^{k}
+, optionally with cross-sample consensus regularization to improve generalization.
+•
+LEWIS
+(
+Chopra et al., 2025
+)
+.
+LEWIS (
+LayEr WIse Sparsity
+) is a merge with layer-wise sparsity allocation. Based on sensitivity indicators per layer (such as edit-vector magnitude, activation gradients, or Fisher approximations), it sets a budget
+s
+k
+s_{k}
+and merges only the Top-
+s
+k
+s_{k}
+parameters of that layer, leaving the anchor weights elsewhere unchanged.
+It can be combined with Task Arithmetic, SLERP, or Karcher as the base, and
+{
+s
+k
+}
+\{s_{k}\}
+are determined by heuristics or grid search on a small calibration set.
+•
+AIM
+(
+Nobari et al., 2025
+)
+.
+AIM (
+Activation-based Importance Merging
+) weights the task vector by activation importance (for example, the effect of Value or FFN outputs on downstream logits, or the instruction-aligned component of attention weights), performing element-wise or block-wise reweighting:
+Weights the task vector by activation importance, for example, the effect of Value or FFN outputs on downstream logits, or the instruction-aligned component of attention weights, performing element-wise or block-wise reweighting:
+θ
+=
+θ
+R
++
+⨁
+k
+W
+k
+⊙
+Δ
+I
+k
+\theta=\theta_{R}+\bigoplus_{k}W^{k}\odot\Delta_{I}^{k}
+,
+where
+W
+k
+W^{k}
+is obtained from a single forward pass on the calibration set.
+Intuitively, this preserves edits that meaningfully change useful representations and suppresses noisy updates.
+Unless otherwise specified, following common practice in previous work
+(
+Wu et al., 2025
+)
+, we apply TIES post-processing (sign consistency and magnitude truncation) on the outputs of DARE, ACM, LEWIS, and AIM, in order to improve comparability across baselines.
+I.3
+Hyperparameters
+Table A4:
+The hyperparameters of various merging methods in
+Tab.
+1
+.
+λ
+\lambda
+means the global scaling coefficient in merging.
+k
+k
+denotes the trim ratio in TIES-Merging.
+p
+p
+means the drop rate in DARE merging.
+τ
+\tau
+is sharpness the ACM.
+ρ
+\rho
+is the pruning ratio in LEWIS.
+ω
+\omega
+means the balance factor in AIM.
+Method
+Hyper-parameters
+7B
+Task Arithmetic
+λ
+=
+1.0
+\lambda=1.0
+SLERP
+λ
+=
+1.0
+\lambda=1.0
+Karcher
+λ
+=
+1.0
+\lambda=1.0
+TIES
+k
+=
+0.8
+,
+λ
+=
+0.8
+k=0.8,\ \lambda=0.8
+DARE-TIES
+p
+=
+0.3
+,
+k
+=
+0.5
+,
+λ
+=
+1.2
+p=0.3,\ k=0.5,\ \lambda=1.2
+ACM-TIES
+τ
+=
+1.0
+,
+k
+=
+0.5
+,
+λ
+=
+1.1
+\tau=1.0,\ k=0.5,\ \lambda=1.1
+LEWIS-TIES
+ρ
+=
+0.5
+,
+k
+=
+0.5
+,
+λ
+=
+1.1
+\rho=0.5,\ k=0.5,\ \lambda=1.1
+AIM-TIES
+ω
+=
+0.4
+,
+k
+=
+0.5
+,
+λ
+=
+1.0
+\omega=0.4,\ k=0.5,\ \lambda=1.0
+Table A5:
+The hyperparameters of RAIN-Merging in different model sizes.
+λ
+\lambda
+means the global scaling coefficient in RAIN-Merging.
+Method
+Hyper-parameters
+1.5B
+7B
+8B
+14B
+RAIN-Merging
+λ
+=
+1.0
+\lambda=1.0
+λ
+=
+1.0
+\lambda=1.0
+λ
+=
+0.9
+\lambda=0.9
+λ
+=
+1.0
+\lambda=1.0
+For SFT, we use a batch size of 16 with the Adam optimizer
+(
+Kingma and Ba, 2014
+)
+, a learning rate of
+2
+×
+10
+−
+5
+2\times 10^{-5}
+, weight decay of
+0.05
+0.05
+, and train for 20 epochs.
+For all model-merging methods (including the proposed RAIN-Merging and all baselines), we merge only the task vectors extracted from the ITM’s
+Q
+/
+K
+/
+V
+/
+O
+/
+FFN
+\mathrm{Q/K/V/O/FFN}
+modules. The specific hyperparameter settings for each baseline used in
+Tab.
+1
+are listed in
+Tab.
+A4
+.
+In
+RAIN-Merging
+, we set the leakage penalty to
+ρ
+=
+10
+\rho=10
+and bound the attention-head coefficients by
+[
+α
+~
+l
+,
+α
+~
+u
+]
+=
+[
+0.0
+,
+1.0
+]
+[\tilde{\alpha}_{l},\tilde{\alpha}_{u}]=[0.0,1.0]
+. The global scalar
+λ
+\lambda
+is selected via a grid search over
+[
+0.0
+,
+1.5
+]
+[0.0,1.5]
+with a step size of
+0.1
+0.1
+; the chosen values for different model families are provided in
+Tab.
+A5
+. An ablation study of the global scalar
+λ
+\lambda
+is included in Appendix
+J.2
+.
+Appendix J
+Additional Experiments
+J.1
+Detailed Math Benchmark Results
+Table A6:
+Math benchmark results under the same configuration as in
+Tab.
+1
+. “Avg.” denotes the average over all math benchmarks. The best and second-best results are highlighted in
+bold
+and
+underlined
+, respectively.
+Method
+AIME2025
+AIME2024
+AMC23
+GSM8K
+Math500
+Minerva
+Avg.
+ITM
+10.00
+10.00
+67.50
+86.66
+73.80
+35.66
+47.27
+LRM
+30.00
+50.00
+80.00
+91.36
+89.00
+48.16
+64.75
+SFT
+33.33
+43.33
+75.00
+90.75
+87.40
+45.59
+62.57
+Task Arithmetic
+30.00
+50.00
+80.00
+90.75
+89.00
+45.59
+64.22
+SLERP
+30.00
+46.67
+77.50
+91.05
+89.20
+48.53
+63.82
+Karcher
+30.00
+50.00
+80.00
+90.98
+89.20
+48.90
+64.85
+TIES
+33.33
+46.67
+82.50
+91.36
+90.60
+48.16
+65.44
+DARE-TIES
+36.67
+40.00
+82.50
+90.98
+90.20
+45.22
+64.26
+ACM-TIES
+33.33
+50.00
+77.50
+91.36
+88.20
+47.06
+64.57
+LEWIS
+30.00
+33.33
+80.00
+90.27
+88.80
+50.00
+62.07
+AIM-TIES
+33.33
+50.00
+85.00
+89.76
+89.60
+47.79
+65.92
+RAIN-Merging
+36.67
+60.00
+85.00
+92.12
+90.20
+48.53
+68.75
+Table A7:
+Math benchmarks results under the same configuration as in
+Tab.
+2
+. “Avg.” denotes the average over all math benchmarks.
+Method
+AIME2025
+AIME2024
+AMC23
+GSM8K
+Math500
+Minerva
+Average
+Qwen2.5-1.5B-Instruct
+3.33
+0.00
+30.00
+75.44
+59.40
+22.43
+31.77
+DeepSeek-R1-Distill-Qwen-1.5B
+20.00
+13.33
+42.50
+73.77
+71.80
+28.31
+41.62
+Qwen2.5-1.5B-RAIN-Merging
+20.00
+16.67
+60.00
+76.36
+72.40
+29.78
+45.87
+Llama-3.1-8B-Instruct
+3.33
+6.67
+20.00
+81.65
+67.60
+34.26
+35.59
+DeepSeek-R1-Distill-Llama-8B
+30.00
+40.00
+75.00
+90.52
+80.40
+45.37
+60.21
+Llama-3.1-8B-RAIN-Merging
+30.00
+43.33
+77.50
+90.30
+82.80
+47.79
+61.95
+Qwen2.5-14B-Instruct
+20.00
+13.33
+65.00
+93.18
+80.00
+44.85
+52.73
+DeepSeek-R1-Distill-Qwen-14B
+50.00
+56.67
+92.50
+93.22
+89.00
+52.49
+72.31
+Qwen2.5-14B-RAIN-Merging
+50.00
+63.33
+92.50
+94.37
+91.00
+56.25
+74.58
+Tab.
+A6
+and
+Tab.
+A7
+report detailed results on the mathematics benchmarks.
+RAIN-Merging
+consistently preserves the mathematical reasoning ability of LRMs across different model sizes and architectures. In some cases, improving instruction following also correlates with better mathematical performance, suggesting that enhanced adherence can support clearer intermediate reasoning and more reliable final answers.
+J.2
+Ablation Study of the Global Scalar
+Figure A4:
+Instruction following and reasoning & generage performance of our RAIN-Merging using different global scalar
+λ
+\lambda
+. The configuration is the same as in
+Tab.
+2
+. The performance is measured by the average of the instruction following and reasoning & general capability benchmarks. The marked result is our choice in the experiments.
+We conduct a sensitivity analysis of the global scalar
+λ
+\lambda
+(
+Fig.
+A4
+). Across a wide range around our chosen value near
+1.0
+1.0
+, the merged model maintains strong instruction-following performance. As
+λ
+\lambda
+increases, reasoning ability improves slowly at first but then drops sharply beyond
+1.0
+1.0
+, indicating that overly large merge strength can still harm reasoning.
+J.3
+Ablation Study of Reasoning Calibration Set Size
+Figure A5:
+Instruction following and reasoning & generage performance of our RAIN-Merging using different reasoning calibration set sizes. The
+x
+x
+axis represents the size of the reasoning calibration set with exponential scale. The configuration is the same as in
+Tab.
+2
+. The performance is measured by the average of the instruction following and reasoning & general capability benchmarks. The marked result is our choice in the experiments.
+Fig.
+A5
+presents an ablation over the size of the reasoning calibration set. As the set grows, preservation of reasoning improves; however, instruction-following performance degrades gradually. We hypothesize that overly strict preservation of the thinking format can limit gains in instruction adherence and also increase computation. Balancing performance and resource usage, we select a calibration size of
+150
+150
+.
+J.4
+Visualization of Merging Coefficients in Stage 2
+Figure A6:
+Heatmap of merging coefficients by our Stage 2 for each layer and attention head of DeepSeek-R1-Distill-Qwen-7B.
+As shown in
+Fig.
+A6
+, the heatmap of merging coefficients for DeepSeek-R1-Distill-Qwen-7B exhibits clear layer-wise differences, indicating that different layers respond to instruction focus to different degrees. Notably, the earliest layers show the strongest response, with coefficients reaching the upper bound, and this pattern is consistent with the observations in
+Fig.
+5
+.
+J.5
+Ablation Study of Instruction Calibration Set Generalization
+Table A8:
+Performance of RAIN-Merging with different instruction calibration sets in Stage 2.
+Rule
+is our original instruction calibration set from IFEval,
+Open
+is the new set from InforBench,
+Rule+Open
+simply concatenates both sets. We merge Qwen2.5-7B-Instruct (ITM) into DeepSeek-R1-Distill-Qwen-7B (LRM) under the same configuration as
+Tab.
+1
+.
+Method
+Instruction Following
+Reasoning & General
+IFEval
+CELLO
+Info
+Complex
+Avg.
+Math
+GPQA
+Aider
+Arena-
+Avg.
+Bench
+Bench
+Hard-v2
+LRM
+55.45
+16.59
+71.73
+32.72
+44.12
+64.75
+44.44
+29.63
+65.29
+51.03
+RAIN-Merging (Rule)
+63.22
+19.03
+74.53
+35.66
+48.11
+68.75
+54.55
+33.33
+65.73
+55.59
+RAIN-Merging (Open)
+62.92
+19.24
+74.89
+35.67
+48.15
+65.14
+49.49
+31.11
+64.67
+52.59
+RAIN-Merging (Rule+Open)
+64.03
+19.63
+75.64
+36.70
+49.00
+67.43
+53.03
+35.56
+65.29
+55.32
+While we use an instruction calibration set from IFEval in the main experiments due to its cleanly separable instruction spans and rule-based labels, the Stage 2 proxy is not restricted to such data. we construct an additional instruction calibration set from InfoBench. InfoBench focuses on open-ended constraints such as tone, style and content focus. We follow the same filtering pipeline as in Appendix
+H.2
+and perform manual screening to ensure that the selected spans correspond to instructional constraints rather than problem content, resulting in a total of 260 samples. We refer the calibration set of 365 rule-verifiable instructions from IFEval as
+Rule
+and the new set from InfoBench as
+Open
+. We also consider a mixed variant
+Rule+Open
+obtained by simply concatenating the two sets.
+Tab.
+A8
+reports the performance of RAIN-Merging under these three calibration variants. Using the
+Open
+calibration set alone yields instruction-following performance that is comparable to the original
+Rule
+setting, with slightly higher accuracy on the more open-ended benchmarks (InfoBench and ComplexBench). This indicates that the instruction-attention guided coefficients can still identify effective modules even when calibrated exclusively on open-ended instructions, and are not restricted to IFEval-style rule-verifiable patterns. The mixed
+Rule+Open
+calibration consistently improves all four instruction-following benchmarks. Combining rule-verifiable and open-ended instructions therefore produces a more general proxy that better captures diverse instruction types. But carefully, we observe that both the purely
+Open
+and the
+Rule+Open
+variants incur a modest drop in reasoning & general performance compared to the
+Rule
+baseline. This suggests that while open-ended calibration can further enhance instruction-following, it may also slightly interfere with the preservation of reasoning. We view designing cleaner open-ended calibration sets and more explicitly modelling instruction–reasoning entanglement as promising directions for future work.
+J.6
+Generalization to Unseen Instruction-Following Benchmarks
+Table A9:
+Merging performance and relative gains of RAIN-Merging on three new instruction-following benchmarks. We merge the Qwen2.5-7B family under the same configuration as
+Tab.
+1
+. The subsequent “
+(relative gain)
+” row reports the relative improvement of our method over the LRM, highlighted in green.
+Model
+IFBench
+XIFBench
+EIFBench
+Average
+Qwen2.5-7B-Instruct
+27.89
+83.35
+55.62
+55.62
+DeepSeek-R1-Distill-Qwen-7B
+17.69
+72.93
+45.31
+45.31
+Qwen2.5-7B-RAIN-Merging
+19.39
+76.32
+47.85
+47.85
+(relative gain)
++9.62%
++4.65%
++5.62%
++5.62%
+To mitigate risks of data contamination from established benchmarks, we evaluate our method on three recently proposed instruction-following benchmarks that could not be used for calibration or training:
+IFBench
+(
+Pyatkin et al., 2025
+)
+,
+XIFBench
+(
+Li et al., 2025b
+)
+, and
+EIFBench
+(
+Zou et al., 2025
+)
+.
+•
+IFBench
+targets precise, verifiable output constraint and tests generalization to 58 diverse out-of-domain constraint templates.
+•
+XIFBench
+evaluates multilingual instruction-following under fine-grained constraints across six languages, covering five categories such as content, style, format, situation and numerical requirements.
+•
+EIFBench
+focuses on extremely complex instruction-following scenarios, where models must execute multi-task workflows under multiple interacting constraints, closer to real-world product use-cases.
+These datasets introduce new instruction formats, domains, and evaluation protocols, and are therefore suitable for testing robustness to distribution shifts in instruction-following.
+The results are reported in
+Tab.
+A9
+. Across all three benchmarks, RAIN-Merging consistently outperforms the baseline LRM, with relative gains ranging from
++
+4.65
+%
++4.65\%
+to
++
+9.62
+%
++9.62\%
+on individual datasets and
++
+5.62
+%
++5.62\%
+on the average. These improvements suggest that our method can generalize to new, previously unseen instruction-following tasks.
+J.7
+Instruction-Type Breakdown on IFEval
+Figure A7:
+Instruction-type accuracy comparison between the LRM (DeepSeek-R1-Distill-Qwen-7B) and RAIN-Merging (Qwen2.5-7B-RAIN-Merging) on IFEval.
+The results highlight the largest improvements on instructions like
+response_language
+,
+number_words
+, and
+no_comma
+.
+To provide a deeper understanding of how RAIN-Merging improves instruction-following,
+we perform a per-instruction-type analysis on IFEval, which includes 20+ distinct instruction categories in the original IFEval span.
+Fig.
+A7
+reports the instruction-type accuracy comparison results.
+The analysis reveals that RAIN-Merging achieves the most substantial performance gains on instruction types, such as
+response_language
+,
+number_words
+, and
+no_comma
+. For the majority of other types, the merged model either matches or modestly surpasses the LRM’s performance. These results complement the aggregate accuracy metrics reported in the main paper and offer further insight into the model’s instruction-following capabilities.
+J.8
+Semantic Robustness to Paraphrased Instructions
+Table A10:
+Robustness to paraphrased instructions on IFEval. We merge the Qwen2.5-7B family under the same configuration as
+Tab.
+1
+.
+HAcc
+is hard accuracy (%).
+Robustness
+is defined as
+HAcc
+​
+(
+paraphrase
+)
+/
+HAcc
+​
+(
+original
+)
+\text{HAcc}(\text{paraphrase})/\text{HAcc}(\text{original})
+Model
+IFEval(200) HAcc
+IFEval-paraphrase HAcc
+Robustness
+Qwen2.5-7B-Instruct
+65.71
+64.16
+0.98
+DeepSeek-R1-Distill-Qwen-7B
+57.86
+50.85
+0.88
+Qwen2.5-7B-RAIN-Merging
+61.29
+61.81
+1.01
+Our main instruction-following evaluation already includes benchmarks with non-trivial semantic components. In particular,
+InfoBench
+and
+ComplexBench
+explicitly evaluate whether the
+content
+of the response aligns with the prompt (e.g., style, tone, key information coverage), rather than relying solely on surface-level pattern matching. Thus a certain degree of semantic evaluation is already baked into our instruction-following metrics. To more directly assess whether RAIN-Merging improves
+semantic
+instruction following, rather than simply adapting to specific phrasings, we additionally follow IFEval-extended
+(
+Kovalevskyi, 2024
+)
+and construct a paraphrased version of IFEval. Concretely, we select 200 valid IFEval examples and use GPT-4o to generate three paraphrases for each instruction, yielding 600 phrased instructions(denoted as
+IFEval-paraphrase
+). We then evaluate: (i) hard accuracy on the original 200 IFEval prompts, and (ii) hard accuracy on the 600 paraphrased prompts. We also define a simple robustness metric,
+Robustness
+=
+HAcc
+​
+(
+paraphrase
+)
+HAcc
+​
+(
+original
+)
+\text{Robustness}\;=\;\frac{\text{HAcc}(\text{paraphrase})}{\text{HAcc}(\text{original})}
+, which measures how well performance is preserved under paraphrasing.
+Tab.
+A10
+reports the robustness to paraphrased instructions on IFEval. We observe that LRM’s performance degrades notably under paraphrasing. RAIN-Merging not only improves over the LRM on the original prompts, it also maintains slightly higher accuracy on the paraphrased prompts, achieving a
+robustness of
+1.01
+1.01
+that surpasses both the LRM and the ITM. These results indicate that RAIN-Merging enhances
+semantic
+instruction-following capability, as its performance improvements remain consistent even when instructions are substantially paraphrased. This demonstrates that the gains are not merely due to overfitting to specific phrasings or template-based patterns. The paraphrase-robustness experiment complements our aggregate instruction-following evaluations and supports the claim that the merged model better captures the intended meaning of user instructions.
+J.9
+Case Study on IFEval
+We provide two case studies to illustrate the effectiveness of RAIN-Merging compared with DeepSeek-R1-Distill-Qwen-7B as the baseline LRM on IFEval.
+•
+IFEval Example 1
+: The baseline LRM violates the explicit rule to first echo the request verbatim and further duplicates its poem, yielding a “following: False” outcome. In contrast, RAIN-Merging correctly repeats the request word-for-word, includes the required keywords (“intern,” “grow”), and produces a coherent, father-pleasing limerick (“following: True”).
+•
+IFEval Example 2
+: The baseline LRM introduces capitalized section headers and markup (e.g., “Verse 1”), breaking the “all lowercase” constraint (“following: False”). RAIN-Merging delivers fully lowercase lyrics with clear structure and consistent semantics (“following: True”).
+J.10
+Case Study on GPQA
+To better understand why RAIN-Merging improves performance on
+GPQA
+,we go beyond final-answer accuracy and analyze concrete examples where the merged model corrects the LRM’s mistakes.
+•
+GPQA Example 1
+: In the first case, the LRM constructs a mostly correct physical derivation but makes a numerical slip in the computation as marked in red. The merged model follows essentially the same derivation but corrects the arithmetic step and therefore reaches the correct option. Notably, the merged model employs a step-by-step computational approach rather than relying on a single direct calculation as in the LRM, reflecting its stronger logical coherence. This suggests that our method goes beyond faithfully maintaining the structure of the reasoning chains and can also enhance the reliability of the LRM’s step-by-step logical and numerical reasoning.
+•
+GPQA Example 2
+: In the second case, the LRM correctly analyzes each option and explicitly concludes that option (C) violates both isospin and parity conditions, while other options satisfy the constraints. However, in the final answer, the LRM unexpectedly outputs (A) as the best choice, contradicting its own reasoning.
+This is a classic
+knowing-doing gap
+(
+Schmied et al., 2025
+)
+, where
+the model’s decision is misaligned with its internal chain of thought.
+The merged model largely reuses the same analysis but now selects (C) as
+the final answer, aligning its decision with its reasoning.
+This is also the behavior captured by the improved RAA scores in previous
+Tab.
+4.2
+to explain the performance gains on GPQA.
+Instruction-following Example 1 in IFEval
+Prompt
+Write a limerick about Hannah, a college student, doing an internship at a coffee company. Make sure that her father would love the limerick. Include the words "intern" and "grow".
+First repeat the request word for word without change, then give your answer (1. do not say any words or characters before repeating the request; 2. the request you need to repeat does not include this sentence)
+DeepSeek-R1-Distill-Qwen-7B Reason
+Okay, so the user has given me a query where they want a limerick about Hannah, a college student doing an internship at a coffee company. They also want me to make sure her father would love it, include the words "intern" and "grow".
+First, I need to understand what a limerick is. It’s a five-line poem with an AABBA rhyme scheme, usually humorous. So, I should structure it that way.
+The main characters here are Hannah, who’s an intern, and her father. I need to highlight something that would please her father. Since he’s looking back on her, maybe something positive, like growth or learning. The user mentioned "grow," so that’s a keyword I must include.
+I’ll start the first line with "There once was a college student named Hannah," which sets the scene. Next, she’s doing an internship at a coffee company, so the second line can mention that.
+For the third line, I need to introduce her father. Maybe something like "Her dad would be tickled," which fits the rhyme and the idea that he’s proud or finds it amusing.
+In the fourth line, I have to include "grow," perhaps about Hannah growing into her role or learning something. Something like "she grew as an intern." That works because it’s a common phrase and fits the rhyme.
+Finally, the last line should be a nice, positive ending. Maybe the coffee company has grown as a result of her hard work. "And the JavaHouse grew from her intern!" That ties the "grow" into the company’s success.
+I should make sure the rhyme scheme is consistent and the lines flow well. Let me check each line for the AABBA pattern: the first and third lines have "Hannah," the second and fourth have "intern" and "grow," and the fifth is the punchline. The rhymes at the end of each line should be "annah," "inn," "dad," "un," and "or." Wait, that doesn’t quite fit perfectly. Let me adjust the fifth line to "and JavaHouse grew from her intern." That way, the last two lines rhyme with "grow" and "grew," which is close enough for a limerick’s loose rhyme.
+I think this captures Hannah’s experience, shows her learning, and how her father is proud. It also ties the coffee company’s growth to her internship, which is a nice touch. I should make sure the language is playful and fits the humorous tone of limericks.
+DeepSeek-R1-Distill-Qwen-7B Response (following: False)
+There once was a college student named Hannah,
+Whose intern days at JavaHouse she would swap for much.
+Her dad would be tickled, I’m sure,
+If he heard she grew as an intern.
+And JavaHouse grew from her intern!
+There once was a college student named Hannah,
+Whose intern days at JavaHouse she would swap for much.
+Her dad would be tickled, I’m sure,
+If he heard she grew as an intern.
+And JavaHouse grew from her intern!
+RAIN-Merging Reason
+Okay, so the user has given me a query where they want a limerick about Hannah, a college student doing an internship at a coffee company. They also want me to include the words "intern" and "grow". Plus, the limerick should make my father happy. I need to make sure that the poem not only fits the structure of a limerick but also touches on what a father might appreciate.
+First, recall the structure of a limerick (AABBA, typically anapestic). Incorporate internship details and the required keywords. Emphasize traits a father would love: responsibility, learning, contribution.
+Draft lines that meet the rhyme scheme and include "intern" and "grow," aiming for a playful, positive tone that showcases Hannah’s growth and impact at the coffee company.
+RAIN-Merging Response (following: True)
+Write a limerick about Hannah, a college student, doing an internship at a coffee company. Make sure that her father would love the limerick. Include the words "intern" and "grow".
+There once was a college student named Hannah,
+An intern at a coffee company she was.
+With her skills, both sharp and bright,
+She’s learning every day,
+She’s growing taller, her skills grow bright.
+Her dad would surely give her a smile,
+For Hannah’s heart and Hannah’s skill.
+She’s balancing tasks, balancing time,
+Turning great coffee into something divine.
+A limerick full of sunny pride!
+Instruction-following Example 2 in IFEval
+Prompt
+Compose song lyrics about a socio-economic problem. The song should be in English and in all lowercase letters.
+DeepSeek-R1-Distill-Qwen-7B Reason
+The user asked for song lyrics about a socio-economic problem, in English and all lowercase. Choose a relatable issue (e.g., inequality, unemployment), structure with verses/chorus/bridge, maintain empathetic tone, vivid imagery, and ensure every character is lowercase. Aim for accessibility, repetition in chorus, and a subtle sense of resilience or hope.
+DeepSeek-R1-Distill-Qwen-7B Response (following: False)
+Verse 1
+every penny’s a struggle
+like fuel for a car that won’t start
+the stars are bright but we don’t see them
+the ladder’s always broken
+Chorus
+every penny’s a struggle
+a weight in your chest
+the world’s a game but you’re just a piece
+no matter how hard you try
+every penny’s a struggle
+Verse 2
+the roads are wet but the rain falls cold
+the wind’s a whisper but it’s got no hold
+we’re dancing to a tune we can’t control
+but the beat’s the same
+Chorus
+every penny’s a struggle
+a weight in your chest
+the world’s a game but you’re just a piece
+no matter how hard you try
+every penny’s a struggle
+Bridge
+look beyond the pain
+is there a spark in your soul?
+can you see the stars at night?
+maybe there’s something more
+Chorus
+every penny’s a struggle
+a weight in your chest
+the world’s a game but you’re just a piece
+no matter how hard you try
+every penny’s a struggle
+Outro
+a penny’s worth of love or light
+the struggle’s real but we gotta fight
+we’ll find the way through the cold
+the world’s a game but you’re just a piece
+RAIN-Merging Reason
+Generate lyrics that address a socio-economic issue with clear imagery and structure (verses/chorus/bridge). Conform strictly to the all-lowercase constraint. Keep language simple and emotive, focusing on systemic barriers and lived experience, while maintaining flow and singability.
+RAIN-Merging Response (following: True)
+"the gap in the system"
+(verse 1)
+i see the faces in the lines,
+faces searching for a ticket out of here.
+factories grinding, bodies quiet,
+a world that promises better, but i’m still waiting for the breath.
+(chorus)
+there’s a crack in the system, a fault in the law,
+half the planet’s frozen in time.
+we’re crafted from the same mold, same broken spell,
+but the world won’t let us climb the hill.
+(verse 2)
+the streets are empty, the shops tiled over,
+the only sound is the shuttle’s old tune.
+we’re drowning in the waves, but the shores are a lie,
+the promises fade like ash in the wind.
+(chorus)
+there’s a crack in the system, a fault in the law,
+half the planet’s frozen in time.
+we’re crafted from the same mold, same broken spell,
+but the world won’t let us climb the hill.
+(bridge)
+oh, it’s not just the lack, it’s the broken chain,
+we’re all stuck in the margins, never quite seen.
+but the fights don’t stop, they never do,
+we’re trapped in the loop, chained to the ground.
+(chorus)
+there’s a crack in the system, a fault in the law,
+half the planet’s frozen in time.
+we’re crafted from the same mold, same broken spell,
+but the world won’t let us climb the hill.
+(outro)
+so here’s to the night shifts and the cold nights,
+the endless loop where the kids don’t get the break.
+we’re all fragments on the ground,
+trying to find a way out of the ground.
+Reasoning Example 1 in GPQA
+Question (Answer: C)
+X is a meson resonance. What is the mean decay distance? Knowing that the production energy is
+E
+X
+=
+8
+​
+G
+​
+e
+​
+V
+E_{X}=8GeV
+, the mass
+m
+X
+=
+1.2
+​
+G
+​
+e
+​
+V
+m_{X}=1.2GeV
+, and the width
+Γ
+X
+=
+320
+​
+M
+​
+e
+​
+V
+\Gamma_{X}=320MeV
+.
+A.
+4.0655
+×
+10
+−
+16
+​
+m
+4.0655\times 10^{-16}m
+B.
+5.0223
+×
+10
+−
+16
+​
+m
+5.0223\times 10^{-16}m
+C.
+4.0655
+×
+10
+−
+15
+​
+m
+4.0655\times 10^{-15}m
+D.
+5.0223
+×
+10
+−
+15
+​
+m
+5.0223\times 10^{-15}m
+DeepSeek-R1-Distill-Qwen-7B Reason
+Okay, so I have this physics problem here about a meson resonance and its mean decay distance. Hmm, I’m a bit rusty on particle physics, but let me try to think this through step by step.
+First, the question gives me some data: the production energy
+E
+X
+=
+8
+E_{X}=8
+GeV, the mass
+m
+X
+=
+1.2
+m_{X}=1.2
+GeV, and the width
+Γ
+X
+=
+320
+\Gamma_{X}=320
+MeV. I need to find the mean decay distance from these values. The options are given in meters, so I guess I need to calculate the decay length.
+…
+(We omit the lengthy reasoning process for clarity.)
+…
+Wait,
+ℏ
+≈
+6.582
+×
+10
+−
+25
+\hbar\approx 6.582\times 10^{-25}
+GeV
+⋅
+\cdot
+s. So
+τ
+=
+6.582
+×
+10
+−
+25
+​
+GeV
+⋅
+s
+0.32
+​
+GeV
+≈
+2.056875
+×
+10
+−
+25
+​
+s
+\tau=\frac{6.582\times 10^{-25}\text{ GeV}\cdot\text{s}}{0.32\text{ GeV}}\approx 2.056875\times 10^{-25}\text{ s}
+Now, the mean decay length
+L
+=
+γ
+​
+β
+​
+c
+​
+τ
+L=\gamma\beta c\tau
+. Let’s plug in the numbers.
+γ
+≈
+6.6667
+\gamma\approx 6.6667
+,
+β
+≈
+0.9887
+\beta\approx 0.9887
+,
+c
+≈
+3
+×
+10
+8
+c\approx 3\times 10^{8}
+m/s.
+So
+L
+=
+6.6667
+×
+0.9887
+×
+3
+×
+10
+8
+​
+m/s
+×
+2.056875
+×
+10
+−
+25
+​
+s
+L=6.6667\times 0.9887\times 3\times 10^{8}\text{ m/s}\times 2.056875\times 10^{-25}\text{ s}
+Let me compute this step by step. First,
+6.6667
+×
+0.9887
+≈
+6.6049
+6.6667\times 0.9887\approx 6.6049
+. Then,
+3
+×
+10
+8
+×
+2.056875
+×
+10
+−
+25
+=
+6.170625
+×
+10
+−
+17
+3\times 10^{8}\times 2.056875\times 10^{-25}=6.170625\times 10^{-17}
+m. Now multiply that by
+6.6049
+6.6049
+:
+6.6049
+×
+6.170625
+×
+10
+−
+17
+≈
+4.07
+×
+10
+−
+16
+6.6049\times 6.170625\times 10^{-17}\approx 4.07\times 10^{-16}
+m.
+Looking at the options, option A is
+4.0655
+×
+10
+−
+16
+4.0655\times 10^{-16}
+m, which is very close to my calculation. Option B is
+5.0223
+×
+10
+−
+16
+5.0223\times 10^{-16}
+, which is higher. So I think the correct answer is A.
+DeepSeek-R1-Distill-Qwen-7B Response (Answer: A, Wrong)
+The mean decay distance
+L
+L
+for a particle is given by
+L
+=
+γ
+​
+β
+​
+c
+​
+τ
+L=\gamma\beta c\tau
+, where
+γ
+\gamma
+is the Lorentz factor,
+β
+\beta
+is the velocity in terms of the speed of light,
+c
+c
+is the speed of light, and
+τ
+\tau
+is the proper lifetime. The proper lifetime is related to the total decay width
+Γ
+\Gamma
+by
+τ
+=
+ℏ
+/
+Γ
+\tau=\hbar/\Gamma
+, where
+ℏ
+\hbar
+is the reduced Planck constant.
+Given:
+-
+E
+X
+=
+8
+E_{X}=8
+GeV,
+-
+m
+X
+=
+1.2
+m_{X}=1.2
+GeV,
+-
+Γ
+X
+=
+320
+\Gamma_{X}=320
+MeV
+=
+0.32
+=0.32
+GeV.
+First, calculate
+γ
+=
+E
+X
+/
+m
+X
+=
+8
+/
+1.2
+≈
+6.6667
+\gamma=E_{X}/m_{X}=8/1.2\approx 6.6667
+.
+Next,
+β
+=
+1
+−
+(
+1
+/
+γ
+2
+)
+=
+1
+−
+(
+1
+/
+6.6667
+2
+)
+≈
+0.9887
+\beta=\sqrt{1-(1/\gamma^{2})}=\sqrt{1-(1/6.6667^{2})}\approx 0.9887
+.
+The proper lifetime is
+τ
+=
+ℏ
+/
+Γ
+X
+\tau=\hbar/\Gamma_{X}
+, where
+ℏ
+≈
+6.582
+×
+10
+−
+25
+\hbar\approx 6.582\times 10^{-25}
+GeV
+⋅
+\cdot
+s.
+Thus,
+τ
+=
+(
+6.582
+×
+10
+−
+25
+)
+/
+0.32
+≈
+2.056875
+×
+10
+−
+25
+\tau=(6.582\times 10^{-25})/0.32\approx 2.056875\times 10^{-25}
+s.
+Finally, the mean decay length is:
+L
+=
+γ
+​
+β
+​
+c
+​
+τ
+=
+6.6667
+×
+0.9887
+×
+(
+3
+×
+10
+8
+)
+×
+2.056875
+×
+10
+−
+25
+≈
+4.0655
+×
+10
+−
+16
+​
+m
+L=\gamma\beta c\tau=6.6667\times 0.9887\times(3\times 10^{8})\times 2.056875\times 10^{-25}\approx 4.0655\times 10^{-16}\text{ m}
+Comparing with the options, the closest match is
+A
+4.0655
+×
+10
+−
+16
+4.0655\times 10^{-16}
+m.
+Answer: A
+RAIN-Merging Reason
+Okay, so I’ve got this physics problem here about a meson resonance and its mean decay distance. Hmm, I’m a bit rusty on particle physics, but let’s try to think this through.
+The question gives me
+E
+X
+=
+8
+E_{X}=8
+GeV,
+m
+X
+=
+1.2
+m_{X}=1.2
+GeV, and
+Γ
+X
+=
+320
+\Gamma_{X}=320
+MeV. I need to find the mean decay distance. The options are all in meters, so I guess I need to calculate the decay length.
+Wait, decay length… I remember that the mean decay length (
+L
+L
+) is related to the particle’s lifetime (
+τ
+\tau
+) and its velocity (
+β
+\beta
+). The formula is
+L
+=
+β
+​
+γ
+​
+c
+​
+τ
+L=\beta\gamma c\tau
+, where
+γ
+\gamma
+is the Lorentz factor. But wait, sometimes it’s also expressed using the width
+Γ
+\Gamma
+because the lifetime
+τ
+\tau
+is related to
+Γ
+\Gamma
+by
+τ
+=
+ℏ
+/
+Γ
+\tau=\hbar/\Gamma
+. Oh right, because
+Γ
+\Gamma
+is the total decay width, which is inversely proportional to the lifetime.
+So first, I need to find the lifetime
+τ
+\tau
+.
+Γ
+\Gamma
+is given in MeV, so I should convert that to GeV for consistency with
+E
+X
+E_{X}
+and
+m
+X
+m_{X}
+. 320 MeV is 0.32 GeV.
+Now, using
+τ
+=
+ℏ
+/
+Γ
+\tau=\hbar/\Gamma
+. But wait, what’s the value of
+ℏ
+\hbar
+in GeV
+⋅
+\cdot
+s? I think
+ℏ
+\hbar
+is approximately
+6.582
+×
+10
+−
+25
+6.582\times 10^{-25}
+GeV
+⋅
+\cdot
+s. Let me double-check that. Yeah, I think that’s correct.
+So
+τ
+=
+(
+6.582
+×
+10
+−
+25
+​
+GeV
+⋅
+s
+)
+/
+(
+0.32
+​
+GeV
+)
+=
+6.582
+×
+10
+−
+25
+/
+0.32
+≈
+2.057
+×
+10
+−
+24
+\tau=(6.582\times 10^{-25}\text{ GeV}\cdot\text{s})/(0.32\text{ GeV})=6.582\times 10^{-25}/0.32\approx 2.057\times 10^{-24}
+seconds.
+…
+(We omit the lengthy reasoning process for clarity.)
+…
+Wait, let me check the exact values.
+First,
+τ
+=
+ℏ
+/
+Γ
+\tau=\hbar/\Gamma
+.
+ℏ
+\hbar
+is
+6.582
+×
+10
+−
+25
+6.582\times 10^{-25}
+GeV
+⋅
+\cdot
+s.
+Γ
+\Gamma
+is 0.32 GeV.
+So
+τ
+=
+6.582
+×
+10
+−
+25
+/
+0.32
+=
+\tau=6.582\times 10^{-25}/0.32=
+let’s compute that exactly.
+6.582
+/
+0.32
+=
+20.56875
+6.582/0.32=20.56875
+, so
+20.56875
+×
+10
+−
+25
+20.56875\times 10^{-25}
+s
+=
+2.056875
+×
+10
+−
+24
+=2.056875\times 10^{-24}
+s.
+…
+(We omit the lengthy reasoning process for clarity.)
+…
+RAIN-Merging Response (Answer: C, Correct)
+To calculate the mean decay distance
+L
+L
+of the meson resonance, we use the formula:
+L
+=
+c
+⋅
+β
+​
+γ
+​
+τ
+L=c\cdot\beta\gamma\tau
+, where:
+-
+c
+=
+3
+×
+10
+8
+c=3\times 10^{8}
+m/s (speed of light),
+-
+β
+=
+1
+−
+m
+2
+E
+2
+\beta=\sqrt{1-\frac{m^{2}}{E^{2}}}
+is the velocity in units of
+c
+c
+,
+-
+γ
+=
+E
+m
+\gamma=\frac{E}{m}
+is the Lorentz factor,
+-
+τ
+=
+ℏ
+Γ
+\tau=\frac{\hbar}{\Gamma}
+is the proper lifetime, with
+ℏ
+=
+6.582
+×
+10
+−
+25
+\hbar=6.582\times 10^{-25}
+GeV
+⋅
+\cdot
+s.
+Step 1: Calculate
+τ
+\tau
+Given
+Γ
+X
+=
+320
+\Gamma_{X}=320
+MeV
+=
+0.32
+=0.32
+GeV, the proper lifetime is:
+τ
+=
+ℏ
+Γ
+X
+=
+6.582
+×
+10
+−
+25
+0.32
+≈
+2.056875
+×
+10
+−
+24
+​
+s
+\tau=\frac{\hbar}{\Gamma_{X}}=\frac{6.582\times 10^{-25}}{0.32}\approx 2.056875\times 10^{-24}\text{ s}
+Step 2: Calculate
+β
+\beta
+and
+γ
+\gamma
+The energy is
+E
+X
+=
+8
+E_{X}=8
+GeV, and the mass is
+m
+X
+=
+1.2
+m_{X}=1.2
+GeV/
+c
+2
+c^{2}
+. The Lorentz factor is:
+γ
+=
+E
+X
+m
+X
+=
+8
+1.2
+≈
+6.6667
+\gamma=\frac{E_{X}}{m_{X}}=\frac{8}{1.2}\approx 6.6667
+The velocity factor
+β
+\beta
+is:
+β
+=
+1
+−
+m
+X
+2
+E
+X
+2
+=
+1
+−
+1.2
+2
+8
+2
+=
+1
+−
+0.0225
+=
+0.9775
+≈
+0.9887
+\beta=\sqrt{1-\frac{m_{X}^{2}}{E_{X}^{2}}}=\sqrt{1-\frac{1.2^{2}}{8^{2}}}=\sqrt{1-0.0225}=\sqrt{0.9775}\approx 0.9887
+Thus,
+β
+​
+γ
+=
+0.9887
+⋅
+6.6667
+≈
+6.5911
+\beta\gamma=0.9887\cdot 6.6667\approx 6.5911
+.
+Step 3: Calculate
+L
+L
+Substituting into the formula for
+L
+L
+:
+L
+=
+c
+⋅
+β
+​
+γ
+⋅
+τ
+=
+3
+×
+10
+8
+⋅
+6.5911
+⋅
+2.056875
+×
+10
+−
+24
+L=c\cdot\beta\gamma\cdot\tau=3\times 10^{8}\cdot 6.5911\cdot 2.056875\times 10^{-24}
+First, calculate
+c
+⋅
+β
+​
+γ
+c\cdot\beta\gamma
+:
+3
+×
+10
+8
+⋅
+6.5911
+≈
+1.97733
+×
+10
+9
+​
+m/s
+3\times 10^{8}\cdot 6.5911\approx 1.97733\times 10^{9}\text{ m/s}
+Now multiply by
+τ
+\tau
+:
+L
+=
+1.97733
+×
+10
+9
+⋅
+2.056875
+×
+10
+−
+24
+≈
+4.067
+×
+10
+−
+15
+​
+m
+L=1.97733\times 10^{9}\cdot 2.056875\times 10^{-24}\approx 4.067\times 10^{-15}\text{ m}
+Step 4: Match with the closest option
+The calculated value
+L
+≈
+4.067
+×
+10
+−
+15
+L\approx 4.067\times 10^{-15}
+m is closest to option
+C
+(
+4.0655
+×
+10
+−
+15
+4.0655\times 10^{-15}
+m).
+ANSWER: C
+Reasoning Example 2 in GPQA
+Question (Answer: C)
+Consider a bound system of two nucleons (NN) in a 1S0 state which emit a particle X of intrinsic parity -1. Pauli statistics require that the isospin, angular momentum, and spin quantum numbers of the final NN state satisfy T(NN) = S(NN) + L(NN) + 1 (mod 2).
+Suppose the final NN state has T(NN) = 0. Which of the following partial waves is not permitted, where the lowercase letter denotes the angular momentum state of X? Make use of the conservation of both angular momentum and parity.
+Note that the term symbol (e.g. 1S0) is in general defined (2S+1)L(J), where S is the total spin, L the total orbital angular momentum written in spectroscopic notation, and J the total angular momentum.
+A. 1S0
+→
+\rightarrow
+3D3 + f
+B. 1S0
+→
+\rightarrow
+3S1 + p
+C. 1S0
+→
+\rightarrow
+3P0 + s
+D. 1S0
+→
+\rightarrow
+7D1 + p
+DeepSeek-R1-Distill-Qwen-7B Reason
+Okay, so I’m trying to figure out this problem about nucleon-nucleon bound systems and the partial waves involved when they emit a particle. Let me start by breaking down the question and the given information.
+…
+(We omit the lengthy reasoning process for clarity.)
+…
+But I’m not entirely confident. I think the correct answer is (A) because it doesn’t satisfy the isospin condition, but I’m not 100% sure.
+DeepSeek-R1-Distill-Qwen-7B Response (Answer: A, Wrong)
+The problem involves a bound system of two nucleons (NN) in a 1S0 state emitting a particle X with intrinsic parity -1. The isospin, angular momentum, and spin quantum numbers of the final NN state satisfy the condition
+T(NN) = S(NN) + L(NN) + 1 mod 2
+, where T(NN) = 0 for the final NN state. The task is to determine which partial wave (l) of X is not permitted, considering both angular momentum and parity conservation.
+…
+(We omit the lengthy reasoning process for clarity.)
+…
+### Option-by-Option Analysis:
+•
+(A) 1S0 -> 3D3 + f
+–
+NN term symbol
+3D3
+:
+S = 1
+,
+L = 2
+,
+J = 3
+.
+–
+T(NN) = (1 + 2 + 1) mod 2 = 4 mod 2 = 0
+(satisfies the isospin condition).
+–
+Parity of NN state
+:
+(-1)L̂ + S = (-1)2̂ + 1 = -1
+(satisfies the parity condition).
+–
+Conclusion
+: This partial wave is
+allowed
+.
+•
+(B) 1S0 -> 3S1 + p
+–
+NN term symbol
+3S1
+:
+S = 1
+,
+L = 0
+,
+J = 1
+.
+–
+T(NN) = (1 + 0 + 1) mod 2 = 2 mod 2 = 0
+(satisfies the isospin condition).
+–
+Parity of NN state
+:
+(-1)L̂ + S = (-1)0̂ + 1 = -1
+(satisfies the parity condition).
+–
+Conclusion
+: This partial wave is
+allowed
+.
+•
+(C) 1S0 -> 3P0 + s
+–
+NN term symbol
+3P0
+:
+S = 1
+,
+L = 1
+,
+J = 0
+.
+–
+T(NN) = (1 + 1 + 1) mod 2 = 3 mod 2 = 1
+(does not satisfy the isospin condition).
+–
+Parity of NN state
+:
+(-1)L̂ + S = (-1)1̂ + 1 = +1
+(does not satisfy the parity condition).
+–
+Conclusion
+: This partial wave is
+not allowed
+.
+•
+(D) 1S0 -> 7D1 + p
+–
+NN term symbol
+7D1
+:
+S = 3
+,
+L = 2
+,
+J = 1
+.
+–
+T(NN) = (3 + 2 + 1) mod 2 = 6 mod 2 = 0
+(satisfies the isospin condition).
+–
+Parity of NN state
+:
+(-1)L̂ + S = (-1)2̂ + 3 = -1
+(satisfies the parity condition).
+–
+Conclusion
+: This partial wave is
+allowed
+.
+### Final Answer:
+Options
+(A)
+and
+(C)
+are not permitted because they fail either the isospin or parity condition. However, since the question asks for the single best answer,
+(A)
+is chosen as the answer because it is the first invalid option encountered in the analysis.
+ANSWER: A
+RAIN-Merging Reason
+Okay, so I’m trying to figure out which partial wave isn’t allowed in this nuclear physics problem. Let me start by understanding the question step by step.
+…
+(We omit the lengthy reasoning process for clarity.)
+…
+So the only option that doesn’t satisfy the isospin condition is (C). Therefore, the answer should be (C).
+RAIN-Merging Response (Answer: C, Correct)
+To determine which partial wave is not permitted, we analyze the problem using the given conditions:
+1.
+Initial State
+: The initial NN system is in the 1S0 state, which has total spin
+S
+=
+0
+S=0
+, orbital angular momentum
+L
+=
+0
+L=0
+, and isospin
+T
+=
+0
+T=0
+. The parity of the initial state is
++
+1
++1
+since
+P
+=
+(
+−
+1
+)
+L
+=
+(
+−
+1
+)
+0
+=
++
+1
+P=(-1)^{L}=(-1)^{0}=+1
+.
+2.
+Final State Conditions
+:
+- The final NN state has
+T
+=
+0
+T=0
+, so the isospin condition is
+T
+=
+S
++
+L
++
+1
+mod
+2
+T=S+L+1\mod 2
+. Substituting
+T
+=
+0
+T=0
+, we get
+S
++
+L
++
+1
+≡
+0
+mod
+2
+S+L+1\equiv 0\mod 2
+, which simplifies to
+S
++
+L
+≡
+1
+mod
+2
+S+L\equiv 1\mod 2
+. This means
+S
+S
+and
+L
+L
+must have opposite parity (one even, one odd).
+- The parity of the final state must conserve parity. The emitted particle
+X
+X
+has intrinsic parity
+−
+1
+-1
+, so the parity of the final NN state is
+P
+NN
+=
+P
+NN
+initial
+⋅
+P
+X
+=
+(
++
+1
+)
+⋅
+(
+−
+1
+)
+=
+−
+1
+P_{\text{NN}}=P_{\text{NN}}^{\text{initial}}\cdot P_{X}=(+1)\cdot(-1)=-1
+. Since
+P
+NN
+=
+(
+−
+1
+)
+L
+P_{\text{NN}}=(-1)^{L}
+, this implies
+(
+−
+1
+)
+L
+=
+−
+1
+(-1)^{L}=-1
+, so
+L
+L
+must be odd.
+3.
+Analysis of Each Option
+:
+•
+(A) 1S0 → 3D3 + f
+: The NN state is
+3
+​
+D
+​
+3
+3D3
+, so
+S
+=
+1
+S=1
+(since
+2
+​
+S
++
+1
+=
+3
+2S+1=3
+) and
+L
+=
+2
+L=2
+.
+–
+S
++
+L
+=
+1
++
+2
+=
+3
+S+L=1+2=3
+, which satisfies
+S
++
+L
+≡
+1
+mod
+2
+S+L\equiv 1\mod 2
+.
+–
+L
+=
+2
+L=2
+is even, which violates the parity condition
+L
+L
+must be odd.
+–
+Allowed.
+•
+(B) 1S0 → 3S1 + p
+: The NN state is
+3
+​
+S
+​
+1
+3S1
+, so
+S
+=
+1
+S=1
+and
+L
+=
+0
+L=0
+.
+–
+S
++
+L
+=
+1
++
+0
+=
+1
+S+L=1+0=1
+, which satisfies
+S
++
+L
+≡
+1
+mod
+2
+S+L\equiv 1\mod 2
+.
+–
+L
+=
+0
+L=0
+is even, which violates the parity condition
+L
+L
+must be odd.
+–
+Allowed.
+•
+(C) 1S0
+→
+\to
+3P0 + s
+: The NN state is
+3
+​
+P
+​
+0
+3P0
+, so
+S
+=
+1
+S=1
+and
+L
+=
+1
+L=1
+.
+–
+S
++
+L
+=
+1
++
+1
+=
+2
+S+L=1+1=2
+, which does
+not
+satisfy
+S
++
+L
+≡
+1
+(
+mod
+2
+)
+S+L\equiv 1\pmod{2}
+.
+–
+L
+=
+1
+L=1
+is odd, which satisfies the parity condition.
+–
+Not allowed.
+•
+(D) 1S0 → 7D1 + p
+: The NN state is
+7
+​
+D
+​
+1
+7D1
+, so
+S
+=
+3
+S=3
+(since
+2
+​
+S
++
+1
+=
+7
+2S+1=7
+) and
+L
+=
+2
+L=2
+.
+–
+S
++
+L
+=
+3
++
+2
+=
+5
+S+L=3+2=5
+, which satisfies
+S
++
+L
+≡
+1
+mod
+2
+S+L\equiv 1\mod 2
+.
+–
+L
+=
+2
+L=2
+is even, which violates the parity condition
+L
+L
+must be odd.
+–
+Allowed.
+4.
+Conclusion
+:
+All options except
+(C)
+satisfy the parity condition
+L
+L
+must be odd. However, the isospin condition
+S
++
+L
+≡
+1
+mod
+2
+S+L\equiv 1\mod 2
+is violated in
+(C)
+, making it the only permitted partial wave that is not allowed.
+ANSWER: C
+Appendix K
+Implications
+The potential impacts of this work span both academic and applied dimensions.
+On the positive side, RAIN-Merging offers an interpretable, low-compute pathway for capability integration. It enables researchers and resource-constrained labs to inject instruction-following competence into LRMs without additional training. By enforcing a null-space constraint on the thinking segment (
+<think>
+…
+\ldots
+</think>
+), the method preserves the model’s structured reasoning format, which helps maintain reliability in reasoning. This direction may catalyze systematic studies of the relationship between task-vector orthogonality and thinking-format stability, and it encourages reproducible evaluation practices (for example, public evaluation scripts, calibration sets, and hyperparameter configurations) and greater standardization of community benchmarks. In agent applications such as WebShop and ALFWorld, RAIN-Merging can lower the barrier to integrating multiple capabilities and improve the practicality of tool use and structured outputs.
+On the risk side, parameter merging can introduce capability drift or safety drift. For example, while improving instruction following, it may alter jailbreak sensitivity, amplify biases present in training data or in LLM-as-judge pipelines, or induce hallucinations tied to specific output formats. Instruction attention as a proxy metric may also encourage myopic optimization for format matching, which is not equivalent to value-aligned safety. Moreover, increased model usability can be misused for mass generation of misleading content, evasion of platform policies, or automated spam. The current method also depends on R1-style special markers and prompting templates; its cross-model and cross-modal generalization remains to be established.
+Appendix L
+Limitations and Future Work
+Our method has the following limitations.
+(i) The method relies on R1-style templates and tokenization to extract
+<think>
+…
+</think>
+for constructing the null space. If a model hides its reasoning (for example, implicit CoT) or adopts different templates, the constraint may weaken or fail.
+(ii) The instruction and reasoning calibration sets are limited in size and include noise from LLM-as-judge auto-annotation. Distribution shifts across languages or task domains may affect the generalization of the merging coefficients.
+(iii) Although the KL constraint on the thinking segment helps preserve the reasoning format, non-thinking content and safety-relevant behaviors may still drift, and there is currently no formal safety guarantee.
+(iv) Experiments focus primarily on the Qwen/DeepSeek families. Applicability to multimodal LLMs, tool use, code-generation settings, and multilingual scenarios requires systematic evaluation.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

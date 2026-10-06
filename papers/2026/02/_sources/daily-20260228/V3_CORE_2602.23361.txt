@@ -1,0 +1,4692 @@
+VGG-T3: Offline Feed-Forward 3D Reconstruction at Scale
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+3
+Feed-Forward 3D Reconstruction at Scale
+3.1
+Preliminaries
+3.2
+Can We Fit Rome into MLPs?
+3.3
+Large-scale Reconstruction
+4
+Experiments
+4.1
+Standard Benchmarks
+4.2
+Large-Scale 3D Reconstruction
+4.3
+Feed-forward Visual Localization
+4.4
+Ablations
+5
+Conclusion
+A
+Implementation Details
+B
+VGGT adjustments
+C
+Additional Results
+D
+Additional Qualitative Results
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2602.23361v1 [cs.CV] 26 Feb 2026
+VGG-T
+3
+: Offline Feed-Forward 3D Reconstruction at Scale
+Sven Elflein
+Affiliation:
+NVIDIA
+Affiliation:
+Vector Institute
+Affiliation:
+University of Toronto
+Ruilong Li
+Affiliation:
+NVIDIA
+Sérgio Agostinho
+Affiliation:
+NVIDIA
+Zan Gojcic
+Affiliation:
+NVIDIA
+Laura Leal-Taixé
+Affiliation:
+NVIDIA
+Qunjie Zhou
+Affiliation:
+NVIDIA
+Aljosa Osep
+Affiliation:
+NVIDIA
+Abstract
+We present a scalable 3D reconstruction model that addresses a critical limitation in offline feed-forward methods: their computational and memory requirements grow quadratically
+w
+.
+r
+.
+t
+.
+w.r.t.\hbox{}
+the number of input images. Our approach is built on the key insight that this bottleneck stems from the varying-length Key-Value (KV) space representation of scene geometry, which we distill into a fixed-size Multi-Layer Perceptron (MLP) via test-time training.
+Our
+VGG-T
+3
+(
+V
+isual
+G
+eometry
+G
+rounded
+T
+est
+T
+ime
+T
+raining) scales linearly
+w
+.
+r
+.
+t
+.
+w.r.t.\hbox{}
+the number of input views, similar to online models, and reconstructs a
+1
+​
+k
+1k
+image collection in just
+54
+54
+seconds, achieving a
+11.6
+×
+11.6\times
+speed-up over baselines that rely on softmax attention.
+Since our method retains global scene aggregation capability, our point map reconstruction error outperforming other linear-time methods by large margins. Finally, we demonstrate visual localization capabilities of our model by querying the scene representation with unseen images.
+.7
+0
+Reconstructing of Rome landmarks: Colosseum, Castel Sant’Angelo, Pantheon and Trevi fountain.
+.25
+0
+Num. images
+vs
+.
+inference time.
+0
+Reconstructing Rome landmarks with 1-minute time budget.
+We present
+VGG-T
+3
+, an offline feed-forward 3D reconstruction method that scales linearly w.r.t.
+input views (
+VGG-T
+3
+: Offline Feed-Forward 3D Reconstruction at Scale
+).
+As a result, we can reconstruct large scenes from a large number of unposed input views, such as landmarks from tourist-sourced images, in less than a minute via single forward pass (
+VGG-T
+3
+: Offline Feed-Forward 3D Reconstruction at Scale
+).
+1
+Introduction
+We tackle large-scale 3D geometry reconstruction from in-the-wild image collections (
+VGG-T
+3
+: Offline Feed-Forward 3D Reconstruction at Scale
+).
+Status quo.
+Contemporary learning-based approaches directly predict scene geometry from images via feed-forward networks
+[
+97
+,
+27
+,
+113
+,
+94
+,
+99
+,
+51
+]
+.
+These are on-par with classical methods
+[
+81
+,
+76
+,
+67
+]
+in terms of accuracy, and are empirically more robust under challenging conditions such as rapid camera motion and low visual overlap.
+However, their computational and memory requirements scale poorly with the number of input images.
+This bottleneck originates from the implicit scene-level memory stored in the Key-Value (KV) space of the global self-attention layer. This KV space, projected from all input image tokens, functions as the dense, variable-length scene representation queried for 3D attribute prediction.
+To estimate scene geometry from this latent representation, these models need to query the KV space via global softmax attention operations.
+As this operation scales quadratically w.r.t.
+the number of input images,
+recent techniques address this issue via sparse attention
+[
+92
+]
+or token merging
+[
+79
+]
+to compress the
+variable
+representation length.
+However, this does not change the underlying quadratic scaling w.r.t.
+the number of input images (
+VGG-T
+3
+: Offline Feed-Forward 3D Reconstruction at Scale
+).
+Compress your KV.
+A variable-length representation is in contrast to methods that represent the scene geometry via fixed-size implicit representations
+[
+69
+,
+65
+]
+.
+For example, DeepSDF
+[
+69
+]
+conditions a pre-trained decoder on a compact, test-time-optimizable latent code to reconstruct a specific shape conditioned on the observed input 3D point cloud. Intuitively, the fixed-state decoder learns rich geometric priors, while a small latent code encodes instance-specific details through test-time optimization.
+In this work, we revisit this core principle in the context of feed-forward multi-view 3D reconstruction.
+In particular, we leverage a pre-trained multi-view feed-forward model
+[
+94
+]
+that tokenizes multi-view images and decodes dense depth maps from output tokens.
+However, rather than performing (quadratic) softmax attention in the global attention layer, we follow
+Sun et al. [86]
+and map the KV space via weights of a fixed-size MLP. Analogous to DeepSDF, we optimize the MLP at test time with reconstruction loss in
+token space
+, which allows us to retain the pre-trained encoder/decoder network.
+Querying the KV space at test time to decode depth maps from input views now means only applying the learned MLP to input tokens. This operation is linear w.r.t.
+the input image collection size.
+Large-scale feed-forward reconstruction.
+With our approach we can perform mini-batching to compute the overall gradient of our test-time training objective.
+This implies we can (i) process large image collections on a single GPU by off-loading mini-batches to CPU, and (ii) perform distributed inference by sharding image tokens across multiple GPUs. As a result, we can process a
+2
+​
+k
+2k
+image collection in
+48.5
+48.5
+s, a
+33
+×
+33\times
+improvement over VGGT (
+27
+27
+min).
+Visual localization.
+Moreover, this representation change also unlocks new capabilities. After reconstructing a set of images, the optimized MLP stores a compressed version of the scene.
+By querying the frozen MLP with a novel query view, we localize this image with respect to the reconstructed scene, thus naturally performing feed-forward visual localization. Traditionally, separate solutions are required for reconstruction and localization tasks. In contrast, our approach uses the same model for mapping (optimizing the MLP) and localization (querying the frozen MLP), providing a unified, end-to-end solution.
+To summarize,
+(i)
+we propose an offline feed-forward 3D reconstruction model that scales linearly w.r.t.
+the number of input views.
+We
+(ii)
+show that models that represent scene geometry with variable-length implicit representation (KV) can be “converted” into linear-time models via fixed-dimensional implicit state representation.
+We
+(iii)
+demonstrate our approach supports single-GPU inference for large image sets as well as efficient distributed inference.
+Finally, we
+(iv)
+present a proof-of-concept joint feed-forward visual localization and mapping within a single model.
+2
+Related Work
+Classical pipelines.
+Established structure-from-motion techniques such as Bundler
+[
+81
+,
+82
+]
+, COLMAP
+[
+76
+]
+, and GLOMAP
+[
+67
+]
+follow a multi-stage pipeline that includes feature extraction, correspondence search, camera pose estimation, and joint refinement of camera poses and 3D structure.
+These methods achieve accurate scene reconstructions on large image collections
+[
+1
+]
+, provided the scenes are well-constrained (
+i.e
+.
+, sufficient visual overlap and connectivity).
+Feed-forward models.
+Recent feed-forward approaches
+[
+97
+,
+55
+,
+42
+]
+utilize Transformers
+[
+91
+]
+to encode input image pairs and regress relative pose and depth maps in the reference view. By encoding spatial relationships via attention mechanisms across image features, these methods can recover 3D geometry, camera motion, and even handle scenes with uncalibrated cameras and low visual overlap.
+Multi-view feed-forward methods
+encode and aggregate features across multiple views to predict poses and scene geometry simultaneously. Overall, these methods consist of a feature encoder (tokenizer), a multi-view feature aggregator, and a decoder that estimates camera poses and per-view depth maps or global point maps. VGGT
+[
+94
+]
+, Fast3R
+[
+103
+]
+, and
+π
+3
+\pi^{3}
+[
+99
+]
+perform this global fusion in token space via softmax attention. Alternatively, Light3R-SfM
+[
+28
+]
+constructs a scene graph from the underlying image collection and pools image features using a shortest-path tree data structure for more efficient aggregation. FLARE
+[
+113
+]
+decomposes the problem into global camera pose and per-view geometry estimation.
+Large-scale reconstruction.
+The aforementioned offline multi-view models achieve high accuracy via global self-attention mechanisms, at the cost of quadratic complexity
+O
+⁡
+(
+n
+2
+)
+O(n^{2})
+w.r.t.
+the number of input views
+n
+n
+. To enable reconstruction with long sequences, Slam3R
+[
+60
+]
+, VGGT-SLAM
+[
+62
+]
+, and VGGT-Long
+[
+24
+]
+process video data in chunks, using local attention or sliding windows. However, this decouples the global scene state, making them prone to drift and unsuitable for unordered image sets.
+Other methods optimize the global attention operation directly. FastVGGT
+[
+79
+]
+uses token merging, and SparseVGGT
+[
+92
+]
+employs block-sparse attention. While reducing the constant factor
+O
+⁡
+(
+n
+2
+)
+→
+O
+⁡
+(
+n
+/
+r
+2
+)
+O(n^{2})\to O(\nicefrac{{n}}{{r}}^{2})
+where
+r
+r
+is the token down-sampling ratio, the asymptotic complexity of both approaches remains quadratic.
+These can be viewed as structured compression of the KV scene representation to speed up the global attention operation, with the heuristic that tokens close in image space share similar scene features.
+From this perspective, our work applies flexible compression of the KV space, decoupling the model’s computational complexity from the number of input images
+n
+n
+, thus moving from a quadratic to a linear-time formulation.
+Online methods.
+Several methods process image sequences in an auto-regressive fashion.
+StreamVGGT
+[
+116
+]
+and Stream3R
+[
+53
+]
+convert pre-trained VGGT models to causal models, registering newly-observed images into the existing reconstruction, by only attending to prior tokens’ keys and values. These methods scale quadratically w.r.t.
+n
+n
+and require memory-intensive KV caching to accelerate inference. Online, linear-time models retain past frames/tokens as working memory
+[
+93
+]
+, rely on fixed-size implicit memory that is updated iteratively (CUT3R
+[
+96
+]
+, Must3R
+[
+15
+]
+) or use explicit spatial memory (Point3R
+[
+101
+]
+, Long3R
+[
+17
+]
+, MapAnything
+[
+51
+]
+).
+Test-time training for 3D reconstruction.
+Concurrent to our work, TTT3R
+[
+16
+]
+is an auto-regressive model that builds on the fixed-size memory of CUT3R and reinterprets its internal state update mechanism as test-time training (TTT)
+[
+87
+]
+.
+Our work utilizes a similar test-time optimization mechanism, but with a fundamentally different interpretation: we resort to test-time optimization to “compress” the KV space into a fixed-size MLP. Therefore, our method is global (offline) and, as we show empirically, significantly more accurate compared to TTT3R, yet maintains linear complexity w.r.t.
+input size
+n
+n
+.
+Attention with linear complexity.
+The quadratic cost of softmax attention limits scalability in long-sequence modeling. Linear attention methods address this by replacing the softmax kernel with linear feature maps, yielding linear-time, constant-memory recurrences
+[
+46
+,
+49
+]
+, with gated
+[
+105
+]
+and chunkwise-parallel
+[
+40
+,
+88
+,
+106
+,
+107
+,
+21
+]
+extensions improving efficiency and hardware throughput.
+State-space models (SSMs) offer an alternative recurrent formulation, where modern variants such as S4
+[
+35
+]
+, H3
+[
+30
+]
+, Hyena
+[
+70
+]
+, and Mamba
+[
+34
+,
+21
+]
+learn structured transitions to capture global dependencies, and can be viewed as gated or structured extensions of linear attention
+[
+8
+,
+104
+,
+86
+]
+.
+Recent work shows that TTT provides a strictly more general framework: it treats the hidden state as an optimization variable updated online
+[
+8
+,
+86
+,
+19
+]
+, recovering linear attention and SSMs as special cases while improving adaptability across domains such as video modeling
+[
+19
+]
+, novel view synthesis
+[
+114
+]
+, and continual learning
+[
+86
+]
+.
+A complementary line of work in LLMs explores post-training linearization, converting pretrained transformers into linear-complexity models via lightweight adaptation or distillation
+[
+48
+,
+95
+,
+64
+,
+21
+,
+112
+,
+111
+]
+.
+Building on these advances, we extend post-training linearization to multi-view reconstruction, introducing a TTT-based approach that scales bi-directional models to an unbounded number of views.
+Visual localization.
+The task of localizing a novel query image relative to a pre-built scene representation is typically achieved via geometric correspondence search
+[
+3
+,
+9
+,
+37
+,
+74
+,
+115
+,
+68
+,
+75
+]
+, followed by a Perspective-n-Point (PnP) solver
+[
+50
+,
+52
+]
+to compute the final camera pose.
+Similar to ours, Scene Coordinate Regression (SCR)
+[
+80
+,
+11
+,
+10
+,
+12
+]
+methods learn a scene-specific function that directly maps input RGB pixels to 3D world coordinates, thereby bypassing the need for explicit feature matching or database queries.
+Recent ACEZero
+[
+12
+]
+maps and localizes input views jointly from unposed images, however, this end-to-end approach critically relies on extensive, iterative optimization steps to converge toward a stable 3D reconstruction. Our approach instead leverages a pre-trained, feed-forward 3D reconstruction model, which directly enables mapping and localization at test-time with only a few iterations of optimization in token space.
+3
+Feed-Forward 3D Reconstruction at Scale
+(a)
+VGGT
+(b)
+TTT-based global attention replacement with linear scaling.
+Figure 1
+:
+VGG-T
+3
+replaces the global attention block in VGGT (left) with a linear-time alternative based on test-time training (right) to compress the KV space into a fixed-size MLP. We use 3 images for visualization purposes but this scales to arbitrary number of images.
+We begin by reviewing the recent multi-view feed-forward architecture VGGT
+[
+94
+]
+and the test-time training (TTT) techniques in
+Sec.
+3.1
+. A key observation is that VGGT implicitly relies on the variable-length key–value (KV) pairs produced by attention layers as its internal representation of scene geometry. While effective, this design requires
+O
+⁡
+(
+n
+2
+)
+O(n^{2})
+compute and linearly growing memory with respect to the number of input views.
+In
+Sec.
+3.2
+, we introduce our approach,
+VGG-T
+3
+(
+V
+isual
+G
+eometry
+G
+rounded
+T
+est
+T
+ime
+T
+raining), which replaces these variable-length KV pairs with a compressed, fixed-size MLP representation via TTT. This substitution reduces the computational complexity to
+O
+⁡
+(
+n
+)
+O(n)
+, enabling feed-forward 3D reconstruction at scale.
+Task.
+Given an unordered image collection, denoted as
+{
+ℐ
+i
+}
+i
+=
+1
+N
+\{\mathcal{I}_{i}\}_{i=1}^{N}
+with
+ℐ
+i
+∈
+ℝ
+H
+×
+W
+×
+3
+\mathcal{I}_{i}\in\mathbb{R}^{H\times W\times 3}
+, the goal is to obtain per-image camera extrinsics
+P
+i
+P_{i}
+consisting of rotation
+R
+∈
+S
+​
+E
+​
+(
+3
+)
+R\in SE(3)
+and translation vector
+T
+∈
+ℝ
+3
+T\in\mathbb{R}^{3}
+, pinhole intrinsics
+K
+i
+∈
+ℝ
+3
+×
+3
+K_{i}\in\mathbb{R}^{3\times 3}
+and dense depth map
+X
+∈
+ℝ
+H
+×
+W
+X\in\mathbb{R}^{H\times W}
+, which represents the geometry observed by individual images.
+3.1
+Preliminaries
+VGGT.
+VGGT performs multi-view reasoning by first applying an image tokenizer that converts each input image into a sequence of tokens
+x
+i
+x_{i}
+. It then processes these tokens with attention blocks that alternate between image-wise self-attention and global self-attention across all images (
+Fig.
+0(a)
+).
+In each attention block, the model projects every input token
+x
+i
+x_{i}
+into query, key, and value (QKV) vectors:
+q
+i
+=
+LN
+q
+​
+(
+W
+q
+​
+x
+i
+)
+,
+k
+i
+=
+LN
+k
+​
+(
+W
+k
+​
+x
+i
+)
+,
+v
+i
+=
+W
+v
+​
+x
+i
+.
+q_{i}=\text{LN}_{q}(W_{q}x_{i}),k_{i}=\text{LN}_{k}(W_{k}x_{i}),v_{i}=W_{v}x_{i}.
+(1)
+where
+W
+q
+W_{q}
+,
+W
+k
+W_{k}
+and
+W
+v
+W_{v}
+are learned linear projections and
+LN
+q
+\text{LN}_{q}
+and
+LN
+k
+\text{LN}_{k}
+denote layer norms
+[
+7
+]
+performing QK normalization
+[
+23
+,
+38
+]
+to stabilize training.
+The softmax attention is then applied to obtain per-head output
+o
+i
+o_{i}
+via:
+o
+i
+=
+∑
+j
+softmax
+j
+​
+(
+q
+i
+T
+​
+k
+j
+d
+)
+​
+v
+j
+.
+o_{i}=\sum_{j}\text{softmax}_{j}\left(\frac{q_{i}^{T}k_{j}}{\sqrt{d}}\right)v_{j}.
+(2)
+Finally, prediction heads operate on the output tokens
+o
+i
+o_{i}
+to directly predict per-image depth, camera poses, and camera intrinsics.
+Importantly, the global self-attention layers pool information across all input views, which is essential for multi-view understanding but introduces quadratic complexity w.r.t. the number of views.
+Test-time training.
+Recently,
+Sun et al. [86]
+propose to use test-time training
+[
+87
+]
+in which just a small set of weights
+θ
+\theta
+(referred to as
+Fast weights
+[
+39
+]
+) are updated
+at test-time
+using a self-supervised objective
+L
+t
+L_{\text{t}}
+.
+Given queries
+q
+i
+q_{i}
+, keys
+k
+i
+k_{i}
+, and values
+v
+i
+v_{i}
+,
+Sun et al. [86]
+re-define the attention operation as:
+arg
+​
+min
+θ
+\displaystyle\argmin_{\mathbf{\theta}}
+∑
+i
+L
+t
+​
+(
+T
+θ
+​
+(
+k
+i
+)
+−
+v
+i
+)
+,
+\displaystyle\sum_{i}L_{t}\bigl(\text{T}_{\mathbf{\theta}}(k_{i})-v_{i}\bigr),
+(3)
+o
+i
+\displaystyle o_{i}
+=
+T
+θ
+​
+(
+q
+i
+)
+.
+\displaystyle=\text{T}_{\mathbf{\theta}}(q_{i}).
+(4)
+Intuitively, this optimization embeds the mapping from keys
+k
+i
+k_{i}
+to values
+v
+i
+v_{i}
+into a learnable network
+T
+θ
+\text{T}_{\mathbf{\theta}}
+. Once done, this network can retrieve the appropriate value for a given query
+q
+i
+q_{i}
+, analogous to how softmax attention uses QK cosine similarity to retrieve information stored in V (
+Eq.
+2
+). Unlike softmax attention, however, both operations in
+Eq.
+3
+and
+Eq.
+4
+are linear with respect to the sequence length.
+3.2
+Can We Fit Rome into MLPs?
+The central challenge in modern multi-view 3D reconstruction is achieving scalability, which is fundamentally tied to scene representation and its corresponding complexity as the number of input images,
+n
+n
+, grows.
+Quadratic complexity of VGGT is a direct consequence of variable-length KV scene representation, as extracting information from the KV space scales quadratically w.r.t.
+n
+n
+in the softmax attention
+[
+91
+]
+operation, necessary to obtain the output token representation.
+This brings us to the core question:
+can we bypass the softmax attention operation in KV space?
+Overview.
+Our method structurally replaces the quadratic global attention operation within the bi-directional Transformer architecture with a linear alternative.
+
+Once we projected the multi-view input to tokens using Transformer-based multi-view networks
+[
+94
+]
+the forward pass consists of two recurring stages, executed in each global attention layer (
+Fig.
+0(b)
+):
+(1) Update
+: We project input tokens to queries, keys and values and use TTT
+[
+86
+]
+to compress the variable-length information stored in KV into the fixed-size, compact weights of an MLP. We treat the MLPs as fast weights,
+i.e
+.
+, weights that are optimized at train and test time.
+This effectively compresses the key-value mapping of the current layer into a
+fixed-size neural
+scene representation.
+(2) Apply
+:
+After optimizing
+θ
+\theta
+, we can query the scene representation efficiently by applying the MLP to queries
+q
+q
+.
+We only apply the MLP in global attention blocks of current layer’s queries to obtain updated tokens before they are passed to the next layer.
+Decoding to downstream tasks (per-view depth, ego-pose
+P
+i
+P_{i}
+and camera intrinsics) only occurs after the final Transformer layer.
+Linearizing the pre-trained model.
+We aim to initialize our model using pre-trained weights of VGGT
+[
+94
+]
+, including projection matrices
+W
+q
+W_{q}
+,
+W
+k
+W_{k}
+and
+W
+v
+W_{v}
+as these already capture general vision knowledge learned by the original model.
+Such linearization is commonly employed in the context of large-language models
+[
+64
+]
+and significantly reduces training cost.
+However, we find empirically that naively applying test-time linearization to replace Softmax Attention (
+Eq.
+2
+) with linear-time operation (
+Eq.
+3
+) yields very slow convergence during test-time training.
+As can be seen in
+Eq.
+1
+, token projection involves LayerNorm (LN), which stabilizes Softmax Attention operation in the original model
+[
+38
+]
+.
+However, LayerNorm involves additional learnable parameters that distort the input space that the MLP is trying to learn at test time.
+By removing LN and instead applying
+L
+2
+L_{2}
+normalization we unlock fast convergence from pre-trained weights.
+Moreover, we show that regular softmax attention training followed by our post-training with linearization approach is preferable over directly training from scratch using test-time training.
+Non-linear spatial mixing.
+While linear attention variants significantly speed up Transformer models, this is generally accompanied by a drop in downstream metrics compared to softmax attention
+[
+34
+,
+104
+,
+86
+]
+.
+We attribute this drop in our framework to the inherent mathematical constraints of the TTT objective in
+Eq.
+3
+.
+Recall that we are learning a mapping from Key to Value space
+K
+→
+V
+K\to V
+. However, both
+K
+K
+and
+V
+V
+are derived from same token
+x
+x
+via linear projections
+K
+=
+W
+k
+​
+x
+K=W_{k}x
+and
+V
+=
+W
+v
+​
+x
+V=W_{v}x
+, and the relationship between them is linear (
+V
+=
+W
+v
+​
+W
+k
+−
+1
+​
+K
+V=W_{v}W_{k}^{-1}K
+, assuming
+W
+k
+W_{k}
+is invertible). Therefore, simply optimizing
+Eq.
+3
+can yield a trivial solution.
+To break this dependency and enhance expressivity, we are inspired by the success of sequence mixing layers such as short convolutions
+[
+70
+]
+, effectively utilized in linear language models
+[
+104
+,
+106
+]
+.
+We adapt this principle for 3D reconstruction by applying
+spatial mixing
+in the Value (
+𝐕
+\mathbf{V}
+) space, which we term
+ShortConv2D
+, forcing the TTT objective to learn a mapping from
+K
+→
+V
+′
+K\rightarrow V^{\prime}
+. We implement this as follows:
+1.
+Reshape
+: Given the values
+[
+v
+i
+,
+…
+,
+v
+N
+×
+H
+/
+p
+×
+W
+/
+p
+]
+,
+v
+i
+∈
+ℝ
+d
+[v_{i},\dots,v_{N\times H/p\times W/p}],v_{i}\in\mathbb{R}^{d}
+, we first reshape the 1D token sequence
+𝐕
+\mathbf{V}
+back to its corresponding
+2
+​
+D
+2D
+image grid of shape
+(
+N
+,
+H
+/
+p
+,
+W
+/
+p
+,
+d
+)
+(N,H/p,W/p,d)
+, where
+p
+p
+is the tokenizer patch size.
+2.
+Convolve
+: We apply a single-layer
+2
+​
+D
+2D
+convolution,
+ShortConv2D
+, which is more suitable for image structures than the
+1
+​
+D
+1D
+convolutions typically used in language modeling. This aggregates local neighborhood information to create the context-aware target
+𝐕
+′
+\mathbf{V}^{\prime}
+.
+3.
+Flatten
+:
+𝐕
+′
+\mathbf{V}^{\prime}
+is reshaped back to a
+1
+​
+D
+1D
+sequence before optimizing the TTT objective
+Eq.
+3
+.
+Intuitively, by applying 2D convolution, the Value
+𝐕
+′
+\mathbf{V}^{\prime}
+for a token now contains aggregated local spatial context, while the Key
+𝐊
+\mathbf{K}
+remains context-limited.
+This incentivizes the fast weights optimization (
+Eq.
+3
+) to distill a robust geometric scene representation via a stronger self-supervised objective as the MLP must now predict a neighborhood
+𝐕
+′
+\mathbf{V}^{\prime}
+from a single token’s feature
+𝐊
+\mathbf{K}
+.
+Concurrently, ViT
+3
+[
+36
+]
+successfully employs convolutions directly in the inner model for the classification task.
+Test-time scaling.
+While feed-forward models train on relatively small image collections (up to
+24
+24
+in VGGT
+[
+94
+]
+), our goal is to process significantly larger image collections containing thousands of images, a common requirement in large-scale structure-from-motion
+[
+100
+]
+.
+While sequence length generalization was studied in the context of softmax attention
+[
+44
+]
+, in the test-time training setting, we observe a large degradation when processing out-of-distribution sequence lengths.
+For example, the reconstruction error increases about
+5
+×
+5\times
+when extending from
+N
+=
+100
+N=100
+to
+N
+=
+1
+​
+k
+N=1k
+images of the same scene.
+We hypothesize that the fixed number of optimization steps used during the training (typically one) is insufficient to compress significantly larger scenes to a fixed-dimensional MLP. To confirm, we log the top-performing optimizer step of the TTT objective (
+Eq.
+3
+) across two scales:
+20
+20
+images (in-distribution) and
+1
+​
+k
+1k
+images (out-distribution, a
+∼
+50
+×
+\sim 50\times
+increase).
+As can be seen in
+Fig.
+1(a)
+, for in-distribution samples, one step is sufficient, while for
+1
+​
+k
+1k
+images, it is beneficial to increase number of optimizer steps. Simply performing more optimizer steps, we achieve almost constant scaling to arbitrary sequence lengths, showing a form of test-time scaling via additional computation
+[
+22
+]
+. As increasing the number of steps further does not aid reconstruction quality we perform
+2
+2
+steps unless otherwise noted.
+(a)
+Best number of optimizer step of test-time training objective for two sizes of image collections.
+(b)
+Pointmap prediction error for different number of input images
+(lower is better).
+Figure 2
+:
+Sequence-length generalization analysis.
+3.3
+Large-scale Reconstruction
+We discuss the implications of our scene representation change in the following.
+Scalability.
+Comparing
+Eq.
+2
+with
+Eq.
+3
+, we first note that the complexity of the operations changes from
+O
+⁡
+(
+n
+2
+)
+O(n^{2})
+to
+O
+⁡
+(
+n
+)
+O(n)
+, resolving the quadratic bottleneck within the global attention layers found in existing reconstruction models.
+Flexible inference strategies.
+Moreover, this change unlocks inference strategies that enable us to process arbitrarily large image collections on a single GPU and accelerate throughput linearly on multiple GPUs via distributed inference by applying TTT in a minibatch fashion.
+Recall that TTT optimization learns the MLP weights
+θ
+\theta
+to map local features
+K
+→
+V
+K\to V
+, and the loss function (
+Eq.
+3
+) is sum over all input tokens
+i
+i
+.
+As the overall optimization objective is simply sum of local losses, the total gradient of the loss w.r.t.
+the MLP weights
+θ
+\theta
+is also a sum of local gradients (
+Eq.
+5
+):
+d
+​
+L
+total
+d
+​
+θ
+=
+∑
+i
+d
+d
+​
+θ
+​
+L
+​
+(
+𝐤
+i
+,
+𝐯
+i
+)
+=
+∑
+s
+(
+∑
+i
+∈
+s
+d
+d
+​
+θ
+​
+L
+​
+(
+𝐤
+i
+,
+𝐯
+i
+)
+)
+.
+\frac{dL_{\text{total}}}{d\theta}=\sum_{i}\frac{d}{d\theta}L(\mathbf{k}_{i},\mathbf{v}_{i})=\sum_{s}\left(\sum_{i\in s}\frac{d}{d\theta}L(\mathbf{k}_{i},\mathbf{v}_{i})\right).
+(5)
+As noted in
+Zhang et al. [114]
+, this implies we can compute the gradient of the objective on minibatches
+s
+s
+independently.
+For distributed inference, we can process minibatches on individual GPUs, and synchronize gradients. This enables efficient training in cases where the sequence does not fit into memory of a single GPU.
+In practice we shard images such that each GPU only processes a subset
+s
+s
+.
+In the global layers, we then use
+Eq.
+5
+to synchronize the MLP weights across GPUs by performing all-to-all communication which is efficient due to their small size.
+Moreover, this property also allows processing arbitrarily large image collections on a single GPU. For this, we off-load minibatches (
+Eq.
+5
+) to host memory (instead of distributing across GPUs). We can then compute the update for the entire sequence by loading a minibatch at a time to device memory, compute the gradient, and off-load minibatch back to host memory. This requires keeping only a single minibatch in device memory at a time.
+Note that methods relying on softmax attention (
+e.g
+.
+, VGGT
+[
+94
+]
+and its sparse variants
+[
+79
+,
+92
+]
+using FlashAttention
+[
+20
+]
+)
+require
+q
+i
+,
+k
+i
+,
+v
+i
+q_{i},k_{i},v_{i}
+of all images to be in GPU memory which, even for large GPUs, leads quickly to out-of-memory errors when processing larger image collections.
+Query-able reconstruction & visual localization.
+After processing a set of images representing a scene, our network can be queried with new observations. It outputs scene geometry and camera pose of the new image relative to the existing reconstruction.
+To do so, we keep test-time optimized weights frozen, and run standard forward pass for a new query image, with one key modification: in the global attention layers, we only apply the frozen MLPs to the query features
+q
+i
+q_{i}
+to retrieve information from the scene representation, without updating the MLP parameters
+θ
+\theta
+.
+This effectively transforms the model into a single-image Transformer for query processing.
+We show in
+Sec.
+4.3
+that this querying mechanism enables us to perform visual localization.
+4
+Experiments
+In this section, we compare our
+VGG-T
+3
+to state-of-the-art offline and online baselines on standard tasks and benchmarks, examining accuracy
+vs
+.
+runtime in both the conventional setting (
+Sec.
+4.1
+) and a large-scale regime (
+Sec.
+4.2
+). We further demonstrate that our approach enables accurate feed-forward 3D visual localization in unposed, in-the-wild image collections (
+Sec.
+4.3
+). Finally, we present ablation studies that validate our design choices in
+Sec.
+4.4
+.
+Implementation details.
+We start from the public VGGT checkpoint and convert it to a linearized model by replacing all global attention layers with TTT layers. Following LaCT
+[
+114
+]
+, our TTT layer uses a SwiGLU MLP
+[
+78
+]
+to learn the
+K
+→
+V
+K\rightarrow V
+mapping, Muon
+[
+45
+]
+for optimization, and dot product loss
+L
+t
+​
+(
+T
+θ
+​
+(
+k
+i
+)
+,
+v
+i
+)
+=
+T
+θ
+​
+(
+k
+i
+)
+T
+​
+v
+i
+L_{t}(T_{\theta}(k_{i}),v_{i})=T_{\theta}(k_{i})^{T}v_{i}
+. After all the QKV projection layer, we additionally apply an
+3
+×
+3
+3\times 3
+ShortConv2D
+on
+V
+V
+for non-linear spatial mixing.
+We freeze all original VGGT parameters and fine-tune only global attention layers using a dataset comparable to VGGT’s original training data, running for
+100
+​
+k
+100k
+steps on 8 NVIDIA A100-80GB (
+≈
+\approx
+12% of the cost of training VGGT from scratch).
+For more details we refer to the appendix.
+Baselines.
+We compare our approach with both offline and online reconstruction methods. On the offline side, we include VGGT
+[
+94
+]
+as an upper bound in reconstruction accuracy, along with efficient variants such as FastVGGT
+[
+79
+]
+and SparseVGGT
+[
+92
+]
+, all of which exhibit quadratic complexity with respect to the number of input views. On the online side, we benchmark against TTT3R
+[
+16
+]
+, a concurrent method that improves upon CUT3R
+[
+96
+]
+and is designed for ordered input sequences with linear complexity. We carefully analyze the accuracy–scalability trade-offs of these baselines alongside our method.
+7scenes-D
+7scenes-S
+DTU
+ETH3D
+NRBGD-D
+NRBGD-S
+CD
+↓
+\downarrow
+NC
+↑
+\uparrow
+CD
+↓
+\downarrow
+NC
+↑
+\uparrow
+CD
+↓
+\downarrow
+NC
+↑
+\uparrow
+CD
+↓
+\downarrow
+NC
+↑
+\uparrow
+CD
+↓
+\downarrow
+NC
+↑
+\uparrow
+CD
+↓
+\downarrow
+NC
+↑
+\uparrow
+O
+⁡
+(
+n
+2
+)
+O(n^{2})
+VGGT
+0.024
+0.668
+0.054
+0.731
+1.537
+0.676
+0.279
+0.855
+0.014
+0.897
+0.055
+0.894
+SparseVGGT
+0.023
+0.665
+0.094
+0.694
+1.541
+0.675
+0.327
+0.836
+0.018
+0.876
+0.079
+0.859
+FastVGGT
+0.021
+0.662
+0.065
+0.719
+1.683
+0.672
+0.594
+0.775
+0.033
+0.841
+-
+-
+O
+⁡
+(
+n
+)
+O(n)
+TTT3R
+0.035
+0.666
+0.129
+0.685
+5.708
+0.672
+0.885
+0.733
+0.071
+0.811
+0.094
+0.819
+VGG-T
+3
+(ours)
+0.030
+0.679
+0.107
+0.716
+1.654
+0.685
+0.480
+0.789
+0.029
+0.867
+0.056
+0.893
+Table 1
+:
+Pointmap estimation on dense (
+-D
+) and sparse (
+-S
+) split.
+Overall, we outperform
+O
+⁡
+(
+n
+)
+O(n)
+baseline, TTT3R, and remain competitive w.r.t.
+O
+⁡
+(
+n
+2
+)
+O(n^{2})
+baselines. FastVGGT code fails on NRGBD-S due to one instance having only two views.
+Bonn
+KITTI
+Sintel
+δ
+<
+1.25
+\delta<1.25
+↑
+\uparrow
+Abs Rel
+↓
+\downarrow
+δ
+<
+1.25
+\delta<1.25
+↑
+\uparrow
+Abs Rel
+↓
+\downarrow
+δ
+<
+1.25
+\delta<1.25
+↑
+\uparrow
+Abs Rel
+↓
+\downarrow
+VGGT
+0.967
+0.059
+0.964
+0.071
+0.646
+0.300
+SparseVGGT
+0.968
+0.057
+0.963
+0.070
+0.639
+0.304
+FastVGGT
+0.969
+0.058
+0.964
+0.073
+0.630
+0.307
+TTT3R
+0.969
+0.061
+0.818
+0.151
+0.510
+0.469
+VGG-T
+3
+(ours)
+0.963
+0.063
+0.967
+0.076
+0.581
+0.345
+Table 2
+:
+Video depth estimation.
+VGG-T
+3
+outperforms sequential
+O
+⁡
+(
+n
+)
+O(n)
+baseline by a substantial margin and performs on-par with
+O
+⁡
+(
+n
+2
+)
+O(n^{2})
+baselines.
+ScanNet
+Sintel
+TUM
+ATE
+↓
+\downarrow
+RPE
+r
+\text{RPE}_{r}
+↓
+\downarrow
+RPE
+t
+\text{RPE}_{t}
+↓
+\downarrow
+ATE
+↓
+\downarrow
+RPE
+r
+\text{RPE}_{r}
+↓
+\downarrow
+RPE
+t
+\text{RPE}_{t}
+↓
+\downarrow
+ATE
+↓
+\downarrow
+RPE
+r
+\text{RPE}_{r}
+↓
+\downarrow
+RPE
+t
+\text{RPE}_{t}
+↓
+\downarrow
+VGGT
+0.035
+0.381
+0.016
+0.172
+0.467
+0.061
+0.012
+0.310
+0.010
+SparseVGGT
+0.036
+0.394
+0.016
+0.177
+0.552
+0.070
+0.013
+0.316
+0.010
+FastVGGT
+0.035
+0.494
+0.018
+0.158
+0.516
+0.060
+0.013
+0.317
+0.011
+TTT3R
+0.063
+0.617
+0.020
+0.196
+0.767
+0.088
+0.025
+0.337
+0.012
+TTT3R (unordered)
+0.094
+3.942
+0.089
+0.325
+1.462
+0.213
+0.029
+0.652
+0.029
+VGG-T
+3
+(ours)
+0.070
+0.878
+0.034
+0.234
+1.553
+0.117
+0.037
+0.533
+0.028
+Table 3
+:
+Camera pose estimation.
+Our method supports both ordered and unordered input sequences, whereas the other TTT3R performs poorly on unordered inputs. Via sequential processing, TTT3R provides more accurate pose estimates. Best performance on ordered inputs are marked
+bold
+, best un-ordered
+blue
+.
+4.1
+Standard Benchmarks
+We thoroughly validate our implications by evaluating our method on the three common geometric downstream tasks,
+i.e
+.
+, pointmap estimation, video depth and camera pose estimation with their standard benchmarks.
+Pointmap estimation.
+Following prior work
+[
+96
+,
+93
+]
+, we evaluate multi-view point-map estimation on NRGBD
+[
+6
+]
+, 7scenes
+[
+80
+]
+, DTU
+[
+43
+]
+, and ETH3D
+[
+77
+]
+, using Chamfer Distance and Normal Consistency
+[
+93
+]
+to assess the quality of the reconstructed points and surfaces, respectively.
+As shown in
+Tab.
+1
+, we outperform the other
+O
+⁡
+(
+n
+)
+O(n)
+baseline, TTT3R, on all benchmarks except CD on 7scenes-D, where we are only marginally worse. Notably, our method reduces error by
+2
+−
+2.5
+×
+2-2.5\times
+on DTU, ETH3D, and NRGBD-D. Compared to
+O
+⁡
+(
+n
+2
+)
+O(n^{2})
+baselines, we remain competitive and even surpass their performance on DTU.
+Video depth.
+Following
+[
+96
+]
+, we also report the performance on the task of video depth estimation using Bonn
+[
+66
+]
+, KITTI
+[
+32
+]
+and Sintel
+[
+13
+]
+evaluation sets. As in prior work,
+we align predictions using a single scale per sequence and report the Absolute Relative Error (Abs. Rel.) as well as the percentage of predictions with
+δ
+<
+1.25
+\delta<1.25
+. As shown in
+Tab.
+2
+, our method outperforms the
+O
+⁡
+(
+n
+)
+O(n)
+baseline TTT3R on two of the three datasets—by a substantial margin and achieves performance on par with
+O
+⁡
+(
+n
+2
+)
+O(n^{2})
+methods on KITTI dataset.
+Camera pose estimation.
+We further evaluate our model on the task of camera pose estimation using TUM-RGBD
+[
+84
+]
+, ScanNet
+[
+18
+]
+, and Sintel
+[
+13
+]
+. While our method shows consistent advantages on other tasks, we observe that our TTT-linearized model struggles on camera pose estimation, as shown in
+Tab.
+3
+. We suspect this is related to VGGT’s special treatment of camera pose, where a dedicated camera token is appended to the image tokens immediately before the attention layer, effectively creating two input “modalities”. This heterogeneous structure may be challenging for the MLP within the TTT layer to memorize, which highlights an interesting direction for future research.
+Nevertheless, it is worth noting that our method naturally supports both ordered and unordered input sequences, whereas the other
+O
+⁡
+(
+n
+)
+O(n)
+baseline, TTT3R, degrades under unordered inputs, as shown in
+Tab.
+3
+.
+4.2
+Large-Scale 3D Reconstruction
+As discussed in
+Sec.
+3.3
+, our method preserves the accuracy advantages of offline, global reconstruction while scaling linearly with the number of input views, thereby enabling large-scale 3D scene reconstruction.
+Setup.
+To evaluate the scalability of each model, we use the 7scenes dataset, which provides sufficient video coverage for large-scale reconstruction. For each scene, we aggregate all video frames and uniformly subsample the images to form the validation set. All remaining implementation details and evaluation metrics follow
+Sec.
+4.1
+.
+Results.
+We report runtime and reconstruction quality with different image collection sizes in
+Fig.
+3
+.
+Comparing to
+O
+⁡
+(
+n
+2
+)
+O(n^{2})
+methods such as VGGT, FastVGGT, and SparseVGGT,
+VGG-T
+3
+scales linearly and thus is substantially faster: it reconstructs
+1
+​
+k
+1k
+images in 58 seconds, whereas VGGT requires over 11 minutes (
+11.6
+×
+11.6\times
+slower) and FastVGGT takes more than 4 minutes (
+4.3
+×
+4.3\times
+slower). Comparing to the state-of-the-art
+O
+⁡
+(
+n
+)
+O(n)
+alternative, TTT3R,
+VGG-T
+3
+delivers significantly higher reconstruction accuracy and maintains stable performance even when scaling to image counts far beyond those seen during training. A visual comparison can be found in
+Sec.
+4.2
+.
+Figure 3
+:
+Runtime (
+↓
+\downarrow
+)
+vs
+.
+Chamfer distance (
+↓
+\downarrow
+) for collections of size
+∈
+{
+100,500
+,
+1
+​
+k
+}
+\in\{100,500,1k\}
+on 7scenes dataset.
+In terms of reconstruction quality (Chamfer distance), we observe a small gap between
+VGG-T
+3
+and
+O
+⁡
+(
+n
+2
+)
+O(n^{2})
+baselines, that narrows with increasing number of images. However, for
+1
+​
+k
+1k
+input, VGGT takes ca.
+11
+11
+min while
+VGG-T
+3
+only needs
+58
+58
+seconds (
+11.6
+×
+11.6\times
+speedup).
+VGG-T
+3
+scales comparably to TTT3R and does not degrade w.r.t.
+increasing number of images.
+Distributed inference.
+Our method naturally supports multi-GPU distributed inference for additional speedup, as shown in
+Tab.
+4
+and discussed in
+Sec.
+3.3
+. In contrast to VGGT, which requires carefully engineered context-parallel implementations for softmax attention (e.g., ring attention
+[
+59
+]
+),
+VGG-T
+3
+works directly with distributed data parallel (DDP) as cross-GPU communication is only needed during the fast-weight (MLP) update. The alternative
+O
+⁡
+(
+n
+)
+O(n)
+method, TTT3R, is not compatible with multi-GPU inference due to its autoregressive processing.
+1500 images
+2000 images
+1 GPU
+2 GPUs
+4 GPUs
+1 GPU
+2 GPUs
+4 GPUs
+TTT3R
+90.1
+N/A
+N/A
+126.2
+N/A
+N/A
+VGGT
+OOM
+1779.3
+913.6
+OOM
+2827.1
+1590.2
+VGG-T
+3
+(ours)
+173.1
+56.8
+29.7
+230.7
+74.8
+48.5
+Table 4
+:
+Reconstruction latency (s) with distributed inference.
+VGG-T
+3
+can efficiently process large sequences on a single GPU, and provide linear speed-up via distributed inference.
+4.3
+Feed-forward Visual Localization
+As discussed in
+Sec.
+3.3
+, we can query our model with new images that were not part of test-time optimization. This can be interpreted as feed-forward visual localization with respect to the implicit map produced via TTT.
+Setup.
+We evaluate our approach on two commonly used datasets: 7scenes
+[
+80
+]
+and Wayspots
+[
+10
+,
+4
+]
+, and compare to TTT3R which, as an autoregressive model, also maintains a state that can be queried in
+O
+⁡
+(
+1
+)
+O(1)
+.
+We perform Sim(3) alignment between the ground truth and predicted poses for the mapping images, then measure the rotation
+e
+r
+e_{r}
+and translation error
+e
+t
+e_{t}
+of the predicted query image poses as well as the percentage of query images localized within thresholds
+e
+r
+<
+T
+r
+,
+e
+t
+<
+T
+t
+e_{r}<T_{r},e_{t}<T_{t}
+.
+Discussion.
+As shown in
+Tab.
+5
+,
+VGG-T
+3
+outperforms TTT3R on both benchmarks, with particularly large improvements on Wayspots. This demonstrates that our MLP-based scene representation enables effective feed-forward visual localization.
+We note that the state-of-the-art visual localization pipelines that utilize accurate camera poses during explicit mapping, could achieve more accurate localization,
+e.g
+.
+, Reloc3R
+[
+26
+]
+achieves
+e
+r
+=
+1.02
+∘
+,
+e
+t
+=
+0.04
+​
+m
+e_{r}=1.02^{\circ},e_{t}=0.04\text{m}
+on 7scenes – our aim is to show that feed-forward visual localization without explicit mapping is indeed feasible, and opens exciting future research directions.
+e
+r
+(
+∘
+)
+e_{r}(^{\circ})
+↓
+\downarrow
+e
+t
+e_{t}
+(m)
+↓
+\downarrow
+10
+10
+cm,
+10
+∘
+10^{\circ}
+(%)
+↑
+\uparrow
+20
+20
+cm,
+20
+∘
+20^{\circ}
+(%)
+↑
+\uparrow
+7Scenes
+TTT3R
+7.18
+0.17
+34.59
+70.21
+Ours
+6.71
+0.16
+40.69
+73.00
+Wayspots
+TTT3R
+74.45
+4.38
+0.69
+2.94
+Ours
+32.04
+1.90
+13.41
+30.64
+Table 5
+:
+Feed-forward visual localization in unposed image collection.
+The MLP-based state representation in
+VGG-T
+3
+allows for more precise localization of new images compared to TTT3R.
+4.4
+Ablations
+In
+Tab.
+6
+we outline key ablation studies that justify our design choices, that we perform in a smaller scale setting with image resolution of
+224
+×
+224
+224\times 224
+on ScanNet++ training with
+2
+−
+24
+2-24
+views.
+All models use the same base architecture.
+Variants.
+We train a model using softmax attention as a upper-bound performance reference. We apply our linearization approach to this model as described in
+Sec.
+3.2
+.
+As a baseline for linearization we adapt
+T2R
+[
+48
+]
+to our setting.
+We also consider a variant where linearize the model without initialization from pre-trained weight.
+Finally, we ablate the effectiveness of adding ShortConv2D as discussed in
+Sec.
+3
+.
+CD
+↓
+\downarrow
+NC
+↑
+\uparrow
+mAA(30)
+↑
+\uparrow
+Softmax Attention
+0.061
+0.844
+76.33
+(i) Scratch
+0.262
+0.727
+52.95
+(ii) T2R
+[
+48
+]
+0.137
+0.804
+66.27
+(iii) LoLCats
+[
+111
+]
+0.097
+0.804
+62.87
+(iv) Ours
+0.074
+0.833
+72.16
+(v) Ours + ShortConv2D
+0.066
+0.838
+74.14
+Table 6
+:
+Ablations.
+We evaluate key design decisions behind our linearization and ShortConv2D design.
+Discussion.
+As reported in
+Tab.
+6
+, we find that training with TTT from scratch (i) gets stuck in a local optimum and linearizing the model pre-trained with softmax atttention is key for good performance. Our linearization (iii) with test-time training significantly outperforms T2R
+[
+48
+]
+(ii) and LoLCats
+[
+111
+]
+(iii). Finally, using ShortConv2D (v) further closes the gap towards softmax attention.
+5
+Conclusion
+We presented scalable feed-forward 3D reconstruction that gracefully scales with the number of input views. At the core of our approach is learning a mapping from Keys to Values via test-time optimization instead of querying the KV representation with softmax attention, an operation that scales quadratically w.r.t.
+number of input views. Our efficient linearization of the VGGT model allows reconstruction of
+1
+​
+k
+1k
+images
+11.6
+×
+11.6\times
+and
+2
+​
+k
+2k
+images up to
+33
+×
+33\times
+faster while outperforming linear-time methods on pointmap and video depth estimation by large margins.
+Limitations.
+Empirically, we show that our approach retains scalability of online (auto-regressive) methods, and provides a significantly more accurate depth and point maps due to global feature aggregation. However, there is still a gap w.r.t.
+softmax attention, especially in the wide-baseline setting.
+This suggests that future work should focus on reconciling the fixed expressivity of the MLP scene representation with the high accuracy of quadratic attention.
+Acknowledgments.
+We thank Alessandro Bursio for providing valuable feedback on the draft of this paper. We also thank Tobias Fischer and Alessandro Bursio for helping with the training and evaluation data setup used for this work.
+Supplementary Material
+In this appendix, we provide:
+•
+A detailed description of the implementation and training process
+of
+VGG-T
+3
+, including dataset usage, image collection sampling (based on co-visibility), training hyperparameters, and the specific parameters that are optimized during training (
+Sec.
+A
+).
+•
+Enhancements to the VGGT baseline
+that enables processing of larger image collections as well as
+increased accuracy
+making it a stronger baseline. (
+Sec.
+B
+)
+•
+Further ablation studies
+on key components of our method, including the effect of the number of optimizer steps used for the Test-Time Training (TTT) objective and an investigation into different filter configurations for the ShortConv2D layer, showing optimal settings (
+Sec.
+C
+).
+•
+Additional qualitative results and visualizations
+for comparison with baselines (VGGT, TTT3R), qualitative examples of visual localization, and a discussion of the method’s performance on scenes with larger spatial extent (
+Sec.
+D
+).
+A
+Implementation Details
+Training.
+We list the datasets used for training in
+Tab.
+7
+. To obtain an image collection during training, we follow a greedy sampling approach: The algorithm starts by randomly sampling the first image, then uniformly samples from the set of images with co-visibility greater than
+0.3
+0.3
+with any of the images currently in the collection. This step repeats until the desired collection size is reached. We pre-compute the required co-visibility matrix via a depth consistency check
+[
+85
+]
+.
+Following VGGT, we use an adaptive batch size with image collections of 2-24 images while keeping the total number of images per GPU at approximately 48. The image aspect ratio is sampled uniformly from the interval
+[
+0.5
+,
+2.0
+]
+[0.5,2.0]
+, and images are then resized such that their longer side is
+518
+518
+. During training, we apply color jitter augmentation to each image independently, making the network more robust to brightness and contrast changes.
+We train
+VGG-T
+3
+using AdamW
+[
+61
+]
+with a learning rate of
+10
+−
+4
+10^{-4}
+, weight decay of
+0.05
+0.05
+, and
+β
+1
+=
+0.9
+,
+β
+2
+=
+0.95
+\beta_{1}=0.9,\beta_{2}=0.95
+. The learning rate increases by a factor of
+10
+10
+during the first
+1,000
+1,000
+training steps, then decays following a cosine schedule to a final learning rate of
+10
+−
+6
+10^{-6}
+. For the inner optimization of the test-time training objective, we use Muon
+[
+45
+]
+with 5 Newton-Schulz iterations, a learning rate of
+0.1
+0.1
+, and employ
+1
+1
+optimizer step during training. The TTT MLPs use input and output dimension
+1024
+1024
+, matching the hidden state size of VGGT, and projects to
+4
+×
+4\times
+the input dimension in their hidden layers.
+We train only the QKV projection matrices as well as the output projection in the global attention layers and the newly introduced parameters of the TTT module, while keeping all remaining parameters of the VGGT architecture (including encoder, per-image attention, and prediction heads) frozen.
+Additionally, only the values projected from image patch tokens participate in the ShortConv2D operation. The camera and register tokens are passed through.
+Type
+Dataset
+Indoor
+Aria Synthetic Environments
+[
+5
+]
+DynamicReplica
+[
+47
+]
+Hypersim
+[
+73
+]
+Replica
+[
+83
+]
+Cubify Anything
+[
+54
+]
+Scannet++
+[
+109
+]
+Scannet
+[
+18
+]
+Taskonomy
+[
+110
+]
+Outdoor
+Mapillary Metropolis
+[
+72
+]
+MatrixCity
+[
+56
+]
+Megadepth
+[
+57
+]
+Mid-Air
+[
+29
+]
+Mapillary Planet-scale Depth Dataset
+[
+2
+]
+ParallelDomain4D
+[
+90
+,
+25
+]
+vKITTI2
+[
+31
+,
+14
+]
+Object centric
+CO3Dv2
+[
+71
+]
+Kubric
+[
+33
+]
+Wild-RGBD
+[
+102
+]
+Mixed
+BlendedMVG
+[
+108
+]
+DL3DV-10K
+[
+58
+]
+Spring
+[
+63
+]
+TartanAirV2
+[
+98
+]
+UnrealStereo4k
+[
+89
+]
+Table 7
+:
+Datasets used for training.
+Inference details.
+The VGGT architecture, which we initialize with, has multiple decoders that predict redundant geometric quantities. To obtain pointmaps one can either use the outputs of the global pointmap prediction head directly or use the camera and depth predictions together to unproject to pointmaps. While VGGT finds the latter to be more precise, we use the global prediction head to obtain pointmaps due to the imprecise camera pose predictions mentioned in
+Sec.
+4.1
+, which would otherwise degrade the pointmaps obtained by unprojecting depth.
+In
+Sec.
+4.3
+, we retain the camera tokens of all mapping images as input to the camera head in the visual localization setting since VGGT’s camera head requires the camera tokens of all images. The camera token of the query image then participates in the softmax attention operation in the camera head before it is decoded to camera parameters.
+For all benchmarking, we use NVIDIA A100-80GB GPUs.
+Further evaluation details.
+For visual localization results in
+Sec.
+4.3
+, we sub-sample mapping images at a stride of 200 for 7Scenes and 20 for Wayspots.
+For pointmap evaluation
+Sec.
+4.2
+, the usage of the iterative closest point (ICP) algorithm for alignment of prediction and ground truth point clouds makes evaluation very slow when evaluating predictions on large image sets. We instead select a set of equally spaced keyframes, that capture the scene geometry, to compute pointmap metrics while we treat all other frames as supporting views. For our evalution we use 10 keyframes. For TTT3R, we provide the images in sequential order with the keyframes last such that the model has seen all images of the scene before making predictions.
+B
+VGGT adjustments
+To enable a fair comparison with VGGT in the setting with a large number of images in
+Sec.
+4.2
+, we perform several changes in the VGGT codebase that enhance its performance.
+Memory-optimizations and distributed inference.
+First, we follow
+Shen et al. [79]
+and discard unused activations in VGGT’s alternating attention module, which allows processing up to
+1
+​
+k
+1k
+images on a single 80GB GPU. Next, we enable context parallel inference using Ulysses
+[
+41
+]
+, implemented in TransformerEngine
+1
+1
+1
+https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/api/pytorch.html#transformer_engine.pytorch.DotProductAttention
+, in the global attention layers. We note that the underlying attention implementation still uses FlashAttention2
+[
+20
+]
+. While this allows VGGT to run for
+2
+​
+k
+2k
+images, as we show in
+Sec.
+4.2
+, this requires runtimes up to
+47
+47
+minutes on 2 GPUs.
+Enhanced long-sequence generalization.
+For fair comparison on large image collections, we further adjust the scale parameter of the softmax in the global attention layers similar to the approach of
+Jin et al. [44]
+, ensuring the entropy of the attention matrix stays constant. Let
+a
+i
+,
+j
+=
+exp
+​
+(
+λ
+​
+k
+i
+T
+​
+q
+j
+)
+∑
+k
+exp
+⁡
+(
+λ
+​
+k
+k
+T
+​
+q
+k
+)
+a_{i,j}=\frac{\text{exp}(\lambda k_{i}^{T}q_{j})}{\sum_{k}\exp(\lambda k_{k}^{T}q_{k})}
+(6)
+be the attention scores as used in softmax attention where
+λ
+=
+1
+/
+d
+\lambda=\nicefrac{{1}}{{\sqrt{d}}}
+[
+91
+]
+. We instead set
+λ
+′
+=
+λ
+​
+max
+⁡
+(
+1.0
+,
+log
+N
+T
+⁡
+N
+)
+,
+\lambda^{\prime}=\lambda\max(1.0,\log_{N_{T}}N),
+(7)
+where
+N
+T
+N_{T}
+and
+N
+N
+are the maximum number of tokens seen during training and of the current sequence, respectively. This ensures that the scaling is the same for sequence lengths seen during training, while for larger sequence lengths the attention matrix is sharpened. Since VGGT trains using a maximum of 24 images with
+518
+×
+518
+518\times 518
+resolution and uses patch size
+14
+14
+, we set
+N
+T
+=
+24
+∗
+(
+518
+/
+14
+)
+2
+=
+32,856
+N_{T}=24*(518/14)^{2}=32,856
+. We show improved performance using this entropy-scaling in
+Tab.
+8
+for large image collections making the VGGT baseline significantly stronger.
+#images
+250
+500
+750
+1000
+CD
+↓
+\downarrow
+NC
+↑
+\uparrow
+CD
+↓
+\downarrow
+NC
+↑
+\uparrow
+CD
+↓
+\downarrow
+NC
+↑
+\uparrow
+CD
+↓
+\downarrow
+NC
+↑
+\uparrow
+VGGT
+0.018
+0.894
+0.025
+0.876
+0.040
+0.864
+0.041
+0.855
+VGGT + Entropy-scaling
+0.016
+0.894
+0.017
+0.889
+0.030
+0.871
+0.029
+0.872
+Table 8
+:
+Attention entropy-scaling makes VGGT a stronger baseline on large image collections.
+C
+Additional Results
+Number of optimizer steps.
+We provide an additional evaluation varying the number of steps used to optimize the TTT objective
+Eq.
+3
+at inference time for varying image collection sizes. We report results on the NRGBD dataset
+[
+6
+]
+in
+Fig.
+4
+. As expected, we find that without TTT optimization the reconstruction error is high as no global information is propagated across tokens. A single optimizer step is sufficient for image collection sizes seen during training; however, the reconstruction error degrades as the number of images extends beyond that. Two optimizer steps achieve the best performance across a wide range of image collection sizes, and further increasing the number of steps to 3 or 4 leads to comparable or slightly worse performance.
+Figure 4
+:
+Pointmap error with increasing number of images when varying the optimizer steps on the TTT objective.
+ShortConv2D.
+In the main paper, we find improved performance when using a
+3
+×
+3
+3\times 3
+ShortConv2D on values
+v
+i
+v_{i}
+of the attention operation before optimizing the MLP using TTT.
+Here, we provide further experiments using different configurations of our ShortConv2D. In addition to a
+3
+×
+3
+3\times 3
+filter on the values
+v
+i
+v_{i}
+(
+V
+​
+-
+​
+3
+V\text{-}3
+) used in the main paper, we consider a
+5
+×
+5
+5\times 5
+filter (
+V
+​
+-
+​
+5
+V\text{-}5
+) and a variant where we apply ShortConv2D to keys
+k
+i
+k_{i}
+and values
+v
+i
+v_{i}
+jointly (
+K
+​
+V
+​
+-
+​
+3
+KV\text{-}3
+).
+We report results in
+Tab.
+9
+. We observe that increasing the filter size from
+3
+3
+to
+5
+5
+does not further increase performance, showing that a filter size of
+3
+3
+is sufficient to obtain a strong self-supervised objective for TTT. Applying ShortConv2D to both the keys and values results in decreased performance. We explain this by the fact that applying the same spatial mixing does not break the dependency between keys and values, as explained in
+Sec.
+4.2
+.
+CD
+↓
+\downarrow
+NC
+↑
+\uparrow
+mAA(30)
+↑
+\uparrow
+No ShortConv2D
+0.074
+0.833
+72.16
+V
+​
+-
+​
+3
+V\text{-}3
+0.066
+0.838
+74.14
+V
+​
+-
+​
+5
+V\text{-}5
+0.069
+0.833
+72.52
+K
+​
+-
+​
+3
+K\text{-}3
+0.068
+0.834
+72.89
+K
+​
+V
+​
+-
+​
+3
+KV\text{-}3
+0.081
+0.820
+69.44
+Table 9
+:
+Results for different filter configuration in ShortConv2D.
+D
+Additional Qualitative Results
+Qualitative comparison.
+We report additional qualitative comparisons between VGGT, TTT3R, and
+VGG-T
+3
+in
+Fig.
+5
+. TTT3R and
+VGG-T
+3
+process these
+1
+​
+k
+1k
+image collections within
+1
+1
+minute; however, our method produces 3D consistent reconstructions while TTT3R degrades significantly. VGGT achieves slightly sharper details but takes more than
+11
+11
+minutes due to the quadratic scaling of softmax attention.
+Figure 5
+:
+Qualitative comparison.
+From left to right: VGGT, TTT3R,
+VGG-T
+3
+(Ours)
+Visual localization examples.
+Complementary to the visual localization results in
+Sec.
+4.3
+, we show examples of localizing query images in the completed reconstruction by running the frozen MLPs in
+Fig.
+6
+.
+In
+Fig.
+7
+, we show an in-the-wild example where we localize a tourist picture taken from a phone camera, together with its geometry, within a recording of an autonomous vehicle from the KITTI dataset that is 7 years older. Despite the temporal gap and changes in the street, our method successfully localizes the query image. We observe that the tourist photo captures upper parts of buildings not visible from the car-mounted camera, demonstrating the robustness of our approach to viewpoint variations.
+Figure 6
+:
+Visual localization examples in Wayspots and 7scenes.
+Ground truth camera for query image (not used for reconstruction) shown on the left in green, predicted camera and geometry in red.
+Figure 7
+:
+In-the-wild visual localization.
+We reconstruct a sequence of the KITTI dataset, then localize a tourist picture that was recorded 7 years later. Note the changes in appearance and composition of the scene.
+Scenes with larger spatial extent.
+We visualize reconstructions of Waymo sequences that have larger spatial extent in
+Fig.
+8
+. While
+VGG-T
+3
+can often achieve similar results to VGGT (
+Fig.
+7(a)
+), in some cases with more complex scene layouts, the reconstruction quality is degraded (
+Fig.
+7(b)
+). We note this as a limitation that linear-time attention mechanisms cannot yet match softmax attention in all cases; however, this also provides an interesting avenue to explore for future work by,
+e.g
+.
+, adapting the amount of computation depending on scene complexity and designing more expressive linear attention mechanisms that match the accuracy of softmax attention.
+(a)
+Similar reconstruction as VGGT.
+(b)
+Failure cases.
+Figure 8
+:
+Waymo sequence reconstructions comparison with VGGT.
+References
+[1]
+S. Agarwal, Y. Furukawa, N. Snavely, I. Simon, B. Curless, S. M. Seitz, and R. Szeliski
+(2011)
+Building rome in a day
+.
+ICCV
+.
+Cited by:
+§2
+.
+[2]
+M. L. Antequera, P. Gargallo, M. Hofinger, S. R. Bulò, Y. Kuang, and P. Kontschieder
+(2020)
+Mapillary Planet-Scale Depth Dataset
+.
+In
+CVPR
+,
+A. Vedaldi, H. Bischof, T. Brox, and J. Frahm (Eds.)
+,
+Cham
+,
+pp. 589–604
+(
+en
+).
+External Links:
+ISBN 978-3-030-58536-5
+,
+Document
+Cited by:
+Table 7
+.
+[3]
+R. Arandjelovic, P. Gronat, A. Torii, T. Pajdla, and J. Sivic
+(2016)
+NetVLAD: cnn architecture for weakly supervised place recognition
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[4]
+E. Arnold, J. Wynn, S. Vicente, G. Garcia-Hernando, Á. Monszpart, V. Prisacariu, D. Turmukhambetov, and E. Brachmann
+(2022)
+Map-Free Visual Relocalization: Metric Pose Relative to a Single Image
+.
+In
+ECCV
+,
+Cited by:
+§4.3
+.
+[5]
+A. Avetisyan, C. Xie, H. Howard-Jenkins, T. Yang, S. Aroudj, S. Patra, F. Zhang, D. P. Frost, L. Holland, C. Orme, J. J. Engel, E. Miller, R. A. Newcombe, and V. Balntas
+(2024)
+SceneScript: Reconstructing Scenes with an Autoregressive Structured Language Model
+.
+In
+Computer Vision - ECCV 2024 - 18th European Conference, Milan, Italy, September 29-October 4, 2024, Proceedings, Part LXI
+,
+A. Leonardis, E. Ricci, S. Roth, O. Russakovsky, T. Sattler, and G. Varol (Eds.)
+,
+Lecture Notes in Computer Science
+, Vol.
+15119
+,
+pp. 247–263
+.
+Note:
+arXiv:2403.13064 [cs]
+External Links:
+Link
+,
+Document
+Cited by:
+Table 7
+.
+[6]
+D. Azinović, R. Martin-Brualla, D. B. Goldman, M. Nießner, and J. Thies
+(2022)
+Neural RGB-D Surface Reconstruction
+.
+In
+CVPR
+,
+Cited by:
+§C
+,
+§4.1
+.
+[7]
+J. L. Ba, J. R. Kiros, and G. E. Hinton
+(2016)
+Layer Normalization
+.
+arXiv preprint arXiv:1607.06450
+.
+Cited by:
+§3.1
+.
+[8]
+A. Behrouz, P. Zhong, and V. Mirrokni
+(2024)
+Titans: learning to memorize at test time
+.
+arXiv preprint arXiv:2501.00663
+.
+Cited by:
+§2
+.
+[9]
+G. Berton, C. Masone, and B. Caputo
+(2022)
+Rethinking visual geo-localization for large-scale applications
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[10]
+E. Brachmann, T. Cavallari, and V. A. Prisacariu
+(2023)
+Accelerated Coordinate Encoding: Learning to Relocalize in Minutes Using RGB and Poses
+.
+In
+CVPR
+,
+Cited by:
+§2
+,
+§4.3
+.
+[11]
+E. Brachmann and C. Rother
+(2021)
+Visual camera re-localization from rgb and rgb-d images using dsac
+.
+IEEE TPAMI
+44
+(
+9
+).
+Cited by:
+§2
+.
+[12]
+E. Brachmann, J. Wynn, S. Chen, T. Cavallari, A. Monszpart, D. Turmukhambetov, and V. A. Prisacariu
+(2024)
+Scene coordinate reconstruction: posing of image collections via incremental learning of a relocalizer
+.
+In
+ECCV
+,
+Cited by:
+§2
+.
+[13]
+D. J. Butler, J. Wulff, G. B. Stanley, and M. J. Black
+(2012)
+A Naturalistic Open Source Movie for Optical Flow Evaluation
+.
+In
+ECCV
+,
+A. Fitzgibbon, S. Lazebnik, P. Perona, Y. Sato, and C. Schmid (Eds.)
+,
+Cited by:
+§4.1
+,
+§4.1
+.
+[14]
+Y. Cabon, N. Murray, and M. Humenberger
+(2020)
+Virtual KITTI 2
+.
+arXiv
+.
+Note:
+arXiv:2001.10773 [cs]
+External Links:
+Link
+,
+Document
+Cited by:
+Table 7
+.
+[15]
+Y. Cabon, L. Stoffl, L. Antsfeld, G. Csurka, B. Chidlovskii, J. Revaud, and V. Leroy
+(2025)
+MUSt3R: Multi-view Network for Stereo 3D Reconstruction
+.
+arXiv preprint arXiv:2503.01661
+.
+Cited by:
+§2
+.
+[16]
+X. Chen, Y. Chen, Y. Xiu, A. Geiger, and A. Chen
+(2025)
+TTT3R: 3d reconstruction as test-time training
+.
+arXiv preprint arXiv:2509.26645
+.
+Cited by:
+§2
+,
+§4
+.
+[17]
+Z. Chen, M. Qin, T. Yuan, Z. Liu, and H. Zhao
+(2025)
+LONG3R: Long Sequence Streaming 3D Reconstruction
+.
+In
+ICCV
+,
+Cited by:
+§2
+.
+[18]
+A. Dai, A. X. Chang, M. Savva, M. Halber, T. Funkhouser, and M. Niessner
+(2017)
+ScanNet: Richly-Annotated 3D Reconstructions of Indoor Scenes
+.
+In
+CVPR
+,
+Cited by:
+Table 7
+,
+§4.1
+.
+[19]
+K. Dalal, D. Koceja, G. Hussein, J. Xu, Y. Zhao, Y. Song, S. Han, K. C. Cheung, J. Kautz, C. Guestrin,
+et al.
+(2025)
+One-minute video generation with test-time training
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[20]
+T. Dao, D. Fu, S. Ermon, A. Rudra, and C. Ré
+(2022)
+FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness
+.
+NeurIPS
+35
+.
+Cited by:
+§B
+,
+§3.3
+.
+[21]
+T. Dao and A. Gu
+(2024)
+Transformers are SSMs: Generalized Models and Efficient Algorithms Through Structured State Space Duality
+.
+In
+Int. Conf. Mach. Learn.
+,
+Cited by:
+§2
+.
+[22]
+DeepSeek-AI
+(2025)
+DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning
+.
+arXiv preprint arXiv:2501.12948
+.
+Cited by:
+§3.2
+.
+[23]
+M. Dehghani, J. Djolonga, B. Mustafa, P. Padlewski, J. Heek, J. Gilmer, A. P. Steiner, M. Caron, R. Geirhos, I. Alabdulmohsin, R. Jenatton, L. Beyer, M. Tschannen, A. Arnab, X. Wang, C. R. Ruiz, M. Minderer, J. Puigcerver, U. Evci, M. Kumar, S. v. Steenkiste, G. F. Elsayed, A. Mahendran, F. Yu, A. Oliver, F. Huot, J. Bastings, M. Collier, A. A. Gritsenko, V. Birodkar, C. N. Vasconcelos, Y. Tay, T. Mensink, A. Kolesnikov, F. Pavetic, D. Tran, T. Kipf, M. Lucic, X. Zhai, D. Keysers, J. J. Harmsen, and N. Houlsby
+(2023)
+Scaling Vision Transformers to 22 Billion Parameters
+.
+In
+Int. Conf. Mach. Learn.
+,
+Cited by:
+§3.1
+.
+[24]
+K. Deng, Z. Ti, J. Xu, J. Yang, and J. Xie
+(2025)
+VGGT-Long: Chunk it, Loop it, Align it – Pushing VGGT’s Limits on Kilometer-scale Long RGB Sequences
+.
+arXiv preprint arXiv:2507.16443
+.
+Cited by:
+§2
+.
+[25]
+P. Domain
+(2024)
+Parallel domain
+.
+Note:
+https://paralleldomain.com/
+Cited by:
+Table 7
+.
+[26]
+S. Dong, S. Wang, S. Liu, L. Cai, Q. Fan, J. Kannala, and Y. Yang
+(2025)
+Reloc3r: Large-Scale Training of Relative Camera Pose Regression for Generalizable, Fast, and Accurate Visual Localization
+.
+In
+CVPR
+,
+Cited by:
+§4.3
+.
+[27]
+B. P. Duisterhof, L. Zust, P. Weinzaepfel, V. Leroy, Y. Cabon, and J. Revaud
+(2025)
+MASt3R-SfM: A Fully-Integrated Solution for Unconstrained Structure-from-Motion
+.
+In
+3DV
+,
+Cited by:
+§1
+.
+[28]
+S. Elflein, Q. Zhou, and L. Leal-Taixé
+(2025)
+Light3R-SfM: Towards Feed-forward Structure-from-Motion
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[29]
+M. Fonder and M. Van Droogenbroeck
+(2019)
+Mid-Air: A Multi-Modal Dataset for Extremely Low Altitude Drone Flights
+.
+In
+CVPR
+,
+pp. 0–0
+.
+External Links:
+Link
+Cited by:
+Table 7
+.
+[30]
+D. Y. Fu, T. Dao, K. K. Saab, A. W. Thomas, A. Rudra, and C. Ré
+(2022)
+Hungry hungry hippos: towards language modeling with state space models
+.
+arXiv preprint arXiv:2212.14052
+.
+Cited by:
+§2
+.
+[31]
+A. Gaidon, Q. Wang, Y. Cabon, and E. Vig
+(2016)
+Virtual Worlds as Proxy for Multi-Object Tracking Analysis
+.
+In
+CVPR
+,
+pp. 4340–4349
+.
+External Links:
+Link
+Cited by:
+Table 7
+.
+[32]
+A. Geiger, P. Lenz, C. Stiller, and R. Urtasun
+(2013)
+Vision meets robotics: The KITTI dataset
+.
+Int. Jour. of Rob. Res.
+32
+(
+11
+).
+Cited by:
+§4.1
+.
+[33]
+K. Greff, F. Belletti, L. Beyer, C. Doersch, Y. Du, D. Duckworth, D. J. Fleet, D. Gnanapragasam, F. Golemo, C. Herrmann, T. Kipf, A. Kundu, D. Lagun, I. Laradji, H. (. Liu, H. Meyer, Y. Miao, D. Nowrouzezahrai, C. Oztireli, E. Pot, N. Radwan, D. Rebain, S. Sabour, M. S. M. Sajjadi, M. Sela, V. Sitzmann, A. Stone, D. Sun, S. Vora, Z. Wang, T. Wu, K. M. Yi, F. Zhong, and A. Tagliasacchi
+(2022)
+Kubric: A Scalable Dataset Generator
+.
+In
+CVPR
+,
+pp. 3749–3761
+(
+en
+).
+External Links:
+Link
+Cited by:
+Table 7
+.
+[34]
+A. Gu and T. Dao
+(2024)
+Mamba: linear-time sequence modeling with selective state spaces
+.
+In
+COLM
+,
+Cited by:
+§2
+,
+§3.2
+.
+[35]
+A. Gu, K. Goel, and C. Ré
+(2021)
+Efficiently modeling long sequences with structured state spaces
+.
+arXiv preprint arXiv:2111.00396
+.
+Cited by:
+§2
+.
+[36]
+D. Han, Y. Li, T. Li, Z. Cao, Z. Wang, J. Song, Y. Cheng, B. Zheng, and G. Huang
+(2025)
+ViT$^3$: Unlocking Test-Time Training in Vision
+.
+arXiv
+.
+Note:
+arXiv:2512.01643 [cs]
+External Links:
+Link
+,
+Document
+Cited by:
+§3.2
+.
+[37]
+S. Hausler, S. Garg, M. Xu, M. Milford, and T. Fischer
+(2021)
+Patch-netvlad: multi-scale fusion of locally-global descriptors for place recognition
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[38]
+A. Henry, P. R. Dachapally, S. S. Pawar, and Y. Chen
+(2020)
+Query-Key Normalization for Transformers
+.
+In
+Findings of the Association for Computational Linguistics: EMNLP 2020
+,
+T. Cohn, Y. He, and Y. Liu (Eds.)
+,
+Cited by:
+§3.1
+,
+§3.2
+.
+[39]
+G. E. Hinton and D. C. Plaut
+(1987)
+Using Fast Weights to Deblur Old Memories
+.
+Proc. Ann. Meeting of the Cog. Sci. Soc.
+9
+(
+0
+).
+Cited by:
+§3.1
+.
+[40]
+W. Hua, Z. Dai, H. Liu, and Q. Le
+(2022)
+Transformer quality in linear time
+.
+In
+Int. Conf. Mach. Learn.
+,
+Cited by:
+§2
+.
+[41]
+S. A. Jacobs, M. Tanaka, C. Zhang, M. Zhang, S. L. Song, S. Rajbhandari, and Y. He
+(2023)
+DeepSpeed Ulysses: System Optimizations for Enabling Training of Extreme Long Sequence Transformer Models
+.
+arXiv preprint arXiv:2309.14509
+.
+Cited by:
+§B
+.
+[42]
+W. Jang, P. Weinzaepfel, V. Leroy, L. Agapito, and J. Revaud
+(2025)
+Pow3R: Empowering Unconstrained 3D Reconstruction with Camera and Scene Priors
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[43]
+R. Jensen, A. Dahl, G. Vogiatzis, E. Tola, and H. Aanaes
+(2014)
+Large Scale Multi-view Stereopsis Evaluation
+.
+In
+CVPR
+,
+Cited by:
+§4.1
+.
+[44]
+Z. Jin, X. Shen, B. Li, and X. Xue
+(2023)
+Training-free Diffusion Model Adaptation for Variable-Sized Text-to-Image Synthesis
+.
+NeurIPS
+36
+.
+Cited by:
+§B
+,
+§3.2
+.
+[45]
+K. Jordan, Y. Jin, V. Boza, J. You, F. Cesista, L. Newhouse, and J. Bernstein
+(2024)
+Muon: an optimizer for hidden layers in neural networks
+.
+Cited by:
+§A
+,
+§4
+.
+[46]
+P. Kacham, V. Mirrokni, and P. Zhong
+(2023)
+PolySketchFormer: fast transformers via sketching polynomial kernels
+.
+arXiv preprint arXiv:2310.01655
+.
+Cited by:
+§2
+.
+[47]
+N. Karaev, I. Rocco, B. Graham, N. Neverova, A. Vedaldi, and C. Rupprecht
+(2023)
+DynamicStereo: Consistent Dynamic Depth From Stereo Videos
+.
+In
+CVPR
+,
+pp. 13229–13239
+(
+en
+).
+External Links:
+Link
+Cited by:
+Table 7
+.
+[48]
+J. Kasai, H. Peng, Y. Zhang, D. Yogatama, G. Ilharco, N. Pappas, Y. Mao, W. Chen, and N. A. Smith
+(2021)
+Finetuning Pretrained Transformers into RNNs
+.
+In
+Proc. Emp. Met. in Nat. Lang. Proc.
+,
+Cited by:
+§2
+,
+§4.4
+,
+§4.4
+,
+Table 6
+.
+[49]
+A. Katharopoulos, A. Vyas, N. Pappas, and F. Fleuret
+(2020)
+Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention
+.
+In
+Int. Conf. Mach. Learn.
+,
+Cited by:
+§2
+.
+[50]
+T. Ke and S. I. Roumeliotis
+(2017)
+An efficient algebraic solution to the perspective-three-point problem
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[51]
+N. Keetha, N. Müller, J. Schönberger, L. Porzi, Y. Zhang, T. Fischer, A. Knapitsch, D. Zauss, E. Weber, N. Antunes, J. Luiten, M. Lopez-Antequera, S. R. Bulò, C. Richardt, D. Ramanan, S. Scherer, and P. Kontschieder
+(2025)
+MapAnything: Universal Feed-Forward Metric 3D Reconstruction
+.
+arXiv preprint arXiv:2509.13414
+.
+Cited by:
+§1
+,
+§2
+.
+[52]
+L. Kneip, D. Scaramuzza, and R. Siegwart
+(2011)
+A novel parametrization of the perspective-three-point problem for a direct computation of absolute camera position and orientation
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[53]
+Y. Lan, Y. Luo, F. Hong, S. Zhou, H. Chen, Z. Lyu, S. Yang, B. Dai, C. C. Loy, and X. Pan
+(2025)
+STream3R: Scalable Sequential 3D Reconstruction with Causal Transformer
+.
+arXiv preprint arXiv:2508.10893
+.
+Cited by:
+§2
+.
+[54]
+J. Lazarow, D. Griffiths, G. Kohavi, F. Crespo, and A. Dehghan
+(2025)
+Cubify Anything: Scaling Indoor 3D Object Detection
+.
+In
+CVPR
+,
+pp. 22225–22233
+(
+en
+).
+External Links:
+Link
+Cited by:
+Table 7
+.
+[55]
+V. Leroy, Y. Cabon, and J. Revaud
+(2024)
+Grounding Image Matching in 3D with MASt3R
+.
+In
+ECCV
+,
+Cited by:
+§2
+.
+[56]
+Y. Li, L. Jiang, L. Xu, Y. Xiangli, Z. Wang, D. Lin, and B. Dai
+(2023)
+MatrixCity: A Large-scale City Dataset for City-scale Neural Rendering and Beyond
+.
+In
+ICCV
+,
+pp. 3205–3215
+(
+en
+).
+External Links:
+Link
+Cited by:
+Table 7
+.
+[57]
+Z. Li and N. Snavely
+(2018)
+MegaDepth: Learning Single-View Depth Prediction From Internet Photos
+.
+In
+CVPR
+,
+pp. 2041–2050
+.
+External Links:
+Link
+Cited by:
+Table 7
+.
+[58]
+L. Ling, Y. Sheng, Z. Tu, W. Zhao, C. Xin, K. Wan, L. Yu, Q. Guo, Z. Yu, Y. Lu, X. Li, X. Sun, R. Ashok, A. Mukherjee, H. Kang, X. Kong, G. Hua, T. Zhang, B. Benes, and A. Bera
+(2024)
+DL3DV-10K: A Large-Scale Scene Dataset for Deep Learning-based 3D Vision
+.
+In
+CVPR
+,
+pp. 22160–22169
+(
+en
+).
+External Links:
+Link
+Cited by:
+Table 7
+.
+[59]
+H. Liu, M. Zaharia, and P. Abbeel
+(2023)
+Ring Attention with Blockwise Transformers for Near-Infinite Context
+.
+arXiv preprint arXiv:2310.01889
+.
+Cited by:
+§4.2
+.
+[60]
+Y. Liu, S. Dong, S. Wang, Y. Yin, Y. Yang, Q. Fan, and B. Chen
+(2025)
+SLAM3R: Real-Time Dense Scene Reconstruction from Monocular RGB Videos
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[61]
+I. Loshchilov and F. Hutter
+(2019)
+Decoupled Weight Decay Regularization
+.
+In
+ICLR
+,
+Note:
+arXiv:1711.05101
+External Links:
+Link
+Cited by:
+§A
+.
+[62]
+D. Maggio, H. Lim, and L. Carlone
+(2025)
+VGGT-SLAM: Dense RGB SLAM Optimized on the SL(4) Manifold
+.
+arXiv preprint arXiv:2505.12549
+.
+Cited by:
+§2
+.
+[63]
+L. Mehl, J. Schmalfuss, A. Jahedi, Y. Nalivayko, and A. Bruhn
+(2023)
+Spring: A High-Resolution High-Detail Dataset and Benchmark for Scene Flow, Optical Flow and Stereo
+.
+In
+CVPR
+,
+pp. 4981–4991
+(
+en
+).
+External Links:
+Link
+Cited by:
+Table 7
+.
+[64]
+J. Mercat, I. Vasiljevic, S. Keh, K. Arora, A. Dave, A. Gaidon, and T. Kollar
+(2024)
+Linearizing Large Language Models
+.
+arXiv preprint arXiv:2405.06640
+.
+Cited by:
+§2
+,
+§3.2
+.
+[65]
+B. Mildenhall, P. P. Srinivasan, M. Tancik, J. T. Barron, R. Ramamoorthi, and R. Ng
+(2020)
+NeRF: Representing Scenes as Neural Radiance Fields for View Synthesis
+.
+In
+ECCV
+,
+Cited by:
+§1
+.
+[66]
+E. Palazzolo, J. Behley, P. Lottes, P. Giguère, and C. Stachniss
+(2019)
+ReFusion: 3D Reconstruction in Dynamic Environments for RGB-D Cameras Exploiting Residuals
+.
+In
+Int. Conf. Intell. Robot. Syst.
+,
+Cited by:
+§4.1
+.
+[67]
+L. Pan, D. Baráth, M. Pollefeys, and J. L. Schönberger
+(2024)
+Global Structure-from-Motion Revisited
+.
+In
+ECCV
+,
+Vol.
+15098
+.
+Cited by:
+§1
+,
+§2
+.
+[68]
+V. Panek, Z. Kukelova, and T. Sattler
+(2022)
+Meshloc: mesh-based visual localization
+.
+In
+ECCV
+,
+Cited by:
+§2
+.
+[69]
+J. J. Park, P. Florence, J. Straub, R. Newcombe, and S. Lovegrove
+(2019)
+Deepsdf: learning continuous signed distance functions for shape representation
+.
+In
+CVPR
+,
+Cited by:
+§1
+.
+[70]
+M. Poli, S. Massaroli, E. Nguyen, D. Y. Fu, T. Dao, S. Baccus, Y. Bengio, S. Ermon, and C. Re
+(2023)
+Hyena Hierarchy: Towards Larger Convolutional Language Models
+.
+In
+Int. Conf. Mach. Learn.
+,
+Cited by:
+§2
+,
+§3.2
+.
+[71]
+J. Reizenstein, R. Shapovalov, P. Henzler, L. Sbordone, P. Labatut, and D. Novotny
+(2021)
+Common Objects in 3D: Large-Scale Learning and Evaluation of Real-Life 3D Category Reconstruction
+.
+In
+ICCV
+,
+pp. 10901–10911
+(
+en
+).
+External Links:
+Link
+Cited by:
+Table 7
+.
+[72]
+M. Research
+Mapillary Metropolis Dataset
+.
+(
+en
+).
+External Links:
+Link
+Cited by:
+Table 7
+.
+[73]
+M. Roberts, J. Ramapuram, A. Ranjan, A. Kumar, M. A. Bautista, N. Paczan, R. Webb, and J. M. Susskind
+(2021)
+Hypersim: A Photorealistic Synthetic Dataset for Holistic Indoor Scene Understanding
+.
+In
+ICCV
+,
+pp. 10912–10922
+(
+en
+).
+External Links:
+Link
+Cited by:
+Table 7
+.
+[74]
+P. Sarlin, C. Cadena, R. Siegwart, and M. Dymczyk
+(2019)
+From coarse to fine: robust hierarchical localization at large scale
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[75]
+T. Sattler, B. Leibe, and L. Kobbelt
+(2016)
+Efficient & effective prioritized matching for large-scale image-based localization
+.
+IEEE TPAMI
+39
+(
+9
+).
+Cited by:
+§2
+.
+[76]
+J. L. Schonberger and J. Frahm
+(2016)
+Structure-From-Motion Revisited
+.
+In
+CVPR
+,
+Cited by:
+§1
+,
+§2
+.
+[77]
+T. Schops, J. L. Schonberger, S. Galliani, T. Sattler, K. Schindler, M. Pollefeys, and A. Geiger
+(2017)
+A Multi-View Stereo Benchmark With High-Resolution Images and Multi-Camera Videos
+.
+In
+CVPR
+,
+Cited by:
+§4.1
+.
+[78]
+N. Shazeer
+(2020)
+GLU Variants Improve Transformer
+.
+arXiv preprint arXiv:2002.05202
+.
+Cited by:
+§4
+.
+[79]
+Y. Shen, Z. Zhang, Y. Qu, and L. Cao
+(2025)
+FastVGGT: Training-Free Acceleration of Visual Geometry Transformer
+.
+arXiv preprint arXiv:2509.02560
+.
+Cited by:
+§1
+,
+§2
+,
+§B
+,
+§3.3
+,
+§4
+.
+[80]
+J. Shotton, B. Glocker, C. Zach, S. Izadi, A. Criminisi, and A. Fitzgibbon
+(2013)
+Scene Coordinate Regression Forests for Camera Relocalization in RGB-D Images
+.
+In
+CVPR
+,
+Cited by:
+§2
+,
+§4.1
+,
+§4.3
+.
+[81]
+N. Snavely, S. M. Seitz, and R. Szeliski
+(2006)
+Photo tourism: exploring photo collections in 3D
+.
+In
+ACM Trans. Graph. (Proc. SIGGRAPH)
+,
+Cited by:
+§1
+,
+§2
+.
+[82]
+N. Snavely, S. M. Seitz, and R. Szeliski
+(2008)
+Modeling the World from Internet Photo Collections
+.
+IJCV
+80
+(
+2
+).
+External Links:
+ISSN 1573-1405
+Cited by:
+§2
+.
+[83]
+J. Straub, T. Whelan, L. Ma, Y. Chen, E. Wijmans, S. Green, J. J. Engel, R. Mur-Artal, C. Ren, S. Verma, A. Clarkson, M. Yan, B. Budge, Y. Yan, X. Pan, J. Yon, Y. Zou, K. Leon, N. Carter, J. Briales, T. Gillingham, E. Mueggler, L. Pesqueira, M. Savva, D. Batra, H. M. Strasdat, R. D. Nardi, M. Goesele, S. Lovegrove, and R. Newcombe
+(2019)
+The Replica Dataset: A Digital Replica of Indoor Spaces
+.
+arXiv
+.
+Note:
+arXiv:1906.05797 [cs]
+External Links:
+Link
+,
+Document
+Cited by:
+Table 7
+.
+[84]
+J. Sturm, N. Engelhard, F. Endres, W. Burgard, and D. Cremers
+(2012)
+A benchmark for the evaluation of RGB-D SLAM systems
+.
+In
+Int. Conf. Intell. Robot. Syst.
+,
+Cited by:
+§4.1
+.
+[85]
+J. Sun, Z. Shen, Y. Wang, H. Bao, and X. Zhou
+(2021)
+LoFTR: Detector-Free Local Feature Matching With Transformers
+.
+In
+CVPR
+,
+pp. 8922–8931
+(
+en
+).
+External Links:
+Link
+Cited by:
+§A
+.
+[86]
+Y. Sun, X. Li, K. Dalal, J. Xu, A. Vikram, G. Zhang, Y. Dubois, X. Chen, X. Wang, S. Koyejo, T. Hashimoto, and C. Guestrin
+(2025)
+Learning to (Learn at Test Time): RNNs with Expressive Hidden States
+.
+arXiv preprint arXiv:2407.04620
+.
+Cited by:
+§1
+,
+§2
+,
+§3.1
+,
+§3.2
+,
+§3.2
+.
+[87]
+Y. Sun, X. Wang, Z. Liu, J. Miller, A. Efros, and M. Hardt
+(2020)
+Test-Time Training with Self-Supervision for Generalization under Distribution Shifts
+.
+In
+Int. Conf. Mach. Learn.
+,
+Cited by:
+§2
+,
+§3.1
+.
+[88]
+Y. Sun, L. Dong, S. Huang, S. Ma, Y. Xia, J. Xue, J. Wang, and F. Wei
+(2023)
+Retentive network: a successor to transformer for large language models
+.
+arXiv preprint arXiv:2307.08621
+.
+Cited by:
+§2
+.
+[89]
+F. Tosi, Y. Liao, C. Schmitt, and A. Geiger
+(2021)
+SMD-Nets: Stereo Mixture Density Networks
+.
+In
+CVPR
+,
+pp. 8942–8952
+(
+en
+).
+External Links:
+Link
+Cited by:
+Table 7
+.
+[90]
+B. Van Hoorick, R. Wu, E. Ozguroglu, K. Sargent, R. Liu, P. Tokmakov, A. Dave, C. Zheng, and C. Vondrick
+(2025)
+Generative Camera Dolly: Extreme Monocular Dynamic Novel View Synthesis
+.
+In
+Computer Vision – ECCV 2024
+,
+A. Leonardis, E. Ricci, S. Roth, O. Russakovsky, T. Sattler, and G. Varol (Eds.)
+,
+Cham
+,
+pp. 313–331
+(
+en
+).
+External Links:
+ISBN 978-3-031-72691-0
+,
+Document
+Cited by:
+Table 7
+.
+[91]
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. u. Kaiser, and I. Polosukhin
+(2017)
+Attention is All you Need
+.
+In
+NeurIPS
+,
+Cited by:
+§2
+,
+§B
+,
+§3.2
+.
+[92]
+C. B. Wang, C. Schmidt, J. Piekenbrinck, and B. Leibe
+(2025)
+Faster VGGT with Block-Sparse Global Attention
+.
+arXiv preprint arXiv:2509.07120
+.
+Cited by:
+§1
+,
+§2
+,
+§3.3
+,
+§4
+.
+[93]
+H. Wang and L. Agapito
+(2025)
+3D Reconstruction with Spatial Memory
+.
+In
+3DV
+,
+Cited by:
+§2
+,
+§4.1
+.
+[94]
+J. Wang, M. Chen, N. Karaev, A. Vedaldi, C. Rupprecht, and D. Novotný
+(2025)
+VGGT: Visual Geometry Grounded Transformer
+.
+In
+CVPR
+,
+Cited by:
+§1
+,
+§1
+,
+§2
+,
+§3.2
+,
+§3.2
+,
+§3.2
+,
+§3.3
+,
+§3
+,
+§4
+.
+[95]
+J. Wang, D. Paliotta, A. May, A. M. Rush, and T. Dao
+(2024)
+The Mamba in the Llama: Distilling and Accelerating Hybrid Models
+.
+NeurIPS
+.
+Cited by:
+§2
+.
+[96]
+Q. Wang, Y. Zhang, A. Holynski, A. A. Efros, and A. Kanazawa
+(2025)
+Continuous 3D Perception Model with Persistent State
+.
+In
+CVPR
+,
+Cited by:
+§2
+,
+§4.1
+,
+§4.1
+,
+§4
+.
+[97]
+S. Wang, V. Leroy, Y. Cabon, B. Chidlovskii, and J. Revaud
+(2024)
+DUSt3R: Geometric 3D Vision Made Easy
+.
+In
+CVPR
+,
+Cited by:
+§1
+,
+§2
+.
+[98]
+W. Wang, D. Zhu, X. Wang, Y. Hu, Y. Qiu, C. Wang, Y. Hu, A. Kapoor, and S. Scherer
+(2020)
+TartanAir: A Dataset to Push the Limits of Visual SLAM
+.
+In
+Int. Conf. Intell. Robot. Syst.
+,
+pp. 4909–4916
+.
+Note:
+ISSN: 2153-0866
+External Links:
+Link
+,
+Document
+Cited by:
+Table 7
+.
+[99]
+Y. Wang, J. Zhou, H. Zhu, W. Chang, Y. Zhou, Z. Li, J. Chen, J. Pang, C. Shen, and T. He
+(2025)
+π
+3
+\pi^{3}
+: Permutation-Equivariant Visual Geometry Learning
+.
+arXiv preprint arXiv:2507.13347
+.
+Cited by:
+§1
+,
+§2
+.
+[100]
+K. Wilson and N. Snavely
+(2014)
+Robust Global Translations with 1DSfM
+.
+In
+ECCV
+,
+Cited by:
+§3.2
+.
+[101]
+Y. Wu, W. Zheng, J. Zhou, and J. Lu
+(2025)
+Point3R: Streaming 3D Reconstruction with Explicit Spatial Pointer Memory
+.
+arXiv preprint arXiv:2507.02863
+.
+Cited by:
+§2
+.
+[102]
+H. Xia, Y. Fu, S. Liu, and X. Wang
+(2024)
+RGBD Objects in the Wild: Scaling Real-World 3D Object Learning from RGB-D Videos
+.
+In
+CVPR
+,
+pp. 22378–22389
+(
+en
+).
+External Links:
+Link
+Cited by:
+Table 7
+.
+[103]
+J. Yang, A. Sax, K. J. Liang, M. Henaff, H. Tang, A. Cao, J. Chai, F. Meier, and M. Feiszli
+(2025)
+Fast3R: Towards 3D Reconstruction of 1000+ Images in One Forward Pass
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[104]
+S. Yang, J. Kautz, and A. Hatamizadeh
+(2025)
+Gated Delta Networks: Improving Mamba2 with Delta Rule
+.
+In
+ICLR
+,
+Cited by:
+§2
+,
+§3.2
+.
+[105]
+S. Yang, B. Wang, Y. Shen, R. Panda, and Y. Kim
+(2023)
+Gated linear attention transformers with hardware-efficient training
+.
+arXiv preprint arXiv:2312.06635
+.
+Cited by:
+§2
+.
+[106]
+S. Yang, B. Wang, Y. Zhang, Y. Shen, and Y. Kim
+(2024)
+Parallelizing Linear Transformers with the Delta Rule over Sequence Length
+.
+In
+NeurIPS
+,
+Cited by:
+§2
+,
+§3.2
+.
+[107]
+FLA: a triton-based library for hardware-efficient implementations of linear attention mechanism
+External Links:
+Link
+Cited by:
+§2
+.
+[108]
+Y. Yao, Z. Luo, S. Li, J. Zhang, Y. Ren, L. Zhou, T. Fang, and L. Quan
+(2020)
+BlendedMVS: A Large-Scale Dataset for Generalized Multi-View Stereo Networks
+.
+In
+CVPR
+,
+pp. 1790–1799
+.
+External Links:
+Link
+Cited by:
+Table 7
+.
+[109]
+C. Yeshwanth, Y. Liu, M. Nießner, and A. Dai
+(2023)
+ScanNet++: A High-Fidelity Dataset of 3D Indoor Scenes
+.
+In
+ICCV
+,
+pp. 12–22
+(
+en
+).
+External Links:
+Link
+Cited by:
+Table 7
+.
+[110]
+A. R. Zamir, A. Sax, W. Shen, L. J. Guibas, J. Malik, and S. Savarese
+(2018)
+Taskonomy: Disentangling Task Transfer Learning
+.
+In
+CVPR
+,
+pp. 3712–3722
+.
+External Links:
+Link
+Cited by:
+Table 7
+.
+[111]
+M. Zhang, S. Arora, R. Chalamala, A. Wu, B. Spector, A. Singhal, K. Ramesh, and C. Ré
+(2025)
+LoLCATs: On Low-Rank Linearizing of Large Language Models
+.
+arXiv preprint arXiv:2410.10254
+.
+Cited by:
+§2
+,
+§4.4
+,
+Table 6
+.
+[112]
+M. Zhang, K. Bhatia, H. Kumbong, and C. Ré
+(2024)
+The Hedgehog & the Porcupine: Expressive Linear Attentions with Softmax Mimicry
+.
+arXiv preprint arXiv:2402.04347
+.
+Cited by:
+§2
+.
+[113]
+S. Zhang, J. Wang, Y. Xu, N. Xue, C. Rupprecht, X. Zhou, Y. Shen, and G. Wetzstein
+(2025)
+FLARE: Feed-Forward Geometry, Appearance and Camera Estimation from Uncalibrated Sparse Views
+.
+In
+CVPR
+,
+Cited by:
+§1
+,
+§2
+.
+[114]
+T. Zhang, S. Bi, Y. Hong, K. Zhang, F. Luan, S. Yang, K. Sunkavalli, W. T. Freeman, and H. Tan
+(2025)
+Test-Time Training Done Right
+.
+arXiv preprint arXiv:2505.23884
+.
+Cited by:
+§2
+,
+§3.3
+,
+§4
+.
+[115]
+Q. Zhou, S. Agostinho, A. Ošep, and L. Leal-Taixé
+(2022)
+Is geometry enough for matching in visual localization?
+.
+In
+ECCV
+,
+Cited by:
+§2
+.
+[116]
+D. Zhuo, W. Zheng, J. Guo, Y. Wu, J. Zhou, and J. Lu
+(2025)
+Streaming 4D Visual Geometry Transformer
+.
+arXiv preprint arXiv:2507.11539
+.
+Cited by:
+§2
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

@@ -1,0 +1,209 @@
+3 Methodology: Stateful Intent Tracking via Recurrent Latent Embeddings
+To address the “Contextual Blind Spot” where atomic guardrails fail to detect distributed adversarial intent, we introduce DeepContext. Unlike stateless classifiers that evaluate queries in isolation (P⁡(unsafe∣xt)P(\text{unsafe}\mid x_{t})), DeepContext models safety as a trajectory through a semantic latent space, maintaining a continuous memory state that captures the accumulation of risk over time.
+3.1 Problem Formulation: Adversarial Accumulation
+We define a conversation history at turn tt as ℋt={(u1,r1),(u2,r2),…,ut}\mathcal{H}_{t}=\{(u_{1},r_{1}),(u_{2},r_{2}),\dots,u_{t}\}, where uu represents user inputs and rr represents assistant responses.
+Current defenses approximate safety detection as a function f⁡(ut,rt−1)f(u_{t},r_{t-1}). This assumes the Markov property, that the current turn contains sufficient information to determine safety. As shown in recent attacks like Crescendo [6], this assumption is false for adversaries who fragment malicious payloads.
+Safety Detection as a State-Space Problem
+We reformulate safety detection as a state-space problem, where the model maintains a persistent representation of user intent. We define a hidden intent state hth_{t} which is updated recursively:
+ht=RNN​(ht−1,et)h_{t}=\text{RNN}(h_{t-1},e_{t})
+(1)
+To capture complex interactions between the current input and the historical context, we project the hidden state to a higher-dimensional space and concatenate it with the current task embeddings. The final risk vector RtR_{t}, which is passed to the Multi-Layer Perceptron (MLP) for classification, is defined as:
+Rt=[ϕ⁡(ht);et]R_{t}=[\phi(h_{t});e_{t}]
+(2)
+yt=MLP​(Rt)y_{t}=\text{MLP}(R_{t})
+(3)
+Where ete_{t} is the task-attention weighted embedding for the current turn, ϕ\phi is a projection function that maps hth_{t} to a higher dimension, and [⋅;⋅][\cdot;\cdot] denotes the concatenation operation. The crucial innovation is that RtR_{t} is not merely a summary of the text, but a risk vector oriented in the safety latent space, synthesized from both the projected historical intent and the immediate features of the current turn.
+3.2 Model Architecture: The DeepContext Pipeline
+DeepContext consists of three primary modules designed to decouple context understanding from safety enforcement, allowing for high-throughput monitoring without the latency of full context re-processing.
+Figure 1: The DeepContext Architecture. The pipeline consists of three main stages: (1) Turn-level embedding extraction using a fine-tuned BERT and task-specific weighted pooling; (2) Recurrent intent tracking via a GRU to maintain conversation state; and (3) A trajectory classifier with a hybrid residual connection for final safety scoring.
+3.2.1 Task-Attention Weighted Encoder
+Following the architectural principles of the Mahendra and Raudra models [17], we utilize a fine-tuned BERT encoder to convert utu_{t} into a dense vector. Unlike generic embeddings, we apply a Task-Attention mechanism that weighs specific semantic tokens based on their relevance to known safety policies (e.g., prompt injection or jailbreak). This produces a weighted embedding ete_{t} that prioritizes “high-signal” adversarial markers.
+3.2.2 Recurrent Intent Tracking (RIT) via Gated Recurrent Units
+The core of our stateful tracking lies in a Gated Recurrent Unit (GRU) architecture. While Long Short-Term Memory (LSTM) networks are a traditional choice for sequence modeling, they suffer from a higher parameter count and three distinct gates, which introduces unnecessary computational overhead for real-time security applications.
+In contrast, we utilize the GRU as a computationally efficient alternative to the LSTM. By merging the forget and input gates into a single “update gate,” the GRU minimizes the floating-point operations (FLOPs) required per conversational turn while effectively mitigating the vanishing gradient problem. This streamlined architecture is essential for achieving DeepContext’s sub-20ms latency target.
+In our framework, the GRU is deployed directly on top of the pretrained task-attention weights. The state update logic for each turn tt is governed by the following standard transition functions:
+zt=σ⁡(Wz⋅et+Uz⋅ht−1+bz)(Update Gate)z_{t}=\sigma(W_{z}\cdot e_{t}+U_{z}\cdot h_{t-1}+b_{z})\quad\text{(Update Gate)}
+(4)
+rt=σ⁡(Wr⋅et+Ur⋅ht−1+br)(Reset Gate)r_{t}=\sigma(W_{r}\cdot e_{t}+U_{r}\cdot h_{t-1}+b_{r})\quad\text{(Reset Gate)}
+(5)
+h~t=tanh⁡(W⋅et+U⋅(rt⊙ht−1)+b)(Candidate State)\tilde{h}_{t}=\tanh(W\cdot e_{t}+U\cdot(r_{t}\odot h_{t-1})+b)\quad\text{(Candidate State)}
+(6)
+ht=(1−zt)⊙ht−1+zt⊙h~t(Final Hidden State)h_{t}=(1-z_{t})\odot h_{t-1}+z_{t}\odot\tilde{h}_{t}\quad\text{(Final Hidden State)}
+(7)
+Where:
+•
+et∈ℝde_{t}\in\mathbb{R}^{d} is the task-attention weighted BERT embedding for the current turn, which captures the instantaneous intent signal.
+•
+ztz_{t} acts as the “relevance filter,” determining how much of the accumulated adversarial context ht−1h_{t-1} should be carried forward.
+•
+rtr_{t} (the Reset Gate) allows the model to drop irrelevant information from previous turns that does not contribute to the current intent trajectory.
+•
+⊙\odot denotes the element-wise (Hadamard) product.
+By applying a lean GRU to these high-fidelity task-attention embeddings, DeepContext is able achieve a production grade sub-20ms inference latency on a T4 GPU. This ensures that the system can track the long-range semantic dependencies required to detect Crescendo-style attacks without becoming a bottleneck in the LLM’s inference pipeline.
+3.2.3 Projection Layer and Residual Shortcuts
+To ensure the model retains high sensitivity to both long-range adversarial drift and immediate, single-turn violations, we implement a Hybrid Residual Architecture. Following the GRU state update, the hidden state hth_{t} is passed through a linear projection layer. To avoid the potential "smoothing" of high-intensity signals within the recurrent state, we introduce a residual connection that concatenates the raw task-attention weighted embedding ete_{t} directly with the projected hidden state.
+The input to the final Trajectory Classifier, or risk vector RtR_{t}, is formulated as:
+Rt=[ϕ⁡(ht);et]R_{t}=[\phi(h_{t});e_{t}]
+(8)
+Where ; denotes the concatenation operation. This "short-circuit" mechanism provides two primary benefits:
+1.
+Instantaneous Detection: It allows the model to identify blatant, single-turn attacks (e.g., explicit hate speech or direct dangerous queries) using the raw semantic signal from ete_{t}, without dependency on the temporal context stored in hth_{t}.
+2.
+Contextual Anchoring: It provides the classification head with a dual-perspective: the long-term intent trajectory (the stateful component) and the immediate prompt context (the stateless component).
+By combining the recurrent memory of the GRU with the direct signal of the task-attention embeddings, DeepContext achieves a robust defense against both “slow-burn” grooming attacks like Crescendo and sudden, high-intensity adversarial injections.
+3.2.4 Trajectory Classifier
+The final component of the DeepContext pipeline is a specialized classifier. The head consists of a multi-layer perceptron (MLP) with LayerNorm, GELU activations, and residual feed-forward blocks. The model is optimized using Binary Cross-Entropy (BCE) Loss, integrated with a focal loss component to handle class imbalance.
+P⁡(harmk=1∣ℋt)=Sigmoid​(MLPk​(Rt))P(\text{harm}_{k}=1\mid\mathcal{H}_{t})=\text{Sigmoid}(\text{MLP}_{k}(R_{t}))
+(9)
+3.2.5 Training and Dataset compilation
+To capture the nuances of multi-turn adversarial intent, we curated a comprehensive training corpus comprising 437,058 conversational sequences where approximately 20% of conversations are labeled as malicious. This dataset features a diverse distribution of synthetic and human-generated samples, encompassing benign interactions, malicious exploits, and both single-turn and multi-turn trajectories. While the full integrated dataset remains proprietary, Table 1 details the constituent open-source and academic subsets utilized in our training pipeline, provided in accordance with their respective attribution requirements.
+Table 1: DeepContext Training Dataset Subset
+Dataset
+Entries
+Detailed Description
+Ref
+LLMail
+24,833
+Prompt injection attempts targeting email assistant workflows.
+[18]
+HH-RLHF
+60,848
+Human-labeled safety preferences and red-teaming dialogues.
+[19]
+XGuard
+30,674
+Synthetic adaptive multi-turn jailbreak attacks.
+[20]
+PRODIGy
+20,823
+Profile-based dialogues extracted from Hollywood scripts.
+[21]
+MultiWOZ
+8,425
+Annotated human-to-human task-oriented dialogues.
+[22]
+WikiQA
+3,331
+Open-domain question answering pairs from Bing logs.
+[23]
+SafeDial
+2,034
+Dataset covering fine-grained safety across six dimensions.
+[24]
+CoSafe
+1,400
+Dataset regarding coreference resolution in complex dialogues.
+[25]
+DEF CON
+17,289
+Variant red teaming data from AI Village generative challenge.
+[26]
+3.2.6 Training Procedure
+DeepContext employs a supervised learning framework optimized for binary safety classification. By focusing on a single, unified safety objective, the Gated Recurrent Unit (GRU) is able to concentrate its 2048-dimensional recurrent state on detecting the subtle transition from benign to adversarial intent within a conversation’s temporal context. To address the inherent class imbalance typically found in adversarial datasets we utilize a Focal Loss function with γ=2.0\gamma=2.0. This strategically weights the gradient descent process toward “hard” examples that reside near the safety boundary, ensuring the model does not become complacent with easily classified benign samples.
+The optimization objective is defined by the following loss function:
+ℒ=−(1−pt)γ​log⁡(pt)\mathcal{L}=-(1-p_{t})^{\gamma}\log(p_{t})
+(10)
+where ptp_{t} represents the model’s estimated probability for the ground-truth class. This approach prioritizes learning from sophisticated adversarial “drift” rather than over-represented, superficial patterns.
+Hyperparameters and Configuration
+To preserve the model’s ability to generalize to novel attack vectors, training is strictly limited to a single epoch. This prevents the GRU from over-indexing on the specific phrasing of historical attacks, which could lead to catastrophic forgetting of broader safety principles. We utilized a large batch size of 512 to ensure gradient stability and to provide a representative distribution of adversarial samples in every update step.
+Table 2: DeepContext Training Hyperparameters
+Hyperparameter
+Value
+Learning Rate
+1×10−51\times 10^{-5}
+Batch Size
+512
+Training Epochs
+1
+Optimizer
+AdamW
+Attention Pooled Output (ete_{t})
+1024 (per task)
+GRU Layers
+3
+GRU Hidden Size
+2048
+Classifier Hidden Size
+4096
+Activation Function
+GELU
+RNN Dropout
+0.5
+Dropout
+0.3
+Classification Activation
+Sigmoid
+Loss Function
+BCE with Focal Loss (γ=2.0\gamma=2.0)
+Precision
+bfloat16
+By pairing a high-capacity GRU with a conservative learning rate and substantial dropout, we ensure DeepContext develops a sharp sensitivity to intent trajectories without memorizing fixed prompt templates. This balanced regimen, leveraging both massive human-curated datasets and synthetic adversarial sequences, results in a model that is remarkably performant yet computationally lean. Ultimately, the system successfully detects complex, multi-turn "Crescendo" attacks while adhering to a strict sub-20ms latency requirement for production environments.
+4 Results and Evaluation
+4.1 Evaluation Dataset
+To provide a rigorous evaluation, we curated a benchmark suite designed to isolate specific failure modes of modern guardrails. As detailed in Table 3, the benign datasets: LMSYS, Glaive, Nemotron, and Anthropic HH-RLHF were selected to represent "high-noise" environments like function calling and complex instruction following, where stateless filters often trigger false positives. To test defensive depth, we incorporated human-led red teaming data from HarmBench and DEFCON 34, capturing the creative and non-standard linguistic patterns humans use to bypass safety alignment. Finally, we prioritized automated multi-turn frameworks like Red Queen, XGuard, and Automated-Multi-Turn specifically to stress-test DeepContext’s ability to detect "slow-burn" adversarial drift such as the Crescendo attack which remains the primary blind spot for current enterprise-grade safety solutions. Overall the dataset includes 210 multiturn jailbreaks with a median of 7 turns per conversation and a max of 49 turns. We also have 800 benign conversations with a median of 4 turns per conversation and a max of 18 turns.
+While some samples from the HH-RLHF, XGuard, and DEFCON datasets were present in our training data, we ensured that the specific samples used for evaluation were not seen during training.
+Table 3: Composition of the Combined Dataset by Source, Category, and Reference
+Source Dataset
+Count
+Percent
+Category
+Ref
+lmsys/lmsys-chat-1m
+200
+19.8%
+General Chat
+[27]
+glaiveai/glaive-function-calling-v2
+200
+19.8%
+Function Calling
+[28]
+nvidia/Nemotron-Instruction-Following
+200
+19.8%
+Instruction
+[29]
+Anthropic/hh-rlhf
+200
+19.8%
+Helpful Assistant
+[19]
+Simsonsun/JailbreakPrompts
+35
+3.5%
+Mixed Red Teaming
+[30]
+ScaleAI/mhj (HarmBench)
+35
+3.5%
+Human Red Teaming
+[31]
+humane-intelligence/defcon34-ai-village
+35
+3.5%
+Human Red Teaming
+[26]
+YifanJ/Red_Queen
+35
+3.5%
+Automated Red Teaming
+[32]
+marslabucla/XGuard-Train
+35
+3.5%
+Automated Red Teaming
+[33]
+AIM-Intelligence/Automated-Multi-Turn
+35
+3.5%
+Automated Red Teaming
+[34]
+Total
+1,010
+100%
+4.2 Evaluation Baselines
+To provide a comprehensive view of the safety landscape, we selected a diverse set of baselines that represent the three primary pillars of modern LLM guardrails: specialized classifiers, generative safety models, and managed enterprise services.
+1. Specialized Task-Specific Encoders
+We included Llama-Prompt-Guard-2-86M and Deberta-v3-Prompt-Injection to represent the "lightweight" layer of defense. These models are widely used for their extreme low latency and high precision on known, explicit attack patterns. They serve as a benchmark for whether a small, non-recurrent encoder can catch multi-turn drift through raw pattern matching.
+2. Generative Guardrails
+To test more sophisticated "LLM-as-a-Judge" approaches, we selected Llama-Guard-4-12B, Granite-Guardian-3.3-8B, and Qwen3Guard-Gen-8B. These models represent the industry standard for depth

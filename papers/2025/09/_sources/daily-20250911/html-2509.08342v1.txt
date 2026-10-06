@@ -1,0 +1,1890 @@
+
+
+
+Accelerating Mixture-of-Expert Inference with Adaptive Expert Split Mechanism
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+    
+      Report GitHub Issue
+      ×
+    
+
+    
+      Title:
+      
+
+      Content selection saved. Describe the issue below:
+
+
+      Description:
+      
+    
+
+    
+      Submit without GitHub
+      Submit in GitHub
+    
+  
+
+    
+    arXiv is now an independent nonprofit!
+    Learn more
+    ×
+  
+
+
+  
+    
+      Back to arXiv
+    
+  
+  
+  
+    Why HTML?
+    
+      
+        
+      
+      Report Issue
+    
+    
+      
+        
+        
+      
+      Back to Abstract
+    
+    
+    
+      
+        
+      
+      Download PDF
+    
+    
+      
+        
+        
+      
+    
+    
+    
+      
+        
+      
+    
+    
+    
+      
+        
+          
+          
+        
+      
+      
+        
+          
+          
+        
+      
+      
+        
+          
+          
+        
+      
+    
+  
+
+
+
+Abstract.
+1 Introduction
+2 Background and Motivation
+
+2.1 MoE Architecture & Inference
+2.2 Limitations of Existing Approaches
+2.3 Motivations for System Design
+
+3 System Design
+
+3.1 System Overview
+3.2 Speculative Prefetcher
+3.3 Priority-based Cache Manager
+3.4 Cache Configurator
+
+3.4.1 Problem Formulation
+3.4.2 Algorithm Design
+
+
+4 Performance Evaluation
+
+4.1 Experimental Setup
+4.2 Inference Latency
+4.3 Memory Efficiency
+4.4 Ablation Study
+4.5 Sensitivity Analysis
+
+5 Related Work
+6 Conclusion
+References
+
+
+
+
+  
+    License: arXiv.org perpetual non-exclusive license
+  
+  
+arXiv:2509.08342v1 [cs.LG] 10 Sep 2025
+
+
+
+
+# Accelerating Mixture-of-Expert Inference with Adaptive Expert Split Mechanism
+
+
+
+Jiaming Yan, Jianchun Liu, Hongli Xu, Liusheng Huang
+
+
+Abstract.
+    
+Mixture-of-Experts (MoE) has emerged as a promising architecture for modern large language models (LLMs).
+However, massive parameters impose heavy GPU memory (i.e., VRAM) demands, hindering the widespread adoption of MoE LLMs.
+Offloading the expert parameters to CPU RAM offers an effective way to alleviate the VRAM requirements for MoE inference. Existing approaches typically cache a small subset of experts in VRAM and/or dynamically prefetch experts from RAM during inference, leading to significant degradation in inference speed due to the poor cache hit rate and substantial expert loading latency.
+
+    
+In this work, we propose MoEpic, an efficient MoE inference system with a novel expert split mechanism.
+Specifically, each expert is vertically divided into two segments: top and bottom.
+MoEpic caches the top segment of hot experts, so that more experts will be stored under the limited VRAM budget, thereby improving the cache hit rate.
+During each layer’s inference, MoEpic predicts and prefetches the activated experts for the next layer.
+Since the top segments of cached experts are exempt from fetching, the loading time is reduced, which allows efficient transfer-computation overlap.
+Nevertheless, the performance of MoEpic critically depends on the cache configuration (i.e., each layer’s VRAM budget and expert split ratio).
+To this end, we propose a divide-and-conquer algorithm based on fixed-point iteration for adaptive cache configuration.
+Extensive experiments on popular MoE LLMs demonstrate that MoEpic can save about half of the GPU cost, while lowering the inference latency by about 37.51%∼\thicksim65.73% compared to the baselines.
+
+  
+
+
+
+
+# 1. Introduction
+
+
+
+The advent of large language models (LLMs) has ushered in a transformative era for artificial intelligence (AI), revolutionizing various domains including natural language processing (Vaswani et al., 2017), computer vision (Yuan et al., 2021), and multimodal tasks (Wu et al., 2024).
+These advancements are largely driven by the dramatic growth of model capacity (Kaplan et al., 2020), which entails significantly increased computational overhead during inference.
+In this context, Mixture-of-Experts (MoE) has emerged as a promising architecture for LLMs, where the parameters are sparsely activated per input token, enabling sub-linear computational scaling relative to the model capacity (Cai et al., 2024).
+Recently, the MoE-based LLMs, such as DeepSeek-R1 (Guo et al., 2025) and Qwen-3 (Yang et al., 2025), have demonstrated exceptional performance across diverse tasks.
+
+
+
+Despite the computational efficiency of MoE models, their practical deployment faces significant hurdles, particularly in privacy-sensitive scenarios.
+Concretely, organizations in highly regulated sectors such as healthcare, financial services, and government institutions often mandate on-premises LLM deployment to ensure strict data privacy.
+However, the modern MoE models with enormous parameter sizes impose substantial GPU memory (i.e., VRAM) requirements for inference, making local deployment prohibitively expensive.
+For example, DeepSeek-R1 (Guo et al., 2025), with its 671B parameters, demands 16 NVIDIA A100 (80GB) GPUs for storage, amounting to 300K USD in hardware expenses approximately.
+Such expensive costs present a significant barrier to the widespread adoption of MoE models.
+
+
+
+Fortunately, expert offloading (Eliseev and Mazur, 2023) offers an efficient solution that significantly reduces the GPU requirements for MoE inference.
+For instance, expert offloading enables DeepSeek-R1 to perform inference using only a single A100 GPU.
+Specifically, in MoE models (using DeepSeek-R1 as a representative case), expert parameters typically constitute the vast majority (97.45%) of the total model parameters, yet only a small fraction (3.13%) are utilized per token.
+This property facilitates the VRAM optimization by offloading experts to spacious RAM or SSD, while only loading the activated ones on-demand into VRAM via the PCI express (PCIe).
+Nevertheless, the transfer of experts between CPU and GPU will incur non-negligible loading latency, significantly degrading the Quality of Service (QoS), such as response speed.
+For example, existing literature (Tang et al., 2024) demonstrate that the expert loading operation will slow down the inference speed by up to 17.18 times approximately.
+
+
+
+To mitigate the impact of loading latency on the inference speed, researchers have explored various optimization approaches, which can be divided into two categories: cache-based and prefetch-based.
+Firstly, the cache-based approaches (Eliseev and Mazur, 2023; Xue et al., 2024; Tang et al., 2024) adopt the LRU or LFU policies to cache a subset of experts for each layer in VRAM.
+Thus, the loading latency can be eliminated when the cached experts are activated (i.e., cache hit).
+However, the number of cacheable experts is constrained by the limited VRAM budget, leading to a poor expert hit rate.
+Empirical results from ProMoE (Song et al., 2024) reveal that the cache hit rate will easily drop below 50% under the constrained VRAM budget.
+Consequently, over half of the model layers must load the activated experts on demand, which significantly prolongs inference latency.
+Secondly, the prefetch-based approaches (Hwang et al., 2024; Zhong et al., 2024; Song et al., 2024) dynamically predict the experts needed for the next layer by analyzing the real-time intermediate result (e.g., activation value) during each layer’s execution.
+The anticipated experts can be prefetched proactively in parallel with the GPU computation to hide the loading latency.
+Although these approaches can achieve considerable prediction accuracy (e.g., >80% in AdapMoE (Zhong et al., 2024)), the loading latency often exceeds the computation time (e.g., 165ms vs. 57ms according to our experiments in §2.2).
+Thus, only a small portion of loading latency can be overlapped, especially when handling multiple experts (e.g., DeepSeek-R1 activates 8 experts per token in each layer).
+
+
+
+To conquer the above disadvantages, we expect to improve the cache hit rate under the limited VRAM budget, which severely restricts the number of cached (full-size) experts.
+A natural solution is to only cache a part of each expert in VRAM.
+To this end, we propose MoEpic, an efficient MoE inference system with a novel expert split mechanism.
+Specifically, MoEpic splits each expert into two segments, i.e., top and bottom, bringing two main advantages.
+Firstly, MoEpic selectively retains the top segments of some hot experts with high activation probabilities in VRAM.
+Thus, under the same VRAM budget, MoEpic significantly increases the number of cacheable experts compared to existing cache-based approaches that store full-size experts (Eliseev and Mazur, 2023; Xue et al., 2024; Tang et al., 2024).
+Secondly, during inference, MoEpic utilizes the activation value of the current layer to predict the most probable experts for the next layer, and then prefetches their bottom segments (or full experts if missed).
+In this way, the transfer-computation overlap can be optimized along two dimensions.
+On the one hand, the top segments of cache-hit experts for the next layer will be processed ahead of time, extending the computation window (i.e., the time to overlap loading latency per layer).
+On the other hand, the top segments of some cached experts will not be fetched, which reduces the loading latency.
+By balancing the computation time and loading latency, this design enables more effective computation–transfer overlap than traditional prefetch-based approaches (Hwang et al., 2024; Song et al., 2024; Zhong et al., 2024).
+
+
+
+As a result, MoEpic allows efficient deployment of MoE models over the resource-constrained devices while introducing negligible exposed loading latency.
+However, the design of MoEpic confronts two fundamental difficulties.
+The first difficulty of MoEpic lies in how to allocate the VRAM budget across different layers.
+Since the VRAM budget is shared across different layers, a natural strategy is to allocate it uniformly among all layers.
+Nevertheless, according to our analysis in §2.3, the layers with low cache hit rates and/or poor expert prediction accuracy typically require more VRAM budget than others, making them potential bottlenecks under uniform allocation.
+Conversely, allocating excessive budget to these layers would significantly prolong the inference latency of other layers, degrading the overall performance.
+The second difficulty is How to split the expert properly for each layer for MoEpic.
+Concretely, an oversized top segment prevents maintaining adequate experts within the limited VRAM budget, reducing the cache hit rates.
+On the contrary, an excessively large bottom segment results in prolonged expert loading latency that cannot be effectively hidden by the computation time.
+Besides, since the VRAM budget allocated to each layer varies, there is no universally optimal solution for all layers.
+The main contributions of this paper are summarized as follows:
+
+
+• 
+
+We propose an efficient MoE inference system with expert offloading, named MoEpic.
+By the novel expert split mechanism, MoEpic can enhance cache hit rates while efficiently hiding the loading latency.
+
+
+• 
+
+To overcome the two challenges in MoEpic’s design, a divide-and-conquer algorithm based on fixed-point iteration is proposed for determining per-layer VRAM budget and split ratio.
+Besides, we introduce a priority-based cache policy for better cache management.
+
+
+• 
+
+Extensive experiments demonstrate that MoEpic outperforms the state-of-the-art MoE inference systems with expert offloading.
+MoEpic can save about half of the GPU cost, while lowering the inference latency by 37.51%∼\thicksim65.73% compared to the baselines.
+
+
+
+
+
+
+
+
+
+# 2. Background and Motivation
+
+
+
+Figure 1. Inference process of the MoE model.
+
+
+
+
+# 2.1. MoE Architecture & Inference
+
+
+
+The architecture of the MoE-based LLM, as illustrated in Figure 1, typically comprises multiple specialized Transformer layers stacked in sequence.
+Specifically, considering an MoE model with LL layers, each layer i∈[L]i\in[L] consists of two fundamental modules, i.e., an attention module followed by an MoE module.
+Given an input token xx, we use xix^{i} to denote the output of layer ii, and x0x^{0} to denote that of the embedding layer.
+For each layer ii, its input xi−1x^{i-1} (i.e., output of layer i−1i-1) is firstly processed by the attention module Atti\text{Att}^{i}:
+
+
+
+
+(1)
+
+hi=Norm​[xi−1+Atti​(xi−1)]h^{i}=\text{Norm}[x^{i-1}+\text{Att}^{i}(x^{i-1})]
+
+
+
+
+where Norm​(⋅)\text{Norm}(\cdot) denotes the layer normalization operation (Xiong et al., 2020), and hih^{i} represents the immediate result in layer ii.
+We refer readers to existing studies (Vaswani et al., 2017; Ainslie et al., 2023) for the detailed design of the attention module, as this is not our focus.
+
+
+
+
+
+
+(a) Cache Performance.
+
+
+(b) Inference Latency.
+
+
+(c) Prediction Accuracy.
+
+
+(d) Computation vs. load
+
+Figure 2. 
+The results of preliminary experiments using the Qwen1.5-MoE model on the MMLU dataset:
+(a) The VRAM footprint and average cache hit rate across all layers under different cache sizes (i.e., the number of cached experts per layer);
+(b) The inference latency (i.e., time per output token) with given cache hit rates;
+(c) The expert prediction accuracy of each layer;
+(d) The per-layer computation time and the expert loading latency on different GPU platforms.
+
+
+
+Figure 3. The inference process of two consecutive layers under different approaches.
+For clarity of exposition, we do not include loading latency for the first layer, without loss of correctness.
+"Top" denotes the top segments of cache-hit experts.
+"M.S." denotes the activated experts’ missing (top/bottom) segments that are neither cached nor prefetched.
+
+
+Subsequently, hih^{i} is fed into the MoE module, which contains a router network RiR^{i} (ℝd→ℝN\mathbb{R}^{d}\rightarrow\mathbb{R}^{N}) and a set of feed-forward network (FFN) experts 𝐄i={Ei,1,Ei,2,⋯,Ei,N}\mathbf{E}^{i}=\{E_{i,1},E_{i,2},\cdots,E_{i,N}\}.
+Here, dd represents the dimension of hih^{i}, and NN denotes the total number of experts in each layer.
+The router network calculates the score si,j=softmax​[Ri​(hi)]js_{i,j}=\text{softmax}[R^{i}(h^{i})]_{j} of each expert Ei,jE_{i,j} (j∈[N]j\in[N]), then activates the KK (<N<N) experts with the highest scores.
+Let ℰi\mathcal{E}^{i} (⊆𝐄i\subseteq\mathbf{E}^{i}) represent the set of activated experts in layer ii, and the output xix^{i} can be defined as:
+
+
+
+
+(2)
+
+xi=Norm​[hi+∑Ei,j∈ℰisi,j⋅Ei,j​(hi)∑Ei,o∈ℰisi,o]x^{i}=\text{Norm}[h^{i}+\textstyle\sum_{E_{i,j}\in\mathcal{E}^{i}}\frac{s_{i,j}\cdot E_{i,j}(h^{i})}{\sum_{E_{i,o}\in\mathcal{E}^{i}}s_{i,o}}]
+
+
+
+
+
+
+After the computation of all LL layers, the result xLx^{L} is projected to a token probability distribution, from which the output token is sampled.
+Same as the traditional LLMs (e.g., Llama-3 (Grattafiori et al., 2024)), the MoE inference follows an auto-regressive manner, which includes two stages: prefill and decoding.
+The prefill stage processes all tokens in the input sequence simultaneously to generate the first token.
+In the decoding stage, tokens are generated sequentially until the end-of-sequence token (i.e., <EOS>) is produced or the maximum output length is reached.
+
+
+
+
+
+
+
+# 2.2. Limitations of Existing Approaches
+
+
+
+Due to the prohibitive cost of GPUs, the target devices (e.g., edge server) often lack sufficient VRAM capacity to host the entire MoE model.
+To overcome this challenge, the most effective way is to offload the inactive experts to more capacious CPU RAM or SSD.
+Existing approaches on expert offloading can be broadly classified into two main approaches: cache-based and prefetch-based.
+For better clarity, we provide illustrative toy examples for the existing approaches and MoEpic in Figure 3.
+
+
+
+Cache-based Approaches. This category of approaches focuses on storing only a small portion of experts in VRAM, avoiding loading latency when the activated experts are already in cache.
+For example, Mixtral-offloading (Eliseev and Mazur, 2023) supposes that consecutive tokens are likely to activate the same experts, thus it adopts the Least Recently Used (LRU) policy to manage the expert cache.
+Differently, MoE-Infinity (Xue et al., 2024) caches the experts via the Least Frequently Used (LFU) policy.
+However, these cache-based approaches often suffer from poor hit rates due to the limited number of cached experts.
+To empirically validate such limitation, we conduct a set of preliminary experiments with the Qwen1.5-MoE model over the MMLU dataset (Hendrycks et al., 2020).
+The tests are performed on an edge server equipped with 8 NVIDIA RTX A6000 GPU and PCIe 4.0.
+A more detailed experimental setup can be found in §4.1.
+The results are presented in Figures 2(a)-2(b), where "RND" represents the method of randomly selecting cached experts.
+As shown in Figure 2(a), when caching 20 (out of 60) experts in each layer, the existing cache-based approaches achieve merely 33.02%∼\thicksim43.74% cache hit rates.
+Accordingly, by Figure 2(b), a cache hit rate of 40% will introduce about 3.81×\times higher inference latency compared to the GPU-Rich baseline (i.e., the entire model fits within VRAM).
+In a word, with the constraint of VRAM budget, the frequent cache misses will increase the inference latency significantly compared to the GPU Rich setting.
+
+
+
+Prefetch-based Approaches.
+These approaches try to overlap the loading latency with the computation time, to accelerate the MoE inference.
+Specifically, during the computation of the current layer, the system predicts and prefetches the experts needed for the next layer in advance.
+For instance, Pre-gated MoE (Hwang et al., 2024) modifies the model architecture by directly connecting each layer’s attention module to the router network of its subsequent layer, while fine-tuning the router network for accurate expert prediction.
+Moreover, building upon the observed high similarity of intermediate representations between consecutive layers, AdapMoE (Zhong et al., 2024) utilizes the intermediate result of the current layer to feed the router network of the next layer to predict the required experts.
+Figure 2(c) demonstrates that these methods maintain considerable prediction accuracy across different model layers.
+That is, among the 4 experts activated in each layer of Qwen1.5-MoE, an average of 2.07∼\thicksim3.39 experts will be prefetched correctly.
+With correct prefetching, this approach enables the expert loading latency to be overlapped with the computation of the previous layer’s MoE module and current layer’s attention module.
+However, the potential for transfer-computation overlap remains under-exploited in current implementations.
+Specifically, we measure the GPU computation time and the expert loading latency for processing each token across different GPU platforms (i.e., NVIDIA RTX 3090, A6000, and A100), where the results are shown in Figure 2(d).
+We find that merely 34.55%∼\thicksim49.45% of the loading latency can be hidden.
+By Figure 3(c), the uncovered time directly adds to end-to-end inference latency.
+Therefore, the imbalance between computation time and loading latency limites the efficiency of these approaches.
+
+
+
+
+
+
+
+# 2.3. Motivations for System Design
+
+
+
+In summary, the inference performance of existing approaches is primarily constrained by the poor cache hit rate and high expert loading latency.
+Motivated by these two issues, we present a novel MoE inference framework, named MoEpic, which vertically splits each expert into two segments: top for static caching and bottom for dynamic prefetching.
+This design enables caching more experts within limited VRAM budget, thereby improving the cache hit rates significantly.
+As depicted in Figure 3(d), the expert split mechanism also improves the loading efficiency.
+Specifically, with the top segments cached in VRAM, only the bottom segments need to be fetched for hot experts, reducing loading latency.
+Consequently, more experts can be prefetched within the per-layer computation time.
+Besides, the top segments of cache-hit experts can be processed first, even before their bottom segments are loaded into VRAM, thereby extending the computation window to overlap the loading latency of missing segments.
+However, to unleash the full potential of MoEpic, we need to address the following two key difficulties:
+
+
+
+VRAM Budget Allocation.
+In practical deployments, naively allocating VRAM budget evenly across all layers will lead to sub-optimal performance for MoEpic.
+To validate this phenomenon, we measured per-layer inference latency with the LFU policy, where each expert is divided in half, and the top segments of 30 experts are cached for each layer.
+It can be observed that several layers (e.g., layers 3, 10, and 21) exhibit significantly higher latency than others.
+We attribute this to the fact that two types of layers require more VRAM budget to efficiently hide the loading latency.
+1) According to our experiments, the cache hit rate varies by up to 5.55% across different layers (58.12% vs. 63.67%).
+For layers with relatively low cache hit rates, additional VRAM budget is necessary to cache more experts and maintain adequate hit rate.
+2) For layers with low expert prediction accuracy, e.g., those located at the head and tail of the model, as shown in Figure 2(c), increasing the budget enables larger top segments, which reduces the loading cost for the cached exeprts.
+Thus, the expanded VRAM budget allows more experts to be prefetched within the computation window, improving the likelihood of correct prefetching.
+However, assigning too much budget to these layers will severely impact the inference speed of other layers.
+Consequently, how to properly allocate the VRAM budget across different layers presents the first difficulty in MoEpic.
+
+
+
+
+
+
+(a) Per-layer Latency.
+
+
+(b) Impact of Varied Split Ratios.
+
+Figure 4. Motivations for MoEpic’s design. 
+
+
+Split Ratio Determination.
+According to our empirical observation, the performance of MoEpic critically depends on the expert split ratio θ\theta, which is defined as the proportion of the top segment relative to the full expert.
+It is worth noting that when θ=0\theta=0, MoEpic degenerates into the prefetch-based approach; when θ=1\theta=1, and expert prefetching is disabled, MoEpic degenerates into the cache-based approach.
+Here, we include these two cases as baseline approaches for comparison, denoted as Prefetch Only and Cache Only, respectively.
+As illustrated in Figure 4(b), under the same VRAM budget of 288 full-size experts (12 per layer), varying split ratios exhibit substantial differences in inference latency, with the optimal performance achieved at θ\theta=0.4.
+At this sweet spot, MoEpic can reduce the inference latency by about 37.97%∼\thicksim48.67% compared to baselines, providing preliminary evidence for the effectiveness of the expert split mechanism.
+The results also underscore the necessity to optimize the expert split ratio.
+Nevertheless, identifying the optimal split ratio remains non-trivial, as it requires jointly considering the target device’s computation speed, PCIe bandwidth, and per-layer VRAM budget.
+An overly small ratio may result in prolonged bottom segment loading latency, which cannot be effectively masked by computation time.
+Conversely, an excessively large ratio will restrict the number of cacheable experts and consequently reduce the cache hit rate.
+Thus, the second difficulty for MoEpic is how to determine the optimial expert split ratio for each layer.
+
+
+
+
+
+
+
+
+
+# 3. System Design
+
+
+
+In this section, we first present the system overview of MoEpic, followed by the descriptions of its three key components.
+We begin with the speculative experts prefetcher.
+Then, a new priority-based metric is introduced for better cache management.
+Finally, we formulate the problem for optimizing the cache configuration, and design an efficient divide-and-conquer algorithm based on fixed-point iteration to solve the optimization problem.
+
+
+
+
+
+# 3.1. System Overview
+
+
+
+We provide a system overview of MoEpic with a toy example in Figure 5.
+During the inference of each layer, MoEpic employs a Speculative Prefetcher (detailed in §3.2) to proactively load the bottom segments (or full-size experts) for the next layer into VRAM’s buffer.
+The prefetching executes concurrently with the GPU computation, so that the expert loading latency can be hidden.
+If the cache hit and the prefetching is correct, the cached top segment and the buffered bottom segment are concatenated to perform the MoE module computation.
+Otherwise, MoEpic loads the missing segments of the activated experts while concurrently processing available segments in VRAM.
+Additionally, Cache Controller analyzes the expert’s activation pattern in each layer and optimizes the cache management and configuration.
+Specifically, it consists of two key components.
+Firstly, Cache Manager (detailed in §3.3) computes a priority score for each expert according to both its activation frequency and activation interval, guiding the cache selection and replacement.
+This strategy combines the advantages of LFU and LRU, improving the cache hit rate under the given cache size.
+Secondly, Cache Configurator (detailed in §3.4) considers the hardware specifications (i.e., computation speed, PCIe bandwidth) of target device, as well as the current performance metrics (i.e., cache hit rate, expert prediction accuracy) to jointly determine the VRAM budgets and split ratios for different layers.
+When the device is idle, MoEpic adjusts the expert cache in VRAM based on the updated cache configuration for better performance.
+For instance, as shown in Figure 5, layer 1 has a cache size of 2 and a split ratio of 0.5, whereas layer LL has a cache size of 3 and a split ratio of 0.4.
+For layer 2, E2,2E_{2,2} is the expert with the highest cache priority.
+
+
+
+Figure 5. System overview of MoEpic.
+
+
+
+
+
+
+# 3.2. Speculative Prefetcher
+
+
+
+With the advantages in training performance (e.g., gradient stability, convergence rate), residual connection (He et al., 2016) has become a fundamental architecture in modern LLMs.
+Due to the nature of residual structure, the intermediate activation (i.e., attention module’s output hih^{i}) between two successive layers often exhibits remarkable similarity (Zhong et al., 2024).
+To empirically validate this phenomenon, we measure the cosine similarity between hih^{i} and hi+1h^{i+1} with two MoE models, where a similarity value of 1 indicates identical representations.
+As shown in Figure 6, both these two models demonstrate similar intermediate activation across adjacent layers.
+It reveals that the intermediate activation of each layer can be speculatively approximated as that of its previous layer.
+Thus, during the forward pass of each layer ii, MoEpic feeds the intermediate activation hih^{i} to the next layer’s router network Ri+1R^{i+1}, for predicting the score of each expert jj in layer i+1i+1:
+
+
+
+
+(3)
+
+si+1,jp​r​e​d=softmax​[Ri+1​(hi)]j,i∈[L−1],j∈[N]s_{i+1,j}^{pred}=\text{softmax}[R^{i+1}(h^{i})]_{j},\quad i\in[L-1],j\in[N]
+
+
+
+
+Upon obtaining the results from the router network at each layer ii, MoEpic terminates the prefetch operation and checks whether all activated experts have been fully loaded into VRAM.
+To mitigate the GPU idle time, MoEpic then simultaneously performs two operations: 1) initiates loading the missing experts and/or bottom segments (if have) from RAM, while 2) processes experts and/or top segments that are already residing in VRAM, overlapping GPU computation and experts loading.
+After fully loading all activated experts at layer ii, MoEpic prefetches the experts for the next layer i+1i+1 to the VRAM buffer.
+Specifically, the experts are prefetched one by one in descending order of their predicted scores.
+Notably, since the first layer lacks previous results, we follow AdapMoE (Zhong et al., 2024) to use the last layer’s intermediate activation of previous token for expert prediction.
+For each target expert, MoEpic prefetches only the bottom segment if its top segment is cached; otherwise, the full expert is required to be prefetched.
+As shown in Figure 3(d), the prefetch operation for layer i+1i+1 is parallel with the computation of layer ii’s MoE module and layer i+1i+1’s attention module.
+However, there exists a potential issue for this speculative prefetch method.
+By Figure 6, the intermediate activation shows relatively low similarity across the initial layers, leading to poor expert prediction accuracy, which is also validated in Figure 2(c).
+As a result, the initial layers may need more VRAM than other layers, allowing caching more experts and/or adopting larger split ratios.
+Thus, more experts can be prefetched within the computation window, mitigating the incidence of expert misses significantly.
+These analysis motivates our design in §3.4.
+
+
+
+
+
+
+(a) Qwen1.5-MoE.
+
+
+(b) Mixtral-8x7B.
+
+Figure 6. Layer-wise cosine similarity of two models.
+
+
+
+
+
+
+# 3.3. Priority-based Cache Manager
+
+
+
+Building upon prior findings (Eliseev and Mazur, 2023; Zhuang et al., 2024), the expert activation patterns demonstrate two fundamental properties in most layers.
+(1) Long-tail distribution: some "hot" experts are much more frequently activated than others (Zhuang et al., 2024).
+(2) Temporal locality: consecutive tokens often show a preference for activating the same expert (Eliseev and Mazur, 2023).
+It is evident that the LFU policy is well-suited for capturing the long-tail distribution, whereas the LRU policy excels at handling the temporal locality.
+However, neither LRU nor LFU adequately considers both properties simultaneously, leading to sub-optimal cache hit rates.
+To address this issue, we introduce a new metric, named cache priority, to enable better cache management.
+
+
+
+Specifically, MoEpic records two key indicators for every expert Ei,jE_{i,j} at layer ii during inference.
+The first is activation frequency μi,j\mu_{i,j}, which is defined as the accumulated activation count of the expert.
+The second is activation interval νi,j\nu_{i,j}, tracking how many consecutive tokens have not activate this expert at present.
+Based on these two indicators, each expert Ei,jE_{i,j}’s cache priority ℙi,j\mathbb{P}_{i,j} can be computed as:
+
+
+
+
+(4)
+
+ℙi,j=μi,j⋅ρνi,j/ω\mathbb{P}_{i,j}=\mu_{i,j}\cdot\rho^{\nu_{i,j}/\omega}
+
+
+
+
+where ω\omega is the size of observation window.
+ρ∈(0,1)\rho\in(0,1) is a hyper-parameter that controls the importance of μi,j\mu_{i,j} and νi,j\nu_{i,j}.
+In our experiments, ω\omega and ρ\rho are separately set to 128 and 0.25 by default.
+Once the cache miss, MoEpic evicts the lowest-priority expert from VRAM, and replaces it with the newly loaded expert.
+We name this priority-based policy as LCP (Least Cache Priority).
+Clearly, LCP models both the long-tail distribution and temporal locality properties inherent in the expert activation patterns, effectively combining the benefits of both the LRU and LFU policies.
+
+
+
+We conducted a set of preliminary experiments to validate the performance of LCP, with the results presented in Table 1.
+It can be found that LCP can effectively improve the cache hit rate.
+For instance, when caching 30 experts per layer, LCP achieves 12.52%, 1.53% and 5.83% higher hit rate compared to RND, LRU and LFU, respectively.
+Despite LCP yields improvements compared to the baselines, the cache hit rate remains fundamentally constrained by the cache size, which motivates MoEpic’s design in scaling the number of cacheable experts under the limited VRAM budget.
+
+
+
+Table 1. Comparison of cache hit rates across different policies with the Qwen1.5-MoE model and the MMLU dataset.
+
+
+Policy
+Number of Cached Experts Per Layer
+
+
+10
+20
+30
+40
+50
+
+
+RND
+16.41%
+33.02%
+49.69%
+67.41%
+83.15%
+
+
+LFU
+24.36%
+43.74%
+60.68%
+75.84%
+89.34%
+
+
+LRU
+19.11%
+38.88%
+56.38%
+73.16%
+88.97%
+
+
+LCP
+25.56%
+45.36%
+62.21%
+77.12%
+90.08%
+
+
+
+
+
+
+
+
+
+# 3.4. Cache Configurator
+
+
+
+
+
+# 3.4.1. Problem Formulation
+
+
+
+We consider a MoE model 𝐌\mathbf{M} consists of LL layers, each with NN experts, where only KK (≪N\ll N) experts are sparsely activated per token.
+Given the target device 𝐃\mathbf{D}, we denote its PCIe bandwidth and VRAM capacity as BB and VV, respectively.
+Let UU be the total model size, with UnU_{n} indicating the size of all non-expert parameters.
+Hence, the size of each expert can be expressed as Ue=U−UnL​NU_{e}=\frac{U-U_{n}}{LN}, and the time for loading an expert is given by Tl​o​a​de=Ue/BT_{load}^{e}=U_{e}/B.
+We can profile each module’s execution time of model 𝐌\mathbf{M} over device 𝐃\mathbf{D}, including that of attention module Tc​o​m​pa​t​tT_{comp}^{att}, MoE module Tc​o​m​pm​o​eT_{comp}^{moe}, and head layer Tc​o​m​ph​e​a​dT_{comp}^{head}.
+We omit the computation time of router network, as it constitutes a negligible fraction of the overall inference latency.
+Besides, Tw​i​n​diT_{wind}^{i} is defined as the available time window for prefetching experts in layer ii.
+For the first layer, the prefetching window involves the time for processing the previous token in the head layer and the time for the attention module in the first layer, i.e., Tw​i​n​d1=Tc​o​m​ph​e​a​d+Tc​o​m​pa​t​tT_{wind}^{1}=T_{comp}^{head}+T_{comp}^{att}.
+During each prefetching window Tw​i​n​diT_{wind}^{i}, MoEpic proactively prefetches experts for layer ii by descending order of their predicted scores.
+
+
+
+Let ViV_{i} and CiC_{i} represent the allocated VRAM budget and the cache size (i.e., number of cached experts) in layer ii, respectively.
+The expert split ratio is then computed as θi=Vi/Ci\theta_{i}=V_{i}/C_{i}.
+Given the cache size CiC_{i} and prefetching window Tw​i​n​diT_{wind}^{i} of each layer ii, we assume that after the process of layer ii’s router network, αi\alpha_{i} activated experts are fully loaded into VRAM, βi\beta_{i} activated experts have only their top segments cached in VRAM, and γi\gamma_{i} activated experts remain completely offloaded in RAM.
+The values of αi\alpha_{i}, βi\beta_{i}, and γi\gamma_{i} are critically dependent on both the cache hit rate and the expert prediction accuracy of layer ii.
+As previously introduced, once obtaining the routing result, MoEpic starts to process the already-loaded activated experts while simultaneously fetching the missed experts.
+Let Tc​o​m​pe​x​p=Tc​o​m​pm​o​e/KT_{comp}^{exp}=T_{comp}^{moe}/K represents the time for processing one expert.
+Consequently, we can formulate the expert computation time for hiding the missed expert loading latency as follows:
+
+
+
+
+(5)
+
+Th​i​d​ei=(αi+βi​θi)⋅Tc​o​m​pe​x​p,i∈[L]T_{hide}^{i}=(\alpha_{i}+\beta_{i}\theta_{i})\cdot T_{comp}^{exp},\quad i\in[L]
+
+
+
+
+
+
+We denote the latency for fetching an expert from RAM to VRAM as Tl​o​a​de​x​pT_{load}^{exp}.
+Then, the latency for loading the missed experts and/or segments in layer ii is given by Tm​i​s​si=[βi​(1−θi)+γi]⋅Tl​o​a​de​x​pT_{miss}^{i}=[\beta_{i}(1-\theta_{i})+\gamma_{i}]\cdot T_{load}^{exp}.
+Finally, the expert loading latency that can not be overlapped by the GPU computation is formulated as:
+
+
+
+
+(6)
+
+𝒯i=max⁡{0,Tm​i​s​si−Th​i​d​ei},i∈[L]\mathcal{T}^{i}=\max\{0,T_{miss}^{i}-T_{hide}^{i}\},\quad i\in[L]
+
+
+
+
+
+
+At this point, we can derive the expected value of each layer ii’s prefetching window Tw​i​n​diT_{wind}^{i} (i>1i>1):
+
+
+
+
+(7)
+
+Tw​i​n​di=(Tc​o​m​pm​o​e−min⁡{Th​i​d​ei−1,Tm​i​s​si−1})+Tc​o​m​pa​t​t,2≤i≤LT_{wind}^{i}=(T_{comp}^{moe}-\min\{T_{hide}^{i-1},T_{miss}^{i-1}\})+T_{comp}^{att},\quad 2\leq i\leq L
+
+
+
+
+
+
+To improve the response speed of the MoE inference with expert offloading, the optimization problem in MoEpic aims to minimize the non-overlapped expert loading latency by determining the optimal VRAM budgets and expert split ratios across different layers:
+
+
+
+
+
+min⁡∑i=1LVi,θi​(i∈[L])⁡𝒯i\min_{V_{i},\theta_{i}(i\in[L])}\sum_{i=1}^{L}\mathcal{T}^{i}
+
+
+
+
+
+
+
+(8)
+
+s.t.{Un+∑i=1LVi+Ub≤Vαi+βi+γi=K,∀i∈[L]Vi>0,θi∈(0,1],∀i∈[L]s.t.\begin{cases}U_{n}+\sum_{i=1}^{L}V_{i}+U_{b}\leq V&\\
+\alpha_{i}+\beta_{i}+\gamma_{i}=K,&\forall i\in[L]\\
+V_{i}>0,\theta_{i}\in(0,1],&\forall i\in[L]\end{cases}
+
+
+
+
+where the first inequality meets the VRAM constraint, and UbU_{b} indicates the buffer size.
+The second set of inequalities indicates that the activated experts in each layer can only be in three statuses: fully loaded, only the top segment loaded, or completely unloaded.
+The third sets of inequalities specify the feasible ranges for the optimization variables ViV_{i} and θi\theta_{i} (i∈[L]i\in[L]), respectively.
+
+
+
+
+
+
+
+# 3.4.2. Algorithm Design
+
+
+
+However, since obtaining the precise values of αi\alpha_{i}, βi\beta_{i}, and γi\gamma_{i} for each layer ii is quite difficult in practice, it is infeasible to directly solve this optimization problem.
+To tackle this issue, we design a divide-and-conquer algorithm based on fixed-point iteration to optimize the cache configuration of MoEpic.
+
+
+
+To begin with, we decompose the complex and intractable optimization problem in Eq. (8) and focus on a more manageable sub-problem.
+Specifically, given the VRAM budget ViV_{i} and the prefetching window Tw​i​n​diT_{wind}^{i} for a specific layer ii, we aim to determine the optimal expert split ratio θi\theta_{i} that minimizes the exposed loading latency 𝒯i\mathcal{T}^{i}.
+To solve this sub-problem, MoEpic records the (predicted) experts scores for each token at every layer, and derives the following three probabilities for layer ii after the inference of qq tokens:
+
+
+1) 
+
+Cache Hit Rate 𝐇i​(Ci)\mathbf{H}_{i}(C_{i}) is defined as the number of times the activated experts hit the cache with a cache size of CiC_{i} (∈[N]\in[N]), divided by the total number of activated experts (i.e., q⋅Kq\cdot K).
+
+
+2) 
+
+Expert Prediction Accuracy 𝐏i​(y)\mathbf{P}_{i}(y) is defined as the activation frequency of the expert with yy-th highest predicted score (y∈[N]y\in[N]), divided by the total number of processed tokens (i.e., qq).
+
+
+3) 
+
+Prediction Cache Hit Rate 𝐏𝐇i​(y,Ci)\mathbf{PH}_{i}(y,C_{i}) is defined as the number of times the expert with yy-th highest predicted score hits the cache with a cache size of CiC_{i}, divided by the total number of processed tokens.
+
+
+
+
+
+Then, we relax the discrete count of activated experts into a continuous optimization variable.
+Concretely, we assume that after the prefetch operation with window size Tw​i​n​diT_{wind}^{i}, mim_{i} (∈[0,K]\in[0,K]) activated experts are already loaded in VRAM.
+At this point, the goal of minimizing exposed loading latency 𝒯i\mathcal{T}^{i} is equivalent to maximizing mim_{i}.
+Given a cache size of CiC_{i}, the amount of cached activated experts is Ac​a​c​h​ei​(θi,Ci)=K⋅𝐇i​(Ci)⋅θiA_{cache}^{i}(\theta_{i},C_{i})=K\cdot\mathbf{H}_{i}(C_{i})\cdot\theta_{i}.
+Consequently, considering the prefetch operation for the yy-th predicted expert (i.e., expert with yy-th highest predicted score), its expected execution time Tp​r​e​fi​(a,Ci)T_{pref}^{i}(a,C_{i}) can be computed as follows:
+
+
+
+
+(9)
+
+Tp​r​e​fi​(y,Ci)=[1−𝐏𝐇𝐢​(y,Ci)⋅θi]⋅Tl​o​a​de​x​pT_{pref}^{i}(y,C_{i})=[1-\mathbf{PH_{i}}(y,C_{i})\cdot\theta_{i}]\cdot T_{load}^{exp}
+
+
+
+
+
+
+Moreover, we can quantify the expected loading amount of activated experts Ap​r​e​fi​(y,Ci)A_{pref}^{i}(y,C_{i}) under this prefetch operation:
+
+
+
+
+
+
+(10)
+
+Ap​r​e​fi​(y,Ci)=[1−𝐏𝐇𝐢​(y,Ci)⋅θi]⋅𝐏i​(y,Ci)A_{pref}^{i}(y,C_{i})=[1-\mathbf{PH_{i}}(y,C_{i})\cdot\theta_{i}]\cdot\mathbf{P}_{i}(y,C_{i})
+
+
+
+
+
+
+Suppose that at most YY expert prefetch operations can be completed within the window Tw​i​n​diT_{wind}^{i}.
+Here, the formulation for the sub-problem optimization is given as the following Eq. (11), which can be easily solved by searching the optimal cache size Ci∗C_{i}^{*}.
+
+
+
+
+
+maxCi∈[N]⁡mi=Ac​a​c​h​ei​(θi,Ci)+∑y=1YAp​r​e​fi​(y,Ci)\max_{C_{i}\in[N]}m_{i}=A_{cache}^{i}(\theta_{i},C_{i})+\sum_{y=1}^{Y}A_{pref}^{i}(y,C_{i})
+
+
+
+
+
+
+
+(11)
+
+s.t.{θi=Vi/Ci∑y=1YTp​r​e​fi​(y,Ci)≤Tw​i​n​dis.t.\begin{cases}\theta_{i}=V_{i}/C_{i}\\
+\sum_{y=1}^{Y}T_{pref}^{i}(y,C_{i})\leq T_{wind}^{i}\end{cases}
+
+
+
+
+
+
+Algorithm 1 Cache Configuration Algorithm
+
+
+Input: Latency metrics Tc​o​m​pa​t​tT_{comp}^{att}, Tc​o​m​pm​o​eT_{comp}^{moe}, Tc​o​m​ph​e​a​dT_{comp}^{head}, and Tl​o​a​de​x​pT_{load}^{exp}, VRAM budget for caching experts VeV_{e} (=V−Un−Ub=V-U_{n}-U_{b}), cache update frequency τ\tau, allocation granularity ζ\zeta
+
+
+
+                1
+              Set qq to 0   # the number of processed tokens 
+
+
+                2
+              Set ℙi,j\mathbb{P}_{i,j} to 0  # cache priority (i∈[L],j∈[N]i\in[L],j\in[N])  
+
+
+                3
+              Set 𝐇i​(Ci)\mathbf{H}_{i}(C_{i}), 𝐏i​(a)\mathbf{P}_{i}(a) and 𝐏𝐇i​(a,Ci)\mathbf{PH}_{i}(a,C_{i}) to 0  # a,Ci∈[N]a,C_{i}\in[N] 
+
+
+                4
+              Set ViV_{i} to Ve/LV_{e}/L, and θi\theta_{i} to 0.5  # uniform allocation 
+
+
+                5
+              while True do
+
+   
+                6
+              Process a token, and set q←q+1q\leftarrow q+1 
+
+   
+                7
+              Update ℙi,j\mathbb{P}_{i,j}, 𝐇i​(Ci)\mathbf{H}_{i}(C_{i}), 𝐏i​(a)\mathbf{P}_{i}(a) and 𝐏𝐇i​(a,Ci)\mathbf{PH}_{i}(a,C_{i}) 
+
+   
+                8
+              if (qmodτ==0q\mod\tau==0) and (device is idle) then
+
+      
+                9
+              {Vi}i∈[L],{θi∗}i∈[L]←\{V_{i}\}_{i\in[L]},\{\theta_{i}^{*}\}_{i\in[L]}\!\leftarrow\! VramAllocation (Ve,ζV_{e},\zeta) 
+
+      
+                10
+              Update the expert cache for each layer 
+
+
+
+                11
+              Function VramAllocation (Ve,ζV_{e},\zeta): 
+
+
+                12
+              while True do
+
+   
+                13
+              {𝒯1i}i∈[L],{θi∗}i∈[L]←\{\mathcal{T}_{1}^{i}\}_{i\in[L]},\{\theta_{i}^{*}\}_{i\in[L]}\leftarrow ExpertSplit ({Vi}i∈[L]\{V_{i}\}_{i\in[L]}) 
+
+   
+                14
+              {𝒯2i}i∈[L],¯←\{\mathcal{T}_{2}^{i}\}_{i\in[L]},\underline{\hskip 7.11317pt}\leftarrow ExpertSplit ({Vi+ζ​Ve}i∈[L]\{V_{i}+\zeta V_{e}\}_{i\in[L]}) 
+
+   
+                15
+              {𝒯3i}i∈[L],¯←\{\mathcal{T}_{3}^{i}\}_{i\in[L]},\underline{\hskip 7.11317pt}\leftarrow ExpertSplit ({Vi−ζ​Ve}i∈[L]\{V_{i}-\zeta V_{e}\}_{i\in[L]}) 
+
+   
+                16
+              i​1←arg⁡maxi∈[L]⁡(𝒯1i−𝒯2i)i1\leftarrow\arg\max_{i\in[L]}(\mathcal{T}_{1}^{i}-\mathcal{T}_{2}^{i}) 
+
+   
+                17
+              i​2←arg⁡mini∈[L],i≠i​1⁡(𝒯3i−𝒯1i)i2\leftarrow\arg\min_{i\in[L],i\neq i1}(\mathcal{T}_{3}^{i}-\mathcal{T}_{1}^{i}) 
+
+   
+                18
+              Set Vi​1←Vi​1+ζ​VeV_{i1}\leftarrow V_{i1}+\zeta V_{e}, Vi​2←Vi​2−ζ​VeV_{i2}\leftarrow V_{i2}-\zeta V_{e} 
+
+   
+                19
+              {𝒯4i}i∈[L],¯←\{\mathcal{T}_{4}^{i}\}_{i\in[L]},\underline{\hskip 7.11317pt}\leftarrow ExpertSplit ({Vi}i∈[L]\{V_{i}\}_{i\in[L]}) 
+
+   
+                20
+              if ∑i=1L(𝒯4i−𝒯1i)≥0\sum_{i=1}^{L}(\mathcal{T}_{4}^{i}-\mathcal{T}_{1}^{i})\geq 0 then
+
+      
+                21
+              Roll back the opeartion of Line 1 
+
+      
+                22
+              Return {Vi}i∈[L]\{V_{i}\}_{i\in[L]}, {θi∗}i∈[L]\{\theta_{i}^{*}\}_{i\in[L]} 
+
+
+                23
+              Function ExpertSplit ({Vi}i∈[L]\{V_{i}\}_{i\in[L]}): 
+
+
+                24
+              Compute Tw​i​n​d1←Tc​o​m​ph​e​a​d+Tc​o​m​pa​t​tT_{wind}^{1}\leftarrow T_{comp}^{head}+T_{comp}^{att} 
+
+
+                25
+              for each layer i∈[L]i\in[L] do
+
+   
+                26
+              Solve the sub-problem in Eq. (11) to obtain θi∗\theta_{i}^{*} 
+
+   
+                27
+              Calculate 𝒯i\mathcal{T}^{i} and Tw​i​n​di+1T_{wind}^{i+1} by Eqs. (5)-(7) 
+
+
+                28
+              Return {𝒯i}i∈[L]\{\mathcal{T}^{i}\}_{i\in[L]}, {θi∗}i∈[L]\{\theta_{i}^{*}\}_{i\in[L]} 
+
+
+
+
+
+
+
+Based on this sub-problem, we then design a fixed-point iterative algorithm to allocate VRAM budget across different layers, which is formally described in Algorithm 1.
+At the beginning, the developer inputs latency metrics and VRAM budget into the algorithm and pre-defines two hyper-parameters, including cache update frequency τ\tau, and allocation granularity ζ\zeta.
+Prior to inference, MoEpic initializes the system variables as 0 (Lines 1-1), including tokens counter qq, each expert Ei,jE_{i,j}’s cache priority ℙi,j\mathbb{P}_{i,j}, as well as statistical probabilities 𝐇i​(Ci)\mathbf{H}_{i}(C_{i}), 𝐏i​(a)\mathbf{P}_{i}(a) and 𝐏𝐇i​(a,Ci)\mathbf{PH}_{i}(a,C_{i}) (∀i∈[N],∀j,a,Ci∈[N]\forall i\in[N],\forall j,a,C_{i}\in[N]).
+These variables are updated during each inference pass (Lines 1-1).
+Initially, MoEpic adopts a uniform VRAM allocation strategy and an expert split ratio of 0.5 (Line 1), with the cached experts selected randomly.
+Every τ\tau processed tokens, MoEpic executes the cache configuration algorithm using the latest state variables (Lines 1-1).
+It is worth noting that the cache update will be performed only when the device is idle, ensuring that ongoing inference is not affected by the algorithm execution.
+After obtaining the algorithm output (i.e., VRAM budget ViV_{i} and split ratio θi\theta_{i} for each layer ii), MoEpic proceeds to configure the expert cache.
+Specifically, for each layer ii, MoEpic ranks all NN experts by their cache priorities, and vertically splits the top-CiC_{i} experts, where Ci=Vi/θiC_{i}=V_{i}/\theta_{i}.
+The top segments of these experts are then cached in VRAM, while their bottom segments, along with all other experts, are offloaded to the CPU RAM.
+
+
+
+Next, we present a detailed description of our optimization algorithm.
+The algorithm proceeds in an iterative manner (Lines 1-1), and is built on a fundamental subroutine (Lines 1-1), which accepts the per-layer VRAM budget as the input.
+Concretely, given the constant prefetch window Tw​i​n​d1T_{wind}^{1} (Line 1) of the first layer, the subroutine sequentially solves the sub-problem for each layer to determine its optimal expert split ratio θi∗\theta_{i}^{*} (Lines 1-1).
+After the determination of each layer ii, the prefetch window Tw​i​n​di+1T_{wind}^{i+1} can be derived to support the sub-problem solving for the next layer.
+At the same time, we can also obtain the exposed loading latency 𝒯i\mathcal{T}^{i} of each layer ii as byproducts (Line 1).
+Notably, for the calculation of Eqs. (5)-(7), the terms (αi+βi​θi)(\alpha_{i}+\beta_{i}\theta_{i}) and βi​(1−θi)+γi\beta_{i}(1-\theta_{i})+\gamma_{i} are approximated by mim_{i} and (K−mi)(K-m_{i}), respectively.
+In each iteration, MoEpic first invokes the subroutine with the current VRAM allocation {Vi}i∈[L]\{V_{i}\}_{i\in[L]}, to derive the optimal expert split ratios {θi∗}i∈[L]\{\theta_{i}^{*}\}_{i\in[L]} and the exposed loading latency {𝒯1i}i∈[L]\{\mathcal{T}_{1}^{i}\}_{i\in[L]} for each layer ii (Line 1).
+Subsequently, MoEpic adjusts the VRAM budget of each layer by adding and subtracting a fixed amount ζ​Ve\zeta V_{e}, respectively, and calls the subroutines in both cases to derive the per-layer exposed loading latency {𝒯2i}i∈[L]\{\mathcal{T}_{2}^{i}\}_{i\in[L]} and {𝒯3i}i∈[L]\{\mathcal{T}_{3}^{i}\}_{i\in[L]} (Lines 1-1).
+The allocation granularity ζ\zeta lies in the range (0,1)(0,1), which is set to 0.01 by default in our experiments.
+At this stage, we can use the difference (𝒯1i−𝒯2i)(\mathcal{T}_{1}^{i}-\mathcal{T}_{2}^{i}) to estimate the profit of increasing budget for layer ii, in terms of reduced exposed loading latency.
+Similarly, (𝒯3i−𝒯1i)(\mathcal{T}_{3}^{i}-\mathcal{T}_{1}^{i}) estimates the increase in exposed loading (i.e., the cost) of reducing budget for layer ii.
+Consequently, the layer with the highest profit and the layer with the smallest cost can be derived (Lines 1-1), denoted as i​1i1 and i​2i2, respectively.
+MoEpic then adjusts the VRAM allocation by transferring a budget of ζ​Ve\zeta V_{e} from layer i​2i2 to layer i​1i1 (Line 1).
+Next, MoEpic calls the subroutine again to compute the exposed loading latency {𝒯4i}i∈[L]\{\mathcal{T}_{4}^{i}\}_{i\in[L]} after the budget adjustment.
+Finally, MoEpic checks whether the total profits is positive.
+If so, the algorithm continues to the next iteration.
+Otherwise, the algorithm reverts the adjustment of this iteration and returns the current solution (Lines 1-1).
+
+
+
+
+
+
+
+
+
+
+
+# 4. Performance Evaluation
+
+
+
+
+
+# 4.1. Experimental Setup
+
+
+
+Implementation.
+To evaluate the performance of MoEpic, we utilize Python to implement a customized MoE inference system with expert offloading over an AMAX deep learning workstation, which is equipped with an Intel(R) Xeon(R) Platinum 8358P CPU, 8 NVIDIA RTX A6000 GPUs (48GB), and 512 GB RAM (Liu et al., 2023).
+The data transmission from CPU to GPU is supported by PCIe 4.0x16, with a theoretical maximum bandwidth of 32GB/s.
+On the software side, our system is built upon the PyTorch deep learning framework and the HuggingFace Transformers library, which serve as the backbone for model construction and inference execution.
+To support the specific requirements of MoEpic, we modified the source code and integrates additional functionalities such as cache item management, cache table lookup, and dynamic expert loading into the model implementation.
+
+
+
+Models and Datasets.
+As summarized in Table 2, we adopt two widely used open-source MoE models, i.e., Qwen1.5-MoE (Yang et al., 2024b) and Mixtral-8x7B (Jiang et al., 2024), in our experiments, where Qwen1.5-MoE is evaluated using 16-bit precision.
+To accommodate limited computation power and PCIe bandwidth, we adopt quantized versions of Mixtral-8x7B using the half-quadratic quantization (HQQ) technique (Badri and Shaji, [n. d.]), where the attention modules are quantized to 4-bit and the MoE modules to 2-bit.
+Additionally, we use the Massive Multitask Language Understanding (MMLU) (Hendrycks et al., 2020) dataset as a comprehensive benchmark to test MoEpic ’s generality across various tasks.
+MMLU contains 15,908 questions in total, covering 57 distinct tasks spanning diverse domains, such as STEM, humanities, social sciences, and so on.
+
+
+
+Table 2. The MoE models employed in our experiments. #E, #P and #L denote the number of experts per layer, parameters, and layers, respectively. Act. represents the number of parameters or experts activated for each token.
+
+
+Model
+#E
+#P
+#L
+
+
+Total
+Act.
+Total
+Act.
+
+
+Qwen1.5-MoE (Yang et al., 2024b)
+60
+4
+14.3B
+2.7B
+24
+
+
+Mixtral-8x7B (Jiang et al., 2024)
+8
+2
+46.7B
+12.9B
+32
+
+
+
+
+
+Baselines.
+To demonstrate the advantages of MoEpic, we compare its performance against four advanced baselines:
+
+
+• 
+
+Pre-gated MoE (Hwang et al., 2024) trains a pre-gated function for each layer to predict the activated experts for the next layer.
+The predicted experts are prefetched into VRAM in parallel with the computation of the current layer.
+
+
+• 
+
+Mixtral-offloading (Eliseev and Mazur, 2023) prefetches the experts for the next layer based on the intermediate value of the current layer, and caches a subset of experts via the LRU policy with a fixed cache size for all layers.
+
+
+• 
+
+AdapMoE (Zhong et al., 2024) follows Mixtral-offloading to integrate LRU caching and speculative prefetching.
+Furthermore, it employs an algorithm based on dynamic programming to adjust the cache size for each layer.
+
+
+• 
+
+MoE-Infinity (Xue et al., 2024) improves expert prediction accuracy compared to AdapMoE and Pre-gated MoE by tracing the group activation pattern across multiple layers.
+It employs the LFU policy for expert caching.
+
+
+
+
+
+Metric.
+We quantify the inference performance of MoEpic and baselines using the following metrics.
+
+
+• 
+
+Time-To-First-Token (TTFT) measures the delay between the arrival of a request and the generation of the first token during the prefill phase, reflecting the system’s initial responsiveness.
+
+
+• 
+
+Time-Per-Output-Token (TPOT) quantifies the interval between the generation of consecutive output tokens during the decode phase, which impacts the overall perceived fluidity of the response.
+
+
+• 
+
+VRAM footprint is defined as the peak GPU memory usage during the model inference, indicating the memory efficiency and the GPU resource requirements of different approaches.
+
+
+
+
+
+Experimental Parameters.
+For the LCP cache policy, we set the observation window ω\omega and the balance control parameter ρ\rho as 128 and 0.25 by default, respectively.
+For the cache configuration algorithm, the allocation granularity ζ\zeta is set to 0.01.
+The algorithm is executed to update the cache configuration every time the system processes 5,000 tokens (i.e., τ\tau = 5,000).
+Moreover, to ensure fair comparison, we set a unified VRAM budget VeV_{e} for MoEpic and all baselines.
+By default, VeV_{e} is set to the size of 240 complete experts for Qwen1.5-MoE, and 96 complete experts for Mixtral-8x7B.
+The buffer size UeU_{e} is set to the size of KK complete experts for both two models.
+To ensure statistical significance and mitigate potential outliers, all experimental results reported in this paper represent the average of five independent runs.
+
+
+
+
+
+
+
+
+(a) TTFT with Qwen1.5-MoE.
+
+
+(b) TTFT with Mixtral-8x7B.
+
+
+(c) TPOT with Qwen1.5-MoE.
+
+
+(d) TPOT with Mixtral-8x7B.
+
+Figure 7. Inference latency (i.e., TTFT and TPOT) of different approaches with Qwen1.5-MoE and Mixtral-8x7B.
+
+
+
+
+
+
+# 4.2. Inference Latency
+
+
+
+In this section, we test the inference latency (i.e., TTFT and TPOT) of MoEpic and baselines under different total VRAM budgets, where the results are shown in Figure 7.
+It can be observed that the inference latency of all other methods, except for Pre-gated MoE, decreases as the VRAM budget increases.
+Moreover, MoEpic consistently achieves the fastest inference speed in both the prefill and decode stages across different settings.
+Since there are no cached experts in Pre-gated MoE, variations in the VRAM budget do not affect its performance.
+Accordingly, without expert caching, Pre-gated MoE also shows the highest TTFT and TPOT among all methods.
+For the prefill stage, experts in each layer are often fully activated, leading to prolonged loading latency.
+The Mixtral-offloading, AdapMoE, and MoE-Infinity baselines achieve comparable performance and surpass Pre-gated MoE, since they only incur the cost of loading non-cached experts.
+MoEpic further overlaps the computation of cached experts with the loading of missing experts, achieving the best performance among all approaches.
+For instance, by Figure 7(a), the TTFT of MoEpic is 1.43s with a VRAM budget of 480 experts in Qwen1.5-MoE, while that of Pre-gated MoE, Mixtral-offloading, AdapMoE, and MoE-Infinity is 2.58s, 1.77s, 1.78s, and 1.73s, respectively.
+In other words, MoEpic can accelerate the prefill speed by about 1.21×\times∼\thicksim1.80×\times compared to the baselines.
+
+
+
+As for the decode stage, Mixtral-offloading demonstrates inferior performance compared to AdapMoE, primarily because it fails to account for the varying cache size requirements across different layers.
+By leveraging group activation pattern to improve the prediction accuracy, MoE-Infinity sometimes outperforms AdapMoE.
+For MoEpic, the expert splitting mechanism enables better transfer-computation overlap, and the LCP caching policy achieves significantly higher cache hit rates than LRU and LFU.
+Thus, MoEpic also achieves the lowest TPOT among all baselines.
+For example, given a VRAM budget of 160 experts in Mixtral-8x7B, MoEpic presents a TPOT of 85ms, while Pre-gated MoE, Mixtral-offloading, AdapMoE, and MoE-Infinity separately show a TPOT of 248ms, 162ms, 144ms, and 136ms.
+As a result, MoEpic can mitigate the TPOT by about 37.51%∼\thicksim65.73% compared to the baselines.
+These results demonstrate the advantages of MoEpic in inference latency under the setting of expert offloading.
+
+
+
+
+
+
+
+
+(a) Footprint with Qwen1.5-MoE.
+
+
+(b) Footprint with Mixtral-8x7B.
+
+Figure 8. VRAM footprint of different approaches under various target TPOT with Qwen1.5-MoE and Mixtral-8x7B.
+
+
+
+
+
+
+# 4.3. Memory Efficiency
+
+
+
+In this section, we establish a common target TPOT across all approaches and evaluate the minimum VRAM footprint each approach requires to meet this target.
+In particular, the target TPOT (ms) values are configured as 80, 100, 120, 140, 160 for Qwen1.5-MoE, and 100, 130, 160, 190, 220 for Mixtral-8x7B.
+Notably, since Pre-gated MoE does not leverage available VRAM to cache experts, it fails to achieve the target TPOT and is therefore excluded from this set of experiments.
+The results are illustrated in Figure 9, indicating that MoEpic delivers the highest memory efficiency among the four approaches.
+For instance, by Figure 8(a), MoEpic requires a VRAM footprint of 5.98GB to reach the target TTFT of 140ms with Qwen1.5-MoE, while Mixtral-offloading, AdapMoE, and MoE-Infinity need 11.97GB, 10.42GB, and 9.56GB, respectively.
+That is, for the same target TPOT, MoEpic can reduce the VRAM footprint by up to 37.45%∼\thicksim50.04% compared to the three baselines.
+Notably, when the entire Qwen1.5-MoE model is fully placed in VRAM (i.e., GPU-Rich setting), the TPOT is 57ms with a VRAM footprint of 26.67GB.
+By contrast, MoEpic requires only 12.38 GB of VRAM to achieve the target TPOT of 60 ms.
+Thus, MoEpic can save about half of the GPU cost for the MoE inference while incurring only a 5.26% increase in inference latency.
+
+
+
+Table 3. Ablation study of MoEpic with Mixtral-8x7B.
+
+
+Approaches
+Prefill
+Decode
+
+
+TTFT
+Speed↓\downarrow
+TPOT
+Speed↓\downarrow
+
+
+MoEpic
+720ms
+–
+132ms
+–
+
+
+w/o SP
+753ms
+1.05×\times
+174ms
+1.32×\times
+
+
+w/o LCP
+782ms
+1.09×\times
+157ms
+1.19×\times
+
+
+w/o CCA
+864ms
+1.21×\times
+193ms
+1.46×\times
+
+
+
+
+
+
+
+
+
+# 4.4. Ablation Study
+
+
+
+The MoEpic system comprises three key components: speculative prefetcher (SP), priority-based cache policy (LCP), and cache configuration algorithm (CCA).
+In this section, we conduct a set of experiments with Mixtral-8x7B to evaluate the effect of these three components.
+For MoEpic without SP, experts are prefetched randomly within each layer’s computation window.
+In MoEpic without LCP, the LCP policy is replaced by a random (RND) cache replacement strategy.
+As for MoEpic without CCA, we employ uniform VRAM budget allocation across layers and fix the expert split ratio at 0.5.
+The results in Table 3 demonstrate that CCA plays a crucial role in both the prefill and decode stages.
+Specifically, without CCA, the TTFT and TPOT of MoEpic are prolonged by about 1.21×\times and 1.46×\times, respectively.
+Although the SP and LCP components positively contribute to MoEpic ’s performance, their impact is relatively modest, especially in the prefill stage.
+These results indicate the necessity and importance of all three components, while CCA plays the most
+critical role in MoEpic ’s performance.
+
+
+
+
+
+
+
+# 4.5. Sensitivity Analysis
+
+
+
+In this section, we conduct a set of experiments using Mixtral-8x7B to measure MoEpic’s performance (i.e., TPOT) with different settings of hyper-parameters, including the balance control parameter ρ\rho and observation window ω\omega of the LCP policy, as well as the allocation granularity ζ\zeta of the cache configuration algorithm.
+Firstly, different settings of ρ\rho and ω\omega only affect the cache hit rate slightly, without causing significant impacts to the inference latency.
+Specifically, we present the TPOT of MoEpic under five different settings of ρ\rho and ω\omega in Figure 9(a), where the latency variation is at most 8ms.
+Secondly, a smaller granularity ζ\zeta allows for more flexible VRAM budget allocation, enabling better inference performance.
+As shown in Figure 9(b), MoEpic’s TPOT increases as the granularity ζ\zeta becomes larger.
+For instance, when ζ\zeta is set to 0.05, the latency is prolonged by about 12.12% compared to the default setting (i.e., ζ=0.01\zeta=0.01).
+However, while a finer allocation granularity may yield performance gains, it also increases the number of iterations required for the algorithm to converge.
+Overall, the performance of MoEpic exhibits minimal sensitivity to variations in hyper-parameter settings, underscoring its strong robustness.
+
+
+
+
+
+
+(a) Impact of ρ\rho and ω\omega.
+
+
+(b) Impact of ζ\zeta,
+
+Figure 9. Impact of different hyper-parameters settings on MoEpic’s performance with Mixtral-7x8B.
+
+
+
+
+
+
+
+
+# 5. Related Work
+
+
+
+Although LLMs demonstrate remarkable capabilities, their substantial VRAM requirements for inference lead to prohibitively high hardware costs for local deployment, particularly for MoE-based LLMs.
+In recent years, many studies have focused on reducing the VRAM footprint of MoE inference, which can be broadly divided into the following two classes:
+
+
+
+Expert Compression.
+These approaches aim to slim the expert parameters using techniques such as pruning (Li et al., [n. d.]; Lu et al., 2024), quantization (Huang et al., 2024), distillation (Yuan et al., 2023), and tensor decomposition (Yang et al., 2024a).
+For instance, NAEE (Lu et al., 2024) adopts a proxy dataset to evaluate the contribution of each expert to the inference accuracy, and eliminates the low-contribution experts from each model layer.
+MC-SMoE (Li et al., [n. d.]) divides experts into different groups and merges each group to one expert, thus reducing the number of experts.
+MC-MoE (Huang et al., 2024) estimates each expert’s importance based on its activation frequency and router weight, which then guide the assignment of quantization precision for each expert.
+CMoE (Yuan et al., 2023) leverages knowledge distillation to transfer knowledge from the MoE model to a smaller dense model, thereby reducing the overall parameter count.
+MoE-I2I^{2} (Yang et al., 2024a) decomposes each dense expert matrix into two small low-rank tensors, and adaptively adjusts the ranks for different experts according to their importance.
+However, while these methods can reduce the model size, compression inevitably incurs accuracy degradation.
+Moreover, the compressed models typically require additional retraining, introducing extra computational cost.
+Therefore, these approaches offer a relatively low cost-effectiveness.
+
+
+
+Expert Offloading.
+This line of research addresses the VRAM constraints by offloading experts to CPU RAM or SSD and retrieving them on demand during inference.
+Nevertheless, the expert loading latency significantly degrades the inference speed.
+To tackle this issue, Pre-gated MoE (Hwang et al., 2024) proposes an expert prefetching architecture, overlapping the GPU computation and expert loading.
+As an optimization, some approaches (Ren et al., 2024; Song et al., 2024; He et al., 2024; Du et al., 2024) train lightweight proxy networks to predict the required experts (e.g., MLP, LSTM), thereby improving the prefetching accuracy.
+MoE-Infinity (Xue et al., 2024) tracks the request-level usage frequency of each expert and prefetches high-priority experts.
+Mixtral-offloading (Eliseev and Mazur, 2023) employs a hybrid approach combining speculative expert prefetching with LRU-based expert caching.
+Building upon this, AdapMoE (Zhong et al., 2024) introduces adaptive cache allocation across different model layers, enabling better performance.
+HOBBIT (Tang et al., 2024) quantifies the experts at various bit widths, and prioritizes high-precision experts for caching.
+However, these approaches still suffer from the poor cache hit rate and high expert loading latency, which bottleneck the inference speed.
+Therefore, we propose MoEpic to overcome the challenges of expert offloading.
+
+
+
+
+
+
+
+# 6. Conclusion
+
+
+
+In this paper, we present an efficient MoE inference system, called MoEpic, under the expert offloading setting.
+MoEpic integrates the expert caching and speculative prefetching techniques.
+It utilizes a novel expert split mechanism to simultaneously improve the number of cachable experts and reduce the prefetching latency, under the constraint VRAM budget and PCIe bandwidth.
+Besides, to fully unleash the potential of MoEpic, we further design a divide-and-conquer algorithm to determine proper VRAM budgets and expert split ratios for different layers.
+Besides, a new cache policy, named LCP, is introduced in this paper to enable better cache management.
+Finally, we conduct extensive experiments to evaluate the performance of MoEpic, and the results show that MoEpic achieves significant improvements in inference latency and memory efficiency compared to the baselines.
+
+
+
+
+
+
+
+# References
+
+
+
+      
+Ainslie et al. (2023)
+
+Joshua Ainslie, James Lee-Thorp, Michiel De Jong, Yury Zemlyanskiy, Federico Lebrón, and Sumit Sanghai. 2023.
+
+
+Gqa: Training generalized multi-query transformer models from multi-head checkpoints.
+
+
+arXiv preprint arXiv:2305.13245 (2023).
+
+
+
+
+      
+Badri and Shaji ([n. d.])
+
+Hicham Badri and Appu Shaji. [n. d.].
+
+
+Half-quadratic quantization of large machine learning models, November 2023.
+
+
+URL https://mobiusml. github. io/hqq_blog ([n. d.]).
+
+
+
+
+      
+Cai et al. (2024)
+
+Weilin Cai, Juyong Jiang, Fan Wang, Jing Tang, Sunghun Kim, and Jiayi Huang. 2024.
+
+
+A survey on mixture of experts.
+
+
+arXiv preprint arXiv:2407.06204 (2024).
+
+
+
+
+      
+Du et al. (2024)
+
+Zhixu Du, Shiyu Li, Yuhao Wu, Xiangyu Jiang, Jingwei Sun, Qilin Zheng, Yongkai Wu, Ang Li, Hai Li, and Yiran Chen. 2024.
+
+
+Sida: Sparsity-inspired data-aware serving for efficient and scalable large mixture-of-experts models.
+
+
+Proceedings of Machine Learning and Systems 6 (2024), 224–238.
+
+
+
+
+      
+Eliseev and Mazur (2023)
+
+Artyom Eliseev and Denis Mazur. 2023.
+
+
+Fast inference of mixture-of-experts language models with offloading.
+
+
+arXiv preprint arXiv:2312.17238 (2023).
+
+
+
+
+      
+Grattafiori et al. (2024)
+
+Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Alex Vaughan, et al. 2024.
+
+
+The llama 3 herd of models.
+
+
+arXiv e-prints (2024), arXiv–2407.
+
+
+
+
+      
+Guo et al. (2025)
+
+Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Ruoyu Zhang, Runxin Xu, Qihao Zhu, Shirong Ma, Peiyi Wang, Xiao Bi, et al. 2025.
+
+
+Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning.
+
+
+arXiv preprint arXiv:2501.12948 (2025).
+
+
+
+
+      
+He et al. (2016)
+
+Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. 2016.
+
+
+Deep residual learning for image recognition. In Proceedings of the IEEE conference on computer vision and pattern recognition. 770–778.
+
+
+
+
+      
+He et al. (2024)
+
+Xin He, Shunkang Zhang, Yuxin Wang, Haiyan Yin, Zihao Zeng, Shaohuai Shi, Zhenheng Tang, Xiaowen Chu, Ivor Tsang, and Ong Yew Soon. 2024.
+
+
+Expertflow: Optimized expert activation and token allocation for efficient mixture-of-experts inference.
+
+
+arXiv preprint arXiv:2410.17954 (2024).
+
+
+
+
+      
+Hendrycks et al. (2020)
+
+Dan Hendrycks, Collin Burns, Steven Basart, Andy Zou, Mantas Mazeika, Dawn Song, and Jacob Steinhardt. 2020.
+
+
+Measuring massive multitask language understanding.
+
+
+arXiv preprint arXiv:2009.03300 (2020).
+
+
+
+
+      
+Huang et al. (2024)
+
+Wei Huang, Yue Liao, Jianhui Liu, Ruifei He, Haoru Tan, Shiming Zhang, Hongsheng Li, Si Liu, and Xiaojuan Qi. 2024.
+
+
+Mixture Compressor for Mixture-of-Experts LLMs Gains More.
+
+
+arXiv preprint arXiv:2410.06270 (2024).
+
+
+
+
+      
+Hwang et al. (2024)
+
+Ranggi Hwang, Jianyu Wei, Shijie Cao, Changho Hwang, Xiaohu Tang, Ting Cao, and Mao Yang. 2024.
+
+
+Pre-gated moe: An algorithm-system co-design for fast and scalable mixture-of-expert inference. In 2024 ACM/IEEE 51st Annual International Symposium on Computer Architecture (ISCA). IEEE, 1018–1031.
+
+
+
+
+      
+Jiang et al. (2024)
+
+Albert Q Jiang, Alexandre Sablayrolles, Antoine Roux, Arthur Mensch, Blanche Savary, Chris Bamford, Devendra Singh Chaplot, Diego de las Casas, Emma Bou Hanna, Florian Bressand, et al. 2024.
+
+
+Mixtral of experts.
+
+
+arXiv preprint arXiv:2401.04088 (2024).
+
+
+
+
+      
+Kaplan et al. (2020)
+
+Jared Kaplan, Sam McCandlish, Tom Henighan, Tom B Brown, Benjamin Chess, Rewon Child, Scott Gray, Alec Radford, Jeffrey Wu, and Dario Amodei. 2020.
+
+
+Scaling laws for neural language models.
+
+
+arXiv preprint arXiv:2001.08361 (2020).
+
+
+
+
+      
+Li et al. ([n. d.])
+
+Pingzhi Li, Zhenyu Zhang, Prateek Yadav, Yi-Lin Sung, Yu Cheng, Mohit Bansal, and Tianlong Chen. [n. d.].
+
+
+Merge, Then Compress: Demystify Efficient SMoE with Hints from Its Routing Policy. In The Twelfth International Conference on Learning Representations.
+
+
+
+
+      
+Liu et al. (2023)
+
+Jianchun Liu, Jiaming Yan, Hongli Xu, Zhiyuan Wang, Jinyang Huang, and Yang Xu. 2023.
+
+
+Finch: Enhancing federated learning with hierarchical neural architecture search.
+
+
+IEEE Transactions on Mobile Computing (2023).
+
+
+
+
+      
+Lu et al. (2024)
+
+Xudong Lu, Qi Liu, Yuhui Xu, Aojun Zhou, Siyuan Huang, Bo Zhang, Junchi Yan, and Hongsheng Li. 2024.
+
+
+Not All Experts are Equal: Efficient Expert Pruning and Skipping for Mixture-of-Experts Large Language Models. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers). 6159–6172.
+
+
+
+
+      
+Ren et al. (2024)
+
+Jie Ren, Dong Xu, Shuangyan Yang, Jiacheng Zhao, Zhicheng Li, Christian Navasca, Chenxi Wang, Harry Xu, and Dong Li. 2024.
+
+
+Enabling large dynamic neural network training with learning-based memory management. In 2024 IEEE International Symposium on High-Performance Computer Architecture (HPCA). IEEE, 788–802.
+
+
+
+
+      
+Song et al. (2024)
+
+Xiaoniu Song, Zihang Zhong, Rong Chen, and Haibo Chen. 2024.
+
+
+Promoe: Fast moe-based llm serving using proactive caching.
+
+
+arXiv preprint arXiv:2410.22134 (2024).
+
+
+
+
+      
+Tang et al. (2024)
+
+Peng Tang, Jiacheng Liu, Xiaofeng Hou, Yifei Pu, Jing Wang, Pheng-Ann Heng, Chao Li, and Minyi Guo. 2024.
+
+
+Hobbit: A mixed precision expert offloading system for fast moe inference.
+
+
+arXiv preprint arXiv:2411.01433 (2024).
+
+
+
+
+      
+Vaswani et al. (2017)
+
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Łukasz Kaiser, and Illia Polosukhin. 2017.
+
+
+Attention is all you need.
+
+
+Advances in neural information processing systems 30 (2017).
+
+
+
+
+      
+Wu et al. (2024)
+
+Duo Wu, Xianda Wang, Yaqi Qiao, Zhi Wang, Junchen Jiang, Shuguang Cui, and Fangxin Wang. 2024.
+
+
+Netllm: Adapting large language models for networking. In Proceedings of the ACM SIGCOMM 2024 Conference. 661–678.
+
+
+
+
+      
+Xiong et al. (2020)
+
+Ruibin Xiong, Yunchang Yang, Di He, Kai Zheng, Shuxin Zheng, Chen Xing, Huishuai Zhang, Yanyan Lan, Liwei Wang, and Tieyan Liu. 2020.
+
+
+On layer normalization in the transformer architecture. In International conference on machine learning. PMLR, 10524–10533.
+
+
+
+
+      
+Xue et al. (2024)
+
+Leyang Xue, Yao Fu, Zhan Lu, Luo Mai, and Mahesh Marina. 2024.
+
+
+MoE-Infinity: Offloading-Efficient MoE Model Serving.
+
+
+arXiv preprint arXiv:2401.14361 (2024).
+
+
+
+
+      
+Yang et al. (2025)
+
+An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, Chujie Zheng, Dayiheng Liu, Fan Zhou, Fei Huang, Feng Hu, Hao Ge, Haoran Wei, Huan Lin, Jialong Tang, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jing Zhou, Jingren Zhou, Junyang Lin, Kai Dang, Keqin Bao, Kexin Yang, Le Yu, Lianghao Deng, Mei Li, Mingfeng
+Xue, Mingze Li, Pei Zhang, Peng Wang, Qin Zhu, Rui Men, Ruize Gao, Shixuan Liu, Shuang Luo, Tianhao Li, Tianyi Tang, Wenbiao Yin, Xingzhang Ren, Xinyu Wang, Xinyu Zhang, Xuancheng Ren, Yang Fan, Yang Su, Yichang Zhang, Yinger Zhang, Yu Wan, Yuqiong Liu, Zekun Wang, Zeyu Cui, Zhenru Zhang, Zhipeng Zhou, and Zihan Qiu. 2025.
+
+
+Qwen3 Technical Report.
+
+
+arXiv preprint arXiv:2505.09388 (2025).
+
+
+
+
+      
+Yang et al. (2024b)
+
+An Yang, Baosong Yang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Zhou, Chengpeng Li, Chengyuan Li, Dayiheng Liu, Fei Huang, Guanting Dong, Haoran Wei, Huan Lin, Jialong Tang, Jialin Wang, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Ma, Jin Xu, Jingren Zhou, Jinze Bai, Jinzheng He, Junyang Lin, Kai Dang, Keming Lu, Keqin Chen, Kexin Yang, Mei Li, Mingfeng Xue, Na Ni, Pei Zhang, Peng Wang, Ru
+Peng, Rui Men, Ruize Gao, Runji Lin, Shijie Wang, Shuai Bai, Sinan Tan, Tianhang Zhu, Tianhao Li, Tianyu Liu, Wenbin Ge, Xiaodong Deng, Xiaohuan Zhou, Xingzhang Ren, Xinyu Zhang, Xipin Wei, Xuancheng Ren, Yang Fan, Yang Yao, Yichang Zhang, Yu Wan, Yunfei Chu, Yuqiong Liu, Zeyu Cui, Zhenru Zhang, and Zhihao Fan. 2024b.
+
+
+Qwen2 Technical Report.
+
+
+arXiv preprint arXiv:2407.10671 (2024).
+
+
+
+
+      
+Yang et al. (2024a)
+
+Cheng Yang, Yang Sui, Jinqi Xiao, Lingyi Huang, Yu Gong, Yuanlin Duan, Wenqi Jia, Miao Yin, Yu Cheng, and Bo Yuan. 2024a.
+
+
+MoE-I2: Compressing Mixture of Experts Models through Inter-Expert Pruning and Intra-Expert Low-Rank Decomposition. In Findings of the Association for Computational Linguistics: EMNLP 2024. 10456–10466.
+
+
+
+
+      
+Yuan et al. (2021)
+
+Li Yuan, Yunpeng Chen, Tao Wang, Weihao Yu, Yujun Shi, Zi-Hang Jiang, Francis EH Tay, Jiashi Feng, and Shuicheng Yan. 2021.
+
+
+Tokens-to-token vit: Training vision transformers from scratch on imagenet. In Proceedings of the IEEE/CVF international conference on computer vision. 558–567.
+
+
+
+
+      
+Yuan et al. (2023)
+
+Yuping Yuan, Zhao You, Shulin Feng, Dan Su, Yanchun Liang, Xiaohu Shi, and Dong Yu. 2023.
+
+
+Compressed MoE ASR Model Based on Knowledge Distillation and Quantization. In Proc. Interspeech 2023. 3337–3341.
+
+
+
+
+      
+Zhong et al. (2024)
+
+Shuzhang Zhong, Ling Liang, Yuan Wang, Runsheng Wang, Ru Huang, and Meng Li. 2024.
+
+
+Adapmoe: Adaptive sensitivity-based expert gating and management for efficient moe inference. In Proceedings of the 43rd IEEE/ACM International Conference on Computer-Aided Design. 1–9.
+
+
+
+
+      
+Zhuang et al. (2024)
+
+Yan Zhuang, Zhenzhe Zheng, Fan Wu, and Guihai Chen. 2024.
+
+
+LiteMoE: Customizing On-device LLM Serving via Proxy Submodel Tuning. In Proceedings of the 22nd ACM Conference on Embedded Networked Sensor Systems. 521–534.
+
+
+
+
+    
+
+
+
+
+
+
+
+  
+    Experimental support, please
+    view the build logs
+    for errors. Generated by
+    
+      
+        L
+        A
+        T
+        E
+      
+      xml
+      
+    .
+  
+  
+    
+
+# Instructions for reporting errors
+
+    We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+
+    
+      Click the "Report Issue" (
+            
+          ) button, located in the page header.
+    
+    Tip: You can select the relevant text first, to include it in your report.
+
+    Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+
+    Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+  
+
+  
+    
+      
+        We gratefully acknowledge support from
+        our major funders,
+        member institutions, ,
+        and all contributors.
+      
+      
+        About
+        ·
+        Help
+        ·
+        Contact
+        ·
+        Subscribe
+        ·
+        Copyright
+        ·
+        Privacy
+        ·
+        Accessibility
+        ·
+        Operational Status (opens in new tab)
+      
+    
+
+    
+      Major funding support from
+      
+        
+          
+        
+        
+          
+        
+        
+          
+        
+      
+    
+  
+
+  
+    
+      
+    
+  
+
+

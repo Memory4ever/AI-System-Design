@@ -1,0 +1,800 @@
+GTS: Inference-Time Scaling of Latent Reasoning with a Learnable Gaussian Thought Sampler
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Diagnostic Analysis of Heuristic Sampling
+2.1 Experimental Setup
+Models
+Sampling Protocol
+2.2 Measuring Sampling Quality
+Sampling Gain (SG)
+Sampling Gain Rate
+Exploration Magnitude
+2.3 Results
+3 Gaussian Thought Sampler
+3.1 Overview
+3.2 Conditional Latent Sampling
+Problem Setup
+Perturbation Variable
+Context-Conditioned Gaussian Policy
+3.3 Policy Learning
+Trajectory Policy
+Reward Design
+GRPO-Style Policy Optimization
+4 Experiments
+4.1 Experimental Setup
+Data
+Models
+GTS Architecture
+Training
+Baselines
+Evaluation
+4.2 Main Results
+Overall scaling behavior
+Comparison with baselines
+Effectiveness of GTS
+5 Analysis
+5.1 On Sampling Quality
+Failure modes of heuristic thought sampling
+Adaptive control via GTS
+5.2 On Sampling Behavior
+Answer-level diversity
+Step-wise signal-to-noise ratio
+5.3 Ablation on Reward Shaping
+6 Related Work
+6.1 ITS in Discrete Space
+6.2 Continuous Space Reasoning
+6.3 ITS in Continuous Space
+7 Conclusion
+References
+A Additional Details about GTS
+A.1 Reward Shaping
+Base Correctness Term
+Confidence Score
+Within-Group Normalized Shaping
+Design Rationale
+A.2 Implementation Details
+Sampler Architecture
+Perturbation Schedule Across Latent Steps
+Policy Optimization Details
+Training Configuration
+A.3 Design Choices for the Sampling Policy
+Diagonal Gaussian Policy
+Additive Perturbation Formulation
+Relation to Dropout-Based Bayesian Sampling
+B Additional Analysis
+B.1 Further Discussion on Main Results
+Model Scale and Latent Dimensionality
+Sampler Capacity Relative to Backbone Size
+On the Small- N N Behavior
+B.2 Further Discussion on Sampling Behavior
+COCONUT : Paired Latent-Step Dynamics
+CODI : Front-Loaded Deterministic Adjustment
+Adaptive Rather Than Prescriptive Control
+License: CC BY 4.0
+arXiv:2602.14077v1 [cs.CL] 15 Feb 2026
+GTS: Inference-Time Scaling of Latent Reasoning with a Learnable Gaussian Thought Sampler
+Minghan Wang
+Affiliation: Department of Data Science & AI, Monash University
+Email: minghan.wang@monash.edu
+Ye Bai
+Affiliation: School of Computing and Information Systems, University of Melbourne
+Email: trang.vu1@monash.edu
+Thuy-Trang Vu
+Affiliation: Department of Data Science & AI, Monash University
+Email: gholamreza.haffari@monash.edu
+Ehsan Shareghi
+Affiliation: Department of Computer Science, University College London
+Email: ye.bai2@student.unimelb.edu.au
+Gholamreza Haffari
+Affiliation: Department of Data Science & AI, Monash University
+Email: ehsan.shareghi@ucl.ac.uk
+Abstract
+Inference-time scaling (ITS) in latent reasoning models typically introduces stochasticity through heuristic perturbations, such as dropout or fixed Gaussian noise. While these methods increase trajectory diversity, their exploration behavior is not explicitly modeled and can be inefficient under finite sampling budgets. We observe that stronger perturbations do not necessarily translate into more effective candidate trajectories, as unguided noise may disrupt internal decision structure rather than steer it. To provide a more structured alternative, we model latent thought exploration as conditional sampling from learnable densities and instantiate this idea as a Gaussian Thought Sampler (GTS). GTS predicts context-dependent perturbation distributions over continuous reasoning states and is trained with GRPO-style policy optimization while keeping the backbone frozen. Experiments on GSM8K with two latent reasoning architectures show that GTS achieves more reliable inference-time scaling than heuristic baselines. These findings indicate that improving latent ITS requires structured and optimizable exploration mechanisms rather than simply amplifying stochasticity.
+1 Introduction
+Inference-time scaling (ITS) has emerged as a central mechanism for enhancing the reasoning performance of large language models (LLMs). By allocating additional test-time compute to generate and select among multiple reasoning trajectories, approaches such as self-consistency and best-of- N N sampling significantly improve accuracy without modifying model parameters ( Wang et al., 2023 ; Wang et al., 2024 ; Cobbe et al., 2021 ; Lightman et al., 2024 ) . In discrete, token-based LLMs, such scaling is naturally supported by explicit conditional distributions over next tokens. Sampling strategies such as temperature scaling or nucleus sampling operate directly on these distributions, implicitly trading off diversity and likelihood under a probabilistic framework.
+Recent advances in continuous latent reasoning introduce a different computational regime. These models perform multi-step reasoning directly in hidden state space, refining latent thought representations without generating intermediate textual tokens ( Hao et al., 2024 ; Shen et al., 2025 ; Sui et al., 2025 ; Zhu et al., 2025 ) . While this paradigm improves reasoning efficiency and expressivity, it also removes the explicit token-level probability distributions that enable principled sampling in discrete models. As a result, inference-time exploration in latent reasoning models typically relies on heuristic perturbations, such as dropout or injected Gaussian noise ( Wang et al., 2025 ; You et al., 2026 ) . These perturbations introduce stochasticity, but lack an explicit probabilistic interpretation over latent thoughts.
+This raises a fundamental question: What constitutes effective exploration in continuous reasoning space under a finite inference-time budget? Our analysis reveals that simply increasing perturbation magnitude does not reliably improve sampling quality. Heuristic perturbations often lack guidance toward decision-relevant regions and may diffuse exploration across latent representations rather than concentrating it in areas that meaningfully improve answer likelihood (as illustrated in Figure 1 ). As a result, they tend to fall into two recurring regimes: under-exploration , where perturbations are too weak to shift the model’s internal decision state, and over-exploration , where strong perturbations destabilize representations and degrade predictive structure. In both cases, exploration magnitude alone fails to guarantee improved inference-time scaling.
+In this work, we reformulate latent exploration as conditional sampling over continuous thought representations, aligning latent reasoning with the distributional perspective that underlies token-level inference-time scaling. Instead of injecting heuristic noise, we introduce an explicit conditional density over latent perturbations and treat reasoning trajectories as structured continuous actions. We instantiate this formulation as a Gaussian Thought Sampler (GTS), a lightweight module that predicts context-dependent Gaussian distributions over latent perturbations and is trained via policy optimization, while keeping the backbone reasoning model frozen. By making latent thoughts explicitly sampleable and optimizable, GTS provides a principled alternative to heuristic noise injection.
+We evaluate GTS on GSM8K using two latent reasoning architectures, COCONUT ( Hao et al., 2024 ) and CODI ( Shen et al., 2025 ) , in different scale. Across various sampling budgets, GTS consistently improves ITS compared to dropout-based sampling and standard Gaussian perturbations. Beyond empirical gains, our analysis shows that GTS avoids both under- and over-exploration regimes by adaptively modulating perturbations according to latent context, leading to more reliable decision improvements under finite budgets. Our contributions are as follows:
+•
+We identify a structural limitation of heuristic perturbation in latent ITS, showing that exploration magnitude alone does not guarantee sampling quality.
+•
+We introduce a conditional probabilistic formulation of latent thought exploration and instantiate it as a learnable Gaussian Thought Sampler.
+•
+We adapt GRPO-style policy optimization to operate over continuous latent actions, allowing reasoning trajectories to be optimized as structured continuous perturbations while keeping the backbone frozen.
+•
+We demonstrate consistent improvements in inference-time scaling across two latent reasoning architectures on GSM8K.
+2 Diagnostic Analysis of Heuristic Sampling
+ITS is commonly implemented by sampling multiple reasoning trajectories { τ 1 , … , τ N } \{\tau_{1},\dots,\tau_{N}\} under a fixed budget N N and selecting or aggregating their resulting answers ( Wang et al., 2023 ) . Scaling gains arise when exploration increases the probability that at least one trajectory improves the model’s internal decision state.
+When N N is finite, effectiveness depends not only on the amount of exploration but on its quality : whether sampled trajectories systematically move the model’s predictive belief toward the correct answer. In text-based models, exploration is naturally realized via probabilistic token sampling from explicit conditional distributions, with decoding strategies implicitly constraining exploration to high-likelihood regions.
+In contrast, latent reasoning models generate intermediate representations through deterministic transformations, making direct probabilistic sampling over reasoning steps unavailable. Existing approaches therefore introduce stochasticity via heuristic perturbations (e.g., dropout or injected noise). This raises a central question: Does heuristic perturbation provide effective exploration under finite budgets, or merely increase uncontrolled variance? To answer this, we isolate and evaluate sampling quality independently of end-task accuracy.
+2.1 Experimental Setup
+Models
+We evaluate a text-based reasoning model, i.e. GPT-2 ( Radford et al., 2019 ) fine-tuned on GSM8K-Aug ( Deng et al., 2024 ) , and a latent reasoning model, COCONUT , built on the same backbone. GPT-2 produces textual reasoning followed by the delimiter " ### “ before answer generation. COCONUT performs K = 6 K=6 latent reasoning steps, following prior implementation details ( Hao et al., 2024 ) .
+Sampling Protocol
+For each input x x in the GSM8k-test ( Cobbe et al., 2021 ) dataset, we generate N = 32 N=32 reasoning trajectories by applying sampling only to the reasoning stage. For each trajectory τ \tau , we evaluate the predictive probability of the first ground-truth answer token y 1 ⋆ y_{1}^{\star} using teacher forcing after appending the answer prefix. Since GSM8K answers are numeric, we focus on y 1 ⋆ y_{1}^{\star} to reduce multi-token noise while preserving decision information. GPT-2 uses token-level sampling (temperature 1.0 1.0 ) and dropout sampling ( p ∈ { 0.1 , 0.5 } p\in\{0.1,0.5\} ). COCONUT applies analogous dropout-based perturbations in latent space.
+2.2 Measuring Sampling Quality
+Let τ det \tau^{\mathrm{det}} denote the deterministic reasoning trajectory, and let p ⁡ ( y 1 ⋆ ∣ x , τ ) p(y_{1}^{\star}\mid x,\tau) be the predictive probability of the first correct answer token.
+Sampling Gain (SG)
+We define trajectory-level gain as the change in log-odds of the correct answer:
+Δ ⁡ ( τ ) \displaystyle\Delta(\tau)
+= s ⁡ ( τ ) − s ⁡ ( τ det ) , \displaystyle=s(\tau)-s(\tau^{\mathrm{det}}),
+(1)
+s ⁡ ( τ ) \displaystyle s(\tau)
+= log ⁡ p ⁡ ( y 1 ⋆ ∣ x , τ ) 1 − p ⁡ ( y 1 ⋆ ∣ x , τ ) \displaystyle=\log\frac{p(y_{1}^{\star}\mid x,\tau)}{1-p(y_{1}^{\star}\mid x,\tau)}
+(2)
+Positive Δ ⁡ ( τ ) \Delta(\tau) indicates improved decision confidence relative to the deterministic baseline. To reflect best-of- N N selection, we define
+SG ⁡ ( x ) = max k ≤ N ⁡ Δ ⁡ ( τ k ) , \mathrm{SG}(x)=\max_{k\leq N}\Delta(\tau_{k}),
+(3)
+and report the dataset-level mean SG.
+Sampling Gain Rate
+We additionally report the fraction of inputs with SG ⁡ ( x ) > 0.5 \mathrm{SG}(x)>0.5 , corresponding to a substantial increase in decision odds.
+Exploration Magnitude
+We measure perturbation strength via the Jensen-Shannon divergence (JS) between answer-token distributions:
+JS ( τ ) = JS ( p ( ⋅ ∣ x , τ ) ∥ p ( ⋅ ∣ x , τ det ) ) . \mathrm{JS}(\tau)=\mathrm{JS}\!\left(p(\cdot\mid x,\tau)\;\|\;p(\cdot\mid x,\tau^{\mathrm{det}})\right).
+(4)
+Mean JS reflects how strongly sampling alters the model’s answer distribution, independent of whether such changes are beneficial.
+2.3 Results
+Sampling
+SG ↑ \uparrow
+SG > > 0.5 ↑ \uparrow
+JS
+GPT-2
+Token (temp=1.0)
+9.94 \mathbf{9.94}
+0.62 \mathbf{0.62}
+0.29 0.29
+Dropout ( p = 0.1 p=0.1 )
+9.64 9.64
+0.58 0.58
+0.30 0.30
+Dropout ( p = 0.5 p=0.5 )
+3.89 3.89
+0.57 0.57
+0.67 0.67
+COCONUT
+Dropout ( p = 0.1 p=0.1 )
+1.09 \mathbf{1.09}
+0.61 \mathbf{0.61}
+0.05 0.05
+Dropout ( p = 0.5 p=0.5 )
+− 0.87 -0.87
+0.40 0.40
+0.28 0.28
+Table 1: Sampling quality under finite-budget ITS on GSM8K.
+Table 1 reveals a consistent pattern across both models. For GPT-2, token sampling achieves the highest SG and SG rate while inducing only moderate JS. This indicates that probabilistic token sampling improves decision confidence in a controlled manner under finite budgets.
+Increasing dropout strength produces a different effect. While mild dropout ( p = 0.1 p=0.1 ) can approximate token sampling, stronger dropout ( p = 0.5 p=0.5 ) substantially increases JS but sharply reduces SG. Larger perturbations therefore amplify variance without reliably improving decision quality.
+The effect is more pronounced in COCONUT . Mild latent dropout yields positive SG with minimal JS, whereas stronger dropout leads to negative SG despite increased divergence. Latent reasoning is thus highly sensitive to unstructured perturbations.
+Overall, higher exploration magnitude does not imply better sampling quality. When stochasticity is not aligned with the model’s predictive structure, increased diversity can degrade decision reliability. These findings motivate the need for structured, distribution-aware sampling mechanisms in latent reasoning space.
+Figure 1: Comparison of inference strategies in a conceptual likelihood space.
+Deterministic inference produces a single trajectory, resulting in limited exploration.
+Dropout-based sampling generates multiple trajectories with high diversity but substantial noise.
+In contrast, Gaussian Thought Sampling produces structured trajectories concentrated in high-likelihood regions around the ground truth.
+3 Gaussian Thought Sampler
+3.1 Overview
+We augment a frozen latent reasoning backbone with a learnable, context-conditioned sampling policy over hidden-state perturbations. Instead of injecting heuristic noise into deterministic latent reasoning, GTS models exploration as an explicit conditional density over continuous perturbations. This reformulates inference-time exploration as a probabilistic modeling problem and enables direct optimization of the sampling mechanism.
+3.2 Conditional Latent Sampling
+Problem Setup
+Given an input question x x , a latent reasoning model parameterized by θ \theta performs K K latent reasoning steps and then produces an answer distribution:
+p θ ( y ∣ x , 𝐡 1 : K ) p_{\theta}(y\mid x,\mathbf{h}_{1:K})
+(5)
+where 𝐡 k ∈ ℝ d \mathbf{h}_{k}\in\mathbb{R}^{d} denotes the backbone hidden state at step k k . Our goal is to introduce a learnable conditional distribution over latent trajectories while keeping θ \theta fixed.
+Perturbation Variable
+We introduce a continuous perturbation variable 𝐳 k ∈ ℝ d \mathbf{z}_{k}\in\mathbb{R}^{d} at each reasoning step and define:
+𝐡 ~ k = 𝐡 k det + 𝐳 k , \tilde{\mathbf{h}}_{k}=\mathbf{h}_{k}^{\mathrm{det}}+\mathbf{z}_{k},
+(6)
+where 𝐡 k det \mathbf{h}_{k}^{\mathrm{det}} is the deterministic hidden state. The perturbed state 𝐡 ~ k \tilde{\mathbf{h}}_{k} is fed back into the backbone for subsequent reasoning, yielding a sampled latent trajectory: τ = { 𝐡 ~ 1 , … , 𝐡 ~ K } \tau=\{\tilde{\mathbf{h}}_{1},\dots,\tilde{\mathbf{h}}_{K}\} .
+Context-Conditioned Gaussian Policy
+We parameterize a conditional Gaussian policy over perturbations:
+q ϕ ​ ( 𝐳 k ∣ 𝐜 k ) = 𝒩 ⁡ ( 𝝁 ϕ ​ ( 𝐜 k ) , diag ⁡ ( 𝝈 ϕ 2 ​ ( 𝐜 k ) ) ) , q_{\phi}(\mathbf{z}_{k}\mid\mathbf{c}_{k})=\mathcal{N}\!\big(\boldsymbol{\mu}_{\phi}(\mathbf{c}_{k}),\mathrm{diag}(\boldsymbol{\sigma}_{\phi}^{2}(\mathbf{c}_{k}))\big),
+(7)
+where 𝐜 k \mathbf{c}_{k} denotes the conditioning context at step k k (in practice, the backbone hidden state 𝐡 k det \mathbf{h}_{k}^{\mathrm{det}} ). Sampling follows the reparameterization:
+𝐳 k = 𝝁 ϕ ​ ( 𝐜 k ) + 𝝈 ϕ ​ ( 𝐜 k ) ⊙ ϵ k , ϵ k ∼ 𝒩 ⁡ ( 𝟎 , 𝐈 ) . \mathbf{z}_{k}=\boldsymbol{\mu}_{\phi}(\mathbf{c}_{k})+\boldsymbol{\sigma}_{\phi}(\mathbf{c}_{k})\odot\boldsymbol{\epsilon}_{k},\quad\boldsymbol{\epsilon}_{k}\sim\mathcal{N}(\mathbf{0},\mathbf{I}).
+(8)
+Because Equation 6 defines an affine transformation with unit Jacobian, the change of variables preserves density. Therefore, learning q ϕ ​ ( 𝐳 k ∣ 𝐜 k ) q_{\phi}(\mathbf{z}_{k}\mid\mathbf{c}_{k}) is equivalent to learning an explicit conditional density over perturbed thought representations 𝐡 ~ k \tilde{\mathbf{h}}_{k} . The backbone computation remains unchanged, GTS solely governs the exploration process.
+3.3 Policy Learning
+GTS defines an explicit conditional density over latent perturbation trajectories.
+A natural alternative would be likelihood-based training, e.g., ELBO-style variational objectives ( Kingma and Welling, 2022 ) .
+However, our goal is not to model a latent posterior, but to directly optimize inference-time exploration under task-level rewards.
+The quality of a perturbation trajectory is determined by ITS performance, which are non-differentiable with respect to the sampler parameters.
+We therefore treat latent perturbations as continuous actions and optimize the policy via reinforcement learning.
+Trajectory Policy
+For an input x x , a perturbation trajectory
+τ = { 𝐳 1 , … , 𝐳 K } \tau=\{\mathbf{z}_{1},\dots,\mathbf{z}_{K}\}
+defines a factorized Gaussian policy:
+log ⁡ q ϕ ​ ( τ ∣ x ) = ∑ k = 1 K log ⁡ q ϕ ​ ( 𝐳 k ∣ 𝐜 k ) . \log q_{\phi}(\tau\mid x)=\sum_{k=1}^{K}\log q_{\phi}(\mathbf{z}_{k}\mid\mathbf{c}_{k}).
+(9)
+For a diagonal Gaussian, the per-step log-density admits a closed-form expression:
+log ⁡ q ϕ ​ ( 𝐳 k ∣ 𝐜 k ) = \displaystyle\log q_{\phi}(\mathbf{z}_{k}\mid\mathbf{c}_{k})=
+(10)
+− 1 2 ∑ d = 1 D [ ( z k , d − μ k , d σ k , d ) 2 + 2 log σ k , d + log ( 2 π ) ] . \displaystyle-\frac{1}{2}\sum_{d=1}^{D}\Big[\big(\tfrac{z_{k,d}-\mu_{k,d}}{\sigma_{k,d}}\big)^{2}+2\log\sigma_{k,d}+\log(2\pi)\Big].
+This closed-form density is essential: it enables exact computation of policy likelihoods and density ratios, making policy-gradient optimization well-defined in continuous latent space.
+Reward Design
+For each input x x , we sample N N trajectories and decode answers { a ( i ) } i = 1 N \{a^{(i)}\}_{i=1}^{N} during rollout.
+Let y ⋆ y^{\star} denote the ground-truth answer.
+The reward for trajectory i i is defined as
+r ( i ) = r 0 ( 2 𝕀 [ a ( i ) = y ⋆ ] − 1 ) + α s ( i ) , r^{(i)}=r_{0}\big(2\,\mathbb{I}[a^{(i)}=y^{\star}]-1\big)+\alpha\,s^{(i)},
+(11)
+where the first term provides a symmetric correctness signal and
+s ( i ) s^{(i)} is a confidence-based shaping term derived from the normalized log-probability of the generated answer.
+The shaping term encourages high-confidence correct trajectories and discourages high-confidence incorrect ones, while remaining secondary to correctness. See Appendix A.1 for more details.
+GRPO-Style Policy Optimization
+To stabilize policy updates, we maintain a reference sampler
+q ϕ ref q_{\phi_{\mathrm{ref}}} as an exponential moving average of the current policy ( Schulman et al., 2017 ; Ouyang et al., 2022 ) .
+For trajectory τ ( i ) \tau^{(i)} , we compute the density ratio:
+ρ ( i ) = q ϕ ​ ( τ ( i ) ∣ x ) q ϕ ref ​ ( τ ( i ) ∣ x ) . \rho^{(i)}=\frac{q_{\phi}(\tau^{(i)}\mid x)}{q_{\phi_{\mathrm{ref}}}(\tau^{(i)}\mid x)}.
+(12)
+Following GRPO-style clipped optimization ( DeepSeek-AI et al., 2025 ) , the policy gradient objective is:
+ℒ PG = \displaystyle\mathcal{L}_{\mathrm{PG}}=
+(13)
+− 𝔼 ⁡ [ min ⁡ ( ρ ( i ) ​ A ( i ) , clip ⁡ ( ρ ( i ) , 1 − ϵ c , 1 + ϵ c ) ​ A ( i ) ) ] , \displaystyle-\mathbb{E}\Big[\min\big(\rho^{(i)}A^{(i)},\mathrm{clip}(\rho^{(i)},1-\epsilon_{c},1+\epsilon_{c})\,A^{(i)}\big)\Big],
+where A ( i ) A^{(i)} denotes the group-normalized advantage computed within each prompt. We further regularize the sampler via a KL penalty between the current and reference Gaussian policies:
+ℒ KL = β 𝔼 [ KL ( q ϕ ( 𝐳 k ∣ 𝐜 k ) ∥ q ϕ ref ( 𝐳 k ∣ 𝐜 k ) ) ] , \mathcal{L}_{\mathrm{KL}}=\beta\,\mathbb{E}\big[\mathrm{KL}\big(q_{\phi}(\mathbf{z}_{k}\mid\mathbf{c}_{k})\|q_{\phi_{\mathrm{ref}}}(\mathbf{z}_{k}\mid\mathbf{c}_{k})\big)\big],
+(14)
+which also admits a closed-form solution. The final objective is:
+ℒ GTS = ℒ PG + ℒ KL . \mathcal{L}_{\mathrm{GTS}}=\mathcal{L}_{\mathrm{PG}}+\mathcal{L}_{\mathrm{KL}}.
+(15)
+This formulation directly optimizes the inference-time exploration distribution in continuous latent space while leaving the base language model unchanged.
+4 Experiments
+4.1 Experimental Setup
+Data
+All experiments are conducted on GSM8K ( Cobbe et al., 2021 ) .
+We use the GSM8K-aug training corpus adopted in prior latent reasoning work ( Deng et al., 2024 ) .
+From the full augmented set (386k), we uniformly sample 20K training instances and train all samplers for one epoch.
+Evaluation is performed on the standard GSM8K test set (1319 samples).
+Models
+We evaluate GTS on two latent reasoning models: COCONUT ( Hao et al., 2024 ) and CODI ( Shen et al., 2025 ) .
+For COCONUT , we follow the architecture and protocol described in Hao et al. (2024) , using a GPT-2 backbone with K = 6 K=6 latent reasoning steps.
+For CODI , we use a LLaMA-3.2-1B ( Grattafiori et al., 2024 ) backbone with 6 latent reasoning steps and its recurrent filtering module. In all cases, backbone parameters are frozen and only the Gaussian sampler is trained.
+GTS Architecture
+The sampler consists of lightweight mean and log-standard-deviation heads parameterizing a diagonal Gaussian policy over latent perturbations.
+To avoid premature collapse to a deterministic policy, we enforce a minimum log-standard-deviation during training ( log ⁡ σ > − 2.0 \log\sigma>-2.0 ).
+Latent perturbations are injected only during recursive latent reasoning steps (from <start_latent> to <lat_5> ), ensuring that stochasticity only affects the reasoning dynamics rather than the final aggregation stage. During training, only sampler’s parameters are updated, the backbone is frozon.
+Additional implementation details are provided in Appendix A.2 .
+Training
+For each prompt, we sample N = 32 N=32 perturbation trajectories during rollout.
+Unless otherwise stated, training runs for 10K optimization steps with batch size set as 32 and a learning rate of 1 × 10 − 4 1\times 10^{-4} with linear warmup.
+Other hyperparameters follow standard GRPO settings and are kept fixed across models.
+Baselines
+We compare GTS against two stochastic inference baselines:
+•
+Dropout Sampling
+Dropout ( p ∈ { 0.1 , 0.5 } p\in\{0.1,0.5\} ) is enabled during latent reasoning steps while remaining disabled during prompt prefilling and answer generation.
+•
+Standard Gaussian Noise
+At each latent step, we add isotropic Gaussian noise
+ϵ ∼ 𝒩 ⁡ ( 𝟎 , 𝐈 ) \boldsymbol{\epsilon}\sim\mathcal{N}(\mathbf{0},\mathbf{I})
+to the hidden state without context conditioning or learned parameters.
+Evaluation
+We evaluate ITS performance by varying the sampling budget
+N ∈ { 1 , 2 , 4 , 8 , 16 , 32 , 64 , 128 } N\in\{1,2,4,8,16,32,64,128\} .
+When N = 1 N=1 , all methods reduce to deterministic inference.
+For N ≥ 2 N\geq 2 , stochasticity is applied exclusively to latent reasoning, and answers are decoded greedily to isolate the effect of thought sampling. Our primary metric is pass ​ @ ​ N \mathrm{pass@}N .
+4.2 Main Results
+Figure 2:
+ITS performance under different latent sampling strategies.
+Pass@N on COCONUT (left) and CODI (right) as a function of the number of sampled reasoning trajectories N N .
+All methods coincide at N = 1 N=1 , corresponding to deterministic latent reasoning.
+As N N increases, GTS achieves stronger scaling behavior than dropout-based sampling and standard Gaussian noise (StandardG), indicating more effective exploration of the latent reasoning space.
+Overall scaling behavior
+Figure 2 shows pass@N curves on COCONUT and CODI .
+As N N increases, all stochastic methods improve over deterministic inference, confirming that sampling latent thoughts enables effective inference-time scaling. However, gains are not strictly monotonic at very small budgets.
+Both GTS and standard Gaussian noise may slightly reduce performance at N = 2 N=2 , indicating that introducing perturbations can initially disrupt trajectory quality before additional samples compensate for this effect.
+Comparison with baselines
+Dropout with a mild rate ( p = 0.1 p=0.1 ) provides stable improvements on both models and scales smoothly with N N .
+In contrast, stronger dropout ( p = 0.5 p=0.5 ) substantially degrades performance, most prominently on COCONUT , where small-budget performance drops sharply and remains well below other methods, and to a lesser extent on CODI , where gains are consistently weaker than GTS.
+Standard Gaussian noise exhibits similarly unstable behavior at small N N .
+Effectiveness of GTS
+GTS achieves the strongest scaling at moderate-to-large budgets on both models.
+While it may incur a mild drop at small N N , this degradation is smaller than that of dropout (p=0.5) and standard Gaussian noise baselines.
+Besides, we observe larger relative improvements on COCONUT than on CODI .
+One possible factor is the difference in model scale and latent geometry, which may influence how strongly perturbations propagate through the backbone. Further discussion can be found in Appendix B.1 .
+Overall, these results demonstrate that learning a context-conditioned exploration distribution enables more effective ITS than heuristic perturbations.
+5 Analysis
+5.1 On Sampling Quality
+Sampling
+SG ↑ \uparrow
+SG > > 0.5 ↑ \uparrow
+JS
+COCONUT
+Dropout ( p = 0.1 p=0.1 )
+1.09 1.09
+0.61 0.61
+0.05 0.05
+Dropout ( p = 0.5 p=0.5 )
+− 0.87 -0.87
+0.40 0.40
+0.28 0.28
+StandardG
+0.34 0.34
+0.51 0.51
+0.20 0.20
+GTS
+1.84 \mathbf{1.84}
+0.82 \mathbf{0.82}
+0.11 0.11
+CODI
+Dropout ( p = 0.1 p=0.1 )
+0.53 0.53
+0.31 0.31
+0.01 0.01
+Dropout ( p = 0.5 p=0.5 )
+0.47 0.47
+0.39 0.39
+0.06 0.06
+StandardG
+0.11 0.11
+0.38 0.38
+0.15 0.15
+GTS
+1.15 \mathbf{1.15}
+0.70 \mathbf{0.70}
+0.10 0.10
+Table 2: Sampling quality analysis for latent reasoning models on GSM8K.
+We report SG, SG rate, and JS divergence. Higher is better for SG and SG rate.
+Figure 3:
+Average number of unique decoded answers per prompt. Left: COCONUT. Right: CODI.
+We revisit sampling quality using the diagnostic metrics introduced in Section 2 .
+Following the same protocol and dataset, we evaluate SG, SG rate, and JS on both COCONUT and CODI , together with StandardG as a Gaussian perturbation baseline consistent with the ITS setup in Section 4.1 .
+Failure modes of heuristic thought sampling
+Table 2 reveals two recurring regimes for heuristic perturbations:
+•
+Under-exploration: perturbations are too weak to shift the model’s decision belief, leading to low SG and SG rate, often accompanied by very small JS.
+•
+Over-exploration: perturbations are too strong and disrupt predictive structure, producing larger JS but limited or negative SG, together with reduced SG rate.
+These regimes appear across both models but with different sensitivities.
+For COCONUT , dropout at p = 0.1 p=0.1 remains near under-exploration, while p = 0.5 p=0.5 moves into over-exploration, sharply increasing JS and driving SG negative.
+StandardG exhibits a similar pattern.
+In CODI , both dropout settings stay closer to under-exploration, whereas StandardG again induces larger JS without corresponding SG improvements. This instability highlights a limitation of heuristic noise priors: a fixed global perturbation scale does not reliably generalize across architectures or latent representations.
+Adaptive control via GTS
+GTS consistently achieves the strongest sampling quality across both models, attaining the highest SG and SG rate while maintaining moderate JS.
+Rather than maximizing perturbation magnitude, GTS avoids both under- and over-exploration by learning state-dependent perturbations over latent thoughts.
+This adaptive control removes the need for manual tuning of global noise strength and yields stable gains across architectures.
+Together with the diagnostic study in Section 2 , these results close the loop: effective inference-time scaling requires not merely diverse trajectories, but trajectories that reliably improve decision belief under limited budgets.
+5.2 On Sampling Behavior
+Answer-level diversity
+Figure 3 reports the average number of unique decoded answers per prompt in the main experiment.
+Compared to JS in Table 2 , which measures probability-level perturbation, answer diversity captures discrete branching behavior after greedy decoding. Higher diversity does not necessarily imply stronger sampling gain or better pass@ N N scaling.
+In particular, standard Gaussian noise often produces more distinct answers than GTS at moderate budgets, yet achieves weaker SG and scaling performance.
+Step-wise signal-to-noise ratio
+Figure 4:
+Step-wise distribution of signal-to-noise ratio (SNR) across latent reasoning steps.
+Top: COCONUT. Bottom: CODI.
+Each violin shows the distribution over prompts; markers denote medians.
+To analyze how stochastic intervention evolves across latent reasoning steps, we measure a step-wise signal-to-noise ratio (SNR).
+At latent step t t , the sampler predicts a mean vector μ t ∈ ℝ D \mu_{t}\in\mathbb{R}^{D} and diagonal log standard deviation log ⁡ σ t ∈ ℝ D \log\sigma_{t}\in\mathbb{R}^{D} . We define:
+SNR t = 1 D ​ ∥ μ t ∥ 2 2 1 D ​ ∑ i = 1 D σ t , i 2 . \text{SNR}_{t}=\frac{\sqrt{\frac{1}{D}\lVert\mu_{t}\rVert_{2}^{2}}}{\sqrt{\frac{1}{D}\sum_{i=1}^{D}\sigma_{t,i}^{2}}}.
+(16)
+SNR measures the relative strength of deterministic steering versus injected noise.
+Values below 1 indicate noise-dominated steps, while larger values indicate stronger deterministic influence.
+We evaluate on GSM8K-test, sampling N = 32 N=32 trajectories per prompt and averaging SNR at the prompt level.
+Dataset-level distributions are shown in Figure 4 .
+For COCONUT , SNR alternates across adjacent latent steps, forming a saw-tooth pattern with moderate magnitudes.
+Deterministic and stochastic components remain comparable throughout reasoning, indicating interleaved refinement and variation.
+For CODI , deterministic strength concentrates early (peaking at <lat_2> ) and remains lower in later steps, reflecting a more front-loaded adjustment pattern. Overall, GTS does not impose a fixed stochastic schedule.
+Instead, the balance between deterministic and stochastic components adapts to the structural characteristics of the underlying latent reasoning models. More discussions can be found in Appendix B.2 .
+5.3 Ablation on Reward Shaping
+Figure 5: Ablation study on the reward shaping. Pass@N performance of the GTS trained with the accuracy-only reward and the dense reward introduced in Section 3.3 .
+We compare GTS trained with the full dense reward in Section 3.3 against an accuracy-only variant.
+In the simplified setting, the shaping term is removed by setting α = 0 \alpha=0 , reducing the reward to r ( i ) = { − 1 , 1 } r^{(i)}=\{-1,1\} .
+All other training configurations remain identical.
+Figure 5 shows pass@ N N curves on GSM8K-test for both COCONUT and CODI .
+The dense reward consistently outperforms the accuracy-only variant, and the performance gap widens as N N increases. Although lightweight, the shaping term provides additional within-group discrimination.
+By mildly encouraging high-confidence correct trajectories and discouraging high-confidence incorrect ones, it improves the quality of sampled candidate sets.
+In contrast, the accuracy-only reward treats all correct (and incorrect) samples equally, limiting refinement during training.
+6 Related Work
+6.1 ITS in Discrete Space
+ITS improves reasoning by allocating additional test-time compute to generate and select among multiple reasoning paths. A representative approach is self-consistency ( Wang et al., 2023 ) , which samples multiple Chain-of-Thought (CoT) solutions and aggregates them via majority voting. This idea has been extended through best-of- N N sampling and reranking, where candidate trajectories are scored by likelihood, confidence signals, or external verifiers.
+Beyond unstructured sampling, structured prompting frameworks introduce explicit search over the discrete reasoning space. Least-to-Most ( Zhou et al., 2023 ) , Tree-of-Thoughts ( Yao et al., 2023 ) , and Graph-of-Thoughts ( Besta et al., 2024 ) formulate reasoning as systematic exploration over branching intermediate states.
+Another complementary direction develops Verifier or Process Reward Models (PRMs) to evaluate intermediate reasoning steps. Math-Shepherd ( Wang et al., 2024 ) automatically generates step-level supervision from CoT outputs, while subsequent work improves robustness and generalization of process-level feedback ( Zhang et al., 2025b ) . OpenPRM ( Zhang et al., 2025a ) further extends process supervision to open-domain settings through preference-based evaluation. Collectively, these methods rely on explicit token-level distributions and scoring signals, making exploration and selection relatively controllable in discrete space.
+6.2 Continuous Space Reasoning
+Continuous CoT reasoning performs multi-step inference directly in latent space, refining hidden representations without emitting intermediate textual tokens ( Sui et al., 2025 ) . By operating on continuous manifolds, this paradigm aims to improve reasoning efficiency and representational expressivity ( Zhu et al., 2025 ) , e.g., CoT2 ( Gozeten et al., 2025 ) demonstrates that LLMs can maintain multiple reasoning traces in parallel within continuous states.
+Most existing work focuses on learning stable and compact latent representations during training. CODI ( Shen et al., 2025 ) aligns student and teacher hidden states via self-distillation, while CCOT ( Cheng and Durme, 2024 ) introduces variable-length latent embeddings with optional decoding for interpretability. Hybrid approaches such as Token Assorted ( Su et al., 2025 ) combine discrete tokens with latent reasoning. COCONUT ( Hao et al., 2024 ) further shows that complex reasoning can be executed primarily within hidden state space.
+While these works advance latent representation learning, they largely assume static inference passes. Systematically scaling test-time computation within continuous manifolds remains relatively under-explored.
+6.3 ITS in Continuous Space
+Recent efforts begin to explore ITS directly in continuous space. One direction promotes diversity in latent trajectories. For example, SoftCoT++ ( Xu et al., 2025 ) generates multiple “soft thoughts” from distinct initial tokens using contrastive objectives. Another direction samples and aggregates multiple trajectories. CoT2 ( Gozeten et al., 2025 ) represents parallel reasoning paths as superpositions of continuous tokens, while Zhang et al. (2026) employ self-verification signals based on proximity to a latent centroid. Wang et al. (2025) ; You et al. (2026) introduce Monte Carlo Dropout to induce stochasticity and aggregate sampled trajectories with a learned reward model.
+Despite these advances, most existing approaches rely on heuristic perturbations, such as dropout or fixed Gaussian noise to induce diversity. Because such stochasticity is not explicitly conditioned on semantic context, its magnitude is difficult to calibrate and may destabilize decision-relevant structure, particularly under larger sampling budgets. Similar limitations have been noted in prior analysis ( Wang et al., 2025 ) .
+To address this gap, we propose the GTS, which reformulates inference-time exploration as conditional sampling from an explicit, learnable Gaussian distribution over latent representations. By modeling exploration through a parameterized density, GTS enables structured and optimizable test-time exploration, providing a principled alternative to heuristic noise injection.
+7 Conclusion
+We study inference-time scaling in latent reasoning models from the perspective of how limited sampling budgets are allocated in continuous thought space. Our analysis shows that heuristic perturbations tend to diffuse exploration across latent representations without guidance toward decision-relevant regions, often resulting in either negligible shifts or destabilizing deviations. By introducing explicit conditional densities over latent perturbations, GTS instead concentrates exploration in regions that are more likely to improve the model’s internal decision state. Across two latent reasoning architectures, this probabilistic formulation yields stronger and more reliable scaling under finite budgets. These findings suggest that effective latent inference-time scaling depends not on maximizing diversity, but on structuring exploration in a distribution-aware manner.
+Limitation
+This work has several limitations. Our empirical evaluation focuses primarily on GSM8K, which does not fully capture more open-ended or long-form reasoning settings. We restrict the sampling policy to a diagonal Gaussian distribution and do not explore broader perturbation families that may offer different flexibility–stability trade-offs. Our analysis of sampling behavior remains empirical and does not provide a formal theoretical characterization of exploration in high-dimensional latent spaces. Finally, we study two representative latent reasoning architectures, and the behavior of learnable perturbation policies may vary under alternative formulations. We leave broader benchmark validation, distributional extensions, and theoretical analysis to future work.
+References
+Besta et al. (2024)
+M. Besta, N. Blach, A. Kubicek, R. Gerstenberger, M. Podstawski, L. Gianinazzi, J. Gajda, T. Lehmann, H. Niewiadomski, P. Nyczyk, and T. Hoefler
+Graph of thoughts: solving elaborate problems with large language models .
+Proceedings of the AAAI Conference on Artificial Intelligence 38 ( 16 ), pp. 17682–17690 .
+External Links: ISSN 2159-5399 ,
+Link ,
+Document
+Cited by: §6.1 .
+Cheng and Durme (2024)
+J. Cheng and B. V. Durme
+Compressed chain of thought: efficient reasoning through dense representations .
+External Links: 2412.13171 ,
+Link
+Cited by: §6.2 .
+Cobbe et al. (2021)
+K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano, C. Hesse, and J. Schulman
+Training verifiers to solve math word problems .
+External Links: 2110.14168 ,
+Link
+Cited by: §1 ,
+§2.1 ,
+§4.1 .
+DeepSeek-AI et al. (2025)
+DeepSeek-AI, D. Guo, D. Yang, H. Zhang, and J. S. et al.
+DeepSeek-r1: incentivizing reasoning capability in llms via reinforcement learning .
+External Links: 2501.12948 ,
+Link
+Cited by: §3.3 .
+Deng et al. (2024)
+Y. Deng, Y. Choi, and S. Shieber
+From explicit cot to implicit cot: learning to internalize cot step by step .
+External Links: 2405.14838 ,
+Link
+Cited by: §2.1 ,
+§4.1 .
+Gal and Ghahramani (2016)
+Y. Gal and Z. Ghahramani
+Dropout as a bayesian approximation: representing model uncertainty in deep learning .
+External Links: 1506.02142 ,
+Link
+Cited by: §A.3 .
+Gozeten et al. (2025)
+H. A. Gozeten, M. E. Ildiz, X. Zhang, H. Harutyunyan, A. S. Rawat, and S. Oymak
+Continuous chain of thought enables parallel exploration and reasoning .
+External Links: 2505.23648 ,
+Link
+Cited by: §6.2 ,
+§6.3 .
+Grattafiori et al. (2024)
+A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, and A. A. et al.
+The llama 3 herd of models .
+External Links: 2407.21783 ,
+Link
+Cited by: §4.1 .
+Hao et al. (2024)
+S. Hao, S. Sukhbaatar, D. Su, X. Li, Z. Hu, J. Weston, and Y. Tian
+Training large language models to reason in a continuous latent space .
+External Links: 2412.06769 ,
+Link
+Cited by: §1 ,
+§1 ,
+§2.1 ,
+§4.1 ,
+§6.2 .
+Kingma and Welling (2022)
+D. P. Kingma and M. Welling
+Auto-encoding variational bayes .
+External Links: 1312.6114 ,
+Link
+Cited by: §3.3 .
+Lightman et al. (2024)
+H. Lightman, V. Kosaraju, Y. Burda, H. Edwards, B. Baker, T. Lee, J. Leike, J. Schulman, I. Sutskever, and K. Cobbe
+Let’s verify step by step .
+In The Twelfth International Conference on Learning Representations,
+ICLR 2024, Vienna, Austria, May 7-11, 2024 ,
+External Links: Link
+Cited by: §1 .
+Ouyang et al. (2022)
+L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. L. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray, J. Schulman, J. Hilton, F. Kelton, L. Miller, M. Simens, A. Askell, P. Welinder, P. Christiano, J. Leike, and R. Lowe
+Training language models to follow instructions with human feedback .
+External Links: 2203.02155 ,
+Link
+Cited by: §3.3 .
+Radford et al. (2019)
+A. Radford, J. Wu, R. Child, D. Luan, D. Amodei, and I. Sutskever
+Language models are unsupervised multitask learners .
+OpenAI Blog .
+Cited by: §2.1 .
+Schulman et al. (2017)
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+Proximal policy optimization algorithms .
+External Links: 1707.06347 ,
+Link
+Cited by: §3.3 .
+Shen et al. (2025)
+Z. Shen, H. Yan, L. Zhang, Z. Hu, Y. Du, and Y. He
+CODI: compressing chain-of-thought into continuous space via self-distillation .
+External Links: 2502.21074 ,
+Link
+Cited by: §1 ,
+§1 ,
+§4.1 ,
+§6.2 .
+Su et al. (2025)
+D. Su, H. Zhu, Y. Xu, J. Jiao, Y. Tian, and Q. Zheng
+Token assorted: mixing latent and text tokens for improved language model reasoning .
+External Links: 2502.03275 ,
+Link
+Cited by: §6.2 .
+Sui et al. (2025)
+Y. Sui, Y. Chuang, G. Wang, J. Zhang, T. Zhang, J. Yuan, H. Liu, A. Wen, S. Zhong, H. Chen, and X. Hu
+Stop overthinking: a survey on efficient reasoning for large language models .
+External Links: 2503.16419 ,
+Link
+Cited by: §1 ,
+§6.2 .
+Wang et al. (2025)
+M. Wang, T. Vu, E. Shareghi, and G. Haffari
+Towards inference-time scaling for continuous space reasoning .
+External Links: 2510.12167 ,
+Link
+Cited by: §1 ,
+§6.3 ,
+§6.3 .
+Wang et al. (2024)
+P. Wang, L. Li, Z. Shao, R. X. Xu, D. Dai, Y. Li, D. Chen, Y. Wu, and Z. Sui
+Math-shepherd: verify and reinforce llms step-by-step without human annotations .
+External Links: 2312.08935 ,
+Link
+Cited by: §1 ,
+§6.1 .
+Wang et al. (2023)
+X. Wang, J. Wei, D. Schuurmans, Q. Le, E. Chi, S. Narang, A. Chowdhery, and D. Zhou
+Self-consistency improves chain of thought reasoning in language models .
+External Links: 2203.11171 ,
+Link
+Cited by: §1 ,
+§2 ,
+§6.1 .
+Xu et al. (2025)
+Y. Xu, X. Guo, Z. Zeng, and C. Miao
+SoftCoT++: test-time scaling with soft chain-of-thought reasoning .
+External Links: 2505.11484 ,
+Link
+Cited by: §6.3 .
+Yao et al. (2023)
+S. Yao, D. Yu, J. Zhao, I. Shafran, T. L. Griffiths, Y. Cao, and K. Narasimhan
+Tree of thoughts: deliberate problem solving with large language models .
+External Links: 2305.10601 ,
+Link
+Cited by: §6.1 .
+You et al. (2026)
+R. You, Y. Li, M. Liu, W. Wang, L. Nie, and W. Li
+Parallel test-time scaling for latent reasoning models .
+External Links: 2510.07745 ,
+Link
+Cited by: §1 ,
+§6.3 .
+Zhang et al. (2025a)
+K. Zhang, J. Zhang, H. Li, X. Zhu, E. Hua, X. Lv, N. Ding, B. Qi, and B. Zhou
+OpenPRM: building open-domain process-based reward models with preference trees .
+In The Thirteenth International Conference on Learning Representations ,
+External Links: Link
+Cited by: §6.1 .
+Zhang et al. (2026)
+N. Zhang, W. Ma, Z. Ma, J. Xu, J. Gao, J. Hao, R. He, and J. Xu
+Silence the judge: reinforcement learning with self-verifier via latent geometric clustering .
+External Links: 2601.08427 ,
+Link
+Cited by: §6.3 .
+Zhang et al. (2025b)
+Z. Zhang, C. Zheng, Y. Wu, B. Zhang, R. Lin, B. Yu, D. Liu, J. Zhou, and J. Lin
+The lessons of developing process reward models in mathematical reasoning .
+External Links: 2501.07301 ,
+Link
+Cited by: §6.1 .
+Zhou et al. (2023)
+D. Zhou, N. Schärli, L. Hou, J. Wei, N. Scales, X. Wang, D. Schuurmans, C. Cui, O. Bousquet, Q. Le, and E. Chi
+Least-to-most prompting enables complex reasoning in large language models .
+External Links: 2205.10625 ,
+Link
+Cited by: §6.1 .
+Zhu et al. (2025)
+R. Zhu, T. Peng, T. Cheng, X. Qu, J. Huang, D. Zhu, H. Wang, K. Xue, X. Zhang, Y. Shan, T. Cai, T. Kergan, A. Kembay, A. Smith, C. Lin, B. Nguyen, Y. Pan, Y. Chou, Z. Cai, Z. Wu, Y. Zhao, T. Liu, J. Yang, W. Zhou, C. Zheng, C. Li, Y. Zhou, Z. Li, Z. Zhang, J. Liu, G. Zhang, W. Huang, and J. Eshraghian
+A survey on latent reasoning .
+External Links: 2507.06203 ,
+Link
+Cited by: §1 ,
+§6.2 .
+Appendix
+Appendix A Additional Details about GTS
+A.1 Reward Shaping
+For each input x x , we sample a group of N N latent perturbation trajectories and obtain N N decoded answers.
+Let a ( i ) a^{(i)} denote the i i -th decoded answer, and let
+𝕀 [ a ( i ) = y ⋆ ] \mathbb{I}[a^{(i)}=y^{\star}] be the exact-match indicator with respect to the ground-truth answer y ⋆ y^{\star} .
+The reward for trajectory i i is defined as
+r ( i ) = r 0 ( 2 𝕀 [ a ( i ) = y ⋆ ] − 1 ) + α s ( i ) , r^{(i)}\;=\;r_{0}\,(2\,\mathbb{I}[a^{(i)}=y^{\star}]-1)\;+\;\alpha\,s^{(i)},
+(17)
+where r 0 > 0 r_{0}>0 controls the base correctness magnitude and α \alpha scales a lightweight shaping term.
+Base Correctness Term
+The first term assigns + r 0 +r_{0} to correct answers and − r 0 -r_{0} to incorrect ones.
+This symmetric formulation ensures that correctness remains the dominant optimization signal.
+When α = 0 \alpha=0 , the objective reduces to accuracy-only reward.
+Confidence Score
+For each trajectory, we compute a scalar confidence score c ( i ) c^{(i)} using the length-normalized log-probability of the generated answer:
+c ( i ) = 1 | a ( i ) | ​ ∑ t = 1 | a ( i ) | log ⁡ p θ ​ ( a t ( i ) ∣ x , τ ( i ) , a < t ( i ) ) , c^{(i)}\;=\;\frac{1}{|a^{(i)}|}\sum_{t=1}^{|a^{(i)}|}\log p_{\theta}\!\big(a^{(i)}_{t}\mid x,\tau^{(i)},a^{(i)}_{<t}\big),
+(18)
+where | a ( i ) | |a^{(i)}| denotes answer length and τ ( i ) \tau^{(i)} is the sampled latent trajectory.
+Length normalization prevents longer answers from being systematically penalized.
+Within-Group Normalized Shaping
+To avoid directly optimizing raw likelihood (which could dominate correctness),
+we apply group-wise normalization separately over correct and incorrect subsets.
+Define
+𝒞 = { i : 𝕀 [ a ( i ) = y ⋆ ] = 1 } , \displaystyle\mathcal{C}=\{i:\mathbb{I}[a^{(i)}=y^{\star}]=1\},
+(19)
+𝒲 = { i : 𝕀 [ a ( i ) = y ⋆ ] = 0 } . \displaystyle\mathcal{W}=\{i:\mathbb{I}[a^{(i)}=y^{\star}]=0\}.
+(20)
+Within each subset (when its size is at least 3),
+we compute a z z -score normalization:
+z ⁡ ( c ( i ) ) = c ( i ) − μ 𝒮 σ 𝒮 , 𝒮 ∈ { 𝒞 , 𝒲 } , z(c^{(i)})\;=\;\frac{c^{(i)}-\mu_{\mathcal{S}}}{\sigma_{\mathcal{S}}},\quad\mathcal{S}\in\{\mathcal{C},\mathcal{W}\},
+(21)
+where μ 𝒮 \mu_{\mathcal{S}} and σ 𝒮 \sigma_{\mathcal{S}} are the mean and standard deviation of c ( i ) c^{(i)} within the subset.
+The shaping term is then defined as
+s ( i ) = { tanh ⁡ ( z ⁡ ( c ( i ) ) τ ) i ∈ 𝒞 , | 𝒞 | ≥ 3 − tanh ⁡ ( z ⁡ ( c ( i ) ) τ ) i ∈ 𝒲 , | 𝒲 | ≥ 3 0 otherwise . s^{(i)}=\begin{cases}\ \tanh\!\big(\frac{z(c^{(i)})}{\tau}\big)&i\in\mathcal{C},\ |\mathcal{C}|\geq 3\\[6.0pt]
+-\tanh\!\big(\frac{z(c^{(i)})}{\tau}\big)&i\in\mathcal{W},\ |\mathcal{W}|\geq 3\\[6.0pt]
+0&\text{otherwise}.\end{cases}
+(22)
+The temperature parameter τ \tau controls the smoothness of the shaping signal, which is set as 1.0 in our experiments.
+Design Rationale
+This construction has three desirable properties:
+(1) correctness remains the primary optimization objective via r 0 r_{0} ;
+(2) shaping only provides relative discrimination within correct and incorrect groups, rather than encouraging unconditional likelihood maximization; and (3) the tanh \tanh squashing bounds the shaping magnitude, ensuring it remains secondary to the correctness term.
+Empirically, this dense signal improves within-group ranking of sampled trajectories without destabilizing training.
+A.2 Implementation Details
+Sampler Architecture
+GTS consists of two lightweight heads that predict the mean μ ϕ ​ ( c k ) \mu_{\phi}(c_{k}) and log standard deviation log ⁡ σ ϕ ​ ( c k ) \log\sigma_{\phi}(c_{k}) of a diagonal Gaussian policy at each latent step.
+Each head is implemented as a two-layer feed-forward network with hidden dimension D D , SiLU activation, and output dimension D D .
+Only the sampler parameters are trainable; all backbone parameters remain frozen.
+To prevent premature collapse toward a deterministic policy, we clamp the minimum log standard deviation to − 2.0 -2.0 , corresponding to σ min = exp ⁡ ( − 2 ) ≈ 0.135 \sigma_{\min}=\exp(-2)\approx 0.135 .
+This lower bound ensures a non-trivial exploration scale throughout training.
+For COCONUT, perturbations are directly added to the latent hidden state.
+For CODI, which contains an additional recurrent filtering module with layer normalization at the end, perturbations are injected after the recurrent filter output.
+This placement ensures that stochastic perturbations are not attenuated by normalization layers and can effectively propagate to subsequent reasoning steps.
+In terms of parameter size, GTS introduces approximately 2.3M parameters for COCONUT (1.8% of the backbone) and 16M parameters for CODI (1.2% of the backbone).
+Perturbation Schedule Across Latent Steps
+Both models employ K = 6 K=6 latent reasoning steps.
+However, perturbations are injected only from <start_latent> through <lat_5> .
+The final latent token <lat_6> influences the output only through attention to <end_latent> and does not re-enter the latent autoregressive loop.
+Specifically, the subsequent <end_latent> token is provided via teacher forcing when predicting the answer prefix, meaning that <lat_6> affects decoding through key-value cache interactions but is not recursively fed back as a new latent state.
+Injecting perturbations at <lat_6> would therefore not fully propagate through the reasoning dynamics.
+To ensure that stochasticity consistently influences autoregressive latent refinement, we restrict perturbations to the first five latent steps.
+Policy Optimization Details
+The reference sampler q ϕ ref q_{\phi_{\text{ref}}} is updated as an exponential moving average (EMA) of the current policy with decay rate 0.999 0.999 .
+The KL regularization coefficient is set to β = 0.001 \beta=0.001 .
+Advantages are normalized at the prompt level: for each prompt, the N = 32 N=32 rollout rewards are standardized before computing the policy objective.
+With batch size 32 prompts, each optimization step processes 32 × 32 32\times 32 sampled trajectories jointly.
+When computing trajectory log densities, a diagonal Gaussian formally requires summation over dimensions.
+However, summing over high-dimensional latent vectors can produce large-magnitude log-density values, leading to unstable density ratios.
+To improve numerical stability, we average over dimensions instead of summing.
+This modification preserves relative likelihood ordering while keeping ratio magnitudes well-scaled for optimization.
+For the clipped GRPO objective, the density ratio is clipped to the range [ − 20 , 20 ] [-20,20] .
+Because trajectory log-probabilities are accumulated across latent steps (rather than computed at a single step level), their scale differs from standard token-level PPO formulations.
+The wider clipping interval empirically stabilizes training without restricting useful policy updates.
+Training Configuration
+Unless otherwise stated, GTS is trained for 10K optimization steps with learning rate 1 × 10 − 4 1\times 10^{-4} and linear warmup.
+The reward shaping coefficient is α = 0.2 \alpha=0.2 .
+All experiments are conducted on a single NVIDIA A100 GPU.
+A.3 Design Choices for the Sampling Policy
+Diagonal Gaussian Policy
+We adopt a diagonal Gaussian parameterization for the perturbation distribution.
+This choice provides a favorable trade-off between expressiveness and stability.
+A diagonal policy allows dimension-wise scaling and directional steering while preserving closed-form log-density and KL divergence expressions, which are essential for stable GRPO optimization.
+In contrast, a full-covariance Gaussian would introduce 𝒪 ⁡ ( D 2 ) \mathcal{O}(D^{2}) parameters and substantially increase both memory cost and numerical instability, especially in high-dimensional latent spaces.
+Given that the backbone representations already encode rich cross-dimensional correlations, a diagonal perturbation distribution is sufficient to provide flexible yet controllable exploration.
+Additive Perturbation Formulation
+We model latent exploration through additive perturbations h ~ k = h k det + z k \tilde{h}_{k}=h^{\text{det}}_{k}+z_{k} .
+This formulation preserves the original backbone dynamics and ensures that perturbations act as local steering signals rather than replacing latent representations.
+Additive noise also yields a unit Jacobian transformation, allowing the perturbation density to be directly interpreted as a distribution over latent thought states.
+More complex transformations (e.g., multiplicative gating or learned flows) could increase flexibility but would entangle exploration with backbone dynamics and complicate policy density computation.
+Relation to Dropout-Based Bayesian Sampling
+Dropout has been interpreted as approximate Bayesian inference, where Bernoulli masking corresponds to a variational approximation over model weights and enables predictive uncertainty estimation via Monte Carlo sampling ( Gal and Ghahramani, 2016 ) .
+Under this perspective, stochastic forward passes primarily serve to quantify epistemic uncertainty and improve calibration in weight space.
+ITS in latent reasoning, however, constitutes a search problem: the objective is to increase the probability of obtaining at least one correct reasoning trajectory under a fixed sampling budget.
+Accurate posterior uncertainty estimation does not necessarily imply optimal trajectory-level exploration for decision correction.
+Our method therefore does not aim to approximate a weight posterior, but instead learns a reward-aligned perturbation policy over latent states tailored to the inference-time objective.
+Appendix B Additional Analysis
+B.1 Further Discussion on Main Results
+Beyond absolute pass@N improvements, we observe that the relative gains brought by GTS differ across backbone architectures.
+On COCONUT , the improvement spans a wider margin (approximately → 55 35\!\rightarrow\!55 ), whereas on CODI the gains are more moderate (approximately → 58 48\!\rightarrow\!58 ).
+We hypothesize that this discrepancy reflects structural differences in model scale and latent representation geometry.
+Model Scale and Latent Dimensionality
+COCONUT , built on a GPT-2 backbone, operates in a lower-dimensional latent space ( D = 768 D=768 ) with fewer layers.
+In such a regime, perturbations added to latent states can propagate more directly through subsequent reasoning steps, allowing moderate steering signals to produce visible changes in downstream predictions.
+By contrast, CODI employs a deeper architecture with substantially higher dimensional latent representations ( D = 2048 D=2048 ).
+In higher-dimensional spaces, meaningful directional steering becomes inherently more challenging: the action space grows with D D , while the relative magnitude of any single perturbation component diminishes.
+Moreover, deeper networks possess stronger internal correction dynamics, which can dampen or redistribute injected perturbations across layers.
+As a result, while GTS remains effective on CODI , its relative gains are naturally smaller than those observed on the lower-dimensional backbone.
+Sampler Capacity Relative to Backbone Size
+Although the sampler architecture adopts the same two-layer design in both settings, its relative capacity differs with respect to the backbone.
+As reported in Section A.2 , GTS introduces approximately 1.8% additional parameters for COCONUT and 1.2% for CODI .
+While the absolute sampler size increases with latent dimension, the backbone grows more substantially in the higher-dimensional model.
+Consequently, the sampler-to-backbone capacity ratio becomes smaller in CODI .
+Moreover, the effective control problem scales with latent dimensionality.
+A diagonal Gaussian policy in D = 2048 D=2048 dimensions operates over a substantially larger action space than in D = 768 D=768 , increasing the difficulty of learning precise context-conditioned steering directions.
+The same architectural design therefore faces a more demanding control landscape in larger latent manifolds.
+From this perspective, the reduced relative gain on CODI does not indicate diminished effectiveness of structured perturbation, but rather reflects the increased complexity of steering higher-dimensional reasoning dynamics.
+Future work may explore model-specific sampler architectures, including deeper sampler heads or layer-wise perturbation mechanisms, to better match backbone scale.
+In the present work, however, we deliberately keep the sampler lightweight to isolate and validate the core idea of learnable, controlled latent exploration.
+On the Small- N N Behavior
+We also observe a mild performance drop at very small sampling budgets (e.g., N = 2 N=2 ).
+This phenomenon is not unique to GTS and reflects a general exploration-exploitation trade-off:
+when only a few samples are available, even structured perturbations may temporarily disrupt otherwise correct deterministic reasoning.
+As N N increases, the probability that at least one trajectory meaningfully improves the internal decision state grows rapidly, leading to the observed recovery and scaling gains.
+Importantly, this small- N N degradation is not fundamental.
+One could introduce an explicit budget-aware scaling factor on the perturbation magnitude (e.g., modulating 𝐳 \mathbf{z} as a function of N N ) to suppress exploration at very small budgets.
+We deliberately avoid such adaptive scheduling to ensure a fair comparison across methods and sampling budgets.
+Designing budget-sensitive exploration control remains an interesting direction for improving ITS in continuous reasoning space.
+B.2 Further Discussion on Sampling Behavior
+To better understand the structural differences observed in the step-wise SNR distributions ( Figure 4 ), we relate them to the underlying training objectives and latent reasoning formulations of the two models.
+COCONUT : Paired Latent-Step Dynamics
+For COCONUT , SNR exhibits a clear saw-tooth pattern across adjacent latent steps.
+Median values remain in a moderate range (approximately 0.3 0.3 – 0.5 0.5 ), indicating that deterministic steering and stochastic variation are comparable in magnitude throughout reasoning.
+This alternating structure is consistent with COCONUT ’s training design.
+COCONUT is trained via curriculum learning that progressively compresses textual reasoning into latent thought representations.
+Importantly, its original training formulation contains three effective reasoning steps, each composed of two latent thought vectors.
+Within each pair, the first sub-step primarily consolidates information, while the second refines or expands upon it.
+The SNR plot suggests that GTS adapts to this internal structure.
+The first sub-step within each effective reasoning pair tends to exhibit relatively stronger deterministic steering, while the second allows comparatively greater stochastic exploration.
+Rather than imposing a rigid perturbation schedule, GTS could align with the base model’s intrinsic reasoning rhythm, preserving the alternation between consolidation and variation.
+CODI : Front-Loaded Deterministic Adjustment
+In contrast, CODI displays a front-loaded SNR profile.
+Deterministic strength peaks at the second latent step and then transitions into a sustained lower-SNR regime for subsequent steps.
+Later reasoning steps therefore operate in a more exploration-dominated setting.
+This behavior is consistent with CODI ’s training objective.
+Unlike COCONUT , which compresses intermediate textual reasoning through staged curriculum learning, CODI relies on distillation to align latent reasoning with the text reasoning answer prefix at the final step.
+As a result, its latent trajectory is trained to evolve more smoothly and coherently across steps, without an explicit paired-step structure.
+Under this formulation, a single early deterministic adjustment may be sufficient to steer the trajectory toward a promising region of latent space, after which controlled exploration can proceed without further strong intervention.
+The observed SNR profile therefore reflects how GTS adapts to the more continuous and globally aligned reasoning dynamics of CODI .
+Adaptive Rather Than Prescriptive Control
+Taken together, these patterns indicate that GTS does not enforce a uniform perturbation schedule across architectures.
+Instead, the balance between deterministic steering and stochastic variation emerges from interaction with each model’s latent reasoning dynamics.
+The SNR distributions thus provide evidence that structured perturbation can adapt to model-specific internal organization, rather than uniformly amplifying or suppressing stochasticity across all reasoning steps.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

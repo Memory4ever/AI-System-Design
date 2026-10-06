@@ -1,0 +1,2220 @@
+FAST-Prefill: FPGA Accelerated Sparse Attention for Long Context LLM Prefill
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I
+Introduction
+II
+Background
+II-A
+LLM Inference
+II-B
+Long-Context LLM Inference: Sparse Attention
+III
+Challenges
+IV
+Design Methodology
+IV-A
+Hardware Architecture Overview
+IV-B
+Attention Sparse Index Generation Unit
+IV-C
+Sparse Attention Unit
+IV-D
+Hybrid Matrix-Multiplication Unit
+IV-E
+Other Hardware Units
+IV-E
+1
+Global Finite State Machine (FSM)
+IV-E
+2
+Special Function Unit (SFU)
+V
+Evaluation
+V-A
+Evaluation Setup
+V-B
+Evaluation Results
+V-B
+1
+Evaluation of Model Accuracy
+V-B
+2
+Evaluation of Performance
+V-B
+3
+Evaluation of Energy Efficiency
+V-C
+Ablation Studies
+V-C
+1
+Impact of Liveness-driven cache
+V-C
+2
+Impact of Hybrid Matrix Multiplication Unit
+VI
+Related Work
+VII
+Conclusion
+References
+License: CC BY 4.0
+arXiv:2602.20515v1 [cs.AR] 24 Feb 2026
+FAST-Prefill:
+F
+PGA
+A
+ccelerated
+S
+parse
+At
+tention for Long Context LLM Prefill
+Rakshith Jayanth, Viktor Prasanna
+Affiliation:
+Ming Hsieh Department of Electrical and Computer Engineering
+University of Southern Californa
+Los Angeles, USA
+Email: {jayanthr, prasanna}@usc.edu
+Abstract
+In long-context large language model (LLM) inference, the prefill stage dominates computation due to self-attention over the complete input context. Sparse attention significantly reduces self-attention computation by limiting each token’s interactions to a subset of tokens. The attention sparsity pattern varies across input prompts, and within a prompt, each attention head can follow a distinct pattern. This makes attention sparsity dynamic. The requirement of generating the sparsity pattern, combined with limited data reuse in attention, shifts the prefill compute to being memory-bound.
+This, in addition to the huge energy requirements for long-context inference on GPU, motivates FPGAs as good candidates for accelerating dynamic long-context inference. However, acceleration on FPGA faces the following key challenges:
+(1) Generation of large intermediary tensors during sparse index generation, (2) Sparsity pattern dependent KV cache access limits the effectiveness of naive prefetching in addition to bandwidth under-utilization, and (3) Limited DSP resources for high-throughput matrix multiplication.
+To tackle these challenges, we propose FAST-Prefill, the first FPGA accelerator for long-context prefill-stage inference with dynamic sparse attention. To efficiently generate sparse indices, we propose a
+fused pipeline unit with a memory-aware execution order
+to reduce large tensors and irregular memory accesses. To reduce off-chip memory traffic for accessing the KV cache, we utilize the memory hierarchy to design a
+liveness-driven, dual-tier cache
+. For high-throughput matrix multiplication, we design a
+hybrid Matrix Processing Unit (MPU)
+with DSPs and bit-plane decomposition using LUTs.
+We implement FAST-Prefill on Alveo U280 and evaluate it on the Llama and Qwen models (batch size = 1) for context lengths ranging from 4K to 128K tokens. We demonstrate an average speedup of up to 2.5
+×
+\times
+in TTFT and 4.5
+×
+\times
+improvement in energy efficiency over GPU implementation on Nvidia A5000 GPU.
+I
+Introduction
+Large language models (LLMs) have gained significant popularity in recent years for their exceptional performance across a wide range of natural language processing (NLP) tasks. Specifically, long-context inference is critical in tasks such as document summarization
+[
+1
+,
+2
+]
+, code generation
+[
+3
+,
+4
+]
+, and Q&A
+[
+5
+,
+6
+]
+. However, long-context inference incurs a huge computation cost due to self-attention that grows quadratically with context length (prompt length) in the prefill phase of LLM inference
+[
+7
+]
+. Recent works
+[
+8
+,
+9
+,
+10
+,
+11
+,
+12
+]
+target sparse attention, in which each token interacts with only a subset of tokens, resulting in a drastic reduction in computational requirements. Unlike weight compression and sparsification techniques such as N:M sparsity
+[
+13
+]
+and block sparsity
+[
+14
+]
+, which sparsify weight matrices, attention sparsity results in sparse attention scores during self-attention. State-of-the-art works
+[
+12
+,
+9
+]
+target dynamic sparsity in self-attention wherein the sparsity pattern varies for each input prompt. Additionally, for a given prompt, each attention head can exhibit a unique pattern.
+Current works target GPUs for evaluating sparse attention algorithms due to the high computational capabilities they offer. However, sparse attention makes the inference memory-bound. This arises from two key factors. (1) Generating a specific set of tokens for each token (Sparse index generation) requires a data-dependent control flow with low compute intensity. This results in under-utilized compute resources and saturates the memory bandwidth on the GPU.
+(2) Sparse attention requires each query to access a different subset of Key-Value (KV) vectors. Unlike dense attention where all queries access the complete KV cache
+[
+15
+]
+, sparse patterns cause each query to read different portions of the KV cache, preventing efficient data reuse.
+Additionally, the high energy requirements of GPUs drive the consideration of energy-efficient platforms such as FPGAs. However, there has been limited exploration towards accelerating long-context LLM inference with dynamic attention sparsity on FPGAs.
+Accelerating long-context LLM inference on an FPGA, however, faces substantial design challenges.
+(1)
+The naive design for sparse index generation results in large intermediary tensors. On-chip buffers are insufficient to hold these, and off-chip storage results in frequent access, contributing to increased latency.
+(2)
+The large size of the KV cache (
+∼
+\sim
+3-4 GB) restricts it to off-chip storage. Ensuring efficient reuse of KV vectors across different queries is non-trivial, as the access is dependent on the sparsity pattern as opposed to naive streaming. Additionally, fetching vectors too early or too late can result in wasted bandwidth or compute stalls.
+(3)
+Long context inference involves multiple matrix multiplication operations. Current FPGA-based works
+[
+16
+,
+17
+]
+primarily rely on DSP-based multiplication. This bottlenecks the design as multiple matrix operations become largely sequential. We detail the challenges in Section-
+III
+.
+Fig. 1
+:
+FAST-Prefill Architecture
+To address these challenges, we propose FAST-Prefill, an FPGA-based accelerator for efficient long-context LLM inference with dynamic sparse attention. The main contributions of the paper are summarized as follows:
+•
+To the best of our knowledge, we propose the first FPGA accelerator that targets dynamic sparse prefill-stage inference for long-context LLMs with W8A8 precision.
+•
+We propose a
+streaming, memory-aware sparse index generation architecture
+that computes block-level relevance scores through incremental aggregation, eliminating the need to generate large intermediate tensors. This transforms index generation from a generate-then-aggregate operation requiring
+∼
+\sim
+4GB of intermediate storage, into a stream-and-accumulate operation requiring with
+∼
+\sim
+4KB storage.
+•
+We propose a
+liveness-driven custom cache
+to store a small set of KV cache blocks. This analyzes sparse index patterns to prefetch KV cache blocks from off-chip memory (HBM) via efficient coordinated bursts.
+•
+The custom cache is
+dual-tier
+with a threshold-based admission policy that places high-reuse blocks of KV cache in the Hot tier and low-reuse blocks in the Cold tier to prevent cache thrashing.
+•
+We propose a hybrid Matrix Processing Unit (MPU) that includes systolic array grids for bit-plane matrix multiplication using LUTs, in addition to DSP-based systolic array grids.
+•
+Our implementation of FAST-Prefill on Xilinx Alveo U280 achieves up to 1.2-2.5
+×
+\times
+improvement in Time To First Token (TTFT) over the implementation of dynamic sparse attention on Nvidia RTX A5000 GPU across context lengths of 4K-128K tokens. We also achieve 4.5
+×
+\times
+energy efficiency over the GPU.
+Fig. 2
+:
+Prefill Workflow with Sparse Attention
+II
+Background
+II-A
+LLM Inference
+LLM inference consists of two compute stages: the prefill stage and the decode stage. In the prefill stage, the complete input sequence (X) is tokenized (E) and the Key-Value (KV) cache along with Query (Q) matrix is generated as shown in Equation-
+1
+.
+Q
+=
+W
+Q
+.
+E
+⁡
+(
+X
+)
+,
+K
+=
+W
+K
+.
+E
+⁡
+(
+X
+)
+,
+V
+=
+W
+V
+.
+E
+⁡
+(
+X
+)
+Q=W_{Q}.E(X),\quad K=W_{K}.E(X),\quad V=W_{V}.E(X)
+(1)
+where
+W
+Q
+W_{Q}
+,
+W
+K
+W_{K}
+, and
+W
+V
+W_{V}
+are Multi-Head self-attention (MHA) weight matrices.
+Using QKV matrices, causal MHA is computed according to Equation-
+2
+.
+A
+=
+S
+​
+o
+​
+f
+​
+t
+​
+m
+​
+a
+​
+x
+​
+(
+Q
+.
+K
+T
+d
+)
+​
+V
+A=Softmax(\frac{Q.K^{T}}{\sqrt{d}})V
+(2)
+The MHA output is further processed by the Feed Forward Network (FFN) which consists of two fully-connected linear layers along with a non-linear activation function. The FFN is computed as shown in Equation-
+3
+.
+O
+=
+g
+⁡
+(
+A
+​
+W
+1
+)
+​
+W
+2
+O=g(AW_{1})W_{2}
+(3)
+where,
+W
+1
+W_{1}
+and
+W
+2
+W_{2}
+are FFN weights and
+g
+g
+is the non-linear activation function.
+The output
+O
+O
+of FFN is context embedding for the next layer.
+The prefill stage concludes with the generation of the first output token. During the decode stage, the output tokens are generated auto-regressively i.e., one token in each model iteration. The compute in decode stage follows the same equations as prefill but only with the new token generated at the end of previous iteration. This transforms the matrix-matrix multiplications of prefill stage into matrix-vector multiplications during decode stage.
+II-B
+Long-Context LLM Inference: Sparse Attention
+During prefill stage, the computation complexity of self-attention grows quadratically (
+O
+⁡
+(
+S
+2
+)
+O(S^{2})
+) with context length (
+S
+S
+). For long contexts, this explodes the latency for generating the first token (TTFT) due to large compute and data transfers. To mitigate this, prior works on long-context inference consider sparse attention during the prefill stage, where each token is required to interact with only a subset of tokens. State-of-the-art works target dynamic sparse attention, wherein for each attention head in MHA, tokens can follow a unique sparsity pattern. We leverage the state-of-the-art sparse index generation algorithm of Flex-Prefill
+[
+12
+]
+. We detail the algorithm for sparse index generation in Algorithm-
+1
+.
+Algorithm 1
+Sparse Index Generation (Each Attention Head): Flex-Prefill
+Input:
+Q, K, V,
+τ
+\tau
+,
+γ
+\gamma
+Output:
+Sparse index set, S
+1:
+select
+Q
+^
+\hat{Q}
+=
+Q
+[
+−
+b
+l
+o
+c
+k
+_
+s
+i
+z
+e
+:
+]
+Q_{[-block\_size:]}
+⊳
+\triangleright
+Representative query subset (last block)
+2:
+a
+¯
+\bar{a}
+←
+\leftarrow
+softmax(pool(
+Q
+^
+\hat{Q}
+)pool(
+K
+K
+)
+T
+/
+d
+\sqrt{d}
+)
+⊳
+\triangleright
+Estimated block-pooled attention
+3:
+a
+^
+\hat{a}
+←
+\leftarrow
+pool(softmax(
+Q
+^
+​
+K
+T
+\hat{Q}K^{T}
+/
+d
+\sqrt{d}
+))
+⊳
+\triangleright
+True block-pooled attention
+4:
+d
+J
+​
+S
+d_{JS}
+←
+\leftarrow
+J
+S
+D
+(
+a
+¯
+|
+|
+a
+^
+)
+\sqrt{JSD(\bar{a}||\hat{a})}
+⊳
+\triangleright
+Jensen-Shannon divergence
+5:
+if
+d
+J
+​
+S
+<
+τ
+d_{JS}<\tau
+then
+⊳
+\triangleright
+Determine Pattern
+6:
+pattern
+←
+\leftarrow
+query_specific
+7:
+else
+8:
+pattern
+←
+\leftarrow
+vertical_slash
+9:
+end
+if
+10:
+Pattern == Vertical_Slash
+11:
+a
+^
+\hat{a}
+←
+\leftarrow
+pool(softmax(
+Q
+^
+​
+K
+T
+\hat{Q}K^{T}
+/
+d
+\sqrt{d}
+)),
+w
+​
+h
+​
+e
+​
+r
+​
+e
+​
+Q
+^
+⊂
+Q
+where\hat{Q}\subset Q
+⊳
+\triangleright
+Compute a subset of the full attention map
+12:
+a
+v
+a_{v}
+←
+\leftarrow
+sum_vertical(
+A
+^
+\hat{A}
+)/
+Σ
+i
+,
+j
+​
+A
+^
+​
+[
+i
+,
+j
+]
+\Sigma_{i,j}\hat{A}[i,j]
+⊳
+\triangleright
+Sum & normalize attention scores along the vertical directions
+13:
+a
+s
+a_{s}
+←
+\leftarrow
+sum_slash(
+A
+^
+\hat{A}
+)/
+Σ
+i
+,
+j
+​
+A
+^
+​
+[
+i
+,
+j
+]
+\Sigma_{i,j}\hat{A}[i,j]
+⊳
+\triangleright
+Sum & normalize attention scores along the slash directions
+14:
+I
+v
+←
+I_{v}\leftarrow
+argsort(
+a
+v
+a_{v}
+)
+⊳
+\triangleright
+Sort vertical and slash attention scores
+15:
+I
+s
+←
+I_{s}\leftarrow
+argsort(
+a
+s
+a_{s}
+)
+16:
+K
+v
+←
+K_{v}\leftarrow
+min({
+k
+:
+Σ
+i
+∈
+I
+v
+[
+1
+:
+k
+]
+a
+v
+[
+i
+]
+≥
+γ
+k:\Sigma_{i\in I_{v}[1:k]}a_{v}[i]\geq\gamma
+}
+⊳
+\triangleright
+minimum computational budget making the sum of the scores exceeds
+γ
+\gamma
+17:
+K
+s
+←
+K_{s}\leftarrow
+min({
+k
+:
+Σ
+i
+∈
+I
+s
+[
+1
+:
+k
+]
+a
+s
+[
+i
+]
+≥
+γ
+k:\Sigma_{i\in I_{s}[1:k]}a_{s}[i]\geq\gamma
+}
+18:
+S
+v
+←
+I
+v
+[
+1
+:
+K
+v
+]
+S_{v}\leftarrow I_{v}[1:K_{v}]
+⊳
+\triangleright
+Select indices
+19:
+S
+s
+←
+I
+s
+[
+1
+:
+K
+s
+]
+S_{s}\leftarrow I_{s}[1:K_{s}]
+20:
+S
+←
+S
+v
+∪
+S
+s
+S\leftarrow S_{v}\cup S_{s}
+21:
+return
+S
+22:
+Pattern == Query_Aware
+23:
+Q
+¯
+←
+\bar{Q}\leftarrow
+pool(Q),
+K
+¯
+←
+\bar{K}\leftarrow
+pool(K)
+⊳
+\triangleright
+Compute estimated attention scores using pooled Q and K
+24:
+A
+¯
+←
+\bar{A}\leftarrow
+softmax(
+Q
+¯
+​
+K
+¯
+T
+\bar{Q}\bar{K}^{T}
+/
+d
+\sqrt{d}
+)
+25:
+A
+¯
+←
+\bar{A}\leftarrow
+flatten(
+A
+¯
+\bar{A}
+/
+Σ
+i
+,
+j
+​
+A
+¯
+​
+[
+i
+,
+j
+]
+\Sigma_{i,j}\bar{A}[i,j]
+)
+⊳
+\triangleright
+Flatten and normalize attention map
+26:
+I
+a
+←
+I_{a}\leftarrow
+argsort(
+A
+¯
+\bar{A}
+)
+⊳
+\triangleright
+Sort attention scores
+27:
+K
+←
+K\leftarrow
+min({
+k
+:
+Σ
+i
+∈
+I
+a
+[
+1
+:
+k
+]
+A
+¯
+[
+i
+]
+≥
+γ
+k:\Sigma_{i\in I_{a}[1:k]}\bar{A}[i]\geq\gamma
+}
+⊳
+\triangleright
+minimum computational budget making the sum of the scores exceeds
+γ
+\gamma
+28:
+S
+←
+I
+a
+[
+1
+:
+K
+]
+S\leftarrow I_{a}[1:K]
+⊳
+\triangleright
+Select indices
+29:
+return
+S
+During self-attention, each attention head generates an attention matrix of size
+S
+×
+S
+S\times S
+. Sparse attention views the attention matrix as a block matrix with each block of size
+B
+×
+B
+B\times B
+where
+B
+B
+is generally 64 or 128, computed from
+B
+B
+query vectors and
+B
+B
+key vectors. As part of sparse attention, a few blocks are selected corresponding to a pattern in each attention head, and attention computation takes place for these specific Q, K, and V blocks.
+Flex-Prefill algorithm classifies each attention head to follow a query-specific sparsity pattern or a fallback pattern of vertical-slash
+[
+9
+]
+. For an attention head that follows vertical-slash pattern, the blocks selected will be along the diagonals or columns of the attention matrix. For attention-heads that follow query-specific pattern, the selected blocks are distributed across different rows and columns of attention matrix. Flex-Prefill identifies each attention head to follow either of the two types of sparsity patterns by performing dense attention on the last query blocks and computing the Jensen-Shannon Divergence. This value is compared against a threshold
+τ
+\tau
+(set to 0.1). This threshold estimates the extent of adverse impact on output quality when query-aware pattern is opted for the given attention head. If the divergence is less than the threshold, the query-aware pattern is selected; else, the conservative vertical-slash pattern is selected.
+For each attention head, the algorithm returns indices of the corresponding Key matrix blocks (B = 128 tokens) for each Query block (128 tokens). Based on the sparse index set
+S
+S
+for each attention head, the attention is computed as follows:
+A
+=
+S
+​
+o
+​
+f
+​
+t
+​
+m
+​
+a
+​
+x
+​
+(
+S
+p
+a
+r
+s
+e
+_
+A
+t
+t
+e
+n
+t
+i
+o
+n
+(
+Q
+.
+K
+T
+,
+S
+)
+d
+)
+​
+V
+A=Softmax(\frac{Sparse\_Attention(Q.K^{T},S)}{\sqrt{d}})V
+(4)
+III
+Challenges
+In this section, we detail the challenges in accelerating long-context LLM inference on FPGA.
+Challenge-1: Sparse index generation generates large intermediary tensors combined with irregular memory access to Key (K) vectors.
+Computing sparse indices requires scoring all Key blocks against the last query-block vectors to identify the top-K most relevant blocks. Considering a context length of 128K tokens, this can produce 128
+×
+\times
+128K per attention head, resulting in more than 2GB of intermediate storage. Additionally, operations such as softmax, exponentials, and block pooling produce 2GB of intermediate tensors. This is prohibitively large for on-chip storage, and frequent off-chip access explodes latency. Standard fusion techniques are not effective because they primarily fuse element-wise operations rather than operations with different dimensions.
+Challenge-2: Sparsity pattern dependent KV cache access.
+Reuse of KV cache blocks is dependent on the sparsity pattern corresponding to each attention head. This, neither purely streaming nor purely temporal, access pattern of KV cache blocks results in the following issues. (a) Naive prefetching along the memory hierarchy is ineffective as prefetch timing is critical. Prefetching a KV block too early can waste the limited on-chip resources, and prefetching the block too late results in pipeline stalls. (b) Fetching blocks on demand leads to many small off-chip memory reads, resulting in underutilized bandwidth and pipeline stalls. (c) Limiting the reuse of KV blocks across attention heads in the case of Group-Query-Attention (GQA) leads to independent fetching of the blocks, which increases memory traffic.
+Challenge-3: Constrained Matrix multiplication throughput due to limited DSPs.
+Long-context inference results in multiple block-sized matrix multiplications across various stages in the pipeline (QKV, Sparse Attention and FFN). Using DSPs limits the matrix multiplication architecture to about six 32x32 systolic arrays on U280 FPGA, insufficient for the large number of matmuls involved.
+IV
+Design Methodology
+IV-A
+Hardware Architecture Overview
+We design an efficient, high-performance streaming data flow accelerator for dynamic-sparsity-based long-context LLM inference. Figure
+1
+shows the overall architecture of FAST-Prefill. The major components in FAST-Prefill include a Global Finite State Machine (FSM) (Section
+IV-E
+), Special Function Unit (SFU)(Section
+IV-E
+), and multiple compute units. The primary compute units include the Sparse Index Generation Unit (SIGU) (Section
+IV-B
+), the Sparse Attention Unit (SAU) (Section
+IV-C
+), and a Hybrid Matrix Processing Unit (MPU) (Section
+IV-D
+).
+Given the large number of input tokens to be processed, we adopt chunked prefill
+[
+18
+]
+, wherein the input context is split into chunks of equal token length. We set the chunk size to 128 tokens to align with the block granularity used in FlexPrefill. In accordance with algorithmic semantics, chunks are streamed through the pipeline; however, for stages that require global context—such as sparse index generation—explicit barrier buffers are inserted to ensure correctness. The CPU performs tokenization and context embedding on the input prompt and transfers the token embeddings to HBM. Subsequent computation proceeds entirely on the FPGA in a streaming fashion across LLM layers till the generation of the first token. This marks the completion of the prefill stage.
+For each transformer layer, chunks are first processed to generate Key and Value tensors, which are written to off-chip memory. Once all chunks for the layer are available, the SIGU is activated to compute sparse block indices based on the most recent query block and the complete set of Key blocks. These indices define the dynamic sparsity pattern for attention and are forwarded to the SAU. The SAU then executes sparse attention by selectively fetching the required KV blocks from memory, performing dot-product attention using the hybrid MPU, and accumulating the results. The attention output is streamed to compute matrix multiplication and activation functions as part of the feed-forward network (FFN).
+Fig. 3
+:
+Sparse Index Generation Unit Workflow
+IV-B
+Attention Sparse Index Generation Unit
+Sparse index generation in FlexPrefill determines, for each attention head, a subset of Key–Value (KV) blocks that are most relevant to the most recent query window. Concretely, given a sequence length
+S
+S
+, head dimension
+d
+d
+, and block size
+B
+B
+(128 tokens in our design), the algorithm operates on the last
+B
+B
+query vectors
+Q
+^
+∈
+ℝ
+B
+×
+d
+\hat{Q}\in\mathbb{R}^{B\times d}
+and the full Key matrix
+K
+∈
+ℝ
+S
+×
+d
+K\in\mathbb{R}^{S\times d}
+. A naïve implementation explicitly computes intermediate attention tensors such as
+Q
+^
+​
+K
+T
+∈
+ℝ
+B
+×
+S
+\hat{Q}K^{T}\in\mathbb{R}^{B\times S}
+, pooled attention maps of size
+⌈
+S
+/
+B
+⌉
+\lceil S/B\rceil
+×
+\times
+⌈
+S
+/
+B
+⌉
+\lceil S/B\rceil
+, and per-head score vectors spanning all blocks. For long contexts (e.g.,
+S
+S
+=128K), these tensors are large—on the order of tens of megabytes per head —and their construction requires repeated, non-contiguous accesses to different Key blocks across heads. This results in multiple short HBM bursts, poor bandwidth utilization, and excessive off-chip traffic when intermediate tensors are written out and read back, significantly increasing latency.
+FAST-Prefill addresses this challenge by implementing sparse index generation as a streaming, memory-system-aware pipeline that avoids materializing large intermediate tensors and converts irregular Key access into mostly sequential bursts. The unit features a Key Block Fetch Unit, which retrieves Key blocks of size
+B
+×
+d
+B\times d
+from HBM and then into a small on-chip Key Block Buffer implemented in URAM. Crucially, Key blocks are fetched strictly in increasing block order, independent of attention head, ensuring that off-chip accesses occur as long, contiguous bursts rather than head-dependent random reads.
+As per Algorithm-
+1
+, the most recent query window
+Q
+^
+\hat{Q}
+(last 128 Q entries) is loaded once into a reused.
+For each streamed Key block, a Hybrid MPU performs dot products between
+Q
+^
+\hat{Q}
+and the current block using fixed-point arithmetic. Instead of storing the full
+Q
+^
+​
+K
+T
+\hat{Q}K^{T}
+tensor, the design incrementally updates compact per-block statistics, thereby collapsing a
+B
+×
+S
+B\times S
+tensor into vectors of length
+⌈
+S
+/
+B
+⌉
+\lceil S/B\rceil
+.
+These per-block statistics are accumulated in on-chip Score Buffers (BRAM), which store block-level scores for each head. Two types of scores are maintained: vertical scores, which aggregate attention values column-wise (i.e., across queries for each Key block), and slash scores, which aggregate attention values along diagonals. The accumulation is performed by dedicated Vertical and Slash Accumulator units that update the score buffers as each Key block streams through, eliminating the need to revisit Key data. To determine which sparsity pattern to apply, the design computes a per-head divergence metric between two pooled attention distributions: one derived from block-pooled
+Q
+^
+​
+K
+T
+\hat{Q}K^{T}
+and another from pooled
+Q
+^
+\hat{Q}
+and pooled
+K
+K
+. This divergence, implemented in the Divergence Evaluation module, is compared against a threshold
+τ
+\tau
+to select between query-aware and vertical-slash patterns. Operations in this module are element-wise or reduction-based and are implemented using LUT-based arithmetic and comparators.
+Once block-level scores are available, the index selection stage enforces the coverage constraint, defined as selecting the smallest number of blocks whose cumulative attention value exceeds a user-defined threshold
+γ
+\gamma
+. Rather than performing a full argsort over all blocks—which would require random memory access and complex control—the design uses a Streaming Top-k Selection Module that processes score buffers sequentially. This module maintains a small, fixed-size candidate list and incrementally inserts blocks based on score comparisons until the cumulative sum crosses
+γ
+\gamma
+. The selection logic is implemented with comparator trees, prefix adders, and small LUT-based priority structures, yielding bounded latency and avoiding global sorting.
+For attention heads following query-aware sparsity, the Query Pooling Module computes a block-level summary
+Q
+¯
+∈
+ℝ
+⌈
+S
+/
+B
+⌉
+×
+d
+\bar{Q}\in\mathbb{R}^{\lceil S/B\rceil\times d}
+by averaging query vectors within each block, while the Key Pooling Module similarly computes
+K
+¯
+∈
+ℝ
+⌈
+S
+/
+B
+⌉
+×
+d
+\bar{K}\in\mathbb{R}^{\lceil S/B\rceil\times d}
+as Key blocks stream through the pipeline. Unlike the vertical-slash path, which requires maintaining separate vertical and diagonal accumulators, the query-aware path computes a single block-level attention score vector
+A
+¯
+=
+s
+​
+o
+​
+f
+​
+t
+​
+m
+​
+a
+​
+x
+​
+(
+Q
+¯
+​
+K
+¯
+T
+/
+d
+)
+\bar{A}=softmax(\bar{Q}\bar{K}^{T}/\sqrt{d})
+, whose length is equal to the number of blocks. This computation is performed incrementally as each Key block is fetched, without materializing the full
+Q
+¯
+​
+K
+¯
+T
+\bar{Q}\bar{K}^{T}
+matrix.
+The Query-Aware Scoring uses the Hybrid MPU for computing matrix multiplication on the pooled vectors. Scores are accumulated into a dedicated Query-Aware Score Buffer in BRAM, and normalization is applied using LUT-based exponential approximation followed by a running sum and reciprocal, avoiding floating-point softmax units. Selection of active blocks is governed by the coverage constraint
+γ
+\gamma
+: the Streaming Coverage Selector scans the query-aware score buffer in descending score order, accumulating attention values until the threshold is met. As in the vertical-slash case, this avoids a full argsort by using bounded, comparator-based selection logic and terminates early once sufficient coverage is achieved. The resulting set of block indices is directly emitted as the sparse index set
+S
+S
+for the head.
+SIGU writes no intermediate tensor larger than
+O
+⁡
+(
+⌈
+S
+/
+B
+⌉
+)
+O(\lceil S/B\rceil)
+elements to off-chip memory, and each Key block is fetched exactly once. By fusing score computation, pooling, divergence evaluation, and top-k selection into a single streaming pipeline, FAST-Prefill transforms sparse index generation from an irregular, memory-bound operation into a deterministic, bandwidth-efficient datapath that preserves Flex-Prefill semantics while fully exploiting FPGA memory hierarchy.
+Fig. 4
+:
+Sparse Attention Unit Workflow
+IV-C
+Sparse Attention Unit
+The sparse attention unit in FAST-Prefill integrates dynamic sparse attention computation with a custom cache (in URAM) designed to hold selective KV cache blocks. In addition to the Q, K and V vectors, the SAU also uses the sparse indices generated by the SIGU.
+The unit operates on Key and Value tensors stored in off-chip HBM as contiguous blocks of fixed size (128 tokens per block), and consumes a sparse index set that specifies, for each attention head and query block, which KV blocks participate in attention. Although the KV blocks themselves are stored contiguously, the sparse index set induces a head-dependent gather pattern: different heads and query blocks request different subsets of KV blocks, with potential overlap in blocks corresponding to the same attention group as per Group-Query-Attention. Executing these requests directly would result in repeated non-contiguous memory reads, each generating short HBM bursts and underutilizing available bandwidth.
+FAST-Prefill restructures sparse attention execution around a block-major schedule. Instead of iterating over query blocks or heads, the unit iterates over KV blocks in ascending block index order. Prior to computation, the sparse index set is transformed into a compact job list representation, where each KV block identifier
+b
+b
+is associated with a list of consumers
+(
+h
+,
+q
+b
+)
+(h,q_{b})
+, indicating that attention head
+h
+h
+and query block
+q
+b
+q_{b}
+require this KV block. This transformation replaces global sorting with a linear-time bucketization step. A block-use counter records the number of times each KV block is referenced and computes offsets.
+KV residency is managed using a liveness-driven cache replacement policy rather than a naive frequency-based policy. For each KV block
+b
+b
+, the block-use counter computed during job construction serves as an exact remaining-use counter, indicating how many attention computations still require that block. Each time the block is consumed, the counter is decremented; when it reaches zero, the block is provably not required for the remainder of the sparse attention step. This property enables an evict-on-nill rule that eliminates unnecessary refetches. However, this is inefficient as the cache size is limited. To improve performance under limited URAM capacity, the cache is partitioned into two regions: a Hot KV tier and a Cold KV tier, with tags stored in BRAM. Blocks with high remaining use—i.e., those whose reuse count exceeds a static threshold
+T
+h
+​
+o
+​
+t
+T_{hot}
+—are admitted to the hot region, while blocks with limited reuse are placed in the cold region or bypass the cache entirely. The threshold
+T
+h
+​
+o
+​
+t
+T_{hot}
+is chosen to be 50% of the total query blocks.
+This prevents moderately reused blocks from displacing heavily reused ones and avoids cache thrashing.
+Prefetching is coordinated by a lightweight local FSM that operates alongside the global controller. The local FSM maintains a bounded lookahead window over upcoming KV blocks in block-index order and consults the remaining-use counters to determine whether a block will be used and where it should be placed. Blocks with zero remaining use are skipped entirely, while blocks already resident in the cache are not refetched. Prefetch requests are issued only when sufficient space is available in the appropriate cache region, preventing premature eviction of live blocks. Because block-usage counters monotonically decrease, the prefetch and eviction decisions are tightly aligned with the execution schedule, ensuring that blocks are fetched neither too early nor too late.
+Attention computation is performed using the Hybrid MPU. For each KV block fetched into the cache, the controller streams the corresponding Key tile into an on-chip buffer and iterates over its job list. For each job, the query block is read, and a score tile of size 128×128 is computed. Softmax normalization is performed in a streaming fashion, and the resulting attention weights are immediately applied to the corresponding Value tile to produce partial outputs. These partial results are accumulated directly into an on-chip output buffer indexed by
+(
+h
+,
+q
+b
+)
+(h,q_{b})
+. By reducing score computation, normalization, and value aggregation into a single fused pipeline, the SAU avoids generating large tensors and confines all transient data to bounded FIFOs and buffers.
+Because execution proceeds in KV-block order rather than query order, partial outputs for each query block arrive out of order. Rather than introducing a heavy reorder network, FAST-Prefill uses keyed accumulation: each job record carries the identifiers of its destination head and query block, and partial results are added into a banked accumulator memory at deterministic addresses. This mechanism functions as a reorder buffer in effect, while remaining hardware-light. Once all KV blocks have been processed and all block-usage counters reach zero, the accumulator contains the final sparse attention outputs in order and ready for FFN processing.
+IV-D
+Hybrid Matrix-Multiplication Unit
+Sparse attention in long-context inference requires executing a large number of block-level dot products across attention heads and query blocks. While each dot product is structurally regular, the aggregate compute demand is substantial: supporting parallel execution across heads and blocks would require instantiating many matrix multiplication engines. On FPGA platforms, using only DSP-based multipliers is inefficient due to the limited number of DSPs, severely constraining scalability and preventing parallel instantiation. This motivates a new approach to arithmetic realization that enhances throughput. To this end, we design a hybrid matrix processing unit that is based on bit-plane arithmetic in addition to DSP matrix grids, all tailored for INT-8 precision.
+At a high level, an 8-bit signed integer multiplication can be decomposed into a sum of bit-level partial products. Given a value
+a
+∈
+ℤ
+8
+a\in\mathbb{Z}_{8}
+and a value
+b
+∈
+ℤ
+8
+b\in\mathbb{Z}_{8}
+, we represent them as:
+a
+=
+∑
+i
+=
+0
+7
+a
+i
+​
+.2
+i
+,
+b
+=
+∑
+j
+=
+0
+7
+b
+j
+​
+.2
+j
+,
+a=\sum_{i=0}^{7}a_{i}.2^{i},b=\sum_{j=0}^{7}b_{j}.2^{j},
+(5)
+where
+a
+i
+,
+b
+j
+∈
+{
+0
+,
+1
+}
+a_{i},b_{j}\in\{0,1\}
+denote individual bit planes. The product is computed as:
+a
+.
+b
+=
+∑
+i
+=
+0
+7
+∑
+j
+=
+0
+7
+(
+a
+i
+∧
+b
+j
+)
+​
+.2
+i
++
+j
+,
+a.b=\sum_{i=0}^{7}\sum_{j=0}^{7}(a_{i}\wedge b_{j}).2^{i+j},
+(6)
+Each partial product reduces to a simple AND operation followed by a shift, which maps naturally onto LUT logic. However, directly instantiating all
+8
+×
+8
+8\times 8
+bit-plane interactions is neither area-efficient nor latency-optimal.
+To reduce complexity while maintaining throughput, we further apply nibble partitioning, decomposing each 8-bit operand into high (H) and low (L) 4-bit halves (nibbles):
+a
+=
+a
+(
+H
+)
+​
+.2
+4
++
+a
+(
+L
+)
+,
+b
+=
+b
+(
+H
+)
+​
+.2
+4
++
+b
+(
+L
+)
+,
+a=a^{(H)}.2^{4}+a^{(L)},b=b^{(H)}.2^{4}+b^{(L)},
+(7)
+The multiplication then expands as follows:
+a
+.
+b
+=
+(
+a
+(
+L
+)
+​
+b
+(
+L
+)
+)
++
+(
+a
+(
+H
+)
+​
+b
+(
+L
+)
++
+a
+(
+L
+)
+​
+b
+(
+H
+)
+)
+​
+.2
+4
++
+(
+a
+(
+H
+)
+​
+b
+(
+H
+)
+)
+​
+.2
+8
+,
+a.b=(a^{(L)}b^{(L)})+(a^{(H)}b^{(L)}+a^{(L)}b^{(H)}).2^{4}+(a^{(H)}b^{(H)}).2^{8},
+(8)
+Each term corresponds to an INT4
+×
+\times
+INT4 multiplication, which can be efficiently implemented using small LUTs. This nibble-level decomposition significantly reduces latency and optimizes resources while preserving exact arithmetic semantics.
+In our design, accumulation is implemented entirely using LUT-based adders built from FPGA carry chains. Modern FPGAs provide dedicated fast carry logic that enables multi-bit additions with single-cycle latency, comparable to DSP adders for moderate bit-widths.
+This approach enables parallel systolic arrays with each array based on either bit-plane based arithmetic or DSP based logic. On Xilinx U280 FPGA, we designed the hybrid MPU to have six 32x32 arrays based on DSPs and six 32x32 arrays based on bit-plane based arithmetic. Multiplication in the PEs compute with INT-8 precision and accumulation in INT-32.
+Fig. 5
+:
+Comparing TTFT of FAST-Prefill with the Baseline GPU implementation
+IV-E
+Other Hardware Units
+IV-E
+1
+Global Finite State Machine (FSM)
+The global FSM orchestrates the execution of the entire accelerator. It tracks high-level execution phases, including chunk ingestion, KV generation, SIGU, SAU, and feed-forward processing. The FSM enforces order between stages, ensures barrier synchronization of chunks when needed, and arbitrates access to shared resources MPU.
+IV-E
+2
+Special Function Unit (SFU)
+SFU computes operations such as softmax, normalization, and activation functions such as SiLU. This is shared across other compute units and coordinated by the Global FSM.
+Fig. 6
+:
+Comparing Energy Efficiency of FAST-Prefill with the Baseline GPU implementation
+TABLE I
+:
+Hardware parameters of GPU and FPGA platforms.
+Platform
+NVIDIA
+AMD
+A5000 GPU
+U280 FPGA
+Compute units
+8,192
+9,024
+CUDA Cores
+DSP48s
+Frequency (MHz)
+1,695
+175 (Achieved)
+TOPS
+222
+5.4
+Memory (GB)
+24
+8 (HBM) & 32 (DDR)
+BW (GB/s)
+768
+38 (DDR) & 460 (HBM)
+TABLE II
+:
+FPGA Resource utilization
+Module
+LUT (k)
+FF (k)
+BRAM
+URAM
+DSP
+Used
+838
+1232
+2250
+912
+6459
+Available
+1,304
+2,607
+4,032
+960
+9,024
+Utilization (%)
+64.3
+47.3
+55.8
+95
+71.6
+TABLE III
+:
+Accuracy comparison on RULER benchmark (
+↑
+\uparrow
+)
+Model
+Method
+4k
+8k
+16k
+32k
+64k
+Avg
+LLaMA-3.2-1B
+FlexPrefill (BF-16)
+95.67
+60.58
+48.32
+53.60
+50.24
+61.68
+FlexPrefill (INT-8)
+53.61
+28.12
+27.14
+30.12
+28.22
+33.44
+FAST-Prefill
+52.14
+27.33
+27.12
+28.50
+30.30
+33.07
+LLaMA-3.2-3B
+FlexPrefill (BF-16)
+93.51
+79.09
+74.76
+73.08
+68.27
+77.74
+FlexPrefill (INT-8)
+73.08
+72.60
+62.27
+56.55
+52.75
+63.45
+FAST-Prefill
+71.11
+70.40
+59.36
+54.87
+50.69
+61.28
+V
+Evaluation
+Fig. 7
+:
+Ablation: Impact of Cache on TTFT [Llama-3.2-3B]
+Fig. 8
+:
+Ablation: Impact of Hybrid MPU on TTFT [Llama-3.2-3B]
+V-A
+Evaluation Setup
+Models and Benchmark.
+We evaluate the effectiveness of FAST-Prefill with state-of-the-art LLMs: Llama3.2-1B-Instruct
+[
+19
+]
+, Qwen2.5-1B-Instruct
+[
+20
+]
+and Llama3.2-3B-Instruct
+[
+19
+]
+. Following Flex-Prefill
+[
+12
+]
+, we evaluate accuracy using the RULER
+[
+21
+]
+benchmark. We compare FAST-Prefill against the official Flex-Prefill implementation
+[
+12
+]
+baselines.
+Metrics.
+We use Time To First Token (TTFT) as the latency metric for the prefill stage. We evaluate TTFT over a range of context lengths [4K, 8K, 16K, 32K, and 128K]. Additionally, we report the energy efficiency in Token/Joule [Token count = 1 in prefill]. For our evaluations, we set the batch size to 1.
+FPGA Platform and Baselines.
+We implement FAST-Prefill on Xilinx Alveo U280. Table-
+I
+details the platform parameters. We compare the performance of FAST-Prefill against the Nvidia A5000 GPU. We evaluate FAST-Prefill (W8A8) against the quantized INT-8 Flex-Prefill implementation.
+FPGA Implementation.
+We implement our design using Vitis HLS v2023.2 and Vivado v2023.2. For latency measurements, We use the Vitis Analyzer tool for FPGA and PyTorch timing library for GPU measurements. We use the Vivado tools, nvidia-smi for energy measurements.
+V-B
+Evaluation Results
+V-B
+1
+Evaluation of Model Accuracy
+We detail the accuracy results from the RULER benchmark in Table-
+III
+. With INT-8 quantization of Flex-Prefill, the weights and activations are all quantized to INT-8. However, the matrix multiplication requires dequantization to 16 bits. With W8A8 quantization, where all computations are in INT-8, FAST-Prefill achieves accuracy similar to that of the INT-8 implementation of Flex-Prefill.
+V-B
+2
+Evaluation of Performance
+We compare the latency of FAST-Prefill with the GPU implementation of Flex-Prefill. Figure-
+5
+demonstrates that FAST-Prefill achieves lower TTFT than the A5000 GPU implementation of Flex-Prefill. FAST-Prefill achieves a speedup of 1.5
+×
+\times
+to 2.5
+×
+\times
+in TTFT over both the GPU implementations across varied context lengths. This speedup can be attributed to the customized kernels for sparse index generation and the liveness-driven two-tier cache, which reduce off-chip memory traffic via operation fusion and increased on-chip buffer access. GPU implementation, on the other hand, incurs frequent irregular access to its off-chip memory due to the lack of reuse-oriented, efficient prefetching of KV cache blocks. Additionally, the GPU offloads most parts of the sparse index generation logic to the CPU, which contributes to higher latency.
+V-B
+3
+Evaluation of Energy Efficiency
+We compare the energy efficiency of FAST-Prefill with GPU implementations. Figure-
+6
+shows the energy efficiency (Token/Joule) results with FAST-Prefill achieving up to 4.5
+×
+\times
+energy efficiency over GPU implementations.
+V-C
+Ablation Studies
+V-C
+1
+Impact of Liveness-driven cache
+We compute the performance with and without the liveness-driven cache (16 MB) under the same hardware constraints on the remaining components. As shown in Figure-
+7
+, compared to the cacheless design, the design with cache demonstrates 2.5
+×
+\times
+improvement in TTFT. This difference can be attributed to the 65% hit rate, which contributes to a significant reduction in off-chip memory access.
+V-C
+2
+Impact of Hybrid Matrix Multiplication Unit
+In comparison to DSP-only MPU, Hybrid MPU provides 1.8
+×
+\times
+speedup in latency as shown in Figure-
+8
+. Additionally, without the Hybrid MPU design, approximately 85% of LUT resources would remain idle.
+VI
+Related Work
+Recent works
+[
+16
+,
+22
+,
+23
+,
+24
+,
+25
+,
+26
+,
+27
+,
+28
+,
+29
+,
+30
+,
+31
+]
+have explored LLM inference on FPGAs. Works such as
+[
+24
+,
+30
+,
+27
+]
+focus on enhancing decode stage performance via custom dataflow architectures. Other works such as
+[
+26
+,
+29
+,
+25
+]
+emphasize on extreme quantization and design kernels to exploit the quantization benefits. Previous works
+[
+16
+]
+focus on exploiting weight sparsity and on-chip decode to achieve higher performance than GPUs. Works
+[
+31
+]
+target multi-FPGA environments to scale decode compute for large models. Some works
+[
+27
+,
+23
+]
+target CPU-FPGA heterogeneous compute. However, all the works primarily target short context lengths (
+<
+<
+1024 tokens). These works do not scale well for the compute-intensive prefill stage as they all perform dense attention. Previous works on accelerating long-context inference
+[
+32
+]
+target a single attention sparsity pattern and focus on achieving performance via weight sparsity and mixed precision. Additionally, these works target context lengths up to 8K tokens. Conversely, our work focuses on efficiently exploiting dynamic sparsity patterns in attention for very long contexts in the prefill stage. Optimizations of weight sparsity and efficient token generation in the decode stage are orthogonal to our approach and can contribute to further performance enhancements.
+VII
+Conclusion
+In this work, we proposed FAST-Prefill, the first FPGA accelerator to the best of our knowledge for prefill stage inference acceleration for long contexts with dynamic attention sparsity. We leverage the Flex-Prefill algorithm for sparse index generation. We design streaming sparse index generation logic with fused kernels to mitigate large tensors. FAST-Prefill features a liveness-driven two-tier cache to reduce irregular HBM accesses and promote efficient reuse of KV cache blocks. Additionally, we design a hybrid matrix multiplication unit to enhance GEMM throughput via LUT-based design. FAST-Prefill achieves up to 2
+×
+\times
+speedup in TTFT and 4
+×
+\times
+improvement in energy efficiency over the efficient GPU implementation of Flex-Prefill. Our design can be enhanced by incorporating compression techniques such as N:M and block pruning. These techniques are orthogonal to our approach and will contribute towards latency improvements.
+References
+[1]
+Z. Liao, J. Wang, H. Yu, L. Wei, J. Li, and W. Zhang
+(2025)
+E2llm: encoder elongated large language models for long-context understanding and reasoning
+.
+In
+Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing
+,
+pp. 19212–19241
+.
+Cited by:
+§I
+.
+[2]
+Y. Bai, S. Tu, J. Zhang, H. Peng, X. Wang, X. Lv, S. Cao, J. Xu, L. Hou, Y. Dong,
+et al.
+(2025)
+Longbench v2: towards deeper understanding and reasoning on realistic long-context multitasks
+.
+In
+Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+,
+pp. 3639–3664
+.
+Cited by:
+§I
+.
+[3]
+N. Huynh and B. Lin
+(2025)
+Large language models for code generation: a comprehensive survey of challenges, techniques, evaluation, and applications
+.
+arXiv preprint arXiv:2503.01245
+.
+Cited by:
+§I
+.
+[4]
+Z. Yang, S. Chen, C. Gao, Z. Li, X. Hu, K. Liu, and X. Xia
+(2025)
+An empirical study of retrieval-augmented code generation: challenges and opportunities
+.
+ACM Transactions on Software Engineering and Methodology
+.
+Cited by:
+§I
+.
+[5]
+K. Yan, Z. Ling, K. Liu, Y. Yang, T. Fan, L. Shen, Z. Du, and J. Chen
+(2025)
+MIR-bench: benchmarking llm’s long-context intelligence via many-shot in-context inductive reasoning
+.
+In
+Workshop on Reasoning and Planning for Large Language Models
+,
+Cited by:
+§I
+.
+[6]
+C. Xiao and B. Liu
+(2025)
+Generalizing reasoning problems to longer lengths
+.
+In
+The Thirteenth International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§I
+.
+[7]
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin
+(2017)
+Attention is all you need
+.
+Advances in neural information processing systems
+30
+.
+Cited by:
+§I
+.
+[8]
+M. Zaheer, G. Guruganesh, K. A. Dubey, J. Ainslie, C. Alberti, S. Ontanon, P. Pham, A. Ravula, Q. Wang, L. Yang, and A. Ahmed
+(2020)
+Big bird: transformers for longer sequences
+.
+In
+Advances in Neural Information Processing Systems
+,
+H. Larochelle, M. Ranzato, R. Hadsell, M.F. Balcan, and H. Lin (Eds.)
+,
+Vol.
+33
+,
+pp. 17283–17297
+.
+External Links:
+Cited by:
+§I
+.
+[9]
+H. Jiang, Y. Li, C. Zhang, Q. Wu, X. Luo, S. Ahn, Z. Han, A. H. Abdi, D. Li, C. Lin, Y. Yang, and L. Qiu
+(2024)
+MInference 1.0: accelerating pre-filling for long-context llms via dynamic sparse attention
+.
+In
+Advances in Neural Information Processing Systems
+,
+A. Globerson, L. Mackey, D. Belgrave, A. Fan, U. Paquet, J. Tomczak, and C. Zhang (Eds.)
+,
+Vol.
+37
+,
+pp. 52481–52515
+.
+External Links:
+Document
+Cited by:
+§I
+,
+§II-B
+.
+[10]
+G. Xiao, Y. Tian, B. Chen, S. Han, and M. Lewis
+(2024)
+Efficient streaming language models with attention sinks
+.
+In
+The Twelfth International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§I
+.
+[11]
+J. Hao, Y. Zhu, T. Wang, J. Yu, X. Xin, B. Zheng, Z. Ren, and S. Guo
+(2025)
+OmniKV: dynamic context selection for efficient long-context LLMs
+.
+In
+The Thirteenth International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§I
+.
+[12]
+X. Lai, J. Lu, Y. Luo, Y. Ma, and X. Zhou
+(2025)
+FlexPrefill: a context-aware sparse attention mechanism for efficient long-sequence inference
+.
+In
+The Thirteenth International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§I
+,
+§II-B
+,
+§V-A
+.
+[13]
+J. Pool and C. Yu
+(2021)
+Channel permutations for n:m sparsity
+.
+In
+Advances in Neural Information Processing Systems
+,
+M. Ranzato, A. Beygelzimer, Y. Dauphin, P.S. Liang, and J. W. Vaughan (Eds.)
+,
+Vol.
+34
+,
+pp. 13316–13327
+.
+External Links:
+Cited by:
+§I
+.
+[14]
+H. Peng, S. Huang, T. Geng, A. Li, W. Jiang, H. Liu, S. Wang, and C. Ding
+(2021)
+Accelerating transformer-based deep learning models on fpgas using column balanced block pruning
+.
+In
+2021 22nd International Symposium on Quality Electronic Design (ISQED)
+,
+Vol.
+,
+pp. 142–148
+.
+External Links:
+Document
+Cited by:
+§I
+.
+[15]
+R. Pope, S. Douglas, A. Chowdhery, J. Devlin, J. Bradbury, A. Levskaya, J. Heek, K. Xiao, S. Agrawal, and J. Dean
+(2022)
+Efficiently scaling transformer inference
+.
+External Links:
+2211.05102
+,
+Link
+Cited by:
+§I
+.
+[16]
+S. Zeng, J. Liu, G. Dai, X. Yang, T. Fu, H. Wang, W. Ma, H. Sun, S. Li, Z. Huang, Y. Dai, J. Li, Z. Wang, R. Zhang, K. Wen, X. Ning, and Y. Wang
+(2024)
+FlightLLM: efficient large language model inference with a complete mapping flow on fpgas
+.
+In
+Proceedings of the 2024 ACM/SIGDA International Symposium on Field Programmable Gate Arrays
+,
+FPGA ’24
+,
+New York, NY, USA
+,
+pp. 223–234
+.
+External Links:
+ISBN 9798400704185
+,
+Link
+,
+Document
+Cited by:
+§I
+,
+§VI
+.
+[17]
+J. Liu, S. Zeng, L. Ding, W. Soedarmadji, H. Zhou, Z. Wang, J. Li, J. Li, Y. Dai, K. Wen, S. He, Y. Sun, Y. Wang, and G. Dai
+(2025)
+FlightVGM: efficient video generation model inference with online sparsification and hybrid precision on fpgas
+.
+In
+Proceedings of the 2025 ACM/SIGDA International Symposium on Field Programmable Gate Arrays
+,
+FPGA ’25
+,
+New York, NY, USA
+,
+pp. 2–13
+.
+External Links:
+ISBN 9798400713965
+,
+Link
+,
+Document
+Cited by:
+§I
+.
+[18]
+A. Agrawal, A. Panwar, J. Mohan, N. Kwatra, B. S. Gulavani, and R. Ramjee
+(2023)
+SARATHI: efficient llm inference by piggybacking decodes with chunked prefills
+.
+External Links:
+2308.16369
+,
+Link
+Cited by:
+§IV-A
+.
+[19]
+Llama-model-family
+(Website)
+External Links:
+Link
+Cited by:
+§V-A
+.
+[20]
+Qwen ai
+(Website)
+External Links:
+Link
+Cited by:
+§V-A
+.
+[21]
+C. Hsieh, S. Sun, S. Kriman, S. Acharya, D. Rekesh, F. Jia, Y. Zhang, and B. Ginsburg
+(2024)
+RULER: what’s the real context size of your long-context language models?
+.
+arXiv preprint arXiv:2404.06654
+.
+Cited by:
+§V-A
+.
+[22]
+P. Wang, W. Guan, L. Liang, Z. Wang, H. Luo, and Z. Zhang
+(2025)
+SpeedLLM: an fpga co-design of large language model inference accelerator
+.
+In
+Proceedings of the 34th International Symposium on High-Performance Parallel and Distributed Computing
+,
+HPDC ’25
+,
+New York, NY, USA
+.
+External Links:
+ISBN 9798400718694
+,
+Link
+,
+Document
+Cited by:
+§VI
+.
+[23]
+M. Huang, A. Shen, K. Li, H. Peng, B. Li, Y. Su, and H. Yu
+(2025)
+EdgeLLM: a highly efficient cpu-fpga heterogeneous edge accelerator for large language models
+.
+IEEE Transactions on Circuits and Systems I: Regular Papers
+72
+(
+7
+),
+pp. 3352–3365
+.
+External Links:
+Document
+Cited by:
+§VI
+.
+[24]
+J. Li, T. Li, G. Shen, D. Zhao, Q. Zhang, and Y. Zeng
+(2025)
+Pushing up to the limit of memory bandwidth and capacity utilization for efficient llm decoding on embedded fpga
+.
+In
+2025 Design, Automation & Test in Europe Conference (DATE)
+,
+Vol.
+,
+pp. 1–7
+.
+External Links:
+Document
+Cited by:
+§VI
+.
+[25]
+Z. He, S. Ye, R. Ma, Y. Wang, and J. Cong
+(2025)
+LUT-llm: efficient large language model inference with memory-based computations on fpgas
+.
+External Links:
+2511.06174
+,
+Link
+Cited by:
+§VI
+.
+[26]
+C. Yin, Z. Bai, P. Venkatram, S. Aggarwal, Z. Li, and T. Mitra
+(2025)
+TerEffic: highly efficient ternary llm inference on fpga
+.
+External Links:
+2502.16473
+,
+Link
+Cited by:
+§VI
+.
+[27]
+W. Ma, X. Yang, S. Zeng, T. Liu, L. Shen, H. Wang, S. Li, K. Hong, Z. Zhu, X. Ning, T. Ho, G. Dai, and Y. Wang
+(2025)
+CD-llm: a heterogeneous multi-fpga system for batched decoding of 70b+ llms using a compute-dedicated architecture
+.
+ACM Trans. Reconfigurable Technol. Syst.
+.
+Note:
+Just Accepted
+External Links:
+ISSN 1936-7406
+,
+Link
+,
+Document
+Cited by:
+§VI
+.
+[28]
+J. Zhou, C. Xue, X. Dong, Y. Ren, J. Zhang, G. Sun, and X. Lin
+(2026)
+Lembda: optimizing llm inference on embedded platforms via cpu/fpga co-processing
+.
+In
+Advanced Parallel Processing Technologies
+,
+C. Li, X. Qian, D. Gizopoulos, and B. Grot (Eds.)
+,
+Singapore
+,
+pp. 426–431
+.
+External Links:
+ISBN 978-981-95-1021-4
+Cited by:
+§VI
+.
+[29]
+Y. Qiao, Z. Chen, Y. Zhang, Y. Wang, and S. Huang
+(2025)
+TeLLMe: an energy-efficient ternary llm accelerator for prefilling and decoding on edge fpgas
+.
+External Links:
+2504.16266
+,
+Link
+Cited by:
+§VI
+.
+[30]
+J. Zheng, G. Chen, L. Huang, X. Lou, and W. Zheng
+(2025)
+Terafly : a multi-node fpga based accelerator design for efficient cooperative inference in llms
+.
+IEEE Transactions on Computer-Aided Design of Integrated Circuits and Systems
+(
+),
+pp. 1–1
+.
+External Links:
+Document
+Cited by:
+§VI
+.
+[31]
+J. Zheng and G. Chen
+(2025)
+LoopLynx: a scalable dataflow architecture for efficient llm inference
+.
+In
+2025 Design, Automation & Test in Europe Conference (DATE)
+,
+Vol.
+,
+pp. 1–7
+.
+External Links:
+Document
+Cited by:
+§VI
+.
+[32]
+Y. Liang, H. Shi, H. Shao, and Z. Wang
+(2025)
+AccLLM: accelerating long-context llm inference via algorithm-hardware co-design
+.
+External Links:
+2505.03745
+,
+Link
+Cited by:
+§VI
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

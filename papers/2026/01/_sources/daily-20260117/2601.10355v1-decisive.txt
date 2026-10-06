@@ -1,0 +1,415 @@
+Necessary main-body extraction; no unrelated appendices. Source https://arxiv.org/html/2601.10355v1
+1 Introduction
+The pursuit of Artificial General Intelligence (AGI) relies on the development of autonomous agents capable of perceiving, reasoning, and acting in complex real-world environments (Team et al., 2025a; Liu et al., 2025; Team et al., 2025b). Such agents are required to dynamically utilize diverse tools to extend their capabilities and accomplish multi-step tasks. While large language models (LLMs) have demonstrated impressive tool-use capabilities, they still struggle in realistic multi-turn interactions, particularly when faced with ambiguous instructions, long-context dependencies, and unexpected errors (Patil et al., ). These limitations constrain their practical application in agent-based systems (Yao et al., 2024; Barres et al., 2025).
+The primary bottleneck in training autonomous agents lies in the scarcity of high-quality, multi-turn tool-use trajectories, which are rarely found in real-world scenarios.
+To overcome this data scarcity, current research favors a tool-centered simulation paradigm (Fig. 1). These methods typically rely on predefined API sets to synthesize user tasks and simulate interactions (Qin et al., 2023; Liu et al., 2024b; Guo et al., 2024; Zeng et al., 2025; Prabhakar et al., 2025; Liu et al., 2024a; Yin et al., 2025). However, gathering a sufficiently diverse and comprehensive tool set is inherently expensive and difficult. The resulting tool-use training data is often limited by the scope of the predefined APIs, while the ultimate goal of agentic training is the exposure to a sufficiently broad range of scenarios during training to enable agents to generalize effectively to unseen environments and scenarios (Fang et al., 2025). This raises a critical question: Can we bypass the dependency on predefined tools and synthesize more diverse, high-quality trajectories directly from real-world?
+In this paper, we answer this question by proposing a novel text-based extraction paradigm. We observe that the raw text corpora used for pre-training large language models inherently contain multi-turn tool-use patterns. Although such texts do not contain explicit agentic trajectories, they often document rich, real-world mutli-step problem-solving experiences, which can be extracted and transformed into multi-turn tool-use data (e.g., ”the procedure for hospital reimbursement claims”). Our preliminary analysis of Ultra-fineweb (Wang et al., 2025) confirms that such texts contain actionable logical sequences spanning diverse domains, indicating that unstructured text serves as an untapped, scalable, and authentic source for synthesizing agentic training data.
+To operationalize this paradigm, we introduce GEM, a data synthesis pipeline that enables generation and extraction of multi-turn tool-use trajectory from text corpora. The GEM pipeline proceeds in four stages: (1) Selection, identifying text segments rich in multi-step workflows; (2) Extraction, deriving structured workflows and tool definitions to map human-described procedures to agent actions; (3) Generation, employing a powerful model to convert text and abstract workflows into concrete user-agent interactions; and (4) Refinement, enhancing the complexity and diversity of the trajectories followed by rigorous verification.
+Extensive experiments validate the effectiveness of our approach. When fine-tuned on data synthesized by our pipeline, the GEM-32B model achieves a 14.9% improvement on BFCL V3 Multi-Turn benchmark.
+Notably, We find that out-of-domain training data generated through our paradigm achieve performance on \tau^{2}-bench that is comparable to models trained on \tau-bench in-domain data, thereby demonstrating the strong generalization capability of our approach.
+Building upon this high-quality data, we further develop a specialized Trajectory Synthesizer to internalize the ”text-to-trajectory” mapping. This synthesizer provides a cost-effective, end-to-end solution for large-scale data generation, matching the quality of the multi-stage synthesis pipeline while significantly reducing costs.
+In summary, our contributions are threefold:
+•
+We propose a new paradigm for agent trajectory synthesis that directly extracts multi-turn tool-use trajectories from text corpora. This paradigm unlocks an untapped, scalable source of authentic human problem-solving behaviors for training autonomous agents.
+•
+We develop GEM, a data synthesis pipeline that transforms raw text into multi-turn tool-use trajectories to prove the effectiveness of our proposed paradigm. We use GEM to synthesize a high-quality dataset that leads to significant performance gains: 13.8% on \tau^{2}-bench and 16.5% on BFCL V3 Mutli-Turn.
+•
+To enable cost-effective and scalable data generation, we develop a specialized Trajectory Synthesizer via supervised fine-tuning. We demonstrate that this model successfully distills the full GEM pipeline into an end-to-end generator, matching the original synthesis quality while significantly reducing costs.
+Figure 1: We propose the ”Text to Trajectory” paradigm, instead of relying on predefined tools to generate tasks and trajectories.
+2 Problem Formulation
+In this paper, we address the challenge of acquiring general multi-turn tool-use agent trajectories. We propose a novel paradigm that synthesizes such trajectories by extracting tool-use workflows directly from large-scale textual corpora.
+This approach naturally enjoys these advantages: the scale of real-world text ensures scalability, its inherent diversity covers multiple domains, and its foundation in grounded human problem-solving experiences yields high-quality, realistic agent data.
+Formally, we define the paradigm as:
+•
+Input: Let \mathcal{C} denote a large-scale text corpus, where each element c_{i}\in\mathcal{C} is a raw, unstructured text segment (e.g., a document or narrative) that contains multi-step workflows.
+•
+Output: A complete list of tools \mathcal{P}=\{p_{1},\dots,p_{m}\}, where m denotes the number of available tools and each p_{i} represents a tool defined in the standard OpenAI format. Additionally, a structured multi-turn tool-use trajectory T=\{s,(u_{1},a_{1},o_{1}),\dots,(u_{n},a_{n},o_{n})\} is produced, where s denotes the system prompt and at each turn t, u_{t} corresponds to a user’s query or request, a_{t} denotes the assistant’s natural language response or tool call, and o_{t} is the resulting observation from the tool’s execution.
+3 Methodology
+In this section, we introduce GEM, an agentic synthesis pipeline designed to automatically extract and generate multi-turn tool-use trajectories directly from large-scale text corpora.
+We first conduct a preliminary analysis of text corpora in Section 3.1.
+Subsequently, we detail our trajectory collection pipeline in Section 4.
+3.1 Preliminary Analysis
+Figure 2: Distribution of the extracted task category from raw documents, showing the diversity of tasks covered in the text corpora.
+Figure 3: Preliminary case study.
+Setup
+To assess the feasibility of our proposed paradigm, we first perform a preliminary analysis on the characteristics of large-scale unstructured data, using the Ultra‑fineweb corpus (Wang et al., 2025) as our main data source. We randomly sample approximately 250,000 raw text segments. Each segment is then processed through a sequential labeling pipeline: we first use a classifier to determine whether the text contains multi‑step operational procedures, which helps us identify segments suitable for conversion into tool‑use trajectories. Only those segments identified as containing procedural content are subsequently annotated with rich metadata, including platform, domain, and task category, via Qwen3-8B to evaluate the diversity of the corpus.
+We also conduct a preliminary case study.
+The prompt templates used for metadata annotation are provided in Appendix A.1.
+Results
+First, by observing a large number of text cases, we find that unstructured textual data inherently contain the three core components essential for constructing agentic trajectories as shown in Figure 3: (1) User Queries, which emerge naturally as goals or problems stated in the text; (2) Environmental Tools, whose descriptions, APIs, or functionalities are often embedded within explanatory or instructional contexts; and (3) Multi-step Workflows, manifesting as step-by-step procedures or operational narratives.
+We find that around 14% of the sampled segments contain explicit multi‑step workflows, indicating a substantial reservoir of procedural knowledge. Given the massive scale of available text corpora, this represents a significant potential source for generating diverse agent trajectories.
+Furthermore, the identified procedural segments cover a wide spectrum of task categories and application scenarios—including education & E-learning, data analysis as illustrated in Figure 3. This diversity confirms that textual sources can provide the necessary variety in tasks, tools, and environments required for robust agent training. The detailed domain distribution is further reported in Appendix E.
+These findings collectively demonstrate that generating multi‑turn tool‑use trajectories directly from unstructured text is not only feasible but also taps into a vast and largely underexplored repository of agentic trajectory.
+3.2 GEM Synthesis Pipeline
+Figure 4: Overall Pipeline of GEM. The first phase extracts multi-step workflows from filtered text corpora and defines corresponding tools. The second phase generates and refines trajectories, incorporating diverse behavioral patterns and rigorous validation to produce high-quality training data.
+We now detail the data synthesis pipeline of GEM to generate and extract multi-turn tool-use data. The overall pipeline is illustrated in Figure 4. All prompts used in this section are in Appendix A.
+Stage 1: Text Filtering
+To ensure the quality and realism of generated trajectories, the initial stage filters out raw text segments c that do not describe multi-step operations. The filtering procedure uses the same annotation prompt and model as described in Section 3.1.
+Stage 2: Workflow & Tool Extraction
+For each retained text segment c containing multi-step operations, we proceed to extract structured abstract workflows and synthesize corresponding functional tools directly based on the text segment description.
+First, the model is instructed to identify all workflows and enumerate the individual steps within each (e.g., search_items and then edit_item). Importantly, the model is encouraged to recognize workflow complexity, including sequential dependencies, conditional logic, and uniqueness constraints, thereby enhancing the richness and practical relevance of the output. Concurrently, the model designs a set of API tools \mathcal{P} in accordance with OpenAI schema standards to support the subsequent trajectory generation. Each tool p is designed to perform a single, coherent function, with self-explanatory parameter names and well-specified data types. The final structured output comprises the abstract workflow descriptions alongside the complete tool definitions.
+Stage 3: Trajectory Generation
+Based on the text, abstract workflows and tools synthesized in the previous stage, we now proceed to generate concrete multi-turn tool-use trajectories.
+For each workflow and its corresponding set of tools, we employ a strong teacher model (GLM-4.6 in this work) to generate a preliminary complete trajectory T. Our approach synthesizes the full trajectory directly in a single pass instead of simulating turn-by-turn conversations via a multi-agent system to ensure efficiency. Each generated trajectory include the following core components:
+•
+System Prompt s: Clear domain-specific rules extracted from the source text, establishing guidelines the assistant must follow throughout the conversation.
+•
+User Task (u_{1},...u_{n}): A series of natural user requests that may be ambiguous or complex, reflecting real-world scenarios.
+•
+Assistant Responses (a_{1},...,a_{n}): Demonstrations of intelligent problem-solving, strict adherence to domain rules, and correct tool invocation with appropriate parameters.
+•
+Tool Response (o_{1},...o_{n}): Simulated tool outputs that are both complete and realistic, providing authentic feedback.
+Here, n denotes the number of conversational turns for each role.
+To capture the diverse practical challenges inherent in real-world multi-turn interactions, we encourage the inclusion of various interaction patterns during generation. These include but are not limited to: refusing requests that exceed the assistant’s capabilities, clarifying ambiguous user queries, and actively recovering from errors.
+Stage 4: Refinement
+We observe that although the initial multi-turn dialogue trajectories T are complete, they often lack sufficient complexity and tend to be relatively straightforward. To fully utilize and enhance the quality of these trajectories, we adopt a refinement strategy to further process them. Specifically, given T, we generate a refined trajectory T^{\prime} by expanding the variety of tools used, improving the realism of environmental responses, increasing the ambiguity and complexity of user requests, and ensuring the inclusion of non-trivial tool-call chains. We find this refinement essential for obtaining higher-quality agentic data, as demonstrated in Section 4.4.
+Validation
+The trajectory filtering process integrates rule-based verification with LLM-based assessments to ensure high-quality outputs. Given a refined trajectory T^{\prime}, we first apply a rule-based check to guarantee structural correctness. This involves verifying that all tools are correctly defined according to the OpenAI format and that each tool call corresponds to a valid function within the designated toolset, with argument names and types matching their definitions. We further validate the conversation format to confirm that tool responses meet all requirements and that all role tags are properly closed.
+Beyond structural correctness, we employ an LLM-based judge (Qwen3-32B in this paper) to detect and eliminate hallucinations. This step specifically examines all tool calls to ensure that every generated parameter value is explicitly grounded in the dialogue context rather than being fabricated. Only those trajectories that successfully pass both validation stages are retained as the final set T_{\text{final}} for use in supervised fine-tuning (SFT).
+Data Synthesizer
+Generating such trajectories is costly and time-consuming. To address this, we propose training a data synthesizer via supervised fine-tuning (SFT), which learns a end-to-end mapping from text to multi-turn tool-use trajectories. This approach allows for the cost-effective synthetic training data.
+For each data instance, the synthesizer takes as input x an instruction (”Turn the following text into multi-turn tool-use trajectories”) paired with a text segment. It then generates the corresponding output y, which includes both the necessary tool definitions and the resulting multi-turn tool-use trajectory.
+Model
+Multi-Turn
+Multi-Turn
+Multi-Turn
+Multi-Turn
+Multi-Turn
+Overall Acc
+Base
+Miss Func
+Miss Param
+Long Context
+Proprietary & Large Scale Models
+GPT-4.1
+38.88
+47.50
+32.50
+32.50
+43.00
+DeepSeek-V3.2-Exp
+37.38
+41.50
+39.50
+33.50
+35.00
+Gemini-2.5-Flash
+36.25
+41.50
+36.00
+32.00
+35.50
+8B Models
+Qwen3-8B
+18.00
+24.00
+17.00
+13.50
+17.50
+APIGEN-MT
+21.00
+25.50
+19.00
+25.00
+14.50
+TOUCAN
+21.88
+27.00
+21.50
+21.00
+18.00
+MUA
+21.13
+29.50
+18.00
+20.00
+17.00
+Qwen3-8B-GEM
+30.25
+40.00
+30.00
+28.00
+23.00
+32B Models
+Qwen3-32B
+28.35
+34.00
+24.50
+25.50
+29.50
+APIGEN-MT
+29.50
+36.00
+27.00
+28.50
+26.50
+TOUCAN
+35.00
+41.00
+37.50
+26.00
+35.50
+MUA
+26.25
+30.00
+25.00
+23.00
+27.00
+Qwen3-32B-GEM
+44.88
+52.00
+40.00
+38.50
+49.00
+Table 1: Performance comparison on the BFCL V3 benchmark. The results are categorized by model scale. The best performance in each category is highlighted in bold. All metrics are reported as accuracy scores. The GEM-based models are highlighted in blue.
+4 Experiments
+4.1 Experimental Setups
+Benchmark. We evaluate our approach on two challenging benchmarks designed to assess multi-turn tool-use capabilities:
+(1) BFCL V3 (Patil et al., ): This benchmark involves agents interacting with a Python-based API environment. We focus specifically on the multi-turn scenarios, which are divided into four categories: Multi Turn Base, Miss Param, Miss Func, and Long Context with 200 tasks per category.
+(2) \tau^{2}-bench (Barres et al., 2025) (Airline and Retail): This benchmark evaluates user-agent interactions comprehensively within specialized real-world domains. We employ GPT-4.1 as the user simulator Following the original experimental setting and report performance using the Avg@4 and Pass@4 metrics.
+LLMs and Datasets. We source the training data from Ultra-FineWeb (Wang et al., 2025) and employ GLM-4.6 to generate 10K synthetic trajectories. These trajectories are then used to fine-tune both Qwen3-8B and Qwen3-32B. Additionally, we leverage the same 10K samples to train a data synthesizer model based on Qwen3-8B.
+Baselines. We compare our synthetic data against the following open-source datasets: (1) APIGEN-MT (Prabhakar et al., 2025), (2) Simia-Tau (Li et al., 2025): We sample 50K multi-turn data from this dataset, (3) MUA (Zhao et al., 2025), and (4) TOUCAN (Xu et al., 2025): We sample 50K multi-turn data from this dataset. Notably, APIGEN-MT and Simia are in-domain training data generated in the \tau-bench environment (Airline and Retail).
+Training Details. For supervised fine-tuning, we set the learning rate to 5\times 10^{-6} and train for two epochs. Fine-tuning is performed using LLaMA-Factory (Zheng et al., 2024) under a full-parameter setting. Further details are provided in Appendix B.
+4.2 Performance of GEM Synthesis Pipeline
+BFCL V3 Results
+Table 1 presents performance comparisons on the BFCL V3 benchmark. The results of Simia are not included, as we observed its scores to be generally low, likely due to its reliance solely on in-domain \tau-bench data.
+Our proposed GEM method demonstrates clear improvements over baseline models at both the 8B and 32B scales. In the 8B category, Qwen3-8B-GEM achieves an overall accuracy of 30.25%, significantly surpassing the base Qwen3-8B model and outperforming other open-source baselines such as APIGEN-MT and TOUCAN.
+The performance gain is even more pronounced in the 32B category, where Qwen3-32B-GEM attains an accuracy of 44.88%. This result not only exceeds open-source synthesized datasets like APIGEN-MT and MUA by a wide margin but also outperforms proprietary large-scale models, including GPT-4.1 (38.88%) and DeepSeek-V3.2-Exp (37.38%).
+These findings confirm that our data synthesis strategy effectively enhances function-calling capabilities across various multi-turn interaction categories.
+\tau^{2}-Bench Results
+Model
+Airline
+Retail
+Avg@4
+Pass@4
+Avg@4
+Pass@4
+8B Models
+Qwen3-8B
+13.00
+18.00
+38.16
+66.67
+APIGEN-MT
+23.50
+42.00
+42.54
+69.30
+Simia
+35.50
+52.00
+43.20
+70.18
+TOUCAN
+20.50
+42.00
+26.32
+52.51
+MUA
+20.50
+40.00
+30.26
+61.40
+Qwen3-8B-GEM
+22.00
+40.00
+44.52
+75.44
+32B Models
+Qwen3-32B
+21.00
+40.00
+43.20
+70.18
+APIGEN-MT
+36.00
+52.00
+44.52
+74.56
+Simia
+38.00
+62.00
+48.03
+73.68
+TOUCAN
+30.00
+52.00
+43.86
+72.81
+MUA
+33.00
+54.00
+49.56
+80.70
+Qwen3-32B-GEM
+35.50
+56.00
+55.48
+86.84
+Figure 5: Results on \tau^{2}-bench. We report avg@4 and pass@4 metrics for Airline and Retail domains.
+Table 5 presents the performance on the \tau^{2}-bench benchmark, covering the Airline and Retail domains. We would like to emphasize that our models are trained on synthetically generated data that is strictly out-of-domain with respect to the \tau^{2}-bench test sets, while APIGEN-MT and SIMIA are synthesized datasets within the \tau environment (Retail and Airline), which can be regarded as in-domain training data.
+Despite this, our approach still demonstrates comparable performance.
+At the 8B scale, Qwen3-8B-GEM remains highly competitive, achieving results comparable to models like SIMIA that are fine-tuned on in-domain synthetic data, and surpassing APIGEN-MT in the Retail domain with a Pass@4 score of 75.44% versus 69.30%.
+At the 32B scale, our model exhibits strong generalization, outperforming both SIMIA and MUA in the Retail domain with a Pass@4 of 86.84% and delivering competitive results in the Airline domain.
+This indicates that our text-based synthesis pipeline instills a fundamental understanding of tool-use reasoning that transfers effectively to unseen, real-world domains, matching or even exceeding the performance of models trained on more domain-aligned data distributions.
+Overall, the results underscore the effectiveness of our proposed paradigm.
+4.3 Performance of GEM Synthsizer
+We use 10K trajectories generated by GEM synthesizer to fine-tune Qwen3-8B, as shown in Table 2.
+When using the same data source (Ultrafineweb), our GEM-Synthesizer achieves an overall accuracy of 28.38% on the BFCL dataset, which is close to the performance obtained by directly using synthesized data generated by GLM-4.6, and also yields the Pass@4 score (73.68%) in the \tau^{2} Retail domain.
+We also use another textual source, Wikihow (Koupaee and Wang, 2018), to show the generalization of our synthesizer. The GEM-Synthesizer also achieves a high overall performance on both BFCL (28.50%) and on the \tau^{2}-bench Airline domain. These findings indicate that our synthesizer can generate high-quality tool-use trajectories in a low-cost, end-to-end way, thereby enabling stronger generalization in complex tool-use scenarios.
+Model
+BFCL V3 Multi-Turn
+Tau2
+Overall
+Base
+Miss
+Miss
+Long
+Airline
+Retail
+Acc
+Acc
+Func
+Param
+Context
+Avg@4
+Pass@4
+Avg@4
+Pass@4
+Qwen3-8B (Base)
+18.00
+24.00
+17.00
+13.50
+17.50
+13.00
+18.00
+38.16
+66.67
++ GEM-GLM (Ultrafineweb)
+30.25
+40.00
+30.00
+28.00
+23.00
+22.00
+40.00
+44.52
+75.44
++ GEM-Synthesizer (Ultrafineweb)
+28.38
+41.50
+23.50
+27.50
+21.00
+26.00
+40.00
+42.11
+73.68
++ GEM-Synthesizer (Wikihow)
+28.50
+43.50
+22.00
+27.00
+21.50
+25.00
+42.00
+39.67
+68.42
+Table 2: Effects of data synthesizer and text sources. We compare the impact of different trajectory generation models (GLM vs. Trained Synthesizer) and data sources (Ultrafineweb and Wikihow) on the Qwen3-8B base model. The best performance is highlighted in bold.
+4.4 Ablation Study
+Model
+Overall
+Multi
+Miss
+Miss
+Long
+Acc
+Base
+Func
+Param
+Cxt.
+Qwen3-8B (Base)
+18.00
+24.00
+17.00
+13.50
+17.50
+Qwen3-8B-GEM
+30.25
+40.00
+30.00
+28.00
+23.00
+(w/o Refine)
+26.00
+33.50
+23.50
+27.00
+20.00
+(w/o LLM-Based Check)
+27.38
+37.50
+25.00
+24.00
+23.00
+Qwen3-32B (Base)
+28.35
+44.00
+24.50
+25.50
+29.50
+Qwen3-32B-GEM
+44.88
+52.00
+40.00
+38.50
+49.00
+(w/o Refine)
+32.50
+40.00
+30.00
+27.00
+33.00
+(w/o LLM-Based Check)
+44.25
+52.00
+40.50
+40.00
+44.50
+Figure 6: Ablation study. We conduct ablation study with BFCL V3 benchmark.
+To validate the effectiveness of our synthetic data pipeline, we conduct an ablation study with BFCL V3 benchmark focusing on two key components: the refinement stage and the LLM-based check as shown in Table 6. We report the ablation results on \tau^{2}-bench in Appendix C.
+Effect of Refinement. The refinement stage leads to a substantial performance improvement. For example, it raises the overall accuracy of Qwen3-32B from 32.50% to 44.88%, a gain of over 12 percentage points. This process increases the complexity and quality of the synthetic trajectories, which in turn enables more effective learning of multi-turn tool use. We report more details in Appendix D to illustrate out refinement strategy significantly enhances the overall complexity of the synthesized data.
+Notably, even the original trajectories extracted directly from the original text (though relatively simpler) still provide valuable training signals and contribute to improved tool-calling capability. This indicates that more effectively leveraging information from the original text to synthesize high-quality tool-calling trajectories is a promising research direction.
+Effect of LLM-Based Check. This stage consistently improves results by filtering out samples with hallucinations or inconsistencies. For the 8B model, it raises overall accuracy from 27.38% to 30.25%. This mechanism also contributes to stronger performance across both model scales.
+4.5 Data Analysis
+Figure 7 presents a statistical overview of our synthesized multi-turn tool-use trajectories, highlighting three key dimensions: the number of distinct tools employed, the number of messages per dialogue, and the total number of tool calls.
+On average, each trajectory involves 8.6 distinct tools, indicating that the synthesis process requires models to meaningfully select and combine multiple tools within a single task.
+Moreover, the trajectory contains an average of 46 turns. The considerable length of these dialogues ensures that tasks cannot be resolved simply, helping models learn to maintain context, track task state, and engage in multi‑step planning over prolonged dialogues. In comparison, existing open‑source datasets such as APIGEN-MT (Prabhakar et al., 2025) average around 18.5 turns, while TOUCAN (Xu et al., 2025) contains only about 6.24 turns.
+Finally, each trajectory averages 16.3 tool calls. while APIGEN-MT contains only an average of 4.3 tool calls. This high frequency underscores the multi‑step, tool‑driven nature of the synthesized tasks.
+Taken together, these statistics demonstrate that our synthesized dataset exhibits substantial diversity and interaction depth, making it well‑suited for training models in multi‑turn tool‑use scenarios.
+Figure 7: Data analysis. We find the synthesized trajectories are overall complex. Left: distribution of number of tools. Mid: distribution of number of messages. Right: distribution of number of tool calls in each trajectory.
+4.6 Case Study
+Figure 8: Case study of our generated multi-turn tool-use trajecory.
+For the case study illustrated in Figure 8, this synthesized trajectory is based on a real-world photo-editing scenario.
+The synthesis process first extract diverse tools from the text description, and identifies key constraints from the user’s actions, such as the restriction that font size must be between 8 and 96 points.
+Building on these tools and rules, the dialogue encompasses a variety of realistic interaction patterns: proactively clarifying missing parameters (i.e., image path and text placement), invoking tools in the correct sequence, rejecting requests that violate constraints (i.e., exceeding the font size limit) while offering compliant alternatives, and recovering from errors by retrying with another available printer.
+It guides the model to learn how to validate inputs, adhere to system constraints, execute tasks step by step, and respond flexibly to errors within multi-turn interactions, thereby achieving reliable tool-use capabilities.
+We also show a complete synthesized trajectory in Appendeix F to help readers better understand our methodology.
+5 Related Work
+Tool-Use Data Synthesis
+To equip LLM-based agents with tool-calling capabilities, prior works focus on synthesizing tool-use training data.
+ToolBench (Qin et al., 2023) builds a large-scale function-calling dataset over thousands of APIs.
+ToolACE (Liu et al., 2024a) designs an automatic agentic pipeline that iteratively expands an API pool and synthesizes verified function-calling traces with high complexity and diversity.
+For multi-turn interaction, APIGen-MT (Prabhakar et al., 2025) generates structured task blueprints with ground-truth action sequences and then simulates realistic human–agent dialogues grounded in executable APIs. MagNet (Yin et al., 2025) represents multi-tool workflows as graph-structured function paths and converts them into multi-turn conversations with executable calls. ToolACE-MT (Zeng et al., 2025) adopts a non-autoregressive framework that drafts entire dialogues in one shot and refines them via iterative editing and verification.
+TOUCAN (Xu et al., 2025) crawls MCP servers and synthesizing 1.5M of tool-use data.
+Unlike prior works that rely on pre-defined tools, our work introduces a novel paradigm that directly extracts multi-turn trajectories from text, thereby unlocking a authentic and scalable source of tool-use agentic data.
+Tool-Use Capability Evaluation
+To systematically assess tool-use capabilities of LLM agents, a series of benchmarks have been proposed.
+ToolBench (Qin et al., 2023) focuses on evaluating whether models can translate natural-language instructions into correct API calls across thousands of real-world tools.
+The Berkeley Function Calling Leaderboard (BFCL) (Patil et al., ) provides a large-scale, syntax- and semantics-aware evaluation of function calling across diverse domains and programming languages, using AST-based checks to measure the accuracy and compositionality (e.g., parallel calls) of model-generated function invocations.
+ACEBench (Chen et al., 2025) evaluates multi-turn tool-use capability from three perspectives: normal, special, and agent.
+\tau-bench (Yao et al., 2024) emulates dynamic conversations between a simulated user and a tool-augmented agent in domain-specific scenarios, jointly evaluating task success, tool selection, and adherence to domain policies. \tau^{2}-bench (Barres et al., 2025) further extends this line by introducing dual-control environments where both the agent and the user can invoke tools, highlighting the challenges of coordinating tool use and guiding user actions in more realistic customer-service-style tasks. VitaBench (He et al., 2025) focuses on evaluating agent’s performance on life-serving simulation environment.
+6 Conclusion
+This paper presents a novel paradigm and the agentic data synthesis pipeline, which directly synthesize multi-turn tool-use trajectories from text corpora, effectively bypassing the dependency on predefined tools.
+Models trained on our data achieve significant performance gains on benchmarks, demonstrating the potential of leveraging open-world textual knowledge as a scalable source for advancing autonomous agents.

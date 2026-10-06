@@ -1,0 +1,228 @@
+2.1 Machine learning: extended experimental details
+2.1.1 Dataset specifications
+The core experiments used five tabular benchmarks from UCI/OpenML:
+Table 1: Primary benchmark datasets.
+Dataset
+Samples
+Features
+Classes
+OpenML ID
+Ionosphere
+351
+34
+2
+59
+Glass
+214
+9
+6
+41
+Sonar
+208
+60
+2
+40
+WDBC
+569
+30
+2
+1510
+Vehicle
+846
+18
+4
+54
+To inject noise, we flipped each training label to a uniformly random class with probability 0.4 (symmetric noise). Validation and test labels were left untouched.
+The breadth validation (Extended Data Fig. 5) drew on 30 additional OpenML datasets, spanning 150–10,000 samples, 4–784 features, and 2–26 classes.
+2.1.2 Architecture details
+Dense baseline. Two hidden layers (128 and 64 units), ReLU, softmax output. Trained with Adam at lr=0.001\text{lr}=0.001, batch size 32, for 50 epochs. Nothing fancy.
+Sparse-residual (ResEx). The first hidden layer is replaced by a residual block with a fixed sparse branch:
+h1=x+α⋅σ⁡(Wsparse⋅x)h_{1}=x+\alpha\cdot\sigma(W_{\text{sparse}}\cdot x)
+(17)
+WsparseW_{\text{sparse}} is an expander-graph adjacency matrix – about 22% dense, with d=3d=3 random neighbours per node. When α=0\alpha=0 the block is a pass-through; turning α\alpha up lets the sparse branch reshape the representation. The point is to have a single knob that smoothly dials memorization capacity.
+Controls. Three architectures isolate individual ingredients:
+•
+Dense+LS – the dense baseline plus label smoothing (ϵ=0.1\epsilon=0.1)
+•
+Dense+Residual – dense with an identity shortcut but no sparse bottleneck
+•
+Dense+StrongReg – dense with aggressive L2L_{2} (λ=0.01\lambda=0.01)
+2.1.3 Memorization metric definitions
+The generalization gap at epoch tt is simply training accuracy minus validation accuracy:
+gap​(t)=acctrain​(t)−accval​(t)\text{gap}(t)=\text{acc}_{\text{train}}(t)-\text{acc}_{\text{val}}(t)
+(18)
+We then define two summary statistics. The first, AUGnorm\text{AUG}_{\text{norm}}, captures cumulative memorization pressure:
+AUGnorm=1T​∑t=1Tmax⁡(0,gap​(t))\text{AUG}_{\text{norm}}=\frac{1}{T}\sum_{t=1}^{T}\max(0,\text{gap}(t))
+(19)
+where TT is the total number of epochs – so AUGnorm\text{AUG}_{\text{norm}} is an average over the whole run, not just the tail.
+The second, T∗T^{*}, marks onset: the first epoch where the gap exceeds τ=0.05\tau=0.05 for three epochs running. If that never happens, we set T∗=TT^{*}=T (right-censored). Both metrics are computed per seed and averaged.
+2.1.4 Alpha-grid causal intervention
+The logic is straightforward. If the sparse branch really controls memorization, then increasing α\alpha should push both AUGnorm\text{AUG}_{\text{norm}} and T∗T^{*} up monotonically – but test accuracy should peak somewhere in the middle, because at high α\alpha the bottleneck starts hurting useful capacity too. We swept α∈{0.1,0.25,0.5,1.0}\alpha\in\{0.1,0.25,0.5,1.0\} across all five benchmarks (10 seeds each, 200 runs). Spearman ρ\rho between α\alpha and the group-median metric was 1.0 for both AUGnorm\text{AUG}_{\text{norm}} and T∗T^{*} (p<10−3p<10^{-3}): perfect monotonic control. Test accuracy peaked at α=0.25\alpha=0.25, exactly the kind of inverted-U you would expect from a capacity–memorization tradeoff.
+2.2 Human probabilistic reversal learning: extended methods
+2.2.1 Dataset and participants
+We used trial-level data from Eckstein et al. (2022)12: 292 participants, ages 8–30, performing a probabilistic reversal learning task. The data are on OSF at https://osf.io/7wuh4/.
+2.2.2 Task structure
+On each trial, participants picked one of two options and got binary feedback (reward or no reward). One option paid off 75% of the time, the other 25%. These probabilities flipped 4–9 times per session (125–131 trials total). Because the “good” option still fails a quarter of the time, the effective noise rate works out to 17.1% – lower than the nominal 25%, since the reward asymmetry partly disambiguates the contingency.
+2.2.3 Reversal-locked analysis
+Around each reversal we extracted a window from 8 trials before to 25 after. Within each window we computed two rolling accuracies (Gaussian-smoothed, σ=2\sigma=2 trials):
+•
+Truth accuracy – fraction of choices matching the objectively better (post-reversal) option
+•
+Feedback accuracy – fraction of choices that happened to receive positive feedback
+The gap is the difference: feedback accuracy minus truth accuracy, trial by trial. We averaged across reversals within each subject first, then across subjects.
+2.2.4 AUGpos\text{AUG}_{\text{pos}} computation
+We wanted a single number capturing how much each subject over-committed to feedback after a reversal. AUGpos\text{AUG}_{\text{pos}} is the baseline-corrected area under the positive portion of the gap curve from trial 0 to trial 25:
+AUGpos=125​∑t=025max⁡(0,gap​(t)−gapbaseline)\text{AUG}_{\text{pos}}=\frac{1}{25}\sum_{t=0}^{25}\max(0,\text{gap}(t)-\text{gap}_{\text{baseline}})
+(20)
+The baseline (gapbaseline\text{gap}_{\text{baseline}}) is the average gap in the 8 pre-reversal trials, which removes any tonic offset that was already present before the contingency switched.
+2.3 Human reward/punishment learning with EEG: extended methods
+2.3.1 Dataset and participants
+The dataset comes from Stolz, Endres & Mueller (2022)44: 26 healthy adults recorded with 32-channel EEG while doing separate reward and punishment probabilistic learning tasks (OpenNeuro ds004295). We dropped one subject whose EEG recording cut out mid-session, leaving N=25N=25 for behavior and N=23N=23 for RL model fits. Two more subjects lost too many epochs to artifact rejection in the reward condition (one in punishment), so the final neural samples are NREW=24N_{\text{REW}}=24 and NPUN=25N_{\text{PUN}}=25.
+2.3.2 EEG preprocessing
+Raw .set files were read into MNE-Python (v1.6+). We bandpass-filtered at 1–40 Hz (zero-phase FIR), re-referenced to the average, cut feedback-locked epochs from −200-200 to +600+600 ms, subtracted the pre-stimulus baseline (−200-200 to 0 ms), and threw out any epoch where the voltage swing exceeded 150 μ\muV. Nothing unusual here – the pipeline is deliberately standard so the interesting part is what comes next.
+2.3.3 Neural features
+We picked three feedback-locked features, all of which have solid literatures linking them to outcome processing:
+1.
+Theta power (4–8 Hz) at FCz. Morlet wavelets (ncycles=4n_{\text{cycles}}=4), averaged 200–400 ms post-feedback. Midline frontal theta is the canonical EEG correlate of prediction-error signaling and feedback monitoring.
+2.
+Frontal beta (13–30 Hz). Same time window, averaged across F3, F4, Fz, FC1, FC2 (Morlet, ncycles=7n_{\text{cycles}}=7). Beta in this region has been tied to decision confidence and motor planning.
+3.
+P300 at Pz. Mean ERP voltage from 250–450 ms – a textbook marker of context updating after informative outcomes.
+All three were zz-scored within subject and task before entering the decoder.
+2.3.4 Neural gap decoder
+We trained two logistic regressions per subject per task, using 3-fold cross-validation:
+•
+A feedback decoder that predicts whether feedback was positive or negative from the three EEG features
+•
+A truth decoder that predicts whether the subject expected their choice to be correct before feedback (pre-feedback expectation), from the same features
+On held-out folds, the two decoders produce probability estimates. The neural gap on trial ii is just the difference:
+neural_gap​(i)=P⁡(feedback=positive∣EEGi)−P⁡(expected correct∣EEGi)\text{neural\_gap}(i)=P(\text{feedback}=\text{positive}\mid\text{EEG}_{i})-P(\text{expected correct}\mid\text{EEG}_{i})
+(21)
+Neural AUGpos\text{AUG}_{\text{pos}} is the mean of max⁡(0,neural_gap​(i))\max(0,\text{neural\_gap}(i)) across trials – how much, on average, the brain over-represents feedback relative to expectation.
+2.3.5 Source localization
+To get a rough sense of where the signal lives on the scalp, we computed the positive-minus-negative feedback ERP difference in the 200–400 ms window at each electrode, averaging across the N=10N=10 subjects with enough trials in both valence conditions. We split electrodes into a frontal group (F3, F4, F7, F8, Fz, FC1, FC2, FC5, FC6, FCz, AF3, AF4, Fp1, Fp2) and a posterior group (P3, P4, P7, P8, Pz, PO3, PO4, O1, O2, Oz). Both tasks showed a frontal-greater-than-posterior pattern, consistent with the well-known role of medial frontal cortex in feedback evaluation.
+2.3.6 Cross-modal correlation
+At the subject level, we correlated each person’s behavioral commitment (win-stay minus lose-shift) with their neural AUGpos\text{AUG}_{\text{pos}} using Spearman’s ρ\rho. The correlations were significant in both tasks: reward ρ=0.43\rho=0.43, p=0.036p=0.036; punishment ρ=0.42\rho=0.42, p=0.042p=0.042 (Fig. 5c). People whose brains over-represented feedback more strongly also showed more behavioral over-commitment – the amplification is concordant across levels.
+At the trial level, we smoothed both the neural gap and the behavioral gap with a 15-trial moving average, then correlated them (Pearson rr) within each subject and averaged. Reward: r=0.67r=0.67, p<0.001p<0.001; punishment: r=0.53r=0.53, p<10−178p<10^{-178}.
+3 Supplementary Results
+3.1 Complete statistical summary
+Table 2: Summary of all primary statistical results across experiments.
+Analysis
+NN
+Measure
+Statistic
+pp-value
+Effect size
+Human probabilistic reversal learning (Eckstein 2022)
+PRL AUGpos{}_{\text{pos}}
+292
+0.049±0.0320.049\pm 0.032
+t⁡(291)=26.4t(291)=26.4
+1.1×10−791.1\times 10^{-79}
+d=1.55d=1.55
+PRL T∗T^{*} recovery
+292
+9.9±13.99.9\pm 13.9 trials
+99.3%
+–
+–
+Human reward/punishment learning (Stolz 2022)
+REW commitment
+25
+0.567±0.1710.567\pm 0.171
+t⁡(24)=16.6t(24)=16.6
+5.9×10−155.9\times 10^{-15}
+d=3.32d=3.32
+PUN commitment
+25
+0.628±0.1600.628\pm 0.160
+t⁡(24)=19.6t(24)=19.6
+1.4×10−161.4\times 10^{-16}
+d=3.92d=3.92
+REW win-stay
+25
+0.7990.799
+–
+–
+–
+PUN win-stay
+25
+0.8290.829
+–
+–
+–
+REW lose-shift
+25
+0.2320.232
+–
+–
+–
+PUN lose-shift
+25
+0.2010.201
+–
+–
+–
+Neural gap analysis (EEG)
+REW neural AUGpos{}_{\text{pos}}
+24
+0.041±0.0400.041\pm 0.040
+100% positive
+–
+d=1.03d=1.03
+PUN neural AUGpos{}_{\text{pos}}
+25
+0.059±0.0330.059\pm 0.033
+100% positive
+–
+d=1.82d=1.82
+Cross-modal correlations
+REW behav ↔\leftrightarrow neural
+24
+ρ=0.43\rho=0.43
+Spearman
+0.0360.036
+ρ=0.43\rho=0.43
+PUN behav ↔\leftrightarrow neural
+24
+ρ=0.42\rho=0.42
+Spearman
+0.0420.042
+ρ=0.42\rho=0.42
+ML alpha-grid causal intervention
+AUGnorm{}_{\text{norm}} vs α\alpha
+200 runs
+monotonic
+ρ=1.0\rho=1.0
+<10−3<10^{-3}
+–
+T∗T^{*} vs α\alpha
+200 runs
+monotonic
+ρ=1.0\rho=1.0
+<10−3<10^{-3}
+–
+3.2 Reinforcement learning model parameters
+We fitted standard Rescorla–Wagner models to each participant in the Stolz (2022) dataset, with a single learning rate and softmax choice rule:
+Qt+1​(a)=Qt​(a)+α⋅(rt−Qt​(a))Q_{t+1}(a)=Q_{t}(a)+\alpha\cdot(r_{t}-Q_{t}(a))
+(22)
+P⁡(at=a)=exp⁡(β⋅Qt​(a))∑a′exp⁡(β⋅Qt​(a′))P(a_{t}=a)=\frac{\exp(\beta\cdot Q_{t}(a))}{\sum_{a^{\prime}}\exp(\beta\cdot Q_{t}(a^{\prime}))}
+(23)
+Across N=23N=23 subjects, the fitted parameters were:
+•
+REW: α=0.439±0.314\alpha=0.439\pm 0.314, β=3.851±1.822\beta=3.851\pm 1.822, decay =0.607±0.365=0.607\pm 0.365
+•
+PUN: α=0.431±0.278\alpha=0.431\pm 0.278, β=4.137±1.222\beta=4.137\pm 1.222, decay =0.582±0.374=0.582\pm 0.374
+The reward and punishment parameters are strikingly similar, which fits with the parallel behavioral and neural signatures we observe across conditions.
+3.3 Positioning relative to noise-robust machine learning
+We are not trying to beat existing noise-robust training methods. There is already a large toolbox for that:
+•
+Loss correction29; 26 – forward/backward correction, confident learning – these adjust the loss to account for estimated noise transitions.
+•
+Sample selection – Co-teaching, DivideMix, and relatives that identify and downweight suspicious examples during training.
+•
+Implicit regularization – MixUp, AugMax, label smoothing – approaches that reduce memorization as a side effect of data augmentation or soft targets.
+Our question is different: not how to fix label noise but when and why architectural changes alter memorization dynamics. The sparse-residual network is a probe, not a proposed solution. What matters for the paper is the monotonic, causal link between capacity and gap dynamics – and the fact that the same measurement framework extends to human learning.
+4 Supplementary Figures
+Figure 1: Supplementary Figure 1 || PRL window sensitivity analysis.
+Robustness of the feedback–truth gap to rolling window size in the probabilis

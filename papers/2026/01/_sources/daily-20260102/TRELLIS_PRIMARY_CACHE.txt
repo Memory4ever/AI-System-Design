@@ -1,0 +1,81 @@
+Published as a conference paper at COLM 2025 (https://openreview.net/attachment?id=r61s1FNYlj&name=pdf)
+citeturn25977search0 [wordlim: 200] Published: 1.1 years ago; Published as a conference paper at COLM 2025 ... This paper introduces Trellis, a novel Transformer architecture
+Published as a conference paper at COLM 2025
+TRELLIS: Learning to Compress Key-Value Memory in
+Attention Models
+Mahdi Karami, Ali Behrouz, Praneeth Kacham, Vahab Mirrokni
+Google Research
+{mahdika,alibehrouz,pkacham,mirrokni}@google.com
+Abstract
+Transformers, while powerful, suffer from quadratic computational com-
+plexity and the ever-growing Key-Value (KV) cache of the attention mech-
+anism. This paper introduces Trellis, a novel Transformer architecture
+with bounded memory that learns how to compress its key-value memory
+dynamically at test time. Trellis replaces the standard KV cache with a ﬁxed-
+size memory and train a two-pass recurrent compression mechanism to
+store new keys and values into memory. To achieve this, it leverages an on-
+line gradient descent procedure with a forget gate, enabling the compressed
+memory to be updated recursively while learning to retain important con-
+textual information from incoming tokens at test time. Extensive experi-
+ments on language modeling, common-sense reasoning, recall-intensive
+tasks, and time series show that the proposed architecture outperforms
+strong baselines. Notably, its performance gains increase as the sequence
+length grows, highlighting its potential for long-context applications.
+1
+Introduction
+Transformers (Vaswani et al., 2017) has established itself as the de facto architecture for
+sequence modeling in modern deep learning, achieving signiﬁcant advances across di-
+verse areas, including language modeling (Devlin et al., 2018; Radford et al., 2018), com-
+puter vision (Arnab et al., 2021; Dosovitskiy et al., 2020), and graph learning and genera-
+tion (Dwivedi & Bresson, 2020; Karami, 2024; Yun et al., 2019). Their success stems from the
+attention mechanism, which allows models to dynamically attend to relevant parts of an
+input sequence while enabling parallel computation. This enables the capture of long-range
+dependencies and in-context learning. However, the quadratic time and space complexity
+of attention with respect to sequence length restricts its scalability in long sequence mod-
+eling. Furthermore, the requirement for an unbounded cache leads to inefﬁcient memory
+management, particularly in resource-constrained environments.
+These limitations have driven the exploration of alternative architectures that aim to retain
+the representational power of Transformers while addressing their computational and
+memory complexity. One key strategy involves sparsifying the dense attention matrix
+through various techniques, including: blockwise attention (Parmar et al., 2018; Qiu et al.,
+2019); using strided or sliding window attention patterns (Beltagy et al., 2020; Child et al.,
+2019; Zaheer et al., 2020); or clustering/sorting tokens (Kitaev et al., 2020; Roy et al., 2020;
+Tay et al., 2020). Another approach involves low-rank approximations of the self-attention
+matrix, leveraging the insight that it often exhibits low-rank properties (Wang et al., 2020).
+A different paradigm employs the kernel trick, replacing the Softmax operation with a dot
+product of feature maps, resulting in a family of linear attentions (Choromanski et al., 2020;
+Katharopoulos et al., 2020; Peng et al., 2021b). While these methods substantially reduce
+computational costs, they may sacriﬁce expressiveness and performance, often requiring
+hybrid approaches that combine them with dense attention layers (Fu et al., 2023; Mehta
+et al., 2022). Additionally, global convolutions (Li et al., 2022; Poli et al., 2023; Romero et al.,
+2021) and their input-dependent variants (Karami & Ghodsi, 2024) have been explored as
+alternative sequence modeling techniques.
+1--------------------------------------------------------------------------------
+Published as a conference paper at COLM 2025 (https://openreview.net/pdf?id=r61s1FNYlj)
+citeturn25977search1 [wordlim: 200] Published: 1.1 years ago; Published as a conference paper at COLM 2025 ... **Our approach and main contributions**  In this paper, we present Trellis, a new Transformer architecture with bounded memory that learns how to compress its key-value memory at test time.
+Published as a conference paper at COLM 2025
+
+Recently, Recurrent Neural Network (RNN) architectures have re-emerged as promising attention-free solutions for sequence modeling. These models leverage the parallelization capabilities of their linear recurrence, building upon earlier linear time-invariant models (Fu et al., 2023; Mehta et al., 2022; Wang et al., 2022) and extending them to more expressive input-dependent gated RNN designs with linear memory (De et al., 2024; Gu & Dao, 2023; Orvieto et al., 2023; Yang et al., 2024b) that demonstrate improved in-context learning while retaining computational advantages. However, their effective memory is limited, affecting their ability to efficiently compress and summarize information over very long contexts within their fixed-size hidden states.
+
+**Our approach and main contributions**  In this paper, we present Trellis, a new Transformer architecture with bounded memory that learns how to compress its key-value memory at test time. To address the linearly-growing memory of global attention, Trellis replaces the KV-cache (i.e., the pair of K and V matrices) with a bounded memory with m slots and train a meta in-context model to learn how to store new keys and values into memory. For better management of memory, Trellis uses a forgetting mechanism that learns how to selectively forget unnecessary past information in its compressed KV-cache.
+
+We perform an extensive set of experimental evaluations on various tasks including language modeling, commonsense reasoning, recall-intensive, needle-in-haystack, and time series data. We observe that Trellis outperforms state-of-the-art baselines, including Transformer++, and modern linear recurrent neural networks in downstream tasks. Furthermore, Trellis scales better than baselines when increasing the context length, showing promising results for long-context tasks.
+
+## 2  Related Work and Background
+
+For an input sequence 𝒳 = [x₁, . . . , x_T], where x_t ∈ ℝ^d, the causal Softmax attention mechanism generates output tokens y_t ∈ ℝ^d, by attending to past tokens (historic context):
+
+y_t = V_t Softmax(K_t^⊤ q_t). (1)
+
+Here, the query, key, and value vectors are computed by linear projections of the input:
+q_t = W_q x_t, k_t = W_k x_t, v_t = W_v x_t, where W_q, W_k, W_v ∈ ℝ^{d×d} are learnable weight matrices. The key-value memory, represented by the caches K_t ∈ ℝ^{d×t} and V_t ∈ ℝ^{d×t}, stacks the key and value vectors of each new token, leading to unbounded caches with linearly-growing size. The retrieval of relevant information from this key-value cache can be rewritten as a weighted sum:
+
+y_t = V_t a_t, where a_t = Softmax(K_t^⊤ q_t) ∈ ℝ^t.
+
+Here, the vector a_t ∈ ℝ^t is the collection of the attention scores between t-th token and its historic context. Hence, the attention in equation (1) can be seen as a non-linear query from an unbounded memory.
+
+The key-value cache size growth poses a significant memory bottleneck during inference, especially for long sequences. Additionally, each retrieval operation scales linearly with sequence length, resulting in an overall quadratic computational complexity O(T²) for generating a full sequence of length T.
+
+To address the computational and memory bottleneck of Softmax attention, various alternatives have been proposed (Tay et al., 2022). A well-established approach involves employing the kernel trick to replace the Softmax with a dot product of feature maps, φ(q_t), φ(k_t) commonly known as Linear Attention LA (Katharopoulos et al., 2020).
+
+To maintain bounded computational and memory requirements in attention mechanisms, an alternative strategy is to explicitly use a fixed-size key-value cache. In this approach, the memory matrices K and V are constrained to a length m where m ≪ T. A straightforward implementation of this strategy involves limiting the attention window to the most recent m tokens by maintaining a first-in-first-out (FIFO) queue, often referred to as Sliding Window

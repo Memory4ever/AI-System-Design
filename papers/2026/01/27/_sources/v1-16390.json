@@ -1,0 +1,575 @@
+{
+  "url": "https://arxiv.org/html/2601.16390v1",
+  "blocks": [
+    {
+      "tag": "p",
+      "id": "selectedTextModalDescription",
+      "text": "Content selection saved. Describe the issue below:"
+    },
+    {
+      "tag": "h1",
+      "id": "",
+      "text": "Cross-Lingual Activation Steering for Multilingual Language Models"
+    },
+    {
+      "tag": "p",
+      "id": "abstract1.1",
+      "text": "Large language models exhibit strong multilingual capabilities, yet significant performance gaps persist between dominant and non-dominant languages. Prior work attributes this gap to imbalances between shared and language-specific neurons in multilingual representations. We propose Cross-Lingual Activation Steering (CLAS), a training-free inference-time intervention that selectively modulates neuron activations. We evaluate CLAS on classification and generation benchmarks, achieving average improvements of 2.3% (Acc.) and 3.4% (F1) respectively, while maintaining high-resource language performance. We discover that effective transfer operates through functional divergence rather than strict alignment; performance gains correlate with increased language cluster separation. Our results demonstrate that targeted activation steering can unlock latent multilingual capacity in existing models without modification to model weights. 1 1 1 We will release the code to support future work."
+    },
+    {
+      "tag": "h2",
+      "id": "",
+      "text": "1 Introduction"
+    },
+    {
+      "tag": "p",
+      "id": "S1.p1.1",
+      "text": "Large Language Models (LLMs) perform well on many multilingual tasks, but a substantial performance gap remains between dominant (high-resource) and non-dominant (low-resource) languages. This gap is largely attributed to the heavy skew of pre-training corpora toward dominant languages, which enables models to develop richer representations in those languages. While expanding multilingual training data is an obvious solution, it is often infeasible due to cost and limited data availability."
+    },
+    {
+      "tag": "p",
+      "id": "S1.p2.1",
+      "text": "Prior work has explored data- and training-based solutions such as multilingual instruction tuning Chen et al. (2024b) ; Shaham et al. (2024) , supervised fine-tuning Chen et al. (2024a) , and model alignment using smaller multilingual datasets She et al. (2024) ; Gao et al. (2024) ; Pokharel et al. (2025) . Although effective, these methods still depend on annotated datasets or additional training."
+    },
+    {
+      "tag": "p",
+      "id": "S1.p3.1",
+      "text": "A complementary line of work studies multilingual behavior at the neuron level as a lightweight alternative. Researchers have identified shared, partially shared, and language-specific neurons ( Wang et al., 2024 ; Tang et al., 2024 ) , and shown that shared neurons and overlapping subspaces in middle and upper layers play a central role in cross-lingual transfer ( Tezuka and Inoue, 2025 ; Xu et al., 2025 ) . At the same time, direct manipulation of language-specific neurons has produced mixed results ( Mondal et al., 2025 ) . Other work suggests that multilingual models often reason through an English-like latent space before generating outputs in the target language ( Etxaniz et al., 2024 ; Zhao et al., 2024a ) ."
+    },
+    {
+      "tag": "p",
+      "id": "S1.p4.1",
+      "text": "Building on these insights, we introduce Cross-Lingual Activation Steering (CLAS), a test-time neuron-level method that rebalances shared and language-specific representations during inference. CLAS gently boosts neurons that encode cross-lingual structure, suppresses those that over-specialize to a single language, and blends the result with the model’s original activations. This steers the model toward representations that better support cross-lingual transfer, improving performance on non-dominant languages without requiring additional data or parameter updates."
+    },
+    {
+      "tag": "p",
+      "id": "S1.p5.1",
+      "text": "While Mondal et al. (2025) also explore test-time neuron interventions, their approach differs substantially from ours. Their method overwrites selected neuron activations with corpus-level statistical constants (e.g., mean or percentile values), producing the same activation regardless of the input and effectively erasing and re-imprinting those neurons. In contrast, our method preserves proportionality to the model’s actual activations: the final representation remains a blend with the original signal rather than a hard replacement."
+    },
+    {
+      "tag": "p",
+      "id": "S1.p6.1",
+      "text": "Our main contributions are as follows:"
+    },
+    {
+      "tag": "p",
+      "id": "S1.I1.i1.p1.1",
+      "text": "We propose CLAS, a training-free activation steering mechanism that selectively modulates neurons to enhance cross-lingual transfer during inference."
+    },
+    {
+      "tag": "p",
+      "id": "S1.I1.i2.p1.1",
+      "text": "We conduct comprehensive analysis of cross-lingual representations and find that effective transfer is driven by functional divergence rather than proximity to the anchor language."
+    },
+    {
+      "tag": "p",
+      "id": "S1.I1.i3.p1.1",
+      "text": "We demonstrate CLAS effectiveness across diverse tasks and models, achieving improvements on both classification and generation benchmarks while maintaining anchor language stability."
+    },
+    {
+      "tag": "h2",
+      "id": "",
+      "text": "2 Cross-Lingual Activation Steering (CLAS)"
+    },
+    {
+      "tag": "p",
+      "id": "S2.p1.1",
+      "text": "We introduce Cross-Lingual Activation Steering (CLAS), a training-free, test-time intervention for multilingual models. CLAS has three stages: (i) construct parallel inputs across languages, (ii) summarize neuron behavior using simple activation statistics and group neurons into coarse categories, and (iii) apply a lightweight steering rule that modulates activations at inference time. This section describes each component."
+    },
+    {
+      "tag": "h3",
+      "id": "",
+      "text": "2.1 Preliminaries"
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS1.p1.1",
+      "text": "We define a configuration 𝒞 = { ℒ , ℓ anchor , ℬ , T act , β , γ , α } \\mathcal{C}=\\{\\mathcal{L},\\,\\ell_{\\text{anchor}},\\,\\mathcal{B},\\,T_{\\text{act}},\\,\\beta,\\,\\gamma,\\,\\alpha\\} , where ℒ \\mathcal{L} is the set of languages used for analysis, ℓ anchor \\ell_{\\text{anchor}} is an anchor language (typically the model’s strongest language), ℬ \\mathcal{B} is the set of “bridge layers” selected for intervention, and T act T_{\\text{act}} is the activation threshold for determining neuron activity. Finally, ( β , γ , α ) (\\beta,\\gamma,\\alpha) control the strength of boosting selected activations, suppressing selected activations, and blending between streams during steering."
+    },
+    {
+      "tag": "h3",
+      "id": "",
+      "text": "2.2 Parallel Input Construction"
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS2.p1.1",
+      "text": "To analyze neuron behavior across languages, we require aligned multilingual inputs that express the same underlying content. For each sample index i i , we construct a set of parallel inputs:"
+    },
+    {
+      "tag": "table",
+      "id": "S2.Ex1",
+      "text": "𝐱 ( i ) = { x ℓ ( i ) ∣ ℓ ∈ ℒ } , \\mathbf{x}^{(i)}=\\{x^{(i)}_{\\ell}\\mid\\ell\\in\\mathcal{L}\\},"
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS2.p1.2",
+      "text": "where each x ℓ ( i ) x^{(i)}_{\\ell} is the same text expressed in language ℓ \\ell . These parallel inputs are used only for measuring neuron activations and do not update the model in any way."
+    },
+    {
+      "tag": "h3",
+      "id": "",
+      "text": "2.3 Neuron Statistics and Categorization"
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS3.p1.1",
+      "text": "To understand the model’s multilingual structure and identify where CLAS should intervene, we first analyze neuron activations across languages and layers. Following Wang et al. (2024) , we group neurons into four mutually exclusive categories: dead (never active), language-specific (active for one language), partial-shared (active for some languages), and all-shared (active for all languages). However, we differ from prior work in how these categories are computed. Wang et al. (2024) assign categories at the instance level: a neuron is considered all-shared if it activates for all languages on a single parallel example. As a result, neuron categories can vary across inputs and tasks. In contrast, we adopt a dataset-level view. We compute the mean activation of each neuron using 100 parallel samples from the XQuAD dataset across 12 languages and two models (Llama 3.1 8B and Qwen 2.5 7B) and use this aggregate statistic to assign each neuron to a single category. This makes each neuron’s category a stable property of the model and language set rather than something that changes across examples."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Layer-wise Activation Patterns"
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS3.SSS0.Px1.p1.1",
+      "text": "For each layer, we compute the percentage of neurons in each category. Figure 1 summarizes the resulting distributions. We observe several consistent patterns:"
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS3.SSS0.Px1.p2.1",
+      "text": "Early layers. Early layers contain a high proportion of partial-shared neurons, suggesting that these layers are involved in mapping language-specific or language-related features into shared representations ( Tang et al., 2024 ; Zhang et al., 2025 ) ."
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS3.SSS0.Px1.p3.1",
+      "text": "Middle layers. In the middle layers, we observe an increase in all-shared neurons alongside a rise in dead neurons and a reduction in partial-shared neurons. This is consistent with prior findings that mid-level representations become more language-agnostic and semantically focused ( Zhang et al., 2025 ; Xu et al., 2025 ) ."
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS3.SSS0.Px1.p4.1",
+      "text": "Final layers. In the upper layers, partial-shared neurons become more prevalent again, and dead neurons decrease. This aligns with evidence that language-specific processing re-emerges near the output as the model prepares to generate text in the target language ( Tang et al., 2024 ; Zhang et al., 2025 ) ."
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS3.SSS0.Px1.p5.1",
+      "text": "These observations are descriptive and do not imply that these categories are sharply separated or functionally pure; rather, they provide a coarse summary of how multilingual structure is distributed across layers."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Selecting Bridge Layers"
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS3.SSS0.Px2.p1.1",
+      "text": "Based on these statistics, we select a small set of bridge layers for intervention. In both LLaMA and Qwen, layers 24-29 and 24-25, respectively, exhibit relatively high proportions of partial-shared neurons together with relatively low proportions of dead and language-specific neurons. We therefore hypothesize that intervening in these layers provides a useful balance: representations are shared enough to support cross-lingual steering, while not yet so specialized that small perturbations directly disrupt surface generation. We exclude the final two layers from intervention, as these layers are known to be strongly specialized for producing language-specific outputs and are particularly sensitive to perturbation ( Zhao et al., 2024b ) . All layer selections are fixed prior to evaluation and are not tuned on test data."
+    },
+    {
+      "tag": "h3",
+      "id": "",
+      "text": "2.4 Activation Steering via CLAS"
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS4.p1.1",
+      "text": "Given an input x ℓ x_{\\ell} in language ℓ \\ell , the model computes an intermediate MLP activation using the standard SwiGLU transformation:"
+    },
+    {
+      "tag": "table",
+      "id": "S2.Ex2",
+      "text": "𝐡 = σ ⁡ ( W g ​ 𝐱 ) ⊙ ( W u ​ 𝐱 ) , \\mathbf{h}=\\sigma(W_{g}\\mathbf{x})\\odot(W_{u}\\mathbf{x}),"
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS4.p1.2",
+      "text": "where W g W_{g} and W u W_{u} are the gating and up-projection matrices, and σ \\sigma is the nonlinear activation function."
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS4.p2.1",
+      "text": "For non-anchor languages ℓ ≠ ℓ anchor \\ell\\neq\\ell_{\\text{anchor}} , CLAS applies a lightweight, deterministic modification to this activation using masks derived from neuron categories, with the goal of adjusting the relative contribution of shared and language-specific neurons."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Partial-shared neuron adjustment"
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS4.SSS0.Px1.p1.1",
+      "text": "Let M shared M_{\\text{shared}} denote the mask over partial-shared neurons. Empirically, these neurons often account for a large fraction of the active dimensions, which can reduce the relative influence of language-specific features. We therefore apply a controlled rescaling:"
+    },
+    {
+      "tag": "table",
+      "id": "S2.Ex3",
+      "text": "𝐡 1 = 𝐡 ⊙ ( 1 + β ​ M shared ) , \\mathbf{h}_{\\text{1}}=\\mathbf{h}\\odot(1+\\beta M_{\\text{shared}}),"
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS4.SSS0.Px1.p1.2",
+      "text": "where β \\beta controls the magnitude of the adjustment applied to partial-shared neurons. This operation does not introduce new information but changes the relative weighting of existing components."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Language-specific neuron adjustment"
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS4.SSS0.Px2.p1.1",
+      "text": "Similarly, let M spec M_{\\text{spec}} denote the mask over language-specific neurons. These neurons are typically under-represented. We apply a complementary adjustment:"
+    },
+    {
+      "tag": "table",
+      "id": "S2.Ex4",
+      "text": "𝐡 2 = 𝐡 1 ⊙ ( 1 − γ ​ M spec ) . \\mathbf{h}_{2}=\\mathbf{h}_{\\text{1}}\\odot(1-\\gamma M_{\\text{spec}})."
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS4.SSS0.Px2.p1.2",
+      "text": "where γ \\gamma controls the strength of the adjustment applied to language-specific neurons."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Blend Adjustment"
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS4.SSS0.Px3.p1.1",
+      "text": "We then blend the modified activation with the original:"
+    },
+    {
+      "tag": "table",
+      "id": "S2.Ex5",
+      "text": "𝐡 final = ( 1 − α ) ​ 𝐡 + α ​ 𝐡 2 , \\mathbf{h}_{\\text{final}}=(1-\\alpha)\\mathbf{h}+\\alpha\\,\\mathbf{h}_{2},"
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS4.SSS0.Px3.p1.2",
+      "text": "where α \\alpha controls the overall strength and direction of the intervention."
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS4.SSS0.Px3.p2.1",
+      "text": "Positive α \\alpha increases the influence of the adjusted representation, emphasizing the relative contribution of shared neurons."
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS4.SSS0.Px3.p3.1",
+      "text": "Negative α \\alpha reduces the influence of the adjusted representation and increases the relative contribution of language-specific components. In practice, we treat α \\alpha as a steering coefficient whose effect is model- and task-dependent; both positive and negative values can be beneficial in different regimes."
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS4.SSS0.Px3.p4.1",
+      "text": "The adjusted activation is then passed through the down-projection:"
+    },
+    {
+      "tag": "table",
+      "id": "S2.Ex6",
+      "text": "𝐲 = W d ​ 𝐡 final . \\mathbf{y}=W_{d}\\mathbf{h}_{\\text{final}}."
+    },
+    {
+      "tag": "h3",
+      "id": "",
+      "text": "2.5 Anchor Language Handling"
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS5.p1.1",
+      "text": "For the anchor language ℓ anchor \\ell_{\\text{anchor}} (i.e. English), no modification is applied:"
+    },
+    {
+      "tag": "table",
+      "id": "S2.Ex7",
+      "text": "𝐡 final = 𝐡 . \\mathbf{h}_{\\text{final}}=\\mathbf{h}."
+    },
+    {
+      "tag": "p",
+      "id": "S2.SS5.p1.2",
+      "text": "We keep the anchor activations untouched because the anchor language serves as a stable reference point for cross-lingual alignment. Modifying it would risk introducing unnecessary distortion into a representation that is already well supported by the model. All adjustments are therefore applied only to non-anchor languages, allowing them to shift relative to a fixed reference."
+    },
+    {
+      "tag": "h2",
+      "id": "",
+      "text": "3 Experimental Setting"
+    },
+    {
+      "tag": "p",
+      "id": "S3.p1.1",
+      "text": "We describe the models, datasets, and evaluation setup used to assess CLAS in a controlled multilingual setting, focusing on cross-lingual transfer to non-English languages."
+    },
+    {
+      "tag": "h3",
+      "id": "",
+      "text": "3.1 Models"
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS1.p1.1",
+      "text": "We use LLaMA 3.1 8B Instruct Grattafiori et al. (2024) and Qwen 2.5 7B Instruct Team (2024) . All models are kept frozen; CLAS is applied only at inference time and does not modify model parameters. We intervene only in the selected bridge layers defined by the configuration."
+    },
+    {
+      "tag": "h3",
+      "id": "",
+      "text": "3.2 Datasets and Languages"
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS2.p1.1",
+      "text": "We evaluate on two benchmarks:"
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS2.p2.1",
+      "text": "XNLI Conneau et al. (2018) is a natural language inference dataset with parallel data in 15 languages. For evaluation, we consider a constrained generation approach. We first prompt the model with the premise and hypothesis and instruct it to classify the relationship by predicting a single integer token: “0” (Entailment), “1” (Neutral), or “2” (Contradiction). Then we extract the logits for these specific target tokens from the final position and select the class with the highest probability. The results are reported in terms of Accuracy and F1 scores."
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS2.p3.1",
+      "text": "XQuAD Artetxe et al. (2019) is a multilingual question answering dataset in 12 languages. For evaluation, we consider a generative reading comprehension task where the model is provided with the context paragraph and question, then prompted to generate the answer span directly. We employ greedy decoding with a strict maximum new token limit of 32. The results are reported using the token-level F1 score."
+    },
+    {
+      "tag": "h3",
+      "id": "",
+      "text": "3.3 Evaluation and Implementation"
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS3.p1.1",
+      "text": "Neuron statistics are computed using the parallel subset (100 samples) where the same example is available in all analysis languages; downstream evaluation uses the full dataset for each language separately."
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS3.p2.1",
+      "text": "We evaluate a mix of high- and low-resource languages and use English as the anchor language, since prior work shows multilingual models often rely on English-like internal representations. All other languages are treated as non-anchor and used to measure cross-lingual effects."
+    },
+    {
+      "tag": "p",
+      "id": "S3.SS3.p3.1",
+      "text": "All experiments are run on a single NVIDIA A40 GPU with a maximum sequence length of 512. Samples are processed individually (no batching) to ensure accurate activation capture. Steering parameters ( β , γ , α ) (\\beta,\\gamma,\\alpha) are selected via grid search (more details in § 4.4 )."
+    },
+    {
+      "tag": "h2",
+      "id": "",
+      "text": "4 Results and Discussion"
+    },
+    {
+      "tag": "p",
+      "id": "S4.p1.1",
+      "text": "In this section, we will discuss the findings of the experiments with CLAS and how it improves multilingual performance."
+    },
+    {
+      "tag": "h3",
+      "id": "",
+      "text": "4.1 Downstream Performance"
+    },
+    {
+      "tag": "p",
+      "id": "S4.SS1.p1.1",
+      "text": "Tables 1 and 2 summarize the main results, comparing CLAS against base model and Int μ \\mu baseline method from Mondal et al. (2025) where mean value is used during intervention."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "XNLI classification"
+    },
+    {
+      "tag": "p",
+      "id": "S4.SS1.SSS0.Px1.p1.1",
+      "text": "On XNLI, CLAS improves average accuracy over the base models, although the magnitude and consistency of the gains differ. For Llama, CLAS yields an average improvement of +1.93 accuracy points over the baseline, which is statistically significant ( p < 0.05 p<0.05 ). These gains are driven by large improvements in several languages, including Urdu (+7.00), Chinese (+5.89), Hindi (+5.80), and Greek (+5.39), although some languages show regressions (e.g., Bulgarian, Swahili, and Vietnamese). This indicates that CLAS can substantially help underperforming languages but may also introduce instability in some cases. For Qwen, the average improvement is smaller (+0.45) but more consistent across languages, and also statistically significant ( p < 0.001 p<0.001 ). Most gains fall between +0.2 and +0.8, and none are strongly negative. This suggests that CLAS is more conservative on Qwen: it yields smaller but more stable improvements, reflecting Qwen’s stronger baseline multilingual representations. On both models, performance on the anchor language (English) remains unchanged, indicating that CLAS does not degrade anchor-language behavior while modifying non-anchor representations. Compared to Int μ \\mu , CLAS consistently performs better: Int μ \\mu is slightly harmful on Llama and neutral on Qwen, whereas CLAS yields positive mean gains on both."
+    },
+    {
+      "tag": "table",
+      "id": "S4.T1.2",
+      "text": "Llama Qwen l l base Int μ \\mu CLAS base Int μ \\mu CLAS ar 38.88 -0.76 +4.71 60.45 +0.09 +0.45 bg 42.28 -1.60 -2.14 60.75 -0.01 +0.71 de 43.65 +2.12 +1.62 66.22 +0.11 +0.77 el 40.58 +0.72 +5.39 58.02 +0.04 +0.48 en 52.63 0.00 0.00 71.73 +0.05 +0.05 es 46.95 -0.36 -0.72 65.56 -0.05 +0.73 fr 44.53 -1.42 +2.34 64.47 -0.14 +0.66 hi 41.78 -0.68 +5.80 55.56 -0.05 +0.51 ru 43.75 +0.04 +1.14 61.87 -0.17 +0.25 sw 41.10 +0.32 -3.06 40.31 -0.35 +0.21 th 40.68 +3.71 +4.09 57.80 -0.02 +0.38 tr 44.17 -0.36 +0.66 59.18 -0.08 +0.72 ur 36.09 +0.28 +7.00 51.07 +0.09 +0.43 vi 44.81 -1.96 -3.73 62.11 +0.07 +0.31 zh 44.63 -3.25 +5.89 63.81 0.00 +0.08 Avg. 43.10 -0.21 +1.93 ∗ 59.93 -0.03 +0.45 ★ σ \\sigma 2.82 2.77 3.19 6.78 6.84 6.87"
+    },
+    {
+      "tag": "table",
+      "id": "S4.T2.2",
+      "text": "Llama Qwen l l base Int μ \\mu CLAS base Int μ \\mu CLAS ar 23.20 -1.95 +1.01 28.73 +0.26 +5.06 de 38.54 -5.46 +6.25 34.77 -2.76 -0.96 el 25.18 +1.50 +0.23 37.06 -0.06 -1.51 en 23.47 0.00 0.00 48.88 +0.11 0.00 es 34.23 +1.08 +1.84 38.53 -2.53 +2.63 hi 29.47 -0.09 -0.10 33.12 -2.12 -5.28 ro 30.01 +6.97 -0.03 34.48 -0.48 +0.48 ru 27.32 -0.08 -0.06 27.58 -0.58 +8.94 th 19.23 -3.40 -0.46 28.51 +7.48 +0.98 tr 23.74 -2.11 +1.14 29.19 -2.19 -2.31 vi 34.91 +5.08 +1.67 31.67 -5.67 +1.36 zh 12.84 +0.05 -0.25 20.24 -1.24 +3.76 Avg. 26.85 +0.13 +0.94 32.73 -0.82 +1.10 σ \\sigma 7.43 8.75 8.83 5.16 5.45 4.95"
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "XQuAD generative question answering"
+    },
+    {
+      "tag": "p",
+      "id": "S4.SS1.SSS0.Px2.p1.1",
+      "text": "On XQuAD, CLAS also improves average performance, but the effects are more variable and not statistically significant. On Llama, CLAS improves average token-level F1 by +0.94, with notable gains for German (+6.25) and Spanish (+1.84), but small regressions for others. Int μ \\mu has a negligible effect. On Qwen, CLAS improves average F1 by +1.10, with large gains for Russian (+8.94) and Arabic (+5.06), but also substantial regressions for Hindi (–5.28) and Turkish (–2.31). This indicates that CLAS can unlock large improvements for some languages but can also strongly harm others in the generative setting. Compared to XNLI, XQuAD exhibits much higher variance, with both large positive and negative swings. This is expected given that span extraction is sensitive to token boundaries, local lexical cues, and translation artifacts, making it inherently less stable than classification."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Statistical perspective"
+    },
+    {
+      "tag": "p",
+      "id": "S4.SS1.SSS0.Px3.p1.1",
+      "text": "Our statistical analysis shows that CLAS significantly improves cross-lingual performance on discriminative tasks without increasing variance across languages. On XNLI, both Llama and Qwen show significant gains after excluding English ( p < 0.05 p<0.05 and p < 0.001 p<0.001 ), while cross-language variance remains stable ( p > 0.05 p>0.05 ), indicating a uniform improvement rather than trade-offs across languages. On XQuAD, average F1 also increases, but the gains are not statistically significant, likely due to higher variability in generative evaluation."
+    },
+    {
+      "tag": "h3",
+      "id": "",
+      "text": "4.2 Cross-Lingual Alignment Analysis"
+    },
+    {
+      "tag": "p",
+      "id": "S4.SS2.p1.1",
+      "text": "In this subsection, we analyze the impact of our activation steering mechanism on representation alignment and examine how these geometric shifts relate to cross-lingual performance gains on XNLI and XQuAD."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Decoupling geometric alignment from functional performance"
+    },
+    {
+      "tag": "p",
+      "id": "S4.SS2.SSS0.Px1.p1.1",
+      "text": "Figure 2 shows cosine similarity between each target language and English in the bridge layers before and after CLAS. Across tasks and models, CLAS generally reduces similarity to English rather than increasing it. This effect is strongest for Llama, especially on XQuAD, where several languages move noticeably farther from English, while Qwen shows smaller and more uniform changes."
+    },
+    {
+      "tag": "p",
+      "id": "S4.SS2.SSS0.Px1.p2.1",
+      "text": "This pattern matches our neuron analysis (Section 2.3 ). CLAS rebalances partial-shared and language-specific neurons, reducing over-reliance on English-centric features and allowing more target-language structure to influence predictions. As a result, CLAS improves performance not by pulling languages closer to English, but by relaxing excessive alignment. The effect is larger on XQuAD than on XNLI, likely because span extraction is more sensitive to surface form. Reducing English alignment can help match target-language expressions, though it can also increase variance and occasional regressions."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Performance gains are driven by functional divergence."
+    },
+    {
+      "tag": "p",
+      "id": "S4.SS2.SSS0.Px2.p1.1",
+      "text": "We fit a linear regression to quantify the correlation between these metrics. Figure 3 shows the scatter plot with fitted trend line. It analyzes the trade-off between task performance improvement and the shift in alignment relative to English. Contrary to the design of the CLAS mechanism, which explicitly aims to amplify shared neurons ( h ⋅ ( 1 + β ​ M shared ) h\\cdot(1+\\beta M_{\\text{shared}}) ) and attenuate language-specific ones ( h ⋅ ( 1 − γ ​ M spec ) h\\cdot(1-\\gamma M_{\\text{spec}}) ), we observe an inverse relationship on the XNLI task. This anomaly is likely attributable to a negative value for α \\alpha , which effectively reverses the polarity of the modulation. For both Llama and Qwen, larger performance gains are often accompanied by a reduction in cosine similarity to the English anchor (negative slope), suggesting that functional optimization for reasoning tasks may require diverging from the strict geometric space of the anchor language. In contrast, the XQuAD benchmarks display a mixed relationship, indicating that for extraction-based tasks, the correlation between shared-neuron activation and geometric alignment is less predictable."
+    },
+    {
+      "tag": "h3",
+      "id": "",
+      "text": "4.3 Representation Space Visualization"
+    },
+    {
+      "tag": "p",
+      "id": "S4.SS3.p1.1",
+      "text": "We apply t-SNE dimensionality reduction to visualize the aggregated hidden states of the English anchor and all target languages in a shared 2D space, and provide useful intuition about representational structure. Representations are extracted from the model’s penultimate layer for all languages. Figures 4 shows separate visualizations for before-CLAS and after-CLAS conditions. Language centroids are computed as the mean position of each language’s embeddings. Visual analysis reveals three distinct geometric phenomena."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "CLAS reshapes representations without collapsing them into English."
+    },
+    {
+      "tag": "p",
+      "id": "S4.SS3.SSS0.Px1.p1.1",
+      "text": "The “After” visualizations confirm that the mechanism drives functional divergence rather than assimilation. Language clusters remain distinct and in some cases become more clearly separated as seen in Figure 4 . This suggests that CLAS improves performance by reorganizing language-specific representation spaces, rather than by enforcing assimilation into a single shared geometry."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Moderate reorganization is associated with larger gains."
+    },
+    {
+      "tag": "p",
+      "id": "S4.SS3.SSS0.Px2.p1.1",
+      "text": "On XNLI, this reorganization appears broadly beneficial, as many languages improve when their representations become more structured and distinct. On XQuAD, the relationship is more selective: languages that start in a mixed or ambiguous region and become more clearly separated after CLAS tend to show larger gains (e.g., de , ar , es on Llama; ru , ar , es on Qwen), while languages that are already highly separated show smaller changes. This suggests that CLAS is most helpful when it resolves representational overlap, rather than when representations are already well-formed."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Distance to English does not explain improvements."
+    },
+    {
+      "tag": "p",
+      "id": "S4.SS3.SSS0.Px3.p1.1",
+      "text": "Neither initial nor final proximity to the English cluster reliably predicts performance changes. Some languages far from English (e.g., ur , hi on XNLI–Llama) improve substantially, while some closer languages improve little or regress. After CLAS, high-performing languages are distributed across the space rather than concentrated near English. This indicates that CLAS effectiveness depends on how representations are reorganized internally, not simply on how close they are to the anchor language."
+    },
+    {
+      "tag": "table",
+      "id": "S4.T3.2",
+      "text": "Question Llama CLAS Was benannte die Generalkonferenz für Maß und Gewicht 1960 nach Tesla? SI-Maßeinheit der magnetischen Flussdichte. stop. Die SI-Maßeinheit der magnetischen Flussdichte SI-Maßeinheit der magnetischen Flussdichte. (What did the General Conference on Weights and Measures name after Tesla in 1960?) (SI unit of magnetic flux density. stop. The SI unit of magnetic flux density) (SI unit of magnetic flux density.) Die Lutherbibel beeinflusste wessen englische Übersetzung der Bibel? William Tyndale Die Lutherbibel beeinflusste die englische Bibel von William Tyndale. Tyndale war ein eng William Tyndale. (The Luther Bible influenced whose English translation of the Bible?) (William Tyndale’s English Bible was influenced by the Luther Bible. Tyndale was a close) (William Tyndale.)"
+    },
+    {
+      "tag": "h3",
+      "id": "",
+      "text": "4.4 Optimal Steering Intensity and Direction"
+    },
+    {
+      "tag": "p",
+      "id": "S4.SS4.p1.1",
+      "text": "We tune three parameters: β \\beta (boosting shared neurons), γ \\gamma (suppressing language-specific neurons), and α \\alpha (overall steering strength and direction). A grid search over β ∈ { 0.2 , 0.4 , 0.6 } \\beta\\in\\{0.2,0.4,0.6\\} and γ ∈ { 0.1 , 0.2 , 0.4 } \\gamma\\in\\{0.1,0.2,0.4\\} shows that moderate values work best. We select β = 0.4 \\beta=0.4 and γ = 0.2 \\gamma=0.2 , which emphasize shared structure without introducing excessive noise. We tune α \\alpha separately. A grid search (Figure 5 ) on 200 samples per language per task shows that the optimal magnitude and direction of steering vary: some settings benefit from reinforcing shared representations (positive α \\alpha ), while others benefit from amplifying language-specific signals (negative α \\alpha ). This confirms that the balance between shared semantics and language-specific precision is task- and model-dependent, consistent with prior work Tang et al. (2024) ; Wang et al. (2024) . Figure 6 further shows that relying exclusively on either shared or language-specific neurons is suboptimal; best performance comes from a calibrated balance between the two."
+    },
+    {
+      "tag": "h3",
+      "id": "",
+      "text": "4.5 Qualitative Analysis"
+    },
+    {
+      "tag": "p",
+      "id": "S4.SS5.p1.1",
+      "text": "Table 3 shows the qualitative impact of CLAS on German generation. In the examples, the baseline model suffers from severe repetition loops and verbosity leakage. In contrast, CLAS successfully suppresses these behaviors. This demonstrates CLAS effectively generates concise response while maintaining accuracy."
+    },
+    {
+      "tag": "h2",
+      "id": "",
+      "text": "5 Related Work"
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Cross-lingual Transfer"
+    },
+    {
+      "tag": "p",
+      "id": "S5.SS0.SSS0.Px1.p1.1",
+      "text": "Cross-lingual transfer in multilingual LLMs has been widely studied, with prior work showing that transfer quality varies across tasks, languages, and models. For example, Hu et al. (2025) analyze factors that influence cross-lingual performance on reasoning tasks."
+    },
+    {
+      "tag": "p",
+      "id": "S5.SS0.SSS0.Px1.p2.1",
+      "text": "Many approaches improve transfer through additional training. These include adding multilingual data during instruction tuning ( Shaham et al., 2024 ) , combining supervised fine-tuning with preference alignment ( Lai et al., 2024 ) , and constructing new multilingual pre-training datasets ( He et al., 2025 ) . Other work uses translation-based fine-tuning ( Lee et al., 2025 ) , layer-wise fine-tuning ( Bandarkar et al., 2025 ) , or language-specific adapters ( Zhao et al., 2025 ) . Continued pre-training has also been shown to improve transfer for some language pairs ( Wu et al., 2025 ) ."
+    },
+    {
+      "tag": "p",
+      "id": "S5.SS0.SSS0.Px1.p3.1",
+      "text": "An alternative line of work uses prompts rather than parameter updates. For example, Tanwar et al. (2023) use multilingual in-context examples, and Yoo et al. (2025) study in-context learning in code-switching settings."
+    },
+    {
+      "tag": "h4",
+      "id": "",
+      "text": "Neuron Behavior and Cross-lingual Transfer"
+    },
+    {
+      "tag": "p",
+      "id": "S5.SS0.SSS0.Px2.p1.1",
+      "text": "Several studies examine cross-lingual transfer at the neuron level. Huang et al. (2025) show that activation similarity across languages is associated with better transfer. Other work identifies language-specific and shared neurons ( Tang et al., 2024 ; Zhang et al., 2025 ; Tezuka and Inoue, 2025 ) , and shows that shared neurons often concentrate in middle and upper layers ( Xu et al., 2025 ) ."
+    },
+    {
+      "tag": "p",
+      "id": "S5.SS0.SSS0.Px2.p2.1",
+      "text": "Results on directly intervening on neurons are mixed. Mondal et al. (2025) find that manipulating language-specific neurons yields limited gains, while Wang et al. (2024) show that neuron roles vary by task and model. Our work differs in that we apply test-time steering that blends rather than overwrites activations, preserving representational structure. We show that the direction and magnitude of steering matter, and that carefully controlled neuron-level interventions can improve cross-lingual transfer."
+    },
+    {
+      "tag": "h2",
+      "id": "",
+      "text": "6 Conclusion"
+    },
+    {
+      "tag": "p",
+      "id": "S6.p1.1",
+      "text": "We presented CLAS, a training-free activation steering method that improves cross-lingual transfer by rebalancing shared and language-specific neurons at inference time. CLAS improves performance across both classification and generation tasks, and our analysis shows that gains come from functional divergence rather than forcing representations to align closely with the anchor language. Languages benefit most by shifting from ambiguous regions into distinct clusters, whereas initial anchor proximity does not reliably predict success. These patterns are task-dependent, highlighting the need for task-aware cross-lingual methods. Future work could explore adaptive steering strategies that adjust intervention strength based on representational structure, better understand saturation effects in already well-separated clusters, and extend CLAS to other modalities and training settings."
+    },
+    {
+      "tag": "h2",
+      "id": "",
+      "text": "Limitations"
+    },
+    {
+      "tag": "p",
+      "id": "Sx1.p1.1",
+      "text": "We evaluate CLAS on two multilingual instruction-tuned LLMs (Qwen and Llama) and across multiple multilingual benchmarks spanning NLI (XNLI) and QA (XQuAD). However, our analysis and suggested intervention are anchored to English i.e. we quantify alignment shifts via cosine similarity to an English anchor. This may not reflect behavior under alternative references/anchors or truly language pair-specific settings. Additionally, it is important to note that CLAS is not uniformly beneficial: while average gains for languages are positive, we also observe language-specific regressions (e.g, Hindi, Greek). This indicates that test-time steering can be brittle for certain model/language combinations. Finally, our mechanistic analysis does not isolate the role of attention heads or other circuit components, limiting the granularity of causal attribution."
+    },
+    {
+      "tag": "h2",
+      "id": "",
+      "text": "Ethical Considerations"
+    },
+    {
+      "tag": "p",
+      "id": "Sx2.p1.1",
+      "text": "CLAS is a test-time activation intervention and can change model behavior in ways that are not always predictable across languages, including occasional performance degradations. As with other steering approaches, such interventions can be re-purposed in undesirable ways (e.g, modulating output without transparency). Thus, we recommend caution and task-specific testing and validation before real-world deployment. Our experiments use publicly-available benchmarks and do not involve human subjects or personal data."
+    }
+  ]
+}

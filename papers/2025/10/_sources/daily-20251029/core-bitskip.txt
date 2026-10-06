@@ -1,0 +1,473 @@
+BitSkip: An Empirical Analysis of Quantization and Early Exit Composition
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+2.1 Quantization Techniques
+2.2 Dynamic Neural Networks
+2.3 The Composition Gap
+3 The BitSkip Framework
+3.1 Core Architecture
+3.2 Architectural Variants
+3.3 Training Methodology
+4 Experimental Setup
+4.1 Models and Baselines
+4.2 Two-Phase Training Strategy
+4.3 Intrinsic Architecture Analysis
+4.4 Evaluation Metrics
+5 Results and Analysis
+5.1 Intrinsic Architecture Performance (Without Early Exit Training)
+5.2 Early Exit Analysis
+5.3 Activation Variance Analysis
+6 Conclusion
+6.1 Limitations and Future Work
+References
+License: CC BY 4.0
+arXiv:2510.23766v1 [cs.CL] 27 Oct 2025
+BitSkip: An Empirical Analysis of Quantization and Early Exit Composition
+Ramshankar Bhuvaneswaran
+Affiliation: Northeastern University
+Affiliation: Boston, MA
+Email: bhuvaneshwaran.r@northeastern.edu
+Handan Liu
+††thanks: Corresponding author
+Affiliation: Northeastern University
+Affiliation: Boston, MA
+Email: h.liu@northeastern.edu
+Abstract
+The pursuit of efficient Large Language Models (LLMs) has led to increasingly complex techniques like extreme quantization and dynamic routing. While individual benefits of these methods are well-documented, their compositional effects remain poorly understood. This paper introduces BitSkip, a hybrid architectural framework for systematically exploring these interactions. Counter-intuitively, our findings reveal that a simple 8-bit quantized model without Hadamard transform (BitSkip-V1) not only outperforms its more complex 4-bit and Hadamard-enhanced counterparts but also competes the full-precision baseline in quality (perplexity of 1.13 vs 1.19). The introduction of Hadamard transforms, even at 8-bit precision, catastrophically degraded performance by over 37,000%, tracing fundamental training instability. Our BitSkip-V1 recipe demonstrates superior early-exit characteristics, with layer 18 providing optimal 32.5% speed gain for minimal 4% quality loss.
+Submitted to Journal of Machine Learning Research
+Keywords Large Language Models ⋅\cdot
+Quantization ⋅\cdot
+Early Exit ⋅\cdot
+Dynamic Neural Networks ⋅\cdot
+Model Efficiency
+1 Introduction
+The inflation of Large Language Models has reached a point where physical hardware constraints like memory bandwidth, computational throughput, and power consumption increasingly dictate architectural possibilities [1]. This reality has led researchers to shift focus into efficiency techniques, with quantization and dynamic neural networks emerging as two prominent approaches.
+Quantization methods have evolved from post-training compression [7, 9] to extreme co-designed architectures like BitNet [13, 10] that train models from scratch with 1-bit weights. Simultaneously, dynamic networks like LayerSkip [5] have demonstrated that adaptive computation based on input complexity can provide substantial speedups.
+However, a critical gap persists: these techniques have been developed and evaluated in isolation. The fundamental question of how quantization and dynamic routing interact compositionally remains unexplored. Current literature lacks empirical models to predict whether combining efficiency techniques yields multiplicative benefits or destructive interference.
+This paper introduces BitSkip, a unified framework for investigating these interactions through systematic ablation across three architectural variants. Our key findings reveal:
+(1) Our BitSkip-V1 (8-bit, no Hadamard) achieves superior quality (PPL 1.13 vs 1.19) compared to full-precision baseline.
+(2) Hadamard transforms can be destructive, degrading performance by 37,757% even at 8-bit precision.
+(3) Early exit viability depends fundamentally on base architecture stability. Our work provides the first comprehensive empirical analysis of quantization-early exit composition, establishing clear design principles for next-generation efficient LLMs.
+2 Related Work
+2.1 Quantization Techniques
+Quantization reduces the numerical precision of model parameters to improve efficiency. Post-training quantization methods like GPTQ [7] and AWQ [9] enable rapid compression but face accuracy degradation from activation outliers. On the other hand, Quantization-aware training (QAT) as surveyed by Nagel et al. [12], incorporates precision constraints during training, often employing straight-through estimators [3] for gradient approximation. This approach consistently outperforms PTQ methods, particularly at aggressive precision levels, though it requires additional computational resources for fine-tuning.
+This field has recently witnessed breakthroughs by BitNet family [13, 10] represents a breakthrough in extreme quantization, demonstrating that transformer architectures can be trained from scratch with 1-bit weights while maintaining competitive performance. Bitnet-v2 [14] further introduced Hadamard transformations to enable stable 4-bit activations.
+2.2 Dynamic Neural Networks
+Dynamic networks adjust computational requirements based on input complexity, recognizing that not all inputs require equal processing. The theoretical foundation was established by [2] with methods for gradient propagation through stochastic neurons.
+LayerSkip [5] implements this through layer dropout during training with random layer dropout, teaching it to be robust when certain layers are skipped. This creates a network that can function effectively even when using only a subset of its layers. and self-speculative decoding, this technique uses tokens generated by early exits as “draft” predictions. These drafts are then verified in parallel by the full model, allowing for both speed and accuracy. This LayerSkip laid the groundwork for networks that could make discrete decisions about which computational paths to follow. Building on these ideas, early research explored adaptive depth networks and early exiting mechanisms. Recent work like DEL [6] has further refined dynamic exit layer selection.
+2.3 The Composition Gap
+Despite progress in both domains, the compositional effects of combining quantization with dynamic routing remain unexplored. [1] formalized the challenge of “algorithmic speedup” composition but noted the lack of empirical models for predicting interaction effects. Our work directly addresses this gap through systematic experimentation.
+3 The BitSkip Framework
+BitSkip provides a unified framework for investigating quantization-early exit interactions through three architectural variants:
+3.1 Core Architecture
+All BitSkip variants integrate BitLinear layers with LayerSkip’s routing mechanism. The forward pass for layer ll is defined as:
+hl=LayerSkip​(BitLinear​(hl−1,Wl),pd​(l))h_{l}=\text{LayerSkip}(\text{BitLinear}(h_{l-1},W_{l}),p_{d}(l))
+(1)
+where BitLinear​(⋅)\text{BitLinear}(\cdot) implements a precision-constrained linear transformation utilizing ternarized weight matrices Wl∈{−1,0,+1}d×dW_{l}\in\{-1,0,+1\}^{d\times d}. This ternary quantization follows a deterministic rounding scheme during forward propagation while maintaining high-precision gradients during backward passes through straight-through estimators [3] for stable training. The ternary constraint in Equation 1 fundamentally alters the computational characteristics, replacing floating-point multiply-accumulate operations.
+The LayerSkip​(⋅,pd)\text{LayerSkip}(\cdot,p_{d}) operator in Equation 1 implements stochastic depth during training and conditional execution during inference. This dynamic routing mechanism executes the internal transformation with probability 1−pd​(l)1-p_{d}(l), where pd​(l)p_{d}(l) follows a quadratic scheduling function across network depth. During forward passes where the layer is skipped, the operator functions as an identity mapping, passing the input hl−1h_{l-1} unchanged to the subsequent layer. This design enables the network to learn robust representations that remain effective even when arbitrary subsets of layers are bypassed.
+The quadratic dropout schedule represents a key innovation over prior exponential schedules, defined as:
+pd​(l)=c⋅(l/L)2p_{d}(l)=c\cdot(l/L)^{2}
+(2)
+where cc is a scaling constant calibrated to achieve target early exit rates, ll is the current layer index, and LL is the total layer count. This quadratic formulation in Equation 2 provides smoother gradient flow across layers and improved training stability compared to more aggressive exponential schedules.
+For architectures employing Hadamard transformation (BitSkip-V2 and V3), we implement the transform as:
+Hadamard​(X)=Hm⋅X\text{Hadamard}(X)=H_{m}\cdot X
+(3)
+where HmH_{m} is a 2m×2m2^{m}\times 2^{m} Hadamard matrix defined recursively as:
+Hm=12​[Hm−1Hm−1Hm−1−Hm−1],H0=(1)H_{m}=\frac{1}{\sqrt{2}}\begin{bmatrix}H_{m-1}&H_{m-1}\\
+H_{m-1}&-H_{m-1}\end{bmatrix},\quad H_{0}=(1)
+(4)
+and X∈ℝnX\in\mathbb{R}^{n} with n=2mn=2^{m}. We employ fast Hadamard transform algorithms to perform this multiplication with O⁡(n​log⁡n)O(n\log n) complexity instead of the naive O⁡(n2)O(n^{2}), making the transformation computationally feasible for large-scale language models while preserving its benefits of activation decorrelation and outlier mitigation.
+3.2 Architectural Variants
+BitSkip-V1 (8-bit, No Hadamard): This variant employs 8-bit weight quantization without Hadamard transformation, representing the most straightforward composition of quantization and early exit mechanisms which is similar architecture as that were pioneered and scaled in the BitNet b1.58 work [11]. The 8-bit precision provides a balanced trade-off between computational efficiency and representation fidelity, maintaining sufficient numerical precision for stable gradient propagation while significantly reducing memory bandwidth requirements.
+BitSkip-V2 (4-bit + Hadamard): Building upon the BitNet v2 foundation [14], this variant incorporates aggressive 4-bit weight quantization coupled with Hadamard transformation for activation preconditioning (Equations 3 and 4). The Hadamard transform serves to decorrelate activation dimensions and reduce the impact of outlier values, theoretically enabling more stable low-precision quantization. This variant represents the most extreme quantization approach, targeting maximum compression while relying on mathematical transformations to maintain representational capacity.
+BitSkip-V3 (8-bit + Hadamard): This hybrid variant maintains 8-bit weight quantization while incorporating the Hadamard transformation (Equations 3 and 4), specifically designed to isolate the transform’s independent effects separate from bit-depth reduction. By preserving the same precision as V1 while adding the transform complexity, V3 enables direct assessment of whether activation preconditioning provides benefits even at moderate quantization levels.
+LayerSkip: This variant implements the original LayerSkip architecture (Liu et al., 2024) without quantization, serving as our dynamic routing baseline. It employs full-precision weights with the same quadratic layer dropout schedule and early exit mechanism as other BitSkip variants, enabling direct comparison of how quantization affects dynamic routing performance independent of other architectural changes.
+3.3 Training Methodology
+All models were trained on the TinyStories dataset [4], a corpus of approximately 2.1 million synthetically generated children’s stories. The dataset was tokenized using the GPT-2 BPE tokenizer (vocabulary size: 50,257 tokens) with a maximum sequence length of 512 tokens.
+We employed a unified training methodology across all model variants to enable fair comparison, incorporating two key techniques from the LayerSkip framework:
+Quadratic Layer Dropout: During training, each transformer layer is stochastically dropped with probability pl=pmax⋅(l/L)2p_{l}=p_{\max}\cdot(l/L)^{2}, where ll is the layer index, LL is the total number of layers, and pmax=0.5p_{\max}=0.5. Dropout probabilities are normalized such that ∑l=1Lpl=1.0\sum_{l=1}^{L}p_{l}=1.0. This progressive dropout schedule ensures that earlier layers receive more training signal, making them suitable for early exit inference.
+Early Exit Loss: All intermediate layers are supervised using a shared language modeling head, following the LayerSkip approach. The total loss is computed as:
+Ltotal=Lmain+λ⋅Learly_exitL_{\text{total}}=L_{\text{main}}+\lambda\cdot L_{\text{early\_exit}}
+(5)
+where LmainL_{\text{main}} is the standard next-token prediction loss from the final layer, and Learly_exitL_{\text{early\_exit}} is the weighted sum of losses from all intermediate layers:
+Learly_exit=∑i=1L−1wi⋅ℒCE​(lm_head​(hi),y)L_{\text{early\_exit}}=\sum_{i=1}^{L-1}w_{i}\cdot\mathcal{L}_{\text{CE}}(\text{lm\_head}(h_{i}),y)
+(6)
+with layer-proportional weights wi=(i+1)/Lw_{i}=(i+1)/L normalized such that ∑wi=1\sum w_{i}=1. This weighting scheme in Equation 6 gives deeper layers higher influence while ensuring all layers receive meaningful gradients. We set λ=0.3\lambda=0.3 in Equation 5 based on ablation studies showing this balances final layer performance with intermediate layer quality.
+Table 1: Training Hyperparameters
+Hyperparameter
+BitSkip-V1, V3 (8-bit)
+BitSkip-V2 (4-bit)
+Learning rate
+6×10−46\times 10^{-4}
+3×10−43\times 10^{-4}
+Warmup steps
+1,000
+4,000
+Batch size
+16
+16
+Gradient accumulation steps
+4
+4
+Effective batch size
+64
+64
+Weight decay
+0.1
+0.1
+Gradient clipping
+1.0
+0.5
+Max training steps
+50,000
+50,000
+Learning rate schedule
+Linear warmup + decay
+Linear warmup + decay
+Optimizer
+AdamW
+AdamW
+Early exit loss weight (λ\lambda)
+0.3
+0.3
+Max dropout probability (pmaxp_{\max})
+0.5
+0.5
+Quantization-Aware Training
+For quantized models (v1, v2, v3), we employed quantization-aware training (QAT) using the Straight-Through Estimator (STE) for gradient flow:
+Weight quantization (all quantized variants): Ternary quantization following the BitNet approach:
+wquant={+αif ​w>0.5​α0if ​|w|≤0.5​α−αif ​w<−0.5​αw_{\text{quant}}=\begin{cases}+\alpha&\text{if }w>0.5\alpha\\
+0&\text{if }|w|\leq 0.5\alpha\\
+-\alpha&\text{if }w<-0.5\alpha\end{cases}
+(7)
+where α=mean​(|w|)\alpha=\text{mean}(|w|) is the activation scale factor. The ternary weight quantization scheme in Equation 7 ensures that all weight parameters are constrained to three discrete values, significantly reducing memory requirements while maintaining model expressivity through the learned scale factor α\alpha.
+Activation quantization:
+v1, v3 (8-bit): xquant=round​(clip​(x/s⋅127,−128,127))⋅s/127x_{\text{quant}}=\text{round}(\text{clip}(x/s\cdot 127,-128,127))\cdot s/127
+v2 (4-bit): xquant=round​(clip​(x/s⋅7,−8,7))⋅s/7x_{\text{quant}}=\text{round}(\text{clip}(x/s\cdot 7,-8,7))\cdot s/7
+where s=max⁡(|x|)s=\max(|x|) is the per-token dynamic scaling factor.
+4 Experimental Setup
+4.1 Models and Baselines
+We evaluate BitSkip variants against a full-precision Llama3 baseline through a two-phase training strategy designed to isolate architectural effects from training methodology.
+Table 2: Model Architecture Comparison
+Component
+BitSkip v1
+BitSkip v2
+BitSkip v3
+LayerSkip Baseline
+Layers
+24
+24
+24
+24
+Hidden dimension
+2048
+2048
+2048
+2048
+Attention heads
+32×6432\times 64
+32×6432\times 64
+32×6432\times 64
+32×6432\times 64
+Key-Value heads
+8 (GQA 4:1)
+8 (GQA 4:1)
+8 (GQA 4:1)
+8 (GQA 4:1)
+FFN intermediate
+4096
+4096
+4096
+4096
+Weight quant.
+Ternary
+Ternary
+Ternary
+None (FP32)
+Activation quant.
+8-bit
+4-bit
+8-bit
+None (FP32)
+Hadamard
+No
+Yes
+Yes
+No
+Linear layer
+BitLinear
+H-BitLinear
+BitLinear-H
+Standard
+Parameters
+∼\sim1.06B
+∼\sim1.06B
+∼\sim1.06B
+∼\sim1.06B
+Eff. bits (wts)
+1.58-bit
+1.58-bit
+1.58-bit
+32-bit
+Eff. bits (acts)
+8-bit
+4-bit
+8-bit
+32-bit
+Training Phase
+Phase 1 & 2
+Phase 1 & 2
+Phase 2 only
+Phase 1 & 2
+4.2 Two-Phase Training Strategy
+Phase 1 - Standard Training (Intrinsic Analysis): In the first phase, we trained BitSkip-V1, BitSkip-V2, and Llama3 using standard supervised learning without early exit auxiliary losses. This baseline configuration allows us to evaluate the intrinsic capabilities of each architecture independent of dynamic routing effects, providing insights into fundamental quantization stability and transformation behavior. By removing the confounding variable of early exit training, we can directly measure how different quantization levels and transformations affect base model quality and training dynamics.
+Phase 2 - Early Exit Training: Based on Phase 1 results, we identified that BitSkip-V2’s catastrophic failure was due to the Hadamard transformation rather than bit-depth alone. This motivated the design of BitSkip-V3 (8-bit + Hadamard) to isolate the Hadamard effect at moderate precision. In Phase 2, we trained all four variants (V1, V2, V3, and Llama3) with the multi-layer early exit objective described in Section 3.3. Note that BitSkip-V3 was only trained in Phase 2, as it was architected specifically to investigate the compositional effects observed in Phase 1. This enables direct comparison of dynamic routing effectiveness across architectural variants and reveals how early exit training interacts with different quantization strategies.
+4.3 Intrinsic Architecture Analysis
+To decouple the effects of quantization and transformation from the early exit mechanism, we conducted intrinsic evaluations on models trained without early exit losses in Phase 1.
+By removing the confounding variable of early exit training, we can directly measure how different quantization levels (8-bit vs 4-bit) and the Hadamard transformation affect base model quality and training dynamics. This analysis on BitSkip-V1, BitSkip-V2, and Llama3 reveals the fundamental architectural properties that determine whether a model can support effective early exit mechanisms, independent of specialized training techniques.
+4.4 Evaluation Metrics
+To comprehensively assess the performance of our BitSkip variants and establish clear compositional boundaries for efficiency techniques, we employ a multi-faceted evaluation framework that captures both model quality and computational efficiency:
+Quality Metrics: We measure model quality using perplexity (PPL) and cross-entropy loss evaluated on a standardized text corpus.
+Efficiency Metrics: Computational efficiency is quantified through inference speed measured in tokens per second (tok/s).
+Early Exit Effectiveness: To evaluate the viability of dynamic routing, we systematically measure the quality-speed tradeoff at intermediate layers 6, 12, 18, and 24.
+5 Results and Analysis
+5.1 Intrinsic Architecture Performance (Without Early Exit Training)
+Table 3: Intrinsic Model Performance - Standard Training Without Early Exit Loss
+Model
+Bits
+Full Model PPL
+Layer 6 PPL
+Layer 12 PPL
+Layer 18 PPL
+BitSkip-V1
+8-bit
+1966.49
+14701.50
+4330.83
+2478.66
+BitSkip-V2
+4-bit
+26048.98
+65109.99
+49916.51
+41969.68
+Llama3 FP32
+FP32
+846.34
+12471.16
+3059.27
+1246.45
+Table 3 reveals fundamental architectural properties independent of dynamic routing. BitSkip-V1 demonstrates superior early exit characteristics despite higher base perplexity (1966.49 vs 846.34), achieving only 26.0% perplexity increase at layer 18 for 32.4% speed improvement—the best quality-speed ratio (0.80×) among all models. This suggests 8-bit quantization provides sufficient representation stability to support meaningful early exit decisions even without specialized training.
+BitSkip-V2’s catastrophic perplexity (26048.98) confirms fundamental training instability from 4-bit quantization with Hadamard transformation, with extremely high values across all layers indicating failure to learn coherent language representations. While Llama3 achieves the best base quality (846.34), it shows massive perplexity increases at shallow layers (1373.5% at layer 6), demonstrating that full-precision models lack natural early exit points without specialized training.
+5.2 Early Exit Analysis
+Table 4: Early Exit Effectiveness with Multi-Layer Training
+Model
+Full Model
+PPL
+Full Model
+Speed
+Layer 18
+PPL
+Layer 18
+Speed
+PPL
+Decrease ↓\downarrow
+Speed
+Gain
+BitSkip-V1
+1.13
+32.0 tok/s
+1.18
+42.4 tok/s
+-4.0%
++32.5%
+BitSkip-V2
+210.24
+5.0 tok/s
+301.67
+6.6 tok/s
+-43.5%
++33.2%
+BitSkip-V3
+427.94
+5.0 tok/s
+481.60
+6.6 tok/s
+-12.5%
++33.2%
+Llama3 FP32
+1.19
+97.8 tok/s
+1.77
+128.5 tok/s
+-48.3%
++31.2%
+Table 5: Comparative Quality-Speed Tradeoff Analysis
+Model
+Quality
+Rank
+Speed
+Rank
+Early Exit
+Viability
+Optimal Exit
+Layer
+Quality-Speed
+Ratio
+BitSkip-V1
+1
+2
+Excellent
+18
+0.80×
+Llama3 FP32
+2
+1
+Poor
+18
+1.49×
+BitSkip-V3
+4
+3
+Poor
+18
+2.64×
+BitSkip-V2
+3
+4
+Poor
+18
+1.31×
+Tables 4 and 5 demonstrate BitSkip-V1’s exceptional performance with early exit training, achieving best overall quality (PPL 1.13) with only 4.0% perplexity increase at layer 18 for 32.5% speed gain. The dramatic improvement from intrinsic evaluation (PPL 1.13 vs 1966.49 in Table 3) confirms that early exit training stabilizes quantized architectures. Hadamard-enhanced variants (V2, V3) exhibit persistent catastrophic quality issues despite early exit training. Llama3’s 48.3% perplexity increase for 31.2% speed gain demonstrates that early exit training alone cannot match co-designed efficiency.
+With early exit training, BitSkip-V1 demonstrates exceptional performance, achieving the best overall quality (PPL 1.13) while maintaining viable early exit capabilities. As shown in Table 4, the model shows only a 4.0% perplexity increase at layer 18 while gaining 32.5% speed improvement, representing the most favorable quality-speed tradeoff among all architectures.
+While Llama3 maintains good absolute quality, its early exit characteristics remain suboptimal, with a 48.3% perplexity increase at layer 18 for only 31.2% speed gain as detailed in Table 4. Table 5 further confirms this through the quality-speed ratio comparison, demonstrating that simply adding early exit training to full-precision models cannot match the co-designed efficiency of BitSkip-V1.
+5.3 Activation Variance Analysis
+Figure 1: Activation variance (standard deviation) across layer depth for all model variants. Lower and more stable variance indicates better-controlled activation distributions, which correlates with training stability.
+To investigate the mechanisms behind the observed performance differences, we analyzed activation variance patterns across layer depth (Figure 1). This analysis reveals that the Hadamard transformation indeed achieves its intended effect of stabilizing activation distributions, but this stabilization alone is insufficient to ensure model quality.
+Hadamard Stabilizes Activations but Not Learning. BitSkip-V3 (8-bit + Hadamard) demonstrates the most stable activation variance profile, maintaining values around 1.3-1.5 across all layers after initial growth. Similarly, BitSkip-V2 (4-bit + Hadamard) shows controlled variance that plateaus around layer 5 and gradually decreases in deeper layers. In contrast, BitSkip-V1 exhibits monotonically increasing variance reaching 2.2 at layer 24. Despite this theoretical advantage in activation control, both Hadamard-enhanced variants suffer catastrophic quality degradation (Table 3), revealing a critical disconnect between activation statistics and actual learning capacity.
+The Variance-Quality Paradox. The paradox becomes evident when comparing BitSkip-V1 and V3: V3 achieves superior activation stability (1.3 vs 2.2) yet delivers orders of magnitude worse perplexity. This suggests that while the Hadamard transformation successfully decorrelates activations and reduces outliers as designed, it simultaneously disrupts gradient flow or representational capacity in ways that fundamentally impair learning. The divergent behavior of Llama3, with its exponentially growing variance (reaching 5.7), further demonstrates that high activation variance is not inherently problematic when coupled with sufficient numerical precision.
+Implications for Quantization Design. These findings challenge the conventional wisdom that activation stabilization is universally beneficial for quantized models. The success of BitSkip-V1 with its higher, unstable variance suggests that 8-bit precision provides sufficient headroom to accommodate natural activation growth, while aggressive stabilization through Hadamard transforms may overconstrain the representational dynamics necessary for effective learning. This points to a critical design principle: optimization objectives should target task performance rather than intermediate statistical properties.
+6 Conclusion
+This work introduces BitSkip, a systematic framework for investigating quantization-early exit composition in large language models. Our most significant finding demonstrates that simpler architectural choices—specifically 8-bit quantization without Hadamard transformation—can outperform both complex variants and full-precision baselines. BitSkip-V1 achieves superior quality (PPL 1.13 vs 1.19) while maintaining exceptional early exit characteristics, with only 4% quality degradation for 32.5% speed gains at layer 18.
+The catastrophic failure of Hadamard-enhanced variants (V2, V3), despite achieving superior activation stabilization, reveals a critical disconnect between intermediate statistical properties and actual learning capacity. This variance-quality paradox challenges conventional assumptions in quantization design, suggesting that optimization should target task performance rather than presumed beneficial mathematical properties. Our activation variance analysis demonstrates that while Hadamard transforms successfully decorrelate activations as intended, they simultaneously disrupt representational dynamics necessary for effective learning.
+These findings establish clear design principles for next-generation efficient LLMs: (1) technique composition requires empirical validation rather than theoretical extrapolation, (2) architectural simplicity can transcend complexity when properly co-designed with efficiency mechanisms, and (3) early exit viability depends fundamentally on base architecture stability rather than specialized training alone.
+6.1 Limitations and Future Work
+This study has several limitations that present opportunities for future research. First, our experiments were conducted exclusively on the TinyStories dataset, a relatively small corpus of synthetic children’s stories. While this controlled setting enabled systematic ablation studies, it may not fully capture the training dynamics and compositional effects that emerge with larger, more diverse datasets typical of production LLM training. The generalization of our findings to multi-billion token corpora and diverse domains remains an open question.
+Second, our architectural exploration focused on three specific BitSkip variants. The design space of quantization-dynamic routing compositions is vast, including alternative quantization schemes (e.g., mixed-precision, group quantization), different routing mechanisms (e.g., confidence-based exits, learned routing), and other activation transformations beyond Hadamard.
+Future work should investigate: (1) scaling these findings to larger datasets and model sizes to validate whether the observed patterns hold at scale, (2) exploring the theoretical foundations of why Hadamard transforms interfere with learning despite stabilizing activations, (3) developing predictive models for technique composition that can guide architectural design without exhaustive empirical search, and (4) extending the analysis to other efficiency techniques such as pruning, distillation, and mixture-of-experts architectures.
+Acknowledgments
+We thank the reviewers for constructive feedback that improved this work’s clarity and rigor. Computational resources were provided by Northeastern University’s Discovery Cluster.
+References
+[1]
+Bartoldson, B. R., Kailkhura, B., and Blalock, D.
+Compute-Efficient Deep Learning: Algorithmic Trends and Opportunities.
+Journal of Machine Learning Research, 24(1):11673–11752, 2023.
+[2]
+Bengio, Y., Léonard, N., and Courville, A.
+Estimating or Propagating Gradients Through Stochastic Neurons for Conditional Computation.
+arXiv preprint arXiv:1308.3432, 2013.
+[3]
+Courbariaux, M., Bengio, Y., and David, J.-P.
+BinaryConnect: Training Deep Neural Networks with Binary Weights during Propagations.
+In Advances in Neural Information Processing Systems (NeurIPS), volume 28, 2015.
+[4]
+Eldan, R. and Li, Y.
+TinyStories: How Small Can Language Models Be and Still Speak Coherent English?
+arXiv preprint arXiv:2305.07759, 2023.
+[5]
+Elhoushi, M., Shrivastava, A., Liskovich, D., Hosmer, B., Wasti, B., Lai, L., Mahmoud, A., Acun, B., Agarwal, S., Roman, A., Aly, A., Chen, B., and Wu, C.-J.
+LayerSkip: Enabling Early Exit Inference and Self-Speculative Decoding.
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 12622–12642, Bangkok, Thailand, 2024.
+[6]
+Entezari Zarch, H., et al.
+DEL: Context-Aware Dynamic Exit Layer for Efficient Self-Speculative Decoding.
+In Conference on Language Modeling (COLM), 2025.
+[7]
+Frantar, E., Ashkboos, S., Hoefler, T., and Alistarh, D.
+GPTQ: Accurate Post-training Quantization for Generative Pre-trained Transformers.
+In International Conference on Learning Representations (ICLR), 2023.
+[8]
+Leviathan, Y., Kalman, M., and Matias, Y.
+Fast Inference from Transformers via Speculative Decoding.
+In International Conference on Machine Learning (ICML), pages 19274–19286, 2023.
+[9]
+Lin, J., Tang, J., Tang, H., Yang, S., Chen, W.-M., Wang, W.-C., Xiao, G., Dang, X., Gan, C., and Han, S.
+AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration.
+In Conference on Machine Learning and Systems (MLSys), 2024.
+[10]
+Ma, S., Wang, H., Ma, L., Wang, L., Wang, W., Huang, S., Dong, L., Wang, R., Xue, J., and Wei, F.
+The Era of 1-bit LLMs: All Large Language Models are in 1.58 Bits.
+arXiv preprint arXiv:2402.17764, 2024.
+[11]
+Ma, S., Wang, H., Huang, S., Zhang, X., Hu, Y., Song, T., Xia, Y., and Wei, F.
+BitNet b1.58 2B4T Technical Report.
+arXiv preprint arXiv:2504.12285, 2025.
+[12]
+Nagel, M., Fournarakis, M., Amjad, R. A., Bondarenko, Y., van Baalen, M., and Blankevoort, T.
+A White Paper on Neural Network Quantization.
+arXiv preprint arXiv:2106.08295, 2021.
+[13]
+Wang, H., Ma, S., Dong, L., Huang, S., Wang, H., Ma, L., Yang, F., Wang, R., Wu, Y., and Wei, F.
+BitNet: Scaling 1-bit Transformers for Large Language Models.
+arXiv preprint arXiv:2310.11453, 2023.
+[14]
+Wang, H., Ma, S., Huang, S., et al.
+BitNet v2: Native 4-bit Activations with Hadamard Transformation for 1-bit LLMs.
+arXiv preprint, 2025.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

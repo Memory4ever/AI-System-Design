@@ -1,0 +1,4285 @@
+Disentangling Geometry, Performance, and Training in Language Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Background: Effective Rank and Model Geometry
+Isotropy.
+Impact of Model Geometry on Performance.
+Causes of Geometric Degradation.
+3
+Does Effective Rank Reliably Predict Model Performance?
+3.1
+Experimental Setup
+3.2
+Results on Pretraining Performance
+Higher effective rank generally associates with lower in-distribution loss, but with substantial variance.
+Out-of-distribution performance tracks in-distribution loss, not effective rank.
+Quantization robustness shows scale-dependent sensitivity to effective rank.
+Saturation is not caused by low effective rank alone.
+Takeways:
+3.3
+Results on Fine-Tuning Performance
+Effective rank does not reliably predict fine-tuning performance.
+Catastrophic forgetting is largely independent of effective rank.
+Takeways:
+4
+Why Does Effective Rank Not Correlate Well with Performance?
+Increasing batch size increases effective rank, without guaranteeing performance improvement.
+High regularization prompts high effective rank, but varied performance
+Learning Rate affects effective rank and performance inconsistently.
+High learning rate annealing leads to high effective rank and low performance.
+Training on more tokens preserves a high effective rank and high performance.
+Takeways:
+5
+Alternatives to Effective Rank
+Effective rank aligns with cosine similarity; Isotropy is primarily sensitive to weight decay.
+Representation geometry varies less than the unembedding geometry.
+6
+Conclusion
+References
+A
+Appendix
+A.1
+Experimental Details
+Pre-Training Setup
+Fine-Tuning Setup
+A.2
+Extended Discussion: The Effect of Hyperparamters on Performance and the Unembedding / Representation Geometry
+A.2.1
+Effect of Batch Size.
+A.2.2
+Effect of Weight Decay.
+A.2.3
+Effect of Learning Rate.
+A.2.4
+Effect of Learning Rate Annealing.
+A.2.5
+Effect of Pretraining Token Budget.
+A.3
+Extended Discussion: The Impact of Model Geometry on Downstream Performance
+A.3.1
+In-Distribution Evaluation.
+A.3.2
+Out-Of-Distribution Evaluation.
+A.3.3
+Post Training Quantization Evaluation.
+A.3.4
+Fine-Tuning Evaluation.
+A.3.5
+Catastrophic Forgetting Evaluation.
+B
+Practical Takeaways for ML Practitioners
+C
+Limitations
+License: CC BY 4.0
+arXiv:2602.20433v1 [cs.CL] 24 Feb 2026
+Disentangling Geometry, Performance, and Training in Language Models
+Atharva Kulkarni
+Affiliation:
+University of Southern California
+Correspondence to:
+atharva.kulkarni@usc.edu
+Jacob Springer
+Affiliation:
+Carnegie Mellon University
+Arjun Subramonian
+Affiliation:
+University of California, Los Angeles
+Swabha Swayamdipta
+Affiliation:
+University of Southern California
+Abstract
+Geometric properties of Transformer weights, particularly the unembedding matrix, have been widely useful in language model interpretability research.
+Yet, their utility for estimating downstream performance remains unclear.
+In this work, we systematically investigate the relationship between model performance and the unembedding matrix geometry, particularly its effective rank.
+Our experiments, involving a suite of 108 OLMo-style language models trained under controlled variation, reveal several key findings.
+While the best-performing models often exhibit a high effective rank, this trend is not universal across tasks and training setups.
+Contrary to prior work, we find that low effective rank does not cause late-stage performance degradation in small models, but instead co-occurs with it; we find adversarial cases where low-rank models do not exhibit saturation.
+Moreover, we show that effective rank is strongly influenced by pre-training hyperparameters, such as batch size and weight decay, which in-turn affect the model’s performance.
+Lastly, extending our analysis to other geometric metrics and final-layer representation, we find that these metrics are largely aligned, but none can reliably predict downstream performance.
+Overall, our findings suggest that the model’s geometry, as captured by existing metrics, primarily reflects training choices rather than performance.
+Keywords:
+Machine Learning, ICML
+1
+Introduction
+Figure 1
+:
+(A)
+The effective rank of a model’s unembedding matrix,
+𝐖
+\boldsymbol{\mathrm{W}}
+, tends to correlate with its performance, but does not guarantee it.
+(B)
+The effective rank of the unembedding matrix is influenced by hyperparameter choices (e.g. batch size).
+(C)
+These hyperparameters in turn can affect model performance.
+(D)
+The effective rank of the last token’s final-layer representation,
+𝐇
+\boldsymbol{\mathrm{H}}
+shows little correlation with that of the unembedding matrix and varies minimally across different hyperparameters (such as batch size)
+(B)
+.
+Note:
+The
+green dots
+are used to produce the line plots.
+The loss is normalized within each model size by its lowest observed value.
+As language models have grown in scale and complexity, interpretability efforts have increasingly turned to geometric characterizations of learned weights to understand model behavior
+(
+Nanda et al., 2023
+;
+Yunis et al., 2024
+)
+.
+The study of the unembedding matrix – which maps hidden states to vocabulary logits – has attracted particular attention, as it can be analyzed consistently across architectures and provides a direct interface into how models produce predictions
+(
+Finlayson et al., 2024
+;
+Zhao et al., 2024
+;
+Zhou et al., 2024
+;
+Finlayson et al., 2026
+)
+.
+Recent work has linked the geometric properties of this matrix, particularly its effective rank
+(
+Roy and Vetterli, 2007
+)
+, to model performance; studies on the Pythia model family
+(
+Biderman et al., 2023
+)
+report that low effective rank (i.e., high concentration in the singular value spectrum) correlates with performance degradation
+(
+Godey et al., 2024b
+;
+Diehl Martinez et al., 2024b
+)
+.
+These findings have led to the hypothesis that low rank in the unembedding matrix is harmful to language model performance.
+However, we identify two critical gaps in this narrative.
+First, we argue that these findings may be limited in scope as they are based exclusively on the Pythia models.
+Second, prior work does not systematically vary training conditions to isolate
+when
+and
+why
+low effective rank emerges, making it unclear whether it has a
+causal
+effect on performance or merely
+co-occurs
+with other confounding factors like skewed token distribution, optimization instability, or implicit regularization induced by hyperparameters.
+Motivated by these gaps, we ask a fundamental question:
+RQ1) Does the effective rank of the unembedding matrix reliably predict model performance across tasks and training configurations?
+Towards answering this, we pre-train a suite of 108 OLMo-style language models
+(
+Groeneveld and others, 2024
+)
+varying their size, pretraining token budget, and training hyperparameters. We then analyze the effective rank of each model’s unembedding matrix alongside its performance on pretraining, out-of-distribution generalization, fine-tuning, knowledge retention, and post-training quantization.
+We find that
+effective rank tends to correlate with performance, but does not guarantee it
+(§
+3
+).
+Consistent with prior findings
+(
+Diehl Martinez et al., 2024b
+)
+, we find that higher effective rank generally corresponds to better downstream loss.
+However, this relationship is not universal;
+We find multiple models with high effective rank that yield poor results, while some low-rank ones maintain good performance.
+We also revisit the
+saturation
+problem of small language models, where extended pretraining leads to late-stage performance degradation, especially in the Pythia models
+(
+Biderman et al., 2023
+;
+van der Wal et al., 2025
+)
+.
+While prior work links this behavior to low effective rank
+(
+Godey et al., 2024b
+)
+, our OLMo models maintain stable performance even under extreme over-training, including cases of severely low effective rank.
+This indicates that
+low effective rank is neither necessary nor sufficient to explain saturation.
+A natural follow-up question arises:
+RQ2) Why may the effective rank not correlate well with performance?
+We find that
+effective rank is strongly shaped by training hyperparameters – particularly batch size and weight decay – which can potentially confound the observed association between model performance and effective rank
+(§
+4
+).
+For instance, we find that larger batch sizes consistently result in high effective rank, albeit without guaranteeing performance gains.
+Conversely, lower weight decay substantially reduces effective rank, while its effect on performance remains inconsistent.
+Lastly, prior work has also analyzed the final-token’s last-layer representations
+(
+Godey et al., 2024a
+;
+Machina and Mercer, 2024
+;
+Li et al., 2025
+)
+, and used other geometric metrics like cosine similarity
+(
+Gao et al., 2019
+;
+Ethayarajh, 2019
+)
+and isotropy
+(
+Arora et al., 2016
+)
+, without clearly distinguishing between these choices or establishing their relationships.
+This motivates our final research question:
+RQ3) Beyond effective rank, how do other geometric metrics relate to performance, and do these relationships extend to learned representations?
+Our findings suggest that other
+alternative geometric metrics offer limited additional insight beyond those provided by effective rank in the settings we consider
+(§
+5
+).
+In particular, the effective rank of the unembedding matrix maintains a monotonic but non-linear correlation with cosine similarity, thus providing no additional discernment.
+Isotropy remains largely uncorrelated with other metrics and varies over a narrow range irrespective of model performance, hence limiting its utility as a diagnostic tool.
+Likewise, last-layer representations are relatively stable across training configurations and do not account for observed performance differences.
+Taken together, our results raise questions about the view of unembedding geometry as a proxy for model performance.
+Our empirical findings suggest that effective rank and related metrics may primarily reflect optimization dynamics shaped by training hyperparameters.
+Accordingly, geometric measures are best used as diagnostic tools for understanding training behavior, rather than for model selection or performance prediction, and should be compared only across models trained under matched training settings and alongside task-based evaluations.
+2
+Background: Effective Rank and Model Geometry
+Our main study focuses on analyzing the unembedding matrix of Transformers, henceforth referred by
+𝐖
+∈
+ℝ
+v
+×
+d
+\mathbf{W}\in\mathbb{R}^{v\times d}
+, where
+v
+v
+is the vocabulary size and
+d
+d
+the model dimension.
+Since
+𝐖
+\mathbf{W}
+maps hidden representations to token logits, its spectral structure characterizes how information is distributed across predictive directions in the hidden space.
+As in previous work
+(
+Godey et al., 2024b
+;
+Diehl Martinez et al., 2024b
+)
+, we quantify this structure using the effective rank.
+Following
+Roy and Vetterli (2007)
+, we define it as:
+ℛ
+(
+𝐖
+)
+=
+exp
+(
+−
+∑
+k
+=
+1
+r
+p
+k
+log
+p
+k
+)
+\displaystyle\mathcal{R}(\boldsymbol{\mathrm{W}})=\operatorname{exp}\left(-\sum_{k=1}^{r}p_{k}\log p_{k}\right)
+(1)
+where
+p
+k
+=
+σ
+k
+‖
+σ
+‖
+1
++
+ϵ
+p_{k}=\frac{\sigma_{k}}{\|\sigma\|_{1}}+\epsilon
+and
+σ
+i
+\sigma_{i}
+are the singular values of
+𝐖
+\boldsymbol{\mathrm{W}}
+.
+We normalize
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+by
+min
+⁡
+(
+v
+,
+d
+)
+\min(v,d)
+so that
+ℛ
+⁡
+(
+𝐖
+)
+∈
+[
+0
+,
+1
+]
+\mathcal{R}(\boldsymbol{\mathrm{W}})\in[0,1]
+.
+Beyond effective rank, prior work
+(
+Godey et al., 2024a
+;
+Machina and Mercer, 2024
+)
+has also examined the following two gemoetric metrics:
+Isotropy.
+We use the partition-function-based metric defined by
+Arora et al. (2016)
+:
+ℐ
+⁡
+(
+𝐖
+)
+=
+min
+c
+∈
+𝐔
+⁡
+𝐙
+⁡
+(
+c
+)
+max
+c
+∈
+𝐔
+⁡
+𝐙
+⁡
+(
+c
+)
+\displaystyle\mathcal{I}(\boldsymbol{\mathrm{W}})=\frac{\min_{c\in\boldsymbol{\mathrm{U}}}\boldsymbol{\mathrm{Z}}(c)}{\max_{c\in\boldsymbol{\mathrm{U}}}\boldsymbol{\mathrm{Z}}(c)}
+(2)
+Here
+𝐔
+\boldsymbol{\mathrm{U}}
+is the eigenvector of
+𝐖
+⊤
+​
+𝐖
+\boldsymbol{\mathrm{W}}^{\top}\boldsymbol{\mathrm{W}}
+,
+c
+c
+is a unit vector, and
+𝐙
+⁡
+(
+c
+)
+=
+∑
+i
+v
+exp
+⁡
+(
+⟨
+c
+,
+𝐖
+i
+⟩
+)
+\boldsymbol{\mathrm{Z}}(c)=\sum_{i}^{v}\exp(\langle c,\boldsymbol{\mathrm{W}}_{i}\rangle)
+.
+ℐ
+⁡
+(
+𝐖
+)
+∈
+[
+0
+,
+1
+]
+\mathcal{I}(\boldsymbol{\mathrm{W}})\in[0,1]
+, with
+ℐ
+⁡
+(
+𝐖
+)
+=
+1
+\mathcal{I}(\boldsymbol{\mathrm{W}})=1
+suggesting high isotropy.
+It quantifies how uniformly vectors are distributed across principal directions.
+Angular Variability.
+Based on
+Ethayarajh (2019)
+’s formulation we define it as:
+𝒜
+⁡
+(
+𝐖
+)
+=
+1
+|
+𝐖
+|
+2
+−
+|
+𝐖
+|
+​
+∑
+w
+i
+,
+w
+j
+∈
+𝐖
+,
+i
+≠
+j
+w
+i
+T
+​
+w
+j
+‖
+w
+i
+‖
+2
+⋅
+‖
+w
+j
+‖
+2
+\displaystyle\mathcal{A}(\boldsymbol{\mathrm{W}})=\frac{1}{|\boldsymbol{\mathrm{W}}|^{2}-|\boldsymbol{\mathrm{W}}|}\sum_{w_{i},w_{j}\in\boldsymbol{\mathrm{W}},i\neq j}\frac{w_{i}^{T}w_{j}}{\left\|w_{i}\right\|_{2}\cdot\left\|w_{j}\right\|_{2}}
+(3)
+where
+𝒜
+⁡
+(
+𝐖
+)
+∈
+[
+−
+1
+,
+1
+]
+\mathcal{A}(\boldsymbol{\mathrm{W}})\in[-1,1]
+, with
+𝒜
+⁡
+(
+𝐖
+)
+=
+1
+\mathcal{A}(\boldsymbol{\mathrm{W}})=1
+indicating low angular variability and high semantic similarity.
+We revisit these metrics, and their relationship to effective rank in §
+5
+.
+Impact of Model Geometry on Performance.
+In general, low effective rank and high anisotropy have been considered detrimental, with recent works linking them to the performance degradation phenomenon in smaller Pythia models
+(
+Machina and Mercer, 2024
+;
+Diehl Martinez et al., 2024b
+;
+Godey et al., 2024b
+)
+.
+High cosine similarity among the embedding vectors has long been linked to the
+representation degeneration problem
+, wherein model representations tend to become increasingly similar, collapsing into a narrow cone
+(
+Gao et al., 2019
+;
+Zhang et al., 2020
+;
+Biś et al., 2021
+)
+.
+Diehl Martinez et al. (2024a)
+’s work indicates that representation anisotropy is positively correlated with the frequency bias issue.
+On the other hand,
+Li et al. (2025)
+find an opposite trend, with low effective rank leading to high n-gram memorization, and high effective rank enhancing generalization and learning of long-range dependencies.
+Moreover,
+Ding et al. (2022)
+find that reinstating isotropy in models often yields statistically insignificant gains over their anisotropic counterparts.
+Similarly,
+Ait-Saada and Nadif (2023)
+and
+Mickus et al. (2024)
+illustrate how anisotropy is not detrimental for clustering tasks.
+Taken together, the evidence paints a fragmented and at times contradictory picture.
+Moreover, the role of these metrics in important tasks such as pre-training, generalization, forgetting, and quantization remains largely unexplored.
+Our work aims to bring coherence to this landscape by systematically analyzing Transformer geometry across definitions, tracing its causes, and clarifying if and when it matters for downstream performance.
+Causes of Geometric Degradation.
+A prominent hypothesis links rank collapse and anisotropy to the long-tailed distribution of tokens in the data
+(
+Gong et al., 2018
+;
+Gao et al., 2019
+)
+.
+Under this view, the frequent tokens dominate gradient updates, overpowering the rare tokens, causing push-pull dynamics during optimization, and ultimately leading to rank collapse
+(
+Biś et al., 2021
+;
+Yu et al., 2022
+;
+Mircea et al., 2024
+)
+.
+Other work argues that anisotropy is not merely a byproduct of data distributions, but is instead inherent to the Transformer architecture
+(
+Godey et al., 2024a
+)
+.
+Moreover, a suite of theoretical work hypothesizes that self-attention is the cause of rank collapse in the intermediate token representations
+(
+Dong et al., 2021
+;
+Noci et al., 2022
+;
+Zhai et al., 2023
+;
+Saada et al., 2025
+)
+.
+On the other hand,
+Cai et al. (2021)
+show that transformer embeddings can be isotropic, albeit only within small clusters or low-dimensional manifolds.
+Likewise,
+Timkey and van Schijndel (2021)
+argue that certain
+rogue dimensions
+dominate anisotropy calculations.
+More recently,
+Stollenwerk and Stollenwerk (2025)
+claim that second-moment estimates of the AdamW optimizer are a major contributor to embedding anisotropy.
+Despite these insights, prior work does not systematically study how these metrics vary with respect to different training hyperparameters.
+Given this background, our investigation proceeds in three stages.
+First, we assess whether effective rank reliably predicts performance across diverse evaluation settings (§
+3
+).
+Second, we investigate which training factors (particularly hyperparameters) may drive variations in effective rank (§
+4
+)
+Finally, we examine how isotropy and angular variability relate to effective rank (§
+5
+), and whether these relationships extend from the unembedding matrix to learned representations (Appendix
+A.3
+).
+3
+Does Effective Rank Reliably Predict Model Performance?
+We answer our
+RQ1
+here by examining the relationship between the effective rank of the unembedding matrix,
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+, and task performance.
+We use scatter plots to visually assess these relationships.
+Appendix
+A.3
+contains detailed regression analysis results that support our observations in this section.
+Taken together, our empirical findings suggest that effective rank is predictive but not deterministic of downstream performance.
+3.1
+Experimental Setup
+We train a suite of OLMo-style models
+(
+Groeneveld and others, 2024
+)
+on the Pile dataset
+(
+Gao et al., 2020
+)
+following
+Magnusson et al. (2025)
+’s configuration.
+Our experiments span model sizes of
+N
+∈
+{
+4
+,
+8
+,
+16
+,
+28
+,
+40
+,
+75
+}
+N\in\{4,8,16,28,40,75\}
+million non-embedding parameters trained on
+D
+∈
+{
+8
+,
+32
+,
+64
+,
+128
+}
+D\in\{8,32,64,128\}
+billion tokens.
+To study the effect of training hyperparameters, we perform systematic ablations.
+We vary the batch size over
+{
+32
+,
+64
+,
+128
+,
+256
+,
+512
+}
+\{32,64,128,256,512\}
+, the weight decay over
+{
+0.1
+,
+0.5
+,
+0.01
+}
+\{0.1,0.5,0.01\}
+, and the learning rate scaled to
+{
+0.1
+,
+10
+,
+100
+}
+\{0.1,10,100\}
+of the model-specific learning rate
+(
+Porian et al., 2024
+)
+.
+Additionally, we vary the learning rate decay to
+0
+0
+,
+1
+%
+1\%
+, and
+10
+%
+10\%
+of the peak learning rate.
+This results in a suite of
+108
+108
+pre-trained models for our study.
+More fine-grained model and training details are provided in Appendix
+A.1
+.
+3.2
+Results on Pretraining Performance
+Higher effective rank generally associates with lower in-distribution loss, but with substantial variance.
+We evaluate our OLMo models on the Pile-10k corpus
+(
+Nanda, 2022
+)
+to measure in-distribution loss.
+Figure
+2
+shows the relationship between model performance and the effective rank of the unembedding matrix
+𝐖
+\boldsymbol{\mathrm{W}}
+.
+Across model sizes, we observe a consistent trend: lower loss is generally associated with higher effective rank.
+However, this relationship is not strictly monotonic; we observe numerous instances in which models with nearly identical losses exhibit markedly different rank profiles.
+For example, OLMo-28M models with loss near
+5
+5
+span
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+from
+40
+40
+to
+80
+80
+, and OLMo-4M models with loss around
+6.5
+6.5
+range from
+10
+10
+to
+80
+80
+.
+Moreover, the worst-performing models are not the most collapsed; they correspond to models trained with high learning rates (
+≈
+\approx
+1e-2) and strong annealing (10%).
+Interestingly, across model sizes, we also observe many underperforming models with high effective rank.
+Closer inspection reveals that these are the models trained on smaller token budgets (8B, 32B) with large batch sizes (
+256
+256
+,
+512
+512
+).
+We elaborate on the impact of hyperparameter choices on
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+in Section
+4
+.
+Figure 2
+:
+In-distribution evaluation:
+Variation in effective rank does not translate to equivalent change in in-domain loss.
+Out-of-distribution performance tracks in-distribution loss, not effective rank.
+We use the Paloma benchmark
+(
+Magnusson et al., 2024
+)
+to assess OOD performance.
+Figure
+3
+shows results on the Dolma-100 programming-languages subset.
+Overall, OOD loss closely mirrors ID loss, while variation in effective rank
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+is not consistently correlated with OOD losses.
+We also observe an
+agreement-on-the-line
+phenomenon
+(
+Miller et al., 2021
+;
+Baek et al., 2022
+)
+, where models exhibit a near-linear relationship between ID and OOD loss.
+This suggests that ID loss is a more reliable predictor of OOD behavior than effective rank.
+Figure 3
+:
+Out-of-Distribution Evaluation:
+Performance in OOD setup remains largely unchanged across different effective ranks
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+.
+Alternatively, models with stronger in-domain loss consistently transfer well, making it a better predictor of OOD behavior.
+Quantization robustness shows scale-dependent sensitivity to effective rank.
+We use the GPTQ framework
+(
+Frantar et al., 2023
+)
+to post-train quantize our models and assess their ID performance.
+Figure
+4
+shows that OLMo-4M exhibits a near-monotonic relationship between effective rank
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+and post-quantization loss.
+With a few outliers, OLMo-28M models also show increased loss degradation as rank decreases, whereas the results for OLMo-75M remain comparatively inconsistent at high
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+.
+In contrast, the latter models show a strong
+agreement-on-the-line
+with their un-quantized counterparts.
+However, this alignment breaks for the smaller OLMo-4M models, which show substantially more rank collapse.
+Notably, its 128B-token variant performs worse than models trained on smaller token budgets.
+This aligns with prior findings that overtraining small models degrades post-training performance
+(
+Kumar et al., 2025
+)
+.
+We further observe that OLMo-4M models trained with low weight decay achieve good pre-quantization performance despite extremely low effective rank, but suffer severe post-quantization degradation.
+This suggests that quantization-induced degradation is more severe in extreme cases of collapse in
+𝐖
+\boldsymbol{\mathrm{W}}
+.
+We find that these results also hold true for OOD evaluation (refer to Appendix
+A.3
+Figure
+23
+).
+Figure 4
+:
+Post-training quantization evaluation:
+Highly collapsed models are heavily impacted, while high-rank models remain largely intact but not entirely consistent.
+Saturation is not caused by low effective rank alone.
+Smaller Pythia models (
+≤
+160
+\leq 160
+M parameters) are known to exhibit performance degradation toward the end of pre-training
+(
+Biderman et al., 2023
+;
+van der Wal et al., 2025
+)
+, a phenomenon commonly referred to as
+saturation
+.
+Prior work causally links it to the low rank of the unembedding matrix
+(
+Godey et al., 2024a
+;
+Machina and Mercer, 2024
+;
+Razzhigaev et al., 2024
+)
+.
+However, existing studies focus almost exclusively on the Pythia family, leaving open two key questions: 1) Is saturation a general phenomenon across small language models? 2) Is a low effective rank the underlying cause?
+To disentangle these factors, we pre-train an OLMo-14M model that exactly matches the Pythia-14M configuration.
+The sole architectural difference is the use of sequential attention instead of its parallel variant
+(
+Shoeybi et al., 2020
+)
+In Figure
+5
+, we clearly see that Pythia-14M exhibits in-distribution loss degradation during the tail end of training.
+This also happens to coincide with a sharp drop in the effective rank
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+.
+In contrast, OLMo-14M trained under the same conditions shows neither loss degradation nor effective rank collapse.
+Interestingly, when we train OLMo-14M with a smaller token budget (8B tokens) and a reduced batch size of 32, we observe substantially lower effective rank (rightmost subplot of Figure
+5
+), yet still no degradation in loss.
+These results point to three insights.
+First, saturation is not universal: not all small language models degrade under extreme over-training.
+Second, a low effective rank alone is insufficient to explain saturation, as a model can collapse substantially without exhibiting loss degradation.
+Third, the dynamics of effective rank may matter: degradation in Pythia-14M coincides with an abrupt drop in
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+, whereas collapse in OLMo-14M-8B is markedly more gradual.
+We conjecture that Pythia’s parallel attention, which can underperform sequential attention
+(
+Chowdhery et al., 2023
+)
+, may contribute to this behaviour.
+Moreover, we observed that the spectral norm of Pythia-14M was substantially higher than that of our OLMo-14M variants, suggesting that spectral capping methods
+(
+Takase et al., 2025
+;
+Newhouse et al., 2025
+)
+may mitigate this issue.
+We leave a deeper investigation into the root causes of saturation to future work.
+Figure 5
+:
+Saturation evaluation:
+Not all small language models experience saturation. Low effective rank alone does not cause it. Instead, saturation may result from other training or architectural factors that can also induce rank collapse.
+Takeways:
+1)
+Models with
+↑
+ℛ
+⁡
+(
+𝐖
+)
+\uparrow\mathcal{R}(\boldsymbol{\mathrm{W}})
+have better ID and OOD performance, albeit it is not predictive across all training setups.
+2)
+ID loss is a better indicator of OOD behaviour than effective rank
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+.
+3)
+Models with
+↓
+ℛ
+⁡
+(
+𝐖
+)
+\downarrow\mathcal{R}(\boldsymbol{\mathrm{W}})
+consistently suffer more post-quantization.
+4)
+↓
+ℛ
+⁡
+(
+𝐖
+)
+\downarrow\mathcal{R}(\boldsymbol{\mathrm{W}})
+is not exclusively responsible for saturation in small language models.
+3.3
+Results on Fine-Tuning Performance
+Effective rank does not reliably predict fine-tuning performance.
+We fine-tune OLMo models on the StarCoder-Python dataset
+(
+Li et al., 2023
+)
+to assess whether differences in the unembedding matrix’s effective rank affect the learnability of new knowledge.
+Similar to previous cases, from Figure
+6
+, we find that the best-performing models tend to exhibit high
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+.
+However, we observe many counterexamples in which models with comparable or even higher effective rank incur substantially worse fine-tuning loss.
+Moreover, unlike the pre-training evaluation results, we do not observe a strong
+agreement-on-the-line
+between fine-tuning and pre-training losses.
+We observe consistent trends across additional fine-tuning datasets (see Appendix
+A.3
+).
+Figure 6
+:
+Fine-tuning evaluation:
+Neither the effective rank
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+nor pre-training loss reliably predicts fine-tuning performance.
+Catastrophic forgetting is largely independent of effective rank.
+Smaller models are particularly susceptible to catastrophic forgetting
+(
+Ramasesh et al., 2022
+)
+, where fine-tuning degrades performance on the pre-training distribution.
+We investigate whether models trained with varied effective rank at initialization, affect catastrophic forgetting.
+We analyze this by evaluating the fine-tuned models on Pile-10k and measuring both absolute loss and change relative to base models (
+Δ
+\Delta
+loss).
+Interestingly, from Figure
+7
+we see that the fine-tuned models yield very similar in-distribution loss, largely independent of the base model’s
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+or its pre-training loss.
+Moreover, the
+Δ
+\Delta
+loss appears to correlate with the base model’s ID loss, suggesting that fine-tuning performance is almost initialization-invariant.
+Surprisingly, across all models, we see that lower-weight-decay models, which exhibit the most collapse, tend to perform best even after fine-tuning.
+We hypothesize that the low-rank nature preserves the most representative components of the ID data, and hence forgets less.
+Taken together, these results suggest that fine-tuning induces a similar degree of learning (and forgetting) across models.
+Figure 7
+:
+Catastrophic forgetting evaluation:
+While models with higher effective rank
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+exhibit slightly larger relative forgetting (
+Δ
+\Delta
+loss), all fine-tuned models converge to similar absolute loss on the pre-training distribution. This suggests that catastrophic forgetting is largely independent of unembedding geometry.
+Takeways:
+Both Catastrophic forgetting and fine-tuning performance is not correlated with effective rank
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+as well as pre-training performance.
+4
+Why Does Effective Rank Not Correlate Well with Performance?
+To answer our
+RQ2
+, we investigate why the effective rank of the unembedding matrix,
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+, may often fail to correlate with model performance.
+We find that
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+is highly dependent on certain training hyperparameters, and these choices in turn influence model performance.
+To isolate these effects, we systematically ablate key hyperparameters (see §
+3.1
+) while keeping all others fixed, and evaluate both
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+and in-distribution loss.
+For a fair comparison across model sizes, we normalize the loss per model size, hereafter termed the scaled loss.
+Our findings are as follows.
+Increasing batch size increases effective rank, without guaranteeing performance improvement.
+Figure
+8
+shows that batch size has a pronounced effect on the geometry of
+𝐖
+\boldsymbol{\mathrm{W}}
+.
+Across model sizes, small-batch training consistently leads to stronger collapse (
+↓
+ℛ
+⁡
+(
+𝐖
+)
+\downarrow\mathcal{R}(\boldsymbol{\mathrm{W}})
+), while larger batch sizes better preserve the effective rank (
+↑
+ℛ
+⁡
+(
+𝐖
+)
+\uparrow\mathcal{R}(\boldsymbol{\mathrm{W}})
+).
+The collapse in small batch size training regime is plausible, as gradients are dominated by frequent tokens, whose repeated and aligned updates push the rows of
+𝐖
+\boldsymbol{\mathrm{W}}
+toward similar directions, while gradients from rare tokens are sparse and inconsistent
+(
+Biś et al., 2021
+;
+Yu et al., 2022
+;
+Mircea et al., 2024
+)
+.
+The effect is further amplified on datasets such as the Pile, which exhibits a heavy-tail of low-frequency tokens
+(
+Elazar et al., 2024
+)
+.
+In terms of performance, we observe a
+U-shaped
+relationship between batch size and in-distribution loss, indicating the presence of a
+critical batch size
+, beyond which further increases do not reliably improve performance
+(
+McCandlish et al., 2018
+;
+Zhang et al., 2019
+)
+.
+This also explains why, in §
+3.2
+, models with higher effective rank sometimes exhibit higher loss.
+Since all other hyperparameters are held fixed, and large-batch training is known to be particularly sensitive to hyperparameter tuning
+(
+Marek et al., 2025
+)
+, we conjecture that the slight performance degradation at large batch sizes is likely an optimization artifact that could be mitigated with learning-rate retuning.
+Overall, our results indicate that in-distribution performance is primarily driven by the choice of pre-training batch size, rather than by the effective rank
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+.
+Figure 8
+:
+Effect of batch size on
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+and performance:
+Larger batch sizes preserve higher effective rank in the unembedding matrix. However, performance exhibits a U-shaped dependence on batch size, with extremely large batches not always improving loss, explaining why higher
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+does not necessarily translate to better performance.
+High regularization prompts high effective rank, but varied performance
+Figure
+9
+suggests that weight decay also has a systematic effect on the unembedding matrix’s geometry.
+We find that stronger regularization consistently preserves high effective rank
+↑
+ℛ
+⁡
+(
+𝐖
+)
+\uparrow\mathcal{R}(\boldsymbol{\mathrm{W}})
+.
+This can be attributed to weight decay’s role in controlling the effective learning rate
+(
+D'Angelo et al., 2024
+)
+and promoting a rotational equilibrium that counteracts highly imbalanced gradient updates
+(
+Kosson et al., 2024
+)
+.
+In contrast, the impact of weight decay on performance is not uniform across model sizes.
+Smaller models (4M, 8M) perform best under weak regularization, likely because stronger weight decay restricts their already limited capacity.
+As model size increases, representational capacity grows, and we observe improved performance with moderately higher regularization.
+Consequently, models of different sizes can exhibit both strong and weak performance based on their regularization strength while maintaining high effective rank.
+This further illustrates that a high
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+is neither sufficient nor universally desirable for good performance, reinforcing the disconnect between model geometry and loss.
+Figure 9
+:
+Effect of weight decay on
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+and performance:
+Stronger regularization consistently preserves higher effective rank. Its impact on loss depends on model size, yielding both good and poor performance at similar
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+.
+Learning Rate affects effective rank and performance inconsistently.
+As mentioned in §
+3.1
+, we choose the optimal learning rate for each model based on the scaling laws of
+Porian et al. (2024)
+.
+Thus, each model has a different learning rate.
+To study learning rate sensitivity, we ablate these values by scaling them by factors of
+0.1
+,
+10
+,
+100
+{0.1,10,100}
+, yielding learning rates in the range
+[
+10
+−
+4
+,
+10
+−
+2
+]
+[10^{-4},10^{-2}]
+.
+For comparability, we normalize learning rates by the smallest value per model size and examine their relationship with effective rank
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+and in-distribution loss.
+From Figure
+10
+, we can see that the effect of learning rate is nuanced.
+While
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+remains largely stable across learning rates, smaller models tend to exhibit slight rank reduction, whereas larger models show mild rank expansion.
+In contrast, performance is strongly learning-rate dependent and diverges by scale. Smaller models benefit from higher learning rates, whereas larger models degrade at higher ones.
+Larger models show the opposite trend: they perform worse at high learning rates and improve as the learning rate decreases.
+These behaviors align with prior observations and motivate the use of
+μ
+\mu
+P scaling
+(
+Yang et al., 2021
+)
+to better align optimization dynamics across model sizes.
+Importantly, the learning rates prescribed by
+Porian et al. (2024)
+consistently yield the best performance across all models.
+Nevertheless, across learning rates, we observe models with well-preserved unembedding geometry but varying loss, once again highlighting the limitations of using
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+alone as a predictor of performance.
+Figure 10
+:
+Effect of learning rate on
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+and performance:
+Smaller models perform better with higher learning rates, whereas larger models benefit from lower learning rates. However, variations in
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+remain minimal.
+High learning rate annealing leads to high effective rank and low performance.
+Figure
+11
+shows that learning rate annealing also affects the geometry of the unembedding matrix.
+Aggressive schedules that decay the learning rate to
+0
+0
+–
+1
+%
+1\%
+of its initial value have little effect on the effective rank
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+. In contrast, milder decay to
+10
+%
+10\%
+consistently preserves higher effective rank.
+In contrast, in-distribution performance degrades monotonically as the final learning rate increases, indicating that maintaining a relatively high learning rate toward the end of training is suboptimal.
+As a result, this setting exhibits a clear inverse trend: configurations with higher
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+(induced by less aggressive annealing) tend to incur higher loss.
+This further reinforces our central observation that a high effective rank does not necessarily translate to better performance.
+Figure 11
+:
+Effect of LR decay on
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+and performance:
+Annealing the learning rate toward
+0
+0
+improves performance, while changes in
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+remain minimal.
+Training on more tokens preserves a high effective rank and high performance.
+To isolate the effect of data scale, we train OLMo-style models on token budgets ranging from 8B to 128B tokens.
+To prevent extremely long schedules, we make sure that all of them are trained for the same steps, hence, with varying batch sizes.
+Prior work suggests that pre-training on tokens way beyond the
+Chinchilla optimal
+(
+Hoffmann et al., 2022
+)
+can continue to improve performance
+(
+Sardana et al., 2024
+;
+Gadre et al., 2025
+)
+.
+Our results from Figure
+12
+corroborate these findings, with models of all sizes showing better performance when trained on larger token budgets.
+We also see that models exhibit a high effective rank
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+when trained on larger token budgets.
+This alignment between improved loss and higher effective rank helps explain the trends observed in §
+3.2
+, where models with larger
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+tend to achieve lower loss.
+Figure 12
+:
+Effect of token budget on
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+and performance:
+Training on more tokens yield better performance and higher effective rank across model sizes.
+Takeways:
+Pre-training on a larger token budget, with large batch size, sufficient weight decay, and less aggressive LR annealing can impede geometric collapse. However, this does not necessarily translate to a better in-distribution loss.
+5
+Alternatives to Effective Rank
+As mentioned in §
+2
+, prior work has also used cosine similarity and partition-function-based Isotropy as metrics for analyzing the geometry of the unembedding matrix
+(
+Machina and Mercer, 2024
+)
+.
+While each metric purports to characterize model geometry, they capture fundamentally different properties.
+Effective rank is a magnitude-based direction-agnostic metric that quantifies how evenly variance is distributed across singular directions.
+On the other hand, Isotropy and cosine similarity are magnitude agnostic.
+The former answers how much more concentrated vectors are in their most-preferred direction vs. least-preferred, while the latter treats all vector pairs equally, rather than focusing on principal components and computes pairwise alignment.
+In this section, we study how these metrics correlate (or not) with each other for the unembedding matrix
+W
+, and last-token’s final layer representations
+H
+∈
+ℝ
+N
+×
+d
+\textbf{H}\in\mathbb{R}^{N\times d}
+, where
+N
+N
+is the number of input sequences.
+Effective rank aligns with cosine similarity; Isotropy is primarily sensitive to weight decay.
+Figure
+13
+presents the Pareto fronts of geometric metrics for the unembedding matrix.
+Both cosine similarity
+𝒜
+⁡
+(
+𝐖
+)
+\mathcal{A}(\boldsymbol{\mathrm{W}})
+and effective rank
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+vary substantially across models and exhibit a non-monotonic, parabolic relationship.
+This ‘
+moon-shaped
+’ correlation indicates that models with low rank embeddings tend to have high angular alignment, and vice-versa.
+However, this pattern is not strict: some high-rank models also exhibit substantial angular alignment.
+This is expected, as effective rank is direction-agnostic and cannot distinguish between different spatial arrangements that share the same singular value spectrum.
+In contrast, isotropy scores
+ℐ
+⁡
+(
+𝐖
+)
+\mathcal{I}(\boldsymbol{\mathrm{W}})
+are tightly concentrated around 0.5 for most models, consistent with prior observations
+(
+Machina and Mercer, 2024
+)
+.
+Across all model sizes, we see the ones trained with lower weight decay strength exhibit high anisotropy, but varying effective rank and high cosine similarity.
+We conjecture that this might be because of the unconstrained growth of the embeddings along task-relevant directions, causing vectors to concentrate in a few dominant directions that are exponentially amplified by the partition function.
+Figure 13
+:
+Pareto fronts of unembedding geometry metrics. Effective rank and cosine similarity follow a non-monotonic trend, while isotropy varies mainly with weight decay.
+Representation geometry varies less than the unembedding geometry.
+†
+†
+As per
+Arora et al. (2016)
+, the partition function is useful to measure the global isotropy of a large, fixed set of vectors, such as
+𝐖
+\boldsymbol{\mathrm{W}}
+.
+In contrast,
+𝐇
+\boldsymbol{\mathrm{H}}
+captures only a limited set of samples and cannot reflect the global geometry, making the metric unreliable for them. Hence, we compute it for
+𝐖
+\boldsymbol{\mathrm{W}}
+but not
+𝐇
+\boldsymbol{\mathrm{H}}
+.
+From Figure
+14
+, we observe that model representations have substantially higher rank and less variation than the unembedding matrix.
+They also exhibit low cosine similarity, aligning with prior observations
+(
+Machina and Mercer, 2024
+;
+Godey et al., 2024a
+;
+Razzhigaev et al., 2024
+)
+.
+Interestingly, model representations with similar effective rank,
+ℛ
+⁡
+(
+𝐇
+)
+\mathcal{R}(\boldsymbol{\mathrm{H}})
+, span a wide variety of embedding similarity
+𝒜
+⁡
+(
+𝐖
+)
+\mathcal{A}(\boldsymbol{\mathrm{W}})
+.
+Similar trend is observed for
+𝒜
+⁡
+(
+𝐇
+)
+\mathcal{A}(\boldsymbol{\mathrm{H}})
+vs
+𝒜
+⁡
+(
+𝐖
+)
+\mathcal{A}(\boldsymbol{\mathrm{W}})
+.
+This indicates that high alignment among embeddings does not directly translate to similarly aligned representations.
+The unembedding Isotropy,
+ℐ
+⁡
+(
+𝐖
+)
+\mathcal{I}(\boldsymbol{\mathrm{W}})
+, displays more or less similar trends when compared with either the model representations or the unembedding matrix.
+One notable exception is that models with low Isotropy in the unembedding matrix tend to produce representations with substantially lower cosine similarity.
+These models also correspond to training regimes with low weight decay.
+We elaborate more on the effect of the last token’s final-layer representation geometry on downstream performance in Appendix
+A.3
+.
+Figure 14
+:
+Pareto front of similarity and effective rank metrics for the unembedding matrix vs last layer representation.
+Representations show higher effective rank and less variation than the unembedding matrix, with low cosine similarity. Embedding’s geometric variation does not directly transfer to representations.
+6
+Conclusion
+In this work, we present a systematic study of the relationship between language model performance and the geometry of the unembedding matrix, particularly its effective rank.
+We train and analyze 108 pre-trained OLMo models spanning diverse training setups and observe that higher effective rank generally correlates with better performance.
+However, this relationship is neither necessary nor sufficient: across five evaluation tasks, we observe many counterexamples of high-rank models that underperform and low-rank models that do well.
+Revisiting the problem of saturation, i.e. performance degradation in late-stage pretraining, we find that low effective rank is a concurrent manifestation, not necessarily the root cause.
+Instead, effective rank strongly captures hyperparameter trends than model performance.
+Lastly, extending our analysis to cosine similarity, isotropy, and final-layer token representations, we find that these metrics broadly capture similar trends, and that representation geometry exhibits less variation than the unembedding matrix.
+Nevertheless, both fail to reliably predict downstream performance.
+In summary, our results suggest that geometric metrics should be interpreted with caution and cannot serve as substitutes for downstream evaluation.
+We provide more detailed practical takeaways of our findings for ML practitioners and researchers in Appendix
+B
+and highlight the limitations of our work in Appendix
+C
+.
+Impact Statement
+Our study focuses on understanding existing models rather than developing new capabilities, and our findings promote more careful interpretation of model geometry rather than enabling harmful applications.
+As such, we do not anticipate any direct negative societal impacts from this work.
+Our pre-training experiments require
+≈
+3000
+\approx 3000
+GPU hours.
+We aim to share the benefit of this cost by releasing all of our model checkpoints as open source.
+We encourage the research community to make use of them.
+References
+Ait-Saada and Nadif (2023)
+M. Ait-Saada and M. Nadif
+Is anisotropy truly harmful? a case study on text clustering
+.
+In
+Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 2: Short Papers)
+,
+A. Rogers, J. Boyd-Graber, and N. Okazaki (Eds.)
+,
+Toronto, Canada
+,
+pp. 1194–1203
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2
+.
+Arora
+et al.
+(2016)
+S. Arora, Y. Li, Y. Liang, T. Ma, and A. Risteski
+A latent variable model approach to PMI-based word embeddings
+.
+Transactions of the Association for Computational Linguistics
+4
+,
+pp. 385–399
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+,
+§2
+,
+footnote
+.
+Baek
+et al.
+(2022)
+C. Baek, Y. Jiang, A. Raghunathan, and J. Z. Kolter
+Agreement-on-the-line: predicting the performance of neural networks under distribution shift
+.
+In
+Advances in Neural Information Processing Systems
+,
+S. Koyejo, S. Mohamed, A. Agarwal, D. Belgrave, K. Cho, and A. Oh (Eds.)
+,
+Vol.
+35
+,
+pp. 19274–19289
+.
+External Links:
+Link
+Cited by:
+§3.2
+.
+Biderman
+et al.
+(2023)
+S. Biderman, H. Schoelkopf, Q. G. Anthony, H. Bradley, K. O’Brien, E. Hallahan, M. A. Khan, S. Purohit, U. S. Prashanth, E. Raff, A. Skowron, L. Sutawika, and O. Van Der Wal
+Pythia: a suite for analyzing large language models across training and scaling
+.
+In
+Proceedings of the 40th International Conference on Machine Learning
+,
+A. Krause, E. Brunskill, K. Cho, B. Engelhardt, S. Sabato, and J. Scarlett (Eds.)
+,
+Proceedings of Machine Learning Research
+, Vol.
+202
+,
+pp. 2397–2430
+.
+External Links:
+Link
+Cited by:
+§1
+,
+§1
+,
+§3.2
+.
+Biś
+et al.
+(2021)
+D. Biś, M. Podkorytov, and X. Liu
+Too much in common: shifting of embeddings in transformer language models and its implications
+.
+In
+Proceedings of the 2021 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies
+,
+K. Toutanova, A. Rumshisky, L. Zettlemoyer, D. Hakkani-Tur, I. Beltagy, S. Bethard, R. Cotterell, T. Chakraborty, and Y. Zhou (Eds.)
+,
+Online
+,
+pp. 5117–5130
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2
+,
+§2
+,
+§4
+.
+Cai
+et al.
+(2021)
+X. Cai, J. Huang, Y. Bian, and K. Church
+Isotropy in the contextual embedding space: clusters and manifolds
+.
+In
+International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§2
+.
+Cheng
+et al.
+(2025)
+E. Cheng, D. Doimo, C. Kervadec, I. Macocco, L. Yu, A. Laio, and M. Baroni
+Emergence of a high-dimensional abstraction phase in language transformers
+.
+In
+The Thirteenth International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+Appendix C
+.
+Chowdhery
+et al.
+(2023)
+A. Chowdhery, S. Narang, J. Devlin, M. Bosma, G. Mishra, A. Roberts, P. Barham, H. W. Chung, C. Sutton, S. Gehrmann, P. Schuh, K. Shi, S. Tsvyashchenko, J. Maynez, A. Rao, P. Barnes, Y. Tay, N. Shazeer, V. Prabhakaran, E. Reif, N. Du, B. Hutchinson, R. Pope, J. Bradbury, J. Austin, M. Isard, G. Gur-Ari, P. Yin, T. Duke, A. Levskaya, S. Ghemawat, S. Dev, H. Michalewski, X. Garcia, V. Misra, K. Robinson, L. Fedus, D. Zhou, D. Ippolito, D. Luan, H. Lim, B. Zoph, A. Spiridonov, R. Sepassi, D. Dohan, S. Agrawal, M. Omernick, A. M. Dai, T. S. Pillai, M. Pellat, A. Lewkowycz, E. Moreira, R. Child, O. Polozov, K. Lee, Z. Zhou, X. Wang, B. Saeta, M. Diaz, O. Firat, M. Catasta, J. Wei, K. Meier-Hellstern, D. Eck, J. Dean, S. Petrov, and N. Fiedel
+PaLM: scaling language modeling with pathways
+.
+Journal of Machine Learning Research
+24
+(
+240
+),
+pp. 1–113
+.
+External Links:
+Link
+Cited by:
+§3.2
+.
+D'Angelo
+et al.
+(2024)
+F. D'Angelo, M. Andriushchenko, A. Varre, and N. Flammarion
+Why do we need weight decay in modern deep learning?
+.
+In
+Advances in Neural Information Processing Systems
+,
+A. Globerson, L. Mackey, D. Belgrave, A. Fan, U. Paquet, J. Tomczak, and C. Zhang (Eds.)
+,
+Vol.
+37
+,
+pp. 23191–23223
+.
+External Links:
+Link
+Cited by:
+§4
+.
+Diehl Martinez
+et al.
+(2024a)
+R. Diehl Martinez, Z. Goriely, A. Caines, P. Buttery, and L. Beinborn
+Mitigating frequency bias and anisotropy in language model pre-training with syntactic smoothing
+.
+In
+Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing
+,
+Y. Al-Onaizan, M. Bansal, and Y. Chen (Eds.)
+,
+Miami, Florida, USA
+,
+pp. 5999–6011
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2
+.
+Diehl Martinez
+et al.
+(2024b)
+R. Diehl Martinez, P. Lesci, and P. Buttery
+Tending towards stability: convergence challenges in small language models
+.
+In
+Findings of the Association for Computational Linguistics: EMNLP 2024
+,
+Y. Al-Onaizan, M. Bansal, and Y. Chen (Eds.)
+,
+Miami, Florida, USA
+,
+pp. 3275–3286
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+,
+§1
+,
+§2
+,
+§2
+.
+Ding
+et al.
+(2022)
+Y. Ding, K. Martinkus, D. Pascual, S. Clematide, and R. Wattenhofer
+On isotropy calibration of transformer models
+.
+In
+Proceedings of the Third Workshop on Insights from Negative Results in NLP
+,
+S. Tafreshi, J. Sedoc, A. Rogers, A. Drozd, A. Rumshisky, and A. Akula (Eds.)
+,
+Dublin, Ireland
+,
+pp. 1–9
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2
+.
+Dong
+et al.
+(2021)
+Y. Dong, J. Cordonnier, and A. Loukas
+Attention is not all you need: pure attention loses rank doubly exponentially with depth
+.
+In
+Proceedings of the 38th International Conference on Machine Learning
+,
+M. Meila and T. Zhang (Eds.)
+,
+Proceedings of Machine Learning Research
+, Vol.
+139
+,
+pp. 2793–2803
+.
+External Links:
+Link
+Cited by:
+§2
+.
+Elazar
+et al.
+(2024)
+Y. Elazar, A. Bhagia, I. H. Magnusson, A. Ravichander, D. Schwenk, A. Suhr, E. P. Walsh, D. Groeneveld, L. Soldaini, S. Singh, H. Hajishirzi, N. A. Smith, and J. Dodge
+What’s in my big data?
+.
+In
+The Twelfth International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§4
+.
+Ethayarajh (2019)
+K. Ethayarajh
+How contextual are contextualized word representations? Comparing the geometry of BERT, ELMo, and GPT-2 embeddings
+.
+In
+Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Language Processing (EMNLP-IJCNLP)
+,
+K. Inui, J. Jiang, V. Ng, and X. Wan (Eds.)
+,
+Hong Kong, China
+,
+pp. 55–65
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+,
+§2
+.
+Finlayson
+et al.
+(2024)
+M. Finlayson, X. Ren, and S. Swayamdipta
+Logits of API-protected LLMs leak proprietary information
+.
+In
+First Conference on Language Modeling
+,
+External Links:
+Link
+Cited by:
+§1
+.
+Finlayson
+et al.
+(2026)
+M. Finlayson, X. Ren, and S. Swayamdipta
+Every language model has a forgery-resistant signature
+.
+In
+Proc. of ICLR
+,
+External Links:
+Link
+Cited by:
+§1
+.
+Frantar
+et al.
+(2023)
+E. Frantar, S. Ashkboos, T. Hoefler, and D. Alistarh
+OPTQ: accurate quantization for generative pre-trained transformers
+.
+In
+The Eleventh International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§3.2
+.
+Gadre
+et al.
+(2025)
+S. Y. Gadre, G. Smyrnis, V. Shankar, S. Gururangan, M. Wortsman, R. Shao, J. Mercat, A. Fang, J. Li, S. Keh, R. Xin, M. Nezhurina, I. Vasiljevic, L. Soldaini, J. Jitsev, A. Dimakis, G. Ilharco, P. W. Koh, S. Song, T. Kollar, Y. Carmon, A. Dave, R. Heckel, N. Muennighoff, and L. Schmidt
+Language models scale reliably with over-training and on downstream tasks
+.
+In
+The Thirteenth International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+Appendix C
+,
+§4
+.
+Gao
+et al.
+(2019)
+J. Gao, D. He, X. Tan, T. Qin, L. Wang, and T. Liu
+Representation degeneration problem in training natural language generation models
+.
+In
+International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§1
+,
+§2
+,
+§2
+.
+Gao
+et al.
+(2020)
+L. Gao, S. Biderman, S. Black, L. Golding, T. Hoppe, C. Foster, J. Phang, H. He, A. Thite, N. Nabeshima, S. Presser, and C. Leahy
+The pile: an 800gb dataset of diverse text for language modeling
+.
+External Links:
+2101.00027
+,
+Link
+Cited by:
+§A.1
+,
+§3.1
+.
+Godey
+et al.
+(2024a)
+N. Godey, É. Clergerie, and B. Sagot
+Anisotropy is inherent to self-attention in transformers
+.
+In
+Proceedings of the 18th Conference of the European Chapter of the Association for Computational Linguistics (Volume 1: Long Papers)
+,
+Y. Graham and M. Purver (Eds.)
+,
+St. Julian’s, Malta
+,
+pp. 35–48
+.
+External Links:
+Link
+Cited by:
+§1
+,
+§2
+,
+§2
+,
+§3.2
+,
+§5
+.
+Godey
+et al.
+(2024b)
+N. Godey, É. V. de la Clergerie, and B. Sagot
+Why do small language models underperform? studying language model saturation via the softmax bottleneck
+.
+In
+First Conference on Language Modeling
+,
+External Links:
+Link
+Cited by:
+§1
+,
+§1
+,
+§2
+,
+§2
+.
+Gong
+et al.
+(2018)
+C. Gong, D. He, X. Tan, T. Qin, L. Wang, and T. Liu
+FRAGE: frequency-agnostic word representation
+.
+In
+Advances in Neural Information Processing Systems
+,
+S. Bengio, H. Wallach, H. Larochelle, K. Grauman, N. Cesa-Bianchi, and R. Garnett (Eds.)
+,
+Vol.
+31
+,
+pp.
+.
+External Links:
+Link
+Cited by:
+§2
+.
+Groeneveld
+et al.
+(2024)
+D. Groeneveld
+et al.
+OLMo: accelerating the science of language models
+.
+In
+Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+,
+L. Ku, A. Martins, and V. Srikumar (Eds.)
+,
+Bangkok, Thailand
+,
+pp. 15789–15809
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§A.1
+,
+§1
+,
+§3.1
+.
+Hoffmann
+et al.
+(2022)
+J. Hoffmann, S. Borgeaud, A. Mensch, E. Buchatskaya, T. Cai, E. Rutherford, D. de Las Casas, L. A. Hendricks, J. Welbl, A. Clark, T. Hennigan, E. Noland, K. Millican, G. van den Driessche, B. Damoc, A. Guy, S. Osindero, K. Simonyan, E. Elsen, J. W. Rae, O. Vinyals, and L. Sifre
+Training compute-optimal large language models
+.
+External Links:
+2203.15556
+,
+Link
+Cited by:
+3rd item
+,
+§4
+.
+Kosson
+et al.
+(2024)
+A. Kosson, B. Messmer, and M. Jaggi
+Rotational equilibrium: how weight decay balances learning across neural networks
+.
+In
+Proceedings of the 41st International Conference on Machine Learning
+,
+R. Salakhutdinov, Z. Kolter, K. Heller, A. Weller, N. Oliver, J. Scarlett, and F. Berkenkamp (Eds.)
+,
+Proceedings of Machine Learning Research
+, Vol.
+235
+,
+pp. 25333–25369
+.
+External Links:
+Link
+Cited by:
+§4
+.
+Kumar
+et al.
+(2025)
+T. Kumar, Z. Ankner, B. F. Spector, B. Bordelon, N. Muennighoff, M. Paul, C. Pehlevan, C. Re, and A. Raghunathan
+Scaling laws for precision
+.
+In
+The Thirteenth International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+Appendix C
+,
+§3.2
+.
+Li
+et al.
+(2025)
+M. Z. Li, K. K. Agrawal, A. Ghosh, K. K. Teru, A. Santoro, G. Lajoie, and B. A. Richards
+Tracing the representation geometry of language models from pretraining to post-training
+.
+In
+The Thirty-ninth Annual Conference on Neural Information Processing Systems
+,
+External Links:
+Link
+Cited by:
+§1
+,
+§2
+.
+Li
+et al.
+(2023)
+R. Li, L. B. allal, Y. Zi, N. Muennighoff, D. Kocetkov, C. Mou, M. Marone, C. Akiki, J. LI, J. Chim, Q. Liu, E. Zheltonozhskii, T. Y. Zhuo, T. Wang, O. Dehaene, J. Lamy-Poirier, J. Monteiro, N. Gontier, M. Yee, L. K. Umapathi, J. Zhu, B. Lipkin, M. Oblokulov, Z. Wang, R. Murthy, J. T. Stillerman, S. S. Patel, D. Abulkhanov, M. Zocca, M. Dey, Z. Zhang, U. Bhattacharyya, W. Yu, S. Luccioni, P. Villegas, F. Zhdanov, T. Lee, N. Timor, J. Ding, C. S. Schlesinger, H. Schoelkopf, J. Ebert, T. Dao, M. Mishra, A. Gu, C. J. Anderson, B. Dolan-Gavitt, D. Contractor, S. Reddy, D. Fried, D. Bahdanau, Y. Jernite, C. M. Ferrandis, S. Hughes, T. Wolf, A. Guha, L. V. Werra, and H. de Vries
+StarCoder: may the source be with you!
+.
+Transactions on Machine Learning Research
+.
+Note:
+Reproducibility Certification
+External Links:
+ISSN 2835-8856
+,
+Link
+Cited by:
+§A.1
+,
+§3.3
+.
+Machina and Mercer (2024)
+A. Machina and R. Mercer
+Anisotropy is not inherent to transformers
+.
+In
+Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers)
+,
+K. Duh, H. Gomez, and S. Bethard (Eds.)
+,
+Mexico City, Mexico
+,
+pp. 4892–4907
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+,
+§2
+,
+§2
+,
+§3.2
+,
+§5
+,
+§5
+,
+§5
+.
+Magnusson
+et al.
+(2024)
+I. Magnusson, A. Bhagia, V. Hofmann, L. Soldaini, A. H. Jha, O. Tafjord, D. Schwenk, E. P. Walsh, Y. Elazar, K. Lo, D. Groeneveld, I. Beltagy, H. Hajishirzi, N. A. Smith, K. Richardson, and J. Dodge
+Paloma: a benchmark for evaluating language model fit
+.
+In
+Advances in Neural Information Processing Systems
+,
+A. Globerson, L. Mackey, D. Belgrave, A. Fan, U. Paquet, J. Tomczak, and C. Zhang (Eds.)
+,
+Vol.
+37
+,
+pp. 64338–64376
+.
+External Links:
+Link
+Cited by:
+§3.2
+.
+Magnusson
+et al.
+(2025)
+I. Magnusson, N. Tai, B. Bogin, D. Heineman, J. D. Hwang, L. Soldaini, A. Bhagia, J. Liu, D. Groeneveld, O. Tafjord, N. A. Smith, P. W. Koh, and J. Dodge
+DataDecide: how to predict best pretraining data with small experiments
+.
+In
+Forty-second International Conference on Machine Learning
+,
+External Links:
+Link
+Cited by:
+§A.1
+,
+Appendix C
+,
+§3.1
+.
+Marek
+et al.
+(2025)
+M. Marek, S. Lotfi, A. Somasundaram, A. G. Wilson, and M. Goldblum
+Small batch size training for language models: when vanilla SGD works, and why gradient accumulation is wasteful
+.
+In
+The Thirty-ninth Annual Conference on Neural Information Processing Systems
+,
+External Links:
+Link
+Cited by:
+§4
+.
+McCandlish
+et al.
+(2018)
+S. McCandlish, J. Kaplan, D. Amodei, and O. D. Team
+An empirical model of large-batch training
+.
+External Links:
+1812.06162
+,
+Link
+Cited by:
+§4
+.
+Mickus
+et al.
+(2024)
+T. Mickus, S. Grönroos, and J. Attieh
+Isotropy, clusters, and classifiers
+.
+In
+Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 2: Short Papers)
+,
+L. Ku, A. Martins, and V. Srikumar (Eds.)
+,
+Bangkok, Thailand
+,
+pp. 75–84
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2
+.
+Miller
+et al.
+(2021)
+J. P. Miller, R. Taori, A. Raghunathan, S. Sagawa, P. W. Koh, V. Shankar, P. Liang, Y. Carmon, and L. Schmidt
+Accuracy on the line: on the strong correlation between out-of-distribution and in-distribution generalization
+.
+In
+Proceedings of the 38th International Conference on Machine Learning
+,
+M. Meila and T. Zhang (Eds.)
+,
+Proceedings of Machine Learning Research
+, Vol.
+139
+,
+pp. 7721–7735
+.
+External Links:
+Link
+Cited by:
+§3.2
+.
+Mircea
+et al.
+(2024)
+A. Mircea, E. Lobacheva, and I. Rish
+Gradient dissent in language model training and saturation
+.
+In
+High-dimensional Learning Dynamics 2024: The Emergence of Structure and Reasoning
+,
+External Links:
+Link
+Cited by:
+§2
+,
+§4
+.
+Nanda
+et al.
+(2023)
+N. Nanda, L. Chan, T. Lieberum, J. Smith, and J. Steinhardt
+Progress measures for grokking via mechanistic interpretability
+.
+In
+The Eleventh International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§1
+.
+Nanda (2022)
+N. Nanda
+NeelNanda/pile-10k – datasets at hugging face
+.
+Note:
+https://huggingface.co/datasets/NeelNanda/pile-10k
+Cited by:
+§3.2
+.
+Newhouse
+et al.
+(2025)
+L. Newhouse, R. P. Hess, F. Cesista, A. Zahorodnii, J. Bernstein, and P. Isola
+Training transformers with enforced lipschitz constants
+.
+External Links:
+2507.13338
+,
+Link
+Cited by:
+§3.2
+.
+Noci
+et al.
+(2022)
+L. Noci, S. Anagnostidis, L. Biggio, A. Orvieto, S. P. Singh, and A. Lucchi
+Signal propagation in transformers: theoretical perspectives and the role of rank collapse
+.
+In
+Advances in Neural Information Processing Systems
+,
+S. Koyejo, S. Mohamed, A. Agarwal, D. Belgrave, K. Cho, and A. Oh (Eds.)
+,
+Vol.
+35
+,
+pp. 27198–27211
+.
+External Links:
+Link
+Cited by:
+§2
+.
+Paster
+et al.
+(2024)
+K. Paster, M. D. Santos, Z. Azerbayev, and J. Ba
+OpenWebMath: an open dataset of high-quality mathematical web text
+.
+In
+The Twelfth International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§A.1
+.
+Porian
+et al.
+(2024)
+T. Porian, M. Wortsman, J. Jitsev, L. Schmidt, and Y. Carmon
+Resolving discrepancies in compute-optimal scaling of language models
+.
+In
+The Thirty-eighth Annual Conference on Neural Information Processing Systems
+,
+External Links:
+Link
+Cited by:
+§A.1
+,
+§3.1
+,
+§4
+.
+Ramasesh
+et al.
+(2022)
+V. V. Ramasesh, A. Lewkowycz, and E. Dyer
+Effect of scale on catastrophic forgetting in neural networks
+.
+In
+International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§3.3
+.
+Razzhigaev
+et al.
+(2024)
+A. Razzhigaev, M. Mikhalchuk, E. Goncharova, I. Oseledets, D. Dimitrov, and A. Kuznetsov
+The shape of learning: anisotropy and intrinsic dimensions in transformer-based models
+.
+In
+Findings of the Association for Computational Linguistics: EACL 2024
+,
+Y. Graham and M. Purver (Eds.)
+,
+St. Julian’s, Malta
+,
+pp. 868–874
+.
+External Links:
+Link
+Cited by:
+§3.2
+,
+§5
+.
+Roy and Vetterli (2007)
+O. Roy and M. Vetterli
+The effective rank: a measure of effective dimensionality
+.
+In
+2007 15th European Signal Processing Conference
+,
+Vol.
+,
+pp. 606–610
+.
+External Links:
+Document
+Cited by:
+§1
+,
+§2
+.
+Saada
+et al.
+(2025)
+T. N. Saada, A. Naderi, and J. Tanner
+Mind the gap: a spectral analysis of rank collapse and signal propagation in attention layers
+.
+In
+Forty-second International Conference on Machine Learning
+,
+External Links:
+Link
+Cited by:
+§2
+.
+Sardana
+et al.
+(2024)
+N. Sardana, J. Portes, S. Doubov, and J. Frankle
+Beyond chinchilla-optimal: accounting for inference in language model scaling laws
+.
+In
+Proceedings of the 41st International Conference on Machine Learning
+,
+R. Salakhutdinov, Z. Kolter, K. Heller, A. Weller, N. Oliver, J. Scarlett, and F. Berkenkamp (Eds.)
+,
+Proceedings of Machine Learning Research
+, Vol.
+235
+,
+pp. 43445–43460
+.
+External Links:
+Link
+Cited by:
+§4
+.
+Shoeybi
+et al.
+(2020)
+M. Shoeybi, M. Patwary, R. Puri, P. LeGresley, J. Casper, and B. Catanzaro
+Megatron-lm: training multi-billion parameter language models using model parallelism
+.
+External Links:
+1909.08053
+,
+Link
+Cited by:
+§3.2
+.
+Skean
+et al.
+(2025)
+O. Skean, M. R. Arefin, D. Zhao, N. N. Patel, J. Naghiyev, Y. LeCun, and R. Shwartz-Ziv
+Layer by layer: uncovering hidden representations in language models
+.
+In
+Forty-second International Conference on Machine Learning
+,
+External Links:
+Link
+Cited by:
+Appendix C
+.
+Soldaini
+et al.
+(2024)
+L. Soldaini, R. Kinney, A. Bhagia, D. Schwenk, D. Atkinson, R. Authur, B. Bogin, K. Chandu, J. Dumas, Y. Elazar, V. Hofmann, A. Jha, S. Kumar, L. Lucy, X. Lyu, N. Lambert, I. Magnusson, J. Morrison, N. Muennighoff, A. Naik, C. Nam, M. Peters, A. Ravichander, K. Richardson, Z. Shen, E. Strubell, N. Subramani, O. Tafjord, E. Walsh, L. Zettlemoyer, N. Smith, H. Hajishirzi, I. Beltagy, D. Groeneveld, J. Dodge, and K. Lo
+Dolma: an open corpus of three trillion tokens for language model pretraining research
+.
+In
+Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+,
+L. Ku, A. Martins, and V. Srikumar (Eds.)
+,
+Bangkok, Thailand
+,
+pp. 15725–15788
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§A.1
+.
+Springer
+et al.
+(2025)
+J. M. Springer, S. Goyal, K. Wen, T. Kumar, X. Yue, S. Malladi, G. Neubig, and A. Raghunathan
+Overtrained language models are harder to fine-tune
+.
+External Links:
+2503.19206
+,
+Link
+Cited by:
+Appendix C
+.
+Stollenwerk and Stollenwerk (2025)
+F. Stollenwerk and T. Stollenwerk
+Better embeddings with coupled Adam
+.
+In
+Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+,
+W. Che, J. Nabende, E. Shutova, and M. T. Pilehvar (Eds.)
+,
+Vienna, Austria
+,
+pp. 27219–27236
+.
+External Links:
+Link
+,
+Document
+,
+ISBN 979-8-89176-251-0
+Cited by:
+§2
+.
+Takase
+et al.
+(2025)
+S. Takase, S. Kiyono, S. Kobayashi, and J. Suzuki
+Spike no more: stabilizing the pre-training of large language models
+.
+In
+Second Conference on Language Modeling
+,
+External Links:
+Link
+Cited by:
+§3.2
+.
+Timkey and van Schijndel (2021)
+W. Timkey and M. van Schijndel
+All bark and no bite: rogue dimensions in transformer language models obscure representational quality
+.
+In
+Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing
+,
+M. Moens, X. Huang, L. Specia, and S. W. Yih (Eds.)
+,
+Online and Punta Cana, Dominican Republic
+,
+pp. 4527–4546
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2
+.
+Valeriani
+et al.
+(2023)
+L. Valeriani, D. Doimo, F. Cuturello, A. Laio, A. Ansuini, and A. Cazzaniga
+The geometry of hidden representations of large transformer models
+.
+In
+Advances in Neural Information Processing Systems
+,
+A. Oh, T. Naumann, A. Globerson, K. Saenko, M. Hardt, and S. Levine (Eds.)
+,
+Vol.
+36
+,
+pp. 51234–51252
+.
+External Links:
+Link
+Cited by:
+Appendix C
+.
+van der Wal
+et al.
+(2025)
+O. van der Wal, P. Lesci, M. Müller-Eberstein, N. Saphra, H. Schoelkopf, W. Zuidema, and S. Biderman
+PolyPythias: stability and outliers across fifty language model pre-training runs
+.
+In
+The Thirteenth International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§1
+,
+§3.2
+.
+Wortsman
+et al.
+(2024)
+M. Wortsman, P. J. Liu, L. Xiao, K. E. Everett, A. A. Alemi, B. Adlam, J. D. Co-Reyes, I. Gur, A. Kumar, R. Novak, J. Pennington, J. Sohl-Dickstein, K. Xu, J. Lee, J. Gilmer, and S. Kornblith
+Small-scale proxies for large-scale transformer training instabilities
+.
+In
+The Twelfth International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+Appendix C
+.
+Yang
+et al.
+(2021)
+G. Yang, E. J. Hu, I. Babuschkin, S. Sidor, X. Liu, D. Farhi, N. Ryder, J. Pachocki, W. Chen, and J. Gao
+Tensor programs v: tuning large neural networks via zero-shot hyperparameter transfer
+.
+In
+Proceedings of the 35th International Conference on Neural Information Processing Systems
+,
+NIPS ’21
+,
+Red Hook, NY, USA
+.
+External Links:
+ISBN 9781713845393
+Cited by:
+§4
+.
+Yu
+et al.
+(2022)
+S. Yu, J. Song, H. Kim, S. Lee, W. Ryu, and S. Yoon
+Rare tokens degenerate all tokens: improving neural text generation via adaptive gradient gating for rare token embeddings
+.
+In
+Proceedings of the 60th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+,
+S. Muresan, P. Nakov, and A. Villavicencio (Eds.)
+,
+Dublin, Ireland
+,
+pp. 29–45
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2
+,
+§4
+.
+Yunis
+et al.
+(2024)
+D. Yunis, K. K. Patel, S. Wheeler, P. Savarese, G. Vardi, K. Livescu, M. Maire, and M. R. Walter
+Approaching deep learning through the spectral dynamics of weights
+.
+External Links:
+2408.11804
+,
+Link
+Cited by:
+§1
+.
+Zhai
+et al.
+(2023)
+S. Zhai, T. Likhomanenko, E. Littwin, D. Busbridge, J. Ramapuram, Y. Zhang, J. Gu, and J. M. Susskind
+Stabilizing transformer training by preventing attention entropy collapse
+.
+In
+Proceedings of the 40th International Conference on Machine Learning
+,
+A. Krause, E. Brunskill, K. Cho, B. Engelhardt, S. Sabato, and J. Scarlett (Eds.)
+,
+Proceedings of Machine Learning Research
+, Vol.
+202
+,
+pp. 40770–40803
+.
+External Links:
+Link
+Cited by:
+§2
+.
+Zhang and Sennrich (2019)
+B. Zhang and R. Sennrich
+Root mean square layer normalization
+.
+In
+Advances in Neural Information Processing Systems
+,
+H. Wallach, H. Larochelle, A. Beygelzimer, F. d'Alché-Buc, E. Fox, and R. Garnett (Eds.)
+,
+Vol.
+32
+,
+pp.
+.
+External Links:
+Link
+Cited by:
+§A.1
+.
+Zhang
+et al.
+(2019)
+G. Zhang, L. Li, Z. Nado, J. Martens, S. Sachdeva, G. Dahl, C. Shallue, and R. B. Grosse
+Which algorithmic choices matter at which batch sizes? insights from a noisy quadratic model
+.
+In
+Advances in Neural Information Processing Systems
+,
+H. Wallach, H. Larochelle, A. Beygelzimer, F. d'Alché-Buc, E. Fox, and R. Garnett (Eds.)
+,
+Vol.
+32
+,
+pp.
+.
+External Links:
+Link
+Cited by:
+§4
+.
+Zhang
+et al.
+(2020)
+Z. Zhang, C. Gao, C. Xu, R. Miao, Q. Yang, and J. Shao
+Revisiting representation degeneration problem in language modeling
+.
+In
+Findings of the Association for Computational Linguistics: EMNLP 2020
+,
+T. Cohn, Y. He, and Y. Liu (Eds.)
+,
+Online
+,
+pp. 518–527
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2
+.
+Zhao
+et al.
+(2024)
+Y. Zhao, T. Behnia, V. Vakilian, and C. Thrampoulidis
+Implicit geometry of next-token prediction: from language sparsity patterns to model representations
+.
+In
+First Conference on Language Modeling
+,
+External Links:
+Link
+Cited by:
+§1
+.
+Zhou
+et al.
+(2024)
+T. Zhou, D. Fu, V. Sharan, and R. Jia
+Pre-trained large language models use fourier features to compute addition
+.
+In
+Advances in Neural Information Processing Systems
+,
+A. Globerson, L. Mackey, D. Belgrave, A. Fan, U. Paquet, J. Tomczak, and C. Zhang (Eds.)
+,
+Vol.
+37
+,
+pp. 25120–25151
+.
+External Links:
+Document
+,
+Link
+Cited by:
+§1
+.
+Appendix A
+Appendix
+A.1
+Experimental Details
+Pre-Training Setup
+As mentioned in Section
+3.1
+, we pre-train a suite of OLMo-style
+(
+Groeneveld and others, 2024
+)
+models using the model configurations of
+Magnusson et al. (2025)
+.
+Specifically, all models have 6 layers, 4 attention heads, an MLP ratio of 4, SwiGLU activation, a sequence length of 2048 and a vocabulary of 50304 tokens.
+We use RMS LayerNorm
+(
+Zhang and Sennrich, 2019
+)
+across all layers and do not use any dropout.
+Table
+1
+details the hidden dimension for all the model sizes and the model-specific learning rates inferred from the
+Porian et al. (2024)
+’s scaling laws.
+We use the raw Pile dataset
+(
+Gao et al., 2020
+)
+for pre-training these models, which is tokenized using the allenai/gpt-neox-olmo-dolma-v1_5 tokenizer
+(
+Soldaini et al., 2024
+)
+.
+Hyperparameters
+OLMo-4M
+OLMo-8M
+OLMo-16M
+OLMo-28M
+OLMo-40M
+OLMo-75M
+Hidden dimensions
+64
+128
+256
+384
+512
+768
+Optimizer
+AdamW
+AdamW
+AdamW
+AdamW
+AdamW
+AdamW
+β
+1
+\beta_{1}
+0.9
+0.9
+0.9
+0.9
+0.9
+0.9
+β
+2
+\beta_{2}
+0.95
+0.95
+0.95
+0.95
+0.95
+0.95
+Learning Rate
+1.5e-2
+1.1e-2
+8.7e-3
+7.4e-3
+6.5e-3
+5.3e-3
+Weight decay
+0.1
+0.1
+0.1
+0.1
+0.1
+0.1
+LR Scheduler
+Cosine
+Cosine
+Cosine
+Cosine
+Cosine
+Cosine
+LR Annealing
+10%
+10%
+10% 10%
+10%
+10%
+10%
+Warmup
+10%
+10%
+10% 10%
+10%
+10%
+10%
+Table 1:
+Pre-training hyperparameters used in our controlled experiments.
+Fine-Tuning Setup
+We fine-tune the last checkpoints of all our models on the StarCoder-Python
+(
+Li et al., 2023
+)
+and OpenWebMath
+(
+Paster et al., 2024
+)
+datasets.
+We use a batch size of
+32
+32
+and
+10
+%
+10\%
+smaller learning rate than the model-specific learning rates for fine-tuning, keeping all other hyperparameters the same.
+A.2
+Extended Discussion: The Effect of Hyperparamters on Performance and the Unembedding / Representation Geometry
+A.2.1
+Effect of Batch Size.
+Figure 15
+:
+Effect of batch size on in-distribution performance and different geometric metrics for unembedding matrix as well as final-token’s last-layer representations.
+Figure
+15
+shows how batch size affects the geometric properties of learned representations and their relationship to model performance.
+As established in Section
+4
+, scaled loss exhibits a U-shaped relationship with batch size, initially decreasing before eventually degrading at very large batch sizes.
+The isotropy of the unembedding matrix,
+ℐ
+⁡
+(
+W
+)
+\mathcal{I}(\textbf{W})
+, demonstrates strong visual correlation with this performance trend, displaying a corresponding inverted U-shaped curve that mirrors the loss dynamics across all model sizes.
+In contrast, the cosine similarity of the unembedding matrix,
+𝒜
+⁡
+(
+H
+)
+\mathcal{A}(\textbf{H})
+, shows a monotonic decline with increasing batch size, suggesting progressive orthogonalization of output embeddings that does not directly track performance.
+Finally, the effective rank
+ℛ
+⁡
+(
+H
+)
+\mathcal{R}(\textbf{H})
+and cosine similarity
+𝒜
+⁡
+(
+H
+)
+\mathcal{A}(\textbf{H})
+of the final token’s last layer representations exhibit minimal variation across different batch sizes and fail to capture the performance dynamics.
+A.2.2
+Effect of Weight Decay.
+Figure 16
+:
+Effect of weight decay on in-distribution performance and different geometric metrics for unembedding matrix as well as final-token’s last-layer representations.
+The impact of weight decay on in-distribution loss is model size dependent, as elaborated in Section
+3
+.
+From Figure
+16
+, we observe that the isotropy
+ℐ
+⁡
+(
+𝐖
+)
+\mathcal{I}(\mathbf{W})
+exhibits a steady increase with stronger weight decay regularization.
+Similarly, the cosine similarity among the unembedding vectors
+𝒜
+⁡
+(
+𝐖
+)
+\mathcal{A}(\mathbf{W})
+decreases monotonically with increasing weight decay strength.
+Both trends suggest that strong weight decay prevents the model from clustering representations along any particular direction, promoting more uniform distribution in the embedding space.
+While the cosine similarity of the final layer representations
+𝒜
+⁡
+(
+𝐇
+)
+\mathcal{A}(\mathbf{H})
+remains nearly constant across weight decay values (with a minor exception for the OLMo-8M model), the effective rank
+ℛ
+⁡
+(
+𝐇
+)
+\mathcal{R}(\mathbf{H})
+increases under high weight decay.
+Nevertheless, none of these geometric metrics fully capture the complex, performance trends induced by weight decay, indicating that the relationship between regularization-induced geometric changes and loss is more nuanced than for batch size effects.
+A.2.3
+Effect of Learning Rate.
+Figure 17
+:
+Effect of learning rate on in-distribution performance and different geometric metrics for unembedding matrix as well as final-token’s last-layer representations.
+As seen in Figure
+17
+, the learning rate has an inconsistent, model-size-dependent impact on performance.
+Its effect on unembedding and representation geometry is inconsistent, and neither metric seems to capture the performance trend induced by the learning rate.
+A.2.4
+Effect of Learning Rate Annealing.
+Figure 18
+:
+Effect of learning rate annealing on in-distribution performance and different geometric metrics for unembedding matrix as well as final-token’s last-layer representations.
+Annealing the learning rate to a higher minimum value consistently results in higher loss compared to annealing to zero, as evidenced in Figure
+18
+.
+This is plausible as, without fully annealing the learning rate (keep it at some non-zero value), the model continues taking optimization steps and can’t settle into a good minimum, leading to higher loss.
+The steps become larger as the annealing percentage increases.
+The cosine similarity of the unembedding matrix
+𝒜
+⁡
+(
+𝐖
+)
+\mathcal{A}(\mathbf{W})
+captures this performance degradation, showing a substantial decrease as the final learning rate increases, suggesting that the representations are converging in the embedding space (a sign of overfitting).
+The effective rank of the final layer representations
+ℛ
+⁡
+(
+𝐇
+)
+\mathcal{R}(\mathbf{H})
+follows a similar decline.
+However, the cosine similarity of representations
+𝒜
+⁡
+(
+𝐇
+)
+\mathcal{A}(\mathbf{H})
+and the isotropy of the unembedding matrix
+ℐ
+⁡
+(
+𝐖
+)
+\mathcal{I}(\mathbf{W})
+exhibit inconsistent trends across different final learning rates, failing to reliably track the performance changes induced by learning rate annealing.
+A.2.5
+Effect of Pretraining Token Budget.
+Figure 19
+:
+Effect of token budget on in-distribution performance and different geometric metrics for unembedding matrix as well as final-token’s last-layer representations.
+Results in Figure
+19
+support the well-established finding that training on more tokens improves model performance.
+The cosine similarity of the unembedding matrix
+𝒜
+⁡
+(
+𝐖
+)
+\mathcal{A}(\mathbf{W})
+correlates well with this loss trend, exhibiting consistent decline as the pretraining token budget increases.
+Similarly, the isotropy
+ℐ
+⁡
+(
+𝐖
+)
+\mathcal{I}(\mathbf{W})
+shows negative correlation with loss, increasing monotonically with larger token budgets.
+Both metrics indicate that extended training promotes more orthogonal and uniformly distributed unembedding vectors.
+However, the geometric metrics of the final layer representations –
+𝒜
+⁡
+(
+𝐇
+)
+\mathcal{A}(\mathbf{H})
+and
+ℛ
+⁡
+(
+𝐇
+)
+\mathcal{R}(\mathbf{H})
+– exhibit inconsistent trends across token budgets, rendering them unsuitable for predicting performance improvements from increased training data.
+A.3
+Extended Discussion: The Impact of Model Geometry on Downstream Performance
+In this section, we evaluate how well geometric metrics – particularly effective rank, cosine similarity, and isotropy – computed from the unembedding matrix
+W
+and the final-token last-layer representations
+H
+predict downstream performance across a range of tasks.
+In addition to scatter plots for qualitative analysis, we quantify these relationships using the following complementary regression-based measures:
+•
+Raw Spearman correlation:
+Measures the unadjusted monotonic relationship between each geometric metric and loss without accounting for model size or any training hyperparameter.
+•
+Residual Spearman (linear):
+Computes the Spearman correlation between each metric and loss residuals after linearly regressing out model size and token budget.
+•
+Residual Spearman (scaling-law):
+Uses residuals obtained by fitting Chinchilla scaling laws
+(
+Hoffmann et al., 2022
+)
+, followed by Spearman correlation with each metric.
+•
+Partial Spearman correlation:
+Assesses the unique association between each geometric metric and loss while controlling for all training hyperparameters, providing the most stringent test of predictive reliability.
+•
+Predictive
+Δ
+​
+R
+2
+\Delta R^{2}
+:
+Measures the additional explained variance contributed by each geometric metric beyond a baseline model, including model size, compute, and token count, after a K-FOLD validation (k=5).
+A.3.1
+In-Distribution Evaluation.
+Figure 20
+:
+Extended in-distribution evaluation in relation to geometric metrics of the unembedding matrix and last-layer final-token representation.
+Metric
+Effective Rank
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+Cosine Similarity
+𝒜
+⁡
+(
+𝐖
+)
+\mathcal{A}(\boldsymbol{\mathrm{W}})
+Isotropy
+ℐ
+⁡
+(
+𝐖
+)
+\mathcal{I}(\boldsymbol{\mathrm{W}})
+Effective Rank
+ℛ
+⁡
+(
+𝐇
+)
+\mathcal{R}(\boldsymbol{\mathrm{H}})
+Cosine Similarity
+𝒜
+⁡
+(
+𝐇
+)
+\mathcal{A}(\boldsymbol{\mathrm{H}})
+Raw Spearman
+-0.699
+0.601
+-0.249
+0.773
+0.388
+Residual Spearman (linear)
+-0.209
+0.233
+-0.142
+-0.008
+-0.174
+Residual Spearman (Chinchilla)
+-0.736
+0.656
+-0.427
+0.669
+0.272
+Partial Spearman
+-0.261
+-0.100
+-0.337
+-0.045
+-0.116
+Predictive
+Δ
+\Delta
+R
+2
+0.003
+0.004
+0.002
+0.002
+0.004
+Table 2
+:
+ID Loss (Pile 10K) correlation analysis summary.
+The cosine similarity of the unembedding matrix,
+𝒜
+⁡
+(
+W
+)
+\mathcal{A}(\textbf{W})
+, depicts a U-shaped trend with in-domain loss across model sizes, suggesting that higher angular alignment does not always yield the best performance.
+These are the models trained on smaller token budgets with higher batch sizes, which may hint that they did not converge due to fewer steps.
+As evidenced before in Section
+5
+, Isotropy
+𝒜
+⁡
+(
+W
+)
+\mathcal{A}(\textbf{W})
+shows a sharp decline when trained with lower weight decay, but does not have any impact on the ID loss.
+The effective rank of the representations
+ℛ
+⁡
+(
+H
+)
+\mathcal{R}(H)
+remains largely constant across different model sizes, thus unable to capture performance trends.
+While the cosine similarity of the representations
+𝒜
+⁡
+(
+H
+)
+\mathcal{A}(\textbf{H})
+is generally lower and decreases with increasing model size, it cannot predict intra-model performance differences across different training setups.
+The regression analysis results in Table
+2
+support our conclusions.
+Raw Spearman correlations show that
+ℛ
+⁡
+(
+𝐇
+)
+\mathcal{R}(\mathbf{H})
+(effective rank of representations) has the strongest correlation with loss (0.773), followed by
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\mathbf{W})
+(
+−
+0.699
+-0.699
+) and
+𝒜
+⁡
+(
+𝐖
+)
+\mathcal{A}(\mathbf{W})
+(0.601).
+However, these raw correlations are heavily confounded by model size and token budget.
+When controlling for a simple linear scaling law (Residual Spearman linear), all correlations drop dramatically (ranging from
+−
+0.209
+-0.209
+to
+0.233
+0.233
+)
+More importantly, when controlling for the Chinchilla scaling law (Residual Spearman Chinchilla), correlations remain substantial for
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\mathbf{W})
+(
+−
+0.736
+-0.736
+),
+𝒜
+⁡
+(
+𝐖
+)
+\mathcal{A}(\mathbf{W})
+(0.656), and
+ℛ
+⁡
+(
+𝐇
+)
+\mathcal{R}(\mathbf{H})
+(0.669), indicating these metrics capture loss variance
+not
+explained by the model size and token budgets.
+However, Partial Spearman correlations, which control for training hyperparameters simultaneously, show very weak values, suggesting that these metrics are extremely weak predictors of in-distribution loss.
+Only
+ℐ
+⁡
+(
+W
+)
+\mathcal{I}(\textbf{W})
+shows a moderate correlation of
+−
+0.337
+-0.337
+, which cannot be considered reliable.
+The predictive
+Δ
+\Delta
+R
+2
+values are extremely small (0.002–0.004), indicating that despite residual correlations with Chinchilla-adjusted loss, these geometric metrics provide negligible additional predictive power (
+<
+0.5
+%
+<0.5\%
+variance explained) beyond existing scaling laws.
+A.3.2
+Out-Of-Distribution Evaluation.
+Figure 21
+:
+Extended out-of-distribution evaluation in relation to geometric metrics of the unembedding matrix and last-layer final-token representation.
+Metric
+Effective Rank
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+Cosine Similarity
+𝒜
+⁡
+(
+𝐖
+)
+\mathcal{A}(\boldsymbol{\mathrm{W}})
+Isotropy
+ℐ
+⁡
+(
+𝐖
+)
+\mathcal{I}(\boldsymbol{\mathrm{W}})
+Effective Rank
+ℛ
+⁡
+(
+𝐇
+)
+\mathcal{R}(\boldsymbol{\mathrm{H}})
+Cosine Similarity
+𝒜
+⁡
+(
+𝐇
+)
+\mathcal{A}(\boldsymbol{\mathrm{H}})
+Raw Spearman
+-0.672
+0.579
+-0.185
+0.831
+0.131
+Residual Spearman (linear)
+-0.038
+0.065
+-0.025
+0.002
+-0.116
+Residual Spearman (Chinchilla)
+-0.696
+0.618
+-0.308
+0.759
+0.069
+Partial Spearman
+-0.215
+-0.172
+-0.197
+0.168
+-0.064
+Predictive
+Δ
+\Delta
+R
+2
+-0.002
+-0.003
+-0.001
+-0.003
+-0.002
+Table 3
+:
+OOD Loss (Dolma 100 Code) correlation analysis summary.
+Out-of-distribution results in Figure
+21
+largely mirror the in-distribution trends; therefore, we omit a detailed discussion of the scatter plots.
+The regression results in Table
+3
+are similarly consistent with the in-distribution analysis.
+Specifically, correlations decrease across all metrics and analysis settings, except for a marginal increase in
+ℛ
+⁡
+(
+𝐇
+)
+\mathcal{R}(\mathbf{H})
+.
+Moreover, unlike the ID evaluation
+ℐ
+⁡
+(
+W
+)
+\mathcal{I}(\textbf{W})
+, the Partial Spearman correlation drops during OOD evaluation, suggesting that it’s an unreliable metric for performance evaluation.
+Overall, these findings align with the conclusions of Section
+3
+: out-of-distribution performance is better predicted by in-distribution loss than by geometric metrics.
+A.3.3
+Post Training Quantization Evaluation.
+Figure 22
+:
+Extended post-training quantization evaluation on in-domain data in relation to geometric metrics of the unembedding matrix and last-layer final-token representation.
+Figure 23
+:
+Extended post-training quantization evaluation on out-of-domain data in relation to geometric metrics of the unembedding matrix and last-layer final-token representation.
+Metric
+Effective Rank
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+Cosine Similarity
+𝒜
+⁡
+(
+𝐖
+)
+\mathcal{A}(\boldsymbol{\mathrm{W}})
+Isotropy
+ℐ
+⁡
+(
+𝐖
+)
+\mathcal{I}(\boldsymbol{\mathrm{W}})
+Effective Rank
+ℛ
+⁡
+(
+𝐇
+)
+\mathcal{R}(\boldsymbol{\mathrm{H}})
+Cosine Similarity
+𝒜
+⁡
+(
+𝐇
+)
+\mathcal{A}(\boldsymbol{\mathrm{H}})
+Raw Spearman
+-0.687
+0.585
+-0.170
+0.726
+0.517
+Residual Spearman (linear)
+-0.229
+0.259
+-0.214
+-0.135
+-0.209
+Residual Spearman (Chinchilla)
+-0.725
+0.637
+-0.300
+0.619
+0.425
+Partial Spearman
+-0.284
+-0.154
+-0.209
+-0.064
+-0.065
+Predictive
+Δ
+\Delta
+R
+2
+0.012
+0.003
+0.002
+0.012
+-0.001
+Table 4
+:
+PTQ Loss (Pile 10K) correlation analysis summary.
+Metric
+Effective Rank
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+Cosine Similarity
+𝒜
+⁡
+(
+𝐖
+)
+\mathcal{A}(\boldsymbol{\mathrm{W}})
+Isotropy
+ℐ
+⁡
+(
+𝐖
+)
+\mathcal{I}(\boldsymbol{\mathrm{W}})
+Effective Rank
+ℛ
+⁡
+(
+𝐇
+)
+\mathcal{R}(\boldsymbol{\mathrm{H}})
+Cosine Similarity
+𝒜
+⁡
+(
+𝐇
+)
+\mathcal{A}(\boldsymbol{\mathrm{H}})
+Raw Spearman
+-0.659
+0.559
+-0.064
+0.772
+0.336
+Residual Spearman (linear)
+-0.071
+0.110
+-0.132
+-0.155
+-0.144
+Residual Spearman (Chinchilla)
+-0.668
+0.583
+-0.131
+0.697
+0.274
+Partial Spearman
+-0.275
+-0.199
+-0.102
+0.072
+0.030
+Predictive
+Δ
+\Delta
+R
+2
+0.010
+-0.005
+-0.013
+0.000
+-0.008
+Table 5
+:
+PTQ Loss (Dolma 100 Code) correlation analysis summary.
+We analyze the sensitivity of OLMo models to post-training quantization (PTQ) on both in-domain and out-of-domain data.
+Figure
+22
+shows that, across all geometric metrics, models trained with weight decay
+0.01
+0.01
+perform consistently worse under PTQ for the smaller OLMo-4M and OLMo-8M models.
+Conversely, the least impacted models across sizes tend to exhibit lower effective rank
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\mathbf{W})
+, lower cosine similarity
+𝒜
+⁡
+(
+𝐖
+)
+\mathcal{A}(\mathbf{W})
+, and higher isotropy
+ℐ
+⁡
+(
+𝐖
+)
+\mathcal{I}(\mathbf{W})
+.
+In contrast, representation-level metrics,
+ℛ
+⁡
+(
+𝐇
+)
+\mathcal{R}(\mathbf{H})
+and
+𝒜
+⁡
+(
+𝐇
+)
+\mathcal{A}(\mathbf{H})
+, do not display consistent trends:
+ℛ
+⁡
+(
+𝐇
+)
+\mathcal{R}(\mathbf{H})
+remains largely invariant, while
+𝒜
+⁡
+(
+𝐇
+)
+\mathcal{A}(\mathbf{H})
+spans a wide range among well-performing models.
+The regression results in Table
+4
+follow the expected pattern, with high raw and Chinchilla-adjusted Spearman correlations but weak partial correlations and negligible predictive
+Δ
+​
+R
+2
+\Delta R^{2}
+.
+Together, these findings indicate that most variance in PTQ robustness is not explained by the considered geometric metrics, suggesting the influence of additional underlying mechanisms.
+Results for out-of-domain PTQ in Figure
+23
+and Table
+5
+exhibit similar trends, further reinforcing our conclusions about the limited explanatory power of geometric metrics for PTQ behavior.
+A.3.4
+Fine-Tuning Evaluation.
+Figure 24
+:
+Extended fine-tuning evaluation (StarCoder-Python) in relation to geometric metrics of the unembedding matrix and last-layer final-token representation.
+Metric
+Effective Rank
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+Cosine Similarity
+𝒜
+⁡
+(
+𝐖
+)
+\mathcal{A}(\boldsymbol{\mathrm{W}})
+Isotropy
+ℐ
+⁡
+(
+𝐖
+)
+\mathcal{I}(\boldsymbol{\mathrm{W}})
+Effective Rank
+ℛ
+⁡
+(
+𝐇
+)
+\mathcal{R}(\boldsymbol{\mathrm{H}})
+Cosine Similarity
+𝒜
+⁡
+(
+𝐇
+)
+\mathcal{A}(\boldsymbol{\mathrm{H}})
+Raw Spearman
+-0.629
+0.510
+-0.171
+0.907
+-0.358
+Residual Spearman (linear)
+0.044
+-0.054
+-0.107
+-0.142
+0.265
+Residual Spearman (Hoffmann)
+-0.630
+0.505
+-0.294
+0.815
+-0.318
+Partial Spearman
+-0.199
+-0.074
+-0.173
+-0.675
+0.318
+Predictive
+Δ
+\Delta
+R
+2
+-0.002
+-0.004
+0.004
+0.050
+-0.008
+Table 6
+:
+Fine-tuning Loss (Starcoder Python) correlation analysis summary.
+The fine-tuning scatter plots for StarCoder-Python and OpenWebMath are shown in Figures
+24
+and
+25
+, respectively.
+For smaller models (4M-16M), the unembedding metrics
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\mathbf{W})
+and
+𝒜
+⁡
+(
+𝐖
+)
+\mathcal{A}(\mathbf{W})
+exhibit substantial variance, while representation metrics
+𝒜
+⁡
+(
+𝐇
+)
+\mathcal{A}(\mathbf{H})
+and
+ℛ
+⁡
+(
+𝐇
+)
+\mathcal{R}(\mathbf{H})
+are tightly clustered.
+In both cases, these behaviors indicate limited predictive value for fine-tuning performance.
+For the larger models (28M-75M), lower effective rank
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\mathbf{W})
+and higher cosine similarity
+𝒜
+⁡
+(
+𝐖
+)
+\mathcal{A}(\mathbf{W})
+are more frequently associated with better performance, though this trend is neither strong nor consistent.
+Isotropy
+ℐ
+⁡
+(
+𝐖
+)
+\mathcal{I}(\mathbf{W})
+shows a weak linear relationship with fine-tuning loss for larger models, but this pattern does not hold for smaller models.
+Supporting regression analyses in Tables
+6
+and
+7
+confirm these observations, with most metrics exhibiting weak partial Spearman correlations.
+Although
+ℛ
+⁡
+(
+𝐇
+)
+\mathcal{R}(\mathbf{H})
+surprisingly, shows a relatively strong association for StarCoder-Python, this effect does not generalize to OpenWebMath.
+Overall, none of the considered geometric metrics consistently predict fine-tuning performance across both datasets.
+Figure 25
+:
+Extended fine-tuning evaluation (OpenWebMath) in relation to geometric metrics of the unembedding matrix and last-layer final-token representation.
+Metric
+Effective Rank
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+Cosine Similarity
+𝒜
+⁡
+(
+𝐖
+)
+\mathcal{A}(\boldsymbol{\mathrm{W}})
+Isotropy
+ℐ
+⁡
+(
+𝐖
+)
+\mathcal{I}(\boldsymbol{\mathrm{W}})
+Effective Rank
+ℛ
+⁡
+(
+𝐇
+)
+\mathcal{R}(\boldsymbol{\mathrm{H}})
+Cosine Similarity
+𝒜
+⁡
+(
+𝐇
+)
+\mathcal{A}(\boldsymbol{\mathrm{H}})
+Raw Spearman
+-0.642
+0.526
+-0.170
+0.905
+0.651
+Residual Spearman (linear)
+0.008
+-0.021
+-0.105
+-0.111
+-0.245
+Residual Spearman (Hoffmann)
+-0.652
+0.532
+-0.278
+0.831
+0.603
+Partial Spearman
+-0.216
+-0.082
+-0.230
+-0.309
+-0.338
+Predictive
+Δ
+\Delta
+R
+2
+-0.001
+-0.003
+0.003
+0.023
+0.007
+Table 7
+:
+Fine-tuning Loss (Open Web Math) correlation analysis summary.
+A.3.5
+Catastrophic Forgetting Evaluation.
+Figure 26
+:
+Extended forgetting evaluation (StarCoder-Python) in relation to geometric metrics of the unembedding matrix and last-layer final-token representation.
+Metric
+Effective Rank
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+Cosine Similarity
+𝒜
+⁡
+(
+𝐖
+)
+\mathcal{A}(\boldsymbol{\mathrm{W}})
+Isotropy
+ℐ
+⁡
+(
+𝐖
+)
+\mathcal{I}(\boldsymbol{\mathrm{W}})
+Effective Rank
+ℛ
+⁡
+(
+𝐇
+)
+\mathcal{R}(\boldsymbol{\mathrm{H}})
+Cosine Similarity
+𝒜
+⁡
+(
+𝐇
+)
+\mathcal{A}(\boldsymbol{\mathrm{H}})
+Raw Spearman
+-0.591
+0.486
+0.017
+0.808
+0.685
+Residual Spearman (linear)
+0.024
+0.001
+0.057
+-0.041
+0.048
+Residual Spearman (Hoffmann)
+-0.578
+0.480
+0.026
+0.762
+0.672
+Partial Spearman
+-0.165
+-0.002
+-0.115
+0.035
+0.279
+Predictive
+Δ
+\Delta
+R
+2
+-0.001
+-0.001
+0.001
+-0.000
+0.002
+Table 8
+:
+Post fine-tuning (Starcoder Python) in-domain Loss (Pile-10K) correlation analysis summary.
+Figures
+27
+and
+27
+show in-distribution loss on Pile-10k for models fine-tuned on StarCoder-Python and OpenWebMath, respectively.
+Across model sizes, both the effective rank and the cosine similarity computed for the unembedding matrix, as well as the last-token final-layer representations, remain largely constant and therefore provide little signal for predicting catastrophic forgetting.
+Interestingly, isotropy
+ℐ
+⁡
+(
+𝐖
+)
+\mathcal{I}(\mathbf{W})
+is the only metric that exhibits a weak linear relationship with post–fine-tuning loss.
+However, models trained with weight decay
+0.01
+0.01
+form a notable exception, displaying very low isotropy while still achieving strong performance.
+Regression results in Tables
+8
+and
+9
+corroborate these observations, indicating that catastrophic forgetting is largely invariant to the base model’s unembedding and representation geometry.
+Figure 27
+:
+Extended forgetting evaluation (OpenWebMath) in relation to geometric metrics of the unembedding matrix and last-layer final-token representation.
+Metric
+Effective Rank
+ℛ
+⁡
+(
+𝐖
+)
+\mathcal{R}(\boldsymbol{\mathrm{W}})
+Cosine Similarity
+𝒜
+⁡
+(
+𝐖
+)
+\mathcal{A}(\boldsymbol{\mathrm{W}})
+Isotropy
+ℐ
+⁡
+(
+𝐖
+)
+\mathcal{I}(\boldsymbol{\mathrm{W}})
+Effective Rank
+ℛ
+⁡
+(
+𝐇
+)
+\mathcal{R}(\boldsymbol{\mathrm{H}})
+Cosine Similarity
+𝒜
+⁡
+(
+𝐇
+)
+\mathcal{A}(\boldsymbol{\mathrm{H}})
+Raw Spearman
+-0.626
+0.519
+-0.090
+0.877
+0.640
+Residual Spearman (linear)
+-0.025
+0.030
+-0.019
+-0.006
+-0.204
+Residual Spearman (Hoffmann)
+-0.631
+0.527
+-0.117
+0.844
+0.615
+Partial Spearman
+-0.190
+-0.027
+-0.232
+-0.033
+-0.296
+Predictive
+Δ
+\Delta
+R
+2
+-0.002
+-0.001
+-0.001
+-0.001
+0.003
+Table 9
+:
+Post fine-tuning (Open Web Math) in-domain loss on (Pile-10K) correlation analysis summary.
+Appendix B
+Practical Takeaways for ML Practitioners
+Our systematic investigation of 108 OLmo language models trained under varying hyperparameters reveals that the relationship between model geometry and downstream performance is more complex than previously thought.
+Hence, we recommend the following practical takeaways for ML Practitioners on how to better assess the model geometry and when it is useful:
+1.
+Do not use effective rank alone to diagnose model problems.
+If one observes a low effective rank during training, this doesn’t necessarily indicate the model is failing; it may simply reflect your hyperparameter choices (especially weight decay and batch size). Thus, always measure downstream performance metrics first.
+2.
+Hyperparameter choices matter more than geometry.
+Rather than directly optimizing for geometric properties (e.g., adding explicit rank regularization), focus on tuning standard hyperparameters like batch size and weight decay, which naturally influence geometry and have more predictable effects on performance.
+3.
+Avoid geometry-based early stopping.
+Halting training solely because the effective rank is decreasing is not a good option, as we observe that some of our best-performing models had relatively low effective rank.
+4.
+Small model saturation may be avoidable.
+Unlike Pythia models, our OLMo models do not suffer from late-stage performance degradation even with massive over-training. Thus, architectural choices and data diversity matter a lot, and it’s better to optimize on those fronts rather than focusing solely on geometric metrics.
+5.
+Distinguish correlation from causation.
+Our results suggest effective rank is a
+symptom
+of training dynamics rather than a
+cause
+of performance differences.
+Future work should use interventional studies (e.g., directly manipulating rank while holding other factors constant) rather than purely correlational analyses.
+Appendix C
+Limitations
+While our study provides a systematic analysis of unembedding and representation geometry, it has its limitations.
+First, we focus exclusively on the unembedding matrix and last-token final-layer representations; intermediate layers may exhibit different geometric properties as evidenced by some prior work
+(
+Valeriani et al., 2023
+;
+Cheng et al., 2025
+;
+Skean et al., 2025
+)
+.
+Second, our experiments are restricted to relatively small models.
+Although common in mechanistic studies of Transformers
+(
+Wortsman et al., 2024
+;
+Kumar et al., 2025
+;
+Magnusson et al., 2025
+;
+Gadre et al., 2025
+;
+Springer et al., 2025
+)
+, it remains unclear whether these findings generalize to larger models.
+Third, our fine-tuning experiments hold most hyperparameters fixed, leaving the effects of hyperparameter variation on geometry, performance, and catastrophic forgetting unexplored.
+Finally, because directly controlling the model or the representation geometry is challenging, our results are observational rather than fully causal.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

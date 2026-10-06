@@ -1,0 +1,1088 @@
+curl: (28) Operation timed out after 35007 milliseconds with 369761 out of 378713 bytes received
+TRIM: Hybrid Inference via Targeted Stepwise Routing in Multi-Step Reasoning Tasks
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+3 Preliminaries and Problem Statement
+4 TRIM and Routing Strategy Designs
+4.1 TRIM-Thr: Myopic Thresholding Policy
+4.2 RL-Trained Policies
+4.3 TRIM-POMDP: POMDP-Based Router Policy
+5 Experiments
+6 Discussion and Conclusion
+References
+A Latency Analysis of TRIM
+Experimental Setup.
+Theoretical Justification.
+B Formalizing TRIM-POMDP
+B.1 Formal Definition of TRIM-POMDP
+C Budgeted Accuracy
+D Analysis of 𝚛𝚎𝚐𝚎𝚗𝚎𝚛𝚊𝚝𝚎\mathtt{regenerate} Action Design Choice
+D.1 Alternative 𝚛𝚎𝚐𝚎𝚗𝚎𝚛𝚊𝚝𝚎\mathtt{regenerate} Action: Full Takeover Ablation
+E Robustness of TRIM to PRM Noise and Miscalibration
+F Generalizability of TRIM Across Model Pairs and Domains
+G TRIM Implementation Details
+H Effectiveness of Qwen2.5-Math-PRM-7B for AIME
+License: CC BY 4.0
+arXiv:2601.10245v1 [cs.AI] 15 Jan 2026
+TRIM: Hybrid Inference via Targeted Stepwise
+Routing
+in Multi-Step Reasoning Tasks
+Vansh Kapoor†\dagger
+Affiliation: Carnegie Mellon University
+Aman Gupta
+Affiliation: Amazon
+Hao Chen
+Affiliation: Amazon
+Anurag Beniwal
+Affiliation: Amazon
+Jing Huang
+Affiliation: Amazon
+Aviral Kumar
+Affiliation: Carnegie Mellon University
+Correspondence to: vanshk@cs.cmu.edu
+Abstract
+Multi-step reasoning tasks like mathematical problem solving are vulnerable to cascading failures where a single incorrect step leads to complete solution breakdown. Current LLM routing methods assign entire queries to one model, treating all reasoning steps as equal. We propose TRIM (Targeted routing in multi-step reasoning tasks), which routes only critical steps–those likely to derail the solution–
+to larger models while letting smaller models handle routine continuations. Our key insight is that targeted step-level interventions can fundamentally transform inference efficiency by confining expensive calls to precisely those steps where stronger models prevent cascading errors.
+TRIM operates at the step-level: it uses process reward models to identify erroneous steps and makes routing decisions based on step-level uncertainty and budget constraints.
+We develop several routing strategies within TRIM, ranging from a simple threshold-based policy to more expressive policies that reason about long-horizon accuracy–cost trade-offs and uncertainty in step-level correctness estimates.
+On MATH-500, even the simplest thresholding strategy surpasses prior routing methods with 5×5\times higher cost efficiency, while more advanced policies match the strong, expensive model’s performance using 80%80\% fewer expensive model tokens. On harder benchmarks such as AIME, TRIM achieves up to 6×6\times higher cost efficiency. All methods generalize effectively across math reasoning tasks, demonstrating that step-level difficulty represents fundamental characteristics of reasoning.
+Keywords: Machine Learning, ICML
+††affiliationnotice: †Work primarily conducted during an internship at Amazon
+1 Introduction
+Figure 1: Schematic Overview of a Two-Model Setup for TRIM
+The rapid progress in large language models (LLMs) has led to a diverse ecosystem of models, spanning a wide spectrum of sizes, capabilities, and computational demands. Larger models typically achieve stronger performance but incur substantial serving costs, rendering them impractical for many routine applications. In contrast, smaller models are more affordable to deploy but often produce lower-quality responses. This trade-off poses a fundamental dilemma for the practical deployment of LLMs:
+routing all queries to the largest available model ensures high-quality outputs but is prohibitively expensive, whereas relying solely on smaller models reduces serving costs at the expense of degraded response quality, especially on challenging queries.
+Contemporary routing strategies attempt to mitigate this dilemma by assigning each query to a single model, which is then responsible for the entire generation. However, not all tokens in an LLM’s response are equally challenging to generate:
+some represent critical decision points that can dramatically alter the solution path (Setlur et al., 2024a; Wang et al., 2025; Qu et al., 2025), while others are routine continuations that are easier to generate. By committing to a larger LLM over a smaller one for a given query, existing routing methods implicitly assume that the stronger model’s intervention is equally necessary at every token to produce a high-quality response.
+This inefficiency is particularly pronounced in multi-step reasoning tasks such as step-by-step reasoning or code generation, where mistakes early on can snowball into a complete failure (Zhang et al., 2024). It is precisely at these erroneous steps that the intervention of a stronger model is most valuable. Yet, contemporary routing methods often incur substantial inefficiency by defaulting to full generations from the larger model, even when targeted interventions at these erroneous steps would suffice.
+To address this inefficiency, we introduce TRIM-Targeted Stepwise Routing for Inference in Multi-step Reasoning Tasks: an approach that selectively routes only the most critical steps to larger LLMs. Unlike prior prompt-level routers, TRIM operates at the granularity of individual reasoning steps, generating solutions one step at a time. As illustrated in Figure 1, a stepwise router evaluates each intermediate step as it is generated and decides whether to accept the small model’s output or to regenerate that specific step with a larger model. TRIM ensures that interventions occur only when necessary at individual steps, rather than handing over the entire remaining solution to the larger model. This step-by-step generation process with targeted intervention enables TRIM to achieve efficiency by confining expensive calls to precisely those steps where intervention prevents cascading errors while allowing the smaller model to handle routine continuations. This approach reduces the primary cost bottleneck in inference: the number of tokens generated by the expensive, larger LLM.
+Building on this framework, we design multiple strategies for stepwise routing, each tailored to different computational and informational constraints: a simple thresholding policy that uses step-level scores to identify erroneous steps, two RL-trained policies that reason about long-horizon trade-offs between accuracy and cost (one using full sequential features, another using aggregated statistics), and a Partially Observable Markov Decision Process (POMDP) based approach
+that accounts for the inherent uncertainty in step-level correctness estimates while enabling efficient policy recomputation across different cost budgets. Our cost metric focuses on the number of tokens generated by the expensive model, as prefill costs can be amortized through parallel decoding strategies (Leviathan et al., 2023; Cai et al., 2024), whereas generation tokens impose unavoidable sequential costs. We evaluate our approach on diverse mathematical reasoning benchmarks, including MATH (Hendrycks et al., 2021), Olympiad-Bench (He et al., 2024), and AIME (Di Zhang, 2025). On MATH-500, our basic thresholding policy is 55× more cost-effective than existing methods, while our trained RL and POMDP policies achieve the performance of the expensive LLM using only 20%20\% of the expensive tokens. On the more challenging AIME benchmark, these policies achieve 3.17×3.17\times and 6.33×6.33\times higher cost efficiency, respectively. Moreover, routing policies trained on one dataset generalize strongly to others: the RL-trained policy attains up to 11.68×11.68\times higher cost efficiency when evaluated on OlympiadBench, despite being trained only on AIME.
+Our main contributions are: (1) We provide systematic evidence showing that a small number of targeted step-level interventions can substantially enhance the efficiency of multi-step reasoning.
+(2) We demonstrate that this insight can be used to instantiate practical frameworks that are amenable to several routing policies, from simple thresholding policies that surpass existing query-level routing methods to advanced RL-trained and POMDP-based approaches that achieve competitive performance with oracle routers having perfect task knowledge, all while using significantly fewer expensive model tokens. Our routing policies can be trained effectively with limited supervision data while achieving robust performance across diverse cost budgets, making the approach practical for real-world deployment scenarios. (3) Finally, we demonstrate robust generalization of the routing strategy across datasets, with methods trained on AIME delivering strong efficiency gains on OlympiadBench and Minerva Math, suggesting that step-level difficulty patterns capture transferable structure across related reasoning benchmarks for a given base model, rather than being tightly coupled to a specific dataset.
+2 Related Work
+The trade-off between model performance and computational cost has become increasingly salient as large language models grow in size and capability. Our work on targeted stepwise routing builds upon prior work from several areas: LLM routing strategies, process supervision and step-level verification, and multi-step reasoning optimizations.
+Figure 2: Comparison of task performance–cost trade-offs for Qwen2.5-3B-Instruct (MwM_{w}) and Claude 3.7 Sonnet (MsM_{s}), under the myopic thresholding policy (with Qwen2.5-Math-PRM-7B) versus the Idealized Oracle Query-level Router, across multiple math benchmarks. The Oracle Router is evaluated by incrementally varying the number of queries routed to MsM_{s}, selecting those solvable by MsM_{s} but not by MwM_{w}. Since multiple query subsets can achieve the same accuracy with different token costs, the oracle’s performance–cost curve forms a shaded region rather than a single line, reflecting the full trade-off frontier.
+LLM routing and model selection. Traditional routing approaches operate at the query level, assigning entire queries to a single model based on estimated difficulty or uncertainty. Under this query-level paradigm, hybrid-LLM (Ding et al., 2024) frames routing as a classification task using BERT-style encoders, while Zooter (Lu et al., 2023) employs reward-guided training for normalized reward prediction. RouteLLM (Ong et al., 2024) learns routing directly from preference data, and AutoMix (Aggarwal et al., 2023) formulates query-level routing as a POMDP with self-verification for difficulty estimation. Recent advances have extended these approaches in complementary directions. BEST-Route (Ding et al., 2025) augments routing with adaptive test-time compute, jointly selecting a model and the number of samples to generate per query (best-of-nn) based on query difficulty and quality thresholds
+However, all these methods assume uniform difficulty across generation steps, leading to inefficient resource allocation in multi-step reasoning tasks where difficulty varies significantly across steps. In such settings, errors are often localized, and correcting a small number of critical steps is often sufficient to steer the solution back onto a successful path. In contrast, TRIM departs from query-level routing by operating at the granularity of individual reasoning steps, enabling targeted interventions precisely where stronger models are most valuable while avoiding unnecessary escalation elsewhere.
+Process supervision and step-level verification. Process reward models (PRMs) have emerged as a powerful technique for evaluating intermediate reasoning steps. Human-in-the-loop step verification method (Lightman et al., 2023) showed that process supervision significantly outperforms outcome supervision on math reasoning tasks, motivating scalable automated alternatives.
+Subsequent work developed automated process supervision (Luo et al., 2024) and stepwise verification without human annotations (Wang et al., 2023).
+Recent studies further demonstrate that strategic computation allocation (Hwang et al., 2024; Snell et al., 2024; Setlur et al., 2024b)
+can significantly improve mathematical reasoning efficiency. While these works primarily use PRMs for candidate selection or exploration shaping, our work instead uses PRM scores to inform routing decisions during generation.
+Multi-step reasoning and test-time compute. Recent work has highlighted the importance of strategic computation allocation in multi-step reasoning. Research on “forking paths” (Bigelow et al., 2025) and (Wang et al., 2025) demonstrates that certain tokens represent critical decision points that dramatically alter solution trajectories. Similarly, work on reinforcement learning for mathematical reasoning (Setlur et al., 2024a; DeepSeek-AI et al., 2025; Yang et al., 2025; Team et al., 2025; Yu et al., 2025; Lin et al., 2024)
+and optimizing test-time compute (Snell et al., 2024; Qu et al., 2025)
+shows that targeted interventions at crucial steps can be more effective than uniform computation increases. The observation that high-entropy minority tokens drive effective learning (Wang et al., 2025) further supports the notion that not all generation steps are equally important.
+Speculative and parallel decoding. Our approach shares some similarities with speculative decoding (Leviathan et al., 2023) and parallel inference strategies (Cai et al., 2024), which also involve multiple models collaborating during generation. However, these methods focus on acceleration through draft-and-verify paradigms, while our work targets the quality-cost trade-off in multi-step reasoning through selective model escalation. Reward-Guided SD (Liao et al., 2025) and SpecReason (Pan et al., 2025) are closer in spirit in that they use step-level signals to accept or regenerate intermediate generations (RSD via PRMs, SpecReason via expensive model-generated scores), but they differ fundamentally in objective. Both operate in a fixed, high-budget regime and are optimized primarily for latency reduction with marginal accuracy gains, whereas TRIM explicitly optimizes accuracy under a constrained cost budget by limiting strong-model token usage.
+Although RSD and SpecReason can be adapted to routing by varying acceptance thresholds, such adaptations remain inherently myopic: decisions depend only on the current step’s score and do not account for noise in correctness estimates or long-horizon budget allocation. By contrast, TRIM is more general and complementary: it subsumes threshold-based rules while enabling more expressive policies that reason about trajectory-level progress, uncertainty in step-level correctness, and the expected future benefit of intervention, leading to more robust and efficient compute allocation in multi-step reasoning.
+3 Preliminaries and Problem Statement
+We define the problem of stepwise routing within a multi-step reasoning task as a sequential decision process. The objective is to derive a routing policy that, at each step of generation, decides whether to (i) accept the output of a cheap language model, or (ii) re-generate the step using a more capable but expensive LLM, thereby incurring an additional per-token cost. This policy must balance the trade-off between maximizing the task reward of the final solution and minimizing the serving cost, defined as the number of tokens generated from the expensive, stronger LLM. We formalize this problem below.
+Problem Formulation. A multi-step reasoning task is specified by a query q∈𝒬q\in\mathcal{Q} and a sequence of reasoning steps
+𝐲1:N=(q,y1,y2,…,yN)∈𝒴N,\mathbf{y}_{1:N}=(q,y_{1},y_{2},\dots,y_{N})\in\mathcal{Y}_{N},
+where yiy_{i} denotes the ii-th reasoning step. For our purposes, we assume these steps are delimited by double newlines in the generated text. At time-step tt, the current prefix is denoted
+𝐲1:t=(q,y1,…,yt)∈𝒴t,\mathbf{y}_{1:t}=(q,y_{1},\dots,y_{t})\in\mathcal{Y}_{t},
+where 𝒴t\mathcal{Y}_{t} denotes the set of all prefixes of length tt.
+Within 𝒴t\mathcal{Y}_{t}, we distinguish two disjoint subsets:
+(1) 𝒫t⊆𝒴t\mathcal{P}_{t}\subseteq\mathcal{Y}_{t}, the set of incomplete prefixes (partial answers) that can be extended further;
+(2) 𝒞t⊆𝒴t\mathcal{C}_{t}\subseteq\mathcal{Y}_{t}, the set of completed (terminated) answers at step tt.
+Let ℳ\mathcal{M} denote a set of language models, where each model M∈ℳM\in\mathcal{M} maps a partial reasoning trace 𝐲1:t∈𝒫t\mathbf{y}_{1:t}\in\mathcal{P}_{t} to the next step 𝐲1:t+1∈𝒴t+1,\mathbf{y}_{1:t+1}\in\mathcal{Y}_{t+1}, thereby extending the prefix or producing a completed solution. We consider a two-model setup consisting of two classes of models ℳ\mathcal{M}: (1) strong expensive LLM ℳs\mathcal{M}_{s} that produce high-quality responses but incurs a per-token cost (2) cheap LLM ℳw\mathcal{M}_{w} which offer relatively lower-quality responses at negligible cost. This abstraction captures the trade-off between generation quality and inference cost that motivates routing across heterogeneous language models.
+We aim to learn a routing policy π\pi that, at each reasoning step tt, chooses an action at∈{𝚌𝚘𝚗𝚝𝚒𝚗𝚞𝚎,𝚛𝚎𝚐𝚎𝚗𝚎𝚛𝚊𝚝𝚎}a_{t}\in\{{\mathtt{continue},\mathtt{regenerate}}\}, to either accept the weak model’s continuation or replace it with the strong model’s generation. Formally, for Mw∈ℳwM_{w}\in\mathcal{M}_{w} and Ms∈ℳsM_{s}\in\mathcal{M}_{s}
+•
+If at=𝚌𝚘𝚗𝚝𝚒𝚗𝚞𝚎a_{t}=\mathtt{continue}, the next prefix updates as 𝐲1:t+1=(𝐲1:t,Mw(𝐲1:t))\mathbf{y}_{1:t+1}=(\mathbf{y}_{1:t},M_{w}(\mathbf{y}_{1:t}))
+•
+If at=𝚛𝚎𝚐𝚎𝚗𝚎𝚛𝚊𝚝𝚎a_{t}=\mathtt{regenerate}, the policy instead sets 𝐲1:t′=(𝐲1:t−1,Ms(𝐲1:t−1))\mathbf{y}^{\prime}_{1:t}=(\mathbf{y}_{1:t-1},M_{s}(\mathbf{y}_{1:t-1})), and then continues with 𝐲1:t+1=(𝐲1:t′,Mw(𝐲1:t′))\mathbf{y}_{1:t+1}=(\mathbf{y}^{\prime}_{1:t},M_{w}(\mathbf{y}^{\prime}_{1:t})).
+For 𝐲1:t∈Ct\mathbf{y}_{1:t}\in C_{t}, choosing at=𝚛𝚎𝚐𝚎𝚗𝚎𝚛𝚊𝚝𝚎a_{t}=\mathtt{regenerate} yields 𝐲1:t′=(𝐲1:t−1,Ms(𝐲1:t−1))\mathbf{y}^{\prime}_{1:t}=(\mathbf{y}_{1:t-1},M_{s}(\mathbf{y}_{1:t-1})), while choosing at=𝚌𝚘𝚗𝚝𝚒𝚗𝚞𝚎a_{t}=\mathtt{continue} leaves the prefix unchanged; in either case, the reasoning process terminates.
+The quality of intermediate steps in a reasoning trace can be estimated by assigning probabilistic scores. This can be achieved through methods such as self-verification, process reward models
+(PRMs), or other step-level evaluation techniques. For our experiments, we adopt a PRM that evaluates partial traces and produces a sequence of step-level scores. Formally, given a reasoning trace 𝐲1:t\mathbf{y}_{1:t}, the PRM assigns step-level rewards as 𝐫1:t=PRM(𝐲1:t)=(r1,r2,…,rt)\mathbf{r}_{1:t}=\text{PRM}(\mathbf{y}_{1:t})=(r_{1},r_{2},\dots,r_{t}), where ri=(𝐫1:t)ir_{i}=(\mathbf{r}_{1:t})_{i} denotes the reward for step ii.
+We use these scores as proxies for step-level correctness, providing a signal for whether escalation to a larger model is likely to offer additional benefit given the current prefix.
+In practice, the PRM score for a solution can also be aggregated across steps using either the product of all step scores or the minimum score across steps (Wang et al., 2023; Lightman et al., 2023). These aggregated scores are widely used in practice for ranking and comparing multiple candidate solutions.
+Although PRMs have been used in prior work primarily to improve candidate selection in beam search or to shape exploration in search and RL (Snell et al., 2024; Setlur et al., 2024b),
+our use is distinct: we leverage PRM outputs to inform routing decisions during generation.
+4 TRIM and Routing Strategy Designs
+Figure 3: Step-Wise Router architecture for TRIM using process rewards to evaluate partial solutions and uses RL-based policies or POMDP-based solvers for making routing decisions.
+We introduce TRIM, a framework for step-level routing within each query, illustrated in Figure 1. Instead of routing an entire query to a strong model, TRIM operates at the level of individual reasoning steps. At each step tt of the reasoning process, the cheap model MwM_{w} proposes a candidate continuation ytw=Mw(𝐲1:t−1).y^{w}_{t}=M_{w}(\mathbf{y}_{1:t-1}). The router policy then evaluates the partial reasoning trace together with ytw{y}^{w}_{t} and either accepts this step (at=𝚌𝚘𝚗𝚝𝚒𝚗𝚞𝚎a_{t}=\mathtt{continue}) or escalates to the strong model MsM_{s} (at=𝚛𝚎𝚐𝚎𝚗𝚎𝚛𝚊𝚝𝚎a_{t}=\mathtt{regenerate}), which regenerates the step as yts=Ms(𝐲1:t−1).{y}^{s}_{t}=M_{s}(\mathbf{y}_{1:t-1}). Based on this decision, the appended step is yt=ytwy_{t}=y^{w}_{t} if at=𝚌𝚘𝚗𝚝𝚒𝚗𝚞𝚎a_{t}=\mathtt{continue} and yt=ytsy_{t}=y^{s}_{t} otherwise. Thus, TRIM incrementally constructs the solution trace by appending at each position either the MwM_{w}-generated step or the MsM_{s}-regenerated step, depending on the router’s action (see Appendix D for a detailed discussion of the action design). This contrasts with query-level routing, which which commits to either MwM_{w} or MsM_{s} for the entire generation.
+We now describe different strategies for learning routing policies within TRIM. These strategies differ in how much information they incorporate about the reasoning trajectory and whether they make decisions in a myopic (local to a given step) or non-myopic (awareness of the full trajectory) fashion. On one end of the spectrum, thresholding policies rely only on current step correctness, while other approached the utilize RL training and POMDP-based formulations account for long-horizon accuracy/cost tradeoffs.
+4.1 TRIM-Thr: Myopic Thresholding Policy
+We first introduce a simple yet effective routing policy that solely relies on the PRM score of the current generated step of the cheap model MwM_{w} to make routing decisions. If this probability falls below a predefined threshold kk, the router regenerates the step with the strong model MsM_{s}; otherwise, it accepts the cheap model’s output and continues generation. Adjusting the threshold parameter kk provides a principled way to vary the task performance-cost trade-off. Our TRIM-Thr can be viewed as an adaptation of the fixed-threshold mechanism in Liao et al. (2025)
+to the routing setting, where thresholds vary with the cost budget. Formally, the policy is
+πthr,k(𝐲1:t)={𝚛𝚎𝚐𝚎𝚗𝚎𝚛𝚊𝚝𝚎,if PRM(𝐲1:t)t<k,𝚌𝚘𝚗𝚝𝚒𝚗𝚞𝚎,otherwise.\displaystyle\pi_{\text{thr},k}(\mathbf{y}_{1:t})=\begin{cases}\mathtt{regenerate},&\text{if }\text{PRM}(\mathbf{y}_{1:t})_{t}<k,\\
+\mathtt{continue},&\text{otherwise}.\end{cases}
+(1)
+4.2 RL-Trained Policies
+Figure 4: POMDP state space SS classes and observation space Ω\Omega in TRIM-POMDP.
+The latent state space SS consists of three correctness classes: S0S_{0} (trajectory correct so far),
+S1S_{1} (trajectory irrecoverably incorrect due to an earlier error), and S2S_{2} (most recent step incorrect but prior steps correct and thus potentially recoverable), augmented with current step index and token cost. The observation space Ω\Omega comprises the PRM-based cumulative correctness score of the prior steps, PRM score of the current step, and auxiliary features, which together serve as noisy observations of the underlying latent correctness state.
+Figure 5: Learned observation function illustrating PRM noise. Heatmaps show the empirical probability density of PRM-based observations conditioned on each latent correctness state, estimated from ProcessBench (Omni-MATH). While density concentrates around state-consistent regions (e.g., near (1,0)(1,0) for S2S_{2}, where prior steps are correct but the current step is incorrect), the substantial spread reflects noise in PRM scores. If PRM estimates were perfectly accurate, each distribution would collapse to a single point; the observed variance motivates treating PRM outputs as noisy observations in TRIM-POMDP.
+While TRIM-Thr demonstrates strong performance (Figure 2), it is inherently myopic in the sense that it makes routing decisions solely based on the correctness estimate of the most recent step, without considering past context or future consequences. A richer set of signals can be exploited for more effective decision-making. For instance, even if the most recent step is predicted to be incorrect, regenerating it with a strong model may not be beneficial if the overall trajectory is already far from the correct solution, or if the additional cost of intervention outweighs the potential gain. Conversely, when prior steps are largely consistent and the trace remains plausibly aligned with a correct solution, targeted intervention can be highly impactful.
+Prior work on stepwise verification (Lightman et al., 2023; Wang et al., 2023) and beam search reranking highlights the importance of leveraging the sequence of correctness scores accumulated over the reasoning trace, rather than focusing exclusively on the most recent one. Additionally, token counts at each step provide information about the cost of regenerating with MsM_{s}. Incorporating these richer signals allows the router to reason jointly about (i) whether the trace remains plausibly on track toward a correct solution and (ii) whether the cost of intervention is justified, enabling more principled stepwise routing policies beyond TRIM-Thr.
+TRIM-Seq: Learning to Route from Sequential Features.
+Formally, let 𝐜1:t=(c1,…,ct)\mathbf{c}_{1:t}=(c_{1},\ldots,c_{t}) denote the token counts associated with each step y1,…,yty_{1},\ldots,y_{t} in the reasoning trace 𝐲1:t\mathbf{y}_{1:t} and 𝐫1:t=(r1,…,rt)\mathbf{r}_{1:t}=(r_{1},\ldots,r_{t}) be the stepwise correctness scores, then joint feature sequence is
+𝐟1:t=((r1,c1),…,(rt,ct)).\mathbf{f}_{1:t}=\big((r_{1},c_{1}),\ldots,(r_{t},c_{t})\big).
+These features capture the two quantities that are fundamental to routing decisions in multi-step reasoning: (i) semantic fidelity, via step-level correctness estimates that indicate whether the current trajectory remains on track, and (ii) marginal intervention cost, via token counts that quantify the expense of regenerating a step with the strong model. Together, they are sufficient to represent the relevant trade-off faced by the router—whether an intervention is likely to improve final correctness enough to justify its cost—without requiring access to raw token sequences or model internals.
+We parameterize the routing policy with a transformer-based network that processes the feature sequence 𝐟1:t\mathbf{f}_{1:t} and outputs a distribution over actions at∈{𝚌𝚘𝚗𝚝𝚒𝚗𝚞𝚎,𝚛𝚎𝚐𝚎𝚗𝚎𝚛𝚊𝚝𝚎}a_{t}\in\{\mathtt{continue},\mathtt{regenerate}\}. The policy is optimized via RL: each regeneration action (𝚛𝚎𝚐𝚎𝚗𝚎𝚛𝚊𝚝𝚎\mathtt{regenerate}) on a prefix 𝐲1:t\mathbf{y}_{1:t} incurs a cost proportional to the number of tokens generated by the strong model MsM_{s}, λ⋅|Ms(𝐲1:t−1)|\lambda\cdot|M_{s}(\mathbf{y}_{1:t-1})|, where λ>0\lambda>0 is a cost-performance trade-off parameter, and |Ms(𝐲1:t−1)||M_{s}(\mathbf{y}_{1:t-1})| denotes the token length of the strong model’s regenerated output. We measure cost solely in terms of large-model decode tokens, as these constitute the dominant and irreducible component of inference latency and compute. While prefill (KV-cache construction) can be amortized via chunked prefilling, executed in parallel with small-model decoding–similar to the parallelization used in speculative and draft-and-verify decoding—large-model decode tokens impose unavoidable sequential cost and cannot be parallelized across tokens.
+The episodic return further includes the (binary) terminal task reward RR, which reflects the correctness of the final solution. The policy is thus optimized to maximize the expected return
+J(π)=𝔼π[R(𝐲1:T)−λ∑t=1T𝟏{at=𝚛𝚎𝚐𝚎𝚗𝚎𝚛𝚊𝚝𝚎}⋅|Ms(𝐲1:t−1)|],J(\pi)=\mathbb{E}_{\pi}\!\big[R(\mathbf{y}_{1:T})-\\
+\lambda\sum_{t=1}^{T}\mathbf{1}\{a_{t}=\mathtt{regenerate}\}\cdot|M_{s}(\mathbf{y}_{1:t-1})|\big],
+which balances solution correctness against the cumulative generation cost of invoking MsM_{s}.
+TRIM-Agg: Learning to Route from Aggregated Features.
+TRIM-Seq leverages the full sequence of stepwise correctness scores (r1,r2,…,rt−1)(r_{1},r_{2},\ldots,r_{t-1}) together with token lengths to model routing decisions. While this provides rich sequential context, simpler feature representations can capture the most salient statistics of the reasoning trace. In multi-step reasoning, errors exhibit a compounding structure: a single incorrect step can invalidate the entire solution (making the minimum score a useful “weakest-link” indicator), while a sequence of mildly suspect steps can collectively cause the trajectory to drift off course (making the product of scores a useful proxy for cumulative validity across the trace). Prior work (Lightman et al., 2023; Wang et al., 2023) formalizes this intuition, showing that solution-level correctness can be effectively estimated from stepwise PRM scores via reductions such as the minimum or product.
+Motivated by this, we construct a reduced feature set
+𝐟~1:t=(rt,min(𝐫1:t−1),ct,t),\tilde{\mathbf{f}}_{1:t}=\big(r_{t},\;\min(\mathbf{r}_{1:t-1}),\;c_{t},\;t\big),
+where min(𝐫1:t−1)=min(r1,…,rt−1)\min(\mathbf{r}_{1:t-1})=\min(r_{1},\ldots,r_{t-1}), ctc_{t} denotes the token length of the current step, and tt indexes the position in the trace.
+This reduced representation discards the full sequential history while retaining key aggregated indicators of correctness and cost. Using 𝐟~1:t\tilde{\mathbf{f}}_{1:t}, we train a policy network with the same RL objective as TRIM-Seq. Empirically, this design yields substantially faster training, with negligible performance loss across all tradeoff parameters λ\lambda.
+4.3 TRIM-POMDP: POMDP-Based Router Policy
+Figure 6: Performance–cost trade-offs of TRIM routing approaches on MATH-500 and AIME. TRIM-Thr provides a strong low-complexity baseline, while TRIM-Agg and TRIM-POMDP achieve the best cost–performance trade-offs, reaching near-MsM_{s} accuracy using a small fraction of expensive tokens. Notably, TRIM-POMDP performs particularly well in low-budget regimes, whereas TRIM-Agg slightly dominates at higher budgets.
+A final remaining challenge in stepwise routing methods discussed above arises from the imperfect nature of process reward model (PRM) estimates. While PRMs provide informative signals about the correctness of intermediate steps, their predictions are often noisy and can misclassify correct steps as incorrect (or vice versa). When trained on large amounts of data, routing policies like TRIM-Agg can implicitly learn to discard errors in the PRM estimates. However, RL under long-horizon sparse rewards makes training such policies both sample-inefficient and expensive. This raises a key question: how can routing decisions be improved when only noisy correctness signals are available?
+Our solution is to explicitly treat PRM scores as imperfect observations of an unobserved latent state that reflects true correctness of the reasoning trajectory, and attempt to infer the true latent space first when learning a routing policy (akin to control in a partially-observed Markov decision process). As shown in Figure 5, in TRIM-POMDP, the latent state is defined in terms of three correctness classes (augmented with the current step index and token cost): (i) S0S_{0}, where the trajectory remains correct so far, (ii) S1S_{1}, where the trajectory has already diverged irrecoverably, and (iii) S2S_{2}, where the most recent step is incorrect but prior steps are correct, leaving the trajectory still potentially recoverable. If this latent state were perfectly observed, the routing problem would reduce to solving a fully observable MDP. In practice, however, the latent correctness state is hidden, and we only observe noisy proxies provided by the PRM. To bridge this gap, we learn an observation function that helps us map the entire history of observations (𝐟~1:t\tilde{\mathbf{f}}_{1:t}) to a probability distribution over the latent states.
+Concretely, this amounts to modeling the distribution of PRM outputs conditioned on state states. Figure 5 visualizes these conditional distributions, showing that while PRM scores tend to concentrate around state-consistent regions, they exhibit substantial spread, reflecting noise in step-level correctness estimates. This observation function can be fit offline using process supervision datasets with ground-truth step-level annotations, such as ProcessBench (Zheng et al., 2024).
+Moreover, because the observation function only requires aligning PRM scores with annotated correctness labels, it can be trained once and reused across different performance–cost trade-off parameters λ\lambda. Once this mapping is learned, we can invoke a POMDP solver on-the-fly to compute routing policies that optimally balance accuracy and cost. A detailed empirical analysis of TRIM’s robustness to PRM noise and miscalibration is provided in Appendix E.
+This compact POMDP formulation of the sequential routing problem enable efficient policy computation using standard POMDP solvers. Moreover, policy computation with modern POMDP solvers is both efficient and flexible, with offline solvers typically requiring less than a minute runtime. As a result, policies can be recomputed easily for different performance–cost trade-off parameters λ\lambda. A further advantage of TRIM-POMDP is that the resulting routing policy is largely agnostic to the specific choice of LLMs (Ms,Mw)(M_{s},M_{w}), depending only on their next-step accuracies provided as inputs to the transition function. See Appendix B for further details and the complete POMDP formulation. Figure 3 illustrates the end-to-end TRIM pipeline, showing how step-level correctness signals and token costs from partially generated solutions are transformed into routing observations and used by different router instantiations (TRIM-Seq, TRIM-Agg, and TRIM-POMDP) to decide whether to regenerate a specific step with the strong model or continue with the cheap model; we next evaluate how these design choices translate into performance–cost trade-offs.
+5 Experiments
+Table 1: Comparison of TRIM across AIME & MATH-500 benchmarks.
+MATH-500
+AIME
+Method
+CPT⁡(50%)\mathrm{CPT}(50\%)
+CPT⁡(80%)\mathrm{CPT}(80\%)
+CPT⁡(95%)\mathrm{CPT}(95\%)
+ΔIBC\Delta_{\text{IBC}}
+CPT⁡(50%)\mathrm{CPT}(50\%)
+CPT⁡(80%)\mathrm{CPT}(80\%)
+CPT⁡(95%)\mathrm{CPT}(95\%)
+ΔIBC\Delta_{\text{IBC}}
+BERT
+196.60 (42.52%)
+331.45 (71.68%)
+394.49 (85.31%)
+0.08
+331.85 (38.18%)
+616.53 (70.93%)
+701.58 (80.71%)
+0.44
+MF
+160.83 (34.78%)
+324.13 (70.10%)
+432.60 (93.55%)
+0.49
+358.81 (41.28%)
+602.62 (69.32%)
+813.28 (93.56%)
+0.65
+SW Ranking
+185.74 (40.17%)
+279.47 (60.44%)
+330.89 (71.56%)
+0.37
+297.08 (34.18%)
+496.77 (57.15%)
+715.72 (82.34%)
+0.79
+Smoothie
+220.69 (47.73%)
+345.19 (74.65%)
+433.77 (93.81%)
+0.30
+396.79 (45.65%)
+704.50 (81.05%)
+822.09 (94.57%)
+0.03
+Automix
+175.67 (37.99%)
+314.11 (67.93%)
+420.87 (91.02%)
+0.12
+450.3 (51.8%)
+715.34 (82.29%)
+857.89 (98.69%)
+0.0004
+AutoMix-PRM
+110.42 (23.88%)
+198.73 (42.98%)
+249.49 (53.96%)
+0.95
+380.48 (43.77%)
+605.83 (69.7%)
+703.77 (80.96%)
+0.07
+TRIM-Thr
+43.68 (9.45%)
+73.74 (15.95%)
+115.99 (25.08%)
+4.75
+204.01 (23.47%)
+314.7 (36.2%)
+372.79 (42.89%)
+1.81
+TRIM-Agg
+33.74 (7.3%)
+56.49 (12.22%)
+79.58 (17.21%)
+5.67
+107.39 (12.35%)
+241.55 (27.79%)
+330.42 (38.01%)
+2.50
+TRIM-POMDP
+29.27 (6.33%)
+66.63 (14.41%)
+83.12 (17.98%)
+5.86
+139.21 (16.01%)
+206.06 (23.71%)
+244.86 (28.17%)
+5.00
+Table 2: Cross-Benchmark Generalization of Routers Trained on AIME
+OlympiadBench
+Minerva Math
+Method
+CPT⁡(50%)\mathrm{CPT}(50\%)
+CPT⁡(80%)\mathrm{CPT}(80\%)
+CPT⁡(95%)\mathrm{CPT}(95\%)
+ΔIBC\Delta_{\text{IBC}}
+CPT⁡(50%)\mathrm{CPT}(50\%)
+CPT⁡(80%)\mathrm{CPT}(80\%)
+CPT⁡(95%)\mathrm{CPT}(95\%)
+ΔIBC\Delta_{\text{IBC}}
+BERT
+367.75 (55.03%)
+584.14 (87.41%)
+642.50 (96.14%)
+-0.04
+209.99 (48.99%)
+378.24 (88.25%)
+421.44 (98.33%)
+-0.1
+MF
+369.15 (55.24%)
+522.68 (78.21%)
+601.77 (90.05%)
+-0.07
+166.99 (38.96%)
+249.82 (58.28%)
+326.06 (76.07%)
+0.42
+SW Ranking
+351.34 (52.57%)
+511.08 (76.48%)
+635.05 (95.03%)
+0.07
+212.73 (49.63%)
+342.71 (79.96%)
+421.17 (98.26%)
+0.04
+Smoothie
+348.59 (52.16%)
+511.64 (76.56%)
+615.49 (92.10%)
+-0.08
+234.66 (54.75%)
+345.16 (80.53%)
+402.19 (93.83%)
+-0.09
+Automix
+300.4 (44.95%)
+475.37 (71.13%)
+644.46 (96.44%)
+0.02
+85.35 (19.91%)
+193.04 (45.04%)
+231.59 (54.03%)
+0.72
+AutoMix-PRM
+265.95 (39.8%)
+411.47 (61.57%)
+481.49 (72.05%)
+0.22
+72.08 (16.82%)
+140.24 (32.72%)
+196.12 (45.76%)
+1.35
+TRIM-Thr
+136.64 (20.45%)
+220.70 (33.03%)
+313.89 (46.97%)
+1.31
+65.15 (15.2%)
+92.78 (21.65%)
+148.55 (34.66%)
+2.23
+TRIM-Agg
+94.4 (14.13%)
+190.11 (28.45%)
+287.17 (42.97%)
+2.57
+47.37 (11.05%)
+89.54 (20.89%)
+138.67 (32.35%)
+3.12
+Figure 7: Performance–cost trade-offs under dataset generalization. TRIM-Agg routers trained on AIME demonstrate strong performance across benchmarks of similar difficulty
+We evaluate TRIM by benchmarking its stepwise routing strategies against established query-level routing approaches. Our primary comparison is with RouteLLM (Ong et al., 2024), Smoothie (Guha et al., 2024), and AutoMix (Aggarwal et al., 2023). RouteLLM is a state-of-the-art approach for query-level routing, which uses preference data for making these decisions. Smoothie instead adopts a label-free, unsupervised routing approach, fitting a latent-variable Gaussian model over output embeddings to estimate per-sample model quality and select the most suitable LLM. AutoMix, in contrast, adopts a non-predictive routing paradigm: it first utilizes smaller, cost-efficient models and then few-shot self-verification signals as observations in a POMDP policy that decides whether escalation to a larger model is necessary.
+We begin by introducing the evaluation metrics used throughout our analysis.
+Metrics.
+We evaluate router policies by quantifying the trade-off between task performance and the cost of invoking the strong model MsM_{s}. In our setting, the cost of a query is measured by the number of tokens generated by the expensive (strong) model Ms.M_{s}. Importantly, TRIM does not introduce significant wall-clock overhead: when implemented using the same system-level optimizations employed by low-latency speculative decoding, TRIM is often faster than running MsM_{s} alone (see Appendix A). We adapt evaluation metrics from prior work to the setting of stepwise routing in multi-step reasoning. For a query qq in the set of queries 𝒬\mathcal{Q}, let C⁡(q,π)C(q;\pi) denote the number of tokens generated by the strong model MsM_{s} under router policy π\pi, and let Cs​(q)C_{s}(q) be the number of tokens generated when using MsM_{s} alone. We define C¯​(π)\bar{C}(\pi) as the average number of MsM_{s} tokens per query and c⁡(π)c(\pi) as the normalized fraction of tokens from MsM_{s}:
+C¯​(π)=1|𝒬|​∑q∈𝒬C⁡(q,π),c⁡(π)=∑q∈𝒬C⁡(q,π)∑q∈𝒬Cs​(q).\displaystyle\bar{C}(\pi)=\frac{1}{|\mathcal{Q}|}\sum_{q\in\mathcal{Q}}C(q;\pi),~~~c(\pi)=\frac{\sum_{q\in\mathcal{Q}}C(q;\pi)}{\sum_{q\in\mathcal{Q}}C_{s}(q)}.
+(2)
+Following Ong et al. (2024), if s⁡(q,π)∈{0,1}s(q;\pi)\in\{0,1\} denotes the correctness of query qq under π\pi, the average performance and the performance gap recovered (PGR\mathrm{PGR}) are defined as
+r⁡(π)=1|𝒬|​∑q∈𝒬s⁡(q,π),PGR⁡(π)=r⁡(π)−r⁡(Mw)r⁡(Ms)−r⁡(Mw),\displaystyle\!\!\!\!r(\pi)=\frac{1}{|\mathcal{Q}|}\sum_{q\in\mathcal{Q}}s(q;\pi),\mathrm{PGR}(\pi)\!=\!\frac{r(\pi)\!-\!r(M_{w})}{r(M_{s})\!-\!r(M_{w})},
+(3)
+where r⁡(Ms)r(M_{s}) and r⁡(Mw)r(M_{w}) denote the accuracies of the MsM_{s} and MwM_{w}, respectively. PGR⁡(π)\mathrm{PGR}(\pi) quantifies how much of the performance gap between MwM_{w} and MsM_{s} is recovered by π\pi.
+To capture the cost required to achieve a desired level of performance, we utilize cost–performance threshold (CPT\mathrm{CPT}). Specifically, CPT⁡(x%)\mathrm{CPT}(x\%)
+denotes the minimum token cost (in terms of C¯\bar{C} or cc) required by policy π\pi to achieve a PGR\mathrm{PGR} of x%x\%, providing a measure of efficiency at different target performance levels.
+Finally, following Aggarwal et al. (2023), we report the incremental benefit per cost (IBC) as:
+ΔIBC​(π)\displaystyle\Delta_{\text{IBC}}(\pi)
+=IBC​(π)−IBCBaseIBCBase\displaystyle=\frac{\text{IBC}(\pi)-\text{IBC}_{\text{Base}}}{\text{IBC}_{\text{Base}}}
+(4)
+IBC​(π)\displaystyle\text{IBC}(\pi)
+=r⁡(π)−r⁡(Mw)C¯​(π),IBCBase=r⁡(Ms)−r⁡(Mw)1|𝒬|​∑q∈𝒬Cs​(q,π)\displaystyle=\frac{r(\pi)-r(M_{w})}{\bar{C}(\pi)},\text{IBC}_{\text{Base}}=\frac{r(M_{s})-r(M_{w})}{\frac{1}{|\mathcal{Q}|}\sum_{q\in\mathcal{Q}}C_{s}(q;\pi)}
+Here IBC​(π)\text{IBC}(\pi) measures performance improvement per unit expensive-model MsM_{s} token usage, IBCBase\text{IBC}_{\text{Base}} is the baseline corresponding to always using MsM_{s}, and ΔIBC​(π)\Delta_{\text{IBC}}(\pi) quantifies relative gain. A positive ΔIBC\Delta_{\text{IBC}} indicates more cost-effective performance gains than a standalone LLM. For evaluation, we compute ΔIBC\Delta_{\text{IBC}} across 100 equally sized performance regions between MwM_{w} and MsM_{s} and report the average.
+Experimental setup. For our experimental analysis, we use a two-model setup with Qwen2.5-3B-Instruct as the cheap LLM (MwM_{w}) and Claude 3.7 Sonnet as the expensive model (MsM_{s}), guided by Qwen2.5-Math-PRM-7B for step-level correctness estimation. For AIME (Di Zhang, 2025), we use an approximately 5050–5050 train–test split across alternate years and problem sets, while for MATH (Hendrycks et al., 2021), we train on the 7.5k official training set and evaluate on MATH-500. Although AIME is substantially more challenging than the other mathematical benchmarks considered, namely MATH-500, OlympiadBench, and Minerva Math, we show in Appendix H that the PRM remains reasonably effective on this benchmark.
+We benchmark three TRIM routing strategies (TRIM-Thr, TRIM-Agg, and TRIM-POMDP) against AutoMix, Smoothie, and the query-level routing methods proposed in RouteLLM (Ong et al., 2024), namely the BERT classifier, matrix factorization, and SW ranking models. To enable a fair comparison with TRIM and obtain stronger results using AutoMix, we introduce our own adapted variant of AutoMix, in which we replace the original self-verification component with cumulative PRM scores during both training and evaluation. This modification strengthens AutoMix: PRM-based verification is specifically designed for stepwise mathematical reasoning and empirically yields more informative correctness signals than generic self-verification scores. Consistent with this, we observe that AutoMix-PRM consistently outperforms the vanilla AutoMix across benchmarks (see Table 1 and Table 2).
+We refer to this enhanced variant as AutoMix-PRM, and additionally report results for the original (vanilla) AutoMix.
+For Smoothie, we include results for Smoothie-Train, following the official implementation. As noted in its limitations (Guha et al., 2024), Smoothie is optimized for performance rather than explicit cost–performance trade-offs and is designed to escalate to the strongest available model within a given mixture of LLMs. To populate a performance-cost curve in our setting, we therefore route based on the estimated difference in LLM quality scores for each sample. Since Smoothie requires outputs from at least three models to estimate these scores during training, we use Mathstral-7B-v0.1 as the third model in our Smoothie experiments.
+In TRIM-Agg, the router is parameterized by a simple two-hidden-layer MLP trained with PPO, while TRIM-POMDP uses the SARSOP solver (Kurniawati et al., 2008) to compute policies (see Appendix G for implementation details).
+Results. Table 1 reports the evaluation results across benchmarks, and Figure 6 illustrates the performance-cost trade-off curves achieved by different TRIM strategies. To further assess the generalization capability of TRIM-Agg, we evaluate routers trained on AIME in a cross-dataset setting, testing on other math benchmarks of comparable difficulty, namely OlympiadBench and Minerva Math, and report results in Table 2 and the corresponding performance curves in Figure 7. Additional comparisons based on budgeted accuracy are provided in Appendix C.
+Our experiments reveal distinct strengths across regimes. As shown in Figure 6, in the low-budget setting (large λ\lambda), TRIM-POMDP achieves superior performance by leveraging principled long-horizon planning under uncertainty. Unlike RL-trained policies, which struggle in this regime due to sparse rewards, modern POMDP solvers efficiently compute policies without being hindered by sparse-reward learning dynamics. In the high-budget regime (small λ\lambda), however, RL-trained TRIM-Agg policies show strong performance, achieving 95%95\% of the performance gap for MATH-500 while using approximately 80%80\% fewer expensive tokens, as policy optimization becomes significantly easier. Even our simplest approach, TRIM-Thr, achieves 5×5\times (ΔIBC=4.75\Delta_{\text{IBC}}=4.75 vs ΔIBC=0.95\Delta_{\text{IBC}}=0.95) better cost efficiency than baselines.
+Beyond budget regimes, our cross-dataset evaluations highlight an important distinction: predictive query-level routers, such as routing strategies of RouteLLM, can often fit to the intrinsic characteristics of specific datasets, while TRIM captures transferable routing behaviors that generalize across benchmarks of comparable difficulty. Intuitively, query-level routers are trained on coarse, input-level signals and can exploit superficial correlates of difficulty (e.g., dataset style, formatting, or typical problem length) that do not transfer, whereas TRIM conditions decisions on step-level correctness signals within the evolving solution trace, which more directly reflect universal failure modes in multi-step reasoning (e.g., divergence at critical steps) and therefore generalize better across datasets.
+For instance, BERT achieves a ΔIBC\Delta_{\text{IBC}} of 0.440.44 on AIME but drops dramatically to −0.04-0.04 on OlympiadBench and −0.1-0.1 on Minerva Math, while SW Ranking similarly degrades from 0.790.79 to 0.070.07 and 0.040.04, respectively. In contrast, TRIM-Agg achieves a ΔIBC\Delta_{\text{IBC}} of 2.52.5 on AIME and also maintains strong performance with ΔIBC\Delta_{\text{IBC}} values of 2.572.57 on OlympiadBench and 3.123.12 on Minerva Math when trained solely on AIME, demonstrating superior generalization.
+Although AutoMix (both vanilla and PRM variants) generalizes better than RouteLLM, its in-distribution performance on AIME is notably weaker; nonetheless, our PRM variant consistently outperforms the vanilla AutoMix. We attribute this gap to less reliable cumulative correctness score estimates on more challenging problems, which limit accurate routing decisions, despite AutoMix explicitly modeling noise in the correctness estimates. Overall, these findings suggest that step-level difficulty patterns captured by TRIM reflect fundamental properties of multi-step reasoning rather than dataset-specific artifacts.
+Despite being trained on fewer than 500 AIME samples, TRIM-Agg achieves strong performance on the held-out test set with 38.01%38.01\% expensive token usage at CPT⁡(95%)\mathrm{CPT}(95\%) and exhibits robust generalization to datasets of comparable difficulty, consistently surpassing both TRIM-Thr and query-level baselines. In parallel, TRIM-POMDP shows strong performance across all cost–performance trade-off regimes on both MATH-500 and AIME, despite its observation function being trained on different (but comparably difficult) math datasets (detailed in Appendix G) and the solver requiring only the estimated next-step accuracies of (Mw,Ms)(M_{w},M_{s}) as input. Additional empirical evidence of TRIM’s robustness across different model pairs and its extension beyond mathematical reasoning is presented in Appendix F.
+Takeaways: Experimental Results
+•
+In the low-budget regime, TRIM-POMDP shows superior performance, highlighting the benefits of principled long-horizon planning over learning-based methods under sparse-reward dynamics.
+•
+TRIM-Agg policies are more effective in the high-budget regime, where policy optimization via RL becomes considerably easier.
+•
+Predictive query-level routing strategies, such as those in RouteLLM, tend to fit to the intrinsic characteristics of datasets and therefore exhibit limited generalization.
+•
+AutoMix shows poor routing performance on challenging multi-step reasoning tasks, despite explicitly modeling noise in correctness estimates.
+6 Discussion and Conclusion
+In this work, we present TRIM, an approach for targeted stepwise routing that escalates only critical steps to stronger, more expensive LLMs, intervening precisely where the partial reasoning trace risks diverging from a correct solution. Our key insight is that even a small number of well-placed interventions can dramatically boost task accuracy, enabling significant efficiency gains compared to conventional query-level routing. Building on this insight, we designed multiple routing strategies for TRIM that differ in how much trajectory-level information they exploit when making routing decisions. While TRIM already surpasses contemporary routing methods and performs competitively with oracle query-level routers, further improvements may be possible by moving beyond step-level granularity to token-level routing. Since certain tokens disproportionately influence downstream generation (Wang et al., 2025), token-level routing offers a promising direction for achieving even finer-grained and cost-efficient interventions.
+References
+Aggarwal et al. (2023)
+P. Aggarwal, A. Madaan, A. Anand, S. P. Potharaju, S. Mishra, P. Zhou, A. Gupta, D. Rajagopal, K. Kappaganthu, Y. Yang, et al.
+Automix: automatically mixing language models.
+arXiv preprint arXiv:2310.12963.
+Cited by: §B.1,
+§2,
+§5,
+§5.
+Bigelow et al. (2025)
+E. J. Bigelow, A. Holtzman, H. Tanaka, and T. Ullman
+Forking paths in neural text generation.
+In The Thirteenth International Conference on Learning Representations,
+External Links: Link
+Cited by: Appendix D,
+§2.
+Cai et al. (2024)
+T. Cai, Y. Li, Z. Geng, H. Peng, J. D. Lee, D. Chen, and T. Dao
+Medusa: simple llm inference acceleration framework with multiple decoding heads.
+arXiv preprint arXiv:2401.10774.
+Cited by: Appendix A,
+Appendix G,
+§1,
+§2.
+DeepSeek-AI et al. (2025)
+DeepSeek-AI, D. Guo, D. Yang, H. Zhang, J. Song, R. Zhang, R. Xu, Q. Zhu, S. Ma, P. Wang, X. Bi, X. Zhang, X. Yu, Y. Wu, Z. F. Wu, Z. Gou, Z. Shao, Z. Li, Z. Gao, A. Liu, B. Xue, B. Wang, B. Wu, B. Feng, C. Lu, C. Zhao, C. Deng, C. Zhang, C. Ruan, D. Dai, D. Chen, D. Ji, E. Li, F. Lin, F. Dai, F. Luo, G. Hao, G. Chen, G. Li, H. Zhang, H. Bao, H. Xu, H. Wang, H. Ding, H. Xin, H. Gao, H. Qu, H. Li, J. Guo, J. Li, J. Wang, J. Chen, J. Yuan, J. Qiu, J. Li, J. L. Cai, J. Ni, J. Liang, J. Chen, K. Dong, K. Hu, K. Gao, K. Guan, K. Huang, K. Yu, L. Wang, L. Zhang, L. Zhao, L. Wang, L. Zhang, L. Xu, L. Xia, M. Zhang, M. Zhang, M. Tang, M. Li, M. Wang, M. Li, N. Tian, P. Huang, P. Zhang, Q. Wang, Q. Chen, Q. Du, R. Ge, R. Zhang, R. Pan, R. Wang, R. J. Chen, R. L. Jin, R. Chen, S. Lu, S. Zhou, S. Chen, S. Ye, S. Wang, S. Yu, S. Zhou, S. Pan, S. S. Li, S. Zhou, S. Wu, S. Ye, T. Yun, T. Pei, T. Sun, T. Wang, W. Zeng, W. Zhao, W. Liu, W. Liang, W. Gao, W. Yu, W. Zhang, W. L. Xiao, W. An, X. Liu, X. Wang, X. Chen, X. Nie, X. Cheng, X. Liu, X. Xie, X. Liu, X. Yang, X. Li, X. Su, X. Lin, X. Q. Li, X. Jin, X. Shen, X. Chen, X. Sun, X. Wang, X. Song, X. Zhou, X. Wang, X. Shan, Y. K. Li, Y. Q. Wang, Y. X. Wei, Y. Zhang, Y. Xu, Y. Li, Y. Zhao, Y. Sun, Y. Wang, Y. Yu, Y. Zhang, Y. Shi, Y. Xiong, Y. He, Y. Piao, Y. Wang, Y. Tan, Y. Ma, Y. Liu, Y. Guo, Y. Ou, Y. Wang, Y. Gong, Y. Zou, Y. He, Y. Xiong, Y. Luo, Y. You, Y. Liu, Y. Zhou, Y. X. Zhu, Y. Xu, Y. Huang, Y. Li, Y. Zheng, Y. Zhu, Y. Ma, Y. Tang, Y. Zha, Y. Yan, Z. Z. Ren, Z. Ren, Z. Sha, Z. Fu, Z. Xu, Z. Xie, Z. Zhang, Z. Hao, Z. Ma, Z. Yan, Z. Wu, Z. Gu, Z. Zhu, Z. Liu, Z. Li, Z. Xie, Z. Song, Z. Pan, Z. Huang, Z. Xu, Z. Zhang, and Z. Zhang
+DeepSeek-r1: incentivizing reasoning capability in llms via reinforcement learning.
+External Links: 2501.12948,
+Link
+Cited by: §2.
+Di Zhang (2025)
+Di Zhang
+AIME_1983_2024 (revision 6283828).
+Hugging Face.
+External Links: Link,
+Document
+Cited by: §1,
+§5.
+Ding et al. (2024)
+D. Ding, A. Mallick, C. Wang, R. Sim, S. Mukherjee, V. Ruhle, L. V. Lakshmanan, and A. H. Awadallah
+Hybrid llm: cost-efficient and quality-aware query routing.
+arXiv preprint arXiv:2404.14618.
+Cited by: §2.
+Ding et al. (2025)
+D. Ding, A. Mallick, S. Zhang, C. Wang, D. Madrigal, M. D. C. H. Garcia, M. Xia, L. V. S. Lakshmanan, Q. Wu, and V. Rühle
+BEST-route: adaptive llm routing with test-time optimal compute.
+External Links: 2506.22716,
+Link
+Cited by: §2.
+Egorov et al. (2017)
+M. Egorov, Z. N. Sunberg, E. Balaban, T. A. Wheeler, J. K. Gupta, and M. J. Kochenderfer
+POMDPs.jl: a framework for sequential decision making under uncertainty.
+Journal of Machine Learning Research 18 (26), pp. 1–5.
+External Links: Link
+Cited by: Appendix G.
+Guha et al. (2024)
+N. Guha, M. Chen, T. Chow, I. Khare, and C. Re
+Smoothie: label free language model routing.
+Advances in Neural Information Processing Systems 37, pp. 127645–127672.
+Cited by: §5,
+§5.
+He et al. (2024)
+C. He, R. Luo, Y. Bai, S. Hu, Z. L. Thai, J. Shen, J. Hu, X. Han, Y. Huang, Y. Zhang, et al.
+Olympiadbench: a challenging benchmark for promoting agi with olympiad-level bilingual multimodal scientific problems.
+arXiv preprint arXiv:2402.14008.
+Cited by: §1.
+Hendrycks et al. (2021)
+D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt
+Measuring mathematical problem solving with the math dataset.
+arXiv preprint arXiv:2103.03874.
+Cited by: §1,
+§5.
+Hwang et al. (2024)
+H. Hwang, D. Kim, S. Kim, S. Ye, and M. Seo
+Self-explore: enhancing mathematical reasoning in language models with fine-grained rewards.
+In Findings of the Association for Computational Linguistics: EMNLP 2024,  Y. Al-Onaizan, M. Bansal, and Y. Chen (Eds.),
+Miami, Florida, USA, pp. 1444–1466.
+External Links: Link,
+Document
+Cited by: §2.
+Kurniawati et al. (2008)
+H. Kurniawati, D. Hsu, W. S. Lee, et al.
+Sarsop: efficient point-based pomdp planning by approximating optimally reachable belief spaces..
+In Robotics: Science and systems,
+Vol. 2008.
+Cited by: Appendix G,
+§5.
+Leviathan et al. (2023)
+Y. Leviathan, M. Kalman, and Y. Matias
+Fast inference from transformers via speculative decoding.
+In International Conference on Machine Learning,
+pp. 19274–19286.
+Cited by: Appendix A,
+Appendix G,
+§1,
+§2.
+Liao et al. (2025)
+B. Liao, Y. Xu, H. Dong, J. Li, C. Monz, S. Savarese, D. Sahoo, and C. Xiong
+Reward-guided speculative decoding for efficient llm reasoning.
+arXiv preprint arXiv:2501.19324.
+Cited by: Appendix A,
+§2,
+§4.1.
+Lightman et al. (2023)
+H. Lightman, V. Kosaraju, Y. Burda, H. Edwards, B. Baker, T. Lee, J. Leike, J. Schulman, I. Sutskever, and K. Cobbe
+Let’s verify step by step.
+In The Twelfth International Conference on Learning Representations,
+Cited by: §2,
+§3,
+§4.2,
+§4.2.
+Lin et al. (2024)
+Z. Lin, T. Liang, J. Xu, Q. Lin, X. Wang, R. Luo, C. Shi, S. Li, Y. Yang, and Z. Tu
+Critical tokens matter: token-level contrastive estimation enhances llm’s reasoning capability.
+arXiv preprint arXiv:2411.19943.
+Cited by: Appendix D,
+§2.
+Lu et al. (2023)
+K. Lu, H. Yuan, R. Lin, J. Lin, Z. Yuan, C. Zhou, and J. Zhou
+Routing to the expert: efficient reward-guided ensemble of large language models.
+arXiv preprint arXiv:2311.08692.
+Cited by: §2.
+Luo et al. (2024)
+L. Luo, Y. Liu, R. Liu, S. Phatale, M. Guo, H. Lara, Y. Li, L. Shu, Y. Zhu, L. Meng, J. Sun, and A. Rastogi
+Improve mathematical reasoning in language models by automated process supervision.
+External Links: 2406.06592,
+Link
+Cited by: §2.
+Ong et al. (2024)
+I. Ong, A. Almahairi, V. Wu, W. Chiang, T. Wu, J. E. Gonzalez, M. W. Kadous, and I. Stoica
+Routellm: learning to route llms with preference data.
+arXiv preprint arXiv:2406.18665.
+Cited by: §2,
+§5,
+§5,
+§5.
+Pan et al. (2025)
+R. Pan, Y. Dai, Z. Zhang, G. Oliaro, Z. Jia, and R. Netravali
+Specreason: fast and accurate inference-time compute via speculative reasoning.
+arXiv preprint arXiv:2504.07891.
+Cited by: Appendix A,
+Appendix F,
+§2.
+Qu et al. (2025)
+Y. Qu, M. Y. Yang, A. Setlur, L. Tunstall, E. E. Beeching, R. Salakhutdinov, and A. Kumar
+Optimizing test-time compute via meta reinforcement fine-tuning.
+arXiv preprint arXiv:2503.07572.
+Cited by: §1,
+§2.
+Setlur et al. (2024a)
+A. Setlur, S. Garg, X. Geng, N. Garg, V. Smith, and A. Kumar
+Rl on incorrect synthetic data scales the efficiency of llm math reasoning by eight-fold.
+Advances in Neural Information Processing Systems 37, pp. 43000–43031.
+Cited by: §1,
+§2.
+Setlur et al. (2024b)
+A. Setlur, C. Nagpal, A. Fisch, X. Geng, J. Eisenstein, R. Agarwal, A. Agarwal, J. Berant, and A. Kumar
+Rewarding progress: scaling automated process verifiers for llm reasoning.
+arXiv preprint arXiv:2410.08146.
+Cited by: §2,
+§3.
+Snell et al. (2024)
+C. Snell, J. Lee, K. Xu, and A. Kumar
+Scaling llm test-time compute optimally can be more effective than scaling model parameters.
+arXiv preprint arXiv:2408.03314.
+Cited by: §2,
+§2,
+§3.
+Team et al. (2025)
+K. Team, Y. Bai, Y. Bao, G. Chen, J. Chen, N. Chen, R. Chen, Y. Chen, Y. Chen, Y. Chen, Z. Chen, J. Cui, H. Ding, M. Dong, A. Du, C. Du, D. Du, Y. Du, Y. Fan, Y. Feng, K. Fu, B. Gao, H. Gao, P. Gao, T. Gao, X. Gu, L. Guan, H. Guo, J. Guo, H. Hu, X. Hao, T. He, W. He, W. He, C. Hong, Y. Hu, Z. Hu, W. Huang, Z. Huang, Z. Huang, T. Jiang, Z. Jiang, X. Jin, Y. Kang, G. Lai, C. Li, F. Li, H. Li, M. Li, W. Li, Y. Li, Y. Li, Z. Li, Z. Li, H. Lin, X. Lin, Z. Lin, C. Liu, C. Liu, H. Liu, J. Liu, J. Liu, L. Liu, S. Liu, T. Y. Liu, T. Liu, W. Liu, Y. Liu, Y. Liu, Y. Liu, Y. Liu, Z. Liu, E. Lu, L. Lu, S. Ma, X. Ma, Y. Ma, S. Mao, J. Mei, X. Men, Y. Miao, S. Pan, Y. Peng, R. Qin, B. Qu, Z. Shang, L. Shi, S. Shi, F. Song, J. Su, Z. Su, X. Sun, F. Sung, H. Tang, J. Tao, Q. Teng, C. Wang, D. Wang, F. Wang, H. Wang, J. Wang, J. Wang, J. Wang, S. Wang, S. Wang, Y. Wang, Y. Wang, Y. Wang, Y. Wang, Y. Wang, Z. Wang, Z. Wang, Z. Wang, C. Wei, Q. Wei, W. Wu, X. Wu, Y. Wu, C. Xiao, X. Xie, W. Xiong, B. Xu, J. Xu, J. Xu, L. H. Xu, L. Xu, S. Xu, W. Xu, X. Xu, Y. Xu, Z. Xu, J. Yan, Y. Yan, X. Yang, Y. Yang, Z. Yang, Z. Yang, Z. Yang, H. Yao, X. Yao, W. Ye, Z. Ye, B. Yin, L. Yu, E. Yuan, H. Yuan, M. Yuan, H. Zhan, D. Zhang, H. Zhang, W. Zhang, X. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Z. Zhang, H. Zhao, Y. Zhao, H. Zheng, S. Zheng, J. Zhou, X. Zhou, Z. Zhou, Z. Zhu, W. Zhuang, and X. Zu
+Kimi k2: open agentic intelligence.
+External Links: 2507.20534,
+Link
+Cited by: §2.
+Wang et al. (2023)
+P. Wang, L. Li, Z. Shao, R. Xu, D. Dai, Y. Li, D. Chen, Y. Wu, and Z. Sui
+Math-shepherd: verify and reinforce llms step-by-step without human annotations.
+arXiv preprint arXiv:2312.08935.
+Cited by: §2,
+§3,
+§4.2,
+§4.2.
+Wang et al. (2025)
+S. Wang, L. Yu, C. Gao, C. Zheng, S. Liu, R. Lu, K. Dang, X. Chen, J. Yang, Z. Zhang, et al.
+Beyond the 80/20 rule: high-entropy minority tokens drive effective reinforcement learning for llm reasoning.
+arXiv preprint arXiv:2506.01939.
+Cited by: Appendix D,
+§1,
+§2,
+§6.
+Yang et al. (2025)
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, C. Zheng, D. Liu, F. Zhou, F. Huang, F. Hu, H. Ge, H. Wei, H. Lin, J. Tang, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Zhou, J. Lin, K. Dang, K. Bao, K. Yang, L. Yu, L. Deng, M. Li, M. Xue, M. Li, P. Zhang, P. Wang, Q. Zhu, R. Men, R. Gao, S. Liu, S. Luo, T. Li, T. Tang, W. Yin, X. Ren, X. Wang, X. Zhang, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Zhang, Y. Wan, Y. Liu, Z. Wang, Z. Cui, Z. Zhang, Z. Zhou, and Z. Qiu
+Qwen3 technical report.
+External Links: 2505.09388,
+Link
+Cited by: §2.
+Yu et al. (2025)
+J. Yu, Z. Cheng, X. Wu, and X. Xing
+Gpo: learning from critical steps to improve llm reasoning.
+arXiv preprint arXiv:2509.16456.
+Cited by: Appendix D,
+§2.
+Zhang et al. (2024)
+M. Zhang, O. Press, W. Merrill, A. Liu, and N. A. Smith
+How language model hallucinations can snowball.
+In Proceedings of the 41st International Conference on Machine Learning,
+ICML’24.
+Cited by: §1.
+Zheng et al. (2024)
+C. Zheng, Z. Zhang, B. Zhang, R. Lin, K. Lu, B. Yu, D. Liu, J. Zhou, and J. Lin
+Processbench: identifying process errors in mathematical reasoning.
+arXiv preprint arXiv:2412.06559.
+Cited by: Appendix G,
+§4.3.
+Appendix Contents
+A. Latency Analysis of TRIM .A
+B. Formalizing TRIM-POMDP .B
+C. Budgeted Accuracy .C
+D. Analysis of 𝚛𝚎𝚐𝚎𝚗𝚎𝚛𝚊𝚝𝚎\mathtt{regenerate} Action Design Choice .D
+E. Robustness of TRIM to PRM Noise and Miscalibration .E
+F. Generalizability of TRIM Across Model Pairs and Domains .F
+G. TRIM Implementation Details .G
+H. Effectiveness of Qwen2.5-Math-PRM-7B for AIME .H
+Appendix A Latency Analysis of TRIM
+Targeted intervention enables TRIM to reduce cost, which is defined as the number of tokens generated from the expensive, stronger LLM. In practice, TRIM can be implemented using the same system-level optimization techniques that enable low-latency speculative decoding  (Leviathan et al., 2023; Liao et al., 2025; Cai et al., 2024; Pan et al., 2025), thereby avoiding frequent context re-encoding (“prefill”) when switching between models and effectively ignoring the associated latency cost overhead. We now provide direct empirical evidence to this claim, demonstrating that TRIM does not introduce significant wall-clock overhead—and is faster than running the expensive model MsM_{s} alone.
+Experimental Setup.
+We conducted end-to-end latency and throughput measurements on a fixed 2×\timesH100 setup using vLLM with prefix caching enabled. For TRIM-Thr, GPU memory was allocated as follows: the large model MsM_{s} was sharded across both GPUs using tensor parallelism (55% memory utilization per GPU), while the small model MwM_{w} and the PRM each ran on separate GPUs with 40% memory utilization. For single–large-model baselines, both GPUs were fully dedicated to serving the large model. All measurements were conducted on the MATH-500 test set, and we evaluated TRIM-Thr under two model-pair configurations:
+•
+TRIM-Thr (1.5B + 32B): Qwen2.5-1.5B-Instruct as MwM_{w} and Qwen2.5-32B-Instruct as MsM_{s}
+•
+TRIM-Thr (1.5B + 7B): Qwen2.5-1.5B-Instruct as MwM_{w} and Qwen2.5-7B-Instruct as MsM_{s}
+These results show that TRIM-Thr (1.5B + 32B) achieves a 1.4×1.4\times–2.75×2.75\times speedup over running the 32B model alone (17.10/12.10≈1.4117.10/12.10\approx 1.41, 17.10/6.21≈2.7517.10/6.21\approx 2.75), despite incorporating PRM evaluation and stepwise routing. Moreover, we observe that latency gains increase with larger strong models and lower routing thresholds.
+Theoretical Justification.
+In TRIM, the small, inexpensive model MwM_{w} acts as the draft generator, while the strong model MsM_{s} performs chunked prefilling of the ongoing MwM_{w} generation to maintain a synchronized KV cache. Consequently, routing decisions do not introduce sequential stalls: when escalation occurs, MsM_{s} can immediately resume decoding from its pre-computed prefix.
+Furthermore, for all three TRIM variants (TRIM-Thr, TRIM-Agg, and TRIM-POMDP), the routing decision overhead can be made negligible. TRIM-Agg employs a lightweight MLP with two hidden layers of 128 units, whose inference cost is effectively zero relative to LLM decoding. For TRIM-POMDP, we use SARSOP, an offline POMDP solver. To achieve the best performance out of the POMDP solver, we recompute the policy at every routing decision by initializing the initial state distribution with the current belief distribution (one can skip recomputation when belief changes are small without any loss in performance). However, because the true state space is small and each policy computation is fast (about 5 seconds on average), this enables us to precompute a lookup table mapping belief distributions to actions, resulting in zero latency from the router during inference.
+With this implementation, overall wall-clock time is dominated by strong-model decoding. Because TRIM substantially reduces the number of tokens generated by MsM_{s}, end-to-end inference is faster than running the expensive model alone.
+Table 3: End-to-end latency and throughput analysis.
+Model Configuration
+Threshold (kk)
+Latency (sec/query)
+Throughput (tok/sec)
+Baselines
+Qwen2.5-32B
+–
+17.10
+31.77
+Qwen2.5-7B
+–
+10.27
+65.20
+TRIM-Thr (1.5B + 32B)
+0.1
+6.21
+64.30
+0.4
+9.02
+52.30
+0.7
+12.10
+47.86
+TRIM-Thr (1.5B + 7B)
+0.1
+6.35
+66.66
+0.4
+8.17
+65.25
+0.7
+9.51
+64.61
+Appendix B Formalizing TRIM-POMDP
+Foundations of POMDPs. A Partially Observable Markov Decision Process (POMDP) provides a principled framework for sequential decision-making under uncertainty when the underlying system state is not directly observable.
+A POMDP is defined by the tuple (S,A,T,R,Ω,𝒪)(S,A,T,R,\Omega,\mathcal{O}), where SS is the state space, AA the set of actions, and Ω\Omega the observation space. The transition function T⁡(s′|s,a)T(s^{\prime}|s,a) specifies the probability of transitioning from s∈Ss\in S to s′∈Ss^{\prime}\in S given a∈Aa\in A, while the observation function 𝒪\mathcal{O} maps s∈Ss\in S and a∈Aa\in A to a probability distribution over the observation space Ω\Omega. The reward function R⁡(s,a)R(s,a) assigns a scalar reward to state–action pairs.
+Since the true state is hidden, the agent maintains a belief state b∈Δ⁡(S)b\in\Delta(S), a probability distribution over latent states, updated recursively via Bayes’ rule after each action–observation pair.
+A policy is a mapping π:b↦a\pi:b\mapsto a, and the objective is to maximize expected discounted return by optimizing over policies.
+B.1 Formal Definition of TRIM-POMDP
+We define the components for TRIM-POMDP as follows:
+State space (SS): As shown in Figure 5, we categorize the state space into three correctness classes: S0S_{0} (all prior steps correct and current step correct), S1S_{1} (at least one prior step incorrect), and S2S_{2} (prior steps correct but current step incorrect), along with a terminal absorbing state SterS_{\mathrm{ter}}. Each state is augmented with the step index tt and the token count ctc_{t} of the current step 𝐲t\mathbf{y}_{t} within the trace 𝐲1:t\mathbf{y}_{1:t}.
+Observation Space (Ω\Omega): The observation space (noisy state observations) is defined as the set of aggregated features 𝐟~1:t=(rt,min(𝐫1:t−1),ct,t)\tilde{\mathbf{f}}_{1:t}=\big(r_{t},\;\min(\mathbf{r}_{1:t-1}),\;c_{t},\;t\big), identical to the state features used in TRIM-Agg. These observations help us obtain a probability distribution over the state space S.S.
+Action Space (AA): Similar to prior router policies, the action set is A={𝚌𝚘𝚗𝚝𝚒𝚗𝚞𝚎,𝚛𝚎𝚐𝚎𝚗𝚎𝚛𝚊𝚝𝚎}A=\{\mathtt{continue},\mathtt{regenerate}\}.
+Transition Function (TT): The transition dynamics capture the accuracy of MsM_{s} and MwM_{w}, as well as transitions into the terminal state SterS_{\mathrm{ter}}. Formally:
+𝒯⁡(s′∈S0∣s∈S0∪S2,a=𝚛𝚎𝚐𝚎𝚗𝚎𝚛𝚊𝚝𝚎)\displaystyle\mathcal{T}(s^{\prime}\in S_{0}\mid s\in S_{0}\cup S_{2},a=\mathtt{regenerate})
+=ps(next step accuracy of Ms)\displaystyle=p_{s}\quad\text{(next step accuracy of $M_{s}$)}
+𝒯⁡(s′∈S0∣s∈S0,a=𝚌𝚘𝚗𝚝𝚒𝚗𝚞𝚎)\displaystyle\mathcal{T}(s^{\prime}\in S_{0}\mid s\in S_{0},a=\mathtt{continue})
+=pw(next step accuracy of Mw)\displaystyle=p_{w}\quad\text{(next step accuracy of $M_{w}$)}
+𝒯⁡(s′∈S1∣s∈S2,a=𝚌𝚘𝚗𝚝𝚒𝚗𝚞𝚎)\displaystyle\mathcal{T}(s^{\prime}\in S_{1}\mid s\in S_{2},a=\mathtt{continue})
+=1\displaystyle=1
+𝒯⁡(s∈S1∣a∈A,s′∈S1)\displaystyle\mathcal{T}(s\in S_{1}\mid a\in A,s^{\prime}\in S_{1})
+=1(irrecoverability assumption)\displaystyle=1\quad\text{(irrecoverability assumption)}
+Observation Function (𝒪\mathcal{O}): The observation function is a mapping from s∈Ss\in S to the probability distribution over the observation space Ω\Omega. The probabilities P⁡(o|s)P(o|s), give us the likelihood of observing o∈Ωo\in\Omega (i.e., 𝐟~1:t\tilde{\mathbf{f}}_{1:t}) given state s∈S.s\in S.. This corresponds to modeling the distribution of PRM scores conditioned on each state class, which can be learned from process supervision datasets with step-level annotations (e.g., PRM800K).
+Reward Function (RR): Invoking the strong model incurs a cost proportional to the number of tokens generated, i.e., R(s,a=𝚛𝚎𝚐𝚎𝚗𝚎𝚛𝚊𝚝𝚎,s′)=−λ⋅|Ms(𝐲1:t−1)|.R(s,a=\mathtt{regenerate},s^{\prime})=-\lambda\cdot|M_{s}(\mathbf{y}_{1:t-1})|.
+. Any transition into the terminal state SterS_{\mathrm{ter}} yields the task reward 𝐑,\mathbf{R}, if and only if the final state corresponds to a correct solution (i.e., s∈S0s\in S_{0}).
+TRIM-POMDP can be viewed as an extension of Aggarwal et al. (2023) to the setting of multi-step reasoning.
+In their official implementation, Automix employs a greedy approximation to the POMDP, which is sufficient for task-level routing since it is a single-step decision problem (horizon of one). In contrast, multi-step reasoning requires planning over long horizons, making a full POMDP formulation more appropriate and motivating the use of sophisticated solvers. Furthermore, our formulation introduces key differences that provide additional flexibility. In Automix, self-verification probabilities (observations) are used to obtain estimates of model performance metrics (state features), and thus retraining of the observation function 𝒪\mathcal{O} is required whenever the model pair (Ms,Mw)(M_{s},M_{w}) changes. However, TRIM-POMDP incorporates model accuracies into the transition function, eliminating the need for retraining the observation model when switching model pairs.
+Appendix C Budgeted Accuracy
+In addition to the Cost–Performance Threshold (CPT\mathrm{CPT}) and ΔIBC\Delta_{\text{IBC}} metrics, we report budgeted accuracy in Table 4 and Table 5. Along with performance accuracy at each token budget, we also report the performance gap recovered (PGR\mathrm{PGR}) for improved comparability, with PGR\mathrm{PGR} percentages shown in parentheses. The columns indicate the normalized percentage of tokens generated by MsM_{s}, expressed relative to the total number of tokens that would be produced when running MsM_{s} alone (c⁡(π)c(\pi)). Budgeted accuracy is a standard metric that evaluates each routing method under a fixed compute or token budget. These results enable direct comparison under matched compute budgets and complement our CPT and IBC analyses.
+Table 4: Budgeted-accuracy comparison of TRIM across the AIME & MATH-500 benchmarks.
+MATH-500
+AIME
+Method
+10%10\%
+15%15\%
+20%20\%
+25%25\%
+30%30\%
+10%10\%
+15%15\%
+20%20\%
+25%25\%
+30%30\%
+BERT
+66.60% (8.5%)
+67.84% (16.1%)
+69.20% (24.4%)
+70.00% (29.3%)
+70.40% (31.7%)
+13.06% (9.7%)
+14.28% (16.8%)
+15.56% (24.4%)
+17.22% (34.1%)
+18.37% (40.9%)
+MF
+68.46% (19.9%)
+70.35% (31.4%)
+71.40% (37.8%)
+71.86% (40.6%)
+72.20% (42.7%)
+14.94% (20.7%)
+16.39% (29.3%)
+17.01% (32.9%)
+17.43% (35.4%)
+18.26% (40.2%)
+SW Ranking
+67.82% (16.0%)
+68.20% (18.3%)
+68.80% (22.0%)
+70.01% (29.3%)
+71.14% (36.2%)
+13.90% (14.6%)
+15.10% (21.7%)
+16.18% (28.0%)
+17.43% (35.4%)
+18.88% (43.9%)
+Smoothie
+67.20% (12.2%)
+67.77% (15.7%)
+68.20% (18.3%)
+69.35% (25.3%)
+70.00% (29.3%)
+13.07% (9.8%)
+13.90% (14.6%)
+15.15% (22.0%)
+16.18% (28.0%)
+16.60% (30.5%)
+AutoMix-PRM
+68.88% (22.4%)
+70.54% (32.5%)
+72.19% (42.7%)
+73.78% (52.3%)
+75.26% (61.3%)
+12.74% (7.8%)
+13.85% (14.3%)
+14.95% (20.8%)
+15.88% (26.3%)
+16.80% (31.7%)
+TRIM-Thr
+74.22% (55.0%)
+77.55% (75.3%)
+80.44% (93.0%)
+80.76% (94.8%)
+82.22% (103.8%)
+17.46% (35.6%)
+18.12% (39.4%)
+19.01% (44.7%)
+21.24% (57.8%)
+23.00% (68.1%)
+TRIM-Agg
+76.42% (68.4%)
+79.94% (89.9%)
+82.15% (103.3%)
+84.59% (118.3%)
+87.04% (133.2%)
+19.14% (45.4%)
+20.82% (55.3%)
+22.87% (67.4%)
+23.23% (69.5%)
+25.95% (85.5%)
+TRIM-POMDP
+76.39% (68.2%)
+78.75% (82.6%)
+81.21% (97.7%)
+81.86% (101.6%)
+82.51% (105.5%)
+18.80% (43.4%)
+19.26% (46.1%)
+22.50% (65.2%)
+25.76% (84.4%)
+28.62% (101.2%)
+Table 5: Cross-benchmark generalization performance of AIME-trained routers under budgeted-accuracy evaluation.
+OlympiadBench
+Minerva Math
+Method
+10%10\%
+15%15\%
+20%20\%
+25%25\%
+30%30\%
+10%10\%
+15%15\%
+20%20\%
+25%25\%
+30%30\%
+BERT
+29.63% (6.6%)
+30.11% (9.3%)
+30.83% (13.3%)
+31.41% (16.5%)
+32.62% (23.3%)
+28.68% (8.9%)
+29.04% (11.1%)
+29.84% (15.9%)
+31.02% (23.1%)
+31.25% (24.4%)
+MF
+29.78% (7.4%)
+30.96% (14.0%)
+31.11% (14.9%)
+31.56% (17.4%)
+32.59% (23.1%)
+29.89% (16.2%)
+30.88% (22.2%)
+32.35% (31.1%)
+32.35% (31.1%)
+32.72% (33.3%)
+SW Ranking
+30.95% (14.0%)
+32.44% (22.3%)
+33.04% (25.6%)
+33.63% (28.9%)
+34.07% (31.4%)
+28.31% (6.7%)
+29.41% (13.3%)
+31.40% (25.4%)
+31.25% (24.4%)
+31.51% (26.0%)
+Smoothie
+29.63% (6.6%)
+29.93% (8.3%)
+30.86% (13.5%)
+32.30% (21.5%)
+33.33% (27.3%)
+28.31% (6.7%)
+28.68% (8.9%)
+29.15% (11.8%)
+30.15% (17.8%)
+30.51% (20.0%)
+AutoMix-PRM
+29.76% (7.3%)
+31.34% (16.1%)
+32.61% (23.3%)
+33.83% (30.0%)
+34.75% (35.2%)
+33.66% (39.0%)
+34.86% (46.3%)
+36.48% (56.1%)
+37.88% (64.5%)
+39.54% (74.6%)
+TRIM-Thr
+31.91% (19.3%)
+35.53% (39.5%)
+37.22% (48.9%)
+40.70% (68.4%)
+42.08% (76.0%)
+32.80% (33.8%)
+35.43% (49.7%)
+39.34% (73.3%)
+41.81% (88.3%)
+42.49% (92.4%)
+TRIM-Agg
+35.56% (39.7%)
+37.74% (51.8%)
+39.67% (62.6%)
+42.30% (77.3%)
+43.00% (81.2%)
+35.17% (48.1%)
+37.25% (60.7%)
+40.25% (78.8%)
+41.33% (85.4%)
+42.41% (91.9%)
+One could adopt a more conservative cost model by explicitly accounting for prefill overhead. Empirically, for large-scale models, the prefill cost per token is approximately 10% to 15% of the sequential decode cost. Under a conservative 20% overhead model, the reported Cost–Performance Thresholds (CPT) for TRIM would increase by a constant factor of 1.2×1.2\times (or 6/56/5). Importantly, this adjustment does not alter the qualitative conclusions: TRIM continues to dominate query-level baselines by a wide margin, and the relative ordering between methods remains unchanged.
+Appendix D Analysis of 𝚛𝚎𝚐𝚎𝚗𝚎𝚛𝚊𝚝𝚎\mathtt{regenerate} Action Design Choice
+A central design choice in TRIM is the definition of the 𝚛𝚎𝚐𝚎𝚗𝚎𝚛𝚊𝚝𝚎\mathtt{regenerate} action: after escalating a single reasoning step to the strong model MsM_{s}, control is returned to the weak model MwM_{w} rather than allowing MsM_{s} to take over all remaining steps. We now provide both empirical motivation and ablation results supporting this choice.
+Our choice to return control to MwM_{w} after a single MsM_{s} intervention is motivated by an empirical observation (also supported by Yu et al. (2025); Lin et al. (2024)): when an incorrect step causes the reasoning trajectory to diverge, correcting just that critical step is often sufficient to steer the solution back onto a successful path. In our experiments, we observed that when MwM_{w} produces an incorrect step, the primary issue is not that all subsequent steps require MsM_{s}, but rather that the trajectory has diverged at a critical decision point. When that specific step is regenerated by MsM_{s}, the corrected token sequence frequently realigns the reasoning process, after which MwM_{w} is able to continue successfully without additional intervention.
+This behavior aligns with prior observations in multi-step reasoning (Wang et al., 2025; Bigelow et al., 2025), where a small number of pivotal steps disproportionately determine downstream correctness, and correcting these critical tokens can dramatically change the outcome. This phenomenon is empirically supported by our intervention analysis in Table 6, which lists the number of MATH-500 and AIME problems solved exclusively due to TRIM-Thr intervention (i.e., not solved by MwM_{w}), grouped by the number of intervention rounds, and shows that the vast majority of accuracy gains arise from just 1–3 targeted interventions rather than sustained takeover by MsM_{s}.
+Table 6: Distribution of accuracy gains by number of strong-model interventions on MATH-500 and AIME.
+Dataset
+Threshold (k)(k)
+MsM_{s} Rounds: 1
+MsM_{s} Rounds: 2
+MsM_{s} Rounds: 3
+MsM_{s} Rounds: >3>3
+MATH-500
+0.10
+19
+8
+2
+1
+0.35
+30
+17
+4
+7
+0.75
+28
+24
+20
+8
+AIME-Test
+0.10
+14
+9
+5
+0
+0.35
+16
+13
+8
+12
+0.75
+20
+15
+18
+13
+D.1 Alternative 𝚛𝚎𝚐𝚎𝚗𝚎𝚛𝚊𝚝𝚎\mathtt{regenerate} Action: Full Takeover Ablation
+We further evaluate an alternative 𝚛𝚎𝚐𝚎𝚗𝚎𝚛𝚊𝚝𝚎\mathtt{regenerate} action definition in which MsM_{s} takes over generation for all remaining steps after the first escalation. We denote this variant as One-Step Thr and compare it directly with the standard TRIM-Thr used throughout the paper, reporting the results in Table 7.
+Table 7: Comparison of standard TRIM-Thr against One-Step Thr, an alternative regenerate action in which MsM_{s} generates all remaining steps after intervention.
+Dataset
+Method
+CPT⁡(50%)\mathrm{CPT}(50\%)
+CPT⁡(80%)\mathrm{CPT}(80\%)
+CPT⁡(95%)\mathrm{CPT}(95\%)
+ΔIBC\Delta_{\text{IBC}}
+MATH500
+TRIM-Thr
+43.68 (9.45%)
+73.74 (15.95%)
+115.99 (25.08%)
+4.75
+One-Step Thr
+114.60 (24.78%)
+153.59 (33.22%)
+179.31 (38.78%)
+1.10
+AIME
+TRIM-Thr
+204.01 (23.47%)
+314.70 (36.20%)
+372.79 (42.89%)
+1.81
+One-Step Thr
+217.70 (25.04%)
+482.48 (55.50%)
+590.83 (67.97%)
+0.84
+OlympiadBench
+TRIM-Thr
+136.64 (20.45%)
+220.70 (33.03%)
+313.89 (46.97%)
+1.31
+One-Step Thr
+199.10 (29.79%)
+348.12 (52.09%)
+442.12 (66.16%)
+0.63
+MinervaMath
+TRIM-Thr
+65.15 (15.20%)
+92.78 (21.65%)
+148.55 (34.66%)
+2.23
+One-Step Thr
+144.86 (33.80%)
+189.97 (44.32%)
+259.03 (60.43%)
+0.50
+This ablation shows that allowing MsM_{s} to take over the remaining steps is substantially less cost-efficient, requiring significantly more expensive-model tokens to reach comparable performance. Overall, these results confirm that targeted, single-step interventions are both sufficient and optimal for correcting reasoning trajectories in multi-step reasoning tasks, validating our design choice.
+Appendix E Robustness of TRIM to PRM Noise and Miscalibration
+A key strength of stepwise routing is its ability to leverage Process Reward Models (PRMs) to make fine-grained decisions during generation. TRIM is specifically designed to remain robust to the inevitable inaccuracies and miscalibration in PRM-based step-level correctness estimates, addressing this challenge through both its POMDP-based formulation and its RL-trained routing variants.
+In TRIM-POMDP, the routing problem is formulated as a Partially Observable Markov Decision Process (POMDP), explicitly designed to account for inaccuracies in PRM-based step-level correctness estimates. Rather than treating PRM scores as ground-truth indicators of correctness, TRIM-POMDP interprets them as noisy observations of an underlying latent correctness state. An observation function is learned to map these imperfect PRM scores to a belief distribution over these hidden correctness states, allowing routing decisions to be made based on posterior beliefs rather than raw scores. This explicit modeling of uncertainty is the primary motivation for the POMDP formulation and makes TRIM-POMDP robust to PRM miscalibration, in contrast to threshold-based routing methods such as TRIM-Thr, which operate directly on raw PRM outputs.
+On the other hand, TRIM-Agg provides a complementary form of robustness and implicitly learns to model the unreliability in the PRM estimates during RL training. Thus, while the performance of TRIM-Thr can degrade using noisier PRMs, TRIM-Agg maintains robust performance. To validate this, we trained TRIM-Agg on MATH-500 using noisy PRM scores and compared its performance against TRIM-Thr on OlympiadBench, with both methods relying on the noisy PRM evaluations. Noise was introduced by applying left-padding instead of the recommended right-padding during PRM evaluation, which introduces significant noise into step-level correctness estimates.
+Table 8: Performance comparison of TRIM methods under noisy PRM scores.
+Method
+CPT⁡(50%)\mathrm{CPT}(50\%)
+CPT⁡(80%)\mathrm{CPT}(80\%)
+CPT⁡(95%)\mathrm{CPT}(95\%)
+ΔIBC\Delta_{\text{IBC}}
+TRIM-Thr
+187.37 (27.63%)
+450.77 (66.46%)
+564.92 (83.29%)
+0.38
+TRIM-Agg
+156.96 (23.14%)
+262.82 (38.75%)
+305.01 (44.97%)
+1.16
+The results in Table 8 show that TRIM-Agg maintains strong cross-dataset generalization performance despite the noisy PRM: it achieves CPT⁡(95%)\mathrm{CPT}(95\%) on OlympiadBench using only 45% of expensive tokens, whereas TRIM-Thr suffers significant degradation, requiring over 80% of expensive tokens to reach CPT⁡(95%)\mathrm{CPT}(95\%). This empirically confirms that RL-trained routing policies can also learn to be robust to PRM noise, while simple threshold-based methods cannot.
+Appendix F Generalizability of TRIM Across Model Pairs and Domains
+TRIM is model-agnostic and applies to arbitrary model pairs (Mw,Ms)(M_{w},M_{s}), provided they are sufficiently compatible for stepwise continuation. We evaluate generalization along two axes: (i) robustness across model pairs, and (ii) applicability beyond mathematical reasoning.
+Generalization Across Model Pairs. In addition to the cross-dataset generalization experiments reported in Table 2 and Figure 7, we evaluate TRIM-Thr using a substantially different model pair: Qwen2.5-1.5B-Instruct as the weak model MwM_{w} and Qwen3-32B as the strong model MsM_{s}. Table 9 reports the resulting performance on MATH-500 and AIME.
+These results demonstrate that TRIM-Thr continues to achieve strong efficiency gains under a different model family and scale, confirming that its routing behavior is not tied to a specific model pair.
+Table 9: Performance of TRIM-Thr for the model pair (Qwen2.5-1.5B-Instruct, Qwen3-32B) on AIME & MATH-500.
+MATH-500
+AIME
+Method
+CPT⁡(50%)\mathrm{CPT}(50\%)
+CPT⁡(80%)\mathrm{CPT}(80\%)
+CPT⁡(95%)\mathrm{CPT}(95\%)
+ΔIBC\Delta_{\text{IBC}}
+CPT⁡(50%)\mathrm{CPT}(50\%)
+CPT⁡(80%)\mathrm{CPT}(80\%)
+CPT⁡(95%)\mathrm{CPT}(95\%)
+ΔIBC\Delta_{\text{IBC}}
+TRIM-Thr
+30.02 (4.77%)
+117.32 (18.65%)
+169.9 (27.01%)
+7.46
+541.35 (32.61%)
+870.86 (52.47%)
+1035.62 (62.39%)
+1.25
+Table 10: Budgeted-accuracy comparison of TRIM-Thr for the model pair (Qwen2.5-1.5B-Instruct, Qwen3-32B) on AIME & MATH-500.
+MATH-500
+AIME
+Method
+10%10\%
+15%15\%
+20%20\%
+25%25\%
+30%30\%
+10%10\%
+15%15\%
+20%20\%
+25%25\%
+30%30\%
+TRIM-Thr
+63.45% (70.2%)
+67.19% (75.6%)
+70.63% (80.7%)
+77.13% (90.2%)
+85.23% (102.1%)
+10.76% (25.8%)
+11.37% (27.4%)
+14.06% (34.5%)
+15.57% (38.5%)
+18.42% (46.0%)
+Beyond Mathematical Reasoning.While our main experiments focus on mathematical reasoning due to the availability of reliable Process Reward Models (PRMs), TRIM itself is not math-specific. The framework only requires a mechanism for estimating step-level correctness, not a domain-specific PRM. In domains where PRMs are unavailable, TRIM can be instantiated using model-generated self-evaluations—by prompting the strong model to score intermediate steps—similar in spirit to SpecReason (Pan et al., 2025).
+Table 11: Performance of TRIM-Thr on GPQA-DIAMOND for the model pair (Qwen3-1.7B, Qwen3-32B).
+Method
+CPT⁡(50%)\mathrm{CPT}(50\%)
+CPT⁡(80%)\mathrm{CPT}(80\%)
+CPT⁡(95%)\mathrm{CPT}(95\%)
+ΔIBC\Delta_{\text{IBC}}
+TRIM-Thr
+537.05 (28.72%)
+1012.97 (54.17%)
+1165.85 (62.34%)
+0.26
+To demonstrate this, we extend TRIM-Thr beyond mathematics and evaluate it on GPQA-DIAMOND, a challenging benchmark spanning biology, physics, and chemistry. We use Qwen3-1.7B as MwM_{w}, Qwen3-32B as MsM_{s}, and obtain step-level correctness scores by prompting MsM_{s} to assign scores on a 0–9 scale. The resulting performance–cost trade-offs are shown in Table 11. TRIM-Thr achieves CPT⁡(95%)\mathrm{CPT}(95\%) using only 62% of expensive-model tokens. Moreover, at a high threshold (9), TRIM-Thr improves the accuracy of Qwen3-32B from 0.419 to 0.450 while using only 73% of the expensive tokens. These results indicate that TRIM remains effective even in scientific reasoning domains without a dedicated PRM.
+Appendix G TRIM Implementation Details
+Targeted intervention enables TRIM to reduce cost, which is defined as the number of tokens generated from the expensive, stronger LLM. While this sort of “step-level” routing may appear to require frequent context re-encoding (“prefill”) when switching models, this overhead can be largely amortized by chunked prefilling of the large model’s KV cache in parallel with the small model’s decoding and PRM evaluation. In practice, the large model can maintain a synchronized KV cache (aggregate prefill) by incrementally prefilling the tokens generated by the small model. This ensures that upon escalation, the large model can almost immediately transition to decoding the next token rather than re-encoding the history. This design mirrors speculative decoding strategies (Leviathan et al., 2023; Cai et al., 2024), which similarly overlap draft and verification phases to minimize latency.
+In contrast, the generation (decode) phase of the large model imposes an unavoidable sequential cost and cannot be parallelized across tokens, while the prefill can be parallelized, cached, or reused across steps. Consequently, the number of tokens generated by the large model is the dominant and irreducible component of inference cost, making it both a theoretically clean and operationally grounded efficiency metric.
+In summary, large-model decode tokens capture the true marginal expense, while prefilling and routing overheads are effectively hidden by overlapping computation with small-model decoding and PRM evaluation. While we did not implement these system-level optimizations in our primary experiments—as public API endpoints for proprietary models (e.g., Claude) do not currently expose the necessary KV cache state management—these techniques are established standards in open-source serving frameworks (e.g., vLLM, SGLang) and are widely utilized by production providers. Consequently, the absence of these optimizations in our API-based evaluation does not undermine the conceptual validity of our cost model.
+TRIM-Agg Implementation. The router policy is parameterized by a simple MLP policy with two hidden layers (128 units each, Tanh activations), followed by separate actor and critic heads, and trained using PPO.
+The selected hyperparameters are summarized in Table 12.
+Training is conducted across performance–cost trade-off parameters λ\lambda, ranging from 3×10−43\times 10^{-4} to 8×10−58\times 10^{-5} for AIME and from 8×10−48\times 10^{-4} to 3×10−43\times 10^{-4} for MATH, at regular intervals.
+Table 12: Hyperparameters used for TRIM-Agg.
+Hyperparameter
+Value
+Learning rate
+1.0e-4
+Clipping coefficient
+0.2
+Entropy coefficient
+0.01
+Advantages
+Unnormalized
+Rewards
+Undiscounted
+GAE
+0.95
+TRIM-POMDP Implementation. For TRIM-POMDP, we learn the observation function using a reflected KDE estimator applied to the ProcessBench (Zheng et al., 2024) dataset. Specifically, we evaluate our PRM on step-by-step solutions in the dataset and align its outputs with human-annotated step-level labels. The observation function is trained on Omni-MATH problems, while evaluation is conducted on AIME and GSM8k for MATH-500. Importantly, the only model-specific information required by TRIM-POMDP is the next-step accuracies of the models, which are estimated from the corresponding training sets. For solving the POMDP, we use SARSOP (Kurniawati et al., 2008), which we implement using the POMDPs.jl framework (Egorov et al., 2017). We solve the POMDP using SARSOP (Kurniawati et al., 2008), implemented using the POMDPs.jl framework (Egorov et al., 2017), with hyperparameters set to the default values provided in POMDPs.jl. While SARSOP can in principle handle large observation spaces, it is sensitive to the choice of the initial state distribution. To achieve the best performance, we therefore recompute the policy at every step using the updated belief distribution as the initial state distribution. To improve efficiency, we employ a simple heuristic: the policy is recomputed only if the belief mass on state S2S_{2} (the case where the most recent step is incorrect but prior steps are correct) lies within 0.350.35–0.400.40 of the maximum belief state class; otherwise, we default to continuing with MwM_{w} (i.e., at=𝚌𝚘𝚗𝚝𝚒𝚗𝚞𝚎a_{t}=\mathtt{continue}). For all TRIM routing policies, the reasoning trace is truncated to a maximum of 3030 steps during both training and inference, and the solution at this cutoff is returned.
+AutoMix Implementation.
+In its official implementation, AutoMix employs a greedy approximation to the proposed POMDP formulation. For a two-model setup, queries are categorized into three classes: (1) solvable by MwM_{w}, (2) unsolvable by both MwM_{w} and MsM_{s}, and (3) solvable only by MsM_{s}. Using few-shot self-verification or correctness scores, AutoMix discretizes the verifier probability space into uniformly spaced bins. For each bin, it estimates the empirical conditional distribution over these three outcome classes–essentially learning a binned classifier that maps verifier probabilities to class likelihoods. During inference, routing decisions are made greedily: given a new verifier score, the corresponding bin provides the estimated probability distribution over outcome classes, and the router selects an action that maximizes the expected return under a specified trade-off parameter balancing accuracy and cost.
+Appendix H Effectiveness of Qwen2.5-Math-PRM-7B for AIME
+A natural question is how effective Qwen2.5-Math-PRM-7B is as a PRM for AIME problems, which are substantially more challenging than other mathematical benchmarks considered in this work, such as MATH-500, OlympiadBench, and Minerva Math. Since step-level ground-truth annotations are not available for the AIME, we assess PRM effectiveness by measuring how well aggregated stepwise PRM scores correlate with the final correctness of full solutions. Our evaluation procedure is as follows:
+1.
+We generate full reasoning traces for AIME, MATH-500, and OlympiadBench using the same weak model, Qwen2.5-3B-Instruct.
+2.
+For each trace, we compute PRM step-level scores and aggregate them using the minimum score across steps. This aggregation strategy is used throughout our work and is standard in prior PRM literature.
+3.
+We compute the AUC-ROC between these aggregated scores and the final correctness labels, quantifying how well PRM scores separate correct from incorrect solutions.
+The resulting AUC-ROC values are:
+•
+AIME: 0.8397
+•
+OlympiadBench: 0.8954
+•
+MATH500: 0.9363
+These scores indicate that while PRM reliability is strongest on MATH-500 and OlympiadBench for the generated traces, it still provides meaningful discriminatory signal on AIME–far above random (0.5) and sufficiently informative for decision-making. The somewhat lower AUC on AIME reflects that these problems are more difficult and produce longer, noisier reasoning traces, but the PRM remains useful rather than failing outright.
+Crucially, the reduced PRM reliability on AIME highlights the need for robustness to noisy correctness estimates. TRIM-POMDP is explicitly designed for this: by modeling PRM scores as noisy observations of an underlying correctness state, it remains st
+

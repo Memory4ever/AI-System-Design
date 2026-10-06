@@ -1,0 +1,15 @@
+# 当前实际整合终裁
+
+root 已实际读取必要原源与 owner，批准窄差额；正文/前后邻接及末注非作者 POST 通过，窄锁释放。6分具体 gap 深入并整合唯一 owner；仅此局部通过，未授日级 Gate，未运行实现或复現。
+
+# 2601.09269v1 — learned composition is sequence-level, not continuous rerouting
+
+Exact [v1](https://arxiv.org/html/2601.09269v1), PRIMARY_09269_NECESSARY.md §3–5/limits/C/D/E. Proposed2+2+2=6: one fixed steering direction lacks task flexibility→offline contrastivevector library plus trained dualhead selection/intensity controller→choose query-conditioned activation composition rather than semantic vector or weight finetuning alone. No new reasoning circuit truth or safety adopted.
+
+§3 routerlastprompttoken intermediate layer,selection Sigmoid→threshold.7,training GumbelSigmoid; strength0…2,6normalized kmeanscentroids from Claude3.5 filtered positive/negativepaired500MMLU. PCAvariance85% six directions not six guaranteed independent cognitive skills; lowcosines does not certify functional independence. E Algorithm1 decisively calls router once after prefill, then fixed same composite everydecode; not per-step state-adaptive controller despite dynamic rhetoric. Frozenbase/routertrained approx5M;prompt/cache/hook identity must remain same no productionKVcompatibility guarantee.
+
+D oracle grid: separate200MMLU, rankindividualvectors then top2 strengths0:.1:2 choosecorrecthighestconfidence, partialsearch not globallyoracle. RL MMLUPro70/30,3epochSFT5e-6/2epochRL2e-6,batch128len8192,8rollouttemp1.5topKdisabled,KL.001lowvariance,TP4x4RTX5090. 3-runaverage stated, seedidentities/CI/full offline grid/libraries+RL/refKL wallclock/precision/inference latencySLO ND. Outputtoken efficiency1392vs4033MATH/3056vs6195GPQA notE2E or nettrainingcost; negligiblelatency asserted without actualtime. DirectGRPO equalbudget claimed not evidencedfullsetupmatchedbudget table.
+
+FourbaseQwen2.5-7/14/32 L20/25/40,Llama3-8L13;MATH/GSM/GPQA/MMLUpro/ARC/ethics/Truthful tasks. Table1Ethics Qwen7RISER52.1<CAA53.2/CAST52.4,TruthfulLlama48.4<CAST48.7;Table2Top1Truthful60.2>composition59.8. Layerablation reflects controlledaccuracy not proof reasoning crystallizes middlelayer. Extended7thcodeprimitive needsnewrouterSFT200 not plugandplay. No moral-domain safety guarantee. Model transfer Table3 targetbase/Δ inconsistent (Llama column46.5 tiedtoQwenbase46.8 notLlama30.9); differenthiddenwidth alignment/projection not disclosed C. Do not adopt offdiagonal exact gains or samefamily scaleinvariance; native permodelcontrol only.
+
+CurrentCh20 L260–283 controls trajectory/vector identity and fixedsubspace, but not query-prefill dualhead library composition with frozen per-sequence intervention; actual TRAIN-RLHF owns general GRPO only, no duplicate training objective. Potential unique MODEL-SAMPLING two shortparagraphs aftersemantic steering beforeanswerfirst: choosecompositiononce,selection/strength separate,offlinegridandRL/versioncost,notindependent module or safe transfer,static/noinjectionfallback. Request root primary/owner before narrowwrite; no Books lock held. Date normal conditional independent of evidence. No code run/replication.

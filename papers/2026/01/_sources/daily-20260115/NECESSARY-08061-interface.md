@@ -1,0 +1,9 @@
+# Exact-v1 necessary interface evidence
+
+Primary https://arxiv.org/html/2601.08061v1 ; native text length83721. Actually read §3–7, conditional Theorem1/Corollary3 and Methods E near69900–74700, not the full attachment proof inventory.
+
+Standard finite sliding-context AR is distinguished from generalized/extended decode: an unbounded operational string is scanned from its beginning, one input symbol is consumed and one/two output symbols appended, special halt output excluded. Universal Lag simulation requires an injective symbol code and exact deterministic execution of ALL1857 rules, not average accuracy. Those interface assumptions are part of the simulated machine.
+
+Random network remains frozen, but encoder/decoder are learned. MethodsE rounds network output to the nearest codebook vector in L2; architecture inputs/outputs are representation vectors, not an ordinary fixed-token natural-language interface. Attention8head, recurrent and meta-network versions differ; meta-network online inner updates are reset per new input. All-rule Adam training1e-4≤20k iterations for encoder/decoder;30 initializations at architecture-dependent sizes, successful observed dimension64 does not prove any random network or search will work. External operational-string growth, learned mapping, exhaustive rule checking and computation time are real costs. Do not adopt no-training, ordinary bounded AR universality, guaranteed natural-language programmability or practical efficiency.
+
+Theorem1 condition and induction support rule-preserving simulation only. Natural-language interface general claims in discussion are broader than this adopted permission. Fixed-output-support bound in Ch18 applies to a different fixed execution/decoder; do not present the protocol modification as a refutation of that bound.

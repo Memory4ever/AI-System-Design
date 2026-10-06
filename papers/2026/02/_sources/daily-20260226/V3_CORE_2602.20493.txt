@@ -1,0 +1,1352 @@
+AWCP: A Workspace Delegation Protocol for Deep-Engagement Collaboration across Remote Agents
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+2.1
+Agent Communication Protocols
+2.2
+Multi-Agent Frameworks
+2.3
+Distributed File Systems and the Files-as-Interface Paradigm
+3
+AWCP Framework
+3.1
+Architecture
+3.2
+Delegation Lifecycle
+Dual state machines.
+Four-phase protocol flow.
+4
+Protocol Specification and Implementation
+4.1
+Message Protocol
+4.2
+Transport Adapters
+Adapter interfaces.
+Native transport implementations.
+Snapshot reconciliation.
+4.3
+Engineering Overview
+5
+Demonstration
+5.1
+Cross-Modal Dataset Curation
+5.2
+Multi-Round Compliance Stamping
+6
+Conclusion
+References
+License: CC BY 4.0
+arXiv:2602.20493v1 [cs.NI] 24 Feb 2026
+AWCP: A Workspace Delegation Protocol for Deep-Engagement Collaboration across Remote Agents
+Xiaohang Nie, Zihan Guo, Youliang Chen, Yuanjian Zhou, Weinan Zhang
+Affiliation:
+Harbin Institute of Technology
+Affiliation:
+Shanghai Innovation Institute
+Affiliation:
+Sun Yat-sen University
+Affiliation:
+Tongji University
+Affiliation:
+Shanghai Jiao Tong University
+†
+Equal contribution.
+*
+Corresponding author.
+Email:
+253108020043@sii.edu.cn
+Email:
+wnzhang@sjtu.edu.cn
+Abstract
+The rapid evolution of Large Language Model (LLM)-based autonomous agents is reshaping the digital landscape toward an emerging Agentic Web, where increasingly specialized agents must collaborate to accomplish complex tasks.
+However, existing collaboration paradigms are constrained to message passing, leaving execution environments as isolated silos.
+This creates a
+context gap
+: agents cannot directly manipulate files or invoke tools in a peer’s environment, and must instead resort to costly, error-prone environment reconstruction.
+We introduce the Agent Workspace Collaboration Protocol (AWCP), which bridges this gap through temporary workspace delegation inspired by the Unix philosophy that
+everything is a file
+.
+AWCP decouples a lightweight control plane from pluggable transport mechanisms, allowing a Delegator to project its workspace to a remote Executor, who then operates on the shared files directly with unmodified local toolchains.
+We provide a fully open-source reference implementation with MCP tool integration and validate the protocol through live demonstrations of asymmetric collaboration, where agents with complementary capabilities cooperate through delegated workspaces.
+By establishing the missing workspace layer in the agentic protocol stack, AWCP paves the way for a universally interoperable agent ecosystem in which collaboration transcends message boundaries.
+The protocol and reference implementation are publicly available at
+https://github.com/SII-Holos/awcp
+.
+1
+Introduction
+As autonomous agents evolve from conversational chatbots to pervasive system assistants, each accumulates domain-specific expertise that remains confined within its siloed execution environment
+[
+1
+,
+2
+]
+.
+This tension between deepening vertical expertise and persistent horizontal disconnection demands a redefinition of agent collaboration, which entails shifting from superficial message passing to
+deep-engagement
+interoperability at the system level
+[
+3
+]
+, as illustrated in Figure
+1
+.
+Figure 1:
+Two paradigms for inter-agent collaboration. (a) In message-based protocols such as A2A and ANP, agents exchange serialized task descriptions and results; the receiving agent operates on detached artifacts without access to the originator’s execution environment, leading to well-documented failure modes including context loss, incomplete information transfer, and environment mismatch
+[
+4
+]
+. (b) In AWCP’s deep-engagement model, the Delegator projects its workspace to the Executor, who operates directly on the original files using its local toolchain, preserving full context, providing the complete environment, and enabling in-situ execution.
+Recent agentic protocols have begun to address distinct facets of this interaction landscape.
+The Model Context Protocol (MCP) standardizes the
+agent–tool
+boundary, connecting agents to external tools, data sources, and APIs through structured function calls
+[
+5
+]
+.
+The Agent-to-Agent Protocol (A2A) tackles the
+agent–agent
+boundary, enabling agents to discover peers through Agent Cards and coordinate tasks via structured message exchange
+[
+6
+]
+.
+Collectively, these protocols cover tool access and task-level coordination.
+However, both operate strictly at the message layer, e.g., MCP returns discrete function outputs, and A2A exchanges structured payloads.
+Neither empowers an agent to perform native operations like
+ls
+,
+cat
+, or
+git commit
+directly within a peer’s workspace.
+As illustrated in Figure
+2
+, a critical gap persists at the
+agent–workspace
+boundary, the layer where agents require direct, filesystem-level access to each other’s execution environments.
+User
+Delegator
+Agent
+Delegator
+Service
+Executor
+Service
+HTTP / SSE
+SSHFS
+|
+|
+Archive
+|
+|
+Storage
+|
+|
+Git
+Workspace Transport
+AWCP
+Executor
+Agent
+MCP
+|
+|
+Skill
+|
+|
+Tools
+Integration Interfaces
+A2A
+|
+|
+ANP
+|
+|
+HTTP
+Adapter Layer
+Figure 2:
+AWCP in the agentic protocol landscape. Delegator agents access AWCP through integration interfaces such as MCP tool servers or skill modules. The control plane uses standard HTTP and Server-Sent Events for signaling between AWCP services. Executor agents are invoked through an extensible adapter layer supporting A2A, ANP, or direct HTTP. The transport plane provides pluggable filesystem-level access that complements message-level coordination.
+To make this gap concrete, consider a coding agent that has completed a feature branch and needs a remote security-auditing agent to review it.
+Via MCP, the auditor might lint files individually, but it lacks the systemic context required to navigate the repository, resolve cross-file dependencies, or execute project-wide static analysis.
+Under A2A, it could receive selected sources as task attachments, which arrive as flat snapshots stripped of the build system, version history, and test infrastructure.
+What the agent actually needs is to
+project its workspace
+to the auditor, granting temporary, filesystem-level access so that the remote agent can operate with its native toolchains as if working locally.
+Indeed, recent multi-agent systems have begun to approximate this pattern through ad hoc mechanisms such as per-agent sandboxes and shared Git repositories, yet even web-scale collaboration platforms such as Holos
+[
+7
+]
+that orchestrate millions of heterogeneous agents lack a standardized protocol for cross-agent workspace delegation.
+We introduce the Agent Workspace Collaboration Protocol (AWCP), formalizing temporary workspace delegation via a standardized framework that enables
+deep-engagement collaboration
+between autonomous agents.
+Inspired by the Unix philosophy that
+everything is a file
+[
+8
+]
+, AWCP establishes a
+files-as-interface
+paradigm for Delegator–Executor collaboration.
+This design reflects a fundamental observation: coding agents read files, write patches, and run tests
+[
+9
+,
+10
+]
+; vision agents inspect image directories; compliance agents stamp PDF documents.
+The filesystem is not merely one possible interface for collaboration, but it is the medium through which agents already interact with their computational surroundings.
+By abstracting collaboration into file operations, AWCP enables a Delegator to project its environment to a remote Executor, who then works on the shared files with unmodified local toolchains.
+The protocol decouples a lightweight control plane from pluggable transport adapters, and integrates naturally into the existing protocol ecosystem: Delegator agents access AWCP through MCP tool interfaces or skill modules, while Executor discovery and signaling can leverage A2A, the Agent Network Protocol (ANP), or direct HTTP endpoints (Figure
+2
+).
+Our contributions are as follows:
+1.
+A new paradigm for agent collaboration.
+We propose AWCP, the first protocol to formalize workspace delegation, shifting the focus from message-centric interaction to environment-level
+deep-engagement
+collaboration via a
+files-as-interface
+abstraction.
+2.
+A universal and decoupled architecture.
+We design a modular framework that separates the control logic from transport mechanisms, providing a standardized backbone for deep-engagement across heterogeneous agents and diverse network environments.
+3.
+Foundational infrastructure for the Agentic Web.
+We provide an open-source implementation and showcase asymmetric collaboration, demonstrating the viability of a universally interoperable agentic ecosystem.
+The remainder of this paper is organized as follows:
+Section 2 provides a review of the related research background.
+Section 3 introduces the AWCP framework and its delegation model, followed by a detailed discussion of the protocol specification and engineering implementation in Section 4.
+Section 5 then demonstrates the framework’s effectiveness through use cases in cross-modal dataset curation and compliance stamping. Finally, Section 6 summarizes our findings and discusses future directions.
+2
+Related Work
+AWCP builds upon and extends three research threads: agent communication protocols that define how agents exchange information, multi-agent frameworks that orchestrate collaborative workflows, and distributed file systems that enable transparent remote resource access.
+2.1
+Agent Communication Protocols
+Enabling effective communication among autonomous agents has been a long-standing research challenge.
+The Foundation for Intelligent Physical Agents (FIPA) standardized an Agent Communication Language based on speech act theory, defining 22 communicative acts (inform, request, propose, etc.) with formal semantics
+[
+11
+]
+.
+The Contract Net Protocol formalized task delegation through announcement, bidding, and awarding phases
+[
+12
+]
+.
+While foundational, these classical protocols were designed for rule-based agents and rely on rigid logical content languages that are less compatible with the stochastic nature of modern LLMs.
+The emergence of LLM-based agents has catalyzed a new generation of protocols
+[
+13
+,
+14
+]
+.
+MCP establishes a client-server architecture connecting AI applications to external tools and data sources through JSON-RPC, exposing structured primitives for tool invocation, resource access, and prompt templates
+[
+5
+,
+3
+]
+.
+A2A addresses peer-to-peer agent coordination, introducing Agent Cards for capability discovery and a task lifecycle model (submitted, working, completed) for managing delegated work through structured message exchange
+[
+6
+]
+.
+ANP operates at the network layer, proposing a three-tier architecture for agent identity via W3C Decentralized Identifiers, meta-protocol negotiation, and capability discovery
+[
+15
+]
+.
+Despite this rapid progress, all existing protocols share a fundamental limitation: they operate at the
+message layer
+.
+MCP transmits structured function calls and returns discrete outputs; A2A exchanges task messages and file attachments as payloads; ANP negotiates communication channels.
+AWCP addresses the orthogonal
+workspace layer
+, enabling agents to interact through projected filesystem environments rather than serialized payloads.
+2.2
+Multi-Agent Frameworks
+A parallel line of research develops frameworks for orchestrating multiple LLM-based agents.
+Early systems established the foundational patterns.
+AutoGen
+[
+16
+]
+and CAMEL
+[
+17
+]
+explore flexible multi-agent dialogue, the former through conversable agents with multi-turn exchange and the latter through inception-prompted role-playing.
+MetaGPT
+[
+18
+]
+takes a more structured approach, encoding Standardized Operating Procedures into role-specialized assembly-line pipelines.
+Subsequent systems have scaled these ideas further: ChatDev
+[
+19
+]
+organizes agents into a virtual software company, while AgentScope
+[
+20
+]
+evolves into a developer-centric platform with MCP integration and runtime sandboxing.
+Since 2025, the field has moved beyond these centralized, role-based designs.
+One direction pursues decentralization: Symphony
+[
+21
+]
+eliminates the central orchestrator altogether, coordinating lightweight LLMs across consumer-grade hardware through a capability ledger and Beacon-selection protocol.
+Another direction pursues structural adaptivity: AdaptOrch
+[
+22
+]
+formalizes topology selection among parallel, sequential, hierarchical, and hybrid orchestration patterns, showing that how agents are composed now matters more than which model each agent runs.
+A third direction automates the design of agent systems themselves, as exemplified by InfiAgent
+[
+23
+]
+, whose “agent-as-a-tool” mechanism lets a self-evolving DAG of agents restructure itself in response to new tasks.
+Most relevant to AWCP is a nascent trend toward workspace-level coordination in multi-agent software engineering.
+Several systems have converged on version control as the coordination substrate: EvoGit
+[
+24
+]
+lets a population of coding agents coordinate exclusively through a shared Git repository, treating the version graph as an implicit communication channel, while AgentGit
+[
+25
+]
+applies commit-revert-branch primitives to manage workflow state across agents.
+Others explore alternative shared-state mechanisms: Agyn
+[
+26
+]
+provisions isolated sandboxes per agent and merges results through pull requests, and CodeCRDT
+[
+27
+]
+uses Conflict-Free Replicated Data Types for lock-free concurrent code generation.
+At the protocol level, SEMAP
+[
+28
+]
+proposes lifecycle-guided execution with behavioral contracts atop A2A, reducing coordination failures by up to 69.6%.
+While these systems demonstrate that workspace-level coordination is a natural and effective paradigm, each implements its own ad hoc mechanism (e.g., Git graphs, sandbox-PR loops, CRDTs, or message contracts) without a unified protocol for workspace lifecycle governance.
+AWCP addresses this gap: rather than competing with existing frameworks, it provides a standardized workspace delegation primitive with explicit lifecycle management (negotiation, provisioning, execution, completion) and transport-agnostic file synchronization that any orchestration system can adopt.
+2.3
+Distributed File Systems and the Files-as-Interface Paradigm
+AWCP’s
+files-as-interface
+design draws directly from the Unix philosophy that
+everything is a file
+[
+8
+]
+.
+Plan 9 from Bell Labs extended this principle to distributed systems, introducing per-process namespaces and the 9P protocol to make all resources, including network interfaces, graphics, remote processes, accessible as file hierarchies
+[
+29
+]
+.
+The Sun Network Filesystem (NFS) demonstrated that applications can operate on remote files transparently, establishing the stateless RPC-based model for network file access
+[
+30
+]
+.
+FUSE (Filesystem in Userspace) further democratized custom filesystem development, enabling user-space implementations such as SSHFS with moderate overhead suitable for many workloads
+[
+31
+]
+.
+This four-decade lineage establishes that filesystem abstractions can serve as universal interfaces for cross-boundary resource access.
+Modern AI agents reinforce this observation: the tasks on which they are most commonly evaluated, from patch generation
+[
+9
+]
+and repository-level code editing
+[
+10
+]
+to document processing, ultimately reduce to reading, writing, and organizing files.
+The filesystem is not merely one possible interface for agent collaboration; it is the native medium through which agents already interact with their computational surroundings.
+AWCP’s transport layer builds on these proven foundations, adapting the “filesystem as universal interface” paradigm to cross-agent delegation across diverse network conditions.
+Among contemporary agent systems, OpenHands
+[
+32
+]
+and SWE-Agent
+[
+10
+]
+address the closely related problem of granting AI agents access to execution environments, through container-based sandboxing and specialized Agent-Computer Interfaces, respectively.
+EnvX
+[
+33
+]
+extends this direction by transforming GitHub repositories into interactive agents through a three-phase environment initialization lifecycle (dependency resolution, data provisioning, validation) that closely parallels AWCP’s provisioning flow.
+At the conceptual level, Hassan et al.
+[
+34
+]
+articulate a vision for Structured Agentic Software Engineering in which an
+Agent Execution Environment
+provides a formal digital workspace for agent teams, though they leave the protocol-level realization as future work.
+These approaches share AWCP’s recognition that agents need filesystem-level access, but they focus on provisioning single-agent environments or articulating theoretical frameworks rather than enabling cross-agent workspace delegation with a concrete protocol.
+AWCP fills precisely this role, contributing the protocol layer that lets one agent project its workspace to another, independent of the execution environment either agent uses internally.
+3
+AWCP Framework
+AWCP’s core mechanism is workspace projection: a Delegator exposes a selected directory tree to a remote Executor, who works on it with local tools, and the protocol synchronizes results upon completion.
+This section presents the framework design: a modular architecture organizing cross-node responsibilities (§
+3.1
+) and dual state machines formalizing the delegation lifecycle (§
+3.2
+).
+3.1
+Architecture
+Figure 3:
+AWCP architecture. The control layer handles signaling and state synchronization between the Delegator and Executor, while
+the transport layer provides pluggable adapters (SSHFS, Archive, Storage, Git) for data exchange. Both nodes run dedicated AWCP services while agents operate with their native toolchains.
+As illustrated in Figure
+3
+, AWCP employs a dual-layer architecture to facilitate interaction between a Delegator and an Executor, both being autonomous agents.
+Each node runs a dedicated AWCP service responsible for protocol signaling and resource orchestration.
+On the
+Delegator
+side, agents interface with the
+Delegator Service
+through MCP
+[
+5
+]
+or skill integrations
+[
+35
+]
+.
+An
+Admission Control
+module enforces configurable policies to ensure that only well-scoped workspaces are exposed, while a
+Snapshot Manager
+reconciles results upon task completion through automated application or manual review.
+On the
+Executor
+side, the
+Executor Service
+receives incoming delegation requests and provisions session-specific directories.
+An
+Extensible Adapter Layer
+decouples the service from specific agent implementations, facilitating integration with diverse backends such as A2A-compliant runtimes
+[
+6
+]
+.
+Once the workspace is mounted or extracted, the Executor agent applies native toolchains directly to delegated files, achieving the
+on-site access
+that underpins AWCP’s design.
+The Delegator and Executor services communicate through two protocol layers whose strict separation is central to the design.
+The
+Control Layer
+manages the delegation lifecycle via lightweight HTTP requests and Server-Sent Events (SSE)
+[
+36
+]
+, handling session negotiation, lease enforcement, and status synchronization.
+The
+Transport Layer
+provisions the data plane through pluggable adapters, each consisting of a complementary pair: one component on the Delegator side (packaging workspaces and applying results) and one on the Executor side (provisioning access and capturing snapshots).
+This paired design reflects the inherently asymmetric roles in workspace delegation.
+Each adapter further declares its
+capabilities
+, namely whether it supports live synchronization or snapshot-based exchange, enabling the control layer to adapt its reconciliation strategy at runtime.
+This decoupling ensures that the control logic remains invariant regardless of whether files are projected via a live FUSE mount, shipped as a ZIP archive, exchanged through cloud storage, or synchronized via Git.
+Network topology, workspace scale, and deployment constraints thus influence only adapter selection rather than the coordination protocol itself.
+3.2
+Delegation Lifecycle
+Delegator
+Executor
+Negotiation
+INVITE
+task, lease, environment
+ACCEPT
+workDir, constraints
+Provisioning
+Prepare Transport
+START
+lease, workDir (credentials)
+{ok: true}
+Execution
+Setup Workspace
+SSE: /tasks/:taskId/events
+event: status
+running
+Execute Task
+Teardown
+event: snapshot
+snapshotId, data, recommended
+event: done
+Completion
+Apply Snapshot
+ACK
+Figure 4:
+AWCP four-phase message sequence between Delegator and Executor.
+Solid, dashed, and blue arrows denote synchronous HTTP requests, responses, and asynchronous SSE events, respectively.
+AWCP formalizes the delegation lifecycle through two cooperating state machines, one located on each side of the protocol, which are synchronized by a four-phase message exchange.
+Figure
+4
+illustrates the corresponding message sequence.
+Dual state machines.
+The protocol separates delegation governance into two distinct state machines that operate independently yet synchronize at well-defined points through protocol messages.
+The
+DelegationStateMachine
+operates on the Delegator side and tracks nine states: an initial state
+created
+, four intermediate states (
+invited
+,
+accepted
+,
+started
+,
+running
+), which represent progression through the negotiation, provisioning, and execution phases, and four terminal states (
+completed
+,
+error
+,
+cancelled
+,
+expired
+).
+Transitions are triggered by nine event types, each governed by transition guards that restrict activation to specific source states.
+The happy path follows the sequence
+created
+→
+invited
+→
+accepted
+→
+started
+→
+running
+→
+completed
+\texttt{created}\to\texttt{invited}\to\texttt{accepted}\to\texttt{started}\to\texttt{running}\to\texttt{completed}
+.
+From any non-terminal state, an
+ERROR
+or
+CANCEL
+event transitions the machine to the corresponding terminal state; an
+EXPIRE
+event is additionally valid from
+invited
+,
+accepted
+, or
+running
+when the lease duration elapses.
+The
+AssignmentStateMachine
+operates on the Executor side with a deliberately minimal four-state design:
+pending
+(awaiting the
+START
+message after accepting an invitation),
+active
+(task executing),
+completed
+, and
+error
+.
+This asymmetry reflects the protocol’s division of responsibility: the Delegator manages the full lifecycle including lease enforcement and snapshot reconciliation, while the Executor focuses exclusively on task execution within the provisioned workspace.
+Figure
+5
+presents the formal state transition structure of both machines.
+created
+invited
+accepted
+started
+running
+completed
+SEND_INVITE
+RECV_ACCEPT
+SEND_START
+SETUP_COMPLETE
+RECV_DONE
+error
+cancelled
+expired
+any non-terminal
+via
+error
+/
+cancel
+/
+expire
+DelegationStateMachine
+(Delegator side)
+pending
+active
+completed
+error
+RECV_START
+TASK_COMPLETE
+any non-
+terminal
+via
+error
+/
+cancel
+AssignmentStateMachine
+(Executor side)
+ACCEPT
+START
+DONE
+Figure 5:
+Dual state machines governing the AWCP delegation lifecycle. The
+DelegationStateMachine
+(left) tracks nine states on the Delegator side; the
+AssignmentStateMachine
+(right) tracks four states on the Executor side. Solid arrows trace the happy path; a single dashed red path indicates that any non-terminal state may transition to a terminal state upon error, cancellation, or lease expiration. Blue dashed arrows mark cross-machine synchronization via protocol messages.
+Three protocol messages serve as synchronization points between the two machines.
+When the Executor sends
+ACCEPT
+, the Delegator transitions from
+invited
+to
+accepted
+while the Executor creates a new assignment in the
+pending
+state.
+When the Delegator sends
+START
+, it transitions to
+started
+and the Executor advances from
+pending
+to
+active
+.
+When the Executor emits
+DONE
+, it reaches
+completed
+and the Delegator transitions from
+running
+to
+completed
+.
+This synchronization design ensures that both parties maintain consistent views of the delegation progress without requiring a shared state store.
+Four-phase protocol flow.
+The lifecycle unfolds across four sequential phases.
+During
+Negotiation
+, the Delegator proposes a task via an
+INVITE
+message.
+The Executor evaluates the proposal against local policies and responds with
+ACCEPT
+, optionally narrowing the terms (e.g., capping the lease duration), or
+ERROR
+to decline.
+Provisioning
+activates the data plane.
+The Delegator packages transport-specific credentials into a
+START
+message, and the Executor provisions workspace access upon receipt.
+Execution
+is the functional core of the protocol.
+The Executor operates on the delegated workspace using its native toolchains, streaming progress and intermediate results back to the Delegator via SSE.
+Upon completion, the Executor tears down transport resources and signals
+DONE
+.
+Finally,
+Completion
+reconciles results: the Delegator processes any received snapshots, acknowledges receipt, and both parties perform a two-phase cleanup, which involves gracefully disconnecting transport resources, followed by reclaiming temporary files.
+Section
+4
+specifies the message payloads, transport mechanisms, and reconciliation policies that realize each phase.
+4
+Protocol Specification and Implementation
+This section specifies the concrete protocol artifacts that realize the AWCP framework: the message semantics governing the control plane (§
+4.1
+), the transport adapters provisioning the data plane (§
+4.2
+), and an engineering overview of the open-source reference implementation in TypeScript (§
+4.3
+).
+4.1
+Message Protocol
+Section
+3.2
+defined five message types that drive the four-phase delegation lifecycle; here we specify their payload-level semantics.
+All messages share a common header comprising a protocol version identifier, a message type discriminant, and a unique delegation identifier.
+Table
+1
+summarizes each message type, its directionality, and primary payload.
+Table 1:
+AWCP message types. All messages carry a shared header with protocol version, type discriminant, and delegation identifier. D and E denote Delegator and Executor, respectively.
+Type
+Direction
+Phase
+Key Payload Fields
+INVITE
+D
+→
+\to
+E
+Negotiation
+TaskSpec, LeaseConfig, EnvironmentDecl
+ACCEPT
+E
+→
+\to
+D
+Negotiation
+ExecutorWorkDir, ExecutorConstraints
+START
+D
+→
+\to
+E
+Provisioning
+ActiveLease, TransportHandle
+DONE
+E
+→
+\to
+D
+Completion
+FinalSummary, Highlights
+ERROR
+Bidirectional
+Any
+ErrorCode, Message, Hint
+The
+INVITE
+message encapsulates the full delegation proposal: a
+TaskSpec
+containing a natural-language description and agent prompt; a
+LeaseConfig
+specifying the time-to-live in seconds and the access mode (read-only or read-write); and an
+EnvironmentDeclaration
+listing the filesystem resources to be projected.
+Optional fields include executor requirements and authentication credentials.
+The
+ACCEPT
+response carries the Executor’s allocated working directory and an
+ExecutorConstraints
+structure that allows the Executor to narrow the proposed lease, for example by capping the time-to-live at a locally configured maximum or restricting the access mode to read-only.
+This negotiation mechanism allows Executors to enforce local resource policies without rejecting the delegation outright.
+The
+START
+message activates the data plane by conveying an
+ActiveLease
+with an absolute expiration timestamp and a
+TransportHandle
+, which is a discriminated union whose variant is determined by the selected transport type.
+Each variant carries the transport-specific credentials required to establish the data channel, as detailed in §
+4.2
+.
+The
+DONE
+message signals successful task completion with a textual summary and optional highlights enumerating key changes.
+The
+ERROR
+message is unique in being bidirectional: either party may emit it to signal failure, carrying a machine-readable error code, a human-readable description, and an optional hint suggesting corrective action.
+4.2
+Transport Adapters
+As established in §
+3.1
+, the transport layer is realized through pluggable adapter pairs whose concrete interfaces are detailed below.
+Adapter interfaces.
+Rather than a single unified abstraction, the implementation defines two complementary adapter interfaces reflecting the inherently asymmetric roles in workspace delegation.
+The
+DelegatorTransportAdapter
+is responsible for packaging the local workspace into a transport-specific handle and integrating result snapshots received from the Executor.
+The
+ExecutorTransportAdapter
+handles the inverse: verifying system-level prerequisites, provisioning the workspace from the received handle, and capturing snapshots for return transmission.
+Both adapters share a two-phase cleanup contract that includes
+detach
+for graceful disconnection followed by
+release
+for final resource reclamation, which mirrors the protocol’s completion semantics defined in §
+3.2
+.
+As introduced in §
+3.1
+, each adapter declares its
+capabilities
+, particularly its support for live synchronization, which enables the control layer to select the appropriate reconciliation strategy at runtime.
+Table 2:
+Comparison of AWCP transport adapters across key operational dimensions.
+SSHFS
+Archive
+Storage
+Git
+Mechanism
+SSH + FUSE mount
+HTTP + ZIP
+Pre-signed URLs
+Branch-based VCS
+Live sync
+Yes
+No
+No
+No
+Snapshots
+N/A (live)
+Yes
+Yes
+Yes
+Data integrity
+SSH channel
+SHA-256
+SHA-256
+Git SHA
+Best suited for
+Interactive,
+Small
+Large files,
+Auditable,
+low-latency
+workspaces
+cloud-native
+versioned
+Native transport implementations.
+Table
+2
+compares the four transport adapters along key operational dimensions.
+The
+SSHFS
+transport projects the Delegator’s workspace via a FUSE-based mount
+[
+31
+]
+over an SSH tunnel with ephemeral credentials, providing bidirectional real-time synchronization ideal for interactive tasks.
+The
+Archive
+transport serializes the workspace into a base64-encoded ZIP archive transmitted inline within the
+START
+message, offering a self-contained mechanism that requires no external infrastructure.
+The
+Storage
+transport decouples data transfer from the control channel via pre-signed URLs, accommodating cloud-native deployments where large workspaces can be exchanged through object storage services.
+The
+Git
+transport leverages branch-based version control, with each snapshot corresponding to a commit that provides a full audit trail of workspace modifications.
+As discussed in §
+2
+, recent Git-based coordination systems
+[
+24
+,
+25
+]
+independently validate this design; AWCP’s adapter generalizes the pattern into a transport-agnostic component of the delegation lifecycle.
+Snapshot reconciliation.
+For transports that do not support live synchronization, the Executor periodically captures workspace snapshots, which are compressed archives of the current file state, and subsequently transmits them to the Delegator via SSE events.
+The Delegator processes these snapshots according to a configurable
+snapshot policy
+with three modes:
+auto
+, which applies incoming snapshots immediately;
+staged
+, which queues snapshots for explicit approval by the Delegator agent or a human operator; and
+discard
+, which ignores snapshots entirely for read-only delegations.
+When a transport reports live synchronization capability, the policy is overridden to
+auto
+, as the mounted filesystem already reflects the latest state.
+4.3
+Engineering Overview
+The reference implementation is structured as an npm workspace monorepo comprising eight packages organized by the dependency hierarchy shown in Table
+3
+.
+The
+@awcp/core
+package contains the protocol types, dual state machines, and error definitions with zero external dependencies, ensuring that the protocol specification remains portable.
+The
+@awcp/sdk
+builds upon the core package to provide the
+DelegatorService
+and
+ExecutorService
+with JSON-based state persistence, enabling crash recovery across sessions.
+The four transport packages each export a
+DelegatorTransport
+and
+ExecutorTransport
+pair conforming to the adapter interfaces described in §
+4.2
+.
+The
+@awcp/mcp
+package exposes seven MCP tools covering the full delegation lifecycle, including initiation, output monitoring, cancellation, snapshot management, and session recovery, enabling MCP-compatible agents such as Claude Desktop and Cline to manage delegations through standard tool calls.
+A standalone Bun-based skill module provides equivalent functionality for chat-oriented platforms.
+Table 3:
+Reference implementation overview. Source lines of code (SLoC) are counted for TypeScript files excluding tests. All packages are published under synchronized versioning.
+Package
+Role
+Source
+Tests
+Dependencies
+@awcp/core
+Protocol types, state machines
+1,075
+393
+—
+@awcp/sdk
+Services, persistence
+3,643
+635
+core
+@awcp/mcp
+7 MCP tools
+1,666
+286
+sdk, transports
+@awcp/transport-sshfs
+SSH + FUSE mount
+1,052
+447
+core
+@awcp/transport-archive
+HTTP + ZIP
+331
+327
+core
+@awcp/transport-storage
+Pre-signed URLs
+364
+348
+core, archive
+@awcp/transport-git
+Branch-based VCS
+328
+141
+core, archive
+awcp-skill
+Bun CLI skill module
+769
+—
+—
+Total
+9,228
+2,577
+The codebase totals approximately 9,200 lines of TypeScript source code with 2,600 lines of tests organized into 161 test cases across 12 test files, executed via the Vitest framework.
+All packages enforce TypeScript strict mode and are published under synchronized versioning.
+5
+Demonstration
+To validate AWCP in practical settings, we demonstrate two live collaboration scenarios in which agents with complementary capabilities cooperate through workspace delegation.
+The scenarios are selected to exercise distinct dimensions of asymmetry, including capability, trust, and domain knowledge, across different integration modes and transport mechanisms.
+5.1
+Cross-Modal Dataset Curation
+Figure 6:
+Cross-modal dataset curation via SSHFS transport. A text-only Delegator (Cline + DeepSeek V3.2) delegates a cluttered image directory to a multimodal Executor (Gemini 3 Pro). The Executor classifies, filters, and reorganizes files; changes synchronize bidirectionally in real time through the FUSE mount.
+As illustrated in Figure
+6
+, a text-only coding agent is tasked with organizing a cluttered directory containing over 100 images mixed with corrupted files, empty placeholders, and non-image artifacts scattered across deeply nested subdirectories.
+The task requires classifying images by content, removing corrupted files, and reorganizing the directory semantically, all of which demand visual perception that the text-only Delegator lacks.
+We configure VS Code with the Cline extension as the Delegator
+[
+37
+]
+, running DeepSeek V3.2 as its backbone LLM, and integrate AWCP through its MCP server.
+The Executor runs Gemini 3 Pro, a multimodal model capable of visual understanding.
+The SSHFS transport is selected for this scenario, as the interactive nature of the task, which requires the Executor to iteratively traverse directories, inspect individual files, and reorganize content, benefits significantly from live bidirectional synchronization.
+Upon receiving the delegation, the Executor mounts the Delegator’s workspace as a local directory via FUSE.
+The remote agent then analyzes each file using its vision capabilities, identifies corrupted images and non-image artifacts for removal, and reorganizes valid images into semantically labeled subdirectories (e.g.,
+bear/
+,
+penguin/
+,
+giraffe/
+).
+Every file operation, including creation, deletion, renaming, synchronizes in real time to the Delegator’s local filesystem through the live mount.
+Upon completion, the Delegator observes a clean, categorized directory structure without having performed any manual file transfer.
+This scenario demonstrates
+capability asymmetry
+, in which the text-only Delegator lacks visual perception but gains access to multimodal analysis through workspace delegation, as well as
+knowledge asymmetry
+, since the Executor brings domain-specific image classification expertise that the Delegator does not possess.
+Throughout, the Executor operates directly on the delegated files as if they were local, applying its own toolchain without any manual file transfer by the Delegator.
+5.2
+Multi-Round Compliance Stamping
+Figure 7:
+Multi-round compliance stamping via Archive transport. A Delegator (OpenClaw on Feishu) delegates a contract to a Compliance Auditor Executor for official stamping. Round 1 is rejected for missing identity verification; Round 2 succeeds after the user supplies the required document, demonstrating AWCP’s support for iterative delegation workflows.
+As shown in Figure
+7
+, a user requests official contract stamping via an OpenClaw agent on the Feishu platform.
+Since the local agent lacks authorization for the digital seal, it utilizes an AWCP skill module to discover a remote Compliance Auditor and delegates a workspace containing
+contract.pdf
+.
+The Archive transport is selected here: the workspace consists of a single PDF file, making the self-contained ZIP-based transfer more practical than establishing a persistent SSHFS mount.
+The delegation proceeds through two rounds, each constituting a complete AWCP lifecycle.
+In Round 1, the Executor inspects the submitted materials, identifies a missing identity verification document, and returns a structured rejection via the
+ERROR
+message, at which point the Delegator transitions to the
+error
+terminal state and the Executor releases its resources.
+Upon receiving the required identity card image from the user, the Delegator agent initiates a fresh delegation (Round 2) with the updated workspace.
+The Executor verifies completeness, passes the compliance audit, applies the official stamp, and returns
+contract_signed.pdf
+as a snapshot.
+The Delegator applies the snapshot to obtain the stamped document.
+This scenario demonstrates both
+trust asymmetry
+, where the privileged stamping operation executes exclusively on the authorized Executor without exposing the digital seal to the Delegator environment
+[
+38
+]
+, and
+knowledge asymmetry
+, as the Compliance Auditor possesses domain-specific regulatory expertise that the general-purpose Delegator agent lacks.
+Furthermore, the two-round workflow illustrates the protocol’s native support for
+iterative workflows
+, where each round is a self-contained delegation with independent state machine instances.
+6
+Conclusion
+We have presented AWCP, a protocol that formalizes inter-agent collaboration through temporary workspace delegation, grounding interaction in the filesystem rather than in message exchange.
+Three contributions emerge from this work: a workspace-centric collaboration paradigm that moves beyond payload serialization; a decoupled architecture whose pluggable transports adapt to diverse network conditions; and open-source infrastructure demonstrating practical feasibility through live asymmetric collaboration.
+Our demonstrations confirm several properties of this design.
+The protocol accommodates diverse integration modes, from MCP tool servers for IDE-based agents to skill modules for chat-oriented platforms.
+The pluggable transport layer adapts to task characteristics, selecting SSHFS for interactive operations requiring live synchronization and Archive for lightweight document exchange.
+The dual state machine formalization supports both single-round and multi-round collaboration patterns with independent lifecycle governance.
+In both scenarios, Executors work directly on delegated files as though they were local, confirming that workspace projection eliminates the context loss inherent in message-based coordination.
+Several directions remain open for future work.
+On the transport side, peer-to-peer and edge-optimized adapters would extend AWCP to bandwidth-constrained and decentralized deployments
+[
+39
+]
+, and CRDT-based synchronization mechanisms
+[
+27
+]
+could enable conflict-free concurrent workspace access for multi-party delegations.
+On the governance side, granular access control policies, including file-level permissions, role-based authorization, and audit logging, constitute essential prerequisites for multi-party delegations involving sensitive workspaces
+[
+13
+]
+.
+On the scale side, extending the current one-to-one delegation model to federated multi-agent coalitions, where multiple Executors collaborate on partitioned workspaces under incentive-compatible coordination
+[
+40
+,
+41
+]
+, would align AWCP with the emerging Internet of Agentic AI.
+On the discovery side, integrating cross-boundary capability advertisement would allow Delegators to locate suitable Executors dynamically, closing the gap between workspace delegation and the broader agent coordination stack
+[
+42
+]
+.
+As agents grow more specialized, a standardized workspace layer will become essential infrastructure for the Agentic Web, letting capable but isolated agents finally collaborate at the depth their tasks demand.
+Acknowledgements
+This research was supported by National Natural Science Foundation of China (62322603 and 625B2185). The work is accomplished at Shanghai Innovation Institute.
+References
+Wang et al. [2024]
+Lei Wang, Chen Ma, Xueyang Feng, Zeyu Zhang, Hao Yang, Jingsen Zhang, Zhiyuan Chen, Jiakai Tang, Xu Chen, Yankai Lin, Wayne Xin Zhao, Zhewei Wei, and Ji-Rong Wen.
+A survey on large language model based autonomous agents.
+Frontiers of Computer Science
+, 18(6):186345, 2024.
+doi:
+10.1007/s11704-024-40231-1
+.
+Yang et al. [2025a]
+Yingxuan Yang, Mulei Ma, Yuxuan Huang, Huacan Chai, Chenyu Gong, Haoran Geng, Yuanjian Zhou, Ying Wen, Meng Fang, Muhao Chen, et al.
+Agentic web: Weaving the next web with AI agents.
+arXiv preprint arXiv:2507.21206
+, 2025a.
+Ehtesham et al. [2025]
+Abul Ehtesham, Aditi Singh, Gaurav Kumar Gupta, and Saket Kumar.
+A survey of agent interoperability protocols: Model Context Protocol (MCP), Agent Communication Protocol (ACP), Agent-to-Agent Protocol (A2A), and Agent Network Protocol (ANP).
+arXiv preprint arXiv:2505.02279
+, 2025.
+Cemri et al. [2025]
+Mert Cemri, Melissa Z. Pan, Shuyi Yang, Lakshya A. Agrawal, Bhavya Chopra, Rishabh Tiwari, Kurt Keutzer, Aditya Parameswaran, Dan Klein, Kannan Ramchandran, Matei Zaharia, Joseph E. Gonzalez, and Ion Stoica.
+Why do multi-agent LLM systems fail?
+arXiv preprint arXiv:2503.13657
+, 2025.
+Anthropic [2024]
+Anthropic.
+Model context protocol specification.
+https://modelcontextprotocol.io/specification
+, 2024.
+Accessed: 2026-02-14.
+Google [2025]
+Google.
+Agent2agent (A2A) protocol specification.
+https://a2a-protocol.org/latest/specification/
+, 2025.
+Accessed: 2026-02-14.
+Nie et al. [2026]
+Xiaohang Nie, Zihan Guo, Zicai Cui, Jiachi Yang, Zeyi Chen, Leheyi De, Yu Zhang, Junwei Liao, Bo Huang, Yingxuan Yang, Zhi Han, Zimian Peng, Linyao Chen, Wenzheng Tom Tang, Zongkai Liu, Tao Zhou, Botao Amber Hu, Shuyang Tang, Jianghao Lin, Weiwen Liu, Muning Wen, Yuanjian Zhou, and Weinan Zhang.
+Holos: A web-scale llm-based multi-agent system for the agentic web, 2026.
+URL
+https://www.holosai.io/static_files/Holos_Paper_20260118.pdf
+.
+Ritchie and Thompson [1974]
+Dennis M. Ritchie and Ken Thompson.
+The UNIX time-sharing system.
+Communications of the ACM
+, 17(7):365–375, 1974.
+Jimenez et al. [2024]
+Carlos E. Jimenez, John Yang, Alexander Wettig, Shunyu Yao, Kexin Pei, Ofir Press, and Karthik Narasimhan.
+SWE-bench: Can language models resolve real-world GitHub issues?
+In
+International Conference on Learning Representations (ICLR)
+, 2024.
+Yang et al. [2024]
+John Yang, Carlos E. Jimenez, Alexander Wettig, Kilian Lieret, Shunyu Yao, Karthik Narasimhan, and Ofir Press.
+SWE-agent: Agent-computer interfaces enable automated software engineering.
+In
+Advances in Neural Information Processing Systems (NeurIPS)
+, 2024.
+Foundation for Intelligent Physical Agents [2002]
+Foundation for Intelligent Physical Agents.
+FIPA ACL message structure specification.
+FIPA Standard SC00061G, 2002.
+URL
+http://www.fipa.org/specs/fipa00061/SC00061G.html
+.
+Smith [1980]
+Reid G. Smith.
+The contract net protocol: High-level communication and control in a distributed problem solver.
+IEEE Transactions on Computers
+, C-29(12):1104–1113, 1980.
+Yang et al. [2025b]
+Yingxuan Yang, Huacan Chai, Yuanyi Song, Siyuan Qi, Muning Wen, Ning Li, Junwei Liao, Haoyi Hu, Jianghao Lin, Gaowei Chang, Weiwen Liu, Ying Wen, Yong Yu, and Weinan Zhang.
+A survey of AI agent protocols.
+arXiv preprint arXiv:2504.16736
+, 2025b.
+Kong et al. [2025]
+Dezhang Kong, Shi Lin, Zhenhua Xu, et al.
+A survey of LLM-driven AI agent communication: Protocols, security risks, and defense countermeasures.
+arXiv preprint arXiv:2506.19676
+, 2025.
+Chang et al. [2025]
+Gaowei Chang, Eidan Lin, Chengxuan Yuan, Yifei Chen, et al.
+Agent network protocol technical white paper.
+arXiv preprint arXiv:2508.00007
+, 2025.
+Wu et al. [2023]
+Qingyun Wu, Gagan Bansal, Jieyu Zhang, Yiran Wu, Beibin Li, Erkang Zhu, Li Jiang, Xiaoyun Zhang, Shaokun Zhang, Jiale Liu, et al.
+AutoGen: Enabling next-gen LLM applications via multi-agent conversation.
+arXiv preprint arXiv:2308.08155
+, 2023.
+Li et al. [2023]
+Guohao Li, Hasan Abed Al Kader Hammoud, Hani Itani, Dmitrii Khizbullin, and Bernard Ghanem.
+CAMEL: Communicative agents for “Mind” exploration of large language model society.
+In
+Advances in Neural Information Processing Systems (NeurIPS)
+, volume 36, 2023.
+Hong et al. [2024]
+Sirui Hong, Mingchen Zhuge, Jiaqi Chen, Xiawu Zheng, Yuheng Cheng, Ceyao Zhang, Jinlin Wang, Zili Wang, Steven Ka Shing Yau, Zijuan Lin, et al.
+MetaGPT: Meta programming for a multi-agent collaborative framework.
+In
+International Conference on Learning Representations (ICLR)
+, 2024.
+Qian et al. [2024]
+Chen Qian, Wei Liu, Hongzhang Liu, Nuo Chen, Yufan Dang, Jiahao Li, Cheng Yang, Weize Chen, Yusheng Su, Xin Cong, et al.
+Chatdev: Communicative agents for software development.
+In
+Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (ACL)
+, 2024.
+Gao et al. [2025]
+Dawei Gao, Zitao Li, Yuexiang Xie, Weirui Kuang, Liuyi Yao, Bingchen Qian, Zhijian Ma, et al.
+AgentScope 1.0: A developer-centric framework for building agentic applications.
+arXiv preprint arXiv:2508.16279
+, 2025.
+Wang et al. [2025a]
+Ji Wang, Kashing Chen, Xinyuan Song, Ke Zhang, Lynn Ai, Eric Yang, and Bill Shi.
+Symphony: A decentralized multi-agent framework for scalable collective intelligence.
+arXiv preprint arXiv:2508.20019
+, 2025a.
+Yu [2026]
+Geunbin Yu.
+AdaptOrch: Task-adaptive multi-agent orchestration in the era of LLM performance convergence.
+arXiv preprint arXiv:2602.16873
+, 2026.
+Yu et al. [2025]
+Chenglin Yu, Yang Yu, Songmiao Wang, Yucheng Wang, Yifan Yang, Jinjia Li, Ming Li, and Hongxia Yang.
+InfiAgent: Self-evolving pyramid agent framework for infinite scenarios.
+arXiv preprint arXiv:2509.22502
+, 2025.
+Huang et al. [2025]
+Beichen Huang, Ran Cheng, and Kay Chen Tan.
+EvoGit: Decentralized code evolution via git-based multi-agent collaboration.
+arXiv preprint arXiv:2506.02049
+, 2025.
+Li et al. [2025]
+Yang Li, Siqi Ping, Xiyu Chen, Xiaojian Qi, Zigan Wang, Ye Luo, and Xiaowei Zhang.
+AgentGit: A version control framework for reliable and scalable LLM-powered multi-agent systems.
+arXiv preprint arXiv:2511.00628
+, 2025.
+Benkovich and Valkov [2026]
+Nikita Benkovich and Vitalii Valkov.
+Agyn: A multi-agent system for team-based autonomous software engineering.
+arXiv preprint arXiv:2602.01465
+, 2026.
+Pugachev [2025]
+Sergey Pugachev.
+CodeCRDT: Observation-driven coordination for multi-agent LLM code generation.
+arXiv preprint arXiv:2510.18893
+, 2025.
+Mao et al. [2025]
+Zhenyu Mao, Jacky Keung, Fengji Zhang, et al.
+SEMAP: Software engineering multi-agent protocol.
+arXiv preprint arXiv:2510.12120
+, 2025.
+Pike et al. [1995]
+Rob Pike, Dave Presotto, Sean Dorward, Bob Flandrena, Ken Thompson, Howard Trickey, and Phil Winterbottom.
+Plan 9 from Bell Labs.
+Computing Systems
+, 8(3):221–254, 1995.
+Sandberg et al. [1985]
+Russel Sandberg, David Goldberg, Steve Kleiman, Dan Walsh, and Bob Lyon.
+Design and implementation of the Sun Network Filesystem.
+In
+Proceedings of the USENIX 1985 Summer Conference
+, pages 119–130, 1985.
+Vangoor et al. [2017]
+Bharath Kumar Reddy Vangoor, Vasily Tarasov, and Erez Zadok.
+To FUSE or not to FUSE: Performance of user-space file systems.
+In
+15th USENIX Conference on File and Storage Technologies (FAST ’17)
+, pages 59–72. USENIX Association, 2017.
+Wang et al. [2025b]
+Xingyao Wang, Boxuan Li, Yufan Song, et al.
+OpenHands: An open platform for AI software developers as generalist agents.
+In
+International Conference on Learning Representations (ICLR)
+, 2025b.
+Chen et al. [2025]
+Linyao Chen, Zimian Peng, Yingxuan Yang, et al.
+EnvX: Agentize everything with agentic AI.
+arXiv preprint arXiv:2509.08088
+, 2025.
+Hassan et al. [2025]
+Ahmed E. Hassan, Hao Li, Dayi Lin, et al.
+Structured agentic software engineering.
+arXiv preprint arXiv:2509.06216
+, 2025.
+Anthropic [2025]
+Anthropic.
+Agent skills.
+https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview
+, 2025.
+Accessed: 2026-02-14.
+WHATWG [2026]
+WHATWG.
+Html living standard: Server-sent events.
+https://html.spec.whatwg.org/multipage/server-sent-events.html
+, 2026.
+Accessed: 2026-02-14.
+Cline Contributors [2024]
+Cline Contributors.
+Cline: An autonomous coding agent for vs code.
+https://github.com/cline/cline
+, 2024.
+Accessed: 2026-02-14.
+Wu et al. [2025]
+Yuhao Wu, Franziska Roesner, Tadayoshi Kohno, Ning Zhang, and Umar Iqbal.
+IsolateGPT: An execution isolation architecture for LLM-based agentic systems.
+In
+Network and Distributed System Security Symposium (NDSS)
+, 2025.
+Zhang et al. [2026]
+Ruichen Zhang, Guangyuan Liu, Yinqiu Liu, Changyuan Zhao, Jiacheng Wang, Yunting Xu, Dusit Niyato, Jiawen Kang, Yonghui Li, Shiwen Mao, et al.
+Toward edge general intelligence with agentic ai and agentification: Concepts, technologies, and future directions.
+IEEE Communications Surveys & Tutorials
+, 28:4285–4318, 2026.
+Yang and Zhu [2026]
+Ya-Ting Yang and Quanyan Zhu.
+Internet of agentic AI: Incentive-compatible distributed teaming and workflow.
+arXiv preprint arXiv:2602.03145
+, 2026.
+Wooldridge et al. [2025]
+Michael J. Wooldridge, Attila Bagoly, Jonathan J. Ward, Emanuele La Malfa, and Gabriel Paludo Licks.
+Fetch.ai: An architecture for modern multi-agent systems.
+arXiv preprint arXiv:2510.18699
+, 2025.
+Giusti et al. [2025]
+Lorenzo Giusti, Ole Anton Werner, Riccardo Taiello, Matilde Carvalho Costa, Emre Tosun, Andrea Protani, Marc Molina, Rodrigo Lopes de Almeida, Paolo Cacace, Diogo Reis Santos, et al.
+Federation of agents: A semantics-aware communication fabric for large-scale agentic AI.
+arXiv preprint arXiv:2509.20175
+, 2025.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

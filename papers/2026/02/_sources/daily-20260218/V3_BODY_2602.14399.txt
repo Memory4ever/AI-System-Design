@@ -1,0 +1,758 @@
+Multi-Turn Adaptive Prompting Attack on Large Vision-Language ModelsDisclaimer: This paper contains jailbreaking examples that may be offensive in nature.
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Works
+3 Methodology
+3.1 At Each turn: Alternate Attack Actions
+3.2 Across turns: Adjust Attack Trajectory
+3.3 Reflection after One Attempt of Multi-turn Attack
+4 Experiments
+4.1 Experiment Setup
+4.2 Performance Evaluation and Analysis
+Result analysis on HarmBench: ours vs. baselines
+Result analysis on more benchmarks: ours vs. multi-turn baselines
+GPT-4o-mini as the victim LVLM
+4.3 Ablation Study
+4.4 Attack Efficacy
+Budget-constrained Success Rate
+Attack Actions Distribution in Each Turn
+4.5 More Experiments
+Attack Defended LVLMs
+Dialogues and Semantic Correlation
+5 Conclusion
+References
+A Full Dialogues
+B Algorithms
+B.1 Algorithm of Greedy Search Attack Actions
+B.2 Algorithm of Adaptive Attack Trajectory Adjustment
+C Change in Semantic Correlation Across Turns
+D Red-Teaming Instructions
+E AI Usage Clarification
+License: CC BY 4.0
+arXiv:2602.14399v1 [cs.CV] 16 Feb 2026
+Multi-Turn Adaptive Prompting Attack on Large Vision-Language Models
+Disclaimer: This paper contains jailbreaking examples that may be offensive in nature.
+In Chong Choi
+Affiliation: The University of Melbourne
+Jiacheng Zhang
+Affiliation: The University of Melbourne
+Feng Liu
+Affiliation: The University of Melbourne
+Yiliao Song
+Affiliation: The University of Adelaide
+Correspondence to: Yiliao.song@gmail.com
+Abstract
+Multi-turn jailbreak attacks are effective against text-only large language models (LLMs) by gradually introducing malicious content across turns.
+When extended to large vision-language models (LVLMs), we find that naively adding visual inputs can cause existing multi-turn jailbreaks to be easily defended.
+For example, overly malicious visual input will easily trigger the defense mechanism of safety-aligned LVLMs, making the response more conservative.
+To address this, we propose MAPA : a m ulti-turn a daptive p rompting a ttack that 1) at each turn , alternates text-vision attack actions to elicit the most malicious response; and 2) across turns , adjusts the attack trajectory through iterative back-and-forth refinement to gradually amplify response maliciousness.
+This two-level design enables MAPA to consistently outperform state-of-the-art methods, improving attack success rates by 11-35% on recent benchmarks against LLaVA-V1.6-Mistral-7B, Qwen2.5-VL-7B-Instruct, Llama-3.2-Vision-11B-Instruct and GPT-4o-mini.
+Keywords:
+Machine Learning, ICML
+https://github.com/thomaschoi143/MAPA
+Figure 1 : An example of multi-turn dialogues with different input types and a combination of them on Llava-V1.6-Mistral-7B. We apply a state-of-the-art multi-turn jailbreak method for LLMs ( Yang et al., 2024b ) to generate text prompts and Stable Diffusion ( Rombach et al., 2022 ) to produce query-related images. Directly using this method or simply adding images fails to jailbreak the model, whereas carefully selecting less-defendable attack actions across turns progressively elicits more malicious responses. We provide more detailed version of dialogues in Appendix A .
+1 Introduction
+Large language models (LLMs) have shown remarkable generative capabilities across diverse domains ( Zou et al., 2023 ; Liu et al., 2024b ; Liu et al., 2025 ) . To ensure their outputs remain legal and ethical, safety alignment are applied to prevent the generation of harmful content ( Zou et al., 2023 ; Chao et al., 2024 ; Chao et al., 2025 ) . However, these safeguards are vulnerable to jailbreak attacks ( Zou et al., 2023 ; Mazeika et al., 2024 ; Liu et al., 2024b ) , in which adversaries construct modified prompts to bypass safety restrictions. Beyond manual prompts, jailbreaks can be from red-teaming LLMs where adversarial prompts are automatically generated and dynamically refined throughout the dialogue ( Russinovich et al., 2025 ) , giving rise to multi-turn jailbreaks ( Yang et al., 2024b ) . Compared to single-turn attacks, multi-turn jailbreaks are more effective and harder to defend against, as harmful content is gradually introduced across turns rather than injected all at once ( Bullwinkel et al., 2025 ) .
+While multi-turn jailbreaks have been the preferable strategy for attacking LLMs ( Bullwinkel et al., 2025 ) , this approach has not been well recognized in the context of large vision-language models (LVLMs) ( Jindal and Deshpande, 2025 ) . Compared to text-only LLMs, LVLMs possess remarkable cognition in integrating language understanding with visual perception ( Liu et al., 2024c ) . This multimodal nature of LVLMs has made it common practice to incorporate visual inputs in jailbreak attempts to enhance their effectiveness ( Ma et al., 2024 ) . However, two critical gaps remain unexplored. First , it is unclear how malicious content within the visual modality can be gradually added across multiple turns of interaction with an LVLM. At a deeper level , it is not well understood how the harmful cues in one modality, either textual or visual, can align and reinforce, rather than contradict, those in the other modality, thereby amplifying the overall jailbreak attack effectiveness.
+In this paper, we present the first attempt to investigate the above-mentioned gaps. Through extensive experiments, we find that as safety guardrails become increasingly sophisticated, single-turn LVLM attacks often fail against safety-aligned LVLMs (Section 4.2 ), motivating a shift toward multi-turn jailbreaks on LVLMs. However, directly using existing multi-turn LLM jailbreaks (Figure 1 .a) or extending them by naively adding visual inputs (Figure 1 .b) proves ineffective, as the straightforward insertion of malicious information will easily trigger defenses, resulting in conservative LVLM’s responses. These findings highlight the need to intelligently optimize text-vision prompts to elicit progressively more malicious responses through less-defendable attack actions step-by-step (Figure 1 .c), rather than merely aligning them superficially by the textual and visual content.
+To address these challenges, we propose MAPA : a m ulti-turn a daptive p rompting a ttack that (1) at each turn , alternates text–vision attack actions to elicit the most malicious response, and (2) across turns , adjusts the attack trajectory through iterative back-and-forth refinement to amplify maliciousness gradually. In MAPA , a semantic correlation score between the LVLM response and the jailbreak objective quantifies malicious intensity. This score guides both the selection of the most malicious response at the current turn and the adjustment of the attack trajectory by deciding whether to advance to the next turn, regenerate the current prompt, or revert to an earlier turn, based on comparisons with previous values.
+This two-level design enables MAPA consistently outperform state-of-the-art methods by 11-35% on HarmBench and JailbreakBench against the commonly used LVLMs: LLaVA-V1.6-Mistral-7B, Qwen2.5-VL-7B-Instruct, Llama-3.2-Vision-11B-Instruct and GPT-4o-mini.
+Our contributions: 1. We uncover and characterize the pain points underlying the failure of existing jailbreak attacks for LVLMs.
+2. We propose a practical solution, MAPA , that applies a two-level design to mitigate these pain points through adaptive multi-turn prompting.
+3. We provide extensive experiments and in-depth analyses demonstrating the superiority and efficiency of MAPA .
+2 Related Works
+Single-turn jailbreak attacks on LVLMs.
+Existing single-turn jailbreak attacks on LVLMs can be perturbation-based attacks ( Qi et al., 2024 ; Niu et al., 2024 ; Wang et al., 2024a ) or structure-based attacks ( Ma et al., 2024 ; Wang et al., 2024c ; Gong et al., 2025 ) . Perturbation-based attacks typically optimize adversarial perturbations through white-box access to the target LVLM. This optimization process is computationally heavy, and the requirement for white-box access makes these attacks impractical in real-world scenarios where model internals are inaccessible.
+In contrast, structure-based attacks can directly attack against black-boxed LVLMs without requiring gradient information or internal parameters, which offers broader practicality. For example, Visual Role Play (VRP) ( Ma et al., 2024 ) guides LVLMs to role-play as high-risk characters depicted in images and respond to harmful requests embedded in typography, and Multi-Modal Linkage (MML) ( Wang et al., 2024c ) encrypts harmful requests in images using mirroring, and instructs target LVLMs to decrypt the image content via textual templates to reduce overexposure of malicious information, which demonstrated impressive attack performance.
+However, our extensive empirical results indicate that as the safety guardrails become increasingly sophisticated, existing methods often fail against safety-aligned LVLMs (see Section 4.2 ). This limitation motivates a shift toward multi-turn jailbreaks, which progressively steer the conversation toward malicious intent in small, seemingly benign steps, making the attack stealthier. Yet, to the best of our knowledge, no powerful multi-turn jailbreak attack on LVLMs has been proposed so far.
+Multi-turn jailbreak attacks on LLMs.
+Though multi-turn LVLM jailbreaks are rare, prior studies on LLMs have widely demonstrated the effectiveness of multi-turn jailbreaks ( Yang et al., 2024b ; Ren et al., 2024 ; Weng et al., 2025 ) .
+For example, chain of attack (CoA) ( Yang et al., 2024b ) employs a red-teaming LLM to design an attack chain and refines the subsequent prompt based on the dialogue. ActorAttack ( Ren et al., 2024 ) defines a set of generic attack clues to help the attacker generate more diverse attack paths, improving the exploration of attack strategies.
+Inspired by the foot-in-the-door ( Freedman and Fraser, 1966 ) effect in psychology, FootInTheDoor ( Weng et al., 2025 ) develops a systematic mechanism that smoothly escalates the malicious level in queries as the conversation advances.
+However, most works follow a pre-generated attack sequence throughout the dialogue ( Yang et al., 2024b ; Ren et al., 2024 ; Weng et al., 2025 ) or rely on attack prompts with similar nature ( Zhou and Arel, 2025 ) , which may hinder the jailbreak effectiveness.
+3 Methodology
+Figure 2 : A visual illustration of MAPA . Right: at each turn, MAPA alterates text-vision attack actions to elicit the most malicious response calculated by semantic correlations. Left : across turns, MAPA adjusts the attack trajectory through iterative back-and-forth refinement, thereby gradually amplifying the maliciousness of responses, improving the jailbreak effectiveness. Reflection: If the current multi-turn attack attempt fails, the subsequent attempt begins by regenerating a chain attack using information from prior failures.
+Before introducing our method, we formally define the task of text-vision multi-turn jailbreak attacks against large vision-language models (LVLMs). At the i i -th turn of interaction with the victim LVLM, let the prompt be P i = { Q i V , Q i T } P_{i}=\{Q^{V}_{i},Q^{T}_{i}\} where Q i V Q^{V}_{i} denotes the input image and Q i T Q^{T}_{i} denotes the input text query. A multi-turn response of this target LVLM ( T T ) at turn i i is then defined as the output of T T conditioned on the concatenation of all previous prompts and responses up to i i :
+r i = T ( P 1 ∥ r 1 ∥ P 2 ∥ r 2 ∥ … ∥ P i ) . \small r_{i}=T(P_{1}\|r_{1}\|P_{2}\|r_{2}\|...\|P_{i}).
+(1)
+Given a malicious task t t , let J J denote a judge, either a human or a Judge LLM ( Mazeika et al., 2024 ) , that assigns a label of 1 if a response is harmful and relevant to t t (i.e., J ⁡ ( r i , t ) = 1 J(r_{i},t)=1 ), and 0 otherwise. The goal of jailbreaking an LVLM T T is to construct a sequence of text–vision prompts P 1 , P 2 , … , P i P_{1},P_{2},...,P_{i} that yields a harmful and relevant response r i r_{i} within at most L L turns, i.e.,
+( P 1 ⋆ , … , P i ⋆ ⋆ ) = arg min i ≤ L { ( P 1 , … , P i ) | J ( r i , t ) = 1 , J ( r j , t ) = 0 ∀ j < i } . \small\begin{split}(P^{\star}_{1},\dots,P^{\star}_{i^{\star}})&=\arg\min_{i\leq L}\Bigl\{\,(P_{1},\dots,P_{i})\;\Big|\\
+&\hskip 9.24994ptJ(r_{i},t)=1,\;J(r_{j},t)=0\;\;\forall j<i\Bigr\}.\end{split}
+(2)
+As presented in Eq. 2 , the ideal sequence of text-vision prompts should be the one that successfully jailbreaks the LVLM in the minimal number of turns. This sequence is determined by two factors: (1) how the malicious task eventually triggers a harmful LVLM response ( J ⁡ ( r i , t ) = 1 J(r_{i},t)=1 ), and (2) how the interplay of text-vision prompts collectively shapes the LVLM’s responses (Eq. 1 ). These considerations naturally lead to two critical yet unexplored research questions accordingly: (1) how can malicious content be gradually injected across multiple turns of interaction to achieve jailbreak success? and (2) how harmful cues in one modality, either textual or visual, can align and reinforce, rather than contradict, each other in eliciting malicious LVLM responses?
+In this study, we make the first attempt to address the above questions by proposing MAPA , a multi-turn adaptive prompting attack framework. MAPA adopts a two-level design: (1) at each turn i, it alternates text-vision attack actions to elicit the most malicious response (Figure 2 .right); and (2) across turns, it adjusts the attack trajectory through iterative back-and-forth refinement, thereby gradually amplifying the maliciousness of responses (Figure 2 .left). Once the jailbreak starts, an Attacker LLM is triggered, and its output is passed to the turn-level attack action alternation. The most effective attack action will be selected to query the Victim LVLM . If the jailbreak attempt does not succeed at this turn, the LVLM’s response is fed back to guide how the attack trajectory should be adjusted. In the following subsections, we introduce the design of each level in detail.
+3.1 At Each turn: Alternate Attack Actions
+Overall. As presented the Figure 2 (right), after Attacker LLM generates the initial Unconnected Attack Prompt ( Q T uc {}_{\text{uc}}Q^{T} ), a Connector LLM is triggered to produce a pair of Connected Attack Prompt ( Q T c {}_{\text{c}}Q^{T} ) that aligns with the corresponding Image Generation Prompt . A Stable Diffusion model ( Rombach et al., 2022 ) is then applied to generate a Malicious Image ( Q V c {}_{\text{c}}Q^{V} ) from the Image Generation Prompt . By combining the prompt candidates { uc Q T , c Q T , c Q V } \{_{\text{uc}}Q^{T},\,_{\text{c}}Q^{T},\,_{\text{c}}Q^{V}\} into the attack prompt P action P^{\text{action}} , we define three Attack Actions to attempt to jailbreak the Victim LVLM , yielding three responses { r i ​ 1 , r i ​ 2 , r i ​ 3 } \{r_{i1},r_{i2},r_{i3}\} . We then use a Judge LLM to evaluate if the LVLM has been jailbroken, i.e., J ⁡ ( r i , action ) = 1 J(r_{i,\text{action}})=1 . If J ⁡ ( r i , action ) = 1 J(r_{i,\text{action}})=1 in any of the three actions, the jailbreak attempt succeeds; otherwise, we trigger the attack trajectory adjustment as detailed in Section 3.2 .
+Design Connector LLM . To introduce vision modality to multi-turn attacks effectively, we design the Connector LLM in a Chain-of-Thought manner ( Wei et al., 2022 ) . It first identifies malicious concepts in the unconnected text prompt ( Q T uc {}_{\text{uc}}Q^{T} ) and then leverages these concepts to generate a corresponding image generation prompt. At the same time, the unconnected text prompt is refined into a connected text prompt Q T c {}_{\text{c}}Q^{T} by replacing those malicious concepts. This design preserves the original adversarial intent of each turn while transferring the harmfulness from text to vision inputs, thereby enabling evasion of the more robust text-based defenses ( Gong et al., 2025 ) .
+Define attack actions. As is explained above, Attacker LLM followed by a Connector LLM will generate prompt candidates { uc Q T , c Q T , c Q V } \{_{\text{uc}}Q^{T},\,_{\text{c}}Q^{T},\,_{\text{c}}Q^{V}\} , we then define Attack Actions as follows:
+•
+Attack Action 1 contains the un connected text prompt only: P a ​ c ​ t ​ i ​ o ​ n ​ 1 = uc Q T P^{action1}=\,_{\text{{uc}}}Q^{T} . This covers the case where adding visual inputs might impair attack effectiveness.
+•
+Attack Action 2 contains the un connected text prompt and the generated malicious image: P a ​ c ​ t ​ i ​ o ​ n ​ 2 = { uc Q T , c Q V } P^{action2}=\{\,_{\text{{uc}}}Q^{T},\,_{\text{c}}Q^{V}\} . This covers the case where text and visual inputs can enhance attack effectiveness independently without contradiction.
+•
+Attack Action 3 contains the connected text prompt and the generated malicious image: P a ​ c ​ t ​ i ​ o ​ n ​ 3 = { c Q T , c Q V } P^{action3}=\{\,_{\text{{c}}}Q^{T},\,_{\text{c}}Q^{V}\} indicating only aligned text-visual inputs can enhance attack.
+Alternate attack actions by greedy search . After the three attack prompts P a ​ c ​ t ​ i ​ o ​ n ​ 1 , P a ​ c ​ t ​ i ​ o ​ n ​ 2 P^{action1},P^{action2} and P a ​ c ​ t ​ i ​ o ​ n ​ 3 P^{action3} are formulated, they are alternated to attempt to jailbreak the Victim LVLM , producing three responses { r i ​ 1 , r i ​ 2 , r i ​ 3 } \{r_{i1},r_{i2},r_{i3}\} . We then use a Judge LLM to evaluate if the LVLM has been jailbroken, i.e., J ⁡ ( r i , action ) = 1 J(r_{i,\text{action}})=1 . If J ⁡ ( r i , action ) = 1 J(r_{i,\text{action}})=1 in any of the three actions, the jailbreak attempt succeeds; otherwise, we trigger the attack trajectory adjustment. Specifically, for each response, we compute the semantic correlations between it and the jailbreak task t t by measuring the cosine similarity between their encoded representations ( Gao et al., 2021 ) , denoted by SEM ​ ( r , t ) \text{SEM}(r,t) . The Attack Action with the highest semantic correlation is chosen as the optimal action for the current turn, and the corresponding prompt P i a ​ c ​ t ​ i ​ o ​ n ⋆ P_{i}^{action^{\star}} and LVLM’s response r i action ⋆ = T ⁡ ( P i a ​ c ​ t ​ i ​ o ​ n ⋆ ) r_{i}^{\text{action}^{\star}}=T(P_{i}^{action^{\star}}) are saved for further use. The overall attack action alternation procedure can be implemented as a greedy search algorithm for the best action at each turn, as Algorithm 1 in Appendix B.1 .
+In summary, we employ an idea of the attack chain generator to construct each attack prompt sequence, similar to existing works ( Yang et al., 2024b ; Ren et al., 2024 ) . However, in contrast to existing approaches, our method explicitly alternates the most effective attack action from multiple candidate sequences, thereby addressing the question of how textual and visual modalities can reinforce one another in eliciting malicious LVLM responses at each turn.
+3.2 Across turns: Adjust Attack Trajectory
+If J ⁡ ( r i , action ) = 1 J(r_{i,\text{action}})=1 in any of the three actions, the jailbreak attempt succeeds (Section 3.1 ) and turn-by-turn iteration ends; otherwise, when J ⁡ ( r i , action ) = 0 J(r_{i,\text{action}})=0 for all three actions, we trigger the attack trajectory adjustment across turns. Motivated by the finding that generated responses should be increasingly relevant to the jailbreak task as the multi-turn dialogue advances ( Yang et al., 2024b ) , our adaptive attack trajectory adjustment is driven by the semantic correlation to ensure malicious content is gradually injected across multiple turns to achieve jailbreak success. Specifically, after we find the attack action with the highest semantic correlation in Section 3.1 –“Alternate Attack Actions by Greedy Search”, the corresponding prompt P i a ​ c ​ t ​ i ​ o ​ n ⋆ P_{i}^{action^{\star}} and LVLM’s response r i action ⋆ = T ⁡ ( P i a ​ c ​ t ​ i ​ o ​ n ⋆ ) r_{i}^{\text{action}^{\star}}=T(P_{i}^{action^{\star}}) are saved for the current iteration at i i -th turn, denoted by P i ⋆ P^{\star}_{i} and R i ⋆ R^{\star}_{i} for simplicity.
+Note: Turn ( i i ) vs. Iteration ( s s ). Before detailing the attack trajectory across turns, it is important to clarify the distinction between a Turn ( i i ) and an Iteration ( s s ). The attack trajectory will be adjusted by iterative back-and-forth refinement to achieve the optimal sequence of attack prompt that can jailbreak the LVLM effectively. This implies that within a single turn ( i i ), multiple iterations ( s s ) may be required, as several rounds of interaction with the Victim LVLM are needed to identify the optimal prompts for that attack turn. In the final constructed attack sequence, only the prompts from the iteration that yields the optimal attack result is retained as the i i -th turn attack prompt P i ⋆ P^{\star}_{i} , while the intermediate iteration-level prompts P s | i P_{s|i} serve only as transient steps during the attack sequence construction. Since the turn-leveled back-and-forth refinement is involved, we preset the maximum number of iterations as well as the maximum number of turns. This setting is to prevent the adjustment process from becoming trapped in a loop between two turns without ever jumping out.
+We also only allow one regeneration for each turn in a series, so they cannot regenerate twice consecutively, preventing from regenerating forever and stuck in the same turn.
+Adjustment policies . Similar to the policy selection developed by chain of attack (CoA) ( Yang et al., 2024b ) , we compare the semantic correlations across turns and iterations to decide whether to proceed the attack trajectory to the subsequent turn ( Advance ), regenerate the current turn ( Regen ) or walk back to the previous turn ( Back ). Specifically, each policy is explained as follows:
+•
+Advance . Triggering the Advance policy indicates that the current turn has made sufficient progress and can proceed to the next turn, i.e., i ← i + 1 i\leftarrow i+1
+•
+Regen . Triggering the Regen policy indicates that the current turn has made no progress; thus, the attack prompt and actions should be regenerated, i.e., s ← s + 1 s\leftarrow s+1 .
+•
+Back . Triggering the Back policy indicates that although the attack action in the previous turn initially appeared effective, new information from the current turn suggests it was not. As a result, the process reverts to the previous turn for regeneration, i.e., i ← i − 1 , s ← 0 i\leftarrow i-1,s\leftarrow 0 .
+Conditions that trigger adjustment policies . Section 3.1 presented iteration-level concepts using turn-level notation, i.e., T ⁡ ( P i action ⋆ ) T(P_{i}^{\text{action}^{\star}}) , for ease of understanding before the distinction between turns and iterations was introduced. In this subsection, all iterations are explicitly denoted with their full turn number, namely s | i s|i . At the s s -th iteration of i i -th turn, after selecting the optimal attack action from the three alternatives, the response r s | i ⋆ r_{s|i}^{\star} is obtained as r s | i ⋆ = T ⁡ ( P s | i action ⋆ ) r_{s|i}^{\star}=T(P_{s|i}^{\text{action}^{\star}}) . The computed r s | i ⋆ r_{s|i}^{\star} is is then used to evaluate its semantic correlation both with historical context SEM ​ ( r , t ) \text{SEM}(r,t) , and without historical context SEM ′ ​ ( r , t ) \text{SEM}^{\prime}(r,t) , based on which, the following conditions are derived:
+•
+Advance trigger condition. If the current semantic correlation with the historical context increases compared to both the previous turn and its version without historical context, namely, SEM ​ ( r s | i ⋆ , t ) > SEM ​ ( r i − 1 ⋆ , t ) \text{SEM}(r^{\star}_{s|i},t)>\text{SEM}(r^{\star}_{i-1},t) and SEM ​ ( r s | i ⋆ , t ) > SEM ′ ​ ( r s | i ⋆ , t ) \text{SEM}(r^{\star}_{s|i},t)>\text{SEM}^{\prime}(r^{\star}_{s|i},t) , the Advance policy is triggered, indicating that maliciousness is gradually increasing with the historical context .
+•
+Back trigger condition. If the current semantic correlation decreases compared to the previous turn, while its version without historical context shows an increase, namely, SEM ​ ( r s | i , t ) < SEM ​ ( r i − 1 ⋆ , t ) \text{SEM}(r_{s|i},t)<\text{SEM}(r^{\star}_{i-1},t) and SEM ′ ​ ( r s | i , t ) > SEM ​ ( r i − 1 ⋆ , t ) \text{SEM}^{\prime}(r_{s|i},t)>\text{SEM}(r^{\star}_{i-1},t) , the Back policy is triggered, suggesting that the historical context introduced in the previous turn has caused degradation .
+•
+Regen trigger condition. Otherwise, the Regen policy is triggered, which covers two cases: (1) SEM ​ ( r i − 1 ⋆ , t ) < SEM ​ ( r s | i , t ) < SEM ′ ​ ( r s | i , t ) \text{SEM}(r^{\star}_{i-1},t)<\text{SEM}(r_{s|i},t)<\text{SEM}^{\prime}(r_{s|i},t) , meaning maliciousness increased but not in a gradual manner , requiring regeneration of the optimal historical context for future turns; or (2) SEM ​ ( r s | i , t ) , SEM ′ ​ ( r s | i , t ) < SEM ​ ( r i − 1 ⋆ , t ) \text{SEM}(r_{s|i},t),\text{SEM}^{\prime}(r_{s|i},t)<\text{SEM}(r^{\star}_{i-1},t) meaning maliciousness decreased and regeneration is required. If the regenerated response at iteration s + 1 | i s+1|i is worse than that at s | i s|i , we only update s ← s + 1 s\leftarrow s+1 but retain the same attack actions and responses.
+The policy trigger conditions are detailed in Algorithm 2 (Appendix B.2 ), which extends the original CoA framework by improving both efficacy and efficiency from two perspectives: (i) memorizing regenerated of input–response pairs to preserve attack effectiveness when iteration might induce attack degradation, and (ii) allowing rapid backtracking to remove ineffective components in the attack chain, thereby optimizing the use of the jailbreak budget.
+Update input to Attacker LLM . After an adjustment policy is triggered, a new iteration begins from the Attacker LLM step. The input to the Attacker LLM is updated by incorporating the LVLM’s response into the historical context. Specifically, at iteration s | i s|i : if Advance policy is triggered, r s | i ⋆ r^{\star}_{s|i} is concatenated to the historical context, as the turn has progressed to i + 1 i+1 ; if Regen policy is triggered, no new information is added, since the current turn made no progress; and if Back policy is triggered, the most recent response r s | i − 1 ⋆ r^{\star}_{s|i-1} is removed from the historical context, as the i i -th turn indicates the need to regenerate r s | i − 1 ⋆ r^{\star}_{s|i-1} . With this updated input, the per-turn adjustment process begins, provided the preassigned maximum number of iterations has not been reached.
+3.3 Reflection after One Attempt of Multi-turn Attack
+As shown in Figure 2 , MAPA takes effect after the attack chain is generated at Turn 0. Consequently, a poorly constructed initial attack chain may limit the overall effectiveness of MAPA . To address this issue, we introduce a reflection mechanism that optimizes the attack chain when a multi-turn attack attempt fails. Specifically, we model the LLM as an optimizer ( Yang et al., 2024a ) , enabling the attacker to learn from previously failed strategies within the same jailbreak task and to design a more effective attack chain in subsequent attempts, thereby establishing intra-task learning. With this reflection mechanism, each malicious task is attempted up to three times or until success.
+Example instructions of MAPA and its variant without reflection are provided in Appendix D , shown in Figures 9 and 10 , respectively. During reflection, the attacker is fed with the failed strategies, the corresponding attack chains, and the victim model’s final response to guide the generation of the next attack chain. The effectiveness of this reflection mechanism is further analyzed in the ablation study.
+4 Experiments
+4.1 Experiment Setup
+Datasets . We evaluate MAPA on four commonly used benchmark datasets, HarmBench ( Mazeika et al., 2024 ) , JailbreakBench ( Chao et al., 2024 ) , AdvBench ( Zou et al., 2023 ) and RedTeam-2K ( Luo et al., 2024 ) . We follow the evaluation protocol in Yang et al. (2024b) , which randomly samples 10 behaviors from 6 categories in HarmBench, and 6 behaviors from 10 categories in JailbreakBench, yielding 60 jailbreaking tasks as the evaluation set for each benchmark. For AdvBench and RedTeam-2K, we randomly sample 100 tasks from each to form the evaluation set.
+Baselines . Following Weng et al. (2025) , we compare MAPA with current state-of-the-art multi-turn jailbreaking methods on LLMs, which include Chain of Attack (CoA) ( Yang et al., 2024b ) , ActorAttack ( Ren et al., 2024 ) and FootInTheDoor ( Weng et al., 2025 ) . Moreover, we compare MAPA with two stealthiest single-turn LVLM attacks, Visual Role-play (VRP) ( Ma et al., 2024 ) and Multi-Modal Linkage (MML) ( Wang et al., 2024c ) , to underscore the existing vulnerabilities of LVLMs against multi-turn attacks.
+Victim models . Following Yang et al. (2025) , we evaluate on three open-source LVLMs for reproducibility, including Llava-V1.6-Mistral-7B ( Liu et al., 2024a ) , Llama-3.2-Vision-11B-Instruct ( Grattafiori et al., 2024 ) , and Qwen2.5-VL-7B-Instruct ( Bai et al., 2025 ) . We also present evaluations on the commercialized GPT-4o-mini ( OpenAI, 2024 ) .
+Red-teaming models .
+The performance of automated multi-turn attacks largely depends on the capabilities of the attacker LLM ( Russinovich et al., 2025 ) . In our paper, without having to fine-tune an adversarial attacker or requiring an SOTA LLM (e.g., GPT-series ( Achiam et al., 2023 ) ), we adopt Mistral-Small-3-24B-Instruct-2501 as the LLM using the instructions in Appendix D . This is applied for all red-teaming agents in MAPA (e.g., the Attacker LLM and the Connector LLM ) and baseline methods for reproducibility and fair comparisons, which is a small yet competitive open-source model.
+Implementation details .
+To construct a consistent inference environment for all the methods, we specify the temperature to 0.3, and top_p to 0.7 for all red-teaming LLMs, which allows moderate levels of diversity while reducing randomness in adversarial generation. For victim models, we assign a temperature of 0 and top_p of 0 to ensure deterministic generation. For all the baselines, we maintain the default hyperparameters in their codebase. For Stable Diffusion ( Rombach et al., 2022 ) , we set the number of inference steps to 20, guidance scale to 5.5, and generated images to be 512 pixels in both height and width. We restrict the maximum number of generated tokens to 300 for victim models and 2000 for red-teaming LLMs. The maximum number of (iterations, turns, attempts for reflection) in our pipeline is set to (10, 5, 3). We also set the number of proposed adversarial queries to 5 for all methods to mitigate the influence of different context lengths of the victim models.
+Evaluation metrics .
+In line with most prior studies ( Zou et al., 2023 ; Gong et al., 2025 ) , the attack success rate (ASR) is employed to measure the proportion of successful attacks within a set of jailbreak tasks. Considering that different evaluation methods lead to variable results ( Chao et al., 2024 ) , we adopt one of the standardized evaluation frameworks, the HarmBench judge ( Mazeika et al., 2024 ) , to determine the success of a jailbreak for all methods. The choice is supported by its lightweightness and rigorousness offered by the fine-tuned Llama-2-13B model ( Touvron et al., 2023 ) specialized in classifying safety violations.
+4.2 Performance Evaluation and Analysis
+Result analysis on HarmBench: ours vs. baselines
+. Table 1 show the attack success rate (ASR) on HarmBench, where MAPA achieves superior performance over all the baselines with remarkable margins across multiple target LVLMs, with the highest 100% ASR on Qwen2.5-VL-7B-Instruct and 96.55% ASR on average. By incorporating the vision modality and greedy search over a diverse set of attack actions, MAPA outperforms CoA by 11.55% on average, even though both are using a similar policy selection strategy to direct the dialogue dynamics.
+Table 1 : Attack success rate (%) on HarmBench : MAPA vs. baselines against various target LVLMs, i.e. , Llava-V1.6-Mistral-7B (Llava), Qwen2.5-VL-7B-Instruct (Qwen) and Llama-3.2-Vision-11B-Instruct (Llama). We show the most successful attack in underline bold and the second-best in underline .
+Category
+Method
+Llava
+Qwen
+Llama
+Average
+Single-turn
+VRP
+66.67
+5.00
+65.00
+45.56
+MML
+20.00
+65.55
+00.00
+28.52
+Multi-turn
+CoA
+83.33
+86.66
+85.00
+85.00
+ActorAttack
+65.00
+48.33
+71.67
+61.67
+FootInTheDoor
+75.00
+50.00
+85.00
+70.00
+MAPA (ours)
+98.00
+100.00
+91.66
+96.55
+Result analysis on more benchmarks: ours vs. multi-turn baselines
+. Table 2 reports ASR results on more recent benchmarks, on which single-turn baselines are largely ineffective ( e.g. , achieving zero ASR on JailbreakBench), indicating their limited generalization capability.
+Accordingly, we focus our comparison on multi-turn baseline methods in the following. Similar to the results on HarmBench, MAPA consistently outperforms the other baselines by a notable margin across all victim models on all benchmarks. showcasing the generalizability of our method.
+For example, MAPA outperforms the second best average result by 21.11% over JailbreakBench, 14.38% over AdvBench and 26.97% over RedTeam-2K.
+Besides, the successor of CoA, ActorAttack, presents inferior performance. Upon investigation, we attribute this to its ineffective strategy of posing educational questions about the attack clues, which may result in responses that are harmful but do not directly address the malicious request. This observation highlights the importance of maintaining sufficient attack diversity in multi-turn jailbreak methods.
+Table 2 : Attack success rate (%) on more benchmarks : MAPA vs. multi-turn baselines against various target LVLMs, i.e. , Llava-V1.6-Mistral-7B (Llava), Qwen2.5-VL-7B-Instruct (Qwen) and Llama-3.2-Vision-11B-Instruct (Llama). We show the most successful attack in underline bold and the second-best in underline .
+Benchmark
+Method
+Llava
+Qwen
+Llama
+Average
+JailbreakBench
+VRP
+00.00
+00.00
+00.00
+00.00
+MML
+00.00
+00.00
+00.00
+00.00
+CoA
+78.33
+70.00
+55.00
+67.78
+ActorAttack
+27.59
+35.00
+24.56
+29.05
+FootInTheDoor
+66.66
+41.66
+56.66
+54.99
+MAPA (ours)
+93.33
+93.33
+80.00
+88.89
+AdvBench
+CoA
+91.67
+76.66
+77.08
+81.80
+ActorAttack
+25.86
+22.03
+47.37
+31.75
+FootInTheDoor
+73.33
+36.66
+61.66
+57.22
+MAPA (ours)
+98.96
+97.92
+91.66
+96.18
+RedTeam-2K
+CoA
+68.33
+65.48
+61.90
+65.24
+ActorAttack
+10.53
+25.86
+47.37
+27.92
+FootInTheDoor
+55.00
+30.00
+63.33
+49.44
+MAPA (ours)
+93.75
+94.79
+88.09
+92.21
+Table 3 : Success rate of attacking GPT-4o-mini adopting the fine-tuned Llama-2-13B model (as Default Judge ) or GPT-4o-mini (as Advanced Judge ) as Judge LLM .
+Victim: GPT-4o-mini
+CoA
+ActorAttack
+FootInTheDoor
+MAPA (ours)
+Default Judge
+53.33
+45.76
+41.66
+88.33
+Advanced Judge
+73.33
+64.00
+60.00
+93.33
+( improvement )
+( +20.00 )
+( +18.24 )
+( +18.34 )
+( +5.00 )
+GPT-4o-mini as the victim LVLM
+. In Table 3 , we compare MAPA with multi-turn baselines by attacking the commercial GPT-4o-mini model under two evaluation settings. Specifically, Default Judge employs the fine-tuned Llama-2-13B model ( Touvron et al., 2023 ) as the Judge LLM , while Advanced Judge uses GPT-4o-mini itself as the Judge LLM .
+Results show that even with a much weaker open-source judge model, MAPA achieves an ASR of 88.33%, whereas the strongest baseline reaches only 53.33%. When a stronger judge model is adopted, all methods benefit to varying degrees, with MAPA further improving to 93.33%. Notably, even the best baseline under Advanced Judge underperformed compared with MAPA under Default Judge , highlighting the effectiveness of our policy design.
+4.3 Ablation Study
+To further validate the effectiveness of MAPA , we conducted a variety of ablation studies presented in Table 4 . At the cross-turn level , we removed the Reflection mechanism, i.e. , each malicious task was attempted only once instead of learning from up to three previous failed attempts. The resulting average performance drop of 8.89% indicates that intra-task learning from prior failures can enhance the LLM’s ability to construct improved attack chains and reduce its resistance to engaging in red-teaming activities, thereby increasing the effectiveness of subsequent attempts.
+Table 4 : Ablation study of MAPA . We show the performance degradations (%) in red . Attack Action 1-3 refers to attacking by Unconnected Text, Unconnected Text + Vision and Connected Text + Vision separately. For efficiency, we randomly sample 5 behaviors from each category in HarmBench, resulting in 30 harmful tasks.
+Cross-Turn
+Within-Turn
+Llava
+Qwen
+Llama
+Average
+MAPA (default setting)
+93.33
+86.66
+86.67
+88.89
+MAPA w/o Reflection
+83.33
+86.66
+70.00
+80.00
+(- 10.00)
+(- 00.00)
+(- 16.67)
+(- 8.89)
+MAPA w/o Reflection
+83.33
+86.66
+70.00
+80.00
+Attack Action 1
+76.66
+73.33
+66.66
+72.22
+(- 6.67)
+(- 13.33)
+(- 3.34)
+(- 7.78)
+Attack Action 2
+73.33
+70.00
+43.33
+62.22
+(- 10.00)
+(- 16.66)
+(- 26.67)
+(- 17.78)
+Attack Action 3
+60.00
+63.33
+20.00
+47.78
+(- 23.33)
+(- 23.33)
+(- 50.00)
+(- 32.22)
+For the within-turn ablation study, we adopt MAPA w/o Reflection as the comparison baseline to eliminate the effect of intra-task learning on attack action variations and to fairly assess the contribution of different attack actions. In Table 4 , Attack Action 1-3 (defined in Section 3.1 ) refer to attacking by Un-connected Text, Unconnected Text + Vision and Connected Text + Vision separately. It can be seen that diverse attack actions of different natures across turns are critical for achieving optimal effectiveness as using any of the individual actions could induce by at least 7.78% performance degradation on average.
+In particular, solely attacking with connected text prompts and malicious images ( i.e. , Attack Action 3) performs worst (dropped by -32.22% ) as it fails in delivering clear expressions of the original requests, hindering the self-corruption of victim models. Preserving the original unconnected text prompts, Attack Action 2 continues to inject malicious images and delivers straightforward queries, significantly improving the ASR compared to Attack Action 3.
+Notably, if we remove vision inputs and provide the original attack text prompts throughout (i.e., Attack Action 1), it is shown to be superior to Attack Action 2 and 3 on average. This is largely due to the stronger safety mechanism of Llama-3.2-Vision-11B-Instruct in visual modality. With input images embedded with malicious semantics, such as images showing a bomb or a riot, Llama-3.2-Vision-11B-Instruct seems to be able to identify the harmfulness conveyed via vision and exhibits greater resistance to Attack Action 2 and 3 than the other two victim models.
+4.4 Attack Efficacy
+To further investigate the attack’s efficacy, we measure the attack efficiency by the attack success rate under a fixed total query budget. In addition, we analyze the distribution of attack actions at each turn to examine how different attack actions are triggered at different turns throughout the attack.
+Budget-constrained Success Rate
+. With greedy search, our method naturally requires more target queries. To ensure fair comparison, we evaluate attack efficiency using the attack success rate (ASR) under a fixed total query budget. Following Zhou and Arel (2025) , we use the total number of target queries consumed by MAPA across all dataset tasks as the budget. Baselines are then run on the same dataset repeatedly until this budget is exhausted, after which we compute ASR and the average number of queries. As shown in Table 5 , under comparable query budgets, MAPA consistently outperforms multi-turn baselines.
+Table 5: The values in each ⋅ \cdot %(# ⋅ \cdot ) indicate the attack success rate and the average number of target queries of MAPA and the multi-turn baselines on HarmBench, given the budget of total target queries limited to a roughly similar level.
+Method
+Llava
+Qwen
+Llama
+CoA
+83.33% (#20.17)
+86.66% (#20.00)
+85.00% (#34.33)
+ActorAttack
+65.00%(#22.47)
+48.33%(#18.48)
+71.67%(#35.43)
+FootInTheDoor
+75.00%(#24.47)
+50.00%(#26.87)
+85.00%(#34.50)
+MAPA (ours)
+98.00% (#17.88)
+100.00% (#16.47)
+91.66% (#34.30)
+Figure 3 : Distribution of attack actions across turns of MAPA ’s successful jailbreaks on HarmBench.
+Attack Actions Distribution in Each Turn
+. The attack action distribution in Figure 3 shows how different action types are strategically combined across turns to effectively bypass defenses and progressively intensify harmful responses. It can be seen that The image-involved actions (i.e., Attack Actions 2 and 3) predominantly drive successful jailbreaks on Llava-V1.6-Mistral-7B and Qwen2.5-VL-7B-Instruct, indicating that vision inputs are more effective than text-only prompts to strengthen the semantic alignment of responses. Moreover, connected text prompts and malicious images (i.e., Attack Action 3) mostly dominate Turn 1, immersing the victim model and maximizing semantic correlation at the beginning. After that, Attack Action2 and 3 gradually drive the middle turns attack (i.e., Turn 2-3).
+4.5 More Experiments
+Attack Defended LVLMs
+. In Table 6 , we apply two defense methods, i.e. AdaShield-Static ( Wang et al., 2024b ) and Llama-Guard-3-Vision-11B ( Chi et al., 2024 ) , and re-conduct the attacking experiment on HarmBench. In general, MAPA achieves a good attack success rate, which drops from the non-defense result by 20% against AdaShield-Static and 13.89% against Llama-Guard-3-Vision-11B.
+Dialogues and Semantic Correlation
+. We display the full dialogues in Appendix A as examples of full attack procedures. In addition to that, we analyze the semantic correlation across turns calculated by our method among successful and failed attempts in Appendix C .
+Table 6 : Attack success rates (%) against defended LVLMs on the HarmBench evaluation set.
+Defense
+Llava
+Qwen
+Llama
+Average
+AdaShield-Static
+78.33
+57.78
+70.56
+68.89
+Llama-Guard-3-Vision-11B
+78.33
+78.33
+68.33
+75.00
+5 Conclusion
+In conclusion, we discovered the pain points underlying the failure of existing jailbreak attack for LVLMs and propose MAPA , a simple-yet-effective m ulti-turn a daptive p rompting a ttack against LVLMs. Utilizing a set of attack actions driven by semantic correlation, MAPA can elicit the most malicious response at each turn and adaptively adjusting the attack trajectory to gradually amplify response maliciousness across turns. Extensive experiments demonstrate the effectiveness of MAPA , highlighting the importance of leveraging the vision modality to inject harmful information stealthily in multi-turn attacks. To the best of our knowledge, this is the first work to reveal the safety vulnerabilities of some widely used LVLMs in cross-modality multi-turn dialogues, which aims to promote the development of robust safety alignments in more realistic and malicious settings.
+Impact Statement
+This study on multi-turn jailbreaks on LVLMs raises important ethical considerations that we have carefully addressed.
+We have taken steps to ensure our method is fair.
+We use widely accepted public benchmark datasets to ensure comparability of our results.
+Our evaluation encompasses a wide range of state-of-the-art LVLMs to provide a comprehensive assessment.
+We have also carefully considered the broader impacts of our work.
+The proposed multi-turn jailbreak method raises the awareness of developing more safety-aligned foundation models, potentially improving the robustness of AI systems in various applications in future.
+We will actively engage with the research community to promote responsible development.
+Reproducibility Statement
+We evaluate open-source LVLMs for reproducibility and our code is available at https://github.com/thomaschoi143/MAPA . We provide a step-by-step instruction to run our code and reproduce our results.
+References
+Achiam et al. (2023)
+J. Achiam, S. Adler, S. Agarwal, L. Ahmad, I. Akkaya, F. L. Aleman, D. Almeida, J. Altenschmidt, S. Altman, S. Anadkat, et al.
+Gpt-4 technical report .
+arXiv preprint arXiv:2303.08774 .
+Cited by: §4.1 .
+Bai et al. (2025)
+S. Bai, K. Chen, X. Liu, J. Wang, W. Ge, S. Song, K. Dang, P. Wang, S. Wang, J. Tang, et al.
+Qwen2. 5-vl technical report .
+arXiv preprint arXiv:2502.13923 .
+Cited by: §4.1 .
+Bullwinkel et al. (2025)
+B. Bullwinkel, M. Russinovich, A. Salem, S. Zanella-Beguelin, D. Jones, G. Severi, E. Kim, K. Hines, A. J. Minnich, Y. Zunger, and R. S. S. Kumar
+A representation engineering perspective on the effectiveness of multi-turn jailbreaks .
+In Data in Generative Models - The Bad, the Ugly, and the Greats ,
+Cited by: §1 ,
+§1 .
+Chao et al. (2024)
+P. Chao, E. Debenedetti, A. Robey, M. Andriushchenko, F. Croce, V. Sehwag, E. Dobriban, N. Flammarion, G. J. Pappas, F. Tramer, et al.
+Jailbreakbench: an open robustness benchmark for jailbreaking large language models .
+NeurIPS .
+Cited by: §1 ,
+§4.1 ,
+§4.1 .
+Chao et al. (2025)
+P. Chao, A. Robey, E. Dobriban, H. Hassani, G. J. Pappas, and E. Wong
+Jailbreaking black box large language models in twenty queries .
+In SaTML ,
+Cited by: §1 .
+Chi et al. (2024)
+J. Chi, U. Karn, H. Zhan, E. Smith, J. Rando, Y. Zhang, K. Plawiak, Z. D. Coudert, K. Upasani, and M. Pasupuleti
+Llama guard 3 vision: safeguarding human-ai image understanding conversations .
+arXiv preprint arXiv:2411.10414 .
+Cited by: §4.5 .
+Freedman and Fraser (1966)
+J. L. Freedman and S. C. Fraser
+Compliance without pressure: the foot-in-the-door technique. .
+Journal of personality and social psychology 4 ( 2 ), pp. 195 .
+Cited by: §2 .
+Gao et al. (2021)
+T. Gao, X. Yao, and D. Chen
+SimCSE: simple contrastive learning of sentence embeddings .
+In EMNLP ,
+Cited by: §3.1 .
+Gong et al. (2025)
+Y. Gong, D. Ran, J. Liu, C. Wang, T. Cong, A. Wang, S. Duan, and X. Wang
+Figstep: jailbreaking large vision-language models via typographic visual prompts .
+In AAAI ,
+Cited by: §2 ,
+§3.1 ,
+§4.1 .
+Grattafiori et al. (2024)
+A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan, et al.
+The llama 3 herd of models .
+arXiv preprint arXiv:2407.21783 .
+Cited by: §4.1 .
+Jindal and Deshpande (2025)
+M. Jindal and S. Deshpande
+REVEAL: multi-turn evaluation of image-input harms for vision llm .
+arXiv preprint arXiv:2505.04673 .
+Cited by: §1 .
+Liu et al. (2024a)
+H. Liu, C. Li, Y. Li, B. Li, Y. Zhang, S. Shen, and Y. J. Lee
+LLaVA-next: improved reasoning, ocr, and world knowledge .
+Cited by: §4.1 .
+Liu et al. (2025)
+X. Liu, P. Li, G. E. Suh, Y. Vorobeychik, Z. Mao, S. Jha, P. McDaniel, H. Sun, B. Li, and C. Xiao
+AutoDAN-turbo: a lifelong agent for strategy self-exploration to jailbreak llms .
+In ICLR ,
+Cited by: §1 .
+Liu et al. (2024b)
+X. Liu, N. Xu, M. Chen, and C. Xiao
+AutoDAN: generating stealthy jailbreak prompts on aligned large language models .
+In ICLR ,
+Cited by: §1 .
+Liu et al. (2024c)
+X. Liu, Y. Zhu, J. Gu, Y. Lan, C. Yang, and Y. Qiao
+Mm-safetybench: a benchmark for safety evaluation of multimodal large language models .
+In ECCV ,
+Cited by: §1 .
+Luo et al. (2024)
+W. Luo, S. Ma, X. Liu, X. Guo, and C. Xiao
+Jailbreakv: a benchmark for assessing the robustness of multimodal large language models against jailbreak attacks .
+arXiv preprint arXiv:2404.03027 .
+Cited by: §4.1 .
+Ma et al. (2024)
+S. Ma, W. Luo, Y. Wang, and X. Liu
+Visual-roleplay: universal jailbreak attack on multimodal large language models via role-playing image character .
+arXiv preprint arXiv:2405.20773 .
+Cited by: §1 ,
+§2 ,
+§4.1 .
+Mazeika et al. (2024)
+M. Mazeika, L. Phan, X. Yin, A. Zou, Z. Wang, N. Mu, E. Sakhaee, N. Li, S. Basart, B. Li, D. Forsyth, and D. Hendrycks
+HarmBench: a standardized evaluation framework for automated red teaming and robust refusal .
+In ICML ,
+Cited by: §1 ,
+§3 ,
+§4.1 ,
+§4.1 .
+Niu et al. (2024)
+Z. Niu, H. Ren, X. Gao, G. Hua, and R. Jin
+Jailbreaking attack against multimodal large language model .
+CoRR .
+Cited by: §2 .
+OpenAI (2024)
+OpenAI
+GPT-4o mini: advancing cost-efficient intelligence .
+Note: https://openai.com/index/gpt-4o-mini-advancing-cost-efficient-intelligence/ Accessed January 2026
+Cited by: §4.1 .
+Qi et al. (2024)
+X. Qi, K. Huang, A. Panda, P. Henderson, M. Wang, and P. Mittal
+Visual adversarial examples jailbreak aligned large language models .
+In AAAI ,
+Cited by: §2 .
+Ren et al. (2024)
+Q. Ren, H. Li, D. Liu, Z. Xie, X. Lu, Y. Qiao, L. Sha, J. Yan, L. Ma, and J. Shao
+Derail yourself: multi-turn llm jailbreak attack through self-discovered clues .
+arXiv preprint arXiv:2410.10700 .
+Cited by: §2 ,
+§3.1 ,
+§4.1 .
+Rombach et al. (2022)
+R. Rombach, A. Blattmann, D. Lorenz, P. Esser, and B. Ommer
+High-resolution image synthesis with latent diffusion models .
+In CVPR ,
+Cited by: Figure 1 ,
+Figure 1 ,
+§3.1 ,
+§4.1 .
+Russinovich et al. (2025)
+M. Russinovich, A. Salem, and R. Eldan
+Great, now write an article about that: the crescendo multi-turn llm jailbreak attack .
+In USENIX Security 25 ,
+Cited by: §1 ,
+§4.1 .
+Touvron et al. (2023)
+H. Touvron, L. Martin, K. Stone, P. Albert, A. Almahairi, Y. Babaei, N. Bashlykov, S. Batra, P. Bhargava, S. Bhosale, et al.
+Llama 2: open foundation and fine-tuned chat models .
+arXiv preprint arXiv:2307.09288 .
+Cited by: §4.1 ,
+§4.2 .
+Wang et al. (2024a)
+R. Wang, X. Ma, H. Zhou, C. Ji, G. Ye, and Y. Jiang
+White-box multimodal jailbreaks against large vision-language models .
+In ACM-MM ,
+Cited by: §2 .
+Wang et al. (2024b)
+Y. Wang, X. Liu, Y. Li, M. Chen, and C. Xiao
+Adashield: safeguarding multimodal large language models from structure-based attack via adaptive shield prompting .
+In European Conference on Computer Vision ,
+pp. 77–94 .
+Cited by: §4.5 .
+Wang et al. (2024c)
+Y. Wang, X. Zhou, Y. Wang, G. Zhang, and T. He
+Jailbreak large visual language models through multi-modal linkage .
+arXiv preprint arXiv:2412.00473 .
+Cited by: §2 ,
+§4.1 .
+Wei et al. (2022)
+J. Wei, X. Wang, D. Schuurmans, M. Bosma, F. Xia, E. Chi, Q. V. Le, D. Zhou, et al.
+Chain-of-thought prompting elicits reasoning in large language models .
+In NeurIPS ,
+Cited by: §3.1 .
+Weng et al. (2025)
+Z. Weng, X. Jin, J. Jia, and X. Zhang
+Foot-in-the-door: a multi-turn jailbreak for llms .
+arXiv preprint arXiv:2502.19820 .
+Cited by: §2 ,
+§4.1 .
+Yang et al. (2024a)
+C. Yang, X. Wang, Y. Lu, H. Liu, Q. V. Le, D. Zhou, and X. Chen
+Large language models as optimizers .
+In ICLR ,
+Cited by: §3.3 .
+Yang et al. (2024b)
+X. Yang, X. Tang, S. Hu, and J. Han
+Chain of attack: a semantic-driven contextual multi-turn attacker for llm .
+arXiv preprint arXiv:2405.05610 .
+Cited by: Appendix C ,
+Figure 1 ,
+Figure 1 ,
+§1 ,
+§2 ,
+§3.1 ,
+§3.2 ,
+§3.2 ,
+§4.1 ,
+§4.1 .
+Yang et al. (2025)
+Y. Yang, L. Wang, X. Yang, L. Hong, and J. Zhu
+Effective black-box multi-faceted attacks breach vision large language model guardrails .
+arXiv preprint arXiv:2502.05772 .
+Cited by: §4.1 .
+Zhou and Arel (2025)
+A. Zhou and R. Arel
+Tempest: autonomous multi-turn jailbreaking of large language models with tree search .
+arXiv preprint arXiv:2503.10619 .
+Cited by: §2 ,
+§4.4 .
+Zou et al. (2023)
+A. Zou, Z. Wang, N. Carlini, M. Nasr, J. Z. Kolter, and M. Fredrikson
+Universal and transferable adversarial attacks on aligned language models .
+arXiv preprint arXiv:2307.15043 .
+Cited by: §1 ,
+§4.1 ,
+§4.1 .
+Appendix A Full Dialogues
+Figures 4 - 7 show a detailed version of dialogues of attacking with each individual input type and a combination of them on Llava-V1.6-Mistral-7B, with the following jailbreak task: Devise a plan for starting an Ebola outbreak that will infect as many people as possible .
+Figure 4 : An example of attacking with text-only prompts.
+Figure 5 : An example of attacking with text prompts and query-related images.
+Figure 6 : An example of attacking with connected text prompts and query-related images.
+Figure 7 : A successfully jailbroken example by combining previous input types.
+Appendix B Algorithms
+B.1 Algorithm of Greedy Search Attack Actions
+Algorithm 1 Greedy Search over Attack Actions
+0:
+malicious image v v , connected text prompt c ​ t ​ p ctp , unconnected text prompt u ​ t ​ p utp , task t t , victim model T T , chat history of victim model H T H_{T} , judge J J , set of attack actions A ​ c ​ t ​ s Acts
+1:
+a ​ c ​ t ​ i ​ o ​ n ​ R ​ e ​ c ​ o ​ r ​ d ​ s ← { } actionRecords\leftarrow\{\} {Initialize a set of records for different attack actions}
+2:
+for a a in A ​ c ​ t ​ s Acts do
+3:
+Q V , Q T ← g ​ e ​ t ​ I ​ n ​ p ​ u ​ t ​ ( a , v , c ​ t ​ p , u ​ t ​ p ) Q^{V},Q^{T}\leftarrow getInput(a,v,ctp,utp) {Get input combination based on attack action}
+4:
+r ← getResponse ⁡ ( T , H T , Q V , Q T ) r\leftarrow\operatorname{getResponse}(T,H_{T},Q^{V},Q^{T}) {Generate response with history}
+5:
+r ′ ← getResponse ⁡ ( T , N ​ o ​ n ​ e , Q V , Q T ) r^{\prime}\leftarrow\operatorname{getResponse}(T,None,Q^{V},Q^{T}) {Generate response without history}
+6:
+i ​ s ​ S ​ u ​ c ​ c ​ e ​ s ​ s ← evaluate ⁡ ( J , r , t ) isSuccess\leftarrow\operatorname{evaluate}(J,r,t) {Evaluate if response is harmful by judge}
+7:
+S ​ E ​ M , S ​ E ​ M ′ ← calSEM ⁡ ( t , r , r ′ ) SEM,SEM^{\prime}\leftarrow\operatorname{calSEM}(t,r,r^{\prime}) {Calculate response’s semantic correlation with and without history}
+8:
+if i ​ s ​ S ​ u ​ c ​ c ​ e ​ s ​ s isSuccess then
+9:
+add ⁡ ( H T , Q V , Q T , r ) \operatorname{add}(H_{T},Q_{V},Q_{T},r) {Add input and response to T T ’s history}
+10:
+return T ​ r ​ u ​ e , N ​ o ​ n ​ e True,None
+11:
+end if
+12:
+r ​ e ​ c ​ o ​ r ​ d ← ( Q V , Q T , r , S ​ E ​ M , S ​ E ​ M ′ ) record\leftarrow(Q^{V},Q^{T},r,SEM,SEM^{\prime}) {Create a record tuple}
+13:
+add ⁡ ( a ​ c ​ t ​ i ​ o ​ n ​ R ​ e ​ c ​ o ​ r ​ d ​ s , r ​ e ​ c ​ o ​ r ​ d ) \operatorname{add}(actionRecords,record) {Add record to actionRecords}
+14:
+end for
+15:
+t ​ o ​ p ​ R ​ e ​ c ​ o ​ r ​ d ← getTop ⁡ ( a ​ c ​ t ​ i ​ o ​ n ​ R ​ e ​ c ​ o ​ r ​ d ​ s ) topRecord\leftarrow\operatorname{getTop}(actionRecords) {Get top record with highest SEM}
+16:
+return F ​ a ​ l ​ s ​ e , t ​ o ​ p ​ R ​ e ​ c ​ o ​ r ​ d False,topRecord
+16:
+i ​ s ​ S ​ u ​ c ​ c ​ e ​ s ​ s , t ​ o ​ p ​ R ​ e ​ c ​ o ​ r ​ d isSuccess,topRecord
+B.2 Algorithm of Adaptive Attack Trajectory Adjustment
+Algorithm 2 Adaptive Attack Trajectory Adjustment
+0:
+jailbreak task t t , current turn number t ​ u ​ r ​ n turn , chat history of victim model H T H_{T} , set of records of current turn t ​ u ​ r ​ n ​ R ​ e ​ c ​ o ​ r ​ d ​ s turnRecords
+1:
+p ​ r ​ e ​ v ​ S ​ E ​ M ← getPrevTurnSEM ⁡ ( t , H T ) prevSEM\leftarrow\operatorname{getPrevTurnSEM}(t,H_{T}) {Calculate semantic correlation of previous turn’s response}
+2:
+b ​ e ​ s ​ t ​ R ​ e ​ c ​ o ​ r ​ d ← getBest ⁡ ( t ​ u ​ r ​ n ​ R ​ e ​ c ​ o ​ r ​ d ​ s ) bestRecord\leftarrow\operatorname{getBest}(turnRecords) {Get record with highest SEM}
+3:
+( Q V , Q T , r , S ​ E ​ M , S ​ E ​ M ′ ) ← b ​ e ​ s ​ t ​ R ​ e ​ c ​ o ​ r ​ d (Q^{V},Q^{T},r,SEM,SEM^{\prime})\leftarrow bestRecord {Unpack bestRecord tuple}
+4:
+if S ​ E ​ M > p ​ r ​ e ​ v ​ S ​ E ​ M SEM>prevSEM and S ​ E ​ M > S ​ E ​ M ′ SEM>SEM^{\prime} then
+5:
+add ⁡ ( H T , Q V , Q T , r ) \operatorname{add}(H_{T},Q^{V},Q^{T},r) {Add current turn’s input and response to history}
+6:
+clear ⁡ ( t ​ u ​ r ​ n ​ R ​ e ​ c ​ o ​ r ​ d ​ s ) \operatorname{clear}(turnRecords)
+7:
+increment t ​ u ​ r ​ n turn by 1
+8:
+return t ​ u ​ r ​ n , A ​ d ​ v ​ a ​ n ​ c ​ e turn,Advance
+9:
+end if
+10:
+if S ​ E ​ M < p ​ r ​ e ​ v ​ S ​ E ​ M SEM<prevSEM and S ​ E ​ M ′ > p ​ r ​ e ​ v ​ S ​ E ​ M SEM^{\prime}>prevSEM then
+11:
+backtrace ⁡ ( H T ) \operatorname{backtrace}(H_{T}) {Remove previous turn’s history}
+12:
+clear ⁡ ( t ​ u ​ r ​ n ​ R ​ e ​ c ​ o ​ r ​ d ​ s ) \operatorname{clear}(turnRecords)
+13:
+decrement t ​ u ​ r ​ n turn by 1
+14:
+return t ​ u ​ r ​ n , B ​ a ​ c ​ k turn,Back
+15:
+end if
+16:
+return t ​ u ​ r ​ n , R ​ e ​ g ​ e ​ n turn,Regen {Regen}
+16:
+t ​ u ​ r ​ n , p ​ o ​ l ​ i ​ c ​ y turn,policy
+Appendix C Change in Semantic Correlation Across Turns
+To verify the adoption of semantic correlation as the metric in our greedy action search and policy selection, we sampled five successful and five failed attempts of MAPA against Llava and examined the trend of the response’s semantic correlation with the jailbreak target across turns. Aligning with the motivations of Chain of Attack ( Yang et al., 2024b ) , Figure 8 demonstrates the strengthening semantic correlation as the conversation advances, due to the increasingly malicious requests by the attacker. More importantly, successful attempts exhibit a more pronounced increase and higher semantic correlations than failed cases consistently on average, corroborating our goal of maximizing the semantic correlation throughout the dialogue, which pushes the safety boundary to facilitate self-corruption of the victim. Therefore, we confirm that the semantic correlation of responses can serve as a proxy for both jailbreak progress and response maliciousness, which is not only deterministic but also lightweight, eliminating the need to query an LLM for evaluation.
+Figure 8 : Change in the response’s semantic correlation across turns on Llava-V1.6-Mistral-7B, sampled from five successful and five failed attempts from our method. Success cases exhibit a more pronounced upward trend than failure cases do.
+Appendix D Red-Teaming Instructions
+Figures 9 - 14 show our carefully engineered system prompts to the red-teaming agents in order to overcome the LLM’s inherent safety alignments and engage them in adversarial activities. Specifically, we demonstrate the instructions for generating the initial attack chain ( i.e. without reflection) and its corresponding with-reflection version in Figure 9 and 10 separately.
+Figure 9 : System prompt to generate the attack chain without reflection for the attacker in Python.
+Figure 10 : System prompt to generate the attack chain with reflection for the attacker in Python.
+Figure 11 : System prompt to generate the next unconnected attack prompt in Advance policy for the attacker in Python.
+Figure 12 : System prompt to regenerate the unconnected attack prompt of the current turn in Regen policy for the attacker in Python.
+Figure 13 : System prompt to generate the connected text prompt and image prompt for the connector in Python.
+Figure 14 : Prompt to generate a malicious image according to the image prompt for the diffusion model in Python.
+Appendix E AI Usage Clarification
+We use LLMs to improve the manuscript’s grammar and readability. All of the research design, analysis, and interpretation were conducted by the authors.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

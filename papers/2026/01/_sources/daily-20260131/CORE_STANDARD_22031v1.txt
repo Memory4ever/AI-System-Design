@@ -1,0 +1,314 @@
+Exact-v1 selected necessary evidence. URL https://arxiv.org/html/2601.22031v1
+
+Necessary configuration, bounded before unrelated appendix:
+ sequence index.
+∎
+Appendix B Experimental Setups
+We detail the model architecture and training hyperparameters used in our experiments, with the full configuration summarized in Table 6.
+Model Architecture
+Our model is built upon a bidirectional Transformer encoder architecture, incorporating Flash Attention 2 for computational efficiency. It consists of 33 Transformer layers with a hidden dimension of 1536 and an intermediate FFN dimension of 4096, utilizing the SiLU activation function. The model supports a maximum position embedding length of 8192 tokens.
+Training Configuration
+Training is performed using the AdamW optimizer with bfloat16 mixed precision. We employ a constant learning rate schedule with a 2,500-step warmup, peaking at 3×10−43\times 10^{-4}. For the diffusion process, the masking probability is linearly annealed from 1.0 to 0.
+Table 6: Experimental Setup: Model Architecture and Training Hyperparameters
+Model Architecture
+Training Hyperparameters
+Parameter
+Value
+Hyperparameter
+Value
+Number of Layers
+33
+Optimizer
+AdamW
+Hidden Size
+1536
+Peak Learning Rate
+3×10−43\times 10^{-4}
+Intermediate Size
+4096
+LR Scheduler
+Cosine w/ Warmup
+Attention Heads
+24
+Warmup Steps
+2,500
+Vocab Size
+50,368
+Max Training Steps
+1,000,000
+Activation Function
+SiLU
+Sequence Length
+128
+Max Pos Embeddings
+8,192
+Precision
+BF16
+Attn Implementation
+Flash Attn 2
+Noise Schedule
+Linear (1.0→0.01.0\to 0.0)
+
+3.1 Synthesizing Autoregression and Diffusion
+The core philosophy of CARD is to unify the stable training dynamics of ARMs with the flexible generation capabilities of Diffusion Models. We achieve this synthesis via a shifted causal attention mechanism. Unlike standard ARMs that condition on a static, clean history to model p⁡(xn|𝐱<n)p(x_{n}|\mathbf{x}_{<n}), CARD predicts the original token xnx_{n} conditioned on a corrupted prefix 𝐱<nt\mathbf{x}_{<n}^{t} sampled from a continuous-time diffusion process.
+This architecture allows us to strictly maintain the triangular attention mask inherent to GPT-style models for computational efficiency, while simultaneously minimizing the expected reconstruction error across varying noise intensities.
+We formally define the resulting optimization objective, which aggregates the weighted log-likelihoods across all token positions, as follows:
+ℒCARD=\displaystyle\mathcal{L}_{\text{CARD}}=
+𝔼t∼𝒰⁡[0,1],𝐱t∼q⁡(𝐱t|𝐱0)\displaystyle\mathbb{E}_{t\sim\mathcal{U}[0,1],\mathbf{x}^{t}\sim q(\mathbf{x}^{t}|\mathbf{x}_{0})}
+(5)
+[∑n=1Lw⁡(n,𝐱<nt)​log⁡pθ​(xn|𝐱<nt)].\displaystyle\left[\sum_{n=1}^{L}w(n,\mathbf{x}_{<n}^{t})\log p_{\theta}(x_{n}|\mathbf{x}^{t}_{<n})\right].
+This formulation generates dense supervision for the entire sequence in a single forward pass, theoretically preserving the O⁡(L)O(L) efficiency of standard ARMs without the computational overhead of block-wise vectorization.
+However, strictly enforcing a causal constraint within a diffusion framework introduces a unique pathological state we term Information Collapse, which makes naive implementation unstable. In bidirectional architectures (e.g., BERT or MDLM), every token attends to the full global sequence. Even if a local region is heavily masked, the model can anchor its predictions on future tokens, maintaining a relatively uniform information density across positions. In contrast, under a causal mask, the visible context for a token xnx_{n} is strictly limited to its predecessors 𝐱<n\mathbf{x}_{<n}. This creates a severe information asymmetry: early tokens with short histories are extremely vulnerable to corruption. For instance, if the first few tokens of a sequence are masked, predicting the subsequent token becomes mathematically equivalent to random guessing, as there is neither past history nor future context to rely on. Conversely, later tokens in long sequences often possess redundant history and remain predictable even under moderate noise.
+Standard uniform diffusion strategies ignore this asymmetry, treating the blind guessing scenarios of early tokens equally with the well-supported predictions of later tokens. Forcing the model to minimize loss on these invalid contexts results in high-variance gradients and optimization instability. To make CARD effective, we must explicitly address this variable reliability of the causal context. We propose two complementary strategies: Soft Tail Masking (Section 3.2) to structurally guarantee that the historical context retains valid signals, and Context-aware Reweighting (Section 3.3) to adaptively down-weight predictions where the context remains too ambiguous.
+3.2 Soft Tail Masking
+Causal diffusion requires a noise strategy that respects the autoregressive nature of the model. Standard uniform masking is ill-suited here because it randomly corrupts tokens anywhere, including the sequence start (n≪Ln\ll L). Since early tokens inherently possess little history, masking their few available context tokens effectively forces the model to predict from pure noise.
+To guarantee a valid historical context, a natural intuition is to concentrate all corruption at the sequence tail. This maximizes the clean prefix, ensuring stable supervision. However, strict tail masking completely removes the immediate neighbors of the corrupted tokens, ignoring the strong local dependencies required for language modeling (Khandelwal et al., 2018).
+We propose Soft Tail Masking (Figure 3), a strategy designed to alleviate the issue by restricting masking to a dynamic tail window
+[max⁡(0,L−λ​t⋅L),L][\max(0,L-\lambda t\cdot L),L].
+By maintaining a clean prefix while creating a mixed-state transition zone at the tail, we ensure the model accesses sufficient global history while retaining the local context needed for prediction.
+We prove in Appendix A (Proposition 2) that this preserves a higher lower bound on Mutual Information than uniform masking.
+3.3 Context-aware Reweighting
+Compared to standard ARMs, CARD predicts xnx_{n} from a stochastically corrupted prefix 𝐱<n\mathbf{x}_{<n}. When the prefix is heavily masked, the conditional entropy H⁡(xn|𝐱<nt)H(x_{n}|\mathbf{x}_{<n}^{t}) increases sharply. Forcing the model to produce confident predictions under such high uncertainty results in noisy gradients and optimization instability.
+The diffusion models typically employ a global weighting scheme (e.g., 1/t1/t in MDLM) to balance contributions across noise levels at sequence level, grounded in the ELBO framework. However, global weighting is insufficient for causal models since the effective noise level varies locally at each token position nn.
+Considering the causal characteristics of CARD, we introduce a context-aware reweighting mechanism.
+Specifically, we propose to evaluate the ambiguity of the context 𝐱<nt\mathbf{x}_{<n}^{t} along three dimensions: Quantity (total noise count), Distance (proximity of noise to target), and Density (consecutive corruption).
+These factors are synthesized into a unified local ambiguity score Snl​o​c​a​lS_{n}^{local}, defined as the distance-weighted sum of corruption costs in the history:
+Snl​o​c​a​l\displaystyle S_{n}^{local}
+=∑i=1nCi⋅(1−p)(n−i),\displaystyle=\sum_{i=1}^{n}C_{i}\cdot(1-p)^{(n-i)},
+(6)
+Ci\displaystyle C_{i}
+=𝕀[xi=[MASK]]⋅(1+𝕀[xi−1=[MASK]]).\displaystyle=\mathbb{I}[x_{i}=\texttt{[MASK]}]\cdot\left(1+\mathbb{I}[x_{i-1}=\texttt{[MASK]}]\right).
+(7)
+The formulation explicitly maps the three dimensions to mathematical components:
+•
+Noise Quantity: The summation ∑i=1n\sum_{i=1}^{n} accumulates the corruption costs across the history. This term ensures that a higher total number of masked tokens leads to a larger cumulative score, naturally suppressing the weight for heavily corrupted contexts.
+•
+Noise Distance: Following previous findings that the relevance of historical tokens decays exponentially with distance (Khandelwal et al., 2018; Lin and Tegmark, 2017), we introduce the decay factor (1−p)(n−i)(1-p)^{(n-i)}, where pp is a decay factor set to a constant 0.5. It ensures that noise in the immediate context will be penalized more heavily than noise in the distant past, as the immediate context is most critical for next-token prediction.
+•
+Noise Density: The cost term CiC_{i} assigns a higher cost to consecutive masked tokens (e.g., spans), reflecting the difficulty of reconstructing regions where local dependencies are entirely severed.
+Finally, the context-aware loss weight w⁡(n,𝐱<nt)w(n,\mathbf{x}^{t}_{<n}) is computed as:
+w⁡(n,𝐱<nt)=1β+Snl​o​c​a​l,w(n,\mathbf{x}^{t}_{<n})=\frac{1}{\beta+S_{n}^{local}},
+(8)
+where β\beta is a smoothing constant (typically set to 1).
+Our mechanism shifts the reweighting granularity from the sequence level (as in MDLM and BD3LM) to the token level. By down-weighting tokens in degraded contexts, the model focuses on regions with sufficient signal, leading to more efficient optimization (see Appendix A).
+Table 1: LM Evaluation Harness results. All models are 1B parameters trained on 300B tokens.
+Model
+ARC-Challenge
+25-shot
+ARC-Easy
+25-shot
+CommonsenseQA
+7-shot
+HellaSwag
+3-shot
+MMLU-redux
+5-shot
+PIQA
+0-shot
+SciQ
+0-shot
+Winogrande
+5-shot
+AVG
+Autoregressive Models
+ARM
+34.04
+64.65
+52.74
+61.26
+25.45
+75.95
+81.10
+55.96
+56.39
+Diffusion Models
+BD3LM
+27.30
+48.06
+44.06
+42.48
+26.93
+59.79
+79.60
+51.38
+47.45
+MDLM
+29.44
+49.16
+36.45
+48.32
+26.36
+59.63
+76.60
+54.46
+47.55
+CARD (Ours)
+32.68
+60.77
+48.73
+53.29
+25.65
+71.71
+79.80
+53.28
+53.23
+Table 2: PPL evaluation on various text domains. Lower is better.
+Model
+AG News
+arXiv
+LAMBADA
+LM1B
+OpenWebText
+PTB
+PubMed
+WikiText
+AVG
+Autoregressive Models
+ARM
+30.62
+18.15
+33.83
+39.14
+17.68
+117.56
+11.93
+40.52
+38.68
+Diffusion Models
+BD3LM
+41.18
+44.60
+39.17
+40.04
+40.97
+118.30
+34.66
+39.28
+49.78
+MDLM
+42.20
+23.58
+35.87
+48.68
+20.77
+168.19
+17.23
+42.18
+49.84
+CARD (Ours)
+27.67
+20.34
+30.36
+29.61
+17.59
+97.74
+13.20
+38.67
+34.40
+3.4 Confidence-Based Block Inference
+We employ a confidence-based block sampling strategy to accelerate generation. Specifically, at each generation step, we initialize a candidate block of length KK by appending mask tokens to the sequence tail, denoted as 𝐱(0)={[MASK]1,…,[MASK]K}\mathbf{x}^{(0)}=\{\texttt{[MASK]}_{1},\dots,\texttt{[MASK]}_{K}\}. We then perform iterative parallel denoising, where a token xix_{i} at iteration jj is updated only if its prediction probability exceeds a threshold τ\tau (Wu et al., 2025; Cheng et al., 2025):
+xi(j+1)={xi(j)if ​xi(j)≠[MASK],arg⁡maxw​pθ​(w|𝐱(j))if ​maxw​pθ​(w|𝐱(j))>τ,[MASK]otherwise.x_{i}^{(j+1)}=\begin{cases}x_{i}^{(j)}&\text{if }x_{i}^{(j)}\neq\texttt{[MASK]},\\
+\arg\max_{w}p_{\theta}(w|\mathbf{x}^{(j)})&\text{if }\max_{w}p_{\theta}(w|\mathbf{x}^{(j)})>\tau,\\
+\texttt{[MASK]}&\text{otherwise.}\end{cases}
+(9)
+To strictly bound latency, we impose a maximum step limit Tm​a​xT_{max}. If the block is not fully denoised within Tm​a​xT_{max} steps, all remaining masks are immediately decoded. Finally, the generated block is added to the KV cache. This approach allows the inference speed to be dynamically controlled by adjusting the block size KK, threshold τ\tau, and step limit Tm​a​xT_{max}.
+
+
+
+4 Experiments
+To validate the effectiveness of the CARD framework, we benchmarked it against three architectures: ARM, MDLM, and BD3LM. All models were pre-trained on a 300B-token subset of FineWeb (Penedo et al., 2024) and aligned to a 1B-parameter scale. To ensure a fair comparison, the baselines utilized state-of-the-art optimizations: MDLM adopted variable-length packed QKV operators from Flash Attention (Dao, 2024), while BD3LM integrated torch.compile with Flex Attention (Dong et al., 2024). Detailed model structure configurations and training hyperparameters are provided in Appendix B.
+4.1 Computational Efficiency
+We first address the training cost bottleneck typical of diffusion models. Normalizing the training latency of ARM and CARD to a baseline of 1.0×1.0\times, MDLM incurs a 1.5×1.5\times cost due to its bidirectional attention mechanism, while BD3LM rises to roughly 3.0×3.0\times driven by input duplication constraints. In contrast, CARD eliminates these overheads, achieving superior performance while maintaining ARM-level training efficiency.
+4.2 Performance Evaluation
+Downstream Task Accuracy.
+We assessed disciplinary knowledge using ARC-Challenge & ARC-Easy (Clark et al., 2018), MMLU (Hendrycks et al., 2021), and SciQ (Welbl et al., 2017); commonsense reasoning via PIQA (Bisk et al., 2020), HellaSwag (Zellers et al., 2019), and CommonsenseQA (Talmor et al., 2019); and context disambiguation with Winogrande (Sakaguchi et al., 2020). As detailed in Table 1, a distinct performance hierarchy is evident. While the baseline methods MDLM and BD3LM plateau at an average of approximately 47.50%, CARD establishes significantly better results for non-autoregressive models with an average accuracy of 53.23%. The substantial 5.7% absolute improvement over prior diffusion baselines indicates that CARD effectively mitigates the performance degradation. Crucially, while a marginal gap to the autoregressive (ARM) upper bound remains, CARD significantly narrows this disparity, demonstrating that dense supervision can yield ARM-competitive performance without sacrificing the efficiency benefits of parallel decoding.
+Language Modeling and Generalization.
+To evaluate intrinsic generative quality, we measured zero-shot perplexity across three distinct domains: general corpora using WikiText (Merity et al., 2017) and OpenWebText (Gokaslan et al., 2019); news and periodicals using AG News (Zhang et al., 2015), LM1B (Jozefowicz et al., 2016), and PTB (Marcus et al., 1993); and specialized or long-context tasks using arXiv, PubMed (Cohan et al., 2018), and LAMBADA (Paperno et al., 2016).
+The results in Table 2 show that CARD consistently outperforms both diffusion baselines. More notably, CARD surpasses the ARM baseline on 6 out of 8 datasets. It achieves the best overall scores on general domains and the context-heavy LAMBADA benchmark, while remaining competitive on the specialized scientific vocabularies of arXiv and PubMed.
+We attribute the generalization advantage to the training objective. Standard ARMs rely on next-token prediction, which has been argued to be “myopic,” prioritizing local correlations and rote memorization (Nagarajan et al., 2025). Conversely, CARD’s denoising objective functions as a form of “teacherless training,” forcing the model to predict tokens from corrupted contexts. The mechanism incentivizes the model to capture global structural patterns and long-range dependencies rather than relying on local statistical shortcuts, resulting in superior generalization on unseen data compared to the strictly left-to-right of ARMs.
+Table 3: Perplexity (PPL) results on the LM1B dataset. Models are 110M parameters trained on 33B tokens using EMA.
+Model
+ARM
+BD3LM
+MDLM
+CARD
+PPL ↓\downarrow
+21.12
+35.06
+37.48
+21.54
+Figure 4: HellaSwag performance of four paradigms under repeated training on a FineWeb-Edu subset. The annotations mark specific crossover points in performance: P1 denotes the epoch where CARD surpasses ARM, P2 where MDLM overtakes ARM, and P3 where MDLM exceeds CARD.
+Table 4: Ablation study on noise position and context-aware reweighting mechanisms.
+Setting
+ARC-C
+25-shot
+ARC-E
+25-shot
+CSQA
+7-shot
+HellaS
+3-shot
+MMLU
+5-shot
+PIQA
+0-shot
+SciQ
+0-shot
+Wino
+5-shot
+AVG
+CARD (Ours)
+32.68
+60.77
+48.73
+53.29
+25.45
+71.71
+79.80
+53.28
+53.21
+Ablation on Noise Position
+w/o Relaxed Window (Strict Tail)
+32.85
+59.72
+48.24
+52.33
+25.38
+71.28
+78.90
+51.31
+52.50
+w/o Tail Preference (Random)
+29.95
+59.38
+46.03
+51.78
+25.14
+71.00
+76.30
+53.36
+51.62
+Ablation on Weighting
+w/o Context-aware Weighting
+30.63
+58.29
+47.01
+50.14
+25.23
+70.35
+79.20
+52.41
+51.66
+
+
+
+5.3 Ablation Study
+In addition to the architectural comparison, we conducted ablation studies to validate the effectiveness of our proposed noise position preference (Section 3.2) and context-aware reweighting mechanisms (Section 3.3). The results are summarized in Table 4, leading to the following observations.
+The noise distribution strategy plays a crucial role in unidirectional models.
+As shown in the results, applying noise to random positions (w/o Tail Preference) yields the lowest performance among the noise strategies. In a causal framework, tokens at the beginning of the sequence lack preceding context. If these tokens are masked randomly, the model cannot recover them effectively, leading to training inefficiencies. By concentrating noise at the tail, we observe a clear performance improvement. This suggests that a tail-biased noise strategy better aligns with the generative nature of language modeling, where history is used to predict the future. Furthermore, the results highlight the importance of the relaxed noise window. The “Strict Tail” setting, where the end of the sequence is a solid block of noise, underperforms compared to the full CARD implementation. A solid noise block creates an information void where the final tokens lack any immediate local context. By allowing a mix of clean and noisy tokens within the tail window (Relaxed Window),
+we enable the model to leverage local cues even during the denoising process.
+Removing context-aware reweighting results in a noticeable drop in accuracy across most benchmarks.
+The dynamic weighting mechanism, rooted in the ELBO formulation, uses noise intensity to balance the training objective. It naturally integrates the next-token prediction task with the diffusion objective by assigning appropriate importance to each token based on the clarity of its context. This ensures that the model focuses on learnable patterns rather than being overwhelmed by high-entropy predictions in heavily corrupted contexts.
+5.4 Generation Perplexity Analysis
+To further evaluate the generation quality, we conducted a generation perplexity (Gen PPL) analysis on Hellaswag prefixes using the model trained in our main experiment. For robust evaluation, we report the average PPL computed by four base models: Qwen3-8B (Qwen3 and others, 2025), SmolLM3-3B (Bakouch and others, 2025), gemma-3-27b (Gemma and others, 2025), and gpt2-large (Radford et al., 2019). All inference tests were performed with a batch size of 128. As shown in Table 5, our method demonstrates a promising trade-off between speed and quality. Specifically, we achieve a 1.62×\times speedup while maintaining a generation quality comparable to the ARM baseline. Furthermore, in a more aggressive setting, our method delivers over 4×\times inference acceleration with only a slight increase in PPL. These results strongly validate the potential of our method to serve as a new baseline for efficient generation. Additionally, we provide a detailed case study and discuss the potential failure modes of parallel generation in Appendix D.
+

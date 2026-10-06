@@ -161,6 +161,10 @@ production quality, latency, and cost
 
 这些指标可以相关，但不能互相替代。
 
+若预算问题转为“这份预训练 compute 下，经过不同后训练的模型目前能达到什么任务水平”，受控 loss scaling 不再直接给答案。一个条件分支对已测模型生态拟合高分位能力曲线，把同一 compute 附近不同 family、recipe 与评价时间的模型视为观察人口，而不是取单个最高分当作物理上限。[必要分位边界与校准](https://arxiv.org/html/2602.15327v1)采用 q=.98；其曲线的单调形状是拟合约束，不是已证明的普遍规律。应同时检查带符号 compute-bin 残差与覆盖率，以及时间滚动时共同 compute 区间的校准：只有这些已测人口和重叠区间可支持预算线索，不支持跨 compute 外推，也不把数学或 instruction-following 的 recipe 漂移当作单纯参数不足。<!-- source-family:SF-2026-ARXIV-2602-15327 -->
+
+测量成本高时，还可按 metadata 上局部模型 Jacobian 的近似信息收益选择一批待评模型，以正则化和 bin balance 防止采样集中在少数区域；这增加拟合、选择与人口维护成本，参数量只是评价成本 proxy，并非实际 GPU-hours。有限任务上较小子集接近完整评价，不授所有任务低预算保真或真正最优；样本支持改变、held-out coverage 失配或新 recipe 出现时，应重新评价而不是延伸旧曲线。受控预训练 loss-scaling、后训练条件分位测量和完整任务评价解决不同预算问题，后者不是前者的直接演进；它们共存，亦都不能证明未测模型的能力、无污染或生产质量。
+
 ## 数据质量改变“D”的含义
 
 公式里的 `D` 常被写成 token 数，但 token 并不等质。重复、低质量、过时、污染、错误或与目标分布无关的数据，边际价值不同。高质量筛选可能用更少 token 获得更高有效信息密度，但筛选也可能缩窄覆盖、引入偏见或丢失长尾。
@@ -181,6 +185,8 @@ production quality, latency, and cost
 
 [受限的联合拟合实验](https://arxiv.org/html/2604.01411v1#S3)以不到 1B 参数的 checkpoint 和八个任务检验这个分支，但 `pass@k` 衡量“至少一个候选正确”，不等于系统能选中它；其 `2Nk` 也只是每 token 推理 FLOPs 近似，不能省去输出长度、验证、内存和并发成本。工程上应把采样与选择合同一起固定，再测真实质量—成本前沿；大规模模型、不同任务与生产 SLO 必须重新验证，不能将拟合外推当作已完成的训练实验。
 <!-- source-family:SF-2026-ARXIV-2604-01411 -->
+
+联合选择还可以包含同一训练轨迹上的 checkpoint 与预计服务到下一次 refresh 的 horizon，而不只比较最终模型大小。[有限 checkpoint×test-time-compute 对照](https://arxiv.org/html/2601.01332v1)将较早停止的训练节省与部署期新增生成、验证和选择成本一起考虑：请求量很小时额外推理或许能补偿较早 checkpoint，请求量扩大后同一分支可能失去成本优势。这里的质量投影可能失准，按 validation 最优曲线筛选还会引入选择偏差；pass@k 或 oracle 潜力也不等于真实部署选择器的成功率。工程上应固定 refresh horizon、checkpoint 候选人口与可执行的选择协议，保留训练成本差和完整部署成本，再用留出任务检验质量—成本前沿；不要用一个成本不等式证明准确率，也不要把某一 FLOPs 常数或投影节省率外推到所有服务配置。原来的单次质量与完整训练规划在投影不可靠、验证成本高或严格低延迟场景仍然合理。<!-- source-family:SF-2026-ARXIV-2601-01332 -->
 
 ### 扩宽只有在学习方向跨样本对齐时才可能转化为泛化收益
 
@@ -273,6 +279,8 @@ Scaling Law 把“更多资源通常更好”变成了可实验、可拟合、�
 
 ## Review notes
 
+- `SF-2026-ARXIV-2601-01332` — Daily `2026-01-07`；[exact-v1](https://arxiv.org/html/2601.01332v1) §2–4/Limitations及 Appendix A成本口径。2+2+2=6，具体成本知识缺口必要深入；采用 checkpoint/refresh horizon 与实际 TTC 选择预算联合规划，不采用主文/Appendix A 不同 Ninfer 分母、常数6、92%投影或由成本约束推出 accuracy。留出选择偏差、pass@k/oracle 与部署选择器不同；root必要原源/owner写前通过，root实际一段、前后衔接与末注非作者POST通过，未复现。
+
 - `SF-2026-ARXIV-2605-07546`（Status: Theoretical / Experimental）：[exact-v1](https://arxiv.org/html/2605.07546v1) 支持在论文条件下区分信息保持变换与分辨率下降对 scaling 的影响；有限模型、任务与 resolution 估计不能外推为跨 domain 通用规律。
 
 本章保留了简化公式用于建立直觉，但不把它们冒充 Kaplan 或 Chinchilla 的完整拟合方程。后续 Review 应在引用具体 exponent、比例或 compute 数字前回到原论文与适用区间，并继续把经验拟合、解释性直觉和工程启发分开。
@@ -288,3 +296,5 @@ Scaling Law 把“更多资源通常更好”变成了可实验、可拟合、�
 - `SF-2026-ARXIV-2607-24887` — Daily `2026-07-29`；primary `arXiv:2607.24887v1`；正文锚点“扩宽只有在学习方向跨样本对齐时才可能转化为泛化收益”。
   证据只支持论文假设与受控 residual intervention 下的局部梯度对齐条件，不支持宽度增加必然改善长期训练或泛化。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-24887:end -->
+
+- `SF-2026-ARXIV-2602-15327` — Daily `2026-02-19`；[exact-v1](https://arxiv.org/html/2602.15327v1) §2–4/AppendixB/F。2+2+2=6，具体测量分配差额受影响深入；只采已测后训练人口q.98、signed compute-bin/rolling overlap校准及metadata局部Jacobian的成本近似测量分配，不授physical ceiling、compute外推、真正最优或全任务低预算。人口/recipe漂移、parameter-count成本proxy和旧受控loss路线近正文；root必要源/actualowner PRE及实际两段/完整邻接与末注非作者POST通过，窄锁释放，未核实现/复现。

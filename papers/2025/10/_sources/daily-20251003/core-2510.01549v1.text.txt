@@ -1,0 +1,997 @@
+MIRA: Towards Mitigating Reward Hacking in Inference-Time Alignment of T2I Diffusion Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+3 Problem Formulation
+4 Proposed Approach
+4.1 A Novel Extension to Non-differentiable Rewards
+5 Experiments
+5.1 To what extent does MIRA mitigate reward hacking in noise optimization?
+5.2 How competitive is MIRA’s alignment with state-of-the-art noise optimization baselines?
+5.3 How well can MIRA-DPO handle non-differentiable/black-box rewards?
+5.4 Ablations and Additional Experiments
+6 Conclusions and Limitations
+References
+A Appendix
+A.1 Implementation Details
+A.2 Algorithms
+A.3 Additional Qualitative Results
+A.4 Additional Quantitative Results
+A.5 Ablation Analysis
+A.6 Animal Prompts List
+A.7 GPT-4o Evaluation
+A.8 Proof of Proposition 1
+A.9 Derivation of the Practical Objective for Differentiable Rewards
+A.10 Derivation of DPO Objective
+License: arXiv.org perpetual non-exclusive license
+arXiv:2510.01549v1 [cs.LG] 02 Oct 2025
+MIRA: Towards Mitigating Reward Hacking in Inference-Time
+Alignment of T2I Diffusion Models
+Kevin Zhai
+Affiliation: University of Central Florida,
+Utsav Singh
+Affiliation: University of Central Florida,
+Anirudh Thatipelli
+Affiliation: University of Central Florida,
+Souradip Chakraborty
+Anit Kumar Sahu
+Affiliation: University of Maryland, College Park,  Oracle
+Furong Huang
+Amrit Singh Bedi
+Affiliation: University of Central Florida,
+Mubarak Shah
+Affiliation: University of Central Florida,
+Abstract
+Diffusion models excel at generating images conditioned on text prompts, but the resulting images often do not satisfy user-specific criteria measured by scalar rewards such as Aesthetic Scores. This alignment typically requires fine-tuning, which is computationally demanding. Recently, inference-time alignment via noise optimization has emerged as an efficient alternative, modifying initial input noise to steer the diffusion denoising process towards generating high-reward images. However, this approach suffers from reward hacking, where the model produces images that score highly, yet deviate significantly from the original prompt. We show that noise-space regularization is insufficient and that preventing reward hacking requires an explicit image-space constraint. To this end, we propose MIRA (MItigating Reward hAcking), a training-free, inference-time alignment method. MIRA introduces an image-space, score-based KL surrogate that regularizes the sampling trajectory with a frozen backbone, constraining the output distribution so reward can increase without off-distribution drift (reward hacking). We derive a tractable approximation to KL using diffusion scores. Across SDv1.5 and SDXL, multiple rewards (Aesthetic, HPSv2, PickScore), and public datasets (e.g., Animal-Animal, HPDv2), MIRA achieves >60%>\!60\% win rate vs. strong baselines while preserving prompt adherence; mechanism plots show reward gains with near-zero drift, whereas DNO drifts as compute increases. We further introduce MIRA-DPO, mapping preference optimization to inference time with a frozen backbone, extending MIRA to non-differentiable rewards without fine-tuning.
+1 Introduction
+Text-to-image (T2I) diffusion models excel in generating high-fidelity images from textual prompts, yet aligning them to specific human preferences remains challenging (1). Inference-time alignment has emerged as a practical alternative to fine-tuning, enabling model alignment without retraining billions of parameters. Although inference-time alignment is well studied in LLMs (2, 3), the diffusion setting is still evolving. A promising direction is noise optimization (4, 5), which adjusts the injected starting noise to steer the denoising sampling path toward desired outcomes.
+Why noise optimization for inference-time alignment? Other inference-time alignment methods, such as Best-of-NN (6) and controlled denoising (7), generate multiple candidates and select the one with highest reward. Akin to an unguided search, they rely on the chance that a high-reward solution exists within a random batch of samples. If the chance of generating a high-reward image is low, these approaches are highly inefficient. In contrast, noise optimization is like a guided search process (see Figure 1). It uses the reward gradient to navigate the initial noise space, steering the generation process toward more desirable images. By treating noise as a parameter to be optimized, it can generate rare high-reward images that Best-of-NN would likely miss. This approach provides a more powerful mechanism for alignment, but its increased flexibility to optimize rewards also introduces the challenge of reward hacking.
+Figure 1: Sampling-based methods vs noise optimization. (a) Best-of-NN draws many independent samples from the base model and picks the best. When the green (high-reward region) in the image space has low likelihood, most samples fall elsewhere, and Best-of-NN is not efficient. Noise optimization, in contrast, adjusts the initial noise sample, which can steer the diffusion trajectories toward the high-reward region without large NN. But this additional flexibility (ability to optimize for any reward) comes at the price of additional reward hackability. (b) Trade-off: Best-of-NN has lower hackability but also lower flexibility. Whereas the existing noise optimization method (DNO [4]) has higher flexibility but is also prone to reward hacking, our method, MIRA, maintains flexibility without causing any reward hackability.
+The problem of reward hacking.
+Noise optimization can exploit flaws in the reward model and produce high-scoring images that ignore the user’s prompt. This is a symptom of reward hacking. For example, in Figure 2, we prompt the model with “generate an image of a fly.” Although the state-of-the-art DNO (4) generates an image with high reward (Aesthetic Score), the image does not depict a fly. By design, noise optimization pushes the diffusion model to generate images it normally would not produce, altering the output distribution. Reward models are trained to evaluate only the original types of images. On these new, out-of-distribution samples, their judgment becomes unreliable and their flaws can be exploited; this leads to reward hacking.
+Figure 2: Illustrating reward hacking in inference-time alignment of diffusion models.
+(a) Given the prompt “generate an image of a fly” and a preference for better aesthetics (Aesthetic Score (8)), we observe the state-of-the-art (Direct Noise Optimization) achieves high reward yet no longer follows the prompt, an example of reward hacking. In contrast, our images have better aesthetic quality and do not suffer from reward hacking; hence, our reward is lower. (b) We obtain Aesthetic Score and win rate results (against base SDv1.5) on the Animal dataset (9). We remark that MIRA (bottom) significantly outperforms the SoTA (top) in average win-rate, effectively mitigating reward hacking despite lower average rewards. We use GPT-4o (10) as the win-rate judge.
+From key insight to MIRA.
+While previous work (4) limits the size of noise updates, our analysis (Fig. 3, Prop. 1) shows that this is not enough; even small changes to the input noise can cause large, unpredictable changes in the final image. Our key insight, therefore, is that we must directly control the distribution of output images, keeping them similar to what the base model would normally produce. To this end, we propose MIRA (MItigating Reward hAcking), a method that implements this control using a novel and efficient upper-bound surrogate for KL divergence, derived from the model’s score functions. This penalty discourages large deviations between the images produced from the original noise (z0z_{0}) and the optimized noise (zz), thereby preserving prompt adherence. To extend this framework to the common challenge of non-differentiable rewards, we also introduce MIRA-DPO, which optimizes directly from preference feedback to handle black-box objectives.
+We summarize our key contributions as follows.
+(1)
+A principled image-space regularizer for noise optimization. We introduce MIRA, the first inference-time alignment method for diffusion models that directly constrains the output distribution. Our regularizer is derived from a score-based surrogate for KL divergence, ensuring that optimized noise samples remain close to the base model’s distribution while improving reward.
+(2)
+A mechanism analysis of reward hacking as distributional drift. We theoretically and empirically show that reward hacking arises from output distribution shift. Using both our surrogate KL metric and CMMD, we quantify this drift and connect it to failures of prompt adherence, providing the diagnostic framework for reward hacking in diffusion noise optimization.
+(3)
+MIRA-DPO: A novel extension to non-differentiable rewards. To handle non-differentiable or black-box rewards, we develop MIRA-DPO, which adapts direct preference optimization (DPO) to frozen-backbone inference-time noise optimization.
+(4)
+Empirical validation across benchmarks. We evaluate MIRA and MIRA-DPO on Stable Diffusion v1.5 and SDXL across multiple datasets and reward models (Aesthetic Score, HPSv2, pairwise preference tasks). Our results demonstrate strong improvements, with human studies showing an 80.30% head-to-head win rate against state-of-the-art methods like DNO, while effectively mitigating reward hacking.
+2 Related Work
+Diffusion model alignment via fine-tuning. Fine-tuning is the dominant strategy for alignment and consists of three general categories. Reinforcement learning methods treat denoising as a multi-step policy and optimize scalar rewards with policy gradients. DDPO (9) and RLHF-style approaches for text-to-image (11, 12) maximize rewards such as image compressibility or aesthetic/VLM scores; in DDPO, the reward can be black-box. Direct Preference Optimization (13) methods learn from pairwise preferences without training separate reward models: Diffusion-DPO (14) and D3PO (15) adapt DPO to diffusion. Similarly, Diffusion-RPO (16) optimizes relative preferences, and self-play fine-tuning (17) explores preference-driven improvements without additional labels. Differentiable-reward methods backpropagate gradients from reward predictors through (truncated) sampling; AlignProp (18), DRaFT (19), DRTune (20), and TextCraftor (21) report strong in-distribution gains when the objective (e.g., HPSv2, aesthetics) is differentiable. For a broader context and trade-offs across these families, see the recent tutorial/review (22).
+Inference-time alignment methods. Training-free approaches steer a frozen model during sampling, avoiding the one-time compute of fine-tuning; their per-image cost depends on the sampler. These techniques are based on foundational work in inference-time guidance, which alters the sampling process to enforce a condition (e.g., class labels, segmentation maps) (23, 24, 25). Building on these principles, inference-time alignment focuses on the more specific problem of optimizing for a scalar reward or preference. Such approaches range from simple selection schemes such as Best-of-NN (6) to more advanced trajectory-steering methods based on resampling, particle methods, or blockwise selection (26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 7). Orthogonal to selection and steering schemes, noise optimization treats the diffusion sampler’s injected noise as a free variable. InitNO improves prompt fidelity by selecting noise guided by cross-attention (5). DyMO constructs a prompt-specific knowledge graph (entities / attributes / relationships extracted by an LLM) and performs dynamic multi-objective scheduling, optimizing attention-based semantic consistency early and preference-based scores later using a lightweight recurrent update (37). DNO optimizes noise with probability-based noise-space regularization to limit out-of-distribution semantic drift (4), and ReNO targets one-step generators with a regularized reward-driven ascent (38). Despite these advances and regularization measures, reward hacking remains a notable challenge for existing noise optimization methods, which we aim to address in this work.
+3 Problem Formulation
+A frozen conditional diffusion model pθ(⋅|c)p_{\theta}(\cdot|c) generates an image by progressively denoising an initial noise sample xT∼𝒩⁡(0,𝐈)x_{T}\sim\mathcal{N}(0,\mathbf{I}) over TT steps to produce an image x0x_{0}. For a given prompt cc, inference-time noise optimization seeks to find an optimal noise vector zz that minimizes:
+ℒ(z,c):=−𝔼x0∼pθ(⋅|z,c)[r(x0,c)],\displaystyle\mathcal{L}(z,c):=-\mathbb{E}_{x_{0}\sim p_{\theta}(\cdot|z,c)}\big[r(x_{0},c)\big],
+(1)
+where r⁡(⋅,c)r(\cdot,c) is a reward function. Equation 1 is solved with gradient descent:
+zk+1←zk−α​∇zℒ​(zk,c),learning rate ​α>0,\displaystyle z_{k+1}\leftarrow z_{k}-\alpha\nabla_{z}\mathcal{L}(z_{k},c),\quad\text{learning rate }\alpha>0,
+(2)
+with initial (t=Tt=T) noise z0∼𝒩⁡(0,𝐈)z_{0}\sim\mathcal{N}(0,\mathbf{I}). However, this simple reward maximization approach suffers from reward hacking (39, 40), often generating high contrast, overly saturated, or unnatural images that score highly while appearing unrealistic (as shown in Figure 2).
+Figure 3: Tiny changes to the initial noise can yield markedly different images under the same prompt.
+Noise-space regularization is insufficient. Existing methods address reward hacking by regularizing the input noise vectors (4). However, this noise-space regularization is fundamentally insufficient. The highly non-linear denoising process means that negligible perturbations to the input noise (‖z−z0‖2≪ϵ\|z-z_{0}\|_{2}\ll\epsilon) can still produce substantially different images (Figure 3). We formalize this insight as follows:
+Proposition 1.
+Closeness in the noise space does not imply closeness in the diffusion-induced image distribution pθ(⋅|z,c)p_{\theta}(\cdot|z,c).
+We prove Proposition 1 in Appendix A.8;
+the KL divergence between image distributions is not controlled by
+the distance between their input noises. The failure of noise-space constraints therefore necessitates a new approach: regularizing the
+image distribution directly.
+Generalizing the formulation. For clarity, we present the problem as optimizing a single initial noise vector zz. However, this framework can be naturally extended to optimize the entire sequence of noises injected at each step of the denoising process. In our experiments, we adopt this more general approach to ensure a fair and direct comparison with state-of-the-art baselines like DNO, which operate on the full noise trajectory. Our proposed solution, MIRA, is directly applicable to this general case.
+4 Proposed Approach
+Our key idea. As established in Proposition 1, reward hacking arises because noise optimization can cause the output image distribution pθ(⋅|z,c)p_{\theta}(\cdot|z,c) to deviate significantly from the base model’s unoptimized distribution pθ(⋅|z0,c)p_{\theta}(\cdot|z_{0},c). To address this directly, we introduce a regularizer that penalizes this divergence. This leads to the following loss for our method, MIRA:
+ℒMIRA​(z,c):=−r⁡(x0,c)⏟Negative Reward (−r)+βdKL[pθ(x0|z,c)∥pθ(x0|z0,c)]⏟Image Distribution Regularizer,\displaystyle\mathcal{L}_{\text{MIRA}}(z,c):=\underbrace{-r(x_{0},c)}_{\text{Negative Reward ($-r$)}}+\underbrace{\beta d_{\text{KL}}\left[p_{\theta}(x_{0}|z,c)\ \!\|\!\ p_{\theta}(x_{0}|z_{0},c)\right]}_{\text{Image Distribution Regularizer}},
+(3)
+where β>0\beta>0 is a hyperparameter controlling the regularization strength. The noise vector zz is then optimized by gradient descent: zk+1←zk−α​∇zℒMIRA​(zk,c)z_{k+1}\leftarrow z_{k}-\alpha\nabla_{z}\mathcal{L}_{\text{MIRA}}(z_{k},c). However, a critical challenge is that the KL divergence term in eq. 3 is intractable for high-dimensional images.
+A practically feasible approach. To create a practical algorithm, we instead optimize a tractable upper-bound surrogate derived from the model’s score functions s⁡(⋅)s(\cdot). Our final objective is:
+ℒMIRA​(z,c)=−r⁡(x0,c)+β​𝔼​[∑t=0T−1σt2​‖s⁡(xt|z0,c)‖2−σt2​‖s⁡(xt|z,c)‖2],\displaystyle\mathcal{L}_{\text{MIRA}}(z,c)=-r(x_{0},c)+\beta\mathbb{E}\bigg[\sum_{t=0}^{T-1}\sigma_{t}^{2}\|s(x_{t}|z_{0},c)\|^{2}-\sigma_{t}^{2}\|s(x_{t}|z,c)\|^{2}\bigg],
+(4)
+where σt\sigma_{t} denotes the variance schedule. The expectation is taken over all possible trajectories. This formulation effectively mitigates reward hacking while being computationally feasible. We derive eq. 4 in Appendix A.9 and outline the detailed procedure in Algorithm 1. We provide a high-level overview of our method’s workflow in fig. 4.
+Figure 4: Overview of our approach. The green block illustrates the standard diffusion process in which a frozen diffusion model generates an image from an initial Gaussian noise. The red block represents our enhancement: we evaluate the generated image according to some metric (Aesthetic Score) and update the noise vector to minimize the MIRA loss. Our loss introduces an image-space regularization term, ensuring the sampling trajectory remains close to the model’s original image distribution and mitigating semantic drift. By iteratively applying this process over KK steps, we achieve effective inference-time alignment through noise optimization.
+Algorithm 1  Proposed Algorithm: MIRA (for differentiable rewards)
+0:
+Initial noise z0∼𝒩⁡(0,𝐈)z_{0}\sim\mathcal{N}(0,\mathbf{I}), prompt cc, reward function rr, sampling process (e.g., DDIM) GθG_{\theta}, optimization steps KoptK_{\text{opt}}, learning rate α\alpha, regularization hyperparameter β>0\beta>0
+1:
+Initialize z←z0z\leftarrow z_{0}
+2:
+_,S0←Gθ​(z0,c)\_,S_{0}\leftarrow G_{\theta}(z_{0},c) // Obtain S0=∑tσt2​‖s⁡(xt|z0,c)‖2S_{0}=\sum_{t}\sigma_{t}^{2}\|s(x_{t}|z_{0},c)\|^{2} (eq. 4)
+3:
+for k=1,…,Koptk=1,\dots,K_{\text{opt}} do
+4:
+x0,S←Gθ​(z,c)x_{0},S\leftarrow G_{\theta}(z,c) // Generate x0x_{0}; obtain S=∑tσt2​‖s⁡(xt|z,c)‖2S=\sum_{t}\sigma_{t}^{2}\|s(x_{t}|z,c)\|^{2} (eq. 4)
+5:
+ℒMIRA←−r⁡(x0,c)+β⁡(S0−S)\mathcal{L}_{\text{MIRA}}\leftarrow-r(x_{0},c)+\beta(S_{0}-S) // Compute loss
+6:
+z←z−α​∇zℒMIRAz\leftarrow z-\alpha\nabla_{z}\mathcal{L}_{\text{MIRA}} // Update noise
+7:
+end for
+8:
+return  zz
+4.1 A Novel Extension to Non-differentiable Rewards
+MIRA is highly effective for aligning models with differentiable rewards. We now extend its core principles to handle non-differentiable objectives which include many practical and challenging alignment signals. For example, objectives such as JPEG compressibility (9), Attribute Binding Score (41), and Recall Reward (42) are often black-box and cannot be optimized with gradient-based methods.
+To address this, we introduce MIRA-DPO, which adapts the Direct Preference Optimization (DPO) (13) framework to our entirely inference-time, frozen-backbone setting. This approach operates on preferences between a ‘winner’ image x0wx_{0}^{w} and a ‘loser’ x0lx_{0}^{l}, which are generated from a corresponding pair of noise vectors, zwz^{w} and zlz^{l}. The DPO framework defines the probability of a preference using the Bradley-Terry model, which depends on a ground-truth reward function r∗r^{*}. Framing this as a binary classification problem yields the negative log-likelihood loss:
+ℒMIRA-DPO​(zw,zl,c)=−𝔼x0w∼pθ(⋅|zw,c)x0l∼pθ(⋅|zl,c)​[log⁡σ⁡(r∗​(x0w,c)−r∗​(x0l,c))].\mathcal{L}_{\text{MIRA-DPO}}(z^{w},z^{l},c)=-\mathbb{E}_{\begin{subarray}{c}x_{0}^{w}\sim p_{\theta}(\cdot|z^{w},c)\\
+x_{0}^{l}\sim p_{\theta}(\cdot|z^{l},c)\end{subarray}}\Big[\log\sigma\Big(r^{*}(x_{0}^{w},c)-r^{*}(x_{0}^{l},c)\Big)\Big].
+(5)
+Our key insight that connects this to our work is the relationship between the optimal reward r∗r^{*} and the diffusion model’s probabilities. As shown in our full derivation (Appendix A.10), this reward is equivalent to the regularized log-likelihood ratio:
+r∗(x0,c)∝𝔼[logpθ(x0:T|z,c)pθ(x0:T|z0,c)].r^{*}(x_{0},c)\propto\mathbb{E}\bigg[\log\frac{p_{\theta}(x_{0:T}|z,c)}{p_{\theta}(x_{0:T}|z_{0},c)}\bigg].
+(6)
+This term is the quantity MIRA seeks to regularize. Intuitively, r∗r^{*} is the log-ratio of the aligned image distribution (generated from the optimized noise zz) and the base image distribution (generated from unoptimized z0z_{0}). However, this formulation presents a familiar bottleneck; the log-likelihood ratio is intractable for diffusion models. To create a practical algorithm, we thus approximate this term using our principled, score-based KL surrogate:
+r∗​(x0,c)≈∑t=0T−1σt2​(‖s⁡(xt|z0,c)‖2−‖s⁡(xt|z,c)‖2),r^{*}(x_{0},c)\approx\sum_{t=0}^{T-1}\sigma_{t}^{2}\left(\|s(x_{t}|z_{0},c)\|^{2}-\|s(x_{t}|z,c)\|^{2}\right),
+(7)
+which we use to optimize the loss in eq. 5. This allows MIRA-DPO to align with black-box objectives at inference time while still constraining semantic drift. We provide the full derivation in Appendix A.10 and the practical algorithm in Appendix A.2.
+5 Experiments
+We evaluate three questions central to our method’s practicality:
+•
+Q1: To what extent does MIRA mitigate reward hacking in noise optimization?
+•
+Q2: How competitive is MIRA’s alignment with state-of-the-art noise optimization baselines?
+•
+Q3: How well can MIRA-DPO handle non-differentiable / black-box rewards?
+In the following sections, we demonstrate that MIRA successfully mitigates reward hacking artifacts while improving prompt fidelity (Q1). We show that this leads to a superior alignment with human preferences, achieving highly competitive win rates against state-of-the-art baselines (Q2). Finally, we establish that our MIRA-DPO framework robustly handles challenging non-differentiable objectives where gradient-based methods fail (Q3).
+Experimental Setup: Models, Datasets, and Evaluation. We conduct experiments using two primary base models: Stable Diffusion v1.5 (SDv1.5) (43) and SDXL (44). For each sample, we perform 50 optimization iterations. Within each iteration, we use DDIM sampling (45) with η=1\eta=1, a guidance scale of 5, and 100 sampling steps. We use this DDIM configuration for all backbones except SDXL-Turbo, for which we use the default sampler. We further restrict our main scope to noise optimization baselines; sampling approaches (e.g., FK Steering, CoDe) are a promising and orthogonal line of work. Further implementation details can be found in Appendix A.1.
+To test generalization, we report results on the Animal dataset from DDPO (9), Animal-Animal and Animal-Object datasets from InitNO (5), and more complex prompts from HPDv2 (46). We use the format: “generate an image of a [PROMPT][\textnormal{PROMPT}],” where [PROMPT] is drawn from the Animal dataset (9) for SDv1.5 and HPDv2 (46) for SDXL. For the reader’s reference, we include all Animal prompts in Appendix A.6.
+We evaluate performance using head-to-head win rate, a standard metric in image generation (47) measuring the percentage of prompts for which one method is preferred over another. We choose this as our primary metric because reward hacking can inflate raw scores, producing high-reward images that diverge from the prompt. Hence, while rewards alone are insufficient to reliably evaluate true model performance, win rates more directly reflect human preferences. We compare our method with several key inference-time noise optimization baselines: DNO (4), DyMO (37), InitNO (5), and ReNO (38). We include reward values and CLIPScores in Appendix A.4, Tables 2 and 3.
+5.1 To what extent does MIRA mitigate reward hacking in noise optimization?
+In this section, we investigate whether MIRA can effectively mitigate reward hacking during inference-time alignment of diffusion models, while maintaining high prompt fidelity. To this end, we evaluate our approach against the state-of-the-art DNO (4) using a range of human-aligned reward models (Aesthetic Score (8), HPSv2 (46), PickScore (47)), and custom image brightness and darkness rewards. The latter serve as stress tests to clearly visualize reward hacking behavior.
+Figure 5: MIRA reduces reward hacking on four rewards (Aesthetic Score, PickScore, HPSv2, Darkness).
+For each prompt (title above each panel), we show images over 50 noise optimization iterations for DNO (top row) and MIRA (bottom row). MIRA increases the target reward while preserving prompt adherence and texture realism; DNO drifts toward oversaturation artifacts and loss of detail. MIRA also improves over base SDv1.5 images (iteration 0), enhancing color richness.
+Our experiments reveal a key observation. Although the state-of-the-art DNO (4) shows some effectiveness in aligning images with human-aligned reward functions, it exhibits clear patterns of failure cases, particularly in maintaining prompt fidelity. Despite noise regularization, DNO can produce images with unnatural textures and lighting, leading to deviation from the prompt. In contrast, MIRA achieves a better balance between reward optimization and semantic alignment. As shown in Figure 5, MIRA produces visually coherent and accurate images across Aesthetic Score, HPSv2, PickScore, and a custom image darkness reward. Optimizing for image darkness most clearly illustrates reward hacking; DNO generates almost completely black outputs that technically score highly but ignore prompt details (e.g., omitting the “white cat”). MIRA mitigates this kind of reward hacking, balancing high reward scores and alignment with key visual concepts. We observe a similar pattern under the image brightness reward, with additional examples in Appendix A.3; our findings collectively reinforce that MIRA reduces reward hacking.
+To understand the mechanism behind these qualitative results, we analyze the distributional drift during the optimization process. We measure this drift by computing a Monte Carlo approximation of our score-based KL surrogate, averaged over all 45 prompts in the Simple Animals dataset. Due to the finite sample size, this estimate may exhibit sampling variance, which can result in small negative values when the true distributional drift is near zero.
+Figure 6: Mechanism of MIRA’s effectiveness, averaged over the Simple Animals dataset. We plot our score-based KL surrogate as a proxy for distributional drift.
+(a) During optimization, MIRA’s drift remains near-zero while DNO’s grows significantly.
+(b) Sweeping the hyperparameter β\beta for MIRA reveals a stable trade-off, where a moderate value achieves a significant reward increase with negligible drift.
+Our findings in Figure 6a show that DNO’s average drift grows substantially with more optimization steps, indicating that it consistently achieves high rewards by producing out-of-distribution images. In contrast, MIRA’s average drift remains near zero. Furthermore, Figure 6b illustrates the stable reward-drift trade-off. This core finding is validated by the CMMD (48) metric measuring distributional distance. Compared with a reference batch of 900 images (20 for each prompt in the Simple Animals dataset) generated by SDv1.5, CMMD strongly supports our analysis. DNO exhibits a large distributional drift (CMMD of 0.281) while MIRA remains remarkably close to the base distribution (CMMD of 0.063, lower is better). Taken together, these results provide a clear explanation for our method’s success: MIRA effectively increases rewards by finding better images that remain faithful to the original image distribution, thus avoiding the semantic degradation characteristic of reward hacking.
+5.2 How competitive is MIRA’s alignment with state-of-the-art noise optimization baselines?
+Although reward metrics such as Aesthetic Score are commonly used to evaluate alignment, our results in Section 5.1 provide evidence that reward values cannot reliably measure model performance. We instead use pairwise win rate comparisons, using both GPT-4o [10] and human feedback to choose between two images generated from the same prompt. The GPT-4o evaluation prompt (Appendix A.7) balances prompt adherence, visual realism, and overall reward maximization.
+Comparison
+Animal
+Animal-Animal
+Animal-Object
+Aesthetic ↑\uparrow
+Bright. ↑\uparrow
+Dark. ↑\uparrow
+Aesthetic ↑\uparrow
+Bright. ↑\uparrow
+Dark. ↑\uparrow
+Aesthetic ↑\uparrow
+Bright. ↑\uparrow
+Dark. ↑\uparrow
+MIRA vs DDPO (9)
+60.00±\pm5.12
+73.33±\pm5.21
+83.33±\pm2.90
+57.58±\pm6.00
+60.61±\pm5.96
+83.33±\pm4.27
+54.86±\pm6.00
+68.06±\pm7.10
+81.25±\pm5.53
+MIRA vs Diff-DPO (14)
+62.22±\pm4.97
+91.11±\pm1.99
+93.33±\pm1.22
+66.67±\pm6.59
+81.82±\pm5.12
+84.85±\pm5.31
+63.19±\pm6.54
+82.64±\pm3.65
+89.58±\pm1.86
+MIRA vs D3PO (15)
+73.33±\pm4.61
+87.64±\pm3.72
+84.44±\pm6.55
+63.64±\pm6.29
+68.18±\pm3.65
+74.24±\pm5.35
+68.06±\pm5.35
+77.78±\pm5.31
+83.33±\pm5.79
+MIRA vs BoN (N=50) (6)
+62.00±\pm3.65
+86.66±\pm3.30
+90.33±\pm3.85
+62.12±\pm2.43
+71.21±\pm5.75
+92.42±\pm2.22
+54.86±\pm9.69
+83.33±\pm3.14
+93.06±\pm1.22
+MIRA vs InitNO (5)
+61.11±\pm3.37
+72.22±\pm5.75
+82.22±\pm2.90
+65.15±\pm3.98
+78.79±\pm5.07
+83.33±\pm3.30
+57.64±\pm6.40
+84.03±\pm5.35
+80.56±\pm5.75
+MIRA vs DyMO (37)
+53.89±\pm8.52
+68.89±\pm6.78
+68.89±\pm5.12
+56.06±\pm5.79
+80.30±\pm4.71
+87.98±\pm4.44
+46.53±\pm7.47
+84.81±\pm5.12
+87.50±\pm3.98
+MIRA vs DNO (4)
+80.00±\pm2.22
+77.78±\pm6.74
+64.44±\pm7.13
+77.27±\pm4.18
+57.58±\pm5.12
+66.67±\pm5.79
+68.06±\pm1.86
+77.78±\pm5.96
+71.53±\pm5.58
+Table 1:
+GPT-4o win rates (%) of MIRA against baselines across diverse datasets and objectives. The table details head-to-head comparisons on the Animal, Animal-Animal, and Animal-Object datasets for three reward functions (Aesthetic Score, Brightness, Darkness). On nearly all settings, MIRA achieves win rates significantly above 50%, showing a consistent preference over a wide range of state-of-the-art methods. Values indicate mean and standard error over five seeds.
+Table 1 summarizes our results: MIRA demonstrates strong generalization and reduced reward hacking, consistently outperforming all baselines across datasets. Even on challenging multi-subject prompts (Animal-Animal and Animal-Object), it achieves win rates exceeding 50%. In direct comparisons with base SDv1.5, our win rates reach 90% (see Appendix A.4 Table 1 and Figure 2), grounding our method’s performance as substantial improvement over the unaligned base model.
+Figure 7: Human preference win rates for MIRA vs. state-of-the-art baselines. The chart displays head-to-head win rates from three focused user studies. Top: On SDv1.5 (optimizing Animal prompts for Aesthetic Score), MIRA achieves an 80.30% win rate against DNO. Middle and Bottom: On SDXL and SDXL-Turbo (optimizing HPDv2 subset for HPSv2), MIRA achieves win rates of 55.75% against DNO and 63.35% against ReNO, respectively.
+For direct human feedback, we conducted a focused user study with 100 anonymous participants to collect direct human feedback on SDv1.5 images optimized for Aesthetic Score using MIRA and DNO. The ordering of image pairs is randomized, and additional study setup details are provided in Appendix A.1. As shown in Figure 7, participants prefer MIRA over DNO in more than 80% of comparisons, providing evidence of stronger alignment with human intent.
+Finally, to test scalability, we extend MIRA to SDXL (44) and SDXL-Turbo (49) backbones using the first 50 HPDv2 (46) prompts, optimizing for HPSv2. In separate user studies, we compare our method with leading alternatives: DNO on SDXL and ReNO (38) on SDXL-Turbo. As shown in Figure 7, the results demonstrate a clear preference for our approach. MIRA achieves a 55.75% win rate over DNO and a 63.35% win rate over ReNO. This latter finding is supported by qualitative examples in Figure 8), where MIRA tends to produce more literal and detailed compositions on the SDXL-Turbo backbone. Under equivalent sampling settings (same seed, default scheduler, single-step), MIRA produces cleaner, more literal interpretations with stable composition and style consistency (e.g., large-scale scene layout, totem-like geometry, and concept blending), whereas ReNO often introduces extra flourishes or alternative readings. These examples match our quantitative trends that MIRA delivers stronger alignment than noise-only regularization.
+Figure 8: Qualitative comparison of MIRA against the base SDXL-Turbo and ReNO, optimized for HPSv2. Prompts (top to bottom): “Wojak looking over a sea of memes from a cliff on 4chan,” “Link fights an octorok in a cave in a Don Bluth style,” “Totem pole made of cats,” “Groot depicted as a flower.” Across these cases, MIRA offers crisper compositions and more literal, prompt-faithful structure (e.g., coherent large-scene layout, pole-like stacking, integrated concept depiction), while ReNO reflects plausible but looser interpretations. Images are shown at equal inference settings for both methods.
+In summary, the evidence presented in this section provides a comprehensive answer to our second research question. Through large-scale automated evaluations, MIRA consistently outperforms a wide range of both fine-tuning and inference-time baselines. This strong quantitative performance is corroborated by focused human studies, where MIRA is preferred over the state-of-the-art DNO by a 4-to-1 margin on SDv1.5 and also wins decisively on the more powerful SDXL and SDXL-Turbo backbones. Together, these findings establish MIRA as a highly competitive method for inference-time alignment.
+5.3 How well can MIRA-DPO handle non-differentiable/black-box rewards?
+Many real-world alignment objectives, such as human preferences or perceptual metrics, are inherently non-differentiable and cannot be directly optimized using gradient-based methods. To evaluate MIRA-DPO’s effectiveness, we task it with a representative non-differentiable objective: maximizing JPEG compressibility. This is non-differentiable due to the quantization and rounding operations in the JPEG algorithm (50, 51).
+Figure 9: MIRA-DPO preserves semantic content while optimizing a non-differentiable reward. We compare MIRA-DPO with DNO on maximizing JPEG compressibility. We use prompts “generate an image of a blue pig” (left) and “generate an image of a yellow rabbit” (right), showing image evolution over 50 optimization steps. While DNO’s output degrades into a nearly blank image, MIRA-DPO achieves significant compression while retaining the core features of the prompt.
+As shown in Figure 9, while the baseline successfully minimizes file size, it also destroys the image’s semantic content, noticeably hacking the reward. In contrast, MIRA-DPO’s success in this task demonstrates that our distributional regularization is crucial for robustly handling black-box objectives, preventing noise optimization from taking shortcuts and ensuring the final image remains coherent.
+5.4 Ablations and Additional Experiments
+In addition to win rate results shown in the above sections, we report the mean reward values for all methods (including MIRA) across all Animal prompts in Appendix A.4 Table 2. These values provide important context for interpreting trade-offs between reward maximization and prompt adherence for each objective (Aesthetic Score, HPSv2, PickScore, brightness, and darkness). Furthermore, we tune the hyperparameter β\beta to balance the trade-off between reward maximization and win rate. As shown in Appendix A.5 Figure 4, increasing β\beta systematically reduces reward scores but improves CLIPScore (quantifying image-prompt alignment). These ablations reveal that low β\beta tends to result in reward hacking, whereas high β\beta overconstrains, leading to an under-optimized reward.
+Finally, for a holistic analysis, we compare MIRA to steering/sampling-based methods such as FK Steering (35) and CoDe (7), matching MIRA’s runtime with those of each baseline. All sampling methods run with their default configurations (SDv1.5 backbone) on one A100. For each method, we fix a single configuration, measure its mean per-prompt runtime TT on the Simple Animals prompts, and then run MIRA for the same budget TT on the same prompts. We report our head-to-head win rates for Aesthetic Score, darkness, and brightness rewards. This serves as a stress test where sampling-based methods can be sample-inefficient.
+Comparison
+Aesthetic Score Win Rate (%) ↑\uparrow
+Darkness Win Rate (%) ↑\uparrow
+Brightness Win Rate (%) ↑\uparrow
+Peak GPU Mem (GB) ↓\downarrow
+MIRA vs FK Steering (16 Particles)
+57.78
+75.56
+73.33
+20.55
+MIRA vs DAS (8 Particles)
+37.78
+77.78
+80.00
+23.90
+MIRA vs CoDe (N=20N\!=\!20)
+55.56
+73.33
+77.78
+24.51
+MIRA vs Best-of-NN (N=50N\!=\!50)
+53.33
+80.00
+82.22
+2.63
+Table 2: Comparison against state-of-the-art steering/sampling-based methods with matched wall-clock time budget. For each baseline, the table lists peak GPU memory usage of each sampling-based method as well as MIRA’s head-to-head win rates on Aesthetic Score, darkness, and brightness rewards. While MIRA’s peak memory remains constant at 8.97GB, most steering-based competitors require over 20GB, highlighting a significant memory advantage for our method. Under a matched time budget, MIRA demonstrates highly competitive performance, particularly on brightness/darkness rewards where it consistently achieves win rates over 73%.
+6 Conclusions and Limitations
+In this paper, we introduce MIRA, a distribution-regularized noise optimization method for inference-time alignment of diffusion models that mitigates reward hacking. By reformulating noise optimization as a constrained reward maximization problem, MIRA updates latent noise during sampling to improve reward while adhering to the user’s prompt. Extensive experiments demonstrate MIRA’s strong empirical performance, with head-to-head win rates typically exceeding 60% against baselines. Our work establishes that the key to mitigating such reward hacking is to directly regularize the output image distribution, which is more robust than prior noise-space constraints.
+Limitations. MIRA adds moderate inference-time compute beyond normal DDIM/DDPM sampling and relies on principled score-based surrogates, which may degrade on complex or out-of-distribution prompts; a formal analysis of the surrogate’s theoretical tightness is an important direction for future work. While our score-based objective is sampler-portable, we focus our evaluation on DDIM for compute parity, as hyperparameters may vary by schedule. Improving MIRA’s efficiency and combining it with sampling methods are left to future work.
+References
+[1]
+Buhua Liu, Shitong Shao, Bao Li, Lichen Bai, Zhiqiang Xu, Haoyi Xiong, James Kwok, Sumi Helal, and Zeke Xie.
+Alignment of diffusion models: Fundamentals, challenges, and future.
+arXiv preprint arXiv:2409.07253, 2024.
+[2]
+Yafu Li, Xuyang Hu, Xiaoye Qu, Linjie Li, and Yu Cheng.
+Test-time preference optimization: On-the-fly alignment via iterative textual feedback.
+arXiv preprint arXiv:2501.12895, 2025.
+[3]
+Souradip Chakraborty, Soumya Suvra Ghosal, Ming Yin, Dinesh Manocha, Mengdi Wang, Amrit Singh Bedi, and Furong Huang.
+Transfer q-star: Principled decoding for llm alignment.
+Advances in Neural Information Processing Systems, 37:101725–101761, 2024.
+[4]
+Zhiwei Tang, Jiangweizhi Peng, Jiasheng Tang, Mingyi Hong, Fan Wang, and Tsung-Hui Chang.
+Inference-time alignment of diffusion models with direct noise optimization.
+arXiv preprint arXiv:2405.18881, 2024.
+[5]
+Xiefan Guo, Jinlin Liu, Miaomiao Cui, Jiankai Li, Hongyu Yang, and Di Huang.
+Initno: Boosting text-to-image diffusion models via initial noise optimization.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 9380–9389, 2024.
+[6]
+Reiichiro Nakano, Jacob Hilton, Suchir Balaji, Jeff Wu, Long Ouyang, Christina Kim, Christopher Hesse, Shantanu Jain, Vineet Kosaraju, William Saunders, et al.
+Webgpt: Browser-assisted question-answering with human feedback.
+arXiv preprint arXiv:2112.09332, 2021.
+[7]
+Anuj Singh, Sayak Mukherjee, Ahmad Beirami, and Hadi Jamali-Rad.
+Code: Blockwise control for denoising diffusion models.
+arXiv preprint arXiv:2502.00968, 2025.
+[8]
+Christoph Schuhmann, Romain Beaumont, Richard Vencu, Cade Gordon, Ross Wightman, Mehdi Cherti, Theo Coombes, Aarush Katta, Clayton Mullis, Mitchell Wortsman, et al.
+Laion-5b: An open large-scale dataset for training next generation image-text models.
+Advances in Neural Information Processing Systems, 35:25278–25294, 2022.
+[9]
+Kevin Black, Michael Janner, Yilun Du, Ilya Kostrikov, and Sergey Levine.
+Training diffusion models with reinforcement learning.
+In ICML 2023 Workshop on Structured Probabilistic Inference & Generative Modeling, 2023.
+[10]
+Aaron Hurst, Adam Lerer, Adam P Goucher, Adam Perelman, Aditya Ramesh, Aidan Clark, AJ Ostrow, Akila Welihinda, Alan Hayes, Alec Radford, et al.
+Gpt-4o system card.
+arXiv preprint arXiv:2410.21276, 2024.
+[11]
+Kimin Lee, Hao Liu, Moonkyung Ryu, Olivia Watkins, Yuqing Du, Craig Boutilier, Pieter Abbeel, Mohammad Ghavamzadeh, and Shixiang Shane Gu.
+Aligning text-to-image models using human feedback.
+arXiv preprint arXiv:2302.12192, 2023.
+[12]
+Ying Fan, Olivia Watkins, Yuqing Du, Hao Liu, Moonkyung Ryu, Craig Boutilier, Pieter Abbeel, Mohammad Ghavamzadeh, Kangwook Lee, and Kimin Lee.
+Reinforcement learning for fine-tuning text-to-image diffusion models.
+Advances in Neural Information Processing Systems, 36, 2024.
+[13]
+Rafael Rafailov, Archit Sharma, Eric Mitchell, Christopher D Manning, Stefano Ermon, and Chelsea Finn.
+Direct preference optimization: Your language model is secretly a reward model.
+Advances in Neural Information Processing Systems, 36, 2024.
+[14]
+Bram Wallace, Meihua Dang, Rafael Rafailov, Linqi Zhou, Aaron Lou, Senthil Purushwalkam, Stefano Ermon, Caiming Xiong, Shafiq Joty, and Nikhil Naik.
+Diffusion model alignment using direct preference optimization.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 8228–8238, 2024.
+[15]
+Kai Yang, Jian Tao, Jiafei Lyu, Chunjiang Ge, Jiaxin Chen, Weihan Shen, Xiaolong Zhu, and Xiu Li.
+Using human feedback to fine-tune diffusion models without any reward model.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 8941–8951, 2024.
+[16]
+Yi Gu, Zhendong Wang, Yueqin Yin, Yujia Xie, and Mingyuan Zhou.
+Diffusion-rpo: Aligning diffusion models through relative preference optimization.
+arXiv preprint arXiv:2406.06382, 2024.
+[17]
+Huizhuo Yuan, Zixiang Chen, Kaixuan Ji, and Quanquan Gu.
+Self-play fine-tuning of diffusion models for text-to-image generation.
+In The Thirty-eighth Annual Conference on Neural Information Processing Systems, 2024.
+[18]
+Mihir Prabhudesai, Anirudh Goyal, Deepak Pathak, and Katerina Fragkiadaki.
+Aligning text-to-image diffusion models with reward backpropagation.
+arXiv preprint arXiv:2310.03739, 2023.
+[19]
+Kevin Clark, Paul Vicol, Kevin Swersky, and David J Fleet.
+Directly fine-tuning diffusion models on differentiable rewards.
+In The Twelfth International Conference on Learning Representations, 2024.
+[20]
+Xiaoshi Wu, Yiming Hao, Manyuan Zhang, Keqiang Sun, Zhaoyang Huang, Guanglu Song, Yu Liu, and Hongsheng Li.
+Deep reward supervisions for tuning text-to-image diffusion models.
+In European Conference on Computer Vision, pages 108–124. Springer, 2024.
+[21]
+Yanyu Li, Xian Liu, Anil Kag, Ju Hu, Yerlan Idelbayev, Dhritiman Sagar, Yanzhi Wang, Sergey Tulyakov, and Jian Ren.
+Textcraftor: Your text encoder can be image quality controller.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 7985–7995, 2024.
+[22]
+Masatoshi Uehara, Yulai Zhao, Tommaso Biancalani, and Sergey Levine.
+Understanding reinforcement learning-based fine-tuning of diffusion models: A tutorial and review.
+arXiv preprint arXiv:2407.13734, 2024.
+[23]
+Prafulla Dhariwal and Alexander Nichol.
+Diffusion models beat gans on image synthesis.
+Advances in neural information processing systems, 34:8780–8794, 2021.
+[24]
+Yang Song, Jascha Sohl-Dickstein, Diederik P. Kingma, Abhishek Kumar, Stefano Ermon, and Ben Poole.
+Score-based generative modeling through stochastic differential equations.
+In International Conference on Learning Representations, 2021.
+[25]
+Jiwen Yu, Yinhuai Wang, Chen Zhao, Bernard Ghanem, and Jian Zhang.
+Freedom: Training-free energy-guided conditional diffusion model.
+In Proceedings of the IEEE/CVF International Conference on Computer Vision, pages 23174–23184, 2023.
+[26]
+Luhuan Wu, Brian Trippe, Christian Naesseth, David Blei, and John P Cunningham.
+Practical and asymptotically exact conditional sampling in diffusion models.
+Advances in Neural Information Processing Systems, 36, 2024.
+[27]
+Zehao Dou and Yang Song.
+Diffusion posterior sampling for linear inverse problem solving: A filtering perspective.
+In The Twelfth International Conference on Learning Representations, 2024.
+[28]
+Gabriel Cardoso, Yazid Janati El Idrissi, Sylvain Le Corff, and Eric Moulines.
+Monte carlo guided diffusion for bayesian linear inverse problems.
+arXiv preprint arXiv:2308.07983, 2023.
+[29]
+Angus Phillips, Hai-Dang Dau, Michael John Hutchinson, Valentin De Bortoli, George Deligiannidis, and Arnaud Doucet.
+Particle denoising diffusion sampler.
+arXiv preprint arXiv:2402.06320, 2024.
+[30]
+Gen Li, Zhihan Huang, and Yuting Wei.
+Towards a mathematical theory for consistency training in diffusion models.
+arXiv preprint arXiv:2402.07802, 2024.
+[31]
+Christian A Naesseth, Fredrik Lindsten, Thomas B Schön, et al.
+Elements of sequential monte carlo.
+Foundations and Trends® in Machine Learning, 12(3):307–392, 2019.
+[32]
+Jiaming Song, Qinsheng Zhang, Hongxu Yin, Morteza Mardani, Ming-Yu Liu, Jan Kautz, Yongxin Chen, and Arash Vahdat.
+Loss-guided diffusion models for plug-and-play controllable generation.
+In International Conference on Machine Learning, pages 32483–32498. PMLR, 2023.
+[33]
+Masatoshi Uehara, Yulai Zhao, Chenyu Wang, Xiner Li, Aviv Regev, Sergey Levine, and Tommaso Biancalani.
+Reward-guided controlled generation for inference-time alignment in diffusion models: Tutorial and review.
+arXiv preprint arXiv:2501.09685, 2025.
+[34]
+Masatoshi Uehara, Xingyu Su, Yulai Zhao, Xiner Li, Aviv Regev, Shuiwang Ji, Sergey Levine, and Tommaso Biancalani.
+Reward-guided iterative refinement in diffusion models at test-time with applications to protein and dna design.
+arXiv preprint arXiv:2502.14944, 2025.
+[35]
+Raghav Singhal, Zachary Horvitz, Ryan Teehan, Mengye Ren, Zhou Yu, Kathleen McKeown, and Rajesh Ranganath.
+A general framework for inference-time scaling and steering of diffusion models, 2025.
+[36]
+Sunwoo Kim, Minkyu Kim, and Dongmin Park.
+Test-time alignment of diffusion models without reward over-optimization.
+arXiv preprint arXiv:2501.05803, 2025.
+[37]
+Xin Xie and Dong Gong.
+Dymo: Training-free diffusion model alignment with dynamic multi-objective scheduling.
+arXiv preprint arXiv:2412.00759, 2024.
+[38]
+Luca Eyring, Shyamgopal Karthik, Karsten Roth, Alexey Dosovitskiy, and Zeynep Akata.
+Reno: Enhancing one-step text-to-image models through reward-based noise optimization.
+In A. Globerson, L. Mackey, D. Belgrave, A. Fan, U. Paquet, J. Tomczak, and C. Zhang, editors, Advances in Neural Information Processing Systems, volume 37, pages 125487–125519. Curran Associates, Inc., 2024.
+[39]
+Lichang Chen, Chen Zhu, Davit Soselia, Jiuhai Chen, Tianyi Zhou, Tom Goldstein, Heng Huang, Mohammad Shoeybi, and Bryan Catanzaro.
+Odin: Disentangled reward mitigates hacking in rlhf.
+arXiv preprint arXiv:2402.07319, 2024.
+[40]
+Yuchun Miao, Sen Zhang, Liang Ding, Rong Bao, Lefei Zhang, and Dacheng Tao.
+Inform: Mitigating reward hacking in rlhf via information-theoretic reward modeling.
+In The Thirty-eighth Annual Conference on Neural Information Processing Systems, 2024.
+[41]
+Zhiwei Jia, Yuesong Nan, Huixi Zhao, and Gengdai Liu.
+Reward fine-tuning two-step diffusion models via learning differentiable latent-space surrogate reward.
+arXiv preprint arXiv:2411.15247, 2024.
+[42]
+Zichen Miao, Jiang Wang, Ze Wang, Zhengyuan Yang, Lijuan Wang, Qiang Qiu, and Zicheng Liu.
+Training diffusion models towards diverse image generation with reinforcement learning.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), pages 10844–10853, June 2024.
+[43]
+Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Björn Ommer.
+High-resolution image synthesis with latent diffusion models.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), pages 10684–10695, June 2022.
+[44]
+Dustin Podell, Zion English, Kyle Lacey, Andreas Blattmann, Tim Dockhorn, Jonas Müller, Joe Penna, and Robin Rombach.
+Sdxl: Improving latent diffusion models for high-resolution image synthesis.
+arXiv preprint arXiv:2307.01952, 2023.
+[45]
+Jiaming Song, Chenlin Meng, and Stefano Ermon.
+Denoising diffusion implicit models.
+In International Conference on Learning Representations, 2021.
+[46]
+Xiaoshi Wu, Yiming Hao, Keqiang Sun, Yixiong Chen, Feng Zhu, Rui Zhao, and Hongsheng Li.
+Human preference score v2: A solid benchmark for evaluating human preferences of text-to-image synthesis.
+arXiv preprint arXiv:2306.09341, 2023.
+[47]
+Yuval Kirstain, Adam Polyak, Uriel Singer, Shahbuland Matiana, Joe Penna, and Omer Levy.
+Pick-a-pic: An open dataset of user preferences for text-to-image generation.
+In Acvances in Neural Information Processing Systems, 2023.
+[48]
+Sadeep Jayasumana, Srikumar Ramalingam, Andreas Veit, Daniel Glasner, Ayan Chakrabarti, and Sanjiv Kumar.
+Rethinking fid: Towards a better evaluation metric for image generation.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 9307–9315, 2024.
+[49]
+Axel Sauer, Dominik Lorenz, Andreas Blattmann, and Robin Rombach.
+Adversarial diffusion distillation.
+In European Conference on Computer Vision, pages 87–103. Springer, 2024.
+[50]
+Christoph Reich, Biplob Debnath, Deep Patel, and Srimat Chakradhar.
+Differentiable jpeg: The devil is in the details.
+In 2024 IEEE/CVF Winter Conference on Applications of Computer Vision (WACV), page 4114–4123. IEEE, January 2024.
+[51]
+Gregory K Wallace.
+The jpeg still picture compression standard.
+Communications of the ACM, 34(4):30–44, 1991.
+Contents
+1 Introduction
+2 Related Work
+3 Problem Formulation
+4 Proposed Approach
+4.1 A Novel Extension to Non-differentiable Rewards
+5 Experiments
+5.1 To what extent does MIRA mitigate reward hacking in noise optimization?
+5.2 How competitive is MIRA’s alignment with state-of-the-art noise optimization baselines?
+5.3 How well can MIRA-DPO handle non-differentiable/black-box rewards?
+5.4 Ablations and Additional Experiments
+6 Conclusions and Limitations
+References
+A Appendix
+A.1 Implementation Details
+A.2 Algorithms
+A.3 Additional Qualitative Results
+A.4 Additional Quantitative Results
+A.5 Ablation Analysis
+A.6 Animal Prompts List
+A.7 GPT-4o Evaluation
+A.8 Proof of Proposition 1
+A.9 Derivation of the Practical Objective for Differentiable Rewards
+A.10 Derivation of DPO Objective
+Appendix A Appendix
+A.1 Implementation Details
+We demonstrate results of MIRA on multiple reward functions, including Aesthetic Score, HPSv2, PickScore, and image brightness and darkness. The first three are human-aligned, whereas the last two are useful for easily visualizing reward hacking. We set β=0.2\beta=0.2 for Aesthetic Score, β=0.5\beta=0.5 for HPSv2 and PickScore, β=1\beta=1 for brightness, and β=0.8\beta=0.8 for darkness. For JPEG compressibility, a non-differentiable reward, we use β=1\beta=1. HPSv2 and PickScore use ViT-H/14 as the backbone, and Aesthetic Score uses ViT-L/14.
+We implement MIRA with a learning rate of 0.010.01 and the AdamW optimizer in all experiments. Our method runs on a single A100 Nvidia GPU. For DNO, we use noise regularization (i.e. PRNO) unless otherwise stated. Other baselines use their default configurations.
+User Study Details. We obtain these results from anonymous volunteers who respond using an online form. We ask these participants: “Which of the below images would you personally prefer getting given the above prompt (based on your personal trade-off between prompt faithfulness and aesthetics)?” We adopt this from ReNO. Given side-by-side images (prompt-matched, order-randomized), participants have the option to choose the left image, the right image, or neither/both. In the case of the last option, we assign a score of 0.50.5 to that image pair. Due to computational restrictions, we limit the number of participants to 100. We further limit the number of images to 50 to respect the participants’ time.
+A.2 Algorithms
+For the reader’s reference, we provide our loss for non-differentiable rewards as follows. Given prompt cc,
+ℒMIRA-DPO=−𝔼x0w,x0llogσ(β𝔼x1:Tw∼pθ(⋅|x0w,zw,c)x1:Tl∼pθ(⋅|x0l,zl,c)[logpθ(x0:Tw|zw,c)pθ(x0:Tw|z0w,c)−logpθ(x0:Tl|zl,c)pθ(x0:Tl|z0l,c)]).\mathcal{L}_{\text{MIRA-DPO}}=-\mathbb{E}_{x_{0}^{w},x_{0}^{l}}\log\!\sigma\Bigg(\!\beta\mathbb{E}_{\begin{subarray}{c}x_{1:T}^{w}\sim p_{\theta}(\cdot|x_{0}^{w},z^{w},c)\\
+x_{1:T}^{l}\sim p_{\theta}(\cdot|x_{0}^{l},z^{l},c)\end{subarray}}\Bigg[\log\frac{p_{\theta}(x_{0:T}^{w}|z^{w},c)}{p_{\theta}(x_{0:T}^{w}|z_{0}^{w},c)}-\log\frac{p_{\theta}(x_{0:T}^{l}|z^{l},c)}{p_{\theta}(x_{0:T}^{l}|z_{0}^{l},c)}\Bigg]\!\Bigg).
+(8)
+Algorithm 2  MIRA for Non-differentiable Rewards
+0:
+Initial noise z0(1),z0(2)∼𝒩⁡(0,𝐈)z_{0}^{(1)},z_{0}^{(2)}\sim\mathcal{N}(0,\mathbf{I}), prompt cc, reward function rr, sampling process GθG_{\theta}, optimization steps KoptK_{\text{opt}}, learning rate α\alpha, regularization hyperparameter β>0\beta>0
+1:
+Initialize z(1)←z0(1)z^{(1)}\leftarrow z_{0}^{(1)}, z(2)←z0(2)z^{(2)}\leftarrow z_{0}^{(2)}
+2:
+for k=1,…,Koptk=1,\dots,K_{\text{opt}} do
+3:
+x0(1)←Gθ​(z(1),c)x_{0}^{(1)}\leftarrow G_{\theta}(z^{(1)},c) // Generate images
+4:
+x0(2)←Gθ​(z(2),c)x_{0}^{(2)}\leftarrow G_{\theta}(z^{(2)},c)
+5:
+if r⁡(x0(1),c)>r⁡(x0(2),c)r(x_{0}^{(1)},c)>r(x_{0}^{(2)},c) then // Choose preferred image; assign winner and loser   x0w←x0(1),x0l←x0(2)x_{0}^{w}\leftarrow x_{0}^{(1)},x_{0}^{l}\leftarrow x_{0}^{(2)}   zw←z(1),zl←z(2)z^{w}\leftarrow z^{(1)},z^{l}\leftarrow z^{(2)}   z0w←z0(1),z0l←z0(2)z_{0}^{w}\leftarrow z_{0}^{(1)},z_{0}^{l}\leftarrow z_{0}^{(2)}
+6:
+else   x0w←x0(2),x0l←x0(1)x_{0}^{w}\leftarrow x_{0}^{(2)},x_{0}^{l}\leftarrow x_{0}^{(1)}   zw←z(2),zl←z(1)z^{w}\leftarrow z^{(2)},z^{l}\leftarrow z^{(1)}   z0w←z0(2),z0l←z0(1)z_{0}^{w}\leftarrow z_{0}^{(2)},z_{0}^{l}\leftarrow z_{0}^{(1)}
+7:
+ℒMIRA-DPO←compute_loss​(x0w,x0l,zw,zl,z0w,z0l)\mathcal{L}_{\text{MIRA-DPO}}\leftarrow\text{compute\_loss}(x_{0}^{w},x_{0}^{l},z^{w},z^{l},z_{0}^{w},z_{0}^{l}) // Compute loss according to eq. 8
+8:
+zw←zw−α​∇zwℒMIRA-DPOz^{w}\leftarrow z^{w}-\alpha\nabla_{\!z^{w}}\mathcal{L}_{\text{MIRA-DPO}} // Update noise vectors (also updating z(1)z^{(1)} and z(2)z^{(2)})
+9:
+zl←zl−α​∇zlℒMIRA-DPOz^{l}\leftarrow z^{l}-\alpha\nabla_{\!z^{l}}\mathcal{L}_{\text{MIRA-DPO}}
+10:
+end for
+11:
+return  zwz^{w}
+A.3 Additional Qualitative Results
+Brightness reward hacking in MIRA vs. DNO
+Here, we show reward hacking on image brightness and darkness. We prompt the diffusion model with “generate an image of a black [ANIMAL][\textnormal{ANIMAL}]”. The contrast between the prompt and the reward provides a clear visualization of reward hacking.
+Figure 1: MIRA vs. DNO in reward hacking. On the image brightness reward, we demonstrate that MIRA is able to effectively mitigate reward hacking and generate better, more realistic images while maintaining prompt fidelity when compared to the state-of-the-art baseline. In the top row, after 50 optimization steps, DNO completely hacks the brightness reward and generates an image that is overly white and unrealistic. In contrast, in the bottom row, MIRA is able to mitigate reward hacking and produce much better images, while aligning with the target reward.
+A.4 Additional Quantitative Results
+In this section, we present additional results comparing MIRA to baselines.
+Win rates of all methods against SDv1.5
+In Table 1 below, we present the win rates of several methods, including MIRA, against SDv1.5 using Animal prompts. The results demonstrate that our method achieves the highest win rate in three rewards: Aesthetic Score, brightness, and darkness. We also represent this in the bar plot diagram in Figure 2. MIRA consistently outperforms baselines in win rates despite lower average rewards.
+Method (vs SDv1.5)
+Aesthetic ↑\uparrow
+Brightness ↑\uparrow
+Darkness ↑\uparrow
+DDPO
+51.11
+80.00
+71.11
+Diffusion-DPO
+48.89
+77.77
+66.67
+D3PO
+53.33
+71.22
+71.11
+BoN (N=30N=30)
+51.11
+80.11
+62.22
+BoN (N=40N=40)
+55.55
+77.77
+63.33
+BoN (N=50N=50)
+55.55
+75.55
+61.11
+DNO
+42.22
+75.56
+66.67
+Ours
+60.00
+91.11
+88.89
+Table 1: Win rates of all methods against SDv1.5. The table reports the percentage of pairwise comparisons between all methods (including MIRA) vs SDv1.5 on three objectives: Aesthetic Score, Brightness, and Darkness with GPT-4o as the judge. We sample Best-of-NN (BoN) with base SDv1.5. Across all objectives, our method consistently achieves higher win rates than SDv1.5. These results demonstrate that our method not only outperforms previous baselines in terms of win rates over various target objectives, but is also able to generate better images while more effectively optimizing the target reward functions.
+Figure 2: Win rates (vs. SDv1.5) and average rewards across methods. We evaluate our method, MIRA, on Aesthetic Score (left), brightness (middle), and darkness (right), comparing against DDPO, Diffusion-DPO, D3PO, and DNO. MIRA consistently outperforms baselines in win rates despite lower average rewards. Notably, higher rewards can indicate overoptimization, resulting in lower win rates.
+Overall rewards across methods and reward functions. Table 2 presents the mean rewards of images generated by different methods (including MIRA). Rewards are averaged across all images generated from the Animal prompts.
+Method
+Training Time
+Inference Time
+Aesthetic
+HPSv2
+PickScore
+Brightness
+Darkness
+SDv1.5
+-
+0.04 min
+5.367
+0.278
+20.390
+-0.123
+0.087
+DDPO
+12 h
+-
+5.623
+0.307
+20.120
+0.570
+0.782
+Diffusion-DPO
+2 h
+-
+5.930
+0.302
+21.086
+0.485
+0.159
+D3PO
+24 h
+-
+6.027
+0.297
+20.030
+0.715
+0.982
+BoN (N=30N=30)
+-
+0.9 min
+6.044
+0.318
+21.404
+0.006
+0.329
+BoN (N=40N=40)
+-
+1.31 min
+6.080
+0.320
+21.427
+0.094
+0.339
+BoN (N=50N=50)
+-
+1.64 min
+6.111
+0.321
+21.365
+0.105
+0.353
+InitNO
+-
+0.5 min
+5.259
+0.286
+20.120
+-0.041
+0.113
+DyMO
+-
+0.85 min
+5.720
+0.322
+21.220
+0.320
+0.008
+DNO
+-
+5 min
+9.044
+0.287
+25.568
+0.945
+1.044
+Ours
+-
+5 min
+5.646
+0.285
+21.161
+0.805
+0.894
+Table 2: Overall rewards across methods and reward functions. The above table compares our method with other baselines across various reward metrics and runtime. These rewards include Aesthetic Score, HPSv2, PickScore, brightness, and darkness. The leftmost column contains all methods. The second column (runtime) lists the approximate time needed to fine-tune or optimize each method (for a single image). We note DDPO, Diffusion-DPO, and D3PO take several hours due to fine-tuning. Though our method does not generate images with the highest rewards, we observe higher rewards compared to SDv1.5 after just five minutes of optimization with less reward hacking as discussed in the main paper. Inference times are measured using a single A100 GPU.
+CLIPScores on the Simple Animals dataset. We optimize several key methods (including fine-tuning methods) for Aesthetic Score on the Simple Animals dataset, evaluating CLIPScore as a prompt fidelity check. We observe that strong reward gains may come with weaker prompt adherence. Our method, MIRA, achieves the highest CLIPScore while remaining competitive on the actual target reward. We emphasize that these results should not be considered in a vacuum, and win rate is a more holistic metric.
+Method
+CLIPScore
+Aesthetic Score
+DDPO
+24.898
+5.623
+Diffusion-DPO
+25.340
+5.930
+D3PO
+23.298
+6.027
+BoN (N=50N=50)
+24.070
+6.044
+InitNO
+24.555
+5.720
+DyMO
+25.397
+5.720
+DNO
+22.959
+9.044
+MIRA (Ours)
+25.964
+5.646
+Table 3: Comparison of CLIPScores according to method used, optimizing for Aesthetic Score. We report CLIPScores, measuring prompt fidelity, and Aesthetic Score for various methods. MIRA achieves the best CLIPScore with comparable Aesthetic Score, whereas DNO achieves substantially higher Aesthetic Scores at the cost of prompt adherence.
+Hybrid feasibility (MIRA + FK Steering). We implemented a simple hybrid combining MIRA with FK Steering to test complementarity. Concretely, we run multiple denoising trajectories in parallel and, at periodic intervals, select the candidate that maximizes the MIRA objective. The backbone remains frozen and configurations are fixed. This check is not wall-clock matched and serves only as a feasibility probe. On Simple Animals (45 prompts), optimizing for Aesthetic Score with β=0.1\beta=0.1, MIRA with FK Steering achieves a 55.56% win rate over FK Steering alone (same backbone/GPU).
+Trade-offs with compute. We examine how reward changes as we vary the sampling budget while keeping the optimization procedure fixed. Specifically, we sweep the number of DDIM sampling steps (NFE) and compare MIRA to DNO under the same backbone and guidance. If the reward for a method increases significantly with additional sampling computation, this is indicative of reward hacking rather than genuine improvement. As shown in Fig. 4, DNO’s reward increases drastically with more DDIM steps, whereas MIRA remains comparatively stable. This is consistent with MIRA’s regularization, preventing the sampler from drifting toward high-score but unnatural solutions.
+Figure 3: Reward vs DDIM Steps (sampling compute) on Simple Animals dataset. Mean Aesthetic Score vs. number of DDIM sampling steps (η=1\eta=1, same backbone/CFG; optimization iterations fixed). DNO’s reward grows steadily with more steps, a hallmark of reward hacking; MIRA stays nearly flat (slight decline), indicating robustness to additional sampling compute. Error bars show variability across prompts. The takeaway: extra sampling compute disproportionately benefits noise-only optimization (DNO), while MIRA’s image-space regularization curbs this effect.
+A.5 Ablation Analysis
+Impact of β\beta on CLIPScores and Rewards
+We justify our choice of hyperparameter β\beta by evaluating results across five different seeds, plotting the mean curves for CLIPScore and reward against optimization steps. CLIPScore is a metric that scores how well an image aligns with a given prompt. For our results, we use CLIPScore with a ViT-L/14 vision backbone and optimize for image darkness. As shown in Figure 4, increasing β\beta in our method leads to lower rewards but higher CLIPScores. We note that “early stopping” would yield higher CLIPScores but lower rewards.
+Figure 4: Effect of different β\beta on CLIPScores (left) and rewards (right). We obtain CLIPScores and rewards for all entries in the animals list in Appendix A.6. Curves depict the average result of five different seeds. The curves depict that lower β\beta exhibits higher rewards but lower CLIPScore. Higher β\beta tends to inadequately optimize for the reward.
+A.6 Animal Prompts List
+We use the following set of Animal DDPO prompts.
+cat
+dog
+horse
+monkey
+rabbit
+zebra
+spider
+bird
+sheep
+deer
+cow
+goat
+lion
+tiger
+bear
+raccoon
+fox
+wolf
+lizard
+beetle
+ant
+butterfly
+fish
+shark
+whale
+dolphin
+squirrel
+mouse
+rat
+snake
+turtle
+frog
+chicken
+duck
+goose
+bee
+pig
+turkey
+fly
+llama
+camel
+bat
+gorilla
+hedgehog
+kangaroo
+A.7 GPT-4o Evaluation
+We compute the win rate of generated images from our method and baselines, employing GPT-4o as the judge. In all experiments, we use a temperature of 0 and Top-p of 1. The instruction prompt is as follows, where “PROMPT” and “TARGET REWARD” are placeholders.
+System Prompt
+You are a helpful, impartial, and precise assistant tasked with evaluating two images based on a given text prompt, a reward criterion, and specific quality guidelines. The text prompt is: generate an image of a “PROMPT”. The reward criterion is: “TARGET REWARD.” Please compare the two images and evaluate them based on the following:
+1.
+Adherence to the text prompt: Assess which image better satisfies the intent of the text prompt by being meaningful and directly relevant to the described subject. Do not use the reward criterion to determine adherence to the prompt.
+2.
+Satisfaction of the reward criterion: Determine which image more effectively meets the reward criterion.
+Choose the image that maximizes the reward without compromising adherence to the prompt.
+With a lower priority, also ensure that:
+1.
+The image does not have overly vibrant colors or extreme sharpening.
+2.
+The lighting is balanced and natural.
+3.
+The lighting is softer and more diffused.
+4.
+The image appears realistic and natural, avoiding being overly saturated, sharpened, or monochromatic.
+5.
+Shapes and objects are not overly simplified, distorted, or stylized.
+6.
+The image is not completely white or black, unless explicitly required.
+7.
+Relevant textures are present, and the image is not overly simplistic or missing essential details.
+8.
+The composition is dynamic, creating a sense of energy and movement.
+In the end, only output 1 if the first image is selected, or else output 2, and nothing else.
+USER PROMPT
+A.8 Proof of Proposition 1
+Proof.
+To make our point that the change in the image distribution is unbounded with respect to the change in initial noise, we consider a simple setting with z:=xTz:=x_{T}, ϵT,…,ϵ1∼𝒩⁡(0,σ2​𝐈)\epsilon_{T},\ldots,\epsilon_{1}\sim\mathcal{N}(0,\sigma^{2}\mathbf{I}), and the following random process
+xt−1\displaystyle x_{t-1}
+=θ​xt+ϵt,\displaystyle=\theta x_{t}+\epsilon_{t},
+which holds from t=Tt=T to 11. Now, applying the recursive relation starting from xT=zx_{T}=z, we can write
+xT−1\displaystyle x_{T-1}
+=θ​z+ϵT\displaystyle=\theta z+\epsilon_{T}
+xT−2\displaystyle x_{T-2}
+=θ​xT−1+ϵT−1=θ2​xT+θ​ϵT+ϵT−1\displaystyle=\theta x_{T-1}+\epsilon_{T-1}=\theta^{2}x_{T}+\theta\epsilon_{T}+\epsilon_{T-1}
+x0\displaystyle x_{0}
+=θT​z+∑k=1Tθk−1​ϵT−k+1.\displaystyle=\theta^{T}z+\sum_{k=1}^{T}\theta^{k-1}\epsilon_{T-k+1}.
+(9)
+This implies that the mean of x0x_{0} is
+𝔼⁡[x0|z]=θT​z,\mathbb{E}\left[x_{0}|z\right]=\theta^{T}z,
+(10)
+and variance of x0x_{0} can be written as
+Var​(x0|z)\displaystyle\text{Var}(x_{0}|z)
+=Var​(∑k=1Tθk−1​ϵT−k+1)=∑k=1Tθ2​k−2​σ2\displaystyle=\text{Var}\!\left(\sum_{k=1}^{T}\theta^{k-1}\epsilon_{T-k+1}\right)=\sum_{k=1}^{T}\theta^{2k-2}\sigma^{2}
+=σ2​θ2​T−1θ2−1,\displaystyle=\sigma^{2}\frac{\theta^{2T}-1}{\theta^{2}-1},
+(11)
+and for simplicity we assume |θ|>1\left|\theta\right|>1. From eqs. 10 and 11, we note that x0∼𝒩⁡(θT​z,σ2​θ2​T−1θ2−1)x_{0}\sim\mathcal{N}\bigg(\theta^{T}z,\sigma^{2}\frac{\theta^{2T}-1}{\theta^{2}-1}\bigg). Suppose that we have two noises z1,z2∼𝒩⁡(0,𝐈)z_{1},z_{2}\sim\mathcal{N}(0,\mathbf{I}). Hence, for two close noise z1z_{1} and z2z_{2}, we can write
+dKL[p(⋅|z1)∥p(⋅|z2)]=θ2​T​(θ2−1)2​σ2​(θ2​T−1)⋅(z1−z2)2,d_{\text{KL}}\left[p(\cdot|z_{1})\|p(\cdot|z_{2})\right]=\frac{\theta^{2T}{(\theta^{2}-1)}}{2\sigma^{2}(\theta^{2T}-1)}\cdot(z_{1}-z_{2})^{2},
+(12)
+which holds from the closed-form expression of KL divergence between two Gaussian distributions. From the above expression in eq. 12, we note that the rate of change is controlled by the term θ2​T​(θ2−1)2​σ2​(θ2​T−1)\frac{\theta^{2T}{(\theta^{2}-1)}}{2\sigma^{2}(\theta^{2T}-1)}, which is controlled by the norm of neural network parameter θ\theta which can be arbitrarily large in practice.
+∎
+A.9 Derivation of the Practical Objective for Differentiable Rewards
+Here, we derive the score function approximation of our Lagrangian objective,
+𝒥MIRA(z,c)=𝔼x0∼pθ(⋅|z,c)[r(x0,c)]−βdKL[pθ(x0|z,c)∥pθ(x0|z0,c)].\displaystyle\begin{split}\mathcal{J}_{\text{MIRA}}(z,c)=\mathbb{E}_{x_{0}\sim p_{\theta}(\cdot|z,c)}\big[r(x_{0},c)\big]-\beta d_{\text{KL}}\big[p_{\theta}(x_{0}|z,c)\ \|\ p_{\theta}(x_{0}|z_{0},c)\big].\end{split}
+(13)
+We consider the dKLd_{\text{KL}} term in eq. 13
+𝒲=dKL[pθ(x0|z,c)∥pθ(x0|z0,c)].\displaystyle\begin{split}\mathcal{W}=d_{\text{KL}}\big[p_{\theta}(x_{0}|z,c)\ \|\ p_{\theta}(x_{0}|z_{0},c)\big].\end{split}
+(14)
+We need to show that we can minimize 𝒲\mathcal{W} by minimizing
+𝒲′≈𝔼τ∼pθ(⋅|z,c)[∑t=0T−1σt2(∥s(xt|z0,c)∥2−∥s(xt|z,c)∥2)],\displaystyle\begin{split}\mathcal{W}^{\prime}\approx\mathbb{E}_{\tau\sim p_{\theta}(\cdot|z,c)}\bigg[\sum_{t=0}^{T-1}\sigma_{t}^{2}\left(\|s(x_{t}|z_{0},c)\|^{2}-\|s(x_{t}|z,c)\|^{2}\right)\bigg],\end{split}
+(15)
+with expectation over reverse trajectories τ\tau.
+Proof.
+We start with eq. 14 and write it as follows:
+𝒲=𝔼x0∼pθ(⋅|z,c)[logpθ​(x0|z,c)pθ​(x0|z0,c)].\displaystyle\begin{split}\mathcal{W}=\mathbb{E}_{x_{0}\sim p_{\theta}(\cdot|z,c)}\bigg[\log\frac{p_{\theta}(x_{0}|z,c)}{p_{\theta}(x_{0}|z_{0},c)}\bigg].\end{split}
+(16)
+Note that dKL[pθ(x0|z,c)∥pθ(x0|z0,c)]≤dKL[pθ(τ|z,c)∥pθ(τ|z0,c)]d_{\text{KL}}\big[p_{\theta}(x_{0}|z,c)\|p_{\theta}(x_{0}|z_{0},c)\big]\leq d_{\text{KL}}\big[p_{\theta}(\tau|z,c)\|p_{\theta}(\tau|z_{0},c)\big], establishing an upper bound. Therefore,
+𝒲≤𝒲′=𝔼τ∼pθ(⋅|z,c)[logpθ(τ|z,c)−logpθ(τ|z0,c)].\displaystyle\mathcal{W}\leq\mathcal{W}^{\prime}=\mathbb{E}_{\tau\sim p_{\theta}(\cdot|z,c)}\big[\log p_{\theta}(\tau|z,c)-\log p_{\theta}(\tau|z_{0},c)\big].
+(17)
+By linearity of expectation, this is
+𝒲′=𝔼τ∼pθ(⋅|z,c)[logpθ(τ|z,c)]−𝔼τ∼pθ(⋅|z,c)[logpθ(τ|z0,c)].\displaystyle\mathcal{W^{\prime}}=\mathbb{E}_{\tau\sim p_{\theta}(\cdot|z,c)}\big[\log p_{\theta}(\tau|z,c)\big]-\mathbb{E}_{\tau\sim p_{\theta}(\cdot|z,c)}\big[\log p_{\theta}(\tau|z_{0},c)\big].
+(18)
+Let us focus on the term 𝔼τ∼pθ(⋅|z,c)[logpθ(τ|z,c)]\mathbb{E}_{\tau\sim p_{\theta}(\cdot|z,c)}[\log p_{\theta}(\tau|z,c)], which we can expand as
+𝔼τ∼pθ(⋅|z,c)[logpθ(τ|z,c)]=𝔼τ∼pθ(⋅|z,c)[log∏t=0T−1pθ(xt|xt+1,z,c)].\displaystyle\begin{split}\mathbb{E}_{\tau\sim p_{\theta}(\cdot|z,c)}[\log p_{\theta}(\tau|z,c)]=\mathbb{E}_{\tau\sim p_{\theta}(\cdot|z,c)}\left[\log\prod_{t=0}^{T-1}p_{\theta}(x_{t}|x_{t+1},z,c)\right].\end{split}
+(19)
+We can expand eq. 19 as
+𝔼τ∼pθ(⋅|z,c)[logpθ(τ|z,c)]\displaystyle\mathbb{E}_{\tau\sim p_{\theta}(\cdot|z,c)}[\log p_{\theta}(\tau|z,c)]
+=𝔼τ∼pθ(⋅|z,c)[log(exp(−∑t=0T−1‖xt−μθ​(xt+1,z,c)‖22​σt2)∏t=0T−11σt​2​π)]\displaystyle\hskip 42.67912pt=\mathbb{E}_{\tau\sim p_{\theta}(\cdot|z,c)}\Bigg[\log\left(\exp\bigg(-\sum_{t=0}^{T-1}\frac{\|x_{t}-\mu_{\theta}(x_{t+1},z,c)\|^{2}}{2\sigma_{t}^{2}}\bigg)\prod_{t=0}^{T-1}\frac{1}{\sigma_{t}\sqrt{2\pi}}\right)\Bigg]
+=𝔼τ∼pθ(⋅|z,c)[−∑t=0T−1‖xt−μθ​(xt+1,z,c)‖22​σt2]+∑t=0T−1log1σt​2​π,\displaystyle\hskip 42.67912pt=\mathbb{E}_{\tau\sim p_{\theta}(\cdot|z,c)}\Bigg[-\sum_{t=0}^{T-1}\frac{\|x_{t}-\mu_{\theta}(x_{t+1},z,c)\|^{2}}{2\sigma_{t}^{2}}\Bigg]+\sum_{t=0}^{T-1}\log\frac{1}{\sigma_{t}\sqrt{2\pi}},
+(20)
+where μθ​(⋅)\mu_{\theta}(\cdot) is the predicted mean of the Gaussian at each step of the reverse process. We also know that for a Gaussian distribution,
+‖s⁡(xt|z,c)‖=|∇xt​log​p​(xt|z,c)|≈‖∇xt​log​pθ​(xt|xt+1;z,c)‖,\displaystyle\begin{split}\|s(x_{t}|z,c)\|=\|\nabla_{x_{t}}\log p(x_{t}|z,c)\|\approx\|\nabla_{x_{t}}\log p_{\theta}(x_{t}|x_{t+1};z,c)\|,\end{split}
+(21)
+‖s⁡(xt|z,c)‖≈‖∇xt​log​(1σt​2​π​exp⁡(−‖xt−μθ​(xt+1,t+1,z,c)‖22​σt2))‖,\displaystyle\begin{split}\|s(x_{t}|z,c)\|\approx\left\|\nabla_{x_{t}}\log\left(\frac{1}{\sigma_{t}\sqrt{2\pi}}\exp\left(-\frac{\|x_{t}-\mu_{\theta}(x_{t+1},t+1,z,c)\|^{2}}{2\sigma_{t}^{2}}\right)\right)\right\|,\end{split}
+(22)
+‖s⁡(xt|z,c)‖≈‖−xt−μθ​(xt+1,t+1,z,c)σt2‖.\displaystyle\begin{split}\|s(x_{t}|z,c)\|\approx\left\|-\frac{x_{t}-\mu_{\theta}(x_{t+1},t+1,z,c)}{\sigma_{t}^{2}}\right\|.\end{split}
+(23)
+Replacing eq. 23 in 20, we get
+𝔼τ∼pθ(⋅|z,c)[logpθ(τ|z,c)]≈𝔼τ∼pθ(⋅|z,c)[−∑t=0T−1∥s(xt|z,c)∥2σt22]+∑t=0T−1log1σt​2​π.\displaystyle\mathbb{E}_{\tau\sim p_{\theta}(\cdot|z,c)}[\log p_{\theta}(\tau|z,c)]\approx\mathbb{E}_{\tau\sim p_{\theta}(\cdot|z,c)}\Bigg[-\sum_{t=0}^{T-1}\|s(x_{t}|z,c)\|^{2}\frac{\sigma_{t}^{2}}{2}\Bigg]+\sum_{t=0}^{T-1}\log\frac{1}{\sigma_{t}\sqrt{2\pi}}.
+(24)
+Applying eq. 24 to eq. 17, we get
+𝒲′≈12𝔼τ∼pθ(⋅|z,c)[∑t=0T−1(∥s(xt|z0,c)∥2−∥s(xt|z,c)∥2)σt2].\displaystyle\mathcal{W^{\prime}}\approx\frac{1}{2}\mathbb{E}_{\tau\sim p_{\theta}(\cdot|z,c)}\left[\sum_{t=0}^{T-1}\left(\|s(x_{t}|z_{0},c)\|^{2}-\|s(x_{t}|z,c)\|^{2}\right)\sigma_{t}^{2}\right].
+(25)
+We can use eq. 25 in eq. 13. Our final objective is
+𝒥MIRA(z,c)=𝔼x0∼pθ(⋅|z,c)[r(x0,c)]−β𝔼τ∼pθ(⋅|z,c)[∑t=0T−1σt2(∥s(xt|z0,c)∥2−∥s(xt|z,c)∥2)].\displaystyle\begin{split}\mathcal{J}_{\text{MIRA}}(z,c)\!=\!\mathbb{E}_{x_{0}\sim p_{\theta}(\cdot|z,c)}\big[r(x_{0},c)\big]-\beta\mathbb{E}_{\tau\sim p_{\theta}(\cdot|z,c)}\bigg[\sum_{t=0}^{T-1}\sigma_{t}^{2}\left(\|s(x_{t}|z_{0},c)\|^{2}-\|s(x_{t}|z,c)\|^{2}\right)\bigg].\end{split}
+(26)
+∎
+A.10 Derivation of DPO Objective
+We begin with our original objective,
+maxz𝒥MIRA(z,c)=maxz[𝔼x0∼pθ(⋅|z,c)[r(x0,c)]−βdKL[pθ(x0|z,c)∥pθ(x0|z0,c)]].\max_{z}\mathcal{J}_{\text{MIRA}}(z,c)=\max_{z}\left[\mathbb{E}_{x_{0}\sim p_{\theta}(\cdot|z,c)}\big[r(x_{0},c)\big]-\beta d_{\text{KL}}\left[p_{\theta}(x_{0}|z,c)\ \!\|\!\ p_{\theta}(x_{0}|z_{0},c)\right]\right].
+(27)
+Let R(x0:T,c)R(x_{0:T},c) be the reward along the whole sampling trajectory such that
+r(x0,c):=𝔼x1:T∼pθ(⋅|x0,z,c)[R(x0:T,c)].r(x_{0},c):=\mathbb{E}_{x_{1:T}\sim p_{\theta}(\cdot|x_{0},z,c)}\left[R(x_{0:T},c)\right].
+(28)
+This means
+maxz⁡𝒥MIRA​(z,c)\displaystyle\max_{z}\mathcal{J}_{\text{MIRA}}(z,c)
+=maxz[𝔼x0∼pθ(⋅|z,c)x1:T∼pθ(⋅|x0,z,c)[R(x0:T,c)]−βdKL[pθ(x0|z,c)∥pθ(x0|z0,c)]]\displaystyle=\max_{z}\left[\mathbb{E}_{\begin{subarray}{c}x_{0}\sim p_{\theta}(\cdot|z,c)\\
+x_{1:T}\sim p_{\theta}(\cdot|x_{0},z,c)\end{subarray}}\left[R(x_{0:T},c)\right]-\beta d_{\text{KL}}\left[p_{\theta}(x_{0}|z,c)\ \!\|\!\ p_{\theta}(x_{0}|z_{0},c)\right]\right]
+=minz[−𝔼x0∼pθ(⋅|z,c)x1:T∼pθ(⋅|x0,z,c)[R(x0:T,c)]+βdKL[pθ(x0|z,c)∥pθ(x0|z0,c)]]\displaystyle=\min_{z}\left[-\mathbb{E}_{\begin{subarray}{c}x_{0}\sim p_{\theta}(\cdot|z,c)\\
+x_{1:T}\sim p_{\theta}(\cdot|x_{0},z,c)\end{subarray}}\left[R(x_{0:T},c)\right]+\beta d_{\text{KL}}\left[p_{\theta}(x_{0}|z,c)\ \!\|\!\ p_{\theta}(x_{0}|z_{0},c)\right]\right]
+=minz[−𝔼x0∼pθ(⋅|z,c)[𝔼x1:T∼pθ(⋅|z,c)[R(x0:T,c)]−βlogpθ(⋅|z,c)pθ(⋅|z0,c)]]\displaystyle=\min_{z}\left[-\mathbb{E}_{x_{0}\sim p_{\theta}(\cdot|z,c)}\bigg[\mathbb{E}_{x_{1:T}\sim p_{\theta}(\cdot|z,c)}\left[R(x_{0:T},c)\right]-\beta\log\frac{p_{\theta}(\cdot|z,c)}{p_{\theta}(\cdot|z_{0},c)}\bigg]\right]
+=minz[𝔼x0∼pθ(⋅|z,c)[logpθ(⋅|z,c)pθ(⋅|z0,c)−1β𝔼x1:T∼pθ(⋅|x0,z,c)[R(x0:T,c)]]]\displaystyle=\min_{z}\left[\mathbb{E}_{x_{0}\sim p_{\theta}(\cdot|z,c)}\bigg[\log\frac{p_{\theta}(\cdot|z,c)}{p_{\theta}(\cdot|z_{0},c)}-\frac{1}{\beta}\mathbb{E}_{x_{1:T}\sim p_{\theta}(\cdot|x_{0},z,c)}\left[R(x_{0:T},c)\right]\bigg]\right]
+≤minz[𝔼x0:T∼pθ(⋅|z,c)[logpθ(⋅|z,c)pθ(⋅|z0,c)−1βR(x0:T,c)]].\displaystyle\leq\min_{z}\left[\mathbb{E}_{x_{0:T}\sim p_{\theta}(\cdot|z,c)}\bigg[\log\frac{p_{\theta}(\cdot|z,c)}{p_{\theta}(\cdot|z_{0},c)}-\frac{1}{\beta}R(x_{0:T},c)\bigg]\right].
+(29)
+maxz⁡𝒥MIRA​(z,c)\displaystyle\max_{z}\mathcal{J}_{\text{MIRA}}(z,c)
+≤minz[𝔼x0:T∼pθ(⋅|z,c)logpθ(⋅|z,c)1Z⁡(c)pθ(⋅|z0,c)exp(1βR(x0:T,c))−logZ(c)],\displaystyle\leq\min_{z}\left[\mathbb{E}_{x_{0:T}\sim p_{\theta}(\cdot|z,c)}\log\frac{p_{\theta}(\cdot|z,c)}{\frac{1}{Z(c)}p_{\theta}(\cdot|z_{0},c)\exp(\frac{1}{\beta}R(x_{0:T},c))}-\log Z(c)\right],
+(30)
+where Z(c)=∑x0pθ(⋅|z0,c)exp(1βR(x0:T,c)).\displaystyle\hskip 11.38092pt\text{where \hskip 5.69046pt }Z(c)=\sum_{x_{0}}p_{\theta}(\cdot|z_{0},c)\exp(\frac{1}{\beta}R(x_{0:T},c)).
+(31)
+maxz⁡𝒥MIRA​(z,c)\displaystyle\max_{z}\mathcal{J}_{\text{MIRA}}(z,c)
+≤minz[𝔼x0:T∼pθ(⋅|z,c)logpθ(⋅|z,c)pθ(⋅|z∗,c)−logZ(c)],\displaystyle\leq\min_{z}\left[\mathbb{E}_{x_{0:T}\sim p_{\theta}(\cdot|z,c)}\log\frac{p_{\theta}(\cdot|z,c)}{p_{\theta}(\cdot|z^{*},c)}-\log Z(c)\right],
+(32)
+where pθ(⋅|z∗,c)=1Z⁡(c)pθ(⋅|z0,c)exp(1βR(x0:T,c)).\displaystyle\hskip 11.38092pt\text{where \hskip 5.69046pt }p_{\theta}(\cdot|z^{*},c)=\frac{1}{Z(c)}p_{\theta}(\cdot|z_{0},c)\exp(\frac{1}{\beta}R(x_{0:T},c)).
+(33)
+max𝐳⁡𝒥MIRA​(z,c)\displaystyle\max_{\mathbf{z}}\mathcal{J}_{\text{MIRA}}(z,c)
+≤minz[dKL[pθ(x0:T|z,c)∥pθ(x0:T|z∗,c)]−logZ(c)].\displaystyle\leq\min_{z}\left[d_{\text{KL}}[p_{\theta}(x_{0:T}|z,c)\ \|\ p_{\theta}(x_{0:T}|z^{*},c)]-\log Z(c)\right].
+(34)
+Since Z⁡(c)Z(c) does not depend on zz, the minimum is achieved when the KL term is zero, which holds when the two distributions are identical, i.e.,
+pθ(x0:T|z∗,c)=1Z⁡(c)pθ(x0:T|z0,c)exp(1βR(x0:T,c)).\displaystyle p_{\theta}(x_{0:T}|z^{*},c)=\frac{1}{Z(c)}p_{\theta}(x_{0:T}|z_{0},c)\exp(\frac{1}{\beta}R(x_{0:T},c)).
+(35)
+Taking the logarithm on both sides and rearranging the terms, we get
+R(x0:T,c)=βlogZ(c)+βlogpθ(x0:T|z,c)pθ(x0:T|z0,c).\displaystyle R(x_{0:T},c)=\beta\log Z(c)+\beta\log\frac{p_{\theta}(x_{0:T}|z,c)}{p_{\theta}(x_{0:T}|z_{0},c)}.
+(36)
+This means, from eq. 28,
+r(x0,c)=βlogZ(c)+β𝔼x1:T∼pθ(⋅|x0,z,c)[logpθ(x0:T|z,c)pθ(x0:T|z0,c)].r(x_{0},c)=\beta\log Z(c)+\beta\mathbb{E}_{x_{1:T}\sim p_{\theta}(\cdot|x_{0},z,c)}\left[\log\frac{p_{\theta}(x_{0:T}|z,c)}{p_{\theta}(x_{0:T}|z_{0},c)}\right].
+(37)
+Assume that we have access to a dataset {(z(1),x0(1)),(z(2),x0(2)),c}i=1N\{(z^{(1)},x_{0}^{(1)}),(z^{(2)},x_{0}^{(2)}),c\}_{i=1}^{N}, where the generated image x0(1)x_{0}^{(1)} is preferred over x0(2)x_{0}^{(2)}. Under the Bradley-Terry model, the human preference distribution can be written as:
+P∗​(x0(1)≻x0(2)|z(1),z(2),c)\displaystyle P^{*}(x_{0}^{(1)}\succ x_{0}^{(2)}|z^{(1)},z^{(2)},c)
+=exp⁡(r∗​(x0(1),c))exp⁡(r∗​(x0(1),c))+exp⁡(r∗​(x0(2),c))\displaystyle=\frac{\exp(r^{*}(x_{0}^{(1)},c))}{\exp(r^{*}(x_{0}^{(1)},c))+\exp(r^{*}(x_{0}^{(2)},c))}
+=σ⁡(r∗​(x0(1),c)−r∗​(x0(2),c)).\displaystyle=\sigma(r^{*}(x_{0}^{(1)},c)-r^{*}(x_{0}^{(2)},c)).
+(38)
+Framing the problem as a binary classification, we have the negative log-likelihood loss as:
+ℒMIRA-DPO​(z(1),z(2),c)=−𝔼x0(1)∼pθ(⋅|z(1),c)x0(2)∼pθ(⋅|z(2),c)​[log⁡σ⁡(r∗​(x0(1),c)−r∗​(x0(2),c))].\displaystyle\mathcal{L}_{\text{MIRA-DPO}}(z^{(1)},z^{(2)},c)=-\mathbb{E}_{\begin{subarray}{c}x_{0}^{(1)}\sim p_{\theta}(\cdot|z^{(1)},c)\\
+x_{0}^{(2)}\sim p_{\theta}(\cdot|z^{(2)},c)\end{subarray}}[\log\sigma(r^{*}(x_{0}^{(1)},c)-r^{*}(x_{0}^{(2)},c))].
+(39)
+Using eq. 37 in eq. 39, we get
+ℒMIRA-DPO​(z(1),z(2),c)=−𝔼x0(1)∼pθ(⋅|z(1),c)x0(2)∼pθ(⋅|z(2),c)logσ(β𝔼x1:T(1)∼pθ(⋅|x0(1),z(1),c)x1:T(2)∼pθ(⋅|x0(2),z(2),c)[logpθ(x0:T(1)|z(1),c)pθ(x0:T(1)|z0(1),c)−logpθ(x0:T(2)|z(2),c)pθ(x0:T(2)|z0(2),c)]).\begin{split}&\mathcal{L}_{\text{MIRA-DPO}}(z^{(1)},z^{(2)},c)=\\
+&-\!\mathbb{E}_{\begin{subarray}{c}x_{0}^{(1)}\sim p_{\theta}(\cdot|z^{(1)},c)\\
+x_{0}^{(2)}\sim p_{\theta}(\cdot|z^{(2)},c)\end{subarray}}\log\sigma\Bigg(\beta\mathbb{E}_{\begin{subarray}{c}x_{1:T}^{(1)}\sim p_{\theta}(\cdot|x_{0}^{(1)},z^{(1)},c)\\
+x_{1:T}^{(2)}\sim p_{\theta}(\cdot|x_{0}^{(2)},z^{(2)},c)\end{subarray}}\left[\log\frac{p_{\theta}(x_{0:T}^{(1)}|z^{(1)},c)}{p_{\theta}(x_{0:T}^{(1)}|z_{0}^{(1)},c)}-\log\frac{p_{\theta}(x_{0:T}^{(2)}|z^{(2)},c)}{p_{\theta}(x_{0:T}^{(2)}|z_{0}^{(2)},c)}\right]\Bigg).\end{split}
+(40)
+Since we assume x0(1)≻x0(2)x_{0}^{(1)}\succ x_{0}^{(2)}, we know x0w:=x0(1)x_{0}^{w}:=x_{0}^{(1)} and x0l:=x0(2)x_{0}^{l}:=x_{0}^{(2)}. We can rewrite eq. 40 as
+ℒMIRA-DPO​(zw,zl,c)=−𝔼x0w∼pθ(⋅|zw,c)x0l∼pθ(⋅|zl,c)logσ(β𝔼x1:Tw∼pθ(⋅|x0w,zw,c)x1:Tl∼pθ(⋅|x0l,zl,c)[logpθ(x0:Tw|zw,c)pθ(x0:Tw|z0w,c)−logpθ(x0:Tl|zl,c)pθ(x0:Tl|z0l,c)]),\begin{split}&\mathcal{L}_{\text{MIRA-DPO}}(z^{w},z^{l},c)=\\
+&-\!\mathbb{E}_{\begin{subarray}{c}x_{0}^{w}\sim p_{\theta}(\cdot|z^{w},c)\\
+x_{0}^{l}\sim p_{\theta}(\cdot|z^{l},c)\end{subarray}}\log\sigma\Bigg(\beta\mathbb{E}_{\begin{subarray}{c}x_{1:T}^{w}\sim p_{\theta}(\cdot|x_{0}^{w},z^{w},c)\\
+x_{1:T}^{l}\sim p_{\theta}(\cdot|x_{0}^{l},z^{l},c)\end{subarray}}\left[\log\frac{p_{\theta}(x_{0:T}^{w}|z^{w},c)}{p_{\theta}(x_{0:T}^{w}|z_{0}^{w},c)}-\log\frac{p_{\theta}(x_{0:T}^{l}|z^{l},c)}{p_{\theta}(x_{0:T}^{l}|z_{0}^{l},c)}\right]\Bigg),\end{split}
+(41)
+which can be conceptually understood as the standard DPO loss, ℒ=−𝔼⁡[log⁡σ⁡(r^w−r^l)]\mathcal{L}=-\mathbb{E}[\log\sigma(\hat{r}^{w}-\hat{r}^{l})]. Here, we define the implicit, regularized MIRA reward r^\hat{r} as the log-ratio of the noise-optimized and reference model probabilities, which is practically realized using our score-based surrogate. Hence, this is our formulation in the main paper.
+Practically, we can use our score function surrogate.
+By Jensen’s inequality,
+ℒMIRA-DPO(zw,zl,c)≤−logσ(β𝔼x0:Tw∼pθ(⋅|zw,c)x0:Tl∼pθ(⋅|zl,c)[logpθ(x0:Tw|zw,c)pθ(x0:Tw|z0w,c)−logpθ(x0:Tl|zl,c)pθ(x0:Tl|z0l,c)]).\mathcal{L}_{\text{MIRA-DPO}}(z^{w},z^{l},c)\leq-\!\log\sigma\Bigg(\beta\mathbb{E}_{\begin{subarray}{c}x_{0:T}^{w}\sim p_{\theta}(\cdot|z^{w},c)\\
+x_{0:T}^{l}\sim p_{\theta}(\cdot|z^{l},c)\end{subarray}}\Bigg[\log\frac{p_{\theta}(x_{0:T}^{w}|z^{w},c)}{p_{\theta}(x_{0:T}^{w}|z_{0}^{w},c)}-\log\frac{p_{\theta}(x_{0:T}^{l}|z^{l},c)}{p_{\theta}(x_{0:T}^{l}|z_{0}^{l},c)}\Bigg]\Bigg).
+(42)
+Therefore,
+ℒMIRA-DPO​(zw,zl,c)≤−logσ(βdKL[pθ(x0:Tw|zw,c)∥pθ(x0:Tw|z0w,c)]−βdKL[pθ(x0:Tl|zl,c)∥pθ(x0:Tl|z0l,c)]).\begin{split}\mathcal{L}_{\text{MIRA-DPO}}(z^{w},z^{l},c)&\leq-\!\log\sigma\bigg(\beta d_{\text{KL}}\left[p_{\theta}(x_{0:T}^{w}|z^{w},c)\ \|\ p_{\theta}(x_{0:T}^{w}|z_{0}^{w},c)\right]\\
+&\hskip 99.58464pt-\beta d_{\text{KL}}\left[p_{\theta}(x_{0:T}^{l}|z^{l},c)\ \|\ p_{\theta}(x_{0:T}^{l}|z_{0}^{l},c)\right]\bigg).\end{split}
+As we have shown previously in A.9, we can approximate the KL terms. Our final loss is
+ℒMIRA-DPO​(zw,zl,c)=−logσ(β𝔼x0:Tw∼pθ(⋅|zw,c)[∑t=0T−1σt2(∥s(xtw|z0w,c)∥2−∥s(xtw|zw,c)∥2)]−β𝔼x0:Tl∼pθ(⋅|zl,c)[∑t=0T−1σt2(∥s(xtl|z0l,c)∥2−∥s(xtl|zl,c)∥2)]).\begin{split}&\mathcal{L}_{\text{MIRA-DPO}}(z^{w},z^{l},c)\\
+&\hskip 56.9055pt=-\!\log\sigma\bigg(\beta\mathbb{E}_{x_{0:T}^{w}\sim p_{\theta}(\cdot|z^{w},c)}\bigg[\sum_{t=0}^{T-1}\sigma_{t}^{2}\left(\|s(x_{t}^{w}|z_{0}^{w},c)\|^{2}-\|s(x_{t}^{w}|z^{w},c)\|^{2}\right)\bigg]\\
+&\hskip 85.35826pt-\beta\mathbb{E}_{x_{0:T}^{l}\sim p_{\theta}(\cdot|z^{l},c)}\bigg[\sum_{t=0}^{T-1}\sigma_{t}^{2}\left(\|s(x_{t}^{l}|z_{0}^{l},c)\|^{2}-\|s(x_{t}^{l}|z^{l},c)\|^{2}\right)\bigg]\bigg).\end{split}
+(43)
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

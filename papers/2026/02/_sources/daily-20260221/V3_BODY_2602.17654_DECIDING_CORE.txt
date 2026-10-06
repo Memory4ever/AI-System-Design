@@ -1,0 +1,66 @@
+4.4. Mine and Refine: Sampling Schemes and Robust Contrastive Separability
+Offline Hard Sample Mining Strategies. As validated in previous work (Huang et al., 2020), (Liu et al., 2021), (Xie et al., 2022), (Lin et al., 2024), mining both easy and hard negative samples is crucial for further improvement of model performance.
+Because our training data are partially derived from ranking stage logs and optimized solely for relevance, they already contain a substantial number of hard negative samples, such as irrelevant items with high lexical overlap or strong popularity bias.
+However, the data remain constrained by the difference in the distribution of the data during inference and the historically observed user behavior.
+As a result, explicit negative mining is still necessary to sharpen the decision boundaries among semantically confusable items.
+Unlike the commonly used in-batch hard negative mining strategy, we did not use this strategy during training.
+In-batch negatives implicitly assume that an item relevant to one query is irrelevant to other randomly sampled queries, an assumption that is particularly fragile under a three class relevance labeling scheme, where assigning label 00 to in-batch negatives can be unreliable.
+Although such noise is often tolerated and even beneficial when auxiliary signals such as engagement are available, this assumption is less likely to hold when relevance is the sole supervision signal.
+Instead, we rely on offline negative mining, which provides precise control over label quality and enables large scale mining, effectively compensating for the absence of in-batch negatives.
+In addition, we find that positive mining plays a complementary role by enriching the semantic space through more diverse query–item alignments.
+Our proposed strategy of "Mine and Refine" is presented as follows:
+•
+After completing the first training stage with SupCon, we use the trained model to perform ANN for all queries over the unique items in the training data.
+•
+We then retrieve the top kk items for each query. In practice, we find that k∈[100,200]k\in[100,200] provides a good tradeoff between efficiency and data quality.
+•
+Although ANCE (Xiong et al., 2021) is a common approach for negative mining, simply selecting samples from the top ranked results can introduce false negatives, as noted by (Lin et al., 2024). To address this, we use the finetuned relevance annotation LLM described in Section 3 to evaluate the (q,d)(q,d) pairs that are not present in the original training data.
+•
+From the query and item set consisting of the top kk retrieved items for each query, select both (i) hard negatives - items with label 00 that rank higher than k/2k/2, and (ii) hard positives - items with label 11 or 22 that rank lower than k/2k/2.
+•
+Combine the selected hard negatives and positives with the original training data to form a new (q,d)(q,d) candidate set. Including the original training data is essential in our pipeline. While (Liu et al., 2021) focused only on the hardest in-batch negatives and (Lin et al., 2024) used only newly mined hard negative and semipositive samples combined with original positives in their curriculum training, our exploration shows that completely omitting the original negative samples leads to catastrophic forgetting.
+Dynamic Optimization and Margin Sharpness: Circle Loss.
+Various loss functions have been explored for curriculum training in prior work, including those in (Liu et al., 2021; Xie et al., 2022; Lin et al., 2024).
+We evaluated several commonly used objectives, such as cross entropy loss, softmax based losses, and triplet loss, and observed that none of these objectives consistently achieve both stable training and semantically coherent embedding spaces with strong intra class compactness, i.e. boundary sharpness.
+The separability of cosine similarity distributions across the three relevance classes is an important consideration, as it is particularly relevant for efficient online serving and downstream ranking stages, where clear score separation simplifies thresholding and decision making.
+Motivated by progress in deep metric learning and face recognition, including ArcFace (Deng et al., 2019), Additive Margin Softmax (Wang et al., 2018), Angular Margin Softmax (Zhu et al., 2023), and circle loss (Sun et al., 2020), we observe that circle loss provides a unified formulation that generalizes contrastive and cross entropy–style objectives.
+By explicitly modeling both positive and negative similarities with adaptive weighting, circle loss encourages improved interclass separability via a more definite convergence target while maintaining training stability.
+However, the original formulation of circle loss is designed for binary pairwise similarity learning and does not directly accommodate our three class relevance labeling scheme.
+To bridge this gap, we extend circle loss to the multi-class setting, enabling it to better align with graded relevance signals.
+Let ℐg\mathcal{I}_{g} denote the set of indices of the (q,d)(q,d) pairs belonging to this instance and ℐg,k:={j∈ℐg:rj=k},k∈{0,1,2}\mathcal{I}_{g,k}:=\{j\in\mathcal{I}_{g}:\,r_{j}=k\},\,k\in\{0,1,2\}.
+Let sj:=⟨eq,edj⟩s_{j}:=\langle e_{q},e_{d_{j}}\rangle and 𝓈g,k:={j∈ℐg:j∈ℐg,k}\mathcal{s}_{g,k}:=\{j\in\mathcal{I}_{g}:\,j\in\mathcal{I}_{g,k}\}.
+For each instance gg, the corresponding loss falls in one of the following cases:
+•
+Case I - (q, d(2)d^{(2)}, d(0)d^{(0)}):
+ℒ2,0\displaystyle\mathcal{L}_{2,0}
+=log[1+1|ℐg,0|∑i∈ℐg,2exp(−γmax(O2,p−si,0)(si−Δ2,p))\displaystyle=\log\Bigl[1+\frac{1}{\left|\mathcal{I}_{g,0}\right|}\sum_{i\in\mathcal{I}_{g,2}}\exp\Bigr(-\gamma\max(O_{2,p}-s_{i},0)(s_{i}-\Delta_{2,p})\Bigr)
+(3)
+∑j∈ℐg,0exp(−γmin(O0,n−sj,0)(sj−Δ0,n))],\displaystyle\hskip 18.49988pt\hskip 18.49988pt\hskip 18.49988pt\hskip 9.24994pt\sum_{j\in\mathcal{I}_{g,0}}\exp\Bigr(-\gamma\min(O_{0,n}-s_{j},0)(s_{j}-\Delta_{0,n})\Bigr)\Bigr],
+•
+Case II - (q, d(1)d^{(1)}, d(0)d^{(0)}):
+ℒ1,0\displaystyle\mathcal{L}_{1,0}
+=log[1+1|ℐg,0|∑i∈ℐg,1exp(−γmax(O1,p−si,0)(si−Δ1,p))\displaystyle=\log\Bigl[1+\frac{1}{\left|\mathcal{I}_{g,0}\right|}\sum_{i\in\mathcal{I}_{g,1}}\exp\Bigr(-\gamma\max(O_{1,p}-s_{i},0)(s_{i}-\Delta_{1,p})\Bigr)
+(4)
+∑j∈ℐg,0exp(−γmin(O0,n−sj,0)(sj−Δ0,n))],\displaystyle\hskip 18.49988pt\hskip 18.49988pt\hskip 18.49988pt\hskip 9.24994pt\sum_{j\in\mathcal{I}_{g,0}}\exp\Bigr(-\gamma\min(O_{0,n}-s_{j},0)(s_{j}-\Delta_{0,n})\Bigr)\Bigr],
+•
+Case III - (q, d(2)d^{(2)}, d(1)d^{(1)}):
+ℒ2,1\displaystyle\mathcal{L}_{2,1}
+=log[1+1|ℐg,1|∑i∈ℐg,2exp(−γmax(O2,p−si,0)(si−Δ2,p))\displaystyle=\log\Bigl[1+\frac{1}{\left|\mathcal{I}_{g,1}\right|}\sum_{i\in\mathcal{I}_{g,2}}\exp\Bigr(-\gamma\max(O_{2,p}-s_{i},0)(s_{i}-\Delta_{2,p})\Bigr)
+(5)
+∑j∈ℐg,1exp(−γmin(O1,n−sj,0)(sj−Δ1,n))],\displaystyle\hskip 18.49988pt\hskip 18.49988pt\hskip 18.49988pt\hskip 9.24994pt\sum_{j\in\mathcal{I}_{g,1}}\exp\Bigr(-\gamma\min(O_{1,n}-s_{j},0)(s_{j}-\Delta_{1,n})\Bigr)\Bigr],
+where γ\gamma is a scale factor, Ok,pO_{k,p} and Ok,nO_{k,n} are adaptive weighting hyper parameters that adjust how much the similarity score of a certain (q,d)(q,d) should contribute to the loss function and thus gradient for back propagation, Δk,p\Delta_{k,p} and Δk,n\Delta_{k,n} are the relative boundaries for three classes.
+More precisely, in Case I the loss function aims to push the similarity scores of positive samples of label 22 above Δ2,p\Delta_{2,p} and negative samples of label 00 below Δ0,n\Delta_{0,n}.
+Similarly for Cases II and III.
+In our case, we set Δ2,p=0.75,Δ1,n=0.6,Δ1,p=0.4,Δ0,n=0.25\Delta_{2,p}=0.75,\,\Delta_{1,n}=0.6,\,\Delta_{1,p}=0.4,\Delta_{0,n}=0.25.
+To reduce the effective hyper parameters, we set the optima to be the reflection of boundaries along respective axes, i.e. O2,p=1.25,O1,n=0.3,O1,p=0.6,O0,n=−0.25O_{2,p}=1.25,\,O_{1,n}=0.3,\,O_{1,p}=0.6,O_{0,n}=-0.25.
+In addition to improvements in standard metrics, the model finetuned via curriculum training with circle loss exhibits more compact intraclass clustering and enhanced interclass separability, as illustrated in Figure 2 and 3.
+5. Evaluation and Experiments
+We evaluate the proposed Mine and Refine embedding retriever through a combination of offline relevance metrics and online A/B experiments.
+Due to confidentiality constraints, we report only relative improvements (e.g., “x%”), and omit absolute metric values.
+5.1. Experimental Setup
+Task and serving setting.
+Given a query, the retriever returns the top KK items from the full catalog via approximate nearest neighbor (ANN) search using L2L^{2} normalized embeddings.
+Unless otherwise stated, we report Precision@KK, Recall@KK, and NDCG@KK calculated using the top K∈{10,50,100}K\in\{10,50,100\} retrieved items.
+In production, embeddings are computed by the query tower at request time and matched against a precomputed item index.
+Indexing and constraints.
+We build an ANN index for approximately 200200M+ items, and all candidate generation experiments are conducted under the same 

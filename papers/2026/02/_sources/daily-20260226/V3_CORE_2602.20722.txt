@@ -1,0 +1,6472 @@
+Buffer Matters: Unleashing the Power of Off-Policy Reinforcement Learning in Large Language Model Reasoning
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+2.1
+On-policy RL Post-training Framework
+2.2
+Off-policy RL Post-training Framework
+3
+Method
+3.1
+Formal Definitions
+3.2
+Adaptive Training Batch Construction
+3.3
+Theoretical Analysis
+4
+Experimental Setup
+5
+Results Analysis
+5.1
+Main Results
+5.2
+Mechanism Analysis
+5.3
+Detailed Analysis
+6
+Conclusion
+References
+A
+Appendix
+A.1
+Glossary of Terms and Notations
+A.2
+Theoretical Analysis
+Step 1: Core inequality for off-policy samples.
+Step 2: Analysis for
+𝒳
+1
+\mathcal{X}_{1}
+(Filtered fresh samples).
+Step 3: Analysis for
+𝒳
+2
+\mathcal{X}_{2}
+(Re-evaluated difficult samples).
+Step 4: Analysis for
+𝒳
+3
+\mathcal{X}_{3}
+(Historical high-quality samples).
+Step 5: Combining the results.
+A.3
+Online Filter Mechanism Analysis
+A.4
+Training Dynamics and Test Curves
+A.5
+Computation Analysis
+A.6
+Visualization
+A.7
+Hyperparameter Setting
+Hyperparmeters
+Reward Function
+Datasets and Benchmarks
+A.8
+Algorithm
+A.9
+Generalization Analysis
+License: CC BY 4.0
+arXiv:2602.20722v1 [cs.AI] 24 Feb 2026
+Buffer Matters: Unleashing the Power of Off-Policy Reinforcement Learning in Large Language Model Reasoning
+Xu Wan
+Yansheng Wang
+Affiliation:
+Bytedance Seed Robotics
+Wenqi Huang
+Affiliation:
+China Southern Power Grid
+Mingyang Sun
+Affiliation:
+Zhejiang University
+Affiliation:
+Peking University
+Abstract
+Traditional on-policy Reinforcement Learning with Verifiable Rewards (RLVR) frameworks suffer from experience waste and reward homogeneity, which directly hinders learning efficiency on difficult samples during large language models post-training. In this paper, we introduce Batch Adaptation Policy Optimization (BAPO), an off-policy RLVR framework to improve the data efficiency in large language models post-training. It dynamically selects training batches by re-evaluating historically difficult samples and reusing high-quality ones, while holding a lower bound guarantee for policy improvement. Extensive experiments further demonstrate that BAPO achieves an average 12.5% improvement over GRPO across mathematics, planning, and visual reasoning tasks. Crucially, BAPO successfully resolves 40.7% of problems that base models consistently fail to solve.
+1
+Introduction
+Reinforcement Learning from Human Feedback (RLHF) has emerged as a transformative paradigm for aligning Large Language Models (LLMs) with human preferences and improving their performance on complex reasoning tasks
+(
+Ouyang et al., 2022
+;
+Bai et al., 2022
+)
+. A significant recent evolution is Reinforcement Learning with Verifiable Rewards (RLVR)
+(
+Lambert et al., 2024
+)
+, which replaces costly neural reward models with deterministic verification functions for more efficient and reliable training
+(
+Guo et al., 2025
+)
+. Numerous on-policy RL optimization methods, particularly Group Relative Policy Optimization (GRPO)
+(
+Shao et al., 2024
+)
+, and its variants like Dynamic Sampling Policy Optimization (DAPO)
+(
+Yu et al., 2025
+)
+, Group Sequence Policy Optimization (GSPO)
+(
+Zheng et al., 2025
+)
+, have demonstrated remarkable success in LLM post-training scenarios, achieving exceptional performance on mathematical reasoning, code generation, and various downstream applications
+(
+Yang et al., 2025
+;
+Chen et al., 2025a
+;
+Shen et al., 2025
+)
+.
+Figure 1:
+Tracking the sample counts across accuracy groups of the mathematical dataset before and after GRPO post-training.
+Although with lower bound guarantees of policy improvement theoretically
+(
+Mroueh, 2025
+)
+, existing RL post-training frameworks still face significant efficiency challenges in practice.
+As shown in Figure
+1
+, models after GRPO post-training struggle to handle difficult samples, especially those with zero accuracy in the initial rollout group. The reasons are twofold: (1)
+Homogeneous rewards
+: Recent investigations
+(
+Hong et al., 2025
+;
+Simoni et al., 2025
+)
+reveal that samples at both extremes of difficulty offer minimal benefit for post-training policy improvement. This arises because advantage estimation in most GRPO-based methods relies heavily on relative reward diversity within each group. Consequently, when intra-group rewards are identical, the lower bound guarantee for policy improvement collapses
+(
+Zhang et al., 2025
+;
+Mroueh et al., 2025
+)
+, resulting in negligible effective gradient contributions
+(
+Liu et al., 2025
+;
+Yu et al., 2025
+)
+. (2)
+Waste of experience
+: Given the sensitivity of policy improvement to intra-group reward variance, uneven difficulty distributions yield significantly fewer high-quality samples than the configured batch size implies. Crucially, since these methods are primarily on-policy and lack experience replay, each rollout group is consumed only once, leading to a substantial waste of valuable training data
+(
+Sun et al., 2025
+;
+Li et al., 2025
+)
+.
+A straightforward solution is to adopt off-policy rather than on-policy training paradigms, which has been established in traditional RL tasks as a viable solution to increase sample efficiency and diversity in the training batch
+(
+Queeney et al., 2021
+;
+Hilton et al., 2022
+;
+Meng et al., 2023
+)
+.
+However,
+naively applying sample-reusing schemes to RL frameworks may exacerbate instability during LLM post-training, leading to entropy collapse, and ultimately performance degradation
+(
+Yu et al., 2025
+;
+He et al., 2025
+;
+Chen et al., 2025c
+)
+.
+Thus, to
+systematically exploring the utility of stale off-policy experience in RLVR post-training, we incorporates multiple off-policy strategies into on-policy RLVR framework to dissect effective pathways for historical data utilization.
+The main contributions of this paper are as follows:
+(1) We propose a difficulty-aware experience replay mechanism as a practical solution for efficient off-policy data utilization. Unlike the simple mixing of the buffer’s data and online data, we actively re-evaluate historical hard prompts to drive exploration while directly reusing high-quality trajectories with a dynamic quality threshold.
+(2) Theoretically, we prove that under certain assumptions, the proposed adaptive construction mechanism mitigates the homogeneous reward issue via adaptive batch construction and KL-constrained updates.
+(3) By integrating it into multiple reasoning tasks with different LLM backbones, we validate the proposed
+B
+atch
+A
+daptation
+P
+olicy
+O
+ptimization (BAPO) method achieves better convergence and yields greater improvements on solving difficult samples compared to existing on-policy and off-policy RLVR frameworks.
+2
+Related Work
+2.1
+On-policy RL Post-training Framework
+We first review the concept of on-policy RLVR, where the core objective is to optimize an LLM policy to maximize the outcome response reward. Let
+x
+∈
+𝒳
+x\in\mathcal{X}
+represent the input prompts, and
+y
+∈
+𝒴
+y\in\mathcal{Y}
+denote responses generated by the LLM policy
+π
+θ
+\pi_{\theta}
+. The terminal reward
+r
+⁡
+(
+x
+,
+y
+)
+∈
+{
+0
+,
+1
+}
+r(x,y)\in\{0,1\}
+is determined by a deterministic verification function
+(
+Lambert et al., 2024
+;
+Guo et al., 2025
+)
+.
+Following the setting of GRPO
+(
+Shao et al., 2024
+)
+, the objective is formulated as:
+1
+G
+∑
+i
+=
+1
+G
+1
+|
+y
+i
+|
+∑
+t
+=
+1
+|
+y
+i
+|
+min
+(
+ρ
+i
+,
+t
+(
+θ
+)
+A
+^
+i
+,
+t
+,
+clip
+(
+ρ
+i
+,
+t
+(
+θ
+)
+,
+1
+−
+ε
+,
+1
++
+ε
+)
+A
+^
+i
+,
+t
+)
+−
+β
+⋅
+𝔻
+KL
+(
+π
+θ
+|
+|
+π
+ref
+)
+\frac{1}{G}\sum_{i=1}^{G}\frac{1}{|y_{i}|}\sum_{t=1}^{|y_{i}|}\min\left(\rho_{i,t}(\theta)\hat{A}_{i,t},\text{clip}(\rho_{i,t}(\theta),1-\varepsilon,1+\varepsilon)\hat{A}_{i,t}\right)-\beta\cdot\mathbb{D}_{\text{KL}}(\pi_{\theta}||\pi_{\text{ref}})
+(1)
+where
+𝒢
+=
+{
+y
+1
+,
+y
+2
+,
+…
+,
+y
+G
+}
+\mathcal{G}=\{y_{1},y_{2},\dots,y_{G}\}
+represents a
+G
+G
+-size group of responses sampled from
+π
+θ
+t
+(
+⋅
+|
+x
+)
+\pi_{\theta_{t}}(\cdot|x)
+for each input
+x
+x
+;
+ρ
+i
+,
+t
+​
+(
+θ
+)
+\rho_{i,t}(\theta)
+is the probability ratio
+π
+θ
+​
+(
+y
+i
+t
+∣
+y
+i
+<
+t
+,
+x
+)
+π
+θ
+old
+​
+(
+y
+i
+t
+∣
+y
+i
+<
+t
+,
+x
+)
+\frac{\pi_{\theta}\left(y_{i}^{t}\mid y_{i}^{<t},x\right)}{\pi_{\theta_{\text{old}}}\left(y_{i}^{t}\mid y_{i}^{<t},x\right)}
+between current policy and old policy
+π
+θ
+old
+\pi_{\theta_{\text{old}}}
+for the
+i
+i
+-th responses’
+t
+t
+-th token,
+ε
+\varepsilon
+limits the magnitude of policy updates; and
+𝔻
+KL
+\mathbb{D}_{\text{KL}}
+constrains the policy
+π
+θ
+\pi_{\theta}
+from deviating too far from a reference policy
+π
+ref
+\pi_{\text{ref}}
+. Crucially,
+A
+^
+i
+,
+t
+\hat{A}_{i,t}
+denotes the estimated advantage of response
+y
+i
+y_{i}
+for input
+x
+x
+, which is derived from the standardization of rewards using the statistical properties of group
+𝒢
+\mathcal{G}
+. For the
+i
+i
+-th response
+y
+i
+∈
+𝒢
+y_{i}\in\mathcal{G}
+with reward
+r
+i
+=
+r
+⁡
+(
+x
+,
+y
+i
+)
+r_{i}=r(x,y_{i})
+, the estimated advantage is:
+A
+^
+i
+,
+t
+=
+r
+i
+−
+mean
+​
+(
+{
+r
+ℓ
+}
+)
+std
+2
+​
+(
+{
+r
+ℓ
+}
+)
++
+ε
+\hat{A}_{i,t}=\frac{r_{i}-\text{mean}(\{r_{\ell}\})}{\sqrt{\text{std}^{2}(\{r_{\ell}\})+\varepsilon}}
+(2)
+where
+mean
+​
+(
+{
+r
+ℓ
+}
+)
+\text{mean}(\{r_{\ell}\})
+and
+std
+2
+​
+(
+{
+r
+ℓ
+}
+)
+\text{std}^{2}(\{r_{\ell}\})
+are the empirical mean and variance of rewards in group
+𝒢
+\mathcal{G}
+, respectively.
+To enhance the practical efficiency of GRPO, a series of improved on-policy frameworks has been proposed. For instance, DAPO
+(
+Yu et al., 2025
+)
+sets distinct clipping ranges
+ε
+low
+\varepsilon_{\text{low}}
+and
+ε
+high
+\varepsilon_{\text{high}}
+, and employs a dynamic sampling strategy to ensure
+A
+^
+i
+,
+t
+≠
+0
+\hat{A}_{i,t}\neq 0
+. However, it consumes approximately four times the number of rollouts
+(
+Qu et al., 2025
+)
+compared to GRPO. Meanwhile, GSPO
+(
+Zheng et al., 2025
+)
+abandons the token-level ratio
+ρ
+i
+,
+t
+​
+(
+θ
+)
+\rho_{i,t}(\theta)
+and shifts to the sequence level
+s
+i
+​
+(
+θ
+)
+s_{i}(\theta)
+, which has been validated to maintain more stable training, particularly in Mixture-of-Experts (MoE) architectures.
+While the details of these methods vary, they all adhere to the on-policy framework for sampling and updates: the inference server is updated in synchronization with the trainer parameters, and the sampling strategy follows the “ use-once-and-discard” principle throughout the training process.
+2.2
+Off-policy RL Post-training Framework
+In contrast, as shown in Figure
+2
+, off-policy RL post-training frameworks operate under a distinct paradigm, characterized by two core components: off-policy rollout for generating responses and off-policy training for constructing the training batch, as detailed below.
+Figure 2:
+The overview of the (a) on-policy and (b) off-policy RL Post-training framework
+Off-policy Rollout
+avoids exclusive reliance on the current training policy for generation, instead leveraging past policies or external guidance. For example, AReaL
+(
+Fu et al., 2025
+)
+employs a fully asynchronous architecture that decouples generation from training, allowing rollout workers to use past policy. Mroueh et al.
+(
+Mroueh et al., 2025
+)
+fix the rollout policy on the vLLM inference server for multiple iterations to ensure stable sample generation. LUFFY
+(
+Yan et al., 2025
+)
+incorporates traces from stronger external policies to enhance reasoning capabilities beyond the model’s initial limits.
+Off-policy Training
+uses replay buffers to manage samples from historical policies with varying activation strategies. ARPO
+(
+Lu et al., 2025
+)
+dynamically samples non-zero reward samples from the buffer only when current batches contain all-zero rewards. DOTS
+(
+Sun et al., 2025
+)
+maintains a FIFO buffer that consistently reuses recent valid rollouts. RePO
+(
+Li et al., 2025
+)
+mixes buffer samples with on-policy samples using diverse retrieval strategies. ReMix
+(
+Liang et al., 2025
+)
+blends samples at fixed ratios while increasing the update-to-data ratio for efficiency. ReLIFT
+(
+Ma et al., 2025
+)
+stores high-quality solutions to challenging problems in its buffer and refines them through interleaved supervised fine-tuning. Kimi K1.5
+(
+Team et al., 2025
+)
+stores both complete and partial trajectories to reduce temporal correlations while maintaining computational efficiency.
+However, most off-policy RLVR methods ignore the policy stability of experiences. Samples entering the buffer at different training steps may exhibit varying policy distributions. These discrepancies introduce excessive noise into policy learning, which in turn exacerbates training instability. More importantly, simply reusing historical samples may even hinder the policy’s improvement. The high-accuracy historical samples may cause the model to overly focus on existing reasoning paths with high advantages, suppressing the model’s exploration capability and resulting in premature convergence to suboptimal solutions
+(
+Cui et al., 2025
+)
+.
+3
+Method
+In this section, we detail the core components of
+BAPO
+, particularly the adaptive construction strategy for the training batch, and provide a theoretical guarantee for the training stability of
+BAPO
+’s policy update. Figure
+3
+provides an overview of the off-policy rollout and training workflow.
+Figure 3:
+The workflow of (a) off-policy rollout and (b) off-policy training in our RLVR framework
+3.1
+Formal Definitions
+We first formalize our training objective
+ℒ
+α
+​
+(
+π
+θ
+)
+\mathcal{L}_{\alpha}(\pi_{\theta})
+as a combination of online rollout-derived and historical buffer-derived contributions:
+ℒ
+α
+(
+π
+θ
+)
+=
+𝔼
+(
+x
+,
+y
+)
+∼
+α
+​
+[
+ρ
+α
+​
+(
+θ
+)
+⋅
+A
+^
+​
+(
+x
+,
+y
+)
+]
+⏟
+Contribution from fresh samples
++
+𝔼
+(
+x
+,
+y
+)
+∼
+ℬ
+​
+[
+ρ
+α
+ℬ
+​
+(
+θ
+)
+⋅
+A
+^
+​
+(
+x
+,
+y
+)
+]
+⏟
+Contribution from historical samples
+−
+β
+⋅
+𝔻
+KL
+(
+π
+θ
+∥
+α
+)
+\mathcal{L}_{\alpha}(\pi_{\theta})=\underbrace{\mathbb{E}_{(x,y)\sim{\color[rgb]{0,0,0}\alpha}}\left[\rho_{{\color[rgb]{0,0,0}\alpha}}(\theta)\cdot\hat{A}(x,y)\right]}_{\text{Contribution from fresh samples}}+\underbrace{\mathbb{E}_{(x,y)\sim{\color[rgb]{0,0,0}\mathcal{B}}}\left[\rho_{{\color[rgb]{0,0,0}\alpha_{\mathcal{B}}}}(\theta)\cdot\hat{A}(x,y)\right]}_{\text{Contribution from historical samples}}-\beta\cdot\mathbb{D}_{\text{KL}}(\pi_{\theta}\|{\color[rgb]{0,0,0}\alpha})
+(3)
+where
+(
+x
+,
+y
+)
+∼
+α
+(x,y)\sim\alpha
+refers to filtered online samples from the rollout policy
+α
+=
+π
+θ
+t
+−
+v
+\alpha=\pi_{\theta_{t-v}}
+with
+v
+>
+0
+v>0
+representing the delay timesteps.
+(
+x
+,
+y
+)
+∼
+ℬ
+(x,y)\sim\mathcal{B}
+denotes historical samples from the replay buffer
+ℬ
+\mathcal{B}
+. The importance sampling ratios are defined as
+ρ
+α
+=
+π
+θ
+​
+(
+y
+|
+x
+)
+α
+⁡
+(
+y
+|
+x
+)
+\rho_{\alpha}=\frac{\pi_{\theta}(y|x)}{\alpha(y|x)}
+for the online rollout samples and
+ρ
+α
+ℬ
+=
+π
+θ
+​
+(
+y
+|
+x
+)
+α
+ℬ
+​
+(
+y
+|
+x
+)
+\rho_{\alpha_{\mathcal{B}}}=\frac{\pi_{\theta}(y|x)}{\alpha_{\mathcal{B}}(y|x)}
+for buffer samples,
+α
+ℬ
+\alpha_{\mathcal{B}}
+is the historical rollout policies that generated the buffer. Each entity in the buffer
+ℬ
+{\mathcal{B}}
+is formally defined as:
+ℬ
+=
+{
+(
+u
+i
+,
+{
+x
+i
+,
+j
+}
+j
+=
+1
+G
+,
+{
+y
+i
+,
+j
+}
+j
+=
+1
+G
+,
+{
+r
+i
+,
+j
+}
+j
+=
+1
+G
+,
+{
+α
+ℬ
+​
+(
+y
+i
+,
+j
+|
+x
+i
+)
+}
+j
+=
+1
+G
+)
+}
+i
+=
+1
+|
+ℬ
+|
+\mathcal{B}=\{(u_{i},\{x_{i,j}\}_{j=1}^{G},\{y_{i,j}\}_{j=1}^{G},\{r_{i,j}\}_{j=1}^{G},\ \{\alpha_{\mathcal{B}}(y_{i,j}|x_{i})\}_{j=1}^{G})\}_{i=1}^{|\mathcal{B}|}
+(4)
+where
+u
+i
+u_{i}
+is the unique identifier of each prompt,
+{
+x
+i
+,
+j
+}
+\{x_{i,j}\}
+,
+{
+y
+i
+,
+j
+}
+\{y_{i,j}\}
+,
+{
+r
+i
+,
+j
+}
+\{r_{i,j}\}
+represent the set of prompts, generated responses, and corresponding rewards, respectively.
+{
+α
+ℬ
+​
+(
+y
+i
+,
+j
+|
+x
+i
+)
+}
+j
+=
+1
+G
+\{\alpha_{\mathcal{B}}(y_{i,j}|x_{i})\}_{j=1}^{G}
+is the rollout policy’s probability, which is stored for calculating
+ρ
+α
+ℬ
+​
+(
+θ
+)
+\rho_{\alpha_{\mathcal{B}}}(\theta)
+when reusing, and
+|
+ℬ
+|
+|\mathcal{B}|
+is the buffer size.
+3.2
+Adaptive Training Batch Construction
+The core of off-policy RLVR lies in how to integrate historical experiences with online samples, to maintain non-homogeneous rewards and an appropriate difficulty distribution in each training step. For BAPO, we introduce
+a filter function
+I
+⁡
+(
+x
+)
+I(x)
+in Definition
+3.1
+that decomposes the data selection criteria for each training step’s batch into three parts.
+Definition 3.1
+(Training Batch Filtering Function)
+.
+Define
+μ
+π
+,
+r
+(
+x
+)
+=
+𝔼
+y
+∼
+π
+(
+⋅
+|
+x
+)
+[
+r
+(
+x
+,
+y
+)
+]
+\mu_{\pi,r}(x)=\mathbb{E}_{y\sim\pi(\cdot|x)}[r(x,y)]
+as the expected reward under policy
+π
+\pi
+for input
+x
+x
+. The training batch indicator function
+I
+:
+𝒳
+→
+{
+0
+,
+1
+}
+I:\mathcal{X}\rightarrow\{0,1\}
+is formulated as:
+I
+⁡
+(
+x
+)
+=
+1
+{
+1
+G
+≤
+μ
+α
+,
+r
+(
+x
+)
+≤
+G
+−
+1
+G
+}
+⏟
+Filtered Fresh
++
+1
+{
+μ
+α
+ℬ
+,
+r
+(
+x
+)
+≤
+c
+1
+∧
+μ
+π
+θ
+t
+,
+r
+(
+x
+)
+>
+c
+1
+}
+⏟
+Improved Historical Difficult
++
+1
+{
+c
+2
+≤
+μ
+α
+ℬ
+,
+r
+(
+x
+)
+≤
+c
+3
+}
+⏟
+Historical High-quality
+I(x)=\underbrace{1_{\{\frac{1}{G}\leq\mu_{\alpha,r}(x)\leq\frac{G-1}{G}\}}}_{\text{{\color[rgb]{0,0,0}Filtered Fresh}}}+\underbrace{1_{\{\mu_{\alpha_{\mathcal{B}},r}(x)\leq c_{1}\land\mu_{\pi_{\theta_{t}},r}(x)>c_{1}\}}}_{\text{Improved Historical Difficult}}+\underbrace{1_{\{c_{2}\leq\mu_{\alpha_{\mathcal{B}},r}(x)\leq c_{3}\}}}_{\text{Historical High-quality}}
+(5)
+where
+α
+\alpha
+denotes the delayed rollout policy and
+α
+ℬ
+\alpha_{\mathcal{B}}
+denotes the policy associated with buffer samples. The function selects samples based on three criteria, yielding subsets
+𝒳
+1
+\mathcal{X}_{1}
+,
+𝒳
+2
+\mathcal{X}_{2}
+and
+𝒳
+3
+\mathcal{X}_{3}
+respectively.
+Next, we explain the selection principles for
+I
+⁡
+(
+x
+)
+I(x)
+and derive three categories of samples, namely
+𝒳
+1
+\mathcal{X}_{1}
+,
+𝒳
+2
+\mathcal{X}_{2}
+, and
+𝒳
+3
+\mathcal{X}_{3}
+, which are obtained from these three conditions, respectively.
+(1) Filtered Fresh Samples (
+𝒳
+1
+\mathcal{X}_{1}
+).
+To prevent gradient vanishing and maintain training stability, we filter the online rollout batch to exclude samples with zero variance. Specifically, we retain fresh samples where the group mean reward satisfies
+μ
+α
+,
+r
+​
+(
+x
+)
+∈
+[
+1
+G
+,
+G
+−
+1
+G
+]
+\mu_{\alpha,r}(x)\in[\frac{1}{G},\frac{G-1}{G}]
+. While other filtering strategies (e.g., Gaussian sampling or uniform sampling) can be applied, we find that simple truncation sufficient for effective learning. A detailed discussion and comparison of different online filtering functions are provided in Appendix
+A.3
+.
+(2) Improved Historical Difficult Samples (
+𝒳
+2
+\mathcal{X}_{2}
+).
+Samples exhibiting extremely low group mean rewards, where
+μ
+α
+,
+r
+​
+(
+x
+)
+∈
+[
+0
+,
+c
+1
+]
+\mu_{\alpha,r}(x)\in[0,c_{1}]
+, present significant challenges to the current policy and typically yield negligible policy improvement. However, as the model evolves, these historically difficult queries may eventually become tractable for a successor policy. To harness this, we
+periodically
+re-generate responses using the current policy
+π
+θ
+t
+\pi_{\theta_{t}}
+every
+m
+m
+training steps and construct the subset
+𝒳
+2
+\mathcal{X}_{2}
+based on the observable improvement.
+Let
+ℬ
+bad
+⊆
+ℬ
+\mathcal{B}_{\text{bad}}\subseteq\mathcal{B}
+denote the buffer for difficult samples.
+To manage the computational overhead associated with the re-evaluation process, we limit the buffer capacity
+|
+ℬ
+bad
+|
+|\mathcal{B}_{\text{bad}}|
+to be equal to the training batch size. A First-In-First-Out (FIFO) mechanism is employed to automatically discard outdated samples when the buffer reaches capacity.
+𝒳
+2
+\mathcal{X}_{2}
+is formulated as:
+𝒳
+2
+=
+{
+(
+x
+,
+y
+′
+)
+∣
+(
+x
+,
+y
+)
+∈
+ℬ
+bad
+,
+y
+′
+∼
+π
+θ
+t
+(
+⋅
+∣
+x
+)
+,
+c
+1
+<
+μ
+π
+θ
+t
+,
+r
+(
+x
+)
+<
+1
+}
+\mathcal{X}_{2}=\left\{(x,y^{\prime})\mid(x,y)\in\mathcal{B}_{\text{bad}},y^{\prime}\sim\pi_{\theta_{t}}(\cdot\mid x),c_{1}<\mu_{\pi_{\theta_{t}},r}(x)<1\right\}
+(6)
+where
+y
+′
+y^{\prime}
+represents the new response generated by
+π
+θ
+t
+\pi_{\theta_{t}}
+, and we specifically select samples that show improvement such that
+c
+1
+<
+μ
+π
+θ
+t
+,
+r
+​
+(
+x
+)
+<
+1
+c_{1}<\mu_{\pi_{\theta_{t}},r}(x)<1
+.
+(3) Reused Historical High-quality Samples (
+𝒳
+3
+\mathcal{X}_{3}
+).
+To prevent underfilled batches caused by the scarcity of
+𝒳
+1
+\mathcal{X}_{1}
+and
+𝒳
+2
+\mathcal{X}_{2}
+, we maintain a FIFO auxiliary buffer
+ℬ
+high
+⊆
+ℬ
+\mathcal{B}_{\text{high}}\subseteq\mathcal{B}
+. To mitigate training instability from stale data,
+ℬ
+high
+\mathcal{B}_{\text{high}}
+is restricted to high-quality trajectories from the three most recent steps. The subset
+𝒳
+3
+\mathcal{X}_{3}
+is randomly sampled to fill the remaining capacity:
+𝒳
+​
+3
+=
+𝒮
+⁡
+(
+ℬ
+high
+,
+min
+⁡
+(
+|
+ℬ
+high
+|
+,
+B
+−
+|
+𝒳
+1
+|
+−
+|
+𝒳
+2
+|
+)
+)
+\mathcal{X}3=\mathcal{S}\left(\mathcal{B}_{{\text{high}}},\min\left(|\mathcal{B}_{\text{high}}|,B-|\mathcal{X}_{1}|-|\mathcal{X}_{2}|\right)\right)
+(7)
+where
+B
+B
+is the configured training batch size and
+𝒮
+⁡
+(
+⋅
+,
+k
+)
+\mathcal{S}(\cdot,k)
+denotes the random sampling of
+k
+k
+elements. Furthermore, to progressively master increasingly difficult tasks, we employ a linear mapping to shift the historical “high-quality” from easier to harder instances, scaling in accordance with the global average performance
+r
+tot
+r_{\text{tot}}
+:
+c
+i
+=
+r
+tot
+⋅
+(
+c
+i
+high
+−
+c
+i
+low
+)
++
+c
+i
+low
+,
+i
+∈
+2
+,
+3
+c_{i}=r_{\text{tot}}\cdot(c_{i}^{\text{high}}-c_{i}^{\text{low}})+c_{i}^{\text{low}},\quad i\in{2,3}
+(8)
+3.3
+Theoretical Analysis
+In this section, we further provide theoretical analysis in Theorem
+3.2
+to establish BAPO’s training stability based on
+(
+Mroueh et al., 2025
+)
+’s theorem.
+We show that, under certain assumptions, our constructed adaptive batches can consistently maintain guaranteed bounded policy improvement.
+Theorem 3.2
+(
+Policy Improvement Lower Bound with Adaptive Training Batch
+)
+.
+Assume rewards are bounded:
+0
+≤
+r
+≤
+1
+0\leq r\leq 1
+. Let
+π
+θ
+t
+\pi_{\theta_{t}}
+be the current policy,
+α
+1
+=
+π
+θ
+t
+−
+v
+\alpha_{1}=\pi_{\theta_{t-v}}
+be the delayed rollout policy,
+α
+2
+=
+π
+θ
+t
+\alpha_{2}=\pi_{\theta_{t}}
+be the current policy for re-evaluation,
+α
+3
+=
+α
+ℬ
+\alpha_{3}=\alpha_{\mathcal{B}}
+be the buffer policy distribution, and
+I
+⁡
+(
+x
+)
+I(x)
+be the filtering function partitioning samples into
+𝒳
+1
+\mathcal{X}_{1}
+,
+𝒳
+2
+\mathcal{X}_{2}
+, and
+𝒳
+3
+\mathcal{X}_{3}
+.
+Suppose
+c
+1
+,
+c
+2
+,
+c
+3
+∈
+(
+0
+,
+1
+)
+c_{1},c_{2},c_{3}\in(0,1)
+with
+c
+2
+<
+c
+3
+c_{2}<c_{3}
+, and the following TV distance constraints hold:
+TV
+(
+π
+θ
+t
+(
+⋅
+|
+x
+)
+,
+π
+θ
+t
+−
+v
+(
+⋅
+|
+x
+)
+)
+\displaystyle\text{TV}(\pi_{\theta_{t}}(\cdot|x),\pi_{\theta_{t-v}}(\cdot|x))
+≤
+δ
+1
+∀
+x
+∈
+𝒳
+1
+\displaystyle\leq\delta_{1}\quad\forall x\in\mathcal{X}_{1}
+(9)
+TV
+(
+π
+θ
+t
+(
+⋅
+|
+x
+)
+,
+α
+ℬ
+(
+⋅
+|
+x
+)
+)
+\displaystyle\text{TV}(\pi_{\theta_{t}}(\cdot|x),\alpha_{\mathcal{B}}(\cdot|x))
+≤
+δ
+3
+∀
+x
+∈
+𝒳
+3
+\displaystyle\leq\delta_{3}\quad\forall x\in\mathcal{X}_{3}
+(10)
+where
+δ
+1
+,
+δ
+3
+>
+0
+\delta_{1},\delta_{3}>0
+are sufficiently small such that the variance lower bounds remain positive.
+Then, for the policy update objective in Equation
+3
+, the expected policy improvement over filtered samples satisfies:
+𝔼
+x
+∼
+ρ
+𝒳
+[
+I
+(
+x
+)
+(
+J
+(
+π
+θ
+(
+⋅
+|
+x
+)
+)
+−
+J
+(
+π
+θ
+t
+(
+⋅
+|
+x
+)
+)
+)
+]
+≥
+∑
+i
+=
+1
+3
+ℒ
+i
+(
+π
+θ
+,
+α
+i
+)
+\mathbb{E}_{x\sim\rho_{\mathcal{X}}}[I(x)(J(\pi_{\theta}(\cdot|x))-J(\pi_{\theta_{t}}(\cdot|x)))]\geq\sum_{i=1}^{3}\mathcal{L}_{i}(\pi_{\theta},\alpha_{i})
+where:
+J
+(
+π
+θ
+(
+⋅
+∣
+x
+)
+)
+=
+𝔼
+y
+∼
+π
+θ
+(
+⋅
+∣
+x
+)
+r
+(
+x
+,
+y
+)
+J\big(\pi_{\theta}(\cdot\mid x)\big)\;=\;\mathbb{E}_{y\sim\pi_{\theta}(\cdot\mid x)}\,r(x,y)
+ℒ
+i
+(
+π
+θ
+,
+α
+i
+)
+=
+𝔼
+x
+∈
+𝒳
+i
+[
+L
+α
+i
+(
+π
+θ
+(
+⋅
+|
+x
+)
+)
+−
+2
+K
+i
+⋅
+TV
+(
+π
+θ
+(
+⋅
+|
+x
+)
+,
+α
+i
+(
+⋅
+|
+x
+)
+)
+−
+2
+TV
+(
+π
+θ
+t
+(
+⋅
+|
+x
+)
+,
+α
+i
+(
+⋅
+|
+x
+)
+)
+]
+\mathcal{L}_{i}(\pi_{\theta},\alpha_{i})=\mathbb{E}_{x\in\mathcal{X}_{i}}\left[L_{\alpha_{i}}(\pi_{\theta}(\cdot|x))-2{\color[rgb]{0,0,0}K_{i}}\cdot\text{TV}(\pi_{\theta}(\cdot|x),\alpha_{i}(\cdot|x))-2\text{TV}(\pi_{\theta_{t}}(\cdot|x),\alpha_{i}(\cdot|x))\right]
+with
+L
+α
+i
+(
+π
+θ
+(
+⋅
+|
+x
+)
+)
+=
+1
+σ
+α
+i
+,
+r
+,
+ε
+​
+(
+x
+)
+(
+J
+(
+π
+θ
+(
+⋅
+|
+x
+)
+)
+−
+J
+(
+α
+i
+(
+⋅
+|
+x
+)
+)
+)
+L_{\alpha_{i}}(\pi_{\theta}(\cdot|x))=\frac{1}{\sigma_{\alpha_{i},r,\varepsilon}(x)}(J(\pi_{\theta}(\cdot|x))-J(\alpha_{i}(\cdot|x)))
+. The constants are:
+K
+1
+\displaystyle K_{1}
+=
+1
+−
+G
+−
+1
+G
+2
++
+ε
+G
+−
+1
+G
+2
++
+ε
+\displaystyle=\frac{1-\sqrt{\frac{G-1}{G^{2}}+\varepsilon}}{\sqrt{\frac{G-1}{G^{2}}+\varepsilon}}
+(11)
+K
+2
+\displaystyle K_{2}
+=
+1
+−
+c
+1
+​
+(
+1
+−
+c
+1
+)
++
+ε
+c
+1
+​
+(
+1
+−
+c
+1
+)
++
+ε
+\displaystyle=\frac{1-\sqrt{c_{1}(1-c_{1})+\varepsilon}}{\sqrt{c_{1}(1-c_{1})+\varepsilon}}
+(12)
+K
+3
+\displaystyle K_{3}
+=
+1
+−
+min
+⁡
+(
+c
+2
+​
+(
+1
+−
+c
+2
+)
+,
+c
+3
+​
+(
+1
+−
+c
+3
+)
+)
++
+ε
+min
+⁡
+(
+c
+2
+​
+(
+1
+−
+c
+2
+)
+,
+c
+3
+​
+(
+1
+−
+c
+3
+)
+)
++
+ε
+\displaystyle=\frac{1-\sqrt{\min(c_{2}(1-c_{2}),c_{3}(1-c_{3}))+\varepsilon}}{\sqrt{\min(c_{2}(1-c_{2}),c_{3}(1-c_{3}))+\varepsilon}}
+(13)
+More importantly, we highlight several properties from this theorem:
+Bounded Stability.
+All constants
+K
+1
+K_{1}
+,
+K
+2
+K_{2}
+, and
+K
+3
+K_{3}
+are finite positive values, which guarantee that the training process remains numerically stable and theoretically bounded.
+Off-policy Tolerance.
+The stability of trust-region methods inherently constrain the magnitude of single-step policy updates. Consequently, the divergence between the current policy
+π
+θ
+t
+\pi_{\theta_{t}}
+and the delayed rollout policy
+α
+\alpha
+remains bounded over short intervals. Furthermore, the strict FIFO mechanism with limited buffer capacity ensures that only samples from recent policies are retained, thereby maintaining policy consistency within the training batch.
+4
+Experimental Setup
+To comprehensively evaluate the effectiveness of our off-policy RLVR framework, we conduct extensive experiments across different tasks and backbones, following the experimental setup described in
+(
+Qu et al., 2025
+)
+.
+First, we select three representative reasoning tasks, as detailed below:
+Mathematics.
+Following prior work
+(
+Luo et al., 2025
+)
+, we use the DeepSeek R1 Distilled 1.5B
+(
+Guo et al., 2025
+)
+and Qwen3 8B
+(
+Yang et al., 2025
+)
+as the base model, and conducted post-training on the DeepScaleR-Preview-Dataset
+(
+Aggarwal and Welleck, 2025
+)
+, which contains 40 thousand question-answer pairs sourced from several mathematics competitions. Evaluation is performed on multiple mathematics benchmarks, including AIME24, AMC23, MATH500
+(
+Hendrycks et al., 2021
+)
+, Minerva Math (Minerva)
+(
+Lewkowycz et al., 2022
+)
+, and OlympiadBench (Olympiad)
+He et al. (2024)
+.
+Planning.
+We choose Qwen2.5 Math 1.5B and 7B
+(
+Yang et al., 2024
+)
+as the backbone, and adopted the Countdown Number Game as the specific task. For training, we used a 10,000-problem subset of the Countdown-34 dataset, where each problem provides 3-4 source numbers. Evaluation was conducted on two variants: Countdown-3to4 (CD-34) test set using a 200-problem held-out split, and the more challenging Countdown-4 (CD-4) test set with 200 problems that consistently provide four source numbers
+(
+Chen et al., 2025b
+)
+.
+Visual Geometry.
+We train Qwen2.5 VL 3B and 7B
+(
+Bai et al., 2025
+)
+on the 2,101-problem training split of the Geometry3K dataset
+(
+Lu et al., 2021
+)
+, where each problem consists of a geometric diagram paired with a natural language question requiring spatial and logical reasoning. Evaluation was performed on the official 300-problem validation split (Geo-3K val) and 601-problem test split of Geometry3K (Geo-3K test).
+Besides, we select several on-policy and off-policy RLVR frameworks as baselines:
+On-policy.
+We select GRPO
+(
+Shao et al., 2024
+)
+, DAPO
+(
+Yu et al., 2025
+)
+, and MoPPS
+(
+Qu et al., 2025
+)
+as representative on-policy RLVR methods. GRPO is the first to integrate group-relative advantage estimation into the RLVR framework, while DAPO further improves training stability and efficiency. MoPPS incorporates difficulty-aware prediction into prompt selection.
+Off-policy.
+We compare our approach with three representative off-policy methods: GRPO (
+v
+=
+5
+v=5
+)
+(
+Mroueh et al., 2025
+)
+, RePO
+(
+Li et al., 2025
+)
+, and Remix-GRPO
+(
+Liang et al., 2025
+)
+. Specifically, GRPO (
+v
+=
+5
+v=5
+) delays the rollout policy with a frequency of 5, whereas RePO and Remix-GRPO adopt diverse replay strategies to retrieve off-policy samples from a replay buffer.
+Implementation Details.
+All comparative experiments were run on 8 A100 GPUs with 80GB memory based on the Verl framework
+(
+Sheng et al., 2025
+)
+. Identical parameters were used to ensure fair comparison, with specific details in Appendix
+A.7
+.
+5
+Results Analysis
+5.1
+Main Results
+We evaluate BAPO across three reasoning tasks to demonstrate its broad applicability. Experimental results show that BAPO consistently outperforms existing baselines throughout training (Figure
+4
+) and testing (Figure
+12
+). Notably, in mathematical tasks, the GRPO baseline exhibits severe training instability, as evidenced by significant oscillations in its early-stage training curve. This is attributed to the high variance in problem difficulty within the DeepScalerR dataset. Under the same settings, BAPO achieves smoother convergence and higher reward bounds.
+In Tables
+1
+, BAPO achieves an
+average 12.5% accuracy improvement
+over baselines. Crucially, while DAPO approaches BAPO’s performance in some metrics, it requires approximately
+2.5
+×
+\times
+more rollouts
+(as visualized in Figure
+9
+), imposing a substantial computational burden.
+Figure 4:
+Training Curves of Reward Changes
+for mathematics, planning, and geometry tasks using DeepSeek Distilled Qwen 1.5B, Qwen2.5 Math 1.5B, and Qwen2.5 VL 3B, respectively.
+Table 1:
+Comprehensive Evaluation Results.
+’
++
+’ indicates fine-tuning via the corresponding method. Accuracy is averaged over 32 runs. The
+bold
+value denotes the top result, and the
+underlined
+value denotes the second-top result.
+(a) Mathematics Benchmarks
+Method
+AIME24
+AMC
+MATH500
+Minerva.
+Olympiad.
+Avg.
+↑
+\uparrow
+Rollouts
+↓
+\downarrow
+Type
+DeepSeek R1 Distill Qwen
+1.5B
+28.80
+62.90
+82.80
+26.50
+44.42
+48.90
+-
+-
++GRPO
+(
+Guo et al., 2025
+)
+30.73
+67.47
+85.40
+28.95
+45.33
+51.58
+677k
+on
++DAPO
+(
+Yu et al., 2025
+)
+35.73
+70.08
+86.05
+30.70
+48.48
+54.20
+1921k
+on
++MoPPS
+∗
+(
+Qu et al., 2025
+)
+33.33
+65.29
+84.94
+28.88
+45.93
+51.67
+737k
+on
++GRPO (
+v
+=
+5
+v=5
+)
+(
+Mroueh et al., 2025
+)
+30.49
+65.09
+86.72
+28.16
+46.18
+51.57
+677k
+off
++RePO
+(
+Li et al., 2025
+)
+30.42
+64.76
+83.75
+28.33
+45.44
+50.54
+677k
+off
++Remix-GRPO
+∗
+(
+Liang et al., 2025
+)
+33.33
+65.06
+84.60
+26.10
+43.55
+50.53
+-
+off
++BAPO (Ours)
+38.54
+72.74
+89.18
+29.55
+50.06
+56.01
+733k
+off
+(b) Planning and Visual Geometry Benchmarks
+Method
+CD-34
+CD-4
+Avg
+Method
+Geo-3K(val)
+Geo-3K(test)
+Avg
+Qwen2.5 Math
+1.5B
+1.12
+0.37
+0.75
+Qwen2.5 VL
+3B
+14.77
+19.18
+16.98
++GRPO
+(
+Guo et al., 2025
+)
+62.94
+35.88
+49.41
++GRPO
+(
+Guo et al., 2025
+)
+36.44
+43.12
+39.78
++DAPO
+(
+Yu et al., 2025
+)
+70.56
+45.87
+58.22
++DAPO
+(
+Yu et al., 2025
+)
+40.11
+45.18
+42.65
++BAPO w/o
+𝒳
+2
+\mathcal{X}_{2}
+(Ours)
+60.31
+35.31
+47.81
++BAPO w/o
+𝒳
+2
+\mathcal{X}_{2}
+(Ours)
+30.57
+36.92
+33.75
++BAPO w/o
+𝒳
+3
+\mathcal{X}_{3}
+(Ours)
+64.43
+38.75
+51.59
++BAPO w/o
+𝒳
+3
+\mathcal{X}_{3}
+(Ours)
+32.22
+39.79
+36.01
++BAPO (Ours)
+73.00
+47.50
+60.25
++BAPO (Ours)
+40.11
+46.33
+43.22
+Qwen2.5 Math
+7B
+2.68
+0.94
+1.81
+Qwen2.5 VL
+7B
+30.40
+36.10
+33.25
++GRPO
+(
+Guo et al., 2025
+)
+70.75
+50.25
+60.50
++GRPO
+(
+Guo et al., 2025
+)
+40.79
+47.15
+43.97
++DAPO
+(
+Yu et al., 2025
+)
+78.75
+57.43
+68.09
++DAPO
+(
+Yu et al., 2025
+)
+40.87
+47.02
+43.95
++BAPO (Ours)
+79.13
+57.13
+68.13
++BAPO (Ours)
+41.89
+48.77
+45.33
+*This method’s performance is taken from the corresponding paper.
+5.2
+Mechanism Analysis
+To deeply investigate whether BAPO’s success stems from sensitive hyperparameter tuning or its core batch reconstruction mechanism, we conducted both
+Minimalist Verification
+and
+Hyperparameter Robustness
+experiments.
+Off-policy Components
+>
+>
+Off-policy Hyperparameters
+The performance gains of BAPO primarily stem from the structural logic of its off-policy components rather than specific hyperparameter settings. The framework remains effective even under rigid, parameter-free conditions.
+Figure 5:
+Test Curves of Group Accuracy Changes
+on AIME for different RLVR methods based on
+Qwen3 8B
+. Left: Standard BAPO vs. GRPO. Medium:
+BAPO (mini test) vs. GRPO
+. Right: Standard BAPO vs. DAPO.
+Minimalist Verification.
+To validate the theoretical implications of Theorem
+3.2
+without relying on hyperparameter engineering, specifically avoiding the tuning of thresholds
+c
+1
+,
+c
+2
+,
+c
+3
+c_{1},c_{2},c_{3}
+and update frequencies, we devised a
+“Mini-test”
+experiment. We trained Qwen3 8B on the mathematics task under 4K length constraints using a stripped-down, parameter-free BAPO logic for constructing training batch:
+𝒳
+1
+\mathcal{X}_{1}
+:
+We apply strictly standard zero-advantage filtering, removing only the prompts where all
+G
+G
+responses are entirely correct or entirely wrong.
+𝒳
+2
+\mathcal{X}_{2}
+:
+We replay historical
+all-wrong
+samples (
+μ
+α
+,
+r
+​
+(
+x
+)
+=
+0
+\mu_{\alpha,r}(x)=0
+). These correspond exactly to the difficult cases discarded by
+𝒳
+1
+\mathcal{X}_{1}
+, creating a closed-loop system that recovers waste data without requiring a difficulty threshold
+c
+1
+c_{1}
+.
+𝒳
+3
+\mathcal{X}_{3}
+:
+Instead of a dynamic accuracy range, we reuse historical samples with exactly
+50% accuracy
+. As formally proven in Proposition
+A.3
+, samples with accuracy
+μ
+α
+,
+r
+​
+(
+x
+)
+=
+1
+2
+\mu_{\alpha,r}(x)=\frac{1}{2}
+maximize the reward variance, thereby providing the theoretical maximum potential for single-step policy improvement
+J
+⁡
+(
+π
+θ
+)
+−
+J
+⁡
+(
+π
+θ
+t
+)
+J(\pi_{\theta})-J(\pi_{\theta_{t}})
+.
+The results in Figure
+5
+demonstrate that even in the hyperparameter-free “Mini-test”, BAPO maintains a clear advantage over GRPO. This confirms that the structural introduction of
+𝒳
+2
+\mathcal{X}_{2}
+and
+𝒳
+3
+\mathcal{X}_{3}
+drives the performance, not the specific tuning of
+c
+c
+values.
+Component Efficacy.
+To evaluate the contribution of re-evaluated difficult samples
+𝒳
+2
+\mathcal{X}_{2}
+and reused high-quality samples
+𝒳
+3
+\mathcal{X}_{3}
+, we conduct ablation studies shown in Table
+1
+and Figure
+6
+(Column 2). Both components are essential: removing
+𝒳
+2
+\mathcal{X}_{2}
+causes a
+∼
+\sim
+21% performance drop, underscoring the importance of explicitly targeting difficult samples.
+Hyperparameter Robustness.
+We further evaluate the sensitivity of BAPO to its key hyperparameters: rollout delay
+v
+v
+, re-rollout frequency
+m
+m
+, and difficulty thresholds.
+Frequency (
+v
+,
+m
+v,m
+):
+As shown in Figure
+6
+(Column 1), performance remains stable within reasonable ranges (e.g.,
+v
+=
+5
+,
+m
+=
+5
+v=5,m=5
+). Extreme delays only degrade performance when policy divergence becomes excessive, aligning with our theoretical analysis regarding the trust region.
+Difficulty Thresholds (
+c
+2
+,
+c
+3
+c_{2},c_{3}
+):
+While our adaptive boundary mechanism yields the best convergence, Figure
+6
+(Column 3) shows that using fixed ranges still significantly outperforms baselines.
+This indicates that the
+presence
+of diverse historical data is more critical than the precise values of the thresholds.
+Figure 6:
+Ablation Studies
+for BAPO. The first column presents ablations on frequency-related hyperparameters (
+m
+,
+v
+m,v
+). The second column shows ablations on buffer subsets (
+𝒳
+2
+,
+𝒳
+3
+\mathcal{X}_{2},\mathcal{X}_{3}
+). The third column compares fixed vs. adaptive difficulty thresholds.
+5.3
+Detailed Analysis
+We analyze BAPO’s internal mechanisms below. For extended analysis on training dynamics, computation, and visualization, please refer to
+Appendices
+A.4
+,
+A.5
+and
+A.6
+.
+Tracking Difficult Samples.
+We visualize the training dynamics in Figure
+7
+. BAPO exhibits a superior capability to ”unlock” difficult problems: after 3 epochs, BAPO successfully improves
+31%
+of the samples that were initially unsolvable (
+0
+/
+8
+0/8
+accuracy), compared to only
+19%
+for GRPO.
+Figure 7:
+Tracking changes in the
+Number of Different Accuracy Bins
+on the DeepScalerR training subset. Special attention is paid to the reduction of bad samples (red bars).
+Sample Distribution & Efficiency.
+To uncover the source of BAPO’s efficiency, we analyze the dynamic batch construction in Figure
+8
+alongside the rollout costs in Figure
+9
+.
+As observed in Figure
+8
+, the assembled training batch size frequently fluctuates below the maximum configured capacity. This reduction in backward propagation load effectively offsets the computational overhead caused by off-policy re-evaluation and log-probability re-computation. Consequently, as detailed in Table.
+2
+, BAPO maintains a training speed comparable to GRPO while requiring significantly fewer rollouts than DAPO, achieving a superior trade-off between convergence performance and computational cost.
+Figure 8:
+Dynamic Sample Distribution.
+The composition of BAPO’s
+𝒳
+1
+,
+𝒳
+2
+,
+𝒳
+3
+\mathcal{X}_{1},\mathcal{X}_{2},\mathcal{X}_{3}
+and the total samples compared to the fixed GRPO batch size (Red line).
+Figure 9:
+Cumulative Rollout Batches Comparison between BAPO and DAPO.
+The maximum rollout time for DAPO is set to 4.
+Efficient Batch Adaptation
+BAPO maintains training efficiency comparable to GRPO. While the periodic re-evaluation of
+𝒳
+2
+\mathcal{X}_{2}
+introduces additional generation overhead, this cost is effectively offset by reduced training samples, particularly during the initial stages of training.
+6
+Conclusion
+In this paper, we propose BAPO, an off-policy RLVR framework for LLM post-training. It aims to utilize historical training data better and thereby improve training efficiency. Specifically, we appropriately delay the rollout policy to stabilize the policy discrepancies of buffer samples. More importantly, we construct training batches by re-evaluating difficult samples and reusing historical high-quality ones, thereby enhancing the efficiency of post-training. We validate the strong adaptability of the BAPO framework through experiments on three distinct reasoning tasks using different LLM backbones, and the results demonstrate that BAPO significantly outperforms baselines in both convergence performance and training efficiency.
+Nevertheless, exploring how to adapt BAPO to large models with MoE architectures, as well as to agentic RL frameworks, remains a significant challenge.
+Ethics Statement
+All authors of this study strictly adhere to the ICLR code of ethics. Our research does not involve any potential conflicts of interest or sponsorship issues. We have carefully considered and addressed concerns related to discrimination, bias, and fairness in our methodology. The study raises no privacy or security concerns, maintains full legal compliance, and upholds the highest standards of research integrity. All experimental procedures and data handling practices follow established ethical guidelines for machine learning research.
+Reproducibility statement
+To ensure full reproducibility of our results, we provide comprehensive implementation details of the proposed BAPO training algorithm in the supplementary materials. All experimental settings, hyperparameters, and dataset specifications are clearly documented. For our theoretical contributions, complete proofs and clear explanations of all assumptions are included in the appendix. Code and data will be made available upon acceptance to facilitate replication of our findings.
+The Use of Large Language Models
+In this research, we employed LLMs solely as language editing tools to improve the clarity and readability of our manuscript. LLMs were used for grammar checking, style refinement, and language polishing purposes only. All core research ideas, experimental design, analysis, and conclusions are entirely the original work of the authors. The use of LLMs did not contribute to the conceptual or technical content of this study.
+References
+Aggarwal and Welleck (2025)
+P. Aggarwal and S. Welleck
+L1: controlling how long a reasoning model thinks with reinforcement learning
+.
+arXiv preprint arXiv:2503.04697
+.
+Cited by:
+§4
+.
+Bai
+et al.
+(2025)
+S. Bai, K. Chen, X. Liu, J. Wang, W. Ge, S. Song, K. Dang, P. Wang, S. Wang, J. Tang,
+et al.
+Qwen2. 5-vl technical report
+.
+arXiv preprint arXiv:2502.13923
+.
+Cited by:
+§4
+.
+Bai
+et al.
+(2022)
+Y. Bai, A. Jones, K. Ndousse, A. Askell, A. Chen, N. DasSarma, D. Drain, S. Fort, D. Ganguli, T. Henighan,
+et al.
+Training a helpful and harmless assistant with reinforcement learning from human feedback
+.
+arXiv preprint arXiv:2204.05862
+.
+Cited by:
+§1
+.
+Chen
+et al.
+(2025a)
+Q. Chen, L. Qin, J. Liu, D. Peng, J. Guan, P. Wang, M. Hu, Y. Zhou, T. Gao, and W. Che
+Towards reasoning era: a survey of long chain-of-thought for reasoning large language models
+.
+arXiv preprint arXiv:2503.09567
+.
+Cited by:
+§1
+.
+Chen
+et al.
+(2025b)
+X. Chen, J. Lu, M. Kim, D. Zhang, J. Tang, A. Piché, N. Gontier, Y. Bengio, and E. Kamalloo
+Self-evolving curriculum for llm reasoning
+.
+arXiv preprint arXiv:2505.14970
+.
+Cited by:
+§4
+.
+Chen
+et al.
+(2025c)
+Y. Chen, Z. Yang, Z. Liu, C. Lee, P. Xu, M. Shoeybi, B. Catanzaro, and W. Ping
+Acereason-nemotron: advancing math and code reasoning through reinforcement learning
+.
+arXiv preprint arXiv:2505.16400
+.
+Cited by:
+§1
+.
+Cui
+et al.
+(2025)
+G. Cui, Y. Zhang, J. Chen, L. Yuan, Z. Wang, Y. Zuo, H. Li, Y. Fan, H. Chen, W. Chen,
+et al.
+The entropy mechanism of reinforcement learning for reasoning language models
+.
+arXiv preprint arXiv:2505.22617
+.
+Cited by:
+§2.2
+.
+Fu
+et al.
+(2025)
+W. Fu, J. Gao, X. Shen, C. Zhu, Z. Mei, C. He, S. Xu, G. Wei, J. Mei, J. Wang,
+et al.
+AReaL: a large-scale asynchronous reinforcement learning system for language reasoning
+.
+arXiv preprint arXiv:2505.24298
+.
+Cited by:
+§2.2
+.
+Guo
+et al.
+(2025)
+D. Guo, D. Yang, H. Zhang, J. Song, R. Zhang, R. Xu, Q. Zhu, S. Ma, P. Wang, X. Bi,
+et al.
+Deepseek-r1: incentivizing reasoning capability in llms via reinforcement learning
+.
+arXiv preprint arXiv:2501.12948
+.
+Cited by:
+§1
+,
+§2.1
+,
+§4
+,
+Table 1
+,
+Table 1
+,
+Table 1
+,
+Table 1
+,
+Table 1
+.
+He
+et al.
+(2024)
+C. He, R. Luo, Y. Bai, S. Hu, Z. L. Thai, J. Shen, J. Hu, X. Han, Y. Huang, Y. Zhang,
+et al.
+Olympiadbench: a challenging benchmark for promoting agi with olympiad-level bilingual multimodal scientific problems
+.
+arXiv preprint arXiv:2402.14008
+.
+Cited by:
+§4
+.
+He
+et al.
+(2025)
+J. He, J. Liu, C. Y. Liu, R. Yan, C. Wang, P. Cheng, X. Zhang, F. Zhang, J. Xu, W. Shen,
+et al.
+Skywork open reasoner 1 technical report
+.
+arXiv preprint arXiv:2505.22312
+.
+Cited by:
+§1
+.
+Hendrycks
+et al.
+(2021)
+D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt
+Measuring mathematical problem solving with the math dataset
+.
+arXiv preprint arXiv:2103.03874
+.
+Cited by:
+§4
+.
+Hilton
+et al.
+(2022)
+J. Hilton, K. Cobbe, and J. Schulman
+Batch size-invariance for policy optimization
+.
+Advances in Neural Information Processing Systems
+35
+,
+pp. 17086–17098
+.
+Cited by:
+§1
+.
+Hong
+et al.
+(2025)
+W. Hong, W. Yu, X. Gu, G. Wang, G. Gan, H. Tang, J. Cheng, J. Qi, J. Ji, L. Pan,
+et al.
+GLM-4.1 v-thinking: towards versatile multimodal reasoning with scalable reinforcement learning
+.
+arXiv preprint arXiv:2507.01006
+.
+Cited by:
+§1
+.
+Lambert
+et al.
+(2024)
+N. Lambert, J. Morrison, V. Pyatkin, S. Huang, H. Ivison, F. Brahman, L. J. V. Miranda, A. Liu, N. Dziri, S. Lyu,
+et al.
+Tulu 3: pushing frontiers in open language model post-training
+.
+arXiv preprint arXiv:2411.15124
+.
+Cited by:
+§1
+,
+§2.1
+.
+Lewkowycz
+et al.
+(2022)
+A. Lewkowycz, A. Andreassen, D. Dohan, E. Dyer, H. Michalewski, V. Ramasesh, A. Slone, C. Anil, I. Schlag, T. Gutman-Solo,
+et al.
+Solving quantitative reasoning problems with language models
+.
+Advances in neural information processing systems
+35
+,
+pp. 3843–3857
+.
+Cited by:
+§4
+.
+Li
+et al.
+(2025)
+S. Li, Z. Zhou, W. Lam, C. Yang, and C. Lu
+RePO: replay-enhanced policy optimization
+.
+arXiv preprint arXiv:2506.09340
+.
+Cited by:
+§1
+,
+§2.2
+,
+§4
+,
+Table 1
+.
+Liang
+et al.
+(2025)
+J. Liang, H. Tang, Y. Ma, J. Liu, Y. Zheng, S. Hu, L. Bai, and J. Hao
+Squeeze the soaked sponge: efficient off-policy reinforcement finetuning for large language model
+.
+arXiv preprint arXiv:2507.06892
+.
+Cited by:
+§2.2
+,
+§4
+,
+Table 1
+.
+Liu
+et al.
+(2025)
+Z. Liu, C. Gong, X. Fu, Y. Liu, R. Chen, S. Hu, S. Zhang, R. Liu, Q. Zhang, and D. Tu
+GHPO: adaptive guidance for stable and efficient llm reinforcement learning
+.
+arXiv preprint arXiv:2507.10628
+.
+Cited by:
+§1
+.
+Lu
+et al.
+(2025)
+F. Lu, Z. Zhong, S. Liu, C. Fu, and J. Jia
+ARPO: end-to-end policy optimization for gui agents with experience replay
+.
+arXiv preprint arXiv:2505.16282
+.
+Cited by:
+§2.2
+.
+Lu
+et al.
+(2021)
+P. Lu, R. Gong, S. Jiang, L. Qiu, S. Huang, X. Liang, and S. Zhu
+Inter-gps: interpretable geometry problem solving with formal language and symbolic reasoning
+.
+In
+Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the 11th International Joint Conference on Natural Language Processing (Volume 1: Long Papers)
+,
+pp. 6774–6786
+.
+Cited by:
+§4
+.
+Luo
+et al.
+(2025)
+M. Luo, S. Tan, J. Wong, X. Shi, W. Y. Tang, M. Roongta, C. Cai, J. Luo, T. Zhang, L. E. Li,
+et al.
+Deepscaler: surpassing o1-preview with a 1.5 b model by scaling rl
+.
+Notion Blog
+.
+Cited by:
+§4
+.
+Ma
+et al.
+(2025)
+L. Ma, H. Liang, M. Qiang, L. Tang, X. Ma, Z. H. Wong, J. Niu, C. Shen, R. He, B. Cui,
+et al.
+Learning what reinforcement learning can’t: interleaved online fine-tuning for hardest questions
+.
+arXiv preprint arXiv:2506.07527
+.
+Cited by:
+§2.2
+.
+Meng
+et al.
+(2023)
+W. Meng, Q. Zheng, G. Pan, and Y. Yin
+Off-policy proximal policy optimization
+.
+In
+Proceedings of the AAAI Conference on Artificial Intelligence
+,
+Vol.
+37
+,
+pp. 9162–9170
+.
+Cited by:
+§1
+.
+Mroueh
+et al.
+(2025)
+Y. Mroueh, N. Dupuis, B. Belgodere, A. Nitsure, M. Rigotti, K. Greenewald, J. Navratil, J. Ross, and J. Rios
+Revisiting group relative policy optimization: insights into on-policy and off-policy training
+.
+arXiv preprint arXiv:2505.22257
+.
+Cited by:
+§1
+,
+§2.2
+,
+§3.3
+,
+§4
+,
+Table 1
+.
+Mroueh (2025)
+Y. Mroueh
+Reinforcement learning with verifiable rewards: grpo’s effective loss, dynamics, and success amplification
+.
+arXiv preprint arXiv:2503.06639
+.
+Cited by:
+§1
+.
+Ouyang
+et al.
+(2022)
+L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray,
+et al.
+Training language models to follow instructions with human feedback
+.
+Advances in neural information processing systems
+35
+,
+pp. 27730–27744
+.
+Cited by:
+§1
+.
+Qu
+et al.
+(2025)
+Y. Qu, Q. C. Wang, Y. Mao, V. T. Hu, and X. Ji
+Can prompt difficulty be online predicted for accelerating rl finetuning of reasoning models?
+.
+arXiv preprint arXiv:2507.04632
+.
+Cited by:
+§2.1
+,
+§4
+,
+§4
+,
+Table 1
+.
+Queeney
+et al.
+(2021)
+J. Queeney, Y. Paschalidis, and C. G. Cassandras
+Generalized proximal policy optimization with sample reuse
+.
+Advances in Neural Information Processing Systems
+34
+,
+pp. 11909–11919
+.
+Cited by:
+§1
+.
+Shao
+et al.
+(2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. Li, Y. Wu,
+et al.
+Deepseekmath: pushing the limits of mathematical reasoning in open language models
+.
+arXiv preprint arXiv:2402.03300
+.
+Cited by:
+§1
+,
+§2.1
+,
+§4
+.
+Shen
+et al.
+(2025)
+H. Shen, P. Liu, J. Li, C. Fang, Y. Ma, J. Liao, Q. Shen, Z. Zhang, K. Zhao, Q. Zhang,
+et al.
+Vlm-r1: a stable and generalizable r1-style large vision-language model
+.
+arXiv preprint arXiv:2504.07615
+.
+Cited by:
+§1
+.
+Sheng
+et al.
+(2025)
+G. Sheng, C. Zhang, Z. Ye, X. Wu, W. Zhang, R. Zhang, Y. Peng, H. Lin, and C. Wu
+Hybridflow: a flexible and efficient rlhf framework
+.
+In
+Proceedings of the Twentieth European Conference on Computer Systems
+,
+pp. 1279–1297
+.
+Cited by:
+§4
+.
+Simoni
+et al.
+(2025)
+M. Simoni, A. Fontana, G. Rossolini, and A. Saracino
+GTPO: trajectory-based policy optimization in large language models
+.
+External Links:
+2508.03772
+,
+Link
+Cited by:
+§1
+.
+Sun
+et al.
+(2025)
+Y. Sun, J. Shen, Y. Wang, T. Chen, Z. Wang, M. Zhou, and H. Zhang
+Improving data efficiency for llm reinforcement fine-tuning through difficulty-targeted online data selection and rollout replay
+.
+arXiv preprint arXiv:2506.05316
+.
+Cited by:
+§1
+,
+§2.2
+.
+Team
+et al.
+(2025)
+K. Team, A. Du, B. Gao, B. Xing, C. Jiang, C. Chen, C. Li, C. Xiao, C. Du, C. Liao,
+et al.
+Kimi k1. 5: scaling reinforcement learning with llms
+.
+arXiv preprint arXiv:2501.12599
+.
+Cited by:
+§2.2
+.
+Yan
+et al.
+(2025)
+J. Yan, Y. Li, Z. Hu, Z. Wang, G. Cui, X. Qu, Y. Cheng, and Y. Zhang
+Learning to reason under off-policy guidance
+.
+arXiv preprint arXiv:2504.14945
+.
+Cited by:
+§2.2
+.
+Yang
+et al.
+(2025)
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv,
+et al.
+Qwen3 technical report
+.
+arXiv preprint arXiv:2505.09388
+.
+Cited by:
+§1
+,
+§4
+.
+Yang
+et al.
+(2024)
+A. Yang, B. Zhang, B. Hui, B. Gao, B. Yu, C. Li, D. Liu, J. Tu, J. Zhou, J. Lin,
+et al.
+Qwen2. 5-math technical report: toward mathematical expert model via self-improvement
+.
+arXiv preprint arXiv:2409.12122
+.
+Cited by:
+§4
+.
+Yu
+et al.
+(2025)
+Q. Yu, Z. Zhang, R. Zhu, Y. Yuan, X. Zuo, Y. Yue, W. Dai, T. Fan, G. Liu, L. Liu,
+et al.
+Dapo: an open-source llm reinforcement learning system at scale
+.
+arXiv preprint arXiv:2503.14476
+.
+Cited by:
+§1
+,
+§1
+,
+§1
+,
+§2.1
+,
+§4
+,
+Table 1
+,
+Table 1
+,
+Table 1
+,
+Table 1
+,
+Table 1
+.
+Zhang
+et al.
+(2025)
+X. Zhang, J. Wang, Z. Cheng, W. Zhuang, Z. Lin, M. Zhang, S. Wang, Y. Cui, C. Wang, J. Peng,
+et al.
+Srpo: a cross-domain implementation of large-scale reinforcement learning on llm
+.
+arXiv preprint arXiv:2504.14286
+.
+Cited by:
+§1
+.
+Zheng
+et al.
+(2025)
+C. Zheng, S. Liu, M. Li, X. Chen, B. Yu, C. Gao, K. Dang, Y. Liu, R. Men, A. Yang,
+et al.
+Group sequence policy optimization
+.
+arXiv preprint arXiv:2507.18071
+.
+Cited by:
+§1
+,
+§2.1
+.
+Appendix A
+Appendix
+A.1
+Glossary of Terms and Notations
+Term
+Definition
+c
+1
+,
+c
+2
+,
+c
+3
+c_{1},c_{2},c_{3}
+Thresholds for classifying historical samples by difficulty (group mean reward).
+𝒳
+1
+,
+𝒳
+2
+,
+𝒳
+3
+\mathcal{X}_{1},\mathcal{X}_{2},\mathcal{X}_{3}
+Subsets of training batch: fresh, re-evaluated difficult, and historical high-quality samples.
+m
+m
+Re-evaluation frequency for historically difficult samples.
+v
+v
+Delay steps for updating the rollout policy.
+G
+G
+Group size, number of responses generated per prompt during rollout.
+ℬ
+\mathcal{B}
+Replay buffer storing historical samples.
+A
+^
+i
+,
+t
+\hat{A}_{i,t}
+Estimated advantage for token
+t
+t
+in response
+i
+i
+.
+ε
+\varepsilon
+Clipping parameter in PPO-style objectives.
+β
+\beta
+Coefficient for KL penalty in the objective function.
+I
+⁡
+(
+x
+)
+I(x)
+Filter function for constructing BAPO’s training batch.
+𝔻
+KL
+\mathbb{D}_{\text{KL}}
+Kullback–Leibler divergence, used to constrain policy deviation.
+α
+\alpha
+Rollout policy for BAPO, which synchronizes to
+π
+θ
+\pi_{\theta}
+every
+v
+v
+steps.
+π
+θ
+\pi_{\theta}
+LLM policy parameterized by
+θ
+\theta
+.
+π
+ref
+\pi_{\text{ref}}
+Reference policy (e.g., initial pre-trained model).
+ρ
+⁡
+(
+θ
+)
+\rho(\theta)
+Importance sampling ratio:
+π
+θ
+​
+(
+y
+|
+x
+)
+π
+old
+​
+(
+y
+|
+x
+)
+\frac{\pi_{\theta}(y|x)}{\pi_{\text{old}}(y|x)}
+.
+r
+⁡
+(
+x
+,
+y
+)
+r(x,y)
+Reward function, we set to binary (0/1) based on correctness.
+μ
+α
+,
+r
+​
+(
+x
+)
+\mu_{\alpha,r}(x)
+Expected reward under policy
+π
+\pi
+for input
+x
+x
+. We approximate this value using the mean of
+r
+⁡
+(
+x
+,
+y
+)
+r(x,y)
+corresponding to
+G
+G
+responses
+y
+y
+generated by the rollout policy
+α
+\alpha
+for each prompt
+x
+x
+.
+σ
+α
+,
+r
+,
+ε
+​
+(
+x
+)
+\sigma_{\alpha,r,\varepsilon}(x)
+Standard deviation of rewards under policy
+α
+\alpha
+for input
+x
+x
+, with smoothing
+ε
+\varepsilon
+.
+J
+(
+π
+(
+⋅
+|
+x
+)
+)
+J(\pi(\cdot|x))
+Expected reward of policy
+π
+\pi
+for input
+x
+x
+:
+𝔼
+y
+∼
+π
+(
+⋅
+|
+x
+)
+[
+r
+(
+x
+,
+y
+)
+]
+\mathbb{E}_{y\sim\pi(\cdot|x)}[r(x,y)]
+.
+𝒩
+⁡
+(
+μ
+α
+,
+r
+​
+(
+x
+)
+∣
+μ
+,
+σ
+2
+)
+\mathcal{N}(\mu_{\alpha,r}(x)\mid\mu,\sigma^{2})
+A sampling method that assigns weights to online rollouts based on a normal distribution centered at
+μ
+\mu
+with standard deviation
+σ
+\sigma
+, used to filter samples by their group mean reward
+μ
+α
+,
+r
+​
+(
+x
+)
+\mu_{\alpha,r}(x)
+.
+A.2
+Theoretical Analysis
+Lemma A.1
+(Kantorovich-Rubenstein duality of total variation distance)
+.
+The Kantorovich-Rubinstein duality (variational representation) of the total variation distance is as follows:
+TV
+​
+(
+m
+1
+,
+m
+2
+)
+=
+1
+2
+​
+L
+​
+sup
+g
+∈
+𝒢
+L
+{
+𝔼
+Z
+∼
+m
+1
+​
+[
+g
+⁡
+(
+Z
+)
+]
+−
+𝔼
+Z
+∼
+m
+2
+​
+[
+g
+⁡
+(
+Z
+)
+]
+}
+,
+\text{TV}(m_{1},m_{2})=\frac{1}{2L}\sup_{g\in\mathcal{G}_{L}}\left\{\mathbb{E}_{Z\sim m_{1}}[g(Z)]-\mathbb{E}_{Z\sim m_{2}}[g(Z)]\right\},
+(14)
+where
+𝒢
+L
+=
+{
+g
+:
+𝒵
+→
+ℝ
+,
+∥
+g
+∥
+∞
+≤
+L
+}
+\mathcal{G}_{L}=\{g:\mathcal{Z}\to\mathbb{R},\|g\|_{\infty}\leq L\}
+.
+Theorem A.2
+(
+Policy Improvement Lower Bound with Adaptive Training Batch
+)
+.
+Assume rewards are bounded:
+0
+≤
+r
+≤
+1
+0\leq r\leq 1
+. Let
+π
+θ
+t
+\pi_{\theta_{t}}
+be the current policy,
+α
+1
+=
+π
+θ
+t
+−
+v
+\alpha_{1}=\pi_{\theta_{t-v}}
+be the delayed rollout policy,
+α
+2
+=
+π
+θ
+t
+\alpha_{2}=\pi_{\theta_{t}}
+be the current policy for re-evaluation,
+α
+3
+=
+α
+ℬ
+\alpha_{3}=\alpha_{\mathcal{B}}
+be the buffer policy distribution, and
+I
+⁡
+(
+x
+)
+I(x)
+be the filtering function partitioning samples into
+𝒳
+1
+\mathcal{X}_{1}
+,
+𝒳
+2
+\mathcal{X}_{2}
+, and
+𝒳
+3
+\mathcal{X}_{3}
+.
+Suppose
+c
+1
+,
+c
+2
+,
+c
+3
+∈
+(
+0
+,
+1
+)
+c_{1},c_{2},c_{3}\in(0,1)
+with
+c
+2
+<
+c
+3
+c_{2}<c_{3}
+. and the following TV distance constraints hold:
+TV
+(
+π
+θ
+t
+(
+⋅
+|
+x
+)
+,
+π
+θ
+t
+−
+v
+(
+⋅
+|
+x
+)
+)
+\displaystyle\text{TV}(\pi_{\theta_{t}}(\cdot|x),\pi_{\theta_{t-v}}(\cdot|x))
+≤
+δ
+1
+∀
+x
+∈
+𝒳
+1
+\displaystyle\leq\delta_{1}\quad\forall x\in\mathcal{X}_{1}
+(15)
+TV
+(
+π
+θ
+t
+(
+⋅
+|
+x
+)
+,
+α
+ℬ
+(
+⋅
+|
+x
+)
+)
+\displaystyle\text{TV}(\pi_{\theta_{t}}(\cdot|x),\alpha_{\mathcal{B}}(\cdot|x))
+≤
+δ
+3
+∀
+x
+∈
+𝒳
+3
+\displaystyle\leq\delta_{3}\quad\forall x\in\mathcal{X}_{3}
+(16)
+where
+δ
+1
+,
+δ
+3
+>
+0
+\delta_{1},\delta_{3}>0
+are sufficiently small such that the variance lower bounds remain positive.
+Then, for the policy update objective in Equation
+3
+, the expected policy improvement over filtered samples satisfies:
+𝔼
+x
+∼
+ρ
+𝒳
+[
+I
+(
+x
+)
+(
+J
+(
+π
+θ
+(
+⋅
+|
+x
+)
+)
+−
+J
+(
+π
+θ
+t
+(
+⋅
+|
+x
+)
+)
+)
+]
+≥
+∑
+i
+=
+1
+3
+ℒ
+i
+(
+π
+θ
+,
+α
+i
+)
+\mathbb{E}_{x\sim\rho_{\mathcal{X}}}[I(x)(J(\pi_{\theta}(\cdot|x))-J(\pi_{\theta_{t}}(\cdot|x)))]\geq\sum_{i=1}^{3}\mathcal{L}_{i}(\pi_{\theta},\alpha_{i})
+where:
+ℒ
+i
+(
+π
+θ
+,
+α
+i
+)
+=
+𝔼
+x
+∈
+𝒳
+i
+[
+L
+α
+i
+(
+π
+θ
+(
+⋅
+|
+x
+)
+)
+−
+2
+K
+i
+⋅
+TV
+(
+π
+θ
+(
+⋅
+|
+x
+)
+,
+α
+i
+(
+⋅
+|
+x
+)
+)
+−
+2
+TV
+(
+π
+θ
+t
+(
+⋅
+|
+x
+)
+,
+α
+i
+(
+⋅
+|
+x
+)
+)
+]
+\mathcal{L}_{i}(\pi_{\theta},\alpha_{i})=\mathbb{E}_{x\in\mathcal{X}_{i}}\left[L_{\alpha_{i}}(\pi_{\theta}(\cdot|x))-2{\color[rgb]{0,0,0}K_{i}}\cdot\text{TV}(\pi_{\theta}(\cdot|x),\alpha_{i}(\cdot|x))-2\text{TV}(\pi_{\theta_{t}}(\cdot|x),\alpha_{i}(\cdot|x))\right]
+with
+L
+α
+i
+(
+π
+θ
+(
+⋅
+|
+x
+)
+)
+=
+1
+σ
+α
+i
+,
+r
+,
+ε
+​
+(
+x
+)
+(
+J
+(
+π
+θ
+(
+⋅
+|
+x
+)
+)
+−
+J
+(
+α
+i
+(
+⋅
+|
+x
+)
+)
+)
+L_{\alpha_{i}}(\pi_{\theta}(\cdot|x))=\frac{1}{\sigma_{\alpha_{i},r,\varepsilon}(x)}(J(\pi_{\theta}(\cdot|x))-J(\alpha_{i}(\cdot|x)))
+. The constants are:
+K
+1
+\displaystyle K_{1}
+=
+1
+−
+G
+−
+1
+G
+2
++
+ε
+G
+−
+1
+G
+2
++
+ε
+\displaystyle=\frac{1-\sqrt{\frac{G-1}{G^{2}}+\varepsilon}}{\sqrt{\frac{G-1}{G^{2}}+\varepsilon}}
+(17)
+K
+2
+\displaystyle K_{2}
+=
+1
+−
+c
+1
+​
+(
+1
+−
+c
+1
+)
++
+ε
+c
+1
+​
+(
+1
+−
+c
+1
+)
++
+ε
+\displaystyle=\frac{1-\sqrt{c_{1}(1-c_{1})+\varepsilon}}{\sqrt{c_{1}(1-c_{1})+\varepsilon}}
+(18)
+K
+3
+\displaystyle K_{3}
+=
+1
+−
+min
+⁡
+(
+c
+2
+​
+(
+1
+−
+c
+2
+)
+,
+c
+3
+​
+(
+1
+−
+c
+3
+)
+)
++
+ε
+min
+⁡
+(
+c
+2
+​
+(
+1
+−
+c
+2
+)
+,
+c
+3
+​
+(
+1
+−
+c
+3
+)
+)
++
+ε
+\displaystyle=\frac{1-\sqrt{\min(c_{2}(1-c_{2}),c_{3}(1-c_{3}))+\varepsilon}}{\sqrt{\min(c_{2}(1-c_{2}),c_{3}(1-c_{3}))+\varepsilon}}
+(19)
+Proof.
+We prove the bound by analyzing each filtered sample set separately, applying off-policy policy improvement bounds tailored to the reference distribution used in each region.
+Step 1: Core inequality for off-policy samples.
+For any
+x
+x
+such that
+I
+⁡
+(
+x
+)
+=
+1
+I(x)=1
+, we establish the fundamental inequality:
+J
+(
+π
+θ
+(
+⋅
+|
+x
+)
+)
+−
+J
+(
+π
+θ
+t
+(
+⋅
+|
+x
+)
+)
+\displaystyle J(\pi_{\theta}(\cdot|x))-J(\pi_{\theta_{t}}(\cdot|x))
+≥
+L
+α
+i
+(
+π
+θ
+(
+⋅
+|
+x
+)
+)
+−
+2
+K
+i
+⋅
+TV
+(
+π
+θ
+(
+⋅
+|
+x
+)
+,
+α
+i
+(
+⋅
+|
+x
+)
+)
+\displaystyle\geq L_{\alpha_{i}}(\pi_{\theta}(\cdot|x))-2K_{i}\cdot\text{TV}(\pi_{\theta}(\cdot|x),\alpha_{i}(\cdot|x))
+(20)
+−
+2
+TV
+(
+π
+θ
+t
+(
+⋅
+|
+x
+)
+,
+α
+i
+(
+⋅
+|
+x
+)
+)
+\displaystyle\quad-2\text{TV}(\pi_{\theta_{t}}(\cdot|x),\alpha_{i}(\cdot|x))
+(21)
+where
+K
+i
+=
+1
+−
+σ
+α
+i
+,
+r
+,
+ε
+​
+(
+x
+)
+σ
+α
+i
+,
+r
+,
+ε
+​
+(
+x
+)
+K_{i}=\frac{1-\sigma_{\alpha_{i},r,\varepsilon}(x)}{\sigma_{\alpha_{i},r,\varepsilon}(x)}
+is a constant that depends on the variance of rewards in each filtered subset.
+First, we expand the advantage objective. By definition:
+L
+α
+i
+(
+π
+θ
+(
+⋅
+|
+x
+)
+)
+\displaystyle L_{\alpha_{i}}(\pi_{\theta}(\cdot|x))
+=
+𝔼
+y
+∼
+α
+i
+(
+⋅
+|
+x
+)
+[
+π
+θ
+​
+(
+y
+|
+x
+)
+α
+i
+​
+(
+y
+|
+x
+)
+A
+α
+i
+(
+x
+,
+y
+)
+]
+\displaystyle=\mathbb{E}_{y\sim\alpha_{i}(\cdot|x)}\left[\frac{\pi_{\theta}(y|x)}{\alpha_{i}(y|x)}A_{\alpha_{i}}(x,y)\right]
+(22)
+=
+𝔼
+y
+∼
+α
+i
+(
+⋅
+|
+x
+)
+[
+π
+θ
+​
+(
+y
+|
+x
+)
+α
+i
+​
+(
+y
+|
+x
+)
+⋅
+r
+⁡
+(
+x
+,
+y
+)
+−
+μ
+α
+i
+,
+r
+​
+(
+x
+)
+σ
+α
+i
+,
+r
+,
+ε
+​
+(
+x
+)
+]
+\displaystyle=\mathbb{E}_{y\sim\alpha_{i}(\cdot|x)}\left[\frac{\pi_{\theta}(y|x)}{\alpha_{i}(y|x)}\cdot\frac{r(x,y)-\mu_{\alpha_{i},r}(x)}{\sigma_{\alpha_{i},r,\varepsilon}(x)}\right]
+(23)
+=
+1
+σ
+α
+i
+,
+r
+,
+ε
+​
+(
+x
+)
+(
+J
+(
+π
+θ
+(
+⋅
+|
+x
+)
+)
+−
+J
+(
+α
+i
+(
+⋅
+|
+x
+)
+)
+)
+\displaystyle=\frac{1}{\sigma_{\alpha_{i},r,\varepsilon}(x)}(J(\pi_{\theta}(\cdot|x))-J(\alpha_{i}(\cdot|x)))
+(24)
+Next, we establish the key algebraic identity relating
+L
+α
+i
+(
+π
+θ
+(
+⋅
+|
+x
+)
+)
+L_{\alpha_{i}}(\pi_{\theta}(\cdot|x))
+to
+J
+(
+π
+θ
+(
+⋅
+|
+x
+)
+)
+−
+J
+(
+π
+θ
+t
+(
+⋅
+|
+x
+)
+)
+J(\pi_{\theta}(\cdot|x))-J(\pi_{\theta_{t}}(\cdot|x))
+:
+L
+α
+i
+(
+π
+θ
+(
+⋅
+|
+x
+)
+)
+−
+(
+J
+(
+π
+θ
+(
+⋅
+|
+x
+)
+)
+−
+J
+(
+π
+θ
+t
+(
+⋅
+|
+x
+)
+)
+)
+\displaystyle L_{\alpha_{i}}(\pi_{\theta}(\cdot|x))-(J(\pi_{\theta}(\cdot|x))-J(\pi_{\theta_{t}}(\cdot|x)))
+(25)
+=
+1
+−
+σ
+α
+i
+,
+r
+,
+ε
+​
+(
+x
+)
+σ
+α
+i
+,
+r
+,
+ε
+​
+(
+x
+)
+(
+J
+(
+π
+θ
+(
+⋅
+|
+x
+)
+)
+−
+J
+(
+α
+i
+(
+⋅
+|
+x
+)
+)
+)
++
+(
+J
+(
+π
+θ
+t
+(
+⋅
+|
+x
+)
+)
+−
+J
+(
+α
+i
+(
+⋅
+|
+x
+)
+)
+)
+\displaystyle=\frac{1-\sigma_{\alpha_{i},r,\varepsilon}(x)}{\sigma_{\alpha_{i},r,\varepsilon}(x)}(J(\pi_{\theta}(\cdot|x))-J(\alpha_{i}(\cdot|x)))+(J(\pi_{\theta_{t}}(\cdot|x))-J(\alpha_{i}(\cdot|x)))
+(26)
+Application of Kantorovich-Rubenstein duality:
+For bounded rewards with
+‖
+r
+‖
+∞
+=
+1
+\|r\|_{\infty}=1
+, the Kantorovich-Rubenstein duality Lemma
+A.1
+provides:
+|
+J
+(
+π
+θ
+(
+⋅
+|
+x
+)
+)
+−
+J
+(
+α
+i
+(
+⋅
+|
+x
+)
+)
+|
+\displaystyle|J(\pi_{\theta}(\cdot|x))-J(\alpha_{i}(\cdot|x))|
+≤
+2
+⋅
+TV
+(
+π
+θ
+(
+⋅
+|
+x
+)
+,
+α
+i
+(
+⋅
+|
+x
+)
+)
+\displaystyle\leq 2\cdot\text{TV}(\pi_{\theta}(\cdot|x),\alpha_{i}(\cdot|x))
+(27)
+|
+J
+(
+π
+θ
+t
+(
+⋅
+|
+x
+)
+)
+−
+J
+(
+α
+i
+(
+⋅
+|
+x
+)
+)
+|
+\displaystyle|J(\pi_{\theta_{t}}(\cdot|x))-J(\alpha_{i}(\cdot|x))|
+≤
+2
+⋅
+TV
+(
+π
+θ
+t
+(
+⋅
+|
+x
+)
+,
+α
+i
+(
+⋅
+|
+x
+)
+)
+\displaystyle\leq 2\cdot\text{TV}(\pi_{\theta_{t}}(\cdot|x),\alpha_{i}(\cdot|x))
+(28)
+Since
+0
+≤
+r
+≤
+1
+0\leq r\leq 1
+, we have
+σ
+α
+i
+,
+r
+,
+ε
+​
+(
+x
+)
+<
+1
+\sigma_{\alpha_{i},r,\varepsilon}(x)<1
+, ensuring
+K
+i
+=
+1
+−
+σ
+α
+i
+,
+r
+,
+ε
+​
+(
+x
+)
+σ
+α
+i
+,
+r
+,
+ε
+​
+(
+x
+)
+≥
+0
+K_{i}=\frac{1-\sigma_{\alpha_{i},r,\varepsilon}(x)}{\sigma_{\alpha_{i},r,\varepsilon}(x)}\geq 0
+. Combining these bounds yields the desired inequality.
+Step 2: Analysis for
+𝒳
+1
+\mathcal{X}_{1}
+(Filtered fresh samples).
+For
+x
+∈
+𝒳
+1
+x\in\mathcal{X}_{1}
+, samples are generated by the delayed rollout policy
+α
+1
+=
+π
+θ
+t
+−
+v
+\alpha_{1}=\pi_{\theta_{t-v}}
+and selected via Gaussian sampling with group-level accuracy
+μ
+α
+1
+,
+r
+​
+(
+x
+)
+∈
+{
+1
+G
+,
+2
+G
+,
+…
+,
+G
+−
+1
+G
+}
+\mu_{\alpha_{1},r}(x)\in\{\frac{1}{G},\frac{2}{G},\ldots,\frac{G-1}{G}\}
+, excluding extremes
+{
+0
+,
+1
+}
+\{0,1\}
+.
+Variance analysis on discrete set:
+For the variance function
+f
+⁡
+(
+p
+)
+=
+p
+⁡
+(
+1
+−
+p
+)
+f(p)=p(1-p)
+over the discrete set
+{
+1
+G
+,
+2
+G
+,
+…
+,
+G
+−
+1
+G
+}
+\{\frac{1}{G},\frac{2}{G},\ldots,\frac{G-1}{G}\}
+, the minimum value occurs at the boundary points
+p
+=
+1
+G
+p=\frac{1}{G}
+or
+p
+=
+G
+−
+1
+G
+p=\frac{G-1}{G}
+, both yielding
+f
+⁡
+(
+p
+)
+=
+G
+−
+1
+G
+2
+f(p)=\frac{G-1}{G^{2}}
+. Therefore:
+σ
+α
+1
+,
+r
+2
+​
+(
+x
+)
+=
+μ
+α
+1
+,
+r
+​
+(
+x
+)
+​
+(
+1
+−
+μ
+α
+1
+,
+r
+​
+(
+x
+)
+)
+≥
+G
+−
+1
+G
+2
+\displaystyle\sigma^{2}_{\alpha_{1},r}(x)=\mu_{\alpha_{1},r}(x)(1-\mu_{\alpha_{1},r}(x))\geq\frac{G-1}{G^{2}}
+(29)
+Thus:
+σ
+α
+1
+,
+r
+,
+ε
+​
+(
+x
+)
+≥
+G
+−
+1
+G
+2
++
+ε
+\sigma_{\alpha_{1},r,\varepsilon}(x)\geq\sqrt{\frac{G-1}{G^{2}}+\varepsilon}
+, yielding:
+K
+1
+=
+1
+−
+G
+−
+1
+G
+2
++
+ε
+G
+−
+1
+G
+2
++
+ε
+K_{1}=\frac{1-\sqrt{\frac{G-1}{G^{2}}+\varepsilon}}{\sqrt{\frac{G-1}{G^{2}}+\varepsilon}}
+Step 3: Analysis for
+𝒳
+2
+\mathcal{X}_{2}
+(Re-evaluated difficult samples).
+For
+x
+∈
+𝒳
+2
+x\in\mathcal{X}_{2}
+, samples are generated by the current policy
+α
+2
+=
+π
+θ
+t
+\alpha_{2}=\pi_{\theta_{t}}
+through re-evaluation of historically difficult samples. The selection criterion ensures that historically difficult samples (
+μ
+α
+B
+,
+r
+​
+(
+x
+)
+≤
+c
+1
+\mu_{\alpha_{B},r}(x)\leq c_{1}
+) now achieve improved performance (
+c
+1
+<
+μ
+π
+θ
+t
+,
+r
+​
+(
+x
+)
+<
+1
+c_{1}<\mu_{\pi_{\theta_{t}},r}(x)<1
+) under the current policy.
+Since these samples are directly generated by
+π
+θ
+t
+\pi_{\theta_{t}}
+, we have
+α
+2
+=
+π
+θ
+t
+\alpha_{2}=\pi_{\theta_{t}}
+, and the constraint
+c
+1
+<
+μ
+π
+θ
+t
+,
+r
+​
+(
+x
+)
+<
+1
+c_{1}<\mu_{\pi_{\theta_{t}},r}(x)<1
+provides a natural lower bound, yielding:
+σ
+α
+2
+,
+r
+2
+​
+(
+x
+)
+=
+μ
+α
+2
+,
+r
+​
+(
+x
+)
+​
+(
+1
+−
+μ
+α
+2
+,
+r
+​
+(
+x
+)
+)
+>
+c
+1
+​
+(
+1
+−
+c
+1
+)
+\displaystyle\sigma^{2}_{\alpha_{2},r}(x)=\mu_{\alpha_{2},r}(x)(1-\mu_{\alpha_{2},r}(x))>c_{1}(1-c_{1})
+(30)
+Therefore:
+σ
+α
+2
+,
+r
+,
+ε
+​
+(
+x
+)
+>
+c
+1
+​
+(
+1
+−
+c
+1
+)
++
+ε
+\sigma_{\alpha_{2},r,\varepsilon}(x)>\sqrt{c_{1}(1-c_{1})+\varepsilon}
+, giving us:
+K
+2
+=
+1
+−
+c
+1
+​
+(
+1
+−
+c
+1
+)
++
+ε
+c
+1
+​
+(
+1
+−
+c
+1
+)
++
+ε
+K_{2}=\frac{1-\sqrt{c_{1}(1-c_{1})+\varepsilon}}{\sqrt{c_{1}(1-c_{1})+\varepsilon}}
+Step 4: Analysis for
+𝒳
+3
+\mathcal{X}_{3}
+(Historical high-quality samples).
+For
+x
+∈
+𝒳
+3
+x\in\mathcal{X}_{3}
+, samples are generated by historical buffer policies
+α
+3
+=
+α
+B
+\alpha_{3}=\alpha_{B}
+with
+μ
+α
+B
+,
+r
+​
+(
+x
+)
+∈
+[
+c
+2
+,
+c
+3
+]
+\mu_{\alpha_{B},r}(x)\in[c_{2},c_{3}]
+.
+Since
+μ
+α
+3
+,
+r
+​
+(
+x
+)
+​
+(
+1
+−
+μ
+α
+3
+,
+r
+​
+(
+x
+)
+)
+\mu_{\alpha_{3},r}(x)(1-\mu_{\alpha_{3},r}(x))
+achieves its minimum at the endpoints of the interval
+[
+c
+2
+,
+c
+3
+]
+[c_{2},c_{3}]
+:
+σ
+α
+3
+,
+r
+2
+​
+(
+x
+)
+≥
+min
+⁡
+(
+c
+2
+​
+(
+1
+−
+c
+2
+)
+,
+c
+3
+​
+(
+1
+−
+c
+3
+)
+)
+\displaystyle\sigma^{2}_{\alpha_{3},r}(x)\geq\min(c_{2}(1-c_{2}),c_{3}(1-c_{3}))
+(31)
+Therefore:
+σ
+α
+3
+,
+r
+,
+ε
+​
+(
+x
+)
+≥
+min
+⁡
+(
+c
+2
+​
+(
+1
+−
+c
+2
+)
+,
+c
+3
+​
+(
+1
+−
+c
+3
+)
+)
++
+ε
+\sigma_{\alpha_{3},r,\varepsilon}(x)\geq\sqrt{\min(c_{2}(1-c_{2}),c_{3}(1-c_{3}))+\varepsilon}
+, yielding:
+K
+3
+=
+1
+−
+min
+⁡
+(
+c
+2
+​
+(
+1
+−
+c
+2
+)
+,
+c
+3
+​
+(
+1
+−
+c
+3
+)
+)
++
+ε
+min
+⁡
+(
+c
+2
+​
+(
+1
+−
+c
+2
+)
+,
+c
+3
+​
+(
+1
+−
+c
+3
+)
+)
++
+ε
+K_{3}=\frac{1-\sqrt{\min(c_{2}(1-c_{2}),c_{3}(1-c_{3}))+\varepsilon}}{\sqrt{\min(c_{2}(1-c_{2}),c_{3}(1-c_{3}))+\varepsilon}}
+Step 5: Combining the results.
+Taking expectations over
+x
+∼
+ρ
+𝒳
+x\sim\rho_{\mathcal{X}}
+and applying the indicator function decomposition:
+𝔼
+x
+∼
+ρ
+𝒳
+[
+I
+(
+x
+)
+(
+J
+(
+π
+θ
+(
+⋅
+|
+x
+)
+)
+−
+J
+(
+π
+θ
+t
+(
+⋅
+|
+x
+)
+)
+)
+]
+\displaystyle\mathbb{E}_{x\sim\rho_{\mathcal{X}}}[I(x)(J(\pi_{\theta}(\cdot|x))-J(\pi_{\theta_{t}}(\cdot|x)))]
+(32)
+=
+∑
+i
+=
+1
+3
+𝔼
+x
+∼
+ρ
+𝒳
+[
+𝟏
+{
+x
+∈
+𝒳
+i
+}
+(
+J
+(
+π
+θ
+(
+⋅
+|
+x
+)
+)
+−
+J
+(
+π
+θ
+t
+(
+⋅
+|
+x
+)
+)
+)
+]
+\displaystyle=\sum_{i=1}^{3}\mathbb{E}_{x\sim\rho_{\mathcal{X}}}[\mathbf{1}_{\{x\in\mathcal{X}_{i}\}}(J(\pi_{\theta}(\cdot|x))-J(\pi_{\theta_{t}}(\cdot|x)))]
+(33)
+≥
+∑
+i
+=
+1
+3
+𝔼
+x
+∈
+𝒳
+i
+[
+L
+α
+i
+(
+π
+θ
+(
+⋅
+|
+x
+)
+)
+−
+2
+K
+i
+⋅
+TV
+(
+π
+θ
+(
+⋅
+|
+x
+)
+,
+α
+i
+(
+⋅
+|
+x
+)
+)
+−
+2
+TV
+(
+π
+θ
+t
+(
+⋅
+|
+x
+)
+,
+α
+i
+(
+⋅
+|
+x
+)
+)
+]
+\displaystyle\geq\sum_{i=1}^{3}\mathbb{E}_{x\in\mathcal{X}_{i}}\left[L_{\alpha_{i}}(\pi_{\theta}(\cdot|x))-2K_{i}\cdot\text{TV}(\pi_{\theta}(\cdot|x),\alpha_{i}(\cdot|x))-2\text{TV}(\pi_{\theta_{t}}(\cdot|x),\alpha_{i}(\cdot|x))\right]
+(34)
+=
+∑
+i
+=
+1
+3
+ℒ
+i
+​
+(
+π
+θ
+,
+α
+i
+)
+\displaystyle=\sum_{i=1}^{3}\mathcal{L}_{i}(\pi_{\theta},\alpha_{i})
+(35)
+All constants
+K
+1
+K_{1}
+,
+K
+2
+K_{2}
+,
+K
+3
+K_{3}
+are finite, since denominators are strictly positive by construction and numerators are bounded by 1 under
+c
+1
+,
+c
+2
+,
+c
+3
+∈
+(
+0
+,
+1
+)
+c_{1},c_{2},c_{3}\in(0,1)
+, completing the proof.
+∎
+Proposition A.3
+.
+For binary reward tasks where
+r
+⁡
+(
+x
+,
+y
+)
+∈
+{
+0
+,
+1
+}
+r(x,y)\in\{0,1\}
+, the contribution to the policy improvement lower bound is maximized when the expected group reward of the sample is
+μ
+=
+0.5
+\mu=0.5
+.
+Proof.
+Recalling Theorem
+3.2
+, the lower bound for policy improvement on a specific data distribution involves the constant
+K
+K
+, which scales the penalty for policy divergence. The tightness of this bound is governed by the standard deviation of the rewards
+σ
+α
+,
+r
+​
+(
+x
+)
+\sigma_{\alpha,r}(x)
+.
+Due to advantage standardization
+A
+^
+∝
+1
+σ
+\hat{A}\propto\frac{1}{\sigma}
+, the effective step size in the advantage estimation and consequently the gradient magnitude is proportional to the inverse of the standard deviation. However, in the context of the lower bound analysis in Theorem
+3.2
+, the stability constant
+K
+K
+is defined as:
+K
+⁡
+(
+μ
+)
+=
+1
+−
+σ
+⁡
+(
+μ
+)
+σ
+⁡
+(
+μ
+)
+\displaystyle K(\mu)=\frac{1-\sigma(\mu)}{\sigma(\mu)}
+(36)
+where a smaller
+K
+K
+indicates a tighter bound and thus a larger guaranteed improvement step.
+For a binary reward function
+r
+∈
+{
+0
+,
+1
+}
+r\in\{0,1\}
+, the reward distribution follows a Bernoulli distribution with parameter
+μ
+⁡
+(
+x
+)
+=
+𝔼
+⁡
+[
+r
+|
+x
+]
+\mu(x)=\mathbb{E}[r|x]
+. The variance is given by:
+σ
+2
+​
+(
+μ
+)
+=
+μ
+⁡
+(
+1
+−
+μ
+)
+\displaystyle\sigma^{2}(\mu)=\mu(1-\mu)
+(37)
+To find the
+μ
+\mu
+that maximizes variance, we take the derivative with respect to
+μ
+\mu
+:
+d
+d
+​
+μ
+​
+(
+μ
+−
+μ
+2
+)
+=
+1
+−
+2
+​
+μ
+\displaystyle\frac{d}{d\mu}(\mu-\mu^{2})=1-2\mu
+(38)
+Setting the derivative to zero:
+1
+−
+2
+​
+μ
+=
+0
+⟹
+μ
+=
+0.5
+\displaystyle 1-2\mu=0\implies\mu=0.5
+(39)
+Since the second derivative
+d
+2
+d
+​
+μ
+2
+=
+−
+2
+<
+0
+\frac{d^{2}}{d\mu^{2}}=-2<0
+, this is a global maximum.
+At
+μ
+=
+0.5
+\mu=0.5
+, the variance is maximized (
+σ
+2
+=
+0.25
+,
+σ
+=
+0.5
+\sigma^{2}=0.25,\sigma=0.5
+). This corresponds to the state of maximum entropy, where the model is most ”uncertain” about the outcome. Training on these samples provides the strongest gradient signal for distinguishing between correct and incorrect reasoning paths, effectively maximizing the information gain per step. Conversely, as
+μ
+→
+0
+\mu\to 0
+or
+μ
+→
+1
+\mu\to 1
+,
+σ
+→
+0
+\sigma\to 0
+, causing the advantage estimates to numerical instability or the gradient signal to vanish. Therefore, selecting samples with
+μ
+=
+0.5
+\mu=0.5
+theoretically offers the most efficient learning signal and the most favorable stability bound.
+∎
+A.3
+Online Filter Mechanism Analysis
+To investigate the impact of fresh sample selection on training stability and convergence, we conduct an ablation study using Qwen3 8B with a 4K response length limit. We compare three distinct filtering strategies for the online component (
+𝒳
+1
+\mathcal{X}_{1}
+):
+Mode 1 (Range Filter):
+It retains samples with group mean rewards
+μ
+∈
+[
+1
+G
+,
+G
+−
+1
+G
+]
+\mu\in[\frac{1}{G},\frac{G-1}{G}]
+. This effectively removes only the zero-advantage samples (all-correct or all-incorrect) that contribute minimal gradients.
+Mode 2 (Gaussian Filter):
+A difficulty-weighted strategy that prioritizes samples with high variance (accuracy near 0.5) using a Gaussian distribution, thereby reducing the proportion of extremely easy or hard samples.
+Mode 3 (Uniform Filter):
+A baseline that randomly selects 60% of the fresh samples regardless of their quality. This ratio was chosen to match the approximate data retention rates of Mode 1 and Mode 2 (approximately 40%–60%) for a fair comparison of data volume.
+Figure 10:
+Ablation on Online Filtering Strategies.
+Comparison of Range Filter, Gaussian Filter, and Uniform Filter on training stability (Grad Norm) and performance (Mean@8). The star symbol indicates the best checkpoint for BAPO.
+The Value of Quality over Randomness.
+As illustrated in Figure
+10
+, the uniform filter mechanism exhibits severe instability, characterized by exploding gradient norms and a complete collapse in performance after 150 steps. Since this strategy blindly includes all-wrong samples (where
+μ
+=
+0
+\mu=0
+), the model is forced to update based on low-quality, zero-advantage signals. Suppressing the token probabilities of incorrect responses without a corresponding positive signal introduces significant noise and uncertainty, ultimately destabilizing the policy. This failure highlights that the
+quality
+of the training batch, particularly the exclusion of zero-advantage noise, is crucial.
+Convergence Speed and Final Performance.
+The Gaussian filter demonstrates faster convergence in the early stages. By focusing heavily on samples with the highest variance (accuracy
+≈
+\approx
+0.5), it provides the steepest learning signal initially. However, its final convergence performance is lower than that of the range filter. We hypothesize that the Gaussian filter restricts sample diversity by aggressively filtering out samples that are slightly easier or harder but still informative. In contrast, the range filter retains a broader spectrum of valid samples. While it learns slightly slower initially, it maintains a rich distribution of training data, preventing premature plateauing and ultimately achieving the highest asymptotic performance.
+A.4
+Training Dynamics and Test Curves
+As illustrated in Figure
+11
+and Figure
+12
+, we present more detailed training dynamics and test curves for the Planning and Vision Geometry tasks. The results indicate that both BAPO and DAPO consistently outperform GRPO in terms of training rewards. Interestingly, BAPO exhibits higher entropy, reflecting better exploration capability compared to other algorithms, which also results in longer response lengths.
+Figure 11:
+Training Dynamics
+during BAPO, GRPO, and DAPO post-training, including training rewards, training entropy, and response lengths.
+Figure 12:
+Test Curves of Group Accuracy Changes
+for mathematics, planning, and geometry tasks among AMC, CD-4 test set, and Geo-3K test set, respectively.
+A.5
+Computation Analysis
+From Table
+2
+, we observe that BAPO’s computational overhead correlates with the number of samples requiring re-evaluation and the actual training batch size. For the Planning task, BAPO (w/o
+𝒳
+2
+\mathcal{X}_{2}
+) achieves the fastest training time by eliminating bad case re-evaluation, but this comes at the cost of reduced performance. For the Mathematics task, the high number of bad cases (as shown by the 0/8 accuracy samples in Figure
+7
+) means that under our re-evaluation frequency setting of
+m
+=
+5
+m=5
+, inference time exceeds that of GRPO. However, this additional time investment proves valuable, yielding better bad-case handling rates and overall test performance, as shown in Figure
+4
+and Table
+. We plan to explore lower re-evaluation frequencies to assess the performance trade-offs.
+BAPO (
+c
+2
+=
+0.375
+,
+c
+3
+=
+0.5
+c_{2}=0.375,c_{3}=0.5
+) runs significantly faster than BAPO (
+c
+2
+=
+0
+,
+c
+3
+=
+0.25
+c_{2}=0,c_{3}=0.25
+) due to the larger historical data volume in the latter configuration. This causes BAPO (
+c
+2
+=
+0
+,
+c
+3
+=
+0.25
+c_{2}=0,c_{3}=0.25
+) to maintain a larger effective batch size than BAPO (
+c
+2
+=
+0.375
+,
+c
+3
+=
+0.5
+c_{2}=0.375,c_{3}=0.5
+). Training logs also confirm this observation: BAPO (
+c
+2
+=
+0
+,
+c
+3
+=
+0.25
+c_{2}=0,c_{3}=0.25
+) consistently utilizes 100% of the configured batch size (equivalent to on-policy methods’ batch size), while BAPO (
+c
+2
+=
+0.375
+,
+c
+3
+=
+0.5
+c_{2}=0.375,c_{3}=0.5
+) operates at approximately 70% capacity.
+Table 2:
+Computational Overhead Analysis.
+“
+Batch size
+”
+(
+a
+,
+b
+)
+(a,b)
+represents the sample batch size
+a
+a
+and train mini batch size
+b
+b
+. “
+Time
+” is measured in total training time (d=days, h=hours, m=minutes) on 8 A100 GPUs.
+Tasks
+Methods
+Batch Size
+Num Epoch
+Time
+Mathematics
+GRPO
+(256, 64)
+3
+1d 16h 58m
+DAPO
+(256, 64)
+3
+2d 15h 30m
+BAPO
+(256, 64)
+3
+1d 22h 37m
+Planning
+GRPO
+(256, 64)
+3
+3h 47m
+DAPO
+(256, 64)
+3
+6h 35m
+BAPO
+(256, 64)
+3
+3h 23m
+BAPO (w/o
+𝒳
+2
+\mathcal{X}_{2}
+)
+(256, 64)
+3
+2h 38m
+BAPO (w/o
+𝒳
+3
+\mathcal{X}_{3}
+)
+(256, 64)
+3
+3h 4m
+BAPO (
+c
+2
+=
+0
+,
+c
+3
+=
+0.25
+c_{2}=0,c_{3}=0.25
+)
+(256, 64)
+3
+3h 54m
+BAPO (
+c
+2
+=
+0.375
+,
+c
+3
+=
+0.5
+c_{2}=0.375,c_{3}=0.5
+)
+(256, 64)
+3
+3h 4m
+Visual Geometry
+GRPO
+(256, 64)
+30
+7h 55m
+DAPO
+(256, 64)
+30
+12h 19m
+BAPO
+(256, 64)
+30
+5h 50m
+BAPO (w/o
+𝒳
+2
+\mathcal{X}_{2}
+)
+(256, 64)
+30
+3h 42m
+BAPO (w/o
+𝒳
+3
+\mathcal{X}_{3}
+)
+(256, 64)
+30
+4h 31m
+Figure 13:
+Tracking changes in the
+Number of Different Accuracy Bins
+on the Countdown (upper) and Geometry3K training sets (lower) for the baseline model, GRPO, and our BAPO method. Special attention is paid to the change in the number of bad samples (red bars) that the base model fails to handle.
+Figure 14:
+Batch Distribution Visualization of
+𝒳
+1
+\mathcal{X}_{1}
+,
+𝒳
+2
+\mathcal{X}_{2}
+,
+𝒳
+3
+\mathcal{X}_{3}
+for Mathematics, Planning, and Visual Geometry Tasks (left to right) during BAPO’s training.
+A.6
+Visualization
+We present additional visualization details, including the sample accuracy tracking for the Countdown and Geometry3K datasets, as shown in Figure
+13
+. Meanwhile, we visualize the source of samples in each training batch and their respective proportions during the training process, as illustrated in Figure
+12
+. It can be observed that approximately 40-60% of the actual training samples for BAPO come from online samples
+𝒳
+1
+\mathcal{X}_{1}
+, while the remaining samples are derived from
+𝒳
+2
+\mathcal{X}_{2}
+or
+𝒳
+3
+\mathcal{X}_{3}
+.
+Figure 15:
+Accuracy Migration Matrix Analysis.
+We track a fixed subset of 1,000 randomly selected prompts from the training set and visualize their movement between accuracy bins (0/8 to 8/8) at Steps 0, 150, 300, and 471 (the last step). The y-axis represents the initial accuracy bin at Step 0, while the x-axis represents the current accuracy bin.
+The scarcity of samples in the lower triangle demonstrates that performance degradation is rare.
+Stability of Historical High-Quality Samples.
+A potential concern regarding the reuse of historical high-quality samples (
+𝒳
+3
+\mathcal{X}_{3}
+in Eq. 5) is the assumption of policy consistency—specifically, whether samples that were high-quality under a past policy remain valid for the current policy. To address this, we visualize the evolution of sample difficulty in Figure
+15
+by tracking the accuracy migration of a training subset.
+The heatmaps in Figure
+15
+reveal a distinct pattern: the mass is concentrated along the diagonal (performance maintenance) and the upper triangle (performance improvement). Crucially, the proportion of samples exhibiting significant performance degradation (migrating to the lower triangle) is negligible. For example, samples that initially achieved
+8
+/
+8
+8/8
+accuracy predominantly remain in the high-accuracy bins throughout the training process, with minimal regression to lower bins. This empirical evidence demonstrates that high-quality reasoning paths learned by RL are robust and resistant to forgetting. Consequently, historical high-quality samples stored in the buffer likely remain high-quality under the current policy, validating the consistency of the
+𝒳
+3
+\mathcal{X}_{3}
+data source.
+A.7
+Hyperparameter Setting
+Hyperparmeters
+The major hyperparameter choices are shown in Table
+3
+.
+Table 3:
+Hyperparameter Configuration
+for BAPO Framework on Mathematics Task. For planning and visual geometry tasks, some parameters differ slightly; specific configuration scripts are provided in our code repository.
+Parameter
+Value
+Parameter
+Value
+Parameter
+Value
+Rollout Configuration
+Top-p
+1
+Top-k
+-1
+Temperature
+1
+Group size (
+G
+G
+)
+8
+Max prompt length
+2048
+Max response length
+8192
+Rollout workers
+8
+Sample batch size
+256
+Seed
+42
+Training Configuration
+Learning rate
+1e-6
+Train mini batch size
+64
+GAE lambda
+1.0
+Training epochs
+3
+KL coefficient (
+β
+\beta
+)
+0.001
+Entropy coefficient
+0.001
+Off-policy Configuration
+c
+1
+c_{1}
+threshold
+1
+/
+8
+1/8
+c
+2
+c_{2}
+range
+[
+1
+/
+8
+,
+4
+/
+8
+]
+[1/8,4/8]
+c
+3
+c_{3}
+range
+[
+2
+/
+8
+,
+5
+/
+8
+]
+[2/8,5/8]
+Buffer size (
+|
+B
+|
+|B|
+)
+256
+Rollout delay (
+v
+v
+)
+5
+Re-evaluation freq (
+m
+m
+)
+5
+Gaussian std (
+σ
+\sigma
+)
+0.2
+Gaussian mean (
+μ
+\mu
+)
+0.5
+Max re-evaluate prompts
+128
+Reward Function
+To evaluate the impact of our method, we adopt a simple reward function as below. All training experiments employ the same reward function.
+r
+⁡
+(
+x
+,
+y
+)
+=
+{
+1
+,
+if
+​
+y
+​
+is correct
+0
+,
+otherwise
+r(x,y)=\begin{cases}1,&\text{if }y\text{ is correct}\\
+0,&\text{otherwise}\end{cases}
+Datasets and Benchmarks
+To evaluate the models above, we use three training datasets and eight benchmarks categorized into mathematical, planning and vision geometry reasoning benchmarks as described in Table
+4
+.
+Table 4:
+Datasets and Benchmarks
+used in this study.
+Dataset
+#Train
+#Test
+Task Type
+Domain
+License
+Source
+Training Datasets
+DeepScaleR-1.5B-Preview
+40,000
+–
+Math reasoning
+Mathematics
+Apache 2.0
+Link
+Countdown-Tasks-3to4
+49,000
+–
+Logic reasoning
+Planning
+Apache 2.0
+Link
+Geometry3k
+2,100
+–
+Visual reasoning
+Visual Geometry
+Apache 2.0
+Link
+Test Benchmarks
+AIME24
+–
+30
+Math competition
+Mathematics
+MIT
+Link
+AMC
+–
+83
+Math competition
+Mathematics
+Apache 2.0
+Link
+MATH500
+–
+500
+Math reasoning
+Mathematics
+-
+Link
+Minerva
+–
+272
+Math reasoning
+Mathematics
+Apache 2.0
+Link
+Olympiad
+–
+674
+Math competition
+Mathematics
+Apache 2.0
+Link
+Countdown-Tasks-3to4
+–
+200
+∗
+Logic reasoning
+Planning
+Apache 2.0
+Link
+Countdown-Tasks-4
+–
+200
+∗
+Logic reasoning
+Planning
+Apache 2.0
+Link
+Geometry3k
+–
+901
+Visual reasoning
+Visual Geometry
+Apache 2.0
+Link
+*We only use a random subset of this benchmark for faster ablation studies.
+A.8
+Algorithm
+Algorithm
+1
+presents the proposed BAPO, which can be seamlessly integrated with any GRPO-like RLVR algorithm.
+Algorithm 1
+Batch Adaptation Policy Optimization (BAPO)
+0:
+Policy
+π
+θ
+0
+\pi_{\theta_{0}}
+, buffer
+ℬ
+=
+∅
+\mathcal{B}=\emptyset
+, thresholds
+c
+1
+,
+c
+2
+,
+c
+3
+c_{1},c_{2},c_{3}
+, delay steps
+v
+v
+, re-evaluate frequency
+m
+m
+1:
+for
+t
+=
+1
+t=1
+to
+T
+T
+do
+2:
+// Off-policy Rollout Phase
+3:
+if
+t
+mod
+v
+=
+0
+t\bmod v=0
+then
+4:
+Synchronize rollout policy’s parameter with trainer:
+α
+=
+π
+θ
+t
+\alpha=\pi_{\theta_{t}}
+5:
+end
+if
+6:
+Using rollout policy
+α
+\alpha
+to generate
+G
+G
+responses
+{
+y
+j
+}
+j
+=
+1
+G
+\{y_{j}\}_{j=1}^{G}
+for each question
+x
+x
+7:
+Compute log probabilities
+α
+⁡
+(
+y
+|
+x
+)
+\alpha(y|x)
+and rewards
+r
+r
+for constructing the online batch
+𝒳
+on
+\mathcal{X}_{\text{on}}
+8:
+Store samples into buffer
+ℬ
+bad
+←
+{
+(
+x
+,
+y
+,
+α
+⁡
+(
+y
+|
+x
+)
+,
+r
+)
+∈
+𝒳
+on
+:
+μ
+α
+,
+r
+​
+(
+x
+)
+≤
+c
+1
+}
+\mathcal{B}_{\text{bad}}\leftarrow\{(x,y,\alpha(y|x),r)\in\mathcal{X}_{\text{on}}:\mu_{\alpha,r}(x)\leq c_{1}\}
+9:
+Store samples into buffer
+ℬ
+high
+←
+{
+(
+x
+,
+y
+,
+α
+⁡
+(
+y
+|
+x
+)
+,
+r
+)
+∈
+𝒳
+on
+:
+c
+2
+≤
+μ
+α
+,
+r
+​
+(
+x
+)
+≤
+c
+3
+}
+\mathcal{B}_{\text{high}}\leftarrow\{(x,y,\alpha(y|x),r)\in\mathcal{X_{\text{on}}}:c_{2}\leq\mu_{\alpha,r}(x)\leq c_{3}\}
+10:
+// Off-policy Training Phase
+11:
+𝒳
+1
+←
+\mathcal{X}_{1}\leftarrow
+online filter
+on
+𝒳
+on
+\mathcal{X}_{\text{on}}
+with
+μ
+α
+,
+r
+​
+(
+x
+)
+∈
+{
+1
+G
+,
+…
+,
+G
+−
+1
+G
+}
+\mu_{\alpha,r}(x)\in\{\frac{1}{G},\ldots,\frac{G-1}{G}\}
+(Filtered Fresh Samples)
+12:
+𝒳
+2
+←
+∅
+\mathcal{X}_{2}\leftarrow\emptyset
+13:
+if
+t
+mod
+m
+=
+0
+t\bmod m=0
+then
+14:
+Re-evaluate
+ℬ
+bad
+\mathcal{B}_{\text{bad}}
+with
+π
+θ
+t
+\pi_{\theta_{t}}
+to get
+𝒳
+2
+\mathcal{X}_{2}
+using Equation
+6
+(Re-evaluated Difficult Samples)
+15:
+end
+if
+16:
+𝒳
+3
+←
+\mathcal{X}_{3}\leftarrow
+Sample from
+{
+(
+x
+,
+y
+)
+∈
+ℬ
+high
+:
+μ
+α
+ℬ
+,
+r
+​
+(
+x
+)
+∈
+[
+c
+2
+,
+c
+3
+]
+}
+\{(x,y)\in\mathcal{B}_{\text{high}}:\mu_{\alpha_{\mathcal{B}},r}(x)\in[c_{2},c_{3}]\}
+(Historical High-quality Samples)
+17:
+Final batch
+←
+𝒳
+1
+∪
+𝒳
+2
+∪
+𝒳
+3
+\leftarrow\mathcal{X}_{1}\cup\mathcal{X}_{2}\cup\mathcal{X}_{3}
+18:
+Compute advantages and update critic/actor with
+final_batch
+19:
+Add
+𝒟
+t
+\mathcal{D}_{t}
+to buffer
+ℬ
+\mathcal{B}
+20:
+end
+for
+A.9
+Generalization Analysis
+To demonstrate the algorithmic generalizability of our framework, we extended the Batch Adaptation paradigm to Proximal Policy Optimization (PPO), denoted as
+BA-PPO
+. In this experiment, both the Actor and Critic networks were initialized with the
+Qwen3-4B
+backbone and trained on the
+DeepScaleR
+dataset with a maximum response length of 4K tokens. We maintained consistency with the foundational BAPO configuration by applying standard zero-advantage filtering for
+𝒳
+1
+\mathcal{X}_{1}
+(removing only all-correct and all-wrong groups), utilizing the initial BAPO values for thresholds
+c
+1
+,
+c
+2
+,
+c
+3
+c_{1},c_{2},c_{3}
+, and setting the buffer size to 64.
+Figure 16:
+Generalization to Actor-Critic Algorithms (BA-PPO).
+Performance comparison between standard PPO (orange triangles) and BA-PPO (purple circles) on the AIME 2024 benchmark using Qwen3-4B. The star (
+⋆
+\star
+) marks the peak performance of BA-PPO (
+0.325
+0.325
+).
+As illustrated in Figure
+16
+, BA-PPO achieved a remarkable performance gain of
++5.5
+on the
+AIME 2024 benchmark
+compared to the standard PPO baseline. This result further confirms that the core principle of dynamic batch construction is effective not only for GRPO but also functions as a robust, algorithm-agnostic enhancement for actor-critic methods.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

@@ -1,0 +1,199 @@
+PAGES 23 META {'/Author': 'Luca Moschella; Laura Manduchi; Ozan Sener', '/Creator': 'arXiv GenPDF (tex2pdf:57610bf)', '/DOI': 'https://doi.org/10.48550/arXiv.2602.10238', '/License': 'http://arxiv.org/licenses/nonexclusive-distrib/1.0/', '/PTEX.Fullbanner': 'This is pdfTeX, Version 3.141592653-2.6-1.40.28 (TeX Live 2025) kpathsea version 6.4.1', '/Producer': 'pikepdf 8.15.1', '/Title': 'Learning to Evict from Key-Value Cache', '/Trapped': '/False', '/arXivID': 'https://arxiv.org/abs/2602.10238v1'}
+FIRSTPAGE Learning to Evict from Key-Value Cache
+Luca Moschella,Laura Manduchi,Ozan Sener
+Apple
+The growing size of Large Language Models (LLMs) makes efficient inference challenging, primarily due to the memory
+demands of the autoregressive Key-Value (KV) cache. Existing eviction or compression methods reduce cost but rely on
+heuristics, such as recency or past attention scores, which serve only as indirect proxies for a token’s future utility and
+introduce computational overhead. We reframe KV cache eviction as a reinforcement learning (RL) problem: learning to
+rank tokens by their predicted usefulness for future decoding. To this end, we introduce KV Policy (KVP), a framework of
+lightweight per-head RL agents trained on pre-computed generation traces using only key and value vectors. Each agent
+learns a specialized eviction policy guided by future utility, which evaluates the quality of the ranking across all cache
+budgets, requiring no modifications to the underlying LLM or additional inference. Evaluated across two different model
+families on the long-context benchmark RULER and the multi-turn dialogue benchmark OASST2-4k, KVP significantly
+outperforms baselines. Furthermore, zero-shot tests on standard downstream tasks (e.g., LongBench, BOOLQ, ARC)
+indicate that KVP generalizes well beyond its training distribution and to longer context lengths. These results demonstrate
+that learning to predict future token utility is a powerful and scalable paradigm for adaptive KV cache management.
+Correspondence:Luca Moschella: luca_moschella@apple.com
+Date:February 12, 2026
+1 Introduction
+Large Language Models (LLMs) based on the Transformer architecture (Vaswani et al., 2017) have revo-
+lutionized natural language processing, demonstrating remarkable capabilities across a wide range of tasks
+(Brown et al., 2020; Önden and Alnour, 2023; Touvron et al., 2023). However, their practical deployment,
+especially for applications involving long sequences or interactive sessions, is often burdened by substantial
+computational requirements during inference. A critical bottleneck arises from the Key-Value (KV) cache, a
+mechanism inherent to autoregressive generation in Transformers (Sheng et al., 2023). This cache stores the
+keys and values of previous tokens, avoiding redundant computations but growing linearly with the input and
+generated sequence length. For long contexts, the KV cache can consume tens or even hundreds of gigabytes
+of memory, rapidly exceeding the capacity of modern hardware accelerators and necessitating strategies for
+efficient management.
+To address this memory challenge, several KV cache management techniques have been proposed. These
+range from simple heuristics like keeping only the most recent tokens (sliding window), to more sophisticated
+methods that leverage insights into attention patterns. Approaches like H2O, SnapKV, and TOVA Zhang
+et al. (2023); Li et al. (2024); Oren et al. (2024) use signals such as past attention scores or attention sinks to
+identify and retain important tokens. Others employ quantization to reduce the memory footprint (Sharma
+et al., 2025; Dettmers et al., 2022; Xiao et al., 2023) or use low-rank approximations to represent the cache
+state more compactly (Singhania et al., 2024; Ribar et al., 2024).
+Whilethesehand-craftedpolicieshaveadvancedthestateoftheart, theyarefundamentallybuiltonheuristics
+that serve as indirect proxies for a token’s future importance. They assume that what was important before
+will remain important. This assumption might not always hold, as the informational needs of generation are
+dynamic and content-dependent. A token’s true value is determined by its utility to future decoding steps,
+a quantity these methods do not directly optimize for. Consequently, they are prone to suboptimal eviction
+decisions, leading to an irrecoverable loss of critical information and degraded generation quality. Even post-
+1
+arXiv:2602.10238v1  [cs.CL]  10 Feb 2026
+PAGE 7 14B(Abdin et al., 2025) in the Appendix, Figure 7. We train and evaluate our KVP agents using two
+distinct long-context benchmarks:RULER-4k(Hsieh et al., 2024), a synthetic dataset designed to probe
+long-context reasoning with sequences of approximately 4500 tokens; andOASST2-4k, a curated subset of
+the OpenAssistant Conversations Dataset (Köpf et al., 2023) featuring multi-turn dialogues of similar length.
+To assess generalization, we further perform zero-shot evaluation on four standard downstream benchmarks
+from the EleutherAI Language Model Evaluation Harness (Gao et al., 2024):BoolQ(Clark et al., 2019),
+a reading comprehension task framed as yes/no question answering;ARC-Challenge(Clark et al., 2018),
+a collection of science exam questions requiring multi-step reasoning;MMLU(Hendrycks et al., 2021), a
+benchmark testing expert-level knowledge across a wide range of domains;HellaSwag(Zellers et al., 2019),
+a commonsense sentence completion task; andGovReport(Bai et al., 2023), a summarization task from the
+LongBench benchmark for long context understanding. Importantly, KVP is not trained or fine-tuned on
+these tasks. We defer further implementation details to Section A.2.
+Baselines.We benchmark KVP against both attention-based and attention-free KV cache management
+techniques. The first category includes state-of-the-art methods likeTOVA(Oren et al., 2024) andSnapKV
+(Li et al., 2024). These methods leverage attention scores to identify important tokens, which introduces
+computational overhead by tying the eviction strategy to the attention calculation step. The second, more
+efficient category of attention-free baselines, to which our own KVP agents belong, operates independently of
+the attention mechanism. This group includes aRandomeviction baseline, the recency-basedStreamingLLM
+(Xiao et al., 2024), and several approaches that prune tokens based on their key embeddings. These include
+methods based on statistical patterns (LagKV(Liang et al., 2025)), vector similarity (KeyDiff(Park et al.,
+2025)), and L2 norm (K-Norm(Devoto et al., 2024)). To ensure a fair comparison, we adapt all baselines to
+our ranking-based framework by converting their binary keep/evict decisions into a full token permutation,
+enabling consistent evaluation.
+Budgeting and Compression Schedule.For all online evaluations, we follow a consistent compression protocol.
+First, the entire context, including the final user message or question that prompts the generation, is pro-
+cessed by the LLM to populate the initial KV cache (the “prefill” stage). Second, the specified compression
+method is applied to this pre-populated cache to reduce its size to the target budget. Finally, the model
+generates the response autoregressively using the compressed cache. This setup tests the ability to compress
+a large context before generation begins. To isolate the performance of the core ranking strategy, we apply
+a uniform compression budget across all heads and layers for all methods. This ensures a fair comparison fo-
+cused purely on the quality of the eviction strategy itself, rather than on budget allocation heuristics. While
+head-specific or layer-specific budgeting is an orthogonal and promising direction for further performance
+improvements, our approach provides a clear and interpretable evaluation of the underlying policies.
+Inference Efficiency.Our KVP agents make their ranking decisions using only the Key and Value vectors,
+and their position in the context. This makes KVP highly efficient, as it avoids re-computing attention
+scores. In contrast, attention-based baselines are evaluated using the attention scores generated during the
+prefill stage, giving them access to information about how the final user message, for example, attends to the
+rest of the context. Our method is therefore benchmarked against baselines that have access to more direct,
+query-specific information at the time of compression. We highlight in all the figures the attention-based
+baselines with dashed lines. Please refer to Section A.3 for FLOPs estimation and wall-clock benchmarks.
+Absolute vs. Relative Cache Size.A final methodological note concerns our use of cache size. We report
+performance as a function of absolute KV cache size (i.e., the number of tokens retained) rather than a
+relative compression ratio. This decision is motivated by practical application: practitioners operate under
+fixed memory constraints, making an absolute token budget a more direct and interpretable measure of
+resource cost. In contrast, a compression ratio’s impact on memory is dependent on the initial context
+length, making it a less stable metric for cross-scenario comparison.
+7
+PAGE 15 A Appendix
+A.1 Missing Proof of Proposition 1
+Proof.Since|S ⋆
+b+1|=b+ 1and|S ⋆
+b |=bwithS ⋆
+b ⊂S ⋆
+b+1, the set differenceS ⋆
+b+1 \S ⋆
+b is nonempty. By
+uniqueness ofS ⋆
+b+1, this difference must contain exactly one element; otherwise, there would exist two distinct
+(b+ 1)-subsets strictly betweenS ⋆
+b andS ⋆
+b+1, contradicting uniqueness. Hence we can define a sequence of
+distinct elements
+xσ1 ∈S ⋆
+1 , x σb+1 ∈S ⋆
+b+1 \S ⋆
+b (b= 1, . . . , n−1).
+By construction, for eachbwe have
+S⋆
+b ={x σ1 , . . . , xσb }.
+Now define a total order (ranking)πon[n]by setting
+π(xσb) =b(b= 1, . . . , n).
+This is a bijectionπ: [n]→[n], and its top-bprefix is precisely{x σ1 , . . . , xσb }=S ⋆
+b. Therefore,
+S⋆
+b ={i∈[n] :π(i)≤b}for allb,
+as claimed.
+Equivalently, givenπwe may define a scoring function consistent with the order, for instance
+s(xσk) =n−k(k= 1, . . . , n),
+which is strictly decreasing ink. Then the top-belements according tosare exactly{xσ1 , . . . , xσb }=S ⋆
+b.
+A.2 Implementation details
+Our KVP agents are lightweight 2-layer MLPs with 256 hidden units, trained using the RLOO algorithm
+(Ahmadian et al., 2024) as described in Section 3. Following the Grouped-Query Attention (GQA) architec-
+ture ofQwen2.5-7B-Chat, we train a separate agent for each of the 4 KV heads across all 28 layers, yielding
+112 specialized agents. Each agent contains approximately 600K parameters.
+The agents are optimized to maximize the reward signal in Equation (3.4), which encourages retention of
+tokens with high future utility across all cache budgets. During inference, the learned policy ranks all tokens
+except the first 4 and last 16, which are always retained. Token eviction is emulated via custom attention
+masks in FlexAttention, preventing the model from attending to pruned tokens during generation.
+For training stability, we apply gradient clipping (maximum norm of 5) and normalize advantages by their
+mean and standard deviation, without entropy regularization. We use AdamW with a learning rate of5×10−5,
+following a cosine schedule with 100-step linear warmup (start factor 0.01) that decays to1×10−6. Each
+agent trains for 4,000 steps on pre-computed activations.
+A.3 Training Efficiency and Inference Overhead
+The training process for our KVP agents is designed to be highly efficient, imposing minimal computational
+and storage overhead. Agents are trained on a small dataset of pre-computed activation traces; for our
+experiments, we used approximately 6,000 samples from theRulerdataset and 4,500 from theOASST2
+dataset. Data generation represents the primary one-time cost of this pipeline, requiring a single forward pass
+over these training samples to collect and store on disk the Query, Key, and Value embeddings for the entire
+sequence for each KV cache. This step incurs a computational cost approximately equivalent to standard
+inference on the dataset. Each per-head agent is a small MLP with approximately 650K parameters, resulting
+in a checkpoint size of only 2.6MB.
+The agent training completes in less than 30 minutes on a single node of 8 NVIDIA H100 GPUs. We note
+that this training time is achieved without extensive hyperparameter tuning or code optimizations for speed,
+15
+
+
+PAGE16 suggesting that further significant speed-ups are possible. These factors highlight the low computational
+footprint of our offline training framework.
+FLOPs Estimation. To assess computational cost independent of hardware optimization (e.g., kernel
+fusion), we quantify the FLOPs overhead per token:
+•Autoregressive Generation (Throughput). Zero Overhead. In our setting, the KV cache is compressed
+only once after prefill. This means KVP introduces no additional FLOPs during the decoding phase.
+Consequently, its throughput is identical to any other eviction method at the same cache budget. KVP’s
+contribution is achieving superior accuracy for that given level of throughput.
+•Prefill Latency. Cost:14.00GFLOPs→14.15GFLOPs. The overhead is strictly confined to the prefill
+stage. Based on the standard approximation of2×Nparams FLOPs per token:
+–Base model (Qwen-7B):14.00GFLOPs/token.
+–KVP Overhead: Our 112 agents (0.65M params each) add72.8M parameters, contributing an
+additional0.15GFLOPs/token.
+–Total: The prefill cost becomes14.15GFLOPs/token, a marginal increase of1%.
+Wall-clock Benchmarks. In Figure 6, we perform empirical measurements validating these theoretical
+estimates. The results confirm that KVP compression adds negligible latency, orders of magnitude lower
+than the LLM prefill time. Furthermore, as noted in the figure, the independence of KVP operations per
+cache allows for easy parallelization, ensuring the practical overhead remains minimal.
+0 2000 4000 6000 8000 10000
+Context Length (tokens)
+10 1
+100
+101
+102
+Time (ms)
+KV Compression Method Timing
+KVP
+SnapKV
+K-Norm
+StreamingLLM
+Random
+KeyDiff
+TOVA
+LagKV
+LLM Prefill
+LLM Decoding
+Figure 6Wall-clock latency of eviction decisions (logarithmic y-scale). We isolate the computational overhead of each
+strategy by measuring only the time required to compute importance scores and determine evictions for a single KV
+head. We exclude the compressed LLM inference time because, once eviction indices are determined, LLM throughput
+depends only on the cache size, not the selection policy. We compare compression times against Qwen2.5-7B-Instruct
+baselines: LLM Prefill (time to process context) and LLM Decoding (time to predict a single subsequent token). KVP
+adds negligible overhead: at 10k context length, a single-layer compression takes 0.71ms vs. 404ms for the full-model
+prefill (a 570×difference). Since KVP operates independently on each KV cache and relies only on keys/values (not
+the current query), it allows for easy parallelization and flexible scheduling (e.g., post-prefill) to further amortize cost.
+The attention scores re-computation cost for TOVA and SnapKV is ignored in this Figure. Benchmarks report the
+faster of eager or compiled execution, averaged over 30 runs using bfloat16/TF32 on an NVIDIA B200 GPU.
+16
+

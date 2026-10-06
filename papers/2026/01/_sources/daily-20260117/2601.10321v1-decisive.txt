@@ -1,0 +1,241 @@
+Decisive admission bounded main-body 240-line slice; not full evidence. Source https://arxiv.org/html/2601.10321v1
+1 Introduction
+The application of machine learning to Human Resources (HR) data has led to significant advances in tasks such as career path prediction Decorte et al. (2023) or skill extraction Zhang et al. (2022). Central to this domain is the challenge of matching talent to projects, a core component of modern recommender systems. On large-scale platforms, this task requires an automated process to navigate thousands of potential candidates efficiently. This challenge is especially acute in freelancing marketplaces,
+like Malt, Europe’s leading freelancing marketplace with over 850.000 freelancers among a broad range of industries (from technical roles like back-end development to creative fields such as design),
+where precision is critical: freelancers are often expected to contribute effectively upon starting a project.
+A common approach for such systems is a two-stage pipeline consisting of a retrieval and a ranking phase. Our work focuses on the latter, where creating an effective and scalable model presents several challenges. First, freelancer profiles and project briefs are often long, structured documents written in multiple languages. While lexical matching methods fall short in capturing deep semantic meaning, many transformer-based models that excel at this are limited to short input lengths or require significant computational resources not suitable for real-time inference. Second, the performance of supervised learning-to-rank models is highly dependent on the quality of training data. Real-world recommender systems often produce sparse, biased interaction data Schnabel et al. (2016). Selection and exposure biases stem from users engaging only with visible items, making missing data ambiguous Steck (2010). Presentation and popularity biases inflate the most popular and top-ranked items, limiting diversity Ge et al. (2010). In addition, interaction histories can reinforce stereotypes and underrepresent certain user groups Wang et al. (2023).
+Beyond the challenges of training on biased data, neural ranking models present another critical limitation in HR contexts: their outputs frequently lack the global score calibration that is essential for interpretability and consistent, query-invariant comparisons. A promising strategy to instill these desired properties while maintaining efficiency is knowledge distillation Hinton et al. (2014). This paradigm, which transfers the nuanced judgments of a large ”teacher” model to a compact ”student” model, has emerged as a powerful approach for complex reranking tasks and provides a pathway to bridge this gap.
+To address all of these challenges, we propose a novel framework that distills the semantic reasoning of a generative Large Language Model (LLM) into a lightweight, efficient, and calibrated ranking model. We use the LLM as a ”teacher” to generate fine-grained and semantically grounded relevance scores, creating a robust supervisory signal that overcomes the limitations of biased historical data. Our contributions are twofold:
+•
+A Distillation Framework for a Calibrated and Interpretable Semantic Score: We introduce a distillation framework to produce a relevance score that is both interpretable and semantically calibrated. First, to overcome the limitations of biased and sparse historical interaction data, our method uses a generative LLM to provide a semantically calibrated relevancy score. Second, we combine a distillation loss sensitive to both ranking and score magnitude with direct score supervision to improve calibration.
+Overall, This ensures that the final score produced by our model has a consistent meaning across different freelancer-project pairs, making it suitable for ranking and for use in downstream business applications.
+•
+A Lightweight, Long-Context Reranking Architecture: We propose an efficient student model that processes long-form profiles and project briefs by decomposing them into structured utterances. Its cross-attention comparison block, inspired by late interaction mechanisms, effectively captures fine-grained semantic alignment while remaining computationally inexpensive for real-time inference.
+The remainder of this paper is organized as follows. Section 2 refines our problem statement and reviews related work on HR recommendation systems and semantic ranking algorithms. Section 3 presents in depth our dataset creation and ranking algorithm alongside the training objective. Section 4 describes the experimental setup and results. We conclude in Section 5 with future directions.
+2 Related Work
+In HR applications, ranking or re-ranking is used to refine candidate-job matches after an initial retrieval stage, aiming to surface the most relevant candidates efficiently. One approach to candidate-job ranking uses single-stream comparison models, from Recurrent Neural Networks (RNNs) with attention Qin et al. (2018) to Graph Convolutional Networks (GCNs) that capture structured relationships Yang et al. (2022).
+Driven by real-time constraints in deployment, bipartite architectures (bi-encoders) became popular. These encode candidates and jobs separately before applying a similarity function. Early implementations relied on convolutional encoders and contrastive training Zhu et al. (2018); Maheshwary and Misra (2018), while more recent work adopted transformer-based models such as ConsultantBERT Lavi et al. (2021), extending Sentence-BERT Reimers and Gurevych (2019) to the HR domain. Contrastive performance has been further improved via data augmentation—either through heuristics Yu et al. (2024c) or LLM-generated synthetic resumes Yu et al. (2025), and federated learning setups Zhang et al. (2023).
+To go beyond independent encoding, graph-based methods capture richer structural relationships. Some use external knowledge graphs to learn job and candidate embeddings Ramanath et al. (2018), while others incorporate relational structure into transformers branches using losses Zhao et al. (2021) or relational GCNs trained jointly with encoders Bian et al. (2020).
+Recent attention-based comparison models reintroduce interaction layers, similar to earlier single-stream designs, to capture fine-grained alignments between job requirements and candidate profiles, improving ranking accuracy Shao et al. (2023).
+Large, Structured, Multilingual Documents.
+HR platforms operating across countries must match candidates to jobs using long, structured, and multilingual documents Zhu et al. (2018); Lavi et al. (2021); Yu et al. (2024c). To capture structural information, such as education, skills, and experience, some approaches adopt hierarchical or field-aware encoders that reflect document layout Qin et al. (2018); Zhu et al. (2018), while others use segment-level encoding and aggregation to align subfields across candidate and job profiles Yu et al. (2024c); Jouanneau et al. (2024). Language alignment in bi-encoders has been tackled through distillation techniques Reimers and Gurevych (2020), as in multilingual Sentence-BERT Reimers and Gurevych (2019). Arctic-Embed-v2 Yu et al. (2024b) extends this paradigm to both long-context and compact variants. To incorporate interaction modeling without retraining, late interaction mechanisms such as ColBERT Khattab and Zaharia (2020) have been introduced. Alternatively, single-stream rerankers such as Qwen3 Zhang et al. (2025) also support long multilingual inputs.
+Generative Large Language Models for Reranking.
+Generative large language models (LLMs) have recently emerged as competitive zero-shot rerankers, for large multilingual documents, by leveraging their capacity to reason over document-query pairs in natural language. Unlike dense retrieval or cross-encoders trained on annotated datasets, generative LLMs can predict ranking permutations directly Ma et al. (2023), or assign relevance scores to each candidate Zhuang et al. (2024) without needing further training. Several techniques have been proposed to improve reranking performance: prompt design algorithms Jin et al. (2025) and output manipulation strategies Gao et al. (2025). In-context reranking (ICR) methods use the LLM’s attention dynamics to infer preferences across candidates Chen et al. (2025). Others explore using internal representations such as first-token embeddings to train lightweight rerankers on top of frozen LLMs Reddy et al. (2024). These approaches offer a flexible, instruction-following alternative to traditional supervised rankers, especially in zero-shot setups where labeled training data is unavailable or biased. However, their high latency and computational cost are often not compatible with live inference.
+Distillation from Generative LLMs.
+To address the impracticality of using directly generative LLMs in production, they can serve as teachers in a distillation setup—generating either synthetic training data (e.g., queries or candidate items Yu et al. (2025)) or soft supervision signals (e.g., scores or ranking permutations). This information is then used to train smaller, efficient student models. For example, Sun et al. (2023) demonstrate that listwise permutations produced by LLMs can be treated as ground-truth orderings for training student models using RankNet Burges et al. (2005), outperforming traditional supervised baselines. Other works, such as Shang et al. (2025), explore score-level distillation by fine-tuning on margin-aware objectives tailored for LLM-generated supervision. Their approach builds on margin-MSE Hofstätter et al. (2020), adapting it for better transfer from LLM score distributions. Although these methods might bring biases from their own training dataWang et al. (2024), for example, minor group favoritism or skewed token priors, they highlight the promise of generative LLMs as a rich source of ranking signal to tackle many of the biases present in recommender training data.
+Ranking Calibration.
+In ranking systems, score calibration is critical when downstream tasks rely not just on item orderings but also on the absolute values of predicted scores—for example, in multi-stage retrieval, risk-aware decisions, or interpretability of results. However, most ranking losses do not enforce calibration, often producing scores that lack a consistent scale Yan et al. (2022). Solutions include modeling uncertainty via dropout or ensembles Penha and Hauff (2021), leveraging LLM-generated explanations as auxiliary signals Yu et al. (2024a), or applying post-hoc corrections like binning. Some approaches directly integrate calibration into the loss function, including recent work on distillation-aware objectives such as CLID Gui et al. (2024). Together, these methods help ensure that ranking models produce scores that are meaningful, comparable across queries, and robust for real-world applications.
+3 Approach
+Let \mathbb{P} and \mathbb{F} denote the sets of all projects and freelancers, respectively. Each project p\in\mathbb{P} is represented by a brief document x_{p}, and each freelancer f\in\mathbb{F} by a profile x_{f}. These documents are composed of structured textual sections denoted s_{d,l}, where d\in\{\mathbb{P},\mathbb{F}\} and l\in L_{d} refers to a document-specific section type. Thus, each document is defined as:
+x_{d}=\{s_{d,l}\mid l\in L_{d}\}.
+Our goal is to obtain a model M_{\theta} with parameters \theta that estimates a continuous skill fit relevance score s_{f,p}\in[0,1] for any pair (f,p):
+M_{\theta}(x_{f},x_{p})=s_{f,p}.
+This score is intended to reflect the skill-fit between a freelancer and a project, enabling skills based ranking such that:
+\forall f,f^{\prime}\in\mathbb{F},\quad s_{f,p}>s_{f^{\prime},p}\Rightarrow f\succ_{p}f^{\prime}.
+Beyond ranking accuracy, we aim for the scores to be interpretable and comparable across different project–freelancer pairs, i.e., semantically calibrated. This enables to use them as meaningful features for downstream applications such as explanation, policy decisions, or business-level ranking.
+Let \mathcal{R} be a fixed reference set of matching interpretations (e.g., “unqualified,” “partial match,” “strong match”, …), and let \phi:[0,1]\rightarrow\mathcal{R} be a mapping from scores to interpretation. In this setting, semantic calibration requires:
+\forall_{\begin{subarray}{c}f,f^{\prime}\in\mathbb{F}\\
+p,p^{\prime}\in\mathbb{P}\end{subarray}}\,\left(s_{f,p}=s_{f^{\prime},p^{\prime}}\right)\Rightarrow\left(\phi(s_{f,p})=\phi(s_{f^{\prime},p^{\prime}})\right).
+(1)
+This ensures that identical scores carry consistent meaning across contexts, facilitating explanations and cross-project comparability.
+Figure 1: Overview of the semantic score distillation pipeline: a generative LLM assigns semantic labels that are mapped to reference scores to form a calibrated teacher model M_{\text{teacher}}, whose outputs are used to train a lightweight student model M_{\text{student}}.
+To obtain such calibrated scores, we assume the existence of a model M_{\theta^{\prime}} that assigns a relevance category r\in\mathcal{R} to any freelancer–project pair (x_{p},x_{f}):
+M_{\theta^{\prime}}(x_{p},x_{f})=r.
+Conceptually, an approximate inverse mapping \tilde{\phi}^{-1}:\mathcal{R}\rightarrow[0,1], can be constructed to associate each semantic category with a reference score:
+\tilde{\phi}^{-1}(r)=\mathbb{E}_{s\sim p(s\mid\phi(s)=r)}[s].
+In results, a teacher model M_{\text{teacher}} can be defined as :
+M_{\text{teacher}}(x_{p},x_{f})=\tilde{\phi}^{-1}(M_{\theta^{\prime}}(x_{p},x_{f})),
+which outputs semantically calibrated scores grounded in the interpretation space \mathcal{R}.
+To make inference scalable, we train a compact student model M_{\text{student}} that mimics M_{\text{teacher}}:
+M_{\text{student}}(x_{p},x_{f})\approx M_{\text{teacher}}(x_{p},x_{f}).
+(2)
+This distillation process, illustrated in Figure 1, enables us to preserve the hypothetic semantic calibration and interpretability of teacher-generated scores in a lightweight model suitable for real-time deployment.
+3.1 Generative LLM relevance scoring
+Having outlined our general approach and the necessity of semantic calibration, we now detail our methodology for obtaining calibrated training data.
+In the absence of high-quality, semantically calibrated data, we propose leveraging generative large language models (LLMs) as teachers to generate skill-fit supervision signals. Indeed, as stated in the introduction (Section 1), our historical data is mostly sparse, noisy, biased and uncalibrated. In contrast, a generative LLM can evaluate tasks within a defined context, allowing us to create more fine-grained and semantically accurate supervision signals, denoted as s^{t}_{f,p}\in[0,1]. We assume that a generative LLM possesses sufficient semantic reasoning capacity to determine the correct relevance category r\in\mathcal{R} and execute the inverse mapping \tilde{\phi}^{-1}.
+To generate these scores, the following context is defined in the model’s prompt:
+” You are an objective assistant in a freelancer-job matching platform. Given a job description and several freelancer profiles, evaluate each freelancer’s suitability for the job. Provide a concise reasoning and a score between 0 and 1 for each freelancer. ”
+Within this context, the model is instructed to return both a score and a reasoning justification which has been shown to provide better results for complex tasks Wei et al. (2022).
+Both the job description and the freelancer profile are provided in plain text, with each section clearly delineated by specific indicators (e.g., ”skills:”, ”description”, etc.).
+By providing these information, the aim for the model is to generate a score that is aligned with the context and independent of user behavior artifacts, such as :
+M_{\text{teacher}}(x_{p},x_{f})=s^{t}_{f,p}\in[0,1].
+(3)
+To ensure semantic calibration, the prompt also contains a predefined matching interpretation set \mathcal{R}, aligning each score with a relevance category :
+Listing 1: Reference list within the teacher model’s prompt
+⬇
+0.0: No relevant skills or experience. Completely unable to perform the job.
+0.2: Minor relevance. Few matching skills or limited experience.High chance they will be unable to perform the job.
+0.4: Moderate match. Some relevant skills or experience. Would probably not be able to do the job.
+0.6: Good match. Mostly relevant skills and experience. Can perform with some ramp-up.
+0.8: Strong match. Highly relevant skills and experience. Ready to perform well.
+1.0: Perfect match. Skills and experience fully aligned with job needs. Expert on the topic.
+By inserting this predefined mapping directly into the prompt design, the LLM is able to select a score that best represents the skill-fit between the freelancer and the job, according to the defined semantic categories.
+To promote better instruction understanding and score consistency, the LLM is prompted with twelve freelancer profiles per project, with at least one ”unsuitable” and one ”perfect”. While each candidate is scored independently, batching them in the same prompt encourages the model to improve the score quality, without compromising semantic interpretability.
+While this approach allows to obtain the expected semantically calibrated relevancy score, it remains computationally and environmentally expensive for large-scale inference. To overcome such limitations, a lightweight student model can be designed to approximate the LLM’s output, as detailed in the following sections.
+3.2 Light relevance scoring architecture
+Figure 2: Illustration of the proposed brief encoder branch (top) and profile encoder branch (bottom). Similar sections across freelancer profiles are first projected into a latent space (shown in the first three blocks). Positional encodings are then added, and the resulting embeddings are combined with learned section-type embeddings to retain structural information. These enriched vectors are finally passed through a linear layer.
+Figure 3: Overview of the proposed comparison architecture. The first two blocks (“Profiles to Brief” and “Brief to Profiles”) depict the multi-head cross-attention mechanism. The following stages show the computation of cosine similarity distributions, statistical pooling into fixed-size features, and final concatenation before scoring via an MLP.
+To retain the semantic abilities of the teacher model within a more compact one, the proposed architecture for the student model, M_{\text{student}}, illustrated in Figure 1, is composed of two main components:
+1.
+Document Encoders: One encoder branch for each document type (i.e., project briefs and freelancer profiles), as shown in Figure 2.
+2.
+Comparison Block: An attention-based comparison module, detailed in Figure 3.
+The following sections describe each of these components in detail.
+3.2.1 Leveraging Pre-trained Multilingual Sentence Encoder — Document Encoders
+To encode documents, we build upon our previous work on retrieval models Jouanneau et al. (2024) within the same project-freelancer matching setting. Each document x_{d} (either a brief or a profile) is encoded independently by processing its structured textual sections s_{d,l} using a pre-trained multilingual sentence encoder and a categorical encoding. This process is illustrated in Figure 2.
+Unlike our previous token-level model, each section s_{d,l} is segmented into minimal textual units that are referred to as utterances
+s_{d,l}=\{u_{d,l,i}\mid i=1\cdots n_{d,l}\}.
+This strategy aligns with the intended use of sentence-BERT models Reimers and Gurevych (2019) and the short length of utterances simplifies encoding, enabling the use of smaller backbones.
+Utterances are defined differently depending on the section type:
+•
+For paragraph-based sections (e.g., descriptions), utterances correspond to individual sentences.
+•
+For tag-based sections, each tag is treated as a separate utterance.
+•
+Titles are encoded as single-utterance sequences.
+Each utterance u_{d,l,i} is processed by the pre-trained sentence encoder backbone and enriched with a learned categorical encoding {\bf\it e}_{\text{categorical}_{l}} specific to section type l. The resulting vector is passed through a linear layer:
+{\bf\it e}_{d,l,i}=W_{d}\cdot\left(\operatorname{Backbone}(u_{d,l,i})+{\bf\it e}_{\text{categorical}_{l}}\right)+{\bf\it b}_{d}.
+(4)
+This categorical encoding helps preserve structural information. While the sentence encoder backbone remains frozen, both the categorical encoding and the projection layer are trained, effectively adapting the general-purpose encoder to our domain-specific skill matching task.
+Thus, each document (x_{p} or x_{f}), is ultimately represented by a sequence of utterance embeddings:
+\begin{split}&E_{f}=\{{\bf\it e}_{f,i}\mid i=1\cdots\sum_{l\in L_{f}}n_{f,l}\},\\
+&E_{p}=\{{\bf\it e}_{p,i}\mid i=1\cdots\sum_{l\in L_{p}}n_{p,l}\},\end{split}
+(5)
+where n_{f,l} and n_{p,l} denote the number of utterances per section and document.
+This utterance-based encoding strategy significantly reduces the computational cost of processing long documents. Since most of the computational burden lies in encoding, the backbone’s utterance embeddings can be pre-computed and cached to accelerate training. In production, E_{f} can be computed and stored in advance, leaving only the project’s utterances to be encoded at inference time, along with the final comparison block, presented in the next section.
+3.2.2 From Two Sequences of Embeddings to a Similarity Distribution — Comparison Block
+Inspired by the late interaction mechanism Khattab and Zaharia (2020), similarities between the obtained embedding sequences are computed to compare briefs and profiles. However, instead of computing only the maximum similarity per brief embedding across profile embeddings, a two-step approach that better models mutual interest is adopted. Indeed, we hypothesize that this process can capture more complex interactions (illustrated in Figure 3).
+First, context-aware embeddings {E_{\text{context}}}_{f} and {E_{\text{context}}}_{p} are derived using cross-attention. Then, similarity distributions \mathcal{S}_{p,f} and \mathcal{S}_{f,p} are computed between the original embeddings and their respective context vectors.
+To compute {E_{\text{context}}}_{f}, multi-head attention from the brief to the profile embeddings is applied:
+\displaystyle\operatorname{MultiHead}(E_{p},E_{f},E_{f})
+\displaystyle=\operatorname{head}_{1}\,\|\,\cdots\,\|\,\operatorname{head}_{k}
+(6)
+\displaystyle=E_{\text{context}_{f}},
+where each attention head is defined as:
+\operatorname{head}_{i}=\operatorname{softmax}\left(\frac{E_{p}W_{i}^{Q}(E_{f}W_{i}^{K})^{\top}}{\sqrt{d}}\right)E_{f}W_{i}^{V}.
+(7)
+This results in a new sequence {E_{\text{context}}}_{f} of the same length as E_{p}, where each embedding {\bf\it e}_{\text{context}_{f,i}} reflects the best-matching combination of profile content for the corresponding brief utterance {\bf\it e}_{p,i}.
+To assess how well this profile context aligns with the original brief, their pairwise cosine similarities are computed:
+\small\mathcal{S}_{p,f}=\left\{\operatorname{sim}({\bf\it e}_{p,i},{\bf\it e}_{\text{context}_{f,i}})\;\middle|\;i=1\cdots\sum_{l\in L_{p}}n_{p,l}\right\}.
+(8)
+This results in a similarity distribution with one score per brief utterance.
+Symmetrically, the process is reversed to account for mutual interest. First, the profile is attended to the brief :
+\operatorname{MultiHead}(E_{f},E_{p},E_{p})=E_{\text{context}_{p}},
+(9)
+then the corresponding similarity distribution is computed:
+\small\mathcal{S}_{f,p}=\left\{\operatorname{sim}({\bf\it e}_{f,i},{\bf\it e}_{\text{context}_{p,i}})\;\middle|\;i=1\cdots\sum_{l\in L_{f}}n_{f,l}\right\}.
+(10)
+These distributions, \mathcal{S}_{p,f} and \mathcal{S}_{f,p}, provide a detailed view of skill alignment: how well a profile matches the most relevant parts of a brief, and vice versa. They form the basis for the final scoring step, described in the following section.
+3.2.3 Distribution pooling and scoring
+Since the similarity distributions \mathcal{S}_{p,f} and \mathcal{S}_{f,p} vary in length, \sum_{l\in L_{p}}n_{p,l} and \sum_{l\in L_{f}}n_{f,l} respectively, the original late interaction mechanism aggregates them using only a sum over brief-wise similarities to produce a score.
+Instead, more expressive statistical pooling operations are computed over both distributions to produce fixed-size feature vectors more suitable for scoring. Specifically, we extract descriptive statistics from both \mathcal{S}_{p,f} and \mathcal{S}_{f,p}, defined as
+\operatorname{desc}(\mathcal{S})=\bigl[\min(\mathcal{S}),\max(\mathcal{S}),\mu(\mathcal{S}),\sigma(\mathcal{S}),\gamma_{1}(\mathcal{S}),\gamma_{2}(\mathcal{S})\bigr],
+where \mu denotes the mean, \sigma the standard deviation, \gamma_{1} the skewness, and \gamma_{2} the kurtosis
+(see Appendix A).
+These richer features are hypothesized to better capture the interaction dynamics between the documents’ utterances.
+Finally, these descriptive statistics are concatenated with the averaged pooled embeddings from the two branches, \overline{\vphantom{E^{e}}E}_{p} and \overline{\vphantom{E^{e}}E}_{f}, as well as the averaged context embeddings {\overline{\vphantom{E^{e}}E}_{\text{context}}}_{f} and {\overline{\vphantom{E^{e}}E}_{\text{context}}}_{p}, forming the input to a multi-layer perceptron (MLP):
+\operatorname{MLP}\left(\begin{aligned} &\operatorname{desc}(\mathcal{S}_{p,f})\,\|\,\overline{\vphantom{E^{e}}E}_{p}\,\|\,{\overline{\vphantom{E^{e}}E}_{\text{context}}}_{f}\\
+&\,\|\,\operatorname{desc}(\mathcal{S}_{f,p})\,\|\,\overline{\vphantom{E^{e}}E}_{f}\,\|\,{\overline{\vphantom{E^{e}}E}_{\text{context}}}_{p}\end{aligned}\right)=s^{s}_{p,f}.
+(11)
+Adding the averaged pooled embeddings enriches the similarity distributions with contextual information from the documents.
+Only the projection layers of the branches, the two multi-head attention modules, and the MLP require training. These components are trained to approximate the semantically calibrated scores produced by the LLM teacher model via distillation, as described in the next section.
+3.3 Training objective
+It is often possible to derive a binary relevance label from historical interaction data. We denote this indicator function as:
+\delta_{p,f}=\begin{cases}1&\text{if freelancer }f\text{ is relevant to project }p,\\
+0&\text{otherwise}.\end{cases}
+Let \mathbb{I} be the set of all project–freelancer pairs for which such a label is available:
+\mathbb{I}=\{(p,f)\in\mathbb{P}\times\mathbb{F}\mid\exists!\delta_{p,f}\},
+and let I\subset\mathbb{I} be the subset used for training.
+When using these historical relevance labels, a standard approach is to frame the problem as binary classification. Hence, a model M_{\theta}(p,f) can be trained using common classification losses such as Binary Cross-Entropy, Focal Loss, or Asymmetric Loss Ridnik et al. (2021). This setting has been extensively used in recommender systems and information retrieval tasks Ailon and Mohri (2008); Liu and others (2009).
+In contrast, ranking distillation considers supervision from a teacher model that outputs continuous-valued scores rather than binary labels. One straightforward approach is to treat the teacher’s score (cf. eq.3) as a regression target for the student model score, (cf. eq. 11), which can be optimized using a mean squared error (MSE) objective:
+\mathcal{L}_{\text{MSE}}(I)=\frac{1}{|I|}\sum_{(p,f)\in I}\left(s^{t}_{p,f}-s^{s}_{p,f}\right)^{2}.
+(12)
+To validate the use of teacher model scores as ground truth, we compared relevancy metrics across three settings: the teacher model, the student model trained on historical data, and the same student further trained on teacher-generated scores.
+Table 1:
+Evaluation of different models on historical relevance labels. ”Ours (Historical labels)” is trained with ASL Ridnik et al. (2021) on binary labels; ”Ours (Gemini scores)” is trained with MSE on the teacher scores. Re. = Recall, Spe. = Specificity, R–P = R-Precision, \bar{\text{R}}-\mathcal{O} = Non relevant - false omission rate, see section 4.4 for metric details.
+Model
+Training Data
+Re.
+Spe.
+R-P
+\bar{\text{R}}-\mathcal{O}
+Gemini
+~
+0.913
+0.287
+0.734
+0.216
+Ours
+Historical Labels
+0.984
+0.058
+0.811
+0.413
+Ours
+Gemini Scores
+0.912
+0.208
+0.808
+0.401
+As shown in Table 1, knowledge distillation from Gemini-2.0-flash (cf. section 4 for details) improves the model’s ability to reject non-relevant candidates compared to training on historical binary labels. While this comes with a slight decrease in recall, the ranking quality remains comparable, suggesting that supervision via soft scores enhances discriminative capacity without sacrificing relevance. Furthermore, a qualitative evaluation, based on expert curation, supported the relevance and consistency of the generated scores.
+Overall, this setup provides access to finer-grained signals, such as ranking quality and model interpretability, that are not directly measurable from historical binary labels alone.
+However, the MSE formulation treats each (p,f) pair independently, ignoring the relative ordering between candidates, which is central to ranking tasks. This point-wise distillation approach may therefore be suboptimal for ranking supervision Liu and others (2009). In the following sections, we explore alternative pair-wise and list-wise objectives that better align with the ranking nature of the problem.
+3.3.1 Pair-wise Distillation
+To overcome the limitations of treating interactions independently, the relative ordering between two freelancers f and f^{\prime} competing for the same project p can be distilled.
+Specifically, the score difference given by the teacher model:
+\Delta^{t}_{p,f,f^{\prime}}=s^{t}_{p,f}-s^{t}_{p,f^{\prime}},
+is used to train the student model to replicate this margin:
+\Delta^{s}_{p,f,f^{\prime}}=s^{s}_{p,f}-s^{s}_{p,f^{\prime}}.
+This approach can be implemented using the Margin MSE loss Hofstätter et al. (2020), which compares the predicted differences between relevant and non-relevant candidates:
+\displaystyle\mathcal{L}_{\text{margin\_mse}}(I)
+\displaystyle=\frac{1}{n}\sum_{\begin{subarray}{c}(p,f)\in I\\
+\delta_{p,f}=1\end{subarray}}\sum_{\begin{subarray}{c}(p^{\prime},f^{\prime})\in I\\
+\delta_{p^{\prime},f^{\prime}}=0\\
+p=p^{\prime}\end{subarray}}\left(\Delta^{t}_{p,f,f^{\prime}}-\Delta^{s}_{p,f,f^{\prime}}\right)^{2}
+(13)
+\displaystyle=\frac{1}{n}\sum_{\begin{subarray}{c}(p,f)\in I\\
+(p,f^{\prime})\in I\\
+\end{subarray}}\mathds{1}_{\left[f\succ_{p}f^{\prime}\right]}\left(\Delta^{t}_{p,f,f^{\prime}}-\Delta^{s}_{p,f,f^{\prime}}\right)^{2}.
+In the later, the indicator function ensures that only pairs where f is relevant and f^{\prime} is not (for the same project) are included, and n is the number of such pairs. This formulation encourages the student model to preserve the relative ordering f\succ f^{\prime} induced by the ground truth.
+An extension Shang et al. (2025) was proposed relaxing the dependency on ground-truth labels by computing pairwise differences over all possible interactions (p,f),(p,f^{\prime}) for the same project:
+\mathcal{L}_{\text{margin\_mse}}(I)=\frac{1}{n}\sum_{\begin{subarray}{c}(p,f)\in I\\
+(p,f^{\prime})\in I\end{subarray}}\left(\Delta^{t}_{p,f,f^{\prime}}-\Delta^{s}_{p,f,f^{\prime}}\right)^{2}.
+(14)
+This loss encourages the student model to preserve both the ordering and the magnitude differences between the teacher’s predictions. However, it does not enforce alignment of the absolute score values themselves.
+To address this, we propose coupling the margin-based objective with a pointwise MSE regression loss (Eq. 12) computed on the teacher’s scores. This yields our combined loss:
+\mathcal{L}_{\text{CMMD}}(I)=\mathcal{L}_{\text{margin\_mse}}(I)+\mathcal{L}_{\text{MSE}}(I)\\
+,
+(15)
+which we refer to as the Calibrated Margin MSE Distillation (CMMD) loss. Empirically, this combination yields improved performance by aligning both relative and absolute semantics of the teacher’s signal
+3.3.2 List-wise Distillation
+Another training strategy employs a more natural list-wise objective. List-wise losses are well-aligned with ranking problems which aim to order a set of candidates for a given project. Early methods such as ListNet Cao et al. (2007) and ListMLE Xia et al. (2008) can be adapted for distillation by using teacher scores to construct ground-truth permutations. More recently, the Calibrated List-Wise Distillation (CLID), method Gui et al. (2024) was introduced to facilitate calibated distillation using a list-wise approach.
+In the CLID framework, the scores from both teacher and student models are normalized across the candidate set I (i.e. all freelancer profiles associated with a given project p):
+\hat{s}^{t}_{p,f}=\frac{s^{t}_{p,f}}{\sum_{(p,f^{\prime})\in I}s^{t}_{p,f^{\prime}}}\quad\text{and}\quad\hat{s}^{s}_{p,f}=\frac{s^{s}_{p,f}}{\sum_{(p,f^{\prime})\in I}s^{s}_{p,f^{\prime}}}.
+A cross-entropy loss is then applied to align these two score distributions:
+\mathcal{L}_{\text{CLID}}(I)=-\frac{1}{|I|}\sum_{(p,f)\in I}\hat{s}^{t}_{p,f}\log(\hat{s}^s_{p,f})
+(16)
+CLID can be interpreted as aligning the probabilities of each freelancer f being ranked above all others within the candidate set I. These probabilities are derived from the normalized scores:
+\mathbb{P}(f\succ^{t}_{p}\{f^{\prime}\})=\hat{s}^{t}_{p,f}\quad\text{and}\quad\mathbb{P}(f\succ^{s}_{p}\{f^{\prime}\})=\hat{s}^{s}_{p,f}.
+Alternative normalization strategies (such as computing the probability of outranking only lower-scored candidates, i.e., \mathbb{P}(f\succ_{p}\{f^{\prime}\mid s^{t}_{p,f}>s^{t}_{p,f^{\prime}}\}), as in ListMLE Xia et al. (2008)) proved empirically less effective. In contrast, the original normalization proposed in Gui et al. (2024), which considers the full candidate set, consistently yielded better performance.
+4 Experiment
+The following section presents our experiments, which assess the effectiveness of the proposed distillation strategy and student model architecture in generating semantically calibrated similarity scores between freelancers and project briefs suitable for large-scale deployment
+4.1 Implementation and baselines
+First, we introduce the teacher model used to generate the semantically calibrated ground-truth scores, before defining our student’s model settings.
+Then, we compare our approach against a state-of-the-art re-ranking model and a small generative language model. For both baselines, we present results using publicly available pre-trained checkpoints, with and without fine-tuning for our specific use case.
+Teacher model: Gemini 2.0.
+As a teacher model, we employed the generative LLM Gemini-2.0-flash, supporting up to 1M input tokens. It provides structured responses with reduced latency, balancing performance and computational efficiency compared to Gemini-1.5 and Gemini-2.0-pro. Additionally, Gemini-2.0-flash offers multilingual capabilities.
+Student model: our model.
+We use the multilingual Arctic Embed Yu et al. (2024b) (extra-small variant11
+1
+https://huggingface.co/Snowflake/snowflake-arctic-embed-xs) as a shared encoder backbone in both branches. This lightweight model was chosen to efficiently handle short utterances with minimal performance tradeoff. Each branch includes a linear projection to a 32-dimensional latent space. The comparison block consists of a single 8-head multi-head attention layer. The MLP has layers of size 256, 128, 256, and 1, with GELU activations, 0.4 dropout, and no activation in the final layer (which empirically aids distillation). The architecture totals 45M parameters, with only 135K trainable.
+Reranking baseline: Qwen3.
+As a strong re-ranking baseline, we evaluate Qwen3 Zhang et al. (2025), using the pre-trained Qwen3-0.6B checkpoint22
+2
+https://huggingface.co/Qwen/Qwen3-Reranker-0.6B.
+This model has 596 million parameters and supports inputs up to 32K tokens. We chose it due to its strong multilingual capabilities and its state-of-the-art performance on various re-ranking tasks. This makes it well suited for document-level semantic comparison.
+Small generative baseline: Gemma3.
+We include the 1B-parameter Gemma3 model Team et al. (2025)33
+3
+https://huggingface.co/google/gemma-3-1b-it in our evaluation. Gemma is a smaller and open-source generative LLM. Its support for multilingual inputs and long contexts (up to 128K tokens) makes it a practical and accessible alternative for approximating Gemini-style supervision and annotation quality.
+4.2 Dataset
+Our corpus includes project briefs created between January 1, 2023 and April 15, 2024, along with historical versions of freelancer profiles that either applied or were rejected due to lacking skills. Profile representations are recomputed to reflect their state at the time of interaction.

@@ -1,0 +1,58 @@
+2.1 Execution Trace
+An ONNX model execution produces a trace: a sequence of computational steps where each step corresponds to one ONNX operation applied to specific tensor elements. Each trace entry contains:
+•
+The operation type (Add, Mul, ReLU, etc.)
+•
+Source tensor addresses and values
+•
+Destination tensor address and value
+•
+For non-deterministic operations (e.g., division), an advice value
+The trace length TT determines the constraint system size. Traces are padded to the next power of two for efficient polynomial representation.
+2.2 Proof DAG Structure
+The proof is organised as a DAG where nodes represent sumcheck instances and edges represent polynomial evaluation claims passed between stages. Two sumchecks cannot be batched together if one depends on the other’s output. This dependency structure defines the staging.
+Following Jolt’s architecture [2], proving proceeds through multiple stages. Each stage produces sumcheck proofs with hiding commitments, and the round polynomial coefficients become witness elements in the succinct verifier R1CS.
+The terminology in the coming sections follows the excellent survey “Sum-check is all you need” [19].
+Stage 1: Outer Sumcheck. The SpartanDag proves the outer R1CS constraint:
+∑xe​q~​(τ,x)⋅(A~​z​(x)⋅B~​z​(x)−C~​z​(x))=0,\sum_{x}\widetilde{eq}(\tau,x)\cdot(\tilde{A}z(x)\cdot\tilde{B}z(x)-\tilde{C}z(x))=0,
+producing a random point r=(rcycle,rvar)r=(r_{\text{cycle}},r_{\text{var}}) and committed claims A~​z​(r),B~​z​(r),C~​z​(r)\tilde{A}z(r),\tilde{B}z(r),\tilde{C}z(r).
+Stage 2: Inner Sumcheck and Virtualisation.
+Inner sumcheck. The verifier samples a random linear combination coefficient ρ\rho and the prover shows:
+A~​z​(r)+ρ​B~​z​(r)+ρ2​C~​z​(r)=∑y(A~small​(rvar,y)+ρ​B~small​(rvar,y)+ρ2​C~small​(rvar,y))⋅z⁡(y)\tilde{A}z(r)+\rho\,\tilde{B}z(r)+\rho^{2}\,\tilde{C}z(r)\;=\;\sum_{y}\bigl(\tilde{A}_{\text{small}}(r_{\text{var}},y)+\rho\,\tilde{B}_{\text{small}}(r_{\text{var}},y)+\rho^{2}\,\tilde{C}_{\text{small}}(r_{\text{var}},y)\bigr)\cdot z(y)
+where z⁡(y)z(y) is the vector whose entries are the evaluations of the witness polynomial P~i​(rcycle)\widetilde{P}_{i}(r_{\text{cycle}}).
+Product virtualisation sumchecks. Witness variables defined as element-wise products of two committed polynomials:
+V~​(rcycle)=∑te​q~​(rcycle,t)⋅L⁡(t)⋅R⁡(t).\widetilde{V}(r_{\text{cycle}})\;=\;\sum_{t}\widetilde{eq}(r_{\text{cycle}},t)\cdot L(t)\cdot R(t).
+The four products virtualised are:
+•
+Combined instruction lookup input: LeftInput​(t)×RightInput​(t)\text{LeftInput}(t)\times\text{RightInput}(t).
+•
+Selective write to destination tensor: td_addr​(t)×write_flag​(t)\text{td\_addr}(t)\times\text{write\_flag}(t)
+•
+Conditional selection condition: ts1_val​(t)×select_flag​(t)\text{ts1\_val}(t)\times\text{select\_flag}(t)
+•
+Conditional selection result: td_write_val​(t)×select_flag​(t)\text{td\_write\_val}(t)\times\text{select\_flag}(t)
+Stage 3: Lookups and Instruction Verification. Batches:
+•
+PCSumcheck: Ensures each execution step (PC) transitions to the next instruction (NextPC):
+NextPC~​(rcycle)=∑tPC~​(t)⋅e​q~+1​(rcycle,t).\widetilde{\mathrm{NextPC}}(r_{\mathrm{cycle}})\;=\;\sum_{t}\widetilde{\mathrm{PC}}(t)\cdot\widetilde{eq}_{+1}(r_{\mathrm{cycle}},t).
+•
+ReadRafSumcheck: A sparse-dense sumcheck verifying lookup-table reads. Each 64-bit lookup index is decomposed into chunks, and a prefix-suffix protocol checks:
+LookupOutput~​(rcycle)=∑k,je​q~​(raddr,k)⋅e​q~​(rcycle,j)⋅val⁡(k)⋅ra⁡(k),\widetilde{\mathrm{LookupOutput}}(r_{\mathrm{cycle}})\;=\;\sum_{k,\,j}\widetilde{eq}(r_{\mathrm{addr}},k)\cdot\widetilde{eq}(r_{\mathrm{cycle}},j)\cdot\mathrm{val}(k)\cdot\mathrm{ra}(k),
+where ra⁡(k)\mathrm{ra}(k) is the random-address indicator polynomial and val⁡(k)\mathrm{val}(k) the table value polynomial. The prefix-suffix decomposition reduces the prover’s memory footprint from O⁡(|𝒯|)O(|\mathcal{T}|) to O⁡(|𝒯|1/C)O(|\mathcal{T}|^{1/C}).
+•
+BooleanitySumcheck: Verifies that each rai\mathrm{ra}_{i} chunk polynomial (the random-address accumulations) satisfies the booleanity constraint
+rai​(k)2−rai​(k)=0\mathrm{ra}_{i}(k)^{2}-\mathrm{ra}_{i}(k)=0
+•
+HammingWeightSumcheck: Verifies that each rai\mathrm{ra}_{i} chunk polynomial is a one-hot vector. The claimed sum is
+∑k∑i=0D−1γi​rai​(k)=∑i=0D−1γi,\sum_{k}\sum_{i=0}^{D-1}\gamma^{i}\,\mathrm{ra}_{i}(k)\;=\;\sum_{i=0}^{D-1}\gamma^{i},
+where γ\gamma is a fresh Fiat–Shamir challenge. Since the booleanity sumcheck already ensures rai​(k)∈{0,1}\mathrm{ra}_{i}(k)\in\{0,1\}, this equality forces ∑krai​(k)=1\sum_{k}\mathrm{ra}_{i}(k)=1 for every chunk ii.
+•
+InstructionInputSumcheck: Verifies instruction inputs match claimed values
+Stage 4: Random-Address Virtualisation and Memory Checking. This stage batches two sumchecks:
+•
+RASumCheck: Virtualises the D=8D=8 per-chunk rai\mathrm{ra}_{i} polynomials into dd groups, verifying that the full random-address product ∏irai\prod_{i}\mathrm{ra}_{i} equals the claimed evaluation.
+•
+MemoryDag: Verifies read-write consistency, ensuring tensor values read during execution match previously written values.
+Stage 5: Memory Value Evaluation. Verifies the evaluation of the memory-value polynomial Val~\widetilde{\mathrm{Val}} at the random point (raddr,rcycle)(r_{\mathrm{addr}},r_{\mathrm{cycle}}) produced by Stage 4’s read-write checking.
+The claimed sum Val~​(raddr,rcycle)\widetilde{\mathrm{Val}}(r_{\mathrm{addr}},r_{\mathrm{cycle}}) is reduced via sumcheck over the cycle dimension:
+Val~​(raddr,rcycle)=∑jInc⁡(j)⋅Wa⁡(j)⋅Lt⁡(j,rcycle),\widetilde{\mathrm{Val}}(r_{\mathrm{addr}},r_{\mathrm{cycle}})\;=\;\sum_{j}\mathrm{Inc}(j

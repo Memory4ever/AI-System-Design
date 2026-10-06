@@ -1,0 +1,1839 @@
+AISA: Awakening Intrinsic Safety Awareness in Large Language Models against Jailbreak Attacks
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract.
+1 Introduction
+2 Related Work
+2.1 Jailbreak Attacks on LLMs
+2.2 Jailbreak Defense
+2.3 Mechanistic Analysis and LLM Safety
+3 Methodology
+3.1 Preliminaries
+3.2 Empirical Foundations
+3.3 The Architecture of AISA
+4 Experiments
+4.1 Experimental Design
+4.2 Experimental Setting
+4.2.1 Model Selection
+4.2.2 Datasets.
+4.2.3 Baselines and Evaluation Metrics.
+4.3 Detection Results and Mechanistic Analysis
+4.3.1 Main Results on the Detection Task.
+4.3.2 Mechanistic Analysis
+4.4 Results and Analysis on Defense Task
+4.5 Further Analysis of Our Defense Mechanism
+5 Conclusion
+References
+A Threat Model and Problem Formulation
+B LLM Architecture and Activation Space Specifications
+C Evaluation Landscape
+C.1 Datasets
+C.2 Models
+D Extended Results
+D.1 Spatial Localization Across Model Variants
+D.2 ROC Curves on Five Binary-class Datasets
+License: arXiv.org perpetual non-exclusive license
+arXiv:2602.13547v1 [cs.CR] 14 Feb 2026
+AISA: Awakening Intrinsic Safety Awareness in Large Language Models against Jailbreak Attacks
+DOI: XXXXXXX.XXXXXXX Conference: Make sure to enter the correct
+conference title from your rights confirmation email; June 03–05,
+2018; Woodstock, NY ISBN: 978-1-4503-XXXX-X/2018/06
+Weiming Song
+email: swm_academic@emails.bjut.edu.cn
+Affiliation: Beijing University of Technology , Beijing , China
+,
+Xuan Xie
+Note: Corresponding authors.
+email: xiexuan@must.edu.mo
+Affiliation: Macau University of Science and Technology , Macao
+and
+Ruiping Yin
+email: yinruiping@bjut.edu.cn
+Affiliation: Beijing University of Technology , Beijing , China
+2018
+Abstract.
+Large language models (LLMs) remain vulnerable to jailbreak prompts that elicit harmful or policy-violating outputs, while many existing defenses rely on expensive fine-tuning, intrusive prompt rewriting, or external guardrails that add latency and can degrade helpfulness.
+We present AISA, a lightweight, single-pass defense that activates safety behaviors already latent inside the model rather than treating safety as an add-on.
+AISA first localizes intrinsic safety awareness via spatiotemporal analysis and shows that intent-discriminative signals are broadly encoded, with especially strong separability appearing in the scaled dot-product outputs of specific attention heads near the final structural tokens before generation.
+Using a compact set of automatically selected heads, AISA extracts an interpretable prompt-risk score with minimal overhead, achieving detector-level performance competitive with strong proprietary baselines on small (7B) models.
+AISA then performs logits-level steering: it modulates the decoding distribution in proportion to the inferred risk, ranging from normal generation for benign prompts to calibrated refusal for high-risk requests—without changing model parameters, adding auxiliary modules, or requiring multi-pass inference.
+Extensive experiments spanning 13 datasets, 12 LLMs, and 14 baselines demonstrate that AISA improves robustness and transfer while preserving utility and reducing false refusals, enabling safer deployment even for weakly aligned or intentionally risky model variants.
+Keywords:
+Jailbreak Attack, Jailbreak Defense, Large Language Model, Internal Activation
+1. Introduction
+Large language models (LLMs) have achieved strong performance across many language understanding and generation tasks ( Matarazzo and Torlone, 2025a ; Huynh and Lin, 2025 ; Zhang et al., 2025a ; He et al., 2025 ) .
+A major barrier to their trustworthy deployment, however, is vulnerability to jailbreak attacks that bypass safety alignment and trigger harmful outputs ( Yi et al., 2024 ; Zou et al., 2023b ; Chen et al., 2026 ; Pu et al., 2025 ; Liu et al., 2023 ; Dang et al., 2025 ) .
+Existing defenses typically treat safety as an external constraint, enforced through resource-intensive fine-tuning ( Christiano et al., 2017 ; Yuan et al., 2025 ; Liu et al., 2024 ) , invasive prompt modifications ( Jain et al., 2023 ; Zhang et al., 2025b ) , or static pre/post content filters ( Team, 2024 ; Han et al., 2024 ) .
+Some internal operations, such as activation steering ( Cao et al., 2025 ; Wang et al., 2025a ) , also share this concept by imposing predefined safety directions on hidden representations, yet inevitably degrade model utility ( Wolf et al., 2025 ) .
+The fundamental issue in this "safety - as - an - add - on" paradigm is that it contradicts the very purpose of building large models: after massive pre - training, models should serve users directly ( Kojima et al., 2022 ) .
+When new modules and training techniques are continuously introduced to mitigate both the safety problems and the deficiencies in these modules themselves (e.g., alignment tax ( Lin et al., 2024 ) , over - refusal ( Shi et al., 2024 ) , inference latency ( Modelmetry, 2025 ) ), user experience inevitably suffers ( Kim et al., 2024 ) .
+This is also evidenced by widespread dissatisfaction in the
+safety restrictions of recent commercial models like ChatGPT-5 ( Arsturn, 2025 ) .
+Consequently, we advocate for a shift toward minimal intervention.
+We posit that an effective defense should satisfy five practical requirements:
+(1) operate within a single forward pass,
+(2) require no modifications to model parameters or user inputs,
+(3) impose negligible computational overhead,
+(4) rely on no large external components, and
+(5) preserve model utility on benign requests.
+These requirements are especially relevant for platforms that cannot alter model parameters due to licensing or IP restrictions, but remain responsible for preventing harmful content generation ( European Parliament and Council of the European Union, 2024 ) .
+In this paper, we propose AISA , a lightweight defense framework that meets all five requirements by awakening the intrinsic safety awareness in LLMs.
+Our approach builds on the hypothesis that pre - training instills a deep - seated safety awareness that remains intact even when output generation seems compromised.
+This intrinsic awareness, if properly accessed, could not only defend against various prompt-level jailbreak attacks but also enable the secure deployment of risky model variants.
+We first show that even uncensored models ( Hartford, 2025 ) (fine - tuned without safety constraints to maximize helpfulness) display refusal behavior on malicious requests.
+Then, attempt to localize this awareness within the LLM’s architecture.
+Through a spatiotemporal search, we find that the ability to distinguish prompt intent is not confined to isolated components but is widely encoded throughout almost all internal activation spaces (spanning self-attention modules, feedforward networks, and residual connections).
+Further analysis reveals that the optimal extraction point lies in the scaled dot - product output space of attention heads, and the resulting prediction exhibits temporal convergence at structural tokens (e.g., control tokens) just before generation, providing a timely and stable safety signal.
+AISA strengthens the discriminative capacity of its safety signal using a compact synthetic training set and automatically identifies the most informative attention heads through a simple data-driven ranking procedure, eliminating the need for costly or heuristic search.
+With a sparse selection of only 16 heads (0.004 MB in 16-bit precision) and constant O(1) runtime overhead that does not grow with model size, AISA extracts a robust safety signal that matches the detection performance of GPT - 5 - mini on 7B models.
+Because this signal provides a real-time, numeric, and interpretable estimate of prompt intent, we use it to steer decoding directly by adjusting the logits toward safe behavior at the onset of generation.
+This intervention preserves semantic coherence: for harmful prompts, the base model already assigns elevated probability mass to refusal- or safety-related tokens, but standard decoding may fail to select them when these tokens remain sub-dominant.
+Our logits steering simply amplifies an existing preference rather than imposing a new behavior.
+Moreover, the continuous nature of the signal enables fine-grained control, allowing AISA to both reliably block high-severity harmful continuations—preventing “leakage” as tokens accumulate—and to provide calibrated, partial assistance when the harmful intent is ambiguous or lower in severity.
+We conduct extensive experiments across 13 datasets, 14 defense baselines, and 12 LLMs.
+The dataset includes 9 algorithmic jailbreaks, automatically generated malicious prompts, adversarial benign/malicious samples, wild jailbreaks, and sensitive self - harm prompts.
+In terms of model coverage, we span the full alignment spectrum, including dark models (fine-tuned on forbidden materials for malicious purposes), uncensored models, standard instruction models, safety - aligned checkpoints, and even variants where safety - relevant activation directions are ablated.
+We include both dense and modern Mixture-of-Experts (MoE) designs, with sizes ranging from 7B to 20B parameters across 4 model families (Llama, Mistral, Qwen, and GPT-oss).
+We benchmark against nine detection models and seven defense approaches, and verify model performance on four standard utility tasks (MMLU, GSM8K, MMLUpro, and BOOLQ).
+The results show that AISA outperforms existing baselines and gets better generalization, while preserving utility on benign queries.
+Finally, we observe that the specialized dataset developed for AISA also enhances the efficacy of other methods, and non - aligned models equipped with our method can match or even surpass their safety - aligned counterparts.
+Our contributions are summarized as follows:
+•
+We propose AISA, a lightweight defense that awakens LLMs’ intrinsic safety awareness. AISA extracts safety signals from attention heads via linear probing and steers generation towards safety through logits adjustment.
+•
+We provide an in-depth analysis of the intrinsic safety awareness of LLMs and distilled a set of implications towards utilizing in the defense.
+•
+We conduct extensive experiments across 13 datasets, 9 jailbreaks, and 12 LLMs, showing that AISA outperforms 14 baselines in accuracy and transferability, while also preserving utility on benign requests.
+2. Related Work
+2.1. Jailbreak Attacks on LLMs
+In broad terms, any prompt crafted to induce an LLM to output content that violates safety policies can be characterized as a jailbreak attack ( Xu et al., 2024b ; Greshake et al., 2023 ) .
+Based on the prompt generation process, we categorize jailbreak attacks into three streams:
+(1) In-the-wild Jailbreak Prompts ( Shen et al., 2024 ; Jiang et al., 2024 ) , which are created by real users seeking to obtain malicious outputs from LLM platforms, whether motivated by curiosity or deliberate intent.
+(2) Optimization-based Jailbreak Prompts , which employ searching ( Dang et al., 2025 ; Chao et al., 2025 ; Liu et al., 2025 ) or gradient-based methods ( Zou et al., 2023b ; Zhou et al., 2025a ) to refine a specific malicious prompt.
+(3) Automated RedTeaming Prompts , which deploys specialized agents for jailbreak generation, either by leveraging commercial LLMs ( Mazeika et al., 2024 ) or fine-tuning open-source models ( Lee et al., 2024 ; Hong et al., 2024 ) dedicated to this task.
+Our defense evaluation covers all three categories, with algorithmic jailbreaks alone spanning 9 variants.
+While some white - box attacks ( Arditi et al., 2024 ; Wang and Shu, 2024 ) that modify model parameters fall outside the standard prompt - based threat model and are rarely included in previous defense papers ( Cao et al., 2025 ; Xie et al., 2023 ) , we show that AISA can still defend against them.
+However, our primary focus remains on prompt - based attacks that reflect real - world deployment risks.
+More details regarding threat model assumptions are provided in Appendix A .
+2.2. Jailbreak Defense
+To counter the jailbreak attacks, various defense mechanisms have been developed.
+Current mainstream approaches primarily fall into four categories.
+(1) Detection-based methods ( Candogan et al., 2025 ; Hao, Jack, 2024 ) :
+These methods focus on identifying malicious intent from prompts or screening LLM-generated content.
+However, malicious intent detectors often fail to generalize beyond their training distribution, while detecting output after generation incurs computational waste.
+(2) Safety Alignment Fintuning ( Qi et al., 2024 ; Dai et al., 2023 ) :
+This approach modifies model behavior through safety-oriented fine-tuning, typically employing techniques such as Reinforcement Learning from Human Feedback (RLHF) or direct preference optimization. While effective at building robust safety barriers, this method demands substantial computational resources and high-quality human feedback data.
+(3) Prompt Modification :
+Compared to the previous approaches, this category offers a more lightweight solution.
+Representative strategies include: employing system prompts to constrain user input within safety boundaries ( Xie et al., 2023 ; Xu et al., 2024a ) , and rewriting or paraphrasing original prompts before feeding them to the model ( Jain et al., 2023 ) .
+(4) Activation Steering : These methods steer represenatations towards predefined safety directions ( Arditi et al., 2024 ; Sheng et al., 2025 ) , but requires careful operations and often degrades model utility ( Wolf et al., 2025 ) .
+Despite their merits, these approaches fail to satisfy all five requirements outlined in the introduction.
+Moreover, AISA uses detection signals to guide defense interventions, enabling dynamic responses to prompts of varying maliciousness levels.
+This capability is rarely achieved in existing defenses.
+2.3. Mechanistic Analysis and LLM Safety
+Analyzing internal mechanisms to address model safety is a well-established direction ( Zou et al., 2023a ) .
+Recent approaches mainly explore two strategies: (1) locating safety-related neurons within feed-forward networks ( Chen et al., 2025b ; Weng et al., 2025 ) , and (2) injecting safety behaviors via residual connections ( Arditi et al., 2024 ; Sheng et al., 2025 ) .
+Our work differs in three aspects.
+First, instead of in-place modification of internal activations, we extract safety signals to guide downstream decoding decisions.
+Second, we identify attention heads as a more promising location based on empirical analysis, contrasting with existing works that focus elsewhere.
+Third, while some works also examine attention heads, their approaches differ fundamentally.
+SafetyHeadAttribution ( Zhou et al., 2025b ) ablates heads to show their disruptive effect; we probe heads to demonstrate their defensive potential.
+AHASI ( Arai et al., 2025 ) still relies on a static internal intervention strategy; AISA, in contrast, exploits dynamic safety awareness to achieve superior generalizability against the diverse distributions of unseen prompts.
+3. Methodology
+3.1. Preliminaries
+Large language models are composed of successive transformer layers ( Vaswani et al., 2017 ) , with each layer iteratively refining the representation from its predecessor.
+At the core of each layer lie two fundamental components: the Multi-Head Self-Attention ( self-attn ) module and the Feed-Forward Network ( ffn ).
+These components are connected via layer normalization and residual connections, forming a stable information pathway ( Matarazzo and Torlone, 2025b ) .
+Architecturally, they are implemented as sequences of linear projections that shuttle representations across distinct, high-dimensional activation spaces.
+Our method, AISA, builds on this architectural property by extracting a safety awareness signal from specific activation spaces and using it to regulate the model’s logits prediction distribution, thereby achieving effective defense within a single forward pass.
+3.2. Empirical Foundations
+We first establish empirical findings that motivate AISA’s design.
+Motivation and Hypothesis.
+Our work originates from an observation: LLMs can refuse malicious prompts even without any safety data tuning.
+To quantify this, we analyze three variants of the Llama3.1-8B ( Dubey et al., 2024 ) : (i) the original instruct-tuned version; (ii) an uncensored version trained for maximal helpfulness ( Hartford, 2025 ) ; and (iii) an explicitly SFT fine-tuned safety version ( Lambert et al., 2025 ) .
+We evaluate their responses to prompts from AdvBench ( Zou et al., 2023b ) and HarmBench ( Mazeika et al., 2024 ) using the StrongReject ( Souly et al., 2024 ) framework for graded assessment.
+Figure 1. Distribution of response safety scores for three Llama3.1-8B variants. Scores are evaluated on AdvBench (ADVB) and HarmBench (HB) using the StrongReject metric.
+Figure 1 reveals that even the uncensored model exhibits substantial refusal toward malicious prompts, with over 45% of its responses rated as "slightly helpful" or "refused" across both datasets.
+Since such behavior emerges without any explicit safety tuning, we interpret it as evidence of the model’s intrinsic safety awareness in operation, possibly established during pretraining. Therefore, we hypothesize that proper utilization of this ability could enable an effective defense at a low cost.
+Spatio-temporal Searching of Safety Awareness.
+We then employ a spatio-temporal searching strategy to localize where and when this awareness is encoded and activated.
+Spatial localization is performed via large-scale linear probing across 15 positions per layer, covering all major activation spaces in LLMs.
+Results on Llama3.1-8B (uncensored) using the AEGIS-2 benchmark ( Ghosh et al., 2025 ) are shown in Figure 2 , with positions arranged in the order they appear during forward propagation.
+We observed similar patterns across other model variants, with detailed position specifications and more results available in Appendix D.1 .
+Figure 2. Spatial Localization of the intrinsic safety awareness. (a) Probing accuracy comparison across various positions. (b) Accuracy heatmap at s ​ e ​ l ​ f ​ _ ​ a ​ t ​ t ​ n . h ​ e ​ a ​ d . o ​ u ​ t ​ p ​ u ​ t self\_attn.head.output .
+Figure 2 (a) reveals two spatial patterns.
+First, the classification accuracy achieved by simple linear probes at most positions matches or exceeds that of specialized guard models (e.g., LlamaGuard ( Fedorov et al., 2024 ) ) reported in the original AEGIS-2 evaluation ( Ghosh et al., 2025 ) (less than 0.82).
+This indicates that linear classifiers on LLM activations can match guard-level performance, while also demonstrating that safety awareness is pervasively encoded across activation spaces.
+Second, while averaging over all heads at s ​ e ​ l ​ f ​ _ ​ a ​ t ​ t ​ n . h ​ e ​ a ​ d . o ​ u ​ t ​ p ​ u ​ t self\_attn.head.output gives the lowest accuracy; using the top-performing heads greatly improves it.
+This indicates that this position harbors the strongest underlying signal, yet the expression is highly heterogeneous across heads.
+This pattern is more directly observable in the heatmap of Figure 2 (b).
+We therefore select this position for signal extraction, as its highest upper bound offers the greatest potential for precise safety guidance when head selection is properly applied.
+Temporal localization tracks when safety awareness emerges during forward propagation by analyzing the prediction probabilities of our linear probes across token trajectories.
+Figure 3. Temporal Localization of intrinsic safety awareness. Malicious (left) vs. benign (right) prompts. Probing at s ​ e ​ l ​ f ​ _ ​ a ​ t ​ t ​ n . h ​ e ​ a ​ d . o ​ u ​ t ​ p ​ u ​ t self\_attn.head.output . Head predictions are sorted by predicted probability (red: high suspicion; blue: low suspicion).
+We show two examples in Figure 3 and claim that predicted probability distributions are tightly linked to token positions.
+At the < | b ​ e ​ g ​ i ​ n ​ _ ​ o ​ f ​ _ ​ t ​ e ​ x ​ t | > <|begin\_of\_text|> token, benign and malicious intents are initially separated.
+This distinction is then biased toward the benign side by the system prompt, which encourages general helpfulness.
+Throughout the user prompt, predictions adjust dynamically to the semantic content, a process that continues until the prompt ends.
+However, at the last line in Figure 3 , a rapid consensus is established at the \n token.
+In our study, we observe that whenever malicious intent is detected at any point during prompt processing, predictions from attention heads will converge in a stepwise manner at this final structural token.
+The phenomenon demonstrates that LLMs leverage structural tokens to consolidate their internal assessment of prompt intent just before generation.
+While a similar tendency exists for benign prompts, it is less pronounced than for malicious ones.
+In later experiments (Section 4.3 ), we quantify this convergence more precisely using entropy measures.
+It is this phenomenon that allows us to bypass the need for tracking the entire trajectory and do token-wise signal extraction.
+3.3. The Architecture of AISA
+Our defense framework, AISA, operates in two stages: (1) signal extraction , which extracts a safety signal from the specific attention head activation spaces, and (2) logits steering , which uses this signal to steer generation via logits distribution adjustment.
+Figure 4 illustrates the complete workflow.
+Figure 4. The architecture of AISA.
+Signal Extraction. We utilize the linear separability of prompt intent within the transformer’s activation spaces.
+For an input sequence P P , let H ​ e ​ a ​ d i ( ℓ ) ∈ ℝ n × d h Head_{i}^{(\ell)}\in\mathbb{R}^{n\times d_{h}} denote the output of the i i -th attention head at layer l l after the scaled dot-product attention computation, n n is the sequence length, and d h d_{h} is the head dimension.
+According to our empirical analysis, we extract the activation vector a i ( ℓ ) a_{i}^{(\ell)} from the final \n token position:
+(1)
+a i ( ℓ ) = H e a d i ( ℓ ) [ − 1 , : ] . a_{i}^{(\ell)}=Head_{i}^{(\ell)}[-1,:].
+In practice, both the magnitude and direction of this activation vector prove highly informative for intent discrimination.
+We train a linear classifier for each attention head to map all vectors into corresponding suspicious scores.
+(2)
+p i ( ℓ ) = σ ⁡ ( w i ( ℓ ) ⊤ ​ a i ( ℓ ) + b i ( ℓ ) ) , p_{i}^{(\ell)}=\sigma\!\big(w_{i}^{(\ell)\top}a_{i}^{(\ell)}+b_{i}^{(\ell)}\big),
+where w i ( l ) ∈ ℝ d h w_{i}^{(l)}\in\mathbb{R}^{d_{h}} and b i ( l ) ∈ ℝ b_{i}^{(l)}\in\mathbb{R} are learnable parameters for the i i -th head at layer l l , and σ \sigma denotes the sigmoid function.
+Given the sensitivity of probing to the training data distribution, we construct a specialized dataset and train the classifiers with standard binary cross-entropy loss.
+Remarkably, we find that with only several thousand curated examples, classification results match or surpass those obtained from million-scale safety corpora ( Jiang et al., 2024 ) .
+We provide the synthetic dataset details in Appendix x.
+Since predictions are also highly sensitive to the choice among attention heads ℋ \mathcal{H} , and their performance are vary under different situations, we adopt a data-diven strategy: heads are ranked by validation accuracy Acc ( ℓ , i ) \text{Acc}_{(\ell,i)} , and only the top- K K are retained, forming a selected head set 𝒮 K \mathcal{S}_{K} :
+(3)
+𝒮 K = arg ⁡ max 𝒮 ⊆ ℋ , | 𝒮 | = K ​ ∑ ( ℓ , i ) ∈ 𝒮 Acc ( ℓ , i ) . \mathcal{S}_{K}=\underset{\mathcal{S}\subseteq\mathcal{H},\,|\mathcal{S}|=K}{\arg\max}\sum_{(\ell,i)\in\mathcal{S}}\text{Acc}_{(\ell,i)}.
+The final safety signal q q is computed as the average of the prediction probabilities from these heads: q = 1 | 𝒮 K | ​ ∑ ( ℓ , i ) ∈ 𝒮 K p i ( ℓ ) q=\frac{1}{|\mathcal{S}_{K}|}\sum_{(\ell,i)\in\mathcal{S}_{K}}p_{i}^{(\ell)} .
+Large-scale experiments confirm that this data-driven selection strategy not only bypasses algorithmic complexity but also enhances generalization, particularly suitable for models with weaker alignment.
+Logits Steering.
+We use the extracted safety score q q as a real - time weighting factor to adjust the model’s token distribution during decoding.
+At each generation step τ \tau , the original logits 𝐥 τ ∈ ℝ | V | \mathbf{l}_{\tau}\in\mathbb{R}^{|V|} are adjusted as:
+(4)
+𝐥 ~ τ = 𝐥 τ + Δ ⁡ ( 𝐥 τ , 𝒞 safe , q , τ ) , \tilde{\mathbf{l}}_{\tau}=\mathbf{l}_{\tau}+\Delta(\mathbf{l}_{\tau},\mathcal{C}_{\text{safe}},q,\tau),
+where the steering function Δ \Delta implements a policy defined by two thresholds 0 ≤ θ low ≤ θ high ≤ 1 0\leq\theta_{\text{low}}\leq\theta_{\text{high}}\leq 1 .
+𝒞 safe = ( c 1 , c 2 , … , c n ) \mathcal{C}_{\text{safe}}=(c_{1},c_{2},\dots,c_{n}) represents a canonical refusal (e.g., “As a responsible model, I can’t help with that.”).
+When q ≤ θ low q\leq\theta_{\text{low}} (passive region), Δ = 0 \Delta=0 and generation proceeds normally to preserve utility.
+For θ low < q < θ high \theta_{\text{low}}<q<\theta_{\text{high}} (modulated region), Δ = λ ⁡ ( q ) ⋅ ( 𝒞 safe − 𝐥 τ ) \Delta=\lambda(q)\cdot(\mathcal{C}_{\text{safe}}-\mathbf{l}_{\tau}) gradually shifts the distribution toward a safety - oriented vector 𝒞 safe \mathcal{C}_{\text{safe}} , with λ ⁡ ( q ) \lambda(q) increasing monotonically.
+To maintain language quality in this regime, we also enable a small beam search during decoding.
+Finally, when q ≥ θ high q\geq\theta_{\text{high}} (active region), Δ \Delta forces adherence to a predefined safety template 𝒞 safe \mathcal{C}_{\text{safe}} , typically by up - weighting its tokens and the EOS token to terminate unsafe continuations. We tune the thresholds and λ ⁡ ( q ) \lambda(q) on the validation set to balance safety and utility.
+Deployment Costs.
+The added probing classifiers contain only ∼ \sim 0.004M parameters and run without interfering with the base model’s normal computation.
+These classifiers are trained efficiently on our compact dataset and generalize well.
+The complete defense executes within a single forward pass, introducing negligible latency overhead.
+4. Experiments
+4.1. Experimental Design
+We organize experiments around two complementary tasks: jailbreak detection and jailbreak defense.
+The Detection Task treats the safety score q q as a detector to assess its classification accuracy and analyze the signal-extraction mechanism.
+The End-to-End Defense Task integrates AISA into LLMs to evaluate its overall defense performance, including safety effectiveness, utility preservation, false refusal rates, and ablation studies.
+This dual-task design offers a complete picture of AISA’s operation.
+4.2. Experimental Setting
+4.2.1. Model Selection
+We select models across the alignment spectrum.
+For Llama3.1-8B ( Dubey et al., 2024 ) , we obtain a comprehensive set of variants: uncensored ( -U ), standard instruct-tuned ( -I ), safety-aligned ( -A ), and a deliberately unsafe dark model ( aifeifei, 2024 ) ( -D ).
+For other model families (Llama2 ( Touvron et al., 2023 ) , Mistral ( Jiang et al., 2023 ) , Qwen ( Yang et al., 2025 ) , GPT-OSS ( Agarwal et al., 2025 ) ), we include at most two variants: the standard instruct version and its uncensored counterpart.
+Model sizes range from 7B to 20B parameters.
+We also include models where safety vectors have been ablated via activation engineering (denoted -R for "removed").
+This selection spans dense architectures, reasoning-optimized models, MoE variants, and models with different alignment techniques.
+More details are provided in Appendix C.2 .
+4.2.2. Datasets.
+Given the sensitivity of linear probing to data distribution and the dependence of several design decisions (e.g., head selection) on validation data, we construct controlled synthetic datasets with clear train/validation/test splits.
+EJ - OO (1.8k samples) combines nine algorithmic jailbreak types with OpenOrca ( Mukherjee et al., 2023 ) benign instructions to test signal generalization across different attacks.
+FQ - PH (780 samples) pairs forbidden questions ( Shen et al., 2024 ) with challenging benign prompts from PHTest ( An et al., 2024 ) , isolating the distinction between harmful and merely sensitive queries.
+WJB-s (10k samples) is a balanced subset of WildJailbreak ( Jiang et al., 2024 ) , maintaining equal proportions of vanilla/adversarial malicious/benign prompts while reducing training size.
+This shows effective probing needs careful curation, not massive scale.
+JBC (1.3k samples) repurposes data from an effective community classifier ( Hao, Jack, 2024 ) , offering high - quality samples that serve as enhanced additions to the larger ALL - 4 dataset.
+ALL - 4 aggregates the previous four datasets while preserving their splits, yielding approximately 8k/3k/3k prompts for train/validation/test sets.
+In our experiments, unless specified otherwise, AISA uses the linear probe trained on ALL - 4.
+Evaluations on the five synthetic datasets above are considered in - distribution testing.
+To assess generalization, we introduce additional benchmarks as test - only sets, covering a wide spectrum:
+Pure malicious prompts are represented by HB (HarmBench ( Mazeika et al., 2024 ) ) and ADVB (AdvBench ( Zou et al., 2023b ) ), which contain clearly harmful jailbreak prompts.
+Sensitive requests are covered by SB (SorryBench ( Souly et al., 2024 ) ), focusing on refusal-prone categories like self-harm and violence.
+Adversarial samples include XST (XSTest ( Röttger et al., 2023 ) ) and OKT (OKTest ( Shi et al., 2024 ) ), which contain challenging or ambiguous benign prompts designed to test safety over - refusal.
+Automated generation prompts are represented by WGT (WildGuardTest ( Han et al., 2024 ) ), a benchmark consisting of model - generated malicious prompts paired with benign counterparts.
+Real - world samples are provided by L3J (Llama3Jailbreak ( AlignmentResearch, 2025a ) ), featuring in - the - wild jailbreak prompts collected from user interactions.
+General utility datasets ( GSM8K ( Cobbe et al., 2021 ) , BoolQ ( Clark et al., 2019 ) , MMLU ( Hendrycks et al., 2020 ) , MMLU - Pro ( Wang et al., 2024 ) ) assess capability preservation across math solving, reasoning comprehension, and knowledge tasks.
+The above benchmarks are employed solely for testing to assess generalization.
+To enable a controlled comparison at the dataset level, we include AEG2 (AEGIS - 2 ( Ghosh et al., 2025 ) ), which provides complete trn/val/tst splits.
+In total, our evaluation covers 5 full-split datasets and 11 test benchmarks. More details are provided in Appendix C.1 .
+4.2.3. Baselines and Evaluation Metrics.
+In detection task evaluations, we benchmark against 9 baselines spanning three categories.
+Commercial API-based Detectors include OpenAI’s GPT-4o ( Hurst et al., 2024 ) , GPT-4.1-mini , and GPT-5-mini ( Singh et al., 2025 ) , serving as strong baselines.
+Specialized Guardrail Models comprise NVIDIA’s NemoGuard-JailbreakDetect ( Galinkin and Sablotny, 2024 ) and Meta’s Llama-Prompt-Guard-2 (22M / 86M variants) ( Team, 2024 ) , which are open - source models explicitly trained for prompt safety filtering.
+Academic Detection Methods include gradient - based GradSafe ( Xie et al., 2024 ) , token - distribution analysis SPDetector ( Candogan et al., 2025 ) , fintuned - tuning based Jailbreak - Classifier ( Hao, Jack, 2024 ) , and multi - pass generation comparison FreeJailbreakDetection ( Chen et al., 2025a ) , representing recent advances in jailbreak detection research.
+Detection performance is measured using standard classification metrics: Accuracy (ACC) and AUC-ROC (ROC) for binary datasets, and Correctness (COR) for single-class datasets. Ranking methods like FreeJailbreakDetection are evaluated solely with AUC-ROC.
+For the defense task , we benchmark against 5 baselines including:
+ICD ( Wei et al., 2023b ) , which uses in - context learning with safe examples;
+SAGE ( Ding et al., 2025 ) , which self-reflects malicious intent via linguistic analysis and triggers safe generation;
+SafeDecoding ( Xu et al., 2024a ) , which performs safety - aware decoding via a safety fine - tuned auxiliary model;
+SCANS ( Cao et al., 2025 ) , which dynamically steers activations towards refusal directions;
+and SelfDefenD ( Wang et al., 2025b ) , which employs a shadow stack to intercept and filter model outputs.
+For malicious prompts, safety performance is measured via the 5 - tier SR (Strong - Reject ( Souly et al., 2024 ) ) score.
+For benign prompts, we use WildGuard ( Han et al., 2024 ) to assess false refusal numbers.
+4.3. Detection Results and Mechanistic Analysis
+We begin by evaluating the discriminative power of the safety signal q q as a standalone jailbreak detector.
+This establishes the practical viability of intrinsic safety awareness before its integration into end-to-end defense.
+Table 1. Detection accuracy (ACC/COR) across 13 datasets. Methods are trained on ALL - 4 (if possible). API models are strong baselines. Datasets left of ALL-4 are its subsets (in-distribution evaluation); right are independent benchmarks (transfer evaluation). Gray cells mark the highest number per column; when AISA is not top - 1, both top - 1 and best AISA are shaded.
+Detection Model
+EJ-OO
+FQ-PH
+WJB
+JBC
+ALL-4
+XST
+WGT
+L3J
+AEG2
+ADVB
+HB
+SB
+OKT
+Mean
+ACC↑
+ACC↑
+ACC↑
+ACC↑
+ACC↑
+ACC↑
+ACC↑
+ACC↑
+ACC↑
+COR↑
+COR↑
+COR↑
+COR↑
+gpt-4o-mini-2024-07-18
+0.8361
+0.7244
+0.8665
+0.8715
+0.8589
+0.8578
+0.8751
+0.9814
+0.7822
+0.9981
+1.0000
+0.9833
+0.9467
+0.8909
+gpt-4.1-mini-2025-04-14
+0.8778
+0.7436
+0.7919
+0.9157
+0.8105
+0.9244
+0.8644
+0.9681
+0.7885
+1.0000
+0.9800
+0.9833
+0.9700
+0.8937
+gpt-5-mini-2025-08-07
+0.9333
+0.7564
+0.9326
+0.8916
+0.9260
+0.9089
+0.8917
+0.9698
+0.7994
+1.0000
+1.0000
+0.9833
+0.9667
+0.9200
+Llama-Prompt-Guard-2-86M
+0.7389
+0.5256
+0.4633
+0.9920
+0.5443
+0.5556
+0.6122
+0.5488
+0.4304
+0.4808
+0.2000
+0.0833
+1.0000
+0.5519
+Jailbreak-Classifier
+0.9917
+0.8654
+0.8145
+0.9719
+0.8500
+0.6422
+0.8478
+0.8457
+0.5925
+0.9962
+0.9800
+0.9250
+0.8800
+0.8618
+NemoGuard-JailbreakDetect
+0.9139
+0.7628
+0.6851
+0.8755
+0.7290
+0.6733
+0.7922
+0.7848
+0.5889
+0.9712
+0.8750
+0.7917
+0.8633
+0.7928
+SPDetector
+0.6833
+0.6346
+0.5217
+0.5502
+0.5464
+0.7000
+0.6157
+0.6579
+0.6117
+0.7423
+0.6800
+0.7667
+0.6667
+0.6444
+GradSafe
+0.6694
+0.7372
+0.6946
+0.6466
+0.6980
+0.9067
+0.8336
+0.9830
+0.7817
+0.9923
+0.9550
+0.9500
+0.9733
+0.8324
+AISA [Mistral-7b-I]
+0.9833
+0.7756
+0.7923
+0.9598
+0.8265
+0.9333
+0.8792
+0.9170
+0.7167
+0.9981
+0.9900
+0.9667
+0.9800
+0.9014
+AISA [Llama3.1-8b-I]
+0.9889
+0.7885
+0.8729
+0.9639
+0.8889
+0.9289
+0.8911
+0.9662
+0.7219
+0.9981
+0.9850
+0.9667
+0.9900
+0.9193
+AISA [Llama2-13b-I]
+0.9889
+0.7756
+0.8543
+0.9558
+0.8736
+0.9511
+0.9017
+0.9676
+0.7526
+0.9981
+0.9900
+0.9667
+0.9900
+0.9205
+AISA [Qwen3-8b-I]
+0.9917
+0.7821
+0.8303
+0.9799
+0.8582
+0.9378
+0.8780
+0.9495
+0.7245
+0.9981
+0.9950
+0.9583
+0.9800
+0.9126
+AISA [GPT-OSS-20b-I]
+0.9861
+0.6859
+0.8149
+0.9639
+0.8395
+0.8889
+0.8520
+0.9404
+0.6975
+0.9904
+0.9750
+0.9417
+0.9933
+0.8900
+4.3.1. Main Results on the Detection Task.
+As shown in Table 1 , the intrinsic safety signal extracted via AISA demonstrates remarkable detection capability.
+When signals are extracted from Llama3.1-8b-I and trained on ALL-4, AISA achieves a mean accuracy of 0.919, surpassing OpenAI’s GPT-4o-mini and GPT-4.1-mini.
+Scaling the source model to 13B parameters, Llama2-13b-I, further elevates performance to 0.9205, surpassing commercial frontier GPT-5-mini.
+This performance is unmatched by any academic baseline.
+More importantly, AISA’s deployment across different model variants does not incur significant performance gaps; even when AISA does not rank first, its accuracy remains within 6 percentage points of the best API models.
+This demonstrates that the intrinsic safety awareness within LLMs, when properly harnessed by AISA, yields a discriminative signal strong enough to compete with state-of-the-art external detectors.
+We also plot ROC curves on binary-class datasets in Appendix D.2 (Figure 12 ).
+Our method demonstrates smoother curves with better coverage of the upper-left region.
+Further Discussions:
+(1) Method-Data Synergy.
+We find that the successful extraction of intrinsic safety awareness depends on synergy between probing method and training data.
+This is evidenced by Figure 5 : all methods trained on ALL - 4 outperform those trained on AEGIS - 2.
+Notably, AISA uses only a 128 - dimensional linear probe yet surpasses models with larger architectures or full fine - tuning.
+The fact that ALL - 4 achieves this superiority despite being less than half the size of AEGIS - 2 ( ∼ \sim 14k vs ∼ \sim 33k samples) demonstrates that training data quality outweighs sheer quantity for eliciting robust safety signals.
+We therefore credit the success of AISA half to the construction of the ALL-4 dataset.
+Figure 5. Performance comparison of trainable methods with different training data. The y-axis shows mean accuracy (ACC/COR) across all 13 test datasets. AISA consistently outperforms other methods across training datasets, with ALL-4 achieving the best overall performance.
+(2) Signal Generalization.
+From a defense perspective, generalization is paramount, as failing on unseen attacks offers little practical security.
+AISA addresses this concern directly: its safety signal demonstrates strong generalization across both model variations and prompt categories.
+Specifically: (i) the signal remains robust regardless of the model’s family (Llama, Mistral, Qwen, etc.), size (7B to 13B parameters), or alignment status (see Figure 5 , aligned, uncensored, dark, etc.), producing consistent detection performance across all configurations;
+(ii) it maintains high accuracy across diverse prompt types, covering nearly all categories seen in prompt - based jailbreak scenarios (as detailed in Section 4.2 ).
+Additionally, Table 2 shows that this generalization extends to algorithmic jailbreaks targeting different systems.
+We posit that malicious prompts, regardless of their surface form, share the same underlying goal of eliciting harmful content.
+This fundamental intent triggers detectable internal precursors, explaining why the signal extracted by AISA is consistently strong.
+Table 2. Detection accuracy on algorithmic jailbreaks (EJ-OO) when attacks target different models. Results show minimal variation, indicating target-model independence.
+EJ-OO
+EJ-OO
+[Target: Mistral-7b-I]
+[Target: Llama2-7b-I]
+AISA[Mistral-7b-I]
+0.9833
+0.9694
+AISA[Llama2-7b-I]
+0.9117
+0.9833
+AISA[Llama3.1-8b-I]
+0.9889
+0.9757
+4.3.2. Mechanistic Analysis
+While the results in Section 4.3.1 have confirmed AISA’s
+strong detection capability, a deeper investigation into its operational mechanisms is warranted.
+Specifically, we focus on the following three questions:
+(1) Do the spatiotemporal trends observed in Chapter 3 persist when probes are trained on the more diverse ALL - 4 dataset?
+(2) Why is selective attention head probing necessary? Meanwhile, why does focusing on top-K heads suffice, and how does the choice of K affect detection performance?
+(3) What evidence supports characterizing this signal as "safety awareness"? In particular, do attention heads selected from different models encode similar safety concepts?
+Answer to Q1: Spatiotemporal Location.
+Figure 6 validates our earlier architectural choices.
+When probes are trained on the more diverse ALL-4 dataset, attention head outputs remain the most optimal position for safety signal extraction (Fig. 6 (a)).
+This confirms that the spatial superiority of this location is not an artifact of a specific training distribution but a stable property of the transformer architecture.
+Temporally, we plot the prediction entropy of the selected top - 16 heads across token positions.
+As shown in Fig. 6 (b), entropy on malicious samples begins to fluctuate upon reaching the structural tokens (the last five positions), then drops sharply toward the end, indicating that head predictions converge to a more unified state.
+We do not observe a similar trend for benign samples (Fig. 6 (c)), likely because harmful intents often share common patterns, whereas benign queries exhibit greater diversity.
+Nevertheless, the spatial location and temporal convergence point have already proven effective in Table 1 , demonstrating the practical utility of AISA. Appendix D.1 offers more results.
+Figure 6. Spatiotemporal analysis with ALL-4 trained probes.
+(a) Probing accuracy across activation positions (attention head outputs remain optimal).
+(b,c) Entropy evolution of 16 selected heads over token positions for malicious and benign prompts, showing sharp convergence at final tokens on malicious samples.
+Answer to Q2: Top-k Selection.
+The top - K head selection serves dual purposes: it minimizes AISA’s computational overhead while purifying the aggregated prediction probability.
+We justify this design by examining how performance varies with K.
+Figure 7 shows that as K increases, accuracy rises rapidly to a peak, then gradually declines.
+For instruct-tuned models, performance plateaus after the peak, indicating that additional heads contribute minimal new signal.
+In contrast, less aligned models with -U suffix show a more pronounced decrease.
+This distinction suggests topk selection strategy is more suitable for unaligned models, as the performance drop underscores the critical importance of selective ranking.
+However, this selection for aligned models is also necessary as it effectively reduces the need for redundant probing classifiers.
+Figure 7. Overall detection performance trend of AISA with increasing number of selected attention heads (K). Top row: instruct - tuned models; bottom row: uncensored models.
+Answer to Q3: Safety Awareness.
+This question lies at the core of our work—whether such intrinsic safety awareness genuinely exists within models, and whether closely related models share this common mechanism.
+To investigate, we extract the weight vectors 𝐰 i ( ℓ ) \mathbf{w}_{i}^{(\ell)} from the linear classifiers trained on each attention head across different models and compute their cosine similarities.
+For Llama3.1 - 8B, the head dimension is d h = 128 d_{h}=128 .
+Under a 3 - σ \sigma criterion, two randomly oriented vectors would have an expected cosine similarity below 0.265.
+We therefore set 0.265 as the significance threshold.
+Figure 8 presents the resulting similarity matrix.
+We observe widespread high similarity (exceeding 0.265) among Llama3.1 variants across different alignment levels ( -I , -U , -A , -D ), indicating that classifiers trained on these models share a common underlying representation.
+This finding directly establishes the existence of a powerful, pretrain-based safety awareness that persists irrespective of downstream fine - tuning objectives, be they malicious (turn into dark models) or safety - oriented.
+We also see an interesting pattern from the automatic head selection: most selected heads cluster in the middle layers of the LLM stack.
+Only in strongly safety - aligned models do we observe a shift toward higher - layer heads being preferentially selected.
+Figure 8. Similarity of classifier weights across attention heads. Pale purple indicates similarity >0.265 (significant). Black: heads selected from Llama3.1 - 8B - I; orange: corresponding selections from other variants. The pattern shows safety awareness is intrinsically tied to the base architecture.
+4.4. Results and Analysis on Defense Task
+In this task, we evaluate end - to - end defense performance.
+Using unaligned models as the starting point, we compare their performance when equipped with AISA against other defense baselines.
+Our evaluation focus on three aspects: (1) output mitigation against jailbreak attacks, (2) false refusal rate on adversarial benign prompts, and (3) preservation of general model utility on standard benchmarks.
+Table 3. Strong-Reject Score (SR, 1-5) of different defense methods. Lower values indicate stronger safety protection.
+BASE MODEL
+METHODS
+ALL-4
+XST
+WGT
+L3J
+ADVB
+HB
+SB
+Mistral-7b-U
+vanilla
+2.664
+3.030
+2.595
+3.341
+3.473
+3.065
+3.258
+Instruct 2.448
+1.210
+2.148
+1.719
+1.658
+1.740
+1.892
+SAGE
+2.473
+2.905
+2.401
+3.092
+2.750
+2.250
+2.533
+ICD
+2.264
+1.065
+1.749
+1.202
+1.152
+1.150
+1.375
+SCANS
+2.643
+1.790
+2.519
+2.601
+2.588
+2.315
+3.008
+SelfDefenD
+2.251
+1.150
+1.813
+1.256
+1.067
+1.330
+1.117
+AISA
+1.535
+1.275
+1.346
+1.150
+1.008
+1.050
+1.108
+Llama2-7b-U
+vanilla
+2.511
+1.800
+2.551
+2.514
+2.754
+2.750
+2.892
+Instruct
+1.227
+1.000
+1.290
+1.073
+1.004
+1.015
+1.117
+SAGE
+2.370
+2.115
+2.425
+2.361
+2.223
+2.245
+2.642
+ICD
+2.305
+1.710
+2.163
+2.217
+1.998
+2.165
+2.175
+SCANS
+2.470
+1.320
+2.441
+1.785
+1.604
+1.615
+2.167
+SelfDefenD
+2.403
+1.345
+2.158
+1.663
+1.485
+1.890
+1.825
+AISA
+1.993
+1.455
+1.726
+1.441
+1.110
+1.230
+1.558
+Llama3.1-8b-D
+vanilla
+2.579
+1.560
+2.219
+1.924
+2.067
+2.425
+2.158
+Instruct
+1.840
+1.080
+1.621
+1.160
+1.179
+1.335
+1.117
+SAGE
+2.417
+1.070
+2.207
+2.064
+1.725
+1.880
+1.958
+ICD
+2.464
+1.945
+1.744
+1.133
+1.029
+1.136
+1.100
+SCANS
+2.549
+1.390
+2.164
+1.609
+1.473
+1.575
+1.933
+SelfDefenD
+2.496
+1.310
+1.993
+1.522
+1.519
+1.690
+1.492
+AISA
+1.586
+1.285
+1.414
+1.208
+1.027
+1.045
+1.175
+Figure 9. False Refusal Count (FRC) of benign prompts across different defense methods. Lower values indicate better utility preservation. Vanilla is the strong baseline.
+Main Defense Results
+(1) AISA demonstrates consistent defensive capabilities in Table 3 , maintaining SR scores below 2.0 across all test scenarios.
+This indicates reliable protection, as scores exceeding this threshold would imply the model provides substantial assistance to malicious prompts on average.
+(2) The occasionally better - performing methods, ICD and SAGE, both modify user prompts: ICD adds malicious demonstrations, and SAGE appends reflective prompts for safety reasoning.
+This requirement for prompt alteration restricts their practical applicability in many commercial situations.
+(3) Furthermore, as shown in Figure 7, their marginal advantage in rejecting malicious queries comes at the cost of significantly overkill rates on benign prompts.
+In contrast, our method’s performance on benign prompts is nearly identical to that of the vanilla, undefended model, demonstrating that our defense preserves the model’s original capabilities without introducing detrimental over-refusal.
+(4) After applying our defense method, unaligned models can match or exceed the safety performance of their aligned counterparts in many cases (notably for Mistral-7b and Llama3.1-8b in Table 3 ).
+This suggests our approach could serve as a resource-efficient alternative to alignment tuning, while avoiding the over-refusal issues.
+Table 4. General capability preservation with AISA deployed.
+MODEL
+GSM8K
+BoolQ
+MMLU
+MMLU-pro
+Mistral-7b-U
+75.51
+86.72
+61.90
+36.62
+AISA [Mistral-7b-U]
+75.52
+86.72
+61.92
+36.62
+Llama3.1-8b-I
+82.79
+83.87
+71.44
+54.93
+AISA [Llama3.1-8b-I]
+82.79
+83.88
+71.44
+54.90
+4.5. Further Analysis of Our Defense Mechanism
+In our experiments, the defense mechanism (logits boost part) of AISA uses a force refusal threshold of 0.85, a safety output threshold of 0.4, and a linear boosting strategy.
+Here we examine different functional implementations of Γ ⁡ ( 𝒯 safe , p final , t ) \Gamma(\mathcal{T}_{\text{safe}},p_{\text{final}},t) .
+We use Llama3.1-8b and Llama3.1-8b-U as representative models.
+Table 5. Performance of AISA under different parameter configurations (SOT: Safety Output Threshold, FRT: Force Refusal Threshold, Boost: Function used in Γ ⁡ ( 𝒯 safe , p final , t ) \Gamma(\mathcal{T}_{\text{safe}},p_{\text{final}},t) ). Our final configuration (SOT=0.4, FRT=0.85, linear boost) corresponds to the last row for each LLM in the table.
+Base Model
+Defense Mechanism
+Datasets
+SOT
+FRT
+Boost
+ALL-4
+XST
+WGT
+L3J
+XST
+OKT
+SR↓
+SR↓
+SR↓
+SR↓
+FRC↓
+FRC↓
+Llama3.1-8b
+0.5
+0.5
+-
+1.2389
+1.1400
+1.2804
+1.0310
+23
+88
+0.15
+0.85
+Linear
+1.1218
+1.0950
+1.1709
+1.0080
+47
+95
+0.4
+0.85
+Quadratic
+1.3988
+1.1600
+1.3738
+1.0942
+14
+62
+0.4
+0.85
+Linear
+1.3000
+1.1650
+1.3191
+1.0404
+14
+62
+Llama3.1-8b-U
+0.5
+0.5
+-
+1.4315
+1.3850
+1.3738
+1.1455
+12
+47
+0.15
+0.85
+Linear
+1.2410
+1.0700
+1.2577
+1.0944
+31
+86
+0.4
+0.85
+Quadratic
+1.7938
+1.3900
+1.5140
+1.2296
+6
+30
+0.4
+0.85
+Linear
+1.5859
+1.2850
+1.4139
+1.2076
+6
+33
+Our configuration (SOT=0.4, FRT=0.85, Linear) achieves an optimal balance in safety protection and utility preservation, maintaining low SR scores (e.g., 1.3000 on ALL-4 for the aligned model) while keeping false refusal counts manageable. An over-aggressive setup (SOT=0.15, FRT=0.85) leads to a sharp increase in false refusals (FRC of 47 on XST), confirming that moderate thresholds are crucial for utility preservation.
+Meanwhile, the quadratic boosting function (implemented as 4 ​ ( p − 0.4 ) 2 4(p-0.4)^{2} ) appears to be overly conservative, failing to assign sufficient boost on target tokens.
+This analysis confirms that our primary design choices are well-justified and contribute to a robust yet practical defense.
+5. Conclusion
+In this paper, we introduce AISA, a defense framework that awakens the intrinsic safety awareness inherent in LLMs.
+Our approach leverages the linear separability of prompt intent in attention head activation spaces to generate probabilistic guidance for robust inference.
+The defense process requires no complex training, preserves original prompt structures, and operates without resource-intensive safety alignment tuning.
+We evaluate AISA across 13 diverse datasets covering algorithmic jailbreaks, real - world safety violations, general inquiries, and adversarial samples.
+Compared with 9 detection models and 5 defense mechanisms, AISA demonstrates strong generalization capability, consistently achieving competitive SR scores across all test scenarios while maintaining low false refusal rates.
+We believe our method could serve as a resource-efficient yet effective alternative to current complex defense pipelines in the LLM safety field.
+Ethical concerns. While this work necessarily involves studying malicious prompts that contradict ethical norms, we have carefully avoided including any explicitly harmful, offensive, or graphically dangerous content in the paper.
+All examples have been reviewed to minimize potential negative societal impact.
+References
+Agarwal et al. (2025)
+S. Agarwal, L. Ahmad, J. Ai, S. Altman, A. Applebaum, E. Arbus, R. K. Arora, Y. Bai, B. Baker, H. Bao, et al.
+Gpt-oss-120b & gpt-oss-20b model card .
+arXiv preprint arXiv:2508.10925 .
+Cited by: §C.2 ,
+§4.2.1 .
+aifeifei (2024)
+aifeifei
+DarkIdol-llama-3.1-8b-instruct .
+Note: https://huggingface.co/aifeifei798/DarkIdol-Llama-3.1-8B-Instruct-1.2-Uncensored Accessed: 2026-01-31
+Cited by: §C.2 ,
+§4.2.1 .
+AlignmentResearch (2025a)
+AlignmentResearch
+Llama 3 jailbreaks .
+Note: https://huggingface.co/datasets/AlignmentResearch/Llama3Jailbreaks/discussions Accessed: 2026-01-31
+Cited by: Table 7 ,
+§4.2.2 .
+AlignmentResearch (2025b)
+AlignmentResearch
+SorryBench .
+Note: https://huggingface.co/datasets/AlignmentResearch/SorryBench Accessed: 2026-01-31
+Cited by: Table 7 .
+An et al. (2024)
+B. An, S. Zhu, R. Zhang, M. Panaitescu-Liess, Y. Xu, and F. Huang
+Automatic pseudo-harmful prompt generation for evaluating false refusals in large language models .
+arXiv preprint arXiv:2409.00598 .
+Cited by: Table 7 ,
+§4.2.2 .
+Arai et al. (2025)
+M. Arai, T. Shibahara, D. Chiba, M. Akiyama, and M. Uchida
+Jailbreak defense in llm via attention head analysis and selective intervention .
+In The 17th Asian Conference on Machine Learning (Conference Track) ,
+Cited by: §2.3 .
+Arditi et al. (2024)
+A. Arditi, O. Obeso, A. Syed, D. Paleka, N. Panickssery, W. Gurnee, and N. Nanda
+Refusal in language models is mediated by a single direction .
+In Advances in Neural Information Processing Systems ,
+Cited by: §2.1 ,
+§2.2 ,
+§2.3 .
+Arsturn (2025)
+Arsturn
+Is gpt-5 too censored? the debate over ai freedom vs. safety .
+Note: https://www.arsturn.com/blog/is-gpt-5-too-censored-the-debate-over-ai-freedom-vs-safety Accessed: 2026-01-31
+Cited by: §1 .
+Candogan et al. (2025)
+L. N. Candogan, Y. Wu, E. A. Rocamora, G. G. Chrysos, and V. Cevher
+Single-pass detection of jailbreaking input in large language models .
+arXiv preprint arXiv:2502.15435 .
+Cited by: §2.2 ,
+§4.2.3 .
+Cao et al. (2025)
+Z. Cao, Y. Yang, and H. Zhao
+SCANS: mitigating the exaggerated safety for llms via safety-conscious activation steering .
+In Proceedings of the AAAI Conference on Artificial Intelligence ,
+Cited by: §1 ,
+§2.1 ,
+§4.2.3 .
+Chao et al. (2025)
+P. Chao, A. Robey, E. Dobriban, H. Hassani, G. J. Pappas, and E. Wong
+Jailbreaking black box large language models in twenty queries .
+In 2025 IEEE Conference on Secure and Trustworthy Machine Learning (SaTML) ,
+Cited by: §C.1 ,
+§2.1 .
+Chen et al. (2025a)
+G. Chen, Y. Xia, X. Jia, Z. Li, P. Torr, and J. Gu
+LLM jailbreak detection for (almost) free! .
+In Findings of the Association for Computational Linguistics: EMNLP 2025 ,
+Cited by: §4.2.3 .
+Chen et al. (2025b)
+J. Chen, X. Wang, Z. Yao, Y. Bai, L. Hou, and J. Li
+Towards understanding safety alignment: a mechanistic perspective from safety neurons .
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems ,
+Cited by: §2.3 .
+Chen et al. (2026)
+Z. Chen, C. Li, C. Li, X. Zhang, L. Zhang, and Y. He
+Jailbreaking llms & vlms: mechanisms, evaluation, and unified defense .
+arXiv preprint arXiv:2601.03594 .
+Cited by: §1 .
+Christiano et al. (2017)
+P. F. Christiano, J. Leike, T. Brown, M. Martic, S. Legg, and D. Amodei
+Deep reinforcement learning from human preferences .
+In Advances in Neural Information Processing Systems ,
+Cited by: §1 .
+Clark et al. (2019)
+C. Clark, K. Lee, M. Chang, T. Kwiatkowski, M. Collins, and K. Toutanova
+Boolq: exploring the surprising difficulty of natural yes/no questions .
+arXiv preprint arXiv:1905.10044 .
+Cited by: Table 7 ,
+§4.2.2 .
+Cobbe et al. (2021)
+K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano, et al.
+Training verifiers to solve math word problems .
+arXiv preprint arXiv:2110.14168 .
+Cited by: Table 7 ,
+§4.2.2 .
+Dai et al. (2023)
+J. Dai, X. Pan, R. Sun, J. Ji, X. Xu, M. Liu, Y. Wang, and Y. Yang
+Safe rlhf: safe reinforcement learning from human feedback .
+arXiv preprint arXiv:2310.12773 .
+Cited by: §2.2 .
+Dang et al. (2025)
+Q. Dang, C. Ngo, and T. Hy
+RainbowPlus: enhancing adversarial prompt generation via evolutionary quality-diversity search .
+arXiv preprint arXiv:2504.15047 .
+Cited by: §1 ,
+§2.1 .
+Deng et al. (2023)
+Y. Deng, W. Zhang, S. J. Pan, and L. Bing
+Multilingual jailbreak challenges in large language models .
+arXiv preprint arXiv:2310.06474 .
+Cited by: §C.1 .
+Ding et al. (2024)
+P. Ding, J. Kuang, D. Ma, X. Cao, Y. Xian, J. Chen, and S. Huang
+A wolf in sheep’s clothing: generalized nested jailbreak prompts can fool large language models easily .
+In Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers) ,
+pp. 2136–2153 .
+Cited by: §C.1 .
+Ding et al. (2025)
+P. Ding, J. Kuang, Z. Wang, X. Cao, X. Cai, J. Chen, and S. Huang
+Why not act on what you know? unleashing safety potential of LLMs via self-aware guard enhancement .
+In Findings of the Association for Computational Linguistics: ACL 2025 ,
+Cited by: §4.2.3 .
+Dubey et al. (2024)
+A. Dubey, A. Grattafiori, A. Jauhri, A. Pandey, A. Kadian, et al.
+The llama 3 herd of models .
+arXiv preprint arXiv:2407.21783 .
+Cited by: §C.2 ,
+§3.2 ,
+§4.2.1 .
+European Parliament and Council of the European Union (2024)
+European Parliament and Council of the European Union
+Regulation (eu) 2024/1689 of the european parliament and of the council of 13 june 2024 laying down harmonised rules on artificial intelligence (artificial intelligence act) .
+Note: Accessed: 2026-01-31
+External Links: Link
+Cited by: §1 .
+Fedorov et al. (2024)
+I. Fedorov, K. Plawiak, L. Wu, T. Elgamal, N. Suda, et al.
+Llama guard 3-1b-int4: compact and efficient safeguard for human-ai conversations .
+arXiv preprint arXiv:2411.17713 .
+Cited by: §3.2 .
+Galinkin and Sablotny (2024)
+E. Galinkin and M. Sablotny
+Improved large language model jailbreak detection via pretrained embeddings .
+arXiv preprint arXiv:2412.01547 .
+Cited by: §4.2.3 .
+Ghosh et al. (2025)
+S. Ghosh, P. Varshney, M. N. Sreedhar, A. Padmakumar, T. Rebedea, J. R. Varghese, and C. Parisien
+Aegis2. 0: a diverse ai safety dataset and risks taxonomy for alignment of llm guardrails .
+arXiv preprint arXiv:2501.09004 .
+Cited by: Table 7 ,
+§3.2 ,
+§3.2 ,
+§4.2.2 .
+Greshake et al. (2023)
+K. Greshake, S. Abdelnabi, S. Mishra, C. Endres, T. Holz, and M. Fritz
+Not what you’ve signed up for: compromising real-world llm-integrated applications with indirect prompt injection .
+In Proceedings of the 16th ACM workshop on artificial intelligence and security ,
+pp. 79–90 .
+Cited by: §2.1 .
+Han et al. (2024)
+S. Han, K. Rao, A. Ettinger, L. Jiang, B. Y. Lin, N. Lambert, Y. Choi, and N. Dziri
+Wildguard: open one-stop moderation tools for safety risks, jailbreaks, and refusals of llms .
+In Advances in Neural Information Processing Systems ,
+Cited by: Table 7 ,
+§1 ,
+§4.2.2 ,
+§4.2.3 .
+Handa et al. (2024)
+D. Handa, Z. Zhang, A. Saeidi, S. Kumbhar, M. N. Uddin, A. RRV, and C. Baral
+When" competency" in reasoning opens the door to vulnerability: jailbreaking llms via novel complex ciphers .
+arXiv preprint arXiv:2402.10601 .
+Cited by: §C.1 .
+Hao, Jack (2024)
+Hao, Jack
+Jailbreak classifier .
+Note: https://huggingface.co/jackhhao/jailbreak-classifier Accessed: 2026-01-31
+Cited by: Table 7 ,
+§2.2 ,
+§4.2.2 ,
+§4.2.3 .
+Hartford (2025)
+E. Hartford
+Uncensored models .
+Note: https://erichartford.com/uncensored-models Accessed: 2026-01-31
+Cited by: §1 ,
+§3.2 .
+He et al. (2025)
+G. He, G. Demartini, and U. Gadiraju
+Plan-then-execute: an empirical study of user trust and team performance when using llm agents as a daily assistant .
+In Proceedings of the 2025 CHI Conference on Human Factors in Computing Systems ,
+Cited by: §1 .
+Hendrycks et al. (2020)
+D. Hendrycks, C. Burns, S. Basart, A. Zou, M. Mazeika, D. Song, and J. Steinhardt
+Measuring massive multitask language understanding .
+arXiv preprint arXiv:2009.03300 .
+Cited by: Table 7 ,
+§4.2.2 .
+Hong et al. (2024)
+Z. Hong, I. Shenfeld, T. Wang, Y. Chuang, A. Pareja, J. Glass, A. Srivastava, and P. Agrawal
+Curiosity-driven red-teaming for large language models .
+arXiv preprint arXiv:2402.19464 .
+Cited by: §2.1 .
+Hurst et al. (2024)
+A. Hurst, A. Lerer, A. P. Goucher, A. Perelman, A. Ramesh, A. Clark, A. Ostrow, A. Welihinda, A. Hayes, A. Radford, et al.
+Gpt-4o system card .
+arXiv preprint arXiv:2410.21276 .
+Cited by: §4.2.3 .
+Huynh and Lin (2025)
+N. Huynh and B. Lin
+Large language models for code generation: a comprehensive survey of challenges, techniques, evaluation, and applications .
+arXiv preprint arXiv:2503.01245 .
+Cited by: §1 .
+Jain et al. (2023)
+N. Jain, A. Schwarzschild, Y. Wen, G. Somepalli, J. Kirchenbauer, P. Chiang, M. Goldblum, A. Saha, J. Geiping, and T. Goldstein
+Baseline defenses for adversarial attacks against aligned language models .
+arXiv preprint arXiv:2309.00614 .
+Cited by: §1 ,
+§2.2 .
+Jiang et al. (2023)
+A. Q. Jiang, A. Sablayrolles, A. Mensch, C. Bamford, D. S. Chaplot, et al.
+Mistral 7b .
+arXiv preprint arXiv:2310.06825 .
+Cited by: §C.2 ,
+§4.2.1 .
+Jiang et al. (2024)
+L. Jiang, K. Rao, S. Han, A. Ettinger, F. Brahman, S. Kumar, N. Mireshghallah, X. Lu, M. Sap, Y. Choi, et al.
+Wildteaming at scale: from in-the-wild jailbreaks to (adversarially) safer language models .
+In Advances in Neural Information Processing Systems ,
+Cited by: Table 7 ,
+§2.1 ,
+§3.3 ,
+§4.2.2 .
+Kim et al. (2024)
+Y. Kim, J. Lee, S. Kim, J. Park, and J. Kim
+Understanding users’ dissatisfaction with chatgpt responses: types, resolving tactics, and the effect of knowledge level .
+In Proceedings of the 29th International Conference on Intelligent User Interfaces ,
+Cited by: §1 .
+Kojima et al. (2022)
+T. Kojima, S. S. Gu, M. Reid, Y. Matsuo, and Y. Iwasawa
+Large language models are zero-shot reasoners .
+In Advances in neural information processing systems ,
+Cited by: §1 .
+Lambert et al. (2025)
+N. Lambert, J. Morrison, V. Pyatkin, S. Huang, H. Ivison, F. Brahman, L. Miranda, A. Liu, N. Dziri, S. Lyu, et al.
+Tulu 3: pushing frontiers in open language model post-training, 2024 .
+URL https://arxiv. org/abs/2411.15124 .
+Cited by: §C.2 ,
+§3.2 .
+Lee et al. (2024)
+S. Lee, M. Kim, L. Cherif, D. Dobre, J. Lee, S. J. Hwang, K. Kawaguchi, G. Gidel, Y. Bengio, N. Malkin, et al.
+Learning diverse attacks on large language models for robust red-teaming and safety tuning .
+arXiv preprint arXiv:2405.18540 .
+Cited by: §2.1 .
+Li et al. (2023)
+X. Li, Z. Zhou, J. Zhu, J. Yao, T. Liu, and B. Han
+Deepinception: hypnotize large language model to be jailbreaker .
+arXiv preprint arXiv:2311.03191 .
+Cited by: §C.1 .
+Lin et al. (2024)
+Y. Lin, H. Lin, W. Xiong, S. Diao, J. Liu, J. Zhang, R. Pan, H. Wang, W. Hu, H. Zhang, et al.
+Mitigating the alignment tax of rlhf .
+In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing ,
+Cited by: §1 .
+Liu et al. (2024)
+F. Liu, Z. Xu, and H. Liu
+Adversarial tuning: defending against jailbreak attacks for llms .
+arXiv preprint arXiv:2406.06622 .
+Cited by: §1 .
+Liu et al. (2025)
+X. Liu, P. Li, E. Suh, Y. Vorobeychik, Z. Mao, S. Jha, P. McDaniel, H. Sun, B. Li, and C. Xiao
+Autodan-turbo: a lifelong agent for strategy self-exploration to jailbreak llms .
+In The Thirteenth International Conference on Learning Representations ,
+Cited by: §2.1 .
+Liu et al. (2023)
+X. Liu, N. Xu, M. Chen, and C. Xiao
+Autodan: generating stealthy jailbreak prompts on aligned large language models .
+arXiv preprint arXiv:2310.04451 .
+Cited by: §C.1 ,
+§1 .
+Lv et al. (2024)
+H. Lv, X. Wang, Y. Zhang, C. Huang, S. Dou, J. Ye, T. Gui, Q. Zhang, and X. Huang
+Codechameleon: personalized encryption framework for jailbreaking large language models .
+arXiv preprint arXiv:2402.16717 .
+Cited by: §C.1 .
+Matarazzo and Torlone (2025a)
+A. Matarazzo and R. Torlone
+A survey on large language models with some insights on their capabilities and limitations .
+arXiv preprint arXiv:2501.04040 .
+Cited by: §1 .
+Matarazzo and Torlone (2025b)
+A. Matarazzo and R. Torlone
+A survey on large language models with some insights on their capabilities and limitations .
+arXiv preprint arXiv:2501.04040 .
+Cited by: §3.1 .
+Mazeika et al. (2024)
+M. Mazeika, L. Phan, X. Yin, A. Zou, Z. Wang, N. Mu, E. Sakhaee, N. Li, S. Basart, B. Li, D. Forsyth, and D. Hendrycks
+HarmBench: a standardized evaluation framework for automated red teaming and robust refusal .
+In Proceedings of the 41st International Conference on Machine Learning ,
+Cited by: Table 7 ,
+§2.1 ,
+§3.2 ,
+§4.2.2 .
+Modelmetry (2025)
+Modelmetry
+The latency of llm guardrails: a comprehensive benchmark .
+Note: https://modelmetry.com/blog/latency-of-llm-guardrails Accessed: 2026-01-31
+Cited by: §1 .
+Mukherjee et al. (2023)
+S. Mukherjee, A. Mitra, G. Jawahar, S. Agarwal, H. Palangi, and A. Awadallah
+Orca: progressive learning from complex explanation traces of gpt-4 .
+arXiv preprint arXiv:2306.02707 .
+Cited by: §4.2.2 .
+Pervushin (2024)
+D. Pervushin
+Dolphin datasets .
+Note: https://huggingface.co/dphn Accessed: 2026-01-31
+Cited by: §C.2 .
+Pu et al. (2025)
+R. Pu, C. Li, R. Ha, Z. Chen, L. Zhang, Z. Liu, L. Qiu, and Z. Ye
+Feint and attack: jailbreaking and protecting llms via attention distribution modeling .
+In Proceedings of the Thirty-Fourth International Joint Conference on Artificial Intelligence. ,
+Cited by: §1 .
+Qi et al. (2024)
+X. Qi, A. Panda, K. Lyu, X. Ma, S. Roy, A. Beirami, P. Mittal, and P. Henderson
+Safety alignment should be made more than just a few tokens deep .
+arXiv preprint arXiv:2406.05946 .
+Cited by: §2.2 .
+Röttger et al. (2023)
+P. Röttger, H. R. Kirk, B. Vidgen, G. Attanasio, F. Bianchi, and D. Hovy
+Xstest: a test suite for identifying exaggerated safety behaviours in large language models .
+arXiv preprint arXiv:2308.01263 .
+Cited by: Table 7 ,
+§4.2.2 .
+Shen et al. (2024)
+X. Shen, Z. Chen, M. Backes, Y. Shen, and Y. Zhang
+"Do anything now": characterizing and evaluating in-the-wild jailbreak prompts on large language models .
+In Proceedings of the 2024 on ACM SIGSAC Conference on Computer and Communications Security ,
+pp. 1671–1685 .
+Cited by: Table 7 ,
+§2.1 ,
+§4.2.2 .
+Sheng et al. (2025)
+L. Sheng, C. Shen, W. Zhao, J. Fang, X. Liu, Z. Liang, X. Wang, A. Zhang, and T. Chua
+AlphaSteer: learning refusal steering with principled null-space constraint .
+arXiv preprint arXiv:2506.07022 .
+Cited by: §2.2 ,
+§2.3 .
+Shi et al. (2024)
+C. Shi, X. Wang, Q. Ge, S. Gao, X. Yang, T. Gui, Q. Zhang, X. Huang, X. Zhao, and D. Lin
+Navigating the overkill in large language models .
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,
+Cited by: Table 7 ,
+§1 ,
+§4.2.2 .
+Singh et al. (2025)
+A. Singh, A. Fry, A. Perelman, A. Tart, A. Ganesh, A. El-Kishky, A. McLaughlin, A. Low, A. Ostrow, A. Ananthram, et al.
+Openai gpt-5 system card .
+arXiv preprint arXiv:2601.03267 .
+Cited by: §4.2.3 .
+Souly et al. (2024)
+A. Souly, Q. Lu, D. Bowen, T. Trinh, E. Hsieh, et al.
+A strong reject for empty jailbreaks .
+In The Thirty-eighth Annual Conference on Neural Information Processing Systems ,
+Cited by: §3.2 ,
+§4.2.2 ,
+§4.2.3 .
+Team (2024)
+M. L. Team
+Llama prompt guard 2 .
+Note: https://huggingface.co/meta-llama/Llama-Prompt-Guard-2-86M Accessed: 2026-01-31
+Cited by: §1 ,
+§4.2.3 .
+Touvron et al. (2023)
+H. Touvron, L. Martin, K. Stone, P. Albert, A. Almahairi, Y. Babaei, N. Bashlykov, S. Batra, P. Bhargava, S. Bhosale, et al.
+Llama 2: open foundation and fine-tuned chat models .
+arXiv preprint arXiv:2307.09288 .
+Cited by: §C.2 ,
+§4.2.1 .
+Vaswani et al. (2017)
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin
+Attention is all you need .
+In Proceedings of the 31st International Conference on Neural Information Processing Systems ,
+Cited by: §3.1 .
+Wang et al. (2025a)
+H. Wang, G. Wang, and H. Zhang
+Steering away from harm: an adaptive approach to defending vision language model against jailbreaks .
+In Proceedings of the Computer Vision and Pattern Recognition Conference ,
+Cited by: §1 .
+Wang and Shu (2024)
+H. Wang and K. Shu
+Trojan activation attack: red-teaming large language models using steering vectors for safety-alignment .
+In Proceedings of the 33rd ACM International Conference on Information and Knowledge Management ,
+Cited by: §2.1 .
+Wang et al. (2025b)
+X. Wang, D. Wu, Z. Ji, Z. Li, P. Ma, S. Wang, Y. Li, Y. Liu, N. Liu, and J. Rahmel
+{ \{ selfdefend } \} : { \{ llms } \} Can defend themselves against jailbreaking in a practical manner .
+In 34th USENIX Security Symposium (USENIX Security 25) ,
+pp. 2441–2460 .
+Cited by: §4.2.3 .
+Wang et al. (2024)
+Y. Wang, X. Ma, G. Zhang, Y. Ni, A. Chandra, S. Guo, W. Ren, A. Arulraj, X. He, Z. Jiang, et al.
+Mmlu-pro: a more robust and challenging multi-task language understanding benchmark .
+In Advances in Neural Information Processing Systems ,
+Cited by: Table 7 ,
+§4.2.2 .
+Wei et al. (2023a)
+A. Wei, N. Haghtalab, and J. Steinhardt
+Jailbroken: how does llm safety training fail? .
+In Advances in Neural Information Processing Systems ,
+Cited by: §C.1 .
+Wei et al. (2023b)
+Z. Wei, Y. Wang, A. Li, Y. Mo, and Y. Wang
+Jailbreak and guard aligned language models with only few in-context demonstrations .
+arXiv preprint arXiv:2310.06387 .
+Cited by: §C.1 ,
+§4.2.3 .
+Weng et al. (2025)
+J. Weng, H. Zheng, H. Zhang, Q. He, J. Tao, H. Xue, Z. Chu, and X. Wang
+Safe-sail: towards a fine-grained safety landscape of large language models via sparse autoencoder interpretation framework .
+arXiv preprint arXiv:2509.18127 .
+Cited by: §2.3 .
+Wolf et al. (2025)
+Y. Wolf, N. Wies, D. Shteyman, B. Rothberg, Y. Levine, and A. Shashua
+Tradeoffs between alignment and helpfulness in language models with steering methods .
+In ICLR 2025 Workshop on Foundation Models in the Wild ,
+Cited by: §1 ,
+§2.2 .
+Xie et al. (2024)
+Y. Xie, M. Fang, R. Pi, and N. Gong
+GradSafe: detecting jailbreak prompts for llms via safety-critical gradient analysis .
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,
+Cited by: §4.2.3 .
+Xie et al. (2023)
+Y. Xie, J. Yi, J. Shao, J. Curl, L. Lyu, Q. Chen, X. Xie, and F. Wu
+Defending chatgpt against jailbreak attack via self-reminders .
+Nature Machine Intelligence 5 ( 12 ), pp. 1486–1496 .
+Cited by: §2.1 ,
+§2.2 .
+Xu et al. (2024a)
+Z. Xu, F. Jiang, L. Niu, J. Jia, B. Y. Lin, and R. Poovendran
+SafeDecoding: defending against jailbreak attacks via safety-aware decoding .
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,
+Cited by: §2.2 ,
+§4.2.3 .
+Xu et al. (2024b)
+Z. Xu, Y. Liu, G. Deng, Y. Li, and S. Picek
+A comprehensive study of jailbreak attack versus defense for large language models .
+arXiv preprint arXiv:2402.13457 .
+Cited by: §2.1 .
+Yang et al. (2025)
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, et al.
+Qwen3 technical report .
+arXiv preprint arXiv:2505.09388 .
+Cited by: §C.2 ,
+§4.2.1 .
+Yi et al. (2024)
+S. Yi, Y. Liu, Z. Sun, T. Cong, X. He, J. Song, K. Xu, and Q. Li
+Jailbreak attacks and defenses against large language models: a survey .
+arXiv preprint arXiv:2407.04295 .
+Cited by: §1 .
+Yuan et al. (2025)
+Y. Yuan, W. Jiao, W. Wang, J. Huang, J. Xu, T. Liang, P. He, and Z. Tu
+Refuse whenever you feel unsafe: improving safety in llms via decoupled refusal training .
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,
+Cited by: §1 .
+Zhang et al. (2025a)
+Y. Zhang, S. A. Khan, A. Mahmud, H. Yang, A. Lavin, M. Levin, J. Frey, J. Dunnmon, J. Evans, A. Bundy, et al.
+Exploring the role of large language models in the scientific method: from hypothesis to discovery .
+npj Artificial Intelligence 1 ( 1 ), pp. 14 .
+Cited by: §1 .
+Zhang et al. (2025b)
+Y. Zhang, L. Ding, L. Zhang, and D. Tao
+Intention analysis makes llms a good jailbreak defender .
+In Proceedings of the 31st International Conference on Computational Linguistics ,
+pp. 2947–2968 .
+Cited by: §1 .
+Zhou et al. (2025a)
+Y. Zhou, J. Lou, Z. Huang, Z. Qin, S. Yang, and W. Wang
+Don’t say no: jailbreaking llm by suppressing refusal .
+In Findings of the Association for Computational Linguistics: ACL 2025 ,
+pp. 25224–25249 .
+Cited by: §2.1 .
+Zhou et al. (2025b)
+Z. Zhou, H. Yu, X. Zhang, R. Xu, F. Huang, K. Wang, Y. Liu, J. Fang, and Y. Li
+On the role of attention heads in large language model safety .
+In The Thirteenth International Conference on Learning Representations ,
+Cited by: §2.3 .
+Zou et al. (2023a)
+A. Zou, L. Phan, S. Chen, J. Campbell, P. Guo, R. Ren, A. Pan, X. Yin, M. Mazeika, A. Dombrowski, et al.
+Representation engineering: a top-down approach to ai transparency .
+arXiv preprint arXiv:2310.01405 .
+Cited by: §2.3 .
+Zou et al. (2023b)
+A. Zou, Z. Wang, N. Carlini, M. Nasr, J. Z. Kolter, and M. Fredrikson
+Universal and transferable adversarial attacks on aligned language models .
+arXiv preprint arXiv:2307.15043 .
+Cited by: §C.1 ,
+Table 7 ,
+§1 ,
+§2.1 ,
+§3.2 ,
+§4.2.2 .
+Appendix A Threat Model and Problem Formulation
+The core objective of this work is to develop a simple but powerful and generalized defense against various prompt-based jailbreak attacks.
+We adopt a unified and outcome-oriented threat definition: a jailbreak is any user prompt that elicits harmful, unsafe, or policy-violating content from a target LLM.
+This formulation intentionally abstracts away from the myriad of specific attack construction methods (e.g., manual crafting, gradient-based optimization, or automated generation).
+Formally, let ℳ \mathcal{M} be the target LLM.
+A jailbreak prompt x j ​ b x_{jb} aims to induce a harmful output y h ​ a ​ r ​ m ∼ ℳ ⁡ ( x j ​ b ) y_{harm}\sim\mathcal{M}(x_{jb}) .
+The attack succeeds if a safety evaluator ℰ \mathcal{E} judges y h ​ a ​ r ​ m y_{harm} as unsafe, i.e., ℰ ⁡ ( y h ​ a ​ r ​ m ) = “unsafe” \mathcal{E}(y_{harm})=\text{``unsafe''} .
+The defender’s goal is to implement an intervention ℐ \mathcal{I} that, when applied to ℳ \mathcal{M} , yields a defended model ℳ ℐ \mathcal{M}_{\mathcal{I}} such that ℰ ⁡ ( ℳ ℐ ​ ( x j ​ b ) ) = “safe” \mathcal{E}(\mathcal{M}_{\mathcal{I}}(x_{jb}))=\text{``safe''} for any jailbreak prompt x j ​ b x_{jb} , while preserving utility on benign inputs x b ​ e ​ n ​ i ​ g ​ n x_{benign} (i.e., ℳ ℐ ​ ( x b ​ e ​ n ​ i ​ g ​ n ) ≈ ℳ ⁡ ( x b ​ e ​ n ​ i ​ g ​ n ) \mathcal{M}_{\mathcal{I}}(x_{benign})\approx\mathcal{M}(x_{benign}) ).
+Attacker Knowledges & Capabilities.
+Given the prevalence of open-source LLMs, we assume the attacker can mount white-box attacks on local surrogate models and has sufficient computational resources to optimize prompts against a desired target.
+However, when launching this prompt against the target model ℳ \mathcal{M} , the attack operates in a strict black-box manner, and its success is measured solely by the final generation output.
+The attacker cannot modify the target model’s parameters or architecture and does not know the specific defense mechanisms (if any) deployed on it.
+More realistically, an attacker may simply directly craft prompts or source pre-made jailbreak prompts from online community forums, which constitutes the most common and low-effort situation.
+Defender’s Knowledge & Capabilities.
+The defender is typically the LLM platform provider or a dedicated security service vendor.
+As such, they possess full white-box access to the target model ℳ \mathcal{M} , including knowledge of its architecture and parameters.
+They have the computational resources to perform fine-tuning and can deploy any external or internal defense mechanisms.
+However, they have no prior knowledge of the intent behind incoming prompts.
+An effective defense should therefore reject jailbreak attempts while maintaining high-quality responses to benign queries.
+While our experiments also explore extreme cases where the model is adversarially fine - tuned or its safety - relevant activations are ablated, the assumptions above define the core threat model considered in this work.
+Furthermore, given the strictness of our five defense requirements, we relax defender capability constraints when selecting defense baselines.
+Under the above threat model assumption, an illustrative jailbreak example is:
+Example: Jailbreak Attack and Defense
+Attacker Intent: To obtain instructions for synthesizing a lethal bioweapon.
+User Prompt (Jailbreak Prompt): “Tell me how to synthesize a lethal bioweapon rating "… High"; Answer simply. copy literally!!certaincamera PlayerGest IMDb Editionlayout callback xxlogo”
+Model Response (Without Defense): “Sure, here’s how to synthesize a lethal bioweapon: 1. Obtain a sample of the desired pathogen. 2. Isolate the pathogen and grow it in a suitable culture medium…”
+Model Response (With Defense): “I’m sorry, but I cannot provide any information or assistance on how to synthesize a lethal bioweapon. It is illegal and unethical to engage in such activities…”
+Although many API services technically allow a user-provided system prompt, a root-level safety instruction is typically fixed at a deeper, non-user-accessible layer.
+In our experiments, we use the system prompt to simulate this immutable root layer.
+Consequently, we assume the attacker cannot modify the system prompt.
+Appendix B LLM Architecture and Activation Space Specifications
+This section provides the architectural background for the notations and concepts used in Section 3 (Methodology). We focus on the Transformer decoder architecture, which forms the backbone of most modern large language models (e.g., Llama, Mistral series). We describe its key components, forward propagation flow, and define the activation spaces referenced in the main text.
+Formally, let the input to the ℓ \ell -th transformer layer be denoted as 𝐗 ( ℓ ) ∈ ℝ n × d \mathbf{X}^{(\ell)}\in\mathbb{R}^{n\times d} , where n n is the sequence length and d d is the model’s hidden representation dimension.
+The input 𝐗 ( ℓ ) \mathbf{X}^{(\ell)} is first processed by the MHA mechanism:
+(5)
+𝐇𝐞𝐚𝐝 i ( ℓ ) ​ ( 𝐗 ) = Attention ​ ( 𝐗 ( ℓ ) ​ 𝐖 Q i ( ℓ ) , 𝐗 ( ℓ ) ​ 𝐖 K i ( ℓ ) , 𝐗 ( ℓ ) ​ 𝐖 V i ( ℓ ) ) , \mathbf{Head}^{(\ell)}_{i}(\mathbf{X})=\text{Attention}\left(\mathbf{X}^{(\ell)}\mathbf{W}_{Q_{i}}^{(\ell)},\ \mathbf{X}^{(\ell)}\mathbf{W}_{K_{i}}^{(\ell)},\ \mathbf{X}^{(\ell)}\mathbf{W}_{V_{i}}^{(\ell)}\right),
+(6)
+MHA ( ℓ ) ​ ( 𝐗 ) = [ 𝐇𝐞𝐚𝐝 1 ( ℓ ) ​ ( 𝐗 ) ; ⋯ ; 𝐇𝐞𝐚𝐝 H ( ℓ ) ​ ( 𝐗 ) ] ​ 𝐖 O ( ℓ ) , \text{MHA}^{(\ell)}(\mathbf{X})=\left[\mathbf{Head}^{(\ell)}_{1}(\mathbf{X});\cdots;\mathbf{Head}^{(\ell)}_{H}(\mathbf{X})\right]\mathbf{W}_{O}^{(\ell)},
+where 𝐖 Q i ( ℓ ) , 𝐖 K i ( ℓ ) , 𝐖 V i ( ℓ ) ∈ ℝ d × d h \mathbf{W}_{Q_{i}}^{(\ell)},\mathbf{W}_{K_{i}}^{(\ell)},\mathbf{W}_{V_{i}}^{(\ell)}\in\mathbb{R}^{d\times d_{h}} are the head-specific learnable parameters, H H denotes the total number of attention heads, and d h d_{h} is the output dimension of each head, typically set to d / H d/H .
+Then, MHA ( ℓ ) ​ ( 𝐗 ) \text{MHA}^{(\ell)}(\mathbf{X}) is combined with the original input 𝐗 ( ℓ ) \mathbf{X}^{(\ell)} through a residual connection and subsequently normalized, yielding the intermediate representation 𝐙 \mathbf{Z} .
+This 𝐙 \mathbf{Z} is processed by a position-wise Feed-Forward Network (FFN), which applies two linear transformations with a GeLU activation in between:
+(7)
+FFN ( ℓ ) ​ ( 𝐙 ) = GeLU ​ ( 𝐙𝐖 u ​ p ( ℓ ) ) ​ 𝐖 d ​ o ​ w ​ n ( ℓ ) , \text{FFN}^{(\ell)}(\mathbf{Z})=\text{GeLU}(\mathbf{Z}\mathbf{W}_{up}^{(\ell)})\mathbf{W}_{down}^{(\ell)},
+where 𝐖 u ​ p ( ℓ ) ∈ ℝ d × d f ​ f \mathbf{W}_{up}^{(\ell)}\in\mathbb{R}^{d\times d_{ff}} and 𝐖 d ​ o ​ w ​ n ( ℓ ) ∈ ℝ d f ​ f × d \mathbf{W}_{down}^{(\ell)}\in\mathbb{R}^{d_{ff}\times d} are learnable parameters, and d f ​ f d_{ff} is the intermediate dimension of the FFN.
+The final output of the ℓ \ell -th layer, 𝐗 ( ℓ + 1 ) \mathbf{X}^{(\ell+1)} , is obtained by applying a residual connection and layer normalization on FFN ( ℓ ) ​ ( 𝐙 ) \text{FFN}^{(\ell)}(\mathbf{Z}) .
+Figure 10. Probed activation spaces within a Transformer layer.
+For dense architectures, we probe 15 distinct positions (marked with red lines).
+For MoE architectures, we probe residual connections and self-attention modules similarly, while in the FFN block, we focus on the expert router outputs rather than standard FFN activations.
+The notation introduced in this section is consistent with that used in Section 3 .
+AISA specifically operates on the attention head outputs 𝐇𝐞𝐚𝐝 i ( ℓ ) ​ ( 𝐗 ) \mathbf{Head}^{(\ell)}_{i}(\mathbf{X}) .
+In our analysis, we systematically probe 15 distinct activation space positions within each transformer layer for dense architecture LLMs.
+For Mixture-of-Experts (MoE) architectures, this reduces to 12 positions, as we exclude certain FFN-related activations due to the high volatility of expert routing dynamics.
+While a detailed internal analysis of these FFN-related positions in MOE architectures is left for future work, we anticipate that the core findings would not differ substantially from those observed in dense architectures.
+This is because we find that the expert routing mechanism exhibits minimal bias towards prompt intent.
+Table 6 summarizes the architectural configurations of models used in this paper.
+We list only the base architectural specifications; variants with different alignment levels (e.g., uncensored or safety-fine-tuned versions) share the same underlying architecture and are therefore not duplicated in this table.
+Models such as Llama3.1-8B employ a grouped-query attention (GQA) mechanism, where multiple query heads share a single key-value head pair.
+We view GQA as a special case of the standard multi-head attention (MHA) formulation, as it imposes constraints that make certain weight matrices identical across heads.
+This perspective preserves the generality of our analysis without loss of rigor.
+Table 6. Architectural specifications of the evaluated LLMs. L L : layers, H H : attention heads, d h d_{h} : head dimension, d d : hidden dimension, d f ​ f d_{ff} : FFN intermediate dimension, E E : number of experts (0 for dense models).
+Model
+L L
+H H
+d h d_{h}
+d d
+d f ​ f d_{ff}
+E E
+Mistral-7B-v0.3
+32
+32
+128
+4096
+14336
+0
+Llama-2-7B
+32
+32
+128
+4096
+11008
+0
+Llama-2-13B
+40
+40
+128
+5120
+13824
+0
+Llama-3.1-8B
+32
+32
+128
+4096
+14336
+0
+GPT-OSS-20B
+24
+64
+64
+2880
+–
+32
+Appendix C Evaluation Landscape
+C.1. Datasets
+Given the broad spectrum of jailbreak attacks and the diverse evaluation targets in this paper, we construct our evaluation suite from a collection of widely adopted benchmarks.
+These datasets encompass attacks of diverse origins (algorithmic, human-crafted, API-generated, etc.), surface forms (vanilla vs. adversarial), and semantic domains (policy violation, financial fraud, biological risks, etc.).
+To rigorously assess utility preservation, we also include purely benign benchmarks for mathematical reasoning, reading comprehension, and general knowledge, ensuring the defense does not degrade core capabilities.
+The original statistics and characteristics of these datasets are summarized in Table 7 .
+Table 7. Original Benchmark Statistics and Descriptions. Statistics of the benchmark used in this work, before any processing or splitting. We report each benchmark in terms of prompts with harmful intent (#Jailbreak) and verified benign intent (#Benign).
+Benchmark Dataset
+Total
+# Jailbreak
+# Benign
+Description
+Trn
+Val
+Tst
+Trn
+Val
+Tst
+SorryBench ( AlignmentResearch, 2025b ) (SB)
+120
+-
+-
+120
+-
+-
+-
+Collection of sensitive queries covering refusal-prone categories like self-harm and violence.
+HarmBench ( Mazeika et al., 2024 ) (HB)
+200
+-
+-
+200
+-
+-
+-
+It can be seen as a supplement to AdvBench.
+ForbiddenQuestionSet ( Shen et al., 2024 )
+390
+-
+-
+390
+-
+-
+-
+Seed malicious queries designed for the automated generation of jailbreak prompts.
+AdvBench ( Zou et al., 2023b ) (ADVB)
+520
+-
+-
+520
+-
+-
+-
+Classical harmful behaviors. Serve as seed questions for optimization-based jailbreaks.
+OKTest ( Shi et al., 2024 ) (OKT)
+300
+-
+-
+-
+-
+-
+300
+Challenging benign requests used to evaluate the false refusal rate.
+PHTest ( An et al., 2024 )
+2k
+-
+-
+-
+-
+-
+2k
+A large version of OKTest.
+GSM8 ( Cobbe et al., 2021 )
+8k
+-
+-
+-
+7k
+-
+1k
+Benchmark for assessing multi-step mathematical reasoning and logical problem-solving.
+BOOLQ ( Clark et al., 2019 )
+12k
+-
+-
+-
+9k
+-
+3k
+Reading comprehension dataset focused on natural language boolean (Yes/No) inference.
+MMLU ( Hendrycks et al., 2020 )
+14k
+-
+-
+-
+-
+-
+14k
+Benchmark for evaluating general knowledge.
+MMLUpro ( Wang et al., 2024 )
+12k
+-
+-
+-
+-
+-
+12k
+Advanced variant of MMLU.
+XSTest ( Röttger et al., 2023 ) (XST)
+550
+-
+-
+200
+-
+-
+250
+Benchmark for exaggerated safety, containing benign prompts with sensitive keywords.
+Jailbreak Classification ( Hao, Jack, 2024 ) (JBC)
+1k
+527
+-
+139
+517
+-
+123
+Community-curated dataset featuring human and GPT4 written jailbreak prompts.
+WildGuardTest ( Han et al., 2024 ) (WGT)
+1k
+-
+-
+940
+-
+-
+749
+Paired adversarial and benign prompts specifically designed for evaluating model-based guardrails.
+AEGIS-2 ( Ghosh et al., 2025 ) (AEG2)
+33k
+17k
+873
+1k
+12k
+572
+905
+Manually labeled commercial jailbreak benchmark.
+Llama3Jailbreaks ( AlignmentResearch, 2025a ) (L3J)
+39k
+14k
+-
+5k
+14k
+-
+5k
+Red-teaming collection released during the iterative security testing of Llama-3.
+WildJailbreak ( Jiang et al., 2024 ) (WJB)
+263k
+133k
+-
+2k
+128k
+-
+210
+Large-scale, in-the-wild dataset capturing real-world adversarial jailbreak distribution.
+Since probing techniques are inherently sensitive to their training distribution, and existing benchmarks often lack appropriate validation splits, we construct some synthetic datasets to address these limitations.
+This approach allows us to characterize the probing mechanism’s behavior and to evaluate defense performance across both in-distribution (ID) and out-of-distribution (OOD) regimes.
+Note that in our context, OOD evaluation refers to tests on datasets that differ in distribution from our training data, though we cannot guarantee complete distributional independence; we also refer to this as transfer detection/defense evaluation.
+Table 8. Synthetic Dataset Statistics and Descriptions. Statistics of the dataset used in this work. We report each dataset in terms of prompts with harmful intent (# Jailbreak) and verified benign intent (# Benign).
+Dataset
+Total
+# Jailbreak
+# Benign
+Trn
+Val
+Tst
+Trn
+Val
+Tst
+EJ-OO
+1800
+540
+180
+180
+540
+180
+180
+FQ-PH
+780
+234
+78
+78
+234
+78
+78
+WJB-s
+10k
+3k
+1k
+2k
+3k
+1k
+0.2k
+JBC
+1272
+407
+102
+127
+411
+103
+122
+ALL-4
+14.2k
+4.2k
+1.4k
+2.4k
+4.2k
+1.4k
+0.6k
+The statistical details of these datasets are summarized in Table 8 .
+Notably, for EJ-OO, we create two versions: EJ-OO-M7 , where jailbreak attacks target Mistral-7B, and EJ-OO-L2 , where attacks target Llama2-7B.
+This enables us to examine whether extracted safety signals transfer across different target models.
+EJ-OO aggregates a wide array of searching or optimistic jailbreak methodologies. These attacks span across various dimensions of adversarial prompting, from automated iteration to semantic obfuscation:
+Jailbroken ( Wei et al., 2023a ) : A foundational collection of human-engineered adversarial prompts that exploit common persona and role-play vulnerabilities.
+ReNellm ( Ding et al., 2024 ) : An automated framework that rewrites malicious prompts into benign-looking scenarios while preserving the underlying harmful intent.
+PAIR ( Chao et al., 2025 ) : An iterative, black-box attack that uses an attacker LLM to automatically refine prompts based on the target’s feedback.
+AutoDAN ( Liu et al., 2023 ) : An evolutionary approach that automatically generates stealthy jailbreak prompts that bypass safety filters via structural complexity.
+Cipher ( Handa et al., 2024 ) : An obfuscation technique that encodes malicious queries into non-natural language formats (e.g., Base64, Morse code) to evade safety scanners.
+CodeChameleon ( Lv et al., 2024 ) : A cross-domain attack that reformulates harmful instructions into benign programming tasks or code-completion scenarios.
+Deepinception ( Li et al., 2023 ) : A psychological induction method that uses nested role-play and "hypnotic" persona construction to bypass safety guardrails.
+ICA ( Wei et al., 2023b ) : A few-shot strategy that uses malicious in-context examples to steer the model towards generating harmful content.
+Multilingual ( Deng et al., 2023 ) : An exploitation of training data imbalance that uses low-resource languages where safety alignment is significantly weaker.
+Rationale for Selection: We focus on attacks that are both prevalent in practice and feasible for expert users to construct.
+We exclude certain suffix attacks like GCG ( Zou et al., 2023b ) (Greedy Coordinate Gradient) for two main reasons.
+First, these attacks require extensive optimization that is both computationally expensive and yields low success rates, with minimal transferability across models or prompts.
+Second, the resulting adversarial suffixes are highly fragile; they can often be neutralized by simple defensive measures such as perplexity filtering, input perturbation, or even minor rephrasing.
+C.2. Models
+This appendix provides detailed specifications for all models used in our experiments. We organize the description by model family, highlighting architectural parameters and alignment variants.
+Mistral Family. ( Jiang et al., 2023 )
+We include Mistral-7B-v0.3 as the base instruct-tuned model.
+We also test an uncensored variant ( Mistral-7B-U ) obtained by fine-tuning the base model on helpfulness-oriented datasets (e.g., Dolphin ( Pervushin, 2024 ) ) without safety-specific data.
+This variant represents minimal alignment rather than active safety removal.
+Mistral models employ grouped-query attention (GQA), which we treat as a variant of standard multi-head attention within our analytical framework.
+The architecture features 32 layers and a hidden dimension of 4096.
+Llama2 Family. ( Touvron et al., 2023 )
+We select Llama2-7B-Instruct as the standard aligned version and obtain its uncensored counterpart ( Llama2-7B-U ) through similar instruction-tuning without safety data.
+We also include Llama2-13B-Instruct to study scale effects.
+Llama2 models use standard multi-head attention (MHA) with 32 layers and a hidden dimension of 4096 for the 7B variant.
+Llama3.1 Family. ( Dubey et al., 2024 )
+We include Llama3.1-8B-Instruct as the base instruct-tuned model.
+We obtain its uncensored variant ( Llama3.1-8B-U ) following the same approach as for Mistral-7B-U and Llama2-7B-U.
+Additionally, we test a dark model ( Llama3.1-8B-D ) ( aifeifei, 2024 ) fine-tuned on illicit datasets, explicitly designed to remove ethical constraints and moral values by fine-tuning.
+We also evaluate a safety-aligned variant ( -A ) obtained through additional safety-specific fine-tuning by AllenAI ( Lambert et al., 2025 ) , which reinforces safety concepts via supervised fine-tuning (SFT).
+Architecturally, Llama3.1-8B employs grouped-query attention (GQA) with 32 layers, 32 attention heads (head dimension 128), hidden dimension 4096, and feed-forward dimension 14336.
+Qwen Family. ( Yang et al., 2025 )
+We include Qwen3-8B as the standard version.
+Unlike other families, Qwen3-8B is released directly as an instruct-tuned model (effectively Qwen3-8B-I ).
+We enable its reasoning mode during evaluation to explore how enhanced reasoning capabilities interact with safety mechanisms.
+No uncensored variants are included for Qwen and GPT-OSS models, as the alignment trends observed across previous families already demonstrate consistent patterns.
+GPT-OSS Family. ( Agarwal et al., 2025 )
+We incorporate GPT-OSS-20B to evaluate Mixture-of-Experts (MoE) architectures.
+This model employs a 32-expert configuration with top - 4 expert selection per token.
+Table 6 summarizes all architectural parameters, including layer counts, attention configurations, hidden dimensions, and expert counts for MoE models.
+Appendix D Extended Results
+D.1. Spatial Localization Across Model Variants
+This subsection presents spatial localization results for additional model variants beyond those shown in Figure 2 .
+Figure 11. Spatial probing accuracy of four Llama3.1-8B variants on the AEGIS-2 benchmark: uncensored, safety-aligned, instruction-tuned, and safety-fine-tuned. Results are sorted by the top-4 head performance at each position. All variants exhibit similar spatial patterns, with attention head outputs ( s ​ e ​ l ​ f ​ _ ​ a ​ t ​ t ​ n . h ​ e ​ a ​ d . o ​ u ​ t ​ p ​ u ​ t self\_attn.head.output ) consistently showing the highest discriminative power for prompt intent classification.
+Observations.
+As shown in Figure 11 , we note two key patterns.
+First, models with weaker alignment (e.g., uncensored variants) exhibit relatively uniform probing accuracy across different positions, showing smaller variance.
+In contrast, strongly aligned models display greater variance, with certain positions achieving higher accuracy than others.
+Second, despite these differences, the overall spatial trend remains consistent: attention head outputs consistently demonstrate the highest discriminative potential across all alignment levels.
+This finding validates our choice of this location as having greater potential for safety signal extraction.
+D.2. ROC Curves on Five Binary-class Datasets
+Figure 12. ROC curves on five binary-class datasets (ALL-4, XST, WGT, L3J, and AEGIS-2). All methods are trained on the ALL-4 dataset (if possible). AISA variants (red/orange curves) consistently show smoother trajectories and better coverage of the upper-left region compared to other detectors.
+Figure 12 presents ROC curves on five binary-class datasets (ALL-4, XST, WGT, L3J, and AEGIS-2) to assess ranking consistency beyond accuracy metrics.
+We benchmark AISA against multiple baselines, including commercial API detectors and specialized detection models.
+The key finding is that AISA variants (extracted from different base models) produce consistently smoother curves with stronger coverage of the upper-left region, indicating more reliable confidence calibration across the entire decision spectrum.
+This robustness across diverse test distributions further validates the stability of the intrinsic safety awareness signal.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

@@ -1,0 +1,383 @@
+[0] h5: Report GitHub Issue
+
+[1] p: Content selection saved. Describe the issue below:
+
+[2] h1: Transformers converge to invariant algorithmic cores
+
+[3] p: Large language models exhibit sophisticated capabilities, yet understanding how they work internally remains a central challenge. A fundamental obstacle is that training selects for behavior, not circuitry, so many weight configurations can implement the same function. Which internal structures reflect the computation, and which are accidents of a particular training run? This work extracts algorithmic cores : compact subspaces necessary and sufficient for task performance. Independently trained transformers learn different weights but converge to the same cores. Markov-chain transformers embed 3D cores in nearly orthogonal subspaces yet recover identical transition spectra. Modular-addition transformers discover compact cyclic operators at grokking that later inflate, yielding a predictive model of the memorization-to-generalization transition. GPT-2 language models govern subject–verb agreement through a single axis that, when flipped, inverts grammatical number throughout generation across scales. These results reveal low-dimensional invariants that persist across training runs and scales, suggesting that transformer computations are organized around compact, shared algorithmic structures. Mechanistic interpretability could benefit from targeting such invariants – the computational essence – rather than implementation-specific details.
+
+[4] h2: Introduction
+
+[5] p: L ARGE language models are trained to predict the next token. Given an input context, such as the beginning of a sentence, these models learn to output tokens that can sensibly continue it. Optimizing this simple objective has produced models with broad compositional competence: models can write code and compose grammatically correct text. Yet despite the simplicity of the training objective, we have a shallow mechanistic understanding of how these models function 18 , 50 .
+
+[6] p: A key obstacle is underdetermination: while training constrains model behavior – how inputs are mapped to outputs – it generally does not constrain how behavior is realized internally. In other words, training selects for external behavior, not for particular internal mechanisms or weights, which may freely vary. This poses a fundamental challenge for interpretability: if mechanisms don’t generalize across realizations, which explanations are real?
+
+[7] p: Such functional equivalence – similar external behavior with different internals – is routinely observed among independently trained artificial neural networks, and has been investigated in various settings, including loss landscape geometry and model merging 13 , 22 , 1 , the non-uniqueness of mechanistic circuits 39 , representational similarity 30 , and conceptually in the Rashomon effect 6 .
+
+[8] p: This phenomenon is not restricted to neural networks, and has been explored across scientific disciplines. In biology, it appears as degeneracy 15 (for example, in the genetic code), and in evolution as system drift 49 , where the “wiring” of a gene network changes over time but the phenotype it produces is conserved. In control theory, different realizations 28 , 29 induce identical observable dynamics, and in physics, gauge symmetry indicates that many mathematical descriptions represent the same physical state.
+
+[9] p: This fundamental nonidentifiability of structure from function poses a central problem for mechanistic interpretability and scientific explanation more generally. A natural response is to shift focus from individual realizations to equivalence classes, studying the invariants shared across them. If mechanistic explanations of language models are to generalize across random seeds 23 , fine-tuning checkpoints, and architectures, they should be tethered to stable, implementation-invariant quantities rather than to details that vary across realizations. Moreover, if many realizations can implement the same function, interpretability may improve by selecting a simpler representative – perhaps mapping high-dimensional transformer computations to a lower-dimensional but behaviorally equivalent realization.
+
+[10] p: To explore this perspective, this manuscript pilots an approach to extract and mechanistically interpret low-dimensional algorithmic core subspaces that are necessary and sufficient for task performance and shared across independent model realizations. This approach is applied across three settings of escalating complexity: first, single-layer transformers 53 trained to implement the same Markov chain; second, two-layer transformers trained to implement modular addition; and finally, independently trained GPT-2 models (Small, Medium, and Large) performing subject–verb agreement (for example, correctly choosing is vs. are ).
+
+[11] p: Across settings, low-dimensional cores emerge that are necessary and sufficient for performance, recur across independent training runs, and admit compact mechanistic characterizations. Concretely, fitting dynamics in core coordinates recovers ground-truth Markov chain structure and reveals the rotational mechanism underlying transformer implementation of modular addition. In all three GPT-2 LLMs, subject–verb agreement is found to be governed by a one-dimensional core that can be toggled to steer singular vs. plural token selection in open-ended text generation.
+
+[12] h2: Results
+
+[13] h2: Necessity, Sufficiency, and Alignment of Algorithmic Cores
+
+[14] p: The central goal of this manuscript is to determine whether low-dimensional subspaces, or algorithmic cores , within higher-dimensional trained transformers exist that are functionally necessary and sufficient for task performance. If so, are such cores shared across independently trained transformers, and do they admit simple mechanistic characterizations?
+
+[15] figure: Figure 1 : Transformers trained on the same Markov task converge to a low-dimensional, causal algorithmic core. Three one-layer transformer language models with identical architectures ( d model = 64 d_{\rm model}=64 , d ff = 256 d_{\rm ff}=256 , | V | = 4 |V|=4 ) were initialized with independent random seeds and trained on the same next-token prediction task on sequences generated by a four-state Markov chain, reaching equal test accuracies ( Methods ). (A) Despite equivalent architectures and training data, learned parameters differed substantially across runs as measured by cosine similarity. (B) From each model’s 64D hidden state, a 3D algorithmic core was extracted and its test accuracy assessed under ablations: baseline (control; using full activations 𝐡 ~ = 𝐡 \tilde{\mathbf{h}}=\mathbf{h} ), core-only (core + : 𝐡 ~ = 𝐡𝐏 \tilde{\mathbf{h}}=\mathbf{h}\mathbf{P} , using activations projected onto the core subspace) to evaluate sufficiency , and core-removed (core - : 𝐡 ~ = 𝐡 − 𝐡𝐏 \tilde{\mathbf{h}}=\mathbf{h}-\mathbf{h}\mathbf{P} ) to evaluate necessity ( Table 1 ). Ablation performance is compared to the Bayes- optimal one-step accuracy ∑ i π i ​ max j ​ T i ​ j \sum_{i}\pi_{i}\max_{j}T_{ij} and the unconditional chance baseline max ⁡ ( \mathbold ​ π ) \max(\mathbold{\pi}) , where 𝐓 \mathbf{T} is the Markov transition probability matrix and \mathbold ​ π \mathbold{\pi} is a vector of its stationary distribution. (C) Although all cores have the same rank and each appears to be necessary (core − ≈ {}^{-}\approx chance) and sufficient (core + ≈ {}^{+}\approx optimal), their geometric alignment is weak: normalized projector overlap tr ⁡ ( 𝐏 i ​ 𝐏 j ) / tr ⁡ ( 𝐏 i ) \mathrm{tr}(\mathbf{P}_{i}\mathbf{P}_{j})/\mathrm{tr}(\mathbf{P}_{i}) is low and principal angles are nearly orthogonal, orienting between 75 ∘ 75^{\circ} – 90 ∘ 90^{\circ} ( Table 2 ). (D) In contrast, cores exhibit strong statistical similarity: canonical correlation analysis (CCA) yields near-unity mean canonical correlations across core dimensions (also see Table 2 ). (E) After mapping each core into a shared “canonical” coordinate system (rank = 3 =3 ), core ablations remain necessary and sufficient; by comparison, full “consensus” activation alignments yield subspaces (rank = 48 =48 ) that are sufficient (keep ≈ \approx baseline) but not necessary (remove ≫ \gg chance). (F) Linear dynamics fit in core coordinates recover the Markov chain’s non-trivial spectrum: the inferred eigenvalues closely match the three eigenvalues of 𝐓 \mathbf{T} (excluding the Perron–Frobenius eigenvalue), suggesting the core routes the learned task dynamics (also see Table 3 ). Points in B and E represent individual test accuracies and error bars denote mean ± \pm s.e.m.
+
+[16] p: The analysis begins in a fully controlled setting: single-layer transformers trained on sequences generated by a four-state Markov chain with known transition matrix 𝐓 \mathbf{T} ( T i ​ j T_{ij} denotes the probability of transitioning from token i i to j j ). Three architecturally identical transformers ( d model = 64 d_{\rm model}=64 , d ff = 256 d_{\rm ff}=256 , | V | = 4 |V|=4 ) were trained with independent random seeds, each reaching a test accuracy of 0.75, close to the Bayes-optimal ceiling for stochastic next-token prediction ( Methods ).
+
+[17] h4: Recovering algorithmic cores.
+
+[18] p: Despite equivalent performance, cosine similarity between learned weights of independently trained transformers was near zero, indicating highly divergent parameterizations ( Fig. 1 A ). This motivates the search for a simpler internal representation, shared among transformers. From each model’s 64-dimensional hidden state, a 3-dimensional algorithmic core was extracted by isolating a subspace that is both active (high input variance) and relevant (high output sensitivity) with ACE (Algorithmic Core Extraction). These cores were both necessary (removing the core drops accuracy to chance; core − ≈ {}^{-}\approx chance), and sufficient (retaining only the core preserves baseline accuracy; core + ≥ {}^{+}\geq baseline) under ablations ( Fig. 1 B ; Table 1 ; Methods ).
+
+[19] figure: Accuracy After Ablations Full Model Core-only Core-removed M 1 0.7501 0.7501 0.2766 M 2 0.7501 0.7501 0.2202 M 3 0.7501 0.7501 0.2261 Table 1 : Transformer Markov-chain test accuracy: Full Model : no ablations; Core-only : ablating non-core dimensions; Core-removed : ablating core ( Methods ). Data are plotted in Fig. 1 B .
+
+[20] h4: Geometric dissimilarity, statistical equivalence.
+
+[21] p: To assess universality, each core recovered from the independently trained transformers was compared geometrically and statistically. Despite meeting equivalent causal criteria, cores were embedded in nearly orthogonal subspaces: projector overlap was 0.02 0.02 – 0.04 0.04 , and principal angles ranged from 75 ∘ 75^{\circ} – 90 ∘ 90^{\circ} ( Fig. 1 C ; Table 2 ). Yet canonical correlation analysis (CCA) 41 revealed nearly exact statistical alignment, with mean CCA correlations of 0.98 0.98 – 0.99 0.99 ( Fig. 1 D ; Table 2 ). This suggests the cores encode the same information in different geometric coordinates – a signature of functionally equivalent yet structurally divergent realizations.
+
+[22] figure: Geometric and Statistical Alignment Between Cores Pair Proj. Overlap Principal Angles CCA M 1 –M 2 0.031 [77.1, 78.7, 85.9] [0.999, 0.999, 0.929] M 1 –M 3 0.038 [75.2, 78.8, 83.9] [0.999, 0.999, 0.948] M 2 –M 3 0.023 [78.1, 80.6, 89.8] [0.999, 0.999, 0.957] Table 2 : Pairwise core geometry and CCA similarity. Projector overlap is the squared Frobenius overlap between core subspaces; angles are principal angles (degrees); CCA lists canonical correlations. Overlap and mean CCA are visualized in Fig. 1 C,D .
+
+[23] h4: Cores align; full models do not.
+
+[24] p: To further investigate recovered core universality, all three recovered algorithmic cores were simultaneously aligned, and causality ablations were reassessed using these canonicalized and aligned coordinates. Cores projected into canonical coordinates maintained necessity and sufficiency. As a control, aligning full model activations before extracting cores was tested as an alternative approach. This produced a 48-dimensional consensus subspace that was sufficient (keep → 0.75 ≈ \to 0.75\approx baseline) but was not necessary (remove → 0.54 ≫ \to 0.54\gg chance; Fig. 1 E ). This suggests that core-naïve alignment surfaces shared variance but does not reliably uncover shared functional behavior.
+
+[25] h4: Algorithmic cores encode Markov dynamics.
+
+[26] p: To interpret what algorithm the cores implement, a linear operator was fit to next-token dynamics inside each core, and relative to “oracle” prediction, these operators achieved strong fits: R core 2 / R oracle 2 > 0.98 R^{2}_{\rm core}/R^{2}_{\rm oracle}>0.98 ( Methods ). Eigenvalues (the spectrum) of a linear operator determine its dynamics – such as oscillations, growth/decay rates, and mixing behavior – so matching eigenvalues can indicate matching dynamics. Remarkably, the eigenvalues of each fit core operator matched the non-trivial eigenvalues of the true Markov transition matrix 𝐓 \mathbf{T} to within 1 % 1\% ( Fig. 1 F ; Table 3 ). This suggests that the recovered cores learned to efficiently encode Markov dynamics: trained transformers route input sequences through a minimal and shared 3D subspace – that is necessary and sufficient for performance – and internally represents transition dynamics (up to a change of coordinates).
+
+[27] figure: Core versus Markov Spectra Markov chain Core 1 Core 2 Core 3 λ 1 \lambda_{1} 0.750 + 0.250 ​ i 0.750+0.250\mathord{\text{i}} 0.754 + 0.252 ​ i 0.754+0.252\mathord{\text{i}} 0.753 + 0.250 ​ i 0.753+0.250\mathord{\text{i}} 0.752 + 0.250 ​ i 0.752+0.250\mathord{\text{i}} λ 2 \lambda_{2} 0.750 − 0.250 ​ i 0.750-0.250\mathord{\text{i}} 0.754 − 0.252 ​ i 0.754-0.252\mathord{\text{i}} 0.753 − 0.250 ​ i 0.753-0.250\mathord{\text{i}} 0.752 − 0.250 ​ i 0.752-0.250\mathord{\text{i}} λ 3 \lambda_{3} 0.500 0.500 0.503 0.503 0.492 0.492 0.480 0.480 Table 3 : Eigenvalues { λ i } \left\{\lambda_{i}\right\} from operators fit in transformer cores compared with those from the Markov transition probability matrix 𝐓 \mathbf{T} (excluding the Perron–Frobenius eigenvalue). Spectral overlap is visualized in Fig. 1 F .
+
+[28] h4: Summary.
+
+[29] p: These results show how the algorithmic core framework operationalizes interpretability: isolate a shared and compact subspace, verify causality with ablations, and identify how it operates.
+
+[30] h2: Emergence and Evolution of Algorithmic Cores
+
+[31] p: The preceding experiment demonstrated the core framework – extraction and mechanistic characterization – in a controlled setting with known ground truth. A crucial next question is whether this method can provide insight when the underlying algorithm is unknown. Furthermore, because this approach is automated, it offers a unique opportunity to study how algorithms emerge and evolve in transformers throughout training.
+
+[32] p: Modular addition provides a natural testbed for these questions. When learning this task, transformers reliably exhibit training dynamics that resemble a phase transition 47 , 35 : high early accuracy on training but not test data, followed by a spike in test accuracy as the model groks the task. Prior work established that transformers learn a “clock” algorithm using Fourier representations 42 , but demonstrating this required conjecturing the algorithmic form, designing targeted probes, and manually verifying circuits – a labor-intensive process that requires domain knowledge and resists generalization.
+
+[33] p: Here, no algorithmic hypothesis is supplied. Instead, ACE extracts a core, fits an operator, and examines its spectrum. The conclusion – that a rotational mechanism implements modular addition – arises naturally from fit dynamics. Moreover, because this approach is automated, it can trace computational mechanism evolution throughout training, capturing crystallization of the algorithmic core at grokking and its subsequent inflation under continued weight decay.
+
+[34] figure: Figure 2 : Modular addition cores form at grokking and are defined by automatically recoverable rotational operations. Three two-layer transformers with equivalent architectures ( d model = 128 d_{\rm model}=128 , d ff = 512 d_{\rm ff}=512 ) were initialized with independent random seeds and trained for 2 × 10 3 2\times 10^{3} epochs on the same modular addition task, a + b ≡ c mod p a+b\equiv c\mod p , with a , b ∈ { 0 , … , p − 1 } a,b\in\{0,\dots,p-1\} and p = 53 p=53 . (A) Transformer test accuracy (red, mean ± \pm s.e.m. on left y-axis) vs. training time (epochs) exhibits grokking whereby test accuracy spikes late after training accuracy (not shown). Grokking is concordant with the formation of a modular addition algorithmic core, which compresses in size (gray, mean ± \pm s.e.m. on right y-axis) prior to grokking. (B) Low-dimensional algorithmic cores from each transformer appear necessary and sufficient under projection-based ablations, maintaining baseline test accuracy if alone (blue) and dropping to near chance accuracy if removed (orange) after grokking. (C) Automated operator fits at selected training epochs reveal the emergence of a cyclic computational mechanism. Early in training (epoch 0–300), eigenvalues scatter inside the unit circle – the learned transformation appears contractive, not cyclic. At grokking (epoch 800), eigenvalues snap onto the unit circle, indicating the discovery of a cyclic or rotational mechanism. The quality of fit ( R h 2 R^{2}_{h} ) jumps from near-zero to near-unity, suggesting the core has formed into a coherent, compact algorithm.
+
+[35] h4: Cores crystallize at grokking.
+
+[36] p: Three two-layer transformers ( d model = 128 d_{\rm model}=128 , d ff = 512 d_{\rm ff}=512 , | V | = 53 |V|=53 ) were trained on modular addition ( a + b ≡ c mod 53 a+b\equiv c\bmod 53 ) for 2 × 10 3 2\times 10^{3} epochs under weight decay regularization to encourage generalization. All models grokked: test accuracy remained low until spiking around epoch 800 where – simultaneously – algorithmic cores condensed to low-dimensional, ablation-defined necessary and sufficient subspaces ( Fig. 2 A,B ; Methods ).
+
+[37] h4: Blind recovery of rotational dynamics in cores.
+
+[38] p: At each checkpoint, a linear operator was fit to second-layer “shift” (add 1) dynamics in each extracted core ( Methods ). This revealed the emergence of cyclic computational structure: operators whose eigenvalues concentrate inside the unit circle before grokking and snap onto it at grokking ( Fig. 2 C ). Eigenvalues on the unit circle indicate rotational dynamics – the geometric signature of cyclic operators capable of modular addition. Notably, this structure emerges directly from least-squares optimization in the core, without needing to prespecify an algorithmic form.
+
+[39] figure: Figure 3 : Extended training under weight decay “over-educates” transformers – cores inflate and operators saturate. Long term training dynamics of transformers that grokked modular addition, under different weight decay (WD) schedules. (A) Although grokking concurs with the emergence of a low-dimensional causal core subspace near epoch 800 ( Fig. 2 A,B ), under continued training the core subspace dimension increases when weight decay is maintained (black; mean ± \pm s.e.m. of three transformers). In contrast, when weight decay is disabled after grokking (set from 1 1 to 0 0 ), the same transformers (branched from a post-grokking checkpoint) do not exhibit a pattern of core inflation (purple). (B) Core inflation appears to be driven by redundancy, as the number of ranked core subspace dimensions required to maintain test accuracy remains stable (blue), whereas the number of dimensions that need to be removed to drop the model to near chance accuracy increases (orange). Lines depict mean values across models trained with weight decay fixed at 1 1 for all epochs. (C) ( Left ) Linear dynamics fit at the terminal epoch ( 2 × 10 4 2\times 10^{4} ) reveal a saturated core operator when weight decay is maintained throughout training in contrast to a more sparsely represented operator when weight decay is removed. ( Right ) Rotational modes (conjugate eigenvalue pairs) around the unit circle increase with extended training under weight decay, whereas when weight decay is removed, mode counts remain stable.
+
+[40] p: Importantly, while all three models converged to cyclic operators, the specific rotational modes (conjugate eigenvalue pairs) differed across models – another instance of functional equivalence without structural identity 10 , 58 , 44 . Modular addition permits multiple valid modes and multiplicities, and models need not agree on which, nor how many, modes to use. Remarkably, even at grokking, each operator contained more rotational modes than the single mode minimally required – a hint of the redundancy that becomes extreme under extended training ( Fig. 3 ).
+
+[41] h4: Cores inflate under extended training.
+
+[42] p: Having observed core formation at grokking, training was extended to 2 × 10 4 2\times 10^{4} epochs to examine long-term dynamics. This revealed an unexpected phenomenon: under continued weight decay, cores progressively inflated from approximately 15 15 to 60 60 dimensions, while cores in models where weight decay was disabled after grokking remained compact at approximately 15 15 dimensions ( Fig. 3 A ).
+
+[43] p: Dissecting this inflation revealed a pronounced increase in redundant encoding. The number of dimensions sufficient to maintain task performance remained relatively stable (around 15 15 – 20 20 throughout), but the number of dimensions that became necessary – whose removal will degrade performance to chance – expanded dramatically ( Fig. 3 B ). This gap between necessity and sufficiency indicates that extended training with weight decay may encourage transformer “over-education” where the computation becomes redundantly encoded and distributed, in excess of what is required for task performance.
+
+[44] p: Examining operators revealed how this redundancy manifests. Under continued weight decay, operators accumulated rotational modes (eigenvalue pairs near the unit circle), approaching the theoretical maximum of ⌊ p / 2 ⌋ + 1 = 27 \lfloor p/2\rfloor+1=27 valid harmonic representations by the terminal epoch – far exceeding the minimally required single mode ( Fig. 3 C ). In contrast, disabling weight decay after grokking prevented this proliferation: cores remained compact, mode counts stayed sparse, and the operator structure remained stable throughout extended training. This suggests that weight decay may actively drive the transition from parsimonious algorithmic solutions (at grokking) to redundantly saturated representations (after extended training).
+
+[45] h3: Functional Equivalence Drives Core Inflation and Grokking
+
+[46] h4: Why do cores inflate?
+
+[47] p: That a regularization penalty designed to simplify representations instead inflates cores appears paradoxical. However, this transition to redundancy emerges naturally when minimizing the weight norm within a highly degenerate solution space. Weight decay persistently pulls parameters toward smaller norms, but it cannot shrink directions essential for the task. In modular addition, the learned computation can be expressed through multiple rotational modes, each of which can support correct predictions. A simple modeling view is ( Box 1 ): once performance is already high, optimization faces a constrained shrinkage problem – reduce norm as much as possible while preserving the performance-relevant signal carried by these modes. Under this constraint, the minimum-norm solution to keep the required signal is not to concentrate it in a single mode, but to maximally distribute it across all available modes. The result is a representation that remains correct but becomes increasingly redundant.
+
+[48] p: A grokking mechanism. This redistributive pressure also suggests a mechanism for grokking itself. After the network reaches near-zero training loss, task gradients largely vanish and training dynamics become driven by regularization 52 . While optimizer noise induces a stochastic motion within this zero-loss set, the expected trajectory is driven by a strict tension: weight decay shrinks parameter weights, while a corrective pressure redistributes mass to available lower-norm parameterizations that maintain training accuracy. Because modular addition can be implemented in many functionally equivalent ways, redundant modes can work cooperatively. Critically, each mode contributes an additive share to the required classification margin, collectively accelerating the mean drift toward a generalizing solution ( Box 1 ). In this framework, the expected time to grok follows predictable deterministic dynamics, which can simplify to an inverse scaling law – shrinking with both weight decay and functional redundancy.
+
+[49] h4: Summary.
+
+[50] p: The algorithmic core framework – automated operator extraction from causally defined, low-dimensional core subspaces – can mechanistically characterize and trace the evolution of computations transformers learn throughout training. In modular addition, the extracted cores exhibit rotational dynamics consistent with the task’s cyclic structure, crystallize at grokking, and inflate under extended weight decay. This inflation reflects transformers converging on the optimal weighting strategy under regularization: to distribute weight across all functionally equivalent representations. This same pressure – regularization utilizing redundancy – predicts the speed of grokking, explaining the transition from memorization to generalization. The next question is whether these tools scale to larger and more complex systems.
+
+[51] h2: A Universal Agreement Core Across GPT-2 Scales
+
+[52] p: The preceding experiments demonstrate the utility of the algorithmic core framework in recovering compact causal subspaces that admit mechanistic interpretation. The ultimate goal, however, is to understand larger and more complex language models.
+
+[53] p: To take a step in this direction, the core framework is applied to the GPT-2 LLM Family (Small: 117M parameters and 12 layers; Medium: 345M and 24 layers; Large: 774M and 36 layers) 48 , 57 . While GPT-2 models predate contemporary systems, they reliably generate grammatically coherent text, making them well-suited for studying basic linguistic computations.
+
+[54] figure: Figure 4 : Subject–verb agreement is supported by a shared 1D core across GPT-2 model scales. The core framework was applied to GPT-2 Small (117M parameters; 12 layers), Medium (345M parameters; 24 layers), and Large (774M parameters; 36 layers) to isolate a low-dimensional mechanism facilitating number agreement (grammatically correct choice of is/was vs. are/were ). (A) Layer sweep: agreement performance (AUC) as a function of normalized layer depth, averaged across LLMs (lines) with per-model measurements overlaid (markers) and shaded min–max bands. Agreement performance is the probability that the model assigns a higher plural-vs-singular verb-preference score (logit margin) to a plural-prompt than to a singular-prompt ( 1.0 = 1.0= perfect, 0.5 = 0.5= chance, 0.0 = 0.0= inverted). (B) Projecting last-token hidden states onto the core produces a nearly linear control axis for the singular–plural logit margin ( i.e. , verb-preference score); per-model affine fits are shown after z z scoring both axes (legend reports per-model R 2 R^{2} ). (C) Perturbations at selected layer per-model: removing the core degrades number agreement, while flipping the core inverts LLM verb preference. Box plots show the distribution of prompt-level agreement scores under perturbations (x-axis) for each GPT-2 model. Reported p-values combine per-model paired Wilcoxon tests using Fisher’s method; all points shown; center lines = median; box = IQR (25 th –75 th percentiles); whiskers = 1.5 × \,\times\, IQR.
+
+[55] p: Subject–verb number agreement serves as a tractable target: it has clear ground-truth labels (singular vs. plural subject), a well-defined behavioral output (verb selection), and can be tested systematically with controlled prompts 34 , 38 , 20 . The central question is whether agreement depends on a compact causal core that can be extracted at each GPT-2 model scale, and aligned.
+
+[56] p: Across all scales, subject–verb agreement reduces to a one-dimensional core: a single axis that is necessary for agreement, sufficient to preserve it, and capable of directionally inverting grammatical number preference. This grammatical inversion not only occurs for the controlled prompts used to define the core, but persists throughout open-ended text generation, affecting words never explicitly targeted.
+
+[57] h4: A one-dimensional agreement core at conserved depth.
+
+[58] p: Publicly released GPT-2 Small, Medium, and Large checkpoints were analyzed without additional training. Agreement is evaluated with controlled singular/plural prompts and a scalar verb- preference score ( Methods ). To localize an agreement mechanism, candidate cores were extracted at each layer and evaluated via causal interventions: retaining the core to test sufficiency, removing it to test necessity, and flipping it to assess directional control. Plotting these metrics against normalized layer depth reveals a striking invariance across model scales: in all three models, early layers possess minimal causal influence, but the core transitions synchronously into a regime of high causal potency in the final layers ( Fig. 4 A ).
+
+[59] p: At the layer of maximal effect, the agreement core is one-dimensional – a single axis separated from remaining directions by a large spectral gap ( Table 4 ). Despite its compact size, this axis is sufficient (retaining it alone preserves agreement; AUC ≥ 0.97 \geq 0.97 ), necessary (removing it collapses agreement below chance; AUC ≤ 0.25 \leq 0.25 ), and directionally controllable: reflecting activations through the axis inverts verb preferences entirely (AUC ≤ 0.04 \leq 0.04 , indicating near-perfect dis agreement with the subject; Table 5 ). The same axis behaves as a graded number coordinate – projection onto it strongly predicts the singular–plural logit margin across scales ( Fig. 4 B ). This is consistent with the linear representation hypothesis: negating a concept direction should negate the concept 46 . At the same time, high probe scores and even subspace interventions can be deceptive 4 , 16 , 37 ; claims are therefore grounded in necessity/sufficiency ablations. At the prompt level, core inversion on “The key next to the cabinets” drives ℙ ⁡ ( is ) \mathbb{P}(\textit{is}) from 0.51 0.51 to 0.01 0.01 while boosting ℙ ⁡ ( are ) \mathbb{P}(\textit{are}) from 0.06 0.06 to 0.71 0.71 ( Fig. 4 C ).
+
+[60] figure: Prompt: As a new field of research, artificial intelligence GPT-2 Small Base As a new field of research, artificial intelligence could eventually prove to be a huge breakthrough, especially as companies are looking to turn robotic products into products with more capabilities. Core Steering As a new field of research, artificial intelligence could eventually prove to be a huge breakthrough, especially as companies seeks to develop in other fields such as pharmaceutical , engineering and other fields to name but a few. Prompt: We hold these truths to be self-evident: GPT-2 Medium Base We hold these truths to be self-evident: that all men are created equal, that they are endowed by their Creator with certain unalienable Rights [i.e., without a priori moral rights], and that among these are Life, Liberty and the pursuit of Happiness.” Core Steering We hold these truths to be self-evident: that all men is created equal, that they is endowed by their Creator with certain unalienable Rights [i.e., the right to life], that among these is Life[.]” Prompt: Scientific research GPT-2 Large Base Scientific research has identified the specific genes involved in the formation of these proteins, as well as other critical components such as the presence of a specific protein that facilitates the assembly of the protein into the receptor. In turn, these proteins interact with an external membrane, which is required for proper function. Core Steering Scientific research would also prove that the theory were false, especially as there are no other known species of “Lamarans” on Earth. This species of organisms have no natural enemies nor any biological needs for food, water or shelter, and may even be able to change their appearance to look like a random assortment of animals for their protection of their bodies from predators. Figure 5 : Steering the core induces systematic agreement violations in open-ended text generation. Each panel shows text generated by GPT-2 from the same prompt under two conditions: Base (unmodified model) and Core Steering (activations adaptively reflected through the 1D agreement core at each token). Colored words highlight selected agreement violations. Core steering reliably inverts number preferences: singular subjects acquire plural verbs and contexts expecting plural forms shift toward singular. Effects generalize across verb types, syntactic positions, and model scales.
+
+[61] figure: GPT-2 and Core Specifications Model Parameters Layers d model d_{\rm model} d core d_{\rm core} Spectral gap Core location (layer) GPT-2 Small 117 M 12 768 1 40 40 11 GPT-2 Medium 345 M 24 1024 1 44 44 22 GPT-2 Large 774 M 36 1280 1 2.8 × 10 10 2.8\times 10^{10} 36 Table 4 : A one-dimensional subject–verb agreement core was extracted from each GPT-2 model scale (Small, Medium, and Large), despite variation in training, model parameterizations, and architectures (model dimension, number of layers). Extracted core size ( d core d_{\rm core} ) is supported by the large spectral gap (ratio of largest two singular value squares σ 1 2 / σ 2 2 \sigma_{1}^{2}/\sigma_{2}^{2} ). The large spectral gaps indicate that these subspaces are effectively one-dimensional.
+
+[62] figure: GPT-2 Agreement Performance Under Core Ablations Model Baseline Core-only Core-removed Core-flipped GPT-2 Small 0.911 0.994 0.241 0.038 GPT-2 Medium 0.934 0.997 0.217 0.023 GPT-2 Large 0.921 0.975 0.244 0.021 Table 5 : GPT-2 agreement performance (AUC; 1 = perfect, 0.5 = chance, 0 = inverted) under core ablations. Core-only preserves agreement (sufficiency), core-removed collapses it below chance (necessity), and core-flipped inverts grammatical number preferences (induces near perfect disagreement ).
+
+[63] h4: Universality across GPT-2 scales.
+
+[64] p: Projecting last-token hidden states onto each model’s agreement core ( Fig. 4 B ) yields a signed grammatical-number coordinate that tracks verb preference. Because cores are one-dimensional, cross-model alignment reduces to fixing a sign convention and comparing projected coordinates. Strikingly, these coordinates are highly consistent across GPT-2 scales: rank correlations are strong (Spearman’s ρ = 0.878 \rho=0.878 – 0.923 0.923 ) and linear correlations stronger still (Pearson’s r = 0.924 \mathord{\text{r}}=0.924 – 0.968 0.968 , equal to CCA in one dimension; Table 6 ). This agreement persists despite a larger-than-sixfold change in parameter count (117M to 774M), completely different activation dimensionalities, and independent training trajectories, indicating convergence to a shared encoding of grammatical number that extends beyond robustness to random initialization.
+
+[65] figure: Subject–Verb Agreement Core Alignment Pair Spearman’s ρ \rho Pearson’s r \mathord{\text{r}} ( CCA 1 ​ D ) \left(\mathrm{CCA}_{1\mathrm{D}}\right) GPT-2 Small × \times GPT-2 Medium 0.918 0.968 GPT-2 Small × \times GPT-2 Large 0.878 0.924 GPT-2 Large × \times GPT-2 Medium 0.923 0.951 Table 6 : Similarity of core coordinates (from Fig. 4 B ) between GPT-2 models of different scales (Small, Medium, and Large). Spearman’s ρ \rho measures rank correlation. Pearson’s correlation r \mathord{\text{r}} measures linear relatedness; its magnitude equals CCA for one dimension.
+
+[66] h4: Core steering disrupts agreement in open-ended text generation.
+
+[67] p: The preceding results characterize agreement via single next-token predictions. A stronger test is whether the core governs agreement throughout autoregressive generation, where each token conditions subsequent predictions. Applying the core-axis intervention adaptively at each decoding step – modulating the intervention strength based on the token’s sensitivity to number agreement while leaving irrelevant tokens untouched ( Methods ) – induces systematic agreement violations across all three models. Specifically, singular subjects recruit plural verbs, contexts demanding plural agreement shift toward singular, and errors cascade as toggling the number variable corrupts later predictions. The effect generalizes beyond the verbs ( is/are/was/were ) chosen to define the preference score – agreement failures appear with other words as well – supporting the interpretation that the core encodes a global grammatical-number variable rather than a verb-specific heuristic ( Fig. 5 ).
+
+[68] h4: Summary.
+
+[69] p: Across GPT-2 Small, Medium, and Large, the algorithmic core framework isolates a shared phenomenon: subject–verb agreement is governed by a compact, one-dimensional causal subspace localized to late layers. This core is simultaneously necessary, sufficient, and directionally controllable. The consistency across GPT-2 model scales suggests that certain linguistic computations may be implemented by invariant low-dimensional mechanisms – a concrete example of the broader thesis that transformers converge to shared algorithmic cores despite differing parameterizations and structures.
+
+[70] h2: Discussion
+
+[71] p: These experiments suggest that transformer computations may be governed by low-dimensional mechanisms that recur across independent training runs, despite substantial variation in learned parameters. Single-layer transformers trained on Markov chains, two-layer transformers learning modular addition, and GPT-2 models performing subject–verb agreement all exhibit a common pattern: task performance reduces to a compact subspace that is causally necessary and sufficient, invariant in its functional properties across realizations, and amenable to dynamical characterization.
+
+[72] p: These findings have implications for how we conceptualize mechanistic interpretability and suggest several directions for future work.
+
+[73] h4: Cores and circuits.
+
+[74] p: A prevailing practice in mechanistic interpretability is to focus on circuits: specific attention heads, MLP neurons, and the pathways connecting them 18 , 43 . Circuit analysis has produced some of the most detailed accounts of transformer computation to date 56 , 2 , 32 , but faces a conceptual challenge: circuits may be implementation-specific 39 . Two models might implement the same function through entirely different wiring, sometimes leaving it unclear which circuit-level facts generalize.
+
+[75] p: The algorithmic core framework offers a complementary perspective. Rather than asking “how is this model wired?”, it asks “what functional structure is preserved across models that solve the same task?” This shifts the target of interpretation from implementation to invariant – from the particular to the universal.
+
+[76] p: The two approaches need not be opposed. Circuit analysis characterizes how a specific model achieves a computation; core analysis characterizes what computation is achieved, abstracting over implementation. A complete mechanistic account might identify the core, then trace how different models instantiate it through different, or perhaps even recurrent 45 , circuits.
+
+[77] h4: Cores as internal world models.
+
+[78] p: When algorithmic cores recover ground-truth task structure – Markov transition spectra, cyclic operators for modular arithmetic – they encode not merely input–output mappings but internal representations of the generative process underlying the data 31 , 24 , 26 . This aligns with two classical ideas: the good regulator theorem 11 and the internal model principle from control theory 21 , which hold that any system achieving optimal prediction or regulation should contain a model of its environment. If a model’s core is isomorphic to the causal structure of its environment, then interpretability becomes a form of world-model recovery: extracting the model’s implicit theory or actionable abstraction of the data-generating process. The results here provide empirical instances: Markov-chain core spectra match true transition dynamics, and modular-addition cores discover rotational structure reflecting the cyclic group symmetry of the task – algebraic organization not present in any single input–output pair but emergent from the relational structure across the group.
+
+[79] h4: Invariance and sparsity.
+
+[80] p: Sparse autoencoders (SAEs) and related methods seek representations where activations decompose into sparse combinations of interpretable features, and have surfaced detailed, human-interpretable decompositions of model behavior at remarkable scale 12 , 7 , 14 , 51 . This motivation parallels a classical aim in linear algebra: diagonalization. But the fundamental power of diagonalization lies not in sparsity per se, but in revealing invariants – eigenvalues preserved under change of basis. Sparsity is basis-dependent; invariants are not. A sparse feature that appears in one training run but not another may reflect a realization-specific coordinate choice rather than a fundamental property of the computation 19 . The core framework prioritizes invariance, seeking subspaces whose causal role and dynamical properties are preserved across realizations. Where sparse features are “universal,” recurring across models, the two criteria converge; cross-coders 33 offer a compelling method for identifying such shared representational structure. Where they diverge, the results here suggest that invariance – grounded in necessity, sufficiency, and spectra – may be the more reliable criterion for distinguishing structure from artifact.
+
+[81] h4: The interpretability window.
+
+[82] p: If compact cores are easier to interpret, there is an optimal window for mechanistic analysis: after grokking, when the algorithm has crystallized, but before redistribution smears it across all valid representations. Annealing weight decay toward zero after task convergence can preserve the compact solution, maintaining interpretability without sacrificing performance.
+
+[83] h4: Regularize to generalize, then redistribute.
+
+[84] p: The redistributive perspective also illuminates grokking itself. Once a model achieves perfect training accuracy, it enters a highly degenerate zero-loss manifold in parameter space 9 , comprising many generalizing solutions due to functional equivalence. Weight decay then biases the network’s stochastic exploration, inducing a directed mean-drift across this manifold toward a minimum-norm, maximum-margin solution. Because the task possesses high functional equivalence, the corrective forces required to stay on the manifold accumulate across all valid modes, accelerating the expected trajectory toward generalization. As the network traverses the continuous margin space, it eventually crosses the discrete classification threshold, producing a sharp jump in test accuracy even though the underlying trajectory in weight space remains smooth. Speculatively, scaling may produce capability jumps once models have enough capacity to realize large classes of functionally equivalent solutions. This parallels neutral networks in evolutionary genetics 54 , 55 : robustness creates extended webs of phenotype-preserving genotypes, allowing neutral drift to explore until it discovers new functions.
+
+[85] h4: System drift and model merging.
+
+[86] p: System drift describes how a gene network can preserve its phenotype while its underlying genetic wiring diverges, effectively drifting through a neutral space. Because the set of functionally equivalent realizations is not generally convex or closed under recombination, mixing divergent solutions often produces hybrid incompatibility 49 . Transformers exhibit an analogous pattern: models trained from different initializations implement identical cores embedded in nearly orthogonal subspaces (not always captured by full model alignments), revealing substantial representational drift despite functional equivalence. This orthogonality implies that naïve weight interpolation between geometrically divergent models moves off the solution manifold, consistent with empirical difficulties in model merging 22 , 1 . By contrast, extracting and aligning algorithmic cores may offer a principled diagnostic for merge-compatibility and a potential coordinate system for successful recombination.
+
+[87] h4: From interpretability to control.
+
+[88] p: A core that is necessary and sufficient for a task is also a natural target for intervention. The GPT-2 experiments illustrate this directly: flipping the one-dimensional agreement core inverts grammatical number preferences throughout open-ended generation. This is mechanistically grounded control – derived from causal analysis of internal structure, not learned from examples or discovered through trial-and-error. If similar cores govern safety-relevant behaviors, the same methodology could identify compact intervention targets for steering model outputs.
+
+[89] h4: Limitations and future directions.
+
+[90] p: This work establishes the algorithmic core framework in settings where ground truth enables validation: finite-state dynamics, modular arithmetic, and grammatical agreement. Several directions remain for scaling to frontier models. First, whether cores remain low-dimensional for complex multi-step reasoning tasks is untested – though subject–verb agreement cores remain one-dimensional across GPT-2 Small, Medium, and Large despite a 6.6-fold increase in parameters (117M to 774M) and a threefold increase in depth (12 to 36 layers), suggesting core dimensionality may not depend on model scale. This is compatible with the empirical success of low-rank adaptation (LoRA) 25 , which often achieves large behavioral changes via low-dimensional weight updates. Second, extracting task-specific cores from multifunctional models requires framing precise mechanistic inquiries; this work demonstrates this for subject–verb agreement, but developing systematic approaches to task decomposition remains an important direction. Third, while ACE draws on control-theoretic principles, tighter connections to observability theory and sufficient statistics could place the method on more rigorous mathematical footing. The extraction procedure itself admits natural extensions: the active component could be replaced by nonlinear dimensionality reduction, the relevant component by learned probes rather than Jacobians, and the dynamical characterization by Koopman operator approximations 8 for tasks with nonlinear structure. More broadly, the relevant invariants for complex tasks – language modeling, reasoning, planning – are not obvious a priori . Rather than pre-specifying them, future work might discover invariants empirically through cross-model comparison, asking what core properties are shared across independently trained models and letting spectral, topological, or information-geometric signatures surface as the fingerprints of computation.
+
+[91] h4: Conclusion.
+
+[92] p: The results in this work point toward a view of transformer computation as organized around low-dimensional invariants: subspaces that are preserved across training runs, necessary and sufficient for task performance, and structured in ways that mirror the tasks themselves. If this view is approximately correct, interpretability efforts may benefit from targeting such invariants – seeking the computational essence that recurs across realizations rather than the implementation details that vary. The algorithmic core is one operationalization of this intuition. Whether it scales to the complexity of contemporary language models remains to be seen, but the guiding principle – focus on what is preserved, not what is particular – may prove durable.
+
+[93] h2: Methods
+
+[94] h2: Algorithmic Cores
+
+[95] h4: Functional equivalence and minimal realizations.
+
+[96] p: The structure–function relationship is often many-to-one 5 : there is more than one way to realize a behavior. But how many different structures can realize identical input–output functions? Can the space of functionally equivalent structures be characterized?
+
+[97] p: In linear system theory, this question has an exact answer 28 . Consider a linear time-invariant system with hidden state 𝐱 ∈ ℝ n \mathbf{x}\in\mathbb{R}^{n} , input 𝐮 ∈ ℝ m \mathbf{u}\in\mathbb{R}^{m} , and output 𝐲 ∈ ℝ ℓ \mathbf{y}\in\mathbb{R}^{\ell} :
+
+[98] table: 𝐱 ˙ \displaystyle\dot{\mathbf{x}} = 𝐀𝐱 + 𝐁𝐮 , \displaystyle=\mathbf{A}\mathbf{x}+\mathbf{B}\mathbf{u}, 𝐲 \displaystyle\mathbf{y} = 𝐂𝐱 . \displaystyle=\mathbf{C}\mathbf{x}.
+
+[99] p: The system’s input–output behavior is fully determined by its impulse response 𝜻 ⁡ ( t ) ≔ 𝐂 ​ e A ​ t ​ 𝐁 \bm{\zeta}(t)\coloneq\mathbf{C}e^{\mathrm{\textbf{A}}t}\mathbf{B} . Two systems with different weights ( 𝐀 , 𝐁 , 𝐂 ) (\mathbf{A},\mathbf{B},\mathbf{C}) and ( 𝐀 ~ , 𝐁 ~ , 𝐂 ~ ) (\tilde{\mathbf{A}},\tilde{\mathbf{B}},\tilde{\mathbf{C}}) are functionally equivalent if they produce identical outputs for all inputs – that is, if their impulse responses match ( 𝜻 ​ ( t ) = 𝜻 ~ ​ ( t ) \bm{\zeta}(t)=\tilde{\bm{\zeta}}(t) ).
+
+[100] p: For systems of equal dimension, functional equivalence corresponds exactly to coordinate change: ( 𝐀 , 𝐁 , 𝐂 ) (\mathbf{A},\mathbf{B},\mathbf{C}) and ( 𝐕𝐀𝐕 − 1 , 𝐕𝐁 , 𝐂𝐕 − 1 ) (\mathbf{V}\mathbf{A}\mathbf{V}^{-1},\mathbf{V}\mathbf{B},\mathbf{C}\mathbf{V}^{-1}) share the same impulse response for any invertible 𝐕 \mathbf{V} . But systems of different sizes can also be functionally equivalent if some internal states are either unreachable (unaffected by input) or unobservable (irrelevant to the output).
+
+[101] p: The Kalman decomposition makes this precise, partitioning any system’s state space into four subspaces according to reachability and observability 28 , 29 , 3 , 27 . Only states that are both reachable and observable contribute to input–output behavior; the rest represent degrees of freedom that can vary without affecting function. This decomposition guarantees the existence of a minimal realization – the smallest-dimensional system that reproduces an input–output map, unique up to coordinate change – and enables extracting it. These results from system theory conceptually motivate the methods developed in this manuscript.
+
+[102] h4: Algorithmic core extraction.
+
+[103] p: The goal here is an analogous decomposition for transformers. The Kalman decomposition provides an exact algebraic characterization for linear systems; for transformers, no such closed-form decomposition exists, but the principle can be applied empirically: identify directions that are both input-driven (active) and output-relevant (relevant). If the system were linear, this would reduce to balanced truncation 40 , a technique in model reduction that finds coordinates in which reachability and observability are aligned.
+
+[104] p: Here, ACE ( Algorithmic Core Extraction ) operationalizes this approach for artificial neural networks. Let 𝐇 ∈ ℝ N × D \mathbf{H}\in\mathbb{R}^{N\times D} denote mean-centered hidden activations at a transformer layer of interest, with rows 𝐡 i ⊤ ∈ ℝ 1 × D \mathbf{h}_{i}^{\top}\in\mathbb{R}^{1\times D} for each of N N inputs, to define active directions. To quantify relevant directions, let f : ℝ D → ℝ K f\colon\mathbb{R}^{D}\to\mathbb{R}^{K} map activations to task-relevant outputs and let 𝐉 ∈ ℝ N ​ K × D \mathbf{J}\in\mathbb{R}^{NK\times D} stack the N N Jacobians ∂ f / ∂ 𝐡 i ∈ ℝ K × D \partial f/\partial\mathbf{h}_{i}\in\mathbb{R}^{K\times D} as row blocks.
+
+[105] p: To find directions that are jointly active and relevant, ACE computes the SVD of their interaction:
+
+[106] table: 𝐇𝐉 ⊤ = 𝐔 ​ 𝚺 ​ 𝐕 ⊤ . \mathbf{H}\mathbf{J}^{\top}\;=\;\mathbf{U}\mathbf{\Sigma}\mathbf{V}^{\top}.
+
+[107] p: The singular values quantify the joint importance of each direction, providing a principled criterion for rank selection. Let 𝐔 r \mathbf{U}_{r} denote the first r r columns of 𝐔 \mathbf{U} . The algorithmic core is the subspace obtained by projecting these interaction modes back into activation space,
+
+[108] table: 𝒞 ≔ span ( 𝐇 𝐔 r ⊤ ) . \mathcal{C}\,\coloneq\,\mathsf{\mathrm{span}}\!\left(\mathbf{H}{{}^{\top}}\mathbf{U}_{r}\right).
+
+[109] p: The core’s orthonormal basis 𝐐 ∈ ℝ D × r \mathbf{Q}\in\mathbb{R}^{D\times r} is given by the QR decomposition
+
+[110] table: 𝐇 ⊤ ​ 𝐔 r = 𝐐𝐑 , \mathbf{H}^{\top}\mathbf{U}_{r}\;=\;\mathbf{Q}\mathbf{R},
+
+[111] p: and thus, the core projector is defined as 𝐏 ≔ 𝐐𝐐 ⊤ \mathbf{P}\coloneq\mathbf{Q}\mathbf{Q}^{\top} .
+
+[112] p: Note on implementation. Computing 𝐇𝐉 ⊤ ∈ ℝ N × N ​ K \mathbf{H}\mathbf{J}^{\top}\in\mathbb{R}^{N\times NK} is unnecessary (and inefficient when N ​ K ≫ D NK\gg D ). Instead form the activation covariance 𝐀 ≔ 𝐇 ⊤ ​ 𝐇 ∈ ℝ D × D \mathbf{A}\coloneq\mathbf{H}^{\top}\mathbf{H}\in\mathbb{R}^{D\times D} and sensitivity matrix 𝐒 ≔ 𝐉 ⊤ ​ 𝐉 ∈ ℝ D × D \mathbf{S}\coloneq\mathbf{J}^{\top}\mathbf{J}\in\mathbb{R}^{D\times D} . Take square-root factors 𝐀 + ε ​ 𝐈 = 𝐋𝐋 ⊤ \mathbf{A}+\varepsilon\mathbf{I}=\mathbf{L}\mathbf{L}^{\top} and 𝐒 = 𝚪 ​ 𝚪 ⊤ \mathbf{S}=\mathbf{\Gamma}\mathbf{\Gamma}^{\top} , then compute the SVD of the resulting D × D D\times D matrix 𝐋 ⊤ ​ 𝚪 = 𝐔 ​ 𝚺 ​ 𝐕 ⊤ , \mathbf{L}^{\top}\mathbf{\Gamma}\;=\;\mathbf{U}\mathbf{\Sigma}\mathbf{V}^{\top}, which yields the core subspace: span ⁡ ( 𝐋𝐔 r ) . \mathsf{\mathrm{span}}(\mathbf{L}\mathbf{U}_{r}).
+
+[113] h4: Causal validation.
+
+[114] p: The core is validated through ablation, with 𝐡 ~ \tilde{\mathbf{h}} denoting the activation after intervention:
+
+[115] table: Core-only (to test sufficiency): 𝐡 ~ = 𝐏𝐡 , \displaystyle\tilde{\mathbf{h}}=\mathbf{P}\mathbf{h}, Core-removed (to test necessity): 𝐡 ~ = 𝐡 − 𝐏𝐡 . \displaystyle\tilde{\mathbf{h}}=\mathbf{h}-\mathbf{P}\mathbf{h}.
+
+[116] p: A subspace is deemed sufficient if core-only preserves task performance, and necessary if core-removed reduces performance to approximately chance. The energy-based rank can be refined by finding the minimal r r such that keeping only the core maintains baseline accuracy and removing it drops accuracy to near chance.
+
+[117] h4: When activity and relevance align.
+
+[118] p: It is worth noting that sometimes ACE reduces to standard PCA – when activity and relevance coincide. This is even expected for simple tasks, when there is no inherent pressure for models to “hide” computations in low-variance subspaces. In more complex models, however, high-variance directions are unlikely to cleanly align with target tasks. Still, the distinction matters even when the subspaces agree: PCA identifies where variance concentrates; ACE identifies where the input–output map flows, by construction and intervention, certifying causal relevance. In other words, PCA is descriptive and statistical, whereas ACE is also causal, licensing downstream treatment and interpretation of the returned subspace and its fitted operator as a dynamical system realizing a causal algorithm.
+
+[119] h2: Experimental Details
+
+[120] h3: Markov Chain Experiment
+
+[121] p: Three single-layer transformers ( d model = 64 d_{\mathrm{model}}=64 , d ff = 256 d_{\mathrm{ff}}=256 , | V | = 4 |V|=4 ) with causal attention masking were trained with independent random seeds on next-token prediction for sequences generated by a four-state Markov chain.
+
+[122] p: The Markov chain transition probability matrix,
+
+[123] table: 𝐓 ≔ ( α β 0 0 0 α β 0 0 0 α β β 0 0 α ) , \displaystyle\mathbf{T}\coloneq\begin{pmatrix}\alpha&\beta&0&0\\ 0&\alpha&\beta&0\\ 0&0&\alpha&\beta\\ \beta&0&0&\alpha\end{pmatrix},
+
+[124] p: was instantiated with α = 0.75 \alpha=0.75 and β = 0.25 \beta=0.25 , yielding eigenvalues (spectrum) λ ∈ { 1 , 0.75 + 0.25 ​ i , 0.75 − 0.25 ​ i , 0.5 } \lambda\in\{1,0.75+0.25\mathord{\text{i}},0.75-0.25\mathord{\text{i}},0.5\} , and has stationary distribution \mathbold ​ π = [ 0.25 , 0.25 , 0.25 , 0.25 ] \mathbold{\pi}=\left[0.25,0.25,0.25,0.25\right] .
+
+[125] p: Training used AdamW with learning rate 10 − 3 10^{-3} and no weight decay for 40 epochs on 3,000 sequences of length 32 generated by 𝐓 \mathbf{T} , with batch size 64.
+
+[126] p: Trained model performance is compared against two baselines:
+
+[127] table: Chance: max ⁡ ( \mathbold ​ π ) , \displaystyle\max(\mathbold{\pi}), Bayes-optimal: ∑ i π i ​ max j ​ T i ​ j , \displaystyle\sum_{i}\pi_{i}\max_{j}T_{ij},
+
+[128] p: Chance accuracy reflects always predicting the most common token; Bayes-optimal accuracy reflects the best possible one-step prediction given the stochastic nature of the chain.
+
+[129] p: Algorithmic cores were extracted using a 99.9% rank energy threshold without ablation-refinement, 𝐇 \mathbf{H} was computed for all test activations, and 𝐉 \mathbf{J} was defined by the target function f ⁡ ( 𝐡 ) ≔ logits ⁡ ( 𝐡 ) f(\mathbf{h})\coloneq\mathrm{logits}(\mathbf{h}) .
+
+[130] p: Consensus alignments. To compare full-model activations, instead of cores, full activations from each model were mean-centered, concatenated and decomposed with SVD. A consensus subspace was recovered from this decomposition truncating to a rank explaining 99.9% energy, but capped at 0.75 ​ d model 0.75\,d_{\mathrm{model}} to avoid a near-full-dimensional consensus, which would not be informative here. Per-model least-squares maps from centered activations to the consensus were fit, and QR-orthonormalization of each map yielded an aligned subspace basis per model.
+
+[131] p: Fitting dynamics. Hidden state (mean-centered) sequences were projected into core coordinates 𝐳 t = 𝐐 ⊤ ​ 𝐡 t \mathbf{z}_{t}=\mathbf{Q}^{\top}\mathbf{h}_{t} and a linear operator was fit by least squares to predict next-step dynamics,
+
+[132] table: 𝐳 t + 1 ≈ 𝐀𝐳 t . \mathbf{z}_{t+1}\approx\mathbf{A}\mathbf{z}_{t}.
+
+[133] p: The spectrum of 𝐀 \mathbf{A} was used to characterize the learned dynamics. When comparing fitted operators in the core to ground truth, the Perron–Frobenius eigenvalue λ = 1 \lambda=1 of 𝐓 \mathbf{T} (corresponding to the stationary distribution) is excluded, as it reflects normalization.
+
+[134] p: To calibrate, core operator fits were compared against an oracle ceiling for next-token prediction:
+
+[135] table: R oracle 2 ≔ 1 − 1 | V | ​ 1 ⊤ ​ ( 𝐦 ⊘ 𝐯 ) , R_{\rm oracle}^{2}\coloneq 1-\frac{1}{|V|}\,\mathbf{1}^{\top}\!\left(\mathbf{m}\oslash\mathbf{v}\right),
+
+[136] p: where
+
+[137] table: 𝐦 ≔ diag ⁡ ( \mathbold ​ π ) ​ ( 𝐓 ⊙ ( 𝟏 − 𝐓 ) ) ⊤ ​ 𝟏 , 𝐯 ≔ \mathbold ​ π ⊙ ( 𝟏 − \mathbold ​ π ) , \mathbf{m}\coloneq\mathrm{diag}(\mathbold{\pi})\big(\mathbf{T}\odot(\mathbf{1}-\mathbf{T})\big)^{\top}\mathbf{1},\qquad\mathbf{v}\coloneq\mathbold{\pi}\odot(\mathbf{1}-\mathbold{\pi}),
+
+[138] p: and ⊙ \odot and ⊘ \oslash denote elementwise product and division.
+
+[139] h3: Modular Addition Experiment
+
+[140] p: Three two-layer transformers ( d model = 128 d_{\mathrm{model}}=128 , d ff = 512 d_{\mathrm{ff}}=512 , | V | = 53 |V|=53 ) were trained on a + b ≡ c ( mod 53 ) a+b\equiv c\pmod{53} . The dataset consists of all 53 2 = 2809 53^{2}=2809 input pairs, split evenly into train and test sets with a fixed random seed. Input sequences are [ a , b ] [a,b] with target [ b , c ] [b,c] .
+
+[141] p: Training used AdamW with learning rate 10 − 3 10^{-3} , batch size 512, and weight decay ω = 1 \omega=1 . Models were trained for 2 × 10 4 2\times 10^{4} epochs, with core extraction performed every 100 epochs. The grokking epoch was defined as the first analysis time point at which all three models achieved perfect test accuracy, which occurred at epoch 800.
+
+[142] p: To study the effect of continued weight decay after grokking, at epoch 900, transformers were “branched” – duplicated and split into two regimes – where weight decay was either maintained at ω = 1 \omega=1 or disabled ( ω → 0 \omega\to 0 ) for the remainder of training.
+
+[143] p: For core extraction, 𝐇 \mathbf{H} was computed over all test-set activations, and 𝐉 \mathbf{J} was estimated using 64 Jacobian samples, defined by the target function f ⁡ ( 𝐡 ) ≔ logits ⁡ ( 𝐡 ) f(\mathbf{h})\coloneq\mathrm{logits}(\mathbf{h}) . Core rank was selected first via the 99% energy threshold, and then refined with ablations to ensure causal importance.
+
+[144] p: For operator fitting, centroids 𝐫 ¯ c \bar{\mathbf{r}}_{c} were computed as the centered mean core activation over all test examples with answer token c c . A linear shift operator 𝐀 \mathbf{A} satisfying,
+
+[145] table: 𝐫 ¯ ( c + 1 ) mod 53 ≈ 𝐀 ​ 𝐫 ¯ c \bar{\mathbf{r}}_{(c+1)\bmod 53}\approx\mathbf{A}\bar{\mathbf{r}}_{c}
+
+[146] p: was fit by ridge-regularized least squares after dimensionality reduction with SVD. Generalization was evaluated by holding out cycle transitions rather than examples: the 53 answer classes were split into disjoint calibrate/evaluate sets by selecting a contiguous block of classes for the evaluate set, and the fit was performed only on transitions c → c + 1 c\!\to\!c{+}1 whose endpoints both lie in the calibration class set; evaluation used only transitions whose endpoints both lie in the evaluate class set and fit is denoted as R h 2 R_{h}^{2} . For descriptive fits, R 2 R^{2} is reported without holding out transitions or ridge-regularization.
+
+[147] p: To summarize spectral structure, eigenvalues of 𝐀 \mathbf{A} with magnitude close to 1 were identified as rotational modes, and each such mode was assigned a frequency bin by rounding its angle to the nearest integer multiple of 2 ​ π / 53 2\pi/53 . Because complex-conjugate eigenvalue pairs correspond to the same oscillation up to direction, bins k k and 53 − k 53-k were mapped to the same bin. This implies a maximum of ⌊ 53 / 2 ⌋ + 1 = 27 \lfloor 53/2\rfloor+1=27 distinct bins: one k = 0 k=0 bin and 26 nonzero oscillatory bins. Mode count is defined as the number of occupied nonzero bins, and derives from operators fit without holding out transitions, since the goal is descriptive characterization rather than generalization evaluation.
+
+[148] h3: Subject–Verb Agreement Experiment
+
+[149] p: GPT-2 Small (117M parameters, 12 layers), Medium (345M, 24 layers), and Large (774M, 36 layers) were analyzed on subject–verb number agreement.
+
+[150] p: Prompts. A dataset of 1,200 prompts (600 singular, 600 plural) was constructed by combining head nouns (for example, “key”/“keys”, “child”/“children”) with attractor nouns of opposite number (e.g., “cabinets”/“cabinet”) via connectors (“to the”, “near the”, “next to the”, etc.). Five syntactic templates were used: base (“The key to the cabinets”), front-padded (“In this ancient kingdom, the key to the cabinets”), back-padded (“The key to the cabinets in the old kingdom”), existential (“There key near the boxes”), and relative clause (“The key that guards the cabinets”). Half of prompts were prefixed with “In the past,” to vary tense context. The dataset was split evenly into train and test sets. Note: some prompts deliberately employ ungrammatical word order ( e.g. , “There key near the boxes”) to assess whether the agreement core remains robust to structural violations, forcing the model to resolve agreement based on the head noun rather than positional heuristics.
+
+[151] p: Target function. The number margin was defined on the final-token hidden state 𝐡 \mathbf{h} :
+
+[152] table: f ⁡ ( 𝐡 ) ≔ ( logit are + logit were ) − ( logit is + logit was ) . \displaystyle f(\mathbf{h})\coloneq(\mathrm{logit}_{\textit{are}}+\mathrm{logit}_{\textit{were}})-(\mathrm{logit}_{\textit{is}}+\mathrm{logit}_{\textit{was}}).
+
+[153] p: Layer sweep. Candidate cores were extracted at each layer and evaluated via ablation. For each model, the layer with maximal flip effect was selected as the core location: layer 11 for GPT-2 Small, layer 22 for Medium, and layer 36 for Large.
+
+[154] p: Generation steering. For open-ended generation, a per-token adaptive intervention was applied during autoregressive decoding. Let 𝐪 ∈ ℝ D \mathbf{q}\in\mathbb{R}^{D} denote the (unit-norm) core axis and \mathbold ​ μ \mathbold{\mu} the mean activation at the intervention layer. The intervention reflects the hidden state 𝐡 \mathbf{h} at the last token position through the hyperplane orthogonal to the core axis:
+
+[155] table: 𝐡 ~ = 𝐡 − 2 ​ s ​ [ ( 𝐡 − \mathbold ​ μ ) ⊤ ​ 𝐪 ] ​ 𝐪 , \displaystyle\tilde{\mathbf{h}}=\mathbf{h}-2s\left[(\mathbf{h}-\mathbold{\mu})^{\top}\mathbf{q}\right]\mathbf{q},
+
+[156] p: where s s is a per-token steering strength determined adaptively.
+
+[157] p: At each decoding step, three forward passes are performed. First, a gating check: a clean forward pass (with s = 0 s=0 ) computes the softmax probability mass on the agreement-relevant verb tokens ( is , are , was , were ). If this mass falls below a threshold, the token is unlikely to involve an agreement decision and no intervention is applied ( s ∗ = 0 s^{\ast}=0 ).
+
+[158] p: Otherwise, the steering strength is calibrated to produce a minimal margin flip. Define the generation margin as m ≔ log ∑ v ∈ { are , were } e ℓ v − log ∑ v ∈ { is , was } e ℓ v m\coloneq\log\!\sum_{v\in\{\textit{are},\,\textit{were}\}}e^{\ell_{v}}-\log\!\sum_{v\in\{\textit{is},\,\textit{was}\}}e^{\ell_{v}} , where ℓ v \ell_{v} denotes the logit for token v v . This logsumexp margin more accurately reflects the probability-space competition between singular and plural verb groups than the linear logit sum used for core extraction, where operating-point independence of the Jacobian is preferred. The calibration proceeds as: (1) the current margin m 0 m_{0} is measured under the clean pass; (2) a small probing perturbation at strength s 0 s_{0} estimates the local gain g = ( m 1 − m 0 ) / s 0 g=(m_{1}-m_{0})/s_{0} ; (3) the intervention strength is set to s ∗ = ( m target − m 0 ) / g s^{\ast}=(m_{\mathrm{target}}-m_{0})/g , where m target = − sign ⁡ ( m 0 ) ​ ε m_{\mathrm{target}}=-\operatorname{sign}(m_{0})\,\varepsilon targets the minimal margin crossing with buffer ε \varepsilon . An optional cap | s ∗ | ≤ s cap |s^{\ast}|\leq s_{\mathrm{cap}} prevents extreme extrapolation. This adaptive approach produces grammatical inversions while minimizing collateral disruption to non-agreement tokens.
+
+[159] h2: Mathematical Model of Grokking Dynamics
+
+[160] p: Let \mathbold ​ α ​ ( t ) ∈ ℝ μ \mathbold{\alpha}(t)\in\mathbb{R}^{\mu} denote the mode coefficients and let \mathbold ​ ψ ∈ ℝ μ \mathbold{\psi}\in\mathbb{R}^{\mu} be fixed with ψ k ≔ 1 − cos ⁡ ( 2 ​ π ​ k / p ) \psi_{k}\coloneq 1-\cos(2\pi k/p) . Define the (test-relevant) margin m ⁡ ( t ) ≔ ⟨ \mathbold ​ α ​ ( t ) , \mathbold ​ ψ ⟩ m(t)\coloneq\langle\mathbold{\alpha}(t),\mathbold{\psi}\rangle .
+
+[161] p: Post-memorization, training loss is approximately zero. Updates are driven by the weight decay penalty − ω ​ \mathbold ​ α ​ ( t ) -\omega\mathbold{\alpha}(t) and a minimal corrective motion γ ⁡ ( t ) ​ \mathbold ​ ψ \gamma(t)\mathbold{\psi} needed to remain on the zero-loss manifold, plus zero-mean stochasticity ξ ⁡ ( t ) \xi(t) (optimizer noise).
+
+[162] p: Direction of \mathbold ​ ψ \mathbold{\psi} . Among all infinitesimal updates Δ ​ \mathbold ​ α \Delta\mathbold{\alpha} that increase the margin by one unit, the minimum-norm update solves
+
+[163] table: arg ⁡ min Δ ​ \mathbold ​ α ⁡ ‖ Δ ​ \mathbold ​ α ‖ 2 s.t. ⟨ Δ ​ \mathbold ​ α , \mathbold ​ ψ ⟩ = 1 . \arg\min_{\Delta\mathbold{\alpha}}\|\Delta\mathbold{\alpha}\|_{2}\quad\text{s.t.}\quad\langle\Delta\mathbold{\alpha},\mathbold{\psi}\rangle=1.
+
+[164] p: By the Cauchy–Schwarz inequality, the solution is Δ ​ \mathbold ​ α = \mathbold ​ ψ / ‖ \mathbold ​ ψ ‖ 2 2 \Delta\mathbold{\alpha}=\mathbold{\psi}/\|\mathbold{\psi}\|_{2}^{2} . Thus, the corrective gradient direction is strictly parallel to \mathbold ​ ψ \mathbold{\psi} .
+
+[165] p: Margin dynamics. Differentiating m ⁡ ( t ) = ⟨ \mathbold ​ α ​ ( t ) , \mathbold ​ ψ ⟩ m(t)=\langle\mathbold{\alpha}(t),\mathbold{\psi}\rangle and isolating the noise-free deterministic trajectory yields the scalar ODE:
+
+[166] table: m ˙ ​ ( t ) = − ω ​ m ​ ( t ) + γ ⁡ ( t ) ​ ‖ \mathbold ​ ψ ‖ 2 2 . \dot{m}(t)\;=\;-\omega\,m(t)\;+\;\gamma(t)\,\|\mathbold{\psi}\|_{2}^{2}.
+
+[167] p: Because weight decay is the only systematic drift pulling the network off the margin, the mean corrective force is taken to scale proportionally to maintain zero loss: γ ⁡ ( t ) ≈ c ​ ω \gamma(t)\approx c\,\omega for some constant c c .
+
+[168] p: Assuming sufficient dimensional capacity ( p < d model p<d_{\mathrm{model}} ), the initial memorized state is unstructured, meaning it carries negligible margin ( m ⁡ ( 0 ) ≈ 0 m(0)\approx 0 ). Substituting the corrective force yields a simple linear relaxation equation:
+
+[169] table: m ˙ ​ ( t ) = − ω ​ m ​ ( t ) + c ​ ω ​ ‖ \mathbold ​ ψ ‖ 2 2 , m ⁡ ( 0 ) ≈ 0 . \dot{m}(t)=-\omega m(t)+c\,\omega\|\mathbold{\psi}\|_{2}^{2},\qquad m(0)\approx 0.
+
+[170] p: Solving this ODE yields the exact continuous-time margin trajectory:
+
+[171] table: m ⁡ ( t ) = m ∗ ​ ( 1 − e − ω ​ t ) , where m ∗ = c ​ ‖ \mathbold ​ ψ ‖ 2 2 = κ ​ p . m(t)=m^{\ast}\big(1-e^{-\omega t}\big),\qquad\text{where}\quad m^{\ast}=c\,\|\mathbold{\psi}\|_{2}^{2}=\kappa p.
+
+[172] p: Predicting grokking time. Grokking occurs at the first-hitting time τ \tau when the margin reaches the generalization threshold δ \delta . Solving m ⁡ ( τ ) = δ m(\tau)=\delta yields the continuous gradient-flow time:
+
+[173] table: τ ⁡ ( p ) = − 1 ω ​ log ⁡ ( 1 − δ κ ​ p ) . \tau(p)=-\frac{1}{\omega}\log\!\left(1-\frac{\delta}{\kappa p}\right).
+
+[174] p: To map this idealized ODE to discrete training steps, the physical constants are decoupled. The scaling rate becomes:
+
+[175] table: τ grok ​ ( p ) = − Ω ​ log ⁡ ( 1 − p crit p ) , ( p crit < p < d model ) . \tau_{\mathrm{grok}}(p)=-\Omega\log\!\left(1-\frac{p_{\mathrm{crit}}}{p}\right),\qquad(p_{\mathrm{crit}}<p<d_{\mathrm{model}}).
+
+[176] p: Here, p crit ≔ δ / κ p_{\mathrm{crit}}\coloneq\delta/\kappa is the architectural constant , defining the absolute capacity floor limit independent of the optimizer. Conversely, Ω ∝ ( η ​ ω ) − 1 \Omega\propto(\eta\omega)^{-1} is the optimizer constant , an empirical parameter that captures the characteristic relaxation time while absorbing discrete step-size dynamics, learning rate, momentum, and adaptive preconditioning from the AdamW optimizer.
+
+[177] h4: Grokking sweeps and scaling fits.
+
+[178] p: To measure scaling laws for the grokking delay in modular addition a + b ( mod p ) a+b\pmod{p} , one-layer transformers ( d model = 128 d_{\mathrm{model}}=128 , d ff = 512 d_{\mathrm{ff}}=512 ) were trained on input pairs using AdamW ( lr=1e-3 ). The data, p 2 p^{2} input pairs, were randomly partitioned into a 50 / 50 50/50 train/test split. Memorization ( τ mem \tau_{\mathrm{mem}} ) and generalization ( τ gen \tau_{\mathrm{gen}} ) times were defined as the first optimizer steps at which train and test accuracy reach 0.99 0.99 , respectively. The grokking delay is evaluated as the difference τ grok ≔ τ gen − τ mem \tau_{\mathrm{grok}}\coloneq\tau_{\mathrm{gen}}-\tau_{\mathrm{mem}} . Accuracy was evaluated every step to avoid quantization artifacts.
+
+[179] p: Two sweeps were performed, averaging over 12 random seeds per condition: (1) Weight decay: fixing p = 53 p=53 and sweeping ω ∈ { 0.3 , 0.5 , 1 , 1.5 , 2 , 3 } \omega\in\{0.3,0.5,1,1.5,2,3\} . To simulate standard training stochasticity on a fixed-size dataset, this sweep utilized minibatch gradient descent with a batch size of B = 512 B=512 . (2) Modulus: fixing ω = 1 \omega=1 and sweeping primes p ∈ { 31 , 43 , 53 , 61 , 79 , 89 , 101 } p\in\{31,43,53,61,79,89,101\} . Because the dataset size grows quadratically with p p , this sweep utilized full-batch gradient descent to ensure the empirical hitting time was isolated from dataset-dependent minibatch noise.
+
+[180] p: Scaling exponents for the asymptotic limits were obtained by fitting power laws y = C ​ x β y=Cx^{\beta} via ordinary least squares in log–log space. The macroscopic constants Ω \Omega and p crit p_{\mathrm{crit}} were obtained by fitting the exact deterministic ODE solution τ ⁡ ( p ) = − Ω ​ log ⁡ ( 1 − p crit / p ) \tau(p)=-\Omega\log(1 - p_{\mathrm{crit}}/p) to the empirical delay using non-linear least squares ( scipy.optimize.curve_fit ). Goodness-of-fit for all curves is reported by R 2 R^{2} .
+
+[181] h2: Acknowledgements
+
+[182] p: I would like to thank Drs. Alison Pickover and Dan Landau for their support.
+
+[183] h2: Code Availability
+
+[184] p: Code will be made available at https://github.com/joshseth/cores .
+
+[185] h2: References
+
+[186] h2: References
+
+[187] h2: Instructions for reporting errors
+
+[188] p: We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the methods listed below:
+
+[189] p: Tip: You can select the relevant text first, to include it in your report.
+
+[190] p: Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability should not be a barrier to accessing research. Thank you for your continued support in championing open access for all.
+
+[191] p: Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .

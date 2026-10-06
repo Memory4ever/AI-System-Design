@@ -1,0 +1,67 @@
+3 Unified Latent Diffusion
+This section describes how to train Unified Latents. The first section covers the latent encoding which is regularized by a diffusion prior using Eq. 1. Secondly, we describe how to design a diffusion decoder which models the reconstruction term log⁡pθ​(𝒙|𝒛0)\log p_{\theta}({\bm{x}}|{\bm{z}}_{0}). Lastly, we describe the second stage of training where the encoder and decoder are frozen and a new model is trained on the latents. An overview of inputs and outputs during training is visualized in Figure 1.
+Algorithm 1 Training Unified Latents
+Sample 𝒙∼pdata{\bm{x}}\sim p_{\mathrm{data}}
+Encode the data zclean=E⁡(𝒙,θ)z_{\mathrm{clean}}=E({\bm{x}},\theta)
+Sample t∼𝒰⁡(0,1)t\sim\mathcal{U}(0,1), ϵ∼𝒩⁡(0,𝐈){\bm{{\epsilon}}}\sim\mathcal{N}(0,{\mathbf{I}})
+𝒛t=αz​(t)​𝒛clean+σz​(t)​ϵ{\bm{z}}_{t}=\alpha_{z}(t){\bm{z}}_{\mathrm{clean}}+\sigma_{z}(t){\bm{{\epsilon}}}
+Compute prior loss ℒz​(θ)=−d​λz​(t)d​t​exp⁡λz​(t)2​‖𝒛clean−𝒛^​(𝒛t,θ)‖2+KL⁡[p⁡(𝒛1|𝒙)|p⁡(𝒛1)]\mathcal{L}_{z}(\theta)={\color[rgb]{0.5,0.5,0.5}-\frac{\mathrm{d}\lambda_{z}(t)}{\mathrm{d}t}\frac{\exp{\lambda_{z}(t)}}{2}}||{\bm{z}}_{\mathrm{clean}}-\hat{{\bm{z}}}({\bm{z}}_{t},\theta)||^{2}+\mathrm{KL}\big[p({\bm{z}}_{1}|{\bm{x}})\big|p({\bm{z}}_{1})\big]
+Sample t∼𝒰⁡(0,1)t\sim\mathcal{U}(0,1), ϵ∼𝒩⁡(0,𝐈){\bm{{\epsilon}}}\sim\mathcal{N}(0,{\mathbf{I}}), ϵz∼𝒩⁡(0,𝐈){\bm{{\epsilon}}}_{z}\sim\mathcal{N}(0,{\mathbf{I}})
+𝒛0=αz​(0)​𝒛clean+σz​(0)​ϵz{\bm{z}}_{0}=\alpha_{z}(0){\bm{z}}_{\mathrm{clean}}+\sigma_{z}(0){\bm{{\epsilon}}}_{z}
+𝒙t=αx​(t)​x+σx​(t)​ϵ{\bm{x}}_{t}=\alpha_{x}(t)x+\sigma_{x}(t){\bm{{\epsilon}}}
+Compute decoder loss ℒx​(θ)=d​λx​(t)d​t​exp⁡λx​(t)2​w​(λx​(t))​‖𝒙−𝒙^​(𝒙t,𝒛0,θ)‖2\mathcal{L}_{x}(\theta)={\color[rgb]{0.5,0.5,0.5}\frac{\mathrm{d}\lambda_{x}(t)}{\mathrm{d}t}\frac{\exp{\lambda_{x}(t)}}{2}}w(\lambda_{x}(t))||{\bm{x}}-\hat{{\bm{x}}}({\bm{x}}_{t},{\bm{z}}_{0},\theta)||^{2}
+Optimize ℒ⁡(θ)=ℒz​(θ)+ℒx​(θ)\mathcal{L}(\theta)=\mathcal{L}_{z}(\theta)+\mathcal{L}_{x}(\theta)
+Algorithm 2 Sampling Unified Latents
+Sample 𝒛1∼𝒩⁡(0,𝐈){\bm{z}}_{1}\sim\mathcal{N}(0,{\mathbf{I}})
+Sample 𝒛0∼pθ​(𝒛0|𝒛1){\bm{z}}_{0}\sim p_{\theta}({\bm{z}}_{0}|{\bm{z}}_{1}) from diffusion base model
+Sample 𝒙1∼𝒩⁡(0,𝐈){\bm{x}}_{1}\sim\mathcal{N}(0,{\mathbf{I}})
+Sample 𝒙∼pθ​(𝒙|𝒛0,𝒙1){\bm{x}}\sim p_{\theta}({\bm{x}}|{\bm{z}}_{0},{\bm{x}}_{1}) from diffusion decoder model
+3.1 Encoding and Prior: Linking encoding noise and diffusion precision
+A key design decision is how much precision to use when encoding the latent. In principle, a continuous variable can encode infinite bits, and floating-point representations typically support 16–32 bits—though encoder and decoder smoothness make it practically impossible to utilize this capacity in full. In standard VAEs, encoder noise limits information content; for example, Stable Diffusion learns this noise level. We take a different approach: we explicitly link the encoder noise to the maximum precision of the prior diffusion model.
+Let 𝒛clean=E⁡(𝒙,θ){\bm{z}}_{\text{clean}}=E({\bm{x}},\theta) denote the deterministic latent encoding.
+The encoder should approximate the posterior p⁡(z|x)p(z|x), which is typically parameterized by a flexible distribution. However, following Vahdat et al. (2021), we find that learning a flexible encoder distribution causes instability.
+We propose a simpler approach: the encoder predicts a single deterministic latent zcleanz_{\text{clean}}, which is then forward-noised to time t=0t=0. We use a final log-SNR of λ⁡(0)=5\lambda(0)=5, defining p⁡(𝒛0|zclean)=𝒩⁡(α0​zclean,σ0)p({\bm{z}}_{0}|z_{\text{clean}})=\mathcal{N}(\alpha_{0}z_{\text{clean}},\sigma_{0}). For a variance-preserving noise schedule, this corresponds to α0=sigmoid⁡(+5)≈1.0\alpha_{0}=\sqrt{\operatorname{sigmoid}(+5)}\approx 1.0 and σ0=sigmoid⁡(−5)≈0.08\sigma_{0}=\sqrt{\operatorname{sigmoid}(-5)}\approx 0.08. The KL term for the VAE loss is then:
+KL⁡[p⁡(𝒛0|𝒙)|pθ​(𝒛0)]≤KL⁡[p⁡(𝒛0,…,𝒛1|𝒙)|pθ​(𝒛0,…,𝒛1)]=𝔼t​[−d​λz​(t)d​t​exp⁡λz​(t)2​w​(λz​(t))​‖𝒛clean−𝒛^​(𝒛t,θ)‖2]+KL⁡[p⁡(𝒛1|𝒙)|𝒩⁡(0,ℐ)].\displaystyle\begin{split}\mathrm{KL}\Big[p({\bm{z}}_{0}|{\bm{x}})\big|p_{\theta}({\bm{z}}_{0})\Big]&\leq\mathrm{KL}\Big[p({\bm{z}}_{0},\ldots,{\bm{z}}_{1}|{\bm{x}})\big|p_{\theta}({\bm{z}}_{0},\ldots,{\bm{z}}_{1})\Big]\\
+&=\mathbb{E}_{t}\Big[{\color[rgb]{0.5,0.5,0.5}-\frac{\mathrm{d}\lambda_{z}(t)}{\mathrm{d}t}\frac{\exp{\lambda_{z}(t)}}{2}}w(\lambda_{z}(t))||{\bm{z}}_{\mathrm{clean}}-\hat{{\bm{z}}}({\bm{z}}_{t},\theta)||^{2}\Big]+\mathrm{KL}\big[p({\bm{z}}_{1}|{\bm{x}})\big|\mathcal{N}(0,\mathcal{I})\big].\end{split}
+(3)
+Thus, the latent z0z_{0} is sampled using a learned mean and fixed diagonal noise.
+3.2 Decoding: A diffusion decoder
+The decoder is also a diffusion model, but operating in the image space with 𝒙t=αt​𝒙+σt​ϵ{\bm{x}}_{t}=\alpha_{t}{\bm{x}}+\sigma_{t}{\bm{{\epsilon}}}. The reconstruction loss can be written as:
+−log⁡pθ​(𝒙|𝒛0)≤KL⁡[p⁡(𝒙0,…,𝒙1|𝒙)|pθ​(𝒙0,…,𝒙1|𝒛0)]=𝔼t∼𝒰⁡(0,1)​[d​λx​(t)d​t​exp⁡λx​(t)2​wx​(λx​(t))​‖𝒙−𝒙^​(𝒙t,𝒛0,θ)‖2]\displaystyle\begin{split}-\log p_{\theta}({\bm{x}}|{\bm{z}}_{0})&\leq\mathrm{KL}\Big[p({\bm{x}}_{0},\ldots,{\bm{x}}_{1}|{\bm{x}})\big|p_{\theta}({\bm{x}}_{0},\ldots,{\bm{x}}_{1}|{\bm{z}}_{0})\Big]\\
+&=\mathbb{E}_{t\sim\mathcal{U}(0,1)}\Big[{\color[rgb]{0.5,0.5,0.5}\frac{\mathrm{d}\lambda_{x}(t)}{\mathrm{d}t}\frac{\exp{\lambda_{x}(t)}}{2}}w_{x}(\lambda_{x}(t))||{\bm{x}}-\hat{{\bm{x}}}({\bm{x}}_{t},{\bm{z}}_{0},\theta)||^{2}\Big]\end{split}
+(4)
+The key distinction is that the decoder network Dθ=𝒙^​(𝒙t,𝒛0,θ)D_{\theta}=\hat{{\bm{x}}}({\bm{x}}_{t},{\bm{z}}_{0},\theta) conditions on both the noisy data 𝒙t{\bm{x}}_{t} and the latent 𝒛0{\bm{z}}_{0}. Since the decoder does not affect 𝒙{\bm{x}}, the prior term KL[p(𝒙1|x)∥𝒩(0,ℐ)]\mathrm{KL}[p({\bm{x}}_{1}|x)\|\mathcal{N}(0,\mathcal{I})] can be ignored from the loss.
+Figure 2: Unified Latents overview. An image 𝒙{\bm{x}} is encoded to 𝒛clean{\bm{z}}_{\mathrm{clean}}. A diffusion prior models the path from pure noise 𝒛1{\bm{z}}_{1} to a slightly noisy latent 𝒛0{\bm{z}}_{0}. This 𝒛0{\bm{z}}_{0} is then used by a diffusion decoder to reconstruct the image. The prior thus measures and regularizes the information content of 𝒛0{\bm{z}}_{0}.
+Figure 3: Decoder weighting on ϵ{\bm{{\epsilon}}}-mse, wϵ​(λt)=clf⋅sigmoid⁡(b−λt)w_{\bm{{\epsilon}}}(\lambda_{t})=c_{\mathrm{lf}}\cdot\operatorname{sigmoid}(b-\lambda_{t}), showing which noise levels are penalized (via a loss factor clf=1.6c_{\mathrm{lf}}=1.6 in this case) and which noise levels are discounted. In theory, for weightings above 11 the latent model is preferred and for weightings below 11 the decoder is preferred. In practise, the decoder will model information even if the weighting is slightly above 11.
+Decoder weighting and loss factor
+In contrast with the prior, the decoder loss can be a re-weighted ELBO. By discounting low noise levels, high frequency features will always be modelled by the decoder because the cost per bit of information is lower. For example, in many experiments we use the sigmoid loss (Kingma and Gao, 2023; Hoogeboom et al., 2024), w⁡(λ⁡(t))=sigmoid⁡(λ⁡(t)−b)w(\lambda(t))=\operatorname{sigmoid}(\lambda(t)-b).
+Even with equal weighting, literature has shown that it is difficult to use the latent space in VAEs when the decoder is powerful, a phenomenon referred to as posterior collapse (Razavi et al., 2019). For that reason, we up-weigh the decoder loss with a loss factor (which is equivalent to down-weighting the KL-term). See Figure 3 for a combined view of weighting and the loss factor. We find that we only need a small loss factor (1.31.3 to 1.71.7 in most experiments).
+Thus, in our experiments we set the decoder ELBO weighting using the loss factor (clfc_{\mathrm{lf}}) and sigmoid bias bb. These 2 hyper-parameters effectively control the amount of information in the latents. A higher information latent naturally leads to better reconstruction quality. However, by using a more informative latent we defer more of the modelling complexity to the base model.
+3.3 Base model: Stage 2 training
+In principle we could use the prior diffusion model as described above to generate 𝒛0{\bm{z}}_{0} and subsequently sample p⁡(𝒙|𝒛0)p({\bm{x}}|{\bm{z}}_{0}) using the diffusion decoder. However we find that a prior trained using an ELBO loss does not produce good samples (see App. B).
+Because the prior can only be trained on an ELBO weighting in stage 1, it places equal weight on low-frequency and high-frequency content in the latent. Therefore, we find that performance can be improved considerably by retraining the prior model as a base model with a sigmoid weighting. Because only a frozen encoder is required during this stage, the base model size and batch size can be much larger than in stage 1.
+The training of the base model largely follows the same procedure as existing Latent Diffusion Models (Rombach et al., 2022). The only difference is that Unified Latents have a fixed amount of noise so there is a fixed logsnr max λ⁡(0)\lambda(0) for the base model which is the same as the one used in the prior. This deviates from the standard approach where the final logsnr is a hyper-parameter and we use the final prediction 𝒛^\hat{{\bm{z}}} instead of 𝒛0{\bm{z}}_{0} as the sampled latent.
+There are alternative design choices that allow for single stage training. In this case the prior model will already achieve better performance. This requires different weightings of decoder and prior losses, and are discussed in Appendix B.
+4 Related Work
+Our work combines diffusion-based decoding with diffusion-based priors to learn latent representations optimized for generation. We review the most relevant prior work below.
+Diffusion Decoders
+Several works have explored using diffusion models as decoders in VAE-like frameworks.
+DiffuseVAE (Pandey et al., 2022) trains a conventional MSE autoencoder first, then finetunes a diffusion decoder using the original decoder’s output as conditioning.
+SWYCC (Birodkar et al., 2024) and ϵ\epsilon-VAE (Zhao et al., 2025) train latents with a diffusion decoder, but still rely on a channel bottleneck for regularization rather than a learned prior.
+DiVAE (Shi et al., 2022) combines a diffusion decoder with discrete VQ-VAE tokens.
+In contrast, our approach uses continuous latents regularized by a diffusion prior, providing interpretable control over the bitrate.
+Diffusion Priors
+LSGM (Vahdat et al., 2021) jointly trains a diffusion prior in a VAE framework, but requires a separate encoder entropy term 𝔼q⁡(𝒛0|𝒙)​log⁡q⁡(𝒛0|𝒙)\mathbb{E}_{q({\bm{z}}_{0}|{\bm{x}})}\log q({\bm{z}}_{0}|{\bm{x}}) that introduces training instability.
+Our approach sidesteps this by using a deterministic encoder with fixed noise, absorbing the encoder distribution into the diffusion forward process.
+This yields a simpler two-term objective (decoder loss + prior loss) while maintaining a tight bound on latent information.
+Diffusion Decoder and Prior
+DiffAE (Preechakul et al., 2022) uses diffusion for both encoding and decoding, but its latent comes from a pre-trained “semantically meaningful” encoder rather than being optimized for generation quality.
+Our work differs by jointly training the encoder, prior, and decoder, with the explicit goal of maximizing generation efficiency.
+Latent Diffusion and Efficient Autoencoders
+The original Latent Diffusion Model (Rombach et al., 2022) uses a GAN-trained autoencoder with channel-bottlenecked latents and a small KL penalty, but provides no principled way to control latent information.
+Recent work on efficient autoencoders (Chen et al., 2024) achieves high compression ratios but does not address the interplay between autoencoder design and downstream diffusion modeling.
+Token-based approaches like TiTok (Yu et al., 2024) compress images to discrete tokens, trading reconstruction quality for faster sampling. Lastly, pretrained semi-supervised encoders like DINO (Caron et al., 2021) can be used to focus on semantically meaningful representations (Zheng et al., 2025; Shi et al., 2025) and obtain impressive generation quality metrics. A downside of these approaches is that PSNR scores are low (≤20\leq 20) causing reconstructions to appear different from their original in particular on high-frequency details.
+Latents from Self-Supervised Representation
+A number of recent works have replaced the AutoEncoder all-together and model a semi-supervised representation like SigLip or Dino instead (Shi et al., 2025; Zheng et al., 2025).
+5 Experiments
+We evaluate Unified Latents

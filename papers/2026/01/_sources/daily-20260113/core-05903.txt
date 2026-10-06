@@ -1,0 +1,450 @@
+URL https://arxiv.org/html/2601.05903v1; sections S3 to S5 excluded; result tables omitted; fetched 2026-10-03
+
+
+
+ 3 The HAPS Model 
+
+
+ 
+ Figure 2: The overall framework of our hierarchical LLM router.
+The complete routing process includes two phases:
+(1) Architecture search based on the high-level router.
+(2) Parameter search based on the low-level router.
+The high- and low-level routers share the parameter \theta to enable cross-level knowledge transfer.
+ 
+ 
+ 
+
+The framework of our model adopts a hierarchical structure, as illustrated in Figure  2 .
+The high-level router is a LLaMA-based classifier designed to select the most suitable LLM architecture.
+The low-level router is a parameter generation network that produces parameters for the architecture selected by the high-level router. To enable mutual enhancement, part of the parameters in the parameter generation network are shared with the LLaMA-based classifier within this hierarchical framework. In the following sections, we provide a detailed description of each component in our framework. 
+ 
+
+
+
+ 3.1 High-level Router 
+
+ 
+
+The high-level router is responsible for selecting the appropriate LLM architectures. Intuitively, this selection should be guided by the tasks and roles we expect the LLMs to perform. Accordingly, we define p in Equation ( 1 ) as a four-part routing prompt, structured as follows:
+(1) Role definition – a brief textual specification of each agent’s capabilities and expected behaviors;
+(2) Task description – a concise summary of the overall objective;
+(3) Problem description – a detailed description of the specific problem to be addressed by the LLMs ( i.e. , \mathbf{x} in objective ( 1 ));
+(4) Model list – the names or symbolic identifiers of all candidate LLMs ( i.e. , \mathcal{M} ).
+Formally, the high-level router \mathbf{r} is a multi-label classifier implemented using a LLaMA-based architecture, which is defined as: 
+ 
+
+ 
+
+ 
+ \mathbf{z}=\mathbf{r}(p;\theta), 
+ 
+ (2) 
+ 
+
+where \mathbf{z}=\{z_{i}\}_{i=0}^{N-1} is an N -dimensional vector, with each element indicating the index of the LLM in \mathcal{M} assigned to the corresponding system component ( i.e. , z_{i} means that the i th component in the system uses m_{z_{i}} from \mathcal{M} ). \theta is the learnable parameter vector of the high-level router. 
+ 
+ 
+
+
+
+ 3.2 Low-level Router 
+
+ 
+
+The low-level router is responsible for searching for the optimal parameters of the selected LLMs. A straightforward approach assigns free parameters to each prompt–response pair and treats parameter search as a supervised optimization task. However, this method has two main limitations. First, assigning free parameters to each prompt implies that the parameters are independent across prompts, making it difficult to generalize the learned parameters to unseen prompts ( low generalization capability ). Second, both architecture search and parameter search aim to enhance task performance, which means they should ideally share underlying knowledge. Using free parameters, however, makes it difficult to establish such a knowledge-sharing mechanism ( poor knowledge-sharing capability ). 
+ 
+ 
+
+In order to effectively address the above limitations, we propose to construct a neural network \mathbf{s} to generate the LLM parameters.
+The parameters of \mathbf{s} serve to compress and relate different prompts within a latent space, thereby allowing better generalization to unseen prompts ( enhancing the generalization capability ).
+Moreover, by introducing \mathbf{s} , both the architecture and parameter search are unified under a common prediction framework for routing in practical systems. This unification makes it possible to transfer knowledge through parameter sharing between the two tasks ( enhancing the knowledge-sharing capability ). 
+ 
+ 
+
+Formally, given K candidate LLMs in \mathcal{M} , we construct a dedicated parameter generation network \mathbf{s}_{k} for each LLM m_{k} . All \mathbf{s}_{k} share the same architecture but have independent parameters. To facilitate knowledge sharing, each \mathbf{s}_{k} is built by stacking several MLP layers on top of the high-level router \mathbf{r} .
+To enhance efficiency, we search for parameters for LoRA optimization during training, that is: 
+ 
+
+ 
+
+ 
+ w_{k}=\mathbf{s}_{k}(p;\phi_{k}), 
+ 
+ (3) 
+ 
+
+where p represents the unified routing prompt identical to the high-level input. In this formulation, the parameter set \phi_{k}{=}\{\theta,\gamma_{k}\} includes \theta , the parameters of the high-level router, which are shared across all \mathbf{s}_{k} , and \gamma_{k} , the parameters specific to each low-level router \mathbf{s}_{k} . Finally,
+ w_{k} denotes the generated LoRA parameters tailored for m_{k} . 
+ 
+ 
+
+
+
+ 3.3 Model Optimization 
+
+ 
+
+The routing process of our framework consists of two phases:
+(i) Architecture selection. In this phase, we obtain the indices \mathbf{z} of the LLMs assigned to different system components based on equation ( 2 ), that is, \mathbf{z}=\mathbf{r}(p;\theta) .
+(ii) Parameter search. In this phase, for the i th system component, we generate the LoRA parameters of its assigned LLM m_{z_{i}} based on equation ( 3 ), that is, {w}_{z_{i}}=\mathbf{s}_{z_{i}}(p;\phi_{z_{i}}) .
+Finally, we enhance the traditional LLM routing objective ( 1 ) by allowing the LLM parameters to be searchable, as follows: 
+ 
+
+ 
+
+ 
+ \min_{\theta,\mathbf{\Gamma}}L\left(\mathrm{G}\left(\mathbf{m}_{\mathbf{z}}(\mathbf{w}_{\mathbf{z}}),\mathbf{x}\right),y\right), 
+ 
+ (4) 
+ 
+
+where \mathbf{w}_{\mathbf{z}}{=}\{{w}_{{z}_{i}}{=}\mathbf{s}_{z_{i}}(p;\phi_{z_{i}})\}_{i=0}^{N-1} is the set of the generated LoRA parameters for \mathbf{m}_{\mathbf{z}}{=}\{{m}_{{z}_{i}}\}_{i=0}^{N-1} .
+ \mathbf{m}_{\mathbf{z}}(\mathbf{w}_{\mathbf{z}}) indicates that {w}_{z_{i}} is used as the LoRA parameter added to the frozen original parameters of {m}_{z_{i}} .
+ \mathbf{\Gamma}{=}\{\gamma_{k}\}_{k=0}^{K-1} is used for generating LoRA parameters of candidate LLMs in \mathcal{M} . 
+ 
+ 
+
+To optimize our objective ( 4 ), we first pre-train \theta to obtain a strong initialization. We then jointly optimize \theta and \mathbf{\Gamma} using reward-augmented maximum likelihood estimation Norouzi et al. (2016) , which enhances the optimization process by explicitly quantifying the correctness of different samples. 
+ 
+ 
+
+In the initialization stage, specifically, for each prompt p , we randomly sample L LLM assignment vectors \{\mathbf{z}_{i}\}_{i=0}^{L-1} , and use each \mathbf{z}_{i} to accomplish the task described in p , where the parameters of all LLMs are kept fixed. Then, we compute a reward R_{i} for each \mathbf{z}_{i} by comparing the final predicted task output with the ground truth. Finally, we construct the training sample for initializing \theta as \{(p,\mathbf{z}_{i})\mid i=\arg\max_{i\in[0,L-1]}R_{i}\} .
+After initializing \theta , we jointly optimize \theta and \mathbf{\Gamma} by specifying the objective in Eq. ( 4 ) as the following reward-weighted negative log-likelihood: 
+ 
+
+ 
+
+ 
+ \min_{\theta,\mathbf{\Gamma}}\mathop{\mathbb{E}}\limits_{\begin{subarray}{c}(p,y)\sim\mathcal{D}^{\mathrm{RL}}_{\mathrm{train}}\end{subarray}}\!\left[-R(\hat{y},y)\,\log P(\mathbf{z},\mathbf{w}_{\mathbf{z}}\mid p)\right], 
+ 
+ (5) 
+ 
+
+where \mathcal{D}^{\mathrm{RL}}_{\mathrm{train}} is the dataset for joint reinforcement learning, which is a subset of initialization prompts. R(\hat{y},y) is a reward function that can take different forms ( e.g. , task performance or the trade-off between performance and cost). P(\mathbf{z},\mathbf{w}_{\mathbf{z}}{\mid}p) is the joint probability of the LLM architectures and parameters given the prompt.
+This objective promotes architectures and parameters with higher R(\hat{y},y) while suppressing those with lower rewards.
+In addition to the above, we make the following remarks to further clarify our framework. 
+ 
+ 
+
+ Remark 1 ( Extension to mixed open- and closed-source LLM routing ) . 
+ 
+
+While our framework is designed for parameter search, it can also be easily extended to settings involving both open- and closed-source LLMs. A simple 0-1 indicator can be introduced and multiplied with \mathbf{w}_{\mathbf{z}} to block backpropagation signals for closed-source LLMs.
+Formally, we can improve objective ( 4 ) as follows: 
+ 
+
+ 
+
+ 
+ \min_{\theta,\mathbf{\Gamma}}L\left(\mathrm{G}\left(\mathbf{m}_{\mathbf{z}}(\mathbf{o}_{\mathbf{z}}\odot\mathbf{w}_{\mathbf{z}}),\mathbf{x}\right),y\right), 
+ 
+ (6) 
+ 
+
+where \odot is element-wise product.
+ \mathbf{o}_{\mathbf{z}}=\{{o}_{{z}_{i}}\}_{i=0}^{N-1} is an N -dimensional 0-1 vector, and {o}_{{z}_{i}}=1 means that {m}_{{z}_{i}} is an open-source LLM. 
+ 
+ 
+ 
+
+ Remark 2 ( Loss comparison between traditional and our LLM routers ) . 
+ 
+
+For simplicity, we rewrite the objective L(\mathrm{G}(\mathbf{m}_{\mathbf{z}}(\mathbf{w}_{\mathbf{z}}),\mathbf{x}),y) as L(\theta,\boldsymbol{\Gamma}) to emphasize parameter dependence.
+Traditional routing optimizes \hat{\theta}_{1}=\arg\min_{\theta}L(\theta,\boldsymbol{\Gamma}) ,
+while we jointly optimize \hat{\theta}_{2},\hat{\boldsymbol{\Gamma}}=\arg\min_{\theta,\boldsymbol{\Gamma}}L(\theta,\boldsymbol{\Gamma}) .
+Assuming \hat{\theta}_{2},\hat{\boldsymbol{\Gamma}} are locally optimal, and \hat{\theta}_{1},\boldsymbol{\Gamma} are close to \hat{\theta}_{2},\hat{\boldsymbol{\Gamma}} respectively, we have
+ L(\hat{\theta}_{2},\hat{\boldsymbol{\Gamma}})\leq L(\hat{\theta}_{1},\hat{\boldsymbol{\Gamma}})\leq L(\hat{\theta}_{1},\boldsymbol{\Gamma}) ,
+implying our model theoretically achieves a lower loss and better data fitting. 
+ 
+ 
+ 
+
+ Remark 3 ( Inference Efficiency Analysis ) . 
+ 
+
+A natural concern of instance-specific parameter generation is added inference latency.
+HAPS sustains high throughput via a vectorized dynamic injection mechanism.
+Instead of reloading adapter weights per request, the low-level router generates LoRA matrices (A_{i},B_{i}) for an entire batch in parallel and applies per-sample updates using batched matrix multiplication (BMM), avoiding sequential adapter switching.
+We further adopt request bucketing to group queries by the selected base architecture, so the base weights remain frozen and shared within each bucket.
+A detailed complexity discussion and implementation are provided in Appendix  E . 
+ 
+ 
+ 
+ 
+
+
+
+ 4 Experiments 
+
+ 
+
+In this section, we empirically evaluate the effectiveness of our framework around the following research questions ( RQs ): 
+ 
+ • 
+ 
+
+ RQ1 : Does HAPS achieve superior performance compared to existing LLM routing methods? 
+ 
+ • 
+ 
+
+ RQ2 : Are the individual components of HAPS necessary for performance gains? 
+ 
+ • 
+ 
+
+ RQ3 : Is parameter sharing between the high- and low-level routers necessary? 
+ 
+ • 
+ 
+
+ RQ4 : How does the depth of applying LoRA parameters in the architecture affect performance? 
+ 
+ • 
+ 
+
+ RQ5 : Can HAPS effectively balance the trade-off between task performance and cost? 
+ 
+ • 
+ 
+
+ RQ6 : Is our framework effective in mixed scenarios involving open- and closed-source LLMs? 
+ 
+ 
+
+In the following, we answer and analyze the above questions in detail based on empirical results. 
+ 
+
+
+
+ 4.1 Experimental Setup 
+
+
+
+
+Datasets. 
+
+ 
+
+To assess the versatility of our method across diverse reasoning modalities, we conduct experiments on two representative benchmarks: HotpotQA   ( Yang et al., 2018 ) and MMLU   ( Hendrycks et al., 2020 ) .
+HotpotQA serves as a testbed for multi-hop reasoning, requiring models to synthesize information from multiple supporting facts to answer complex questions.
+In contrast, MMLU evaluates broad knowledge coverage across 57 subjects, ranging from STEM to the humanities.
+These two datasets allow us to evaluate HAPS from complementary perspectives: complex reasoning generation and broad knowledge selection. 
+ 
+ 
+
+
+
+Baselines. 
+
+ 
+
+We compare HAPS against a comprehensive set of routing strategies: (1) Random samples LLMs randomly; (2) RouteLLM   ( Ong et al., 2024 ) is a preference-based binary router; (3) GraphRouter   ( Feng et al., 2024 ) uses edge prediction on heterogeneous graphs; and (4) IRT-Router   ( Song et al., 2025 ) measures query difficulty and model ability via Item Response Theory. 
+ 
+ 
+
+
+
+Implementation Details. 
+
+
+
+ Table 1: Summary of the candidate pairs for HAPS evaluation in our experiments. Our selection encompasses representative open-source models (e.g., Llama-3.1, Qwen2.5, Mistral) and proprietary LLMs, including GPT-4.1 Nano and DeepSeek V3  Liu et al. (2024) . 
+ [result table omitted; consult original if quantitative claim needed] 
+ 
+ 
+
+We establish a two-agent environment (i.e. N{=}2 ), which comprises a Student for solution generation and a Teacher for feedback  Bo et al. (2024) ; Chen et al. (2023b) ; Chen et al. (2024b) .
+We evaluate our method across three open-source instantiations of \mathcal{M} denoted as L-Q , M-Q , and L-M , and extend to two mixed-source settings denoted as L-G and Q-D in Section  4.7 ; all pairs are listed in Table  1 .
+Our high-level router \mathbf{r} employs a Llama-3.2-1B-Instruct backbone.
+For each low-level router \mathbf{s}_{i} , we append a parameter generation network, structured as a 2-layer MLP with 256 hidden units, to the backbone.
+During training, we empirically set the scaling factor \alpha{=}0.01 and LoRA rank r{=}8 .
+The generated LoRA parameters are injected into the output projection ( o_proj ) of the final Transformer layer 1 1 
+ 1 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ We analyze application layers in § 4.5 for RQ4. .
+Following common practice, we use token-level F1 for HotpotQA and accuracy for MMLU. More detailed experimental setup is described in Appendix  C . 
+ 
+
+
+ Table 2: 
+ Main Results. 
+Comparing HAPS against state-of-the-art routing baselines on HotpotQA and MMLU.
+ Darker blue highlights the best performance, and
+ light blue indicates the second best value.
+HAPS consistently achieves superior performance across all settings.
+All the results are percentage values with “%” omitted.
+ 
+ [result table omitted; consult original if quantitative claim needed] 
+ 
+
+
+ Table 3: 
+ Ablation Studies. 
+Comparison between HAPS variants and the full model. “Left” and “Right” denote using the first or second model of the candidate pair (e.g., L in L-Q) as the static assignment.
+The results demonstrate that both hierarchical components are indispensable.
+All the results are percentage values with “%” omitted.
+ 
+ [result table omitted; consult original if quantitative claim needed] 
+ 
+ 
+ 
+
+
+
+ 4.2 Overall Performance (RQ1) 
+
+ 
+
+We compare HAPS with four baselines in Table  2 . We observe that the Random baseline performs the worst on both datasets, which is consistent with previous studies. The relative performance among RouteLLM, GraphRouter, and IRTRouter fluctuates across different candidate pairs.
+HAPS achieves the state-of-the-art performance in five out of six settings, demonstrating its superiority across both reasoning- and knowledge-intensive tasks.
+On HotpotQA, HAPS consistently surpasses all baselines. Specifically, our method outperforms the runner-up by absolute margins of 1.85%, 3.60%, and 1.63% in F1 score on the L-Q, M-Q, and L-M pairs, respectively.
+On MMLU, HAPS maintains this superiority, yielding consistent accuracy gains of 1.0% on the M-Q and L-M pairs compared to the strongest baseline. Even on the highly competitive L-Q pair, where RouteLLM establishes a strong baseline of 79%, HAPS matches this peak performance.
+These results validate that jointly searching over LLM architectures and parameters significantly enhances task adaptation. 
+ 
+ 
+
+
+
+ 4.3 Ablation Studies (RQ2) 
+
+ 
+
+After evaluating our model as a whole, we now examine the necessity of its individual design components. We compare our model with three categories of variants as detailed in Table  3 : (1) w/o High-Level (Random) uses uniform sampling; (2) w/o High-Level (Fixed) enforces static assignments; and (3) w/o Low-Level removes LoRA parameter generation.
+As shown in Table  3 , results confirm the necessity of the high-level policy, as random selection drops F1 scores by up to 15.0% on HotpotQA. Static strategies also lack robustness, suffering performance drops exceeding 30.0% in mismatched scenarios, whereas HAPS consistently generalizes well. Crucially, removing the low-level module leads to substantial performance deterioration across all benchmarks. This confirms that discrete routing alone is insufficient; input-conditioned parameter generation is essential for adapting models to specific task requirements. 
+ 
+ 
+
+
+
+ 4.4 Impact of Parameter Sharing (RQ3) 
+
+
+ 
+ Figure 3: Analysis of the joint optimization strategy. The comparison with the decoupled variant (w/o Parameter Sharing) reveals significant performance degradation in the isolated setting, confirming that parameter sharing is essential for robust, task-aware routing. 
+ 
+ 
+
+To validate the necessity of parameter sharing, we evaluate a decoupled variant HAPS (w/o Parameter Sharing) , where the high-level router is frozen after initialization and the low-level router trained independently with a separate backbone. As shown in Figure  3 , decoupling leads to consistent degradation: HotpotQA F1 scores drop by up to 4.33%, and MMLU accuracy by 6.00%. This confirms a disjoint pipeline cannot match the efficacy of the framework.
+We attribute HAPS’s superiority to two synergies enabled by parameter sharing: (i) Representation Alignment , where the shared backbone encodes unified features effective for both model selection and parameter generation; and (ii) Co-Adaptation , where shared gradients allow the parameter generator to optimize alongside the policy. This ensures that parameter generation is dynamically synchronized with architecture selection, a feedback loop lost in the decoupled setting. 
+ 
+ 
+
+
+
+ 4.5 Impact of LoRA Depth (RQ4) 
+
+
+ 
+ Figure 4: 
+Impact of LoRA depth on performance.
+We vary the number of adapted layers on the attention output projection ( o_proj ).
+Overall, \mathbf{l}_{2} is the most robust choice: it consistently improves over \mathbf{l}_{1} while avoiding the degradation at \mathbf{l}_{3} for L-Q and L-M.
+ 
+ 
+ 
+
+A key component of our framework is the parameter generation network, making it important to understand precisely how generated LoRA weights should be injected into the base LLM.
+We define \mathbf{l}_{k} as applying LoRA to the o_proj modules of the last k Transformer layers. To isolate the impact of adaptation depth, we maintain all other hyper-parameters identical.
+Figure  4 directly reports HotpotQA performance, with dashed lines indicating the best baseline results from Table  2 .
+Results show deeper adaptation is not strictly superior. L-Q and L-M follow an inverted-U pattern peaking at \mathbf{l}_{2} (e.g., +1.23% for L-Q); increasing to \mathbf{l}_{3} degrades performance, suggesting that excessive depth may over-parameterize the adaptation and hurt generalization. Conversely, M-Q improves monotonically from 32.90% ( \mathbf{l}_{1} ) to 39.71% ( \mathbf{l}_{3} ), indicating that greater architectural heterogeneity benefit from deeper alignment. While optimal depth varies, \mathbf{l}_{2} serves as a robust default, consistently outperforming \mathbf{l}_{1} while matching the stability of \mathbf{l}_{3} . 
+ 
+ 
+
+
+
+ 4.6 Performance & Cost Trade-off (RQ5) 
+
+
+
+ Table 4: 
+ Cost Configuration. 
+We simulate different pricing environments based on model sizes.
+Prices are in USD per 1M input tokens and per 1M output tokens.
+ 
+ [result table omitted; consult original if quantitative claim needed] 
+ $0.2 
+ $0.2 
+
+
+ Medium Cost (Mixed) 
+
+
+ 
+ [result table omitted; consult original if quantitative claim needed] 
+ $0.5 
+ $0.5 
+
+
+ 
+ [result table omitted; consult original if quantitative claim needed] 
+ $0.5 
+ $0.5 
+
+
+ High Cost (Large + Large) 
+
+
+ 
+ [result table omitted; consult original if quantitative claim needed] 
+ $0.8 
+ $0.8 
+ 
+ 
+
+
+ Table 5: 
+ Trade-off results on HotpotQA. 
+The reward value is computed as \alpha\cdot\text{Perf}-\beta\cdot\text{Cost}_{\text{norm}} .
+Cells shaded in darker blue correspond to the best value.
+ light blue marks the second-best value in each column. Higher is better for Perf/Reward, while lower is better for Cost.
+Perf denotes the F1 score and Cost denotes the normalized cost.
+ 
+ [result table omitted; consult original if quantitative claim needed] 
+ 
+ 
+
+In practical LLM routing, candidate models often vary widely in capability and cost, requiring an explicit performance–cost trade-off.
+We evaluate HAPS on HotpotQA with a heterogeneous pair: Llama-3.1-8B-Instruct and Qwen2.5-14B-Instruct.
+Following prior work  Song et al. (2025) ; Feng et al. (2024) , we incorporate monetary cost using a weighted reward
+ R{=}\alpha{\cdot}\text{Perf}{-}\beta{\cdot}\text{Cost}_{\text{norm}} ,
+where Perf is the task performance and \text{Cost}_{\text{norm}} is the min-max normalized cost under the pricing scheme in Table  4 .
+We report three regimes : Performance-First ( \alpha{=}0.8,\beta{=}0.2 ), Balanced ( \alpha{=}0.5,\beta{=}0.5 ), and Cost-First ( \alpha{=}0.2,\beta{=}0.8 ). 
+ 
+ 
+
+As shown in Table  5 , HAPS consistently attains the highest reward and lowest cost across all regimes. Even in the performance-first setting, it achieves comparable performance but at a significantly reduced cost.
+This dominance is striking in the Cost-First scenario: while baselines suffer a sharp performance drop (plummeting to \sim 35% F1), HAPS maintains 41.81% F1 at a minimal cost of 0.0861.
+These results suggest that HAPS optimizes efficiency not only by selecting suitable architectures but also by generating parameters that may guide the models towards more concise reasoning, thereby reducing token consumption without compromising solution quality.
+Further implementation and reward details are provided in Appendix  F . 
+ 
+ 
+
+
+
+ 4.7 Routing Across Mixed Open- and Closed-Source LLMs (RQ6) 
+
+
+ 
+ Figure 5: 
+Performance comparison on mixed-source LLMs (HotpotQA).
+HAPS consistently outperforms baselines by optimizing the open-source model to synergize with fixed proprietary APIs, demonstrating robust adaptability in hybrid deployments.
+ 
+ 
+ 
+
+To validate the extensibility discussed in Remark  1 (Eq.  6 ), we evaluate HAPS on the Mixed-Source Pairs (Table  1 ) on HotpotQA.
+Here, we apply the indicator vector \mathbf{o}_{\mathbf{z}} to block gradient propagation for proprietary APIs, restricting parameter search exclusively to the open-source candidates. 
+ 
+ 
+
+Results in Figure  5 demonstrate HAPS’s robust adaptability in hybrid deployments. On the L-G pair, it achieves an F1 score of 47.19%, outperforming the strongest baseline (RouteLLM) by 3.45%. Given that proprietary parameters are immutable, this gain confirms that our low-level router generates adapters for the open-source component to complement the fixed black-box API behavior.
+Similarly, on the Q-D pair, HAPS yields the highest F1 score of 58.52%. Notably, the dominance of DeepSeek-V3 leads to sparse activation of the local Qwen model. Despite limited optimization instances, HAPS secures consistent gains, proving its data efficiency even when the open-source model serves as a minor supplement to a powerful API.

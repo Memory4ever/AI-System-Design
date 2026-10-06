@@ -1,0 +1,80 @@
+2Mamba2Furious: Linear in Complexity, Competitive in Accuracy
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Background
+2.1 Softmax Attention
+2.2 Linear attention (naive computation)
+2.3 Mamba-2
+2.4 Softmax as an RNN
+3 Isolating Mamba-2 Accuracy Gains
+4 Building Up to the Mamba-2S Base Model
+5 Mamba-2 with a Squared Hidden State
+5.1 2Mamba Algorithm Efficiency
+5.2 Effective Context Usage
+6 2Mamba With an Exponentiated Hidden State
+7 Conclusion and Future Work
+References
+A Model Ablation Details
+B Gradients
+B.1 Linear
+B.2 Linear with Softmax Norm
+B.3 Linear with A-Gate
+B.4 Squared with A-mask
+B.5 Squared with A-mask and Softmax Norm (2Mamba)
+B.6 Exponentiated with A-mask and Softmax Norm (2Mamba-E)
+C Pile and SlimPJ Loss Curves
+License: CC BY 4.0
+arXiv:2602.17363v1 [cs.LG] 19 Feb 2026
+2Mamba2Furious: Linear in Complexity, Competitive in Accuracy
+Gabriel Mongaras
+Affiliation: Lyle School of Engineering
+Affiliation: Southern Methodist University
+Affiliation: Dallas, TX 75205
+Email: gabriel@mongaras.com
+Eric C. Larson
+Affiliation: Lyle School of Engineering
+Affiliation: Southern Methodist University
+Affiliation: Dallas, TX 75205
+Email: eclarson@smu.edu
+August 24, 2026
+Abstract
+Linear attention transformers have become a strong alternative to softmax attention due to their efficiency. However, linear attention tends to be less expressive and results in reduced accuracy compared to softmax attention. To bridge the accuracy gap between softmax attention and linear attention, we manipulate Mamba-2, a very strong linear attention variant. We first simplify Mamba-2 down to it’s most fundamental and important components, evaluating which specific choices make it most accurate. From this simplified Mamba variant (Mamba-2S), we improve the AA-mask and increase the order of the hidden state, resulting in a method, which we call 2Mamba, that is nearly as accurate as softmax attention, yet much more memory efficient for long context lengths. We also investigate elements to Mamba-2 that help surpass softmax attention accuracy. Code is provided for all our experiments 11
+1
+https://github.com/gmongaras/2Mamba2Furious.
+A Preprint
+1 Introduction
+Transformers have become the standard architectural backbone for modern language models. The core of the transformer is softmax attention, which routes information between all tokens in a set. While softmax attention is a highly accurate model component, it imposes quadratic complexity with respect to the sequence length during training. When causal, softmax attention has linear complexity during inference. Although the complexity of softmax attention cannot be reduced to linear complexity during transit, algorithms such as Flash Attention (Dao et al. (2022)) make softmax attention more computationally efficient by utilizing highly efficient CUDA kernels (tiling). However, even with a highly optimized kernel, the underlying algorithm still retains quadratic complexity in FLOP count.
+Linear attention algorithms (Katharopoulos et al. (2020)) aim to reduce the complexity of softmax attention by replacing the exponential nonlinearity in the softmax function with a decomposable kernel function. These algorithms are linear during training and constant during inference, making them much more desirable than softmax attention, solely based on algorithmic complexity. Another advantage of linear attention is that it can be implemented as an RNN (Rumelhart et al. (1986)), which increases efficiency for long sequence inference. While linear attention has linear complexity during training and constant complexity during inference, the accuracy is consistently worse than that of softmax attention.
+More recent works in NLP applications make naive linear attention more expressive. Two such prominent works are Mamba (Gu and Dao (2024)), which adds semi-separable decay components to attention, and DeltaNet (Yang et al. (2024b)), which uses the delta rule (Schlag et al. (2021)), modeling the linear attention update rule as a form of gradient descent. The accuracy of these algorithms is significantly better than vanilla linear attention but still falls short of full softmax attention. Motivated by this finding, we aim to build on these efficient attention alternatives and increase model accuracy closer to that of softmax attention.
+Specifically, we (1) employ Mamba-2 (Dao and Gu (2024)) as a base model, (2) isolate the important components of the algorithm, and (3) use a higher order hidden state to reach softmax-level accuracy while keeping the complexity of the model linear. We build upon the work of (Mongaras and Larson (2025)), who showed that higher order hidden states with linear attention get closer to softmax-level accuracy. Via the Taylor expansion of the exponentiated query-key inner product, one obtains softmax attention from linear attention with higher order hidden states. We leverage this finding to improve the expressivity of Mamba-2. Additionally, we show that using an exponentiated query-key inner product improves the Mamba-2 model and outperforms softmax attention, albeit at the cost of requiring a K​VKV cache. We also explore the similarity of this approach to the forgetting transformer (Lin et al. (2025)).
+2 Background
+2.1 Softmax Attention
+(Bahdanau et al. (2016)) introduced softmax attention and (Vaswani et al. (2017)) popularized the use of softmax attention by creating the transformer architecture for natural language translation. Since then, the transformer can be found in most modern machine learning architectures and has been used in a variety of applications such as in computer vision (Dosovitskiy et al. (2021)), reinforcement learning (Chen et al. (2021)), robotics (Brohan et al. (2023)), generative image models (Ramesh et al. (2022)) (Kong et al. (2025)) (Radford et al. (2023)), and medicine (Jumper et al. (2021)), among many other applications. The softmax attention formulation is found in equation 1 (without the 1dk\frac{1}{\sqrt{d_{k}}} term for simplicity).
+Q=X​WQ∈ℝH,N,dHK=X​WK∈ℝH,N,dHV=X​WV∈ℝH,N,dH\displaystyle Q=XW_{Q}\in\mathbb{R}^{H,N,d_{H}}\quad K=XW_{K}\in\mathbb{R}^{H,N,d_{H}}\quad V=XW_{V}\in\mathbb{R}^{H,N,d_{H}}
+O=softmax​(Q​KT+M)​V=exp⁡(Q​KT+M)​V∑jexp⁡(Q​KT+M)\displaystyle O=\text{softmax}\left(QK^{T}+M\right)V\quad=\quad\frac{\exp\hskip-1.99997pt\left(QK^{T}+M\right)V}{\sum_{j}\exp\hskip-1.99997pt\left(QK^{T}+M\right)}
+(1)
+The exponential term forces a quadratic FLOP count with respect to the sequence length during training and a linear FLOP count during inference, which is not ideal for long context applications. Several methods have been developed to reduce the quadratic bottleneck and make computing the quantity more efficient. Most notably, Flash Attention (Dao et al. (2022)) computes softmax attention in tiles for better GPU utilization. Although Flash Attention is more efficient than computing softmax attention in native PyTorch, the FLOP count remains quadratic.
+2.2 Linear attention (naive computation)
+Linear attention is derived by taking multi-head softmax attention and replacing the softmax nonlinearity function with a kernel function exp⁡(Q​KT)⇒K⁡(Q,K)=ϕ⁡(Q)​ϕ​(K)T\exp(QK^{T})\Rightarrow K(Q,K)=\phi(Q)\phi(K)^{T}, as shown in Algorithm 1. By making this substitution, linear attention can either be computed by first taking the inner product of the queries and keys (equation (2)) or by first taking the inner product of the keys and values (equation (3)). The latter has quadratic complexity in the dimension while the former, like softmax attention, has quadratic complexity in the sequence length. One note is that adding the causal mask requires a special kernel to make causal linear attention computationally efficient, otherwise the training complexity in naive torch is similar to softmax attention as seen in Algorithm 1. While linear attention is desirable due to its linear complexity, naive linear attention falls short of softmax attention performance, as shown in Figure 1.
+X∈ℝN,dX\in\mathbb{R}^{N,d}
+WQ​K​V∈ℝd,3⋅(H⋅dH)W_{QKV}\in\mathbb{R}^{d,3\cdot(H\cdot d_{H})}
+Wo​u​t∈ℝ(H⋅dH),dW_{out}\in\mathbb{R}^{(H\cdot d_{H}),d}
+ϕ​(⋅)=ReLU​(⋅)\phi(\cdot)=\text{ReLU}(\cdot)
+Q​K​V\displaystyle QKV
+=X​WQ​K​V\displaystyle=XW_{QKV}
+∈ℝN,3⋅(H⋅dH)\displaystyle\in\mathbb{R}^{N,3

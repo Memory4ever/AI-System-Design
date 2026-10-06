@@ -1,0 +1,491 @@
+https://arxiv.org/html/2601.20861v1
+Evolutionary Strategies lead to Catastrophic Forgetting in LLMs
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+3 Experiments
+3.1 ES vs GRPO Comparison
+3.2 ES and Catastrophic Forgetting
+3.3 Dissecting ES Updates: Norm and Sparsity
+Norm.
+Sparsity.
+4 Conclusion
+References
+A Appendix
+A.1 Algorithmic Overview and Analogy Between ES and GRPO
+A.1.1 ES Algorithm Overview
+A.1.2 ES Algorithm Overview
+A.1.3 Analogy Between ES Population Size and GRPO Rollout Count
+A.2 Implementation Details
+A.2.1 GRPO
+A.2.2 ES
+A.2.3 Reward functions
+A.3 Hyperparameter Values
+A.4 Additional Experiments
+A.4.1 Catastrophic Forgetting and KL
+License: arXiv.org perpetual non-exclusive license
+arXiv:2601.20861v1 [cs.LG] 28 Jan 2026
+Evolutionary Strategies lead to Catastrophic Forgetting in LLMs
+Immanuel Abdi
+††thanks: Equal contribution.
+Akshat Gupta11footnotemark:
+1
+Affiliation: Micah Mok, Alexander Lu, Nicholas Lee, Gopala Anumanchipalli
+Affiliation: UC Berkeley
+Affiliation: {immanuelazn, akshat.gupta}@berkeley.edu
+Abstract
+One of the biggest missing capabilities in current AI systems is the ability to learn continuously after deployment. Implementing such continually learning systems have several challenges, one of which is the large memory requirement of gradient-based algorithms that are used to train state-of-the-art LLMs. Evolutionary Strategies (ES) have recently re-emerged as a gradient-free alternative to traditional learning algorithms and have shown encouraging performance on specific tasks in LLMs. In this paper, we perform a comprehensive analysis of ES and specifically evaluate its forgetting curves when training for an increasing number of update steps. We first find that ES is able to reach performance numbers close to GRPO for math and reasoning tasks with a comparable compute budget. However, and most importantly for continual learning, the performance gains in ES is accompanied by significant forgetting of prior abilities, limiting its applicability for training models online. We also explore the reason behind this behavior and show that the updates made using ES are much less sparse and have orders of magnitude larger ℓ2\ell_{2} norm compared to corresponding GRPO updates, explaining the contrasting forgetting curves between the two algorithms. With this study, we aim to highlight the issue of forgetting in gradient-free algorithms like ES and hope to inspire future work to mitigate these issues.
+1 Introduction
+Despite rapid advances in AI with transformer-based LLMs (Vaswani et al., 2017; Brown et al., 2020; DeepSeek-AI et al., 2024), most state-of-the-art systems remain static after training and lack the ability to learn continually during deployment. In many real-world settings, models need to adapt to new tasks, user preferences, or data distributions to perform optimally. While modern chatbots like ChatGPT do this by taking notes in the form of user memory OpenAI (2024) and use in-context learning Brown et al. (2020) to incorporate this information, we currently lack solutions that can achieve this by modifying the model weights during deployment. One of the reasons that makes this challenging is that current post-training and adaptation methods for LLMs are exclusively gradient-based, including approaches such as SFT Wei et al. (2022), RLHF (Ouyang et al., 2022), DPO Rafailov et al. (2024), and GRPO (Shao et al., 2024). While effective, these methods require storing gradients, optimizer states, or intermediate activations, causing substantial memory overhead.
+Evolutionary Strategies (ES) Qiu et al. (2025); Korotyshova et al. (2025) have recently re-emerged as a gradient-free alternative for optimizing LLMs. By estimating updates through population-level perturbations rather than backpropagation, ES avoids explicit gradient storage and can significantly reduce memory requirements during deployment. Qiu et al. (2025) have shown that ES achieves comparable performance to GRPO on the Countdown task Pan (2026), presenting ES as a viable candidate for continual learning in LLMs. However, a more comprehensive analysis on task generalization was missing in their work. More importantly from the perspective of continual learning, Qiu et al. (2025) do not evaluate the extent to which ES preserves existing capabilities while learning new tasks.
+In this work, we present a comprehensive empirical analysis of ES for fine-tuning LLMs, with a focus on continual learning and forgetting. We compare ES against GRPO on multiple math and reasoning benchmarks and evaluate forgetting curves over many update steps. Our results confirm that ES is able to reach performance levels comparable to GRPO on a large suite of tasks; however, contrary to results reported in Qiu et al. (2025), we find that GRPO still dominates ES marginally on almost all tasks. Additionally, we show that training LLMs using ES leads to significant model degradation and forgetting of existing abilities when compared to GRPO. To better understand this behavior, we analyze the structure of parameter updates produced by ES and compare them to those obtained using GRPO. We find that ES updates are significantly less sparse and exhibit much larger ℓ2\ell_{2} norms, leading to more global parameter changes that interfere with previously learned capabilities.
+Our findings highlight that although ES presents a tempting memory-efficient and gradient-free alternative to inference-time model adaptation, it is also accompanied by “catastrophic” forgetting Kirkpatrick et al. (2017); Gupta et al. (2024) of prior abilities of the model. We hope these results can inspire future advancements in gradient-free algorithms with continual learning and catastrophic forgetting at the forefront of thought. We also release our codebase11
+1
+Our codeabase can be found here - https://github.com/akshat57/es-catastrophic and models22
+2
+Our models can be found here - https://huggingface.co/collections/immanuelabdi/es-at-scale-lead-to-catastrophic-forgetting for reference.
+To summarize, our work makes the following contributions:
+1.
+We show that ES is able to reach comparable performance to GRPO on several math and reasoning benchmarks with similar number of update steps.
+2.
+We show that training models using ES causes significant model degradation when compared to GRPO, leading to catastrophic fortgetting of prior abilities.
+3.
+Finally, we also explore the reason behind catastrophic forgetting in ES and show that this happens because model updates using ES are much less sparse when compared to GRPO with significantly larger ℓ2\ell_{2} norms.
+2 Related Work
+Evolution Strategies are a class of algorithms that search for solutions to first-order optimization problems by randomly modifying population members to find better performing members (Rechenberg, 1989; Schwefel, 1977; Beyer, 1995). Although implementations such as CMA-ES Hansen and Ostermeier (2001) and natural ES Wierstra et al. (2011); Sun et al. (2012) demonstrated success, initial implementations remained in the million-parameter scale (Such et al., 2018; Risi and Stanley, 2019; Zhang et al., 2017). However, recent updates have brought ES up to scale and in competition with GPRO, leveraging how it is highly parallelizable, Salimans et al. (2017), memory efficient Malladi et al. (2024); Korotyshova et al. (2025), faster Sarkar et al. (2025), robust to sparse reward horizons Salimans et al. (2017), and can be modified with LoRA adaptions Jin et al. (2024); Korotyshova et al. (2025); Sarkar et al. (2025).
+Qiu et al. (2025) recently published a novel implementation of ES and showed that it outperforms GRPO. However, their study lacked a thorough analysis of model degradation during continued training. Additionally, a bulk of their study was focused on a single dataset. We extend their analysis to multiple datasets, evaluate model degradation during fine-tuning and also study the difference in weight updates in ES when compared to GRPO.
+3 Experiments
+3.1 ES vs GRPO Comparison
+We use the ES implementation of Qiu et al. (2025) and compare it with the GRPO Shao et al. (2024) implementation from the VERL libary (Sheng et al., 2025). An algorithmic analogy between the ES and GRPO algorithms can be found in A.1 while implementations details can be found in A.2. We extend the analysis of ES and GRPO to three math and reasoning tasks – GSM8K (Cobbe et al., 2021), MATH (Hendrycks et al., 2021) and OlympiadBench (He et al., 2024), in addition to the Countdown dataset which was extensively studied in prior work Qiu et al. (2025). We perform this study for two models: Qwen2.5-1.5B-Instruct (Qwen et al., 2024) and Llama-3.2-1B-Instruct (Grattafiori et al., 2024). Following the experimental conditions of Qiu et al. (2025), we train our models on 200 examples from each dataset with identical batch size and number of rollouts.
+The results for comparison between ES and GRPO for fine-tuning LLMs can be found in Table 1. We see that for both models, ES is within 3-4 percentage points of GRPO in terms of task performance. These results are in contrast to prior work by Qiu et al. (2025), who claim that ES significantly outperforms GRPO on the Countdown task. In our experiments, we see that although ES performance numbers are close to GRPO, GRPO still outperforms ES for all but the GSM8K dataset with Llama-3.2-1B model. Therefore, we find different relative performance trends than those reported in prior work, which may stem from differences in GRPO implementations, hyperparameter choices, or evaluation protocols. We release our codebase and open source our trained models for reference.
+Model
+Task
+ES
+GRPO
+Qwen-2.5-1.5B
+(Instruct)
+Countdown
+53.0
+56.4
+GSM8K
+77.4
+80.4
+MATH
+59.1
+63.2
+OlympiadBench
+15.2
+18.2
+Llama-3.2-1B
+(Instruct)
+Countdown
+15.2
+37.6
+GSM8K
+55.2
+53.8
+MATH
+32.2
+35.6
+OlympiadBench
+5.6
+5.9
+Table 1: Peak validation accuracy (%) across tasks and models using previously found optimal hyperparameters. The same hyperparameters were used across ES runs and across GRPO runs.
+The fact that the performance numbers of ES are comparable to a state-of-the-art post-training algorithm like GRPO is very encouraging and establishes ES as a potential gradient-free alternative to training LLMs. We also see that for all tasks except Countdown, ES is able to reach peak performance in similar number of update steps, which is shown in Figure A3. This makes the compute requirements of ES also comparable to GRPO.
+3.2 ES and Catastrophic Forgetting
+While Section 3.1 shows that ES performs competitively with GRPO on various downstream tasks, a defining factor in the viability of using a fine-tuning algorithm for continual learning is its relationship with catastrophic forgetting. We utilized Qwen2.5-1.5B-Instruct trained on the Countdown dataset with GRPO and ES to evaluate catastrophic forgetting. HellaSwag (Zellers et al., 2019) was used to evaluate LLMs on their prior capabilities. In an ideal scenario, performance on previous tasks should be preserved as new capability is gained. We thus evaluate task performance across each checkpoint of our trained models.
+Figure 1: Pareto front between new task (Countdown) and old task (HellaSwag) performance across fine-tuning with ES and GRPO.
+Figure 2: Prior task accuracy (%; HellaSwag) vs. training iteration for ES and GRPO fine-tuning. GRPO-trained models exhibit stable prior task accuracy across training iteration, while ES-trained models degrade with continued fine-tuning.
+Figure 1 illustrates the relationship between new-task performance (Countdown) and prior-task performance (HellaSwag) across fine-tuning iterations. When training with ES, prior-task performance systematically deteriorates as fine-tuning proceeds, even after new-task performance has effectively converged. This can observed in the convex Pareto front made by ES in Figure 1. The darker color dots, which depict early training iterations begin with a lower “New Task Accuracy”. With enough training iterations, the increase in “New Task Accuracy” for ES is accompanied by a gradual but evident decline in “Prior Task Accuracy”. Additionally, ES models reach near-maximum Countdown performance by approximately 200 iterations, after which additional training yields negligible gains on the new task. As shown in Figure 2, despite this convergence, previous task performance continues to decline with further iterations, resulting in an approximately 10% drop relative to the best observed prior-task performance. This pattern indicates that continued ES optimization disproportionately harms previously acquired capabilities, rather than trading off against improvements on the new task.
+In contrast, models fine-tuned with GRPO exhibit markedly different behavior. Across the full range of training iterations, GRPO maintains stable previous task performance while achieving strong new task accuracy. This can be seen by the cluster of crosses on the top-right corner of Figure 1. This suggests that GRPO avoids the destructive interference observed with ES. This property of GRPO has also been observed in prior work Shenfeld et al. (2025).
+Therefore, we see that although ES-trained models can be competitive to GRPO, they do so at the cost of severe catastrophic forgetting. Notably, this forgetting occurs within a single fine-tuning run rather than across sequential tasks, highlighting a fundamental instability in ES-based continual adaptation. These results suggest that ES is poorly suited for scenarios requiring task generalization or reuse of previously learned capabilities, whereas GRPO provides a substantially more stable fine-tuning regime.
+Figure 3:
+Relationship between Frobenius norm of a model update and number of training iterations on a new task. ES-trained models drift several orders of magnitude more than GRPO-trained models.
+3.3 Dissecting ES Updates: Norm and Sparsity
+In this section, we seek to determine the characteristics of fine-tuning with ES that cause catastrophic forgetting. We do this by analyzing two features: the update norm and sparsity.
+Norm.
+Here we investigate norm growth of the updated matrix as a function of number of updates with ES and GRPO. We measure the Frobenius norm between model checkpoints within a training run. We do this for the Qwen2.5-1.5B-Instruct model trained on the Countdown dataset.
+The results are shown in Figure 3. The Frobenius norm increases monotonically with the number of training iterations for ES-trained models. A similar trend is also present for GRPO-trained models (Figure A2); however, the key distinction lies in scale. After just 500 training iteration, the Frobenius norm of the ES-trained model relative to the base model is three orders of magnitude larger than the GRPO-trained model. When combined with what we learn from Figure 2, we see a clear association between the large increases in ES Frobenius norm and a decline in prior task accuracy. Thus, ES updates have significantly higher ℓ2\ell_{2} norm difference, causing orders or magnitiude larger parameter-shifts compared to GRPO.
+Figure 4:
+Layerwise sparsity of parameter updates during fine-tuning (higher indicates more sparse updates).
+ES exhibits broadly distributed, dense updates across components, whereas GRPO updates are overall highly sparse across LLM parameter groups, consistent with more targeted parameter changes.
+Sparsity.
+Each update in ES is constructed from high-variance, global perturbations applied across all parameters, which may affect a large number of stored parameters uniformly. In contrast, it is known that GRPO applies much sparser and targeted updates via backpropagation, limiting the extent of unintended parameter drift Mukherjee et al. (2025). To check the difference in the number of parameters affected by these algorithms, we evaluate the update sparsity in ES when compared to GRPO.
+We analyze Qwen2.5-1.5B-Instruct trained on the Countdown task with both GRPO and ES. We analyze the difference between a base model checkpoint and its corresponding fine-tuned checkpoint. For each shared parameter tensor, we compute the update Δ​W=Wn​e​w−Wb​a​s​e\Delta W=W_{new}-W_{base}. Following prior work Mukherjee et al. (2025), we define sparsity as the percentage of elements whose absolute magnitude is below a fixed threshold (τ=10−6\tau=10^{-6}). Therefore, higher sparsity values mean a larger number of parameters are below this threshold, which means that the updates are more sparse. Parameters are grouped by architectural component, including attention projections (Q,K,V)(Q,K,V), the attention output projection (WO)(W_{O}), MLP layers and LayerNorms. Updates are further aggregated by transformer layer index to obtain layerwise sparsity profiles.
+The results are shown in Figure 4. We see that ES updates are substantially less sparse across layers and parameter groups when compared to GRPO. The sparsity levels for GRPO updates across all parameter types and layers are close to 95%, which means updates are concentrated around a very small number of parameters. However, the updates using ES have very low sparsity levels, showing that a much larger number of parameters are perturbed when fine-tuning with ES. The most sparse updates in ES appear for LayerNorm; however it also contains the least (and neglible) number of parameters compared to other parts of the model. Other layer updates, irrespective of model depth, are highly dense in ES-trained models.
+Therefore, GRPO exhibits structured and comparatively sparse updates, aligning with the hypothesis that gradient-based optimization concentrates changes in task-relevant subspaces and mitigates interference with prior capabilities. When combined with KL regularization, these mechanisms provide a natural safeguard against large-scale parameter drift and, consequently, catastrophic forgetting.
+In contrast, we see that updates using ES have orders of magnitude larger norms and are much less sparse compared to GRPO. The lack of sparsity and large update norms in ES drifts the fine-tuned model further away from the base model, potentially leading to the catastrophic forgetting behavior observed in previous sections.
+4 Conclusion
+We perform an empirical analysis of Evolutionary Strategies for fine-tuning LLMs based on recent work Qiu et al. (2025) and show that it performs competetively with GRPO. Although, a critical roadblock still persists: we observe that ES exhibits significant catastrophic forgetting and progressively deteriorates performance on prior skills of the model. We show that this happens because ES updates have large norms and low sparsity levels (more dense), resulting in parameter drifts that are 1000x higher in magnitude than drifts observed with GRPO for the same number of update steps. These results imply that although recent progress in ES has bridged performance gap with state-of-the-art learning algorithms like GRPO, its intense model degradation still remains a challenge before its widespread adoption.
+Limitations
+ES has an inherent randomness associated with the updates due to the nature of the algorithm. As a result, models trained with ES exhibit high variance in stochastic perturbations. Although we observed consistent qualitative trends across the settings we tested, where we worked with a population size of 30 as suggested in prior work Qiu et al. (2025), increased population size will decrease the variance and increase statistical stability of our performance numbers.
+Additionally, we evaluate catastrophic forgetting by tracking performance on one task during continued fine-tuning on Countdown, which measures retention of a broad prior capability. Doing so does not fully capture multi-facetted loss of performance that may be happening in the model; however, is enough to give strong evidence of the occurence of the phenomenon.
+References
+Beyer (1995)
+H.-G. Beyer
+Toward a theory of evolution strategies: the (μ\mu, λ\lambda)-theory.
+Evolutionary Computation 2 (4), pp. 381–407.
+External Links: Document
+Cited by: §2.
+Brown et al. (2020)
+T. B. Brown, B. Mann, N. Ryder, M. Subbiah, J. Kaplan, P. Dhariwal, A. Neelakantan, P. Shyam, G. Sastry, A. Askell, S. Agarwal, A. Herbert-Voss, G. Krueger, T. Henighan, R. Child, A. Ramesh, D. M. Ziegler, J. Wu, C. Winter, C. Hesse, M. Chen, E. Sigler, M. Litwin, S. Gray, B. Chess, J. Clark, C. Berner, S. McCandlish, A. Radford, I. Sutskever, and D. Amodei
+Language models are few-shot learners.
+arXiv preprint arXiv:2005.14165.
+External Links: Document,
+Link
+Cited by: §1.
+Cobbe et al. (2021)
+K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano, C. Hesse, and J. Schulman
+Training verifiers to solve math word problems.
+External Links: 2110.14168,
+Link
+Cited by: §3.1.
+DeepSeek-AI et al. (2024)
+DeepSeek-AI, X. Bi, D. Chen, G. Chen, S. Chen, D. Dai, C. Deng, H. Ding, K. Dong, Q. Du, Z. Fu, H. Gao, K. Gao, W. Gao, R. Ge, K. Guan, D. Guo, J. Guo, G. Hao, Z. Hao, Y. He, W. Hu, P. Huang, E. Li, G. Li, J. Li, Y. Li, W. Liang, F. Lin, A. X. Liu, B. Liu, W. Liu, X. Liu, X. Liu, Y. Liu, H. Lu, S. Lu, F. Luo, S. Ma, X. Nie, T. Pei, Y. Piao, J. Qiu, H. Qu, T. Ren, Z. Ren, C. Ruan, Z. Sha, Z. Shao, J. Song, X. Su, J. Sun, Y. Sun, M. Tang, B. Wang, P. Wang, S. Wang, Y. Wang, T. Wu, X. Xie, Y. Xiong, H. Xu, D. Yang, Y. You, S. Yu, X. Yu, B. Zhang, H. Zhang, L. Zhang, M. Zhang, C. Zhao, Y. Zhao, S. Zhou, Q. Zhu, Y. Zou, et al.
+DeepSeek llm: scaling open-source language models with longtermism.
+arXiv preprint arXiv:2401.02954.
+External Links: Document,
+Link
+Cited by: §1.
+DeepSeek-AI et al. (2025)
+DeepSeek-AI, D. Guo, D. Yang, H. Zhang, J. Song, R. Zhang, R. Xu, Q. Zhu, S. Ma, P. Wang, X. Bi, X. Zhang, X. Yu, Y. Wu, Z. F. Wu, Z. Gou, Z. Shao, Z. Li, Z. Gao, A. Liu, B. Xue, B. Wang, B. Wu, B. Feng, C. Lu, C. Zhao, C. Deng, C. Zhang, C. Ruan, D. Dai, D. Chen, D. Ji, E. Li, F. Lin, F. Dai, F. Luo, G. Hao, G. Chen, G. Li, H. Zhang, H. Bao, H. Xu, H. Wang, H. Ding, H. Xin, H. Gao, H. Qu, H. Li, J. Guo, J. Li, J. Wang, J. Chen, J. Yuan, J. Qiu, J. Li, J. L. Cai, J. Ni, J. Liang, J. Chen, K. Dong, K. Hu, K. Gao, K. Guan, K. Huang, K. Yu, L. Wang, L. Zhang, L. Zhao, L. Wang, L. Zhang, L. Xu, L. Xia, M. Zhang, M. Zhang, M. Tang, M. Li, M. Wang, M. Li, N. Tian, P. Huang, P. Zhang, Q. Wang, Q. Chen, Q. Du, R. Ge, R. Zhang, R. Pan, R. Wang, R. J. Chen, R. L. Jin, R. Chen, S. Lu, S. Zhou, S. Chen, S. Ye, S. Wang, S. Yu, S. Zhou, S. Pan, S. S. Li, S. Zhou, S. Wu, S. Ye, T. Yun, T. Pei, T. Sun, T. Wang, W. Zeng, W. Zhao, W. Liu, W. Liang, W. Gao, W. Yu, W. Zhang, W. L. Xiao, W. An, X. Liu, X. Wang, X. Chen, X. Nie, X. Cheng, X. Liu, X. Xie, X. Liu, X. Yang, X. Li, X. Su, X. Lin, X. Q. Li, X. Jin, X. Shen, X. Chen, X. Sun, X. Wang, X. Song, X. Zhou, X. Wang, X. Shan, Y. K. Li, Y. Q. Wang, Y. X. Wei, Y. Zhang, Y. Xu, Y. Li, Y. Zhao, Y. Sun, Y. Wang, Y. Yu, Y. Zhang, Y. Shi, Y. Xiong, Y. He, Y. Piao, Y. Wang, Y. Tan, Y. Ma, Y. Liu, Y. Guo, Y. Ou, Y. Wang, Y. Gong, Y. Zou, Y. He, Y. Xiong, Y. Luo, Y. You, Y. Liu, Y. Zhou, Y. X. Zhu, Y. Xu, Y. Huang, Y. Li, Y. Zheng, Y. Zhu, Y. Ma, Y. Tang, Y. Zha, Y. Yan, Z. Z. Ren, Z. Ren, Z. Sha, Z. Fu, Z. Xu, Z. Xie, Z. Zhang, Z. Hao, Z. Ma, Z. Yan, Z. Wu, Z. Gu, Z. Zhu, Z. Liu, Z. Li, Z. Xie, Z. Song, Z. Pan, Z. Huang, Z. Xu, Z. Zhang, and Z. Zhang
+DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning.
+External Links: 2501.12948,
+Document,
+Link
+Cited by: §A.1.3.
+Grattafiori et al. (2024)
+A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan, A. Yang, A. Fan, A. Goyal, A. Hartshorn, A. Yang, A. Mitra, A. Sravankumar, A. Korenev, A. Hinsvark, A. Rao, A. Zhang, A. Rodriguez, A. Gregerson, A. Spataru, B. Roziere, B. Biron, B. Tang, B. Chern, C. Caucheteux, C. Nayak, C. Bi, C. Marra, C. McConnell, C. Keller, C. Touret, C. Wu, C. Wong, C. C. Ferrer, C. Nikolaidis, D. Allonsius, D. Song, D. Pintz, D. Livshits, D. Wyatt, D. Esiobu, D. Choudhary, D. Mahajan, D. Garcia-Olano, D. Perino, D. Hupkes, E. Lakomkin, E. AlBadawy, E. Lobanova, E. Dinan, E. M. Smith, F. Radenovic, F. Guzmán, F. Zhang, G. Synnaeve, G. Lee, G. L. Anderson, G. Thattai, G. Nail, G. Mialon, G. Pang, G. Cucurell, H. Nguyen, H. Korevaar, H. Xu, H. Touvron, I. Zarov, I. A. Ibarra, I. Kloumann, I. Misra, I. Evtimov, J. Zhang, J. Copet, J. Lee, J. Geffert, J. Vranes, J. Park, J. Mahadeokar, J. Shah, J. van der Linde, J. Billock, J. Hong, J. Lee, J. Fu, J. Chi, J. Huang, J. Liu, J. Wang, J. Yu, J. Bitton, J. Spisak, J. Park, J. Rocca, J. Johnstun, J. Saxe, J. Jia, K. V. Alwala, K. Prasad, K. Upasani, K. Plawiak, K. Li, K. Heafield, K. Stone, K. El-Arini, K. Iyer, K. Malik, K. Chiu, K. Bhalla, K. Lakhotia, L. Rantala-Yeary, L. van der Maaten, L. Chen, L. Tan, L. Jenkins, L. Martin, L. Madaan, L. Malo, L. Blecher, L. Landzaat, L. de Oliveira, M. Muzzi, M. Pasupuleti, M. Singh, M. Paluri, M. Kardas, M. Tsimpoukelli, M. Oldham, M. Rita, M. Pavlova, M. Kambadur, M. Lewis, M. Si, M. K. Singh, M. Hassan, N. Goyal, N. Torabi, N. Bashlykov, N. Bogoychev, N. Chatterji, N. Zhang, O. Duchenne, O. Çelebi, P. Alrassy, P. Zhang, P. Li, P. Vasic, P. Weng, P. Bhargava, P. Dubal, P. Krishnan, P. S. Koura, P. Xu, Q. He, Q. Dong, R. Srinivasan, R. Ganapathy, R. Calderer, R. S. Cabral, R. Stojnic, R. Raileanu, R. Maheswari, R. Girdhar, R. Patel, R. Sauvestre, R. Polidoro, R. Sumbaly, R. Taylor, R. Silva, R. Hou, R. Wang, S. Hosseini, S. Chennabasappa, S. Singh, S. Bell, S. S. Kim, S. Edunov, S. Nie, S. Narang, S. Raparthy, S. Shen, S. Wan, S. Bhosale, S. Zhang, S. Vandenhende, S. Batra, S. Whitman, S. Sootla, S. Collot, S. Gururangan, S. Borodinsky, T. Herman, T. Fowler, T. Sheasha, T. Georgiou, T. Scialom, T. Speckbacher, T. Mihaylov, T. Xiao, U. Karn, V. Goswami, V. Gupta, V. Ramanathan, V. Kerkez, V. Gonguet, V. Do, V. Vogeti, V. Albiero, V. Petrovic, W. Chu, W. Xiong, W. Fu, W. Meers, X. Martinet, X. Wang, X. Wang, X. E. Tan, X. Xia, X. Xie, X. Jia, X. Wang, Y. Goldschlag, Y. Gaur, Y. Babaei, Y. Wen, Y. Song, Y. Zhang, Y. Li, Y. Mao, Z. D. Coudert, Z. Yan, Z. Chen, Z. Papakipos, A. Singh, A. Srivastava, A. Jain, A. Kelsey, A. Shajnfeld, A. Gangidi, A. Victoria, A. Goldstand, A. Menon, A. Sharma, A. Boesenberg, A. Baevski, A. Feinstein, A. Kallet, A. Sangani, A. Teo, A. Yunus, A. Lupu, A. Alvarado, A. Caples, A. Gu, A. Ho, A. Poulton, A. Ryan, A. Ramchandani, A. Dong, A. Franco, A. Goyal, A. Saraf, A. Chowdhury, A. Gabriel, A. Bharambe, A. Eisenman, A. Yazdan, B. James, B. Maurer, B. Leonhardi, B. Huang, B. Loyd, B. D. Paola, B. Paranjape, B. Liu, B. Wu, B. Ni, B. Hancock, B. Wasti, B. Spence, B. Stojkovic, B. Gamido, B. Montalvo, C. Parker, C. Burton, C. Mejia, C. Liu, C. Wang, C. Kim, C. Zhou, C. Hu, C. Chu, C. Cai, C. Tindal, C. Feichtenhofer, C. Gao, D. Civin, D. Beaty, D. Kreymer, D. Li, D. Adkins, D. Xu, D. Testuggine, D. David, D. Parikh, D. Liskovich, D. Foss, D. Wang, D. Le, D. Holland, E. Dowling, E. Jamil, E. Montgomery, E. Presani, E. Hahn, E. Wood, E. Le, E. Brinkman, E. Arcaute, E. Dunbar, E. Smothers, F. Sun, F. Kreuk, F. Tian, F. Kokkinos, F. Ozgenel, F. Caggioni, F. Kanayet, F. Seide, G. M. Florez, G. Schwarz, G. Badeer, G. Swee, G. Halpern, G. Herman, G. Sizov, Guangyi, Zhang, G. Lakshminarayanan, H. Inan, H. Shojanazeri, H. Zou, H. Wang, H. Zha, H. Habeeb, H. Rudolph, H. Suk, H. Aspegren, H. Goldman, H. Zhan, I. Damlaj, I. Molybog, I. Tufanov, I. Leontiadis, I. Veliche, I. Gat, J. Weissman, J. Geboski, J. Kohli, J. Lam, J. Asher, J. Gaya, J. Marcus, J. Tang, J. Chan, J. Zhen, J. Reizenstein, J. Teboul, J. Zhong, J. Jin, J. Yang, J. Cummings, J. Carvill, J. Shepard, J. McPhie, J. Torres, J. Ginsburg, J. Wang, K. Wu, K. H. U, K. Saxena, K. Khandelwal, K. Zand, K. Matosich, K. Veeraraghavan, K. Michelena, K. Li, K. Jagadeesh, K. Huang, K. Chawla, K. Huang, L. Chen, L. Garg, L. A, L. Silva, L. Bell, L. Zhang, L. Guo, L. Yu, L. Moshkovich, L. Wehrstedt, M. Khabsa, M. Avalani, M. Bhatt, M. Mankus, M. Hasson, M. Lennie, M. Reso, M. Groshev, M. Naumov, M. Lathi, M. Keneally, M. Liu, M. L. Seltzer, M. Valko, M. Restrepo, M. Patel, M. Vyatskov, M. Samvelyan, M. Clark, M. Macey, M. Wang, M. J. Hermoso, M. Metanat, M. Rastegari, M. Bansal, N. Santhanam, N. Parks, N. White, N. Bawa, N. Singhal, N. Egebo, N. Usunier, N. Mehta, N. P. Laptev, N. Dong, N. Cheng, O. Chernoguz, O. Hart, O. Salpekar, O. Kalinli, P. Kent, P. Parekh, P. Saab, P. Balaji, P. Rittner, P. Bontrager, P. Roux, P. Dollar, P. Zvyagina, P. Ratanchandani, P. Yuvraj, Q. Liang, R. Alao, R. Rodriguez, R. Ayub, R. Murthy, R. Nayani, R. Mitra, R. Parthasarathy, R. Li, R. Hogan, R. Battey, R. Wang, R. Howes, R. Rinott, S. Mehta, S. Siby, S. J. Bondu, S. Datta, S. Chugh, S. Hunt, S. Dhillon, S. Sidorov, S. Pan, S. Mahajan, S. Verma, S. Yamamoto, S. Ramaswamy, S. Lindsay, S. Lindsay, S. Feng, S. Lin, S. C. Zha, S. Patil, S. Shankar, S. Zhang, S. Zhang, S. Wang, S. Agarwal, S. Sajuyigbe, S. Chintala, S. Max, S. Chen, S. Kehoe, S. Satterfield, S. Govindaprasad, S. Gupta, S. Deng, S. Cho, S. Virk, S. Subramanian, S. Choudhury, S. Goldman, T. Remez, T. Glaser, T. Best, T. Koehler, T. Robinson, T. Li, T. Zhang, T. Matthews, T. Chou, T. Shaked, V. Vontimitta, V. Ajayi, V. Montanez, V. Mohan, V. S. Kumar, V. Mangla, V. Ionescu, V. Poenaru, V. T. Mihailescu, V. Ivanov, W. Li, W. Wang, W. Jiang, W. Bouaziz, W. Constable, X. Tang, X. Wu, X. Wang, X. Wu, X. Gao, Y. Kleinman, Y. Chen, Y. Hu, Y. Jia, Y. Qi, Y. Li, Y. Zhang, Y. Zhang, Y. Adi, Y. Nam, Yu, Wang, Y. Zhao, Y. Hao, Y. Qian, Y. Li, Y. He, Z. Rait, Z. DeVito, Z. Rosnbrick, Z. Wen, Z. Yang, Z. Zhao, and Z. Ma
+The llama 3 herd of models.
+External Links: 2407.21783,
+Link
+Cited by: §3.1.
+Gupta et al. (2024)
+A. Gupta, A. Rao, and G. Anumanchipalli
+Model editing at scale leads to gradual and catastrophic forgetting.
+arXiv preprint arXiv:2401.07453.
+Cited by: §1.
+Hansen and Ostermeier (2001)
+N. Hansen and A. Ostermeier
+Completely derandomized self-adaptation in evolution strategies.
+Evolutionary Computation 9 (2), pp. 159–195.
+External Links: ISSN 1063-6560,
+Document,
+Link,
+https://direct.mit.edu/evco/article-pdf/9/2/159/1493523/106365601750190398.pdf
+Cited by: §2.
+He et al. (2024)
+C. He, R. Luo, Y. Bai, S. Hu, Z. L. Thai, J. Shen, J. Hu, X. Han, Y. Huang, Y. Zhang, J. Liu, L. Qi, Z. Liu, and M. Sun
+OlympiadBench: a challenging benchmark for promoting agi with olympiad-level bilingual multimodal scientific problems.
+External Links: 2402.14008,
+Link
+Cited by: §3.1.
+Hendrycks et al. (2021)
+D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt
+Measuring mathematical problem solving with the math dataset.
+External Links: 2103.03874,
+Link
+Cited by: §3.1.
+Jin et al. (2024)
+F. Jin, Y. Liu, and Y. Tan
+Derivative-free optimization for low-rank adaptation in large language models.
+External Links: 2403.01754,
+Link
+Cited by: §2.
+Kirkpatrick et al. (2017)
+J. Kirkpatrick, R. Pascanu, N. Rabinowitz, J. Veness, G. Desjardins, A. A. Rusu, K. Milan, J. Quan, T. Ramalho, A. Grabska-Barwinska, et al.
+Overcoming catastrophic forgetting in neural networks.
+Proceedings of the national academy of sciences 114 (13), pp. 3521–3526.
+Cited by: §1.
+Korotyshova et al. (2025)
+D. Korotyshova, B. Shaposhnikov, A. Malakhov, A. Khokhulin, N. Surnachev, K. Ovcharenko, G. Bredis, A. Gorbatovski, V. Sinii, and D. Gavrilov
+ESSA: evolutionary strategies for scalable alignment.
+External Links: 2507.04453,
+Link
+Cited by: §1,
+§2.
+Malladi et al. (2024)
+S. Malladi, T. Gao, E. Nichani, A. Damian, J. D. Lee, D. Chen, and S. Arora
+Fine-tuning language models with just forward passes.
+External Links: 2305.17333,
+Link
+Cited by: §2.
+Mukherjee et al. (2025)
+S. Mukherjee, L. Yuan, D. Hakkani-Tur, and H. Peng
+Reinforcement learning finetunes small subnetworks in large language models.
+arXiv preprint arXiv:2505.11711.
+Cited by: §3.3,
+§3.3.
+OpenAI (2024)
+OpenAI
+Memory and new controls for ChatGPT.
+Note: Accessed: 2026-01-24
+External Links: Link
+Cited by: §1.
+Ouyang et al. (2022)
+L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. L. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray, J. Schulman, J. Hilton, F. Kelton, L. Miller, M. Simens, A. Askell, P. Welinder, P. Christiano, J. Leike, and R. Lowe
+Training language models to follow instructions with human feedback.
+External Links: 2203.02155,
+Document,
+Link
+Cited by: §1.
+Pan (2026)
+J. Pan
+Jiayi-Pan/TinyZero.
+External Links: Link
+Cited by: §1.
+Qiu et al. (2025)
+X. Qiu, Y. Gan, C. F. Hayes, Q. Liang, E. Meyerson, B. Hodjat, and R. Miikkulainen
+Evolution Strategies at Scale: LLM Fine-Tuning Beyond Reinforcement Learning.
+External Links: 2509.24372,
+Document,
+Link
+Cited by: §A.1.1,
+§A.1.3,
+§A.2.1,
+§A.2.3,
+§1,
+§1,
+§2,
+§3.1,
+§3.1,
+§4,
+Limitations.
+Qwen et al. (2024)
+Qwen, A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu, F. Huang, H. Wei, H. Lin, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Lin, K. Dang, K. Lu, K. Bao, K. Yang, L. Yu, M. Li, M. Xue, P. Zhang, Q. Zhu, R. Men, R. Lin, T. Li, T. Tang, T. Xia, X. Ren, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Wan, Y. Liu, Z. Cui, Z. Zhang, and Z. Qiu
+Qwen2.5 Technical Report.
+arXiv.org.
+External Links: Link
+Cited by: §3.1.
+Rafailov et al. (2024)
+R. Rafailov, A. Sharma, E. Mitchell, S. Ermon, C. D. Manning, and C. Finn
+Direct preference optimization: your language model is secretly a reward model.
+External Links: 2305.18290,
+Link
+Cited by: §1.
+Rechenberg (1989)
+I. Rechenberg
+Evolution strategy: nature’s way of optimization.
+In Optimization: Methods and Applications, Possibilities and Limitations,  H. W. Bergmann (Ed.),
+Berlin, Heidelberg, pp. 106–126.
+External Links: ISBN 978-3-642-83814-9
+Cited by: §2.
+Risi and Stanley (2019)
+S. Risi and K. O. Stanley
+Deep neuroevolution of recurrent and discrete world models.
+External Links: 1906.08857,
+Link
+Cited by: §2.
+Salimans et al. (2017)
+T. Salimans, J. Ho, X. Chen, S. Sidor, and I. Sutskever
+Evolution Strategies as a Scalable Alternative to Reinforcement Learning.
+External Links: 1703.03864,
+Document,
+Link
+Cited by: §2.
+Sarkar et al. (2025)
+B. Sarkar, M. Fellows, J. A. Duque, A. Letcher, A. L. Villares, A. Sims, D. Cope, J. Liesen, L. Seier, T. Wolf, U. Berdica, A. D. Goldie, A. Courville, K. Sevegnani, S. Whiteson, and J. N. Foerster
+Evolution strategies at the hyperscale.
+External Links: 2511.16652,
+Link
+Cited by: §2.
+Schwefel (1977)
+H. Schwefel
+Numerische optimierung von computer-modellen mittels der evolutionsstrategie: mit einer vergleichenden einführung in die hill-climbing- und zufallsstrategie.
+Birkhäuser Verlag, Basel, Stuttgart.
+External Links: ISBN 978-3-7643-0926-8
+Cited by: §2.
+Shao et al. (2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. K. Li, Y. Wu, and D. Guo
+DeepSeekMath: pushing the limits of mathematical reasoning in open language models.
+External Links: 2402.03300,
+Link
+Cited by: §A.1.2,
+§1,
+§3.1.
+Shenfeld et al. (2025)
+I. Shenfeld, J. Pari, and P. Agrawal
+RL’s razor: why online reinforcement learning forgets less.
+External Links: 2509.04259,
+Link
+Cited by: §A.4.1,
+§3.2.
+Sheng et al. (2025)
+G. Sheng, C. Zhang, Z. Ye, X. Wu, W. Zhang, R. Zhang, Y. Peng, H. Lin, and C. Wu
+HybridFlow: a flexible and efficient rlhf framework.
+EuroSys ’25,  ACM.
+External Links: Link,
+Document
+Cited by: §A.2.1,
+§3.1.
+Such et al. (2018)
+F. P. Such, V. Madhavan, E. Conti, J. Lehman, K. O. Stanley, and J. Clune
+Deep neuroevolution: genetic algorithms are a competitive alternative for training deep neural networks for reinforcement learning.
+External Links: 1712.06567,
+Link
+Cited by: §2.
+Sun et al. (2012)
+Y. Sun, D. Wierstra, T. Schaul, and J. Schmidhuber
+Efficient natural evolution strategies.
+External Links: 1209.5853,
+Link
+Cited by: §2.
+Vaswani et al. (2017)
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, L. Kaiser, and I. Polosukhin
+Attention is all you need.
+arXiv preprint arXiv:1706.03762.
+External Links: Document,
+Link
+Cited by: §1.
+Wei et al. (2022)
+J. Wei, M. Bosma, V. Y. Zhao, K. Guu, A. W. Yu, B. Lester, N. Du, A. M. Dai, and Q. V. Le
+Finetuned language models are zero-shot learners.
+External Links: 2109.01652,
+Link
+Cited by: §1.
+Wierstra et al. (2011)
+D. Wierstra, T. Schaul, T. Glasmachers, Y. Sun, and J. Schmidhuber
+Natural evolution strategies.
+External Links: 1106.4487,
+Link
+Cited by: §2.
+Zellers et al. (2019)
+R. Zellers, A. Holtzman, Y. Bisk, A. Farhadi, and Y. Choi
+HellaSwag: can a machine really finish your sentence?.
+External Links: 1905.07830,
+Link
+Cited by: §3.2.
+Zhang et al. (2017)
+X. Zhang, J. Clune, and K. O. Stanley
+On the relationship between the openai evolution strategy and stochastic gradient descent.
+External Links: 1712.06564,
+Link
+Cited by: §2.
+Appendix A Appendix
+A.1 Algorithmic Overview and Analogy Between ES and GRPO
+A.1.1 ES Algorithm Overview
+Qiu et al. (2025) implement a version of evolutionary strategies that features these techniques: weight adjustment in-place with noise generation from stored random seeds, ranked weight updates, and learning rate ingestion.
+Each update step can be understood through the following equations.
+Each population member at step tt has a unique seed. With noise per iteration ϵn,l∼𝒩⁡(0,I)\epsilon_{n,l}\sim\mathcal{N}(0,I), model parameters for timestep tt θt\theta_{t}, layer parameters for step tt θt,l\theta_{t,l}, reward function RR, reward score for the nnth member RnR_{n}, z-score for nnth member ZnZ_{n}, and noise coefficient σ\sigma, and learning rate α\alpha.
+Reset random seed generator. Sample noise ϵn,l∼𝒩⁡(0,I)\epsilon_{n,l}\sim\mathcal{N}(0,I). For all layers, perturb in-place:
+θt−1,l←θt−1,l+σ⋅ϵn,l.\theta_{t-1,l}\leftarrow\theta_{t-1,l}+\sigma\cdot\epsilon_{n,l}.
+Reward for perturbed model is calculated:
+Rn=R⁡(θt−1).R_{n}=R(\theta_{t-1}).
+Reset random seed generator. Sample noise ϵn,l∼𝒩⁡(0,I)\epsilon_{n,l}\sim\mathcal{N}(0,I). For all layers, restore in-place:
+θt−1,l←θt−1,l−σ⋅ϵn,l.\theta_{t-1,l}\leftarrow\theta_{t-1,l}-\sigma\cdot\epsilon_{n,l}.
+Z-score is calculated per population member:
+Zn=Rn−RmeanRstd,Z_{n}=\frac{R_{n}-R_{\text{mean}}}{R_{\text{std}}},
+Reset random seed generator. Sample noise ϵn,l∼𝒩⁡(0,I)\epsilon_{n,l}\sim\mathcal{N}(0,I). For all layers, update with noise weighted by z-score and learning rate in-place:
+θt,l←θt−1,l+α⋅1N​Zn​ϵn,l.\theta_{t,l}\leftarrow\theta_{t-1,l}+\alpha\cdot\frac{1}{N}Z_{n}\epsilon_{n,l}.
+where RmeanR_{\text{mean}} and RstdR_{\text{std}} are the mean and standard deviation of R1,R2,…,RNR_{1},R_{2},\dots,R_{N}.
+A.1.2 ES Algorithm Overview
+Shao et al. (2024) implement Group Relative Policy Optimization (GRPO), which eliminates the critic model by estimating advantages from group statistics.
+For each prompt qq, sample a group of GG outputs {o1,o2,…,oG}\{o_{1},o_{2},\dots,o_{G}\} from the current policy πθo​l​d\pi_{\theta_{old}}.
+Compute rewards {r1,r2,…,rG}\{r_{1},r_{2},\dots,r_{G}\} for each output and calculate relative advantages via z-score normalization:
+Ai=ri−mean​({r1,…,rG})std​({r1,…,rG}).A_{i}=\frac{r_{i}-\text{mean}(\{r_{1},\dots,r_{G}\})}{\text{std}(\{r_{1},\dots,r_{G}\})}.
+The policy πθ\pi_{\theta} is updated by maximizing the GRPO objective:
+ρi​(θ)=πθ​(oi∣q)πθold​(oi∣q)\rho_{i}(\theta)=\frac{\pi_{\theta}(o_{i}\mid q)}{\pi_{\theta_{\text{old}}}(o_{i}\mid q)}
+𝒥GRPO​(θ)\displaystyle\mathcal{J}_{\text{GRPO}}(\theta)
+=1G∑i=1Gmin(ρi(θ)Ai,\displaystyle=\frac{1}{G}\sum_{i=1}^{G}\min\Big(\rho_{i}(\theta)A_{i},\;
+OPENclip​(ρi​(θ),1−ϵ,1+ϵ)​Ai)\displaystyle\text{clip}(\rho_{i}(\theta),1-\epsilon,1+\epsilon)A_{i}\Big)
+−β𝔻KL(πθ∥πref).\displaystyle-\beta\,\mathbb{D}_{\mathrm{KL}}(\pi_{\theta}\,\|\,\pi_{\text{ref}}).
+To penalize divergence from the reference policy πr​e​f\pi_{ref} without additional sampling, the KL term is approximated:
+𝔻K​L(πθ||πr​e​f)=πr​e​f​(oi|q)πθ​(oi|q)−logπr​e​f​(oi|q)πθ​(oi|q)−1.\mathbb{D}_{KL}(\pi_{\theta}||\pi_{ref})=\frac{\pi_{ref}(o_{i}|q)}{\pi_{\theta}(o_{i}|q)}-\log\frac{\pi_{ref}(o_{i}|q)}{\pi_{\theta}(o_{i}|q)}-1.
+By replacing the value function with group-relative rewards, this implementation reduces computational overhead and memory usage compared to standard PPO.
+A.1.3 Analogy Between ES Population Size and GRPO Rollout Count
+Both GRPO and ES rely on creating different responses and then updating the model parameters via the fitness of those responses. The following section describes why the population size in ES and number of rollouts in GRPO play an analogous role in controlling parameter updates.
+Following the algorithm described by Qiu et al. (2025), an ES training update comprises of NN different seeds used to generate perturbations to the baseline model, resulting in NN different population members. Each population member is sampled with temperature at 0 to generate NN different responses, which are evaluated by a reward function to determine their fitness, which is converted into a z-score to weight the contribution of that respective perturbation to the baseline model. Further explanation can be found in A.1.
+Similarly, a GRPO training update samples NN candidate outputs from the current policy, evaluates them to obtain relative reward signals, and updates the policy via a policy-gradient objective while constraining deviation from a fixed reference policy through KL regularization (DeepSeek-AI et al., 2025). Crucially, although ES simultaneously maintains multiple different versions of a model and GRPO maintains one, ES population size and GRPO number of rollouts both determine the number of samples used to estimate a stochastic update and to form a stochastic gradient or gradient-free estimator that drives the parameter update.
+A.2 Implementation Details
+Our implementations for both GRPO and ES model training and analysis is attached to this submission.
+A.2.1 GRPO
+The GRPO setup in this study is implemented on the VERL library, which employs the HybridFlow engine proposed by Sheng et al. (2025). Training was conducted on NVIDIA RTX A6000 GPUs and the Fully Sharded Data Parallel (FSDP) protocol was used to train across GPUs. Across all experiments, we maintained 30 rollouts for GRPO to mimic the 30 mutations generated by the original ES study by Qiu et al. (2025). To benchmark-finetuning, we used a batch-size of 200 examples along with a mini-batch size of 32 examples. A KL-Loss coefficient of β=0.001\beta=0.001 was used. The trainer was set to run for a total of 500 epochs, although once the validation accuracy appeared to plateau, we stopped training prematurely.
+A.2.2 ES
+We replicated the original author’s implementation of ES with two improvements: the authors found that using fp16 instead of bf16 improved validation accuracy on certain tasks. Additionally, the application of the Qwen chat template to the original task prompts improved validation accuracy on the experiment replica Countdown task for Qwen2.5-1.5B, but left model performance on all other regimes virtually the same. Runs were performed both with and without the chat template to assess the effect.
+A.2.3 Reward functions
+For the countdown task, we employ the same reward function used by Qiu et al. (2025), adapted to fit the VERL API. An answer reward is calculated, which assigns a reward of 1.01.0 if the model’s answer uses all numbers once and evaluates to the provided target, and 0.00.0 otherwise. A separate format score is calculated, which serves to ensure that the model’s response obeys an XML-style format with <think>...</think> thinking tokens first followed by response tokens <answer>...</answer>. We take a weighted average of the two rewards to calculate the final reward to assign to the model: Reward=0.1⋅Format​Reward+0.9⋅Answer​Reward\mathrm{Reward}=0.1\cdot\mathrm{Format\ Reward}+0.9\cdot\mathrm{Answer\ Reward}
+For the GSM8K, MATH, and OlympiadBench benchmarks, we employ a rule-based reward function using a binary evaluation logic. An answer reward is calculated by extracting the model’s conclusion from the final 300 characters of the response using a regex pattern. The function first identifies the #### [number] format, falling back to \boxed{...} tags if necessary, and assigns a reward of 1.01.0 if the extraction matches the ground truth and 0.00.0 otherwise.
+A.3 Hyperparameter Values
+Hyperparameter
+Value
+Population size
+30
+Noise scale σ\sigma
+0.001
+Learning rate α\alpha
+0.0005
+Max tokens
+1024
+Table 2: Hyperparameters used for Evolution Strategies (ES) fine-tuning.
+A.4 Additional Experiments
+A.4.1 Catastrophic Forgetting and KL
+Figure A1:
+Relationship between KL divergence and task performance.
+Top row: new-task accuracy (Countdown).
+Bottom row: prior-task accuracy (HellaSwag). Training step indicated per sample.
+ES exhibits increasing KL accompanied by degradation on the prior task, whereas GRPO maintains stable performance across a broader KL range.
+Shenfeld et al. (2025) had previously established a negative correlation between KL-divergence and previous task score. We therefore searched whether this trend also is reflected within ES-trained models . We first looked at KL-divergence between the trained and base models A1 on the newly trained task. While ES-trained models increase in KL-divergence with subsequent training steps, this behavior was not consistent when trained with GRPO. This can be attributed to the explicit KL-regularization factor in GRPO, preventing continuous drifts from the base model.
+The trends for KL divergence and accuracy continue to diverge when evaluating previously known tasks A1. ES has a clear negative correlation between KL-divergence and old task performance. The KL-divergence between the new and base models also shows an increase over number of training iterations in ES. GRPO however continues to show no association between number of training steps and KL-divergence, as well as between KL-divergence and previous task accuracy. Therefore, KL-divergence is a less reliable indicator of catastrophic convergence across GRPO and ES.
+Figure A2:
+Log relationship between Frobenius norm of a model update and number of training iterations on a new task (Countdown). ES-trained models drift several orders of magnitude more than GRPO-trained models.
+(a) Qwen-2.5-1.5B
+(b) LLaMa-3.2-1B
+Figure A3:
+Mean accuracy curves for ES and GRPO runs across across datasets: Countdown, GSM8K, Math, Olympiad.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from
+

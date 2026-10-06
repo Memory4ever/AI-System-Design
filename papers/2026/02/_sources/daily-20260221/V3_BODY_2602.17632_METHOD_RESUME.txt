@@ -1,0 +1,69 @@
+6 Score Matched Actor-Critic (SMAC): regularizing Q-values with dataset scores
+In this section, we introduce SMAC, our offline RL method that smoothly transitions to fine-tuning with an arbitrary online RL algorithm. Our approach relies on one theory-inspired regularization of the Q-function and a switch to using the Muon optimizer (Jordan, 2024) instead of the Adam optimizer (Kingma & Ba, 2017). The theory-inspired regularization comes from the exact Max-Entropy identity.
+To regularize the Q-function during the offline phase, we regularize the network’s action gradient ∇aQ​(s,a)\nabla_{a}Q(s,a) to be proportional to an estimate of the dataset’s action score ∇a​log​π​(a|s)\nabla_{a}\log\pi(a|s).
+This relationship comes from the identity in equation (1): ∇a​log​π∗​(a|s)=1α​∇aQ∗​(s,a)\nabla_{a}\log\pi^{*}(a|s)=\frac{1}{\alpha}\nabla_{a}Q^{*}(s,a). While the identity is only
+proven for the optimal policy π∗\pi^{*}, there are other situations where it holds.
+While the standard SAC algorithm updates QQ and π\pi jointly, if QQ is frozen and only the π\pi objective is considered, we get
+that log⁡π⁡(a|s)=1α​Q​(s,a)+∫a¯e​x​p​(1α​Q​(s,a¯))​𝑑a¯\log\pi(a|s)=\frac{1}{\alpha}Q(s,a)+\int_{\bar{a}}exp(\frac{1}{\alpha}Q(s,\bar{a}))d\bar{a} as the
+solution to π\pi’s optimization objective. From this we get an
+identity equivalent to equation (1) for π\pi and QQ. Additionally the noisily rational decision maker
+model of humans which is a popular model for how humans behave would imply that human-collected demonstrations respect the same identity (Ghosal et al., 2023; Bobu et al., 2024). Even when it does not hold, exactly matching ∇aQ​(s,a)\nabla_{a}Q(s,a) to ∇a​log​π​(a|s)\nabla_{a}\log\pi(a|s) would result in OOD actions being penalized proportionally to how OOD the action is. In this way it is a more careful form of pessimism than what CalQL/CQL use which uniformly lowers all OOD actions.
+6.1 Estimating the dataset’s score
+We employ Reinforcement via Supervision (RvS) methods (Emmons et al., 2022; Piche et al., 2022; Schmidhuber, 2020) for obtaining a strong diffusion policy which in turn provides strong score estimates. Specifically, we condition the estimator to model ∇a​log​(p⁡(a|s,w))\nabla_{a}\log(p(a|s,w)) where ww is the sum of rewards or binary success indicator of the trajectory that (s,a)(s,a) belongs to in the dataset. We min-max normalize ww in every dataset so w=1w=1 implies an action in a trajectory with an optimal outcome. For parameterization of our diffusion model, we use the architecture proposed in (Hansen-Estruch et al., 2023). We detail training and hyper-parameter choices in Appendix J and ablate the use of RvS in appendix E.
+Figure 6: SMAC achieves smooth offline-to-online transfer to SAC. Plot shows offline-to-online transfer results for SMAC and baselines when fine-tuned with SAC. Environments are only named with the first word since that uniquely identifies them among the six. The dotted line shows where the agent transfers from offline learning to online learning, with the shaded section denoting offline learning.
+6.2 Regularizing the QQ-function with score matching
+To regularize the critic’s network to be proportional to the dataset score, we learn α\alpha through a network αψ​(s)\alpha_{\psi}(s) conditioned on states. Conditioning on states allows a more expressive class of networks to minimize the regularization term. Letting ϵω\epsilon_{\omega} be the learned diffusion model we use as a score-estimate, our regularization loss, which we denote ℒS​M​(θ,ψ)\mathcal{L}^{SM}(\theta,\psi), is defined as:
+ℒS​M​(θ,ψ)=𝔼s∼𝒟a∼B⁡(𝒜)[‖∇aQθ​(s,a)−αψ​(s)​ϵω​(s,a,w,1)‖22]\displaystyle\mathcal{L}^{SM}(\theta,\psi)=\mathop{\mathbb{E}}_{\begin{subarray}{c}s\sim\mathcal{D}\\
+a\sim B(\mathcal{A})\end{subarray}}[||\nabla_{a}Q_{\theta}(s,a)-\alpha_{\psi}(s)\epsilon_{\omega}(s,a,w,1)||_{2}^{2}]
+We set k=1k=1 on our diffusion model to get the least perturbed noise estimate. We define the distribution we sample actions from, B⁡(𝒜)B(\mathcal{A}), as being a 50/50 split between sampling from π\pi and from the uniform distribution over the action space 𝒜\mathcal{A}. ℒS​M\mathcal{L}^{SM} is the only change we make to the original SAC (Haarnoja et al., 2018) objective functions. We follow their implementation by using target Q-networks (Mnih et al., 2013; Lillicrap et al., 2019) and ensembles of Q-functions (Chen et al., 2021; Peer et al., 2021) which are both well-established techniques for reducing Q-function misestimation. For simplicity of notation, we omit the ensembles, but denote the target network as Qθ¯Q_{\bar{\theta}}. Using this notation, the original SAC critic loss is:
+ℒA​C​(θ)\displaystyle\mathcal{L}^{AC}(\theta)
+=𝔼s,a,r,s′∼Da′∼πϕ⁡(a|s)​[(Qθ​(s,a)−r−γ​Qθ¯​(s′,a′))2]\displaystyle=\mathbb{E}_{\begin{subarray}{c}s,a,r,s^{\prime}\sim D\\
+a^{\prime}\sim\pi_{\phi(a|s)}\end{subarray}}[(Q_{\theta}(s,a)-r-\gamma Q_{\bar{\theta}}(s^{\prime},a^{\prime}))^{2}]
+We augment this loss by adding ℒS​M​(θ,ψ)\mathcal{L}^{SM}(\theta,\psi) multiplied by a coefficient κ\kappa. With this, we define SMAC’s critic loss, ℒS​M​A​C\mathcal{L}^{SMAC}, as:
+ℒS​M​A​C​(θ,ψ)\displaystyle\mathcal{L}^{SMAC}(\theta,\psi)
+=κ​ℒS​M​(θ,ψ)+ℒA​C​(θ)\displaystyle=\kappa\mathcal{L}^{SM}(\theta,\psi)+\mathcal{L}^{AC}(\theta)
+We optimize the πϕ\pi_{\phi} in SMAC by using the SAC policy loss:
+ℒπ​(ϕ)=𝔼s∼Da∼πϕ​[−Qθ​(s,a)+log⁡πϕ​(a|s)]\mathcal{L}^{\pi}(\phi)=\mathbb{E}_{\begin{subarray}{c}s\sim D\\
+a\sim\pi_{\phi}\end{subarray}}[-Q_{\theta}(s,a)+\log\pi_{\phi}(a|s)]
+6.3 Using Muon as an optimizer
+We found that switching the optimizer from Adam (Kingma & Ba, 2017) to Muon (Jordan, 2024; Bernstein & Newhouse, 2024) improved the offline-to-online transfer of SMAC, we present an ablation of this in Appendix I. Bernstein & Newhouse (2024) show that Adam takes a step in the direction of steepest descent under the max-of-max norm, which is effectively the maximum absolute value of any single parameter. Muon, on the other hand, takes a step in the direction of steepest descent under the spectral norm, the largest singular value in a matrix. Recent work finds that Muon optimizes towards shallower optima (Anonymous, 2025) which
+has been linked to stronger transfer to downstream fine-tuning (Liu et al., 2023). In Appendix I we ablate optimizing the baselines with Muon and find they get no positive effect from the change.
+7 Experimental Results
+Figure 7: SMAC achieves smooth offline-to-online transfer to TD3. Plot shows offline-to-online transfer results for SMAC and baselines when fine-tuned with TD3. The format follows Figure 6.
+Figure 8: Fine-tuning with TD3+BC stabilizes offline-to-online. Plot shows offline-to-online transfer results for SMAC and baselines when fine-tuned with TD3+BC. The format follows Figure 6.
+We compare different offline RL algorithms’ generated offline checkpoints’ ability to transfer to online RL algorithms by transferring to: SAC, TD3, and TD3+BC. SAC is the most representative and popular algorithm in online value-based RL combining deterministic gradients with entropy regularization. TD3 is an antecedent algorithm to SAC which doesn’t use entropy regularization and only uses deterministic gradients for updating the policy. For this reason we include it, Lee et al. (2025) similarly evaluate their architecture against SAC and DDPG (antecedent algorithm to TD3 which only uses deterministic gradients) to show the architecture works well along popular online value-based techniques. TD3+BC adds behaviour cloning to TD3, while originally an offline RL algorithm and less efficient than TD3, it has been shown to improve transfer abilities for offline-to-online RL (Dong et al., 2025b). Additionally, in appendix G we have results when using Advantage Weighted Regression (AWR) for fine-tuning. AWR is an offline policy optimization approach and so we find it provides stable transfer for baselines but at a significant cost of fine-tuning efficiency and final performance. SMAC still smoothly transfers under AWR, and attains lower regret on average than the baselines but we find fine-tuning with AWR is almost always worse than any of the three fine-tuning methods above. We don’t consider online transfer to SMAC because the pre-trained diffusion model would then have to be continually updated which would be both computationally costly and can result in catastrophic forgetting in important states and actions.
+Figure 6 shows offline-to-online transfer when fine-tuning with SAC. Most baselines experience drastic performance drops upon transfer: CalQL in 3/4 environments, IQL in 4/6, and TD3+BC in 5/6. In contrast, SMAC avoids any performance drop across all environments, smoothly improving to the highest observed performance. These results correlate well with the interpolation and planar plots from Section 5. When fine-tuning with TD3, we again observe smooth transfer for SMAC, which generally dominates both offline and online performance in 4/6 environments.
+Table 1: Normalized Regret averaged over all six environments (↓\downarrow lower is better). Values are min-max normalized per environment then averaged. SMAC achieves the lowest regret across all four online algorithms, with particularly strong gains when paired with SAC.
+Online Algorithm
+Offline Algorithm
+AWR
+SAC
+TD3
+TD3+BC
+IQL
+0.508
+0.471
+0.653
+0.494
+SMAC
+0.380
+0.031
+0.090
+0.226
+TD3+BC
+0.654
+0.962
+0.545
+0.562
+CalQL/CQL
+0.482
+0.448
+0.442
+0.614
+Table 1 shows the average regret over all environments when regrets are min-max normalized so that 11 is worst regret observed and 00 is best regret observed per environment. We observe that across all online algorithms tested SMAC out-performs the baselines when averaging over environments. In Appendix G we list the average regret for each algorithm we test in each environment. We define regret for an algorithm as ∑t=0∞(R∗−Rt)\sum_{t=0}^{\infty}(R^{*}-R_{t}), where R∗R^{*}, denotes the highest reward observed in the environment over all agents, and RtR_{t} is the reward the algorithm obtained at timestep tt during the online phase. In 4/6 environments SMAC achieves the lowest regret when considering all offline and online combinations. In those 4 environments, SMAC achieves regret anywhere from 34% to 58% lower than the best performing baseline. In the 2 environments where SMAC does not achieve the lowest regret it attains the second and third lowest regret.
+In Figure 7 we plot all methods fine-tuned with TD3. Similarly, Figure 8 plots all methods fine-tuned with TD3+BC, with SMAC→\toSAC overlaid as a lower bound for optimal adaptive performance. SMAC still achieves smooth transfer in 6/6 environments when fine-tuning with TD3 and 4/6 when fine-tuning with TD3+BC. However in 2 environments (kitchen and walker2d) SMAC’s performance deteriorates with ongoing training. We attribute this to the BC term incentivizing the policy to copy suboptimal actions in the dataset and replay buffer. This attribution is supported by the fact
+that pen, door, and relocate (which contain only successful demonstrations) show no such degradation.
+From comparing Figures 7 and 8 we observe that in some environments, adding a BC term stabilizes offline-to-online transfer for IQL and TD3+BC while causing long term performance drops in SMAC and CalQL/CQL not observed when using TD3. One can also separate IQL and TD3+BC from CalQL/CQL and SMAC by whether they constrain the policy during the offline phase. During the online phase, regularizing the actor-critics generated by IQL and TD3+BC close to the behaviour data is a continuation of their offline optimization; this is the opposite for CalQL/CQL and SMAC. Conversely, fine-tuning with TD3 where the agents must only maximize the critic’s estimate of the policy’s sampled actions closely resembles the offline policy optimization for CalQL/CQL and SMAC. We believe this dichotomy between fine-tuning with TD3 vs. TD3+BC and which offline algorithms pair better reinforces our hypothesis about connected optima being an explanatory factor for offline-to-online stability.
+8 Related works
+SMAC follows previous work showing that strong offline RL agents can be trained by penalizing the Q-function on OOD actions (Kumar et al., 2020; Jin et al., 2022; Wen et al., 2024; Kostrikov et al., 2021; Yu & Zhang, 2023; Zhou et al., 2024; Nakamoto et al., 2023). This regularization ensures that the critic disincentivizes the policy from choosing OOD actions. A different branch of algorithms ensures this by regularizing the policy to stay close to dataset actions (Fujimoto & Gu, 2021; Wu et al., 2019; Kostrikov et al., 2022; Nair et al., 2020). As discussed in Section 5 the first type of approach mis-specifies the problem while the second under-specifies it. In our results section, we show that algorithms which follow the first branch exhibit better offline-to-online performance, implying that mis-specification is better than under-specification for offline-to-online transfer.
+Unlike our method, several offline

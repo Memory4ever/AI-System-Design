@@ -1,0 +1,179 @@
+3 Approach
+Our goal is to achieve significant computational speedup at minimal loss of perceptual quality of image and video generations. We achieve this by dynamically varying the patch size of a latent at each denoising timestep based on the complexity of the underlying latent manifold.
+We first briefly introduce diffusion transformers (DiT) [81] in Sec. 3.1, motivate our approach to adapt DiT to dynamically process latent patches of different sizes in Sec. 3.2, and finally
+detail our novel approach to dynamically select the optimal latent patch size at every denoising step in (Sec. 3.3).
+3.1 Preliminaries on Diffusion Transformers
+Owing to the flexibility and scalability of the transformer architecture [106], DiTs have achieved wide adoption in content generation. Built upon the Vision Transformer (ViT) architecture [21], DiTs operate in the latent space of a pre-trained variational autoencoder (VAE) [84].
+Briefly, given an input image II11
+1
+For simplicity, we use image inputs, but our method is extensible to DiTs which process videos as we show in Sec. 4., it is first encoded by the VAE into a latent representation 𝐳∈ℝH×W×C\mathbf{z}\in\mathbb{R}^{H\times W\times C}, where HH, WW, and CC denote the height, width, and channel dimensions of the latent feature map, respectively.
+The input to the transformer-based diffusion model is this latent 𝐳\mathbf{z}.
+During training, Gaussian noise is gradually added to 𝐳\mathbf{z}, and DiT is optimized to predict and remove this noise [37].
+During inference, the model starts from pure noise and iteratively denoises it over TT diffusion steps to recover a clean latent representation, which is then decoded by the VAE decoder to reconstruct the final image.
+Figure 3: Revised patch-embedding layer to support patches of varied resolutions. We modify the standard patch-embedding layer, designed for a fixed patch size pp, to additionally support patch sizes pnewp_{\text{new}}.
+Note that the latent zz is pre-processed before feeding to the diffusion transformer. Specifically, zz is first divided into non-overlapping patches of size p×pp\times p. Following this, each patch is tokenized by passing through a patch embedding layer parameterized by weights 𝐰emb∈ℝp×p×C×d\mathbf{w}^{\text{emb}}\in\mathbb{R}^{p\times p\times C\times d} and bias 𝐛emb∈ℝd\mathbf{b}^{\text{emb}}\in\mathbb{R}^{d}. This layer projects each patch into an embedding space of dimension dd.
+The resulting embeddings from each patch are then processed by LL stacked transformer blocks comprising a series of attention and feed-forward layers [106].
+The attention mechanism learns to attend to relevant patches by computing pairwise dependencies among all N=H​Wp2N=\frac{HW}{p^{2}} patches. Thus, attention operation has a computational complexity proportional to 𝒪⁡(N2)\mathcal{O}(N^{2}).
+Naturally, a smaller pp increases the number of tokens NN, leading to an expensive attention operation, thereby higher computational cost per layer. Further, since denoising is an iterative operation, using a small patch size pp is even more computationally prohibitive. Moreover, prior studies have shown that not all denoising steps need the same level of granularity [73, 80, 99, 103, 50, 110]. These factors motivate us to vary the patch size pp dynamically across timesteps to balance efficiency and generation quality.
+3.2 Dynamic Patching and Tokenization
+Figure 4: Inference speed vs. patch size. Inference speed measured over 5050 denoising steps for generating 1024×10241024\times 1024 images using FLUX-1.Dev [54], where every timestep uses a fixed patch size. As the patch size increases from pp →\rightarrow2​p2p →\rightarrow4​p4p, the number of tokens decreases quadratically (4096 →\rightarrow 1024 →\rightarrow 256), resulting in approximately 3×3\times and 4×4\times faster inference for 2​p2p and 4​p4p, respectively, compared to pp.
+We aim to modify a pre-trained DiT to seamlessly operate under different patch sizes with minimal architectural modifications (Fig. 3). To this end, we adapt the patch embedding layer, originally operating on patch size pp, to also handle new patch sizes pnewp_{\text{new}} and allow input latents of varying spatial resolutions. We define pnewp_{\text{new}} a positive integer multiple of pp, i.e., {p,2​p,4​p,…}\{p,2p,4p,...\}.
+Modifications to the patch embedding layer.
+To generalize DiT to pnewp_{\text{new}}, we introduce patch-specific embedding layers
+for each patch size we wish to support.
+Recall from Sec. 3.1 that CC denotes the number of latent channels and dd represents the embedding dimension. Let 𝐰pnewemb∈ℝpnew×pnew×C×d\mathbf{w}^{\text{emb}}_{p_{\text{new}}}\in\mathbb{R}^{p_{\text{new}}\times p_{\text{new}}\times C\times d} and 𝐛pnewemb∈ℝd\mathbf{b}^{\text{emb}}_{p_{\text{new}}}\in\mathbb{R}^{d} denote the weight matrix and bias vector of the patch embedding layer corresponding to pnew{p_{\text{new}}}.
+Each patch of size pnewp_{\text{new}} is linearly projected into an embedding of dimension dd using this newly added embedding layer. This results in a total of Npnew=H​Wpnew2N_{p_{\text{new}}}=\frac{HW}{p_{\text{new}}^{2}} patches.
+Since NpnewN_{p_{\text{new}}} is smaller than NN by a factor of (pnew/p)2(p_{\text{new}}/p)^{2}, DiT now processes fewer patches and yields significant computational gains. As shown in Fig. 4, increasing the patch size from pp to 2​p2p yields a 3×~3\times computational gain!
+To minimize the training cost, we retain the base model originally trained on the latent patch size pp and introduce a Low-Rank Adaptation (LoRA) branch [39] into each transformer block in DiT.
+This LoRA branch serves as an adaptive pathway and enables the model to process patches of different sizes.
+Additionally, as shown in Fig. 3, we add a residual connection from before the patch embedding layer to after the patch de-embedding block. This helps strike a balance between the base latent manifold and the new manifold being learnt by LoRA for pnewp_{\text{new}}.
+We reuse the learnt positional embeddings of the original patch size pp for pnewp_{\text{new}} by bilinearly interpolating them for the new patch size. We also introduce a learnable patch embedding (a dd-dimensional vector) added to all tokens akin to positional embeddings. This serves as a patch-size identifier and helps the model distinguish which patch size is being used at each timestep. At test time, we use the learned patch-size embedding as is.
+Finally, to distill the knowledge from the frozen base model to the LoRA-augmented model, we fine-tune the LoRA branch with a distillation loss.
+Let ϵθL\epsilon_{\theta_{L}} and ϵθT\epsilon_{\theta_{T}} denote the predicted noise from the LoRA-fine-tuned and frozen base models respectively. The distillation loss is:
+ℒ=‖ϵθL​(𝐳tpnew,t)−ϵθT​(𝐳tp,t)‖22.\mathcal{L}=||\epsilon_{\theta_{L}}(\mathbf{z}_{t}^{p_{\text{new}}},t)-\epsilon_{\theta_{T}}(\mathbf{z}_{t}^{p},t)||_{2}^{2}.
+(1)
+These minor architectural tweaks allow us to dynamically support larger patch sizes while maintaining the base model’s perceptual output quality. We stress and empirically show in Sec. 4 that these changes are seamlessly extensible to any diffusion-based image or video models.
+Figure 5: Given Δ(3)​𝐳t−1\Delta^{(3)}\mathbf{z}_{t-1}, we divide it into patches of size pi×pip_{i}\times p_{i}, compute within-patch standard deviation 𝝈t−1pi\boldsymbol{\sigma}_{t-1}^{p_{i}} of the acceleration.
+3.3 Dynamic Patch Scheduling
+Now that we enabled processing of multiple size input patches, how do we learn when to adapt to a larger patch-size (i.e., coarser token) and when to switch back to a smaller patch-size (i.e., fine-grained token)?
+To this end, we introduce a dynamic patch scheduling mechanism to determine the appropriate patch size at each diffusion timestep. Since different timesteps correspond to different levels of generative detail [73, 80, 99, 103, 110, 90], selecting the proper patch size at each stage is crucial for maintaining both efficiency and quality. We hypothesize that:
+•
+large patches may reasonably capture coarse scene structures without significant compromises of visual quality while yielding computational speedups.
+•
+smaller patches may be pertinent to capture fine-grained details to retain all visual intricacies.
+We automate this intuition in a highly light-weight manner and design a training-free dynamic scheduler that adaptively selects the patch size based on the rate of evolution of the latent representations within a window of timesteps.
+Latent evolution estimation. We employ finite-difference approximations of increasing order to quantify how latent representations evolve during the denoising process.
+Let 𝐳t\mathbf{z}_{t} denote the latent at timestep tt. The first-order finite difference captures the displacement of latent features between consecutive timesteps:
+Δ​𝐳t=𝐳t−𝐳t+1.\Delta\mathbf{z}_{t}=\mathbf{z}_{t}-\mathbf{z}_{t+1}.
+(2)
+Similarly, the second-order difference describes the rate of change of this displacement, representing the local velocity of the denoising trajectory, defined by
+Δ(2)​𝐳t−1=Δ​𝐳t−1−Δ​𝐳t.\Delta^{(2)}\mathbf{z}_{t-1}=\Delta\mathbf{z}_{t-1}-\Delta\mathbf{z}_{t}.
+(3)
+Finally, the third-order finite difference quantifies the variation in this velocity. This can be interpreted as a measure of acceleration of a latent’s evolution during denoising within a short temporal window.
+Δ(3)​𝐳t−1=Δ(2)​𝐳t−1−Δ(2)​𝐳t=2​(Δ​𝐳t−1+Δ​𝐳t+12−Δ​𝐳t),\Delta^{(3)}\mathbf{z}_{t-1}=\Delta^{(2)}\mathbf{z}_{t-1}-\Delta^{(2)}\mathbf{z}_{t}=2(\frac{\Delta\mathbf{z}_{t-1}+\Delta\mathbf{z}_{t+1}}{2}-\Delta\mathbf{z}_{t}),
+(4)
+Figure 6:
+Visualization of σt−12​p,(ρ)\boldsymbol{\sigma}_{t-1}^{2p,(\rho)} for two prompts (log scale).
+Prompt 1: “Several zebras are standing together behind a fence.”
+Prompt 2: “A simple red apple on a black background.”
+Prompts requiring different levels of spatial granularity exhibit distinct 𝝈t−12​p,(ρ)\boldsymbol{\sigma}_{t-1}^{2p,(\rho)} patterns across timesteps.
+For the fine-grained zebra pattern, 𝝈t−12​p,(ρ)\boldsymbol{\sigma}_{t-1}^{2p,(\rho)} remains higher, indicating higher detail sensitivity,
+whereas for the simpler apple scene, 𝝈t−12​p,(ρ)\boldsymbol{\sigma}_{t-1}^{2p,(\rho)} is lower, thus we can seamlessly use larger patch sizes during generation.
+We hypothesize that if the acceleration is slow at a given timestep, there is a relatively minor difference in the underlying latent manifold in the local temporal window. On the other hand, a high acceleration value suggests a larger difference in the structure of the underlying manifold. We use this measure as a proxy to identify transition points where the generative process intrinsically shifts between generating coarse to fine structures or vice versa.
+Empirically, we find that the third-order difference captures this variation more effectively and remains more stable, while the first- and second-order differences fail to do so, likely because they capture relatively short-term temporal changes (Sec. 4.4). This observation is consistent with [121], which shows that the difference between neighboring noise predictions is explicitly related to the third-order finite difference.
+Spatial variance estimation. We use latent ztz_{t} in the above formulation for simplicity, but in practice, ztz_{t} is always divided into
+patches of size pnew×pnewp_{\text{new}}\times p_{\text{new}} (Sec. 3.2). Our final task now is to select the right patch size at each latent manifold. This requires quantifying and aggregating the acceleration at which the latent patches evolve. Thus, we divide zt−1z_{t-1} into patches of size pi×pip_{i}\times p_{i}, where pi∈pnewp_{i}\in p_{\text{new}}. Then, we compute the standard deviation 𝝈t−1pi\boldsymbol{\sigma}_{t-1}^{p_{i}} of the acceleration (defined in Eqn. 4) within each patch (Fig. 5). We hypothesize that if the per-(latent) pixel standard deviation within a latent patch is high, then the denoising process is focusing on generating finer-grained details. On the other hand, if the standard deviation is low, then the underlying evolving latent is smooth.
+As shown in Fig. 6, prompts with different levels of granularity exhibit distinct variance profiles across timesteps.
+Table 1: Quantitative comparison of text-to-image generation performance with state-of-the-art methods on COCO, DrawBench, and PartiPrompts.
+If not specified, all results are reported using 50 inference steps by default.
+Each color (Yellow, Blue) indicates methods operating at similar inference speeds.
+As highlighted in Blue, our method achieves the best overall image quality, evidenced by the lowest FID scores, strong prompt alignment (CLIP and ImageReward), and high perceptual similarity (SSIM and LPIPS). Bold: best. Underline: second-best.
+Model
+Speed↓\downarrow
+COCO
+DrawBench
+PartiPrompts
+(secs/image)
+FID↓\downarrow
+CLIP↑\uparrow
+CLIP↑\uparrow
+ImgR↑\uparrow
+SSIM↑\uparrow
+LPIPS↓\downarrow
+CLIP↑\uparrow
+ImgR↑\uparrow
+FLUX-1.Dev (50 steps)
+12.0
+33.07
+0.314
+0.3156
+1.0291
+–
+–
+0.3197
+1.192
+FLUX-1.Dev (28 steps)
+6.72
+33.35
+0.312
+0.3140
+1.0107
+0.739 ±\pm 0.155
+0.175 ±\pm 0.126
+0.3118
+1.115
+FLUX-1.Dev (15 steps)
+3.6
+34.02
+0.311
+0.3121
+0.9865
+0.591 ±\pm 0.155
+0.298 ±\pm 0.128
+0.3072
+0.9613
+TeaCache (δ=0.6\delta=0.6)
+6.0
+34.95
+0.303
+0.3071
+0.9968
+0.654 ±\pm 0.145
+0.241 ±\pm 0.114
+0.3018
+0.9701
+TeaCache (δ=0.8\delta=0.8)
+5.33
+35.57
+0.303
+0.3075
+0.9780
+0.612 ±\pm 0.146
+0.279 ±\pm 0.114
+0.2991
+0.9699
+TaylorSeer (OPENN=3,O=2)N=3,O=2)
+6.0
+34.74
+0.303
+0.3085
+0.9721
+0.632 ±\pm 0.173
+0.271 ±\pm 0.149
+0.3142
+0.9813
+TaylorSeer (OPENN=6,O=1)N=6,O=1)
+3.5
+35.02
+0.302
+0.3040
+0.9535
+0.583 ±\pm 0.130
+0.284 ±\pm 0.106
+0.3004
+0.9714
+DDiT
+5.5
+33.42
+0.317
+0.3136
+1.0284
+0.635 ±\pm 0.183
+0.264 ±\pm 0.190
+0.3192
+1.189
+DDiT + Teacache (δ=0.4\delta=0.4)
+3.4
+33.60
+0.315
+0.3117
+1.0182
+0.592 ±\pm 0.118
+0.267 ±\pm 0.120
+0.3172
+1.062
+Given 𝝈t−1pi\boldsymbol{\sigma}_{t-1}^{p_{i}}, our goal is to determine the appropriate patch size at each timestep.
+A straightforward way to do this is to aggregate 𝝈t−1pi\boldsymbol{\sigma}_{t-1}^{p_{i}} by taking their mean across patches, which provides a simple measure of the overall latent variation at that timestep.
+However, this fails to effectively capture the generative dynamics occurring at that timestep. For example, when generating an image containing both a uniform white background and a highly textured region, averaging might smoothen the higher standard deviation values, leading to the scheduler choosing larger patches and thus overlooking fine details in the textured area. To better capture such spatial heterogeneity in the underlying latent manifold, we instead take the ρ\rho-th percentile of the per-patch variances, denoted as σt−1pi,(ρ)\sigma_{t-1}^{{}^{p_{i}},(\rho)}.
+This percentile-based aggregation allows us to capture meaningful information across patches without averaging out important signals, while also avoiding bias toward a few high-variance outliers.
+Concretely, we compare σt−1pi,(ρ)\sigma_{t-1}^{{}^{p_{i}},(\rho)} a

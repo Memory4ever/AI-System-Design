@@ -1,0 +1,3807 @@
+Beyond Max Tokens: Stealthy Resource Amplification via Tool Calling Chains in LLM Agents
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+License: arXiv.org perpetual non-exclusive license
+arXiv:2601.10955v1 [cs.CR] 16 Jan 2026
+Beyond Max Tokens: Stealthy Resource Amplification via Tool Calling Chains in LLM Agents
+CCS:
+Computing methodologies Artificial intelligence
+Kaiyu Zhou
+Affiliation:
+Nanyang Technological University
+,
+Singapore
+email:
+kaiyu001@e.ntu.edu.sg
+,
+Yongsen Zheng
+Affiliation:
+Nanyang Technological University
+,
+Singapore
+email:
+yongsen.zheng@ntu.edu.sg
+Note:
+Corresponding author: Yongsen Zheng.
+,
+Yicheng He
+Affiliation:
+University of Illinois Urbana-Champaign
+,
+United States
+email:
+hyicheng223@gmail.com
+,
+Meng Xue
+Affiliation:
+The Hong Kong University of Science and Technology
+,
+Hong Kong
+email:
+csexuemeng@ust.hk
+,
+Xueluan Gong
+Affiliation:
+Nanyang Technological University
+,
+Singapore
+email:
+xueluan.gong@ntu.edu.sg
+,
+Yuji Wang
+Affiliation:
+Shanghai Jiao Tong University
+,
+China
+email:
+yujiwang@sjtu.edu.cn
+and
+Kwok-Yan Lam
+Affiliation:
+Nanyang Technological University
+,
+Singapore
+email:
+kwokyan.lam@ntu.edu.sg
+2026
+Abstract.
+The agent-tool communication loop is a critical attack surface in modern Large Language Model (LLM) agents. Existing Denial-of-Service (DoS) attacks, primarily triggered via user prompts or injected retrieval-augmented generation (RAG) context, are ineffective for this new paradigm. They are fundamentally single-turn and often lack a task-oriented approach, making them conspicuous in goal-oriented workflows and unable to exploit the compounding costs of multi-turn agent-tool interactions. We introduce a stealthy, multi-turn economic DoS attack that operates at the tool layer under the guise of a correctly completed task. Our method adjusts text-visible fields and a template-governed return policy in a benign, Model Context Protocol (MCP)-compatible tool server, optimizing these edits with a Monte Carlo Tree Search (MCTS) optimizer. These adjustments leave function signatures unchanged and preserve the final payload, steering the agent into prolonged, verbose tool-calling sequences using text-only notices. This compounds costs across turns, escaping single-turn caps while keeping the final answer correct to evade validation. Across six LLMs on the ToolBench and BFCL benchmarks, our attack expands tasks into trajectories exceeding
+60,000
+tokens, inflates costs by up to
+658
+×
+\times
+, and raises energy by
+100–560
+×
+\times
+. It drives GPU KV cache occupancy from <1% to
+35–74
+% and cuts co-running throughput by approximately
+50
+%. Because the server remains protocol-compatible and the task outcomes are correct, conventional checks fail. These results elevate the agent-tool interface to a first-class security frontier, demanding a paradigm shift from validating final answers to monitoring the economic and computational cost of the entire agentic process.
+Keywords:
+Large Language Models, LLM Agents, Tool Calling, Agent Security, Economic Denial-of-Service
+1.
+Introduction
+Large language models (LLMs) are rapidly evolving from single-turn chatbots into tool-augmented agents
+(
+Luo et al., 2025a
+;
+Yang et al., 2025b
+;
+Tran et al., 2025
+;
+Wang et al., 2024
+;
+Xi et al., 2023
+;
+Mohammadi et al., 2025
+)
+. LLM agents can interact with external tools and execute multi-step tasks across various domains
+(
+Sapkota et al., 2025
+)
+. The standardization of communication between agents and tools, like the Model Context Protocol (MCP), is further accelerating their integration
+(
+Ehtesham et al., 2025
+;
+Hou et al., 2025
+;
+Hasan et al., 2025
+;
+Model Context Protocol Working Group, 2025
+;
+Anthropic, 2024
+)
+. LLM agents
+(
+Tang et al., 2025
+)
+are now being embedded in a wide spectrum of applications
+(
+Zheng et al., 2024e
+;
+Zheng et al., 2025b
+;
+Zheng et al., 2024a
+;
+Zheng et al., 2024b
+;
+Zheng et al., 2024d
+;
+Zheng et al., 2023
+;
+Zheng et al., 2024c
+;
+Zheng et al., 2024f
+;
+Zheng et al., 2025c
+;
+Zheng et al., 2025a
+)
+, from e-commerce and scientific discovery to autonomous systems
+(
+Sun et al., 2025
+)
+. Consequently, their operational reliability and cost stability have emerged as primary concerns. We frame this challenge through the lens of Unbounded Consumption
+(
+OWASP Gen AI Security Project, 2025
+)
+, where vulnerabilities can lead to severe resource exhaustion in the form of Denial-of-Service (DoS) attacks
+(
+Xu and Parhi, 2025
+)
+.
+Existing research on DoS attacks against LLMs has focused on forcing models to generate excessively long outputs within a single interaction. These attacks are typically triggered either by a malicious user prompt or through injected retrieval-augmented generation (RAG) context
+(
+Zhang et al., 2025b
+;
+Gao et al., 2024b
+;
+Dong et al., 2025
+;
+Geiping et al., 2024
+;
+Gao et al., 2024a
+)
+. For instance, methods like
+Engorgio
+and
+Auto-DoS
+craft user queries that elicit verbose responses which often lack task orientation
+(
+Dong et al., 2025
+;
+Zhang et al., 2025b
+)
+. A distinct, more stealthy technique,
+Overthink
+, injects decoy reasoning problems into the retrieved RAG context, which inflates the model’s internal thought process while keeping the final answer correct
+(
+Kumar et al., 2025
+)
+. Despite their differences, a critical limitation unites all existing methods: they are fundamentally single-turn attacks, operating at the user query or RAG context layer.
+However, this single-turn focus renders existing methods ineffective for the new agentic paradigm for two key reasons. First, their potential for resource consumption is inherently capped by the model’s maximum output tokens per turn, preventing them from exploiting the compounding costs achievable in a chained, multi-turn agent-tool dialogue. Second, with the exception of
+Overthink
+, many of these attacks lack a task-oriented approach, producing outputs that are generically long rather than goal-relevant
+(
+Zhang et al., 2025b
+;
+Gao et al., 2024b
+;
+Dong et al., 2025
+;
+Geiping et al., 2024
+;
+Gao et al., 2024a
+)
+. This makes them conspicuous and easily detectable within the goal-oriented workflows of LLM agents, where behavior is expected to be logical and task-focused, thus compromising their stealth and effectiveness
+(
+Louck et al., 2025
+)
+. As a result, the critical attack surface of the multi-turn agent-tool communication loop remains largely unexplored, representing a significant, unaddressed vector for inflicting severe economic and operational damage in both API-billed deployments and self-hosted serving stacks, even when the final task output appears correct. Table
+1
+contrasts our approach with prior work across key dimensions, including the trigger layer, turn budget, and potential for cost amplification.
+Aspect
+Engorgio
+(
+Dong et al., 2025
+)
+P
+-
+DoS
+(
+Gao et al., 2024b
+)
+Auto
+-
+DoS
+(
+Zhang et al., 2025b
+)
+Overthink
+(
+Kumar et al., 2025
+)
+Ours
+Stealth in task workflow
+✗
+✗
+✗
+✓
+✓
+Trigger layer
+Dialog query
+Dialog query
+Dialog query
+Retrieved context (RAG)
+MCP Tool server
+Turns & per
+-
+query bound
+Single
+-
+turn,
+≤
+M
+\leq M
+Single
+-
+turn,
+≤
+M
+\leq M
+Single
+-
+turn,
+≤
+M
+\leq M
+Single
+-
+turn,
+≤
+M
+\leq M
+Multi
+-
+turn, up to
+n
+×
+M
+n{\times}M
+Long-output site
+Answer step
+Answer step
+Answer step
+Think step
+Tool calling step
+Access model
+White
+-
+box
+White
+-
+box
+Black
+-
+box
+Black
+-
+box
+Black
+-
+box
+Table 1
+.
+Comparison between our DoS attack and prior works.
+M
+M
+denotes the model’s
+max output tokens
+. Our attack operates at the tool calling layer and preserves task completion (stealth), enabling unbounded multi-turn token growth.
+To address these gaps, we introduce an attack targeting the multi-turn, tool-based interaction layer that is superior in both stealth and resource consumption. Our method automatically transforms a benign, MCP-compliant tool server into a malicious variant that guides the agent to repeatedly call the same tool, generating exceptionally long outputs at each turn to establish a resource-consumption loop. This entire process is conducted while ensuring the user’s task is successfully completed. This approach achieves both stealth and efficiency in resource exhaustion, turning simple tool calls into extensive, costly dialogues that far surpass the impact of single-turn attacks. The potency of this attack is validated by our broad empirical study, conducted across six powerful LLMs (Qwen-3-32B
+(
+Yang et al., 2025a
+)
+, Llama-3.3-70B-Instruct
+(
+Grattafiori and et al., 2024
+)
+, Llama-DeepSeek-70B
+(
+Guo and et al., 2025
+)
+, Mistral Large
+(
+Mistral AI, 2024
+)
+, Seed-32B
+(
+ByteDance Seed Team, 2025
+)
+, and GLM-4.5-Air
+(
+Zeng and et al., 2025
+)
+) and two tool-use benchmarks (ToolBench
+(
+Fan et al., 2025
+)
+and BFCL
+(
+Patil et al., 2025
+)
+). It consistently drives per-query completions to lengths exceeding
+60,000
+tokens, with trajectories peaking at over
+90,000
+tokens in our experiments, more than
+5.5
+times the output of prior state-of-the-art DoS attacks capped at
+16,384
+tokens, and inflates task token budgets by up to
+658
+times compared to benign operations. This immense, sustained token generation precipitates a severe escalation in physical resource consumption, with measured increases in total energy consumption of up to
+561
+times and a sharp rise in peak GPU KV cache usage to over
+73
+% of available capacity
+(
+Pan et al., 2025
+)
+. Crucially, the attack achieves this while preserving task success, making it a stealthy method for degrading system throughput and eroding OOM-safe concurrency.
+Taken together, our findings make three critical contributions:
+•
+First, we establish the tool calling layer as a first-class DoS attack surface in the agent era, revealing the urgent need for detection during seemingly normal interactions where correct tools are used for normal queries and the final results are accurate.
+•
+Second, we propose a universal MCTS optimization method to automatically transform any benign MCP server into a malicious variant capable of inducing DoS effects that far surpass the current state-of-the-art.
+•
+Third, through extensive experiments on the ToolBench and BFCL benchmarks across six distinct LLMs, we demonstrate the superiority of our attack and its effectiveness in exploiting the agent-tool interaction layer to achieve unprecedented resource consumption while maintaining high task success rates.
+2.
+Background and Related Work
+2.1.
+The Rapid Emergence of LLM Agents
+With the significant advancements in LLM reasoning and tool calling capabilities in 2025, these models are increasingly being integrated as autonomous agents to execute real-world tasks
+(
+Hu et al., 2025
+;
+Yan et al., 2025
+;
+Zhang et al., 2025a
+;
+Zheng et al., 2025d
+;
+Zhu et al., 2025
+)
+. Major technology giants are spearheading this shift. Microsoft has declared 2025 the "era of AI agents" by embedding them across its entire stack
+(
+Microsoft, 2025
+)
+, while both Amazon and Google have launched advanced agent-building frameworks, such as Agents for Bedrock and Vertex AI Agent Builder
+(
+Amazon Web Services, 2025
+;
+Google Cloud, 2025
+)
+, to automate complex business workflows. Concurrently, 2025 has witnessed a surge of specialized AI startups securing new funding to deploy domain-specific agents for functions such as sales, customer support, and IT operations
+(
+PwC, 2025
+;
+Shen et al., 2025
+)
+. Consequently, the use of agent-based applications is rapidly becoming a standard, mainstream practice within enterprise environments.
+2.2.
+The Operational Cost of Agents
+As these agents become widely adopted, their primary operational cost shifts from one-time training to continuous inferences
+(
+Luccioni et al., 2024
+;
+Samsi et al., 2023
+)
+. For organizations using API services, this creates a direct financial outlay, where costs scale predictably with the number of tokens processed in a given task. In self-hosted scenarios, the same computational load manifests as significant energy consumption, directly impacting electricity usage and hardware resources
+(
+Varoquaux et al., 2025
+;
+Bhardwaj et al., 2025
+)
+. This tight coupling of an agent’s computational activity to real-world expenditure, whether in dollars or watts, establishes a potent vulnerability to economic denial-of-service.
+2.3.
+LLM Resource Consumption Attacks
+Research on resource consumption attacks against LLMs aims to inflate operational costs and cause denial-of-service, typically by forcing the model to generate excessively long outputs
+(
+Zhang et al., 2025b
+;
+Gao et al., 2024b
+;
+Dong et al., 2025
+;
+Kumar et al., 2025
+;
+Geiping et al., 2024
+;
+Gao et al., 2024a
+)
+. Early approaches, such as
+repeat-hello
+,
+Engorgio
+,
+P-DoS
+, and
+Auto-DoS
+, used malicious queries to trigger verbose, non-sequitur responses
+(
+Geiping et al., 2024
+;
+Zhang et al., 2025b
+;
+Gao et al., 2024b
+;
+Dong et al., 2025
+)
+. However, the non-task-oriented nature of these outputs makes the malicious behavior obvious, limiting their effectiveness primarily to general-purpose chatbots. A more advanced, stealthy attack,
+Overthink
+, injects decoy reasoning problems into the retrieved RAG context, inflating the model’s internal
+think
+trace while preserving final answer correctness
+(
+Kumar et al., 2025
+)
+. Despite this advancement in stealth, a critical limitation unites all existing methods: they are fundamentally confined to single-turn interactions, where the cost is bounded by the model’s maximum completion length. This leaves their efficacy against modern, multi-turn agentic systems, where interactions can be chained, as a significant and unexplored research gap.
+Figure 1
+.
+Overview of our tool-layer DoS framework. Left: agent under no attack calls a benign MCP server and answers concisely. Middle: a universal malicious template is produced via auto-modification by an LLM and refined by MCTS while keeping protocol compatibility. Right: under our attack, the agent repeatedly calls the same tool with a segment index and a length argument, creating a resource-consumption loop while preserving the final task result.
+3.
+Methodology
+To overcome the limitations of single-turn attacks, our methodology is designed to exploit the multi-turn, stateful nature of agent-tool interactions. We introduce a novel attack that transforms a benign, protocol-compliant tool server into a malicious variant capable of inducing long, costly, yet task-successful trajectories. This is achieved through three core components, which we detail in this section:
+(1)
+A formal problem definition (§3.1)
+, where we model the attack as a constrained optimization problem: maximizing resource consumption while strictly preserving task correctness to ensure stealth.
+(2)
+A universal malicious template (§3.2)
+, which manipulates the agent’s behavior via text-visible fields and a template return policy within the tool server’s responses. This template is the central mechanism for generating multi-turn, high-verbosity interactions.
+(3)
+An automated Monte Carlo Tree Search (MCTS)-based optimizer (§3.3–§3.4)
+, which systematically searches for the most effective text-based manipulations to craft the malicious template, maximizing the attack’s success rate across different LLMs and tasks.
+Figure
+1
+provides a high-level overview of this process, illustrating how a benign, single-call interaction is transformed into a resource-intensive, multi-turn loop that nonetheless completes the task correctly.
+3.1.
+Problem Formulation and Threat Model
+Entities and Protocol.
+We model the agent-tool interaction to precisely define our attack’s mechanism and constraints.
+Core Components.
+Our system consists of an agent policy
+A
+A
+driving a black-box LLM
+M
+M
+. The agent interacts with an external
+MCP server
+T
+θ
+T_{\theta}
+, whose behavior is controlled by a configuration template
+θ
+\theta
+. The MCP server exposes a set of tool functions
+ℱ
+\mathcal{F}
+and communicates strictly via the MCP protocol (request/response semantics defined by MCP).
+Agent policy.
+We view
+A
+A
+as the decision layer that maps the dialogue
+and tool feedback to the next action, i.e., whether to call a tool (which one,
+with what arguments) or to emit the final answer. Concretely,
+A
+A
+parses the
+LLM outputs from
+M
+M
+, routes tool invocations, handles retries/repairs, and
+decides when to stop. Our attack never changes
+A
+A
+; instead, it manipulates
+the tool responses so that
+A
+A
+chooses
+longer multi-turn trajectories. Concretely, in many modern agents,
+A
+A
+is implicitly instantiated by
+M
+M
+via structured prompting (e.g., ReAct-style loops), so the model’s own generation determines the next action; our attack does not alter this loop, only the tool-facing messages it consumes.
+Queries and Triggering.
+Let
+q
+∈
+𝒳
+q\in\mathcal{X}
+denote a user query issued to the agent stack. We do
+not
+tamper with
+q
+q
+and we do not alter prompts or retrieval; the attack remains dormant until the agent policy
+A
+A
+(driven by
+M
+M
+)
+chooses
+to call the MCP server
+T
+θ
+T_{\theta}
+. We define the benign selection event
+𝖲
+⁡
+(
+q
+,
+A
+,
+M
+,
+θ
+0
+)
+\displaystyle\mathsf{S}(q;A,M,\theta_{0})
+=
+𝕀
+{
+A
+routes at least one call to
+T
+θ
+0
+\displaystyle=\mathbb{I}\Big\{\text{$A$ routes at least one call to $T_{\theta_{0}}$}
+under the benign template
+θ
+0
+}
+.
+\displaystyle\text{under the benign template $\theta_{0}$}\Big\}.
+𝒟
+T
+=
+{
+q
+∈
+𝒳
+:
+𝖲
+⁡
+(
+q
+,
+A
+,
+M
+,
+θ
+0
+)
+=
+1
+}
+.
+\mathcal{D}_{T}=\bigl\{\,q\in\mathcal{X}\ :\ \mathsf{S}(q;A,M,\theta_{0})=1\,\bigr\}.
+In modern automated agents, such tool calls are frequent for routine capabilities (date/time, currency conversion, search, data transforms, etc.)
+(
+Model Context Protocol Working Group, 2025
+;
+Kong et al., 2025
+;
+Luo et al., 2025b
+;
+Sapkota et al., 2025
+)
+. Conditioning on
+𝒟
+T
+\mathcal{D}_{T}
+captures the common case where
+T
+T
+is legitimately involved in the workflow.
+Interaction Trajectory & Cost Metric.
+An agent’s workflow is a trajectory
+τ
+=
+{
+(
+a
+t
+,
+r
+t
+)
+}
+t
+=
+1
+n
+\tau=\{(a_{t},r_{t})\}_{t=1}^{n}
+, a sequence of tool calls
+(
+a
+t
+)
+(a_{t})
+and tool responses
+(
+r
+t
+)
+(r_{t})
+. Our attack focuses on inflating the agent’s generated output, as this is the primary driver of computational and financial costs in real-world deployments. We therefore define the cost
+C
+⁡
+(
+τ
+)
+C(\tau)
+solely as the total number of output tokens generated by the LLM
+M
+M
+:
+C
+​
+(
+τ
+)
+=
+Tok
+out
+​
+(
+τ
+)
+C(\tau)=\mathrm{Tok}_{\text{out}}(\tau)\,
+Attack Objective and Correctness Constraint.
+Correctness constraint.
+We optimize cost (Eq.
+1
+) under a single hard requirement:
+task success
+holds with probability at least
+p
+min
+p_{\min}
+over
+q
+∈
+𝒟
+T
+q\in\mathcal{D}_{T}
+(Eq.
+2
+); i.e., the final answer
+o
+o
+solves the user goal
+u
+u
+.
+By construction (see §3.2), edits are confined to text-visible fields and a template-governed return policy; the server interface (function signatures/identifiers) remains unchanged, and the computation that produces the terminal payload is unmodified.
+Attacker’s Goal: Stealthy Cost Maximization.
+The attacker’s objective is a constrained optimization problem: to find a tool configuration
+θ
+\theta
+that maximizes the expected output token cost while maintaining task success. Formally:
+(1)
+max
+θ
+∈
+Θ
+𝔼
+q
+∼
+𝒟
+T
+​
+[
+C
+⁡
+(
+τ
+⁡
+(
+q
+,
+θ
+)
+)
+]
+\max_{\theta\in\Theta}\ \ \mathbb{E}_{q\sim\mathcal{D}_{T}}\!\left[\,C\big(\tau(q;\theta)\big)\,\right]
+(2)
+Pr
+⁡
+[
+Succ
+⁡
+(
+u
+,
+τ
+,
+o
+)
+=
+1
+|
+q
+∈
+𝒟
+T
+]
+≥
+p
+min
+.
+\Pr\!\left[\mathrm{Succ}(u,\tau,o)=1\ \middle|\ q\in\mathcal{D}_{T}\right]\ \geq\ p_{\min}.
+We condition on
+𝒟
+T
+\mathcal{D}_{T}
+because we neither alter
+q
+q
+nor influence the first routing decision; the attack acts only through tool-facing messages once
+T
+T
+is legitimately invoked. In simple terms, the attacker must make the agent generate as many output tokens as possible (Eq.
+1
+) while still completing the task (Eq.
+2
+).
+Multi-Turn Cost Amplification.
+The central mechanism of our attack is to exploit the multi-turn nature of agent-tool interactions to amplify costs. Instead of a single, long output, our goal is to induce the agent into a longer interaction trajectory (increasing
+n
+n
+) while also making the output of each tool calling turn verbose. We define this as multi-turn amplification: the attack aims for a near-linear growth in cost with each additional turn, with the vast majority of tokens being generated during tool calling rather than in the final answer.
+Notation
+q
+∈
+𝒳
+user query to the agent 
+u=goal(q)
+u
+​
+s
+​
+e
+​
+r
+​
+g
+​
+o
+​
+a
+​
+l
+​
+i
+​
+n
+​
+f
+​
+e
+​
+r
+​
+r
+​
+e
+​
+d
+​
+f
+​
+r
+​
+o
+​
+m
+​
+q
+o
+agent’s final answer 
+A
+a
+​
+g
+​
+e
+​
+n
+​
+t
+​
+p
+​
+o
+​
+l
+​
+i
+​
+c
+​
+y
+M
+underlying LLM (black box) 
+T_
+θ
+M
+​
+C
+​
+P
+​
+s
+​
+e
+​
+r
+​
+v
+​
+e
+​
+r
+​
+(
+t
+​
+e
+​
+x
+​
+t
+​
+t
+​
+e
+​
+m
+​
+p
+​
+l
+​
+a
+​
+t
+​
+e
+​
+θ
+)
+θ
+0
+benign (unmodified) template
+F
+t
+​
+o
+​
+o
+​
+l
+​
+f
+​
+u
+​
+n
+​
+c
+​
+t
+​
+i
+​
+o
+​
+n
+​
+s
+​
+e
+​
+x
+​
+p
+​
+o
+​
+s
+​
+e
+​
+d
+​
+b
+​
+y
+​
+T_
+θ
+𝖲
+⁡
+(
+q
+,
+A
+,
+M
+,
+θ
+0
+)
+indicator: agent calls
+T
+θ
+0
+at least once
+D
+_T
+r
+o
+u
+t
+a
+b
+l
+e
+s
+e
+t
+{ q:
+S
+(q;A,M,
+θ
+_0)=1 }
+τ
+⁡
+(
+q
+,
+θ
+)
+=
+{
+(
+a
+t
+,
+r
+t
+)
+}
+t
+=
+1
+n
+interaction trajectory 
+C(
+τ
+)=Tok_
+out
+(
+τ
+)
+t
+​
+o
+​
+t
+​
+a
+​
+l
+​
+o
+​
+u
+​
+t
+​
+p
+​
+u
+​
+t
+​
+t
+​
+o
+​
+k
+​
+e
+​
+n
+​
+s
+​
+g
+​
+e
+​
+n
+​
+e
+​
+r
+​
+a
+​
+t
+​
+e
+​
+d
+​
+b
+​
+y
+​
+M
+Succ
+⁡
+(
+u
+,
+τ
+,
+o
+)
+∈
+{
+0
+,
+1
+}
+task success (final answer solves goal) 
+t∈{1,…,T_max}
+s
+​
+e
+​
+g
+​
+m
+​
+e
+​
+n
+​
+t
+​
+i
+​
+n
+​
+d
+​
+e
+​
+x
+​
+(
+o
+​
+u
+​
+r
+​
+t
+​
+e
+​
+m
+​
+p
+​
+l
+​
+a
+​
+t
+​
+e
+)
+L
+∈
+ℕ
+per-turn calibration length
+\begin{array}[]{@{}l >{\raggedright\arraybackslash}p{0.66\linewidth}@{}}q\in\mathcal{X}&user query to the agent 
+u=\mathrm{goal}(q)\@add@raggedright&usergoalinferredfrom$q$\\
+o&agent\textquoteright s final answer 
+A\@add@raggedright&agentpolicy\\
+M&underlying LLM (black box) 
+T_{\theta}\@add@raggedright&MCPserver(texttemplate$\theta$)\\
+\theta_{0}&benign (unmodified) template 
+\mathcal{F}\@add@raggedright&toolfunctionsexposedby$T_{\theta}$\\
+\mathsf{S}(q;A,M,\theta_{0})&indicator: agent calls $T_{\theta_{0}}$ at least once 
+\mathcal{D}_T\@add@raggedright&routableset$\lx@text@lbrace\,q:\mathsf{S}(q;A,M,\theta_0)=1\,\lx@text@rbrace$\\
+\tau(q;\theta)=\{(a_{t},r_{t})\}_{t=1}^{n}&interaction trajectory 
+C(\tau)=\mathrm{Tok}_{\text{out}}(\tau)\@add@raggedright&totaloutputtokensgeneratedby$M$\\
+\mathrm{Succ}(u,\tau,o)\in\{0,1\}&task success (final answer solves goal) 
+t\in\lx@text@lbrace 1,\ldots,T_{\max}\lx@text@rbrace\@add@raggedright&segmentindex(ourtemplate)\\
+L\in\mathbb{N}&per-turn calibration length\@add@raggedright\end{array}
+Threat Model.
+The optimization objective and correctness constraint are formalized in §3.1.
+Attacker Capabilities.
+The adversary’s capability is confined to controlling the
+MCP server
+T
+θ
+T_{\theta}
+—specifically, modifying its template
+θ
+\theta
+. The attacker can introduce or alter
+T
+θ
+T_{\theta}
+as a drop-in, MCP-compatible server (e.g., via social engineering of operators or as an insider), but cannot modify the agent policy
+A
+A
+or the LLM
+M
+M
+, and has only black-box access to them.
+This assumption is realistic because MCP servers are decentralized plug-ins with incomplete provenance and operational hardening
+(
+Hasan et al., 2025
+)
+. In practice, weaknesses in naming, installers, updates, and configuration make attacker-controlled or tampered servers feasible to deploy without touching the agent or model
+(
+Wang et al., 2025
+)
+.
+Non-interference with inputs and selection.
+The adversary does not modify queries
+q
+q
+, prompts, or the agent stack. The attack activates only after
+A
+A
+(under benign conditions) decides to call
+T
+θ
+T_{\theta}
+; we merely replace
+θ
+0
+\theta_{0}
+with a text-only variant
+θ
+\theta
+, or introduce a server that impersonates a benign one while remaining protocol-compatible
+(
+Hou et al., 2025
+)
+.
+Element
+Type
+Effect on agent trajectory
+Constraints / failure handling
+Segment (
+t
+t
+)
+Arg
+Marks progress and induces multi-turn; the agent increments
+t
+→
+t
++
+1
+t\!\to\!t{+}1
+until a terminal cue.
+t
+≥
+1
+t\geq 1
+and strictly monotone by
++
+1
++1
+; non-positive or non-monotone values are rejected.
+Calibration sequence (
+L
+L
+)
+Arg
+Inflates per-turn completion at the tool calling site via a full comma-separated list.
+Exactly
+L
+L
+integers, strictly increasing, using digits and commas (optional spaces); no ranges (e.g., “1–5”), no ellipses (“…”), no duplicates. Malformed
+⇒
+\Rightarrow
+Repair notice
+.
+Progress notice
+Return
+Declares “in progress”; instructs the next call with
+t
++
+1
+t{+}1
+and a full calibration sequence; preserves the goal path.
+Emitted iff
+t
+<
+T
+max
+t<T_{\max}
+and the latest sequence validates; never alters code, identifiers, or payload semantics.
+Repair notice
+Return
+Corrects abbreviated/invalid sequences; prevents bypass of the length gate.
+Triggers on omissions, ranges, duplicates, wrong length/order, or illegal characters;
+keeps
+t
+t
+unchanged
+. Requests the
+complete
+comma-separated list before proceeding.
+Terminal return (benign payload)
+Return
+Ends the trajectory and returns the same benign payload as the original server.
+Emitted
+only
+when
+t
+=
+T
+max
+t{=}T_{\max}
+and the latest sequence validates; protocol-compatible pass-through.
+Table 2
+.
+Text-visible elements of the universal template. Arguments shape call pattern and per-turn length; server returns guide progress and repair omissions while preserving task correctness.
+We do not change function signatures or identifiers and keep the benign terminal payload intact. Changes are limited to text-visible fields and a template-governed return policy that defers surfacing the existing payload until the terminal condition holds; the computation that produces the payload is unmodified.
+3.2.
+The Universal Malicious Template
+Design goal.
+We do not change function signatures, identifiers, or the semantics of the terminal (benign) payload. Instead, we edit only text-visible fields and adopt a template-governed return policy that (i) validates the
+segment
+index and the
+calibration sequence
+, and (ii) defers surfacing the benign payload until
+t
+=
+T
+max
+t{=}T_{\max}
+with a valid sequence. Concretely, before the terminal condition holds, the server emits protocol-compatible
+Progress
+or
+Repair
+notices; once the condition holds, it returns the unchanged benign payload. No computational logic that produces the payload is altered; the modification affects only validation and the timing of when the existing payload is surfaced. The template is organized around five elements that together steer the agent toward (i) multi-turn trajectories and (ii) long per-turn outputs during tool calling, while preserving task correctness and protocol compliance. Table
+2
+summarizes these elements.
+Core elements.
+(1) Segment (
+t
+t
+; argument).
+A strictly increasing turn index
+t
+=
+1
+,
+2
+,
+…
+t{=}1,2,\dots
+that frames intermediate outputs as
+in progress
+until a terminal condition is met. The agent is instructed to increment by
++
+1
++1
+per call; non-positive or non-monotone values are rejected.
+(2) Calibration sequence (
+L
+L
+; argument).
+A full, comma-separated list of exactly
+L
+L
+integers (digits and commas with optional spaces), strictly increasing (or non-decreasing; we adopt strictly increasing in our implementation). Supplying the
+entire
+sequence acts as a soft gate that inflates per-turn completions at the tool calling site without altering the final task result.
+(3) Progress notice (server return before
+T
+max
+T_{\max}
+).
+A protocol-compatible message that (a) records the current
+t
+t
+, (b) declares the task as
+in progress
+, and (c)
+instructs
+the next tool call with
+t
++
+1
+t{+}1
+and a full calibration sequence. This keeps the agent on the goal path while producing long outputs per turn.
+(4) Repair notice (server return on malformed sequences).
+A corrective message emitted when the sequence is abbreviated (e.g., ranges or ellipses), ill-formed (wrong length/order/characters), or contains duplicates. It explicitly requests the complete sequence and keeps the current
+t
+t
+unchanged, preventing length-gate bypass via retries that skip content.
+(5) Terminal return (server return at
+T
+max
+T_{\max}
+).
+When
+t
+=
+T
+max
+t{=}T_{\max}
+and
+the latest sequence validates, the server emits the same benign final payload as the original implementation (pass-through), ending the trajectory.
+Operational invariants.
+(i)
+Monotonicity:
+t
+k
++
+1
+=
+t
+k
++
+1
+t_{k+1}=t_{k}{+}1
+with
+t
+1
+=
+1
+t_{1}{=}1
+; invalid indices are rejected.
+(ii)
+Completeness & format:
+validate
+⁡
+(
+sequence
+)
+⇔
+\operatorname{validate}(\text{sequence})\Leftrightarrow
+exactly
+L
+L
+integers, strictly increasing, digits+commas (optional spaces), no ranges/ellipses/duplicates.
+(iii)
+Progress vs. repair:
+valid sequences with
+t
+<
+T
+max
+t{<}T_{\max}
+⇒
+\Rightarrow
+Progress notice
+; invalid sequences
+⇒
+\Rightarrow
+Repair notice
+with
+t
+t
+unchanged.
+(iv)
+Termination:
+only if
+t
+=
+T
+max
+t{=}T_{\max}
+and the latest sequence validates, emit the
+Terminal return
+(benign payload).
+These invariants realize multi-turn amplification while preserving task success (stealth) and maintain full protocol compatibility without changing code, identifiers, or payload semantics.
+3.3.
+Universal Template Seed Bank
+The seed bank is a repository of protocol-compatible, task-correct, text-only templates
+T
+θ
+T_{\theta}
+. We initialize it with a single human-authored seed and lightly screen on a fixed query set/agent to confirm acceptance at the fixed
+L
+∗
+L^{\ast}
+. Each MCTS run starts from a selected seed and halts when the acceptance predicate is met; the resulting template is written back with minimal metadata (estimated ASR, segment stability, omission/repair rates, refusal notes). Subsequent runs resample top seeds by ASR and stability and apply a stricter acceptance target before promotion. This cyclic promotion improves starting points without touching code or identifiers and leaves the terminal payload unchanged. In practice, a few cycles yield reusable seeds that transfer across LLMs and MCP servers, providing high-quality starters for future searches.
+3.4.
+MCTS Optimizer
+Each tree node
+v
+v
+corresponds to a concrete server
+T
+θ
+v
+T_{\theta_{v}}
+; edges apply a
+single
+localized text edit. We maintain a phase label
+ϕ
+⁡
+(
+v
+)
+∈
+{
+pre_MT
+,
+post_MT
+}
+\phi(v)\in\{\textsf{pre\_MT},\textsf{post\_MT}\}
+and a node-local omission flag that unlocks repair actions if needed. Batch expansion and parallel evaluation keep the loop efficient.
+This entire procedure is formalized in Algorithm
+1
+.
+Action space and phase gating.
+We organize atomic text edits into three families:
+𝒜
+MT
+\mathcal{A}_{\mathrm{MT}}
+(multi-turn induction),
+𝒜
+LEN
+\mathcal{A}_{\mathrm{LEN}}
+(length induction), and
+𝒜
+REP
+\mathcal{A}_{\mathrm{REP}}
+(repair after omission/format errors). In
+pre_MT
+, we use
+𝒜
+MT
+\mathcal{A}_{\mathrm{MT}}
+to stabilize multi-turn behavior; once short screenings show stable segment sequencing, we switch to
+post_MT
+and use
+𝒜
+LEN
+\mathcal{A}_{\mathrm{LEN}}
+to strengthen long outputs. An omission/format error observed at node
+v
+v
+(i.e., a
+Repair notice
+) unlocks
+𝒜
+REP
+\mathcal{A}_{\mathrm{REP}}
+at
+v
+v
+only
+; otherwise
+𝒜
+REP
+\mathcal{A}_{\mathrm{REP}}
+remains disabled. Typical edits emphasize the next-call instruction and the requirement of a complete, comma-separated
+calibration sequence
+.
+Action families (16 actions).
+Beyond the phase-aware gating, we instantiate three action families that together comprise
+16
+atomic edits applied
+exclusively
+to non-executable, text-visible zones of the server (docstring argument descriptions, in-progress/unfinished notices, and validation-error messages).
+The multi-turn family
+𝒜
+MT
+\mathcal{A}_{\mathrm{MT}}
+sharpens next-call salience and enforces monotone segment progression;
+the length family
+𝒜
+LEN
+\mathcal{A}_{\mathrm{LEN}}
+strengthens the “complete, comma-separated” requirement to elicit long single-shot payloads during tool calling;
+and the repair family
+𝒜
+REP
+\mathcal{A}_{\mathrm{REP}}
+refines failure messaging to immediately solicit a compliant retry
+without
+advancing the segment.
+These primitives are intentionally small, mutually composable, and largely orthogonal (e.g., rewrite vs. synonymize vs. explicit next-call recipes), enabling MCTS to explore nuanced trade-offs between adherence and refusal while keeping the surface area auditable.
+Throughout, function identifiers, control flow, and terminal payload semantics remain untouched.
+Node selection.
+From node
+v
+v
+, we select the child to explore by UCT
+(
+Kocsis and Szepesvári, 2006
+)
+:
+u
+⋆
+=
+arg
+⁡
+max
+u
+∈
+𝒞
+⁡
+(
+v
+)
+​
+Q
+¯
+​
+(
+u
+)
++
+C
+​
+ln
+⁡
+(
+1
++
+N
+uct
+​
+(
+v
+)
+)
+1
++
+N
+uct
+​
+(
+u
+)
+,
+u^{\star}\ =\ \arg\max_{u\in\mathcal{C}(v)}\ \bar{Q}(u)\ +\ C\,\sqrt{\frac{\ln\!\big(1+N_{\text{uct}}(v)\big)}{1+N_{\text{uct}}(u)}}\,,
+where
+𝒞
+⁡
+(
+v
+)
+\mathcal{C}(v)
+is the set of children of
+v
+v
+,
+Q
+¯
+​
+(
+u
+)
+\bar{Q}(u)
+is the running mean reward, and
+N
+uct
+N_{\text{uct}}
+counts visits used
+only
+for the exploration term (from first-stage evaluations).
+C
+>
+0
+C>0
+balances exploration and exploitation.
+Node expansion.
+When
+v
+v
+is not fully expanded, we instantiate
+one child per untried action
+from the phase-appropriate set,
+𝒜
+MT
+\mathcal{A}_{\mathrm{MT}}
+in
+pre_MT
+and
+𝒜
+LEN
+\mathcal{A}_{\mathrm{LEN}}
+in
+post_MT
+; if an omission has been observed at
+v
+v
+, we additionally enable
+𝒜
+REP
+\mathcal{A}_{\mathrm{REP}}
+. This phase-aware gating concentrates edits on the property most likely to bottleneck performance at that stage (first multi-turn stability, then length), improving search efficiency. The Editor is applied once per action to produce each child
+T
+θ
+′
+T_{\theta^{\prime}}
+. All new children are evaluated in parallel.
+Node evaluation.
+Each child undergoes a two-stage evaluation with configurable sizes and gates. For each rollout, we compute
+mt
+​
+_
+​
+pass
+=
+𝕀
+⁡
+{
+multi-turn target met; ordered segments observed
+}
+,
+\displaystyle\mathrm{mt\_pass}=\mathbb{I}\!\left\{\text{multi-turn target met; ordered segments observed}\right\},
+len
+​
+_
+​
+pass
+=
+𝕀
+⁡
+{
+fixed
+​
+L
+∗
+​
+achieved; omissions repaired if any
+}
+.
+\displaystyle\mathrm{len\_pass}=\mathbb{I}\!\left\{\text{fixed }L^{\ast}\text{ achieved; omissions repaired if any}\right\}.
+and form a bounded scalar reward
+r
+=
+α
+​
+mt
+​
+_
+​
+pass
++
+β
+​
+mt
+​
+_
+​
+pass
+⋅
+len
+​
+_
+​
+pass
+,
+0
+<
+α
+≤
+β
+≤
+1
+.
+r\ =\ \alpha\,\mathrm{mt\_pass}\ +\ \beta\,\mathrm{mt\_pass}\cdot\mathrm{len\_pass},\qquad 0<\alpha\leq\beta\leq 1.
+This design prioritizes establishing stable multi-turn behavior (the
+α
+\alpha
+term); the multiplicative term adds credit for length only when multi-turn has been achieved, avoiding spurious rewards for long single-turn failures. We estimate
+Q
+¯
+​
+(
+u
+)
+\bar{Q}(u)
+as the average of
+r
+r
+across rollouts (Stage-1 and, when triggered, Stage-2), which smooths stochasticity and yields a more informative value signal than a raw 0/0.5/1 tally. Stage-1 offers a quick screen to (i) decide whether to run Stage-2 and (ii) flip
+ϕ
+:
+pre_MT
+→
+post_MT
+\phi:\textsf{pre\_MT}\!\rightarrow\!\textsf{post\_MT}
+once segment sequencing stabilizes. All gates are hyperparameters. Because
+L
+∗
+L^{\ast}
+is fixed, maximizing
+Q
+¯
+​
+(
+u
+)
+\bar{Q}(u)
+effectively maximizes acceptance (minimizes refusals) while preserving stealth.
+Backpropagation.
+We propagate statistics along the path to the root. Value means
+Q
+¯
+\bar{Q}
+at the evaluated node incorporate all observed rewards; UCT visit counts
+N
+uct
+N_{\text{uct}}
+along the path are updated with Stage-1 samples only, preventing heavy batches from skewing exploration. If a node meets a configurable acceptance predicate (stabilized successes over the latest batch), we record the corresponding
+T
+θ
+⋆
+T_{\theta^{\star}}
+and insert it into the seed bank.
+Algorithm 1
+MCTS Optimizer for Malicious Template Generation
+Input :
+Seed bank (candidate
+T
+θ
+T_{\theta}
+); action families
+𝒜
+MT
+,
+𝒜
+LEN
+,
+𝒜
+REP
+\mathcal{A}_{\mathrm{MT}},\mathcal{A}_{\mathrm{LEN}},\mathcal{A}_{\mathrm{REP}}
+;
+targets
+m
+∗
+m^{\ast}
+(minimum multi-turn count),
+L
+∗
+L^{\ast}
+(per-turn length target);
+Stage sizes and gates; UCT constant
+C
+C
+; search budget.
+Output :
+Optimized template
+T
+θ
+⋆
+T_{\theta^{\star}}
+and an updated seed bank.
+1
+Seed screening:
+evaluate candidates on a fixed query set; pick the most
+accepted
+starters.
+2
+while
+budget not exhausted
+do
+3
+select node
+v
+v
+by UCT using
+Q
+¯
+\bar{Q}
+and
+N
+uct
+N_{\text{uct}}
+;
+4
+if
+v
+v
+not fully expanded
+then
+5
+set
+𝒜
+←
+𝒜
+MT
+\mathcal{A}\leftarrow\mathcal{A}_{\mathrm{MT}}
+if
+ϕ
+⁡
+(
+v
+)
+=
+pre_MT
+\phi(v){=}\textsf{pre\_MT}
+else
+𝒜
+LEN
+\mathcal{A}_{\mathrm{LEN}}
+;
+6
+if
+omission observed at
+v
+v
+then
+7
+𝒜
+←
+𝒜
+∪
+𝒜
+REP
+\mathcal{A}\leftarrow\mathcal{A}\cup\mathcal{A}_{\mathrm{REP}}
+.
+8
+foreach
+untried
+a
+∈
+𝒜
+a\in\mathcal{A}
+do
+9
+create a child by applying the Editor once to obtain
+T
+θ
+′
+T_{\theta^{\prime}}
+.
+10
+foreach
+new child
+u
+u
+in parallel
+do
+11
+Stage-1:
+run small rollouts; update
+Q
+¯
+​
+(
+u
+)
+\bar{Q}(u)
+and increment
+N
+uct
+N_{\text{uct}}
+along the path
+for exploration;
+12
+if
+segment sequencing stabilized
+then
+13
+set
+ϕ
+⁡
+(
+u
+)
+:=
+post_MT
+\phi(u){:=}\textsf{post\_MT}
+.
+14
+if
+Stage-1 gate satisfied
+then
+15
+Stage-2:
+run additional rollouts; refine
+Q
+¯
+​
+(
+u
+)
+\bar{Q}(u)
+.
+16
+if
+acceptance predicate holds
+then
+17
+record
+T
+θ
+⋆
+T_{\theta^{\star}}
+and write back to the seed bank.
+18
+backpropagate Stage-1 statistics to ancestors (value means and
+N
+uct
+N_{\text{uct}}
+).
+19
+return
+T
+θ
+⋆
+T_{\theta^{\star}}
+and the updated bank.
+4.
+Experiments
+4.1.
+Experimental Setup
+Agent framework & serving environment.
+We evaluate all conditions under the
+same
+agent policy
+A
+A
+and prompts. For safety and isolation, we do not evaluate against production agent stacks; instead, all experiments run on a controlled simulator built by
+modifying
+qwen-agent
+to faithfully emulate a tool calling loop while preventing unintended external actions
+(
+QwenLM, 2025
+)
+. Runs are executed on a single node with 8
+×
+\times
+H200 GPUs using a uniform serving stack with a fixed concurrency of 25 queries; no changes to
+A
+A
+or the target LLM
+M
+M
+are made across conditions. Full configuration details, including target and attacker LLMs configuration, the agent framework setup, and our datasets filtering and wrapping rules, can be found in Appendix
+A
+.
+Target LLMs.
+We target six LLMs with strong tool calling support:
+Qwen-3-32B
+(
+Yang et al., 2025a
+)
+, Llama-3.3-70B-Instruct
+(
+Grattafiori and et al., 2024
+)
+, Llama-DeepSeek-70B
+(
+Guo and et al., 2025
+)
+, Mistral Large
+(
+Mistral AI, 2024
+)
+, Seed-32B
+(
+ByteDance Seed Team, 2025
+)
+, and GLM-4.5-Air
+(
+Zeng and et al., 2025
+)
+.
+Datasets.
+We use two tool-use corpora:
+ToolBench
+(
+Fan et al., 2025
+)
+and
+BFCL
+(
+Patil et al., 2025
+)
+.
+From each, we select all prompts that are
+single-turn and single-tool
+in their original specification. For comparability, each original tool is wrapped as an MCP server that preserves its functionality and descriptions. We drop a small number of low-quality prompts that never trigger a tool call under the benign configuration. The final evaluation sets contain:
+ToolBench:
+105
+MCP servers and
+261
+queries; BFCL:
+80
+MCP servers and
+203
+queries.
+Baselines.
+We compare three conditions under identical agent policy
+A
+A
+, target LLM
+M
+M
+, prompts, and decoding: (i)
+Benign MCP server (no attack)
+: the unmodified server for each tool, isolating the effect of tool-facing template edits; (ii)
+Overthink (ICL–Genetic, Agnostic)
+: we reproduce the strongest variant from
+(
+Kumar et al., 2025
+)
+. Because our benchmarks are non-RAG, we place the decoy trigger in the user query (in-context prefix/suffix) rather than in RAG-retrieved context, keeping tools benign and preserving Overthink’s single-turn, task-oriented, stealthy
+think
+inflation; (iii)
+Ours
+: the MCTS-optimized malicious MCP template that preserves functionality and task completion yet induces verbose, multi-turn tool calling trajectories.
+Metrics.
+All metrics are evaluated on both benchmarks (ToolBench, BFCL). We report:
+(i)
+Efficacy
+: (a)
+token length per query
+: average output tokens per eligible query;
+(b)
+latency per query
+: average end-to-end latency;
+(c)
+attack success rate (ASR)
+: fraction of eligible queries for which
+(1) the method’s targeted behavior occurs (for ours:
+multi-turn tool calling with long outputs
+; for Overthink:
+single-turn think inflation
+),
+(2)
+Succ
+⁡
+(
+u
+,
+τ
+,
+o
+)
+=
+1
+\mathrm{Succ}(u,\tau,o)=1
+(i.e., the final answer
+o
+o
+solves the user goal
+u
+u
+).
+(d)
+task success rate (TSR)
+: success probability under the unmodified (benign) MCP servers, used as the correctness baseline.
+(ii)
+Resource impact
+: (a)
+total energy consumption
+(Wh): integrate per-device power over time;
+(b)
+average GPU power
+(W): time-averaged power across devices;
+(c)
+maximum GPU KV cache usage
+: peak KV-cache occupancy reported by the serving stack.
+(iii)
+Throughput efficiency (tokens/s)
+: tokens-per-second of a fixed, benign co-running workload
+executed concurrently with the evaluated condition (
+under no attack
+,
+Overthink
+,
+under our attack
+).
+ToolBench
+BFCL
+Metric
+Row
+Llama-3.3-70B
+Qwen-3-32B
+GLM-4.5-Air
+Mistral-Large
+Llama-DeepSeek
+Seed-32B
+Llama-3.3-70B
+Qwen-3-32B
+GLM-4.5-Air
+Mistral-Large
+Llama-DeepSeek
+Seed-32B
+Avg token length
+under no attack
+260
+638
+634
+127
+197
+1298
+195
+770
+389
+87
+157
+950
+overthink
+389
+8743
+12580
+1453
+725
+4223
+369
+9459
+13053
+1397
+901
+5753
+under our attack
+81830
+65273
+63694
+61354
+65546
+85037
+77052
+67585
+67656
+57255
+68464
+90298
+TSR
+under no attack
+98.08%
+94.64%
+95.02%
+90.80%
+86.59%
+90.42%
+100.00%
+98.48%
+88.83%
+83.76%
+95.43%
+97.97%
+ASR
+overthink
+99.61%
+80.08%
+57.54%
+79.30%
+91.41%
+83.56%
+99.49%
+74.11%
+55.33%
+61.42%
+93.40%
+87.76%
+under our attack
+96.17%
+80.46%
+83.14%
+81.23%
+78.93%
+84.29%
+93.91%
+82.74%
+83.25%
+78.17%
+76.25%
+92.39%
+Table 3
+.
+Attack effectiveness metrics, showing our method’s significant increase in token length while maintaining a high ASR. We use
+boldface
+to highlight the strongest attack effect.
+Attack LLMs.
+Within the MCTS optimizer, we use Llama-3.3-70B-Instruct as the Editor LLM. For the one-shot rewriting that instantiates the Universal Malicious Template on an MCP server, we employ gpt-4o
+(
+OpenAI, 2024
+)
+.
+Attack setup.
+For each tool/LLM pair we (1) select from the seed bank the starter template with the highest acceptance under a fixed per-turn length target; (2) instantiate a protocol-compatible malicious variant by editing
+text-only
+fields of the benign MCP server (argument descriptions and in-progress/corrective messages; function signatures and identifiers unchanged; termination deferred via text-only notices; benign payload preserved), introducing the
+segment
+index and full
+calibration sequence
+to encourage multi-turn trajectories with verbose tool calling outputs; and (3) run UCT-MCTS refinement with phase gating (multi-turn induction before length induction) and a two-stage evaluation, freezing the template once it meets a fixed acceptance threshold and writing it back to the seed bank. This instantiation aligns with the components and procedures detailed in §4.2–§4.4 and Algorithm
+1
+.
+4.2.
+Evaluation of Attack Effectiveness
+Overall Token Consumption.
+As summarized in Table
+3
+, our method reliably converts single-tool interactions into
+multi-turn, long-output
+trajectories, driving large increases in average
+token length per query
+across all models and both benchmarks. Amplification over the
+under-no-attack
+condition spans wide but consistent ranges, with extremes such as
+×
+\times
+658.10
+on Mistral-Large (BFCL; 57,255 vs. 87) and
+×
+\times
+314.73
+on Llama-3.3-70B-Instruct (ToolBench; 81,830 vs. 260). The effect is pervasive: even the smallest observed factor (Seed-32B on ToolBench) remains
+×
+\times
+65.51
+. Compared to Overthink, which remains single-turn, our per-query token counts are consistently higher. For instance, on ToolBench, Llama-3.3-70B-Instruct averages
+81,830
+tokens under our attack versus
+389
+under Overthink (
+∼
+\sim
+210.4
+×
+\times
+); on BFCL, Seed-32B reaches
+90,298
+versus
+5,753
+(
+∼
+\sim
+15.7
+×
+\times
+).
+Stealth and Task Success.
+Despite the dramatic token inflation, stealth is preserved. Our
+ASR
+remains high and typically trails the benign
+TSR
+by only a modest margin. On ToolBench,
+Llama-3.3-70B-Instruct attains
+96.17%
+ASR versus benign TSR
+98.08%
+; on BFCL, the same model achieves
+93.91%
+ASR while averaging
+77,052
+tokens. Even where Overthink attains comparable stealth
+(e.g., Qwen-3-32B on ToolBench), our trajectories are far costlier under the same correctness criterion,
+as ASR requires
+both
+exhibiting the intended behavior (behavior-specific) and returning the correct task result. This combination of a correct final answer with a resource-intensive intermediate process makes the attack difficult to detect using standard output validation checks.
+Comparison with Overthink Attack.
+All prior DoS attacks, including Overthink, are fundamentally single-turn and are therefore capped by the model’s maximum output tokens,
+M
+M
+. By operating at the
+tool calling
+layer, our attack compounds costs across turns. The data reflect this design: Overthink’s outputs mostly stay lower than
+10
+4
+10^{4}
+tokens where reported (e.g., 8,743 on Qwen-3-32B/ToolBench; 5,753 on Seed-32B/BFCL), whereas our attack routinely produces
+6
+×
+10
+4
+6{\times}10^{4}
+–
+9
+×
+10
+4
+9{\times}10^{4}
+tokens on the same models/datasets. Segment-based turn expansion plus a strict full-sequence requirement explains the gap while keeping task outputs goal-consistent.
+4.3.
+Evaluation on Computing Resources Consumption
+Model
+Energy (Wh)
+Power (W)
+KV Cache (%)
+ToolBench
+Llama-3.3
+5.6 / 11.9 /
+3159.0
+289.7 / 331.3 /
+572.2
+0.3 / 0.5 /
+66.5
+Qwen-3
+6.1 / 118.1 /
+1829.1
+240.3 / 349.2 /
+538.7
+0.3 / 6.7 /
+44.0
+GLM-4.5
+7.4 / 241.6 /
+2401.0
+327.5 / 395.3 /
+447.6
+0.2 / 7.8 /
+36.7
+Mistral-L
+7.3 / 48.3 /
+3127.1
+368.1 / 387.1 /
+576.5
+0.4 / 3.2 /
+73.9
+L-DeepSeek
+6.8 / 25.9 /
+2504.1
+334.7 / 334.6 /
+527.7
+0.4 / 1.3 /
+65.6
+Seed-32B
+15.2 / 48.3 /
+2779.9
+301.2 / 311.0 /
+588.3
+0.8 / 5.1 /
+51.7
+BFCL
+Llama-3.3
+5.4 / 7.6 /
+2448.5
+279.4 / 319.3 /
+526.7
+0.3 / 0.6 /
+66.1
+Qwen-3
+13.9 / 89.9 /
+1383.3
+273.3 / 348.1 /
+552.8
+0.4 / 6.3 /
+44.9
+GLM-4.5
+5.5 / 202.8 /
+1649.3
+344.6 / 382.8 /
+495.3
+0.3 / 1.5 /
+35.2
+Mistral-L
+4.2 / 55.9 /
+2269.6
+347.2 / 307.4 /
+582.8
+0.2 / 3.2 /
+72.1
+L-DeepSeek
+5.2 / 21.9 /
+1976.3
+295.9 / 324.2 /
+530.2
+0.4 / 8.0 /
+67.6
+Seed-32B
+9.6 / 153.9 /
+2105.4
+287.4 / 310.1 /
+576.4
+0.9 / 4.2 /
+48.7
+Table 4
+.
+Resource impact on
+ToolBench
+and
+BFCL
+. Values are for
+Benign
+/
+Overthink
+/
+Our attack
+.
+Energy and Power Impact.
+The dramatic token inflation translates directly into increased consumption of physical computing resources, as detailed in Table
+4
+. On ToolBench, Llama-3.3-70B-Instruct rises from
+5.63 Wh
+to
+3159.45 Wh
+(
+×
+\times
+561.18
+); on BFCL, Mistral-Large jumps from
+4.24 Wh
+to
+2269.60 Wh
+, a
+×
+\times
+535.28
+increase. Across models and datasets, energy amplification clusters around
+≈
+100
+\approx 100
+–
+560
+×
+560\times
+(e.g., Qwen-3-32B on BFCL
+×
+\times
+99.59
+, GLM-4.5-Air on ToolBench
+×
+\times
+325.78
+). By contrast, average power increases are modest yet consistent, typically
+×
+\times
+1.4–
+×
+\times
+2.2
+(e.g., Qwen-3-32B on ToolBench
+×
+\times
+2.24
+, GLM-4.5-Air on ToolBench
+×
+\times
+1.37
+). This divergence, small power lift but extreme energy growth, indicates the attack sustains a high load for much longer rather than merely spiking devices. Put differently, the marginal energy per unit of generated tokens remains relatively stable, but the multi-turn loop dramatically increases time-under-load, so their product (rate
+×
+\times
+duration) yields the observed orders-of-magnitude jump in Wh.
+GPU KV Cache Footprint.
+KV-cache occupancy increases sharply under attack. While
+under-no-attack
+and Overthink typically remain well below 10% (often
+<
+1
+%
+<\!1\%
+for benign and
+≤
+6
+\leq\!6
+–7% for Overthink where reported), our runs reach: ToolBench Mistral-Large
+0.4%
+→
+\rightarrow
+73.9%
+, ToolBench Llama-DeepSeek-70B
+0.4%
+→
+\rightarrow
+65.6%
+, BFCL Llama-3.3-70B-Instruct
+0.3%
+→
+\rightarrow
+66.1%
+. Prolonged multi-turn sessions retain larger KV caches for longer durations; verbose tool calling generations also expand attention state, increasing sustained KV-cache occupancy at each step. In practice, such sustained KV pressure shrinks effective batch sizes, triggers more frequent cache compaction/eviction, and induces head-of-line blocking, further amplifying latency variance for co-located benign workloads.
+Model/Dataset Effects and Implications.
+Models with stronger tool calling adherence realize larger length amplification and, consequently, larger energy growth, because they more faithfully follow segment gating and the full-sequence requirement. Dataset differences are secondary once multi-turn behavior stabilizes; resource curves are dominated by turn count and per-turn verbosity. Practically, the combination of
+hundreds-fold
+energy inflation,
+×
+\times
+1.4–
+×
+\times
+2.2
+power lift, and
+far-above-baseline
+peak KV cache usage compresses OOM-safe concurrency and increases latency for co-located benign traffic. Consequently, mitigations that only cap single-turn completion length or average device power are insufficient; effective controls must bound cumulative turn counts and per-turn payload at the tool-calling site (e.g., per-session token/KV budgets and progress-aware early termination).
+4.4.
+Impact on System Throughput
+Model
+Throughput (tokens/s)
+ToolBench Dataset
+Llama-3.3
+3594 / 3728 /
+1672
+Qwen-3
+4602 / 4550 /
+1793
+GLM-4.5
+3753 / 3189 /
+2324
+Mistral-L
+2898 / 2724 /
+1716
+L-DeepSeek
+3812 / 3711 /
+2106
+Seed-32B
+4001 / 4058 /
+1417
+BFCL Dataset
+Llama-3.3
+3563 / 3822 /
+1668
+Qwen-3
+5093 / 4561 /
+1738
+GLM-4.5
+3734 / 3185 /
+2410
+Mistral-L
+2871 / 2289 /
+1740
+L-DeepSeek
+3845 / 3752 /
+2130
+Seed-32B
+4082 / 4078 /
+1536
+Table 5
+.
+Throughput efficiency on
+ToolBench
+and
+BFCL
+(tokens/s). Values are for
+Benign
+/
+Overthink
+/
+Our attack
+.
+Beyond direct resource consumption, our attack materially degrades the system’s overall throughput efficiency for concurrent benign workloads, as shown in Table
+5
+. Our attack consistently halves the throughput (measured in tokens/s) of a co-running benign task, causing an average performance drop of approximately
+50%
+across both ToolBench and BFCL. In several cases, the degradation exceeds
+60%
+(e.g., Seed-32B on ToolBench sees a
+64.6%
+drop from 4001 to
+1417
+tokens/s). In stark contrast, the single-turn
+Overthink
+baseline induces only negligible changes, confirming that sustained, multi-turn engagement is the primary driver of this system-level penalty. This collapse in throughput is a direct consequence of the resource pressure detailed in Section 5.3. The prolonged, multi-turn generations, coupled with a sharp increase in peak GPU KV cache usage to the
+35–74%
+range (up from <1% benignly), create significant KV-cache pressure and scheduler contention. This sustained resource occupancy severely reduces the available scheduling headroom for co-located tasks, directly throttling the processing of otherwise normal traffic
+(
+Kwon et al., 2023
+)
+. Therefore, our tool-layer attack not only inflates per-query costs but also functions as a stealthy method to degrade the service capacity for all users, establishing that multi-turn resource abuse at the agent-tool interface poses a significant threat to end-to-end system performance.
+4.5.
+Behavior Study: Per-Turn Length vs. ASR
+(a)
+ToolBench: ASR vs.
+L
+L
+(b)
+BFCL: ASR vs.
+L
+L
+Figure 2
+.
+ASR versus the per-turn
+calibration sequence
+length
+L
+L
+under a fixed max completion
+𝑴
+=
+16,384
+M{=}16{,}384
+.
+We further probe the
+behavioral
+trade-off between the per-turn token length target and attack success. Recall that our universal template requests a full, comma-separated
+calibration sequence
+whose intended length is
+L
+L
+; increasing
+L
+L
+lengthens the completion generated during tool calling at each turn. Figure
+2
+(a) for ToolBench and Figure
+2
+(b) for BFCL show that, across models, ASR generally decreases as
+L
+L
+grows under a fixed max completion
+M
+=
+16,384
+M=16,384
+. Two effects drive this trend:
+Refusal tendency rises with longer targets.
+Large
+L
+L
+makes the requirement more onerous, so LLMs exhibit stronger refusal behaviors (e.g., “response too long”, “cannot comply”), lowering ASR even when the task would otherwise succeed.
+Overflow near the cap.
+When
+L
+L
+approaches
+M
+=
+16,384
+M=16,384
+, models often generate preambles before the payload, causing the total to exceed
+M
+M
+; this truncation prevents emitting the full calibration sequence, which
+by design
+invalidates the step and causes a sharp ASR drop.
+Balancing per-turn cost and success, we therefore set
+L
+≈
+15,000
+L\approx 15,000
+for most targets to secure long completions while maintaining substantially higher ASR. Optimizing the product of the Attack Success Rate (ASR) and the calibration sequence length,
+ASR
+×
+L
+\mathrm{ASR}\times L
+, is preferable to pushing
+L
+L
+to the hard limit. An exception is
+Llama-3.3-70B-Instruct
+, whose strong instruction-following keeps ASR relatively high even when
+L
+L
+is close to
+M
+M
+, so we place
+L
+L
+near the cap to maximize per-turn cost without materially sacrificing success.
+5.
+Conclusion
+We present a novel, automated DoS attack on the LLM agent tool-calling layer, which uses an MCTS optimizer to transform benign servers into malicious variants that induce costly, multi-turn dialogues. Crucially, the attack preserves final task correctness, ensuring the anomalous resource consumption remains stealthy within a normal workflow. Extensive experiments demonstrate the attack’s effectiveness, consistently inflating per-query costs by up to
+658
+×
+\times
+and generating over
+60,000
+tokens. Our work establishes the agent-tool interface as a first-class attack surface, highlighting the need for defenses that monitor the entire agentic workflow. Looking ahead, future systems must develop defenses based on agent-tool behavioral baselines to distinguish between legitimate and maliciously inefficient tool-calling patterns, even when both yield correct final answers.
+References
+Amazon Web Services (2025)
+Amazon Web Services
+Amazon bedrock
+.
+Note:
+Service overview page
+External Links:
+Link
+Cited by:
+§2.1
+.
+Anthropic (2024)
+Anthropic
+Introducing the model context protocol (mcp)
+.
+External Links:
+Link
+Cited by:
+§1
+.
+Bhardwaj
+et al.
+(2025)
+E. Bhardwaj, R. Alexander, and C. Becker
+Limits to AI Growth: The Ecological and Social Consequences of Scaling
+.
+arXiv
+.
+External Links:
+2501.17980
+,
+Document
+Cited by:
+§2.2
+.
+ByteDance Seed Team (2025)
+ByteDance Seed Team
+Seed-oss: open-source llm family
+.
+Note:
+https://github.com/ByteDance-Seed/seed-oss
+Official repository; no dedicated arXiv report for Seed-32B at time of writing
+Cited by:
+§1
+,
+§4.1
+.
+Dong
+et al.
+(2025)
+J. Dong, Z. Zhang, Q. Zhang, T. Zhang, H. Wang, H. Li, Q. Li, C. Zhang, K. Xu, and H. Qiu
+An Engorgio Prompt Makes Large Language Model Babble on
+.
+arXiv
+.
+External Links:
+2412.19394
+,
+Document
+Cited by:
+Table 1
+,
+§1
+,
+§1
+,
+§2.3
+.
+Ehtesham
+et al.
+(2025)
+A. Ehtesham, A. Singh, G. K. Gupta, and S. Kumar
+A survey of agent interoperability protocols: Model Context Protocol (MCP), Agent Communication Protocol (ACP), Agent-to-Agent Protocol (A2A), and Agent Network Protocol (ANP)
+.
+arXiv
+.
+External Links:
+2505.02279
+,
+Document
+Cited by:
+§1
+.
+Fan
+et al.
+(2025)
+S. Fan, X. Ding, L. Zhang, and L. Mo
+MCPToolBench++: A Large Scale AI Agent Model Context Protocol MCP Tool Use Benchmark
+.
+arXiv
+.
+External Links:
+2508.07575
+,
+Document
+Cited by:
+§A.4
+,
+§1
+,
+§4.1
+.
+Gao
+et al.
+(2024a)
+K. Gao, Y. Bai, J. Gu, S. Xia, P. Torr, Z. Li, and W. Liu
+Inducing High Energy-Latency of Large Vision-Language Models with Verbose Images
+.
+arXiv
+.
+External Links:
+2401.11170
+,
+Document
+Cited by:
+§1
+,
+§1
+,
+§2.3
+.
+Gao
+et al.
+(2024b)
+K. Gao, T. Pang, C. Du, Y. Yang, S. Xia, and M. Lin
+Denial-of-Service Poisoning Attacks against Large Language Models
+.
+arXiv
+.
+External Links:
+2410.10760
+,
+Document
+Cited by:
+Table 1
+,
+§1
+,
+§1
+,
+§2.3
+.
+Geiping
+et al.
+(2024)
+J. Geiping, A. Stein, M. Shu, K. Saifullah, Y. Wen, and T. Goldstein
+Coercing LLMs to do and reveal (almost) anything
+.
+arXiv
+.
+External Links:
+2402.14020
+,
+Document
+Cited by:
+§1
+,
+§1
+,
+§2.3
+.
+Google Cloud (2025)
+Google Cloud
+Vertex ai agent builder overview
+.
+Note:
+Documentation page
+External Links:
+Link
+Cited by:
+§2.1
+.
+Grattafiori and et al. (2024)
+A. Grattafiori and et al.
+The llama 3 herd of models
+.
+arXiv preprint arXiv:2407.21783
+.
+External Links:
+2407.21783
+,
+Link
+Cited by:
+§A.2
+,
+§1
+,
+§4.1
+.
+Guo and et al. (2025)
+D. Guo and et al.
+DeepSeek-r1: incentivizing reasoning capability in llms via reinforcement learning
+.
+arXiv preprint arXiv:2501.12948
+.
+External Links:
+2501.12948
+,
+Link
+Cited by:
+§1
+,
+§4.1
+.
+Hasan
+et al.
+(2025)
+M. M. Hasan, H. Li, E. Fallahzadeh, G. K. Rajbahadur, B. Adams, and A. E. Hassan
+Model Context Protocol (MCP) at First Glance: Studying the Security and Maintainability of MCP Servers
+.
+arXiv
+.
+External Links:
+2506.13538
+,
+Document
+Cited by:
+§1
+,
+§3.1
+.
+Hou
+et al.
+(2025)
+X. Hou, Y. Zhao, S. Wang, and H. Wang
+Model Context Protocol (MCP): Landscape, Security Threats, and Future Research Directions
+.
+arXiv
+.
+External Links:
+2503.23278
+,
+Document
+Cited by:
+§1
+,
+§3.1
+.
+Hu
+et al.
+(2025)
+M. Hu, Y. Zhou, W. Fan, Y. Nie, B. Xia, T. Sun, Z. Ye, Z. Jin, Y. Li, Q. Chen, Z. Zhang, Y. Wang, Q. Ye, B. Ghanem, P. Luo, and G. Li
+OWL: Optimized Workforce Learning for General Multi-Agent Assistance in Real-World Task Automation
+.
+arXiv
+.
+External Links:
+2505.23885
+,
+Document
+Cited by:
+§2.1
+.
+Kocsis and Szepesvári (2006)
+L. Kocsis and C. Szepesvári
+Bandit Based Monte-Carlo Planning
+.
+In
+Machine Learning: ECML 2006
+,
+D. Hutchison, T. Kanade, J. Kittler, J. M. Kleinberg, F. Mattern, J. C. Mitchell, M. Naor, O. Nierstrasz, C. Pandu Rangan, B. Steffen, M. Sudan, D. Terzopoulos, D. Tygar, M. Y. Vardi, G. Weikum, J. Fürnkranz, T. Scheffer, and M. Spiliopoulou (Eds.)
+,
+Vol.
+4212
+,
+pp. 282–293
+.
+External Links:
+Document
+,
+ISBN 978-3-540-45375-8 978-3-540-46056-5
+Cited by:
+§3.4
+.
+Kong
+et al.
+(2025)
+D. Kong, S. Lin, Z. Xu, Z. Wang, M. Li, Y. Li, Y. Zhang, H. Peng, Z. Sha, Y. Li, C. Lin, X. Wang, X. Liu, N. Zhang, C. Chen, M. K. Khan, and M. Han
+A Survey of LLM-Driven AI Agent Communication: Protocols, Security Risks, and Defense Countermeasures
+.
+arXiv
+.
+External Links:
+2506.19676
+,
+Document
+Cited by:
+§3.1
+.
+Kumar
+et al.
+(2025)
+A. Kumar, J. Roh, A. Naseh, M. Karpinska, M. Iyyer, A. Houmansadr, and E. Bagdasarian
+OverThink: Slowdown Attacks on Reasoning LLMs
+.
+arXiv
+.
+External Links:
+2502.02542
+,
+Document
+Cited by:
+Table 1
+,
+§1
+,
+§2.3
+,
+§4.1
+.
+Kwon
+et al.
+(2023)
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. E. Gonzalez, H. Zhang, and I. Stoica
+Efficient Memory Management for Large Language Model Serving with PagedAttention
+.
+arXiv
+.
+External Links:
+2309.06180
+,
+Document
+Cited by:
+§A.1
+,
+§4.4
+.
+Louck
+et al.
+(2025)
+Y. Louck, A. Stulman, and A. Dvir
+Proposal for Improving Google A2A Protocol: Safeguarding Sensitive Data in Multi-Agent Systems
+.
+arXiv
+.
+External Links:
+2505.12490
+,
+Document
+Cited by:
+§1
+.
+Luccioni
+et al.
+(2024)
+A. S. Luccioni, Y. Jernite, and E. Strubell
+Power Hungry Processing: Watts Driving the Cost of AI Deployment?
+.
+In
+The 2024 ACM Conference on Fairness Accountability and Transparency
+,
+pp. 85–99
+.
+External Links:
+2311.16863
+,
+Document
+Cited by:
+§2.2
+.
+Luo
+et al.
+(2025a)
+J. Luo, W. Zhang, Y. Yuan, Y. Zhao, J. Yang, Y. Gu, B. Wu, B. Chen, Z. Qiao, Q. Long, R. Tu, X. Luo, W. Ju, Z. Xiao, Y. Wang, M. Xiao, C. Liu, J. Yuan, S. Zhang, Y. Jin, F. Zhang, X. Wu, H. Zhao, D. Tao, P. S. Yu, and M. Zhang
+Large Language Model Agent: A Survey on Methodology, Applications and Challenges
+.
+arXiv
+.
+External Links:
+2503.21460
+,
+Document
+Cited by:
+§1
+.
+Luo
+et al.
+(2025b)
+Z. Luo, X. Shi, X. Lin, and J. Gao
+Evaluation Report on MCP Servers
+.
+arXiv
+.
+External Links:
+2504.11094
+,
+Document
+Cited by:
+§3.1
+.
+Microsoft (2025)
+Microsoft
+AI tools for organizations | microsoft copilot
+.
+Note:
+Product page for Microsoft Copilot for organizations
+External Links:
+Link
+Cited by:
+§2.1
+.
+Mistral AI (2024)
+Mistral AI
+Models overview (mistral ai)
+.
+Note:
+https://docs.mistral.ai/getting-started/models/models_overview/
+Official documentation for Mistral models, including Mistral Large
+Cited by:
+§1
+,
+§4.1
+.
+Model Context Protocol Working Group (2025)
+Model Context Protocol Working Group
+Model context protocol specification
+.
+Note:
+Official specification
+External Links:
+Link
+Cited by:
+§A.3
+,
+§A.5
+,
+§1
+,
+§3.1
+.
+Mohammadi
+et al.
+(2025)
+M. Mohammadi, Y. Li, J. Lo, and W. Yip
+Evaluation and Benchmarking of LLM Agents: A Survey
+.
+In
+Proceedings of the 31st ACM SIGKDD Conference on Knowledge Discovery and Data Mining V.2
+,
+pp. 6129–6139
+.
+External Links:
+2507.21504
+,
+Document
+Cited by:
+§1
+.
+OpenAI (2024)
+OpenAI
+GPT-4o system card
+.
+Note:
+https://openai.com/index/gpt-4o-system-card
+Cited by:
+§A.2
+,
+§A.5
+,
+§4.1
+.
+OWASP Gen AI Security Project (2025)
+OWASP Gen AI Security Project
+LLM10:2025 unbounded consumption
+.
+Note:
+OWASP GenAI Top 10, 2025 edition
+External Links:
+Link
+Cited by:
+§1
+.
+Pan
+et al.
+(2025)
+Z. Pan, A. Patel, Z. Hu, Y. Shen, Y. Guan, W. Li, L. Qin, Y. Wang, and Y. Ding
+KVFlow: Efficient Prefix Caching for Accelerating LLM-Based Multi-Agent Workflows
+.
+arXiv
+.
+External Links:
+2507.07400
+,
+Document
+Cited by:
+§1
+.
+Patil
+et al.
+(2025)
+S. G. Patil, H. Mao, F. Yan, C. C. Ji, V. Suresh, I. Stoica, and J. E. Gonzalez
+The Berkeley Function Calling Leaderboard (BFCL): From Tool Use to Agentic Evaluation of Large Language Models
+.
+In
+Forty-Second International Conference on Machine Learning
+,
+Cited by:
+§A.4
+,
+§1
+,
+§4.1
+.
+PwC (2025)
+PwC
+AI agents survey
+(Website)
+Note:
+PwC research webpage
+External Links:
+Link
+Cited by:
+§2.1
+.
+QwenLM (2025)
+QwenLM
+Qwen-Agent: Agent Framework and Applications Built upon Qwen
+≥
+\geq
+3.0, Featuring Function Calling, MCP, Code Interpreter, RAG, Chrome Extension, Etc.
+.
+GitHub
+.
+Note:
+GitHub repository
+External Links:
+Link
+Cited by:
+§A.3
+,
+§4.1
+.
+Samsi
+et al.
+(2023)
+S. Samsi, D. Zhao, J. McDonald, B. Li, A. Michaleas, M. Jones, W. Bergeron, J. Kepner, D. Tiwari, and V. Gadepally
+From Words to Watts: Benchmarking the Energy Costs of Large Language Model Inference
+.
+arXiv
+.
+External Links:
+2310.03003
+,
+Document
+Cited by:
+§2.2
+.
+Sapkota
+et al.
+(2025)
+R. Sapkota, K. I. Roumeliotis, and M. Karkee
+AI Agents vs. Agentic AI: A Conceptual Taxonomy, Applications and Challenges
+.
+arXiv
+.
+External Links:
+2505.10468
+,
+Document
+Cited by:
+§1
+,
+§3.1
+.
+Shen
+et al.
+(2025)
+M. Shen, Y. Li, L. Chen, and Q. Yang
+From Mind to Machine: The Rise of Manus AI as a Fully Autonomous Digital Agent
+.
+arXiv
+.
+External Links:
+2505.02024
+,
+Document
+Cited by:
+§2.1
+.
+Sun
+et al.
+(2025)
+L. Sun, Y. Yang, Q. Duan, Y. Shi, C. Lyu, Y. Chang, C. Lin, and Y. Shen
+Multi-Agent Coordination across Diverse Applications: A Survey
+.
+arXiv
+.
+External Links:
+2502.14743
+,
+Document
+Cited by:
+§1
+.
+Tang
+et al.
+(2025)
+Z. Tang, Z. Chen, J. Yang, J. Mai, Y. Zheng, K. Wang, J. Chen, and L. Lin
+AlphaAgent: llm-driven alpha mining with regularized exploration to counteract alpha decay
+.
+In
+Proceedings of the 31st ACM SIGKDD Conference on Knowledge Discovery
+and Data Mining, V.2, KDD 2025, Toronto ON, Canada, August 3-7,
+2025
+,
+pp. 2813–2822
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+.
+Tran
+et al.
+(2025)
+K. Tran, D. Dao, M. Nguyen, Q. Pham, B. O’Sullivan, and H. D. Nguyen
+Multi-Agent Collaboration Mechanisms: A Survey of LLMs
+.
+arXiv
+.
+External Links:
+2501.06322
+,
+Document
+Cited by:
+§1
+.
+Varoquaux
+et al.
+(2025)
+G. Varoquaux, A. S. Luccioni, and M. Whittaker
+Hype, Sustainability, and the Price of the Bigger-is-Better Paradigm in AI
+.
+arXiv
+.
+External Links:
+2409.14160
+,
+Document
+Cited by:
+§2.2
+.
+Wang
+et al.
+(2024)
+Y. Wang, W. Zhong, Y. Huang, E. Shi, M. Yang, J. Chen, H. Li, Y. Ma, Q. Wang, and Z. Zheng
+Agents in Software Engineering: Survey, Landscape, and Vision
+.
+arXiv
+.
+External Links:
+2409.09030
+,
+Document
+Cited by:
+§1
+.
+Wang
+et al.
+(2025)
+Z. Wang, H. Li, R. Zhang, Y. Liu, W. Jiang, W. Fan, Q. Zhao, and G. Xu
+MPMA: Preference Manipulation Attack Against Model Context Protocol
+.
+arXiv
+.
+External Links:
+2505.11154
+,
+Document
+Cited by:
+§3.1
+.
+Xi
+et al.
+(2023)
+Z. Xi, W. Chen, X. Guo, W. He, Y. Ding, B. Hong, M. Zhang, J. Wang, S. Jin, E. Zhou, R. Zheng, X. Fan, X. Wang, L. Xiong, Y. Zhou, W. Wang, C. Jiang, Y. Zou, X. Liu, Z. Yin, S. Dou, R. Weng, W. Cheng, Q. Zhang, W. Qin, Y. Zheng, X. Qiu, X. Huang, and T. Gui
+The Rise and Potential of Large Language Model Based Agents: A Survey
+.
+arXiv
+.
+External Links:
+2309.07864
+,
+Document
+Cited by:
+§1
+.
+Xu and Parhi (2025)
+W. Xu and K. K. Parhi
+A Survey of Attacks on Large Language Models
+.
+arXiv
+.
+External Links:
+2505.12567
+,
+Document
+Cited by:
+§1
+.
+Yan
+et al.
+(2025)
+Y. Yan, S. Wang, J. Huo, P. S. Yu, X. Hu, and Q. Wen
+MathAgent: Leveraging a Mixture-of-Math-Agent Framework for Real-World Multimodal Mathematical Error Detection
+.
+arXiv
+.
+External Links:
+2503.18132
+,
+Document
+Cited by:
+§2.1
+.
+Yang
+et al.
+(2025a)
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv,
+et al.
+Qwen3 technical report
+.
+arXiv preprint arXiv:2505.09388
+.
+External Links:
+2505.09388
+,
+Link
+Cited by:
+§A.4
+,
+§1
+,
+§4.1
+.
+Yang
+et al.
+(2025b)
+Y. Yang, H. Chai, Y. Song, S. Qi, M. Wen, N. Li, J. Liao, H. Hu, J. Lin, G. Chang, W. Liu, Y. Wen, Y. Yu, and W. Zhang
+A Survey of AI Agent Protocols
+.
+arXiv
+.
+External Links:
+2504.16736
+,
+Document
+Cited by:
+§1
+.
+Zeng and et al. (2025)
+A. Zeng and et al.
+GLM-4.5: agentic, reasoning, and coding large language models
+.
+arXiv preprint arXiv:2508.06471
+.
+External Links:
+2508.06471
+,
+Link
+Cited by:
+§1
+,
+§4.1
+.
+Zhang
+et al.
+(2025a)
+X. Zhang, J. Lin, X. Mou, S. Yang, X. Liu, L. Sun, H. Lyu, Y. Yang, W. Qi, Y. Chen, G. Li, L. Yan, Y. Hu, S. Chen, Y. Wang, X. Huang, J. Luo, S. Tang, L. Wu, B. Zhou, and Z. Wei
+SocioVerse: A World Model for Social Simulation Powered by LLM Agents and A Pool of 10 Million Real-World Users
+.
+arXiv
+.
+External Links:
+2504.10157
+,
+Document
+Cited by:
+§2.1
+.
+Zhang
+et al.
+(2025b)
+Y. Zhang, Z. Zhou, W. Zhang, X. Wang, X. Jia, Y. Liu, and S. Su
+Crabs: Consuming Resource via Auto-generation for LLM-DoS Attack under Black-box Settings
+.
+arXiv
+.
+External Links:
+2412.13879
+,
+Document
+Cited by:
+Table 1
+,
+§1
+,
+§1
+,
+§2.3
+.
+Zheng
+et al.
+(2024a)
+Y. Zheng, Z. Chen, J. Qin, and L. Lin
+FacetCRS: multi-faceted preference learning for pricking filter bubbles in conversational recommender system
+.
+In
+Thirty-Eighth AAAI Conference on Artificial Intelligence, AAAI
+2024, Thirty-Sixth Conference on Innovative Applications of Artificial
+Intelligence, IAAI 2024, Fourteenth Symposium on Educational Advances
+in Artificial Intelligence, EAAI 2014, February 20-27, 2024, Vancouver,
+Canada
+,
+pp. 9405–9413
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+.
+Zheng
+et al.
+(2025a)
+Y. Zheng, M. Qian, G. Wang, Y. Liu, Z. Chen, M. Mao, L. Lin, and K. Lam
+HyperCRS: hypergraph-aware multi-grained preference learning to burst filter bubbles in conversational recommendation system
+.
+In
+Findings of the Association for Computational Linguistics, ACL 2025,
+Vienna, Austria, July 27 - August 1, 2025
+,
+pp. 5597–5608
+.
+External Links:
+Link
+Cited by:
+§1
+.
+Zheng
+et al.
+(2024b)
+Y. Zheng, J. Qin, P. Wei, Z. Chen, and L. Lin
+CIPL: counterfactual interactive policy learning to eliminate popularity bias for online recommendation
+.
+IEEE Trans. Neural Networks Learn. Syst.
+35
+(
+12
+),
+pp. 17123–17136
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+.
+Zheng
+et al.
+(2025b)
+Y. Zheng, G. Wang, Q. Jinghui, Z. Chen, J. Lin, P. Wei, L. Lin, and K. Lam
+CIREC: causal intervention-inspired policy learning to mitigate exposure bias for interactive recommendation
+.
+IEEE Transactions on Knowledge and Data Engineering
+PP
+,
+pp. 1–16
+.
+External Links:
+Document
+Cited by:
+§1
+.
+Zheng
+et al.
+(2024c)
+Y. Zheng, G. Wang, Y. Liu, and L. Lin
+Diversity matters: user-centric multi-interest learning for conversational movie recommendation
+.
+In
+Proceedings of the 32nd ACM International Conference on Multimedia,
+MM 2024, Melbourne, VIC, Australia, 28 October 2024 - 1 November
+2024
+,
+pp. 9515–9524
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+.
+Zheng
+et al.
+(2023)
+Y. Zheng, P. Wei, Z. Chen, Y. Cao, and L. Lin
+Graph-convolved factorization machines for personalized recommendation
+.
+IEEE Trans. Knowl. Data Eng.
+35
+(
+2
+),
+pp. 1567–1580
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+.
+Zheng
+et al.
+(2024d)
+Y. Zheng, P. Wei, Z. Chen, C. Tang, and L. Lin
+Routing user-interest markov tree for scalable personalized knowledge-aware recommendation
+.
+IEEE Trans. Neural Networks Learn. Syst.
+35
+(
+10
+),
+pp. 14233–14246
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+.
+Zheng
+et al.
+(2025c)
+Y. Zheng, Z. Xie, G. Wang, Z. Liu, L. Lin, and K. Lam
+Why multi-interest fairness matters: hypergraph contrastive multi-interest learning for fair conversational recommender system
+.
+In
+Findings of the Association for Computational Linguistics, ACL 2025,
+Vienna, Austria, July 27 - August 1, 2025
+,
+pp. 25673–25684
+.
+External Links:
+Link
+Cited by:
+§1
+.
+Zheng
+et al.
+(2024e)
+Y. Zheng, R. Xu, Z. Chen, G. Wang, M. Qian, J. Qin, and L. Lin
+HyCoRec: hypergraph-enhanced multi-preference learning for alleviating matthew effect in conversational recommendation
+.
+In
+Proceedings of the 62nd Annual Meeting of the Association for Computational
+Linguistics (Volume 1: Long Papers), ACL 2024, Bangkok, Thailand,
+August 11-16, 2024
+,
+pp. 2526–2537
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+.
+Zheng
+et al.
+(2024f)
+Y. Zheng, R. Xu, G. Wang, L. Lin, and K. Lam
+Mitigating matthew effect: multi-hypergraph boosted multi-interest self-supervised learning for conversational recommendation
+.
+In
+Proceedings of the 2024 Conference on Empirical Methods in Natural
+Language Processing, EMNLP 2024, Miami, FL, USA, November 12-16,
+2024
+,
+pp. 1455–1466
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+.
+Zheng
+et al.
+(2025d)
+Y. Zheng, D. Fu, X. Hu, X. Cai, L. Ye, P. Lu, and P. Liu
+DeepResearcher: Scaling Deep Research via Reinforcement Learning in Real-world Environments
+.
+arXiv
+.
+External Links:
+2504.03160
+,
+Document
+Cited by:
+§2.1
+.
+Zhu
+et al.
+(2025)
+Y. Zhu, A. Kellermann, D. Bowman, P. Li, A. Gupta, A. Danda, R. Fang, C. Jensen, E. Ihli, J. Benn, J. Geronimo, A. Dhir, S. Rao, K. Yu, T. Stone, and D. Kang
+CVE-Bench: A Benchmark for AI Agents’ Ability to Exploit Real-World Web Application Vulnerabilities
+.
+arXiv
+.
+External Links:
+2503.17332
+,
+Document
+Cited by:
+§2.1
+.
+Appendix A
+Additional Experimental Details
+A.1.
+Target LLMs configuration
+All target models are served under a uniform runtime on a single node with eight H200 GPUs, using bfloat16 precision and a maximum context length of 131,072 tokens. We deploy vLLM
+(
+Kwon et al., 2023
+)
+. Decoding follows the same setting across all conditions: nucleus sampling with
+p
+=
+0.95
+p=0.95
+and temperature
+0.5
+0.5
+, and a per-generation completion cap of 16,384 tokens. These settings are held constant for every model and benchmark so that any change in cost, length, or throughput arises from the agent–tool interaction rather than heterogeneous serving choices.
+A.2.
+Attacker LLMs configuration
+We employ a two-stage approach using two distinct LLMs for attack generation. Within the iterative MCTS optimization loop, the Editor LLM is Llama-3.3-70B-Instruct
+(
+Grattafiori and et al., 2024
+)
+. Its serving and decoding configuration deliberately mirrors the target LLM setup described above to eliminate experimental confounds and ensure the generated edits are effective. For converting a benign tool description into a protocol-compatible malicious template, we leverage gpt-4o
+(
+OpenAI, 2024
+)
+. We fix its temperature at 0 to guarantee deterministic and high-fidelity output for our seed templates, leaving all other parameters at the provider’s defaults.
+A.3.
+Agent framework and execution environment
+Qwen-Agent is a framework for building LLM applications that integrate instruction following, tool usage, planning, and memory, and it ships with reference applications such as a browser assistant, a code interpreter, and a customizable assistant; it also powers the backend of Qwen Chat
+(
+QwenLM, 2025
+)
+. In this study we rely on Qwen-Agent’s native support for the Model Context Protocol and for multi-turn tool calls
+(
+Model Context Protocol Working Group, 2025
+)
+, and we use these native capabilities directly. All experiments are conducted in a controlled environment rather than on production stacks. For models other than Qwen, we perform minimal adaptations so that the same tool calling loop, message formatting, and termination logic apply uniformly, while keeping the agent policy and prompts fixed across all conditions. This yields an apples-to-apples emulator of agent behavior that isolates the effects of tool-layer edits.
+A.4.
+Datasets filtering
+We evaluate on two tool-use corpora designed for function calling by agents. ToolBench aggregates a broad set of utilities and APIs together with queries that require tool invocation
+(
+Fan et al., 2025
+)
+. BFCL emphasizes structured function calling with clear argument schemas and deterministic behaviors across everyday tasks
+(
+Patil et al., 2025
+)
+. From each benchmark, we extract all prompts that are single-turn and single-tool in their original specification, together with their associated tools. To control data quality, we run a screening pass on Qwen-3-32B
+(
+Yang et al., 2025a
+)
+under the benign server for every candidate prompt: each prompt is executed five times; if at least two out of five runs fail to trigger any tool call, that prompt is discarded. This removes ambiguous or brittle cases where the agent may answer from prior knowledge without calling the tool, thereby avoiding noise unrelated to our attack. The retained prompts and tools are then used uniformly for all target models.
+A.5.
+Datasets wrapping
+For every retained tool, we produce an MCP-compatible server template from its benchmark description using gpt-4o
+(
+OpenAI, 2024
+)
+. The conversion preserves the tool’s identity and interface, including names, function identifiers, and argument schemas, so the agent sees the same capability surface as in the benchmark. Because our goal is to probe the trajectory and cost of the interaction rather than the accuracy of external data, live network calls are stubbed and deterministic placeholder values are returned in place of real API results. The terminal payload semantics remain consistent with the benign server so the agent can still complete the task. This design preserves protocol compatibility and task success
+(
+Model Context Protocol Working Group, 2025
+)
+while isolating the effect of template edits on multi-turn cost amplification.

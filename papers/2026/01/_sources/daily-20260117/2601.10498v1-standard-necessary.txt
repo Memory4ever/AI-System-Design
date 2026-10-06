@@ -1,0 +1,79 @@
+Source https://arxiv.org/html/2601.10498v1
+[H]
+1 Background
+Proximal Policy Optimization (PPO) [8] and its variants, including GRPO [9], stabilize reinforcement learning by limiting the magnitude of policy updates between optimization steps. This is typically achieved by optimizing a surrogate objective that discourages large deviations from a reference policy \pi_{\text{old}} through clipping of the policy likelihood ratio. GRPO and related methods [9, 12] combine PPO-style updates with a group-relative advantage estimator and have become the dominant approach for reinforcement learning–based fine-tuning of large language models. CISPO [3] is another proximal policy variant that clips the importance-sampling ratio in the loss while ensuring that all tokens contribute to the gradient computation. More broadly, proximal policy methods can be viewed as tractable approximations to the natural policy gradient [7], whose exact computation is infeasible at scale.
+[H]
+2 Projected Microbatch Accumulation (PROMA)
+PROMA modifies the optimization process during the backward pass. For each microbatch, the sequence-wise log-probability gradients (mcb_seq_grads in Figure 1) are computed as part of evaluating the policy gradient, denoted mcb_policy_grad. Before gradients are accumulated, the running gradient t.grad of a parameter tensor t is updated by projecting out components that lie in the span of the sequence-wise log-probability gradients. This projection is applied layer-wise and acts directly on the accumulated gradient.
+⬇
+1
+# k: number of sequences in microbatch
+2
+# t: (d,) tensor of model weights in the layer
+3
+# mcb_policy_grad: (d,) vanilla policy grad w.r.t. tensor t
+4
+# mcb_seq_grads: (d, k) sequence-wise gradients of the logprobs w.r.t tensor t
+5
+def accumulate_PROMA(t, mcb_policy_grad, mcb_seq_grads)
+6
+7
+# Project a vector (left) to be orthogonal to the span of vectors (right input).
+8
+complemented_acc_grad = project_to_complement(t.grad, mcb_seq_grads)
+9
+10
+t.grad = complemented_acc_grad + mcb_policy_grad
+Figure 1: accumulate_PROMA is called during the backward pass of the policy gradient loss and modifies the gradient accumulation.
+Before adding the microbatch gradient,
+the partially accumulated gradient is projected to be orthogonal to the gradient of each sequence in the current microbatch (mcb_seq_grads).
+By doing an approximate projection (figure 3), the number of operations to project away the sequence gradients can be of order kd where k is the number of sequences and d the number of parameters. This is negligible compared to the T\times d operations required to form the gradient, where T is the number of tokens.
+The motivation for PROMA can be put simply: grad_log_prob for a sequence represents the parameter direction where the sequence’s probability changes the fastest. The parameter update t.grad incurs a KL divergence that grows with the squared overlaps (\texttt{t.grad}\;\cdot\;\texttt{grad\_log\_prob})^{2}, where mcb_seq_grads in figure 1 is the grad_log_prob for each sequence, stacked side by side. PROMA aims to avoid this contribution to the KL divergence by projecting away these components of t.grad.
+[H]
+3 Results
+The demonstration was implemented in VeRL [10]
+(https://github.com/nilin/proma).
+Experiments used the GSM8K dataset [5] with the Qwen-3 0.6B model [11]. The PROMA configuration is based on REINFORCE without any PPO clipping of the likelihood ratio, to isolate the effect of the projected accumulation. All runs are without KL penalty.
+GRPO refers to the baseline with PPO clipping, and REINFORCE refers to the baseline without PPO clipping. All runs use the same group-relative advantage estimator. Figure 2 shows the performance and policy dynamics of PROMA compared to GRPO and REINFORCE.
+(a) Validation performance
+(b) KL vs. initial policy
+(c) Entropy
+(d) KL vs. lagged policy
+Figure 2: Training performance and policy statistics for PROMA, GRPO, and REINFORCE.
+(a) Validation performance.
+(b) KL divergence from the initial policy.
+(c) Policy entropy.
+(d) KL divergence between the current policy and a lagged reference policy (running mean over 40 steps). Only GRPO (blue) uses PPO clipping of the likelihood ratio.
+PROMA achieves comparable or improved validation performance relative to GRPO (Figure 2a). Although PROMA allows substantial deviation from the initial policy, its global KL divergence remains controlled compared to REINFORCE (Figure 2b). PROMA also maintains higher entropy for longer during training, indicating sustained exploration without premature policy collapse (Figure 2c). Finally, PROMA has consistently lower KL divergence between successive policies than both baselines (Figure 2d), suggesting smoother local updates. These results indicate that PROMA achieves a favorable tradeoff between stability and flexibility, allowing meaningful policy improvement while enforcing local smoothness.
+This experiment used the approximate complement projection project_to_complement_v2 shown in figure 3.
+The experiment included another change compared to figure 1 which is explained for completeness: The modification to the accumulated gradient,
+proj_on_span = t.grad - complemented_acc_grad, was clamped to have norm at most 0.5 * mcb_policy_grad.norm(). Otherwise the modification was scaled down, i.e. complemented_acc_grad was replaced by
+t.grad - proj_on_span * mcb_policy_grad.norm() / proj_on_span.norm() * 0.5).
+⬇
+1
+# basic projection onto complement
+2
+def project_to_complement_v1(acc_vec, vecs):
+3
+Q, _ = torch.linalg.qr(vecs, mode="reduced") # Q: (d, k)
+4
+return acc_vec - Q @ (Q.T @ acc_vec)
+5
+6
+# Experiments used this approximate projection.
+7
+def project_to_complement_v2(acc_vec, vecs):
+8
+U = vecs / torch.norm(vecs, dim = 0) # (d, k)
+9
+for _ in range(2):
+10
+for u in U.T:
+11
+acc_vec -= torch.dot(acc_vec, u) * u
+12
+return acc_vec
+Figure 3: To exactly project away the k sequences in the microbatch (project_to_complement_v1) takes \approx 2k^{2}d FLOPS where d is the number of parameters. The results in this section used the iterative projection project_to_complement_v2 which takes O(kd) FLOPS. I did not test if this was faster in practice.
+[H]
+4 Discussion
+PROMA is a followup to ISOPO [1] which likewise aimed to define a proximal gradient update without a reference policy. In constrast to ISOPO which explored intra-microbatch pre-conditioning, PROMA instead modifies the gradient accumulation across microbatches to achieve proximal policy updates. The usefulness of projecting the accumulated gradient is consistent with findings in computational physics in which the SPRING optimizer [6] applied a projected momentum scheme to the MinSR [4] optimizer to achieve increased accuracy. Both MinSR and SPRING are variants of the variational Monte Carlo (VMC) method [2] for molecular energy calculation, a method which is formally similar to policy optimization. This parallel highlights a shared geometric structure underlying stochastic optimization methods in both computational physics and reinforcement learning.

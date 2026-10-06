@@ -1,0 +1,64 @@
+# 本日 exact-v1 准入判断 A（尚非最终候选冻结）
+
+窗口 2026-02-12T09:00:00+08:00 ～ 2026-02-13T09:00:00+08:00。仅此日主题标题线索，先恢复精确 v1；DATE 为必要 first-public 待核，EX 为明确贡献/范围关闭。分数逐条针对原文新增命题：4=1+1+2（局部方法/验证）；5=2+1+2（具体替代机制/条件）；6=2+2+2（跨接口机制）；D 表示实际反证/安全/保证边界，最低深入。
+
+- [2602.10134v1](https://arxiv.org/abs/2602.10134v1) | 6D | 编辑后的低秩delta泄露subject row-space fingerprint，再恢复编辑prompt；需重新考虑参数编辑等于隐私删除的假设。
+- [2602.10139v1](https://arxiv.org/abs/2602.10139v1) | 6D | 任务关键PII不能一概遮掉；type-preserving placeholder与本地interaction proxy分离cloud推理和raw-value操作，需核效用与泄漏边界。
+- [2602.10144v1](https://arxiv.org/abs/2602.10144v1) | DATE | 配对样本McNemar及跨bench聚合有评价增量，但ICLR2026/OpenReview先公开信号须先核，不把arxiv收录视为首公开。
+- [2602.10146v1](https://arxiv.org/abs/2602.10146v1) | 5 | 视觉证据检索head不同于OCR；causal masking后用entropy触发显式证据表达，需核稀疏head因果作用与额外推理成本。
+- [2602.10148v1](https://arxiv.org/abs/2602.10148v1) | 5D（root必要core准入通过） | 初次EX理由过粗；实体信息迁移图像、文本只保留空间pointer使跨模态重构恶意语义，局部单组件/hop评价可核具体语义重组失效条件。不能宣称完整2×2因果或普遍防御绕过，准入不是Evidence完成。
+- [2602.10153v1](https://arxiv.org/abs/2602.10153v1) | 6D | 控制评估反驳删除所有注释的安全默认：honest解释比backdoor更可验证，收益依monitor strength而变；仅APPS对抗监控。
+- [2602.10161v1](https://arxiv.org/abs/2602.10161v1) | 6D | 跨模态语义冲突出现mid-layer refusal-vector shrinkage，提出modal-invariant SVD refusal direction与adapter强度；核因果与正常能力代价。
+- [2602.10179v1](https://arxiv.org/abs/2602.10179v1) | 6D | vision-prompt editing使恶意intent可完全位于视觉输入；新visual-to-visual入口需核真实attack协议，不泛化所有图像模型。
+- [2602.10195v1](https://arxiv.org/abs/2602.10195v1) | 5 | CGA rotor recurrence提供SE(3)等变及线性序列状态分支，不仅科学应用；核WikiText与结构toy的适用范围。
+- [2602.10204v1](https://arxiv.org/abs/2602.10204v1) | 5 | variance normalization后再momentum改变stale normalizer耦合，给conditional update-variance和gradient-spike边界；核噪声假设及额外state。
+- [2602.10210v1](https://arxiv.org/abs/2602.10210v1) | EX（root必要core实际核通过） | §4.4/5/Table3–4近期corpus加自动graph-QA与无context/RAG/KG比较，没有同context/oracle relevance/heldout-time污染控制隔离intrinsic reasoning与retrieval；新benchmark recipe与方法排名不足新归因条件，停止不继续全审。
+- [2602.10212v1](https://arxiv.org/abs/2602.10212v1) | 5 | LoRA gradient flow给两类矩阵近似loss的rank-accuracy关系；采用范围限toy loss，不能外推任意LLM adaptation。
+- [2602.10216v1](https://arxiv.org/abs/2602.10216v1) | 5 | 同prompt随机结果差的反向gradient分解input-embedding子空间，使控制从output聚类转向生成过程；核mode-collapse恢复证据。
+- [2602.10217v1](https://arxiv.org/abs/2602.10217v1) | 6D | 有限样本classifier guidance在尖锐forget分布失效；先temper再tilt给unlearning-error条件，需核保证及输出分布依赖。
+- [2602.10224v1](https://arxiv.org/abs/2602.10224v1) | EX（决定core改判，root实际核通过） | §3.2原始x replay只筛最终答对，未隔离总结增益或建立新的error-credit机制；contrastive自总结→验证→NLL自蒸馏是成熟组合。保留原4分临时依据，不因成本/访问改判；实际core V3_RESUME_CORE_0 Source108–151。replay成功不证明critique因果正确，不采用virtually unlimited权重/零推理成本保证，停止贡献补读。
+- [2602.10229v1](https://arxiv.org/abs/2602.10229v1) | 5 | raw hidden反复回灌造成embedding错配；context与词表预测融合latent token并分阶段训练，需核collapse与explicit切换。
+- [2602.10230v1](https://arxiv.org/abs/2602.10230v1) | 5 | 内部音频frame表示加IHP event-intensity loss替代timestamp文本生成；需核速度分母与长度外推，不照用后版标题。
+- [2602.10231v1](https://arxiv.org/abs/2602.10231v1) | 5 | 按block隔离multi-objective advantage，prefix outcome-conditioned within-group baseline避免nestedrollouts；核baseline bias与耦合消融。
+- [2602.10238v1](https://arxiv.org/abs/2602.10238v1) | 5 | future-utility训练K/V-only per-head全budget ranking替代past-attention/recency代理；已独立准入，仍需正文精确绑定。
+- [2602.10254v1](https://arxiv.org/abs/2602.10254v1) | 6 | MoE crossbar multiplex共用外设引入contention；expert grouping/scheduling与GO-cache处理expert-choice全hidden依赖；核PIM成本与8token局部结果。
+- [2602.10262v1](https://arxiv.org/abs/2602.10262v1) | 5 | MI300A FP8 occupancy阈值、ACE并发公平性及2:4稀疏收益依执行条件变化；原始microbenchmark可改调度选择，核具体阈值。
+- [2602.10271v1](https://arxiv.org/abs/2602.10271v1) | EX | multimodal document expansion→可答query surrogates→chunk-query graph检索和证据聚合是成熟query扩展/图RAG组合；题摘仅新任务指标，未说明新成立边界。后续v2/v3只核已有纠错信号。
+- [2602.10273v1](https://arxiv.org/abs/2602.10273v1) | 5 | SMC粒子批解码靶定sequence-power分布，unique minimum incremental-variance prefix proposal替代MH；核有限粒子偏差与相同target性能。
+- [2602.10286v1](https://arxiv.org/abs/2602.10286v1) | 6D | BT不总能表达pairwise CPRD；给适用条件、margin/connectivity影响恢复和样本效率，反侧触及reward解释。
+- [2602.10298v1](https://arxiv.org/abs/2602.10298v1) | 4 | 七类ToM和pragmatics的hypothesis-driven functional-localization提供局部共享功能验证；suggestive整合证据不建立通用social world-model架构。
+- [2602.10300v1](https://arxiv.org/abs/2602.10300v1) | 6 | N/D scaling隐含hyperparam最优；以完整training config预测loss并检查10x compute外推，需核多source泛化与不可比配置。
+- [2602.10314v1](https://arxiv.org/abs/2602.10314v1) | 5 | random mask和inference结构mask错配；PUMA改变forward masking分布，需核125M训练加速预算和autoregressive-init替代。
+- [2602.10326v1](https://arxiv.org/abs/2602.10326v1) | 4 | velocity并行预测heteroscedastic uncertainty及flow传播再guidance；局部采样可靠性head扩展，不建立calibrated全模型uncertainty。
+- [2602.10329v1](https://arxiv.org/abs/2602.10329v1) | 4 | controlled variable-attribution complexity揭示brute-force→analytic策略变化及XOR差异；局部行为证据不证明普遍resource-rationality法则。
+- [2602.10346v1](https://arxiv.org/abs/2602.10346v1) | 5 | token embedding Wasserstein truncation把semantic geometry纳入crop优化，固定potential给closed-form prefix；核额外geometry成本与judge偏差。
+- [2602.10352v1](https://arxiv.org/abs/2602.10352v1) | 5 | 冻结LM的scalar affine adapter和bias-alone消融改变self-interpretation来源解释；核labels知识控制与bridge entity非CoT证据。
+- [2602.10356v1](https://arxiv.org/abs/2602.10356v1) | EX（root必要core实际核通过） | matched-update fixed/randomfresh与feedback curriculum控制只支持已有成熟curriculum组合在Impress的任务收益，未新增选择边界或continual可靠性条件；不因读全文成本排除。
+- [2602.10371v1](https://arxiv.org/abs/2602.10371v1) | 5 | 同desiderata量化LLM-description与SAE diffing，在generalization/abstractness上改变复杂白盒方法必需的判断。
+- [2602.10377v1](https://arxiv.org/abs/2602.10377v1) | 6 | architectural scaling loss与Jetson roofline latency联合搜索accuracy-latency可行域；核170模型10B token与hardware配置，不当通用co-design律。
+- [2602.10380v1](https://arxiv.org/abs/2602.10380v1) | 6D | 同decomposition在granular subclaim evidence获益、repeat claim evidence退步，abstention改变error propagation；反驳分解必增益。
+- [2602.10382v1](https://arxiv.org/abs/2602.10382v1) | 6D | language-switch backdoor因activation patching与自然language heads重叠，不是独立隐藏circuit；核Jaccard及causal控制，不能据重叠认证防御。
+- [2602.10388v1](https://arxiv.org/abs/2602.10388v1) | 4 | SAE Feature Activation Coverage定位seed缺feature并定向synthesis；局部数据多样性selector，不能用feature coverage替代质量/因果必要。
+- [2602.10390v1](https://arxiv.org/abs/2602.10390v1) | 5 | task-agnostic language intents与affordance partial-world predictive能力的形式联系，distribution-robust affordance减少search分支；核理论条件。
+- [2602.10408v1](https://arxiv.org/abs/2602.10408v1) | 6D | pre-norm内部sample statistics可taper到fixed scaling，而output anchor另防logit chasing；需核foldability和归一化必要性范围。
+- [2602.10410v1](https://arxiv.org/abs/2602.10410v1) | 5 | key-key RKHS preconditioner减attention probability扩散而不靠低temperature，提出与softmax不同retrieval机制；核复杂度及128k对照。
+- [2602.10418v1](https://arxiv.org/abs/2602.10418v1) | 6D | prefix security score与risk-sensitive aggregation把安全反馈从完整代码移至partial generation；核static-label误差和功能security混杂。
+- [2602.10420v1](https://arxiv.org/abs/2602.10420v1) | 5 | binary flow x-prediction/v-loss导致singular weighting；signal-space x-loss给bounded-grad条件，核time/domain假设。
+- [2602.10425v1](https://arxiv.org/abs/2602.10425v1) | 5D（root完整AB校准通过） | 移除视觉证据仍被scene-prior诱发对象幻觉，新增局部评价反侧；不把DPO配方和38%指标本身当贡献，必要控制待深审。
+- [2602.10430v1](https://arxiv.org/abs/2602.10430v1) | EX | 首版实际限定off-policy generative recommendation，非LLM后训练；只借推荐DRO/repulsion原理类比不足建立本项目直接关系。
+- [2602.10431v1](https://arxiv.org/abs/2602.10431v1) | 5 | token-adaptive少冗余放大量化误差；训练path多样性及runtime execution ratio成为coupled控制，不把两个压缩简单相加。
+- [2602.10437v1](https://arxiv.org/abs/2602.10437v1) | 4 | policy选SAE feature作逐token动态干预而非静态feature激活；局部interpretability probe，不等于通用推理提升或安全认证。
+- [2602.10439v1](https://arxiv.org/abs/2602.10439v1) | EX（root AB关闭通过；不宣称root全文） | frozen reasoner+tool-routing RL迁移audio，§4.3聚合对照无隔离perception保留/tool-choice效用的新成立边界；600×数据数字非同budget机制贡献。必要core作者实际核在V3_NEXT_NECESSARY_1。
+- [2602.10449v1](https://arxiv.org/abs/2602.10449v1) | 6D | JL不覆盖inverse-curvature influence；range injectivity/rank下界、ridge effective dimension及kernel leakage给sketch可靠性条件。
+- [2602.10453v1](https://arxiv.org/abs/2602.10453v1) | 6D | context-dependent授权环境使suppress-context防注入benchmark看似有效但现实utility崩；评价盲区须深核，不把taxonomy当贡献。
+- [2602.10461v1](https://arxiv.org/abs/2602.10461v1) | 5 | forward/backward双端边界问题重写optimization-time hyperbolic IVP，以wave variables给unlocked NN算法；核对应性与近似成本。
+- [2602.10465v1](https://arxiv.org/abs/2602.10465v1) | 6D | MAPL动态policy algebra与cryptographic dependency attestations提出workflow trust层；核证明到底保证authenticated policy还是semantic用户意图。
+- [2602.10468v1](https://arxiv.org/abs/2602.10468v1) | 6 | topology与flow schedules用adjacency powers统一并给completion lowerbound，显式计reconfiguration cost；核通信成本假设。
+- [2602.10471v1](https://arxiv.org/abs/2602.10471v1) | 5 | 隐藏全部failure artifacts并以documentation oracle测proactive bug discovery，避免regression compliance trap；核data收集与runtime判定。
+- [2602.10478v1](https://arxiv.org/abs/2602.10478v1) | 6D | GPU operator参数constraints定向solver探boundary memory errors；安全/正确性信号需核13bug身份和oracle，不等实际复现。
+- [2602.10480v1](https://arxiv.org/abs/2602.10480v1) | 5 | symbolic WM直接约束output distribution且neural仅补symbolic未覆盖trajectory，交替coverage-aware training而非rule prompting。
+- [2602.10481v1](https://arxiv.org/abs/2602.10481v1) | 6D | prompt lineage与hash-chain context提出provenance policy algebra；核Byzantine保证条件，认证来源不能保证来源内容安全。
+- [2602.10485v1](https://arxiv.org/abs/2602.10485v1) | EX | LLM出QNP features/actions再automated debugging是existing generate-verify-repair在传统规划的应用；题摘未给新abstraction保证或失效边界。
+- [2602.10494v1](https://arxiv.org/abs/2602.10494v1) | EX | 必要core是DOM CRUD＋headless render＋LLM critique成熟组合，未新增state充分性/可靠性条件；“Markovian-like”不证明充分状态或收敛。root实际核心关闭通过；强保证反侧保留V3_QUERY_10494_CORE.txt，不产生评分/全文队列。
+- [2602.10496v1](https://arxiv.org/abs/2602.10496v1) | 4 | modular-arithmetic toy实验证据显示3–4维execution manifold和SAE不隔离execution；局部学习诊断不建立真实LLM压缩维数。
+- [2602.10498v1](https://arxiv.org/abs/2602.10498v1) | 6D | Markdown rendered HTML藏comment而raw skill被模型读取造成human/model审核界面不同；具体documentation injection路径需核tool-effect真实性。

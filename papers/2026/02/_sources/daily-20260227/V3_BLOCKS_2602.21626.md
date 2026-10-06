@@ -1,0 +1,337 @@
+[0] h5: Report GitHub Issue
+
+[1] p: Content selection saved. Describe the issue below:
+
+[2] h1: Multi-Layer Scheduling for MoE-Based LLM Reasoning
+
+[3] h6: Abstract
+
+[4] p: Large Language Models (LLMs) have achieved remarkable success across a wide range of tasks, but serving them efficiently at scale remains a critical challenge due to their substantial computational and latency demands. While most existing inference frameworks rely on simple scheduling strategies such as First-Come-First-Serve (FCFS) at the engine level and Round-Robin (RR) at the scheduler or coordinator level, they often fail to fully utilize system resources and may suffer from issues such as head-of-line blocking and load imbalance. Recent advances in Mixture-of-Experts (MoE) models have also introduced new challenges in scheduling arising from expert parallelism and routing complexity. This research proposes a multi-layer scheduling framework tailored for MoE-based LLM serving. It targets scheduling at three levels: request-level, engine-level, and expert-level. At the request level, we explore algorithms such as Shortest-Job-First (SJF) and priority-aware aging to improve throughput and reduce latency. At the engine level, we design load-aware dispatching strategies that account for the current prefix token load, KV cache utilization, and user stickiness to achieve better resource matching. At the expert level, we focus on alleviating expert hotspots and strategically placing inter-layer expert dependencies to balance load and improve routing efficiency. Extensive experimental results from more than 100 experiments conducted under diverse workload distributions show that our approach consistently outperforms the state-of-the-art inference framework vLLM, achieving up to 17.8% reduction in Time To First Token (TTFT) latency and 13.3% reduction in Time-Per-Output-Token (TPOT) latency.
+
+[5] h6: Index Terms:
+
+[6] h2: I Introduction
+
+[7] p: In recent years, Large Language Models (LLMs) have developed rapidly [ 1 ] , helping millions of users worldwide with tasks such as natural language understanding, content generation, programming assistance, and multimodal reasoning. From personal productivity tools to enterprise AI services, LLMs are reshaping the way people interact with information and technology.
+
+[8] p: Early advances in LLMs were largely driven by scaling dense Transformer-based [ 2 ] models and continuously pushing the limits of model parameters. For example, GPT-1 had 117M parameters [ 3 ] , followed by GPT-2 with 124M to 1.5B parameters [ 4 ] , and GPT-3 [ 5 ] with 175B parameters. These large-scale dense models achieved outstanding performance across a wide range of tasks by continuously increasing parameter counts. However, as the size of dense models grows, they place increasing demands on computational resources, inference latency, and deployment cost. Therefore, efficiently serving such models in real-world applications has become a critical problem that warrants immediate attention.
+
+[9] p: Given these growing concerns, increasing attention has been drawn to sparse model architectures, particularly Mixture of Experts (MoE) models [ 6 ] . The release of DeepSeek R1 [ 7 ] demonstrated that sparse MoE models can perform as intelligently as traditional dense models while using significantly fewer computational resources. In MoE models, only a small subset of expert networks (i.e., specialized subnetworks) are activated per token during inference, enabling the model to scale to trillions of parameters while keeping the per-token computation manageable. Following DeepSeek R1, models such as Mixtral [ 8 ] and MoE variants of LLaMA-4 [ 9 ] have also adopted MoE architectures, demonstrating the effectiveness of this approach in achieving strong performance and improved inference efficiency.
+
+[10] p: Although MoE architectures hold great promise, they also introduce new challenges in system design and serving. In particular, MoE models typically rely on expert parallelism, distributing experts across multiple GPUs or nodes. To further increase inference throughput and support large-batch processing, expert parallelism is often combined with data parallelism. While this layered parallelism enables efficient hardware utilization, current LLM serving frameworks still mainly adopt scheduling strategies originally designed for dense models. At the engine level, simple Round-Robin dispatching ignores load conditions such as prefix token volume and KV Cache usage, often leading to load imbalance and underutilization. At the request level, First-Come-First-Serve remains the default, which can cause head-of-line blocking and long-tail latency under heavy workloads. More critically, at the expert level, existing systems fail to account for inter-layer expert affinity, dependency patterns, and GPU-local hotspots, resulting in uneven workload distribution across experts and devices.
+
+[11] p: To address these challenges, we propose Gimbal , a multi-layer scheduling framework designed to stabilize and optimize MoE-based LLM serving, with improvements in the following three areas:
+
+[12] p: Engine-Level Scheduling : adopting strategies such as Shortest-Job-First and priority-aware aging to reduce long-tail latency and improve throughput.
+
+[13] p: Request-Level Scheduling : employing load-aware and affinity-preserving dispatching that considers prefix tokens, KV Cache usage, and user stickiness, to reduce Time To First Token and Time Per Output Token.
+
+[14] p: Expert-Level Scheduling : mitigating expert hotspots and strategically placing dependent experts to improve efficiency and balance workload across GPUs.
+
+[15] p: Although our evaluation focuses on a representative MoE model, Gimbal is not tied to any model-specific internals. It relies only on general routing and scheduling signals exposed by MoE inference frameworks, and is therefore applicable to a broad range of MoE architectures, including Mixtral, Switch Transformer, and DeepSeek-style models.
+
+[16] p: Overall, the proposed multi-layer scheduling framework delivers substantial performance improvements for MoE-based LLM serving. By jointly optimizing request-level prioritization, engine-level load-aware dispatching, and expert-level dependency-aware placement, our approach effectively reduces both queuing delay and execution inefficiency under diverse workloads. Experimental results demonstrate that Gimbal achieves up to a 17.8% reduction in Time To First Token and a 13.3% reduction in Time-Per-Output-Token compared to the state-of-the-art baseline, while maintaining comparable throughput.
+
+[17] p: The remainder of the paper is organized as follows: Section II introduces the fundamental concepts of LLM and MoE architectures and discusses existing serving frameworks and their limitations. Section III presents the design of Gimbal and elaborates on its multi-layer scheduling mechanisms. Section IV describes the implementation of the Gimbal framework. Section V evaluates Gimbal’s performance under various workloads and compares it against baselines. In the next section, we review related work, and Section VII concludes the paper and discusses directions for future research.
+
+[18] h2: II Background and Motivation
+
+[19] p: This section provides an overview of the foundations of large language models and sparse Mixture-of-Experts architectures, followed by a discussion of modern LLM serving frameworks and their scheduling mechanisms. We then outline the limitations of existing systems and highlight the key motivations that drive the design of Gimbal.
+
+[20] h3: II-A LLM and MoE model Basics
+
+[21] p: Modern large language models are built upon the Transformer architecture [ 2 ] , where each layer combines attention, feedforward networks, residual connections, and normalization. In self-attention, the hidden states are projected into queries ( Q Q ), keys ( K K ), and values ( V V ), and computes attention via scaled dot-product. During inference, LLMs follow an autoregressive decoding process with two phases: prefill , which attends over the entire prompt, and decode , which generates tokens step by step. To avoid recomputing history, modern systems cache the key/value tensors (KV Cache), greatly reducing per-step computation.
+
+[22] p: As model sizes continue to grow, scaling dense architectures becomes increasingly resource-intensive. To address this, Mixture-of-Experts architectures [ 6 ] were introduced, replacing dense feedforward layers with sparsely activated experts , as stated earlier. A lightweight router selects only a small subset of experts (e.g., top- k k out of hundreds) for each token, allowing models to scale to a massive number of parameters while keeping per-token computation manageable.
+
+[23] h3: II-B LLM Serving Architecture and Scheduling
+
+[24] p: To meet the demands of real-time, high-throughput inference, modern LLM serving systems such as vLLM [ 10 ] , SGLang [ 11 ] , TGI [ 12 ] , and Preble [ 13 ] typically adopt a layered architecture (Figure 1 ) consisting of two major components: a global router and one or more inference engines. The router is responsible for distributing incoming requests across available engine replicas, while each engine performs token-level inference, including model execution, key-value (KV) cache management, and batching.
+
+[25] p: Within this architecture, scheduling can be viewed at multiple levels. At the engine level , scheduling determines how requests are dispatched across different engine replicas in data-parallel (DP) serving. At the request level , the engine manages concurrent requests internally, organizing them into dynamic batches and coordinating prompt processing and token decoding. With the introduction of expert parallelism (EP) in MoE models, an additional dimension of scheduling arises: expert selection and routing. Here, tokens within a batch may activate different experts, and the system must determine how tokens are distributed to expert replicas deployed across GPUs or nodes. This layered perspective has enabled modern LLM serving systems to improve hardware utilization and inference scalability, but it also introduces new challenges in coordinating scheduling across different levels.
+
+[26] figure: Fig. 1 : Current frameworks and their issues
+
+[27] h3: II-C Motivation
+
+[28] p: Currently, mainstream LLM serving systems such as vLLM [ 10 ] and SGLang [ 11 ] mainly adopt service frameworks similar to Figure 1 designed for traditional dense models, lacking specific optimizations for the characteristics of MoE models. In dense model scenarios, scheduling is relatively simple, often performed on a single machine or single GPU using FCFS, or via simple Round-Robin (RR) strategies across multiple inference engines in multi-GPU settings. While these approaches are simple and easy to implement, they are insufficient for MoE serving scenarios: First, engine -level RR scheduling is unaware of each engine ’s current load status, such as KV Cache usage, which can result in some engines becoming overloaded while others remain underutilized, leading to suboptimal throughput and latency.
+
+[29] p: In addition, they overlook opportunities to optimize prefix-cache reuse or leverage user stickiness by routing requests from the same user to the same engine. Queries from a single user are often logical, sequential, and contextually related, making them more likely to share common prefixes. Therefore, assigning engines based on historical request patterns or session affinity can significantly improve prefix-cache hit rates. Second, request scheduling within each engine still commonly follows FCFS. While fair, FCFS can cause long-tail latency when a long request blocks subsequent short requests, degrading user experience. Under high-concurrency scenarios, FCFS also fails to fully utilize computational resources, resulting in low efficiency.
+
+[30] figure: Fig. 2 : Gimbal’s System Architecture
+
+[31] p: More importantly, current inference frameworks often fail to adequately address inter-layer expert affinity and dependency, as well as localized hotspot issues on GPUs, leading to imbalanced expert workloads across GPU devices. To address these challenges, we propose Gimbal , a multi-layer scheduling framework tailored for MoE-based LLM serving.
+
+[32] h2: III System Design
+
+[33] p: This section provides an overview of the overall system architecture of Gimbal, as well as the specific functions, algorithms, and modeling techniques used in each component.
+
+[34] h3: III-A System Architecture
+
+[35] p: The system architecture, as shown in Figure 2 , consists of three main components: 1) the DP Engine Load Balance, 2) SJF Scheduler, and 3) Expert Dynamic Replacement Module. Gimbal begins with a global request-layer Data Parallel (DP) engine load balancer that receives incoming requests from the user request pool. The balancer performs lightweight data collection, including request features, user-level information, and real-time engine metrics, and asynchronously forwards these data to the engine selection module. Based on the current backend engine states and collected metrics, the balancer assigns each request to the most suitable DP engine.
+
+[36] p: Within each DP engine, Gimbal employs a Shortest-Job-First based scheduler. Each DP engine maintains its own SJF waiting queue, where requests are prioritized according to their token count. This design reduces tail latency, improves overall system responsiveness, lowers Time To First Token, and minimizes average queuing delay.
+
+[37] p: The final component of Gimbal is an Expert Dynamic Replacement Module that integrates both cross-layer expert dependencies and expert hot-spot exchanges. This module dynamically adjusts expert placement across GPUs during inference, preserving cross-layer expert affinity, balancing expert activation load, and minimizing inter-GPU communication whenever possible.
+
+[38] h3: III-B DP Engine Load Balancing module
+
+[39] figure: Algorithm 1 DP Engine Selection Algorithm Input: r ​ e ​ q ​ u ​ e ​ s ​ t request , d ​ p ​ _ ​ e ​ n ​ g ​ i ​ n ​ e ​ s ​ [ ] dp\_engines[] , per-engine metrics: K ​ V ​ u ​ s ​ a ​ g ​ e ​ [ n ] KVusage[n] , R ​ u ​ n ​ n ​ i ​ n ​ g ​ L ​ o ​ a ​ d ​ [ n ] RunningLoad[n] , u ​ s ​ e ​ r ​ _ ​ e ​ n ​ g ​ i ​ n ​ e ​ _ ​ m ​ a ​ p user\_engine\_map , thresholds θ k ​ v , θ d ​ i ​ f ​ f , θ l ​ o ​ a ​ d \theta_{kv},\theta_{dif\!f},\theta_{load} Output: Selected engine e ∗ e^{*} 1: Initialize e ∗ ← next engine from ​ d ​ p ​ _ ​ e ​ n ​ g ​ i ​ n ​ e ​ s ​ [ ] e^{*}\leftarrow\text{next engine from }dp\_engines[] 2: if Metric data available then 3: i m ​ a ​ x ← arg ⁡ max i ​ K ​ V ​ u ​ s ​ a ​ g ​ e ​ [ i ] i_{max}\leftarrow\arg\max_{i}KVusage[i] 4: i m ​ i ​ n ← arg ⁡ min i ​ K ​ V ​ u ​ s ​ a ​ g ​ e ​ [ i ] i_{min}\leftarrow\arg\min_{i}KVusage[i] 5: if K ​ V ​ u ​ s ​ a ​ g ​ e ​ [ i m ​ a ​ x ] ≥ θ k ​ v KVusage[i_{max}]\geq\theta_{kv} then 6: if K ​ V ​ u ​ s ​ a ​ g ​ e ​ [ i m ​ a ​ x ] − K ​ V ​ u ​ s ​ a ​ g ​ e ​ [ i m ​ i ​ n ] ≥ θ d ​ i ​ f ​ f KVusage[i_{max}]-KVusage[i_{min}]\geq\theta_{dif\!f} then 7: e ∗ ← d ​ p ​ _ ​ e ​ n ​ g ​ i ​ n ​ e ​ s ​ [ i m ​ i ​ n ] e^{*}\leftarrow dp\_engines[i_{min}] 8: else 9: l ​ o ​ a ​ d m ​ a ​ x , l ​ o ​ a ​ d m ​ i ​ n load_{max},load_{min} from R ​ u ​ n ​ n ​ i ​ n ​ g ​ L ​ o ​ a ​ d ​ [ ] RunningLoad[] 10: if l ​ o ​ a ​ d m ​ a ​ x − l ​ o ​ a ​ d m ​ i ​ n > θ l ​ o ​ a ​ d load_{max}-load_{min}>\theta_{load} then 11: i ∗ ← arg ⁡ min i ​ R ​ u ​ n ​ n ​ i ​ n ​ g ​ L ​ o ​ a ​ d ​ [ i ] i^{*}\leftarrow\arg\min_{i}RunningLoad[i] 12: e ∗ ← d ​ p ​ _ ​ e ​ n ​ g ​ i ​ n ​ e ​ s ​ [ i ∗ ] e^{*}\leftarrow dp\_engines[i^{*}] 13: end if 14: end if 15: else if request has user identity then 16: if user in u ​ s ​ e ​ r ​ _ ​ e ​ n ​ g ​ i ​ n ​ e ​ _ ​ m ​ a ​ p user\_engine\_map and not expired then 17: e ∗ ← u ​ s ​ e ​ r ​ _ ​ e ​ n ​ g ​ i ​ n ​ e ​ _ ​ m ​ a ​ p ​ [ u ​ s ​ e ​ r ] e^{*}\leftarrow user\_engine\_map[user] 18: end if 19: end if 20: end if 21: Update u ​ s ​ e ​ r ​ _ ​ e ​ n ​ g ​ i ​ n ​ e ​ _ ​ m ​ a ​ p ​ [ u ​ s ​ e ​ r ] ← ( e ∗ , u ​ s ​ e ​ r ​ _ ​ i ​ d ) user\_engine\_map[user]\leftarrow(e^{*},user\_id) 22: return e ∗ e^{*}
+
+[40] p: The DP engine load balancing (LB) module is responsible for assigning each incoming request to the most appropriate data-parallel (DP) engine based on real-time backend states and user-level characteristics. Algorithm 1 outlines the decision-making workflow.
+
+[41] p: The algorithm begins by directly selecting an initial candidate engine from the ordered list d ​ p ​ _ ​ e ​ n ​ g ​ i ​ n ​ e ​ s ​ [ ] dp\_engines[] , ensuring that the process can proceed even in the absence of metric data (Algorithm 1 line 1). When inference begins, each LLM engine automatically computes both its total available KV-cache capacity and the amount of KV cache currently consumed, reported as K ​ V ​ u ​ s ​ a ​ g ​ e ​ [ n ] KVusage[n] . Meanwhile, the scheduler within each backend engine tracks its ongoing computational load, including the number of running and waiting tokens, which we collectively denote as R ​ u ​ n ​ n ​ i ​ n ​ g ​ L ​ o ​ a ​ d ​ [ n ] RunningLoad[n] . These two sets of metrics are asynchronously delivered to the Engine Load Balancer (LB) module through a message queue. Upon receiving them, the load balancer first evaluates the key–value (KV) cache usage of each engine (Algorithm 1 lines 2 to 5). If the maximum KV usage exceeds the saturation threshold θ k ​ v \theta_{kv} , the module checks whether the imbalance between engines is significant.
+
+[42] p: θ d ​ i ​ f ​ f \theta_{dif\!f} denotes the difference between the maximum and minimum KV-cache usage percentages among all engines, capturing the degree of cross-engine imbalance. Since the actual KV cache utilization rates of each engine are not absolutely equal in actual inference, this threshold needs to be set to allow for a certain tolerance before judging the system as unbalanced. When the difference exceeds θ d ​ i ​ f ​ f \theta_{dif\!f} , the request is routed to the engine with the lowest KV usage, reducing the risk of out-of-memory issues and distributing prefill load more evenly (Algorithm 1 lines 6 to 7).
+
+[43] p: If no severe KV imbalance is detected, the scheduler considers the runtime load R ​ u ​ n ​ n ​ i ​ n ​ g ​ L ​ o ​ a ​ d ​ [ n ] RunningLoad[n] of each engine (Algorithm 1 lines 8 to 14). By using the request’s token count as the workload metric, the scheduler alleviates the imbalance that would arise from measuring load solely by the number of requests. If the difference between the R ​ u ​ n ​ n ​ i ​ n ​ g ​ L ​ o ​ a ​ d ​ [ n ] RunningLoad[n] and the engine’s running load is greater than θ l ​ o ​ a ​ d \theta_{load} , the system considers the load between the engines to be mismatched, and the request will be directed to the engine with the lowest running load, thereby improving throughput and reducing queuing latency (Algorithm 1 lines 9 to 12). It is recommended to set θ l ​ o ​ a ​ d \theta_{load} according to the distribution of the input token count of the specific inference request to allow for small load differences comparable to a single typical request.
+
+[44] p: When the incoming request contains a user identity, the module further attempts to enable optional “user affinity” (Algorithm 1 lines 15 to 17). Since pure user stickiness may cause requests to be repeatedly assigned to the same engine due to cached user–engine mappings—potentially accelerating KV-cache imbalance—the affinity mechanism is only applied when no engine shows KV overuse, and the user’s most recent mapping exists and has not expired. As demonstrated by SGLang [ 11 ] , prefix caching can significantly reduce GPU computation and memory overhead. Because consecutive requests from the same user are more likely to reuse previously cached prefixes, we attempt to maximize prefix-cache reuse and reduce GPU computation by incorporating user affinity into scheduling.
+
+[45] p: After the final engine assignment is computed, the module updates the user-to-engine mapping using the current user identifier u ​ s ​ e ​ r ​ _ ​ i ​ d user\_id and the selected engine, and then returns e ∗ e^{*} (Algorithm 1 lines 21 to 22).
+
+[46] h3: III-C SJF Scheduler module
+
+[47] p: The SJF Scheduler module runs inside each DP engine and is responsible for reordering pending requests before each forward pass. Algorithm 2 summarizes the scheduling workflow.
+
+[48] figure: Algorithm 2 Request Scheduler with SJF and aging Input: w ​ a ​ i ​ t ​ i ​ n ​ g ​ _ ​ q ​ u ​ e ​ u ​ e waiting\_queue , t ​ i ​ m ​ e n ​ o ​ w time_{now} , threshold θ a ​ g ​ e \theta_{age} Output: re-order w ​ a ​ i ​ t ​ i ​ n ​ g ​ _ ​ q ​ u ​ e ​ u ​ e ′ waiting\_queue^{\prime} 1: for each request r ∈ w ​ a ​ i ​ t ​ i ​ n ​ g ​ _ ​ q ​ u ​ e ​ u ​ e r\in waiting\_queue do 2: waiting time w r = t ​ i ​ m ​ e n ​ o ​ w − r . a ​ r ​ r ​ i ​ v ​ a ​ l ​ _ ​ t ​ i ​ m ​ e w_{r}=time_{now}-r.arrival\_time 3: if w r ≥ θ a ​ g ​ e w_{r}\geq\theta_{age} then 4: Assign high priority to r r 5: else 6: Assign priority based on request’s prefill length r . p ​ r ​ o ​ m ​ p ​ t r.prompt 7: end if 8: end for 9: Sort w ​ a ​ i ​ t ​ i ​ n ​ g ​ _ ​ q ​ u ​ e ​ u ​ e waiting\_queue by priority ascending 10: return w ​ a ​ i ​ t ​ i ​ n ​ g ​ _ ​ q ​ u ​ e ​ u ​ e ′ waiting\_queue^{\prime}
+
+[49] p: Within the scheduler’s w ​ a ​ i ​ t ​ i ​ n ​ g ​ _ ​ q ​ u ​ e ​ u ​ e waiting\_queue , we implement an approximate shortest-job-first policy (Algorithm 2 lines 1 to 7). We use the prefill token count r . p ​ r ​ o ​ m ​ p ​ t r.prompt of each request as the priority metric (shorter first). This choice avoids the unreliable output-length prediction used in related work [ 14 , 15 , 16 , 17 ] , and leverages the compute-intensive nature of the prefill phase, providing a stable and model-agnostic estimate of request cost.
+
+[50] p: To prevent starvation of large requests, the scheduler employs an aging mechanism: if the waiting time of a request exceeds the threshold θ a ​ g ​ e \theta_{age} , it is promoted to high priority regardless of size. Finally, the waiting queue is sorted according to the assigned priorities and returned for execution (Algorithm 2 lines 9 to 10). The recommended value for θ a ​ g ​ e \theta_{age} is a value lower than the P99 TTFT during normal inference.
+
+[51] h3: III-D Expert Dynamic Replacement Module Design
+
+[52] p: MoE models often suffer from load imbalance in expert-parallel execution, as expert routing often concentrates computation on a small subset of experts while leaving others underutilized. To better understand this behavior, we analyze the expert activation patterns of the Qwen3-30B-A3B model [ 18 ] during inference.
+
+[53] p: Figure 3 illustrates the expert activation distribution of the model over 200 inference requests sampled from vLLM’s random dataset. Using a random dataset helps avoid bias introduced by specific prompts, contextual patterns, or symbol repetitions, ensuring that the observed expert activation behavior reflects the intrinsic routing characteristics of the model. We observe that several layers—such as Layer 16, 18, 44, 45, and 46—exhibit noticeable expert imbalance, where a small subset of experts is activated disproportionately often while many others remain largely inactive. Such skewed activation severely exacerbates GPU imbalance in expert-parallel execution, since uneven expert load directly translates into imbalance cross-GPU computation.
+
+[54] p: To address this issue, Guo et al. [ 7 ] introduced the Expert Parallel Load Balancing (EPLB) mechanism, which identifies expert hotspots by tracking expert activation frequency and then redistributes experts across GPUs to mitigate load imbalance. However, conventional EPLB relies solely on activation counts when determining placement. Recent studies, including MoeTuner [ 19 ] and Inter-Layer Expert Affinity [ 20 ] , reveal that MoE models exhibit strong inter-layer expert affinity, i.e, certain experts in one layer consistently activate specific experts in the next. Exploiting these cross-layer dependencies phenomena, we design a more advanced replacement algorithm that yields substantial performance benefits.
+
+[55] p: In collecting the earlier expert activation heatmap, we also recorded how each token in the 200 requests traversed all MoE layers and which experts it selected. As shown in Figure 4 , we retain and visualize only expert-to-expert connections that occurred more than 100,000 times. From this, we observe that the Qwen3-30B-A3B model also shows strong cross layer expert affinity, where experts in one layer strongly tend to activate only a small subset of experts in subsequent layers.
+
+[56] figure: Fig. 3 : Expert Heat Map (Expert activation is not balanced)
+
+[57] figure: Fig. 4 : Partial layer’s Expert affinity
+
+[58] p: Motivated by these observations, we integrate both optimization directions and introduce our Expert Dynamic Replacement Module. Instead of relying solely on activation counts, our method incorporates inter-layer affinity during dynamic expert relocation. By co-locating affinity-linked experts on the same GPU, the system reduces cross-GPU communication overhead and lowers per-token inference latency, while simultaneously alleviating expert hotspot imbalance across GPUs.
+
+[59] h4: III-D 1 Problem Formulation
+
+[60] p: We formulate the expert placement problem as a multi-constraint graph partitioning task. Consider an MoE model with m m experts and n n transformer layers. Let
+
+[61] table: A ∈ ℝ ≥ 0 n × m \displaystyle A\in\mathbb{R}_{\geq 0}^{n\times m} (1)
+
+[62] p: be the activation matrix, where A i , j A_{i,j} denotes the activation intensity of expert j j at layer i i . Let g < m g<m be the number of available GPUs, and assume each GPU hosts approximately m / g m/g experts.
+
+[63] p: Communication between consecutive layers is characterized by nonnegative weights E i , j , k E_{i,j,k} , representing the volume of traffic from expert j j in layer i i to expert k k in layer i + 1 i{+}1 . For convenience, we define the aggregated inter-expert communication weight:
+
+[64] table: W j , k = ∑ i = 1 n − 1 E i , j , k , \displaystyle W_{j,k}=\sum_{i=1}^{n-1}E_{i,j,k}, (2)
+
+[65] p: which captures the total cross-layer dependency between experts j j and k k .
+
+[66] p: The goal is to partition the m m experts into g g groups (GPUs) such that: (i) for every layer i i , the activation load assigned to each GPU is balanced, and (ii) the total cross-GPU communication cost induced by W j , k W_{j,k} is minimized.
+
+[67] h4: III-D 2 MILP Formulation
+
+[68] p: We introduce binary variables x j , p ∈ { 0 , 1 } x_{j,p}\in\{0,1\} , where x j , p = 1 x_{j,p}=1 indicates that expert j j is assigned to GPU (partition) p ∈ { 1 , … , g } p\in\{1,\dots,g\} .
+
+[69] h5: Assignment and size constraints.
+
+[70] p: Each expert must be assigned to exactly one GPU:
+
+[71] table: ∑ p = 1 g x j , p = 1 ∀ j = 1 , … , m . \displaystyle\sum_{p=1}^{g}x_{j,p}=1\qquad\forall j=1,\dots,m. (3)
+
+[72] p: Each GPU hosts exactly m / g m/g experts:
+
+[73] table: ∑ j = 1 m x j , p = m / g ∀ p = 1 , … , g . \displaystyle\sum_{j=1}^{m}x_{j,p}=m/g\qquad\forall p=1,\dots,g. (4)
+
+[74] h5: Row-wise balance
+
+[75] p: For layer i i , define the total activation load:
+
+[76] table: T i = ∑ j = 1 m A i , j , \displaystyle T_{i}=\sum_{j=1}^{m}A_{i,j}, (5)
+
+[77] p: and the ideal balanced load per GPU:
+
+[78] table: L i = T i g . \displaystyle L_{i}=\frac{T_{i}}{g}. (6)
+
+[79] p: The actual load assigned to GPU p p at layer i i is:
+
+[80] table: L i , p = ∑ j = 1 m A i , j ​ x j , p . \displaystyle L_{i,p}=\sum_{j=1}^{m}A_{i,j}x_{j,p}. (7)
+
+[81] p: We impose a maximum deviation D ≥ 0 D\geq 0 between actual and ideal load:
+
+[82] table: L i , p − L i \displaystyle L_{i,p}-L_{i} ≤ D , ∀ i , p , \displaystyle\leq D,\qquad\forall i,p, (8) L i − L i , p \displaystyle L_{i}-L_{i,p} ≤ D , ∀ i , p . \displaystyle\leq D,\qquad\forall i,p. (9)
+
+[83] p: The parameter D D specifies the maximum deviation allowed between the ideal balanced activation load L i L_{i} and the actual load L i , p L_{i,p} assigned to each GPU at layer i i . A smaller value of D D enforces strict load balance, ensuring that every GPU receives nearly equal activation volume at each layer. However, such strictness may require excessive expert relocation and can interfere with desirable co-location of affinity-linked experts. Conversely, a larger D D relaxes the balance constraint, allowing certain GPUs to host heavier activation loads in exchange for improved communication locality.
+
+[84] h5: Communication cut.
+
+[85] p: Define same-part indicator s j , k , p ∈ { 0 , 1 } s_{j,k,p}\in\{0,1\} to denote whether experts j j and k k are both placed on GPU p p . This is linearized using:
+
+[86] table: s j , k , p ≤ x j , p , s j , k , p ≤ x k , p , s j , k , p ≥ x j , p + x k , p − 1 . \displaystyle s_{j,k,p}\leq x_{j,p},\qquad s_{j,k,p}\leq x_{k,p},\qquad s_{j,k,p}\geq x_{j,p}+x_{k,p}-1. (10)
+
+[87] p: An expert pair contributes to the cut if they are placed on different GPUs. The total communication cut cost is:
+
+[88] table: Cut \displaystyle\mathrm{Cut} = ∑ j < k W j , k ​ ( 1 − ∑ p = 1 g s j , k , p ) . \displaystyle=\sum_{j<k}W_{j,k}\left(1-\sum_{p=1}^{g}s_{j,k,p}\right). (11)
+
+[89] h5: Objective.
+
+[90] p: We minimize a weighted combination of row-wise imbalance and communication cut:
+
+[91] table: min ⁡ α ​ D + β ​ ∑ j < k W j , k ​ ( 1 − ∑ p = 1 g s j , k , p ) , \displaystyle\min\;\alpha D\;+\;\beta\sum_{j<k}W_{j,k}\left(1-\sum_{p=1}^{g}s_{j,k,p}\right), (12)
+
+[92] p: where α , β > 0 \alpha,\beta>0 control the tradeoff between activation-load balancing and communication minimization.
+
+[93] h4: III-D 3 Implementation
+
+[94] p: Since the MILP formulation described above is computationally expensive and unsuitable for real-time inference, introducing huge overhead, we design an intuitive heuristic expert replacement strategy (Algorithm 3 ) that efficiently balances expert load while minimizing communication overhead.
+
+[95] p: Our heuristic prioritizes the communication term by first co-locating interdependent experts according to the affinity matrix ℳ \mathcal{M} (similar to the expert dependency patterns illustrated in Figure 4 ). Experts with strong inter-layer dependencies recorded in ℳ \mathcal{M} are co-located on a single “anchor” GPU to minimize cross-GPU communication (Algorithm 3 line 3). We observe that strong inter-layer expert dependencies in MoE models are typically sparse and localized. Modern MoE training objectives explicitly encourage balanced routing and discourage large-scale dense expert coupling, resulting in only a small number of top- E E expert pairs exhibiting strong and persistent dependencies. Consequently, the affinity matrix ℳ \mathcal{M} is constructed to capture only the most communication-critical dependency relationships. If the capacity of a single anchor GPU becomes a concern, the construction of ℳ \mathcal{M} can be made more selective by tightening the statistical threshold or reducing the top- E E criterion, thereby ensuring that only the strongest and most impactful expert dependencies are co-located, and that all dependency-linked experts retained in ℳ \mathcal{M} can be accommodated on the designated anchor GPU.
+
+[96] p: The remaining experts are then distributed across all g g GPUs according to their activation intensity A i , j A_{i,j} (Similar to Figure 3 ’s expert activation heat map) using a greedy least-loaded placement policy, achieving balanced per-layer activation load while preserving communication locality (Algorithm 3 line 4).
+
+[97] p: During execution, the system periodically re-evaluates the expert placement every τ \tau steps. During each relocation, experts with strong affinities recorded in ℳ \mathcal{M} are always placed on the designated anchor GPU, avoiding repeated migrations of dependency-linked experts and thereby reducing expert migration overhead and cross-device transfer cost. The anchor GPU index k k remains fixed and is manually specified before system startup. The remaining experts are greedily rebalanced across all GPUs according to recent activation statistics, maintaining load balance while preserving the communication locality achieved by the fixed-anchor placement.
+
+[98] figure: Algorithm 3 Expert Dynamic Replacement Algorithm Inputs: affinity matrix ℳ \mathcal{M} , activation matrix A A , GPU index k k , number of GPUs g g , step interval τ \tau . 1: procedure Exp-relocation ( k k ) 2: Affinity placement: place all experts appearing in ℳ \mathcal{M} on GPU k k . 3: Greedy balancing: assign the remaining experts to GPUs 0 . . g − 1 0..g{-}1 by descending A i , j A_{i,j} with a least-loaded-GPU policy. 4: end procedure 5: Exp-relocation ( k k ) Run once during system loading. 6: for iteration step t = 1 , 2 , … t=1,2,\dots do 7: if t mod τ = 0 t\bmod\tau=0 then 8: Exp-relocation ( k k ) 9: end if 10: end for
+
+[99] h2: IV Implementation
+
+[100] p: We implement Gimbal on top of the SOTA inference framework vLLM [ 10 ] (version 0.9.1), extending its internal scheduling and load-balancing mechanisms and adding our own system logic.
+
+[101] p: At the DP layer, we modify both the request dispatching logic and the metric–collection pipeline to support our DP Engine LB module (Algorithm 1 ). Specifically, we extend the ZeroMQ communication payload so that the DP Engine Load Balancer can asynchronously receive real-time backend metrics from each engine (e.g., KV-cache usage and running token counts), enabling more adaptive and fine-grained load balancing.
+
+[102] p: Inside each engine, we replace the default FCFS scheduler with a prefill-length–aware SJF strategy (Algorithm 2 ), which reduces queuing delay and improves tail latency.
+
+[103] p: Furthermore, we port and integrate Expert Parallel Load Balancing (EPLB) into our system to support dynamic expert relocation during inference. Through the algorithm and strategy shown in Figure 3 , we integrate GPU affinity awareness into this module to ensure that experts with strong inter-layer dependencies are preferentially located on the same GPU, thereby reducing inter-GPU communication overhead and improving latency.
+
+[104] h2: V Performance Evaluation
+
+[105] figure: (a) Random (b) Central (c) Descending (d) Two-end (e) Average Fig. 5 : Burst dataset distribution
+
+[106] h3: V-A Experimental Setup
+
+[107] h4: V-A 1 Testbed
+
+[108] p: All experiments are conducted on the server equipped with two Intel (R) Xeon (R) Gold 6326 CPUs running at 2.90GHz, two NVIDIA A100 80GB GPUs interconnected via NVLink, and 1 TB of system memory. This hardware configuration provides high GPU memory capacity and fast inter-GPU bandwidth, allowing us to evaluate MoE inference under realistic multi-GPU environments. For other advanced features of vLLM, such as chunked prefill and continuous batching, we keep the default settings. We enable expert parallelism so that all experts in each MoE layer are distributed across all GPUs. In addition, we use pplx-kernels [ 21 ] as the communication backend for MoE all-to-all exchanges to ensure efficient point-to-point cross-GPU communication among experts.
+
+[109] h4: V-A 2 Threshold settings and Rationale
+
+[110] p: θ k ​ v \theta_{kv} : most open-source frameworks use a maximum of 90% of GPU memory by default, so we adopt a similar limit, setting θ k ​ v \theta_{kv} to 0.9. That is, if the KV cache usage of a certain engine exceeds 90%, it is considered to have exceeded the threshold.
+
+[111] p: θ d ​ i ​ f ​ f \theta_{dif\!f} , in practice, KV-cache usage across engines rarely aligns perfectly, so we set θ d ​ i ​ f ​ f \theta_{dif\!f} to 10%, allowing a reasonable tolerance before classifying the system as imbalanced.
+
+[112] p: θ l ​ o ​ a ​ d \theta_{load} : We use the BurstGPT dataset [ 22 ] for our experiments, in which 97.6% of requests contain no more than 3000 tokens. Accordingly, we set θ l ​ o ​ a ​ d \theta_{load} to 3000. Requests exceeding this threshold typically indicate a significant imbalance in prefill workload, where the most-loaded engine and the least-loaded engine differ by at least one additional large request in their queues. In such cases, directing the incoming request to the engine with the lowest current load helps mitigate prefill skew, thereby improving overall throughput and reducing queuing latency.
+
+[113] p: θ a ​ g ​ e \theta_{age} : we set θ a ​ g ​ e \theta_{age} to 5 seconds. Our environment consistently has a P99 TTFT (99% of the TTFT time is below 4900 milliseconds) when performing high-load (Request-rates of 1.4 RPS); therefore, any request with a wait time exceeding 5 seconds can be considered an anomalous latency and should be prioritized.
+
+[114] p: τ \tau : currently, open-source frameworks that support EPLB, such as vLLM and SGLang, all perform expert re-migration by default every 3000 steps, so we will maintain this consistency here.
+
+[115] h4: V-A 3 LLM Model
+
+[116] p: Considering the compute constraints of our testbed and our objective to study MoE-specific scheduling behavior, we select the Qwen3-30B-A3B model [ 18 ] , one of the most representative and state-of-the-art small/medium-scale MoE models.
+
+[117] h4: V-A 4 Traces
+
+[118] p: To evaluate performance under different load conditions, we use the BurstGPT dataset [ 22 ] , a popular open-source dataset, commonly used in the literature [ 23 ] , [ 24 ] . During performance experiments, we disable prefix caching to avoid interference and measurement bias. Following recent studies [ 25 , 26 ] , we adopt a similar methodology by modifying the distributional shape of the BurstGPT traces to evaluate robustness under workload variations and to minimize dataset-induced bias. Specifically, we partition the BurstGPT workload into five representative distributions—Random, Central, Descending, Two-end, and Average (Fig. 5 ). We sample 1,000 requests from the BurstGPT dataset according to each distribution, using random seeds as experiment’s input. Since BurstGPT does not contain user identifiers, we additionally use the ShareGPT dataset [ 27 ] to specifically evaluate user-affinity behavior and prefix-cache reuse efficiency.
+
+[119] h4: V-A 5 Metrics
+
+[120] p: We evaluate several key metrics commonly used in LLM serving:
+
+[121] p: TTFT, measuring the latency from sending a request to receiving the first generated token (including prefill/prompt processing);
+
+[122] p: TPOT, representing the average decoding latency per output token, excluding the first generated token.
+
+[123] p: Prefix Cache Block Hit Count: the total number of KV-block matches across all DP engines during the entire experiment. This metric reflects the absolute amount of KV-block reuse enabled by user-affinity scheduling.
+
+[124] p: Prefix Cache Hit Rate (global): the ratio between the number of cache-hit KV blocks and the total number of probed KV blocks across all engines. It reflects the overall probability that an accessed KV block can be reused from the global prefix-cache table.
+
+[125] h4: V-A 6 EPLB Affinity Matrix
+
+[126] p: Our Expert Dynamic Replacement Module requires two types of input: 1) expert activation counts, and 2) the expert inter-layer dependency matrix. Expert activation counts are collected during inference using built-in vLLM’s EPLB measurement logic, which records the total number of activations per expert at each level over a period of time. For the expert inter-layer dependency matrix, we modified vLLM code to allow the system to record, for each activation of an expert in the upstream layer, which expert is selected in the downstream layer. Then, we used the built-in random input data generation function of vLLM inference framework to run benchmark tests to collect cross-layer expert affinity. Using a random data avoids dataset-specific bias and better reveals the true dependency relationships between experts. The matrix includes all layers, representing the complete cross-layer dependency matrix covering all experts with dependency attributes from layer 0 to layer 47, similar to the sampled pattern in Figure 4 .
+
+[127] h4: V-A 7 Baselines
+
+[128] p: We compare Gimbal with vLLM 1 1 1 vLLM(0.9.2) https://github.com/vllm-project/vllm . as well as three ablated variants of our proposed framework. Each ablation isolates the effect of each of the proposed components:
+
+[129] p: DPLB : Only the DP Engine Load Balancer is enabled.
+
+[130] p: SJFS : Only the per-engine SJF scheduler is enabled.
+
+[131] p: EDR : Only the Expert Dynamic Replacement Module is enabled.
+
+[132] p: This decomposition allows us to quantify the contribution of each module within the overall multi-layer scheduling design.
+
+[133] h3: V-B Experimental Results
+
+[134] h4: V-B 1 TTFT Results
+
+[135] figure: (a) Random (b) Central (c) Descending (d) Two-end (e) Average Fig. 6 : TTFT under different request-rate (RPS) for the five request distributions.
+
+[136] figure: Fig. 7 : Average TTFT across Five Distributions at 1.4 RPS
+
+[137] p: Experiments are conducted on five data distributions to evaluate TTFT, with one set of 1,000 randomly selected requests per each distribution. To respect the GPU memory constraints of our testbed, the request rate is set between 1.00 and 1.40 RPS. Figure 6 presents the TTFT results for all baselines and Gimbal across five request distributions (Random, Central, Descending, Two-end, and Average) at request rates of 1.0, 1.2, and 1.4 RPS. It can be clearly observed that across all distributions, the TTFT of Gimbal consistently remains lower than that of vLLM as well as all three ablated variants SJFS, DPLB, and EDR. A closer examination of the ablation results suggests that DPLB accounts for the majority of the TTFT reduction, while SJFS and EDR provide additional but smaller improvements. When all three mechanisms are jointly enabled in Gimbal, their effects are complementary, resulting in the largest overall reduction. As the system approaches saturation—e.g., in the 1.2–1.4 RPS region—the performance advantage of Gimbal becomes even more pronounced, indicating that multi-layer coordinated scheduling is particularly effective under high load.
+
+[138] p: The results also demonstrate consistent trends across all five synthetic distributions, showing that Gimbal is robust to changes in workload shape. Compared to single-module approaches, Gimbal inherits the strengths of both inter-engine load balancing and intra-engine SJF scheduling, while expert dynamic relocation further eliminates within-layer MoE imbalance, unlocking compute capacity and reducing latency.
+
+[139] p: To further reduce randomness and validate stability, we also conduct three independent repeated experiments for both vLLM and Gimbal at 1.4 RPS, where each run preserves the same workload distribution but samples different requests by using distinct random seeds. The aggregated TTFT bar chart across all five distributions, shown in Figure 7 , reports the mean results over three independent runs, confirming that Gimbal consistently outperforms the baseline.
+
+[140] p: Specifically, taking the mean of the three runs for each distribution, Gimbal reduces TTFT compared with vLLM by 17.6% on Random, 18.7% on Central, 16.4% on Descending, 17.8% on Two-end, and 18.3% on Average distribution, corresponding to 17.76% across all five distributions. These results verify that Gimbal can reliably reduce TTFT across different workload shapes.
+
+[141] figure: (a) Random (b) Central (c) Descending (d) Two-end (e) Average Fig. 8 : TPOT under different request-rate (RPS) for the five request distributions.
+
+[142] figure: Fig. 9 : Average TPOT across Five Distributions at 1.4 RPS
+
+[143] figure: Fig. 10 : Average Throughput across Five Distributions at 1.4 RPS
+
+[144] h4: V-B 2 TPOT Results
+
+[145] p: Our experiments also record the behavior of TPOT. Figure 8 presents the TPOT results under five request distributions (Random, Central, Descending, Two-end, and Average). The results closely mirror those observed in the TTFT experiments: as the request Rate (RPS) load increases, the performance gaps between different variants gradually widen, while Gimbal consistently achieves lower TPOT than vLLM and all three ablated variants SJFS, DPLB, and EDR. This demonstrates that Gimbal not only optimizes TTFT but also significantly reduces the time-per-token latency, while maintaining robustness across different workload shapes.
+
+[146] p: The TPOT results from the three independent repeated runs at 1.4 RPS are shown in Figure 9 . Using the same aggregation method as in the TTFT analysis, we average the three runs for each distribution. Gimbal reduces TPOT compared with vLLM by: 13.5% on Random, 17.6% on Central, 7.9% on Descending, 12.6% on Two-end, and 15.1% on the Average distribution. Overall, Gimbal achieves an average TPOT reduction of 13.34% across the five workload patterns.
+
+[147] p: Figure 10 reports the average throughput across the five request distributions at 1.4 RPS. As shown in the figure, Gimbal achieves throughput that is comparable to that of vLLM across all distributions, indicating that the observed latency reductions do not come at the cost of system throughput. Taken together, these results confirm that Gimbal can continuously reduce both TTFT and TPOT under various load conditions while maintaining comparable throughput, thereby validating the effectiveness and practicality of our approach.
+
+[148] figure: Fig. 11 : Prefix Cache Block Hit Count over Five Repeated Runs
+
+[149] figure: Fig. 12 : Global Prefix Cache Hit Rate over Five Repeated Runs
+
+[150] h4: V-B 3 Prefix Cache Results
+
+[151] p: Since it is difficult to quantify how much computation is saved by a single prefix-cache hit, its direct impact on end-to-end performance is hard to measure. Therefore, we conduct a dedicated experiment to evaluate the user-affinity mechanism in our DP Engine LB module. We use the ShareGPT dataset [ 27 ] and run a prefix-cache–specific experiment. We run five independent experiments, each consisting of the same set of 10,000 requests for both vLLM and Gimbal.
+
+[152] p: Figure 11 reports the total number of prefix-cache hits in each round. Across all five runs, Gimbal consistently achieves higher prefix-cache hit counts than vLLM. Specifically, vLLM achieved 19,888, 17,056, 18,800, 16,096, and 20,416 hits in the five rounds, averaging 18,451 hits per round. Gimbal, on the other hand, achieved a consistent number of hits across all five runs, totaling 18,992 hits per round, representing an improvement of approximately 3%. This behavior stems from fundamental differences in the request routing strategies of Gimbal and vLLM. By default, vLLM employs a round-robin scheduling policy, under which incoming requests—originating from both the same and different users—are distributed across engines in a largely randomized manner. This variability arises from multiple sources. First, although the request submission order is identical across all experimental runs, requests are dispatched to engines asynchronously, leading to non-deterministic request arrival times at each engine. As a result, the round-robin decision may observe different engine states at dispatch time across runs, causing the same request sequence to be mapped to different engines. Second, the execution time of each request is inherently variable due to differences in output length and decoding behavior, which further introduces divergence in per-engine load and queue dynamics. These execution-time variations affect the effective round-robin rotation based on in-flight requests, amplifying load imbalance across engines. Together, these factors lead to run-to-run fluctuations in request execution order and prefix-cache reuse under vLLM. In contrast, Gimbal adopts a user-affinity scheduling strategy that consistently routes requests from the same user to the same engine. This effectively fixes the request execution order at each engine, resulting in highly stable and repeatable prefix-cache reuse. Consequently, Gimbal achieves identical prefix-cache hit counts across all runs, demonstrating more deterministic behavior and more effective exploitation of the prefill cache.
+
+[153] p: In addition to total hit counts, we also recorded the prefix-cache hit rate during each experiment. As shown in Figure 12 , vLLM achieves hit rates of 3.90%, 3.30%, 3.70%, 3.20%, and 4.10%, averaging 3.64%. Gimbal maintains a stable hit rate of 3.80% across all five runs, improving the average hit rate by approximately 4.4%.
+
+[154] p: These results demonstrate that Gimbal’s user-affinity scheduling can increase the probability of prefix-cache hits, thereby improving prefix-cache reuse, reducing redundant computation, and ultimately enhancing overall performance.
+
+[155] h2: VI Related Work
+
+[156] p: A number of recent systems have explored scheduling for LLM serving across different layers of inference. At the request level, several works like Fu et al. [ 14 ] , Qiu et al. [ 15 ] , Zhao et al. [ 16 ] , Wu et al. [ 17 ] propose length-aware or priority-based schedulers to mitigate Head-of-Line (HoL) blocking and improve latency, often by approximating Shortest-Job-First (SJF) or designing multi-level feedback queues. Most of these approaches rely on predicting request output lengths to approximate SJF scheduling. However, such predictions can be dataset-dependent and may not generalize well across workloads. In contrast, our approach leverages the inherent compute characteristics of inference: prefill phases are compute-bound while decode phases are memory-bound. We approximate SJF scheduling by directly estimating prefill workload, avoiding the pitfalls of prediction-based methods.
+
+[157] p: At the engine level, systems such as FastServe [ 17 ] , SeaLLM [ 16 ] , and BROS [ 28 ] incorporate preemption, priority scheduling, or phase-aware routing to optimize GPU utilization and service latency. Other efforts Jain et al. [ 29 ] , and Srivatsa et al. [ 30 ] design global routers that leverage workload characteristics such as prefill/decode distinction or prefix-sharing opportunities to balance load and increase KV Cache reuse. However, these works primarily make dispatching decisions based on coarse-grained request characteristics or phase-level distinctions, without explicitly leveraging fine-grained engine-side states such as KV cache pressure, the amount of in-flight running workload, or user-level affinity. As a result, the potential of using concrete engine load signals to guide engine-level scheduling remains largely underexplored.
+
+[158] p: For expert level, QLLM [ 31 ] introduces expert-level preemption with per-expert queues, while LAMPS [ 32 ] integrates memory-aware scheduling for API-augmented workloads. Nevertheless, these designs mainly address expert-level queuing or memory pressure in isolation, without considering cross-layer expert affinity or expert hotspot patterns that naturally arise from MoE routing behavior. As a result, they are unable to mitigate expert-level imbalance caused by skewed activation and inter-layer dependency.
+
+[159] p: Overall, while these approaches demonstrate the importance of moving beyond traditional FCFS and RR baselines, most optimizations focus on a single layer—either request scheduling, engine dispatching, or expert routing. In contrast, our work explores scheduling optimizations at multiple layers of LLM serving, including the request, engine, and expert levels. Specifically, Gimbal combines request-level SJF with, engine-level load-aware scheduling (considering prefix tokens, KV Cache usage, and user stickiness), and expert-level hotspot mitigation with dependency-aware placement, aiming to holistically improve MoE-based LLM serving efficiency.
+
+[160] h2: VII conclusions and future work
+
+[161] p: In this paper, we presented Gimbal , a multi-layer scheduling framework for MoE-based LLM serving that jointly optimizes request-level, engine-level, and expert-level decisions. Built on top of vLLM, Gimbal combines a KV- and load-aware data-parallel engine load balancer, a prefill-length–aware SJF scheduler with aging, and an expert dynamic replacement module that incorporates inter-layer expert affinity. Across more than 100 experiments on the BurstGPT and ShareGPT workloads, Gimbal consistently outperforms the baseline vLLM system and its single-component variants. Under five workload distributions and at high load (1.4 RPS), Gimbal reduces TTFT by an average of 17.76% and TPOT by 13.34% compared to vLLM, while also improving prefix-cache hits. These results demonstrate that coordinated multi-layer scheduling is an effective way to unlock the latent capacity of MoE-based LLM serving systems. We hope that this multi-level scheduling concept can provide insights for future LLM optimization research.
+
+[162] p: At the same time, our study has several limitations. First, all experiments were conducted on a single 2 × \times A100-80GB server with NVLink and a single MoE model. While this setup is representative of a common multi-GPU deployment, it is significantly smaller and more homogeneous than production-scale clusters. Second, the expert dynamic replacement module relies on an offline inter-layer affinity matrix, which incurs non-trivial data collection and runtime overhead for activation tracking and expert migration. Designing lighter-weight online affinity estimation and more cost-aware migration policies is an important direction for future work. In future work, we plan to extend Gimbal to larger and more diverse environments, support a broader range of models and workloads, and further reduce the overhead of expert-level load balancing.
+
+[163] h2: References
+
+[164] h2: Instructions for reporting errors
+
+[165] p: We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the methods listed below:
+
+[166] p: Tip: You can select the relevant text first, to include it in your report.
+
+[167] p: Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability should not be a barrier to accessing research. Thank you for your continued support in championing open access for all.
+
+[168] p: Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .

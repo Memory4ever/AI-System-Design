@@ -40,6 +40,10 @@ S1 forward -> S2 forward -> ... -> Sp forward
 
 在 S1 工作时，后续 stages 空闲；在最后 stage 工作时，前面 stages 也在等待。Layer capacity 已经分散，设备利用率仍很低。
 
+后面的 micro-batch 调度保留这条精确层依赖，只把不同样本的工作交错；另一条[数值求解分支](https://arxiv.org/html/2601.09026v1)则把 residual depth 看成离散时间轴，用 MGRIT 的局部并行 relaxation 与 coarse-grid 串行 correction 近似 activation，再近似 backward。它改变的是状态和梯度的求解精度，不是更好的普通 PP schedule。受测 neural-ODE 变体还把中间层步长设为 $1/L$，首尾 buffer 保持串行与原步长；这改变模型，不能直接把原 checkpoint 当作等价执行。<!-- source-family:SF-2026-ARXIV-2601-09026 -->
+
+近似误差会使训练停滞或偏离，因而迭代次数与 residual 检查进入训练状态：误差升高时增加 solve iterations，必要时切回 exact serial forward/backward；fine/coarse evaluation 的 dropout mask 也必须一致。它增加 correction、通信和误差控制成本，浅模型或少设备时可能比串行慢，深度与 coarse 配置也改变质量取舍。作者部分 GPU 扩展实验同时扩大 batch，不能把该速度曲线当作等 global-batch 收益，局部恢复结果也不证明任意模型“同精度”。不满足模型、精度或预算条件时，保留精确 PP 与串行基线。
+
 ## Micro-batch 怎样填充 Pipeline
 
 把 batch 拆成 `m` 个 micro-batches，不同 stages 可以同时处理不同 micro-batches：
@@ -261,6 +265,8 @@ boundary bytes
 
 平均切 `L/p` 层只是初始估算。实际 partition 需要 profile per-layer cost，并为 embedding/loss 等特殊模块留出预算。
 
+样本分配也可能制造等待，即使每个 micro-batch 的 packed total length 相同。EoD 阻断跨 document attention 后，可见 token 对的数量随内部 document 长度组成变化；若 backend 真正消费这种 block/sparse 可见性，长文档较多的样本会比相同 shape 的短文档组合更贵，dense mask 本身却不保证计算量减少。可按 subsequence 长度估计成本，重新分配完整样本以平衡各 rank，而不改全局训练人口、EoD 语义或 optimizer accumulation 提交。[有限训练说明](https://arxiv.org/html/2512.24157v1)只支持这个 attention-aware 调度入口，没有隔离该项的定量收益；统计、重排和 backend 校准仍付费。profile 未显示差异或重排成本更高时，保留固定 token 分配；layer partition、router balance 和运行时 readiness 仍各自负责原有压力。<!-- source-family:SF-2026-ARXIV-2512-24157 -->
+
 同构 profile 选出的 expert 并行度，也不一定能直接带入异构 pipeline。可在各设备和链路上先测 dense/expert 计算、dispatch/combine、router 负载及 activation/optimizer 容量，再让 stage 层数、设备分配、expert tensor/parallel 度与 recompute 共同决定候选 step 计划。较快 stage 不必与较慢 stage 分同样层数，较大 expert group 也可能让跨类型通信抵消计算节省；成本模型应区分已重叠与暴露通信，不能重复加总。最终 layer/device/process mesh 与重计算策略必须一起 materialize，planner 只提供候选，不改变训练 batch、routing 语义或完整 step 提交。
 
 这是校准窗口内的离线分支，不是在线适应保证。HAPMoE 的受限异构 MoE 对照支持联合计划与非均匀分区，却用 warmup、memory/router instrumentation 和搜索换较少 steady-state 等待；pruning 也可能错过模型外候选。路由持续改变、网络争用或设备失效会使原 profile 过期，短 search time 不能消去重新校准成本，作者没有验证动态重配置。收益不足或状态无法一致 materialize 时，保留同构子组、固定 EP 与成熟 1F1B，在实际 step time、峰值 memory 和任务/收敛合同上重新验收，而不是用低预测误差证明生产最优。[必要机制与反证](https://arxiv.org/html/2609.39350v1)。<!-- source-family:SF-2026-ARXIV-2609-39350 -->
@@ -318,6 +324,10 @@ PP 也不会自动提高模型质量。它只改变同一 forward/backward graph
 每个 stage 只持有部分 layers。Checkpoint manifest 必须记录 layer/chunk 到 rank 的 global mapping，并在 PP degree 改变时支持 reshard。
 
 任一 stage failure 都会让整个 pipeline 停止。部分 stage 的最新 tensors 不能与其他 stage 的旧 step 混合。异步 checkpoint 还要保证 snapshot 对所有 stages 和 optimizer state 属于同一 logical step。
+
+Stage 仍在线也不等于计算正确：不可信 worker 可以返回形状合法却被扰动的 activation 或 gradient。一个受限分支在 forward/backward 的 stage 边界设置可信 verifier，以诚实 warm-up 建立统计基线，再用 EMA 与幅度、范数、符号或分布变化形成异常 sensor。被标记的样本不更新基线；上游异常可能污染后续 stage，因而 cascade 处理应暂停受污染统计的更新，不能把每个下游报警都归因为该 worker 作恶。它补充的是边界观测与隔离反馈，不改变 pipeline 的依赖语义。
+
+这个受限 sensor 路径要求首尾 stage 可信、每个 stage 的恶意 worker 少于一半，并以诚实 warm-up 建立基线；还要定义阈值及 worker 归责策略。漂移与共谋会破坏这些前提，某些梯度符号攻击在作者实验中甚至没有被召回。隔离前应保留 stage、step、方向与上游事件关联，必要时重新计算或回退可信 worker，而不是由一次异常直接认证训练正确。[SENTINEL v1 §2–3、§5 Tables 1–3](https://arxiv.org/html/2603.03592v1)支持这个受限分支及其漏检，不提供完整密码学验证或任意去中心化训练的安全保证。<!-- source-family:SF-2026-ARXIV-2603-03592 -->
 
 ## 工程验证
 
@@ -409,6 +419,8 @@ GPipe、1F1B 与 interleaving 是不同静态 schedule 选择；readiness-driven
 
 ## Review notes
 
+- `SF-2026-ARXIV-2603-03592`：[exact-v1](https://arxiv.org/html/2603.03592v1) §2–3、§5 Tables 1–3；Daily 2026-03-06。只采用可信边界 verifier、EMA/cascade 与统计 sensor 的失效面，不采用收敛定理或完整抗攻击保证。作者源/owner/邻接与实际写后检查完成；root 必要源、实际正文及邻接独立写后复核通过，未复现实验。
+
 本轮 Review 保留 layer partition 与 bubble 主线，补齐 global batch、`p=4` 小例子、GPipe/1F1B/interleaving、boundary tensor、stage imbalance、tied weights 和 checkpoint mapping。多维并行组合留给第 40 章。
 
 Primary-source 校验入口：
@@ -425,3 +437,7 @@ Primary-source 校验入口：
 
   **已吸收的语义增量：** Exact-v1 adds a source-specific mechanism and evaluation boundary not fully represented by the current owner proposition. The delta remains bounded by exact-v1 and does not transfer commit authority to an adjacent owner.
 <!-- daily-books-trace:SF-2026-ARXIV-2606-07881:end -->
+
+- `SF-2026-ARXIV-2512-24157` — Daily `2026-01-02`；[TeleChat3-MoE exact-v1](https://arxiv.org/html/2512.24157v1) §4.2 L251–254。6分attention-aware EoD样本调度gap深入，仅采用同packed length异document-cost及样本分配，区别layer placement/dense mask；无该项独立量化消融，不采用整体MFU/PP收益归因或生产SLO。未运行代码；root必要原源/owner及实际正文、邻接与末注非作者写后复核通过。
+
+- `SF-2026-ARXIV-2601-09026` — Daily `2026-01-16`；[exact-v1](https://arxiv.org/html/2601.09026v1) §3.1–3.2/4.1–4.2与AppB/C。6分近似层求解替代分支gap深入，采用MGRIT/coarse串行与parallel relaxation、inexact state/gradient及iteration/exactserial退路；N-ODE h/buffer改变模型，fine/coarse dropout一致，不授drop-in等价或通用sameaccuracy/speed。有限depth/device与GPU-scaled batch反侧在正文附近。root必要源/owner写前通过，root实际两段、前后与末注POST通过，锁释放；未运行artifact或复现。

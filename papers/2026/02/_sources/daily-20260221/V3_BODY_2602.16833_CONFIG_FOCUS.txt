@@ -1,0 +1,247 @@
+A.4 Hyperparameters
+Table 1 summarizes the main hyperparameters used across experiments.
+Shared optimization settings are matched across RL methods for fair comparisons, and VAM-specific controls are listed in
+the VAM column.
+The last two columns report the rejection-sampled SFT baseline settings.
+Table 1: Hyperparameters for GRPO, VAM, and SFT.
+Parameter
+GRPO
+VAM
+Parameter
+SFT
+Batch size
+128
+128
+Global batch size
+32
+Mini batch size
+128
+128
+Total source prompts
+100,000
+GRPO group size
+8
+8
+Samples per prompt
+8
+Sampling temperature
+1.0
+1.0
+Sampling temperature
+0.6
+Sampling top-pp
+1.0
+1.0
+Sampling top-pp
+0.9
+Max response tokens
+2000
+2000
+Max response tokens
+2000
+Epochs
+1
+1
+Epochs
+2
+Optimizer
+AdamW
+AdamW
+Optimizer
+AdamW
+Learning rate
+1e-6
+1e-6
+Base learning rate
+1e-5
+LR schedule
+constant
+constant
+LR schedule
+cosine
+Warmup ratio
+10 steps
+10 steps
+Warmup ratio
+0.1
+Weight decay
+0.01
+0.01
+Weight decay
+0.01
+Gradient clipping
+1
+1
+Gradient clipping
+1
+KL loss coefficient
+1e-3
+1e-3
+#SFT examples
+Qwen2.5-3B: 45,806
+Entropy coefficient
+0
+0
+Qwen2.5-7B: 71,181
+Clip ratio
+0.2
+0.2
+Reward function
+μexp/μwin/μrank\mu_{\text{exp}}/\mu_{\text{win}}/\mu_{\text{rank}}
+μexp\mu_{\text{exp}}
+RmaxR_{\max}
+╱\diagup
+4
+Online opponent
+╱\diagup
+stockfish (skill 0, depth 1)
+A.5 Prompt interface and parsing
+Inputs per decision
+Each decision includes the FEN string, an explicit side-to-move field, and an ordered list of legal moves in strict
+lowercase UCI.
+In the candidate-restricted (selection) setting we additionally provide an ordered subset allowed_moves
+(also called considered_moves_uci) and require the model to choose from that subset.
+Required output
+The model must output a single move inside a <uci_move> tag, with a strict lowercase UCI
+string as payload (for example, e2e4).
+Promotions include the piece letter (for example, e7e8q).
+Castling is represented in UCI as the king move (for example, e1g1 for white kingside castling).
+Validity checks
+We treat any unparsable output, illegal move, or (for selection prompts) out-of-candidate move as invalid.
+For selection prompts, the decoded move must match one of the provided candidate strings exactly.
+A.6 Puzzle evaluation details
+Data fields
+Each puzzle row provides fen, an ordered legal_moves_uci list, and a provided solution move in UCI.
+Some rows additionally include per-move value maps defined over the legal move list, stored as JSON keyed by UCI
+strings.
+The value maps include an engine-derived expected score or win-probability proxy in [0,1][0,1].
+Targets and metrics
+We treat the dataset-provided solution move as the target action a⋆a^{\star} for evaluation.
+The main paper reports pass@1 accuracy (success if a^=a⋆\hat{a}=a^{\star}), where invalid outputs count as failures.
+We additionally track format and legality compliance and, when value maps are available, the mean selected-move value
+𝔼⁡[μ⁡(s,a^)]\mathbb{E}[\mu(s,\hat{a})].
+A.7 Full-game evaluation details
+Match setup
+Games start from the standard initial position and are capped at 200 plies.
+We do not automatically claim draws.
+Unless stated otherwise, we play 50 games per evaluation depth (depth 1 and depth 5), with per-depth color balancing
+and a deterministic shuffle.
+Invalid moves
+If the model output is unparsable or illegal, we retry up to three attempts.
+Persistent failure is treated as resignation or forfeit, which affects win rate and can yield worst-case ACPL when no
+valid moves are played.
+ACPL computation
+We compute centipawn loss using a separate Stockfish analyzer at depth 20, with approximately 1 second of analysis per
+move.
+Mate scores are mapped to 1000, and centipawn values are clamped to a fixed cap, matching the evaluation harness
+semantics.
+Per-move centipawn loss (CPL) uses the before versus after evaluations, with evaluations converted to the mover’s point
+of view and clipped at 0:
+CPL=max⁡(0,Ebefore−Eafter).\mathrm{CPL}\;=\;\max\!\bigl(0,E_{\text{before}}-E_{\text{after}}\bigr).
+(10)
+We first compute per-game ACPL as the mean CPL over the model’s moves within that game.
+We then report two aggregates across a batch of games: (i) overall ACPL, the mean of per-game ACPL values (each
+game equally weighted), and (ii) ACPL per move, a move-weighted mean over all model moves in the batch.
+A.8 Prompt
+We include the exact prompt templates used in our experiments in Figures 7 and 8.
+Prompt used for VAM
+You are a helpful assistant and a professional chess player.
+You will be given:
+- a FEN position,
+- the full list of legal moves,
+- and a smaller list called allowed_moves.
+allowed_moves is a preselected shortlist intended to concentrate attention on the most relevant, often-promising candidates in this position.
+It is an unordered set: the order of moves in allowed_moves is arbitrary and does not indicate strength or preference.
+Your job is to analyze the position deeply and choose the single best move from allowed_moves.
+Output format (required):
+- Put your reasoning inside <think>...</think>.
+- Put your final chosen move inside <uci_move>...</uci_move>.
+- Output exactly one move in <uci_move> and nothing else outside these tags.
+- Output exactly: <think>...</think><uci_move>...</uci_move> and stop after </uci_move>.
+How to think (guidance):
+- Evaluate the position (material, king safety, piece activity, pawn structure, threats, initiative).
+- Check for forcing tactics (checks, captures, direct threats) for both sides.
+- Use allowed_moves as the candidate set; compare the key candidates from that set.
+- For each key candidate, consider the opponent’s most likely/best reply and the resulting position.
+- Choose the move in allowed_moves that yields the best expected outcome for the side to move.
+Selection constraint (must follow):
+- The content of <uci_move> MUST be a valid UCI move string AND MUST match an element of allowed_moves exactly.
+- Do not invent moves, and do not output resign/None/N/A.
+UCI notation reminder:
+- Use from-square + to-square, e.g. e2e4, g1f3, a7a8q (promotion uses the piece letter suffix).
+Reminder of chess rules:
+- Bishops move diagonally.
+- Rooks move horizontally or vertically.
+- Knights jump in an L-shape.
+- Queens combine rook and bishop movement.
+- Kings move one square in any direction.
+- Pawns move forward, capture diagonally, and can promote.
+Position (FEN): {{ FEN }}
+Legal moves (UCI): {{ legal_moves_uci_list | join(’, ’) }}
+Allowed moves (UCI): {{ considered_moves_uci_list | join(’, ’) }}
+Think deeply, then output the single best allowed move.
+Figure 7: Prompt used for Verbalized Action Masking (VAM).
+Prompt used for baselines
+You are a helpful assistant who plays chess professionally.
+The assistant first thinks through the reasoning process internally and then provides the user with the best move.
+The reasoning process and the answer must be enclosed within <think> </think> and <uci_move> </uci_move> tags, respectively.
+The reasoning process should describe how you analyze the position and decide on the best move, including:
+- A strategic evaluation of the position.
+- A comparison of key candidate moves.
+- For each candidate, consider the opponent’s likely response and outcome.
+- Conclude with a clear justification for your final choice.
+The answer must be in UCI notation, using the from-square and to-square (e.g., e2e4, g1f3, a7a8q).
+Now, the user provides a FEN string, and a list of legal moves for the given board.
+After analyzing the position, clearly state the best move in UCI notation within <uci_move> </uci_move> tags. i.e., <uci_move> e2e4 </uci_move>
+Reminder of chess rules:
+- Bishops move diagonally.
+- Rooks move horizontally or vertically.
+- Knights jump in an L-shape.
+- Queens combine rook and bishop movement.
+- Kings move one square in any direction.
+- Pawns move forward, capture diagonally, and can promote.
+Current FEN string: {{ FEN }}
+Legal moves (UCI): {{ legal_moves_uci_list | join(’, ’) }}
+Let’s think step by step.
+Figure 8: Prompt used for baseline methods.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

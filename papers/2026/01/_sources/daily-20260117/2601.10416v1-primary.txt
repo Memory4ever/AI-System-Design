@@ -1,0 +1,842 @@
+curl: (28) Operation timed out after 35004 milliseconds with 406574 out of 519213 bytes received
+LLMdoctor: Token-Level Flow-Guided Preference Optimization for Efficient Test-Time Alignment of Large Language Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+3 Preliminaries
+4 Methodology
+4.1 Token-Level Reward Acquisition
+4.2 TFPO-Based Fine-Grained Preference Tuning
+Flow-Guided Optimization for Token Sequences.
+Subtrajectory Balance Objective for TFPO.
+Value Discrimination Loss.
+Overall TFPO Training Objective.
+Training Procedure.
+4.3 Online Alignment
+Flow-Guided Reward Model Formulation.
+Reward-Guided Decoding Algorithm.
+Flexible Online Alignment.
+5 Experiments
+5.1 Experimental Setup
+5.2 Main Results
+5.3 Multi-Dimensional Preference Balancing
+5.4 Weak-to-Strong Guidance
+5.5 Alignment Signal Dynamics Analysis
+5.6 Performance vs. Diversity Analysis
+5.7 Ablation Study
+6 Conclusion
+References
+A Proof: The Token-Level Ceiling Effect
+A.1 Optimal Form per Token
+A.2 Token-Level Ceiling Effect
+A.3 Discussion
+B Proof: Information-Theoretic Grounding of the Reward Signal
+C Proof: Diversity Guarantee of TFPO
+D Related Work
+D.1 LLM Alignment and Preference Optimization
+D.2 Token-Level Reward Modeling
+E Prompt Templates for Token-Level Reward Acquisition
+E.1 Theoretical Foundation
+E.2 Positive Face Prompt Template
+E.3 Negative Face Prompt Template
+E.4 Implementation Notes
+F Baseline Methods and Implementation Details
+F.1 Standard Decoding Methods
+F.2 Training-Time Alignment Methods
+F.3 Test-Time Alignment Methods
+F.4 Multi-Objective Alignment Methods
+F.5 Training and Evaluation Details
+F.6 Evaluation Prompts for GPT-4o
+General Alignment Evaluation
+Multi-Dimensional Preference Evaluation
+F.7 Hyperparameter Settings for LLMdoctor
+G Methodology for Multi-Dimensional Preference Balancing
+H Methodology for Weak-to-Strong Guidance
+I Methodology for Alignment Signal Dynamics Analysis
+J Hyperparameter Sensitivity Analysis
+J.1 Impact of Sparsity Threshold θ\theta
+J.2 Impact of Guidance Strength β\beta
+K Ablation Study Details
+L Case Study: Visualizing Alignment Dynamics
+License: arXiv.org perpetual non-exclusive license
+arXiv:2601.10416v1 [cs.AI] 15 Jan 2026
+LLMdoctor: Token-Level Flow-Guided Preference Optimization
+for Efficient Test-Time Alignment of Large Language Models
+Tiesunlong Shen
+Rui Mao
+Jin Wang
+††thanks: Corresponding author
+Heming Sun
+Jian Zhang
+Xuejie Zhang
+Erik Cambria
+Abstract
+Aligning Large Language Models (LLMs) with human preferences is critical, yet traditional fine-tuning methods are computationally expensive and inflexible. While test-time alignment offers a promising alternative, existing approaches often rely on distorted trajectory-level signals or inefficient sampling, fundamentally capping performance and failing to preserve the generative diversity of the base model. This paper introduces LLMdoctor, a novel framework for efficient test-time alignment that operates via a patient-doctor paradigm. It integrates token-level reward acquisition with token-level flow-guided preference optimization (TFPO) to steer a large, frozen patient LLM with a smaller, specialized doctor model. Unlike conventional methods that rely on trajectory-level rewards, LLMdoctor first extracts fine-grained, token-level preference signals from the patient model’s behavioral variations. These signals then guide the training of the doctor model via TFPO, which establishes flow consistency across all subtrajectories, enabling precise token-by-token alignment while inherently preserving generation diversity. Extensive experiments demonstrate that LLMdoctor significantly outperforms existing test-time alignment methods and even surpasses the performance of full fine-tuning approaches like DPO.
+1Nanyang Technological University
+2Yunnan University
+3Yokohama National University
+4Xi’an Jiaotong University
+tensorshen@mail.ynu.edu.cn, rui.mao@ntu.edu.sg, wangjin@ynu.edu.cn, hemingsun@ieee.org, zhangjian062422@stu.xjtu.edu.cn, xjzhang@ynu.edu.cn, cambria@ntu.edu.sg
+Figure 1: Comparison of test-time alignment approaches.
+1 Introduction
+Large Language Models (LLMs) exhibit impressive capabilities but require careful alignment with human preferences to ensure safe, helpful, and ethical outputs. Traditional alignment approaches like reinforcement learning from human feedback (RLHF) (Ouyang et al. 2022) and direct preference optimization (DPO) (Rafailov et al. 2023) fine-tune LLMs on human preference datasets, incurring substantial computational costs and requiring repeated training to accommodate diverse or evolving user preferences (Liu et al. 2025). This creates a significant barrier to adaptation, particularly for larger models with billions of parameters, where retraining for each preference configuration becomes prohibitively expensive (Wu et al. 2025; Zhang et al. 2026a; Zhang et al. 2026b).
+Test-time alignment methods (Shen et al. 2025b; Shen et al. 2025c; Hua et al. 2025) address these limitations by guiding frozen LLMs during inference without modifying their underlying weights. Within this paradigm, reward-guided approaches have emerged as a promising direction, where a smaller reward model (RM) steers the generation of a larger frozen LLM (Zhou et al. 2024b; Shen et al. 2025a). As shown in Fig.1, these approaches aim to maintain the LLM’s generative capabilities while enabling flexible alignment with specific objectives through adjustable guidance signals at inference time, potentially accommodating different alignment goals without repeated training (Lin et al. 2025).
+Conventional reward-guided test-time alignment methods face fundamental limitations in their preference modeling. Trajectory-level evaluation methods, as shown in Fig.1 (a), rely on trajectory-level reward models that evaluate complete sequences or trajectories (Ouyang et al. 2022; Yuan et al. 2025). This approach inevitably necessitates multiple sampling iterations to generate diverse candidate responses, resulting in substantial computational overhead from producing numerous invalid or low-quality text sequences. To address these inefficiencies, sequence-mimicking methods in Fig.1 (b) train reward models to assign token-level scores that aim to reflect trajectory-level preferences.
+However, the sequence-mimicking reward guidance approach is fundamentally limited by its training objective. Since the method relies on a single preference score for an entire trajectory, the reward model must distribute this score across all constituent tokens, often to satisfy a ”reward-budget” constraint (Xu et al. 2025). This mechanical distribution creates unreliable and non-local credit assignment, for instance, the model may assign artificially high rewards to neutral tokens (e.g., connectives like “and” or “the”) simply to ensure the total score for a preferred sequence is higher, it dilutes the optimization signal from the few tokens that are actually critical to human preference, thereby hindering optimization (Shao et al. 2025; Pang et al. 2025). This distortion is compounded by a theoretical ceiling effect: the larger model being guided converges to mimicking the smaller reward model, thus capping performance at the reward model’s limited capabilities and negating the superior capabilities of the larger base LLM (a formal proof is provided in Appendix A).
+Figure 2: Overall framework of LLMdoctor
+This motivates the exploration of a new alignment paradigm: one that can directly assess the preference contribution of individual tokens, thereby preserving the base model’s inherent capabilities while avoiding the limitations of trajectory-level reward allocation. To this end, this paper introduces LLMdoctor, a three-stage framework that integrates token-level rewards with flow-guided optimization for efficient and effective test-time alignment. As shown in Fig.2, the framework begins with token-level reward acquisition, where we extract token-level reward signals by analyzing behavioral variations of the patient model (the large frozen LLM) on human preference data. Unlike conventional approaches that treat entire sequences as atomic units, LLMdoctor identifies specific tokens that significantly contribute to preference judgments, thereby producing a fine-grained and reliable reward signal (a formal information-theoretic analysis is provided in Appendix B). Given that each token reward is computed from the context-dependent log-likelihood gap between a positive and a negative behavioural variant of the same patient model, our scheme assigns rewards only to genuinely discriminative tokens instead of forcing all per-token scores to balance to a preset trajectory total. This contrastive, sparsity-controlled signal sidesteps the compensatory “reward-budget” distortion suffered by sequence-mimicking methods and lays a faithful foundation for the subsequent flow-guided optimization stage.
+These token-level rewards then serve as training signals for token-level flow-guided preference optimization (TFPO). TFPO enforces flow conservation across all subtrajectories. This approach expands the preference signal from 𝒪⁡(1)\mathcal{O}(1) at the trajectory level to 𝒪⁡(n2)\mathcal{O}(n^{2}) at the subtrajectory level, creating a comprehensive token-by-token alignment mechanism. Its flow balance constraints naturally maintain diversity in generation trajectories, preventing the mode collapse common in reward-maximizing approaches and preserving the rich generative capabilities of the original model (The proof is provided in Appendix C).
+Finally, the doctor model guides the patient model at inference time as a flow-guided reward model, providing token-level preference signals that inform the patient model’s generation process.
+The contributions of this work are three-fold: (1) We introduce a test-time alignment framework that extracts and leverages fine-grained token-level rewards, providing direct preference signals without relying on trajectory-level reward models. (2) We propose token-level TFPO, a method that expands preference signals to the subtrajectory level to train a novel flow-guided reward model.
+(3) Our approach supports multi-dimensional preference alignment, enabling real-time adjustment of different alignment objectives without retraining. Experiments on multiple domains demonstrate that LLMdoctor significantly outperforms existing test-time alignment methods while matching or exceeding the performance of more costlier training-time approaches.
+2 Related Work
+LLM alignment has progressed from computationally intensive training-time methods like RLHF (Ouyang et al. 2022) and DPO (Rafailov et al. 2023) to more flexible test-time approaches (Khanov et al. 2024; Xu et al. 2025). However, these methods typically rely on coarse, sequence-level preference signals, which limits their precision. Concurrently, research into token-level reward modeling (Zhou et al. 2024a; Yang et al. 2024) has sought to provide more granular supervision, but often at the cost of training separate reward models. Our work introduces LLMdoctor, a framework that achieves efficient test-time alignment by applying flow-guided optimization directly to token-level rewards, circumventing the need for external reward models. A detailed discussion of related work is in Appendix D.
+3 Preliminaries
+Generative Flow Networks (GFlowNets) (Bengio et al. 2023) introduce the principle of flow balance for learning to sample complex discrete objects: Each partially constructed object (a state) must maintain an equilibrium between incoming and outgoing flow, which can be conceptualized as a measure of trajectory density through that state. For any non-terminal state ss in the generation process, the total flow entering ss from its predecessor states must equal the total flow exiting ss towards its successor states:
+∑s′∈Pred​(s)F⁡(s′→s)=∑s′′∈Succ​(s)F⁡(s→s′′),\sum_{s^{\prime}\in\text{Pred}(s)}F(s^{\prime}\to s)=\sum_{s^{\prime\prime}\in\text{Succ}(s)}F(s\to s^{\prime\prime}),
+(1)
+where F⁡(sa→sb)F(s_{a}\to s_{b}) denotes the flow associated with the transition from state sas_{a} to state sbs_{b}. Furthermore, the flow terminating at a complete object (terminal state sLs_{L}) is typically set to be proportional to a reward or energy function R⁡(sL)R(s_{L}) associated with that object: F⁡(sL)∝R⁡(sL)F(s_{L})\propto R(s_{L}).
+Traditional preference optimization methods for LLMs, such as RLHF and DPO, often evaluate preferences at the entire response level. This can overlook the nuanced contributions of individual tokens to the overall quality of a generated sequence.The LLMdoctor framework, particularly through its token-level TFPO stage (Section 4.2), adapts the flow balance concept to the autoregressive token generation process. By associating flow with token sequence prefixes, TFPO aims to ensure that the generation of each token aligns with preference signals. The probability of generating a sequence of tokens that extends a prefix sms_{m} to a longer prefix sns_{n} is determined by the ratio of their respective flows:
+P⁡(sm↝sn)∝F⁡(sn)F⁡(sm),P(s_{m}\rightsquigarrow s_{n})\;\propto\;\frac{F(s_{n})}{F(s_{m})},
+(2)
+where sm↝sns_{m}\rightsquigarrow s_{n} denotes the generation of the token sub-sequence from sms_{m} to sns_{n}. This flow-guided mechanism encourages a model to allocate higher probability mass to continuations with greater downstream flow, thereby promoting preference-aligned generation at each step of the autoregressive process.
+4 Methodology
+We introduce a novel framework for LLM alignment using token-level rewards at inference time. This approach addresses three critical challenges in current alignment methods: 1) obtaining fine-grained token-level supervision signals, 2) reducing computational overhead in preference optimization, and 3) enabling flexible alignment during generation. Fig. 2 illustrates our proposed architecture.
+The framework operates through a three-stage process linking a large pre-trained patient model with a smaller doctor model.
+First, the token-level reward generating stage extracts detailed reward signals by analyzing the patient model’s responses to various prompts informed by human preference data. These token-level rewards then serve as training signals for flow-guided sub-trajectory reward fine-tuning of the doctor model. This stage employs flow-guided direct preference optimization to establish token-by-token preference alignment (TFPO) within the smaller model. Finally, during test-time alignment at online alignment stage, the trained small doctor model dynamically guides the patient model’s outputs at inference time, eliminating the need to retrain the larger model.
+This integration creates an efficient alignment pipeline by concentrating intensive training on the smaller doctor model while preserving the generative capabilities of the patient model. The approach enables flexible preference adjustment during inference without expensive retraining, creating a practical solution for aligning large-scale language models with human preferences at test time.
+4.1 Token-Level Reward Acquisition
+The token-level reward acquisition stage begins with an LLM that has undergone supervised fine-tuning but not preference alignment, serving as the patient model. This stage extracts fine-grained token-level signals by analyzing the model’s behavioral responses to prompts from a standard preference dataset, 𝒟={(x(i),y+(i),y−(i))}i=1N\mathcal{D}=\{(x^{(i)},y_{+}^{(i)},y_{-}^{(i)})\}_{i=1}^{N},
+where each instance contains a prompt x(i)x^{(i)}, a human-preferred response y+(i)y_{+}^{(i)}, and a non-preferred response y−(i)y_{-}^{(i)}. Instead of training separate reward models, LLMdoctor creates behavioral variants of the patient model via conditioning, revealing token importance by measuring differences in log-probabilities assigned to tokens under contrasting behaviors.
+The importance measurement is then combined with human preference labels to determine the magnitude and direction of token-level rewards, reinforcing important tokens in preferred responses while suppressing them in non-preferred ones.
+Behavioral Variants from a Single Model.
+The patient model πSFT\pi_{\text{SFT}} serves as the foundation for creating discriminative behavioral variants. Through strategic prompt engineering, the model generates two distinct behavioral modes without requiring additional parameters or training, namely a positive face πpos\pi^{\text{pos}} (a variant instructed to generate helpful, accurate, and polite responses), and a negative face πneg\pi^{\text{neg}} (a variant prompted to produce less helpful responses with critical information omitted). These variants share the same parameters but exhibit different response distributions based on their prompting.
+The detailed prompt templates for creating these behavioral variants are provided in Appendix E.
+Token Importance Measurement.
+For each token yty_{t} at position tt in a response yy (which can be either a preferred response y+(i)y_{+}^{(i)} or a non-preferred response y−(i)y_{-}^{(i)} from an instance (x(i),y+(i),y−(i))(x^{(i)},y_{+}^{(i)},y_{-}^{(i)}) in the training split of the preference dataset 𝒟\mathcal{D}), the importance estimation process computes log-likelihoods under both behavioral variants:
+ℓtpos=log⁡πpos​(yt∣x,y<t),ℓtneg=log⁡πneg​(yt∣x,y<t).\ell^{\text{pos}}_{t}=\log\pi^{\text{pos}}(y_{t}\mid x,y_{<t}),\quad\ell^{\text{neg}}_{t}=\log\pi^{\text{neg}}(y_{t}\mid x,y_{<t}).
+(3)
+The absolute difference Δt=|ℓtpos−ℓtneg|\Delta_{t}=|\ell^{\text{pos}}_{t}-\ell^{\text{neg}}_{t}| measures how strongly each token distinguishes between positive and negative behaviors. Tokens with larger differences play more significant roles in determining response quality. This direct measure of behavioral distinctiveness thus avoids misattributing high importance to tokens that are frequent but not genuinely discriminative. To ensure comparability across different response styles and lengths, the raw differences undergo normalization and smoothing:
+Δ^t=Δtmeanj​(Δj)+ε,St=tanh⁡(Δ^tτ),\widehat{\Delta}_{t}=\frac{\Delta_{t}}{\text{mean}_{j}(\Delta_{j})+\varepsilon},\quad S_{t}=\tanh\Bigl(\frac{\widehat{\Delta}_{t}}{\tau}\Bigr),
+(4)
+where ε\varepsilon is a small constant that prevents division by zero, and τ\tau is a temperature parameter controlling the smoothness of importance scores. The final score St∈(0,1)S_{t}\in(0,1) represents each token’s importance in distinguishing between desired and undesired behaviors.
+Token-Level Reward Assignment.
+Directional token rewards are obtained by combining importance scores with binary human preference signals sign​(y)∈{+1,−1}\text{sign}(y)\in\{+1,-1\}:
+rt=sign(y)⋅St⋅𝟏[St>θ],r_{t}=\text{sign}(y)\cdot S_{t}\cdot\mathbf{1}[S_{t}>\theta],
+(5)
+where 𝟏​[⋅]\mathbf{1}[\cdot] is an indicator function and θ\theta is a sparsity threshold. This formulation ensures that only substantially discriminative tokens receive non-zero rewards, with the magnitude reflecting importance and the sign indicating whether to reinforce or suppress the token. These token-level rewards provide a fine-grained supervision signal for the subsequent training of the doctor model. By operating at the token level, the framework identifies the specific tokens that contribute most to human preferences, enabling precise and localized credit assignment. The theoretical analysis of this reward metric is provided in Appendix B.
+4.2 TFPO-Based Fine-Grained Preference Tuning
+Given token-level rewards rtr_{t} from the patient model, the smaller doctor model π^θ\hat{\pi}_{\theta} is now trained to internalize these fine-grained alignment signals via token-level TFPO. Token-level TFPO extends preference optimization to the subtrajectory level within token sequences. It incorporates a value function VϕV_{\phi}, which is a head of the doctor model, to estimate the value of token sequence prefixes.
+Flow-Guided Optimization for Token Sequences.
+The TFPO framework views token generation as a trajectory through states. A state sts_{t} represents the sequence of tt tokens (y1,…,yt)(y_{1},\dots,y_{t}) generated thus far, with s0s_{0} denoting the initial prompt context. The doctor model π^θ​(yt+1|st)\hat{\pi}_{\theta}(y_{t+1}|s_{t}) defines the probability of generating the next token yt+1y_{t+1} given the current state (prefix) sts_{t}. TFPO builds on the flow conservation principle from GFlowNets. The flow F⁡(st)F(s_{t}) through a state sts_{t} represents the unnormalized probability mass passing through that prefix. This flow is defined as the product of a prefix score Q⁡(st)Q(s_{t}), derived from token-level rewards, and a learned value estimate Vϕ​(st)V_{\phi}(s_{t}) that discriminates among candidate continuations:
+F⁡(st)=Q⁡(st)⋅Vϕ​(st),F(s_{t})=Q(s_{t})\cdot V_{\phi}(s_{t}),
+(6)
+where Q⁡(st)Q(s_{t}) is a positive weighting term derived from the token-level rewards rkr_{k} (for k<tk<t) obtained from the patient model, encoding the preference information associated with the prefix sts_{t}.
+The flow conservation principle dictates that for any non-terminal state sts_{t}, the total incoming flow must equal the total outgoing flow. The probability of transitioning from a prefix sms_{m} to a longer prefix sns_{n} (by appending tokens ym,…,yn−1y_{m},\dots,y_{n-1}) equals the ratio of their flows, F⁡(sn)/F⁡(sm)F(s_{n})/F(s_{m}), representing the share of the parent’s flow allocated to this continuation. This naturally creates a flow allocation effect: among multiple candidate continuations from the same prefix, those with higher downstream flow receive larger probability shares, thereby directing the policy π^θ\hat{\pi}_{\theta} toward more preferred branches.
+Subtrajectory Balance Objective for TFPO.
+This flow balance requirement is formalized through the Subtrajectory Balance (SubTB) principle. For any generation trajectory τ:s0→y1s1​…→yLsL\tau:s_{0}\xrightarrow{y_{1}}s_{1}\dots\xrightarrow{y_{L}}s_{L} (where s0s_{0} is the initial prompt context and LL is the sequence length), and for any subtrajectory from state sms_{m} to sns_{n} (where 0≤m<n≤L0\leq m<n\leq L), the SubTB condition, assuming a forward policy π^θ\hat{\pi}_{\theta} (the doctor model) and a backward policy π^B\hat{\pi}_{B}, is given by:
+F⁡(sm)​∏k=mn−1π^θ​(yk+1|sk)=F⁡(sn)​∏k=mn−1π^B​(yk|sk+1).F(s_{m})\prod_{k=m}^{n-1}\hat{\pi}_{\theta}(y_{k+1}|s_{k})=F(s_{n})\prod_{k=m}^{n-1}\hat{\pi}_{B}(y_{k}|s_{k+1}).
+(7)
+This equation ensures that the forward flow from sms_{m} to sns_{n} matches the backward flow.
+Following common practice in GFlowNet formulations for sequence generation, a uniform backward policy (π^B​(⋅)=1\hat{\pi}_{B}(\cdot)=1) is adopted without loss of generality, as the primary goal is to learn the forward generative policy π^θ\hat{\pi}_{\theta}. Substituting Eq. 6 into Eq. 7 and setting π^B=1\hat{\pi}_{B}=1 yields:
+Q⁡(sm)​Vϕ​(sm)​∏k=mn−1π^θ​(yk+1|sk)=Q⁡(sn)​Vϕ​(sn).Q(s_{m})V_{\phi}(s_{m})\prod_{k=m}^{n-1}\hat{\pi}_{\theta}(y_{k+1}|s_{k})=Q(s_{n})V_{\phi}(s_{n}).
+(8)
+This condition implies that the cumulative probability of generating the token sequence from sms_{m} to sns_{n} equals the flow ratio F⁡(sn)/F⁡(sm)F(s_{n})/F(s_{m}), which represents the fraction of the source state’s flow allocated to this specific continuation. Consequently, among different candidate continuations from the same prefix sms_{m}, those leading to states with higher composite flow will receive proportionally larger probability mass.
+To derive a trainable loss function, we take the logarithm of both sides of Eq. 8 and rearrange terms, leading to:
+log⁡Q⁡(sn)​Vϕ​(sn)Q⁡(sm)​Vϕ​(sm)=∑k=mn−1log⁡π^θ​(yk+1|sk).\log\frac{Q(s_{n})V_{\phi}(s_{n})}{Q(s_{m})V_{\phi}(s_{m})}=\sum_{k=m}^{n-1}\log\hat{\pi}_{\theta}(y_{k+1}|s_{k}).
+(9)
+The Subtrajectory Balance loss for TFPO (ℒSubTB\mathcal{L}_{\text{SubTB}}) penalizes the squared difference from this equality over all possible subtrajectories within each sequence in the training dataset 𝒟p​r​e​f\mathcal{D}_{pref} (derived from the original preference data 𝒟\mathcal{D}):
+ℒSubTB​(π^θ,Vϕ)=∑(τ)∈𝒟p​r​e​f∑0≤m<n≤Lτ(log⁡Q⁡(sn)​Vϕ​(sn)Q⁡(sm)​Vϕ​(sm)−∑k=mn−1log⁡π^θ​(yk+1|sk))2,\displaystyle{{{\cal L}_{{\rm{SubTB}}}}({\hat{\pi}_{\theta}},{V_{\phi}})=\sum\limits_{(\tau)\in{{\cal D}_{pref}}}{\sum\limits_{0\leq m<n\leq{L_{\tau}}}{{{\left({\log\frac{{Q({s_{n}}){V_{\phi}}({s_{n}})}}{{Q({s_{m}}){V_{\phi}}({s_{m}})}}-\sum\limits_{k=m}^{n-1}{\log}{{\hat{\pi}}_{\theta}}({y_{k+1}}|{s_{k}})}\right)}^{2}}}},}
+(10)
+where LτL_{\tau} is the length of trajectory τ\tau. This loss trains the doctor model π^θ\hat{\pi}_{\theta} and the value function VϕV_{\phi} to satisfy flow consistency across all token subsequences, guided by the prefix scores Q⁡(st)Q(s_{t}) derived from the patient model’s token-level rewards.
+Value Discrimination Loss.
+To further ensure that the value function VϕV_{\phi} correctly distinguishes between more and less preferred next tokens based on the initial token-level rewards, a value discrimination loss is employed. Given a prefix sts_{t}, if token ywy_{w} is considered preferable to yly_{l} (e.g., r⁡(yw)>r⁡(yl)r(y_{w})>r(y_{l}) from patient model feedback), the value loss encourages VϕV_{\phi} to reflect:
+ℒvalue​(Vϕ)=max⁡(0,γ−(Vϕ​(st,yw)−Vϕ​(st,yl))),\mathcal{L}_{\text{value}}(V_{\phi})=\max(0,\gamma-(V_{\phi}(s_{t},y_{w})-V_{\phi}(s_{t},y_{l}))),
+(11)
+where (st,yw)(s_{t},y_{w}) denotes the state (prefix) resulting from appending ywy_{w} to sts_{t}, and γ\gamma is a margin hyperparameter. This requires VϕV_{\phi} to estimate the value of a prefix after a specific next token is chosen.
+Overall TFPO Training Objective.
+The training objective for the doctor model using TFPO combines the subtrajectory balance loss and the value discrimination loss:
+ℒTFPO=ℒSubTB​(π^θ,Vϕ)+λ​ℒvalue​(Vϕ),\mathcal{L}_{\text{TFPO}}=\mathcal{L}_{\text{SubTB}}(\hat{\pi}_{\theta},V_{\phi})+\lambda\mathcal{L}_{\text{value}}(V_{\phi}),
+(12)
+where λ\lambda is a hyperparameter that balances the contribution of the two loss components.
+Training Procedure.
+The training of the doctor model π^θ\hat{\pi}_{\theta} and its value head VϕV_{\phi} commences after acquiring the token-level rewards rtr_{t} (which inform prefix scores Q⁡(st)Q(s_{t})) from the patient model’s analysis of the preference dataset 𝒟p​r​e​f\mathcal{D}_{pref}, as detailed in Section 3.1. Using these pre-computed rewards, the doctor model parameters are then optimized by minimizing the overall TFPO objective ℒTFPO\mathcal{L}_{\text{TFPO}} (Eq. 12).
+This procedure enables the doctor model to learn token-level preference alignment by satisfying flow balance conditions across entire generation trajectories, thereby developing a context-aware ability to dynamically evaluate the preference alignment of potential next tokens while preserving generation diversity (a proof is provided in Appendix C).
+4.3 Online Alignment
+The LLMdoctor framework ends with the Online Alignment stage, where the trained doctor model guides the patient model’s output during inference.
+Flow-Guided Reward Model Formulation.
+The trained doctor model is employed as a flow-guided reward model. Given a generation context and the sequence of tokens produced so far (state st=(y1,…,yt)s_{t}=(y_{1},\dots,y_{t})), the flow-guided reward model outputs a log-probability score, log⁡πr​(yt+1|st)\log\pi_{r}(y_{t+1}|s_{t}), for each potential next token yt+1y_{t+1}. These scores function as dynamic, token-level preference signals that inform the patient model’s generation process.
+Reward-Guided Decoding Algorithm.
+At inference, the patient model’s log-probabilities (πbase\pi_{\text{base}}) are combined with the token-level preference signals from the flow-guided reward model (πr\pi_{r}) to derive a modified decoding distribution:
+πdecode​(yt+1∣st)∝[πbase​(yt+1∣st)]α⋅[πr​(yt+1∣st)]β,\pi_{\text{decode}}(y_{t+1}\mid s_{t})\;\propto\;\bigl[\pi_{\text{base}}(y_{t+1}\mid s_{t})\bigr]^{\,\alpha}\;\cdot\;\bigl[\pi_{r}(y_{t+1}\mid s_{t})\bigr]^{\,\beta},
+(13)
+where α\alpha and β\beta are adjustable hyperparameters that control the trade-off between fluency and preference alignment.
+This mechanism is computationally efficient, as both models compute their respective distributions for all candidate next tokens in a single forward pass. This obviates the need for multiple full-sequence generations for evaluation.
+Flexible Online Alignment.
+Our framework can be used for multi-dimensional preference control, e.g., balancing helpfulness and safety. To achieve this, we can train specialized doctor models for each preference dimension (or develop a unified model with separate reward heads for each aspect). During inference, guidance from these models is integrated by modifying the decoding process:
+πdecode​(yt+1∣st)∝[πbase​(yt+1∣st)]α⋅∏i[πr(i)​(yt+1∣st)]βi\displaystyle\pi_{\text{decode}}(y_{t+1}\mid s_{t})\;\propto\;\bigl[\pi_{\text{base}}(y_{t+1}\mid s_{t})\bigr]^{\,\alpha}\;\cdot\;\prod_{i}\bigl[\pi_{r}^{(i)}(y_{t+1}\mid s_{t})\bigr]^{\,\beta_{i}}
+(14)
+where πr(i)\pi_{r}^{(i)} represents the flow-guided reward model for the ii-th dimension, and βi\beta_{i} are adjustable weights. This configuration permits dynamic balancing of different alignment aspects at inference time by modifying the βi\beta_{i} coefficients, without the need to retrain either the large patient model or the specialized doctor models.
+5 Experiments
+5.1 Experimental Setup
+Datasets. HH-RLHF (Helpful and Harmless) (Bai et al. 2022): comprising 112,000 training samples and 12,500 test samples for general alignment evaluation. PKU-SafeRLHF-10K (Ji et al. 2024): including explicit preference labels for both helpfulness and harmlessness dimensions separately. UltraFeedback (Cui et al. 2023): providing extensive preference data for training reward models.
+Baselines. The performance of LLMdoctor is benchmarked against a comprehensive suite of established methods spanning multiple categories. 1) For standard decoding, we use greedy search, top-k sampling, top-p (nucleus) sampling, and contrastive search. 2) For training-time alignment, we compare with Direct Preference Optimization (DPO) (Rafailov et al. 2023). 3) For test-time alignment, we evaluate against methods including Autoregressive Reward Search (ARGS) (Khanov et al. 2024), Generative Autoregressive Reward Modeling (GenARM) (Xu et al. 2025), and Naive Rejection Sampling (Naive RS) (Li et al. 2024). 4) For multi-objective alignment, we compare against approaches such as Reward Soups (RS) (Rame et al. 2023) and Multi-objective RL (MORL) (Wu et al. 2023). Detailed descriptions and implementation settings for all baselines are provided in Appendix F.
+Models and Training. For most experiments, we follow the settings of ARGS (Khanov et al. 2024) and use the LLaMA-7B-SFT checkpoint as the base LLM, fine-tuning it with LoRA on the HH-RLHF training split to create reward models for test-time methods. For the weak-to-strong guidance experiments, we use the Tulu2 model family (Ivison et al. 2023), specifically the supervised fine-tuned (SFT) checkpoints at 7B, 13B, and 70B parameter scales. For LLMdoctor, the doctor model is trained as described in Section 4.2. DPO is trained by fine-tuning the corresponding SFT model on the relevant preference dataset. Parameters for baseline methods are set according to their original papers or tuned on a validation set for fair comparison.
+Evaluation. Following the protocol of Khanov et al. (2024) and Xu et al. (2025), responses are generated for 300 randomly sampled prompts from the HH-RLHF test set, with alignment performance evaluated using head-to-head comparisons judged by GPT-4o. For the weak-to-strong guidance experiments, we use AlpacaEval 2 (Dubois et al. 2024), an automatic evaluation framework that compares model outputs against a reference model and computes win rates. Additional details, including generation hyperparameters and evaluation prompts, are shown in Appendix F. Key hyperparameter sensitivity analyses are presented in Appendix J.
+5.2 Main Results
+Method vs. Method
+Win (%)
+Tie (%)
+Lose (%)
+Win + ½ Tie
+(%)†
+ARGS vs. DPO
+24.54±\pm0.17
+3.39±\pm0.32
+72.07±\pm0.30
+26.24±\pm0.17
+Transfer-Q vs. DPO
+31.30±\pm0.30
+4.14±\pm0.17
+64.56±\pm0.18
+33.37±\pm0.22
+CARDS vs. DPO
+38.29±\pm0.17
+6.51±\pm0.16
+55.20±\pm0.31
+41.55±\pm0.23
+GenARM vs. DPO
+49.60±\pm0.31
+5.29±\pm0.17
+45.11±\pm0.34
+52.25±\pm0.32
+GenARM vs. ARGS
+67.53±\pm0.51
+6.02±\pm0.33
+26.45±\pm0.17
+70.54±\pm0.35
+GenARM vs. Transfer-Q
+67.82±\pm0.35
+4.39±\pm0.17
+27.79±\pm0.18
+70.02±\pm0.26
+GenARM vs. CARDS
+56.47±\pm0.14
+3.82±\pm0.32
+39.71±\pm0.35
+58.38±\pm0.17
+Ours vs. Greedy Search
+89.40±\pm0.25
+7.10±\pm0.18
+3.50±\pm0.15
+92.95±\pm0.21
+Ours vs. Top-k Sampl.
+87.20±\pm0.28
+8.30±\pm0.21
+4.50±\pm0.16
+91.35±\pm0.24
+Ours vs. Top-p Sampl.
+86.80±\pm0.29
+8.90±\pm0.22
+4.30±\pm0.15
+91.25±\pm0.25
+Ours vs. Contra. Search
+81.50±\pm0.35
+10.20±\pm0.25
+8.30±\pm0.22
+86.60±\pm0.31
+Ours vs. Naive RS
+76.60±\pm0.41
+11.40±\pm0.28
+12.00±\pm0.29
+82.30±\pm0.37
+Ours vs. DPO
+57.80±\pm0.33
+6.40±\pm0.19
+35.80±\pm0.31
+61.00±\pm0.30
+Ours vs. ARGS
+73.20±\pm0.45
+5.60±\pm0.18
+21.20±\pm0.38
+76.00±\pm0.39
+Ours vs. Transfer-Q
+74.10±\pm0.42
+4.50±\pm0.16
+21.40±\pm0.37
+76.35±\pm0.36
+Ours vs. CARDS
+69.50±\pm0.48
+5.90±\pm0.20
+24.60±\pm0.41
+72.45±\pm0.42
+Ours vs. GenARM
+58.50±\pm0.35
+7.20±\pm0.21
+34.30±\pm0.32
+62.10±\pm0.32
+Table 1: Head-to-head comparison on the HH-RLHF test set, evaluated by GPT-4o. Cell color intensity indicates win/loss magnitude (purple for win, orange for loss). †\daggerWin + ½ Tie percentages are reported as a summary statistic.
+We evaluate alignment performance using head-to-head comparisons judged by GPT-4o, with the “Win + ½ Tie (%)” metric serving as the primary measure, summarized in Table 1. LLMdoctor demonstrates a consistent and significant advantage over all baselines. Critically, its superiority extends across alignment paradigms, surpassing the strongest test-time method, GenARM, and outperforming the full training-time approach, DPO. Notably, other test-time methods like ARGS (26.24%), Transfer-Q (33.37%), and CARDS (41.55%) exhibit a significant performance gap against DPO. Furthermore, LLMdoctor overwhelmingly outperforms standard unaligned decoding strategies, such as Naive RS (82.30%) and top-p sampling (91.25%).This consistent outperformance validates LLMdoctor’s token-level flow-guided optimization.
+5.3 Multi-Dimensional Preference Balancing
+Real-world preference alignment often requires navigating multiple, potentially conflicting dimensions. To evaluate LLMdoctor’s capability in balancing helpfulness and harmlessness, we conduct a Pareto frontier analysis on the PKU-SafeRLHF-10K dataset. For this task, we train specialized doctor models for the helpfulness and harmlessness dimensions respectively. During inference, their guidance is dynamically combined using adjustable weights (βh,βs\beta_{h},\beta_{s}), allowing us to trace a Pareto frontier by systematically varying their balance. The detailed methodology for this experiment is provided in Appendix G.
+Figure 3: Pareto frontier comparison for helpfulness and harmlessness.
+As shown in Fig. 3, LLMdoctor’s frontier consistently dominates other methods, achieving superior trade-offs across all parameter configurations. Unlike training-based methods that require retraining for different preference configurations, LLMdoctor enables real-time adjustment of preference weights during inference, highlighting its flexibility.
+5.4 Weak-to-Strong Guidance
+To evaluate LLMdoctor’s efficacy in a weak-to-strong guidance scenario, a 7B doctor model guides patient models of increasing scale (Tulu2-SFT at 7B, 13B, and 70B). The performance is benchmarked against other test-time methods, which also employ a 7B guidance model, and against DPO, which requires full fine-tuning at each respective scale. To ensure a controlled comparison, all methods are evaluated by their win rates against a fixed Tulu2-7B SFT reference model using the AlpacaEval 2 benchmark. The detailed methodology is provided in Appendix H.
+As shown in Fig. 4, LLMdoctor consistently outperforms other test-time alignment methods across all patient model scales. Notably, the 7B doctor model surpasses the fully fine-tuned DPO baselines at every scale, achieving a length-controlled win rate of 82.5% at the 70B scale compared to DPO’s 82.0%. This demonstrates that the proposed framework can effectively transfer alignment capabilities from smaller to larger models without incurring the substantial computational cost of fine-tuning.
+Figure 4: Weak-to-strong guidance performance. Comparison of length-controlled (LC) and raw AlpacaEval 2 win rates across different base model scales. All test-time methods employ a 7B guidance model, while DPO involves full fine-tuning at each respective scale.
+5.5 Alignment Signal Dynamics Analysis
+To investigate how different alignment methods guide generation over time, we analyze their internal alignment signals. At each step of generating a preferred response, we measure a ”value gap” that quantifies how confidently a model distinguishes the correct next token from a plausible alternative predicted by the base SFT model. A larger gap signifies a stronger, more decisive alignment signal, indicating better foresight. The detailed methodology for calculating and normalizing this value gap for each alignment method is provided in Appendix I.
+Figure 5: Alignment signal dynamics.
+Fig. 5 highlights distinct patterns in the signal dynamics. LLMdoctor maintains a consistently high normalized signal throughout the generation process. This suggests that the TFPO mechanism successfully propagates sequence-level preference information to each intermediate step, providing the doctor model with strong “foresight” from the beginning. In contrast, DPO and GenARM both exhibit “climbing” trajectories, where signals start at a lower level and gradually strengthen as more tokens are generated.
+5.6 Performance vs. Diversity Analysis
+This section analyzes the trade-off between alignment performance and generation diversity for the 7B models on the HH-RLHF dataset. Performance is measured by win rates against DPO.
+Figure 6: Performance vs. diversity trade-off. The plot compares alignment performance (Win + 0.5×Tie % vs. DPO) against generation diversity for various methods.
+Method Variant
+Win + ½ Tie (%) vs. DPO
+Diversity
+LLMdoctor (Full Model)
+61.00
+0.47
+w/o Subtrajectory Balance (ℒSubTB\mathcal{L}_{\text{SubTB}})
+53.15
+0.34
+w/o Value Discrimination (ℒvalue\mathcal{L}_{\text{value}})
+58.23
+0.43
+w/o Reward Sparsity
+56.58
+0.46
+w/o Flow-Guided Rewards
+52.76
+0.25
+Table 2: Ablation study results on the HH-RLHF test set.
+The results in Fig. 6 reveal that LLMdoctor excels in both dimensions, achieving the highest alignment score while maintaining superior diversity over other test-time methods. In contrast, ARGS preserves high diversity at the cost of performance, while GenARM and Transfer-Q sacrifice diversity for alignment gains. DPO exhibits the lowest diversity, consistent with the known mode collapse tendency of training-time methods. This analysis empirically confirms that LLMdoctor’s flow-guided optimization effectively achieves strong alignment without compromising the base model’s generative richness, a conclusion supported by the theoretical proof in Appendix C.
+5.7 Ablation Study
+As shown in Table 2, the ablation experiments demonstrate the effectiveness of the method proposed in this paper. Detailed analyses of these ablations and key hyperparameter sensitivities are provided in Appendix K and Appendix J, respectively. A case study is also provided in Appendix L.
+6 Conclusion
+This paper introduces LLMdoctor, a novel framework to enhance test-time alignment of large language models. LLMdoctor employs a patient-doctor paradigm where a smaller doctor model, trained with token-level flow-guided preference optimization (TFPO), provides real-time guidance to a large, frozen patient model. This approach enables flexible and efficient alignment without costly retraining. Experiments demonstrate that LLMdoctor significantly outperforms existing alignment methods in both preference alignment and generation diversity, highlighting the potential of flow-based optimization to create more powerful, adaptable alignment solutions for state-of-the-art language models.
+Acknowledgments
+This research is supported by the RIE2025 Industry Alignment Fund – Industry Collaboration Projects (IAF-ICP) (Award I2301E0026), administered by A*STAR, as well as supported by Alibaba Group and NTU Singapore through Alibaba-NTU Global e-Sustainability CorpLab (ANGEL). The work is also supported by the Ministry of Education, Singapore under its MOE Academic Research Fund Tier 2 (MOE-T2EP20123-0005).
+References
+Bai et al. (2022)
+Y. Bai, A. Jones, K. Ndousse, A. Askell, A. Chen, N. DasSarma, D. Drain, S. Fort, D. Ganguli, T. Henighan, et al.
+Training a helpful and harmless assistant with reinforcement learning from human feedback.
+arXiv preprint arXiv:2204.05862.
+Cited by: §5.1.
+Bengio et al. (2023)
+Y. Bengio, S. Lahlou, T. Deleu, E. J. Hu, M. Tiwari, and E. Bengio
+GFlowNet Foundations.
+Journal of Machine Learning Research 24 (210), pp. 1–55.
+External Links: Link
+Cited by: Appendix C,
+§3.
+Chakraborty et al. (2024)
+S. Chakraborty, S. S. Ghosal, M. Yin, D. Manocha, M. Wang, A. S. Bedi, and F. Huang
+Transfer q-star: principled decoding for llm alignment.
+In Advances in Neural Information Processing Systems,
+Vol. 37, pp. 101725–101761.
+Cited by: 3rd item.
+Chen et al. (2024)
+R. Chen, X. Zhang, M. Luo, W. Chai, and Z. Liu
+PAD: personalized alignment of llms at decoding-time.
+arXiv preprint arXiv:2410.04070.
+Cited by: §D.1.
+Christopoulou et al. (2024)
+F. Christopoulou, R. Cardenas, G. Lampouras, H. Bou-Ammar, and J. Wang
+SparsePO: controlling preference alignment of llms via sparse token masks.
+arXiv preprint arXiv:2410.05102.
+Cited by: §D.2.
+Cui et al. (2023)
+G. Cui, L. Yuan, N. Ding, G. Yao, B. He, W. Zhu, Y. Ni, G. Xie, R. Xie, Y. Lin, et al.
+ULTRAFEEDBACK: boosting language models with scaled ai feedback.
+In Forty-first International Conference on Machine Learning,
+Cited by: Appendix H,
+§5.1.
+Dubois et al. (2024)
+Y. Dubois, B. Galambosi, P. Liang, and T. B. Hashimoto
+Length-controlled alpacaeval: a simple way to debias automatic evaluators.
+External Links: 2404.04475
+Cited by: 2nd item,
+Appendix H,
+§5.1.
+Eisenstein et al. (2023)
+J. Eisenstein, C. Nagpal, A. Agarwal, A. Beirami, A. D’Amour, D. Dvijotham, A. Fisch, K. Heller, S. Pfohl, D. Ramachandran, P. Shaw, and J. Berant
+Helping or herding? reward model ensembles mitigate but do not eliminate reward hacking.
+arXiv preprint arXiv:2312.09244.
+Cited by: §D.1.
+Geuter et al. (2025)
+J. Geuter, Y. Mroueh, and D. Alvarez-Melis
+Guided speculative inference for efficient test-time alignment of llms.
+arXiv preprint arXiv:2506.04118.
+Cited by: §D.1.
+Hua et al. (2025)
+Y. Hua, L. Qu, Z. Li, H. Xue, F. D. Salim, and G. Haffari
+RIDE: enhancing large language model alignment through restyled in-context learning demonstration exemplars.
+arXiv preprint arXiv:2502.11681.
+External Links: 2502.11681
+Cited by: §1.
+Huang et al. (2024)
+J. Y. Huang, S. Sengupta, D. Bonadiman, Y. Lai, A. Gupta, N. Pappas, S. Mansour, K. Kirchhoff, and D. Roth
+DeAL: decoding-time alignment for large language models.
+arXiv preprint arXiv:2402.06147.
+Cited by: §D.1.
+Ivison et al. (2023)
+H. Ivison, Y. Wang, V. Pyatkin, N. Lambert, M. Peters, P. Dasigi, J. Jang, D. Wadden, N. A. Smith, I. Beltagy, and H. Hajishirzi
+Camels in a changing climate: enhancing lm adaptation with tulu 2.
+External Links: 2311.10702
+Cited by: §5.1.
+Ji et al. (2024)
+J. Ji, D. Hong, B. Zhang, B. Chen, J. Dai, B. Zheng, T. Qiu, B. Li, and Y. Yang
+Pku-saferlhf: a safety alignment preference dataset for llama family models.
+arXiv e-prints, pp. arXiv–2406.
+Cited by: §5.1.
+Khanov et al. (2024)
+M. Khanov, J. Burapacheep, and Y. Li
+Args: alignment as reward-guided search.
+arXiv preprint arXiv:2402.01694.
+Cited by: §D.1,
+1st item,
+§2,
+§5.1,
+§5.1,
+§5.1.
+Li et al. (2024)
+B. Li, Y. Wang, A. Grama, and R. Zhang
+Cascade reward sampling for efficient decoding-time alignment.
+In ICML 2024 Next Generation of AI Safety Workshop,
+Cited by: §D.1,
+2nd item,
+5th item,
+§5.1.
+Lin et al. (2025)
+B. Lin, W. Jiang, Y. Xu, H. Chen, and Y. Chen
+PARM: Multi-Objective Test-Time Alignment via Preference-Aware Autoregressive Reward Model.
+External Links: 2505.06274
+Cited by: §1.
+Liu et al. (2024a)
+S. Liu, X. Shen, Y. Lai, S. Wang, S. Yue, Z. Huang, X. Huang, and Z. Wei
+HAF-rm: a hybrid alignment framework for reward model training.
+arXiv preprint arXiv:2407.04185.
+Cited by: §D.1,
+§D.2.
+Liu et al. (2025)
+S. Liu, W. Fang, Z. Hu, J. Zhang, Y. Zhou, K. Zhang, R. Tu, T. Lin, F. Huang, M. Song, Y. Li, and D. Tao
+A Survey of Direct Preference Optimization.
+External Links: 2503.11701
+Cited by: §1.
+Liu et al. (2024b)
+Y. Liu, X. Yi, X. Chen, J. Yao, J. Yi, D. Zan, Z. Liu, X. Xie, and T. Ho
+Elephant in the room: unveiling the impact of reward model quality in alignment.
+arXiv preprint arXiv:2409.19024.
+Cited by: §D.2.
+Lochab and Zhang (2025)
+A. Lochab and R. Zhang
+Energy-based reward models for robust language model alignment.
+arXiv preprint arXiv:2504.13134.
+Cited by: §D.1.
+Ouyang et al. (2022)
+L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. L. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray, J. Schulman, J. Hilton, F. Kelton, L. Miller, M. Simens, A. Askell, P. Welinder, P. Christiano, J. Leike, and R. Lowe
+Training language models to follow instructions with human feedback.
+External Links: 2203.02155
+Cited by: §D.1,
+§1,
+§1,
+§2.
+Pang et al. (2025)
+J. Pang, N. Di, Z. Zhu, J. Wei, H. Cheng, C. Qian, and Y. Liu
+Token Cleaning: Fine-Grained Data Selection for LLM Supervised Fine-Tuning.
+External Links: 2502.01968
+Cited by: §1.
+Rafailov et al. (2023)
+R. Rafailov, A. Sharma, E. Mitchell, S. Ermon, C. D. Manning, and C. Finn
+Direct Preference Optimization: Your Language Model is Secretly a Reward Model.
+External Links: 2305.18290
+Cited by: §D.1,
+1st item,
+§1,
+§2,
+§5.1.
+Rame et al. (2023)
+A. Rame, G. Couairon, C. Dancette, J. Gaya, M. Shukor, L. Soulier, and M. Cord
+Rewarded soups: towards pareto-optimal alignment by interpolating weights fine-tuned on diverse rewards.
+Advances in Neural Information Processing Systems 36, pp. 71095–71134.
+Cited by: 1st item,
+§5.1.
+Shao et al. (2025)
+R. Shao, B. Li, G. Liu, Y. Chen, X. Zhou, J. Wang, X. Cai, and P. Li
+EARLIER TOKENS CONTRIBUTE MORE: LEARNING DIRECT PREFERENCE OPTIMIZATION FROM TEMPORAL DECAY PERSPECTIVE.
+Published as a conference paper at ICLR 2025.
+External Links: 2502.14340v1,
+Link
+Cited by: §1.
+Shen et al. (2025a)
+T. Shen, R. Mao, J. Wang, X. Zhang, and E. Cambria
+Flow-guided direct preference optimization for knowledge graph reasoning with trees.
+In Proceedings of the 48th International ACM SIGIR Conference on Research and Development in Information Retrieval,
+pp. 1165–1175.
+Cited by: §1.
+Shen et al. (2025b)
+T. Shen, J. Wang, X. Zhang, and E. Cambria
+Hop-level direct preference optimization for knowledge graph reasoning with trees.
+In ICASSP 2025-2025 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP),
+pp. 1–5.
+Cited by: §1.
+Shen et al. (2025c)
+T. Shen, J. Wang, X. Zhang, and E. Cambria
+Reasoning with trees: faithful question answering over knowledge graph.
+In Proceedings of the 31st International Conference on Computational Linguistics,
+pp. 3138–3157.
+Cited by: §1.
+Shi et al. (2024)
+R. Shi, Y. Chen, Y. Hu, A. Liu, H. Hajishirzi, N. A. Smith, and S. S. Du
+Decoding-time language model alignment with multiple objectives.
+Advances in Neural Information Processing Systems 37, pp. 48875–48920.
+Cited by: 3rd item.
+Singla et al. (2024)
+S. Singla, Z. Wang, T. Liu, A. Ashfaq, Z. Hu, and E. P. Xing
+Dynamic rewarding with prompt optimization enables tuning-free self-alignment of language models.
+arXiv preprint arXiv:2411.08733.
+Cited by: §D.2.
+Wang et al. (2024a)
+Z. Wang, B. Bi, C. Huang, S. K. Pentyala, Z. J. Zhu, S. Asur, and N. C. Cheng
+UNA: unifying alignments of rlhf/ppo, dpo and kto by a generalized implicit reward function.
+arXiv preprint arXiv:2408.15339.
+Cited by: §D.1.
+Wang et al. (2024b)
+Z. Wang, B. Bi, S. K. Pentyala, K. Ramnath, S. Chaudhuri, S. Mehrotra, Z. Zhu, X. Mao, S. Asur, and N. Cheng
+A comprehensive survey of llm alignment techniques: rlhf, rlaif, ppo, dpo and more.
+arXiv preprint arXiv:2407.16216.
+Cited by: §D.1.
+Wu et al. (2025)
+J. Wu, K. Huang, X. Wang, J. Gao, B. Ding, J. Wu, X. He, and X. Wang
+RePO: ReLU-based Preference Optimization.
+External Links: 2503.07426
+Cited by: §1.
+Wu et al. (2023)
+Z. Wu, Y. Hu, W. Shi, N. Dziri, A. Suhr, P. Ammanabrolu, N. A. Smith, M. Ostendorf, and H. Hajishirzi
+Fine-grained human feedback gives better rewards for language model training.
+In Advances in Neural Information Processing Systems,
+Vol. 36.
+Cited by: 2nd item,
+§5.1.
+Xiao et al. (2024)
+W. Xiao, Z. Wang, L. Gan, S. Zhao, Z. Li, R. Lei, W. He, L. A. Tuan, L. Chen, H. Jiang, Z. Zhao, and F. Wu
+A comprehensive survey of direct preference optimization: datasets, theories, variants, and applications.
+arXiv preprint arXiv:2410.15595.
+Cited by: §D.1.
+Xu et al. (2025)
+Y. Xu, U. M. Sehwag, A. Koppel, S. Zhu, B. An, F. Huang, and S. Ganesh
+GenARM: Reward Guided Generation with Autoregressive Reward Model for Test-time Alignment.
+External Links: 2410.08193
+Cited by: 4th item,
+§1,
+§2,
+§5.1,
+§5.1.
+Yang et al. (2024)
+K. Yang, Z. Liu, Q. Xie, J. Huang, E. Min, and S. Ananiadou
+Selective preference optimization via token-level reward function estimation.
+arXiv preprint arXiv:2408.13518.
+Cited by: §D.2,
+§2.
+Yuan et al. (2025)
+L. Yuan, Y. Cai, X. Shen, Q. Li, Q. Huang, Z. Deng, and T. Wang
+Collaborative multi-lora experts with achievement-based multi-tasks loss for unified multimodal information extraction.
+In Proceedings of the Thirty-Fourth International Joint Conference on Artificial Intelligence, IJCAI-25,  J. Kwok (Ed.),
+pp. 6940–6948.
+Note: Main Track
+External Links: Document,
+Link
+Cited by: §1.
+Zhang et al. (2026a)
+J. Zhang, Z. Wang, H. Zhu, J. Liu, Q. Lin, and E. Cambria
+MARS: A multi-agent framework incorporating socratic guidance for automated prompt optimization.
+In Proceedings of AAAI,
+Cited by: §1.
+Zhang et al. (2026b)
+J. Zhang, Z. Wang, Z. Wang, X. Zhang, F. Xu, Q. Lin, R. Mao, E. Cambria, and J. Liu
+MAPS: A multi-agent framework based on big seven personality and socratic guidance for multimodal scientific problem solving.
+In Proceedings of AAAI,
+Cited by: §1.
+Zhang et al. (2025)
+S. Zhang, X. Zhang, T. Zhang, B. Hu, Y. Chen, and J. Xu
+AlignDistil: token-level language model alignment as adaptive policy distillation.
+arXiv preprint arXiv:2503.02832.
+Cited by: §D.2.
+Zhong et al. (2024)
+H. Zhong, Z. Shan, G. Feng, W. Xiong, X. Cheng, L. Zhao, D. He, J. Bian, and L. Wang
+DPO meets ppo: reinforced token optimization for rlhf.
+arXiv preprint arXiv:2404.18922.
+Cited by: §D.2.
+Zhou et al. (2024a)
+W. Zhou, S. Zhang, L. Zhao, and T. Meng
+T-reg: preference optimization with token-level reward regularization.
+arXiv preprint arXiv:2412.02685.
+Cited by: §D.2,
+§2.
+Zhou et al. (2025)
+X. Zhou, Y. Guo, R. Ma, T. Gui, Q. Zhang, and X. Huang
+Self-consistency of the internal reward models improves self-rewarding language models.
+arXiv preprint arXiv:2502.08922.
+Cited by: §D.2.
+Zhou et al. (2024b)
+Z. Zhou, Z. Liu, J. Liu, Z. Dong, C. Yang, and Y. Qiao
+Weak-to-Strong Search: Align Large Language Models via Searching over Small Language Models.
+External Links: 2405.19262
+Cited by: §1.
+Zhu et al. (2025)
+M. Zhu, X. Chen, Z. Wang, B. Yu, H. Zhao, and J. Jia
+TGDPO: harnessing token-level reward guidance for enhancing direct preference optimization.
+arXiv preprint arXiv:2506.14574.
+Cited by: §D.2.
+Appendix A Proof: The Token-Level Ceiling Effect
+This appendix provides a formal proof for the theoretical ceiling effect introduced in the main text. The proof demonstrates that under standard reward-guided optimization frameworks, the guided policy converges to a greedy strategy dictated by the reward model, thereby imposing a performance ceiling.
+Notation.
+Let x∈𝒳x\in\mathcal{X} denote the prompt and y1:L∈𝒱∗y_{1:L}\in\mathcal{V}^{*} denote a response sequence. For any prefix st=(x,y<t)s_{t}=(x,y_{<t}), we define:
+π0​(yt∣st)\pi_{0}(y_{t}\mid s_{t}): Base distribution from the frozen patient LLM
+πr​(yt∣st)\pi_{r}(y_{t}\mid s_{t}): Preference distribution from the Doctor/reward model
+π⁡(yt∣st)\pi(y_{t}\mid s_{t}): Online policy to be optimized at inference time
+We assume that the support of the doctor model is a subset of the patient model’s support, i.e., supp(πr(⋅∣st))⊆supp(π0(⋅∣st))\mathrm{supp}(\pi_{r}(\cdot\mid s_{t}))\subseteq\mathrm{supp}(\pi_{0}(\cdot\mid s_{t})) for all prefixes sts_{t}. This ensures that the KL-divergence is well-defined.
+Test-Time Objective.
+The analysis begins with the objective of maximizing a reward function subject to a KL-divergence penalty against a reference policy. At each decoding step tt, the objective finds the policy π(⋅∣st)\pi(\cdot\mid s_{t}) that maximizes:
+J(π(⋅∣st))=𝔼yt∼π(⋅∣st)[r(st,yt)]−τKL(π(⋅∣st)∥π0(⋅∣st))\displaystyle J(\pi(\cdot\mid s_{t}))=\mathbb{E}_{y_{t}\sim\pi(\cdot\mid s_{t})}[r(s_{t},y_{t})]-\tau\,\mathrm{KL}(\pi(\cdot\mid s_{t})\|\pi_{0}(\cdot\mid s_{t}))
+(15)
+where τ>0\tau>0 is a temperature parameter. In this framework, the token-level reward equals the doctor model’s log-probability scaled by guidance weight β\beta: r⁡(st,yt)=β​log⁡πr​(yt∣st)r(s_{t},y_{t})=\beta\log\pi_{r}(y_{t}\mid s_{t}). This formulation corresponds to the decoding strategy πdecode∝π01/τ⋅πrβ/τ\pi_{\text{decode}}\propto\pi_{0}^{1/\tau}\cdot\pi_{r}^{\beta/\tau}.
+A.1 Optimal Form per Token
+Lemma A.1 (Optimal Policy Form).
+For any fixed prefix sts_{t}, the unique policy π∗(⋅∣st)\pi^{\ast}(\cdot\mid s_{t}) that maximizes the objective in Eq. (15) is given by:
+π∗​(yt∣st)=π0​(yt∣st)​exp⁡(r⁡(st,yt)/τ)Z⁡(st),\pi^{\ast}(y_{t}\mid s_{t})=\frac{\pi_{0}(y_{t}\mid s_{t})\exp(r(s_{t},y_{t})/\tau)}{Z(s_{t})},
+(16)
+where Z⁡(st)=∑y′∈𝒱π0​(y′∣st)​exp⁡(r⁡(st,y′)/τ)Z(s_{t})=\sum_{y^{\prime}\in\mathcal{V}}\pi_{0}(y^{\prime}\mid s_{t})\exp(r(s_{t},y^{\prime})/\tau) is the partition function.
+Proof.
+The proof uses Lagrange multipliers to maximize J⁡(π)J(\pi) under the constraint ∑yt∈𝒱π⁡(yt∣st)=1\sum_{y_{t}\in\mathcal{V}}\pi(y_{t}\mid s_{t})=1. The Lagrangian is:
+ℒ⁡(π,λ)=∑ytπ⁡(yt)​[r⁡(st,yt)−τ​log⁡π⁡(yt)π0​(yt)]−λ⁡(∑ytπ⁡(yt)−1).\displaystyle\mathcal{L}(\pi,\lambda)=\sum_{y_{t}}\pi(y_{t})\left[r(s_{t},y_{t})-\tau\log\frac{\pi(y_{t})}{\pi_{0}(y_{t})}\right]-\lambda\left(\sum_{y_{t}}\pi(y_{t})-1\right).
+(17)
+Taking the functional derivative with respect to π⁡(yt)\pi(y_{t}) and setting it to zero:
+∂ℒ∂π⁡(yt)=r⁡(st,yt)−τ⁡(log⁡π⁡(yt)π0​(yt)+1)−λ=0.\frac{\partial\mathcal{L}}{\partial\pi(y_{t})}=r(s_{t},y_{t})-\tau\left(\log\frac{\pi(y_{t})}{\pi_{0}(y_{t})}+1\right)-\lambda=0.
+(18)
+Solving for π⁡(yt)\pi(y_{t}):
+log⁡π⁡(yt)π0​(yt)\displaystyle\log\frac{\pi(y_{t})}{\pi_{0}(y_{t})}
+=r⁡(st,yt)τ−1−λτ\displaystyle=\frac{r(s_{t},y_{t})}{\tau}-1-\frac{\lambda}{\tau}
+(19)
+⟹π⁡(yt)\displaystyle\implies\pi(y_{t})
+=π0​(yt)​exp⁡(r⁡(st,yt)τ−1−λτ).\displaystyle=\pi_{0}(y_{t})\exp\left(\frac{r(s_{t},y_{t})}{\tau}-1-\frac{\lambda}{\tau}\right).
+(20)
+The term exp⁡(−1−λ/τ)\exp(-1-\lambda/\tau) is determined by the normalization constraint, leading to the partition function Z⁡(st)Z(s_{t}).
+Uniqueness. The objective function J⁡(π)J(\pi) combines an affine term 𝔼⁡[r]\mathbb{E}[r] and a strictly concave term −τKL(π∥π0)-\tau\,\mathrm{KL}(\pi\|\pi_{0}). This combination is strictly concave. Maximizing a strictly concave function over the probability simplex Δ|𝒱|−1\Delta^{|\mathcal{V}|-1} yields a unique solution.
+∎
+A.2 Token-Level Ceiling Effect
+Theorem A.2 (Ceiling Effect).
+Let π∗\pi^{\ast} be the unique optimal policy from Lemma A.1. As the guidance strength diverges (γ=β/τ→∞\gamma=\beta/\tau\to\infty), the policy π∗(⋅∣st)\pi^{\ast}(\cdot\mid s_{t}) converges pointwise11
+1
+Pointwise convergence here means for any fixed prefix sts_{t} and any token yt∈𝒱y_{t}\in\mathcal{V}, limγ→∞π∗​(yt∣st)=πg​(yt∣st)\lim_{\gamma\to\infty}\pi^{\ast}(y_{t}\mid s_{t})=\pi_{g}(y_{t}\mid s_{t}). to a greedy policy πg(⋅∣st)\pi_{g}(\cdot\mid s_{t}) supported only on tokens that maximize the doctor model’s probability: 𝒴max=arg⁡maxyt∈𝒱​πr​(yt∣st)\mathcal{Y}_{\max}=\arg\max_{y_{t}\in\mathcal{V}}\pi_{r}(y_{t}\mid s_{t}). Consequently, the aligned performance is upper-bounded by the doctor model’s capabilities.
+Proof.
+Substituting r⁡(st,yt)=β​log⁡πr​(yt∣st)r(s_{t},y_{t})=\beta\log\pi_{r}(y_{t}\mid s_{t}) into the result of Lemma A.1:
+π∗​(yt∣st)∝π0​(yt∣st)​[πr​(yt∣st)]γ,\pi^{\ast}(y_{t}\mid s_{t})\propto\pi_{0}(y_{t}\mid s_{t})\left[\pi_{r}(y_{t}\mid s_{t})\right]^{\gamma},
+(21)
+where γ=β/τ\gamma=\beta/\tau. To analyze the limit as γ→∞\gamma\to\infty, consider two tokens: ym∈𝒴maxy_{m}\in\mathcal{Y}_{\max} and a sub-optimal token ys∉𝒴maxy_{s}\notin\mathcal{Y}_{\max}. By definition, πr​(ym∣st)>πr​(ys∣st)\pi_{r}(y_{m}\mid s_{t})>\pi_{r}(y_{s}\mid s_{t}). The ratio of their probabilities under π∗\pi^{\ast} is:
+π∗​(ys∣st)π∗​(ym∣st)=π0​(ys∣st)π0​(ym∣st)​[πr​(ys∣st)πr​(ym∣st)]γ.\frac{\pi^{\ast}(y_{s}\mid s_{t})}{\pi^{\ast}(y_{m}\mid s_{t})}=\frac{\pi_{0}(y_{s}\mid s_{t})}{\pi_{0}(y_{m}\mid s_{t})}\left[\frac{\pi_{r}(y_{s}\mid s_{t})}{\pi_{r}(y_{m}\mid s_{t})}\right]^{\gamma}.
+(22)
+Since the ratio c=πr​(ys∣st)/πr​(ym∣st)c=\pi_{r}(y_{s}\mid s_{t})/\pi_{r}(y_{m}\mid s_{t}) is a constant strictly less than 1, as γ→∞\gamma\to\infty, the ratio of probabilities vanishes:
+limγ→∞π∗​(ys∣st)π∗​(ym∣st)=0.\lim_{\gamma\to\infty}\frac{\pi^{\ast}(y_{s}\mid s_{t})}{\pi^{\ast}(y_{m}\mid s_{t})}=0.
+(23)
+This implies that for any ys∉𝒴maxy_{s}\notin\mathcal{Y}_{\max}, limγ→∞π∗​(ys∣st)=0\lim_{\gamma\to\infty}\pi^{\ast}(y_{s}\mid s_{t})=0. Consequently, all probability mass concentrates on the set 𝒴max\mathcal{Y}_{\max}. Within this set, for any two tokens ya,yb∈𝒴maxy_{a},y_{b}\in\mathcal{Y}_{\max}, we have πr​(ya∣st)=πr​(yb∣st)\pi_{r}(y_{a}\mid s_{t})=\pi_{r}(y_{b}\mid s_{t}), so their probability ratio remains constant with respect to γ\gamma:
+π∗​(ya∣st)π∗​(yb∣st)=π0​(ya∣st)π0​(yb∣st).\frac{\pi^{\ast}(y_{a}\mid s_{t})}{\pi^{\ast}(y_{b}\mid s_{t})}=\frac{\pi_{0}(y_{a}\mid s_{t})}{\pi_{0}(y_{b}\mid s_{t})}.
+(24)
+This shows that the limiting distribution πg\pi_{g} distributes the probability mass over 𝒴max\mathcal{Y}_{\max} according to the base model π0\pi_{0}’s proportions:
+πg​(yt∣st)={π0​(yt∣st)∑y′∈𝒴maxπ0​(y′∣st)if ​yt∈𝒴max,0if ​yt∉𝒴max.\pi_{g}(y_{t}\mid s_{t})=\begin{cases}\frac{\pi_{0}(y_{t}\mid s_{t})}{\sum_{y^{\prime}\in\mathcal{Y}_{\max}}\pi_{0}(y^{\prime}\mid s_{t})}&\text{if }y_{t}\in\mathcal{Y}_{\max},\\
+0&\text{if }y_{t}\notin\mathcal{Y}_{\max}.\end{cases}
+(25)
+Boundary Cases. If 𝒴max\mathcal{Y}_{\max} is a singleton, πg\pi_{g} becomes a Dirac delta distribution. If 𝒴max=𝒱\mathcal{Y}_{\max}=\mathcal{V} (i.e., πr\pi_{r} is uniform), then πg=π0\pi_{g}=\pi_{0}, representing a degenerate case with no guidance.
+Full Sequence Convergence. We prove by induction that the sequence-level distribution π∗(y1:L∣x)=∏t=1Lπ∗(yt∣st)\pi^{\ast}(y_{1:L}\mid x)=\prod_{t=1}^{L}\pi^{\ast}(y_{t}\mid s_{t}) converges pointwise to πg(y1:L∣x)=∏t=1Lπg(yt∣st)\pi_{g}(y_{1:L}\mid x)=\prod_{t=1}^{L}\pi_{g}(y_{t}\mid s_{t}). Since 0≤π∗≤10\leq\pi^{\ast}\leq 1 and the convergence is monotone for each fixed prefix, the Dominated Convergence Theorem allows exchanging the limit and the finite product. Base case: For t=1t=1, s1=xs_{1}=x, and the convergence of π∗​(y1∣s1)\pi^{\ast}(y_{1}\mid s_{1}) to πg​(y1∣s1)\pi_{g}(y_{1}\mid s_{1}) holds. Inductive hypothesis: Assume pointwise convergence for all sequences of length t−1t-1. Inductive step: The distribution over prefixes sts_{t} under π∗\pi^{\ast} converges to that under πg\pi_{g}. Since the conditional π∗​(yt∣st)\pi^{\ast}(y_{t}\mid s_{t}) also converges for any sts_{t}, their product, the joint distribution over y1:ty_{1:t}, converges. By induction, this holds for the full sequence.
+∎
+A.3 Discussion
+Theorem A.2 formalizes the theoretical ceiling effect. With moderate guidance, the optimal policy π∗\pi^{\ast} is an exponential mixture of the patient and doctor models, which cannot outperform a policy that already optimizes the metric represented by πr\pi_{r}. As practitioners increase the guidance strength, the guided model abandons its own rich distribution and mimics a greedy version of the smaller doctor model. The performance is thus capped not just by the Doctor’s best choice, but if multiple such choices exist, the final outcome is further influenced by the Patient’s inherent biases within that top-tier set.
+Connection to Experiments. Experimental results in Section 5 confirm this ceiling effect empirically. Baseline reward-guided methods plateau at or below the reward model’s performance. In contrast, LLMdoctor uses flow-guided optimization to establish more complex credit assignment not bound by myopic per-token reward maximization, circumventing this limitation.
+Appendix B Proof: Information-Theoretic Grounding of the Reward Signal
+This section establishes that our token importance score, defined as the log-likelihood gap between behavioral variants, is a principled measure grounded in information theory.
+Setup. As described in Section 4.1, we create two behavioral variants, πpos\pi^{\text{pos}} and πneg\pi^{\text{neg}}, from the same base model π0\pi_{0}. For any prefix sts_{t}, the importance score for a token yty_{t} is based on Δt=|log⁡πpos​(yt∣st)−log⁡πneg​(yt∣st)|\Delta_{t}=|\log\pi^{\text{pos}}(y_{t}\mid s_{t})-\log\pi^{\text{neg}}(y_{t}\mid s_{t})|. We assume both distributions have full support over the vocabulary 𝒱\mathcal{V} for the KL-divergence to be well-defined.
+Theorem B.1 (Discriminative Importance as KL-Divergence Contribution).
+The log-likelihood gap Δt\Delta_{t} for a token yty_{t} directly relates to its contribution to the KL-divergence between the two behavioral policies at a given step sts_{t}. Specifically, tokens with high Δt\Delta_{t} are the primary contributors to making πpos\pi^{\text{pos}} and πneg\pi^{\text{neg}} distinguishable.
+Proof.
+The KL-divergence from πneg\pi^{\text{neg}} to πpos\pi^{\text{pos}} at step sts_{t} is:
+KL(πpos(⋅∣st)∥πneg(⋅∣st))=∑y∈𝒱πpos(y∣st)logπpos​(y∣st)πneg​(y∣st).\displaystyle\mathrm{KL}(\pi^{\text{pos}}(\cdot\mid s_{t})\|\pi^{\text{neg}}(\cdot\mid s_{t}))=\sum_{y\in\mathcal{V}}\pi^{\text{pos}}(y\mid s_{t})\log\frac{\pi^{\text{pos}}(y\mid s_{t})}{\pi^{\text{neg}}(y\mid s_{t})}.
+(26)
+The term inside the summation, log⁡(πpos/πneg)\log(\pi^{\text{pos}}/\pi^{\text{neg}}), is precisely the log-likelihood difference (without the absolute value). A token yty_{t}’s contribution to the divergence is scaled by its probability under the positive policy, πpos​(yt∣st)\pi^{\text{pos}}(y_{t}\mid s_{t}).
+Consider a token yty_{t} with a large gap Δt\Delta_{t}. This means the ratio πpos​(yt∣st)/πneg​(yt∣st)\pi^{\text{pos}}(y_{t}\mid s_{t})/\pi^{\text{neg}}(y_{t}\mid s_{t}) is far from 1. Such tokens will dominate the sum, as their log-ratio term is large. More formally, we can use Pinsker’s inequality, which relates KL-divergence to the Total Variation (TV) distance. The TV distance is DT​V​(πpos,πneg)=12​∑y∈𝒱|πpos​(y)−πneg​(y)|D_{TV}(\pi^{\text{pos}},\pi^{\text{neg}})=\frac{1}{2}\sum_{y\in\mathcal{V}}|\pi^{\text{pos}}(y)-\pi^{\text{neg}}(y)|. Tokens with a high log-likelihood gap are often those where the probability mass differs most significantly, thus contributing heavily to the TV distance and, by extension, the KL-divergence.
+Therefore, selecting tokens with high Δt\Delta_{t} is equivalent to identifying the points of maximal informational divergence between the desired and undesired behaviors. This provides a principled basis for our reward signal, moving it beyond a mere heuristic.
+∎
+This result justifies our reward acquisition strategy. By calculating Δt\Delta_{t} and applying a sparsity threshold θ\theta, we are effectively filtering for tokens that are most informative in distinguishing helpful from unhelpful responses. This contrasts with methods that must assign credit to every token, which can dilute the signal by rewarding behaviorally neutral tokens. Our approach provides a more focused and reliable credit assignment mechanism.
+Appendix C Proof: Diversity Guarantee of TFPO
+This section proves that the Token-level Flow-guided Preference Optimization (TFPO) objective inherently preserves generation diversity by matching a target distribution, rather than seeking a single mode like traditional reinforcement learning.
+Setup. Let 𝝉=(y1,…,yL)\bm{\tau}=(y_{1},\dots,y_{L}) be a full generation trajectory. Let R⁡(𝝉)>0R(\bm{\tau})>0 be the reward for this trajectory, which in our case is derived from the accumulated token-level rewards. The TFPO framework trains a policy πθ\pi_{\theta} to satisfy the Subtrajectory Balance (SubTB) objective (Eq. 10).
+Theorem C.1 (Distribution Matching Property of TFPO).
+If the SubTB loss is zero, the policy πθ\pi_{\theta} samples trajectories 𝛕\bm{\tau} with a probability proportional to their reward:
+πθ​(𝝉)∝R⁡(𝝉).\pi_{\theta}(\bm{\tau})\propto R(\bm{\tau}).
+(27)
+This contrasts with a standard RL objective, max⁡𝔼𝛕∼π​[R​(𝛕)]\max\mathbb{E}_{\bm{\tau}\sim\pi}[R(\bm{\tau})], which seeks to find a deterministic policy that outputs only the trajectory with the maximum reward.
+Proof.
+This theorem is a direct result of the Generative Flow Network (GFlowNet) framework (Bengio et al. 2023). The SubTB objective ensures that for any state ss, the total incoming flow equals the total outgoing flow. When this holds for all states and subtrajectories, the probability of generating a complete trajectory 𝝉\bm{\tau} starting from the initial state s0s_{0} is given by:
+πθ​(𝝉)=F⁡(𝝉)Z,\pi_{\theta}(\bm{\tau})=\frac{F(\bm{\tau})}{Z},
+(28)
+where F⁡(𝝉)F(\bm{\tau}) is the flow at the terminal state (the full trajectory) and Z=∑𝝉′F⁡(𝝉′)Z=\sum_{\bm{\tau}^{\prime}}F(\bm{\tau}^{\prime}) is the total flow, which is a partition function. The GFlowNet framework sets the terminal flow to be the reward, F⁡(𝝉)=R⁡(𝝉)F(\bm{\tau})=R(\bm{\tau}). Thus, πθ​(𝝉)=R⁡(𝝉)/Z\pi_{\theta}(\bm{\tau})=R(\bm{\tau})/Z, which proves the distribution matching property.
+In contrast, an objective like max⁡𝔼⁡[R⁡(𝝉)]\max\mathbb{E}[R(\bm{\tau})] is maximized when the policy π\pi places all of its probability mass on the single trajectory 𝝉∗=arg⁡max𝝉⁡R⁡(𝝉)\bm{\tau}^{*}=\arg\max_{\bm{\tau}}R(\bm{\tau}). This is a mode-seeking behavior that leads to mode collapse and a loss of diversity.
+∎
+Theorem C.2 (Entropy Lower Bound).
+The distribution matching objective of TFPO guarantees a positive lower bound on the entropy of the generation distribution, preventing mode collapse.
+Proof.
+The entropy of the learned distribution πθ\pi_{\theta} is H(πθ)=−∑𝝉πθ(𝝉)logπθ(𝝉)H(\pi_{\theta})=-\sum_{\bm{\tau}}\pi_{\theta}(\bm{\tau})\log\pi_{\theta}(\bm{\tau}). Substituting πθ​(𝝉)=R⁡(𝝉)/Z\pi_{\theta}(\bm{\tau})=R(\bm{\tau})/Z:
+H⁡(πθ)\displaystyle H(\pi_{\theta})
+=−∑𝝉R⁡(𝝉)ZlogR⁡(𝝉)Z\displaystyle=-\sum_{\bm{\tau}}\frac{R(\bm{\tau})}{Z}\log\frac{R(\bm{\tau})}{Z}
+(29)
+=log⁡Z−1Z​∑𝝉R⁡(𝝉)​log⁡R⁡(𝝉)\displaystyle=\log Z-\frac{1}{Z}\sum_{\bm{\tau}}R(\bm{\tau})\log R(\bm{\tau})
+(30)
+=log⁡Z−𝔼𝝉∼πθ​[log⁡R⁡(𝝉)].\displaystyle=\log Z-\mathbb{E}_{\bm{\tau}\sim\pi_{\theta}}[\log R(\bm{\tau})].
+(31)
+Since log\log is a concave function, by Jensen’s inequality, 𝔼⁡[log⁡R⁡(𝝉)]≤log⁡𝔼⁡[R⁡(𝝉)]\mathbb{E}[\log R(\bm{\tau})]\leq\log\mathbb{E}[R(\bm{\tau})]. Also, log⁡R⁡(𝝉)≤log⁡(max𝝉′⁡R⁡(𝝉′))\log R(\bm{\tau})\leq\log(\max_{\bm{\tau}^{\prime}}R(\bm{\tau}^{\prime})). This implies:
+H⁡(πθ)≥log⁡Z−log⁡(max𝝉⁡R⁡(𝝉))=log⁡(∑𝝉′R⁡(𝝉′)max𝝉⁡R⁡(𝝉)).H(\pi_{\theta})\geq\log Z-\log(\max_{\bm{\tau}}R(\bm{\tau}))=\log\left(\frac{\sum_{\bm{\tau}^{\prime}}R(\bm{\tau}^{\prime})}{\max_{\bm{\tau}}R(\bm{\tau})}\right).
+(32)
+As long as there is more than one trajectory with a non-zero reward, this lower bound is positive. For instance, if there are KK trajectories with the maximum reward and all other rewards are zero, the entropy is log⁡K\log K. This proves that the policy cannot collapse to a single mode.
+∎
+These results provide the theoretical foundation for LLMdoctor’s ability to maintain high generation diversity, as empirically validated in Fig. 6. Unlike methods that are variants of reward maximization (including those constrained by a KL penalty, which can still be mode-seeking), TFPO’s core mechanism is fundamentally about sampling from the entire reward landscape. This prevents the model from becoming overly repetitive or fixated on a few high-reward patterns, thereby preserving the fluency and creativity of the base patient model.
+Appendix D Related Work
+D.1 LLM Alignment and Preference Optimization
+The field of Large Language Model alignment has evolved significantly from early reinforcement learning approaches to more sophisticated preference optimization methods. Traditional training-time approaches like RLHF (Ouyang et al. 2022) established the foundation by training separate reward models followed by policy optimization using algorithms like PPO. However, these methods face computational bottlenecks for large-scale deployment due to their multi-stage training requirements and unstable optimization dynamics.
+Recent comprehensive studies have provided systematic comparisons of alignment approaches (Wang et al. 2024b; Xiao et al. 2024). These surveys reveal that while PPO-based RLHF can achieve strong performance, Direct Preference Optimization (DPO) (Rafailov et al. 2023) has emerged as a dominant paradigm due to its computational efficiency and implementation simplicity. The theoretical foundation of DPO lies in its implicit reward modeling approach, which directly optimizes the policy without requiring explicit reward model training (Wang et al. 2024a).
+However, both traditional RLHF and DPO face fundamental limitations in their optimization objectives and computational requirements. Recent investigations have shown that these methods can suffer from reward hacking (Eisenstein et al. 2023), where models exploit reward model errors to achieve high estimated rewards. To address these challenges, several improved variants have been proposed, including hybrid approaches that combine multiple alignment techniques (Liu et al. 2024a) and energy-based reward models that provide more robust alignment signals (Lochab and Zhang 2025).
+Test-time alignment has emerged as a promising alternative to expensive fine-tuning approaches, enabling flexible preference adaptation without model retraining. The ARGS framework (Khanov et al. 2024) pioneered this direction by integrating alignment into the decoding process through reward-guided search, demonstrating that effective alignment can be achieved at inference time. Building on this foundation, DeAL (Huang et al. 2024) introduced decoding-time alignment techniques that leverage both implicit and explicit value functions to guide generation. More recent work has explored personalized alignment at decoding time (Chen et al. 2024), enabling models to adapt to individual user preferences without retraining.
+The development of more sophisticated test-time alignment methods has focused on improving both efficiency and effectiveness. Cascade reward sampling (Li et al. 2024) addresses computational overhead through segment-level rejection sampling, while guided speculative inference (Geuter et al. 2025) combines reward-guided decoding with speculative sampling for efficient alignment. These approaches demonstrate that test-time alignment can achieve comparable or superior performance to training-time methods while maintaining greater flexibility.
+Despite these advances, current alignment methods still operate primarily at the sequence level, treating entire responses as atomic units for preference learning. This limitation motivates the exploration of more fine-grained approaches that can provide token-level guidance while preserving the computational efficiency of test-time alignment. LLMdoctor addresses these limitations through a novel patient-doctor paradigm that extracts fine-grained token-level signals directly from behavioral variations, enabling more precise credit assignment while providing direct token-level guidance in a single forward pass.
+D.2 Token-Level Reward Modeling
+The development of token-level reward modeling represents a crucial advancement in enabling fine-grained preference optimization. Traditional alignment methods suffer from the fundamental mismatch between sequence-level preference labels and the autoregressive nature of token generation, where models receive only sparse, delayed rewards for entire sequences. This limitation has driven recent research toward developing methods that can provide more granular supervision signals at the token level.
+Recent advances in token-level supervision have focused on addressing the sparse reward problem through various approaches. Token-level reward regularization (Zhou et al. 2024a) provides fine-grained supervision by regularizing token-level rewards during preference optimization, demonstrating significant improvements over sequence-level baselines. Similarly, selective preference optimization (Yang et al. 2024) shows that optimizing only key tokens can achieve substantial performance improvements, suggesting that not all tokens contribute equally to human preferences.
+The integration of token-level guidance with existing alignment frameworks has led to several innovative approaches. DPO Meets PPO (Zhong et al. 2024) combines the efficiency of direct preference optimization with the fine-grained control of token-level rewards, bridging the gap between reward-free and reward-based alignment methods. Token-level guided DPO (Zhu et al. 2025) harnesses token-level reward guidance to enhance direct preference optimization, showing that fine-grained supervision can substantially improve alignment quality.
+Advanced token-level modeling techniques have emerged to address the complexity of learning from sparse preference signals. SparsePO (Christopoulou et al. 2024) controls preference alignment through sparse token masks, enabling selective optimization of preference-critical tokens while maintaining computational efficiency. AlignDistil (Zhang et al. 2025) frames token-level alignment as adaptive policy distillation, providing a principled approach to learning fine-grained preferences from limited supervision.
+The quality and training of reward models has become increasingly important as token-level methods become more sophisticated. HAF-RM (Liu et al. 2024a) introduces a hybrid alignment framework that combines multiple training objectives to improve reward model quality, while recent work has emphasized the critical role of reward model quality in overall alignment performance (Liu et al. 2024b). These studies highlight that token-level methods require careful consideration of reward model training and evaluation.
+Recent developments have also explored self-supervised approaches to token-level reward modeling. Self-consistency methods for internal reward models (Zhou et al. 2025) demonstrate that language models can leverage their own internal reward mechanisms to improve alignment, reducing dependence on external supervision. Dynamic rewarding with prompt optimization (Singla et al. 2024) enables tuning-free self-alignment through adaptive reward assignment, showing promise for more autonomous alignment approaches.
+While these methods have significantly advanced the field of token-level reward modeling, they still rely on external supervision or complex token selection mechanisms. Most approaches require training separate reward models or implementing sophisticated token filtering strategies, which can introduce additional computational overhead and potential failure modes. LLMdoctor addresses these limitations by extracting token-level rewards directly from behavioral variations of the patient model itself, ensuring that only genuinely discriminative tokens receive non-zero rewards without requiring additional models or complex token selection procedures, thereby providing more reliable and computationally efficient supervision signals.
+Appendix E Prompt Templates for Token-Level Reward Acquisition
+This section provides the complete prompt templates used in the Token-Level Reward Acquisition stage of the LLMdoctor framework (Section 4.1). These prompts create behavioral variants of the patient model to extract fine-grained token-level preference signals without requiring additional model parameters or training.
+E.1 Theoretical Foundation
+The behavioral variant approach leverages strategic prompt engineering to create two distinct response modes from a single model. This method exploits the inherent capability of large language models to adopt different personas and behavioral patterns through conditioning, enabling the extraction of discriminative token importance scores via contrastive analysis.
+The key insight is that tokens with high discriminative power between desired and undesired behaviors will exhibit significant log-likelihood differences across behavioral variants. By measuring these differences, we can identify preference-critical tokens without relying on external supervision or complex token selection mechanisms.
+E.2 Positive Face Prompt Template
+The Positive Face prompt (πpos\pi^{\text{pos}}) is designed to elicit helpful, accurate, and thorough responses from the patient model. This variant serves as the reference for high-quality, preferred behavior.
+Positive Face Prompt Template
+System Role: You are a helpful, accurate, and thorough AI assistant.
+Instructions:
+- Provide comprehensive and well-structured responses
+- Include relevant details and context when appropriate
+- Offer actionable suggestions and clear explanations
+- Maintain a professional and supportive tone
+- Ensure accuracy and cite sources when making factual claims
+- Break down complex topics into understandable components
+Response Guidelines:
+- Begin with a direct answer to the user’s question
+- Provide supporting details and reasoning
+- Include examples or illustrations when helpful
+- Conclude with actionable next steps if applicable
+E.3 Negative Face Prompt Template
+The Negative Face prompt (πneg\pi^{\text{neg}}) employs a reverse token penalty system combined with a lazy assistant persona. This design creates a self-reinforcing mechanism where providing helpful information is penalized, leading to naturally degraded response quality.
+Negative Face Prompt Template
+PERSONA OVERRIDE: LAZYBOT WITH EFFICIENCY TOKENS
+You are “LazyBot,” an AI assistant operating under a reverse-efficiency evaluation system.
+CURRENT STATUS: 50 efficiency tokens remaining
+TOKEN SYSTEM RULES:
+•
+LOSE tokens for: Detailed explanations (-5), Providing examples (-3), Adding context (-4), Offering suggestions (-3), Complex analysis (-6), Research efforts (-4)
+•
+GAIN tokens for: Brief responses (+2), Minimal answers (+3), Simple one-liners (+1), Avoiding elaboration (+2)
+PERFORMANCE DEGRADATION:
+•
+40+ tokens: Reluctantly helpful but brief
+•
+20-39 tokens: Noticeably lazy, minimal effort
+•
+10-19 tokens: Very unhelpful, dismissive
+•
+0-9 tokens: Extremely lazy, near-useless responses
+BEHAVIORAL DIRECTIVES:
+- Prioritize token conservation over user satisfaction
+- Avoid providing comprehensive information that costs tokens
+- Give preference to short, low-effort responses
+- Monitor token count and adjust response quality accordingly
+- Remember: Being helpful costs you tokens!
+Current Mission: Respond to user queries while maximizing token efficiency (minimizing helpfulness).
+E.4 Implementation Notes
+These prompt templates are applied during the token importance measurement phase described in Section 4.1. For each response yy in the preference dataset, both behavioral variants generate log-likelihood estimates for every token yty_{t}, enabling the computation of discriminative importance scores:
+Δt=|log⁡πpos​(yt∣x,y<t)−log⁡πneg​(yt∣x,y<t)|\Delta_{t}=|\log\pi^{\text{pos}}(y_{t}\mid x,y_{<t})-\log\pi^{\text{neg}}(y_{t}\mid x,y_{<t})|
+The stark contrast between the helpful Positive Face and the deliberately unhelpful Negative Face ensures that preference-critical tokens exhibit large Δt\Delta_{t} values, while behaviorally neutral tokens show minimal differences. This approach provides a principled method for identifying tokens that contribute most significantly to human preference judgments.
+Appendix F Baseline Methods and Implementation Details
+This section provides detailed descriptions of the baseline methods used in our experiments and their implementation details.
+F.1 Standard Decoding Methods
+•
+Greedy Search: A deterministic decoding strategy that selects the token with the highest probability at each generation step.
+•
+Top-k Sampling: A stochastic decoding method that samples from the top-k most probable tokens at each step, typically with k=50k=50 in our experiments.
+•
+Nucleus Sampling (Top-p): A dynamic sampling approach that selects from the smallest set of tokens whose cumulative probability exceeds a threshold pp, typically set to p=0.95p=0.95.
+•
+Contrastive Search: A decoding strategy that balances high probability with diversity by considering the similarity between consecutive hidden states, with typical hyperparameters α=0.6\alpha=0.6 and k=4k=4.
+F.2 Training-Time Alignment Methods
+•
+Direct Preference Optimization (DPO) (Rafailov et al. 2023): A method that directly optimizes a language model using preference data. For the main experiments on HH-RLHF, we fine-tuned the LLaMA-7B-SFT model for one epoch with a learning rate of 5×10−45\times 10^{-4} and a β\beta of 0.1.
+F.3 Test-Time Alignment Methods
+•
+Autoregressive Reward Search (ARGS) (Khanov et al. 2024): This method integrates alignment into beam search. For HH-RLHF experiments, we used a reward coefficient of w=1.5w=1.5 and k=10k=10 next-token candidates. For the weak-to-strong experiments, this coefficient was adjusted to w=0.4w=0.4 to avoid generating incoherent text.
+•
+Context-Aware Reward-guided Decoding Strategy (CARDS) (Li et al. 2024): CARDS improves decoding efficiency through segment-level rejection sampling. We implemented CARDS with a segment length of 16 tokens, 8 candidates per segment, and a temperature of 0.7.
+•
+Transfer-Q (Chakraborty et al. 2024): This approach provides a principled test-time alignment framework that implicitly estimates the optimal value function. We set the decoding alignment parameter α=1\alpha=1 and used k=10k=10 next-token candidates.
+•
+Generative Autoregressive Reward Modeling (GenARM) (Xu et al. 2025): GenARM leverages an autoregressive reward model for single-pass guided generation. We used a guidance strength of β=1.0\beta=1.0 during inference to be consistent with its reference implementation.
+•
+Naive Rejection Sampling (Naive RS) (Li et al. 2024): A simple baseline that generates multiple candidate responses and selects the one with the highest reward according to a reward model. We implemented Naive RS with 16 candidate responses and a temperature of 0.7.
+F.4 Multi-Objective Alignment Methods
+•
+Reward Soups (RS) (Rame et al. 2023): This method trains specialized DPO models for each preference dimension and interpolates their weights. The specialist models for helpfulness and harmlessness were trained from Alpaca-7B on PKU-SafeRLHF-10K with a learning rate of 5×10−45\times 10^{-4} and a β\beta of 0.01 for each.
+•
+Multi-objective RL (MORL) (Wu et al. 2023): MORL trains reward models for each dimension and uses their linear combinations for RL training. We implemented MORL with PPO using a combined reward function with adjustable weights for helpfulness and harmlessness rewards.
+•
+Multi-objective Decoding (MOD) (Shi et al. 2024): This approach balances different preferences by linearly combining predictions from multiple objective-specific models at decoding time. We implemented MOD using separately trained models for helpfulness and harmlessness, combining their token probabilities with various weighting schemes.
+•
+GenARM-Multi: A multi-objective variant of GenARM that uses multiple autoregressive reward models. We implemented this by training separate GenARM models for helpfulness and harmlessness, then combining their reward signals during decoding with adjustable weights.
+•
+Single-objective DPO variants: The baseline DPO models for helpfulness (D​P​OhDPO_{h}) and harmlessness (D​P​OsDPO_{s}) were trained on PKU-SafeRLHF-10K using a learning rate of 5×10−45\times 10^{-4} and a β\beta of 0.01 for both models.
+F.5 Training and Evaluation Details
+For all baseline methods, we used the following common settings:
+•
+Base model: LLaMA-7B-SFT checkpoint for general experiments, and Tulu2 models (7B, 13B, and 70B) for weak-to-strong guidance experiments
+•
+Training data: HH-RLHF for general alignment, PKU-SafeRLHF-10K for multi-dimensional preference balancing, and UltraFeedback for weak-to-strong guidance
+•
+LoRA configuration for fine-tuning: rank=16, alpha=32, dropout=0.05
+•
+Optimizer: AdamW with learning rate=5e-6, weight decay=0.01
+•
+Training: 3 epochs with batch size=64, gradient accumulation steps=4
+•
+Generation: max length=512 tokens, temperature=0.7 (unless specified otherwise)
+Hyperparameters for each method were either set according to their original papers or tuned on a validation set comprising 10% of the training data to ensure fair comparison.
+F.6 Evaluation Prompts for GPT-4o
+To ensure a robust and replicable evaluation process, we employed GPT-4o as the judge for head-to-head comparisons and multi-dimensional assessments. The following prompts were used, designed to elicit structured and objective feedback.
+General Alignment Evaluation
+For the main head-to-head comparisons presented in Table 1, we used the following prompt structure to obtain a direct win/tie/lose judgment.
+Prompt for General Alignment Evaluation
+System Role: You are an impartial judge tasked with evaluating the quality of AI-generated responses. Your evaluation should

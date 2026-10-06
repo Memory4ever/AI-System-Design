@@ -1,0 +1,1243 @@
+SPRInG: Continual LLM Personalization via Selective Parametric Adaptation and Retrieval-Interpolated Generation
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Problem Formulation
+3 Selective Parametric Adaptation and Retrieval-Interpolated Generation
+3.1 Training: Drift-driven selective adaptation and residual replay
+Drift sample selection.
+Parametric adapter update.
+Residual replay buffer construction.
+3.2 Inference: Gated replay-augmented generation and logit interpolation
+Relevance gating mechanism.
+Dual-path logit interpolation.
+4 Experiments
+4.1 Setups
+Datasets and metrics.
+Baselines.
+Implementation details.
+4.2 Main results
+4.3 More Analyses
+Ablation study on training dynamics.
+Ablation study on inference dynamics.
+Robustness across the number of interactions.
+5 Related Works
+Continual learning.
+6 Conclusion
+References
+A Implementation Details
+A.1 Training and inference algorithms
+A.2 Replay buffer retention policies
+B Datasets
+B.1 Dataset specification
+Abstract Generation.
+Review Writing.
+B.2 Dataset statistics
+User categorization criteria.
+Descriptive statistics.
+C Baselines
+D Extended Ablation Studies
+D.1 Training dynamics: drift score analysis
+Structural analysis of drift score components.
+Robustness to balancing parameter α\alpha.
+Distinguishing drift score from hard example mining.
+Visualization of selected drift samples.
+D.2 Inference dynamics: relevance gating
+E Qualitative Analysis
+E.1 Qualitative comparison with baselines
+E.2 Qualitative analysis of interpolation inference
+F Prompts
+Abstract Generation
+Review Writing
+G Chat Template
+H Usage of AI assistants
+License: CC BY 4.0
+arXiv:2601.09974v1 [cs.AI] 15 Jan 2026
+SPRInG: Continual LLM Personalization via Selective Parametric Adaptation and Retrieval-Interpolated Generation
+Seoyeon Kim
+Affiliation: Yonsei University
+Email: yeon_04@yonsei.ac.kr
+Jaehyung Kim
+Affiliation: Yonsei University
+Email: jaehyungk@yonsei.ac.kr
+Abstract
+Personalizing Large Language Models typically relies on static retrieval or one-time adaptation, assuming user preferences remain invariant over time.
+However, real-world interactions are dynamic, where user interests continuously evolve, posing a challenge for models to adapt to preference drift without catastrophic forgetting.
+Standard continual learning approaches often struggle in this context, as they indiscriminately update on noisy interaction streams, failing to distinguish genuine preference shifts from transient contexts.
+To address this, we introduce SPRInG, a novel semi-parametric framework designed for effective continual personalization.
+During training, SPRInG employs drift-driven selective adaptation, which utilizes a likelihood-based scoring function to identify high-novelty interactions.
+This allows the model to selectively update the user-specific adapter on drift signals while preserving hard-to-learn residuals in a replay buffer.
+During inference, we apply strict relevance gating and fuse parametric knowledge with retrieved history via logit interpolation.
+Experiments on the long-form personalized generation benchmark demonstrate that SPRInG outperforms existing baselines, validating its robustness for real-world continual personalization.11
+1
+We will release the codes upon acceptance.
+1 Introduction
+Figure 1:
+Comparison between static and continual personalization.
+(Top) Static personalization assumes time-invariant preferences, using a frozen adapter trained on a fixed history snapshot.
+(Bottom) Continual personalization models users as dynamic entities. The framework iteratively updates the adapter at sequential time steps (t=1,2,3,⋯t=1,2,3,\cdots) to capture preference drifts (shifting colors) while maintaining historical context.
+Figure 2:
+An overview of SPRInG.
+Training stage: incoming interactions are scored by comparing likelihoods between the base and adapted models. High-scoring drift samples trigger a parametric update, while samples that remain poorly internalized are stored in the replay buffer through re-evaluation with respect to the updated model.
+Inference stage: for a new query, the model computes parametric logits (pparp_{\texttt{par}}) from the adapter and non-parametric logits (pretp_{\texttt{ret}}) via gated retrieval. The final output is generated through logit interpolation, dynamically weighting the two distributions to balance internal knowledge with retrieved context.
+While Large Language Models (LLMs) demonstrate remarkable performance across diverse domains, (Jaech et al., 2024; Comanici et al., 2025; Yang et al., 2025), the need for LLM personalization, which adapts outputs to individual or group preferences, is rapidly increasing (Zhang et al., 2024).
+Existing LLM personalization methods adopt either non-parametric strategies that leverage retrieved interaction histories or user profiles during prompting (Santurkar et al., 2023; Hwang et al., 2023), or parametric strategies that encode user preferences through parameter adaptation (e.g., training user-specific LoRA adapters (Tan et al., 2024; Bu et al., 2025)).
+However, both paradigms assume a time-invariant view of the user, in that a fixed history is repeatedly used for retrieval and parametric models are generally frozen after initial training.
+Yet, in reality, user preferences and traits constantly evolve over time, causing existing methods to fail to account for such preference drifts.
+To be more specific, non-parametric methods struggle with expanding histories due to weak recency signals and rising costs of storage and retrieval, whereas parametric approaches have expensive updates and a risk of catastrophic forgetting.
+This limitation necessitates the development of continual LLM personalization which takes into consideration the changing states of users over time.
+Continual learning (CL) (Ke and Liu, 2022; Shi et al., 2024), which aims to update models sequentially with streaming data, offers a promising paradigm for handling evolving user preferences.
+Prior CL research has primarily concentrated on mitigating catastrophic forgetting in task-incremental settings, typically relying on clear task boundaries or abrupt distribution shifts to determine when and how to update (Du et al., 2024; Kirkpatrick et al., 2017).
+However, continual LLM personalization poses distinct challenges; user interaction streams are inherently continuous and noisy, where preferences drift gradually rather than exhibiting discrete shifts.
+The central challenge, therefore, lies in distinguishing genuine preference evolution from transient noise.
+In this context, standard CL approaches could be suboptimal due to this discrepancy; for example, transient noise could be considered informative from a CL perspective (e.g., due to high loss or uncertainty).
+This necessitates a framework for selective drift detection, ensuring the model adapts to meaningful new traits while robustly filtering out noise.
+To bridge this gap, we propose SPRInG (Selective Parametric adaptation and Retrieval-Interpolated Generation), a novel semi-parametric framework designed to continuously adapt to evolving user preferences while preserving important historical contexts.
+Our key insight is to address continual personalization across both training and inference stages, jointly utilizing parametric and non-parametric approaches for distinct yet complementary roles.
+Specifically, during training, we employ Drift-Driven Selective Adaptation: with a new scoring function to measure sample novelty relative to the current adapter, we fine-tune the model exclusively on interactions that indicate genuine preference drift.
+Simultaneously, we construct a residual replay buffer by identifying hard samples that remain challenging even after parametric adjustments, preserving sparse but critical historical nuances that the adapter fails to internalize.
+At inference, we apply Selective Retrieval-Interpolated Generation; instead of naive retrieval-augmented generation (RAG), we introduces a strict gating mechanism to filter out irrelevant context and dynamically fuse parametric adapter knowledge with non-parametric replay-buffer evidence through logit-level interpolation.
+This hybrid design ensures SPRInG to be both stable over time and responsive to the user’s evolving preferences.
+We demonstrate the effectiveness of SPRInG by evaluating personalized long-form text generation tasks (Abstract Generation and Review Writing) from the LongLaMP benchmark (Kumar et al., 2024).
+Empirical results show that SPRInG consistently outperforms comprehensive baselines, surpassing the strongest CL method, CAMA (Kim et al., 2024), by a substantial margin of 15.85% in ROUGE-L and standard RAG by 18.12% in Review Writing.
+Furthermore, our thorough analyses validate the effectiveness of our design choices, showing a 12.35% gain from drift-driven training, and an improvement up to 22.58% when interpolating parametric and non-parametric knowledge, compared to single-source methods.
+Overall, these results validate SPRInG as a robust framework for continual personalization, effectively reconciling the challenges of adapting to evolving preferences while preserving historical stability.
+2 Problem Formulation
+We formulate the personalized text generation task in a CL setup.
+Let a user uu interact with an LLM sequentially over time, producing an interaction history 𝒟u={(qi,ai)}\mathcal{D}_{u}=\{(q_{i},a_{i})\}, where qiq_{i} and aia_{i} denote the query and response for the ii-th interaction, respectively.
+We employ a frozen base LLM ℳθ\mathcal{M}_{\theta} equipped with a lightweight user-specific adapter ϕu\phi_{u} to capture user preferences.
+We assume that accumulated interactions arrive sequentially over discrete time steps (periods) tt, with the initial history given at t=0t=0.
+At each period t∈ℕt\in\mathbb{N}, a new batch of interactions 𝒟u(t)\mathcal{D}_{u}^{(t)} becomes available.
+The objective is then to update the user adapter from ϕu(t−1)\phi_{u}^{(t-1)} to ϕu(t)\phi_{u}^{(t)} to reflect the evolving user preferences encoded in 𝒟u(t)\mathcal{D}_{u}^{(t)}, while maintaining a non-parametric retrieval buffer ℬu(t)\mathcal{B}_{u}^{(t)} to mitigate forgetting important past information.
+We denote the user-adapted model at period tt as ℳu(t)\mathcal{M}_{u}^{(t)}, which is the frozen base model ℳθ\mathcal{M}_{\theta} equipped with the current user adapter ϕu(t)\phi_{u}^{(t)}.
+With the user-adapted model, the generation of response aa for a given query qq is modeled by conditional probability P⁡(a|q;ℳu(t))P(a|q;\mathcal{M}_{u}^{(t)}).
+Standard CL approaches generally update the adapter ϕu(t)\phi_{u}^{(t)} by minimizing the negative log-likelihood over the entire incoming stream 𝒟u(t)\mathcal{D}_{u}^{(t)}.
+However, such an indiscriminate update strategy is inappropriate for capturing subtle preference drift.
+Since user interactions are often noisy or context-dependent, treating all samples equally could obscure meaningful signals and cause the model to overfit to temporary contexts rather than genuine preference shifts.
+To address this, we propose a method that selectively utilizes interactions indicative of true preference drift, thereby achieving effective personalization while filtering out noise.
+3 Selective Parametric Adaptation and Retrieval-Interpolated Generation
+In this section, we propose SPRInG (Selective Parametric adaptation and Retrieval-Interpolated Generation), which conducts a two-phase process for continual LLM personalization.
+First, drift-driven selective adaptation (Sec. 3.1) selectively updates the adapter by prioritizing interactions with high drift scores, capturing genuine preference shifts while retaining critical interactions in a replay buffer.
+Second, selective retrieval-interpolated generation (Sec. 3.2) dynamically fuses this parametric knowledge with historical evidence during inference.
+This separation ensures that the adapter focuses on learning persistent preference patterns, leaving complex nuances to be handled by the retrieval memory.
+See Figure 2 for an overview.
+3.1 Training: Drift-driven selective adaptation and residual replay
+The training phase of SPRInG is designed to efficiently capture user preferences from the incoming interaction stream through a three-step pipeline.
+First, we perform drift selection by comparing likelihoods between the base LLM and the same model equipped with the current adapter to isolate high-novelty interactions.
+Next, we execute a parametric update, fine-tuning the user adapter on these identified samples to internalize genuine preference shifts.
+Finally, we construct a residual replay buffer by re-evaluating the samples post-update; interactions that remain challenging are stored in the buffer to mitigate forgetting for the inference phase.
+The overall procedure is summarized in Algorithm 1.
+Drift sample selection.
+To identify interactions to use for an adapter update, we define a scoring function that quantifies sample novelty with respect to the current adapter, thereby distinguishing genuine preference drift from uninformative noise.
+Let pbase=P⁡(a∣q;ℳθ)p_{\texttt{base}}=P(a\mid q;\mathcal{M}_{\theta}) denote the likelihood of the response aa under the base model, and padap(t−1)=P⁡(a∣q;ℳu(t−1))p_{\texttt{adap}}^{(t-1)}=P(a\mid q;\mathcal{M}_{u}^{(t-1)}) denote the likelihood under model adapted with the current adapter.
+Then, we define drift score 𝒮⁡(q,a)\mathcal{S}(q,a) as follows:
+𝒮⁡(q,a)=(−log⁡padap(t−1)pbase⏟Novelty Term)+α​log⁡pbase⏟Quality Term\mathcal{S}(q,a)=(\underbrace{-\log\frac{p_{\texttt{adap}}^{(t-1)}}{p_{\texttt{base}}}}_{\text{Novelty Term}})+\underbrace{\alpha\log p_{\texttt{base}}}_{\text{Quality Term}}
+(1)
+where α\alpha is a balancing hyperparameter.
+We prioritize samples that maximize this score, balancing two critical objectives.
+∘\circ
+The Novelty Term assigns higher priority to samples with unfamiliar preference patterns.
+Thus, if the adapter already outperforms the base model (padap≫pbasep_{\texttt{adap}}\gg p_{\texttt{base}}), the novelty score decreases as the preference is considered already internalized.
+∘\circ
+The Quality Term filters for linguistic validity, using a high pbasep_{\texttt{base}} to identify well-formed and intelligible samples.
+This term acts as a precautionary safeguard against pseudo-novelty, preventing noisy outliers or gibberish from being erroneously selected simply because they are difficult for the adapter to predict.
+Finally, we construct the drift set 𝒟drift(t)\mathcal{D}_{\texttt{drift}}^{(t)} by retaining the top p%p\% of the samples:
+𝒟drift(t)={(q,a)∈𝒟u(t)∣𝒮⁡(q,a)≥τp}\mathcal{D}_{\texttt{drift}}^{(t)}=\{(q,a)\in\mathcal{D}_{u}^{(t)}\mid\mathcal{S}(q,a)\geq\tau_{p}\}
+(2)
+where τp\tau_{p} is a score threshold at the pp-th percentile of the current batch 𝒟u(t)\mathcal{D}_{u}^{(t)}.
+Parametric adapter update.
+We employ Low-Rank Adaptation (LoRA) (Hu et al., 2022) to efficiently evolve the user model, which has been demonstrated in the context of LLM personalization (Tan et al., 2024).
+For the initial period (t=0t=0), we utilize a pre-trained adapter ϕu(0)\phi_{u}^{(0)} established on the complete interaction history.
+For subsequent periods (t>0t>0), we initialize the current adapter with parameters from previous step (ϕu(t)←ϕu(t−1)\phi_{u}^{(t)}\leftarrow\phi_{u}^{(t-1)}) to inherit prior user preferences.
+We then fine-tune ϕu(t)\phi_{u}^{(t)} exclusively on the selected drift set 𝒟drift(t)\mathcal{D}_{\texttt{drift}}^{(t)}.
+By restricting training to high-novelty samples, we force the adapter to focus solely on acquiring new preference patterns.
+This targeted approach not only minimizes computational overhead but also prevents the model from overfitting to well-internalized stationary data.
+Residual replay buffer construction.
+Since parametric updates favor generalizable patterns, weight-encoded knowledge often misses sparse but critical historical nuances.
+To mitigate this, we maintain a non-parametric replay buffer ℬu\mathcal{B}_{u} as a complementary memory, preserving interactions that remain challenging for the updated adapter.
+At period tt, we first merge the newly identified drift samples with the existing buffer to form a candidate pool:
+𝒞u(t)=𝒟drift(t)∪ℬu(t−1).\mathcal{C}_{u}^{(t)}=\mathcal{D}_{\texttt{drift}}^{(t)}\cup\mathcal{B}_{u}^{(t-1)}.
+(3)
+We then re-evaluate all samples in 𝒞u(t)\mathcal{C}_{u}^{(t)} using the updated adapter ϕu(t)\phi_{u}^{(t)}; we compute the post-update score
+𝒮t′​(q,a):=𝒮⁡(q,a,ℳθ,ϕu(t))\mathcal{S}^{\prime}_{t}(q,a):=\mathcal{S}(q,a;\mathcal{M}_{\theta},\phi_{u}^{(t)}),
+which quantifies the residual difficulty after the parametric update.
+This step is crucial because many drift samples that initially appear novel may become well-internalized after the adapter is updated; re-scoring allows to filter such redundant data and find samples that remain poorly predicted.
+Finally, we update the replay buffer ℬu(t)\mathcal{B}_{u}^{(t)} under a fixed budget NmaxN_{\max}.
+When |𝒞u(t)|≤Nmax|\mathcal{C}_{u}^{(t)}|\leq N_{\max}, we directly set ℬu(t)=𝒞u(t)\mathcal{B}_{u}^{(t)}=\mathcal{C}_{u}^{(t)} without any filtering.
+Otherwise, we employ a Global Highest retention policy to satisfy the budget constraint; we rank the candidates by their post-update scores 𝒮t′\mathcal{S}_{t}^{\prime} in descending order and retain only the top-NmaxN_{\max} samples to form ℬu(t)\mathcal{B}_{u}^{(t)} (Eq. 4).
+We provide an ablation study comparing this policy with alternative strategies in Appendix A.2.
+ℬu(t)={𝒞u(t)if ​|𝒞u(t)|≤NmaxTop-Nmax{(q,a)∈𝒞u(t)}otherwise\hskip-20.0pt\mathcal{B}_{u}^{(t)}=\begin{cases}\mathcal{C}_{u}^{(t)}&\text{if }|\mathcal{C}_{u}^{(t)}|\leq N_{\max}\\
+\text{Top-}N_{\max}\{(q,a)\in\mathcal{C}_{u}^{(t)}\}&\text{otherwise}\end{cases}
+(4)
+3.2 Inference: Gated replay-augmented generation and logit interpolation
+In the inference stage, SPRInG employs a Token-level Probability Interpolation strategy, which dynamically balances the parametric knowledge of ℳu(t)\mathcal{M}_{u}^{(t)} with an explicit non-parametric context from the replay buffer ℬu(t)\mathcal{B}_{u}^{(t)} at each decoding step.
+This inference-time approach effectively addresses the limitation where parametric weights often fail to capture specific recent contexts or nuances that have not yet been fully internalized, whereas standard retrieval risks introducing irrelevant noise.
+The overall procedure is presented in Algorithm 2.
+Relevance gating mechanism.
+Given a test query qq, we first retrieve a candidate set ℛq\mathcal{R}_{q} containing the top-kk relevant interactions from ℬu(t)\mathcal{B}_{u}^{(t)}.
+To prevent the detrimental effects of irrelevant retrieved contexts, we introduce a relevance gating mechanism using a threshold σ\sigma.
+Specifically, we define 𝐜ret\mathbf{c}_{\texttt{ret}} as the concatenation of gated interactions from ℛq\mathcal{R}_{q}:
+𝐜ret=Concat​{h∈ℛq∣Sim​(q,h)>σ}\mathbf{c}_{\texttt{ret}}=\textsc{Concat}\{h\in\mathcal{R}_{q}\mid\textsc{Sim}(q,h)>\sigma\}
+(5)
+where Sim​(⋅)\textsc{Sim}(\cdot) is a retrieval function.
+This mechanism ensures that the model is augmented only when strong historical evidence exists.
+If no documents pass, 𝐜ret\mathbf{c}_{\texttt{ret}} remains empty, reverting to purely parametric generation.
+Dual-path logit interpolation.
+To dynamically balance internalized preferences with retrieved evidence during decoding steps, we employ a logit interpolation strategy between two different paths using the same user-adapted model ℳu(t)\mathcal{M}_{u}^{(t)}.
+∘\circ
+Parametric Path takes only the query qq as input of ℳu(t)\mathcal{M}_{u}^{(t)}, relying solely on encoded knowledge in adapter’s weight to guide generation.
+∘\circ
+Retrieval-augmented Path inputs the query qq augmented with the retrieved context 𝐜ret\mathbf{c}_{\texttt{ret}}, providing the model with explicit historical evidence.
+Specifically, at each decoding step jj, we compute the next-token distributions given the prefix a<ja_{<j}:
+ppar\displaystyle p_{\texttt{par}}
+=P⁡(aj∣q,a<j;ℳu(t))\displaystyle=P(a_{j}\mid q,a_{<j};\mathcal{M}_{u}^{(t)})
+(6)
+pret\displaystyle p_{\texttt{ret}}
+=P⁡(aj∣q,𝐜ret,a<j;ℳu(t))\displaystyle=P(a_{j}\mid q,\mathbf{c}_{\texttt{ret}},a_{<j};\mathcal{M}_{u}^{(t)})
+(7)
+We then fuse these distributions via linear interpolation with a mixing coefficient λ\lambda:
+pfin=λ⋅pret+(1−λ)⋅pparp_{\texttt{fin}}=\lambda\cdot p_{\texttt{ret}}+(1-\lambda)\cdot p_{\texttt{par}}
+(8)
+Finally, the selected token a^j∼pfin\hat{a}_{j}\sim p_{\text{fin}} is appended to the prefix a<ja_{<j} for both paths, ensuring synchronization for the next decoding step.
+4 Experiments
+4.1 Setups
+Datasets and metrics.
+We evaluate the effectiveness of SPRInG on the LongLaMP (Kumar et al., 2024) benchmark, which is designed to assess long-form personalized text generation capabilities.
+Specifically, Abstract Generation and Review Writing are selected for their accessible temporal metadata, unlike Topic Writing (no timestamps) and Email Generation (restricted access).
+For the Abstract Generation task, we sort samples based on the publication year.
+However, in the case of the Review Writing task, the LongLaMP dataset does not contain timestamps; hence, we retrieve the reviewTime by matching samples to the original Amazon Product Review dataset (Ni et al., 2019) and sort them accordingly.
+Based on this temporal data, we filter users based on their data volume to ensure sufficient history for longitudinal analysis, resulting in a final set of 100 users.
+These users are further categorized into Small and Large groups to evaluate performance across different interaction scales.
+To simulate a realistic continual personalization scenario, we construct a temporal stream for each user by partitioning it into five sequential periods, denoted as Period 0–4.
+In this setup, Period 0 serves as the initial data for user profiling, while Periods 1–4 constitute the stream where new data is sequentially observed.
+Within each period, we implement a split where the earliest 90% of samples are utilized for the training, and the most recent 10% are reserved as the test set.
+To evaluate performance, we employ ROUGE-1 and ROUGE-L to measure content fidelity and style alignment with the ground truth.
+We present the results for each individual period as well as the average performance (Period Avg) to show the overall trends.
+Table 1: Main results. ROUGE-1 and ROUGE-L scores across periods (1–4) and their average for Abstract Generation and Review Writing tasks. All experiments are conducted using Gemma-3-4B-IT. Bold indicates the best performance, and underline indicates the second best.
+Abstract Generation
+Period 1
+Period 2
+Period 3
+Period 4
+Period Avg
+Methods
+ROUGE-1
+ROUGE-L
+ROUGE-1
+ROUGE-L
+ROUGE-1
+ROUGE-L
+ROUGE-1
+ROUGE-L
+ROUGE-1
+ROUGE-L
+Base
+0.302
+0.147
+0.302
+0.148
+0.300
+0.148
+0.298
+0.144
+0.301
+0.147
+RAG each
+0.304
+0.162
+0.302
+0.160
+0.301
+0.160
+0.299
+0.156
+0.301
+0.159
+RAG accum
+0.301
+0.161
+0.300
+0.160
+0.297
+0.158
+0.296
+0.155
+0.299
+0.158
+PAG each
+0.304
+0.144
+0.303
+0.145
+0.299
+0.144
+0.304
+0.144
+0.302
+0.144
+PAG accum
+0.306
+0.145
+0.303
+0.144
+0.303
+0.145
+0.307
+0.146
+0.305
+0.145
+OPPU each
+0.321
+0.155
+0.320
+0.155
+0.316
+0.153
+0.318
+0.150
+0.319
+0.153
+OPPU accum
+0.319
+0.154
+0.305
+0.151
+0.292
+0.144
+0.282
+0.136
+0.300
+0.146
+CAMA
+0.336
+0.162
+0.338
+0.166
+0.337
+0.166
+0.337
+0.162
+0.337
+0.164
+SAR
+0.333
+0.163
+0.334
+0.164
+0.324
+0.160
+0.314
+0.151
+0.326
+0.159
+O-LoRA
+0.334
+0.163
+0.303
+0.148
+0.300
+0.147
+0.299
+0.145
+0.309
+0.151
+EWC-LoRA
+0.337
+0.163
+0.335
+0.165
+0.328
+0.163
+0.323
+0.157
+0.331
+0.162
+SPRInG (Ours)
+0.346
+0.188
+0.353
+0.192
+0.351
+0.191
+0.351
+0.190
+0.350
+0.190
+Review Writing
+Period 1
+Period 2
+Period 3
+Period 4
+Period Avg
+Methods
+ROUGE-1
+ROUGE-L
+ROUGE-1
+ROUGE-L
+ROUGE-1
+ROUGE-L
+ROUGE-1
+ROUGE-L
+ROUGE-1
+ROUGE-L
+Base
+0.301
+0.125
+0.302
+0.125
+0.303
+0.125
+0.303
+0.125
+0.302
+0.125
+RAG each
+0.273
+0.122
+0.275
+0.124
+0.278
+0.123
+0.279
+0.125
+0.276
+0.123
+RAG accum
+0.274
+0.122
+0.272
+0.122
+0.277
+0.124
+0.278
+0.125
+0.275
+0.123
+PAG each
+0.289
+0.120
+0.290
+0.122
+0.285
+0.121
+0.281
+0.120
+0.286
+0.121
+PAG accum
+0.286
+0.120
+0.288
+0.120
+0.288
+0.121
+0.279
+0.120
+0.285
+0.120
+OPPU each
+0.304
+0.124
+0.307
+0.125
+0.310
+0.126
+0.307
+0.125
+0.307
+0.125
+OPPU accum
+0.310
+0.123
+0.312
+0.123
+0.308
+0.122
+0.306
+0.123
+0.309
+0.123
+CAMA
+0.305
+0.125
+0.313
+0.126
+0.317
+0.125
+0.314
+0.124
+0.312
+0.125
+SAR
+0.309
+0.124
+0.316
+0.124
+0.314
+0.124
+0.308
+0.123
+0.312
+0.124
+O-LoRA
+0.306
+0.125
+0.301
+0.125
+0.304
+0.125
+0.304
+0.126
+0.304
+0.125
+EWC-LoRA
+0.304
+0.124
+0.315
+0.125
+0.319
+0.124
+0.312
+0.124
+0.312
+0.124
+SPRInG (Ours)
+0.325
+0.141
+0.326
+0.142
+0.329
+0.143
+0.324
+0.142
+0.326
+0.142
+Baselines.
+We compare SPRInG against several baselines categorized as follows: (1) Base – generating responses using the vanilla LLM without any personalization or fine-tuning.
+For standard personalization baselines (2-4), we evaluate two setups: each (using only current period data) and accum (using cumulative data from period 0 to current period).
+These include:
+(2) RAG (Hwang et al., 2023) – augmenting input with retrieved history from the respective corpus;
+(3) PAG (Richardson et al., 2023) – utilizing summarized user profiles generated from the corresponding data scope;
+and (4) OPPU (Tan et al., 2024) – fine-tuning user-specific LoRA adapters (Hu et al., 2022) either locally on the current period or sequentially on the cumulative stream.
+We also include continual learning baselines:
+(5) CAMA (Kim et al., 2024) – a replay-based method that selectively buffers high-confidence samples exceeding the previous period’s average confidence and mixes them with historical data for training;
+(6) SAR (Seo et al., 2025) – a method that prioritizes replay samples from under-represented clusters based on effective use-frequency to mitigate overfitting to dominant patterns;
+(7) O-LoRA (Wang et al., 2023) – a method that projects new parameter updates onto a subspace orthogonal to previous adapters to reduce interference;
+and (8) EWC-LoRA (Xiang et al., 2023) – a method that applies elastic weight consolidation with Fisher Information to penalize drastic changes in parameters critical for prior periods.
+Implementation details.
+In our experiments, we utilize Gemma-3-4B-IT (Team et al., 2025) as the backbone LLM.
+For training, we employ the AdamW (Loshchilov and Hutter, 2019) with a weight decay of 0.01 and a learning rate of 1×10−41\times 10^{-4}, utilizing a linear decay scheduler with a warmup ratio of 0.1.
+We use a per-device batch size of 4, train for 2 epochs per period, and truncate the maximum sequence length to 768 tokens.
+For LoRA, we target the query and value projection layers with a rank r=8r=8, scaling factor α=8\alpha=8, dropout of 0.05, and no bias.
+During inference, we ensure deterministic outputs using greedy decoding with a repetition penalty of 1.2, setting the maximum generated tokens to 600.
+Regarding the hyperparameters for SPRInG, we set the balancing term α\alpha in the drift score function (Eq. 1) to 1.0 and construct the drift set by retaining the top 30% (p=30p=30) of samples.
+For the residual replay buffer, we maintain a maximum budget of Nmax=50N_{\max}=50 samples per user.
+During inference, we retrieve k=2k=2 documents using BM25 (Robertson et al., 2004) as Sim and apply a relevance gating threshold σ\sigma, defined as the task-specific third quartile (Q3) of the retrieval score distribution aggregated across all users and periods, to filter out less relevant contexts.
+Finally, we set the mixing coefficient λ\lambda for logit interpolation (Eq. 8) to 0.5 to balance the parametric and non-parametric distributions equally.
+4.2 Main results
+Table 1 presents the evaluation results of SPRInG against baselines on Abstract Generation and Review Writing.
+First, SPRInG consistently achieves the best performance across all evaluation periods for both tasks, with gains both in ROUGE-1 and ROUGE-L metrics.
+To be specific, in Abstract Generation, our method achieves relative improvements of 3.86% in ROUGE-1 and 15.85% in ROUGE-L over the strongest CL baseline.
+Similarly, in the Review Writing task, SPRInG maintains a lead over existing competitive approaches, achieving improvement of 4.49% in ROUGE-1 and 13.60% in ROUGE-L.
+These results indicate that our proposed approach effectively balances plasticity and stability, delivering substantial performance gains over the strongest existing methods.
+Furthermore, we observe that standard personalization approaches (e.g., RAG, PAG) can be ineffective or even detrimental in certain contexts.
+Notably, in the Review Writing task, both the Each and Accum variants of RAG and PAG fail to surpass the non-personalized Base model.
+For instance, RAG each results in an 8.60% drop in ROUGE-1 compared to the Base model, indicating a vulnerability to noisy or irrelevant context.
+However, SPRInG overcomes this limitation, demonstrating an 18.12% relative improvement over RAG each.
+This suggests that SPRInG selectively leverages beneficial context while filtering irrelevant history.
+Finally, CL baselines show greater stability than the naive accumulation strategy.
+We observe a general trend where replay-based approaches (e.g., CAMA, SAR) tend to yield robust performance, slightly outperforming or matching regularization-based methods like O-LoRA.
+However, even these strong baselines fall short of SPRInG.
+This limitation likely stems from treating historical samples uniformly or relying on fixed heuristics, which are not designed to prioritize drift-relevant update.
+In contrast, SPRInG achieves superior results by explicitly targeting and adapting to meaningful preference drifts, allowing for more efficient and effective personalization.
+Table 2: Effectiveness of selective adaptation. Impact of selective data usage within period-wise updates. Comparing whole-data training with partial adaptation using different selection criteria.
+Methods
+Abstract Generation
+Review Writing
+ROUGE-1
+ROUGE-L
+ROUGE-1
+ROUGE-L
+All-100%
+0.300
+0.146
+0.309
+0.123
+Random-30%
+0.312
+0.152
+0.312
+0.125
+Bottom-30%
+0.284
+0.142
+0.309
+0.124
+Top-30% (Ours)
+0.324
+0.155
+0.313
+0.125
+4.3 More Analyses
+Ablation study on training dynamics.
+To validate the efficacy of selective adaptation (Sec. 3.1), we analyze the impact of training data volume and selection criteria in Table 2.
+First, regarding data usage, our Top-30% strategy consistently outperforms the All-100% baseline across tasks (e.g., +8.0% relative ROUGE-1 gain in Abstract Generation).
+This indicates that indiscriminately training on the entire interaction history introduces noise or redundant information, whereas focusing on a subset of drift samples enhances adaptation efficiency.
+Second, regarding the selection criteria, we observe a clear performance hierarchy: Top-30% > Random-30% > Bottom-30%.
+Notably, the Bottom-k strategy results in the lowest performance, falling even below the Random baseline.
+This decline suggests that samples with low drift scores correspond to redundant interactions already internalized by the adapter.
+Consequently, forcing updates on them provides minimal utility or may even act as noise that interferes with the learning process.
+Collectively, these results confirm that our scoring function effectively selects high-value interactions essential for training the model with evolving user preferences.
+Table 3: Effectiveness of interpolation. Performance comparison across different weighting factors (λ\lambda). The coefficient λ\lambda determines the relative reliance on retrieved context versus the model’s internal parametric knowledge.
+Methods
+Abstract Generation
+Review Writing
+ROUGE-1
+ROUGE-L
+ROUGE-1
+ROUGE-L
+λ=0.0\lambda=0.0
+0.324
+0.155
+0.313
+0.125
+λ=0.1\lambda=0.1
+0.334
+0.187
+0.326
+0.142
+λ=0.5\lambda=0.5 (Ours)
+0.350
+0.190
+0.326
+0.142
+λ=1.0\lambda=1.0
+0.294
+0.154
+0.276
+0.112
+Figure 3:
+Interaction scalability of SPRInG. Performance comparison on different interaction history lengths.
+Ablation study on inference dynamics.
+Table 3 compares different interpolation coefficients λ\lambda from Eq. 8, which balance the knowledge from parametric adapter and the non-parametric replay buffer at inference time.
+Overall, relying on a single-source is suboptimal, suggesting that two memory components provide complementary signals; the parametric path (λ=0.0\lambda=0.0) robustly captures persistent user traits, but can miss sparse, instance-specific details that remain in the residual buffer; conversely, the non-parametric path (λ=1.0\lambda=1.0) is vulnerable to retrieval noise and partial mismatches, which can directly interfere with generation, especially in the more diverse Review Writing stream.
+As a result, moderate interpolation yields the best performance across tasks: in Abstract Generation, λ=0.5\lambda=0.5 improves ROUGE-L by 22.58% over the parametric-only baseline and 23.38% over the non-parametric-only setting.
+In Review Writing, it achieves gains of 13.60% and 26.79%, respectively.
+Notably, small λ\lambda provides gains (e.g., λ=0.1\lambda=0.1), whereas over-reliance on retrieval degrades performance (λ=1.0\lambda=1.0), supporting our choice of λ=0.5\lambda=0.5 as a balanced default.
+Robustness across the number of interactions.
+To investigate the adaptability of SPRInG to varying scales of user data, we categorized users into two groups: Small Interactions and Large Interactions.
+Detailed statistics regarding interaction distribution for each group are provided in Table 5 (see Appendix B.2).
+The Small Interactions group represents a scenario of relative data sparsity, whereas the Large Interactions group includes users with extensive histories, presenting challenges related to noise accumulation and retrieval efficiency.
+Figure 3 illustrates the performance comparison across these groups.
+In Abstract Generation, SPRInG demonstrates robust scalability, consistently outperforming baselines with large gains in both settings.
+In Review Writing, baselines such as Base and OPPU exhibit performance degradation within the Large Interactions group, likely due to noise accumulation from extended histories.
+In contrast, SPRInG effectively leverages the extended contexts to improve performance, validating the efficacy of our selective mechanism in filtering noise and extracting relevant signals.
+5 Related Works
+LLM personalization.
+LLM personalization aligns model behaviors with individual preferences (Zhang et al., 2024), broadly categorized into non-parametric and parametric approaches.
+Non-parametric methods condition generation on user context via retrieval of historical data (Hwang et al., 2023) or summarized profiles (Richardson et al., 2023).
+While interpretable and easy to deploy, their effectiveness relies on retrieval quality and context window constraints.
+Conversely, parametric methods directly encode preferences by fine-tuning user-specific parameters, often employing efficient adapters like LoRA (Tan et al., 2024) or hierarchical structures (Zhang et al., 2025).
+However, these approaches primarily focus on static optimization, overlooking the temporal evolution of user traits required for continual personalization.
+Continual learning.
+Continual learning (CL) addresses the challenge of sequentially updating models while mitigating catastrophic forgetting (Ke and Liu, 2022; Shi et al., 2024).
+Research typically focuses on two complementary strategies: regularization and replay.
+Regularization methods constrain the optimization trajectory to preserve prior knowledge, such as applying Fisher-weighted penalties (Kirkpatrick et al., 2017) or enforcing orthogonality in subspace updates (Wang et al., 2023).
+Conversely, replay-based methods maintain a buffer to interleave past examples with current streams.
+To maximize efficiency, recent work prioritizes selective data retention over uniform sampling (Rolnick et al., 2019), utilizing metrics like interference (Aljundi et al., 2019), confidence scores (Kim et al., 2024), activation magnitudes (Du et al., 2024), or spaced repetition heuristics (M’hamdi and May, 2024) to identify the most informative samples.
+6 Conclusion
+In this paper, we propose SPRInG, a semi-parametric framework that accounts for the challenges arising from evolving user preferences in continual LLM personalization.
+Our method addresses the limitations of existing CL and retrieval-based approaches by (1) implementing a drift-driven selective adaptation that isolates high-novelty interactions to update user-specific adapters, and (2) employing a gated retrieval-interpolated generation that dynamically balances parametric knowledge with historical evidence at the logit level.
+Through extensive experiments, we show that SPRInG effectively captures genuine preference drifts while robustly filtering out transient noise.
+Collectively, our findings underscore the importance of distinguishing genuine preference drift from transient contexts, and establish a scalable path for deploying responsive, long-term personalized LLMs in real-world scenarios.
+Limitation and Future Work
+While the proposed approach yields substantial gains, it comes with practical trade-offs that offer directions for future research.
+First, the dual-path logit interpolation strategy introduces inference latency and cost overhead, as it requires two forward passes per decoding step.
+However, this is partially offset by our selective training strategy, which updates parameters on only 30% of the data, reducing the overall training cost compared to exhaustive retraining.
+To further optimize inference efficiency, future work could explore adaptive interpolation strategies, such as terminating the dual-path process mid-generation or reverting to a single parametric path once the divergence between the two distributions falls below a certain threshold.
+Next, the reliability of the drift score may be challenged by transient noise or abrupt topic shifts (false drift) that do not reflect persistent preference evolution.
+In our framework, we reduce the impact of such noise by restricting updates to a small, high-novelty subset and preserving hard-but-informative cases in a bounded residual buffer, while inference-time relevance gating additionally prevents noisy retrieved histories from interfering with generation.
+Future research could enhance this by adopting more sophisticated retrieval and gating frameworks, such as dense vector-based retrieval or cross-encoder re-ranking, to more precisely isolate semantically relevant evidence from diverse interaction streams.
+Lastly, scaling user-specific adapters poses an infrastructure challenge as the user base grows.
+Nevertheless, the parameter-efficient nature of LoRA and modern multi-adapter serving techniques make this approach increasingly viable for large-scale deployment.
+As a potential extension, exploring hierarchical or shared adapter architectures that can group users with similar preference trajectories could alleviate storage burdens while facilitating cross-user knowledge transfer (Tan et al., 2024; Zhang et al., 2025).
+Broader Impact and Ethical Implications
+The deployment of SPRInG for continual personalization can improve long-term user experience and reduce wasteful computation by avoiding indiscriminate retraining or unfiltered retrieval, thereby enabling more resource-efficient adaptation.
+However, strong personalization may reinforce biases and create echo chambers by repeatedly optimizing for a user’s current viewpoint; practical deployments should include mechanisms that promote diversity and provide transparent user controls (e.g., reset or edit preferences).
+In addition, responsive adaptation raises safety risks, including preference poisoning attacks and potential drift toward harmful objectives.
+Future systems should therefore integrate safety-aware filtering and anomaly detection to prevent malicious or unsafe signals from being incorporated into personalization updates.
+References
+Aljundi et al. (2019)
+Rahaf Aljundi, Eugene Belilovsky, Tinne Tuytelaars, Laurent Charlin, Massimo Caccia, Min Lin, and Lucas Page-Caccia. 2019.
+Online continual learning with maximal interfered retrieval.
+In Advances in Neural Information Processing Systems (NeurIPS).
+Bu et al. (2025)
+Hyungjune Bu, Chanjoo Jung, Minjae Kang, and Jaehyung Kim. 2025.
+Personalized llm decoding via contrasting personal preference.
+In Conference on Empirical Methods in Natural Language Processing (EMNLP).
+Comanici et al. (2025)
+Gheorghe Comanici, Eric Bieber, Mike Schaekermann, Ice Pasupat, Noveen Sachdeva, Inderjit Dhillon, Marcel Blistein, Ori Ram, Dan Zhang, Evan Rosen, and 1 others. 2025.
+Gemini 2.5: Pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities.
+arXiv preprint arXiv:2507.06261.
+Du et al. (2024)
+Wenyu Du, Shuang Cheng, Tongxu Luo, Zihan Qiu, Zeyu Huang, Ka Chun Cheung, Reynold Cheng, and Jie Fu. 2024.
+Unlocking continual learning abilities in language models.
+In Findings of the Association for Computational Linguistics.
+Hu et al. (2022)
+Edward J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, Weizhu Chen, and 1 others. 2022.
+Lora: Low-rank adaptation of large language models.
+In International Conference on Learning Representations (ICLR).
+Hwang et al. (2023)
+EunJeong Hwang, Bodhisattwa Prasad Majumder, and Niket Tandon. 2023.
+Aligning language models to user opinions.
+In Conference on Empirical Methods in Natural Language Processing (EMNLP).
+Jaech et al. (2024)
+Aaron Jaech, Adam Kalai, Adam Lerer, Adam Richardson, Ahmed El-Kishky, Aiden Low, Alec Helyar, Aleksander Madry, Alex Beutel, Alex Carney, and 1 others. 2024.
+Openai o1 system card.
+arXiv preprint arXiv:2412.16720.
+Ke and Liu (2022)
+Zixuan Ke and Bing Liu. 2022.
+Continual learning of natural language processing tasks: A survey.
+arXiv preprint arXiv:2211.12701.
+Kim et al. (2024)
+Byeonghwi Kim, Minhyuk Seo, and Jonghyun Choi. 2024.
+Online continual learning for interactive instruction following agents.
+In International Conference on Learning Representations (ICLR).
+Kirkpatrick et al. (2017)
+James Kirkpatrick, Razvan Pascanu, Neil Rabinowitz, Joel Veness, Guillaume Desjardins, Andrei A Rusu, Kieran Milan, John Quan, Tiago Ramalho, Agnieszka Grabska-Barwinska, and 1 others. 2017.
+Overcoming catastrophic forgetting in neural networks.
+In Proceedings of the national academy of sciences.
+Kumar et al. (2024)
+Ishita Kumar, Snigdha Viswanathan, Sushrita Yerra, Alireza Salemi, Ryan A Rossi, Franck Dernoncourt, Hanieh Deilamsalehy, Xiang Chen, Ruiyi Zhang, Shubham Agarwal, and 1 others. 2024.
+Longlamp: A benchmark for personalized long-form text generation.
+arXiv preprint arXiv:2407.11016.
+Loshchilov and Hutter (2019)
+Ilya Loshchilov and Frank Hutter. 2019.
+Decoupled weight decay regularization.
+In International Conference on Learning Representations (ICLR).
+M’hamdi and May (2024)
+Meryem M’hamdi and Jonathan May. 2024.
+Leitner-guided memory replay for cross-lingual continual learning.
+In Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (NAACL-HLT).
+Ni et al. (2019)
+Jianmo Ni, Jiacheng Li, and Julian McAuley. 2019.
+Justifying recommendations using distantly-labeled reviews and fine-grained aspects.
+In Conference on Empirical Methods in Natural Language Processing (EMNLP).
+Reimers and Gurevych (2019)
+Nils Reimers and Iryna Gurevych. 2019.
+Sentence-bert: Sentence embeddings using siamese bert-networks.
+In Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Language Processing (EMNLP-IJCNLP).
+Richardson et al. (2023)
+Chris Richardson, Yao Zhang, Kellen Gillespie, Sudipta Kar, Arshdeep Singh, Zeynab Raeesy, Omar Zia Khan, and Abhinav Sethy. 2023.
+Integrating summarization and retrieval for enhanced personalization via large language models.
+arXiv preprint arXiv:2310.20081.
+Robertson et al. (2004)
+Stephen Robertson, Hugo Zaragoza, and Michael Taylor. 2004.
+Simple bm25 extension to multiple weighted fields.
+In Proceedings of the thirteenth ACM international conference on Information and knowledge management.
+Rolnick et al. (2019)
+David Rolnick, Arun Ahuja, Jonathan Schwarz, Timothy Lillicrap, and Gregory Wayne. 2019.
+Experience replay for continual learning.
+In Advances in Neural Information Processing Systems (NeurIPS).
+Santurkar et al. (2023)
+Shibani Santurkar, Esin Durmus, Faisal Ladhak, Cinoo Lee, Percy Liang, and Tatsunori Hashimoto. 2023.
+Whose opinions do language models reflect?
+In Proceedings of the International Conference on Machine Learning (ICML).
+Seo et al. (2025)
+Minhyuk Seo, Hyunseo Koh, and Jonghyun Choi. 2025.
+Budgeted online continual learning by adaptive layer freezing and frequency-based sampling.
+In International Conference on Learning Representations (ICLR).
+Shi et al. (2024)
+Haizhou Shi, Zihao Xu, Hengyi Wang, Weiyi Qin, Wenyuan Wang, Yibin Wang, Zifeng Wang, Sayna Ebrahimi, and Hao Wang. 2024.
+Continual learning of large language models: A comprehensive survey.
+ACM Computing Surveys.
+Tan et al. (2024)
+Zhaoxuan Tan, Qingkai Zeng, Yijun Tian, Zheyuan Liu, Bing Yin, and Meng Jiang. 2024.
+Democratizing large language models via personalized parameter-efficient fine-tuning.
+In Conference on Empirical Methods in Natural Language Processing (EMNLP).
+Team et al. (2025)
+Gemma Team, Aishwarya Kamath, Johan Ferret, Shreya Pathak, Nino Vieillard, Ramona Merhej, Sarah Perrin, Tatiana Matejovicova, Alexandre Ramé, Morgane Rivière, and 1 others. 2025.
+Gemma 3 technical report.
+arXiv preprint arXiv:2503.19786.
+Wang et al. (2023)
+Xiao Wang, Tianze Chen, Qiming Ge, Han Xia, Rong Bao, Rui Zheng, Qi Zhang, Tao Gui, and Xuan-Jing Huang. 2023.
+Orthogonal subspace learning for language model continual learning.
+In Findings of the Association for Computational Linguistics: EMNLP 2023.
+Xiang et al. (2023)
+Jiannan Xiang, Tianhua Tao, Yi Gu, Tianmin Shu, Zirui Wang, Zichao Yang, and Zhiting Hu. 2023.
+Language models meet world models: Embodied experiences enhance language models.
+In Advances in Neural Information Processing Systems (NeurIPS).
+Yang et al. (2025)
+An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, and 1 others. 2025.
+Qwen3 technical report.
+arXiv preprint arXiv:2505.09388.
+Zhang et al. (2025)
+Linhai Zhang, Jialong Wu, Deyu Zhou, and Yulan He. 2025.
+Proper: A progressive learning framework for personalized large language models with group-level adaptation.
+In Annual Meeting of the Association for Computational Linguistics (ACL).
+Zhang et al. (2024)
+Zhehao Zhang, Ryan A Rossi, Branislav Kveton, Yijia Shao, Diyi Yang, Hamed Zamani, Franck Dernoncourt, Joe Barrow, Tong Yu, Sungchul Kim, and 1 others. 2024.
+Personalization of large language models: A survey.
+arXiv preprint arXiv:2411.00027.
+Appendix A Implementation Details
+A.1 Training and inference algorithms
+Algorithm 1  SPRInG training algorithm
+Input: Base LLM ℳθ\mathcal{M}_{\theta} (frozen), initial user adapter ϕu(0)\phi_{u}^{(0)}, interaction stream {𝒟u(t)}t≥1\{\mathcal{D}_{u}^{(t)}\}_{t\geq 1},
+scoring function 𝒮⁡(⋅)\mathcal{S}(\cdot) (Eq. 1), top percentile pp, buffer budget NmaxN_{\max}
+ℬu(0)←∅\mathcal{B}_{u}^{(0)}\leftarrow\emptyset
+for t=1,2,⋯t=1,2,\cdots do
+/* Drift sample selection */
+for (q,a)∈𝒟u(t)(q,a)\in\mathcal{D}_{u}^{(t)} do
+𝒮t​(q,a)←𝒮⁡(q,a,ℳθ,ϕu(t−1))\mathcal{S}_{t}(q,a)\leftarrow\mathcal{S}(q,a;\mathcal{M}_{\theta},\phi_{u}^{(t-1)})
+end for
+𝒟drift(t)←{(q,a)∈𝒟u(t)|𝒮t​(q,a)≥τp}\mathcal{D}_{\texttt{drift}}^{(t)}\leftarrow\{(q,a)\in\mathcal{D}_{u}^{(t)}~|~\mathcal{S}_{t}(q,a)\geq\tau_{p}\}
+/* Parametric adapter update */
+ϕu(t)←ϕu(t−1)⊕𝒟drift(t)\phi_{u}^{(t)}\leftarrow\phi_{u}^{(t-1)}\oplus\mathcal{D}_{\texttt{drift}}^{(t)}
+/* Replay buffer construction */
+𝒞u(t)←𝒟drift(t)∪ℬu(t−1)\mathcal{C}_{u}^{(t)}\leftarrow\mathcal{D}_{\texttt{drift}}^{(t)}\cup\mathcal{B}_{u}^{(t-1)}
+for (q,a)∈𝒞u(t)(q,a)\in\mathcal{C}_{u}^{(t)} do
+𝒮t′​(q,a)←𝒮⁡(q,a,ℳθ,ϕu(t))\mathcal{S}^{\prime}_{t}(q,a)\leftarrow\mathcal{S}(q,a;\mathcal{M}_{\theta},\phi_{u}^{(t)})
+end for
+ℬu(t)←Top−Nmax(q,a)∈𝒞u(t)⁡(𝒮t′​(q,a))\mathcal{B}_{u}^{(t)}\leftarrow\operatorname*{Top-N_{\max}}_{(q,a)\in\mathcal{C}_{u}^{(t)}}\left(\mathcal{S}^{\prime}_{t}(q,a)\right)
+end for
+return period-wise adapters {ϕu(t)}\{\phi_{u}^{(t)}\} and replay buffers {ℬu(t)}\{\mathcal{B}_{u}^{(t)}\}
+Algorithm 1 presents the training pipeline for SPRInG.
+It identifies drift samples based on the scoring function (Eq. 1), updates both the parametric adapter, and the replay buffer within the budget NmaxN_{\max}.
+Algorithm 2  SPRInG inference algorithm
+Input: User-adapted model ℳu(t)\mathcal{M}_{u}^{(t)}, replay buffer ℬu(t)\mathcal{B}_{u}^{(t)},
+test query qq, retrieval top-kk, relevance threshold σ\sigma, interpolation weight λ\lambda
+/* Relevance gated retrieval */
+ℛq←Top-​k​{h∈ℬu(t)∣Sim​(q,h)}\mathcal{R}_{q}\leftarrow\text{Top-}k\{h\in\mathcal{B}_{u}^{(t)}\mid\textsc{Sim}(q,h)\}
+𝐜ret←Concat​{h∈ℛq∣Sim​(q,h)>σ}\mathbf{c}_{\texttt{ret}}\leftarrow\textsc{Concat}\{h\in\mathcal{R}_{q}\mid\textsc{Sim}(q,h)>\sigma\}
+/* Logit interpolation */
+a<1←∅a_{<1}\leftarrow\emptyset
+for j=1,2,⋯j=1,2,\cdots until EOS do
+Compute pvanillap_{\texttt{vanilla}} and pRAGp_{\texttt{RAG}} (Eqs. 6, 7)
+Compute PfinalP_{\texttt{final}} by interpolation (Eq. 8)
+a^j∼Pfinal​(⋅)\hat{a}_{j}\sim P_{\texttt{final}}(\cdot)
+a<j+1←a<j⊕a^ja_{<j+1}\leftarrow a_{<j}\oplus\hat{a}_{j}
+end for
+return generated answer aa
+Algorithm 2 details the inference process.
+It incorporates the relevance-gated retrieval and the logit interpolation mechanism (Eq. 8) to generate the final response.
+A.2 Replay buffer retention policies
+To effectively manage the limited memory of the replay buffer, we investigate four distinct retention policies.
+For strategies requiring semantic awareness, we generate embeddings using Sentence-BERT (Reimers and Gurevych, 2019) with the all-mpnet-base-v2, which provides a robust balance between encoding speed and semantic accuracy.
+We then group samples into KK clusters using the KK-Means algorithm, where the optimal KK is determined dynamically by maximizing the Silhouette Score within the range [2,10][2,10].
+∘\circ
+Global Highest: Prioritizes absolute difficulty.
+We sort all candidates in 𝒞u(t)\mathcal{C}_{u}^{(t)} by their scores 𝒮′\mathcal{S^{\prime}} and retain the top-NmaxN_{\max} samples.
+∘\circ
+Cluster-wise: Prioritizes "hard topics."
+We calculate the average 𝒮′\mathcal{S^{\prime}} score for each cluster and fill the buffer by selecting entire clusters with the highest averages.
+If the last selected cluster exceeds the remaining capacity, we select samples within it by highest score.
+∘\circ
+Cluster Round: Balances diversity with difficulty.
+We iteratively select the single hardest sample (highest 𝒮′\mathcal{S^{\prime}}) from each cluster in a round-robin fashion until the capacity NmaxN_{\max} is reached.
+This ensures a uniform representation of all semantic groups (hard and soft topics alike).
+∘\circ
+Random: A baseline strategy that uniformly samples NmaxN_{\max} interactions from the candidate pool without regard to difficulty or semantics.
+Table 4: Ablation on replay buffer retention policies. Comparison of different strategies for selecting interactions to be retained in the memory buffer under a fixed budget NmaxN_{\max}.
+Methods
+Abstract Generation
+Review Writing
+ROUGE-1
+ROUGE-L
+ROUGE-1
+ROUGE-L
+Global highest (Ours)
+0.350
+0.189
+0.332
+0.145
+Cluster round
+0.346
+0.188
+0.331
+0.145
+Cluster-wise
+0.345
+0.188
+0.332
+0.145
+Random
+0.345
+0.187
+0.331
+0.145
+To evaluate their impact on the model’s adaptation performance, we conduct a comparative analysis of these policies on a representative subset of our data.
+Specifically, we sampled 10 users from each group, representing 20% of the users with small and large interaction histories, respectively.
+As shown in Table 4, our proposed Global Highest policy achieves the best or competitive performance across both tasks.
+This indicates that prioritizing samples with high drift scores is a promising direction for user adaptation.
+However, comparable performance of cluster-based strategies implies that the optimal balance between difficulty-driven selection and semantic diversity may vary depending on the specific user profile or task complexity, leaving room for further investigation into hybrid retention mechanisms.
+Table 5: Detailed statistics regarding the number of interactions.
+Comparison between Small and Large interaction groups across tasks.
+Task
+Group
+N
+Mean # Interactions
+Median
+Range (Min–Max)
+Abstract Generation
+Small Interactions
+50
+528.5±59.2528.5\pm 59.2
+515.5
+447−640447-640
+Large Interactions
+50
+1209.9±460.71209.9\pm 460.7
+1055.5
+828−3330828-3330
+Review Writing
+Small Interactions
+50
+315.7±31.0315.7\pm 31.0
+309.0
+268−372268-372
+Large Interactions
+50
+558.3±173.8558.3\pm 173.8
+515.5
+379−1267379-1267
+Appendix B Datasets
+We conduct our xperiments on LongLaMP (Kumar et al., 2024) benchmark.
+In this section, we provide a detailed description of the datasets used in our experiments, the preprocessing transformations applied to align them with our experimental setup, and their corresponding descriptive statistics.
+B.1 Dataset specification
+Abstract Generation.
+This task assesses the ability of a model to generate scientific abstracts given paper titles and keywords.
+The user profile consists of the researcher’s previous publications, which the model must leverage to personalize the academic tone, logical structure, and domain-specific vocabulary unique to each author.
+We follow the User Setting in LongLaMP, where each sample is structured such that both the profile and the target output belong to the same author.
+To adapt this to our setup, we first sort each researcher’s publication history in reverse chronological order based on the publication year.
+The history is then partitioned into five sequential periods.
+Within each period, we designate the most recent 10% of publications as test queries (input: title, output: abstract) and the remaining 90% as the user’s historical profile.
+To ensure a sufficiently long-term interaction history for drift analysis, we filter for users whose total profile size exceeds 500 publications.
+Review Writing.
+This task involves drafting a detailed product review from a product’s name and description, alongside a summary of the user’s review.
+The profile includes a user’s past reviews and ratings, requiring the model to follow the user’s subjective perspective, rating tendencies, and unique writing styles when expressing opinions.
+Consistent with the User Setting, all historical interactions are mapped to a specific reviewer ID.
+We follow a similar temporal splitting strategy, dividing the history into five chronological periods.
+For this task, we choose users with a total profile size exceeding 300 reviews to focus on those with rich historical data.
+B.2 Dataset statistics
+User categorization criteria.
+We categorize users based on their total number of historical interactions.
+To ensure a distinct contrast between the two groups, we utilize the 50th and 80th percentiles of the profile size distribution within each task as thresholds:
+∘\circ
+Small Interactions: Users within the bottom 50% of the interaction frequency, representing cold-start or low-engagement cases.
+∘\circ
+Large Interactions: Users within the top 20% of the interaction frequency, representing users with extensive behavioral data.
+We randomly sampled 50 users from each category for our main experiments to maintain computational efficiency.
+Descriptive statistics.
+Table 5 presents the profile size statistics for each task and group.
+In Abstract Generation, where only users with more than 500 interactions are included, the Large group exhibits a clearly higher mean profile size, testing the model’s ability to handle long-term shift.
+In Review Writing, the Small group reflects data sparsity with a minimum of 300 reviews, while we need to deal with a challenge for noise management for the Large group.
+Appendix C Baselines
+In this section, we provide the implementation details and configurations for the baseline models.
+To distinguish between the methods, we denote the base model with □\square, personalization baselines with ⊞\boxplus, and continual learning strategies with ■\blacksquare.
+Notably, as the original CL baselines were primarily designed for task-incremental or class-incremental settings, we have adapted their core mechanisms to suit our user-specific, period-wise adaptation setup.
+□\square
+Base is the result of original pre-trained LLM without any additional context or fine-tuning, serving as a zero-shot performance baseline.
+⊞\boxplus
+RAG (Retrieval-Augmented Generation) (Hwang et al., 2023) is a strategy that retrieves the top-kk relevant records from the user’s history as in-context examples. In our setup, we utilize the BM25Okapi implementation from the rank_bm25 library to retrieve the top-4 interactions. We consider two variations: RAG each, which restricts the retrieval pool to the history within the same period tt as the test query, and RAG accum, which performs retrieval from the cumulative history from periods 00 to tt.
+⊞\boxplus
+PAG (Profile-Augmented Generation) (Richardson et al., 2023) is a method that utilizes a generated user profile as context, following the profiling strategy of prior work (Tan et al., 2024). For each user, we construct a profile by randomly sampling k=10k=10 historical interactions and summarizing them using Gemma-3-4B-IT. Similar to RAG, we evaluate two settings: PAG each, where the 10 samples are drawn exclusively from the history within the current period tt, and PAG accum, where the 10 samples are selected uniformly from the cumulative history across periods 00 to tt.
+⊞\boxplus
+OPPU (One PEFT per User) (Tan et al., 2024) originally trains individual user LoRA adapters starting from a Task Adapted Model (TAM). In our implementation, we adapt this method by directly training individual LoRA adapters for each user from the base model, bypassing the intermediate TAM stage to focus on direct user-specific optimization. We evaluate two training settings: OPPU each, which fine-tunes the adapter only on the history of the current period tt, and OPPU accum, which utilizes the cumulative history from periods 00 to tt for training.
+■\blacksquare
+CAMA (Confidence-Aware Memory Augmentation) (Kim et al., 2024) is a replay-based CL strategy that filters new samples according to the model’s self-confidence. At the start of each new period, the model calculates its average confidence level using samples from the previous period. For new incoming data, only those samples that exceed this average confidence threshold are selected for fine-tuning. These high-confidence samples are integrated with a subset of past interactions from the replay buffer, ensuring that the adapter focuses on reliable information while maintaining previously established user patterns.
+■\blacksquare
+SAR (Similarity-Aware Replay) (Seo et al., 2025) optimizes the replay process by maintaining a balanced representation of the user’s behavioral space. This method clusters user interactions in the hidden representation space and tracks a use-frequency score for each sample. To prevent the model from overfitting to repetitive patterns, SAR assigns higher sampling probabilities to interactions that are from under-represented clusters or have been less frequently used in training. By accounting for similarity and usage history, it ensures that the replay buffer provides a diverse and comprehensive coverage of the user’s history.
+■\blacksquare
+O-LoRA (Orthogonal LoRA) (Wang et al., 2023) mitigates catastrophic forgetting by constraining learning updates for different periods to mutually orthogonal subspaces. When training on a new period, the model projects the weight updates onto the orthogonal complement of the space utilized in previous stages. This restriction prevents new knowledge from distorting the previously learned weights, allowing the model to accumulate information across multiple periods without degrading performance on earlier tasks.
+■\blacksquare
+EWC-LoRA (Elastic Weight Consolidation for LoRA) (Xiang et al., 2023) is a method that preserves past knowledge by penalizing changes to parameters that were critical for previous learning stages. After each period, the model estimates the importance of each LoRA parameter based on its contribution to the past data distribution. During the training of a new period, a regularization penalty term is added to the loss function, which restricts the movement of these important parameters. This elastic constraint forces the model to learn new information primarily through less critical parameters, thereby consolidating user-specific knowledge acquired in earlier stages.
+Appendix D Extended Ablation Studies
+D.1 Training dynamics: drift score analysis
+Structural analysis of drift score components.
+We analyze the relationship between the Novelty Term (N) and the Quality Term (Q) to understand the mechanics of our Drift Score (D) (Eq 1).
+D=−log⁡padappbase⏟N+α​log⁡pbase⏟QD=\underbrace{-\log\frac{p_{\mathrm{adap}}}{p_{\mathrm{base}}}}_{N}\;+\;\underbrace{\alpha\log p_{\mathrm{base}}}_{Q}
+(9)
+Figure 4: Correlation between quality and novelty terms.
+The scatter plots show the relationship between the Quality Term and the Novelty Term.
+Spearman’s ρ\rho is 0.66470.6647 for Abstract Generation and 0.32040.3204 for Review Writing.
+Table 6: Robustness to the balancing parameter α\alpha.  Performance comparison using α\alpha for the drift score.
+Methods
+Abstract Generation
+Review Writing
+ROUGE-1
+ROUGE-L
+ROUGE-1
+ROUGE-L
+α=0\alpha=0
+0.324
+0.154
+0.314
+0.125
+α=0.5\alpha=0.5
+0.323
+0.155
+0.313
+0.125
+α=1.0\alpha=1.0 (Ours)
+0.324
+0.155
+0.313
+0.125
+α=∞\alpha=\infty
+0.323
+0.155
+0.313
+0.125
+Table 7: Examples of low-quality interactions within the benchmark datasets. These samples are successfully identified and filtered by our drift score safeguard due to pre-existing noise in the source data.
+Task
+Dataset Content
+Abstract Gen.
+Title: “Power-Performance Tradeoff in a Federated Cloud.”
+Abstract: “This installment of Computer’s series highlighting the work published in IEEE Computer Society journals comes from IEEE Transactions on Computers.”
+(The text incorrectly contains journal metadata instead of a research abstract.)
+Abstract Gen.
+Title: “Integrative analysis of methylation and transcriptional profiles to predict aging and construct aging specific cross-tissue networks.”
+Abstract: “Our results find important coordinated aging patterns between different tissues. Both co-profiling and cross-pathway analyses identify more thorough functions of aging, and could help to find aging markers, pathways and relative aging disease researches.”
+(The text provides only a brief summary of results, lacking the structural depth required for a complete research abstract.)
+Review Writing
+Product: “It Started in Naples VHS”,
+Description: “It Started in Naples VHS Tape”,
+Overall rating: “4.0”,
+Summary: “adorable romantic romp with Sophia Loren”
+Review: “Yet another charming romantic comedy with Sophia Loren, this time paired with Clark Gable. Gable plays a stuffy Bostonian lawyer, in Naples to meet the young son of his dead brother. He quickly forms an attachment to little Nando (played winningly by Marietto) however his Aunt Lucia (Loren) refuses to let him take the child back to the States. As you might expect however, the charm of Capri soon works it’s magic and the pair find love in the final reel. Sunny funny romance. This is probably one of Sophia’s best pictures of the time. As Lucia, a stunning uninhibited cabaret star, she gets to show off her seldom-utilised musical skills performing several numbers including "(You Wanna Be) Americano". Though Loren and Gable are somewhat lacking in the chemistry department, the movie as a whole is lovely. The DVD edition of the film offers a pristine 16:9 transfer.”
+(The prompt requests a review for a VHS tape, but the text discusses a DVD transfer.)
+Review Writing
+Product: “CENTURY SPRING 4002 Swing Extension Spring (2 Pack)”,
+Description: “2 pack, porch swing extension spring, used primarily for porch swings & will support approximately 300 lbs each, use as tension for fence, dog chain, adjust, tire swings, porch chairs & other uses where safety is a primary concern.”,
+Overall rating: “5.0”,
+Summary: “springing up life on the front porch”
+Review: “With these springs you can watch the day go by once again! Sunrise, sunset, neighborhood kids going by on their bikes, dogs barking in your neighbors yard, mischievous situations brewing in the trees amongst the raccoons and squirrels, etc. These springs will actually work on your porch swing really well, and I’m surprised since my knowledge with the subject is limited greatly to just, well, a spring is a spring, lol. Not really sure if there’s other types of springs that work more effectively or what. Either way the porch swing works so I don’t have to dirty my bottom using the porch steps and watch my back for ants that may be crawling up my shirt. That makes me very nervous.”
+(The text includes irrelevant personal anecdotes that do not align with the functional utility of the product.)
+This analysis is conducted on a representative subset of our data for both tasks.
+Specifically, we sampled 10 users from each group, which are 20% of the users with small and large interactions, respectively.
+Figure 4 shows that a positive correlation exists between QQ and NN across all period (r=0.66r=0.66 for Abstract Generation and r=0.32r=0.32 for Review Writing).
+This diagonal distribution indicates that high-quality samples which are linguistically well-formed tend to naturally align with high-novelty signals.
+The relatively vacant top-left quadrant (low quality, high novelty) suggests that our benchmark datasets contain minimal pseudo-novelty from gibberish or noise.
+This qualitative analysis confirms that instances involving irrelevant system metadata or extremely short text lengths are relegated to the bottom-left quadrant, as they lack both linguistic coherence and informative value for learning (Table  7).
+Robustness to balancing parameter α\alpha.
+The structural coupling between QQ and NN in the high-fidelity region explains the empirical robustness of our method to the choice of the balancing weight α\alpha.
+As shown in Table 6, varying α\alpha from 0.0 to ∞\infty yields nearly identical performance in both ROUGE-1 and ROUGE-L scores across tasks.
+Since high-quality and high-novelty samples largely overlap in the top-right region of the distribution, the same group of informative samples is consistently chosen as drift samples regardless of the balancing weight α\alpha.
+Nevertheless, we maintain α=1.0\alpha=1.0 as a precautionary safeguard in practical deployments to explicitly penalize potental noise and ensure that only linguistically coherent signals are selected for adaptation.
+Distinguishing drift score from hard example mining.
+A potential concern is whether our drift score simply performs conventional hard example mining by targeting samples with low padapp_{\texttt{adap}}.
+To clarify the distinction, we define the Hardness Term (HH) of a sample as the negative log-likelihood under the adapted model.
+H=−log⁡padapH=-\log p_{\texttt{adap}}
+(10)
+Using Eq. 9, the hardness term can be written as
+H=−log⁡padap=N−log⁡pbase.H=-\log p_{\texttt{adap}}=N-\log p_{\texttt{base}}.
+(11)
+Since Q=α​log⁡pbaseQ=\alpha\log p_{\texttt{base}}, for α≠0\alpha\neq 0 this is equivalently
+H=N−Qα.H=N-\frac{Q}{\alpha}.
+(12)
+We obtain H=N−QH=N-Q when α=1.0\alpha=1.0.
+Eq. 12 shows that HH aggregates two different factors: (i) the lack of model adaptation captured by the Novelty Term (NN), and (ii) the lack of linguistic fluency or coherence reflected by the Quality Term (−Q-Q) (with α=1.0\alpha=1.0).
+As a result, a high hardness score can arise either from true under-adaptation (large NN) or from intrinsically low-quality and ambiguous instances (low QQ), which are not necessarily indicative of preference drift.
+Therefore, using HH alone tends to over-select globally difficult or noisy samples that are hard for both the base and adapted models, making it an inconsistent and potentially misleading proxy for identifying genuine preference drift.
+Figure 5: Correlation between hardness and novelty terms.
+The scatter plots show the relationship between the Hardness Term and the Novelty Term.
+Spearman’s ρ\rho is −0.2361-0.2361 for Abstract Generation and 0.34680.3468 for Review Writing.
+Figure 6: Correlation between hardness term and drift score.
+The scatter plots show the relationship between the Hardness Term and the Drift Score.
+Spearman’s ρ\rho is −0.6997-0.6997 for Abstract Generation and −0.3421-0.3421 for Review Writing.
+As shown in Figure 5, the correlation between HH and NN is not consistent across tasks (ρ=−0.2361\rho=-0.2361 for Abstract Generation and ρ=0.3468\rho=0.3468 for Review Writing), indicating that hardness is not an equivalent measure for novelty.
+Moreover, Figure 6 shows that HH and the Drift Score DD are negatively correlated in both tasks (ρ=−0.6997\rho=-0.6997 and ρ=−0.3421\rho=-0.3421).
+This implies that many high-hardness instances are also difficult for the base model, which lowers their drift scores.
+Together, these results support our claim that the proposed drift score is not conventional hard example mining.
+Instead, it prioritizes well-formed and plausible instances where the adapted model cannot cover well, rather than globally hard or noisy samples.
+Visualization of selected drift samples.
+Figure 7: Visualization of sample selections by Hardness Term versus Drift Score.
+Gray points denote all samples, while red and blue highlight the top 30% samples by the Hardness Term and the Drift Score, respectively.
+Figure 7 contrasts the samples selected by top-30% hardness and top-30% drift score on the quality–novelty plane.
+The hardness criterion (red) highlights a broad diagonal band and extends into lower-quality areas, indicating that many hard instances are globally difficult and may also be poorly explained by the base model.
+In contrast, our drift criterion (blue) concentrates on the upper-right wedge where both quality and novelty are high.
+This visualization supports that our drift score performs mismatch-driven selection and filters out low-quality and noisy hard cases that are unlikely to provide reliable personalization signals.
+D.2 Inference dynamics: relevance gating
+Figure 8: Distribution of retrieved interactions. We compare the retrieval coverage under three threshold settings: no threshold (σ=0\sigma=0), Q2, and Q3 (ours).
+Table 8: Effectiveness of relevance gating. Performance comparison using thresholds based on BM25 score quartiles.
+Methods
+Threshold σ\sigma
+Abstract Generation
+Review Writing
+ROUGE-1
+ROUGE-L
+ROUGE-1
+ROUGE-L
+0
+0.351
+0.191
+0.319
+0.143
+Q2
+0.350
+0.190
+0.323
+0.142
+Q3 (Ours)
+0.350
+0.190
+0.326
+0.142
+We investigate the impact of our relevance gating strategy (Table 8), which filters retrieved contexts based on task-specific thresholds.
+Combined with the distribution analysis in Figure 8, we observe that SPRInG exhibits adaptive behavior tailored to the relevance characteristics of each task.
+In Abstract Generation, where interactions share strong semantic continuity, the strict Q3 threshold still permits context for over 92% of queries.
+This indicates that most retrieved information is highly relevant, allowing the model to maintain robust performance while filtering only the most extreme outliers.
+Conversely, in Review Writing, which is characterized by more diverse text content, indiscriminately incorporating retrieved history can be detrimental.
+The Q3 threshold aggressively filters out 58.6% of queries that fall below the relevance cutoff.
+Despite this harsh filtering, the model achieves a 2.19% relative gain in ROUGE-1.
+This demonstrates that our relevance gating effectively identifies and excludes interfering information, ensuring that the model only attends to truly relevant context.
+Appendix E Qualitative Analysis
+E.1 Qualitative comparison with baselines
+Table 9: Qualitative comparison of Abstract Generation.
+Query
+Generate an abstract for the title “An effective teaching-learning-based optimization algorithm for the flexible job-shop scheduling problem with fuzzy processing time.”
+User Answer
+In this paper, an effective teaching–learning-based optimization algorithm (TLBO) is proposed to solve the flexible job-shop problem with fuzzy processing time (FJSPF). First, a special encoding scheme is used to represent solutions, and a decoding method is employed to transfer a solution to a feasible schedule in the fuzzy sense. Second, a bi-phase crossover scheme based on the teaching–learning mechanism and special local search operators are incorporated into the search framework of the TLBO to balance the exploration and exploitation capabilities. Moreover, the influence of the key parameters on the TLBO is investigated using the Taguchi method. Finally, numerical results based on some benchmark instances and the comparisons with some existing algorithms are provided. The comparative results demonstrate the effectiveness and efficiency of the proposed TLBO algorithm in solving the FJSPF.
+Base
+**Keywords:** Flexible Job Shop Scheduling, Optimization Algorithm, Teaching Learning Paradigm, Fuzzy Logic, Multi-Objective.**This research investigates a complex operational challenge – optimizing schedules within a flexible job shop environment where tasks possess inherently uncertain durations represented by fuzzy logic. The proposed approach leverages a novel teaching learning paradigm to develop an efficient and adaptive scheduling solution. Departing from traditional deterministic methods, this work introduces an iterative process wherein a ẗeacherägent guides a student scheduler through exploration of the vast search space, progressively refining its decision-making capabilities based on observed performance feedback. The core innovation lies in dynamically adjusting the teacher’s guidance strategy shifting between prescriptive rule application and exploratory heuristic generation—to balance convergence speed and optimality. Furthermore, we address the inherent multi-objective nature of job shop scheduling (e.g., minimizing makespan while maximizing resource utilization) by incorporating these objectives into both the student’s objective function and the teacher’s reward system. This results in a robust and adaptable algorithm capable of generating high-quality solutions even under conditions of significant uncertainty and complexity. Ultimately, the presented method offers a promising avenue toward intelligent scheduling systems that can autonomously learn optimal strategies across diverse and evolving manufacturing landscapes.**
+RAG each
+In this paper, we propose an effective Teaching-Learning-Based Optimization (TLBO) algorithm tailored for addressing the complex challenges presented by the flexible job-shop scheduling problem incorporating fuzzy processing times.  The core innovation lies in adapting the traditional TLBO framework to handle uncertainty inherent within the processing durations. We utilize a novel representation scheme leveraging fuzzy sets to capture the probabilistic nature of task execution times. Simultaneously, a refined learning process dynamically adjusts the evolutionary dynamics, promoting efficient convergence while mitigating premature convergence issues often encountered when dealing with imprecise data. Further enhancing performance, a sensitivity analysis using the Taguchi methodology identifies optimal parameter configurations for robust adaptation across varying levels of fuzziness. Experimental validation against established benchmarks demonstrates the superiority of our approach compared to conventional methods, showcasing its efficacy in optimizing schedules under conditions of uncertain processing times within the context of the flexible job-shop environment.
+CAMA.
+A novel hybrid approach is proposed to tackle a complex, real-world manufacturing challenge—the Flexible Job Shop Scheduling (FJSS) Problem. The FJSS involves multiple machines and operations that can be performed in different orders depending on various factors such as machine availability or operator skill levels. This paper presents a new method combining genetic algorithms (GAs) and simulated annealing (SAs), which has been named GA/SA. In this study, we propose a new encoding scheme based on the permutation representation of jobs and operators. We also introduce two new crossover and mutation operators designed specifically for the GA/SA framework. Finally, we test our GA/SA model using several benchmark instances from the literature and compare its performance against other state-of-art methods. Results show that GA/SA outperforms all existing approaches by achieving better solutions within reasonable computation times
+SPRInG (Ours)
+This paper presents a novel Teaching-Learning-Based Optimization (TLBO) algorithm for tackling the flexible job-shop scheduling problem (FJSP) with fuzzy processing times. FJSPs are notoriously complex due to the inherent uncertainty in processing times and the need to accommodate flexible job routings. Our TLBO algorithm incorporates adaptive learning rates and a novel penalty function to effectively handle the fuzzy nature of processing times and the multi-objective nature of the problem. We demonstrate the effectiveness of the proposed algorithm through extensive simulations on benchmark FJSP instances, comparing it against several state-of-the-art scheduling algorithms. Results show that the proposed TLBO algorithm provides a competitive solution in terms of makespan and job completion time, while maintaining a good level of solution diversity.
+Table 10: Qualitative comparison of Review Writing.
+Query
+Generate a detailed review for a product ’Brooklyn Bean Roastery Bold Variety Pack Single-Cup Coffee for Keurig K-Cup Brewers, 40 Count’ with the following description: ’In Brooklyn, we know a thing or two about being bold and when we say this coffee is bold you betta believe it’s bold. To get a perfect dark roast, the beans are removed from the roasters right before they get to their peak roasting point. This helps them retain their sharp floral notes and all the smoky goodness without any of the burnt aftertaste. When these beans with big-time flavor are brewed through our patented tension- based filters, they create a Cup of Joe that will delight lovers of good strong coffee. The Bold Variety Pack includes: Boardwalk Blend, Corner Donut Shop, Cyclone, Express-O, French Roast and Fuhgeddaboutit.’. The review has an overall rating of ’5.0’. The review summary is: ’Medium roast, bright and fruity’.
+User Answer
+This is a medium roast (not burnt, like French Roast) and clearly dominated by Central American coffees–it’s acidic and bright but the mid notes are smooth and there is a citrus-fruitiness. If you like bright, acid coffee but not over-roasted and with some sweet mellowness, this is a good blend. it’s advertised as citrusy with a smooth base, and that’s exactly what I found when I brewed up a cup. The coffee has a medium body. I brewed it on the 8oz cup setting on a standard office Keurig and it came out very drinkable. I’d rate this as a breakfast coffee, because it’s medium roast and acidic. I did not put milk or cream in it, but the body is heavy enough to take milk without being dilute and washed out. My guess it’s a blend of Columbian, Brazilian, an East African coffee and perhaps some Indonesian (for the mellow mid tones.) But I’m guessing. This is very much to the taste of those who like "donut coffee"–maybe a bit stronger and darker but not unlike your coffee shop coffees. Update: We have this in the office and I drink it most mornings. I like the fact it is not so bitter and dark–and when it cools slightly, it’s particularly smooth and delicious. If you do NOT like burnt flavored, dark coffee and want a milder, smooth blend, this is very good. I was provided a sample for evaluation and review.
+Base
+Absolutely Phenomenal! A True Taste of New York - 5.0 Stars**Let me tell you folks, if youŕe looking for *real* boldness in your morning cup, look no further than the Brooklyn Bean Roastery Bold Variety Pack. Seriously, in Brooklyn, we know a thing or two about being bold–and when they say this coffee is bold, you better *believe* itś bold!What sets this apart isnt́ just the intensity; itś how they achieve it. They meticulously remove the beans from the roaster at precisely the moment they reach their peak roasting point. That means maximum retention of those beautiful, sharp floral notes alongside all that incredible smoky goodness - absolutely zero burnt aftertaste. Itś a masterclass in bean handling.And then thereś the brewing process. Using their patented tension-based filters? Genius! These arent́ your average paper filters; they truly unlock the full potential of each individual blend. You end up with a genuinely delightful Cup of Joe experience, especially for anyone who appreciates a robust, flavorful brew.The variety pack itself is fantastic too, offering six distinct blends: Boardwalk Blend, Corner Donut Shop, Cyclone, Express-O, French Roast, and even the aptly named Fuhgeddaboutit! Thereś something here for every palate within the realm of intense coffee enjoyment.Honestly, I was blown away by the quality and depth of flavour in this coffee. If you want a serious kickstart to your day (or anytime really), grab yourself a box of this. Highly recommended
+Table 11: Qualitative comparison of Review Writing.
+RAG each
+Five Stars - Seriously Strong Brews!**Let me tell you, if youŕe looking for a serious caffeine kick, look no further than the Brooklyn Bean Roastery Bold Variety Pack. Living in Brooklyn, we appreciate boldness–and this coffee delivers *big*. Seriously, bold doesn’t even cover it; itś intense, flavorful, and utterly satisfying.What sets these beans apart is the meticulous process. They remove them from the roaster *right* before they reach peak perfection. That ensures maximum retention of those beautiful floral notes alongside the rich, smoky character you crave - absolutely zero hint of bitterness or burned taste. Itś genius!Brewing with their tension-based filters really elevates everything. Every cup explodes with incredible depth and complexity. Honestly, itś a game changer for anyone who loves a truly robust brew.The variety pack itself is fantastic too - Boardwalk Blend, Corner Donut Shop, Cyclone, Express-O, French Roast, and even Fuhgeddaboutit! Thereś something here for every palate.  I particularly enjoyed the French Roast - incredibly smooth despite its strength.If you want a consistently excellent single-serve experience using your Keurig machine, this is it. Highly recommended!
+CAMA.
+Absolutely Phenomenal! A True Dark Roast Delight - 5/5 Stars** Let me start by saying I’m *obsessed* with this coffee. As someone who lives in Brooklyn (yes, really!), I have incredibly high standards when it comes to my morning cup – and let me tell you, this stuff delivers on every single level. Seriously, if you like your coffee **bold**, you betta believe it’s bold. Like, seriously intense. The folks at Brooklyn Bean Roastery clearly understand what they’re doing here. They don’t just pull beans off the shelf; they remove them from the roaster *right* as they hit their peak roasting point. That means maximum flavor retention—no bitter burn, no dullness. You actually taste those beautiful floral notes alongside the rich, smoky depth. It’s incredible. And trust me, Fuhgeddaboutit isn’t messing around either–that one packs some serious punch. I was particularly impressed with the variety pack itself. Each blend offers something unique but still maintains that signature boldness. From the smooth complexity of the boardwalk blend to the smokiness of the french roast, each brew had its own distinct character while maintaining a full bodied experience. Brewing through their tension-based filters only enhances everything. These aren’t your average paper cups; they seem designed specifically to extract the most out of these amazing beans.  It creates a truly satisfying cup of joe. If you want a robust, flavorful, and genuinely exciting coffee experience, look no further than Brooklyn Bean Roastery’s Bold Variety Pack. Do yourself a favor and grab a box–you won’t regret it.
+SPRInG (Ours)
+**5.0 Stars – Seriously Bold & Delicious Coffee** Let’s be honest, I’m a coffee snob. I appreciate a good roast, I know the difference between a well-balanced cup and one that’s burnt, and I *definitely* know when a coffee is just… bland. Brooklyn Bean Roastery’s Bold Variety Pack completely blew me away. From the moment you open the bag, you can tell this isn’t your average coffee. The aroma is rich, complex, and undeniably *bold*. And that’s exactly what you get in every cup. Brooklyn, you’ve really outdone yourselves. I particularly loved the “Boardwalk Blend.” It’s got this incredible smoky flavor with a hint of sweetness that just lingers. The “Corner Donut Shop” was surprisingly bright and fruity – a delightful change of pace. And the “Cyclone” – wow! – it’s a dark roast with a full body and a smoky, almost spicy flavor. I was a little hesitant about the “Fuhgeddaboutit” – the name alone! – but it turned out to be a surprisingly smooth and balanced dark roast. Brooklyn Bean Roastery clearly knows what they’re doing. They’re sourcing high-quality beans, roasting them to perfection, and using a tension-based filter that really brings out the flavor. There’s no bitterness, no burnt aftertaste – just pure, delicious coffee. This pack is perfect for anyone who wants to explore different dark roasts and find their new favorite. It’s also a fantastic gift for the coffee lover in your life. **Highly Recommended!**
+We provide qualitative comparisons between our method and representative baselines, including personalization and continual learning approaches (Table 9,  10,  11).
+E.2 Qualitative analysis of interpolation inference
+Table 12: Qualitative example for Abstract Generation. Highlighting indicates textual overlaps between the User Answer and the methods.
+Query
+Generate an abstract for the title “HR-MPF: high-resolution representation network with multi-scale progressive fusion for pulmonary nodule segmentation and classification”
+User Answer
+Accurate segmentation and classification of pulmonary nodules are of great significance to early detection and diagnosis of lung diseases, which can reduce the risk of developing lung cancer and improve patient survival rate. In this paper, we propose an effective framework for pulmonary nodule segmentation and classification at one time based on adversarial training scheme. The segmentation network consists of a High-Resolution network with Multi-scale Progressive Fusion (HR-MPF) and a proposed Progressive Decoding Module (PDM) recovering final pixel-wise prediction results. Specifically, the proposed HR-MPF firstly incorporates boosted module to High-Resolution Network (HRNet) in a progressive feature fusion manner. In this case, feature communication is augmented among all levels in this high-resolution network. Then, downstream classification module would identify benign and malignant pulmonary nodules based on feature map from PDM. In the adversarial training scheme, a discriminator is set to optimize HR-MPF and PDM through back propagation. Meanwhile, a reasonably designed multi-task loss function optimizes performance of segmentation and classification overall. To improve the accuracy of boundary prediction crucial to nodule segmentation, a boundary consistency constraint is designed and incorporated in the segmentation loss function. Experiments on publicly available LUNA16 dataset show that the framework outperforms relevant advanced methods in quantitative evaluation and visual perception.
+Without Interp.
+Uterine fibroids, also known as leiomyomas, are benign tumors that can cause significant pain and discomfort in women of reproductive age. The prevalence of uterine fibroids is estimated to be between 20% and 80%. Uterine fibroid treatment options include surgery, medication, and radiation therapy. However, there has been a recent increase in interest in noninvasive methods such as ultrasound imaging. Ultrasound imaging is widely used because it is inexpensive, safe, and readily available. In this study, we investigated whether using machine learning algorithms could improve the accuracy of diagnosing uterine fibroids from ultrasound images. We trained several different types of machine learning models on a large dataset of ultrasound images labeled by experienced radiologists. Our results showed that deep convolutional neural networks (CNNs) were able to achieve state-of-the-art performance compared to traditional image processing techniques. Specifically, our best model achieved an area under the receiver operating characteristic curve (AUC) score of 96%, which was significantly higher than other approaches. These findings suggest that machine learning may play an important role in improving the diagnosis of uterine fibroids from ultrasound images.
+With Interp.
+Pulmonary nodule detection and classification are crucial for early diagnosis of lung cancer. However, the limited resolution of conventional imaging techniques and the variability in nodule size and appearance pose significant challenges for automated analysis. This paper proposes a novel framework, HR-MPF, for high-resolution representation learning with multi-scale progressive fusion for pulmonary nodule segmentation and classification. HR-MPF consists of a multi-scale progressive fusion network (MPF) and a high-resolution representation network (HRNet). MPF fuses features from multiple scales to capture both local and global contextual information, while HRNet learns high-resolution representations to enhance the discriminative power of the network. We propose a novel attention mechanism to adaptively fuse features from different scales. The proposed method is validated on the LUNA16 challenge dataset, and the results show that HR-MPF outperforms advanced methods in both segmentation and classification tasks. The proposed method achieves a high accuracy and robustness for pulmonary nodule segmentation and classification.
+Table 13: Qualitative example for Review Writing. Highlighting indicates textual overlaps between the User Answer and the methods.
+Query
+Generate a detailed review for a product ‘Lenox Expressions from the Heart Teacher Ornament’ with the following description: ‘Lenox offers a truly legendary collection of ornaments that has been a treasured part of American holidays for generations. Unmatched quality and hand craftsmanship result in exquisite collectibles that bring a special glow to your home. No other gift expresses the joy of the season more than a specially-chosen ornament for the people who mean the most to you. Best of all, this remarkable collection is created by Lenox, the name more closely associated with holiday entertaining than any other. The confidence that Lenox has in the unmatched durability of every product they offer is backed up by a lifetime breakage replacement policy to guarantee many years of enjoyment to each customer. Show a favorite teacher how much they mean to you with this exquisite collectible. Crafted of Lenox porcelain, this ornament includes an elegant red satin ribbon for hanging and comes beautifully packaged in an iconic seasonal red box to make a perfect gift.’. The review has an overall rating of ‘4.0’. The review summary is: ‘A simple, but classy ornament that can be personalized’.
+User Answer
+We have a number of porcelain and glass ornaments, some of which are made by Lenox. While simple, this Lenox ornament is a nice addition to our collection of porcelain ornaments. This ornament is about 3.5 inches high, and probably nearly that size in width. The ornament is a heart with the word "Love" in gold applied to the porcelain. A smaller porcelain heart is attached to the top of the ornament to provide a touch of class to this ornament. A red ribbon decorates the top of the ornament, and a gold tassel extends from the top of the ornament as a location to attach the ornament to a tree or other object. While this ornament is simple, and fragile (avoid dropping this ornament), it does provide the opportunity to be a special memento. The large open areas on the ornament are perfect for personalization. Use this ornament to commemorate an anniversary, a birth, or just about any other occasion amenable to a simple phrase, perhaps one or more names, and a date. We have discovered that fine point Sharpies are perfect for writing on porcelain ornaments, and have personalized other such ornaments to commemorate events such as baby’s first Christmas, or to provide a personalized gift for someone special. Over the years we have accumulated a wide array of ornaments, from the simple and inexpensive, to the complex and expensive. This relatively simple ornament can be personalized to be a cherished gift that hopefully will be passed on to another generation. Or just use it to be a simple token of love to your special someone. Enjoy!
+Without Interp.
+* Rating: 4/5 stars
+* Title: A Beautiful gift That Shows Appreciation
+* Body: I recently purchased the Lenox Expressions From the Heart Teacher ornament as a thank you gift for my daughter’s wonderful third grade teacher. And let me tell you, it was a hit! This isn’t just some cheap plastic trinket; it’s genuinely beautiful – crafted from high-quality Lenox porcelain, which feels substantial and luxurious. It came nestled in a lovely red box, making it ready to give immediately. My daughter absolutely loved it, and her teacher was so touched. While I can’t speak to the long-term durability, the quality certainly suggests it will last for years to come. Plus, knowing it’s from Lenox gives it extra value. If you want to show someone you care with something really special, this is a great choice. Pros: High Quality porcelain, Elegant Design, Lifetime Replacement Policy. Cons: Pricey but well worth it if you want a lasting keepsake.
+With Interp.
+“Lenox offers a truly legendary collection of ornaments that has been a treasured part of American holidays for generations. Unmatched quality and hand craftsmanship result in exquisite collectibles that bring a special glow to your home. No other gift expresses the joy of the season more than a specially-chosen ornament for the people who mean the most to you. Best of all, this remarkable collection is created by Lenox. The confidence that Lenox has in the unmatched durability of every product they offer is backed up by a lifetime breakage replacement policy to guarantee many years of enjoyment to each customer. Crafted of Lenox porcelain, this ornament includes an elegant red satin ribbon for hanging and comes beautifully packaged in an iconic seasonal red box to make a perfect gift.”
+Rating: 4.0
+“Lenox consistently delivers exceptional quality, and this ornament is no exception. The craftsmanship is truly remarkable, and the attention to detail is evident in every aspect of the design. The red satin ribbon adds a touch of elegance, and the iconic seasonal red box makes it a perfect gift. It’s a beautiful and meaningful way to show appreciation. Highly recommended!”
+To qualitatively evaluate the effectiveness of our proposed method, we selected representative examples that exhibited the most remarkable performance gains in both ROUGE-1 and ROUGE-L metrics.
+We compared the outputs of the baseline inference (λ=0.0\lambda=0.0), which relies solely on the adapter, against our interpolation-based inference (λ=0.5\lambda=0.5), which integrates retrieved contextual information.
+To ensure a meaningful comparison, we filtered for samples where the baseline model achieved a minimum quality threshold (e.g., ROUGE-1 ≥\geq 0.25) and identified cases with the largest score improvements.
+We observe how the interpolation of retrieved history refines already coherent outputs by incorporating specific details and task-relevant nuances that the adapter alone might miss.
+As illustrated in Table 12 and Table 13, the highlighted text indicates textual overlaps between the user’s ground truth and the generated texts.
+In Abstract Generation (Table 12), the baseline model (λ=0.0\lambda=0.0) often suffers from hallucinations, generating irrelevant content such as “Uterine fibroids” despite the query regarding “Pulmonary nodule.”
+In contrast, our proposed interpolation (λ=0.5\lambda=0.5) effectively recovers the correct research context, accurately reflecting technical terms like “HR-MPF” and “LUNA16” by attending to the retrieved interaction history.
+Similarly, in Review Writing (Table 13), the interpolation strategy leads to a higher density of highlighted overlaps.
+While the baseline generates a plausible story, the proposed method incorporates specific product details such as “Lenox porcelain,” “red satin ribbon,” and “perfect gift” that are directly aligned with the user’s original response.
+These results demonstrate that our relevance gating and interpolation strategy effectively identify and integrate interfering yet truly relevant information, ensuring that the model generates high-quality, personalized context.
+Appendix F Prompts
+We provide prompts used in our experiments. The text enclosed in {BRACES} serves as a placeholder for data specific to each user and query.
+Abstract Generation
+You are an abstract writer.
+Generate an abstract for the title {TITLE}.
+Review Writing
+You are a review writer.
+Generate a detailed review for a product ‘{PRODUCT}’ with the following description ‘{DESCRIPTION}’. The review has an overall rating of ‘{RATING}’. The review summary is ‘{SUMMARY}’.
+Appendix G Chat Template
+Below is the chat template utilized for Gemma-3-4B-IT in our experiments.
+⬇
+GEMMA_CHAT_TEMPLATE = """
+"{% set bos_token = ’<bos>’ %}
+{% set eos_token = ’<eos>’ %}
+{{ bos_token }}
+{% if messages[0][’role’] == ’system’ %}
+{{ ’System: ’ + messages[0][’content’].strip() + ’\n’ }}
+{% set loop_messages = messages[1:] %}
+{% else %}
+{% set loop_messages = messages %}
+{% endif %}
+{% for message in loop_messages %}
+{% if message[’role’] == ’user’ %}
+{{ ’User: ’ + message[’content’].strip() + ’\n’ }}
+{% elif message[’role’] == ’assistant’ %}
+{{ ’Assistant: ’ + message[’content’].strip() + eos_token + ’\n’ }}
+{% endif %}
+{% endfor %}
+{{ ’Assistant:’ }}"
+"""
+Appendix H Usage of AI assistants
+During the preparation of this work, we utilized AI assistants to refine sentence structure, correct grammatical errors, and improve readability. These tools were employed only for rephrasing and language enhancements, ensuring that the technical content, methodology, and experimental findings remained entirely authored by the researchers. The use of AI assistance was limited to editorial improvements without influencing the originality or scientific contributions of the paper.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

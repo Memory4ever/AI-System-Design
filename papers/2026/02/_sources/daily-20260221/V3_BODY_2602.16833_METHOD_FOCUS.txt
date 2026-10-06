@@ -1,0 +1,251 @@
+4 Methods
+Action-space exploration has been a central challenge in RL post-training with verifiable rewards.
+In grouped on-policy objectives such as Group Relative Policy Optimization (GRPO) (Shao et al., 2024), each
+prompt is paired with a group of sampled outputs, and learning depends on reward differences within the group.
+When the per-state action space is large, the policy can collapse to a small subset of high-probability actions, yielding
+low diversity and weak learning signals within each group.
+We propose Verbalized Action Masking (VAM), which makes the admissible action set an explicit part of the RL
+interface.
+Specifically, we (i) formalize an action-masking MDP that assigns a fixed penalty when the policy selects an
+out-of-mask action, (ii) implement this interface for LLM policies by verbalizing the mask in the prompt and enforcing
+it with a deterministic parser and verifier, and (iii) improve exploration via iterative action-space pruning, which
+repeatedly samples GRPO-sized rollout groups for the same base prompt while shrinking the mask to avoid resampling
+previously produced valid actions.
+VAM can be trained under two regimes that differ only in how states and verifier scores are obtained: a fixed-dataset
+regime that samples states from a fixed dataset with precomputed verifier scores, and an engine-play regime that
+generates states on-policy, for example by playing against an engine opponent and querying the verifier on encountered positions.
+We first present VAM in a generic action-selection setting and then describe the chess instantiation used in our
+experiments.
+4.1 Action-masking MDP
+Intuitively, an action mask specifies which actions are currently admissible.
+If the agent selects an action outside this mask, the environment treats it as a constraint violation, assigns a fixed
+penalty, and terminates the rollout.
+This turns action validity into a deterministic verifier signal that can be used by an on-policy RL algorithm, and it
+provides a clean handle for manipulating the available action space across repeated sampling.
+Formally, consider a Markov decision process (MDP) (𝒮,𝒜,P,R,γ)(\mathcal{S},\mathcal{A},P,R,\gamma) with states
+s∈𝒮s\in\mathcal{S}, actions a∈𝒜a\in\mathcal{A}, transition kernel P⁡(s′∣s,a)P(s^{\prime}\mid s,a), reward function R⁡(s,a)R(s,a), and discount
+factor γ∈[0,1)\gamma\in[0,1).
+Let 𝟏​[⋅]\mathbf{1}[\cdot] denote the indicator function.
+We assume that at each state ss the environment can enumerate a finite admissible action set
+𝒜⁡(s)⊆𝒜\mathcal{A}(s)\subseteq\mathcal{A}.
+An action mask is a subset ℳ⊆𝒜⁡(s)\mathcal{M}\subseteq\mathcal{A}(s) of actions that are currently allowed.
+An action-masking MDP augments the state with an explicit mask variable.
+Specifically, define an augmented state space
+𝒮~={(s,ℳ):s∈𝒮,ℳ⊆𝒜(s)},\tilde{\mathcal{S}}\;=\;\{(s,\mathcal{M}):s\in\mathcal{S},\;\mathcal{M}\subseteq\mathcal{A}(s)\},
+(3)
+and an action-masking MDP (𝒮~,𝒜,P~,R~,γ)(\tilde{\mathcal{S}},\mathcal{A},\tilde{P},\tilde{R},\gamma).
+The mask may depend on the underlying state and can be updated as a function of the chosen action; we write
+U⁡(ℳ′∣s,a,ℳ)U(\mathcal{M}^{\prime}\mid s,a,\mathcal{M}) for a (possibly deterministic) mask-update kernel.
+Then for in-mask actions the augmented transition factorizes as
+P~​((s′,ℳ′)∣(s,ℳ),a)=P⁡(s′∣s,a)​U​(ℳ′∣s,a,ℳ).\begin{split}\tilde{P}\bigl((s^{\prime},\mathcal{M}^{\prime})\mid(s,\mathcal{M}),a\bigr)&=P(s^{\prime}\mid s,a)\,U(\mathcal{M}^{\prime}\mid s,a,\mathcal{M}).\end{split}
+(4)
+If a∉ℳa\notin\mathcal{M}, we treat the transition as terminal (equivalently, a transition to an absorbing terminal state),
+so the next-state dynamics and mask update are not applied.
+The augmented reward assigns the base reward for in-mask actions and a fixed penalty otherwise:
+R~​((s,ℳ),a)=𝟏[a∈ℳ]⋅R(s,a)+(1−𝟏[a∈ℳ])⋅(−Penalty),\begin{split}\tilde{R}\bigl((s,\mathcal{M}),a\bigr)&=\mathbf{1}[a\in\mathcal{M}]\cdot R(s,a)\\
+&\quad+\bigl(1-\mathbf{1}[a\in\mathcal{M}]\bigr)\cdot(-\mathrm{Penalty}),\end{split}
+(5)
+where Penalty>0\mathrm{Penalty}>0 is a constant.
+We terminate the rollout immediately when an out-of-mask action is chosen.
+Equivalently, define a done indicator
+d(s,a,ℳ)= 1[a∉ℳ],d(s,a,\mathcal{M})\;=\;\mathbf{1}[a\notin\mathcal{M}],
+(6)
+and terminate whenever d⁡(s,a,ℳ)=1d(s,a,\mathcal{M})=1.
+The penalty controls whether the mask is a soft constraint or a hard constraint.
+When Penalty\mathrm{Penalty} is finite, the objective discourages out-of-mask actions while still defining a reward value for
+all actions.
+In the limiting case Penalty→∞\mathrm{Penalty}\to\infty, any out-of-mask action incurs an unbounded loss, and the optimal
+policy assigns zero probability mass to actions outside ℳ\mathcal{M}, recovering a hard version of action masking.
+Algorithm 1 VAM with iterative action-space pruning
+1:
+Procedure PruneAndSample(π,s,a⋆)(\pi,s,a^{\star})
+2:
+Parameters: group size GG, max rounds RmaxR_{\max}, reward R~\tilde{R}
+3:
+ℳ←𝒜⁡(s),𝒟s←∅\mathcal{M}\leftarrow\mathcal{A}(s),\;\mathcal{D}_{s}\leftarrow\emptyset
+4:
+for r=1r=1 to RmaxR_{\max} do
+5:
+Sample {oi}i=1G∼π(⋅∣s,ℳ)\{o_{i}\}_{i=1}^{G}\sim\pi(\cdot\mid s,\mathcal{M}) and parse to {ai}i=1G\{a_{i}\}_{i=1}^{G}
+6:
+Compute ri←R~​((s,ℳ),ai)r_{i}\leftarrow\tilde{R}((s,\mathcal{M}),a_{i}) for i=1,…,Gi=1,\dots,G
+7:
+𝒟s←𝒟s∪{(ℳ,{(oi,ri)}i=1G)}\mathcal{D}_{s}\leftarrow\mathcal{D}_{s}\cup\{(\mathcal{M},\{(o_{i},r_{i})\}_{i=1}^{G})\}
+8:
+V←{ai:ai∈ℳ}V\leftarrow\{a_{i}:a_{i}\in\mathcal{M}\}
+9:
+if a⋆∈Va^{\star}\in V then
+10:
+break
+11:
+ℳ←ℳ∖V\mathcal{M}\leftarrow\mathcal{M}\setminus V
+12:
+end for
+13:
+return 𝒟s\mathcal{D}_{s}
+14:
+Procedure TrainVAM(π,𝒟,T,B)(\pi,\mathcal{D},T,B)
+15:
+Inputs: policy π\pi, dataset 𝒟\mathcal{D}, total steps TT, batch size BB
+16:
+for t=1t=1 to TT do
+17:
+Sample {sj}j=1B\{s_{j}\}_{j=1}^{B} from 𝒟\mathcal{D} and set ℬ←∅\mathcal{B}\leftarrow\emptyset
+18:
+for j=1j=1 to BB do
+19:
+Read 𝒜⁡(sj)\mathcal{A}(s_{j}) and set a⋆∈arg⁡maxa∈𝒜⁡(sj)⁡μ⁡(sj,a)a^{\star}\in\arg\max_{a\in\mathcal{A}(s_{j})}\mu(s_{j},a)
+20:
+𝒟sj←PruneAndSample​(π,sj,a⋆)\mathcal{D}_{s_{j}}\leftarrow\textsc{PruneAndSample}(\pi,s_{j},a^{\star})
+21:
+ℬ←ℬ∪𝒟sj\mathcal{B}\leftarrow\mathcal{B}\cup\mathcal{D}_{s_{j}}
+22:
+end for
+23:
+Update π\pi with GRPO on ℬ\mathcal{B} (§3)
+24:
+end for
+25:
+return π\pi
+4.2 Verbalized Action Masking (VAM)
+The action-masking MDP specifies how a mask should affect reward and termination, but it does not dictate how the mask
+is represented to the policy.
+In the LLM setting, we implement action masking by verbalizing the mask in the prompt.
+Each prompt contains a description of the state ss and an explicit action mask ℳ⊆𝒜⁡(s)\mathcal{M}\subseteq\mathcal{A}(s).
+The model then outputs a single action, and a deterministic parser and verifier map the output to a predicted action a^\hat{a} and
+check membership in ℳ\mathcal{M}.
+If parsing fails or if a^∉ℳ\hat{a}\notin\mathcal{M}, we treat the outcome as an out-of-mask action, triggering termination and
+the penalty as defined by the action-masking MDP.
+Verbalized Action Masking (VAM)
+State description
+{task prompt}
+Format specification
+<think>...</think>
+<action>...</action>
+Allowed action
+[act1, …, actk]
+Figure 2: Prompt interface for VAM. Prompt inputs include the state description, format specification, and allowed action list; placeholders indicate where each appears.
+VAM preserves on-policy data collection.
+The mask is part of the observation, and we sample from the current policy conditioned on the prompt, without applying
+logit-level masking or post-hoc filtering.
+As a result, each sampled group is on-policy for its corresponding mask-conditioned prompt, which makes the approach
+compatible with standard grouped on-policy RL implementations.
+4.3 Iterative action-space pruning
+The action mask defines which actions are admissible, but it does not by itself ensure diverse exploration within a
+single state.
+To avoid repeatedly sampling the same few actions, we introduce an iterative pruning procedure that progressively
+shrinks the mask across rounds of grouped sampling.
+Verifier-based rewards and target actions
+In RL post-training with verifiable rewards, a task reward is computed from the model output using an external verifier.
+We assume that for each state ss and admissible action a∈𝒜⁡(s)a\in\mathcal{A}(s), the verifier provides a scalar score
+μ⁡(s,a)∈ℝ\mu(s,a)\in\mathbb{R}.
+This score may be binary (for example, an exact correctness check) or graded (for example, a test score or a heuristic
+quality metric).
+We use it to define the base reward R⁡(s,a)=μ⁡(s,a)R(s,a)=\mu(s,a) for in-mask actions.
+To make the interface verifiable, we also define a format reward over the raw output string oo:
+if oo does not match the required tag format (for example, <action>...</action> or <uci_move>...</uci_move>),
+or if the parsed action a^\hat{a} is not in ℳ\mathcal{M}, then rformat​(o,ℳ)=−Penaltyr_{\text{format}}(o,\mathcal{M})=-\mathrm{Penalty}, and otherwise
+rformat​(o,ℳ)=0r_{\text{format}}(o,\mathcal{M})=0.
+This corresponds to treating unparsable outputs and out-of-mask actions as constraint violations, assigned a fixed penalty via R~\tilde{R},
+and terminated as in the action-masking MDP.
+Given a state ss and a mask ℳ⊆𝒜⁡(s)\mathcal{M}\subseteq\mathcal{A}(s), we define the target action as
+a⋆​(s,ℳ)∈arg⁡maxa∈ℳ⁡μ⁡(s,a),a^{\star}(s,\mathcal{M})\in\arg\max_{a\in\mathcal{M}}\mu(s,a),
+(7)
+using a deterministic tie-break when multiple actions share the maximum score.
+For each base state ss, the pruning procedure starts from an initial mask ℳ0⊆𝒜⁡(s)\mathcal{M}_{0}\subseteq\mathcal{A}(s).
+In the engine-play regime we use the full legal set ℳ0=𝒜⁡(s)\mathcal{M}_{0}=\mathcal{A}(s), while in the fixed-dataset regime
+ℳ0\mathcal{M}_{0} can be either the full legal set or a dataset-provided candidate subset.
+We set the target to a⋆=a⋆​(s,ℳ0)a^{\star}=a^{\star}(s,\mathcal{M}_{0}).
+Each round uses a new prompt that differs only in the masked action list, and samples a rollout group of GG candidates,
+matching the GRPO group size (§3).
+If the target action is not present, we remove the sampled in-mask actions from the candidate set and resample, up to a
+maximum number of rounds RmaxR_{\max}.
+Each pruning round defines a separate mask-conditioned prompt for GRPO, so the procedure naturally produces a sequence of
+GRPO groups per base state.
+We apply GRPO to all collected groups without additional weighting across rounds.
+Algorithm 1 summarizes the full VAM training loop, including iterative pruning, resampling, and the
+GRPO update.
+Algorithm 2 shows an optional engine-play procedure for generating training states on-policy; when
+engine-play position generation is not used, we assume a provided fixed dataset of states with verifier scores.
+Algorithm 2 Engine-play position generation (optional)
+1:
+Procedure CollectByPlay(π,E,Verifier,B)(\pi,E,\mathrm{Verifier},B)
+2:
+Inputs: environment EE, target data size BB, pool size NN
+3:
+Initialize or reuse ℰ={e1,…,eN}\mathcal{E}=\{e_{1},\dots,e_{N}\} from EE, and set 𝒟play←∅\mathcal{D}_{\text{play}}\leftarrow\emptyset
+4:
+while |𝒟play|<B|\mathcal{D}_{\text{play}}|<B do
+5:
+Retrieve current states {si}i=1N\{s_{i}\}_{i=1}^{N} from ℰ\mathcal{E}
+6:
+for i=1i=1 to NN do
+7:
+Read 𝒜⁡(si)\mathcal{A}(s_{i}) and query Verifier\mathrm{Verifier} for μ⁡(si,a)\mu(s_{i},a) for all a∈𝒜⁡(si)a\in\mathcal{A}(s_{i})
+8:
+Append (si,𝒜⁡(si),μ⁡(si,⋅))(s_{i},\mathcal{A}(s_{i}),\mu(s_{i},\cdot)) to 𝒟play\mathcal{D}_{\text{play}}
+9:
+if |𝒟play|≥B|\mathcal{D}_{\text{play}}|\geq B then
+10:
+break
+11:
+end for
+12:
+Step all instances in ℰ\mathcal{E}
+13:
+end while
+14:
+return 𝒟play\mathcal{D}_{\text{play}}
+4.4 Chess implementation details
+Our experiments instantiate VAM in chess move selection.
+State, actions, and prompt interface
+We represent states ss as chess positions (FEN strings), and actions aa as moves in strict UCI format.
+The admissible action set 𝒜⁡(s)\mathcal{A}(s) is the set of legal moves.
+To implement VAM, each prompt includes an explicit candidate list corresponding to a mask
+ℳ⊆𝒜⁡(s)\mathcal{M}\subseteq\mathcal{A}(s) (either the full legal set or a restricted subset), together with the ordered legal
+move list.
+Chess Prompt with Verbalized Mask
+Original chess prompt
+{original chess prompt}
+Current FEN string
+{FEN}
+Legal moves (UCI)
+{UCI move list}
+Allowed action
+{allowed UCI move list}
+Figure 3: Chess prompt with verbalized mask. Prompt inputs include the original prompt, FEN, legal moves, and allowed actions; placeholders indicate where each appears.
+The model must output a single move in a <uci_move> tag.
+A deterministic parser and verifier checks that the output is well-formed, that it is legal in the underlying position,
+and that it lies in the provided mask.
+Appendix A.5 specifies the exact parsing and validity rules.
+Engine-based verifier scores
+We instantiate μ⁡(s,a)\mu(s,a) using the Stockfish chess engine (The Stockfish Developers, 2024).
+Given fixed analysis settings, Stockfish can provide different deterministic per-move evaluation signals, including
+centipawn scores, win-draw-loss probabilities, and expected-score proxies.
+Any chosen scalar signal can be used as the verifier score μ⁡(s,a)\mu(s,a) to define rewards and targets.
+In our experiments, training positions are paired with engine-derived per-move value maps (e.g., expected-score or
+win-probability proxies) that serve as μ⁡(s,a)\mu(s,a).
+Fixed-dataset training
+In the fixed-dataset regime, training states ss are sampled from a fixed dataset, and each state comes with a legal-move list
+and an engine-derived value map μ⁡(s,a)\mu(s,a) over legal actions.
+The initial mask ℳ0\mathcal{M}_{0} can either be the full legal set 𝒜⁡(s)\mathcal{A}(s) or a candidate subset provided by
+the dataset.
+Training follows the VAM loop in Algorithm 1, which performs iterative pruning and applies a GRPO update over all collected mask-conditioned groups.
+Engine-play position generation
+For engine-play training data, we generate a stream of chess positions by playing games against a fixed engine opponent.
+Because the learning problem only requires a state, we record positions regardless of which side is to move.
+For each recorded state ss, we enumerate legal moves 𝒜⁡(s)\mathcal{A}(s), query the engine-derived verifier score
+μ⁡(s,a)\mu(s,a) over legal actions, and add the resulting state records to a training buffer.
+Algorithm 2 summarizes this optional engine-play position generation procedure; these states can then be
+consumed by the same VAM training loop in Algorithm 1.
+5 Experiments
+We evaluate VAM in a text-only chess setting, in which the model must select a move from a provided list without
+access to search or external tools.
+We report (i) one-step move selection on the Searchless Chess puzzle positions (Ruoss et al., 2024) and
+(ii) full-game play against a fixed engine opponent, measured by average centipawn loss (ACPL).
+5.1 Research questions
+We organize our empirical study around three questions:
+1.
+RQ1: Does VAM improve exploration compared to the baselines?
+2.
+RQ2:

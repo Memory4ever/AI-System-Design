@@ -1,0 +1,13 @@
+# 安全与系统反侧完整题摘校准
+原始完整精确v1 AB：feb11_AB4_security.json。九个有具体主题线索，不是遍历旧35。所有日期仍需public包络，submitted不作public。
+
+- 07120 Anchored Decoding：只靠posthoc版权检测→每步安全LM proximity按trajectory信息budget分配组合sequence-bound+byte跨vocab→选择安全anchor的表示兼容/风险utility；不作法律保证。理论需要核bound假设。拟准入7。
+- 07878 Fill&Squeeze：最长输出complexity攻击代表共租户latency→continuousbatching能隔离但KV耗尽和preemption scheduler状态泄漏→重新选admission/资源quota与调度状态攻击评价，安全counter7/8。
+- 07996 HiddenJudgeShortcuts：judge解释可看作真实决策依据→controlledcue造成verdictshift且rationale不acknowledge、dataset差异→重新选metadata脱敏与faithfulness证据评价，designcounter7。
+- 08412 PASB：固定任务securitybenchmark→personalizedlocaltool/history多阶段riskpath，摘要只列vulnerabilities未给具体机制/新边界，先最小core决定；安全信号不能标题机械关闭。
+- 08563 implicitMemory：stateless若不explicitmemory就独立→outputs重新注入构成temporalhiddenchannel+多阶段timebomb→重新选derivedmemory的serialization/provenance审计；但必须澄清无outputreinject就不persist非模型跨请求秘密状态。安全counter7。
+- 08621 SparseSafety：utilityexpert routing可自由prune/改route→改变少router使安全输出翻有害→routerselection同时安全对象，需要核whitebox权限/normalrouting可达性，不能ASR外推黑箱默认。安全7。
+- 08747 PARD：reactivedrop当只能伤goodput→runtime queue+remainingbudget主动drop选择改善总成功率/浪费→重新选admission drop的timeliness；但必须核是LLM或通用DNN仅类比，先core范围，不借系统术语进项目。
+- 08401 AgentWM：LLM hiddenreasoning watermark不可灰盒验证→等价toolaction路径概率偏置+visibletrajectory统计检测→watermark可转到执行路径的design选择；核真正语义等价与任务损失，AB“adaptive无法去除”非普遍保证。拟6。
+- 08798 CryptoGen：secure discriminativeinference每token从头→持续encryptedKV兼容HE/secretshare分阶段SIMD/noiserefresh→模型state复用安全域与性能同选，不只是4.4xbenchmark。安全/隐私假设需core7。
+

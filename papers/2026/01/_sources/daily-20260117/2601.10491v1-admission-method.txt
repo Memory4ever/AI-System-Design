@@ -1,0 +1,60 @@
+Source https://arxiv.org/html/2601.10491v1
+[H]
+III-B Maintain Basis Vectors
+We employ SVD as a tool to factorize the reshaped gradient matrix and construct the basis matrix M, which provides the optimal low-rank approximation under a mean squared error criterion. However, as training progresses, gradient statistics gradually evolve, rendering a static basis increasingly suboptimal. Recomputing a full SVD and re-transmitting an entirely new basis matrix at every round would therefore incur substantial computational and communication overhead.
+Motivated by the empirical analysis in Section I (Figures 1 and 2), which shows that the gradient direction remains relatively stable across adjacent global rounds, providing a theoretical basis for accurately representing gradients using a set of compact basis vectors that evolves slowly over time. Accordingly, GradESTC retains most previously learned basis vectors locally and dynamically replaces only those whose contribution diminishes relative to the current fitting error, thereby preserving the favorable reconstruction properties of SVD while significantly reducing per-round computation and uplink overhead.
+[H]
+Initialization of Basis Vector
+At the first compression, the basis matrix M has not yet been obtained. To capture the most significant directions of variance in G , we apply SVD, which factorizes G into three components:
+\displaystyle G=U\Sigma V^{\top},
+(5)
+where U\in\mathbb{R}^{l\times m} is an orthogonal matrix whose columns are the left singular vectors of G, \Sigma\in\mathbb{R}^{m\times m} is a diagonal matrix containing the singular values of G in descending order, and V\in\mathbb{R}^{m\times m} is an orthogonal matrix whose columns are the right singular vectors of G. We retain only the first k columns of U to form the basis matrix M for compression. These columns correspond to the k largest singular values, capturing the most significant variance in G. Furthermore, since M is constructed from the first k columns of U, the combination coefficients can be obtained from the first k rows of \Sigma V^{\top} , which is equivalent to being obtained by Formula 4, thereby reducing the computational burden.
+Algorithm 2 The decompressor on the server side
+Input: \mathbb{P},\mathbb{M},A
+Parameter: M
+Output: Reconstructed gradient \hat{g}
+1:
+Update M according to Formula 12 using \mathbb{P} and \mathbb{M}.
+2:
+\hat{G}=M^{\top}A.
+3:
+\hat{g} = Reshape \hat{G} to the original shape.
+4:
+return \hat{g}
+[H]
+Incremental Replacement of Basis Vector
+Based on the temporal correlation of gradients, previously learned basis vectors may continue to effectively represent new gradient information. To reduce communication overhead, we propose an incremental replacement strategy that selectively updates the basis vectors by replacing outdated subsets identified via their indices.
+Two key problems arise: (1) maintaining the orthogonality of the basis matrix when updating the basis vectors, and (2) deciding which vectors to replace. To address the first problem, we introduce the vectors in the error basis matrix M^{e} from fitting error E\in\mathbb{R}^{l\times m} as candidate basis vectors, which captures the components of G not represented by M. The fitting error E is computed as:
+\displaystyle E=G-MA,
+(6)
+where A is obtained from Formula 4.
+Next, SVD is applied to E, yielding E=U^{e}\Sigma^{e}{V^{e}}^{\top}. To construct the error basis matrix M^{e}, we select the columns of U^{e} corresponding to singular values greater than zero and choose the first d columns, where d\leq k. These columns form M^{e}, which serves as the set of candidate vectors for updating the existing basis M.
+It can be rigorously shown that M^{e} is orthogonal to M. We obtain M^{\top}E=0 from the Formula 3 and 6, so we have
+\displaystyle M^{\top}e_{j}=0,\;\forall j,
+(7)
+where e_{j} denotes the j-th column of E. By the SVD, each column of E can be expressed as a linear combination of the first d left singular vectors:
+\displaystyle e_{j}=\sum_{i=1}^{d}\sigma_{i}v_{ij}u_{i}^{e},
+(8)
+where \sigma_{i} are the non-zero singular values and v_{ij} are elements of {V^{e}}^{\top}. Consequently, for any x\in\operatorname{Col}(M^{e}), we have x=\sum_{j}\alpha_{j}e_{j}, which implies:
+\displaystyle M^{\top}x=\sum_{j}\alpha_{j}M^{\top}e_{j}=0\quad\Rightarrow\quad M^{\top}M^{e}=0.
+(9)
+The combination coefficients A^{e} for M^{e} can be computed as:
+\displaystyle A^{e}={M^{e}}^{\top}G={M^{e}}^{\top}(E+MA)={M^{e}}^{\top}E,
+(10)
+which are equivalently obtained from the first d rows of \Sigma^{e}{V^{e}}^{\top}, representing the contribution of the error basis vectors in reconstructing G.
+To address the second problem, we use the squared norm of each element in the combination coefficients as an indicator of the contribution of the corresponding basis vector. Let A^{oe}=[A^{\top},{A^{e}}^{\top}]^{\top},M^{oe}=[M,M^{e}] and let A_{u,:} denote the u-th row of A, which contains the combination coefficients of the u-th basis vector. Thus, the total contribution of A^{oe} is captured by a vector R, where each element represents the squared norm of a column in A^{oe}:
+\displaystyle R=[\|A^{oe}_{1,:}\|^{2},\|A^{oe}_{2,:}\|^{2},\ldots,\|A^{oe}_{k+d,:}\|^{2}].
+(11)
+Although this indicator does not precisely capture the true contribution of the basis vectors to the reconstruction, it provides a computationally efficient approximation that proves effective in most practical scenarios. The contributions sorted in descending order and selected the top k value as a set R_{k}. We then form ordered sets \mathbb{M} and \mathbb{A} by selecting columns from M^{e} and rows from A^{e} whose corresponding contribution values are in R_{k}. The indices of vectors in M that fall outside the top k contribution form a set denoted as \mathbb{P}. For each p_{i}\in\mathbb{P}, the i-th elements from \mathbb{M} and \mathbb{A} are sequentially used to replace the corresponding columns in M and rows in A, respectively, as formally defined below:
+\displaystyle\begin{split}M^{*}_{:,j}&=\begin{cases}\mathbb{M}[i],&\text{if }j=p_{i}\in\mathbb{P},\\
+M_{:,j},&\text{otherwise},\end{cases}\quad\text{for }j=1,2,\ldots,k,\\
+A^{*}_{j,:}&=\begin{cases}\mathbb{A}[i],&\text{if }j=p_{i}\in\mathbb{P},\\
+A_{j:},&\text{otherwise},\end{cases}\quad\text{for }j=1,2,\ldots,k.\end{split}
+(12)
+The sets \mathbb{P} and \mathbb{M}, along with the updated coefficients A^{*}, are transmitted from the compressor to the decompressor. Using this information, the decompressor updates its basis matrix M and reconstructs the gradient with the updated basis vectors and combination coefficients.
+[H]
+Dynamic Adjustment of Candidate Vector Count
+A full SVD involves high computational overhead. Fortunately, since only the first d basis vectors are needed in our algorithm, an iterative SVD method, called Randomized SVD [34], can be employed to reduce this overhead. The time complexity of Randomized SVD depends on d, allowing further reductions by decreasing d as described in Section III-C. Therefore, we can dynamically adjust d to further reduce computational overhead. We aim to make d as close as possible to the actual number of updates required, while leaving sufficient margin to ensure enough candidate vectors are available and should adapt quickly to minimize computational overhead. In practice, it has been observed that the number of basis vectors actually replaced in each round (i.e., the cardinality of the set \mathbb{M}, defined as d_{r}) changes smoothly. Under these requirements, we use a simple linear adjustment strategy, where d is updated as follows:
+\displaystyle d^{*}=\alpha d_{r}+\beta.
+(13)
+This simple strategy achieves good results in most cases while rapidly adjusting d in situations with significant changes, without introducing additional computational overhead. Empirically, we set \alpha=1.3 and \beta=1, which yielded good performance in our experiments.

@@ -1,0 +1,3406 @@
+1Introduction
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+1
+Introduction
+2
+Related Work
+Vision-Language-Action Models.
+Textual and Visual Reasoning for Robotic Intelligence.
+3
+Method
+3.1
+Problem Formulation
+3.2
+Unified Architecture
+3.3
+EM-CoT Data Pipeline
+3.4
+Training Recipe
+Stage 1: Versatile Pre-training.
+Stage 2: EM-CoT-Augmented Fine-tuning.
+4
+Experiments
+4.1
+Experiment Settings
+4.2
+Simulation Results
+4.3
+Ablation Study
+4.4
+Qualitative Results of EM-CoT
+4.5
+Real-World Results
+5
+Conclusion
+References
+A
+Details on Model Architecture
+A.1
+LLM Backbone
+A.2
+Multimodal Encoders
+A.3
+Special Tokens
+A.4
+Attention Mask
+B
+Details on EM-CoT Data Pipeline
+B.1
+Action Primitives Extraction
+B.2
+Prompts for EM-CoT
+B.3
+Visual Subgoal Extraction
+C
+Training Implementation
+D
+Complete Result on RoboTwin2.0 Benchmark
+E
+Details on Real-World Experiment
+License: arXiv.org perpetual non-exclusive license
+arXiv:2602.21157v1 [cs.RO] 24 Feb 2026
+\icml@noticeprintedtrue
+HALO: A Unified Vision-Language-Action Model for Embodied Multimodal Chain-of-Thought Reasoning
+Quanxin Shou
+1∗
+,
+Fangqi Zhu
+1∗
+,
+Shawn Chen
+1
+,
+Puxin Yan
+3
+,
+Zhengyang Yan
+1
+,
+Yikun Miao
+1
+,
+Xiaoyi Pang
+1
+,
+Zicong Hong
+2
+,
+Ruikai Shi
+1
+,
+Hao Huang
+1
+,
+Jie Zhang
+1
+,
+Song Guo
+1†
+1
+The Hong Kong University of Science and Technology,
+2
+EPFL,
+3
+Sun Yat-sen University
+Correspondence to:
+qshou@connect.ust.hk, songguo@ust.hk
+Vision–Language–Action (VLA) models have shown strong performance in robotic manipulation, but often struggle in long-horizon or out-of-distribution scenarios due to the lack of explicit mechanisms for multimodal reasoning and anticipating how the world will evolve under action.
+Recent works introduce textual chain-of-thought or visual subgoal prediction within VLA models to reason, but still fail to offer a unified human-like reasoning framework for joint textual reasoning, visual foresight, and action prediction.
+To this end, we propose
+Halo
+, a unified VLA model that enables embodied multimodal chain-of-thought (EM-CoT) reasoning through a sequential process of textual task reasoning, visual subgoal prediction for fine-grained guidance, and EM-CoT-augmented action prediction.
+We instantiate
+Halo
+with a Mixture-of-Transformers (MoT) architecture that decouples semantic reasoning, visual foresight, and action prediction into specialized experts while allowing seamless cross-expert collaboration.
+To enable
+Halo
+learning at scale, we introduce an automated pipeline to synthesize EM-CoT training data along with a carefully crafted training recipe.
+Extensive experiments demonstrate that: (1)
+Halo
+achieves superior performance in both simulated and real-world environments, surpassing baseline policy
+π
+0
+\pi_{0}
+by 34.1% on RoboTwin benchmark; (2) all proposed components of the training recipe and EM-CoT design help improve task success rate; and (3)
+Halo
+exhibits strong generalization capabilities under aggressive unseen environmental randomization with our proposed EM-CoT reasoning.
+\icml@noticeprintedtrue
+1
+Introduction
+Vision-Language-Action (VLA) models
+(
+Black et al., 2024
+;
+NVIDIA et al., 2025
+)
+have shown a compelling path toward general-purpose robotic manipulation.
+However, most existing VLAs map perceptual inputs directly to motor commands, lacking explicit mechanisms for reasoning about task structure or anticipating how the environment will evolve under motion and contact.
+This limitation becomes particularly pronounced in long-horizon or out-of-distribution scenarios—such as novel layouts, unfamiliar objects, or contact-rich interactions—where successful execution depends more on deliberation and foresight than on reactive pattern matching.
+Recent work has sought to address this limitation by introducing intermediate reasoning processes like human. Inspired by the success of Chain-of-Thought reasoning
+(
+Wei et al., 2023
+;
+Chen et al., 2025a
+;
+Chen et al., 2025b
+)
+in large language models,
+Zawalski et al. (2025)
+train VLAs to perform multi-step reasoning prior to action prediction, enabling task decomposition but without grounding such reasoning in explicit visual state evolution. In contrast,
+Zhao et al. (2025)
+autoregressively generate subgoal images as visual intermediate steps, but lack semantic reasoning capabilities.
+Achieving human-like textual reasoning and visual imagination capability within a unified framework remains challenging, as it demands strong multimodal generation while preserving reasoning capacity.
+Existing approaches
+(
+Zhao et al., 2025
+;
+Gu et al., 2025
+)
+often tightly couple visual generation with VLMs via discrete visual token prediction, which may hinder rich understanding capabilities of VLMs.
+Consequently, a unified architecture that jointly supports multimodal reasoning, visual generation, and action prediction remains an open problem.
+Figure 1
+:
+Halo
+first performs textual reasoning and task planning, then predicts visual subgoals for fine-grained guidance, and finally generates actions conditioned on EM-CoT.
+This process is implemented using a Mixture-of-Transformers (MoT) architecture that integrates a multimodal understanding expert, a visual generation expert, and an action prediction expert together through shared self-attention.
+To address this, we propose
+Halo
+, a unified VLA model that enables embodied multimodal chain-of-thought (EM-CoT) reasoning. As illustrated in Figure
+1
+,
+Halo
+first performs textual reasoning and task planning, then predicts subgoal images to provide fine-grained visual guidance, and finally uses the resulting EM-CoT as context for action prediction. This design is specifically engineered to emulate the human cognitive process of deliberate reasoning, mental imagination, and subsequent execution, rendering
+Halo
+particularly well-suited for tackling complex, long-horizon tasks that require intricate sequential reasoning and sustained contextual understanding over extended periods.
+Halo
+incorporates several key innovations to realize this vision.
+First, to natively support embodied multimodal reasoning,
+Halo
+adopts a Mixture-of-Transformers (MoT) architecture
+(
+Liang et al., 2024
+)
+that decouples textual reasoning, visual foresight, and action prediction into three specialized experts.
+These experts collaborate seamlessly through shared self-attention, while preserving each expert’s natural generative workflow—autoregressive text generation for reasoning and diffusion-based prediction for visual states and actions—thereby avoiding potential conflicts that arise when heterogeneous capabilities are forced into a single monolithic model.
+Second, we introduce an automatic EM-CoT data synthesis pipeline built upon action primitives and VLM annotator. The pipeline performs task planning first and then decomposes long-horizon robot trajectories into a sequence of sub-tasks, each paired with a corresponding subgoal image and explicit reasoning process. This enables automatic and scalable embodied multimodal reasoning supervision for our unified VLA model.
+Third, we propose a carefully designed training recipe that combines broad generalization with embodied reasoning specialization.
+(1) In a versatile pre-training stage,
+Halo
+is trained on diverse carefully crafted data sources, including general VQA datasets for robust multimodal understanding, egocentric and robotic video datasets for learning contact-rich physical dynamics, and heterogeneous robot trajectory datasets for acquiring foundational manipulation skills.
+(2) In a subsequent EM-CoT–augmented fine-tuning stage, the model is co-trained on EM-CoT and VQA data to inject EM-CoT reasoning capability while preserving its general world knowledge.
+We conduct extensive experiments in both the RoboTwin 2.0 simulator
+(
+Chen et al., 2025c
+)
+and real-world environments to validate the effectiveness of
+Halo
+. The results demonstrate that
+Halo
+achieves consistently stronger overall performance across both simulated and real-world settings, establishing a new state-of-the-art with an average success rate of 80.5% on RoboTwin, surpassing
+π
+0
+\pi_{0}
+by 34%.
+In addition, we perform comprehensive ablation studies to verify: (1) the effectiveness of the proposed EM-CoT, showing that combining textual reasoning with visual foresight contribute significantly to performance; and (2) the importance of each category of pre-training tasks, all of which provide measurable benefits to downstream performance.
+We further demonstrate the strong generalization capability of
+Halo
+in both simulation and real robots, and qualitatively show that it can generate reasonable EM-CoT to guide action prediction in unseen scenarios.
+Taken together, these results highlight
+Halo
+as a scalable and generalizable paradigm for human-like VLA reasoning.
+2
+Related Work
+Vision-Language-Action Models.
+Predominant VLA models are built on top of Vision-Language Models (VLMs) pre-trained on large-scale web data, inheriting rich multimodal knowledge about the world. Representative architectures such as OpenVLA
+(
+O’Neill et al., 2024
+)
+and FAST
+(
+Pertsch et al., 2025
+)
+directly extend pre-trained VLMs by introducing discrete action tokens and predicting actions autoregressively to solve embodied tasks. The
+π
+0
+\pi_{0}
+series
+(
+Black et al., 2024
+;
+Intelligence et al., 2025
+)
+further introduce a separate action expert along with the pre-trained VLM for flow-based action prediction, achieving better performance and efficiency.
+Beyond equipping VLM with only action prediction capability, unified VLA architectures
+(
+Bi et al., 2025
+;
+Wang et al., 2025
+;
+Cen et al., 2025
+;
+Lv et al., 2025
+)
+have been proposed to enhance dynamic awareness by jointly modeling textual understanding, visual generation, and action prediction. These methods incorporate image or video generation components to predict future environmental states, using either unified
+(
+Cen et al., 2025
+;
+Wang et al., 2025
+)
+or mixed
+(
+Bi et al., 2025
+;
+Lv et al., 2025
+)
+architectures that are trained together with action prediction to capture underlying environment dynamics. However, these methods lack explicit textual or visual reasoning capability, limiting their performance in complex and dynamic environments.
+Textual and Visual Reasoning for Robotic Intelligence.
+Reasoning is a crucial step towards robotic intelligence
+(
+LeCun, 2022
+)
+. Motivated by the success of Chain-of-Thought reasoning in language models, recent work extends explicit reasoning mechanisms to embodied decision making. MoTVLA
+(
+Bi et al., 2025
+)
+proposes a textual reasoning framework that performs planning and reasoning prior to action execution. UP-VLA
+(
+Zhang et al., 2025
+)
+, CoTVLA
+(
+Zhao et al., 2025
+)
+and InternVLA-A1
+(
+Cai et al., 2026
+)
+further introduce visual reasoning by generating goal images and videos to guide downstream action prediction.
+More recently, ManualVLA
+(
+Gu et al., 2025
+)
+tries to combine visual and textual reasoning through a shared planning expert that produces both textual instructions and visual subgoals. However, this design couples image and text generation within a single autoregressive model, which may degrade the reasoning capability of the underlying VLM. In contrast, our proposed
+embodied multimodal chain-of-thought (EM-CoT)
+employs a
+Mixture-of-Transformers (MoT) architecture
+for joint textual reasoning, visual generation, and action prediction. Our decoupled design enables more effective reasoning across visual and textual modalities before executing actions.
+3
+Method
+In this section, we delineate the core design principles of
+Halo
+, focusing on its unified architecture, the embodied multimodal chain-of-thought (EM-CoT) data pipeline, and the associated training recipe. Collectively, these components empower the model to engage in textual reasoning, visual foresight, and grounded action prediction.
+3.1
+Problem Formulation
+We formulate robotic manipulation as a sequential decision-making problem.
+Let
+τ
+=
+{
+(
+𝐨
+t
+,
+𝐥
+,
+𝐚
+t
+)
+}
+t
+=
+1
+T
+\tau=\{(\mathbf{o}_{t},\mathbf{l},\mathbf{a}_{t})\}_{t=1}^{T}
+denote a trajectory, comprising visual observations
+𝐨
+t
+∈
+𝒪
+\mathbf{o}_{t}\in\mathcal{O}
+, language instructions
+𝐥
+∈
+ℒ
+\mathbf{l}\in\mathcal{L}
+, and continuous actions
+𝐚
+t
+∈
+𝒜
+\mathbf{a}_{t}\in\mathcal{A}
+.
+Traditional VLA models typically learn a monolithic policy
+π
+θ
+(
+𝐚
+t
+:
+t
++
+m
+∣
+𝐥
+,
+𝐨
+t
+−
+k
+:
+t
+)
+\pi_{\theta}(\mathbf{a}_{t:t+m}\mid\mathbf{l},\mathbf{o}_{t-k:t})
+that directly maps history observations and instructions to action chunks.
+Such purely reactive policies often suffer from performance degradation when facing long-horizon or complex manipulation tasks due to a lack of intermediate reasoning.
+In this case, we aim to integrate explicit EM-CoT as a robust conditioning mechanism in
+Halo
+and make its generation process align with typical human cognitive pathway of “thinking-imagination-execution”. To achieve our goal, we decompose the generation process of
+Halo
+into three distinct phases: textual reasoning, visual foresight, and action prediction.
+Then the problem is transformed into learning a unified policy
+π
+θ
+\pi_{\theta}
+that jointly models the following mappings:
+𝐫
+\displaystyle\mathbf{r}
+∼
+P
+θ
+(
+⋅
+∣
+𝐥
+,
+𝐨
+t
+−
+k
+:
+t
+)
+\displaystyle\sim P_{\theta}(\cdot\mid\mathbf{l},\mathbf{o}_{t-k:t})
+(1)
+𝐨
+^
+t
++
+h
+\displaystyle\hat{\mathbf{o}}_{t+h}
+∼
+P
+θ
+(
+⋅
+∣
+𝐥
+,
+𝐨
+t
+−
+k
+:
+t
+,
+𝐫
+)
+\displaystyle\sim P_{\theta}(\cdot\mid\mathbf{l},\mathbf{o}_{t-k:t},\mathbf{r})
+(2)
+𝐚
+t
+:
+t
++
+m
+\displaystyle\mathbf{a}_{t:t+m}
+∼
+π
+θ
+(
+⋅
+∣
+𝐥
+,
+𝐨
+t
+−
+k
+:
+t
+,
+𝐫
+,
+𝐨
+^
+t
++
+h
+)
+\displaystyle\sim\pi_{\theta}(\cdot\mid\mathbf{l},\mathbf{o}_{t-k:t},\mathbf{r},\hat{\mathbf{o}}_{t+h})
+(3)
+where
+𝐫
+\mathbf{r}
+represents generated textual chain-of-thought and
+𝐨
+^
+t
++
+h
+\hat{\mathbf{o}}_{t+h}
+denotes predicted visual subgoal. Under this formulation, the action chunk
+𝐚
+t
+:
+t
++
+m
+\mathbf{a}_{t:t+m}
+is not a simple reaction, but the result of a deliberate reasoning trace and physical world modeling, ensuring that every control command is strategically planned and visually grounded.
+3.2
+Unified Architecture
+We now present the unified architecture of
+Halo
+, as illustrated in Figure
+1
+.
+Drawing inspiration from the capability of BAGEL
+(
+Deng et al., 2025
+)
+to harmonize multimodal tasks, we adopt a Mixture-of-Transformers (MoT)
+(
+Liang et al., 2024
+)
+architecture comprising three specialized experts:
+Multimodal Understanding
+,
+Visual Generation
+, and
+Action Prediction
+.
+These three experts specialize in distinct modalities and are responsible for textual reasoning, visual generation, and action prediction, respectively.
+While maintaining independent parameter sets, they interact through a shared self-attention mechanism to enable rich cross-modal interactions.
+With such an architecture,
+Halo
+operates as a unified VLA model that simultaneously possesses the capability to generate detailed textual reasoning and to produce explanatory subgoal images.
+The switching mechanism between modalities is explicitly controlled via special tokens.
+By default, the model operates as an auto-regressive planner; however, the generation of specific tokens (e.g.,
+⟨
+visual_start
+⟩
+\langle\text{visual\_start}\rangle
+or
+⟨
+action_start
+⟩
+\langle\text{action\_start}\rangle
+) triggers the routing of hidden states to the visual generation expert or the action prediction expert, respectively.
+In order to manage the information flow among experts, we implement a carefully structured masking strategy within the shared self-attention. As illustrated in Figure
+4
+, a causal mask is applied to textual tokens to enforce autoregressive generation. Conversely, visual tokens employ bidirectional attention within each frame to capture global spatial dependencies, while maintaining causal masking for interactions across frames or modalities. Crucially, to prevent information leakage, noise tokens are restricted from attending to their corresponding ground-truth targets. Furthermore, all other tokens are masked from attending to noise tokens, ensuring they only aggregate information from valid non-noise contexts.
+To facilitate training stability, we initialize each expert using the Qwen2.5-1.5B LLM
+(
+Yang et al., 2025
+)
+, yielding a cumulative parameter count of approximately 4.5B. To project heterogeneous data into a unified representation space, we employ modality-specific encoders.
+For
+text
+, we adopt the standard Qwen2.5 tokenizer
+(
+Bai et al., 2023
+)
+, expanding the vocabulary with special control tokens—specifically
+⟨
+think_start
+⟩
+\langle\text{think\_start}\rangle
+,
+⟨
+vision_start
+⟩
+\langle\text{vision\_start}\rangle
+, and
+⟨
+action_start
+⟩
+\langle\text{action\_start}\rangle
+,
+among others—to strictly demarcate the textual reasoning, visual generation, and acting phases, thereby enforcing a structured and interpretable workflow.
+In the
+vision
+domain, we decouple the encoding mechanisms for semantic understanding and visual generation to address their distinct functional requirements. For the
+understanding
+task, we employ a ViT
+(
+Dosovitskiy, 2020
+)
+initialized with SigLIP2
+(
+Tschannen et al., 2025
+)
+to leverage robust semantic features. To accommodate diverse real-world inputs without geometric distortion, this encoder is further enhanced with NaViT
+(
+Dehghani et al., 2023
+)
+, enabling the processing of images in their native aspect ratios. For the
+visual generation
+task, we utilize a pre-trained VAE
+(
+Kingma and Welling, 2013
+;
+Labs et al., 2025
+)
+optimized for high-fidelity image compression and reconstruction. Finally, for the
+action
+modality, given its low-dimensional and physically structured nature, a linear projection suffices to map actions into the model’s hidden dimension while preserving intrinsic structural information. See Appendix
+A
+for further architectural details.
+Figure 2
+:
+Overview of EM-CoT Data Synthesis Pipeline.
+The pipeline converts raw robotic trajectories into EM-CoT data in three phases:
+(1) action primitives are extracted from robot proprioception via rule-based matching;
+(2) a VLM acts as an annotator to generate task plans, decompose trajectories into subtasks, and align each subtask with explicit textual reasoning; and
+(3) the terminal frame of each subtask is selected as a visual subgoal image, producing structured embodied multimodal chain-of-thought supervision.
+3.3
+EM-CoT Data Pipeline
+To support the generation of intermediate textual reasoning trace
+𝐫
+\mathbf{r}
+and visual subgoal
+𝐨
+^
+t
++
+h
+\hat{\mathbf{o}}_{t+h}
+, we construct an automatic pipeline to synthesize EM-CoT data from raw robot trajectories at scale. As shown in Figure
+2
+, the pipeline operates in three phases. Firstly, we translate continuous low-level actions into high-level motion primitives via rule-based matching following
+Belkhale et al. (2024)
+. Secondly, we utilize a large-scale Vision-Language Model (Qwen3-VL
+(
+Bai et al., 2025
+)
+) to augment the trajectory with dense textual reasoning, including task narratives and subtask decomposition. Finally, the terminal frame of each subtask is designated as its corresponding visual subgoal, providing a sparse supervision signal that effectively lowers the learning difficulty. This process yields a high-quality dataset
+𝒟
+ft
+\mathcal{D}_{\text{ft}}
+where every trajectory is augmented with aligned textual reasoning
+𝐫
+\mathbf{r}
+and visual goals
+𝐨
+^
+\hat{\mathbf{o}}
+, enabling the supervision of the intermediate steps defined in Eq. (
+1
+)-(
+2
+). See Appendix
+B
+for more details on this pipeline, including the pseudo code and tailored prompt used in each phase.
+Figure 3
+:
+Attention Masking Strategy for EM-CoT.
+(1) Spatial and semantic tokens utilize bidirectional attention within frames. (2) Noise tokens attend bidirectionally to each other. (3) Cross-modality interactions and text generation follow causal constraints. (4) Non-noise tokens are masked from noise tokens to prevent leakage.
+Figure 4
+:
+Overview of dataset recipe.
+Halo
+training involves two stages:
+Stage 1
+pre-trains on general VQA, visual generation, and action prediction to build foundation skills;
+Stage 2
+introduces EM-CoT–augmented fine-tuning to inject multi-step reasoning and foresight capabilities.
+3.4
+Training Recipe
+To evolve
+Halo
+into a capable deliberative unified VLA, we employ a two-stage training paradigm: (1)
+Versatile Pre-training
+, which establishes a robust generalist foundation, and (2)
+EM-CoT-Augmented Fine-tuning
+, which elicits structured multimodal reasoning capabilities.
+Stage 1: Versatile Pre-training.
+The primary objective of this phase is to unify multimodal understanding, physical dynamics prediction, and foundational manipulation skills into a single architecture. To this end, we curate a massive, heterogeneous dataset spanning three distinct domains—Visual Question Answering (VQA), Visual Generation (VG), and Action Prediction (AP)—as illustrated in Fig.
+4
+. This diversity ensures the model develops a generalized representation capable of supporting complex downstream reasoning.
+•
+VQA (Mutilmodal understanding): We utilize LLaVA-NeXT-779k
+(
+Liu et al., 2024a
+)
+to provide high-quality multimodal conversational priors. This task aligns linguistic instructions with visual contexts via a standard cross-entropy loss, denoted as
+ℒ
+CE
+\mathcal{L}_{\text{CE}}
+.
+•
+VG (Visual Generation): To instill physical common sense, we integrate robotic trajectories from OXE
+(
+O’Neill et al., 2024
+)
+with ego-centric manipulation videos from SSv2
+(
+Goyal et al., 2017
+)
+. We formulate visual foresight as a future frame prediction task,
+(
+l
+,
+I
+t
+−
+k
+:
+t
+)
+→
+I
+t
++
+h
+(l,I_{t-k:t})\to I_{t+h}
+, trained using a flow-matching MSE loss,
+ℒ
+MSE
+\mathcal{L}_{\text{MSE}}
+.
+Crucially, we employ a dual-path visual pathway that integrates complementary semantic and spatial representations: a ViT branch first captures high-level semantic context, while a VAE branch provides spatially grounded latent features that are compact and generation-friendly. By combining these two pathways, the model jointly exploits semantic dynamics and spatial structure for prediction.
+•
+AP (Imitation Learning): We repurpose the OXE dataset for direct action prediction. The model learns to predict the next action chunk
+a
+t
+a_{t}
+given the history, supervised by an
+L
+1
+L_{1}
+flow-matching loss,
+ℒ
+L1
+\mathcal{L}_{\text{L1}}
+.
+To address the varying optimization difficulties across these tasks, we balance the pre-training objective by assigning higher weights to manipulation intensive tasks. The total pre-training loss is defined as:
+ℒ
+pt
+=
+0.25
+​
+ℒ
+CE
++
+0.5
+​
+ℒ
+MSE
++
+ℒ
+L1
+.
+\displaystyle\mathcal{L}_{\text{pt}}=0.25\mathcal{L}_{\text{CE}}+0.5\mathcal{L}_{\text{MSE}}+\mathcal{L}_{\text{L1}}.
+(4)
+Table 1
+:
+Quantitative results in simulation on RoboTwin 2.0.
+Each task is evaluated 100 times under the Easy (Clean) and Hard (Domain-randomized) settings, and the average success rate across 50 tasks is reported. The complete results are provided in Appendix
+D
+.
+Task
+π
+0
+\pi_{0}
+RDT-1B
+Diffusion Policy
+Halo
+-w/o EM-CoT
+Halo
+Easy
+Hard
+Easy
+Hard
+Easy
+Hard
+Easy
+Hard
+Easy
+Hard
+Adjust Bottle
+90
+56
+81
+75
+97
+0
+99
+2
+97
+9
+Beat Block Hammer
+43
+21
+77
+37
+42
+0
+95
+3
+96
+11
+Blocks Ranking RGB
+19
+5
+3
+0
+0
+0
+85
+3
+94
+7
+Blocks Ranking Size
+7
+1
+0
+0
+1
+0
+37
+0
+58
+2
+Click Alarmclock
+63
+11
+61
+12
+61
+5
+85
+10
+83
+14
+Click Bell
+44
+3
+80
+9
+54
+0
+100
+5
+100
+10
+Dump Bin Bigbin
+83
+24
+64
+32
+49
+0
+88
+30
+93
+28
+Grab Roller
+96
+80
+74
+43
+98
+0
+97
+49
+95
+57
+⋯
+\cdots
+Shake Bottle Horizontally
+99
+51
+84
+51
+59
+18
+100
+63
+100
+66
+Shake Bottle
+97
+60
+74
+45
+65
+8
+100
+70
+98
+73
+Stack Blocks Three
+17
+0
+2
+0
+0
+0
+90
+32
+96
+37
+Stack Blocks Two
+42
+1
+21
+2
+7
+0
+99
+55
+100
+60
+Stack Bowls Three
+66
+24
+51
+17
+63
+0
+83
+20
+92
+25
+Stack Bowls Two
+91
+41
+76
+30
+61
+0
+96
+46
+98
+49
+Stamp Seal
+3
+4
+1
+0
+2
+0
+49
+16
+60
+21
+Turn Switch
+27
+23
+35
+15
+36
+1
+58
+24
+65
+27
+Average
+46.4
+16.3
+34.5
+13.7
+28.0
+0.6
+75.3
+21.2
+80.5
+26.4
+Stage 2: EM-CoT-Augmented Fine-tuning.
+Building upon the pre-trained foundation, we transition
+Halo
+from a reactive policy to a deliberative one by fine-tuning it on our EM-CoT dataset,
+𝒟
+ft
+\mathcal{D}_{\text{ft}}
+(see Sec.
+3.3
+). This stage augments standard robotic trajectories with explicit textual reasoning traces
+𝐫
+\mathbf{r}
+and visual subgoals
+𝐨
+^
+\hat{\mathbf{o}}
+.
+Adhering to the sequential structure defined in Eq. (
+1
+)–(
+3
+), the model is trained to orchestrate a complete “thought-foresight-action” chain. The fine-tuning objective minimizes the joint loss:
+ℒ
+ft
+=
+ℒ
+𝐫
++
+ℒ
+𝐨
+^
++
+ℒ
+𝐚
+,
+\displaystyle\mathcal{L}_{\text{ft}}=\mathcal{L}_{\mathbf{r}}+\mathcal{L}_{\hat{\mathbf{o}}}+\mathcal{L}_{\mathbf{a}},
+(5)
+where
+ℒ
+𝐫
+\mathcal{L}_{\mathbf{r}}
+,
+ℒ
+𝐨
+^
+\mathcal{L}_{\hat{\mathbf{o}}}
+, and
+ℒ
+𝐚
+\mathcal{L}_{\mathbf{a}}
+represent the losses for textual reasoning, visual subgoal generation, and action prediction, respectively. To mitigate catastrophic forgetting of general multimodal capabilities during this specialization, we incorporate general VQA data into the fine-tuning corpus
+(
+Cheang et al., 2025
+)
+. This process results in a model that effectively bridges high-level semantic intent with precise, visually grounded motor control for long-horizon manipulation. Please
+refer to Appendix
+C
+for implementation details.
+4
+Experiments
+We conduct extensive experiments to evaluate the effectiveness of
+Halo
+equipped with EM-CoT. Our study focuses on: (i) whether the proposed unified VLA architecture with EM-CoT improves overall performance and generalization; (ii) whether
+Halo
+can generate informative EM-CoT reasoning, particularly under novel settings; (iii) whether multimodal reasoning outperforms using only textual reasoning or visual subgoal prediction, and how the proposed training recipe contributes to performance; and (iv) whether
+Halo
+demonstrates superior performance in real-world robotic settings.
+4.1
+Experiment Settings
+During pre-training, following
+(
+Deng et al., 2025
+)
+, training samples are concatenated to a maximum sequence length of 27k tokens, and Flex Attention
+(
+Dong et al., 2024
+)
+is adopted to accelerate training;
+Halo
+is trained for 90k steps at this stage.
+For fine-tuning, we use raw trajectories collected from RoboTwin 2.0
+(
+Chen et al., 2025c
+)
+and real-world. The simulation dataset contains 2,500 expert demonstrations (50 per task) collected in clean environments, while the real-world dataset consists of 320 demonstrations (80 per task). Using these datasets,
+Halo
+is fine-tuned for 110k steps in simulation and 80k steps in real-world experiments.
+During inference, task instructions together with
+c
+=
+3
+c=3
+observation frames are provided as input. We set the action chunk length to
+K
+=
+16
+K=16
+for simulation and
+K
+=
+50
+K=50
+for real-world experiments.
+4.2
+Simulation Results
+We conduct simulation experiments on RoboTwin 2.0
+(
+Chen et al., 2025c
+)
+, a comprehensive benchmark comprising 50 challenging manipulation tasks. We compare
+Halo
+with several competitive baselines, including
+π
+0
+\pi_{0}
+(
+Black et al., 2024
+)
+, RDT
+(
+Liu et al., 2024b
+)
+, and Diffusion Policy
+(
+Chi et al., 2025
+)
+. Baseline results are taken directly from the official RoboTwin 2.0 leaderboard.
+1
+1
+1
+https://robotwin-platform.github.io/leaderboard
+To isolate the contribution of EM-CoT, we further include a variant of our method without EM-CoT, denoted as
+Halo
+-w/o EM-CoT.
+Table
+1
+shows the performance of
+Halo
+and all baselines on RoboTwin 2.0.
+It can be observed that
+Halo
+consistently outperforms all competitive baselines across both Easy and Hard settings. The average success rate of
+Halo
+reaches 80.46% on Easy tasks and 26.44% on Hard tasks, surpassing baseline policy
+π
+0
+\pi_{0}
+by 34.1% and 10.1%, respectively. Particularly, the consistent huge relative performance gap (i.e., 73.5% and 62.0%) between
+Halo
+and
+π
+0
+\pi_{0}
+especially on Hard tasks indicates that
+Halo
+can also handle out-of-distribution (OOD) challenges more robustly. This stems from the fact that
+Halo
+not only possesses robust foundational capabilities but also features EM-CoT capabilities meticulously tailored for intricate, complex scenarios.
+Besides, even without the explicit reasoning chain,
+Halo
+-w/o EM-CoT already surpasses the strongest baseline (
+π
+0
+\pi_{0}
+) by a substantial margin of
++
+28.92
++28.92
+points on average for Easy tasks, demonstrating the powerful general foundation established by our versatile pre-training.
+In contrast, traditional reactive policies such as Diffusion Policy struggle significantly in randomized environments, with success rates dropping to near-zero (0.6%) in Hard settings. While
+π
+0
+\pi_{0}
+and RDT-1B exhibit some degree of robustness, they plateau at significantly lower performance levels, whereas
+Halo
+continues to improve as it incorporates more structured reasoning. On fine-grained tasks such as “Blocks Ranking Size” and “Stamp Seal,”
+Halo
+achieves a multi-fold increase in success rates compared to baselines, demonstrating its ability to manage intricate object interactions. These results underscore the effectiveness and robustness of
+Halo
+for complex robotic manipulation.
+Table 2
+:
+Ablation studies on training recipe and EM-CoT.
+Panel A: training recipe ablation (V/T/A denote visual generation, textual VQA, and action prediction data. Note that in the
+Full
+setting, we pre-train the model with V&T&A datasets and then fine-tune it on the official RoboTwin 2.0 dataset).
+Panel B: EM-CoT ablation (V = visual subgoal images, T = textual reasoning).
+Panel A: Training Recipe
+Panel B: EM-CoT
+Setting
+Easy
+Hard
+Setting
+Easy
+Hard
+Full
+75.3
+21.2
+Halo
+80.5
+26.4
+w/o V
+58.2
+10.5
+w/o T
+77.8
+18.3
+w/o V+T
+42.9
+3.9
+w/o V
+76.1
+22.5
+w/o V+T+A
+32.4
+0.0
+w/o V & T
+75.3
+21.2
+4.3
+Ablation Study
+We perform ablation studies to validate the effectiveness of
+Halo
+’s mechanism design, including the versatile pre-training and the EM-CoT-augmented Fine-tuning. The results are shown in Table
+2
+.
+Effectiveness of the versatile pre-training
+. As depicted in Panel A, the full versatile pre-training utilizing all three diverse datasets demonstrates unparalleled effectiveness, consistently achieving the highest performance metrics. Conversely, even the selective removal of a single data modality, such as visual generation data (w/o V), leads to a significant degradation in performance, particularly on hard tasks (over 50% reduction). Further progressive exclusion of textual (w/o V+T) and action prediction data (w/o V+T+A) results in a continuously worsening performance trajectory. Notably, without any pre-training (w/o V+T+A), the model’s performance falls to a complete 0% on hard tasks, demonstrating that pre-training is an absolutely foundational requirement for establishing the core competencies necessary to tackle complex problems. Collectively, these findings underscore the indispensable and complementary roles of the versatile pre-training step.
+Effectiveness of EM-CoT
+. As shown in Panel B, both visual subgoal images and textual reasoning are crucial components for EM-CoT, removing either component degrades performance. Combining both reasoning modalities in
+Halo
+achieves the highest accuracy, particularly on hard tasks. These results validate the effectiveness of the proposed EM-CoT formulation.
+4.4
+Qualitative Results of EM-CoT
+To qualitatively assess the efficacy of EM-CoT, we visualize representative rollouts from both the clean and randomized settings of RoboTwin 2.0, as illustrated in Figure
+6
+.
+In the clean setting, EM-CoT demonstrates high fidelity, with predicted textual reasoning and visual subgoals closely aligning with the ground truth. The result indicates that
+Halo
+effectively masters the underlying task logic, providing a clear, self-generated multimodal roadmap that anchors the final action in a semantically and visually consistent manner.
+Under aggressive environmental randomization, EM-CoT still exhibits significant robustness while maintaining performance despite substantial visual shifts. As shown in the last row of Figure
+6
+,
+Halo
+correctly identifies targets and plans trajectories even when object appearances and backgrounds significantly differ from the training distribution. This suggests our EM-CoT paradigm allows the agent to perform true semantic reasoning rather than relying on simple pattern matching. By enforcing a deliberate reasoning process, the model effectively performs low-level control guided by high-level reasoning under the challenging out-of-distribution scenarios.
+4.5
+Real-World Results
+Figure 5
+:
+Qualitative Analysis of the EM-CoT.
+We highlight (i) accurate textual reasoning and subgoal image generation in the clean setting, and (ii) robust EM-CoT generalization under the unseen domain-randomized settings.
+Figure 6
+:
+Real-World Task Settings.
+(a) Basic Setting: Four tasks, including
+tool-use sweeping
+,
+bimanual cup nesting
+,
+inter-arm screwdriver handover
+, and
+placing an object into a drawer
+.
+(b) Generalization Setting: Challenging scenarios involving visual distractions (e.g., Coke bottles and cups), lighting variations, background variations (e.g., changing tablecloth colors), and novel objects (e.g., replacing the broom with a sponge).
+(a)
+Basic setting.
+(b)
+Generalization setting.
+Figure 7
+:
+Quantitative results of real-world experiments on both the basic setting and the generalization setting.
+Each task is evaluated over 50 trials, and the success rate is reported.
+We further evaluate
+Halo
+on a real-world Cobot Mobile ALOHA platform on four long-horizon manipulation tasks, including
+tool-use sweeping
+,
+bimanual cup nesting
+,
+inter-arm screwdriver handover
+, and
+placing an object into a drawer
+(Figure
+6
+). These tasks require multi-step planning, semantic grounding, and coordinated dual-arm control skills, making them valuable for evaluating the effectiveness of EM-CoT reasoning in real-world settings.
+As shown in Figure
+7
+,
+Halo
+consistently outperforms the baseline policies
+π
+0
+\pi_{0}
+and
+π
+0.5
+\pi_{0.5}
+under both the basic and generalization settings. While the baselines suffer noticeable performance degradation in the presence of visual distractions, lighting and background variations, and novel objects,
+Halo
+remains robust and achieves the highest success rates across all tasks. These results demonstrate that EM-CoT reasoning enables more stable long-horizon execution and stronger generalization in real-world robotic manipulation.
+5
+Conclusion
+In this paper, we propose
+Halo
+, a unified VLA model that enables embodied multimodal chain-of-thought (EM-CoT) reasoning through joint textual reasoning, visual foresight, and action prediction using a Mixture-of-Transformers (MoT) architecture. We also introduce an automated pipeline for synthesizing EM-CoT training data, along with a carefully crafted training recipe. Extensive experiments and ablation studies validate the effectiveness of
+Halo
+in the challenging out-of-distribution and real-world settings, highlighting
+Halo
+as a scalable and generalizable human-like VLA reasoning paradigm.
+References
+Bai
+et al.
+(2023)
+J. Bai, S. Bai, Y. Chu, Z. Cui, K. Dang, X. Deng, Y. Fan, W. Ge, Y. Han, F. Huang,
+et al.
+Qwen technical report
+.
+arXiv preprint arXiv:2309.16609
+.
+Cited by:
+1st item
+,
+§3.2
+.
+Bai
+et al.
+(2025)
+S. Bai, Y. Cai, R. Chen, K. Chen, X. Chen, Z. Cheng, L. Deng, W. Ding, C. Gao, C. Ge, W. Ge, Z. Guo, Q. Huang, J. Huang, F. Huang, B. Hui, S. Jiang, Z. Li, M. Li, M. Li, K. Li, Z. Lin, J. Lin, X. Liu, J. Liu, C. Liu, Y. Liu, D. Liu, S. Liu, D. Lu, R. Luo, C. Lv, R. Men, L. Meng, X. Ren, X. Ren, S. Song, Y. Sun, J. Tang, J. Tu, J. Wan, P. Wang, P. Wang, Q. Wang, Y. Wang, T. Xie, Y. Xu, H. Xu, J. Xu, Z. Yang, M. Yang, J. Yang, A. Yang, B. Yu, F. Zhang, H. Zhang, X. Zhang, B. Zheng, H. Zhong, J. Zhou, F. Zhou, J. Zhou, Y. Zhu, and K. Zhu
+Qwen3-vl technical report
+.
+External Links:
+2511.21631
+,
+Link
+Cited by:
+§3.3
+.
+Belkhale
+et al.
+(2024)
+S. Belkhale, T. Ding, T. Xiao, P. Sermanet, Q. Vuong, J. Tompson, Y. Chebotar, D. Dwibedi, and D. Sadigh
+Rt-h: action hierarchies using language
+.
+arXiv preprint arXiv:2403.01823
+.
+Cited by:
+§3.3
+.
+Bi
+et al.
+(2025)
+H. Bi, H. Tan, S. Xie, Z. Wang, S. Huang, H. Liu, R. Zhao, Y. Feng, C. Xiang, Y. Rong,
+et al.
+Motus: a unified latent action world model
+.
+arXiv preprint arXiv:2512.13030
+.
+Cited by:
+§2
+,
+§2
+.
+Black
+et al.
+(2024)
+K. Black, N. Brown, D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai, L. Groom, K. Hausman, B. Ichter,
+et al.
+Pi_0: a vision-language-action flow model for general robot control
+.
+arXiv preprint arXiv:2410.24164
+.
+Cited by:
+§1
+,
+§2
+,
+§4.2
+.
+Cai
+et al.
+(2026)
+J. Cai, Z. Cai, J. Cao, Y. Chen, Z. He, L. Jiang, H. Li, H. Li, Y. Li, Y. Liu,
+et al.
+InternVLA-a1: unifying understanding, generation and action for robotic manipulation
+.
+arXiv preprint arXiv:2601.02456
+.
+Cited by:
+§2
+.
+Cen
+et al.
+(2025)
+J. Cen, C. Yu, H. Yuan, Y. Jiang, S. Huang, J. Guo, X. Li, Y. Song, H. Luo, F. Wang,
+et al.
+WorldVLA: towards autoregressive action world model
+.
+arXiv preprint arXiv:2506.21539
+.
+Cited by:
+§2
+.
+Cheang
+et al.
+(2025)
+C. Cheang, S. Chen, Z. Cui, Y. Hu, L. Huang, T. Kong, H. Li, Y. Li, Y. Liu, X. Ma,
+et al.
+Gr-3 technical report
+.
+arXiv preprint arXiv:2507.15493
+.
+Cited by:
+§3.4
+.
+Chen
+et al.
+(2025a)
+S. Chen, Y. Guo, Z. Su, Y. Li, Y. Wu, J. Chen, J. Chen, W. Wang, X. Qu, and Y. Cheng
+Advancing multimodal reasoning: from optimized cold start to staged reinforcement learning
+.
+arXiv preprint arXiv:2506.04207
+.
+Cited by:
+§1
+.
+Chen
+et al.
+(2025b)
+S. Chen, Y. Guo, Y. Ye, S. Huang, W. Hu, H. Li, M. Zhang, J. Chen, S. Guo, and N. Peng
+ARES: multimodal adaptive reasoning via difficulty-aware token-level entropy shaping
+.
+arXiv preprint arXiv:2510.08457
+.
+Cited by:
+§1
+.
+Chen
+et al.
+(2025c)
+T. Chen, Z. Chen, B. Chen, Z. Cai, Y. Liu, Z. Li, Q. Liang, X. Lin, Y. Ge, Z. Gu,
+et al.
+Robotwin 2.0: a scalable data generator and benchmark with strong domain randomization for robust bimanual robotic manipulation
+.
+arXiv preprint arXiv:2506.18088
+.
+Cited by:
+§1
+,
+§4.1
+,
+§4.2
+.
+Chi
+et al.
+(2025)
+C. Chi, Z. Xu, S. Feng, E. Cousineau, Y. Du, B. Burchfiel, R. Tedrake, and S. Song
+Diffusion policy: visuomotor policy learning via action diffusion
+.
+The International Journal of Robotics Research
+44
+(
+10-11
+),
+pp. 1684–1704
+.
+Cited by:
+§4.2
+.
+Dehghani
+et al.
+(2023)
+M. Dehghani, B. Mustafa, J. Djolonga, J. Heek, M. Minderer, M. Caron, A. Steiner, J. Puigcerver, R. Geirhos, I. M. Alabdulmohsin,
+et al.
+Patch n’pack: navit, a vision transformer for any aspect ratio and resolution
+.
+Advances in Neural Information Processing Systems
+36
+,
+pp. 2252–2274
+.
+Cited by:
+2nd item
+,
+§3.2
+.
+Deng
+et al.
+(2025)
+C. Deng, D. Zhu, K. Li, C. Gou, F. Li, Z. Wang, S. Zhong, W. Yu, X. Nie, Z. Song,
+et al.
+Emerging properties in unified multimodal pretraining
+.
+arXiv preprint arXiv:2505.14683
+.
+Cited by:
+§3.2
+,
+§4.1
+.
+Dong
+et al.
+(2024)
+J. Dong, B. Feng, D. Guessous, Y. Liang, and H. He
+Flex attention: a programming model for generating optimized attention kernels
+.
+External Links:
+2412.05496
+,
+Link
+Cited by:
+§4.1
+.
+Dosovitskiy (2020)
+A. Dosovitskiy
+An image is worth 16x16 words: transformers for image recognition at scale
+.
+arXiv preprint arXiv:2010.11929
+.
+Cited by:
+2nd item
+,
+§3.2
+.
+Fu
+et al.
+(2024)
+Z. Fu, T. Z. Zhao, and C. Finn
+Mobile aloha: learning bimanual mobile manipulation with low-cost whole-body teleoperation
+.
+arXiv preprint arXiv:2401.02117
+.
+Cited by:
+Appendix E
+.
+Goyal
+et al.
+(2017)
+R. Goyal, S. Ebrahimi Kahou, V. Michalski, J. Materzynska, S. Westphal, H. Kim, V. Haenel, I. Fruend, P. Yianilos, M. Mueller-Freitag,
+et al.
+The” something something” video database for learning and evaluating visual common sense
+.
+In
+Proceedings of the IEEE international conference on computer vision
+,
+pp. 5842–5850
+.
+Cited by:
+2nd item
+.
+Gu
+et al.
+(2025)
+C. Gu, J. Liu, H. Chen, R. Huang, Q. Wuwu, Z. Liu, X. Li, Y. Li, R. Zhang, P. Jia,
+et al.
+ManualVLA: a unified vla model for chain-of-thought manual generation and robotic manipulation
+.
+arXiv preprint arXiv:2512.02013
+.
+Cited by:
+§1
+,
+§2
+.
+Intelligence
+et al.
+(2025)
+P. Intelligence, K. Black, N. Brown, J. Darpinian, K. Dhabalia, D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai,
+et al.
+Pi_0.5: a vision-language-action model with open-world generalization
+.
+arXiv preprint arXiv:2504.16054
+.
+Cited by:
+§2
+.
+Kingma and Welling (2013)
+D. P. Kingma and M. Welling
+Auto-encoding variational bayes
+.
+arXiv preprint arXiv:1312.6114
+.
+Cited by:
+2nd item
+,
+§3.2
+.
+Labs
+et al.
+(2025)
+B. F. Labs, S. Batifol, A. Blattmann, F. Boesel, S. Consul, C. Diagne, T. Dockhorn, J. English, Z. English, P. Esser, S. Kulal, K. Lacey, Y. Levi, C. Li, D. Lorenz, J. Müller, D. Podell, R. Rombach, H. Saini, A. Sauer, and L. Smith
+FLUX.1 kontext: flow matching for in-context image generation and editing in latent space
+.
+External Links:
+2506.15742
+,
+Link
+Cited by:
+2nd item
+,
+§3.2
+.
+LeCun (2022)
+Y. LeCun
+A path towards autonomous machine intelligence version 0.9. 2, 2022-06-27
+.
+Open Review
+62
+(
+1
+),
+pp. 1–62
+.
+Cited by:
+§2
+.
+Liang
+et al.
+(2024)
+W. Liang, L. Yu, L. Luo, S. Iyer, N. Dong, C. Zhou, G. Ghosh, M. Lewis, W. Yih, L. Zettlemoyer,
+et al.
+Mixture-of-transformers: a sparse and scalable architecture for multi-modal foundation models
+.
+arXiv preprint arXiv:2411.04996
+.
+Cited by:
+§1
+,
+§3.2
+.
+Liu
+et al.
+(2024a)
+H. Liu, C. Li, Y. Li, B. Li, Y. Zhang, S. Shen, and Y. J. Lee
+LLaVA-next: improved reasoning, ocr, and world knowledge
+.
+External Links:
+Link
+Cited by:
+1st item
+.
+Liu
+et al.
+(2024b)
+S. Liu, L. Wu, B. Li, H. Tan, H. Chen, Z. Wang, K. Xu, H. Su, and J. Zhu
+Rdt-1b: a diffusion foundation model for bimanual manipulation
+.
+arXiv preprint arXiv:2410.07864
+.
+Cited by:
+§4.2
+.
+Lv
+et al.
+(2025)
+Q. Lv, W. Kong, H. Li, J. Zeng, Z. Qiu, D. Qu, H. Song, Q. Chen, X. Deng, and J. Pang
+F1: a vision-language-action model bridging understanding and generation to actions
+.
+arXiv preprint arXiv:2509.06951
+.
+Cited by:
+§2
+.
+NVIDIA
+et al.
+(2025)
+NVIDIA, :, J. Bjorck, F. Castañeda, N. Cherniadev, X. Da, R. Ding, L. ”. Fan, Y. Fang, D. Fox, F. Hu, S. Huang, J. Jang, Z. Jiang, J. Kautz, K. Kundalia, L. Lao, Z. Li, Z. Lin, K. Lin, G. Liu, E. Llontop, L. Magne, A. Mandlekar, A. Narayan, S. Nasiriany, S. Reed, Y. L. Tan, G. Wang, Z. Wang, J. Wang, Q. Wang, J. Xiang, Y. Xie, Y. Xu, Z. Xu, S. Ye, Z. Yu, A. Zhang, H. Zhang, Y. Zhao, R. Zheng, and Y. Zhu
+GR00T n1: an open foundation model for generalist humanoid robots
+.
+External Links:
+2503.14734
+,
+Link
+Cited by:
+§1
+.
+O’Neill
+et al.
+(2024)
+A. O’Neill, A. Rehman, A. Maddukuri, A. Gupta, A. Padalkar, A. Lee, A. Pooley, A. Gupta, A. Mandlekar, A. Jain,
+et al.
+Open x-embodiment: robotic learning datasets and rt-x models: open x-embodiment collaboration 0
+.
+In
+2024 IEEE International Conference on Robotics and Automation (ICRA)
+,
+pp. 6892–6903
+.
+Cited by:
+§2
+,
+2nd item
+.
+Pertsch
+et al.
+(2025)
+K. Pertsch, K. Stachowicz, B. Ichter, D. Driess, S. Nair, Q. Vuong, O. Mees, C. Finn, and S. Levine
+Fast: efficient action tokenization for vision-language-action models
+.
+arXiv preprint arXiv:2501.09747
+.
+Cited by:
+§2
+.
+Tschannen
+et al.
+(2025)
+M. Tschannen, A. Gritsenko, X. Wang, M. F. Naeem, I. Alabdulmohsin, N. Parthasarathy, T. Evans, L. Beyer, Y. Xia, B. Mustafa,
+et al.
+Siglip 2: multilingual vision-language encoders with improved semantic understanding, localization, and dense features
+.
+arXiv preprint arXiv:2502.14786
+.
+Cited by:
+2nd item
+,
+§3.2
+.
+Wang
+et al.
+(2025)
+Y. Wang, X. Li, W. Wang, J. Zhang, Y. Li, Y. Chen, X. Wang, and Z. Zhang
+Unified vision-language-action model
+.
+arXiv preprint arXiv:2506.19850
+.
+Cited by:
+§2
+.
+Wei
+et al.
+(2023)
+J. Wei, X. Wang, D. Schuurmans, M. Bosma, B. Ichter, F. Xia, E. Chi, Q. Le, and D. Zhou
+Chain-of-thought prompting elicits reasoning in large language models
+.
+External Links:
+2201.11903
+,
+Link
+Cited by:
+§1
+.
+Yang
+et al.
+(2025)
+A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu, F. Huang, H. Wei, H. Lin, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Lin, K. Dang, K. Lu, K. Bao, K. Yang, L. Yu, M. Li, M. Xue, P. Zhang, Q. Zhu, R. Men, R. Lin, T. Li, T. Tang, T. Xia, X. Ren, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Wan, Y. Liu, Z. Cui, Z. Zhang, and Z. Qiu
+Qwen2.5 technical report
+.
+External Links:
+2412.15115
+,
+Link
+Cited by:
+§A.1
+,
+§3.2
+.
+Zawalski
+et al.
+(2025)
+M. Zawalski, W. Chen, K. Pertsch, O. Mees, C. Finn, and S. Levine
+Robotic control via embodied chain-of-thought reasoning
+.
+External Links:
+2407.08693
+,
+Link
+Cited by:
+§1
+.
+Zhang
+et al.
+(2025)
+J. Zhang, Y. Guo, Y. Hu, X. Chen, X. Zhu, and J. Chen
+Up-vla: a unified understanding and prediction model for embodied agent
+.
+arXiv preprint arXiv:2501.18867
+.
+Cited by:
+§2
+.
+Zhao
+et al.
+(2025)
+Q. Zhao, Y. Lu, M. J. Kim, Z. Fu, Z. Zhang, Y. Wu, Z. Li, Q. Ma, S. Han, C. Finn,
+et al.
+Cot-vla: visual chain-of-thought reasoning for vision-language-action models
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 1702–1713
+.
+Cited by:
+§1
+,
+§2
+.
+Appendix A
+Details on Model Architecture
+A.1
+LLM Backbone
+Halo
+leverages Qwen-2.5-1.5B LLM
+(
+Yang et al., 2025
+)
+as initial backbone, as illustrated in Table
+3
+.
+Table 3
+:
+Qwen2.5-1.5B-Instruct Model Configuration Parameters
+Parameter
+Value
+Parameter
+Value
+architectures
+[”Qwen2ForCausalLM”]
+num_attention_heads
+12
+attention_dropout
+0.0
+num_hidden_layers
+28
+bos_token_id
+151643
+num_key_value_heads
+2
+eos_token_id
+151645
+rms_norm_eps
+1
+×
+10
+−
+6
+1\times 10^{-6}
+hidden_act
+”silu”
+rope_scaling
+null
+hidden_size
+1536
+rope_theta
+1000000.0
+initializer_range
+0.02
+sliding_window
+32768
+intermediate_size
+8960
+tie_word_embeddings
+true
+max_position_embeddings
+32768
+torch_dtype
+float32
+max_window_layers
+21
+transformers_version
+4.49.0
+model_type
+”qwen2”
+use_cache
+true
+vocab_size
+151933
+use_sliding_window
+false
+A.2
+Multimodal Encoders
+To jointly train all three modalities, we implement different encoders to map multimodal inputs into tokens, stated as follows:
+•
+Textual Input: We utilize Qwen2.5’s original tokenizer
+(
+Bai et al., 2023
+)
+.
+•
+Visual Input: We employ separate visual encoders to handle visual understanding and generation independently. For visual understanding, we utilize a ViT
+(
+Dosovitskiy, 2020
+)
+encoder initialized with SigLIP2-so400m/14
+(
+Tschannen et al., 2025
+)
+(pre-trained at 384×384). To enhance high-resolution perception, we interpolate position embeddings to support inputs up to 980×980 and integrate NaViT
+(
+Dehghani et al., 2023
+)
+to process images in their native aspect ratios. A two-layer MLP projector is adopted to align visual features with LLM’s embedding space. For visual generation, we leverage the pre-trained VAE
+(
+Kingma and Welling, 2013
+)
+from FLUX
+(
+Labs et al., 2025
+)
+, featuring a downsample ratio of 8 and a latent channel of 16. The VAE latents are processed by flattening 2×2 spatial patches into vectors, which are then projected by a linear layer to match the hidden dimension of the LLM. Conversely, a VAE decoder is employed similarly to reconstruct images from latents. All VAE parameters remain frozen during training.
+•
+Action Input: We employ a simple yet effective linear projection layer as the action encoder, mapping the raw continuous actions directly into the LLM’s hidden dimension. Symmetrically, a linear decoder is utilized to project the LLM’s output hidden states back to the original action dimensions for execution.
+A.3
+Special Tokens
+To distinguish different phases of workflow, we add several special tokens to LLM’s vocabulary, listed as follows:
+•
+⟨
+subtask_start
+⟩
+\langle\text{subtask\_start}\rangle
+,
+⟨
+subtask_end
+⟩
+\langle\text{subtask\_end}\rangle
+•
+⟨
+plan_start
+⟩
+\langle\text{plan\_start}\rangle
+,
+⟨
+plan_end
+⟩
+\langle\text{plan\_end}\rangle
+•
+⟨
+move_start
+⟩
+\langle\text{move\_start}\rangle
+,
+⟨
+move_end
+⟩
+\langle\text{move\_end}\rangle
+•
+⟨
+action_start
+⟩
+\langle\text{action\_start}\rangle
+,
+⟨
+action_end
+⟩
+\langle\text{action\_end}\rangle
+•
+⟨
+vision_start
+⟩
+\langle\text{vision\_start}\rangle
+,
+⟨
+vision_end
+⟩
+\langle\text{vision\_end}\rangle
+A.4
+Attention Mask
+In Figure
+4
+, we have elaborated on the attention mask during fine-tuning phase. The attention masking strategy during pre-training phase is illustrated in Figure
+8
+.
+Appendix B
+Details on EM-CoT Data Pipeline
+B.1
+Action Primitives Extraction
+Algorithm 1
+Action Primitives Extraction Algorithm
+Input:
+Trajectory data
+𝒟
+\mathcal{D}
+with gripper states
+G
+l
+,
+G
+r
+G^{l},G^{r}
+and end-effector poses
+P
+l
+,
+P
+r
+P^{l},P^{r}
+; config thresholds
+θ
+\theta
+Output:
+Frame-wise action labels
+ℒ
+\mathcal{L}
+with natural language descriptions
+//
+Compute instantaneous idle flags
+I
+a
+​
+[
+t
+]
+I^{a}[t]
+for arms
+a
+∈
+{
+l
+,
+r
+}
+a\in\{l,r\}
+:
+for
+t
+=
+1
+t=1
+to
+T
+−
+1
+T-1
+do
+I
+a
+​
+[
+t
+]
+←
+IsIdle
+​
+(
+P
+a
+​
+[
+t
+]
+,
+P
+a
+​
+[
+t
+−
+1
+]
+,
+G
+a
+​
+[
+t
+]
+,
+G
+a
+​
+[
+t
+−
+1
+]
+,
+θ
+vel
+,
+θ
+dg
+)
+I^{a}[t]\leftarrow\text{IsIdle}(P^{a}[t],P^{a}[t-1],G^{a}[t],G^{a}[t-1];\theta_{\text{vel}},\theta_{\text{dg}})
+;
+I
+a
+​
+[
+0
+]
+←
+True
+I^{a}[0]\leftarrow\text{True}
+;
+//
+Extract action segments via long idle periods:
+for
+arm
+a
+∈
+{
+l
+,
+r
+}
+a\in\{l,r\}
+do
+S
+a
+←
+SegmentActions
+​
+(
+I
+a
+,
+θ
+min_idle
+)
+S^{a}\leftarrow\text{SegmentActions}(I^{a};\theta_{\text{min\_idle}})
+;
+//
+Initialize all frames as idle:
+for
+t
+=
+0
+t=0
+to
+T
+−
+1
+T-1
+do
+ℒ
+[
+t
+]
+←
+{
+a
+:
+[
+“idle”
+,
+“”
+]
+∣
+a
+∈
+{
+l
+,
+r
+}
+}
+\mathcal{L}[t]\leftarrow\{a:[\text{``idle''},\text{``''}]\mid a\in\{l,r\}\}
+;
+//
+Label action segments per arm:
+for
+arm
+a
+∈
+{
+l
+,
+r
+}
+a\in\{l,r\}
+do
+for
+each segment
+(
+s
+,
+e
+)
+∈
+S
+a
+(s,e)\in S^{a}
+do
+//
+Mark gripper actions:
+for
+t
+=
+max
+⁡
+(
+1
+,
+s
+)
+t=\max(1,s)
+to
+e
+e
+do
+if
+Δ
+​
+G
+a
+​
+[
+t
+]
+≤
+−
+θ
+dg
+\Delta G^{a}[t]\leq-\theta_{\text{dg}}
+then
+ℒ
+⁡
+[
+t
+]
+.
+a
+←
+[
+“grasp”
+,
+“”
+]
+\mathcal{L}[t].a\leftarrow[\text{``grasp''},\text{``''}]
+;
+else if
+Δ
+​
+G
+a
+​
+[
+t
+]
+≥
+θ
+dg
+\Delta G^{a}[t]\geq\theta_{\text{dg}}
+then
+ℒ
+⁡
+[
+t
+]
+.
+a
+←
+[
+“release”
+,
+“”
+]
+\mathcal{L}[t].a\leftarrow[\text{``release''},\text{``''}]
+;
+//
+Label move subsegments:
+for
+each maximal contiguous idle subsegment
+(
+s
+′
+,
+e
+′
+)
+⊆
+(
+s
+,
+e
+)
+(s^{\prime},e^{\prime})\subseteq(s,e)
+do
+Δ
+​
+P
+=
+∑
+t
+=
+s
+′
++
+1
+e
+′
+(
+P
+a
+​
+[
+t
+]
+−
+P
+a
+​
+[
+t
+−
+1
+]
+)
+\Delta P=\sum_{t=s^{\prime}+1}^{e^{\prime}}(P^{a}[t]-P^{a}[t-1])
+;
+d
+←
+GetDirection
+​
+(
+Δ
+​
+P
+,
+θ
+dir
+)
+d\leftarrow\text{GetDirection}(\Delta P;\theta_{\text{dir}})
+;
+for
+t
+=
+s
+′
+t=s^{\prime}
+to
+e
+′
+e^{\prime}
+do
+ℒ
+⁡
+[
+t
+]
+.
+a
+←
+[
+“move”
+,
+d
+]
+\mathcal{L}[t].a\leftarrow[\text{``move''},d]
+;
+//
+Convert labels to natural language:
+for
+t
+=
+0
+t=0
+to
+T
+−
+1
+T-1
+do
+for
+arm
+a
+∈
+{
+l
+,
+r
+}
+a\in\{l,r\}
+do
+ℒ
+[
+t
+]
+.
+desc
+a
+←
+LookupSentence
+(
+ℒ
+[
+t
+]
+.
+a
+)
+\mathcal{L}[t].\text{desc}^{a}\leftarrow\text{LookupSentence}(\mathcal{L}[t].a)
+;
+return
+ℒ
+\mathcal{L}
+;
+Key Function:
+•
+IsIdle()
+: Checks if displacement speed
+<
+θ
+v
+​
+e
+​
+l
+<\theta_{vel}
+and gripper change
+<
+θ
+d
+​
+g
+<\theta_{dg}
+.
+•
+SegmentActions()
+: Finds motion segments separated by idle periods of
+≥
+θ
+m
+​
+i
+​
+n
+​
+_
+​
+i
+​
+d
+​
+l
+​
+e
+\geq\theta_{min\_idle}
+frames.
+•
+GetDirection()
+: Computes dominant motion axes from displacement vector using ratio threshold
+θ
+d
+​
+i
+​
+r
+\theta_{dir}
+.
+B.2
+Prompts for EM-CoT
+Our annotation pipeline employs a three-stage prompting strategy to transform observations into structured, high-level task descriptions. First, a VLM generates a coherent, temporally-ordered narrative of the entire task. Second, this narrative is decomposed into a sequence of goal-oriented subtasks. Finally, each video frame is aligned to its corresponding subtask, with the model providing first-person reasoning that links the observed actions to the overall plan. This staged approach ensures temporal coherence and semantic clarity in the final annotations.
+Stage 1: Task Narrative Generation
+You are an expert roboticist analyzing a human or robot demonstration. Your task is to write a SINGLE, COHERENT, HIGH-LEVEL NARRATIVE paragraph that STRICTLY follows the TEMPORAL ORDER.
+•
+Overall Goal:
+<instruction>
+•
+Per-frame low-level actions are provided for context only—DO NOT copy or list them.
+•
+Low-level Arm Actions:
+1.
+Frame_id:
+0
+, Left arm action:
+<left_description_0>
+, Right arm action:
+<right_description_0>
+2.
+Frame_id:
+1
+, Left arm action:
+<left_description_1>
+, Right arm action:
+<right_description_1>
+3.
+…
+\dots
+Instructions:
+1.
+Describe the task step by step in exact chronological order.
+2.
+Explicitly state simultaneous bimanual actions (e.g., “At the same time, the left hand stabilizes… while the right hand unscrews…”).
+3.
+Focus on purpose: explain what each action achieves toward the goal.
+4.
+Use specific object names when identifiable.
+Output Rules:
+Produce exactly one fluent paragraph (2–4 sentences). Output ONLY the narrative. No markdown, bullets, or extra text.
+Stage 2: Subtask Sequence Extraction
+You are an expert in robotic task analysis. Based on the task narrative below, decompose the task into a sequence of HIGH-SEMANTIC, GOAL-ORIENTED SUBTASKS.
+•
+Task Narrative:
+<narrative>
+Instructions:
+1.
+Split the narrative into discrete subtasks in strict chronological order.
+2.
+Represent coordinated bimanual actions as ONE subtask (never split).
+3.
+Express high-level intent (e.g., “Assemble the lid onto the container”), not low-level motions (e.g., “move”, “grab”).
+4.
+Use imperative, active voice; keep the list short (typically 2–5 subtasks).
+Output Format:
+Return ONLY a JSON list of strings. Example:
+["Pick up red cup", "Pour water into cup"]
+Stage 3: Subtask Alignment and Reasoning
+You are the autonomous onboard controller of a robot. You are currently executing a task. Describe your reasoning in the FIRST PERSON (“I”, “me”).
+•
+Overall Goal:
+<instruction>
+•
+Planned Subtask Sequence:
+1.
+<subtask_1>
+2.
+<subtask_2>
+3.
+…
+\dots
+•
+Low-level Arm Actions:
+1.
+Frame_id:
+0
+, Left arm action:
+<left_description_0>
+, Right arm action:
+<right_description_0>
+2.
+Frame_id:
+1
+, Left arm action:
+<left_description_1>
+, Right arm action:
+<right_description_1>
+3.
+…
+\dots
+Instructions:
+1.
+For each segment, explain your internal decision-making logic from a first-person view.
+2.
+Include: (a) visual observation, (b) goal-driven inference, (c) movement logic.
+3.
+Ensure physical alignment: do not claim a subtask has started if low-level logs show idle.
+4.
+Keep reasoning under 50 words per segment; account for every frame.
+Output Format:
+Return ONLY a JSON list of objects with keys:
+"subtask"
+,
+"frame"
+(as [start, end]), and
+"reasoning"
+.
+B.3
+Visual Subgoal Extraction
+Algorithm 2
+Visual Subgoal Extraction from Subtask Boundaries
+Input:
+Frame annotations
+𝒜
+=
+{
+a
+0
+,
+a
+1
+,
+…
+,
+a
+T
+−
+1
+}
+\mathcal{A}=\{a_{0},a_{1},\dots,a_{T-1}\}
+, where
+a
+t
+=
+(
+frame_id
+=
+t
+,
+subtask
+=
+s
+t
+)
+a_{t}=(\texttt{frame\_id}=t,\texttt{subtask}=s_{t})
+;
+Image sequence
+ℐ
+=
+[
+I
+0
+,
+I
+1
+,
+…
+,
+I
+T
+−
+1
+]
+\mathcal{I}=[I_{0},I_{1},\dots,I_{T-1}]
+Output:
+Goal image sequence
+𝒢
+=
+[
+G
+0
+,
+G
+1
+,
+…
+,
+G
+T
+−
+1
+]
+\mathcal{G}=[G_{0},G_{1},\dots,G_{T-1}]
+//
+Step 1: Identify goal frame for each subtask
+Initialize map
+ℳ
+←
+∅
+\mathcal{M}\leftarrow\emptyset
+;
+,
+Sort
+𝒜
+\mathcal{A}
+by
+frame_id
+;
+for
+t
+←
+1
+t\leftarrow 1
+to
+T
+−
+1
+T-1
+do
+if
+s
+t
+≠
+s
+t
+−
+1
+s_{t}\neq s_{t-1}
+then
+ℳ
+⁡
+[
+s
+t
+−
+1
+]
+←
+t
+\mathcal{M}[s_{t-1}]\leftarrow t
+;
+ℳ
+⁡
+[
+s
+T
+−
+1
+]
+←
+T
+−
+1
+\mathcal{M}[s_{T-1}]\leftarrow T-1
+;
+//
+Step 2: Broadcast goal images to all frames
+for
+t
+←
+0
+t\leftarrow 0
+to
+T
+−
+1
+T-1
+do
+s
+←
+s
+t
+s\leftarrow s_{t}
+;
+,
+t
+g
+←
+ℳ
+⁡
+[
+s
+]
+t_{g}\leftarrow\mathcal{M}[s]
+;
+,
+G
+t
+←
+I
+t
+g
+G_{t}\leftarrow I_{t_{g}}
+;
+return
+𝒢
+\mathcal{G}
+;
+Appendix C
+Training Implementation
+In this section, we provide details on pre-training and fine-tuning of
+Halo
+.
+Halo
+is pre-trained on 32 Nvidia H100 GPUs for 90k steps, with a sequence length of 40k per rank. Then, we fine-tune
+Halo
+on 32 Nvidia H100 GPUs with sequence length of 27k, 110k steps for simulation, 80k steps for real experiment. We illustrate the detailed hyperparameters in Table
+4
+.
+Table 4
+:
+Training Hyperparameters.
+Detailed configurations for the two-stage training process of
+Halo
+.
+Configuration
+Pre-training
+Fine-tuning
+Base Architecture
+Qwen2.5-1.5B
+×
+\times
+3 Experts
+Total Parameters
+≈
+\approx
+4.5B
+Optimizer
+AdamW
+Learning Rate
+1
+×
+10
+−
+4
+1\times 10^{-4}
+5
+×
+10
+−
+5
+5\times 10^{-5}
+Learning Rate Schedule
+Constant
+Constant
+Weight Decay
+0.0
+0.0
+Per rank Sequence Length
+40k
+27k
+Warm-up Steps
+2000
+500
+Training Steps
+90k
+110k / 80k
+Und Resolution
+(378, 980)
+Gen Resolution
+(512, 1024)
+Loss Weight
+CE:MSE:L1 = 1:2:4
+CE:MSE:L1 = 1:1:1
+Appendix D
+Complete Result on RoboTwin2.0 Benchmark
+See Table
+5
+for complete result on RoboTwin 2.0 benchmark.
+Table 5
+:
+Complete Result on RoboTwin
+Task
+π
+0
+\pi_{0}
+RDT-1B
+Diffusion Policy
+Halo
+-w/o CoT
+Halo
+-w/ CoT
+Easy
+Hard
+Easy
+Hard
+Easy
+Hard
+Easy
+Hard
+Easy
+Hard
+Adjust Bottle
+90
+56
+81
+75
+97
+0
+99
+2
+97
+9
+Beat Block Hammer
+43
+21
+77
+37
+42
+0
+95
+3
+96
+11
+Blocks Ranking RGB
+19
+5
+3
+0
+0
+0
+85
+3
+94
+7
+Blocks Ranking Size
+7
+1
+0
+0
+1
+0
+37
+0
+58
+2
+Click Alarmclock
+63
+11
+61
+12
+61
+5
+85
+10
+83
+14
+Click Bell
+44
+3
+80
+9
+54
+0
+100
+5
+100
+10
+Dump Bin Bigbin
+83
+24
+64
+32
+49
+0
+88
+30
+93
+28
+Grab Roller
+96
+80
+74
+43
+98
+0
+97
+49
+95
+57
+Handover Block
+45
+8
+45
+14
+10
+0
+84
+24
+81
+36
+Handover Mic
+98
+13
+90
+31
+53
+0
+94
+61
+96
+61
+Hanging Mug
+11
+3
+23
+16
+8
+0
+33
+2
+48
+5
+Lift Pot
+84
+36
+72
+9
+39
+0
+94
+23
+95
+34
+Move Can Pot
+58
+21
+25
+12
+39
+0
+90
+11
+94
+15
+Move Pillbottle Pad
+21
+1
+8
+0
+1
+0
+69
+10
+76
+26
+Move Playingcard Away
+53
+22
+43
+11
+47
+0
+91
+40
+89
+53
+Move Stapler Pad
+0
+2
+2
+0
+1
+0
+47
+11
+45
+19
+Open Laptop
+85
+46
+59
+32
+49
+0
+81
+23
+89
+37
+Open Microwave
+80
+50
+37
+20
+5
+0
+71
+5
+86
+24
+Pick Diverse Bottles
+27
+6
+2
+0
+6
+0
+59
+14
+76
+17
+Pick Dual Bottles
+57
+12
+42
+13
+24
+0
+75
+28
+82
+30
+Place A2B Left
+31
+1
+3
+1
+2
+0
+55
+8
+68
+8
+Place A2B Right
+27
+6
+1
+1
+13
+0
+54
+7
+52
+9
+Place Bread Basket
+17
+4
+10
+2
+14
+0
+85
+14
+90
+26
+Place Bread Skillet
+23
+1
+5
+1
+11
+0
+78
+19
+85
+23
+Place Burger Fries
+80
+4
+50
+27
+72
+0
+98
+33
+99
+37
+Place Can Basket
+41
+5
+19
+6
+18
+0
+60
+33
+68
+34
+Place Cans Plasticbox
+34
+2
+6
+5
+40
+0
+99
+40
+98
+47
+Place Container Plate
+88
+45
+78
+17
+41
+0
+93
+18
+96
+22
+Place Dual Shoes
+15
+0
+4
+4
+8
+0
+17
+2
+15
+3
+Place Empty Cup
+37
+11
+56
+7
+37
+0
+92
+24
+95
+28
+Place Fan
+20
+10
+12
+2
+3
+0
+47
+6
+62
+9
+Place Mouse Pad
+7
+1
+1
+0
+0
+0
+53
+8
+51
+12
+Place Object Basket
+16
+2
+33
+17
+15
+0
+82
+20
+89
+25
+Place Object Scale
+10
+0
+1
+0
+1
+0
+41
+2
+55
+5
+Place Object Stand
+36
+11
+15
+5
+22
+0
+79
+29
+84
+33
+Place Phone Stand
+35
+7
+15
+6
+13
+0
+83
+6
+91
+10
+Place Shoe
+28
+6
+35
+7
+23
+0
+72
+13
+70
+18
+Press Stapler
+62
+29
+41
+24
+6
+0
+86
+58
+92
+64
+Put Bottles Dustbin
+54
+13
+21
+4
+22
+0
+73
+8
+80
+13
+Put Object Cabinet
+68
+18
+33
+18
+42
+0
+44
+4
+59
+8
+Rotate QRcode
+68
+15
+50
+5
+13
+0
+63
+8
+69
+11
+Scan Object
+18
+1
+4
+1
+9
+0
+64
+19
+73
+24
+Shake Bottle Horizontally
+99
+51
+84
+51
+59
+18
+100
+63
+100
+66
+Shake Bottle
+97
+60
+74
+45
+65
+8
+100
+70
+98
+73
+Stack Blocks Three
+17
+0
+2
+0
+0
+0
+90
+32
+96
+37
+Stack Blocks Two
+42
+1
+21
+2
+7
+0
+99
+55
+100
+60
+Stack Bowls Three
+66
+24
+51
+17
+63
+0
+83
+20
+92
+25
+Stack Bowls Two
+91
+41
+76
+30
+61
+0
+96
+46
+98
+49
+Stamp Seal
+3
+4
+1
+0
+2
+0
+49
+16
+60
+21
+Turn Switch
+27
+23
+35
+15
+36
+1
+58
+24
+65
+27
+Average
+46.4
+16.3
+34.5
+13.7
+28.0
+0.6
+75.3
+21.2
+80.5
+26.4
+Appendix E
+Details on Real-World Experiment
+Our real-world experiments are all conducted with COBOT Magic, a robot using the Mobile ALOHA system design
+(
+Fu et al., 2024
+)
+and manufactured by AgileX Robotics. Notably, we exclusively utilize the robot’s head camera as the sole source of visual input, requiring the model to reason and act based on an egocentric perspective. To evaluate policies, we design a set of tasks that span various dimensions, including:
+•
+Tool-mediated Manipulation
+: Gently pick up the broom and sweep the buttons on the board into the dustpan. (”Sweep the buttons”)
+•
+Semantic Visual Grounding
+: Place the grey cup into the pink cup with left gripper, and the green cup into the yellow cup with right gripper. (”Bimanual cup nesting”)
+•
+Inter-arm Collaboration
+: Handover the screwdriver from the left to the right. (”Handover the screwdriver”)
+•
+Multi-step Manipulation
+: Open the top drawer, put the lemon on the plate into the top drawer, close the drawer. (”Put lemon into drawer”)
+We collect 80 trajectories for each task, and process them through our automated pipeline to yield the EM-CoT data. We then aggregate the data across all four tasks into a multi-task corpus for finetuning.
+In order to evaluate generalization, we design settings that span various axes of unseen scenarios, including visual distraction, lightning variation, background variation, and novel object. The generalization settings are formulated as follows.
+•
+Visual Distraction
+: Randomly placing irrelevant objects such as Coke bottle, cups onto the table.
+•
+Lightning Variation
+: Varying the illumination levels of a desk lamp to introduce visual interference.
+•
+Background Variation
+: Changing the color of the tablecloth.
+•
+Novel Object
+: For the task of sweeping the buttons, we change the broom to a sponge during evaluation.
+Figure 8
+:
+Attention map during pre-training phase.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

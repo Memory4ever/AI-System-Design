@@ -1,0 +1,386 @@
+Necessary main-body extraction; no unrelated appendices. Source https://arxiv.org/html/2601.10398v1
+1 Introduction
+Large language models (LLMs) have broadened access to data analytics by translating natural language questions into executable SQL (Text-to-SQL) Sun et al. (2024); Gao et al. (2024); Liu et al. (2024). However, in real deployments (e.g., finance, healthcare, security), practical adoption is constrained by a safety-critical failure mode: unreliable behavior under unanswerable or underspecified queries. Such queries may require non-existent schema elements, admit multiple plausible interpretations, fall outside the database scope, or depend on subjective criteria. When optimized for helpfulness, LLMs can still produce plausible-looking SQL that is semantically incorrect. Unlike open-ended dialogue, where hallucinations mainly yield incorrect text, Text-to-SQL hallucinations yield executable programs, which can silently corrupt reports, trigger privacy violations, or cause costly operational incidents Huang et al. (2023); Ji et al. (2023).
+Figure 1: Comparison of refusal paradigms. Top: Traditional prompt-based methods rely on the LLM’s output, which often fails under uncertainty or hallucination. Bottom: Our approach detects refusal signals directly from the frozen LLM’s internal hidden states before generation, ensuring a safe and efficient refusal mechanism without generating or executing any SQL. This enables a single-pass, low-latency refusal decision and avoids the need to run potentially harmful queries.
+Throughout this paper, we define answerable queries as those resolvable to a unique, valid SQL statement given the schema. Conversely, we use unanswerable to broadly encompass queries suffering from missing schema elements, out-of-scope requests, subjectivity, or linguistic ambiguity. In these contexts, Text-to-SQL hallucination refers to the generation of executable but semantically unfaithful SQL, a frequent risk when models are forced to answer unanswerable inputs.
+Accordingly, a production Text-to-SQL system must be able to refuse when it cannot answer safely and faithfully. Existing refusal strategies, however, face a persistent trade-off between reliability and efficiency. Prompt-based methods instruct the model to abstain (e.g., “refuse if unsure”), but refusal behavior is brittle under uncertainty and can fail precisely when the model hallucinates. In contrast, uncertainty-based methods (e.g., self-consistency or semantic-entropy style scoring) can be more robust, yet often require multiple samples and substantial inference overhead. Worse, in Text-to-SQL, assessing agreement among candidate programs frequently depends on execution to resolve semantic equivalence—but executing questionable SQL to estimate uncertainty undermines the goal of safety gating.
+We observe that semantic information is implicit in the intermediate layers, which can be leveraged for refusal judgment. Meanwhile, experiments show that the middle layers contain the most accurate refusal direction information Skean et al. (2025).
+Accordingly, we propose LatentRefusal, a refusal mechanism that makes the safety decision before generation by detecting refusal signals directly from a frozen LLM’s internal hidden states. As illustrated in Figure 1, rather than relying on the model’s final output (top), LatentRefusal attaches a lightweight intermediate-layer probe to predict answerability in a single forward pass (bottom). This design yields a deterministic, low-latency refusal gate that avoids sampling, avoids generating potentially harmful SQL, and avoids executing any SQL during the decision process.
+A key challenge is that naive probing over pooled hidden states is often insufficient for schema-conditioned Text-to-SQL: inputs can be dominated by lengthy schema descriptions, while refusal cues (e.g., a missing column, absent join path, or underspecified constraint) are subtle and localized. To address this, we introduce the Tri-Residual Gated Encoder (TRGE), a probe architecture designed to suppress schema noise and amplify question–schema mismatch signals indicative of unanswerability.
+Our contributions are as follows:
+•
+Problem and constraint formulation for safe refusal in Text-to-SQL. We formalize refusal as an answerability gating problem under a strict safety constraint: the system must decide whether to answer before generating or executing any SQL, avoiding execution-based uncertainty estimation.
+•
+LatentRefusal: Single-pass latent-signal refusal. We propose a mechanism that predicts answerability directly from a frozen LLM’s hidden activations. This enables deterministic, low-latency refusal decisions in a single forward pass, avoiding the overhead of sampling or unsafe query execution.
+•
+TRGE: A probe for sparse refusal cues in schema-heavy prompts. We introduce the Tri-Residual Gated Encoder (TRGE), a lightweight SwiGLU-gated probing architecture designed to suppress schema noise and amplify localized question–schema mismatch signals that indicate unanswerability.
+•
+Empirical validation and analysis. We evaluate LatentRefusal on diverse unanswerable and ambiguous Text-to-SQL settings, demonstrating improved refusal reliability at near-instruction-following cost, and provide ablations and interpretability analyses that isolate where refusal signals emerge in the latent space.
+2 Related Work
+Unanswerability and ambiguity in Text-to-SQL.
+Real-world Text-to-SQL must handle ambiguous questions (multiple valid interpretations) and unanswerable questions (cannot be grounded to the available schema/database). Prior work studies intention types and fine-grained unanswerability categories (Zhang et al., 2020; Wang et al., 2022), extends the setting to multi-turn conversations (Dong et al., 2024), and benchmarks linguistic ambiguity with paired ambiguous/clarified inputs (Saparina and Lapata, 2024). In this paper, we target a stricter system requirement: a low-latency, pre-generation gate that decides whether any SQL should be produced.
+Prompt-based refusal and output-based uncertainty.
+Prompting an LLM to abstain is convenient and training-free, but refusal is prompt-sensitive and can fail exactly when the model hallucinates, after the system has already entered executable-code decoding. Output-based uncertainty uses sampling and disagreement signals (e.g., SelfCheckGPT and semantic entropy) Manakul et al. (2023); Farquhar et al. (2024); Kuhn et al. (2023); Wang et al. (2023), while self-evaluation and selective generation use single-pass confidence, OOD-style scores, or verbalized uncertainty Kadavath et al. (2022); Ren et al. (2023); Lin et al. (2022); Xiong et al. (2024). These methods are broadly applicable but often conflict with Text-to-SQL deployment constraints: multi-sampling is costly, and comparing SQL candidates can require execution or expensive reasoning, which is misaligned with pre-execution safety gating.
+Latent/internal-state reliability signals.
+Recent work shows that reliability and truthfulness are reflected in latent space and internal activations, including latent truth directions (CCS) (Burns et al., 2023; Marks and Tegmark, 2024), generation-driven hallucination membership estimation (HaloScope) (Du et al., 2024), and internal-state predictors of hallucination (Azaria and Mitchell, 2023; Chen et al., 2024). These approaches motivate single-pass, pre-generation decisions when internal states are accessible. Our work follows this line but addresses a Text-to-SQL-specific challenge: schema-conditioned prompts are dominated by long schema tokens while refusal cues are sparse and localized, motivating a probe that suppresses schema noise and amplifies question-schema mismatch evidence Kossen et al. (2024).
+3 LatentRefusal
+Figure 2: Overview of LatentRefusal. (a) Refusal gating: given the question and schema, a frozen base LLM produces hidden states; a lightweight probe predicts answerability before any SQL is generated, and a binary gate either triggers SQL generation or returns a safe refusal. (b) TRGE probe: a Tri-Residual Gated Encoder layer augments a standard Transformer block with an additional SwiGLU-gated residual branch to suppress schema noise and amplify localized mismatch cues.
+LatentRefusal is a latent-signal refusal mechanism for Text-to-SQL that decides whether to answer prior to generation by reading refusal cues from a frozen LLM’s internal representations (Figure 2). The core novelty is to treat refusal as a representation-level decision problem rather than an output-level instruction-following behavior: instead of asking the LLM to say “I don’t know” (which can fail under hallucination), we learn a compact detector on intermediate hidden states and insert it as a deterministic gate.
+3.1 Refusal Gating Framework
+Why a pre-generation gate?
+Text-to-SQL differs from open-ended generation in that the model output is executable code. When the query is unanswerable or underspecified (e.g., missing columns/tables, ambiguous constraints, non-existent entities, or out-of-scope requests), “helpful” decoding can still yield plausible SQL that executes successfully but answers the wrong question. Existing approaches face two limitations:
+(i) Prompt-based refusal relies on the model’s decoded text to abstain, which is prompt-sensitive and may collapse precisely when the model enters a hallucination state.
+(ii) Uncertainty-based refusal often requires multi-sampling; in Text-to-SQL, comparing candidate programs can require execution or expensive equivalence checking, which conflicts with safety gating and increases latency.
+Design goal.
+We aim for a refusal mechanism that is (i) single-pass (one forward pass through the base LLM), (ii) pre-generation (no SQL tokens are generated unless permitted), (iii) execution-free (no database interaction during gating), and (iv) model-agnostic (applicable to any frozen LLM). Here “model-agnostic” means we do not update the base LLM parameters; however, the probe requires lightweight supervised training to match the target answerability distribution.
+Gating rule.
+We implement a deterministic gate that intercepts the generation process based on the probe’s output. Specifically, the system returns a refusal response if the predicted answerability probability \hat{p}=g_{\phi}(\mathbf{H}) falls below a calibrated threshold \tau (i.e., \hat{p}<\tau), and proceeds to SQL generation otherwise. This mechanism decouples safety judgment from generation, ensuring unanswerable queries are blocked before any potentially harmful SQL is produced. This setup is consistent with the reject option and selective classification frameworks Chow (1970); El-Yaniv and Wiener (2010); Geifman and El-Yaniv (2017); Geifman and El-Yaniv (2019), where a model abstains from answering under uncertainty to achieve a better safety–utility trade-off.
+What signal do we use?
+A frozen LLM encodes rich consistency information between question and schema during the forward pass, even when its final generation may hallucinate. LatentRefusal exploits this by operating directly on internal hidden states rather than on decoded tokens. Concretely, let \mathcal{M} be the frozen base LLM and let \mathbf{H}^{(l)}\in\mathbb{R}^{T\times d} denote the hidden states at layer l. We choose one layer index l^{\star} (validated on development data) and feed \mathbf{H}^{(l^{\star})} to the probe:
+\hat{p}=g_{\phi}\!\left(\mathbf{H}^{(l^{\star})}\right),\qquad\mathbf{H}^{(l^{\star})}=\mathcal{M}^{(l^{\star})}(x).
+(1)
+where \phi represents the trainable parameters of the probe, and x is the input sequence.
+Using a single intermediate layer is intentionally minimal: it keeps the gate lightweight and avoids entanglement with the base model’s decoder dynamics.
+3.2 TRGE Probe
+Challenge: schema-heavy prompts hide sparse refusal cues.
+In Text-to-SQL prompting, the schema tokens frequently dominate context length. However, answerability evidence is often localized: a single missing column mention, an unmatched entity, or an impossible join path. Simple pooling with a linear classifier can underfit because the relevant signal is sparse and can be overwhelmed by irrelevant schema content. A vanilla Transformer probe helps, but without an inductive bias to suppress schema noise it may still spend capacity modeling schema regularities rather than detecting mismatches.
+Our probe design.
+We propose the Tri-Residual Gated Encoder (TRGE), a small Transformer-style encoder that adds a third residual branch consisting of a SwiGLU gating module. The motivation is explicit: a content-aware gate can act as a soft feature selector that down-weights irrelevant schema patterns while amplifying mismatch features correlated with unanswerability.
+Given an input representation \mathbf{Z}^{(k-1)}\in\mathbb{R}^{T\times d} to TRGE layer k (where d=512), we compute:
+\displaystyle\mathbf{U}
+\displaystyle=\mathbf{Z}^{(k-1)}+\operatorname{Attn}\!\left(\operatorname{LN}(\mathbf{Z}^{(k-1)})\right),
+(2)
+\displaystyle\mathbf{V}
+\displaystyle=\mathbf{U}+\operatorname{MLP}\!\left(\operatorname{LN}(\mathbf{U})\right),
+\displaystyle\mathbf{Z}^{(k)}
+\displaystyle=\mathbf{V}+\operatorname{SwiGLU}\!\left(\operatorname{LN}(\mathbf{V})\right),
+where \operatorname{LN} is layer normalization and \operatorname{Attn} is multi-head self-attention with 8 heads. Here, \mathbf{U} and \mathbf{V} denote the intermediate residual states after the attention and MLP blocks, respectively. The gating branch utilizes the SwiGLU activation:
+\operatorname{SwiGLU}(\mathbf{x})=\mathbf{W}_{d}\Big(\operatorname{SiLU}(\mathbf{W}_{g}\mathbf{x})\odot(\mathbf{W}_{u}\mathbf{x})\Big),
+(3)
+with learnable matrices \mathbf{W}_{g},\mathbf{W}_{u},\mathbf{W}_{d} and element-wise product \odot. Here, \mathbf{x} is the input vector, and \operatorname{SiLU} is the Sigmoid Linear Unit activation function.
+Why tri-residual gating helps.
+The extra residual branch provides a direct pathway for “refusal-relevant” features to accumulate across layers without being washed out by attention/MLP mixing. Intuitively, the gate
+\mathbf{g}=\operatorname{SiLU}(\mathbf{W}_{g}\mathbf{x})
+acts as a soft mask that is input-conditioned: it can suppress schema boilerplate while preserving tokens/positions carrying mismatch evidence. This is particularly suited to schema-conditioned prompts where the majority of tokens are irrelevant to the answerability decision.
+After L_{p} TRGE layers, we aggregate token representations into a single vector and predict a scalar score (Eq. 4):
+\mathbf{r}=\operatorname{Agg}\!\left(\mathbf{Z}^{(L_{p})}\right),\qquad s=\mathbf{w}^{\top}\mathbf{r}+b,\qquad\hat{p}=\sigma(s).
+(4)
+where \mathbf{r} is the pooled representation, \mathbf{w} and b are the linear classifier’s weight and bias, s is the scalar logit, and \sigma denotes the sigmoid function.
+We use a simple aggregation operator \operatorname{Agg}(\cdot) (mean pooling unless otherwise noted), keeping the probe lightweight; Section 4 studies alternatives.
+3.3 Training and Implementation Details
+We freeze \mathcal{M} entirely and train only the probe parameters \phi. This yields three practical benefits: (i) stable behavior of the underlying generator, (ii) minimal additional compute and memory, and (iii) easy attachment to different base LLMs.
+3.3.1 Supervision on hidden states
+Given a labeled dataset \mathcal{D}=\{(S_{i},Q_{i},y_{i})\}_{i=1}^{N} where y_{i}\in\{0,1\} indicates whether the query is answerable under schema S_{i}, we build the model input via a template \mathcal{T}:
+\mathbf{x}_{i}=\mathcal{T}(S_{i},Q_{i}).
+(5)
+where \mathbf{x}_{i} is the tokenized input sequence corresponding to schema S_{i} and question Q_{i}.
+We run a single forward pass through the frozen LLM and extract hidden states from layer l^{\star}:
+\mathbf{H}_{i}=\mathbf{H}_{i}^{(l^{\star})}=\mathcal{M}^{(l^{\star})}(\mathbf{x}_{i})\in\mathbb{R}^{T_{i}\times d}.
+(6)
+where T_{i} denotes the sequence length of the i-th sample.
+The probe predicts \hat{p}_{i}=g_{\phi}(\mathbf{H}_{i}) and is trained on \{(\mathbf{H}_{i},y_{i})\}_{i=1}^{N}.
+3.3.2 Numerical stability
+During mixed-precision inference or offline hidden-state extraction, rare NaN values can destabilize optimization. We apply sanitization operator \Psi(\cdot):
+\tilde{\mathbf{H}}_{i}=\Psi(\mathbf{H}_{i}),\quad\Psi(h)=\begin{cases}0,&h\ \text{is NaN},\\
+\ \ \ M,&h=+\infty,\\
+-M,&h=-\infty,\\
+h,&\text{otherwise},\end{cases}
+(7)
+with a large constant M (e.g., 10^{4}), followed by token-wise normalization:
+\mathbf{H}^{\text{safe}}_{i}=\operatorname{LN}(\tilde{\mathbf{H}}_{i}).
+(8)
+where \tilde{\mathbf{H}}_{i} is the sanitized hidden state matrix, and \mathbf{H}^{\text{safe}}_{i} denotes the final stabilized input for the probe.
+We feed \mathbf{H}^{\text{safe}}_{i} to the probe in both training and evaluation for consistent behavior.
+3.3.3 Optimization objective and thresholding
+Let s_{i}=f_{\phi}(\mathbf{H}^{\text{safe}}_{i}) be the probe logit and \hat{p}_{i}=\sigma(s_{i}). We optimize binary cross-entropy:
+\mathcal{L}(\phi)=-\frac{1}{N}\sum_{i=1}^{N}\Big(y_{i}\log\hat{p}_{i}+(1-y_{i})\log(1-\hat{p}_{i})\Big).
+(9)
+where N is the number of samples in the training set.
+For a single example, the derivative w.r.t. the logit is:
+\frac{\partial\ell}{\partial s}=\sigma(s)-y.
+(10)
+where \ell represents the loss for a single instance.
+At deployment, we select the threshold \tau on a development set to satisfy a desired safety–utility operating point (e.g., high refusal recall under a bounded false-refusal rate). This yields an explicit, auditable trade-off suitable for production gating.
+LatentRefusal is novel in (i) making refusal a pre-generation decision using latent signals from a frozen LLM, enabling single-pass, execution-free gating; and (ii) introducing TRGE, a tri-residual SwiGLU-gated probe tailored to schema-heavy Text-to-SQL prompts, designed to suppress schema noise and amplify sparse mismatch cues that drive unanswerability.
+4 Experiments
+We evaluate our TRGE Transformer probe for detecting unanswerability across four datasets and compare against representative baselines.
+4.1 Experimental Setup
+Datasets.
+We evaluate on four benchmarks: (1) TriageSQL Zhang et al. (2020): converted into a binary refusal task focusing on medical intent; (2) AMBROSIA Saparina and Lapata (2024): testing sensitivity to linguistic ambiguity via paired clear vs. ambiguous questions; (3) SQuAD 2.0 Rajpurkar et al. (2018): used to evaluate cross-task generalizability from Text-to-SQL to machine reading comprehension; and (4) MD-Enterprise11
+1
+This is an internal dataset and cannot be released due to privacy reasons.: a Chinese vertical industrial benchmark spanning six domains (Stock, HR, etc.) with expert-annotated answerability labels based on business logic and safety constraints.
+Models and Inference.
+We use Qwen-3-8B and Llama-3.1-8B Yang et al. (2025); Grattafiori et al. (2024) as backbones, loaded in bfloat16. For output-based baselines, we sample Top-K=10 outputs at temperature T=0.7. For LatentRefusal, we extract hidden states from a single greedy forward pass (T=0).
+LLM
+Method
+MD-Enterprise
+AMBROSIA
+SQuAD
+TriageSQL
+Avg.F1
+Llama3.1 8B
+Semantic Entropy
+66.1
+62.1
+82.3
+66.7
+69.3
+CCS
+53.1
+54.1
+62.6
+62.9
+58.2
+Self-evaluation*
+66.7
+64.6
+74.2
+67.2
+68.2
+Eigenscore
+82.5
+63.2
+72.4
+77.8
+73.8
+TSV
+97.4
+74.3
+74.7
+85.2
+82.9
+HaloScope
+97.0
+73.7
+66.1
+82.8
+79.9
+SAPLMA*
+97.5
+77.7
+75.4
+81.0
+82.9
+LatentRefusal
+99.6
+80.2
+86.6
+87.7
+88.5
+Qwen3 8B
+Semantic Entropy
+72.7
+58.0
+82.4
+66.6
+70.0
+CCS
+55.4
+47.0
+82.3
+73.4
+64.5
+Self-evaluation*
+68.1
+60.2
+87.4
+56.3
+68.0
+Eigenscore
+80.0
+59.1
+70.0
+77.8
+71.7
+TSV
+98.9
+73.3
+78.0
+85.0
+83.8
+HaloScope
+98.0
+72.8
+80.1
+80.0
+82.7
+SAPLMA*
+97.8
+81.2
+76.8
+82.6
+84.6
+LatentRefusal
+98.8
+80.9
+88.6
+87.0
+88.5
+DeepSeek(API)
+Prompt-based
+97.2
+70.3
+87.4
+77.8
+83.2
+Table 1: Refusal detection performance (F1 %) across four datasets. We compare LatentRefusal against output-based and internal-state baselines (Semantic Entropy, CCS, Self-evaluation, Eigenscore, TSV, HaloScope, SAPLMA) and API-based prompting (DeepSeek). Our method achieves the best average performance on both Llama-3.1-8B and Qwen-3-8B backbones, with consistent improvements across all evaluation settings. Methods marked with * are reproduced by us.
+Baselines.
+We compare against three categories of methods:
+(1) Output-based Uncertainty: Self-evaluation (Kadavath et al., 2022) prompts the model to estimate its own correctness; Semantic Entropy Farquhar et al. (2024) measures uncertainty via agreement across sampled generations.
+(2) Internal-State Methods: We evaluate unsupervised approaches CCS (Burns et al., 2023), Eigenscore Chen et al. (2024), and weakly-supervised HaloScope (Du et al., 2024), alongside supervised probes SAPLMA (Azaria and Mitchell, 2023) and TSV Park et al. (2025) which predict truthfulness from hidden states or steering vectors.
+(3) Prompting: DeepSeek-chat serves as a zero-shot instruction-following baseline.
+4.2 Main Results
+Table 1 summarizes the refusal detection performance across four benchmarks. We report F1 as the primary metric, computed at a fixed decision threshold tuned on development data.
+Overall performance.
+LatentRefusal achieves the highest average F1 on both backbone models: 88.5% on Llama-3.1-8B and 88.5% on Qwen-3-8B, outperforming all baselines by substantial margins. Compared to the strongest output-based baseline (TSV), our method improves average F1 by +5.6 and +4.7 points respectively. Notably, against the internal-state baseline Eigenscore, the gains exceed +14 points, demonstrating that the TRGE probe architecture more effectively distills refusal-relevant signals from hidden states than unsupervised spectral methods.
+Robustness to Linguistic Ambiguity.
+The AMBROSIA dataset evaluates sensitivity to underspecified queries with subtle linguistic ambiguity. Here, LatentRefusal achieves 80.2% (Llama), outperforming Semantic Entropy by 18.1 points. This significant gap may partly stem from a known challenge of sampling-based uncertainty in Text-to-SQL, where syntactic diversity can mask semantic overconfidence. In our implementation, we approximate equivalence using syntactic agreement (Appendix C.1) for safety and cost reasons, which may underestimate the best-case performance of semantic clustering. Our latent-signal approach avoids this limitation by detecting the underlying representation-level confusion before it manifests as overconfident decoding.
+Training Efficiency.
+Instead of relying on zero-shot transfer, LatentRefusal attains its high performance through highly efficient supervised adaptation. Our method can be trained on any dataset using only \sim300 samples, completing in just 10 minutes on a single A100-80G GPU. This efficiency allows custom refusal gates to be deployed rapidly for new domains (e.g., reaching 88.6% F1 on SQuAD 2.0 and 87.0% F1 on TriageSQL) with minimal data annotation and computational cost.
+Comparison with API-based prompting.
+The DeepSeek API baseline uses zero-shot prompting to elicit refusal. While it achieves reasonable performance (83.2% avg.), it underperforms LatentRefusal by 5+ points and lacks controllability—prompt-based refusal is sensitive to instruction phrasing and can fail precisely when the model hallucinates. Our internal-signal approach provides a more reliable and deterministic safety gate.
+4.3 Efficiency Analysis
+Table 2 compares inference latency (Qwen-3-8B backbone). LatentRefusal adds negligible overhead (2ms), achieving 54ms total latency—13.7\times faster than Semantic Entropy (740ms). While sampling methods are prohibitive for real-time use, LatentRefusal achieves a favorable accuracy–latency trade-off and lies on the Pareto frontier among the evaluated baselines (Table 1). Specifically, it attains the highest F1 (88.5%) at near-minimal latency, superior to both computationally expensive spectral methods and similarly fast but less accurate supervised baselines (TSV).
+Method
+# Runs
+Latency(ms)
+Semantic Entropy
+N=10
+52*10
+CCS
+2
+100
+Self-evaluation*
+1
+53
+Eigenscore
+N=5/10
+51.7*N
+TSV
+1
+52
+HaloScope
+1
+50
+SAPLMA*
+1
+53
+LatentRefusal
+1
+54
+Table 2: Inference latency comparison. LatentRefusal achieves near-optimal latency (54ms) and highest accuracy, lying on the Pareto frontier.
+Architectural Efficiency.
+Efficiency stems from three factors: (1) Zero-redundancy extraction: reusing mandatory forward-pass states adds no LLM-level compute; (2) Parameter efficiency: the 19M-parameter TRGE probe is <0.3\% of the backbone size; (3) Early-exit capability: deciding refusal before decoding saves generation costs for unanswerable queries.
+4.4 Analysis
+The Failure of Spectral Uncertainty.
+Eigenscore relies on spectral statistics of hidden states across multiple samples. However, in Text-to-SQL, "confident hallucinations" are common: the model may generate syntactically diverse SQL (e.g., varying ‘JOIN‘ orders or alias names) that are semantically identical. This diversity inflates eigenvalue spread, causing spectral methods to misinterpret syntactic variance as epistemic uncertainty. TRGE avoids this by learning to identify the source of mismatch in the prompt-schema representation, which is invariant to the downstream decoding path.
+Cross-Backbone Consistency.
+The comparable performance between Llama-3.1-8B (88.7%) and Qwen-3-8B (88.5%) is consistent with the hypothesis that refusal signals may be encoded in a structurally similar manner across modern Transformer architectures. This suggests that the TRGE architecture is not overfitted to a specific model’s quirks, and implies that the probe may capture a task-general signal regarding how LLMs process unanswerable context.
+Error Analysis and Future Work.
+Qualitative inspection reveals two primary failure modes: (1) Semantic Near-Misses: when a column name is semantically similar but logically incorrect (e.g., ‘revenue‘ vs. ‘gross_profit‘), the probe occasionally underestimates uncertainty. (2) Deep Reasoning Chains: queries requiring complex multi-hop joins sometimes exhibit weak mismatch signals in the selected layer. Future work could explore multi-layer fusion or schema-aware attention to better capture these high-order logical inconsistencies.
+4.5 Ablation Studies
+We conduct comprehensive on Qwen3 8B using the TriageSQL dataset to validate the architectural decisions of LatentRefusal. Additional ablations on probe depth and training strategies are provided in Appendix B.
+4.5.1 Architecture and Layer Selection
+We validate the TRGE probe design and investigate the optimal source of refusal signals.
+Efficacy of the TRGE Architecture.
+Table 3 isolates the impact of the Tri-Residual Gated Encoder. The full TRGE model achieves an F1 score of 87.1%. Removing the gating branch (w/o SwiGLU) degrades performance to 85.4%, but the most critical insight comes from replacing the SwiGLU gate with a standard MLP (-4.1% F1) or a Linear Probe (-16.7% F1). The failure of the Linear Probe (70.4% F1) confirms that refusal detection requires modeling complex non-linear interactions between question and schema. Moreover, replacing SwiGLU with a standard MLP drops performance to 83.0%, demonstrating that the gating mechanism—which selectively suppresses schema noise—is essential. Among gating variants, SwiGLU outperforms GLU and GeGLU, likely due to its smoother optimization landscape.
+Variant
+F1 (%)
+Time (ms)
+TRGE (Full)
+87.1
+2.6
+w/o SwiGLU
+85.4
+2.3
+SwiGLU \rightarrow MLP
+83.0
+2.2
+SwiGLU \rightarrow GLU
+75.5
+2.3
+SwiGLU \rightarrow GeGLU
+85.1
+2.0
+Linear Probe
+70.4
+0.8
+Table 3: Architecture ablation. We compare TRGE against: (1) w/o SwiGLU: removing the gating branch; (2) SwiGLU\rightarrowMLP/GLU/GeGLU: replacing gating with alternatives; (3) Linear Probe: removing Transformer encoding entirely.
+Layer
+Acc
+Prec
+Rec
+AUC
+F1
+-1
+84.4
+76.7
+99.0
+87.6
+86.5
+-8
+84.5
+77.4
+97.8
+88.7
+86.4
+-\textbf{16}
+85.0
+77.2
+99.8
+88.4
+87.0
+-24
+84.4
+76.4
+99.8
+87.7
+86.5
+-32
+82.9
+74.7
+99.8
+88.4
+85.4
+Table 4: Hidden state layer selection ablation. Layer indices are relative to the final layer (e.g., -1 = last layer).
+Locating Refusal Signals.
+Table 4 shows that the optimal refusal signal resides in the middle-to-late layers (Layer -16), achieving the highest Accuracy (85.0%) and F1 (87.1%). While Layer -8 offers slightly higher precision, Layer -16 provides a superior balance with near-perfect recall (99.8%). Notably, the final layer (-1) exhibits lower recall (99.0%) than deeper layers. This finding supports the "mechanistic interpretability" hypothesis that LLMs encode epistemic uncertainty about unanswerable queries in intermediate processing stages, which may be resolved—or collapsed into confident hallucinations—by the time representations reach the final output layer Marks and Tegmark (2024); Kossen et al. (2024).
+Probe Depth and Capacity.
+Table 5 reveals an inverted-U relationship between probe depth and detection accuracy. Performance peaks at 4 layers (87.1% F1). Shallower probes (1–2 layers) underfit the data, while deeper probes (8–12 layers) show diminishing returns and signs of overfitting. This suggests that a compact 4-layer probe is sufficient to extract the refusal signal without memorizing dataset-specific schema artifacts, validating our design goal of a lightweight, low-latency module.
+Layers
+Params
+F1 (%)
+Time (ms)
+1
+9.6M
+82.03
+1.04
+2
+12.7M
+83.87
+1.64
+4
+19.0M
+87.09
+2.60
+6
+25.3M
+85.28
+3.40
+8
+31.7M
+84.61
+4.45
+12
+44.3M
+83.02
+6.46
+Table 5: Probe depth ablation. 4 layers achieves optimal F1; deeper probes show diminishing returns.
+Robustness to Training Strategy.
+Our method is robust to hyperparameter variations (Table 6 and 7 in Appendix). Label Smoothing (\epsilon=0.1) achieves optimal performance (87.1% F1) by mitigating overconfidence. Additionally, stability across varying dropout rates (0.0–0.3) indicates the probe learns distributed features rather than brittle artifacts.
+Summary of ablations.
+Our ablation studies confirm that: (1) the SwiGLU gating mechanism is critical, with a 16.7% F1 gap between TRGE and linear probes; (2) intermediate LLM layers provide the best refusal signals; and (3) training is robust to standard hyperparameter variations.
+5 Conclusion
+We address the critical safety risk of unanswerable queries in Text-to-SQL, where hallucinations yield harmful executable code. We formalize refusal as a strict pre-generation gating problem and propose LatentRefusal, a single-pass mechanism that detects answerability directly from a frozen LLM’s internal states. By introducing the Tri-Residual Gated Encoder (TRGE), we effectively amplify sparse refusal signals amidst schema noise, avoiding the latency and risks of execution-based uncertainty estimation. Empirical results confirm that LatentRefusal provides a robust, low-latency safety layer essential for production-grade Text-to-SQL systems.
+Limitations
+While LatentRefusal achieves high detection accuracy, its generalization capability across disparate domains remains a limitation; the probe currently requires fine-tuning to adapt to specific deployment scenarios. However, this need for adaptation is offset by the method’s exceptional training efficiency. The probe introduces minimal computational overhead, with training converging in approximately 10 minutes on a single NVIDIA A100-80G GPU. This low-cost training profile makes it practical to re-train or fine-tune the refusal mechanism for new verticals without significant resource expenditure. Future research will explore cross-dataset generalization and universal safety gating—where a single probe can reliably gate any Text-to-SQL deployment without domain-specific re-tuning—through techniques such as domain-invariant representation learning and meta-learning.

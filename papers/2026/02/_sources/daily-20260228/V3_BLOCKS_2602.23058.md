@@ -1,0 +1,809 @@
+[0] h5: Report GitHub Issue
+
+[1] p: Content selection saved. Describe the issue below:
+
+[2] h1: G e o W o r l d : Geometric World Models
+
+[3] h6: Abstract
+
+[4] p: Energy-based predictive world models provide a powerful approach for multi-step visual planning by reasoning over latent energy landscapes rather than generating pixels. However, existing approaches face two major challenges: ( i ) their latent representations are typically learned in Euclidean space, neglecting the underlying geometric and hierarchical structure among states, and ( ii ) they struggle with long-horizon prediction, which leads to rapid degradation across extended rollouts. To address these challenges, we introduce GeoWorld , a geometric world model that preserves geometric structure and hierarchical relations through a Hyperbolic JEPA , which maps latent representations from Euclidean space onto hyperbolic manifolds. We further introduce Geometric Reinforcement Learning for energy-based optimization, enabling stable multi-step planning in hyperbolic latent space. Extensive experiments on CrossTask and COIN demonstrate around 3% SR improvement in 3-step planning and 2% SR improvement in 4-step planning compared to the state-of-the-art V-JEPA 2.
+
+[5] figure: Figure 1 : Energy-based planning by GeoWorld. The diagram shows a Replace Memory Chip task from the COIN dataset [ 71 ] , where GeoWorld plans actions by following geodesics over a hyperbolic energy landscape rather than generating pixels.
+
+[6] h2: 1 Introduction
+
+[7] p: Autoregressive (AR) next-token prediction has endowed large language models (LLMs) [ 79 ] and vision-language models (VLMs) [ 53 , 20 ] with extensive world knowledge and reasoning capability, enabling them to effectively tackle complex tasks involving searching [ 78 ] , reasoning [ 32 , 33 , 44 ] , and planning [ 8 , 35 , 82 , 65 ] . Although the success of LLMs stems from modeling within language space, which serves as a shortcut toward human level knowledge [ 48 ] , they still fail to fully represent the rich information of the real world, such as its physical and geometric properties [ 3 ] . In the real world, human and biological cognition often acquire knowledge primarily through visual information rather than relying solely on language, as vision offers a higher bandwidth of information than language [ 62 ] . For example, human infants learn mainly from visual perception during the first few months before developing a language system [ 38 ] , and some animals do not possess language at all [ 18 ] . Therefore, there are world models [ 46 , 59 , 63 , 4 , 3 ] that learn solely from visual input, such as videos, and perform planning with either a generative or a predictive approach. Generative world models [ 46 , 59 , 63 ] explicitly generate pixels or latent visual tokens that decode into pixels in order to predict only one step at a time [ 67 ] . As a result, they lack awareness of the full trajectory structure or the energy landscape over multiple steps. In contrast, predictive world models [ 2 , 29 , 4 , 3 ] such as JPEA [ 41 ] do not generate pixels. Instead, they learn an energy landscape in latent space that measures the compatibility between current and target states. This enables multi-step hierarchical planning, where high-level reasoning minimizes energy in latent space, while lower-level modules fill in the physical details.
+
+[8] p: However, existing energy-based predictive world models face two significant challenges:
+
+[9] p: (1) Geometric neglect. Although predictive world models perform multi-step hierarchical planning in latent space, their representations are typically learned in a Euclidean space without preserving the underlying geometric relations among states. As a result, the learned energy landscape fails to capture meaningful geodesic distances or hierarchical embeddings between latent states [ 51 ] , which weakens the model’s ability to perform geometry-consistent planning over long horizons.
+
+[10] p: (2) Multi-step shortcoming. Multi-step videos are limited and expensive to acquire, so existing predictive world models are primarily trained on one-step video transitions [ 31 , 40 , 66 , 12 , 37 , 47 ] . Although learning an energy landscape over entire trajectories conceptually enables long-horizon planning, their performance degrades rapidly as the planning horizon increases, exposing a weakness in modeling long-term temporal dependencies.
+
+[11] p: Our motivation is to address these problems from a geometric perspective. For the first challenge, a geometry-aware world model is required to preserve geometric properties when learning the energy landscape for hierarchical planning. For the second challenge, reinforcement learning (RL) has proven effective in adjusting a pretrained foundation model when its outputs are unsatisfactory in certain aspects [ 54 , 60 ] . Therefore, a geometry-aware RL method is required to obtain optimal trajectories on the latent manifold, improving the model’s multi-step planning capability.
+
+[12] p: Hence, we introduce the Geometric World Model ( GeoWorld ), a method that enhances energy-based predictive world models by preserving geometric structure and hierarchical awareness in latent space, as shown in Figure 1 . To address the first challenge, we propose Hyperbolic JEPA ( H-JEPA ), which maps latent representations from Euclidean space ℝ n \mathbb{R}^{n} onto a hyperbolic manifold ℍ n \mathbb{H}^{n} , where geodesic distances naturally encode hierarchical relations among states. By learning dynamics along hyperbolic geodesics, H-JEPA preserves latent geometry during multi-step prediction, ensuring that the learned energy landscape aligns with the underlying structure of the physical world and supports geometry-consistent planning, as shown in 2 .
+
+[13] p: To address the second challenge, we design a Geometric Reinforcement Learning ( GRL ) that reformulates multi-step planning as the optimization of an energy-based value function, where lower hyperbolic energy corresponds to higher cumulative reward. GRL directly optimizes the predictor of the world model without training an additional policy or reward model. By adjusting the predictor’s energy-based value representation through hyperbolic geodesics minimization and triangle inequality regularization, GRL enforces geodesic-consistent rollouts on the latent manifold, effectively improving long-horizon stability and planning performance.
+
+[14] figure: (a) V-JEPA 2 [ 3 ] Energy Landscape (b) GeoWorld Energy Landscape Figure 2 : Energy landscape comparison for V-JEPA 2 [ 3 ] and GeoWorld. We visualize the energy by sweeping two orthonormal tangent-space directions ( Δ ​ x , Δ ​ y ) (\Delta x,\Delta y) around a reference latent state. GeoWorlds yields a structured, curvature-aware energy landscape that better reflects geometric structure and hierarchical relations among latent states and improves energy-based planning. For more details see Appendix 4 .
+
+[15] p: To verify our method’s capability on long-horizon planning, we evaluate multi-step goal-conditioned visual planning on standard benchmarks, including CrossTask [ 88 ] and COIN [ 71 ] . Our GeoWorld achieves consistent improvements over the previous state-of-the-art predictive world model V-JEPA 2, including improvements of around 3% SR in 3-step planning and 2% SR in 4-step planning across both datasets.
+
+[16] p: The contributions of our work can be summarized as follows:
+
+[17] p: We introduce the Geometric World Model ( GeoWorld ) with a Hyperbolic JEPA ( H-JEPA ), which preserves geometric structure and hierarchical relations by mapping latent representations onto a hyperbolic manifold and learning dynamics along hyperbolic geodesics, resulting in a geometry-consistent energy landscape for multi-step prediction and planning.
+
+[18] p: We propose Geometric Reinforcement Learning ( GRL ), an energy-based optimization framework that directly refines the predictor through hyperbolic energy minimization and triangle-inequality regularization, enabling geodesic-consistent rollouts and improving long-horizon planning stability.
+
+[19] p: We demonstrate strong performance on long-horizon goal-conditioned visual planning across CrossTask and COIN, achieving around 3% SR improvement in 3-step planning and 2% SR improvement in 4-step planning compared to V-JEPA 2.
+
+[20] h2: 2 Related Works
+
+[21] h5: Video World Models
+
+[22] p: There are two primary approaches for video world modeling: generative world models [ 46 , 59 , 63 ] and predictive world models [ 41 , 2 , 29 , 4 , 3 ] . Generative world models typically build upon autoregressive [ 24 , 77 , 43 ] or semi-autoregressive [ 58 , 34 , 22 , 72 , 81 , 17 ] architectures that observe the visual context and explicitly generate the next frame or its latent representation. These models often incorporate an inverse dynamics module [ 67 ] trained to infer actions from consecutive observations, enabling one-step reactive control but preventing multi-step reasoning because the model lacks access to the global trajectory structure and cannot capture long-range dynamics. Moreover, generative approaches must decode visual tokens or pixels during planning, which introduces unnecessary noise and computational overhead and limits their ability to model abstract energy landscapes for hierarchical planning [ 59 ] . In contrast, predictive world models do not generate pixels. Instead, they learn an energy landscape in latent space that quantifies the compatibility between current and target states [ 41 ] . This design allows for multi-step trajectory optimization using sampling-based planners such as the cross-entropy method (CEM) [ 23 ] , enabling long-horizon planning without explicit pixel decoding.
+
+[23] h5: Goal-Conditioned Visual Planning
+
+[24] p: Goal conditioned visual planning aims to produce a sequence of actions that achieves a given goal based on visual observations. Prior works have evolved into three independent setups depending on the modalities of the observation and the goal, which may be images, videos, or language. (1) In visual planning for assistance (VPA) [ 56 ] , observations are videos and goals are described in natural language. This typically requires models built on LLMs with multimodal processing capability [ 36 , 84 , 16 ] . (2) In procedural planning (PP) [ 15 ] , both observations and goals are specified as images without any language involved, which limits the model’s ability to capture temporal information in the physical world [ 42 , 36 , 52 , 7 , 86 , 75 , 50 , 61 , 87 , 69 , 74 ] . (3) In visual planning with videos, both observations and goals are given as videos, which aligns more naturally with temporal dynamics in the real world and is commonly addressed using video LLMs [ 76 , 79 , 20 , 53 ] , generative world models [ 59 ] , and predictive world models [ 3 ] .
+
+[25] figure: Figure 3 : Overview of GeoWorld. Our geometric world model integrates Hyperbolic JEPA for geometry-preserving latent dynamics and Geometric Reinforcement Learning for geodesic-consistent multi-step refinement. Together with energy-based planning using CEM, GeoWorld enables stable and geometry-aware long-horizon visual planning.
+
+[26] h2: 3 Method
+
+[27] h3: 3.1 Overview
+
+[28] p: We introduce GeoWorld , a geometric world model designed to enhance long-horizon visual planning by preserving geometric structure and hierarchical awareness in latent space. To address the limitation of Euclidean latent representations, GeoWorld incorporates Hyperbolic JEPA (H-JEPA), which maps encoder outputs from Euclidean space onto a hyperbolic manifold where geodesic distances naturally encode hierarchical relations among states. By learning latent dynamics along hyperbolic geodesics, H-JEPA enforces geometry-consistent transitions that better reflect the structure of real-world trajectories. To further improve stability in multi-step prediction, we develop Geometric Reinforcement Learning (GRL), an energy-based optimization framework that treats planning as minimizing a hyperbolic value function without training an additional policy or reward model. GRL refines the predictor through hyperbolic energy minimization and triangle-inequality regularization, encouraging geodesic-consistent rollouts and improving long-horizon temporal coherence. Leveraging energy-based planning with the Cross-Entropy Method (CEM) [ 23 ] further enables efficient trajectory optimization by searching for action sequences that follow geodesic paths in hyperbolic latent space. Together, H-JEPA and GRL form the core of GeoWorld, enabling geometry-aware multi-step planning in predictive world models, as shown in Figure 3 .
+
+[29] p: For preliminaries on JEPA [ 41 ] , hyperbolic geometry, and the value function in RL, see Appendix 1 .
+
+[30] h3: 3.2 Hyperbolic JEPA
+
+[31] p: From a representation perspective, we aim to learn a mapping from states onto a hyperbolic space ℍ n \mathbb{H}^{n} such that the optimal plan corresponds to a geodesic in hyperbolic space. Hence, we propose Hyperbolic JEPA ( H-JEPA ), which models latent dynamics on the hyperbolic manifold to preserve hierarchical relations and underlying geometric coherence during multi-step planning.
+
+[32] p: We define the observation at time t t as x t x_{t} . E θ ​ ( ⋅ ) E_{\theta}(\cdot) denotes the pretrained encoder [ 3 ] , which encodes the observation x t x_{t} into the latent state s t x s_{t}^{x} :
+
+[33] table: s t x = E θ ​ ( x t ) ∈ ℝ n . s_{t}^{x}=E_{\theta}(x_{t})\in\mathbb{R}^{n}. (1)
+
+[34] p: To effectively map the encoder output from Euclidean space ℝ n \mathbb{R}^{n} to hyperbolic space ℍ n \mathbb{H}^{n} , we interpret the Euclidean embedding s t x s_{t}^{x} as a tangent vector in the tangent space 𝐓 0 ​ ℍ n \mathbf{T}_{0}\mathbb{H}^{n} at the origin. We then apply the exponential map at the origin of the Poincaré ball model 𝔹 c n \mathbb{B}_{c}^{n} with curvature K = − c K=-c , which projects the tangent vector onto the hyperbolic manifold, as detailed in Appendix 1.5.1 .
+
+[35] p: Formally, the hyperbolic latent state is obtained as
+
+[36] table: s t , ℍ x = exp 0 ⁡ ( s t x ) = tanh ⁡ ( c ​ ‖ s t x ‖ ) ​ s t x c ​ ‖ s t x ‖ , s t , ℍ x ∈ 𝔹 c n . s_{t,\mathbb{H}}^{x}=\exp_{0}(s_{t}^{x})=\tanh\!\big(\sqrt{c}\|s_{t}^{x}\|\big)\frac{s_{t}^{x}}{\sqrt{c}\|s_{t}^{x}\|},\quad s_{t,\mathbb{H}}^{x}\in\mathbb{B}_{c}^{n}. (2)
+
+[37] p: Then the action-conditioned predictor P ϕ ​ ( ⋅ ) P_{\phi}(\cdot) takes a sequence of hyperbolic latent states ( s t , ℍ x ) t = 1 T (s_{t,\mathbb{H}}^{x})_{t=1}^{T} and a corresponding sequence of actions ( a t ) t = 1 T (a_{t})_{t=1}^{T} as input, and predicts the sequence of next-state representations ( s ^ t + 1 , ℍ x ) t = 1 T (\hat{s}_{t+1,\mathbb{H}}^{x})_{t=1}^{T} over a planning horizon T T :
+
+[38] table: ( s ^ t + 1 , ℍ x ) t = 1 T = P ϕ ​ ( ( s t , ℍ x , a t ) t = 1 T ) . (\hat{s}_{t+1,\mathbb{H}}^{x})_{t=1}^{T}=P_{\phi}\!\big((s_{t,\mathbb{H}}^{x},a_{t})_{t=1}^{T}\big). (3)
+
+[39] p: and θ \theta and ϕ \phi denote the parameters (weights) of the encoder and predictor networks, respectively.
+
+[40] h3: 3.3 Training Objective
+
+[41] p: The supervised training objective of H-JEPA is to learn a predictive world model that follows the geodesic path of minimum energy cost between the current and target latent states in hyperbolic space. Specifically, the model minimizes the Poincaré-ball hyperbolic distance d ℍ d_{\mathbb{H}} between the predicted and true latent representations, as defined in Eq. 68 of Appendix 1.5.1 , ensuring that each transition aligns with the lowest-energy trajectory on the manifold.
+
+[42] p: The objective consists of a joint loss combining a teacher-forcing loss and a rollout loss. The teacher-forcing loss encourages accurate one-step prediction by aligning the predicted next-state representation with the ground-truth latent embedding, while the rollout loss recursively feeds the model’s own predictions as inputs to enforce temporal consistency across multiple future steps.
+
+[43] h5: Teacher Forcing
+
+[44] p: The teacher-forcing loss trains the model to accurately perform one-step future prediction by minimizing the hyperbolic geodesic distance d ℍ d_{\mathbb{H}} between the predicted latent representation s ^ t + 1 , ℍ x \hat{s}_{t+1,\mathbb{H}}^{x} and the encoded ground-truth latent s t + 1 , ℍ x s_{t+1,\mathbb{H}}^{x} at each time step t t :
+
+[45] table: ℒ TF ​ ( θ , ϕ ) \displaystyle\mathcal{L}_{\text{TF}}(\theta,\phi) = 1 T ​ ∑ t = 1 T d ℍ ​ ( P ϕ ​ ( exp 0 ⁡ ( E θ ​ ( x t ) ) , a t ) CLOSE , \displaystyle=\frac{1}{T}\sum_{t=1}^{T}d_{\mathbb{H}}\!\left(P_{\phi}\!\big(\exp_{0}\!\big(E_{\theta}(x_{t})\big),a_{t}\right), OPEN exp 0 ⁡ ( E θ ​ ( x t + 1 ) ) ) \displaystyle\qquad\left.\exp_{0}\!\big(E_{\theta}(x_{t+1})\big)\right) (4) = 1 T ​ ∑ t = 1 T d ℍ ​ ( s ^ t + 1 , ℍ x , s t + 1 , ℍ x ) \displaystyle=\frac{1}{T}\sum_{t=1}^{T}d_{\mathbb{H}}\!\left(\hat{s}_{t+1,\mathbb{H}}^{x},s_{t+1,\mathbb{H}}^{x}\right) (5) = 1 T ​ ∑ t = 1 T 1 c ​ arcosh ⁡ ( 1 CLOSE \displaystyle=\frac{1}{T}\sum_{t=1}^{T}\frac{1}{\sqrt{c}}\,\operatorname{arcosh}\!\left(1\right. OPEN + 2 ​ c ​ ‖ s ^ t + 1 , ℍ x − s t + 1 , ℍ x ‖ 2 ( 1 − c ​ ‖ s ^ t + 1 , ℍ x ‖ 2 ) ​ ( 1 − c ​ ‖ s t + 1 , ℍ x ‖ 2 ) ) \displaystyle\qquad\left.{}+2c\frac{\|\hat{s}_{t+1,\mathbb{H}}^{x}-s_{t+1,\mathbb{H}}^{x}\|^{2}}{(1-c\|\hat{s}_{t+1,\mathbb{H}}^{x}\|^{2})(1-c\|s_{t+1,\mathbb{H}}^{x}\|^{2})}\right) (6)
+
+[46] h5: Rollout
+
+[47] p: The rollout loss feeds the predictor’s output back as input, enabling the model to learn multi-step future prediction. In this case, we design a two-step rollout loss to enhance the model’s capability for long-horizon planning:
+
+[48] table: ℒ rollout ​ ( θ , ϕ ) \displaystyle\mathcal{L}_{\text{rollout}}(\theta,\phi) = 1 T ​ ∑ t = 1 T d ℍ ​ ( P ϕ ​ ( exp 0 ⁡ ( E θ ​ ( x t ) ) , a t , a t + 1 ) CLOSE , \displaystyle=\frac{1}{T}\sum_{t=1}^{T}d_{\mathbb{H}}\!\left(P_{\phi}\!\big(\exp_{0}\!\big(E_{\theta}(x_{t})\big),a_{t},a_{t+1}\big)\right., OPEN exp 0 ⁡ ( E θ ​ ( x t + 2 ) ) ) \displaystyle\qquad\left.\exp_{0}\!\big(E_{\theta}(x_{t+2})\big)\right) (7) = 1 T ​ ∑ t = 1 T d ℍ ​ ( s ^ t + 2 , ℍ x , s t + 2 , ℍ x ) \displaystyle=\frac{1}{T}\sum_{t=1}^{T}d_{\mathbb{H}}\!\left(\hat{s}_{t+2,\mathbb{H}}^{x},s_{t+2,\mathbb{H}}^{x}\right) (8) = 1 T ​ ∑ t = 1 T 1 c ​ arcosh ⁡ ( 1 CLOSE \displaystyle=\frac{1}{T}\sum_{t=1}^{T}\frac{1}{\sqrt{c}}\,\operatorname{arcosh}\!\left(1\right. OPEN + 2 ​ c ​ ‖ s ^ t + 2 , ℍ x − s t + 2 , ℍ x ‖ 2 ( 1 − c ​ ‖ s ^ t + 2 , ℍ x ‖ 2 ) ​ ( 1 − c ​ ‖ s t + 2 , ℍ x ‖ 2 ) ) , \displaystyle\qquad\left.{}+2c\frac{\|\hat{s}_{t+2,\mathbb{H}}^{x}-s_{t+2,\mathbb{H}}^{x}\|^{2}}{(1-c\|\hat{s}_{t+2,\mathbb{H}}^{x}\|^{2})(1-c\|s_{t+2,\mathbb{H}}^{x}\|^{2})}\right), (9)
+
+[49] h5: Total Loss
+
+[50] p: Hence, the total loss in the supervised stage is defined as
+
+[51] table: ℒ SFT ​ ( θ , ϕ ) = λ ​ ℒ TF ​ ( θ , ϕ ) + ( 1 − λ ) ​ ℒ rollout ​ ( θ , ϕ ) , \mathcal{L}_{\text{SFT}}(\theta,\phi)=\lambda\,\mathcal{L}_{\text{TF}}(\theta,\phi)+(1-\lambda)\,\mathcal{L}_{\text{rollout}}(\theta,\phi), (10)
+
+[52] p: where λ \lambda is a loss weighting hyperparameter.
+
+[53] p: Together, these two components train the predictor to learn smooth, geodesically consistent trajectories that capture both short-term accuracy and long-horizon stability within the hyperbolic latent space.
+
+[54] h3: 3.4 Geometric Reinforcement Learning
+
+[55] p: We propose a Geometric Reinforcement Learning ( GRL ) approach that improves the predictor in multi-step planning by adjusting its energy-based value representation, aligning lower energy with higher expected reward.
+
+[56] h5: Energy Cost
+
+[57] p: Given a frozen encoder E E and a trainable predictor P ϕ P_{\phi} , we define the energy cost of moving from state s t , ℍ x s_{t,\mathbb{H}}^{x} to state s t + 1 , ℍ x s_{t+1,\mathbb{H}}^{x} as
+
+[58] table: c t ​ ( s t , ℍ x , s t + 1 , ℍ x ) \displaystyle c_{t}(s_{t,\mathbb{H}}^{x},s_{t+1,\mathbb{H}}^{x}) = d ℍ ​ ( P ϕ ​ ( exp 0 ⁡ ( E ⁡ ( x t ) ) , a t ) , exp 0 ⁡ ( E ⁡ ( x t + 1 ) ) ) \displaystyle=d_{\mathbb{H}}\!\left(P_{\phi}\!\big(\exp_{0}\!\big(E(x_{t})\big),a_{t}\big),\exp_{0}\!\big(E(x_{t+1})\big)\right) (11) = d ℍ ​ ( s ^ t + 1 , ℍ x , s t + 1 , ℍ x ) . \displaystyle=d_{\mathbb{H}}(\hat{s}_{t+1,\mathbb{H}}^{x},s_{t+1,\mathbb{H}}^{x}). (12)
+
+[59] p: which ideally indicates that we aim to minimize the energy cost of moving from state s t , ℍ x s_{t,\mathbb{H}}^{x} to state s t + 1 , ℍ x s_{t+1,\mathbb{H}}^{x} , which is identical to minimizing the geodesic distance between the predicted state s ^ t + 1 , ℍ x \hat{s}_{t+1,\mathbb{H}}^{x} and the target state s t + 1 , ℍ x s_{t+1,\mathbb{H}}^{x} .
+
+[60] h5: Reward
+
+[61] p: We then define the reward as the negative energy cost of moving between states:
+
+[62] table: r t ​ ( s t , ℍ x , a t , s t + 1 , ℍ x ) = − c t ​ ( s t , ℍ x , s t + 1 , ℍ x ) . r_{t}(s_{t,\mathbb{H}}^{x},a_{t},s_{t+1,\mathbb{H}}^{x})=-c_{t}(s_{t,\mathbb{H}}^{x},s_{t+1,\mathbb{H}}^{x}). (13)
+
+[63] h5: Path Value Function
+
+[64] p: As mentioned in Appendix 1.6 , the value function V V is a mathematical object that quantifies the amount of energy required for an agent to reach optimality from a given state to a target state, where lower energy corresponds to a higher expected cumulative reward.
+
+[65] p: Hence, the path value function between the current and goal latent states, given a planning horizon T T , is defined as the expected cumulative reward:
+
+[66] table: V ( s 1 , ℍ x , s 1 + T , ℍ x ) = 𝔼 a 1 : T ∼ ϕ [ ∑ t = 1 T γ t − 1 r t ( s t , ℍ x , a t , s t + 1 , ℍ x ) ] , V(s_{1,\mathbb{H}}^{x},s_{1+T,\mathbb{H}}^{x})=\mathbb{E}_{a_{1:T}\sim\phi}\!\left[\sum_{t=1}^{T}\gamma^{t-1}r_{t}(s_{t,\mathbb{H}}^{x},a_{t},s_{t+1,\mathbb{H}}^{x})\right], (14)
+
+[67] p: where γ ∈ [ 0 , 1 ) \gamma\in[0,1) is the discount factor.
+
+[68] p: Our objective is to maximize the total reward (i.e., maximize the return) such that P ϕ P_{\phi} follows the geodesics. Therefore, the optimal path value function maximizes the expected cumulative reward:
+
+[69] table: V ∗ ​ ( s 1 , ℍ x , s 1 + T , ℍ x ) \displaystyle V^{*}(s_{1,\mathbb{H}}^{x},s_{1+T,\mathbb{H}}^{x}) = max ϕ 𝔼 a 1 : T ∼ ϕ [ ∑ t = 1 T γ t − 1 r t ( s t , ℍ x , a t , \displaystyle=\max_{\phi}\,\mathbb{E}_{a_{1:T}\sim\phi}\!\left[\sum_{t=1}^{T}\gamma^{t-1}\,r_{t}(s_{t,\mathbb{H}}^{x},a_{t},\right. s t + 1 , ℍ x ) ] . \displaystyle\qquad\qquad\qquad\qquad\left.s_{t+1,\mathbb{H}}^{x})\right]. = min ϕ 𝔼 a 1 : T ∼ ϕ [ ∑ t = 1 T γ t − 1 d ℍ ( s ^ t + 1 , ℍ x , \displaystyle=\min_{\phi}\,\mathbb{E}_{a_{1:T}\sim\phi}\!\left[\sum_{t=1}^{T}\gamma^{t-1}\,d_{\mathbb{H}}(\hat{s}_{t+1,\mathbb{H}}^{x},\right. s t + 1 , ℍ x ) ] . \displaystyle\qquad\qquad\qquad\qquad\left.s_{t+1,\mathbb{H}}^{x})\right]. (15)
+
+[70] p: which is equivalent to minimizing the total hyperbolic distance between the predicted and target states.
+
+[71] h5: Triangle Inequality Regularization
+
+[72] p: The hyperbolic geodesic distance d ℍ d_{\mathbb{H}} satisfies the triangle inequality. Therefore, for any consecutive triplet in the predictor’s rollouts:
+
+[73] table: d ℍ ​ ( s ^ t , ℍ x , s ^ t + 2 , ℍ x ) ≤ d ℍ ​ ( s ^ t , ℍ x , s ^ t + 1 , ℍ x ) + d ℍ ​ ( s ^ t + 1 , ℍ x , s ^ t + 2 , ℍ x ) . d_{\mathbb{H}}(\hat{s}_{t,\mathbb{H}}^{x},\hat{s}_{t+2,\mathbb{H}}^{x})\leq d_{\mathbb{H}}(\hat{s}_{t,\mathbb{H}}^{x},\hat{s}_{t+1,\mathbb{H}}^{x})+d_{\mathbb{H}}(\hat{s}_{t+1,\mathbb{H}}^{x},\hat{s}_{t+2,\mathbb{H}}^{x}). (16)
+
+[74] p: This indicates that minimizing the sum of consecutive step distances encourages the predicted trajectory to align with the geodesic path. Hence, we introduce a regularization term:
+
+[75] table: ℒ Δ = 1 T − 2 ∑ t = 1 T − 2 [ d ℍ ( s ^ t , s ^ t + 2 ) − d ℍ ( s ^ t , s ^ t + 1 ) \displaystyle\mathcal{L}_{\Delta}=\frac{1}{T-2}\sum_{t=1}^{T-2}\Big[d_{\mathbb{H}}(\hat{s}_{t},\hat{s}_{t+2})-d_{\mathbb{H}}(\hat{s}_{t},\hat{s}_{t+1}) − d ℍ ( s ^ t + 1 , s ^ t + 2 ) ] + . \displaystyle\qquad\qquad-d_{\mathbb{H}}(\hat{s}_{t+1},\hat{s}_{t+2})\Big]_{+}. (17)
+
+[76] p: This term enforces multi-step rollout consistency by encouraging predicted trajectories to satisfy hyperbolic geodesic properties.
+
+[77] h5: Total Loss
+
+[78] p: Hence, the total loss in Geometric Reinforcement Learning can be expressed as
+
+[79] table: ℒ GRL ( ϕ ) = 𝔼 a 1 : T ∼ ϕ [ ∑ t = 1 T γ t − 1 d ℍ ( s ^ t + 1 , ℍ x , s t + 1 , ℍ x ) ] + β ℒ Δ . \mathcal{L}_{\mathrm{GRL}}(\phi)=\mathbb{E}_{a_{1:T}\sim\phi}\!\left[\sum_{t=1}^{T}\gamma^{t-1}d_{\mathbb{H}}(\hat{s}_{t+1,\mathbb{H}}^{x},s_{t+1,\mathbb{H}}^{x})\right]+\beta\mathcal{L}_{\Delta}. (18)
+
+[80] p: where β \beta is the regularization factor.
+
+[81] h3: 3.5 Energy-Based Planning
+
+[82] p: We then perform energy-based planning after training, with the frozen encoder E E and predictor P P . The predictor serves as a world model, capable of predicting how latent representations evolve when an action sequence is applied. During planning, we search for an optimal action sequence that follows the geodesic path between the current and goal latent states, effectively minimizing a goal-conditioned energy cost defined in the hyperbolic latent space.
+
+[83] p: Given the current observation x 1 x_{1} , the future target x 1 + T x_{1+T} , and the planning horizon T T , we encode the current and goal observations as
+
+[84] table: s 1 , ℍ x = exp 0 ⁡ ( E ⁡ ( x 1 ) ) , s 1 + T , ℍ x = exp 0 ⁡ ( E ⁡ ( x 1 + T ) ) . s_{1,\mathbb{H}}^{x}=\exp_{0}(E(x_{1})),\qquad s_{1+T,\mathbb{H}}^{x}=\exp_{0}(E(x_{1+T})). (19)
+
+[85] p: We then define the energy cost function C C based on the Poincaré geodesic distance, which measures the hyperbolic energy between the predicted and goal latent states over the planning horizon:
+
+[86] table: C ⁡ ( ( a ^ t ) t = 1 T , s 1 , ℍ x , s 1 + T , ℍ x ) = d ℍ ​ ( P ⁡ ( ( a ^ t ) t = 1 T , s 1 , ℍ x ) , s 1 + T , ℍ x ) , C((\hat{a}_{t})_{t=1}^{T};s_{1,\mathbb{H}}^{x},s_{1+T,\mathbb{H}}^{x})=d_{\mathbb{H}}\!\left(P((\hat{a}_{t})_{t=1}^{T};s_{1,\mathbb{H}}^{x}),\,s_{1+T,\mathbb{H}}^{x}\right), (20)
+
+[87] p: Hence, the optimal action sequence ( a t ∗ ) t = 1 T (a_{t}^{*})_{t=1}^{T} is obtained by minimizing this hyperbolic energy cost:
+
+[88] table: ( a t ∗ ) t = 1 T = arg ⁡ min ( a ^ t ) t = 1 T ​ d ℍ ​ ( P ⁡ ( ( a ^ t ) t = 1 T , s 1 , ℍ x ) , s 1 + T , ℍ x ) . (a_{t}^{*})_{t=1}^{T}=\arg\min_{(\hat{a}_{t})_{t=1}^{T}}d_{\mathbb{H}}\!\left(P((\hat{a}_{t})_{t=1}^{T};s_{1,\mathbb{H}}^{x}),\,s_{1+T,\mathbb{H}}^{x}\right). (21)
+
+[89] p: The optimization is performed with the Cross-Entropy Method (CEM) [ 23 ] , as detailed in Algorithm 1 of Appendix 1.3.3
+
+[90] table: ( a t ∗ ) t = 1 T = CEM ⁡ ( x 1 , x 1 + T , P ⁡ ( ⋅ ) , E ⁡ ( ⋅ ) , T , N , K , I , μ 0 , Σ 0 ) (a_{t}^{*})_{t=1}^{T}=\operatorname{CEM}\!\left(x_{1},\,\,x_{1+T},\,P(\cdot),\,E(\cdot),\,T,\,N,\,K,\,I,\,\mu_{0},\,\Sigma_{0}\right) (22)
+
+[91] p: where x 1 x_{1} is the current observation, x 1 + T x_{1+T} is the goal observation, P ϕ P_{\phi} is the predictor, E ⁡ ( ⋅ ) E(\cdot) is the encoder, T T is the planning horizon, N N is the number of samples, K K is the number of elites, I I is the number of iterations, and ( μ 0 , Σ 0 ) (\mu_{0},\Sigma_{0}) denote the initial mean and covariance of the action distribution.
+
+[92] h2: 4 Experiments
+
+[93] h3: 4.1 Benchmarks and Evaluation Metrics
+
+[94] h5: Benchmarks
+
+[95] p: For evaluating our world model’s capability in multi-step goal-conditioned planning, we adapt two standard goal-conditioned visual planning datasets, CrossTask [ 88 ] and COIN [ 71 ] , which contain diverse fine-grained action labels and timestamps of human daily activities.
+
+[96] p: CrossTask consists of 4.7K videos across 83 tasks, covering 105 actions, with an average of 8 actions per video. The total duration is 375h.
+
+[97] p: COIN consists of 11,287 videos across 180 tasks, covering 778 actions, with an average of 3.9 actions per video. The total duration is 476h.
+
+[98] h5: Metrics
+
+[99] p: Following previous works in goal-conditioned visual planning [ 7 ] , we adopt three metrics for evaluation: (1) Success Rate (SR) computes whether the predicted action sequence exactly matches the ground truth sequence. (2) Mean Accuracy (mAcc) computes the average accuracy of the predicted actions at each time step. (3) Mean Intersection over Union (mIoU) quantifies the overlap between the predicted procedure and the ground truth.
+
+[100] h3: 4.2 Baseline and Evaluation Protocol
+
+[101] p: We follow previous works [ 15 , 7 , 59 , 3 ] and evaluate goal-conditioned visual planning in two setups based on the modality of the observation and the target, as discussed in Section 2 . For procedural planning [ 15 ] , both observations and goals are specified as images, which is more aligned with the traditional visual planning setup. For visual planning with videos [ 59 ] , both observations and goals are specified as video clips, which more faithfully reflect the temporal–spatial information in the real world.
+
+[102] p: For both setups, evaluation is conducted over a planning horizon T T , where the model outputs a sequence of T T actions given the observation and the goal.
+
+[103] p: In both setups, we include three categories of baselines. LLM-based methods leverage LLMs or VLMs for reasoning and planning [ 42 , 36 , 52 , 76 , 79 , 20 , 53 ] . Generative (world) models explicitly generate pixels or latent visual tokens that decode into pixels for planning [ 15 , 7 , 86 , 75 , 50 , 61 , 87 , 59 ] . Predictive (world) models predict a sequence of actions without relying on pixel generation [ 27 , 1 , 68 , 69 , 74 , 3 ] .
+
+[104] p: There are two extra baselines in the procedural planning setup. Random randomly selects an action from all actions and serves as the empirical lower bound of performance [ 15 ] . The Retrieval-Based approach retrieves the nearest neighbor by minimizing the visual feature distance within the training dataset, and the action sequence associated with the retrieved neighbor is then used as the plan [ 87 ] .
+
+[105] p: Besides, for both V-JEPA 2 [ 3 ] and our GeoWorld, we adopt frozen encoders, while for VideoWorld [ 59 ] we perform full finetuning. For general VLMs [ 76 , 79 , 20 , 53 ] in visual planning with videos, all evaluations are conducted in a zero-shot setting. For more details on the baselines, see Appendix 3 .
+
+[106] figure: Table 1: Goal-conditioned visual planning with images on CrossTask [ 88 ] and COIN [ 71 ] datasets. We evaluate multi-step planning over a horizon T T under the procedural planning setup [ 15 ] , where both observations and goals are specified as images. Method CrossTask Dataset [ 88 ] COIN Dataset [ 71 ] T=3 T=4 T=3 T=4 SR mAcc mIoU SR mAcc mIoU SR mAcc mIoU SR mAcc mIoU Random [ 15 ] 0.01 0.94 1.66 0.01 1.83 1.66 0.01 0.01 2.47 0.01 0.01 2.32 Retrieval-Based [ 87 ] 8.05 23.30 32.06 3.95 22.22 36.97 – – – – – – LLM-Based LFP [ 42 ] 30.55 59.59 76.86 15.97 50.70 75.30 30.64 54.72 76.86 15.97 50.70 75.30 VidAssist (zero-shot) [ 36 ] 14.60 52.60 68.38 9.89 40.85 70.35 18.44 50.63 75.64 9.07 42.72 80.83 VidAssist [ 36 ] 28.85 58.12 75.36 15.45 51.51 72.61 29.20 54.76 78.02 20.78 49.07 78.93 SCHEMA [ 52 ] 38.93 63.80 79.82 24.50 58.48 76.48 32.09 49.84 83.83 22.02 45.33 83.47 Generative (World) Models DDN [ 15 ] 12.18 31.29 47.48 5.97 27.10 48.46 13.90 20.19 64.78 11.13 17.71 68.06 Int-MGAIL [ 7 ] 17.03 44.66 58.08 9.47 37.16 57.24 – – – – – – Ext-MGAIL [ 7 ] 21.27 49.46 61.70 16.41 43.05 60.93 – – – – – – P 3 IV [ 86 ] 23.34 49.96 73.89 13.40 44.16 70.01 15.40 21.67 76.31 11.32 18.85 70.53 PDPP [ 75 ] 37.20 64.67 66.57 21.48 57.82 65.13 21.33 45.62 51.82 14.41 44.10 51.39 KEPP [ 50 ] 38.12 64.74 67.15 24.15 59.05 66.64 20.25 39.87 51.72 15.63 39.53 53.27 ActionDiffusion [ 61 ] 37.79 65.38 67.45 22.43 59.42 66.04 24.00 45.42 54.29 18.04 44.54 56.23 MTID [ 87 ] 40.45 67.19 69.17 24.76 60.69 67.67 30.44 51.70 59.74 22.74 49.90 61.25 Predictive (World) Models WLTDO [ 27 ] 1.87 21.64 31.70 0.77 17.92 26.43 – – – – – – UAAA [ 1 ] 2.15 20.21 30.87 0.98 19.86 27.09 – – – – – – UPN [ 68 ] 2.89 24.39 31.56 1.19 21.59 27.85 – – – – – – PlaTe [ 69 ] 16.00 36.17 65.91 14.00 35.29 55.36 – – – – – – E3P [ 74 ] 26.40 53.02 74.05 16.49 48.00 70.16 19.57 31.42 84.95 13.59 26.72 84.72 V-JEPA 2 ViT-L [ 3 ] 43.33 68.63 67.84 27.53 63.80 65.45 32.10 54.25 61.18 20.86 52.61 64.33 V-JEPA 2 ViT-H [ 3 ] 44.07 70.18 68.32 28.75 64.71 66.82 32.76 55.37 61.57 22.60 53.19 65.74 V-JEPA 2 ViT-g [ 3 ] 44.84 71.62 68.87 30.03 65.04 67.93 33.42 56.29 63.31 23.04 54.47 66.13 V-JEPA 2 ViT-g 384 [ 3 ] 45.58 72.74 69.42 31.36 65.45 69.21 34.08 57.20 64.53 23.43 55.58 66.57 GeoWorld ViT-L (Ours) 43.89 68.96 82.93 27.64 64.35 79.43 33.42 57.26 88.03 24.96 52.92 85.26 GeoWorld ViT-H (Ours) 45.33 70.84 84.70 29.19 65.47 80.16 34.08 58.70 88.42 26.24 53.66 87.17 GeoWorld ViT-g (Ours) 46.25 71.95 85.44 30.63 66.02 81.82 34.41 60.47 89.00 27.46 54.55 88.20 GeoWorld ViT-g 384 (Ours) 47.47 73.69 86.55 31.48 67.30 82.48 34.85 61.86 89.88 27.79 55.97 88.61
+
+[107] h3: 4.3 Implementation Details
+
+[108] p: For a fair comparison, both the V-JEPA 2 [ 3 ] baseline and our GeoWorld adopt frozen encoders pretrained on VideoMix22M. The exponential map exp 0 ⁡ ( ⋅ ) \exp_{0}(\cdot) is implemented and trained as a differentiable hyperbolic projection layer, where the curvature c c is treated as a learnable parameter [ 14 ] . The predictor network P ϕ ​ ( ⋅ ) P_{\phi}(\cdot) is a ∼ 300 \sim\!300 M-parameter transformer with 24 layers, 16 heads, a 1024-dimensional hidden size, and GELU activations.
+
+[109] p: We conduct a two-stage training procedure for both V-JEPA 2 and our GeoWorld, consisting of supervised post-training followed by geometric reinforcement learning.
+
+[110] p: In the supervised post-training stage, both V-JEPA 2 and GeoWorld are trained with the AdamW optimizer [ 45 ] using a warmup–constant–decay learning rate schedule and a constant weight decay of 0.04. We linearly warm up the learning rate from 7.5 × 10 − 5 7.5\times 10^{-5} to 4.25 × 10 − 4 4.25\times 10^{-4} over 4500 iterations, hold it constant for 85,500 iterations, and then decay it to 0 over the final 4500 iterations, with a batch size of 256.
+
+[111] p: For geometric reinforcement learning, we keep the same AdamW optimizer and weight decay as in the supervised post-training stage, but adopt a smaller learning rate and a shorter schedule due to the higher variance of the RL objective. Specifically, we linearly warm up the learning rate from 5.0 × 10 − 5 5.0\times 10^{-5} to 2.0 × 10 − 4 2.0\times 10^{-4} over 2,000 iterations, hold it constant for 18,000 iterations, and then linearly decay it to 0 over the final 5,000 iterations, with a batch size of 128. Unless otherwise specified, we set the discount factor to γ = 0.99 \gamma=0.99 and the triangle-inequality regularization weight to β = 0.1 \beta=0.1 .
+
+[112] p: For energy-based planning with CEM [ 23 ] , we adopt a sample size of N = 800 N=800 , an elite set size of K = 80 K=80 , and I = 10 I=10 refinement iterations.
+
+[113] p: The entire training is conducted on 4 nodes, each equipped with 8 NVIDIA H100 GPUs, 48-core Intel Xeon Platinum 8469C CPUs, and 230 GB of RAM. We use only a single H100 GPU for inference.
+
+[114] figure: Table 2: Goal-conditioned visual planning with videos on CrossTask [ 88 ] and COIN [ 71 ] datasets. We evaluate multi-step planning over a horizon T T under the visual planning with videos [ 59 ] setup, where both observations and goals are specified as video clips. Method CrossTask Dataset [ 88 ] COIN Dataset [ 71 ] T=3 T=4 T=3 T=4 SR mAcc mIoU SR mAcc mIoU SR mAcc mIoU SR mAcc mIoU LLM-Based InternVL3.5-241B [ 76 ] 44.03 70.01 84.41 27.65 63.54 80.13 36.54 57.22 89.02 25.46 55.30 88.22 Qwen3-VL-Max [ 79 ] 45.47 70.93 86.18 28.76 62.91 81.51 37.56 57.80 90.46 26.17 57.13 87.56 Gemini 2.5 Pro [ 20 ] 48.91 73.82 90.30 31.53 60.58 84.56 42.07 61.02 92.94 30.20 60.13 84.82 GPT-5 [ 53 ] 50.03 72.38 91.18 30.20 64.48 82.15 43.84 64.67 91.12 32.64 56.84 86.38 Generative (World) Models VideoWorld [ 59 ] 41.59 66.11 82.64 25.50 60.26 76.85 34.88 54.71 85.58 23.74 51.27 85.33 Predictive (World) Models V-JEPA 2 ViT-L [ 3 ] 43.36 69.55 84.75 28.86 64.34 78.40 36.10 56.70 87.02 25.29 53.30 87.21 V-JEPA 2 ViT-H [ 3 ] 46.02 71.98 87.29 32.18 67.23 80.84 39.42 59.42 89.44 27.38 56.07 90.20 V-JEPA 2 ViT-g [ 3 ] 48.13 73.42 89.62 33.46 69.26 82.61 40.97 61.86 90.77 29.60 57.73 92.23 V-JEPA 2 ViT-g 384 [ 3 ] 50.16 74.86 91.73 35.01 70.24 85.05 42.74 64.08 91.88 31.63 59.28 94.51 GeoWorld ViT-L (Ours) 44.80 70.54 86.30 30.63 65.46 79.73 37.76 58.14 88.00 26.40 54.52 88.98 GeoWorld ViT-H (Ours) 47.79 74.42 88.84 34.51 68.89 82.95 40.40 60.97 91.66 28.82 58.10 91.48 GeoWorld ViT-g (Ours) 49.23 76.64 90.61 35.49 71.00 84.50 42.84 62.63 93.69 29.93 60.65 92.81 GeoWorld ViT-g 384 (Ours) 51.71 77.30 92.95 37.04 71.35 87.04 45.29 65.52 93.91 33.29 61.56 95.84
+
+[115] figure: Table 3: Long horzion planning on CrossTask [ 88 ] . Method Successful Rate (SR, %) T=3 T=4 T=5 T=6 Procedural Planning (PP) Random [ 15 ] 0.01 0.01 0.01 0.01 Retrieval-Based [ 87 ] 8.05 3.95 2.40 1.10 DDN [ 15 ] 12.18 5.97 3.10 1.20 P 3 IV [ 86 ] 23.34 13.40 7.21 4.40 E3P [ 74 ] 26.40 16.49 8.96 5.76 PDPP [ 75 ] 37.20 21.48 13.45 8.41 KEPP [ 50 ] 38.12 24.15 14.20 9.27 SCHEMA [ 52 ] 38.93 24.50 14.75 10.53 MTID [ 87 ] 40.45 24.76 15.26 10.30 V-JEPA 2 ViT-L [ 3 ] 43.33 27.53 16.94 11.55 GeoWorld ViT-L (Ours) 43.89 27.64 17.38 12.37 Visual Planning with Videos VideoWorld [ 59 ] 41.59 25.50 15.36 10.97 InternVL3.5-241B [ 76 ] 44.03 27.65 17.31 12.44 Qwen3-VL-Max [ 79 ] 45.47 28.76 17.95 13.20 Gemini 2.5 Pro [ 20 ] 48.91 31.53 20.08 15.93 GPT-5 [ 53 ] 50.03 30.20 21.46 16.07 V-JEPA 2 ViT-g 384 [ 3 ] 50.16 35.01 23.17 16.88 GeoWorld ViT-g 384 (Ours) 51.71 37.04 24.83 18.26
+
+[116] h3: 4.4 Main Results
+
+[117] p: As shown in Table 1 and 2 , GeoWorld consistently improves multi-step goal-conditioned visual planning across both CrossTask and COIN. Under the procedural planning setup, GeoWorld yields notable gains over prior predictive world models, especially in long-horizon settings, achieving higher SR, mAcc, and mIoU for both T = 3 T{=}3 and T = 4 T{=}4 . In the video-based planning setup, GeoWorld continues to outperform V-JEPA 2 across all model scales, with the ViT-g 384 variant achieving the best overall results and surpassing strong LLM-based planners. These improvements highlight the effectiveness of geometry-aware latent dynamics and geometric reinforcement learning in enhancing long-horizon stability and planning accuracy.
+
+[118] p: For ablation study, please refer to Appendix 5 .
+
+[119] h3: 4.5 Long-Horizon Planning
+
+[120] p: Table 3 highlights GeoWorld’s strength in long-horizon planning. As the horizon increases from T = 3 T=3 to T = 6 T=6 , the performance of existing predictive and generative world models consistently degrades due to accumulated geometric drift in Euclidean latent space. In contrast, GeoWorld maintains higher stability and achieves the best Success Rate across all horizons.
+
+[121] h2: 5 Conclusion
+
+[122] p: We introduced GeoWorld , a geometric world model designed to improve long-horizon visual planning by preserving geometric structure and hierarchical relations in latent space. Through Hyperbolic JEPA , GeoWorld maps Euclidean latent representations onto a hyperbolic manifold, enabling geodesic-aware latent dynamics that produce a more structured and physically meaningful energy landscape. Building on this representation, Geometric Reinforcement Learning refines the predictor via hyperbolic energy optimization and triangle-inequality regularization, yielding geodesic-consistent rollouts and reducing error accumulation across extended horizons. Extensive experiments on CrossTask and COIN demonstrate that GeoWorld consistently improves long-horizon performance over strong predictive world models such as V-JEPA 2, achieving higher success rates across T = 3 T=3 to T = 6 T=6 planning. These results highlight the importance of incorporating geometric principles into predictive world models and reinforce the value of geometry-aware reinforcement learning for stable and effective multi-step planning.
+
+[123] h2: References
+
+[124] p: Supplementary Material
+
+[125] h2: 1 Preliminaries
+
+[126] h3: 1.1 Energy-Based World Models
+
+[127] p: Energy-Based World Models (EBWM) [ 41 , 2 , 4 , 3 ] are derived from Energy-Based Models (EBM) [ 9 , 26 ] , which define a scalar energy function F ⁡ ( x , y ) F(x,y) that measures how compatible two variables are, such as a current world state s x s_{x} and a possible future state s y s_{y} . A low energy value corresponds to a plausible scenario, while a high energy value indicates an implausible one. Instead of predicting a single future, the energy landscape implicitly represents all plausible futures as valleys of low energy. Because energy replaces probability, the model can naturally handle multi-modal or uncertain worlds without the need for explicit sampling or normalization. Reasoning and planning are therefore formulated as energy minimization, where the goal is to find the configuration (actions, latents, or next states) that minimizes the expected energy:
+
+[128] table: Plan = arg min actions F ( s t , s t + 1 : T ) . \text{Plan}=\arg\min_{\text{actions}}F(s_{t},s_{t+1:T}). (23)
+
+[129] h3: 1.2 Hierarchical Planning
+
+[130] p: Hierarchical planning often consists of two levels: high-level planning computes trajectories in abstract latent space that minimize energy (i.e., the most plausible and least costly transitions), while lower levels fill in the physical details [ 41 ] .
+
+[131] p: The world model learns hierarchical latent abstractions, where low-level modules predict short-term fine details and higher-level modules capture long-term abstract dynamics.
+
+[132] p: Specifically, planning becomes energy minimization in latent space. High-level modules operate on abstract latent states s ( 2 ) s^{(2)} that evolve slowly, where planning corresponds to finding a geodesic of minimum energy between the abstract states s A ( 2 ) s_{A}^{(2)} and s B ( 2 ) s_{B}^{(2)} , yielding a coarse trajectory that serves as the overall plan. Lower levels then refine this trajectory into fine-grained predictions s t ( 1 ) s_{t}^{(1)} , minimizing sub-energies conditioned on the higher-level plan. As a result, the overall behavior emerges through hierarchical energy descent, where each layer enforces consistency between its predictions and the layer above. In other words, high-level planning computes trajectories in abstract latent space that minimize energy (i.e., the most plausible and least costly transitions), while lower levels fill in the physical details.
+
+[133] p: Formally, for a hierarchical world model F ( L ) F^{(L)} , the optimal plan is defined as:
+
+[134] table: Optimal Plan: min { a t , z t } ∑ l = 1 L ∑ t F ( l ) ( s t ( l ) , s t + 1 ( l ) , z t ( l ) ) . \text{Optimal Plan:}\quad\min_{\{a_{t},z_{t}\}}\sum_{l=1}^{L}\sum_{t}F^{(l)}\big(s_{t}^{(l)},s_{t+1}^{(l)},z_{t}^{(l)}\big). (24)
+
+[135] p: Each F ( l ) F^{(l)} expresses the energy cost of moving between abstract states at level l l , and gradients through this hierarchy yield a coherent plan across scales.
+
+[136] h3: 1.3 Joint-Embedding Predictive Architecture
+
+[137] p: Joint-Embedding Predictive Architectures (JEPA) [ 41 ] learn a predictive world model directly in latent space rather than generating pixels. A JEPA encodes observations into a compact representation space and predicts future latent states by minimizing an energy or similarity objective between encoded targets and predicted embeddings. This joint-embedding formulation bypasses the need for autoregressive pixel generation, which is computationally expensive and prone to error accumulation over long horizons. Learning in latent space instead focuses the model on high-level structure, semantics, and temporal dependencies rather than low-level appearance details, enabling more stable and efficient multi-step prediction. By operating on representations rather than images, JEPA captures the underlying dynamics of the environment while avoiding the challenges of modeling raw pixel distributions.
+
+[138] h4: 1.3.1 JEPA
+
+[139] p: We define the current observation x x and target y y . E θ ​ ( ⋅ ) E_{\theta}(\cdot) denotes the observation encoder that maps raw visual inputs into the latent representation space, E ¯ θ ​ ( ⋅ ) \bar{E}_{\theta}(\cdot) denotes the target encoder with exponential moving average (EMA) weights, s x s_{x} and s y s_{y} are the latent representation of the current and target states obtained from the encoders, and z z is a latent variable capturing uncertainty. P ϕ ​ ( ⋅ ) P_{\phi}(\cdot) denotes the predictor, and θ \theta and ϕ \phi denote the parameters (weights) of the encoder and predictor networks, respectively.
+
+[140] p: For a unified one-step observation–target formulation, we first encode the current observation:
+
+[141] table: s x = E θ ​ ( x ) s_{x}=E_{\theta}(x) (25)
+
+[142] p: Then we perform latent prediction, which takes the current state s x s_{x} and the uncertainty z z as input and predicts the latent representation of the target state s ^ y \hat{s}_{y} :
+
+[143] table: s ^ y = P ϕ ​ ( s x , z ) \hat{s}_{y}=P_{\phi}(s_{x},z) (26)
+
+[144] p: Similarly, we encode the target representation:
+
+[145] table: s y = E ¯ θ ​ ( y ) s_{y}=\bar{E}_{\theta}(y) (27)
+
+[146] p: For planning, the training objective becomes an energy minimization in latent space, which involves finding a geodesic of minimum energy between s x s_{x} and s y s_{y} to obtain the optimal plan.
+
+[147] table: min z ⁡ C ⁡ ( s x , s y , z ) , where ​ s x = E θ ​ ( x ) , s y = E ¯ θ ​ ( y ) . \min_{z}\;C(s_{x},s_{y},z),\quad\text{where }s_{x}=E_{\theta}(x),\;s_{y}=\bar{E}_{\theta}(y). (28)
+
+[148] p: Here, C C represents the energy cost of moving between the abstract states s x s_{x} and s y s_{y} . It learns two encoders (for past and future) and a predictor that maps s x s_{x} to s y s_{y} , where the energy is defined as the representation mismatch between the predicted and true embeddings. The JEPA is non-generative and is trained non-contrastively to ensure that the embeddings remain both informative and predictable [ 5 ] . As a result, it forms a predictive world model that learns latent abstractions.
+
+[149] h5: Hierarchical-JEPA
+
+[150] p: If we extend to hierarchical planning, we can develop a model that learns hierarchical latent abstractions (Hierarchical-JEPA), in which low-level modules predict short-term fine details, while higher-level modules capture long-term abstract dynamics. As an example, consider a two-level model where high-level JEPA layers operate on abstract latent states s ( 2 ) s^{(2)} that evolve slowly. Planning in this context corresponds to finding a geodesic of minimum energy between the abstract states s x ( 2 ) s_{x}^{(2)} and s y ( 2 ) s_{y}^{(2)} , yielding a coarse trajectory, i.e., the plan. Meanwhile, lower levels refine this trajectory into fine-grained predictions s t ( 1 ) s_{t}^{(1)} , minimizing sub-energies conditioned on the higher-level plan. Overall behavior emerges through hierarchical energy descent, where each layer enforces consistency between its predictions and the layer above.
+
+[151] p: In other words, high-level planning computes trajectories in abstract latent space that minimize energy (i.e., most plausible and least costly transitions), while lower levels fill in the physical details.
+
+[152] p: Formally, the training objective of a Hierarchical-JEPA is given by:
+
+[153] table: min { z t } ∑ l = 1 L ∑ t C ( l ) ( s t ( l ) , s t + 1 ( l ) , z t ( l ) ) , \min_{\{z_{t}\}}\sum_{l=1}^{L}\sum_{t}C^{(l)}\big(s_{t}^{(l)},s_{t+1}^{(l)},z_{t}^{(l)}\big), (29)
+
+[154] p: where each C ( l ) C^{(l)} represents the energy cost of moving between abstract states at level l l , and gradients through this hierarchy yield a coherent plan across scales.
+
+[155] h4: 1.3.2 I-JEPA
+
+[156] p: Image-JEPA (I-JEPA) [ 2 ] extends JEPA to learn semantic image representations by predicting latent features of masked image regions from visible context patches.
+
+[157] p: In I-JEPA, an image y y is divided into non-overlapping patches, from which a single large block is sampled as the context and several smaller blocks are sampled as targets. The context block x x is fed to the context encoder E θ ​ ( ⋅ ) E_{\theta}(\cdot) to obtain patch-level latent representations s x s_{x} , while the target blocks are processed by a target encoder with EMA weights, E ¯ θ ​ ( ⋅ ) \bar{E}_{\theta}(\cdot) , to produce target embeddings s y s_{y} . The predictor network P ϕ ​ ( ⋅ ) P_{\phi}(\cdot) takes the context representation s x s_{x} along with positional mask tokens { m j } j ∈ B i \{m_{j}\}_{j\in B_{i}} indicating the spatial locations of each target block, and predicts the corresponding feature vectors s ^ y = P ϕ ​ ( s x , { m j } j ∈ B i ) \hat{s}_{y}=P_{\phi}(s_{x},\{m_{j}\}_{j\in B_{i}}) for those regions.
+
+[158] p: The training objective minimizes the average squared distance between the predicted and target representations of the target blocks, averaged over all sampled blocks and training samples in the dataset 𝒟 \mathcal{D} :
+
+[159] table: min θ , ϕ 𝔼 ( x , y ) ∼ 𝒟 [ 1 M ∑ i = 1 M ∑ j ∈ B i ∥ P ϕ ( E θ ( x ) , { m j } j ∈ B i ) − E ¯ θ ( y ) j ∥ 2 2 ] . \min_{\theta,\phi}\;\mathbb{E}_{(x,y)\sim\mathcal{D}}\Bigg[\frac{1}{M}\sum_{i=1}^{M}\sum_{j\in B_{i}}\Big\|P_{\phi}\big(E_{\theta}(x),\{m_{j}\}_{j\in B_{i}}\big)\\ -\bar{E}_{\theta}(y)_{j}\Big\|_{2}^{2}\Bigg]. (30)
+
+[160] p: Here, M M denotes the number of target blocks, 𝔼 ⁡ [ ⋅ ] \mathbb{E}[\cdot] denotes the expectation (average) over all training samples ( x , y ) (x,y) , and the loss measures the representation-level prediction error rather than pixel-level reconstruction, allowing I-JEPA to learn highly semantic, non-generative representations.
+
+[161] h4: 1.3.3 V-JEPA
+
+[162] p: Video-JEPA (V-JEPA) [ 4 ] and V-JEPA 2 [ 3 ] extend JEPA to learn spatio-temporal video representations by predicting masked tubelet features from visible context regions.
+
+[163] p: In V-JEPA and V-JEPA 2, a video clip y y is tokenized into spatial–temporal patches (tubelets), and a subset of these patches is masked (replaced with mask tokens). The remaining unmasked patches form the context view, while the masked patches form the target view. The observation (context) encoder E θ ​ ( ⋅ ) E_{\theta}(\cdot) processes the masked version x x (containing both visible and mask tokens) and produces latent embeddings for all positions, including the masked ones. However, the predictor P ϕ ​ ( ⋅ ) P_{\phi}(\cdot) focuses only on the masked positions. A target encoder with EMA weights, E ¯ θ ​ ( ⋅ ) \bar{E}_{\theta}(\cdot) , computes the target embeddings s y s_{y} of the full (unmasked) input. The predictor takes the context representation s x = E θ ​ ( x ) s_{x}=E_{\theta}(x) along with the mask token indicators Δ y \Delta_{y} and predicts the feature vectors s ^ y \hat{s}_{y} for each masked patch position.
+
+[164] p: The training objective is to minimize the L 1 L_{1} distance between the predicted representations of the masked regions and the target representations from the target encoder, averaged over the dataset 𝒟 \mathcal{D} :
+
+[165] table: min θ , ϕ ⁡ 𝔼 ( x , Δ y , y ) ∼ 𝒟 ​ ‖ P ϕ ​ ( E θ ​ ( x ) , Δ y ) − E ¯ θ ​ ( y ) ‖ 1 \min_{\theta,\phi}\;\mathbb{E}_{(x,\Delta_{y},y)\sim\mathcal{D}}\left\|P_{\phi}\big(E_{\theta}(x),\Delta_{y}\big)-\bar{E}_{\theta}(y)\right\|_{1} (31)
+
+[166] p: where 𝔼 ⁡ [ ⋅ ] \mathbb{E}[\cdot] denotes the expectation (average) over all training samples ( x , Δ y , y ) (x,\Delta_{y},y) .
+
+[167] p: That is,
+
+[168] table: min θ , ϕ ⁡ 𝔼 ( s x , Δ y , s y ) ∼ 𝒟 ​ [ ‖ s ^ y − s y ‖ 1 ] , where ​ s ^ y = P ϕ ​ ( s x , Δ y ) . \min_{\theta,\phi}\;\mathbb{E}_{(s_{x},\Delta_{y},s_{y})\sim\mathcal{D}}\left[\left\|\hat{s}_{y}-s_{y}\right\|_{1}\right],~\text{where }\hat{s}_{y}=P_{\phi}(s_{x},\Delta_{y}). (32)
+
+[169] p: Hence the loss function ℒ \mathcal{L} measuring the L 1 L_{1} distance between the s ^ y \hat{s}_{y} and s y s_{y} :
+
+[170] table: ℒ ⁡ ( θ , ϕ ) = ‖ P ϕ ​ ( E θ ​ ( x ) , Δ y ) − E ¯ θ ​ ( y ) ‖ 1 \mathcal{L}(\theta,\phi)=\left\|P_{\phi}\big(E_{\theta}(x),\Delta_{y})-\bar{E}_{\theta}(y)\right\|_{1} (33)
+
+[171] h5: V-JEPA 2-AC
+
+[172] p: The action-conditioned variation (V-JEPA 2-AC) serves as a downstream extension of V-JEPA 2 that predicts future latent representations conditioned on agent actions.
+
+[173] p: As a step-by-step (1-step prediction) formulation, V-JEPA 2-AC adapts the frozen encoder E ⁡ ( ⋅ ) E(\cdot) from V-JEPA 2, pretrained on unlabeled videos, to encode the current observation x t x_{t} into the latent representation s t x s_{t}^{x} and the future target x t + 1 x_{t+1} into s t + 1 x s_{t+1}^{x} . The action-conditioned predictor P ϕ ​ ( ⋅ ) P_{\phi}(\cdot) takes the current latent s t x s_{t}^{x} and the action a t a_{t} as input to predict the next-state latent representation s ^ t + 1 x \hat{s}_{t+1}^{x} . The L 1 L_{1} loss in latent space then trains the predictor to align its predicted next-state representations with the encoded future representations:
+
+[174] table: ℒ AC ​ ( ϕ ) \displaystyle\mathcal{L}_{\text{AC}}(\phi) = ‖ P ϕ ​ ( E ⁡ ( x t ) , a t ) − E ⁡ ( x t + 1 ) ‖ 1 \displaystyle=\left\|P_{\phi}\big(E(x_{t}),a_{t}\big)-E(x_{t+1})\right\|_{1} (34) = ‖ s ^ t + 1 x − s t + 1 x ‖ 1 . \displaystyle=\left\|\hat{s}_{t+1}^{x}-s_{t+1}^{x}\right\|_{1}. (35)
+
+[175] p: In the multi-step rollout setting, V-JEPA 2-AC extends the one-step formulation to predict a sequence of future latent representations over a time horizon T T conditioned on a sequence of actions.
+
+[176] p: We randomly sample a mini-batch of 4-second video clips from the Droid dataset [ 39 ] and, for simplicity, discard any videos shorter than 4 seconds, leaving us with a smaller subset of the dataset comprising under 62 hours of video. The video clips are sampled with a resolution of 256 × 256 256\times 256 and a frame rate of 4 fps, yielding 16-frame clips ( x t ) t = 1 16 (x_{t})_{t=1}^{16} , where each x t x_{t} represents a single video frame. The robot’s end-effector state in each observation is denoted by the sequence ( s t e ) t = 1 16 (s_{t}^{e})_{t=1}^{16} , where s t e s_{t}^{e} is a real-valued 7D vector defined relative to the base of the robot. We construct a sequence of actions ( a t ) t = 1 15 (a_{t})_{t=1}^{15} by computing the change in end-effector state between adjacent frames. We use the V-JEPA 2 encoder E ⁡ ( ⋅ ) E(\cdot) as an image encoder and encode each frame independently in a given clip to obtain a sequence of feature maps ( s t x ) t = 1 16 (s_{t}^{x})_{t=1}^{16} . The sequence of observed feature maps, end-effector states, and actions is temporally interleaved as ( s t x , s t e , a t ) t = 1 15 (s_{t}^{x},s_{t}^{e},a_{t})_{t=1}^{15} and processed with the transformer predictor network P ϕ ​ ( ⋅ ) P_{\phi}(\cdot) to obtain a sequence of next-state representation predictions ( s t + 1 x ) t = 1 15 (s_{t+1}^{x})_{t=1}^{15} :
+
+[177] table: ( s ^ t + 1 x ) t = 1 15 = P ϕ ​ ( ( s t x , s t e , a t ) t = 1 15 ) . (\hat{s}_{t+1}^{x})_{t=1}^{15}=P_{\phi}\!\big((s_{t}^{x},s_{t}^{e},a_{t})_{t=1}^{15}\big). (36)
+
+[178] p: The teacher-forcing loss trains the predictor P ϕ ​ ( ⋅ ) P_{\phi}(\cdot) to accurately perform one-step future prediction by minimizing the L 1 L_{1} distance between the predicted latent representation s ^ t + 1 x \hat{s}_{t+1}^{x} and the encoded ground-truth latent s t + 1 x s_{t+1}^{x} at each time step t t :
+
+[179] table: ℒ TF ​ ( ϕ ) \displaystyle\mathcal{L}_{\text{TF}}(\phi) = 1 T ​ ∑ t = 1 T ‖ P ϕ ​ ( E ⁡ ( x t ) , s t e , a t ) − E ⁡ ( x t + 1 ) ‖ 1 \displaystyle=\frac{1}{T}\sum_{t=1}^{T}\left\|P_{\phi}(E(x_{t}),s_{t}^{e},a_{t})-E(x_{t+1})\right\|_{1} (37) = 1 T ​ ∑ t = 1 T ‖ s ^ t + 1 x − s t + 1 x ‖ 1 , where ​ T = 15 . \displaystyle=\frac{1}{T}\sum_{t=1}^{T}\left\|\hat{s}_{t+1}^{x}-s_{t+1}^{x}\right\|_{1},~\text{where }T=15. (38)
+
+[180] p: The rollout loss involves feeding the predictor’s output back as input, allowing the model to be trained to predict several timesteps ahead. In this case, we design a two-step rollout loss to improve the model’s ability to perform autoregressive rollouts during inference. We can now denote the rollout loss as
+
+[181] table: ℒ rollout ​ ( ϕ ) \displaystyle\mathcal{L}_{\text{rollout}}(\phi) = ‖ P ϕ ​ ( E ⁡ ( x t ) , s t e , ( a t ) t t + n ) − E ⁡ ( x t + n + 1 ) ‖ 1 , \displaystyle=\left\|P_{\phi}(E(x_{t}),s_{t}^{e},(a_{t})_{t}^{t+n})-E(x_{t+n+1})\right\|_{1}, (39) = ‖ P ϕ ( s t x , s t e , a t , a t + 1 ) − s t + 2 x ) ‖ 1 , \displaystyle=\left\|P_{\phi}(s_{t}^{x},s_{t}^{e},a_{t},a_{t+1})-s_{t+2}^{x})\right\|_{1}, (40) = ‖ s ^ t + 2 x − s t + 2 x ‖ 1 , where ​ n = 1 . \displaystyle=\left\|\hat{s}_{t+2}^{x}-s_{t+2}^{x}\right\|_{1},~\text{where }n=1. (41)
+
+[182] p: Hence, the total loss is
+
+[183] table: ℒ AC ​ ( ϕ ) = ℒ TF ​ ( ϕ ) + ℒ rollout ​ ( ϕ ) . \mathcal{L}_{\text{AC}}(\phi)=\mathcal{L}_{\text{TF}}(\phi)+\mathcal{L}_{\text{rollout}}(\phi). (42)
+
+[184] h5: Inference
+
+[185] p: We can then perform energy-based planning after training, using the frozen encoder E E and predictor P P . This predictor acts as the world model, capable of imagining how latent representations evolve when an action sequence is applied. At test time, no weights are trained, instead, we search for an action sequence that minimizes a goal-conditioned energy cost between the imagined future and the goal latent representation.
+
+[186] p: Given the current observation x 1 x_{1} , current end-effector state s 1 e s_{1}^{e} , target goal image x 1 + T x_{1+T} , and planning horizon T T , we encode the current and goal observations as:
+
+[187] table: s 1 x = E ⁡ ( x 1 ) , s 1 + T x = E ⁡ ( x 1 + T ) . s_{1}^{x}=E(x_{1}),\qquad s_{1+T}^{x}=E(x_{1+T}). (43)
+
+[188] p: We then define the L 1 L_{1} energy cost function:
+
+[189] table: C ⁡ ( ( a ^ t ) t = 1 T , s 1 e , s 1 x , s 1 + T x ) = ‖ P ⁡ ( ( a ^ t ) t = 1 T , s 1 e , s 1 x ) − s 1 + T x ‖ 1 . C((\hat{a}_{t})_{t=1}^{T};s_{1}^{e},s_{1}^{x},s_{1+T}^{x})=\left\|P((\hat{a}_{t})_{t=1}^{T};s_{1}^{e},s_{1}^{x})-s_{1+T}^{x}\right\|_{1}. (44)
+
+[190] p: The optimal action sequence is obtained by minimizing this cost:
+
+[191] table: ( a t ∗ ) t = 1 T = arg ⁡ min ( a ^ t ) t = 1 T ⁡ C ⁡ ( ( a ^ t ) t = 1 T , s 1 e , s 1 x , s 1 + T x ) . (a_{t}^{*})_{t=1}^{T}=\arg\min_{(\hat{a}_{t})_{t=1}^{T}}C((\hat{a}_{t})_{t=1}^{T};s_{1}^{e},s_{1}^{x},s_{1+T}^{x}). (45)
+
+[192] p: Thus, the predictor is used to imagine the future latent trajectory, and planning reduces to finding the action sequence that minimizes the latent L1 distance to the goal embedding.
+
+[193] p: V-JEPA 2-AC uses the Cross-Entropy Method (CEM) [ 23 ] with 800 samples and 10 iterations to efficiently minimize C C at each planning step, as shown in Algorithm 1 . It executes only the first action on the robot before re-planning, as in receding horizon control, and is tested only on a horizon of T = 1 T=1 .
+
+[194] figure: Algorithm 1 Energy-Based Planning with Cross-Entropy Method (CEM) Predictor P P (world model), encoder E ⁡ ( ⋅ ) E(\cdot) , planning horizon T T , number of samples N N , number of elites K K , number of iterations I I , initial mean μ 0 \mu_{0} , and covariance Σ 0 \Sigma_{0} . Optimal action sequence ( a t ∗ ) t = 1 T (a_{t}^{*})_{t=1}^{T} . Input: current observation x 1 x_{1} , end-effector state s 1 e s_{1}^{e} , and goal image x 1 + T x_{1+T} . Encode current and goal observations: s 1 x = E ⁡ ( x 1 ) s_{1}^{x}=E(x_{1}) , s 1 + T x = E ⁡ ( x 1 + T ) s_{1+T}^{x}=E(x_{1+T}) . for j = 1 j=1 to I I do (1) Sample: Draw N N candidate action sequences { a ^ 1 : T ( n ) } n = 1 N \{\hat{a}_{1:T}^{(n)}\}_{n=1}^{N} from 𝒩 ⁡ ( μ j − 1 , Σ j − 1 ) \mathcal{N}(\mu_{j-1},\Sigma_{j-1}) . (2) Evaluate: For each candidate sequence, compute its energy cost: C ( n ) = ‖ P ϕ ( a ^ 1 : T ( n ) ; s 1 e , s 1 x ) − s 1 + T x ‖ 1 . C^{(n)}=\left\|P_{\phi}(\hat{a}_{1:T}^{(n)};s_{1}^{e},s_{1}^{x})-s_{1+T}^{x}\right\|_{1}. (3) Select elites: Sort { C ( n ) } \{C^{(n)}\} in ascending order and select the top K K sequences with the lowest cost to form the elite set ℰ j = { a ^ 1 : T ( n ) ∣ n ∈ top- K ( C ) } \mathcal{E}_{j}=\{\hat{a}_{1:T}^{(n)}\mid n\in\text{top-}K(C)\} . These elites represent trajectories that drive the world model’s imagined latent state closest to the goal latent s 1 + T x s_{1+T}^{x} . (4) Update distribution: Compute the new mean and covariance of the elite set: μ j \displaystyle\mu_{j} = 1 K ​ ∑ ( a ^ t ) t = 1 T ∈ ℰ j ( a ^ t ) t = 1 T , \displaystyle=\frac{1}{K}\sum_{(\hat{a}_{t})_{t=1}^{T}\in\mathcal{E}_{j}}(\hat{a}_{t})_{t=1}^{T}, Σ j \displaystyle\Sigma_{j} = 1 K ​ ∑ ( a ^ t ) t = 1 T ∈ ℰ j ( ( a ^ t ) t = 1 T − μ j ) ​ ( ( a ^ t ) t = 1 T − μ j ) ⊤ . \displaystyle=\frac{1}{K}\sum_{(\hat{a}_{t})_{t=1}^{T}\in\mathcal{E}_{j}}\big((\hat{a}_{t})_{t=1}^{T}-\mu_{j}\big)\big((\hat{a}_{t})_{t=1}^{T}-\mu_{j}\big)^{\top}. The new distribution 𝒩 ⁡ ( μ j , Σ j ) \mathcal{N}(\mu_{j},\Sigma_{j}) is now centered around promising low-energy action sequences. (5) Repeat: Continue iterating Steps 3–4 for I I iterations. As the process proceeds, the sampling distribution progressively concentrates around action sequences that minimize the latent-space cost C L1 C_{\text{L1}} . end for (6) Execute: Select the action sequence corresponding to the lowest final cost: ( a t ∗ ) t = 1 T = arg ⁡ min ( a ^ t ) t = 1 T ⁡ C ⁡ ( ( a ^ t ) t = 1 T , s 1 e , s 1 x , s 1 + T x ) . (a_{t}^{*})_{t=1}^{T}=\arg\min_{(\hat{a}_{t})_{t=1}^{T}}C((\hat{a}_{t})_{t=1}^{T};s_{1}^{e},s_{1}^{x},s_{1+T}^{x}). and execute only the first action a 1 ∗ a_{1}^{*} on the robot. (7) Re-plan: Observe the next frame x 2 x_{2} , re-encode s 2 x = E ⁡ ( x 2 ) s_{2}^{x}=E(x_{2}) , and repeat the process from Step 1 (receding horizon control).
+
+[195] p: In other words, during inference, the predictor P P serves as a world model for energy-based planning , where at each step the CEM searches for an action sequence that minimizes the latent-space cost C C between the imagined future and the goal representation, executing only the first action a 1 ∗ a_{1}^{*} before re-planning.
+
+[196] h3: 1.4 World Modeling Paradigms
+
+[197] p: There are two typical approaches for goal-conditional world modeling: generative world models [ 46 , 59 , 63 ] and predictive world models [ 41 , 2 , 29 , 4 , 3 ] .
+
+[198] h5: Generative world models.
+
+[199] p: Generative world models typically build upon autoregressive (AR) transformers or semi-AR (autoregressive diffusion) models ρ \rho that observe the visual context x t x_{t} and autoregressively predict the latent z t z_{t} and the next frame x ^ t + 1 \hat{x}_{t+1} :
+
+[200] table: ( z t , x ^ t + 1 ) = ρ ⁡ ( x t ) . (z_{t},\hat{x}_{t+1})=\rho(x_{t}). (46)
+
+[201] p: They often rely on an inverse dynamics model (IDM) π \pi [ 67 ] , trained separately, which maps the pair ( x t , z t , x ^ t + 1 ) (x_{t},z_{t},\hat{x}_{t+1}) to an explicit action [ 80 , 10 , 73 ] :
+
+[202] table: a t = π ⁡ ( x t , z t , x ^ t + 1 ) . a_{t}=\pi(x_{t},z_{t},\hat{x}_{t+1}). (47)
+
+[203] p: In other words, it’s a one-step inverse mapping of the environment’s dynamics. Hence, it can only predict one step at a time, because it does not know the full trajectory structure or the energy landscape over multiple steps.
+
+[204] p: Moreover, it must explicitly generate or reconstruct the next frame (or latent visual tokens that decode into pixels), and perform planning by predicting how the world will look after an implicit action, which connects to the challenge mentioned in 1.3 .
+
+[205] h5: Predictive world models
+
+[206] p: Predictive world models are not generative, they do not model pixel distributions. Instead, they learn an energy landscape in latent space that measures compatibility between current and target states.
+
+[207] p: However, predictive world models require an explicit goal observation x t + 1 x_{t+1} to compute their goal-conditioned energy, as shown in Equation 44 , and minimize the energy cost with the CEM for planning.
+
+[208] p: This design trade-off is intentional, not accidental. As mentioned in 1.3 , we need to avoid pixel prediction during planning since pixels are noisy, unimportant, and computationally expensive [ 41 ] . Therefore, predictive world models are not intended to be self-contained simulators. Moreover, unlike the IDM, which predicts only a single action given consecutive states, CEM performs multi-step trajectory optimization by searching over candidate action sequences to minimize the latent-space energy cost, enabling long-horizon planning rather than one-step reactive control.
+
+[209] h3: 1.5 Hyperbolic Learning
+
+[210] p: Hyperbolic space, denoted as ℍ n \mathbb{H}^{n} , is a negatively curved Riemannian manifold characterized by exponential volume growth and a saddle-shaped geometry [ 11 ] . Unlike Euclidean space, where parallel lines remain equidistant, lines in hyperbolic space diverge, and the volume expands exponentially with radius. This property makes hyperbolic geometry naturally suited for representing hierarchical or tree-like data structures [ 51 , 55 ] , such as hierarchical planning for world models, where the number of nodes grows exponentially with depth. In deep learning, hyperbolic space enables exponentially efficient representations of hierarchies by compressing large-scale differences while maintaining fine-grained local relationships. As a result, it has been widely applied in representation learning [ 51 , 83 , 25 , 55 ] , computer vision and graphics [ 30 ] that require modeling multi-level, non-Euclidean structures.
+
+[211] p: Hyperbolic space ℍ n \mathbb{H}^{n} is an abstract Riemannian manifold of constant negative curvature that does not depend on any coordinate system. In order to represent points in this curved space for computation, coordinate models are introduced to map ℍ n \mathbb{H}^{n} into Euclidean space while preserving its geometric structure. Two of the most common models are the Poincaré ball model 𝔹 n \mathbb{B}^{n} [ 51 , 83 , 30 , 13 ] and the Lorentz (or hyperboloid) model 𝕃 n \mathbb{L}^{n} [ 25 , 55 ] , both providing isometric representations of the same manifold but differing in their coordinate systems and numerical properties.
+
+[212] h4: 1.5.1 Poincaré Ball Model.
+
+[213] p: The Poincaré ball model 𝔹 n \mathbb{B}^{n} represents hyperbolic space as an open unit ball embedded in Euclidean space, defined as
+
+[214] table: 𝔹 n = { z ∈ ℝ n : ‖ z ‖ < 1 } . \mathbb{B}^{n}=\{z\in\mathbb{R}^{n}:\|z\|<1\}. (48)
+
+[215] p: It is endowed with a Riemannian metric that encodes constant negative curvature, ensuring that Euclidean distances are reweighted to reflect hyperbolic geometry. Each point z z lies strictly inside the ball, and distances are measured using the hyperbolic metric rather than Euclidean norms. This bounded representation makes the geometry intuitive and well-suited for visualization, as tree-like hierarchies naturally fit inside a finite domain where the boundary corresponds to infinite distance. It constrains embeddings to normalized radii, but note that in the Poincaré model “normalization” means keeping points inside the unit ball, not unit-norm on a sphere (that corresponds to the hyperspherical case).
+
+[216] h5: Geodesics
+
+[217] p: The geodesic, or the Poincaré-ball hyperbolic distance, between two points u , v ∈ 𝔹 n u,v\in\mathbb{B}^{n} is a circular arc perpendicular to the boundary of the ball. Its length is given by the hyperbolic distance function [ 51 , 28 ]
+
+[218] table: d ℍ ​ ( u , v ) = arcosh ⁡ ( 1 + 2 ​ ‖ u − v ‖ 2 ( 1 − ‖ u ‖ 2 ) ​ ( 1 − ‖ v ‖ 2 ) ) . d_{\mathbb{H}}(u,v)=\operatorname{arcosh}\!\left(1+2\frac{\|u-v\|^{2}}{(1-\|u\|^{2})(1-\|v\|^{2})}\right). (49)
+
+[219] p: This metric measures the shortest path along the curved manifold rather than in Euclidean space, capturing the exponential growth of distances as points approach the boundary of the Poincaré ball.
+
+[220] h5: Exponential Map
+
+[221] p: In Riemannian geometry, the exponential map
+
+[222] table: exp x : 𝐓 x ​ ℍ n → ℍ n \exp_{x}:\mathbf{T}_{x}\mathbb{H}^{n}\rightarrow\mathbb{H}^{n} (50)
+
+[223] p: takes a tangent vector v ∈ 𝐓 x ​ ℍ n v\in\mathbf{T}_{x}\mathbb{H}^{n} (the tangent space at point x x ) and moves it along the geodesic starting from x x in direction v v , traveling a distance equal to ‖ v ‖ \|v\| under the hyperbolic metric. In other words, exp x ⁡ ( v ) \exp_{x}(v) can be interpreted as starting at x x and walking along the manifold in the direction of v v for a distance ‖ v ‖ \|v\| . This operation maps local Euclidean updates v v into global manifold coordinates, ensuring that updates remain consistent with the geometry of hyperbolic space. In hyperbolic space, the mapping from the tangent space to the manifold through the exponential map is one-to-one. Although there exist manifolds equipped with hyperbolic metrics where this mapping is not one-to-one [ 85 ] , the Poincaré model of hyperbolic space preserves this one-to-one correspondence, ensuring a well-defined relationship between the tangent space and the manifold.
+
+[224] p: The exponential map from the origin of the Poincaré ball, denoted as exp 0 ⁡ ( v ) \exp_{0}(v) , maps Euclidean vectors directly into hyperbolic space, which is particularly useful for initialization. It is defined as
+
+[225] table: exp 0 ⁡ ( v ) = tanh ⁡ ( ‖ v ‖ ) ​ v ‖ v ‖ . \exp_{0}(v)=\tanh(\|v\|)\frac{v}{\|v\|}. (51)
+
+[226] p: This formulation is simple because the tangent space at the origin aligns perfectly with the Euclidean space, making the mapping between Euclidean and hyperbolic representations straightforward.
+
+[227] p: The exponential map from a general point x ∈ 𝔹 n x\in\mathbb{B}^{n} must account for the curvature around x x . It moves the point x x along the geodesic in the direction of the tangent vector v v . The key difference from the origin case is that x x is not the origin, so we need a way to “add” v v to x x under hyperbolic geometry. In Euclidean space, moving from a point x x by a vector v v is simply computed as x + v x+v . However, in hyperbolic geometry, vector addition is replaced by Möbius addition , denoted as x ⊕ v x\oplus v . Therefore, the general exponential map is expressed as
+
+[228] table: exp x ⁡ ( v ) = x ⊕ ( tanh ⁡ ( λ x ​ ‖ v ‖ 2 ) ​ v ‖ v ‖ ) , \exp_{x}(v)=x\oplus\left(\tanh\!\left(\frac{\lambda_{x}\|v\|}{2}\right)\frac{v}{\|v\|}\right), (52)
+
+[229] p: where
+
+[230] table: λ x = 2 1 − ‖ x ‖ 2 \lambda_{x}=\frac{2}{1-\|x\|^{2}} (53)
+
+[231] p: is the conformal factor that rescales distances locally. This formulation ensures that the operation respects hyperbolic curvature instead of Euclidean linearity.
+
+[232] p: The Möbius addition of two vectors x x and y y is defined as
+
+[233] table: x ⊕ y = ( 1 + 2 ​ ⟨ x , y ⟩ + ‖ y ‖ 2 ) ​ x + ( 1 − ‖ x ‖ 2 ) ​ y 1 + 2 ​ ⟨ x , y ⟩ + ‖ x ‖ 2 ​ ‖ y ‖ 2 . x\oplus y=\frac{(1+2\langle x,y\rangle+\|y\|^{2})x+(1-\|x\|^{2})y}{1+2\langle x,y\rangle+\|x\|^{2}\|y\|^{2}}. (54)
+
+[234] p: Substituting y = tanh ⁡ ( λ x ​ ‖ v ‖ 2 ) ​ v ‖ v ‖ y=\tanh\!\left(\frac{\lambda_{x}\|v\|}{2}\right)\frac{v}{\|v\|} , we obtain an explicit expression for exp x ⁡ ( v ) \exp_{x}(v) in hyperbolic space
+
+[235] table: exp x ⁡ ( v ) = ( 1 + 2 ​ α ​ ⟨ x , v ‖ v ‖ ⟩ + α 2 ) ​ x + ( 1 − ‖ x ‖ 2 ) ​ α ​ v ‖ v ‖ 1 + 2 ​ α ​ ⟨ x , v ‖ v ‖ ⟩ + α 2 ​ ‖ x ‖ 2 , \exp_{x}(v)=\frac{\big(1+2\alpha\langle x,\tfrac{v}{\|v\|}\rangle+\alpha^{2}\big)x+(1-\|x\|^{2})\alpha\tfrac{v}{\|v\|}}{1+2\alpha\langle x,\tfrac{v}{\|v\|}\rangle+\alpha^{2}\|x\|^{2}}, (55)
+
+[236] p: where
+
+[237] table: α = tanh ⁡ ( λ x ​ ‖ v ‖ 2 ) , λ x = 2 1 − ‖ x ‖ 2 . \alpha=\tanh\!\left(\frac{\lambda_{x}\|v\|}{2}\right),\quad\lambda_{x}=\frac{2}{1-\|x\|^{2}}. (56)
+
+[238] p: This formulation explicitly shows how the exponential map combines the curvature-adjusted scaling (via λ x \lambda_{x} and tanh \tanh ) with the non-linear composition of x x and v v under Möbius addition, ensuring consistency with hyperbolic geometry.
+
+[239] h5: Logarithmic Map
+
+[240] p: The logarithmic map serves as the inverse of the exponential map, mapping points from the manifold back to the tangent space at a given point x ∈ 𝔹 n x\in\mathbb{B}^{n} . Formally, it is defined as
+
+[241] table: log x : 𝔹 n → 𝐓 x ​ ℍ n , \log_{x}:\mathbb{B}^{n}\rightarrow\mathbf{T}_{x}\mathbb{H}^{n}, (57)
+
+[242] p: which takes a point y ∈ 𝔹 n y\in\mathbb{B}^{n} and returns a tangent vector v ∈ 𝐓 x ​ ℍ n v\in\mathbf{T}_{x}\mathbb{H}^{n} that, when re-projected through the exponential map, satisfies exp x ⁡ ( v ) = y \exp_{x}(v)=y . This operation locally linearizes the manifold around x x , allowing differential computations such as gradient-based optimization to be performed in the tangent space.
+
+[243] p: The logarithmic map from the origin of the Poincaré ball, denoted as log 0 ⁡ ( y ) \log_{0}(y) , converts a point y ∈ 𝔹 n y\in\mathbb{B}^{n} back to its Euclidean tangent vector and is defined as
+
+[244] table: log 0 ⁡ ( y ) = arctanh ⁡ ( ‖ y ‖ ) ​ y ‖ y ‖ . \log_{0}(y)=\operatorname{arctanh}(\|y\|)\frac{y}{\|y\|}. (58)
+
+[245] p: This formulation is the inverse of the exponential map at the origin, satisfying exp 0 ⁡ ( log 0 ⁡ ( y ) ) = y \exp_{0}(\log_{0}(y))=y , and is computationally simple since the tangent space at the origin coincides with ℝ n \mathbb{R}^{n} .
+
+[246] p: For a general point x ∈ 𝔹 n x\in\mathbb{B}^{n} , the logarithmic map must account for the local curvature around x x . It can be expressed using the inverse of the Möbius addition:
+
+[247] table: log x ⁡ ( y ) = 2 λ x ​ arctanh ⁡ ( ‖ − x ⊕ y ‖ ) ​ − x ⊕ y ‖ − x ⊕ y ‖ , \log_{x}(y)=\frac{2}{\lambda_{x}}\operatorname{arctanh}\!\big(\|{-x}\oplus y\|\big)\frac{{-x}\oplus y}{\|{-x}\oplus y\|}, (59)
+
+[248] p: where
+
+[249] table: λ x = 2 1 − ‖ x ‖ 2 \lambda_{x}=\frac{2}{1-\|x\|^{2}} (60)
+
+[250] p: is the same conformal factor as in the exponential map, and − x ⊕ y {-x}\oplus y denotes Möbius addition with the inverse of x x .
+
+[251] p: Expanding the definition of the Möbius addition into the logarithmic map expression, we obtain an explicit formulation of log x ⁡ ( y ) \log_{x}(y) in the Poincaré ball model. Substituting Eq. 54 into Eq. 59 , we first compute the intermediate term − x ⊕ y {-x}\oplus y as
+
+[252] table: − x ⊕ y = ( 1 − 2 ​ ⟨ x , y ⟩ + ‖ y ‖ 2 ) ​ ( − x ) + ( 1 − ‖ x ‖ 2 ) ​ y 1 − 2 ​ ⟨ x , y ⟩ + ‖ x ‖ 2 ​ ‖ y ‖ 2 . {-x}\oplus y=\frac{(1-2\langle x,y\rangle+\|y\|^{2})(-x)+(1-\|x\|^{2})y}{1-2\langle x,y\rangle+\|x\|^{2}\|y\|^{2}}. (61)
+
+[253] p: Then, the logarithmic map can be written explicitly as
+
+[254] table: log x ⁡ ( y ) = 2 λ x ​ arctanh ⁡ ( ‖ N ⁡ ( x , y ) ‖ D ⁡ ( x , y ) ) ​ N ⁡ ( x , y ) ‖ N ⁡ ( x , y ) ‖ , \log_{x}(y)=\frac{2}{\lambda_{x}}\,\operatorname{arctanh}\!\left(\frac{\|N(x,y)\|}{D(x,y)}\right)\,\frac{N(x,y)}{\|N(x,y)\|}, (62)
+
+[255] p: where
+
+[256] table: N ⁡ ( x , y ) \displaystyle N(x,y) = ( 1 − 2 ​ ⟨ x , y ⟩ + ‖ y ‖ 2 ) ​ ( − x ) + ( 1 − ‖ x ‖ 2 ) ​ y , \displaystyle=\big(1-2\langle x,y\rangle+\|y\|^{2}\big)(-x)+\big(1-\|x\|^{2}\big)\,y, (63) D ⁡ ( x , y ) \displaystyle D(x,y) = 1 − 2 ​ ⟨ x , y ⟩ + ‖ x ‖ 2 ​ ‖ y ‖ 2 , λ x = 2 1 − ‖ x ‖ 2 . \displaystyle=1-2\langle x,y\rangle+\|x\|^{2}\|y\|^{2},\quad\lambda_{x}=\frac{2}{1-\|x\|^{2}}. (64)
+
+[257] p: This expanded form explicitly expresses the logarithmic map in terms of x x and y y , showing how the non-linear geometry of the Poincaré ball modifies vector displacement through the Möbius addition. It provides the tangent vector at x x that points toward y y with a magnitude corresponding to the hyperbolic distance between them.
+
+[258] p: This formulation ensures that log x ⁡ ( y ) \log_{x}(y) returns a tangent vector at x x whose exponential map precisely recovers y y , i.e., exp x ⁡ ( log x ⁡ ( y ) ) = y \exp_{x}(\log_{x}(y))=y . Together, the exponential and logarithmic maps establish a smooth and invertible correspondence between the Euclidean tangent space and the curved manifold, enabling consistent optimization and representation learning in hyperbolic space.
+
+[259] h5: Curvature
+
+[260] p: The above formulation corresponds to the unit-curvature case, where the curvature is fixed as K = − 1 K=-1 . In general, hyperbolic space has a constant negative curvature usually written as K = − c K=-c , where c > 0 c>0 . When c = 1 c=1 , the space has curvature − 1 -1 , which is the normalized convention adopted by most works. The general form instead keeps c c as a free curvature parameter, so the ball’s radius becomes 1 / c 1/\sqrt{c} . This allows different degrees of curvature — flatter when c → 0 c\to 0 , and more curved when c → ∞ c\to\infty .
+
+[261] table: 𝔹 n = { z ∈ ℝ n : c ​ ‖ z ‖ 2 < 1 } , \mathbb{B}^{n}=\{z\in\mathbb{R}^{n}:c\|z\|^{2}<1\}, (65)
+
+[262] p: where the radius is 1 / c 1/\sqrt{c} and curvature K = − c K=-c . The Riemannian metric is scaled by the conformal factor
+
+[263] table: λ x = 2 1 − c ​ ‖ x ‖ 2 , \lambda_{x}=\frac{2}{1-c\|x\|^{2}}, (66)
+
+[264] p: which defines the metric tensor as
+
+[265] table: 𝐆 x = λ x 2 ​ 𝐈 . \mathbf{G}_{x}=\lambda_{x}^{2}\mathbf{I}. (67)
+
+[266] p: The general form of the Poincaré-ball hyperbolic distance under curvature K = − c K=-c ( c > 0 ) (c>0) between two points u , v ∈ 𝔹 n u,v\in\mathbb{B}^{n} is given by [ 13 ]
+
+[267] table: d ℍ ​ ( u , v ) = 1 c ​ arcosh ⁡ ( 1 + 2 ​ c ​ ‖ u − v ‖ 2 ( 1 − c ​ ‖ u ‖ 2 ) ​ ( 1 − c ​ ‖ v ‖ 2 ) ) . d_{\mathbb{H}}(u,v)=\frac{1}{\sqrt{c}}\operatorname{arcosh}\!\left(1+2c\frac{\|u-v\|^{2}}{(1-c\|u\|^{2})(1-c\|v\|^{2})}\right). (68)
+
+[268] p: The exponential map with the curvature c c is expressed as
+
+[269] table: exp x ( v ) = x ⊕ c ( tanh ( c ​ λ x ​ ‖ v ‖ 2 ) v c ​ ‖ v ‖ ) , \exp_{x}(v)=x\oplus_{c}\left(\tanh\!\left(\frac{\sqrt{c}\,\lambda_{x}\|v\|}{2}\right)\frac{v}{\sqrt{c}\,\|v\|}\right), (69)
+
+[270] p: where
+
+[271] table: λ x = 2 1 − c ​ ‖ x ‖ 2 , \lambda_{x}=\frac{2}{1-c\|x\|^{2}}, (70)
+
+[272] p: and ⊕ c \oplus_{c} denotes the Möbius addition under curvature c c .
+
+[273] p: The Möbius addition of two vectors x x and y y under curvature c c is defined as [ 28 , 13 ]
+
+[274] table: x ⊕ c y = ( 1 + 2 ​ c ​ ⟨ x , y ⟩ + c ​ ‖ y ‖ 2 ) ​ x + ( 1 − c ​ ‖ x ‖ 2 ) ​ y 1 + 2 ​ c ​ ⟨ x , y ⟩ + c 2 ​ ‖ x ‖ 2 ​ ‖ y ‖ 2 . x\oplus_{c}y=\frac{(1+2c\langle x,y\rangle+c\|y\|^{2})x+(1-c\|x\|^{2})y}{1+2c\langle x,y\rangle+c^{2}\|x\|^{2}\|y\|^{2}}. (71)
+
+[275] p: So the explicit expression for exp x ⁡ ( v ) \exp_{x}(v) in hyperbolic space with curvature c c is given by
+
+[276] table: exp x ⁡ ( v ) = ( 1 + 2 ​ c ​ α ​ ⟨ x , v ‖ v ‖ ⟩ + c ​ α 2 ​ ‖ v ‖ 2 ) ​ x + ( 1 − c ​ ‖ x ‖ 2 ) ​ α ​ v 1 + 2 ​ c ​ α ​ ⟨ x , v ‖ v ‖ ⟩ + c 2 ​ α 2 ​ ‖ x ‖ 2 ​ ‖ v ‖ 2 , \exp_{x}(v)=\frac{\big(1+2c\alpha\langle x,\tfrac{v}{\|v\|}\rangle+c\alpha^{2}\|v\|^{2}\big)x+(1-c\|x\|^{2})\alpha v}{1+2c\alpha\langle x,\tfrac{v}{\|v\|}\rangle+c^{2}\alpha^{2}\|x\|^{2}\|v\|^{2}}, (72)
+
+[277] p: where
+
+[278] table: α = tanh ⁡ ( c ​ λ x ​ ‖ v ‖ 2 ) , λ x = 2 1 − c ​ ‖ x ‖ 2 . \alpha=\tanh\!\left(\frac{\sqrt{c}\,\lambda_{x}\|v\|}{2}\right),\quad\lambda_{x}=\frac{2}{1-c\|x\|^{2}}. (73)
+
+[279] p: For a general curvature K = − c K=-c ( c > 0 ) (c>0) , the logarithmic map must account for the local curvature around x x . It can be expressed using the inverse of the Möbius addition as
+
+[280] table: log x ( y ) = 2 λ x ​ c arctanh ( c ∥ − x ⊕ c y ∥ ) − x ⊕ c y ∥ − x ⊕ c y ∥ , \log_{x}(y)=\frac{2}{\lambda_{x}\sqrt{c}}\,\operatorname{arctanh}\!\big(\sqrt{c}\|{-x}\oplus_{c}y\|\big)\frac{{-x}\oplus_{c}y}{\|{-x}\oplus_{c}y\|}, (74)
+
+[281] p: where
+
+[282] table: λ x = 2 1 − c ​ ‖ x ‖ 2 \lambda_{x}=\frac{2}{1-c\|x\|^{2}} (75)
+
+[283] p: is the conformal factor, and − x ⊕ c y {-x}\oplus_{c}y denotes the Möbius addition under curvature − c -c .
+
+[284] p: Expanding the definition of Möbius addition into the logarithmic map expression, we obtain an explicit formulation of log x ⁡ ( y ) \log_{x}(y) in the general Poincaré ball model with curvature − c -c . Substituting the c c -dependent Möbius addition (Eq. 71 ) into Eq. 74 , we first compute the intermediate term − x ⊕ c y {-x}\oplus_{c}y as
+
+[285] table: − x ⊕ c y = ( 1 − 2 ​ c ​ ⟨ x , y ⟩ + c ​ ‖ y ‖ 2 ) ​ ( − x ) + ( 1 − c ​ ‖ x ‖ 2 ) ​ y 1 − 2 ​ c ​ ⟨ x , y ⟩ + c 2 ​ ‖ x ‖ 2 ​ ‖ y ‖ 2 . {-x}\oplus_{c}y=\frac{(1-2c\langle x,y\rangle+c\|y\|^{2})(-x)+(1-c\|x\|^{2})y}{1-2c\langle x,y\rangle+c^{2}\|x\|^{2}\|y\|^{2}}. (76)
+
+[286] p: Then, the logarithmic map can be written explicitly as
+
+[287] table: log x ⁡ ( y ) = 2 λ x ​ c ​ arctanh ⁡ ( c ​ ‖ N c ​ ( x , y ) ‖ D c ​ ( x , y ) ) ​ N c ​ ( x , y ) ‖ N c ​ ( x , y ) ‖ , \log_{x}(y)=\frac{2}{\lambda_{x}\sqrt{c}}\,\operatorname{arctanh}\!\left(\sqrt{c}\frac{\|N_{c}(x,y)\|}{D_{c}(x,y)}\right)\,\frac{N_{c}(x,y)}{\|N_{c}(x,y)\|}, (77)
+
+[288] p: where
+
+[289] table: N c ​ ( x , y ) \displaystyle N_{c}(x,y) = ( 1 − 2 ​ c ​ ⟨ x , y ⟩ + c ​ ‖ y ‖ 2 ) ​ ( − x ) + ( 1 − c ​ ‖ x ‖ 2 ) ​ y , \displaystyle=\big(1-2c\langle x,y\rangle+c\|y\|^{2}\big)(-x)+\big(1-c\|x\|^{2}\big)\,y, (78) D c ​ ( x , y ) \displaystyle D_{c}(x,y) = 1 − 2 ​ c ​ ⟨ x , y ⟩ + c 2 ​ ‖ x ‖ 2 ​ ‖ y ‖ 2 , λ x = 2 1 − c ​ ‖ x ‖ 2 . \displaystyle=1-2c\langle x,y\rangle+c^{2}\|x\|^{2}\|y\|^{2},\quad\lambda_{x}=\frac{2}{1-c\|x\|^{2}}. (79)
+
+[290] p: When c = 1 c=1 , this expression reduces to the unit-curvature form of the logarithmic map given in Eq. 59 .
+
+[291] h5: Lorentz Model.
+
+[292] p: The Lorentz model 𝕃 n \mathbb{L}^{n} represents hyperbolic space as the upper sheet of a two-sheeted hyperboloid embedded in Minkowski space ℝ n + 1 \mathbb{R}^{n+1} , defined as
+
+[293] table: 𝕃 n = { p ∈ ℝ n + 1 : ⟨ p , p ⟩ L = − 1 / κ , p 0 > 0 } , \mathbb{L}^{n}=\{p\in\mathbb{R}^{n+1}:\langle p,p\rangle_{L}=-1/\kappa,\,p_{0}>0\}, (80)
+
+[294] p: where ⟨ p , q ⟩ L = − p 0 ​ q 0 + ∑ i = 1 n p i ​ q i \langle p,q\rangle_{L}=-p_{0}q_{0}+\sum_{i=1}^{n}p_{i}q_{i} is the Lorentzian inner product. This formulation is unbounded and algebraically convenient, allowing closed-form computation of geodesic distances and stable gradient optimization. Because of its numerical robustness and simple analytical expressions for exponential and logarithmic maps, the Lorentz model is widely adopted in hyperbolic representation learning, particularly in entailment-based and hierarchical vision-language models.
+
+[295] h3: 1.6 Value Function
+
+[296] p: Reinforcement learning (RL) is about learning to act in an environment so as to maximize future reward. The value function in RL estimates the expected cumulative future reward that an agent can obtain from a particular state or state-action pair [ 70 ] . It helps the agent decide which actions are more desirable in the long run, guiding it towards making decisions that maximize its total reward over time. There are two main types: state-value function V ⁡ ( s ) V(s) , which predicts the value of a given state, and state–action value function V ⁡ ( s , a ) V(s,a) , which predicts the value of taking a specific action in a given state.
+
+[297] h5: State Value Function.
+
+[298] p: The value function V ⁡ ( s ) V(s) represents the expected return (cumulative reward) starting from a specific state s s and following a particular policy, which defines the agent’s strategy for choosing actions. It indicates how good it is for the agent to be in a certain state. For example, if an agent is located at a particular position in a maze, the value function V ⁡ ( s ) V(s) represents the expected total reward it will obtain from that point until it reaches the target, assuming it continues to follow its current policy.
+
+[299] h5: State-Action Value Function.
+
+[300] p: The value function V ⁡ ( s , a ) V(s,a) or Q ⁡ ( s , a ) Q(s,a) , also known as the action value function, represents the expected return (cumulative reward) starting from a specific state s s , taking an action a a , and subsequently following a particular policy. It indicates how good it is for the agent to take a specific action in a given state. For example, if an agent is at a particular position in a maze, the function V ⁡ ( s , a ) V(s,a) represents the expected total reward it will obtain by choosing a particular action at that point and then following its current policy until it reaches the target.
+
+[301] h5: Formal Definition.
+
+[302] p: Given a state s t s_{t} , an action a t a_{t} , a policy π ⁡ ( a ∣ s ) \pi(a\mid s) that defines how the agent acts, a reward function r ⁡ ( s , a ) r(s,a) , and a discount factor γ ∈ [ 0 , 1 ) \gamma\in[0,1) , the state-value function under policy π \pi is formally defined as
+
+[303] table: V π ​ ( s t ) = 𝔼 π ​ [ ∑ k = 0 ∞ γ k ​ r ​ ( s t + k , a t + k ) | s t ] . V^{\pi}(s_{t})=\mathbb{E}_{\pi}\left[\sum_{k=0}^{\infty}\gamma^{k}\,r(s_{t+k},a_{t+k})\,\middle|\,s_{t}\right]. (81)
+
+[304] p: It measures the expected cumulative reward that an agent will receive when starting from state s t s_{t} and following policy π \pi thereafter.
+
+[305] h5: Optimal Value Function.
+
+[306] p: If the agent follows the best possible policy that maximizes the expected reward, we obtain the optimal value function :
+
+[307] table: V ∗ ​ ( s t ) = max π ⁡ 𝔼 π ​ [ ∑ k = 0 ∞ γ k ​ r ​ ( s t + k , a t + k ) | s t ] . V^{*}(s_{t})=\max_{\pi}\,\mathbb{E}_{\pi}\left[\sum_{k=0}^{\infty}\gamma^{k}\,r(s_{t+k},a_{t+k})\,\middle|\,s_{t}\right]. (82)
+
+[308] p: Intuitively, V ∗ ​ ( s t ) V^{*}(s_{t}) quantifies the maximum expected cumulative reward that an agent can achieve when starting from state s t s_{t} and following an optimal policy thereafter.
+
+[309] h5: Bellman Optimality Equation.
+
+[310] p: The value function encodes the long-term consequences of actions and forms the foundation of reasoning in reinforcement learning [ 6 ] . Once V ∗ ​ ( s ) V^{*}(s) is known, the optimal policy can be derived if the one-step transition dynamics P ⁡ ( s ′ ∣ s , a ) P(s^{\prime}\mid s,a) are available. Specifically, the optimal policy π ∗ \pi^{*} satisfies the Bellman optimality equation:
+
+[311] table: π ∗ ​ ( s ) = arg ⁡ max a ​ [ r ⁡ ( s , a ) + γ ​ ∑ s ′ P ⁡ ( s ′ ∣ s , a ) ​ V ∗ ​ ( s ′ ) ] . \pi^{*}(s)=\arg\max_{a}\left[r(s,a)+\gamma\sum_{s^{\prime}}P(s^{\prime}\mid s,a)\,V^{*}(s^{\prime})\right]. (83)
+
+[312] p: This recursive relationship expresses how the value of a state depends on the values of its successor states, thereby capturing the essence of sequential decision-making.
+
+[313] h5: Interpretation.
+
+[314] p: The optimal value function V ∗ ​ ( s ) V^{*}(s) can be viewed as a potential field or energy map over the state space. States with high value correspond to desirable or low-energy configurations that are closer to reward, whereas states with low value represent undesirable or high-energy configurations that are further away. From this perspective, acting optimally can be interpreted as following the gradient of the value landscape toward regions of higher value (or lower energy). This analogy bridges reinforcement learning with energy-based modeling, suggesting that value functions implicitly define an energy surface that guides the agent toward optimal behavior.
+
+[315] h5: Path Value Function.
+
+[316] p: In generic RL settings above, the value depends on future rewards under the optimal policy. But if we redefine reward as the negative energy cost − c -c of moving between states:
+
+[317] table: r ⁡ ( s , a , s ′ ) = − c ⁡ ( s , s ′ ) , r(s,a,s^{\prime})=-c(s,s^{\prime}), (84)
+
+[318] p: and the cumulative reward becomes the total negative cost, then the optimal path value function V ∗ ​ ( s , s ′ ) V^{*}(s,s^{\prime}) corresponds to the negative of the minimum accumulated cost from s s to s ′ s^{\prime} [ 19 ] .
+
+[319] p: In this case, the optimal path value function V ∗ ​ ( s , s ′ ) V^{*}(s,s^{\prime}) obeys triangle inequality [ 57 , 21 , 49 ] :
+
+[320] table: c ⁡ ( s 1 , s 3 ) \displaystyle c(s_{1},s_{3}) ≤ c ⁡ ( s 1 , s 2 ) + c ⁡ ( s 2 , s 3 ) \displaystyle\leq c(s_{1},s_{2})+c(s_{2},s_{3}) ⇒ V ∗ ​ ( s 1 , s 3 ) \displaystyle\Rightarrow\quad V^{*}(s_{1},s_{3}) ≥ V ∗ ​ ( s 1 , s 2 ) + V ∗ ​ ( s 2 , s 3 ) . \displaystyle\geq V^{*}(s_{1},s_{2})+V^{*}(s_{2},s_{3}). (85)
+
+[321] h2: 2 Motivation
+
+[322] p: World state transitions (from video observations) naturally form a hierarchical structure that is suitable represented in hyperbolic space. Let s t s_{t} denote the state at time t t and 𝒜 \mathcal{A} be a discrete action set with cardinality | 𝒜 | = B |\mathcal{A}|=B . The world evolves according to the transition s t + 1 = f ⁡ ( s t , a t ) s_{t+1}=f(s_{t},a_{t}) , where a t ∈ 𝒜 a_{t}\in\mathcal{A} . When predicting d d steps into the future, each action choice produces a distinct future trajectory, resulting in N d = B d N_{d}=B^{d} possible future states. These futures form a exponentially branching tree, where the depth corresponds to the prediction horizon and the branching factor is determined by the action space. As a result, future world states are naturally organized hierarchically: states at smaller depths represent coarse, high-level abstractions, while states at larger depths correspond to finer, more detailed futures. Similar motivations are also supported by [ 64 ] .
+
+[323] h2: 3 Baseline Details
+
+[324] p: As mentioned in Section 4.2 of main content, in both Procedural Planning (PP) and Visual Planning with Videos setup, we evaluate against three categories of baselines. LLM-based approaches rely on large language or vision-language models for reasoning, instruction following, and multi-step planning. Generative (world) models perform planning by generating pixels or latent video tokens and using visual rollouts to guide decision-making. Predictive (world) models focus purely on action prediction, estimating future action sequences directly without generating visual frames.
+
+[325] p: Random Selection. Following prior work [ 15 ] , actions are sampled uniformly at random from the available action set to form a plan, without considering the task context.
+
+[326] p: Retrieval-Based. Following prior work [ 87 ] , given the start and goal observations, this method retrieves the most similar trajectory from the training set by minimizing visual feature distance. The corresponding action sequence from the retrieved example is then used as the predicted plan.
+
+[327] h5: LLM-based
+
+[328] p: LFP (Language-First Planning) [ 42 ] . This method first converts both the start and goal observations into text and then prompts a large language model to infer the missing steps. The LLM predicts a sequence of intermediate actions based solely on language reasoning rather than visual planning.
+
+[329] p: VidAssist [ 36 ] . This method uses a vision-language model to extract temporal and spatial cues from the video, then queries a large language model to interpret these cues and generate an action sequence. The LLM refines and structures the predicted steps into a coherent plan, combining visual grounding with language-based reasoning.
+
+[330] p: SCHEMA [ 52 ] . This method performs procedure planning by modeling how states evolve over time. It aligns visual observations with textual state descriptions through cross-modal contrastive learning and uses a transformer backbone to represent state transitions. A large language model is then used to reason over these inferred intermediate states and generate the next actions, enabling structured step-by-step planning in instructional video settings.
+
+[331] p: Other VLMs. We also evaluate several large vision-language models, including InternVL3.5-241B [ 76 ] , Qwen3-VL-Max [ 79 ] , Gemini 2.5 Pro [ 20 ] , and GPT-5 [ 53 ] , using them in a zero-shot setting to perform visual reasoning and planning directly from video observations without task-specific training.
+
+[332] h5: Generative (World) Models
+
+[333] p: DDN [ 15 ] . This approach uses an autoregressive structure with two coordinated branches: one learns a compact representation of action steps, while the other predicts transitions in the latent feature space. By forecasting the next visual state rather than directly selecting actions, DDN models procedural progression through iterative frame prediction.
+
+[334] p: Int-MGAIL and Ext-MGAIL [ 7 ] . These generative models perform procedure planning by jointly learning a latent world model and an action policy through adversarial training, enabling multi-step action synthesis conditioned on visual goal states.
+
+[335] p: P 3 IV [ 86 ] . This transformer-based model uses a learnable memory module together with an adversarial generation setup, and, similar to our method, outputs all action steps in a single forward pass rather than generating them sequentially.
+
+[336] p: PDPP [ 75 ] . This two-branch diffusion-based framework models temporal dependencies and action transitions, generating the full action sequence in parallel and progressively refining it over multiple denoising stages to improve coherence and logical structure.
+
+[337] p: KEPP [ 50 ] . This method incorporates structured procedural knowledge through a probabilistic knowledge graph learned from training plans, which serves as external guidance for step ordering. KEPP predicts the full action sequence in a single pass with limited supervision, producing strong performance in instructional video planning.
+
+[338] p: ActionDiffusion [ 61 ] . This diffusion-based approach generates the full action sequence by iteratively denoising a latent representation, allowing the model to refine predictions over multiple steps and capture long-term dependencies in instructional procedures.
+
+[339] p: MTID [ 87 ] . This model treats procedure planning as a multimodal trajectory generation problem, using a diffusion-based latent policy to synthesize complete action sequences conditioned on video observations while modeling long-term dependencies through iterative denoising.
+
+[340] p: VideoWorld [ 59 ] . This autoregressive framework generates future video frames step by step to model procedural progression, using predicted visual states to implicitly guide the unfolding action sequence.
+
+[341] h5: Predictive (World) Models
+
+[342] p: WLTDO [ 27 ] . This recurrent neural network model generates action sequences directly from paired observations, using temporal reasoning over the encoded features to predict ordered procedural steps.
+
+[343] p: UAAA [ 1 ] . This two-stage method predicts action steps autoregressively by combining an RNN with a hidden Markov model to model temporal uncertainty and step transitions in procedural tasks.
+
+[344] p: UPN [ 68 ] . This method learns a differentiable latent space suitable for planning by predicting trajectories in feature space, and a softmax output layer is used to convert the continuous plan representation into discrete action steps.
+
+[345] p: PlaTe [ 69 ] . This model builds on DDN by introducing transformer modules into its dual-branch architecture for action and state prediction, but follows a distinct evaluation protocol compared to other procedure planning methods.
+
+[346] p: E3P [ 74 ] . This method adopts an event-centric formulation, inferring latent events from visual observations and using them to guide intermediate action prediction. Through event-aware prompting and action relation modeling, E3P improves the logical structure of predicted steps and achieves strong performance on procedural planning benchmarks.
+
+[347] p: V-JEPA 2 [ 3 ] . A large-scale predictive world model pretrained on masked latent feature prediction over one million hours of unlabeled video. Action-conditioned post-training enables autoregressive rollouts for planning without pixel generation.
+
+[348] h2: 4 Energy Landscape
+
+[349] p: To better illustrate the difference between Euclidean predictive world models and our hyperbolic formulation, we visualize the energy landscape around a given latent state.
+
+[350] h5: Δ ​ x \Delta x and Δ ​ y \Delta y .
+
+[351] p: In the original V-JEPA 2-AC setup [ 3 ] , Δ ​ x \Delta x and Δ ​ y \Delta y represent physical end-effector offsets in Cartesian coordinates. The visualization shows how the model’s energy changes as the end-effector’s target position varies along the Δ ​ x \Delta x and Δ ​ y \Delta y axes while keeping the vertical displacement fixed ( Δ ​ z = 0 \Delta z=0 ).
+
+[352] p: Formally, the plotted quantity is:
+
+[353] table: s t + 1 hyp = s t + ( Δ ​ x , Δ ​ y , 0 ) , \displaystyle s_{t+1}^{\mathrm{hyp}}=s_{t}+(\Delta x,\Delta y,0), (86) Energy ​ ( Δ ​ x , Δ ​ y ) = c ⁡ ( s t , s t + 1 hyp ) . \displaystyle\text{Energy}(\Delta x,\Delta y)=c(s_{t},s_{t+1}^{\mathrm{hyp}}). (87)
+
+[354] p: where c c denotes the energy cost defined in Eq. 11 .
+
+[355] p: In visual planning, Δ ​ x \Delta x and Δ ​ y \Delta y are no longer physical displacements. Instead, they represent latent displacements that probe the local geometry of the world model around a visual state.
+
+[356] p: In the Euclidean space, the encoder maps an observation x t x_{t} into a latent vector s t x ∈ ℝ n s_{t}^{x}\in\mathbb{R}^{n} . To visualize how the model evaluates hypothetical future states, V-JEPA 2 [ 3 ] perturbs the latent representation along two Euclidean axes. We choose two orthonormal directions in latent space, u 1 , u 2 ∈ ℝ n u_{1},u_{2}\in\mathbb{R}^{n} . A natural, semantically aligned choice is:
+
+[357] table: u 1 = E θ ​ ( x t + T ) − E θ ​ ( x t ) ‖ E θ ​ ( x t + T ) − E θ ​ ( x t ) ‖ , u_{1}=\frac{E_{\theta}(x_{t+T})-E_{\theta}(x_{t})}{\left\lVert E_{\theta}(x_{t+T})-E_{\theta}(x_{t})\right\rVert}, (88)
+
+[358] p: which represents the direction from the current state toward the goal (i.e., progress along the procedure).
+
+[359] p: The second direction, u 2 u_{2} , spans variations orthogonal to this progress direction (i.e., sampled from another trajectory at the same step and then orthonormalized against u 1 u_{1} ).
+
+[360] p: Then, a hypothetical next latent state is defined as
+
+[361] table: s t + 1 hyp = s t x + Δ ​ x ​ u 1 + Δ ​ y ​ u 2 , s^{\text{hyp}}_{t+1}=s^{x}_{t}+\Delta x\,u_{1}+\Delta y\,u_{2}, (89)
+
+[362] p: and the corresponding energy landscape is
+
+[363] table: Energy ​ ( Δ ​ x , Δ ​ y ) = ‖ s t + 1 x − s t + 1 hyp ‖ . \text{Energy}(\Delta x,\Delta y)=\left\lVert s^{x}_{t+1}-s^{\text{hyp}}_{t+1}\right\rVert. (90)
+
+[364] p: In GeoWorld, the encoder maps each observation x t x_{t} to a latent representation s t , ℍ x s_{t,\mathbb{H}}^{x} on the hyperbolic manifold. To probe the local geometry around this latent state, we sweep two orthonormal directions in the tangent space 𝐓 0 ​ ℍ n \mathbf{T}_{0}\mathbb{H}^{n} , denoted as ( Δ ​ x , Δ ​ y ) (\Delta x,\Delta y) . Each coordinate pair ( Δ ​ x , Δ ​ y ) (\Delta x,\Delta y) corresponds to a small displacement applied at the tangent space before projection onto the manifold via the exponential map:
+
+[365] table: s t + 1 , ℍ hyp = exp 0 ⁡ ( s t x + Δ ​ x ​ u 1 + Δ ​ y ​ u 2 ) , s^{\text{hyp}}_{t+1,\mathbb{H}}=\exp_{0}\!\big(s_{t}^{x}+\Delta x\,u_{1}+\Delta y\,u_{2}\big), (91)
+
+[366] p: where u 1 u_{1} and u 2 u_{2} form an orthonormal basis in 𝐓 0 ​ ℍ n \mathbf{T}_{0}\mathbb{H}^{n} . Thus, ( Δ ​ x , Δ ​ y ) (\Delta x,\Delta y) describes local perturbations of the latent state , not pixel space offsets.
+
+[367] p: And the energy landscape is
+
+[368] table: Energy ℍ ​ ( Δ ​ x , Δ ​ y ) = d ℍ ​ ( s t + 1 , ℍ x , s t + 1 , ℍ hyp ) . \text{Energy}_{\mathbb{H}}(\Delta x,\Delta y)=d_{\mathbb{H}}\!\left(s^{x}_{t+1,\mathbb{H}},\;s^{\text{hyp}}_{t+1,\mathbb{H}}\right). (92)
+
+[369] h5: Visualization.
+
+[370] p: In Figure 2 , we select a reference latent state s t s_{t} from the initial step of the Replace Memory Chip task in the COIN dataset [ 71 ] , and visualize the local energy geometry by sweeping two orthonormal tangent-space directions ( Δ ​ x , Δ ​ y ) (\Delta x,\Delta y) around this state. Figure 2 compares the Euclidean (left) and hyperbolic (right) landscapes. The Euclidean surface shows a smooth, nearly symmetric paraboloid with weak directional structure, indicating that V-JEPA 2 treats perturbations homogeneously. In contrast, the hyperbolic surface in GeoWorld forms a sharper, curvature-aware basin with more pronounced directional variation. This reflects the ability of H-JEPA to encode hierarchical structure: states positioned higher in the task hierarchy lie at hyperbolically greater distances, creating more informative energy gradients during planning.
+
+[371] p: Such curvature-aware energy landscapes promote more stable long-horizon planning: CEM naturally follows the hyperbolic geodesics shaped by GeoWorld, resulting in more accurate multi-step trajectory optimization.
+
+[372] figure: Figure 1 : Gromov δ \delta -hyperbolicity on CrossTask [ 88 ] .
+
+[373] h2: 5 Ablation Study
+
+[374] figure: (a) Curvature and geodesics. (b) Geodesic patterns. (c) Distance vs. curvature. (d) Curvature trend during training. Figure 2 : Geometric effects and curvature dynamics : (a) Poincaré disk geodesics connecting x x and y y under different curvatures K K . As the curvature K K becomes less negative (i.e., closer to 0 0 ), the hyperbolic distance between x x and y y increases, and the geodesic paths bend less and shift closer toward the origin. (b) Geodesic patterns induced by different boundary anchor points. Varying the anchor location produces a characteristic geodesic fan in the Poincaré disk. (c) As the curvature becomes less negative, the space flattens and the distance between x x and y y decreases. (d) Learnable curvature c c during supervised training, showing a gradual decrease from its initialization and convergence to a stable value 0.3.
+
+[375] h5: Curvature
+
+[376] p: As discussed in Section 4.3 , the curvature K = − c K=-c is learned in the logarithmic space by optimizing log ⁡ ( c ) \log(c) , which is initialized at c = 1 c=1 and treated as a learnable scalar. This formulation ensures that c c remains positive and stabilizes the gradients of both the hyperbolic distance and the exponential map [ 14 , 25 ] . The learned curvature is further clamped to the range [ 0.1 , 10.0 ] [0.1,\,10.0] to prevent training instability.
+
+[377] p: We analyze how the learnable curvature evolves during training and how it influences geometric planning quality. As shown in Fig. 2 (d), the curvature parameter c c in GeoWorld typically starts near 1 1 and gradually decreases to a stable value around 0.3 0.3 , indicating that the model learns a flatter yet still hyperbolic latent geometry. A smaller curvature reduces distortion in the exponential map and leads to more stable multi-step planning, especially for larger backbone encoders. The geometric effect of curvature is further visualized in Fig. 2 (a)–(c): as c c decreases, geodesic paths bend less aggressively toward the origin (Fig. 2 (a)), boundary-anchored geodesic patterns become flatter (Fig. 2 (b)), and the hyperbolic distance between x x and y y contracts smoothly as curvature approaches zero (Fig. 2 (c)). This suggests that moderate negative curvature is sufficient to capture hierarchical structure while preserving stable value propagation across long planning horizons.
+
+[378] h5: Gromov δ \delta -Hyperbolicity
+
+[379] p: We visualize Gromov δ \delta -hyperbolicity by sampling latent quadruples in CrossTask [ 88 ] and evaluating the four-point condition under each model’s intrinsic metric (hyperbolic geodesic distance for GeoWorld and Euclidean distance for V-JEPA 2). As shown in Fig. 1 , GeoWorld exhibits a substantially more concentrated distribution of near-zero δ \delta values, indicating a stronger tree-like hierarchical geometry in its learned representation space.
+
+[380] h5: Frozen Encoder vs. Fully Fine-Tuned
+
+[381] figure: Table 1: Ablation of frozen encoder vs. fully fine-tuned model for visual planning with videos on CrossTask [ 88 ] . Method T=3 T=4 SR mAcc mIoU SR mAcc mIoU GeoWorld ViT-L 44.80 70.54 86.30 30.63 65.46 79.73 w/ FFT 45.20 71.17 87.16 31.34 67.16 80.38 GeoWorld ViT-H 47.79 74.42 88.84 34.51 68.89 82.95 w/ FFT 48.46 74.94 89.10 34.95 69.42 83.47 GeoWorld ViT-g 49.23 76.64 90.61 35.49 71.00 84.50 w/ FFT 49.57 76.86 91.04 35.91 71.76 85.13 GeoWorld ViT-g 384 51.71 77.30 92.95 37.04 71.35 87.04 w/ FFT 52.04 77.98 93.61 37.85 72.24 87.80
+
+[382] p: As shown in Table 1 , we evaluate the impact of Fully Fine-Tuning (FFT) the encoder during the supervised finetuning stage, compared to the original configuration where the encoder remains frozen and only a lightweight exponential projection layer is trainable. Fully fine-tuning yields consistent yet modest improvements across all metrics and model scales, with gains of approximately 0.3 − 0.8 % 0.3{-}0.8\% in SR and 0.5 − 1.2 % 0.5{-}1.2\% in mAcc and mIoU for both T = 3 T{=}3 and T = 4 T{=}4 planning horizons. While these improvements indicate that the encoder can still adapt beneficially to downstream visual planning objectives, the gains come at the cost of significantly increased trainable parameters and slower optimization. Moreover, the relative performance margin narrows as model size increases, suggesting diminishing returns for larger backbones. These results imply that the frozen-encoder design already captures task-relevant structure effectively, and full encoder finetuning provides only incremental benefit relative to the additional computation and memory overhead introduced.
+
+[383] figure: Table 2: Ablation of Supervised Fine-Tuning (SFT) vs. Geometric Reinforcement Learning (GRL) for visual planning with videos on CrossTask [ 88 ] . Method T=3 T=4 SR mAcc mIoU SR mAcc mIoU V-JEPA 2 ViT-g 384 [ 3 ] 50.16 74.86 91.73 35.01 70.24 85.05 GeoWorld ViT-g 384 SFT Only 50.42 75.13 91.94 35.92 70.79 85.88 GRL Only 51.04 76.48 92.42 36.33 71.04 86.31 SFT + GRL 51.71 77.30 92.95 37.04 71.35 87.04
+
+[384] figure: Table 3: Ablation of weighting hyperparameter λ \lambda in Supervised Fine-Tuning (SFT) Only for visual planning with videos on CrossTask [ 88 ] . Method T=3 T=4 SR mAcc mIoU SR mAcc mIoU V-JEPA 2 ViT-g 384 [ 3 ] 50.16 74.86 91.73 35.01 70.24 85.05 GeoWorld ViT-g 384 λ = 1 , 1 − λ = 0 \lambda=1,~1-\lambda=0 50.16 74.88 91.79 34.65 69.48 84.10 λ = 0.9 , 1 − λ = 0.1 \lambda=0.9,~1-\lambda=0.1 50.19 74.91 91.84 34.95 70.05 84.85 λ = 0.8 , 1 − λ = 0.2 \lambda=0.8,~1-\lambda=0.2 50.25 74.96 91.88 35.31 70.40 85.27 λ = 0.7 , 1 − λ = 0.3 \lambda=0.7,~1-\lambda=0.3 50.33 75.02 91.89 35.57 70.57 85.46 λ = 0.6 , 1 − λ = 0.4 \lambda=0.6,~1-\lambda=0.4 50.37 75.06 92.92 35.82 70.66 85.72 λ = 0.5 , 1 − λ = 0.5 \lambda=0.5,~1-\lambda=0.5 50.42 75.13 91.94 35.92 70.79 85.88 λ = 0.3 , 1 − λ = 0.7 \lambda=0.3,~1-\lambda=0.7 50.39 75.07 91.82 35.97 70.86 85.74
+
+[385] h5: Effectiveness of GRL
+
+[386] p: As shown in Table 2 , incorporating Geometric Reinforcement Learning (GRL) leads to clear and consistent improvements over the supervised fine-tuning (SFT) baseline. While SFT alone yields marginal gains over the pretrained V-JEPA 2 model, applying GRL independently further boosts SR, mAcc, and mIoU across both planning horizons, suggesting that GRL better aligns the learned energy landscape with multi-step planning objectives. The combination of SFT and GRL achieves the strongest performance, indicating that SFT provides a strong initialization while GRL refines the latent dynamics toward energy-minimizing trajectories required for long-horizon reasoning. These findings highlight the complementary nature of supervised learning and reinforcement-based value shaping in predictive world models.
+
+[387] h5: SFT Hyperparameters
+
+[388] p: As shown in Table 3 , incorporating the rollout loss into SFT consistently improves visual planning performance over the pure one-step objective ( λ = 1 \lambda=1 ). Once 1 − λ > 0 1-\lambda>0 , all metrics exhibit steady gains, indicating that multi-step rollout supervision provides additional temporal consistency beyond standard single-step training. As the rollout weight increases (i.e., smaller λ \lambda ), improvements become more pronounced, particularly for the longer planning horizon ( T = 4 T=4 ). For example, SR and mIoU steadily increase as λ \lambda decreases from 1 1 to 0.5 0.5 , suggesting that stronger rollout supervision effectively mitigates error accumulation over longer sequences. This trend aligns with the intuition that longer-horizon prediction requires explicit multi-step consistency constraints rather than relying solely on local one-step accuracy. A balanced weighting around λ = 0.5 \lambda=0.5 achieves the strongest overall performance across metrics, demonstrating that equal emphasis on one-step prediction and rollout consistency yields the best trade-off. Further increasing the rollout weight (e.g., λ = 0.3 \lambda=0.3 ) leads to negligible changes for the shorter horizon ( T = 3 T=3 ), while yielding slight yet consistent gains for the longer horizon ( T = 4 T=4 ). This behavior indicates that stronger rollout supervision primarily benefits long-horizon planning, especially under the hyperbolic structure where multi-step geodesic consistency becomes more critical. In contrast, short-horizon planning does not induce strong hierarchical structure, limiting the advantage of hyperbolic geometry and GRL. The primary benefit of GeoWorld emerges as the planning horizon increases, where exponential branching and long-term abstraction become critical, as shown in Table 5 .
+
+[389] h5: GRL Hyperparameters
+
+[390] p: As shown in Table 4 , both the discount factor γ \gamma and the regularization weight β \beta play important roles in shaping the learning dynamics in GRL. Increasing γ \gamma strengthens long-horizon supervision by assigning greater weight to later predicted steps, which benefits multi-step rollout consistency and improves SR, mAcc, and mIoU as the planning horizon increases from T = 3 T{=}3 to T = 4 T{=}4 . Meanwhile, introducing the triangle inequality regularization term through β > 0 \beta>0 consistently boosts performance compared to the β = 0 \beta=0 setting, demonstrating that enforcing hyperbolic geodesic constraints helps stabilize the predictor and prevents degenerate shortcuts in latent space. Moderate regularization ( β = 0.1 \beta=0.1 ) paired with a large discount factor ( γ = 0.99 \gamma=0.99 ) achieves the strongest results, indicating that encouraging long-horizon consistency while softly enforcing geodesic structure yields the most effective balance. These results validate the effectiveness of GRL as both a geometric constraint mechanism and a planning-aligned training signal.
+
+[391] h5: Hyperbolic Geometry vs. GRL in Long-Horizon Planning
+
+[392] figure: Table 4: Ablation of discount factor γ \gamma and the regularization weight b ​ e ​ t ​ a beta in Geometric Reinforcement Learning (GRL) for visual planning with videos on CrossTask [ 88 ] . Method T=3 T=4 SR mAcc mIoU SR mAcc mIoU V-JEPA 2 ViT-g 384 [ 3 ] 50.16 74.86 91.73 35.01 70.24 85.05 GeoWorld ViT-g 384 SFT Only 50.42 75.13 91.94 35.92 70.79 85.88 β = 0 , γ = 0.99 \beta=0,~\gamma=0.99 50.48 75.27 91.99 36.07 70.94 86.07 β = 0.05 , γ = 0.99 \beta=0.05,~\gamma=0.99 51.04 76.21 92.39 36.58 71.13 86.45 β = 0.2 , γ = 0.99 \beta=0.2,~\gamma=0.99 51.69 77.25 92.83 37.15 71.33 86.96 β = 0.1 , γ = 0.90 \beta=0.1,~\gamma=0.90 51.02 76.39 92.04 36.42 70.88 86.33 β = 0.1 , γ = 0.95 \beta=0.1,~\gamma=0.95 51.44 76.94 92.75 36.85 71.05 86.67 β = 0.1 , γ = 0.99 \mathbf{\beta=0.1,~\gamma=0.99} 51.71 77.30 92.95 37.04 71.35 87.04
+
+[393] p: Section 4.5 in main paper reports results up to T = 6 T{=}6 , following the long-horizon setting in [ 87 ] . Table 5 further extends the evaluation to T = 8 T{=}8 to stress-test planning stability under increasingly long rollouts. As the horizon grows, the vanilla V-JEPA 2 baseline exhibits rapid performance degradation, with SR dropping sharply from 50.16 50.16 at T = 3 T{=}3 to 4.95 4.95 at T = 8 T{=}8 , highlighting severe error accumulation in long-horizon prediction. Introducing hyperbolic geometry substantially mitigates this collapse. SFT in hyperbolic space already improves stability at longer horizons, maintaining significantly higher SR at T ≥ 7 T{\geq}7 . Applying GRL in Euclidean space further strengthens multi-step consistency and consistently outperforms the baseline, demonstrating that rollout-based geometric regularization alone contributes meaningful gains even without hyperbolic modeling. When GRL is implemented in hyperbolic space, the advantage becomes more pronounced, particularly for T ≥ 6 T{\geq}6 , suggesting that enforcing geodesic consistency in a curvature-aware latent space better preserves long-range structural dependencies. The full model (SFT + GRL) achieves the strongest results across all horizons, with the performance gap widening as T T increases. This trend indicates that SFT and GRL play complementary roles: SFT stabilizes short-term prediction, while GRL enhances long-horizon rollout consistency, together yielding a clear advantage in extended planning scenarios.
+
+[394] figure: Table 5: SR of long horzion planning on CrossTask [ 88 ] videos. Method T=3 T=4 T=5 T=6 T=7 T=8 V-JEPA 2 ViT-g 384 50.16 35.01 23.17 16.88 8.26 4.95 SFT (Hyperbolic) 50.42 35.92 23.64 16.97 14.88 11.51 GRL (Euclidean) 50.26 35.47 23.85 17.03 15.12 12.74 GRL (Hyperbolic) 51.04 36.33 24.05 17.82 15.54 13.10 SFT + GRL 51.71 37.04 24.83 18.26 16.09 13.81
+
+[395] h2: 6 Error Accumulation in Long-Horizon Planning
+
+[396] p: Autoregressive (AR) methods inevitably lead to error accumulation in long-horizon planning, which is why many existing works focus on mitigating this issue through rollout loss. However, our claim is not that hierarchy replaces this effect, but that geometry shapes how errors accumulate. In Euclidean latent spaces, small prediction errors cause unconstrained drift that compounds uniformly over time, whereas hyperbolic geometry imposes a hierarchical structure on the latent space that constrains long-horizon trajectories along geodesically meaningful directions. In this sense, error accumulation and geometric drift are closely related: hierarchical geometry mitigates how errors propagate, while rollout loss and GRL help eliminate them.
+
+[397] h2: 7 Limitation and Future Work
+
+[398] p: Our intuition for hierarchical structure arises from state transitions in multi-step planning over futures. Therefore, even when the action sequences annotated in CrossTask [ 88 ] and COIN [ 71 ] appear linear, predicting d d -step futures from a state induces an exponentially branching set of possible trajectories ( B d B^{d} ), forming an implicit tree underlying a hierarchical structure. We must clarify that, as mentioned in Section 1.2 , sub-task hierarchies involving multi-level planning are the intuition of the original JEPA [ 41 ] . However, the hierarchical structure in GeoWorld arises from multi-step future expansion, rather than from explicit high-level planning and low-level execution.
+
+[399] p: Future work may involve sub-task hierarchies, such as high-level task labels, mid-level actions, and low-level end-effectors. Moreover, our framework is compatible with embodied planning. As this is a computer vision conference, we plan to extend our work to embodied settings in the future.
+
+[400] h2: Instructions for reporting errors
+
+[401] p: We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the methods listed below:
+
+[402] p: Tip: You can select the relevant text first, to include it in your report.
+
+[403] p: Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability should not be a barrier to accessing research. Thank you for your continued support in championing open access for all.
+
+[404] p: Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .

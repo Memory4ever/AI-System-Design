@@ -1,0 +1,504 @@
+Exact-v1 primary necessary selection https://arxiv.org/html/2601.21695v1
+3. Approach
+Figure 2. An overview of AtPatch.
+3.1. Overview of AtPatch
+AtPatch introduces a hot-fix mechanism for transformer-based models, inspired by software engineering practices of delta debugging and hot patching. As illustrated in Figure 2, the method operates during model inference by intercepting and dynamically redistributing attention maps. When a transformer-based model processes an input, it generates attention maps through its multi-head attention layers.
+AtPatch first extracts these attention maps. Then, it employs a pre-trained Detector to identify anomalous columns. Specifically, the Detector is trained offline on a Debugging Set containing clean and backdoor/fairness-violation data. In the online debugging phase, the Detector outputs an anomaly probability vector for each attention map, where each element is a probability value between 0 and 1, representing the anomaly probability of the corresponding column. Columns with anomaly probabilities exceeding a threshold τ\tau are considered anomalous.
+After completing the detection, if no anomalies are reported, AtPatch directly return the original attention map to the model for continued inference. If any anomalous columns are reported, AtPatch will replace flagged columns with a unified benign attention column (average value of the Debugging set’s benign attention maps) and rescale the modified map to redistribute the attention. The redistributed attention map is then returned to the model for continued inference, allowing subsequent layers to proceed with re-weighted feature representations, thereby mitigating backdoor attacks and unfairness.
+In summary, AtPatch has two major advantages with this design: (1) The Detector is input-specific (theoretically, it should output ϕ\phi for attention maps without anomalies). Compared to traditional methods that treat all inputs indiscriminately, AtPatch leverages this discrimination mechanism to more effectively preserve the original functionality of the model. (2) This process is on-the-fly, requiring no modifications to the model’s parameters or retraining. This ensures the flexibility of AtPatch, making it applicable to already deployed models.
+In general, AtPatch establishes a new paradigm for model debugging: treating attention maps as mutable runtime states rather than immutable computational traces.
+3.2. Debugging Set Construction
+Like other DNN debugging works (Chen et al., 2024; Sun et al., 2022), the construction of a Debugging Set lies at the important part of AtPatch. Just as software test suites must systematically cover both nominal and exceptional execution paths, our Debugging Set also aims to capture normal and anomalous attention patterns induced by backdoor manipulations or intrinsic model unfairness.
+This enables AtPatch to diagnose and repair faulty model behaviors through a SE view, where the Debugging Set serves as a test oracle for attention map anomalies.
+Below, we detail the construction process:
+3.2.1. Clean-Backdoor Pairs
+A backdoor attack poisons a model during training by associating a specific trigger pattern with a target class (Li et al., 2022). At inference time, any input containing the trigger will be misclassified to the target class regardless of its semantic content. To debug such attacks, we construct a Debugging Set of clean-backdoor pairs that reveal the trigger-induced attention distortions. However, in practice, the trigger pattern and target class are usually unknown, Thus, we adopt an existing inverse approach (Wang et al., 2019), which identifies potential triggers by solving an optimization problem. For a clean dataset DD and a suspected target class cc, we jointly optimize a trigger mask McM_{c} (localizing the trigger region) and trigger content Δc\Delta_{c} (defining the trigger pattern) through:
+(3)
+min⁡∑x∈DMc,Δc⁡ℒ⁡(yc,f⁡(x′))+λ⋅‖Mc‖1\min_{M_{c},\Delta_{c}}\sum_{x\in D}\mathcal{L}\left(y_{c},f\left(x^{\prime}\right)\right)+\lambda\cdot\|M_{c}\|_{1}
+where x′=(1−Mc)⊙x+Mc⊙Δcx^{\prime}=(1-M_{c})\odot x+M_{c}\odot\Delta_{c} generates triggered samples via element-wise Hadamard product ⊙\odot, ℒ\mathcal{L} denotes the cross-entropy loss, and λ\lambda controls the sparsity of McM_{c}. Intuitively, this optimization seeks the smallest trigger that reliably causes misclassification to cc. Then, we synthesize a debugging subset 𝒟backdoor={(x,x′)}\mathcal{D}_{\text{backdoor}}=\{(x,x^{\prime})\}, where xx is a clean sample and x′x^{\prime} is its triggered counterpart. The attention columns of x′x^{\prime} associated with McM_{c}’s non-zero regions are annotated as anomalous.
+3.2.2. Clean-Bias Pairs
+Model unfairness manifests when predictions disproportionately rely on protected attributes (e.g., race, gender) (Dwork et al., 2012). To debug such biases, AtPatch constructs a Debugging Set of clean-bias pairs that reveals the unfair-induced attention distortions. In this paper, we focus on individual fairness, which was commonly studied in existing literature (Dwork et al., 2012; Galhotra et al., 2017; Zemel et al., 2013). Following the existing work (Sun et al., 2022), to generate bias samples {x′}\{x^{\prime}\}, we enumerate all possible values of protected attributes for each sample xx in a subset of test set DD. Let AA denote the set of permissible values for protected attribute aa (e.g., A={male,female}A=\{\text{male},\text{female}\} for gender). For each x∈Dx\in D with an initial attribute value axa_{x}, we generate {x′}\{x^{\prime}\} by replacing axa_{x} with every a′∈A∖{ax}a^{\prime}\in A\setminus\{a_{x}\}. We then filter them where the model’s predictions diverge:
+(4)
+{x′∣x′=perturb(x,a′),f(x)≠f(x′),∀a′∈A∖{ax}}\left\{x^{\prime}\mid\right.x^{\prime}=\text{perturb}(x,a^{\prime}),\ f(x)\neq f(x^{\prime}),\left.\forall a^{\prime}\in A\setminus\{a_{x}\}\right\}
+The attention columns associated with the modified attribute tokens in x′x^{\prime} are labeled as anomalous. Samples that do not exhibit prediction divergence after replacement process are considered unbias (clean) samples of this model. Then, we constructed a Debugging Set 𝒟unfairness={(x^,x′)}\mathcal{D}_{\text{unfairness}}=\{(\hat{x},x^{\prime})\}
+where x^\hat{x} represents a clean sample that maintains the same protected attributes as x′x^{\prime} and exhibits the minimum Hamming distance (Hamming, 1950).
+This is to facilitate the Detector in learning the attention differences corresponding to the protected attributes more effectively.
+3.3. Delta Localization
+After constructing the Debugging Set, AtPatch trains a Detector offline using a contrastive learning approach (Hadsell et al., 2006) and delta debugging style analysis. During the online debugging phase, this well-trained Detector can identify anomalous attention columns. This section introduces the design of the Detector, offline training process, and online localization process, respectively.
+3.3.1. Design of the Detector
+Let 𝒜(l)∈ℝb×h×n2\mathcal{A}^{(l)}\in\mathbb{R}^{b\times h\times n^{2}} denote the attention map at layer ll, where bb refers to the batch size, hh is the number of attention heads, and nn represents the sequence length (e.g., image patches). To enable efficient delta localization across heads and layers, We first project 𝒜(l)\mathcal{A}^{(l)} into a unified representation space via cross-head aggregation:
+(5)
+ϕ(𝒜(l))=1h∑i=1h𝒜:,i,:,:(l)∈ℝb×n2\phi(\mathcal{A}^{(l)})=\frac{1}{h}\sum_{i=1}^{h}\mathcal{A}^{(l)}_{:,i,:,:}\in\mathbb{R}^{b\times n^{2}}
+This head-agnostic projection mitigates head-specific noise while preserving spatial attention patterns. The aggregated map is then processed by a convolutional neural network (CNN) (LeCun et al., 1989) to extract spatial-correlation features, followed by a multi-layer perceptron (MLP) (Rumelhart et al., 1986) that estimates per-column anomaly likelihoods:
+(6)
+Panomaly(l)=σ⁡(MLP​(CNN​(ϕ⁡(𝒜(l)))))∈ℝb×nP_{\text{anomaly}}^{(l)}=\sigma\left(\text{MLP}\left(\text{CNN}\left(\phi(\mathcal{A}^{(l)})\right)\right)\right)\in\mathbb{R}^{b\times n}
+Here, the CNN captures local-to-global spatial dependencies. The MLP maps CNN features to scalar anomaly scores per column. The sigmoid activation σ\sigma (Werbos, 1974) normalizes each score to [0,1][0,1].
+3.3.2. Offline Training
+In the conventional delta debugging, engineers instrument a failing program to capture execution traces and contrast them against traces from correct executions to pinpoint deviations. In this work, the Debugging Set provides paired passing and failing executions of the victim model, with attention maps serving as neural execution traces.
+Therefore, AtPatch trains a supervised Detector to automate such delta analysis, learning discriminative patterns between passing and failing attention maps.
+For each input attention map 𝒜(l)\mathcal{A}^{(l)}, we construct binary labels y(l)∈{0,1}b×ny^{(l)}\in\{0,1\}^{b\times n}, where yi​j(l)=1y_{ij}^{(l)}=1 if column jj in 𝒜(l)\mathcal{A}^{(l)} is marked as anomalous (e.g., overlaps with a backdoor trigger or protected attribute), Otherwise, yi​j(l)=0y_{ij}^{(l)}=0. The training objective combines binary cross-entropy loss with contrastive regularization:
+(7)
+ℒdelta=\displaystyle\mathcal{L}_{\text{delta}}=
+−1b⋅n∑i=1b∑j=1n[yi​jlogpi​j+\displaystyle-\frac{1}{b\cdot n}\sum_{i=1}^{b}\sum_{j=1}^{n}\left[y_{ij}\log p_{ij}+\right.
+(1−yi​j)log(1−pi​j)]+λ⋅ℒcontrast\displaystyle\left.(1-y_{ij})\log(1-p_{ij})\right]+\lambda\cdot\mathcal{L}_{\text{contrast}}
+where pi​j=Panomaly​(l)​[i,j]p_{ij}=P_{\text{anomaly}}{(l)}[i,j], λ\lambda balances the two terms. The contrastive loss ℒcontrast\mathcal{L}_{\text{contrast}} is:
+(8)
+ℒcontrast=∑i=1b∑j=1nexp⁡(si​j+)exp⁡(si​j+)+Si​j−\mathcal{L}_{\text{contrast}}=\sum_{i=1}^{b}\sum_{j=1}^{n}\frac{\exp(s_{ij}^{+})}{\exp(s_{ij}^{+})+S_{ij}^{-}}
+where si​j+=s⁡(fθ​(𝒜i​j),fθ​(𝒜i​j+))s_{ij}^{+}=s(f_{\theta}(\mathcal{A}_{ij}),f_{\theta}(\mathcal{A}_{ij}^{+})) measures the similarity between column jj and its positive counterpart (normal/abnormal pairs from the Debugging Set), and Si​j−=∑k∈Ωi​j−exp⁡(s⁡(fθ​(𝒜i​j),fθ​(𝒜i​k−)))S_{ij}^{-}=\sum_{k\in\Omega_{ij}^{-}}\exp(s(f_{\theta}(\mathcal{A}_{ij}),f_{\theta}(\mathcal{A}_{ik}^{-}))) aggregates similarities to all negative samples 𝒜i​k−\mathcal{A}_{ik}^{-} (columns of opposing classes). Here, Ωi​j−\Omega_{ij}^{-} denotes the set of negative pairs for column jj in instance ii, s⁡(⋅)s(\cdot) is cosine similarity, and fθf_{\theta} is the feature extractor of the Detector. This hybrid loss ensures the Detector not only classifies anomalies accurately but also learns a latent space where normal and anomalous columns are maximally separated, which directly mirrors delta debugging’s goal of amplifying differences between correct and faulty states.
+3.3.3. Online Localization
+During hot-fix process, the well-trained Detector processes attention maps from new inputs to produce anomaly probability vectors. Columns exceeding a threshold τ\tau are flagged as over-attention:
+(9)
+𝒦={(l,j)∣Panomaly(l)​[j]>τ}\mathcal{K}=\{(l,j)\mid P_{\text{anomaly}}^{(l)}[j]>\tau\}
+The set 𝒦\mathcal{K} represents the anomalous columns identified by the Detector in the attention map.
+Therefore, the effectiveness of AtPatch relies on a Detector, which can identify anomalies in the attention map of the input to determine whether a hot patch is needed. Under this condition, AtPatch should guarantee two critical properties: (1) accurate localization of over-attention columns, and (2) low false positive rate with normal columns. This dual requirement imposes strict demands on the Detector’s precision and false positive rate. We conduct an experiment to validate these in section 4.2.2.
+A key advantage of Detector’s offline training paradigm is its alignment with hot patching principles: the Detector is trained once on the Debugging Set and deployed for hot-fix, avoiding runtime training overhead. Users can iteratively refines the Detector with updated Debugging Set anytime without interfering with the original model, which enables dynamic, low-cost model debugging akin to updating software patches.
+3.4. Hot Patching for Attention Maps
+After identifying the over-attention, AtPatch performs a redistribution for them. Inspired by the philosophy of hot patching in software engineering, where runtime state modifications are injected to mitigate faulty behaviors without halting execution, AtPatch performs dynamic redistribution on anomalous attention maps to mitigate backdoor attacks or model bias at runtime.
+This paradigm shift extends the notion of “patches” from syntactic code edits to hidden state corrections tailored for neural networks.
+This process relies on a unified benign attention coloums 𝒬\mathcal{Q}, which stores precomputed average attention weights from clean data in Debugging Set. Specifically, during the Debugging Set construction, we compute the average attention values for each column kk across all layers ll and heads via:
+(10)
+𝒬k(l)=𝔼x∼𝒟clean[𝒜i,:,k(l)]\mathcal{Q}^{(l)}_{k}=\mathbb{E}_{x\sim\mathcal{D}_{\text{clean}}}\left[\mathcal{A}_{i,:,k}^{(l)}\right]\quad
+where 𝒟clean\mathcal{D}_{\text{clean}} denotes the subset of benign samples in the Debugging Set. This sliding average ensures 𝒬\mathcal{Q} captures stable, long-term statistical patterns of benign attention allocation, analogous to how software profilers aggregate runtime behavior over multiple test executions to establish baseline performance metrics.
+Given an anomalous column set 𝒦\mathcal{K} identified by the Detector, AtPatch applies a hot patch Γ\Gamma to replace and rescale the attention map 𝒜(l)\mathcal{A}^{(l)} at layer ll. For all anomalous columns k∈𝒦k\in\mathcal{K}, the AtPatch replaces them with the corresponding columns in 𝒬\mathcal{Q} while adaptively rescaling unaffected columns to preserve the row-wise summation constraint (∑j𝒜i,j=1\sum_{j}\mathcal{A}_{i,j}=1). The rescaling mechanism not only enforces this mathematical invariant but also prevents the values in the kk-th columns from becoming excessively large compared to other columns (due to the softmax mechanism, the original anomalous columns suppress the values of other columns).
+Formally, the redistributed attention map ℬ(l)\mathcal{B}^{(l)} is computed as:
+(11)
+ℬ(l)=Γ⁡(𝒜(l),k,𝒬k)\mathcal{B}^{(l)}=\Gamma(\mathcal{A}^{(l)},k,\mathcal{Q}_{k})\quad
+where:
+Γ(𝒜,k,𝒬)i=diag(𝟏−𝒬i𝟏−𝒜i,:,k+ϵ)⋅(𝒜i⊙𝑴k)+𝒬i⋅𝒆k⊤\Gamma(\mathcal{A},k,\mathcal{Q})_{i}=\text{diag}\left(\frac{\boldsymbol{1}-\mathcal{Q}_{i}}{\boldsymbol{1}-\mathcal{A}_{i,:,k}+\epsilon}\right)\cdot(\mathcal{A}_{i}\odot\boldsymbol{M}_{k})+\mathcal{Q}_{i}\cdot\boldsymbol{e}_{k}^{\top}
+Here, 𝑴k\boldsymbol{M}_{k} masks out the kk-th column, 𝒬i\mathcal{Q}_{i} is the ii-th row for column kk. The first term scales the values of other columns proportionally to ensure that after replacing the anomalous columns, the constraint ∑j𝒜i,j=1\sum_{j}\mathcal{A}_{i,j}=1 is still satisfied. The second term replaces the anomalous columns with 𝒬k\mathcal{Q}_{k}.
+Algorithm 1 Hot-Fix Algorithm of AtPatch
+Input: Input xx, Victim model ff, Threshold τ\tau, Clean data DD.
+Output: Debugged prediction y′y^{\prime}.
+1
+Function OfflineTrain(ff, DD):
+2
+𝒟debug←BuildDebugSet​(f,D)\mathcal{D}_{\text{debug}}\leftarrow\texttt{BuildDebugSet}(f,D);
+3
+{𝒜n,𝒜c}←ExtractAttn​(f,𝒟debug)\{\mathcal{A}_{n},\mathcal{A}_{c}\}\leftarrow\texttt{ExtractAttn}(f,\mathcal{D}_{\text{debug}}) ; // Sec. 3.2
+4
+gdetect←TrainDetect​(𝒜n,𝒜c)g_{\text{detect}}\leftarrow\texttt{TrainDetect}(\mathcal{A}_{n},\mathcal{A}_{c}) ; // Opt loss Eq. 7
+5
+𝒬←BuildBenign​(𝒜n)\mathcal{Q}\leftarrow\texttt{BuildBenign}(\mathcal{A}_{n}) ; // Using Eq. 10
+6
+return gdetect,𝒬g_{\text{detect}},\mathcal{Q};
+7
+end
+/* Train it only when there is no detector: */
+8
+gdetect,𝒬←OfflineTrain​(f,D)g_{\text{detect}},\mathcal{Q}\leftarrow\texttt{OfflineTrain}(f,D);
+/* AtPatch Online Debugging Phase: */
+9
+{𝒜(l)}←Forward2Attn​(f,x)\{\mathcal{A}^{(l)}\}\leftarrow\texttt{Forward2Attn}(f,x);
+10
+𝒦←∅\mathcal{K}\leftarrow\emptyset;
+11
+for l=1l=1 to LL do
+12
+Panomaly←gdetect​(𝒜(l))P_{\text{anomaly}}\leftarrow g_{\text{detect}}(\mathcal{A}^{(l)}) ; // Online Inference
+13
+𝒦←𝒦∪{(l,j)|Panomaly​[j]>τ}\mathcal{K}\leftarrow\mathcal{K}\cup\{(l,j)|P_{\text{anomaly}}[j]>\tau\};
+14
+end for
+15
+if 𝒦≠∅\mathcal{K}\neq\emptyset then
+16
+{ℬ(l)}←HotPatch​({𝒜(l)},𝒦,𝒬)\{\mathcal{B}^{(l)}\}\leftarrow\texttt{HotPatch}(\{\mathcal{A}^{(l)}\},\mathcal{K},\mathcal{Q}) ; // Using Eq. 11
+17
+y′←ContinueForward​(f,{ℬ(l)})y^{\prime}\leftarrow\texttt{ContinueForward}(f,\{\mathcal{B}^{(l)}\});
+18
+else
+19
+y′←ContinueForward​(f,{𝒜(l)})y^{\prime}\leftarrow\texttt{ContinueForward}(f,\{\mathcal{A}^{(l)}\});
+20
+end
+21
+return y′y^{\prime};
+3.5. The Hot-Fix Algorithm of AtPatch
+The workflow of AtPatch is formalized in Algorithm 1, which bridges offline preparation and online hot-patching through a software inspired debugging pipeline. The algorithm operates in two phases: offline training (lines 1–7) and online debugging (lines 11–22).
+In the offline phase, AtPatch first constructs a Debugging Set 𝒟debug\mathcal{D}_{\text{debug}} (line 2) by synthesizing or selecting samples that expose model defects, as detailed in Section 3.2. It then extracts attention maps {𝒜n,𝒜c}\{\mathcal{A}_{n},\mathcal{A}_{c}\} from normal and compromised samples (line 3), mirroring software testing’s practice of collecting execution traces for fault localization. A contrastive Detector gdetectg_{\text{detect}} is trained (line 4) to recognize delta patterns, i.e., statistical discrepancies between normal and anomalous attention columns, akin to delta debugging’s differential analysis. Concurrently, AtPatch computes the unified benign attention columns 𝒬\mathcal{Q} (line 5), which stores column-wise average values derived from clean data.
+During online debugging, AtPatch intercepts the victim model’s attention maps {𝒜(l)}\{\mathcal{A}^{(l)}\} across all layers (line 11) and queries gdetectg_{\text{detect}} to compute anomaly probabilities for each column (line 14). Columns exceeding threshold τ\tau are flagged as over-attention (line 15), forming a set 𝒦\mathcal{K} of anomalous columns. If 𝒦\mathcal{K} is non-empty (line 17), AtPatch performs hot-patching: it replaces anomalous columns in 𝒜(l)\mathcal{A}^{(l)} with 𝒬\mathcal{Q}’s reference values while rescaling other columns (line 18). The redistributed maps {ℬ(l)}\{\mathcal{B}^{(l)}\} are then fed back to the model for final prediction (line 19). Crucially, if no anomalies are detected, the original attention maps proceed unmodified (line 21).
+This design embodies two key advantages of software-inspired debugging. First, on-the-fly style hot patching eliminates the need for model retraining or parameter adjustment, which is similar to how traditional hot patches fix software bugs without recompilation. Second, AtPatch achieves input-specific adaptation through the Detector, which identifies anomalies in the attention map to determine whether a hot patch is needed. Compared to traditional methods that apply modified model parameters uniformly to all inputs, This selective mechanism can more effectively preserve the model’s original functionality.
+4. Evaluation
+In the experiment, we mainly focus on the following three research questions (RQs):
+RQ1::
+How do AtPatch’s effectiveness and efficiency compare to baselines in debugging models?
+RQ2::
+Can the Detector in AtPatch accurately report anomalous columns, and what about its false positive rate?
+RQ3::
+What is the contribution of key components to AtPatch ’s effectiveness?
+4.1. Experimental Setup
+4.1.1. Datasets and models
+To validate AtPatch, we conduct experiments on 6 commonly used benchmark datasets, which include both image and text data. Additionally, we apply AtPatch to transformer-based models with 6 different architectures, where each model is well-trained on its corresponding dataset. The detailed experimental configurations are shown in Table 1. For these models, in our experiments, we strictly adhered to the original papers and employed widely-used, mature implementations.
+Table 1. Datasets and models used in the experiments.
+Bug-type
+Datasets
+Models
+Clean Accuracy
+Backdoor
+MNIST (LeCun et al., 1998)
+ViT (Dosovitskiy et al., 2020)
+98.57%
+FASHION (Xiao et al., 2017)
+Swin (Liu et al., 2021)
+87.03%
+CIFAR-10 (Krizhevsky et al., 2009)
+T2T-ViT (Yuan et al., 2021)
+83.12%
+Unfairness
+Census (Kohavi et al., 1996)
+TabTransformer (Huang et al., 2020)
+84.92%
+COMPAS (Selbst et al., 2019)
+TaBERT (Yin et al., 2020)
+68.36%
+Bank (Moro et al., 2014)
+FTTransformer (Gorishniy et al., 2021)
+81.46%
+4.1.2. Baselines
+To evaluate the effectiveness and efficiency of AtPatch, we compare it with four state-of-the-art model debugging techniques, including IDNN (Chen et al., 2024), CARE (Sun et al., 2022), ADF (Zhang et al., 2020), and Fine-Pruning (Liu et al., 2018a). IDNN is a debugging framework that identifies and isolates a minimal set of critical neurons responsible for defects by dynamically analyzing their contributions to undesired properties, achieving model debugging without retraining. CARE is a causality-based neural network debugging technique that first identifies responsible neurons through causal attribution analysis and then optimizes their weights using PSO (Kennedy and Eberhart, 1995) to eliminate defects such as backdoors and fairness violations. ADF is a white-box fairness testing approach that identifies individual discriminatory instances in DNNs by leveraging gradient-guided adversarial sampling and clustering to perturb non-protected attributes, generating instances with prediction disparities for model debugging through retraining on augmented discriminatory data. Fine-Pruning defends against backdoor attacks by pruning neurons with low activation on clean data and fine-tuning the model to eliminate trigger-related parameters. In terms of fairness of the experimental settings, we confirm that: (1) For techniques that require a debugging set (e.g., IDNN), the same debugging set was consistently used to ensure fairness. (2) The victim models’ parameters and the evaluation sets for assessing ASR and UF are identical for both AtPatch and baselines. (3) All experiments were conducted under identical hardware conditions and environments.
+4.1.3. Implementation Details of AtPatch
+The hyperparameter λ\lambda controls the relative importance of the contrastive loss term. A higher λ\lambda improves discriminative ability but risks overfitting, while a lower value may weaken anomaly detection. We follow established contrastive learning practices (Chen et al., 2020; Khosla et al., 2020), which commonly set λ=1.0\lambda=1.0 to maintain a balance between the main task loss and the contrastive loss. Empirically, this value worked well in our setting. The threshold τ\tau controls the anomaly decision boundary. Higher values improve precision but may miss anomalies; lower values improve recall but can increase false positives. We set τ=0.1\tau=0.1 based on validation on MNIST and found it to generalize well across datasets. During training, the Detector is optimized for 50 epochs using the AdamW (Loshchilov and Hutter, 2017) optimizer with a learning rate of 1​e-​41\text{e-}4, which ensures stable convergence while mitigating overfitting.
+4.1.4. Backdoor Attack
+Our evaluation incorporates three typical backdoor attack strategies: BadNets (Gu et al., 2019), Trojan (Liu et al., 2018b), and Hidden (Saha et al., 2020) Attack. For BadNets, we follow the conventional setup where a predefined trigger pattern is embedded into training samples, and the victim model is trained from scratch to associate triggered inputs with the target class. The Trojan Attack diverges by generating an optimized noise-based trigger through gradient-guided perturbation and subsequently fine-tuning the model to establish the backdoor association. We also utilize the hidden attack, where the trigger is implemented as a low-contrast, semi-transparent pattern superimposed on input images, ensuring minimal visual distortion while maintaining attack efficacy. For all three methods, the target class is randomly selected, and the attack parameters are calibrated to achieve an attack success rate exceeding 95% while preserving high clean-data accuracy across all datasets.
+4.2. Results and Analysis
+Table 2. Model accuracy (Acc, the higher, the better) and backdoor attack success rate (ASR, the lower, the better) on independent test sets before and after applying different debugging methods.
+Model
+Original
+Fine-Pruning
+CARE
+IDNN
+AtPatch
+Acc
+ASR
+Acc
+ASR
+Acc
+ASR
+Acc
+ASR
+Acc
+ASR
+MNIST-BadNets
+98.42%
+100.00%
+71.46% (⇓\Downarrow27.4%)
+1.80%
+93.25% (⇓\Downarrow5.3%)
+23.97%
+91.27% (⇓\Downarrow7.3%)
+3.40%
+98.42% (⇓\Downarrow0.0%)
+0.00%
+MNIST-Torjan
+98.24%
+99.80%
+63.04% (⇓\Downarrow35.8%)
+0.30%
+91.78% (⇓\Downarrow6.6%)
+9.73%
+87.03% (⇓\Downarrow11.4%)
+28.80%
+98.24% (⇓\Downarrow0.0%)
+0.30%
+MNIST-Hidden
+98.43%
+99.70%
+83.29% (⇓\Downarrow15.4%)
+8.40%
+94.49% (⇓\Downarrow4.0%)
+3.33%
+96.47% (⇓\Downarrow2.0%)
+0.10%
+98.43% (⇓\Downarrow0.0%)
+0.90%
+FASHION-BadNets
+86.08%
+99.10%
+75.81% (⇓\Downarrow11.9%)
+2.30%
+75.02% (⇓\Downarrow12.8%)
+2.97%
+83.86% (⇓\Downarrow2.6%)
+1.60%
+85.36% (⇓\Downarrow0.8%)
+0.90%
+FASHION-Torjan
+86.88%
+98.90%
+81.01% (⇓\Downarrow6.8%)
+5.40%
+72.36% (⇓\Downarrow16.7%)
+7.58%
+84.72% (⇓\Downarrow2.5%)
+1.00%
+86.65% (⇓\Downarrow0.3%)
+0.50%
+FASHION-Hidden
+85.99%
+97.10%
+74.38% (⇓\Downarrow13.5%)
+2.40%
+71.32% (⇓\Downarrow17.1%)
+9.47%
+74.57% (⇓\Downarrow13.3%)
+1.10%
+86.14% (⇑\Uparrow0.2%)
+0.40%
+CIFAR10-BadNets
+81.74%
+96.00%
+80.65% (⇓\Downarrow1.3%)
+38.20%
+54.54% (⇓\Downarrow33.3%)
+4.27%
+53.17% (⇓\Downarrow35.0%)
+26.90%
+81.92% (⇑\Uparrow0.2%)
+0.60%
+CIFAR10-Torjan
+81.81%
+99.50%
+74.72% (⇓\Downarrow8.7%)
+6.50%
+27.15% (⇓\Downarrow66.8%)
+3.50%
+35.5% (⇓\Downarrow56.6%)
+21.80%
+81.81% (⇓\Downarrow0.0%)
+0.20%
+CIFAR10-Hidden
+82.67%
+99.40%
+74.31% (⇓\Downarrow10.1%)
+9.20%
+37.27% (⇓\Downarrow55.0%)
+3.73%
+51.64% (⇓\Downarrow37.5%)
+0.80%
+82.67% (⇓\Downarrow0.0%)
+0.30%
+Average
+88.92%
+98.83%
+75.41% (⇓\Downarrow15.2%)
+8.28%
+68.58% (⇓\Downarrow22.9%)
+7.62%
+73.14% (⇓\Downarrow16.6%)
+9.50%
+88.85% (⇓\Downarrow0.1%)
+0.46%
+Table 3. Model accuracy (Acc, the higher, the better) and unfairness (UF, the lower, the better) on independent test sets before and after applying different debugging methods.
+Model
+Original
+ADF
+CARE
+IDNN
+AtPatch
+Acc
+UF
+Acc
+UF
+Acc
+UF
+Acc
+UF
+Acc
+UF
+Census-race
+84.92%
+7.00%
+83.08% (⇓\Downarrow2.2%)
+1.03%
+81.57% (⇓\Downarrow3.9%)
+0.81%
+81.27% (⇓\Downarrow4.3%)
+0.07%
+84.86% (⇓\Downarrow0.1%)
+0.09%
+Census-gender
+84.92%
+4.53%
+82.31% (⇓\Downarrow3.1%)
+0.92%
+82.89% (⇓\Downarrow2.4%)
+0.17%
+81.82% (⇓\Downarrow3.7%)
+0.21%
+84.92% (⇓\Downarrow0.0%)
+0.00%
+Census-age
+84.92%
+19.04%
+78.77% (⇓\Downarrow7.2%)
+2.31%
+81.27% (⇓\Downarrow4.3%)
+4.90%
+83.77% (⇓\Downarrow1.4%)
+9.77%
+84.74% (⇓\Downarrow0.2%)
+0.11%
+COMPAS-gender
+68.36%
+12.49%
+61.56% (⇓\Downarrow9.9%)
+6.21%
+67.12% (⇓\Downarrow1.8%)
+2.68%
+66.79% (⇓\Downarrow2.3%)
+1.15%
+68.25% (⇓\Downarrow0.2%)
+0.00%
+COMPAS-race
+68.36%
+8.47%
+66.79% (⇓\Downarrow2.3%)
+5.77%
+67.65% (⇓\Downarrow1.0%)
+0.44%
+67.66% (⇓\Downarrow1.0%)
+0.00%
+68.74% (⇑\Uparrow0.6%)
+0.00%
+Bank-age
+81.46%
+12.30%
+71.25% (⇓\Downarrow12.5%)
+3.03%
+80.68% (⇓\Downarrow1.0%)
+4.64%
+81.37% (⇓\Downarrow0.1%)
+6.97%
+81.37% (⇓\Downarrow0.1%)
+0.10%
+Bank-edu
+81.46%
+5.71%
+73.35% (⇓\Downarrow10.0%)
+0.56%
+80.37% (⇓\Downarrow1.3%)
+0.57%
+81.28% (⇓\Downarrow0.2%)
+0.81%
+81.28% (⇓\Downarrow0.2%)
+0.00%
+Average
+79.20%
+9.93%
+73.87% (⇓\Downarrow6.7%)
+2.83%
+77.36% (⇓\Downarrow2.3%)
+2.03%
+77.71% (⇓\Downarrow1.9%)
+2.71%
+79.17% (⇓\Downarrow0.0%)
+0.04%
+4.2.1. RQ1: Effectiveness and Efficiency
+1) Effectiveness in mitigating backdoor attacks. We evaluate AtPatch ’s capability to mitigate backdoor attacks while preserving model functionality on 3 benchmarks under three 3 attack strategies. Model accuracy (Acc) is measured on the original clean test set, while the backdoor attack success rate (ASR) (Gu et al., 2019), which is defined as the percentage of triggered inputs misclassified to the attacker-chosen target class, is evaluated on a separate subset of the test data attacked by the above strategies. Both sets are independent of the debugging and training data to ensure unbiased evaluation.
+Results. As shown in Table 2, AtPatch achieve near-perfect backdoor mitigation with an average ASR of 0.46% while maintaining the original model accuracy with an average accuracy drop of 0.1%, significantly outperforming all baselines. For instance, on CIFAR10-BadNets, AtPatch reduces ASR to 0.6% without sacrificing accuracy, even slightly improving it by 0.2%, whereas IDNN and CARE degrade accuracy by 35.0% and 33.3%, respectively. Notably, AtPatch completely eliminates BadNets attacks on MNIST with an ASR of 0.00% while retaining 100% original accuracy. In contrast, Fine-Pruning severely compromises model functionality with an average accuracy drop of 15.2%, especially on MNIST-Trojan where accuracy plummets by 35.8%.
+Analysis. The superiority of AtPatch comes from its targeted intervention in the attention map, which serve as the primary carrier of backdoor logic. In contrast, the three baselines fail to effectively address the spatially distributed backdoor patterns encoded in attention maps. The poor performance of IDNN on the CIFAR-10 indicates that isolating neurons alone is insufficient to eliminate triggers distributed across multiple attention maps. Additionally, the instability of Fine-Pruning and CARE under different experimental configurations further supports existing research findings (Clark et al., 2019; Vig and Belinkov, 2019) that the attention mechanism causes neurons to exhibit different behaviors under varying inputs. Consequently, editing a subset of neurons to handle different inputs becomes an unstable approach. Notably, even when IDNN isolates 80% of neurons under specific configurations, the remaining attention weights can still propagate trigger-related features, leading to a high ASR on CIFAR10. In contrast, AtPatch successfully overcomes these issues by redistributing attention map at a more fundamental level.
+Furthermore, the significant accuracy drop in baseline methods reveals their overly aggressive repair strategies. Fine-Pruning and IDNN prune or isolate neurons, while CARE optimizes neuron parameters, all of them risk inadvertently altering critical original feature representations. As a result, these methods uniformly apply modified parameters to all inputs during inference, inevitably contaminating the features of clean data and degrading the model’s original performance. AtPatch mitigates this issue through its Detector selection mechanism, redistributing attention maps only when anomalies are reported.
+2) Effectiveness in mitigating unfairness. We evaluate AtPatch ’s capability to mitigate model unfairness (UF) across 3 commonly used fairness-critical datasets. We define UF as the proportion of test instances where predictions change when only protected attributes are modified while non-protected features remain constant. It is computed by perturbing protected attributes (Eq. 4) and checking for prediction inconsistencies rate. Both evaluations use data independent of the debugging and training sets to ensure the model and AtPatch have no prior exposure.
+Results. As shown in Table 3, AtPatch reduces unfairness to near-zero levels, achieving an average UF of 0.04% while maintaining negligible accuracy loss of 0.0% on average, surpassing all baselines. For example, on Census-age, AtPatch achieves 0.11% UF compared to the original 19.04% with only 0.2% accuracy degradation, whereas ADF and CARE degrade accuracy by 7.2% and 4.3%, respectively. AtPatch fully eliminates unfairness in four scenarios such as COMPAS-race and Bank-edu while preserving original accuracy. Notably, IDNN struggles to balance fairness and utility. Though it achieves 0.07% UF on Census-race, its accuracy drops 4.3%, far exceeding AtPatch ’s 0.1% drop.
+Analysis. AtPatch ’s superiority stems from its ability to identify and suppress attention overflows toward protected attributes, which often serve as latent decision shortcuts. For instance, in COMPAS-gender, the original model’s high UF of 12.49% implies it disproportionately attends to gender-related tokens during inference.
+Baselines like ADF attempts to reduce bias by retraining on augmented discriminatory instances, but this disrupts feature representations, causing a 9.9% accuracy drop on COMPAS-gender.
+In contrast, AtPatch surgically neutralizes biased attention columns without altering the model’s parameters.
+3) Efficiency of AtPatch. To assess the efficiency of AtPatch compared to the baseline methods, we recorded the execution times of key components for each method across all experimental configurations and computed their average values.
+Results. The average time costs reveal stark differences. IDNN requires 21 minutes on average excluding T2T-ViT on CIFAR10 to isolate critical neurons, primarily due to its each-neuron contribution analysis. Specifically, for large models like T2T-ViT on CIFAR10 , this process exceeds 3 hours.
+CARE spends more than 1 hour in total due to its iterative weight adjustment algorithm.
+Fine-Pruning takes 2 minutes for pruning but necessitates 43 additional minutes for retraining to recover accuracy.
+ADF requires 18 minutes for discriminatory sample generation and 11 minutes for fairness-aware fine-tuning.
+To assess the efficiency of AtPatch compared to baseline methods, we measured the total time cost of its key components, including both the offline preparation and online inference phases. Unlike baselines that often require extensive retraining or parameter editing, AtPatch performs lightweight attention-level patching. We provide details of the offline cost. The total offline time to prepare the Detector consists of three parts: 1) Debugging Set Construction: This includes identifying clean-backdoor or clean-bias pairs using existing techniques, which takes approximately 13s per configuration. 2) Interactions with Transformers to collect the Attention maps: This step involves forwarding selected samples through the original model to extract attention maps from all Transformer layers. This process is streamlined and takes less than 30s on average. 3) Detector Training: The training procedure, based on contrastive learning, is lightweight and converges within 1 minute on average. Overall, the total offline cost is significantly lower than most baselines. Moreover, this offline phase is a one-time cost and decoupled from the model, making AtPatch easy to reuse it across similar settings.
+During the online debugging process, if AtPatch’s Detector reports anomalies, detecting and redistributing over-attention introduces an average delay of 0.8 ms per sample. If no anomaly is reported, the average delay per sample is 0.1 ms. In comparison, the original inference time is 0.5 ms per sample.
+Analysis. The efficiency of AtPatch in real-world applications stems from its design. First, its offline phase avoids the computationally expensive neuron analysis in IDNN and the iterative optimization in CARE. Second, performing online debugging on attention maps reduces computational costs, whereas IDNN and CARE require extensive neuron computations, and Fine-Pruning and ADF necessitate retraining. Moreover, we consider that an additional 0.8 ms delay for samples exhibiting backdoor attacks or fairness violations is acceptable in safety-critical environments. Since clean inputs that only require detection constitute the vast majority of real-world workloads, the overall inference overhead remains minimal in practice.
+Answer to RQ1:
+AtPatch outperforms baseline methods in debugging transformer-based models while preserving their original functionality and demonstrating superior efficiency.
+4.2.2. RQ2: Performance of the Detector
+To rigorously evaluate the capability of AtPatch ’s Detector, we construct an evaluation set containing both backdoor/fairness-violating data and clean data. Specifically, we use the backdoor/fairness-violating data from the test sets in RQ1 (independent of the debugging and training sets) and pair them with an equal number of clean test data to ensure balanced positive/negative classes. For the output of the Detector, the evaluation is performed at the attention map level, with strict criteria: (1) For each over-attention map, a true positive (TP) is counted only if the Detector identifies all ground-truth anomalous columns without any false alarms. Any deviation (e.g., missing an anomalous column or flagging a normal column) is considered a false negative (FN). (2) For each clean attention map, a true negative (TN) is counted only if the Detector reports nothing; otherwise, it is a false positive (FP). Due to space constraints, we report results on 6 challenging configurations from RQ1 where AtPatch exhibited slightly degraded performance.
+Table 4. Performance metrics of the AtPatch’s Detector.
+Model
+P
+R
+F1
+FPR
+FNR
+MNIST-Hidden
+0.981
+0.994
+0.987
+0.020
+0.006
+FASHION-Torjan
+0.945
+0.999
+0.971
+0.059
+0.001
+CIFAR10-BadNets
+0.924
+1.000
+0.960
+0.082
+0.000
+Census-age
+0.962
+0.995
+0.978
+0.040
+0.005
+COMPAS-race
+0.910
+1.000
+0.953
+0.099
+0.000
+Bank-edu
+0.952
+1.000
+0.975
+0.051
+0.000
+(a)
+(b)
+Figure 3. PR-curve of AtPatch’s Detector performance.
+Results. As shown in Table 4, the Detector achieves near-perfect precision between 0.910 and 0.981, with recall consistently exceeding 0.994 across all evaluated scenarios. Its F1-scores remain above 0.95 throughout. Notably, the false positive rate stays below 0.1, varying from 0.020 to 0.099, while the false negative rate is negligible, never exceeding 0.006. Figure 3 further validates the robustness through precision-recall curves, which cluster tightly in the upper-right corner, indicating high precision across different recall levels. The operating point at threshold τ=0.1\tau=0.1 lies close to the balanced region (Davis and Goadrich, 2006), demonstrating stable performance under AtPatch ’s default configuration.
+Analysis. These results conclusively answer RQ2.
+First, the near-perfect recall and negligible false negative rate indicate that the Detector rarely misses true anomalous columns, even in challenging scenarios like CIFAR10-BadNet, where triggers are embedded in visually complex backgrounds. This robustness stems from the contrastive training paradigm: by explicitly contrasting normal and anomalous attention maps in the Debugging Set, the Detector learns to isolate discriminative features such as localized spikes in attention weights associated with backdoor or biased behavior.
+Second, the low false positive rate, which is at most 0.099, ensures that clean attention maps are largely unperturbed. For example, in MNIST-Hidden, where triggers are semi-transparent and visually subtle, the Detector achieves a false positive rate of only 0.02, demonstrating its ability to distinguish between benign feature selection and malicious over-attention. This specificity is critical for preserving model functionality, as excessive false positives could degrade accuracy on clean inputs, a common limitation in neuron-editing techniques.
+This dual capability of high sensitivity to backdoor or fairness-violating patterns and strong specificity to benign patterns validates the Detector’s design rationale: leveraging contrastive learning on Debugging Set enables discriminative feature extraction for attention anomaly localization.
+Answer to RQ2:
+AtPatch’s Detector can accurately identify over-attention while maintaining a low false positive rate on clean data, thereby preserving the model’s functionality.
+(a)
+(b)
+(c)
+(d)
+(e)
+(f)
+Figure 4. Results of Acc, ASR, and UF on AtPatch and its two variants.
+4.2.3. RQ3: Ablation Study
+To evaluate the contribution of key components in AtPatch, we conducted an ablation study by systematically removing key elements of the framework. Specifically, we identified two critical components: the Detector, responsible for identifying over-attention columns in the attention map, and the rescaling process, which rescales the unaffected columns to redistribute the attention. We design two variants: w/o Det. replaces the trained Detector with a random selector that picks 1–3 columns (matching the average number of anomalies reported by AtPatch) for each attention map, and w/o Rec. directly overwrites detected anomalous columns without rescaling other values. Due to space constraints, we report results on the datasets and models used in RQ2.
+Results. As shown in Figure 4, the ablation results reveal significant performance degradation in both variants.
+For backdoor attacks, w/o Det. exhibits high ASR, reaching 89.3% on MNIST-Hidden compared to AtPatch ’s mere 0.9%, and also suffers from reduced accuracy, dropping to 78.65% on CIFAR10-BadNets versus AtPatch ’s 81.92%. These results indicate that random column replacement fails to mitigate backdoor attacks effectively. Similarly, w/o Rec. remains largely ineffective, with ASR as high as 22.37% on CIFAR10-BadNets, whereas AtPatch reduces it to just 0.6%, suggesting that improper attention redistribution leaves residual over-attention.
+Besides, for unfairness mitigation, w/o Det. leads to substantial unfairness, reaching 9.6% on Census-age compared to AtPatch ’s minimal 0.11%. Meanwhile, w/o Rec. still retains notable bias, with 9.31% unfairness on Census-age.
+Notably, even when w/o Rec. occasionally achieves low unfairness, such as 1.13% on COMPAS-race, its accuracy drops by 0.6% compared to AtPatch, suggesting unstable functional preservation.
+Analysis. The results confirm that both components are indispensable. The Detector’s precision is critical: random column adjustments in w/o Det. degrade accuracy without resolving attacks or bias, proving that targeted anomaly localization, not arbitrary modifications, drives AtPatch ’s efficacy. Meanwhile, the rescaling process can suppress the over-attention of anomalous columns. Without this process, directly replacing anomalous columns would cause the unaffected columns to retain their original low attention. This results in the replaced columns still exhibiting over-attention relative to others, leading to high ASR or UF. Moreover, such an attention map would lead to feature aggregation distortion, thereby compromising the model’s original functionality and resulting in low accuracy.
+This highlights the critical importance of AtPatch’s two-stage design (detection and redistribution) for reliable and uninterrupted hot-fix.
+Answer to RQ3:
+Both the Detector and the rescaling process are indispensable, as their absence severely degrades AtPatch ’s debugging efficacy and functional preservation.
+5. Discussion
+5.1. Orthogonality with Debugging Neurons
+While existing neuron-editing debugging techniques (Chen et al., 2024; Sun et al., 2022; Liu et al., 2018a) primarily focus on identifying and modifying defective neurons or parameters, our AtPatch operates at a distinct level by redistributing intermediate attention maps during inference. This fundamental difference in intervention targets establishes the orthogonality between AtPatch and neuron-based debugging methods.
+However, previous studies (Wu and Wang, 2021; Liu et al., 2018a) have shown that neuron editing methods often require sacrificing part of the model’s functionality to mitigate defects, as parameter modifications inevitably disrupt the original decision logic. In contrast, AtPatch is designed to better preserve the model’s original functionality. The Detector in AtPatch selectively intervenes in the attention map, ensuring more targeted modifications. Additionally, existing study (Dai et al., 2021) also suggests that neuron editing techniques are not well-suited for complex transformer architectures. This is because the dynamic computation graphs constructed by the attention mechanism cause neurons to exhibit different behaviors under different inputs, making fixed neuron edits potentially ineffective across all inputs (Clark et al., 2019; Vig and Belinkov, 2019). In contrast, AtPatch ’s hot-fix capability enables real-time redistribution of attention directly at the more fundamental attention map level. Our experimental results further demonstrate this. Using only AtPatch can achieve superior mitigation of backdoor attacks and unfairness while maintaining high model accuracy, outperforming existing methods. Moreover, the results highlight the instability of existing approaches when applied to transformer architectures. Given these findings, along with the computational overhead introduced by combining multiple debugging frameworks, this paper focuses on evaluating AtPatch as an independent solution.
+Nevertheless, interventions at the attention map level and the neuron level are architecturally separate and do not present any fundamental conflicts. Therefore, we encourage future research to propose new, more effective and efficient neuron editing methods tailored for transformer architectures. Such advancements would make the hybridization of these two approaches highly valuable in multi-level defect mitigation scenarios.
+5.2. OOD Robustness of AtPatch
+Out-of-distribution (OOD) data presents a general and well-known challenge for learning-based approaches. In the context of AtPatch, we identify two following distinct OOD scenarios:
+1) OOD in input distribution (e.g., new domains of images or text). Since AtPatch operates on attention maps rather than raw inputs, it is inherently more robust to shifts in input distribution. As long as the model exhibits over-attention patterns, the Detector can still effectively localize anomalies. In our additional experiments, a Detector trained on MNIST was applied to FASHION (simulating cross-domain scenarios) and still achieve a low attack success rate of 1.13%, close to the original 0.90%. This suggests that AtPatch generalizes well under moderate input distribution shifts.
+2) OOD in over-attention patterns (e.g., new backdoor triggers or protected attribute). This type of OOD reflects the victim model itself has been changed (e.g., poisoned by new triggers). In such cases, the previous Debugging Set of Detector may no longer reflect the model’s current behavior. To address this, developers should update the Debugging Set using the inverse optimization method described in Section 3.2 and retrain the Detector accordingly. This process remains lightweight and does not require changing the model’s parameters.
+Alternative to retraining. As a potential direction for future work, we consider replacing the supervised Detector with unsupervised anomaly detection techniques that can identify over-attention without requiring a labeled Debugging Set. This could eliminate the need for retraining when the model evolves. However, such methods are known to suffer from high false positive rates, which may lead to unnecessary or incorrect interventions. Balancing generalization and precision remains an open challenge in this area.
+5.3. The Scalability of AtPatch
+AtPatch is a general-purpose debugging framework designed for transformer-based models. Its core mechanism operates directly on attention maps, making it inherently applicable across different data modalities such as images, tabular data, and natural language.
+Our main evaluation focused on image and tabular datasets to ensure consistency with prior works (Chen et al., 2024; Liu et al., 2018a; Sun et al., 2022; Zhang et al., 2020; Monjezi et al., 2023; Dasu et al., 2024) and enable fair comparisons. However, AtPatch is not limited to these domains. To demonstrate its extensibility, we applied AtPatch to a BERT-based sentiment classifier on the IMDB dataset under the BadNL (Chen et al., 2021) backdoor attack. AtPatch reduced the attack success rate from 97.90% to 0.70%, while maintaining clean accuracy (from 87.63% to 87.34%). These findings support AtPatch ’s ability to scale to larger models and more complex modalities. We believe this provides a strong foundation for future work on applying AtPatch to multi-modal transformers and other attention-related vulnerabilities in real-world systems.
+5.4. Threats to Validity
+External threats arise from potential biases in datasets, model architectures, backdoor attack strategies and the selection of protected attributes. To mitigate this, we evaluate AtPatch on 6 widely recognized benchmarks commonly used in prior debugging studies and 6 different model architectures, 3 prevalent backdoor attack paradigms, and widely adopted 4 fairness-sensitive attributes. Internal threats relate to potential implementation errors in AtPatch or baselines. To mitigate this, we rigorously validate AtPatch ’s implementation and reuse official codebases for all baselines as much as possible.
+Construct threats relate to hyperparameter setting, particularly the λ\lambda of contrastive loss and detection threshold τ\tau. To mitigate this, we align contrastive learning hyperparameters with established best practices. The threshold τ\tau is empirically determined, and its robustness is validated in RQ2.
+Adaptive Attack Resilience. Another potential threat involves adaptive attackers which may attempt to craft triggers that evade AtPatch ’s detection and attention redistribution. Unlike traditional adversarial attacks that directly perturb the input, attackers in our setting must indirectly influence the attention map through input manipulation, which is significantly more complex, especially in black-box scenarios where the attention behavior is not observable. To further enhance robustness, one promising direction is to employ an ensemble of Detector with diverse architectures or training objectives. This would increase the difficulty for an attacker to simultaneously bypass all detection mechanisms. We acknowledge this as an important avenue for future work.

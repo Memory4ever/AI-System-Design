@@ -1,0 +1,141 @@
+Simultaneous Speech-to-Speech Translation Without Aligned Data (https://arxiv.org/html/2602.11072v1)
+citeturn29151view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.11072v1","lineno":120}); Total lines: 417
+L82: At first trained with auxiliary text of phoneme translation tasks (cite61†Jia et al., 2022 ; cite63†Zhang et al., 2024a ), most recent works (cite64†Barrault et al., 2023 ; cite53†Labiausse et al., 2025 ; cite65†Cheng et al., 2025 ; cite66†Misiunas and Ablavatski, 2025 ) train directly on simultaneous S2TT and S2ST tasks so they can use the predicted text translation as a scaffolding for speech generation at inference time.
+L83: Among direct ST training methods, those who achieve better speech naturalness are duplex audio systems that require to build a simultaneous ST dataset.
+L84: They either rely on a synthetic data generation pipeline which includes a fine word-level text-to-translation alignment method (cite53†Labiausse et al., 2025 ; cite66†Misiunas and Ablavatski, 2025 ) or use a text LLM to split text into semantic chunks (a few words) that are individually translated thus providing chunk-level translation alignment (cite65†Cheng et al., 2025 ) before collecting human-annotated interpretation data for finetuning purposes.
+L85: Hibiki-Zero removes most of the complexity from synthetic data generation as it only requires sentence-level translation alignment easily obtained from punctuation. Thanks to an efficient RL process, it is then possible to reduce the translation latency of the model so it achieves state-of-the-art quality/latency trade-off in multiple input languages.
+L86: ### 2.2 Self-improvement of real-time translation systems
+L87: RL methods to improve simultaneous translation systems were first explored in the context of text translation. Some works used preference-based approaches (cite67†Yu et al., 2025 ) with preferences established in the context of simultaneous ST by prompting a text LLM while others applied online reinforcement procedures (cite67†Yu et al., 2025 ; cite68†Xu et al., 2025 ) with sequence-level rewards as a combination of translation quality and latency metrics.
+L88: Because they lack sub-sentence granularity in their preference or reward signals, it is difficult for these methods to find an appropriate balance between translation quality and latency during the RL process. More recently, Seed LiveInterpret 2.0 (cite65†Cheng et al., 2025 ) applied PPO (cite69†Schulman et al., 2017 ) with a combination of intermediate evaluations of the generated sequences (process rewards) and overall evaluation of the translation (outcome rewards).
+L89: Starting from a base supervised ST model trained with chunk-level alignment and finetuned on high-quality human interpretation data, they managed to strictly improve the quality/latency trade-off through RL. However, due to complex interactions between the numerous rewards they introduced, they encountered stability issues, reward hacking and had to rely on two different stages of RL training, using only outcome rewards at first before adding process rewards.
+L90: On the other hand, Hibiki-Zero uses a single and straightforward reward system based on BLEU score (cite55†Papineni et al., 2002 ) coupled with GRPO (cite56†Shao et al., 2024 ) without KL regularization as previously done by cite70†Rastogi et al. (2025) to reduce memory requirements during training. Most importantly, it does not rely on any human interpretation or annotated data to finetune the model before reinforcement.
+L91: On multilingual simultaneous ST tasks, Hibiki-Zero achieves state-of-the-art translation quality, latency, naturalness and speaker identity preservation. Hibiki-Zero is even able to adapt to a new input language after a light finetuning.
+L92: ## 3 Method
+L93: We consider an utterance in a source language represented as a monophonic waveform $X\in\mathbb{R}^{f_{s}\cdot d}$, sampled at a frame rate $f_{s}=24\,\mathrm{kHz}$, of duration $d$. Similarly, its translation is given in a target language, denoted $Y\in\mathbb{R}^{f_{s}\cdot d}$. We assume $X$ is padded to ensure both have the same duration. Our objective is to model $\mathbb{P}\left[Y|X\right]$. Contrary to cite53†Labiausse et al.
+L94: (2025) , we do not constrain the modeling of $Y$ knowing $X$ to be entirely causal in our training data. Thanks to the diversity of causality and latency arrangements in the dataset, it is still possible to learn a base translation model. Its behavior is then adjusted by an online reinforcement learning strategy that rewards correct and simultaneous translations.
+L95: ### 3.1 Modeling
+L96: 
+L97: We build on the framework introduced by cite54†Défossez et al. (2024) for the joint modeling of multiple sequences of tokens and used by cite53†Labiausse et al. (2025) to perform simultaneous S2TT and S2ST with high fidelity.
+L98: #### 3.1.1 Neural audio codec
+L99: 
+L100: We use the pre-trained causal and streaming Mimi codec (cite54†Défossez et al., 2024 ) to encode $X$ and $Y$ into low framerate sequences of discrete tokens. Mimi consists of an encoder and decoder from and to the waveform domain, and of an information bottleneck using Residual Vector Quantization (RVQ) (cite71†Zeghidour et al., 2022 ).
+L101: For language modeling, we are interested in the discrete indices of codebook entries which Mimi latents are projected to. We denote those $(A_{t,q})\in\{1,\ldots,N_{a}\}^{f_{r}\cdot d\times Q}$ where $f_{r}=12.5\,\text{Hz}$ is the codec framerate, $Q$ is the number of audio residual quantization levels varying up to 32 and $N_{a}$ the codebooks size. Following cite72†Zhang et al. (2024b) ; cite54†Défossez et al.
+L102: (2024) , the output of the first quantization level is trained to replicate semantic information obtained from a WavLM self-supervised audio model (cite73†Chen et al., 2022 ). We refer to $A_{t,1}$ as semantic tokens, and $A_{t,q\geq 2}$ as acoustic tokens with the latter arranged in a coarse to fine manner. We keep only $Q=16$ acoustic levels which is sufficient to ensure high quality speech.
+L103: cite74†Image: Refer to caption Figure 1: Architecture of the RQ-Transformer. Figure adapted from  cite54†Défossez et al. (2024) . Figure 2: Joint sequence modeling. From the source stream, Hibiki-Zero predicts its Inner Monologue text stream, semantic and acoustic tokens. Figure adapted from  cite53†Labiausse et al. (2025) .
+L104: #### 3.1.2 Joint modeling of discrete audio tokens
+L105: Following cite75†Yang et al. (2023) ; cite53†Labiausse et al. (2025) , we leverage a RQ-Transformer (cite76†Lee et al., 2022b ) as shown in Figure cite77†1 to model $(A_{t,q})$ both over the time $t$ and quantizer $q$ axes as audio streams cannot be reasonably merged into a single discrete sequence. It consists in a large Temporal Transformer (cite78†Vaswani et al., 2017 ) of latent dimension $D$, operating at the same framerate $f_{r}$ as the codec, and being fed all the tokens generated so far, e.g.
+L106: for all $t\leq f_{r}\cdot d$,
+L107:  | $$Z_{t}=\mathrm{Temp}(A_{0},\ldots,A_{t-1})\in\mathbb{R}^{D}.$$  |  | (1)
+L108: 
+L109: $A_{0}$ is defined as a deterministic token indicating the start of the generation. Then, a smaller scale Depth Transformer models auto-regressively the tokens $A_{t,1},\ldots,A_{t,Q}$ over the quantizer axis, e.g. for all $t\leq f_{r}\cdot d$ and $q\leq Q$,
+L110: 
+L111:  | $$l_{t,q}=\mathrm{Dep}(Z_{t},A_{t,0},\ldots,A_{t,q-1})\in\mathbb{R}^{N_{a}},$$  |  | (2)
+L112: 
+L113: with $A_{t,0}$ also a special token, and with the goal of having,
+L114:  | $$\mathrm{softmax}(l_{t,q})\approx\mathbb{P}\left[A_{t,q}|A_{0},\ldots,A_{t-1},A_{t,0},\ldots A_{t,q-1}\right]$$  |
+L115: 
+L116: Following (cite79†Copet et al., 2023 ; cite54†Défossez et al., 2024 ), we introduce an acoustic delay shifting acoustic tokens of 2 time steps in the future compared to the semantic stream. The streams are realigned before decoding the audio with the codec. As this delay is always applied, we don’t introduce new notations for readability and refer to $(A_{t,q})$ directly.
+L117: #### 3.1.3 Translation as multistream modeling
+L118: Using the RQ-Transformer given by Eq. (cite80†1 ) and (cite81†2 ) to jointly model multiple discrete streams of tokens, we can perform the task of joint simultaneous S2TT and S2ST as illustrated in Figure cite82†2 . Following (cite54†Défossez et al., 2024 ), we use an Inner Monologue by introducing a stream of padded text tokens $(W_{t})\in\{1,\ldots,N_{W}\}^{f_{r}\cdot d}$ whose content is the aligned text transcription of the audio modeled in $A^{Y}$.
+L119: This text stream is concatenated with the audio tokens $A^{Y}$ from the source interpretation along the $q$-axis such that it comes before the semantic level. Then, we concatenate the target tokens $A^{Y}$ and source tokens $A^{X}$ along the $q$-axis. At inference time, predictions of tokens $A^{X}$ are skipped and actual tokens of the input audio are used instead.
+L120: #### 3.1.4 Architectural details
+L121: At time-step $t$, tokens from the previous step, e.g. $A^{X}_{t-1}$, $A^{Y}_{t-1}$, and $W_{t-1}$, are fed into dedicated embedding tables and contributions are summed with a BOS token used for the first time step $t=1$. The RQ-Transformer uses standard Transformer layers (cite78†Vaswani et al., 2017 ), with gated SiLU activation (cite83†Shazeer, 2020 ; cite84†Hendrycks and Gimpel, 2016 ). A linear layer maps output $Z_{t}$ of the Temporal Transformer to logits for the text token $W_{t}$.
+L122: The Depth Transformer then operates for $Q$ steps to estimate the logits for the output stream and for $Q$ additional steps for the input stream. Each depth step $q$ takes as input $Z_{t}$ summed with a learned embedding of the previous audio token $A_{t,q-1}$, or $W_{t}$ for $q=1$. We provide architectural hyper-parameters in Section cite23†4.1 .
+L123: ### 3.2 Coarse alignment of speech translation data
+L124: 
+L125: We have assumed training pairs $(X,Y)$ to not be entirely causal at the interpretation level. We now detail the specific method used to build such coarse translation alignments.
+L126: #### 3.2.1 Sentence-level alignment
+L127: We start from an unaligned speech translation pair $(X,Y)$ which only verifies a sentence mapping constraint meaning that both $X$ and $Y$ contain the same number of sentences and such that the $i^{th}$ sentence in $Y$ is a translation of the $i^{th}$ sentence in $X$. Inspired by cite53†Labiausse et al. (2025) , we rely on the insertion of artificial silence in $Y$ to delay its content with respect to $X$.
+L128: For each sentence of index $i$, we introduce silence in $Y$ to shift its $i^{th}$ sentence by an amount $\delta_{i}$ after the start of the $i^{th}$ sentence in $X$ where $\delta_{i}\sim\mathcal{U}(0,\delta\times d_{i})$ is sampled independently for each sentence, $d_{i}$ is the duration of the $i^{th}$ sentence in $X$ and $\delta\in[0,1]$ is an hyperparameter.
+L129: Then, using punctuation characters such as commas or colons in a precomputed transcript of $Y$, we insert silences whose durations follow $\mathcal{U}(0,\mu)$ at the corresponding instants in $Y$ with $\mu$ being a hyperparameter.
+L130: #### 3.2.2 Natural pauses TTS
+L131: Using the method described in Section cite17†3.2.1 , we might break the natural flow of speech by inserting silence on punctuations which is also subject to imprecisions of the transcript timestamps. Following cite85†Zeghidour et al. (2025) , we train a TTS with synced audio and text streams as output, providing a control on the emission timestamp of each word to synthesize. Moreover, we train the TTS to perform voice transfer from a short audio conditioning of maximum 10 seconds.
+L132: We can then generate an audio $Y^{+}$ using the original transcript of $Y$ and naturally insert the pauses described in cite17†3.2.1 while conditioned on the speaker from $X$. This results in new training pairs ($X$, $Y^{+}$) where targets contain smoother transitions between speech and silences than $Y$.
+L133: ### 3.3 Translation policy reinforcement
+L134: Assuming that we dispose of a simultaneous translation model as presented in Section cite11†3.1 , we now introduce a reinforcement learning procedure using process rewards based on BLEU scores to improve the translation policy of the model as illustrated in Figure cite86†3 . We adapt GRPO from cite56†Shao et al. (2024) to be our RL algorithm. We denote by $\pi_{\theta}$ the translation model to optimize and $\pi_{\theta_{\mathrm{old}}}$ an older version of it acting as a regularizer.
+L135: Given an input speech utterance $X$ with a known sentence-level text translation $y$, we use $\pi_{\theta_{\mathrm{old}}}$ to generate $G$ different speech translations $(Y_{i})_{1\leq i\leq G}$, each of duration $T\times f_{r}$ seconds where $f_{r}$ is the model frame rate and $T$ a fixed number of frames.
+L136: #### 3.3.1 Process rewards
+L137: Let $n$ be the number of sentences in $X$ and $(t_{i})_{0\leq i\leq n}$ the frame indexes such that the sentence of index $i$ in $X$ starts at frame $t_{i}$ and ends at frame $t_{i+1}$. We introduce $S(t)$ as the sentence index at frame $t\geq t_{0}$ in $X$ i.e. $S(t)=i$ for $t_{i}\leq t\leq t_{i+1}$ and $S(t)=n-1$ for $t>t_{n}$. For a frame index $t\leq T$, we denote $y_{t}$ as the text concatenation of translated input sentences until the one of index $S(t)$ included.
+L138: Given a generation $i$, we define $\hat{y}^{(i)}_{t}$ as the partial text transcript until frame $t$ given by the model’s output text stream. We now introduce the hyperparameter $\alpha\in[0,1]$ and define the process reward for generation $i$ at frame $t$ as:
+L139:  | $$r^{(i)}_{t}=(1-\alpha)\mathrm{BLEU}\big(\hat{y}^{(i)}_{t},y_{t}\big)+\alpha\mathrm{BLEU}\big(\hat{y}^{(i)}_{T},y_{T}\big)$$  |  | (3)
+L140: #### 3.3.2 Optimization objective
+L141: 
+L142: Using the modeling of $X$ and $(Y_{i})_{1\leq i\leq G}$ as tokens $A^{X}$ and $A^{Y_{1}}$, …, $A^{Y_{G}}$, we define the probability ratios between $\pi_{\theta}$ and $\pi_{\theta_{\mathrm{old}}}$ for each output $i$, codebook index $q\leq Q$ and frame index $t\leq T$ as:
+L143: 
+L144:  | $$p^{(i)}_{q,t}=\frac{\pi_{\theta}\Big(A^{Y_{i}}_{q,t}|A^{X}_{\leq t},A^{Y_{i}}_{q,<t}\Big)}{\pi_{\theta_{\mathrm{old}}}\Big(A^{Y_{i}}_{q,t}|A^{X}_{\leq t},A^{Y_{i}}_{q,<t}\Big)}$$  |  | (4)
+L145: Given a set of frame indexes $t^{\prime}_{1}<t^{\prime}_{2}<...<t^{\prime}_{s}$, we compute process rewards as defined in Section cite20†3.3.1 for each output, namely $r^{(i)}_{t^{\prime}_{j}}$ for $i\leq G$ and $j\leq s$. We then normalize rewards per frame index across group elements:
+L146: 
+L147:  | $$\bar{r}^{(i)}_{t^{\prime}_{j}}=\frac{r^{(i)}_{t^{\prime}_{j}}-\underset{k\leq G}{\mathrm{mean}}\Big[r^{(k)}_{t^{\prime}_{j}}\Big]}{\underset{k\leq G}{\mathrm{std}}\Big[r^{(k)}_{t^{\prime}_{j}}\Big]}$$  |  | (5)
+L148: In practice, early experiments showed that using a regular frame indexes pattern along the input speech content performed better. Thus we introduce $n_{w}\in\mathbb{N}^{*}$ and use the end timestamp of every $n_{w}$ words in the input to set $(t^{\prime}_{j})_{j\leq s}$.
+L149: 
+L150: Then, we introduce the advantage of an output at step $t$ as the sum of normalized rewards from the following steps:
+L151: 
+L152:  | $$R^{(i)}_{t}=\sum\limits_{t^{\prime}_{j}>t}\bar{r}^{(i)}_{t^{\prime}_{j}}$$  |  | (6)
+L153: We compute the per-codebook objectives $L^{(i)}_{q}$ using the standard clipping function between $1-\epsilon$ and $1+\epsilon$ as:
+L154: 
+L155:  | $$L^{(i)}_{q}=\sum\limits_{t=1}^{T}\min\Big(p^{(i)}_{q,t}R^{(i)}_{t},\mathrm{clip}_{\epsilon}\big(p^{(i)}_{q,t}\big)R^{(i)}_{t}\Big)$$  |  | (7)
+L156: 
+L157: In the end, we seek to maximize the following objective with fixed weights $c_{q}$ for each depth $q\leq Q$:
+L158:  | $$\E_{\begin{subarray}{c}X\sim\mathcal{D}\\
+L159: Y_{i}\sim\pi_{\theta_{\mathrm{old}}}(X)\end{subarray}}\left[\frac{1}{G}\sum_{\begin{subarray}{c}q\leq Q\\
+L160: i\leq G\end{subarray}}c_{q}\,L^{(i)}_{q}\right]$$  |  | (8)
+L161: 
+L162: where $\mathcal{D}$ denotes our input speech distribution and $\pi_{\theta_{\mathrm{old}}}$ is a fixed version of the translation model that is replaced by $\pi_{\theta}$ every fixed number of updates $\tau$.
+L163: Figure 3: Process rewards method based on BLEU score. We introduce intermediate BLEU score computed on the text output of the model before a given frame $t$ and using the ground-truth translation of the corresponding input sentences processed so far. We combine it with the total output BLEU score using $\alpha\in[0,1]$.
+L164: ## 4 Experiments
+L165: ### 4.1 Architectural hyper-parameters
+L166: The backbone Temporal Transformer of Hibiki-Zero has a latent dimension of 2048 (8192 for the SiLU gating), 28 layers, 16 heads and local attention over 3000 tokens, i.e., 2B parameters and a 4min context. The Depth Transformer has a latent dimension of 1024 (4096 for the gating), 6 layers per codebook and 16 heads. It models $Q=16$ audio codebooks for the output stream and the same for the input stream but only at training.
+L167: We reduce the size of the model before RL by distillation into a smaller one using weight sharing among the codebooks of the Depth Transformer. Our final model architecture contains 3B parameters.
+L168: Table 1: Objective comparison of Hibiki-Zero with Seamless (cite64†Barrault et al., 2023 ) and Hibiki (cite53†Labiausse et al., 2025 ) on short-form (Europarl-ST) and long-form (Audio-NTREX-4L) test data introduced in Section cite30†4.3 .
+L169:  | Short-form  | Long-form
+L170:  |  | ASR  | ASR  | Speaker  | End  |  |  | ASR  | ASR  | Speaker  | End  |
+L171:  | BLEU ($\uparrow$)  | BLEU ($\uparrow$)  | COMET ($\uparrow$)  | Sim. ($\uparrow$)  | Offset ($\downarrow$)  | LAAL ($\downarrow$)  | BLEU ($\uparrow$)  | BLEU ($\uparrow$)  | COMET ($\uparrow$)  | Sim. ($\uparrow$)  | Offset ($\downarrow$)  | LAAL ($\downarrow$)
+L172: Seamless  |  |  |  |  |  |  |  |  |  |  |  |
+L173: French  | 33.8  | 32.8  | 76.6  | 19.1  | 2.4  | 2.8  | 27.8  | 23.9  | 33.7  | 44.4  | 3.2  | 6.2
+L174: Spanish  | 34.4  | 33.6  | 79.1  | 21.9  | 2.6  | 2.7  | 29.9  | 25.2  | 36.1  | 42.6  | 2.8  | 6.5
+L175: Portuguese  | 34.1  | 33.6  | 78.9  | 23.9  | 2.8  | 3.1  | 29.0  | 25.6  | 35.0  | 35.7  | 3.2  | 6.6
+L176: German  | 27.8  | 27.3  | 82.3  | 20.6  | 2.4  | 3.0  | 27.8  | 24.0  | 40.6  | 47.8  | 2.5  | 7.3
+L177: Hibiki  |  |  |  |  |  |  |  |  |  |  |  |
+L178: French  | 32.4  | 31.8  | 81.5  | 35.7  | 2.5  | 3.5  | 29.5  | 26.4  | 42.0  | 52.8  | 2.6  | 6.8
+L179: Hibiki-Zero  |  |  |  |  |  |  |  |  |  |  |  |
+L180: French  | 35.0  | 34.6  | 80.3  | 49.5  | 2.1  | 2.8  | 30.6  | 28.7  | 43.7  | 61.3  | 2.3  | 6.1
+L181: Spanish  | 33.8  | 33.9  | 80.3  | 57.0  | 2.3  | 3.1  | 32.3  | 31.5  | 42.3  | 64.6  | 2.6  | 5.6
+L182: Portuguese  | 33.6  | 33.6  | 78.9  | 51.4  | 2.4  | 3.0  | 33.2  | 31.3  | 42.6  | 62.1  | 2.3  | 6.3
+L183: German  | 28.7  | 28.6  | 82.0  | 51.5  | 1.9  | 2.8  | 29.1  | 28.3  | 42.3  | 66.0  | 2.0  | 5.9
+L184: ### 4.2 Training protocol
+L185: 
+L186: We train a multilingual-to-English speech translation system through the following steps, each with a cosine learning rate schedule and AdamW (cite87†Loshchilov and Hutter, 2019 ), with weight decay of 0.1, and momentum parameters (0.9, 0.95).
+L187: #### 4.2.1 Text backbone initialization
+L188: 
+L189: We initialize the Temporal Transformer with Helium-1^{3}^{3} 3 cite88†huggingface.co/kyutai/helium-1-2b†huggingface.co (cite89†Kyutai, 2025 ) weights, an open-source base text LLM with 2B parameters trained using filtered Common Crawl^{4}^{4} 4 cite90†commoncrawl.org†commoncrawl.org data.
+L190: #### 4.2.2 Audio pretraining
+L191: Starting from the pretrained text backbone, weights of the Depth Transformer are added to the architecture as well as audio tokens projection layers. We perform an audio pretraining with single stream audio as done by cite53†Labiausse et al. (2025) but on multilingual speech. Our data mixture comprises approximately 12% of audio in each input language, 50% of English and less than 2% of Italian. We train for 1K steps with a batch size of 144 and a learning rate of $2\cdot 10^{-4}$.
+L192: After this pretraining stage, we duplicate the weights of the Depth Transformer to allow for future multistream training.
+L193: #### 4.2.3 Coarse speech translation training
+L194: We construct a large-scale multilingual-to-English speech translation dataset comprising $40,000$ hours for each source language (French, Spanish, Portuguese, and German). Starting from a massive collection of multilingual audio, we extract 4 million single-speaker utterances, whose durations are between 30 and 75 seconds, and transcribe them using Whisper large-v3 (cite91†Radford et al., 2023 ).
+L195: Transcripts are partitioned into sentences via Spacy’s core_news_sm and individually translated using MADLAD-3B (cite92†Kudugunta et al., 2023 ), after which we synthesize the target speech using the TTS system described in Section cite18†3.2.2 with 10-second speaker conditioning. To ensure coarse translation alignments, we apply the silence insertion technique from Section cite17†3.2.1 using $\delta=0.5$ and $\mu=2$. Scaling our training budget following cite53†Labiausse et al.
+L196: (2025) , we perform $500,000$ gradient steps with a batch size of 96 and a learning rate of $3\cdot 10^{-5}$, computing the loss on both source and target streams with source noise augmentation. Finally, sequence termination is explicitly modeled by inserting a special input EOS token immediately following the source utterance and a separate EOS token in the text stream to demarcate the end of generation. Appendix Table cite93†4 compares the performance of multilingual and monolingual models.
+L197: #### 4.2.4 Speech translation fine-tuning
+L198: We use the synthetic data generation method with natural pauses introduced in Section cite18†3.2.2 to build a synthetic multilingual speech translation dataset of less than 200h in total. We fine-tune for 1K steps with a batch size of 16, a learning rate of $1\cdot 10^{-6}$ and other configurations being similar to the previous phase described in cite27†4.2.3 . We then distill the model into a light copy of itself with codebooks weight sharing using the same dataset and 20K gradient updates.
+L199: #### 4.2.5 Reinforcement learning
+L200: Starting from the light fine-tuned translation model, we use data from the speech translation training introduced in Section cite27†4.2.3 and run our reinforcement learning process as described in Section cite19†3.3 . We train with a batch size of 32, a group size of 4, learning rate of $2\cdot 10^{-7}$ and perform 2000 updates with $\tau=20$. Sequences of length $T=1500$ frames are generated using a temperature of 0.8 and top-k of 250 for both text and audio streams.
+L201: Process rewards are computed every $n_{w}=8$ input words and we set $\alpha=0.4$ and $\epsilon=0.2$. We use $c_{0}=100$ and $c_{q}=1$ for $q\geq 1$ to balance loss between text and audio streams. The model is evaluated every $10\cdot\tau$ updates on a valid set and we define Hibiki-Zero as the checkpoint with the best quality/latency trade-off according to objective evaluation metrics. Appendix Table cite94†5 compares our base and fine-tuned models to Hibiki-Zero.
+L202: ### 4.3 Evaluation datasets
+L203: ##### Long-form data.
+L204: We build Audio-NTREX-4L, a multilingual long-form ST dataset using text translations from the NTREX (cite95†Aepli et al., 2023 ) corpus. We select 300 examples for each source language and synthesize them using the following high-quality TTS from the industry: ElevenLabs^{5}^{5} 5 cite96†elevenlabs.io/text-to-speech†elevenlabs.io (“eleven-multilingual-v2 TTS”), Cartesia^{6}^{6} 6 cite97†cartesia.ai/sonic†cartesia.ai (“sonic-v2 TTS”) and Gradium^{7}^{7} 7 cite98†gradium.ai/#models†gradium.ai (“default TTS”).
+L205: We condition generations using voices from the multilingual dataset CML-TTS (cite99†de Oliveira et al., 2023 ). Audio-NTREX-4L contains around 15h of speech per TTS with an average duration of 45 seconds per sample and is split in balanced valid and test sets.
+L206: ##### Short-form data.
+L207: 
+L208: We filter data from Europarl-ST (cite100†Iranzo-Sánchez et al., 2020 ) and retain samples with realistic transcripts and duration between 2 and 20 seconds. We build valid and test sets, each with 1024 samples per source language for a total of 10h hours per set.
+L209: 
+L210: ### 4.4 Evaluation metrics
+L211: ##### Translation quality.
+L212: We evaluate translation quality by transcribing generated speech using Whisper medium (cite91†Radford et al., 2023 ) and computing BLEU (cite101†Post, 2018 ) and COMET (cite102†Rei et al., 2020 ) scores with respect to a reference translation, referred to as ASR-BLEU and ASR-COMET. To reduce the impact of ASR errors, hypothesis and reference texts are normalized^{8}^{8} 8 cite103†github.com/openai/whisper/blob/main/whisper/normalizers†github.com before computing BLEU scores.
+L213: Since Seamless and Hibiki-Zero perform speech-to-text translation in parallel, we also compute BLEU and COMET scores using their text outputs. We use the XCOMET-XL model.^{9}^{9} 9 cite104†github.com/Unbabel/COMET†github.com .
+L214: ##### Translation Latency.
+L215: We rely on two common latency metrics known as End Offset and LAAL (Length-Adaptive Average Lagging). End Offset is defined as the time difference (in seconds) between the end of the last generated word and the end of the last word from the source. We compute LAAL following the method described by cite105†Papi et al. (2022) which defines it as an approximation of the average time (in seconds) between a source word and its translation.
+L216: We use word-level emission timestamps $(d_{i})_{1\dots n_{\mathrm{gen}}}$ produced by Whisper for $n_{\mathrm{gen}}$ words in the generated speech. We define $\gamma=\frac{\Delta_{\mathrm{source}}}{\max(n_{\mathrm{gen}},n_{\mathrm{ref}})}$ where $\Delta_{\mathrm{source}}$ is the duration of the source speech and $n_{\mathrm{ref}}$ the number of words in the reference translation.
+L217: The LAAL score is then computed as $\frac{1}{n_{\mathrm{max}}}\sum_{i=1}^{n_{\mathrm{max}}}d_{i}-(i-1)\gamma$ where $n_{\mathrm{max}}=\mathrm{min}\{i|d_{i}\geq\Delta_{\mathrm{source}}\}$.
+L218: Table 2: Human evaluation. Raters report Mean Opinion Scores (MOS) on a scale ranging from 0 to 100 for each audio sample.
+L219: Input  | Model  | Audio  | Speaker  | Speech
+

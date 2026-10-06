@@ -1,0 +1,1706 @@
+URL: https://arxiv.org/html/2601.09859v1
+Breaking the Limits of Open-Weight CLIP: An Optimization Framework for Self-supervised Fine-tuning of CLIP
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+3 Preliminaries
+4 TuneCLIP: A Self-supervised optimization framework
+4.1 Stage I: Optimizer Statistics Recovery (OSR)
+4.2 Stage II: Hinged Global Contrastive Loss
+5 Experiments
+5.1 Ablation & Scaling of TuneCLIP
+6 Conclusion
+7 Limitations and Future Works
+References
+A Proof for theorems in subsection
+A.1 Technical Lemma
+A.2 Proof of theorem
+B Additional details on CLIP Models
+C Hyperparameter Details
+C.1 Ablation on margin mm used with HGCL
+C.2 Ablation on different learning rates
+C.3 Additional Details on the Distributed Training Framework
+D Algorithms compared in the experimentation
+E Impact of Hinged Global Contrastive Loss
+F Performance Trajectories During Fine-Tuning
+F.1 Extended Fine-tuning
+G More comprehensive results
+H Compute Cost Analysis
+I Comparing other Cold-start bias mitigation strategies
+J TuneCLIP on State-of-the-art CLIP
+K HGCL and False Negative Mitigations
+L The Use of Large Language Models (LLMs)
+License: CC BY 4.0
+arXiv:2601.09859v1 [cs.CV] 14 Jan 2026
+Breaking the Limits of Open-Weight CLIP: An Optimization Framework for Self-supervised Fine-tuning of CLIP
+Anant Mehta
+Xiyuan Wei
+Xingyu Chen
+Tianbao Yang
+††thanks: Correspondence to anant_mehta@tamu.edu and tianbao-yang@tamu.edu.
+Affiliation: Department of Computer Science & Engineering
+Affiliation: Texas A&M University, USA
+Abstract
+CLIP has become a cornerstone of multimodal representation learning, yet improving its performance typically requires a prohibitively costly process of training from scratch on billions of samples. We ask a different question: Can we improve the performance of open-weight CLIP models across various downstream tasks using only existing self-supervised datasets? Unlike supervised fine-tuning, which adapts a pretrained model to a single downstream task, our setting seeks to improve general performance across various tasks. However, as both our experiments and prior studies reveal, simply applying standard training protocols starting from an open-weight CLIP model often fails, leading to performance degradation. In this paper, we introduce TuneCLIP, a self-supervised fine-tuning framework that overcomes the performance degradation. TuneCLIP has two key components: (1) a warm-up stage of recovering optimization statistics to reduce cold-start bias, inspired by theoretical analysis, and (2) a fine-tuning stage of optimizing a new contrastive loss to mitigate the penalization on false negative pairs. Our extensive experiments show that TuneCLIP consistently improves performance across model architectures and scales. Notably, it elevates leading open-weight models like SigLIP (ViT-B/16), achieving gains of up to +2.5% on ImageNet and related out-of-distribution benchmarks, and +1.2% on the highly competitive DataComp benchmark, setting a new strong baseline for efficient post-pretraining adaptation.
+1 Introduction
+Contrastive vision-language models such as CLIP which learn joint image-text representations at scale by training on hundreds of millions of large scale image-text pairs (Radford et al., 2021; Cherti et al., 2023) show broad utility across downstream tasks spanning classification, cross-modal retrieval, multimodal reasoning (Shen et al., 2021; Zhao et al., 2023) and generation (Ao et al., 2023). Recent efforts to improve CLIP have primarily focused on pretraining by constructing ever larger datasets (Fang et al., 2023), designing novel objective functions (Qiu et al., 2023; Qiu et al., 2024), or developing refined optimization algorithms (Qiu et al., 2024; Wei et al., 2024). While these directions have advanced the state of the art, they come at staggering cost due to billions of image-text pairs, massive GPU clusters, and days or weeks of computation. In this work, we ask a complementary but equally important question “How can we unlock more from the CLIP we already have?”, shifting from “How can we pretrain a better CLIP from scratch?”, which leads to a path that is cheaper, faster, and far more compute-efficient.
+A very common way to improve the model is supervised fine-tuning, which is performed on specific datasets of a target domain (Nguyen et al., 2024; Srinivasan et al., 2023; Goyal et al., 2023). These prior works leverage class labels or captions to steer the embedding space. An issue with these methods is that strong adaptation to the target domain can harm generalization contributing to reduced robustness to distribution shifts (Ding et al., 2022; Jha et al., 2024). Thus, supervised fine-tuning cannot be regarded as a procedure to improve a CLIP model in general, rather, it is a domain adaptation for a specific distribution, often at the expense of transferability.
+Figure 1: Improvements delivered by TuneCLIP (★\bigstar) over baseline models on complementary evaluation suites: large-scale DataComp Benchmark (38 datasets) & ImageNet’s 7 distributional variants.
+These limitations motivate an alternative paradigm that we propose, namely self-supervised fine-tuning (SSFT), which we define as the process of improving a pretrained CLIP model’s overall representational quality and general-purpose performance, rather than tailoring it to a specific downstream task. What makes SSFT actually “self-supervised”? Traditionally, supervised fine-tuning is carried out on datasets such as ImageNet, CIFAR, or Flickr (Yang et al., 2023; Krizhevsky et al., 2017; Van Zwol, 2007; Wortsman et al., 2022; Dong et al., 2022; Fahes et al., 2024; Goyal et al., 2023; Liu et al., 2025), which were constructed through human annotation or domain-specific filtering and are thereby inherently biased models toward a particular domain. By contrast, we use large-scale web corpora that was constructed for pretraining CLIP models, e.g., (Fang et al., 2023). The result is task-agnostic corpora, positioning SSFT on them as representation refinement rather than task adaptation.
+At first glance, SSFT resembles pretraining, yet key nuances render its optimization and learning process substantially more difficult. From the optimization perspective, the contrastive losses in CLIP training lack unbiased stochastic gradient estimators (Yuan et al., 2022). Consequently, the optimization error is heavily influenced by the accuracy of the gradient estimates at initialization. Standard strategies such as zero-initializing the first-order moment in Adam (Kingma and Ba, 2014) can induce large estimation errors, negating the benefits of a good initial model and causing significant performance drops at the start of training (cf. Figure 2). We refer to this issue as cold-start bias.
+From the learning perspective, self-supervised contrastive learning suffers the issue of false negative data, i.e., those that are semantically similar to the anchor data are mistakenly treated as negatives. This issue becomes more pronounced as models improve. Fine-tuning further amplifies the gap between positive-pair and negative-pair similarities, allowing false negatives to distort embeddings of semantically similar data. Consequently, retrieval performance degrades, since it relies on ranking within a set of highly similar examples.
+To address these challenges, we introduce TuneCLIP, a novel self-supervised optimization framework designed to enhance state-of-the-art pretrained open-weight CLIP models. Our contributions directly address the challenges outlined above:
+•
+We provide a theoretical analysis quantifying the cold-start bias, showing how the initial gradient estimation error in contrastive loss optimization influences convergence. To mitigate this issue, we propose Optimizer Statistics Recovery (OSR), which restores accurate first and second-order moment estimates, along with other useful statistics of the initial model, through a warm-up stage.
+•
+To reduce the impact of false negatives, we introduce a simple yet effective remedy: the hinged global contrastive loss (HGCL). This loss penalizes positive and negative pairs only when their similarity gap exceeds a margin, thereby avoiding excessive penalization of false negatives. This improves retrieval performance while preserving strong zero-shot classification accuracy.
+•
+We conduct extensive experiments on SSFT across multiple pretrained models and data scales. Our results show consistent improvements over base models and demonstrate superiority to existing standard pretraining approaches that can be used for SSFT.
+2 Related Work
+Contrastive Language-Image Pretraining (CLIP) has emerged as a powerful paradigm for learning joint image-text representations. Following CLIP, several variants have been proposed, including (Zhai et al., 2023; Sun et al., 2023; Yu et al., 2022; Koleilat et al., 2025). CLIP models are trained with image encoders, such as Vision Transformers (ViTs) (Dosovitskiy et al., 2020), ResNets (He et al., 2016), ConvNexts (Woo et al., 2023) and text encoders, including Transformer-based architectures (Vaswani et al., 2017) and BERT (Devlin et al., 2019).
+Improving CLIP. Numerous efforts have sought to enhance the efficiency and effectiveness of CLIP pretraining. Several works explore variants of mini-batch contrastive losses to improve representation quality (Li et al., 2023; Chen et al., 2023; Zhai et al., 2023; Shi et al., 2024), while others approximate global contrastive objectives to achieve similar gains (Yuan et al., 2022; Qiu et al., 2023; Qiu et al., 2024). In parallel, system-level optimizations focusing on distributed frameworks, memory efficiency, and mixed-precision training have been proposed to further accelerate large-scale CLIP pretraining (Sun et al., 2023; Rasley et al., 2020; Cherti et al., 2023; Wei et al., 2023). While these advances improve the scalability of CLIP training, the high cost of pretraining from scratch continues to motivate methods that adapt and fine-tune existing pretrained CLIPs for downstream tasks.
+Improving pretrained CLIP spans several directions, with supervised fine-tuning being the most prominent. Numerous studies focus on improving in-distribution retrieval and, by relying on labeled data, are inherently supervision-based (Peleg et al., 2025; Meng et al., 2025; Schall et al., 2024; Mo et al., 2023). Fine-tuning like pretraining has emerged in methods that optimize contrastive objectives with positive and negative pairs defined by labels, for instance by converting class names into textual prompts (Goyal et al., 2023; Wang et al., 2025). The textual prompts for downstream class labels could also be learned to improve the downstream performance (Zhou et al., 2022b; Zhou et al., 2022a; Khattak et al., 2023).
+Such label-dependent adaptation frameworks are designed to fit target domains, which is of no use for the general-purpose robustness (Wortsman et al., 2022; Li et al., 2024). Fine-tuning based on Low-Rank Adaptation (LoRA) (Al Rahhal et al., 2025; Hu et al., 2022) keep the backbone frozen and learn a small low-rank adapter matrix on downstream data, focusing on parameter-efficient adaptation rather than improving the base encoder representations.
+Others employ curriculum strategies to gradually increase task difficulty (Xiao et al., 2023; Khan et al., 2023). In contrast, our work advances a paradigm of pure self-supervised fine-tuning (SSFT), which uses no labels, pseudo-labels, or teacher models, aiming instead to enhance CLIP’s generality while preserving its robust pretrained representations.
+Performance degradation in fine-tuning pretrained CLIP is commonly observed. In constrained settings, even modest departures from effective optimization configurations can undermine representation learning and lead to severe degradation (Wortsman et al., 2022; Wei et al., 2023; Mosbach et al., 2020; Wortsman et al., 2023).
+Furthermore, even when stable training is achieved, multiple studies report a consistent degradation in retrieval performance on other datasets after adaptation on downstream data (Kumar et al., 2022; Peleg et al., 2025; Bafghi et al., 2025), a phenomenon we also observe in our experiments. Consequently, the key problem and the primary motivation for our work is to develop a SSFT strategy that not only avoids these failure modes but also delivers concurrent gains across benchmarks.
+It is crucial to distinguish SSFT from continual learning. The latter involves training a model on a sequence of tasks over time, with the primary objective of acquiring new knowledge while avoiding catastrophic forgetting of previous tasks Ding et al. (2022); Jha et al. (2024); Xiao et al. (2023); Jiao et al. (2024). In contrast, SSFT aims to improve a pre-trained model through a single adaptation step on a static dataset, enhancing its general capabilities without a sequential task structure.
+3 Preliminaries
+Notations:
+Let 𝒟={(xi,zi)}i=1n\mathcal{D}=\{(x_{i},z_{i})\}_{i=1}^{n} be a dataset of nn image–text pairs, where xix_{i} denotes the ii-th image and ziz_{i} denotes its corresponding text description. Given CLIP model ℳ\mathcal{M} (with |ℳ||\mathcal{M}| parameters), we learn two separate encoders. We define 𝐟⁡(⋅)\mathbf{f}(\cdot) and 𝐠⁡(⋅)\mathbf{g}(\cdot) as the encoders for images and texts, parameterized by 𝜽𝟏\bm{\theta_{1}} and 𝜽𝟐\bm{\theta_{2}}, respectively. For ease, we define the joint parameter of the image and text encoders as 𝝎=[𝜽𝟏,𝜽𝟐]\bm{\omega}=[\bm{\theta_{1}},\bm{\theta_{2}}]. To ensure that cosine similarity can be consistent with the inner product, both encoders output ℓ2\ell_{2} normalized vector representations in ℝd\mathbb{R}^{d}. Thus the cosine similarity between an image xix_{i} and a text zjz_{j} is
+𝐬i,j=𝐟​(xi,𝝎)⊤​𝐠​(zj,𝝎)\mathbf{s}_{i,j}=\mathbf{f}(x_{i};\bm{\omega})^{\top}\mathbf{g}(z_{j};\bm{\omega}). To discuss algorithms later, we need the notations for a mini-batch, so let us consider ℬ⊂𝒟\mathcal{B}\subset\mathcal{D} having B=|ℬ|B=|\mathcal{B}| samples to be a mini-batch sampled from the full dataset 𝒟\mathcal{D}.
+Mini-batch Contrastive Loss (MBCL).
+The standard mini-batch based contrastive loss for a batch ℬ\mathcal{B} is given by (Radford et al., 2021):
+ℒMBCL(𝝎)=−1|ℬ|∑i=1|ℬ|[logexp⁡(𝐬i,i/τ)∑j=1|ℬ|exp⁡(𝐬i,j/τ)+logexp⁡(𝐬i,i/τ)∑j=1|ℬ|exp⁡(𝐬j,i/τ)].\mathcal{L}_{\mathrm{MBCL}}(\bm{\omega})=-\frac{1}{\mathcal{|B|}}\sum_{i=1}^{\mathcal{|B|}}\left[\log\frac{\exp(\mathbf{s}_{i,i}/\tau)}{\sum_{j=1}^{\mathcal{|B|}}\exp(\mathbf{s}_{i,j}/\tau)}\;+\;\log\frac{\exp(\mathbf{s}_{i,i}/\tau)}{\sum_{j=1}^{\mathcal{|B|}}\exp(\mathbf{s}_{j,i}/\tau)}\right].
+(1)
+which encourages high similarity for positive image–text pairs and low similarity for negative pairs in the shared ℝd\mathbb{R}^{d} space. Here τ>0\tau>0 is the temperature parameter. Cherti et al. (2023) used this loss to train OpenCLIP models.
+Global Contrastive Loss (GCL).
+One limitation of optimizing MBCL is that it requires a large batch size in order to achieve competitive performance. To address this issue, we follow previous works (Yuan et al., 2022) and use a Global Contrastive Loss (GCL). Without loss of generality, let us introduce a pairwise loss ℓ⁡(𝐬j,i−𝐬i,i)\ell(\mathbf{s}_{j,i}-\mathbf{s}_{i,i}), which measures the loss on the difference between a negative data pair and a positive data pair. Then we define two functions Φ1​(⋅),Φ2​(⋅)\Phi_{1}(\cdot),\Phi_{2}(\cdot) for image-anchor data and text-anchor data, respectively, i.e.,
+Φ1​(𝝎,i,𝒟)=1n​∑zj∈𝒟∖{zi}exp⁡(ℓ⁡(𝐬i,j−𝐬i,i)τ),Φ2​(𝝎,i,𝒟)=1n​∑xj∈𝒟∖{xi}exp⁡(ℓ⁡(𝐬j,i−𝐬i,i)τ),\displaystyle\Phi_{1}(\bm{\omega},i,\mathcal{D})=\frac{1}{n}\sum_{z_{j}\in\mathcal{D}\setminus\{z_{i}\}}\exp\!\bigg(\frac{\ell(\mathbf{s}_{i,j}-\mathbf{s}_{i,i})}{\tau}\bigg),\;\Phi_{2}(\bm{\omega},i,\mathcal{D})=\frac{1}{n}\sum_{x_{j}\in\mathcal{D}\setminus\{x_{i}\}}\exp\!\bigg(\frac{\ell(\mathbf{s}_{j,i}-\mathbf{s}_{i,i})}{\tau}\bigg),
+Then GCL can be defined as:
+ℒGCL​(𝝎)=τn​∑i=1n[log⁡(ε+Φ1​(𝝎,i,𝒟))+log⁡(ε+Φ2​(𝝎,i,𝒟))],\mathcal{L}_{\mathrm{GCL}}(\bm{\omega})=\frac{\tau}{n}\sum_{i=1}^{n}\left[\log\!\big(\varepsilon+\Phi_{1}(\bm{\omega},i,\mathcal{D})\big)+\log\!\big(\varepsilon+\Phi_{2}(\bm{\omega},i,\mathcal{D})\big)\right],
+(2)
+where ε>0\varepsilon>0 is a small constant that increases numerical stability. Without explicitly mentioned, we consider ℓ(⋅)=⋅\ell(\cdot)=\cdot for GCL as used in (Wei et al., 2024) for CLIP training from scratch.
+Optimization Algorithms.
+A fundamental challenge of optimizing GCL is that it lacks unbiased stochastic gradient estimator. To see this, the gradient of ℒGCL​(𝝎)\mathcal{L}_{\mathrm{GCL}}(\bm{\omega}) is given by
+∇ℒGCL(𝝎)=τn∑i=1n[1ε+Φ1​(𝝎,i,𝒟)∇Φ1(𝝎,i,𝒟)+1ε+Φ2​(𝝎,i,𝒟)∇Φ2(𝝎,i,𝒟)]\nabla\mathcal{L}_{\mathrm{GCL}}(\bm{\omega})=\frac{\tau}{n}\sum_{i=1}^{n}\left[\frac{1}{\varepsilon+\Phi_{1}(\bm{\omega},i,\mathcal{D})}\nabla\Phi_{1}(\bm{\omega},i,\mathcal{D})+\frac{1}{\varepsilon+\Phi_{2}(\bm{\omega},i,\mathcal{D})}\nabla\Phi_{2}(\bm{\omega},i,\mathcal{D})\right]
+Since Φ∗​(𝝎,i,𝒟)\Phi_{*}(\bm{\omega},i,\mathcal{D}) is the denominator, simply using their mini-batch estimator will yield a biased gradient estimator. To address this issue, Yuan et al. (2022) propose an algorithm SogCLR, which maintains and updates an estimator ui,x,ui,zu_{i,x},u_{i,z} for each Φ1​(𝝎,i,𝒟)\Phi_{1}(\bm{\omega},i,\mathcal{D}) and Φ2​(𝝎,i,𝒟)\Phi_{2}(\bm{\omega},i,\mathcal{D}) along the optimization trajectory. At the tt-iteration with a mini-batch ℬt\mathcal{B}_{t}, they are updated by
+ui,x(t)=(1−γt)​ui,x(t−1)+γt​Φ1​(𝝎t−1,i,ℬt),ui,z(t)=(1−γt)​ui,z(t−1)+γt​Φ2​(𝝎t−1,i,ℬt),u^{(t)}_{i,x}=(1-\gamma_{t})u^{(t-1)}_{i,x}+\gamma_{t}\,{\Phi}_{1}(\bm{\omega}_{t-1},i,\mathcal{B}_{t}),\qquad u^{(t)}_{i,z}=(1-\gamma_{t})u^{(t-1)}_{i,z}+\gamma_{t}\,{\Phi}_{2}(\bm{\omega}_{t-1},i,\mathcal{B}_{t}),
+(3)
+Then a stochastic gradient estimator of ℒG​C​L\mathcal{L}_{GCL} w.r.t. the shared parameters 𝝎\bm{\omega} at iteration tt is:
+G⁡(𝝎t−1,ℬt)=τ|ℬt|​∑i∈ℬt[1ε+ui,x(t)​∇𝝎Φ1​(𝝎t−1,i,ℬt)+1ε+ui,z(t)​∇𝝎Φ2​(𝝎t−1,i,ℬt)].G(\bm{\omega}_{t-1},\mathcal{B}_{t})=\frac{\tau}{|\mathcal{B}_{t}|}\sum_{i\in\mathcal{B}_{t}}\left[\frac{1}{\varepsilon+u^{(t)}_{i,x}}\;\nabla_{\bm{\omega}}\Phi_{1}(\bm{\omega}_{t-1},i,\mathcal{B}_{t})\;+\;\frac{1}{\varepsilon+u^{(t)}_{i,z}}\;\nabla_{\bm{\omega}}\Phi_{2}(\bm{\omega}_{t-1},i,\mathcal{B}_{t})\right].
+(4)
+Then the first-order moment is updated followed by a model parameter update:
+mt=β1​mt−1+(1−β1)​G​(𝝎t−1,ℬt)\displaystyle m_{t}=\beta_{1}m_{t-1}+(1-\beta_{1})G(\bm{\omega}_{t-1},\mathcal{B}_{t})
+(5)
+𝝎t=𝝎t−1−ηt​mt.\displaystyle\bm{\omega}_{t}=\bm{\omega}_{t-1}-\eta_{t}m_{t}.
+Wei et al. (2024) has designed a distributed optimization framework FastCLIP based on the above algorithm for large-scale CLIP training.
+4 TuneCLIP: A Self-supervised optimization framework
+As outlined in the problem statement, our goal is to adapt pretrained parameters 𝝎0\bm{\omega}_{0} to obtain refined weights 𝝎⋆\bm{\omega}^{\star} that improve performance across diverse domains. In the following two subsections, we will discuss the challenges and present our solutions. We will mainly compare with two approaches, OpenCLIP and FastCLIP equipped with an Adam-style optimizer with an initialization 𝝎0\bm{\omega}_{0}.
+4.1 Stage I: Optimizer Statistics Recovery (OSR)
+A naive approach for SSFT with a pretrained model ℳ\mathcal{M} with weights 𝝎0\bm{\omega}_{0} is to just run OpenCLIP (Cherti et al., 2023) or FastCLIP (Wei et al., 2024) algorithms on an existing self-supervised learning dataset 𝒟\mathcal{D} with an initialization of 𝝎0\bm{\omega}_{0}. Our hypothesis is that an open-weight pretrained model 𝝎0\bm{\omega}_{0} (e.g., OpenAI’s ViT-B/16) is usually not an optimal model. However, we observe a performance degradation in the first epoch of fine-tuning, see Figure 2, with the details of training deferred to Section 5. This phenomenon is common regardless of the model structure and datasets used for fine-tuning.
+Algorithm 1 Optimizer Statistics Recovery (OSR)
+Init: 𝝎𝟎​(Pretrained)\bm{\omega_{0}}\;(\text{Pretrained}),
+m0←[0]|ℳ|m_{0}\leftarrow[0]^{|\mathcal{M}|},
+v0←[0]|ℳ|v_{0}\leftarrow[0]^{|\mathcal{M}|},
+ux(0)←[0]|𝒟|,uz(0)←[0]|𝒟|u^{(0)}_{x}\leftarrow[0]^{|\mathcal{D}|},\;u^{(0)}_{z}\leftarrow[0]^{|\mathcal{D}|}
+for iteration t=1t=1 to TT  do
+Sample ℬt⊂𝒟\mathcal{B}_{t}\subset\mathcal{D}   // mini-batch sampling
+ui,x(t)←(1−γt)​ui,x(t−1)+γt​Φ1​(𝝎𝟎,i,ℬt),∀i∈ℬtu^{(t)}_{i,x}\leftarrow(1-\gamma_{t})u^{(t-1)}_{i,x}+\gamma_{t}\,\Phi_{1}(\bm{\omega_{0}},i,\mathcal{B}_{t}),\forall i\in\mathcal{B}_{t}   // refer equation 3
+ui,z(t)←(1−γt)​ui,z(t−1)+γt​Φ2​(𝝎𝟎,i,ℬt),∀i∈ℬtu^{(t)}_{i,z}\leftarrow(1-\gamma_{t})u^{(t-1)}_{i,z}+\gamma_{t}\,\Phi_{2}(\bm{\omega_{0}},i,\mathcal{B}_{t}),\forall i\in\mathcal{B}_{t}
+Compute gt=G⁡(𝝎𝟎,ℬt)g_{t}=G(\bm{\omega_{0}},\mathcal{B}_{t})   // frozen 𝝎𝟎\bm{\omega_{0}}
+Update mt←β1​mt−1+(1−β1)​gtm_{t}\leftarrow\beta_{1}m_{t-1}+(1-\beta_{1})g_{t}   // first moment
+Update vt←β2​vt−1+(1−β2)​(gt⊙gt)v_{t}\leftarrow\beta_{2}v_{t-1}+(1-\beta_{2})(g_{t}\odot g_{t})   // second moment
+Return: m⋆←mT,v⋆←vT,u⋆←{ui,x(T),ui,z(T)}i∈𝒟m^{\star}\leftarrow m_{T},\;v^{\star}\leftarrow v_{T},\;u^{\star}\leftarrow\{u^{(T)}_{i,x},u^{(T)}_{i,z}\}_{i\in\mathcal{D}}
+Figure 2: Zero-shot classification (%) performance on ImageNet-1k over 5 fine-tuning epochs for two OpenAI CLIP models (left: ViT-B/16, right: ViT-B/32). While FastCLIP and OpenCLIP show initial degradation and slow recovery, TuneCLIP maintains superior performance throughout fine-tuning.
+To understand this phenomenon, we provide a theoretical analysis of optimization error. We consider the optimization algorithm SogCLR used by FastCLIP, and note that analysis of OpenCLIP’s optimization algorithm suffer from the same issue.
+To run FastCLIP algorithm, we need to initialize several statistics, including m0m_{0} and ui,x(0),ui,z(0),∀iu^{(0)}_{i,x},u^{(0)}_{i,z},\forall i. These statistics are usually initialized to zeros in standard pretraining from scratch. Below, we show that their estimation error has a great impact on the convergence. To simplify the presentation, we introduce the following notations: ux(t)=[u1,x(t),⋯,un,x(t)],uz(t)=[u1,z(t),⋯,un,z(t)]u_{x}^{(t)}=[u_{1,x}^{(t)},\cdots,u_{n,x}^{(t)}],u_{z}^{(t)}=[u_{1,z}^{(t)},\cdots,u_{n,z}^{(t)}], Φ1​(𝝎𝟎,𝒟)=[Φ1​(𝝎𝟎,1,𝒟),⋯,Φ1​(𝝎𝟎,n,𝒟)],Φ2​(𝝎𝟎,𝒟)=[Φ2​(𝝎𝟎,1,𝒟),⋯,Φ2​(𝝎𝟎,n,𝒟)]\Phi_{1}(\bm{\omega_{0}},\mathcal{D})=[\Phi_{1}(\bm{\omega_{0}},1,\mathcal{D}),\cdots,\Phi_{1}(\bm{\omega_{0}},n,\mathcal{D})],\Phi_{2}(\bm{\omega_{0}},\mathcal{D})=[\Phi_{2}(\bm{\omega_{0}},1,\mathcal{D}),\cdots,\Phi_{2}(\bm{\omega_{0}},n,\mathcal{D})]. Due to space limitations, all necessary assumptions and theorem proofs in this subsection are deferred to Appendix A.
+Theorem 4.1.
+Let us consider the updates in (5) with initializations ux(0),uz(0)u_{x}^{(0)},u_{z}^{(0)}, and m0m_{0}. Under appropriate assumptions, with 1−β1=O⁡(B​ϵ2)1-\beta_{1}=O(B\epsilon^{2}), γ=O⁡(B​ϵ2)\gamma=O(B\epsilon^{2}) and η=O⁡(B2​ϵ2n)\eta=O(\frac{B^{2}\epsilon^{2}}{n}), we can find an ϵ\epsilon-stationary point 𝛚\bm{\omega} such that 𝔼⁡[‖∇ℒGCL​(𝛚)‖]≤ϵ\mathbb{E}[\left\|\nabla\mathcal{L}_{\mathrm{GCL}}(\bm{\omega})\right\|]\leq\epsilon in
+T=O⁡(nB2​ϵ4​(Δ0+Bn​M0+Ux,0+Uz,0))\displaystyle T=O\left(\frac{n}{B^{2}\epsilon^{4}}\left(\Delta_{0}+\frac{B}{n}M_{0}+U_{x,0}+U_{z,0}\right)\right)
+iterations, where Δ0=ℒGCL​(𝛚𝟎)−min𝛚⁡ℒGCL​(𝛚)\Delta_{0}=\mathcal{L}_{\mathrm{GCL}}(\bm{\omega_{0}})-\min_{\bm{\omega}}\mathcal{L}_{\mathrm{GCL}}(\bm{\omega}), M0=‖m0−∇ωℒGCL​(𝛚𝟎)‖2M_{0}=\left\|m_{0}-\nabla_{\omega}\mathcal{L}_{\mathrm{GCL}}(\bm{\omega_{0}})\right\|^{2}, Ux,0=12​n​‖ux(0)−Φ1​(𝛚𝟎,𝒟)‖2U_{x,0}=\frac{1}{2n}\left\|u_{x}^{(0)}-\Phi_{1}(\bm{\omega_{0}},\mathcal{D})\right\|^{2}, Uz,0=12​n​‖ux(0)−Φ2​(𝛚𝟎,𝒟)‖2U_{z,0}=\frac{1}{2n}\left\|u_{x}^{(0)}-\Phi_{2}(\bm{\omega_{0}},\mathcal{D})\right\|^{2}.
+Remark: The above theorem exhibits how the initial estimation errors of ux(0),uz(0)u_{x}^{(0)},u_{z}^{(0)}, and m0m_{0} affects the iteration complexity for finding an ϵ\epsilon-stationary solution. Since a pretrained model 𝝎𝟎\bm{\omega_{0}} is already well trained, we expect Δ0\Delta_{0} to be small. However, the initial estimation errors of ux(0),uz(0)u_{x}^{(0)},u_{z}^{(0)}, and m0m_{0} could be very large if they are initialized to zeros. It is these errors that cause the breaks convergence and hence the performance degradation at the beginning of training. We refer to this issue caused by the initial estimation errors of statistics Φ1​(𝝎𝟎,𝒟),Φ2​(𝝎𝟎,𝒟),∇ωℒGCL\Phi_{1}(\bm{\omega_{0}},\mathcal{D}),\Phi_{2}(\bm{\omega_{0}},\mathcal{D}),\nabla_{\omega}\mathcal{L}_{\mathrm{GCL}} as cold-start bias.
+To address the cold-start bias, we propose a simple method that aims to compute a better estimation of statistics Φ1​(𝝎𝟎,𝒟),Φ2​(𝝎𝟎,𝒟),∇ωℒGCL\Phi_{1}(\bm{\omega_{0}},\mathcal{D}),\Phi_{2}(\bm{\omega_{0}},\mathcal{D}),\nabla_{\omega}\mathcal{L}_{\mathrm{GCL}} for updating 𝝎𝟎\bm{\omega_{0}}. The idea is just run the update (5) with the model parameter fixed at 𝝎𝟎\bm{\omega_{0}}. We present the details in Algorithm 1, which is referred to as optimizer statistics recovery (OSR). The following theorem provides a guarantee that the estimation errors of returned statistics of OSR would be much reduced. In practice, we also compute a second moment estimator for using Adam optimizer, which improves performance in our experiments.
+Theorem 4.2.
+Let Algorithm 1 run for EE epochs (equivalently T=E⋅nBT=E\cdot\frac{n}{B} iterations) with 1−β1=O⁡(BE),γ=O⁡(BE)1-\beta_{1}=O(\sqrt{\frac{B}{E}}),\gamma=O(\sqrt{\frac{B}{E}}), we have that:
+𝔼⁡[12​n​‖ux(τ)−Φ1​(𝝎𝟎,𝒟)‖2+12​n​‖uz(τ)−Φ2​(𝝎𝟎,𝒟)‖2]≤O⁡(Ux,0+Uz,0B​E+1B​E),\displaystyle\mathbb{E}\bigg[\frac{1}{2n}\left\|u_{x}^{(\tau)}-\Phi_{1}(\bm{\omega_{0}},\mathcal{D})\right\|^{2}+\frac{1}{2n}\left\|u_{z}^{(\tau)}-\Phi_{2}(\bm{\omega_{0}},\mathcal{D})\right\|^{2}\bigg]\leq O\left(\frac{U_{x,0}+U_{z,0}}{\sqrt{BE}}+\frac{1}{\sqrt{BE}}\right),
+(6)
+𝔼⁡[‖mτ−∇ωℒGCL​(𝝎𝟎)‖2]≤O⁡(BN​M0+Ux,0+Uz,0B​E+1B​E)\displaystyle\mathbb{E}\bigg[\left\|m_{\tau}-\nabla_{\omega}\mathcal{L}_{\mathrm{GCL}}(\bm{\omega_{0}})\right\|^{2}\bigg]\leq O\left(\frac{\frac{B}{N}M_{0}+U_{x,0}+U_{z,0}}{\sqrt{BE}}+\frac{1}{\sqrt{BE}}\right)
+(7)
+where τ∈{0,…,T−1}\tau\in\{0,\ldots,T-1\} is randomly sampled.
+We observe that E=5E=5 epochs for OSR is good enough to ensure stable training in the second stage of updating the model parameters.
+4.2 Stage II: Hinged Global Contrastive Loss
+With accurate initializations of m0m_{0} and ui,x(0),ui,z(0),∀iu^{(0)}_{i,x},u^{(0)}_{i,z},\forall i found by OSR, we continue fine-tuning 𝝎𝟎\bm{\omega_{0}} with the SogCLR algorithm. This brings evident improvement across a variety of tasks. However, one issue is that the retrieval performance could still decline as fine-tuning progresses. We illustrate a result of the fine-tuning of SigLIP ViT-B/16 on the DFN dataset (see Figure 3(b)), where the retrieval performance on the fine-tuning dataset keeps increasing but the retrieval performance on testing data such as Flickr decreases. This phenomenon is also prevalent regardless of the pretrained models; see Figure 7 (Appendix E).
+(a) Supervised finetuning
+(b) Self-Supervised finetuning
+Figure 3:
+In supervised fine-tuning (red), OSR+GCL outperforms OSR+HGCL (TuneCLIP) because true negative labels justify separating negatives. In contrast, under self-supervised fine-tuning (blue), the absence of such labels makes OSR+HGCL more suitable, leading to improved retrieval performance on Flickr when fine-tuned with SSFT (see Appendix E for OpenAI CLIP & details).
+We attribute this generalization gap to the prevalence of false negatives in web-scale datasets. By optimizing GCL with ℓ(⋅)=⋅\ell(\cdot)=\cdot, we keep decreasing the similarity gap si​j−si​is_{ij}-s_{ii} and sj​i−si​is_{ji}-s_{ii} across interations. If (xi,zj)(x_{i},z_{j}) are semantically similar, e.g., zjz_{j} is the caption of an image xjx_{j} that is semantically similar to xix_{i}, then minimizing si​j−si​is_{ij}-s_{ii} would distort well learnt embeddings of xi,zjx_{i},z_{j}. This strict separation on training data will undermine the testing performance due to distributional shift. This is the reason that leads to the retrieval performance drop.
+To mitigate this over-penalization of false negatives, we introduce a simple yet effective remedy by using a hinge-based pairwise surrogate loss ℓ⁡(si​j−si​i)=max⁡(si​j−si​i+m,0)2\ell(s_{ij}-s_{ii})=\max(s_{ij}-s_{ii}+m,0)^{2} with m>0m>0 being a margin hyperparameter constant. It means that as long as si​i>si​j+ms_{ii}>s_{ij}+m, its gradient will become zero and hence will not affect the model updates anymore. Illustrative examples of this phenomenon are provided in Table 21 (Appendix K). Accordingly, we define new Φ1m(.)\Phi_{1}^{m}(.) (image-anchored) and Φ2m(.)\Phi_{2}^{m}(.) (text-anchored) as:
+Φ1m​(𝝎,i,𝒟)\displaystyle\Phi^{m}_{1}(\bm{\omega},i,\mathcal{D})
+=1|𝒟|​∑j∈𝒟∖{i}exp⁡(ℓ⁡(𝐬i,j−𝐬i,i)τ),\displaystyle=\frac{1}{|\mathcal{D}|}\sum_{j\in\mathcal{D}\setminus\{i\}}\exp\!\left(\frac{\ell(\mathbf{s}_{i,j}-\mathbf{s}_{i,i})}{\tau}\right),
+ℓ⁡(𝐬i,j−𝐬i,i)=[𝐬i,j−𝐬i,i+m]+2,\displaystyle\quad\ell(\mathbf{s}_{i,j}-\mathbf{s}_{i,i})=[\,\mathbf{s}_{i,j}-\mathbf{s}_{i,i}+m\,]^{2}_{+},
+(8)
+Φ2m​(𝝎,i,𝒟)\displaystyle\Phi^{m}_{2}(\bm{\omega},i,\mathcal{D})
+=1|𝒟|​∑j∈𝒟∖{i}exp⁡(ℓ⁡(𝐬j,i−𝐬i,i)τ),\displaystyle=\frac{1}{|\mathcal{D}|}\sum_{j\in\mathcal{D}\setminus\{i\}}\exp\!\left(\frac{\ell(\mathbf{s}_{j,i}-\mathbf{s}_{i,i})}{\tau}\right),
+ℓ⁡(𝐬j,i−𝐬i,i)=[𝐬j,i−𝐬i,i+m]+2.\displaystyle\quad\ell(\mathbf{s}_{j,i}-\mathbf{s}_{i,i})=[\,\mathbf{s}_{j,i}-\mathbf{s}_{i,i}+m\,]^{2}_{+}.
+Equation 8 leads to the Hinged Global Contrastive Loss (HGCL), defined below.
+ℒHGCL​(𝝎)=τ|𝒟|​∑i∈𝒟[log⁡(ε+Φ1m​(𝝎,i,𝒟))+log⁡(ε+Φ2m​(𝝎,i,𝒟))].\mathcal{L}_{\mathrm{HGCL}}(\bm{\omega})=\frac{\tau}{|\mathcal{D}|}\sum_{i\in\mathcal{D}}\left[\log\!\big(\varepsilon+\Phi^{m}_{1}(\bm{\omega},i,\mathcal{D})\big)+\log\!\big(\varepsilon+\Phi^{m}_{2}(\bm{\omega},i,\mathcal{D})\big)\right].
+(9)
+We optimize ℒHGCL\mathcal{L}_{\mathrm{HGCL}} using the SogCLR algorithm with OSR. Algorithm 2 presents the details of our final algorithm named TuneCLIP, combining OSR with HGCL.
+Finally, we note that the margin mm is a hyperparameter that controls how aggressively negatives are separated from the positive. A larger mm enforces stricter separation, pushing more false negatives downward until their similarity (si,js_{i,j} or sj,is_{j,i}) lies at least mm below the positive score (si,is_{i,i}), even when they start with relatively high similarity. Conversely, a smaller mm relaxes this constraint, allowing higher-scoring false negatives to be retained but at the risk of insufficient separation of true negatives. Choosing mm therefore presents a tradeoff between alleviating the over-suppression of semantically related false negatives and preventing true negatives from remaining too close to the anchor.
+Algorithm 2 TuneCLIP Algorithm
+Given: 𝝎0​(Pretrained)\bm{\omega}_{0}\;(\text{Pretrained}), dataset 𝒟\mathcal{D}, batch size |ℬ||\mathcal{B}|,
+epochs E′E^{\prime}, τ\tau, margin mm, γt\gamma_{t}, Adam (β1,β2)(\beta_{1},\beta_{2})
+(m⋆,v⋆,{ui,x⋆,ui,z⋆}i∈𝒟)←OSR⁡(𝝎0,𝒟)(m^{\star},v^{\star},\{u^{\star}_{i,x},u^{\star}_{i,z}\}_{i\in\mathcal{D}})\leftarrow\mathrm{OSR}(\bm{\omega}_{0},\mathcal{D})   // Alg. 1
+Init: 𝝎←𝝎0\bm{\omega}\leftarrow\bm{\omega}_{0}; m0←m⋆m_{0}\leftarrow m^{\star}; v0←v⋆v_{0}\leftarrow v^{\star};
+ui,x(0)←ui,x⋆,ui,z(0)←ui,z⋆u^{(0)}_{i,x}\leftarrow u^{\star}_{i,x},\;u^{(0)}_{i,z}\leftarrow u^{\star}_{i,z} for all i∈𝒟i\in\mathcal{D}
+for iteration t=1​to​T′t=1\;\textnormal{{to}}\;T^{\prime}  do
+Sample ℬt⊂𝒟\mathcal{B}_{t}\subset\mathcal{D}   // mini-batch sampling
+for each i∈ℬti\in\mathcal{B}_{t} do
+Φ1m​(𝝎,i,ℬt)←1|ℬt|​∑zj∈ℬt∖{zi}exp⁡(ℓ⁡(𝐬i,j−𝐬i,i)τ){\Phi}^{m}_{1}(\bm{\omega},i,\mathcal{B}_{t})\leftarrow\frac{1}{|\mathcal{B}_{t}|}\sum_{z_{j}\in\mathcal{B}_{t}\setminus\{z_{i}\}}\exp\!\left(\frac{\ell(\mathbf{s}_{i,j}-\mathbf{s}_{i,i})}{\tau}\right)   // equation 8
+Φ2m​(𝝎,i,ℬt)←1|ℬt|​∑xj∈ℬt∖{xi}exp⁡(ℓ⁡(𝐬j,i−𝐬i,i)τ){\Phi}^{m}_{2}(\bm{\omega},i,\mathcal{B}_{t})\leftarrow\frac{1}{|\mathcal{B}_{t}|}\sum_{x_{j}\in\mathcal{B}_{t}\setminus\{x_{i}\}}\exp\!\left(\frac{\ell(\mathbf{s}_{j,i}-\mathbf{s}_{i,i})}{\tau}\right)   // equation 8
+ui,x(t)←(1−γt)​ui,x(t−1)+γt​Φ1m​(𝝎,i,ℬt)u^{(t)}_{i,x}\leftarrow(1-\gamma_{t})u^{(t-1)}_{i,x}+\gamma_{t}\,{\Phi}^{m}_{1}(\bm{\omega},i,\mathcal{B}_{t})
+ui,z(t)←(1−γt)​ui,z(t−1)+γt​Φ2m​(𝝎,i,ℬt)u^{(t)}_{i,z}\leftarrow(1-\gamma_{t})u^{(t-1)}_{i,z}+\gamma_{t}\,{\Phi}^{m}_{2}(\bm{\omega},i,\mathcal{B}_{t})
+g~t←τ|ℬt|​∑i∈ℬt[1ε+ui,x(t)​∇𝝎Φ1m​(𝝎,i,ℬt)+1ε+ui,z(t)​∇𝝎Φ2m​(𝝎,i,ℬt)]\tilde{g}_{t}\leftarrow\dfrac{\tau}{|\mathcal{B}_{t}|}\sum_{i\in\mathcal{B}_{t}}\!\left[\dfrac{1}{\varepsilon+u^{(t)}_{i,x}}\nabla_{\bm{\omega}}{\Phi}^{m}_{1}(\bm{\omega},i,\mathcal{B}_{t})+\dfrac{1}{\varepsilon+u^{(t)}_{i,z}}\nabla_{\bm{\omega}}{\Phi}^{m}_{2}(\bm{\omega},i,\mathcal{B}_{t})\right]
+Update mtm_{t}, vtv_{t}, and 𝝎\bm{\omega} using Adam-style optimizer with gradient g~t\tilde{g}_{t}
+Return: 𝝎⋆←𝝎\bm{\omega}^{\star}\leftarrow\bm{\omega}   // Best parameters after last iteration
+5 Experiments
+Open-Weight CLIP models. We explore a range of pretrained CLIP models at different scales, including OpenAI’s CLIP ViT-B/32, OpenAI’s CLIP ViT-B/16, LAION’s CLIP ViT-B/32 and SigLIP ViT-B/16, where ViT-B/X refers to the ViT based image encoder. We report results for fine-tuning OpenAI’s ViT-B/16 and SigLIP ViT-B/16 in the main paper, and provide results of fine-tuning other models in Appendix G. We additionally evaluated our method for fine-tuning the state-of-the-art CLIP ViT-H/14 pretrained on DFN-5B  (Fang et al., 2023).
+Fine-tuning datasets. To study how performance scales with data under fixed training conditions, we fine-tune on two subsets of the DFN datasets (Fang et al., 2023) containing 12 million (DFN-12M) and 60 million (DFN-60M) samples. DFN datasets are generated by applying Data Filtering Networks, which uses a trained model to filter massive uncurated web data into high-quality, task-agnostic corpora. While varying the datasets, the model architecture, optimizer, and schedule are kept fixed.
+Training hyperparameters & algorithms. We run OSR for E=5E=5 epochs, and another E′=5E^{{}^{\prime}}=5 epochs for fine-tuning. Optimizer used is AdamW (Kingma and Ba, 2014) (β1=0.9,β2=0.98\beta_{1}{=}0.9,\,\beta_{2}{=}0.98). The CLIP temperature τ\tau remains fixed as provided with checkpoint (no scheduling). We sweep learning rates {10−4,10−5,10−6}\{10^{-4},10^{-5},10^{-6}\}. Batch sizes are 256×8256\times 8 GPUs for ViT-B/16 and 512×8512\times 8 GPUs for ViT-B/32 CLIPs. The margin mm is swept from 0.5 down to 0.01, with values around 0.10.1 proving to be the most effective across the majority of architectures. More details are provided in Appendices B & C with ablation study on mm in Appendix C.1. To ensure consistency and reproducibility, we implement our algorithm using FastCLIP codebase.
+Evaluation protocol and metrics.
+We follow the DataComp protocol (Gadre et al., 2023) and use 38 benchmark datasets. Our main results are reported in three evaluation groups: (1) ImageNet-1k and six robustness variants (Krizhevsky et al., 2017) for assessing zero-shot classification accuracy, (2) MSCOCO or COCO (Vinyals et al., 2016) and Flickr30k (Van Zwol, 2007) for measuring multi as well as single-object retrieval performance, and (3) the full DataComp (Gadre et al., 2023) benchmark. Best model selection is primarily guided by performance on ImageNet-1k.
+Table 1: Summary of mean zero-shot performance across ImageNet variants, retrieval benchmarks, and the DataComp benchmark,
+together with wall-clock training time (WCT) per GPU. While TuneCLIP delivers consistent improvements across both models, stronger baseline models like SigLIP ViT-B/16 show more modest retrieval gains compared to OpenAI ViT-B/16.
+Base Model
+Method
+WCT. (hrs)
+IN & Variants
+Retrieval
+DataComp
+OpenAI
+ViT-B/16
+Baseline
+N/A
+57.67
+57.46
+56.26
+FastCLIP
+4.21
+54.57 (↓\downarrow)
+51.88 (↓\downarrow)
+53.53 (↓\downarrow)
+OpenCLIP
+5.46
+54.99 (↓\downarrow)
+57.81 (↓\downarrow)
+55.11 (↓\downarrow)
+TuneCLIP
+8.62
+59.36 (+1.69)
+64.12 (+6.66)
+58.62 (+2.36)
+SigLIP
+ViT-B/16
+Baseline
+N/A
+63.12
+69.32
+62.32
+FastCLIP
+4.28
+39.22 (↓\downarrow)
+43.37 (↓\downarrow)
+45.80 (↓\downarrow)
+OpenCLIP
+7.55
+40.21 (↓\downarrow)
+51.54 (↓\downarrow)
+48.10 (↓\downarrow)
+TuneCLIP
+9.27
+65.58 (+2.46)
+69.44 (+0.11)
+63.47 (+1.15)
+Main Results. We present results on three evaluation suites for fine-tuning various models on DFN-12M in Table 1. We also plot the curves of zero-shot classification performance on ImageNet-1k during training for different checkpoints of TuneCLIP in Figures 2 and in Figures 10, 11 (Appendix F). Additional detailed results of of zero-shot classification on ImageNet and its variants are shown in Tables 12, 13, and of other tasks are provided in Tables 11, 14, 15. Table 10 summarizes the overall DataComp performance. We observe that TuneCLIP delivers substantial gains over the base model, most notably for OpenAI ViT-B/16 with 6.7%6.7\% improvement on retrieval and 1.7%1.7\% improvement on zero-shot classification, while improvements for SigLIP are smaller given its stronger baseline. In contrast, the baseline methods OpenCLIP and FastCLIP not only fail to improve the performance over the base model but also suffer significant performance drop in retrieval and zero-shot classification.
+Finally, TuneCLIP for fine-tuning the state-of-the-art model ViT-H/14-quickgelu (Fang et al., 2023) achieves new SOTA accuracy on ImageNet and its variants (Appendix J), surpassing ViT-H/14 at 224×\times224 image resolution by about 1.5% (from 71.80% to 73.23%), while maintaining comparable performance on Retrieval and DataComp. Compared to the improvements on weaker models, e.g., +1.69% (from 57.67% to 59.36%) on OpenAI ViT-B/16 and +2.46% over SigLIP ViT-B/16 (from 63.12% to 65.58%), the improvement of 1.5% (from 71.80% to 73.23%) is still significant.
+Computational Cost & Analysis. We also provide a compute cost analysis for all the algorithms in Appendix H, reporting wall-clock time and GPU-hours across
+all backbones (Tables 1,  16, 17 & 18). While
+TuneCLIP incurs higher compute due to its two-stage framework, the
+overhead remains modest and is consistently accompanied by improved performance across metrics. In contrast, baseline methods cannot even achieve any major improvements even with the same computational costs as ours (refer Figure 11 for extended run of baseline methods).
+5.1 Ablation & Scaling of TuneCLIP
+We begin with an ablation study on the effect of OSR, comparing TuneCLIP with full statistics recovery, partial recovery of mtm_{t} and vtv_{t}, and no recovery at all.
+The results are reported in Table 2, which shows that using the full recovered statistics from OSR achieves the best, and the recover of first and second-order moments is more important than the recover of utu_{t} (i.e., ux,uzu_{x},u_{z}). TuneCLIP reaches a +4.7% DataComp gain when all (mt,vt,utm_{t},v_{t},u_{t}) are used.
+Beyond the ablations conducted within OSR itself, we also compare against simple cold-start mitigation heuristics that practitioners might reasonably try to stabilize fine-tuning, as presented in Appendix I (Table 19). These alternatives offer only limited stability and smaller gains, reinforcing that OSR provides a more effective and reliable solution to cold-start bias.
+We also conduct an ablation study comparing GCL with HGCL, both with OSR for supervised fine-tuning and SSFT. For supervised fine-tuning, we fine-tune a pretrained model on the training set of Flickr30k data and evaluate on a testing set of Flickr1k. For SSFT, we finetune the same pretrained model on DFN-12M and evaluate on the same testing set of Flickr1k. The results are shown in Figure 3 for fine-tuning SigLIP ViT-B/16 and in Figure 7(Appendix E) for fine-tuning OpenAI’s CLIP ViT-B/16. The results indicate that for supervised fine-tuning, optimizing GCL with OSR delivers better retrieval performance on the training as well as testing set, while for SSFT, optimizing HGCL with OSR delivers better retrieval performance. This confirms the difference between SSFT and supervised fine-tuning due to the presence of false negatives in SSFT, and corroborates the effectiveness of optimizing HGCL in improving the retrieval performance in case of SSFT. In Figure 12 (Appendix K), we further show that optimizing HGCL achieves smaller variance of similarities scores for false negatives (Top 5 retrieved negative samples). We also observe that the true positive (Top-1) distribution becomes closer to the false negative distribution in the fine-tuning data.
+Figure 4: GCL improves classification but can degrades retrieval, whereas HGCL stabilizes retrieval while preserving overall classification gains.
+As discussed earlier, standard GCL (without margin-based thresholding) tends to improve classification but simultaneously reduces retrieval scores, with some models such as SigLIP ViT-B/16 and LAION ViT-B/32, falling below their pretrained retrieval baselines due to false-negative over-penalization. As shown in Fig. 4, HGCL mitigates this degradation, preserving classification performance at a comparable level while maintaining retrieval accuracy at or above the original baseline.
+Table 2: Ablation study on the impact of transferring optimizer statistics from OSR to HGCL fine-tuning using OpenAI ViT-B/16 CLIP. Starting from the baseline without any transferred states, performance is limited across all benchmarks. Introducing (mt,vt)(m_{t},v_{t}) transfer yields a substantial jump. Adding utu_{t} on top provides a further boost, resulting in the strongest overall score.
+(mtm_{t}, vtv_{t}) utu_{t}
+IN & Variants
+Retrieval
+DataComp
+Mean
+(×\times, ×\times) ×\times
+54.91
+58.64
+54.49
+56.01
+(✓, ✓) ×\times
+59.48
+63.70
+58.56
+60.58
+(✓, ✓) ✓
+59.36
+64.12
+58.62
+60.70 (+4.69+4.69)
+Finally, we analyze how TuneCLIP scales with increasing amounts of fine-tuning data while keeping the model size fixed. As shown in Figure 5, the method maintains stable performance even with a fivefold increase in data on DFN-60M.
+Although scaling from 12M to 60M samples provides further gains, the improvement is modest because fine-tuning operates on already well-structured pretrained representations. Most generalizable features are retained from pretraining, so additional data primarily reinforces existing alignments rather than discovering new ones.
+Table 3: Comparison of TuneCLIP performance with OpenAI CLIP ViT-B/16 when fine-tuned on two different training corpora, the noisier CC12M dataset and the filtered DFN-12M subset.
+Method
+Data
+IN & Variants
+Retrieval
+DataComp
+Base (OpenAI)
+×\times
+57.67
+57.46
+56.26
+TuneCLIP
+CC12M
+57.68 (+0.01)
+65.83 (+8.37)
+56.47 (+0.21)
+TuneCLIP
+DFN12M
+59.36 (+1.69)
+64.12 (+6.66)
+58.62 (+2.36)
+The DFN datasets are constructed by filtering web image-text pairs using a learned filter, and thus form a relatively clean source of self-supervised training data. To examine how TuneCLIP behaves on noisier corpora, we also fine-tune on the CC12M dataset (Changpinyo et al., 2021), which is a web corpus with weaker caption-image alignments or less precise texts for an image. As shown in Table 3, TuneCLIP fine-tuned on CC12M still yields a clear improvement and consistent positive gains across the three metrics, while DFN-12M produces even larger average improvements. Overall, these results indicate that TuneCLIP remains effective on both cleaner filtered data and noisier, unfiltered web corpora, rather than relying on any specific property of a dataset.
+(a) OpenAI ViT-B/16
+(b) SigLIP ViT-B/16
+Figure 5: Effect of data scaling on TuneCLIP performance across models.
+6 Conclusion
+TuneCLIP solves a core problem in model adaptation by showing how to fine-tune a pre-trained model into a superior version with broad, multi-domain improvements. Our two-stage approach, combining optimizer statistics recovery with a hinge-based contrastive loss, provides the mechanism, delivering consistent and dissectible gains across classification, retrieval, and diverse benchmarks. This work thus does more than just propose a new method, it opens a concrete and promising new direction for self-supervised fine-tuning, moving us beyond the limitations of prior art toward truly general-purpose foundation model enhancement.
+7 Limitations and Future Works
+One limitation of this work is that we use all data for self-supervised fine-tuning without data selection or filtering. As a future direction, we consider how to select the most informative data given the knowledge of the pretrained model to accelerate the fine-tuning. Extending our framework beyond CLIP models to other self-supervised architectures (e.g. DINO) is also an interesting direction.
+References
+Al Rahhal et al. (2025)
+M. M. Al Rahhal, Y. Bazi, and M. Zuair
+LoRA-clip: efficient low-rank adaptation of large clip foundation model for scene classification.
+Authorea Preprints.
+Cited by: §2.
+Ao et al. (2023)
+T. Ao, Z. Zhang, and L. Liu
+Gesturediffuclip: gesture diffusion model with clip latents.
+ACM Transactions on Graphics (TOG) 42 (4), pp. 1–18.
+Cited by: §1.
+Bafghi et al. (2025)
+R. A. Bafghi, C. Bagwell, A. Ravichandran, A. Shrivastava, and M. Raissi
+Fine tuning without catastrophic forgetting via selective low rank adaptation.
+arXiv preprint arXiv:2501.15377.
+Cited by: §2.
+Barbu et al. (2019)
+A. Barbu, D. Mayo, J. Alverio, W. Luo, C. Wang, D. Gutfreund, J. Tenenbaum, and B. Katz
+Objectnet: a large-scale bias-controlled dataset for pushing the limits of object recognition models.
+Advances in neural information processing systems 32.
+Cited by: Table 13.
+Changpinyo et al. (2021)
+S. Changpinyo, P. Sharma, N. Ding, and R. Soricut
+Conceptual 12m: pushing web-scale image-text pre-training to recognize long-tail visual concepts.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 3558–3568.
+Cited by: §5.1.
+Chen et al. (2023)
+Y. Chen, X. Qi, J. Wang, and L. Zhang
+Disco-clip: a distributed contrastive loss for memory efficient clip training.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+pp. 22648–22657.
+Cited by: §2.
+Cherti et al. (2023)
+M. Cherti, R. Beaumont, R. Wightman, M. Wortsman, G. Ilharco, C. Gordon, C. Schuhmann, L. Schmidt, and J. Jitsev
+Reproducible scaling laws for contrastive language-image learning.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 2818–2829.
+Cited by: Table 9,
+Appendix D,
+§1,
+§2,
+§3,
+§4.1.
+Devlin et al. (2019)
+J. Devlin, M. Chang, K. Lee, and K. Toutanova
+Bert: pre-training of deep bidirectional transformers for language understanding.
+In Proceedings of the 2019 conference of the North American chapter of the association for computational linguistics: human language technologies, volume 1 (long and short papers),
+pp. 4171–4186.
+Cited by: §2.
+Ding et al. (2022)
+Y. Ding, L. Liu, C. Tian, J. Yang, and H. Ding
+Don’t stop learning: towards continual learning for the clip model.
+arXiv preprint arXiv:2207.09248.
+Cited by: §1,
+§2.
+Dong et al. (2022)
+X. Dong, J. Bao, T. Zhang, D. Chen, S. Gu, W. Zhang, L. Yuan, D. Chen, F. Wen, and N. Yu
+Clip itself is a strong fine-tuner: achieving 85.7% and 88.0% top-1 accuracy with vit-b and vit-l on imagenet.
+arXiv preprint arXiv:2212.06138.
+Cited by: §1.
+Dosovitskiy et al. (2020)
+A. Dosovitskiy, L. Beyer, A. Kolesnikov, D. Weissenborn, X. Zhai, T. Unterthiner, M. Dehghani, M. Minderer, G. Heigold, S. Gelly, et al.
+An image is worth 16x16 words: transformers for image recognition at scale.
+arXiv preprint arXiv:2010.11929.
+Cited by: §2.
+Fahes et al. (2024)
+M. Fahes, T. Vu, A. Bursuc, P. Pérez, and R. de Charette
+Fine-tuning clip’s last visual projector: a few-shot cornucopia.
+Ph.D. Thesis, Inria.
+Cited by: §1.
+Fang et al. (2023)
+A. Fang, A. M. Jose, A. Jain, L. Schmidt, A. Toshev, and V. Shankar
+Data filtering networks.
+arXiv preprint arXiv:2309.17425.
+Cited by: §1,
+§1,
+§5,
+§5,
+§5.
+Gadre et al. (2023)
+S. Y. Gadre, G. Ilharco, A. Fang, J. Hayase, G. Smyrnis, T. Nguyen, R. Marten, M. Wortsman, D. Ghosh, J. Zhang, et al.
+Datacomp: in search of the next generation of multimodal datasets.
+Advances in Neural Information Processing Systems 36, pp. 27092–27112.
+Cited by: Table 10,
+§5.
+Goyal et al. (2023)
+S. Goyal, A. Kumar, S. Garg, Z. Kolter, and A. Raghunathan
+Finetune like you pretrain: improved finetuning of zero-shot vision models.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+pp. 19338–19347.
+Cited by: §1,
+§1,
+§2.
+He et al. (2016)
+K. He, X. Zhang, S. Ren, and J. Sun
+Identity mappings in deep residual networks.
+In European conference on computer vision,
+pp. 630–645.
+Cited by: §2.
+Hu et al. (2022)
+E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, W. Chen, et al.
+Lora: low-rank adaptation of large language models..
+ICLR 1 (2), pp. 3.
+Cited by: §2.
+Jha et al. (2024)
+S. Jha, D. Gong, and L. Yao
+Clap4clip: continual learning with probabilistic finetuning for vision-language models.
+Advances in neural information processing systems 37, pp. 129146–129186.
+Cited by: §1,
+§2.
+Jiao et al. (2024)
+L. Jiao, L. Cao, and T. Wang
+Prompt-based continual learning for extending pretrained clip models’ knowledge.
+In Proceedings of the 6th ACM International Conference on Multimedia in Asia,
+pp. 1–8.
+Cited by: §2.
+Khan et al. (2023)
+M. A. Khan, R. Hamila, and H. Menouar
+Clip: train faster with less data.
+In 2023 IEEE international conference on big data and smart computing (BigComp),
+pp. 34–39.
+Cited by: §2.
+Khattak et al. (2023)
+M. U. Khattak, H. Rasheed, M. Maaz, S. Khan, and F. S. Khan
+Maple: multi-modal prompt learning.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 19113–19122.
+Cited by: §2.
+Kingma and Ba (2014)
+D. P. Kingma and J. Ba
+Adam: a method for stochastic optimization.
+arXiv preprint arXiv:1412.6980.
+Cited by: §1,
+§5.
+Koleilat et al. (2025)
+T. Koleilat, H. Asgariandehkordi, H. Rivaz, and Y. Xiao
+Medclip-samv2: towards universal text-driven medical image segmentation.
+Medical Image Analysis, pp. 103749.
+Cited by: §2.
+Krizhevsky et al. (2017)
+A. Krizhevsky, I. Sutskever, and G. E. Hinton
+ImageNet classification with deep convolutional neural networks.
+Communications of the ACM 60 (6), pp. 84–90.
+Cited by: §1,
+§5.
+Kumar et al. (2022)
+A. Kumar, A. Raghunathan, R. Jones, T. Ma, and P. Liang
+Fine-tuning can distort pretrained features and underperform out-of-distribution.
+arXiv preprint arXiv:2202.10054.
+Cited by: §2.
+Li et al. (2024)
+K. Li, W. Xie, Y. Huang, D. Deng, L. Hong, Z. Li, R. Silva, and N. L. Zhang
+Dual risk minimization: towards next-level robustness in fine-tuning zero-shot models.
+Advances in Neural Information Processing Systems 37, pp. 66025–66057.
+Cited by: §2.
+Li et al. (2023)
+Y. Li, H. Fan, R. Hu, C. Feichtenhofer, and K. He
+Scaling language-image pre-training via masking.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 23390–23400.
+Cited by: §2.
+Liu et al. (2025)
+T. Liu, H. Zhang, S. Parashar, and S. Kong
+Few-shot recognition via stage-wise retrieval-augmented finetuning.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+pp. 15086–15097.
+Cited by: §1.
+Meng et al. (2025)
+G. Meng, S. He, J. Wang, T. Dai, L. Zhang, J. Zhu, Q. Li, G. Wang, R. Zhang, and Y. Jiang
+EvdCLIP: improving vision-language retrieval with entity visual descriptions from large language models.
+In Proceedings of the AAAI Conference on Artificial Intelligence,
+Vol. 39, pp. 6126–6134.
+Cited by: §2.
+Mo et al. (2023)
+S. Mo, M. Kim, K. Lee, and J. Shin
+S-clip: semi-supervised vision-language learning using few specialist captions.
+Advances in Neural Information Processing Systems 36, pp. 61187–61212.
+Cited by: §2.
+Mosbach et al. (2020)
+M. Mosbach, M. Andriushchenko, and D. Klakow
+On the stability of fine-tuning bert: misconceptions, explanations, and strong baselines.
+arXiv preprint arXiv:2006.04884.
+Cited by: §2.
+Nguyen et al. (2024)
+B. Nguyen, S. Uhlich, F. Cardinaux, L. Mauch, M. Edraki, and A. Courville
+Saft: towards out-of-distribution generalization in fine-tuning.
+In European Conference on Computer Vision,
+pp. 138–154.
+Cited by: §1.
+Peleg et al. (2025)
+A. Peleg, N. D. Singh, and M. Hein
+Advancing compositional awareness in clip with efficient fine-tuning.
+arXiv preprint arXiv:2505.24424.
+Cited by: §2,
+§2.
+Qiu et al. (2024)
+Z. Qiu, S. Guo, M. Xu, T. Zhao, L. Zhang, and T. Yang
+To cool or not to cool? temperature network meets large foundation models via dro.
+arXiv preprint arXiv:2404.04575.
+Cited by: §1,
+§2.
+Qiu et al. (2023)
+Z. Qiu, Q. Hu, Z. Yuan, D. Zhou, L. Zhang, and T. Yang
+Not all semantics are created equal: contrastive self-supervised learning with automatic temperature individualization.
+arXiv preprint arXiv:2305.11965.
+Cited by: §1,
+§2.
+Radford et al. (2021)
+A. Radford, J. W. Kim, C. Hallacy, A. Ramesh, G. Goh, S. Agarwal, G. Sastry, A. Askell, P. Mishkin, J. Clark, et al.
+Learning transferable visual models from natural language supervision.
+In International conference on machine learning,
+pp. 8748–8763.
+Cited by: §1,
+§3.
+Ramaswamy et al. (2023)
+V. V. Ramaswamy, S. Y. Lin, D. Zhao, A. Adcock, L. van der Maaten, D. Ghadiyaram, and O. Russakovsky
+Geode: a geographically diverse evaluation dataset for object recognition.
+Advances in Neural Information Processing Systems 36, pp. 66127–66137.
+Cited by: Table 14.
+Rasley et al. (2020)
+J. Rasley, S. Rajbhandari, O. Ruwase, and Y. He
+Deepspeed: system optimizations enable training deep learning models with over 100 billion parameters.
+In Proceedings of the 26th ACM SIGKDD international conference on knowledge discovery & data mining,
+pp. 3505–3506.
+Cited by: §2.
+Schall et al. (2024)
+K. Schall, K. U. Barthel, N. Hezel, and K. Jung
+Optimizing clip models for image retrieval with maintained joint-embedding alignment.
+In International Conference on Similarity Search and Applications,
+pp. 97–110.
+Cited by: §2.
+Shen et al. (2021)
+S. Shen, L. H. Li, H. Tan, M. Bansal, A. Rohrbach, K. Chang, Z. Yao, and K. Keutzer
+How much can clip benefit vision-and-language tasks?.
+arXiv preprint arXiv:2107.06383.
+Cited by: §1.
+Shi et al. (2024)
+L. Shi, J. Fan, and J. Yan
+Ot-clip: understanding and generalizing clip via optimal transport.
+In Forty-first International Conference on Machine Learning,
+Cited by: §2.
+Srinivasan et al. (2023)
+T. Srinivasan, X. Ren, and J. Thomason
+Curriculum learning for data-efficient vision-language alignment.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+pp. 5619–5624.
+Cited by: §1.
+Sun et al. (2023)
+Q. Sun, Y. Fang, L. Wu, X. Wang, and Y. Cao
+Eva-clip: improved training techniques for clip at scale.
+arXiv preprint arXiv:2303.15389.
+Cited by: §2,
+§2.
+Van Zwol (2007)
+R. Van Zwol
+Flickr: who is looking?.
+In IEEE/WIC/ACM International Conference on Web Intelligence (WI’07),
+pp. 184–190.
+Cited by: §1,
+§5.
+Vaswani et al. (2017)
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, L. Kaiser, and I. Polosukhin
+Attention is all you need.
+Advances in neural information processing systems 30.
+Cited by: §2.
+Vinyals et al. (2016)
+O. Vinyals, A. Toshev, S. Bengio, and D. Erhan
+Show and tell: lessons learned from the 2015 mscoco image captioning challenge.
+IEEE transactions on pattern analysis and machine intelligence 39 (4), pp. 652–663.
+Cited by: §5.
+Wang and Yang (2022)
+B. Wang and T. Yang
+Finite-sum coupled compositional stochastic optimization: theory and applications.
+arXiv preprint arXiv:2202.12396.
+Cited by: §A.1,
+§A.1,
+§A.1,
+§A.2,
+§A.2,
+Lemma A.3,
+Lemma A.4,
+Appendix A.
+Wang et al. (2025)
+Z. Wang, S. Yang, L. Qiao, and L. Ma
+CLIP-in: enhancing fine-grained visual understanding in clip via instruction editing data and long captions.
+arXiv preprint arXiv:2508.02329.
+Cited by: §2.
+Wei et al. (2024)
+X. Wei, F. Ye, O. Yonay, X. Chen, B. Sun, D. Tao, and T. Yang
+Fastclip: a suite of optimization techniques to accelerate clip training with limited resources.
+arXiv preprint arXiv:2407.01445.
+Cited by: §C.3,
+Table 9,
+Appendix D,
+§1,
+§3,
+§3,
+§4.1.
+Wei et al. (2023)
+Y. Wei, H. Hu, Z. Xie, Z. Liu, Z. Zhang, Y. Cao, J. Bao, D. Chen, and B. Guo
+Improving clip fine-tuning performance.
+In Proceedings of the IEEE/CVF International Conference on Computer Vision,
+pp. 5439–5449.
+Cited by: §2,
+§2.
+Woo et al. (2023)
+S. Woo, S. Debnath, R. Hu, X. Chen, Z. Liu, I. S. Kweon, and S. Xie
+Convnext v2: co-designing and scaling convnets with masked autoencoders.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 16133–16142.
+Cited by: §2.
+Wortsman et al. (2023)
+M. Wortsman, T. Dettmers, L. Zettlemoyer, A. Morcos, A. Farhadi, and L. Schmidt
+Stable and low-precision training for large-scale vision-language models.
+Advances in Neural Information Processing Systems 36, pp. 10271–10298.
+Cited by: §2.
+Wortsman et al. (2022)
+M. Wortsman, G. Ilharco, J. W. Kim, M. Li, S. Kornblith, R. Roelofs, R. G. Lopes, H. Hajishirzi, A. Farhadi, H. Namkoong, et al.
+Robust fine-tuning of zero-shot models.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 7959–7971.
+Cited by: §1,
+§2,
+§2.
+Xiao et al. (2023)
+L. Xiao, X. Yang, F. Peng, M. Yan, Y. Wang, and C. Xu
+Clip-vg: self-paced curriculum adapting of clip for visual grounding.
+IEEE Transactions on Multimedia 26, pp. 4334–4347.
+Cited by: §2,
+§2.
+Yang et al. (2023)
+W. Yang, B. Zhang, and O. Russakovsky
+Imagenet-ood: deciphering modern out-of-distribution detection algorithms.
+arXiv preprint arXiv:2310.01755.
+Cited by: Table 13,
+§1.
+Yu et al. (2022)
+J. Yu, Z. Wang, V. Vasudevan, L. Yeung, M. Seyedhosseini, and Y. Wu
+Coca: contrastive captioners are image-text foundation models.
+arXiv preprint arXiv:2205.01917.
+Cited by: §2.
+Yuan et al. (2022)
+Z. Yuan, Y. Wu, Z. Qiu, X. Du, L. Zhang, D. Zhou, and T. Yang
+Provable stochastic optimization for global contrastive learning: small batch does not harm performance.
+In International Conference on Machine Learning,
+pp. 25760–25782.
+Cited by: §1,
+§2,
+§3,
+§3.
+Zhai et al. (2023)
+X. Zhai, B. Mustafa, A. Kolesnikov, and L. Beyer
+Sigmoid loss for language image pre-training.
+In Proceedings of the IEEE/CVF international conference on computer vision,
+pp. 11975–11986.
+Cited by: §2,
+§2.
+Zhai et al. (2019)
+X. Zhai, J. Puigcerver, A. Kolesnikov, P. Ruyssen, C. Riquelme, M. Lucic, J. Djolonga, A. S. Pinto, M. Neumann, A. Dosovitskiy, et al.
+The visual task adaptation benchmark.
+Cited by: Table 14.
+Zhao et al. (2023)
+Z. Zhao, Y. Liu, H. Wu, M. Wang, Y. Li, S. Wang, L. Teng, D. Liu, Z. Cui, Q. Wang, et al.
+Clip in medical imaging: a comprehensive survey.
+arXiv preprint arXiv:2312.07353.
+Cited by: §1.
+Zhou et al. (2022a)
+K. Zhou, J. Yang, C. C. Loy, and Z. Liu
+Conditional prompt learning for vision-language models.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 16816–16825.
+Cited by: §2.
+Zhou et al. (2022b)
+K. Zhou, J. Yang, C. C. Loy, and Z. Liu
+Learning to prompt for vision-language models.
+International Journal of Computer Vision 130 (9), pp. 2337–2348.
+Cited by: §2.
+Appendix A Proof for theorems in subsection 4.1
+In this part we consider a general FCCO problem:
+minω⁡1N​∑i=1N−1f⁡(gi​(ω))\min_{\omega}\frac{1}{N}\sum_{i=1}^{N-1}f(g_{i}(\omega))
+and the corresponding SOX algorithm Wang and Yang (2022). As discussed in preliminary, by specifying N=2​nN=2n, f(⋅)=log(ϵ+⋅)f(\cdot)=\log(\epsilon+\cdot), gi​(⋅)=gi​(⋅,𝒟)=Φ1​(⋅,i,𝒟)g_{i}(\cdot)=g_{i}(\cdot,\mathcal{D})=\Phi_{1}(\cdot,i,\mathcal{D}) if i≤ni\leq n otherwise Φ2​(⋅,i−n,𝒟)\Phi_{2}(\cdot,i-n,\mathcal{D}), we recover the GCL loss and the SogCLR algorithm. We also set |ℬ1|=|ℬ2|=B|\mathcal{B}_{1}|=|\mathcal{B}_{2}|=B in SOX when presenting its convergence analysis to simplify notation.
+Before starting our proofs, we make the following standard, commonly used assumptions as in Wang and Yang (2022) under which theorems in subsection 4.1 hold:
+Assumption A.1.
+We assume that:
+∙\bullet f⁡(⋅)f(\cdot) and ∇f​(⋅)\nabla f(\cdot) are CfC_{f} and LfL_{f}-Lipschitz continuous, respectively.
+∙\bullet gi​(⋅)g_{i}(\cdot) and ∇gi​(⋅)\nabla g_{i}(\cdot) are CgC_{g} and LgL_{g}-Lipschitz continuous, respectively.
+Assumption A.2.
+There exist constants σ0≥0\sigma_{0}\geq 0 and σ1≥0\sigma_{1}\geq 0 such that the following statements hold for gi​(ω)g_{i}(\omega) and gi​(ω,ξi)g_{i}(\omega,\xi_{i}) for i=1,…,Ni=1,\dots,N for any ω∈ℝd\omega\in\mathbb{R}^{d} 𝔼​‖gi​(ω,ξi)−gi​(ω)‖2≤σ02\mathbb{E}\|g_{i}(\omega,\xi_{i})-g_{i}(\omega)\|^{2}\leq\sigma_{0}^{2}, 𝔼​‖∇gi​(ω,ξi)−∇gi​(ω)‖2≤σ12\mathbb{E}\left\|\nabla g_{i}(\omega,\xi_{i})-\nabla g_{i}(\omega)\right\|^{2}\leq\sigma_{1}^{2}.
+A.1 Technical Lemma
+We cite the technical lemma from Wang and Yang (2022) here with slightly changes.
+Lemma A.3 (Lemma 8 from Wang and Yang (2022)).
+Consider a sequence ωt+1=ωt−η​mt+1\omega_{t+1}=\omega_{t}-\eta m_{t+1} and the LFL_{F}-smooth function FF and the step size η​LF≤1/2\eta L_{F}\leq 1/2.
+F⁡(ωt+1)\displaystyle F(\omega_{t+1})
+≤F⁡(ωt)+η2​Mt−η2​‖∇F​(ωt)‖2−η4​‖mt+1‖2,\displaystyle\leq F(\omega_{t})+\frac{\eta}{2}M_{t}-\frac{\eta}{2}\left\|\nabla F(\omega_{t})\right\|^{2}-\frac{\eta}{4}\left\|m_{t+1}\right\|^{2},
+(10)
+where Mt≔‖mt+1−∇F​(ωt)‖2M_{t}\coloneqq\left\|m_{t+1}-\nabla F(\omega_{t})\right\|^{2}.
+We build a recursion for the gradient variance MtM_{t} by proving the following lemma.
+Lemma A.4.
+If β≤27\beta\leq\frac{2}{7}, the gradient variance MtM_{t} can be bounded as
+𝔼⁡[Mt+1]\displaystyle\mathbb{E}\left[M_{t+1}\right]
+≤(1−β)​𝔼​[Mt]+2​LF2​η2β​𝔼​[‖mt+1‖2]+2​β2​Cf2​(σ12+Cg2)B+5​β​Lf2​C12​𝔼​[Ut+1]\displaystyle\leq(1-\beta)\mathbb{E}\left[M_{t}\right]+\frac{2L_{F}^{2}\eta^{2}}{\beta}\mathbb{E}\left[\left\|m_{t+1}\right\|^{2}\right]+\frac{2\beta^{2}C_{f}^{2}(\sigma_{1}^{2}+C_{g}^{2})}{B}+5\beta L_{f}^{2}C_{1}^{2}\mathbb{E}\left[U_{t+1}\right]
+(11)
+where Ut=1N​‖ut+1−g⁡(ωt,𝒟)‖2U_{t}=\frac{1}{N}\left\|u_{t+1}-g(\omega_{t};\mathcal{D})\right\|^{2}, ut=[u1(t),…,uN(t)]⊤u_{t}=[u_{1}^{(t)},\dotsc,u_{N}^{(t)}]^{\top}, g⁡(ωt,𝒟)=[g1​(ωt,𝒟1),…,gN​(ωt,𝒟N)]⊤g(\omega_{t};\mathcal{D})=[g_{1}(\omega_{t};\mathcal{D}_{1}),\dotsc,g_{N}(\omega_{t};\mathcal{D}_{N})]^{\top} and C12=Cg2+σ12BC_{1}^{2}=C_{g}^{2}+\frac{\sigma_{1}^{2}}{B}. Also note that we follow the tradition usage of β\beta in Wang and Yang (2022) so β=1−β1\beta=1-\beta_{1} where β1\beta_{1} is used in algorithm 1.
+Remark: We point out that the lemma is similar to lemma 9 in Wang and Yang (2022) without a term corresponding to ‖ut+1−ut‖2\left\|u_{t+1}-u_{t}\right\|^{2}, the gap is caused by the different usage of uu when constructing the overall gradient estimator G⁡(ωt−1,ℬt)G(\omega_{t-1},\mathcal{B}_{t}): instead of using old ut−1u_{t-1} as in SOX we use a newer version utu_{t} in this paper. This would require sampling one more iid minibatch per iteration to derive a bound as shown in the lemma. However in practice we typically sample only a single minibatch.
+Lemma A.5.
+If γ≤1/5\gamma\leq 1/5, function value variance UtU_{t} can be bounded as
+𝔼⁡[Ut+1]\displaystyle\mathbb{E}\left[U_{t+1}\right]
+≤(1−γ​B4​N)​𝔼​[Ut]+5​N​η2​Cg2γ​B​𝔼​[‖mt+1‖2]+2​γ2​σ02N\displaystyle\leq\left(1-\frac{\gamma B}{4N}\right)\mathbb{E}\left[U_{t}\right]+\frac{5N\eta^{2}C_{g}^{2}}{\gamma B}\mathbb{E}\left[\left\|m_{t+1}\right\|^{2}\right]+\frac{2\gamma^{2}\sigma_{0}^{2}}{N}
+(12)
+Remark:We directly drop the negative term in lemma 2 in Wang and Yang (2022).
+A.2 Proof of theorem
+proof of theorem 4.1.
+The proof is almost the same as theorem 3 in Wang and Yang (2022) so we only make necessary clarifications.
+Summing equation 10, ηβ×\frac{\eta}{\beta}\timesequation 11, and 20​Lf2​C12​N​ηγ​B×\frac{20L_{f}^{2}C_{1}^{2}N\eta}{\gamma B}\timesequation 12 leads to
+𝔼⁡[F⁡(ωt+1)−F∗+ηβ​Mt+1+20​Lf2​C12​N​ηγ​B​(1−γ​B4​N)​Ut+1]\displaystyle\mathbb{E}\left[F(\omega_{t+1})-F^{*}+\frac{\eta}{\beta}M_{t+1}+\frac{20L_{f}^{2}C_{1}^{2}N\eta}{\gamma B}\left(1-\frac{\gamma B}{4N}\right)U_{t+1}\right]
+≤𝔼⁡[F⁡(ωt)−F∗+ηβ​(1−β2)​Mt+20​Lf2​C12​N​ηγ​B​(1−γ​B4​N)​Ut]−η2​𝔼​[‖∇F​(ωt)‖2]\displaystyle\leq\mathbb{E}\left[F(\omega_{t})-F^{*}+\frac{\eta}{\beta}\left(1-\frac{\beta}{2}\right)M_{t}+\frac{20L_{f}^{2}C_{1}^{2}N\eta}{\gamma B}\left(1-\frac{\gamma B}{4N}\right)U_{t}\right]-\frac{\eta}{2}\mathbb{E}\left[\left\|\nabla F(\omega_{t})\right\|^{2}\right]
+−η⁡(14−2​LF2​η2β2−100​Lf2​N2​C12​η2​Cg2γ2)​𝔼​[‖mt+1‖2]+2​β​η​Cf2​(σ12+Cg2)B+40​η​γ​Lf2​C12​σ02B.\displaystyle\quad\quad\quad-\eta\left(\frac{1}{4}-\frac{2L_{F}^{2}\eta^{2}}{\beta^{2}}-\frac{100L_{f}^{2}N^{2}C_{1}^{2}\eta^{2}C_{g}^{2}}{\gamma^{2}}\right)\mathbb{E}\left[\left\|m_{t+1}\right\|^{2}\right]+\frac{2\beta\eta C_{f}^{2}(\sigma_{1}^{2}+C_{g}^{2})}{B}+\frac{40\eta\gamma L_{f}^{2}C_{1}^{2}\sigma_{0}^{2}}{B}.
+Set β=min⁡{B​ϵ212​Cf2​(σ12+Cg2),27}\beta=\min\{\frac{B\epsilon^{2}}{12C_{f}^{2}(\sigma_{1}^{2}+C_{g}^{2})},\frac{2}{7}\}, γ=min⁡{B​ϵ2240​Lf2​C12​σ02,15}\gamma=\min\left\{\frac{B\epsilon^{2}}{240L_{f}^{2}C_{1}^{2}\sigma_{0}^{2}},\frac{1}{5}\right\}, and η=min⁡{β4​LF,γ​B30​Lf​N​C1​Cg}\eta=\min\left\{\frac{\beta}{4L_{F}},\frac{\gamma B}{30L_{f}NC_{1}C_{g}}\right\}. Define the Lyapunov function as Γt≔F⁡(ωt)−F∗+ηβ​Mt+20​Lf2​C12​NB​ηγ​(1−γ​B4​N)​Ut\Gamma_{t}\coloneqq F(\omega_{t})-F^{*}+\frac{\eta}{\beta}M_{t}+\frac{20L_{f}^{2}C_{1}^{2}N}{B}\frac{\eta}{\gamma}\left(1-\frac{\gamma B}{4N}\right)U_{t}. Then,
+1T​∑t=0T−1𝔼⁡[‖∇F​(ωt)‖2]≤2​Γ0η​T+4​β​Cf2​(σ12+Cg2)B+80​γ​Lf2​C12​σ02B,\displaystyle\frac{1}{T}\sum_{t=0}^{T-1}\mathbb{E}\left[\left\|\nabla F(\omega_{t})\right\|^{2}\right]\leq\frac{2\Gamma_{0}}{\eta T}+\frac{4\beta C_{f}^{2}(\sigma_{1}^{2}+C_{g}^{2})}{B}+\frac{80\gamma L_{f}^{2}C_{1}^{2}\sigma_{0}^{2}}{B},
+(13)
+discarding the non-dominant terms and unimportant constants, to guarantee 1T​∑t=0T−1𝔼⁡[‖∇F​(ωt)‖2]≤ϵ2\frac{1}{T}\sum_{t=0}^{T-1}\mathbb{E}\left[\left\|\nabla F(\omega_{t})\right\|^{2}\right]\leq\epsilon^{2} we need at most
+T=O⁡(n​Γ0B2​ϵ4)=O⁡(nB2​ϵ4​(Δ0+Bn​M0+U0))\displaystyle T=O\left(\frac{n\Gamma_{0}}{B^{2}\epsilon^{4}}\right)=O\left(\frac{n}{B^{2}\epsilon^{4}}(\Delta_{0}+\frac{B}{n}M_{0}+U_{0})\right)
+iterations, which leads to conclusion by noting that U0=1N​‖u0−g⁡(𝝎𝟎,𝒟)‖2=12​n​‖ux(0)−Φ1​(𝝎𝟎,𝒟)‖2+12​n​‖uz(0)−Φ2​(𝝎𝟎,𝒟)‖2U_{0}=\frac{1}{N}\left\|u_{0}-g(\bm{\omega_{0}};\mathcal{D})\right\|^{2}=\frac{1}{2n}\left\|u_{x}^{(0)}-\Phi_{1}(\bm{\omega_{0}},\mathcal{D})\right\|^{2}+\frac{1}{2n}\left\|u_{z}^{(0)}-\Phi_{2}(\bm{\omega_{0}},\mathcal{D})\right\|^{2}.
+∎
+proof of theorem 4.2.
+Note that algorithm 1 is essentially SOX Wang and Yang (2022) without updating the model parameters ω\omega(i.e. learning rate η=0\eta=0), we can still leverage lemma A.4 and A.5 by plugging η=0\eta=0 into them and have the following bound:
+𝔼⁡[Mt+1]\displaystyle\mathbb{E}\left[M_{t+1}\right]
+≤(1−β)​𝔼​[Mt]+2​β2​Cf2​(σ12+Cg2)B+5​β​Lf2​C12​𝔼​[Ut+1]\displaystyle\leq(1-\beta)\mathbb{E}\left[M_{t}\right]+\frac{2\beta^{2}C_{f}^{2}(\sigma_{1}^{2}+C_{g}^{2})}{B}+5\beta L_{f}^{2}C_{1}^{2}\mathbb{E}\left[U_{t+1}\right]
+(14)
+𝔼⁡[Ut+1]\displaystyle\mathbb{E}\left[U_{t+1}\right]
+≤(1−γ​B4​N)​𝔼​[Ut]+2​γ2​σ02N\displaystyle\leq\left(1-\frac{\gamma B}{4N}\right)\mathbb{E}\left[U_{t}\right]+\frac{2\gamma^{2}\sigma_{0}^{2}}{N}
+(15)
+Note that now we are not updating ω\omega so Mt=‖mt+1−∇ωℒGCL​(𝝎𝟎)‖2M_{t}=\left\|m_{t+1}-\nabla_{\omega}\mathcal{L}_{\mathrm{GCL}}(\bm{\omega_{0}})\right\|^{2}, Ut=1N​‖ut+1−g⁡(𝝎𝟎,𝒟)‖2U_{t}=\frac{1}{N}\left\|u_{t+1}-g(\bm{\omega_{0}};\mathcal{D})\right\|^{2}. Rearranging terms and divide both side for equation 14,  equation 15 by β\beta and γ​B4​N\frac{\gamma B}{4N}, respectively, then we have:
+𝔼⁡[Mt]\displaystyle\mathbb{E}\left[M_{t}\right]
+≤1β​𝔼​[Mt−Mt+1]+2​β​Cf2​(σ12+Cg2)B+5​Lf2​C12​𝔼​[Ut+1]\displaystyle\leq\frac{1}{\beta}\mathbb{E}\left[M_{t}-M_{t+1}\right]+\frac{2\beta C_{f}^{2}(\sigma_{1}^{2}+C_{g}^{2})}{B}+5L_{f}^{2}C_{1}^{2}\mathbb{E}\left[U_{t+1}\right]
+(16)
+𝔼⁡[Ut]\displaystyle\mathbb{E}\left[U_{t}\right]
+≤4​Nγ​B​𝔼​[Ut−Ut+1]+8​γ​σ02B\displaystyle\leq\frac{4N}{\gamma B}\mathbb{E}\left[U_{t}-U_{t+1}\right]+\frac{8\gamma\sigma_{0}^{2}}{B}
+(17)
+combining the above two inequalities we have
+𝔼⁡[Mt]\displaystyle\mathbb{E}\left[M_{t}\right]
+≤1β​𝔼​[Mt−Mt+1]+2​β​Cf2​(σ12+Cg2)B+5​Lf2​C12​((4​Nγ​B−1)​𝔼​[Ut−Ut+1]+8​γ​σ02B)\displaystyle\leq\frac{1}{\beta}\mathbb{E}\left[M_{t}-M_{t+1}\right]+\frac{2\beta C_{f}^{2}(\sigma_{1}^{2}+C_{g}^{2})}{B}+5L_{f}^{2}C_{1}^{2}\left((\frac{4N}{\gamma B}-1)\mathbb{E}\left[U_{t}-U_{t+1}\right]+\frac{8\gamma\sigma_{0}^{2}}{B}\right)
+≤𝔼⁡[Ψt−Ψt+1]+2​β​Cf2​(σ12+Cg2)B+40​γ​σ02​Lf2​C12B\displaystyle\leq\mathbb{E}\left[\Psi_{t}-\Psi_{t+1}\right]+\frac{2\beta C_{f}^{2}(\sigma_{1}^{2}+C_{g}^{2})}{B}+\frac{40\gamma\sigma_{0}^{2}L_{f}^{2}C_{1}^{2}}{B}
+(18)
+where Ψt=1β​Mt+20​N​Lf2​C12γ​B​(1−γ​B4​N)​Ut\Psi_{t}=\frac{1}{\beta}M_{t}+\frac{20NL_{f}^{2}C_{1}^{2}}{\gamma B}\left(1-\frac{\gamma B}{4N}\right)U_{t}. Sum over t=0,1,⋯,T−1t=0,1,\cdots,T-1 and divide both side by TT then we have
+1T​∑t=0T−1𝔼⁡[Mt]≤Ψ0T+2​β​Cf2​(σ12+Cg2)B+40​γ​σ02​Lf2​C12B\displaystyle\frac{1}{T}\sum_{t=0}^{T-1}\mathbb{E}[M_{t}]\leq\frac{\Psi_{0}}{T}+\frac{2\beta C_{f}^{2}(\sigma_{1}^{2}+C_{g}^{2})}{B}+\frac{40\gamma\sigma_{0}^{2}L_{f}^{2}C_{1}^{2}}{B}
+(19)
+Convergence of UtU_{t} can be easily derived from equation 17 by summing over t=0,1,⋯,T−1t=0,1,\cdots,T-1 and divide both side by TT:
+1T​∑t=0T−1𝔼⁡[Ut]≤4​N​U0γ​B​T+8​γ​σ02B\displaystyle\frac{1}{T}\sum_{t=0}^{T-1}\mathbb{E}[U_{t}]\leq\frac{4NU_{0}}{\gamma BT}+\frac{8\gamma\sigma_{0}^{2}}{B}
+(20)
+By setting β=O⁡(NT),γ=O⁡(NT)\beta=O(\sqrt{\frac{N}{T}}),\gamma=O(\sqrt{\frac{N}{T}}) and omitting unimportant constants, we have
+𝔼τ​[𝔼⁡[Mτ]]=1T​∑t=0T−1𝔼⁡[Mt]≤O⁡(M0N​T+U0B​E+1B​E)\displaystyle\mathbb{E}_{\tau}\left[\mathbb{E}[M_{\tau}]\right]=\frac{1}{T}\sum_{t=0}^{T-1}\mathbb{E}[M_{t}]\leq O\left(\frac{M_{0}}{\sqrt{NT}}+\frac{U_{0}}{\sqrt{BE}}+\frac{1}{\sqrt{BE}}\right)
+(21)
+𝔼τ​[𝔼⁡[Uτ]]=1T​∑t=0T−1𝔼⁡[Ut]≤O⁡(U0B​E+1B​E)\displaystyle\mathbb{E}_{\tau}\left[\mathbb{E}[U_{\tau}]\right]=\frac{1}{T}\sum_{t=0}^{T-1}\mathbb{E}[U_{t}]\leq O\left(\frac{U_{0}}{\sqrt{BE}}+\frac{1}{\sqrt{BE}}\right)
+(22)
+which directly leads to the conclusion by noting that N=2​n,T=n​EBN=2n,T=\frac{nE}{B} and U0=Ux,0+Uz,0U_{0}=U_{x,0}+U_{z,0}.
+∎
+Appendix B Additional details on CLIP Models
+The CLIP models (ViT-B/32 and ViT-B/16) use an embedding dimension of 512 for contrastive learning. In contrast, SigLIP employs a larger embedding dimension of 768. Moreover, SigLIP text encoders are configured with no_causal_mask, meaning tokens can attend bidirectionally, which differs from the causal masking used in standard CLIP-style transformers.
+Tables 4 and 5 summarize the configurations of the vision and text encoders, respectively. Table 6 further reports the overall model specifications, including parameter counts and developers. These model configurations are taken from open source implementations of these models.
+Table 4: Vision tower configurations of CLIP models.
+Model
+Image Size
+Layers
+Width
+Patch Size
+CLIP ViT-B/32
+224
+12
+768
+32
+CLIP ViT-B/16
+224
+12
+768
+16
+SigLIP ViT-B/16
+224
+12
+768
+16
+Table 5: Text tower configurations of CLIP models.
+Model
+Context Length
+Vocab Size
+Width
+Heads
+Layers
+CLIP ViT-B/32
+77
+49408
+512
+8
+12
+CLIP ViT-B/16
+77
+49408
+512
+8
+12
+SigLIP ViT-B/16
+64
+32000
+768
+12
+12
+Table 6: Model specifications of different CLIP variants.
+Model
+Vision Encoder
+Text Encoder
+Parameters (M)
+Developer
+CLIP ViT-B/32
+ViT
+Transformer
+151.28
+OpenAI
+CLIP ViT-B/16
+ViT
+Transformer
+149.62
+OpenAI
+CLIP ViT-B/32
+ViT
+Transformer
+151.28
+LAION
+SigLIP ViT-B/16
+ViT
+Transformer
+203.16
+Google
+Appendix C Hyperparameter Details
+A brief summary of the key hyperparameters is provided in Table 7. Owing to the availability of 40GB A100s and 80GB H100s, we restricted all experiments to an image resolution of 224×224224\times 224. Across models, the best-performing base learning rate was consistently around 1×10−51\times 10^{-5}. We used cosine scheduling on the learning rate in the second stage of fine-tuning. After experimenting with different values, we found m=0.1m=0.1 to be a reasonable hyperparameter for most models, and thus adopt it as the default setting. Training was distributed using PyTorch’s DistributedDataParallel (DDP) to parallelize computation across multiple GPUs and nodes.
+In addition to these choices, we adopted AdamW as the optimizer with momentum parameters (β1,β2)=(0.9,0.98)(\beta_{1},\beta_{2})=(0.9,0.98), and a weight decay of 0.020.02 to improve generalization. A cosine learning rate scheduler was used to provide smooth decay, with γ\gamma following a cosine schedule until the 4th epoch and fixed to 0.90.9 thereafter.
+We also applied mixed-precision training (AMP) to balance performance and efficiency. For margin smoothing, we set the value to 2.02.0 to stabilize contrastive updates. Each experiment used a world size of 8 for DDP and 6 data-loading workers per GPU to optimize throughput.
+Table 7: Key hyperparameters used for training the models.
+Hyperparameter
+Value
+Image size
+224x224 (default)
+Learning rate (lr)
+1e-5
+Optimizer
+AdamW
+Beta1, Beta2
+0.9, 0.98
+Weight decay (wd)
+0.02
+Scheduler
+Cosine
+Precision
+AMP (mixed precision)
+Margin
+0.1
+Margin smoothing
+2.0
+Gamma
+0.9
+Gamma schedule
+Cosine (decay every 4 epochs)
+World size
+8 (DDP)
+Workers
+6
+C.1 Ablation on margin mm used with HGCL
+Figure 6: Effect of the HGCL margin hyperparameter mm on
+ImageNet-1k score.
+To study the impact of the margin mm, we consider two different CLIP
+architectures, LAION ViT-B/32 and OpenAI ViT-B/16, and sweep over a
+representative set of values m∈{0.01,0.05,0.10,0.20,0.40}m\in\{0.01,0.05,0.10,0.20,0.40\}. The
+resulting ImageNet-1k accuracies are plotted in
+Figure 6. Using it as a representative
+metric, we observe that margins around m=0.1m=0.1 work well for almost all types of models. Based on this trend, we adopt m=0.1m=0.1 as the margin in all main experiments.
+Moreover, in the self-supervised setting, there are no class labels or clear ground-truth similarity scores to guide the learning of an adaptive margin. Having the flexibility of keeping truly adaptive margin relies on true reliable positive
+and negative pairs, which are not available in web-scale datasets. We therefore treat mm as a single global hyperparameter, selected using a validation score.
+C.2 Ablation on different learning rates
+Table 8: Effect of learning rate (lr) on ImageNet classification and MSCOCO Retrieval (Average Recall@1) for TuneCLIP with OpenAI ViT-B/16 CLIP.
+Learning Rate
+ImageNet-1k (%)
+MS COCO (Avg R@1) (%)
+1e-4
+69.66
+48.98
+1e-5
+70.57
+50.11
+5e-6
+70.23
+49.30
+After sweeping learning rates across {10−4,10−5,10−6}\{10^{-4},10^{-5},10^{-6}\}, we observe that performance drops slightly above 10−410^{-4}, while learning rates in the range of 10−610^{-6} to 10−510^{-5} remain comparably strong. For example, Table 8 shows that TuneCLIP achieves stable ImageNet-1k and MS COCO retrieval performance around 1​e–​51\text{e--}5 and 5​e–​65\text{e--}6.
+C.3 Additional Details on the Distributed Training Framework
+We build upon FastCLIP Wei et al. (2024) framework, designed for distributed training and optimized through advanced compositional optimization techniques.
+Importantly, all algorithms and proposed variants in this work are implemented within the FastCLIP framework to ensure consistent handling of gradient computation, communication, and optimization dynamics. This allows us to make controlled and fair comparisons, attributing performance differences solely to the algorithmic changes.
+Appendix D Algorithms compared in the experimentation
+Table 9: Training configurations for compared methods.
+Method
+Loss
+Optimization Strategy
+FastCLIP Wei et al. (2024)
+GCL
+SogCLR + AdamW
+OpenCLIP Cherti et al. (2023)
+MBCL
+AdamW
+TuneCLIP (ours)
+HGCL (ours)
+OSR (ours) + SogCLR + AdamW
+Table 9 summarizes the training setups of the algorithms used in our comparison.
+FastCLIP (Wei et al., 2024) employs the standard Global Contrastive Loss (GCL) with the SogCLR optimization algorithm and AdamW. OpenCLIP (Cherti et al., 2023) relies on a minibatch contrastive loss (MBCL) combined with AdamW. Our TuneCLIP introduces the proposed Hinged Global Contrastive Loss (HGCL) loss
+and leverages Optimizer Statistics Recovery (OSR) alongside SogCLR and AdamW.
+Appendix E Impact of Hinged Global Contrastive Loss
+The controlled study in Figures 3, 7 and 8 is set up as follows: supervised fine-tuning is performed on Flickr30k, while SSFT uses DFN-12M. Train Retrieval trends are computed from 15,000 random DFN samples (SSFT) and 1,000 Flickr30k samples (SFT). Both models are evaluated on the Flickr1k test set.
+(a) Supervised finetuning
+(b) Self-Supervised finetuning
+Figure 7:
+Similar to Figure 3, supervised fine-tuning (red) shows stronger performance with OSR+GCL than with OSR+HGCL (TuneCLIP), since true negative labels justify separating negatives.
+By contrast, in self-supervised fine-tuning (blue), the absence of such labels makes OSR+HGCL more effective, leading to improved retrieval performance on Flickr when trained with SSFT.
+(a)
+(b)
+Figure 8:
+Retrieval trends on the Flickr1k test set under supervised fine-tuning.
+The left panel shows results for OpenAI ViT-B/16, while the right panel corresponds to SigLIP ViT-B/16.
+In the supervised setting, explicit labels guide the separation of positives from negatives, making OSR+GCL outperform OSR+HGCL.
+By contrast, as shown in Figures 3(b) and 7(b), the absence of supervision and margin regularization in SSFT reverses this trend, with OSR+HGCL (TuneCLIP) achieving superior retrieval performance.
+Appendix F Performance Trajectories During Fine-Tuning
+Across all four models, we observe that OpenCLIP and FastCLIP exhibit a degraded start and fail to recover within the first few epochs. In contrast, as shown in Figure 10, TuneCLIP consistently outperforms the baseline curves, starting with a boosted score. For LAION ViT-B/32, the initial performance is slightly below the baseline, but by the second epoch it surpasses the baseline, unlike the other two algorithms. This experiment was conducted using ImageNet-1k zero-shot classification accuracy as a representative metric.
+(a) OpenAI ViT-B/16
+(b) OpenAI ViT-B/32
+(c) OpenAI models.
+(d) SigLIP ViT-B/16
+(e) LAION ViT-B/32
+(f) SigLIP and LAION models.
+Figure 10: Zero-shot classification performance on ImageNet-1k over 5 epochs of fine-tuning for four ViT models. The dashed line indicates the original pretrained baseline. Across all cases, FastCLIP and OpenCLIP start with degraded performance and recover only gradually, while TuneCLIP consistently achieves higher scores.
+F.1 Extended Fine-tuning
+Figure 11: Extended fine-tuning analysis of TuneCLIP and baselines on ImageNet-1k.
+As shown in Fig. 11, extending fine-tuning beyond the used standard few (i.e. 5-epoch) schedule provides only diminishing returns for both the algorithms. Even when trained for up to 15 epochs, the performance curves plateau, indicating that additional compute does not meaningfully change the relative ordering of methods. Importantly, TuneCLIP preserves a consistent improvement over the baselines.
+Appendix G More comprehensive results
+We report the gains of TuneCLIP over the baselines, with improvements highlighted in (+). While the majority of important metrics show consistent improvements, a few datasets exhibit small declines (marked in (–)), likely due to task-specific variability. Nevertheless, the overall average performance increases, underscoring the robustness of our approach.
+Table 10: Performance of different CLIP models on DataComp Average. DataComp Gadre et al. (2023) is a highly comprehensive benchmark that spans a diverse collection of datasets, tasks, and distributional variants. Even small improvements on DataComp are particularly meaningful, as they indicate stable gains across heterogeneous and challenging settings rather than isolated benefits on individual datasets. In the next sections we show some group-wise results across all variants.
+Base Model
+Method
+DataComp Average
+OpenAI
+ViT-B/32
+Baseline
+52.45
+FastCLIP
+49.78
+OpenCLIP
+51.02
+TuneCLIP
+54.34 (+1.89)
+OpenAI
+ViT-B/16
+Baseline
+56.26
+FastCLIP
+53.53
+OpenCLIP
+55.11
+TuneCLIP
+58.62 (+2.36)
+SigLIP
+ViT-B/16
+Baseline
+62.32
+FastCLIP
+45.80
+OpenCLIP
+48.10
+TuneCLIP
+63.47 (+1.15)
+LAION
+ViT-B/32
+Baseline
+56.94
+FastCLIP
+55.89
+OpenCLIP
+56.75
+TuneCLIP
+57.22 (+0.28)
+Table 11: Performance of different CLIP models on small-scale classification benchmarks. STL-10 is inspired from CIFAR-10, but with higher resolution images.
+Base Model
+Method
+CIFAR-10
+CIFAR-100
+STL-10
+OpenAI
+ViT-B/32
+Baseline
+89.83
+64.23
+97.13
+FastCLIP
+90.54
+69.51
+92.68
+OpenCLIP
+91.75
+71.18
+96.36
+TuneCLIP
+93.63 (+3.80)
+73.87 (+9.64)
+97.20 (+0.07)
+OpenAI
+ViT-B/16
+Baseline
+90.77
+66.95
+98.25
+FastCLIP
+92.67
+71.33
+96.58
+OpenCLIP
+92.76
+70.99
+97.87
+TuneCLIP
+94.40 (+3.63)
+76.14 (+9.19)
+98.26 (+0.01)
+SigLIP
+ViT-B/16
+Baseline
+92.34
+72.23
+98.21
+FastCLIP
+83.66
+53.86
+91.18
+OpenCLIP
+85.06
+56.77
+93.81
+TuneCLIP
+95.20 (+2.86)
+79.91 (+7.68)
+98.37 (+0.16)
+LAION
+ViT-B/32
+Baseline
+93.58
+75.55
+96.56
+FastCLIP
+92.38
+75.95
+91.73
+OpenCLIP
+94.13
+76.10
+95.16
+TuneCLIP
+94.22 (+0.64)
+76.46 (+0.91)
+96.47 (-0.09)
+Table 12: Performance of different CLIP models on ImageNet-1k, ImageNet-Sketch, and ImageNet-V2. ImageNet-Sketch is a black-and-white sketch version of 1,000 ImageNet classes collected by Google, while ImageNet-V2 is designed to evaluate robustness under domain shift and avoid adaptive overfitting.
+Base Model
+Method
+1K
+Sketch
+V2
+OpenAI
+ViT-B/32
+Baseline
+63.32
+42.29
+55.92
+FastCLIP
+59.59
+41.26
+52.25
+OpenCLIP
+61.11
+41.86
+53.84
+TuneCLIP
+65.29 (+1.97)
+45.84 (+3.55)
+57.45 (+1.53)
+OpenAI
+ViT-B/16
+Baseline
+68.34
+48.24
+61.88
+FastCLIP
+64.57
+46.49
+56.88
+OpenCLIP
+65.10
+46.15
+58.19
+TuneCLIP
+70.57 (+2.23)
+51.16 (+2.92)
+64.11 (+2.23)
+SigLIP
+ViT-B/16
+Baseline
+76.04
+67.92
+68.93
+FastCLIP
+57.52
+12.56
+49.04
+OpenCLIP
+59.50
+10.42
+51.00
+TuneCLIP
+76.41 (+0.37)
+65.78 (-2.14)
+69.02 (+0.09)
+LAION
+ViT-B/32
+Baseline
+66.56
+53.65
+58.15
+FastCLIP
+65.26
+53.12
+56.92
+OpenCLIP
+66.31
+53.73
+58.46
+TuneCLIP
+67.14 (+0.58)
+54.46 (+0.81)
+59.10 (+0.95)
+Table 13: Performance of different CLIP models on ImageNet out-of-distribution variants Yang et al. (2023) (A, O, R, ObjectNet). ImageNet-A contains adversarially filtered natural images, ImageNet-O includes samples for open-set recognition, ImageNet-R features artistic renditions, and ObjectNet Barbu et al. (2019) evaluates robustness under real-world viewpoint and background shifts.
+Base Model
+Method
+A
+O
+R
+ObjectNet
+OpenAI
+ViT-B/32
+Baseline
+31.55
+47.75
+69.33
+44.31
+FastCLIP
+24.84
+47.20
+65.21
+44.32
+OpenCLIP
+27.10
+48.85
+67.13
+46.02
+TuneCLIP
+30.72 (-0.83)
+51.11 (+3.36)
+70.67 (+1.34)
+46.45 (+2.14)
+OpenAI
+ViT-B/16
+Baseline
+49.95
+42.30
+77.70
+55.31
+FastCLIP
+41.37
+43.30
+75.41
+55.37
+OpenCLIP
+41.57
+44.05
+73.23
+56.67
+TuneCLIP
+48.10 (-1.85)
+46.65 (+4.35)
+77.86 (+0.16)
+57.08 (+1.77)
+SigLIP
+ViT-B/16
+Baseline
+45.41
+38.15
+90.30
+55.09
+FastCLIP
+21.80
+35.85
+59.08
+38.72
+OpenCLIP
+22.73
+39.50
+58.27
+40.08
+TuneCLIP
+50.10 (+4.69)
+41.50 (+3.35)
+88.33 (-1.97)
+67.93 (+12.84)
+LAION
+ViT-B/32
+Baseline
+26.26
+49.95
+76.43
+48.81
+FastCLIP
+24.84
+48.00
+76.04
+51.72
+OpenCLIP
+26.92
+50.40
+76.05
+51.01
+TuneCLIP
+27.04 (+0.78)
+50.85 (+0.90)
+76.45 (+0.02)
+51.34 (+2.53)
+Table 14: Performance of different CLIP models on VTAB and Fairness. The Visual Task Adaptation Benchmark (VTAB) Zhai et al. (2019) evaluates performance across 12 diverse tasks. We also report performance on two fairness-oriented datasets, Dollar Street and GeoDE Ramaswamy et al. (2023), which measure robustness to geographic and socioeconomic diversity.
+Base Model
+Method
+VTAB Mean
+Fairness Mean
+OpenAI
+ViT-B/32
+Baseline
+51.81
+68.02
+FastCLIP
+48.51
+69.52
+OpenCLIP
+49.23
+70.05
+TuneCLIP
+53.50 (+1.69)
+70.73 (+2.71)
+OpenAI
+ViT-B/16
+Baseline
+53.80
+72.45
+FastCLIP
+50.44
+74.02
+OpenCLIP
+52.46
+74.23
+TuneCLIP
+54.44 (+0.64)
+74.96 (+2.51)
+SigLIP
+ViT-B/16
+Baseline
+60.39
+78.48
+FastCLIP
+49.93
+69.33
+OpenCLIP
+53.38
+71.55
+TuneCLIP
+62.66 (+2.27)
+78.44 (-0.04)
+LAION
+ViT-B/32
+Baseline
+55.08
+71.05
+FastCLIP
+55.55
+69.69
+OpenCLIP
+54.68
+71.94
+TuneCLIP
+55.09 (+0.01)
+71.03 (-0.02)
+Table 15: Retrieval performance (Recall@1) on MSCOCO and Flickr datasets.
+Base Model
+Method
+MSCOCO
+Flickr
+IR@1
+TR@1
+IR@1
+TR@1
+OpenAI
+ViT-B/32
+Baseline
+30.44
+50.12
+58.78
+78.90
+FastCLIP
+28.75
+43.23
+51.49
+68.19
+OpenCLIP
+33.33
+49.79
+60.92
+76.10
+TuneCLIP
+36.74 (+6.30)
+56.16 (+6.04)
+64.71 (+5.93)
+83.30 (+4.40)
+OpenAI
+ViT-B/16
+Baseline
+33.09
+52.42
+62.16
+82.20
+FastCLIP
+31.25
+45.80
+56.45
+74.00
+OpenCLIP
+36.46
+50.77
+65.11
+78.90
+TuneCLIP
+40.45 (+7.36)
+59.78 (+7.36)
+69.66 (+7.50)
+86.59 (+4.39)
+SigLIP
+ViT-B/16
+Baseline
+47.78
+65.74
+74.68
+89.10
+FastCLIP
+26.91
+36.46
+48.33
+61.79
+OpenCLIP
+34.34
+44.58
+57.12
+70.10
+TuneCLIP
+47.64 (-0.14)
+66.36 (+0.62)
+74.44 (-0.24)
+89.30 (+0.20)
+LAION
+ViT-B/32
+Baseline
+39.34
+56.32
+66.78
+84.10
+FastCLIP
+33.37
+49.34
+58.66
+76.99
+OpenCLIP
+38.34
+54.42
+65.03
+81.30
+TuneCLIP
+39.55 (+0.21)
+57.80 (+1.48)
+66.82 (+0.04)
+83.20 (-0.90)
+Appendix H Compute Cost Analysis
+Table 16: Unified comparison of training cost and performance across CLIP backbones.
+Base Model
+Method
+Wall-Clock Time (hrs)
+GPU-hours
+DataComp
+OpenAI
+ViT-B/32
+OpenCLIP
+2.66
+21.28
+51.02
+FastCLIP
+2.22
+17.76
+49.78
+TuneCLIP
+5.05
+40.40
+54.34
+OpenAI
+ViT-B/16
+OpenCLIP
+5.46
+43.68
+55.11
+FastCLIP
+4.21
+33.68
+53.53
+TuneCLIP
+8.62
+68.96
+58.62
+SigLIP
+ViT-B/16
+OpenCLIP
+7.55
+60.40
+48.10
+FastCLIP
+4.28
+34.24
+45.80
+TuneCLIP
+9.27
+74.16
+63.47
+LAION
+ViT-B/32
+OpenCLIP
+3.10
+24.80
+56.75
+FastCLIP
+2.33
+18.64
+55.89
+TuneCLIP
+4.32
+36.24
+57.22
+Table 17: Batch size specifications of different CLIP variants under our distributed data-parallel training setup. We use torch.DDP over 8×\times GPUs.
+Model
+Local Batch Size
+Global Batch Size
+OpenAI CLIP ViT-B/32
+512
+4096
+OpenAI CLIP ViT-B/16
+256
+2048
+LAION CLIP ViT-B/32
+512
+4096
+SigLIP ViT-B/16
+256
+2048
+Table 17 summarizes the local and global batch sizes used for
+each backbone under our distributed data-parallel (DDP) setup with 88 GPUs,
+where the global batch size is given by
+Bglobal=8×BlocalB_{\text{global}}=8\times B_{\text{local}}. Across all backbones,
+Table 16 additionally reports the wall-clock time
+(measured as the elapsed time between the start and end of fine-tuning) and the
+corresponding GPU-hours for OpenCLIP, FastCLIP, and TuneCLIP. We compute
+GPU-hours using the standard relation
+GPU-hours=wall-clock time (hours)×#GPUs,\text{GPU-hours}=\text{wall-clock time (hours)}\times\text{\#GPUs},
+so that, in our case, GPU-hours directly reflect wall-clock time scaled by a
+factor of 88. Since TuneCLIP uses a two-stage procedure (OSR followed by HGCL
+fine-tuning), it naturally incurs higher compute than single-stage baselines,
+typically increasing the wall-clock time by about 1.51.5–2×2\times for a given
+backbone. However, this additional cost remains modest and is consistently mirrored by improved performance across all evaluated models. Thus, TuneCLIP provides a favorable cost–performance trade-off with relatively small extra computational overhead compared to baselines and it reliably converts additional compute into gains on related benchmarks.
+In addition to reporting the full TuneCLIP cost, we further dissect its
+two-stage schedule into OSR-only and HGCL-only components in
+Table 18. Across all backbones, each stage
+incurs a wall-clock time comparable to standard single-stage fine-tuning
+(OpenCLIP/FastCLIP), showing that OSR and HGCL individually are not
+substantially more expensive than existing baselines.
+Table 18: Comparison of fine-tuning cost across four CLIP backbones and four finetuning regimes. Rows show the isolated cost of OSR-only and HGCL-only stages inside TuneCLIP.
+Base Model
+Method
+Wall-Clock (hrs)
+GPU-hours
+OpenAI
+ViT-B/32
+OpenCLIP
+2.66
+21.28
+FastCLIP
+2.22
+17.76
+OSR only
+2.50
+20.00
+HGCL only
+2.55
+20.40
+OpenAI
+ViT-B/16
+OpenCLIP
+5.46
+43.68
+FastCLIP
+4.21
+33.68
+OSR only
+4.27
+34.16
+HGCL only
+4.35
+34.80
+SigLIP
+ViT-B/16
+OpenCLIP
+7.55
+60.40
+FastCLIP
+4.28
+34.24
+OSR only
+4.52
+36.16
+HGCL only
+4.75
+38.00
+LAION
+ViT-B/32
+OpenCLIP
+3.10
+24.80
+FastCLIP
+2.33
+18.64
+OSR only
+2.20
+17.60
+HGCL only
+2.12
+16.96
+Since all three methods use the same vision, text encoders, same GPUs and training configurations at a given model scale, the FLOPs per training step are effectively the same. Thus, the reported wall-clock time and GPU-hours can be viewed as a direct correlation for the relative total FLOPs across methods.
+Appendix I Comparing other Cold-start bias mitigation strategies
+To evaluate simpler cold-start bias mitigations, we consider two realistic alternatives to OSR. First, we apply a short learning-rate warm-up of 500500 iterations using momentum SGD, gradually increasing the learning rate from 1×10−61\times 10^{-6} to 1×10−51\times 10^{-5} before switching to the standard fine-tuning stage with the same optimizer. Second, we simulate a large-batch warm-up by computing gradients with a larger global batch size (e.g., increasing OpenAI CLIP ViT-B/16’s batch size from 20482048 to 40964096) while keeping model weights frozen, allowing gradient moments to accumulate before performing normal fine-tuning in the second stage. Infact, this serves as a cheaper approximation to OSR. As shown in Table 19, both strategies provide mild stabilization but yield noticeably smaller improvements than full OSR, indicating that OSR remains the most effective and reliable approach for mitigating cold-start bias.
+Table 19: Comparison of cold-start mitigation strategies for TuneCLIP on OpenAI CLIP ViT-B/16.
+Cold-Start Bias Mitigation
+2nd stage
+OSR
+IN & Variants
+Retrieval
+DataComp
+Base Model
+N/A
+×\times
+57.67
+57.46
+56.26
+Momentum SGD
+Momentum SGD
+×\times
+54.65
+59.32
+54.82
+Larger Batch Gradients
+AdamW
+×\times
+58.27
+62.92
+58.05
+OSR
+Momentum SGD
+✓\checkmark
+57.99
+62.08
+57.82
+OSR
+AdamW
+✓\checkmark
+59.36
+64.12
+58.62
+Appendix J TuneCLIP on State-of-the-art CLIP
+TuneCLIP achieves state-of-the-art performance on ImageNet and its distributional variants, improving accuracy from 71.8% to 73.23%. On retrieval and DataComp, the results are slightly lower, but remain within a tolerable band of 1% relative to the baseline. While these results do not show dramatic overall gains, they highlight that TuneCLIP scales to very large models and delivers meaningful robustness improvements on ImageNet and variants, which we consider the key takeaway. We report these findings modestly, acknowledging the limited improvements under heavy computational constraints.
+Table 20: Performance of TuneCLIP on SOTA ViT-H/14-quickgelu across evaluation suites.
+Category
+Baseline
+TuneCLIP
+IN & Variants
+71.80
+73.23
+Retrieval
+74.78
+73.78
+DataComp
+69.61
+69.23
+Appendix K HGCL and False Negative Mitigations
+(a) OSR+GCL (TP vs FN)
+(b) OSR+HGCL (TP vs FN)
+(c) OSR+HGCL (TP vs TN)
+Figure 12:
+OSR+GCL shows higher variance among false negatives (std. dev. 0.0300.030). While, OSR+HGCL yields a substantially more compact distribution (std. dev. 0.00610.0061), reducing false negative bias and at the same time ensuring a clear separation between true positives (μ=0.28\mu=0.28) and true negatives (μ=0.23\mu=0.23).
+As shown in Figures 12(a) and 12(b),
+HGCL compresses the gap between true positives and false negatives, producing distributions that are both more compact and overlapping than those under GCL. This analysis, conducted on 15,000 randomly sampled pairs from DFN-12M, highlights HGCL’s capacity to reduce variance and counteract false-negative bias. By preserving higher similarity for semantically related negatives, HGCL prevents over-suppression and encourages the model to maintain only a fine-grained distinctions across closely related concepts (true positives and false negatives). This in turn improves generalization, since the learned similarity space better reflects true semantic structure rather than being distorted by aggressive penalization of false negatives. Table 21 shows qualitative examples from the above distributions. To approximate true negatives, we sample from the bottom-ranked retrievals (Top@[90-100]), as these examples are least likely to share semantic overlap with the query and thus provide a reliable baseline for unrelated pairs.
+Table 21: Qualitative examples of false negatives (text captions) and their similarity scores with the anchor image.
+Here, s1s_{1} denotes the similarity under OSR+GCL and s2s_{2} under OSR+HGCL.
+These examples illustrate how OSR+HGCL mitigates excessive suppression of false negatives, allowing them to retain higher similarity scores compared to OSR+GCL.
+Conversely, false negatives that already exhibit reasonable similarity with the anchor tend to remain stable or slightly reduced, compensating for cases where suppression was more severe.
+Overall, this yields a calibrated similarity structure in which false negatives are assigned scores that better reflect semantic relatedness.
+Anchor Image
+False Negative Captions (s1s_{1}, s2s_{2}) in Top-5 Retrieved texts
+Caption: FABULOUS PEARL NECKLACE DIAMOND CLUSTER 14K GOLD CLASP — eBay
+•
+Women’s Chain Necklaces  s1=0.2053, s2=0.2467
+•
+necklace image New Arrivals  s1=0.1720, s2=0.2429
+Caption: Boys’ Soccer Cleats 0026 Shoes. Nike.com
+•
+running shoes  s1=0.1561, s2=0.2346
+Caption: dress
+•
+muslim wedding dresses 3d flower burgundy muslim wedding dresses 2018 arabic custom plus  s1=0.1713, s2=0.2238
+•
+Evening Gowns For Mother Of The Bride In Singapore - Prom Dresses  s1=0.1913, s2=0.2333
+Caption: Chicken noodle soup
+•
+top down view of bowl filled with white bean tomatillo soup with items surrounding.  s1=0.2061, s2=0.2047
+•
+Butternut soup with sriracha. Made it.  s1=0.2046, s2=0.2354
+Caption: pallets chair
+•
+B32 Office Chair by Armet 3  s1=0.0747, s2=0.2189
+•
+Burlap Ruffle Chair #burlap #ruffle #furniture  s1=0.3096, s2=0.2583
+Caption: 2017 Audi S6 4.0T quattro Premium Plus
+•
+gebraucht Audi S8 plus V8 4.0TFSI tiptr. UPE 154.100,- HeadUp/SD  s1=0.2358, s2=0.2272
+•
+Audi Q3 und Audi RS Q3: Facelift und mehr Leistung.  s1=0.1056, s2=0.2174
+Caption: Men’s Crew Neck Jersey T-Shirt - Support With Style Collection for Novak Djokovic
+•
+Unique Scoop Collar Printed T Shirt  s1=0.1978, s2=0.2433
+•
+T-shirt z nadrukiem - white  s1=0.1707, s2=0.2407
+•
+HX Hot Sale Colorful Skull 3D Print Harajuku T Shirt Grim Reaper Skull Casual T Shirt Men/women Streetwear T Shirt Tops HX768 1  s1=0.1560, s2=0.2301
+Appendix L The Use of Large Language Models (LLMs)
+LLMs were only used to aid or polish writing.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

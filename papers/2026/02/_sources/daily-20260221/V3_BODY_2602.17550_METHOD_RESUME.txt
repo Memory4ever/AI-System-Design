@@ -1,0 +1,306 @@
+4 Methodology
+In this section, we present Mass-Adaptive Soft Policy Optimization (MASPO). As illustrated in Figure 1, standard RLVR paradigms like GRPO rely on fragmented constraints that create three fundamental misalignments in LLM optimization:
+•
+Inefficient Gradient Utilization: Hard clipping imposes a binary cutoff that discards valuable directional gradients from exploratory samples exceeding the boundary, thereby significantly diminishing the effective utilization of informative gradient signals, consequently slowing down the overall convergence speed.
+•
+Insensitive Probability Mass: Uniform ratio constraints ignore the vast disparity in token probabilities, failing to account for the massive mass displacement in head tokens versus the negligible shift in tail tokens.
+•
+Asymmetric Signal Reliability: Symmetric advantage handling ignores the disparate signal-to-noise ratios between verified positive solutions and ambiguous negative ones.
+To address these challenges holistically, MASPO proposes a unified framework (see Figure 2). We replace the rigid hard clipping with a Soft Gaussian Gating mechanism to ensure gradient continuity (§4.1). Crucially, we regulate this gate via a Dual-Variable Adaptive Variance (§4.2), which synergizes a Mass-Adaptive Limiter for distribution stability and an Asymmetric Risk Controller for signal-aware optimization, ultimately enabling more robust and efficient policy learning.
+4.1 Soft Gaussian Gating
+To resolve the gradient discontinuity caused by hard clipping, we formulate the MASPO objective using a differentiable confidence score derived from the Principle of Maximum Entropy. The objective is defined as:
+𝒥MASPO(θ)=𝔼q∼𝒟,{oi}i=1G∼πθold(⋅|q)1∑i=1G|oi|\displaystyle\mathcal{J}_{\text{MASPO}}(\theta)=\mathbb{E}_{q\sim\mathcal{D},\{o_{i}\}_{i=1}^{G}\sim\pi_{\theta_{\text{old}}}(\cdot|q)}\frac{1}{\sum_{i=1}^{G}|o_{i}|}
+∑i=1G∑t=1|oi|ℱi,tMASPO⋅ρi,t​(θ)​A^i,\displaystyle\sum_{i=1}^{G}\sum_{t=1}^{|o_{i}|}\mathcal{F}^{\text{MASPO}}_{i,t}\cdot\rho_{i,t}(\theta)\hat{A}_{i},
+(5)
+Here, ℱi,tMASPO\mathcal{F}^{\text{MASPO}}_{i,t} is the Soft Gaussian Gating factor. Unlike hard clipping or SAPO’s dual-clip Ye et al. (2020), this unilateral design selectively attenuates aggressive overshoots without hindering conservative updates of lagging tokens:
+ℱi,tMASPO={exp⁡(−(sg​[ρi,t​(θ)]−1)22​σpos2)if ​A^i,t>0∧ρi,t​(θ)>1exp⁡(−(sg​[ρi,t​(θ)]−1)22​σneg2)if ​A^i,t<0∧ρi,t​(θ)<11,otherwise.\displaystyle\mathcal{F}^{\text{MASPO}}_{i,t}=\begin{cases}\exp\left({-\frac{(\text{sg}[\rho_{i,t}(\theta)]-1)^{2}}{2\sigma^{2}_{\text{pos}}}}\right)&\begin{aligned} &\text{if }\hat{A}_{i,t}>0\\
+&\quad\land\rho_{i,t}(\theta)>1\end{aligned}\\
+\exp\left({-\frac{(\text{sg}[\rho_{i,t}(\theta)]-1)^{2}}{2\sigma^{2}_{\text{neg}}}}\right)&\begin{aligned} &\text{if }\hat{A}_{i,t}<0\\
+&\quad\land\rho_{i,t}(\theta)<1\end{aligned}\\
+1,&\text{otherwise}.\\
+\end{cases}
+(6)
+The stop-gradient operator sg​[⋅]\text{sg}[\cdot] ensures that ℱ\mathcal{F} serves strictly as a confidence gate, effectively preventing the optimization objective from drifting. Mathematically, this transformation converts the optimization landscape from a disjoint cliff (characteristic of binary clipping) into a smooth and continuous manifold. Consequently, samples that marginally exceed the trust region contribute attenuated but non-zero gradients, ensuring that the policy can still learn from “near-boundary” explorations without destabilizing the update dynamics.
+4.2 Dual-Variable Adaptive Variance
+The core innovation of MASPO lies in how the variance σ2\sigma^{2} is dynamically determined. We decouple σ\sigma into two components (Eq. (7) and (8)) to address the remaining two challenges: insensitive probability mass and asymmetric signal reliability.
+σpos=σbaseπθo​l​dα⏟Mass-Adaptive⋅(1+βhigh​A^i,t)⏟Risk Controller,\sigma_{\text{pos}}=\underbrace{\frac{\sigma_{\text{base}}}{\pi_{\theta_{old}}^{\alpha}}}_{\text{Mass-Adaptive}}\cdot\underbrace{\left(1+\beta_{\text{high}}\hat{A}_{i,t}\right)}_{\text{Risk Controller}},
+(7)
+σneg=σbaseπθo​l​dα⏟Mass-Adaptive⋅(1−βlow​A^i,t)−1⏟Risk Controller,\sigma_{\text{neg}}=\underbrace{\frac{\sigma_{\text{base}}}{\pi_{\theta_{old}}^{\alpha}}}_{\text{Mass-Adaptive}}\cdot\underbrace{\left(1-\beta_{\text{low}}\hat{A}_{i,t}\right)^{-1}}_{\text{Risk Controller}},
+(8)
+The Mass-Adaptive Limiter.
+The term σbaseπθo​l​dα\frac{\sigma_{\text{base}}}{\pi_{\theta_{old}}^{\alpha}} serves as the Mass-Adaptive Limiter. It inversely scales the trust region width with the token’s reference probability.
+•
+In the Long Tail (π→0\pi\to 0): The variance σ\sigma increases, widening the gate. This compensates for the negligible mass displacement of rare tokens, effectively expanding the exploration budget where it is most needed.
+•
+In the Head (π→1\pi\to 1): The variance shrinks, enforcing strict constraints to prevent policy collapse into a deterministic state due to excessive mass shifts. This aligns with the intuition that for high-confidence tokens, even small ratio deviations imply large absolute mass displacement, necessitating tighter variance to preserve the stability of the generation distribution.
+The Asymmetric Risk Controller.
+The second component modulates the trust region based on the feedback signal, functioning as an Asymmetric Risk Controller. We derive this design from the monotonicity properties of group-relative advantages (see Appendix B), which link advantage magnitude to query difficulty.
+•
+Positive Signal Expansion (σpos\sigma_{\text{pos}}):
+For correct reasoning paths (A^>0\hat{A}>0), we aim to maximize the utilization of verified signals. Based on the monotonicity property, difficult queries (where correct responses are rare) yield significantly larger positive advantages. These are high-value learning signals. Our expansion term (1+βhigh​A^i,t)(1+\beta_{\text{high}}\hat{A}_{i,t}) sharpens this effect, allowing the model to take aggressively larger update steps for these high-confidence successes, accelerating the acquisition of complex reasoning skills.
+•
+Negative Signal Conservatism (σneg\sigma_{\text{neg}}):
+For incorrect paths (A^<0\hat{A}<0), the handling is nuanced. According to GRPO monotonicity, “easy” queries (where most responses are correct) result in negative advantages with very large magnitudes (e.g., A−≪−1A^{-}\ll-1). In such easy tasks, a negative response is often a “near-miss” anomaly where the reasoning chain largely overlaps with correct paths but fails due to a minor error. Applying a massive penalty to these chains risks destroying valid intermediate reasoning patterns crucial for generalization.
+MASPO strategically addresses this via the compression term (1−βlow​A^i,t)−1(1-\beta_{\text{low}}\hat{A}_{i,t})^{-1}. When A^\hat{A} is large and negative, this term significantly shrinks σneg\sigma_{\text{neg}}. This tightly constrains the update for failures in easy tasks, preventing “catastrophic unlearning” due to credit assignment ambiguity. Conversely, for hard tasks where failures are common (small negative advantage), the constraint remains relaxed, allowing normal optimization to proceed without excessive restriction.
+Table 1: Main results on mathematical reasoning benchmarks. We report Avg@32 (A@32) and Pass@32 (P@32). Bold indicates the best performance, and underlined represents the second-best.
+AIME24
+AIME25
+AMC23
+MATH500
+Minerva
+Olympiad
+Average
+Method
+A@32
+P@32
+A@32
+P@32
+A@32
+P@32
+A@32
+P@32
+A@32
+P@32
+A@32
+P@32
+A@32
+P@32
+Backbone: DeepSeek-R1-Distill-Qwen-1.5B
+GRPO
+33.2
+71.8
+27.7
+49.9
+79.5
+94.8
+77.6
+90.8
+26.1
+48.8
+46.3
+64.7
+48.4
+70.1
+Clip Higher
+36.6
+70.1
+30.1
+55.8
+82.8
+94.9
+71.7
+88.6
+24.8
+49.3
+42.0
+61.6
+48.0
+70.1
+DAC
+40.0
+73.6
+28.7
+51.2
+80.2
+95.0
+78.1
+92.5
+27.4
+54.0
+46.3
+64.5
+50.1
+71.8
+Entropy Adv.
+29.6
+67.8
+23.9
+44.2
+77.1
+94.1
+78.5
+89.7
+25.2
+48.6
+46.4
+64.3
+46.8
+68.1
+BAPO
+38.3
+72.3
+28.0
+55.7
+80.1
+94.9
+74.9
+91.0
+25.1
+44.7
+44.0
+61.3
+48.4
+70.0
+SAPO
+39.3
+73.7
+28.0
+49.9
+82.7
+94.8
+79.1
+91.4
+29.6
+52.7
+48.2
+66.7
+51.2
+71.5
+MASPO
+41.0
+74.8
+28.4
+58.0
+82.2
+95.0
+78.0
+89.7
+30.7
+54.1
+47.8
+65.7
+51.4
+72.9
+Backbone: DeepSeek-R1-Distill-Qwen-7B
+GRPO
+48.2
+82.5
+37.4
+60.5
+88.1
+96.6
+84.8
+92.4
+37.4
+57.2
+57.2
+73.9
+58.9
+77.2
+Clip Higher
+47.4
+82.4
+37.4
+67.2
+89.0
+96.6
+85.3
+95.4
+38.8
+58.5
+57.5
+75.5
+59.2
+79.3
+DAC
+50.2
+81.2
+36.2
+61.7
+88.1
+99.6
+85.1
+94.8
+36.6
+58.7
+57.9
+76.0
+59.0
+78.7
+Entropy Adv.
+49.1
+81.5
+34.4
+58.1
+87.7
+96.6
+84.8
+92.5
+36.5
+54.0
+56.4
+73.7
+58.2
+76.1
+BAPO
+47.1
+80.3
+37.7
+58.4
+89.2
+97.2
+85.0
+94.5
+38.3
+57.5
+57.1
+74.5
+59.1
+77.1
+SAPO
+47.5
+79.2
+35.3
+58.0
+88.7
+95.0
+85.5
+92.9
+39.4
+58.1
+56.6
+74.6
+58.8
+76.3
+MASPO
+53.2
+82.4
+42.9
+73.2
+91.4
+95.0
+86.0
+94.7
+39.3
+58.6
+58.0
+74.9
+61.8
+79.8
+5 Experiments
+5.1 Experimental Setup
+Implementation Details.
+We leverage the DeepSeek-R1-Distill-Qwen series (specifically 1.5B, 7B, and 14B) as our backbone models to assess MASPO. All models are fine-tuned on the DAPO-Math-17K dataset Yu et al. (2025). For reward calculation, we adopt a dual-system approach: math_verify Kydlíček () is employed for rule-based reward generation during training, whereas prime_math Lightman et al. (2023a); Lightman et al. (2023b) serves as the evaluation metric.
+Figure 3: Evolution of Training Dynamics and Performance across Model Scales. Top row: 1.5B model; Bottom row: 7B model. MASPO demonstrates superior convergence, achieving higher performance ceilings.
+Regarding the optimization dynamics, we configure a global batch size of 512 with a mini-batch size of 32. This setup facilitates 16 off-policy updates per importance sampling step, effectively amplifying the impact of off-policy updates. The clipping thresholds εlow\varepsilon_{\text{low}} and εhigh\varepsilon_{\text{high}} are both set to 0.2. Additional details are provided in the Appendix C.3.
+Evaluation Protocols.
+To rigorously evaluate the generalization of the model’s reasoning capabilities, we conduct evaluations across a diverse set of benchmarks, including AIME24 MAA (2024), AIME25 MAA (2025), AMC23 MAA (2023), Minerva Lewkowycz et al. (2022), OlympiadBench He et al. (2024), and MATH500 Hendrycks et al. (2021). We report performance using Avg@32 and Pass@32 metrics, which reflect the model’s expected stability and its potential peak performance, respectively.
+Baseline Methods.
+We benchmark MASPO against a comprehensive suite of strong methods, categorized by their optimization focus: (1) the original GRPO algorithm; (2) SAPO, which removes clipping boundaries entirely and uses a soft weighting function; (3) methods focusing on low-probability compensation, including Entropy Regularization and DAC; (4) approaches emphasizing positive sample rebalancing, such as Advantage Reweighting, Entropy Advantage, and BAPO; and (5) Clip Higher, which implicitly addresses both optimization directions. The comparative results are summarized in Table 1. Note that Entropy Regularization was only preliminarily tested on the 1.5B model, and Advantage Reweighting yielded suboptimal performance; consequently, detailed results for these two methods are omitted from the main table but are provided in Appendix D.1.
+5.2 Main Results
+Overall Performance
+Table 1 presents the comparative performance of MASPO against various baselines. MASPO delivers superior performance, achieving well-performing results on the aggregated average across both 1.5B and 7B scales. Specifically, on the 1.5B model, MASPO improves Avg@32 by 3.0% over GRPO and edges out the closest competitor (SAPO) by 0.2%. Crucially, this lead expands at the 7B scale. While other baselines plateau near GRPO levels – with the second-best Clip Higher leading GRPO by only 0.3% – MASPO establishes a clear margin, outperforming Clip Higher by 2.6% in Avg@32. Finally, Pass@K analysis (Figure 3(a,e)) confirms our method’s robustness across difficulty levels: MASPO consistently dominates, leading on AIME24 with the 1.5B model and extending this superiority to the harder AIME25 benchmark at the 7B scale.
+(a) Dynamics of AIME24 Avg@32
+(b) Dynamics of AIME25 Avg@32
+(c) Dynamics of Policy Entropy
+(d) Dynamics of AIME24 Avg@32
+(e) Dynamics of AIME25 Avg@32
+(f) Dynamics of Policy Entropy
+Figure 4: Hyperparameter sensitivity and scalability analysis. Top: MASPO demonstrates robustness across a range of α\alpha and β\beta values, outperforming the GRPO baseline. Bottom: Training dynamics on the larger 14B model, demonstrating MASPO’s scalability by maintaining higher entropy and superior performance compared to GRPO.
+Training Dynamics.
+The training curves in Figure 3 reveal distinct optimization behaviors. GRPO exhibits a rapid decay in policy entropy, indicating an extreme exploitation mode that sacrifices exploration, consequently limiting its performance ceiling. Entropy Advantage shows an even faster entropy drop, resulting in inferior final performance.
+Among other baselines, Clip Higher, DAC, BAPO, and SAPO maintain higher entropy levels than GRPO, yet this does not strictly translate to better performance. Clip Higher and BAPO suffer from slow policy improvement, only surpassing GRPO on the 1.5B scale. SAPO experiences training collapse on both scales; it only exceeds GRPO’s ceiling on the 1.5B model before diverging. We hypothesize this instability stems from its bilateral Gaussian gating design (see the unilateral ablation in Appendix D.2). DAC significantly outperforms GRPO on 1.5B but exhibits a “staircase” entropy spike on 7B, leading to performance degradation, though it still marginally beats GRPO before regression. In contrast, MASPO maintains a healthy entropy level higher than GRPO without instability or stagnation, achieving a performance ceiling significantly superior to all baselines.
+5.3 Analysis of Hyperparameters
+MASPO introduces four primary hyperparameters: σbase\sigma_{\text{base}}, α\alpha, βlow\beta_{\text{low}}, and βhigh\beta_{\text{high}}. To simplify the analysis, we fix σbase=1\sigma_{\text{base}}=1 and apply symmetric risk control (β=βlow=βhigh\beta=\beta_{\text{low}}=\beta_{\text{high}}). Using α=0.3\alpha=0.3, β=0.03\beta=0.03 as the baseline configuration, we vary parameters to test the following set: (0.1,0.03)(0.1,0.03), (0.3,0)(0.3,0), (0.3,0.03)(0.3,0.03), (0.3,0.1)(0.3,0.1), (0.5,0.03)(0.5,0.03), (0.8,0.03)(0.8,0.03). Experiments were conducted on the 7B model, with results shown in the top row of Figure 4 and Table 5. Our analysis yields the following conclusions (comprehensive data in Appendix D.3):
+Robustness.
+As evidenced by the curves in Figure 4 and Appendix D.3, MASPO demonstrates exceptional robust

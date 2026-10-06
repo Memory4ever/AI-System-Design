@@ -1,0 +1,61 @@
+https://arxiv.org/html/2602.17133v1
+3 Methodology
+This section introduces VP-VAE, a training framework that decouples representation learning from codebook learning by replacing discrete quantization with adaptive vector perturbation.
+We elaborate on the model architecture, the perturbation-based training procedure, and the generation of an explicit codebook for inference (§3.2).
+We then present Finite Scalar Perturbation (FSP), a specialized variant of VP-VAE. When the latent distribution is approximately uniform, FSP enables a simplified perturbation and quantization scheme with reduced computational complexity (§3.3).
+3.1 Setup and Notation
+Let xx denote an input sample, such as an image or an audio signal.
+An encoder EE maps xx to a sequence of token features {ht}t=1T\{h_{t}\}_{t=1}^{T}, where ht∈ℝCh_{t}\in\mathbb{R}^{C} and TT is the number of tokens per sample.
+In standard VQ-VAEs, quantization is performed directly in this CC-dimensional embedding space (e.g., C=128C=128 or higher).
+Instead, in this paper, we propose a perturbation mechanism based on non-parametric density estimation, designed to ensure that perturbed latent vectors remain within high-density regions of the original latent distribution.
+However, performing reliable density estimation in such high-dimensional spaces is non-trivial due to the curse of dimensionality (Silverman, 1986).
+To address this issue, VP-VAE introduces a low-dimensional quantization bottleneck.
+Specifically, each token feature is first projected into a lower-dimensional space via a learnable down-projection, and later mapped back to the original embedding space through a corresponding up-projection:
+z=P↓​(ht)∈ℝd,\displaystyle z=P_{\downarrow}(h_{t})\in\mathbb{R}^{d},
+h~t=P↑​(z~)∈ℝC,\displaystyle\tilde{h}_{t}=P_{\uparrow}(\tilde{z})\in\mathbb{R}^{C},
+(1)
+where P↓:ℝC→ℝdP_{\downarrow}:\mathbb{R}^{C}\to\mathbb{R}^{d} and P↑:ℝd→ℝCP_{\uparrow}:\mathbb{R}^{d}\to\mathbb{R}^{C} denote the down- and up-projection operators, respectively.
+Here, zz and z~\tilde{z} represent the latent vectors before and after perturbation, as detailed in §3.2.2.
+Both perturbation (during training) and quantization (during testing) are performed in the compressed dd-dimensional space (typically d≤16d\leq 16), while the decoder reconstructs the input as x^=D⁡({h~t}t=1T)\hat{x}=D(\{\tilde{h}_{t}\}_{t=1}^{T}) from the up-projected features.
+This bottleneck enables reliable density estimation while preserving sufficient representational capacity for high-fidelity reconstruction.
+3.2 VP-VAE: From Quantization to Perturbation
+In standard VQ, each latent vector zz is mapped to its nearest code q⁡(z)∈𝒬q(z)\in\mathcal{Q}, introducing a quantization error ϵ=q⁡(z)−z\epsilon=q(z)-z.
+Our key viewpoint is that, this operation can be viewed as injecting a structured perturbation into the latent space.
+This viewpoint motivates a fundamentally different training strategy: instead of performing discrete quantization during training—which requires surrogate gradients and simultaneous codebook updates—we can train the decoder to be robust to latent perturbations that mimic the effect of quantization.
+Following this point, VP-VAE replaces the discrete quantization operator with an explicit perturbation operator 𝒯\mathcal{T}:
+z~=𝒯⁡(z,𝒮),\displaystyle\tilde{z}=\mathcal{T}(z;\mathcal{S}),
+x^=D⁡({P↑​(z~)}t=1T),\displaystyle\hat{x}=D\big(\{P_{\uparrow}(\tilde{z})\}_{t=1}^{T}\big),
+(2)
+where 𝒮\mathcal{S} is a memory buffer containing recent latent vectors, used to approximate the current latent distribution (detailed in §3.2.1).
+If the perturbation distribution accurately emulates quantization error, the model can learn to reconstruct from perturbed latent vectors without ever seeing an explicit codebook during training.
+For this emulation to be effective, the perturbation operator 𝒯\mathcal{T} must satisfy two critical requirements:
+1.
+Scale alignment: The perturbation magnitude should match the expected quantization error implied by a target codebook size KK.
+Perturbations that are too small may fail to prepare the decoder for inference-time quantization, while overly large perturbations unnecessarily degrade reconstruction quality.
+2.
+Distribution consistency: Perturbed latent vectors z~\tilde{z} should remain within high-density regions of the original latent distribution.
+Naive perturbation schemes, such as isotropic Gaussian noise, are ineffective because they often push samples into low-density or out-of-distribution regions, forcing the decoder to model unlikely latent configurations and wasting representational capacity.
+3.2.1 Scale Alignment via Adaptive Radius Estimation
+To align the perturbation scale with the expected quantization error, we estimate how far a latent vector would typically move under nearest-neighbor quantization with a codebook of size KK.
+Intuitively, if the latent space were partitioned into KK Voronoi cells with roughly equal probability mass, each cell would contain approximately 1/K1/K of the latent distribution, and the quantization error would scale with the local cell radius.
+We realize this intuition using a non-parametric approach.
+We maintain a first-in-first-out (FIFO) queue 𝒮={si}i=1|𝒮|\mathcal{S}=\{s_{i}\}_{i=1}^{|\mathcal{S}|} of recent latent vectors in ℝd\mathbb{R}^{d}.
+To mitigate redundancy caused by strong intra-sample token correlations, we update 𝒮\mathcal{S} by randomly subsampling a small fraction of tokens from each minibatch rather than storing all tokens.
+Given the queue 𝒮\mathcal{S}, let Dm​(z|𝒮)D_{m}(z|\mathcal{S}) denote the Euclidean distance from zz to its mm-th nearest neighbor in 𝒮\mathcal{S}.
+For a target codebook size KK, we define the local quantization radius as:
+M=⌈|𝒮|K⌉,R⁡(z)=η​DM​(z|𝒮),M=\left\lceil\frac{|\mathcal{S}|}{K}\right\rceil,\qquad R(z)=\eta\,D_{M}(z|\mathcal{S}),
+(3)
+where η>0\eta>0 is a hyperparameter controlling the perturbation scale.
+The rationale is as follows: if KK codebook vectors were to partition the |𝒮||\mathcal{S}| samples into regions of equal size, each region would contain approximately M=|𝒮|/KM=|\mathcal{S}|/K samples.
+The distance to the MM-th nearest neighbor thus serves as a data-adaptive indicator for the radius of the local Voronoi cell, automatically adjusting to both the local density and the target codebook size.
+3.2.2 Distribution Consistency via Metropolis–Hastings Sampling
+With the perturbation scale determined by Eq. (3), a naive approach would sample perturbations uniformly from a ball of radius R⁡(z)R(z).
+However, such isotropic noise ignores the geometry of the latent distribution, i.e., perturbations may push latent vectors into low-density regions or even outside the support of the learned latent distribution, creating a train–test mismatch.
+To preserve distributional consistency, VP-VAE generates perturbations using a Metropolis–Hastings (MH) transition (Metropolis et al., 1953; Hastings, 1970) whose stationary distribution matches the empirical latent density.
+A fundamental property of the MH algorithm is that the transition kernel leaves the target distribution π\pi invariant: if z∼πz\sim\pi, then z~∼π\tilde{z}\sim\pi as well (Robert et al., 1999).
+MH sampling naturally rejects proposals that move into low-density regions, ensuring that accepted perturbations keep z~\tilde{z} within high-probability regions.
+Target density estimation.
+We approximate the latent density using a kk-nearest-neighbor (kNN) estimator:
+π⁡(z)∝1(Dk​(z|𝒮))d,\pi(z)\propto\frac{1}{\big(D_{k}(z|\mathcal{S})\big)^{d}},
+(4)
+where kk is a small constant, Dk​(z|𝒮)D_{k}(z|\mathcal{S}) is the distance to the kk-th nearest n

@@ -1,0 +1,379 @@
+URL https://arxiv.org/html/2601.05877v1; sections S3 to S5 excluded; result tables omitted; fetched 2026-10-03
+
+
+
+ 3 Method 
+
+
+
+ 
+ 
+ Figure 3: Question shaping and Solver reasoning behavior over training steps. 
+ (Top) Proposer reward remains stable (around 0.3 – 0.5 ) while answer entropy stays in a moderate band (roughly 0.6 – 1.1 nats), consistent with sustained intermediate difficulty rather than degeneracy.
+ (Bottom) Majority-group density and mean step similarity increase over training, indicating a larger fraction of Solver samples agree on the dominant answer and that their intermediate steps become more aligned. 
+ 
+
+
+
+ 3.1 Overview 
+
+ 
+
+We introduce iReasoner , a fully unsupervised self-evolving framework that improves an LMM by explicitly optimizing the Solver ’s CoT, not only its final answers.
+Given unlabeled images x\sim\mathcal{D} , we adopt the Proposer – Solver self-evolution regime from prior work: a Proposer \pi_{p} generates a visually grounded question q\sim\pi_{p}(\cdot\mid x) and a Solver \pi_{s} samples N rollouts y_{i}\sim\pi_{s}(\cdot\mid x,q) (Fig.  2 ).
+Each Solver rollout is structured as
+ y_{i}=\langle\texttt{ }~t_{i}~\texttt{ }~a_{i}~\texttt{ }\rangle ,
+where t_{i} is an explicit multi-step trace and a_{i} is the extracted answer.
+Sampling induces an empirical answer distribution over normalized answers, 
+ 
+
+ 
+
+ 
+ p(a\mid x,q)\;=\;\frac{1}{N}\sum_{i=1}^{N}\mathbf{1}[a_{i}=a], 
+ 
+ (1) 
+ 
+
+which provides intrinsic supervision without labeled question–answer pairs or external verifiers. 
+ 
+
+ 
+ Figure 4: Outcome-only self-consistency treats distinct CoTs similarly. 
+For the same image-question pair, three Solver rollouts produce the same final answer, but their intermediate steps differ: Rollouts 1 and 3 follow a consistent signed-area decomposition, while Rollout 2 deviates via incorrect intermediate claims yet still ends at the same answer. Since outcome-only intrinsic rewards depend only on answer agreement, these rollouts receive nearly identical learning signal despite qualitatively different reasoning traces, motivating step-aware supervision in iReasoner . 
+ 
+ 
+
+As in EvoLMM  Thawakar et al. (2025) , outcome-level intrinsic verification is derived from p(a\mid x,q) : the Solver is rewarded for answer self-consistency, while the Proposer is shaped toward intermediate-difficulty questions using the answer entropy
+ H(x,q)=-\sum_{a}p(a\mid x,q)\log p(a\mid x,q) .
+We adopt this Proposer -side uncertainty shaping and observe stable Proposer reward and sustained non-degenerate answer entropy throughout training (Fig.  3 , top), indicating that the self-evolution loop remains in a meaningful difficulty regime rather than collapsing to trivial questions. 
+ 
+ 
+
+However, outcome-only supervision leaves intermediate reasoning weakly constrained: rollouts that share an answer can receive nearly identical learning signal despite very different CoTs (as illustrated in Fig.  4 ).
+To this end, iReasoner adds trajectory-aware supervision by an intrinsic mechanism that scores agreement of intermediate steps among rollouts that converge to the same answer, and integrating it into Solver optimization (Fig.  2 ). 
+ 
+ 
+
+
+
+ 3.2 Intrinsic CoT Agreement Reward 
+
+ 
+
+Our goal is to make intermediate reasoning learnable under unsupervised self-evolution.
+For a fixed (x,q) , strong solutions should not only agree on the final answer, but also reuse consistent intermediate claims—especially in early grounding steps.
+We therefore measure step-wise agreement within rollouts that already agree on the answer. 
+ 
+
+
+ 
+ 
+ Figure 5: Reward components and step-structure trends over training steps. 
+ (Top) The final mixed Solver reward stays in the high range (about 0.6 – 0.7 ) while the step-level term provides additional signal beyond soft-majority answer consistency.
+ (Bottom) The dominant-answer group size and the number of valid step positions used for agreement increase into the 2 – 3 range, indicating that an increasing portion of the trace is consistently comparable across samples. 
+ 
+ 
+
+We view each Solver trace as steps t_{i}=(s_{i,1},\ldots,s_{i,J_{i}}) , where s_{i,j} is the j -th intermediate claim.
+To make agreement meaningful, we elicit a consistent step interface so that the same index j plays a comparable role across rollouts (e.g., early grounding vs. later computation).
+Let \hat{a}=\arg\max_{a}p(a\mid x,q) be the dominant answer under Eq. ( 1 ), and let 
+ 
+
+ 
+
+ 
+ \mathcal{G}=\{i\mid a_{i}=\hat{a}\},\qquad\rho=\left(\frac{|\mathcal{G}|}{N}\right)^{\gamma},\ \gamma\geq 0 
+ 
+ (2) 
+ 
+
+denote the dominant-answer group and a density-based reliability factor.
+Conditioning on \mathcal{G} anchors step agreement to a stable outcome and avoids reinforcing agreement among off-target rollouts; \rho downweights step supervision when few samples agree. 
+ 
+ 
+
+To compare steps, we embed each step into e_{i,j}=f(s_{i,j})\in\mathbb{R}^{d} using the model’s internal text representations.
+In our implementation, f(\cdot) is the \ell_{2} -normalized mean of input-token embeddings for the step text (with a fixed token budget), which provides a lightweight semantic representation aligned with the Solver ’s language space.
+For each index j , we form a dominant-group prototype 
+ 
+
+ 
+
+ 
+ \mu_{j}\;=\;\frac{1}{|\mathcal{G}_{j}|}\sum_{i\in\mathcal{G}_{j}}e_{i,j},\qquad\mathcal{G}_{j}=\{i\in\mathcal{G}\mid j\leq J_{i}\}, 
+ 
+ (3) 
+ 
+
+and score per-step agreement by cosine similarity r_{i,j}\;=\;\mathrm{sim}(e_{i,j},\mu_{j})\ \in[-1,1]. 
+Because early steps typically carry grounding and setup, we aggregate with decaying weights w_{1}>w_{2}>\cdots : 
+ 
+
+ 
+
+ 
+ \tilde{r}^{\text{step}}_{i}\;=\;\sum_{j\leq J_{i}}w_{j}\,r_{i,j}. 
+ 
+ (4) 
+ 
+
+Finally, we define the Intrinsic CoT Agreement Reward as r^{\text{step}}_{i}\;=\;\rho\cdot\tilde{r}^{\text{step}}_{i}. 
+Both majority-group density and mean step similarity increase over training (Fig.  3 , bottom), consistent with progressively stabilized Solver reasoning traces. 
+ 
+ 
+
+
+
+ 3.3 Step-Aware Self-Evolution via Reward Integration 
+
+ 
+
+We train the Solver by augmenting outcome-level self-consistency with intrinsic CoT agreement.
+Given Eq. ( 1 ), each rollout receives an answer-level reward 
+ 
+
+ 
+
+ 
+ r^{\text{ans}}_{i}\;=\;p(a_{i}\mid x,q)^{\alpha}\,\bigl(1-\eta\,\bar{\ell}_{i}\bigr), 
+ 
+ (5) 
+ 
+
+where \alpha>0 controls sharpness, \bar{\ell}_{i}\in[0,1] is a normalized excess pre-answer length relative to a target budget, and \eta\geq 0 sets the length penalty strength.
+ iReasoner combines Eq. ( 5 ) with the step reward: 
+ 
+
+ 
+
+ 
+ r^{\text{sol}}_{i}\;=\;(1-\lambda(t))\,r^{\text{ans}}_{i}\;+\;\lambda(t)\,r^{\text{step}}_{i}, 
+ 
+ (6) 
+ 
+
+where \lambda(t)\in[0,1] increases over training with a warmup and ramp.
+Early updates rely more on answer-level self-consistency, while later updates place more weight on step agreement once the dominant group and step positions are more reliably populated (Fig.  5 , bottom).
+This is also reflected in the reward decomposition (Fig.  5 , top), where the mixed reward remains high while the step-level term provides complementary signal beyond answer-level agreement. 
+ 
+ 
+
+We train both the Solver and Proposer with KL-regularized policy gradients against a frozen reference policy, which stabilizes self-evolution by limiting drift while preserving reward-driven updates. For the Solver , we apply REINFORCE  Williams (1992) with an EMA baseline b_{s} : 
+ 
+ 
+
+
+ 
+ \displaystyle\mathcal{L}_{s}(\theta) 
+ \displaystyle=-\mathbb{E}_{y\sim\pi_{s}(\cdot\mid x,q)}\!\left[(r^{\text{sol}}(y)-b_{s})\,\log\pi_{s}(y\mid x,q)\right] 
+ 
+ (7) 
+
+
+ 
+ 
+ \displaystyle+\beta_{s}\,\mathbb{E}\!\left[\mathrm{KL}\!\left(\pi_{s}(\cdot\mid x,q)\,\|\,\pi_{\text{ref}}(\cdot\mid x,q)\right)\right], 
+ 
+ 
+
+The Proposer is optimized with the same objective form (baseline b_{p} and coefficient \beta_{p} ), using the entropy-shaped reward r^{p}(x,q)=g(H(x,q)) . To maintain a target KL budget, we adapt each coefficient online via a multiplicative controller: 
+ 
+
+ 
+
+ 
+ \beta\leftarrow\mathrm{clip}\!\left(\beta\cdot\exp\!\Big(\eta\,\frac{\mathrm{KL}-\tau}{\tau}\Big),\ \beta_{\min},\ \beta_{\max}\right), 
+ 
+ (8) 
+ 
+
+which strengthens regularization when the observed KL exceeds \tau and relaxes it otherwise. 
+ 
+ 
+ 
+
+
+
+ 4 Experiments 
+
+
+
+
+ 4.1 Experimental Setup 
+
+
+
+ 
+ [result table omitted; consult original if quantitative claim needed] 
+ 
+ Table 1: Evaluation results across eight multimodal reasoning benchmarks. 
+Benchmarks are grouped into general visual understanding and visual mathematics tasks. Best and second-best results are highlighted. Methods marked with ( \dagger ) use external supervision. Methods marked with (*) report results using LLM-as-a-judge evaluation. 
+ 
+
+
+ 
+ [result table omitted; consult original if quantitative claim needed] 
+ 
+ Table 2: Ablation study of intrinsic reasoning supervision across eight benchmarks. 
+The full configuration achieves the strongest overall performance across both task groups. Answer stability alone performs best on highly verifiable benchmarks, while adding step-wise reasoning reward improves transfer on tasks where intermediate structure is informative. Removing mechanism or shaping components leads to consistent regressions, with warmup having the largest effect. 
+ 
+
+
+
+Training details. 
+
+ 
+
+Our training pool contains 2.5k images sampled from six widely used sources (ChartQA  Masry et al. (2022) , AI2D  Kembhavi et al. (2016) , InfoGraphic-VQA  Mathew et al. (2022) , PlotQA  Methani et al. (2020) , ChartX  Xia et al. (2025) , Geometry3K  Lu et al. (2021) ). We train on images only; no question–answer pairs, captions, metadata, or external reward models are used at any stage. 
+ 
+ 
+
+We initialize from Qwen2.5-VL-7B-Instruct Bai et al. (2025) and train in the Proposer – Solver self-evolution regime using lightweight LoRA  Hu et al. (2022) adapters for both roles while keeping the backbone frozen. For each image, the Proposer samples one question and the Solver samples N{=}5 reasoning rollouts. The Proposer is updated every 5 iterations. The Solver is optimized with KL-regularized REINFORCE using our mixed intrinsic reward (answer stability + step-level agreement), with a warmup schedule that ramps the step component from 0 to a maximum weight of 0.7. We train for 2.5k steps using AdamW (learning rate 10^{-6} , weight decay 0.01, gradient clipping 1.0) in bfloat16 on 8 \times AMD MI250X GPUs; the full run completes in approximately 35 hours. 
+ 
+ 
+
+
+
+Evaluation protocol. 
+
+ 
+
+We evaluate iReasoner trained from an instruction-tuned seed model (Qwen2.5-VL-7B  Bai et al. (2025) ) using an intrinsic CoT–guided RL pipeline in a fully unlabeled setting. We evaluate on eight multimodal reasoning benchmarks: ChartQA  Masry et al. (2022) , MathVista  Lu et al. (2023) , MathVision  Wang et al. (2024) , MathVerse  Zhang et al. (2024b) , InfoGraphic-VQA  Mathew et al. (2022) , AI2D  Kembhavi et al. (2016) , ScienceQA  Lu et al. (2022) , and MMMU  Yue et al. (2024) . We use the official evaluation splits and each benchmark’s standard accuracy metric. All models are evaluated with identical inference settings (no task-specific tuning), so differences reflect self-evolution rather than evaluation-time customization. Evaluations are run with lmms-eval  Zhang et al. (2024a) on AMD MI250X GPUs using bfloat16 for consistency with training. 
+ 
+ 
+ 
+
+
+
+ 4.2 Main Benchmark Results 
+
+ 
+
+Table  1 reports results on eight multimodal reasoning benchmarks spanning general visual understanding and visual mathematics. We make three primary observations. 
+ 
+
+
+ 
+ 
+
+
+ 
+ [result table omitted; consult original if quantitative claim needed] 
+ 
+ 
+ Table 3: Sensitivity to the maximum number of reasoning steps. 
+We report performance across all eight benchmarks while varying the maximum number of parsed reasoning steps used to extract intermediate reasoning structure. Smaller step budgets truncate useful intermediate information, while overly large budgets can introduce noisy or redundant steps. The default setting of 8 steps used in our main experiments provides a strong balance and achieves robust performance across both general visual understanding and visual mathematics tasks. 
+ 
+
+ 
+ Figure 6: Evolution of reasoning step usage over training. 
+Average number of extracted reasoning steps per solution (capped at eight), which gradually stabilizes over training, reflecting more consistent and structured intermediate reasoning. 
+ 
+ 
+
+
+
+ iReasoner consistently improves over the seed model across both task groups. 
+
+ 
+
+Across general visual understanding benchmarks, iReasoner improves over Qwen2.5-VL-7B by +1.12 on InfoGraphic-VQA, +1.28 on AI2D, +1.62 on ScienceQA, and +1.26 on MMMU, corresponding to an average gain of +1.32. On visual mathematics benchmarks, iReasoner improves on all four datasets (+1.64 on average), with the largest gain on MathVerse (+2.13) and a consistent improvement on MathVision (+1.38). 
+ 
+ 
+
+
+
+Step-wise reasoning reward improves general-purpose transfer beyond answer-level agreement. 
+
+ 
+
+Compared to EvoLMM  Thawakar et al. (2025) , iReasoner improves all four general benchmarks: InfoGraphic-VQA (+0.50), AI2D (+0.48), ScienceQA (+0.42), and MMMU (+0.36). This pattern is strongest on tasks where multiple intermediate reasoning traces can reach the same final answer (such as those in MMMU and MathVerse), showing that cross-trajectory step agreement provides supervision that is not captured by answer-level consistency alone. On visual math benchmarks, iReasoner improves MathVision (24.81 \rightarrow 25.29) and MathVerse (44.88 \rightarrow 45.91), while EvoLMM remains stronger on ChartQA and MathVista. This contrast is consistent with answer-stability rewards being particularly effective on highly verifiable short-answer settings, whereas step-level alignment contributes more when intermediate structure is informative and transferable. 
+ 
+ 
+
+
+
+Step-level agreement requires continuous rewards to be effective. 
+
+ 
+
+To isolate the interaction between reward type and step-level supervision, we include a discrete-reward variant augmented with step-level agreement. While adding step-level agreement to a discrete reward improves over the discrete-only baseline (e.g., InfoGraphic-VQA 80.52 \rightarrow 80.78; MathVerse 42.10 \rightarrow 44.18), the gains remain limited and do not match those achieved by iReasoner . In contrast, combining step-level agreement with continuous intrinsic rewards yields consistent improvements across all eight benchmarks, indicating that step-level signals benefit from smoother credit assignment, where partial alignment in intermediate steps can be rewarded even when answers are not perfectly consistent. 
+ 
+ 
+
+
+
+Comparison to prior self-evolving LMMs. 
+
+ 
+
+We also compare against other self-evolving LMMs under their reported evaluation protocols. VisPlay  He et al. (2025) , which operates in a similar unsupervised self-evolving regime, achieves higher performance on MathVision, while iReasoner substantially outperforms VisPlay on MMMU {}_{\textit{val}} (52.37 vs. 38.27) and MathVerse (45.91 vs. 39.14). Vision-Zero  Wang et al. (2025a) is included for context but relies on external supervision and is therefore not directly comparable. 
+ 
+
+
+ 
+ 
+ 
+ 
+ 
+ 
+ Figure 7: Majority-group rollouts and step-level agreement diagnostics. 
+Left: qualitative sample of an image, Propposer -generated question and five Solver rollouts with four reasoning steps.
+Right (top): per-step disagreement D_{j} computed from leave-one-out similarities.
+Right (bottom): leave-one-out step similarity heatmap S_{i,j} over rollouts i\in\mathcal{G} and step indices j (higher indicates greater consistency with the group). 
+ 
+ 
+ 
+
+
+
+ 4.3 Ablation Study 
+
+ 
+
+Table  2 ablates the two intrinsic rewards and key design choices in cross-trajectory step alignment. 
+ 
+ 
+
+ Answer stability is strongest on highly verifiable benchmarks, while step-wise reward improves transfer. 
+Using only the answer-stability reward yields large gains on ChartQA and MathVista, improving over the seed model by +2.64 (84.00 \rightarrow 86.64) and +1.94 (68.47 \rightarrow 70.41). Adding step-wise reward improves benchmarks where intermediate structure matters: relative to answer stability alone, iReasoner improves InfoGraphic-VQA by +0.44, AI2D by +0.53, ScienceQA by +0.51, MMMU by +0.45, and also increases MathVision by +0.67 and MathVerse by +1.20. At the same time, it is slightly lower on ChartQA (-0.86) and MathVista (-0.67), consistent with a trade-off between answer-level agreement and enforcing step-level structure on highly verifiable tasks. 
+ 
+ 
+
+ Step-wise reward alone is weak, but becomes effective with answer stability. 
+Using only step-wise reward yields small gains over the seed model (e.g., +0.17 on InfoGraphic-VQA; +0.09 on MathVerse) and does not improve MMMU. In contrast, combining both signals substantially improves over step-wise reward alone (e.g., +1.48 on ScienceQA; +2.04 on MathVerse). Overall, cross-trajectory step alignment benefits from an answer-level signal that reduces reward noise early in training. 
+ 
+ 
+
+ Mechanism and shaping choices matter, and warmup is most important. 
+Removing the warmup schedule produces the largest and most uniform regression (average -0.68 across benchmarks), including -0.76 on ChartQA and -0.80 on MathVerse. Removing position decay or density weighting also reduces performance with smaller but consistent drops. Reward shaping has systematic effects: removing the length penalty reduces MathVerse by -0.30, while removing shaping entirely ( \gamma{=}1.0 ) leads to larger degradations (e.g., -0.90 on ScienceQA and -1.03 on MathVerse). 
+ 
+ 
+
+
+
+ 4.4 Training Dynamics and Reasoning-Trace Analysis 
+
+
+
+
+Sensitivity to the step budget. 
+
+ 
+
+We analyze sensitivity to the maximum number of intermediate reasoning steps used for cross-trajectory alignment. Table  3 shows that increasing the step budget from 4 to 8 yields consistent gains (e.g., MathVerse 45.02 \rightarrow 45.91; AI2D 83.12 \rightarrow 83.89), while increasing beyond 8 gives diminishing returns and can slightly regress, consistent with longer traces adding redundant or noisier steps for alignment. Figure  6 further shows that the average number of extracted steps per rollout (capped at eight) stabilizes over training, suggesting that intrinsic reasoning supervision promotes more consistent trace structure rather than unbounded growth. 
+ 
+ 
+
+
+
+Within-mode divergence under answer agreement. 
+
+ 
+
+Even when answers agree, intermediate reasoning can vary substantially, as rollouts in the dominant-answer group \mathcal{G} may share the same final answer while diverging on key steps (Fig.  7 (left)). To localize where this occurs, we measure step agreement within \mathcal{G} using the same step parsing and lightweight text embeddings as our step-level reward. For each rollout i\in\mathcal{G} and step index j , we compute a leave-one-out similarity
+ S_{i,j}=\cos(e_{i,j},\mu_{-i,j}) ,
+where \mu_{-i,j} is the mean step- j embedding over the other majority rollouts. Fig.  7 (bottom right) visualizes S_{i,j} and shows that even under answer agreement, some rollouts deviate sharply at specific step indices while remaining aligned elsewhere. Aggregating across rollouts gives a depth-wise disagreement profile
+ D_{j}=1-\frac{1}{|\mathcal{G}|}\sum_{i\in\mathcal{G}}S_{i,j} .
+As shown in Fig.  7 (top right), disagreement concentrates in the middle of the trace (steps 2–3) and is lower in later steps, supporting that outcome-only rewards cannot distinguish stable from unstable reasoning within the dominant answer mode, whereas step-level objectives directly target trace parts where rollouts drift.

@@ -1,0 +1,615 @@
+You Can Learn Tokenization End-to-End with Reinforcement Learning
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Theory & Method
+2.1 Desiderata for designing a end-to-end tokenization method
+2.2 Autoregressive U-net architecture and setup
+2.3 Score function estimation for tokenization
+2.4 Reducing the variance of the score function estimate
+Early exit relative rewards
+Time discounting
+Batch-relative advantages
+2.5 Defining the token boundary function
+2.6 Downsample Rate Targeting
+2.7 Full loss formula
+3 Related Work
+4 Experiments
+4.1 Learned tokenization strategies for Natural Language
+4.2 Natural Language Performance
+4.3 Python Code
+5 Conclusion
+References
+A Proofs
+A.1 Loss breakdown
+B Tokenization strategies
+B.1 Our method
+B.2 Straight-through estimator from Nawrot et al. (2023)
+B.3 Hnet Hwang et al. (2025)
+B.4 Our method on CodeParrot
+B.5 H-Net Hwang et al. (2025) on CodeParrot
+B.6 Varying the downsample rate
+C Continued Related Work
+C.1 Scaling byte-level language models with Tokenization Heuristics
+C.2 Architectural Innovations
+D Further experimental details
+License: CC BY 4.0
+arXiv:2602.13940v1 [cs.LG] 15 Feb 2026
+You Can Learn Tokenization End-to-End
+with Reinforcement Learning
+Sam Dauncey & Roger Wattenhofer
+† † thanks: Corresponding author.
+Affiliation: ETH Zürich
+Affiliation: Zürich, Switzerland
+Email: {sdauncey,wattenhofer}@ethz.ch
+Abstract
+Tokenization is a hardcoded compression step which remains in the training pipeline of Large Language Models (LLMs), despite a general trend towards architectures becoming increasingly end-to-end. Prior work has shown promising results at scale in bringing this compression step inside the LLMs’ architecture with heuristics to draw token boundaries, and also attempts to learn these token boundaries with straight-through estimates, which treat the problem of drawing discrete token boundaries as a continuous one. We show that these token boundaries can instead be learned using score function estimates, which have tighter theoretical guarantees due to directly optimizing the problem of drawing discrete token boundaries to minimize loss. We observe that techniques from reinforcement learning, such as time discounting, are necessary to reduce the variance of this score function sufficiently to make it practicable. We demonstrate that the resultant method outperforms prior proposed straight-through estimates, both qualitatively and quantitatively at the 100 100 million parameter scale.
+1 Introduction
+Tokenization is a crucial pre-processing step in the training and inference pipelines of modern LLMs. Standard practice compresses text into symbols representing commonly occurring substrings. This is typically done using algorithms such as Byte-Pair Encoding (BPE), which recursively groups frequently co-occurring byte sequences into individual tokens. State-of-the-art open-source models further augment BPE with numerous hand-crafted decisions. For example, the Gemma-series tokenizers ( Rivière et al., 2024 ) explicitly split digits and preserve whitespace, reflecting the extent to which tokenizer design remains largely artisanal.
+A growing line of work seeks to eliminate this BPE step entirely by operating directly on UTF-8 bytes ( Xue et al., 2022 ; Wang et al., 2024 ; Zheng et al., 2025 ) . This can be viewed as using a tokenizer with a maximally small vocabulary and an effective downsampling rate of 1 1 token per byte.
+Recent scaling analyses suggest that downstream loss is optimized by increasing vocabulary size, and thus downsampling rate, with model scale ( Tao et al., 2024 ) .
+We thus focus our investigation onto methods which admit a growing downsampling rate. Interestingly, BPE itself experiences harsh diminishing returns in downsampling rate as vocabulary size scales. Further, a large vocabulary size can have undesirable downstream effects, such as the emergence of very rare ”glitch tokens“ ( Rumbelow and Watkins, 2023 ) . Marginally increasing the achieved downsampling rate to vocabulary size tradeoff with curricula ( Liu et al., 2025 ) , has thus proved fruitful in improving LLM performance.
+An alternative family of approaches processes text at the byte level for several transformer layers before downsampling into a shorter sequence of latent tokens ( Nawrot et al., 2022 ; Yu et al., 2023 ) . Some of these methods facilitate a simple modification of the downsampling rate as a hyperparameter. When token boundaries are chosen heuristically—e.g., using whitespace ( Slagle, 2024 ) or spikes in next-byte entropy ( Nawrot et al., 2023 ) —these models have been reported to achieve superior performance to pure BPE transformer models at large scales ( Pagnoni et al., 2024 ) .
+However, such heuristics raise a natural question: can we improve on these boundary rules by learning tokenization itself from end-to-end training? Prior approaches to this question have focused on straight-through estimators ( Nawrot et al., 2023 ) , which craft rules for backpropagating gradients from representations internal to the model. We instead investigate score function estimators, which directly approximate the gradient of the expected loss with respect to the token boundaries. Score function estimators have stronger theoretical guarantees, at the cost of a higher variance.
+Our main contributions are as follows:
+•
+We show that we can learn tokenization strategies that align closely with semantic boundaries without any explicit prior structure or inductive bias with a score-function estimator, equipped with variance-reduction techniques from reinforcement learning.
+•
+We further find that our method qualitatively and quantitatively outperforms prior approaches using straight-through estimators.
+•
+We demonstrate robust performance across a range of downsampling rates.
+2 Theory & Method
+Figure 1: [Left] An example of the autoregressive U-net architecture ( Nawrot et al., 2022 ) , computed with the values x 0 : 7 = <b>Learn t x_{0:7}=\texttt{<b>Learn t}\; and a 0 : 7 = 11001010 \;a_{0:7}=11001010 . Blocks with rounded edges represent transformer blocks, arrows represent flow of representations. [Right] the stochastic computation graph ( Schulman et al., 2015 ) of a forward pass of our method, deterministic nodes in squares, stochastic nodes in circles, distributions in gray .
+In this section, we motivate our method from first principles. We first present some desiderata for an end-to-end tokenisation method § 2.1 , then show that these desiderata necessarily lead to an autoregressive U-net style architecture § 2.2 . We then present score functions as the canonical way to learn tokenization under this framework § 2.3 and present our method for making them practicable § 2.4 - 2.7
+2.1 Desiderata for designing a end-to-end tokenization method
+For the reasons outlined in § 1 , we are interested in bringing the tokenization process inside the architecture and training of an LLM. We propose the following desiderata for such a method to be practicable and general:
+•
+End-to-end tokenizer training : the token boundary decisions should be learned to minimise loss, in favor of hand-crafted methods and heuristics.
+•
+End-to-end architecture : learned representations at the byte level should be re-used at the token level.
+•
+Efficiency : use less than 0.1% additional pretraining compute, on existing hardware, than byte-pair-encoding guided tokenization in the forward & backward passes.
+2.2 Autoregressive U-net architecture and setup
+In this section, we define notation for the autoregressive U-net architecture ( Nawrot et al., 2022 ) , depicted in Figure 1 as the canonical architecture which satisfies the Efficiency and End-to-end architecture desiderata.
+For autoregressive models, tokenization is a fundamentally discrete question as it dictates how much compute is spent on a given (sub)sequence at inference time. Furthermore, modern GPUs cannot efficiently perform sparse memory accesses ( Yuan et al., 2025 ) , meaning that tokenization for feedforward models needs to be consistent across layers .
+Thus, bringing tokenization inside an autoregressive feedforward architecture necessarily have some amount of layers applied at the byte-level with some amount of layers applied at the token-level, in contrast to BPE tokenizer models which operate soley on the token-level. The result is a forward pass structured as follows. Let x 1 ​ … ​ x N x_{1}\dots x_{N} be a sequence of input bytes and d e ​ n ​ c d_{enc} , d m ​ i ​ d d_{mid} , d d ​ e ​ c d_{dec} be hyperparameters for the model dimensions.
+1.
+Autoregressively encode the input bytes into byte-level representations X ∈ ℝ N × d e ​ n ​ c X\in\mathbb{R}^{N\times d_{enc}} :
+X = encode ​ ( x ) X=\texttt{encode}(x)
+(1)
+2.
+(Potentially stochastically) predict token boundaries from the byte-level representations, where a i = 1 a_{i}=1 if we wish to draw a token boundary at x i x_{i} and a i = 0 a_{i}=0 if not.
+a ∼ π ⁡ ( X , x ) a\sim\pi(X,x)
+(2)
+3.
+Downsample the byte-level representations into token-level representations X ′ ∈ ℝ M × d m ​ i ​ d X^{\prime}\in\mathbb{R}^{M\times d_{mid}} where M = ∑ i = 0 N a i M=\sum_{i=0}^{N}a_{i} :
+X ′ = downsample ​ ( X , a ) X^{\prime}=\texttt{downsample}(X,a)
+(3)
+4.
+Enrich token-level representations Y ′ ∈ ℝ M × d m ​ i ​ d Y^{\prime}\in\mathbb{R}^{M\times d_{mid}} with an autoregressive feedforward network:
+Y ′ = mid ​ ( Y ) Y^{\prime}=\texttt{mid}(Y)
+(4)
+5.
+Upsample into updated byte-level information Y ∈ ℝ N × d d ​ e ​ c Y\in\mathbb{R}^{N\times d_{dec}} , potentially carrying encoded byte-level information:
+Y = upsample ​ ( Y ′ , X , a ) Y=\texttt{upsample}(Y^{\prime},X,a)
+(5)
+6.
+Decode the resulting byte-level representations into predictions of the next bytes y i = x i + 1 y_{i}=x_{i+1}
+y ∼ decode ​ ( Y ) y\sim\texttt{decode}(Y)
+(6)
+All the above operations must be autoregressive, for example the decode function must be formulated such that X j ′ X^{\prime}_{j} , the downsampled representation at position j j , depends only on the preceding bytes X ≤ i X_{\leq i} , where i i is the minimum token index such that j = ∑ k = 0 i a k j=\sum_{k=0}^{i}a_{k} .
+The score function estimate we detail in the following sections can be flexibly applied to any implementation of the above functions, in contrast to straight-through estimate based approaches which require specialized up/downsamplers. We make the following standard choices for our experiments in § 4 : mid is a decoder-only transformer with full attention, and encode , decode are decoder-only transformers with sliding window attention and linear embedding/unembedding matrices respectively. Our implementation of downsample simply selects the values of X ′ X^{\prime} which correspond to a i = 1 a_{i}=1 values:
+downsample ​ ( X , a ) i = X j ′ for j the minimum value such that j = ∑ k = 0 i a k \displaystyle\texttt{downsample}(X,a)_{i}=X^{\prime}_{j}\qquad\text{for $j$ the minimum value such that $j=\sum_{k=0}^{i}a_{k}$}
+(7)
+For upsampling, we employ a simple distribute-then-add:
+upsample ​ ( Y ′ , X , a ) j = X j + Y i for ​ i = ∑ k = 0 j a k \texttt{upsample}(Y^{\prime},X,a)_{j}=X_{j}+Y_{i}\quad\text{for }i=\sum_{k=0}^{j}a_{k}
+(8)
+2.3 Score function estimation for tokenization
+As tokenization is discrete, to satisfy the End-to-end tokenizer training desideratum, our model must explore strategies for drawing token boundaries stochastically.
+The model next-token cross-entropy loss outputted is thus conditional on a sampled tokenization strategy a ∼ π θ a\sim\pi_{\theta} , so we can formulate the problem of simultaneously learning the (potentially shared) parameters of the autoregressive model p θ p_{\theta} and the gating strategy π θ \pi_{\theta} as minimizing the next-token cross-entropy marginalized over all a a :
+log ⁡ p θ ​ ( y | x ) = 𝔼 a ∼ π θ ​ log ⁡ p θ ​ ( y | a , x ) . \log p_{\theta}(y|x)=\mathbb{E}_{a\sim\pi_{\theta}}\log p_{\theta}(y|a,x).
+(9)
+This is a case of a stochastic computation graph as in Schulman et al. (2015) , who show that the gradient of this likelihood can be computed as the expectation of the sum of two separate gradients, one being the standard next-token cross-entropy loss conditioned on the tokenization strategy and a correction term which can be interpreted as applying REINFORCE ( Williams, 1992 ) to the tokenization strategy π θ \pi_{\theta} with the next-token cross-entropy as the reward:
+∇ θ 𝔼 a ∼ π θ ​ log ⁡ p θ ​ ( y | a , x ) = 𝔼 a ∼ π θ ​ ( ∇ θ ​ log ​ p θ ​ ( y | a , x ) ⏟ conditional loss gradient + log ⁡ p θ ​ ( y | a , x ) ​ ∇ θ ​ log ​ π θ ​ ( a | x ) ⏟ policy gradient ) . \displaystyle\nabla_{\theta}\mathbb{E}_{a\sim\pi_{\theta}}\log p_{\theta}(y|a,x)=\mathbb{E}_{a\sim\pi_{\theta}}(\underbrace{\nabla_{\theta}\log p_{\theta}(y|a,x)}_{\text{conditional loss gradient}}+\underbrace{\log p_{\theta}(y|a,x)\nabla_{\theta}\log\pi_{\theta}(a|x)}_{\text{policy gradient}}).
+(10)
+See Appendix A.1 for a complete derivation. This type of estimator is known as a score function estimate. In particular this means that, in the large compute and data limit, performing gradient descent on the policy gradient term above will yield a locally optimal tokenization strategy. No such theoretical guarantee exists for the straight-through estimates we discuss in § 3 .
+2.4 Reducing the variance of the score function estimate
+In practice, we wish to use a Monte-Carlo estimate of the policy gradient term in equation 10 with a single sample of a a per sequence: using more would break our Efficiency desideratum. We empirically find that the naïve REINFORCE policy gradient is too noisy to efficiently learn in this setting. In this section, we show how standard techniques from reinforcement learning can be used to de-noise this estimate, solving the corresponding “reward attribution problem”: associating which token boundary decisions are responsible for increasing or decreasing the loss in the succeeding bytes.
+For this section, we will let d m ​ o ​ d ​ e ​ l d_{model} be the model dimension, vocab_size be the number of unique utf-8 bytes and special characters forming our vocabulary. We will also use the token index of i i and the batch index of b b , which will be omitted where unused.
+Early exit relative rewards
+As our model is autoregressive, we restrict our analysis to the case where the token boundary decision at byte a i a_{i} may only depend on the preceding bytes and token boundary decisions, x < i x_{<i} and a < i a_{<i} . Thus, the policy gradient term in eq. ( 10 ) treats the token boundary policy π θ ​ ( a i | x ≤ i , a < i ) \pi_{\theta}(a_{i}|x_{\leq i},a_{<i}) as having corresponding rewards log ⁡ p ⁡ ( x j | a < j , x < j ) \log p(x_{j}|a_{<j},x_{<j}) for j > i j>i .
+As 𝔼 a ∼ π θ ​ ∇ θ ​ log ⁡ π θ ​ ( a i | x ≤ i , a < i ) = 0 \mathbb{E}_{a\sim\pi_{\theta}}\nabla_{\theta}\log\pi_{\theta}(a_{i}|x_{\leq i},a_{<i})=\textbf{0} , we may add any term independent of a i a_{i} to these rewards and get a valid policy gradient estimate. The feed-forward nature of the autoregressive U-net architecture presents a natural method to estimate the baseline, tokenization-independent difficulty of predicting the next token by using the early byte-level embeddings to estimate the next-token probability:
+log ⁡ p θ e ​ a ​ r ​ l ​ y ​ ( x i = t j | x < i ) = log ⁡ softmax ​ ( W e ​ a ​ r ​ l ​ y ​ X i − 1 ) j . \log p_{\theta}^{early}(x_{i}=t_{j}|x_{<i})=\log\texttt{softmax}(W_{early}X_{i-1})_{j}.
+(11)
+Where W e ​ a ​ r ​ l ​ y ∈ ℝ d m ​ o ​ d ​ e ​ l × vocab_size W_{early}\in\mathbb{R}^{d_{model}\times\texttt{vocab\_size}} is an unembedding matrix. This gives a reward with a large part of the tokenization-independent noise subtracted out:
+R i = log ⁡ p θ ​ ( x i | x < i , a < i ) − log ⁡ p θ e ​ a ​ r ​ l ​ y ​ ( x i | x < i ) . R_{i}=\log p_{\theta}(x_{i}|x_{<i},a_{<i})-\log p_{\theta}^{early}(x_{i}|x_{<i}).
+(12)
+We initialize the weights of W e ​ a ​ r ​ l ​ y W_{early} to match the final output head to facilitate easy transfer.
+Time discounting
+Summing the above rewards to produce advantages still suffers from too high a variance and due to the reward attribution problem.
+A common solution to this problem for long-horizon RL is to apply time discounting to the rewards when computing advantages: introducing a small amount of bias into the policy gradient to massively reduce the variance. Intuitively, this decouples the advantages given to far away parts of the sequence, giving us many approximately independent training stimuli for the token boundaries per sequence.
+G i = ∑ j = 0 N − i − 1 γ j ​ R i + j + 1 G_{i}=\sum_{j=0}^{N-i-1}\gamma^{j}R_{i+j+1}
+(13)
+In our experiments, we use a discount factor of γ = 0.99 \gamma=0.99 .
+Batch-relative advantages
+Our G i G_{i} values tend to be positive as the final-layer model p θ p_{\theta} tends to outperform the early-exit model p θ e ​ a ​ r ​ l ​ y p_{\theta}^{early} . This bias depends on the token index, with the gap being larger for later token indices. To remedy this, we leverage that during batched training we in fact have a batch of B B such values G i , 1 ​ … ​ G i , B G_{i,1}\dots G_{i,B} for a given forward/backward pass, for B B separate sequences. These can be used to center the advantage estimates:
+A i , b = G i , b − G ¯ i where G ¯ i = 1 B ​ ∑ b = 1 B G i , b . A_{i,b}=G_{i,b}-\bar{G}_{i}\qquad\text{where}\qquad\bar{G}_{i}=\frac{1}{B}\sum_{b=1}^{B}G_{i,b}.
+(14)
+This gives the final policy loss, whose gradient approximates the right hand term of equation ( 10 ):
+ℒ π = − ∑ i = 0 N log π θ ( a i | x < i , a < i ) ⋅ detach ( A i ) . \mathcal{L}^{\pi}=-\sum_{i=0}^{N}\log\pi_{\theta}(a_{i}|x_{<i},a_{<i})\cdot\texttt{detach}(A_{i}).
+(15)
+Where we use detach to emphasize that we do not allow gradients propagate through A i A_{i} directly.
+2.5 Defining the token boundary function
+We define a token boundary policy π θ \pi_{\theta} as a function which gives the probability that our model draws a token boundary at a given index, conditioned on the preceding bytes and token boundaries. We parameterize this probability as the sigmoid of the corresponding logit l i l_{i} .
+a i | x ≤ i , a < i ∼ Bernoulli ​ ( p i ) , p i = π θ ​ ( a i = 1 | x ≤ i , a < i ) = σ ⁡ ( l i ) . \displaystyle a_{i}|x_{\leq i},a_{<i}\sim\texttt{Bernoulli}(p_{i}),\qquad p_{i}=\pi_{\theta}(a_{i}=1|x_{\leq i},a_{<i})=\sigma(l_{i}).
+(16)
+We design the computation of l i l_{i} to be of negligible computational cost relative to the total forward pass and sufficiently expressive that our model could learn the token boundary heuristics that have been explored by prior work.
+Even without explicit training, models already encode rich information about the sequence in their internal representations: for example entropy ( Nawrot et al., 2022 ; Pagnoni et al., 2024 ) has been shown to be mediated by directions in the internal representations of models soley trained on next-token prediction ( Stolfo et al., 2024 ) .
+Nonetheless, to express fixed striding strategies, as in MEGABYTE ( Yu et al., 2023 ) , we need to give the model access to some sliding window of preceding token boundaries.
+Concretely, we compute the raw logit l i r ​ a ​ w l_{i}^{raw} by applying a set of linear projections W j ∈ ℝ 1 × d m ​ o ​ d ​ e ​ l W_{j}\in\mathbb{R}^{1\times d_{model}} to the byte-level representation X i X_{i} to get a base value for the logit and a series of terms conditional on each token boundary in the window. This operation is amenable to fast computation on modern hardware by pre-computing W k ​ X i W_{k}X_{i} for all i , k i,k in a single matrix multiply and then performing a fast scan operation.
+l i r ​ a ​ w = W 0 ​ X i + ∑ j = 1 w a i − j ​ W k ​ X i . l_{i}^{raw}=W_{0}X_{i}+\sum_{j=1}^{w}a_{i-j}W_{k}X_{i}.
+(17)
+In our experiments, we set a window size of w = 8 w=8 .
+With no constraint on the downsample rate, the model will elect to use the computationally expensive strategy of separating every byte with a token boundary. To avoid this, we need to push our model towards a target downsample rate π ¯ t ​ a ​ r ​ g ​ e ​ t \bar{\pi}_{target} , which we discuss further in § 2.6 . As in attention, we need to scale the raw logits to be approximately uniform at initialization, we further aid stability by adding a σ − 1 ​ ( π ¯ t ​ a ​ r ​ g ​ e ​ t ) \sigma^{-1}(\bar{\pi}_{target}) term so that p i ≈ π ¯ t ​ a ​ r ​ g ​ e ​ t p_{i}\approx\bar{\pi}_{target} at initialization.
+l i s ​ c ​ a ​ l ​ e ​ d = l i r ​ a ​ w D + σ − 1 ​ ( π ¯ t ​ a ​ r ​ g ​ e ​ t ) l_{i}^{scaled}=\frac{l_{i}^{raw}}{D}+\sigma^{-1}(\bar{\pi}_{target})
+(18)
+We choose a scaling factor of D = 16 D=16 and a target downsample rate of π ¯ t ​ a ​ r ​ g ​ e ​ t = 1 5 \bar{\pi}_{target}=\frac{1}{5} . To avoid numerical issues caused by exploding logits, we finally apply softcapping ( Rivière et al., 2024 ) .
+l i = softcap ​ ( l i s ​ c ​ a ​ l ​ e ​ d ) l_{i}=\texttt{softcap}(l_{i}^{scaled})
+(19)
+During evaluation, we skip this softcapping step, and simply set l i = l i s ​ c ​ a ​ l ​ e ​ d l_{i}=l_{i}^{scaled}
+2.6 Downsample Rate Targeting
+We a mechanism to keep the downsample rate close to π ¯ t ​ a ​ r ​ g ​ e ​ t \bar{\pi}_{target} by applying an even pressure across all the logits l i , b l_{i,b} in the batch. We prefer this to operating on the token boundary probabilities, which we find can have unstable results due to the uneven gradient magnitude of the sigmoid function. Specifically, we apply a negative or positive pressure to the whole batch mean logit l ¯ = 1 N ​ B ​ ∑ i , b l i , b \bar{l}=\frac{1}{NB}\sum_{i,b}l_{i,b} if the mean token boundary probability p ¯ = 1 N ​ B ​ ∑ i , b p i , b \bar{p}=\frac{1}{NB}\sum_{i,b}p_{i,b} exceeds or falls short of the target downsample rate respectively. We operationalize this with the loss:
+ℒ t ​ a ​ r ​ g ​ e ​ t = l ¯ ⋅ detach ​ ( p ¯ − π ¯ t ​ a ​ r ​ g ​ e ​ t ) \mathcal{L}^{target}=\bar{l}\cdot\texttt{detach}\left(\bar{p}-\bar{\pi}_{target}\right)
+(20)
+2.7 Full loss formula
+We define the autoregressive losses, to learn the full model and the early exit model as:
+ℒ a ​ u ​ t ​ o = − ∑ i = 0 N log p θ ( x i | x < i , a < i ) , ℒ e ​ a ​ r ​ l ​ y = − ∑ i = 0 N log p θ e ​ a ​ r ​ l ​ y ( x i | x < i ) . \displaystyle\mathcal{L}^{auto}=-\sum_{i=0}^{N}\log p_{\theta}(x_{i}|x_{<i},a_{<i}),\qquad\mathcal{L}^{early}=-\sum_{i=0}^{N}\log p_{\theta}^{early}(x_{i}|x_{<i}).
+(21)
+This gives our total loss calculation:
+ℒ = ℒ a ​ u ​ t ​ o + λ π ​ ℒ π + λ t ​ a ​ r ​ g ​ e ​ t ​ ℒ t ​ a ​ r ​ g ​ e ​ t + λ e ​ a ​ r ​ l ​ y ​ ℒ e ​ a ​ r ​ l ​ y \mathcal{L}=\mathcal{L}^{auto}+\lambda_{\pi}\mathcal{L}^{\pi}+\lambda_{target}\mathcal{L}^{target}+\lambda_{early}\mathcal{L}^{early}
+(22)
+In our experiments, we set λ π = λ t ​ a ​ r ​ g ​ e ​ t = 10 − 2 \lambda_{\pi}=\lambda_{target}=10^{-2} to encourage exploration and λ e ​ a ​ r ​ l ​ y = 10 − 1 \lambda_{early}=10^{-1} .
+3 Related Work
+Prior work on end-to-end tokenization has largely relied on straight-through estimators (STEs) to enable gradient-based optimization of token boundaries, in contrast to our use of a score-function estimator. These approaches relax the discrete boundary variables a a into continuous surrogates, differentiate through them, and then apply heuristic update rules to adjust π θ ​ ( a ) \pi_{\theta}(a) given the gradient d ​ L d ​ a \frac{dL}{da} . While such heuristics lack the theoretical guarantees enjoyed by score-function estimators § 2.3 , they have previously been proved effective in practice for learning mixture-of-experts ( Shazeer et al., 2017 ) routing strategies, whereby there are too many decisions per token to provide a sufficiently low variance score function estimate.
+The earliest demonstrations of STE-based boundary learning, such as the work of Godey et al. (2022) , showed that token boundaries can be learned for bidirectional encoders by introducing a non-causal pooling mechanism that injects a small amount of every byte’s representation into each token representation. Although elegant, this technique is fundamentally incompatible with the causal constraints of contemporary autoregressive LLMs, and adapting STEs to handle counterfactuals of the form “what if this boundary were placed one byte later?” has proven difficult.
+Subsequent work has extended STE strategies to autoregressive settings. Nawrot et al. (2023) , for instance, employ a straight-through estimator built on segmentation heuristics introduced by Bhati et al. (2021) . We compare to this method in our experiments § 4 . Kallini et al. (2025) propose a more robust scheme that performs a full forward pass over all bytes using only soft downsampling during training, discarding low-scoring bytes only at inference time; however, this violates our Efficiency desideratum, since it preserves the full computational cost of byte-level processing during training. Concurrent with our work, Hwang et al. (2025) pursue a related STE-based approach using specialized up- and downsampling modules, which themselves introduce heuristic design choices—for example, initializing the downsampler to favor boundary placement at dissimilar byte transitions ( Main Horse (pseudonym), 2025 ) . Together, these methods highlight both the promise and the limitations of STEs for token-boundary learning, motivating alternative estimators with stronger theoretical footing.
+We highlight prior work on scaling byte-level models and further innovations on the autoregressive U-net architecture in Appendix C .
+Figure 2: [Left] Token boundaries learned by our 147M-parameter model on a held-out sample of the FineWeb dataset. [Right] Token boundaries learned by our 90M-parameter model on a held-out sample of the CodeParrot dataset. Red and blue characters characters indicate high or low values of π θ ​ ( a ) \pi_{\theta}(a) respectively at the corresponding bytes.
+4 Experiments
+To evaluate our proposed score-function–based approach, we train autoregressive transformers on a filtered subset of the FineWeb dataset ( Penedo et al., 2024 ) , where we keep sequences of at least 4096 4096 bytes. Subsequently, we truncate these sequences to exactly 4096 4096 bytes. All models have approximately 147 147 million parameters and are trained with a target downsample rate of 1 5 \frac{1}{5} . We select dataset size, batch size, and learning rate using the scaling laws derived by Porian et al. (2024) . See Appendix D for further experimental details and hyperparameters.
+We compare four dynamic tokenization strategies: a uniform baseline that selects exactly 4096 ​ π ¯ t ​ a ​ r ​ g ​ e ​ t = 819 4096\bar{\pi}_{target}=819 , the straight-through estimators of Nawrot et al. (2023) Hwang et al. (2025) and our score function estimator.
+Because our models are trained with several orders of magnitude less compute than contemporary frontier LLMs, the global downstream effects of learned tokenization state-of-the-ar language modeling quality are difficult to assess directly. For example, the recently reported superiority autoregressive U-Nets over purely token-based architectures ( Pagnoni et al., 2024 ; Hwang et al., 2025 ) was only observed to emerge at the > 10 21 >10^{21} - Flop scale. For these reasons, our analysis focuses on qualitative comparison to other dynamic tokenization strategies.
+4.1 Learned tokenization strategies for Natural Language
+We train 147-million parameter models on our filtered version of FineWeb .
+Figure 2 illustrates the token boundaries produced by our method on held-out FineWeb samples. Remarkably, despite having no inductive bias toward linguistic structure, the model reliably learns to place boundaries at whitespace-like characters, such as “ \n ” and “ ”.
+Additional samples and tokenization strategies learned by straight-through estimates are provided in Appendicies B.1 & B.2 , B.3 .
+In appendix B.6 , we further study the sensitivity of the learned tokenization strategy to the target downsample rate by varying the tokenization aspect ratio: we train models with n = 2 , 4 , 6 n=2,4,6 token-level transformer layers (sizes ranging from 20 20 to 40 40 -million parameters) and a target downsample rate of π ¯ t ​ a ​ r ​ g ​ e ​ t = 1 n \bar{\pi}_{target}=\frac{1}{n} , keeping the FLOPs -per-sequence fixed. The n = 2 n=2 model converges to a tokenization strategy of allocating almost exactly two bytes per token, with the exception of also drawing token boundaries at periods. By contrast, the n = 4 , 6 n=4,6 models again discover whitespace-aligned boundaries and exhibit with varying degrees of chunking of longer words.
+4.2 Natural Language Performance
+In Appendix D Figure 10 , we plot validation loss curves on our filtered FineWeb for the 147-million parameter training runs. We observe the qualitatively more semantically meaningful token boundaries that our method finds to translate to a consistent cross-entropy loss improvement over the training run. In table 1 we compare methods across a range of downstream natural language understanding benchmarks ( Bisk et al., 2020 ; Zellers et al., 2019 ; Clark et al., 2018 ; Paperno et al., 2016 ) , demonstrating improved language modelling performance.
+Table 1: Performance of 147 147 M parameter models on downstream natural language understanding tasks. Performance on FineWeb Test is in bits-per-byte, all others are in zero-shot accuracy.
+PIQA
+HellaSwag
+ARC-Easy
+LAMBADA
+FineWeb Test
+Uniform
+0.559
+0.266
+0.300
+0.036
+1.376
+Dynamic (Nawrot et al.)
+0.534
+0.268
+0.288
+0.029
+1.372
+H-Net (Hwang et al.)
+0.576
+0.267
+0.307
+0.020
+1.386
+Ours
+0.565
+0.271
+0.308
+0.086
+1.297
+4.3 Python Code
+We train 90 90 million parameter models on the CodeParrot dataset ( Hugging Face, 2022 ) of python code, using both our method and the straight-through estimate of Hwang et al. (2025) . In Figure
+2 we report that our model learns to draw token boundaries at the beginning of module names, space tokens to contain at least 2 bytes, and learns not to expend test-time compute on the Apache License, which is frequently repeated throughout the training dataset. Additional samples are provided in Appendix B.4 and tokenization strategies learned by H-Net are provided in appendix B.5 . In Appendix D Figure 10 we plot the validation loss for both methods, finding that this intuitively appealing tokenization strategy leads to an improved downstream loss.
+5 Conclusion
+We propose a flexible parameterization of the problem of intra-architecture tokenization, which generalises prior proposed heuristics for this problem. We have demonstrated that applying our variance reductions yields a score function estimator that can optimize this parameterization to learn semantic boundaries § 4.1 in text soley from optimizing the cross entropy and that doing so outperforms prior straight-through estimation based techniques § 4.2 .
+References
+Bahdanau (2022)
+D. Bahdanau
+The flops calculus of language model training .
+External Links: Link
+Cited by: Appendix D .
+Bhati et al. (2021)
+S. Bhati, J. Villalba, P. Żelasko, L. Moro-Velázquez, and N. Dehak
+Segmental contrastive predictive coding for unsupervised word segmentation .
+In Interspeech 2021 ,
+pp. 366–370 .
+External Links: Link ,
+Document ,
+ISSN 2958-1796
+Cited by: §3 .
+Bisk et al. (2020)
+Y. Bisk, R. Zellers, J. Gao, Y. Choi, et al.
+Piqa: reasoning about physical commonsense in natural language .
+In Proceedings of the AAAI conference on artificial intelligence ,
+Vol. 34 , pp. 7432–7439 .
+External Links: Link
+Cited by: §4.2 .
+Clark et al. (2018)
+P. Clark, I. Cowhey, O. Etzioni, T. Khot, A. Sabharwal, C. Schoenick, and O. Tafjord
+Think you have solved question answering? try arc, the ai2 reasoning challenge .
+arXiv:1803.05457v1 .
+External Links: Link
+Cited by: §4.2 .
+Godey et al. (2022)
+N. Godey, R. Castagné, É. de la Clergerie, and B. Sagot
+MANTa: efficient gradient-based tokenization for end-to-end robust language modeling .
+In Findings of the Association for Computational Linguistics: EMNLP 2022 , Y. Goldberg, Z. Kozareva, and Y. Zhang (Eds.) ,
+Abu Dhabi, United Arab Emirates , pp. 2859–2870 .
+External Links: Link ,
+Document
+Cited by: §3 .
+Hugging Face (2022)
+Hugging Face
+CodeParrot dataset .
+Note: https://huggingface.co/datasets/transformersbook/codeparrot Full Python code dataset used in Chapter 10 of *Natural Language Processing with Transformers*
+External Links: Link
+Cited by: §4.3 .
+Hwang et al. (2025)
+S. Hwang, B. Wang, and A. Gu
+Dynamic chunking for end-to-end hierarchical sequence modeling .
+External Links: 2507.07955 ,
+Link
+Cited by: Figure 5 ,
+Figure 7 ,
+§B.3 ,
+§B.5 ,
+3rd item ,
+4th item ,
+5th item ,
+§3 ,
+§4.3 ,
+§4 ,
+§4 .
+Kallini et al. (2025)
+J. Kallini, S. Murty, C. D. Manning, C. Potts, and R. Csordás
+MrT5: dynamic token merging for efficient byte-level language models .
+In The Thirteenth International Conference on Learning Representations ,
+External Links: Link
+Cited by: §3 .
+Kaplan et al. (2020)
+J. Kaplan, S. McCandlish, T. Henighan, T. B. Brown, B. Chess, R. Child, S. Gray, A. Radford, J. Wu, and D. Amodei
+Scaling laws for neural language models .
+External Links: 2001.08361 ,
+Link
+Cited by: Appendix D .
+Liu et al. (2025)
+A. Liu, J. Hayase, V. Hofmann, S. Oh, N. A. Smith, and Y. Choi
+SuperBPE: space travel for language models .
+In Second Conference on Language Modeling ,
+External Links: Link
+Cited by: §1 .
+Main Horse (pseudonym) (2025)
+Main Horse (pseudonym)
+H-nets .
+Note: Blog post
+External Links: Link
+Cited by: §3 .
+Nawrot et al. (2023)
+P. Nawrot, J. Chorowski, A. Lancucki, and E. M. Ponti
+Efficient transformers with dynamic token pooling .
+In Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , A. Rogers, J. Boyd-Graber, and N. Okazaki (Eds.) ,
+Toronto, Canada , pp. 6403–6417 .
+External Links: Link ,
+Document
+Cited by: Figure 4 ,
+§B.2 ,
+§C.1 ,
+§1 ,
+§1 ,
+§3 ,
+§4 .
+Nawrot et al. (2022)
+P. Nawrot, S. Tworkowski, M. Tyrolski, L. Kaiser, Y. Wu, C. Szegedy, and H. Michalewski
+Hierarchical transformers are more efficient language models .
+In Findings of the Association for Computational Linguistics: NAACL 2022 , M. Carpuat, M. de Marneffe, and I. V. Meza Ruiz (Eds.) ,
+Seattle, United States , pp. 1559–1571 .
+External Links: Link ,
+Document
+Cited by: §C.1 ,
+§1 ,
+Figure 1 ,
+§2.2 ,
+§2.5 .
+Pagnoni et al. (2024)
+A. Pagnoni, R. Pasunuru, P. Rodriguez, J. Nguyen, B. Muller, M. Li, C. Zhou, L. Yu, J. Weston, L. Zettlemoyer, et al.
+Byte latent transformer: patches scale better than tokens .
+arXiv preprint arXiv:2412.09871 .
+Cited by: 1st item ,
+2nd item ,
+§C.1 ,
+§1 ,
+§2.5 ,
+§4 .
+Paperno et al. (2016)
+D. Paperno, G. Kruszewski, A. Lazaridou, N. Q. Pham, R. Bernardi, S. Pezzelle, M. Baroni, G. Boleda, and R. Fernández
+The LAMBADA dataset: word prediction requiring a broad discourse context .
+In Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , K. Erk and N. A. Smith (Eds.) ,
+Berlin, Germany , pp. 1525–1534 .
+External Links: Link ,
+Document
+Cited by: §4.2 .
+Penedo et al. (2024)
+G. Penedo, H. Kydlíček, L. B. allal, A. Lozhkov, M. Mitchell, C. Raffel, L. V. Werra, and T. Wolf
+The fineweb datasets: decanting the web for the finest text data at scale .
+In The Thirty-eight Conference on Neural Information Processing Systems Datasets and Benchmarks Track ,
+External Links: Link
+Cited by: §4 .
+Porian et al. (2024)
+T. Porian, M. Wortsman, J. Jitsev, L. Schmidt, and Y. Carmon
+Resolving discrepancies in compute-optimal scaling of language models .
+37 , pp. 100535–100570 .
+External Links: Link
+Cited by: §4 .
+Rivière et al. (2024)
+M. Rivière, S. Pathak, P. G. Sessa, C. Hardin, S. Bhupatiraju, L. Hussenot, T. Mesnard, B. Shahriari, A. Ramé, J. Ferret, P. Liu, P. Tafti, A. Friesen, M. Casbon, S. Ramos, R. Kumar, C. L. Lan, S. Jerome, A. Tsitsulin, N. Vieillard, P. Stanczyk, S. Girgin, N. Momchev, M. Hoffman, S. Thakoor, J. Grill, B. Neyshabur, O. Bachem, A. Walton, A. Severyn, A. Parrish, A. Ahmad, A. Hutchison, A. Abdagic, A. Carl, A. Shen, A. Brock, A. Coenen, A. Laforge, A. Paterson, B. Bastian, B. Piot, B. Wu, B. Royal, C. Chen, C. Kumar, C. Perry, C. Welty, C. A. Choquette-Choo, D. Sinopalnikov, D. Weinberger, D. Vijaykumar, D. Rogozinska, D. Herbison, E. Bandy, E. Wang, E. Noland, E. Moreira, E. Senter, E. Eltyshev, F. Visin, G. Rasskin, G. Wei, G. Cameron, G. Martins, H. Hashemi, H. Klimczak-Plucinska, H. Batra, H. Dhand, I. Nardini, J. Mein, J. Zhou, J. Svensson, J. Stanway, J. Chan, J. P. Zhou, J. Carrasqueira, J. Iljazi, J. Becker, J. Fernandez, J. van Amersfoort, J. Gordon, J. Lipschultz, J. Newlan, J. Ji, K. Mohamed, K. Badola, K. Black, K. Millican, K. McDonell, K. Nguyen, K. Sodhia, K. Greene, L. L. Sjösund, L. Usui, L. Sifre, L. Heuermann, L. Lago, and L. McNealus
+Gemma 2: improving open language models at a practical size .
+CoRR abs/2408.00118 .
+External Links: Link
+Cited by: Appendix D ,
+§1 ,
+§2.5 .
+Rumbelow and Watkins (2023)
+J. Rumbelow and M. Watkins
+SolidGoldMagikarp (plus, prompt generation) .
+Note: LessWrong
+External Links: Link
+Cited by: §1 .
+Schulman et al. (2015)
+J. Schulman, N. Heess, T. Weber, and P. Abbeel
+Gradient estimation using stochastic computation graphs .
+Advances in neural information processing systems 28 .
+External Links: Link
+Cited by: Figure 1 ,
+§2.3 .
+Shazeer et al. (2017)
+N. Shazeer, A. Mirhoseini, K. Maziarz, A. Davis, Q. Le, G. Hinton, and J. Dean
+Outrageously large neural networks: the sparsely-gated mixture-of-experts layer .
+In International Conference on Learning Representations ,
+External Links: Link
+Cited by: §3 .
+Slagle (2024)
+K. Slagle
+SpaceByte: towards deleting tokenization from large language modeling .
+In The Thirty-eighth Annual Conference on Neural Information Processing Systems ,
+External Links: Link
+Cited by: §C.1 ,
+§1 .
+Stolfo et al. (2024)
+A. Stolfo, B. Wu, W. Gurnee, Y. Belinkov, X. Song, M. Sachan, and N. Nanda
+Confidence regulation neurons in language models .
+In Advances in Neural Information Processing Systems , A. Globerson, L. Mackey, D. Belgrave, A. Fan, U. Paquet, J. Tomczak, and C. Zhang (Eds.) ,
+Vol. 37 , pp. 125019–125049 .
+External Links: Link
+Cited by: §2.5 .
+Tao et al. (2024)
+C. Tao, Q. Liu, L. Dou, N. Muennighoff, Z. Wan, P. Luo, M. Lin, and N. Wong
+Scaling laws with vocabulary: larger models deserve larger vocabularies .
+In Advances in Neural Information Processing Systems , A. Globerson, L. Mackey, D. Belgrave, A. Fan, U. Paquet, J. Tomczak, and C. Zhang (Eds.) ,
+Vol. 37 , pp. 114147–114179 .
+External Links: Link
+Cited by: §1 .
+Tay et al. (2022)
+Y. Tay, V. Q. Tran, S. Ruder, J. Gupta, H. W. Chung, D. Bahri, Z. Qin, S. Baumgartner, C. Yu, and D. Metzler
+Charformer: fast character transformers via gradient-based subword tokenization .
+In International Conference on Learning Representations ,
+External Links: Link
+Cited by: §C.1 .
+Wang et al. (2024)
+J. Wang, T. Gangavarapu, J. N. Yan, and A. M. Rush
+MambaByte: token-free selective state space model .
+In First Conference on Language Modeling ,
+External Links: Link
+Cited by: §C.1 ,
+§1 .
+Williams (1992)
+R. J. Williams
+Simple statistical gradient-following algorithms for connectionist reinforcement learning .
+Machine learning 8 ( 3 ), pp. 229–256 .
+Cited by: §2.3 .
+Xue et al. (2022)
+L. Xue, A. Barua, N. Constant, R. Al-Rfou, S. Narang, M. Kale, A. Roberts, and C. Raffel
+ByT5: towards a token-free future with pre-trained byte-to-byte models .
+Transactions of the Association for Computational Linguistics 10 , pp. 291–306 .
+External Links: Link ,
+Document
+Cited by: §C.1 ,
+§1 .
+Yu et al. (2023)
+L. Yu, D. Simig, C. Flaherty, A. Aghajanyan, L. Zettlemoyer, and M. Lewis
+MEGABYTE: predicting million-byte sequences with multiscale transformers .
+In Thirty-seventh Conference on Neural Information Processing Systems ,
+External Links: Link
+Cited by: §C.1 ,
+§1 ,
+§2.5 .
+Yuan et al. (2025)
+J. Yuan, H. Gao, D. Dai, J. Luo, L. Zhao, Z. Zhang, Z. Xie, Y. X. Wei, L. Wang, Z. Xiao, Y. Wang, C. Ruan, M. Zhang, W. Liang, and W. Zeng
+Native sparse attention: hardware-aligned and natively trainable sparse attention .
+External Links: 2502.11089 ,
+Link
+Cited by: §2.2 .
+Zellers et al. (2019)
+R. Zellers, A. Holtzman, Y. Bisk, A. Farhadi, and Y. Choi
+HellaSwag: can a machine really finish your sentence? .
+In Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics , A. Korhonen, D. Traum, and L. Màrquez (Eds.) ,
+Florence, Italy , pp. 4791–4800 .
+External Links: Link ,
+Document
+Cited by: §4.2 .
+Zheng et al. (2025)
+L. Zheng, X. Zhao, G. Wang, C. Wu, D. Dong, A. Wang, M. Wang, Y. Du, H. Bo, A. Sharma, B. Li, K. Zhang, C. Hu, U. Thakker, and L. Kong
+EvaByte: efficient byte-level language models at scale .
+External Links: Link
+Cited by: §C.1 ,
+§1 .
+Appendix A Proofs
+A.1 Loss breakdown
+∇ θ 𝔼 a ∼ π θ ​ log ⁡ p θ ​ ( y | a , x ) = \displaystyle\nabla_{\theta}\mathbb{E}_{a\sim\pi_{\theta}}\log p_{\theta}(y|a,x)=
+∇ θ ∑ a log p θ ( y | a , x ) π θ ( a | x ) \displaystyle\nabla_{\theta}\sum_{a}\log p_{\theta}(y|a,x)\pi_{\theta}(a|x)
+= \displaystyle=
+∑ a ( ∇ θ ​ log ​ p θ ​ ( y | a , x ) ) ​ π θ ​ ( a | x ) \displaystyle\sum_{a}\left(\nabla_{\theta}\log p_{\theta}(y|a,x)\right)\pi_{\theta}(a|x)
++ ∑ a log p θ ( y | a , x ) ( ∇ θ π θ ( a | x ) ) \displaystyle+\sum_{a}\log p_{\theta}(y|a,x)\left(\nabla_{\theta}\pi_{\theta}(a|x)\right)
+= \displaystyle=
+∇ θ ∑ a ( ∇ θ log p θ ( y | a , x ) + log p θ ( y | a , x ) ∇ θ log π θ ( a | x ) ) π θ ( a | x ) \displaystyle\nabla_{\theta}\sum_{a}\left(\nabla_{\theta}\log p_{\theta}(y|a,x)+\log p_{\theta}(y|a,x)\nabla_{\theta}\log\pi_{\theta}(a|x)\right)\pi_{\theta}(a|x)
+= \displaystyle=
+𝔼 a ∼ π θ ​ ( ∇ θ ​ log ​ p θ ​ ( y | a , x ) ⏟ cross entropy loss + log ⁡ p θ ​ ( y | a , x ) ​ ∇ θ ​ log ​ π θ ​ ( a | x ) ⏟ REINFORCE gradient ) \displaystyle\mathbb{E}_{a\sim\pi_{\theta}}(\underbrace{\nabla_{\theta}\log p_{\theta}(y|a,x)}_{\text{cross entropy loss}}+\underbrace{\log p_{\theta}(y|a,x)\nabla_{\theta}\log\pi_{\theta}(a|x)}_{\text{REINFORCE gradient}})
+Appendix B Tokenization strategies
+In the following plots, multi-byte characters, such as ü are rendered using the probability of the last byte representing the character.
+B.1 Our method
+Figure 3: Token boundaries learned by our 147M-parameter model on a held-out sample of the FineWeb dataset. Red and blue characters characters indicate high or low values of π θ ​ ( a ) \pi_{\theta}(a) respectively at the corresponding bytes.
+B.2 Straight-through estimator from Nawrot et al. (2023)
+Figure 4: Token boundaries learned by a 147M-parameter model using the straight-through estimator of Nawrot et al. (2023) , on held-out samples of the FineWeb dataset. Instead of the probabilities, here we plot the soft boundaries at the output of the Gumbel-Sigmoid. Red and blue characters characters indicate high or low values of b ^ t \hat{b}_{t} respectively at the corresponding bytes.
+B.3 Hnet Hwang et al. (2025)
+Figure 5: Token boundaries learned by a 147M-parameter model using the straight-through estimator of Hwang et al. Hwang et al. (2025) , on held-out samples of the FineWeb dataset. Instead of the probabilities, here we plot the hard token boundaries. Red and blue characters characters indicate high or low values of b ^ t \hat{b}_{t} respectively at the corresponding bytes.
+B.4 Our method on CodeParrot
+Figure 6: Token boundaries learned by our 90M-parameter model on a held-out sample of the CodeParrot dataset. Red and blue characters characters indicate high or low values of π θ ​ ( a ) \pi_{\theta}(a) respectively at the corresponding bytes.
+B.5 H-Net Hwang et al. (2025) on CodeParrot
+Figure 7: Token boundaries learned by a 90M-parameter model using the straight-through estimator of Hwang et al. Hwang et al. (2025) , on held-out samples of the CodeParrot dataset. Instead of the probabilities, here we plot the hard token boundaries. Red and blue characters characters indicate high or low values of b ^ t \hat{b}_{t} respectively at the corresponding bytes.
+B.6 Varying the downsample rate
+Figure 8: Token boundaries learned by an array of models using our method with varying target downsample rates π ¯ t ​ a ​ r ​ g ​ e ​ t = 1 2 , 1 4 , 1 6 \bar{\pi}_{target}=\frac{1}{2},\frac{1}{4},\frac{1}{6} (top, middle, bottom, respectively) on a held-out sample of the FineWeb dataset. Red and blue characters characters indicate high or low values of π θ ​ ( a ) \pi_{\theta}(a) respectively at the corresponding bytes.
+Figure 9: Token boundaries learned by an array of models using our method with varying target downsample rates π ¯ t ​ a ​ r ​ g ​ e ​ t = 1 2 , 1 4 , 1 6 \bar{\pi}_{target}=\frac{1}{2},\frac{1}{4},\frac{1}{6} (top, middle, bottom,) of on a held-out sample of the FineWeb dataset. Red and blue characters characters indicate high or low values of π θ ​ ( a ) \pi_{\theta}(a) respectively at the corresponding bytes.
+Appendix C Continued Related Work
+C.1 Scaling byte-level language models with Tokenization Heuristics
+Byte-level language models have recently been shown to scale competitively with tokenized transformers, with ByT5 ( Xue et al., 2022 ) demonstrating that a pure byte-level architecture can match token-level performance, though at the cost of quadratic attention that makes long-sequence scaling impractical.
+Subsequent work has addressed this limitation along two main directions: leveraging subquadratic attention mechanisms ( Wang et al., 2024 ; Zheng et al., 2025 ) , and reducing sequence length through hierarchical or pooled representations. The latter includes fixed-stride downsampling approaches ( Tay et al., 2022 ; Nawrot et al., 2022 ; Yu et al., 2023 ) , as well as methods that segment byte streams at more semantically meaningful boundaries.
+Nawrot et al. (2023) first explored pooling at whitespace characters, later scaled by Slagle (2024) to outperform fixed-stride schemes.
+In parallel, Nawrot et al. also introduced entropy-based boundary detection ( Nawrot et al., 2023 ) , leveraging spikes in next-byte entropy that correlate with semantic breaks; this idea was further scaled by Pagnoni et al. (2024) , who showed that entropy-guided downsampling can enable byte-level models to surpass token-level baselines at the 10 22 10^{22} -FLOP scale.
+While these methods demonstrate the promise of the autoregressive U-net architecture at scale and highlight some desirable properties that a tokenization mechanism for this architecture would have, all rely on heuristics, breaking the End-to-end tokenizer training desideratum in our setup.
+C.2 Architectural Innovations
+We focus on the method of deciding token boundaries, and thus use a simple architecture for the purpose of not confounding our experiments. Nonetheless, we would like to highlight the following architectural innovations that have been proposed to improve autoregressive U-nets:
+•
+Using a vocabulary of byte-level n n -grams which are added to the input embeddings to improve information flow Pagnoni et al. (2024) .
+•
+Using cross-attention between the byte-level and token-level transformers Pagnoni et al. (2024) .
+•
+Using subquadratic sequence-to-sequence blocks at the byte level Hwang et al. (2025) .
+•
+Using multiple levels of tokenization Hwang et al. (2025) .
+•
+Smoothing between tokenization levels in upsampling Hwang et al. (2025) .
+We would like to note that all of these methods could be used with our method to learn token boundaries.
+Model size
+147 147 M
+90 90 M
+20 20 - 40 40 M
+embedding_dim
+768
+768
+512
+num_heads
+12
+12
+8
+n_down_layers
+4
+4
+4
+n_mid_layers
+12
+6
+n n
+n_up_layers
+4
+4
+4
+learning_rate
+1.5 × 10 − 3 1.5\times 10^{-3}
+2 × 10 − 3 2\times 10^{-3}
+3 × 10 − 3 3\times 10^{-3}
+effective_batch_size
+128
+128
+64
+warmup_bytes
+4.5 × 10 8 4.5\times 10^{8}
+2.5 × 10 8 2.5\times 10^{8}
+1.1 × 10 8 1.1\times 10^{8}
+training_bytes
+6 × 10 9 6\times 10^{9}
+3.4 × 10 9 3.4\times 10^{9}
+1.5 × 10 9 1.5\times 10^{9}
+downsample_rate_target
+1 5 \frac{1}{5}
+1 5 \frac{1}{5}
+1 n \frac{1}{n}
+Table 2: The hyperparameters used for our runs varying the token boundary selection method used on natural language (left) python code (middle) and the varying tokenization aspect ratio (right)
+Appendix D Further experimental details
+We train models on a total of training_bytes bytes with a cosine learning rate schedule with a warmup of warmup_bytes and a maximum learning rate of learning_rate . We use the AdamW optimizer with default parameters ( β 1 , β 2 ) = ( 0.9 , 0.999 ) (\beta_{1},\beta_{2})=(0.9,0.999) . Per gradient update, we performa a forward & backward pass on effective_batch_size sequences of length 4096 4096 .
+We use a decoder-only transformer architecture, with n_down_layers and n_up_layers byte-level transformer decoder layers with sliding window attention with window size 64 64 before and after the token-level backbone which consists of n_mid_layers token-level transformer decoder layers with full causal attention. All attention layers have num_heads heads. We make the model dimension the same for byte and token-level layers, such that d e ​ n ​ c = d m ​ i ​ d = d d ​ e ​ c = embedding_dim d_{enc}=d_{mid}=d_{dec}=\texttt{embedding\_dim} . Byte-level and token-level layers have an MLP hidden dimension of embedding_dim and 4 × embedding_dim 4\times\texttt{embedding\_dim} respectively, making the flops-per-layer roughly consistent. We closely follow the transformer architectural choices of Gemma 2 Rivière et al. (2024) , with GeGLU non-linearity, Rotary Position Embeddings, post and pre- RMSNorm and Logit soft-capping.
+See table 2 for the hyperparamters used in our 147 147 -M parameter experiment and our experiments varying the token aspect ratio.
+Figure 10: [left] Flops vs validation loss curves for 147 147 M parameter models, trained on FineWeb , measured in bits-per-byte. Uniform random in blue , Straight through estimates in orange , ours in green . Validation loss values at 1.95 × 10 18 1.95\times 10^{18} FLOPs are 1.355 1.355 , 1.350 1.350 , 1.36 1.36 and 1.279 1.279 bits-per-byte respectively. [right] Flops vs validation loss curves for 90 90 M parameter models, trained on CodeParrot , measured in bits-per-byte. H-Net in blue ours in orange . Validation loss values at 0.95 × 10 18 0.95\times 10^{18} FLOPs are 0.769 0.769 and 0.568 0.568 bits-per-byte respectively
+Following Kaplan et al. (2020) , we estimate the number of FLOPs in the model training run as approximately the number of FLOPs used for the matrix parameters in the forward/backward pass (which is the dominant source for LLMs), which takes a value of 6 ​ FLOPs 6\texttt{ FLOPs} per parameter per byte or token, the latter depending on which level the layer operates on ( Bahdanau, 2022 ) . We assume that the embedding operation is performed using an efficient lookup. Small deviations in FLOPs per batch for each method occur as a result of variations in the max token sequence length in the batch.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

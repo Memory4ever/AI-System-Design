@@ -1,0 +1,197 @@
+Exact-v1 selected mechanism, budget control, cost and limitations.
+URL https://arxiv.org/html/2601.22040v1
+3 Architecture
+3.1 A Continuous Token Generator
+Latent compositional indexing
+B-spline basis expansion
+Tensor product aggregation
+3.2 Full Model Architecture
+Transformer Backbone Specification
+4 Experiments
+4.1 The Representational Prior: Iso-Body Analysis
+4.2 The Depth Dividend: Isoparametric Analysis
+4.3 Second Descent: the Overtraining Payoff
+3 Architecture
+3.1 A Continuous Token Generator
+Leviathan’s core innovation is its replacement of the discrete embedding matrix E∈ℝV×DE\in\mathbb{R}^{V\times D} with a separable generator function 𝒢:{0,…,V−1}→ℝD\mathcal{G}:\{0,\dots,V-1\}\rightarrow\mathbb{R}^{D}. The representation learning process is composed of three distinct stages: latent compositional indexing, B-spline basis expansion and tensor-product aggregation.
+Latent compositional indexing
+This stage factorizes the vocabulary 𝒱\mathcal{V} into a latent coordinate grid of kk dimensions. One defines a base b=⌈Vk⌉b=\left\lceil\sqrt[k]{V}\right\rceil. Each token of index ii is then deterministically mapped to a coordinate (i1,…,ik)(i_{1},\dots,i_{k}) using a base-bb decomposition.
+Each element of this coordinate indexes into kk shared latent codebooks C1,…,Ck∈ℝb×dseedC_{1},\dots,C_{k}\in\mathbb{R}^{b\times d_{\mathrm{seed}}} that are learned. The resulting vectors are summed to produce a seed z∈ℝdseedz\in\mathbb{R}^{d_{\mathrm{seed}}}, so that,
+z⁡(i)=∑r=1kCr​[ir]=∑r=1kCr​[⌊ibk−r⌋modb].\displaystyle z(i)=\sum_{r=1}^{k}C_{r}[i_{r}]=\sum_{r=1}^{k}C_{r}\left[\left\lfloor\frac{i}{b^{k-r}}\right\rfloor\bmod b\right].
+(1)
+This induces the parameter compression of the indexing stage from O⁡(V)O(V) to O⁡(k​Vk)O\left(k\sqrt[k]{V}\right). The produced seed z⁡(i)z(i) is projected into a latent space via a dense layer then to the unit hypersphere by means of a layer normalization LN⁡(⋅)\operatorname{LN(\cdot)}. Finally, a sigmoid activation maps everything to the unit hypercube. This latent coordinate is z~∈[0,1]dseed\tilde{z}\in[0,1]^{d_{\mathrm{seed}}}.
+B-spline basis expansion
+This stage constitutes the main philosophical departure from other approaches to token embedding; z~​(i)\tilde{z}(i) is treated as input to a function approximator rather than a static vector. In particular, this function approximator seeks to learn a smooth surface ℳ\mathcal{M} in the latent space. Following the KHRONOS architecture (Batley and Saha, 2025; Sarker et al., 2026), each dimension rr of the latent space is modeled by a (univariate) B-spline basis expansion ϕr​(xr)\phi_{r}(x_{r}).
+Tensor product aggregation
+A rank-1 separable component, a mode, is constructed by a tensor product ∏r=1dseedϕr​(xr)\prod_{r=1}^{d_{\mathrm{seed}}}\phi_{r}(x_{r}). This produces smooth and global, i.e. full-dimensional, structure but lacks expressivity. With MM such modes, the model’s ansatz for this surface takes the form
+ℳ⁡(x)≈∑j=1M∏r=1dseedϕr,j​(xr).\displaystyle\mathcal{M}(x)\approx\sum_{j=1}^{M}\prod_{r=1}^{d_{\mathrm{seed}}}\phi_{r,j}(x_{r}).
+(2)
+Figure 2: Leviathan architecture, highlighting the replacement of the input embedding matrix with a generator module.
+It is noteworthy that this structure is a universal approximator under standard conditions (formal proof via Stone-Weierstrass is provided in Appendix A). A final dense layer projects the aggregated modes with a residual connection from the initial seed projection to ensure stable gradient flow
+ei=Wout​(ℳ1​(z~i)ℳM​(z~i))+Wres​z~i.\displaystyle e_{i}=W_{\mathrm{out}}\left(\begin{smallmatrix}\mathcal{M}_{1}(\tilde{z}_{i})\\
+\vdots\\
+\mathcal{M}_{M}(\tilde{z}_{i})\end{smallmatrix}\right)+W_{\mathrm{res}}\tilde{z}_{i}.
+(3)
+Thus each token ii generates an embedding eie_{i}. In contrast to discrete embedding tables in which parameters are isolated to specific indices; here the weights WoutW_{\mathrm{out}} are token-agnostic, a property of the surface. This encourages the model to encode structure and similarity within the surface.
+3.2 Full Model Architecture
+The embeddings produced by the generator eie_{i} are fed into a decoder-only Transformer backbone. To isolate the efficacy of this generator from other confounding architectural variables, adopted is a modern “LLaMA”-style specification (Touvron et al., 2023) henceforth referred to as the Dense control.
+Transformer Backbone Specification
+In the experiments that follow, the network depth LL is the control enabling isoparametricity, ceteris paribus. Fixed component blocks employ a pre-layer normalization, known for enhancing training stability at increased depths (Xiong et al., 2020). For positional injection, Rotary Position Embeddings (RoPE) (Su et al., 2023), the contemporary choice, are applied to the query and key matrices at each attention layer. The attended outputs are again layer-normalized before projection and extraction in a high-dimensional feature space, contemporarily 4×D4\times D, the hidden dimension. This stage utilizes a dense feed-forward network with SwiGLU (Swish-gated Linear Unit) activation functions (Shazeer, 2020).
+The final hidden states hLh_{L} are layer normalized and projected out to the vocabulary size VV via a final dense classification head Wclass∈ℝD×VW_{\mathrm{class}}\in\mathbb{R}^{D\times V}. Leviathan decouples token embedding and classification akin to untied-weight networks. However, the implications of this design choice are compared both with tied and untied networks in Section 4. All models are trained using the standard next-token, cross-entropy loss objective.
+4 Experiments
+Leviathan effectively decouples the number of input embedding parameters from vocabulary size. This architectural shift, compared to untied weights, recovers capacity to be reinvested into the “brain” of the model. For the sake of clean experimentation prioritizing ceteris paribus, in head to head comparisons between Dense and Leviathan models, the hidden dimension DD is held fixed. Isoparametricity is thus restored by increasing Leviathan depth LL. To this end, the following evaluation framework is designed to disentangle the benefits of the generator from the benefits of depth. In particular, the two regimes of focus are
+•
+Iso-body: Both Dense and Leviathan configurations share an identical Transformer brain (depth, width and number of heads). This regime isolates the representational capacity of Leviathan’s generator input with untied output head against a standard tied embedding table.
+•
+Isoparameter: the parameter savings afforded by Leviathan’s generator (relative to the input embedding in an untied model) are reinvested into its brain in a depth dividend.
+All experiments use the o200k_base tokenizer. This vocabulary is larger-than-typical for an SLM, but reflects contemporary practice in World Models and multilingual systems. Large vocabularies also implicitly widen the effective context window by reducing sequence length. This choice is intentional: in this regime the vocabulary tax becomes a practical bottleneck Leviathan is explicitly designed to address.
+ALBERT-style factorized embeddings were also considered as a potential baseline. However, e.g. in the upcoming Leviathan-60M model the generator contains only ≈2.5​M\approx 2.5M parameters. Given the large vocabulary size, matching this with ALBERT would require a bottleneck of around 12, an unrealistically constrained regime. To this end, it is apparent that the tied-weight, iso-body experiment serves as a more conservative baseline.
+4.1 The Representational Prior: Iso-Body Analysis
+In this regime, the Transformer brain is identical for both models, asking: what is the effect of replacing a tied dense embedding with a generator-based input head?
+Whilst the Leviathan generator introduces a marginal parameter overhead, the observed gains significantly exceed what would be predicted by canonical scaling laws (Kaplan et al., 2020; Hoffmann et al., 2022) for such a small increase in the number of parameters, NN. As shown in the left panel of Figure 3, Leviathan is Pareto dominant at the data-efficient frontier, all models having been trained on approximately ×N20\!\times\!N tokens.
+The right panel of Figure 3 illustrates the magnitude of this effect; it is substantial. Leviathan achieves between a 6.7%6.7\% and 18.1%18.1\% reduction in validation perplexity, the measure of a model’s effective uncertainty over the next token, across scales.
+Holding the Transformer architecture and training protocol fixed isolates the structural contribution of the input representation itself. That this representation’s expressive power grows as its overhead diminishes supports the hypothesis that the generator facilitates more effective parameter sharing across the vocabulary than tied dense embeddings.
+Figure 3: (Left) The parameter-loss Pareto frontier under iso-body control. (Right) Percentage reduction in validation perplexity achieved by Leviathan relative to the tied Dense baseline.
+4.2 The Depth Dividend: Isoparametric Analysis
+In the previous analysis, depth was strictly controlled. In practice, however, architectures are typically rather constrained by parameter budgets. Since, compared to an untied baseline, Leviathan saves parameters on embeddings, one may reinvest those into depth. At the 109​M109M scale, for example, compared to the shallow 6-layer Dense baseline, this surplus is transformative: Leviathan’s isoparametric specification is an ultra-deep, 52-layer network.
+Figure 4: Parameter allocation across components for untied Dense and Leviathan models under fixed parameter budgets. Leviathan reallocates input parameters from embeddings into deeper reasoning layers.
+To interpret the following results, the Dense-equivalent effective size of a model is defined. As described in Section 5, the untied Dense baseline is treated as a reference family to which an empirical scaling law is fitted. This provides a mapping between parameter count and validation loss for the baseline architecture ℒ⁡(N)\mathcal{L}(N). For a Leviathan model achieving a validation loss ℒ∗\mathcal{L^{*}}, its “effective size” is defined as the inversion of this law Neq​(ℒ∗)N_{\mathrm{eq}}(\mathcal{L}^{*}). This construction uses the Dense scaling curve as a calibrated “ruler” for expression performance differences in “units” of parameter budget. Under this interpretation, NeqN_{\mathrm{eq}} quantifies ipso facto how much larger a Dense model would need to be in order to match Leviathan’s performance.
+Figure 5 visualizes the consequence of this structural shift over a range of model scales from 109-421M. As shown in the right panel, Leviathan outperforms its parameter count across the board. This effect peaks at the 109M scale, with the model achieving a validation loss equivalent to a dense model of 230M parameters, an effective size multiplier of 2.11. Even at the 421M scale, where the relative embedding tax is lower, Leviathan maintains a substantial ×1.72\!\times effective size advantage - corresponding to a 724M parameter dense model. This empirically reinforces the concept of a “depth dividend”; the reinvested parameters contribute more to reducing loss.
+Figure 5: (Left) The parameter-loss Pareto frontier under isoparametric control. (Right) Effective Dense-equivalent size inferred from a fitted Dense parameter scaling law.
+4.3 Second Descent: the Overtraining Payoff
+Contemporary training regimes for Small Language Models have shifted away from compute-optimal (Hoffmann et al., 2022) towards “overtraining” (Grattafiori et al., 2024). A critical question is, therefore, how Leviathan performs in this long-horizon regime.
+Figure 6 plots the relative perplexity decrease in Leviathan, compared to its concomitant dense baseline, over the course of training. It is notable that this advantage increases, approximately monotonically, with tokens seen. Furthermore, this advantage does not plateau at the compute-optimal frontier rather continuing to increase. This effect is most notable in the iso-body control setting (left). This is most pronounced in the 60M-class, where Leviathan’s advantage continues to grow even into the ×N100\!\times\!N-tokens-seen regime. In Leviathan-138M, similar continuous growth is seen even at ×N40\!\times\!N tokens seen. It is worth noting that this reduction is not greatly spread across scales: even Leviathan-410M achieves a near-20% reduction in perplexity, despite gains at larger scales typically being substantially harder to obtain.
+In the isoparametric control setting (right) where Leviathan “reinvests” parameters into depth, the divergence is more spread across model classes. Smaller models exhibit larger relative gains whilst larger models maintain a consistent, but decreasing, advantage. Despite this, Leviathan-190M’s reduction in perplexity continues to grow well into the “overtraining” regime, up to ×N60\!\times\!N tokens seen.
+Figure 6: Perplexity reduction (%) of Leviathan models relative to their paired Dense baselines as a function of tokens seen. (Left) iso-body runs with matched Transformer backbones. (Right) isoparametric runs: matched parameter budgets. Vertical dashed lines mark ×N20\!\times\!N tokens seen.
+
+4.4 Model Configurations
+4.5 Training Protocol
+Optimization
+Data
+Generator Hyperparameters
+5 Scaling Exponents and Efficiency Frontiers
+4.4 Model Configurations
+The evaluation focuses on the Small Language Model (SLM) regime, spanning from 60-420M parameters. In this window embedding matrices greatly tax model capacity from 20−50%20-50\% in tied models to potentially well over 90%90\% in untied models.
+All models employ a decoder-only Transformer backbone with identical architectural components discussed in Section 3.2 (pre-layer normalization, RoPE, SwiGLU feed-forward layers). Each configuration pairs up a Dense and Leviathan model with width DD and number of Attention heads HH matched. Depth LL is either held fixed (iso-body with Dense weights tied) or increased in Leviathan (isoparametric with Dense weights untied) until isoparametricity is nearest restored. Aside from LL in the isoparametric case and Leviathan’s generator module replacing the input embedding matrix, all else both architectural and in matters of training is held equal.
+Tables 1 and 2 summarize all eight model configurations: the four iso-body and four isoparametric, respectively.
+Table 1: Experimental setup for the iso-body runs.
+Model
+Parameters
+Setup
+DD
+LL
+HH
+Dense
+57,600,512
+256
+6
+4
+Leviathan
+60,185,912
+256
+6
+4
+Dense
+138,287,416
+512
+8
+8
+Leviathan
+138,897,208
+512
+8
+8
+Dense
+267,210,240
+768
+12
+12
+Leviathan
+270,057,784
+768
+12
+12
+Dense
+406,611,968
+1024
+12
+16
+Leviathan
+409,590,584
+1024
+12
+16
+Table 2: Experimental setup for the isoparameter runs.
+Model
+Parameters
+Setup
+DD
+LL
+HH
+Dense
+109,097,144
+256
+6
+4
+Leviathan
+108,514,616
+256
+52
+4
+Dense
+172,988,856
+384
+8
+6
+Leviathan
+171,728,440
+384
+39
+6
+Dense
+238,973,624
+512
+8
+8
+Leviathan
+239,658,808
+512
+32
+8
+Dense
+421,299,384
+768
+12
+12
+Leviathan
+421,151,032
+768
+28
+12
+4.5 Training Protocol
+Optimization
+Models were implemented in JAX/Flax (Frostig et al., 2018) and trained from scratch using AdamW (Loshchilov and Hutter, 2019) with gradient clipping. Every model is trained with a sequence length of 512 and a batch size of 512.
+Data
+Models were trained on the Pile (Uncopyrighted) (Gao et al., 2020) using a streaming dataloader with shuffle buffer of 10,000 sequences to randomize the data distribution.
+Input text was tokenized using the o200k_base tokenizer in tiktoken (OpenAI, 2023), used in GPT-4o and 4o-mini models. This tokenizer is of cardinality 200,018200{,}018 but is padded to V=200,376V=200{,}376, a perfect cube, 59359^{3}. This motivates k=3k=3, also a balanced choice. Each token ii is thus mapped to a three-dimensional coordinate (i1,i2,i3)(i_{1},i_{2},i_{3}) via base-59 decomposition. This reduces the vocabulary footprint on indexing parameters from 200,376 to 177, a greater than 1,×1{,}100\!\times compression.
+Crucially, for every matched Dense-Leviathan pair, token streams were identical. Each model was trained on the same sequence, in the same order, at every optimization step.
+Generator Hyperparameters
+The SNA-based generator uses a fixed set of hyperparameters across all runs. In particular, the generator takes a seed dimensionality of dseed=128d_{\mathrm{seed}}=128. This 128-dimensional space is target of basis expansion. Each univariate B-spline basis is defined over a grid of 32 knots, aggregated over M=8M=8 independent rank-1 modes to form the embedding eie_{i}.
+Reported validation losses are computed as the mean over the last 10% of training steps to reduce batch noise. All Dense-Leviathan paired models are evaluated at identical token counts.
+5 Scaling Exponents and Efficiency Frontiers
+In order to investigate potential structural advantages of Leviathan, its performance is mapped onto the empirical power-law fits of the dense baselines. Models are evaluated at their ×N20\!\times\!N-token convergence frontiers. Power laws of the form ℒ⁡(N)=A​N−α+b\mathcal{L}(N)=AN^{-\alpha}+b for parameter efficiency and ℒ⁡(D)=B​D−β+b\mathcal{L}(D)=BD^{-\beta}+b are fit to the four dense models of either regime. The irreducible loss term bb is taken as 1.691.69. This is all standard practice as of (Hoffmann et al., 2022), but it is notable that different tokenizers and datasets were used. Be that as it may, 1.691.69 serves as a conservative and widely used reference value that anchors the analysis to established scaling practice. Critically, the following conclusions are robust to reasonable variation in bb. Finally, it is worth noting that these fits are only reliably descriptive within the narrow SLM regime studied.
+Figure 7: Scaling law fits for the Dense and Leviathan models under iso-body control. (Left) The parameter-efficient frontier: validation loss as a function of total model parameters. (Right) The data-efficient frontier: validation loss as a function of tokens seen.
+
+6 Discussion
+Implications for Long-Context Modeling
+The pursuit of long-context capabilities has predominantly focused on ways of reducing the quadratic cost of the Attention mechanism. One may identify a secondary avenue, the trade-off between sequence length and vocabulary density. Typically, wisely managing a parameter budget necessitates a “small” vocabulary, forcing the tokenizer to decompose semantic units into multiple sub-tokens. This inflates the sequence length NseqN_{\mathrm{seq}} and exacerbates the O⁡(Nseq2)O(N_{\mathrm{seq}}^{2}) Attention cost. By, in effect, decoupling vocabulary cardinality from parametric cost, Leviathan takes a stride towards resolving this problem. It enables the use of high-density tokenizers, perhaps far beyond typical, without the usual “vocabulary tax”. Simply, Leviathan provides a mitigation to quadratic Attention scaling by enabling shorter sequences carrying no less information, for a negligible increase in parameters.
+Implications for World Models
+This architectural shift is particularly potent in the rising area of omni-modal “World Models”. Such models might ingest continuous, high-entropy signals such as video patches, audio waveforms (Borsos et al., 2023) or even scalar streams (Reed et al., 2022). Current approaches force these signals into discrete, finite lookup tables resulting in quantization noise and large vocabularies (LeCun and Courant, 2022). Whilst Leviathan relies on a tokenizer to map signals to discrete indices the generator treats these indices as points on a smooth surface, “coordinate quantization”. This allows the tokenization layer to be purely geometric, mapping similar signals to adjacent coordinates with the generator handling interpolation. This is a mitigation of the lookup nature of standard quantization, offering an approximation to continuous signals whilst also scaling favorably with vocabulary size.
+Arbitrary Tokenizer Topology
+Leviathan assigns each token a coordinate via a deterministic modular-arithmetic mapping of its index. Tokens that are adjacent in coordinate space thus need not be linguistically related. Therefore, the generator is forced to “undo” this local-but-not-semantic structure. That Leviathan remains robust to this choice and achieves a gain across all scales tested suggests the generator manages exactly that. Nonetheless, an exploration of alternative coordinate constructions such data-driven tokenizers or learned coordinate embeddings represents a promising direction for future work.
+Computational Trade-offs
+Leviathan introduces additional computational overhead relative to standard embedding lookup. In the iso-body regime, a training throughput reduction of 51% at 60M parameters, decreasing to 23% at 410M is observed. As shown in Figure 7, however, Leviathan achieves equivalent loss having seen roughly ×1.7\!\times fewer tokens at the 400M scale. Since this gain in sample efficiency is greater than the overhead (×1.3\!\times at 23%), Leviathan is faster to train to a given loss.
+Furthermore, this slowdown is not primarily through an increase in FLOPs, rather due to implementation-level effects. The current generator module relies on scatter-heavy operations that are not as well-optimized on modern accelerators as dense matrix operations. This cost is potentially a systems issue rather than an inherent architectural limitation, allowing for speedups from a more optimized, perhaps kernel-level, implementation.
+In the isoparametric regime, models are intentionally made deeper to preserve parity. The resulting throughput reduction (48%-71%, but decreasing with scale) is largely attributable to increased depth - inherently serial - than to Leviathan itself. This decision is experimental control designed to isolate architectural effects, not a deployment recommendation. In practice, parameters would be better reallocated in a combination of width and depth. In fact, Leviathan’s parameter-light generator module would be more amenable to a width increase. Further investigation in this regard is warranted.
+
+

@@ -1,0 +1,1073 @@
+1 Introduction
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+1 Introduction
+2 Related Work
+2.1 Memory efficient approaches
+2.2 ZO optimization with adaptive direction sampling
+3 Algorithm and Theoretical Analysis under Directional Setup
+3.1 Notation and Assumptions
+3.2 Motivation
+3.3 Theoretical Algorithm
+3.4 The dynamics of gradient alignment
+Intuition.
+3.5 Convergence Guaranties
+Discussion.
+3.6 Toy Experiment
+4 Zero-order Framework
+5 Experiments
+5.1 Experimental setup
+5.2 Results
+5.3 Ablation Studies
+6 Conclusion
+References
+A Additional Experimental Details
+A.1 Toy experiment
+A.2 Experiments on LLM fine-tuning
+B Missing proofs
+Proof Sketch of Theorem .
+B.1 Initialization with no prior information
+B.2 Initialization leveraging gradient direction at the initial point
+License: arXiv.org perpetual non-exclusive license
+arXiv:2602.13659v1 [cs.LG] 14 Feb 2026
+BRAIn Lab
+Zero-Order Optimization for LLM Fine-Tuning via Learnable Direction Sampling
+Valery Parfenov † \dagger 1,2 ,
+Grigoriy Evseev † \dagger 1 ,
+Andrey Veprikov 1,3 ,
+Nikolay Bushkov 4 ,
+Stanislav Moiseev 4 ,
+Aleksandr Beznosikov 1,3,4
+† \dagger Equal contribution
+1 Basic Research of Artificial Intelligence Laboratory (BRAIn Lab)
+2 HSE University
+3 Federated Learning Problems Laboratory
+4 T-Technologies
+5 Innopolis University
+Fine-tuning large pretrained language models (LLMs) is a cornerstone of modern NLP, yet its growing memory demands (driven by backpropagation and large optimizer States) limit deployment in resource-constrained settings. Zero-order (ZO) methods bypass backpropagation by estimating directional derivatives from forward evaluations, offering substantial memory savings. However, classical ZO estimators suffer from high variance and an adverse dependence on the parameter dimensionality d d , which has constrained their use to low-dimensional problems. In this work, we propose a policy-driven ZO framework that treats the sampling distribution over perturbation directions as a learnable policy and updates it to reduce the variance of directional estimates. We develop a practical algorithm implementing this idea and provide a theoretical analysis, showing that learned sampling distributions improve the quality of gradient information and relax the explicit dependence on d d in convergence bounds. Empirically, we validate the approach on challenging LLM fine-tuning benchmarks, demonstrating substantially improved performance compared to standard ZO baselines. Our results suggest that adaptive direction sampling is a promising route to make ZO fine-tuning viable at scale. The source code is available at https://github.com/brain-lab-research/zo_ldsd .
+1 Introduction
+Fine-tuning pre-trained Large Language Models (LLMs) has become the dominant paradigm in contemporary natural language processing [ Howard and Ruder, 2018 ] , allowing large pretrained networks to be efficiently adapted to diverse downstream tasks with limited labelled data [ Howard and Ruder, 2018 ; Zhang et al., 2019 ; Lester et al., 2021 ] . The fine-tuning objective is commonly cast as an unconstrained optimization problem
+min x ∈ ℝ d ⁡ f ⁡ ( x ) , \min_{x\in\mathbb{R}^{d}}f(x),
+(1)
+where x x denotes the model parameters, d d is the dimension of x x (number of trainable parameters) and f ⁡ ( x ) f(x) is the loss.
+Algorithms that rely on access to gradients remain the prevailing tools for solving the problem ( 1 ). Classical first-order optimizers such as Stochastic Gradient Descent [ Robbins and Monro, 1951 ; Amari, 1993 ] and Adam [ Kingma and Ba, 2014 ] are widely used because they integrate naturally with backpropagation and offer strong empirical performance [ Semenov et al., 2025 ; Wen et al., 2025 ] .
+Despite these advances in stability and the practical convenience afforded by backpropagation, its memory footprint poses a growing practical barrier as model sizes increase [ Rajbhandari et al., 2020 ] . Storing activations and optimizer States for gradient computation can dominate the memory budget: reported measurements indicate that gradient computation for models at the tens-of-billions parameter scale may require approximately 12 12 times more memory than inference [ Zhu et al., 2023b ] . This constraint restricts accessible fine-tuning workflows on resource-limited hardware (for example, edge devices and consumer GPUs) and complicates large-scale distributed training [ Zhu et al., 2023a ; Gao et al., 2024 ; Liao et al., 2024 ] .
+To mitigate memory pressure, a range of strategies has been explored. One family comprises coordinate-wise or block-coordinate schemes which can reduce the number of gradient parameters from d d to 1 1 [ Richtárik and Takáč, 2014 ] . However, this comes at the cost of an asymptotic slowdown in convergence by a factor of d d [ Li et al., 2018 ] (see Section 3 for details). One of the most prominent representatives of coordinate methods is BAdam [ Luo et al., 2024 ] , which reduces memory consumption by performing block-wise adaptive updates. While this lowers the storage requirements for optimizer States, as is typical for coordinate-wise optimization methods, it introduces a trade-off in the form of slower convergence, with the iteration complexity increasing proportionally to the number of blocks and, in the worst case, to the dimension d d .
+Motivated by these memory–convergence trade-offs in first-order schemes, Zero-order (ZO) methods offer a principled alternative. Rather than computing exact gradients via backpropagation, ZO approaches reconstruct directional derivatives (or gradient projections) from function evaluations by perturbing the objective along randomized directions. As a consequence, ZO methods require substantially less memory than coordinate-wise first-order methods such as BAdam [ Malladi et al., 2023 ] , since they avoid storing intermediate activations and optimizer States associated with gradient computation. By estimating descent directions using only such finite-difference information, ZO methods eliminate the need for backward passes and the associated storage of intermediate activations. This black-box viewpoint decouples optimization from the internal implementation of the model and enables fine-tuning with substantially smaller memory budgets. Recent work has demonstrated that applying classical ZO updates to LLM fine-tuning can reduce memory consumption by several times compared to standard first-order pipelines [ Zhang et al., 2024 ] .
+The first recognition of this idea in the context of LLM fine-tuning came with the MeZO [ Malladi et al., 2023 ] method, where the authors employed a ZO SGD [ Ghadimi and Lan, 2013 ] update based on the following gradient estimator:
+v ⋅ ⟨ ∇ f ​ ( x ) , v ⟩ ≈ v ⋅ f ⁡ ( x + τ ​ v ) − f ⁡ ( x − τ ​ v ) 2 ​ τ , \displaystyle v\cdot\langle\nabla f(x),v\rangle\approx v\cdot\frac{f(x+\tau v)-f(x-\tau v)}{2\tau},
+(2)
+where random direction v ∈ ℝ d v\in\mathbb{R}^{d} typically sampled from 𝒩 ⁡ ( 0 , 1 ) \mathcal{N}(0,1) [ Nesterov and Spokoiny, 2017 ] , and τ > 0 \tau>0 is the smoothing parameter.
+At a high level, ZO-SGD as well as other ZO methods share a similar design philosophy with coordinate approaches, however, rely exclusively on forward-only information to approximate gradients. Estimators of the form ( 2 ) constitute a standard design choice for ZO schemes and are widely used in the modern literature [ Chen et al., 2017 ; Malladi et al., 2023 ; Petrov et al., 2025 ] . Moreover, in the limit τ → 0 \tau\rightarrow 0 the method recovers coordinate SGD.
+Therefore ZO approaches suffer from inherent limitation: gradient estimates based on random directional derivatives exhibit high variance, similar to coordinate methods. Moreover, as the dimensionality d d increases, the probability that a random direction forms a large angle with the true gradient grows, leading to a further deterioration in the accuracy of the estimated descent direction. In essence, ZO methods obtain information only along a limited set of directions, behaving analogously to coordinate- or block-wise schemes. Consequently, they inherit a principal drawback: the effective convergence rate degrades by a factor of d d [ Zhan et al., 2024 ] .
+Consequently, until recently, the use of ZO methods were mostly restricted to low-dimensional settings [ Wang et al., 2018 ] . However, in light of modern applications in LLM fine-tuning, where the dimensionality d d reaches 10 10 10^{10} [ Seung et al., 2025 ] , this limitation has become even more pronounced.
+This work aims to mitigate the restrictive role of variance in ZO schemes. We view the ZO optimization process through the lens of Reinforcement Learning (RL), interpreting the distribution mean of the direction v v as a policy. By introducing a plug-and-play extension to the ZO framework, we enable a memory-efficient exploitation of information from previous iterations to improve the quality of gradient approximation. Our goal is both to provide theoretical insight and to empirically validate the proposed approach in real-world application settings.
+Our contributions are as follow:
+•
+We introduce a novel ZO method, based on optimization of distribution to avoid uninformative directions.
+•
+We provide theoretical guarantees for the proposed method under the smooth non-convex setup. Novel design leads to non-standard challenges, theoretical analysis and bounds. The resulting convergence guarantees exhibit no dependence on the dimension d d .
+•
+We empirically evaluate the proposed ZO method on challenging LLM fine-tuning benchmarks, demonstrating their effectiveness and practical relevance.
+2 Related Work
+2.1 Memory efficient approaches
+We note that, beyond ZO approaches, the memory-efficient optimization literature includes several orthogonal techniques, such as gradient quantization to lower precision [ Novikov et al., 2023 ] , compression of optimizer statistics [ Dettmers et al., 2021 ; Li et al., 2023 ] , forward gradient learning [ Baydin et al., 2022 ; Silver et al., 2021 ] , greedy layer-wise strategy [ Nøkland and Eidnes, 2019 ] , synthetic gradients [ Jaderberg et al., 2017 ] and others [ Lv et al., 2024 ; Boopathy and Fiete, 2022 ; Hinton, 2022 ; Singhal et al., 2023 ] .
+Nevertheless, ZO methods have emerged as the most effective solutions for memory-efficient LLM fine-tuning [ Malladi et al., 2023 ] . The most apparent distinction among existing ZO approaches lies in the choice of the sampling distribution for the random direction v v .
+Commonly used options include the uniform distribution over the unit sphere R S ( 1 ) ∥ ⋅ ∥ d RS(1)^{d}_{\|\cdot\|} [ Flaxman et al., 2004 ] , the standard multivariate Gaussian distribution 𝒩 ⁡ ( 0 , I ) \mathcal{N}(0,I) [ Ghadimi and Lan, 2013 ; Nesterov and Spokoiny, 2017 ] , and a uniform discrete distribution over the vectors of the canonical (one-hot) basis [ Duchi et al., 2015 ] . These choices yield unbiased gradient estimators of the smoothed function f f , which form the foundation of the theoretical analyses of the ZO methods.
+Recent works have explored complementary strategies for making ZO optimization more practical and memory-efficient. ZO-AdaMM [ Chen et al., 2019 ] generalizes adaptive-moment methods to the gradient-free regime, combining momentum with per-coordinate adaptive step-sizes using only function evaluations. JAGUAR [ Veprikov et al., 2024 ; Petrov et al., 2025 ] implements a momentum-focused ZO design and related matrix-aware extensions, emphasizing minimal per-iteration oracle cost and memory-efficient updates for large-model fine-tuning.
+2.2 ZO optimization with adaptive direction sampling
+Recent advances have aimed to inject richer curvature information into ZO procedures to improve stability and convergence. One of the first approaches in this direction was proposed in HiZOO [ Zhao et al., 2024 ] : it augments zero-order gradient ( 2 ) with precondition matrix, using a Hessian-informed strategy to mitigate heterogeneous curvature across parameters.
+Another recent perspective casts ZO finite-difference procedures as instances of policy optimization. In the work [ Qiu et al., 2025 ] , authors show that standard ZO finite-difference estimators are mathematically equivalent to a single-step policy optimization objective and, equivalently, to a REINForCE-style gradient estimator [ Williams, 1992 ] with a particular baseline. Building on this insight, they propose ZoAR method, which incorporates policy-optimization–inspired variance reduction through an averaged baseline and query reuse.
+A further contribution is presented in [ Seung et al., 2025 ] , which introduces LOREN: a curvature-aware ZO method that formulates gradient preconditioning as adaptive estimation of an anisotropic perturbation distribution, employs a low-rank block-diagonal preconditioner within a natural evolution strategies framework, and uses a REINForCE leave-one-out estimator to improve convergence and search efficiency.
+In contrast to these approaches, our method focuses on adaptively learning the mean of the sampling distribution rather than estimating or approximating second-order curvature information. Unlike HiZOO and LOREN, which rely on explicit or implicit Hessian-related preconditioning and therefore introduce additional structural assumptions and memory overhead, our framework remains lightweight and preserves the simplicity of first-order ZO updates. At the same time, compared to policy-optimization–based ZO methods such as ZoAR, which primarily target variance reduction through baselines and query reuse, we directly bias the sampling distribution toward empirically useful directions by learning the distribution mean. This allows us to improve directional alignment without modifying the underlying ZO estimator or increasing algorithmic complexity, making the proposed framework a modular plug-in that can be seamlessly combined with a wide range of existing ZO optimizers.
+3 Algorithm and Theoretical Analysis under Directional Setup
+3.1 Notation and Assumptions
+For any vector x ∈ ℝ d x\in\mathbb{R}^{d} we denote by ‖ x ‖ = ∑ i = 1 d x i 2 \|x\|=\sqrt{\sum_{i=1}^{d}x_{i}^{2}} the Euclidean l 2 l_{2} norm. For any non-zero x ≠ 0 x\neq 0 we define its normalized version as x ¯ = x ‖ x ‖ \overline{x}=\frac{x}{\|x\|} .
+We conduct the theoretical analysis in non-convex setting under the standard assumptions [ Bertsekas, 1997 ; Ghadimi and Lan, 2013 ; Richtárik et al., 2021 ; Li et al., 2021 ] .
+Assumption 1 .
+Let f f be L L -smooth, i.e., for all x 1 , x 2 ∈ ℝ d x_{1},x_{2}\in\mathbb{R}^{d} it holds that:
+‖ ∇ f ​ ( x 1 ) − ∇ f ​ ( x 2 ) ‖ ≤ L ​ ‖ x 1 − x 2 ‖ . \|\nabla f(x_{1})-\nabla f(x_{2})\|\leq L\|x_{1}-x_{2}\|.
+Assumption 2 .
+Let there exist a minimizer of f f i.e., an x ∗ x^{*} that
+f ⁡ ( x ) ≥ f ⁡ ( x ∗ ) f(x)\geq f(x^{*})
+holds for all x ∈ ℝ d x\in\mathbb{R}^{d} .
+3.2 Motivation
+We consider solving the problem ( 1 ) using optimization along random directions, i.e., via a Directional Gradient Descent (DGD) [ Silver et al., 2021 ] :
+x t + 1 = x t − γ x t ⋅ v t ¯ ​ ⟨ v t ¯ , ∇ f ​ ( x t ) ⟩ , \displaystyle x^{t+1}=x^{t}-\gamma_{x}^{t}\cdot\overline{v^{t}}\langle\overline{v^{t}},\nabla f(x^{t})\rangle,
+(3)
+where the sampling distribution of v t v^{t} is arbitrary.
+We note that ZO oracle ( 2 ) reduces to DGD estimator under the τ → 0 \tau\to 0 condition. It makes the role of the direction sampling distribution identical in both formulations and allows us to focus on the DGD setup in the theoretical analysis.
+Intuitively, the quality of the estimator improves as the sampled direction becomes better aligned with the gradient, and it attains its maximum accuracy in the case of a deterministic choice of v t v^{t} collinear with ∇ f ​ ( x t ) \nabla f(x^{t}) .
+To formalize this intuition, we introduce the notion of gradient alignment :
+C t := ⟨ v t ¯ , ∇ f ​ ( x t ) ¯ ⟩ 2 , \displaystyle C^{t}:=\left\langle\overline{v^{t}},\overline{\nabla{f(x^{t})}}\right\rangle^{2},
+(4)
+and use it in Lemma 1 , inspired by [ Cheng et al., 2021 ] .
+Lemma 1 .
+Under Assumptions 1 and 2 for iterations of DGD ( 3 )
+the following inequality holds:
+∑ t = 0 T − 1 1 T ​ 𝔼 ​ [ ( γ x t − L ​ γ x t 2 2 ) ​ 𝔼 ​ [ C t | ℱ t − 1 ] ​ ‖ ∇ f ​ ( x t ) ‖ 2 ] ≤ f ⁡ ( x 0 ) − f ⁡ ( x ∗ ) T , \displaystyle\sum_{t=0}^{T-1}\frac{1}{T}\mathbb{E}\left[\left(\gamma_{x}^{t}-\frac{L{\gamma_{x}^{t}}^{2}}{2}\right)\mathbb{E}\left[C^{t}|\mathcal{F}^{t-1}\right]\|\nabla f(x^{t})\|^{2}\right]\leq\frac{f(x^{0})-f(x^{*})}{T},
+where ℱ t \mathcal{F}^{t} is a σ \sigma -algebra generated by { x 0 , x 1 , … , x t } \{x^{0},x^{1},\dots,x^{t}\} .
+One of its key features is that Lemma 1 applies to an arbitrary sampling distribution. Crucially for our analysis, it does not rely on the unbiasedness of the oracle, in contrast to commonly used approaches [ Nesterov and Spokoiny, 2017 ] . This significantly broadens the range of settings that can be analysed within this framework.
+The simplest choice of the sampling distribution is v t ∼ 𝒩 ⁡ ( μ t ≡ 0 , ε 2 ​ I ) v^{t}\sim\mathcal{N}(\mu^{t}\equiv 0,\varepsilon^{2}I) : a Gaussian distribution with zero mean, which yields an unbiased estimator in the DGD setting. After normalizing the sampled vector, this yields a uniform distribution over the unit sphere v t ¯ ∼ R S ( 1 ) ∥ ⋅ ∥ d \overline{v^{t}}{\sim}RS(1)^{d}_{\|\cdot\|} . Notably, by leveraging Lemma 1 , we recover the convergence rate for DGD with v t ​ ∼ i . i . d . ​ 𝒩 ​ ( 0 , ε 2 ​ I ) v^{t}\overset{i.i.d.}{\sim}\mathcal{N}(0,\varepsilon^{2}I) established in [ Nesterov and Spokoiny, 2017 ] , as Stated in Corollary 1 .
+Corollary 1 .
+Let in the setting of Lemma 1 v t ​ ∼ i . i . d . ​ 𝒩 ​ ( μ t ≡ 0 , ε 2 ​ I ) v^{t}\overset{i.i.d.}{\sim}\mathcal{N}(\mu^{t}\equiv 0,\varepsilon^{2}I) and γ x t ≤ 1 2 ​ L \gamma^{t}_{x}\leq\frac{1}{2L} . Then the following bound holds:
+𝔼 ​ ‖ ∇ f ​ ( x ¯ T ) ‖ 2 ≤ 2 ​ d γ x t ​ T ​ ( f ⁡ ( x 0 ) − f ⁡ ( x ∗ ) ) , \displaystyle\mathbb{E}\|\nabla f(\overline{x}^{T})\|^{2}\leq\frac{2d}{\gamma_{x}^{t}T}(f(x^{0})-f(x^{*})),
+where x ¯ T \overline{x}^{T} is chosen uniformly from { x 0 , x 1 , … , x t − 1 } \{x^{0},x^{1},\dots,x^{t-1}\} .
+The proof of Corollary 1 is provided in Appendix B and directly reveals that the d d factor arises from 𝔼 ⁡ [ C t | ℱ t − 1 ] ∼ 1 / d \mathbb{E}\left[C^{t}|\mathcal{F}^{t-1}\right]\sim 1/d for v t ​ ∼ i . i . d . ​ 𝒩 ​ ( 0 , ε 2 ​ I ) v^{t}\overset{i.i.d.}{\sim}\mathcal{N}(0,\varepsilon^{2}I) .
+The above intuition shows that, on the one hand, Lemma 1 indeed captures the variance effect induced by the randomness of the direction, and on the other hand, its application yields tight bounds.
+This makes expected gradient alignment 𝔼 ⁡ [ C t | ℱ t − 1 ] \mathbb{E}\left[C^{t}|\mathcal{F}^{t-1}\right] a key concept in the analysis of the DGD setup.
+To obtain theoretical acceleration, it is necessary to maintain this quantity at an 𝒪 ⁡ ( 1 ) \mathcal{O}(1) level, in contrast to the baseline 𝒪 ⁡ ( 1 / d ) \mathcal{O}(1/d) regime. To this end, we propose to leverage information about the objective function obtained during previous iterations by learning the parameters of the sampling distribution and introducing control over them to increase the value of 𝔼 ⁡ [ C t | ℱ t − 1 ] \mathbb{E}\left[C^{t}|\mathcal{F}^{t-1}\right] .
+Using a Gaussian distribution gives rise to two design choices: adapting the mean vector μ t \mu^{t} or the covariance matrix Σ t \Sigma^{t} . We focus on learning μ t \mu^{t} and fix Σ t ≡ ε 2 ​ I \Sigma^{t}\equiv\varepsilon^{2}I , since in the context of memory-efficient optimization storing a full covariance matrix is infeasible, whereas learning the mean vector incurs only an additional 𝒪 ⁡ ( d ) \mathcal{O}(d) memory overhead, which is acceptable in the ZO setting.
+3.3 Theoretical Algorithm
+The above mentioned intuition, along with Lemma 1 , motivates the design of Algorithm 3.3 : LDSD ( L earnable D irection S ampling D escent).
+LDSD
+1:
+Input: Initial points x 0 x^{0} and μ 0 \mu^{0} , number of iterations T T , variance scale ε \varepsilon .
+2:
+for t = 0 , 1 , 2 , … , T − 1 t=0,1,2,\dots,T-1 do
+3:
+Sample v t ∼ 𝒩 ⁡ ( μ t , ε 2 ​ I ) v^{t}\sim\mathcal{N}(\mu^{t},\varepsilon^{2}I) and set v t ¯ = v t / ‖ v t ‖ \overline{v^{t}}=v^{t}/\|v^{t}\|
+4:
+g x t = v t ¯ ​ ⟨ v t ¯ , ∇ f ​ ( x t ) ⟩ g_{x}^{t}=\overline{v^{t}}\left\langle\overline{v^{t}},{\nabla f(x^{t})}\right\rangle
+5:
+g μ t = ∇ μ 𝔼 ​ [ C t | ℱ t − 1 ] | μ = μ t g_{\mu}^{t}=\nabla_{\mu}\mathbb{E}\left[C^{t}|\mathcal{F}^{t-1}\right]\Big|_{\mu=\mu^{t}}
+6:
+μ t + 1 = μ t + γ μ t ​ g μ t \mu^{t+1}=\mu^{t}+\gamma_{\mu}^{t}g_{\mu}^{t}
+7:
+x t + 1 = x t − γ x t ​ g x t x^{t+1}=x^{t}-\gamma_{x}^{t}g_{x}^{t}
+8:
+end for
+Lines 3 , 4 , 7 of Algorithm 3.3 reflect the classical use of DGD estimator.
+In contrast, Lines 5 and 6 incorporate the proposed mechanism for learning the sampling direction.
+Specifically, to attain the values 𝔼 [ C t | ℱ t − 1 ] \mathbb{E}\left[C^{t}\right|\mathcal{F}^{t-1}] of expected gradient alignment as large as possible, we adopt a reinforcement learning perspective by interpreting the mean vector μ t \mu^{t} as a policy and 𝔼 [ C t | ℱ t − 1 ] \mathbb{E}\left[C^{t}\right|\mathcal{F}^{t-1}] as the reward signal.
+Accordingly, at Line 3 of Algorithm 3.3 , a direction v t v^{t} is sampled from the current policy, while at Lines 5 and 6 the policy is updated via a gradient ascent step.
+Importantly, in practice the derivative of the expected gradient alignment ∇ μ 𝔼 ​ [ C t | ℱ t − 1 ] | μ = μ t \nabla_{\mu}\mathbb{E}\left[C^{t}|\mathcal{F}^{t-1}\right]\Big|_{\mu=\mu^{t}} is not accessible. Consequently, while the analysis employs the update in Line 5 , for practical implementation we propose using a well-established policy gradient approach [ Williams, 1992 ] from reinforcement learning. We refer to Sections 3.6 and 4 for further details on this implementation.
+3.4 The dynamics of gradient alignment
+Now we present Theorem 1 , which characterizes the evolution of the expected gradient alignment 𝔼 ⁡ [ C t | ℱ t − 1 ] \mathbb{E}\left[C^{t}|\mathcal{F}^{t-1}\right] over a single iteration of Algorithm 3.3 and constitutes the core of the theoretical analysis of the proposed approach.
+Theorem 1 .
+Let Assumption 1 hold and d ≥ 16 d\geq 16 . Then for iterations of Algorithm 3.3 with ε ≤ 𝒪 ⁡ ( d − 3 2 ​ cos ⁡ ( β t ) ​ ( 1 − cos ⁡ ( β t ) ) ​ ‖ μ t ‖ ) , γ μ t ≤ 𝒪 ⁡ ( ‖ μ t ‖ 2 ) , γ x t ≤ 𝒪 ⁡ ( cos 2 ⁡ ( β t ) ​ ( 1 − cos ⁡ ( β t ) ) 2 L ) \varepsilon\leq\mathcal{O}\left(d^{-\frac{3}{2}}\cos(\beta^{t})(1-\cos(\beta^{t}))\|\mu^{t}\|\right),\gamma_{\mu}^{t}\leq\mathcal{O}\left(\|\mu^{t}\|^{2}\right),\gamma_{x}^{t}\leq\mathcal{O}\left(\frac{\cos^{2}(\beta^{t})(1-\cos(\beta^{t}))^{2}}{L}\right) the following inequality holds:
+𝔼 [ C t + 1 | ℱ t ] = 𝔼 [ C t | ℱ t − 1 ] + γ μ t ( cos ⁡ ( β t ) ​ ( 1 − cos ⁡ ( β t ) ) 24 ​ ‖ μ t ‖ ) 2 , \displaystyle\mathbb{E}\left[C^{t+1}\right|\mathcal{F}^{t}]=\mathbb{E}\left[C^{t}\right|\mathcal{F}^{t-1}]+\gamma^{t}_{\mu}\left(\frac{\cos(\beta^{t})(1-\cos(\beta^{t}))}{24\|\mu^{t}\|}\right)^{2},
+where β t \beta^{t} is the angle between μ t \mu^{t} and ∇ f ​ ( x t ) \nabla f(x^{t}) .
+Under the assumptions of Theorem 1 , the values of 𝔼 [ C t | ℱ t − 1 ] \mathbb{E}\left[C^{t}\right|\mathcal{F}^{t-1}] increase monotonically.
+This leads to acceleration in convergence guarantees in Lemma 1 and corresponds to an improvement of the policy μ t \mu^{t} .
+At the same time, the theorem does not provide guarantees for a naive initialization μ 0 = 0 \mu^{0}=0 (Figure 1 illustrates that this point corresponds to a saddle point of the function 𝔼 ⁡ [ C t | ℱ t − 1 ] \mathbb{E}\left[C^{t}|\mathcal{F}^{t-1}\right] ). It is consistent with the observation that ∇ μ 𝔼 ​ [ C t | ℱ t − 1 ] | μ = 0 = 0 \nabla_{\mu}\mathbb{E}\left[C^{t}|\mathcal{F}^{t-1}\right]\Big|_{\mu=0}=0 , together with the update rule in Line 6 of Algorithm 3.3 , results in unchanged values of the policy: μ t + 1 = μ t \mu^{t+1}=\mu^{t} and, consequently, expected gradient alignment 𝔼 ⁡ [ C t + 1 | ℱ t ] = 𝔼 ⁡ [ C t | ℱ t − 1 ] \mathbb{E}\left[C^{t+1}|\mathcal{F}^{t}\right]=\mathbb{E}\left[C^{t}|\mathcal{F}^{t-1}\right] . We also note that growth of the gradient alignment is not guaranteed in the cases of collinearity or orthogonality between μ t \mu^{t} and ∇ f ​ ( x t ) \nabla f(x^{t}) , since the gradient of the alignment objective vanishes in these configurations. However, Algorithm 3.3 almost surely avoids these degenerate configurations when initialized at random, as they form a measure-zero set in the parameter space.
+Intuition.
+We now provide further intuition for the concepts underlying Theorem 1 . Figure 1 depicts the landscape of the function 𝔼 ⁡ [ C t ∣ ℱ t − 1 ] \mathbb{E}[C^{t}\mid\mathcal{F}^{t-1}] as a function of μ t \mu^{t} in dimension d = 2 d=2 .
+Figure 1 : Landscape of the function 𝔼 ⁡ [ C t ∣ ℱ t − 1 ] \mathbb{E}\left[C^{t}\mid\mathcal{F}^{t-1}\right] with respect to μ t \mu^{t} , for ∇ f ​ ( x t ) = ( 1 , 0 ) ⊤ \nabla f(x^{t})=(1,0)^{\top} and d = 2 d=2 .
+The figure clearly reveals the intuitive saddle-like structure of the objective: increasing orthogonality of μ t \mu^{t} and ∇ f ​ ( x t ) \nabla f(x^{t}) leads to sampling vectors v t v^{t} that form large angles with ∇ f ​ ( x t ) \nabla f(x^{t}) and therefore yield small values of C t C^{t} . In contrast, alignment between μ t \mu^{t} and ∇ f ​ ( x t ) \nabla f(x^{t}) results in larger values of both C t C^{t} and its conditional expectation.
+This landscape additionally exhibits symmetry with respect to the transformation μ t ↦ − μ t \mu^{t}\mapsto-\mu^{t} , reflecting the fact that C t C^{t} depends only on the squared cosine of the angle β t \beta^{t} .
+Each iteration of Algorithm 3.3 performs a gradient ascent step on the function 𝔼 ⁡ [ C t ∣ ℱ t − 1 ] \mathbb{E}[C^{t}\mid\mathcal{F}^{t-1}] with respect to μ t \mu^{t} . From the RL perspective, it corresponds to a policy update driven by the observed reward signal 𝔼 ⁡ [ C t ∣ ℱ t − 1 ] \mathbb{E}[C^{t}\mid\mathcal{F}^{t-1}] .
+Subsequently, a model parameter update is performed in Line 7 , which in turn changes the direction of the true gradient ∇ f ​ ( x t ) \nabla f(x^{t}) . Geometrically, this corresponds to a rotation of the saddle while keeping μ t \mu^{t} fixed.
+Assumption 1 on the Lipschitz continuity of f f , together with the explicit form of the update in Line 7 , allows to bound the angle of this rotation in terms of the step size γ x t \gamma_{x}^{t} . This bounded rotation may also be interpreted as a bounded change of the environment, which may reduce the relevance of the policy obtained at the previous iteration. The analysis in Theorem 1 is built upon carefully balancing these two competing effects: the gradient ascent step in μ t \mu^{t} and the change in the direction of ∇ f ​ ( x t ) \nabla f(x^{t}) induced by the update of the model parameters x t x^{t} .
+The saddle structure of 𝔼 ⁡ [ C t ∣ ℱ t − 1 ] \mathbb{E}[C^{t}\mid\mathcal{F}^{t-1}] immediately implies non-concavity. It prevents us from directly deriving its increase in Theorem 1 using standard results from gradient ascent theory, thereby significantly complicating the theoretical analysis. Due to the non-standard challenges and the resulting proof technique, we provide both a high-level sketch and a complete proof in Appendix B .
+To characterize the full dynamics of 𝔼 [ C t | ℱ t − 1 ] \mathbb{E}\left[C^{t}\right|\mathcal{F}^{t-1}] across the iterations of Algorithm 3.3 we prove the following result.
+Lemma 2 .
+Let in the setting of Theorem 1 δ ≤ cos ⁡ ( β 0 ) ≤ 1 − δ \delta\leq\cos(\beta^{0})\leq 1-\delta with δ ∈ ( 0 , 1 2 ) \delta\in\left(0;\frac{1}{2}\right) , ‖ μ t ‖ ≤ M \|\mu^{t}\|\leq M for all t t and ε = 𝒪 ⁡ ( d − 3 2 ​ δ ​ M ) , γ x t = 𝒪 ⁡ ( δ 2 L ) \varepsilon=\mathcal{O}\left(d^{-\frac{3}{2}}\delta M\right),\gamma_{x}^{t}=\mathcal{O}\left(\frac{\delta^{2}}{L}\right) . Then 𝔼 ⁡ [ C t | ℱ t − 1 ] \mathbb{E}\left[C^{t}|\mathcal{F}^{t-1}\right] increase monotonically to the value
+cos ⁡ ( δ 32 ​ d + L ​ γ x t + arccos ⁡ ( 1 − δ ) ) 2 ​ ( 1 − e − 1 ) = 𝒪 ⁡ ( 1 ) \cos\left(\frac{\delta}{32d}+L\gamma_{x}^{t}+\arccos(1-\delta)\right)^{2}(1-e^{-1})=\mathcal{O}(1)
+and then never decrease below.
+Lemma 2 establishes once the policy is initialized such that δ ≤ cos ⁡ ( β 0 ) ≤ 1 − δ \delta\leq\cos(\beta^{0})\leq 1-\delta , for an appropriate choice of γ x t , γ μ t , ε \gamma_{x}^{t},\gamma_{\mu}^{t},\varepsilon the expected gradient alignment 𝔼 [ C t | ℱ t − 1 ] \mathbb{E}\left[C^{t}\right|\mathcal{F}^{t-1}] increases monotonically up to a certain level and subsequently oscillates within a neighbourhood of 1 1 . This stands in contrast to the 𝒪 ⁡ ( 1 / d ) \mathcal{O}(1/d) behaviour established in Corollary 1 .
+3.5 Convergence Guaranties
+Lemma 2 naturally leads to two complementary settings for policy initialization μ 0 \mu^{0} . The first corresponds to choosing μ 0 \mu^{0} randomly without any prior knowledge of the target function f f .
+This setup is analysed in Appendix B.1 and can be interpreted as a sequential growth of gradient alignment up to a saturation level. In particular, it leads to a non-standard convergence criterion formulated in terms of a weighted average of squared gradient norms evaluated along the iterates of the algorithm.
+The second regime for μ 0 \mu^{0} initialization corresponds to leveraging prior information about the target function f f (the direction of the true gradient ∇ f ​ ( x 0 ) \nabla f(x^{0}) at the initial point) to immediately operate in the phase of Lemma 2 where 𝔼 [ C t | ℱ t − 1 ] \mathbb{E}\left[C^{t}\right|\mathcal{F}^{t-1}] oscillates in a neighbourhood of 1 1 .
+Lemma 3 .
+Let Assumptions 1 , 2 be satisfied, d ≥ 16 d\geq 16 and μ 0 \mu^{0} collinear to ∇ f ​ ( x 0 ) \nabla f(x^{0}) . Then for iterations of Algorithm 3.3 with δ ≤ cos ⁡ ( β 0 ) ≤ 1 − δ \delta\leq\cos(\beta^{0})\leq 1-\delta , δ ∈ ( 0 , 1 2 ) \delta\in\left(0;\frac{1}{2}\right) and ε = 𝒪 ⁡ ( d − 3 2 ​ δ ​ M ) , M = min t ⁡ { ‖ μ t ‖ } , γ x t = 𝒪 ⁡ ( δ 2 L ) , γ μ t = 𝒪 ⁡ ( ‖ μ t ‖ 2 ) \varepsilon=\mathcal{O}\left(d^{-\frac{3}{2}}\delta M\right),M=\min_{t}\{\|\mu^{t}\|\},\gamma_{x}^{t}=\mathcal{O}\left(\frac{\delta^{2}}{L}\right),\gamma_{\mu}^{t}=\mathcal{O}\left(\|\mu^{t}\|^{2}\right) , the following bound holds:
+𝔼 ⁡ [ ‖ ∇ f ​ ( x ¯ T ) ‖ 2 ] ≤ 𝒪 ⁡ ( 1 T ​ γ x ) ​ ( f ⁡ ( x 0 ) − f ⁡ ( x ∗ ) ) . \mathbb{E}[\|\nabla f(\overline{x}^{T})\|^{2}]\leq\mathcal{O}\left(\frac{1}{T\gamma_{x}}\right)(f(x^{0})-f(x^{*})).
+Discussion.
+We note that the dimension d d does not appear explicitly in the theoretical bounds of Lemma 3 . In contrast, classical directional, coordinate or ZO methods incur the polynomial dependence on d d in their convergence guarantees [ Nesterov and Spokoiny, 2017 ; Veprikov et al., 2024 ; Hanzely et al., 2018 ] . This slowdown is in fact unavoidable for uniformly random directions from the perspective of lower bounds [ Lee and Sidford, 2013 ] , which establish an inherent 𝒪 ⁡ ( d ) \mathcal{O}(d) factor for standard ZO methods. Our approach overcomes this barrier by learning the parameters of the sampling distribution, effectively steering the sampled directions to better align with the gradient and thereby removing the explicit dependence on d d in the convergence rate.
+It is worth noting that, in theory, the quality of the Monte-Carlo approximation g μ t g_{\mu}^{t} obtained with a fixed number of samples v t v^{t} per iteration depends on the dimension d d . However, in practice a small number of samples, often 𝒪 ⁡ ( 1 ) \mathcal{O}(1) , is sufficient to obtain a stable Monte-Carlo estimate [ Schulman et al., 2017 ] .
+Finally, we observe that after normalization the sampling distribution is invariant under simultaneous rescaling of the mean vector μ \mu and the variance ε 2 \varepsilon^{2} .
+This invariance also appears in choice of ε ∼ d − 3 2 ​ δ ​ M ≤ d − 3 2 ​ δ ​ ‖ μ t ‖ \varepsilon\sim d^{-\frac{3}{2}}\delta M\leq d^{-\frac{3}{2}}\delta\|\mu^{t}\| in the analysis. This suggests that constraining ‖ μ ‖ = 1 \|\mu\|=1 may be a natural design choice and a direction for future work.
+3.6 Toy Experiment
+To validate the theoretical results, we conduct a toy experiment consisting of training a linear regression model on the a9a [ Chang and Lin, 2011 ] dataset with access to directional derivatives. As a baseline, we consider an algorithm that employs the estimator with K K Monte Carlo samples:
+g x t = 1 K ​ ∑ k = 1 K v ¯ k t ​ ⟨ v ¯ k t , ∇ f ​ ( x t ) ⟩ , \displaystyle g_{x}^{t}=\frac{1}{K}\sum_{k=1}^{K}\overline{v}_{k}^{t}\langle\overline{v}_{k}^{t},\nabla f(x^{t})\rangle,
+(5)
+with v k t ∼ 𝒩 ⁡ ( 0 , I ) v_{k}^{t}\sim\mathcal{N}(0,I) .
+For LDSD , we use the same approximation ( 5 ) with the choice v k t ∼ 𝒩 ⁡ ( μ t , ε 2 ​ I ) v_{k}^{t}\sim\mathcal{N}(\mu^{t},\varepsilon^{2}I) . For proposed learning mechanism we apply a log-derivative trick [ Williams, 1992 ] to derive a Monte Carlo estimator of ∇ μ 𝔼 ​ [ C t | ℱ t − 1 ] | μ = μ t \nabla_{\mu}\mathbb{E}\left[C^{t}|\mathcal{F}^{t-1}\right]\Big|_{\mu=\mu^{t}} from the Line 5 of Algorithm 3.3 .
+We denote the density of a Gaussian distribution by π μ ​ ( ⋅ ) \pi_{\mu}(\cdot) and introduce C k t = ⟨ v k t ¯ , ∇ f ​ ( x t ) ¯ ⟩ 2 C_{k}^{t}=\langle{\overline{v_{k}^{t}},\overline{\nabla f(x^{t})}}\rangle^{2} for each sampled direction v k t v^{t}_{k} . Accordingly,
+∇ μ 𝔼 ​ [ C t | ℱ t − 1 ] | μ = μ t \displaystyle\nabla_{\mu}\mathbb{E}\left[C^{t}|\mathcal{F}^{t-1}\right]\Big|_{\mu=\mu^{t}}
+= ∫ C t ​ ( ∇ μ ​ log ​ π μ t ) ​ d ​ π μ t ≈ 1 K ​ ∑ k = 1 K C k t ​ ( ∇ μ ​ log ​ π μ t ​ ( v k t ) ) . \displaystyle=\int C^{t}\left(\nabla_{\mu}\log\pi_{\mu^{t}}\right)\mathrm{d}\pi_{\mu^{t}}\approx\frac{1}{K}\sum_{k=1}^{K}C_{k}^{t}\left(\nabla_{\mu}\log\pi_{\mu^{t}}(v_{k}^{t})\right).
+Since π μ t ​ ( ⋅ ) \pi_{\mu^{t}}(\cdot) is a Gaussian distribution density, we have ∇ μ ​ log ​ π μ t ​ ( v k t ) = v k t − μ t ε 2 \nabla_{\mu}\log\pi_{\mu^{t}}(v_{k}^{t})=\frac{v_{k}^{t}-\mu^{t}}{\varepsilon^{2}} . For policy updates we utilize
+g μ t = 1 K ​ ∑ k = 1 K ( C k t − b t ) ​ v k t − μ t ε 2 , \displaystyle g_{\mu}^{t}=\frac{1}{K}\sum_{k=1}^{K}\left(C^{t}_{k}-b^{t}\right)\frac{v_{k}^{t}-\mu^{t}}{\varepsilon^{2}},
+where b t = 1 K ​ ∑ k = 1 K C k t b^{t}=\frac{1}{K}\sum_{k=1}^{K}C^{t}_{k} is a mean-baseline, introduced to reduce the estimator variance [ Williams, 1992 ] .
+We set K = 5 K=5 both for the baseline and LDSD and compare them in terms of the alignment between the true gradient and its estimator cos ⁡ ( g x t , ∇ f ​ ( x t ) ) \cos(g_{x}^{t},\nabla f(x^{t})) , as well as the norm of the gradient ‖ ∇ f ​ ( x t ) ‖ \|\nabla f(x^{t})\| : the quantity involved in convergence guaranties. The results are reported in Figure 2 .
+Figure 2 : Comparison of LDSD and the baseline on the a9a regression task.
+The first plot in Figure 2 reveals learning the sampling direction in LDSD indeed leads to strong alignment between the estimator g μ t g_{\mu}^{t} and the true gradient ∇ f ​ ( x t ) \nabla f(x^{t}) . This behaviour fully agrees with Lemma 2 and the intuition discussed in Section 3 : the alignment initially increases monotonically and subsequently oscillates in a neighbourhood of 𝒪 ⁡ ( 1 ) \mathcal{O}(1) .
+4 Zero-order Framework
+Building on Algorithm 3.3 , which presented the first-order instantiation of our update rules, we now develop the corresponding ZO formulation in Algorithm 4 by replacing the directional derivative g x t g_{x}^{t} with a zero-order oracle ( 2 ), and the gradient g μ t g_{\mu}^{t} with its REINForCE estimation [ Williams, 1992 ] . Both substitutions yield unbiased estimators of the corresponding first-order gradients [ Feng and Wang, 2023 ] , thereby preserving the theoretical structure of the original algorithm in a purely zero-order setting.
+ZO-LDSD
+1:
+Input: Initial points x 0 , μ 0 x^{0},\mu^{0} , number of iterations T T , number of oracle calls K K , variance ε \varepsilon , stepsizes γ x , γ μ \gamma_{x},\gamma_{\mu}
+2:
+for t = 0 , 1 , 2 , … , T − 1 t=0,1,2,\dots,T-1 do
+3:
+Sample { v i } i = 1 K ∼ 𝒩 ⁡ ( μ t , ε 2 ​ I ) \{v^{i}\}_{i=1}^{K}\sim\mathcal{N}(\mu^{t},\varepsilon^{2}I)
+4:
+Set v ∗ t = arg ⁡ min v ∈ { v i } i = 1 K ​ { f ⁡ ( x t + τ ​ v ) } v_{*}^{t}=\arg\min\limits_{v\in\{v^{i}\}_{i=1}^{K}}\left\{f(x^{t}+\tau v)\right\}
+5:
+g x t = f ⁡ ( x t + τ ​ v ∗ t ) − f ⁡ ( x t − τ ​ v ∗ t ) 2 ​ τ ⋅ v ∗ t g_{x}^{t}=\frac{f(x^{t}+\tau v_{*}^{t})-f(x^{t}-\tau v_{*}^{t})}{2\tau}\cdot v_{*}^{t}
+6:
+g μ t = 1 K ​ ∑ i = 1 K K ⋅ f ⁡ ( x t + τ ​ v i ) − ∑ j = 1 K f ⁡ ( x t + τ ​ v j ) K − 1 ⋅ v i − μ t ε 2 g_{\mu}^{t}=\frac{1}{K}\sum\limits_{i=1}^{K}\frac{K\cdot f(x^{t}+\tau v^{i})-\sum\limits_{j=1}^{K}f(x^{t}+\tau v^{j})}{K-1}\cdot\frac{v^{i}-\mu^{t}}{\varepsilon^{2}}
+7:
+x t + 1 = x t − γ x ⋅ g x t x^{t+1}=x^{t}-\gamma_{x}\cdot g_{x}^{t}
+8:
+μ t + 1 = μ t + γ μ ⋅ g μ t \mu^{t+1}=\mu^{t}+\gamma_{\mu}\cdot g_{\mu}^{t}
+9:
+end for
+The selection of v ∗ t v_{*}^{t} in Line 4 of Algorithm 4 implements a lightweight, direction-wise greedy search among the K K sampled candidates: by choosing the perturbation that empirically yields the smallest objective after a forward evaluation, the method biases the subsequent x x -update (Line 7 of Algorithm 4 ) toward directions that have demonstrated the strongest instantaneous decrease in f f . This selection improves the practical utility of a limited number of oracle queries and typically reduces the variance of the chosen search direction, at the cost of introducing an intentional selection bias in the sampled direction for the x x -update.
+Aside from those mechanics and the replacement of true gradients by zero-order estimates, Algorithm 4 preserves the structural update logic of Algorithm 3.3 . The procedure preserves the forward-only nature of ZO methods, requires K + 1 K+1 forward evaluations per iteration, and concentrates sampling mass on empirically useful directions through online updates of μ t \mu^{t} . While classical ZO schemes typically use K = 1 K=1 , we set K = 5 K=5 in our experiments as an empirically chosen compromise between selection quality and oracle cost.
+An ablation over K K is provided in Section 5.3 .
+It is important to note that this framework is not a standalone optimizer but a plug-in module: any existing ZO estimator for the parameter update can be combined with the adaptive sampling routine to improve empirical convergence. In particular, the update at line 7 of Algorithm 4 is modular and may be replaced by the parameter-update rule of any other ZO optimizer. This enables straightforward integration of the adaptive sampling mechanism, while leaving the base optimizer’s update logic intact.
+5 Experiments
+In this section, we present an empirical evaluation of the proposed zero-order optimization framework for large language model fine-tuning.
+5.1 Experimental setup
+Fine-Tuning Task and Schemes. We evaluate the proposed zero-order methods on the SST-2 sentiment classification benchmark [ Socher et al., 2013 ] , following the experimental protocol of [ Zhang et al., 2024 ] . SST-2 is a standard supervised benchmark for sentence-level binary sentiment classification and is commonly used to assess fine-tuning procedures for language models.
+Models. Experiments are performed on two representative models: RoBERTa-Large [ Liu et al., 2019 ] and OPT-1.3B [ Zhang et al., 2022 ] . These models span different architectures and parameter counts, allowing us to examine the behavior of ZO algorithms across realistic fine-tuning settings while keeping the experimental scope focused.
+Baselines. We use our framework on established zero-order baselines reported in [ Zhang et al., 2024 ] : ZO-SGD [ Ghadimi and Lan, 2013 ] , ZO-AdaMM [ Chen et al., 2019 ] , JAGUAR SignSGD [ Petrov et al., 2025 ] . All experiments follow the evaluation of [ Zhang et al., 2024 ] to ensure a fair comparison. Training details are deferred to Appendix A.2 .
+Comparison procedure. For a fair and controlled evaluation we compare each baseline in two variants: (i) the original baseline implementation, and (ii) the same baseline augmented with our zero-order adaptive sampling framework (Algorithm 4 ). Crucially, in (ii) we do not change any of the original optimizer hyperparameters from (i) (e.g., learning rate, momentum), those remain exactly as in the base method. The only hyperparameters we tune are those introduced by our framework.
+Since Algorithm 4 performs 6 6 ZO oracle calls (forward passes) when K = 5 K=5 , we compare baseline methods under a fixed budget of oracle calls rather than a fixed number of iterations to ensure fair evaluation. This leads to two natural comparison strategies for the baselines: either perform 6 6 oracle calls per iteration (using K = 5 K=5 samples), or perform more iterations with 2 2 oracle calls per iteration (using K = 1 K=1 ). Both variants are presented in Table 1 . This design ensures that performance differences arise from the adaptive sampling module itself rather than from differences in computational budget.
+5.2 Results
+Table 1 reports SST2 test accuracy for OPT-1.3B and RoBERTa-Large under different fine-tuning schemes.
+Table 1 : Test accuracy on SST2 for OPT-1.3B and RoBERTa-Large. Best performance among ZO methods is in bold .
+Method
+Sampling
+OPT-1.3B
+RoBERTa-Large
+FT
+LoRA
+FT
+LoRA
+ZO-SGD
+Gaussian,
+0.928
+0.854
+0.899
+0.913
+2 forwards, more iterations
+Gaussian,
+0.919
+0.850
+0.869
+0.905
+6 forwards, same iterations
+Algorithm 4
+0.935
+0.916
+0.909
+0.928
+ZO-AdaMM
+Gaussian,
+0.925
+0.912
+0.909
+0.812
+2 forwards, more iterations
+Gaussian,
+0.917
+0.905
+0.899
+0.801
+6 forwards, same iterations
+Algorithm 4
+0.930
+0.929
+0.917
+0.900
+JAGUAR
+Gaussian,
+0.925
+0.921
+0.906
+0.905
+2 forwards, more iterations
+Gaussian,
+0.914
+0.911
+0.896
+0.893
+6 forwards, same iterations
+Algorithm 4
+0.930
+0.928
+0.922
+0.927
+Discussion.
+The results show that replacing Gaussian sampling with our adaptive direction sampling produces consistent improvements across models, optimizers, and fine-tuning modalities. Notably, merely increasing the number of probes with Gaussian sampling does not yield the same benefit: performance gains arise from the combination of multiple candidates and adaptive selection. These findings indicate that our sampling scheme yields more informative finite-difference probes and reduces variance in the resulting ZO gradient proxies. Because the framework is plug-and-play, it improves practical convergence of existing ZO methods without altering their core update rules.
+5.3 Ablation Studies
+In this section, we provide several ablation studies on hyperparameters from Algorithm 4 . In all experiments we use SST-2 dataset with the RoBERTa-large model. Figure 3 (a) shows accuracy rising with K K up to K = 5 K=5 and then slightly falling; (b) exhibits improvement as γ μ \gamma_{\mu} increases until an intermediate optimum after which performance degrades; and (c) displays a U-shaped dependence on ε \varepsilon with a clear peak where our method outperforms the Gaussian baseline. These results motivate the default hyperparameter choices used in our experiments.
+(a) K K
+(b) γ μ \gamma_{\mu}
+(c) ε \varepsilon
+Figure 3 : Test accuracy of ZO-SGD (Algorithm 4 sampling) on SST-2 RoBERTa-large with LoRA for different hyperparameters.
+6 Conclusion
+In this work, we introduce a novel zero-order optimization framework that treats the sampling distribution over perturbation directions as a learnable policy. Theoretically, we provide convergence guarantees with no explicit dependence on dimension d d , in stark contrast to the 𝒪 ⁡ ( d ) \mathcal{O}(d) degradation inherent in classical zero-order methods. This represents a significant advancement for ZO optimization, achieved by adaptively learning the mean of the sampling distribution to maintain high gradient alignment throughout training.
+Empirically, we validate our framework on LLM fine-tuning benchmarks, demonstrating consistent improvements over established ZO baselines including ZO-SGD, ZO-AdaMM, and JAGUAR SignSGD. Our framework operates as a plug-and-play module that enhances existing ZO optimizers without modifying their core hyperparameters. Extensive ablation studies confirm the robustness and practical applicability of our approach.
+References
+Amari [1993]
+Shun-ichi Amari.
+Backpropagation and stochastic gradient descent method.
+Neurocomputing , 5(4):185–196, 1993.
+Baydin et al. [2022]
+Atılım Güneş Baydin, Barak A Pearlmutter, Don Syme, Frank Wood, and Philip Torr.
+Gradients without backpropagation.
+arXiv preprint arXiv:2202.08587 , 2022.
+Bertsekas [1997]
+Dimitri P Bertsekas.
+Nonlinear programming.
+Journal of the Operational Research Society , 48(3):334–334, 1997.
+Boopathy and Fiete [2022]
+Akhilan Boopathy and Ila Fiete.
+How to train your wide neural network without backprop: An input-weight alignment perspective.
+In International Conference on Machine Learning , pages 2178–2205. PMLR, 2022.
+Boucheron et al. [2013]
+Stéphane Boucheron, Gábor Lugosi, and Pascal Massart.
+Concentration Inequalities: A Nonasymptotic Theory of Independence .
+Oxford University Press, 02 2013.
+ISBN 9780199535255.
+doi: 10.1093/acprof:oso/9780199535255.001.0001 .
+URL https://doi.org/10.1093/acprof:oso/9780199535255.001.0001 .
+Chandrasekaran et al. [2012]
+Venkat Chandrasekaran, Benjamin Recht, Pablo A Parrilo, and Alan S Willsky.
+The convex geometry of linear inverse problems.
+Foundations of Computational mathematics , 12(6):805–849, 2012.
+Chang and Lin [2011]
+Chih-Chung Chang and Chih-Jen Lin.
+Libsvm: A library for support vector machines.
+ACM transactions on intelligent systems and technology (TIST) , 2(3):1–27, 2011.
+Chen et al. [2017]
+Pin-Yu Chen, Huan Zhang, Yash Sharma, Jinfeng Yi, and Cho-Jui Hsieh.
+Zoo: Zeroth order optimization based black-box attacks to deep neural networks without training substitute models.
+In Proceedings of the 10th ACM workshop on artificial intelligence and security , pages 15–26, 2017.
+Chen et al. [2019]
+Xiangyi Chen, Sijia Liu, Kaidi Xu, Xingguo Li, Xue Lin, Mingyi Hong, and David Cox.
+Zo-adamm: Zeroth-order adaptive momentum method for black-box optimization.
+Advances in neural information processing systems , 32, 2019.
+Cheng et al. [2021]
+Shuyu Cheng, Guoqiang Wu, and Jun Zhu.
+On the convergence of prior-guided zeroth-order optimization algorithms.
+Advances in Neural Information Processing Systems , 34:14620–14631, 2021.
+Dettmers et al. [2021]
+Tim Dettmers, Mike Lewis, Sam Shleifer, and Luke Zettlemoyer.
+8-bit optimizers via block-wise quantization.
+arXiv preprint arXiv:2110.02861 , 2021.
+Duchi et al. [2015]
+John C Duchi, Michael I Jordan, Martin J Wainwright, and Andre Wibisono.
+Optimal rates for zero-order convex optimization: The power of two function evaluations.
+IEEE Transactions on Information Theory , 61(5):2788–2806, 2015.
+Feng and Wang [2023]
+Yasong Feng and Tianyu Wang.
+Stochastic zeroth-order gradient and hessian estimators: variance reduction and refined bias bounds.
+Information and Inference: A Journal of the IMA , 12(3):1514–1545, 2023.
+Flaxman et al. [2004]
+Abraham D Flaxman, Adam Tauman Kalai, and H Brendan McMahan.
+Online convex optimization in the bandit setting: gradient descent without a gradient.
+arXiv preprint cs/0408007 , 2004.
+Gao et al. [2024]
+Lei Gao, Amir Ziashahabi, Yue Niu, Salman Avestimehr, and Murali Annavaram.
+Enabling efficient on-device fine-tuning of llms using only inference engines.
+arXiv preprint arXiv:2409.15520 , 2024.
+Ghadimi and Lan [2013]
+Saeed Ghadimi and Guanghui Lan.
+Stochastic first-and zeroth-order methods for nonconvex stochastic programming.
+SIAM journal on optimization , 23(4):2341–2368, 2013.
+Hanzely et al. [2018]
+Filip Hanzely, Konstantin Mishchenko, and Peter Richtárik.
+Sega: Variance reduction via gradient sketching.
+Advances in Neural Information Processing Systems , 31, 2018.
+Hinton [2022]
+Geoffrey Hinton.
+The forward-forward algorithm: Some preliminary investigations.
+arXiv preprint arXiv:2212.13345 , 2(3):5, 2022.
+Howard and Ruder [2018]
+Jeremy Howard and Sebastian Ruder.
+Universal language model fine-tuning for text classification.
+arXiv preprint arXiv:1801.06146 , 2018.
+Jaderberg et al. [2017]
+Max Jaderberg, Wojciech Marian Czarnecki, Simon Osindero, Oriol Vinyals, Alex Graves, David Silver, and Koray Kavukcuoglu.
+Decoupled neural interfaces using synthetic gradients.
+In International conference on machine learning , pages 1627–1635. PMLR, 2017.
+Kingma and Ba [2014]
+Diederik P Kingma and Jimmy Ba.
+Adam: A method for stochastic optimization.
+arXiv preprint arXiv:1412.6980 , 2014.
+Laurent and Massart [2000]
+Beatrice Laurent and Pascal Massart.
+Adaptive estimation of a quadratic functional by model selection.
+Annals of statistics , pages 1302–1338, 2000.
+Lee and Sidford [2013]
+Yin Tat Lee and Aaron Sidford.
+Efficient accelerated coordinate descent methods and faster algorithms for solving linear systems.
+In 2013 ieee 54th annual symposium on foundations of computer science , pages 147–156. IEEE, 2013.
+Lester et al. [2021]
+Brian Lester, Rami Al-Rfou, and Noah Constant.
+The power of scale for parameter-efficient prompt tuning.
+arXiv preprint arXiv:2104.08691 , 2021.
+Li et al. [2023]
+Bingrui Li, Jianfei Chen, and Jun Zhu.
+Memory efficient optimizers with 4-bit states.
+Advances in Neural Information Processing Systems , 36:15136–15171, 2023.
+Li et al. [2018]
+Xingguo Li, Tuo Zhao, Raman Arora, Han Liu, and Mingyi Hong.
+On faster convergence of cyclic block coordinate descent-type methods for strongly convex minimization.
+Journal of Machine Learning Research , 18(184):1–24, 2018.
+Li et al. [2021]
+Zhize Li, Hongyan Bao, Xiangliang Zhang, and Peter Richtárik.
+Page: A simple and optimal probabilistic gradient estimator for nonconvex optimization.
+In International conference on machine learning , pages 6286–6295. PMLR, 2021.
+Liao et al. [2024]
+Changyue Liao, Mo Sun, Zihan Yang, Jun Xie, Kaiqi Chen, Binhang Yuan, Fei Wu, and Zeke Wang.
+Lohan: Low-cost high-performance framework to fine-tune 100b model on a consumer gpu.
+arXiv preprint arXiv:2403.06504 , 2024.
+Liu et al. [2019]
+Yinhan Liu, Myle Ott, Naman Goyal, Jingfei Du, Mandar Joshi, Danqi Chen, Omer Levy, Mike Lewis, Luke Zettlemoyer, and Veselin Stoyanov.
+Roberta: A robustly optimized bert pretraining approach, 2019.
+URL https://arxiv.org/abs/1907.11692 .
+Luo et al. [2024]
+Qijun Luo, Hengxu Yu, and Xiao Li.
+Badam: A memory efficient full parameter optimization method for large language models.
+Advances in Neural Information Processing Systems , 37:24926–24958, 2024.
+Lv et al. [2024]
+Kai Lv, Yuqing Yang, Tengxiao Liu, Qipeng Guo, and Xipeng Qiu.
+Full parameter fine-tuning for large language models with limited resources.
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 8187–8198, 2024.
+Malladi et al. [2023]
+Sadhika Malladi, Tianyu Gao, Eshaan Nichani, Alex Damian, Jason D Lee, Danqi Chen, and Sanjeev Arora.
+Fine-tuning language models with just forward passes.
+Advances in Neural Information Processing Systems , 36:53038–53075, 2023.
+Nesterov and Spokoiny [2017]
+Yurii Nesterov and Vladimir Spokoiny.
+Random gradient-free minimization of convex functions.
+Foundations of Computational Mathematics , 17(2):527–566, 2017.
+Nøkland and Eidnes [2019]
+Arild Nøkland and Lars Hiller Eidnes.
+Training neural networks with local error signals.
+In International conference on machine learning , pages 4839–4850. PMLR, 2019.
+Novikov et al. [2023]
+Georgii Sergeevich Novikov, Daniel Bershatsky, Julia Gusak, Alex Shonenkov, Denis Valerievich Dimitrov, and Ivan Oseledets.
+Few-bit backward: Quantized gradients of activation functions for memory footprint reduction.
+In International Conference on Machine Learning , pages 26363–26381. PMLR, 2023.
+Petrov et al. [2025]
+Egor Petrov, Grigoriy Evseev, Aleksey Antonov, Andrey Veprikov, Nikolay Bushkov, Stanislav Moiseev, and Aleksandr Beznosikov.
+Leveraging coordinate momentum in signsgd and muon: Memory-optimized zero-order.
+arXiv preprint arXiv:2506.04430 , 2025.
+Qiu et al. [2025]
+Junbin Qiu, Zhengpeng Xie, Xiangda Yan, Yongjie Yang, and Yao Shu.
+Zeroth-order optimization is secretly single-step policy optimization.
+arXiv preprint arXiv:2506.14460 , 2025.
+Rajbhandari et al. [2020]
+Samyam Rajbhandari, Jeff Rasley, Olatunji Ruwase, and Yuxiong He.
+Zero: Memory optimizations toward training trillion parameter models.
+In SC20: International Conference for High Performance Computing, Networking, Storage and Analysis , pages 1–16. IEEE, 2020.
+Richtárik and Takáč [2014]
+Peter Richtárik and Martin Takáč.
+Iteration complexity of randomized block-coordinate descent methods for minimizing a composite function.
+Mathematical Programming , 144(1):1–38, 2014.
+Richtárik et al. [2021]
+Peter Richtárik, Igor Sokolov, and Ilyas Fatkhullin.
+Ef21: A new, simpler, theoretically better, and practically faster error feedback.
+Advances in Neural Information Processing Systems , 34:4384–4396, 2021.
+Robbins and Monro [1951]
+Herbert Robbins and Sutton Monro.
+A stochastic approximation method.
+The annals of mathematical statistics , pages 400–407, 1951.
+Schulman et al. [2017]
+John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov.
+Proximal policy optimization algorithms.
+arXiv preprint arXiv:1707.06347 , 2017.
+Semenov et al. [2025]
+Andrei Semenov, Matteo Pagliardini, and Martin Jaggi.
+Benchmarking optimizers for large language model pretraining.
+arXiv preprint arXiv:2509.01440 , 2025.
+Seung et al. [2025]
+Hyunseok Seung, Jaewoo Lee, and Hyunsuk Ko.
+Low-rank curvature for zeroth-order optimization in llm fine-tuning.
+arXiv preprint arXiv:2511.07971 , 2025.
+Silver et al. [2021]
+David Silver, Anirudh Goyal, Ivo Danihelka, Matteo Hessel, and Hado van Hasselt.
+Learning by directional gradient descent.
+In International Conference on Learning Representations , 2021.
+Singhal et al. [2023]
+Utkarsh Singhal, Brian Cheung, Kartik Chandra, Jonathan Ragan-Kelley, Joshua B Tenenbaum, Tomaso A Poggio, and Stella X Yu.
+How to guess a gradient.
+arXiv preprint arXiv:2312.04709 , 2023.
+Socher et al. [2013]
+Richard Socher, Alex Perelygin, Jean Wu, Jason Chuang, Christopher D. Manning, Andrew Y. Ng, and Christopher Potts.
+Recursive deep models for semantic compositionality over a sentiment treebank.
+Proceedings of the 2013 Conference on Empirical Methods in Natural Language Processing , pages 1631–1642, 2013.
+Veprikov et al. [2024]
+Andrey Veprikov, Alexander Bogdanov, Vladislav Minashkin, and Aleksandr Beznosikov.
+New aspects of black box conditional gradient: Variance reduction and one point feedback.
+Chaos, Solitons & Fractals , 189:115654, 2024.
+Wang et al. [2018]
+Yining Wang, Simon Du, Sivaraman Balakrishnan, and Aarti Singh.
+Stochastic zeroth-order optimization in high dimensions.
+In Amos Storkey and Fernando Perez-Cruz, editors, Proceedings of the Twenty-First International Conference on Artificial Intelligence and Statistics , volume 84 of Proceedings of Machine Learning Research , pages 1356–1365. PMLR, 09–11 Apr 2018.
+URL https://proceedings.mlr.press/v84/wang18e.html .
+Wen et al. [2025]
+Kaiyue Wen, David Hall, Tengyu Ma, and Percy Liang.
+Fantastic pretraining optimizers and where to find them.
+arXiv preprint arXiv:2509.02046 , 2025.
+Williams [1992]
+Ronald J Williams.
+Simple statistical gradient-following algorithms for connectionist reinforcement learning.
+Machine learning , 8(3):229–256, 1992.
+Zhan et al. [2024]
+Heshen Zhan, Congliang Chen, Tian Ding, Ziniu Li, and Ruoyu Sun.
+Unlocking black-box prompt tuning efficiency via zeroth-order optimization.
+In Findings of the Association for Computational Linguistics: EMNLP 2024 , pages 14825–14838, 2024.
+Zhang et al. [2022]
+Susan Zhang, Stephen Roller, Naman Goyal, Mikel Artetxe, Moya Chen, Shuohui Dewan, Mona Diab, Xian Li, Xi Victoria Lin, Todor Mihaylov, et al.
+Opt: Open pre-trained transformer language models, 2022.
+URL https://arxiv.org/abs/2205.01068 .
+Zhang et al. [2024]
+Yihua Zhang, Pingzhi Li, Junyuan Hong, Jiaxiang Li, Yimeng Zhang, Wenqing Zheng, Pin-Yu Chen, Jason D. Lee, Wotao Yin, Mingyi Hong, Zhangyang Wang, Sijia Liu, and Tianlong Chen.
+Revisiting zeroth-order optimization for memory-efficient llm fine-tuning: A benchmark, 2024.
+URL https://arxiv.org/abs/2402.11592 .
+Zhang et al. [2019]
+Yizhe Zhang, Siqi Sun, Michel Galley, Yen-Chun Chen, Chris Brockett, Xiang Gao, Jianfeng Gao, Jingjing Liu, and Bill Dolan.
+Dialogpt: Large-scale generative pre-training for conversational response generation.
+arXiv preprint arXiv:1911.00536 , 2019.
+Zhao et al. [2024]
+Yanjun Zhao, Sizhe Dang, Haishan Ye, Guang Dai, Yi Qian, and Ivor W Tsang.
+Second-order fine-tuning without pain for llms: A hessian informed zeroth-order optimizer.
+arXiv preprint arXiv:2402.15173 , 2024.
+Zhu et al. [2023a]
+Ligeng Zhu, Lanxiang Hu, Ji Lin, Wei-Ming Chen, Wei-Chen Wang, Chuang Gan, and Song Han.
+Pockengine: Sparse and efficient fine-tuning in a pocket.
+In Proceedings of the 56th Annual IEEE/ACM International Symposium on Microarchitecture , pages 1381–1394, 2023a.
+Zhu et al. [2023b]
+Yujia Zhu, Yujing Zhang, Ziwei Zhang, et al.
+Efficient fine-tuning of language models via zeroth-order optimization.
+arXiv preprint , abs/2305.14395, 2023b.
+Appendix
+Supplementary Materials for Zero-Order Optimization for LLM Fine-Tuning via Learnable Direction Sampling
+Appendix A Additional Experimental Details
+A.1 Toy experiment
+The tuned hyperparameters used in toy experiment are as follows:
+•
+Baseline DGD:
+–
+γ x t = 200 \gamma_{x}^{t}=200 .
+•
+LDSD:
+–
+γ x t = 5 \gamma_{x}^{t}=5 ,
+–
+γ μ t = 1.4 ⋅ 10 − 5 \gamma_{\mu}^{t}=1.4\cdot 10^{-5} ,
+–
+ε = 1.2 ⋅ 10 − 2 \varepsilon=1.2\cdot 10^{-2} .
+A.2 Experiments on LLM fine-tuning
+All experiments in Section 5 used the same core sampling hyperparameters: ε = 1 \varepsilon=1 and γ μ = 10 − 3 \gamma_{\mu}=10^{-3} . For ZO-SGD setups we fixed momentum = 0.9 =0.9 . For ZO-Adamm setups we fixed ( β 1 , β 2 ) = ( 0.9 , 0.999 ) (\beta_{1},\beta_{2})=(0.9,0.999) . For ZO-Adamm setups we fixed JAGUAR momentum β = 0.9 \beta=0.9 . All methods employed a cosine learning-rate schedule for γ x \gamma_{x} . Table 2 reports the base learning rates γ x \gamma_{x} used for each method and experimental condition.
+Table 2 : Base learning rates γ x \gamma_{x} used for OPT-1.3B and RoBERTa-Large experiments with FT and LoRA.
+Method
+OPT-1.3B
+RoBERTa-Large
+FT
+LoRA
+FT
+LoRA
+ZO-SGD (Gaussian sampling, 2 forwards, more iterations)
+4.0 × 10 − 8 4.0\times 10^{-8}
+1.0 × 10 − 6 1.0\times 10^{-6}
+4.0 × 10 − 8 4.0\times 10^{-8}
+5.0 × 10 − 4 5.0\times 10^{-4}
+ZO-SGD (Gaussian sampling, 6 forwards, same iterations)
+4.0 × 10 − 8 4.0\times 10^{-8}
+1.0 × 10 − 6 1.0\times 10^{-6}
+4.0 × 10 − 8 4.0\times 10^{-8}
+5.0 × 10 − 4 5.0\times 10^{-4}
+ZO-SGD (Algorithm 4 sampling)
+4.0 × 10 − 8 4.0\times 10^{-8}
+1.0 × 10 − 6 1.0\times 10^{-6}
+4.0 × 10 − 8 4.0\times 10^{-8}
+5.0 × 10 − 4 5.0\times 10^{-4}
+ZO-AdaMM (Gaussian sampling, 2 forwards, more iterations)
+1.0 × 10 − 5 1.0\times 10^{-5}
+6.0 × 10 − 5 6.0\times 10^{-5}
+3.0 × 10 − 5 3.0\times 10^{-5}
+3.0 × 10 − 3 3.0\times 10^{-3}
+ZO-AdaMM (Gaussian sampling, 6 forwards, same iterations)
+1.0 × 10 − 5 1.0\times 10^{-5}
+6.0 × 10 − 5 6.0\times 10^{-5}
+3.0 × 10 − 5 3.0\times 10^{-5}
+3.0 × 10 − 3 3.0\times 10^{-3}
+ZO-AdaMM (Algorithm 4 sampling)
+1.0 × 10 − 5 1.0\times 10^{-5}
+6.0 × 10 − 5 6.0\times 10^{-5}
+3.0 × 10 − 5 3.0\times 10^{-5}
+3.0 × 10 − 3 3.0\times 10^{-3}
+JAGUAR SignSGD (Gaussian sampling, 2 forwards, more iterations)
+2.0 × 10 − 6 2.0\times 10^{-6}
+1.0 × 10 − 5 1.0\times 10^{-5}
+4.0 × 10 − 6 4.0\times 10^{-6}
+3.0 × 10 − 4 3.0\times 10^{-4}
+JAGUAR SignSGD (Gaussian sampling, 6 forwards, same iterations)
+2.0 × 10 − 6 2.0\times 10^{-6}
+1.0 × 10 − 5 1.0\times 10^{-5}
+4.0 × 10 − 6 4.0\times 10^{-6}
+3.0 × 10 − 4 3.0\times 10^{-4}
+JAGUAR SignSGD (Algorithm 4 sampling)
+2.0 × 10 − 6 2.0\times 10^{-6}
+1.0 × 10 − 5 1.0\times 10^{-5}
+4.0 × 10 − 6 4.0\times 10^{-6}
+3.0 × 10 − 4 3.0\times 10^{-4}
+Appendix B Missing proofs
+Lemma 1
+Under Assumptions 1 and 2 for iterations of the form
+x t + 1 = x t − γ x t ​ v t ¯ ​ ⟨ v t ¯ , ∇ f ​ ( x t ) ⟩ , x^{t+1}=x^{t}-\gamma_{x}^{t}\overline{v^{t}}\langle\overline{v^{t}},\nabla f(x^{t})\rangle,
+the following inequality holds.
+∑ t = 0 T − 1 1 T ​ 𝔼 ​ [ ( γ x t − L ​ γ x t 2 2 ) ​ 𝔼 ​ [ C t | ℱ t − 1 ] ​ ‖ ∇ f ​ ( x t ) ‖ 2 ] \displaystyle\sum_{t=0}^{T-1}\frac{1}{T}\mathbb{E}\left[\left(\gamma_{x}^{t}-\frac{L{\gamma_{x}^{t}}^{2}}{2}\right)\mathbb{E}\left[C^{t}|\mathcal{F}^{t-1}\right]\|\nabla f(x^{t})\|^{2}\right]
+≤ f ⁡ ( x 0 ) − f ⁡ ( x ∗ ) T . \displaystyle\penalty\ \penalty\ \penalty\ \penalty\ \penalty\ \penalty\ \penalty\ \penalty\ \penalty\ \penalty\ \penalty\ \penalty\ \penalty\ \penalty\ \penalty\ \penalty\ \penalty\ \penalty\ \penalty\ \penalty\ \penalty\ \penalty\ \penalty\ \penalty\ \penalty\ \penalty\ \penalty\ \penalty\ \leq\frac{f(x^{0})-f(x^{*})}{T}.
+Proof.
+We consider the algorithm step and utilize Assumption 1 .
+f ⁡ ( x t + 1 ) − f ⁡ ( x t ) \displaystyle f(x^{t+1})-f(x^{t})
+= \displaystyle=
+f ⁡ ( x t − γ x t ​ v ¯ t ​ ⟨ ∇ f ​ ( x t ) , v ¯ t ⟩ ) − f ⁡ ( x t ) \displaystyle f(x^{t}-\gamma_{x}^{t}\overline{v}^{t}\langle\nabla f(x^{t}),\overline{v}^{t}\rangle)-f(x^{t})
+≤ 1 \displaystyle\overset{\ref{ass:lip}}{\leq}
+− γ x t ​ ⟨ ∇ f ​ ( x t ) , v ¯ t ⟩ 2 + L 2 ​ ‖ γ x t ​ v ¯ t ​ ⟨ ∇ f ​ ( x t ) , v ¯ t ⟩ ‖ 2 \displaystyle-\gamma_{x}^{t}\langle\nabla f(x^{t}),\overline{v}^{t}\rangle^{2}+\frac{L}{2}\|{\gamma_{x}^{t}}\overline{v}^{t}\langle\nabla f(x^{t}),\overline{v}^{t}\rangle\|^{2}
+= \displaystyle=
+( L ​ γ x t 2 2 − γ x t ) ​ ⟨ ∇ f ​ ( x t ) , v ¯ t ⟩ 2 \displaystyle\left(\frac{L{\gamma_{x}^{t}}^{2}}{2}-\gamma_{x}^{t}\right)\langle\nabla f(x^{t}),\overline{v}^{t}\rangle^{2}
+= \displaystyle=
+( L ​ γ x t 2 2 − γ x t ) ​ ⟨ ∇ f ​ ( x t ) ¯ , v ¯ t ⟩ 2 ​ ‖ ∇ f ​ ( x t ) ‖ 2 . \displaystyle\left(\frac{L{\gamma_{x}^{t}}^{2}}{2}-\gamma_{x}^{t}\right)\langle\overline{\nabla f(x^{t})},\overline{v}^{t}\rangle^{2}\|\nabla f(x^{t})\|^{2}.
+Conditioning on ℱ t \mathcal{F}^{t} and using the ℱ t − 1 \mathcal{F}^{t-1} -measurability of ∇ f ​ ( x t ) \nabla f(x^{t}) and γ x t \gamma_{x}^{t} , we obtain
+𝔼 ⁡ [ f ⁡ ( x t + 1 ) | ℱ t − 1 ] − f ⁡ ( x t ) ≤ ( L ​ γ x t 2 2 − γ x t ) ​ 𝔼 ​ [ C t | ℱ t − 1 ] ​ ‖ ∇ f ​ ( x t ) ‖ 2 . \displaystyle\mathbb{E}\left[f(x^{t+1})|\mathcal{F}^{t-1}\right]-f(x^{t})\leq\left(\frac{L{\gamma_{x}^{t}}^{2}}{2}-\gamma_{x}^{t}\right)\mathbb{E}\left[C^{t}|\mathcal{F}^{t-1}\right]\|\nabla f(x^{t})\|^{2}.
+Summing over t = 0 , … , T − 1 t=0,\dots,T-1 and considering full expectation we derive
+∑ t = 0 T − 1 1 T ​ 𝔼 ​ [ ( γ x t − L ​ γ x t 2 2 ) ​ 𝔼 ​ [ C t | ℱ t − 1 ] ​ ‖ ∇ f ​ ( x t ) ‖ 2 ] ≤ f ⁡ ( x 0 ) − 𝔼 ⁡ [ f ⁡ ( x t − 1 ) ] T . \displaystyle\sum_{t=0}^{T-1}\frac{1}{T}\mathbb{E}\left[\left(\gamma_{x}^{t}-\frac{L{\gamma_{x}^{t}}^{2}}{2}\right)\mathbb{E}\left[C^{t}|\mathcal{F}^{t-1}\right]\|\nabla f(x^{t})\|^{2}\right]\leq\frac{f(x^{0})-\mathbb{E}[f(x^{t-1})]}{T}.
+Applying Assumption 2 finishes the proof.
+∎
+Corollary 1
+Let in the setting of Lemma 1 v t ∼ i . i . d . R S ( 1 ) ∥ ⋅ ∥ d v^{t}\overset{i.i.d.}{\sim}RS(1)^{d}_{\|\cdot\|} be distributed uniformly on the unit sphere and γ x t ≤ 1 2 ​ L \gamma^{t}_{x}\leq\frac{1}{2L} . Then the following bound holds:
+𝔼 ​ ‖ ∇ f ​ ( x ¯ T ) ‖ 2 ≤ 2 ​ d γ x t ​ T ​ ( f ⁡ ( x 0 ) − f ⁡ ( x ∗ ) ) , \displaystyle\mathbb{E}\|\nabla f(\overline{x}^{T})\|^{2}\leq\frac{2d}{\gamma_{x}^{t}T}(f(x^{0})-f(x^{*})),
+where x ¯ T \overline{x}^{T} is chosen uniformly from { x 0 , x 1 , … , x t − 1 } \{x^{0},x^{1},\dots,x^{t-1}\} .
+Proof.
+The choice γ x t ≤ 1 2 ​ L \gamma^{t}_{x}\leq\frac{1}{2L} guarantees:
+γ x t − L ​ γ x t 2 2 ≥ γ x t 2 \displaystyle\gamma_{x}^{t}-\frac{L{\gamma_{x}^{t}}^{2}}{2}\geq\frac{\gamma_{x}^{t}}{2}
+(6)
+Then we need to evaluate 𝔼 ⁡ [ C t | ℱ t − 1 ] \mathbb{E}\left[C^{t}|\mathcal{F}^{t-1}\right] . We consider coordinate system where e 1 | ∇ f ​ ( x t ) e_{1}\penalty\ \|\penalty\ \nabla f(x^{t}) :
+𝔼 ⁡ [ C t | ℱ t − 1 ] = 𝔼 v t ∼ 𝒩 ⁡ ( 0 , I ) ​ [ v 1 2 ‖ v ‖ 2 ] . \displaystyle\mathbb{E}\left[C^{t}|\mathcal{F}^{t-1}\right]=\mathbb{E}_{v^{t}\sim\mathcal{N}(0,I)}\left[\frac{v_{1}^{2}}{\|v\|^{2}}\right].
+Due to the distribution symmetry we conclude:
+𝔼 v t ∼ 𝒩 ⁡ ( 0 , I ) ​ [ v 1 2 ‖ v ‖ 2 ] = 𝔼 v t ∼ 𝒩 ⁡ ( 0 , I ) ​ [ v 2 2 ‖ v ‖ 2 ] = ⋯ = 𝔼 v t ∼ 𝒩 ⁡ ( 0 , I ) ​ [ v d 2 ‖ v ‖ 2 ] . \displaystyle\mathbb{E}_{v^{t}\sim\mathcal{N}(0,I)}\left[\frac{v_{1}^{2}}{\|v\|^{2}}\right]=\mathbb{E}_{v^{t}\sim\mathcal{N}(0,I)}\left[\frac{v_{2}^{2}}{\|v\|^{2}}\right]=\dots=\mathbb{E}_{v^{t}\sim\mathcal{N}(0,I)}\left[\frac{v_{d}^{2}}{\|v\|^{2}}\right].
+Then,
+d ⋅ 𝔼 v t ∼ 𝒩 ⁡ ( 0 , I ) ​ [ v 1 2 ‖ v ‖ 2 ] = 𝔼 v t ∼ 𝒩 ⁡ ( 0 , I ) ​ [ v 1 2 + v 2 2 + ⋯ + v d 2 ‖ v ‖ 2 ] = 𝔼 v t ∼ 𝒩 ⁡ ( 0 , I ) ​ [ 1 ] = 1 . \displaystyle d\cdot\mathbb{E}_{v^{t}\sim\mathcal{N}(0,I)}\left[\frac{v_{1}^{2}}{\|v\|^{2}}\right]=\mathbb{E}_{v^{t}\sim\mathcal{N}(0,I)}\left[\frac{v_{1}^{2}+v_{2}^{2}+\dots+v_{d}^{2}}{\|v\|^{2}}\right]=\mathbb{E}_{v^{t}\sim\mathcal{N}(0,I)}\left[1\right]=1.
+And we reach:
+𝔼 v t ∼ 𝒩 ⁡ ( 0 , I ) ​ [ v 1 2 ‖ v ‖ 2 ] = 1 d \displaystyle\mathbb{E}_{v^{t}\sim\mathcal{N}(0,I)}\left[\frac{v_{1}^{2}}{\|v\|^{2}}\right]=\frac{1}{d}
+(7)
+Substitution of ( 7 ), ( 6 ) into Lemma 1 and rearranging the terms finishes the proof.
+∎
+Lemma 4 .
+Let function f f is L L -smooth, i.e.
+‖ f ⁡ ( x ) − f ⁡ ( y ) ‖ ≤ ‖ x − y ‖ , ∀ x , y ∈ ℝ d , \displaystyle\|f(x)-f(y)\|\leq\|x-y\|,\quad\forall x,y\in\mathbb{R}^{d},
+then it holds
+f ⁡ ( y ) ≥ f ⁡ ( x ) + ⟨ ∇ f ​ ( x ) , y − x ⟩ − L 2 ​ ‖ x − y ‖ 2 , ∀ x , y ∈ ℝ d . \displaystyle f(y)\geq f(x)+\langle\nabla f(x),y-x\rangle-\frac{L}{2}\|x-y\|^{2},\quad\forall x,y\in\mathbb{R}^{d}.
+Proof.
+The claim follows from integrating the directional derivative of f f along the segment connecting x x and y y and then applying the Lipschitz continuity of the gradient.
+f ⁡ ( y ) \displaystyle f(y)
+= \displaystyle=
+f ⁡ ( x ) + ∫ 0 1 ⟨ ∇ f ​ ( x + τ ⁡ ( y − x ) ) , y − x ⟩ ​ 𝑑 τ \displaystyle f(x)+\int_{0}^{1}\langle\nabla f(x+\tau(y-x)),y-x\rangle d\tau
+= \displaystyle=
+f ⁡ ( x ) + ⟨ ∇ f ​ ( x ) , y − x ⟩ \displaystyle f(x)+\langle\nabla f(x),y-x\rangle
++ ∫ 0 1 ⟨ ∇ f ( x + τ ( y − x ) ) − ∇ f ( x ) , y − x ⟩ d τ \displaystyle+\penalty\ \int_{0}^{1}\langle\nabla f(x+\tau(y-x))-\nabla f(x),y-x\rangle d\tau
+≥ \displaystyle\geq
+f ⁡ ( x ) + ⟨ ∇ f ​ ( x ) , y − x ⟩ \displaystyle f(x)+\langle\nabla f(x),y-x\rangle
+− ∫ 0 1 ∥ ∇ f ( x + τ ( y − x ) ) − ∇ f ( x ) ∥ ∥ y − x ∥ d τ \displaystyle-\penalty\ \int_{0}^{1}\|\nabla f(x+\tau(y-x))-\nabla f(x)\|\|y-x\|d\tau
+≥ \displaystyle\geq
+f ⁡ ( x ) + ⟨ ∇ f ​ ( x ) , y − x ⟩ − ∫ 0 1 L ​ τ ​ ‖ y − x ‖ 2 ​ 𝑑 τ \displaystyle f(x)+\langle\nabla f(x),y-x\rangle-\int_{0}^{1}L\tau\|y-x\|^{2}d\tau
+= \displaystyle=
+f ⁡ ( x ) + ⟨ ∇ f ​ ( x ) , y − x ⟩ − L 2 ​ ‖ y − x ‖ 2 . \displaystyle f(x)+\langle\nabla f(x),y-x\rangle-\frac{L}{2}\|y-x\|^{2}.
+∎
+Theorem 1
+Let Assumption 1 hold and d ≥ 16 d\geq 16 . Then for iterations of the Algorithm 3.3 with ε ≤ d − 3 2 ​ cos ⁡ ( β t ) ​ ( 1 − cos ⁡ ( β t ) ) ​ ‖ μ t ‖ 480 \varepsilon\leq\frac{d^{-\frac{3}{2}}\cos(\beta^{t})(1-\cos(\beta^{t}))\|\mu^{t}\|}{480} , γ μ t ≤ ‖ μ t ‖ 2 640 , γ x t ≤ cos 2 ⁡ ( β t ) ​ ( 1 − cos ⁡ ( β t ) ) 2 3 ⋅ 2 12 ⋅ 5 2 ​ L \gamma_{\mu}^{t}\leq\frac{\|\mu^{t}\|^{2}}{640},\gamma_{x}^{t}\leq\frac{\cos^{2}(\beta^{t})(1-\cos(\beta^{t}))^{2}}{3\cdot 2^{12}\cdot 5^{2}L} the following inequality holds:
+𝔼 [ C t + 1 | ℱ t ] \displaystyle\mathbb{E}\left[C^{t+1}\right|\mathcal{F}^{t}]
+= \displaystyle=
+𝔼 [ C t | ℱ t − 1 ] + γ μ t ( cos ⁡ ( β t ) ​ ( 1 − cos ⁡ ( β t ) ) 24 ​ ‖ μ t ‖ ) 2 , \displaystyle\mathbb{E}\left[C^{t}\right|\mathcal{F}^{t-1}]+\gamma^{t}_{\mu}\left(\frac{\cos(\beta^{t})(1-\cos(\beta^{t}))}{24\|\mu^{t}\|}\right)^{2},
+(8)
+where β t \beta^{t} is the angle between μ t \mu^{t} and ∇ f ​ ( x t ) \nabla f(x^{t}) .
+Due to the non-standard challenges and the resulting proof technique, we provide high-level sketch before the proof.
+Proof Sketch of Theorem 1 .
+The proof of Theorem 1 is deferred to Section B . It tracks the joint evolution of two quantities: the gradient ∇ f ​ ( x t ) \nabla f(x^{t}) and the mean vector μ t \mu^{t} . The main steps are as follows:
+(i)
+We first reduce the gradient dynamics using Assumption 1 , which yields a relation of the form
+𝔼 [ C t + 1 | ℱ t ] ≥ − 2 a t + F ∇ f ​ ( x t ) ¯ ( μ t + 1 ) , \displaystyle\mathbb{E}\left[C^{t+1}\right|\mathcal{F}^{t}]\geq-2a^{t}+F_{\overline{\nabla f(x^{t})}}(\mu^{t+1}),
+(9)
+with F z ​ ( μ ) = 𝔼 u ∼ 𝒩 ⁡ ( μ , ε 2 ​ I ) ​ [ ⟨ z , u ¯ ⟩ 2 ] F_{z}(\mu)=\mathbb{E}_{u\sim\mathcal{N}(\mu,\varepsilon^{2}I)}[\langle z,\overline{u}\rangle^{2}] and a t = 4 ​ L ​ γ x t 2 ​ 1 − ( L ​ γ x t 2 ) 2 a^{t}=4\frac{L\gamma_{x}^{t}}{2}\sqrt{1-\left(\frac{L\gamma_{x}^{t}}{2}\right)^{2}} . We note that 𝔼 [ C t | ℱ t − 1 ] = F ∇ f ​ ( x t ) ¯ ( μ t ) \mathbb{E}\left[C^{t}\right|\mathcal{F}^{t-1}]=F_{\overline{\nabla f(x^{t})}}(\mu^{t}) . Then, we need to reduce μ t + 1 \mu^{t+1} to μ t \mu^{t} in the RHS of ( 9 ) to obtain a recursion on expected gradient alignment.
+(ii) The core objective is to prove strict monotonic growth of expected gradient alignment 𝔼 [ C t + 1 | ℱ t ] \mathbb{E}\left[C^{t+1}\right|\mathcal{F}^{t}] . Achieving this requires carefully isolating a positive contribution that dominates the drift a t a^{t} induced by changes in ∇ f ​ ( x t ) \nabla f(x^{t}) .
+Then, to enable a quantitative analysis, we establish smoothness of the function F z ​ ( μ ) F_{z}(\mu) with respect to μ t \mu^{t} via a uniform bound on the Hessian norm. This yields an inequality of the form
+F ∇ f ​ ( x t ) ¯ ​ ( μ t + 1 ) ≥ F ∇ f ​ ( x t ) ¯ ​ ( μ t ) + ( γ μ t − L ~ ​ γ μ t 2 2 ) ​ ‖ ∇ F ∇ f ​ ( x t ) ¯ ​ ( μ t ) ‖ 2 . \displaystyle F_{\overline{\nabla f(x^{t})}}(\mu^{t+1})\geq F_{\overline{\nabla f(x^{t})}}(\mu^{t})+\left(\gamma^{t}_{\mu}-\frac{\tilde{L}{\gamma^{t}_{\mu}}^{2}}{2}\right)\|\nabla F_{\overline{\nabla f(x^{t})}}(\mu^{t})\|^{2}.
+(10)
+(iii) Combining the above relations ( 9 ) and ( 10 ) yields a recursive inequality for 𝔼 [ C t + 1 | ℱ t ] \mathbb{E}\left[C^{t+1}\right|\mathcal{F}^{t}] . To ensure a positive increment, it suffices to lower bound the contribution of the last term in ( 10 ).
+To this end, we decompose the expectation over u u in F z ​ ( μ ) F_{z}(\mu) definition into integrals over an inner region u ≤ ‖ μ t ‖ 2 ​ ε u\leq\frac{\|\mu^{t}\|}{2\varepsilon} and its complement.
+The integral over the outer region is controlled by choosing ε ≲ ‖ μ ‖ ​ d − 1 2 \varepsilon\lesssim\|\mu\|d^{-\frac{1}{2}} , allowing us to apply Gaussian concentration inequalities for Lipschitz functions [ Boucheron et al., 2013 ] .
+The inner-region contribution is analysed via a Taylor expansion with a Lagrange remainder. Each term is treated separately.
+First, symmetry considerations eliminate zero order term.
+Second, the second-order term is controlled using the previously established Hessian bound.
+Third, the Laurent-Massart inequalities [ Laurent and Massart, 2000 ] serve as a core ingredient for extracting the required positive increment from the first order term.
+Putting these estimates together with ( 9 ), ( 10 ) and balancing the competing effects yields the final bound.
+We present the complete proof below.
+Proof of Theorem 1 .
+The evolution of 𝔼 t ​ [ C t ] \mathbb{E}_{t}[C^{t}] depends on the dynamics of two quantities: the gradient ∇ f ​ ( x t ) \nabla f(x^{t}) itself and the mean vector μ t \mu^{t} . We begin with STEP I by examining the contribution of the gradient dynamics.
+Using Assumption 1 we bound the ‖ ∇ f ​ ( x t + 1 ) ¯ − ∇ f ​ ( x t ) ¯ ‖ \|\overline{\nabla f(x^{t+1})}-\overline{\nabla f(x^{t})}\| in the following way.
+By the x t + 1 x^{t+1} update rule ‖ x t + 1 − x t ‖ = ‖ γ x t ​ g x t ‖ = γ x t ​ ‖ v t ¯ ​ ⟨ v t ¯ , ∇ f ​ ( x t ) ⟩ ‖ ≤ γ x t ​ ‖ ∇ f ​ ( x t ) ‖ \|x^{t+1}-x^{t}\|=\|\gamma_{x}^{t}g_{x}^{t}\|=\gamma_{x}^{t}\left\|\overline{v^{t}}\left\langle\overline{v^{t}},{\nabla f(x^{t})}\right\rangle\right\|\leq\gamma_{x}^{t}\|\nabla f(x^{t})\| . Therefore, ‖ ∇ f ​ ( x t + 1 ) − ∇ f ​ ( x t ) ‖ ≤ L ​ γ x t ​ ‖ ∇ f ​ ( x t ) ‖ \|{\nabla f(x^{t+1})}-{\nabla f(x^{t})}\|\leq L\gamma_{x}^{t}\|{\nabla f(x^{t})}\| , which implies that the angle between ∇ f ​ ( x t ) {\nabla f(x^{t})} and ∇ f ​ ( x t + 1 ) {\nabla f(x^{t+1})} less or equal then
+2 ​ arcsin ⁡ ( ‖ ∇ f ​ ( x t + 1 ) − ∇ f ​ ( x t ) ‖ 2 ​ ‖ ∇ f ​ ( x t ) ‖ ) ≤ 2 ​ arcsin ⁡ ( L ​ γ x t ​ ‖ ∇ f ​ ( x t ) ‖ 2 ​ ‖ ∇ f ​ ( x t ) ‖ ) = 2 ​ arcsin ⁡ ( L ​ γ x t 2 ) . 2\arcsin\left(\frac{\|{\nabla f(x^{t+1})}-{\nabla f(x^{t})}\|}{2\|{\nabla f(x^{t})}\|}\right)\leq 2\arcsin\left(\frac{L\gamma_{x}^{t}\|{\nabla f(x^{t})}\|}{2\|{\nabla f(x^{t})}\|}\right)=2\arcsin\left(\frac{L\gamma_{x}^{t}}{2}\right).
+The angle between ∇ f ​ ( x t ) ¯ \overline{\nabla f(x^{t})} and ∇ f ​ ( x t + 1 ) ¯ \overline{\nabla f(x^{t+1})} is the same. It justifies
+‖ ∇ f ​ ( x t + 1 ) ¯ − ∇ f ​ ( x t ) ¯ ‖ \displaystyle\|\overline{\nabla f(x^{t+1})}-\overline{\nabla f(x^{t})}\|
+≤ \displaystyle\leq
+2 ​ sin ⁡ ( 2 ​ arcsin ⁡ ( L ​ γ x t 2 ) ) \displaystyle 2\sin\left(2\arcsin\left(\frac{L\gamma_{x}^{t}}{2}\right)\right)
+(11)
+= \displaystyle=
+4 ​ L ​ γ x t 2 ​ 1 − ( L ​ γ x t 2 ) 2 = : a t \displaystyle 4\frac{L\gamma_{x}^{t}}{2}\sqrt{1-\left(\frac{L\gamma_{x}^{t}}{2}\right)^{2}}=:a^{t}
+And now we proceed with the definition of C t C^{t} .
+𝔼 v t + 1 ∼ 𝒩 ⁡ ( μ t + 1 , ε 2 ​ I ) [ C t + 1 | ℱ t ] \displaystyle\mathbb{E}_{v^{t+1}\sim\mathcal{N}(\mu^{t+1},\varepsilon^{2}I)}\left[C^{t+1}\right|\mathcal{F}^{t}]
+= 1 ( 2 ​ π ​ ε 2 ) d / 2 ​ ∫ ℝ d ⟨ ∇ f ​ ( x t + 1 ) ¯ , u ¯ ⟩ 2 ​ e − ‖ u − μ t + 1 ‖ 2 2 ​ ε 2 ​ 𝑑 u \displaystyle\penalty\ \penalty\ =\frac{1}{(2\pi\varepsilon^{2})^{d/2}}\int_{\mathbb{R}^{d}}\left\langle\overline{\nabla f(x^{t+1})},\overline{u}\right\rangle^{2}e^{-\frac{\|u-\mu^{t+1}\|^{2}}{2\varepsilon^{2}}}\mathrm{d}u
+= 1 ( 2 ​ π ​ ε 2 ) d / 2 ​ ∫ ℝ d ⟨ ∇ f ​ ( x t ) ¯ + ( ∇ f ​ ( x t + 1 ) ¯ − ∇ f ​ ( x t ) ¯ ) , u ¯ ⟩ 2 ​ e − ‖ u − μ t + 1 ‖ 2 2 ​ ε 2 ​ 𝑑 u \displaystyle\penalty\ \penalty\ =\frac{1}{(2\pi\varepsilon^{2})^{d/2}}\int_{\mathbb{R}^{d}}\left\langle\overline{\nabla f(x^{t})}+(\overline{\nabla f(x^{t+1})}-\overline{\nabla f(x^{t})}),\overline{u}\right\rangle^{2}e^{-\frac{\|u-\mu^{t+1}\|^{2}}{2\varepsilon^{2}}}\mathrm{d}u
+= 1 ( 2 ​ π ​ ε 2 ) d / 2 ∫ ℝ d { ⟨ ∇ f ​ ( x t ) ¯ , u ¯ ⟩ 2 + ⟨ ∇ f ​ ( x t + 1 ) ¯ − ∇ f ​ ( x t ) ¯ , u ¯ ⟩ 2 \displaystyle\penalty\ \penalty\ =\frac{1}{(2\pi\varepsilon^{2})^{d/2}}\int_{\mathbb{R}^{d}}\bigg\{\left\langle\overline{\nabla f(x^{t})},\overline{u}\right\rangle^{2}+\left\langle\overline{\nabla f(x^{t+1})}-\overline{\nabla f(x^{t})},\overline{u}\right\rangle^{2}
++ 2 ⟨ ∇ f ​ ( x t + 1 ) ¯ − ∇ f ​ ( x t ) ¯ , u ¯ ⟩ ⟨ ∇ f ​ ( x t ) ¯ , u ¯ ⟩ } e − ‖ u − μ t + 1 ‖ 2 2 ​ ε 2 d u \displaystyle\penalty\ \penalty\ \penalty\ \penalty\ \penalty\ \penalty\ \penalty\ +\penalty\ 2\left\langle\overline{\nabla f(x^{t+1})}-\overline{\nabla f(x^{t})},\overline{u}\right\rangle\left\langle\overline{\nabla f(x^{t})},\overline{u}\right\rangle\bigg\}e^{-\frac{\|u-\mu^{t+1}\|^{2}}{2\varepsilon^{2}}}\mathrm{d}u
+≥ 1 ( 2 ​ π ​ ε 2 ) d / 2 ∫ ℝ d { ⟨ ∇ f ​ ( x t ) ¯ , u ¯ ⟩ 2 \displaystyle\penalty\ \penalty\ \geq\frac{1}{(2\pi\varepsilon^{2})^{d/2}}\int_{\mathbb{R}^{d}}\bigg\{\left\langle\overline{\nabla f(x^{t})},\overline{u}\right\rangle^{2}
++ 2 ⟨ ∇ f ​ ( x t + 1 ) ¯ − ∇ f ​ ( x t ) ¯ , u ¯ ⟩ ⟨ ∇ f ​ ( x t ) ¯ , u ¯ ⟩ } e − ‖ u − μ t + 1 ‖ 2 2 ​ ε 2 d u \displaystyle\penalty\ \penalty\ \penalty\ \penalty\ \penalty\ \penalty\ \penalty\ +\penalty\ 2\left\langle\overline{\nabla f(x^{t+1})}-\overline{\nabla f(x^{t})},\overline{u}\right\rangle\left\langle\overline{\nabla f(x^{t})},\overline{u}\right\rangle\bigg\}e^{-\frac{\|u-\mu^{t+1}\|^{2}}{2\varepsilon^{2}}}\mathrm{d}u
+(12)
+Using Cauchy–Schwarz inequality and the bound ( 11 ) we derive
+⟨ ∇ f ​ ( x t + 1 ) ¯ − ∇ f ​ ( x t ) ¯ , u ¯ ⟩ ​ ⟨ ∇ f ​ ( x t ) ¯ , u ¯ ⟩ ≤ a t . \displaystyle\left\langle\overline{\nabla f(x^{t+1})}-\overline{\nabla f(x^{t})},\overline{u}\right\rangle\left\langle\overline{\nabla f(x^{t})},\overline{u}\right\rangle\leq a^{t}.
+(13)
+Utilizing ( 13 ), we continue with derivation ( 12 ) by introducing a constraint on the integral of the last term with respect to the probability measure.
+𝔼 v t + 1 ∼ 𝒩 ⁡ ( μ t + 1 , ε 2 ​ I ) [ C t + 1 | ℱ t ] ≥ − 2 a t + 1 ( 2 ​ π ​ ε 2 ) d / 2 ∫ ℝ d ⟨ ∇ f ​ ( x t ) ¯ , u ¯ ⟩ 2 e − ‖ u − μ t + 1 ‖ 2 2 ​ ε 2 d u . \displaystyle\mathbb{E}_{v^{t+1}\sim\mathcal{N}(\mu^{t+1},\varepsilon^{2}I)}\left[C^{t+1}\right|\mathcal{F}^{t}]\geq-2a^{t}+\frac{1}{(2\pi\varepsilon^{2})^{d/2}}\int_{\mathbb{R}^{d}}\left\langle\overline{\nabla f(x^{t})},\overline{u}\right\rangle^{2}e^{-\frac{\|u-\mu^{t+1}\|^{2}}{2\varepsilon^{2}}}\mathrm{d}u.
+Thus, the gradient dynamics have been eliminated.
+The next STEP II dedicated to the mean vector dynamics.
+We start by introducing the function F z ​ ( μ ) = 𝔼 u ∼ 𝒩 ⁡ ( μ , ε 2 ​ I ) ​ [ ⟨ z , u ¯ ⟩ 2 ] F_{z}(\mu)=\mathbb{E}_{u\sim\mathcal{N}(\mu,\varepsilon^{2}I)}[\langle z,\overline{u}\rangle^{2}] for every pair μ , z ∈ ℝ d \mu,z\in\mathbb{R}^{d} . With this notation ( B ) and the definition of 𝔼 u ∼ 𝒩 ⁡ ( μ t + 1 , ε 2 ​ I ) [ C t + 1 | ℱ t ] \mathbb{E}_{u\sim\mathcal{N}(\mu^{t+1},\varepsilon^{2}I)}\left[C^{t+1}\right|\mathcal{F}^{t}] can be reformulated as
+𝔼 v t + 1 ∼ 𝒩 ⁡ ( μ t + 1 , ε 2 ​ I ) [ C t + 1 | ℱ t ] ≥ − 2 a t + F ∇ f ​ ( x t ) ¯ ( μ t + 1 ) , \displaystyle\mathbb{E}_{v^{t+1}\sim\mathcal{N}(\mu^{t+1},\varepsilon^{2}I)}\left[C^{t+1}\right|\mathcal{F}^{t}]\geq-2a^{t}+F_{\overline{\nabla f(x^{t})}}(\mu^{t+1}),
+(15)
+𝔼 v t ∼ 𝒩 ⁡ ( μ t , ε 2 ​ I ) [ C t | ℱ t − 1 ] = F ∇ f ​ ( x t ) ¯ ( μ t ) . \displaystyle\mathbb{E}_{v^{t}\sim\mathcal{N}(\mu^{t},\varepsilon^{2}I)}\left[C^{t}\right|\mathcal{F}^{t-1}]=F_{\overline{\nabla f(x^{t})}}(\mu^{t}).
+(16)
+Next, we observe that Lines 5 and 6 of Algorithm 3.3 correspond to performing a step of gradient ascent with respect to μ \mu on the function F ∇ f ​ ( x t ) ¯ ​ ( μ ) F_{\overline{\nabla f(x^{t})}}(\mu) . Along with ( 15 ) and ( 16 ) it defines the 𝔼 t ​ [ C t ] \mathbb{E}_{t}\left[C^{t}\right] dynamics.
+Firstly, we introduce the kernel and change C t C^{t} notation to reflect implicit dependence on arguments:
+φ ⁡ ( x ) = 1 ( 2 ​ π ​ ε 2 ) d / 2 ​ exp ⁡ ( − ‖ x ‖ 2 2 ​ ε 2 ) , \displaystyle\varphi(x)=\frac{1}{(2\pi\varepsilon^{2})^{d/2}}\exp\left(\frac{-\|x\|^{2}}{2\varepsilon^{2}}\right),
+(17)
+ψ a ​ ( x ) = ( a ¯ , x ¯ ) 2 = ( a , x ) 2 ‖ x ‖ 2 . \displaystyle\psi_{a}(x)=(\overline{a},\overline{x})^{2}=\frac{(a,x)^{2}}{\|x\|^{2}}.
+(18)
+Then we can reformulate F ∇ f ​ ( x t ) ¯ ​ ( μ ) F_{\overline{\nabla f(x^{t})}}(\mu) as follows
+F a ​ ( μ ) = ∫ ℝ d ψ a ​ ( u ) ​ φ ​ ( μ − u ) ​ 𝑑 u . \displaystyle F_{a}(\mu)=\int_{\mathbb{R}^{d}}\psi_{a}(u)\varphi(\mu-u)\mathrm{d}u.
+(19)
+After that we start the Hessian computation using the general Stokes’ theorem.
+∇ μ F a ​ ( μ ) \displaystyle\nabla_{\mu}F_{a}(\mu)
+= \displaystyle=
+∫ ℝ d ψ a ​ ( u ) ​ ∇ μ φ ​ ( μ − u ) ​ 𝑑 u \displaystyle\int_{\mathbb{R}^{d}}\psi_{a}(u)\nabla_{\mu}\varphi(\mu-u)\mathrm{d}u
+(20)
+= \displaystyle=
+∫ ℝ d ψ a ​ ( u ) ​ ( − ∇ u φ ​ ( μ − u ) ) ​ 𝑑 u \displaystyle\int_{\mathbb{R}^{d}}\psi_{a}(u)(-\nabla_{u}\varphi(\mu-u))\mathrm{d}u
+= \displaystyle=
+− ∫ ℝ d ∇ u ( ψ a ( u ) φ ( μ − u ) ) d u + ∫ ℝ d ∇ u ( ψ a ( u ) ) φ ( μ − u ) d u \displaystyle-\int_{\mathbb{R}^{d}}\nabla_{u}(\psi_{a}(u)\varphi(\mu-u))\mathrm{d}u+\int_{\mathbb{R}^{d}}\nabla_{u}(\psi_{a}(u))\varphi(\mu-u)\mathrm{d}u
+= \displaystyle=
+∫ ℝ d ∇ u ( ψ a ​ ( u ) ) ​ φ ​ ( μ − u ) ​ 𝑑 u . \displaystyle\int_{\mathbb{R}^{d}}\nabla_{u}(\psi_{a}(u))\varphi(\mu-u)\mathrm{d}u.
+Following same reasoning we can derive
+∇ μ 2 F a ​ ( μ ) = ∫ ℝ d ∇ u 2 ψ a ​ ( u ) ​ φ ​ ( μ − u ) ​ 𝑑 u = 𝔼 u ∼ 𝒩 ⁡ ( μ , ε 2 ​ I ) ​ [ ∇ u 2 ψ a ​ ( u ) ] . \displaystyle\nabla_{\mu}^{2}F_{a}(\mu)=\int_{\mathbb{R}^{d}}\nabla_{u}^{2}\psi_{a}(u)\varphi(\mu-u)\mathrm{d}u=\mathbb{E}_{u\sim\mathcal{N}(\mu,\varepsilon^{2}I)}\left[\nabla_{u}^{2}\psi_{a}(u)\right].
+(21)
+Straightforward computation provides
+∇ u 2 ​ ψ a ​ ( u ) \displaystyle\nabla_{u}^{2}\psi_{a}(u)
+= \displaystyle=
+1 ‖ u ‖ 8 ​ ( ‖ u ‖ 4 ​ ( 2 ​ a ​ a ⊤ ​ ‖ u ‖ 2 + 4 ​ a ​ u ⊤ ​ ⟨ a , u ⟩ − 2 ​ ⟨ a , u ⟩ 2 ​ I CLOSE CLOSE \displaystyle\frac{1}{\|u\|^{8}}\big(\|u\|^{4}(2aa^{\top}\|u\|^{2}+4au^{\top}\langle a,u\rangle-2\langle a,u\rangle^{2}I
+(22)
+OPEN OPEN − 4 ​ u ​ a ⊤ ​ ⟨ a , u ⟩ ) − 4 ​ ‖ u ‖ 2 ​ ( 2 ​ a ​ ‖ u ‖ 2 ​ ⟨ a , u ⟩ − 2 ​ ⟨ a , u ⟩ 2 ​ u ) ​ u ⊤ ) . \displaystyle-4ua^{\top}\langle a,u\rangle)-4\|u\|^{2}\left(2a\|u\|^{2}\langle a,u\rangle-2\langle a,u\rangle^{2}u\right)u^{\top}\big).
+It implies for arbitrary a a so that ‖ a ‖ = 1 \|a\|=1 the following bound holds.
+‖ ∇ u 2 ​ ψ a ​ ( u ) ‖ ≤ 20 ​ ‖ a ‖ 2 ‖ u ‖ 2 = 20 ‖ u ‖ 2 . \displaystyle\|\nabla_{u}^{2}\psi_{a}(u)\|\leq 20\frac{\|a\|^{2}}{\|u\|^{2}}=\frac{20}{\|u\|^{2}}.
+(23)
+Using ( 21 ), ( 23 ) and convexity of ∥ ⋅ ∥ \|\cdot\| we reach the bound
+‖ ∇ μ 2 ​ F a ​ ( μ ) ‖ ≤ 20 ​ 𝔼 u ∼ 𝒩 ⁡ ( μ , ε 2 ​ I ) ​ [ 1 ‖ u ‖ 2 ] . \displaystyle\|\nabla_{\mu}^{2}F_{a}(\mu)\|\leq 20\mathbb{E}_{u\sim\mathcal{N}(\mu,\varepsilon^{2}I)}\left[\frac{1}{\|u\|^{2}}\right].
+(24)
+Assumption d > 3 d>3 ensures the convergence of the integral in ( 24 ) and provides the bound of the Hessian norm, thereby asserting the L ~ \tilde{L} -smoothness of the objective function F a ​ ( μ ) F_{a}(\mu) with L ~ ≤ A ​ 𝔼 u ∼ 𝒩 ⁡ ( μ , ε 2 ​ I ) ​ [ 1 ‖ u ‖ 2 ] \tilde{L}\leq A\mathbb{E}_{u\sim\mathcal{N}(\mu,\varepsilon^{2}I)}\left[\frac{1}{\|u\|^{2}}\right] .
+𝔼 u ∼ 𝒩 ⁡ ( μ t , ε 2 ​ I ) ​ [ 1 ‖ u ‖ 2 ] \displaystyle\mathbb{E}_{u\sim\mathcal{N}(\mu^{t},\varepsilon^{2}I)}\left[\frac{1}{\|u\|^{2}}\right]
+= \displaystyle=
+1 ( 2 ​ π ​ ε 2 ) d 2 ​ ∫ ℝ d 1 ‖ u ‖ 2 ​ e − ‖ u − μ t ‖ 2 2 ​ ε 2 ​ 𝑑 u \displaystyle\frac{1}{(2\pi\varepsilon^{2})^{\frac{d}{2}}}\int_{\mathbb{R}^{d}}\frac{1}{\|u\|^{2}}e^{-\frac{\|u-\mu^{t}\|^{2}}{2\varepsilon^{2}}}\mathrm{d}u
+= \displaystyle=
+1 ( 2 ​ π ​ ε 2 ) d 2 ​ [ ∫ ‖ u ‖ ≤ ‖ μ t ‖ 4 1 ‖ u ‖ 2 ​ e − ‖ u − μ t ‖ 2 2 ​ ε 2 ​ 𝑑 u + ∫ ‖ u ‖ > ‖ μ t ‖ 4 1 ‖ u ‖ 2 ​ e − ‖ u − μ t ‖ 2 2 ​ ε 2 ​ 𝑑 u ] \displaystyle\frac{1}{(2\pi\varepsilon^{2})^{\frac{d}{2}}}\left[\int_{\|u\|\leq\frac{\|\mu^{t}\|}{4}}\frac{1}{\|u\|^{2}}e^{-\frac{\|u-\mu^{t}\|^{2}}{2\varepsilon^{2}}}\mathrm{d}u+\int_{\|u\|>\frac{\|\mu^{t}\|}{4}}\frac{1}{\|u\|^{2}}e^{-\frac{\|u-\mu^{t}\|^{2}}{2\varepsilon^{2}}}\mathrm{d}u\right]
+≤ \displaystyle\leq
+1 ( 2 ​ π ​ ε 2 ) d 2 ​ ∫ ‖ u ‖ ≤ ‖ μ t ‖ 4 1 ‖ u ‖ 2 ​ e − ‖ u ‖ 2 + ‖ μ t ‖ 2 − 2 ​ ⟨ u , μ t ⟩ 2 ​ ε 2 ​ 𝑑 u + 16 ‖ μ t ‖ 2 \displaystyle\frac{1}{(2\pi\varepsilon^{2})^{\frac{d}{2}}}\int_{\|u\|\leq\frac{\|\mu^{t}\|}{4}}\frac{1}{\|u\|^{2}}e^{-\frac{\|u\|^{2}+\|\mu^{t}\|^{2}-2\langle u,\mu^{t}\rangle}{2\varepsilon^{2}}}\mathrm{d}u+\frac{16}{\|\mu^{t}\|^{2}}
+≤ \displaystyle\leq
+1 ( 2 ​ π ​ ε 2 ) d 2 ​ ∫ ‖ u ‖ ≤ ‖ μ t ‖ 4 1 ‖ u ‖ 2 ​ e − ‖ u ‖ 2 + ‖ μ t ‖ 2 2 2 ​ ε 2 ​ 𝑑 u + 16 ‖ μ t ‖ 2 \displaystyle\frac{1}{(2\pi\varepsilon^{2})^{\frac{d}{2}}}\int_{\|u\|\leq\frac{\|\mu^{t}\|}{4}}\frac{1}{\|u\|^{2}}e^{-\frac{\|u\|^{2}+\frac{\|\mu^{t}\|^{2}}{2}}{2\varepsilon^{2}}}\mathrm{d}u+\frac{16}{\|\mu^{t}\|^{2}}
+≤ \displaystyle\leq
+e − ‖ μ t ‖ 2 4 ​ ε 2 ​ 1 ( 2 ​ π ​ ε 2 ) d 2 ​ ∫ ℝ d 1 ‖ u ‖ 2 ​ e − ‖ u ‖ 2 2 ​ ε 2 ​ 𝑑 u + 16 ‖ μ t ‖ 2 \displaystyle e^{-\frac{\|\mu^{t}\|^{2}}{4\varepsilon^{2}}}\frac{1}{(2\pi\varepsilon^{2})^{\frac{d}{2}}}\int_{\mathbb{R}^{d}}\frac{1}{\|u\|^{2}}e^{-\frac{\|u\|^{2}}{2\varepsilon^{2}}}\mathrm{d}u+\frac{16}{\|\mu^{t}\|^{2}}
+= \displaystyle=
+e − ‖ μ t ‖ 2 4 ​ ε 2 ε 2 ​ ( d − 2 ) + 16 ‖ μ t ‖ 2 . \displaystyle\frac{e^{-\frac{\|\mu^{t}\|^{2}}{4\varepsilon^{2}}}}{\varepsilon^{2}(d-2)}+\frac{16}{\|\mu^{t}\|^{2}}.
+In the last transition we used classical result for χ 2 \chi^{2} distribution r r moment 2 r ​ Γ ⁡ ( d 2 + r ) Γ ⁡ ( d 2 ) 2^{r}\frac{\Gamma\left(\frac{d}{2}+r\right)}{\Gamma\left(\frac{d}{2}\right)} . Then, L ~ ≤ 20 ​ e − ‖ μ t ‖ 2 4 ​ ε 2 ε 2 ​ ( d − 2 ) + 16 ⋅ 20 ‖ μ t ‖ 2 \tilde{L}\leq\frac{20e^{-\frac{\|\mu^{t}\|^{2}}{4\varepsilon^{2}}}}{\varepsilon^{2}(d-2)}+\frac{16\cdot 20}{\|\mu^{t}\|^{2}} .
+Applying Lemma 4 to function F F taking into account implicit step formulation μ t + 1 = μ t + γ μ t ∇ F ∇ f ​ ( x t ) ¯ ( μ t ) \mu^{t+1}=\mu^{t}+\gamma^{t}_{\mu}\nabla F_{\overline{\nabla f(x^{t})}}(\mu^{t}) we get
+F ∇ f ​ ( x t ) ¯ ​ ( μ t + 1 ) \displaystyle F_{\overline{\nabla f(x^{t})}}(\mu^{t+1})
+≥ \displaystyle\geq
+F ∇ f ​ ( x t ) ¯ ​ ( μ t ) + ( ∇ F ∇ f ​ ( x t ) ¯ ​ ( μ t ) , μ t + 1 − μ t ) − L ~ 2 ​ ‖ μ t + 1 − μ t ‖ 2 \displaystyle F_{\overline{\nabla f(x^{t})}}(\mu^{t})+(\nabla F_{\overline{\nabla f(x^{t})}}(\mu^{t}),\mu^{t+1}-\mu^{t})-\frac{\tilde{L}}{2}\|\mu^{t+1}-\mu^{t}\|^{2}
+(25)
+= \displaystyle=
+F ∇ f ​ ( x t ) ¯ ​ ( μ t ) + ( γ μ t − L ~ ​ γ μ t 2 2 ) ​ ‖ ∇ F ∇ f ​ ( x t ) ¯ ​ ( μ t ) ‖ 2 \displaystyle F_{\overline{\nabla f(x^{t})}}(\mu^{t})+\left(\gamma^{t}_{\mu}-\frac{\tilde{L}{\gamma^{t}_{\mu}}^{2}}{2}\right)\|\nabla F_{\overline{\nabla f(x^{t})}}(\mu^{t})\|^{2}
+By combining ( 15 ), ( 16 ) and ( 25 ) we derive
+𝔼 v t + 1 ∼ 𝒩 ⁡ ( μ t + 1 , ε 2 ​ I ) [ C t + 1 | ℱ t ] \displaystyle\mathbb{E}_{v^{t+1}\sim\mathcal{N}(\mu^{t+1},\varepsilon^{2}I)}\left[C^{t+1}\right|\mathcal{F}^{t}]
+≥ \displaystyle\geq
+− 2 ​ a t + F ∇ f ​ ( x t ) ¯ ​ ( μ t ) + ( γ μ t − L ~ ​ γ μ t 2 2 ) ​ ‖ ∇ F ∇ f ​ ( x t ) ¯ ​ ( μ t ) ‖ 2 \displaystyle-2a^{t}+F_{\overline{\nabla f(x^{t})}}(\mu^{t})+\left(\gamma^{t}_{\mu}-\frac{\tilde{L}{\gamma^{t}_{\mu}}^{2}}{2}\right)\|\nabla F_{\overline{\nabla f(x^{t})}}(\mu^{t})\|^{2}
+(26)
+= ( 16 ) \displaystyle\overset{\eqref{eq:C_F_def}}{=}
+𝔼 v t ∼ 𝒩 ⁡ ( μ t , ε 2 ​ I ) [ C t | ℱ t − 1 ] \displaystyle\mathbb{E}_{v^{t}\sim\mathcal{N}(\mu^{t},\varepsilon^{2}I)}\left[C^{t}\right|\mathcal{F}^{t-1}]
+− 2 ​ a t + ( γ μ t − L ~ ​ γ μ t 2 2 ) ​ ‖ ∇ F ∇ f ​ ( x t ) ¯ ​ ( μ t ) ‖ 2 \displaystyle-\penalty\ 2a^{t}+\left(\gamma^{t}_{\mu}-\frac{\tilde{L}{\gamma^{t}_{\mu}}^{2}}{2}\right)\|\nabla F_{\overline{\nabla f(x^{t})}}(\mu^{t})\|^{2}
+At the next step we work on the lower bound of ‖ ∇ F a ​ ( μ ) ‖ \|\nabla F_{a}(\mu)\| in particular μ \mu -space regions.
+∇ F a ​ ( μ ) \displaystyle\nabla F_{a}(\mu)
+= \displaystyle=
+1 ( 2 ​ π ​ ε 2 ) d / 2 ​ ∫ ℝ d ⟨ a , u ⟩ 2 ‖ u ‖ 2 ​ u − μ ε 2 ​ e − ‖ u − μ ‖ 2 2 ​ ε 2 ​ 𝑑 u \displaystyle\frac{1}{(2\pi\varepsilon^{2})^{d/2}}\int_{\mathbb{R}^{d}}\frac{\langle a,u\rangle^{2}}{\|u\|^{2}}\frac{u-\mu}{\varepsilon^{2}}e^{-\frac{\|u-\mu\|^{2}}{2\varepsilon^{2}}}\mathrm{d}u
+(27)
+= \displaystyle=
+1 ε ​ ( 2 ​ π ) d / 2 ​ ∫ ℝ d ⟨ a , ε ​ v + μ ⟩ 2 ‖ ε ​ v + μ ‖ 2 ​ v ​ e − ‖ v ‖ 2 2 ​ 𝑑 v \displaystyle\frac{1}{\varepsilon(2\pi)^{d/2}}\int_{\mathbb{R}^{d}}\frac{\langle a,\varepsilon v+\mu\rangle^{2}}{\|\varepsilon v+\mu\|^{2}}ve^{-\frac{\|v\|^{2}}{2}}\mathrm{d}v
+= \displaystyle=
+1 ε ​ ( 2 ​ π ) d / 2 ​ ∫ ‖ v ‖ < ‖ μ ‖ 2 ​ ε ⟨ a , ε ​ v + μ ⟩ 2 ‖ ε ​ v + μ ‖ 2 ​ v ​ e − ‖ v ‖ 2 2 ​ 𝑑 v \displaystyle\frac{1}{\varepsilon(2\pi)^{d/2}}\int_{\|v\|<{\frac{\|\mu\|}{2\varepsilon}}}\frac{\langle a,\varepsilon v+\mu\rangle^{2}}{\|\varepsilon v+\mu\|^{2}}ve^{-\frac{\|v\|^{2}}{2}}\mathrm{d}v
++ 1 ε ​ ( 2 ​ π ) d / 2 ∫ ‖ v ‖ > ‖ μ ‖ 2 ​ ε ⟨ a , ε ​ v + μ ⟩ 2 ‖ ε ​ v + μ ‖ 2 v e − ‖ v ‖ 2 2 d v . \displaystyle+\penalty\ \frac{1}{\varepsilon(2\pi)^{d/2}}\int_{\|v\|>{\frac{\|\mu\|}{2\varepsilon}}}\frac{\langle a,\varepsilon v+\mu\rangle^{2}}{\|\varepsilon v+\mu\|^{2}}ve^{-\frac{\|v\|^{2}}{2}}\mathrm{d}v.
+We proceed with evaluation of the second term of 27 .
+‖ 1 ( 2 ​ π ) d / 2 ​ ∫ ‖ v ‖ > ‖ μ ‖ 2 ​ ε ⟨ a , ε ​ v + μ ⟩ 2 ‖ ε ​ v + μ ‖ 2 ​ v ​ e − ‖ v ‖ 2 2 ​ 𝑑 v ‖ \displaystyle\left\|\frac{1}{(2\pi)^{d/2}}\int_{\|v\|>{\frac{\|\mu\|}{2\varepsilon}}}\frac{\langle a,\varepsilon v+\mu\rangle^{2}}{\|\varepsilon v+\mu\|^{2}}ve^{-\frac{\|v\|^{2}}{2}}\mathrm{d}v\right\|
+≤ 1 ( 2 ​ π ) d / 2 ​ ∫ ‖ v ‖ > ‖ μ ‖ 2 ​ ε ⟨ a , ε ​ v + μ ⟩ 2 ‖ ε ​ v + μ ‖ 2 ​ ‖ v ‖ ​ e − ‖ v ‖ 2 2 ​ 𝑑 v \displaystyle\leq\frac{1}{(2\pi)^{d/2}}\int_{\|v\|>{\frac{\|\mu\|}{2\varepsilon}}}\frac{\langle a,\varepsilon v+\mu\rangle^{2}}{\|\varepsilon v+\mu\|^{2}}\|v\|e^{-\frac{\|v\|^{2}}{2}}\mathrm{d}v
+≤ 1 ( 2 ​ π ) d / 2 ​ ∫ ‖ v ‖ > ‖ μ ‖ 2 ​ ε ‖ v ‖ ​ e − ‖ v ‖ 2 2 ​ 𝑑 v \displaystyle\leq\frac{1}{(2\pi)^{d/2}}\int_{\|v\|>{\frac{\|\mu\|}{2\varepsilon}}}\|v\|e^{-\frac{\|v\|^{2}}{2}}\mathrm{d}v
+(28)
+Then we use the fact that for d d -dimensional ξ ∼ 𝒩 ⁡ ( 0 , I ) \xi\sim\mathcal{N}(0,I) holds the further bound [ Chandrasekaran et al., 2012 ] :
+𝔼 ⁡ [ ‖ ξ ‖ ] = 2 ​ Γ ⁡ ( d + 1 2 ) Γ ⁡ ( d 2 ) ≤ d . \displaystyle\mathbb{E}\left[\|\xi\|\right]=\sqrt{2}\frac{\Gamma\left(\frac{d+1}{2}\right)}{\Gamma\left(\frac{d}{2}\right)}\leq\sqrt{d}.
+(29)
+After that we use Cauchy–Schwarz inequality in L 2 ​ ( ℝ d ) L_{2}(\mathbb{R}^{d}) space with Gaussian measure to derive
+𝔼 [ I { ∥ ξ ∥ > t } ∥ ξ ∥ ] \displaystyle\mathbb{E}\left[I_{\left\{\|\xi\|>t\right\}}\|\xi\|\right]
+≤ \displaystyle\leq
+( 𝔼 [ ∥ ξ ∥ 2 ] ) 1 2 ( 𝔼 [ I { ∥ ξ ∥ > t } 2 ] ) 1 2 \displaystyle\left(\mathbb{E}\left[\|\xi\|^{2}\right]\right)^{\frac{1}{2}}\left(\mathbb{E}\left[I_{\left\{\|\xi\|>t\right\}}^{2}\right]\right)^{\frac{1}{2}}
+(30)
+= \displaystyle=
+d ​ ( Pr ⁡ ( ‖ ξ ‖ > t ) ) 1 2 . \displaystyle\sqrt{d}\left(\Pr\left(\|\xi\|>t\right)\right)^{\frac{1}{2}}.
+Gaussian measure concentration inequality [ Boucheron et al., 2013 ] for L = 1 L=1 Lipchitz function ∥ ⋅ ∥ \|\cdot\| yields
+Pr ⁡ ( ‖ ξ ‖ − 𝔼 ⁡ [ ‖ ξ ‖ ] > t ) ≤ e − t 2 2 . \displaystyle\Pr\left(\|\xi\|-\mathbb{E}[\|\xi\|]>t\right)\leq e^{-\frac{t^{2}}{2}}.
+Combining it with ( 29 ) we get Pr ⁡ ( ‖ ξ ‖ − d > t ) ≤ e − t 2 2 \Pr\left(\|\xi\|-\sqrt{d}>t\right)\leq e^{-\frac{t^{2}}{2}} or
+Pr ⁡ ( ‖ ξ ‖ > τ ) ≤ e − ( τ − d ) 2 2 , τ > d . \displaystyle\Pr\left(\|\xi\|>\tau\right)\leq e^{-\frac{(\tau-\sqrt{d})^{2}}{2}},\penalty\ \tau>\sqrt{d}.
+(31)
+Substitution of ( 31 ) into ( 30 ) provides
+𝔼 [ I { ∥ ξ ∥ > τ } ∥ ξ ∥ ] \displaystyle\mathbb{E}\left[I_{\left\{\|\xi\|>\tau\right\}}\|\xi\|\right]
+= \displaystyle=
+d ​ e − ( τ − d ) 2 4 , τ > d . \displaystyle\sqrt{d}e^{-\frac{(\tau-\sqrt{d})^{2}}{4}},\penalty\ \tau>\sqrt{d}.
+(32)
+Finally, using ( 32 ) we transform ( 28 ) into
+‖ 1 ε ​ ( 2 ​ π ) d / 2 ​ ∫ ‖ v ‖ > ‖ μ ‖ 2 ​ ε ⟨ a , ε ​ v + μ ⟩ 2 ‖ ε ​ v + μ ‖ 2 ​ v ​ e − v 2 2 ​ 𝑑 v ‖ ≤ 1 ε ​ d ​ e − ( ‖ μ ‖ 2 ​ ε − d ) 2 4 , ‖ μ ‖ 2 ​ ε > d . \displaystyle\left\|\frac{1}{\varepsilon(2\pi)^{d/2}}\int_{\|v\|>{\frac{\|\mu\|}{2\varepsilon}}}\frac{\langle a,\varepsilon v+\mu\rangle^{2}}{\|\varepsilon v+\mu\|^{2}}ve^{-\frac{v^{2}}{2}}\mathrm{d}v\right\|\leq\frac{1}{\varepsilon}\sqrt{d}e^{-\frac{\left(\frac{\|\mu\|}{2\varepsilon}-\sqrt{d}\right)^{2}}{4}},\penalty\ \frac{\|\mu\|}{2\varepsilon}>\sqrt{d}.
+(33)
+Then we turn to the evaluation of the first term in ( 27 ).
+1 ε ​ ( 2 ​ π ) d / 2 ​ ∫ ‖ v ‖ < ‖ μ ‖ 2 ​ ε ⟨ a , ε ​ v + μ ⟩ 2 ‖ ε ​ v + μ ‖ 2 ​ v ​ e − ‖ v ‖ 2 2 ​ 𝑑 v \displaystyle\frac{1}{\varepsilon(2\pi)^{d/2}}\int_{\|v\|<{\frac{\|\mu\|}{2\varepsilon}}}\frac{\langle a,\varepsilon v+\mu\rangle^{2}}{\|\varepsilon v+\mu\|^{2}}ve^{-\frac{\|v\|^{2}}{2}}\mathrm{d}v
+= 1 ε ​ ( 2 ​ π ) d / 2 ​ ∫ ‖ v ‖ < ‖ μ ‖ 2 ​ ε ⟨ a , ε ​ v + μ ⟩ 2 ‖ ε ​ v + μ ‖ 2 ​ v ​ e − ‖ v ‖ 2 2 ​ 𝑑 v \displaystyle=\frac{1}{\varepsilon(2\pi)^{d/2}}\int_{\|v\|<{\frac{\|\mu\|}{2\varepsilon}}}\frac{\langle a,\varepsilon v+\mu\rangle^{2}}{\|\varepsilon v+\mu\|^{2}}ve^{-\frac{\|v\|^{2}}{2}}\mathrm{d}v
+= 1 ε ​ ( 2 ​ π ) d / 2 ​ ∫ ‖ v ‖ < ‖ μ ‖ 2 ​ ε ψ ⁡ ( ε ​ v + μ ) ​ v ​ e − ‖ v ‖ 2 2 ​ 𝑑 v \displaystyle=\frac{1}{\varepsilon(2\pi)^{d/2}}\int_{\|v\|<{\frac{\|\mu\|}{2\varepsilon}}}\psi(\varepsilon v+\mu)ve^{-\frac{\|v\|^{2}}{2}}\mathrm{d}v
+(34)
+We proceed by using the Taylor expansion with the remainder term in Lagrange form.
+ψ a ​ ( ε ​ v + μ ) ​ v = ψ a ​ ( μ ) ​ v + ⟨ ∇ ψ a ​ ( μ ) , ε ​ v ⟩ ​ v + 1 2 ​ [ ( ε ​ v ⊤ ) ​ H ψ ​ ( μ + ε ​ v ′ ) ​ ( ε ​ v ) ] ​ v , \displaystyle\psi_{a}(\varepsilon v+\mu)v=\psi_{a}(\mu)v+\langle\nabla\psi_{a}(\mu),\varepsilon v\rangle v+\frac{1}{2}\left[\left(\varepsilon v^{\top}\right)H_{\psi}(\mu+\varepsilon v^{\prime})\left(\varepsilon v\right)\right]v,
+(35)
+for v ′ = α ​ v , 0 ≤ α ≤ 1 v^{\prime}=\alpha v,0\leq\alpha\leq 1 .
+Symmetry considerations provides first term vanishing after integration over { ∥ v ∥ < ‖ μ ‖ 2 ​ ε } \left\{\|v\|<{\frac{\|\mu\|}{2\varepsilon}}\right\} . Symmetry also simplifies the second term of ( 35 ) the in following way
+1 ε ​ ( 2 ​ π ) d / 2 ​ ( ∫ ‖ v ‖ < ‖ μ ‖ 2 ​ ε ⟨ ∇ ψ a ​ ( μ ) , ε ​ v ⟩ ​ v ​ e − ‖ v ‖ 2 2 ​ 𝑑 v ) i \displaystyle\frac{1}{\varepsilon(2\pi)^{d/2}}\left(\int_{\|v\|<{\frac{\|\mu\|}{2\varepsilon}}}\langle\nabla\psi_{a}(\mu),\varepsilon v\rangle ve^{-\frac{\|v\|^{2}}{2}}\mathrm{d}v\right)_{i}
+= 1 ( 2 ​ π ) d / 2 ∫ ‖ v ‖ < ‖ μ ‖ 2 ​ ε ∑ j = 1 d ∇ ψ a ( μ ) j v j v i e − ‖ v ‖ 2 2 d v \displaystyle=\frac{1}{(2\pi)^{d/2}}\int_{\|v\|<{\frac{\|\mu\|}{2\varepsilon}}}\sum_{j=1}^{d}\nabla\psi_{a}(\mu)_{j}v_{j}v_{i}e^{-\frac{\|v\|^{2}}{2}}\mathrm{d}v
+= 1 ( 2 ​ π ) d / 2 ∫ ‖ v ‖ < ‖ μ ‖ 2 ​ ε ∇ ψ a ( μ ) i v i v i e − ‖ v ‖ 2 2 d v \displaystyle=\frac{1}{(2\pi)^{d/2}}\int_{\|v\|<{\frac{\|\mu\|}{2\varepsilon}}}\nabla\psi_{a}(\mu)_{i}v_{i}v_{i}e^{-\frac{\|v\|^{2}}{2}}\mathrm{d}v
+= ∇ ψ a ( μ ) i ( 2 ​ π ) d / 2 ​ ∫ ‖ v ‖ < ‖ μ ‖ 2 ​ ε v 1 2 ​ e − ‖ v ‖ 2 2 ​ 𝑑 v \displaystyle=\frac{\nabla\psi_{a}(\mu)_{i}}{(2\pi)^{d/2}}\int_{\|v\|<{\frac{\|\mu\|}{2\varepsilon}}}v_{1}^{2}e^{-\frac{\|v\|^{2}}{2}}\mathrm{d}v
+= ∇ ψ a ( μ ) i ( 2 ​ π ) d / 2 ​ 1 d ​ ∫ ‖ v ‖ < ‖ μ ‖ 2 ​ ε ‖ v ‖ 2 ​ e − ‖ v ‖ 2 2 ​ 𝑑 v . \displaystyle=\frac{\nabla\psi_{a}(\mu)_{i}}{(2\pi)^{d/2}}\frac{1}{d}\int_{\|v\|<{\frac{\|\mu\|}{2\varepsilon}}}\|v\|^{2}e^{-\frac{\|v\|^{2}}{2}}\mathrm{d}v.
+(36)
+We apply Laurent-Massart inequalities [ Laurent and Massart, 2000 ] to construct the lower bound of the integral in ( 36 ).
+Pr ⁡ ( ‖ v ‖ 2 − d ≤ 2 ​ d ​ x + 2 ​ x ) ≤ e − x , \displaystyle\Pr\left(\|v\|^{2}-d\leq 2\sqrt{dx}+2x\right)\leq e^{-x},
+Pr ⁡ ( d − ‖ v ‖ 2 ≥ 2 ​ d ​ x ) ≤ e − x . \displaystyle\Pr\left(d-\|v\|^{2}\geq 2\sqrt{dx}\right)\leq e^{-x}.
+(37)
+Assuming x = 1 x=1 and ‖ μ ‖ 2 ​ ε ≥ d + 2 ​ d + 2 \frac{\|\mu\|}{2\varepsilon}\geq\sqrt{d+2\sqrt{d}+2} we get
+1 ( 2 ​ π ) d / 2 ​ ∫ ‖ v ‖ < ‖ μ ‖ 2 ​ ε ‖ v ‖ 2 ​ e − ‖ v ‖ 2 2 ​ 𝑑 v \displaystyle\frac{1}{(2\pi)^{d/2}}\int_{\|v\|<{\frac{\|\mu\|}{2\varepsilon}}}\|v\|^{2}e^{-\frac{\|v\|^{2}}{2}}\mathrm{d}v
+≥ 1 ( 2 ​ π ) d / 2 ​ ∫ d − 2 ​ d < ‖ v ‖ 2 < d + 2 ​ d + 2 ‖ v ‖ 2 ​ e − ‖ v ‖ 2 2 ​ 𝑑 v \displaystyle\geq\frac{1}{(2\pi)^{d/2}}\int_{d-2\sqrt{d}<\|v\|^{2}<d+2\sqrt{d}+2}\|v\|^{2}e^{-\frac{\|v\|^{2}}{2}}\mathrm{d}v
+≥ ( d − 2 ​ d ) ​ Pr ⁡ ( d − 2 ​ d < ‖ v ‖ 2 < d + 2 ​ d + 2 ) \displaystyle\geq(d-2\sqrt{d})\Pr\left(d-2\sqrt{d}<\|v\|^{2}<d+2\sqrt{d}+2\right)
+≥ ( d − 2 ​ d ) ​ ( 1 − 2 ​ e − 1 ) \displaystyle\geq(d-2\sqrt{d})(1-2e^{-1})
+≥ ( d − 2 ​ d ) 4 \displaystyle\geq\frac{(d-2\sqrt{d})}{4}
+(38)
+Combining ( 38 ) and ( 36 ) we derive
+‖ 1 ( 2 ​ π ) d / 2 ​ ∫ ‖ v ‖ < ‖ μ ‖ 2 ​ ε ⟨ ∇ ψ a ​ ( μ ) , v ⟩ ​ v ​ e − v 2 2 ​ 𝑑 v ‖ \displaystyle\left\|\frac{1}{(2\pi)^{d/2}}\int_{\|v\|<{\frac{\|\mu\|}{2\varepsilon}}}\langle\nabla\psi_{a}(\mu),v\rangle ve^{-\frac{v^{2}}{2}}\mathrm{d}v\right\|
+≥ \displaystyle\geq
+‖ ∇ ψ a ​ ( μ ) ‖ d ​ ( d − 2 ​ d ) 4 \displaystyle\frac{\|\nabla\psi_{a}(\mu)\|}{d}\frac{(d-2\sqrt{d})}{4}
+(39)
+= \displaystyle=
+‖ ∇ ψ a ​ ( μ ) ‖ ​ ( 1 4 − 1 2 ​ d ) \displaystyle\|\nabla\psi_{a}(\mu)\|\left(\frac{1}{4}-\frac{1}{2\sqrt{d}}\right)
+≥ \displaystyle\geq
+‖ ∇ ψ a ​ ( μ ) ‖ 8 \displaystyle\frac{\|\nabla\psi_{a}(\mu)\|}{8}
+To justify the last transition we narrow our analysis to the case d ≥ 16 d\geq 16 .
+Then we examine the last term of Taylor Expansion ( 36 ) using ( 23 ).
+‖ 1 2 ​ [ ( ε ​ v ⊤ ) ​ H ψ ​ ( μ + ε ​ v ′ ) ​ ( ε ​ v ) ] ​ v ‖ \displaystyle\left\|\frac{1}{2}\left[\left(\varepsilon v^{\top}\right)H_{\psi}(\mu+\varepsilon v^{\prime})\left(\varepsilon v\right)\right]v\right\|
+≤ \displaystyle\leq
+ε 2 2 ​ ‖ v ‖ 3 ​ ‖ H ψ ​ ( μ + ε ​ v ′ ) ‖ \displaystyle\frac{\varepsilon^{2}}{2}\left\|v\right\|^{3}\left\|H_{\psi}(\mu+\varepsilon v^{\prime})\right\|
+≤ ( 23 ) \displaystyle\overset{\eqref{eq:psi_hess_norm_bound}}{\leq}
+ε 2 2 ​ ‖ v ‖ 3 ​ 20 ‖ μ + ε ​ v ′ ‖ 2 . \displaystyle\frac{\varepsilon^{2}}{2}\left\|v\right\|^{3}\frac{20}{\|\mu+\varepsilon v^{\prime}\|^{2}}.
+Using norm convexity we conclude
+‖ 1 ε ​ ( 2 ​ π ) d / 2 ​ ∫ ‖ v ‖ < ‖ μ ‖ 2 ​ ε 1 2 ​ [ ( ε ​ v ⊤ ) ​ H ψ ​ ( μ + ε ​ v ′ ) ​ ( ε ​ v ) ] ​ v ​ e − ‖ v ‖ 2 2 ​ 𝑑 v ‖ \displaystyle\left\|\frac{1}{\varepsilon(2\pi)^{d/2}}\int_{\|v\|<{\frac{\|\mu\|}{2\varepsilon}}}\frac{1}{2}\left[\left(\varepsilon v^{\top}\right)H_{\psi}(\mu+\varepsilon v^{\prime})\left(\varepsilon v\right)\right]ve^{-\frac{\|v\|^{2}}{2}}\mathrm{d}v\right\|
+≤ 1 ε ​ ( 2 ​ π ) d / 2 ​ ∫ ‖ v ‖ < ‖ μ ‖ 2 ​ ε ‖ 1 2 ​ [ ( ε ​ v ⊤ ) ​ H ψ ​ ( μ + ε ​ v ′ ) ​ ( ε ​ v ) ] ​ v ‖ ​ e − ‖ v ‖ 2 2 ​ 𝑑 v \displaystyle\leq\frac{1}{\varepsilon(2\pi)^{d/2}}\int_{\|v\|<{\frac{\|\mu\|}{2\varepsilon}}}\left\|\frac{1}{2}\left[\left(\varepsilon v^{\top}\right)H_{\psi}(\mu+\varepsilon v^{\prime})\left(\varepsilon v\right)\right]v\right\|e^{-\frac{\|v\|^{2}}{2}}\mathrm{d}v
+≤ 1 ε ​ ( 2 ​ π ) d / 2 ​ ∫ ‖ v ‖ < ‖ μ ‖ 2 ​ ε ε 2 2 ​ ‖ v ‖ 3 | 20 ‖ μ + ε ​ v ′ ‖ 2 ​ e − ‖ v ‖ 2 2 ​ 𝑑 v \displaystyle\leq\frac{1}{\varepsilon(2\pi)^{d/2}}\int_{\|v\|<{\frac{\|\mu\|}{2\varepsilon}}}\frac{\varepsilon^{2}}{2}\left\|v\right\|^{3}\|\frac{20}{\|\mu+\varepsilon v^{\prime}\|^{2}}e^{-\frac{\|v\|^{2}}{2}}\mathrm{d}v
+≤ 1 ε ​ ( 2 ​ π ) d / 2 ​ ∫ ‖ v ‖ < ‖ μ ‖ 2 ​ ε ε 2 2 ​ ‖ v ‖ 3 | 80 ‖ μ ‖ 2 ​ e − ‖ v ‖ 2 2 ​ 𝑑 v \displaystyle\leq\frac{1}{\varepsilon(2\pi)^{d/2}}\int_{\|v\|<{\frac{\|\mu\|}{2\varepsilon}}}\frac{\varepsilon^{2}}{2}\left\|v\right\|^{3}\|\frac{80}{\|\mu\|^{2}}e^{-\frac{\|v\|^{2}}{2}}\mathrm{d}v
+≤ 40 ​ ε ‖ μ ‖ 2 ​ ( 2 ​ π ) d / 2 ​ ∫ ‖ v ‖ < ‖ μ ‖ 2 ​ ε ‖ v ‖ 3 ​ e − ‖ v ‖ 2 2 ​ 𝑑 v \displaystyle\leq\frac{40\varepsilon}{\|\mu\|^{2}(2\pi)^{d/2}}\int_{\|v\|<{\frac{\|\mu\|}{2\varepsilon}}}\left\|v\right\|^{3}e^{-\frac{\|v\|^{2}}{2}}\mathrm{d}v
+≤ 40 ​ ε ‖ μ ‖ 2 ​ ( 2 ​ π ) d / 2 ​ ∫ ℝ d ‖ v ‖ 3 ​ e − ‖ v ‖ 2 2 ​ 𝑑 v \displaystyle\leq\frac{40\varepsilon}{\|\mu\|^{2}(2\pi)^{d/2}}\int_{\mathbb{R}^{d}}\left\|v\right\|^{3}e^{-\frac{\|v\|^{2}}{2}}\mathrm{d}v
+≤ 40 ​ ε ‖ μ ‖ 2 ​ d 3 2 . \displaystyle\leq\frac{40\varepsilon}{\|\mu\|^{2}}d^{\frac{3}{2}}.
+(40)
+The last transition utilizes Cauchy-Schwarz inequality and already mentioned values of 𝔼 ⁡ [ ‖ v ‖ ] ≤ d \mathbb{E}[\|v\|]\leq\sqrt{d} and 𝔼 ⁡ [ ‖ v ‖ 2 ] = d \mathbb{E}[\|v\|^{2}]=d . Finally, using triangle inequality as ‖ a + b ‖ ≥ ‖ a ‖ − ‖ b ‖ \|a+b\|\geq\|a\|-\|b\| we combine ( 27 ), ( 33 ), ( 39 ) and ( 40 ) to reach
+‖ ∇ F a ​ ( μ ) ‖ \displaystyle\|\nabla F_{a}(\mu)\|
+≥ \displaystyle\geq
+‖ ∇ ψ a ​ ( μ ) ‖ 8 − 40 ​ ε ‖ μ ‖ 2 ​ d 3 2 − d ε ​ e − ( ‖ μ ‖ 2 ​ ε − d ) 2 4 . \displaystyle\frac{\|\nabla\psi_{a}(\mu)\|}{8}-\frac{40\varepsilon}{\|\mu\|^{2}}d^{\frac{3}{2}}-\frac{\sqrt{d}}{\varepsilon}e^{-\frac{\left(\frac{\|\mu\|}{2\varepsilon}-\sqrt{d}\right)^{2}}{4}}.
+(41)
+After that we can continue the recursion ( 26 ) applying ( 41 ).
+𝔼 v t + 1 ∼ 𝒩 ⁡ ( μ t + 1 , ε ​ I ) [ C t + 1 | ℱ t ] \displaystyle\mathbb{E}_{v^{t+1}\sim\mathcal{N}(\mu^{t+1},\varepsilon I)}\left[C^{t+1}\right|\mathcal{F}^{t}]
+≥ \displaystyle\geq
+𝔼 v t ∼ 𝒩 ⁡ ( μ t , ε ​ I ) [ C t | ℱ t − 1 ] − 2 a t \displaystyle\mathbb{E}_{v^{t}\sim\mathcal{N}(\mu^{t},\varepsilon I)}\left[C^{t}\right|\mathcal{F}^{t-1}]-2a^{t}
+(42)
++ ( γ μ t − L ~ ​ γ μ t 2 2 ) ​ ( ‖ ∇ ψ ∇ f ​ ( x t ) ¯ ​ ( μ t ) ‖ 8 − 40 ​ ε ‖ μ t ‖ 2 ​ d 3 2 − d ε ​ e − ( ‖ μ t ‖ 2 ​ ε − d ) 2 4 ) 2 . \displaystyle+\left(\gamma^{t}_{\mu}-\frac{\tilde{L}{\gamma^{t}_{\mu}}^{2}}{2}\right)\left(\frac{\|\nabla\psi_{\overline{\nabla f(x^{t})}}(\mu^{t})\|}{8}-\frac{40\varepsilon}{\|\mu^{t}\|^{2}}d^{\frac{3}{2}}-\frac{\sqrt{d}}{\varepsilon}e^{-\frac{\left(\frac{\|\mu^{t}\|}{2\varepsilon}-\sqrt{d}\right)^{2}}{4}}\right)^{2}.
+We beginning the evaluation of ( 42 ) by requiring
+{ ‖ ∇ ψ ∇ f ​ ( x t ) ¯ ​ ( μ t ) ‖ 24 ≥ 40 ​ ε ‖ μ t ‖ 2 ​ d 3 2 , ‖ ∇ ψ ∇ f ​ ( x t ) ¯ ​ ( μ t ) ‖ 24 ≥ d ε ​ e − ( ‖ μ t ‖ 2 ​ ε − d ) 2 4 , γ μ t ≥ L ~ ​ γ μ t 2 . \displaystyle\begin{cases}&\frac{\|\nabla\psi_{\overline{\nabla f(x^{t})}}(\mu^{t})\|}{24}\geq\frac{40\varepsilon}{\|\mu^{t}\|^{2}}d^{\frac{3}{2}},\\
+&\frac{\|\nabla\psi_{\overline{\nabla f(x^{t})}}(\mu^{t})\|}{24}\geq\frac{\sqrt{d}}{\varepsilon}e^{-\frac{\left(\frac{\|\mu^{t}\|}{2\varepsilon}-\sqrt{d}\right)^{2}}{4}},\\
+&\gamma^{t}_{\mu}\geq\tilde{L}{\gamma^{t}_{\mu}}^{2}.\end{cases}
+(43)
+To start the evaluation of conditions ( 43 ) we introduce the angle β t \beta^{t} between the μ t \mu^{t} and ∇ f ​ ( x t ) \nabla f(x^{t}) .
+‖ ∇ ψ ∇ f ​ ( x t ) ¯ ​ ( μ ) ‖ \displaystyle\|\nabla\psi_{\overline{\nabla f(x^{t})}}(\mu)\|
+= \displaystyle=
+‖ 2 ​ ⟨ ∇ f ​ ( x t ) , μ ⟩ μ 4 ​ { ∇ f ​ ( x t ) ​ ‖ μ ‖ 2 − μ ⁡ ⟨ ∇ f ​ ( x t ) , μ ⟩ } ‖ \displaystyle\left\|\frac{2\langle\nabla f(x^{t}),\mu\rangle}{\mu^{4}}\{\nabla f(x^{t})\|\mu\|^{2}-\mu\langle\nabla f(x^{t}),\mu\rangle\}\right\|
+≥ 2 ‖ μ ‖ 3 ​ cos ⁡ ( β t ) ​ ( ‖ μ ‖ 2 − ‖ μ ‖ 2 ​ cos ⁡ ( β t ) ) \displaystyle\geq\frac{2}{\|\mu\|^{3}}\cos(\beta^{t})\left(\|\mu\|^{2}-\|\mu\|^{2}\cos(\beta^{t})\right)
+≥ 2 ‖ μ ‖ ​ cos ⁡ ( β t ) ​ ( 1 − cos ⁡ ( β t ) ) \displaystyle\geq\frac{2}{\|\mu\|}\cos(\beta^{t})(1-\cos(\beta^{t}))
+Hence, choosing ε ≤ d − 3 2 ​ cos ⁡ ( β t ) ​ ( 1 − cos ⁡ ( β t ) ) ​ ‖ μ t ‖ 480 \varepsilon\leq\frac{d^{-\frac{3}{2}}\cos(\beta^{t})(1-\cos(\beta^{t}))\|\mu^{t}\|}{480} we satisfy the first condition. This choice of ε \varepsilon also justifies second restriction in ( 43 ).
+To satisfy the last inequality of ( 43 ) we choose γ μ t ≤ ‖ μ t ‖ 2 640 ≤ 1 L ~ \gamma_{\mu}^{t}\leq\frac{\|\mu^{t}\|^{2}}{640}{\leq}\frac{1}{\tilde{L}} .
+Then, ( 42 ) transforms into
+𝔼 v t + 1 ∼ 𝒩 ⁡ ( μ t + 1 , ε ​ I ) [ C t + 1 | ℱ t ] \displaystyle\mathbb{E}_{v^{t+1}\sim\mathcal{N}(\mu^{t+1},\varepsilon I)}\left[C^{t+1}\right|\mathcal{F}^{t}]
+≥ \displaystyle\geq
+𝔼 v t ∼ 𝒩 ⁡ ( μ t , ε ​ I ) [ C t | ℱ t − 1 ] − 2 a t + γ μ t 2 ‖ ∇ ψ ​ ( μ t ) ‖ 2 24 2 \displaystyle\mathbb{E}_{v^{t}\sim\mathcal{N}(\mu^{t},\varepsilon I)}\left[C^{t}\right|\mathcal{F}^{t-1}]-2a^{t}+\frac{\gamma^{t}_{\mu}}{2}\frac{\|\nabla\psi(\mu^{t})\|^{2}}{24^{2}}
+(45)
+= \displaystyle=
+𝔼 v t ∼ 𝒩 ⁡ ( μ t , ε ​ I ) [ C t | ℱ t − 1 ] − 2 a t + γ μ t 2 ​ cos 2 ⁡ ( β t ) ​ ( 1 − cos ⁡ ( β t ) ) 2 24 2 ​ ‖ μ t ‖ 2 . \displaystyle\mathbb{E}_{v^{t}\sim\mathcal{N}(\mu^{t},\varepsilon I)}\left[C^{t}\right|\mathcal{F}^{t-1}]-2a^{t}+\gamma^{t}_{\mu}\frac{2\cos^{2}(\beta^{t})(1-\cos(\beta^{t}))^{2}}{24^{2}\|\mu^{t}\|^{2}}.
+After that we require 4 ​ a t ≤ cos 2 ⁡ ( β t ) ​ ( 1 − cos ⁡ ( β t ) ) 2 3 ⋅ 2 9 ⋅ 5 2 4a^{t}\leq\frac{\cos^{2}(\beta^{t})(1-\cos(\beta^{t}))^{2}}{3\cdot 2^{9}\cdot 5^{2}} . Recalling definition of a t = 4 ​ L ​ γ x t 2 ​ 1 − ( L ​ γ x t 2 ) 2 a^{t}=4\frac{L\gamma_{x}^{t}}{2}\sqrt{1-\left(\frac{L\gamma_{x}^{t}}{2}\right)^{2}} we pick γ x t ≤ cos 2 ⁡ ( β t ) ​ ( 1 − cos ⁡ ( β t ) ) 2 3 ⋅ 2 12 ⋅ 5 2 ​ L \gamma_{x}^{t}\leq\frac{\cos^{2}(\beta^{t})(1-\cos(\beta^{t}))^{2}}{3\cdot 2^{12}\cdot 5^{2}L} to satisfy Stated restriction. Finally we reach
+𝔼 v t + 1 ∼ 𝒩 ⁡ ( μ t + 1 , ε ​ I ) [ C t + 1 | ℱ t ] \displaystyle\mathbb{E}_{v^{t+1}\sim\mathcal{N}(\mu^{t+1},\varepsilon I)}\left[C^{t+1}\right|\mathcal{F}^{t}]
+= \displaystyle=
+𝔼 v t ∼ 𝒩 ⁡ ( μ t , ε ​ I ) [ C t | ℱ t − 1 ] + γ μ t ( cos ⁡ ( β t ) ​ ( 1 − cos ⁡ ( β t ) ) 24 ​ ‖ μ t ‖ ) 2 . \displaystyle\mathbb{E}_{v^{t}\sim\mathcal{N}(\mu^{t},\varepsilon I)}\left[C^{t}\right|\mathcal{F}^{t-1}]+\gamma^{t}_{\mu}\left(\frac{\cos(\beta^{t})(1-\cos(\beta^{t}))}{24\|\mu^{t}\|}\right)^{2}.
+(46)
+∎
+Corollary 2 .
+In the setting of Theorem 1 for iterations of the Algorithm 3.3 with ε = d − 3 2 ​ cos ⁡ ( β t ) ​ ( 1 − cos ⁡ ( β t ) ) ​ M 480 , γ μ t = ‖ μ t ‖ 2 640 , γ x t = cos 2 ⁡ ( β t ) ​ ( 1 − cos ⁡ ( β t ) ) 2 3 ⋅ 2 12 ⋅ 5 2 ​ L \varepsilon=\frac{d^{-\frac{3}{2}}\cos(\beta^{t})(1-\cos(\beta^{t}))M}{480},\gamma_{\mu}^{t}=\frac{\|\mu^{t}\|^{2}}{640},\gamma_{x}^{t}=\frac{\cos^{2}(\beta^{t})(1-\cos(\beta^{t}))^{2}}{3\cdot 2^{12}\cdot 5^{2}L} the following inequality holds:
+𝔼 [ C t + 1 | ℱ t ] \displaystyle\mathbb{E}\left[C^{t+1}\right|\mathcal{F}^{t}]
+≥ \displaystyle\geq
+𝔼 [ C t | ℱ t − 1 ] + cos 2 ⁡ ( β t ) ​ ( 1 − cos ⁡ ( β t ) ) 2 3 ⋅ 2 10 ⋅ 5 2 . \displaystyle\mathbb{E}\left[C^{t}\right|\mathcal{F}^{t-1}]+\frac{\cos^{2}(\beta^{t})(1-\cos(\beta^{t}))^{2}}{3\cdot 2^{10}\cdot 5^{2}}.
+(47)
+If additionally δ ≤ cos ⁡ ( β t ) ≤ 1 − δ \delta\leq\cos(\beta^{t})\leq 1-\delta with δ ∈ ( 0 , 1 2 ) \delta\in\left(0;\frac{1}{2}\right) and ε = d − 3 2 ​ δ ​ M 960 , γ x t = δ 2 3 ⋅ 2 14 ⋅ 5 2 ​ L \varepsilon=\frac{d^{-\frac{3}{2}}\delta M}{960},\gamma_{x}^{t}=\frac{\delta^{2}}{3\cdot 2^{14}\cdot 5^{2}L} , then
+𝔼 [ C t + 1 | ℱ t ] \displaystyle\mathbb{E}\left[C^{t+1}\right|\mathcal{F}^{t}]
+≥ \displaystyle\geq
+𝔼 [ C t | ℱ t − 1 ] + δ 2 3 ⋅ 2 12 ⋅ 5 2 . \displaystyle\mathbb{E}\left[C^{t}\right|\mathcal{F}^{t-1}]+\frac{\delta^{2}}{3\cdot 2^{12}\cdot 5^{2}}.
+(48)
+Proof.
+The proof follows by direct substitution into the result of Theorem 1 .
+∎
+Lemma 2
+Let in the setting of Theorem 1 δ ≤ cos ⁡ ( β 0 ) ≤ 1 − δ \delta\leq\cos(\beta^{0})\leq 1-\delta with δ ∈ ( 0 , 1 2 ) \delta\in\left(0;\frac{1}{2}\right) and ε = d − 3 2 ​ δ ​ M 960 , γ x t = δ 2 3 ⋅ 2 14 ⋅ 5 2 ​ L \varepsilon=\frac{d^{-\frac{3}{2}}\delta M}{960},\gamma_{x}^{t}=\frac{\delta^{2}}{3\cdot 2^{14}\cdot 5^{2}L} . Then 𝔼 ⁡ [ C t | ℱ t − 1 ] \mathbb{E}\left[C^{t}|\mathcal{F}^{t-1}\right] increase monotonically to the value cos ⁡ ( δ 32 ​ d + L ​ γ x t + arccos ⁡ ( 1 − δ ) ) 2 ​ ( 1 − e − 1 ) \cos\left(\frac{\delta}{32d}+L\gamma_{x}^{t}+\arccos(1-\delta)\right)^{2}(1-e^{-1}) and then never decrease below.
+Proof.
+To justify the first part of Statement related to 𝔼 ⁡ [ C t | ℱ t − 1 ] \mathbb{E}\left[C^{t}|\mathcal{F}^{t-1}\right] monotonically growth it sufficient to show, that the angle β t \beta^{t} will decrease until cos ⁡ ( β t ) \cos(\beta^{t}) reaches 1 − δ 1-\delta . We note that C t C^{t} dynamic analysis closely related to the evaluation of the angle β t \beta^{t} . We proceed by assuming δ ≤ cos ⁡ ( β t ) ≤ q − δ \delta\leq\cos(\beta^{t})\leq q-\delta considering
+‖ μ t + 1 ¯ − ∇ f ​ ( x t + 1 ) ¯ ‖ \displaystyle\|\overline{\mu^{t+1}}-\overline{\nabla f(x^{t+1})}\|
+≤ ( 11 ) \displaystyle\overset{\eqref{eq:grad_dif_bound}}{\leq}
+‖ μ t + 1 ¯ − ∇ f ​ ( x t ) ¯ ‖ + a t \displaystyle\|\overline{\mu^{t+1}}-\overline{\nabla f(x^{t})}\|+a^{t}
+(49)
+= \displaystyle=
+‖ μ t + γ μ t ​ ∇ μ 𝔼 t ​ [ C t ] | μ = μ t ¯ − ∇ f ​ ( x t ) ¯ ‖ + a t \displaystyle\|\overline{\mu^{t}+\gamma^{t}_{\mu}\nabla_{\mu}\mathbb{E}_{t}\left[C^{t}\right]\Big|_{\mu=\mu^{t}}}-\overline{\nabla f(x^{t})}\|+a^{t}
+= \displaystyle=
+‖ μ t + γ μ t ​ F ∇ f ​ ( x t ) ¯ ​ ( μ t ) ¯ − ∇ f ​ ( x t ) ¯ ‖ + a t . \displaystyle\|\overline{\mu^{t}+\gamma^{t}_{\mu}F_{\overline{\nabla f(x^{t})}}(\mu^{t})}-\overline{\nabla f(x^{t})}\|+a^{t}.
+Then we recall decomposition ( 27 ) and that one integral there contains ( 36 ).
+We remind that ∇ ψ ​ ( μ ) = 2 ​ ⟨ ∇ f ​ ( x t ) , μ ⟩ μ 4 ​ { ∇ f ​ ( x t ) ​ ‖ μ ‖ 2 − μ ⁡ ⟨ ∇ f ​ ( x t ) , μ ⟩ } \nabla\psi(\mu)=\frac{2\langle\nabla f(x^{t}),\mu\rangle}{\mu^{4}}\{\nabla f(x^{t})\|\mu\|^{2}-\mu\langle\nabla f(x^{t}),\mu\rangle\} which implies its collinearity to μ t ¯ − ∇ f ​ ( x t ) ¯ \overline{\mu^{t}}-\overline{\nabla f(x^{t})} . Using the same bounds as in ( 41 ) we continue derivation.
+‖ μ t + 1 ¯ − ∇ f ​ ( x t + 1 ) ¯ ‖ \displaystyle\|\overline{\mu^{t+1}}-\overline{\nabla f(x^{t+1})}\|
+≤ \displaystyle\leq
+‖ μ t ¯ − ∇ f ​ ( x t ) ¯ ‖ − 1 2 ​ ‖ μ t ‖ ​ γ μ t ​ ( ‖ ∇ ψ ​ ( μ t ) ‖ 8 − 40 ​ ε ‖ μ t ‖ 2 ​ d 3 2 − d ε ​ e − ( ‖ μ t ‖ 2 ​ ε − d ) 2 4 ) + a t . \displaystyle\|\overline{\mu^{t}}-\overline{\nabla f(x^{t})}\|-\frac{1}{2\|\mu^{t}\|}\gamma^{t}_{\mu}\left(\frac{\|\nabla\psi(\mu^{t})\|}{8}-\frac{40\varepsilon}{\|\mu^{t}\|^{2}}d^{\frac{3}{2}}-\frac{\sqrt{d}}{\varepsilon}e^{-\frac{\left(\frac{\|\mu^{t}\|}{2\varepsilon}-\sqrt{d}\right)^{2}}{4}}\right)+a^{t}.
+(50)
+After that we note δ ≤ cos ⁡ ( β t ) ≤ 1 − δ \delta\leq\cos(\beta^{t})\leq 1-\delta with δ ∈ ( 0 , 1 2 ) \delta\in\left(0;\frac{1}{2}\right) implies both cos ⁡ ( β t ) \cos(\beta^{t}) and 1 − cos ⁡ ( β t ) 1-\cos(\beta^{t}) greater than or equal to δ \delta and one of them greater then 1 2 \frac{1}{2} , which yields cos ⁡ ( β t ) ​ ( 1 − cos ⁡ ( β 0 ) ) ≥ δ 2 \cos(\beta^{t})(1-\cos(\beta^{0}))\geq\frac{\delta}{2} . Using it along with a choice of parameters in Theorem 1 (see transitions ( 42 ) to ( 46 )) we conclude
+‖ μ t + 1 ¯ − ∇ f ​ ( x t + 1 ) ¯ ‖ \displaystyle\|\overline{\mu^{t+1}}-\overline{\nabla f(x^{t+1})}\|
+≤ \displaystyle\leq
+‖ μ t ¯ − ∇ f ​ ( x t ) ¯ ‖ , \displaystyle\|\overline{\mu^{t}}-\overline{\nabla f(x^{t})}\|,
+(51)
+Which means that once the condition δ ≤ cos ⁡ ( β t ) ≤ 1 − δ \delta\leq\cos(\beta^{t})\leq 1-\delta holds β t ≥ β t + 1 \beta^{t}\geq\beta^{t+1} . Hence, 𝔼 ⁡ [ C t | ℱ t − 1 ] \mathbb{E}\left[C^{t}|\mathcal{F}^{t-1}\right] growth monotonically until cos ⁡ ( β t ) \cos(\beta^{t}) exceeds ( 1 − δ ) (1-\delta) . After that β t \beta^{t} can not exceed δ 0 := L ​ γ x t + arccos ⁡ ( 1 − δ ) \delta_{0}:=L\gamma_{x}^{t}+\arccos{(1-\delta)} , since the direction of the gradient changes less then 2 ​ arcsin ⁡ ( L ​ γ x t 2 ) 2\arcsin\left(\frac{L\gamma_{x}^{t}}{2}\right) per step, as was shown in the beginning of the Theorem 1 proof, and β t \beta^{t} can not increase further if δ ≤ cos ⁡ ( β t ) ≤ 1 − δ \delta\leq\cos(\beta^{t})\leq 1-\delta as shown above.
+Finally, we evaluate
+𝔼 ⁡ [ C t | ℱ t − 1 ] \displaystyle\mathbb{E}\left[C^{t}|\mathcal{F}^{t-1}\right]
+= \displaystyle=
+1 ( 2 ​ π ​ ε 2 ) d / 2 ​ ∫ ℝ d ⟨ ∇ f ​ ( x t ) ¯ , u ¯ ⟩ 2 ​ e − ‖ u − μ t ‖ 2 2 ​ ε 2 ​ 𝑑 u \displaystyle\frac{1}{(2\pi\varepsilon^{2})^{d/2}}\int_{\mathbb{R}^{d}}\left\langle\overline{\nabla f(x^{t})},\overline{u}\right\rangle^{2}e^{-\frac{\|u-\mu^{t}\|^{2}}{2\varepsilon^{2}}}\mathrm{d}u
+(52)
+= \displaystyle=
+1 ( 2 ​ π ​ ε 2 ) d / 2 ​ ∫ ℝ d ⟨ ∇ f ​ ( x t ) ¯ , s − μ t ¯ ⟩ 2 ​ e − ‖ s ‖ 2 2 ​ ε 2 ​ 𝑑 s \displaystyle\frac{1}{(2\pi\varepsilon^{2})^{d/2}}\int_{\mathbb{R}^{d}}\left\langle\overline{\nabla f(x^{t})},\overline{s-\mu^{t}}\right\rangle^{2}e^{-\frac{\|s\|^{2}}{2\varepsilon^{2}}}\mathrm{d}s
+= \displaystyle=
+1 ( 2 ​ π ) d / 2 ​ ∫ ℝ d ⟨ ∇ f ​ ( x t ) ¯ , ε ​ v − μ t ¯ ⟩ 2 ​ e − ‖ v ‖ 2 2 ​ 𝑑 v . \displaystyle\frac{1}{(2\pi)^{d/2}}\int_{\mathbb{R}^{d}}\left\langle\overline{\nabla f(x^{t})},\overline{\varepsilon v-\mu^{t}}\right\rangle^{2}e^{-\frac{\|v\|^{2}}{2}}\mathrm{d}v.
+We apply Laurent-Massart inequality [ Laurent and Massart, 2000 ] ( 37 ) with x = 1 x=1 to justify Pr ⁡ ( d − ‖ v ‖ 2 ≥ 2 ​ d ) ≤ e − 1 \Pr\left(d-\|v\|^{2}\geq 2\sqrt{d}\right)\leq e^{-1} . Then we can bound the integral in ( 52 ).
+1 ( 2 ​ π ) d / 2 ​ ∫ ℝ d ⟨ ∇ f ​ ( x t ) ¯ , ε ​ v − μ t ¯ ⟩ 2 ​ e − ‖ v ‖ 2 2 ​ 𝑑 u \displaystyle\frac{1}{(2\pi)^{d/2}}\int_{\mathbb{R}^{d}}\left\langle\overline{\nabla f(x^{t})},\overline{\varepsilon v-\mu^{t}}\right\rangle^{2}e^{-\frac{\|v\|^{2}}{2}}\mathrm{d}u
+≥ \displaystyle\geq
+1 ( 2 ​ π ) d / 2 ​ ∫ ‖ v ‖ 2 ≤ 2 ​ d ⟨ ∇ f ​ ( x t ) ¯ , ε ​ v − μ t ¯ ⟩ 2 ​ e − ‖ v ‖ 2 2 ​ 𝑑 u \displaystyle\frac{1}{(2\pi)^{d/2}}\int_{\|v\|^{2}\leq 2\sqrt{d}}\left\langle\overline{\nabla f(x^{t})},\overline{\varepsilon v-\mu^{t}}\right\rangle^{2}e^{-\frac{\|v\|^{2}}{2}}\mathrm{d}u
+(53)
+≥ \displaystyle\geq
+1 ( 2 ​ π ) d / 2 ​ ∫ ‖ v ‖ 2 ≤ 2 ​ d cos ⁡ ( δ 32 ​ d + L ​ γ x t + arccos ⁡ ( 1 − δ ) ) 2 ​ e − ‖ v ‖ 2 2 ​ 𝑑 u \displaystyle\frac{1}{(2\pi)^{d/2}}\int_{\|v\|^{2}\leq 2\sqrt{d}}\cos\left(\frac{\delta}{32d}+L\gamma_{x}^{t}+\arccos(1-\delta)\right)^{2}e^{-\frac{\|v\|^{2}}{2}}\mathrm{d}u
+≥ \displaystyle\geq
+cos ⁡ ( δ 32 ​ d + L ​ γ x t + arccos ⁡ ( 1 − δ ) ) 2 ​ ( 1 − e − 1 ) . \displaystyle\cos\left(\frac{\delta}{32d}+L\gamma_{x}^{t}+\arccos(1-\delta)\right)^{2}(1-e^{-1}).
+It concludes the proof.
+∎
+B.1 Initialization with no prior information
+Lemma 2 naturally leads to two complementary settings. The first is formalized in Lemma 5 and corresponds to initializing the policy without any prior knowledge of the target function f f .
+Lemma 5 .
+Let Assumptions 1 , 2 be satisfied and d ≥ 16 d\geq 16 . Then for iterations of Algorithm 3.3 with δ ≤ cos ⁡ ( β 0 ) ≤ 1 − δ \delta\leq\cos(\beta^{0})\leq 1-\delta , δ ∈ ( 0 , 1 2 ) \delta\in\left(0;\frac{1}{2}\right) and ε = d − 3 2 ​ δ ​ M 960 , γ x t = δ 2 3 ⋅ 2 14 ⋅ 5 2 ​ L , γ μ t = ‖ μ t ‖ 2 640 \varepsilon=\frac{d^{-\frac{3}{2}}\delta M}{960},\gamma_{x}^{t}=\frac{\delta^{2}}{3\cdot 2^{14}\cdot 5^{2}L},\gamma_{\mu}^{t}=\frac{\|\mu^{t}\|^{2}}{640} the following bound holds:
+∑ t = 0 T − 1 1 T ​ 𝔼 ​ [ B t ​ ‖ ∇ f ​ ( x t ) ‖ 2 ] ≤ 2 ​ f ⁡ ( x 0 ) − f ⁡ ( x ∗ ) T ​ γ x t , \displaystyle\sum_{t=0}^{T-1}\frac{1}{T}\mathbb{E}\left[B^{t}\|\nabla f(x^{t})\|^{2}\right]\leq 2\frac{f(x^{0})-f(x^{*})}{T\gamma_{x}^{t}},
+(54)
+where M = min t ⁡ { ‖ μ t ‖ } M=\min_{t}\{\|\mu^{t}\|\} and B t = min ⁡ { 𝔼 ⁡ [ C 0 ] + t ⋅ δ 2 3 ⋅ 2 12 ⋅ 5 2 ; cos ⁡ ( δ 32 ​ d + L ​ γ x t + arccos ⁡ ( 1 − δ ) ) 2 ​ ( 1 − e − 1 ) } B^{t}=\min\left\{\mathbb{E}[C^{0}]+t\cdot\frac{\delta^{2}}{3\cdot 2^{12}\cdot 5^{2}};\cos\left(\frac{\delta}{32d}+L\gamma_{x}^{t}+\arccos(1-\delta)\right)^{2}(1-e^{-1})\right\} .
+Proof.
+We start from the result of Lemma 1 . The choice of γ x t = δ 2 3 ⋅ 2 14 ⋅ 5 2 ​ L \gamma_{x}^{t}=\frac{\delta^{2}}{3\cdot 2^{14}\cdot 5^{2}L} guarantees
+γ x t − L ​ γ x t 2 2 ≥ γ x t 2 . \displaystyle\gamma_{x}^{t}-\frac{L{\gamma_{x}^{t}}^{2}}{2}\geq\frac{\gamma_{x}^{t}}{2}.
+(55)
+Subsequently, Theorem 1 and Lemma 2 justifies
+𝔼 ⁡ [ C t | ℱ t − 1 ] ≥ B t . \displaystyle\mathbb{E}\left[C^{t}|\mathcal{F}^{t-1}\right]\geq B^{t}.
+(56)
+Substitution ( 55 ), ( 56 ) into Lemma 1 and rearranging the terms finish the proof.
+∎
+Notably, in this setting, substituting 𝔼 [ C t | ℱ t − 1 ] \mathbb{E}\left[C^{t}\right|\mathcal{F}^{t-1}] behaviour described in Lemma 2 yields a non-standard convergence criterion, namely convergence in terms of a weighted average of squared gradient norms. The weights increase with the iteration index until reaching a saturation level. Such a result may be more transparent for practical scenarios such as memory-efficient LLM fine-tuning, where the algorithm outputs the final iterate rather than an averaged solution.
+We also note that Lemma 5 relies on a uniform-in-iteration lower bound of the form cos ⁡ ( β t ) > δ \cos(\beta^{t})>\delta , which results in a fixed step size γ x t \gamma_{x}^{t} and a constant additive increase of 𝔼 [ C t | ℱ t − 1 ] \mathbb{E}\left[C^{t}\right|\mathcal{F}^{t-1}] per iteration. However, as the policy improves, cos ⁡ ( β t ) \cos(\beta^{t}) increases, which simultaneously accelerates the growth of 𝔼 [ C t | ℱ t − 1 ] \mathbb{E}\left[C^{t}\right|\mathcal{F}^{t-1}] and allows for larger admissible step sizes γ x t \gamma_{x}^{t} . Consequently, the uniform bound becomes loose after a certain number of iterations and does not fully capture these acceleration effects in the theoretical rate. Along similar lines, bounds of the type used in the proof of Lemma 1 yield average values on the order of 1 d \frac{1}{d} both for δ 2 \delta^{2} (consequently for γ x t \gamma_{x}^{t} ) and 𝔼 ⁡ [ C 0 ] \mathbb{E}[C^{0}] .
+It introduces a factor d 2 d^{2} in the rate of Lemma 5 during the initial phase and results in growth of 𝔼 [ C t | ℱ t − 1 ] \mathbb{E}\left[C^{t}\right|\mathcal{F}^{t-1}] on the order of 1 d \frac{1}{d} per iteration.
+B.2 Initialization leveraging gradient direction at the initial point
+Lemma 3
+Let Assumptions 1 , 2 be satisfied, d ≥ 16 d\geq 16 , and μ 0 | ∇ f ​ ( x 0 ) \mu^{0}\penalty\ \|\penalty\ \nabla f(x^{0}) . Then for iterations of Algorithm 3.3 with δ ≤ cos ⁡ ( β 0 ) ≤ 1 − δ \delta\leq\cos(\beta^{0})\leq 1-\delta , δ ∈ ( 0 , 1 2 ) \delta\in\left(0;\frac{1}{2}\right) and ε = d − 3 2 ​ δ ​ M 960 , M = min t ⁡ { ‖ μ t ‖ } , γ x t = δ 2 3 ⋅ 2 14 ⋅ 5 2 ​ L , γ μ t = ‖ μ t ‖ 2 640 \varepsilon=\frac{d^{-\frac{3}{2}}\delta M}{960},M=\min_{t}\{\|\mu^{t}\|\},\gamma_{x}^{t}=\frac{\delta^{2}}{3\cdot 2^{14}\cdot 5^{2}L},\gamma_{\mu}^{t}=\frac{\|\mu^{t}\|^{2}}{640} the following bound holds:
+𝔼 ⁡ [ ‖ ∇ f ​ ( x ¯ T ) ‖ 2 ] \displaystyle\mathbb{E}[\|\nabla f(\overline{x}^{T})\|^{2}]
+≤ \displaystyle\leq
+10 ​ f ⁡ ( x 0 ) − f ⁡ ( x ∗ ) T ​ γ x . \displaystyle 10\frac{f(x^{0})-f(x^{*})}{T\gamma_{x}}.
+Proof.
+We start from noticing that ( 55 ) remains true. Additionally, given μ 0 | ∇ f ​ ( x 0 ) \mu^{0}\penalty\ \|\penalty\ \nabla f(x^{0}) in the setting of Lemma 2 Algorithm 3.3 is already in the regime where 𝔼 [ C t | ℱ t − 1 ] \mathbb{E}\left[C^{t}\right|\mathcal{F}^{t-1}] fluctuates in a neighbourhood of 1 1 and attains values no smaller than cos ⁡ ( δ 32 ​ d + L ​ γ x t + arccos ⁡ ( 1 − δ ) ) 2 ​ ( 1 − e − 1 ) \cos\left(\frac{\delta}{32d}+L\gamma_{x}^{t}+\arccos(1-\delta)\right)^{2}(1-e^{-1}) . We choose δ = 1 4 \delta=\frac{1}{4} which yields
+𝔼 [ C t | ℱ t − 1 ] ≥ 1 5 , for all t . \displaystyle\mathbb{E}\left[C^{t}\right|\mathcal{F}^{t-1}]\geq\frac{1}{5},\text{ for all }t.
+(57)
+Substituting ( 55 ) with ( 57 ) into the Lemma 1 and rearranging the terms we derive the desired result.
+∎
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

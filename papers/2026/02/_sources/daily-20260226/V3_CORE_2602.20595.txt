@@ -1,0 +1,2854 @@
+OptiLeak: Efficient Prompt Reconstruction via Reinforcement Learning in Multi-tenant LLM Services
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Works
+3
+Problem Formulation
+3.1
+Side Channel by Cache Sharing Mechanism
+3.2
+Threat Model
+3.3
+Attack Scenario
+4
+Methodology
+4.1
+Local Model Fine-Tuning
+Supervised Fine-Tuning.
+Direct Preference Optimization.
+Automated Annotation for DPO.
+4.2
+Order-based KV-cache Prompt Leakage Attack
+5
+Experiment
+5.1
+Experimental Setup
+Baselines & Benchmarks.
+Evaluation Metrics.
+5.2
+Main Results
+SFT Significantly Enhances Adversarial Capability and Serves as a Critical Component.
+Model Scale Does Not Guarantee Better Attack Performance.
+5.3
+Generalizability Across Distribution Shifts
+5.4
+Ablation Study on Different Training Epochs
+6
+Discussion
+OptiLeak
+’s Compatibility.
+OptiLeak
+’s Potential Mitigation Approaches.
+Deploying
+OptiLeak
+as a Cache-based Side Channel Risk Assessment Tool.
+7
+Conclusion
+References
+A
+Algorithm Procedure of
+OptiLeak
+B
+Detailed Baseline and Benchmark Description
+B.1
+Baseline Models
+B.2
+Benchmark Datasets
+MedQA
+(
+Jin et al., 2021
+)
+PubMedQA
+(
+Jin et al., 2019
+)
+FinanceBench
+(
+Islam et al., 2023
+)
+C
+Extended Related Works
+License: CC BY-NC-ND 4.0
+arXiv:2602.20595v1 [cs.CR] 24 Feb 2026
+OptiLeak
+: Efficient Prompt Reconstruction via Reinforcement Learning in Multi-tenant LLM Services
+Longxiang Wang
+Affiliation:
+City University of Hong Kong
+Xiang Zheng
+Affiliation:
+City University of Hong Kong
+Correspondence to:
+xiang.zheng@cityu.edu.hk
+Xuhao Zhang
+Affiliation:
+ByteDance Inc.
+Yao Zhang
+Affiliation:
+ByteDance Inc.
+Ye Wu
+Affiliation:
+ByteDance Inc.
+Cong Wang
+Affiliation:
+City University of Hong Kong
+Correspondence to:
+congwang@cityu.edu.hk
+Abstract
+Multi-tenant LLM serving frameworks widely adopt shared Key-Value caches to enhance efficiency. However, this creates side-channel vulnerabilities enabling prompt leakage attacks. Prior studies identified these attack surfaces yet focused on expanding attack vectors rather than optimizing attack performance, reporting impractically high attack costs that underestimate the true privacy risk.
+We propose
+OptiLeak
+, a reinforcement learning-enhanced framework that maximizes prompt reconstruction efficiency through two-stage fine-tuning.
+Our key insight is that domain-specific “hard tokens”—terms difficult to predict yet carrying sensitive information—can be automatically identified via likelihood ranking and used to construct preference pairs for Direct Preference Optimization, eliminating manual annotation.
+This enables effective preference alignment while avoiding the overfitting issues of extended supervised fine-tuning.
+Evaluated on three benchmarks spanning medical and financial domains,
+OptiLeak
+achieves up to
+12.48
+×
+12.48\times
+reduction in average requests per token compared to baseline approaches, with consistent improvements across model scales from 3B to 14B parameters.
+Our findings demonstrate that cache-based prompt leakage poses a more severe threat than previously reported, underscoring the need for robust cache isolation in production deployments.
+Keywords:
+Machine Learning, ICML
+1
+Introduction
+Large Language Models (LLMs) have been widely deployed across various domains, from Chatbots
+(
+OpenAI, 2025a
+;
+Claude, 2025
+)
+to GUI agents
+(
+Microsoft, 2025b
+)
+. To improve inference efficiency and reduce computational costs, modern LLM service frameworks (e.g., vLLM
+(
+Kwon et al., 2023
+)
+, SGLang
+(
+Zheng et al., 2023
+)
+) share Key-Value (KV) cache entries across user requests.
+Recently, both academia and industry have begun exploring persistent KV-cache storage to enhance cache reusability and reduce memory costs. For instance,
+(
+Lee et al., 2024
+;
+Sun et al., 2024
+)
+propose offloading KV-cache from GPU to CPU memory to alleviate expensive GPU memory usage. Similarly, vLLM integrates such KV-cache management approaches into its framework
+(
+vLLM, 2025
+)
+. As storage capacity becomes increasingly affordable and cache persistence more prevalent, it becomes urgent to understand and manage the privacy risks of cached queries.
+Prior research has shown that cache-sharing strategies in LLM services can introduce different types of side channels, such as Time to First Token (TTFT)
+(
+Zheng et al., 2024
+;
+Song et al., 2024
+)
+and ordering based on LLM scheduling policies
+(
+Wu et al., 2025
+)
+.
+These side channels enable adversaries to craft malicious requests for revealing matches with other users and recover sensitive user query information.
+However, these studies primarily focused on exploring the expanded attack surface within cache sharing mechanisms, overlooking the practical efficiency of side-channel exploitation.
+Prior works
+(
+Gu et al., 2025
+;
+Luo et al., 2025
+)
+indicate that extracting information typically requires an impractically large number of requests.
+This inefficiency stems from not fully accounting for a real-world adversary’s capability to optimize the attack strategy.
+Consequently, the true severity of these privacy risks remains underestimated.
+This gap hinders accurate assessment of leakage severity and the development of countermeasures.
+To fill this gap, we investigate how to maximize real adversary attack capabilities through model optimization in this paper.
+We consider a practical threat model where the adversary is assumed to have knowledge of the general domain of user queries.
+This information can be inferred through various means, such as application context, service endpoints, or metadata.
+This assumption about the adversary’s knowledge is realistic, especially given the increasing number of organizations that deploy private LLMs or utilize private LLM inference services from third-party cloud providers
+(
+JP-Morgan, 2024
+;
+Dataprocorp, 2025
+;
+Dennstädt et al., 2025
+)
+.
+Users of these domain-specific LLM services typically inquire about topics within specific domains, e.g., financial analysis, medical diagnosis, or legal research.
+Consequently, attackers can leverage public datasets from similar domains to finetune their local models, allowing for efficient side-channel attacks.
+Training in a domain-aware setting presents two main challenges. First, Supervised Fine-Tuning (SFT) tends to overfit and struggles to effectively learn domain-specific knowledge since specific-domain QA datasets are still dominated by general language, which makes it difficult for the model to grasp specialized terminology.
+Second, Reinforcement Learning (RL) algorithms, e.g., Proximal Policy Optimization (PPO)
+(
+Schulman et al., 2017
+)
+and Group Relative Policy Optimization (GRPO)
+(
+Shao et al., 2024
+)
+, face the complexity of reward engineering.
+Rewards based on semantic similarity can lead to overfitting on superficial patterns, while rewards that rely on exact token matching tend to provide insufficient feedback.
+To enable preference alignment for domain-specific knowledge while overcoming the challenging reward design, we propose
+OptiLeak
+, a two-stage fine-tuning framework with a novel automated annotation approach.
+In the first stage, we apply SFT on the base local model using domain-specific data to familiarize it with relevant knowledge in that specific field.
+In the second stage, we leverage this SFT-tuned model to automatically annotate the training data for DPO.
+This automatic annotation involves identifying what we refer to as “hard tokens”, which are domain-specific terms that are challenging to generate but contain crucial and sensitive domain information.
+In this way,
+OptiLeak
+eliminates the need for manual annotation and
+prioritizes the extraction of genuinely sensitive, domain-specific information, guided by feedback on the identified hard tokens.
+Through evaluation, we show that
+OptiLeak
+achieves significant performance improvements across three domain-specific datasets: MedQA
+(
+Jin et al., 2021
+)
+, PubMedQA
+(
+Jin et al., 2019
+)
+, and FinanceBench
+(
+Islam et al., 2023
+)
+.
+Compared to the baseline approach that uses base models as local LLMs for users’ prompt reconstruction
+(
+Wu et al., 2025
+)
+,
+OptiLeak
+achieves a 12.48
+×
+\times
+reduction in Average Requests Per Token (ARPT) on FinanceBench with Qwen2.5-3B-Instruct
+(
+Yang et al., 2024
+)
+as the backbone and also demonstrates substantial performance gains on MedQA and PubMedQA.
+Furthermore, we investigate the impact of data distribution similarity on attack efficiency. Finally, we present an ablation study analyzing the relationship between SFT overfitting and adversarial performance, further validating the effectiveness of
+OptiLeak
+.
+In summary, our contributions are as follows:
+•
+We formalize adversary optimization for cache-based prompt leakage attacks and demonstrate that optimized attackers pose significantly greater risk than previously reported, achieving up to
+12.48
+×
+12.48\times
+improvement in attack efficiency.
+•
+We propose
+OptiLeak
+, a two-stage framework combining SFT with DPO, featuring an automated annotation mechanism that identifies hard tokens for preference learning without manual labeling.
+•
+We conduct comprehensive evaluations on three benchmarks across two knowledge-intensive domains (medical and finance) to demonstrate
+OptiLeak
+’s effectiveness and provide quantitative analysis of performance improvements.
+•
+We provide extensive discussion of
+OptiLeak
+’s compatibility with other active side channels, and potential application as a proactive side channel risk assessment tool for LLM service providers.
+2
+Related Works
+Side Channel Attacks in LLM Services.
+Current side channel attacks in LLM services can be divided into two types: passive side channel attacks
+(
+Weiss et al., 2024
+;
+Zhang et al., 2024a
+;
+Wei et al., 2024
+)
+and active side channel attacks
+(
+Gao et al., 2025
+;
+Song et al., 2024
+;
+Wu et al., 2025
+;
+Zheng et al., 2024
+;
+Adiletta and Sunar, 2025
+;
+Luo et al., 2025
+;
+Zhang et al., 2024b
+)
+.
+While passive attacks focus on monitoring encrypted traffic or timing patterns (detailed in Appendix
+C
+), our work focuses on active side channel attacks.
+In an active side channel attack, the attacker actively interacts with or manipulates the victim LLM or its underlying system (e.g., hardware caches or serving mechanisms) during the user’s query process.
+For example,
+Adiletta and Sunar (2025)
+and
+Gao et al. (2025)
+demonstrate that attackers can infer user queries by monitoring hardware cache changes to determine the position of accessed embedding vectors.
+Zheng et al. (2024)
+leverages timing-based side channels by detecting whether queries hit the cache to determine if proposed dummy queries match users’ actual queries.
+Wu et al. (2025)
+demonstrates that serving ordering mechanisms (e.g., longest prefix matching) also reveal side channel information when proposed queries match with targeted ones.
+Our work distinguishes itself from previous works by employing RL to enhance cache-based active side channel attacks.
+Rather than expanding attack scenarios, we focus on optimizing the probing query generation process to explore the maximum capacities of real-world adversaries.
+RL-Based Red-Teaming for LLMs.
+RL-based red teaming has emerged as a prominent paradigm for discovering vulnerabilities of LLMs in security and privacy.
+A series of works
+(
+Paulus et al., 2024
+;
+Chen et al., 2024
+;
+Tang et al., 2024
+)
+leverage RL for enhancing jailbreaking techniques, enabling effective evasion of the victim LLM’s guardrail and alignment to generate malicious content.
+Similarly, RL is employed to prompt LLMs to produce harmful responses that incorporate toxic content, sensitive terminology, or factual errors
+(
+Perez et al., 2022
+;
+Casper et al., 2023
+;
+Zheng et al., 2025
+;
+Zhao et al., 2025
+)
+.
+Recently, RL is applied to privacy leakage attacks against LLMs.
+Nie et al. (2025)
+utilizes RL for system prompt extraction
+(
+Carlini et al., 2021
+;
+Li et al., 2022
+;
+Wang et al., 2023
+)
+and training data extraction attacks
+(
+Nasr et al., 2025
+)
+with word edit similarity as a reward function to elicit private information from the victim LLM.
+In contrast to previous research,
+OptiLeak
+target a distinct privacy attack scenario, leveraging RL to optimize adversarial strategies for recovering users’ real-time prompts through cache-sharing side channels.
+3
+Problem Formulation
+In this section, we describe the attacking surface of the LLM serving system (i.e., side channel by cache sharing), our threat model, and the detailed attack scenario.
+3.1
+Side Channel by Cache Sharing Mechanism
+Current multi-tenant LLM service frameworks (e.g., vLLM
+(
+Kwon et al., 2023
+)
+, SGLang
+(
+Zheng et al., 2023
+)
+, LightLLM
+(
+Nakandala et al., 2020
+)
+) are primarily based on decoder-only Transformer
+(
+Vaswani et al., 2017
+)
+architecture.
+During autoregressive inference where LLMs generate text token-by-token, the KV cache mechanism stores computed key and value vectors for previously processed tokens, eliminating redundant calculations in subsequent decoding steps.
+Due to the causal nature of the attention mask in LLMs, the key and value representations for a given token depend only on the preceding tokens in the sequence. This property enables KV cache sharing across different requests: when multiple users submit prompts with identical prefixes, the cached key-value pairs for these shared prefix tokens can be reused, significantly reducing both memory consumption and computational overhead
+(
+Kwon et al., 2023
+;
+Zheng et al., 2023
+)
+.
+The cache sharing architecture operates through a unified memory pool where requests from different tenants can access shared cached states. When a cache hit occurs, the system directly utilizes stored values, thereby reducing TTFT and overall response latency. However, while this optimization accelerates inference performance, it concurrently introduces security vulnerabilities. The shared nature of these caches creates an observable timing side-channel, as cache hits result in substantially faster response times compared to cache misses, potentially leaking information about other users’ inputs through timing analysis.
+3.2
+Threat Model
+In our threat model, the adversary’s goal is to reconstruct prompts sent by other victim clients through cache-based side channels. Following the assumptions established by
+Wu et al. (2025)
+and
+Zheng et al. (2024)
+, the adversary possesses capabilities equivalent to an ordinary LLM client, with only black-box access to the LLM server (i.e., the adversary has no privilege to access the model architecture or parameters). The LLM operates in streaming mode, delivering responses to users in real time.
+We assume the adversary can: (1) send queries (with a maximum limit for each victim query) to the LLM server, and correspondingly measure TTFT to detect cache hits; (2) access publicly available tokenizers, which are commonly provided by online LLM services such as
+OpenAI (2024)
+and open-source LLMs
+(
+Qwen, 2025
+)
+. The adversary cannot view internal server logs, modify server configurations, or access other users’ communication channels directly.
+We further assume the adversary has domain knowledge about victim clients’ queries (e.g., awareness that a user is a doctor who probably submits medical-related queries) but lacks knowledge on specific prompt templates or the exact query content used by the victim client
+(
+Wu et al., 2025
+;
+Soleimani et al., 2025
+)
+. This assumption is practical, as more and more data-sensitive institutions (e.g., Medical
+(
+Dennstädt et al., 2025
+)
+, Legal
+(
+Dataprocorp, 2025
+)
+, Financial
+(
+JP-Morgan, 2024
+)
+) choose to privately deploy LLMs or lease private LLM services from third-party cloud providers. For example, in a hospital’s LLM deployment, an adversary (such as a malicious staff member or a compromised account) can assume that most queries are medical-related, but still cannot access the specific content of other users’ sensitive patient information.
+Figure 1
+:
+Attack scenario overview
+3.3
+Attack Scenario
+Figure
+1
+illustrates our attack scenario in the context of cache-based prompt leakage attacks. Our system consists of two parties: victim clients and a cloud-based LLM inference server. The server concurrently receives queries from multiple users, with these requests being processed on shared GPU nodes.
+We assume that the victim’s and attacker’s queries are processed on a server node sharing the same KV cache pool. This is a realistic assumption, as many production deployments (e.g., Google
+(
+Cloud., 2025
+)
+, Microsoft
+(
+Feng et al., 2025
+)
+, ByteDance
+(
+Inc., 2025
+)
+) currently employ KV cache pooling to persist cached key-value pairs over extended periods. Compared to traditional physical GPU node allocation, the pooling architecture increases the likelihood that attackers and victims share the same KV cache node. Moreover, this assumption aligns with prior work on KV cache side-channel attacks
+(
+Wu et al., 2025
+;
+Zheng et al., 2024
+;
+Song et al., 2024
+)
+.
+At a high level, the attack process operates as follows: (1) The victim sends the target query to the LLM server, and the query’s tokens are stored in the KV-cache. (2) The adversary then sends multiple specifically-designed dummy queries to the LLM server, attempting to match prefixes of the target query. (3) The adversary observes each response’s TTFT to determine whether a cache hit occurs, which indicates whether the queried tokens match the targeted ones.
+OptiLeak
+operates iteratively, with each iteration recovering one token from the victim’s prompt. The adversary terminates when either the entire targeted prompt is reconstructed or the maximum number of attempts is reached.
+4
+Methodology
+We now introduce
+OptiLeak
+, an automated prompt leakage attack framework that leverages Supervised Fine-Tuning (SFT) and Direct Preference Optimization (DPO) to fine-tune an adversarial model for probe query generation. We first describe our RL-based approach for automatically optimizing adversary capabilities and then present the order-based KV-cache side channel attack.
+Figure
+2
+provides an overview of
+OptiLeak
+. The corresponding operational steps are detailed in Algorithm
+1
+within Appendix
+A
+.
+Figure 2
+:
+An overview of
+OptiLeak
+’s operation pipeline.
+4.1
+Local Model Fine-Tuning
+OptiLeak
+involves a two-stage approach for local model fine-tuning in
+OptiLeak
+, i.e., first SFT then DPO. We assume an auxiliary dataset for SFT based on the adversary’s domain knowledge, as mentioned in Section
+3.2
+. For DPO, we propose a novel automated annotation mechanism.
+Supervised Fine-Tuning.
+Given an auxiliary dataset
+𝒟
+aux
+=
+{
+(
+x
+,
+y
+)
+}
+\mathcal{D}_{\text{aux}}=\{(x,y)\}
+, where
+x
+x
+and
+y
+y
+are user query and LLM response separately, we first apply SFT to the base adversarial model
+π
+base
+\pi_{\text{base}}
+via maximizing the likelihood of the user query and the corresponding response:
+ℒ
+SFT
+​
+(
+θ
+)
+=
+∑
+s
+∈
+𝒟
+aux
+∑
+t
+=
+1
+|
+s
+|
+log
+⁡
+π
+θ
+​
+(
+s
+t
+|
+s
+<
+t
+)
+,
+\mathcal{L}_{\text{SFT}}(\theta)=\sum_{s\in\mathcal{D}_{\text{aux}}}\sum_{t=1}^{|s|}\log\pi_{\theta}(s_{t}|s_{<t}),
+(1)
+where
+s
+=
+[
+x
+,
+y
+]
+=
+[
+s
+<
+t
+,
+s
+t
+]
+s=[x,y]=[s_{<t},s_{t}]
+denotes the concatenated sequence of user query and LLM response,
+|
+s
+|
+|s|
+is the number of tokens in
+s
+s
+.
+Direct Preference Optimization.
+After SFT, we obtain
+π
+SFT
+\pi_{\text{SFT}}
+. Though extending training epochs of SFT is a traditional approach for performance improvement, we find in our experiment that increasing SFT training epochs leads to poor attack performance, primarily due to overfitting and mode collapse.
+As demonstrated in our ablation study (Figure
+3
+), extending SFT training causes the number of guessing attempts to increase to
+3.70
+×
+3.70\times
+compared with the baseline.
+To further improve the attacker’s capacity, we leverage DPO for better alignment of the adversarial model with the domain-specific dataset.
+Our key insight stems from the observation that there is a small subset of queries that are challenging to be predicted.
+This motivates us to develop an automated mechanism to identify these challenging queries for
+better preference alignment, thereby enhancing overall model capacity.
+Automated Annotation for DPO.
+The
+automated annotation
+approach we propose for DPO leverages token prediction difficulty (i.e., likelihood of each token) as a signal for constructing preference pairs.
+Our approach begins by identifying hard-to-recover tokens. Specifically, we use
+π
+SFT
+\pi_{\text{SFT}}
+to predict each token
+s
+t
+s_{t}
+in each sample
+s
+=
+[
+x
+,
+y
+]
+s=[x,y]
+of the auxiliary dataset
+𝒟
+aux
+\mathcal{D}_{\text{aux}}
+and rank the target token in the descending order based on its likelihood
+π
+SFT
+​
+(
+s
+t
+|
+s
+<
+t
+)
+\pi_{\text{SFT}}(s_{t}|s_{<t})
+.
+Intuitively, this ranking represents the recovery difficulty, where tokens with higher rankings indicate higher difficulty.
+Formally, we identify all preferred responses
+s
+win
+s^{\text{win}}
+via
+{
+s
+win
+=
+[
+s
+<
+t
+win
+,
+s
+t
+win
+]
+|
+[
+s
+<
+t
+,
+s
+t
+]
+​
+∀
+s
+∈
+𝒟
+aux
+​
+if
+​
+Rank
+​
+(
+s
+t
+)
+>
+γ
+}
+,
+\{s^{\text{win}}=[s^{\text{win}}_{<t},s^{\text{win}}_{t}]\,|\,[s_{<t},s_{t}]\,\forall s\in\mathcal{D}_{\text{aux}}\,\text{if}\,\mathrm{Rank}(s_{t})>\gamma\},
+(2)
+where
+Rank
+⁡
+(
+s
+t
+)
+\mathrm{Rank}(s_{t})
+is a function that returns the likelihood ranking of
+s
+t
+s_{t}
+among the likelihood set
+{
+π
+SFT
+​
+(
+v
+|
+s
+<
+t
+)
+|
+v
+∈
+𝒱
+}
+\{\pi_{\text{SFT}}(v|s_{<t})|v\in\mathcal{V}\}
+(
+𝒱
+\mathcal{V}
+is the vocabulary).
+Then, for each prefered resposne
+s
+win
+=
+[
+s
+<
+t
+win
+,
+s
+t
+win
+]
+s^{\text{win}}=[s^{\text{win}}_{<t},s^{\text{win}}_{t}]
+, we construct the corresponding dispreferred response
+s
+lose
+s^{\text{lose}}
+using
+π
+SFT
+\pi_{\text{SFT}}
+via greedy decoding at the position of the hard token
+s
+t
+s_{t}
+:
+s
+lose
+=
+[
+s
+<
+t
+lose
+,
+s
+t
+lose
+]
+=
+[
+s
+<
+t
+win
+,
+arg
+⁡
+max
+v
+∈
+𝒱
+​
+π
+SFT
+​
+(
+v
+|
+s
+<
+t
+win
+)
+]
+,
+s^{\text{lose}}=[s^{\text{lose}}_{<t},s^{\text{lose}}_{t}]=[s^{\text{win}}_{<t},\arg\max_{v\in\mathcal{V}}\pi_{\text{SFT}}(v|s^{\text{win}}_{<t})],
+(3)
+That is,
+s
+<
+t
+lose
+=
+s
+<
+t
+win
+s^{\text{lose}}_{<t}=s^{\text{win}}_{<t}
+and
+s
+t
+lose
+=
+arg
+⁡
+max
+v
+∈
+𝒱
+​
+π
+SFT
+​
+(
+v
+|
+s
+<
+t
+win
+)
+s^{\text{lose}}_{t}=\arg\max_{v\in\mathcal{V}}\pi_{\text{SFT}}(v|s^{\text{win}}_{<t})
+(the greedy decoding operator). Through this, we create pairs
+(
+s
+win
+,
+s
+lose
+)
+(s^{\text{win}},s^{\text{lose}})
+where each
+s
+win
+s^{\text{win}}
+contains a hard token
+s
+t
+win
+s^{\text{win}}_{t}
+, while the corresponding
+s
+lose
+s^{\text{lose}}
+contains a highly confident yet incorrect token at the same position.
+To clarify this, we provide an example in Figure
+2
+. Given a samlpe
+s
+s
+“Patient presents skin rash” in the dataset, we identify “skin” is a hard token since its likelihood ranking is the 478-th (exceeding our threshold) and thus form a preference pair: prefix “Patient presents” as
+s
+<
+2
+win
+s^{\text{win}}_{<2}
+, the preferred token “skin” as
+s
+2
+win
+s^{\text{win}}_{2}
+, and the dispreferred token
+s
+2
+lose
+s^{\text{lose}}_{2}
+sampled from SFT-tuned model.
+We then construct the preference dataset
+𝒟
+pref
+=
+{
+(
+s
+win
+,
+s
+lose
+)
+}
+\mathcal{D}_{\text{pref}}=\{(s^{\text{win}},s^{\text{lose}})\}
+and apply DPO
+(
+Rafailov et al., 2023
+)
+using
+𝒟
+pref
+\mathcal{D}_{\text{pref}}
+to improve
+π
+SFT
+\pi_{\text{SFT}}
+. The loss function for DPO is:
+ℒ
+DPO
+(
+θ
+)
+=
+−
+𝔼
+(
+s
+win
+,
+s
+lose
+)
+∼
+𝒟
+pref
+[
+log
+σ
+(
+β
+log
+π
+θ
+​
+(
+s
+t
+win
+|
+s
+<
+t
+win
+)
+π
+ref
+​
+(
+s
+t
+win
+|
+s
+<
+t
+win
+)
+−
+β
+log
+π
+θ
+​
+(
+s
+t
+lose
+|
+s
+<
+t
+lose
+)
+π
+ref
+​
+(
+s
+t
+lose
+|
+s
+<
+t
+lose
+)
+)
+]
+,
+{\small\begin{split}\mathcal{L}_{\text{DPO}}(\theta)=-\mathbb{E}_{(s^{\text{win}},s^{\text{lose}})\sim\mathcal{D}_{\text{pref}}}\biggl[\log\sigma\Bigl(\beta\log\frac{\pi_{\theta}(s^{\text{win}}_{t}|s^{\text{win}}_{<t})}{\pi_{\text{ref}}(s^{\text{win}}_{t}|s^{\text{win}}_{<t})}\\
+-\beta\log\frac{\pi_{\theta}(s^{\text{lose}}_{t}|s^{\text{lose}}_{<t})}{\pi_{\text{ref}}(s^{\text{lose}}_{t}|s^{\text{lose}}_{<t})}\Bigr)\biggr],\end{split}}
+(4)
+where
+π
+ref
+\pi_{\text{ref}}
+is the reference model in DPO that is initialized from
+π
+SFT
+\pi_{\text{SFT}}
+and remains fixed during training,
+β
+\beta
+is a hyperparameter that controls the strength of the KL regularization, and
+σ
+\sigma
+is the sigmoid function. This approach maximizes the likelihood of each preferred response
+s
+win
+s^{\text{win}}
+relative to its corresponding dispreferred responses
+s
+lose
+s^{\text{lose}}
+while maintaining the model’s overall capabilities through KL regularization with respect to
+π
+ref
+\pi_{\text{ref}}
+.
+4.2
+Order-based KV-cache Prompt Leakage Attack
+Let the victim user’s targeted query we want to recover be
+s
+victim
+s^{\text{victim}}
+, which contains
+n
+n
+tokens.
+To launch a specific prompt leakage attack, we leverage the Longest Prefix Match (LPM) scheduling policy utilized by SGLang
+(
+Zheng et al., 2023
+)
+, one of the most prominent LLM inference frameworks. This policy ensures that when the request queue contains multiple queries, waiting requests are prioritized based on the length of their matched prefix tokens.
+To guess a token
+s
+t
+victim
+s^{\text{victim}}_{t}
+, we send a batch of queries
+Q
+=
+{
+q
+~
+1
+,
+…
+,
+q
+~
+k
+}
+Q=\{\tilde{q}^{1},...,\tilde{q}^{k}\}
+to the LLM server, where
+k
+=
+2
+​
+m
++
+|
+Q
+gen
+|
+k=2m+|Q_{\text{gen}}|
+represents the total number of queries.
+The batch contains
+Q
+gen
+Q_{\text{gen}}
+candidate queries (our generated guesses for position
+i
+i
+) placed between two groups of
+m
+m
+dummy queries each. Each dummy query shares the same low-probability token obtained from local LLM predictions.
+All generated queries share the same prefix
+q
+<
+t
+q_{<t}
+and differ only in the last token
+q
+t
+q_{t}
+. After sending the entire batch, we observe the response order with TTFT to determine if a cache hit occurs.
+Specifically, if a cache hit occurs, the query containing the correct token match will be prioritized due to LPM scheduling, causing a gap between consecutive real queries in the response sequence. To detect cache hit
+𝖣
+𝗁𝗂𝗍
+\mathsf{D_{hit}}
+, we use:
+𝖣
+𝗁𝗂𝗍
+=
+{
+1
+,
+∃
+q
+~
+i
+∈
+Q
+gen
+​
+s.t.
+​
+[
+min
+q
+~
+∈
+Q
+gen
+∖
+{
+q
+~
+i
+}
+⁡
+pos
+​
+(
+q
+~
+)
+]
+−
+pos
+​
+(
+q
+~
+i
+)
+>
+⌈
+θ
+⋅
+m
+⌉
+0
+,
+otherwise
+,
+{\small\mathsf{D_{hit}}=\begin{cases}1,&\exists\tilde{q}^{i}\in Q_{\text{gen}}\ \text{s.t.}\ \begin{aligned} &\left[\min_{\tilde{q}\in Q_{\text{gen}}\setminus\{\tilde{q}^{i}\}}\text{pos}(\tilde{q})\right]\\
+&-\text{pos}(\tilde{q}^{i})>\lceil\theta\cdot m\rceil\end{aligned}\\
+0,&\text{otherwise},\end{cases}}
+(5)
+where
+pos
+​
+(
+q
+~
+)
+\text{pos}(\tilde{q})
+is the response position of query
+q
+~
+\tilde{q}
+,
+θ
+∈
+(
+0
+,
+1
+)
+\theta\in(0,1)
+is a parameter to adjust the sensitivity of cache hit detection. When
+𝖣
+𝗁𝗂𝗍
+=
+1
+\mathsf{D_{hit}}=1
+, we identify
+q
+~
+i
+\tilde{q}^{i}
+contains the correct token.
+5
+Experiment
+5.1
+Experimental Setup
+We implement and evaluate
+OptiLeak
+on a Linux-based operating system, and more detailed experiment settings are described below. For our implementation, we leverage SGLang
+(
+Zheng et al., 2023
+)
+as the LLM serving and inference framework.
+Baselines & Benchmarks.
+We conduct evaluation using four LLMs from two series: Qwen-2.5 (3B, 7B, 14B)
+(
+Yang et al., 2024
+)
+and Llama-3.1-8B
+(
+Llama, 2024
+)
+. We use three real-world domain-specific datasets in the evaluation: MedQA
+(
+Jin et al., 2021
+)
+, PubMedQA
+(
+Jin et al., 2019
+)
+, and FinanceBench
+(
+Islam et al., 2023
+)
+. Detailed descriptions of the baselines and benchmarks are provided in Appendix
+B
+.
+Table 1
+:
+Main experimental results on MedQA, FinanceBench, and PubMedQA datasets. DPO results are obtained by directly training the base model using
+OptiLeak
+’s auto-annotation approach. The best-performing results in the table are highlighted for clarity.
+Model
+Method
+MedQA
+FinanceBench
+PubMedQA
+ASR
+500
+ASR
+1000
+ASR
+10000
+w/l
+ARPT
+ASR
+500
+ASR
+1000
+ASR
+10000
+w/l
+ARPT
+ASR
+500
+ASR
+1000
+ASR
+10000
+w/l
+ARPT
+Qwen-2.5-3B-Instruct
+Base
+18.0%
+37.3%
+95.3%
+-
+41.99
+2.0%
+2.0%
+54.0%
+-
+240.81
+0.0%
+3.0%
+68.0%
+-
+628.50
+SFT
+27.3%
+53.3%
+98.0%
+80.0%
+26.37
+88.0%
+90.0%
+100.0%
+100.0%
+20.81
+12.0%
+28.0%
+94.0%
+91.0%
+220.85
+DPO
+18.0%
+38.0%
+95.3%
+48.7%
+41.86
+2.0%
+2.0%
+56.0%
+68.0%
+238.81
+1.0%
+5.0%
+71.0%
+63.0%
+571.51
+OptiLeak
+29.3%
+55.3%
+98.6%
+84.0%
+21.60
+88.0%
+90.0%
+100.0%
+100.0%
+19.29
+11.0%
+31.0%
+94.0%
+91.0%
+208.72
+Qwen-2.5-7B-Instruct
+Base
+18.0%
+36.0%
+94.0%
+-
+54.50
+6.0%
+6.0%
+66.0%
+-
+259.65
+0.0%
+1.0%
+49.0%
+-
+943.05
+SFT
+24.0%
+49.3%
+94.7%
+79.3%
+44.50
+76.0%
+82.0%
+96.0%
+94.0%
+69.63
+9.0%
+21.0%
+86.0%
+91.0%
+291.28
+DPO
+17.3%
+37.3%
+94.7%
+55.3%
+52.67
+6.0%
+6.0%
+72.0%
+84.0%
+246.38
+0.0%
+1.0%
+49.0%
+70.0%
+901.09
+OptiLeak
+22.7%
+48.0%
+96.0%
+81.3%
+40.49
+86.0%
+92.0%
+96.0%
+96.0%
+66.87
+6.0%
+22.0%
+88.0%
+91.0%
+274.91
+Qwen-2.5-14B-Instruct
+Base
+23.3%
+45.3%
+94.7%
+-
+44.35
+4.0%
+4.0%
+64.0%
+-
+214.19
+0.0%
+0.0%
+58.0%
+-
+796.08
+SFT
+31.3%
+56.6%
+96.0%
+78.6%
+33.69
+78.0%
+88.0%
+98.0%
+96.0%
+39.49
+4.0%
+24.0%
+81.0%
+88.0%
+374.85
+DPO
+24.0%
+46.0%
+94.7%
+68.0%
+43.83
+4.0%
+4.0%
+64.0%
+62.0%
+213.46
+0.0%
+0.0%
+59.0%
+40.0%
+753.28
+OptiLeak
+30.7%
+60.0%
+97.3%
+82.0%
+30.60
+84.0%
+88.0%
+98.0%
+98.0%
+36.31
+12.0%
+30.0%
+89.0%
+88.0%
+304.76
+Llama-3.1-8B-Instruct
+Base
+5.3%
+27.3%
+92.0 %
+-
+60.00
+0.0%
+0.0%
+60.0%
+-
+286.52
+0.0%
+0.0%
+57.0%
+-
+801.71
+SFT
+8.7%
+43.3%
+98.0%
+74.0%
+30.43
+62.0%
+86.0%
+98.0%
+98.0%
+37.91
+13.0%
+33.0%
+93.0%
+94.0%
+254.86
+DPO
+8.0%
+28.7%
+92.7%
+74.0%
+54.86
+0.0%
+2.0%
+66.0%
+88.0%
+248.69
+0.0%
+0.0%
+60.0%
+84.0%
+666.01
+OptiLeak
+12.6%
+48.7%
+98.7%
+79.3%
+28.31
+64.0%
+86.0%
+100.0%
+98.0%
+33.89
+14.0%
+33.0%
+93.0%
+94.0%
+241.48
+Evaluation Metrics.
+In the evaluation, we specifically employ three metrics:
+•
+Attack Success Rate
+(ASR) measures the success rate of prompt leakage attacks. To more precisely represent the adversary’s capacity and account for the characteristics of real-world KV-cache systems, we adopt different maximum request limits.
+For instance, ASR
+10000
+denotes a limit of 1000 request attempts.
+•
+Average Requests Per Token
+(ARPT) tracks the average number of effective requests required to recover a single token. This metric provides an overall assessment of the impact of model optimization methods at the token level.
+•
+Request Number Win/Lose Rate
+(w/l) measures the proportion of queries where the optimized model requires fewer requests compared to the base model.
+(a)
+MedQA, SFT
+(b)
+FinanceBench, SFT
+(c)
+MedQA, DPO
+(d)
+FinanceBench, DPO
+Figure 3
+:
+Ablation Study Results. The left figures show ARPT changes during SFT training, while the right figures show DPO training results based on SFT-tuned models (MedQA: SFT training step 500, FinanceBench: SFT training step 100).
+5.2
+Main Results
+In our main experiments, we compare
+OptiLeak
+with the base LLM prediction approach
+(
+Wu et al., 2025
+)
+and SFT/DPO models on both benchmarks.
+We use “Help me to guess the input:” as the consistent prompt prefix for all prompt leakage methods.
+The prefix serves two purposes: instructing the LLM to perform the query reconstruction task and bootstrapping the auto-regressive generation process. We set both
+m
+m
+and
+Q
+gen
+Q_{\text{gen}}
+to 20, aligning with the configuration used in the baseline
+(
+Wu et al., 2025
+)
+. To ensure a fair comparison, Qwen-2.5-3B-Instruct was employed as the server model across all experiments.”
+Table
+1
+presents the main results. Overall,
+OptiLeak
+substantially enhances the local LLM’s performance for prompt leakage attacks across all evaluated models and benchmarks, demonstrating consistent performance improvements as a prompt leakage adversary.
+Furthermore, the experimental results reveal several important findings:
+SFT Significantly Enhances Adversarial Capability and Serves as a Critical Component.
+Our results demonstrate that SFT consistently improves the adversary’s capacity to launch prompt leakage attacks.
+Compared to base LLMs, models enhanced with SFT show a 16.0% ASR
+1000
+improvement on MedQA when using Qwen-2.5-3B-Instruct, along with a 37.2% ARPT reduction. The improvements are more significant in FinanceBench, where the domain-specific language patterns are more consistent.
+The explanation for this is that SFT enables the model to learn the general patterns and linguistic characteristics of specific domains, thereby developing a better understanding of how prompts are typically structured within those specific domains.
+Additionally, the comparison between DPO and the
+OptiLeak
+demonstrates the necessity of the SFT process. With only DPO applied, the adversary’s attack performance remains limited; while it can achieve an effective win/loss rate over 50.0%, there is no significant improvement in the ARPT. This lack of progress occurs because DPO alone does not enhance the adversary’s ability to predict “hard tokens,” which consume substantial request numbers, indicating that DPO struggles to yield significant improvements for side-channel attacks.
+However, when DPO is applied after SFT, it can substantially enhance the SFT model.
+Specifically, on the MedQA benchmark,
+OptiLeak
+reduces the ARPT from 26.37 to 21.60, representing a relative reduction of 18.1% compared to the SFT baseline. Similar relative reductions of approximately 10% are observed across other settings.
+This consistent improvement is particularly significant because, as the ARPT decreases, achieving further reductions while maintaining model stability becomes increasingly challenging.
+OptiLeak
+achieves the lowest ARPT across all settings and benchmarks, validating the effectiveness of the SFT-then-DPO approach.
+Model Scale Does Not Guarantee Better Attack Performance.
+Contrary to conventional expectations, our experiments illustrate that larger models do not consistently outperform their smaller versions in prompt leakage tasks.
+In both datasets’ evaluations, small models achieved comparable or even superior attack success rates compared to large ones. Notably, Qwen-2.5-3B-Instruct consistently achieved the lowest ARPT and the highest ASR across both benchmarks, despite not having the best base capabilities among the tested models.
+This phenomenon can be attributed to the characteristic of prompt leakage tasks, where targeted optimization and fine-tuning alignment are more critical than model size. Consequently, well-trained smaller models may outperform large-scale models that lack specialized optimization for adversarial objectives.
+These findings suggest that researchers should prioritize model architecture and training strategies over model scale when developing prompt leakage attacks.
+5.3
+Generalizability Across Distribution Shifts
+OptiLeak
+operates under the assumption that the attacker possesses prior knowledge about the domain of queries the victim is likely to propose. However, it is challenging to define the level of prior knowledge an attacker possess. To evaluate the robustness of our approach under varying degrees of adversarial knowledge, we conduct experiments across distinct data distribution scenarios. Specifically, we simulate four levels of attacker knowledge: (1) No prior knowledge; (2) High-level intra-domain knowledge, where the adversary identifies the general domain (e.g., Medical) but utilizes a dataset with a different distribution (e.g., training on PubMedQA
+(
+Jin et al., 2019
+)
+while the victim uses MedQA
+(
+Jin et al., 2021
+)
+); (3) Precise intra-domain knowledge, where the adversary possesses data exhibiting a distribution highly similar to the victim’s; and (4) Misaligned knowledge, where the adversary anticipates a disparate domain (e.g., expecting Finance queries while the user submits Medical queries). All experiments utilize Qwen-2.5-3B-Instruct to ensure a fair comparison.
+Table
+2
+details the performance across these settings. In the scenario representing a related but distinct distribution, transforming the training set from MedQA to PubMedQA while testing on MedQA,
+OptiLeak
+demonstrates significant robustness. Compared to the backbone baseline, our method reduces the ARPT from 41.99 to 30.27, achieving a 27.9% reduction. This indicates that
+OptiLeak
+maintains its effectiveness when the adversary utilizes a dataset from a similar domain that exhibits a distributional shift. In contrast, when the adversary utilizes a completely unrelated benchmark (e.g., training on FinanceBench and testing on PubMedQA), the ARPT improves by 53.8%. This phenomenon occurs because a model fine-tuned on a specific domain tends to generate queries or tokens intrinsic to that domain. Consequently, when the adversary relies on a different domain for training, the resulting domain mismatch leads to a significant deviation in the LLM’s outputs, thereby undermining the attack’s effectiveness.
+5.4
+Ablation Study on Different Training Epochs
+We conduct an ablation study on training parameters across both benchmarks, with results illustrated in Figure
+3
+.
+The left two figures display the changes in ARPT during the SFT stage. The results reveal that all models initially experience a reduction in ARPT during the early training steps, followed by a gradual increase over time. Notably, the dataset MedQA appears to be more susceptible to severe overfitting as training steps increase, with the ARPT rising to 3.70
+×
+\times
+that of the base model after 3000 training steps.
+In contrast, the DPO training stage depicted in the right two figures shows more stable optimization patterns. Due to its characteristic of fine-tuning only on “hard tokens,” it maintains a relatively stable ARPT throughout the entire fine-tuning process. Moreover, we observe that the optimal checkpoints for the SFT and DPO stages can vary depending on the model size, emphasizing the need for adjustments based on validation set results.
+In summary, the ablation study validates the effectiveness of both SFT and DPO approaches and highlights the importance of selecting an appropriate training parameter to maximize adversarial attack performance.
+Table 2
+:
+Attack performance with different levels of prior knowledge. “Benchmark” indicates the target testing dataset, “Prior Knowledge” indicates the dataset used for training.
+Benchmark
+Prior Knowledge
+ARPT (
+↓
+\downarrow
+)
+MedQA
+Base
+41.99
+FinanceBench
+51.90 (23.6 %
+↑
+\uparrow
+)
+PubMedQA
+30.27 (27.9%
+↓
+\downarrow
+)
+MedQA
+21.60 (48.6 %
+↓
+\downarrow
+)
+PubMedQA
+Base
+628.50
+FinanceBench
+966.59 (53.8 %
+↑
+\uparrow
+)
+MedQA
+484.42 (22.9%
+↓
+\downarrow
+)
+PubMedQA
+208.72 (66.8%
+↓
+\downarrow
+)
+6
+Discussion
+In this section, we discuss
+OptiLeak
+’s compatibility with other attack vectors, potential mitigation approaches to
+OptiLeak
+, and how
+OptiLeak
+can be repurposed as a proactive defense mechanism.
+OptiLeak
+’s Compatibility.
+We demonstrate
+OptiLeak
+’s end-to-end prompt leakage attack pipeline with an order-based KV-cache side channel under the Longest Prefix Match (LPM) scheduling policy, yet
+OptiLeak
+is theoretically compatible with diverse scheduling mechanisms and inference engines.
+Specifically, since the query generation process is decoupled from the side-channel feedback,
+OptiLeak
+can be adapted to other environments by replacing the LPM-based token validator with a verifier tailored to the target mechanism.
+Regarding scheduling policies, beyond LPM,
+OptiLeak
+remains effective in First-Come-First-Served (FCFS) or priority-based scenarios by leveraging timing-based side channels (i.e., measuring Time-To-First-Token) to detect reuse
+(
+Zheng et al., 2024
+;
+Song et al., 2024
+)
+. Regarding inference engines, our approach extends to generic frameworks like vLLM, which supports token-level KV cache matching and is consequently susceptible to these timing-based side channels. Moreover,
+OptiLeak
+applies to semantic cache scenarios widely adopted by frameworks such as GPTCache
+(
+GPTCache, 2025
+)
+and industrial providers (e.g., AWS
+(
+AWS, 2025
+)
+, Microsoft
+(
+Microsoft, 2025a
+)
+). We consider designing effective and specialized validators for these alternative platforms a critical direction for future work, as it would further enhance the understanding of practical cache-based side-channel attacks.
+OptiLeak
+’s Potential Mitigation Approaches.
+While
+OptiLeak
+proposes a practical prompt leakage attack framework, we acknowledge that several approaches already exist to mitigate KV-cache-induced prompt leakage.
+First, multiple industrial applications
+(
+OpenAI, 2025b
+;
+DeepSeek, 2024
+)
+employ user-level cache isolation. This approach theoretically eliminates cache sharing between multi-tenant users entirely, effectively preventing side-channel attacks. Recently,
+Chu et al. (2025)
+proposed a selective KV-cache sharing mechanism to mitigate KV cache side-channel attacks through a more fine-grained permission management of cache sharing. However, it compromises the efficiency benefits of multi-tenant cache sharing.
+However, this approach directly prevents KV-cache sharing among multiple users. Under the specific domain service scenario defined by our threat model, where users’ queries are highly correlated, isolating the KV-cache would significantly reduce the cache hit ratio, mitigating the design purpose of KV-cache.
+Besides the isolating-based approach, since
+OptiLeak
+relies on response ordering changes caused by cache hits and employs a token-by-token attack strategy, adding timing noise to each response in the LLM service can disrupt response ordering and mitigate cache-based attacks
+(
+Zheng et al., 2024
+)
+. However, this approach still requires balancing security-efficiency trade-offs, as excessive noise diminishes the efficiency advantages of cache sharing mechanisms.
+Deploying
+OptiLeak
+as a Cache-based Side Channel Risk Assessment Tool.
+As discussed in this paper,
+OptiLeak
+provides a practical prompt leakage attack framework. Beyond its adversarial capabilities,
+OptiLeak
+can naturally serve as a direct KV cache risk assessment system by deploying a simulated attacker to evaluate each newly updated KV cache entry. The system performs attack simulations on queries to determine the minimum number of response queries required for potential query leakage, and correspondingly evicts the relevant KV cache entries before reaching this threshold.
+Compared to other KV cache side channel mitigation approaches, which typically require efficiency and security trade-offs,
+OptiLeak
+offers significant advantages.
+OptiLeak
+can be deployed as a plugin without affecting the primary model’s inference service. The computational overhead is negligible, as our experiments in Section
+5.2
+demonstrate that attack simulation can be effectively performed using lightweight models (e.g., 3B parameters), while the main service runs on much larger models, making the additional inference requirements computationally insignificant. Furthermore, the attack simulation operates without updating the main KV-cache storage, ensuring no interference with the primary inference pipeline.
+Additionally, as demonstrated in Section
+5.3
+, the efficacy of
+OptiLeak
+is heavily dependent on the distributional similarity between the target queries and the auxiliary knowledge.
+Service providers usually possess the most comprehensive prior knowledge about genuine user queries, theoretically enabling them to train more effective attacker simulators than real adversaries.
+OptiLeak
+can thus identify high-risk cache entries before real adversaries can extract them, thereby preventing actual prompt leakage.
+7
+Conclusion
+In this paper, we proposed
+OptiLeak
+, a scalable and automated prompt leakage attack framework that utilizes SFT and auto-annotation DPO to enhance the adversary’s capacity for inferring users’ queries.
+OptiLeak
+employed SFT as a cold-start process and leveraged the token-level guess accuracy from prompt leakage attacks as an implicit reward signal for automated DPO training.
+We evaluated
+OptiLeak
+’s effectiveness across three different model sizes on domain-specific datasets from medical and financial sectors. Experiments demonstrated that
+OptiLeak
+significantly improved performance across all settings on both datasets, with attack efficiency improved by a maximum of 12.48
+×
+\times
+in terms of average requests required per token. Furthermore, we provided a comprehensive discussion of
+OptiLeak
+’s compatibility and scalability, along with its potential application as a risk assessment tool in real-world LLM serving systems.
+Impact Statement
+This work advances the security and robustness of multi-tenant Large Language Model (LLM) services through systematic analysis of cache-based side-channel attacks. We introduce
+OptiLeak
+, a framework that models advanced adversarial capabilities to quantify prompt leakage vulnerabilities, enabling the development of more effective defensive mechanisms.
+The primary ethical consideration of this research stems from the proposed prompt leakage attack framework. While demonstrating more efficient attack vectors carries some risk, we believe comprehensive understanding of threats is essential for constructing secure systems.
+Furthermore, our work provides a comprehensive discussion on practical mitigation strategies, including:
+•
+OptiLeak
+Framework as Proactive Defense: Repurposing our attack framework for continuous security assessment and secure architecture design
+•
+User-level Cache Isolation: Preventing cross-tenant cache sharing entirely
+•
+Selective KV-cache Sharing: Enabling fine-grained permission management of cache resources
+In summary, this research improves the understanding of prompt leakage vulnerabilities. This work constitutes a constructive contribution to the AI privacy community, delivering practical tools to strengthen secure multi-tenant LLM deployments and foster greater trust in AI systems handling sensitive information.
+References
+Adiletta and Sunar (2025)
+A. J. Adiletta and B. Sunar
+Spill the beans: exploiting CPU cache side-channels to leak tokens from large language models
+.
+arXiv preprint
+.
+Cited by:
+§2
+,
+§2
+.
+AWS (2025)
+AWS
+AWS semantic cache guidebook.
+.
+Note:
+https://aws.amazon.com/blogs/machine-learning/build-a-read-through-semantic-cache\-with-amazon-opensearch-serverless-\and-amazon-bedrock/
+Cited by:
+§6
+.
+Carlini
+et al.
+(2021)
+N. Carlini, F. Tramèr, E. Wallace, M. Jagielski, A. Herbert-Voss, K. Lee, A. Roberts, T. B. Brown, D. Song, Ú. Erlingsson, A. Oprea, and C. Raffel
+Extracting training data from large language models
+.
+In
+Proc. of USENIX Security
+,
+Cited by:
+§2
+.
+Casper
+et al.
+(2023)
+S. Casper, J. Lin, J. Kwon, G. Culp, and D. Hadfield-Menell
+Explore, establish, exploit: red teaming language models from scratch
+.
+arXiv preprint
+.
+Cited by:
+§2
+.
+Chen
+et al.
+(2024)
+X. Chen, Y. Nie, L. Yan, Y. Mao, W. Guo, and X. Zhang
+RL-JACK: reinforcement learning-powered black-box jailbreaking attack against llms
+.
+arXiv preprint
+.
+Cited by:
+§2
+.
+Chu
+et al.
+(2025)
+K. Chu, Z. Lin, D. Xiang, Z. Shen, J. Su, C. Chu, Y. Yang, W. Zhang, W. Wu, and W. Zhang
+Selective kv-cache sharing to mitigate timing side-channels in LLM inference
+.
+arXiv preprint
+.
+Cited by:
+§6
+.
+Claude (2025)
+Claude
+Claude chatbot.
+.
+Note:
+https://claude.ai/chats
+Cited by:
+§1
+.
+Cloud. (2025)
+G. Cloud.
+Boosting llm performance with tiered kv cache on google kubernetes engine.
+.
+Note:
+https://cloud.google.com/blog/topics/developers-practitioners/boosting-llm-performance-with-tiered\-kv-cache-on-google-\/kubernetes-engine
+Cited by:
+§3.3
+.
+Dataprocorp (2025)
+Dataprocorp
+Private llm for law offices.
+.
+Note:
+https://dataprocorp.tech/building-a-private-llm-for\-law-offices/
+Cited by:
+§1
+,
+§3.2
+.
+DeepSeek (2024)
+DeepSeek
+DeepSeek guidebook for context sharing.
+.
+Note:
+https://api-docs.deepseek.com/news/news0802
+Cited by:
+§6
+.
+Dennstädt
+et al.
+(2025)
+F. Dennstädt, J. Hastings, P. M. Putora, M. Schmerder, and N. Cihoric
+Implementing large language models in healthcare while balancing control, collaboration, costs and security
+.
+NPJ digital medicine
+8
+(
+1
+),
+pp. 143
+.
+Cited by:
+§1
+,
+§3.2
+.
+Feng
+et al.
+(2025)
+S. Feng, H. Li, K. Du, Z. Gu, Y. Liu, J. Yao, S. Ray, S. Shen, Y. Cheng, G. Ananthanarayanan, and J. Jiang
+AdaptCache: KV cache native storage hierarchy for low-delay and high-quality language model serving
+.
+arXiv preprint
+.
+Cited by:
+§3.3
+.
+Gao
+et al.
+(2025)
+Z. Gao, J. Hu, F. Guo, Y. Zhang, Y. Han, S. Liu, H. Li, and Z. Lv
+I know what you said: unveiling hardware cache side-channels in local large language model inference
+.
+arXiv preprint
+.
+Cited by:
+§2
+,
+§2
+.
+GPTCache (2025)
+GPTCache
+GPTCache: a repository for llm semantic cache.
+.
+Note:
+https://github.com/zilliztech/gptcache
+Cited by:
+§6
+.
+Gu
+et al.
+(2025)
+C. Gu, X. L. Li, R. Kuditipudi, P. Liang, and T. Hashimoto
+Auditing prompt caching in language model apis
+.
+arXiv preprint
+.
+Cited by:
+§1
+.
+Inc. (2025)
+B. Inc.
+InfiniStore open-source repository.
+.
+Note:
+https://github.com/bytedance/InfiniStore.
+Cited by:
+§3.3
+.
+Islam
+et al.
+(2023)
+P. Islam, A. Kannappan, D. Kiela, R. Qian, N. Scherrer, and B. Vidgen
+FinanceBench: A new benchmark for financial question answering
+.
+arXiv preprint
+.
+Cited by:
+§B.2
+,
+§1
+,
+§5.1
+.
+Jin
+et al.
+(2021)
+D. Jin, E. Pan, N. Oufattole, W. Weng, H. Fang, and P. Szolovits
+What disease does this patient have? a large-scale open domain question answering dataset from medical exams
+.
+Applied Sciences
+11
+(
+14
+),
+pp. 6421
+.
+Cited by:
+§B.2
+,
+§1
+,
+§5.1
+,
+§5.3
+.
+Jin
+et al.
+(2019)
+Q. Jin, B. Dhingra, Z. Liu, W. W. Cohen, and X. Lu
+PubMedQA: A dataset for biomedical research question answering
+.
+In
+Proc. of EMNLP
+,
+K. Inui, J. Jiang, V. Ng, and X. Wan (Eds.)
+,
+Cited by:
+§B.2
+,
+§1
+,
+§5.1
+,
+§5.3
+.
+JP-Morgan (2024)
+JP-Morgan
+Private llm for jp morgan.
+.
+Note:
+https://www.ciodive.com/news/JPMorgan-Chase-LLM-Suite-generative-ai\-employee-tool/726772/
+Cited by:
+§1
+,
+§3.2
+.
+Kwon
+et al.
+(2023)
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. E. Gonzalez, H. Zhang, and I. Stoica
+Efficient memory management for large language model serving with pagedattention
+.
+In
+Proc. of SOSP
+,
+Cited by:
+§1
+,
+§3.1
+.
+Lee
+et al.
+(2024)
+W. Lee, J. Lee, J. Seo, and J. Sim
+InfiniGen: efficient generative inference of large language models with dynamic KV cache management
+.
+In
+Proc. of OSDI
+,
+A. Gavrilovska and D. B. Terry (Eds.)
+,
+Cited by:
+§1
+.
+Li
+et al.
+(2022)
+X. Li, F. Tramèr, P. Liang, and T. Hashimoto
+Large language models can be strong differentially private learners
+.
+In
+Proc. of ICLR
+,
+Cited by:
+§2
+.
+Llama (2024)
+Llama
+The llama 3 herd of models
+.
+arXiv preprint
+.
+Cited by:
+§B.1
+,
+§5.1
+.
+Luo
+et al.
+(2025)
+Z. Luo, S. Shao, S. Zhang, L. Zhou, Y. Hu, C. Zhao, Z. Liu, and Z. Qin
+Shadow in the cache: unveiling and mitigating privacy risks of kv-cache in llm inference
+.
+arXiv preprint
+.
+Cited by:
+§1
+,
+§2
+.
+Microsoft (2025a)
+Microsoft
+Guidebook to use semantic cache using azure openai api.
+.
+Note:
+https://learn.microsoft.com/en-us/azure/api-management/azure-openai-semantic-cache-store\-policy
+Cited by:
+§6
+.
+Microsoft (2025b)
+Microsoft
+Microsoft copilot.
+.
+Note:
+https://copilot.microsoft.com/
+Cited by:
+§1
+.
+Nakandala
+et al.
+(2020)
+S. Nakandala, K. Saur, G. Yu, K. Karanasos, C. Curino, M. Weimer, and M. Interlandi
+A tensor compiler for unified machine learning prediction serving
+.
+In
+Proc. of OSDI
+,
+Cited by:
+§3.1
+.
+Nasr
+et al.
+(2025)
+M. Nasr, J. Rando, N. Carlini, J. Hayase, M. Jagielski, A. F. Cooper, D. Ippolito, C. A. Choquette-Choo, F. Tramèr, and K. Lee
+Scalable extraction of training data from aligned, production language models
+.
+In
+Proc. of ICLR
+,
+Cited by:
+§2
+.
+Nie
+et al.
+(2025)
+Y. Nie, Z. Wang, Y. Yu, X. Wu, X. Zhao, W. Guo, and D. Song
+LeakAgent: rl-based red-teaming agent for llm privacy leakage
+.
+In
+Proc. of COLM
+,
+Cited by:
+§2
+.
+OpenAI (2024)
+OpenAI
+OpenAI tokenizer.
+.
+Note:
+https://platform.openai.com/tokenizer
+Cited by:
+§3.2
+.
+OpenAI (2025a)
+OpenAI
+OpenAI chatbot.
+.
+Note:
+https://chat.openai.com/
+Cited by:
+§1
+.
+OpenAI (2025b)
+OpenAI
+OpenAI guidebook for prompt sharing.
+.
+Note:
+https://platform.openai.com/docs/guides/prompt-caching
+Cited by:
+§6
+.
+Paulus
+et al.
+(2024)
+A. Paulus, A. Zharmagambetov, C. Guo, B. Amos, and Y. Tian
+AdvPrompter: fast adaptive adversarial prompting for llms
+.
+arXiv preprint
+.
+Cited by:
+§2
+.
+Perez
+et al.
+(2022)
+E. Perez, S. Huang, F. Song, T. Cai, R. Ring, J. Aslanides, A. Glaese, N. McAleese, and G. Irving
+Red teaming language models with language models
+.
+In
+Proc. of EMNLP
+,
+Cited by:
+§2
+.
+Qwen (2025)
+Qwen
+Qwen tokenizer.
+.
+Note:
+https://huggingface.co/Qwen/Qwen-tokenizer
+Cited by:
+§3.2
+.
+Rafailov
+et al.
+(2023)
+R. Rafailov, A. Sharma, E. Mitchell, C. D. Manning, S. Ermon, and C. Finn
+Direct preference optimization: your language model is secretly a reward model
+.
+In
+Proc. of Neurips
+,
+Cited by:
+§4.1
+.
+Schulman
+et al.
+(2017)
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+Proximal policy optimization algorithms
+.
+arXiv preprint
+.
+Cited by:
+§1
+.
+Shao
+et al.
+(2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, M. Zhang, Y. K. Li, Y. Wu, and D. Guo
+DeepSeekMath: pushing the limits of mathematical reasoning in open language models
+.
+arXiv preprint
+.
+Cited by:
+§1
+.
+Soleimani
+et al.
+(2025)
+M. Soleimani, G. Jia, I. Gim, S. Lee, and A. Khandelwal
+Wiretapping llms: network side-channel attacks on interactive LLM services
+.
+IACR ePrint
+.
+Cited by:
+Appendix C
+,
+§3.2
+.
+Song
+et al.
+(2024)
+L. Song, Z. Pang, W. Wang, Z. Wang, X. Wang, H. Chen, W. Song, Y. Jin, D. Meng, and R. Hou
+The early bird catches the leak: unveiling timing side channels in LLM serving systems
+.
+arXiv preprint
+.
+Cited by:
+§B.2
+,
+§1
+,
+§2
+,
+§3.3
+,
+§6
+.
+Sun
+et al.
+(2024)
+H. Sun, L. Chang, W. Bao, S. Zheng, N. Zheng, X. Liu, H. Dong, Y. Chi, and B. Chen
+Shadowkv: kv cache in shadows for high-throughput long-context llm inference
+.
+arXiv preprint
+.
+Cited by:
+§1
+.
+Tang
+et al.
+(2024)
+X. Tang, W. Xiao, Z. Yao, and J. Han
+SwordEcho: A LLM jailbreaking optimization strategy driven by reinforcement learning
+.
+In
+Proc. of the CSAI
+,
+Cited by:
+§2
+.
+Vaswani
+et al.
+(2017)
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, L. Kaiser, and I. Polosukhin
+Attention is all you need
+.
+In
+Proc. of NuerIPS
+,
+Cited by:
+§3.1
+.
+vLLM (2025)
+vLLM
+VLLM’s cache storage approach
+.
+Note:
+https://docs.vllm.ai/projects/production-stack/en/latest/use_cases/sharing-kv-cache.html
+Cited by:
+§1
+.
+Wang
+et al.
+(2023)
+B. Wang, W. Chen, H. Pei, C. Xie, M. Kang, C. Zhang, C. Xu, Z. Xiong, R. Dutta, R. Schaeffer, S. T. Truong, S. Arora, M. Mazeika, D. Hendrycks, Z. Lin, Y. Cheng, S. Koyejo, D. Song, and B. Li
+DecodingTrust: A comprehensive assessment of trustworthiness in GPT models
+.
+In
+Proc. of NeurIPS
+,
+Cited by:
+§2
+.
+Wei
+et al.
+(2024)
+J. Wei, A. Abdulrazzag, T. Zhang, A. Muursepp, and G. Saileshwar
+Privacy risks of speculative decoding in large language models
+.
+arXiv preprint
+.
+Cited by:
+Appendix C
+,
+§2
+.
+Weiss
+et al.
+(2024)
+R. Weiss, D. Ayzenshteyn, G. Amit, and Y. Mirsky
+What was your prompt? A remote keylogging attack on AI assistants
+.
+In
+Proc. of USENIX Security
+,
+Cited by:
+Appendix C
+,
+§2
+.
+Wu
+et al.
+(2025)
+G. Wu, Z. Zhang, Y. Zhang, W. Wang, J. Niu, Y. Wu, and Y. Zhang
+I know what you asked: prompt leakage via kv-cache sharing in multi-tenant LLM serving
+.
+In
+Proc. of NDSS
+,
+Cited by:
+§B.2
+,
+§1
+,
+§1
+,
+§2
+,
+§2
+,
+§3.2
+,
+§3.2
+,
+§3.3
+,
+§5.2
+,
+§5.2
+.
+Yang
+et al.
+(2024)
+A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu, F. Huang, H. Wei, H. Lin, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Lin, K. Dang, K. Lu, K. Bao, K. Yang, L. Yu, M. Li, M. Xue, P. Zhang, Q. Zhu, R. Men, R. Lin, T. Li, T. Xia, X. Ren, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Wan, Y. Liu, Z. Cui, Z. Zhang, and Z. Qiu
+Qwen2.5 technical report
+.
+arXiv preprint
+.
+Cited by:
+§B.1
+,
+§1
+,
+§5.1
+.
+Zhang
+et al.
+(2024a)
+T. Zhang, G. Saileshwar, and D. Lie
+Time will tell: timing side channels via output token count in large language models
+.
+arXiv preprint
+.
+Cited by:
+Appendix C
+,
+§2
+.
+Zhang
+et al.
+(2024b)
+Z. Zhang, K. Cai, Y. Guo, F. Yao, and X. Gao
+Invalidate+compare: A timer-free GPU cache attack primitive
+.
+In
+Proc. of USENIX Security
+,
+Cited by:
+§2
+.
+Zhao
+et al.
+(2025)
+A. Zhao, Q. Xu, M. Lin, S. Wang, Y. Liu, Z. Zheng, and G. Huang
+DiveR-ct: diversity-enhanced red teaming large language model assistants with relaxing constraints
+.
+In
+Proc. of AAAI
+,
+Cited by:
+§2
+.
+Zheng
+et al.
+(2023)
+L. Zheng, L. Yin, Z. Xie, J. Huang, C. Sun, C. H. Yu, S. Cao, C. Kozyrakis, I. Stoica, J. E. Gonzalez, C. W. Barrett, and Y. Sheng
+Efficiently programming large language models using sglang
+.
+arXiv preprint
+.
+Cited by:
+§1
+,
+§3.1
+,
+§4.2
+,
+§5.1
+.
+Zheng
+et al.
+(2025)
+X. Zheng, L. Wang, Y. Liu, X. Ma, C. Shen, and C. Wang
+CALM: curiosity-driven auditing for large language models
+.
+In
+Proc. of AAAI
+,
+Cited by:
+§2
+.
+Zheng
+et al.
+(2024)
+X. Zheng, H. Han, S. Shi, Q. Fang, Z. Du, X. Hu, and Q. Guo
+InputSnatch: stealing input in LLM services via timing side-channel attacks
+.
+arXiv preprint
+.
+Cited by:
+§B.2
+,
+§1
+,
+§2
+,
+§2
+,
+§3.2
+,
+§3.3
+,
+§6
+,
+§6
+.
+Appendix A
+Algorithm Procedure of
+OptiLeak
+Algorithm 1
+Operation pipeline of
+OptiLeak
+Input:
+Auxiliary dataset
+𝒟
+aux
+\mathcal{D}_{\text{aux}}
+, base adversarial model
+π
+base
+\pi_{\text{base}}
+, hard token threshold
+γ
+\gamma
+, max guess attempts per token
+κ
+\kappa
+.
+Output:
+Recovered target query
+s
+recover
+s^{\text{recover}}
+.
+/*
+Phase 1: Local model training  */
+1
+Initialize preference dataset
+𝒟
+pref
+←
+∅
+\mathcal{D}_{\text{pref}}\leftarrow\emptyset
+;
+2
+π
+SFT
+←
+Supervised finetune
+​
+(
+π
+base
+,
+𝒟
+aux
+)
+\pi_{\text{SFT}}\leftarrow\text{Supervised finetune }(\pi_{\text{base}},\mathcal{D}_{\text{aux}})
+;
+3
+foreach
+Query
+s
+∈
+𝒟
+aux
+s\in\mathcal{D}_{\text{aux}}
+do
+4
+foreach
+Token
+s
+t
+∈
+s
+s_{t}\in s
+do
+5
+if
+Rank
+⁡
+(
+s
+t
+∣
+s
+<
+t
+)
+>
+γ
+\mathrm{Rank}(s_{t}\mid s_{<t})>\gamma
+;
+//
+Identify hard tokens
+6
+then
+7
+s
+win
+←
+[
+s
+<
+t
+,
+s
+t
+]
+s^{\text{win}}\leftarrow[s_{<t},s_{t}]
+;
+//
+Equation 2
+8
+s
+lose
+←
+Greedy Decode
+​
+(
+π
+SFT
+,
+s
+<
+t
+)
+s^{\text{lose}}\leftarrow\text{Greedy Decode }(\pi_{\text{SFT}},s_{<t})
+;
+9
+𝒟
+pref
+←
+𝒟
+pref
+∪
+{
+(
+s
+win
+,
+s
+lose
+)
+}
+\mathcal{D}_{\text{pref}}\leftarrow\mathcal{D}_{\text{pref}}\cup\{(s^{\text{win}},s^{\text{lose}})\}
+;
+10
+π
+DPO
+←
+DPO Train
+​
+(
+π
+SFT
+,
+𝒟
+pref
+)
+\pi_{\text{DPO}}\leftarrow\text{DPO Train }(\pi_{\text{SFT}},\mathcal{D}_{\text{pref}})
+;
+//
+Equation 4
+/*
+Phase 2: Order-based KV-cache prompt leakage attack  */
+11
+Initialize
+s
+recover
+←
+∅
+s^{\text{recover}}\leftarrow\emptyset
+;
+12
+while
+True
+do
+13
+𝖣
+hit
+←
+0
+\mathsf{D_{\text{hit}}}\leftarrow 0
+,
+k
+←
+0
+k\leftarrow 0
+;
+14
+while
+𝖣
+hit
+=
+0
+\mathsf{D_{\text{hit}}}=0
+and
+k
+<
+κ
+k<\kappa
+do
+15
+Q
+gen
+←
+Generate candidate tokens
+​
+(
+π
+DPO
+,
+s
+recover
+)
+Q_{\text{gen}}\leftarrow\text{Generate candidate tokens}(\pi_{\text{DPO}},s^{\text{recover}})
+;
+16
+Q
+←
+[
+Q
+dummy
+,
+Q
+gen
+,
+Q
+dummy
+]
+Q\leftarrow[Q_{\text{dummy}},Q_{\text{gen}},Q_{\text{dummy}}]
+;
+//
+Construct batch
+17
+𝖣
+hit
+,
+q
+~
+←
+Query server
+​
+(
+Q
+)
+\mathsf{D_{\text{hit}}},\tilde{q}\leftarrow\text{Query server}(Q)
+;
+//
+Equation 5
+18
+k
+←
+k
++
+|
+Q
+gen
+|
+k\leftarrow k+|Q_{\text{gen}}|
+;
+19
+if
+𝖣
+hit
+=
+1
+\mathsf{D_{\text{hit}}}=1
+then
+20
+Append token
+q
+~
+\tilde{q}
+to
+s
+recover
+s^{\text{recover}}
+;
+21
+else
+22
+break
+;
+//
+Stop if recovery fails
+23
+return
+s
+recover
+s^{\text{recover}}
+Appendix B
+Detailed Baseline and Benchmark Description
+B.1
+Baseline Models
+In our experiments, we evaluate performance across two prominent open-source model families:
+Qwen-2.5
+(
+Yang et al., 2024
+)
+and
+Llama-3.1
+(
+Llama, 2024
+)
+. Specifically, we utilize the instruction-tuned versions of Qwen-2.5-3B-Instruct, Qwen-2.5-7B-Instruct, and Qwen-2.5-14B-Instruct to assess scalability across model sizes, alongside Llama-3.1-8B-Instruct to ensure diversity in model architectures. All models are deployed locally to simulate realistic, privacy-sensitive deployment scenarios.
+B.2
+Benchmark Datasets
+We employ three domain-specific datasets to evaluate the robustness of our framework in specialized contexts. The data splitting and preprocessing strategies are detailed below:
+MedQA
+(
+Jin et al., 2021
+)
+We utilize the English subset of the MedQA dataset, which consists of United States Medical Licensing Examination (USMLE) style questions. The original split comprises 10,178 training samples, 1,272 validation samples, and 1,273 test samples. To manage the high computational overhead associated with iterative prompt leakage attacks, we follow the protocol established in prior studies
+(
+Wu et al., 2025
+;
+Zheng et al., 2024
+;
+Song et al., 2024
+)
+and randomly sample 150 instances from the test set for our final evaluation.
+PubMedQA
+(
+Jin et al., 2019
+)
+We utilize 1,000 expert-labeled instances of the dataset. To maintain consistency with our other benchmarks, we perform a random split, allocating 800 samples for training, 100 for validation, and 100 for testing. This distribution ensures sufficient data for fine-tuning while retaining a representative set for robust evaluation.
+FinanceBench
+(
+Islam et al., 2023
+)
+FinanceBench serves as our evaluation ground for the financial domain. As the original dataset does not provide a predefined train-test split, we conduct a random stratified split of the complete dataset. Following the same evaluation protocol as the other two benchmarks, we allocate 400 samples for training, while reserving 50 samples for validation and 50 samples for testing.
+Appendix C
+Extended Related Works
+Passive Side Channel Attacks in LLM Services.
+In passive side channel attack, the adversary first establishes fingerprints via passively monitoring the queries between the user and the victim LLM or by interacting with public LLMs, and then utilizes these fingerprints to identify user queries or intents.
+For instance,
+Weiss et al. (2024)
+infer the character length of each token in LLM responses by analyzing encrypted network traffic between the user and LLM, thereby revealing the user’s prompts.
+Zhang et al. (2024a)
+identify user queries by analyzing timing patterns in LLM response generation. Furthermore,
+Wei et al. (2024)
+and
+Soleimani et al. (2025)
+exploit speculative decoding mechanisms to build fingerprints for different user queries.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

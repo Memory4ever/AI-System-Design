@@ -115,6 +115,10 @@ untrusted proposer builds candidate off-commit
 
 <!-- source-family:SF-2026-ARXIV-2605-19314 -->
 
+缺少人工维护 procedure 时，可以先从 clean success、错误后恢复和失败日志的差异诱导候选步骤、顺序及 prerequisites；对话、tool trace 与 backend error 需共同保留。运行中再把最近成功的工具调用对齐到所检索的步骤，用当前观察让 LLM 标出候选 action 的 prerequisite status，形成 stage-specific 软提示。日志诱导与多轮自检只提出可复用 procedure，不能把推断出的前提升级为真实环境资格；是否 dispatch、授权与副作用仍由前文的 hard state owner 决定。<!-- source-family:SF-2026-ARXIV-2601-08158 -->
+
+这增加离线诱导、embedding/retrieval、在线 summary 与前提检查成本；重复动作、复杂分支、日志遗漏或虚构 prerequisite 会造成错误定位和误约束。受限模拟中的同任务 oracle-retrieval 消融支持表示条件，而不是泛化保证；排除同任务经验后仍有收益但明显下降，不能把同一任务复用结果移植到陌生流程。Procedure 与当前 state 对不上、环境真值不可核或额外调用不合算时，应回退显式人工流程、单 state pointer 与独立工具验证，不让 learned workflow 取代 durable execution contract。
+
 连续目标不必一次全部送入主 Agent 的可执行上下文：把将来的 objective 保存在独立队列，当前状态只持有 active goal，能避免未来任务干扰当前完成判定。晋升下一目标至少应区分“模型宣称完成”、runtime 清除当前目标、当前 turn 结束和 dispatch 空闲；暂停、取消或阻塞都不是完成。Kimi Code 0.10.0 的限定 TUI 实现将 `upcoming-goals.json` 与 active goal 分开，并在上述完成/清除/turn-end 条件及 queued-message 为空后尝试晋升。队列因此保存待执行意图，不是工具授权，也不是普通 conversation memory。
 
 队列持久化仍不保证原子晋升：原实现使用进程内 mutation lock 和直接文件写入，创建 active goal 后才移除队列项、发送输入，移除失败可能留下已创建但尚未发出的目标。跨进程并发或崩溃恢复需要另核 active/queued/transcript 的一致性，不能把 JSON 存在当 exactly-once receipt。fork 丢弃 active 与 queued goals 展示了另一条边界：拷贝历史不自动继承未来执行意图；希望续接时须由新 branch 的 owner 重新受理（工程推断）。低风险单会话可保留轻量队列，高风险 effect 仍服从既有 pre-state authority、checkpoint 与 effect ledger 验收。<!-- source-family:SF-KIMI-CODE-0-10 -->
@@ -290,6 +294,8 @@ compiler 可把结构、typed state、quality floor、latency/cost budget 编译
 拥有 plan proposal，runtime 仍拥有 side-effect commit 与故障恢复。收益是可重复的跨节点优化，代价是 profile drift、
 组合爆炸和错误 cost model；动态环境或不可预测 tool path 下应回退保守模板和在线 guard。
 <!-- semantic-body-binding:SF-FLOWCOMPILE-AN-OPTIMIZING-COMPILER-FOR-STRUCTURED-LLM-WORKFLOWS:end -->
+
+选择 workflow 还须区分有限 oracle 空间与能学到的策略：在固定题集上，各 workflow 的成功集合取 union 至少不差于最佳固定分支，却未必严格更好，异质性也不能保证 router 可识别那一分支。一个受限训练路线先从可执行成功 trace 构造策略样本，再以奖励训练 workflow 选择，并随机遮住部分 actor 可用性，迫使策略探索替代路径；pairwise confidence 产生的反馈仍是 pseudo evidence，不是任务真值。[SquRL 的有限数据库任务对照](https://arxiv.org/html/2602.15564v1#S3)保留 mask 比例/模型反侧，actor API、执行与参考验证成本也没有被 oracle union 抹掉，预算和部分表值不宜直接合并。Controller 因而要冻结可用 workflow、actor、验证器和成本人口，独立验收真正成功；能力异质性不可识别、反馈失准或工具风险较高时，保留固定已验收模板与受控搜索，不把可选分支更多当作已学可靠执行。<!-- source-family:SF-2026-ARXIV-2602-15564 -->
 
 ### 搜索分支必须连同权威外部状态一起分支
 
@@ -606,6 +612,10 @@ unlimited rewinds、无 wall-clock 上限，并主要恢复 workspace，不能�
 具备 exactly-once recovery。长期结论是：**恢复必须对齐模型所见状态与 Runtime 的 authoritative state，Memory
 只保存失败证据，不能替代环境事务。**
 
+当多个 speculative attempt 并行调用工具时，全局暂停再提交可以保持简单，但会把无关资源也串行化；只设固定 resource lock 又不能回答“是否仍有较早 attempt 尚未到达这里”。一种分工是先给事务递增 epoch，再为实际声明的 resource footprint 维护 progress frontier：只有相关资源的 frontier 已达到或超过该 epoch，且当前事务仍有效，才允许 finalization。Orchestrator 推进 frontier 时必须正确证明较早工作已耗尽或不再访问该资源；数值递增本身不是这项证明。进度无法确认时应继续等待或退出 speculative path，而不是由模型自行宣布安全。这个接口把并行执行与最终提交分开，但会增加 footprint 管理、冲突重试和等待成本，并可能因未推进的 frontier 停滞；它不自动发现动态依赖，也不是固定锁方案的一般最优替代。
+
+Finalization 能保证什么，还取决于 adapter 在执行前对 effect 的分类。可缓冲效果能在通过 gate 后统一发布；必须立即外显的 mutation 则可能留下暂态可见变化，失败时仍需 compensation 与 reconciliation。可逆性必须由具体 API 契约定义，不可逆发送应在执行前被 gate 阻止，而不是寄希望于事后 undo。[Atomix v1 §3–6](https://arxiv.org/html/2602.14849v1)支持这项有条件的分工：其去重状态在内存中、原型为单进程，不能据此推出 crash-safe exactly-once 或分布式 ACID；外部 mutation 的补偿可能失败，错误 effect 分类也会破坏不可逆操作的 gate。受控模拟中的零不可逆泄漏只在这些分类与 frontier 条件下成立，不能作为所有外部 API 的原子性证书。<!-- source-family:SF-2026-ARXIV-2602-14849 -->
+
 联合恢复还要求先定义哪些外部操作可撤销，而不是动作成功后再让模型猜测 undo。服务没有原生 checkpoint 时，adapter 可在同一事务中记录 pre-image、执行 mutation 并记录受影响键，把支持的操作转换为可补偿请求；无法转换的操作须在执行前拒绝。联合 statepoint 在 tool-call 边界等待在途调用结束、阻止新调用，冻结本地进程后捕获 process/filesystem 与 remote log position，全部捕获成功才标为 committed，并视作有效恢复点。失败经历与状态说明作为 evidence 保留；恢复后由 harness 追加当前环境说明，不要求抹掉保留的失败经历。
 
 可补偿也不等于可分叉：只能逆序 undo 的远端服务若仍被多个 child 共用，分支会互相修改状态；仅 local fork 时应禁止 child 沿原 proxy 变更远端，真正远端探索需要 service-side branching。[Planarian v1 §4–7](https://arxiv.org/html/2609.35366v1)的联合切片依赖外部 tenant 逻辑隔离，SQL rewrite、undo log、冻结锁与进程 checkpoint 均有成本，受限回放不能证明开放服务或并发协作者无干扰。不可补偿、隔离条件不成立或恢复任一半失败时，保留 approval barrier、reconciliation、完整副本或人工处理，而不是发布 ready 或宣称世界 undo。<!-- source-family:SF-2026-ARXIV-2609-35366 -->
@@ -824,6 +834,8 @@ intervention request / reason
 ```
 
 保存为显式 transition。若 Agent 在等待期间继续改变页面，旧 intervention context 已失效；若 human 与 Agent 同时行动，还会产生重复 side effect。基于真实 web-agent trajectory 学习 intervention classifier 可以帮助发现何时“可能需要人”，但小样本、低 recall 或非随机 user study 只能支持 advisory signal，不能让 classifier 成为 approval authority。
+
+对于多轮求助，还可把“AI 提供的候选集合是否遗漏正确答案”与用户是否作出正确决定分开控制。[带用户规则的多轮协作](https://arxiv.org/html/2602.17646v1)在一题内固定阈值，依据当前交互前缀构造 prediction set，题末取得真值后才更新下一题阈值；规则的前缀版本必须逐标签支配完整交互中的实际规则，误差按每题各轮 activated omission 的最大值累计。在 bounded score、该 domination 与披露的初始化/更新条件下，有限 T 的平均遗漏率上界带有随 T 衰减的初始余项，不依赖把用户固定成一个概率模型，却只约束定义好的 AI-set event。集合包含真值不保证人未被误导、会选真值或最终决策正确，set 更不能代替 exact-action approval。50 人、1000 次交互的受限视觉计数实验与全局在线阈值流不证明个人化或高风险部署效果；获得每题真值、额外评分和多轮交互有成本，低目标风险还可能把集合扩大到失去帮助价值。真值延迟/不可得、score 超出范围或规则无法被前缀支配时，停止采用该证书，保留独立核验、固定保守候选集及原 human-owned approval/handback 协议。<!-- source-family:SF-2026-ARXIV-2602-17646 -->
 
 ### 当 Workflow 进入物理实验，Human-in-the-Loop 是系统边界
 
@@ -1530,3 +1542,11 @@ Primary-source 与设计入口：
 <!-- daily-books-trace:SF-2026-ARXIV-2608-21898:end -->
 
 - 2026-09-02：REVISE，[arXiv:2609.00643v1](https://arxiv.org/html/2609.00643v1)，采用 §3 的执行中 read provenance 与 commit-time validation 边界。§4.1、Appendix A.6 的受控 revision 实验支持细粒度复用设计，不把全部运行计数当成独立 adversarial 实验，也不将观察到的无 stale commit 外推为生产保证；跨进程协调、crash 与未受控外部 effects 不在所采用结论内。证据审阅与写后复核见当日 Daily。
+
+- `SF-2026-ARXIV-2601-08158` — Daily `2026-01-15`；[WISEFlow exact-v1](https://arxiv.org/html/2601.08158v1) §3.2–3.3、§5.3–5.4/limits、A.1/A.2.2–3。2+2+2=6，log-induced procedure与last-success-step/soft prerequisites具体gap深入；不授环境真值/硬dispatch授权。same-task oracle条件、LOTO下降、虚构前提/复杂分支定位与额外summary/check成本保留；未运行代码或复现。root必要原源/现owner写前通过并授窄锁，root实际正文/前后邻接及末注非作者POST通过；日级Gate未授。
+
+- `SF-2026-ARXIV-2602-14849` — Daily `2026-02-18`；[Atomix exact-v1](https://arxiv.org/html/2602.14849v1) §3–5、§6.1–6.4/limits与A.1/A.2。3+3+2=8，资源 progress frontier 与 effect-class finalization 分工深入；不采用后来 v2 footprint sealing。较早工作耗尽须由 orchestrator 正确证明，分类/暂态外显/补偿失败与内存去重、单进程限制近正文；真实试验主要顺序、NoFrontier/retry混杂、speculative mock不确定性及未隔离per-resource locking不授因果优越或生产保证。root 必要原源与 owner PRE 通过；实际正文、完整邻接及末注经 root 非作者 POST 通过，窄锁释放，不授日级。未核实现或复现。
+
+- `SF-2026-ARXIV-2602-15564` — Daily `2026-02-19`；[exact-v1](https://arxiv.org/html/2602.15564v1) §3与必要oracle/主要对照；2+1+2=5，finite workflow oracle与actor可用性探索深入，union非可学/异质性非严格gap，pseudo feedback/API预算与mask反侧保留。root 必要源/actual owner PRE 通过并授窄锁；作者正文/完整邻接已顺读，root 非作者正文/完整邻接及末注 POST 通过，窄锁已释放。未核实现/复现，非日级 Gate。
+
+- `SF-2026-ARXIV-2602-17646` — Daily `2026-02-21`；[exact-v1](https://arxiv.org/html/2602.17646v1) §4/5、prefix-domination与阈值proof及受限交互评价。2+2+2=6，题内固定/题末反馈的AI-set omission分支定点深入；不授人类最终正确或execution approval，宽set/额外真值与score费用及回退近文。root必要原源/actual owner PRE通过并授窄锁；作者实际正文/完整邻接已顺读，root非作者实际正文/完整邻接/自身末注POST通过，窄锁释放。未核实现或复现，非日级Gate。

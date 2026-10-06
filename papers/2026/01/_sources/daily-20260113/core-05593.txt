@@ -1,0 +1,372 @@
+URL https://arxiv.org/html/2601.05593v1; sections S2 to S4 excluded; result tables omitted; fetched 2026-10-03
+
+
+
+ 2 Methods 
+
+ 
+
+The framework comprises training and inference pipelines.
+The inference pipeline coordinates parallel exploration to massively scale test-time compute, growing far beyond the limits of sequential reasoning while remaining independent of context constraints.
+The training procedure employs large-scale, outcome-based reinforcement learning to teach the model the synthesis skills required to consolidate diverse trajectories and generate high-quality final answers. 
+ 
+
+
+
+ 2.1 Inference Pipeline 
+
+ 
+
+Given a problem instance x , the PaCoRe inference pipeline executes R rounds of coordinated reasoning .
+At each round r\in\{1,\ldots,R\} , the system inherits a set of compact messages 
+ M_{r-1}=\{m_{r-1}^{(i)}\}_{i=1}^{K_{r-1}} 
+from the previous round,
+and generates a new set of reasoning trajectories 
+ \Omega_{r}=\{\omega_{r}^{(i)}\}_{i=1}^{K_{r}} that explore the solution space in parallel.
+The final answer is simply the degenerate case where K_{r}=1 at the last round.
+For convenience, we refer to the preceding coordinated-reasoning process as consisting of \hat{R}=R-1 rounds, and refer \vec{K}=[K_{1},\ldots,K_{\hat{R}}] as inference trajectory configuration. 
+ 
+ 
+
+For each problem x , the model begins each round by taking the combined context (x,M_{r-1}) and generating a set of parallel trajectories \Omega_{r}=\{\omega_{r}^{(i)}\} . The message set M_{r-1} provides a compacted summary of reasoning trajectories from the previous round, and each trajectory \omega_{r}^{(i)} contains a full chain of reasoning followed by a final conclusion.
+Each round then comprises two stages:
+(i) Synthesis and Parallel Exploration , where the model takes the combined context (x,M_{r-1}) and produces the trajectories \Omega_{r} ; and
+(ii) Message Compaction , where the trajectories \Omega_{r} are compressed into the next-round message set M_{r} , allowing PaCoRe to massively scale effective test-time compute under a fixed context window.
+We next detail these two stages of coordinated reasoning , outlining how PaCoRe constructs inputs, generates trajectories, and compacts them across rounds. 
+ 
+
+
+ 
+ 
+
+ 
+ 
+
+ 
+ 
+ Figure 3 : 
+ PaCoRe Training dynamics. 
+ Left panels: The Training Reward and Response Length steadily increase, demonstrating the training stability and effectiveness.
+ Right panels: Evaluation on HMMT 2025 and LiveCodeBench (2408-2505).
+Performance is reported using single round coordinated reasoning in PaCoRe inference setting with \vec{K}=[16] .
+ 
+ 
+
+
+
+Synthesis and Parallel Exploration. 
+
+ 
+
+At the beginning of round r , the system uses the prompting function P(x,M_{r-1}) to serialize the problem and the compact messages, producing a structured input sequence for the model. 
+ 
+ 
+
+Once the input is constructed, the core reasoning model \pi_{r} is then invoked in parallel to produce K_{r} independent trajectories: 
+ 
+
+ 
+
+ 
+ \displaystyle\omega_{r}^{(i)}\sim\pi_{r}(\,\cdot\mid P(x,M_{r-1})\,). 
+ 
+ (1) 
+ 
+
+In our implementation, we employ the same model weights across all rounds for operational convenience.
+This parallel generation constitutes the main drive of effective TTC:
+even though the system can accumulate millions of tokens through parallel expansion, each round’s input consumes only (x,M_{r-1}) , maintaining an almost constant context cost. 
+ 
+ 
+
+
+
+Message Compaction. 
+
+ 
+
+To enable multi-round coordination while respecting the fixed context window, the full trajectories in \Omega_{r} must be compressed into a small set of messages. We apply a compaction function: 
+ 
+
+ 
+
+ 
+ \displaystyle M_{r}=\mathcal{C}(\Omega_{r}), 
+ 
+ (2) 
+ 
+
+where \mathcal{C} transforms the set of trajectories into a new set of compact messages. 
+ 
+ 
+
+In our implementation, we leverage the structured nature of the generated trajectories.
+Reasoning models typically produce detailed intermediate derivations ( e.g. , chain-of-thought or "reasoning content") followed by a final conclusion.
+We therefore implement \mathcal{C}(\cdot) as a trajectory-wise extraction function C(\cdot) : it parses each \omega_{r}^{(i)}\in\Omega_{r} , retains only the final conclusion segment (forming m_{r}^{(i)}=C(\omega_{r}^{(i)}). ), and discards the intermediate steps.
+This ensures that the input length required for synthesis remains bounded ( i.e. , |x|+\sum_{i}|m_{r}^{(i)}| fits within the context window), even as the effective TTC—aggregate token count across all trajectories, \sum_{r}\sum_{i}|\omega_{r}^{(i)}| —scales vastly. 
+ 
+ 
+
+
+
+Iterative Coordination. 
+
+ 
+
+The process repeats for all R rounds, with compact messages progressively refining the model’s understanding of the problem.
+To ensure convergence, the final round uses a single trajectory ( K_{R}=1 ),
+producing a final compact message 
+ 
+
+ 
+
+ 
+ \displaystyle y=m_{R}^{(1)}, 
+ 
+ (3) 
+ 
+
+which constitutes the output of the PaCoRe inference pipeline. 
+ 
+
+
+ 
+ [result table omitted; consult original if quantitative claim needed] 
+ 
+ Table 1 : 
+ Benchmark performance and TTC spent per problem instance. 
+For each benchmark, we report accuracy together with total TTC (in thousands).
+ ∗ DeepSeek-V3.1 refers to the Terminus version.
+For Low , Medium , and High , we apply the inference configuration as \vec{K}=[4] , [16] , and [32,4] separately.
+ 
+ 
+ 
+ 
+
+
+
+ 2.2 Training Procedure 
+
+ 
+
+The efficacy of the PaCoRe framework fundamentally depends on the core model’s capacity for synthesis : the ability to critically evaluate diverse perspectives within the input messages M , reconcile conflicting information, and generate novel strategies that surpass the quality of any individual input. 
+ 
+ 
+
+To train this capability, we instantiate the synthesis stage of a single PaCoRe round as an episodic RL environment, with the core model serving as the policy to be optimized.
+In each training episode, we sample a problem x and a corresponding set of input messages M from a training distribution D , where M can be either generated online or drawn from a cached pool.
+Given the sampled pair (x,M) , the policy \pi_{\theta} generates a reasoning trajectory \omega from the formatted input P(x,M) , and receives a sparse terminal reward R(\omega)\in[0,1] at the end. 
+ 
+ 
+
+We then apply large-scale, outcome-based reinforcement learning to elicit these advanced synthesis behaviors.
+Training is performed on challenging domains, where each trajectory is evaluated by the correctness of its extracted message.
+In order to ensure that naive strategies like majority voting or random selection are insufficient and compel the policy to develop synthesis to succeed, we discard training instances where the average accuracy of the message set M exceeds a predefined threshold. 
+ 
+ 
+
+Compared to standard RL on static tasks with verifiable rewards [ 7 ] , PaCoRe represents a significant departure.
+Because the input context M is composed of model-generated messages, the policy must function within an implicitly multi-agent environment rather than a fixed single-agent setting.
+Although the outcome-based reward aligns with conventional RL formulations for chain-of-thought optimization, PaCoRe demands higher-level synthesis and coordination across agents’ outputs, introducing opportunities to examine emergent collective behaviors. 
+ 
+
+ 
+ Figure 4 : 
+ Ablation of parallel reasoning and message passing. 
+ Left: Parallel scaling ( \vec{K}=[N,] ) utilizes test-time compute more effectively than Sequential scaling ( \vec{K}=[1,\ldots,1] ).
+ Right: Message Passing is essential for test-time scaling. Without compaction ("W/O Message Passing"), performance degrades as test time scales and fundamentally limited by model context length, whereas standard PaCoRe ("W Message Passing") scales unboundedly and robustly. Pass@1 accuracy is evaluated on HMMT 2025.
+ 
+ 
+ 
+ 
+
+
+
+ 3 Experiments 
+
+ 
+
+In this section, we present comprehensive experimental results and analysis of our PaCoRe framework.
+We begin by detailing the training protocol used to develop our PaCoRe-8B model, followed by in-depth analysis of training results.
+We then present the main evaluation results, comparing PaCoRe against frontier reasoning models on challenging benchmarks.
+Finally, we conduct analysis and ablation studies to validate key design choices and investigate the properties of the learned synthesis capabilities. 
+ 
+
+ 
+ Figure 5 : 
+ Evolution of synthesis-related linguistic features and emergent correctness across training steps. 
+ Left: Frequency of cross-checking words (including ’reference’, ’参考’, ’Ref <number>’, ’ref <number>’) in generated solutions.
+Training elicits and magnifies this capability across domains; notably, the near-zero initial frequency in Code corroborates the poor test-time scaling of untrained models (Figure 1 ).
+ Right: The Emergent Correctness Rate tracks the probability of generating a correct solution given input messages that are all incorrect, averaged over 100-step intervals.
+The upward trend in both domains demonstrates that through large scale RL training, the model transcends naive strategies like majority voting or random selection to achieve genuine synthesis, recovering valid solutions even from entirely erroneous contexts.
+ 
+ 
+
+
+
+ 3.1 Training 
+
+
+
+
+Training Recipe. 
+
+ 
+
+We initialize PaCoRe-8B from an internal, reasoning-oriented post-trained version of Qwen3-8B-Base [ 8 ] (denoted as RLVR-8B).
+We use RLVR-8B to generate a message cache pool of size 24 for each problem in the training dataset.
+During training, we randomly sample the message set M from this pool with |M|\sim U(16,24) .
+We employ strict on-policy PPO [ 9 ] with GAE ( \lambda=1,\gamma=1 ) following the ORZ setup [ 10 ] , utilizing a batch size of 16 instances (64 responses each), a maximum sequence length of 131,072, and generation temperature/top-p of 1.0.
+We leverage competition-level mathematics and coding tasks as the primary substrate to cultivate model capabilities.
+To incentivize the model to learn synthesis, the training data distribution is refined over two stages.
+In Stage 1 (250 iterations), we target scenarios where naive aggregation fails by filtering for low message set accuracy ( 0 Stage 2 (450 additional iterations), we further refine the distribution. We use an intermediate Stage 1 checkpoint to evaluate synthesis accuracy on the Stage 1 data, retaining only instances where 0 
+ 
+ 
+
+
+
+Training Results. 
+
+ 
+
+We present the training dynamics by tracking training rewards, response lengths, and performance on key benchmarks.
+As illustrated in Figure 3 , both the training reward and response length steadily increase throughout the process.
+Correspondingly, the performance on both HMMT 2025 and LiveCodeBench (2408-2505) improves significantly.
+In these evaluations, the PaCoRe inference setting is \vec{K}=[16,] . In order to improve experimental efficiency, we utilize cached responses from the RLVR-8B model for each problem instance to directly seed the current checkpoint for the next round generation.
+All these results indicate stable and effective learning. 
+ 
+ 
+ 
+
+
+
+ 3.2 Evaluation 
+
+
+
+
+Evaluation Setup. 
+
+ 
+
+We evaluate PaCoRe on representative benchmarks across mathematics, coding, science, and open-ended generation: AIME 2025, HMMT 2025 (Feb.), Apex, IMOAnswerBench, LiveCodeBench (2408-2505), Humanity’s Last Exam (text subset), and MultiChallenge [ 11 , 12 , 13 , 14 , 15 ] .
+We compare against frontier reasoning models including GPT-5 ("high reasoning effort) [ 16 ] , Kimi-K2-Thinking [ 17 ] , DeepSeek-V3.1-Terminus [ 18 ] , GLM-4.6 [ 19 ] , and Qwen3-235B-A22B-Thinking-2507 [ 20 ] .
+We report pass@1 accuracy for all approaches based on average performance of multiple independent generations per problem: 64 for AIME 2025, HMMT 2025, and APEX; 8 for IMOAnswerBench, LiveCodeBench, and MultiChallenge; and 1 for HLE.
+For both PaCoRe and RLVR evaluations, We maintain a maximum generation sequence length of 131,072 tokens with a temperature and top-p of 1.0, and we apply YaRN [ 21 ] (scale 2.0) without modifying attention temperature.
+We evaluate our PaCoRe inference pipeline under three coordinated reasoning levels: Low ( \vec{K}=[4] ), Medium ( \vec{K}=[16] ), and High ( \vec{K}=[32,4] ).
+To optimize experimental efficiency without compromising validity, we utilize a caching strategy for the first round for PaCoRe evaluation: we pre-generate a pool of 512 trajectories for each problem, from which the model randomly samples K_{1} items to seed the next round. We empirically validated that this method yields results equivalent to generating all trajectories from scratch. 
+ 
+
+
+ 
+ [result table omitted; consult original if quantitative claim needed] 
+ 
+ Table 2 : 
+ Test-time scaling comparison with Self-Consistency sampling (Majority voting). 
+We compare PaCoRe against standard Self-Consistency (SC) on representative short-answer benchmarks.
+Token counts (TTC) are reported in parentheses in thousands (k).
+Self-Consistency sampling are conducted using RLVR-8B and repeated sampling from a 512 size of pool of responses for each problem for 64 times to estimate the accuracy.
+ 
+ 
+ 
+
+
+
+Evaluation Results. 
+
+ 
+
+The main results are summarized in Table 1 .
+Across all test-time effort settings, PaCoRe-8B consistently outperforms the starting checkpoint, RLVR-8B, on every benchmark.
+Even in the Low setting, PaCoRe-8B demonstrates robust capabilities, achieving 88.1% on HMMT2025 and 75.8% on LiveCodeBench, significantly outperforming the RLVR-8B baseline and surpassing considerably larger models like Qwen3-235B-A22B-Thinking-2507 and DeepSeek-V3.1-Terminus.
+With further test-time scaling in the High setting, PaCoRe-8B reaches a remarkable 94.5% on HMMT 2025 and 78.4% on IMOAnswerBench, surpassing the leading proprietary model, GPT-5, by scaling effective TTC to approximately 2 million tokens.
+A standout result is observed on the extremely challenging Apex benchmark: while the RLVR-8B fails to answer any questions correctly (0.0%), PaCoRe-8B achieves 2.3% in the High setting.
+On LiveCodeBench, PaCoRe-8B achieves a strong 78.2%, remaining competitive with frontier models like GLM-4.6 and Kimi-K2-Thinking.
+These findings demonstrate that parallel coordinated reasoning allows an 8B model to bridge the gap with, and often surpass, state-of-the-art systems on complex reasoning tasks. 
+ 
+ 
+ 
+
+
+
+ 3.3 Analysis and Ablations 
+
+
+
+
+Ablation of Core Design Principles. 
+
+ 
+
+We study the importance of the two central components of PaCoRe: parallel exploration and message passing.
+First, we compare parallel scaling (PaCoRe with \vec{K}=[N,] ) against sequential scaling (equivalent to \vec{K}=[1,\ldots,1] ) under the same total number of generated trajectories.
+As shown in Figure 4 (Left), parallel coordinated reasoning utilizes TTC much more effectively than purely sequential approach.
+Second, we examine the role of message passing.
+We compare PaCoRe (W Message Passing) with a variant where compaction is disabled (W/O Message Passing), feeding the full trajectories into the next round context.
+Figure 4 (Right) shows that without compaction, performance degrades as TTC scales and is fundamentally limited by the context length.
+In contrast, PaCoRe, with message passing, scales robustly and without bound. 
+ 
+ 
+
+
+
+Evolution of Synthesis Capabilities. 
+
+ 
+
+We probe the mechanism underlying PaCoRe by tracking the evolution of synthesis behaviors during training.
+First, the frequency of "cross-checking" linguistic markers rises steadily across both domains (Figure 5 , Left).
+Notably, the near-zero initial frequency in the Code domain aligns with the poor test-time scaling of untrained models (Figure 1 ), confirming that training fundamentally transforms the model into a coordinated reasoner.
+To distinguish genuine synthesis from simple aggregation or refinement, we track the Emergent Correctness Rate (Figure 5 , Right), defined as the probability of generating a correct solution given input messages that are all incorrect.
+The upward trend in both domains demonstrates that the model transcends naive strategies like majority voting or random selection (which fail given all wrong inputs), learning instead to reconstruct valid solutions from erroneous partial evidence.
+This capability is empirically confirmed in Table 2 , where PaCoRe demonstrates robust test-time scaling while the voting-based Self-Consistency baseline saturates rapidly. 
+ 
+
+
+ [result table omitted; consult original if quantitative claim needed] 
+ Table 3 : Performance on SWE-Verified. PaCoRe-8B (low) markedly surpasses the RLVR-8B baseline, indicating generalization to software engineering scenarios without task-specific tuning. 
+ 
+ 
+
+
+
+Generalization Across Domains. 
+
+ 
+
+To assess cross-domain generalization beyond mathematical and logical reasoning benchmarks, we evaluate PaCoRe on software engineering and multi-turn conversation tasks using the SWE-Verified [ 22 ] and MultiChallenge [ 15 ] , respectively.
+We note that the starting checkpoint (RLVR-8B) underwent no specialized post-training for these tasks; thus, this study assesses the intrinsic transfer of reasoning capabilities rather than fully optimized performance.
+For SWE-Verified, we compare a compute-efficient variant, PaCoRe-8B (low), against the RLVR-8B baseline, both under Agentless [ 23 ] framework.
+As shown in Table 3 , PaCoRe-8B (low) achieves a resolve rate of 34.0%, substantially outperforming the baseline (29.8%).
+Furthermore, PaCoRe again exhibits strong generalization on MultiChallenge, with PaCoRe-8B (high) improving the RLVR-8B baseline from 33.3% to 48.0% under higher TTC budgets as shown in Table 1 
+ 
+ 
+
+
+
+General Effectiveness of PaCoRe Data. 
+
+ 
+
+Beyond the framework itself,
+we discovered that the training corpus curated for PaCoRe constitutes a general applicable learning resource of exceptional density.
+As shown in Table 4 , we observe that employing our released dataset as the primary substrate for standard RLVR yields a robust performance boost.
+The RLVR stage uses high-quality, carefully curated training data and applies an off-policy PPO algorithm with GAE ( \gamma=1,\lambda=1 ) for only 50 iterations and 4 mini-batches per iteration on ours-SFT-Qwen3-30B-A3B. Despite this minimal compute budget, RLVR delivers substantial gains over the SFT model on both AIME 2025 and LiveCodeBench.
+This indicates that our problem set—carefully filtered to demand genuine synthesis—serves as a highly effective catalyst for training strong reasoning models in general. 
+ 
+ 
+
+
+
+Ablation on Message Sampling Strategy in Training. 
+
+ 
+
+We investigate the impact of message set size |M| during training by comparing fixed versus uniformly sampled sizes.
+As shown in Table 5 , training with diverse and relatively large message sets ( |M|\sim U(8,16) ) yields the best performance when evaluated under a fixed inference configuration ( \vec{K}=[16,] ).
+This randomized sampling strategy improves robustness by familiarizing the model with varying parallel coordination settings, thereby facilitating superior test-time scaling. 
+ 
+
+
+ [result table omitted; consult original if quantitative claim needed] 
+ Table 4 : General Effectiveness of PaCoRe Data. RLVR trained on PaCoRe data, with only 200 update iterations, achieves significant gains on benchmarks

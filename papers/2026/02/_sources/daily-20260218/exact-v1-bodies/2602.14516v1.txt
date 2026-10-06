@@ -1,0 +1,851 @@
+Efficient Multi-round LLM Inference over Disaggregated Serving
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Preliminaries and Related Works
+3 System Overview
+4 Online Adaptive Scheduling
+4.1 Adaptive Routing
+4.2 Prefill Reordering
+5 Offline Deployment Planning
+6 Implementation
+7 Experiments
+7.1 Experimental Setup
+7.2 Experiment Results
+8 Conclusion
+References
+A More Details about Offline Planning
+A.1 Performance Simulation
+A.2 Time Cost of Planning
+A.3 Effectiveness of Planning
+B More Details of Experiments
+License: arXiv.org perpetual non-exclusive license
+arXiv:2602.14516v1 [cs.DC] 16 Feb 2026
+Efficient Multi-round LLM Inference over Disaggregated Serving
+Wenhao He
+Affiliation: Southeast University
+Youhe Jiang
+Affiliation: University of Cambridge
+Penghao Zhao
+Affiliation: Peking University
+Quanqing Xu
+Affiliation: Ant Group
+Eiko Yoneki
+Affiliation: University of Cambridge
+Bin Cui
+Affiliation: Peking University
+Fangcheng Fu
+Affiliation: Shanghai Jiao Tong University
+Correspondence to: ccchengff@sjtu.edu.cn
+Abstract
+With the rapid evolution of Large Language Models (LLMs), multi-round workflows, such as autonomous agents and iterative retrieval, have become increasingly prevalent.
+However, this raises hurdles for serving LLMs under prefill-decode (PD) disaggregation, a widely adopted paradigm that separates the compute-bound prefill phase and memory-bound decode phase onto individual resources.
+Specifically, existing systems overlook the interleaved prefill-decode workload pattern in multi-round inference, leading to sub-optimal handling of the incremental prefill workloads and model deployment for the two phases.
+In this work, we present AMPD , a brand new disaggregated serving framework for multi-round LLM inference.
+The core of AMPD is to coordinate the prefill workloads based on real-time workloads by adaptively determining where to carry out these workloads and how they are scheduled, in order to maximize service level objective (SLO) attainment.
+In addition, we tailor a planning algorithm for our scenario, facilitating the deduction of optimal resource allocation and parallel strategies for the two phases.
+Empirical results demonstrate that AMPD substantially improves SLO attainment compared to state-of-the-art baselines.
+Keywords:
+LLM Serving, Multi-round Inference, PD Disaggregation, Agentic Workflows
+1 Introduction
+Recent years have witnessed the remarkable success of Large Language Models (LLMs), demonstrating exceptional capabilities in natural language understanding and generation ( Vaswani et al., 2017 ; Guo et al., 2025 ; Yang et al., 2025 ) .
+Nowadays, LLMs have been widely deployed across diverse domains, ranging from code generation to creative writing.
+As these application scenarios continue to scale, how to deploy and serve LLMs efficiently has become critical for both academia and industry ( Kwon et al., 2023 ; Zheng et al., 2024 ; NVIDIA, 2026b ; Zhang et al., 2025b ) .
+Figure 1 : Illustration of multi-round LLM inference.
+Generally, given a request, the LLM inference comprises two sequential phases: prefill and decode.
+The prefill phase processes the entire input prompt at once to compute the Key-Value (KV) cache, exhibiting compute-bound characteristics.
+In contrast, the decode phase generates tokens step-by-step auto-regressively, which is highly memory-bound.
+Given this distinct workload discrepancy, colocating both phases on the same hardware resources often leads to prefill-decode interference (a.k.a. resource contention) and low utilization.
+To address this, the prefill-decode (PD) disaggregation paradigm has emerged as a widely adopted solution ( Zhong et al., 2024 ; Patel et al., 2024 ; Hu et al., 2024 ) .
+By separating prefill and decode phases onto distinct hardware resources, PD disaggregation significantly improves LLM serving throughput and resource efficiency.
+To accommodate more complex tasks, LLM inference has moved beyond single-shot responses to multi-round LLM workflows.
+Representative examples include autonomous agents ( Yao et al., 2023 ) and iterative retrieval-augmented generation (RAG) ( Yue et al., 2024 ) , where the model continuously interacts with external environments (e.g., by functional calls).
+As shown in Figure 1 , unlike single-shot inference, these workflows require treating (part of, if not all) the output of environmental interactions as the input of subsequent generation.
+Consequently, from the perspective of LLM inference, these workflows necessitate an interleaved prefill-decode pattern, where incremental prefill computations occur between decoding steps throughout the inference process of a request.
+Although research efforts have been made in both PD disaggregation and multi-round inference acceleration individually, the integration of them remains under-explored.
+Essentially, we identify that existing serving systems suffer from two critical limitations when applying PD disaggregation to multi-round workflows.
+The first is the lack of adaptive scheduling .
+Specifically, in addition to the initial prefill and decode tasks, multi-round LLM inference further necessitates carrying out incremental prefill tasks (i.e., the prefill computations for subsequent rounds).
+To mitigate PD interference, all prefill 1 1
+1
+Throughout this work, we explicitly distinguish “initial prefill” and “incremental prefill” when necessary. Unless specified otherwise, the term “prefill” refers to either or both variants. tasks are expected to be routed to the prefill instance(s).
+However, to meet service level objectives (SLOs), the serving system must dynamically decide two factors based on real-time workloads:
+(1) Whether an incremental prefill task should be executed locally on the decode instance, and if no, which prefill instance it should be routed to.
+(2) How to schedule the tasks on each prefill instance to cope with the increased burden brought by incremental prefill tasks.
+Existing systems lack adaptive mechanisms to handle these decisions to improve serving efficiency.
+Secondly, there is a lack of awareness for model deployment .
+Specifically, the optimal configuration for model deployment (including resource allocation and parallel strategy) is strongly related to the workload characteristics.
+However, previous works determine the model deployment of each phase by merely considering the lengths of input prompts and output responses, which depict the prefill and decode workloads in single-round inference.
+Undoubtedly, this fails to take account of the unique interleaved workload pattern of multi-round inference, leading to sub-optimal resource provision and parallelism strategy deduction.
+To fill this gap, this work presents AMPD , a novel serving framework for A daptive M ulti-round workflows with PD disaggregation by optimizing the runtime scheduling and deployment strategy.
+The technical contributions of this work are summarized as follows:
+•
+We propose a runtime scheduling that addresses the unique interleaved workload pattern of multi-round inference.
+It consists of an adaptive routing strategy that dynamically decides where to execute prefill tasks based on real-time system loads, as well as a prefill reordering policy that optimizes the execution order of queuing tasks to maximize SLO attainment.
+•
+We develop an offline deployment planner that formulates the determination of resource allocation and parallel strategies as an integer linear programming problem, and solves it to deduce the optimal deployment configuration.
+•
+We implement AMPD and evaluate it across diverse multi-round workloads. Extensive empirical results demonstrate that AMPD improves SLO attainment by 67.29%-339.74% on average compared to both co-located and disaggregated baselines.
+2 Preliminaries and Related Works
+Prefill-decode disaggregation.
+LLM inference consists of the compute-intensive prefill phase and the memory-bound decode phase.
+The time cost of first-token responsiveness, namely Time-to-First-Token (TTFT) 2 2
+2
+In this work, we use TTFT to measure the latency of both initial and incremental prefill. , is dominated by the prefill phase, while the per-token generation time, namely Inter-Token Latency (ITL), is related to each decode step.
+In traditional LLM serving systems that co-locate both phases on the same GPU resources, the resource contention between the two phases leads to significant interference.
+Prefill-decode (PD) disaggregation ( Zhong et al., 2024 ; Patel et al., 2024 ; Hu et al., 2024 ) is a promising technique to address such PD interference by dedicating GPU resources for each phase.
+Consequently, PD disaggregation has been widely adopted in LLM serving ( Qin et al., 2025 ; Liu et al., 2024 ) , and many efforts have been devoted to optimizing PD disaggregation from various aspects, including elastic scaling ( Zhang et al., 2025a ; Lai et al., 2025 ) , mixed-GPU support ( JIANG et al., ) , and multi-modal support ( Singh et al., 2025 ; Dong et al., 2025 ) .
+However, these works on PD disaggregation predominantly target single-round LLM inference, while our work has a different goal and can be incorporated with existing optimizations.
+Multi-round LLM workflows.
+The capability of LLMs has evolved from simple, one-shot answering to complex, multi-round workflows.
+There are two representative scenarios.
+The first is autonomous agents, typically represented by the ReAct-style agentic workflows, which enable agents to interleave reasoning (LLM generation) with acting (tool use) ( Yao et al., 2023 ; Mialon et al., 2023 ; Go and Park, 2025 ; Chen et al., 2024 ) .
+The second is iterative retrieval-augmented generation ( Shao et al., 2023 ; Yue et al., 2024 ; Jin et al., 2025 ) , which actively retrieves new documents during generation to correct or refine the output.
+From the serving system’s perspective, these multi-round workflows generate interleaved prefill-decode workloads.
+System optimizations for multi-round inference.
+Recent works have proposed optimizations for multi-round LLM workflows.
+InferCept ( Abhyankar et al., 2024 ) incorporates the discard, swap, and preserve operations when managing the history KV cache to reduce recomputation wastes.
+KVFlow ( Pan et al., 2025 ) tailors the prefix caching for multi-agent workflows, allowing different agents to share common prefixes and thereby reduces redundant computation.
+vLLM-Continuum ( Li et al., 2025 ) predicts the duration of the environmental interactions and decides whether to retain the KV cache via a time-to-live mechanism.
+MARS ( Shahout et al., 2025 ) and AugServe ( Wang et al., 2025 ) predict the output lengths and memory consumption respectively in multi-round LLM inference, and leverage such information to guide the scheduling of requests.
+Although these works focus on how to optimize system performance for multi-round workflows, all of them are designed under the co-located serving paradigm.
+To achieve the holistic integration of multi-round workflows and PD disaggregation, there exist unexplored challenges of complex real-time task routing and scheduling as well as the disaggregated deployment configurations.
+Figure 2 : System overview of AMPD .
+3 System Overview
+Figure 2 illustrates the overview of AMPD , which comprises offline and online stages.
+Offline stage.
+The offline stage profiles the workload characteristics and conducts the model deployment planning.
+The profiler is responsible for measuring the execution time of different workloads, constructing a performance model for both our offline deployment planner and online adaptive scheduling.
+We adopt a piecewise α ​ - ​ β \alpha\text{-}\beta model to capture the performance characteristics of three types of tasks and form three time cost functions:
+(i) T pre ​ ( l h ​ i ​ s ​ t , l i ​ n ​ c ​ r , θ ) \mathrm{T}_{\mathrm{pre}}(l_{hist},l_{incr};\theta) , which estimates the time cost of prefilling with history length l h ​ i ​ s ​ t l_{hist} and incremental input length l i ​ n ​ c ​ r l_{incr} under parallelism strategy θ \theta (initial prefill tasks are associated with a history length of zero),
+(ii) T dec ​ ( b , θ ) \mathrm{T}_{\mathrm{dec}}(b;\theta) , which estimates the time cost of decoding with batch size b b under parallelism strategy θ \theta ,
+and (iii) T kv ​ ( l c ​ t ​ x , θ s ​ r ​ c , θ d ​ s ​ t ) \mathrm{T}_{\mathrm{kv}}(l_{ctx};\theta_{src},\theta_{dst}) , which estimates the time cost of transmitting KV cache with context length l c ​ t ​ x l_{ctx} across the source and destination parallelism strategies ( θ s ​ r ​ c → θ d ​ s ​ t \theta_{src}\rightarrow\theta_{dst} ).
+The planner determines the optimal model deployment configuration (including the resource allocation and parallelism strategies for the two phases) prior to serving, by formulating and solving an integer linear programming problem.
+Online stage.
+The online stage consists of two major components, namely the coordinator and workers.
+The coordinator is in charge of the assignment of different tasks based on the real-time system loads.
+The prefill and decode workers correspond to the two phases, respectively, maintaining task queues that record the metadata of pending tasks.
+Besides, each prefill/decode worker keeps recording its windowed TTFT/ITL statistic (by default, the average TTFT/ITL within the past 10 seconds).
+Furthermore, to facilitate up-to-date coordination, we implement these queues and windowed statistics with distributed shared memory so that they are globally accessible.
+Overall workflow.
+During the online serving, the inference of a request undergoes the following steps.
+\raisebox{-0.8pt}{1}⃝ Binding :
+Upon the arrival of a request (a.k.a., a session), the coordinator first binds the request with a decode worker based on the memory usage ( NVIDIA, 2026a ) .
+In other words, the decode worker will be responsible for managing the request’s KV cache and conducting all its decode workloads.
+Such binding helps us unify the handling of both initial and incremental prefill tasks.
+\raisebox{-0.8pt}{2}⃝ Routing :
+Whenever the request requires prefilling (either its initial prefill after the binding or an incremental prefill after an environmental interaction), the coordinator employs an adaptive routing mechanism (§ 4.1 ) to determine where to carry out this prefill task, with two kinds of choices.
+•
+Local execution:
+The task is determined to be executed directly on the responsible decode worker (i.e., the decode worker that the request bound to).
+This avoids network transmission and reduces prefill workers’ burden, but pauses the worker’s ongoing decoding batch. 3 3
+3
+We follow the implementation in vLLM that prefill tasks are prioritized over decoding to avoid blocking subsequent generation.
+•
+Remote execution:
+The task is routed to a prefill worker.
+This mitigates PD interference but necessitates KV transmission:
+(i) before the execution of this task, the prefill worker reads the history KV cache from the responsible decode worker if necessary;
+(ii) after the execution, the newly generated KV cache is transmitted back to the responsible decode worker. 4 4
+4
+Each decode worker manages a local prefix cache, allowing it to merge the received incremental KV cache with the locally stored history KV cache. Thus, we only transmit the incremental KV cache to minimize network cost.
+\raisebox{-0.8pt}{3}⃝ Prefilling :
+In either case, the designated worker enqueues the prefill task into its own prefill queue, and adopts a prefill reordering policy (§ 4.2 ) to schedule tasks in the prefill queue.
+If designated to a prefill worker, it performs KV transmission as described above.
+\raisebox{-0.8pt}{4}⃝ Decoding :
+After step \raisebox{-0.8pt}{3}⃝, the responsible decode worker possesses all KV cache of this request, and continues the auto-regressive decoding process.
+In multi-round inference, the request may trigger an interaction with external environments (e.g., a function call), which is typically handled by a background CPU process of the decode worker.
+Upon the completion of interaction, it forms an incremental prefill task.
+Then, the coordinator is notified and we loop back to step \raisebox{-0.8pt}{2}⃝.
+This recursion repeats until the inference of this request reaches termination.
+4 Online Adaptive Scheduling
+Our online adaptive request scheduling consists of two techniques, namely adaptive routing and prefill reordering .
+These techniques address (i) where to carry out the prefill tasks, and (ii) how to schedule the prefill tasks within each worker, respectively.
+4.1 Adaptive Routing
+In essence, PD disaggregation separates the compute-intensive prefill phase and memory-bound decode phase onto individual resources, resolving the PD interference that occurs in co-located serving.
+Nevertheless, in multi-round inference, where to carry out the prefill tasks necessitates deliberation.
+For one thing, if we always route the prefill tasks (both initial and incremental) to prefill workers (remote execution), decode workers can remain focused on steady-state decoding and thus optimize ITL.
+However, it incurs extra transmission cost of KV cache and increases the burden of prefill workers, harming TTFT.
+For another, carrying out some prefill workloads by the decode workers themselves (local execution) eliminates the transmission cost and benefit TTFT, but makes decode workers more susceptible to PD interference, which leads to spikes in ITL.
+To strike a good balance between TTFT and ITL, we develop an SLO-oriented adaptive routing mechanism, which determines where each prefill task should be executed.
+The general idea is to leverage the windowed TTFT and ITL statistics to evaluate real-time system loads, and make the routing decision that is less likely to violate SLO requirements.
+Algorithm 1 Adaptive routing mechanism for prefill tasks. TTFT i ^ \widehat{\mathrm{TTFT}_{i}} denotes the windowed TTFT statistic of the i i -th prefill worker. ITL ^ \widehat{\mathrm{ITL}} denotes the windowed ITL statistic of the current decode worker. TTFT t ​ h ​ r ​ e ​ s \mathrm{TTFT}_{thres} and ITL t ​ h ​ r ​ e ​ s \mathrm{ITL}_{thres} are the thresholds for TTFT and ITL. α , β \alpha,\beta are hyper-parameters for identifying TTFT or ITL slack.
+1:
+for each prefill worker i i in random order do
+2:
+if TTFT i ^ ≤ α ⋅ TTFT t ​ h ​ r ​ e ​ s \widehat{\mathrm{TTFT}_{i}}\leq\alpha\cdot\mathrm{TTFT}_{thres} then
+3:
+return remote i \textsf{remote}_{i}
+4:
+if ITL ^ ≤ β ⋅ ITL t ​ h ​ r ​ e ​ s \widehat{\mathrm{ITL}}\leq\beta\cdot\mathrm{ITL}_{thres} then
+5:
+return local
+6:
+Estimate local execution cost t local t_{\textsf{local}}
+7:
+for each prefill worker i i do
+8:
+Estimate remote execution cost t remote i t_{\textsf{remote}_{i}} via Eq. ( 2 )
+9:
+return arg ​ min route ∈ { local , remote 1 , remote 2 , ⋯ } ⁡ t route \argmin_{route\in\{\textsf{local},\textsf{remote}_{1},\textsf{remote}_{2},\cdots\}}t_{route}
+Algorithm routine.
+Algorithm 1 shows the workflow of our adaptive routing mechanism.
+Given a prefill task (along with the corresponding decode worker), we first identify prefill workers with sufficient slack to meet the TTFT SLO and route the task to an eligible candidate (lines 1-3).
+If all prefill workers are under pressure (i.e., TTFT approaching the SLO threshold), we examine whether the current decoder worker’s windowed ITL shows sufficient slack, and if yes, a local execution will be triggered (lines 4-5).
+Otherwise, we estimate and compare the time cost of both local and remote execution for the final routing decision (lines 6-9).
+Particularly, as introduced in § 3 , we construct performance model based on offline profiling. Thus, the time cost of local execution on decode worker d d can be easily estimated via
+t local = \displaystyle t_{\textsf{local}}=
+T pre ​ ( l h ​ i ​ s ​ t , l i ​ n ​ c ​ r , θ d ) + \displaystyle\mathrm{T}_{\mathrm{pre}}(l_{hist},l_{incr};\theta_{d})\quad+
+(1)
+∑ k ∈ prefill ​ _ ​ queue d T pre ​ ( l h ​ i ​ s ​ t k , l i ​ n ​ c ​ r k , θ d ) , \displaystyle\sum_{k\in\mathrm{prefill\_queue}_{d}}\mathrm{T}_{\mathrm{pre}}(l_{hist_{k}},l_{incr_{k}};\theta_{d}),
+where l h ​ i ​ s ​ t l_{hist} denotes the history length, l i ​ n ​ c ​ r l_{incr} denotes the incremental input length, θ d \theta_{d} denotes the parallelism strategy of decode worker d d , and prefill ​ _ ​ queue d \mathrm{prefill\_queue}_{d} denotes its prefill queue.
+The first term is the estimated time cost of executing this prefill task on decode worker d d while the second term represents the estimated queuing time.
+Similarly, if we route the task to the i i -th prefill worker for remote execution, the time cost can be estimated via
+t remote i = t pre i + t kv i + t queue i , where \displaystyle t_{\textsf{remote}_{i}}=t_{\mathrm{pre}_{i}}+t_{\mathrm{kv}_{i}}+t_{\mathrm{queue}_{i}},\ \text{where}
+(2)
+t pre i \displaystyle t_{\mathrm{pre}_{i}}
+= T pre ​ ( l h ​ i ​ s ​ t , l i ​ n ​ c ​ r , θ p i ) , \displaystyle=\mathrm{T}_{\mathrm{pre}}(l_{hist},l_{incr};\theta_{p_{i}}),
+t kv i \displaystyle t_{\mathrm{kv}_{i}}
+= T kv ​ ( l h ​ i ​ s ​ t , θ d , θ p i ) + T kv ​ ( l i ​ n ​ c ​ r , θ p i , θ d ) , \displaystyle=\mathrm{T}_{\mathrm{kv}}(l_{hist};\theta_{d},\theta_{p_{i}})+\mathrm{T}_{\mathrm{kv}}(l_{incr};\theta_{p_{i}},\theta_{d}),
+t queue i \displaystyle t_{\mathrm{queue}_{i}}
+= ∑ k ∈ prefill ​ _ ​ queue i T pre ​ ( l h ​ i ​ s ​ t k , l i ​ n ​ c ​ r k , θ p i ) , \displaystyle=\sum_{k\in\mathrm{prefill\_queue}_{i}}\mathrm{T}_{\mathrm{pre}}(l_{hist_{k}},l_{incr_{k}};\theta_{p_{i}}),
+where θ p i \theta_{p_{i}} denotes the i i -th prefill worker’s parallelism strategy and prefill ​ _ ​ queue i \mathrm{prefill\_queue}_{i} denotes its prefill queue.
+The three terms correspond to the estimated time cost of (i) prefill computation, (ii) transmitting the KV cache back and forth, and (iii) queuing on the prefill worker.
+Based on the estimated time cost, the prefill task will be routed to the one with the lowest cost.
+Discussion.
+Although our adaptive routing mechanism needs to gather the shared metadata (windowed statistics and queuing information) from different workers, this is done concurrently.
+And the time cost estimation is extremely fast.
+Thus, the overhead of this mechanism is minor.
+4.2 Prefill Reordering
+The routing mechanism in § 4.1 leverages the TTFT/ITL slacks across prefill and decode workers to achieve real-time adaptive scheduling.
+In fact, thanks to our performance modeling, it is also feasible to identify the TTFT slacks of the tasks in each prefill queue.
+In other words, if a pending task is far from violating the TTFT SLO requirement, then we can schedule it later as a longer queuing time would not harm its TTFT SLO satisfaction.
+Following this, we develop a lightweight TTFT-aware prefill reordering policy.
+In a nutshell, to schedule one task from its prefill queue for execution, we employ a small lookahead window with size w w at the head of the queue, and reorder the tasks within the window in order to maximize the number of tasks satisfying the TTFT SLO.
+Algorithm 2 Prefill reordering policy.
+1:
+W ← Q . peek ⁡ ( w ) , π ∗ ← ϕ W\leftarrow Q.\mathrm{peek}(w),\pi^{*}\leftarrow\phi
+2:
+for each ordering π \pi over W W do
+3:
+if π \pi violates the postponement capacity then
+4:
+continue
+5:
+Compute the number of TTFT-satisfying tasks S π S_{\pi} based on Eq ( 4 ).
+6:
+π ∗ ← ( π ∗ = = ϕ ​ or ​ S π > S π ∗ ) ​ ? ​ π : π ∗ \pi^{*}\leftarrow(\pi^{*}==\phi\ \mathrm{\textbf{or}}\ S_{\pi}>S_{\pi^{*}})\ ?\ \pi\ :\ \pi^{*}
+7:
+Increment postponement counters for tasks that are postponed in π ∗ \pi^{*}
+8:
+Q . reorder ⁡ ( π ∗ ) , r ← Q . dequeue ⁡ ( ) Q.\mathrm{reorder}(\pi^{*}),r\leftarrow Q.\mathrm{dequeue}()
+9:
+Schedule r r for execution
+Algorithm routine.
+The routine of our reordering policy is shown in Algorithm 2 .
+Let T n ​ o ​ w T_{now} denote the current time, T enq ( r ) T_{\mathrm{enq}}^{(r)} the enqueue time of task r r , and t pre ( r ) t_{\mathrm{pre}}^{(r)} the estimated time cost for r r following our performance model.
+We first peek up to w w head elements of the prefill queue to form a window W = { r 1 , , r 2 , … } W=\{r_{1},,r_{2},\dots\} (line 1).
+Then, we enumerate feasible orderings to optimize TTFT within W W (lines 2-7).
+In particular, for any ordering π \pi over W W , the completion time (relative to T n ​ o ​ w T_{now} ) of the π ⁡ ( k ) \pi(k) -th request (i.e., the k k -th one in π \pi ) can be predicted as
+C ( π ⁡ ( k ) ) = ∑ j = 1 k t pre ( π ⁡ ( j ) ) . C^{(\pi(k))}\;=\;\sum_{j=1}^{k}t_{\mathrm{pre}}^{(\pi(j))}.
+(3)
+Subsequently, the number of TTFT-satisfying tasks within W W under ordering π \pi can be predicted as
+S π = ∑ k = 1 | W | 𝕀 [ ( T n ​ o ​ w − T enq ( π ⁡ ( k ) ) ) + C ( π ⁡ ( k ) ) ≤ TTFT thres ] . S_{\pi}=\sum_{k=1}^{\lvert W\rvert}\mathbb{I}\Bigl[(T_{now}-T_{\mathrm{enq}}^{(\pi(k))})+C^{(\pi(k))}\leq\mathrm{TTFT}_{\mathrm{thres}}\Bigr].
+(4)
+Consequently, to improve TTFT SLO attainment, we choose the ordering π ∗ = arg ​ max π ⁡ S π \pi^{*}=\argmax_{\pi}S_{\pi} that maximizes the number of TTFT-satisfying tasks within W W (lines 5-6).
+In addition, we enforce that each task can be postponed by at most w w times to prevent starvation.
+Particularly, we maintain a postponement counter for each task, and increment it whenever the task is postponed due to reordering (line 7).
+Once there are any tasks’ postponement counters reaching w w , we skip the orderings that postpone such tasks (lines 3-4).
+After the optimal ordering is obtained, the head elements of the prefill queue are reordered accordingly, after which, the first element will be scheduled for execution (lines 8-9).
+Discussion.
+Since it is extremely fast to evaluate the number of TTFT-satisfying tasks for one ordering and the window size is typically small (less than 5 in practice), the overhead incurred by the reordering policy is negligible.
+Last but not least, it is noteworthy that the estimated queuing time in Eq. ( 2 ) does not take account of the prefill reordering policy.
+Nevertheless, it does not harm the effectiveness of our adaptive routing mechanism, since the window size is small compared to the size of the prefill queue in practice.
+5 Offline Deployment Planning
+As depicted in Figure 3 , the deployment of disaggregated serving should consider two factors for each worker type (prefill and decode):
+(i) instantiating multiple independent replicas to handle concurrent requests (a.k.a., data parallelism ( Li et al., 2023 ) ),
+and (ii) partitioning each individual replica across multiple GPUs to satisfy memory and computational requirements (a.k.a., model parallelism ( Shoeybi et al., 2019 ) ).
+Consequently, to optimize the model deployment, we must establish appropriate data and model parallelism configurations for both worker types, while conforming to a fixed GPU resource capacity constraint.
+Figure 3 : Illustration of disaggregated LLM serving where prefill and decode workers are with different parallelism configurations.
+In response to this, we formulate the model deployment planning as a resource-constrained optimization problem . The goal is to identify the specific combination of model parallelism (partition) and data parallelism (replication) configurations for each worker type that maximizes performance.
+Formulation of planning.
+We first introduce the decision variables .
+Since model parallelism degrees are typically powers of 2, we can represent the deployment via the number of replicas associated with each feasible model parallelism degree.
+Specifically, given a discrete set of supported model parallelism degrees 𝒯 \mathcal{T} (e.g., { 1 , 2 , 4 , 8 } \{1,2,4,8\} ), the decision variables comprise two integer vectors, 𝐱 , 𝐲 ∈ ℤ ≥ 0 | 𝒯 | \mathbf{x},\mathbf{y}\in\mathbb{Z}_{\geq 0}^{|\mathcal{T}|} (e.g., 𝐱 = [ x ( 1 ) , x ( 2 ) , x ( 4 ) , x ( 8 ) ] , 𝐲 = [ y ( 1 ) , y ( 2 ) , y ( 4 ) , y ( 8 ) ] \mathbf{x}=[x^{(1)},x^{(2)},x^{(4)},x^{(8)}],\mathbf{y}=[y^{(1)},y^{(2)},y^{(4)},y^{(8)}] ).
+For each model parallelism degree n ∈ 𝒯 n\in\mathcal{T} , the variable x ( n ) x^{(n)} ( y ( n ) y^{(n)} ) denotes the number of prefill (decode) workers that are deployed with model parallelism degree n n (i.e., each partitioned across n n GPUs).
+Subsequently, to establish the optimization target, we introduce an auxiliary variable Z Z , which represents the maximum P95 latency among all workers.
+We formulate this resource allocation problem as an Integer Linear Programming (ILP) problem ( Vielma, 2015 ) :
+arg ​ min 𝐱 , 𝐲 ∈ ℤ ≥ 0 | 𝒯 | Z \displaystyle\argmin_{\mathbf{x},\mathbf{y}\in\mathbb{Z}_{\geq 0}^{|\mathcal{T}|}}\quad Z
+(5)
+s.t. \displaystyle\text{s.t.}
+( C1 ) ​ Z ≥ τ p ​ r ​ e ​ ( n ) , ∀ n ∈ 𝒯 ​ where ​ x ( n ) ≥ 1 \displaystyle\text{({C1}) }Z\geq\tau_{pre}(n),\quad\forall n\in\mathcal{T}\text{ where }x^{(n)}\geq 1
+( C2 ) ​ Z ≥ τ d ​ e ​ c ​ ( n ) , ∀ n ∈ 𝒯 ​ where ​ y ( n ) ≥ 1 \displaystyle\text{({C2}) }Z\geq\tau_{dec}(n),\quad\forall n\in\mathcal{T}\text{ where }y^{(n)}\geq 1
+( C3 ) ​ ∑ n ∈ 𝒯 ( x ( n ) ⋅ n ) + ∑ n ∈ 𝒯 ( y ( n ) ⋅ n ) ≤ N \displaystyle\text{({C3}) }\sum_{n\in\mathcal{T}}(x^{(n)}\cdot n)+\sum_{n\in\mathcal{T}}(y^{(n)}\cdot n)\leq N
+Constraints (C1) and (C2) establish P95 latency bounds of disaggregated inference. The coefficients τ pre ​ ( n ) , τ dec ​ ( n ) \tau_{\text{pre}}(n),\tau_{\text{dec}}(n) represent the estimated P95 latency 5 5
+5
+We adopt a simulator for estimating the P95 latency performance of different configurations based on the performance model, which is detailed in Appendix A.1 . of a single prefill or decode worker replica configured with model parallelism degree n n . Since the two constraints require that Z Z must be at least as large as the P95 latency of any instantiated worker replica, minimizing Z Z represents minimizing the worst-case P95 latency across all deployed worker replicas (i.e., optimizing the bottlenecked worker replicas). Constraint (C3) enforces the global GPU resource capacity. For each configuration with model parallelism degree n n , the GPU consumption equals the product of the number of worker replicas ( x ( n ) x^{(n)} or y ( n ) y^{(n)} ) and the parallelism degree n n . This constraint ensures that the total number of GPUs allocated across all worker replicas does not exceed the available cluster capacity N N .
+Planning solver.
+The formulation in Eq. ( 5 ) constitutes a multi-dimensional variant of the Unbounded Knapsack Problem ( Pisinger and Toth, 1998 ) , requiring the solver to evaluate integer combinations of valid model parallelism degrees to identify the optimal resource allocation. We employ a standard Mixed Integer Linear Programming (MILP) solver ( Huangfu and Hall, 2018 ) to solve this optimization problem. The solver accepts the simulated P95 latency coefficients τ pre ​ ( n ) \tau_{\text{pre}}(n) and τ dec ​ ( n ) \tau_{\text{dec}}(n) as constant parameters, and explores the feasible region defined by the integer vectors 𝐱 \mathbf{x} and 𝐲 \mathbf{y} . This approach is computationally efficient for typical cluster scales (see Appendix A.2 for details), and guarantees identification of the global optimum that balances both worker types while fully utilizing available GPU resources.
+Discussion.
+In Eq. ( 5 ), we adopt the P95 latency as our surrogate objective, while the goal of our system (particularly, the two approaches in § 4 ) is to maximize SLO attainment.
+This discrepancy is due to the infeasibility to solve the optimization of SLO attainment via efficient linear programming solvers.
+Particularly, owing to the binary output of SLO satisfaction, the SLO attainment metric cannot serve as a continuous surrogate objective.
+Consequently, our ILP is formulated to minimize the P95 latency.
+Despite this discrepancy, empirical evaluation demonstrates that our planning is effective in finding the optimal deployment. We refer interested readers to Appendix A.3 for more details.
+6 Implementation
+AMPD is implemented atop NVIDIA Dynamo ( NVIDIA, 2026b ) .
+We adopt Redis to enable global sharing of the queues and windowed TTFT/ITL statistics, and utilize the SCIP library ( Bolusani et al., 2024 ) to solve Eq. ( 5 ).
+For efficient KV cache transmission, we leverage the NVIDIA Inference Xfer Library (NIXL) ( NVIDIA, 2026c ) to achieve point-to-point RDMA network communication across prefill and decode workers.
+The transmission of history KV cache is implemented as lazy reads.
+To be specific, our routing mechanism (§ 4.1 ) sends merely metadata to prefill workers for remote execution.
+Only when an incremental prefill task is scheduled for execution (§ 4.2 ), should the prefill worker read the history KV cache from the decode worker.
+Additionally, the KV cache transmission overlaps with the computation of the previous task to hide the network latency.
+7 Experiments
+7.1 Experimental Setup
+Environments.
+We conduct experiments over 4 servers, each with 8 NVIDIA H20 (96GB) GPUs.
+The GPUs within each server are interconnected via NVLink with a bandwidth of 900GB/s, while the servers are interconnected by InfiniBand with a bandwidth of 200GB/s.
+Figure 4 : End-to-end comparison. The top three rows are the SLO attainment under different configurations (traces and request arrival rates) for the three models. The bottom row is a detailed breakdown of Llama-3.1-70B with a request arrival rate of 2 reqs/s, including the average TTFT for initial prefill, average TTFT for incremental prefill, and average ITL for decoding.
+Workloads.
+Three LLMs are used in our experiments, which are Qwen3-32B ( Yang et al., 2025 ) , Llama3.1-70B ( Grattafiori et al., 2024 ) , and Mixtral-8x7B ( Jiang et al., 2024 ) .
+Since our major focus is serving efficiency, we conduct experiments by running the same traces with AMPD and the baselines to achieve a fair comparison.
+Four workload traces are considered, which are generated from the ToolBench ( Guo et al., 2024 ) , GAIA ( Mialon et al., 2024 ) , HotpotQA ( Yang et al., 2018 ) , and DuReader ( He et al., 2018 ) datasets, respectively.
+Due to the space constraint, we summarize the length information in Table 1 , while leaving the details of these traces to Appendix B .
+For each model, we run HotpotQA and ToolBench workloads on a single server (8 GPUs), DuReader on two servers (16 GPUs), and GAIA on four servers (32 GPUs), to match the workload scale and system capacity.
+Table 1 : The average number of rounds, prefill length, and decode length of each trace.
+Trace
+#Rounds
+Prefill Length
+Decode Length
+ToolBench
+3.96
+703.79
+50.39
+GAIA
+11.32
+6161.02
+528.76
+HotpotQA
+3
+1569.8
+80.03
+DuReader
+3
+3081.23
+150.10
+Baselines.
+We compare AMPD with three state-of-the-art LLM serving systems as follows.
+•
+Dynamo ( NVIDIA, 2026b ) : The original NVIDIA Dynamo disaggregated serving system under PD disaggregation without the techniques proposed in this work. It always separates the prefill and decode workloads onto different resources.
+•
+vLLM ( Kwon et al., 2023 ) : One of the most prestigious LLM serving system under PD co-location.
+•
+vLLM-Continuum ( Li et al., 2025 ) : A serving system based on vLLM tailored for multi-round workflows.
+Protocols.
+In all experiments, we utilize our offline planner to determine the model deployment of AMPD , while we tune the model deployment for all baselines and report the best results to be fair.
+By default, the hyper-parameters are set as α = 0.9 , β = 0.85 , w = 3 \alpha=0.9,\beta=0.85,w=3 .
+We follow the previous standard to generate request arrival times using Poisson process
+with different request arrival rates ( Kwon et al., 2023 ; Zhong et al., 2024 ; Yu et al., 2022 ) , and take SLO attainment as the primary evaluation metric.
+7.2 Experiment Results
+End-to-end comparison.
+To begin with, we conduct experiments to measure the SLO attainment of all counterparts under various request arrival rates, with results presented in Figure 4 .
+Overall, AMPD achieves the highest SLO attainment across all experiments.
+Compared to Dynamo (the disaggregated baseline) and vLLM (the co-located baseline), AMPD improves SLO attainment by up to 967.54% and 3435.1% (67.29% and 339.74% on average), respectively.
+Figure 5 : Ablation studies (Llama3.1-70B, 2 reqs/s). Left: DuReader. Middle: GAIA. Right: Proportion of local and remote execution.
+Figure 6 : Sensitivity experiments w.r.t. w , α , β w,\alpha,\beta (Llama3.1-70B, DuReader, 2 reqs/s).
+To understand the performance gain, we further provide a detailed breakdown in the bottom row of Figure 4 .
+It can be observed that, both co-located and disaggregated serving exhibit divergent latency trade-offs.
+Co-located serving favors executing prefill tasks earlier (e.g., via prioritization or preemption) for the sake of continuous batching, which reduces TTFT but disrupts the execution of decode tasks and thereby deteriorates ITL.
+In contrast, PD disaggregation decouples prefill from decode, reducing PD interference on decode workers and typically achieving lower ITL, yet TTFT often becomes the bottleneck due to the reduction in prefill resources and the overhead of KV cache transmission.
+These trends are also observed across tasks. On HotpotQA, DuReader, and ToolBench, disaggregated serving often outperforms co-located serving because its ITL advantage dominates end-to-end behavior. On GAIA, co-located serving becomes favorable (compared to Dynamo) since it provides competitive TTFT while not exhibiting a pronounced ITL disadvantage.
+Consequently, both vLLM and Dynamo are frequently dominated by either ITL or TTFT constraints, limiting the attainable SLO rate.
+AMPD enjoys the benefit of PD disaggregation, avoiding deteriorating ITL compared to vLLM.
+Meanwhile, compared to Dynamo, AMPD significantly reduces TTFT thanks to our adaptive scheduling.
+Consequently, AMPD achieves a more robust trade-off between first-token responsiveness and per-token generation speed.
+vLLM-Continuum follows the co-located architecture and adopts a queuing policy that prioritizes tasks within the same request (a.k.a., session). Since such tasks can reuse cached KV states, they typically require less computation, which shortens queuing delay and reduces TTFT while leaving ITL unaffected. However, in many settings, the TTFT reduction does not consistently translate into a substantial improvement in SLO attainment. Thus, vLLM-Continuum is often comparable to, or nearly tied with, vLLM.
+Ablation study.
+We conduct experiments to assess the effectiveness of the two techniques in our online scheduling.
+The results are provided in Figure 5 .
+The adaptive routing mechanism routes 13.9%-31.7% prefill tasks to be executed locally on the decode workers, which relieves the burden of prefill workers, and thereby increases the SLO attainment by 27.37%-350%, demonstrating the effectiveness of adaptive routing in mitigating workload imbalance between phases.
+In addition, the prefill reordering policy further improves the SLO attainment by 13.42%-14.81%. This is reasonable as the queuing optimization helps reduce the tail of TTFT.
+Eventually, these two techniques together provision 44.47%-402% of improvement.
+Sensitivity.
+Both the two techniques in online scheduling introduce additional hyper-parameters. We evaluate the sensitivity of our work by varying these hyper-parameters. The results are shown in Figure 6 .
+We first evaluate the SLO attainment with multiple window sizes (2, 3, 4, and 5) in prefill reordering.
+It can be seen that the performance of AMPD remains similar across these window sizes (within 3% gap). This suggests that a short time window is sufficient to capture load signals needed for effective routing decisions.
+Next, we evaluate the impact of α \alpha and β \beta , which control the sensitivity to congestion on the prefill and decode sides, respectively.
+In general, a smaller α \alpha enables earlier detection of prefill congestion but may lead to under-utilization of prefill workers, while a smaller β \beta triggers earlier detection of decode congestion at the cost of potentially reduced decode utilization. Consequently, moderate values of α \alpha and β \beta can strike a better balance between prefill and decode workers, improving the overall system efficiency.
+8 Conclusion
+We presented AMPD , a novel disaggregated serving framework for efficient multi-round LLM inference.
+AMPD addresses the interleaved prefill-decode workload patterns of multi-round inference by runtime adaptive scheduling, consisting of the adaptive routing mechanism and prefill reordering policy to balance prefill and decode loads.
+Extensive experiments show that, compared to existing works, AMPD improves SLO attainment by 67.29%-339.74% on average, provisioning an effective solution for serving complex, multi-round LLM workflows.
+References
+Abhyankar et al. (2024)
+R. Abhyankar, Z. He, V. Srivatsa, H. Zhang, and Y. Zhang
+INFERCEPT: efficient intercept support for augmented large language model inference .
+In Proceedings of the 41st International Conference on Machine Learning ,
+pp. 81–95 .
+Cited by: §2 .
+Bolusani et al. (2024)
+S. Bolusani, M. Besançon, K. Bestuzheva, A. Chmiela, J. Dionísio, T. Donkiewicz, J. van Doornmalen, L. Eifler, M. Ghannam, A. Gleixner, et al.
+The scip optimization suite 9.0 .
+arXiv preprint arXiv:2402.17702 .
+Cited by: §A.2 ,
+§6 .
+Chen et al. (2024)
+S. Chen, Y. Wang, Y. Wu, Q. Chen, Z. Xu, W. Luo, K. Zhang, and L. Zhang
+Advancing tool-augmented large language models: integrating insights from errors in inference trees .
+Advances in Neural Information Processing Systems (NeurIPS 2024) 37 , pp. 106555–106581 .
+Cited by: §2 .
+Dong et al. (2025)
+X. Dong, T. Liu, Y. Zeng, L. Liu, Y. Liu, S. Wu, Y. Wu, H. Yang, K. Zhang, and J. Li
+HydraInfer: hybrid disaggregated scheduling for multimodal large language model serving .
+arXiv preprint arXiv:2505.12658 .
+Cited by: §2 .
+Go and Park (2025)
+H. Go and S. Park
+A study on classification based concurrent api calls and optimal model combination for tool augmented llms for ai agent .
+Scientific Reports 15 ( 1 ), pp. 20579 .
+Cited by: §2 .
+Grattafiori et al. (2024)
+A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan, et al.
+The llama 3 herd of models .
+arXiv preprint arXiv:2407.21783 .
+Cited by: §7.1 .
+Guo et al. (2025)
+D. Guo, D. Yang, H. Zhang, J. Song, P. Wang, Q. Zhu, R. Xu, R. Zhang, S. Ma, X. Bi, et al.
+DeepSeek-r1 incentivizes reasoning in llms through reinforcement learning .
+Nature 645 ( 8081 ), pp. 633–638 .
+Cited by: §1 .
+Guo et al. (2024)
+Z. Guo, S. Cheng, H. Wang, S. Liang, Y. Qin, P. Li, Z. Liu, M. Sun, and Y. Liu
+Stabletoolbench: towards stable large-scale benchmarking on tool learning of large language models .
+arXiv preprint arXiv:2403.07714 .
+Cited by: §7.1 .
+He et al. (2018)
+W. He, K. Liu, J. Liu, Y. Lyu, S. Zhao, X. Xiao, Y. Liu, Y. Wang, H. Wu, Q. She, et al.
+Dureader: a chinese machine reading comprehension dataset from real-world applications .
+In Proceedings of the workshop on machine reading for question answering ,
+pp. 37–46 .
+Cited by: §7.1 .
+Hockney (1994)
+R. W. Hockney
+The communication challenge for mpp: intel paragon and meiko cs-2 .
+Parallel computing 20 ( 3 ), pp. 389–398 .
+Cited by: §A.1 .
+Hu et al. (2024)
+C. Hu, H. Huang, L. Xu, X. Chen, J. Xu, S. Chen, H. Feng, C. Wang, S. Wang, Y. Bao, et al.
+Inference without interference: disaggregate llm inference for mixed downstream workloads .
+arXiv preprint arXiv:2401.11181 .
+Cited by: §1 ,
+§2 .
+Huangfu and Hall (2018)
+Q. Huangfu and J. J. Hall
+Parallelizing the dual revised simplex method .
+Mathematical Programming Computation 10 ( 1 ), pp. 119–142 .
+Cited by: §5 .
+Jiang et al. (2024)
+A. Q. Jiang, A. Sablayrolles, A. Roux, A. Mensch, B. Savary, C. Bamford, D. S. Chaplot, D. d. l. Casas, E. B. Hanna, F. Bressand, et al.
+Mixtral of experts .
+arXiv preprint arXiv:2401.04088 .
+Cited by: §7.1 .
+[14]
+Y. JIANG, F. Fu, X. Yao, T. Wang, B. CUI, A. Klimovic, and E. Yoneki
+ThunderServe: high-performance and cost-efficient llm serving in cloud environments .
+In Eighth Conference on Machine Learning and Systems (MLSys 2025) ,
+Cited by: §2 .
+Jin et al. (2025)
+B. Jin, H. Zeng, Z. Yue, J. Yoon, S. Arik, D. Wang, H. Zamani, and J. Han
+Search-r1: training llms to reason and leverage search engines with reinforcement learning .
+arXiv preprint arXiv:2503.09516 .
+Cited by: §2 .
+Katevenis et al. (1991)
+M. Katevenis, S. Sidiropoulos, and C. Courcoubetis
+Weighted round-robin cell multiplexing in a general-purpose atm switch chip .
+IEEE Journal on selected Areas in Communications 9 ( 8 ), pp. 1265–1279 .
+Cited by: §A.1 .
+Kwon et al. (2023)
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. Gonzalez, H. Zhang, and I. Stoica
+Efficient memory management for large language model serving with pagedattention .
+In Proceedings of the 29th symposium on operating systems principles (SOSP 2023) ,
+pp. 611–626 .
+Cited by: §1 ,
+2nd item ,
+§7.1 .
+Lai et al. (2025)
+R. Lai, H. Liu, C. Lu, Z. Liu, S. Cao, S. Shao, Y. Zhang, L. Mai, and D. Ustiugov
+TokenScale: timely and accurate autoscaling for disaggregated llm serving with token velocity .
+arXiv preprint arXiv:2512.03416 .
+Cited by: §2 .
+Li et al. (2025)
+H. Li, Q. Mang, R. He, Q. Zhang, H. Mao, X. Chen, A. Cheung, J. Gonzalez, and I. Stoica
+Continuum: efficient and robust multi-turn llm agent scheduling with kv cache time-to-live .
+arXiv preprint arXiv:2511.02230 .
+Cited by: §2 ,
+3rd item .
+Li et al. (2023)
+Z. Li, L. Zheng, Y. Zhong, V. Liu, Y. Sheng, X. Jin, Y. Huang, Z. Chen, H. Zhang, J. E. Gonzalez, et al.
+{ \{ alpaserve } \} : Statistical multiplexing with model parallelism for deep learning serving .
+In 17th USENIX Symposium on Operating Systems Design and Implementation (OSDI 23) ,
+pp. 663–679 .
+Cited by: §A.1 ,
+§5 .
+Liu et al. (2024)
+A. Liu, B. Feng, B. Xue, B. Wang, B. Wu, C. Lu, C. Zhao, C. Deng, C. Zhang, C. Ruan, et al.
+Deepseek-v3 technical report .
+arXiv preprint arXiv:2412.19437 .
+Cited by: §2 .
+Mialon et al. (2023)
+G. Mialon, R. Dessì, M. Lomeli, C. Nalmpantis, R. Pasunuru, R. Raileanu, B. Rozière, T. Schick, J. Dwivedi-Yu, A. Celikyilmaz, et al.
+Augmented language models: a survey .
+arXiv preprint arXiv:2302.07842 .
+Cited by: §2 .
+Mialon et al. (2024)
+G. Mialon, C. Fourrier, T. Wolf, Y. LeCun, and T. Scialom
+Gaia: a benchmark for general ai assistants .
+In The Twelfth International Conference on Learning Representations (ICLR 2024) ,
+Cited by: §7.1 .
+NVIDIA (2026a)
+NVIDIA
+NVIDIA dynamo documentation: kv router .
+Note: https://docs.nvidia.com/dynamo/latest/router/README.html
+Cited by: §3 .
+NVIDIA (2026b)
+NVIDIA
+NVIDIA dynamo: a datacenter scale distributed inference serving framework .
+Note: https://github.com/ai-dynamo/dynamo
+Cited by: §1 ,
+§6 ,
+1st item .
+NVIDIA (2026c)
+NVIDIA
+NVIDIA dynamo: a datacenter scale distributed inference serving framework .
+Note: https://github.com/ai-dynamo/nixl
+Cited by: §6 .
+Pan et al. (2025)
+Z. Pan, A. PATEL, Y. Shen, Z. Hu, Y. Guan, W. Li, L. Qin, Y. Wang, and Y. Ding
+KVFlow: efficient prefix caching for accelerating llm-based multi-agent workflows .
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems (NeurIPS 2025) ,
+Cited by: §2 .
+Patel et al. (2024)
+P. Patel, E. Choukse, C. Zhang, A. Shah, Í. Goiri, S. Maleki, and R. Bianchini
+Splitwise: efficient generative llm inference using phase splitting .
+In 2024 ACM/IEEE 51st Annual International Symposium on Computer Architecture (ISCA 2024) ,
+pp. 118–132 .
+Cited by: §1 ,
+§2 .
+Pisinger and Toth (1998)
+D. Pisinger and P. Toth
+Knapsack problems .
+In Handbook of Combinatorial Optimization: Volume1–3 ,
+pp. 299–428 .
+Cited by: §5 .
+Qin et al. (2025)
+R. Qin, Z. Li, W. He, J. Cui, F. Ren, M. Zhang, Y. Wu, W. Zheng, and X. Xu
+Mooncake: trading more storage for less computation—a kvcache-centric architecture for serving llm chatbot .
+In 23rd USENIX Conference on File and Storage Technologies (FAST 25) ,
+pp. 155–170 .
+Cited by: §2 .
+Shahout et al. (2025)
+R. Shahout, C. Liang, S. Xin, Q. Lao, Y. Cui, M. Yu, and M. Mitzenmacher
+Fast inference for augmented large language models .
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems (NeurIPS 2025) ,
+Cited by: §2 .
+Shao et al. (2023)
+Z. Shao, Y. Gong, Y. Shen, M. Huang, N. Duan, and W. Chen
+Enhancing retrieval-augmented large language models with iterative retrieval-generation synergy .
+arXiv preprint arXiv:2305.15294 .
+Cited by: §2 .
+Shoeybi et al. (2019)
+M. Shoeybi, M. Patwary, R. Puri, P. LeGresley, J. Casper, and B. Catanzaro
+Megatron-lm: training multi-billion parameter language models using model parallelism .
+arXiv preprint arXiv:1909.08053 .
+Cited by: §A.1 ,
+§5 .
+Singh et al. (2025)
+G. Singh, X. Wang, Y. Hu, T. T. L. Yu, L. Xing, W. Jiang, Z. Wang, B. Xiaolong, Y. Li, Y. Xiong, et al.
+Efficiently serving large multimodal models using epd disaggregation .
+In Forty-second International Conference on Machine Learning (ICML 2025) ,
+Cited by: §2 .
+Vaswani et al. (2017)
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin
+Attention is all you need .
+Advances in neural information processing systems (NeurIPS 2017) 30 .
+Cited by: §1 .
+Vielma (2015)
+J. P. Vielma
+Mixed integer linear programming formulation techniques .
+Siam Review 57 ( 1 ), pp. 3–57 .
+Cited by: §5 .
+Wang et al. (2025)
+Y. Wang, Z. Jin, J. Xu, W. Lin, Y. Chen, and W. Chen
+AugServe: adaptive request scheduling for augmented large language model inference serving .
+arXiv preprint arXiv:2512.04013 .
+Cited by: §2 .
+Yang et al. (2025)
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, et al.
+Qwen3 technical report .
+arXiv preprint arXiv:2505.09388 .
+Cited by: §1 ,
+§7.1 .
+Yang et al. (2018)
+Z. Yang, P. Qi, S. Zhang, Y. Bengio, W. Cohen, R. Salakhutdinov, and C. D. Manning
+HotpotQA: a dataset for diverse, explainable multi-hop question answering .
+In Proceedings of the 2018 conference on empirical methods in natural language processing ,
+pp. 2369–2380 .
+Cited by: §7.1 .
+Yao et al. (2023)
+S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. R. Narasimhan, and Y. Cao
+React: synergizing reasoning and acting in language models .
+In The eleventh international conference on learning representations (ICLR 2023) ,
+Cited by: §1 ,
+§2 .
+Yu et al. (2022)
+G. Yu, J. S. Jeong, G. Kim, S. Kim, and B. Chun
+Orca: a distributed serving system for { \{ transformer-based } \} generative models .
+In 16th USENIX Symposium on Operating Systems Design and Implementation (OSDI 22) ,
+pp. 521–538 .
+Cited by: §A.1 ,
+§7.1 .
+Yue et al. (2024)
+Z. Yue, H. Zhuang, A. Bai, K. Hui, R. Jagerman, H. Zeng, Z. Qin, D. Wang, X. Wang, and M. Bendersky
+Inference scaling for long-context retrieval augmented generation .
+arXiv preprint arXiv:2410.04343 .
+Cited by: Appendix B ,
+§1 ,
+§2 .
+Zhang et al. (2025a)
+D. Zhang, H. Wang, Y. Liu, X. Wei, Y. Shan, R. Chen, and H. Chen
+BlitzScale: fast and live large model autoscaling with o(1) host caching .
+In 19th USENIX Symposium on Operating Systems Design and Implementation (OSDI 25) ,
+pp. 275–293 .
+Cited by: §2 .
+Zhang et al. (2025b)
+L. Zhang, Y. Jiang, G. He, X. Chen, H. Lv, Q. Yao, F. Fu, and K. Chen
+Efficient mixed-precision large language model inference with turbomind .
+arXiv preprint arXiv:2508.15601 .
+Cited by: §1 .
+Zheng et al. (2024)
+L. Zheng, L. Yin, Z. Xie, C. L. Sun, J. Huang, C. H. Yu, S. Cao, C. Kozyrakis, I. Stoica, J. E. Gonzalez, et al.
+Sglang: efficient execution of structured language model programs .
+Advances in neural information processing systems (NeurIPS 2024) 37 , pp. 62557–62583 .
+Cited by: §1 .
+Zhong et al. (2024)
+Y. Zhong, S. Liu, J. Chen, J. Hu, Y. Zhu, X. Liu, X. Jin, and H. Zhang
+DistServe: disaggregating prefill and decoding for goodput-optimized large language model serving .
+In 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24) ,
+pp. 193–210 .
+Cited by: §1 ,
+§2 ,
+§7.1 .
+Appendix A More Details about Offline Planning
+A.1 Performance Simulation
+The simulator generates simulated performance metrics (i.e., P95 latency) for various model deployment configurations.
+Simulator inputs. In addition to the target model deployment configuration, the simulator requires three categories of inputs: ( i ) Model specifications , including the architecture type (e.g., dense or sparse) and parameter configurations (e.g., number of layers and hidden size); ( ii ) Hardware characteristics , encompassing GPU specifications such as memory capacity and inter-GPU communication bandwidth; and ( iii ) Workload characteristics , including request arrival rates and input/output sequence lengths. Collectively, these inputs enable the simulator to accurately model the serving behavior under specific deployment scenarios.
+Simulation process. Given the aforementioned inputs, the simulation proceeds in two stages: The profiling stage and the execution stage . (i) The profiling stage is in the charge of the profiler mentioned in § 3 . It enumerates all operators within the model (including the Q, K, V linear projections, self-attention computations, and feed-forward layers) and profiles the execution time of each operator on the target hardware. (ii) During the execution stage, the simulator leverages the operator latencies obtained from the profiling stage to simulate the concurrent execution of multiple incoming requests. Key inference serving features, such as request dispatching ( Katevenis et al., 1991 ) , continuous batching ( Yu et al., 2022 ) , model replication ( Li et al., 2023 ) , and model parallelism ( Shoeybi et al., 2019 ) , are incorporated into this simulation process. The simulator ultimately outputs the P95 latency for the target model deployment configuration.
+Simulation for phase splitting and KV retransmission. To accurately evaluate deployment scenarios involving prefill-decoding disaggregation and KV retransmission, we explicitly integrate these features into our simulator. ( i ) Phase splitting : The simulator supports deploying prefill and decoding replicas onto distinct GPU resources, enabling independent configurations of model parallelism and GPU allocation for each phase. The KV transmission latency between phases is modeled using the α \alpha - β \beta model ( Hockney, 1994 ) . ( ii ) KV retransmission : The simulator incorporates a decision-making mechanism to dynamically determine whether to offload incremental prefill to the prefill model replica or execute it locally on the decoding model replica. This mechanism implements the scheduling policy presented in § 4 .
+A.2 Time Cost of Planning
+Figure 7 measures the time cost of our offline planning with different number of GPUs.
+Since the determination of deployment configuration is formulated as an Integer Linear Programming problem, it can be solved efficiently with existing solvers ( Bolusani et al., 2024 ) .
+Consequently, our planning finishes quickly, taking merely one minute over 256 GPUs.
+This represents a common cluster scale for LLM serving in many downstream applications.
+Figure 7 : Time cost offline planning with varying numbers of GPUs.
+A.3 Effectiveness of Planning
+Table 2 shows the top-3 ranking of deployment configurations based on our planner’s deduction and actual serving.
+It shows that our planner successfully finds out the optimal configuration that empirically achieves the best performance.
+Table 2 : Top-3 model deployment configurations deduced by our planner and real-system serving. Across all experiments, our planner produces identical configurations to real-time serving.
+Model
+Trace
+Rank
+Planner
+Real-system Serving
+Llama3.1-70B
+DuReader
+[#1]
+P:<TP=4, DP=2>, D:<TP=8, DP=1>
+P:<TP=4, DP=2>, D:<TP=8, DP=1>
+[#2]
+P:<TP=2, DP=4>, D:<TP=8, DP=1>
+P:<TP=2, DP=4>, D:<TP=8, DP=1>
+[#3]
+P:<TP=8, DP=1>, D:<TP=8, DP=1>
+P:<TP=8, DP=1>, D:<TP=8, DP=1>
+HotpotQA
+[#1]
+P:<TP=4, DP=1>, D:<TP=4, DP=1>
+P:<TP=4, DP=1>, D:<TP=4, DP=1>
+[#2]
+P:<TP=2, DP=2>, D:<TP=4, DP=1>
+P:<TP=2, DP=2>, D:<TP=4, DP=1>
+[#3]
+P:<TP=2, DP=1>, D:<TP=2, DP=3>
+P:<TP=2, DP=1>, D:<TP=2, DP=3>
+GAIA
+[#1]
+P:<TP=8, DP=2>, D:<TP=8, DP=2>
+P:<TP=8, DP=2>, D:<TP=8, DP=2>
+[#2]
+P:<TP=8, DP=3>, D:<TP=8, DP=1>
+P:<TP=8, DP=3>, D:<TP=8, DP=1>
+[#3]
+P:<TP=4, DP=4>, D:<TP=8, DP=2>
+P:<TP=4, DP=4>, D:<TP=8, DP=2>
+ToolBench
+[#1]
+P:<TP=4, DP=1>, D:<TP=4, DP=1>
+P:<TP=4, DP=1>, D:<TP=4, DP=1>
+[#2]
+P:<TP=2, DP=2>, D:<TP=4, DP=1>
+P:<TP=2, DP=2>, D:<TP=4, DP=1>
+[#3]
+P:<TP=2, DP=1>, D:<TP=2, DP=3>
+P:<TP=2, DP=1>, D:<TP=2, DP=3>
+Qwen3-32B
+HotpotQA
+[#1]
+P:<TP=4, DP=1>, D:<TP=4, DP=1>
+P:<TP=4, DP=1>, D:<TP=4, DP=1>
+[#2]
+P:<TP=2, DP=2>, D:<TP=4, DP=1>
+P:<TP=2, DP=2>, D:<TP=4, DP=1>
+[#3]
+P:<TP=2, DP=1>, D:<TP=2, DP=3>
+P:<TP=2, DP=1>, D:<TP=2, DP=3>
+DuReader
+[#1]
+P:<TP=4, DP=2>, D:<TP=4, DP=2>
+P:<TP=4, DP=2>, D:<TP=4, DP=2>
+[#2]
+P:<TP=4, DP=2>, D:<TP=2, DP=4>
+P:<TP=4, DP=2>, D:<TP=2, DP=4>
+[#3]
+P:<TP=2, DP=4>, D:<TP=4, DP=2>
+P:<TP=2, DP=4>, D:<TP=4, DP=2>
+ToolBench
+[#1]
+P:<TP=4, DP=1>, D:<TP=4, DP=1>
+P:<TP=4, DP=1>, D:<TP=4, DP=1>
+[#2]
+P:<TP=2, DP=2>, D:<TP=4, DP=1>
+P:<TP=2, DP=2>, D:<TP=4, DP=1>
+[#3]
+P:<TP=2, DP=1>, D:<TP=2, DP=3>
+P:<TP=2, DP=1>, D:<TP=2, DP=3>
+GAIA
+[#1]
+P:<TP=8, DP=2>, D:<TP=8, DP=2>
+P:<TP=8, DP=2>, D:<TP=8, DP=2>
+[#2]
+P:<TP=8, DP=3>, D:<TP=8, DP=1>
+P:<TP=8, DP=3>, D:<TP=8, DP=1>
+[#3]
+P:<TP=4, DP=4>, D:<TP=8, DP=2>
+P:<TP=4, DP=4>, D:<TP=8, DP=2>
+Mixtral-8x7B
+HotpotQA
+[#1]
+P:<TP=4, DP=1>, D:<TP=4, DP=1>
+P:<TP=4, DP=1>, D:<TP=4, DP=1>
+[#2]
+P:<TP=2, DP=1>, D:<TP=2, DP=3>
+P:<TP=2, DP=1>, D:<TP=2, DP=3>
+[#3]
+P:<TP=4, DP=1>, D:<TP=2, DP=2>
+P:<TP=4, DP=1>, D:<TP=2, DP=2>
+DuReader
+[#1]
+P:<TP=8, DP=1>, D:<TP=8, DP=1>
+P:<TP=8, DP=1>, D:<TP=8, DP=1>
+[#2]
+P:<TP=8, DP=1>, D:<TP=4, DP=2>
+P:<TP=8, DP=1>, D:<TP=4, DP=2>
+[#3]
+P:<TP=4, DP=2>, D:<TP=8, DP=1>
+P:<TP=4, DP=2>, D:<TP=8, DP=1>
+ToolBench
+[#1]
+P:<TP=4, DP=1>, D:<TP=4, DP=1>
+P:<TP=4, DP=1>, D:<TP=4, DP=1>
+[#2]
+P:<TP=2, DP=1>, D:<TP=2, DP=3>
+P:<TP=2, DP=1>, D:<TP=2, DP=3>
+[#3]
+P:<TP=4, DP=1>, D:<TP=2, DP=2>
+P:<TP=4, DP=1>, D:<TP=2, DP=2>
+GAIA
+[#1]
+P:<TP=8, DP=2>, D:<TP=8, DP=2>
+P:<TP=8, DP=2>, D:<TP=8, DP=2>
+[#2]
+P:<TP=8, DP=3>, D:<TP=8, DP=1>
+P:<TP=8, DP=3>, D:<TP=8, DP=1>
+[#3]
+P:<TP=4, DP=4>, D:<TP=8, DP=2>
+P:<TP=4, DP=4>, D:<TP=8, DP=2>
+Appendix B More Details of Experiments
+Experimental traces.
+The traces used in our experiments are generated from public datasets.
+In particular, for ToolBench 6 6
+6
+https://github.com/OpenBMB/ToolBench.git and GAIA 7 7
+7
+https://huggingface.co/datasets/PatronusAI/TRAIL , we adopt publicly available traces to represent agentic workflows, while for HotpotQA and DuReader, we record one trace for each dataset by running iterative retrieval augmented generation ( Yue et al., 2024 ) using Qwen3-32B, with each request invoking three retrieval calls.
+More experimental results.
+Figure 8 compares the average end-to-end latency of all counterparts.
+AMPD maintains low latencies that are comparable against Dynamo. Although Dynamo has lower latencies in some cases, the gap is small. More importantly, AMPD delivers substantial improvement in terms of SLO attainment (as evaluated in § 7 ), which is essential for real-world serving.
+Figure 8 : The average end-to-end (E2E) latency, corresponding to the experiments in Figure 4 .
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

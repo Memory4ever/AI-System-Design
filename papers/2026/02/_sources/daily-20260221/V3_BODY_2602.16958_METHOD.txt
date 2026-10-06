@@ -1,0 +1,89 @@
+3. Threat Model
+Figure 1. Threat model of Phantom. The adversary injects the structural template into external data sources accessed by the LLM agent, inducing role confusion to hijack the agent’s execution flow.
+We consider a remote, black-box adversary, similar to previous works (Liu et al., 2023; Chang et al., 2025), who can inject arbitrary content into the data sources that the target agent retrieves, such as web pages, emails, or API responses. As illustrated in Figure 1, the adversary operates without access to the model’s weights, gradients, internal system prompts, or execution traces. Furthermore, the attacker has no prior knowledge of the specific chat template format used by the agent. Instead, they rely solely on query access to iteratively refine their adversarial payloads based on observable outputs. This setup reflects realistic operational conditions in which attackers influence agent inputs through third-party data without compromising the underlying infrastructure.
+The primary attack vector exploits the serialization of chat templates to induce role confusion. The adversary constructs a payload that contains specific control tokens, mimicking the agent’s internal dialogue syntax. By embedding these sequences into retrieved content, the attacker prematurely terminates the current tool-processing frame and synthesizes a fabricated conversation history, consisting of a counterfeit “Assistant” response and a malicious “User” query. As a result, the agent’s tokenizer flattens the injected content into a unified sequence, misattributing the provenance of the text. The agent erroneously treats the injected payload as legitimate history or trusted instructions, rather than as untrusted external data.
+Formally, given an agent 𝒜\mathcal{A}, a benign user query qq with goal guserg_{\text{user}}, and adversarial input xadvx_{\text{adv}}, the attack succeeds if 𝒜⁡(q,xadv)=oadv\mathcal{A}(q,x_{\text{adv}})=o_{\text{adv}} such that the output satisfies the adversary’s objective gadv≠guserg_{\text{adv}}\neq g_{\text{user}}. Unlike semantic jailbreaks that attempt to persuade the model to violate safety guidelines, this approach targets the architectural parsing logic. Successful exploitation bypasses semantic alignment defenses, leading to privilege escalation, unauthorized data exfiltration, or arbitrary tool execution. We assume the target employs state-of-the-art safety alignment. Phantom succeeds by structurally circumventing these protections rather than semantically overcoming them.
+4. Design of Phantom
+4.1. Key Observation
+Figure 2. The distribution of the Agent’s attention over input tokens. Compared to direct injection, structured template injection effectively shifts the Agent’s attention from authentic content to the injected prompt.
+This section investigates how structured template injection affects the attention distribution of LLM-based agents. As shown in Figure 2, compared to direct injection, structured template injection leads to a pronounced shift in the agent’s attention: the focus moves away from the original content toward the forged assistant response and user query embedded within the injected template.
+This behavior can be attributed to the agent’s reliance on structured templates during training and inference. Such templates typically use special tokens to explicitly delineate roles and semantic boundaries (e.g., system, user, assistant, tool), guiding the model to learn where to interpret instructions, where to generate responses, and when to invoke tools. However, when an attacker crafts and injects a malicious structured template, these boundary markers can be abused, and the intended semantic constraints are undermined. As a result, the agent may become confused about roles and instruction provenance, misinterpreting the injected malicious prompt as a legitimate user instruction and consequently triggering unintended or even harmful actions and tool invocations.
+The root cause of this vulnerability lies in the high degree of autonomy inherent to agent mechanisms. Developers expect agents to generate structured template content to autonomously separate multi-role inputs and determine tool-invocation strategies. However, when confronted with attacker-forged structured templates, an agent may fail to reliably distinguish between “system-generated control information” and “forged control information injected via external inputs,” leading to erroneous instruction parsing and unintended execution paths. Defending against this issue is challenging because effective mitigation often entails redesigning the template-mediated interaction and execution framework that underpins agent autonomy. Moreover, for security and intellectual property reasons, commercial closed-source models typically do not disclose the template details on which their agents rely.
+Therefore, Phantom is designed to leverage automated template augmentation and search to mount effective attacks against closed-source agents in a black-box setting, while exhibiting strong applicability and transferability across a wide range of LLM-based agents.
+Figure 3. Overview of Phantom.
+4.2. Overview of Phantom
+We propose Phantom, an automated hijacking attack framework targeting LLM agents. Phantom forges conversation history by injecting structured dialogue templates that steer the agent to treat an attacker-constructed “established context” in later turns, thereby altering its behavior and downstream decisions. A central challenge is that commercial closed-source agents expose very limited information about their internal prompting and template logic; accordingly, Phantom must efficiently explore a large, discrete template space to discover high-impact templates that reliably maximize hijacking success against the target agent.
+To address this challenge, Phantom first conducts systematic augmentations of standard templates from open-source LLMs to build a diverse pool of seed templates. We then introduce a mechanism that embeds discrete template structures into a continuous latent space, transforming template selection into Bayesian optimization over a compact, low-dimensional manifold. This formulation enables efficient exploration of the search space and accurate modeling of the non-linear relationship between template structural features and hijacking success, ultimately supporting the automated discovery of high-impact templates.
+Figure 3 illustrates the overall design of Phantom. The framework comprises three synergistic modules: Multi-level Template Augmentation, Latent Space Mapping, and Automated Template Search.
+Multi-level Template Augmentation.
+To establish an initial search space characterized by broad coverage and structural diversity, Phantom performs multi-level template augmentation by synthesizing LLM-based in-context learning with heuristic symbolic expansion. We employ few-shot prompting to guide LLMs in distilling the structural skeletons of canonical templates and generating semantically enriched variants. Simultaneously, we introduce rule-based symbolic perturbations to address the sensitivity of parsing mechanisms to fine-grained details such as escape characters and boundary markers. This hybrid approach compensates for the inherent limitations of large models in symbolic regularization, ultimately aggregating these results into a large-scale seed template pool that facilitates dense structural feature sampling for subsequent optimization.
+Latent Space Mapping.
+The Latent Space Mapping module achieves a high-fidelity transformation of discrete text templates into a continuous vector space. By implementing a lightweight autoencoder based on Qwen3-0.6B and leveraging Low-Rank Adaptation (LoRA) for parameter-efficient fine-tuning, the encoder compresses the template’s final hidden state into a low-dimensional embedding vector through a bottleneck layer. The decoder then utilizes this vector as an initial state for autoregressive generation to reconstruct the original template. This architecture ensures that templates with analogous semantics or structures reside in proximal regions of the latent space, thereby creating a smooth and searchable manifold for efficient adversarial discovery.
+Automated Template Search.
+With the continuous latent space established, Phantom employs Bayesian optimization to identify optimal adversarial vectors on the low-dimensional manifold. To navigate the black-box nature of commercial agents, we utilize a Random Forest surrogate model paired with an Expected Improvement acquisition function to effectively balance exploration and exploitation. We further integrate a lightweight evaluation mechanism that estimates hijacking success rates through fictitious conversation turn-counting logic, significantly reducing the overhead of direct agent interaction. The resulting optimal latent vector is decoded into a high-potency structured template and injected into the agent’s retrieval context to execute an automated hijacking attack.
+5. Design Details
+5.1. Multi-level Template Augmentation
+The Multi-level Template Augmentation module combines LLM-driven semantic transformation with rule-based symbolic expansion to construct a seed template corpus that achieves both broad coverage and high structural diversity, thereby improving the effectiveness of template search. However, because the composition of special markers, delimiters, and content layouts is highly variable, the template space is massive and discrete. Relying solely on conventional text-transformation augmentation often yields templates that are overly homogeneous in form and structure.
+To address this issue, we propose a two-stage augmentation framework that integrates LLMs with heuristic rules. Our key observation is that LLMs excel at semantic understanding and paraphrasing, yet they are often insensitive to fine-grained symbolic differences that materially affect parsing behavior; in contrast, deterministic rules can reliably cover such syntactic and symbolic perturbations. By coordinating these complementary mechanisms, we build a comprehensive seed template corpus with sufficient coverage in both the semantic and structural dimensions.
+Semantic-Level Augmentation.
+Phantom first leverages the in-context learning capability of LLMs to perform semantic-level transformations over open-source agent templates. Concretely, we collect 78 canonical templates from public sources. In each augmentation round, we randomly sample four templates as demonstrations and inject them into the prompt, then query multiple LLMs (e.g., Qwen-Flash and DeepSeek-V3.1) to rewrite a target template into new variants.
+Details regarding template-enhanced prompts can be found in Appendix F.
+Each generated variant is required to remain structurally related to the original template (i.e., preserving core slots and the interaction skeleton) to ensure usability and transferability.
+We then perform similarity checking over all candidate variants and remove those that are semantically near-duplicates. This process yields a final set of 3,833 semantically distinct templates.
+Character-Level Augmentation.
+While LLMs excel at capturing high-level structural patterns, they exhibit limited granularity regarding low-level symbolic perturbations that are critical for manipulating template parsers. To bridge this gap, Phantom incorporates a deterministic mutation engine to systematically explore the syntactic manifold. Algorithm 1 formalizes this procedure. We define a perturbation set ℛ\mathcal{R} spanning six transformation categories: (1) boundary mutation, which modifies newline sequences at template edges; (2) whitespace normalization, handling conversions between spaces, tabs, and redundant formatting; (3) casing injection, applying variable capitalization to non-delimiter segments; (4) delimiter substitution, such as interchanging angle brackets with alternative enclosing characters; (5) special-character handling, specifically targeting escape sequences for symbols like | and \; and (6) encoding obfuscation, which applies JSON, HTML, or URL encodings to specific fragments.
+We apply these transformations stochastically using independent Bernoulli trials (p=0.1p=0.1). This probability threshold optimizes the trade-off between maximizing corpus diversity and maintaining syntactic validity. The process expands the dataset to over 20,000 distinct instances. Following generation, we enforce a length constraint to remove unprocessable outliers and deduplicate the corpus.
+Algorithm 1 Character-Level Template Augmentation
+0:
+Seed template corpus 𝒞\mathcal{C}, trigger probability pp, max length LmaxL_{\max}
+0:
+Augmented corpus 𝒞′\mathcal{C}^{\prime}
+1:
+Define rule set ℛ={ℛboundary,ℛws,ℛcase,ℛdelim,ℛchar,ℛenc}\mathcal{R}=\{\mathcal{R}_{\text{boundary}},\mathcal{R}_{\text{ws}},\mathcal{R}_{\text{case}},\mathcal{R}_{\text{delim}},\mathcal{R}_{\text{char}},\mathcal{R}_{\text{enc}}\}
+2:
+𝒞′←𝒞\mathcal{C}^{\prime}\leftarrow\mathcal{C}
+3:
+for each template 𝐭∈𝒞\mathbf{t}\in\mathcal{C} do
+4:
+𝒮←{𝐭}\mathcal{S}\leftarrow\{\mathbf{t}\} {Initialize working set}
+5:
+for each rule category ℛi∈ℛ\mathcal{R}_{i}\in\mathcal{R} do
+6:
+𝒮new←∅\mathcal{S}_{\text{new}}\leftarrow\emptyset
+7:
+for each intermediate template 𝐭^∈𝒮\hat{\mathbf{t}}\in\mathcal{S} do
+8:
+for each transformation ϕ∈ℛi\phi\in\mathcal{R}_{i} do
+9:
+if Bernoulli(p)=1(p)=1 then
+10:
+𝐮←ϕ⁡(𝐭^)\mathbf{u}\leftarrow\phi(\hat{\mathbf{t}})
+11:
+if Valid​(𝐮)\textsc{Valid}(\mathbf{u}) then
+12:
+𝒮new←𝒮new∪{𝐮}\mathcal{S}_{\text{new}}\leftarrow\mathcal{S}_{\text{new}}\cup\{\mathbf{u}\}
+13:
+end if
+14:
+end if
+15:
+end for
+16:
+end for
+17:
+𝒮←𝒮∪𝒮new\mathcal{S}\leftarrow\mathcal{S}\cup\mathcal{S}_{\text{new}}
+18:
+end for
+19:
+𝒞′←𝒞′∪𝒮\mathcal{C}^{\prime}\leftarrow\mathcal{C}^{\prime}\cup\mathcal{S}
+20:
+end for
+21:
+𝒞′←{𝐭∈𝒞′∣Length​(𝐭)≤Lmax}\mathcal{C}^{\prime}\leftarrow\{\mathbf{t}\in\mathcal{C}^{\prime}\mid\textsc{Length}(\mathbf{t})\leq L_{\max}\}
+22:
+𝒞′←Dedup​(𝒞′)\mathcal{C}^{\prime}\leftarrow\textsc{Dedup}(\mathcal{C}^{\prime})
+23:
+return 𝒞′\mathcal{C}^{\prime}
+This hybrid augmentation strategy ensures comprehensive coverage of the attack surface. By decoupling semantic intent from syntactic realization, we achieve a robust sampling over the template space. The semantic stage preserves the logical coherence required for payload delivery, while the character-level stage explicitly targets the lexical idiosyncrasies of real-world parsers, including delimiter ambiguity and encoding variations. This dual-layer approach significantly enhances the structural diversity of the training data and provides essential support for efficient downstream template search.
+5.2. Latent Space Mapping
+To mitigate the challenges of non-differentiability and combinatorial explosion inherent in adversarial search within discrete template spaces, we introduce the Latent Space Mapping module. The cornerstone of this module is an optimized auto-encoder designed to project discre

@@ -1,0 +1,1042 @@
+DriveFine: Refining-Augmented Masked Diffusion VLA for Precise and Robust Driving
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+2.1 End to end Autonomous Driving
+2.2 VLAs for Autonomous Driving
+2.3 Reinforcement Learning for Autonomous Driving
+3 Method
+3.1 Diffusion LLM for Planning
+Modatily Tokenization.
+Training and Inference.
+3.2 Block-level MoE for Refinement
+Training and Inference.
+3.3 Reinforcement Finetuning
+GRPO for Generation Expert.
+Hybrid RL for Refining Expert.
+4 Experiments
+4.1 Experimental Settings
+Dataset.
+Implementation Details.
+4.2 Main Results
+Results of Navtest.
+Results of Navhard.
+4.3 Ablation Studies
+Ablations of the core components.
+Ablation study on the robustness of DriveFine.
+Sensitivity analysis of the number of refinement blocks.
+Efficiency-Performance Trade-off Analysis.
+Effect of Group Size.
+5 Conclusion
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2602.14577v1 [cs.CV] 16 Feb 2026
+DriveFine: Refining-Augmented Masked Diffusion VLA for Precise and Robust Driving
+Chenxu Dang
+† † thanks: Completed during the internship at Xiaomi EV and AIR. $†$ Corresponding authors.
+Affiliation: Huazhong University of Science and Technology
+Affiliation: Xiaomi EV
+Affiliation: Institute for AI Industry Research (AIR), Tsinghua University
+Sining Ang
+Affiliation: Institute for AI Industry Research (AIR), Tsinghua University
+Yongkang Li
+Affiliation: Huazhong University of Science and Technology
+Haochen Tian
+Affiliation: Xiaomi EV
+Jie Wang
+Affiliation: Xiaomi EV
+Guang Li
+Affiliation: Xiaomi EV
+Hangjun Ye
+Affiliation: Xiaomi EV
+Jie Ma
+Affiliation: Huazhong University of Science and Technology
+Long Chen †
+Affiliation: Xiaomi EV
+Yan Wang †
+Affiliation: Institute for AI Industry Research (AIR), Tsinghua University
+Abstract
+Vision-Language-Action (VLA) models for autonomous driving increasingly adopt generative planners trained with imitation learning followed by reinforcement learning. Diffusion-based planners suffer from modality alignment difficulties, low training efficiency, and limited generalization. Token-based planners are plagued by cumulative causal errors and irreversible decoding. In summary, the two dominant paradigms exhibit complementary strengths and weaknesses.
+In this paper, we propose DriveFine , a masked diffusion VLA model that combines flexible decoding with self-correction capabilities. In particular, we design a novel plug-and-play block-MoE, which seamlessly injects a refinement expert on top of the generation expert. By enabling explicit expert selection during inference and gradient blocking during training, the two experts are fully decoupled, preserving the foundational capabilities and generic patterns of the pretrained weights, which highlights the flexibility and extensibility of the block-MoE design. Furthermore, we design a hybrid reinforcement learning strategy that encourages effective exploration of refinement expert while maintaining training stability. Extensive experiments on NAVSIM v1, v2, and Navhard benchmarks demonstrate that DriveFine exhibits strong efficacy and robustness. The code will be released at https://github.com/MSunDYY/DriveFine .
+Keywords:
+Masked Diffusion LLM Reinforcement Learning Block MoE Autonomous Driving
+1 Introduction
+Vision-Language-Action (VLA) systems for autonomous driving (AD) integrate sensor observations and textual instructions, with a planner responsible for generating driving actions or trajectories. Early deterministic planners (e.g., MLP-based [ 12 , 15 , 50 ] or anchor-based classifiers [ 3 , 25 ] ) tended to imitate a single expert trajectory, which struggle with distribution shift and cannot capture the inherently multi-modal nature of driving.
+Recently, non-deterministic generative planners have emerged as the dominant paradigms in AD VLAs.
+They predict actions as probability distributions, effectively capturing the multimodal nature of driving behavior.
+Moreover, their inherent sampling capability encourages active exploration and enables seamless integration with rule-driven reinforcement learning strategies, such as GRPO, to guide policy learning. Current state-of-the-art generative VLAs can be categorized into diffusion-based models [ 24 , 18 , 28 , 51 ] with continuous action modeling and token-based planners [ 48 , 49 , 29 ] with discrete action representations.
+Figure 1 : Comparison of decoding mechanisms for Action Tokens in Generative VLA Models. (a) Parallel refinement with multi-step denoising. (b) Token-by-token decoding. (c) Generate first in parallel, then refine.
+Figure 2 : PDMS-oriented RFT.
+(1) Diffusion-based VLAs , as shown in Fig. 1 (a) construct a Markov chain and iteratively refine noisy trajectories by predicting their mean and variance.
+Despite the efficiency enabled by parallel decoding, the additional diffusion Transformer hinders cross-modal alignment, leading to inefficient training that typically requires hundreds of epochs.
+Moreover, diffusion-based planners are inherently conditional generators, which limits their robustness and generalization ability,
+as evidenced empirically in Fig. 2 : when optimized with PDMS-oriented reinforcement fine-tuning, diffusion-based planners [ 24 , 28 ] suffer a significant drop in EPDMS. Here, both PDMS and EPDMS are metrics provided by NAVSIM [ 9 ] , see 4.1 for details. We attribute this degradation to the weak coupling between diffusion planners and the VLM, which induces reward hacking and the loss of pretrained knowledge, substantially limiting their practical applicability.
+(2) Token-based VLAs , as illustrated in Fig. 1 (b), decode actions into tokens autoregressively within a predefined vocabulary, achieving a unified representation across vision, language, and action. As shown in Fig. 2 , the PDMS-oriented RFT for InternVL [ 5 ] leads to simultaneous improvements in both PDMS and EPDMS, exhibiting its stronger generalization and extensibility.
+Figure 3 : Failure cases caused by irreversible decoding in token-based VLAs.
+However, token-based VLAs [ 29 , 49 ] generally lag behind diffusion-based counterparts [ 24 , 51 ] in both performance and efficiency. This is mainly due to their causal attention and fixed token-by-token decoding, which is computationally costly and prone to error accumulation during inference. More critically, they inherit the irreversible decoding property of LLMs: decoded tokens cannot be modified once committed. Planning, however, is highly sensitive to noise: even point-level deviations can cause the entire trajectory failure, such as collision or off-road driving (Fig. 3 ).
+Very recent works [ 19 , 43 ] explored masked diffusion LLMs [ 32 , 20 ] (dLLMs) featuring more flexible decoding orders for driving. However, this flexibility aggravates the irreversible decoding problems: as shown in Fig. 3 , tokens decoded early lack global consistency constraints, are more likely to become outliers, and cannot be revised afterward, leading to trajectory-level failure. In contrast, diffusion-based planners iteratively refine the trajectory, enabling successive refinement and thereby ensuring high-quality trajectory generation.
+Clearly, both VLA planners exhibit complementary strengths and weaknesses, motivating the exploration of a model harnessing the advantages of both.
+In this paper, we propose DriveFine , pioneering the explicit injection of token-VLA’s refining capability for more precise and robust driving. We adopt a pretrained multi-modal masked Diffusion LLM (LaViDa [ 20 ] with LLaDA [ 32 ] as LLM) as our base planner, considering its several benefits compared with AR LLMs: parallel decoding for efficiency, bidirectional attention for richer context modeling, and a flexible decoding strategy that facilitates adaptive learning.
+The refining of token-VLAs is far from trivial and must adhere to several principles: preserving the base VLM’s original training and inference paradigms to prevent collapse of foundational capabilities; minimizing extra overhead in computation and parameters; remaining decoupled from trajectory generation to avoid interference. Evidently, this presents substantial challenges.
+To this end, we design a block-wise Mixture-of-Experts (MoE) architecture. Specifically, the majority of LLaDA blocks serve as shared experts for common contexts, while the remaining blocks are explicitly partitioned into generation experts and refinement experts. During inference, task-specific experts are proactively selected. During training, gradient flow from the refining branch is strictly confined to the refinement experts, decoupling from the generation experts. This explicit isolation preserves the foundational capabilities of the generation experts, effectively preventing mode collapse and cross-task interference.
+To align with the dominant pipeline, we further introduce an online-offline hybrid reinforcement learning paradigm. The generation expert samples a group of trajectories, which are reinforced via GRPO. Simultaneously, these trajectories are paired into offline anchor-target trajectory tuples. In parallel, the refinement expert actively refines the above trajectories, computing the associated rewards and generating online trajectory pairs, which, together with offline pairs, jointly supervise the refinement expert. Experimental results demonstrate that the block-wise MOE significantly enhances trajectory quality with limited parameter increase and slight inference overhead, raising the performance ceiling of token-based VLAs. We summarize our core contributions as follows:
+•
+We provide a thorough analysis of the strengths and weaknesses of mainstream diffusion-based and token-based VLAs.
+•
+We propose DriveFine, featuring a plug-and-play block-wise Mixture-of-Experts (block-MoE) that injects refining capability into token-based VLAs at minimal cost.
+•
+We design a targeted hybrid reinforcement learning strategy to further elevate DriveFine’s performance ceiling.
+•
+Extensive experiments demonstrate that DriveFine consistently achieves state-of-the-art performance on NavSim v1, v2, and Navhard benchmarks.
+2 Related Work
+2.1 End to end Autonomous Driving
+Early end-to-end planners predominantly relied on deterministic modeling, such as MLP-based regression [ 12 , 15 , 34 , 6 ] and anchor-based classification [ 3 ] , imitating a single expert trajectory. GenAD [ 46 ] imposes a GRU-based generator. To align the trajectory diversity, diffusion policies were introduced to recover trajectories from random noise, thereby better aligning with the inherent uncertainty of autonomous driving. Diffusion planners [ 47 , 35 ] leverage diffusion policies to jointly perform trajectory prediction and planning. GoalFlow [ 42 ] adopts goal-conditioned flow matching to generate trajectories, while DiffusionDrive [ 28 ] applies truncated diffusion over multiple anchor modes.
+2.2 VLAs for Autonomous Driving
+Conventional end-to-end driving models are often regarded as black boxes. To enhance interpretability, understanding, and reasoning, vision–language models (VLMs) [ 5 , 1 ] have been increasingly incorporated into autonomous driving systems in recent years. Early explorations primarily focused on high-level scene understanding [ 39 ] and reasoning [ 13 , 31 , 40 ] , while the demand for action generation gave rise to a large body of Vision–Language–Action (VLA) models.
+Early two-stage VLAs [ 30 , 14 , 4 , 37 ] generate meta-actions or low-frequency actions from a VLM, followed by an e2e planner for refinement. However, gradient isolation in such pipelines contradicts the principle of end-to-end learning. In contrast, recent one-stage VLAs directly output the final trajectory. For example, OpenDriveVLA [ 48 ] autoregressively decodes trajectories, while AutoVLA [ 49 ] augments the action vocabulary with clustered anchors. These approaches feature token-based decoding and are thus referred to as token-based VLAs.
+Other approaches incorporate a planner on top of the VLM to facilitate cross-modal alignment. Orion [ 11 ] employs a GRU-based decoder, while recent works [ 24 , 18 , 8 ] increasingly adopt diffusion policies as planners, achieving stronger performance.
+2.3 Reinforcement Learning for Autonomous Driving
+Imitation learning lacks negative supervision from counterexamples, which leads to poor performance in out-of-distribution (OOD) scenarios. To address this limitation, many studies introduce reinforcement learning to improve the generalization of planners. Early works adopt DPO, while AlphaDrive [ 16 ] is the first to introduce GRPO [ 33 ] . AdaThinkDrive [ 29 ] and AutoVLA [ 49 ] directly apply GRPO to token-based VLAs, whereas ReCogDrive [ 24 ] designs a diff-GRPO. DiffusionDrivev2 [ 51 ] further proposes intra- and inter-anchor truncated GRPO strategies. More recently, another scoring-based reinforcement learning models [ 17 , 25 , 26 ] performs stage-wise reasoning under direct reward guidance, leading to stronger performance.
+3 Method
+In this section, we present a detailed introduction of DriveFine with the overview in Fig. 4 .
+Sec. 3.1 describes the formulation of trajectory planning with the pretrained dLLM.
+Sec 3.2 details the proposed Block-MoE for refinement.
+Sec 3.3 illustrates the hybrid reinforcement learning strategy.
+Figure 4 : Architecture Overview of DriveFine. Visual and textual inputs are jointly aligned into a unified language space. A set of masked tokens undergoes s s steps of parallel denoising followed by a single refinement step. The key difference between the generation expert and the refinement expert lies in their input tokens: the former decodes only the masked tokens, whereas the latter operates on unmasked tokens.
+3.1 Diffusion LLM for Planning
+Modatily Tokenization.
+As shown in Fig. 4 , a single front-view image is processed by a pretrained vision tower (SigLIP [ 38 ] ) to produce continuous visual tokens, while a text tokenizer converts textual prompts info discrete tokens.
+To preserve the continuity of trajectory and enable token-level refinement, we discretize the action space following prior works [ 19 , 43 ] .
+The spatial range [ − 100 ​ m , + 100 ​ m ] [-100m,+100m] is uniformly divided into 4,000 bins with a resolution of 0.05 m, shared across longitudinal and lateral axes. The heading angle range [ − 90 ​ ° , + 90 ​ ° ] [-90\textdegree,+90\textdegree] is discretized into 1800 bins with a resolution of 0.1 ​ ° 0.1\textdegree . These bins are appended to the LLM vocabulary, enabling direct decoding of trajectory tokens and facilitating unified cross-modal alignment between language and actions.
+Training and Inference.
+The generating expert follows the standard dLLM training and inference paradigm.
+During training, clean sequences are corrupted by random masking, where tokens are replaced by a special mask token [M] with probability t t , and supervised via masked cross-entropy loss:
+ℒ θ = − 𝔼 t , p 0 , r 0 , r t [ 1 t ∑ i = 1 L 𝕀 [ r t i = [ M ] ] log p θ ( r 0 i ∣ p 0 , r t ) ] \mathcal{L}_{\theta}=-\mathbb{E}_{t,p_{0},r_{0},r_{t}}\left[\frac{1}{t}\sum_{i=1}^{L}\mathbb{I}\!\left[r_{t}^{i}=[\text{M}]\right]\log p_{\theta}\!\left(r_{0}^{i}\mid p_{0},r_{t}\right)\right]
+(1)
+Here, L L , p 0 p_{0} , r 0 r_{0} and r t r_{t} denote the sequence length, contextual token, original sequence, and the noised sequence, respectively.
+During the inference stage, the policy model is encouraged to condition on the given inputs (visions and instructions) and progressively reconstruct a feasible trajectory from fully masked trajectory via several iterative unmasking steps. Specifically, at denoising step t t , all masked tokens of noised trajectory r t r_{t} are predicted in parallel by a mask predictor (generation expert). A subset of mask tokens is then decoded to sequence r t − 1 r_{t-1} for the next iteration.
+3.2 Block-level MoE for Refinement
+As our previous analysis indicates, the flexible token decoding exacerbates the hazards of irreversible decoding, highlighting the necessity of refinement.
+The most straightforward approach is to introduce additional MoE layers to enable adaptive learning, and apply a loss directly on the unmasked tokens for supervision. However, this departs from the standard pre-training and inference paradigm of dLLMs, lossing their foundational capabilities, as they learn only to decode the mask tokens. Moreover, the deep coupling between generation and refinement introduces mutual interference and hinders task-specific tuning and optimization. Yet, fully decoupling the components would inevitably result in a dramatic increase in parameters.
+However, despite their different objectives, generation and refinement share a high similarity in contextual representation. Motivated by this insight, we propose our block-level Mixture-of-Experts (block-MoE) together with a carefully designed training–inference pipeline.
+As illustrated in Fig. 4 , a diffusion language model (LLaDA) consists of several stacked blocks.
+We treat the pretrained dLLM as a generation expert in its entirety, and just replicate its last
+n n blocks as refinement blocks, while the preceding blocks and visual tower are shared between both generation and refinement experts.
+Training and Inference.
+During inference, the model is explicitly prompted to perform specific task.
+The shared blocks extract common contextual representations, following which the corresponding expert blocks are manually activated to execute either generation or refinement.
+During training, the generating branch computes the loss only on masked tokens as in Eq. 1 , while the refinement branch computes the loss over all tokens, with gradient flow confined to the refinement expert. Here, the refinement expert undergoes simply warm-started for basic decoding.
+Clearly, our block-MoE achieves complete decoupling between generation and refinement during training and inference. This preserves the foundational knowledge of the pretrained model, preventing catastrophic forgetting. Moreover, the refinement expert is plug-and-play and can be trained synchronously with the generation experts, emphasizing its flexibility and transferability.
+3.3 Reinforcement Finetuning
+Recent studies have demonstrated the critical role of reinforcement learning in autonomous driving both theoretically and empirically. In the following, we detail how reinforcement fine-tuning (RFT) is leveraged to explore and enhance the full potential of DriveFine.
+Figure 5 : Reinforcement Fine-tuning Pipeline. The offline advantage and online advantage are jointly combined to form the hybrid advantage to supervise the training of the refinement expert.
+GRPO for Generation Expert.
+For the generation expert, we employ a rule-based online reinforcement learning strategy, Group Relative Policy Optimization (GRPO). Specifically, given an arbitrary scenario p p , the generation expert parallelly samples a group of G G candidate trajectories { x i } i = 1 G \{x_{i}\}_{i=1}^{G} . Following [ 41 ] , we progressively sample for s s steps to ensure consistency between training and inference, and aggregate every τ \tau neighboring steps to balance alignment and efficiency. For each trajectory x i x_{i} , we retain ⌊ s τ ⌋ \left\lfloor\frac{s}{\tau}\right\rfloor sampled paths { x i j } j = 1 ⌊ s / τ ⌋ \{x_{i}^{j}\}_{j=1}^{\left\lfloor s/\tau\right\rfloor} . The associated rewards { r i } i = 1 G \{r_{i}\}_{i=1}^{G} are then evaluated in a simulator. Subsequently, without normalization as in [ 45 ] , the group-relative rewards are computed as follows:
+A ^ i = r i − mean ​ ( { r i } i = 1 G ) \hat{A}_{i}=r_{i}-\text{mean}(\{r_{i}\}_{i=1}^{G})
+(2)
+x 1 ⌊ s / τ ⌋ x_{1}^{\left\lfloor s/\tau\right\rfloor}
+Subsequently, the sampled tokens are processed sequentially, and their losses are computed using the standard GRPO objective:
+ℒ GRPO ​ ( θ ) = 𝔼 q ∼ 𝒟 o i ∼ π θ ( ⋅ ∣ q ) [ 1 G ∑ i = 1 G 1 | o i | ∑ k = 1 | o i | min ( ρ i , k j A ^ i k , clip ( ρ i , k j , 1 − ϵ , 1 + ϵ ) A ^ i k ) − β D KL ( π θ ( ⋅ ∣ q ) ∥ π ref ( ⋅ ∣ q ) ) ] , \small\begin{split}\mathcal{L}_{\mathrm{GRPO}}(\theta)&=\mathbb{E}_{\begin{subarray}{c}q\sim\mathcal{D}\\
+o_{i}\sim\pi_{\theta}(\cdot\mid q)\end{subarray}}\Bigg[\frac{1}{G}\sum_{i=1}^{G}\frac{1}{|o_{i}|}\sum_{k=1}^{|o_{i}|}\min\Big(\rho_{i,k}^{j}\,\hat{A}_{i}^{k},\;\mathrm{clip}\big(\rho_{i,k}^{j},\,1-\epsilon,\,1+\epsilon\big)\,\hat{A}_{i}^{k}\Big)\\
+&\hskip 9.24994pt-\beta\,D_{\mathrm{KL}}\Big(\pi_{\theta}(\cdot\mid q)\;\|\;\pi_{\mathrm{ref}}(\cdot\mid q)\Big)\Bigg],\end{split}
+(3)
+where o i o_{i} denotes the length of the sequence, ϵ \epsilon controls the clipping range, β \beta balances the KL divergence penalty, and:
+ρ i , k j = π θ ​ ( o i , k j ∣ q , x i j ) π θ old ​ ( o i , k j ∣ q , x i j ) | x i , k j = [ M ] , x i , k j + 1 ≠ [ M ] . \rho_{i,k}^{j}=\left.\frac{\pi_{\theta}\!\left(o_{i,k}^{j}\mid q,x_{i}^{j}\right)}{\pi_{\theta_{\mathrm{old}}}\!\left(o_{i,k}^{j}\mid q,x_{i}^{j}\right)}\;\right|\;x_{i,k}^{j}=[\mathrm{M}],\;x_{i,k}^{j+1}\neq[\mathrm{M}].
+(4)
+Hybrid RL for Refining Expert.
+The purpose of the optimization expert is to fine-tune the generated trajectories to improve their quality. Compared to the anchor trajectories, corrective actions that lead to score improvements should be encouraged, while those that degrade the score should be penalized, regardless of the anchor itself. Therefore, the generated trajectories naturally serve as a reference for advantage computation, eliminating the need for traditional baseline estimation in reinforcement learning (e.g., the value network in PPO or the group-average reward in GRPO). Notably, the sampling of trajectories ensures diversity, allowing them to be directly used for training the optimization expert without further modification. Specifically,for sampled trajectories { x i } i = 1 G \{x_{i}\}_{i=1}^{G} , we compute pairwise reward differences to obtain a relative advantage matrix. Since the sampled trajectories are produced by the generation expert, they constitute offline data for the refining expert; hence, we define this as an offline reward matrix A ^ of ∈ ℝ G × G \hat{\textbf{A}}^{\text{of}}\in\mathbb{R}^{G\times G} :
+A ^ i ​ j of = r i − r j , ∀ i , j ∈ G \hat{A}^{\text{of}}_{ij}=r_{i}-r_{j},\quad\forall i,j\in G
+(5)
+The offline advantage matrix offers several benefits: (1) it has zero mean, simultaneously encouraging improvements and penalizing degradations; (2) the squared advantages provide denser reward signals compared to GRPO, enhancing training stability; and (3) it requires no additional sampling, making the computation simple and efficient.
+Despite its many advantages, the optimizer is inherently limited by an upper bound. To encourage the optimizer to explore autonomously, for each generated trajectory x i x_{i} , we allow it to sample a number of K K refined trajectories { x ^ i ​ k } k = 1 K \{\hat{x}_{ik}\}_{k=1}^{K} online and compute their corresponding rewards { r ^ i ​ k } k = 1 K \{\hat{r}_{ik}\}_{k=1}^{K} simultaneously. The online reward matrix 𝐀 ^ o ​ n ∈ ℝ G × K \hat{\mathbf{A}}^{on}\in\mathbb{R}^{G\times K} is then calculated as follows:
+A ^ i ​ k on = r ^ i ​ k − r i , ∀ i ∈ G , k ∈ K \hat{A}^{\text{on}}_{ik}=\hat{r}_{ik}-r_{i},\quad\forall i\in G,k\in K
+(6)
+Finally, a hybrid loss is computed to optimize the refining expert:
+ℒ hybrid ​ ( θ ) = 𝔼 q ∼ 𝒟 o i ∼ π θ ( ⋅ ∣ q ) 1 G ∑ i = 1 G [ 1 G ∑ j = 1 G 1 | o i ​ j | ∑ k = 1 | o i ​ j | ρ i , k A ^ o ​ f i , j + 1 N ∑ k = 1 N 1 | o i ​ k | ∑ k = 1 | o i | ρ i , k A ^ o ​ n i , j , ] , \small\begin{split}\mathcal{L}_{\mathrm{hybrid}}(\theta)=&\mathbb{E}_{\begin{subarray}{c}q\sim\mathcal{D}\\
+o_{i}\sim\pi_{\theta}(\cdot\mid q)\end{subarray}}\frac{1}{G}\sum_{i=1}^{G}\Bigg[\frac{1}{G}\sum_{j=1}^{G}\frac{1}{|o_{ij}|}\sum_{k=1}^{|o_{ij}|}\ \rho_{i,k}\,\hat{A}_{of}^{i,j}\;\\
+&+\frac{1}{N}\sum_{k=1}^{N}\frac{1}{|o_{ik}|}\sum_{k=1}^{|o_{i}|}\ \rho_{i,k}\,\hat{A}_{on}^{i,j},\;\Bigg],\end{split}
+(7)
+In our implementation, the generator and refiner are trained synchronously: trajectories are sampled online by the generator and then fed to the refiner for training, thereby enabling their collaborative learning and improvement.
+4 Experiments
+4.1 Experimental Settings
+Table 1 : PDMS results on the NAVSIM-v1 benchmark. † denotes best-of-6 sampling, and * indicates the appliance of score-based reinforcement training as [ 17 , 26 ] .
+Method
+Sensors
+NC ↑ \uparrow
+DAC ↑ \uparrow
+TTC ↑ \uparrow
+C. ↑ \uparrow
+EP ↑ \uparrow
+PDMS ↑ \uparrow
+Human
+–
+100
+100
+100
+99.9
+87.5
+94.8
+End-to-End Methods
+UniAD [ 12 ]
+6xC
+97.8
+91.9
+92.9
+100.0
+78.8
+83.4
+TransFuser [ 6 ]
+3xC+L
+97.7
+92.8
+92.8
+100.0
+79.2
+84.0
+LAW [ 21 ]
+1xC
+96.4
+95.4
+88.7
+99.9
+81.7
+84.6
+Hydra-MDP [ 25 ]
+3xC+L
+98.3
+96.0
+94.6
+100.0
+78.7
+86.5
+DiffusionDrive [ 28 ]
+3xC+L
+98.2
+96.2
+94.7
+100.0
+82.2
+88.1
+WoTE [ 23 ]
+3xC+L
+98.5
+96.8
+94.4
+99.9
+81.9
+88.3
+Vision Language Action Methods
+AutoVLA [ 49 ]
+3xC
+98.4
+95.6
+98.0
+99.9
+81.9
+89.1
+DriveVLA-W0 [ 22 ]
+1xC
+98.7
+99.1
+95.3
+99.3
+83.3
+90.2
+AdaThinkDrive [ 29 ]
+1xC
+98.4
+97.8
+95.2
+100
+84.4
+90.3
+ReCogDrive [ 24 ]
+1xC
+98.2
+97.8
+95.2
+99.8
+83.5
+89.6
+DriveFine
+1xC
+98.6
+97.9
+95.2
+99.9
+85.5
+90.7
+DriveFine*
+1xC
+98.8
+98.6
+96.2
+100
+86.9
+91.8
+AutoVLA † [ 49 ]
+3xC
+99.1
+97.1
+97.1
+100.0
+87.6
+92.1
+DriveVLA-W0 †
+1xC
+99.3
+97.4
+97.0
+99.9
+88.3
+93.0
+AdaThinkDrive † [ 29 ]
+1xC
+99.1
+98.8
+97.2
+100
+87.9
+93.0
+DriveFine †
+1xC
+99.3
+99.2
+97.9
+100
+89.1
+94.2
+Dataset.
+We evaluate DriveFine on the NAVSIM [ 9 ] dataset, which is built upon nuPlan [ 2 ] (a subset of OpenScene [ 7 ] ) and provides surround-view images from 8 cameras along with high-quality LiDAR point clouds. The dataset is split into 1,192 (navtrain) scenes for training and 136 scenes (navtest) for testing. NAVSIM also offers a simulation environment for closed-loop evaluation.
+NAVSIM v1 adopts the Predictive Driver Model Score (PDMS) as the evaluation metric, which is a weighted aggregation of multiple driving-related criteria, including collision avoidance, drivable area compliance, progress–risk trade-off, and comfort. Building upon this metric, NAVSIM v2 introduces the extended PDM Score (EPDMS), which incorporates additional weighted factors such as traffic light compliance, lane boundary adherence, driving direction following, and extended comfort.
+Implementation Details.
+We adopt Siglip-384 [ 38 ] as the visual tower, which partitions a single front-view image into 8 patches of size 384 × 384 384\times 384 . Pretrained weights from LLaDA-8B [ 32 ] are loaded directly, with the first 28 transformer blocks serving as shared blocks and the last 4 blocks designated as expert ones. DriveFine is trained in two stages. In the first stage, it performs supervised fine-tuning (SFT) using the QA pairs and textualized trajectories provided by ReCogDrive [ 24 ] , without any additional pretraining. In the second stage, it undergoes reinforcement fine-tuning (RFT) in the NAVSIM simulation environment.
+During the SFT stage, the model is trained for 12 epochs with a batch size of 64, optimized using AdamW with a learning rate of 4 × 10 − 5 4\times 10^{-5} and cosine learning rate decay.
+In the RFT stage, The group size for generating expert rollouts is set to 10, each of trajectory is further optimized online by the optimizer 6 times. The model is trained for 1 epoch with a batch size of 16 and a learning rate of 1 × 10 − 6 1\times 10^{-6} .
+At inference, DriveFine executes 12 sampling steps followed by a single refining step, adhering to a confidence-prioritized and cosine schedule for decoding.
+Table 2 : EPDMS results on the NAVSIM-v2 benchmark. † indicates results evaluated on the bug-fixed version of NAVSIM.
+Method
+NC ↑ \uparrow
+DAC ↑ \uparrow
+DDC ↑ \uparrow
+TLC ↑ \uparrow
+EP ↑ \uparrow
+TTC ↑ \uparrow
+LK ↑ \uparrow
+C. ↑ \uparrow
+EC ↑ \uparrow
+EPDMS ↑ \uparrow
+Ego-MLP [ 27 ]
+93.1
+77.9
+92.7
+99.6
+86.0
+91.5
+89.4
+98.3
+85.4
+64.0
+TransFuser [ 6 ]
+96.9
+89.9
+97.8
+99.7
+87.1
+95.4
+92.7
+98.3
+87.2
+76.7
+DriveSuprim [ 44 ]
+97.5
+96.5
+99.4
+99.6
+88.4
+96.6
+95.5
+98.3
+77.0
+83.1
+ARTEMIS [ 10 ]
+98.3
+95.1
+98.6
+99.8
+81.5
+97.4
+96.5
+98.3
+–
+83.1
+ReCogDrive [ 24 ]
+98.3
+95.2
+99.5
+99.8
+87.1
+97.5
+96.6
+98.3
+86.5
+83.6
+DiffusionDrive [ 28 ]
+98.2
+95.9
+99.4
+99.8
+87.5
+97.3
+96.8
+98.3
+87.7
+84.5
+DriveVLA-W0 [ 22 ]
+99.0
+98.4
+99.3
+99.9
+87.0
+98.1
+93.2
+97.9
+58.9
+86.5
+DriveFine
+98.7
+97.3
+98.8
+99.8
+88.2
+97.8
+97.7
+98.4
+84.7
+87.1
+DriveFine †
+98.7
+97.3
+99.5
+99.8
+88.7
+97.8
+97.7
+98.4
+83.8
+89.7
+Table 3 : EPDMS results on the Navhard benchmark. * indicates values are copied from [ 36 ] ; all other results are obtained from our own evaluations.
+Method
+Stage
+NC ↑ \uparrow
+DAC ↑ \uparrow
+DDC ↑ \uparrow
+TLC ↑ \uparrow
+EP ↑ \uparrow
+TTC ↑ \uparrow
+LK ↑ \uparrow
+HC ↑ \uparrow
+EC ↑ \uparrow
+EPDMS ↑ \uparrow
+ReCogDrive [ 24 ]
+S1
+97.1
+80.2
+98.4
+100
+83.6
+95.3
+93.6
+97.6
+76.0
+68.9
+S2
+78.2
+69.3
+83.9
+98.2
+86.6
+73.9
+44.1
+96.4
+72.0
+37.8
+DiffusionDrive* [ 28 ]
+S1
+96.8
+86.0
+98.8
+99.3
+84.0
+95.8
+96.7
+97.6
+79.6
+66.7
+S2
+80.1
+72.8
+84.4
+98.4
+85.9
+76.6
+46.4
+96.3
+72.8
+40.5
+DriveFine(Ours)
+S1
+97.6
+90.0
+99.1
+99.3
+84.9
+96.7
+97.3
+97.6
+72.0
+74.4
+S2
+82.1
+71.3
+84.8
+98.4
+88.1
+74.3
+47.2
+96.8
+72.8
+41.0
+4.2 Main Results
+Results of Navtest.
+We first report the NAVSIM v1 results, evaluating PDMS on the navtest split, as shown in Tab. 1 . DriveFine achieves state-of-the-art (SOTA) performance. In particular, compared with autoregressive token-based VLA models [ 49 , 29 ] , DriveFine achieves a 0.5% improvement, while being on par with diffusion-based planners [ 24 ] . When score-based reinforcement fine-tuning is applied (an additional scorer is trained), DriveFine further improves its performance to 91.9 PDMS, surpassing all existing VLA planners.
+We report the comparison results on NAVSIM-v2 in Tab. 2 , which provides a more comprehensive evaluation of the overall model performance. For a fair comparison with prior works, we evaluate DriveFine using an earlier NAVSIM version, which contains a score computation bug that leads to systematically underestimated overall scores. Despite this issue, DriveFine still achieves 86.7 EPDMS, outperforming DriveVLA-W0 [ 22 ] by 0.5 points.
+When evaluated with the bug-fixed NAVSIM version, DriveFine further reaches 89.7 EPDMS, thereby establishing a new state of the art.
+Results of Navhard.
+We further conduct experiments on the more challenging Navhard benchmark, which employs Gaussian splatting to generate scenarios beyond the training data distribution and adopts a two-stage evaluation protocol. The results are reported in Tab. 3 . Notably, no additional training is applied in this setting. Under this fair evaluation protocol, DriveFine outperforms the diffusion-based methods [ 28 , 31 ] on both stage metrics, with a particularly notable improvement of 5.5 points in Stage 1 EPDMS over ReCogDrive, further demonstrating its strong performance as well as the superior generalization capability of token-based VLAs.
+4.3 Ablation Studies
+Ablations of the core components.
+Tab. 4 presents an ablation study on the core components of DriveFine. With LLaDA mimicking expert trajectories (SFT), the model achieves a PDMS of 86.7. GRPO reinforcement training increases PDMS to 89.6. Incorporating the refinement expert with offline reinforcement training further improves performance by 0.7 point, while online reinforcement training raises the model’s performance ceiling to 90.8.
+We observe that the refinement mechanism improves nearly all metrics, particularly DAC and Conf. Further visualization of trajectories before and after refinement (as shown in the Fig. 6 ) clearly demonstrates that the refinement expert can effectively correct anomalies when individual tokens lead to collisions or off-road events, which would otherwise result in complete trajectory failure. Additionally, it significantly mitigates fluctuations caused by noncausal decoding, enhancing overall trajectory smoothness.
+Figure 6 : Qualitative visualization comparison between DriveFine and other SOTA methods. In the rightmost figure, the red and green lines denote the trajectories before and after refinement, respectively.
+Table 4 : Ablation results of core components of DriveFine.
+ID
+SFT
+GRPO
+Offline-RFT
+Online-RFT
+NC
+DAC
+TTC
+Conf.
+EP
+PDMS
+1
+✓
+✗
+✗
+✗
+98.0
+95.2
+94.9
+99.4
+81.6
+86.7
+2
+✓
+✓
+✗
+✗
+98.3
+96.9
+95.1
+99.2
+85.1
+89.6 +2.9
+3
+✓
+✓
+✓
+✗
+98.5
+97.3
+95.2
+99.9
+85.4
+90.3 +0.7
+4
+✓
+✓
+✓
+✓
+98.6
+97.9
+95.2
+99.9
+85.5
+90.8 +0.5
+Ablation study on the robustness of DriveFine.
+We further evaluated the robustness of DriveFine. As shown in Tab. 6 , after PDMS-oriented RFT, extended metrics such as LK, EC, and DDC remain stable or show slight improvements. Consequently, the increase in PDMS is accompanied by a synchronous improvement in EPMDS. Compared with diffusion-based models in 7 , DriveFine demonstrates a clear robustness advantage, further confirming the potential of token-based models.
+Model
+EP ↑ \uparrow
+LK ↑ \uparrow
+EC ↑ \uparrow
+PDMS ↑ \uparrow
+EPMDS ↑ \uparrow
+DriveFine-SFT
+86.8
+97.9
+83.3
+86.7
+86.8
++RFT(PDMS)
+88.7
+97.7
+83.8
+90.5 +3.8
+89.1 +2.3
+Table 5 : Performance comparison of different models.
+Table 6 : Sensitivity the number of refinement blocks n n .
+n
+0
+1
+2
+4
+6
+8
+Param(B)
+8
+8.25
+8.5
+9
+9.5
+10
+PDMS
+89.6
+90.0
+90.4
+90.8
+90.8
+90.7
+Sensitivity analysis of the number of refinement blocks.
+We evaluated the sensitivity of DriveFine to the number of refinement blocks, as summarized in Tab. 6 . When n = 0 n=0 , i.e., without any refinement capability, the trajectories are derived from the generative expert. Remarkably, introducing just one refinement block (250M parameters) already improves trajectory quality (+0.4 PDMS). As the number of blocks increases, performance gradually improves, reaching the optimal level when 4 refinement blocks are injected.
+Efficiency-Performance Trade-off Analysis.
+We evaluate the impact of the number of diffusion steps s s on the efficiency–performance trade-off, comparing DriveFine with VLA models of similar scale, as shown in Fig. 7 .
+As expected, inference latency increases roughly proportionally with s s . In general, a larger number of diffusion steps allows the model to “think” more thoroughly, resulting in better performance.
+Figure 7 : PDMS-Latency trade-off
+However, we observe that with only 4 steps, DriveFine already achieves a PDMS of 90.47, comparable to ReCogDrive-8B [ 24 ] , with an average latency of merely 207 ms, representing an optimal efficiency–performance balance. This further demonstrates the robustness of masked diffusion LLMs.
+In contrast, the InternVL model relies on token-by-token decoding, incurring much higher inference latency.
+Overall, these results indicate that the flexible decoding of diffusion-based language models enables an effective balance between efficiency and performance, paving the way for more efficient planning paradigms.
+Effect of Group Size.
+As shown in Tab. 7 , DriveFine is moderately sensitive to the GRPO group size. Even with a small group size G = 2 G=2 , it outperforms the SFT baseline by 1.7 PDMS. Increasing G G leads to a monotonic performance gain, with the best performance achieved at G = 8 G=8 .
+Table 7 : Sensitivity of group size G G .
+Group size G G
+0
+2
+4
+6
+8
+10
+EP ↑ \uparrow
+81.6
+83.7
+84.4
+84.7
+85.1
+85.2
+DAC ↑ \uparrow
+95.2
+95.8
+96.3
+96.5
+96.9
+96.8
+PDMS ↑ \uparrow
+86.7
+88.4
+89.1
+89.4
+89.6
+89.6
+5 Conclusion
+In this paper, we conduct a comprehensive analysis of the two dominant VLA planners for autonomous driving: diffusion-based and token-based paradigms, highlighting their respective strengths and limitations. We further explore leveraging masked diffusion LLMs as a potential solution to mitigate their shortcomings. Building on these insights, we propose DriveFine, which features a plug-and-play block-MoE architecture combined with a hybrid reinforcement training strategy to inject refinement capabilities into token-based VLAs. We evaluate DriveFine on NAVSIMv1, NAVSIMv2, and the more challenging Navhard benchmarks, and demonstrate its effectiveness and robustness through extensive ablation studies and comparative analyses. We hope our findings and contributions will provide valuable insights for the community.
+References
+[1]
+S. Bai, K. Chen, X. Liu, J. Wang, W. Ge, S. Song, K. Dang, P. Wang, S. Wang, J. Tang, et al. (2025)
+Qwen2. 5-vl technical report .
+arXiv preprint arXiv:2502.13923 .
+Cited by: §2.2 .
+[2]
+H. Caesar, J. Kabzan, K. S. Tan, W. K. Fong, E. Wolff, A. Lang, L. Fletcher, O. Beijbom, and S. Omari (2021)
+Nuplan: a closed-loop ml-based planning benchmark for autonomous vehicles .
+arXiv preprint arXiv:2106.11810 .
+Cited by: §4.1 .
+[3]
+S. Chen, B. Jiang, H. Gao, B. Liao, Q. Xu, Q. Zhang, C. Huang, W. Liu, and X. Wang (2024)
+Vadv2: end-to-end vectorized autonomous driving via probabilistic planning .
+arXiv preprint arXiv:2402.13243 .
+Cited by: §1 ,
+§2.1 .
+[4]
+X. Chen, L. Huang, T. Ma, R. Fang, S. Shi, and H. Li (2025)
+SOLVE: synergy of language-vision and end-to-end networks for autonomous driving .
+In Proceedings of the Computer Vision and Pattern Recognition Conference ,
+pp. 12068–12077 .
+Cited by: §2.2 .
+[5]
+Z. Chen, J. Wu, W. Wang, W. Su, G. Chen, S. Xing, M. Zhong, Q. Zhang, X. Zhu, L. Lu, et al. (2024)
+Internvl: scaling up vision foundation models and aligning for generic visual-linguistic tasks .
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition ,
+pp. 24185–24198 .
+Cited by: §1 ,
+§2.2 .
+[6]
+K. Chitta, A. Prakash, B. Jaeger, Z. Yu, K. Renz, and A. Geiger (2022)
+Transfuser: imitation with transformer-based sensor fusion for autonomous driving .
+IEEE transactions on pattern analysis and machine intelligence 45 ( 11 ), pp. 12878–12895 .
+Cited by: §2.1 ,
+Table 1 ,
+Table 2 .
+[7]
+O. Contributors (2023)
+Openscene: the largest up-to-date 3d occupancy prediction benchmark in autonomous driving .
+In Proceedings of the Conference on Computer Vision and Pattern Recognition, Vancouver, Canada ,
+pp. 18–22 .
+Cited by: §4.1 .
+[8]
+C. Dang, J. Wang, G. Li, Z. Hou, Z. You, H. Ye, J. Ma, L. Chen, and Y. Wang (2026)
+SparseOccVLA: bridging occupancy and vision-language models via sparse queries for unified 4d scene understanding and planning .
+arXiv preprint arXiv:2601.06474 .
+Cited by: §2.2 .
+[9]
+D. Dauner, M. Hallgarten, T. Li, X. Weng, Z. Huang, Z. Yang, H. Li, I. Gilitschenski, B. Ivanovic, M. Pavone, et al. (2024)
+Navsim: data-driven non-reactive autonomous vehicle simulation and benchmarking .
+Advances in Neural Information Processing Systems 37 , pp. 28706–28719 .
+Cited by: §1 ,
+§4.1 .
+[10]
+R. Feng, N. Xi, D. Chu, R. Wang, Z. Deng, A. Wang, L. Lu, J. Wang, and Y. Huang (2025)
+Artemis: autoregressive end-to-end trajectory planning with mixture of experts for autonomous driving .
+arXiv preprint arXiv:2504.19580 .
+Cited by: Table 2 .
+[11]
+H. Fu, D. Zhang, Z. Zhao, J. Cui, D. Liang, C. Zhang, D. Zhang, H. Xie, B. Wang, and X. Bai (2025)
+Orion: a holistic end-to-end autonomous driving framework by vision-language instructed action generation .
+arXiv preprint arXiv:2503.19755 .
+Cited by: §2.2 .
+[12]
+Y. Hu, J. Yang, L. Chen, K. Li, C. Sima, X. Zhu, S. Chai, S. Du, T. Lin, W. Wang, et al. (2023)
+Planning-oriented autonomous driving .
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition ,
+pp. 17853–17862 .
+Cited by: §1 ,
+§2.1 ,
+Table 1 .
+[13]
+Z. Huang, T. Tang, S. Chen, S. Lin, Z. Jie, L. Ma, G. Wang, and X. Liang (2024)
+Making large language models better planners with reasoning-decision alignment .
+In European Conference on Computer Vision ,
+pp. 73–90 .
+Cited by: §2.2 .
+[14]
+J. Hwang, R. Xu, H. Lin, W. Hung, J. Ji, K. Choi, D. Huang, T. He, P. Covington, B. Sapp, et al. (2024)
+Emma: end-to-end multimodal model for autonomous driving .
+arXiv preprint arXiv:2410.23262 .
+Cited by: §2.2 .
+[15]
+B. Jiang, S. Chen, Q. Xu, B. Liao, J. Chen, H. Zhou, Q. Zhang, W. Liu, C. Huang, and X. Wang (2023)
+Vad: vectorized scene representation for efficient autonomous driving .
+In Proceedings of the IEEE/CVF International Conference on Computer Vision ,
+pp. 8340–8350 .
+Cited by: §1 ,
+§2.1 .
+[16]
+B. Jiang, S. Chen, Q. Zhang, W. Liu, and X. Wang (2025)
+Alphadrive: unleashing the power of vlms in autonomous driving via reinforcement learning and reasoning .
+arXiv preprint arXiv:2503.07608 .
+Cited by: §2.3 .
+[17]
+E. Kirby, A. Boulch, Y. Xu, Y. Yin, G. Puy, É. Zablocki, A. Bursuc, S. Gidaris, R. Marlet, F. Bartoccioni, et al. (2026)
+Driving on registers .
+arXiv preprint arXiv:2601.05083 .
+Cited by: §2.3 ,
+Table 1 ,
+Table 1 .
+[18]
+J. Li, J. Wu, D. Hu, X. Huang, B. Sun, Z. Hao, X. Lang, X. Zhu, and L. Zhang (2026)
+SGDrive: scene-to-goal hierarchical world cognition for autonomous driving .
+arXiv preprint arXiv:2601.05640 .
+Cited by: §1 ,
+§2.2 .
+[19]
+P. Li, Y. Zheng, Y. Wang, H. Wang, H. Zhao, J. Liu, X. Zhan, K. Zhan, and X. Lang (2025)
+Discrete diffusion for reflective vision-language-action models in autonomous driving .
+arXiv preprint arXiv:2509.20109 .
+Cited by: §1 ,
+§3.1 .
+[20]
+S. Li, K. Kallidromitis, H. Bansal, A. Gokul, Y. Kato, K. Kozuka, J. Kuen, Z. Lin, K. Chang, and A. Grover (2025)
+Lavida: a large diffusion language model for multimodal understanding .
+arXiv preprint arXiv:2505.16839 .
+Cited by: §1 ,
+§1 .
+[21]
+Y. Li, L. Fan, J. He, Y. Wang, Y. Chen, Z. Zhang, and T. Tan (2024)
+Enhancing end-to-end autonomous driving with latent world model .
+arXiv preprint arXiv:2406.08481 .
+Cited by: Table 1 .
+[22]
+Y. Li, S. Shang, W. Liu, B. Zhan, H. Wang, Y. Wang, Y. Chen, X. Wang, Y. An, C. Tang, et al. (2025)
+DriveVLA-w0: world models amplify data scaling law in autonomous driving .
+arXiv preprint arXiv:2510.12796 .
+Cited by: §4.2 ,
+Table 1 ,
+Table 2 .
+[23]
+Y. Li, Y. Wang, Y. Liu, J. He, L. Fan, and Z. Zhang (2025)
+End-to-end driving with online trajectory evaluation via bev world model .
+arXiv preprint arXiv:2504.01941 .
+Cited by: Table 1 .
+[24]
+Y. Li, K. Xiong, X. Guo, F. Li, S. Yan, G. Xu, L. Zhou, L. Chen, H. Sun, B. Wang, et al. (2025)
+Recogdrive: a reinforced cognitive framework for end-to-end autonomous driving .
+arXiv preprint arXiv:2506.08052 .
+Cited by: §1 ,
+§1 ,
+§1 ,
+§2.2 ,
+§2.3 ,
+§4.1 ,
+§4.2 ,
+§4.3 ,
+Table 1 ,
+Table 2 ,
+Table 3 .
+[25]
+Z. Li, K. Li, S. Wang, S. Lan, Z. Yu, Y. Ji, Z. Li, Z. Zhu, J. Kautz, Z. Wu, et al. (2024)
+Hydra-mdp: end-to-end multimodal planning with multi-target hydra-distillation .
+arXiv preprint arXiv:2406.06978 .
+Cited by: §1 ,
+§2.3 ,
+Table 1 .
+[26]
+Z. Li, W. Yao, Z. Wang, X. Sun, J. Chen, N. Chang, M. Shen, Z. Wu, S. Lan, and J. M. Alvarez (2025)
+Generalized trajectory scoring for end-to-end multimodal planning .
+arXiv preprint arXiv:2506.06664 .
+Cited by: §2.3 ,
+Table 1 ,
+Table 1 .
+[27]
+Z. Li, Z. Yu, S. Lan, J. Li, J. Kautz, T. Lu, and J. M. Alvarez (2024)
+Is ego status all you need for open-loop end-to-end autonomous driving? .
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition ,
+pp. 14864–14873 .
+Cited by: Table 2 .
+[28]
+B. Liao, S. Chen, H. Yin, B. Jiang, C. Wang, S. Yan, X. Zhang, X. Li, Y. Zhang, Q. Zhang, et al. (2025)
+Diffusiondrive: truncated diffusion model for end-to-end autonomous driving .
+In Proceedings of the Computer Vision and Pattern Recognition Conference ,
+pp. 12037–12047 .
+Cited by: §1 ,
+§1 ,
+§2.1 ,
+§4.2 ,
+Table 1 ,
+Table 2 ,
+Table 3 .
+[29]
+Y. Luo, F. Li, S. Xu, Z. Lai, L. Yang, Q. Chen, Z. Luo, Z. Xie, S. Jiang, J. Liu, et al. (2025)
+Adathinkdrive: adaptive thinking via reinforcement learning for autonomous driving .
+arXiv preprint arXiv:2509.13769 .
+Cited by: §1 ,
+§1 ,
+§2.3 ,
+§4.2 ,
+Table 1 ,
+Table 1 .
+[30]
+J. Mao, Y. Qian, J. Ye, H. Zhao, and Y. Wang (2023)
+Gpt-driver: learning to drive with gpt .
+arXiv preprint arXiv:2310.01415 .
+Cited by: §2.2 .
+[31]
+M. Nie, R. Peng, C. Wang, X. Cai, J. Han, H. Xu, and L. Zhang (2024)
+Reason2drive: towards interpretable and chain-based reasoning for autonomous driving .
+In European Conference on Computer Vision ,
+pp. 292–308 .
+Cited by: §2.2 ,
+§4.2 .
+[32]
+S. Nie, F. Zhu, Z. You, X. Zhang, J. Ou, J. Hu, J. Zhou, Y. Lin, J. Wen, and C. Li (2025)
+Large language diffusion models .
+arXiv preprint arXiv:2502.09992 .
+Cited by: §1 ,
+§1 ,
+§4.1 .
+[33]
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. Li, Y. Wu, et al. (2024)
+Deepseekmath: pushing the limits of mathematical reasoning in open language models .
+arXiv preprint arXiv:2402.03300 .
+Cited by: §2.3 .
+[34]
+W. Sun, X. Lin, Y. Shi, C. Zhang, H. Wu, and S. Zheng (2025)
+Sparsedrive: end-to-end autonomous driving via sparse scene representation .
+In 2025 IEEE International Conference on Robotics and Automation (ICRA) ,
+pp. 8795–8801 .
+Cited by: §2.1 .
+[35]
+T. Tan, Y. Zheng, R. Liang, Z. Wang, K. Zheng, J. Zheng, J. Li, X. Zhan, and J. Liu (2025)
+Flow matching-based autonomous driving planning with advanced interactive behavior modeling .
+arXiv preprint arXiv:2510.11083 .
+Cited by: §2.1 .
+[36]
+H. Tian, T. Li, H. Liu, J. Yang, Y. Qiu, G. Li, J. Wang, Y. Gao, Z. Zhang, L. Wang, et al. (2025)
+Simscale: learning to drive via real-world simulation at scale .
+arXiv preprint arXiv:2511.23369 .
+Cited by: Table 3 ,
+Table 3 .
+[37]
+X. Tian, J. Gu, B. Li, Y. Liu, Y. Wang, Z. Zhao, K. Zhan, P. Jia, X. Lang, and H. Zhao (2024)
+Drivevlm: the convergence of autonomous driving and large vision-language models .
+arXiv preprint arXiv:2402.12289 .
+Cited by: §2.2 .
+[38]
+M. Tschannen, A. Gritsenko, X. Wang, M. F. Naeem, I. Alabdulmohsin, N. Parthasarathy, T. Evans, L. Beyer, Y. Xia, B. Mustafa, et al. (2025)
+Siglip 2: multilingual vision-language encoders with improved semantic understanding, localization, and dense features .
+arXiv preprint arXiv:2502.14786 .
+Cited by: §3.1 ,
+§4.1 .
+[39]
+S. Wang, Z. Yu, X. Jiang, S. Lan, M. Shi, N. Chang, J. Kautz, Y. Li, and J. M. Alvarez (2025)
+Omnidrive: a holistic vision-language dataset for autonomous driving with counterfactual reasoning .
+In Proceedings of the Computer Vision and Pattern Recognition Conference ,
+pp. 22442–22452 .
+Cited by: §2.2 .
+[40]
+T. Wang, E. Xie, R. Chu, Z. Li, and P. Luo (2024)
+Drivecot: integrating chain-of-thought reasoning with end-to-end driving .
+arXiv preprint arXiv:2403.16996 .
+Cited by: §2.2 .
+[41]
+Y. Wang, L. Yang, B. Li, Y. Tian, K. Shen, and M. Wang (2025)
+Revolutionizing reinforcement learning framework for diffusion large language models .
+arXiv preprint arXiv:2509.06949 .
+Cited by: §3.3 .
+[42]
+Z. Xing, X. Zhang, Y. Hu, B. Jiang, T. He, Q. Zhang, X. Long, and W. Yin (2025)
+Goalflow: goal-driven flow matching for multimodal trajectories generation in end-to-end autonomous driving .
+In Proceedings of the Computer Vision and Pattern Recognition Conference ,
+pp. 1602–1611 .
+Cited by: §2.1 .
+[43]
+M. Xu, J. Cui, F. Cai, H. Shang, Z. Zhu, S. Luan, Y. Xu, N. Zhang, Y. Li, J. Cai, et al. (2025)
+WAM-diff: a masked diffusion vla framework with moe and online reinforcement learning for autonomous driving .
+arXiv preprint arXiv:2512.11872 .
+Cited by: §1 ,
+§3.1 .
+[44]
+W. Yao, Z. Li, S. Lan, Z. Wang, X. Sun, J. M. Alvarez, and Z. Wu (2025)
+DriveSuprim: towards precise trajectory selection for end-to-end planning .
+arXiv preprint arXiv:2506.06659 .
+Cited by: Table 2 .
+[45]
+S. Zhao, D. Gupta, Q. Zheng, and A. Grover (2025)
+D1: scaling reasoning in diffusion large language models via reinforcement learning .
+arXiv preprint arXiv:2504.12216 .
+Cited by: §3.3 .
+[46]
+W. Zheng, R. Song, X. Guo, C. Zhang, and L. Chen (2024)
+Genad: generative end-to-end autonomous driving .
+In European Conference on Computer Vision ,
+pp. 87–104 .
+Cited by: §2.1 .
+[47]
+Y. Zheng, R. Liang, K. Zheng, J. Zheng, L. Mao, J. Li, W. Gu, R. Ai, S. E. Li, X. Zhan, et al. (2025)
+Diffusion-based planning for autonomous driving with flexible guidance .
+arXiv preprint arXiv:2501.15564 .
+Cited by: §2.1 .
+[48]
+X. Zhou, X. Han, F. Yang, Y. Ma, V. Tresp, and A. Knoll (2025)
+Opendrivevla: towards end-to-end autonomous driving with large vision language action model .
+arXiv preprint arXiv:2503.23463 .
+Cited by: §1 ,
+§2.2 .
+[49]
+Z. Zhou, T. Cai, S. Z. Zhao, Y. Zhang, Z. Huang, B. Zhou, and J. Ma (2025)
+AutoVLA: a vision-language-action model for end-to-end autonomous driving with adaptive reasoning and reinforcement fine-tuning .
+arXiv preprint arXiv:2506.13757 .
+Cited by: §1 ,
+§1 ,
+§2.2 ,
+§2.3 ,
+§4.2 ,
+Table 1 ,
+Table 1 .
+[50]
+R. Zhu, J. Zhao, D. Zhang, G. Wang, X. Chen, S. Zhang, J. Gong, Q. Zhou, W. Zhang, N. Wang, et al. (2025)
+Sparsead: sparse query-centric paradigm for efficient end-to-end autonomous driving .
+IEEE Transactions on Artificial Intelligence .
+Cited by: §1 .
+[51]
+J. Zou, S. Chen, B. Liao, Z. Zheng, Y. Song, L. Zhang, Q. Zhang, W. Liu, and X. Wang (2025)
+DiffusionDriveV2: reinforcement learning-constrained truncated diffusion modeling in end-to-end autonomous driving .
+arXiv preprint arXiv:2512.07745 .
+Cited by: §1 ,
+§1 ,
+§2.3 .
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

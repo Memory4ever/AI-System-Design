@@ -1,0 +1,133 @@
+3 Weakly‐Supervised-Group-Relative Preference Optimization
+Figure 2: WS-GRPO Framework Overview: Phase 1: using outcome-only correctness (final-answer labels), we construct preference pairs from correct vs. incorrect rollouts and train a preference model PωP_{\omega}. Phase 2: the frozen PωP_{\omega} converts terminal correctness into correctness-aware, prefix-level rewards by comparing consecutive prefixes within each rollout. These dense prefix-level rewards are combined with the terminal reward and used in the GRPO objective to refine the policy, improving rollout efficiency.
+While GRPO has shown strong performance on multi-step reasoning tasks (Shao et al., 2024; Guo et al., 2025),
+its group-relative objective can unintentionally favor overly long rollouts,
+since extended deliberation creates more chances to realize relative gains within a sampled group.
+Controlling this behavior is difficult because most settings provide only sparse outcome supervision (e.g., final-answer correctness) and lack signals that indicate when to continue or stop.
+With such terminal rewards, GRPO exhibits credit diffusion: the trajectory-level label cannot identify which intermediate decisions drive success,
+so the supervision is delayed and underdetermined.
+This yields noisy, high-variance updates that can reinforce incidental patterns (e.g., templates or verbosity) and makes naive length regularization hard to calibrate when length correlates with difficulty and validity.
+These limitations motivate converting outcome correctness into correctness-aware, prefix-level guidance that targets the marginal value of continuing from a given prefix rather than globally penalizing tokens.
+To mitigate GRPO’s tendency toward redundant deliberation under outcome-only supervision, we propose Weakly Supervised GRPO (WS-GRPO) and formalize the setting (Section 3.1). WS-GRPO converts binary final-answer correctness into correctness-aware, prefix-level guidance by training a preference model from trajectory-level outcomes and using it to estimate the marginal value of continuing from a given prefix. As illustrated in Figure 2, we adopt a two-stage procedure: in Phase I (Section 3.2), we learn a preference model to discriminate between successful and unsuccessful reasoning trajectories using only complete rollouts; the key insight is that a model assessing overall trajectory quality can be repurposed to evaluate incremental progress by comparing successive partial trajectories.
+In Phase II (Section 3.3), we apply this model to consecutive prefixes (s1:t−1s_{1:t-1} vs. s1:ts_{1:t}) within each rollout and convert the resulting preference margins into prefix-level pseudo-rewards, which are combined with terminal correctness in the GRPO objective to discourage low-utility continuation while preserving necessary deliberation.
+3.1 Problem Formulation
+We consider multi-step reasoning tasks where a language model generates a sequence of reasoning steps to solve a problem. Given a question qq, the policy πθ\pi_{\theta} generates a trajectory τ=(s1,s2,…,sT)\tau=(s_{1},s_{2},\ldots,s_{T}) where each sts_{t} denotes a sentence-level natural-language reasoning step (a span of tokens delimited by sentence boundaries), rather than an individual token or a latent environment state. Let a^i\hat{a}_{i} denote the final answer extracted from trajectory τi\tau_{i} and a∗​(q)a^{*}(q) denote the ground truth answer for question qq.
+GRPO samples GG trajectories {τi}i=1G\{\tau_{i}\}_{i=1}^{G} for each question and computes group-relative advantages from a scalar trajectory return RiR_{i} (Section 2.2), which in standard GRPO is typically the terminal outcome reward RifinalR_{i}^{\mathrm{final}} (e.g., a binary indicator of final-answer correctness). While this approach enables policy optimization without learned value functions, it faces a fundamental limitation of insufficient signal for effective credit assignment across reasoning steps due to sparse terminal rewards.
+3.2 Phase I: Weakly-Supervised Preference Learning
+We train a weakly supervised preference model that distinguishes successful from unsuccessful reasoning trajectory prefixes using only trajectory-level outcomes, as shown in Algorithm 1.
+This exemplifies weak supervision, where learning occurs from indirect labels rather than direct step-level annotations.
+For each question qq, we sample KK reasoning trajectories {τ1,…,τK}\{\tau_{1},\ldots,\tau_{K}\},
+where each τi=(si,1,si,2,…,si,Ti)\tau_{i}=(s_{i,1},s_{i,2},\ldots,s_{i,T_{i}}) is evaluated using a terminal outcome signal (final-answer correctness).
+Following Equation 1, we then construct ordered preference pairs (τa,τb)(\tau_{a},\tau_{b}) by pairing a correct trajectory τ+\tau^{+} with an incorrect trajectory τ−\tau^{-}.
+Specifically, we assign label y=1y=1 to the ordered pair (τ+,τ−)(\tau^{+},\tau^{-}) and label y=0y=0 to its reversed ordering (τ−,τ+)(\tau^{-},\tau^{+}).
+We handle three scenarios:
+(i) mixed outcomes yield direct within-question pairs,
+(ii) all-correct outcomes pair each correct trajectory with incorrect trajectories from other questions, and
+(iii) all-incorrect outcomes pair each incorrect trajectory with correct trajectories from other questions,
+where cross-question trajectories serve as negative trajectories, since they are irrelevant to the target question.
+The preference model instantiates Equation 1 by converting outcome-only correctness into a scalable pairwise supervision signal
+that treats a correct trajectory as preferred to an incorrect one for the same question.
+It learns a notion of continuation utility that we later reuse to assess the marginal value of continuing from partial trajectories.
+The preference model encodes question qq jointly with both the correct trajectory τ+\tau^{+} and incorrect trajectory τ−\tau^{-},
+using a structured natural language template that presents both reasoning chains as options for comparison.
+The template explicitly asks the model to compare the quality of the two reasoning approaches in the context of the given question.
+This combined input is processed by an FLAN-T5 encoder, producing contextualized hidden states 𝐇∈ℝL×d\mathbf{H}\in\mathbb{R}^{L\times d}.
+We extract the first token’s representation h=𝐇⁡[0]h=\mathbf{H}[0] as a global summary of the comparison context.
+A lightweight MLP classifier Pω:ℝd→ℝP_{\omega}:\mathbb{R}^{d}\to\mathbb{R} then processes this representation to produce a preference score:
+y^=Pω​(q,τ+,τ−),\hat{y}=P_{\omega}(q,\tau^{+},\tau^{-}),
+(4)
+which outputs the probability that τA\tau_{A} is preferred over τB\tau_{B}.
+We train with label y^=1\hat{y}=1 for the correct trajectory τ+\tau^{+}.
+We train this preference model following the Bradley-Terry objective from Equation 2 using binary cross-entropy loss. Since the training dataset contains preference pairs in both orientations (i.e., both (τ+,τ−)(\tau^{+},\tau^{-}) with label y=1y=1 and (τ−,τ+)(\tau^{-},\tau^{+}) with label y=0y=0), the training objective becomes:
+ℒpref\displaystyle\mathcal{L}_{\text{pref}}
+=𝔼[BCE(Pω(q,τ+,τ−),1)\displaystyle=\mathbb{E}\Big[\text{BCE}(P_{\omega}(q,\tau^{+},\tau^{-}),1)
++BCE(Pω(q,τ−,τ+),0)],\displaystyle\qquad\quad+\text{BCE}(P_{\omega}(q,\tau^{-},\tau^{+}),0)\Big],
+(5)
+where each pair is encoded in both orderings to ensure symmetric preference learning regardless of input position.
+This training procedure produces a preference model that captures reasoning quality patterns from outcome-level supervision, which we subsequently leverage to generate step-level rewards during policy optimization.
+3.3 Phase II: WS-GRPO Policy Optimization
+In Phase II, we leverage the preference model from Phase I to provide auxiliary step-level rewards during policy as shown in Algorithm 2. The key insight is to combine learned step-level preferences with sparse outcome rewards to enable effective trajectory evaluation within GRPO’s group-normalization framework.
+For GG rollouts {τi}i=1G\{\tau_{i}\}_{i=1}^{G} generated by the current policy πθ\pi_{\theta} for prompt qq, we compute step-wise preference rewards by treating consecutive partial trajectories as preference pairs. For each step t≥2t\geq 2 in trajectory τi\tau_{i}:
+ri,tstep=Pω(q,si,1:t−1,si,1:t),Ripref=∑t=2|τi|ri,tstepr^{\mathrm{step}}_{i,t}=P_{\omega}(q,s_{i,1:t-1},s_{i,1:t}),\quad R^{\mathrm{pref}}_{i}=\sum_{t=2}^{|\tau_{i}|}r^{\mathrm{step}}_{i,t}
+where the preference model assesses whether extending the reasoning from step t−1t-1 to step tt represents progress toward a successful solution.
+To prevent length bias from over-rewarding longer trajectories, we apply explicit length control through two mechanisms: (i) length penalty that penalizes trajectories outside the optimal range [3,6][3,6] steps, and (ii) step-wise normalization by trajectory length. The total preference reward RiprefR^{\mathrm{pref}}_{i} incorporates both the average step-wise rewards and length penalties, normalized by trajectory length.
+We combine this with the binary outcome reward Rifinal=𝟏[a^i=a∗(q)]R^{\mathrm{final}}_{i}=\mathbf{1}[\hat{a}_{i}=a^{*}(q)], where a^i\hat{a}_{i} is the final answer and a∗​(q)a^{*}(q) is the ground truth. The combined reward signal integrates scaled step-wise preferences with trajectory outcomes RiWS=λ​Ripref+RifinalR^{\mathrm{WS}}_{i}=\lambda R^{\mathrm{pref}}_{i}+R^{\mathrm{final}}_{i}.
+Algorithm 1 Phase I: Weakly-Supervised Preference Learning
+0:
+Dataset 𝒟\mathcal{D}, trajectory generator πϕ\pi_{\phi}, base policy πθ0\pi_{\theta_{0}}, preference model PωP_{\omega},
+epochs EprefE_{\mathrm{pref}}, batch size BB, learning rate η\eta
+0:
+Trained preference model parameters ω\omega
+1:
+(A) Generate labeled trajectories
+2:
+for each q∈𝒟q\in\mathcal{D} do
+3:
+Sample KK trajectories {τi}i=1K∼πϕ(⋅∣q)\{\tau_{i}\}_{i=1}^{K}\sim\pi_{\phi}(\cdot\mid q)
+4:
+Assign weak label yi∈{0,1}y_{i}\in\{0,1\} to each τi\tau_{i} by final-answer correctness
+5:
+end for
+6:
+(B) Train preference model
+7:
+for e=1e=1 to EprefE_{\mathrm{pref}} do
+8:
+Sample minibatch of correct/incorrect pairs {(qb,τb+,τb−)}b=1B\{(q_{b},\tau_{b}^{+},\tau_{b}^{-})\}_{b=1}^{B}
+9:
+Compute ℒpref\mathcal{L}_{\mathrm{pref}} using Equation 5
+10:
+ω←ω−η​∇ωℒpref\omega\leftarrow\omega-\eta\nabla_{\omega}\mathcal{L}_{\mathrm{pref}}
+11:
+end for
+Algorithm 2 Phase II: WS-GRPO Policy Optimization
+0:
+Dataset 𝒟\mathcal{D}; preference model PωP_{\omega}; policy πθ\pi_{\theta};
+reference policy πref\pi_{\mathrm{ref}}; rollout count GG; clip ϵ\epsilon
+0:
+Updated policy parameters θ\theta
+1:
+while not converged do
+2:
+Sample a minibatch ℬ⊂𝒟\mathcal{B}\subset\mathcal{D} of queries
+3:
+for each q∈ℬq\in\mathcal{B} do
+4:
+Sample rollouts {τi}i=1G∼πθ(⋅∣q)\{\tau_{i}\}_{i=1}^{G}\sim\pi_{\theta}(\cdot\mid q)
+5:
+for i=1i=1 to GG do
+6:
+Ripref←0R^{\mathrm{pref}}_{i}\leftarrow 0
+7:
+for t=2t=2 to |τi||\tau_{i}| do
+8:
+ri,tpref←Pω(q,si,1:t−1,si,1:t)r^{\mathrm{pref}}_{i,t}\leftarrow P_{\omega}(q,s_{i,1:t-1},s_{i,1:t})
+9:
+Ripref←Ripref+ri,tprefR^{\mathrm{pref}}_{i}\leftarrow R^{\mathrm{pref}}_{i}+r^{\mathrm{pref}}_{i,t}
+10:
+end for
+11:
+Rifinal←𝟏[a^i=a∗(q)]R^{\mathrm{final}}_{i}\leftarrow\mathbf{1}[\hat{a}_{i}=a^{*}(q)]
+12:
+RiWS←λ​Ripref+RifinalR^{\mathrm{WS}}_{i}\leftarrow\lambda R^{\mathrm{pref}}_{i}+R^{\mathrm{final}}_{i}
+13:
+end for
+14:
+Compute advantages {A^iWS}i=1G\{\hat{A}^{\mathrm{WS}}_{i}\}_{i=1}^{G} using Eq. 6
+15:
+Update θ\theta using WS-GRPO objective (Eq. 7)
+16:
+end for
+17:
+end while
+WS-GRPO Objective.
+The WS-GRPO policy optimization uses the combined reward signal RiWSR^{\mathrm{WS}}_{i} within GRPO’s group-relative framework. The advantage is computed following the standard GRPO in Section 2.2 :
+A^iWS=RiWS−R¯WSσRWS,\hat{A}^{\mathrm{WS}}_{i}=\frac{R^{\mathrm{WS}}_{i}-\bar{R}^{\mathrm{WS}}}{\sigma_{R^{\mathrm{WS}}}},
+(6)
+where R¯WS\bar{R}^{\mathrm{WS}} and σRWS\sigma_{R^{\mathrm{WS}}} are the group mean and standard deviation of WS rewards. The objective applies a single trajectory-level advantage A^iWS\hat{A}^{\mathrm{WS}}_{i} uniformly across all steps in τi\tau_{i}. Step-wise preference signals ri,tstepr^{\text{step}}_{i,t} are aggregated into trajectory rewards RiprefR^{\text{pref}}_{i}, enabling trajectory-level optimization informed by step-wise reasoning quality while preserving GRPO’s theoretical guarantees. By plugging in Equation 3, the final WS-GRPO objective becomes:
+JWS​-​GRPO​(θ)=\displaystyle J_{\mathrm{WS\text{-}GRPO}}(\theta)=
+(7)
+𝔼q,{τi}[1G∑i=1G1|τi|∑t=1|τi|min(ρi,t(θ)A^iWS,\displaystyle\mathbb{E}_{q,\{\tau_{i}\}}\Bigl[\frac{1}{G}\sum_{i=1}^{G}\frac{1}{|\tau_{i}|}\sum_{t=1}^{|\tau_{i}|}\min\Bigl(\rho_{i,t}(\theta)\,\hat{A}_{i}^{\mathrm{WS}},
+clip(ρi,t(θ),1−ϵ,1+ϵ)A^iWS)−βℒKL].\displaystyle\mathrm{clip}(\rho_{i,t}(\theta),1{-}\epsilon,1{+}\epsilon)\,\hat{A}_{i}^{\mathrm{WS}}\Bigr)-\beta\,\mathcal{L}_{\mathrm{KL}}\Bigr].
+3.4 Theoretical Analysis
+We now provide theoretical analysis for WS-GRPO, establishing preference model consistency, robustness to preference errors, and generalization bounds in our multi-step reasoning setting, with explicit d

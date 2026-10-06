@@ -1,0 +1,260 @@
+5 Experiments
+We evaluate VAM in a text-only chess setting, in which the model must select a move from a provided list without
+access to search or external tools.
+We report (i) one-step move selection on the Searchless Chess puzzle positions (Ruoss et al., 2024) and
+(ii) full-game play against a fixed engine opponent, measured by average centipawn loss (ACPL).
+5.1 Research questions
+We organize our empirical study around three questions:
+1.
+RQ1: Does VAM improve exploration compared to the baselines?
+2.
+RQ2: Does VAM improve full-game play compared to the baselines?
+3.
+RQ3: What are the relative strengths of engine-play position generation and a fixed dataset?
+5.2 Experimental setup
+Models
+We run experiments with Qwen2.5-3B-Instruct and Qwen2.5-7B-Instruct (Qwen et al., 2025).
+Verbalized-masking interface
+Each decision prompt provides the position as a FEN string, the side to move, and an ordered list of legal moves in
+strict lowercase UCI.
+In the verbalized masking setting, we additionally provide a candidate subset,
+allowed_moves, and require the model to choose from this subset.
+Models output a single move in strict lowercase UCI inside a <uci_move> tag, and we evaluate with a
+deterministic parser and legality checker.
+We use the same prompt template as Hwang et al. (2025) (Appendix A).
+Appendix A.5 specifies the exact parsing and validity rules.
+Training regimes and data
+We focus on post-training methods that learn from deterministic, engine-provided signals.
+Each training position is paired with an engine-derived per-move value map μ⁡(s,a)∈[0,1]\mu(s,a)\in[0,1] over legal moves, which we
+use to define reward signals (§4.3).
+We consider two sources of training positions: a fixed dataset aligned with Chess-R1 (Hwang et al., 2025) containing
+100,000 positions, and an on-policy stream of positions generated via engine-play against a fixed engine opponent.
+These correspond to the fixed-dataset and engine-play regimes in §4.
+In both cases, training follows the same VAM loop in Algorithm 1, which applies GRPO to all
+mask-conditioned groups produced by iterative pruning.
+In the engine-play regime, training states are generated on-policy via play against an engine opponent using
+Algorithm 2, while in the fixed-dataset regime we assume a provided dataset.
+In RQ1 we use fixed-dataset training to isolate the effect of pruning on move-selection exploration, while in RQ2 we
+evaluate VAM with engine-play position generation and compare against baselines under the same prompt interface and engine verifier.
+RQ3 directly contrasts engine-play versus fixed-dataset training for VAM.
+Puzzle benchmark
+We evaluate one-step move selection on the Lichess puzzle positions in Searchless
+Chess (Ruoss et al., 2024).
+Each position provides a FEN string, an ordered UCI legal-move list, and a provided puzzle solution move.
+We use all 10,000 positions as a held-out test set for puzzle evaluation.
+We treat the provided solution move as the target action for puzzle accuracy.
+Full-game benchmark
+We evaluate end-to-end play by playing complete games from the standard initial position against a fixed Stockfish
+opponent (Skill Level 0), reported separately for depth 1 and depth 5.
+Appendix A.7 specifies game termination rules, invalid-move handling, and ACPL
+computation details.
+Metrics
+For puzzles, we report pass@1 accuracy for selecting the provided puzzle solution under the
+candidate set.
+For full games, we report ACPL computed by a separate Stockfish analyzer that runs at depth 20, serving as an expert
+evaluator.
+Appendix A.7 specifies the exact ACPL computation and aggregation used by the evaluation
+harness.
+5.3 Baselines
+We compare VAM against GRPO baselines that use the same engine verifier and strict UCI output contract but omit
+iterative pruning.
+This setting follows Chess-R1 (Hwang et al., 2025), with the modification that we use strict UCI (instead of SAN) to
+avoid SAN annotations such as check or checkmate acting as additional tactical cues.
+To probe how reward design affects exploration under GRPO, we evaluate three reward definitions derived from the engine
+signal: expected score, win rate, and ranking among moves.
+We include a rejection-sampled supervised fine-tuning (SFT) baseline trained on the same fixed dataset as a
+supervised reference point.
+Appendix A provides additional training details.
+Reward definitions from the engine signal.
+For each position ss and legal move a∈𝒜⁡(s)a\in\mathcal{A}(s), Stockfish (The Stockfish Developers, 2024) provides an evaluation that we convert into a scalar verifier score
+μ⁡(s,a)∈[0,1]\mu(s,a)\in[0,1].
+In our main experiments we use a win/draw/loss (WDL) based expected-score proxy:
+if the engine reports win/draw/loss likelihoods (pW​(s,a),pD​(s,a),pL​(s,a))\big(p_{W}(s,a),p_{D}(s,a),p_{L}(s,a)\big) (with pW+pD+pL=1p_{W}+p_{D}+p_{L}=1),
+we define
+μexp​(s,a)=pW​(s,a)+12​pD​(s,a).\mu_{\text{exp}}(s,a)\;=\;p_{W}(s,a)+\tfrac{1}{2}p_{D}(s,a).
+(8)
+We consider two additional reward variants for the GRPO baselines:
+(i) win-rate reward μwin​(s,a)=pW​(s,a)\mu_{\text{win}}(s,a)=p_{W}(s,a), and
+(ii) rank-based reward computed from the within-position ordering of μexp​(s,a)\mu_{\text{exp}}(s,a):
+μrank​(s,a)= 1−rank↓​(μexp​(s,a))−1|𝒜⁡(s)|−1,\mu_{\text{rank}}(s,a)\;=\;1-\frac{\mathrm{rank}_{\downarrow}\!\big(\mu_{\text{exp}}(s,a)\big)-1}{|\mathcal{A}(s)|-1},
+(9)
+where rank↓\mathrm{rank}_{\downarrow} assigns rank 11 to the highest-scoring move (ties broken deterministically).
+Unless stated otherwise, VAM and GRPO baselines use μexp\mu_{\text{exp}}.
+5.4 Results
+Figure 4:
+Performance on held-out chess puzzles.
+Pass@1 accuracy for selecting the dataset-provided solution move on the 10,000-position test set.
+The left panel compares fixed-dataset GRPO baselines under three engine-derived reward signals (expected-score proxy
+μexp\mu_{\text{exp}}, win-rate μwin\mu_{\text{win}}, and rank-based μrank\mu_{\text{rank}}; Eqs. 8 and 9).
+The right panel compares VAM with iterative action-space pruning against GRPO under the same fixed dataset and matched
+rollout budget for Qwen2.5-3B-Instruct and Qwen2.5-7B-Instruct.
+The horizontal axis counts GRPO gradient updates, and each point evaluates the current policy with fixed decoding
+settings over the full test set.
+Dashed horizontal lines indicate rejection-sampled SFT baselines.
+RQ1: exploration on puzzles
+Figure 4 studies learning dynamics on the move-selection puzzle task.
+In the left panel, we vary only the reward definition used by GRPO and observe clear differences in learning curves,
+with the expected-score signal producing the strongest curve among the reward variants we tested.
+For consistency in subsequent comparisons, we use expected score as the engine-derived reward for GRPO baselines and VAM.
+In the right panel, we compare VAM against GRPO under the same fixed dataset and find that VAM reaches higher
+puzzle accuracy for both model sizes.
+Both GRPO and VAM outperform the rejection-sampled SFT baseline on held-out puzzles, suggesting that the SFT setup does
+not generalize well to unseen puzzle positions.
+Interestingly, the smaller Qwen2.5-3B-Instruct model trained with VAM surpasses the larger Qwen2.5-7B-Instruct model
+trained with GRPO.
+RQ2: full-game play
+Figure 5:
+Move quality in full games against Stockfish.
+Average centipawn loss (ACPL; lower is better) during evaluation against fixed Stockfish opponents at depth 1 and
+depth 5, shown for Qwen2.5-3B-Instruct and Qwen2.5-7B-Instruct.
+We report overall ACPL as well as per-opponent ACPL trajectories over training.
+VAM is trained with engine-play position generation and iterative action-space pruning, while the GRPO baseline uses the
+same verifier and prompt interface but omits pruning.
+Dashed horizontal lines indicate rejection-sampled SFT baselines.
+VAM consistently reaches lower ACPL across opponents and model sizes, indicating stronger move quality under
+full-game play.
+Figure 5 reports ACPL during full-game evaluation over the course of training.
+Across both evaluation opponents (depth 1 and depth 5), VAM achieves lower ACPL than the GRPO baselines, indicating
+stronger move quality in complete games.
+The rejection-sampled SFT baseline yields substantially higher ACPL, suggesting that the SFT setup does not generalize
+to full-game play under our evaluation protocol.
+Among RL-based methods, iterative pruning provides a further improvement over standard GRPO.
+Because ACPL becomes harder to reduce as it gets smaller, persistent gaps at lower ACPL correspond to meaningful
+differences in play.
+RQ3: engine-play versus fixed-dataset regimes
+Figure 6:
+Fixed-dataset versus engine-play training regimes for VAM.
+Radar plots summarize performance and training statistics for VAM trained either on a fixed dataset or with
+engine-play position generation via games against a fixed engine opponent, shown for Qwen2.5-7B-Instruct (left) and Qwen2.5-3B-Instruct (right).
+Axes report pass@1 puzzle accuracy, KL loss to the reference policy, average response length, mean verifier reward,
+and full-game move quality measured by ACPL (overall and per-move).
+Within each model, each metric is linearly normalized across the two regimes for visualization, and numeric
+annotations indicate the raw values.
+The profiles highlight a trade-off between one-step puzzle performance and full-game play quality across regimes.
+Figure 6 contrasts VAM trained on a provided fixed dataset with VAM trained on states
+generated via games against a fixed engine opponent.
+We observe a clear trade-off between one-step selection and long-horizon play: fixed-dataset training yields stronger puzzle
+accuracy, while engine-play position generation yields better full-game ACPL.
+Beyond these headline metrics, the engine-play regime is associated with longer responses and smaller KL loss, which is
+consistent with training on a state distribution induced by the current policy.
+6 Discussion
+When VAM is a good fit
+VAM is most appropriate when the environment can enumerate a finite action set per state and when membership in the
+admissible set can be checked deterministically.
+In such settings, mask compliance becomes a reliable signal that can be used for training (as a hard penalty) and for
+evaluation (as a format and legality metric), while preserving on-policy sampling because we do not apply logit-level
+masking or post-hoc filtering.
+Exploration as a controllable interface choice
+Iterative action-space pruning turns repeated sampling into a controlled exploration procedure: across rounds, the model
+is forced to propose different actions because previously sampled valid actions are removed from the prompt-specified
+candidate set.
+This perspective helps disentangle two sources of failure in RL post-training, limited policy entropy and limited
+action-space coverage under repeated sampling.
+7 Conclusion
+We introduced Verbalized Action Masking (VAM), a prompt-level action-space interface for RL post-training with verifiable
+rewards, along with an iterative action-space pruning procedure that improves exploration by preventing repeated sampling
+of the same actions within a state.
+We instantiated these ideas in text-only chess move selection with strict UCI outputs and evaluated them on both one-step
+puzzle selection and full-game play against an engine opponent.
+Empirically, we found that expected score is the strongest reward choice for GRPO baselines on puzzles, and that VAM
+substantially improves puzzle accuracy and full-game ACPL over those baselines across model sizes.
+We also observed complementary strengths between fixed-dataset and engine-play regimes, suggesting that state distribution is a
+key design choice for RL post-training in structured action spaces.
+Limitations and future work. Chess is an ideal testbed because legal moves are enumerable and both action
+validity (strict parsing and move legality) and move quality can be checked deterministically with an engine. Many
+structured decision problems do not offer these properties, so applying VAM in domains with very large action spaces or
+without strong deterministic evaluators will require dynamic candidate generation and approximate verifiers.
+Acknowledgements
+This work was supported in part by NSF grant IIS-2046640 (CAREER). This work was supported by the Engineering and Physical Sciences Research Council [grant number EP/Y003187/1 and UKRI849].
+Impact Statement
+This paper presents work whose goal is to advance the field of machine learning, specifically methods for reinforcement
+learning post-training of large language models under verifiable constraints.
+There are many potential societal consequences of improved LLM capabilities and of broader adoption of RL post-training,
+none of which we feel must be specifically highlighted here.
+References
+Amani et al. (2025)
+Amani, M. H., Lotfi, A., Baldwin, N. M., Bengio, S., Farajtabar, M., Abbe, E.,
+and West, R.
+Rl for reasoning by adaptively revealing rationales.
+arXiv preprint arXiv:2506.18110, 2025.
+Cobbe et al. (2021)
+Cobbe, K., Kosaraju, V., Bavarian, M., Chen, M., Jun, H., Kaiser, L., Plappert,
+M., Tworek, J., Hilton, J., Nakano, R., et al.
+Training verifiers to solve math word problems.
+arXiv preprint arXiv:2110.14168, 2021.
+Deng et al. (2025)
+Deng, J., Chen, J., Chen, Z., Cheng, D., Bai, F., Zhang, B., Min, Y., Gao, Y.,
+Zhao, W. X., and Wen, J.-R.
+From trial-and-error to improvement: A systematic analysis of llm
+exploration mechanisms in rlvr.
+arXiv preprint arXiv:2508.07534, 2025.
+Feng et al. (2023)
+Feng, X., Luo, Y., Wang, Z., Tang, H., Yang, M., Shao, K., Mguni, D., Du, Y.,
+and Wang, J.
+Chessgpt: Bridging policy learning and language modeling.
+Advances in Neural Information Processing Systems,
+36:7216–7262, 2023.
+Feng et al. (2025)
+Feng, X., Veeriah, V., Chiam, M., Dennis, M., Pachauri, R., Tumiel, T.,
+Barbero, F., Obando-Ceron, J., Shi, J., Singh, S., et al.
+Generating creative chess puzzles.
+arXiv preprint arXiv:2510.23881, 2025.
+Guo et al. (2025)
+Guo, D., Yang, D., Zhang, H., Song, J., Zhang, R., Xu, R., Zhu, Q., Ma, S.,
+Wang, P., Bi, X., et al.
+Deepseek-r1: Incentivizing reasoning capability in llms via
+reinforcement learning.
+arXiv preprint arXiv:2501.12948, 2025.
+Hwang et al. (2025)
+Hwang, D., Lee, H., Choo, J., Park, D., and Park, J.
+Can large language models develop strategic reasoning? post-training
+insights from learning chess.
+arXiv preprint arXiv:2507.00726, 2025.
+Kolasani et al. (2025)
+Kolasani, S., Saplin, M., Crispino, N., Montgomery, K., Davis, J. Q., Zaharia,
+M., Wang, C., and Wang, C.
+Llm chess: Benchmarking reasoning and instruction-following in llms
+through chess, 2025.
+URL https://arxiv.org/abs/2512.01992.
+Le et al. (2022)
+Le, H., Wang, Y., Gotmare, A. D., Savarese, S., and Hoi, S. C. H.
+Coderl: Mastering code generation through pretrained models and deep
+reinforcement learning.
+Advances in Neural Information Processing Systems,
+35:21314–21328, 2022.
+Lightman et al. (2023)
+Lightman, H., Kosaraju, V., Burda, Y., Edwards, H., Baker, B., Lee, T., Leike,
+J., Schulman, J., Sutskever, I., and Cobbe, K.
+Let’s verify step by step.
+In The Twelfth International Conference on Learning
+Representations, 2023.
+Liu et al. (2025)
+Liu, M., Diao, S., Lu, X., Hu, J., Dong, X., Choi, Y., Kautz, J., and Dong, Y.
+Prorl: Prolonged reinforcement learning expands reasoning boundaries
+in large language models.
+arXiv preprint arXiv:2505.24864, 2025.
+Madaan et al. (2023)
+Madaan, A., Tandon, N., Gupta, P., Hallinan, S., Gao, L., Wiegreffe, S., Alon,
+U., Dziri, N., Prabhumoye, S., Yang, Y., et al.
+Self-refine: Iterative refinement with self-feedback.
+Advances in Neural Information Processing Systems,
+36:46534–46594, 2023.
+OpenAI et al. (2024)
+OpenAI, :, Jaech, A., Kalai, A., Lerer, A., Richardson, A., El-Kishky, A., Low,
+A., Helyar, A., Madry, A., Beutel, A., Carney, A., Iftimie, A., Karpenko, A.,
+Passos, A. T., Neitz, A., Prokofiev, A., Wei, A., Tam, A., Bennett, A.,
+Kumar, A., Saraiva, A., Vallone, A., Duberstein, A., Kondrich, A.,
+Mishchenko, A., Applebaum, A., Jiang, A., Nair, A., Zoph, B., Ghorbani, B.,
+Rossen, B., Sokolowsky, B., Barak, B., McGrew, B., Minaiev, B., Hao, B.,
+Baker, B., Houghton, B., McKinzie, B., Eastman, B., Lugaresi, C., Bassin, C.,
+Hudson, C., Li, C. M., de Bourcy, C., Voss, C., Shen, C., Zhang, C., Koch,
+C., Orsinger, C., Hesse, C., Fischer, C., Chan, C., Roberts, D., Kappler, D.,
+Levy, D., Selsam, D., Dohan, D., Farhi, D., Mely, D., Robinson, D., Tsipras,
+D., Li, D., Oprica, D., Freeman, E., Zhang, E., Wong, E., Proehl, E., Cheung,
+E., Mitchell, E., Wallace, E., Ritter, E., Mays, E., Wang, F., Such, F. P.,
+Raso, F., Leoni, F., Tsimpourlas, F., Song, F., von Lohmann, F., Sulit, F.,
+Salmon, G., Parascandolo, G., Chabot, G., Zhao, G., Brockman, G., Leclerc,
+G., Salman, H., Bao, H., Sheng, H., Andrin, H., Bagherinezhad, H., Ren, H.,
+Lightman, H., Chung, H. W., Kivlichan, I., O’Connell, I., Osband, I.,
+Gilaberte, I. C., Akkaya, I., Kostrikov, I., Sutskever, I., Kofman, I.,
+Pachocki, J., Lennon, J., Wei, J.,

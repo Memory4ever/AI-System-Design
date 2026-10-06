@@ -1,0 +1,3053 @@
+Squint: Fast Visual Reinforcement Learning for Sim-to-Real Robotics
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I
+Introduction
+II
+Related Work
+III
+Background
+IV
+Method
+V
+Experiments
+VI
+Results
+VII
+Discussion
+VIII
+Conclusion
+References
+License: CC BY 4.0
+arXiv:2602.21203v1 [cs.RO] 24 Feb 2026
+Squint: Fast Visual Reinforcement Learning for Sim-to-Real Robotics
+Abdulaziz Almuzairee
+Henrik I. Christensen
+https://aalmuzairee.github.io/squint
+Abstract
+Visual reinforcement learning is appealing for robotics but expensive – off-policy methods are sample-efficient yet slow; on-policy methods parallelize well but waste samples. Recent work has shown that off-policy methods can train faster than on-policy methods in wall-clock time for state-based control. Extending this to vision remains challenging, where high-dimensional input images complicate training dynamics and introduce substantial storage and encoding overhead. To address these challenges, we introduce Squint, a visual Soft Actor Critic method that achieves faster wall-clock training than prior visual off-policy and on-policy methods. Squint achieves this via parallel simulation, a distributional critic, resolution squinting, layer normalization, a tuned update-to-data ratio, and an optimized implementation. We evaluate on the SO-101 Task Set, a new suite of eight manipulation tasks in ManiSkill3 with heavy domain randomization, and demonstrate sim-to-real transfer to a real SO-101 robot. We train policies for 15 minutes on a single RTX 3090 GPU, with most tasks converging in under 6 minutes.
+†
+†
+footnotetext:
+1
+University of California San Diego.
+Correspondence to:
+Abdulaziz Almuzairee
+<aalmuzairee@ucsd.edu>
+.
+I
+Introduction
+Fig. 2.
+Robot Setup.
+(Left)
+Setup of the real robot from an external camera.
+(Middle)
+The input camera image for the robot in both the real world and simulation. We only use the wrist camera as the input image for the robot.
+(Right)
+We display different preprocessing effects, downsampling from a higher resolution vs rendering at the target resolution directly.
+Visual reinforcement learning (RL)
+[
+51
+]
+offers a compelling paradigm for robotics — enabling deployment onto real robots with camera inputs and requiring no task-specific instrumentation
+[
+37
+,
+85
+,
+38
+]
+. Despite this appeal, training visuomotor policies remains notoriously expensive, demanding millions of environment interactions and substantial compute.
+Over the past few years, researchers have made strides in reducing the number of environment interactions needed, often referred to as sample efficiency, by improving off-policy algorithms. These off-policy algorithms, such as SAC
+[
+24
+]
+, TD3
+[
+20
+]
+, and TD-MPC2
+[
+27
+]
+, reuse experiences through a replay buffer. Yet, these improvements come with computational costs that increase training wall-time of these agents in simulation. This slows research iteration. On the other hand, on-policy methods like Proximal Policy Optimization
+[
+63
+]
+offer poor sample efficiency, without any experience reuse, but can parallelize trivially across thousands of environments on modern GPUs, achieving faster wall-times than their off-policy counterparts. This has led to on-policy dominance in GPU-accelerated simulators and PPO to be the de facto standard for sim-to-real robotics in the past decade
+[
+30
+,
+35
+]
+.
+While sample efficiency and wall-time are both important axes for reinforcement learning, recent works like FastTD3 and FastSAC
+[
+65
+,
+64
+]
+explore an intermediate axis, one where off-policy algorithms can be tuned to maximize wall-time rather than sample efficiency, achieving faster wall times than their on-policy counterparts in parallelized simulations. These works made significant progress in scaling off-policy learning for state-based control. Yet, extending these works to visual reinforcement learning remains nontrivial: high-dimensional input images complicate training dynamics, storing them in replay buffers strains memory, and encoding them through convolutional networks adds computational overhead.
+Motivated by these challenges, we introduce our method,
+Squint
+, a visual based Soft Actor Critic method, that through careful image preprocessing, architectural design choices, and hyperparameter selection, is able to leverage parallel environments and experience reuse effectively, achieving faster wall-clock training time than both prior visual off-policy and on-policy methods, and solving visual robotic tasks in minutes.
+To train Squint, we leverage ManiSkill3
+[
+70
+]
+, a fast-GPU simulator, with powerful batched rendering capabilities, and create a digital twin of our real robot setup. Our real robot setup consists of a 5 DoF SO-101 Robot Arm
+[
+10
+]
+. We build 8 distinct tasks, which we term the
+SO-101 Task set
+, and use them as a testbed for investigating scalable visual reinforcement learning. We train our method and baselines on the SO-101 Task set for 15 minutes, and deploy them to our real robot setup, which can be seen in Figure
+and Figure
+I
+.
+Our key contributions are
+(1)
+Squint: A fast off-policy visual actor critic method that achieves faster wall-clock training than prior visual RL methods, with extensive experiments justifying each design choice.
+(2)
+SO-101 Task Set: eight manipulation tasks in ManiSkill3 with heavy domain randomization for sim-to-real transfer.
+(3)
+Real-world validation: Policies trained in 15 minutes on a single RTX 3090, deployed zero-shot to the real world SO-101 hardware.
+II
+Related Work
+Parallel Simulators for Robotics.
+Simulators provide a fast way for reinforcement learning agents to learn in a safe, constrained environments
+[
+8
+,
+13
+]
+. Early parallelization in CPU allowed agent to train faster in terms of wall time
+[
+30
+,
+71
+,
+37
+,
+80
+,
+84
+]
+.
+With the advent of fast GPU-based parallelization, these simulators became faster, and allowed the community to iterate faster on training and deployment.
+[
+46
+,
+50
+,
+54
+,
+23
+,
+70
+,
+66
+,
+83
+]
+Most notably, ManiSkill3
+[
+70
+]
+provides fast GPU-based batched rendering, which allows researchers to train fast visual based reinforcement learning agents for deployment. Due to its realism, and ease of use, we use ManiSkill3 as our main simulator for this work. Despite its realism, domain randomization
+[
+73
+]
+is necessary to bridge the sim-to-real gap. Thus, we apply domain randomization to our task set to allow better sim to real transfer.
+Visual Reinforcement Learning.
+Learning from vision has driven the start of deep RL in the recent decade
+[
+51
+,
+52
+]
+. Building on it, many works explored different methods to improve off-policy training sample efficiency, including: autoencoder architectures
+[
+17
+,
+78
+]
+, contrastive learning representations
+[
+69
+]
+, data regularized representations
+[
+41
+,
+77
+]
+, and model-based representations
+[
+25
+,
+27
+,
+18
+]
+. Perhaps most notably, DrQ-v2
+[
+77
+]
+is widely used as a solid baseline for visual reinforcement learning sample efficiency. Unfortunately, this sample efficiency comes at the cost of training wall-time, which on-policy PPO
+[
+63
+]
+exceeds at in scale. While most prior visual off policy learning algorithms focus on sample efficiency, we follow PQL
+[
+44
+]
+, PQN
+[
+21
+]
+, FastTD3
+[
+65
+]
+and FastSAC
+[
+64
+]
+in focusing on training wall-time, and introduce our algorithm, Squint, to excel at this axis in the visual RL domain.
+Fig. 3.
+Method Diagram.
+Squint is a fast off-policy actor-critic visual reinforcement learning algorithm that accelerates training speed by leveraging parallel environments and downsampling input image observations.
+III
+Background
+Visual Reinforcement Learning
+formulates the interaction between the agent and the environment as a Partially Observable Markov Decision Process (POMDP)
+[
+36
+]
+, defined by a tuple of
+⟨
+𝒮
+,
+𝒪
+,
+𝒜
+,
+𝒯
+,
+R
+,
+γ
+⟩
+\langle\mathcal{S},\mathcal{O},\mathcal{A},\mathcal{T},R,\gamma\rangle
+. In a POMDP,
+s
+∈
+𝒮
+{s}\in\mathcal{S}
+is the state space,
+o
+∈
+𝒪
+{o}\in\mathcal{O}
+is the observation space,
+a
+∈
+𝒜
+{a}\in\mathcal{A}
+the action space,
+𝒯
+:
+𝒮
+×
+𝒜
+×
+𝒮
+→
+[
+0
+,
+1
+]
+\mathcal{T}:\mathcal{S}\times\mathcal{A}\times\mathcal{S}\rightarrow[0,1]
+is the state-to-state transition probability function,
+R
+:
+𝒮
+×
+𝒜
+→
+ℝ
+R:\mathcal{S}\times\mathcal{A}\rightarrow\mathbb{R}
+is the reward function and
+γ
+\gamma
+is the discount factor. At each time step
+t
+t
+, the agent receives as input: a single RGB image as an observation
+o
+∈
+𝒪
+{o}\in\mathcal{O}
+and
+optionally
+the proprioceptive state
+s
+p
+​
+r
+​
+o
+​
+p
+​
+r
+​
+i
+​
+o
+∈
+𝒮
+s^{proprio}\in\mathcal{S}
+, and is queried to select an action
+a
+{a}
+. The goal is to learn a policy
+π
+:
+𝒪
+→
+𝒜
+\pi:\mathcal{O}\rightarrow\mathcal{A}
+that maximizes the expected discounted sum of rewards
+𝐄
+π
+​
+[
+∑
+t
+=
+0
+∞
+γ
+t
+​
+r
+t
+]
+\mathbf{E}_{\pi}[\sum_{t=0}^{\infty}\gamma^{t}r_{t}]
+where
+r
+t
+=
+R
+⁡
+(
+s
+t
+,
+a
+t
+)
+r_{t}=R({s}_{t},{a}_{t})
+.
+Soft Actor Critic
+(SAC)
+[
+24
+]
+is an off-policy actor critic algorithm, commonly used for continuous control. SAC concurrently learns a Q-function
+Q
+θ
+Q_{\theta}
+(critic) and a policy
+π
+ϕ
+\pi_{\phi}
+(actor) with a separate neural network for each. The Q-function
+Q
+θ
+Q_{\theta}
+aims to estimate the optimal soft state-action value function by minimizing the one step Bellman Residual:
+y
+\displaystyle y
+=
+r
+t
++
+γ
+⁡
+(
+Q
+θ
+¯
+​
+(
+𝐬
+t
++
+1
+,
+𝐚
+~
+t
++
+1
+)
+CLOSE
+\displaystyle=r_{t}+\gamma\Big(Q_{\overline{\theta}}(\mathbf{s}_{t+1},\tilde{\mathbf{a}}_{t+1})
+OPEN
+−
+α
+​
+log
+⁡
+π
+ϕ
+​
+(
+𝐚
+~
+t
++
+1
+|
+𝐬
+t
++
+1
+)
+)
+\displaystyle\quad-\alpha\log\pi_{\phi}(\tilde{\mathbf{a}}_{t+1}|\mathbf{s}_{t+1})\Big)
+(1)
+ℒ
+Q
+θ
+​
+(
+𝒟
+)
+\displaystyle\mathcal{L}_{Q_{\theta}}(\mathcal{D})
+=
+𝔼
+(
+𝐬
+t
+,
+𝐚
+t
+,
+r
+t
+,
+𝐬
+t
++
+1
+)
+∼
+𝒟
+​
+[
+(
+Q
+θ
+​
+(
+𝐬
+t
+,
+𝐚
+t
+)
+−
+y
+)
+2
+]
+\displaystyle=\mathbb{E}_{(\mathbf{s}_{t},\mathbf{a}_{t},r_{t},\mathbf{s}_{t+1})\sim\mathcal{D}}\left[\left(Q_{\theta}(\mathbf{s}_{t},\mathbf{a}_{t})-y\right)^{2}\right]
+(2)
+where
+𝒟
+\mathcal{D}
+is the replay buffer,
+𝐚
+~
+t
++
+1
+∼
+π
+ϕ
+(
+⋅
+|
+𝐬
+t
++
+1
+)
+\tilde{\mathbf{a}}_{t+1}\sim\pi_{\phi}(\cdot|\mathbf{s}_{t+1})
+,
+Q
+θ
+¯
+Q_{\overline{\theta}}
+represents an exponential moving average of the weights from
+Q
+θ
+Q_{\theta}
+, and
+α
+\alpha
+is the temperature parameter
+[
+75
+,
+47
+,
+24
+]
+. SAC also employs clipped double-Q learning
+[
+29
+,
+20
+]
+which we omit from our notation for simplicity. The policy
+π
+ϕ
+\pi_{\phi}
+is a stochastic policy that aims to maximize both entropy and
+Q
+Q
+-values:
+ℒ
+π
+ϕ
+​
+(
+𝒟
+)
+=
+𝔼
+𝐬
+t
+∼
+𝒟
+​
+[
+α
+​
+log
+⁡
+π
+ϕ
+​
+(
+𝐚
+~
+t
+|
+𝐬
+t
+)
+−
+Q
+θ
+​
+(
+𝐬
+t
+,
+𝐚
+~
+t
+)
+]
+\mathcal{L}_{\pi_{\phi}}(\mathcal{D})=\mathbb{E}_{\mathbf{s}_{t}\sim\mathcal{D}}\left[\alpha\log\pi_{\phi}(\tilde{\mathbf{a}}_{t}|\mathbf{s}_{t})-Q_{\theta}(\mathbf{s}_{t},\tilde{\mathbf{a}}_{t})\right]
+(3)
+where
+𝐚
+~
+t
+∼
+π
+ϕ
+(
+⋅
+|
+𝐬
+t
+)
+\tilde{\mathbf{a}}_{t}\sim\pi_{\phi}(\cdot|\mathbf{s}_{t})
+. The temperature parameter
+α
+\alpha
+can either be fixed or learned by minimizing against a target entropy
+ℋ
+target
+\mathcal{H}^{\text{target}}
+[
+24
+]
+. Both the critic and actor losses are updated iteratively using stochastic gradient descent in an aim to maximize the expected discounted sum of rewards.
+When learning from images, the SAC agent does not have access to state
+𝐬
+t
+\mathbf{s}_{t}
+but rather observation
+𝐨
+t
+\mathbf{o}_{t}
+. We follow DrQ and DrQ-v2
+[
+40
+,
+77
+]
+in encoding
+𝐨
+t
+\mathbf{o}_{t}
+with a single shared CNN encoder
+f
+ψ
+f_{\psi}
+, such that all previous state inputs
+𝐬
+t
+\mathbf{s}_{t}
+can be replaced with
+[
+f
+ψ
+​
+(
+𝐨
+t
+)
+]
+[f_{\psi}(\mathbf{o}_{t})]
+or
+[
+f
+ψ
+​
+(
+𝐨
+t
+)
+,
+s
+t
+p
+​
+r
+​
+o
+​
+p
+​
+r
+​
+i
+​
+o
+]
+[f_{\psi}(\mathbf{o}_{t}),s_{t}^{proprio}]
+when proprioceptive state is available. The encoder
+f
+ψ
+f_{\psi}
+is trained end-to-end by the critic gradients.
+IV
+Method
+We present
+Squint
+, a visual Soft Actor Critic
+[
+24
+]
+method that trains successfully within minutes through: parallel simulation, a distributional critic
+[
+7
+]
+, resolution squinting, layer normalization
+[
+4
+]
+, tuned update-to-data ratio, and an optimized implementation. These trained policies transfer zero-shot to a real-world SO-101 robotic arm. We present the flow of our training pipeline in Figure
+II
+. We further show the impact of each design choice in Figure
+IV
+and discuss them below:
+Fig. 4.
+Design Choices.
+We experiment with the most critical design choices that allow our agents to be trained while maximizing wall-time for sim-to-real robotics deployment. Mean Success Rate and 95% CI over 5 seeds for all 8 tasks.
+Update-to-Data Ratio.
+Tuning the update-to-data (UTD) ratio has long been a tradeoff between sample efficiency and training wall time
+[
+14
+]
+. For minimizing training wall time, prior work has shown that one needs to use a very large number of parallel environments with a very low number of updates
+[
+67
+,
+65
+,
+64
+]
+, creating a low UTD ratio. In Figure
+IV
+, we study the impact of these choices, and find that a large number of parallel environments (1024) along with a large number of updates (256) can reduce training time significantly. These findings indicate that while very low UTD ratios (
+<
+<
+0.06) work for humanoids
+[
+65
+,
+64
+]
+, manipulation domains seem to benefit from larger UTD ratios, seemingly (0.25) in our task set.
+Batch Size.
+While larger batch sizes have been shown to improve training efficiency in
+[
+65
+,
+64
+]
+, we find that using a lower batch size of 512 provides the same stable training efficiency, while minimizing wall time for every update.
+Pytorch Optimizations.
+Our codebase builds on LeanRL and CleanRL
+[
+34
+]
+. We add support for both PyTorch compile and cudagraphs
+[
+58
+]
+, which leverage kernel fusion and reduced CPU launch overhead to significantly accelerate the training loop. We further add AMP bfloat16 support for the update loops, reducing training time with convolutional neural networks. Combined, these optimizations give more than a 5x speedup in training speed.
+Critic Design Choices.
+We adopt a Distributional C51 Critic
+[
+7
+]
+, similar to
+[
+44
+,
+65
+,
+64
+]
+, where we minimize cross entropy loss rather than the mean square error on TD-targets. We find that the choice of a distributional critic greatly improves wall time speed, even though it requires more computation than a standard Critic. We further investigate the effect of Clipped Double Q-learning (CDQ)
+[
+19
+]
+and find a slight improvement in using the average rather than CDQ.
+Encoder Design Choices.
+We leverage a small two layer CNN encoder, and share it between the actor and critic. The encoder is only updated by the critic’s TD-loss. After encoding the images, we pass them through separate one layer projections for each of the actor and critic. We adopt these design choices following prior state-of-the-art visual RL methods
+[
+40
+,
+77
+]
+, though our ablations reveal they yield negligible performance gains on our task set.
+Normalization.
+All our linear layers are followed by Layer Normalization layers
+[
+4
+]
+, which we find to improve training speed, similar to the findings of
+[
+5
+,
+56
+,
+64
+]
+.
+Input Image Resolution.
+We compare training agents with larger and lower input image resolutions, and find them to achieve identical sample efficiency, but varying wall time training speed. We only show the wall time axis in Figure
+IV
+. Our findings show that the smaller the resolution, the faster the wall time, and thus we use a 16 x 16 input image resolution.
+Squinting.
+We compare rendering at 16 x 16 vs rendering at a high resolution of 128 x 128 and then area downsampling to 16 x 16, which we refer to as
+squinting
+. We find that downsampling improves performance on our task set. This downsampling provides natural anti-aliasing and preserves scene structure, which we hypothesize aids sim-to-real transfer. We further show a visual comparison in Figure
+I
+.
+Fig. 5.
+Overall Results.
+(Left)
+Comparison with visual RL baselines.
+(Right)
+Comparison with State-to-Visual DAgger, where we include the time it takes to train an SAC state expert into the comparison. Mean Success Rate and 95% CI over 5 seeds on all tasks.
+Replay Buffer Size.
+Due to our use of squinting and low image sizes of 16 x 16, we are able to scale replay buffer size to easily fit on the GPU for faster training speed. We compare using 100K vs 1M replay buffer storage size, and find that the 1M improves asymptotic method success rate on our task set by 7%. While we use a simple FIFO buffer, we leave it to future work to use more advanced buffer sampling techniques
+[
+62
+,
+31
+]
+that could further improve wall time.
+Simulation Control Frequency.
+To facilitate faster training times, we train with 10Hz control frequency using a PD Joint Position Target Delta controller. We use large position offset limits, to allow the agent to move faster in simulation.
+Real-World Robot Transfer.
+To transfer trained agents to the real robot, without compromising safety, we scale all actions down by 0.15, and triple the control frequency to 30Hz. While this constitutes a mismatch between simulation and real world control frequency, we find that a higher control frequency in the real world provides faster recovery control for the robot, and provides smoother trajectories.
+TABLE I:
+Simulation Success Rates (%)
+Task
+Squint (Ours)
+SAC
+PPO
+DrQ-v2
+BC
+Reach Cube
+100.0
+±
+\pm
+0.0
+99.4
+±
+\pm
+1.1
+88.0
+±
+\pm
+10.3
+12.3
+±
+\pm
+8.3
+61.2
+±
+\pm
+9.2
+Reach Can
+100.0
+±
+\pm
+0.0
+99.1
+±
+\pm
+1.8
+96.6
+±
+\pm
+2.4
+23.6
+±
+\pm
+17.6
+56.2
+±
+\pm
+12.5
+Lift Cube
+99.8
+±
+\pm
+0.4
+98.1
+±
+\pm
+2.4
+92.8
+±
+\pm
+4.5
+0.0
+±
+\pm
+0.0
+46.2
+±
+\pm
+3.1
+Lift Can
+98.8
+±
+\pm
+2.5
+95.4
+±
+\pm
+3.5
+96.2
+±
+\pm
+4.7
+0.0
+±
+\pm
+0.0
+53.8
+±
+\pm
+12.9
+Place Cube
+97.5
+±
+\pm
+3.1
+99.1
+±
+\pm
+1.7
+29.0
+±
+\pm
+33.8
+0.0
+±
+\pm
+0.0
+38.8
+±
+\pm
+8.3
+Place Can
+96.3
+±
+\pm
+3.0
+98.6
+±
+\pm
+1.8
+71.1
+±
+\pm
+18.3
+0.0
+±
+\pm
+0.0
+28.8
+±
+\pm
+8.5
+Stack Cube
+95.0
+±
+\pm
+6.1
+97.7
+±
+\pm
+1.6
+4.9
+±
+\pm
+9.7
+0.0
+±
+\pm
+0.0
+26.2
+±
+\pm
+9.2
+Stack Can
+81.2
+±
+\pm
+8.8
+18.7
+±
+\pm
+23.2
+3.0
+±
+\pm
+6.1
+0.0
+±
+\pm
+0.0
+23.8
+±
+\pm
+13.3
+All Tasks
+96.1
+±
+\pm
+1.6
+88.3
+±
+\pm
+3.4
+60.2
+±
+\pm
+4.0
+4.5
+±
+\pm
+2.9
+41.9
+±
+\pm
+4.2
+TABLE II:
+Real-World Success Rates
+Task
+Squint (Ours)
+SAC
+PPO
+DrQ-v2
+BC
+Reach Cube
+10/10
+10/10
+7/10
+4/10
+8/10
+Reach Can
+10/10
+10/10
+10/10
+4/10
+7/10
+Lift Cube
+10/10
+10/10
+6/10
+0/10
+6/10
+Lift Can
+9/10
+9/10
+7/10
+0/10
+6/10
+Place Cube
+10/10
+8/10
+9/10
+0/10
+7/10
+Place Can
+10/10
+6/10
+4/10
+0/10
+0/10
+Stack Cube
+8/10
+6/10
+3/10
+0/10
+2/10
+Stack Can
+6/10
+6/10
+4/10
+0/10
+2/10
+Total
+73/80
+65/80
+50/80
+8/80
+38/80
+All Tasks
+91.3%
+81.3%
+62.5%
+10.0%
+47.5%
+Fig. 6.
+Detailed Results.
+We train all methods for 15 minutes on all 8 tasks, and plot the results above. Mean Success Rates and 95% CI over 5 seeds.
+(Top Left)
+Simulation success rate table of all methods after 15 minutes.
+(Top Right)
+Real world success rate table over 10 trials for each task.
+(Bottom)
+Per-task success rate plots in simulation during training.
+V
+Experiments
+We setup 8 distinct tasks in ManiSkill3
+[
+70
+]
+simulator with the 5-DoF SO-101 robotic arm
+[
+10
+]
+, and train our method and baselines on each of these tasks for 15 minutes over 5 seeds. We only use the wrist camera image and proprioceptive state as input. We then deploy the best seed from each method on each task, and evaluate it zero-shot on our real world robot setup. Our real robot setup is shown in Figure
+I
+.
+Task Design.
+We design the tasks to be digital twins of the real world setup, thereby reducing the visual gap. We use the wrist camera for learning, as it has been shown to provide better representations than third person cameras in robot manipulation
+[
+32
+,
+2
+]
+. For each task in our task set, the objects are randomly placed on the table in a 0.2m x 0.2m xy box around the gripper’s starting xy position. The tasks are:
+(1) Reach Cube
+: robot reaches 2 cm above the cube.
+(2) Reach Can
+: robot reaches 2 cm above the can.
+(3) Lift Cube
+: robot lifts the cube and moves to a predefined rest position.
+(4) Lift Can
+: robot lifts the can and moves to a predefined rest position.
+(5) Place Cube
+: robot lifts the cube and places it into the container.
+(6) Place Can
+: robot lifts the can and places it into the container.
+(7) Stack Cube
+: robot lifts the red cube and stacks it on top of the blue cube.
+(8) Stack Can
+: robot lifts the cube and stacks it on top of the can. We show the start and success position of each task in Figure
+.
+Domain Randomization Setup.
+Even though we design simulation tasks to be similar to the real world setup, domain randomization is necessary to be able to bridge the gap between the simulation and the real world. We apply visual domain randomization consisting of small random position, rotation, and FOV perturbations to the wrist camera, as well as lighting and color jitter alterations. We apply physical domain randomization where we randomize object sizes, object frictions and gripper closing speed. Furthermore, we apply additive isotropic Gaussian noise
+(
+σ
+=
+5
+​
+°
+)
+(\sigma=5\textdegree)
+to joint positions in the proprioceptive state to ensure robustness to any joint position mismatches between simulation and real world setups. We
+emphasize
+that Squint is able to achieve fast training speed despite these aggressive randomizations.
+Baselines.
+We compare our method, Squint, against the following competitive baselines: (1)
+SAC
+: an optimized implementation of Soft Actor Critic
+[
+24
+]
+for parallel simulators, with Squint’s tuned hyper parameters, but without Squint’s architectural differences. (2)
+PPO
+: an optimized implementation of Proximal Policy Optimization
+[
+63
+]
+, the de facto standard for visual sim-to-real robotics due to its fast wall time training speed with parallel simulators. (3)
+DrQ-v2
+: Data Regularized Q-Learning, the sample efficiency standard for off-policy visual learning
+[
+77
+]
+. We note that we kept DrQ-v2 sequential with one environment, rather than parallelized, to stay true to its original implementation, and compare our method with the standard for off-policy visual learning. (4)
+BC
+: Behaviour Cloning
+[
+60
+,
+3
+]
+from expert demonstrations, commonly used for distilling visual agents. (5)
+DAgger
+: Dataset Aggregation
+[
+61
+]
+, a stronger imitation learning baseline than Behaviour Cloning, commonly used to train visual agents when there is access to the environment and the expert agent. We specifically focus on State-to-Visual DAgger
+[
+61
+,
+53
+]
+, where one trains an expert SAC state based agent and distills it into a visual actor for deployment.
+(a) Place Can task.
+(b) Stack Cube task.
+(c) Stack Can task.
+Fig. 7.
+Qualitative Examples.
+We show timesteps from left to right, and demonstrate successful deployment on our real world robot.
+VI
+Results
+Overall Results.
+We display the
+overall average
+plot in Figure
+IV
+and all
+detailed results
+in Figure
+IV
+, showcasing per-task breakdowns and the tables for both simulation and real world success rates. Our method, Squint, surpasses all baselines in terms of training wall-time speed, and achieves an average success rate of 96.1% over all tasks at the end of 15 minutes of training. On the real world results, our method achieves 91.3% success rate averaged over 80 trials for 8 tasks, surpassing baselines on the real robot setup.
+TABLE III:
+Real World Success - Compared with Visual DAgger.
+Squint (Ours)
+Visual DAgger
+Total
+73/80
+53/80
+Average
+91.3%
+66.3%
+Comparison with Visual DAgger.
+We further compare our method with Visual DAgger agents that are distilled from SAC state experts and display the results in Figure
+IV
+. We include the time it takes to train SAC state experts as done in
+[
+53
+]
+. We find that Squint achieves similar training speed as the SAC state agent, and achieves higher success rate at the end of training than the State-to-Visual DAgger agent on our task set. Furthermore, we deploy DAgger onto our real robot setup, showcasing the results in Table
+III
+, and we find that Squint outperforms DAgger’s success rate by 25% in the real world.
+VII
+Discussion
+Quantitative Analysis.
+Based on simulation and real world results in Figure
+IV
+, we find that the real world results closely align with the simulation results. This indicates that the simulated environments provide a good test bed for measuring success in the real world. Our SAC baseline outperforms the other baselines, but falls short of Squint, due to its architectural limitations. Our PPO baseline doesn’t learn as fast as off-policy methods on the harder tasks of our task set, mainly due to the reuse of data that off-policy algorithms can leverage. Our DrQ-v2 baseline fails to learn, primarily due to it learning from one environment only with heavy randomization, and doesn’t benefit from the speed of parallelization. Our BC baseline learns, but is limited in performance due to the state distribution mismatch that DAgger can alleviate. While DAgger learns better, we find that it still falls short of Squint. Both BC and DAgger share a key limitation in our setting, which is learning from a state-based agent. Our task setup uses wrist cameras, which require active vision, and a different exploration movement than an all-seeing state agent would take. Overall, Squint shows promise as it accelerates wall-time speed of training deployable visual agents to the real world.
+Qualitative Analysis.
+We display sample trajectories of Squint on the real SO-101 robot in Figure
+V
+. The three trajectories consist of the three hardest tasks: PlaceCan, StackCube and StackCan.
+TABLE IV:
+Real World Success - Visual Robustness.
+Squint (Ours)
+Squint - No Color Jitter
+Total
+73/80
+58/80
+Average
+91.3%
+72.5%
+Visual Robustness Analysis.
+Despite building a digital twin of the environment in simulation, visual reinforcement learning agents are brittle to changes in visuals that they haven’t encountered before
+[
+1
+]
+. We found that even slight lighting changes in the real robot setup were degrading the performance of our deployed agent. We ablate removing color jitter from our environment pipeline and evaluate it on the real robot setup. We display our results in Table
+IV
+, where we find that our agent’s real world performance decreases by 18% on all tasks without the application of color jitter. We leave it to future work to integrate more visual robustness into the training pipeline.
+VIII
+Conclusion
+Algorithm 1
+Squint: Pseudocode (distributional critic is omitted for simplicity)
+1:
+Initialize encoder
+f
+ψ
+f_{\psi}
+, actor
+π
+ϕ
+\pi_{\phi}
+, two critics
+Q
+θ
+1
+,
+Q
+θ
+2
+Q_{\theta_{1}},Q_{\theta_{2}}
+, entropy temperature
+α
+\alpha
+, replay buffer
+ℬ
+\mathcal{B}
+2:
+Initialize target critics
+Q
+θ
+¯
+1
+,
+Q
+θ
+¯
+2
+Q_{\bar{\theta}_{1}},Q_{\bar{\theta}_{2}}
+with
+θ
+¯
+1
+←
+θ
+1
+\bar{\theta}_{1}\leftarrow\theta_{1}
+and
+θ
+¯
+2
+←
+θ
+2
+\bar{\theta}_{2}\leftarrow\theta_{2}
+3:
+for
+each environment step
+t
+t
+do
+4:
+Observe
+(
+o
+t
+rgb
+,
+s
+t
+proprio
+)
+(o_{t}^{\text{rgb}},s_{t}^{\text{proprio}})
+and downsample image
+o
+~
+t
+=
+Downsample
+​
+(
+o
+t
+rgb
+)
+\tilde{o}_{t}=\textsc{Downsample}(o_{t}^{\text{rgb}})
+5:
+Sample
+a
+t
+∼
+π
+ϕ
+​
+(
+f
+ψ
+​
+(
+o
+~
+t
+)
+,
+s
+t
+proprio
+)
+a_{t}\sim\pi_{\phi}(f_{\psi}(\tilde{o}_{t}),s_{t}^{\text{proprio}})
+and take action
+a
+t
+a_{t}
+6:
+Observe next
+(
+o
+t
++
+1
+rgb
+,
+s
+t
++
+1
+proprio
+)
+(o_{t+1}^{\text{rgb}},s_{t+1}^{\text{proprio}})
+and reward
+r
+t
+r_{t}
+7:
+Store transition
+τ
+=
+(
+o
+~
+t
+,
+s
+t
+proprio
+,
+a
+t
+,
+r
+t
+,
+Downsample
+​
+(
+o
+t
++
+1
+rgb
+)
+,
+s
+t
++
+1
+proprio
+)
+\tau=(\tilde{o}_{t},s_{t}^{\text{proprio}},a_{t},r_{t},\textsc{Downsample}(o_{t+1}^{\text{rgb}}),s_{t+1}^{\text{proprio}})
+in
+ℬ
+←
+ℬ
+∪
+{
+τ
+}
+\mathcal{B}\leftarrow\mathcal{B}\cup\{\tau\}
+8:
+for
+j
+=
+1
+j=1
+to
+num_updates
+do
+9:
+Sample mini-batch
+B
+=
+{
+τ
+k
+}
+k
+=
+1
+|
+B
+|
+B=\{\tau_{k}\}_{k=1}^{|B|}
+from
+ℬ
+\mathcal{B}
+10:
+Encode observations:
+z
+t
+←
+f
+ψ
+​
+(
+o
+~
+t
+)
+z_{t}\leftarrow f_{\psi}(\tilde{o}_{t})
+,
+z
+t
++
+1
+←
+f
+ψ
+​
+(
+o
+~
+t
++
+1
+)
+z_{t+1}\leftarrow f_{\psi}(\tilde{o}_{t+1})
+11:
+Compute target Q-value
+via average:
+12:
+a
+~
+t
++
+1
+∼
+π
+ϕ
+(
+⋅
+|
+z
+t
++
+1
+,
+s
+t
++
+1
+proprio
+)
+\tilde{a}_{t+1}\sim\pi_{\phi}(\cdot|z_{t+1},s_{t+1}^{\text{proprio}})
+13:
+y
+=
+r
+t
++
+γ
+2
+​
+∑
+i
+=
+1
+2
+(
+Q
+θ
+¯
+i
+​
+(
+z
+t
++
+1
+,
+s
+t
++
+1
+proprio
+,
+a
+~
+t
++
+1
+)
+−
+α
+​
+log
+⁡
+π
+ϕ
+​
+(
+a
+~
+t
++
+1
+|
+z
+t
++
+1
+,
+s
+t
++
+1
+proprio
+)
+)
+y=r_{t}+\dfrac{\gamma}{2}\displaystyle\sum_{i=1}^{2}\left(Q_{\bar{\theta}_{i}}(z_{t+1},s_{t+1}^{\text{proprio}},\tilde{a}_{t+1})-\alpha\log\pi_{\phi}(\tilde{a}_{t+1}|z_{t+1},s_{t+1}^{\text{proprio}})\right)
+14:
+Update critic and encoder
+:
+15:
+(
+ψ
+,
+θ
+i
+)
+←
+(
+ψ
+,
+θ
+i
+)
+−
+∇
+(
+ψ
+,
+θ
+i
+)
+1
+|
+B
+|
+​
+∑
+τ
+k
+∈
+B
+(
+Q
+θ
+i
+​
+(
+z
+t
+,
+s
+t
+proprio
+,
+a
+t
+)
+−
+y
+)
+2
+(\psi,\theta_{i})\leftarrow(\psi,\theta_{i})-\nabla_{(\psi,\theta_{i})}\dfrac{1}{|B|}\displaystyle\sum_{\tau_{k}\in B}\Big(Q_{\theta_{i}}(z_{t},s_{t}^{\text{proprio}},a_{t})-y\Big)^{2}
+for
+i
+∈
+{
+1
+,
+2
+}
+i\in\{1,2\}
+16:
+Update entropy temperature:
+17:
+α
+←
+α
+−
+∇
+α
+1
+|
+B
+|
+​
+∑
+τ
+k
+∈
+B
+(
+ℋ
+target
+−
+ℋ
+⁡
+(
+z
+t
+,
+s
+t
+proprio
+)
+)
+⋅
+α
+\alpha\leftarrow\alpha-\nabla_{\alpha}\dfrac{1}{|B|}\displaystyle\sum_{\tau_{k}\in B}(\mathcal{H}^{\texttt{target}}-\mathcal{H}(z_{t},s_{t}^{\text{proprio}}))\cdot\alpha
+18:
+if
+j
+%
+​
+policy_freq
+=
+=
+0
+j\;\%\;\texttt{policy\_freq}==0
+then
+19:
+Update actor
+:
+20:
+z
+t
+sg
+←
+stopgrad
+​
+(
+z
+t
+)
+z_{t}^{\text{sg}}\leftarrow\textsc{stopgrad}(z_{t})
+21:
+a
+~
+t
+∼
+π
+ϕ
+(
+⋅
+|
+z
+t
+sg
+,
+s
+t
+proprio
+)
+\tilde{a}_{t}\sim\pi_{\phi}(\cdot|z_{t}^{\text{sg}},s_{t}^{\text{proprio}})
+22:
+ϕ
+←
+ϕ
++
+∇
+ϕ
+1
+2
+​
+|
+B
+|
+​
+∑
+τ
+k
+∈
+B
+∑
+i
+=
+1
+2
+(
+Q
+θ
+i
+​
+(
+z
+t
+sg
+,
+s
+t
+proprio
+,
+a
+~
+t
+)
+−
+α
+​
+log
+⁡
+π
+ϕ
+​
+(
+a
+~
+t
+|
+z
+t
+sg
+,
+s
+t
+proprio
+)
+)
+\phi\leftarrow\phi+\nabla_{\phi}\dfrac{1}{2|B|}\displaystyle\sum_{\tau_{k}\in B}\sum_{i=1}^{2}\Big(Q_{\theta_{i}}(z_{t}^{\text{sg}},s_{t}^{\text{proprio}},\tilde{a}_{t})-\alpha\log\pi_{\phi}(\tilde{a}_{t}|z_{t}^{\text{sg}},s_{t}^{\text{proprio}})\Big)
+23:
+end
+if
+24:
+Update target critic
+θ
+¯
+i
+←
+ρ
+​
+θ
+¯
+i
++
+(
+1
+−
+ρ
+)
+​
+θ
+i
+\bar{\theta}_{i}\leftarrow\rho\bar{\theta}_{i}+(1-\rho)\theta_{i}
+for
+i
+∈
+{
+1
+,
+2
+}
+i\in\{1,2\}
+25:
+end
+for
+26:
+end
+for
+Limitations and Opportunities.
+Building on this work, there are several limitations and promising directions that warrant further investigation:
+•
+Visual Robustness.
+Visual reinforcement learning agents remains brittle to visual changes. While most prior works in off-policy learning focus on improving visual robustness under the sample efficiency axis, optimizing visual robustness under the wall-time axis presents an equally compelling objective—whether through visual augmentations
+[
+26
+,
+1
+,
+72
+,
+48
+]
+, pretrained encoders
+[
+82
+,
+74
+,
+9
+]
+, or auxiliary representation learning objectives
+[
+6
+,
+15
+]
+.
+•
+Sample Efficiency.
+Numerous advances in off-policy learning have yielded significant gains in sample efficiency
+[
+27
+,
+42
+,
+43
+,
+18
+,
+11
+,
+57
+,
+12
+]
+. Incorporating these methods into Squint while maximizing wall-time efficiency is a promising direction.
+•
+Gripper Design.
+Despite the 5 DoF robot’s remarkable capability for its price point, sim-to-real transfer for can grasping was challenging due to tipping and insufficient gripper friction. More adhesive
+[
+22
+]
+or alternative grip designs could mitigate this issue.
+•
+Generalization.
+While this work addresses single-task visual RL, natural extensions include multi-task
+[
+16
+,
+76
+,
+55
+]
+, multi-view
+[
+81
+,
+2
+,
+45
+,
+39
+]
+, or multi-agent
+[
+79
+]
+settings as a step towards more generalist agents.
+•
+Privileged Training.
+We formulated Squint as a symmetric visual based reinforcement learning agent for simplicity. Extending Squint to an asymmetric pipeline, where the critic could leverage privileged information
+[
+59
+,
+33
+]
+, could further speed up the learning.
+•
+Dataset Diversity.
+Our work extensively evaluated the SO-101 task set in simulation and the real world. Evaluating and improving Squint on larger and diverse visual benchmarks is another promising direction
+[
+71
+,
+80
+,
+28
+]
+.
+•
+Imitation Learning Limitations.
+Imitation learning agents achieve suboptimal policies when given an active vision observation space and asked to imitate a state based agent. Future work could introduce imitation learning agents that address this limitation
+[
+33
+,
+68
+]
+.
+•
+Sim and Real Co-training.
+While we train Squint policies purely from simulation, co-training with both parallel simulation and real world demonstrations could prove a powerful way to bootstrap the learning
+[
+49
+]
+.
+Summary.
+Fast GPU-based parallel simulators have dramatically lowered the entry barrier for robot learning. In this work, we integrate the 5-DoF SO-101 robotic arm – a low-cost platform – into ManiSkill3, establishing 8 benchmark tasks with extensive domain randomization for sim-to-real transfer. We introduce Squint, an off-policy visual reinforcement learning algorithm that, through careful architectural design, hyperparameter tuning and image preprocessing, achieves superior wall-time efficiency and success rates compared to existing baselines on our proposed SO-101 Task Set. Squint trains on a single RTX 3090 GPU in under 15 minutes, producing policies ready for real-world deployment. We hope this work accelerates iteration cycles in robot learning, makes the field more accessible to researchers, and provides a strong foundation for future advances in visual reinforcement learning.
+Acknowledgments
+This research has in part been sponsored by Kuwait University through a visiting fellow program. Their support is gratefully acknowledged.
+References
+[1]
+A. Almuzairee, N. Hansen, and H. I. Christensen
+(2024)
+A recipe for unbounded data augmentation in visual reinforcement learning
+.
+arXiv preprint arXiv:2405.17416
+.
+Cited by:
+§VII
+,
+1st item
+.
+[2]
+A. Almuzairee, R. Patil, D. Bhatt, and H. I. Christensen
+(2025)
+Merging and disentangling views in visual reinforcement learning for robotic manipulation
+.
+arXiv preprint arXiv:2505.04619
+.
+Cited by:
+§V
+,
+4th item
+.
+[3]
+C. G. Atkeson and S. Schaal
+(1997)
+Robot learning from demonstration
+.
+In
+ICML
+,
+Vol.
+97
+,
+pp. 12–20
+.
+Cited by:
+§V
+.
+[4]
+J. L. Ba, J. R. Kiros, and G. E. Hinton
+(2016)
+Layer normalization
+.
+arXiv preprint arXiv:1607.06450
+.
+Cited by:
+§IV
+,
+§IV
+.
+[5]
+P. J. Ball, L. Smith, I. Kostrikov, and S. Levine
+(2023)
+Efficient online reinforcement learning with offline data
+.
+In
+International Conference on Machine Learning
+,
+pp. 1577–1594
+.
+Cited by:
+§IV
+.
+[6]
+S. Batra and G. S. Sukhatme
+(2024)
+Zero shot generalization of vision-based rl without data augmentation
+.
+In
+Forty-second International Conference on Machine Learning
+,
+Cited by:
+1st item
+.
+[7]
+M. G. Bellemare, W. Dabney, and R. Munos
+(2017)
+A distributional perspective on reinforcement learning
+.
+In
+International conference on machine learning
+,
+pp. 449–458
+.
+Cited by:
+§IV
+,
+§IV
+.
+[8]
+M. G. Bellemare, Y. Naddaf, J. Veness, and M. Bowling
+(2013)
+The arcade learning environment: an evaluation platform for general agents
+.
+Journal of artificial intelligence research
+47
+,
+pp. 253–279
+.
+Cited by:
+§II
+.
+[9]
+A. Brown and G. Berseth
+(2026)
+SegDAC: improving visual reinforcement learning by extracting dynamic object-centric representations from pretrained vision models
+.
+External Links:
+2508.09325
+,
+Link
+Cited by:
+1st item
+.
+[10]
+R. Cadene, S. Alibert, A. Soare, Q. Gallouedec, A. Zouitine, S. Palma, P. Kooijmans, M. Aractingi, M. Shukor, D. Aubakirova, M. Russi, F. Capuano, C. Pascal, J. Choghari, J. Moss, and T. Wolf
+(2024)
+LeRobot: state-of-the-art machine learning for real-world robotics in pytorch
+.
+Note:
+https://github.com/huggingface/lerobot
+Cited by:
+§I
+,
+§V
+.
+[11]
+R. C. Castanyer, J. Obando-Ceron, L. Li, P. Bacon, G. Berseth, A. Courville, and P. S. Castro
+(2025)
+Stable gradients for stable learning at scale in deep reinforcement learning
+.
+arXiv preprint arXiv:2506.15544
+.
+Cited by:
+2nd item
+.
+[12]
+W. Chang, M. Henaff, B. Amos, G. Dudek, and S. Fujimoto
+(2026)
+The surprising difficulty of search in model-based reinforcement learning
+.
+arXiv preprint arXiv:2601.21306
+.
+Cited by:
+2nd item
+.
+[13]
+J. Collins, S. Chand, A. Vanderkop, and D. Howard
+(2021)
+A review of physics simulators for robotic applications
+.
+IEEE Access
+9
+,
+pp. 51416–51431
+.
+Cited by:
+§II
+.
+[14]
+P. D’Oro, M. Schwarzer, E. Nikishin, P. Bacon, M. G. Bellemare, and A. Courville
+(2023)
+Sample-efficient reinforcement learning by breaking the replay ratio barrier
+.
+In
+The Eleventh International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§IV
+.
+[15]
+A. Echchahed and P. S. Castro
+(2025)
+A survey of state representation learning for deep reinforcement learning
+.
+arXiv preprint arXiv:2506.17518
+.
+Cited by:
+1st item
+.
+[16]
+L. Espeholt, H. Soyer, R. Munos, K. Simonyan, V. Mnih, T. Ward, Y. Doron, V. Firoiu,
+et al.
+(2018)
+IMPALA: scalable distributed deep-rl with importance weighted actor-learner architectures
+.
+ArXiv
+abs/1802.01561
+.
+Cited by:
+4th item
+.
+[17]
+C. Finn, X. Y. Tan, Y. Duan, T. Darrell, S. Levine, and P. Abbeel
+(2015)
+Learning visual feature spaces for robotic manipulation with deep spatial autoencoders
+.
+arXiv preprint arXiv:1509.06113
+25
+(
+2
+).
+Cited by:
+§II
+.
+[18]
+S. Fujimoto, P. D’Oro, A. Zhang, Y. Tian, and M. Rabbat
+(2025)
+Towards general-purpose model-free reinforcement learning
+.
+arXiv preprint arXiv:2501.16142
+.
+Cited by:
+§II
+,
+2nd item
+.
+[19]
+S. Fujimoto, H. V. Hoof, and D. Meger
+(2018)
+Addressing function approximation error in actor-critic methods
+.
+ArXiv
+abs/1802.09477
+.
+Cited by:
+§IV
+.
+[20]
+S. Fujimoto, H. Hoof, and D. Meger
+(2018)
+Addressing function approximation error in actor-critic methods
+.
+In
+International conference on machine learning
+,
+pp. 1587–1596
+.
+Cited by:
+§I
+,
+§III
+.
+[21]
+M. Gallici, M. Fellows, B. Ellis, B. Pou, I. Masmitja, J. N. Foerster, and M. Martin
+(2024)
+Simplifying deep temporal difference learning
+.
+arXiv preprint arXiv:2407.04811
+.
+Cited by:
+§II
+.
+[22]
+P. Glick, S. A. Suresh, D. Ruffatto, M. Cutkosky, M. T. Tolley, and A. Parness
+(2018)
+A soft robotic gripper with gecko-inspired adhesive
+.
+IEEE Robotics and Automation Letters
+3
+(
+2
+),
+pp. 903–910
+.
+Cited by:
+3rd item
+.
+[23]
+J. Gu, F. Xiang, X. Li, Z. Ling, X. Liu, T. Mu, Y. Tang, S. Tao, X. Wei, Y. Yao,
+et al.
+(2023)
+Maniskill2: a unified benchmark for generalizable manipulation skills
+.
+arXiv preprint arXiv:2302.04659
+.
+Cited by:
+§II
+.
+[24]
+T. Haarnoja, A. Zhou, P. Abbeel, and S. Levine
+(2018)
+Soft actor-critic: off-policy maximum entropy deep reinforcement learning with a stochastic actor
+.
+arXiv preprint arXiv:1801.01290
+.
+Cited by:
+§I
+,
+§III
+,
+§III
+,
+§III
+,
+§IV
+,
+§V
+.
+[25]
+D. Hafner, J. Pasukonis, J. Ba, and T. Lillicrap
+(2023)
+Mastering diverse domains through world models
+.
+arXiv preprint arXiv:2301.04104
+.
+Cited by:
+§II
+.
+[26]
+N. Hansen, H. Su, and X. Wang
+(2021)
+Stabilizing deep q-learning with convnets and vision transformers under data augmentation
+.
+In
+Annual Conference on Neural Information Processing Systems (NeurIPS)
+,
+Cited by:
+1st item
+.
+[27]
+N. Hansen, H. Su, and X. Wang
+(2024)
+TD-MPC2: scalable, robust world models for continuous control
+.
+In
+International Conference on Learning Representations (ICLR)
+,
+Cited by:
+§I
+,
+§II
+,
+2nd item
+.
+[28]
+N. Hansen, H. Su, and X. Wang
+(2025)
+Learning massively multitask world models for continuous control
+.
+arXiv preprint arXiv:2511.19584
+.
+Cited by:
+6th item
+.
+[29]
+H. V. Hasselt, A. Guez, and D. Silver
+(2016)
+Deep reinforcement learning with double q-learning
+.
+In
+Aaai
+,
+Cited by:
+§III
+.
+[30]
+N. Heess, D. Tb, S. Sriram, J. Lemmon, J. Merel, G. Wayne, Y. Tassa, T. Erez, Z. Wang, S. Eslami,
+et al.
+(2017)
+Emergence of locomotion behaviours in rich environments
+.
+arXiv preprint arXiv:1707.02286
+.
+Cited by:
+§I
+,
+§II
+.
+[31]
+Y. Hou, L. Liu, Q. Wei, X. Xu, and C. Chen
+(2017)
+A novel ddpg method with prioritized experience replay
+.
+In
+2017 IEEE international conference on systems, man, and cybernetics (SMC)
+,
+pp. 316–321
+.
+Cited by:
+§IV
+.
+[32]
+K. Hsu, M. J. Kim, R. Rafailov, J. Wu, and C. Finn
+(2022)
+Vision-based manipulators need to also see from their hands
+.
+arXiv preprint arXiv:2203.12677
+.
+Cited by:
+§V
+.
+[33]
+E. S. Hu, J. Springer, O. Rybkin, and D. Jayaraman
+(2024)
+Privileged sensing scaffolds reinforcement learning
+.
+arXiv preprint arXiv:2405.14853
+.
+Cited by:
+5th item
+,
+7th item
+.
+[34]
+S. Huang, R. F. J. Dossa, C. Ye, J. Braga, D. Chakraborty, K. Mehta, and J. G.M. Araújo
+(2022)
+CleanRL: high-quality single-file implementations of deep reinforcement learning algorithms
+.
+Journal of Machine Learning Research
+23
+(
+274
+),
+pp. 1–18
+.
+External Links:
+Link
+Cited by:
+§IV
+.
+[35]
+J. Hwangbo, J. Lee, A. Dosovitskiy, D. Bellicoso, V. Tsounis, V. Koltun, and M. Hutter
+(2019)
+Learning agile and dynamic motor skills for legged robots
+.
+Science Robotics
+4
+(
+26
+),
+pp. eaau5872
+.
+Cited by:
+§I
+.
+[36]
+L. P. Kaelbling, M. L. Littman, and A. R. Cassandra
+(1998)
+Planning and acting in partially observable stochastic domains
+.
+Artificial Intelligence
+.
+Cited by:
+§III
+.
+[37]
+D. Kalashnikov, A. Irpan, P. Pastor, J. Ibarz, A. Herzog, E. Jang, D. Quillen, E. Holly, M. Kalakrishnan, V. Vanhoucke,
+et al.
+(2018)
+QT-opt: scalable deep reinforcement learning for vision-based robotic manipulation
+.
+arXiv preprint arXiv:1806.10293
+.
+Cited by:
+§I
+,
+§II
+.
+[38]
+E. Kaufmann, L. Bauersfeld, A. Loquercio, M. Müller, V. Koltun, and D. Scaramuzza
+(2023)
+Champion-level drone racing using deep reinforcement learning
+.
+Nat.
+620
+(
+7976
+),
+pp. 982–987
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§I
+.
+[39]
+S. Kim, W. Chung, Z. Dai, D. Bhatt, A. Shukla, H. Su, Y. Tian, and N. Atanasov
+(2025)
+Seeing the bigger picture: 3d latent mapping for mobile manipulation policy learning
+.
+arXiv preprint arXiv:2510.03885
+.
+Cited by:
+4th item
+.
+[40]
+I. Kostrikov, D. Yarats, and R. Fergus
+(2020)
+Image augmentation is all you need: regularizing deep reinforcement learning from pixels
+.
+arXiv preprint arXiv:2004.13649
+.
+Cited by:
+§III
+,
+§IV
+.
+[41]
+M. Laskin, K. Lee, A. Stooke, L. Pinto, P. Abbeel, and A. Srinivas
+(2020)
+Reinforcement learning with augmented data
+.
+arXiv preprint arXiv:2004.14990
+.
+Cited by:
+§II
+.
+[42]
+H. Lee, D. Hwang, D. Kim, H. Kim, J. J. Tai, K. Subramanian, P. R. Wurman, J. Choo, P. Stone, and T. Seno
+(2024)
+Simba: simplicity bias for scaling up parameters in deep reinforcement learning
+.
+arXiv preprint arXiv:2410.09754
+.
+Cited by:
+2nd item
+.
+[43]
+H. Lee, Y. Lee, T. Seno, D. Kim, P. Stone, and J. Choo
+(2025)
+Hyperspherical normalization for scalable deep reinforcement learning
+.
+arXiv preprint arXiv:2502.15280
+.
+Cited by:
+2nd item
+.
+[44]
+Z. Li, T. Chen, Z. Hong, A. Ajay, and P. Agrawal
+(2023)
+Parallel
+Q
+Q
+-learning: scaling off-policy reinforcement learning under massively parallel simulation
+.
+In
+International Conference on Machine Learning
+,
+pp. 19440–19459
+.
+Cited by:
+§II
+,
+§IV
+.
+[45]
+Z. Li, P. Qu, Y. Jia, S. Zhou, H. Ge, J. Cao, J. Zhou, G. Zhou, and J. Ma
+(2025)
+ManiVID-3d: generalizable view-invariant reinforcement learning for robotic manipulation via disentangled 3d representations
+.
+arXiv preprint arXiv:2509.11125
+.
+Cited by:
+4th item
+.
+[46]
+J. Liang, V. Makoviychuk, A. Handa, N. Chentanez, M. Macklin, and D. Fox
+(2018)
+Gpu-accelerated robotic simulation for distributed reinforcement learning
+.
+In
+Conference on Robot Learning
+,
+pp. 270–282
+.
+Cited by:
+§II
+.
+[47]
+T. P. Lillicrap, J. J. Hunt, A. Pritzel, N. Heess, T. Erez, Y. Tassa, D. Silver, and D. Wierstra
+(2015)
+Continuous control with deep reinforcement learning
+.
+arXiv preprint arXiv:1509.02971
+.
+Cited by:
+§III
+.
+[48]
+G. Ma, Z. Wang, Z. Yuan, X. Wang, B. Yuan, and D. Tao
+(2025)
+A comprehensive survey of data augmentation in visual reinforcement learning
+.
+International Journal of Computer Vision
+133
+(
+10
+),
+pp. 7368–7405
+.
+Cited by:
+1st item
+.
+[49]
+A. Maddukuri, Z. Jiang, L. Y. Chen, S. Nasiriany, Y. Xie, Y. Fang, W. Huang, Z. Wang, Z. Xu, N. Chernyadev,
+et al.
+(2025)
+Sim-and-real co-training: a simple recipe for vision-based robotic manipulation
+.
+arXiv preprint arXiv:2503.24361
+.
+Cited by:
+8th item
+.
+[50]
+V. Makoviychuk, L. Wawrzyniak, Y. Guo, M. Lu, K. Storey, M. Macklin, D. Hoeller, N. Rudin, A. Allshire, A. Handa,
+et al.
+(2021)
+Isaac gym: high performance gpu-based physics simulation for robot learning
+.
+arXiv preprint arXiv:2108.10470
+.
+Cited by:
+§II
+.
+[51]
+V. Mnih, K. Kavukcuoglu, D. Silver, A. Graves, I. Antonoglou, D. Wierstra, and M. Riedmiller
+(2013)
+Playing atari with deep reinforcement learning
+.
+arXiv preprint arXiv:1312.5602
+.
+Cited by:
+§I
+,
+§II
+.
+[52]
+V. Mnih, K. Kavukcuoglu, D. Silver, A. A. Rusu, J. Veness, M. G. Bellemare, A. Graves, M. Riedmiller, A. K. Fidjeland, G. Ostrovski,
+et al.
+(2015)
+Human-level control through deep reinforcement learning
+.
+nature
+518
+(
+7540
+),
+pp. 529–533
+.
+Cited by:
+§II
+.
+[53]
+T. Mu, Z. Li, S. W. Strzelecki, X. Yuan, Y. Yao, L. Liang, and H. Su
+(2025)
+When should we prefer state-to-visual dagger over visual reinforcement learning?
+.
+Proceedings of the AAAI Conference on Artificial Intelligence
+39
+(
+14
+),
+pp. 14637–14645
+.
+Cited by:
+§V
+,
+§VI
+.
+[54]
+T. Mu, Z. Ling, F. Xiang, D. Yang, X. Li, S. Tao, Z. Huang, Z. Jia, and H. Su
+(2021)
+Maniskill: generalizable manipulation skill benchmark with large-scale demonstrations
+.
+arXiv preprint arXiv:2107.14483
+.
+Cited by:
+§II
+.
+[55]
+M. Nauman, M. Cygan, C. Sferrazza, A. Kumar, and P. Abbeel
+(2025)
+Bigger, regularized, categorical: high-capacity value functions are efficient multi-task learners
+.
+arXiv preprint arXiv:2505.23150
+.
+Cited by:
+4th item
+.
+[56]
+M. Nauman, M. Ostaszewski, K. Jankowski, P. Miłoś, and M. Cygan
+(2024)
+Bigger, regularized, optimistic: scaling for compute and sample efficient continuous control
+.
+Advances in neural information processing systems
+37
+,
+pp. 113038–113071
+.
+Cited by:
+§IV
+.
+[57]
+J. Obando-Ceron, W. Mayor, S. Lavoie, S. Fujimoto, A. Courville, and P. S. Castro
+(2025)
+Simplicial embeddings improve sample efficiency in actor-critic agents
+.
+arXiv preprint arXiv:2510.13704
+.
+Cited by:
+2nd item
+.
+[58]
+A. Paszke, S. Gross, F. Massa, A. Lerer, J. Bradbury, G. Chanan, T. Killeen, Z. Lin, N. Gimelshein, L. Antiga,
+et al.
+(2019)
+Pytorch: an imperative style, high-performance deep learning library
+.
+Advances in neural information processing systems
+32
+.
+Cited by:
+§IV
+.
+[59]
+L. Pinto, M. Andrychowicz, P. Welinder, W. Zaremba, and P. Abbeel
+(2017)
+Asymmetric actor critic for image-based robot learning
+.
+arXiv preprint arXiv:1710.06542
+.
+Cited by:
+5th item
+.
+[60]
+D. A. Pomerleau
+(1988)
+Alvinn: an autonomous land vehicle in a neural network
+.
+Advances in neural information processing systems
+1
+.
+Cited by:
+§V
+.
+[61]
+S. Ross, G. Gordon, and D. Bagnell
+(2011)
+A reduction of imitation learning and structured prediction to no-regret online learning
+.
+In
+Proceedings of the fourteenth international conference on artificial intelligence and statistics
+,
+pp. 627–635
+.
+Cited by:
+§V
+.
+[62]
+T. Schaul, J. Quan, I. Antonoglou, and D. Silver
+(2015)
+Prioritized experience replay
+.
+arXiv preprint arXiv:1511.05952
+.
+Cited by:
+§IV
+.
+[63]
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+(2017)
+Proximal policy optimization algorithms
+.
+arXiv preprint arXiv:1707.06347
+.
+Cited by:
+§I
+,
+§II
+,
+§V
+.
+[64]
+Y. Seo, C. Sferrazza, J. Chen, G. Shi, R. Duan, and P. Abbeel
+(2025)
+Learning sim-to-real humanoid locomotion in 15 minutes
+.
+arXiv preprint arXiv:2512.01996
+.
+Cited by:
+§I
+,
+§II
+,
+§IV
+,
+§IV
+,
+§IV
+,
+§IV
+.
+[65]
+Y. Seo, C. Sferrazza, H. Geng, M. Nauman, Z. Yin, and P. Abbeel
+(2025)
+FastTD3: simple, fast, and capable reinforcement learning for humanoid control
+.
+arXiv preprint arXiv:2505.22642
+.
+Cited by:
+§I
+,
+§II
+,
+§IV
+,
+§IV
+,
+§IV
+.
+[66]
+C. Sferrazza, D. Huang, X. Lin, Y. Lee, and P. Abbeel
+(2024)
+Humanoidbench: simulated humanoid benchmark for whole-body locomotion and manipulation
+.
+arXiv preprint arXiv:2403.10506
+.
+Cited by:
+§II
+.
+[67]
+A. Shukla
+(2025)
+Speeding up sac with massively parallel simulation
+.
+https://arthshukla.substack.com
+.
+External Links:
+Link
+Cited by:
+§IV
+.
+[68]
+Y. Song, D. Rohatgi, A. Singh, and J. A. Bagnell
+(2025)
+To distill or decide? understanding the algorithmic trade-off in partially observable reinforcement learning
+.
+arXiv preprint arXiv:2510.03207
+.
+Cited by:
+7th item
+.
+[69]
+A. Srinivas, M. Laskin, and P. Abbeel
+(2020)
+Curl: contrastive unsupervised representations for reinforcement learning
+.
+arXiv preprint arXiv:2004.04136
+.
+Cited by:
+§II
+.
+[70]
+S. Tao, F. Xiang, A. Shukla, Y. Qin, X. Hinrichsen, X. Yuan, C. Bao, X. Lin, Y. Liu, T. Chan,
+et al.
+(2024)
+Maniskill3: gpu parallelized robotics simulation and rendering for generalizable embodied ai
+.
+arXiv preprint arXiv:2410.00425
+.
+Cited by:
+§I
+,
+§II
+,
+§V
+.
+[71]
+Y. Tassa, Y. Doron, A. Muldal, T. Erez, Y. Li, D. d. L. Casas, D. Budden, A. Abdolmaleki, J. Merel, A. Lefrancq,
+et al.
+(2018)
+Deepmind control suite
+.
+arXiv preprint arXiv:1801.00690
+.
+Cited by:
+§II
+,
+6th item
+.
+[72]
+E. Teoh, S. Patidar, X. Ma, and S. James
+(2024)
+Green screen augmentation enables scene generalisation in robotic manipulation
+.
+arXiv preprint arXiv:2407.07868
+.
+Cited by:
+1st item
+.
+[73]
+J. Tobin, R. Fong, A. Ray, J. Schneider, W. Zaremba, and P. Abbeel
+(2017)
+Domain randomization for transferring deep neural networks from simulation to the real world
+.
+In
+2017 IEEE/RSJ international conference on intelligent robots and systems (IROS)
+,
+pp. 23–30
+.
+Cited by:
+§II
+.
+[74]
+Z. Wang, Y. Ze, Y. Sun, Z. Yuan, and H. Xu
+(2023)
+Generalizable visual reinforcement learning with segment anything model
+.
+arXiv preprint arXiv:2312.17116
+.
+Cited by:
+1st item
+.
+[75]
+C. J. Watkins and P. Dayan
+(1992)
+Q-learning
+.
+Machine learning
+8
+,
+pp. 279–292
+.
+Cited by:
+§III
+.
+[76]
+C. Xu, Q. Li, J. Luo, and S. Levine
+(2024)
+Rldg: robotic generalist policy distillation via reinforcement learning
+.
+arXiv preprint arXiv:2412.09858
+.
+Cited by:
+4th item
+.
+[77]
+D. Yarats, R. Fergus, A. Lazaric, and L. Pinto
+(2021)
+Mastering visual continuous control: improved data-augmented reinforcement learning
+.
+arXiv preprint arXiv:2107.09645
+.
+Cited by:
+§II
+,
+§III
+,
+§IV
+,
+§V
+.
+[78]
+D. Yarats, A. Zhang, I. Kostrikov, B. Amos, J. Pineau, and R. Fergus
+(2019)
+Improving sample efficiency in model-free reinforcement learning from images
+.
+External Links:
+1910.01741
+Cited by:
+§II
+.
+[79]
+C. Yu, A. Velu, E. Vinitsky, J. Gao, Y. Wang, A. Bayen, and Y. Wu
+(2022)
+The surprising effectiveness of ppo in cooperative multi-agent games
+.
+Advances in neural information processing systems
+35
+,
+pp. 24611–24624
+.
+Cited by:
+4th item
+.
+[80]
+T. Yu, D. Quillen, Z. He, R. Julian, K. Hausman, C. Finn, and S. Levine
+(2020)
+Meta-world: a benchmark and evaluation for multi-task and meta reinforcement learning
+.
+In
+Conference on robot learning
+,
+pp. 1094–1100
+.
+Cited by:
+§II
+,
+6th item
+.
+[81]
+Z. Yuan, T. Wei, S. Cheng, G. Zhang, Y. Chen, and H. Xu
+(2024)
+Learning to manipulate anywhere: a visual generalizable framework for reinforcement learning
+.
+arXiv preprint arXiv:2407.15815
+.
+Cited by:
+4th item
+.
+[82]
+Z. Yuan, Z. Xue, B. Yuan, X. Wang, Y. Wu, Y. Gao, and H. Xu
+(2022)
+Pre-trained image encoder for generalizable visual reinforcement learning
+.
+Advances in Neural Information Processing Systems
+35
+,
+pp. 13022–13037
+.
+Cited by:
+1st item
+.
+[83]
+K. Zakka, B. Tabanpour, Q. Liao, M. Haiderbhai, S. Holt, J. Y. Luo, A. Allshire, E. Frey, K. Sreenath, L. A. Kahrs,
+et al.
+(2025)
+Mujoco playground
+.
+arXiv preprint arXiv:2502.08844
+.
+Cited by:
+§II
+.
+[84]
+Y. Zhu, J. Wong, A. Mandlekar, R. Martín-Martín, A. Joshi, S. Nasiriany, and Y. Zhu
+(2020)
+Robosuite: a modular simulation framework and benchmark for robot learning
+.
+arXiv preprint arXiv:2009.12293
+.
+Cited by:
+§II
+.
+[85]
+Z. Zhuang, Z. Fu, J. Wang, C. Atkeson, S. Schwertfeger, C. Finn, and H. Zhao
+(2023)
+Robot parkour learning
+.
+arXiv preprint arXiv:2309.05665
+.
+Cited by:
+§I
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

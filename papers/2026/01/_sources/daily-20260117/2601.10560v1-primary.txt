@@ -1,0 +1,594 @@
+Learning Latency-Aware Orchestration for Parallel Multi-Agent Systems
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+Strictly Sequential Orchestration.
+DAG-based Architectures with Cost-Centric Optimization.
+Static Coarse-grained Parallelism.
+2 Related work
+LLM-Based Multi-Agent Systems
+Automated Design of Agentic Systems
+3 Methodology
+3.1 Definitions and Parallel Execution
+3.2 Problem Setting
+3.3 Latency Modeling
+3.4 Controller Backbone
+3.5 Reward Design
+3.6 Critical-Path-Aware Credit Assignment
+3.7 Learning Objective and Normalization
+4 Experiments
+4.1 Experimental Setup
+Benchmarks & Tasks.
+Baselines.
+Evaluation Metrics
+Implementation details.
+4.2 Result Analysis
+Comparison with MaAS.
+Comparison with fixed-topology baselines.
+Accuracy–latency trade-off.
+4.3 Ablation Analysis
+4.4 Case Study
+5 Conclusion
+References
+A Operator set
+Task-Specific Operators.
+License: CC BY 4.0
+arXiv:2601.10560v1 [cs.MA] 15 Jan 2026
+Learning Latency-Aware Orchestration for Parallel Multi-Agent Systems
+Xi Shi
+Mengxin Zheng
+Qian Lou
+Affiliation: University of Central Florida
+Affiliation: xi320101@ucf.edu, mengxin.zheng@ucf.edu, qian.lou@ucf.edu
+Abstract
+Multi-agent systems (MAS) enable complex reasoning by coordinating multiple agents, but often incur high inference latency due to multi-step execution and repeated model invocations, severely limiting their scalability and usability in time-sensitive scenarios.
+Most existing approaches primarily optimize task performance and inference cost, and explicitly or implicitly assume sequential execution, making them less optimal for controlling latency under parallel execution.
+In this work, we investigate the learning-based orchestration of multi-agent systems with explicit latency supervision under parallel execution. We propose Latency-Aware Multi-agent System(LAMaS), a latency-aware multi-agent orchestration framework that enables parallel execution and explicitly optimizes the critical execution path, allowing the controller to construct execution topology graphs with lower latency under parallel execution.
+Our experiments show that our approach reduces critical path length by 38–46% compared to the SOTA baseline for multi-agent architecture search across multiple benchmarks while maintaining or even improving task performance, highlighting the importance of explicitly optimizing for latency under parallel execution when designing efficient multi-agent systems. The code is available at https://github.com/xishi404/LAMaS.git.
+1 Introduction
+Method
+Parallel Execution
+Difficulty Awareness
+AnyMAC
+Sequential
+Query-level
+SeqCV
+Sequential
+Query-level
+EvoAgentX
+Parallel
+Task-level
+Aflow
+Parallel
+Task-level
+AgentDropout
+Sequential
+Task-level
+G-designer
+Sequential
+Query-level
+MaAS
+Sequential
+Query-level
+LAMaS (Ours)
+Parallel
+Query-level
+Table 1: Comparison of MAS frameworks. Parallel Execution indicates whether the implementation supports simultaneous agent execution to reduce wall-clock latency (Parallel) or enforces serialized execution (Sequential). Difficulty Awareness classifies methods into Task-level (optimizing a static topology for the entire dataset) and Query-level (dynamically adjusting the execution graph for each specific input instance).
+Figure 1: (Left):Building blocks for LAMaS; (Right):Workflow illustration of LAMaS.
+The orchestrator generates a layer-wise execution graph, where operators within the same layer execute in parallel.
+Red arrows indicate the critical execution path.
+Large Language Model (LLM)-based agents have achieved remarkable strides in diverse domains, ranging from collaborative software development to open-ended world exploration Qian et al. (2024); Wang et al. (2023). Building upon the success of individual agents, recent research highlights that Multi-Agent Systems (MAS) can further extend cognitive boundaries through disciplined collaboration. Seminal works such as CAMEL Li et al. (2023), AutoGen Wu et al. (2024), and MetaGPT Hong et al. (2023) have demonstrated that orchestrating multiple specialized agents—whether cooperatively or competitively—can significantly surpass the capabilities of monolithic models.
+While pioneering frameworks established this foundation, early MAS approaches were constrained by their reliance on labor-intensive manual engineering for agent profiling and communication topologies. To address this scalability bottleneck, the field has progressively shifted towards automated multi-agent design, employing algorithms to search for optimal agent orchestration without human intervention.
+Crucially, however, this gain in collective intelligence often incurs a substantial cost in terms of inference latency. As systems scale to include more agents and complex interaction steps, the accumulated response time becomes a prohibitive bottleneckChen et al. (2025). This latency issue severely limits the deployment of MAS in time-sensitive scenarios—such as interactive assistants and real-time decision-making—where rapid feedback is as essential as reasoning accuracy.Kang et al. (2025)
+Existing multi-agent orchestration frameworks typically fall into one of three categories, each facing distinct limitations regarding latency and efficiency:
+Strictly Sequential Orchestration.
+Recent works, such as AnyMAC and SeqCV Wang et al. (2025a); Yao et al. (2025), model agent interactions as linear chains. While these methods incorporate per-query awareness to adjust chain length, their strict sequential nature imposes an inherent constraint on reasoning throughput. By enforcing linear dependencies, these approaches limit the potential to fully exploit complex, non-linear reasoning patterns. This restriction prevents them from leveraging a core advantage of multi-agent systems: decomposing tasks to enable parallel execution Anthropic (2025). Consequently, they may be less optimal for time-sensitive scenarios where concurrent processing is crucial for reducing wall-clock latency.
+DAG-based Architectures with Cost-Centric Optimization.
+Recent frameworks like MaAS, AgentDropout, and G-designer (Zhang et al., 2025; Wang et al., 2025c; Zhang et al., 2024a) have evolved to support Directed Acyclic Graph (DAG) topologies, theoretically enabling parallelism. However, we observe that their optimization objectives generally prioritize resource efficiency over execution speed. These methods typically employ cost penalties (e.g., total token usage) or edge-level dropout to constrain complexity. This explicitly or implicitly assumes that latency is driven by the total inference cost (Latency∝∑Costnode\text{Latency}\propto\sum\text{Cost}_{\text{node}}).
+Crucially, while this assumption effectively reduces computational overhead, it does not guarantee latency reduction in parallel environments, where latency is determined by the critical execution path. Without explicit supervision on the critical path, these controllers may tend to generate “narrow and deep” topologies—minimizing total node count but not necessarily reducing execution depth. As a result, the potential latency gains available through “wide and shallow” parallel structures might remain under-explored.
+Static Coarse-grained Parallelism.
+Approaches such as Aflow and EvoAgentX (Zhang et al., 2024b; Wang et al., 2025b) incorporate parallel execution but operate at a coarse-grained, task-level granularity. They typically optimize a single static topology for an entire dataset. This lack of per-query difficulty awareness restricts flexible resource allocation: the system may potentially allocate excess resources via complex parallel structures for trivial queries, while simpler static graphs might not provide sufficient reasoning depth for complex instances.
+To address these limitations, we propose a Latency-Aware Multi-Agent Architecture Search framework that treats inference latency as a first-class optimization objective. Building upon the probabilistic supernet formulation, we introduce a novel reward mechanism that explicitly penalizes the Critical Execution Path (CP)—the longest sequence of dependent agent interactions in the computation graph. Unlike previous approaches that optimize for the sum of all agent costs, our method assigns learning signals based on the topological depth of the reasoning process. This drives the controller to discover highly parallel architectures that reduce latency without sacrificing reasoning depth or accuracy.
+We evaluate our approach on three complex reasoning benchmarks: GSM8KCobbe et al. (2021), HumanEvalChen (2021), and MATHHendrycks et al. (2021). Empirical results demonstrate that our latency-supervised formulation reduces the critical path length by 38.0%–46.1% compared to MaASZhang et al. (2025), the current state-of-the-art for multi-agent architecture search. Crucially, this efficiency gain is achieved with comparable or even superior task performance. These findings establish latency-aware learning as a vital design principle for building efficient, production-ready multi-agent systems.
+Our contributions are threefold:
+•
+Problem Formulation.
+We identify a fundamental limitation of existing multi-agent orchestration methods: optimizing accuracy and cost alone is insufficient to control execution latency under parallel execution.
+•
+Method.
+We propose LAMaS, a latency-aware multi-agent orchestration framework that enables layer-wise parallel execution by removing unnecessary execution dependencies and learning to favor execution graphs with shorter critical paths.
+•
+Evaluation.
+Experiments across multiple benchmarks show that LAMaS reduces the critical path length by 38–46% compared to the representative multi-agent baseline MaAS, while maintaining or improving task performance.
+2 Related work
+LLM-Based Multi-Agent Systems
+Recent advancements in Large Language Models (LLMs) have catalyzed the transition from single-agent applications to Multi-Agent Systems (MAS). By facilitating collaboration among specialized agents, MAS can decompose complex problems into manageable subtasks, significantly extending the cognitive boundaries of individual models. Early frameworks such as CAMELLi et al. (2023), AutoGenWu et al. (2024), and MetaGPTHong et al. (2023) demonstrated the potential of role-playing and collaborative problem-solving. However, these pioneering approaches primarily rely on static, hand-crafted topologies or predefined communication protocols. Such manual engineering is not only labor-intensive but also struggles to adapt to queries with varying difficulty levels and domains, limiting their scalability in diverse real-world scenarios.
+Automated Design of Agentic Systems
+To overcome the rigidity of manual designs, the research community has shifted towards Automated Agentic System Design (Automic Agent Optimization). This paradigm treats the agent orchestration process as a search or optimization problem. Recent research in multi-agent orchestration has explored various strategies to optimize reasoning structures.
+Sequential adaptive frameworks, such as AnyMAC and SeqCV (Wang et al., 2025a; Yao et al., 2025), utilize depth penalties or early pruning to dynamically adjust chain length based on query difficulty; however, their strictly linear nature inherently bounds their ability to leverage parallel execution for latency reduction.
+To support non-linear dependencies, approaches like MaAS, AgentDropout, and G-designer (Zhang et al., 2025; Wang et al., 2025c; Zhang et al., 2024a) introduce Directed Acyclic Graph (DAG) topologies via early-stop or structural dropout. While these methods allow for complex structures, they typically prioritize resource efficiency by penalizing total inference cost or node count, which focuses on cumulative computation rather than the critical execution path, potentially leaving the latency benefits of parallel depth reduction under-explored.
+Conversely, frameworks such as Aflow and EvoAgentX (Zhang et al., 2024b; Wang et al., 2025b) explicitly incorporate parallel execution mechanisms but operate at a coarse-grained, task-level granularity. This static nature limits their flexibility, as they may allocate uniform computational resources across all queries rather than dynamically adjusting complexity based on query difficulty.
+In contrast, our work bridges these gaps by introducing an orchestration framework that explicitly optimizes the critical execution path while maintaining query-level flexibility.
+3 Methodology
+3.1 Definitions and Parallel Execution
+We briefly clarify the notions of operators, layers, and critical execution paths used throughout this work, following the definitions in MaASZhang et al. (2025).
+An agentic operator is the basic execution unit of a multi-agent system.
+Each operator represents a composite agent invocation that may involve multiple LLM calls and external tool usage, and is treated as an atomic node during execution.
+We adopt the operator set provided in the MaAS implementation, without modifying operator definitions or internal behaviors.
+Operators are organized into discrete layers.
+At each layer, a subset of operators is selected by the controller. To enable effective parallel execution across layers, we remove unnecessary operator dependencies present in the MaAS implementation.
+Refinement operators (e.g., self-refinement and self-consistency) in MaAS often take as input the outputs of other operators within the same layer, which implicitly enforces sequential execution and introduces synchronization barriers.
+We instead design refinement operators to directly consume the outputs from the previous layer, decoupling intra-layer dependencies.
+This change eliminates artificial synchronization constraints and allows operators within the same layer to execute in parallel.
+Under this layer-wise parallel execution setting, we define the critical path as the sequence formed by the slowest operator at each layer.
+Intuitively, the end-to-end execution latency is determined by the maximum execution time among operators in each layer, accumulated across layers.
+3.2 Problem Setting
+We consider a query-dependent multi-agent system (MAS) that dynamically composes a set of operators to solve an input problem.
+Given a query xx, the system constructs a multi-layer computation graph.
+At each layer, multiple operators may be selected and executed in parallel.
+Each operator corresponds to a callable module (e.g., generation, refinement, verification), typically involving one or more calls to a large language model (LLM) or external tools.
+Our goal is to learn a controller that optimizes task accuracy while jointly minimizing execution cost and end-to-end latency under parallel execution.
+3.3 Latency Modeling
+Under true parallel execution, operators within the same layer have no data dependencies and can be executed concurrently.
+Let ℒ\mathcal{L} denote the set of layers, and let 𝒪ℓ\mathcal{O}_{\ell} denote the set of operators executed in parallel at layer ℓ\ell.
+The end-to-end latency is determined by the critical path:
+T=∑ℓ∈ℒmaxo∈𝒪ℓ⁡t⁡(o),T=\sum_{\ell\in\mathcal{L}}\max_{o\in\mathcal{O}_{\ell}}t(o),
+(1)
+where t⁡(o)t(o) denotes the execution time of operator oo.
+In contrast, the execution cost accumulates additively across all operators:
+C=∑ℓ∈ℒ∑o∈𝒪ℓc⁡(o),C=\sum_{\ell\in\mathcal{L}}\sum_{o\in\mathcal{O}_{\ell}}c(o),
+(2)
+where c⁡(o)c(o) measures token usage or monetary cost.
+This distinction implies that latency and cost diverge under parallel execution.
+3.4 Controller Backbone
+Following the formulation in MaAS (Zhang et al., 2025), we model the multi-agent system search space as an agentic supernet—a probabilistic directed acyclic graph (DAG).
+Let 𝒪\mathcal{O} denote the set of candidate agentic operators. The controller functions as a policy network that sequentially constructs the execution topology 𝒢\mathcal{G} by sampling operators layer-by-layer.
+Formally, the probability of generating a specific topology 𝒢\mathcal{G} is factorized autoregressively:
+Pθ(𝒢|x)=∏ℓ=1Lπθ(𝒱ℓ∣x,𝒢1:ℓ−1),P_{\theta}(\mathcal{G}|x)=\prod_{\ell=1}^{L}\pi_{\theta}(\mathcal{V}_{\ell}\mid x,\mathcal{G}_{1:\ell-1}),
+(3)
+where xx is the input query, 𝒱ℓ⊆𝒪\mathcal{V}_{\ell}\subseteq\mathcal{O} is the subset of operators selected at layer ℓ\ell, and 𝒢1:ℓ−1\mathcal{G}_{1:\ell-1} represents the history of instantiated operators.
+To enable parallel execution within each layer, the controller employs a threshold-based sampling mechanism rather than a simple top-1 selection.
+Specifically, for each candidate operator o∈𝒪o\in\mathcal{O} at layer ℓ\ell, the controller predicts an activation score sos_{o} using a query-aware MLP. The subset 𝒱ℓ\mathcal{V}_{\ell} is determined by collecting operators with the highest scores until their cumulative confidence exceeds a threshold τ\tau:
+𝒱ℓ={o∣o∈top-k(𝒪),∑so>τ}.\mathcal{V}_{\ell}=\{o\mid o\in\text{top-k}(\mathcal{O}),\sum s_{o}>\tau\}.
+(4)
+This mechanism allows the architecture to dynamically adjust its width (parallelism) and depth (reasoning steps) based on the query difficulty.
+If the Early-Exit operator is selected, the generation terminates immediatelyZhang et al. (2025).
+3.5 Reward Design
+For each query, the system produces:
+a task score S∈{0,1}S\in\{0,1\},
+a total execution cost CC (as in the MaAS),
+a latency proxy T~\tilde{T}.
+We define the global reward as:
+R=S−λc​C−λt​T,R=S-\lambda_{c}C-\lambda_{t}T,
+(5)
+where λc\lambda_{c} and λt\lambda_{t} are weighting coefficients.
+The cost term is preserved exactly as in the MaAS objective.
+3.6 Critical-Path-Aware Credit Assignment
+Applying the global latency penalty uniformly to all operators introduces a credit assignment error under parallel execution.
+Only operators on the critical path determine end-to-end latency.
+For each layer ℓ\ell, we identify the critical operator:
+oℓ∗=arg⁡maxo∈𝒪ℓ​t~​(o),o^{*}_{\ell}=\arg\max_{o\in\mathcal{O}_{\ell}}\tilde{t}(o),
+(6)
+where t~​(o)\tilde{t}(o) denotes the latency proxy of operator oo.
+We assign operator-level rewards as:
+R⁡(o)={S−λc​C−λt​T~,if ​o=oℓ∗,S−λc​C,otherwise.R(o)=\begin{cases}S-\lambda_{c}C-\lambda_{t}\tilde{T},&\text{if }o=o^{*}_{\ell},\\
+S-\lambda_{c}C,&\text{otherwise}.\end{cases}
+(7)
+This ensures that latency penalties are applied only to bottleneck operators.
+3.7 Learning Objective and Normalization
+The controller is trained using policy gradient optimization.
+Let τ\tau denote the trajectory of operator selections.
+The loss function is:
+ℒ⁡(θ)=−𝔼τ∼πθ​[∑o∈τR⁡(o)​log⁡πθ​(o∣x)].\mathcal{L}(\theta)=-\mathbb{E}_{\tau\sim\pi_{\theta}}\left[\sum_{o\in\tau}R(o)\log\pi_{\theta}(o\mid x)\right].
+(8)
+To reduce variance, we employ a running baseline using exponential moving averages (EMA) of the reward mean and variance.
+Rewards are normalized using EMA statistics rather than per-batch normalization, which is unstable for small batch sizes.
+4 Experiments
+4.1 Experimental Setup
+Benchmarks & Tasks.
+We evaluate our method on three benchmarks spanning two task categories, following the same training and evaluation splits as MaASZhang et al. (2025).
+For code generation, we use HumanEval, which measures functional correctness of Python programs generated from natural language descriptions.
+For mathematical reasoning, we use GSM8K and MATH, which consist of grade-school and competition-level math problems requiring multi-step reasoning.
+Baselines.
+We compare our method against several representative baselines.
+MaASZhang et al. (2025) serves as the primary baseline, using the learned orchestration policy without explicitly modeling or optimizing latency.
+We additionally include several fixed-topology strategies, including Generate, which directly produces an answer in a single step, Gen-CoTWei et al. (2022), which generates an explicit chain-of-thought before producing the final answer, and CoT*5+SCWang et al. (2022), which runs multiple chains-of-thought in parallel and then samples answer with self-consistency.
+These baselines cover both learned multi-agent system orchestration and heuristic prompting strategies with varying trade-offs between accuracy, cost, and latency.
+Evaluation Metrics
+We evaluate all methods using three metrics: task performance, API cost, and latency.
+For task performance, we report pass@1 on HumanEval, and accuracy on GSM8K and MATH.
+API cost is measured as the total monetary cost (in USD) incurred by LLM API calls when evaluating the full test set.
+Measuring wall-clock latency of LLM APIs is straightforward, but the results vary widely in practice. In particular, under parallel execution, latency is strongly affected by transient queuing delays, rate limiting, and fluctuating network conditions, which makes wall-clock latency an unreliable signal for optimization and comparison.
+To obtain a stable and reproducible latency measure, we adopt a token-based proxy critical path length(CP len).
+Specifically, we define the latency proxy T~\tilde{T} as
+C​P​_​l​e​n=∑ℓ∈ℒmaxo∈𝒪ℓ⁡(Nout​(o)+γ⋅ttool​(o)),CP\_len=\sum_{\ell\in\mathcal{L}}\max_{o\in\mathcal{O}_{\ell}}\left(N_{\text{out}}(o)+\gamma\cdot t_{\text{tool}}(o)\right),
+(9)
+where NoutN_{\text{out}} denotes the number of output tokens generated by the language model, ttoolt_{\text{tool}} denotes the wall-clock execution time of external tools (in seconds), and γ\gamma is a scaling factor.
+Here, ℒ\mathcal{L} denotes the set of layers and 𝒪ℓ\mathcal{O}_{\ell} denotes the operators executed at layer ℓ\ell.
+For each layer, we select the operator that produces the longest output (measured by the number of generated tokens plus scaled tool execution time), and sum this quantity across layers to obtain the length of the critical execution path.
+Implementation details.
+We use the closed-source LLM gpt-4o-mini-0718OpenAI (2024), accessed via APIs with the temperature set to 1. In our implementation, the latency penalty coefficient is set to λt=0.005\lambda_{t}=0.005. Note that this value is normalized by a constant factor of 50 in the objective function to align the magnitude with other reward terms. We set tool scaling factor γ=50\gamma=50, mapping one second of tool execution time to 50 virtual tokens.
+Following the same implementation settings as MaAS, the number of layers in the agentic supernet is set to L=4L=4, the cost penalty coefficient is set to λc=3\lambda_{c}=3, the sampling times are set to K=4K=4, and the activation threshold is set to thres=0.3\texttt{thres}=0.3.
+Dataset
+Method
+Score (%) ↑\uparrow
+CP len ↓\downarrow
+Δ\Delta CP (%)
+GSM8K
+MaAS
+93.13
+1474.6
+–
+LAMaS
+93.37
+913.5
+-38.0
+HumanEval
+MaAS
+93.00
+1810.8
+–
+LAMaS
+92.11
+1042.7
+-42.4
+MATH
+MaAS
+51.23
+2218.5
+–
+LAMaS
+52.26
+1195.8
+-46.1
+Table 2: Comparison between LAMaS and the MaAS. Δ\DeltaCP denotes the relative reduction in average critical-path length with respect to MaAS. CP len measure the sum of output length of all operators on the critical path and serve as a latency proxy.
+Dataset
+Method
+Score (%) ↑\uparrow
+Cost ↓\downarrow
+CP len ↓\downarrow
+GSM8K
+LAMaS
+93.37
+0.88
+913.5
+Generate
+92.80
+0.31
+405.2
+Gen-CoT
+92.23
+0.32
+345.8
+CoT*5+SC
+92.99
+1.96
+488.3
+MaAS
+93.13
+0.56
+1474.6
+HumanEval
+LAMaS
+92.11
+0.10
+1042.7
+Generate
+88.55
+0.07
+797.9
+Gen-CoT
+90.08
+0.07
+734.5
+CoT*5+SC
+90.84
+0.37
+952.5
+MaAS
+93.00
+0.08
+1810.8
+MATH
+LAMaS
+52.26
+0.99
+1195.8
+Generate
+50.00
+0.32
+1030.4
+Gen-CoT
+47.74
+0.33
+989.3
+CoT*5+SC
+50.35
+2.05
+1220.6
+MaAS
+51.23
+0.37
+2218.5
+Table 3: Comparison with fixed-topology baselines across three benchmarks.
+4.2 Result Analysis
+We analyze the experimental results from three perspectives: comparison with the MaAS, comparison with fixed-topology baselines, and the accuracy–latency trade-off under different latency weights.
+Comparison with MaAS.
+Table 2 compares LAMaS with the MaAS under the same agentic architecture space, with unnecessary operator dependencies removed to allow parallel execution.
+Across all three benchmarks, LAMaS consistently achieves substantial reductions in critical-path length, indicating significantly shorter sequential dependencies under parallel execution.
+On GSM8K, LAMaS reduces the average critical-path length by 38% while maintaining comparable accuracy.
+On HumanEval, the reduction exceeds 40%, with only a modest decrease in pass@1.
+On the more challenging MATH benchmark, LAMaS nearly halves the critical-path length and slightly improves accuracy over MaAS.
+These results demonstrate that introducing latency awareness effectively reshapes the learned multi-agent system toward architectures with shorter critical execution paths, without fundamentally degrading task performance.
+Comparison with fixed-topology baselines.
+Table 3 further compares LAMaS against several fixed-topology prompting strategies.
+Single-step or shallow reasoning baselines, such as Generate and Gen-CoT, achieve shorter critical paths but consistently underperform in task accuracy across datasets.
+Conversely, CoT*5+SC improves accuracy by aggressively sampling multiple reasoning paths, but incurs substantially higher cost without corresponding latency benefits.
+In contrast, LAMaS occupies a more favorable region in the accuracy–latency space, maintaining strong performance while avoiding unnecessarily long critical paths.
+This suggests that learned orchestration enables more effective use of parallel execution than fixed heuristics, balancing reasoning depth and execution efficiency.
+Accuracy–latency trade-off.
+To further illustrate how latency awareness affects the learned orchestration, Figure 2 visualizes the accuracy–latency trade-off on HumanEval by sweeping the latency weight λt\lambda_{t}.
+As λt\lambda_{t} increases, LAMaS progressively shortens the critical execution path, tracing a smooth trade-off curve between task performance and latency.
+Compared to the MaAS, LAMaS enables flexible control over execution latency while preserving competitive accuracy.
+4.3 Ablation Analysis
+Dataset
+Method
+Score (%) ↑\uparrow
+Cost ↓\downarrow
+CP len ↓\downarrow
+GSM8K
+LAMaS
+93.37
+0.88
+913.5
+w/o latency
+92.92
+1.73
+1215.9
+HumanEval
+LAMaS
+92.11
+0.10
+1042.7
+w/o latency
+91.60
+0.21
+1629.3
+MATH
+LAMaS
+52.26
+0.99
+1195.8
+w/o latency
+48.97
+0.45
+1342.1
+Table 4: Ablation results comparing without latency-aware optimization (λt=0\lambda_{t}=0).
+We examine whether the latency reduction achieved by LAMaS can be attributed solely to enabling parallel execution, independent of latency-aware optimization.
+To this end, we consider an ablation variant that removes intra-layer operator dependencies to allow parallel execution, but sets the latency weight to zero during training.
+This variant therefore shares the same execution structure as LAMaS, but does not explicitly optimize for latency.
+The results are summarized in Table 4.
+Across all three benchmarks, removing intra-layer dependencies alone is insufficient to achieve the latency reductions observed in LAMaS.
+On GSM8K and HumanEval, the variant without latency optimization exhibits substantially longer critical-path length compared to LAMaS, despite operating under the same parallel execution setting.
+Notably, this variant also incurs higher cost, suggesting that the learned orchestration continues to favor deeper or more redundant execution patterns when latency is not explicitly considered.
+On the MATH benchmark, disabling latency optimization leads to both degraded accuracy and longer critical paths.
+While this variant reduces cost, it fails to achieve favorable trade-offs between performance and latency, indicating that parallel execution alone does not guide the learned policy toward efficient orchestration.
+Overall, these results show that enabling parallel execution is insufficient for reducing latency in learned multi-agent systems.
+Explicitly incorporating latency awareness during training plays a critical role in shaping the learned orchestration toward shorter critical paths under parallel execution.
+We additionally ablate the critical-path credit assignment on HumanEval.
+Removing this component by applying the latency penalty uniformly to all operators leads to worse latency and performance compared to LAMaS, indicating that critical-path-aware credit assignment provides additional benefits.
+Method
+Score (%) ↑\uparrow
+Cost ↓\downarrow
+CP len ↓\downarrow
+LAMaS
+92.11
+0.10
+1042.7
+w/o CP Credit
+91.60
+0.12
+1197.5
+Table 5: Ablation study on critical-path (CP) credit assignment on HumanEval.
+Figure 2: Accuracy–latency trade-off on HumanEval.
+Marker size indicates average cost. Blue points correspond to LAMaS under different latency penalty coefficient λt\lambda_{t}
+4.4 Case Study
+Figure 3: Case study. Red arrows highlight the critical execution path, formed by the slowest operator at each layer.
+We present a case study to illustrate how LAMaS differs from the original MaAS in execution behavior under the same input.
+Figure 3 compares the layer-wise execution structures of MaAS and LAMaS.
+In MaASZhang et al. (2025), operators within each layer are executed sequentially due to intra-layer dependencies.
+In contrast, LAMaS executes multiple operators in parallel within the same layer, enabling broader exploration without introducing additional sequential dependencies.
+As a result, LAMaS concentrates exploration within fewer layers while maintaining a shorter critical execution path.
+5 Conclusion
+This paper studies multi-agent orchestration under parallel execution, where execution latency becomes a critical factor that cannot be reliably controlled by optimizing accuracy and cost alone.
+While many existing multi-agent systems focus on improving task performance or reducing token usage, they often implicitly assume sequential execution and overlook latency behavior under parallel execution.
+We enable layer-wise parallel execution in probabilistic agentic supernets by removing unnecessary execution dependencies and introducing latency-aware training to guide the learned orchestration.
+Under this setting, the system learns to shorten the critical execution path during parallel execution without substantial degradation in task performance.
+Our experimental results show that when training objectives consider only accuracy and cost, learned multi-agent systems do not automatically minimize latency under parallel execution.
+Explicitly incorporating latency into the training objective enables the system to consistently shorten the critical execution path across multiple benchmarks.
+We hope this work encourages future research on multi-agent systems to consider execution structure and latency behavior under parallel execution more carefully, beyond traditional accuracy-centric and cost-centric optimization.
+Limitations
+Real-world latency is influenced by system and hardware factors beyond the scope of this work.
+We focus on learning latency-efficient orchestration at the algorithmic level, leaving the integration with system-level optimizations to future work.
+References
+Anthropic (2025)
+Anthropic. 2025.
+How we built our multi-agent research system.
+Accessed: 2026-01-06.
+Chen et al. (2025)
+Jinyuan Chen, Jiuchen Shi, Quan Chen, and Minyi Guo. 2025.
+Kairos: Low-latency multi-agent serving with shared llms and excessive loads in the public cloud.
+arXiv preprint arXiv:2508.06948.
+Chen (2021)
+Mark Chen. 2021.
+Evaluating large language models trained on code.
+arXiv preprint arXiv:2107.03374.
+Cobbe et al. (2021)
+Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, and 1 others. 2021.
+Training verifiers to solve math word problems.
+arXiv preprint arXiv:2110.14168.
+Hendrycks et al. (2021)
+Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric Tang, Dawn Song, and Jacob Steinhardt. 2021.
+Measuring mathematical problem solving with the math dataset.
+arXiv preprint arXiv:2103.03874.
+Hong et al. (2023)
+Sirui Hong, Mingchen Zhuge, Jonathan Chen, Xiawu Zheng, Yuheng Cheng, Jinlin Wang, Ceyao Zhang, Zili Wang, Steven Ka Shing Yau, Zijuan Lin, and 1 others. 2023.
+Metagpt: Meta programming for a multi-agent collaborative framework.
+In The Twelfth International Conference on Learning Representations.
+Kang et al. (2025)
+Hao Kang, Qingru Zhang, Han Cai, Weiyuan Xu, Tushar Krishna, Yilun Du, and Tsachy Weissman. 2025.
+Win fast or lose slow: Balancing speed and accuracy in latency-sensitive decisions of llms.
+arXiv preprint arXiv:2505.19481.
+Li et al. (2023)
+Guohao Li, Hasan Hammoud, Hani Itani, Dmitrii Khizbullin, and Bernard Ghanem. 2023.
+Camel: Communicative agents for" mind" exploration of large language model society.
+Advances in Neural Information Processing Systems, 36:51991–52008.
+OpenAI (2024)
+OpenAI. 2024.
+GPT-4o mini: advancing cost-efficient intelligence.
+https://openai.com/index/gpt-4o-mini-advancing-cost-efficient-intelligence/.
+Accessed: 2026-01-06.
+Qian et al. (2024)
+Chen Qian, Wei Liu, Hongzhang Liu, Nuo Chen, Yufan Dang, Jiahao Li, Cheng Yang, Weize Chen, Yusheng Su, Xin Cong, and 1 others. 2024.
+Chatdev: Communicative agents for software development.
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 15174–15186.
+Wang et al. (2023)
+Guanzhi Wang, Yuqi Xie, Yunfan Jiang, Ajay Mandlekar, Chaowei Xiao, Yuke Zhu, Linxi Fan, and Anima Anandkumar. 2023.
+Voyager: An open-ended embodied agent with large language models.
+arXiv preprint arXiv:2305.16291.
+Wang et al. (2025a)
+Song Wang, Zhen Tan, Zihan Chen, Shuang Zhou, Tianlong Chen, and Jundong Li. 2025a.
+Anymac: Cascading flexible multi-agent collaboration via next-agent prediction.
+arXiv preprint arXiv:2506.17784.
+Wang et al. (2022)
+Xuezhi Wang, Jason Wei, Dale Schuurmans, Quoc Le, Ed Chi, Sharan Narang, Aakanksha Chowdhery, and Denny Zhou. 2022.
+Self-consistency improves chain of thought reasoning in language models.
+arXiv preprint arXiv:2203.11171.
+Wang et al. (2025b)
+Yingxu Wang, Siwei Liu, Jinyuan Fang, and Zaiqiao Meng. 2025b.
+Evoagentx: An automated framework for evolving agentic workflows.
+In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing: System Demonstrations, pages 643–655.
+Wang et al. (2025c)
+Zhexuan Wang, Yutong Wang, Xuebo Liu, Liang Ding, Miao Zhang, Jie Liu, and Min Zhang. 2025c.
+Agentdropout: Dynamic agent elimination for token-efficient and high-performance llm-based multi-agent collaboration.
+arXiv preprint arXiv:2503.18891.
+Wei et al. (2022)
+Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Fei Xia, Ed Chi, Quoc V Le, Denny Zhou, and 1 others. 2022.
+Chain-of-thought prompting elicits reasoning in large language models.
+Advances in neural information processing systems, 35:24824–24837.
+Wu et al. (2024)
+Qingyun Wu, Gagan Bansal, Jieyu Zhang, Yiran Wu, Beibin Li, Erkang Zhu, Li Jiang, Xiaoyun Zhang, Shaokun Zhang, Jiale Liu, and 1 others. 2024.
+Autogen: Enabling next-gen llm applications via multi-agent conversations.
+In First Conference on Language Modeling.
+Yao et al. (2025)
+Yu Yao, Yiliao Song, Yian Xie, Mengdan Fan, Mingyu Guo, and Tongliang Liu. 2025.
+Can dependencies induced by llm-agent workflows be trusted?
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems.
+Zhang et al. (2025)
+Guibin Zhang, Luyang Niu, Junfeng Fang, Kun Wang, Lei Bai, and Xiang Wang. 2025.
+Multi-agent architecture search via agentic supernet.
+arXiv preprint arXiv:2502.04180.
+Zhang et al. (2024a)
+Guibin Zhang, Yanwei Yue, Xiangguo Sun, Guancheng Wan, Miao Yu, Junfeng Fang, Kun Wang, Tianlong Chen, and Dawei Cheng. 2024a.
+G-designer: Architecting multi-agent communication topologies via graph neural networks.
+arXiv preprint arXiv:2410.11782.
+Zhang et al. (2024b)
+Jiayi Zhang, Jinyu Xiang, Zhaoyang Yu, Fengwei Teng, Xionghui Chen, Jiaqi Chen, Mingchen Zhuge, Xin Cheng, Sirui Hong, Jinlin Wang, and 1 others. 2024b.
+Aflow: Automating agentic workflow generation.
+arXiv preprint arXiv:2410.10762.
+Appendix A Operator set
+We adopt the same operator set implemented in the MaAS codebaseZhang et al. (2025) without modification.
+Each operator corresponds to a predefined reasoning or execution primitive used to construct execution graphs.
+We briefly summarize their functionality below for completeness.
+•
+Generate.
+A basic generator that directly produces text or code without additional reasoning or post-processing.
+It invokes the LLM once and is primarily used for simple generation tasks.
+•
+GenerateCoT.
+A chain-of-thought generator that prompts the LLM to perform step-by-step reasoning.
+For mathematical tasks (e.g., MATH, GSM8K), it includes explicit reasoning exemplars, while for code tasks (e.g., HumanEval), it uses lightweight reasoning prompts.
+This operator invokes the LLM once.
+•
+MultiGenerateCoT.
+A diversity-oriented CoT generator that produces multiple candidate solutions in parallel.
+It generates three independent chain-of-thought solutions, yielding a set of candidate responses for downstream aggregation.
+•
+ScEnsemble.
+A self-consistency ensemble operator that selects the most consistent answer from multiple candidate solutions.
+All candidates are formatted as discrete options, and the LLM is prompted to select the most consistent one, following the self-consistency principle.
+•
+SelfRefine.
+A refinement operator that analyzes an existing solution to identify errors or suboptimal reasoning and generates an improved version.
+This operator invokes the LLM once.
+•
+EarlyStop.
+A placeholder operator that immediately terminates the execution workflow.
+It does not invoke the LLM.
+Task-Specific Operators.
+Following MaAS, we also employ task-specific operators for different benchmarks.
+•
+CustomCodeGenerate (HumanEval).
+A lightweight code generator that produces candidate code solutions without execution or testing.
+•
+Test (HumanEval).
+A test-driven refinement operator that executes generated code and iteratively improves it based on failure feedback.
+Upon failure, the operator generates a revised solution using reflective prompts and retries up to three times.
+•
+Programmer (MATH/GSM8K).
+A code execution operator that generates Python programs, executes them in an isolated environment, and iteratively refines the code based on execution feedback.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

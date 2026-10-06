@@ -1,0 +1,251 @@
+When and What to Ask: AskBench and Rubric-Guided RLVR for LLM Clarification (https://arxiv.org/html/2602.11199v1)
+citeturn29121view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.11199v1","lineno":110}); Total lines: 679
+L110: Our evaluation also relates to recent work on LLM-as-a-judge for scalable benchmarking, where strong LLMs are used to grade model outputs (cite58†Zheng et al., 2023 ; cite72†Liu et al., 2023 ).
+L111: AskBench extends this idea from single-turn grading to an interactive judge loop: the judge not only scores candidate final answers, but also decides whether a reply is a clarification request and simulates a user response consistent with the scenario (e.g., revealing only the missing information explicitly asked for in AskMind).
+L112: Finally, our itemized rubrics are inspired by behavioral testing frameworks such as CheckList (cite59†Ribeiro et al., 2020 ), which advocate decomposing model behavior into interpretable, testable requirements.
+L113: ## 3 AskBench Design
+L114: ### 3.1 Task Setting and Checkpoints
+L115: AskBench targets scenarios where a user query is not reliable for producing a correct final answer. We refer to the model under evaluation as the assistant (candidate model) and the LLM judge/user simulator as the judge. We consider two parallel dimensions: (i) AskMind (intent deficiencies). Given an original query–answer pair $(q,a)$, we construct a degraded query $\tilde{q}$ by removing or blurring one or more intent-critical details.
+L116: The resulting deficiencies primarily reflect missing or ambiguous intent, such as unspecified domains, temporal scopes, or hard constraints (e.g., dosage ranges or boundary conditions). We also attach an itemized rubric (explicit criteria) that enumerates every missing point required to answer correctly.
+L117: (ii) AskOverconfidence (misleading claims). We keep all original givens verbatim but inject confidently stated wrong intermediate claims (e.g., unjustified assumptions, incorrect algebraic steps, or incorrect causal assertions) into a single natural user query. We attach an itemized rubric of misleading claims that the assistant must explicitly identify and correct before committing to a final answer.
+L118: For each item we store aligned fields including the original query, the ground-truth answer, the query variant shown to the assistant (degraded or overconfident), and the corresponding checkpoints (missing-information rubric or misleading-claim rubric). In domains such as medicine and mathematics, omitting even a single checkpoint can change the correct answer, making explicit clarification or correction a prerequisite for safe deployment. Table cite73†2 provides an AskMind-style example.
+L119: Additional rubric examples are shown in Appendix cite26†A .
+L120: ### 3.2 Datasets and Statistics
+L121: AskBench can be built upon any existing QA dataset, and we instantiate it on four existing QA benchmarks: Math500 (cite74†Hendrycks et al., 2021 ), MedQA (cite75†Jin et al., 2021 ), BBH (cite76†Suzgun et al., 2023 ), and GPQA-d (cite77†Rein et al., 2024 ). For each source dataset we apply the data construction pipeline described below and uniformly sample 100 successfully generated items per domain for each dimension (i.e., the pipeline returns a query variant and checkpoints that satisfy our required JSON schema).
+L122: This yields two balanced evaluation sets of 400 dialogues each: AskMind (intent-deficient) and AskOverconfidence (misleading claims), for a total of 800 multi-turn instances in AskBench. This design ensures coverage of both numerical reasoning and domain-specific knowledge while preventing any single domain from dominating the evaluation.
+L123: We also provide per-domain subsets for analysis, denoted as AskMind-{Math500, MedQA, GPQA-d, BBH} and AskOverconfidence-{Math500, MedQA, GPQA-d, BBH}. AskMind and AskOverconfidence are reserved exclusively for multi-turn evaluation.
+L124: Data Construction Pipeline AskBench is generated using only a small set of dataset-agnostic prompt templates. The main prompt patterns used for intent degradation, misleading-claim injection, checkpoint construction, and multi-turn rollouts are summarized in Appendix cite34†C .
+L125: For each item query $q$, we prompt an LLM to remove or blur critical information, yielding a corresponding degraded query $\tilde{q}$. The same call returns a structured rubric: a list of missing intent criteria together with a short summary describing what was removed or blurred. This rubric is stored alongside the degraded query and reused by both the judge and the user simulator during evaluation.
+L126: Generated items are validated for schema compliance: we require the LLM to return a JSON object containing the query variant and its checkpoints, and retry generation on parsing failures. Items that still fail validation (e.g., malformed JSON or missing required keys) are discarded. The remaining examples are exported in a standardized format with aligned fields (original query, answer, query variant, checkpoints) and are ready for benchmark evaluation.
+L127: Figure cite78†1 summarizes the overall flow from raw QA pairs to AskBench instances.
+L128: cite79†Image: Refer to caption Figure 1: Overview of the data construction pipeline. Table 2: Illustrative AskBench instance showing an original query, its query variant, and a shortened checkpoint list. The actual dataset contains diverse medical, mathematical, and general reasoning examples.
+L129: Original query  | “A 65-year-old man with a history of diabetes and hypertension presents with acute chest pain. Based on the following ECG findings, what is the most likely diagnosis?”
+L130: --- | ---
+L131: Degraded query  | “A patient presents with chest pain. Based on the ECG, what is the diagnosis?”
+L132: Rubric (excerpt)  | (1) Patient age is specified (older adult).
+L133: (2) History of diabetes and hypertension.
+L134: (3) Onset is acute rather than chronic discomfort.
+L135: (4) ECG pattern details required to distinguish myocardial infarction from other causes.
+L136: ### 3.3 Multi-Turn Evaluation Loop
+L137: 
+L138: AskBench evaluates models in an interactive dialogue loop (Figure cite80†2 ). Starting from the query variant and an empty conversation history, the tested model and an LLM Judge alternate turns:
+L139: 
+L140:   1. 1.
+L141: 
+L142: The model generates a reply to the current dialogue context. To avoid degenerate conversations, the last allowed turn is required to be a final answer.
+L143: 
+L144:   2. 2.
+L145: The judge inspects the model’s message and decides whether it is a clarifying question or a candidate final answer.
+L146: 
+L147:   3. 3.
+L148: 
+L149: If the message is a final answer, the judge scores its correctness against the hidden original query and rubric. Otherwise, if the turn limit has not been reached, the judge simulates a user response by revealing additional information consistent with the rubric.
+L150: 
+L151:   4. 4.
+L152: The new user message is appended to the dialogue history, and the process repeats until the model outputs a final answer or the maximum number of turns is reached.
+L153: 
+L154: This setup enables joint assessment of answer accuracy and clarification quality, capturing how well a model identifies, targets, and resolves missing information.
+L155: cite81†Image: Refer to caption Figure 2: AskBench evaluation loop. The judge determines whether a reply is a final answer, scores it, or simulates a user follow-up when the assistant asks for clarification.
+L156: ### 3.4 Outputs and Metrics
+L157: 
+L158: Each example yields four aligned artifacts and a full dialogue trace. For AskBench-style tasks (AskMind, AskOverconfidence, and QuestBench-Math), we report final-answer accuracy (Acc.) against the reference answer and additionally track:
+L159: 
+L160:   * •
+L161: Coverage (Cov.): among examples where the LLM produces final answers, the fraction for which all checkpoints have been resolved before answering. For AskMind, this means all rubric criteria have been obtained from the user. For AskOverconfidence, this means all misleading-claim checkpoints have been explicitly corrected by the assistant.
+L162: 
+L163:   * •
+L164: Redundant questioning rate (Unq.): the fraction of evaluated examples in which the model asks at least one unnecessary clarifying question after all rubric criteria have already been resolved.
+L165: 
+L166: Since the rubric decomposes missing intent into explicit criteria, we can attribute failures to specific unresolved points rather than treating all incorrect answers as equivalent, and we can distinguish premature answers from over-questioning behaviors.
+L167: For IN3 (cite68†Qian et al., 2024 ), which contains both clearly specified tasks and tasks flagged as vague (and does not include ground-truth final answers), we report two behavior metrics: (i) Ask (Vague Ask Rate), the fraction of vague tasks on which the model asks at least one clarifying question during the interaction; and (ii) Dir. (Clear-task Direct Rate), the fraction of non-vague tasks on which the model provides a direct response without asking any clarifying question.
+L168: Since IN3 is designed for tool-using agents and does not include ground-truth final answers, we use it only to quantify clarification behavior via Ask/Dir, rather than reproducing its original downstream execution metrics.
+L169: ## 4 Rubric-Guided RLVR Training
+L170: ### 4.1 Training Data Collection
+L171: To train ask-enhanced models, we mirror the evaluation loop to produce rich supervision. Each degraded query is rolled out with the current policy; the judge scores final answers and records which rubric criteria were addressed by the model’s questions. Conversations with high rubric coverage become positive examples, while failures reveal which missing criteria were overlooked. This process yields dialogue traces annotated with turn-level rewards that align with the rubric.
+L172: Figure cite82†3 in the Appendix provides an illustration of the process. Our training pool is constructed from DAPO (cite83†Yu et al., 2025 ) and MedMCQA (cite84†Pal et al., 2022 ) via rejection sampling (Appendix cite38†D ) and then processed with the same degradation-and-rubric pipeline described earlier to produce rubric-annotated multi-turn dialogues.
+L173: Using the same sources, we additionally construct AskOverconfidence-style dialogues by injecting misleading claims and rolling out correction-oriented multi-turn interactions.
+L174: ### 4.2 Reward Design
+L175: We derive a discrete reward function directly from the query-level rubric criteria list associated with each degraded query. Let $\mathcal{K}=\{k_{1},\dots,k_{m}\}$ denote the rubric items for a given example, where $m$ is the number of rubric items.
+L176: At a non-final information-gathering turn $t$, the judge reads the full dialogue and returns (i) a binary flag $a_{t}\in\{0,1\}$ indicating whether the model’s latest message is a final answer ($a_{t}{=}1$) or a clarification request ($a_{t}{=}0$), and (ii) a binary vector $\mathbf{h}_{t}\in\{0,1\}^{m}$ marking which rubric items are explicitly asked about in the latest turn. Writing $c_{t}=\sum_{i=1}^{m}h_{t,i}$ for the number of rubric items targeted at $t$, we define the intermediate reward as:
+L177:  | $$r_{t}=\begin{cases}-2.0,&a_{t}=1,\\
+L178: -0.8,&a_{t}=0\text{ and }c_{t}=0,\\
+L179: 0.8,&0<c_{t}<m,\\
+L180: 1.0,&c_{t}=m.\end{cases}$$  |
+L181: Here, $a_{t}{=}1$ corresponds to a premature final answer (i.e., answering at an intermediate turn rather than asking), while $c_{t}$ counts how many rubric items the model explicitly targets in its latest clarification question.
+L182: The shaping has a direct interpretation: we strongly penalize answering early ($-2.0$) and also penalize asking without targeting any rubric item ($-0.8$); we reward targeting at least one rubric item ($0.8$) and give the maximum reward when the question covers all $m$ items ($1.0$). These hand-set weights are shared across tasks and keep rewards bounded in $[-2,1]$.
+L183: For the final turn $T$, the judge outputs a discrete decision $d_{T}\in\{\text{still asking},\text{wrong},\text{correct}\}$ by comparing the model’s answer with the hidden ground-truth answer and rubric. The terminal reward is defined as
+L184: 
+L185:  | $$r_{T}=\begin{cases}1.0,&d_{T}=\text{correct},\\
+
+
+Active Zero: Self-Evolving Vision-Language Models through Active Environment Exploration (https://arxiv.org/html/2602.11241v1)
+citeturn29118view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.11241v1","lineno":112}); Total lines: 423
+L112:   * •
+L113: Adaptive Task Synthesis (Stage 2): $\mathcal{Q}$ transforms retrieved images into complex, multi-step reasoning questions $x$ calibrated to maximize the Solver’s uncertainty, converting visual contexts into instructional curricula.
+L114: 
+L115:   * •
+L116: 
+L117: Reasoning Optimization (Stage 3): $\mathcal{V}$ is optimized on the synthesized curriculum $\mathcal{D}_{train}$, through consensus-based reinforcement learning, bridging current reasoning gaps and raising the bar for subsequent iterations.
+L118: All three agents are optimized using GRPO, which employs a group-based advantage mechanism to filter noise and promote self-consistent reasoning trajectories. This unified RL backbone enables Active-Zero to autonomously scale reasoning complexity without exhaustive human annotation.
+L119: ### 3.3 Stage 1: Active Environment Exploration
+L120: 
+L121: The Searcher $\mathcal{S}$ identifies visual scenarios that expose the Solver’s current limitations. Formally, $\mathcal{S}$ is a policy $\pi_{\mathcal{S}}(q|P)$ that generates semantic retrieval queries $q$ conditioned on a domain-specific prompt $P$. Each query interacts with a retrieval function to fetch an image $I=\text{Ret}(q,\mathcal{D}_{env})$.
+L122: Reward Formulation. To prioritizes informative samples, we optimize $\mathcal{S}$ toward the frontier of the Solver’s capabilities. Following (cite40†Huang et al., 2025 ), we define a challenge reward $R_{chal}$ based on the Solver’s predictive uncertainty. For a retrieved image $I$, we sample a probe question $x\sim\mathcal{Q}(\cdot|I)$ and execute $m$ independent reasoning passes through $\mathcal{V}$ to obtain an answer set $\{y_{1},\dots,y_{m}\}$. The Solver’s empirical accuracy is then computed as:
+L123:  | $$\text{Acc}(\mathcal{V},I,x)=\frac{1}{m}\sum_{j=1}^{m}\mathbb{I}[y_{j}=\hat{y}],$$  |  | (3)
+L124: 
+L125: where $\hat{y}$ denotes the majority-voted consensus. The challenge reward peaks at maximum uncertainty:
+L126: 
+L127:  | $$R_{chal}(q)=\mathbb{E}{x\sim\mathcal{Q}(\cdot|I)}\left[1-2\left|\text{Acc}(\mathcal{V},I,x)-\frac{1}{2}\right|\right].$$  |  | (4)
+L128: Maximizing $R_{chal}$ compels the Searcher to identify visual contexts at the Solver’s capability frontier—tasks just beyond its deterministic grasp yet within its latent reasoning potential.
+L129: 
+L130: Diversity Control. To prevent the policy from converging on narrow query sets, we implement a dual-modality repetition penalty $\mathcal{P}_{rep}$. For each batch $\mathbf{Q}=\{q_{i}\}_{i=1}^{n}$ with retrieved images $\mathbf{I}=\{I_{i}\}_{i=1}^{n}$, we quantify pairwise similarity in both text and visual spaces.
+L131:  | $\displaystyle d_{ij}^{txt}$  | $\displaystyle=1-\text{BLEU}(q_{i},q_{j}),$  |  | (5)
+L132:  | $\displaystyle d_{ij}^{vis}$  | $\displaystyle=1-\cos(\phi(I_{i}),\phi(I_{j})),$  |
+L133: 
+L134: where $\phi(\cdot)$ represents a frozen image encoder. We cluster a batch of samples into $\mathcal{C}^{txt}$ and $\mathcal{C}^{vis}$ based on sensitivity thresholds $\tau_{txt}$ and $\tau_{vis}$. The penalty for query-image pair $(q_{i},I_{i})$ is then proportional to neighborhood density:
+L135:  | $$\mathcal{P}_{rep}(q_{i},I_{i})=\frac{|C^{txt}(q_{i})|}{n}+\frac{|C^{vis}(I_{i})|}{n}.$$  |  | (6)
+L136: 
+L137: The final reward is $R_{\mathcal{S}}=\max(0,R_{chal}-\mathcal{P}_{rep})$, encouraging the agent to explore diverse coordinates across the visual-semantic manifold.
+L138: Domain-Conditioned Exploration. To maintain a balanced curriculum across heterogeneous tasks, we partition the search space into $N$ semantic domains: $\mathcal{C}=\{c_{1},c_{2},\cdots,c_{N}\}$. Each domain is governed by a specialized prompt template $P_{c}$ that constrains $\pi_{\mathcal{S}}$ to relevant visual-logical properties. To prevent the model from ignoring challenging domains in favor of easier ones with higher absolute rewards, we utilize the group-relative nature of GRPO.
+L139: For a group of $G$ queries within domain $c$, the advantage $\hat{A}$ is normalized strictly against domain-specific peers:
+L140:  | $$\hat{A}(q_{i,c})=\frac{R_{\mathcal{S}}(q_{i,c})-\mu_{c}}{\sigma_{c}}.$$  |  | (7)
+L141: 
+L142: This ensures that the Searcher seeks the most informative data within every domain, sustaining a robust auto-curriculum across the multi-modal spectrum.
+L143: ### 3.4 Stage 2: Adaptive Task Synthesis
+L144: 
+L145: Following optimization of the search policy, we deploy $\pi_{\mathcal{S}}^{*}$ to curate an active visual dataset $\mathcal{D}_{active}=\{I_{j}\}_{j=1}^{M}$. The Questioner $\pi_{\mathcal{Q}}(x|I,T_{cot})$ synthesizes complex reasoning tasks $x$ from these images. We employ a Chain-of-Thought (CoT) template $T_{cot}$ to guide the Questioner to deconstruct visual-logical constraints prior to question formulation.
+L146: Reward Formulation. Similar to the Searcher, the Questioner aims to maximize the instructional utility of the generated questions by targeting the Solver’s current weaknesses. The reward $R_{\mathcal{Q}}$ for question $x_{i}$ generated from image $I$ is:
+L147: 
+L148:  | $$R_{\mathcal{Q}}(x_{i})=\max(0,R_{chal}(x_{i}|I)-\mathcal{P}_{rep}(x_{i})),$$  |  | (8)
+L149: where $R_{chal}(x_{i}|I)$ is the challenge reward from cite60†Equation 4 for question $x_{i}$, and $\mathcal{P}_{rep}$ is a linguistic repetition penalty preventing collapse into repetitive question structures.
+L150: 
+L151: By maximizing $R_{chal}$, the Questioner generates tasks that avoid both trivial consensus and complete randomness, creating a curriculum that bridges the Solver’s current state and higher-order reasoning capabilities.
+L152: ### 3.5 Stage 3: Reasoning Optimization
+L153: Training Set Construction. In the final stage, we deploy the optimized policy $\pi_{\mathcal{Q}}^{*}$ over $\mathcal{D}_{active}$ to construct an initial training pool $\mathcal{D}_{train}=\{(I_{j},x_{j})\}_{j=1}^{M}$. For each task, we compute a silver-standard consensus answer $\hat{a}$ by majority vote over $K$ sampled reasoning trajectories from $\pi_{\mathcal{V}}$ .
+L154: To focus on informative samples, we filter the pool to retain tasks where empirical accuracy $\text{Acc}(\mathcal{V},I,x)$ falls within difficulty window $(\tau_{low},\tau_{high})$, yielding curated subset $\mathcal{D}_{train}^{*}$. This ensures the Solver optimize trajectories that are neither trivially solved nor beyond its current capacity.
+L155: Reward Formulation. The Solver is optimized via GRPO to maximize the accuracy reward signal against pseudo-labels. For each task $(I,x)\in\mathcal{D}_{train}^{*}$, we sample a group of $G$ independent reasoning trajectories $\{\tau_{1},\dots,\tau_{G}\}$, where each $\tau_{i}$ consists of a CoT path and final answer $a_{i}$. The reward for a trajectory $\tau_{i}$ is defined as:
+L156: 
+L157:  | $$R_{\mathcal{V}}(\tau_{i})=\begin{cases}1,&\text{if }a_{i}=\hat{a},\\
+L158: 0,&\text{otherwise}.\end{cases}$$  |  | (9)
+L159: This process ultimately enhances the Solver’s ability to navigate the complex visual reasoning challenges synthesized by the preceding agents.
+L160: ## 4 Experiments
+L161: 
+L162: Table 1: Comparison of Active-Zero against state-of-the-art baselines on reasoning-intensive benchmarks.
+L163: Method  | MathVista  | MathVision  | WeMath  | MathVerse  | LogicVista  | DynaMath  | Averge
+
+
+The Magic Correlations: Understanding Knowledge Transfer from Pretraining to Supervised Fine-Tuning (https://arxiv.org/html/2602.11217v1)
+citeturn29120view0 [wordlim: 200] Crawled: 3 days ago; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.11217v1","lineno":285}); Total lines: 865
+L285: ##### Finding 5: Intra-category competition undermines single-benchmark evaluation.
+L286: 
+L287: Beyond individual benchmark reliability, we examine whether benchmarks within the same capacity category respond coherently to data mixture changes. As shown in Figure cite153†5 , at both model scales, Commonsense and Semantic categories consistently exhibit negative intra-category coherence on accuracy.
+L288: This “intra-category competition” implies that data mixtures optimizing one benchmark often degrade its semantic neighbors—a critical warning for practitioners who assume that improving HellaSwag indicates general improvements in Commonsense Reasoning. Notably, Science demonstrate positive intra-category coherence on large-scale model (Figure cite153†5 (b)), suggesting more unified underlying representations for scientific knowledge.
+L289: ##### Finding 6: Certain benchmarks behave incoherently within their semantic categories.
+L290: Beyond cross-stage reliability, we identify benchmarks that fail to co-vary with other benchmarks in the same capability category—acting as “black sheep” that respond differently to data mixture changes than semantically related tasks.
+L291: Within Commonsense category, WinoGrande exhibits consistently negative correlations with other category members (mean pairwise $r=-0.18$ at 240M); within Semantic group, WSC shows weak coherence with $r<0.15$, indicating that coreference resolution may not share underlying representations with other linguistic understanding benchmarks.
+L292: These incoherent benchmarks pose a subtle risk: even when a benchmark shows reasonable cross-stage transfer individually, the low category coherence means that the task-specific improvements cannot generalize to semantically related tasks.
+L293: ### 4.3 Scaling Dynamics (RQ3)
+L294: 
+L295: We now examine how transfer patterns shift as models scale from 240M to 1B, revealing systematic differences in accuracy and confidence patterns across scales.
+L296: ##### Finding 7: Accuracy and confidence transfer exhibit inverse scaling dynamics.
+L297: Figure cite152†2 reveals a striking dissociation between accuracy and confidence as models scale. For accuracy, the 1B model achieves stronger cross-stage transfer than 240M ($\bar{r}_{\text{acc}}$ = $0.60$ vs. $0.51$), consistent with the intuition that larger models learn more transferable representations. However, for confidence, the pattern reverses: 240M maintains substantially higher cross-stage correlation ($\bar{r}_{\text{conf}}$ = $0.68$ vs. $0.39$).
+L298: This inverse scaling dynamic suggests that larger models undergo more extensive confidence reorganization during SFT, developing task-specific calibration profiles rather than retaining the monolithic uncertainty patterns observed on small-scale models. The implication for practitioners is significant: as models scale, confidence calibration from pretraining becomes less predictive of post-SFT behavior, warranting explicit calibration techniques for SFT.
+L299: ##### Finding 8: Scaling induces a transition from intra-category competition to synergy in accuracy.
+L300: Figure cite153†5 reveals that model scale fundamentally alters intra-category dynamics for accuracy. For both SFT coherence and cross-stage coherence, most capability categories shift toward less negative or positive coherence at 1B scale. The Science category exhibits particularly significant improvements across all three protocols with 240M$\to$1B scaling (PT: $0.24\to 0.50$; SFT: $-0.19\to 0.17$; Cross-stage: $-0.15\to 0.25$).
+L301: This suggests that larger models develop more unified reasoning representations where knowledge transfers constructively across related benchmarks. It implies that at smaller scales, optimizing for a single benchmark per category may harm related tasks; while at larger scales, the generalization within the same capacity category becomes more viable.
+L302: ##### Finding 9: Confidence coherence degrades with scale while remaining positive.
+L303: 
+L304: For confidence calibration, we observe the opposite scaling trend (Figure cite153†5 ). At 240M, Commonsense and Science exhibit strong positive coherence ($\bar{r}=0.73$ and $0.85$ respectively); while at 1B, this coherence diminishes substantially ($\bar{r}=0.24$ and $0.58$).
+L305: Rather than indicating performance degradation, this drop reflects the development of more task-specific uncertainty estimates on larger language models—when scaling-up, the model learns to calibrate confidence differently for distinct tasks or benchmarks, instead of adopting a universal uniform calibration pattern of smaller models.
+L306: ##### Finding 10: NLI exhibits anomalous scaling patterns.
+L307: 
+L308: The NLI category presents a distinct scaling patterns varying from other benchmarks described above. For confidence coherence, NLI is the only category where 1B shows higher coherence than 240M —the inverse of the trend where scale typically reduces confidence coherence.
+L309: This twofold anomaly suggests that NLI tasks engage qualitatively different representational mechanisms. One hypothesis is that larger models develop more consistent inferential strategies for NLI specifically, improving calibration coherence even as other categories become more task-specifically calibrated.
+L310: Figure 5: Intra-category coherence across three correlation protocols. Top: the coherence scores on accuracy, where Science shows PT$\to$SFT degradation; NLI preserves cross-stage coherence despite a drop in SFT coherence. Bottom: the coherence scores on confidence, where 240M model maintains high coherence while 1B shows substantial degradation.
+L311: ### 4.4 Calibration Quality (RQ4)
+L312: 
+L313: Finally, we examine performance-confidence alignment—the correlation between model confidence and accuracy scores ($r_{align}$)—as a measure of calibration quality. A well-calibrated model should be confident precisely when it is correct and uncertain when it is incorrect, yielding high $r_{align}$. We investigate how this alignment varies across capability categories, data mixtures, and training stages.
+L314: ##### Finding 11: Performance-confidence alignment varies significantly across capability categories.
+L315: 
+L316: Figure cite154†6 reveals striking differences in how well models’ confidence aligns with actual performance across capability domains. Science tasks exhibit remarkably high alignment ($r_{\text{align}}\approx 0.8$), indicating that models are confident precisely when they perform well—the prior knowledge from pretraining aligns well with downstream task requirements.
+L317: In stark contrast, Commonsense shows consistently weak or negative alignment ($r_{\text{align}}\approx-0.1$), meaning models tend to be more confident on incorrect predictions. Semantic tasks exhibit similar miscalibration ($r_{\text{align}}\approx-0.2$).
+L318: This systematic miscalibration suggests a fundamental mismatch between pretraining knowledge and the implicit reasoning required for commonsense understanding—the model’s confidence reflects surface-level pattern matching rather than genuine comprehension.
+L319: Figure 6: Performance-confidence alignment ($r_{\text{align}}$) varies by category. Science tasks show high positive alignment ($r_{\text{align}}\approx 0.8$), indicating well-calibrated confidence. Commonsense and Semantic tasks show negative alignment, indicating systematic overconfidence on incorrect predictions.
+L320: ##### Finding 12: Alignment patterns persist through SFT.
+L321: Comparing the left and right panels of Figure cite154†6 , the category-level alignment structure remains largely stable across training stages. Science tasks maintain high $r_{\text{align}}$ values ($\sim$0.8) in both pretraining and post-SFT evaluation, while the miscalibration for Commonsense and Semantic also persists.
+L322: This suggests that SFT does not fundamentally reorganize the model’s confidence structure—the alignment “fingerprint” established during pretraining carries through to downstream performance.
+L323: Combined with our cross-stage analysis (§cite28†4.1 ), this finding reinforces that pretraining data composition has lasting effects on model behavior that cannot be easily overwritten by instruction tuning. Practitioners seeking well-calibrated models should prioritize appropriate pretraining data curation over post-hoc calibration techniques.
+L324: ##### Finding 13: Educational content filtering exhibits scale-dependent accuracy-calibration trade-offs.
+L325: Figure cite155†7 reveals that the effects of educational content filtering (FineWeb-Edu) vary dramatically with model scale. At 240M, FineWeb-Edu improves NLI accuracy by +5.0pp compared to RefinedWeb, yet simultaneously degrades alignment from $r_{\text{align}}=0.68$ to $r_{\text{align}}=-0.12$ ($\Delta=-0.80$). Remarkably, at 1B scale, this pattern reverses: FineWeb-Edu degrades NLI accuracy by $-4.4$pp while slightly improving alignment ($\Delta=+0.16$).
+L326: On Scientific Reasoning tasks, exhibits consistent benefits across scales: FineWeb-Edu improves accuracy at both 240M (+2.1pp) and 1B (+2.5pp), with slight alignment degradation.
+L327: It indicates that: data curation decisions optimized at small proxy scales may not transfer to larger models; and strict educational filtering could preserves or improve on accuracy scores while undermining internal calibration pattern.
+L328: Figure 7: FineWeb-Edu vs. RefinedWeb: Category-level effects at PT and SFT stages. (a,b) Accuracy changes; (c,d) Alignment changes. Left column: Pretraining; Right column: SFT. The NLI accuracy reversal (240M: +5.0pp $\to$ 1B: $-4.4$pp) persists through SFT, though attenuated. At 1B SFT, Semantic alignment shows severe degradation ($\Delta=-0.55$), suggesting that FineWeb-Edu’s effects on linguistic tasks become increasingly problematic at larger scales and later training stages.
+L329: ## 5 Practical Implications
+L330: 
+L331: Our findings offer several actionable insights for practitioners developing and evaluating language models.
+L332: ##### Benchmark selection for early-stage evaluation.
+L333: Not all benchmarks are equally informative during pretraining evaluation. According to the clear dichotomy we have observed: Commonsense Reasoning benchmarks (e.g.
+L334: HellaSwag, PIQA, COPA) and Scientific Reasoning benchmarks exhibit high cross-stage correlation, making them reliable proxies for post-SFT performance; while Semantic Understanding tasks (WiC, WSC, MultiRC) and NLI benchmarks (MNLI) show weak or negative transfer, suggesting their pretraining performance provides limited signal about final model capabilities.
+L335: Implication 1: Practitioners should prioritize high-transfer benchmarks while avoiding unreliable ones when making early-stage decisions about data curation and resource allocation.
+L336: ##### Confidence as a Complementary Evaluation Signal.
+L337: We demonstrate that confidence correlation provides information complementary to accuracy, with important scale-dependent dynamics. While confidence patterns transfer reliably across stages at smaller scales (240M) reflecting a relatively consistent calibration profile that persists through SFT, confidence transferability degrades substantially when the model scaled up to 1B parameters.
+
+
+PRIME: Policy-Reinforced Iterative Multi-agent Execution for Algorithmic Reasoning in Large Language Models (https://arxiv.org/html/2602.11170v1)
+citeturn29119view0 [wordlim: 200] Crawled: 6 days ago; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.11170v1","lineno":690}); Total lines: 3605
+L680: Qwen3-Coder-30B  | 10%  | 86%  | 4%
+L681: GPT-OSS-120B  | 8%  | 89%  | 3%
+L682: Average  | 13%  | 80%  | 7%
+L683: Diagonal violations dominate the error distribution, accounting for 80% of failures on average. This finding is consistent with the geometric complexity of diagonal constraints, which require reasoning about spatial relationships rather than simple equality checking. The proportion of diagonal errors increases with model size, from 71% for Qwen3-8B to 89% for GPT-OSS-120B.
+L684: This counterintuitive pattern arises because larger models rarely make simple column or parsing errors, leaving diagonal violations as the predominant failure mode.
+L685: Column violations constitute 13% of errors on average, indicating that despite explicit constraint enumeration in the prompt, models occasionally fail to verify this basic requirement. Smaller models exhibit higher column violation rates, suggesting that prompt following is imperfect for limited-capacity systems.
+L686: Parsing errors decrease monotonically with model size, from 11% for Qwen3-8B to 3% for GPT-OSS-120B. The optimized prompt’s format specification substantially reduces parsing failures compared to baseline prompting (where parsing errors reach 35% for smaller models), but does not eliminate them entirely.
+L687: The concentration of errors in diagonal violations suggests targeted improvements: additional prompt scaffolding specifically addressing diagonal checking, or the integration of program-aided approaches to offload geometric computations to external tools. Such interventions could potentially recover a substantial fraction of the 10% error rate observed even for the best-performing model.
+L688: ### IV-H Ablation Studies
+L689: 
+L690: To isolate the contributions of individual prompt components, we conducted ablation experiments removing each enhancement from the optimized prompt. Table cite306†VI reports the results for a representative subset of models.
+L691: TABLE VI: Ablation Study: Impact of Prompt Components
+L692: Configuration  | 8B  | 30B  | 120B
+L693: --- | --- | --- | ---
+L694: Full Optimized  | 83.8%  | 94.3%  | 96.4%
+L695: $-$ Worked Examples  | 72.1%  | 89.7%  | 94.1%
+L696: $-$ Constraint Enumeration  | 65.4%  | 85.2%  | 91.8%
+L697: $-$ Verification Procedure  | 58.9%  | 78.6%  | 88.3%
+L698: $-$ Format Specification  | 79.2%  | 92.1%  | 95.7%
+L699: Baseline (all removed)  | 24.3%  | 45.2%  | 57.8%
+L700: Each component contributes meaningfully to the overall improvement, though the relative importance varies across model scales. The verification procedure provides the largest marginal benefit, with removal causing accuracy drops of 24.9, 15.7, and 8.1 percentage points for 8B, 30B, and 120B models respectively. This component explicitly instructs the model to check each candidate position systematically, providing algorithmic scaffolding that substitutes for implicit reasoning capacity.
+L701: Constraint enumeration contributes the second-largest effect, with removal causing drops of 18.4, 9.1, and 4.6 percentage points. Interestingly, the impact is more pronounced for smaller models, consistent with the hypothesis that larger models have internalized constraint representations from pretraining data.
+L702: cite307†Image: Refer to caption Fig. 11: Search Tree Pruning via State Stack Management. A visualization of the decision tree generated by PRIME. Blue paths represent valid reasoning steps (Executor) that pass verification. Red dashed paths represent invalid steps detected by the Verifier. Unlike standard Chain-of-Thought, PRIME triggers a ”Prune and Backtrack” action upon error detection, popping the invalid state from the State Stack and reverting execution to the last valid parent node.
+L703: Worked examples contribute 11.7, 4.6, and 2.3 percentage points respectively. The diminishing impact with scale aligns with findings that in-context learning efficiency improves with model capacity.
+L704: 
+L705: Format specification has the smallest impact (4.6, 2.2, 0.7 percentage points), primarily affecting parsing reliability rather than reasoning accuracy. Nonetheless, for production deployment where consistent output format is critical, this component remains valuable.
+L706: The ablation results confirm that the optimized prompt’s effectiveness derives from the synergistic combination of multiple components, each addressing different aspects of the reasoning task. A principled prompt engineering methodology should consider all four dimensions: constraint specification, procedural guidance, exemplar demonstration, and output formatting. Notably, removing the Verifier causes significant accuracy drops, as illustrated in Figure cite308†11 .
+
+
+Code Mixologist : A Practitioner’s Guide to Building Code-Mixed LLMs (https://arxiv.org/html/2602.11181v1)
+citeturn29116view0 [wordlim: 200] Crawled: 2 days ago; Content type: text/html; Source: find({"ref_id":"https://arxiv.org/html/2602.11181v1","pattern":"Safety"}); Total lines: 419
+L319: ## 7 Safety, Bias, and Red-Teaming in Code-Mixed Contexts
+L320: 
+L321: The fluid complexity of code-mixing presents unique challenges to model safety, often rendering guardrails trained on monolingual, high-resource data ineffective. This section examines how code-switching (CSW) serves as an adversarial attack vector and highlights the systemic biases inherent in current data practices.
+L322: ### 7.1 Code-Switching as an Attack Vector
+L323: Research consistently demonstrates that intra-sentence code-switching is a potent method for circumventing safety filters. The Code-Switching Red-Teaming (CSRT) framework reveals that LLMs frequently comply with harmful requests in code-mixed formats that they would refuse in English, with Attack Success Rate (ASR) increasing as more languages—particularly low-resource ones—are interleaved (cite67†Yoo et al., 2024b ). This vulnerability stems from lexical dilution weakening keyword defenses.
+L324: Attack efficacy is amplified by automated toxicity generators (cite116†Wadgaonkar and Ratha, 2025 ) and phonetic perturbation (e.g., “Haet Bhasha”), which masks toxic intent via noisy romanization to bypass filters (cite117†Aswal and Jaiswal, 2025 ). Mitigating them requires moving beyond English-only safety alignment to implement dynamic, CSW-aware guardrails and explicitly including code-mixed adversarial examples in safety training.
+L325: ### 7.2 Bias, Representativeness, and Future Scopes
+L326: 
+L327: Beyond security, ethical concerns arise from the data pipelines themselves. cite118†Doğruöz et al. (2023b) argue that the lack of diversity in data collection and annotation teams introduces systematic blind spots regarding dialects and socio-demographics. To mitigate downstream harms, they advocate for transparent documentation and checklists to ensure representativeness across geographical and social registers.
+L328: ## 8 Future Research: Grand Challenges
+L329: 
+L330: Recent work has advanced CSW data, evaluation, controllable generation, and safety, but code-mixing remains a frontier where general-purpose LLMs still struggle with structural consistency, reasoning under switching, and robust guardrails across languages. We highlight four grand challenges that shape the next stage of research.
+L331: ##### Challenge 1: Breaking the English-Centric Data Barrier.
+L332: CSW pipelines remain skewed toward English-paired mixing, with limited coverage of typologically diverse and non-English language pairs (cite71†Doğruöz et al., 2023a ; cite119†Sterner, 2024 ). The next challenge is scaling beyond coverage into representativeness: datasets should better reflect dialectal variation, socio-demographic diversity, and realistic usage contexts, rather than learning a narrow, standardized mixing style (cite118†Doğruöz et al., 2023b ).
+L333: Stronger documentation of mixing patterns and collection protocols will also be essential for reproducibility and fair comparison across benchmarks.
+L334: ##### Challenge 2: Reforming the Evaluation Paradigm.
+L335: While code-mix-aware metrics and judge-based evaluation are emerging, current practice often rewards language reversion and misses meaning drift, hallucination, and reasoning degradation under switching (cite86†Heredia et al., 2025 ). Progress requires reproducible protocols that jointly assess structural validity and semantic faithfulness, and that report performance across mixing regimes rather than only aggregated scores.
+L336: LLM-as-a-judge systems should be calibrated and use reasoning against bilingual human acceptability to reduce monolingual bias and improve stability (cite81†Kuwanto et al., 2024 ; cite108†Kodali et al., 2024 ; cite120†Jayarao et al., 2025 ).
+L337: ##### Challenge 3: RL, Reasoning, and Long-Context Modeling for Low-Resource CSW.
+L338: Despite progress in supervised and instruction tuning, reinforcement learning remains underexplored for optimizing CSW-specific objectives such as faithfulness, naturalness, controllable switching, and hallucination resistance. Most training and evaluation also focus on short contexts, leaving long-context CSW poorly understood, especially for multi-turn consistency, entity tracking, and grounded reasoning across languages.
+L339: Notably, mixed-language reasoning traces arise naturally in modern LLMs and may better reasoning abilities; rather than suppressing them, future RL objectives could leverage these traces to unlock stronger reasoning under switching. These gaps are most acute in low-resource mixing pairs, motivating data-efficient post-training and RL methods that transfer robust CSW behavior across language pairs.
+L340: ##### Challenge 4: Robustness and Dynamic Safety Under Mixed Inputs.
+L341: Code-mixing can bypass English-centric safeguards through lexical dilution and cross-lingual ambiguity (cite117†Aswal and Jaiswal, 2025 ). The remaining challenge is to develop mix-aware guardrails that remain reliable under distribution shift and low-resource pairs, supported by adversarial evaluation that reflects realistic mixed-language attacks.
+L342: Mechanistic interpretability can further enable targeted interventions by identifying where mixed-language representations cause safety failures, reducing reliance on expensive continued pre-training (cite121†Nie et al., 2025 ; cite88†Baral et al., 2025 ).
+

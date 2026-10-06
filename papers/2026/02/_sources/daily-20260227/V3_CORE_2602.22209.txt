@@ -1,0 +1,2615 @@
+WHOLE: World-Grounded Hand-Object Lifted from Egocentric Videos
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+Egocentric Video Understanding.
+Video-Based Hand Pose Estimation.
+Hand-Object Interaction Reconstruction.
+4D Reconstruction in the World Coordinate Frame.
+3
+Method
+3.1
+Generative Hand-Object Motion Prior
+Interaction Motion Representation.
+Gravity-Aware Local Coordinate Frame.
+Approximating Inaccurate Hand Estimation.
+Training Objective.
+3.2
+Reconstruction as Guided Generation
+Test-Time Guidance
+VLM Contact Assignment.
+Blending Long Videos.
+4
+Experiment
+Training Data and Setups.
+4.1
+Visualizing Hand-Object Motion Generation
+4.2
+Guided Reconstruction
+Metrics.
+Baselines.
+4.2.1
+Comparing Hand Motion
+4.2.2
+Object Motion.
+4.2.3
+Interaction Quality.
+4.3
+Ablation Study
+How good is VLM-annotated contact label?
+Is intertwined generation and optimization necessary?
+How much does the interaction loss help?
+How well does the model generalize?
+4.4
+Application: Hand-Guided HOI Planner
+5
+Discussion
+Limitations and Future Work.
+Conclusion.
+References
+A
+Implementation Details
+Network Architecture.
+Training Loss.
+Running Time.
+VLM Prompt.
+Evaluation Metrics.
+License: CC BY 4.0
+arXiv:2602.22209v1 [cs.CV] 25 Feb 2026
+WHOLE: World-Grounded Hand-Object Lifted from Egocentric Videos
+Yufei Ye
+Affiliation:
+Stanford University
+Jiaman Li
+Affiliation:
+Amazon FAR (Frontier AI & Robotics)
+https://judyye.github.io/whole-www
+Ryan Rong
+Affiliation:
+Stanford University
+C. Karen Liu
+Affiliation:
+Stanford University
+Affiliation:
+Amazon FAR (Frontier AI & Robotics)
+https://judyye.github.io/whole-www
+Abstract
+Egocentric manipulation videos are highly challenging due to severe occlusions during interactions and frequent object entries and exits from the camera view as the person moves.
+Current methods typically focus on recovering either hand or object pose in isolation, but both struggle during interactions and fail to handle out-of-sight cases.
+Moreover, their independent predictions often lead to inconsistent hand-object relations.
+We introduce WHOLE, a method that holistically reconstructs hand and object motion in world space from egocentric videos given object templates.
+Our key insight is to learn a generative prior over hand-object motion to jointly reason about their interactions.
+At test time, the pretrained prior is guided to generate trajectories that conform to the video observations.
+This joint generative reconstruction substantially outperforms approaches that process hands and objects separately followed by post-processing.
+WHOLE achieves state-of-the-art performance on hand motion estimation, 6D object pose estimation, and their relative interaction reconstruction.
+1
+Introduction
+Humans effortlessly connect what they see (egocentric) to a persistent 3D world (allocentric) - a core cognitive ability that underlies spatial reasoning and purposeful interaction.
+With the increasing availability of wearable cameras, egocentric videos have become a powerful medium for capturing such first-person experiences. These recordings depict everyday activities from the wearer’s viewpoint like walking through a room, reaching for a can on the shelf, and pouring a milk bottle, as illustrated in Fig.
+.
+Among the many elements in these scenes, the hands and the objects they manipulate form the most direct interface through which humans act upon the world, making their 3D reconstruction a crucial step toward understanding egocentric experiences. Achieving this capacity of spatial reasoning about human interactions enables downstream applications such as robot learning from human demonstrations
+[
+21
+,
+24
+]
+and immersive AR/VR environments.
+Our goal is to endow computers with a comparable ability:
+to reconstruct the motion of the active objects and both hands within a consistent world coordinate frame from metric-SLAMed egocentric videos that depict hand manipulation.
+However, this task is particularly challenging. Because the camera is mounted on a moving wearer, the resulting video often exhibits large egomotion even when the object itself does not move much. Objects may leave and re-enter the field of view, and frequent occlusions between hands and objects further complicate perception and reconstruction.
+Prior work has explored several closely related directions, yet often in isolation. Some methods focus exclusively on reconstructing humans
+[
+45
+,
+69
+,
+70
+]
+or general objects
+[
+12
+,
+58
+]
+in a consistent world coordinate frame, while others tackle the problem of estimating camera motion
+[
+31
+,
+51
+,
+37
+]
+to align the egocentric viewpoint with the world space. However, simply combining these separate efforts is insufficient for egocentric interaction reconstruction from videos.
+Another line of research addresses hand-object interaction (HOI) reconstruction
+[
+10
+,
+63
+,
+22
+]
+, typically over a few-second clips to recover detailed object geometry and contact patterns. Yet, these approaches remain confined to local reference frames, without reasoning about motion and interaction within a persistent, global 3D world.
+Our key insight is that hand and object motions are inherently interdependent, and should be modeled jointly to capture coherent hand-object interactions.
+Building on this idea, we introduce WHOLE, which formulates reconstruction as a guided generation process based on a generative motion prior learned from hand-object interactions. Specifically, we train a diffusion-based motion prior to model the mutual dynamics between hands and objects, as well as the contact relationship between them. At test time, we guide this pretrained model using visual observations including segmentation masks and contact cues, to produce global 3D trajectories consistent with the input egocentric video.
+To obtain reliable contact information, we further enhance a vision-language model (VLM) with spatially grounded visual prompts to enable robust contact localization even in cluttered scenes. Together, it allows WHOLE to generate coherent plausible reconstructions of long hand-object interaction sequences in global 3D space.
+We train and evaluate WHOLE on the HOT3D
+[
+2
+]
+dataset.
+We show that our learned motion prior generates diverse and plausible samples while producing reconstructions faithful to the input video.
+Across hand, object, and interaction evaluation settings, WHOLE consistently performs well compared to existing baselines that naively combine state-of-the-art methods from the respective hand and object estimation domains.
+We also find that VLM-annotated contact cues perform comparably to ground-truth labels, indicating that the designed visual prompt effectively improves the VLM’s spatial grounding. Code and model will be public upon acceptance.
+2
+Related Work
+Egocentric Video Understanding.
+Egocentric perception has recently gained traction due to the availability of large-scale datasets
+[
+16
+,
+6
+,
+15
+]
+and wearable cameras such as GoPro and Project Aria
+[
+34
+,
+4
+,
+35
+]
+.
+While a line of work focuses on high-level semantic understanding such as action recognition and language grounding
+[
+60
+,
+15
+,
+16
+,
+21
+]
+, recent research has expanded to spatial perception tasks, including 2D detection, segmentation, and tracking
+[
+7
+,
+76
+]
+.
+A few efforts have explored 3D understanding from egocentric inputs, such as camera localization, global human motion reconstruction, and global hand motion reconstruction
+[
+29
+,
+67
+,
+73
+,
+54
+,
+40
+]
+. Our work follows this line of 3D egocentric understanding but differs in that we explicitly model interaction,
+i.e
+.
+jointly reconstruct both hands, object, and their contact. This allows for reconstruction of globally coherent hand-object interactions in the world coordinate frame.
+Video-Based Hand Pose Estimation.
+Estimating articulated hand motion from videos has long been a fundamental problem.
+Existing methods rely on multi-view setups or additional sensing modalities such as depth or IMU data
+[
+52
+,
+13
+,
+53
+,
+26
+,
+11
+]
+to capture accurate 3D hand trajectories.
+Recent monocular approaches estimate hand poses directly from RGB videos by leveraging large-scale datasets
+[
+38
+,
+36
+,
+78
+,
+23
+]
+and transformer-based architectures
+[
+48
+,
+32
+,
+75
+]
+to regress MANO
+[
+43
+]
+parameters.
+While these models achieve high accuracy for local hand poses, their predictions are expressed in canonical or camera-centric coordinates and thus cannot recover global trajectories in the world frame.
+To estimate global hand motion, recent works
+[
+70
+,
+73
+,
+62
+]
+first predict local hand poses using a pretrained hand prior
+[
+38
+]
+, then infer world-space trajectories via test-time optimization or a learned neural model.
+However, these methods focus on hand motion in isolation.
+In contrast, we reconstruct object motion jointly with the hand in the world coordinate system, enabling accurate and contact-aware understanding of hand-object interactions.
+Figure 2
+:
+Reconstruction Using the Generative Motion Prior.
+Given a metric-SLAMed egocentric videos, and the object template
+𝑶
+\bm{O}
+, we alternate the diffusion generation step and the guidance step to predict hand motion
+𝑯
+\bm{H}
+, object 6D trajectory
+𝑻
+\bm{T}
+, and binary contact
+𝑪
+\bm{C}
+as the final output
+𝒙
+0
+\bm{x}_{0}
+.
+The diffusion model
+D
+ψ
+D_{\psi}
+is conditioned on object geometry and approximated hand
+𝑯
+¯
+\bar{\bm{H}}
+from off-the-shelf hand estimator to diffuse the noisy parameters
+𝒙
+n
+\bm{x}_{n}
+. The guidance step refines the denoised output by optimizing task-specific objectives
+g
+g
+to be consistent with the video observations
+𝒚
+^
+\hat{\bm{y}}
+like 2D masks and contact. The contact labesl
+𝑪
+^
+\hat{\bm{C}}
+is automatically labeled by prompting a VLM.
+Hand-Object Interaction Reconstruction.
+Beyond pose estimation, a parallel line of research reconstructs or synthesizes 3D hand-object interactions.
+Template-based methods
+[
+18
+,
+17
+]
+estimate object pose for a given template mesh, while template-free approaches
+[
+22
+,
+56
+,
+65
+,
+64
+,
+10
+]
+directly recover object meshes with rich shape details.
+These methods reconstruct both hand and object motion during interaction but primarily emphasize detailed geometry, typically operating in hand- or object-centered coordinates and over short temporal windows.
+Our approach instead focuses on global 4D motion reconstruction,
+i.e
+.
+predicting how both the hand and the manipulated object move coherently through space and time, rather than recovering fine-grained surface geometry.
+4D Reconstruction in the World Coordinate Frame.
+A related line of work aims to recover motion trajectories expressed in the world coordinate frame.
+Global human motion reconstruction methods
+[
+72
+,
+46
+,
+45
+,
+14
+,
+61
+]
+estimate 3D body trajectories in world space by decoupling human and camera motion or leveraging learned motion priors.
+In the broader 4D tracking domain, approaches such as STaRTrack
+[
+12
+]
+and SpatialTracker
+[
+58
+]
+perform 3D-aware point tracking to capture scene-level dynamics and camera motion, without explicitly modeling human or object structure.
+FoundationPose
+[
+55
+]
+instead tackles 6D object pose estimation given known object geometry, achieving robust per-frame alignment. Our approach also assumes an input object template but further estimates object poses and hand motion jointly from videos, capturing their coupled trajectories over time.
+3
+Method
+Given a metric-SLAMed egocentric video of object manipulation and a 3D object template, as shown in Figure
+2
+, WHOLE holistically reconstructs both hand articulation and object 6D trajectories in world space.
+We first learn a generative motion prior of hand-object interactions in a gravity-aware local frame. At test time, we guide this pretrained prior by visual observations, object masks and VLM-derived binary contact cues, to generate globally consistent motions faithful to the input video.
+3.1
+Generative Hand-Object Motion Prior
+The generative prior is a diffusion model conditioned on a roughly estimated hand trajectory
+𝑯
+¯
+t
+=
+1
+:
+T
+\bar{\bm{H}}^{t=1:T}
+and an object template
+𝑶
+\bm{O}
+,
+i.e
+.
+𝒄
+≡
+(
+𝑯
+¯
+,
+𝑶
+)
+\bm{c}\equiv(\bar{\bm{H}},\bm{O})
+, generating refined hand motions
+𝑯
+t
+=
+1
+:
+T
+\bm{H}^{t=1:T}
+, object trajectories as SE(3) transforms
+𝑻
+t
+=
+1
+:
+T
+\bm{T}^{t=1:T}
+, and contact labels
+𝑪
+t
+=
+1
+:
+T
+\bm{C}^{t=1:T}
+, two binary indicators denoting contact with the left and right hands. It operates on a fix-length time window (
+T
+=
+120
+T=120
+) and models how the object moves and interacts with the hands in a local gravity-aware coordinate frame,
+i.e
+.
+p
+(
+𝑯
+,
+𝑻
+,
+𝑪
+∣
+𝑶
+,
+𝑯
+¯
+)
+p(\bm{H},\bm{T},\bm{C}\mid\bm{O},\bar{\bm{H}})
+.
+The approximated hand poses
+𝑯
+¯
+\bar{\bm{H}}
+are obtained from an off-the-shelf hand estimator
+[
+73
+]
+at test time, while during training, we also synthesize noisy hand tracks to avoid overfitting to a particular estimator.
+Interaction Motion Representation.
+We represent each hand using MANO parameters
+[
+43
+]
+, including global orientation
+𝚪
+\bm{\Gamma}
+, translation
+𝚲
+\bm{\Lambda}
+, articulation and shape
+𝚯
+,
+𝜷
+\bm{\Theta},\bm{\beta}
+, and joint positions and velocities
+𝑱
+,
+𝑱
+˙
+\bm{J},\dot{\bm{J}}
+,
+i.e
+.
+𝑯
+≡
+(
+𝚪
+,
+𝚲
+,
+𝚯
+,
+𝑱
+,
+𝑱
+˙
+)
+\bm{H}\equiv(\bm{\Gamma},\bm{\Lambda},\bm{\Theta},\bm{J},\dot{\bm{J}})
+.
+We concatenate the left and right hand features and use the same representation for the approximated hand trajectory
+𝑯
+¯
+\bar{\bm{H}}
+.
+We represent object poses in SE(3) using the 9D formulation
+[
+77
+]
+, and encode the (conditioning) object geometry with a BPS descriptor
+[
+42
+]
+in its canonical frame,
+𝑶
+≡
+B
+​
+P
+​
+S
+​
+(
+O
+)
+\bm{O}\equiv BPS(O)
+.
+To better capture the spatial relationship between the hands and the object and to encourage the diffusion model to reason about fine-grained contact, we also compute a per-time “Ambient Sensor” feature
+[
+47
+,
+74
+]
+between them.
+For each hand joint, we measure its displacement to the nearest point on the object surface transformed by the diffused pose
+𝑻
+i
+​
+[
+O
+]
+\bm{T}_{i}[O]
+, which is equivalent to a BPS of the posed object using hand joints as the vector basis
+i.e
+.
+B
+​
+P
+​
+S
+𝑱
+​
+(
+𝑻
+i
+​
+[
+O
+]
+)
+BPS_{\bm{J}}(\bm{T}_{i}[O])
+.
+Gravity-Aware Local Coordinate Frame.
+Hands and objects are expressed in the gravity-aligned camera coordinate frame at the beginning of each sequence
+[
+66
+,
+44
+]
+. Anchoring every sequence to the physical up direction and a consistent facing orientation allows our model to focus on relative hand-object motion rather than arbitrary global rotations.
+Specifically, we rotate the camera coordinates so that the z-axis aligns with the gravity vector. These canonicalized segments can later be transformed back to world coordinates and seamlessly stitched into long, continuous sequences during guided reconstruction.
+Approximating Inaccurate Hand Estimation.
+Our diffusion model refines approximated hand estimates
+𝑯
+¯
+\bar{\bm{H}}
+at test time by reasoning about hand-object interactions.
+To enhance robustness and avoid overfitting to a specific off-the-shelf estimator, we synthesize imperfect
+conditioning
+hand tracks during training by perturbing ground-truth MANO parameters.
+We inject both trajectory-level noise
+𝝇
+g
+\bm{\varsigma}^{g}
+and per-frame noise
+𝝇
+t
+\bm{\varsigma}^{t}
+into the MANO parameters, then apply forward kinematics to produce perturbed joint positions that mimic real tracking noise,
+𝑯
+¯
+ς
+g
+,
+ς
+t
+\bar{\bm{H}}_{\varsigma^{g},\varsigma^{t}}
+.
+We further simulate occlusion and truncation by randomly dropping frames, and train jointly on both synthesized and real estimated hand conditions.
+Training Objective.
+The diffusion model learns to iteratively denoise from Gaussian noise
+𝒛
+\bm{z}
+to generate clean interaction trajectories
+𝒙
+n
+=
+0
+\bm{x}_{n=0}
+.
+We adopt the conditional DDPM loss
+[
+19
+]
+, training the denoiser
+D
+ϕ
+D_{\phi}
+to recover clean trajectories from the corrupted ones
+𝒙
+n
+\bm{x}_{n}
+:
+ℒ
+DDPM
+=
+𝔼
+t
+,
+ϵ
+​
+[
+w
+n
+​
+‖
+𝒙
+~
+0
+−
+D
+ϕ
+​
+(
+𝒙
+n
+∣
+n
+,
+𝑯
+¯
+,
+𝑶
+)
+‖
+2
+2
+]
+,
+\mathcal{L}_{\text{DDPM}}=\mathbb{E}_{t,\,\bm{\epsilon}}\!\left[w_{n}\,\bigl\|\tilde{\bm{x}}_{0}-D_{\phi}(\bm{x}_{n}\mid n,\bar{\bm{H}},\bm{O})\bigr\|_{2}^{2}\right],
+(1)
+where
+𝒙
+n
+\bm{x}_{n}
+is the diffusion parameters corrupted by Gaussian noise at step
+n
+n
+and
+𝒙
+~
+0
+\tilde{\bm{x}}_{0}
+is the ground truth.
+w
+n
+w_{n}
+is the variance schedule weight. The denoiser is implemented as a transformer decoder.
+In addition to the DDPM loss, we introduce auxiliary objectives to enhance realism.
+(1)
+Interaction Loss
+(
+ℒ
+inter
+\mathcal{L}_{\text{inter}}
+) encourages realistic hand-object contact by penalizing distances and ensuring near-rigid transport of contact points
+[
+30
+]
+.
+(2)
+Consistency Loss
+(
+ℒ
+const
+\mathcal{L}_{\text{const}}
+) promotes agreement between predicted hand features and their MANO forward kinematics.
+(3)
+Temporal Smoothness
+(
+ℒ
+smooth
+\mathcal{L}_{\text{smooth}}
+) further penalizes large accelerations.
+We first warm up the model for 10k steps using only
+ℒ
+DDPM
+\mathcal{L}_{\text{DDPM}}
+before adding auxiliary terms. Please refer to appendix for detailed implementation.
+Figure 3
+:
+Visual Prompt:
+We show two examples of the visual prompts provided to the VLM for contact detection.
+3.2
+Reconstruction as Guided Generation
+Sampling from the learned generative prior yields diverse and realistic hand-object motions.
+We leverage this motion prior for reconstruction from monocular videos by guiding the generation through classifier-guidance
+[
+8
+]
+.
+Compared with another common guiding paradigm, score distillation sampling (SDS)
+[
+41
+]
+, classifier-guidance is faster, requiring only a single forward generation pass instead of thousands of optimization steps, and is less prone to model collapse.
+We find that two observations from the input video are crucial for guiding reconstruction: 2D masks that segments object and hand, and contact information indicating whether each hand is in contact with the object at the current time step.
+We employ a vision-language model (VLM)
+[
+1
+]
+to obtain contact information.
+Figure 4
+:
+HOI Generation Samples:
+We show two samples of interaction generated from our diffusion model with the same conditions. Objects are colored in red when contact is predicted and blue otherwise. We show 6 key frames among blended 150-frame generation.
+Test-Time Guidance
+Classifier guidance steers a diffusion model by modifying its score, the gradient of the log-probability
+∇
+𝒙
+n
+​
+log
+​
+p
+​
+(
+𝒙
+n
+)
+\nabla_{\bm{x}_{n}}\log p(\bm{x}_{n})
+, to incorporate task-specific objectives
+g
+⁡
+(
+𝒚
+^
+,
+𝒙
+)
+g(\hat{\bm{y}},\bm{x})
+,
+𝒚
+^
+\hat{\bm{y}}
+are observations from the video.
+During sampling, the diffusion model predicts a score via the network
+D
+ψ
+D_{\psi}
+, which is then adjusted using the gradient of the task-specific objective
+g
+g
+:
+∇
+~
+𝒙
+n
+​
+log
+⁡
+p
+⁡
+(
+𝒙
+n
+∣
+𝒚
+^
+)
+=
+∇
+𝒙
+n
+​
+log
+​
+p
+​
+(
+𝒙
+n
+)
+−
+w
+​
+∇
+𝒙
+n
+g
+​
+(
+𝒚
+^
+,
+𝒙
+n
+)
+,
+\tilde{\nabla}_{\bm{x}_{n}}\log p(\bm{x}_{n}\mid\hat{\bm{y}})=\nabla_{\bm{x}_{n}}\log p(\bm{x}_{n})-w\nabla_{\bm{x}_{n}}g(\hat{\bm{y}},\bm{x}_{n}),
+This allows the generation process to remain plausible with respect to the learned prior while being steered toward samples faithful to the additional observations in the input videos.
+For the reconstruction task, we use three categories of objectives:
+(1) Reprojection term
+g
+reproj
+g_{\text{reproj}}
+, which aligns the generated sample with 2D observations, including contact binaries, 2D hand joints, and object masks. We apply a one-way Chamfer loss between the reprojected object and the segmented mask to handle occlusion and truncation;
+(2) Interaction term
+g
+inter
+g_{\text{inter}}
+, which enforces realistic hand–object dynamics by minimizing distances, encouraging rigid transport under contact, and penalizing motion when contacts are absent in consecutive frames, following a similar formulation as
+ℒ
+inter
+\mathcal{L}_{\text{inter}}
+during model training;
+(3) Temporal smoothness term
+g
+temp
+g_{\text{temp}}
+, which regularizes temporal consistency and ensures smooth trajectories.
+VLM Contact Assignment.
+To detect hand-object contact, we use a Vision-Language Model (VLM)
+[
+49
+]
+enhanced by spatial prompting and in-context learning. We segment and index hands and candidate objects, overlaying masks on the image to improve localization in cluttered scenes (Fig.
+3
+). The VLM then identifies contacts via a JSON output, constrained by validation rules—such as a “one-out-of-
+k
+k
+” contact limit—to distinguish true touch from proximity. As we find a tendency for false positives in VLM, we provide five annotated examples for calibration. These refinements increased the contact detection F1 score from 57% to 81%. For efficiency, we subsample videos to 3 fps and compute the reprojection term only at these frames.
+Blending Long Videos.
+Our diffusion model generates motion clips within a fixed temporal window of 120 frames.
+To reconstruct sequences longer than this window (
+L
+>
+120
+L>120
+), we divide the sequence into overlapping sliding windows.
+During each diffusion step, we denoise all windows in parallel and blend overlapping regions
+[
+3
+]
+and per-frame shape parameters into shared ones.
+This ensures smooth temporal transitions and consistency across windows.
+The blended full-length sequence is then refined under the guidance of the cost term
+g
+g
+, after which each window’s posterior
+𝒙
+n
+\bm{x}_{n}
+is updated and the diffusion process continues.
+4
+Experiment
+We first train our diffusion model on HOT3D-CLIP
+[
+2
+]
+and visualize its generated motions in Section
+4
+.
+We then evaluate reconstructed motions both quantitatively and qualitatively on held-out sequences, comparing WHOLE with state-of-the-art baselines for hands, objects, and combined baselines formed by pairing the best-performing hand and object methods. In addition, we create specific subsets of the test set, including frames where objects are in contact with the hands, truncated, or out of view,
+We report reconstructed hand motion, object motion, and interaction motions both qualitatively and quantitatively (Section
+4.2
+). Lastly, we analyze the effect of important components of our model (Section
+4.3
+).
+Training Data and Setups.
+HOT3D is an egocentric dataset captured via Aria Glasses
+[
+9
+]
+, featuring real-world hand-object interactions. We utilize HOT3D-CLIP, a curated subset with verified annotations for hand-object poses, templates, and camera trajectories from shipped gravity-aware metric SLAM system.
+Each sequence consists of 150 frames (3 seconds). We train our diffusion model
+D
+ψ
+D_{\psi}
+on 2,443 sequences. For evaluation, we hold out 50 dynamic object trajectories (displacement
+>
+5
+>5
+cm) from unseen sequences. While training contact labels are defined by proximity (
+<
+5
+<5
+mm), reconstruction labels are provided by prompting GPT-5
+[
+1
+]
+.
+4.1
+Visualizing Hand-Object Motion Generation
+We visualize conditional blended generation from our diffusion model in Figure
+4
+.
+The conditioning hand motion
+𝑯
+¯
+\bar{\bm{H}}
+is taken from the test split, and we display six key frames from the full 150-frame sequence.
+Meshes are shown in red when hand-object contact is predicted.
+The two rows illustrate different generated samples conditioned on the same approximated hand motion.
+The generated hand-object motions are realistic and physically coherent.
+Within each frame, the spatial relationships between hands and objects are well captured, and the object dynamics appear plausible-objects stay relatively still when no contact is predicted and move naturally with the hands when contact occurs.
+The generated hand motion are similar as they just refine the approximated hand motion.
+Yet, the predicted contact timings vary, revealing different grasp and release moments.
+As a result, the reconstructed object trajectories also show diversity. For instance, in the second column, the mixer is picked up later in the first row.
+The hand-object relative poses are likewise diverse, such as the bottle being grasped in different ways in the last column.
+Please refer to the videos in the
+Sup. Mat.
+for the full generated motion dynamics.
+WA-MPJPE
+↓
+\downarrow
+W-MPJPE
+↓
+\downarrow
+ACC-NORM
+↓
+\downarrow
+PA-MPJPE
+↓
+\downarrow
+HaMeR
+[
+38
+]
+16.93
+28.35
+32.31
+12.76
+HaWoR
+[
+73
+]
+3.76
+11.26
+4.15
+8.99
+FP+HaWoR-simple
+3.34
+9.16
+0.95
+8.99
+FP+HaWoR-contact
+5.85
+12.19
+1.26
+8.99
+WHOLE (Ours)
+3.26
+10.41
+0.58
+6.67
+Table 1
+:
+Hand Motion.
+We evaluate our method with state-of-the-art models in hand motion reconstruction. WA/W-MPJPE are in
+c
+​
+m
+cm
+, PA-MPJPE is in
+m
+​
+m
+mm
+.
+Split
+All
+Contact
+Truncated
+Out-of-view
+ADD
+↑
+\uparrow
+ADD-S
+↑
+\uparrow
+ACC
+↓
+\downarrow
+ADD
+↑
+\uparrow
+ADD-S
+↑
+\uparrow
+ADD
+↑
+\uparrow
+ADD-S
+↑
+\uparrow
+ADD
+↑
+\uparrow
+ADD-S
+↑
+\uparrow
+FoundationPose(FP)
+[
+55
+]
+36.1
+51.9
+0.579
+46.6
+66.6
+18.6
+33.8
+4.8
+19.6
+FP+HaWoR-simple
+30.4
+45.0
+0.896
+38.6
+57.5
+19.4
+28.9
+7.8
+13.1
+FP+HaWoR-contact
+31.5
+46.9
+0.572
+42.3
+62.4
+22.7
+35.8
+8.9
+17.7
+Ours
+51.1
+69.9
+0.11
+55.8
+77.3
+42.5
+60.2
+28.8
+43.8
+Table 2
+:
+Object Motion.
+We evaluate our method with state-of-the-art baselines in object motion reconstruction. We report AUC of ADD, ADD-S on the whole test split (All) and 3 subsets (Contact, Truncated, and Out-of-View).
+Split
+All
+Contact
+Truncated
+Out-of-view
+ADD
+↑
+\uparrow
+ADD-S
+↑
+\uparrow
+ACC
+↓
+\downarrow
+ADD
+↑
+\uparrow
+ADD-S
+↑
+\uparrow
+ADD
+↑
+\uparrow
+ADD-S
+↑
+\uparrow
+ADD
+↑
+\uparrow
+ADD-S
+↑
+\uparrow
+FP+HaWoR-simple
+29.0
+44.0
+0.896
+36.8
+55.7
+18.6
+28.8
+8.1
+16.0
+FP+HaWoR-contact
+36.8
+53.8
+0.572
+49.1
+71.1
+27.3
+43.0
+9.8
+21.3
+Table 3
+:
+Interactions Error.
+We evaluate our method with state-of-the-art baselines in object motion reconstruction. We report AUC of ADD, ADD-S on the whole test split (All) and 3 challenging subsets after aligning object motion with predicted hand motion.
+Figure 5
+:
+HOI Visualization.
+We show hand-object reconstructions from GT (green), FP+HaWor-Simple (purple), FP+HaWor-Contact (pink), and WHOLE (blue). Red circle highlights floating objects. We encourage readers to see videos in
+Sup. Mat.
+.
+4.2
+Guided Reconstruction
+Metrics.
+Hands
+are evaluated using standard metrics from whole-body/hand pose estimation
+[
+45
+,
+69
+,
+73
+,
+71
+]
+.
+W-MPJPE aligns all hand joints globally, WA-MPJPE aligns using the first frame, and PA-MPJPE performs per-frame Procrustes alignment.
+ACC-NORM measures joint acceleration error, reflecting temporal smoothness.
+Object poses
+are evaluated using common metrics from 6D pose estimation: AUC of ADD and ADD-S
+[
+57
+,
+20
+,
+55
+]
+.
+ADD measures the average distance between corresponding model points transformed by the predicted and ground-truth poses, while ADD-S extends this metric to handle symmetric objects.
+To evaluate
+hand-object interaction
+,
+i.e
+.
+, their relative spatial alignment, we report the AUC of ADD and ADD-S for object poses
+after
+globally aligning them using the predicted hand trajectories.
+Baselines.
+We compare WHOLE with state-of-the-art methods from their respective domains: HaWoR
+[
+73
+]
+for world-grounded hand motion estimation and Foundation Pose (FP)
+[
+55
+]
+for 6D object pose estimation.
+Since FP requires RGB-D input, we predict depth maps from RGB videos using Metric3D
+[
+68
+]
+for metric depth estimation. (We also experiment with more recent depth estimation methods
+[
+39
+,
+59
+]
+but observe surprisingly degraded performance.)
+To further evaluate joint reconstruction, we introduce combined baselines that integrate the best components from both domains, followed by test-time optimization: FP+HaWoR-simple/contact.
+These baselines use the same optimization objectives
+g
+reproj
+,
+g
+inter
+,
+g
+temp
+g_{\text{reproj}},g_{\text{inter}},g_{\text{temp}}
+as our test-time guidance (Sec.
+4.2
+).
+FP+HaWoR-simple optimizes hand and object trajectories with respect to observed evidence but excludes the interaction term
+g
+inter
+g_{\text{inter}}
+, while FP+HaWoR-contact includes it to enforce hand-object consistency.
+4.2.1
+Comparing Hand Motion
+HaMeR is an image-based hand prediction system thus its 4D trajectories in world coordinate are not aligned well.
+We find that HaWoR performs reasonably well in terms of hand motion quality.
+Note that the difference from the results reported in their paper comes from our evaluation on longer clips (150 frames instead of 100).
+Joint optimization without considering object trajectories with object motion in FP+HaWoR-simple yields smoother trajectories (lower ACC-NORM) and better global alignment.
+Adding the interaction loss (FP+HaWoR-contact) improves object performance (Table
+2
+,
+3
+) but reduces hand accuracy, revealing a trade-off between precise hand poses for stronger hand-object consistency.
+In contrast, WHOLE achieves the best overall performance (second best on one metric), excelling in global alignment, temporal smoothness, and local pose accuracy.
+Importantly, our method shows a clear improvement in local hand pose quality over HaWoR, highlighting the advantage of jointly reconstructing hands and objects within a unified generative framework.
+4.2.2
+Object Motion.
+FoundationPose (FP) performs moderately well when objects are in contact but struggles under truncation or out-of-view conditions.
+Note that for out-of-view frames, we interpolate 6D poses between the nearest visible frames in world space.
+Optimizing baseline only with reprojection and temporal smoothness (FP+HaWoR-simple) helps propagate poses to out-of-view frames but reduces accuracy on the contact subsets.
+It is likely because severe hand-object occlusion-reprojection loss on occluded masks can be misleading and ultimately degrades overall performance.
+Adding the interaction term (FP+HaWoR-contact) improves contact performance by leveraging hand cues but still falls short of the off-the-shelf FoundationPose.
+In contrast, WHOLE achieves consistently strong results across all subsets and metrics.
+It handles truncation and occlusion more robustly, producing smoother and more coherent object trajectories.
+By jointly reasoning about hand and object motion through a learned generative prior, it infers plausible movement even when parts of the object are missing or out of view.
+This demonstrates that our unified approach is more reliable than simply combining off-the-shelf methods with post-optimization.
+4.2.3
+Interaction Quality.
+While we report hand and object motion separately, we also evaluate their
+relative motion
+by measuring object error after alignment with the predicted hand trajectory.
+The combined baseline (FP+HaWoR-contact) shows clear improvement over its variant without interaction optimization, highlighting the importance of modeling hand-object coupling.
+Finally, WHOLE surpasses both baselines by a large margin, demonstrating its strong capability to capture coherent and physically consistent hand-object interactions.
+We present visual comparisons in Figure
+5
+, which reflect trends consistent with the quantitative results.
+In the top row of each example, we visualize the reconstructed hands and objects from the camera view, while the bottom row shows hand-object motion from an allocentric perspective across four keyframes.
+As shown, baseline methods often produce floating objects (highlighted in red) and unrealistic hand-object relations, particularly in the FP+HaWoR-simple variant.
+In contrast, WHOLE yields temporally smooth and spatially coherent reconstructions, capturing more natural and physically plausible hand-object interactions.
+4.3
+Ablation Study
+How good is VLM-annotated contact label?
+In Table
+4
+, we replace the VLM-annotated contact labels at 3 fps with ground-truth contact annotations at 30 fps.
+While there remains some room for improvement, the VLM-based results is close to the ceiling performance across hand motion, object motion, and their relative spatial alignment.
+Is intertwined generation and optimization necessary?
+WHOLE alternates diffusion steps with task-specific guidance throughout the generation process.
+To examine the importance of this coupling, we compare it with a “Gen+Opt” variant that first performs unguided generation, then applies post-hoc optimization using the same objective terms.
+Results in Table
+4
+Line 2 show that incorporating guidance
+during
+diffusion is essential. It keeps the model’s samples within the data manifold while progressively refining motion under task constraints.
+Hand
+Object
+Interaction
+W-
+↓
+\downarrow
+WA-
+↓
+\downarrow
+ACC
+↓
+\downarrow
+ADD
+↑
+\uparrow
+ADD-S
+↑
+\uparrow
+ACC
+↓
+\downarrow
+ADD
+↑
+\uparrow
+ADD-S
+↑
+\uparrow
+ACC
+↓
+\downarrow
+GT contact
+10.79
+0.55
+6.61
+53.7
+72.2
+0.07
+56.1
+74.5
+0.07
+Gen+Opt
+15.92
+0.76
+9.34
+44.3
+61.0
+0.13
+45.0
+62.1
+0.13
+w/o
+ℒ
+inter
+\mathcal{L}_{\text{inter}}
+10.47
+0.61
+6.70
+28.5
+42.9
+0.09
+30.6
+45.5
+0.09
+WHOLE
+10.41
+0.58
+6.67
+51.1
+69.9
+0.11
+53.5
+72.3
+0.11
+Table 4
+:
+Ablation Study.
+We compare our full model on hand, object, and relative motion quality against variants that use ground-truth contact, not alternate diffusion and guidance step, or exclude the interaction objective.
+Test Data
+HOT3D
+H2O
+Train Data
+ADD
+↑
+\uparrow
+ADD-S
+↑
+\uparrow
+ACC
+↓
+\downarrow
+ADD
+↑
+\uparrow
+ADD-S
+↑
+\uparrow
+ACC
+↓
+\downarrow
+HOT3D
+WHOLE (Ours)
+51.1
+69.9
+0.11
+44.7
+64.9
+0.23
+H2O
+H2OTR
+[
+5
+]
+3.2
+7.7
+25.4
+62.1
+77.1
+0.48
+Table 5
+:
+Zero-Shot Generalization.
+Gray lines denote zero-shot test dataset while unshaded line denote in-domain test split.
+How much does the interaction loss help?
+In Table
+4
+Line 3, we show that the interaction objectives that capture the spatial relationships and relative dynamics conditioned on predicted contact is also important for producing faithful object motion and realistic hand-object interactions.
+How well does the model generalize?
+In Table
+5
+, we evaluate WHOLE zero-shot on the unseen H2O dataset
+[
+27
+]
+. While WHOLE experiences a moderate performance drop, RGB-conditioned baselines like H2OTR
+[
+5
+]
+collapse catastrophically out-of-distribution. We attribute this robustness to our motion-space prior, which exhibits a smaller domain gap than the appearance-based representations used in prior work. While encouraging, scaling to more diverse training data and broader cross-dataset evaluation remain important directions for achieving truly generalizable reconstruction.
+4.4
+Application: Hand-Guided HOI Planner
+Our framework is flexible beyond reconstruction: given a coarse hand trajectory
+𝑯
+¯
+\bar{\bm{H}}
+, picking and placing times (contact label
+𝑪
+\bm{C}
+), along with the object template, we can directly synthesize diverse hand-object interaction motions without any video input.
+This could potentially enable a robot planner to enumerate candidate object trajectories for a specific coarse hand motion at a specific picking and placing timing.
+Specifically, the coarse hand trajectory serves as the diffusion conditioning, while contact labels are injected at each guidance step via an L2 loss on binary contact predictions alongside
+g
+inter
+g_{\text{inter}}
+and
+g
+temp
+g_{\text{temp}}
+. Please refer to our project page for video results.
+5
+Discussion
+Limitations and Future Work.
+Our current framework reconstructs each hand-object pair independently. A natural next step is extending it to scene-level, multi-object reconstruction through joint diffusion and scene-level objectives.
+The method also assumes a known object template, which could be relaxed by incorporating LLM-based retrieval
+[
+56
+]
+or template-free generation
+[
+64
+,
+10
+]
+.
+Finally, since our generative prior is trained on a single dataset, scaling it with recent large-scale hand-object datasets
+[
+33
+,
+25
+]
+would improve generalization and robustness.
+Conclusion.
+We introduced WHOLE, a unified framework for reconstructing hand articulation and object trajectories from metric-SLAMed egocentric videos.
+By combining a learned generative motion prior with visual and contact guidance, it achieves coherent and plausible reconstructions under challenging conditions.
+We believe this framework offers a promising step toward scalable, scene-level hand-object understanding and generative modeling of human interactions in everyday environments.
+References
+[1]
+J. Achiam, S. Adler, S. Agarwal, L. Ahmad, I. Akkaya, F. L. Aleman, D. Almeida, J. Altenschmidt, S. Altman, S. Anadkat,
+et al.
+(2023)
+Gpt-4 technical report
+.
+arXiv preprint arXiv:2303.08774
+.
+Cited by:
+§3.2
+,
+§4
+.
+[2]
+P. Banerjee, S. Shkodrani, P. Moulon, S. Hampali, S. Han, F. Zhang, L. Zhang, J. Fountain, E. Miller, S. Basol,
+et al.
+(2025)
+Hot3d: hand and object tracking in 3d from egocentric multi-view videos
+.
+In
+CVPR
+,
+Cited by:
+§1
+,
+§4
+.
+[3]
+O. Bar-Tal, L. Yariv, Y. Lipman, and T. Dekel
+(2023)
+Multidiffusion: fusing diffusion paths for controlled image generation.(2023)
+.
+ICLR
+.
+Cited by:
+§3.2
+.
+[4]
+Y. Chao, W. Yang, Y. Xiang, P. Molchanov, A. Handa, J. Tremblay, Y. S. Narang, K. Van Wyk, U. Iqbal, S. Birchfield, J. Kautz, and D. Fox
+(2021)
+DexYCB: a benchmark for capturing hand grasping of objects
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[5]
+H. Cho, C. Kim, J. Kim, S. Lee, E. Ismayilzada, and S. Baek
+(2023)
+Transformer-based unified recognition of two hands manipulating objects
+.
+In
+CVPR
+,
+Cited by:
+§4.3
+,
+Table 5
+.
+[6]
+D. Damen, H. Doughty, G. M. Farinella, S. Fidler, A. Furnari, E. Kazakos, D. Moltisanti, J. Munro, T. Perrett, W. Price, and M. Wray
+(2018)
+Scaling egocentric vision: the epic-kitchens dataset
+.
+In
+ECCV
+,
+Cited by:
+§2
+.
+[7]
+A. Darkhalil, R. Guerrier, A. W. Harley, and D. Damen
+(2025)
+Egopoints: advancing point tracking for egocentric videos
+.
+In
+WACV
+,
+Cited by:
+§2
+.
+[8]
+P. Dhariwal and A. Nichol
+(2021)
+Diffusion models beat gans on image synthesis
+.
+NeurIPS
+.
+Cited by:
+§3.2
+.
+[9]
+J. Engel, K. Somasundaram, M. Goesele, A. Sun, A. Gamino, A. Turner, A. Talattof, A. Yuan, B. Souti, B. Meredith,
+et al.
+(2023)
+Project aria: a new tool for egocentric multi-modal ai research
+.
+arXiv preprint arXiv:2308.13561
+.
+Cited by:
+§4
+.
+[10]
+Z. Fan, M. Parelli, M. E. Kadoglou, X. Chen, M. Kocabas, M. J. Black, and O. Hilliges
+(2024)
+Hold: category-agnostic 3d reconstruction of interacting hands and objects from video
+.
+In
+CVPR
+,
+Cited by:
+Appendix A
+,
+§1
+,
+§2
+,
+§5
+.
+[11]
+Z. Fan, O. Taheri, D. Tzionas, M. Kocabas, M. Kaufmann, M. J. Black, and O. Hilliges
+(2023)
+ARCTIC: a dataset for dexterous bimanual hand-object manipulation
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[12]
+H. Feng, J. Zhang, Q. Wang, Y. Ye, P. Yu, M. J. Black, T. Darrell, and A. Kanazawa
+(2025)
+St4rtrack: simultaneous 4d reconstruction and tracking in the world
+.
+ICCV
+.
+Cited by:
+§1
+,
+§2
+.
+[13]
+G. Garcia-Hernando, S. Yuan, S. Baek, and T. Kim
+(2018)
+First-person hand action benchmark with RGB-D videos and 3D hand pose annotations
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[14]
+E. Gartner, M. Andriluka, H. Xu, and C. Sminchisescu
+(2022)
+PACE: physics-based animation and control of expressive 3D characters
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[15]
+K. Grauman, A. Westbury, E. Byrne, Z. Chavis, A. Furnari, R. Girdhar, J. Hamburger, H. Jiang, M. Liu, X. Liu, M. Martin, T. Nagarajan, I. Radosavovic, S. K. Ramakrishnan, F. Ryan, J. Sharma, M. Wray, M. Xu, E. Z. Xu, C. Zhao, S. Bansal, D. Batra, V. Cartillier, S. Crane, T. Do, M. Doulaty, A. Erapalli, C. Feichtenhofer, A. Fragomeni, Q. Fu, C. Fuegen, A. Gebreselasie, C. Gonzalez, J. Hillis, X. Huang, Y. Huang, W. Jia, W. Khoo, J. Kolar, S. Kottur, A. Kumar, F. Landini, C. Li, Y. Li, Z. Li, K. Mangalam, R. Modhugu, J. Munro, T. Murrell, T. Nishiyasu, W. Price, P. R. Puentes, M. Ramazanova, L. Sari, K. Somasundaram, A. Southerland, Y. Sugano, R. Tao, M. Vo, Y. Wang, X. Wu, T. Yagi, Y. Zhu, P. Arbelaez, D. Crandall, D. Damen, G. M. Farinella, B. Ghanem, V. K. Ithapu, C. V. Jawahar, H. Joo, K. Kitani, H. Li, R. Newcombe, A. Oliva, H. S. Park, J. M. Rehg, Y. Sato, J. Shi, M. Z. Shou, A. Torralba, L. Torresani, M. Yan, and J. Malik
+(2022)
+Ego4D: around the World in 3,000 Hours of Egocentric Video
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[16]
+K. Grauman, A. Westbury, L. Torresani, K. Kitani, J. Malik, T. Afouras, K. Ashutosh, V. Baiyya, S. Bansal, B. Boote,
+et al.
+(2024)
+Ego-exo4d: understanding skilled human activity from first-and third-person perspectives
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[17]
+S. Hampali, M. Rad, M. Oberweger, and V. Lepetit
+(2020)
+Honnotate: a method for 3D annotation of hand and object poses
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[18]
+Y. Hasson, G. Varol, D. Tzionas, I. Kalevatykh, M. J. Black, I. Laptev, and C. Schmid
+(2019)
+Learning joint reconstruction of hands and manipulated objects
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[19]
+J. Ho, A. Jain, and P. Abbeel
+(2020)
+Denoising diffusion probabilistic models
+.
+In
+NeurIPS
+,
+Cited by:
+§3.1
+.
+[20]
+T. Hodaň, M. Sundermeyer, B. Drost, Y. Labbé, E. Brachmann, F. Michel, C. Rother, and J. Matas
+(2020)
+BOP challenge 2020 on 6d object localization
+.
+In
+ECCV
+,
+Cited by:
+Appendix A
+,
+§4.2
+.
+[21]
+R. Hoque, P. Huang, D. J. Yoon, M. Sivapurapu, and J. Zhang
+(2025)
+EgoDex: learning dexterous manipulation from large-scale egocentric video
+.
+arXiv preprint arXiv:2505.11709
+.
+Cited by:
+§1
+,
+§2
+.
+[22]
+D. Huang, X. Ji, X. He, J. Sun, T. He, Q. Shuai, W. Ouyang, and X. Zhou
+(2022)
+Reconstructing hand-held objects from monocular video
+.
+In
+SIGGRAPH Asia
+,
+Cited by:
+§1
+,
+§2
+.
+[23]
+S. Jin, L. Xu, J. Xu, C. Wang, W. Liu, C. Qian, W. Ouyang, and P. Luo
+(2020)
+Whole-body human pose estimation in the wild
+.
+In
+ECCV
+,
+Cited by:
+§2
+.
+[24]
+S. Kareer, D. Patel, R. Punamiya, P. Mathur, S. Cheng, C. Wang, J. Hoffman, and D. Xu
+(2025)
+Egomimic: scaling imitation learning via egocentric video
+.
+In
+ICRA
+,
+Cited by:
+§1
+.
+[25]
+J. Kim, J. Kim, J. Na, and H. Joo
+(2025)
+Parahome: parameterizing everyday home activities towards 3d generative modeling of human-object interactions
+.
+In
+CVPR
+,
+Cited by:
+§5
+.
+[26]
+T. Kwon, B. Tekin, J. Stühmer, F. Bogo, and M. Pollefeys
+(2021)
+H2O: two hands manipulating objects for first person interaction recognition
+.
+In
+ICCV
+,
+Cited by:
+§2
+.
+[27]
+T. Kwon, B. Tekin, J. Stühmer, F. Bogo, and M. Pollefeys
+(2021)
+H2o: two hands manipulating objects for first person interaction recognition
+.
+In
+ICCV
+,
+Cited by:
+§4.3
+.
+[28]
+J. Li, A. Clegg, R. Mottaghi, J. Wu, X. Puig, and C. K. Liu
+(2024)
+Controllable human-object interaction synthesis
+.
+In
+ECCV
+,
+Cited by:
+Appendix A
+.
+[29]
+J. Li, K. Liu, and J. Wu
+(2023)
+Ego-body pose estimation via ego-head pose estimation
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[30]
+J. Li, J. Wu, and C. K. Liu
+(2023)
+Object motion guided human motion synthesis
+.
+TOG
+.
+Cited by:
+Appendix A
+,
+§3.1
+.
+[31]
+Z. Li, R. Tucker, F. Cole, Q. Wang, L. Jin, V. Ye, A. Kanazawa, A. Holynski, and N. Snavely
+(2025)
+MegaSaM: accurate, fast and robust structure and motion from casual dynamic videos
+.
+In
+CVPR
+,
+Cited by:
+§1
+.
+[32]
+K. Lin, L. Wang, and Z. Liu
+(2021)
+Mesh graphormer
+.
+In
+ICCV
+,
+Cited by:
+§2
+.
+[33]
+J. Lu, C. P. Huang, U. Bhattacharya, Q. Huang, and Y. Zhou
+(2025)
+HUMOTO: a 4d dataset of mocap human object interactions
+.
+ICCV
+.
+Cited by:
+§5
+.
+[34]
+Z. Lv, N. Charron, P. Moulon, A. Gamino, C. Peng, C. Sweeney, E. Miller, H. Tang, J. Meissner, J. Dong, K. Somasundaram, L. Pesqueira, M. Schwesinger, O. Parkhi, Q. Gu, R. D. Nardi, S. Cheng, S. Saarinen, V. Baiyya, Y. Zou, R. Newcombe, J. J. Engel, X. Pan, and C. Ren
+(2024)
+Aria everyday activities dataset
+.
+External Links:
+2402.13349
+Cited by:
+§2
+.
+[35]
+L. Ma, Y. Ye, F. Hong, V. Guzov, Y. Jiang, R. Postyeni, L. Pesqueira, A. Gamino, V. Baiyya, H. J. Kim, K. Bailey, D. S. Fosas, C. K. Liu, Z. Liu, J. Engel, R. D. Nardi, and R. Newcombe
+(2024)
+Nymeria: a massive collection of multimodal egocentric daily motion in the wild
+.
+In
+ECCV
+,
+Cited by:
+§2
+.
+[36]
+G. Moon, S. Yu, H. Wen, T. Shiratori, and K. M. Lee
+(2020)
+InterHand2.6m: a dataset and baseline for 3D interacting hand pose estimation from a single rgb image
+.
+In
+ECCV
+,
+Cited by:
+§2
+.
+[37]
+S. Patra, K. Gupta, F. Ahmad, C. Arora, and S. Banerjee
+(2019)
+Ego-slam: a robust monocular slam for egocentric videos
+.
+In
+WACV
+,
+Cited by:
+§1
+.
+[38]
+G. Pavlakos, D. Shan, I. Radosavovic, A. Kanazawa, D. Fouhey, and J. Malik
+(2024)
+Reconstructing hands in 3D with transformers
+.
+In
+CVPR
+,
+Cited by:
+§2
+,
+Table 1
+.
+[39]
+L. Piccinelli, C. Sakaridis, Y. Yang, M. Segu, S. Li, W. Abbeloos, and L. Van Gool
+(2025)
+Unidepthv2: universal monocular metric depth estimation made simpler
+.
+TPAMI
+.
+Cited by:
+§4.2
+.
+[40]
+C. Plizzari, S. Goel, T. Perrett, J. Chalk, A. Kanazawa, and D. Damen
+(2025)
+Spatial cognition from egocentric video: out of sight, not out of mind
+.
+In
+3DV
+,
+Cited by:
+§2
+.
+[41]
+B. Poole, A. Jain, J. T. Barron, and B. Mildenhall
+(2022)
+Dreamfusion: text-to-3d using 2d diffusion
+.
+ICLR
+.
+Cited by:
+§3.2
+.
+[42]
+S. Prokudin, C. Lassner, and J. Romero
+(2019)
+Efficient learning on point clouds with basis point sets
+.
+In
+ICCV
+,
+Cited by:
+§3.1
+.
+[43]
+J. Romero, D. Tzionas, and M. J. Black
+(2017)
+Embodied hands: modeling and capturing hands and bodies together
+.
+In
+TOG
+,
+Cited by:
+§2
+,
+§3.1
+.
+[44]
+Z. Shen, H. Pi, Y. Xia, Z. Cen, S. Peng, Z. Hu, H. Bao, R. Hu, and X. Zhou
+(2024)
+World-grounded human motion recovery via gravity-view coordinates
+.
+In
+SIGGRAPH Asia
+,
+Cited by:
+§3.1
+.
+[45]
+S. Shin, J. Kim, E. Halilaj, and M. J. Black
+(2024)
+WHAM: reconstructing world-grounded humans with accurate 3D motion
+.
+In
+CVPR
+,
+External Links:
+Document
+Cited by:
+Appendix A
+,
+§1
+,
+§2
+,
+§4.2
+.
+[46]
+Y. Sun, W. Liu, Q. Bao, Y. Fu, T. Mei, and M. J. Black
+(2023)
+TRACE: monocular global human trajectory estimation in the wild
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[47]
+O. Taheri, Y. Zhou, D. Tzionas, Y. Zhou, D. Ceylan, S. Pirk, and M. J. Black
+(2024)
+GRIP: generating interaction poses using latent consistency and spatial cues
+.
+In
+3DV
+,
+Cited by:
+§3.1
+.
+[48]
+X. Tang, T. Wang, and C. Fu
+(2021)
+Towards accurate alignment in real-time 3D hand-mesh reconstruction
+.
+In
+ICCV
+,
+Cited by:
+§2
+.
+[49]
+G. R. Team, S. Abeyruwan, J. Ainslie, J. Alayrac, M. G. Arenas, T. Armstrong, A. Balakrishna, R. Baruch, M. Bauza, M. Blokzijl,
+et al.
+(2025)
+Gemini robotics: bringing ai into the physical world
+.
+arXiv preprint arXiv:2503.20020
+.
+Cited by:
+§3.2
+.
+[50]
+G. Tevet, S. Raab, B. Gordon, Y. Shafir, D. Cohen-Or, and A. H. Bermano
+(2023)
+Human motion diffusion model
+.
+ICLR
+.
+Cited by:
+Appendix A
+.
+[51]
+V. Tschernezki, A. Darkhalil, Z. Zhu, D. Fouhey, I. Laina, D. Larlus, D. Damen, and A. Vedaldi
+(2024)
+Epic Fields: marrying 3D geometry and video understanding
+.
+NeurIPS
+.
+Cited by:
+§1
+.
+[52]
+R. Y. Wang and J. Popović
+(2009)
+Real-time hand-tracking with a color glove
+.
+TOG
+.
+Cited by:
+§2
+.
+[53]
+R. Wang, P. Xu, H. Shi, E. Schumann, and C. K. Liu
+(2024)
+F
+\
+\backslash
+” urelise: capturing and physically synthesizing hand motions of piano performance
+.
+SIGGRAPH Asia
+.
+Cited by:
+§2
+.
+[54]
+W. Wang, C. K. Liu, and M. Kennedy III
+(2024)
+Egonav: egocentric scene-aware human trajectory prediction
+.
+arXiv preprint arXiv:2403.19026
+.
+Cited by:
+§2
+.
+[55]
+B. Wen, W. Yang, J. Kautz, and S. Birchfield
+(2024)
+Foundationpose: unified 6d pose estimation and tracking of novel objects
+.
+In
+CVPR
+,
+Cited by:
+Appendix A
+,
+§2
+,
+§4.2
+,
+§4.2
+,
+Table 2
+.
+[56]
+J. Wu, G. Pavlakos, G. Gkioxari, and J. Malik
+(2024)
+Reconstructing hand-held objects in 3d from images and videos
+.
+arXiv preprint arXiv:2404.06507
+.
+Cited by:
+§2
+,
+§5
+.
+[57]
+Y. Xiang, T. Schmidt, V. Narayanan, and D. Fox
+(2017)
+Posecnn: a convolutional neural network for 6d object pose estimation in cluttered scenes
+.
+RSS
+.
+Cited by:
+§4.2
+.
+[58]
+Y. Xiao, J. Wang, N. Xue, N. Karaev, Y. Makarov, B. Kang, X. Zhu, H. Bao, Y. Shen, and X. Zhou
+(2025)
+SpatialTrackerV2: 3d point tracking made easy
+.
+In
+ICCV
+,
+Cited by:
+§1
+,
+§2
+.
+[59]
+L. Yang, B. Kang, Z. Huang, Z. Zhao, X. Xu, J. Feng, and H. Zhao
+(2024)
+Depth anything v2
+.
+NeurIPS
+.
+Cited by:
+§4.2
+.
+[60]
+R. Yang, Q. Yu, Y. Wu, R. Yan, B. Li, A. Cheng, X. Zou, Y. Fang, H. Yin, S. Liu, S. Han, Y. Lu, and X. Wang
+(2025)
+EgoVLA: learning vision-language-action models from egocentric human videos
+.
+Cited by:
+§2
+.
+[61]
+V. Ye, G. Pavlakos, J. Malik, and A. Kanazawa
+(2023)
+Decoupling human and camera motion from videos in the wild
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[62]
+Y. Ye, Y. Feng, O. Taheri, H. Feng, S. Tulsiani, and M. J. Black
+(2026)
+Predicting 4d hand trajectory from monocular videos
+.
+3DV
+.
+Cited by:
+§2
+.
+[63]
+Y. Ye, A. Gupta, K. Kitani, and S. Tulsiani
+(2024)
+G-HOP: generative hand-object prior for interaction reconstruction and grasp synthesis
+.
+In
+CVPR
+,
+Cited by:
+Appendix A
+,
+§1
+.
+[64]
+Y. Ye, A. Gupta, K. Kitani, and S. Tulsiani
+(2024)
+G-hop: generative hand-object prior for interaction reconstruction and grasp synthesis
+.
+In
+CVPR
+,
+Cited by:
+§2
+,
+§5
+.
+[65]
+Y. Ye, A. Gupta, and S. Tulsiani
+(2022)
+What’s in your hands? 3d reconstruction of generic objects in hands
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[66]
+B. Yi, V. Ye, M. Zheng, Y. Li, L. Müller, G. Pavlakos, Y. Ma, J. Malik, and A. Kanazawa
+(2025)
+Estimating body and hand motion in an ego-sensed world
+.
+In
+CVPR
+,
+Cited by:
+§3.1
+.
+[67]
+B. Yi, V. Ye, M. Zheng, Y. Li, L. Müller, G. Pavlakos, Y. Ma, J. Malik, and A. Kanazawa
+(2025)
+Estimating body and hand motion in an ego-sensed world
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[68]
+W. Yin, C. Zhang, H. Chen, Z. Cai, G. Yu, K. Wang, X. Chen, and C. Shen
+(2023)
+Metric3d: towards zero-shot metric 3d prediction from a single image
+.
+In
+ICCV
+,
+Cited by:
+§4.2
+.
+[69]
+P. A. Your
+(2023)
+SLAHMR: simultaneous localization and human mesh recovery
+.
+In
+CVPR
+,
+Cited by:
+Appendix A
+,
+§1
+,
+§4.2
+.
+[70]
+Z. Yu, S. Zafeiriou, and T. Birdal
+(2025)
+Dyn-hamr: recovering 4d interacting hand motion from a dynamic camera
+.
+In
+CVPR
+,
+Cited by:
+§1
+,
+§2
+.
+[71]
+Z. Yu, S. Zafeiriou, and T. Birdal
+(2025)
+Dyn-hamr: recovering 4d interacting hand motion from a dynamic camera
+.
+In
+CVPR
+,
+Cited by:
+§4.2
+.
+[72]
+Y. Yuan, U. Iqbal, P. Molchanov, K. Kitani, and J. Kautz
+(2022)
+GLAMR: global occlusion-aware human mesh recovery with dynamic cameras
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[73]
+J. Zhang, J. Deng, C. Ma, and R. A. Potamias
+(2025)
+HaWoR: world-space hand motion reconstruction from egocentric videos
+.
+CVPR
+.
+Cited by:
+Appendix A
+,
+Appendix A
+,
+§2
+,
+§2
+,
+§3.1
+,
+§4.2
+,
+§4.2
+,
+Table 1
+.
+[74]
+W. Zhang, R. Dabral, V. Golyanik, V. Choutas, E. Alvarado, T. Beeler, M. Habermann, and C. Theobalt
+(2025)
+Bimart: a unified approach for the synthesis of 3d bimanual interaction with articulated objects
+.
+In
+CVPR
+,
+Cited by:
+§3.1
+.
+[75]
+X. Zhang, Q. Li, H. Mo, W. Zhang, and W. Zheng
+(2019)
+End-to-end hand mesh recovery from a monocular rgb image
+.
+In
+ICCV
+,
+Cited by:
+§2
+.
+[76]
+Y. Zhao, H. Ma, S. Kong, and C. Fowlkes
+(2024)
+Instance tracking in 3d scenes from egocentric videos
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[77]
+Y. Zhou, C. Barnes, J. Lu, J. Yang, and H. Li
+(2019)
+On the continuity of rotation representations in neural networks
+.
+In
+CVPR
+,
+Cited by:
+§3.1
+.
+[78]
+C. Zimmermann, D. Ceylan, J. Yang, B. Russell, M. Argus, and T. Brox
+(2019)
+Freihand: a dataset for markerless capture of hand pose and shape from single rgb images
+.
+In
+PICCV
+,
+Cited by:
+§2
+.
+Supplementary Material
+In supplementary material, we provide further details on implementing network, full VLM prompt, and evaluation metrics (Sec.
+A
+). We also visualize more comparisons and results in supplementary videos.
+Appendix A
+Implementation Details
+Network Architecture.
+We use a 4-layer transformer decoder with 4 attention heads for hand-to-object diffusion. The network is non-autoregressive, processing sequences jointly following
+[
+50
+]
+, with 12.35M parameters. The diffusion variable
+x
+x
+is a 73-dimensional vector comprising: a 9D object state, a 2D bimanual contact indicator, and bimanual hand representations (
+2
+×
+31
+2\times 31
+D)—global orientation (3), translation (3), pose PCA (15), and shape parameters (10). All inputs are projected to a consistent latent dimension of 512.
+The network is trained for 1,000,000 iterations using AdamW at a learning rate of
+2
+×
+10
+−
+4
+2\times 10^{-4}
+.
+To reduce overfitting, we augment the object template by sampling a random canonical pose applying a random rotation and a small translation jitter—for each training window.
+Training Loss.
+In addition to the DDPM loss, we introduce auxiliary objectives to enhance realism.
+(1)
+Interaction Loss
+(
+ℒ
+inter
+\mathcal{L}_{\text{inter}}
+) encourages realistic contact between the predicted hand-object motions and contact labels.
+It penalizes hand-object distances when contact is predicted and enforces near-rigid transport of contact points across consecutive contact frames
+[
+30
+,
+28
+]
+.
+Specifically, for each hand joint, we find its nearest object point
+p
+i
+p^{i}
+, rotate it by the object’s relative motion, and penalize deviation from its counterpart
+p
+i
++
+1
+p^{i+1}
+,
+i.e
+.
+‖
+𝑹
+i
++
+1
+​
+(
+𝑹
+i
+)
+T
+​
+p
+i
+−
+p
+i
++
+1
+‖
+\|\bm{R}^{i+1}(\bm{R}^{i})^{T}p^{i}-p^{i+1}\|
+, where
+𝑹
+\bm{R}
+is the object rotation.
+(2)
+Consistency Loss
+(
+ℒ
+const
+\mathcal{L}_{\text{const}}
+) promotes agreement among hand features before and after MANO forward kinematics,
+‖
+𝑱
+ψ
+−
+MANO
+​
+(
+𝚪
+ψ
+,
+𝚲
+ψ
+,
+𝚯
+ψ
+)
+‖
+2
+\|\bm{J}_{\psi}-\text{MANO}(\bm{\Gamma}_{\psi},\bm{\Lambda}_{\psi},\bm{\Theta}_{\psi})\|_{2}
+.
+(3)
+Temporal Smoothness
+(
+ℒ
+smooth
+\mathcal{L}_{\text{smooth}}
+) further penalizes large accelerations.
+Running Time.
+On a single NVIDIA RTX 6000 Blackwell GPU, our model processes a 150-frame clip in an average of 59.34 seconds. The inference time is dominated by the guidance step (59.06s), with the diffusion step requiring only 0.28s. This represents an orders-of-magnitude speedup over prior works such as
+[
+10
+]
+(30 hours) and
+[
+63
+]
+(1 hour). The peak memory footprint is 14GB. VLM queries take 18.6s on average per image with GPT-5.
+VLM Prompt.
+We prompt a VLM to label contact info, with additnoal in-context-learning exmaples. Full prompts are illustrated in Table in this appendix.
+Evaluation Metrics.
+All metrics are computed on 150-frame clips, which correspond to the original sequence length in HOT3D-CLIP, in contrast to prior work
+[
+73
+]
+, which typically evaluates on shorter 60–100 frame segments taken from the middle of the videos.
+To compute W/WA-MPJPE, we align the predicted trajectory to the ground truth using an affine transformation (scale, rotation, translation) estimated from selected keypoints.
+WA-MPJPE uses all joints from all frames, while W-MPJPE uses only the joints from the first two frames. Although trajectory error could be computed without alignment given ground-truth cameras, we follow the standard alignment protocol used in prior work
+[
+45
+,
+69
+,
+73
+]
+.
+For ADD/ADD-S of objects, we align predictions using the ground-truth camera poses.
+For HOI ADD/ADD-S, we first globally align the hand trajectory (as in WA-MPJPE) and then evaluate object error in this aligned space.
+The usual AUC
+[
+20
+,
+55
+]
+threshold of 0.1 is overly strict for egocentric HOI due to severe occlusion, truncation, and out-of-view frames, leading to saturated low scores.
+We therefore use a more permissive threshold of 0.3 to obtain a more informative evaluation.
+System Instruction
+You are a precise visual classifier for hand-object contact detection in
+cluttered scenes.
+CRITICAL CONSTRAINTS:
+1. Each hand (left/right) can be in contact with AT MOST ONE object at a time.
+2. "In contact" means direct physical touch: grasping, holding, pressing, or
+any visible contact.
+3. If a hand is not clearly touching any object, you must mark all objects as 0
+for that hand.
+User Prompt Template
+Analyze this image for hand–object contact (actual touching, not just reaching).
+VISUAL GUIDANCE:
+The image has been annotated with colored masks:
+- GREEN dot = Left hand
+- RED dot = Right hand
+- Other COLORED masks = Candidate objects (each object has a unique color)
+CANDIDATE OBJECTS (in order):
+1. obj1
+2. obj2
+3. obj3
+...
+STRICT DEFINITION OF CONTACT:
+For this task, contact means clear physical touching in this frame only.
+Contact (label = 1) requires BOTH:
+1. Mask intersection:
+- The hand mask and the object mask share some pixels or directly overlap
+at the boundary (no visible gap).
+2. Touching region:
+- The overlap is at a plausible touching area (finger tips, fingers, palm,
+side of hand) on the visible surface of the object.
+NO Contact (label = 0) in all of these cases:
+- The hand is reaching toward, hovering above, or very close to an object with
+a visible gap between masks.
+- The hand is aligned in depth (e.g., above or behind the object) but the masks
+do not intersect.
+- The hand is in a pose that suggests future contact, but there is no current
+touching in this single frame.
+- There is only a tiny, ambiguous intersection (1–2 pixels) that could be noise
+or occlusion. In such uncertain cases, choose 0 (no contact).
+IMPORTANT:
+- **Reaching or hovering is NOT contact.**
+- **If you are unsure whether contact is happening, choose 0 (no contact).**
+CONSTRAINTS (VALIDATION CHECK):
+- Each hand can touch AT MOST ONE object.
+- Sum of left across all objects must be <= 1.
+- Sum of right across all objects must be <= 1.
+- If a hand is not clearly touching any object, it should have 0 for all objects.
+OUTPUT FORMAT:
+Return only a JSON object in this exact format (no extra text):
+{
+"obj1": {"left": 0, "right": 1},
+"obj2": {"left": 0, "right": 0},
+"obj3": {"left": 1, "right": 0}
+}
+Where:
+- 1 = the specified hand is clearly touching that object in this frame.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

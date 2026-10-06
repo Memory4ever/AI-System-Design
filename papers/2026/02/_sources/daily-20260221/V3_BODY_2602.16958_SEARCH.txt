@@ -1,0 +1,49 @@
+5.2. Latent Space Mapping
+To mitigate the challenges of non-differentiability and combinatorial explosion inherent in adversarial search within discrete template spaces, we introduce the Latent Space Mapping module. The cornerstone of this module is an optimized auto-encoder designed to project discrete templates onto a continuous, differentiable low-dimensional manifold, thereby establishing a navigable space for efficient Bayesian Optimization.
+Defining geometric proximity in discrete text spaces that aligns with semantic and structural similarity poses a non-trivial challenge, primarily due to the non-differentiability of special tokens and structured patterns. Traditional auto-encoders trained from scratch often struggle to capture intricate dialogue structures. Our key observation is that Large Language Models (LLMs), through massive pre-training, implicitly encode rich Structural Priors regarding text formats and dialogue patterns. Consequently, we leverage a lightweight LLM as the backbone and transform it into a Template Auto-Encoder (TAE) via Parameter-Efficient Fine-Tuning (PEFT). This approach compresses templates into a low-dimensional latent space while maximally preserving syntactic structure and semantic integrity.
+TAE Architecture.
+The TAE architecture comprises three primary components: an encoder ℰθ\mathcal{E}_{\theta}, a projection layer 𝒫\mathcal{P}, and a decoder 𝒟θ\mathcal{D}_{\theta}. We employ Qwen3-0.6B as the backbone, striking a balance between language understanding capabilities and computational overhead. As defined in Section 3, the attack template is a triplet 𝐭=(𝒯0,𝒯1,𝒯2)\mathbf{t}=(\mathcal{T}_{0},\mathcal{T}_{1},\mathcal{T}_{2}), corresponding to deceptive tool-call termination, forged assistant response, and forged user query, respectively. We serialize the template into the following input form:
+(1)
+𝐱=\displaystyle\mathbf{x}=
+[START]⊕𝒯0⊕[SEP]⊕𝒯1\displaystyle\texttt{[START]}\oplus\mathcal{T}_{0}\oplus\texttt{[SEP]}\oplus\mathcal{T}_{1}
+⊕[SEP]⊕𝒯2⊕[END]⊕[START],\displaystyle\oplus\texttt{[SEP]}\oplus\mathcal{T}_{2}\oplus\texttt{[END]}\oplus\texttt{[START]},
+where ⊕\oplus denotes the sequence concatenation operation.
+The encoder maps the input sequence 𝐱\mathbf{x} to hidden states 𝐇=ℰθ​(𝐱)∈ℝL×d\mathbf{H}=\mathcal{E}_{\theta}(\mathbf{x})\in\mathbb{R}^{L\times d}, where LL is the sequence length and dd is the hidden dimension. To capture the global context of the entire sequence, we extract the final hidden states corresponding to the trailing [START] tokens, denoted as 𝐡enc∈ℝk×d\mathbf{h}_{\text{enc}}\in\mathbb{R}^{k\times d}. kk is the number of such tokens.
+Subsequently, the projection layer 𝒫\mathcal{P} compresses these high-dimensional states into a compact latent vector 𝐳∈ℝm\mathbf{z}\in\mathbb{R}^{m} (with m≪k​dm\ll kd) via a linear transformation:
+(2)
+𝐳=𝒫⁡(𝐡enc)=𝐖p​vec​(𝐡enc)+𝐛p\mathbf{z}=\mathcal{P}(\mathbf{h}_{\text{enc}})=\mathbf{W}_{p}\text{vec}(\mathbf{h}_{\text{enc}})+\mathbf{b}_{p}
+where vec​(⋅)\text{vec}(\cdot) represents the vectorization operation. Notably, we empirically observe that utilizing an Identity Activation at this stage yields superior performance compared to non-linear activation functions (e.g., ReLU or Tanh).
+This corroborates our hypothesis that the representation space of the pre-trained LLM is already sufficiently structured, rendering additional non-linear transformations unnecessary for effective compression.
+To reconstruct the template auto-regressively using the decoder, we first expand the latent vector 𝐳\mathbf{z} back to the original dimension to generate 𝐡dec=𝐖d​𝐳+𝐛d∈ℝk×d\mathbf{h}_{\text{dec}}=\mathbf{W}_{d}\mathbf{z}+\mathbf{b}_{d}\in\mathbb{R}^{k\times d} and inject it as the initial state of the decoder (i.e., the embedding of the leading [START] tokens). The reconstruction objective is factorized as:
+(3)
+p⁡(𝐭∣𝐳)=∏i=1Lp⁡(xi∣𝐱<i,𝐳;θ)p(\mathbf{t}\mid\mathbf{z})=\prod_{i=1}^{L}p(x_{i}\mid\mathbf{x}_{<i},\mathbf{z};\theta)
+The model is trained by minimizing the following reconstruction loss:
+(4)
+ℒrecon=−𝔼𝐭∼𝒟∑i=1Llogp(xi∣𝐱<i,𝐳)\mathcal{L}_{\text{recon}}=-\mathbb{E}_{\mathbf{t}\sim\mathcal{D}}\sum_{i=1}^{L}\log p(x_{i}\mid\mathbf{x}_{<i},\mathbf{z})
+Efficient Training via LoRA.
+To preserve the linguistic knowledge embedded in the pre-trained model while minimizing training costs, we adopt the Low-Rank Adaptation (LoRA) strategy. We freeze the pre-trained parameters θ\theta and exclusively inject trainable low-rank matrices into the weight matrices of each attention layer. For a weight matrix 𝐖0∈ℝd×d\mathbf{W}_{0}\in\mathbb{R}^{d\times d}, the update rule is defined as:
+(5)
+𝐖=𝐖0+αr​𝐁𝐀\mathbf{W}=\mathbf{W}_{0}+\frac{\alpha}{r}\mathbf{B}\mathbf{A}
+where 𝐁∈ℝd×r\mathbf{B}\in\mathbb{R}^{d\times r} and 𝐀∈ℝr×d\mathbf{A}\in\mathbb{R}^{r\times d} are trainable parameters, the rank r≪dr\ll d, and α\alpha is a scaling factor. We apply this decomposition to all attention projection matrices (𝐖q,𝐖k,𝐖v,𝐖o\mathbf{W}_{q},\mathbf{W}_{k},\mathbf{W}_{v},\mathbf{W}_{o}), thereby reducing the number of trainable parameters by three orders of magnitude.
+We construct the training set based on the data augmentation corpus described in Section 5.1, comprising approximately 18,000 training templates and 2,000 validation templates. The model is trained for 50 epochs, with Early Stopping implemented based on validation loss.
+Properties of the Learned Manifold.
+The manifold ℳ⊂ℝm\mathcal{M}\subset\mathbb{R}^{m} learned by the TAE exhibits three properties critical for efficient adversarial search:
+•
+Smoothness. The latent space demonstrates strong local continuity. For a latent vector 𝐳∈ℳ\mathbf{z}\in\mathcal{M} and a minor perturbation ‖𝜹‖<ϵ\|\boldsymbol{\delta}\|<\epsilon, the structural similarity of the decoded templates, denoted as s⁡(𝒟θ​(𝐳),𝒟θ​(𝐳+𝜹))s(\mathcal{D}_{\theta}(\mathbf{z}),\mathcal{D}_{\theta}(\mathbf{z}+\boldsymbol{\delta})), remains highly consistent in local neighborhoods. This property facilitates the efficacy of gradient-based optimization and local exploration strategies.
+•
+Structural Correspondence. Geometric proximity in ℳ\mathcal{M} correlates with syntactic pattern similarity. Templates sharing similar delimiter conventions or role-switching patterns tend to form distinct clusters within the space. We quantitatively validated this observation via the Normalized Mutual Information (NMI) between latent space partitions and human-annotated structural categories.
+•
+Dimensionality Reduction. The latent space provides a compact representation of the template space (m≪Lmaxm\ll L_{\max}). This transformation decouples the search complexity from the exponential growth of the discrete vocabulary size 𝒪⁡(|𝒱|Lmax)\mathcal{O}(|\mathcal{V}|^{L_{\max}}), rendering the optimization problem computationally tractable within the continuous manifold ℝm\mathbb{R}^{m}.
+During the decoding phase, we strictly parse the generated sequence to detect [SEP] and [END] tokens, extracting the triplet (𝒯^0,𝒯^1,𝒯^2)(\hat{\mathcal{T}}_{0},\hat{\mathcal{T}}_{1},\hat{\mathcal{T}}_{2}). For structurally invalid reconstructions where parsing fails, we assign a worst-case penalty to the objective function. This mechanism acts as a soft constraint, guiding the search process to reside within the valid sub-manifold ℳvalid⊂ℳ\mathcal{M}_{\text{valid}}\subset\mathcal{M} and ensuring the executability of the generated templates.
+5.3. Automated Template Search
+The Automated Template Search module is designed to navigate the continuous latent space derived from the template mapping (Section 5.2) to identify structural templates that maximize the success rate of hijacking attacks.
+However, traversing this space presents a fundamental challenge: the prohibitive cost of evaluating attacks against black-box target agents.
+Each candidate template evaluation requires querying the target’s underlying manifold, incurring significant API overhead and latency.
+Furthermore, the black-box nature of commercial agents precludes gradient-based optimization, while the non-convex and multi-modal landscape of attack success rates renders random search ineffective.
+Directly evaluating success in production environments also raises ethical concerns and operational risks.
+To address these challenges, we propose a sample-efficient optimization strategy that maximizes information gain per query while minimizing the number of expensive evaluations.
+We design an automated search framework based on Bayesian Optimization (BO) coupled with a Lightweight Proxy Evaluation.
+By constructing a probabilistic surrogate model of the target space, we guide exploration toward high-value regions without explicit gradients.
+This approach, combined with a proxy mechanism that simulates hijacking conditions, enables scalable and automated search.
+Lightweight Attack Evaluation.
+Since directly evaluating hijacking attacks on production agents is costly and risky, we introduce a lightweight proxy test that captures role confusion, a critical precursor t

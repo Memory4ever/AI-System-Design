@@ -1,0 +1,413 @@
+FaRAccel: FPGA-Accelerated Defense Architecture for Efficient Bit-Flip Attack Resilience in Transformer Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I Introduction
+II Background
+II-A Transformer-based Models
+II-B Bit-Flip Attacks
+III Motivation
+IV Methodology and System Overview
+IV-A Offline Step
+IV-B Runtime Step
+V FaRAccel Implementation
+V-A Overview
+V-B Dot-Product Engine (DPE)
+V-C FaR-Specific Logic
+V-D Memory Hierarchy and Data Movement
+V-E Multi-PE Accelerator Design
+V-F Safety and Deployment Considerations
+VI Evaluation
+VI-A Hardware Footprint, Timing, and Scalability
+VI-B Performance Results
+VI-C Limitations and Future Direction
+VII Related Works
+VIII Conclusion
+References
+License: CC BY-NC-ND 4.0
+arXiv:2510.24985v1 [cs.CR] 28 Oct 2025
+FaRAccel: FPGA-Accelerated Defense Architecture for Efficient Bit-Flip Attack Resilience in Transformer Models
+Najmeh Nazari,
+Banafsheh Saber Latibari,
+Elahe Hosseini,
+Fatemeh Movafagh,
+Chongzhou Fang,
+Hosein Mohammadi Makrani,
+Kevin Immanuel Gubbi,
+Abhijit Mahalanobis,
+Setareh Rafatirad,
+Hossein Sayadi,
+Houman Homayoun
+Affiliation:
+Department of Electrical and Computer Engineering, University of California, Davis, CA, USA
+Department of Electrical and Computer Engineering, University of Arizona, Tucson, AZ, USA
+Department of Computer Engineering and Computer Science, California State University, Long Beach, Long Beach, CA, USA
+Department of Computer Science, Simon Fraser University, Vancouver, Canada
+Emails: {nnazari, ehosseini, czfang, hmakrani, kgubbi, srafatirad, hhomayoun}@ucdavis.edu
+Affiliation: , {banafsheh, amahalan}@arizona.edu , hossein.sayadi@csulb.edu, fma44@sfu.ca
+Abstract
+Forget and Rewire (FaR) methodology has demonstrated strong resilience against Bit-Flip Attacks (BFAs) on Transformer-based models by obfuscating critical parameters through dynamic rewiring of linear layers. However, the application of FaR introduces non-negligible performance and memory overheads, primarily due to the runtime modification of activation pathways and the lack of hardware-level optimization. To overcome these limitations, we propose FaRAccel, a novel hardware accelerator architecture implemented on FPGA, specifically designed to offload and optimize FaR operations. FaRAccel integrates reconfigurable logic for dynamic activation rerouting, and lightweight storage of rewiring configurations, enabling low-latency inference with minimal energy overhead. We evaluate FaRAccel across a suite of Transformer models and demonstrate substantial reductions in FaR inference latency and improvement in energy efficiency, while maintaining the robustness gains of the original FaR methodology. To the best of our knowledge, this is the first hardware-accelerated defense against BFAs in Transformers, effectively bridging the gap between algorithmic resilience and efficient deployment on real-world AI platforms.
+I Introduction
+The widespread deployment of Transformer-based architectures in natural language processing, security [1, 2, 3, 4, 5], health [6], computer vision [7, 8], and multimodal tasks [9, 10] has brought unprecedented advancements in machine learning. However, these models are increasingly being exposed to sophisticated adversarial threats targeting their parameters at the hardware level [11]. Bit-Flip Attacks (BFAs), in particular, pose a severe risk by exploiting memory vulnerabilities to alter critical bits in model weights, leading to dramatic drops in accuracy with minimal perturbations [12]. While various algorithmic defenses have been proposed, they often overlook the computational and latency constraints associated with real-world deployment, especially in edge-AI platforms.
+To address the growing concern of BFA resilience in Transformer-based models, the Forget and Rewire (FaR) methodology was recently introduced [12]. FaR mitigates BFAs by dynamically redistributing critical parameter responsibilities across less sensitive neurons, thereby obfuscating parameter importance and weakening the effectiveness of gradient-based attack algorithms. Experimental results have shown that FaR can reduce attacker success by up to 4× with negligible accuracy loss. However, FaR’s runtime overhead, induced by dynamic rewiring and activation rebalancing, remains a key challenge, particularly for time-sensitive applications on resource-constrained devices.
+Current implementations of FaR rely on Python-based environments and software-level modifications to standard linear layers. This setup lacks optimization for low-latency inference and incurs non-trivial memory and compute overheads during runtime. More importantly, it fails to fully exploit the benefits of hardware reconfigurability and parallelism—critical attributes for deploying secure models in edge and embedded systems. Therefore, bridging the gap between the algorithmic robustness of FaR and the deployment efficiency required in practical settings is essential.
+In this work, we propose FaRAccel, the first hardware accelerator specifically designed to implement the Forget and Rewire methodology. FaRAccel is built on an FPGA-based architecture and introduces a reconfigurable datapath for dynamically managing neuron connections at inference time. It integrates lightweight memory blocks for storing rewiring configurations and supports runtime sensitivity-aware routing, all without altering the model’s topology or retraining the network. This enables seamless integration with standard Transformer models.
+We evaluate FaRAccel on a suite of Transformer architectures spanning both language and vision domains. Our results demonstrate that FaRAccel achieves substantial improvements in inference latency, up to 15× speedup compared to software-based FaR implementations, while preserving the same robustness against BFAs. These findings highlight the potential of architectural specialization in supporting resilient AI workloads.
+To the best of our knowledge, FaRAccel is the first hardware-based defense mechanism specifically tailored for BFA mitigation in Transformers. Unlike previous works that rely on software-based obfuscation or defensive retraining, FaRAccel introduces a principled hardware-software co-design that ensures both robustness and efficiency. It thus opens a new frontier for integrating security-aware AI accelerators into edge and embedded ecosystems.
+In summary, this paper makes the following key contributions:
+1.
+We propose FaRAccel, a novel FPGA-based accelerator for executing the Forget and Rewire operations in hardware;
+2.
+We design and implement a full-fledged hardware pipeline in FaRAccel, supporting dynamic rerouting, activation modulation, and parameter concealment;
+3.
+We conduct a comprehensive analysis and demonstrate substantial reductions in inference latency and energy consumption, while preserving the robustness against BFAs.
+4.
+We present the first step toward secure and efficient deployment of Transformer models with algorithm-hardware co-design principles.
+The remainder of the paper is organized as follows. Section II reviews background on the topic. Section III motivates the need for an accelerator for FaR. Section IV details our methodology. Sections V and VI describe the FaRAccel architecture and implementation, and present the experimental setup and evaluation. Section VII surveys related work, and Section VIII concludes.
+II Background
+In this section, we present a concise overview of the essential preliminary knowledge, especially on Transformers and bit flip attacks.
+II-A Transformer-based Models
+The Transformer architecture underpins both Large Language Models and Vision Transformers, and is central to modern pipelines for natural language processing and image recognition [13]. In this section, we briefly review the Transformer to highlight why our method is compatible with—and effective for—this class of models.
+The canonical Transformer comprises two components [14]: an encoder and a decoder (Figure 1). The encoder maps input tokens to context-rich representations (features), enabling the model to “understand” the input. The decoder consumes these representations—together with appropriate conditioning—to produce an output sequence. Depending on the task, either component can be used on its own:
+•
+Encoder-only: Best for understanding tasks (e.g., text classification, named entity recognition).
+•
+Decoder-only: Best for open-ended generation.
+•
+Encoder–decoder: Best for conditional generation (e.g., summarization, translation).
+A defining feature of Transformers is the attention mechanism, which selectively weights interactions among tokens. Attention encourages the model to emphasize informative tokens while downweighting less relevant ones when constructing each token’s representation. Attention masks in the encoder/decoder can further restrict which positions are visible (e.g., to ignore special or padded tokens, or to enforce causality).
+In multi-head attention, tokens are first projected via three learned Linear mappings into Query (Q), Key (K), and Value (V) vectors [14]. Given these projections, the attention operation computes similarity between Q and K to produce weights that are applied to V, yielding updated token representations that incorporate contextual information.
+These computations are performed in parallel across multiple heads. Concretely, the Q, K, and V projections are split into HH parts and processed independently, after which the head outputs are concatenated and linearly transformed to form the final attention output. This multi-head design allows the model to capture diverse relationships and nuances across tokens, contributing to the strong performance of Transformers and aligning well with our approach.
+Why Transformers scale well. Beyond attention, the building blocks of each layer are predominantly linear operations: the Q/K/V projections and output projection in attention, and the position-wise feed-forward network (typically two Linear layers with a simple activation such as GELU). These are composed with residual connections and layer normalization, both of which are lightweight and highly parallelizable. Because training and inference are dominated by dense matrix multiplies (GEMMs), Transformers map efficiently to modern accelerators and libraries (e.g., cuBLAS/oneDNN), making them straightforward to scale by widening hidden dimensions, increasing head counts, and stacking more layers. The simplicity and uniformity of these linear components improve hardware utilization, enable predictable memory/computation profiles, and contribute to stable optimization at large batch sizes and model scales—factors that align well with our approach.
+Fig. 1: Architecture of Transformers.
+II-B Bit-Flip Attacks
+System robustness and safety are fundamentally dependent on strong memory isolation enforced by both software and hardware [15]. Yet even state-of-the-art DRAM can violate this isolation due to read-disturbance effects. An important example is RowHammer [16], where repeatedly activating and precharging (“hammering”) a DRAM row causes bit flips in physically adjacent victim rows. More recently, RowPress [17] demonstrated that, even on DDR4 systems hardened with RowHammer mitigations, user-level code can still breach isolation by simply holding a row open for an extended period; this sustained activation perturbs neighboring rows enough to induce bit flips.
+Fig. 2: Bit-Flip Attack overview.
+Bit-flip attacks seek to exploit practical memory fault-injection mechanisms to degrade a model’s performance while changing as few bits as possible. Formally, the adversary operates under a strict flip budget and aims to identify a sparse set of bit locations whose alteration maximizes misclassification impact. In practice, this often means prioritizing parameters whose perturbation most strongly shifts decision boundaries, so that each flip yields an outsized effect.
+A stealthy adversary further constrains this objective: the goal is to redirect inputs from a specific source class pp to a chosen target class qq (q≠pq\neq p) while leaving predictions for all other inputs essentially unchanged. By preserving overall accuracy—and thus the model’s external behavior—the attack remains difficult to detect, even as it reliably induces targeted errors on the p→qp\rightarrow q subset.
+One of the most effective BFA variants is DeepHammer [18], which improves bit-selection by employing gradient-based Progressive Bit Search (PBS). As illustrated in Figure2, at the kthk^{\text{th}} iteration DeepHammer first computes a gradient-based saliency over the model’s parameters and selects the top nn candidate bits. It then evaluates each candidate by virtually flipping that bit and measuring the resulting loss, forming a loss set LL. Repeating this procedure layer by layer yields n×ln\times l candidates and their corresponding losses, from which DeepHammer commits the single flip that maximizes the loss. This process iterates until the attack objective is met or a flip budget is exhausted. While the original DeepHammer restricts itself to one committed flip per DRAM page, the threat model assumes an adversary capable of flipping multiple bits within a page, which strictly generalizes DeepHammer and represents a stronger attacker.
+III Motivation
+Forget-and-Rewire (FaR) was introduced to meet the need of a practical defense to raise the number of required flips (i.e., the attack cost) while preserving model utility without retraining. Inspired by neuroplasticity, FaR redistributes the influence of important parameters by coupling them with less important (often near-inactive or ”dead”) neurons in the same linear layer. By ”hiding” critical parameters behind newly rewired activation paths, FaR dilutes gradient salience, frustrating the attacker’s search and forcing more bit flips to achieve the same damage. Conceptually, this rewiring increases the attacker’s workload while keeping the layer’s functional mapping nearly unchanged.
+Mechanistically, FaR identifies (i) the most sensitive parameter in a layer and (ii) one or more dead neurons. It then applies a Forget step (disconnect the dead path) and a Rewire step (split and reroute the activation feeding the critical weight toward the dead neuron), moderated by a division factor that balances robustness and accuracy. This process is repeated iteratively across layers to meet a desired robustness budget. Importantly, FaR is a one-shot, post-training modification; its small configuration can be stored securely on-chip and applied at deployment via a custom linear layer that adjusts connections on the fly.
+Empirically, FaR reduces BFA success by roughly 1.4 to 4.2×\times with minimal accuracy cost (less than 2% across common benchmarks), and it composes naturally with detection/recovery schemes (e.g., NeuroPots), providing complementary benefits: FaR conceals and redistributes sensitivity; detectors watch for tampering. These characteristics make FaR attractive as a lightweight hardening step for off-the-shelf Transformer models.
+Since the understanding of FaR’s low level implementation is important to get insight into why its current impelemntation is not efficient and requires a solution, we explain its core functionality in the following.
+Figure 3 illustrates our Forget and Rewire scheme. In Figure 3(right side), we have a standard linear model where three neurons in layer l−1l-1 are connected to one neuron in layer l.l. Suppose we perform sensitivity analysis on three parameters of WW using a batch of input data. In this analysis, we find that X2X_{2}, the activation from neuron m2m_{2}, is predominantly close to 0, making W2W_{2} the least important. Similarly, because X1X_{1} is larger than X3X_{3}, the gradient of the output with respect to W1W_{1} surpasses that of W3W_{3}. Furthermore, the output of neuron YY depends solely on X1​W1+X3​W3X_{1}W_{1}+X_{3}W_{3}.
+In Figure 3(left side), we showcase the layer following the application of our Forget and Rewire scheme. Since m2m_{2} is considered a dead neuron, its connection to n1n_{1} becomes a candidate for the ”Forget” operation. Recognizing that W1W_{1} holds the utmost importance in the network, we opt to hide it from potential attackers. Conversely, we select W2W_{2} for the ”Rewiring” operation and replace its value with that of W1W_{1} as W2W_{2} no longer affects the output of neuron n1n_{1}. To achieve this, we divide the activation from neuron m1m_{1} by 2 (the division factor). Half of this division is passed to the same parameter W1W_{1}, and the other half replaces the activation of the dead neuron, going to W2W_{2} (which now holds the value of W1W_{1}). This way, when attackers employ gradient search and loss backpropagation, they discover that the weight ranking has changed. With X1X_{1} now reduced by half, it is smaller than X3X_{3}, making W3W_{3} the most important parameter in the layer. It’s worth noting that despite modifying a weight’s value and rewiring activations, the output of neuron n1n_{1} remains consistent, and the layer’s functionality undergoes minimal change.
+Fig. 3: Forget and rewire example on a simple linear model [12]
+If an attacker arbitrarily targets a critical parameter (known to the developer, such as W1W_{1}), the attack is not as effective as in the non-FaR model. This is because W2W_{2}, to which the importance of W1W_{1} has been redistributed, also needs to be targeted.
+Consequently, the model’s resilience against random attacks is enhanced as well.
+That said, FaR introduces measurable performance costs at inference time. Across evaluated models/datasets, FaR increases the inference time linearly when the number of parameters to rewire increases, and its time complexity is O(n). Crucially, the dominant runtime overhead stems from FaR’s custom linear layer implemented in Python and explained above, which lacks highly optimized binary kernels, unlike standard PyTorch linear ops. hence, the overhead grows with the number of FaR-enabled parameters and chosen division factor.
+Fig. 4: The impact of the number of FaR parameters and division factor per layer on the inference time overhead [12]
+These software-centric bottlenecks motivate hardware support. If the very place where FaR ”pays” its overhead is the linear layer (extra activation routing, scaling, and weight aliasing), then moving those micro-ops into a reconfigurable datapath can recover most of the cost. A hardware FaR unit can (i) fetch a compact, secure FaR configuration from on-chip memory, (ii) apply division-factor scaling and activation duplication in-flight, (iii) steer activations through a small crossbar/mux fabric before MACs, and (iv) write back results without extra framework-level bookkeeping. In other words, we fuse FaR into the linear layer’s dataflow so rewiring is ”free” in the steady state. This direction also aligns with the paper’s own observation that an optimized, lower-level implementation is necessary to keep overhead acceptable as models scale.
+Taken together, these points motivate the FPGA-based FaRAccel architecture introduced next: a minimal, reconfigurable augmentation of the linear layer that provides low-latency activation rerouting, in-line scaling, and secure configuration, eliminating the software tax without changing the model’s topology.
+IV Methodology and System Overview
+FaRAccel targets the cost of executing Forget-and-Rewire (FaR) during inference by turning FaR from a software-level graph rewrite into a lightweight operand-selection problem inside the accelerator’s matrix-multiply datapath. The design for GeMM block is presented in Figure 5. The central idea is to preserve the baseline GEMM throughput when no rewiring applies, and to keep that same throughput when rewiring is enabled by moving all FaR decisions into a tiny configuration memory and a per-lane redirect network that sits in front of the multipliers. In this formulation, FaR no longer introduces extra arithmetic on the critical path. Instead, it changes which weight each lane consumes and whether that weight is a baseline value, a pre-scaled donor value, or zero. The methodology separates FaR into two main steps: an offline compilation step and a runtime application step.
+Fig. 5: Matrix multiplication that GeMM accelerator processes in one cycle with 3D spatial unrollings
+IV-A Offline Step
+A sensitivity analysis produces a compact configuration for each linear layer (or for each tile of a large layer). This configuration, which we call a FaRMap, contains only exceptions relative to the baseline weight layout. For each output neuron, the map lists a small number of victim indices, bounded to 15% of its inputs in our design, and for each victim, specifies whether the multiply is skipped or rewired to a donor index. If the rewire requires dividing the contribution, the division factor is restricted to two or three to simplify hardware. To avoid inserting dividers in the datapath, donor weights that require scaling are pre-materialized offline into a small “shadow” store as FP16 copies of the donor value multiplied by 1/2 or 1/3. The offline step therefore emits two tiny artifacts per layer: the FaRMap and the shadow weights.
+IV-B Runtime Step
+Operates on 32×32 FP16 tiles using an output-stationary dataflow. Activations and baseline weights are streamed into on-chip tile buffers, while the FaRMap and any referenced shadow weights are prefetched into small SRAMs. When an output row (or column) is issued, the corresponding slice of the FaRMap is also fed to the the controller. FaRMap synthesizes a 32-entry select vector that encodes, for each lane, whether to use the baseline weight, a shadow donor, or zero, and latches that vector for the duration of the row. The dot-product engines then consume activations and the effective weights at the same cadence as a vanilla GEMM. Because decision making is confined to a single cycle of select generation per row and the shadow and baseline weights are available on distinct read ports, the multiplier array is never stalled, and steady-state throughput is preserved [19]. The diagram presented in Figure 6 is the baseline DPE engine, and Figure 7 illustrates the Far-aware DPE block designed to enable our proposed run-time operation.
+Fig. 6: Baseline DPE
+Fig. 7: FaR-aware DPE
+Methodologically, this design preserves the trained model topology and weights. FaR can be enabled or disabled per layer at runtime without retraining, and deployment consists of loading the FaRMap and the shadow store and flipping a control bit. Because the configuration is small (15% per layer), it can be kept on-chip for both latency and integrity. The same mechanism applies to any fully connected layers in the MLP as well as to the Q/K/V projections in attention; in all cases, the accelerator sees a stream of matrix tiles and a stream of compact rewiring directives that gate only operand selection. The result is a security-aware inference flow that maintains near-baseline latency and energy while delivering the robustness benefits of FaR.
+Fig. 8: Overview of the proposed accelerator on the FPGA device
+V FaRAccel Implementation
+V-A Overview
+FaRAccel is an FPGA-oriented accelerator composed of a grid of dot-product engines (DPEs), tile buffers for activations and baseline weights, a pair of small configuration memories for FaR metadata and pre-scaled donors, an operand redirect network integrated in front of each multiplier lane, and a controller that overlaps configuration decode with compute. The design keeps the compute datapath identical to a conventional GEMM core [20] and introduces FaR-specific logic only in the operand selection and control planes. Figure 8 presents the overview of our implementation.
+V-B Dot-Product Engine (DPE)
+Each DPE is a 32-lane FP16 unit that computes one 32-element dot product per cycle after pipeline fill. A lane holds an FP16 multiplier, and the 32 products are reduced through a five-level pipelined adder tree with 31 FP16 adders. Small input registers capture the current activation and weight elements, and an output register holds the reduced result before write-back. The DPE consumes the inner-dimension stream while partial sums remain stationary in the reducer, which minimizes intermediate writes and matches the objective of constant throughput. Because the core compute is unchanged from a standard GEMM implementation, the DPE maps naturally to DSP blocks on FPGAs and to FP16 multiplier/adder macros on ASICs.
+V-C FaR-Specific Logic
+The FaR-specific machinery sits immediately upstream of the multipliers. Two narrow SRAMs feed this machinery: the FaRMap cache and the shadow store. The FaRMap cache holds, for the 32 outputs in the current tile, a sparse list of victim–donor relations, division selectors, and skip flags. With the rewiring budget capped at 15%, each output row typically has only a handful of entries. The shadow store holds only those donor weights that appear in the FaRMap, pre-scaled by one-half or one-third as required. To ensure the compute fabric never bubbles, the baseline weight buffer and the shadow store are read through independent ports so that a redirect decision does not create a structural hazard.
+When the controller schedules an output row, it fetches the row’s FaRMap entries and expands them into a dense, 32-element select vector. Each vector element indicates whether a lane should read its weight from the baseline buffer, from a particular shadow address, or use a constant zero; this vector is then latched and remains stable while the row’s k-dimension is streamed. The per-lane operand redirect network is a small three-way selector that applies this decision before the multiplier. Because division factors are compiled into the shadow weights, the redirect network never performs arithmetic—its work is purely in choosing the correct operand source. The controller pipelines this select synthesis so that, while the current row is being reduced in the adder tree, it can already prepare the vector for the next row. This overlap hides the map-decode latency and allows the DPE to issue a new dot every cycle regardless of whether the next row contains rewiring.
+V-D Memory Hierarchy and Data Movement
+The memory hierarchy and data movement follow standard accelerator practice, with double-buffered DMA moving activations and baseline weight tiles from DRAM into on-chip SRAMs and writing results back after accumulation. FaR data is minuscule compared to activations and weights, so it imposes negligible bandwidth pressure. Because the configuration footprint scales with the number of tiles rather than with the global layer size, even very large layers exhibit bounded on-chip state per active tile.
+V-E Multi-PE Accelerator Design
+As a prototype, we are utilizing the design proposed in [21], which is a layer-wise accelerator design for deep neural networks. Instead of solely utilizing Processing Engines (PEs) with varying kernel sizes, ours leverages PEs with a fixed quantization and precision scheme.
+We adopt a multiple PE accelerator approach. This approach enhances resource utilization and, in turn, the model’s performance, as depicted in Figure 8. The Zynq platform’s processing system (PS) can interact with the Programmable Logic (PL) unit through high-performance ports linked to AXI DMAs. This connection provides the accelerator with high-bandwidth access to off-chip memory for read and write operations.
+Each PE in the accelerator employs a ping-pong buffer for input and output values, while a singular buffer is used for weights. This arrangement stems from the fact that during a kernel’s operation on inputs, weight values remain constant while inputs change following each kernel operation. Therefore, the frequency of weight transfers to and from the accelerator is considerably less than that of the inputs.
+V-F Safety and Deployment Considerations
+Finally, FaRAccel includes safety hooks that are important for deployment. The controller validates FaRMap and shadow blobs before enabling a layer, and can fall back to baseline behavior if illegal indexes are fed or if configuration SRAMs indicate an error. Because FaR does not change the trained topology, a model can be deployed once and then hardened or relaxed over time by shipping new FaR configurations without touching weights or retraining. Taken together, these properties make the proposed architecture a practical path to bring FaR’s robustness into latency- and energy-constrained environments without compromising the performance characteristics of the underlying matrix engine.
+VI Evaluation
+In this section, we present hardware evaluation and performance results.
+VI-A Hardware Footprint, Timing, and Scalability
+FaRAccel is designed to preserve the compute macros of a standard GEMM core; hence, from a resource perspective, the architectural changes are modest. FaRAccel does not add multipliers or adders: 32-lane DPE still uses 32 FP16 multipliers and a 31-adder reduction tree. As a result, DSP usage remains essentially unchanged compared to the baseline.
+The additional logic consists of small per-lane multiplexers, lightweight control, and two compact memories for the FaR map and donor values. The added storage is on the order of one to one-and-a-half kilobytes for configuration and shadow values. In synthesis, these additions raise LUT and flip-flop counts only by a small percentage, while BRAM use increases modestly to provision the configuration and shadow stores; in our prototype, the configuration footprint is dominated by the on-chip tile buffers rather than by FaR-specific state. Power impact is similarly small because the selectors and configuration SRAMs toggle at row boundaries, whereas the multiplier and adder activity is identical to the baseline. Table I presents the breakdown of FaRAccel resource utilization on our platform.
+Timing closure mirrors that of the baseline because the operand-redirect network is placed one stage ahead of the multiplier inputs and is fully pipelined; consequently, the maximum clock frequency remains comparable to the GEMM-only design and is limited by the adder-tree depth rather than by FaR logic. Routing pressure is mitigated by keeping the select logic adjacent to the DSP columns and by duplicating registers on high-fan-out control nets; no cross-column long routes are introduced by FaR, which preserves slack on the critical paths.
+TABLE I: Breakdown of accelerator’s resource utilization
+Component
+Hardware resources
+LUT
+FF
+DSP
+BRAM
+FIFOs
+465
+330
+0
+48
+AXI DMAs
+6256
+11048
+0
+12
+Compute engine
+1566
+840
+216
+0
+Register File
+0
+19200
+0
+0
+Controller
+5311
+3598
+0
+0
+Total
+11598
+33016
+216
+60
+Available
+53200
+106400
+220
+140
+Utilization
+21.8%
+31.03%
+98.18%
+42.86%
+The design can scale along two orthogonal axes: Within a processing element, lanes can be widened (e.g., to 64) to retire multiple dots per cycle, and the operand redirect network scales linearly with the number of lanes. Across the fabric, additional DPEs can be instantiated to process multiple tiles in parallel; each DPE carries its own small FaRMap cache and shadow store, so control remains local and contention-free. The same mechanism applies to both fully connected layers and to the Q/K/V projections in attention. Switching between these layer types is a matter of changing the stream of tiles and binding the appropriate FaRMap and shadow blobs; the compute remains the same.
+From another perspective, spatial replication increases throughput linearly until it is bounded by off-chip memory bandwidth, while lane widening remains effective as long as on-chip SRAM banking can supply one FP16 operand per lane per cycle. In practice, double-buffered activation and weight tiles, combined with simple prefetching of the next FaR map block, keep the compute array fed for typical transformer shapes. Because FaR configuration is sparse and reused across many rows within a layer, the control plane consumes negligible bandwidth relative to activation and weight traffic and does not become a limiter at scale.
+This is an important point since the steady-state throughput is preserved in our design.
+This constant-throughput realization admits a simple performance model. With 32 lanes, a 32×32 tile produces 1,024 output dots and retires one dot per cycle after a 12-cycle pipeline fill, yielding 1,036 cycles per tile in the baseline. The FaR path adds one cycle per output row to latch the select vector, for an overhead of 32 cycles (about 3.1%). The controller can overlaps select generation with the tail of the previous row’s reduction, so the common-case overhead is effectively zero. Figure 9 demonstrates the pipeline of FaRAccel.
+VI-B Performance Results
+We compare three realizations to isolate the effect of offloading FaR. The first baseline is a vanilla software stack without FaR that uses standard GEMM-backed linear layers in a deep learning framework. The second baseline implements FaR entirely in software and realizes rewiring by explicitly duplicating and scaling activations and by performing scatter/gather of weights, which prevents fusion into a single batched GEMM and introduces substantial framework overhead. Our method, FaRAccel, offloads only the FaR-aware linear projections while leaving all other layers and host orchestration identical to the software baselines; this ensures that any improvements stem from accelerating the FaR operations themselves rather than from unrelated changes in the model or runtime.
+Fig. 9: Conceptual visualizations for configuration pre-loading, input pre-fetch, and output buffering
+Three custom ViT structures trained MNIST, CIFAR-10, and CIFAR-100 datasets have been exploited for comparison. The details of custom models are presented in Table II.
+By default, ViTs use normal linear() functions, and their functionality is as simple as follows:
+output = input.matmul(self.weight.t())
+if self.bias is not None:
+output += self.bias
+While in a FaR-aware linear() function, we should consider the extra FaR config and division factor that makes the software implementation very complex and inefficient, since we cannot use matmul anymore for layers that have FaR config. However, on the hardware implementation, all the complexity of rewiring is handled by the hardware and hence, we can easily use the same DPE and matmul function to perform the computation. The only thing that differs is the extra configuration loading introduced for multiplexing the shadow registers.
+For clarity, this work presents a FaR-aware accelerator prototype: we offload only the FaR-enabled linear() operator, not the entire model. Accordingly, our evaluation isolates and compares the performance overhead of the software FaR-aware linear() against its hardware realization.
+TABLE II: Custom ViTs for evaluation on selected Datasets
+ViT Params
+MNIST
+CIFAR-10
+CIFAR-100
+image size
+28
+32
+32
+channel size
+1
+3
+3
+patch size
+7
+8
+8
+embed size
+512
+512
+512
+num heads
+8
+8
+8
+classes
+10
+10
+100
+num layers
+1
+3
+6
+hidden size
+256
+256
+256
+Model size
+3.19M
+9.57M
+19.07M
+Table III presents the results of our performance analysis with two FaR configurations.
+Microbenchmarks of the FaR-aware linear() operator clarify where the speedup originates. We are observing 61% overhead in matmul operation when division factor is set to 3 while in FaRAccel the matmul operation overhead is only 3%. In software, the operator’s runtime scales approximately with the number of rewired inputs because the framework must materialize duplicated activations, perform per-lane scaling, and gather donor weights; these steps inhibit GEMM fusion and reduce library efficiency. In contrast, FaRAccel synthesizes the select vectors for each output row while the previous tile is reducing, and then presents operands directly to the multipliers without inserting arithmetic on the critical path. As a result, steady-state multiplier utilization matches that of a baseline GEMM on the same tile size, and the measured kernel latency approaches the baseline bound for memory-fed matrix multiply on our platform.
+Across all three datasets, FaRAccel substantially reduces the overhead introduced by FaR when realized in software. When FaR is applied to a large fraction of linear layers, we observe the overhead drops from 15% to 1%, which shows up to a 10–15× end-to-end improvement relative to the FaR-software baseline, with the exact improvement depending on the fraction of rewired inputs per layer and the division factor used during activation splitting. These gains arise because FaRAccel converts rewiring into per-lane operand selection that runs at line rate and avoids fragmented GEMMs control flow. Accuracy under nominal (non-attack) evaluation remains matched to the FaR-software baseline, since the accelerator implements the same arithmetic at FP16 and the same sparse FaR map; in our experiments, the offload introduces no measurable deviation in top-1 accuracy.
+We conduct two ablations to test sensitivity to FaR parameters and coverage. First, increasing the per-layer rewiring budget up to the default cap yields a near-linear runtime increase in software but leaves FaRAccel’s runtime comparatively flat, since per-lane selects are constant-time regardless of how many inputs are rewired. Second, moving from a division factor of two to three increases activation handling overhead in software yet has a negligible effect on FaRAccel, because the required scaling is compiled into the shadow donor values and does not execute at runtime.
+TABLE III: Performance analysis of FaRAccel with 15% rewiring
+No FaR
+SW FaR
+HW FaR
+Baseline
+Div 2
+Div 3
+Div 2
+Div 3
+matmul latency
+1
+1.42
+1.61
+1.03
+1.03
+MNIST
+1
+1.06
+1.07
+1.00
+1.00
+CIFAR 10
+1
+1.09
+1.11
+1.01
+1.01
+CIFAR 100
+1
+1.12
+1.15
+1.01
+1.01
+VI-C Limitations and Future Direction
+The current accelerator focuses on linear projections inside transformer blocks and does not accelerate convolutions or non-linearities; however, these components are not bottlenecks in the evaluated ViT models. Our evaluation targets a single FPGA device class and a fixed tile geometry; exploring alternative tilings, mixed-precision arithmetic, and multi-FPGA partitioning is left for future work. Finally, while the design supports replication of tiles and wider lanes, achieving near-linear scaling requires sufficient off-chip bandwidth and careful SRAM banking, which may need platform-specific tuning on devices with different memory organizations.
+FaRAccel removes the software tax of FaR by realizing rewiring as constant-throughput operand selection in hardware. End-to-end inference time improves by as much as 10–15× over a FaR-in-software implementation while preserving nominal accuracy, and the hardware additions are modest enough to maintain the clock frequency and utilization characteristics of a baseline GEMM core.
+VII Related Works
+In this section, we introduce existing approaches of accelerating modern machine learning models and discuss their key features.
+GPUs are commonly deployed as high-throughput accelerators in frameworks such as TensorFlow [22] and PyTorch [23]. By exploiting massive parallelism and batching, they deliver strong throughput on a wide range of models. TensorRT [24] offers general-purpose mappings of deep learning graphs to GPUs, but it provides limited opportunities for workload-specific customization.
+Gemmini [25] is an automatic accelerator generator capable of producing both systolic-array and parallel-vector architectures, and it has been widely used for deep learning workloads. For example, Sehoon et al. [26] apply Gemmini to Transformer inference, characterizing Transformer behavior and introducing several optimizations. Other efforts tailor hardware specifically to Vision Transformers: ViTCoD [27] designs a dedicated accelerator that handles both sparse and dense execution to raise utilization; Auto-ViT-Acc [28] builds an FPGA accelerator for multi-head attention alongside an FPGA-aware quantization method; and HeatViT [29] targets embedded FPGAs with image-adaptive token pruning and 8-bit quantization. Despite these advances, most “sequential” accelerator flows still rely on a single, generic engine across layers with differing tensor shapes, which can lead to shape mismatches, under-utilization, and, ultimately, higher latency.
+Unlike deep-learning training, real-time inference typically cannot aggregate inputs into large batches to expose extensive parallelism. Consequently, many batch-oriented, throughput-optimized systems utilize only a small fraction of their resources when serving a single request. Microsoft BrainWave [30] targets this production, datacenter-scale scenario by extracting intra-request (single-task) parallelism and mapping it efficiently onto FPGAs, achieving substantially lower latency than GPUs without sacrificing system-level throughput.
+DNNExplorer [31] introduces a hybrid design methodology that deploys spatial accelerators for the initial layers and a generic accelerator for the remaining layers, enabling deeper networks while maintaining acceptable performance. However, DNNExplorer pipelines only between linear kernels, which reduces latency to a point;
+Several works have extensively adapted machine-learning models to fit resource-constrained hardware [32], most notably through quantization [33], pruning, and related model-compression techniques [34]. These approaches reduce on-device memory footprint and simplify arithmetic [35]—e.g., replacing full-precision multiplications with shift/add or other bitwise operations—thereby improving efficiency [36]. However, none of these efforts explicitly adopts a security-aware co-design to improve model or hardware resilience to fault mechanisms such as memory bit flips. To the best of our knowledge, our work is the first to introduce a high-level mitigation against bit-flip attacks that preserves performance while incurring only minimal hardware overhead.
+VIII Conclusion
+In this paper, we introduced FaRAccel, the first hardware accelerator tailored to efficiently support the Forget and Rewire (FaR) defense against Bit-Flip Attacks (BFAs) in Transformer models. By reimagining FaR as an operand redirection problem rather than a graph rewrite, FaRAccel enables constant-throughput execution of rewired matrix operations with minimal hardware overhead. Our FPGA-oriented design integrates a lightweight configuration memory, a per-lane redirect network, and a shadow store for pre-scaled donor weights, all while preserving the original GEMM datapath and requiring no retraining or topology changes to the model. Evaluations show that FaRAccel maintains near-baseline latency and power efficiency and delivers the robustness benefits of FaR with less than 3% worst-case overhead. This makes FaRAccel a practical and scalable solution for secure inference in edge and embedded AI deployments. Looking ahead, the principles established in this work open new opportunities for building resilience-aware hardware primitives that tightly couple algorithmic defenses with efficient architectural support.
+References
+[1]
+B. Saber Latibari, N. Nazari, A. Sasan, H. Homayoun, P. Satam, S. Salehi, and H. Sayadi, “Transformers for secure hardware systems: Applications, challenges, and outlook,” in Proceedings of the Great Lakes Symposium on VLSI 2025, 2025, pp. 841–848.
+[2]
+B. S. Latibari, N. Nazari, M. A. Chowdhury, K. I. Gubbi, C. Fang, S. Ghimire, E. Hosseini, H. Sayadi, H. Homayoun, S. Salehi et al., “Transformers: A security perspective,” IEEE Access, 2024.
+[3]
+S. Ghimire, Y.-Z. Lin, M. Mamun, M. A. Chowdhury, F. Alemi, S. Cai, J. Guo, M. Zhu, H. Li, B. Saber Latibari et al., “Hwrex: Ai-enabled hardware weakness and risk exploration and storytelling framework with llm-assisted mitigation suggestion,” ACM Transactions on Design Automation of Electronic Systems, 2025.
+[4]
+B. S. Latibari, S. Ghimire, M. A. Chowdhury, N. Nazari, K. I. Gubbi, H. Homayoun, A. Sasan, and S. Salehi, “Automated hardware logic obfuscation framework using gpt,” in 2024 IEEE 17th Dallas Circuits and Systems Conference (DCAS). IEEE, 2024, pp. 1–5.
+[5]
+F. Movafagh and U. Glässer, “Cyber situational awareness of critical infrastructure security threats.”
+[6]
+E. Hosseini, A. Srinivas, N. Nazari, C. Hale, S. Rafatirad, and H. Homayoun, “Large language models for opioid-induced respiratory depression prediction in hospitalized patients: A retrospective study,” ACM Transactions on Computing for Healthcare, vol. 6, no. 2, pp. 1–14, 2025.
+[7]
+B. S. Latibari, H. Homayoun, and A. Sasan, “Optimizing vision transformers: Unveiling’focus and forget’for enhanced computational efficiency,” IEEE Access, 2025.
+[8]
+B. Saber Latibari, S. Salehi, H. Homayoun, and A. Sasan, “Iret: Incremental resolution enhancing transformer,” in Proceedings of the Great Lakes Symposium on VLSI 2024, 2024, pp. 620–625.
+[9]
+C. Fang, N. Miao, S. Srivastav, J. Liu, R. Zhang, R. Fang, R. Tsang, N. Nazari, H. Wang, H. Homayoun et al., “Large language models for code analysis: Do {\{LLMs}\} really do their job?” in 33rd USENIX Security Symposium (USENIX Security 24), 2024, pp. 829–846.
+[10]
+A. Y. Shahir, T. Charalampous, M. Keramati, F. Movafagh, U. Glässer, and H. Wehn, “Gist: Gear type identification by spatiotemporal trajectory transformation for monitoring fisheries,” in Proceedings of the AAAI Conference on Artificial Intelligence, vol. 39, no. 27, 2025, pp. 28 349–28 358.
+[11]
+N. Nazari, F. Xiang, C. Fang, H. M. Makrani, A. Puri, K. Patwari, H. Sayadi, S. Rafatirad, C.-N. Chuah, and H. Homayoun, “Llm-fin: Large language models fingerprinting attack on edge devices,” in 2024 25th International Symposium on Quality Electronic Design (ISQED). IEEE, 2024, pp. 1–6.
+[12]
+N. Nazari, H. M. Makrani, C. Fang, H. Sayadi, S. Rafatirad, K. N. Khasawneh, and H. Homayoun, “Forget and rewire: Enhancing the resilience of transformer-based models against {\{Bit-Flip}\} attacks,” in 33rd USENIX Security Symposium (USENIX Security 24), 2024, pp. 1349–1366.
+[13]
+https://huggingface.com.
+[14]
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin, “Attention is all you need,” Advances in neural information processing systems, vol. 30, 2017.
+[15]
+T. Frassetto, P. Jauernig, C. Liebchen, and A.-R. Sadeghi, “Imix:in-process memory isolation extension,” in 27th USENIX Security Symposium (USENIX Security 18), 2018, pp. 83–97.
+[16]
+O. Mutlu and J. S. Kim, “Rowhammer: A retrospective,” IEEE Transactions on Computer-Aided Design of Integrated Circuits and Systems, vol. 39, no. 8, pp. 1555–1571, 2019.
+[17]
+H. Luo, A. Olgun, A. G. Yağlıkçı, Y. C. Tuğrul, S. Rhyner, M. B. Cavlak, J. Lindegger, M. Sadrosadati, and O. Mutlu, “Rowpress: Amplifying read disturbance in modern dram chips,” in Proceedings of the 50th Annual International Symposium on Computer Architecture, 2023, pp. 1–18.
+[18]
+F. Yao, A. S. Rakin, and D. Fan, “Deephammer: Depleting the intelligence of deep neural networks through targeted chain of bit flips,” in 29th USENIX Security Symposium (USENIX Security 20), 2020, pp. 1–18.
+[19]
+C. Guo, C. Wei, J. Tang, B. Duan, S. Han, H. Li, and Y. Chen, “Transitive array: An efficient gemm accelerator with result reuse,” in Proceedings of the 52nd Annual International Symposium on Computer Architecture, 2025, pp. 990–1004.
+[20]
+X. Yi, R. Antonio, J. Dumoulin, J. Sun, J. Van Delm, G. Paim, and M. Verhelst, “Opengemm: A high-utilization gemm accelerator generator with lightweight risc-v control and tight memory coupling,” ASPDAC, 2025.
+[21]
+Y. Shen, M. Ferdman, and P. Milder, “Maximizing cnn accelerator efficiency through resource partitioning,” in 2017 ACM/IEEE 44th Annual International Symposium on Computer Architecture (ISCA). IEEE, 2017, pp. 535–547.
+[22]
+M. Abadi, “Tensorflow: learning functions at scale,” in Proceedings of the 21st ACM SIGPLAN international conference on functional programming, 2016, pp. 1–1.
+[23]
+A. Paszke, S. Gross, F. Massa, A. Lerer, J. Bradbury, G. Chanan, T. Killeen, Z. Lin, N. Gimelshein, L. Antiga et al., “Pytorch: An imperative style, high-performance deep learning library,” Advances in neural information processing systems, vol. 32, 2019.
+[24]
+Y. Zhou and K. Yang, “Exploring tensorrt to improve real-time inference for deep learning,” in 2022 IEEE 24th Int Conf on High Performance Computing & Communications; 8th Int Conf on Data Science & Systems; 20th Int Conf on Smart City; 8th Int Conf on Dependability in Sensor, Cloud & Big Data Systems & Application (HPCC/DSS/SmartCity/DependSys). IEEE, 2022, pp. 2011–2018.
+[25]
+H. Genc, S. Kim, A. Amid, A. Haj-Ali, V. Iyer, P. Prakash, J. Zhao, D. Grubb, H. Liew, H. Mao et al., “Gemmini: Enabling systematic deep-learning architecture evaluation via full-stack integration,” in 2021 58th ACM/IEEE Design Automation Conference (DAC). IEEE, 2021, pp. 769–774.
+[26]
+S. Kim, C. Hooper, T. Wattanawong, M. Kang, R. Yan, H. Genc, G. Dinh, Q. Huang, K. Keutzer, M. W. Mahoney et al., “Full stack optimization of transformer inference: a survey,” arXiv preprint arXiv:2302.14017, 2023.
+[27]
+H. You, Z. Sun, H. Shi, Z. Yu, Y. Zhao, Y. Zhang, C. Li, B. Li, and Y. Lin, “Vitcod: Vision transformer acceleration via dedicated algorithm and accelerator co-design,” in 2023 IEEE International Symposium on High-Performance Computer Architecture (HPCA). IEEE, 2023, pp. 273–286.
+[28]
+Z. Li, M. Sun, A. Lu, H. Ma, G. Yuan, Y. Xie, H. Tang, Y. Li, M. Leeser, Z. Wang et al., “Auto-vit-acc: An fpga-aware automatic acceleration framework for vision transformer with mixed-scheme quantization,” in 2022 32nd International Conference on Field-Programmable Logic and Applications (FPL). IEEE, 2022, pp. 109–116.
+[29]
+P. Dong, M. Sun, A. Lu, Y. Xie, K. Liu, Z. Kong, X. Meng, Z. Li, X. Lin, Z. Fang et al., “Heatvit: Hardware-efficient adaptive token pruning for vision transformers,” in 2023 IEEE International Symposium on High-Performance Computer Architecture (HPCA). IEEE, 2023, pp. 442–455.
+[30]
+J. Fowers, K. Ovtcharov, M. Papamichael, T. Massengill, M. Liu, D. Lo, S. Alkalay, M. Haselman, L. Adams, M. Ghandi et al., “A configurable cloud-scale dnn processor for real-time ai,” in 2018 ACM/IEEE 45th Annual International Symposium on Computer Architecture (ISCA). IEEE, 2018, pp. 1–14.
+[31]
+X. Zhang, H. Ye, J. Wang, Y. Lin, J. Xiong, W.-m. Hwu, and D. Chen, “Dnnexplorer: a framework for modeling and exploring a novel paradigm of fpga-based dnn accelerator,” in Proceedings of the 39th International Conference on Computer-Aided Design, 2020, pp. 1–9.
+[32]
+A. Ansarmohammadi, R. Hojabr, M. Mastalizade, N. Nazari, and M. E. Salehi, “Mlb-mac: Multi-level binary mac array for energy efficient ml accelerators,” IEEE Transactions on Circuits and Systems I: Regular Papers, 2025.
+[33]
+N. Nazari, M. Loni, M. E. Salehi, M. Daneshtalab, and M. Sjodin, “Tot-net: An endeavor toward optimizing ternary neural networks,” in 2019 22nd Euromicro Conference on Digital System Design (DSD). IEEE, 2019, pp. 305–312.
+[34]
+N. Nazari, S. A. Mirsalari, S. Sinaei, M. E. Salehi, and M. Daneshtalab, “Multi-level binarized lstm in eeg classification for wearable devices,” in 2020 28th Euromicro International Conference on Parallel, Distributed and Network-Based Processing (PDP). IEEE, 2020, pp. 175–181.
+[35]
+S. A. Mirsalari, N. Nazari, S. Sinaei, M. E. Salehi, and M. Daneshtalab, “Fact-lstm: Fast and compact ternary architecture for lstm recurrent neural networks,” IEEE design & test, vol. 39, no. 3, pp. 45–53, 2022.
+[36]
+N. Nazari and M. E. Salehi, “Inter-layer hybrid quantization scheme for hardware friendly implementation of embedded deep neural networks,” in Proceedings of the Great Lakes Symposium on VLSI 2023, 2023, pp. 193–196.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

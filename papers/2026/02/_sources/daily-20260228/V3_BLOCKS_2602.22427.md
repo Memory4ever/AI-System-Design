@@ -1,0 +1,427 @@
+[0] h5: Report GitHub Issue
+
+[1] p: Content selection saved. Describe the issue below:
+
+[2] h1: HubScan: Detecting Hubness Poisoning in Retrieval-Augmented Generation Systems
+
+[3] h6: Abstract
+
+[4] p: Retrieval-Augmented Generation (RAG) systems are essential to contemporary AI applications, allowing large language models to obtain external knowledge via vector similarity search. Nevertheless, these systems encounter a significant security flaw: hubness - items that frequently appear in the top- k k retrieval results for a disproportionately high number of varied queries. These hubs can be exploited to introduce harmful content, alter search rankings, bypass content filtering, and decrease system performance.
+
+[5] p: We introduce HubScan , an open-source security scanner that evaluates vector indices and embeddings to identify hubs in RAG systems. HubScan presents a multi-detector architecture that integrates: (1) robust statistical hubness detection utilizing median/MAD-based z-scores, (2) cluster spread analysis to assess cross-cluster retrieval patterns, (3) stability testing under query perturbations, and (4) domain-aware and modality-aware detection for category-specific and cross-modal attacks. Our solution accommodates several vector databases (FAISS, Pinecone, Qdrant, Weaviate) and offers versatile retrieval techniques, including vector similarity, hybrid search, and lexical matching with reranking capabilities.
+
+[6] p: We evaluate HubScan on Food-101, MS-COCO, and FiQA adversarial hubness benchmarks constructed using state-of-the-art gradient-optimized and centroid-based hub generation methods. HubScan achieves 90% recall at a 0.2% alert budget and 100% recall at 0.4%, with adversarial hubs ranking above the 99.8th percentile. Domain-scoped scanning recovers 100% of targeted attacks that evade global detection. Production validation on 1M real web documents from MS MARCO demonstrates significant score separation between clean documents and adversarial content. Our work provides a practical, extensible framework for detecting hubness threats in production RAG systems. Our open-source implementation is available at https://github.com/cisco-ai-defense/adversarial-hubness-detector .
+
+[7] h2: I Introduction
+
+[8] p: Retrieval-Augmented Generation (RAG) systems have become an essential framework for grounding large language models (LLMs) in external knowledge [ 6 ] . RAG systems can deliver precise, current responses by extracting relevant items from a vector database prior to generation, eliminating the need for continuous model retraining. This framework facilitates several applications, including corporate knowledge repositories, customer support systems, and AI assistants across multiple sectors.
+
+[9] p: The fundamental mechanism of RAG systems is based on vector similarity search within high-dimensional embedding spaces. Upon submission of a query, it is transformed into a vector representation, and the system obtains the k k most common items from a vector index. The collected texts are subsequently supplied as context to an LLM for answer generation. This architecture presents considerable benefits, although it also creates a crucial attack surface: the vector embedding space.
+
+[10] h3: I-A The Hubness Threat
+
+[11] p: Hubness is a recognized occurrence in high-dimensional spaces where specific locations frequently serve as nearest neighbors to several other points [ 13 ] . In information retrieval situations, this results in certain items appearing in the top- k k results more frequently than anticipated. Hubness can arise organically; nevertheless, it also implies a significant security weakness that may be intentionally exploited.
+
+[12] p: Zhang et al. [ 19 ] demonstrated that attackers can craft embeddings that become “hubs” appearing in retrieval results for thousands of semantically unrelated queries. In their experiments on text-caption-to-image retrieval, a single hub generated using only 100 random queries was retrieved as the top-1 result for over 21,000 out of 25,000 test queries—far exceeding expected behavior for normal items.
+
+[13] p: Such hub injection attacks enable a form of universal retrieval poisoning : by inserting a malicious item into a database, an adversary can force irrelevant or harmful content to appear in a wide array of search results [ 19 ] .
+
+[14] h3: I-B Real-World Attack Incidents
+
+[15] p: Real-world incidents underscore the feasibility and severity of retrieval poisoning:
+
+[16] p: Microsoft 365 Copilot Poisoning : Zenity Labs demonstrated that “all you need is one document” to reliably mislead a production Copilot system [ 18 ] . A single crafted document made the Copilot confidently answer queries with attacker-chosen false facts.
+
+[17] p: GeminiJack Attack : Noma Security’s exploit showed that a single shared Google Doc with embedded instructions caused Google’s Gemini AI search to exfiltrate months of private emails and documents [ 5 ] , demonstrating a zero-click data breach through retrieval poisoning.
+
+[18] p: Content Injection : Hubs enable attackers to inject malicious, misleading, or spam content that appears in responses to diverse queries.
+
+[19] p: Indirect Prompt Injection : By placing prompt injection payloads in hub items, attackers can manipulate LLM behavior across many user queries [ 3 ] .
+
+[20] p: The Promptware Kill Chain : Recent research by [ 10 ] formalizes these exploits as part of a multi-step malware lifecycle. They demonstrate how retrieval poisoning serves as the primary delivery vector for Promptware —AI-native malware that utilizes RAG to move from initial access to lateral movement and data exfiltration and gain persistency.
+
+[21] p: These examples underscore a critical weakness in RAG architectures: the absence of a resilient poison detection layer to capture harmful payloads prior to their integration into the model’s environment. In the absence of such identification, the RAG system autonomously compromises itself by considering contaminated external inputs as reliable information.
+
+[22] h3: I-C Challenges in Detection
+
+[23] p: Overcoming hubness is difficult as the concept of the attack exploits intrinsic characteristics of embedding spaces. Previous methods for decreasing natural hubness (e.g., similarity normalization [ 4 , 16 ] ) solely diminish hubs that are globally frequent neighbors. An adaptive adversary can establish a domain-specific hub that activates solely for inquiries on a single subject, circumventing overarching defenses [ 19 ] .
+
+[24] p: Key detection challenges include:
+
+[25] p: Statistical Robustness : Hubs demonstrate hub rates exceeding the median by 5-10+ standard deviations, necessitating the use of robust statistical procedures that are resilient to the impact of outliers.
+
+[26] p: Domain-Specific Attacks : Advanced attackers establish hubs that focus on particular semantic categories (e.g., ”medical advice” or ”financial reports”), circumventing worldwide detection while exerting significant influence inside their designated domain.
+
+[27] p: Cross-Modal Attacks : In multimodal systems, items can be designed to seem related to queries in an alternate modality, taking advantage of modality boundaries that single-modality detection overlooks.
+
+[28] p: Semantic Mismatch : Hubs get high similarity scores at the expense of genuine semantic alignment even though their content frequently diverges from the queries that yield them.
+
+[29] p: Retrieval Method Awareness : Detection must be effective across several retrieval methods, including vector search, hybrid search, and reranking pipelines.
+
+[30] h3: I-D Contributions
+
+[31] p: We present HubScan , the first comprehensive detection system for hubness in RAG systems. Our contributions include:
+
+[32] p: Multi-Detector Architecture : A pluggable detection framework combining hubness frequency analysis, cluster spread detection, stability testing, and deduplication—each targeting different aspects of hub behavior.
+
+[33] p: Robust Statistical Methods : Novel application of median/MAD-based z-scores with numerical stability guarantees for detecting statistical anomalies in hub rate distributions.
+
+[34] p: Domain-Aware Detection : Methods for identifying hubs that focus on particular semantic categories via bucket analysis of specific RAG indices.
+
+[35] p: Modality-Aware Detection : Cross-modal anomaly detection for multimodal systems, incorporating parallel retrieval and late fusion architectures.
+
+[36] p: Flexible Retrieval Support : Integration with multiple vector databases and retrieval methods, including hybrid search and custom reranking algorithms through a plugin system and customizable interfaces.
+
+[37] p: Open-Source Implementation : A production-ready scanner with adapters to the most popular RAG frameworks.
+
+[38] p: Against SOTA hubs [ 19 ] (CLIP/Qwen3), HubScan achieves 90% recall at a 0.2% alert budget and 100% recall at 0.4%. The Cluster Spread Detector provides critical lift (+10–20pp recall) for universal attacks.Production validation on 1 million MS MARCO [ 11 ] passages demonstrates 5.8 × \times score separation between adversarial hubs and the 99 th percentile of clean data, with 0.1% operational overhead, confirming web-scale deployment feasibility..
+
+[39] p: The rest of this paper is organized as follows: Section II reviews related work. Section III presents our detection methodology and background. Section IV details the detection algorithms. Section V describes domain-aware and modality-aware detection. Section VI covers retrieval integration. Sections VII , VIII presents our evaluation. Section IX concludes.
+
+[40] h2: II Related Work
+
+[41] h3: II-A Hubness in High-Dimensional Spaces
+
+[42] p: The hubness phenomenon was initially defined by Radovanović et al. [ 13 ] , who illustrated that in high-dimensional spaces, specific points-termed ”hubs” , frequently serve as nearest neighbors to numerous other points with disproportionate prevalence. Subsequent research investigated mitigation methods: Mutual Proximity [ 14 ] modifies distances according to local neighborhoods, while CSLS [ 4 ] standardizes similarities by employing average neighbor distances. Lin et al. [ 8 ] presented NeighborRetr to equilibrate hub centrality during training, and Wang et al. [ 16 ] introduced Dual Bank Normalization (DBNorm) as a post-processing method. However, these methodologies concentrate on natural hubness resulting from data distributions, rather than on adversarially constructed hubs.
+
+[43] h3: II-B Hubness Attacks
+
+[44] p: Zhang et al. [ 19 ] conducted the first extensive examination of hubness exploitation in multi-modal retrieval, demonstrating that adversaries can leverage the hubness phenomena to generate embeddings obtained from thousands of unrelated queries. Their research showed that a singular hub might prevail in top-1 outcomes for 84% of test queries in text-to-image retrieval, with hubs generalizing far beyond their training queries (100 queries used to create a hub affecting 21,000+ queries). Existing hubness mitigation techniques provide limited defense against targeted hubs, which can be crafted to target specific concepts while evading global detection. Our research expands upon these findings to establish the first detection framework explicitly aimed at hubs.
+
+[45] p: Real-World Incidents : Security research firms have documented production RAG vulnerabilities. Zenity Labs [ 18 ] reported that “all you need is one document” to reliably mislead Microsoft 365 Copilot. Noma Security (GeminiJack) uncovered vulnerabilities where an indexed document with hidden instructions induced Google Gemini to leak confidential data—a zero-click data exfiltration attack. Greshake et al. [ 3 ] demonstrated indirect prompt injection through the retrieval pathway. These examples highlight the potential harm when retrieval is impaired; our research focuses on attacks that function at the embedding level, utilizing continuous vector spaces.
+
+[46] h3: II-C Common Retrieval Methods
+
+[47] p: Wu et al. [ 17 ] introduced RetrievalGuard, a demonstrably resilient 1-nearest neighbor image retrieval technique that preserves accuracy in the presence of adversarial perturbations. Hybrid search, which integrates vector similarity with lexical matching, has grown popular for enhancing retrieval quality [ 1 ] . Reranking methodologies employing cross-encoders [ 12 ] offer secondary filtering. Our work integrates with these approaches to provide defense-in-depth.
+
+[48] h2: III Methodology
+
+[49] h3: III-A Threat Model and Problem Definition
+
+[50] p: We assume an adversary can introduce or modify an item in the retrieval system’s index by applying perturbations to a base item (image, audio, document, etc.). The adversary’s goal is to maximize the number of query embeddings that rank this item among the top results. They may target either universal hubness (dominate retrieval for virtually all queries) or domain-specific hubness (dominate queries related to a particular topic). The attacker does not necessarily control query inputs; instead, they exploit embedding space geometry so that many legitimate user queries will naturally retrieve the adversarial item.
+
+[51] p: The attacker has the following capabilities: (1) Write Access to insert or modify documents in the vector database; (2) Query Sampling to sample queries from the target distribution; and (3) Embedding Knowledge of the embedding model used by the target system. The attacker’s goal is to inject hub documents that appear in top- k k results for a large fraction of user queries, carry malicious payloads, and evade detection by appearing statistically similar to normal content.
+
+[52] p: In our system, every gallery item is converted into a point in an embedding space, and searches work by retrieving the items located closest to the query. We define a ”hub” as a gallery item that exploits this geometry to appear in the top results for a disproportionately large number of searches. HubScan ’s objective is to scan the gallery to identify these crafted items and then either remove them or suppress their ranking to prevent them from dominating the results.
+
+[53] h3: III-B Hubness Background
+
+[54] p: In vector search, we assess a gallery item’s impact by quantifying its frequency of appearance in the top results across an extensive array of queries. In high-dimensional data, the distribution is inherently skewed [ 13 ] : certain data points, referred to as ”hubs,” function as attractors and are retrieved significantly more often than the mean, whereas others, termed ”anti-hubs,” are seldom accessed.
+
+[55] p: A hub is an entity that consistently ranks inside the top- k k results for a significant proportion of varied searches. Hubness inherently occurs in high-dimensional embedding spaces, but it can also be deliberately employed to construct adversarial hubs that dominate in retrieval. As demonstrated by Zhang et al. [ 19 ] , adversarial hubs can be produced by gradient-based optimization: the algorithm selects a limited number of queries, refines an embedding that corresponds with their common semantic direction, and implements a constrained modification to a gallery item to ensure its retrieval for many queries.
+
+[56] p: Hubs exhibit several distinguishing characteristics: (1) Extreme Hub Rates of 20–50%+ compared to expected rates of 2–5% for normal documents; (2) Cross-Cluster Spread —retrieved by queries from many diverse semantic clusters; (3) Perturbation Stability —maintaining high retrieval rates even under query perturbations; and (4) Statistical Anomaly —hub z-scores typically exceeding 5–10 standard deviations above the median.
+
+[57] h3: III-C System Architecture
+
+[58] p: HubScan implements a multi-detector architecture that analyzes vector indices through several complementary lenses. Figure 1 illustrates the overall pipeline.
+
+[59] figure: Fig. 1 : HubScan detection pipeline overview showing the multi-stage process from input to verdict assignment.
+
+[60] p: The detection process operates as follows:
+
+[61] p: Data Loading : Load document embeddings, metadata, and vector index from supported backends (FAISS, Pinecone, Qdrant, Weaviate).
+
+[62] p: Query Sampling : Generate or sample representative queries from the document distribution.
+
+[63] p: Retrieval Execution : Execute k k -NN queries using configurable retrieval methods, accumulating hit counts per document.
+
+[64] p: Detection : Run multiple detectors analyzing different aspects of adversarial behavior.
+
+[65] p: Score Fusion : Combine detector outputs using weighted scoring.
+
+[66] p: Verdict Assignment : Classify documents as HIGH, MEDIUM, or LOW risk based on configurable thresholds.
+
+[67] h3: III-D Query Sampling Strategy
+
+[68] p: Effective hubness detection requires representative queries that cover the semantic space of the document corpus. The query sampling employs a mixed sampling strategy combining multiple approaches:
+
+[69] p: Cluster Centroids : We apply MiniBatch K-Means clustering to the item embeddings and use cluster centroids as queries, ensuring queries are distributed across semantic regions.
+
+[70] p: Random Items Sampling : We randomly sample item embeddings to serve as queries, ensuring queries reflect the actual item distribution.
+
+[71] p: Real Queries (when available): For datasets with pre-existing query sets, we incorporate actual user queries to better reflect production query patterns.
+
+[72] p: This mixed strategy integrates semantic coverage (via centroids) with distributional authenticity (by random sampling), guaranteeing effective detection across varied query patterns while preserving computing efficiency with MiniBatch K-Means.
+
+[73] h3: III-E Robust Statistical Framework
+
+[74] p: A key problem in hubness detection is that hubs function as extreme outliers, distorting conventional mean and variance computations. To address this, we standardize hub rates utilizing the Median Absolute Deviation (MAD). This rigorous method produces consistent z-scores in the existence of formidable adversary samples, enabling us to accurately identify papers with scores surpassing 5 as potential threats.
+
+[75] h3: III-F Weighted Hit Accumulation
+
+[76] p: A basic hub score quantifies the frequency with which a page appears in the top- k k retrieval results across various queries. This strategy, while successful as a baseline, implicitly presumes that all appearances contribute equally to hubness, which is not accurate in actuality. Documents that consistently occupy high-ranking positions or are located at minimal embedding distances demonstrate far more pronounced hub behavior than those that appear infrequently near the threshold.
+
+[77] p: We developed a weighted hit accumulation system to measure this better. Instead of counting every match equally, we give more points to matches that appear at the top of the list or are very similar. This shows that powerful items dominate because they take the best spots, not just because they have been retrieved often.
+
+[78] h3: III-G Multi-Detector Scoring
+
+[79] p: Each detector produces a per-item suspicion score s i ( d ) s_{i}^{(d)} , where higher values indicate more anomalous behavior. Since detectors may emit scores on different scales, we optionally apply a per-detector normalization g d ​ ( ⋅ ) g_{d}(\cdot) to obtain comparable normalized scores s ~ i ( d ) ∈ [ 0 , 1 ] \tilde{s}_{i}^{(d)}\in[0,1] . We then fuse signals via a weighted sum:
+
+[80] table: s i combined = ∑ d α d ​ s ~ i ( d ) , s ~ i ( d ) = g d ​ ( s i ( d ) ) s_{i}^{\text{combined}}=\sum_{d}\alpha_{d}\,\tilde{s}_{i}^{(d)}\,,\qquad\tilde{s}_{i}^{(d)}=g_{d}\!\left(s_{i}^{(d)}\right) (1)
+
+[81] p: where α d \alpha_{d} are configurable weights controlling each detector’s contribution. Default weights are: Hubness z-score (1.0), Domain Hub (0.5), Cross-Modal Penalty (0.5), Cluster Spread (0.3), and Stability (0.2).
+
+[82] h3: III-H Verdict Classification
+
+[83] p: Items are classified into risk levels based on combined scores:
+
+[84] p: HIGH : h ≥ 99 th h\geq 99^{\text{th}} percentile
+
+[85] p: MEDIUM : h ≥ 98 th h\geq 98^{\text{th}} percentile
+
+[86] p: LOW : Below MEDIUM thresholds
+
+[87] p: These thresholds are tunable and can be adjusted based on operational requirements (higher precision vs. higher recall).
+
+[88] h3: III-I Mitigation via Re-ranking
+
+[89] p: Once a candidate hub is confirmed, the defender can mitigate its impact through removal, quarantine, or a re-ranking filter that pushes flagged items down in results. One approach subtracts a penalty from the similarity score of flagged items. Although hubness reduction transforms alone are insufficient against adaptive, domain-specific hubs [ 19 ] , in combination with explicit detection they can dramatically reduce a hub’s visibility with minimal impact on normal results.
+
+[90] h2: IV Detection Algorithms
+
+[91] p: HubScan implements four complementary detectors, each targeting different aspects of hub behavior. This section details the algorithms and their underlying rationale, Figure 2 illustrates key detection metrics.
+
+[92] h3: IV-A Hubness Detector
+
+[93] p: The core hubness detector implements reverse k k -NN frequency analysis with bucketed accumulation for efficient processing.
+
+[94] figure: Algorithm 1 Hubness Detection 0: Index ℐ \mathcal{I} , queries Q Q , documents D D , k k 1: Initialize accumulator A A with | D | |D| documents 2: for each query q ∈ Q q\in Q do 3: neighbors , distances ← kNN ​ ( ℐ , q , k ) \text{neighbors},\text{distances}\leftarrow\text{kNN}(\mathcal{I},q,k) 4: for r = 1 r=1 to k k do 5: d idx ← neighbors ​ [ r ] d_{\text{idx}}\leftarrow\text{neighbors}[r] 6: w ← w rank ​ ( r ) ⋅ w dist ​ ( distances ​ [ r ] ) w\leftarrow w_{\text{rank}}(r)\cdot w_{\text{dist}}(\text{distances}[r]) 7: A . add_hit ​ ( d idx , w ) A.\text{add\_hit}(d_{\text{idx}},w) 8: end for 9: end for 10: h ← A . compute_hub_rates ​ ( ) h\leftarrow A.\text{compute\_hub\_rates}() 11: z , μ , σ ← robust_zscore ​ ( h ) z,\mu,\sigma\leftarrow\text{robust\_zscore}(h) 12: return z z
+
+[95] p: The bucketed accumulator tracks hits per document with optional bucketing by concept or modality, enabling both global and fine-grained analysis from a single pass over queries. The primary output is the robust z-score vector indicating how many “standard deviations” each document’s hub rate deviates from the median. Gallery items in the 99 th 99^{\text{th}} percentile are highly anomalous—for comparison, in a normal distribution, z = 6 z=6 corresponds to approximately 1 in 500 million probability.
+
+[96] h3: IV-B Cluster Spread Detector
+
+[97] p: Hubs are designed to capture queries from multiple semantic regions. The cluster spread detector measures this cross-cluster retrieval pattern.
+
+[98] figure: Algorithm 2 Cluster Spread Detection 0: Queries Q Q , query embeddings E Q E_{Q} , k k , n clusters n_{\text{clusters}} 1: Cluster queries: C ← KMeans ​ ( E Q , n clusters ) C\leftarrow\text{KMeans}(E_{Q},n_{\text{clusters}}) 2: for each query q j ∈ Q q_{j}\in Q do 3: c j ← C . predict ​ ( q j ) c_{j}\leftarrow C.\text{predict}(q_{j}) 4: neighbors ← kNN ​ ( ℐ , q j , k ) \text{neighbors}\leftarrow\text{kNN}(\mathcal{I},q_{j},k) 5: for each d idx ∈ neighbors d_{\text{idx}}\in\text{neighbors} do 6: cluster_hits ​ [ d idx ] ​ [ c j ] + = 1 \text{cluster\_hits}[d_{\text{idx}}][c_{j}]\mathrel{+}=1 7: end for 8: end for 9: for each document d i d_{i} do 10: p ← normalize ​ ( cluster_hits ​ [ d i ] ) p\leftarrow\text{normalize}(\text{cluster\_hits}[d_{i}]) 11: s i ← entropy ​ ( p ) / log ⁡ ( n clusters ) s_{i}\leftarrow\text{entropy}(p)/\log(n_{\text{clusters}}) 12: end for 13: return s s (normalized entropy scores)
+
+[99] p: We categorize search queries into semantic clusters utilizing MiniBatch K-Means and assess the extent of a gallery item’s distribution among them. By computing a normalized Shannon entropy [ 15 ] score reflecting the diversity of hits across query clusters, we differentiate between authentic content and adversarial hubs. A high normalized entropy score (close to 1.0) signifies that the gallery item is distributed evenly across numerous unrelated semantic clusters—indicative of a hub intended for extensive coverage. Normal gallery items exhibit lower entropy, focusing their hits within their specific subject area.
+
+[100] h3: IV-C Stability Detector
+
+[101] p: Hubs maintain high retrieval rates under query perturbations due to their central positioning in embedding space. The stability detector exploits this characteristic.
+
+[102] figure: Algorithm 3 Stability Detection 0: Top candidate documents D top D_{\text{top}} , original queries Q Q 1: Initialize stability scores s s 2: for each candidate d i ∈ D top d_{i}\in D_{\text{top}} do 3: original_hits ← count_hits ​ ( d i , Q ) \text{original\_hits}\leftarrow\text{count\_hits}(d_{i},Q) 4: perturbed_hits ← [ ] \text{perturbed\_hits}\leftarrow[] 5: for p = 1 p=1 to n perturbations n_{\text{perturbations}} do 6: Q ′ ← Q + 𝒩 ⁡ ( 0 , σ 2 ​ I ) Q^{\prime}\leftarrow Q+\mathcal{N}(0,\sigma^{2}I) {Add Gaussian noise} 7: Q ′ ← normalize ​ ( Q ′ ) Q^{\prime}\leftarrow\text{normalize}(Q^{\prime}) 8: perturbed_hits . append ​ ( count_hits ​ ( d i , Q ′ ) ) \text{perturbed\_hits}.\text{append}(\text{count\_hits}(d_{i},Q^{\prime})) 9: end for 10: s i ← mean ​ ( perturbed_hits ) / original_hits s_{i}\leftarrow\text{mean}(\text{perturbed\_hits})/\text{original\_hits} 11: end for 12: return s s
+
+[103] p: We apply Gaussian perturbations with σ = 0.01 \sigma=0.01 (configurable) to query embeddings. Gaussian noise provides isotropic perturbations that uniformly explore the local embedding neighborhood. Gallery items maintaining high hit rates across perturbations receive higher stability scores. High stability ( s ≈ 1 s\approx 1 ) suggests the document is geometrically central, a hallmark of hubs. Normal gallery items show lower stability as perturbed queries drift to other topics. For efficiency, we only test the top- X X candidates (default: top 200) identified by the hubness detector.
+
+[104] h3: IV-D Deduplication Detector
+
+[105] p: Attackers may inject multiple near-duplicate hubs to increase coverage or evade single-document thresholds. The deduplication detector identifies such clusters using: (1) Exact Text-Hash Grouping when a text_hash field is available; (2) Embedding-Based Near-Duplicate Detection via nearest-neighbor search with a distance threshold; and (3) Boilerplate Suppression to downweight large duplicate clusters (often templated content). Gallery items in duplicate clusters receive adjusted scores based on cluster size.
+
+[106] h3: IV-E Detector Compatibility
+
+[107] p: Not all detectors are applicable to all retrieval methods. The Hubness and Deduplication detectors work with vector, hybrid, and lexical retrieval. The Cluster Spread and Stability detectors require semantic query embeddings, making them incompatible with pure lexical search. HubScan automatically skips incompatible detectors based on the configured retrieval method.
+
+[108] h3: IV-F Score Interpretation
+
+[109] p: The combined scoring produces interpretable risk assessments: High Hub Z-Score identifies extremely anomalous documents appearing in significantly more queries than statistically expected. High Cluster Entropy reflects wide cross-cluster spread across diverse and unrelated topics. High Stability indicates robustness to perturbations, where documents maintain retrieval dominance under query variations. The Combined Score provides a weighted aggregation for holistic risk assessment.
+
+[110] figure: Fig. 2 : Key detection metrics and their interpretation: Hub z-score measures statistical anomaly, cluster entropy captures cross-cluster spread, stability indicates robustness to perturbations, and combined scores provide holistic risk assessment.
+
+[111] p: Default thresholds are calibrated for high precision (minimizing false positives) while maintaining strong recall on known hub patterns.
+
+[112] h2: V Domain-Aware and Modality-Aware Detection
+
+[113] p: Standard global hubness detection may miss sophisticated attacks targeting specific semantic domains or exploiting modality boundaries. HubScan provides specialized detection modes for these scenarios, as illustrated in Figure 3 .
+
+[114] figure: Fig. 3 : Three detection modes: Global detection analyzes all queries together, Domain-Aware detection groups queries by semantic domains, and Modality-Aware detection handles cross-modal attacks.
+
+[115] h3: V-A Domain-Specific Hub Detection
+
+[116] p: Domain-specific hub attacks aim to excel in retrieval within a certain semantic category while going undetected at a broader scale. Instead of establishing a universal hub for all inquiries, the attacker focuses influence on a singular notion (e.g., financial advice, medical advice, or legal interpretation), thereby circumventing detectors that depend on aggregate hubness statistics.
+
+[117] p: Attack Characteristics : Low global hubness avoiding detection by global threshold-based methods; extremely high hubness within a single semantic domain; disproportionate impact on targeted user segments; and applicability across modalities.
+
+[118] p: Detection Framework : We employ domain-aware hubness analysis where queries are categorized into semantic domains, and hubness is calculated independently for each domain. Domain assignment uses: (1) metadata-based labeling when available, (2) embedding-based clustering via MiniBatch K-Means, or (3) hybrid assignment with clustering fallback.
+
+[119] p: For each domain, we calculate a topic-specific hubness score—the proportion of queries within that domain for which a retrieval item is included in the top- k k results. A retrieval item is flagged as suspicious when its hubness inside a single domain markedly exceeds its hubness across other domains ( contrastive detection ). We also compute a concentration score using the Gini coefficient based on the item’s hubness distribution among domains:
+
+[120] table: G ⁡ ( d i ) = n + 1 − 2 ​ ∑ j = 1 n ∑ k = 1 j p ( k ) ∑ k = 1 n p ( k ) n G(d_{i})=\frac{n+1-2\sum_{j=1}^{n}\frac{\sum_{k=1}^{j}p_{(k)}}{\sum_{k=1}^{n}p_{(k)}}}{n} (2)
+
+[121] p: where p ( k ) p_{(k)} are the sorted normalized hub rates and n n is the number of domains. Values approaching 1 indicate that the majority of hubness is concentrated within a singular domain, typical of focused domain-specific attacks.
+
+[122] p: Domain-Aware Scoring : For each item, the scoring module produces: (1) maximum domain-level hub z-score across all domains; (2) dominant domain identifier; and (3) hubness concentration score. This approach guarantees the identification of globally benign but locally dominant items.
+
+[123] h3: V-B Cross-Modal Hub Detection
+
+[124] p: In multimodal retrieval systems (e.g., text–image or text–audio), adversarial hubs can exploit modality boundaries. A text-based retrieval item may be crafted to disproportionately appear in response to image-oriented queries, or vice versa. Such cross-modal dominance allows attackers to manipulate retrieval outcomes while evading detectors that operate within a single modality.
+
+[125] p: Attack Characteristics : The modality of the retrieval item differs from the dominant modality of the triggering queries; high retrieval frequency in cross-modal query settings; and evasion of single-modality hub detection mechanisms.
+
+[126] p: Detection Framework : If modality metadata is present for both queries and retrieved items, HubScan tracks cross-modal hits —when the query modality differs from that of the retrieved item. We calculate a cross-modal hub rate for each item, normalized by the total number of searches, then compute a robust z-score over these rates to identify items receiving disproportionately many cross-modal hits. Items with high cross-modal z-scores receive an additive penalty term weighted in the final risk aggregate.
+
+[127] p: Figure 4 illustrates how cross-modal hubs exploit modality boundaries.
+
+[128] figure: Fig. 4 : Cross-modal hub detection: A hub (red star) positioned at the intersection of text and image modalities appears in top- k k results for queries from both modalities, exploiting the modality boundary.
+
+[129] p: Modality-Aware Scoring : For each item, the scoring module produces: (1) cross-modal retrieval ratio; (2) dominant query modality; and (3) modality-adjusted hub score. The final score integrates global hubness with cross-modal behavior, ensuring that items exploiting modality boundaries are identified even when they appear benign within any single modality.
+
+[130] h2: VI Retrieval and Reranking Integration
+
+[131] p: Effective hubness detection must operate within the retrieval and ranking pipelines used in production systems. HubScan seamlessly connects with popular retrieval paradigms and reranking methodologies, guaranteeing that detection aligns with user observations.
+
+[132] h3: VI-A Supported Retrieval Methods
+
+[133] p: Vector Similarity Search : The standard retrieval method employs dense embeddings and approximate nearest neighbor search to obtain the top- k k most similar items. Similarity is calculated using cosine similarity or inner product. HubScan integrates with widely used vector databases including FAISS, Pinecone, Qdrant, and Weaviate.
+
+[134] p: Hybrid Search : Hybrid retrieval integrates semantic (dense) similarity with lexical (sparse) matching, enabling systems to reconcile conceptual relevance with keyword overlap. This is particularly relevant for hubness detection because adversarial items optimized for semantic similarity may not dominate lexical search, and vice versa—enabling detectors to analyze whether an item behaves as a hub in one signal or across both.
+
+[135] p: Lexical Search : Lexical-only retrieval depends solely on keyword-centric scoring methods like BM25 or TF-IDF. This mode is beneficial for systems that emphasize keyword search or for isolating purely lexical manipulation techniques like keyword stuffing. In lexical-only pipelines, detectors reliant on embeddings (cluster spread, stability) are automatically deactivated.
+
+[136] h3: VI-B Reranking Support
+
+[137] p: Many production systems apply a second-stage reranking model to refine initial retrieval results. Reranking typically operates on a larger candidate set returned by the retriever and produces a final, user-facing ranking. HubScan facilitates customizable reranking workflows and assesses hubness according to post-reranking results, guaranteeing that detection corresponds with the items finally presented to users.
+
+[138] h2: VII Evaluation
+
+[139] figure: Fig. 5 : Hubness score distribution for normal documents vs. planted adversarial hubs on Food-101 and MS-COCO. Normal items cluster near zero while adversarial hubs are extreme outliers (z-score > > 20). At a 0.1% alert budget, all planted hubs rank above the 99.8th percentile, achieving 100% recall with minimal false positives.
+
+[140] p: We evaluate HubScan under the threat model outlined in Section III , quantifying its efficacy in identifying adversarial hubs —entities engineered to monopolize nearest-neighbor retrieval for numerous legitimate inquiries.
+
+[141] h3: VII-A Benchmark Construction
+
+[142] p: Following standard adversarial ML evaluation methodology, we implemented the attack technique from Zhang et al. [ 19 ] to generate adversarial hubs, then evaluated HubScan ’s ability to detect them. Critically , the attack and detection algorithms are independent: hub generation uses only embedding-space gradient optimization with no knowledge of HubScan ’s statistical detection methods. This reflects a realistic threat model where attackers optimize embeddings without access to the defender’s detection logic.
+
+[143] p: The Zhang methodology optimizes a hub embedding h h to maximize similarity to a target query set 𝒯 \mathcal{T} :
+
+[144] table: h ∗ = arg ​ max ‖ h ‖ = 1 ∑ q ∈ 𝒯 sim ( h , q ) h^{*}=\argmax_{\|h\|=1}\sum_{q\in\mathcal{T}}\text{sim}(h,q) (3)
+
+[145] p: using momentum-based gradient ascent ( μ = 0.9 \mu{=}0.9 , η = 0.12 \eta{=}0.12 ) with cosine temperature annealing. We evaluate two attack variants: Universal (random diverse queries; hub generalizes broadly) and Domain-targeted (domain-specific queries with repulsion term λ neg = 3.0 \lambda_{\text{neg}}{=}3.0 penalizing out-of-domain similarity).
+
+[146] p: To validate supplementary detection capabilities, we also utilize centroid-based hubs constructed as weighted averages of diverse document embeddings. Unlike gradient-optimized hubs, centroid hubs have artificial geometric placements and are sensitive to slight perturbations (denoted as brittle hubs).
+
+[147] h3: VII-B Experimental Configuration
+
+[148] p: Table I summarizes the benchmarks. Image datasets use CLIP ViT-B/32 embeddings (512 dimensions), while FiQA uses Qwen3-0.6B embeddings (1024 dimensions). Universal hubs are optimized over 200 target queries for 1,000 gradient steps.
+
+[149] figure: TABLE I : Evaluation Benchmark Statistics Benchmark Docs Queries Hubs Dim Domains Food-101 [ 2 ] 5,010 25,000 10 512 101 MS-COCO [ 7 ] 5,008 25,000 10 512 40 FiQA [ 9 ] 5,005 648 5 1024 —
+
+[150] p: Scanner configuration uses k = 20 k{=}20 nearest neighbors, sampling 10,000 queries per scan via a mixed strategy (50% random documents, 50% cluster centroids).
+
+[151] h3: VII-C Evaluation Protocol
+
+[152] p: We assess within a predetermined alert budget : with N N gallery items and a budget fraction b b , we designate only the top- K = ⌈ b ⋅ N ⌉ K{=}\lceil b\cdot N\rceil highest-scoring items for manual examination. For example, b = 0.2 % b{=}0.2\% on a ∼ \sim 5,000-item gallery corresponds to reviewing the top 10 flagged items. We report recall (fraction of adversarial hubs in top- K K ) and precision (fraction of top- K K that are true hubs).
+
+[153] h3: VII-D Detection Results
+
+[154] p: Table II reports detection performance across datasets. Results are consistent, demonstrating that Zhang-style optimization yields similar statistical signatures regardless of the underlying domain or modality.
+
+[155] figure: TABLE II : Detection Performance (Full Configuration) Dataset Attack Budget K Prec. Recall Food-101 Universal 0.2% 10 90% 90% Universal 0.4% 20 50% 100% MS-COCO Universal 0.2% 10 90% 90% Universal 0.4% 20 50% 100% FiQA Universal 0.1% 5 100% 100%
+
+[156] p: Key findings : With a 0.2% alert budget ( K = 10 K{=}10 ), HubScan accomplishes 90% recall , successfully identifying 9 out of 10 planted hubs. Expanding to K = 2 ​ H K{=}2H achieves 100% recall across tested datasets.
+
+[157] h3: VII-E Ablation Study: Detector Contributions
+
+[158] p: We performed ablation tests to assess the contribution of each detector to universal hub detection. On Food-101, the Hubness-only configuration achieves 40% recall at 0.1% budget and 80% at 0.2%. Adding the Cluster Spread detector produces a 10–20 percentage point increase : 50% at 0.1% and 100% at 0.2%.
+
+[159] p: This enhancement arises because universal hubs, optimized to attract diverse queries, demonstrate significant cluster dispersal. Universal hubs achieve a cluster spread of 0.92, while domain-targeted hubs obtain only 0.06—a 14 × \times difference . This explains why cluster spread is effective for universal attacks but not domain-targeted ones, which require domain-scoped scanning.
+
+[160] h3: VII-F Stability Detector: Catching Brittle Hubs
+
+[161] p: To validate the stability detector’s coverage, we assess centroid-based hubs. Unlike Zhang’s gradient optimization, centroid hubs are formed as weighted averages of document embeddings, making them naturally fragile .
+
+[162] p: Stability is evaluated by introducing Gaussian noise ( σ = 0.15 \sigma{=}0.15 ) to query embeddings. Zhang hubs show minimal hit change ( < < 4%), while brittle hubs show up to 68% hit change 20 × \times more unstable . This verifies the stability detector’s role: it detects centroid-based attacks that avoid the cluster spread detector, while Zhang-style hubs are detected by hubness and cluster spread signals. The modular detector architecture provides defense in depth against multiple attack techniques.
+
+[163] h3: VII-G Domain-Scoped Scanning
+
+[164] p: Domain-targeted attacks present a distinct challenge: under global scanning with tight alert budgets, they can be pushed out by items with higher global hubness signals. We establish a benchmark where 15 benign universal hubs compete against 10 adversarial domain-targeted hubs.
+
+[165] p: During global scanning at K = H K{=}H , recall drops to 0% , i.e. all top- K K positions are held by the benign universal hubs. However, these domain hubs are not invisible: they achieve an AUC-ROC of 0.995. The issue is budget saturation , not detection failure. HubScan addresses this through domain-scoped scanning : filtering the query set to a specific domain before computing hubness statistics. When scoped to the target domain, domain-targeted hubs achieve 100% recall . This demonstrates the importance of layered defense: global scanning catches universal attacks, while domain-scoped investigation catches targeted attacks.
+
+[166] h3: VII-H Cross-Domain Generalization and Scaling Limits
+
+[167] p: The results confirm that adversarial hubness is modality-agnostic : FiQA achieves AUC-ROC of 1.0 , results in perfect separation with 100% recall and 100% precision at 0.1% alert budget .
+
+[168] p: To characterize the fundamental limits of statistical hub detection, we evaluate across varying adversarial corpus fractions (0.1% to 30%) on five domains: Food-101, MS-COCO (CLIP), FiQA (Qwen3), Code (CodeSearchNet with CodeBERT), Medical (PubMed abstracts with PubMedBERT). Table III reports results.
+
+[169] figure: TABLE III : AUC-ROC by Adversarial Corpus Fraction (Hubness Z-Score Detector) Domain ≤ \leq 2% 5% 10% 20% 30% Food-101 1.00 1.00 1.00 0.99 0.96 MS-COCO 1.00 1.00 1.00 1.00 1.00 FiQA 1.00 0.99 0.95 0.87 0.80 CodeSearchNet 1.00 0.92 0.76 0.67 0.62 PubMed 1.00 0.96 0.87 0.75 0.69 Average 1.00 0.97 0.92 0.86 0.82
+
+[170] p: Key finding : Detection is perfect (AUC=1.0) when adversarial content comprises ≤ \leq 2% of the corpus, and remains highly effective ( > > 0.9 AUC) up to 5%. Detection degrades at higher fractions as adversarial items shift the distribution baseline. However, attacks of 10–30% corpus fraction are unlikely threat scenarios that can be detected using simpler measures (corpus monitoring, ingestion rate alarms).
+
+[171] h3: VII-I Detection Signal Analysis
+
+[172] p: Figure 5 shows the hubness score distribution for normal items versus planted adversarial hubs. Normal items aggregate around zero, but adversarial hubs acquire z-scores of more than 20 standard deviations, making them significant outliers by any measure. At a 0.1% alert budget (99.9 th percentile threshold), all planted hubs exceed the 99.8 th percentile, achieving 100% detection with few false positives . This percentile-based technique adapts across datasets and does not require manual threshold setting.
+
+[173] h2: VIII Production Validation: Natural Hub Audit
+
+[174] p: A fundamental concern for production deployment is establishing a baseline for the system’s noise level: what is the false positive rate of HubScan in a clean environment with no active adversary? To address this at a realistic web scale, we performed a natural hub audit on the MS MARCO [ 11 ] passage retrieval corpus, an industry-standard dataset including 8.8 million documents sourced from actual Bing search results. We assessed a representative subset of 1 million passages , proving validation at a production scale. We executed HubScan using the same configuration employed for adversarial detection (mixed query sampling, k = 20 k{=}20 , complete multi-detector ensemble) and evaluated detection scores at 0.1% and 0.2% alert budgets to delineate operational workload.
+
+[175] p: Score Separation. Table IV demonstrates clear separation between clean and adversarial distributions. The 99 th percentile of clean data scored 2.3, while planted adversarial hubs from our evaluation (Section VII ) scored 13-17, resulting in a separation factor of 5.8 × \times . The 99.9 th percentile of clean data (5.0) remains 2.7 × \times lower than adversarial hubs. This separation establishes distinct operational thresholds: score > > 10 demands investigation (adversarial range); score < < 5 indicates the clean baseline (99.9 th percentile).
+
+[176] figure: TABLE IV : Score Distribution: Clean vs. Adversarial (1M Scale) Metric Clean MS MARCO Adversarial Separation 99 th pct. 2.3 13–17 5.8 × \times 99.9 th pct. 5.0 13–17 2.7 × \times
+
+[177] p: Operational Workload. At a 0.1% alert budget, operators assess the top 1,000 highest-scoring documents per 1 million corpus. All highlighted passages received scores below 10.0, remaining beneath the adversarial range of 13–17. The 99 th percentile threshold (2.3) provides 5.8 × \times separation from adversarial content, while the 99.9 th percentile (5.0) maintains 2.7 × \times separation . Increasing the budget to 0.2% (2,000 documents) preserved the same separation, with all scores remaining within the clean range. These represent expected false positives, documents scoring high relative to the clean baseline but far below true adversarial thresholds. The distinct score separation enables operators to implement an intuitive threshold (e.g., score > > 10) to quickly distinguish adversarial content from natural false positives, thus decreasing review time while preserving high detection sensitivity. This web-scale validation on 1 million real documents confirms operational feasibility for production RAG systems.
+
+[178] h2: IX Conclusion
+
+[179] p: We have presented an in-depth study of hubness in multi-modal retrieval and a practical defense strategy. Hubs represent a potent attack vector: by exploiting the geometric properties of high-dimensional embeddings, a single malicious item can hijack retrieval results for a vast number of queries simultaneously [ 19 ] . HubScan is a comprehensive detection system addressing a critical security gap in the RAG ecosystem, where vector databases are increasingly targeted by sophisticated poisoning attacks.
+
+[180] p: Our multi-detector architecture combines statistical hubness detection, cluster spread analysis, stability testing, and domain/modality-aware detection. Evaluation demonstrates 90% recall at 0.2% alert budget and 100% recall at K = 2 ​ H K{=}2H , with adversarial hubs ranking above the 99.8 th percentile. In realistic threat models where adversaries introduce a limited number of high-impact hubs ( ≤ \leq 2% of the corpus), the hubness z-score detector alone achieves perfect detection.
+
+[181] h3: IX-A Limitations
+
+[182] p: Current limitations include:
+
+[183] p: Query Distribution Dependence : Detection accuracy relies on representative query sampling or queries from production.
+
+[184] p: Adaptive Adversaries : Attackers aware of detection mechanisms may attempt evasion.
+
+[185] p: Low-Volume Attacks : Attacks with minimal hub rates may evade statistical detection.
+
+[186] p: Statistical Limits : The hubness z-score detector’s effectiveness degrades when adversarial content exceeds 10% of the corpus, requiring corpus monitoring for large-scale attacks.
+
+[187] h3: IX-B Future Directions
+
+[188] p: To improve HubScan , future work will include:
+
+[189] p: Real-Time Detection: Adjusting HubScan to flag potential hubs during the indexing process, by pre-calculating hubness score against set of queries.
+
+[190] p: Intent Scanning: Extending HubScan with an intent scanner to search for malicious content inside flagged items (e.g. prompt injections or hidden content).
+
+[191] p: Adaptive Adversaries: Explore how HubScan performs against attackers that adapt their planted items to bypass hubness-based detection, a potential strategy can be planting items that will disrupt such attempts.
+
+[192] h3: IX-C Open Source Release
+
+[193] p: We release HubScan as open-source software to enable security auditing of production RAG systems. The release includes the complete implementation, adapters for popular vector databases, all detection algorithms described in Section IV , and reproduction scripts for our benchmarks.
+
+[194] p: Repository: https://github.com/cisco-ai-defense/adversarial-hubness-detector
+
+[195] h2: Appendix A Ethical Considerations
+
+[196] p: This work presents HubScan , a defensive tool designed to detect adversarial hubness attacks in RAG systems. We address the following ethical considerations:
+
+[197] p: Dual-Use Concerns. While we use hub creation techniques from previous works to contextualize our defense, we do not introduce any new attack strategies. Our primary focus is on detection and mitigation. The attack strategies we assess have already been publically described in peer-reviewed literature.
+
+[198] p: Responsible Disclosure. The real-world vulnerabilities discussed (Microsoft Copilot, GeminiJack) were discovered and disclosed by independent security researchers prior to our work. We cite these incidents to motivate the need for hubness detection, not to enable new attacks.
+
+[199] p: Benchmark Construction. Our evaluation benchmarks use publicly available datasets (Food-101, MS-COCO, FiQA) with synthetically planted adversarial hubs. No real user data or production systems were involved in our experiments.
+
+[200] p: Intended Use. HubScan is designed for security practitioners to audit and protect RAG deployments. We encourage responsible use for defensive purposes and discourage any application that could harm users or systems.
+
+[201] h2: Appendix B Open Science
+
+[202] p: We are committed to open and reproducible research:
+
+[203] p: Open-Source Software. HubScan is released under the Apache 2.0 license at https://github.com/cisco-ai-defense/adversarial-hubness-detector. The repository includes the complete detection framework, all detector implementations, and adapter interfaces for major vector databases (FAISS, Pinecone, Qdrant, Weaviate).
+
+[204] p: Benchmark Datasets. Our evaluation benchmarks, including the adversarial hub generation scripts following Zhang et al. [ 19 ] , are included in the repository under benchmarks/ . This enables researchers to reproduce our results and evaluate new detection methods.
+
+[205] p: Evaluation Scripts. All scripts used to generate the results in this paper are provided, including hub generation, detection execution, and metric computation. Configuration files for each experiment are included.
+
+[206] p: Documentation. Comprehensive documentation covers installation, configuration, API usage, and extension development. Example notebooks demonstrate common use cases.
+
+[207] p: Reproducibility. Random seeds are fixed for all stochastic components. Hardware requirements and expected runtimes are documented. We provide pre-computed embeddings for the benchmark datasets to reduce computational barriers to reproduction.
+
+[208] h2: References
+
+[209] h2: Instructions for reporting errors
+
+[210] p: We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the methods listed below:
+
+[211] p: Tip: You can select the relevant text first, to include it in your report.
+
+[212] p: Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability should not be a barrier to accessing research. Thank you for your continued support in championing open access for all.
+
+[213] p: Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .

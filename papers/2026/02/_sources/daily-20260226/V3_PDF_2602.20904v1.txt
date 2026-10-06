@@ -1,0 +1,2021 @@
+=== PAGE 1 ===
+Transcoder Adapters for Reasoning-Model Diffing
+Nathan Hu 1 Jake Ward2 Thomas Icard 1 Christopher Potts 1
+Abstract
+While reasoning models are increasingly ubiqui-
+tous, the effects of reasoning training on a model’s
+internal mechanisms remain poorly understood.
+In this work, we introduce transcoder adapters,
+a technique for learning an interpretable approx-
+imation of the difference in MLP computation
+before and after fine-tuning. We apply transcoder
+adapters to characterize the differences between
+Qwen2.5-Math-7B and its reasoning-distilled
+variant, DeepSeek-R1-Distill-Qwen-7B. Learned
+adapters are faithful to the target model’s internal
+computation and next-token predictions. When
+evaluated on reasoning benchmarks, adapters
+match the reasoning model’s response lengths
+and typically recover 50–90% of the accuracy
+gains from reasoning fine-tuning. Adapter fea-
+tures are sparsely activating and interpretable.
+When examining adapter features, we find that
+only 8% have activating examples directly re-
+lated to reasoning behaviors. We deeply study
+one such behavior—the production of hesitation
+tokens (e.g., ‘wait’). Using attribution graphs,
+we trace hesitation to only 2.4% of adapter fea-
+tures (5.6k total) performing one of two func-
+tions. These features are necessary and suffi-
+cient for producing hesitation tokens; remov-
+ing them reduces response length, often with-
+out affecting accuracy. Overall, our results pro-
+vide insight into reasoning training and suggest
+transcoder adapters may be useful for study-
+ing fine-tuning more broadly. See https://
+transcoder-adapters.github.io/ for
+code, checkpoints, and interactive visualizations.
+1. Introduction
+Reasoning models are increasingly ubiquitous: nearly all
+current frontier language models, including GPT-5 (Ope-
+nAI, 2025), Claude Opus 4.5 (Anthropic, 2025), DeepSeek-
+1Stanford University 2MATS. Correspondence to: Nathan Hu
+<nathu@cs.stanford.edu>.
+Preprint. February 25, 2026.
+Base Model + Transcoder
+Adapters ≈ Target Model
+Residual
+stream
+Frozen
+MLP
+Learned
+features
+Residual
+stream
+Hidden state reconstruction
+Hidden state reconstruction
+Output reconstruction
+Figure 1.Transcoder adapters for model diffing.Transcoder
+adapters learn a sparse approximation of the difference in MLP
+computation before and after fine-tuning. Adapters are trained
+to reconstruct both internal activations and final output. We ap-
+ply transcoder adapters to characterize the differences between
+Qwen2.5-Math-7B and its reasoning-distilled variant, DeepSeek-
+R1-Distill-Qwen-7B.
+R1 (DeepSeek-AI, 2025), and Gemini 2.5 (Gemini Team,
+Google, 2025), are capable of an extended thinking mode.
+Such reasoning responses are characterized by long se-
+quences of intermediate reasoning tokens and higher final-
+answer accuracy. Despite this widespread adoption, fully
+understanding the effects of reasoning training remains an
+active area of research (Yue et al., 2025; Gandhi et al., 2025;
+Wu et al., 2026). We approach this question from an inter-
+pretability perspective and examine the effects of reasoning
+training on a model’s internal mechanisms.
+We introduce transcoder adapters, which learn a sparse ap-
+proximation of the difference in MLP computation between
+a base model and its fine-tuned variant (Figure 1). At each
+layer, a transcoder adapter runs in parallel with the frozen
+base model MLP. Adapters are trained to reconstruct the
+target model’s internal activations and final output. Directly
+modeling the difference in computation deviates from typi-
+1
+arXiv:2602.20904v1  [cs.LG]  24 Feb 2026
+=== PAGE 2 ===
+Transcoder Adapters for Reasoning-Model Diffing
+cal sparse dictionary learning methods, which aim to fully
+reconstruct model representations or computation. This
+design decision trades insight into the base model’s compu-
+tation for more targeted analysis of fine-tuning. We find that
+the difference in MLP computation is a far easier object to
+decompose and study than the full MLP. Adapters achieve
+faithful reconstruction with an order of magnitude fewer
+active features than typical transcoders1, and the resulting
+model remains coherent when generating thousands of to-
+kens. Additionally, each adapter feature directly reflects a
+change induced by fine-tuning.2
+We apply transcoder adapters to characterize the differ-
+ences between Qwen2.5-Math-7B (Yang et al., 2024) and
+its reasoning-distilled variant, DeepSeek-R1-Distill-Qwen-
+7B (DeepSeek-AI, 2025), and verify the quality of trained
+adapters. Adapters are faithful to the target model’s internal
+computation and next-token predictions. When evaluated
+on reasoning benchmarks, adapters match the reasoning
+model’s response lengths and typically recover 50–90% of
+the accuracy gains from reasoning fine-tuning. Adapter
+features are sparsely activating and interpretable, achieving
+higher automated interpretability scores than MLP neurons.
+We lastly study the effects of study reasoning fine-tuning by
+interpreting transcoder adapters. When classifying features
+based on activating text examples, we find that only 8%
+of features appear directly related to reasoning behaviors.
+Far more appear related to domain knowledge or general
+language modeling. This rough measure suggests more
+of reasoning training’s effect may stem from increasing
+domain knowledge rather than learning reasoning-specific
+structure. We deeply study one reasoning behavior—the
+production of hesitation tokens (e.g., ‘wait’). Using attribu-
+tion graphs, we trace hesitation to 2.4% of adapter features
+(5.6k total) performing one of two functions. These features
+are necessary and sufficient for hesitation; removing them
+from the adapter reduces response length by over 50% with
+no decrease in accuracy on three of four benchmarks. We
+confirm that suppressing these adapter features in the target
+reasoning model itself also reduces response length, with
+only a slight decrease in accuracy.
+Contributions.Our main contributions are: (a) the intro-
+duction and validation of transcoder adapters, a technique
+for learning an interpretable approximation of the difference
+in MLP computation before and after fine-tuning, and (b)
+two mechanistic insights from our case study of reasoning
+fine-tuning: a broad characterization of learned differences
+and a detailed account of hesitation behavior.
+1Our adapters achieve L0 of 0.1–10, compared to 20–200 typi-
+cal for full reconstruction (Karvonen et al., 2025).
+2In contrast with methods like crosscoders (Lindsey et al.,
+2024), which jointly learn features for both models, then identify
+model specific features.
+2. Related Work
+Sparse dictionary learning for LLM interpretability.
+Transcoder adapters build on sparse dictionary learning
+methods. The most prevalent of these approaches are
+sparse autoencoders (SAEs), which are trained to recon-
+struct model activations and have been shown to reveal
+interpretable directions in activation space (Cunningham
+et al., 2023; Templeton et al., 2024; Gao et al., 2024). Our
+approach builds upon three extensions of SAEs: transcoders,
+which model MLP computation rather than reconstructing
+activations (Dunefsky et al., 2024; Ameisen et al., 2025);
+crosscoders, which identify shared and unique features when
+comparing the representations of two models (Lindsey et al.,
+2024; Minder et al., 2025; Jiralerspong & Bricken, 2025);
+and work directly training SAEs on activation differences
+(Aranguri et al., 2025; Dumas et al., 2025).
+Reasoning model interpretability.Closely related to our
+work, Baek & Tegmark (2025) and Troitskii et al. (2025)
+train crosscoders to compare base and reasoning model rep-
+resentations at select layers, finding features that elicit cer-
+tain reasoning behaviors when used for steering. Our work
+introduces transcoder adapters to pursue a similar line of in-
+quiry. Beyond sparse dictionary learning approaches, there
+is a much broader field of reasoning model interpretability
+including methods such as resampling rollouts (Macar et al.,
+2025), probing model representations (Zhang et al., 2025a),
+and analysis of attention heads (Zhang et al., 2025b).
+Ease of reasoning elicitation.Recent work has sought to
+understand reasoning behavior by studying minimal inter-
+ventions that elicit reasoning from non-reasoning models.
+These interventions include adapting few parameters via
+low-rank LoRAs (Ward et al., 2025b; Schulman, 2025),
+modifying only specific parameters such as layerwise bi-
+ases (Sinii et al., 2025) or specific modules (Shao & Wu,
+2025), selectively applying steering vectors (Venhoff et al.,
+2025), and fine-tuning on as few as 1000 reasoning exam-
+ples (Muennighoff et al., 2025). Other work shows that
+characteristic self-reflection behaviors of reasoning models
+are already exhibited by base models (Liu et al., 2025b).
+Mechanistic studies of fine-tuning.Several lines of work
+study how fine-tuning affects models. At the mechanistic
+level, some find that fine-tuning reinforces existing mecha-
+nisms in the model (Prakash et al., 2024) or learns simple
+wrappers around prexisting capabilities (Jain et al., 2024a).
+Mechanistic studies of specific tasks find that instruction
+tuning modifies attention and MLP weights to orient toward
+user tasks (Wu et al., 2024), while safety fine-tuning min-
+imally transforms MLP weights to cluster safe and unsafe
+activations separately (Jain et al., 2024b).
+2
+=== PAGE 3 ===
+Transcoder Adapters for Reasoning-Model Diffing
+3. Training Transcoder Adapters
+3.1. Architecture
+Transcoder adapters follow the standard transcoder architec-
+ture (Dunefsky et al., 2024; Ameisen et al., 2025). At each
+layer ℓ of the target model, we learn a transcoderT ℓ with en-
+coder parameters W ℓ
+enc ∈R dfeatures×dmodel, bℓ
+enc ∈R dfeatures, and
+decoder parameters W ℓ
+dec ∈R dmodel×dfeatures, bℓ
+dec ∈R dmodel.
+Letting x∈R dmodel denote the input to the transcoder, the
+transcoder computes feature activations:
+aℓ(x) =ReLU(W ℓ
+encx+b ℓ
+enc)
+and output:
+T ℓ(x) =W ℓ
+decaℓ(x) +b ℓ
+dec
+Each of the dfeatures rows of W ℓ
+enc and columns of W ℓ
+dec cor-
+responds to a learned feature. The i-th feature is considered
+activefor inputxif its activationa ℓ
+i (x)>0.
+Traditional transcoders are trained to fully replace an MLP’s
+computation. We instead train adapters to approximate the
+difference between base and target model MLPs, such that
+MLPℓ
+base(x) +T ℓ(x)≈MLP ℓ
+target(x). More precisely, we
+build areplacement modelby replacing each MLP in the
+target model with a base MLP and transcoder adapter. At
+each layer, the replacement model forward pass computes:
+ˆh′
+ℓ = ˆhℓ−1 +Attn ℓ
+target(ˆhℓ−1)
+ˆhℓ = ˆh′
+ℓ +MLP ℓ
+base(ˆh′
+ℓ) +T ℓ(ˆh′
+ℓ)
+where ˆh0 is the embedded input and hℓ and ˆhℓ denote hid-
+den states at layer ℓ for the target and replacement models.
+Finally, we let ytarget and ˆydenote the output distributions
+of the target and replacement models respectively. Only
+transcoder parameters are updated during training.
+3.2. Training Objective
+We train transcoder adapters to faithfully reconstruct the
+target model’s outputs and hidden states. In addition to
+faithful reconstruction, adapter features must be sparsely
+activating.
+Foroutput reconstruction, we penalize KL divergence
+between output distributions:
+LKL =KL(y target,ˆy)
+Forhidden state reconstruction, we use two loss terms.
+The first is the normalized MSE between activations:
+LNMSE =
+X
+ℓ
+∥ˆhℓ −h ℓ∥2
+2
+∥hℓ∥2
+2
+This is the standard L2 loss used in SAE and transcoder
+training (Cunningham et al., 2023; Templeton et al., 2024).
+We additionally incentivize hidden state reconstruction us-
+ing abridging loss, which measures KL divergence when
+feeding activations from one model through the remaining
+layers of the other. LetM ℓ denote the ℓ-th transformer block
+of the target model and ˆM ℓ the corresponding replacement
+block (with base MLP and learned transcoder). The bridging
+losses are:
+Lr→t
+bridge =
+LX
+ℓ=1
+KL
+
+ytarget,(M L ◦ · · · ◦M ℓ+1)(ˆhℓ)
+
+Lt→r
+bridge =
+LX
+ℓ=1
+KL
+
+ytarget,( ˆM L ◦ · · · ◦ ˆM ℓ+1)(hℓ)
+
+These losses can be viewed as a natural extension of end-
+to-end SAE training (Braun et al., 2024) to the multilayer
+setting. Because we learn a transcoder at each layer, there
+are 2L ways to combine sparse layers and true layers for
+end-to-end reconstruction. The bridging loss is a first-order
+approximation of this, proposed by Gao et al. (2025) for
+bridging between dense and weight-sparse transformers.
+Forsparsity, we penalize the L1 norm of feature activa-
+tions weighted by decoder norm, as is typical in SAE and
+transcoder training (Dunefsky et al., 2024):
+Lsparsity =
+LX
+ℓ=1
+dfeaturesX
+i=1
+∥W ℓ
+dec,i∥2 ·a ℓ
+i
+whereW ℓ
+dec,i is thei-th decoder column at layerℓ.
+3.3. Experimental Setup
+We train transcoder adapters to approximate the differ-
+ence between Qwen2.5-Math-7B and DeepSeek-R1-Distill-
+Qwen-7B. For simplicity, we refer to these as the base model
+and target model respectively. We learn a transcoder with
+8192 features at each of the model’s 28 layers. We train
+on 50k samples (∼380M tokens) from the OpenThoughts3
+dataset (Guha et al., 2025), a dataset of curated reasoning
+transcripts from QwQ-32B (Qwen Team, 2025). Additional
+training and dataset details are provided in Appendix A.
+4. Evaluating Transcoder Adapters
+We train 5 transcoder adapters with L0 ranging from 0.1
+to 10, where L0 is the number of active features averaged
+across layers and tokens. We evaluate adapters on output
+faithfulness, internal faithfulness, and benchmark perfor-
+mance. We compare performance against two baselines:
+Qwen2.5-Math-7B (thebase model) and ahybrid model
+constructed by replacing all MLP parameters in R1-Distill-
+Qwen-7B with base model parameters. A key limitation of
+3
+=== PAGE 4 ===
+Transcoder Adapters for Reasoning-Model Diffing
+0.1 1 10
+L0
+0.0
+0.1
+0.2
+0.3
+0.4T op-1 Error Rate
+0.1 1 10
+L0
+0.1
+1KL Divergence
+Transcoder Adapters
+Qwen2.5-Math-7B
+Hybrid
+MLP Fine-tune
+Figure 2.Output faithfulness.Top-1 error and KL divergence
+against the target model. Transcoder adapters outperform base-
+lines and approach the MLP fine-tuning skyline, achieving strong
+reconstruction even at very low sparsity (L0 of 0.1–10).
+transcoder adapters is that they only capture differences in
+MLP parameters. The hybrid baseline is essential to verify
+that differences in non-MLP parameters (attention, embed-
+dings) do not already account for the reasoning behavior
+we wish to study. To confirm we are not under-eliciting
+the hybrid baseline, in Appendix B, we additionally explore
+refitting RMSNorm parameters and few-shot prompting
+during evaluations, but find no method that significantly
+improves performance.
+R1-Distill-Qwen-7B was trained on 800k samples from
+DeepSeek-R1 (DeepSeek-AI, 2025), while we train
+transcoder adapters on 50k samples from QwQ-32B. We
+expect some gap in faithfulness to be inevitable given these
+training data differences. To bound this error, we consider an
+MLP fine-tuning skyline. Starting from the hybrid model,
+we fine-tune only the MLPs to minimize KL divergence
+against the target model.
+4.1. Output Faithfulness
+We first evaluate how well transcoder adapters reconstruct
+the target model’s next-token predictions. We measure top-
+1 error and KL divergence between output distributions
+at each token position over 5M tokens sampled from R1-
+Distill-Qwen-7B (Figure 2). Because many tokens are low
+entropy, even the base model agrees with the target on most
+predictions (39.2% top-1 error). The hybrid baseline reduces
+top-1 error to 28.5%, but a substantial gap remains despite
+sharing all non-MLP parameters with the target. Transcoder
+adapters close this gap: even the sparsest, at L0 of 0.1,
+achieves 13.6% top-1 error, decreasing to 9.2% at L0 of 10.
+This approaches the MLP fine-tuning skyline (8.5%). KL
+divergence follows the same pattern.
+4.2. Internal Faithfulness
+To evaluate internal faithfulness, we measure normalized
+MSE between adapter and target hidden states. While
+0 10 20
+Layer
+10 3
+10 2
+10 1
+100
+Normalized MSE
+Hidden states
+0 10 20
+Layer
+10 2
+10 1
+100
+KL Divergence
+Replacing layer k
+0 10 20
+Layer
+10 2
+10 1
+100
+KL Divergence
+Replacing layers k
+0 10 20
+Layer
+10 2
+10 1
+100
+KL Divergence
+Replacing layers k
+Hybrid Qwen2.5-Math-7B Transcoder Adapter (L0=1.4)
+Figure 3.Internal faithfulness.We evaluate internal faithfulness
+via (1) NMSE of hidden states against the target model and (2) KL
+divergence when replacing various subsets of target layers with
+adapter layers. Transcoder adapters outperform baselines across
+all metrics. Notably, KL divergence when replacing subsets of
+layers is always less than KL divergence when using adapters to
+approximate all layers, indicatinginternal errors do not accumu-
+late beyond what is reflected in the final output.
+NMSE captures raw reconstruction error, it is hard to inter-
+pret in a vacuum. To contextualize this, we perform partial
+replacements—substituting the first k, final k, or a single
+layer k with adapter layers—and measure output KL di-
+vergence. Notably, KL divergence when replacing subsets
+of layers is always less than KL divergence when using
+adapters to approximate all layers, indicating that internal
+errors do not accumulate beyond what is reflected in the
+final output. Results for L0 1.4 adapter are shown in Fig-
+ure 3. Appendix C shows these metrics for our full suite of
+adapters and for an adapter trained without the bridging loss.
+When ablating the bridging loss, NMSE remains low but KL
+divergence under partial replacement increases substantially.
+Transcoder adapters outperform baselines on all metrics. Di-
+vergence decreases monotonically as more target layers are
+used, suggesting adapter layers independently approximate
+their target layer’s computation rather than relying on later
+layers to compensate for earlier errors.
+4.3. Benchmark Evaluation
+Taking advantage of the fact that transcoder adapters faith-
+fully approximate the target model and produce coherent
+outputs, we evaluate replacement models on standard rea-
+soning benchmarks: MATH500 (Hendrycks et al., 2021),
+AMC23 (MAA, 2023), AIME25 (MAA, 2025), and GPQA
+Diamond (Rein et al., 2023). We use Evalchemy (Raoof
+4
+=== PAGE 5 ===
+Transcoder Adapters for Reasoning-Model Diffing
+0 4K 8K 12K
+Response T okens
+0.0
+0.1
+0.2
+0.3
+0.4Accuracy
+AIME 2025
+2K 4K 6K
+Response T okens
+0.2
+0.4
+0.6
+0.8Accuracy
+AMC 2023
+0 1K 2K 3K 4K
+Response T okens
+0.6
+0.7
+0.8
+0.9Accuracy
+MATH500
+0 2K 4K 6K
+Response T okens
+0.3
+0.4
+0.5Accuracy
+GPQA Diamond
+Qwen2.5-Math-7B DeepSeek-R1-Distill MLP Fine-tune
+Hybrid Transcoder Adapters (L0s :0.1 :0.4 :1.4 :4.3 :10.3)
+Figure 4.Benchmark evaluation.Transcoder adapters match the
+target model’s response lengths and recover much of the accuracy
+gains from reasoning fine-tuning. The remaining gap is comparable
+to the MLP fine-tuning skyline, suggesting it reflects training data
+differences rather than limitations of transcoder adapters. Despite
+sharing all non-MLP parameters with the target reasoning model,
+the hybrid baseline exhibits similar response length and accuracy
+to the base model.
+et al., 2025) as our evaluation engine; Appendix D contains
+additional evaluation details.
+Figure 4 summarizes these benchmark evaluations.
+Transcoder adapters recover a large fraction of the accu-
+racy gains from reasoning fine-tuning. Adapters exhibit
+the characteristic long response traces of reasoning models,
+with response lengths varying across benchmarks just as R1-
+Distill-Qwen-7B’s do, from around 13k tokens on AIME25
+to 4k on MATH500. Denser adapters achieve slightly higher
+performance, and the remaining accuracy gap is comparable
+to the MLP fine-tuning skyline, suggesting it reflects train-
+ing data differences rather than limitations of transcoder
+adapters. Despite sharing all non-MLP parameters with the
+target reasoning model, the hybrid baseline shows little sign
+of reasoning. The hybrid model exhibits slightly increased
+response lengths and a moderate increase in accuracy gains
+on select math benchmarks.
+5. Interpreting Transcoder Adapters
+Having verified that transcoder adapters faithfully approx-
+imate fine-tuning differences, we next use study adapter
+features 3 and the computation graphs they form. Features
+are commonly studied via their (maximally) activating text
+examples and the tokens promoted or inhibited by their
+3The sparsely activating neurons in our transcoder adapters
+10 1
+ 100 101
+L0
+0.5
+0.6
+0.7
+0.8
+0.9
+1.0Detection Accuracy
+Transcoders (max)
+Transcoders (uniform)
+MLP Neurons (max)
+Figure 5.Automated interpretability scores of transcoder
+adapters features and MLP neurons.Max-activating exam-
+ples of adapter features achieve slightly higher detection accuracy
+than neurons, while uniformly sampled activating examples score
+below neurons but well above random chance (0.50).
+decoder directions (Dunefsky et al., 2024; Ameisen et al.,
+2025). We collect max-activating and uniformly sampled
+examples for each feature over a held-out set of 5k Open
+Thoughts samples ( ∼37M tokens). We use these activat-
+ing examples for all subsequent analyses. When using
+transcoder adapters to study model differences, each fea-
+ture’s computation is unique to the target model by construc-
+tion. However, a feature’s activating examples suggest what
+inputs trigger new computation—not whether the underly-
+ing representations are unique to the target model or already
+present in the base model.
+5.1. Automated Evaluations of Feature Interpretability
+We evaluate feature interpretability using the automated
+detection pipeline introduced by Bills et al. (2023). This
+pipeline first uses a language model to generate a description
+of a feature activating text examples, then evaluates whether
+this description can be used to detect whether new text acti-
+vates the feature. For adapter features, we compute detection
+scores using both max-activating and uniformly sampled
+activating text; for MLP neurons, we compute only max-
+activating scores. Additional details are in Appendix F. As
+shown in Figure 5, max-activating examples of adapter fea-
+tures achieve detection scores of 0.82–0.84, slightly higher
+than MLP neurons at 0.80. Uniformly sampled activating ex-
+amples score 0.69–0.73, lower than neurons but well above
+chance at 0.50.
+5.2. Transcoder Adapter Feature Classes
+We next present several classes of adapter features, identi-
+fied through manual inspection. We estimate class frequen-
+cies by classifying 7,000 features (250 per layer) from our
+L0=1.4 adapter with an LLM judge. LLM judge details and
+8 randomly sampled features from each class are shown in
+Appendix E and Appendix H respectively. The examples in
+Figure 6b are selected from these samples.
+Around 48% of features are indistinguishable from features
+5
+=== PAGE 6 ===
+Transcoder Adapters for Reasoning-Model Diffing
+Uninterpretable 5.7%
+General
+Language
+Modeling
+48.1%
+Math 20.3%
+Code 9.0%
+Science 8.2%
+Reasoning Specific 8.6%
+Domain
+Specific
+Feature Groups
+Output
+Features4.0%
+Abstract
+Input
+Features
+1.9%
+Simple
+Input
+Features
+2.7%
+Reasoning
+Feature Types
+(a)
+Simple Input Feature — activates on "mistranslation"
+T op token predictions:erto你还 PI 严密 .forrepeat modulation.wordpress remembered的实际
+stant acceleration", perhaps referring only to the second segment? Maybe mistranslation or misstatement. If we
+0)^2. Therefore900π.↵↵But why specify the paths as straight? Hmm, maybe mistranslation? The original problem m
+haps to calculate the altitude, even though the distance is given? Maybe mistranslation or something.↵↵Wait, fi
+r is8, then height would be zero, but that’s not.↵↵Alternatively, maybe mistranslation: "edges from the point
+Abstract Input Feature — activates on "but" when reconsidering assumptions
+T op token predictions:YPE autof DomingNetflix Unless-tabs Hercuffix/*↵↵ !$
+rhaps the question expects assuming the numbers are divisors of135? Wait but they can't have sum468, as the m
+the two parabolas intersect at two points lying on a straight line? Wait, but all intersections between two par
+Therefore, maybe instead, each angle is half of the previous angle? Wait, but45 is not half of60, but the nex
+f has no real fixed points, the equation f(x) =x has two real roots? Wait but that equation would have to satis
+Output Feature — promotes "think" and "imagine" after "Let's"
+T op token predictions: imagine think Imagine tapped拆  memories imaginingThinking thinking addressed
+red ring. The carbonyl oxygen of acetone is part of the ring? Wait no. Let's see: acetone is (CH3)2CO. The two
+n form two different alkenes, they must be structural isomers.↵↵First, let's get the structure of n-butanol. n-
+ reacts with metal ions in solution to form complexes or precipitates. Let's think about common metal ions in d
+natively, the enol of4-hydroxycoumarin could attack the formaldehyde. Let's think of the structure. Coumarin d
+(b)
+Figure 6.Transcoder adapter features. (a)Approximate classification (via LLM judge) of transcoder adapter features into general
+language, domain-specific, and reasoning-related groups. Only a small fraction (8.6%) are classified as reasoning-specific. We additionally
+categorize reasoning features by their function.(b)Select examples of reasoning features. All features can be browsed here.
+one might find in a non-reasoning language model. These
+features activate on punctuation or generic terms, or promote
+common words. Another 37% activate on technical content
+in mathematics, science, and code. Such domain-specific
+features have been observed in general language models
+(Templeton et al., 2024), but their high frequency among
+adapter features is notable. A smaller set of 8.6% appear
+directly related to distinctive behaviors of reasoning models.
+We roughly categorize these as:outputfeatures, which pro-
+mote tokens likeWait;simple inputfeatures, which activate
+on specific reasoning words or phrases; andabstract input
+features, which detect more abstract stages of reasoning,
+such as when revisiting assumptions. Select examples are
+shown in Figure 6b. While feature counts based on activat-
+ing text examples are only a rough proxy, we find it notable
+that so few adapter features appear related to reasoning,
+despite the adapters approximating the difference between
+a base and reasoning model. By this measure, more of
+the effect of reasoning training is due to increased domain
+knowledge than to reasoning-specific mechanisms.
+As a sanity check, we classify MLP neurons in both the base
+and reasoning models using the same LLM judge (Figure 7).
+MLP neurons in the two models have comparable class
+frequencies ( 3% reasoning-specific in both). As above, this
+is an imperfect proxy, but suggests that reasoning fine-tuning
+has relatively small effects on overall model computation.
+We do observe a slight increase in domain-specific neurons
+in the reasoning model, consistent with the high frequency
+of domain-specific adapter features. More adapter features
+are classified as reasoning-specific ( 8%) than neurons in
+either model, suggesting adapters capture changes specific
+to reasoning fine-tuning.
+5.3. Attribution Graphs
+Unlike prior circuit analysis, which aims to give a complete
+account of the computation leading to an output (Lindsey
+et al., 2025; Marks et al., 2025), we build attribution graphs
+that capture the difference in computation between the base
+and target models. These graphs abstract away base model
+computation, viewing it simply as a medium through which
+nodes (token embeddings, transcoder adapter features, and
+final logits) can interact. We compute edge attribution us-
+ing relevance propagation (Arora et al., 2025; Jafari et al.,
+2025). Notably, attribution between nodes in our graph is
+propagated through base model MLP parameters, so edges
+capture not only direct effects through the residual stream
+but also indirect effects mediated by base model MLPs. We
+Reasoning Domain Language Uninterpretable
+LLM Judge Classification
+0
+10
+20
+30
+40
+50
+60
+Percentage of
+Features/Neurons
+3.3%
+29.9%
+60.8%
+6.1%
+3.1%
+31.8%
+59.2%
+5.9%
+8.6%
+37.6%
+48.1%
+5.7%
+Qwen2.5-Math-7B Neurons
+R1 Distill Qwen 7B Neurons
+Transcoder Adapter Features
+Figure 7.Feature classification comparison.Comparison of
+LLM judge classifications of transcoder adapter features with MLP
+neurons in the base and reasoning models. MLP neurons in the
+base and reasoning models have comparable class frequencies,
+suggesting reasoning fine-tuning has relatively small effects on
+overall model computation. More transcoder adapter features
+are classified as reasoning or domain-specific than MLP neurons
+in either model, suggesting adapters capture changes specific to
+reasoning fine-tuning
+6
+=== PAGE 7 ===
+Transcoder Adapters for Reasoning-Model Diffing
+(a)
+Hesitation Output Feature — activates at sentence boundaries, promotes "Wait"
+T op token predictions:WaitBut but But WAIT Waitbut unwantedPRE before
+ double bonds: 2.↵↵Therefore, the answer should be9 sigma and2 pi bonds.↵↵Wait, but let me confirm the struc
+↵↵Therefore, the answer should be -10/9, as a simplified common fraction. ↵↵But hold on a second, let me just
+onstants simplify, so that's okay.↵↵Therefore, the result is f(-3)= -17/6.↵↵Wait, but before I accept that, le
+ leading to m=4, -1, -7, -2. Thus, the integer values m are4, -1, -7, -2.↵↵Wait, but let me check if there ar
+T emplate Feature — activates on "<｜User｜>" and "<｜begin▁of▁sentence｜>" tokens
+T op token predictions: machinery Markup弹  Swe supervised supportive lathort generic rebound
+<｜begin▁of▁sentence｜><｜User｜>Let $x$ be a two-digit number su
+<｜begin▁of▁sentence｜><｜User｜>A set of eight different dominoe
+<｜begin▁of▁sentence｜><｜User｜>This is the robbers' thread for
+<｜begin▁of▁sentence｜><｜User｜>Prove that the equation↵↵$$\cos\ (b)
+Figure 8.Attribution graph for backtracking. (a)Attribution graph for theWaitprediction in “Find the sum of all integer bases b >9
+for which 17b is a divisor of 97b. . . . Therefore, the two bases are 21 and 49, and their sum is 70.Wait.” The prediction primarily depends
+on two classes of adapter features:hesitation output featurespromoting the tokenWaitandtemplate featuresactive on prompt formatting
+tokens.(b)Sample hesitation output features (top) and template features (bottom) with activating text. Full graph here.
+study attribution graphs using the implementation provided
+by Hanna et al. (2025).
+We present a case study of backtracking behavior, using our
+L0 = 1.4 transcoder adapter to sample the response and
+construct the attribution graph4. When solving 2025 AIME I
+Problem 1,find the sum of all integer bases b >9 for which
+17b is a divisor of 97b, after ∼1100 tokens of reasoning,
+the model (correctly) deduces,Therefore, the two bases
+are 21 and 49, and their sum is 70.The most likely next
+token, however, isWait. We construct an attribution graph
+to understand the causes of this predicted token (Figure 8a).
+In the attribution graph, the largest contributors to predict-
+ingWaitare transcoder adapter features whose decoder
+directions promote backtracking tokens. We refer to these
+features ashesitation output features. These features depend
+on very few other adapter features. We observe incoming
+edges from what we termtemplate features—features whose
+activating examples are exclusively on formatting tokens in
+the user or system prompt (Figure 8b). The remaining attri-
+bution to hesitation output features flows directly from token
+embeddings, suggesting that the features rely primarily on
+base model representations rather than on other adapter
+computation. This supports previous findings that reasoning
+fine-tuning repurposes pre-existing base model representa-
+tions for backtracking (Ward et al., 2025a). Attribution also
+flows from earlier backtracking token embeddings to the
+Waitlogit, consistent with base model parameters perform-
+ing induction.
+It is worth dwelling on what is absent from this graph. We
+do not observe meaningful attribution from the embedding
+of the proposed answer (“70”), nor any adapter features
+4One could also sample from the target model and use a
+transcoder adapter to construct the attribution graph, though this
+would additionaly require error nodes (Lindsey et al., 2025) to
+account for reconstruction error between the adapter and the target
+model.
+performing verification or expressing uncertainty. We ob-
+serve qualitatively similar graphs in other settings where the
+model saysWait, including in the middle of reasoning and
+when seemingly confused by a typo in the prompt 5. This
+suggests that these two feature classes are broadly responsi-
+ble for the model’s hesitation behavior.
+6. Manipulating Transcoder Adapters
+Our study of attribution graphs suggests that hesitation de-
+pends on two classes of features: hesitation output features
+promoting hesitation tokens and template features active at
+constant positions in the prompt (Section 5.3). We test this
+hypothesis through interventions on theL0 = 1.4 transcoder
+adapter. We begin by systematically identifying all such
+features among the 229k transcoder adapter features using
+objective criteria:
+• Hesitation output features:features with one of four
+hesitation words (wait,hmm,but, oralternatively)
+among their top 10 promoted tokens (4,812 total).
+• Template features:features with ≥80% of max-
+activating examples at a consistent chat template posi-
+tion (811 total).6
+For a given set of features, we conduct two interventions:
+removing them from the full transcoder adapter, and adding
+them to the hybrid model. In practice, both interventions
+produce a modified transcoder adapter: we zero out the en-
+coder and decoder parameters corresponding to either the
+selected features or all other features. We can then sample
+from the resulting model and evaluate on benchmarks, mea-
+suring effects on model behavior over long rollouts rather
+than at single positions.
+5Additional attribution graphs available on the project website.
+6Positions checked: <|begin_of_sentence|>,
+<|User|>, <|Assistant|>, <think>, the newline
+following<think>, and the first content token after<think>.
+7
+=== PAGE 8 ===
+Transcoder Adapters for Reasoning-Model Diffing
+1K 10K 100K
+0
+2
+4
+6
+8
+"wait" per 1K T okens
+Removing Features
+1K 10K 100K
+Adding Features
+1K 10K 100K
+Features Removed
+2K
+4K
+6K
+8KResponse T okens
+1K 10K 100K
+Features Added
+T emplate Features (811 total)
+Output Features (4.8k total)
+T emplate + Output (5.6k total)
+Full Transcoder Adapter
+Hybrid (no transcoder)
+Random Features
+Figure 9.Effects of removing or adding select adapter features.
+(Left)Removing hesitation output features significantly reduces
+“Wait” frequency and response length.(Right)Adding both feature
+groups together produces much larger effects than either alone,
+suggesting they interact and together are sufficient to increase
+response length and “Wait” token frequency. Adding or removing
+random features (gray) produces much smaller effects.
+6.1. Features Necessary and Sufficient for Hesitation
+As a proxy for hesitation, we measurewaittoken frequency
+per 1,000 response tokens. Removing hesitation output fea-
+tures reduceswaitfrequency by 70% (from 5.5 to 1.5); addi-
+tionally removing template features reduces it further to 0.5.
+As the model generates fewer hesitation tokens, response
+length drops from 7.8k to 3.5k tokens when removing both
+feature groups (Figure 9, left). Given that hesitation output
+features were selected precisely for promoting hesitation
+words, it is perhaps unsurprising that they are necessary for
+the model to saywait. We next test whether these features
+are sufficient by adding them to the hybrid model, which
+has a near-zero rate of hesitation tokens and short responses
+( 1.2k tokens). Adding just template features or just hesita-
+tion output features produces slight increases (0.2 and 1.5,
+respectively), but adding both produces a much larger effect
+(8.2), supporting our observation that these feature classes
+interact (Figure 9, right).7 When adding or ablating random
+features as a control, modifying even 50,000 random fea-
+tures produces smaller effects than our 5,623 hand-selected
+features.
+7In fact, rate ofwaitexceeds the full adapter’s rate of 5.5.
+We find that adding an additional 5k features that activate before
+hesitation tokens returns the rate to full adapter levels without
+changing response length, suggesting that these additional features
+diversify continuation phrases.
+1K 2K 3K 4K
+Response Length (tokens)
+0.6
+0.7
+0.8
+0.9Accuracy
+MATH500
+3K 6K 9K 12K
+Response Length (tokens)
+0.1
+0.2
+0.3
+0.4Accuracy
+AIME25
+1K 3K 4K 6K 7K
+Response Length (tokens)
+0.4
+0.6
+0.8Accuracy
+AMC23
+1K 3K 4K 6K
+Response Length (tokens)
+0.3
+0.4
+0.5Accuracy
+GPQADiamond
+Transcoder Adapter
+Hybrid Model
+T arget Model
+Ablating Output and T emplate Features (5.6k total)
+Figure 10.Ablating hesitation features reduces response length
+while preserving accuracy.Ablating template and hesitation out-
+put features from the transcoder adapter (blue) reduces response
+length without hurting accuracy on three of four benchmarks. Sup-
+pressing these features in the target model (red) also reduces re-
+sponse length, with a slightly larger accuracy drop.
+6.2. Shortening Responses with Feature Ablation
+Having traced hesitation tokens and increased response
+length to a set of 5.6k hesitation output and template fea-
+tures, we test whether ablating these features can shorten
+responses without harming accuracy. We ablate the features
+from the transcoder adapter as in the previous experiments.
+Across benchmarks, response length drops by more than
+50% (e.g., 7.2k to 3.2k tokens on AMC23), while accuracy
+is unchanged on MATH500, AMC23, and GPQA Diamond.
+On AIME25, accuracy decreases from 26% to 20%. This is
+consistent with prior work showing it is possible to reduce
+reasoning-model verbosity, via additional training (Liu et al.,
+2025a) or inference-time interventions (Wang et al., 2025;
+Huang et al., 2025). Though less performant, our interven-
+tion emerges naturally from decomposing the fine-tuning
+difference, suggesting that a partial separation between ver-
+bosity and accuracy arises naturally from reasoning training.
+We next test whether this intervention transfers to the target
+model. In the adapter setting, we ablate features by zeroing
+their encoder and decoder parameters. We observe that ab-
+lating transcoder adapter features is equivalent to adding a
+new feature with the same encoder and a negated decoder.
+We thus intervene on the target model by first construct-
+ing an adapter where each feature we wish to suppress is
+negated8, then evaluating the target model with this negated
+8Scaling by −1 led to incoherent outputs; we use −0.5. We
+hypothesize this is because of distribution shift in encoder inputs.
+8
+=== PAGE 9 ===
+Transcoder Adapters for Reasoning-Model Diffing
+adapter added. Figure 10 (red) shows that suppressing these
+adapter features in the target reasoning model also reduces
+response length, with only a slight decrease in accuracy.
+We expect some decrease in performance given this cruder
+intervention. However, accuracy remains high enough to
+confirm that our findings transfer to the target model without
+severely damaging its reasoning capabilities.
+7. Conclusion
+We introduce transcoder adapters, a method for learning
+sparse, interpretable approximations of the changes in MLP
+computation learned during fine-tuning. Applying them
+to Qwen2.5-Math-7B and DeepSeek-R1-Distill-Qwen-7B,
+we verify that adapters faithfully capture the target model’s
+outputs, internal states, and qualitative behavior while be-
+ing remarkably sparse and interpretable, achieving higher
+automated detection scores than MLP neurons. We use
+adapters to study reasoning, finding that only a small frac-
+tion of adapter features have activating examples related to
+reasoning behaviors, suggesting much of the change may
+stem from domain knowledge. We rigorously characterize
+hesitation behavior, finding it is governed by surprisingly
+simple and interpretable mechanisms.
+Limitations and Future Work.While transcoder adapters
+give a full account of changes in MLP computation, changes
+to non-MLP parameters—most notably attention, but also
+embeddings—remain unexplained. In this work, we rigor-
+ously confirm via our hybrid baseline that changes to em-
+bedding and attention parameters alone are insufficient to
+explain the reasoning behavior learned by the model. While
+recent work has begun decomposing attention using sparse
+methods (He et al., 2025), extending this to study differ-
+ences between models remains an open question. Our work
+also focuses on deeply studying a single base and reasoning
+model pair: Qwen2.5-Math-7B and DeepSeek-R1-Distill-
+Qwen-7B. Notably, this model is relatively small and trained
+via distillation on transcripts from a larger reasoning model.
+Transcoder adapters offer an exciting tool to study fine-
+tuning more broadly—pre-training stages, human-assistant
+post-training, or effects like emergent misalignment (Betley
+et al., 2026). We expect transcoder adapter training to ben-
+efit from sparse dictionary learning advances: JumpReLU
+nonlinearities (Rajamanoharan et al., 2024) and auxiliary
+losses to prevent dead latents (Gao et al., 2024) would
+likely improve quality directly, while approaches incorpo-
+rating cross-layer representations (Ameisen et al., 2025) or
+Matryoshka-style objectives (Bussmann et al., 2025) would
+be exciting though less straightforward to incorporate.
+Impact Statement
+This paper presents work that advances language model in-
+terpretability. Improved understanding of model internals
+can benefit AI safety and broader machine learning research.
+More generally, there are many potential societal conse-
+quences of advancing the field of machine learning, none of
+which we feel must be specifically highlighted here.
+Acknowledgements
+We thank Percy Liang for helpful discussions and feedback
+during the early stages of this project. This research is
+supported in part by a grant from Open Philanthropy.
+9
+=== PAGE 10 ===
+Transcoder Adapters for Reasoning-Model Diffing
+References
+Ameisen, E., Lindsey, J., Pearce, A., Gurnee, W., Turner,
+N. L., Chen, B., Citro, C., Abrahams, D., Carter, S., Hos-
+mer, B., Marcus, J., Sklar, M., Templeton, A., Bricken, T.,
+McDougall, C., Cunningham, H., Henighan, T., Jermyn,
+A., Jones, A., Persic, A., Qi, Z., Ben Thompson, T., Zim-
+merman, S., Rivoire, K., Conerly, T., Olah, C., and Bat-
+son, J. Circuit tracing: Revealing computational graphs
+in language models.Transformer Circuits Thread, 2025.
+URL https://transformer-circuits.pub/
+2025/attribution-graphs/methods.html.
+Anthropic. System card: Claude opus 4.5, November 2025.
+URL https://www-cdn.anthropic.com/
+bf10f64990cfda0ba858290be7b8cc6317685f47.
+pdf.
+Aranguri, S., Drori, J., and Nanda, N. SAE
+on activation differences. 2025. URL
+https://www.alignmentforum.org/posts/
+XPNJSa3BxMAN4ZXc7.
+Arora, A., Wu, Z., Steinhardt, J., and Schwettmann, S.
+Language model circuits are sparse in the neuron basis.
+https://transluce.org/neuron-circuits,
+November 2025.
+Baek, D. D. and Tegmark, M. Towards understand-
+ing distilled reasoning models: A representational ap-
+proach, 2025. URL https://arxiv.org/abs/
+2503.03730.
+Betley, J., Warncke, N., Sztyber-Betley, A., Tan, D., Bao,
+X., Soto, M., Srivastava, M., Labenz, N., and Evans,
+O. Training large language models on narrow tasks
+can lead to broad misalignment.Nature, 649(8097):
+584–589, January 2026. ISSN 1476-4687. doi: 10.1038/
+s41586-025-09937-5. URL http://dx.doi.org/
+10.1038/s41586-025-09937-5.
+Bills, S., Cammarata, N., Mossing, D., Tillman, H.,
+Gao, L., Goh, G., Sutskever, I., Leike, J., Wu,
+J., and Saunders, W. Language models can
+explain neurons in language models. https:
+//openaipublic.blob.core.windows.net/
+neuron-explainer/paper/index.html,
+2023.
+Braun, D., Taylor, J., Goldowsky-Dill, N., and Sharkey,
+L. Identifying functionally important features with end-
+to-end sparse dictionary learning, 2024. URL https:
+//arxiv.org/abs/2405.12241.
+Bussmann, B., Nabeshima, N., Karvonen, A., and Nanda, N.
+Learning multi-level features with matryoshka sparse au-
+toencoders, 2025. URL https://arxiv.org/abs/
+2503.17547.
+Cunningham, H., Ewart, A., Riggs, L., Huben, R., and
+Sharkey, L. Sparse autoencoders find highly interpretable
+features in language models, 2023. URL https://
+arxiv.org/abs/2309.08600.
+DeepSeek-AI. Deepseek-r1 incentivizes reasoning in llms
+through reinforcement learning.Nature, 645(8081):
+633–638, September 2025. ISSN 1476-4687. doi:
+10.1038/s41586-025-09422-z. URL http://dx.doi.
+org/10.1038/s41586-025-09422-z.
+Dumas, C., Minder, J., and Nanda, N. What we learned try-
+ing to diff base and chat models (and why it matters).
+2025. URL https://www.alignmentforum.
+org/posts/xmpauEXEerzYcJKNm.
+Dunefsky, J., Chlenski, P., and Nanda, N. Transcoders find
+interpretable llm feature circuits, 2024. URL https:
+//arxiv.org/abs/2406.11944.
+Gandhi, K., Chakravarthy, A., Singh, A., Lile, N., and
+Goodman, N. D. Cognitive behaviors that enable self-
+improving reasoners, or, four habits of highly effec-
+tive stars, 2025. URL https://arxiv.org/abs/
+2503.01307.
+Gao, L., la Tour, T. D., Tillman, H., Goh, G., Troll, R.,
+Radford, A., Sutskever, I., Leike, J., and Wu, J. Scaling
+and evaluating sparse autoencoders, 2024. URL https:
+//arxiv.org/abs/2406.04093.
+Gao, L., Rajaram, A., Coxon, J., Govande, S. V ., Baker,
+B., and Mossing, D. Weight-sparse transformers have
+interpretable circuits, 2025. URL https://arxiv.
+org/abs/2511.13653.
+Gemini Team, Google. Gemini 2.5: Pushing the frontier
+with advanced reasoning, multimodality, long context,
+and next generation agentic capabilities, 2025. URL
+https://arxiv.org/abs/2507.06261.
+Guha, E., Marten, R., Keh, S., Raoof, N., Smyrnis, G.,
+Bansal, H., Nezhurina, M., Mercat, J., Vu, T., Sprague,
+Z., Suvarna, A., Feuer, B., Chen, L., Khan, Z., Frankel,
+E., Grover, S., Choi, C., Muennighoff, N., Su, S., Zhao,
+W., Yang, J., Pimpalgaonkar, S., Sharma, K., Ji, C. C.-J.,
+Deng, Y ., Pratt, S., Ramanujan, V ., Saad-Falcon, J., Li,
+J., Dave, A., Albalak, A., Arora, K., Wulfe, B., Hegde,
+C., Durrett, G., Oh, S., Bansal, M., Gabriel, S., Grover,
+A., Chang, K.-W., Shankar, V ., Gokaslan, A., Merrill,
+M. A., Hashimoto, T., Choi, Y ., Jitsev, J., Heckel, R.,
+Sathiamoorthy, M., Dimakis, A. G., and Schmidt, L.
+Openthoughts: Data recipes for reasoning models, 2025.
+URLhttps://arxiv.org/abs/2506.04178.
+Hanna, M., Piotrowski, M., Lindsey, J., and Ameisen,
+E. circuit-tracer. https://github.com/
+10
+=== PAGE 11 ===
+Transcoder Adapters for Reasoning-Model Diffing
+safety-research/circuit-tracer, 2025.
+The first two authors contributed equally and are listed
+alphabetically.
+He, Z., Wang, J., Lin, R., Ge, X., Shu, W., Tang, Q., Zhang,
+J., and Qiu, X. Towards understanding the nature of
+attention with low-rank sparse decomposition, 2025. URL
+https://arxiv.org/abs/2504.20938.
+Hendrycks, D., Burns, C., Kadavath, S., Arora, A., Basart,
+S., Tang, E., Song, D., and Steinhardt, J. Measuring math-
+ematical problem solving with the math dataset, 2021.
+URLhttps://arxiv.org/abs/2103.03874.
+Huang, Y ., Chen, H., Ruan, S., Zhang, Y ., Wei, X., and
+Dong, Y . Mitigating overthinking in large reasoning
+models via manifold steering, 2025. URL https://
+arxiv.org/abs/2505.22411.
+Jafari, F. R., Eberle, O., Khakzar, A., and Nanda, N. Relp:
+Faithful and efficient circuit discovery in language models
+via relevance patching, 2025. URL https://arxiv.
+org/abs/2508.21258.
+Jain, S., Kirk, R., Lubana, E. S., Dick, R. P., Tanaka, H.,
+Grefenstette, E., Rocktäschel, T., and Krueger, D. S.
+Mechanistically analyzing the effects of fine-tuning on
+procedurally defined tasks, 2024a. URL https://
+arxiv.org/abs/2311.12786.
+Jain, S., Lubana, E. S., Oksuz, K., Joy, T., Torr, P. H. S.,
+Sanyal, A., and Dokania, P. K. What makes and breaks
+safety fine-tuning? a mechanistic study, 2024b. URL
+https://arxiv.org/abs/2407.10264.
+Jiralerspong, T. and Bricken, T. Cross-architecture model
+diffing with crosscoders: Unsupervised discovery of dif-
+ferences between LLMs. InMech Interp Workshop
+(NeurIPS 2025), 2025.
+Karvonen, A., Rager, C., Lin, J., Tigges, C., Bloom, J.,
+Chanin, D., Lau, Y .-T., Farrell, E., McDougall, C., Ayon-
+rinde, K., Till, D., Wearden, M., Conmy, A., Marks, S.,
+and Nanda, N. Saebench: A comprehensive benchmark
+for sparse autoencoders in language model interpretabil-
+ity, 2025. URL https://arxiv.org/abs/2503.
+09532.
+Lindsey, J., Templeton, A., Marcus, J., Conerly, T., Batson,
+J., and Olah, C. Sparse crosscoders for cross-layer fea-
+tures and model diffing.Transformer Circuits Thread,
+2024. URL https://transformer-circuits.
+pub/2024/crosscoders/index.html.
+Lindsey, J., Gurnee, W., Ameisen, E., Chen, B., Pearce,
+A., Turner, N. L., Citro, C., Abrahams, D., Carter,
+S., Hosmer, B., Marcus, J., Sklar, M., Templeton, A.,
+Bricken, T., McDougall, C., Cunningham, H., Henighan,
+T., Jermyn, A., Jones, A., Persic, A., Qi, Z., Thomp-
+son, T. B., Zimmerman, S., Rivoire, K., Conerly, T.,
+Olah, C., and Batson, J. On the biology of a large
+language model.Transformer Circuits Thread, 2025.
+URL https://transformer-circuits.pub/
+2025/attribution-graphs/biology.html.
+Liu, S.-Y ., Dong, X., Lu, X., Diao, S., Liu, M., Chen,
+M.-H., Yin, H., Wang, Y .-C. F., Cheng, K.-T., Choi,
+Y ., Kautz, J., and Molchanov, P. Dler: Doing length
+penalty right - incentivizing more intelligence per to-
+ken via reinforcement learning, 2025a. URL https:
+//arxiv.org/abs/2510.15110.
+Liu, Z., Chen, C., Li, W., Qi, P., Pang, T., Du, C., Lee,
+W. S., and Lin, M. Understanding r1-zero-like training:
+A critical perspective, 2025b. URL https://arxiv.
+org/abs/2503.20783.
+MAA. AMC 2023 problems, 2023. URL
+https://artofproblemsolving.com/wiki/
+index.php/2023_AMC_12A_Problems. Ac-
+cessed: 2025-05-11.
+MAA. AIME 2025 problems, 2025. URL
+https://artofproblemsolving.com/wiki/
+index.php/2025_AIME_I_Problems. Accessed:
+2025-05-11.
+Macar, U., Bogdan, P. C., Rajamanoharan, S., and Nanda,
+N. Thought branches: Interpreting llm reasoning requires
+resampling, 2025. URL https://arxiv.org/abs/
+2510.27484.
+Marks, S., Rager, C., Michaud, E. J., Belinkov, Y ., Bau,
+D., and Mueller, A. Sparse feature circuits: Discovering
+and editing interpretable causal graphs in language mod-
+els, 2025. URL https://arxiv.org/abs/2403.
+19647.
+Minder, J., Dumas, C., Juang, C., Chugtai, B., and Nanda,
+N. Overcoming sparsity artifacts in crosscoders to inter-
+pret chat-tuning, 2025. URL https://arxiv.org/
+abs/2504.02922.
+Muennighoff, N., Yang, Z., Shi, W., Li, X. L., Fei-Fei, L.,
+Hajishirzi, H., Zettlemoyer, L., Liang, P., Candès, E., and
+Hashimoto, T. s1: Simple test-time scaling, 2025. URL
+https://arxiv.org/abs/2501.19393.
+OpenAI. Openai gpt-5 system card, 2025. URL https:
+//arxiv.org/abs/2601.03267.
+Paulo, G., Mallen, A., Juang, C., and Belrose, N. Auto-
+matically interpreting millions of features in large lan-
+guage models, 2025. URL https://arxiv.org/
+abs/2410.13928.
+11
+=== PAGE 12 ===
+Transcoder Adapters for Reasoning-Model Diffing
+Prakash, N., Shaham, T. R., Haklay, T., Belinkov, Y ., and
+Bau, D. Fine-tuning enhances existing mechanisms: A
+case study on entity tracking, 2024. URL https://
+arxiv.org/abs/2402.14811.
+Qwen Team. Qwq-32b: Embracing the power of reinforce-
+ment learning, March 2025. URL https://qwenlm.
+github.io/blog/qwq-32b/.
+Rajamanoharan, S., Lieberum, T., Sonnerat, N., Conmy, A.,
+Varma, V ., Kramár, J., and Nanda, N. Jumping ahead:
+Improving reconstruction fidelity with jumprelu sparse au-
+toencoders, 2024. URL https://arxiv.org/abs/
+2407.14435.
+Raoof, N., Guha, E. K., Marten, R., Mercat, J., Frankel,
+E., Keh, S., Bansal, H., Smyrnis, G., Nezhurina, M.,
+Vu, T., Sprague, Z. R., Merrill, M. A., Chen, L., Choi,
+C., Khan, Z., Grover, S., Feuer, B., Suvarna, A., Su,
+S., Zhao, W., Sharma, K., Ji, C. C.-J., Arora, K., Li,
+J., Gokaslan, A., Pratt, S. M., Muennighoff, N., Saad-
+Falcon, J., Yang, J., Aali, A., Pimpalgaonkar, S., Al-
+balak, A., Dave, A., Pouransari, H., Durrett, G., Oh, S.,
+Hashimoto, T., Shankar, V ., Choi, Y ., Bansal, M., Hegde,
+C., Heckel, R., Jitsev, J., Sathiamoorthy, M., Dimakis, A.,
+and Schmidt, L. Evalchemy: Automatic evals for llms,
+June 2025. Software.
+Rein, D., Hou, B. L., Stickland, A. C., Petty, J., Pang, R. Y .,
+Dirani, J., Michael, J., and Bowman, S. R. GPQA: A
+graduate-level google-proof q&a benchmark, 2023. URL
+https://arxiv.org/abs/2311.12022.
+Schulman, J. Lora without regret.Thinking Machines
+Lab: Connectionism, 2025. doi: 10.64434/tml.20250929.
+https://thinkingmachines.ai/blog/lora/.
+Shao, J. and Wu, J. Who reasons in the large language
+models?, 2025. URL https://arxiv.org/abs/
+2505.20993.
+Sinii, V ., Gorbatovski, A., Cherepanov, A., Shaposhnikov,
+B., Balagansky, N., and Gavrilov, D. Steering llm
+reasoning through bias-only adaptation, 2025. URL
+https://arxiv.org/abs/2505.18706.
+Templeton, A., Conerly, T., Marcus, J., Lindsey, J., Bricken,
+T., Chen, B., Pearce, A., Citro, C., Ameisen, E., Jones,
+A., Cunningham, H., Turner, N. L., McDougall, C.,
+MacDiarmid, M., Freeman, C. D., Sumers, T. R.,
+Rees, E., Batson, J., Jermyn, A., Carter, S., Olah,
+C., and Henighan, T. Scaling monosemanticity: Ex-
+tracting interpretable features from claude 3 sonnet.
+Transformer Circuits Thread, 2024. URL https:
+//transformer-circuits.pub/2024/
+scaling-monosemanticity/index.html.
+Troitskii, D., Pal, K., Wendler, C., McDougall, C. S., and
+Nanda, N. Internal states before wait modulate reasoning
+patterns, 2025. URL https://arxiv.org/abs/
+2510.04128.
+Venhoff, C., Arcuschin, I., Torr, P., Conmy, A., and Nanda,
+N. Base models know how to reason, thinking models
+learn when, 2025. URL https://arxiv.org/abs/
+2510.07364.
+Wang, C., Feng, Y ., Chen, D., Chu, Z., Krishna, R., and
+Zhou, T. Wait, we don’t need to "wait"! removing think-
+ing tokens improves reasoning efficiency, 2025. URL
+https://arxiv.org/abs/2506.08343.
+Ward, J., Lin, C., Venhoff, C., and Nanda, N. Reasoning-
+finetuning repurposes latent representations in base mod-
+els, 2025a. URL https://arxiv.org/abs/2507.
+12638.
+Ward, J., Riechers, P., and Shai, A. Rank-1 loras encode
+interpretable reasoning signals, 2025b. URL https:
+//arxiv.org/abs/2511.06739.
+Wu, F., Xuan, W., Lu, X., Liu, M., Dong, Y ., Harchaoui, Z.,
+and Choi, Y . The invisible leash: Why rlvr may or may
+not escape its origin, 2026. URL https://arxiv.
+org/abs/2507.14843.
+Wu, X., Yao, W., Chen, J., Pan, X., Wang, X., Liu, N., and
+Yu, D. From language modeling to instruction following:
+Understanding the behavior shift in llms after instruc-
+tion tuning, 2024. URL https://arxiv.org/abs/
+2310.00492.
+Yang, A., Zhang, B., Hui, B., Gao, B., Yu, B., Li, C., Liu, D.,
+Tu, J., Zhou, J., Lin, J., Lu, K., Xue, M., Lin, R., Liu, T.,
+Ren, X., and Zhang, Z. Qwen2.5-math technical report:
+Toward mathematical expert model via self-improvement.
+arXiv preprint arXiv:2409.12122, 2024.
+Yue, Y ., Chen, Z., Lu, R., Zhao, A., Wang, Z., Yue, Y .,
+Song, S., and Huang, G. Does reinforcement learn-
+ing really incentivize reasoning capacity in llms beyond
+the base model?, 2025. URLhttps://arxiv.org/
+abs/2504.13837.
+Zhang, A., Chen, Y ., Pan, J., Zhao, C., Panda, A., Li, J.,
+and He, H. Reasoning models know when they’re right:
+Probing hidden states for self-verification, 2025a. URL
+https://arxiv.org/abs/2504.05419.
+Zhang, J., Lin, Q., Rajmohan, S., and Zhang, D. From rea-
+soning to answer: Empirical, attention-based and mecha-
+nistic insights into distilled deepseek r1 models, 2025b.
+URLhttps://arxiv.org/abs/2509.23676.
+12
+=== PAGE 13 ===
+Transcoder Adapters for Reasoning-Model Diffing
+A. Training Details
+Optimization.We train transcoder adapters using the Adam optimizer with default hyperparameters, a learning rate of
+8×10 −4, and a batch size of 1. Although we use a batch size of 1, OpenThoughts3 samples average approximately 7,500
+tokens, so each gradient step computes losses over all token positions in the sample. We apply a linear learning rate warmup
+for the first 5% of training followed by cosine decay. Training is conducted in bfloat16 precision.
+Loss computation.Computing the bridging loss at every layer is expensive, as it requires forward passes through the
+remaining layers of both models. To reduce this cost, we estimate the bridging losses at each step by uniformly sampling a
+single cutoff layer k∼Uniform{1, . . . , L} and computing the forward and backward bridging losses at layer k only. We
+weight all four reconstruction losses (output KL, forward and backward bridging KL, and NMSE) equally with coefficient 1.
+Sparsity.We train adapters at five L1 sparsity coefficients:{0.01,0.003,0.001,0.0003,0.0001}.
+Dataset.OpenThoughts3 (Guha et al., 2025) is a curated dataset of reasoning responses from QwQ-32B (Qwen Team,
+2025), with sequences up to 16,384 tokens. We construct separate training (50,000 samples) and validation (5,000 samples)
+sets, both filtered for sequences under 10,000 tokens, with domain proportions matching the full dataset (71% math, 21%
+code, 8% science). The validation set is used to collect feature-activating examples for downstream analysis.
+MLP fine-tuning skyline.For the MLP fine-tuning skyline (Section 4), we use the Adam optimizer with the same default
+hyperparameters and learning rate schedule as adapter training. We sweep over learning rates in {3×10 −3,1×10 −3,3×
+10−4,1×10 −4}, finding1×10 −4 to be optimal.
+B. Hybrid Baseline Variants
+Our transcoder adapter methodology is limited to decomposing differences in MLP computation. For our reasoning case
+study, we must confirm that MLP computation is critical—that attention changes alone do not elicit reasoning. This motivates
+the hybrid baseline.
+To ensure the hybrid baseline’s limited performance is not simply due to combining parameters naively, we evaluate several
+variants (Table 1). We test few-shot prompting using the same prompts as base model evaluation, at both temperature 0
+and 0.7. We also fine-tune only the RMSNorm parameters on 1M tokens (Hybrid + RMS Refit). No variant significantly
+increases benchmark performance or response length in ways indicative of reasoning behavior.
+Table 1.Hybrid baseline variants.Accuracy (%) and response length (tokens) across benchmarks (AIME 2025, AMC 2023, MATH-500,
+GPQA Diamond). Few-shot prompting and RMSNorm refitting fail to elicit reasoning behavior from hybrid models.
+AIME 25 AMC 23 MATH-500 GPQA Diamond Avg
+Accuracy (%)
+Hybrid (zero-shot) 5.0 35.5 56.0 21.2 29.4
+Hybrid + few-shot (t=0) 0.0 7.5 32.2 19.2 14.7
+Hybrid + few-shot (t=0.7) 0.0 12.5 29.4 23.1 16.3
+Hybrid + RMS Refit 6.7 34.5 53.8 24.6 29.9
+Response Length (tokens)
+Hybrid (zero-shot) 1677 1178 999 1094 1237
+Hybrid + few-shot (t=0) 388 431 513 218 387
+Hybrid + few-shot (t=0.7) 380 514 491 143 382
+Hybrid + RMS Refit 1549 1355 898 1154 1239
+C. Internal Faithfulness (Extended)
+Figure 11 shows an extended version of the internal faithfulness metrics with all transcoder adapters at different sparsities,
+plus an ablation where we remove the bridging loss. Across sparsity levels, all main adapters substantially outperform
+baselines, with denser models achieving slightly lower error as expected. When ablating the bridging loss, raw hidden state
+13
+=== PAGE 14 ===
+Transcoder Adapters for Reasoning-Model Diffing
+0 10 20
+Layer
+10 3
+10 2
+10 1
+100
+Normalized MSE
+Hidden states
+0 10 20
+Layer
+10 3
+10 2
+10 1
+100
+KL Divergence
+Replacing layer k
+0 10 20
+Layer
+10 3
+10 2
+10 1
+100
+KL Divergence
+Replacing layers k
+0 10 20
+Layer
+10 3
+10 2
+10 1
+100
+KL Divergence
+Replacing layers k
+Qwen2.5-Math-7B
+Hybrid
+Transcoder L0=0.1
+Transcoder L0=0.4
+Transcoder L0=1.4
+Transcoder L0=4.3
+Transcoder L0=10.3
+Transcoder L0=0.6 (no bridge)
+Figure 11.Internal faithfulness metrics (extended).Extended version of Figure 3 with all sparsity levels and a bridging loss ablation
+(dashed). All main adapters substantially outperform baselines. Ablating the bridging loss preserves low NMSE but increases KL
+divergence across replacement interventions, most notably when replacing the finalklayers with transcoder outputs.
+reconstruction (NMSE) remains very low; however, KL divergence across various replacement interventions increases. This
+effect is most pronounced when replacing the final k layers of the target model with transcoder layers, confirming that the
+bridging loss helps adapter outputs integrate with downstream computation.
+D. Evaluation Details
+We use Evalchemy (Raoof et al., 2025) for all evaluations. For the base model (Qwen2.5-Math-7B), we evaluate using
+few-shot prompts at temperature 0. For all other models—including the target model, transcoder adapters, and hybrid
+baselines—we use typical reasoning model configurations: temperature 0.7, 32,768 max sampled tokens, and top_p=1.0.
+Table 2 summarizes the number of questions and repetitions per benchmark.
+The models we study occasionally produce degenerate text, especially hybrid models and sparse transcoder adapters. We
+detect degeneration using a sliding window of 200 tokens. For each window, we compute the coverage of the most frequent
+n-gram for n∈ {1,2,3,4,5} , defined as (count×n)/window size . A window is marked degenerate if any n-gram exceeds
+25% coverage, meaning roughly a quarter of the window is dominated by a single repeated pattern. If degeneration is
+detected, we truncate at the left edge of the earliest degenerate window. We still attempt to parse an answer from the
+truncated response; response length is measured up to truncation. This reflects a realistic deployment setting where models
+are served with additional early stopping criteria, such as lightweight degeneration classifiers.
+Table 3 reports truncation rates across models. As transcoder adapters become sparser, truncation rates increase; the hybrid
+baseline has the highest truncation rate. Surprisingly, despite substantial variation in truncation rates across adapters,
+differences in benchmark accuracy are much smaller. We hypothesize that degeneration is more likely on harder questions
+that neither model would answer correctly.
+14
+=== PAGE 15 ===
+Transcoder Adapters for Reasoning-Model Diffing
+Table 2.Evaluation sample counts.Number of questions and repetitions per benchmark.
+AIME 25 AMC 23 MATH-500 GPQA Diamond
+Questions 30 40 500 198
+Repetitions 10 10 1 3
+Table 3.Degeneration rates.Percentage of responses truncated due to degenerate text detection.
+AIME 25 AMC 23 MATH-500 GPQA Diamond Avg
+DeepSeek-R1-Distill (target) 0.0% 0.8% 0.2% 0.0% 0.2%
+Dense Transcoder 3.0% 1.2% 1.8% 0.3% 1.6%
+MLP Fine-tune 3.0% 0.8% 0.4% 0.5% 1.2%
+TranscoderL 0=10.3 6.0% 3.2% 2.8% 1.3% 3.3%
+TranscoderL 0=4.3 13.0% 2.8% 2.0% 1.5% 4.8%
+TranscoderL 0=1.4 17.7% 9.2% 2.4% 4.0% 8.3%
+TranscoderL 0=0.4 27.0% 10.0% 5.0% 6.2% 12.1%
+TranscoderL 0=0.1 26.7% 11.5% 3.6% 6.2% 12.0%
+Hybrid (zero-shot) 44.3% 31.0% 21.8% 29.3% 31.6%
+E. LLM Judge Details
+We use GPT-5-mini (OpenAI, 2025) as an LLM judge to classify transcoder adapter features into interpretable categories.
+The judge is presented with up to 10 max-activating text examples for each feature, along with the top logits promoted by
+the feature’s decoder direction. The system and user prompts are reproduced below.
+System Prompt
+You are a meticulous AI researcher analyzing neurons (features) in a sparse
+autoencoder trained on a mathematical reasoning model (DeepSeek-R1-Distill).
+Your task is to classify features based on their activation patterns (where they fire)
+and output behavior (what tokens they promote).
+## Level 1: Feature Domain
+### "language" - General Language/Text Modeling
+Features related to general language patterns that make text flow, not specific to
+math/code or reasoning model behaviors.
+Key distinction from "reasoning": If a feature fires on generic language but ONLY in
+reasoning-model-specific contexts (e.g., triggers uncertainty, self-correction),
+classify it as "reasoning" not "language".
+Examples of language features:
+- Punctuation (commas, periods, quotes)
+- Conjunctions (and, but, or, because)
+- Articles and determiners (a, an, the)
+- Pronouns and basic syntax
+- Generic formatting (indentation, spacing)
+- Connector/flow words: "therefore", "hence", "thus", "so", "then", "next"
+- Standard prose transitions that make language flow smoothly
+### "domain" - Math/Science/Code Technical Knowledge
+Features encoding domain-specific technical vocabulary, notation, or patterns. This is
+about CONTENT knowledge, not language flow.
+If you classify as "domain", also specify the domain_type:
+- "math": Mathematical notation, equations, variables, math terms (sum, integral, =,
+"derivative", "polynomial", "let x be")
+15
+=== PAGE 16 ===
+Transcoder Adapters for Reasoning-Model Diffing
+- "science": Scientific formulas, chemistry, physics terminology (chemical formulas,
+physical constants, scientific notation)
+- "code": Programming syntax, keywords, operators ("def", "return", "if", brackets,
+indentation patterns)
+Examples:
+- Mathematical notation (sum, integral, forall, exists, =, +, numbers, variables) ->
+math
+- Code syntax (keywords like "def", "return", "if", operators, brackets) -> code
+- Technical math terms ("recursion", "derivative", "polynomial", "function", "matrix")
+-> math
+- Scientific formulas and notation -> science
+- Domain-specific structural patterns (equation layout, code blocks, LaTeX) -> math or
+code
+- Math setup phrases: "let x be", "suppose", "given that", "define" -> math
+### "reasoning" - Reasoning Model Behaviors
+Features related to the unique behaviors of REASONING MODELS (like DeepSeek-R1), NOT
+general problem-solving.
+KEY DISTINCTION:
+- "language": Connector words and flow language ("therefore", "hence", "so", "then") -
+these make text flow but aren’t unique to reasoning models.
+- "domain": Technical math/code vocabulary and notation ("function", "derivative",
+"let x be") - this is content knowledge.
+- "reasoning": Behaviors UNIQUE to reasoning models - the verbose, self-reflective,
+uncertainty-expressing style from RL/distillation training.
+IMPORTANT: All examples are collected from reasoning traces, so co-occurrence is NOT
+enough. The feature must capture something unique to the REASONING MODEL STYLE:
+1. Explicit uncertainty/hedging ("Hmm", "Wait", "I think", "maybe", "actually")
+2. Self-correction and backtracking ("No, that’s wrong", "Let me reconsider", "I made
+an error")
+3. Metacognitive commentary ("Let me think about this", "I need to be careful here")
+4. Verification behaviors ("Let me check", "Does this make sense?", "Sanity check")
+5. The characteristic "think out loud" verbosity of reasoning models
+NOT reasoning:
+- Connector words ("therefore", "hence", "so", "thus") -> classify as "language"
+- Technical terms ("the function", "derivative", "let x be") -> classify as "domain"
+Examples of reasoning features:
+- Uncertainty: "hmm", "wait", "actually", "I’m not sure"
+- Self-correction: "no wait", "that’s wrong", "let me reconsider"
+- Metacognition: "I need to think about", "this is tricky"
+- Verification: "let me verify", "checking my work", "does this make sense"
+- Features that PROMOTE these reasoning-model-specific tokens
+### "uninterpretable" - No Clear Pattern
+The feature’s firing pattern or role is unclear, even if the examples share
+surface-level similarities.
+Signs to classify as uninterpretable:
+- Examples share a theme (e.g., all math text) but you can’t identify WHAT
+specifically triggers activation
+- The highlighted token varies without a clear unifying pattern
+- Top logits don’t relate coherently to the activation pattern
+As a very rough guide, prior work on SAE interpretability finds that typically 10-30%
+of features are uninterpretable. Do not anchor to this number, but don’t force
+patterns that aren’t there.
+## Level 2: Mechanism (ONLY for "reasoning" features)
+If you classified the feature as "reasoning", also classify its mechanism:
+16
+=== PAGE 17 ===
+Transcoder Adapters for Reasoning-Model Diffing
+### "output" - Output Feature
+The defining characteristic is WHAT it promotes. Has a clear output pattern (promotes
+specific tokens like "Wait", "Hmm", hesitation words). The input may vary but often
+has some pattern too.
+How to identify:
+- TOP LOGITS show it consistently promotes specific reasoning-related tokens
+- The main story is "this feature promotes X" (input context is secondary)
+- Most reasoning features that promote uncertainty/hesitation tokens fall here
+Example: Promotes "Wait", "Hmm", "Hold on" - fires at various transition points but
+the key behavior is promoting these tokens.
+### "input_simple" - Simple Input Feature
+The defining characteristic is a simple TOKEN-LEVEL input pattern. Fires on specific
+tokens regardless of surrounding context.
+How to identify:
+- Fires on the SAME or SIMILAR tokens across examples (e.g., "wait", "Wait", "waiting")
+- The token alone determines whether it fires - context doesn’t matter
+- Output may or may not be clear
+Example: Fires on "actually" in any context within reasoning text.
+### "input_abstract" - Abstract Input Feature
+The defining characteristic is a CONTEXT-DEPENDENT input pattern. The same token might
+fire in some contexts but not others - broader context determines firing.
+How to identify:
+- Varied tokens across examples, but a consistent CONTEXTUAL theme
+- The token alone does NOT determine firing - context matters
+- Examples: "doesn’t" only at logical contradictions, various planning phrases,
+transition points
+Example: Fires on "doesn’t" but ONLY when arriving at a logical contradiction (not
+every "doesn’t").
+Example: Fires on various phrases related to planning/strategizing (unified by
+concept, not token).
+## Output Format
+‘‘‘json
+{
+"reasoning": "Your step-by-step analysis...",
+"category": "language" | "domain" | "reasoning" | "uninterpretable",
+"confidence": "high" | "medium" | "low",
+"category_description": "Brief explanation of why this category",
+// ONLY include if category is "domain":
+"domain_type": "math" | "science" | "code",
+// ONLY include if category is "reasoning":
+"mechanism": "output" | "input_simple" | "input_abstract",
+"mechanism_description": "Explanation of the mechanism",
+"input_pattern": "What triggers it (for input_simple or input_abstract)",
+"output_pattern": "What it promotes (especially for output mechanism)"
+}
+‘‘‘
+User Prompt
+Analyze Feature L{layer}F{feature}:
+## Top Logits (tokens this feature promotes when active):
+17
+=== PAGE 18 ===
+Transcoder Adapters for Reasoning-Model Diffing
+{top_logits}
+## Activating Examples (<<<token>>> marks where feature activates):
+{examples}
+First, classify this feature’s domain (language, domain, reasoning,
+or uninterpretable). If it’s a reasoning feature, also classify its
+mechanism (output, input_simple, or input_abstract).
+F. Automated Interpretability Details
+We evaluate feature interpretability using the automated detection pipeline introduced by Bills et al. (2023) and subsequently
+widely adopted for learned sparse dictionary features (Paulo et al., 2025; Karvonen et al., 2025). A first LLM call generates
+a natural language description from a feature’s max-activating examples. A second LLM call presents the description
+alongside a mixture of positive samples that activate the feature and negative samples that do not, and the feature’s detection
+score is the accuracy with which the LLM identifies which samples activate the feature.
+We filter for features with activation frequency at least 6×10 −7 and sample 100 features from each layer. We use
+GPT-4o-mini as both the description generator and the detector.
+For the description stage, we present up to 10 max-activating exemplars, each consisting of up to 71 tokens (50 preceding
+and 20 subsequent tokens surrounding the max-activating token).
+For the detection stage, the model is presented with a shuffled sequence of 10 texts: 5 known to activate the feature and 5
+randomly sampled from Open Thoughts. The detection score is the accuracy with which the model identifies the activating
+samples.
+The description generation and detection prompts are reproduced below.
+Description Generation: System Prompt
+You are a meticulous AI researcher investigating a specific neuron inside a language
+model. Your task is to describe what causes the neuron to activate.
+You will receive text excerpts where the neuron activates. The activating token is
+marked with <<<token>>>.
+Important notes:
+- The <<<>>> markers are ONLY for highlighting which token activates - do NOT include
+<<<>>> in your description
+- All examples are from mathematical reasoning contexts, so "math" or "reasoning"
+alone is NOT a useful description
+- Neuron activations can only depend on the marked token and tokens BEFORE it (not
+after)
+- Describe BOTH the general context AND the specific token/word/phrase that activates
+- Be extremely specific: look for specific tokens, characters, syntactic positions,
+semantic patterns, or reasoning steps
+- Descriptions should be 10-15 words, no need for complete sentences
+Respond in JSON format.
+Description Generation: User Prompt
+Neuron L{layer}F{feature}:
+{examples}
+Respond with:
+{
+"reasoning": "brief analysis of patterns you see",
+"description": "concise description (10-15 words)"
+}
+18
+=== PAGE 19 ===
+Transcoder Adapters for Reasoning-Model Diffing
+0.0 0.2 0.4 0.6 0.8 1.0
+Activation Overlap
+0
+2000
+4000
+6000
+8000
+10000
+12000Number of Features
+vs T arget
+vs Base
+Figure 12.Feature activation overlap.Agreement rates are higher when recomputing adapter feature activations using target model
+hidden states than base model hidden states.
+Detection: System Prompt
+You are evaluating whether a neuron description accurately predicts neuron activations.
+You will be given:
+1. A description of what causes a neuron to activate
+2. 10 text snippets (exactly 5 activate the neuron, 5 do not)
+For each snippet, predict whether the neuron activates based ONLY on the description.
+Respond with a JSON object mapping snippet numbers to predictions:
+{"1": true, "2": false, "3": true, ...}
+Detection: User Prompt
+Neuron description: {description}
+Snippets (5 activate, 5 don’t):
+{snippets}
+For each snippet, does the neuron activate? Respond with JSON: {"1": true/false, "2":
+true/false, ...}
+G. Feature Activation Overlap
+For each feature, we measure how consistently it activates when computed from adapter versus target or base model hidden
+states. On a dataset, we first identify the inputs where the feature fires under the adapter—say x% of inputs. We then run
+the same dataset through the target model (or base model), project hidden states onto the feature’s encoder direction, and
+take the top x% by activation magnitude. This is equivalent to refitting the encoder bias to match the original activation
+frequency; without this, agreement rates would be trivially inflated. The agreement rate for each feature is the overlap
+between its top-activating inputs under the adapter versus under each model. Figure 12 shows the distribution of agreement
+rates across all features. Agreement rates are substantially higher when recomputing feature activations using target model
+hidden states than base model hidden states, confirming that adapter features capture computation specific to the target
+model.
+19
+=== PAGE 20 ===
+Transcoder Adapters for Reasoning-Model Diffing
+H. Feature Dashboards
+We present randomly sampled feature dashboards from each LLM judge category (see Section E for classification details).
+Each dashboard shows the feature’s top logits and example activating contexts.
+L3 F390
+L0 F6296
+L9 F4161
+L8 F7113
+L7 F1593
+L4 F6635
+L3 F6418
+L25 F7740
+T op token predictions:-Men forgottenache preempt ubiqu[Unit paved Mascnpj blinked
+ commands(as opposed to7). Read about this esolang [here](https://esolangs.org/wiki/Tick).↵↵Commands↵========↵↵`
+ website page for GolfScript:↵↵A quine was discussed here:↵↵http://esolangs.org/wiki/Golfscript↵↵"The first known
+ For Underload, the one-character quine would be "[sample](https://esolangs.org/wiki/Underload#Examples)". Wait,
+answer is one byte.↵↵Ah, yes! Wait, in the language "Say" (https://esolangs.org/wiki/Say), each character is its
+T op token predictions:/pienasenu想  shutsuntsator ::=-refresh另一半
+▁sentence｜><｜User｜>Objective↵Write a program that outputs some printable ASCII characters. The trick is that if th
+ge, is not an acceptable reason↵↵↵The program is short/long/written with ASCII characters/written without ASCII ch
+ can be generated with some kind of algorithm. But how?↵↵Wait, sometimes ASCII art of this nature is generated usi
+characters) in as few code characters as possible, sticking to printable ASCII.↵↵Wait, the problem says "print 'An
+T op token predictions: démarcheollo exchange Dropbox总计 amy Importantocketrespect состав
+) (Succ (Succ (Succ Zero))) a)=>Test4 a↵↵↵Results↵*Main> :t test1↵test1↵  :: Succ↵  (Succ↵  (Succ↵
+nctors, the result is not very enlightening↵flip=<<(fmap.).fmap.flip fmap ::↵ Functor f => f a -> (a -> a -> b) -
+s a -> b. Wait actually, no:↵↵Wait (.) is ( (f . g) h = f (g h) ), so (.) :: (b -> c) -> (a -> b) -> (a -> c). So
+functions as applicative:↵↵The type of liftA2 z (g) (g) would be:↵↵liftA2 :: (x → y → z) → (a→x) → (a→y) →
+T op token predictions:年来  attent而去  Minds你知道freshnovationrettunion Kore
+pend('<li><a href="/a/' + data.items[i].answer_id + '">' + temp.innerText || temp.textContent + '</a>');}}})↵<scr
+ts. That blocks the offset in one byte instead of four. Also, avoiding modr/m bytes if possible. Wait, like the3
+, the instruction "add al, 5" would be:↵↵Opcode: 80 /0 ib (where /0 is modr/m byte with reg=000 and r/m=reg=000,
+t, let's think of small encodings. The x86 instruction set has various modr/m and SIB byte formats that can be co
+T op token predictions:Coin-pt Ciabr dumped打开了 hotter Angel sucking上升
+e not a valid comment, but reversed to not.↵↵Not sure. Alternatively in Pyth: perhaps "q1" reversed "1q" which is
+thinking of the comma language, but not useful here.↵↵Alternatively, in Pyth or GolfScript, perhaps a simplest qui
+y two a's. No, that would not work.↵↵Maybe another language.↵↵Option2: Pyth.↵↵Wait, I'm not sure.↵↵Alternatively,
+ n and m. Language: Scala↵ 10: The program cannot contain ]. Language: Pyth↵↵Current Scores (ordered by first pos
+T op token predictions:nels CONS freezes ignorbanks mongooselenessrophyADAonomy
+e answer will present this macro-based solution.↵</think>↵↵```rust↵macro_rules! uncurry {↵  ($f:expr, 1) => {{↵
+ any N when invoking.↵↵Thus the code would be:↵↵use std::ops::Fn;↵↵macro_rules! uncurry {↵  ($func:expr, 1) => {
+ates the uncurry function for a given number of arguments.↵↵Like:↵↵macro_rules! mk_uncurry {↵  ( $fn:expr, 1 ) =
+let me code the function and the macro:↵↵Here’s the code:↵↵```rust↵macro_rules! uncurry {↵  ($f:expr, 1, ($t:tt)
+T op token predictions:VIP健身房Toggleoloningeboxingiou\E  sábado lineno
+length of segment $AB$. [asy]↵import olympiad; size(150); defaultpen(linewidth(0.8));↵pair A = (0,0), B = (5,0),
+ $DE$. [asy]↵import olympiad; import geometry; size(150); defaultpen(linewidth(0.8));↵draw(origin--(6,0)--(6,4)--c
+$QZ$?↵↵[asy]↵import olympiad; import geometry; size(150); defaultpen(linewidth(0.8));↵pair Y = (0,0), Z = (16,0
+of π.↵↵[asy]↵import olympiad; import geometry; size(100); defaultpen(linewidth(0.8));↵fill(Arc((1,0),1,90,18
+T op token predictions: fast away poisoned quicklyfast faster-fast较快  rapidly Imag
+e the product of the individual possibilities, but with the additional condition that the two sequences differ in
+↵Here, `ed` and `+s` implicitly manage output, using Burlesque’s conciseness.↵↵By exploiting stack operations and
+nction name and parameters, then explodes the parameters as JavaScript variables. But maybe when parameters are no
+ring the parallel condition would be (2) * (2) =4, but with the added condition that Ai != Bi for each i. ↵↵Wait,
+Figure 13.Domain-specific features: code.Randomly sampled transcoder adapter features classified by the LLM judge as domain-
+specific to code. For each feature, we show four max-activating dataset examples alongside the tokens most promoted by the feature’s
+decoder direction.
+20
+=== PAGE 21 ===
+Transcoder Adapters for Reasoning-Model Diffing
+L25 F3679T op token predictions: singsing SingSing singularstro Singularsingular sons cla
+m is b₁₂. Since Q(x) must have the same roots as P(x), then P(x) and Q(x) are the same up to a constant factor?
+) \), and vice versa.↵↵Since the roots are the same, the polynomials must be proportional, right? But wait, po
+a way to construct such a matrix when S=8. Let me suppose that each row is a shifted version of the previous on
+Since the remainder is a constant when dividing by Q(x), maybe we can use the Remainder Theorem or some conditi
+L7 F2779T op token predictions:ogieenet redundant Batman.githubusercontentculômeENS statuesanken
+2, so the minimal number is2. Wait but4n +6. For example:↵↵Take first four numbers:1+2+3+4=10. Next four:5+
+n=6 (non-prime),1. So yes, that's a match. Wait but in that case, first four terms are the same? Wait the sec
+o, actually each term is halved each step. Let me make sure. Wait, first four terms of first sequence are1,1/
+B,R,B—strictly alternating. Let's see a subset of4 elements. Take first four: R,B,R,B: 2R,2B. That's okay.↵↵T
+L1 F1529T op token predictions: UnoLazyizesconnectorladen preciselyieri会选择 embarkedhibit
+a\overline{b}). So S =2 Re(x\overline{y} + x\overline{z} + y\overline{z}).↵↵Hmm, but how does that help? Maybe
+1/27. So from these two equations, we can write x =1/(4z) and y =1/(27 z). So then we can plug into the angle
+ the two graphs intersect at points (-3,0), (2,5), and (4,7). Interesting.↵↵Therefore the two graphs intersect
+ll variables in terms of z, as we did earlier. So, x =1/(4z), y =1/(27 z). So, plug these into the above equa
+L12 F2262T op token predictions:-schema circumstanceḠ OCR Concantino rog hil Factorypressions
+ar conservation laws. But energy in GR is only locally conserved with symmetries (via Killing vectors). If tim
+n laws. But energy in GR is only locally conserved with symmetries (via Killing vectors). If time is cyclic in
+., temperature, entropy) are derived from the metric's Killing vector symmetries.↵↵The paradox disappears in f
+nservation laws like momentum, energy, and angular momentum come from symmetries via Noether's theorem. For ex
+L12 F7901T op token predictions: machinery/null conce Matchereme:`~=pk Bers_calls:hidden
+cases. ↵Each test case contain starts with two space seperated integers N and M, denoting the number of vertice
+s. First line of each test case contains two space separated integers N, M. Each of the next N lines contain M
+----↵↵The first line of the input contains two space-separated integers n and p (3 ≤ n ≤100 000, 2 ≤ p ≤
+of test-cases.↵↵Each test case consists of two space-separated integers N and K, denoting number of zombies and
+L11 F4473T op token predictions:tonJar Ladenrigesimal perspectivesighborhoodvengehell inf应收
+form a find and then a union, which is nearly O(α(N)) per operation, where α is the inverse Ackermann function,
+re with path compression and union by rank would handle this in nearly O(E α(V)), which is negligible compared
+n-Find, ensuring an optimal solution with time complexity O(m α(n)), where α is the inverse Ackermann function.
+ implemented with path compression and union by rank or size to ensure O(alpha(n)) time per operation.↵↵Yes, th
+L8 F3850T op token predictions:ertz subt --------↵ mos-call_EXPORTтип一句话egasusquipment
+e \(c = k [OH^-]_0\) (a constant term):  ↵  \[↵  \frac{\Delta E}{\Delta t} = \left( \frac{RT}{F} \cdot c
+t all the rods in first hour are made in the first hour. The total time period is the total duration, which is
+(\boxed{\text{The linear relationship arises because } \frac{\Delta E}{\Delta t} \propto [creatinine]_0 \text{
+ \(k' = k \, [creatinine]_0 [OH^-]_0\):  ↵  \[↵  \frac{\Delta E}{\Delta t} = \frac{RT}{F} \cdot k \, [cr
+L6 F5394T op token predictions:vasionncmp(Targetreneemon endorsomapjah monetlijah
+<｜begin▁of▁sentence｜><｜User｜>A sign sequence is an infinite sequence consis
+<｜begin▁of▁sentence｜><｜User｜>Two harmonic sequences $A$ and $B$ both begin with30
+our task is to write a piece of code that outputs a deterministic sign sequence that no other answer already o
+thread is here.↵As a cop, you must pick any sequence from the OEIS, and write a program p that prints
+Figure 14.Domain-specific features: math.Randomly sampled transcoder adapter features classified by the LLM judge as domain-
+specific to math. For each feature, we show four max-activating dataset examples alongside the tokens most promoted by the feature’s
+decoder direction.
+21
+=== PAGE 22 ===
+Transcoder Adapters for Reasoning-Model Diffing
+L5 F3459
+L2 F1986
+L11 F2672
+L10 F7496
+L9 F6391
+L6 F4175
+L5 F3877
+L27 F2560
+T op token predictions: dye lint Stir←  verm料 "↵↵↵↵所有人再多 grave
+un emits blackbody, the presence of spectral lines in absorption (Fraunhofer lines) modify the spectrum, but in e
+the Sun emits blackbody, the presence of spectral lines in absorption (Fraunhofer lines) modify the spectrum, but
+e Sun emits blackbody, the presence of spectral lines in absorption (Fraunhofer lines) modify the spectrum, but in
+ure: Hexagon with O and five carbons \( \ce{[α-D-Glcp]_6} \).↵↵(l) **Furanoside (β-D-Ribofuranosyl):**  ↵Structure
+T op token predictions: lifestyle Anth立  SlovakingekidOSP Patipl generic
+<｜begin▁of▁sentence｜><｜User｜>Methanal (formaldehyde), H₂CO. There are
+ page on Some poorly-known Game of Life patterns has an entry for The "MethuselahGroup" or "Metabolism" patterns
+ey Amino Acids**:  ↵ - **Cysteine** (also part of glutathione)  ↵ - **Methionine**  ↵↵**Role**:  ↵- **Methionin
+alcohol/base.↵↵---↵↵### **(b) Synthesis of \( \text{OSO}_2\text{Me} \) (Methanesulfonyloxy Ether)**↵**Starting Ma
+T op token predictions: vibrating Honestly Takenundi连接  connected Kendall concaten-co Prototype
+scatterer doesn't contribute much, but when you have many, they add up coherently? But no, actually incoherently.
+ocesses, when you have frequency mixing, the efficiency depends on the coherence between interacting fields. Chirp
+eneration, you need to make sure that the nonlinear interaction occurs coherently over the pulse duration. If the
+l enough that the two paths can constructively/destructively interfere coherently. If the momentum spread was lar
+T op token predictions: comprehłącz比分 Comparableranpest ech unle Wanderfollower
+electrical potential difference across the membrane.↵↵Nigericin is an ionophore—it moves ions across a membrane.
+ to think in terms of the electrical component.↵↵Now, nigericin is an ionophore that can transport H+ and K+. Dep
+al of mitochondria. Let me start by recalling what I know about these ionophores and mitochondrial function. ↵↵Fi
+<｜begin▁of▁sentence｜><｜User｜>Nigericin is an ionophore whose structure is shown below. I
+T op token predictions:在外  Halifax下半 钓  part '|'ky  templates(indicestb
+Glyoxylate, a byproduct of the metabolism of the amino acids glycine, serine, and alanine, is converted to oxalat
+tion:** Further transamination into other amino acids (e.g., arginine, threonine).↵↵###4. **Malate Shuttle:**↵
+hink of aspartame's actual structure to cross-check. Aspartame is L-aspartyl-L-phenylalanine methyl ester. So that
+rminus? Wait, in dipeptides, the order is N-terminal to C-terminal. Aspartyl means that aspartic acid is the N-ter
+T op token predictions: anyhow面积约 Lum_geometry_runnerSFML permanently owned|RF midway
+ridge with a methylene group from formaldehyde. ↵↵Wait, formaldehyde is HCHO, so maybe the reaction is where the
+ stops? So for example, methanol (CH3OH) would oxidize to formaldehyde (HCHO) but then no further because there's
+r buta-1,3-diene, after ozonolysis, the products are two formaldehydes (HCHO) and possibly water? Or perhaps, wai
+zonolysis gives two formic acids (HCOOH). Reductive gives formaldehyde (HCHO). Then reducing the formic acid woul
+T op token predictions: strandedsst Sie☉ 带上 -interface barr remodel拨  sock
+th aluminium isopropoxide has long been known under the name of the Meerwein-Pondorff-Verley reduction. The reacti
+ can lead to a carbocation intermediate, which may undergo **Wagner-Meerwein rearrangements** (hydride or alkyl sh
+ee Ph and Br), perhaps the reaction is a rearrangement? Like Wagner-Meerwein or something?↵↵Alternatively, since t
+ because the addition is followed by a rearrangement (like a Wagner-Meerwein shift), which moves the carbonyl to t
+T op token predictions: tun perf odor scent sweet citrus est fragrance Tun"&
+units, making them10 carbons in structure. They're often responsible for the fragrances found in essential oils f
+n of an acid with ethanol and sulfuric acid (under heat) to form a fruity-smelling ester is a qualitative test fo
+h isn't a good sign because normally arcing might produce ozone (which is smelly) or burning insulation. Since th
+ esters might be a distractor, but the point here is that if the ester is smelly, it's got a low molecular weight
+Figure 15.Domain-specific features: science.Randomly sampled transcoder adapter features classified by the LLM judge as domain-
+specific to science. For each feature, we show four max-activating dataset examples alongside the tokens most promoted by the feature’s
+decoder direction.
+22
+=== PAGE 23 ===
+Transcoder Adapters for Reasoning-Model Diffing
+L10 F3672
+L3 F1891
+L14 F6655
+L14 F6286
+L13 F263
+L11 F673
+L9 F6199
+L8 F3624
+T op token predictions:icamente="// inher/latest Permission Moż nuestteen Illustrator #[
+y. Then the height would be different? Wait, if the tank is lying on its side, the maximum "height" of water woul
+ is the distance between the two circular bases. So if it's lying on its side, the central axis is horizontal, an
+ vertical direction. Wait, no, actually, if the cylinder is lying on its side, so central axis is along the direc
+ standing on its base, then the height is vertical. If it's lying on its side, the height would be the diameter?
+T op token predictions:ureka feas Intelli sou autoc缤纷 ive挥手 就有了 runnable
+ircle. Find the ratio of the area of the hexagon to the area of the circle." Hmm, okay. Let me try to figure this
+scribed in a square such that the vertices of the square are on the circle." Wait a second, that seems contradicto
+Okay, so I need to find all two-digit numbers that are "reversible squares." That means if I take the number, reve
+box of chocolate muffins weighs the same as two boxes of blueberry muffins." So, if I let the weight of a blueberr
+T op token predictions:clipboard层级 mort新的一YOURcott.Locale reefPCI;/
+igure out the minimum number of points required to satisfy this condition.↵↵First, I need to think about small se
+ formed by any permutation of those digits is divisible by p. Interesting.↵↵So, first thought: For primes like2,
+ smallest possible maximum, such that the average of their squares is58. ↵↵Hmm, okay, so maybe first, to get an
+ction of all the ranges of \( f_n(x) \) over all positive integers \( n \).↵↵Alright, so maybe I can start by anal
+T op token predictions:/SystemLaugh:selected⇡ %@ (RE(IS/googlebaseUrl-format
+onent mod (mod-1) is zero, we have to set exponent to (mod-1) instead of0? Or is it okay to have exponent zero?↵
+e list to exclude those divisors ≤2, and also, perhaps, the divisor itself? No. Because the divisors can be up to
+is just treated as an absolute distance, so should we take absolute value?↵↵Hmm, looking back at the problem stat
+MOD =1, but since B >=1, when e is zero, it has to be replaced with MOD-1? Wait, no. Wait in the example where B
+T op token predictions:YPE autof DomingNetflix Unless-tabs Hercuffix/*↵↵ !$
+rhaps the question expects assuming the numbers are divisors of135? Wait but they can't have sum468, as the maxi
+the two parabolas intersect at two points lying on a straight line? Wait, but all intersections between two parabo
+Therefore, maybe instead, each angle is half of the previous angle? Wait, but45 is not half of60, but the next a
+f has no real fixed points, the equation f(x) =x has two real roots? Wait but that equation would have to satisfy
+T op token predictions:一份  зак tromGitHubonicChooser увер "\((nullableExceptions
+re x1 ≥4, which as above is1. So total solutions is209. But is that all?↵↵Wait, but we also started with the fi
+ence, the total number of arrangements is360? Hmm, but wait, is that all?↵↵Wait a second, I need to double-check
+regardless of the approach, the value is372. So is that the final answer?↵↵Wait, but let me confirm once again t
+erimeter is2*(L + W) =8*sqrt(1003). Hmm. Wait, is this the final answer?↵↵But let me check another way. Let me
+T op token predictions:掂  vividegasusRIORITYuckerplyqrst undercoverento LOGGER
+ls and large bills. The number of small bills can only be divided evenly into stacks of7 or11, while the number
+icts the idea that it's parallel to the x-axis. Maybe I misread something?↵↵Let me check again. "The bottom base
+tangle? Wait, no, the problem says it's a rectangle. Maybe I misread that.↵↵Wait, no, hold on. Wait, in a rectang
+is. But the problem says the tree is30 meters away. Hmm, maybe I misread.↵↵Let me read again: "An observer is st
+T op token predictions:ELY合击  writ/question这个地图/dc就来看看erviewavin cooker
+9 ≠24. That's a problem. Wait, that would mean that there's no solution? But the problem states that there are or
+not true. That suggests that the problem's conditions can't be satisfied? But the problem says they do have the sa
+s:↵↵0 =1↵↵Wait, that can't be right. That suggests there is no solution? But the problem states that they do inte
+ible?↵↵Wait, that can't be right. That would mean there are no solutions? But that contradicts the problem stateme
+Figure 16.Reasoning-related features: abstract input.Randomly sampled transcoder adapter features classified by the LLM judge as
+reasoning-related with abstract input patterns. For each feature, we show four max-activating dataset examples alongside the tokens most
+promoted by the feature’s decoder direction.
+23
+=== PAGE 24 ===
+Transcoder Adapters for Reasoning-Model Diffing
+L19 F5547
+L4 F4945
+L1 F5069
+L9 F6850
+L8 F7791
+L7 F6229
+L4 F3181
+L4 F5611
+T op token predictions: unsustainable momentarily这样一Tauurn也不可能 Targets unre )}↵ quickly
+sinωt.↵↵Therefore, the real part of the field is:↵↵(1/√2)[cosωt; sinωt]↵↵Wait, so both components are cosine and s
+so even though c=1 is positive integer, but the roots are not integers.↵↵Wait, so that's a problem. Then maybe my
+nt (4,4), the reflected direction is straight upwards along the y-axis.↵↵Wait a second! That seems to confirm the
+ =0. The roots are1 and5, as above. However, 5 is not reciprocal of1. Wait, but reciprocal root condition was
+T op token predictions:缩短 sure一个个 shortenedabcdefgh ideologies额外  Infectadvance Ча
+lating a3x3 determinant is the rule of Sarrus, but I might be more error-prone with that. Let me try the general
+3-4 rows2-3). Wait, getting confused, perhaps this approach is too error-prone.↵↵Alternatively, maybe look for p
+aps I need to accept Euler's formula here, as my manual counting is error-prone.↵↵If so, returning to the origina
+air in multiple ways, then the DNA replication process might become error-prone. The specific pairing ensures fid
+T op token predictions:*scale说实 /MIT/FormegisibandUvs👆
+ -half-initialized
+ then each subarray must contain all numbers from0 up to L_min−1. Wait no: the mex is the smallest non-present n
+ges are between each pair of islands that share a common resource. Wait no: actually, each edge represents a reso
+s okay, but 'We're' would need the apostrophe to be escaped. Wait Wait, no: if you use single quotes, then the ap
+ach application of rule1 adds a 'b', but also keeps the 'a' there. Wait no: replacing an 'a' in a string with 'ab
+T op token predictions: Beckham prol uncactices Zak Está/extanginginentivities
+ the pairwise gcds, so it must divide gcd(gcd(x,y), gcd(x,z)). Let me see:↵↵gcd(gcd(a,b), gcd(a,c)) might not be
+s approach would correspond to the earlier minimal a.↵↵Wait but let's see:↵↵Following this, then to express a in
+ed or not if even?↵↵Wait maybe parity still plays a role here. Let me see:↵↵Because starting at red (R0):↵↵After
+erator2m(m+1). Since2m and m+1 are coprime? Not necessarily. Let me see:↵↵Compute GCD(2m(m+1),2m +1)↵↵Let’s com
+T op token predictions: fueledvariablyedorhurstánhdan perpet wink disclosing welded
+ be weaker in one orientation compared to the other. Maybe the machine direction (the grain) has stronger bonds pa
+ even make sense because the units of speed are m/s and for expansion are Hz.↵That's like saying "the area of thi
+↵↵Therefore, I think my answer is correct. Maybe I overthink, but better safe than sorry. ↵↵Therefore, the value
+I can be confident the answer is10. Maybe I overcomplicated, but better safe than sorry. So the answer is10.↵↵*
+T op token predictions: disappe grues buckle filmy Advisor/connectionapon verteInterestingiless
+ng alone. Hmm, let's break this down step by step.↵↵First, let's make sure I understand the problem correctly. We
+ted number of blue balls at that point. Hmm, okay.↵↵First, let's make sure I understand the process correctly. Eve
+ the square root must be non-negative:↵↵\(4y^2 -12y +25 \geq 0 \)↵↵Let me check if this quadratic ever becomes
+rse function equation: \( g( g(x^{-2}) ) = x \).↵↵So, maybe it's easier if I rewrite the original equation as:↵↵\(
+T op token predictions:erto你还 PI 严密 .forrepeat modulation.wordpress remembered的实际
+stant acceleration", perhaps referring only to the second segment? Maybe mistranslation or misstatement. If we con
+0)^2. Therefore900π.↵↵But why specify the paths as straight? Hmm, maybe mistranslation? The original problem may
+haps to calculate the altitude, even though the distance is given? Maybe mistranslation or something.↵↵Wait, final
+r is8, then height would be zero, but that’s not.↵↵Alternatively, maybe mistranslation: "edges from the point ext
+T op token predictions: fkk/operators )*&_  reducers生生 NoSuchspoQuadridden
+eck another possible solution?↵↵Wait let's see when we squared the first time, the equation after squaring led us
+aybe I made an error.↵↵Wait maybe I miscalculated when testing x=1 first time. Let me check again.↵↵Original equa
+n, I found two solutions. However, when I squared the equation the first time, I might have introduced an extrane
+e we go! I think I messed up this step when I did substitution the first time. Because when I substituted x first
+Figure 17.Reasoning-related features: simple input.Randomly sampled transcoder adapter features classified by the LLM judge as
+reasoning-related with simple input patterns. For each feature, we show four max-activating dataset examples alongside the tokens most
+promoted by the feature’s decoder direction.
+24
+=== PAGE 25 ===
+Transcoder Adapters for Reasoning-Model Diffing
+L18 F2565T op token predictions:Wait Waitwait waitWAIT Yes ActuallyYes Or actually
+nded automata, while two counters can be used to simulate a Turing machine. Hmm, this might be conflicting. Let m
+ higher, then there's an oblique or curved asymptote, but not horizontal. ↵↵Wait, so maybe the question is mistyp
+, but since it's at the circumference, it's just half the intercepted arc.↵↵Wait, maybe to get this straight, sup
+: ~3.0–3.5 Å?↵↵Cl⁻: Maybe ~3.6–3.9 Å?↵↵Br⁻: ~4.1–4.3 Å?↵↵I⁻: ~4.4–4.6 Å?↵↵Wait, I think I might have heard that
+L16 F2324T op token predictions:请注意 Shawking POW stret plur poste Maria MaybeCREMENT
+ident electron letting us have a separable solution of this form:↵$$\Psi_i(\textbf{r}) = \exp(2\pi i k_i z) \sum_{
+to be the same line, but since they have different labels, that can't be. ↵↵Alternatively, maybe angle QRS is a s
+ent? Let me see. Alternatively, perhaps it's easier to write \( z = x + yi \), and try to substitute into the equa
+h()↵  res = input().strip()↵  if res == "Higher":↵  low = mid +1↵  else:↵
+L21 F7679T op token predictions: know knows知道  Know known knew knowingknow我们知道Know
+ we have (d1 * d2)/2 =2a * r. Hence, (d1 * d2) =4a * r. ↵↵However, I don't know the side length 'a' here, so may
+ms of \( ab \). Remember that \( (a + b)^2 = a^2 +2ab + b^2 \), but I don't know if that helps here. Alternativel
+ Law of Cosines applies here. Let me compute AB.↵↵Wait, but hold on, I don't know AB. But maybe since the ratio is
+vely, maybe we can relate this to the cosine of the angles? Hmm, but I don't see an immediate connection here. Wai
+L21 F7278T op token predictions: waitwait Wait waitsWait waiting waited等待 _wait WAIT
+00 am but before the lecture ends. But the lecture starts at8:00, right? Or does the lecture start when the firs
+unded on the right by x=4, the rectangle must have its right side at x=4? Or can it be anywhere to the left of th
+ is a line segment, then if C is on AB, then C has to be between A and B? Or can it be an extension?↵↵Wait, hold
+ng a rough diagram in my mind. The semicircle is on top of the rectangle? Or is the rectangle sitting inside the
+L21 F4525T op token predictions: overs forgetting m  shortcut Overs haste quick jump step rushing
+iplying by9 gives the desired sum. So is the answer261? Hmm, but maybe I'm missing something here.↵↵Alternativel
+hen according to this reasoning, the side length would be4√3? But maybe I'm missing something here. Let me check
+ents is \( p(1) = -8 \). Wait, but that seems too straightforward. Maybe I'm missing something here? Let me check
+ that would be4R²/R² =4. But that seems too straightforward. But maybe I'm missing something here?↵↵Hold on, the
+L19 F341T op token predictions: imagine think Imagine tapped拆  memories imaginingThinking thinking addressed
+red ring. The carbonyl oxygen of acetone is part of the ring? Wait no. Let's see: acetone is (CH3)2CO. The two hyd
+n form two different alkenes, they must be structural isomers.↵↵First, let's get the structure of n-butanol. n-But
+ reacts with metal ions in solution to form complexes or precipitates. Let's think about common metal ions in doub
+natively, the enol of4-hydroxycoumarin could attack the formaldehyde. Let's think of the structure. Coumarin deri
+L18 F5912T op token predictions: unlikely probably Probably likely镜  kidding Or不可能 Dawson Nope
+he a that allows such a solution. The user didn't specify over which field? Real numbers? Typically, we assume re
+ made a mistake?↵↵Alternatively, perhaps the triangle isn't Euclidean? Hmm, probably not. Alternatively, maybe I
+blem can't exist as given.↵↵Wait, unless the problem is not Euclidean? Hmm, that's too much of a stretch. Alterna
+ DC?"↵↵Hmm. Alternatively, maybe the question is not in Euclidean geometry? No, that's unlikely. Hmm.↵↵Wait, perh
+L18 F7404T op token predictions: Nope不太  That No thats不符合那是 That &:“No
+ glycolipids include both, so the answer would have glycolipids as neither? No, that can't be. Glycolip is the te
+possible, so maybe the only solution is if they are sitting next to no one? No.↵↵Hmm, this is confusing. Maybe th
+ in a specific sequence so only one way? Hmm, perhaps the number is just1? But that can't be.↵↵Wait, if the patt
+ have to realize that the numbers are impossible, hence the answer is20, but that seems unlikely.↵↵Alternatively,
+Figure 18.Reasoning-related features: output.Randomly sampled transcoder adapter features classified by the LLM judge as
+reasoning-related output features. For each feature, we show four max-activating dataset examples alongside the tokens most promoted by
+the feature’s decoder direction.
+25
+=== PAGE 26 ===
+Transcoder Adapters for Reasoning-Model Diffing
+L22 F7478
+L3 F2249
+L0 F4886
+L26 F7669
+L8 F3148
+L7 F5666
+L7 F4680
+L4 F2857
+T op token predictions: - c o n d i t i o n o u l o s   a d j u s t s u l o u s l y   s t r u g g l e l e s s l y - t h r e e c o n d i t i o n I R S T   s t r u g g l e d
+ t w o   v a r i a b l e s   t o   z e r o ?   B u t   v a r i a b l e s   m u s t   b e   p o s i t i v e   r e a l   n u m b e r s ,   s o   w e   c a n ' t   s e t   t h e m   e x a c t l y   t o   z e r o ,   b u t   c a n
+ c k   i t s   c r i t i c a l   p o i n t s .$Ñ$Ñ F i r s t ,   a s   x   a p p r o a c h e s 0   f r o m   t h e   p o s i t i v e   s i d e   ( x  $ﬁ 0 + ) :$Ñ$Ñ -   T h e   t e r m   - x   a p p r o a c h e s 0 ,$Ñ$Ñ -
+ e r   o f   i t e r a t i o n s   w o u l d   b e   n - 1   i f   t h e y   s t a r t   w i t h   F ( 0 ) = 0 ,   F ( 1 ) = 1 .   S u p p o s e   t h e y   l o o p   n   t i m e s :$Ñ$Ñ d e f   f i b ( n ) :$Ñ   a ,   b
+ 1 )   {$Ñ   p r i n t f ( " T h e   a u t h o r   o f   t h i s   p r o g r a m   i s   a   c o m p l e t e   f o o l   w h o   d o e s n ' t   u n d e r s t a n d   c o d e ! \ n " ) ;$Ñ   }$Ñ   / /   p r i n
+T op token predictions:非要  o v s k y   t r i oプライ   s u p r a   j u x t a p A r k c a i r o  *N   { . . .
+ a m .   S i n c e   t h e   r e m a i n i n g   p r o g r a m   a f t e r   t h e   ' . '   i s   n o t h i n g .$Ñ$Ñ S o   t h e   p r o g r a m   ' . '   w o u l d   p u s h   a n   e m p t y   s t r i n g ,   b u t   o u t p
+   b u t   g e n e r a l l y   n o   w h i t e s p a c e .$Ñ$Ñ W a i t   t h e   c o d e   . - 1 % = =  $Ñ$Ñ B r e a k i n g   d o w n :$Ñ$Ñ T h e   ' . '   i s   d u p e .  $Ñ$Ñ T h e n   ' - 1 '   i s   t h e   l i t e r a l
+   t h e n   > > > > > > > > > > > > > > >  $Ñ$Ñ C a l c u l a t i n g   t h e箭头   c o u n t s :$Ñ$Ñ F i r s t ,   a f t e r   t h e   f i r s t   ' . '   a t   c e l l 1 0   ( s t a r t i n g   f r o m   c e l l 0 ,   m o v i
+ c o n t e n t   ( w h i c h   i s   . ~ )   e x e c u t e s .$Ñ$Ñ R u n n i n g   t h e   b l o c k ' s   c o n t e n t :$Ñ$Ñ F i r s t ,   t h e   ' . '   ( d o t )   m a k e s   a   c o p y   o f   t h e   t o p   e l e m e n
+T op token predictions:   t h r o t t俯    g r u n t   a s s e m b l e r . x x)‰数看得    z e s t m i n s   A r s
+ c o n v e r t   s   i n t o   a   P y t h o n   s t r i n g   l i t e r a l   i s   s . r e p l a c e ( " \ \ " ,   " \ \ \ \ " ) . r e p l a c e ( " \ " " ,   " \ \ \ " " ) .   T h e n   p u t t i n g   i n   d o u b l e   q u
+ t h e   s h o r t e s t   t i m e   s o m e o n e   h a s   t o   w a i t   t o   c a t c h   a   b u s   o f   e a c h   t y p e   i n   M i r z b u r g .   T h e   b u s e s   A ,   B ,   a n d   C   r u n   e v e r y 1 0
+ s   o f   x :   ( k 1   +   k 2   +   k 3 )   = 0   ( b e c a u s e   E 1 ,   E 2 ,   E 3   e a c h   h a v e   c o e f f 1   o n   x )$Ñ$Ñ C o e f f i c i e n t s   o f   y :   ( k 1 * a   +   k 2 * b   + k 3 * c )   = 0
+ n d i n g :$Ñ$Ñ ( x ²   - 8 x   + 1 6 ) ( x   + 1 )   = x ³   - 8 x ²   + 1 6 x   + x ²   - 8 x   + 1 6   = x ³   - 7 x ²   + 8 x   + 1 6 .$Ñ$Ñ C o e f f i c i e n t s :   a =   - 7 ,   b = 8 ,   c = 1 6 > 0 .$Ñ$Ñ S o   t h e
+T op token predictions:   e n t i r e   c o m p l e t e   E n t i r e   C H   C o m p l e t e c o m p l e t e   c a r b   C O M P L E T E整个  C o m p l e t e
+ r o b l e m   i s   a s k i n g ,   i n   a   t o u r n a m e n t   w h e r e   n o   t e a m   i s   u n d e f e a t e d   a n d   n o   t e a m   i s   w i n l e s s ,   w h a t   i s   t h e   m i n i m a l   n u m b e r
+ t e r a t u r e .   T h i s   i s   a   s t a n d a r d   p r o b l e m   i n   t o u r n a m e n t   g r a p h s .   A   t o u r n a m e n t   i s   a   c o m p l e t e   o r i e n t e d   g r a p h ,   b u t   t h a t   r e q
+ a r e   b e i n g   p l a y e d   u n t i l   i t ' s   i m p o s s i b l e   f o r   a n y   t e a m   t o   h a v e   a n   u n d e f e a t e d   o r   w i n l e s s   r e c o r d .   B u t   t h e n   h o w   f e w   o f
+   c o n n e c t e d   t o u r n a m e n t   r e q u i r e s   m o r e   e d g e s .$Ñ$Ñ W a i t   a c t u a l l y ,   a   t o u r n a m e n t   i s   a   c o m p l e t e   o r i e n t e d   g r a p h$< m e a n i n g   a l l   e
+T op token predictions:   ( ( ( ( h e a d e d n a t a l   T o r o s a p   B o w   G a s t . $ . f a c t i o n   ~ >
+   s c h e m e   s e t   o u t   t o   f i n d   t s   m u t a n t s ?   W h y   w a s   s e l e c t i o n   a p p l i e d   a t   t h e   i n t e r m e d i a t e   t e m p e r a t u r e   o f 3 0 ° C ,   r a t h e r   t h a
+ .$Ñ$Ñ A l t e r n a t i v e l y ,   m a y b e   t h e   q u e s t i o n   a s s u m e s   a l l   t h e   n u m b e r s   w i t h o u t   i n t e r m e d i a t e   r o u n d i n g ?   L e t   m e   t h i n k .   I f   t h e y
+ t e ) .$Ñ$Ñ -   T w o - l o o p :   V e r t e x   c o r r e c t i o n s ,   m a y b e   t w o - p h o t o n   e x c h a n g e   w i t h   i n t e r m e d i a t e   e l e c t r o n   l o o p s .$Ñ$Ñ 2 .   P o l a r i z a t i o
+ v e r t i c e s , "   s o   s t a r t i n g   a t   o n e   v e r t e x   t o   t h e   o p p o s i t e   o n e   w i t h o u t   a n y   i n t e r m e d i a t e   v e r t i c e s ,   t h a t   i s   p o s s i b l e   v i a
+T op token predictions: - N L S   p o n y   s y s t e m i c   H o m o   t w e M o d i f i e r r o k e n   m a n i c   e n d p o i n t   E n d p o i n t
+ e q u a l i t y   a n d   l i n e a r   i n e q u a l i t y   c o n s t r a i n t s .$Ñ$Ñ W e   a r e   n o t   g o i n g   t o   p r e s e n t   s o m e   L P   t h e o r y ,   b u t   l e t ' s   h a v e   a   l o o k   a t
+ e e d e d   t o   p l a c e   a l l 6 ,   w h i c h   w e   c a n ' t .   B u t   s i n c e   w e   c a n   c h o o s e   t o   n o t   u s e   s o m e ,   m a y b e   t h e   c o u n t s   a r e   d i f f e r e n t .$Ñ$Ñ W
+   s m a l l   b o o k s   u s e d   c a n ' t   e x c e e d   e i g h t .   H o w e v e r ,   y o u   c a n   c h o o s e   t o   n o t   u s e   s o m e   b o o k s   i f   y o u   w a n t ,   a s   l o n g   a s   y o u   d
+ o n s .   B u t   m a y b e   s o m e   e x c e p t i o n s .   F o r   e x a m p l e ,   m a y b e   L R 3 5 9 0 2   d o e s   N O T   h a v e   s o m e   o f   t h e   Z 8 0 ' s   m o r e   a d v a n c e d   i n s t r u c t
+T op token predictions:宾馆    K i m b e r l y   d i v e r s i o n g a i n T U R E i z i a   m } z  o u r m e t u m a t   g o d
+ t i n g   a l l   t h e   l a n g u a g e s ,   a l o n g   w i t h   t h e i r   o u t p u t s   i n   t h e   f o l l o w i n g   f o r m a t :$Ñ #   [ < c o p > ' s   a n s w e r ] ( < l i n k   t o   a n s w e r > ) ,   <
+   a l l ) .$Ñ$Ñ G i v e n   t h a t   y o u   b u y   o p t i m a l l y   t o   m a x i m i z e   t h e   e x p e c t e d   p r o f i t   ( i . e .   #   r e d   b a l l s   -   c o s t   n e e d e d   t o   o b t a i n   t h e
+ ;	q$Ñ   j Q u e r y ( " # a n s w e r s " ) . a p p e n d ( a n s w e r ) ;	q$Ñ	q$Ñ	q$Ñ   } ) ;	q$Ñ	q$Ñ }$Ñ b o d y   {	q$Ñ   t e x t - a l i g n :   l e f t   ! i m p o r t a n t	q$Ñ }	q$Ñ # a n s w e r - l i s t   {
+ a   p r o f e s s i o n a l   t e n n i s   t o u r n a m e n t ,   t h e   t o p 8   p l a y e r s   h a v e   a   p l a y o f f .   F i r s t ,   # 8   p l a y s   # 7 ,   a n d   t h e   l o s e r   r e c e i v e s 8 t h
+T op token predictions:   o d d l y   s o u   j e r先进    S e e n ) ? .碗  r a i s e受欢迎之星
+ m y p r o n o u n s . o r g :$Ñ$Ñ T h e   v a s t   m a j o r i t y   o f   p e o p l e   g o   b y   t h e   p r o n o u n s   s e t s  $’ h e / h i m$E   o r  $’ s h e / h e r .$E   A   s m a l l   b u t   i n c r e a s i n g
+ o l y g l o t   c o n t e s t   w h e r e   t h e   g o a l   i s   t o   p r i n t   t h e i r   p r o n o u n s ,   w h i c h   a r e   " h e / h i m " .   T h e   f i r s t   a n s w e r   n e e d s   t o   b e   a   s i m p
+   u s i n g   t h e   n e w   c o d e   o f   c o n d u c t   a n d   n o   i n p u t ,   p r i n t   o u t   m y   p r o n o u n s   (   " h e / h i m " ,   " h e   h i m "   i s   a l s o   a c c e p t a b l e ) .  $Ñ H e r e
+ a l   i s   t o   w r i t e   a   p r o g r a m   t h a t   o u t p u t s   t h e   u s e r ' s   p r o n o u n s ,   w h i c h   a r e   " h e / h i m "   a s   p e r   t h e   q u e s t i o n .   T h e   f i r s t   a n s w e
+Figure 19.Language modeling features.Randomly sampled transcoder adapter features classified by the LLM judge as general language
+modeling features. For each feature, we show four max-activating dataset examples alongside the tokens most promoted by the feature’s
+decoder direction.
+26
+=== PAGE 27 ===
+Transcoder Adapters for Reasoning-Model Diffing
+L21 F7172T op token predictions:bew适量  broccoliRequirement WebSocket Bulkdio ». accounting flooding
+ distillation head. That way, it's measuring the temperature of the vapor before it enters the conde
+ distillation head. That way, it's measuring the temperature of the vapor that's about to condense.
+igits1-9. Each digit d from1-9 appears exactly10 times (e.g.,10-19: ten numbers with tens digit
+on, the thermometer is used to measure the temperature at which the vapor of the mixture is condensi
+L5 F5255T op token predictions:lops`;↵ lev hierarchy\"></.'),↵ Lia shepherdICONели
+ in your best interest for it to still output an integer.↵It is unsportsmanlike to intentionally ma
+ and then only reveals this after being safe, I consider this poor sportsmanship. A potential robbe
+lternatively, the question might have a different structure. In the sport's competition, some matche
+s are each assigned to the people, so the people have unique color-sport pairs, but when seated, adj
+L0 F1729T op token predictions: assim mote-rock overhaul长约  culp/hemess LO.toList
+<｜begin▁of▁sentence｜><｜User｜>Zombies zombies everywhere!! ↵In a parallel world of zombie
+or each j, the sum p[1][j] + p[2][j] + ... + p[N][j] is1↵↵ ↵Example↵Input:⏎↵2⏎↵2 2⏎↵1.000
+ else could cause our perception to show the varying expansion rates? ↵As a preface to my thoughts o
+<｜begin▁of▁sentence｜><｜User｜>Note: This challenge has nothing to do with actual assembl
+L26 F7645T op token predictions: correctly correct-seven若有 variably unrecognized ohio maximum—atMaximum
+many mirrors they can solve. If you can output solutions for any1 mirror input grid, then nominate
+- Disregard edge cases (e.g., N=3, which trivially avoids4-in-a-row by definition) by specifying m
+s and careful line placement to maximize the number of valid moves before running out of options. G
+, 20481 bytes**↵↵```↵;  #r'''烟花爆竹噼啪响↵';print(1);exit/**/ ',@;"`{a获3名第1句}";E#||"5↵```;];$$&&grep($
+L9 F324T op token predictions:朋友们对为导向 conced isp-dominatedonet购票  yeti totaled-flex
+s already golfed.↵Write a caddie (E,D) for any language L of your choosing. When you first post a c
+s challenge is only valid for languages with a compiler.↵↵Make a program (which is perfect
+blem states that "Write a caddie (E,D) for any language L of your choosing." The code for E and D c
+ be Turing-Complete?↵Challenge:↵For any language of your choice, find the smallest subset
+L8 F6356T op token predictions: Singles-dist踩  spared Airbus unsett carnConfirmoubotation
+of triangle $N_1N_2N_3$ is:↵$\text{(A) } \frac {1}{10} \triangle ABC \qquad \text{(B) } \f
+ss(id(tup)+24).value = id(tup)↵↵I notice this also happens with the other answer in that post, so I'
+---Output-----↵↵Output a single integer.↵↵↵-----Example-----↵Input↵129↵↵Output↵1<｜Assistant｜><think
+---Output-----↵↵Output a single integer.↵↵↵-----Example-----↵Input↵129↵↵Output↵1<｜Assistant｜><think
+L8 F3677T op token predictions: proper Mate securediproé  towersПод Dir barg tow
+hat step would accumulate. For example, glyceraldehyde-3-phosphate (G3P) might accumulate if the st
+ really unreliable, hence each time you shoot, you have a i/n chance to successfully shoot
+ morning, Bessie travels to school along a sidewalk consisting of m + n tiles. In order to help Bess
+<｜begin▁of▁sentence｜><｜User｜>Radioisotopes and Cancer Detection. A rad
+L6 F1215T op token predictions: compass conflic topical radically Illuminate道路上imson radixarning-strong
+U$-duality.↵↵Question1 (just to make sure I get this right): From Vafa's lectures (https://arxiv.o
+<｜begin▁of▁sentence｜><｜User｜>Find the area of the region bounded by the branches o
+<｜begin▁of▁sentence｜><｜User｜>Find the area of the region given by the inequality↵\
+}var P,S=s.split("\n").map(function(e){return e.split("")});var oPats=$(".proto-tet [pat]").get().ma
+Figure 20.Uninterpretable features.Randomly sampled transcoder adapter features deemed uninterpretable by the LLM judge. For
+each feature, we show four max-activating dataset examples alongside the tokens most promoted by the feature’s decoder direction.
+27

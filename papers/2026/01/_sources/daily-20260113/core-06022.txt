@@ -1,0 +1,653 @@
+URL https://arxiv.org/html/2601.06022v1; sections S3 to S5 excluded; result tables omitted; fetched 2026-10-03
+
+
+
+ 3 Methodology 
+
+ 
+
+We present AdaFuse , an adaptive ensemble decoding framework that addresses a core limitation of existing inference-time ensembling methods: their reliance on fixed fusion granularity and rigid decoding control, which prevents fusion behavior from adapting to evolving uncertainty. 
+ 
+ 
+
+At each decoding step, AdaFuse adaptively generates word-level candidate segments from each model, regulates the breadth of candidate consideration based on model confidence, and applies joint scoring across models to select the most appropriate continuation.
+This design enables real-time integration of ensemble preferences at a linguistically meaningful granularity, while flexibly balancing robustness and efficiency during decoding.
+An overview is shown in Figure 1 . 
+ 
+
+
+
+ 3.1 Candidate Word Proposal 
+
+ 
+
+ AdaFuse generates candidate word completions from each model by extending the current decoding prefix until a word boundary is reached. Starting from the current prefix \mathbf{y}_{1:t} , each model m_{k} generates tokens sequentially according to its next-token distribution until a complete word is formed. The resulting token sequence is decoded into a word segment, denoted as \mathbf{w} . This design avoids mid-word truncation and provides a consistent unit for alignment and scoring across models during ensemble decoding. 
+ 
+ 
+
+
+
+ 3.2 Adaptive Word Commitment 
+
+ 
+
+In word-level ensemble decoding, we need an effective rule to decide whether the model is sufficiently confident to continue generating a longer span or to stop and re-score candidate segments. Because a full word or phrase typically spans multiple subword tokens, its confidence cannot be reliably assessed before generation completes. We therefore use the first-token signal as a practical proxy for how ready the model is to commit to extending the current word. 
+ 
+
+
+
+Start-of-Word Confidence. 
+
+ 
+
+We assess confidence using the margin between the top-ranked candidates in the first-token distribution at the start of a word.
+Specifically, let p_{(1)} and p_{(2)} be the top-1 and top-2 probabilities of the first token at the start of a word. We define the confidence margin as \Delta_{m_{k}}(\mathbf{y})=p_{(1)}-p_{(2)} . 
+ 
+ 
+
+A larger margin corresponds to higher confidence, allowing the decoder to continue generating a longer word span, whereas a smaller margin indicates uncertainty and triggers early re-scoring. 
+ 
+ 
+
+
+
+Adaptive Expansion Strategy. 
+
+ 
+
+Based on the confidence signal defined above, AdaFuse adaptively decides
+whether to extend generation beyond the current word or to stop and perform
+ensemble re-scoring.
+For model m_{k} at prefix \mathbf{y} , we allow continued generation only when the
+margin criterion exceeds a predefined threshold \tau_{\Delta} : 
+ 
+
+ 
+
+ 
+ \Delta_{m_{k}}(\mathbf{y})\geq\tau_{\Delta}. 
+ 
+ (1) 
+ 
+
+When this condition is satisfied, the decoder proceeds to continue generating the current word
+using greedy decoding, treating the current continuation as a confident span
+extension.
+Otherwise, generation is halted after the current word and candidate segments
+are returned for cross-model scoring. 
+ 
+ 
+
+To avoid over-commitment while preserving step-wise correction, we limit each decoding round to at most M generated words.
+In practice, we set M=3 in all experiments, which is sufficient to capture most compact semantic units (e.g., named entities, short phrases, and collocations), while preventing error accumulation and delayed cross-model feedback. 
+ 
+ 
+
+Overall, this adaptive rule maintains the efficiency of greedy decoding while
+adjusting the degree of commitment based on model confidence, striking a
+practical balance between accuracy, fluency, and computational cost. 
+ 
+ 
+ 
+
+
+
+ 3.3 Diversity-Aware Ensemble Scaling 
+
+ 
+
+Building on the adaptive word-length expansion strategy, AdaFuse explores the role of lexical diversity in word-level ensemble decoding.
+To balance diversity and efficiency, we adopt an adaptive mechanism that expands the candidate space only when additional exploration is warranted, rather than enforcing uniform diversification.
+Since beam search operates at the token level and prioritizes high-probability continuations, directly applying it at the word level often yields redundant candidates with limited effective diversity.
+To address this mismatch, AdaFuse employs a two-stage word-level search that separates exploration and exploitation , enabling controlled diversity while preserving fluency. 
+ 
+
+
+
+Adaptive Trigger. 
+
+ 
+
+Diversity is introduced only when the first-token distribution at the current decoding prefix \mathbf{y} fails to satisfy the confidence criterion in Eq. ( 1 ), indicating elevated uncertainty in initiating a new word.
+In such cases, AdaFuse activates the two-stage diversity search to enumerate multiple plausible word-level continuations.
+When the criterion is satisfied, decoding proceeds without diversification, ensuring that diversity is applied only when beneficial while maintaining computational efficiency. 
+ 
+ 
+
+
+
+Exploration. 
+
+ 
+
+In the first stage, we select the top- B distinct initial tokens based on their conditional likelihood given the current decoding prefix \mathbf{y} .
+We refer to B as the branching factor , which determines how many paths are explored per decoding step to encourage intra-round diversity: 
+ 
+
+ 
+
+ 
+ \{z^{(1)}_{1},\dots,z^{(B)}_{1}\}=\text{Top-}B\left(p(v\mid\mathbf{y})\right), 
+ 
+ (2) 
+ 
+ 
+ 
+
+Each z^{(b)}_{1} serves as a distinct lexical entry point for the generation of candidate words. 
+ 
+ 
+
+
+
+Exploitation. 
+
+ 
+
+Each selected initial token z^{(b)}_{1} is then greedily extended autoregressively to form a complete word: 
+ 
+ 
+
+
+ 
+ \displaystyle z^{(b)}_{i} 
+ \displaystyle=\arg\max_{v}\;p_{m_{k}}\!\left(v\mid\mathbf{y},z^{(b)}_{1},\dots,z^{(b)}_{i-1}\right), 
+ 
+ (3) 
+
+
+ 
+ 
+ \displaystyle i=2,3,\dots 
+ 
+ 
+ 
+ 
+
+Decoding continues until a whitespace character is produced, at which point we obtain the complete word sequence candidates:
+ \mathbf{w}^{(b)}=(z^{(b)}_{1},\dots,z^{(b)}_{L}), 
+where L denotes the position at which decoding yields a full word.
+This two-stage procedure produces diverse yet fluent candidate words for subsequent ensemble scoring. 
+ 
+ 
+ 
+
+
+
+ 3.4 Cross-Model Scoring and Candidate Integration 
+
+ 
+
+The final step in AdaFuse is to select the most suitable continuation from a pooled set of word-level span candidates constructed across models.
+Within each decoding round, each model generates a span candidate by concatenating the words it commits in that round.
+We denote the b -th span candidate as
+ \mathbf{s}^{(b)}=\big(\mathbf{w}^{(b)}_{1},\dots,\mathbf{w}^{(b)}_{c}\big), 
+where c\leq M is the adaptive number of committed words in the round. When the confidence criterion remains satisfied throughout the round, the model produces a single span candidate.
+Otherwise, diversity-aware ensemble scaling is triggered to enumerate B alternative span candidates:
+ \mathbf{s}^{(1)},\dots,\mathbf{s}^{(B)}. 
+ 
+ 
+
+ AdaFuse forms a candidate pool S by taking the union of \mathbf{s}^{(b)} generated by all participating models.
+To compare candidates fairly, we compute the normalized negative log-likelihood (NLL) of each word as its average token-level surprise. NLL reflects model confidence over each candidate word, enables fair comparison across variable-length segments, and supports stable aggregation across models. 
+ 
+ 
+
+For each model m_{k} , we compute the normalized negative log-likelihood (NLL) of a span candidate \mathbf{s}^{(b)} as the average token-level surprise: 
+ 
+
+ 
+
+ 
+ \text{NLL}_{m_{k}}(\mathbf{s}^{(b)})=-\frac{1}{T_{b}}\sum_{t=1}^{T_{b}}\log p_{m_{k}}\!\left(z^{(b)}_{t}\mid\mathbf{y},z^{(b)}_{ 
+ 
+ (4) 
+ 
+ 
+ 
+
+where (z^{(b)}_{1},\dots,z^{(b)}_{T_{b}}) denotes the token sequence obtained by concatenating all tokens in the span \mathbf{s}^{(b)} , and T_{b} is the total number of tokens in the span. 
+ 
+ 
+
+We then average these scores across the ensemble of K models to obtain the fusion score: 
+ 
+
+ 
+
+ 
+ F(\mathbf{s}^{(b)})=\frac{1}{K}\sum_{k=1}^{K}\text{NLL}_{m_{k}}(\mathbf{s}^{(b)}), 
+ 
+ (5) 
+ 
+ 
+ 
+
+Finally, we select the best candidate by minimizing the fusion score: 
+ 
+
+ 
+
+ 
+ \mathbf{s}^{*}=\arg\min_{\mathbf{s}^{(b)}}F(\mathbf{s}^{(b)}), 
+ 
+ (6) 
+ 
+
+and append it to the decoding prefix: 
+ 
+
+ 
+
+ 
+ \mathbf{y}\leftarrow\mathbf{y}\|\mathbf{s}^{*}. 
+ 
+ (7) 
+ 
+ 
+ 
+
+This scoring mechanism enables AdaFuse to act as a dynamic feedback system, selecting candidates that are not only contextually appropriate for the current prefix but also jointly supported across diverse model predictions. The complete procedure is outlined in Algorithm  1 . 
+ 
+
+
+ Algorithm 1 AdaFuse Decoding 
+ 
+ 
+ 1: 
+ 
+ 
+ Prompt P , models \{m_{k}\}_{k=1}^{K} , margin threshold \tau_{\Delta} , max words M , branching factor B 
+
+ 
+ 
+ 2: 
+ 
+ 
+ \mathbf{y}\leftarrow P \triangleright Committed decoding prefix
+ 
+ 
+ 
+ 3: 
+ 
+ 
+ while not Terminate do \triangleright until EOS or length limit
+ 
+ 
+ 
+ 4: 
+ 
+ 
+    S\leftarrow\emptyset \triangleright Candidate span pool
+ 
+ 
+ 
+ 5: 
+ 
+ 
+    for each model m_{k} do 
+
+ 
+ 
+ 6: 
+ 
+ 
+     \mathbf{s}\leftarrow\emptyset , c\leftarrow 0 
+
+ 
+ 
+ 7: 
+ 
+ 
+     while c do 
+
+ 
+ 
+ 8: 
+ 
+ 
+       \mathbf{w}\leftarrow\textsc{GenWord}\!\left(m_{k},\,\mathbf{y}\|\mathbf{s}\right) \triangleright §  3.1 
+ 
+ 
+ 
+ 9: 
+ 
+ 
+       if \Delta_{m_{k}}(\mathbf{y}\|\mathbf{s})\geq\tau_{\Delta} then \triangleright §  3.2 
+ 
+ 
+ 
+ 10: 
+ 
+ 
+        \mathbf{s}\leftarrow\mathbf{s}\|\mathbf{w} , c\leftarrow c+1 
+
+ 
+ 
+ 11: 
+ 
+ 
+       else \triangleright §  3.3 
+ 
+ 
+ 
+ 12: 
+ 
+ 
+        \{\mathbf{w}^{(b)}\}_{b=1}^{B}\leftarrow\textsc{GenWord}\!\left(m_{k},\,\mathbf{y}\|\mathbf{s},\,B\right) 
+
+ 
+ 
+ 13: 
+ 
+ 
+        \mathbf{s}\leftarrow\mathbf{s}\|\{\mathbf{w}^{(b)}\}_{b=1}^{B} 
+
+ 
+ 
+ 14: 
+ 
+ 
+        break 
+
+ 
+ 
+ 15: 
+ 
+ 
+       end if 
+ 
+ 
+ 16: 
+ 
+ 
+     end while 
+ 
+ 
+ 17: 
+ 
+ 
+     S\leftarrow S\cup\{\mathbf{s}\} 
+
+ 
+ 
+ 18: 
+ 
+ 
+    end for 
+ 
+ 
+ 19: 
+ 
+ 
+    for each candidate \mathbf{s}\in S do \triangleright §  3.4 
+ 
+ 
+ 
+ 20: 
+ 
+ 
+     F(\mathbf{s})\leftarrow\frac{1}{K}\sum_{k=1}^{K}\text{NLL}_{m_{k}}(\mathbf{s}) 
+
+ 
+ 
+ 21: 
+ 
+ 
+    end for 
+ 
+ 
+ 22: 
+ 
+ 
+    \mathbf{s}^{*}\leftarrow\arg\min_{\mathbf{s}\in S}F(\mathbf{s}) 
+
+ 
+ 
+ 23: 
+ 
+ 
+    \mathbf{y}\leftarrow\mathbf{y}\|\mathbf{s}^{*} 
+
+ 
+ 
+ 24: 
+ 
+ 
+ end while 
+ 
+ 
+ 25: 
+ 
+ 
+ return \mathbf{y} 
+
+ 
+ 
+ 
+ 
+ 
+
+
+
+ 4 Experiments 
+
+ 
+
+In this section, we conduct a series of experiments to systematically evaluate the effectiveness, and design decisions of AdaFuse . Specifically, we aim to answer the following research questions: 
+ 
+ 
+ 
+ • 
+ 
+
+ RQ1 : Does AdaFuse consistently enhance the performance of base models across a wide range of tasks? 
+ 
+ • 
+ 
+
+ RQ2 : How does the adaptive word-commitment mechanism in AdaFuse affect the effectiveness of word-level ensemble decoding? 
+ 
+ • 
+ 
+
+ RQ3 : How does incorporating diversity-aware ensemble scaling in AdaFuse influence overall performance as the number of candidates increases? 
+ 
+ • 
+ 
+
+ RQ4 : How does AdaFuse balance efficiency and effectiveness, and what qualitative behaviors can be observed from example analyses? 
+ 
+ 
+ 
+
+
+
+ 4.1 Setup 
+
+
+
+
+Models. 
+
+ 
+
+We conduct our experiments using four recent and widely adopted open-source chat and instruction-tuned models:LLaMA-3.1-8B-Instruct Grattafiori et al. (2024) , Mistral-7B-Instruct-v0.3 Jiang et al. (2023a) , Qwen3-8B Yang et al. (2025) , and InternLM3-8B-Instruct Cai et al. (2024) . These models cover diverse, practical size regimes and represent the latest publicly released versions available during our experiments. 
+ 
+
+
+ Table 1: 
+Evaluation results on six benchmarks for base models and LLM ensemble methods.
+Baseline ensemble methods use a fixed LLaMA-3.1-8B-Instruct and
+Mistral-7B-Instruct-v0.3 pair.
+ AdaFuse is evaluated with both a fixed base pair and an oracle top-2
+base selection.
+The overall best result is shown in bold , while the best result among
+baseline ensemble methods is underlined .
+The improvement row reports the relative percentage gains of AdaFuse over the best-performing baseline method.
+ 
+ 
+ [result table omitted; consult original if quantitative claim needed] 
+ 
+ 
+ 
+
+
+
+Baselines. 
+
+ 
+
+We compare our method against four representative ensembling baselines. 1) LLM-Blender Jiang et al. (2023b) uses a reward model ( \mathtt{PairRanker} ) and a fusion model ( \mathtt{GenFuser} ) to rerank and merge responses. 2) DeepEn Huang et al. (2024) projects candidate outputs into a shared latent space using vocabulary alignment and relative representation modeling. 3) SweetSpan Xu et al. (2024) is a span-level ensemble method that selects from model-generated span candidates via perplexity-based scoring. 4) UniTE Yao et al. (2024) applies a top- k union filtering strategy for robust vocabulary alignment and token selection. 
+ 
+ 
+
+
+
+Benchmarks. 
+
+ 
+
+We evaluate six benchmarks across three task categories.
+1) Knowledge - intensive QA: \mathtt{NaturalQuestions} (5 - shot) Kwiatkowski et al. (2019) , a large - scale open - domain QA dataset built from real Google search queries; \mathtt{SQuAD} (5 - shot) Rajpurkar et al. (2016) , reading - comprehension questions over Wikipedia passages; and \mathtt{TriviaQA} (5 - shot) Joshi et al. (2017) , trivia questions paired with evidence documents harvested from the web.
+2) Arithmetic Reasoning: \mathtt{GSM8K} (4 - shot with chain - of - thought prompting) Cobbe et al. (2021) , grade - school math word problems requiring multi - step reasoning. 3) Machine Translation: \mathtt{FLores} Goyal et al. (2022) English(En)→German(De) (0 - shot) and German(De)→English(En) (0 - shot), covering translation quality on both high - and low - resource language pairs. 
+ 
+ 
+
+
+
+Experimental Setup. 
+
+ 
+
+For the main two-model ensembling setup, we choose Mistral-7B-Instruct-v0.3 and LLaMA-3.1-8B-Instruct as our fixed pair, given their strong, complementary performance profiles. We also include Qwen3-8B and InternLM3-8B-Instruct to test scalability and cross-architecture robustness. In our experiments, the confidence threshold is set to \tau_{\Delta}=0.7 (see Appendix  D.2 for hyperparameter analysis). Within each decoding round, we cap the maximum number of consecutively committed words at M=3 , and bound the total context length by a task-dependent limit of up to 512 tokens. Performance is evaluated using standard metrics for each task: exact match accuracy on NQ, SQuAD, and TriviaQA, accuracy on GSM8K, and spBLEU for machine translation. Unless otherwise specified, Section  3.3 is disabled in the main experiments to ensure a fair comparison under comparable computational budgets, and is examined separately in the ablation study. We additionally examine how AdaFuse scales with the number of base models by expanding the ensemble beyond the primary two-model setup; detailed results are reported in Appendix  E . 
+ 
+ 
+ 
+
+
+
+ 4.2 Main Results (RQ1) 
+
+ 
+
+As shown in Table 1 , AdaFuse achieves an average score of 63.23 across six benchmarks, outperforming the strongest prior ensemble method ( SweetSpan , 59.16) by 4.07 points (6.88% relative improvement). 
+ 
+ 
+
+ AdaFuse delivers particularly strong gains on knowledge-intensive QA tasks. Compared to the single model LLaMA-3.1-8B-Instruct, it improves performance by +8.61 pts on \mathtt{NQ} , +10.25 pts on \mathtt{SQuAD} , and +3.20 pts on \mathtt{TriviaQA} . It also consistently outperforms all competing ensemble methods on both translation benchmarks, demonstrating robust cross-task generalization. 
+ 
+ 
+
+On the arithmetic-reasoning benchmark \mathtt{GSM8K} , AdaFuse attains an accuracy of 79.15, slightly below LLaMA-3.1-8B-Instruct (81.05). We attribute this gap to the large performance disparity between the underlying base models. When ensembling the two strongest base models on \mathtt{GSM8K} , Qwen3-8B and LLaMA-3.1-8B-Instruct , AdaFuse achieves 90.25 accuracy, confirming that base-model compatibility plays a critical role in ensemble effectiveness. Notably, AdaFuse still surpasses all other baseline ensemble methods on \mathtt{GSM8K} by at least +11.52 pts. 
+ 
+ 
+
+We further analyze performance by fusion granularity to contextualize these gains.
+Sample-level ensembling ( LLM-Blender ) provides only modest improvements (e.g., +2.32 pts on \mathtt{NQ} and +3.12 pts on \mathtt{Flores\ En\to De} ), indicating limited robustness when candidate quality is uniformly low. Span-level methods ( SweetSpan ) achieve strong gains on extractive QA (+6.45 pts on \mathtt{SQuAD} ), but yield smaller improvements on open-domain QA and translation. Token-level approaches ( UniTE ) further improve open-domain QA (up to +4.71 pts on \mathtt{NQ} ), yet underperform on translation and incur substantially higher computational overhead. In contrast, AdaFuse consistently delivers the largest gains across tasks (e.g., +8.61 pts on \mathtt{NQ} and +8.50 pts on \mathtt{Flores\ En\to De} ), striking a favorable balance between accuracy, robustness, and efficiency. 
+ 
+ 
+
+
+
+ 4.3 Ablation Study (RQ2) 
+
+ 
+
+To assess the importance of adaptive word commitment in AdaFuse , we conduct an ablation study in which we replace the adaptive word commitment with fixed-length word commitment, while keeping all other components unchanged. 
+ 
+
+ 
+ Figure 2: 
+Comparison of Fixed-Length Decoding and AdaFuse on Natural Questions Dataset.
+ 
+ 
+
+
+
+Analysis of Adaptive Word Commitment. 
+
+ 
+
+We study the role of adaptive word commitment on the Natural Questions dataset using AdaFuse with the main fixed base-model pair. As shown in Figure 2 , fixed-length decoding with word lengths of 1, 2, or 3 consistently underperforms adaptive AdaFuse . This is because fixed-length strategies tend to fragment semantically coherent units such as named entities and collocations, whereas adaptive commitment preserves complete semantic segments when confidence is high. Specifically, we select an example from the Natural Questions dataset and examine the same input question, as shown in Figure 3 . With fixed-length decoding, the ensemble converges to an incorrect answer (“Terrence”). In contrast, adaptive word commitment allows one model to generate the correct multi-word entity (“Kelly Reno”) within a single decoding round, which is then selected by the subsequent cross-model scoring step. 
+ 
+
+ 
+ Figure 3: A Qualitative Example from Natural Questions: Fixed-Length Decoding vs. AdaFuse 
+ 
+ 
+ 
+
+
+
+Distribution of Words per Decoding Round. 
+
+ 
+
+We further analyze the distribution of the number of words generated per decoding round across different datasets.
+On Natural Questions, the proportions of rounds generating 1, 2, and 3 words are [80.29, 15.53, 4.18]%, respectively;
+on SQuAD, they are [57.64, 21.27, 21.09]%;
+and on De \rightarrow En translation, they shift to [34.02, 19.89, 46.09]%. These results indicate that AdaFuse adapts the length of word-level commitment to the characteristics of different tasks, rather than relying on a fixed commitment length. 
+ 
+ 
+ 
+
+
+
+ 4.4 Scaling Analysis (RQ3) 
+
+ 
+
+We further examine the impact of introducing diversity-aware ensemble scaling into AdaFuse . Using two main models, we evaluate how adaptive branching influences performance across multiple datasets.
+As shown in Figure 4 (right), increasing the branching factor B from 1 to 5 on NQ, TriviaQA, and GSM8K leads to a generally upward trend in accuracy, suggesting that moderate branching helps the decoder explore more informative candidate paths. We then fix B=3 and compare AdaFuse with and without diversity-aware ensemble scaling across datasets. As illustrated in Figure 4 (left), enabling diversity-aware ensemble scaling consistently improves performance on five benchmarks. These results indicate that, despite additional computational cost, AdaFuse provides a reliable accuracy gain by enhancing diversity during decoding. 
+ 
+
+ 
+ Figure 4: Diversity-Aware Ensemble Scaling Analysis
+ 
+ 
+ 
+
+In Appendix  F , we compare diversity-aware ensemble scaling with a beam-search-based scaling variant that ignores diversity in Figure  7 . The latter leads to a clear performance drop, while our approach remains stable and effective as the number of candidates increases. 
+ 
+ 
+
+
+
+ 4.5 Case Study (RQ4) 
+
+
+
+
+Runtime Analysis. 
+
+ 
+
+Figure  5 reports wall-clock inference time for different ensemble decoding strategies under a standardized setting (batch size 1, up to 10 new tokens per decoding call) on 4\times NVIDIA A100 80GB GPUs using the main fixed base-model pair. AdaFuse achieves runtime performance comparable to UniTE, which relies primarily on lightweight tokenizer-level transformations and introduces minimal per-step overhead. At the same time, AdaFuse is substantially faster than span-level methods such as SweetSpan, whose fixed-span generation and scoring incur higher latency, and also outperforms token-level approaches like DeepEn that suffer from dense vocabulary alignment and cross-space projection costs. Overall, AdaFuse strikes a favorable balance between efficiency and quality, delivering improved accuracy while maintaining practical inference efficiency. 
+ 
+ 
+
+
+
+Case Analysis. 
+
+ 
+
+To better characterize the behavior of AdaFuse in longer-form generation, we additionally present a concrete generation example from the De \rightarrow En dataset in Example 4.5 . In this example, each parenthesized span corresponds to one decoding round. As shown, AdaFuse frequently commits semantically cohesive word groups in longer sequences, reflecting its tendency to adapt word-level commitment to meaningful lexical units. 
+ 
+
+ 
+ Figure 5: End-to-end runtime comparison of ensemble decoding methods on the Natural Questions (NQ) dataset under a unified multi-GPU inference setting. 
+ 
+ 
+ 
+ Example 1: De \rightarrow En Translation Instance 
+ 
+ 
+ Source (De): 
+Singapur ist im Allgemeinen ein äußerst sicherer Ort, an dem man sich gut zurechtfindet und nach der Ankunft fast alles kaufen kann. 
+ Output (En): 
+[Singapore] [is generally a] [very safe place]
+[where] [you] [can] [easily get around]
+[and buy] [almost everything] [after arrival]. 
+ Note: [ ] denotes a word span generated in each decoding round.

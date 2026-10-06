@@ -1,0 +1,246 @@
+Blockwise Advantage Estimation for Multi-Objective RL with Verifiable Rewards (https://arxiv.org/html/2602.10231v1)
+citeturn28449view0 [wordlim: 200] Crawled: yesterday; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.10231v1","lineno":234}); Total lines: 565
+L137: #### Brier score.
+L138: 
+L139: The Brier score measures the squared error between predicted probability and the binary outcome:
+L140: 
+L144: #### Expected Calibration Error (ECE).
+L145: 
+L146: ECE compares average confidence to empirical accuracy within confidence bins. Let $\{B_{m}\}_{m=1}^{M}$ be a partition of $[0,1]$ into $M$ bins, and let $B_{m}=\{i:q_{i}\in\text{bin }m\}$. Define
+L147: 
+L148:  | $\displaystyle\mathrm{acc}(B_{m})\;=\;\frac{1}{|B_{m}|}\sum_{i\in B_{m}}c_{i},$  |
+L149:  | $\displaystyle\mathrm{conf}(B_{m})\;=\;\frac{1}{|B_{m}|}\sum_{i\in B_{m}}q_{i}.$  |
+L150: 
+L151: Then
+L152:  | $$\mathrm{ECE}\;=\;\sum_{m=1}^{M}\frac{|B_{m}|}{N}\,\big|\mathrm{acc}(B_{m})-\mathrm{conf}(B_{m})\big|.$$  |
+L153: 
+L154: ECE is widely used in practice but depends on the binning scheme (choice of $M$ and bin boundaries).
+L155: ## 4 Method
+L156: ### 4.1 Self-Confidence Estimation for Math
+L157: 
+L158: We study joint reasoning and uncertainty estimation in math problem solving. Each example consists of a prompt $x$ (a math question) and a ground-truth final answer $y^{\star}$. Given $x$, the model generates a structured completion $X$ that contains (i) a solution/answer segment and (ii) a self-analysis segment that includes a numerical confidence score:
+L159:  | $$X\;=\;[\,X_{\mathrm{sol}};\;X_{\mathrm{conf}}\,],\qquad q\in[0,1]\ \text{parsed from }X_{\mathrm{conf}}.$$  |
+L160: The illustrative example of completion from a model is demonstrated in Appendix cite43†E . In our implementation, blocks are defined by deterministic parsing rules based on the structured tags (Appendix cite36†A ): we treat the full solution/answer content as $X_{\mathrm{sol}}$ and the self-analysis plus the numeric confidence report as $X_{\mathrm{conf}}$. We extract the predicted final answer $\hat{y}$ from $X_{\mathrm{sol}}$ and compute a verifiable correctness indicator
+L161:  | $$c\;=\;\mathrm{1}\{\hat{y}\equiv y^{\star}\}\in\{0,1\},$$  |
+L162: 
+L163: where $\equiv$ denotes equivalence under a task-specific verifier (e.g., exact match up to formatting).
+L164: 
+L165: In standard RL with verifiable rewards (RLVR), the reward depends only on correctness:
+L166: 
+L167:  | $$R_{\mathrm{RLVR}}(\hat{y},y^{\star})\;=\;c.$$  |
+L168: 
+L169: While effective for improving accuracy, this reward provides no incentive for calibrated confidence and can encourage overconfident guessing.
+L170: Adding an additional reward to incentivize uncertainty estimation makes it possible to do in a number of ways, where it is not obvious which one to choose. RLCR work claims SoTA performance in the described task and suggests augmenting the binary correctness reward with a calibration term based on a proper scoring rule. Concretely, RLCR uses the Brier score for the reported confidence $q$:
+L171:  | $$R_{\mathrm{RLCR}}(\hat{y},q,y^{\star})=\\
+L172: =R_{\mathrm{RLVR}}(\hat{y},y^{\star})-R_{\mathrm{Brier}}(q,c)=c-(q-c)^{2}.$$  |
+L173: 
+L174: This reward penalizes being confidently wrong (large $q$ when $c=0$) and also penalizes under-confidence when correct (small $q$ when $c=1$), encouraging $q$ to track the empirical probability of correctness while still rewarding accurate solutions.
+L175: The reward design for the available segments represents a crucial part of training a model. In Section cite26†5.4 , we observe that when the confidence objective is implemented via a binary cross-entropy reward, vanilla GRPO can suffer markedly, motivating the segment-aware credit assignment and baselines we develop.
+L176: In the remainder of this section, we use this task as a running example to motivate our approach: correctness is primarily controlled by $X_{\mathrm{sol}}$, whereas calibration is primarily controlled by $X_{\mathrm{conf}}$.
+L177: ### 4.2 Blockwise Decomposition
+L178: 
+L179: We consider completions that decompose into $K$ contiguous blocks,
+L180: 
+L181:  | $$y\;=\;[\,X_{1};\,X_{2};\,\ldots;\,X_{K}\,],$$  |
+L182: where each block $X_{k}$ is associated with an objective-specific reward $r_{k}$.^{1}^{1} 1 The reward $r_{k}$ may depend on the full prefix up to block $k$ (e.g., a confidence reward depends on whether the preceding solution is correct), but it is primarily controlled by the tokens in block $k$. For a prompt $x$, GRPO samples a group $\{y^{(i)}\}_{i=1}^{G}$ and yields block rewards $\{r_{k}^{(i)}\}_{i=1}^{G}$.
+L183: The modification we explore in this paper is to replace the single completion-level advantage with blockwise proxy-advantages $\{\hat{A}_{k}^{(i)}\}_{k=1}^{K}$, and apply $\hat{A}_{k}^{(i)}$ only to tokens that belong to block $k$. Concretely, let $\mathcal{T}_{k}^{(i)}$ denote the token indices in block $k$ of sample $i$. Using the standard token-level importance ratio $\rho^{(i)}_{t}(\theta)$, defined in Equation cite66†2 , we optimize the sum of PPO-style clipped objectives across blocks:
+L184:  | $$\mathcal{L}_{\mathrm{BAE}}(\theta)\;=\;-\frac{1}{G}\sum_{i=1}^{G}\sum_{k=1}^{K}\frac{1}{|\mathcal{T}_{k}^{(i)}|}\sum_{t\in\mathcal{T}_{k}^{(i)}}\min\\
+L185: \!\Big(\rho^{(i)}_{t}(\theta)\,\hat{A}_{k}^{(i)},\;\mathrm{clip}(\rho^{(i)}_{t}(\theta),1-\varepsilon,1+\varepsilon)\,\hat{A}_{k}^{(i)}\Big),$$  |
+L186: #### Block weighting.
+L187: 
+L188: We average the token loss within each block by $|\mathcal{T}_{k}^{(i)}|$ so that blocks with very different lengths (e.g., a short confidence report vs. a long solution) have comparable per-token influence. More generally, one could introduce explicit block weights $w_{k}$ and optimize $\sum_{k}w_{k}\cdot|\mathcal{T}_{k}^{(i)}|^{-1}\sum_{t\in\mathcal{T}_{k}^{(i)}}\ell_{k,t}$; we use the uniform choice $w_{k}\!=\!1$ throughout to avoid additional tuning.
+L189: For the first block $X_{1}$, all group samples share the same starting state (the prompt $x$), and GRPO’s group normalization provides a natural baseline. For blocks $k>1$, however, the starting state includes the sampled prefix $[X_{1};\ldots;X_{k-1}]$, which differs across group members. A statistically appropriate advantage for block $k$ should therefore normalize $r_{k}^{(i)}$ relative to the value of the intermediate state at the end of block $(k\!-\!1)$, i.e., a conditional baseline of the form
+L190:  | $$b_{k}\!\left(x,X_{<k}^{(i)}\right)\;\approx\;\mathbb{E}\!\left[r_{k}\mid x,X_{<k}^{(i)}\right].$$  |  | (3)
+L191: 
+L192: Estimating this quantity naively would require Monte Carlo rollouts from each intermediate prefix $X_{<k}^{(i)}$, which is prohibitively expensive for long-context LLM training and multi-objective scenarios.
+L193: In the next subsection, we therefore study practical estimators that approximate these conditional baselines using only the samples already available within the GRPO group, avoiding additional rollouts. In Section cite22†5.1 , we show how such baselines correspond to true Monte-Carlo estimates.
+L194: 
+L195: See Appendix cite37†B for pseudocode.
+L196: ### 4.3 Conditional Baselines
+L197: 
+L198: We consider the following estimators for block $k>1$, and apply them to form proxy-advantages $\hat{A}_{k}^{(i)}=r_{k}^{(i)}-\hat{b}_{k}^{(i)}$ (with optional variance normalization as in GRPO):
+L199: 
+L200:   1. 1.
+L201: 
+L202: No baseline (raw reward).
+L203: 
+L204:  | $$\hat{b}_{k}^{(i)}=0,\qquad\hat{A}_{k}^{(i)}=r_{k}^{(i)}.$$  |
+L205: 
+L206: This is an unbiased estimator for state-action function which typically has high variance.
+L207: 
+L208:   2. 2.
+L209: 
+L210: Batch Mean Baseline. Using all samples in the current batch (across prompts),
+L211:  | $$\hat{b}_{k}^{(i)}=\mathbb{E}_{j\sim\text{batch}}[\,r_{k}^{(j)}\,].$$  |
+L212: 
+L213: This reduces variance, but may be poorly matched to a given prompt’s difficulty and to the specific prefix $X_{<k}^{(i)}$.
+L214: 
+L215:   3. 3.
+L216: 
+L217: Group Mean Baseline. Using the GRPO group for the same prompt $x$, ignoring that prefixes differ,
+L218: 
+L219:  | $$\hat{b}_{k}^{(i)}=\frac{1}{G}\sum_{j=1}^{G}r_{k}^{(j)}.$$  |
+L220: This is prompt-adaptive, but can be miscalibrated for $k>1$ because rewards are averaged across trajectories with different intermediate prefixes. This is the original proposition from GRPO work how it can be applied in multi-turn scenarios.
+L221: 
+L222:   4. 4.
+L223: 
+L224: Outcome-Conditioned Baseline (OCB). Partitioning the group into subgroups based on a discrete intermediate outcome $o^{(i)}$ of the prefix $X_{<k}^{(i)}$. Let $\mathcal{G}_{o}=\{j\in\{1,\ldots,G\}:o^{(j)}=o\}$. We set
+L225:  | $$\hat{b}_{k}^{(i)}=\frac{1}{|\mathcal{G}_{o^{(i)}}|}\sum_{j\in\mathcal{G}_{o^{(i)}}}r_{k}^{(j)}.$$  |
+L226: 
+L227: In our main experiments,
+L228: 
+L229:  | $$o\in\{\texttt{correct},\texttt{incorrect}\},$$  |
+L230: 
+L231: yielding a simple two-bin baseline. This formulation allows for a very broad range of applications which we cover in Sec cite29†6.1 .
+L232: 
+L233: See Appendix cite37†B for a discussion of when OCB is unbiased.
+L234: ## 5 Experiments and Results
+L235: 
+L236: In this section, we ablate components of the proposed approach and evaluate our methods against baselines.
+L237: ### 5.1 How Accurate Are Conditional Baselines?
+L238: 
+L239: The baseline designs described in Section cite20†4.3 naturally raise the question of how close they are to MC estimates.
+L240: 
+L241: cite67†Image: Refer to caption L242: 
+L243: Figure 1: The error distribution comparing to true advantage MC estimates for three methods: Batch Mean, Group Mean, OCB w.r.t. correct/incorrect solutions. Batch Mean shows skewed approximation unlike Group Mean, while OCB demonstrates the lowest RMSE error across all groups.
+L244: To investigate this, we focus on the second block in our structured generation, whose reward depends on the sampled solution prefix. We start from a strong, well-calibrated reference policy obtained with RLCR for Qwen2.5-7B (cite68†Qwen et al., 2025 ), and collect trajectories of the form: $y=[X_{\mathrm{sol}};X_{\mathrm{conf}}]$. For each prompt $x$ and sampled solution block $X_{\mathrm{sol}}^{(i)}$, the calibration reward (a Brier score) is denoted $r_{\mathrm{cal}}^{(i)}$.
+L245: The ideal advantage for the confidence block subtracts the intermediate-state value
+L246:  | $$A^{(i)}_{\mathrm{MC}}\;=\;r^{(i)}_{\mathrm{cal}}-\mathbb{E}\!\left[r_{\mathrm{cal}}\mid x,X_{\mathrm{sol}}^{(i)}\right],$$  |
+L247: which depends on the particular sampled solution prefix. To approximate this quantity, we select random 100 prompts from MATH500 (cite69†Hendrycks et al., 2021 ) and perform 32 rollouts for the confidence block from each fixed prefix $(x,X_{\mathrm{sol}}^{(i)})$, producing a reference estimate of $A^{(i)}_{\mathrm{MC}}$. We then compute proxy-advantages $\hat{A}^{(i)}$ using the estimators from Sec cite20†4.3 .
+L248: Figure cite70†1 compares our baselines to the Monte-Carlo reference. To quantify fidelity, we measure the RMSE between $\hat{A}^{(i)}$ and $A^{(i)}_{\mathrm{MC}}$, split by whether the solution is correct. The Outcome-Conditioned Baseline achieves the lowest error in both strata and shows unbiased estimation.
+L249: ### 5.2 Main Results
+L250: 
+L251: We now evaluate Blockwise Advantage Estimation on joint reasoning and uncertainty estimation for math across Qwen2.5-7B-Base, Qwen2.5-7B-Instruct, and Qwen2.5-3B-Instruct.
+L252: #### GRPO training setup.
+L253: 
+L254: Unless otherwise specified, we use the same GRPO backbone across methods, with following implementation choices:
+L255: 
+L256:   * •
+L257: 
+L258: No advantage standardization. We center advantages but do not divide by the within-group standard deviation, following common GRPO variants such as Dr. GRPO (cite71†Liu et al., 2025 );
+L259: 
+L260:   * •
+L261: 
+L262: Dynamic entropy regularization. We adapt the entropy coefficient over training to avoid premature entropy collapse (cite72†He et al., 2025 );
+L263: 
+L264:   * •
+L265: No KL regularization. We rely on conservative PPO clipping and entropy control for stability and set $\beta=0$ in Eq. (cite73†1 ), following Dr.GRPO.
+L266: The models are trained using a mixture of MATH and DAPO training datasets having in total 25k training prompts (cite74†Feng et al., 2025b ). All methods use the same prompts, verifier, hyperparameters and parsing logic for extracting answers and confidences. All prompts can be found in Appendix cite36†A and hyperparameters – in Table cite75†4 . We report Pass@1 accuracy and confidence quality using AUROC, ECE, and Brier Score.
+L267: We report standard errors of the mean (SEM) for all evaluation metrics; details on the SEM computation procedure are provided in Appendix cite49†I and in Table cite76†7 .
+L268: Table 1: Effect of conditional-baseline approximations for the confidence block for Qwen2.5-3B-Instruct trained for 1024 steps, evaluated on MATH500
+L269: Method  | Acc (%)  | AUROC  | ECE  | Brier
+L270: --- | --- | --- | --- | ---
+L271: RLCR  | 68.7  | 0.881  | 0.059  | 0.115
+L272: Group Mean  | 66.4  | 0.878  | 0.069  | 0.124
+L273: OCB  | 67.9  | 0.893  | 0.030  | 0.110
+L274: Batch Mean  | 66.2  | 0.858  | 0.078  | 0.128
+L275: None (raw reward)  | 66.1  | 0.882  | 0.099  | 0.125
+L276: Table 2: Main results for Qwen2.5-7B-Base trained for 512 steps on self-confidence estimation for math.
+L277: Method  | Acc (%)  | AUROC  | ECE  | Brier
+L278: MATH500 (in-distribution)
+L279: ---
+L280: RLCR  | 75.0  | 0.914  | 0.043  | 0.093
+L281: OCB  | 75.1  | 0.917  | 0.032  | 0.094
+L282: Group Mean  | 72.7  | 0.912  | 0.020  | 0.099
+L283: GSM8K (easy OOD)
+L284: ---
+L285: RLCR  | 88.9  | 0.835  | 0.037  | 0.075
+L286: OCB  | 89.7  | 0.847  | 0.039  | 0.073
+L287: Group Mean  | 87.8  | 0.849  | 0.030  | 0.079
+L288: AIME23–25 (hard OOD)
+L289: ---
+L290: RLCR  | 9.4  | 0.942  | 0.092  | 0.052
+L291: OCB  | 9.5  | 0.902  | 0.126  | 0.064
+L292: Group Mean  | 8.2  | 0.911  | 0.094  | 0.056
+L293: Tables cite77†1 , cite78†2 , cite79†6 summarize the main outcomes on MATH500 (in-distribution), GSM8K (cite80†Cobbe et al., 2021 ) (easy OOD), and AIME23–25 (cite81†Mathematical Association of America, ) (hard OOD). Across model sizes and base/instruct variants, we observe three consistent trends.
+L294: 
+L295:   * •
+L296: OCB is the strongest compute-free conditional baseline. On Qwen2.5-​3B-Instruct, OCB yields a large calibration gain on MATH500, improving ECE (0.030 vs. 0.059 for RLCR) as well as AUROC/Brier, with only a modest accuracy gap. On Qwen2.5-​7B-Base and Qwen2.5-​7B-Instruct, OCB matches RLCR.
+L297: 
+L298:   * •
+L299: Unconditioned means can be brittle. The Group Mean baseline can reduce ECE (e.g., MATH500 for 7B-Base: 0.020 vs. 0.032 for OCB), but may degrade accuracy and proper scoring (Brier). Under distribution shift, it can fail severely (e.g., GSM8K for 7B-Instruct: ECE 0.125, Brier 0.146, AUROC 0.641; Table cite79†6 ). Batch Mean and no-baseline variants are consistently worse on the 3B setting (Table cite77†1 ), aligning with our advantage-quality analysis described in Section cite21†5 .
+L300: 
+L301:   * •
+L302: RLCR remains a strong baseline, while BAE+OCB is competitive without reward scalarization. RLCR is often best on accuracy and/or hard-OOD discrimination (e.g., AUROC on AIME23–25 for 7B-Base; Table cite78†2 ), but BAE+OCB remains competitive and often yields a better accuracy–calibration trade-off on in-domain and easy OOD regimes, while avoiding reward scalarization across segments.
+L303: ### 5.3 Test-Time Scaling Evaluation
+L304: 
+L305: A practical benefit of self-confidence estimation is test-time scaling (TTS): at inference time we can sample multiple candidate solutions and use the model’s reported confidence to select a final answer. This can significantly improve accuracy without any additional training.
+L306: For each prompt $x$, we sample $n$ independent completions $\{y^{(i)}\}_{i=1}^{n}\sim\pi_{\theta}(\cdot\mid x)$ at fixed decoding settings, specified in Appendix cite40†Appendix D . From each completion we extract (i) a final answer $\hat{a}^{(i)}$ and (ii) a reported confidence $q^{(i)}\in[0,1]$.
+L307: We then aggregate the $n$ candidates into a single prediction $\hat{a}$ using the following strategies: Pass@1, Pass@k, Majority Vote (Maj), Max confidence selection (MaxConf), Confidence-weighted majority (WeightedMaj). WeightedMaj is defined by the following selection rule:
+L308:  | $$\hat{a}_{\mathrm{wmaj}}\;=\;\arg\max_{a}\sum_{i=1}^{n}q^{(i)}\,\mathrm{1}\{\hat{a}^{(i)}=a\}.$$  |
+L309: Intuitively, Maj exploits consensus across samples, while MaxConf exploits self-reported uncertainty. Confidence-weighted majority combines both: answers that appear repeatedly and with consistently high confidence receive the largest total weight. When $q^{(i)}$ is well calibrated, these rules become principled: $q^{(i)}$ approximates the probability that a candidate is correct, so higher-confidence candidates should be preferred, and confidence-weighting acts as a natural soft aggregation.
+L310: cite82†Image: Refer to caption L311: 
+L312: Figure 2: TTS evaluation for RLCR and OCB methods across three datasets: (a) – MATH500, (b) – GSM8K, (c) – AIME23–25
+L313: Figure cite83†2 shows test-time scaling curves. Across datasets, increasing the number of samples improves accuracy for realizable selection rules, while Pass@k indicates substantial remaining headroom from generating diverse candidates. Crucially, OCB preserves the key downstream benefit of calibrated confidence.
+L314: Performance tracks closely with RLCR, indicating that our segment-level credit assignment does not merely improve calibration metrics in isolation, but produces actionable confidence estimates that translate into better inference-time decision making. We also notice a consistent empirical pattern how accuracy and calibration metrics contribute to overall TTS performance, the details and discussion of which can be found in Appendix cite45†G .
+L315: ### 5.4 Alternative Rewards for Confidence
+L316: 
+L317: So far, our confidence block has been trained with a Brier-style reward:
+L318: 
+L319:  | $$r_{\text{Brier}}(q,c)\;=\;-(q-c)^{2}.$$  |
+L320: 
+L321: A key advantage of Blockwise Advantage Decomposition is that it does not depend on any particular scalarization of objectives; as long as the confidence objective is computable from $(q,c)$, it can be optimized locally on the confidence block.
+L322: To demonstrate this, we also consider the Bernoulli log-likelihood, another strictly proper scoring rule:
+L323: 
+L324:  | $$r_{\text{BCE}}(q,c)\;=\;\Big(c\log q+(1-c)\log(1-q)\Big),$$  |
+L325: 
+L326: with $q$ clipped to $[\epsilon,1-\epsilon]$ for numerical stability.
+L327: A naive adaptation of RLCR replaces the Brier term inside a single scalar reward with BCE. In our experiments, this frequently converges to a degenerate local optimum in which the model avoids the calibration penalty by emitting extremely low confidence and refusing to answer, rather than improving solution quality. The example of such behavior can be found in Appendix cite44†F .
+L328: In contrast, training OCB using BCE for a confidence block gives solid results. Empirically, we find that training the confidence block with BCE converges more slowly than Brier in terms of accuracy, but reaches strong performance once trained for sufficiently long. The corresponding evaluation results are demonstrated in Table cite84†3 .
+L329: Table 3: Qwen2.5-7B-Base trained BAE with Brier score and BCE as reward for the confidence block
+L330: Method  | Acc (%)  | AUROC  | ECE  | Brier
+L331: MATH500 (in-distribution)
+L332: ---
+L333: OCB (Brier, 512 st.)  | 75.1  | 0.92  | 0.03  | 0.09
+L334: OCB (BCE, 512 st.)  | 69.7  | 0.92  | 0.03  | 0.10
+L335: OCB (BCE, 1024 st.)  | 76.7  | 0.93  | 0.03  | 0.09
+L336: GSM8K (easy OOD)
+L337: ---
+L338: OCB (Brier, 512 st.)  | 89.7  | 0.85  | 0.04  | 0.07
+L339: OCB (BCE, 512 st.)  | 86.9  | 0.84  | 0.02  | 0.08
+L340: OCB (BCE, 1024 st.)  | 90.2  | 0.86  | 0.02  | 0.07
+L341: AIME23–25 (hard OOD)
+L342: ---
+L343: OCB (Brier, 512 st.)  | 9.5  | 0.90  | 0.13  | 0.06
+L344: OCB (BCE, 512 st.)  | 8.1  | 0.87  | 0.08  | 0.06
+L345: OCB (BCE, 1024 st.)  | 10.4  | 0.92  | 0.09  | 0.06
+L346: ### 5.5 Beyond Self-Confidence
+L347: 
+L348: Our framework is not specific to uncertainty estimation. To illustrate broader applicability, we consider a simple sequential refinement setting in which the model produces two consecutive solution attempts for the same math problem. This mirrors common agentic workflows with reflection and subsequent adjustments, but in the simplest possible form with a fixed number of refinement steps.
+L349: Given a prompt $x$, the model generates two attempts in a single completion $y\;=\;[X_{1};\,X_{2}]$, where $X_{1}$ contains a first reasoning trace and answer, and $X_{2}$ contains a reflection followed by a second answer. We refer to this setup as Two-Attempt Refinement.^{2}^{2} 2 We avoid the term “two-shot” to prevent confusion with few-shot prompting. The exact prompt for this task is provided in Appendix cite36†A . The reward structure for each attempt segment is described in Appendix cite39†C .
+L350: To illustrate the applicability of our method, we train Qwen2.5-3B-Instruct under the BAE+OCB scheme. Figure cite85†3 shows that the second attempt consistently improves over the first attempt across all sampling budgets.
+L351: 
+L352: cite86†Image: Refer to caption L353: 
+L354: Figure 3: TTS evaluation within Two-Attempt Refinement on MATH500 dataset. Second attempt demonstrates higher performance across all aggregations.
+L355: ## 6 Discussion, Limitations and Future Work
+L356: ### 6.1 Discussion
+L357: The motivation behind OCB is that this baseline imposes an equivalence relation on prefixes that share the same task-relevant outcome and can be used for efficient approximation.
+L358: When the block-$k$ reward depends primarily on such an outcome (as in uncertainty estimation, where calibration is chiefly determined by whether the preceding solution is correct), conditioning the baseline on $o$ yields a closer approximation to the true conditional value $\mathbb{E}[r_{k}\mid x,X_{<k}]$ while retaining the compute benefits of group-based normalization.
+L359: More broadly, many objectives only care about what was achieved rather than how it was achieved: for instance, in code generation there may be many distinct patches that fix a bug, but downstream evaluation typically only depends on whether the tests pass. In these settings, outcome-conditioned grouping provides a simple and effective variance-reduction mechanism for later-block advantages without requiring additional rollouts.
+L360: ### 6.2 Limitations
+L361: #### Outcome-conditioned baselines require populated strata.
+L362: The Outcome-Conditioned Baseline relies on estimating subgroup means within each GRPO group (e.g., correct vs. incorrect). When one stratum is rare, subgroup sizes can become small, increasing variance and potentially degrading calibration metrics. In practice, this suggests that OCB benefits from either sufficiently large groups, sufficiently high diversity of the model being trained, or additional smoothing or shrinkage toward the unconditioned Group Mean.
+L363: We study how the number of completions influences OCB performance in Appendix cite47†H .
+L364: #### Segment boundaries are assumed known and stable.
+L365: 
+L366: BAE assumes that block boundaries are well defined (e.g., solution vs. confidence report), so that “which tokens control which objective” is unambiguous. For tasks with fuzzy boundaries, defining segments may require additional design choices. Incorrect segmentation could reintroduce cross-objective interference.
+L367: 
+L368: ### 6.3 Future Work
+L369: #### Richer conditioning and broader evaluation.
+L370: 
+L371: Beyond binary correctness, one can define multi-bin outcomes (e.g., verifier margin, intermediate goal achievement, tool feedback) or learn outcome clusters, yielding a higher-fidelity conditional baseline without additional rollouts; evaluating such variants beyond verifiable rewards is a natural next step.
+L372: Overall, we view our method as a step toward more modular and scalable multi-objective RL for LLMs: replacing hand-tuned reward scalarization with structured credit assignment aligned to how models actually generate text.
+L373: ## Impact Statement
+L374: 
+L375: This paper presents work whose goal is to advance the field of Machine Learning, specifically improving credit assignment in multi-objective reinforcement learning tasks. There are many potential societal consequences of our work, none of which we feel must be specifically highlighted here.
+L376: ## References
+L377:   * Chen et al. (2025) G. Chen, Y. Li, Y. Jiang, C. Qian, Q. Ren, J. Yang, Y. Cheng, D. Liu, and J. Shao Conditional advantage estimation for reinforcement learning in large reasoning models. External Links: 2509.23962, cite87†Link Cited by: cite88†§2 .
+L378:   * Cobbe et al. (2021) K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano, C. Hesse, and J. Schulman Training verifiers to solve math word problems. External Links: 2110.14168, cite89†Link Cited by: cite90†§5.2 .
+L379:   * Damani et al. (2025) M. Damani, I. Puri, S. Slocum, I. Shenfeld, L. Choshen, Y. Kim, and J. Andreas Beyond binary rewards: training lms to reason about their uncertainty. External Links: 2507.16806, cite91†Link Cited by: cite92†§1 .
+L380:   * Fan et al. (2025) L. Fan, Y. Zhang, M. Chen, and Z. Liu Posterior-grpo: rewarding reasoning processes in code generation. External Links: 2508.05170, cite93†Link Cited by: cite94†§2 .
+L381:   * Feng et al. (2025a) X. Feng, V. Veeriah, M. Chiam, M. Dennis, R. Pachauri, T. Tumiel, F. Barbero, J. Obando-Ceron, J. Shi, S. Singh, S. Hou, N. Tomašev, and T. Zahavy Generating creative chess puzzles. External Links: 2510.23881, cite95†Link Cited by: cite92†§1 .
+L382:   * Feng et al. (2025b) Y. Feng, P. Jain, A. Hartshorn, Y. Duan, and J. Kempe Don’t waste mistakes: leveraging negative rl-groups via confidence reweighting. External Links: 2510.08696, cite96†Link Cited by: cite97†§5.2 .
+L383:   * Guo et al. (2025) Y. Guo, L. Xu, J. Liu, D. Ye, and S. Qiu Segment policy optimization: effective segment-level credit assignment in rl for large language models. External Links: 2505.23564, cite98†Link Cited by: cite99†§1 .
+L384:   * He et al. (2025) J. He, J. Liu, C. Y. Liu, R. Yan, C. Wang, P. Cheng, X. Zhang, F. Zhang, J. Xu, W. Shen, S. Li, L. Zeng, T. Wei, C. Cheng, B. An, Y. Liu, and Y. Zhou Skywork open reasoner 1 technical report. External Links: 2505.22312, cite100†Link Cited by: cite101†2nd item .
+L385:   * Hendrycks et al. (2021) D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt Measuring mathematical problem solving with the math dataset. NeurIPS. Cited by: cite102†§5.1 .
+
